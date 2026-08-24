@@ -5,6 +5,8 @@ import { FormEvent, ReactNode, useMemo, useState } from "react";
 type Section = "inicio" | "clientes" | "proveedores" | "productos" | "compras" | "inventario" | "pedidos" | "ventas" | "entregas" | "finanzas" | "facturacion";
 type Row = (string | ReactNode)[];
 
+const money = (value: number) => new Intl.NumberFormat("es-PY").format(value);
+
 const navGroups = [
   { label: "PRINCIPAL", items: [["inicio", "◫", "Panel general"]] },
   { label: "MAESTROS", items: [["clientes", "C", "Clientes"], ["proveedores", "P", "Proveedores"], ["productos", "#", "Productos"]] },
@@ -64,10 +66,10 @@ function Table({ headers, rows, statusColumn }: { headers: string[]; rows: Row[]
   return <div className="table-scroll"><table><thead><tr>{headers.map(h => <th key={h}>{h}</th>)}<th /></tr></thead><tbody>{rows.map((row, i) => <tr key={i}>{row.map((cell, j) => <td className={j === 0 || j === 1 ? "strong" : ""} key={j}>{statusColumn === j && typeof cell === "string" ? <Status>{cell}</Status> : cell}</td>)}<td><button className="more">•••</button></td></tr>)}</tbody></table></div>;
 }
 
-function PanelTable({ eyebrow, title, action, headers, rows, statusColumn }: { eyebrow: string; title: string; action: string; headers: string[]; rows: Row[]; statusColumn?: number }) {
+function PanelTable({ eyebrow, title, action, headers, rows, statusColumn, onCreate }: { eyebrow: string; title: string; action: string; headers: string[]; rows: Row[]; statusColumn?: number; onCreate?: () => void }) {
   const [query, setQuery] = useState("");
   const filtered = rows.filter(row => row.some(cell => typeof cell === "string" && cell.toLowerCase().includes(query.toLowerCase())));
-  return <section className="panel data-panel"><div className="panel-toolbar"><div><span className="eyebrow">{eyebrow}</span><h2>{title}</h2></div><div className="toolbar"><label className="search small"><b>⌕</b><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Buscar..." /></label><button className="secondary">Exportar</button><button className="primary">＋ {action}</button></div></div><Table headers={headers} rows={filtered} statusColumn={statusColumn} /><footer className="table-footer"><span>Mostrando {filtered.length} de {rows.length} registros</span><div><button>‹</button><button className="selected">1</button><button>2</button><button>›</button></div></footer></section>;
+  return <section className="panel data-panel"><div className="panel-toolbar"><div><span className="eyebrow">{eyebrow}</span><h2>{title}</h2></div><div className="toolbar"><label className="search small"><b>⌕</b><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Buscar..." /></label><button className="secondary">Exportar</button><button className="primary" onClick={onCreate}>＋ {action}</button></div></div><Table headers={headers} rows={filtered} statusColumn={statusColumn} /><footer className="table-footer"><span>Mostrando {filtered.length} de {rows.length} registros</span><div><button>‹</button><button className="selected">1</button><button>2</button><button>›</button></div></footer></section>;
 }
 
 function Dashboard({ go }: { go: (s: Section) => void }) {
@@ -97,9 +99,23 @@ const pageData: Partial<Record<Section, { stats: [string,string,string,string?][
   pedidos: { stats:[["PEDIDOS DE HOY","38","Gs. 81.420.000"],["EN PREPARACIÓN","12","Gs. 22.640.000"],["LISTOS PARA DESPACHO","6","Gs. 11.280.000"]], eyebrow:"FLUJO COMERCIAL", action:"Nuevo pedido", headers:["Pedido","Hora","Cliente","Vendedor","Total","Estado"], rows:orders, status:5 },
 };
 
+function PrototypeForm({ section, close }: { section: "clientes" | "proveedores" | "productos" | "compras" | "pedidos"; close: () => void }) {
+  const [saved, setSaved] = useState(false);
+  const config = {
+    clientes: { title: "Registrar cliente", subtitle: "Datos comerciales y condiciones de crédito", fields: [["Razón social", "Ej.: Comercial del Centro S.R.L.", "text"], ["RUC", "Ej.: 80123456-7", "text"], ["Teléfono", "Ej.: 0981 123 456", "tel"], ["Correo electrónico", "cliente@empresa.com", "email"], ["Ciudad", "Seleccionar ciudad", "select"], ["Límite de crédito (Gs.)", "0", "number"]] },
+    proveedores: { title: "Registrar proveedor", subtitle: "Información de abastecimiento y pagos", fields: [["Razón social", "Ej.: Proveedor Nacional S.A.", "text"], ["RUC", "Ej.: 80012345-6", "text"], ["Contacto comercial", "Nombre y apellido", "text"], ["Teléfono", "Ej.: 0981 123 456", "tel"], ["Rubro principal", "Seleccionar rubro", "select"], ["Condición de pago", "Seleccionar condición", "select"]] },
+    productos: { title: "Registrar producto", subtitle: "Catálogo, precio y control de existencias", fields: [["Código interno", "Ej.: ALI-00421", "text"], ["Nombre del producto", "Ej.: Galletitas surtidas 400 g", "text"], ["Categoría", "Seleccionar categoría", "select"], ["Unidad de medida", "Unidad", "select"], ["Precio mayorista (Gs.)", "0", "number"], ["Stock mínimo", "0", "number"]] },
+    compras: { title: "Registrar orden de compra", subtitle: "Solicitud de compra para un proveedor", fields: [["Proveedor", "Seleccionar proveedor", "select"], ["Fecha de recepción prevista", "", "date"], ["Depósito de destino", "Casa central", "select"], ["Condición de pago", "30 días", "select"], ["Producto principal", "Seleccionar producto", "select"], ["Cantidad estimada", "0", "number"]] },
+    pedidos: { title: "Registrar pedido", subtitle: "Carga rápida para ventas y despacho", fields: [["Cliente", "Seleccionar cliente", "select"], ["Fecha de entrega", "", "date"], ["Vendedor", "Seleccionar vendedor", "select"], ["Condición de venta", "Crédito", "select"], ["Producto principal", "Seleccionar producto", "select"], ["Cantidad", "0", "number"]] },
+  }[section];
+  const save = (e: FormEvent) => { e.preventDefault(); setSaved(true); setTimeout(close, 1300); };
+  return <div className="modal-bg" onMouseDown={e => { if (e.currentTarget === e.target) close(); }}><form className="modal prototype-form" onSubmit={save}><header><div><span className="eyebrow">PROTOTIPO · SIN GUARDADO REAL</span><h2>{config.title}</h2><p>{config.subtitle}</p></div><button type="button" onClick={close}>×</button></header>{saved ? <div className="prototype-success"><i>✓</i><b>Registro simulado correctamente</b><small>Esta demostración no guarda datos reales.</small></div> : <><div className="form-grid">{config.fields.map(([label, placeholder, type]) => <label key={label}><span>{label}</span>{type === "select" ? <select required defaultValue=""><option value="" disabled>{placeholder}</option><option>Casa central</option><option>Asunción</option><option>Alimentos</option><option>Crédito · 30 días</option></select> : <input required type={type} placeholder={placeholder} />}</label>)}</div><section className="prototype-note"><i>i</i><span><b>Vista comercial</b><small>Los campos representan el flujo que tendrá el sistema final.</small></span></section><footer><button type="button" className="secondary" onClick={close}>Cancelar</button><button className="primary">Guardar registro</button></footer></>}</form></div>;
+}
+
 function StandardPage({ section }: { section: Section }) {
   const data = pageData[section]!;
-  return <div className="stack"><Metrics items={data.stats}/><PanelTable eyebrow={data.eyebrow} title="Listado general" action={data.action} headers={data.headers} rows={data.rows} statusColumn={data.status}/></div>;
+  const [form, setForm] = useState(false);
+  return <div className="stack"><Metrics items={data.stats}/><PanelTable eyebrow={data.eyebrow} title="Listado general" action={data.action} headers={data.headers} rows={data.rows} statusColumn={data.status} onCreate={() => setForm(true)}/>{form && <PrototypeForm section={section as "clientes" | "proveedores" | "productos" | "compras" | "pedidos"} close={() => setForm(false)}/>}</div>;
 }
 
 function Inventory() {
