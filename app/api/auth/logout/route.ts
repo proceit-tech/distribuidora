@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const { db } = await import("@/lib/db");
 import {
   getDemoCookieValue,
   getSessionCookieName,
@@ -20,10 +19,15 @@ function clearSessionCookie(response: NextResponse) {
 }
 
 export async function POST(request: NextRequest) {
-  const value = request.cookies.get(getSessionCookieName())?.value;
+  const value =
+    request.cookies.get(getSessionCookieName())?.value;
 
-  if (isDemoMode() && value === getDemoCookieValue()) {
-    const response = NextResponse.json({ ok: true, demo: true });
+  if (isDemoMode()) {
+    const response = NextResponse.json({
+      ok: true,
+      demo: true,
+    });
+
     clearSessionCookie(response);
     return response;
   }
@@ -31,6 +35,8 @@ export async function POST(request: NextRequest) {
   const [id, secret, extra] = value?.split(".") ?? [];
 
   if (id && secret && !extra) {
+    const { db } = await import("@/lib/db");
+
     await db.query(
       `UPDATE sesiones_usuario
           SET revocada_at = now()
@@ -41,7 +47,12 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const response = NextResponse.json({ ok: true, demo: false });
+  const response = NextResponse.json({
+    ok: true,
+    demo: false,
+  });
+
   clearSessionCookie(response);
+
   return response;
 }

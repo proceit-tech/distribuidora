@@ -1,7 +1,6 @@
 import { isIP } from "node:net";
 import { NextRequest, NextResponse } from "next/server";
 
-const { db } = await import("@/lib/db");
 import {
   createSessionToken,
   getDemoCookieValue,
@@ -36,7 +35,10 @@ function userAgent(request: NextRequest) {
   return request.headers.get("user-agent")?.slice(0, 500) ?? null;
 }
 
-function setSessionCookie(response: NextResponse, value: string) {
+function setSessionCookie(
+  response: NextResponse,
+  value: string,
+) {
   response.cookies.set(getSessionCookieName(), value, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
@@ -109,10 +111,15 @@ export async function POST(request: NextRequest) {
       demo: true,
     });
 
-    setSessionCookie(response, getDemoCookieValue());
+    setSessionCookie(
+      response,
+      getDemoCookieValue(),
+    );
 
     return response;
   }
+
+  const { db } = await import("@/lib/db");
 
   const ip = clientIp(request);
   const agent = userAgent(request);
@@ -133,8 +140,10 @@ export async function POST(request: NextRequest) {
 
   if (
     !candidate ||
-    (candidate.bloqueado_hasta &&
-      candidate.bloqueado_hasta > new Date())
+    (
+      candidate.bloqueado_hasta &&
+      candidate.bloqueado_hasta > new Date()
+    )
   ) {
     if (candidate) {
       await db.query(
@@ -144,7 +153,12 @@ export async function POST(request: NextRequest) {
            ($1, $2, 'LOGIN_FALLIDO',
             jsonb_build_object('motivo', 'USUARIO_BLOQUEADO'),
             $3::inet, $4)`,
-        [candidate.empresa_id, candidate.id, ip, agent],
+        [
+          candidate.empresa_id,
+          candidate.id,
+          ip,
+          agent,
+        ],
       );
     }
 
@@ -182,7 +196,12 @@ export async function POST(request: NextRequest) {
          ($1, $2, 'LOGIN_FALLIDO',
           jsonb_build_object('motivo', 'CREDENCIAL_INVALIDA'),
           $3::inet, $4)`,
-      [candidate.empresa_id, candidate.id, ip, agent],
+      [
+        candidate.empresa_id,
+        candidate.id,
+        ip,
+        agent,
+      ],
     );
 
     return NextResponse.json(
@@ -217,7 +236,13 @@ export async function POST(request: NextRequest) {
        VALUES
          ($1, $2, crypt($3, gen_salt('bf', 12)),
           $4::inet, $5, now() + interval '8 hours')`,
-      [token.id, candidate.id, token.secret, ip, agent],
+      [
+        token.id,
+        candidate.id,
+        token.secret,
+        ip,
+        agent,
+      ],
     );
 
     await client.query(
@@ -225,7 +250,12 @@ export async function POST(request: NextRequest) {
          (empresa_id, usuario_id, tipo, ip, user_agent)
        VALUES
          ($1, $2, 'LOGIN_EXITOSO', $3::inet, $4)`,
-      [candidate.empresa_id, candidate.id, ip, agent],
+      [
+        candidate.empresa_id,
+        candidate.id,
+        ip,
+        agent,
+      ],
     );
 
     await client.query("COMMIT");
@@ -243,7 +273,10 @@ export async function POST(request: NextRequest) {
 
   setSessionCookie(
     response,
-    serializeSessionToken(token.id, token.secret),
+    serializeSessionToken(
+      token.id,
+      token.secret,
+    ),
   );
 
   return response;
