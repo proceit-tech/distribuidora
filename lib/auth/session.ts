@@ -4,7 +4,6 @@ import { randomBytes, randomUUID } from "crypto";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
-const { db } = await import("@/lib/db");
 import type { AuthSession } from "@/types/auth";
 
 const COOKIE_NAME =
@@ -90,8 +89,12 @@ export async function getCurrentSession(): Promise<AuthSession | null> {
   const cookieStore = await cookies();
   const cookieValue = cookieStore.get(COOKIE_NAME)?.value;
 
-  if (isDemoMode() && cookieValue === DEMO_COOKIE_VALUE) {
-    return createDemoSession();
+  if (isDemoMode()) {
+    if (cookieValue === DEMO_COOKIE_VALUE) {
+      return createDemoSession();
+    }
+
+    return null;
   }
 
   const token = parseSessionToken(cookieValue);
@@ -99,6 +102,8 @@ export async function getCurrentSession(): Promise<AuthSession | null> {
   if (!token) {
     return null;
   }
+
+  const { db } = await import("@/lib/db");
 
   const result = await db.query<SessionRow>(
     `SELECT
