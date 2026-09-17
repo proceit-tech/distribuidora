@@ -1,7 +1,65 @@
 import { NextResponse } from "next/server";
-import { db } from "@/lib/db";
-import { getCurrentSession } from "@/lib/auth/session";
 import type { PoolClient } from "pg";
+
+
+const DEMO_MODE =
+  process.env.DEMO_MODE === "true" ||
+  !process.env.DATABASE_URL;
+
+async function obtenerSesionActual() {
+  const { getCurrentSession } = await import("@/lib/auth/session");
+  return getCurrentSession();
+}
+
+async function obtenerDb() {
+  const { db } = await import("@/lib/db");
+  return db;
+}
+
+function respuestaProveedoresDemo(url: URL) {
+  const catalogo = url.searchParams.get("catalogo");
+
+  if (catalogo) {
+    return NextResponse.json({
+      catalogo,
+      datos: [],
+      demo: true,
+    });
+  }
+
+  return NextResponse.json({
+    proveedores: [],
+    catalogos: {
+      grupos: [],
+      gruposProveedor: [],
+      condicionesPago: [],
+      monedas: [],
+      mediosPago: [],
+      paises: [],
+      incoterms: [],
+      departamentos: [],
+    },
+    demo: true,
+  });
+}
+
+function crearProveedorDemo(body: ProveedorBody) {
+  const codigo = `PRV-DEMO-${Date.now()}`;
+
+  return {
+    id: `demo-proveedor-${Date.now()}`,
+    codigo,
+    razon_social:
+      texto(body.razonSocial, 200) ||
+      "Proveedor demo",
+    pais_codigo:
+      texto(body.paisCodigo, 3).toUpperCase() ||
+      "PRY",
+    estado_homologacion:
+      texto(body.estadoHomologacion).toUpperCase() ||
+      "PENDIENTE",
+  };
+}
 
 type ContactoInput = {
   nombre?: string;
@@ -252,7 +310,10 @@ async function validarReferenciaGlobal(
   if (!resultado.rowCount) throw new Error(`El ${etiqueta} seleccionado no existe o está inactivo.`);
 }
 
-async function catalogoGeografico(url: URL) {
+async function catalogoGeografico(
+  url: URL,
+  db: Awaited<ReturnType<typeof obtenerDb>>,
+) {
   const catalogo = url.searchParams.get("catalogo");
   if (!catalogo) return null;
 
@@ -305,14 +366,25 @@ async function catalogoGeografico(url: URL) {
 }
 
 export async function GET(request: Request) {
-  const session = await getCurrentSession();
-  if (!session) {
-    return NextResponse.json({ error: "Su sesión ha finalizado." }, { status: 401 });
+  const url = new URL(request.url);
+
+  if (DEMO_MODE) {
+    return respuestaProveedoresDemo(url);
   }
 
+  const session = await obtenerSesionActual();
+
+  if (!session) {
+    return NextResponse.json(
+      { error: "Su sesión ha finalizado." },
+      { status: 401 },
+    );
+  }
+
+  const db = await obtenerDb();
+
   try {
-    const url = new URL(request.url);
-    const respuestaGeografica = await catalogoGeografico(url);
+    const respuestaGeografica = await catalogoGeografico(url, db);
     if (respuestaGeografica) return respuestaGeografica;
 
     const soloCatalogos = url.searchParams.get("modo") === "catalogos";
@@ -443,18 +515,40 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const session = await getCurrentSession();
-  if (!session) {
-    return NextResponse.json({ error: "Su sesión ha finalizado." }, { status: 401 });
-  }
-
   let body: ProveedorBody;
+
   try {
     body = (await request.json()) as ProveedorBody;
   } catch {
-    return NextResponse.json({ error: "Los datos enviados no son válidos." }, { status: 400 });
+    return NextResponse.json(
+      { error: "Los datos enviados no son válidos." },
+      { status: 400 },
+    );
   }
 
+  if (DEMO_MODE) {
+    const proveedor = crearProveedorDemo(body);
+
+    return NextResponse.json(
+      {
+        message: `Proveedor ${proveedor.codigo} registrado correctamente en modo demo.`,
+        proveedor,
+        demo: true,
+      },
+      { status: 201 },
+    );
+  }
+
+  const session = await obtenerSesionActual();
+
+  if (!session) {
+    return NextResponse.json(
+      { error: "Su sesión ha finalizado." },
+      { status: 401 },
+    );
+  }
+
+  const db = await obtenerDb();
   let conexion: PoolClient | null = null;
 
   try {

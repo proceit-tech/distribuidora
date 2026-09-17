@@ -1,7 +1,51 @@
 import { NextResponse } from "next/server";
 import type { PoolClient } from "pg";
-import { db } from "@/lib/db";
-import { getCurrentSession } from "@/lib/auth/session";
+
+
+const DEMO_MODE =
+  process.env.DEMO_MODE === "true" ||
+  !process.env.DATABASE_URL;
+
+async function obtenerSesionActual() {
+  const { getCurrentSession } = await import("@/lib/auth/session");
+  return getCurrentSession();
+}
+
+async function obtenerDb() {
+  const { db } = await import("@/lib/db");
+  return db;
+}
+
+function respuestaProductosDemo() {
+  return NextResponse.json({
+    productos: [],
+    catalogos: {
+      categorias: [],
+      marcas: [],
+      unidades: [],
+      impuestos: [],
+      proveedores: [],
+      depositos: [],
+    },
+    demo: true,
+  });
+}
+
+function crearProductoDemo(d: Record<string, unknown>) {
+  const codigo =
+    texto(d.codigo, 80) ||
+    `PRD-DEMO-${Date.now()}`;
+
+  const descripcion =
+    texto(d.descripcion, 300) ||
+    "Producto demo";
+
+  return {
+    id: `demo-producto-${Date.now()}`,
+    codigo,
+    descripcion,
+  };
+}
 
 const texto = (valor: unknown, maximo?: number) => {
   const resultado = typeof valor === "string" ? valor.trim() : "";
@@ -47,9 +91,21 @@ const errorPg = (e: unknown): e is { code?: string } =>
   typeof e === "object" && e !== null;
 
 export async function GET() {
-  const session = await getCurrentSession();
-  if (!session)
-    return NextResponse.json({ error: "Sesión no válida." }, { status: 401 });
+  if (DEMO_MODE) {
+    return respuestaProductosDemo();
+  }
+
+  const session = await obtenerSesionActual();
+
+  if (!session) {
+    return NextResponse.json(
+      { error: "Sesión no válida." },
+      { status: 401 },
+    );
+  }
+
+  const db = await obtenerDb();
+
   try {
     const empresaId = session.user.empresaId;
     const [
@@ -109,12 +165,43 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const session = await getCurrentSession();
-  if (!session)
-    return NextResponse.json({ error: "Sesión no válida." }, { status: 401 });
-  let conexion: PoolClient | undefined;
+  let d: Record<string, unknown>;
+
   try {
-    const d = (await request.json()) as Record<string, unknown>;
+    d = (await request.json()) as Record<string, unknown>;
+  } catch {
+    return NextResponse.json(
+      { error: "Los datos enviados no son válidos." },
+      { status: 400 },
+    );
+  }
+
+  if (DEMO_MODE) {
+    const producto = crearProductoDemo(d);
+
+    return NextResponse.json(
+      {
+        message: "Producto registrado correctamente en modo demo.",
+        producto,
+        demo: true,
+      },
+      { status: 201 },
+    );
+  }
+
+  const session = await obtenerSesionActual();
+
+  if (!session) {
+    return NextResponse.json(
+      { error: "Sesión no válida." },
+      { status: 401 },
+    );
+  }
+
+  const db = await obtenerDb();
+  let conexion: PoolClient | undefined;
+
+  try {
     const codigo = texto(d.codigo, 80);
     const descripcion = texto(d.descripcion, 300);
     const codigoSifen = opcional(d.codigoSifen, 20);

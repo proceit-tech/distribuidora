@@ -1,8 +1,64 @@
 import type { PoolClient } from "pg";
 import { NextResponse } from "next/server";
 
-import { getCurrentSession } from "@/lib/auth/session";
-import { db } from "@/lib/db";
+
+const DEMO_MODE =
+  process.env.DEMO_MODE === "true" ||
+  !process.env.DATABASE_URL;
+
+async function obtenerSesionActual() {
+  const { getCurrentSession } = await import("@/lib/auth/session");
+  return getCurrentSession();
+}
+
+async function obtenerDb() {
+  const { db } = await import("@/lib/db");
+  return db;
+}
+
+function respuestaDemoCatalogos(url: URL) {
+  const catalogo = url.searchParams.get("catalogo");
+
+  if (catalogo) {
+    return NextResponse.json({
+      catalogo,
+      datos: [],
+      demo: true,
+    });
+  }
+
+  return NextResponse.json({
+    clientes: [],
+    catalogos: {
+      grupos: [],
+      condicionesPago: [],
+      monedas: [],
+      listasPrecio: [],
+      rutasEntrega: [],
+      zonasComerciales: [],
+      vendedores: [],
+      canalesVenta: [],
+      departamentosParaguay: [],
+    },
+    demo: true,
+  });
+}
+
+function crearClienteDemo(cuerpo: JsonObject) {
+  const numeroDocumento = texto(cuerpo.numeroDocumento, 30);
+  const razonSocial = texto(cuerpo.razonSocial, 200);
+  const codigo =
+    texto(cuerpo.codigo, 50) ||
+    `CLI-DEMO-${Date.now()}`;
+
+  return {
+    id: `demo-cliente-${Date.now()}`,
+    codigo,
+    razon_social: razonSocial || "Cliente demo",
+    numero_documento: numeroDocumento,
+  };
+}
+
 
 type JsonObject = Record<string, unknown>;
 
@@ -296,7 +352,10 @@ async function validarDireccionParaguay(
   };
 }
 
-async function catalogoGeografico(url: URL) {
+async function catalogoGeografico(
+  url: URL,
+  db: Awaited<ReturnType<typeof obtenerDb>>,
+) {
   const catalogo = url.searchParams.get("catalogo");
 
   if (!catalogo) return null;
@@ -361,15 +420,24 @@ async function catalogoGeografico(url: URL) {
 }
 
 export async function GET(request: Request) {
-  const session = await getCurrentSession();
+  const url = new URL(request.url);
 
-  if (!session) {
-    return NextResponse.json({ error: "Sesión no válida." }, { status: 401 });
+  if (DEMO_MODE) {
+    return respuestaDemoCatalogos(url);
   }
 
   try {
-    const url = new URL(request.url);
-    const respuestaGeografica = await catalogoGeografico(url);
+    const session = await obtenerSesionActual();
+
+    if (!session) {
+      return NextResponse.json(
+        { error: "Sesión no válida." },
+        { status: 401 },
+      );
+    }
+
+    const db = await obtenerDb();
+    const respuestaGeografica = await catalogoGeografico(url, db);
 
     if (respuestaGeografica) return respuestaGeografica;
 
@@ -515,16 +583,43 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const session = await getCurrentSession();
+  let cuerpo: JsonObject;
 
-  if (!session) {
-    return NextResponse.json({ error: "Sesión no válida." }, { status: 401 });
+  try {
+    cuerpo = (await request.json()) as JsonObject;
+  } catch {
+    return NextResponse.json(
+      { error: "Los datos enviados no son válidos." },
+      { status: 400 },
+    );
   }
 
+  if (DEMO_MODE) {
+    const cliente = crearClienteDemo(cuerpo);
+
+    return NextResponse.json(
+      {
+        message: "Cliente registrado correctamente en modo demo.",
+        cliente,
+        demo: true,
+      },
+      { status: 201 },
+    );
+  }
+
+  const session = await obtenerSesionActual();
+
+  if (!session) {
+    return NextResponse.json(
+      { error: "Sesión no válida." },
+      { status: 401 },
+    );
+  }
+
+  const db = await obtenerDb();
   let conexion: PoolClient | undefined;
 
   try {
-    const cuerpo = (await request.json()) as JsonObject;
     const naturaleza = texto(cuerpo.naturaleza).toUpperCase();
     const tipoOperacion = texto(cuerpo.tipoOperacion).toUpperCase();
     const tipoPersona = texto(cuerpo.tipoPersona).toUpperCase();
