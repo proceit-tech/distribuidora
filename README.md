@@ -1,32 +1,31 @@
-# DistribuNex — MVP para distribuidora
+# DistribuNex — base de autenticación
 
-Demonstração navegável de uma plataforma de gestão comercial, logística, financeira e facturação electrónica para distribuidoras.
+Copie el contenido de `app`, `components`, `lib` y `types` a la raíz del proyecto Next.js.
 
-## Módulos demonstrados
-
-- Dashboard executivo
-- Clientes, fornecedores e produtos
-- Compras e inventário
-- Pedidos e vendas
-- Entregas e rotas
-- Financeiro
-- Simulação de emissão de factura electrónica e envio ao SIFEN
-
-## Executar localmente
+## Dependencia
 
 ```bash
-npm install
-npm run dev
+npm install pg
+npm install -D @types/pg
 ```
 
-Abra `http://localhost:3000`.
+## Configuración
 
-## Publicar na Vercel
+1. Copie `.env.local.example` a `.env.local` y ajuste `DATABASE_URL`.
+2. Ejecute las migrations hasta `017_administrador_inicial.sql`.
+3. Inicialice la empresa y cree el administrador con la función incluida en la migration 017.
+4. Reemplace el `app/page.tsx` actual y agregue las carpetas del paquete.
+5. En el acceso use el código de `empresas.codigo`, el usuario y la contraseña definidos en la migration 017.
 
-1. Envie todos os arquivos deste projeto para um repositório GitHub.
-2. Na Vercel, selecione **Add New > Project**.
-3. Importe o repositório.
-4. Mantenha o framework detectado como **Next.js**.
-5. Clique em **Deploy**.
+El proyecto debe conservar el alias estándar de Next.js en `tsconfig.json`:
 
-Este projeto é uma demonstração visual com dados simulados. Não utiliza banco de dados e não transmite documentos reais ao SIFEN.
+```json
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": { "@/*": ["./*"] }
+  }
+}
+```
+
+El navegador recibe solo un identificador de sesión y un secreto aleatorio. El secreto se almacena como bcrypt en `sesiones_usuario`; cada petición protegida verifica que la sesión siga activa.

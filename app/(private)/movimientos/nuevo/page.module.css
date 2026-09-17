@@ -1,0 +1,318 @@
+.page {
+  width: 100%;
+  min-height: 100vh;
+  padding: 20px 22px 28px;
+}
+
+.hero,
+.cardHeader,
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.hero {
+  min-height: 72px;
+  margin-bottom: 14px;
+}
+
+.heroMeta {
+  display: flex;
+  gap: 7px;
+  margin-bottom: 5px;
+}
+
+.modulePill,
+.demoPill {
+  display: inline-flex;
+  min-height: 20px;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0 7px;
+  font-size: 7px;
+  font-weight: 850;
+}
+
+.modulePill {
+  color: #0a7880;
+  background: #e7f7f7;
+}
+
+.demoPill {
+  color: #7b8d9f;
+  border: 1px solid #dce6ed;
+  background: #ffffff;
+}
+
+.hero h1 {
+  margin: 0;
+  color: #112f4a;
+  font-size: 25px;
+}
+
+.hero p {
+  margin: 4px 0 0;
+  color: #7c8ea0;
+  font-size: 10px;
+}
+
+.secondaryButton,
+.cancelButton {
+  border: 1px solid #d9e4eb;
+  border-radius: 9px;
+  color: #41647d;
+  background: #ffffff;
+  text-decoration: none;
+}
+
+.secondaryButton {
+  padding: 10px 12px;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.card {
+  overflow: hidden;
+  border: 1px solid #dce6ed;
+  border-radius: 13px;
+  background: #ffffff;
+}
+
+.cardHeader {
+  min-height: 74px;
+  padding: 13px 16px;
+  border-bottom: 1px solid #edf2f5;
+}
+
+.cardHeader > div:first-child > span {
+  display: block;
+  margin-bottom: 4px;
+  color: #0a858e;
+  font-size: 7px;
+  font-weight: 900;
+}
+
+.cardHeader h2 {
+  margin: 0;
+  color: #173b59;
+  font-size: 15px;
+}
+
+.cardHeader p {
+  margin: 3px 0 0;
+  color: #8697a7;
+  font-size: 8px;
+}
+
+.statusBadge {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0 8px;
+  color: #14745f;
+  background: #e7f7f0;
+  font-size: 7px;
+  font-weight: 850;
+}
+
+.error {
+  margin: 11px 16px 0;
+  border: 1px solid #f4c9cf;
+  border-radius: 9px;
+  padding: 9px 11px;
+  color: #a74350;
+  background: #fff5f6;
+  font-size: 8px;
+}
+
+.content {
+  padding: 17px 16px 20px;
+}
+
+.gridFour,
+.gridTwo {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.gridFour {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.gridTwo {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.wideField {
+  grid-column: span 2;
+}
+
+.gridFour label,
+.gridTwo label,
+.textareaField {
+  display: grid;
+  gap: 5px;
+}
+
+.gridFour label > span,
+.gridTwo label > span,
+.textareaField > span {
+  color: #667f93;
+  font-size: 7px;
+  font-weight: 800;
+}
+
+.gridFour input,
+.gridFour select,
+.gridTwo input,
+.gridTwo select,
+.textareaField textarea {
+  width: 100%;
+  border: 1px solid #d9e3ea;
+  border-radius: 8px;
+  outline: 0;
+  color: #284c66;
+  background: #ffffff;
+  font-size: 9px;
+}
+
+.gridFour input,
+.gridFour select,
+.gridTwo input,
+.gridTwo select {
+  height: 36px;
+  padding: 0 10px;
+}
+
+.textareaField textarea {
+  min-height: 78px;
+  resize: vertical;
+  padding: 9px 10px;
+}
+
+.sectionTitle {
+  margin: 17px 0 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #edf2f5;
+  color: #1b405e;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.stockSnapshot {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.stockSnapshot > div {
+  border: 1px solid #e0e8ed;
+  border-radius: 9px;
+  padding: 9px 10px;
+  background: #fbfcfd;
+}
+
+.stockSnapshot span,
+.stockSnapshot strong {
+  display: block;
+}
+
+.stockSnapshot span {
+  color: #8496a6;
+  font-size: 7px;
+}
+
+.stockSnapshot strong {
+  margin-top: 3px;
+  color: #31526c;
+  font-size: 12px;
+}
+
+.footer {
+  min-height: 62px;
+  padding: 11px 16px;
+  border-top: 1px solid #e7edf1;
+  background: #f9fbfc;
+}
+
+.footer > div:first-child span {
+  display: block;
+  color: #0a8189;
+  font-size: 7px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.footer small {
+  display: block;
+  margin-top: 2px;
+  color: #8b9baa;
+  font-size: 7px;
+}
+
+.footerActions {
+  display: flex;
+  gap: 8px;
+}
+
+.cancelButton,
+.saveButton {
+  display: inline-flex;
+  min-height: 35px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 13px;
+  font-size: 8px;
+  font-weight: 800;
+}
+
+.saveButton {
+  min-width: 150px;
+  border: 0;
+  border-radius: 8px;
+  color: #ffffff;
+  background: linear-gradient(135deg, #13a9af, #0c919b);
+}
+
+@media (max-width: 1000px) {
+  .gridFour {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .page {
+    padding: 14px;
+  }
+
+  .hero,
+  .cardHeader,
+  .footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .gridFour,
+  .gridTwo,
+  .stockSnapshot {
+    grid-template-columns: 1fr;
+  }
+
+  .wideField {
+    grid-column: auto;
+  }
+
+  .footerActions {
+    width: 100%;
+  }
+
+  .cancelButton,
+  .saveButton {
+    flex: 1;
+  }
+}

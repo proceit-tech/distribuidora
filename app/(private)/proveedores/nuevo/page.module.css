@@ -1,0 +1,306 @@
+.nuevoProveedor {
+  max-width: 1500px;
+  margin: 0 auto;
+  padding: 34px 38px 50px;
+  color: #0b2b4e;
+}
+
+.head,
+.cardHead,
+.sectionTitle,
+.repHead,
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.breadcrumbs {
+  margin: 0 0 10px;
+  color: #7890aa;
+  font-size: 12px;
+}
+
+.breadcrumbs span {
+  margin: 0 6px;
+}
+
+.head h1 {
+  margin: 0 0 7px;
+  font-size: 31px;
+  font-weight: 500;
+}
+
+.head small {
+  color: #6380a4;
+}
+
+.card {
+  overflow: hidden;
+  margin-top: 26px;
+  border: 1px solid #dce7f0;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.cardHead {
+  padding: 22px 25px;
+  border-bottom: 1px solid #e5edf4;
+}
+
+.cardHead span {
+  color: #6482a2;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 1px;
+}
+
+.cardHead h2 {
+  margin: 6px 0 0;
+  font-size: 19px;
+}
+
+.auto {
+  padding: 9px 12px;
+  border-radius: 7px;
+  color: #118274;
+  background: #effaf8;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.tabs {
+  display: flex;
+  overflow-x: auto;
+  border-bottom: 1px solid #e5edf4;
+  background: #fbfdff;
+}
+
+.tabs button {
+  border: 0;
+  border-bottom: 3px solid transparent;
+  padding: 15px 17px;
+  color: #6c86a5;
+  background: transparent;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.tabs button.active {
+  border-color: #12a8af;
+  color: #0c8d96;
+}
+
+.content {
+  padding: 24px 25px;
+}
+
+.sectionTitle {
+  margin-bottom: 18px;
+}
+
+.sectionTitle h3 {
+  margin: 0 0 5px;
+  font-size: 17px;
+}
+
+.sectionTitle p {
+  margin: 0;
+  color: #7790ad;
+  font-size: 12px;
+}
+
+.grid {
+  display: grid;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.four {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.field {
+  display: grid;
+  gap: 5px;
+}
+
+.field span {
+  color: #6a84a3;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.field input,
+.field select,
+.field textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #d5e1ed;
+  border-radius: 7px;
+  padding: 10px 11px;
+  outline: none;
+  color: #244a70;
+  background: #ffffff;
+  font: inherit;
+  font-size: 12px;
+}
+
+.field input:focus,
+.field select:focus,
+.field textarea:focus {
+  border-color: #12a8af;
+}
+
+.field input:disabled,
+.field select:disabled,
+.field textarea:disabled {
+  cursor: not-allowed;
+  background: #f4f7fa;
+}
+
+.field textarea {
+  min-height: 90px;
+  resize: vertical;
+}
+
+.checks {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 12px 0;
+}
+
+.wrap {
+  flex-wrap: wrap;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #dfe8f1;
+  border-radius: 7px;
+  padding: 10px 12px;
+  background: #fbfdff;
+  font-size: 11px;
+}
+
+.repeat {
+  margin: 14px 0;
+  border: 1px solid #e0e9f2;
+  border-radius: 9px;
+  padding: 16px;
+}
+
+.repHead {
+  margin-bottom: 14px;
+}
+
+.remove,
+.add {
+  border: 0;
+  background: transparent;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.add {
+  color: #0c8e98;
+}
+
+.remove {
+  color: #bb4455;
+}
+
+.error {
+  margin: 18px 25px 0;
+  border: 1px solid #fac4ca;
+  border-radius: 7px;
+  padding: 12px 14px;
+  color: #b62f3f;
+  background: #fff2f3;
+}
+
+.loading {
+  padding: 26px;
+  color: #7890aa;
+  text-align: center;
+}
+
+.primary,
+.secondary {
+  display: inline-flex;
+  min-height: 42px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  padding: 0 18px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.primary {
+  border: 0;
+  color: #ffffff;
+  background: #12a8af;
+  cursor: pointer;
+}
+
+.primary:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.secondary {
+  border: 1px solid #d5e1ed;
+  color: #315575;
+  background: #ffffff;
+}
+
+.footer {
+  border-top: 1px solid #e5edf4;
+  padding: 18px 25px;
+  background: #fbfdff;
+}
+
+@media (max-width: 1050px) {
+  .four {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .nuevoProveedor {
+    padding: 22px 16px;
+  }
+
+  .head,
+  .cardHead,
+  .sectionTitle,
+  .footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .four,
+  .three,
+  .two {
+    grid-template-columns: 1fr;
+  }
+
+  .primary,
+  .secondary {
+    width: 100%;
+  }
+}

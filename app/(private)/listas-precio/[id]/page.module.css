@@ -1,0 +1,23 @@
+.state {
+  display: grid;
+  min-height: 300px;
+  place-items: center;
+  align-content: center;
+  gap: 10px;
+  padding: 24px;
+  color: #5f7689;
+  text-align: center;
+}
+
+.state h1 {
+  margin: 0;
+  color: #1f435f;
+  font-size: 22px;
+}
+
+.state a {
+  color: #0b8c95;
+  font-size: 12px;
+  font-weight: 800;
+  text-decoration: none;
+}

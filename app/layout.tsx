@@ -2,12 +2,18 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Distribuidora MVP",
-  description: "Demostración de gestión comercial, logística y facturación electrónica para distribuidoras.",
-  other: { "codex-preview": "development" },
-  icons: { icon: "/favicon.svg", shortcut: "/favicon.svg" },
+  title: "DistribuNex",
+  description: "Sistema de gestión para distribuidoras",
 };
 
-export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="es"><body>{children}</body></html>;
+export default function RootLayout({
+  children,
+}: Readonly<{
+  children: React.ReactNode;
+}>) {
+  return (
+    <html lang="es-PY">
+      <body>{children}</body>
+    </html>
+  );
 }

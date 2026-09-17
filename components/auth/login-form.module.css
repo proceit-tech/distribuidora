@@ -1,0 +1,154 @@
+.form {
+  display: grid;
+  gap: 18px;
+}
+
+.company {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 12px 14px;
+  border: 1px solid #dbe7ee;
+  border-radius: 10px;
+  background: #f8fbfc;
+}
+
+.company > span {
+  color: #7a8ca0;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.company > div {
+  min-width: 0;
+  text-align: right;
+}
+
+.company strong,
+.company small {
+  display: block;
+}
+
+.company strong {
+  color: #0c7180;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.company small {
+  margin-top: 2px;
+  color: #8294a6;
+  font-size: 9px;
+}
+
+.field {
+  display: grid;
+  gap: 7px;
+  color: #173a5d;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.inputWrap {
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  overflow: hidden;
+  border: 1px solid #cfdde9;
+  border-radius: 10px;
+  background: #ffffff;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.inputWrap:focus-within {
+  border-color: #11a8ae;
+  box-shadow: 0 0 0 4px rgba(17, 168, 174, 0.1);
+}
+
+.inputWrap svg {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  margin: 0 14px;
+  fill: none;
+  stroke: #6d8aa3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.inputWrap input {
+  width: 100%;
+  height: 46px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  color: #123454;
+  background: transparent;
+  font-size: 13px;
+}
+
+.inputWrap input::placeholder {
+  color: #9aabbd;
+}
+
+.showPassword {
+  margin: 0 13px 0 8px;
+  padding: 6px 0;
+  border: 0;
+  color: #0b929d;
+  background: transparent;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.submit {
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 3px;
+  border: 0;
+  border-radius: 10px;
+  color: #ffffff;
+  background: linear-gradient(90deg, #099ca7, #16b3b6);
+  box-shadow: 0 10px 20px rgba(8, 164, 172, 0.2);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.submit:disabled {
+  cursor: wait;
+  opacity: 0.75;
+}
+
+.submit span {
+  font-size: 18px;
+}
+
+.error {
+  margin: 0;
+  padding: 11px 13px;
+  border: 1px solid #ffd6dc;
+  border-radius: 9px;
+  color: #c53045;
+  background: #fff4f5;
+  font-size: 11px;
+}
+
+.demoHint {
+  margin: -4px 0 0;
+  color: #8b9bad;
+  font-size: 9px;
+  text-align: center;
+}
+
+.demoHint strong {
+  margin-left: 4px;
+  color: #52708c;
+}
