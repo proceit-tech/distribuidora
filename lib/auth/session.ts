@@ -4,7 +4,7 @@ import { randomBytes, randomUUID } from "crypto";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
-import { db } from "@/lib/db";
+const { db } = await import("@/lib/db");
 import type { AuthSession } from "@/types/auth";
 
 const COOKIE_NAME =

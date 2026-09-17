@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { db } from "@/lib/db";
+const { db } = await import("@/lib/db");
 import {
   getDemoCookieValue,
   getSessionCookieName,

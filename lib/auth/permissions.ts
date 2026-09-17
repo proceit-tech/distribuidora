@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+const { db } = await import("@/lib/db");
 import { isDemoMode } from "@/lib/auth/session";
 import type { AuthUser } from "@/types/auth";
 
