@@ -85,133 +85,6 @@ function gananciaPotencial(
   );
 }
 
-function escaparXml(value: unknown) {
-  return String(value ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
-}
-
-function celdaExcel(
-  value: unknown,
-  type:
-    | "String"
-    | "Number" = "String",
-  styleId?: string,
-) {
-  const style = styleId
-    ? ` ss:StyleID="${styleId}"`
-    : "";
-
-  return `<Cell${style}><Data ss:Type="${type}">${escaparXml(
-    value,
-  )}</Data></Cell>`;
-}
-
-function filaExcel(
-  cells: string[],
-) {
-  return `<Row>${cells.join("")}</Row>`;
-}
-
-function construirLibroExcel(
-  sheets: Array<{
-    name: string;
-    rows: string[];
-  }>,
-) {
-  const worksheets = sheets
-    .map(
-      (sheet) => `
-      <Worksheet ss:Name="${escaparXml(
-        sheet.name,
-      )}">
-        <Table>
-          ${sheet.rows.join("\\n")}
-        </Table>
-      </Worksheet>`,
-    )
-    .join("\\n");
-
-  return `<?xml version="1.0"?>
-<?mso-application progid="Excel.Sheet"?>
-<Workbook
-  xmlns="urn:schemas-microsoft-com:office:spreadsheet"
-  xmlns:o="urn:schemas-microsoft-com:office:office"
-  xmlns:x="urn:schemas-microsoft-com:office:excel"
-  xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"
-  xmlns:html="http://www.w3.org/TR/REC-html40">
-  <Styles>
-    <Style ss:ID="Default" ss:Name="Normal">
-      <Alignment ss:Vertical="Center"/>
-      <Font ss:FontName="Aptos" ss:Size="10"/>
-    </Style>
-
-    <Style ss:ID="title">
-      <Font ss:Bold="1" ss:Size="16" ss:Color="#FFFFFF"/>
-      <Interior ss:Color="#103B4A" ss:Pattern="Solid"/>
-      <Alignment ss:Vertical="Center"/>
-    </Style>
-
-    <Style ss:ID="subtitle">
-      <Font ss:Italic="1" ss:Color="#315D69"/>
-      <Interior ss:Color="#EAF5F7" ss:Pattern="Solid"/>
-    </Style>
-
-    <Style ss:ID="header">
-      <Font ss:Bold="1" ss:Color="#FFFFFF"/>
-      <Interior ss:Color="#167D8A" ss:Pattern="Solid"/>
-      <Alignment ss:Horizontal="Center" ss:Vertical="Center"/>
-    </Style>
-
-    <Style ss:ID="money">
-      <NumberFormat ss:Format="&quot;Gs.&quot; #,##0"/>
-    </Style>
-
-    <Style ss:ID="number">
-      <NumberFormat ss:Format="#,##0"/>
-    </Style>
-
-    <Style ss:ID="percent">
-      <NumberFormat ss:Format="0.00%"/>
-    </Style>
-
-    <Style ss:ID="warning">
-      <Font ss:Bold="1" ss:Color="#B42318"/>
-      <Interior ss:Color="#FDECEC" ss:Pattern="Solid"/>
-    </Style>
-  </Styles>
-  ${worksheets}
-</Workbook>`;
-}
-
-function descargarExcel(
-  contenido: string,
-  nombreArchivo: string,
-) {
-  const blob = new Blob(
-    [contenido],
-    {
-      type:
-        "application/vnd.ms-excel;charset=utf-8;",
-    },
-  );
-
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-
-  anchor.href = url;
-  anchor.download = nombreArchivo;
-
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-
-  URL.revokeObjectURL(url);
-}
-
 function fechaArchivo() {
   const now = new Date();
 
@@ -226,6 +99,36 @@ function fechaArchivo() {
       "0",
     ),
   ].join("-");
+}
+
+function ajustarColumnas(
+  sheet: {
+    ["!cols"]?: Array<{
+      wch?: number;
+    }>;
+  },
+  widths: number[],
+) {
+  sheet["!cols"] = widths.map(
+    (width) => ({
+      wch: width,
+    }),
+  );
+}
+
+function descargarWorkbook(
+  XLSX: typeof import("xlsx"),
+  workbook: import("xlsx").WorkBook,
+  nombreArchivo: string,
+) {
+  XLSX.writeFile(
+    workbook,
+    nombreArchivo,
+    {
+      bookType: "xlsx",
+      compression: true,
+    },
+  );
 }
 
 export default function StockPage() {
@@ -552,141 +455,183 @@ export default function StockPage() {
   }
 
 
-  function exportarListadoExcel() {
-    const rows = [
-      filaExcel([
-        celdaExcel(
-          "CASA MINGO S.A. · STOCK VALORIZADO",
-          "String",
-          "title",
+  async function exportarListadoExcel() {
+    const XLSX = await import("xlsx");
+
+    const detalle = filtrados.map(
+      (item) => ({
+        Código: item.productoCodigo,
+        "Código inventario":
+          item.productoCodigoInventario ||
+          "",
+        Producto:
+          item.productoDescripcion,
+        Marca: item.marca || "",
+        Familia: item.familia || "",
+        Línea: item.linea || "",
+        Procedencia:
+          item.procedencia || "",
+        Propiedad:
+          item.propiedad === "TERCERO"
+            ? `Tercero - ${
+                item.propietarioNombre ||
+                ""
+              }`
+            : "Propio",
+        "Stock disponible": Number(
+          item.disponible || 0,
         ),
-      ]),
-      filaExcel([
-        celdaExcel(
-          "Listado filtrado · costo = PRECIOS del archivo original · venta demo = costo + 20%",
-          "String",
-          "subtitle",
+        "Costo unitario":
+          costoUnitario(item),
+        "Valor a costo":
+          valorCosto(item),
+        "Markup %":
+          MARKUP_DEMO,
+        "Precio venta demo":
+          precioVentaDemo(item),
+        "Valor venta demo":
+          valorVentaDemo(item),
+        "Ganancia potencial":
+          gananciaPotencial(item),
+        Estado:
+          item.nivel === "SIN_STOCK"
+            ? "SIN STOCK"
+            : item.nivel === "BAJO"
+              ? "STOCK BAJO"
+              : item.nivel ===
+                  "SOBRESTOCK"
+                ? "SOBRESTOCK"
+                : "NORMAL",
+      }),
+    );
+
+    const resumenExportacion = [
+      {
+        Indicador: "Productos",
+        Valor: filtrados.length,
+      },
+      {
+        Indicador:
+          "Unidades disponibles",
+        Valor: filtrados.reduce(
+          (acc, item) =>
+            acc +
+            Number(
+              item.disponible || 0,
+            ),
+          0,
         ),
-      ]),
-      filaExcel([]),
-      filaExcel(
-        [
-          "Código",
-          "Código inventario",
-          "Producto",
-          "Marca",
-          "Familia",
-          "Línea",
-          "Procedencia",
-          "Propiedad",
-          "Stock disponible",
-          "Costo unitario",
-          "Valor a costo",
-          "Markup",
-          "Precio venta demo",
+      },
+      {
+        Indicador:
+          "Valor total a costo",
+        Valor: filtrados.reduce(
+          (acc, item) =>
+            acc + valorCosto(item),
+          0,
+        ),
+      },
+      {
+        Indicador:
           "Valor venta demo",
-          "Ganancia potencial",
-          "Estado",
-        ].map((value) =>
-          celdaExcel(
-            value,
-            "String",
-            "header",
-          ),
-        ),
-      ),
-      ...filtrados.map((item) =>
-        filaExcel([
-          celdaExcel(item.productoCodigo),
-          celdaExcel(
-            item.productoCodigoInventario ||
-              "",
-          ),
-          celdaExcel(
-            item.productoDescripcion,
-          ),
-          celdaExcel(item.marca || ""),
-          celdaExcel(item.familia || ""),
-          celdaExcel(item.linea || ""),
-          celdaExcel(
-            item.procedencia || "",
-          ),
-          celdaExcel(
-            item.propiedad === "TERCERO"
-              ? `Tercero - ${
-                  item.propietarioNombre ||
-                  ""
-                }`
-              : "Propio",
-          ),
-          celdaExcel(
-            Number(item.disponible || 0),
-            "Number",
-            "number",
-          ),
-          celdaExcel(
-            costoUnitario(item),
-            "Number",
-            "money",
-          ),
-          celdaExcel(
-            valorCosto(item),
-            "Number",
-            "money",
-          ),
-          celdaExcel(
-            MARKUP_DEMO,
-            "Number",
-            "percent",
-          ),
-          celdaExcel(
-            precioVentaDemo(item),
-            "Number",
-            "money",
-          ),
-          celdaExcel(
+        Valor: filtrados.reduce(
+          (acc, item) =>
+            acc +
             valorVentaDemo(item),
-            "Number",
-            "money",
-          ),
-          celdaExcel(
+          0,
+        ),
+      },
+      {
+        Indicador:
+          "Ganancia potencial",
+        Valor: filtrados.reduce(
+          (acc, item) =>
+            acc +
             gananciaPotencial(item),
-            "Number",
-            "money",
-          ),
-          celdaExcel(
-            item.nivel === "SIN_STOCK"
-              ? "SIN STOCK"
-              : item.nivel === "BAJO"
-                ? "STOCK BAJO"
-                : item.nivel ===
-                    "SOBRESTOCK"
-                  ? "SOBRESTOCK"
-                  : "NORMAL",
-            "String",
-            item.nivel === "SIN_STOCK"
-              ? "warning"
-              : undefined,
-          ),
-        ]),
-      ),
+          0,
+        ),
+      },
+      {
+        Indicador:
+          "Markup aplicado",
+        Valor: MARKUP_DEMO,
+      },
     ];
 
     const workbook =
-      construirLibroExcel([
-        {
-          name: "Stock valorizado",
-          rows,
-        },
-      ]);
+      XLSX.utils.book_new();
 
-    descargarExcel(
+    const resumenSheet =
+      XLSX.utils.json_to_sheet(
+        resumenExportacion,
+      );
+
+    const detalleSheet =
+      XLSX.utils.json_to_sheet(
+        detalle,
+      );
+
+    ajustarColumnas(
+      resumenSheet,
+      [28, 22],
+    );
+
+    ajustarColumnas(
+      detalleSheet,
+      [
+        16,
+        18,
+        45,
+        22,
+        24,
+        18,
+        16,
+        20,
+        16,
+        16,
+        18,
+        12,
+        18,
+        18,
+        18,
+        14,
+      ],
+    );
+
+    resumenSheet["!autofilter"] = {
+      ref: "A1:B7",
+    };
+
+    if (detalle.length > 0) {
+      detalleSheet["!autofilter"] = {
+        ref: `A1:P${
+          detalle.length + 1
+        }`,
+      };
+    }
+
+    XLSX.utils.book_append_sheet(
       workbook,
-      `Stock_Valorizado_Casa_Mingo_${fechaArchivo()}.xls`,
+      resumenSheet,
+      "Resumen",
+    );
+
+    XLSX.utils.book_append_sheet(
+      workbook,
+      detalleSheet,
+      "Stock valorizado",
+    );
+
+    descargarWorkbook(
+      XLSX,
+      workbook,
+      `Stock_Valorizado_Casa_Mingo_${fechaArchivo()}.xlsx`,
     );
   }
 
-  function exportarValorizadoMarca() {
+  async function exportarValorizadoMarca() {
+    const XLSX = await import("xlsx");
+
     const agrupado = new Map<
       string,
       {
@@ -737,99 +682,73 @@ export default function StockPage() {
         0,
       );
 
-    const resumenMarca = Array.from(
-      agrupado.entries(),
-    )
-      .sort(
-        (a, b) =>
-          b[1].costo - a[1].costo,
-      );
-
-    const rows = [
-      filaExcel([
-        celdaExcel(
-          "CASA MINGO S.A. · STOCK AL COSTO POR MARCA",
-          "String",
-          "title",
-        ),
-      ]),
-      filaExcel([
-        celdaExcel(
-          "Valorización demo · costo = PRECIOS del archivo original · markup 20%",
-          "String",
-          "subtitle",
-        ),
-      ]),
-      filaExcel([]),
-      filaExcel(
-        [
-          "Marca",
-          "SKUs",
-          "Unidades",
-          "Valor a costo",
-          "Valor venta demo",
-          "Ganancia potencial",
-          "% participación costo",
-        ].map((value) =>
-          celdaExcel(
-            value,
-            "String",
-            "header",
-          ),
-        ),
-      ),
-      ...resumenMarca.map(
-        ([nombreMarca, item]) =>
-          filaExcel([
-            celdaExcel(nombreMarca),
-            celdaExcel(
-              item.skus,
-              "Number",
-              "number",
-            ),
-            celdaExcel(
-              item.unidades,
-              "Number",
-              "number",
-            ),
-            celdaExcel(
+    const resumenMarca =
+      Array.from(
+        agrupado.entries(),
+      )
+        .sort(
+          (a, b) =>
+            b[1].costo -
+            a[1].costo,
+        )
+        .map(
+          ([nombreMarca, item]) => ({
+            Marca: nombreMarca,
+            SKUs: item.skus,
+            Unidades: item.unidades,
+            "Valor a costo":
               item.costo,
-              "Number",
-              "money",
-            ),
-            celdaExcel(
+            "Valor venta demo":
               item.venta,
-              "Number",
-              "money",
-            ),
-            celdaExcel(
+            "Ganancia potencial":
               item.ganancia,
-              "Number",
-              "money",
-            ),
-            celdaExcel(
+            "Participación costo %":
               totalCosto > 0
                 ? item.costo /
-                    totalCosto
+                  totalCosto
                 : 0,
-              "Number",
-              "percent",
-            ),
-          ]),
-      ),
-    ];
+          }),
+        );
 
     const workbook =
-      construirLibroExcel([
-        {
-          name: "Resumen por marca",
-          rows,
-        },
-      ]);
+      XLSX.utils.book_new();
 
-    descargarExcel(
+    const sheet =
+      XLSX.utils.json_to_sheet(
+        resumenMarca,
+      );
+
+    ajustarColumnas(
+      sheet,
+      [
+        24,
+        12,
+        14,
+        20,
+        20,
+        20,
+        20,
+      ],
+    );
+
+    if (resumenMarca.length > 0) {
+      sheet["!autofilter"] = {
+        ref: `A1:G${
+          resumenMarca.length + 1
+        }`,
+      };
+    }
+
+    XLSX.utils.book_append_sheet(
       workbook,
-      `Stock_Costo_por_Marca_Casa_Mingo_${fechaArchivo()}.xls`,
+      sheet,
+      "Resumen por marca",
+    );
+
+    descargarWorkbook(
+      XLSX,
+      workbook,
+      `Stock_Costo_por_Marca_Casa_Mingo_${fechaArchivo()}.xlsx`,
     );
   }
 
