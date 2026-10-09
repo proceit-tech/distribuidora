@@ -4,6 +4,19 @@ Data: 2026-10-09 · Branch: `feature/NEXIT-2026-001-banco-demo` (base `main` @ `
 
 > **Estado da PR no momento da aprovação:** apenas plano; nenhum SQL executado nem alteração feita na VM. **Decisões P1–P6 já aprovadas abaixo; Claude está autorizado a preparar SQL e testes na branch, mas não a executá-los na VM, nem realizar merge.**
 
+## RETIFICAÇÃO OFICIAL DO PRODUTO — NEXIT V1 DE PRODUÇÃO (09/10/2026)
+
+**A PROCEIT esclareceu expressamente:** os nove itens aprovados compõem a **primeira versão oficial e real do sistema Nexit (V1)**, destinada a uso operacional/produção. **Não são um protótipo, MVP provisório ou apenas uma primeira demonstração.** A palavra "demo" em trechos históricos deste plano, quando se refere aos nove itens, deve ser lida como **escopo da V1 oficial**. Essa retificação prevalece sobre descrições anteriores.
+
+**Os nove itens obrigatórios da V1:** Login e empresa; Clientes; Proveedores; Productos; Movimientos; Stock; Listas de precios; Relatórios de custo e exportação XLSX; Dashboard. Entregar persistência PostgreSQL real, APIs e interface funcionando ponta a ponta, autorização e isolamento multiempresa, transações, regras de estoque/custo, testes automatizados e critérios de aceite. Dados fixos, `localStorage` como fonte de verdade ou telas apenas demonstrativas **não satisfazem a V1**.
+
+**Empresa DEMO é recurso comercial separado da V1 operacional:** um modelo com dados fictícios permite provisionar uma empresa isolada por prospect, usando a mesma aplicação real. Nunca tornar a arquitetura do sistema inteira "demo" nem colocar dados fictícios nos tenants reais.
+
+**Governança:** Claude pesquisa os históricos recuperados e prepara migrations/código/testes e plano automatizado; ChatGPT audita; responsável PROCEIT valida e autoriza implantação. **Nada no banco `nexit` da VM, nada de merge ou deploy sem aprovação expressa.** Os SQLs históricos não são migrations automaticamente aprovadas.
+
+**Estado das fontes históricas:** 001–017 e 022–025 recebidas, porém 018–021 ausentes. Publicação dos originais no Git parcial, com pelo menos `003_configuracion_inicial_y_seguridad.sql` pendente e DOCX binário ainda não publicado. Não presumir cópia completa ou equivalência byte a byte sem verificar hashes.
+
+---
 ## DECISÕES DEFINITIVAS DO RESPONSÁVEL — 09/10/2026 (substituem propostas e perguntas abaixo)
 
 **As seis decisões foram confirmadas expressamente pela PROCEIT.** As referências históricas abaixo a "A CONFIRMAR", "proposta" ou "aguarda respostas" não prevalecem sobre este bloco.
