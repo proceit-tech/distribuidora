@@ -44,6 +44,8 @@ Acesso ao banco vigente e ambiente de execução devem ser explicitamente autori
 | 2026-10-08 | Claude | EM_IMPLEMENTACAO | Branch `feature/REQ-2026-001-consolidacao-documental` a partir de `main` @ `7f4230a` |
 | 2026-10-08 | Claude | PRONTO_PARA_AUDITORIA | Documentos entregues; RN-03 e scripts externos de RN-06 como NAO_VERIFICADO (sem acesso autorizado); npm ci/lint/build NAO_EXECUTADO (registro npm inacessível). Aguardando AUD-REQ-2026-001-R01 |
 | 2026-10-08 | Claude | PRONTO_PARA_AUDITORIA | Complemento antes da R01, a pedido do responsável: §7 de `ARQUITETURA-ATUAL.md` (entidades de acesso para o REQ-2026-002) e renumeração das propostas de `PLANO-EVOLUCAO.md`, porque o número 002 foi definido para multiempresa |
+| 2026-10-08 | ChatGPT | CORRECAO_SOLICITADA | AUD-REQ-2026-001-R01: veredito PENDENTE, 5 achados (F-001 ALTA; F-002 a F-004 MEDIA; F-005 BAIXA) |
+| 2026-10-08 | Claude | PRONTO_PARA_AUDITORIA | Correções da R01 em `60584a7` e TST; F-002 parcialmente (build comprovado por evidência externa; lint e testes dependem do CI). Pronto para AUD-REQ-2026-001-R02 |
 
 ## Caminhos alterados
 - `documentacao/definicoes/ARQUITETURA-ATUAL.md` (novo)
@@ -53,3 +55,4 @@ Acesso ao banco vigente e ambiente de execução devem ser explicitamente autori
 - `documentacao/definicoes/PLANO-EVOLUCAO.md` (novo)
 - `documentacao/testes/TST-REQ-2026-001.md` (novo)
 - `documentacao/definicoes/REQ-2026-001-consolidacao-documental.md` (status e histórico)
+- `documentacao/banco/INTROSPECCAO-SOMENTE-LEITURA.md` (novo, correção F-001 da R01)
