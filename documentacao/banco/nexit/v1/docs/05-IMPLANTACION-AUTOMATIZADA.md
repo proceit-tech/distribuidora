@@ -39,3 +39,10 @@ Empresa real e administrador **não** são criados pelo workflow: `inicializar-e
 
 ## Provado em ensaio local
 O script foi executado em modo `local` contra PG16 descartável (sem contêiner): recibir → planificar → respaldar → probar-restauracion → copiar-externo → migrar → sembrar → inicializar-empresa → verificar `produccion` → pruebas-post → definir-clave-runtime; recusa de `migrar` sem respaldo/restauração; subcomando e sha inválidos rejeitados; nenhum hash/senha nos logs. **Não provado:** modo `docker`, `gs://`, SSH real, IAP, Actions reais (limitação declarada no TST-002).
+
+## Revisão de segurança ChatGPT — 09/10/2026 (não homologado)
+
+- **Restauração fail-closed:** o script remoto foi corrigido para usar `pg_restore --exit-on-error` e interromper imediatamente em falha na restauração descartável ou recuperação para base nova. A prova compara contagens **e uma impressão estrutural de colunas, constraints, índices e funções**. Continua indispensável ensaio do modo Docker real em ambiente de teste: até lá, **não aprovar a implantação**.
+- **Isolamento de leitura:** `nexit_runtime` atualmente tem `SELECT` abrangente e a RLS opcional não está ativada. Uma rota com filtro de empresa incorreto pode vazar dados. **BLOQUEADOR para disponibilização a clientes reais**: integrar e testar escopo tenant no backend e escolher política RLS real antes de homologação da aplicação. Não ligar a RLS sem preparar o contexto transacional da conexão e a função de login.
+- **Permissões na VM:** usuário no grupo Docker equivale a administrador/root na máquina. Resolver mecanismo de privilégios limitados (serviço de root controlado, política sudo mínima revisada ou execução isolada), além da restrição SSH, antes de ativar segredos.
+- **Verificação de regressão pendente:** estas correções foram aplicadas diretamente ao GitHub. Não houve nova execução do ensaio de restauração pelo ChatGPT e os 319 testes do Claude são anteriores a estas alterações. Claude deverá rodar **somente testes específicos** de restauração/backup e validação sintática do script; não repetir bateria completa sem necessidade.
