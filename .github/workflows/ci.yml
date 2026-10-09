@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sql-propostas:
+    # REQ-2026-004: executa P001..P007 (up/down/up) e TESTE-Pn em PostgreSQL DESCARTÁVEL do runner.
+    # Nunca usa banco real nem segredos.
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: ci-descartavel
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PGHOST: localhost
+      PGPORT: "5432"
+      PGUSER: postgres
+      PGPASSWORD: ci-descartavel
+      LOG_DIR: ${{ github.workspace }}/sql-logs
+    steps:
+      - uses: actions/checkout@v4
+      - name: Criar diretório de logs
+        run: mkdir -p "$LOG_DIR"
+      - name: Executar propostas e testes SQL
+        working-directory: documentacao/banco/validacoes
+        run: |
+          set -o pipefail
+          ./executar-propostas.sh | tee "$LOG_DIR/resumo.txt"
+      - name: Publicar logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sql-logs
+          path: sql-logs/
+          retention-days: 30
+
+  app-lint:
+    # Lint do aplicativo. Typecheck/testes de API entram quando existirem scripts (ver REQ-2026-004).
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
