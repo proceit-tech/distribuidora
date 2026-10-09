@@ -2,7 +2,40 @@
 
 Data: 2026-10-09 · Branch: `feature/NEXIT-2026-001-banco-demo` (base `main` @ `0dbb013`) · Referências: PR #6 (`07a9b5c`: `ESTADO-REAL-NEXIT-GOOGLE-CLOUD-2026-10-09.md`, `REQUISITOS-CLAUDE-NEXIT-DEMO-E-BANCO-2026-10-09.md`, `infra/nexit/`), PR #4 (`PRIORIDADE-V1-RELATORIOS-CUSTO-ESTOQUE.md`, mapeamento do banco).
 
-> **Esta PR contém apenas o plano.** Nenhum SQL foi escrito para a VM, nenhum SQL foi executado, nenhum código funcional foi alterado e a infraestrutura (`nexit-db`, `nexit_pgdata`, `nexit_app`, `nexit-app`, Caddy) não foi tocada. Os SQL serão uma segunda etapa, nesta mesma PR, **só depois** das respostas da seção 7.
+> **Estado da PR no momento da aprovação:** apenas plano; nenhum SQL executado nem alteração feita na VM. **Decisões P1–P6 já aprovadas abaixo; Claude está autorizado a preparar SQL e testes na branch, mas não a executá-los na VM, nem realizar merge.**
+
+## DECISÕES DEFINITIVAS DO RESPONSÁVEL — 09/10/2026 (substituem propostas e perguntas abaixo)
+
+**As seis decisões foram confirmadas expressamente pela PROCEIT.** As referências históricas abaixo a "A CONFIRMAR", "proposta" ou "aguarda respostas" não prevalecem sobre este bloco.
+
+| Ref | Decisão aprovada |
+|---|---|
+| P1 | Procurar migrations **001–017** nas branches, histórico, repositórios acessíveis e arquivos conhecidos, sem bloqueio indefinido. Se não encontradas, criar esquema novo derivado do código atual, registrando evidências e lacunas. |
+| P2 | **Primeira demonstração: exatamente nove itens:** **Login e empresa, Clientes, Proveedores, Productos, Movimientos, Stock, Listas de precios, Relatórios de custo / XLSX, Dashboard.** Não interpretar a demo como ERP completo. Separar implementação em etapas internas se necessário, mas **não retirar nenhum dos nove itens da primeira demonstração sem nova autorização.** |
+| P3 | Esquema PostgreSQL em **espanhol**, compatível com a app atualmente implantada. Evolução para inglês somente em mudança futura separada. |
+| P4 | Criar **`nexit_runtime` sem superusuário** para uso pela aplicação, mantendo `nexit_app` para administração/migrations. **Não trocar DATABASE_URL na VM ainda**; testar grants e plano de troca antes. |
+| P5 | Modelo **C — empresa modelo + empresas demo individuais por prospect**, com isolamento, dados fictícios e reset seguro independente. |
+| P6 | **Claude cria SQL e testes em ambiente descartável; ChatGPT revisa; responsável PROCEIT autoriza execução.** Sem execução de SQL na VM, sem alteração do PostgreSQL real e **sem merge** até aprovação expressa. |
+
+### Consequências obrigatórias para o plano técnico
+- A etapa de banco inclui suporte aos **nove itens** e suas dependências estritamente necessárias: autenticação, clientes, proveedores, productos, listas de precios, stock, movimientos, origem de custo, **relatório de ventas al costo**, **stock valorizado**, exportação XLSX e dashboard sustentado por dados reais. Especificar o que exige tabelas, APIs, UI e testes; migrations **sozinhas não completam a demo**.
+- **Depósitos, sucursais, catálogos, perfis/permissões mínimos e dados de documentos/custos** podem ser dependências técnicas dos itens selecionados, sem autorizar novos menus de negócio. Caso funcionalidades de depósitos ou documentos exijam uma interface própria, propor somente o mínimo indispensável e documentar.
+- Respeitar as decisões de custeio já aprovadas em requisitos anteriores, incluindo **custo médio ponderado móvel**; reconciliar a origem e os cálculos com relatórios reais e exigir números não simulados. Se faltar decisão de detalhe, destacar como bloqueio técnico, sem escolher silenciosamente.
+- O menu **Dashboard** entra na demo, mas somente com informações derivadas do PostgreSQL, jamais números fixos ou localStorage apresentados como reais.
+- **Recepciones, Facturas, compras/vendas completas, financeiro, SIFEN e demais menus não selecionados ficam fora da primeira demonstração**. Não inferir autorização para desenvolvê-los só por dependência de dados ou existência de telas.
+- Criar empresas demo separadas por prospect com base em um modelo protegido. Planejar link/credencial de acesso seguro, validade, auditoria, limites, reset isolado e prova de que prospect A não vê dados de prospect B nem dados reais.
+- Versionar **todos os SQLs** (migrations, seeds, permissões, controle de versão) no Git e registrar testes PostgreSQL 16 descartável. **Nenhum script é autorizado a rodar em `nexit` na VM**, nenhum `down -v`, nenhuma alteração de volume `nexit_pgdata` e nenhum merge.
+- A PR #7 pode receber agora implementação de SQL e documentação de testes; **alterações funcionais de código em PR separada** ou claramente isoladas, para auditoria independente. Não declarar recursos como prontos sem prova de API/UI persistindo de ponta a ponta.
+- Antes de solicitar execução real: plano de backup **fora da VM** e teste de restauração; a validação e a autorização são gates obrigatórios.
+
+### Próximas entregas esperadas do Claude
+1. Relatório breve do resultado da busca 001–017.
+2. Matriz dos nove itens: tabelas, rotas API, telas, seeds, lacunas, dependências e sequência de implantação.
+3. Plano atualizado NEX-001... com migrations adicionais necessárias a preços, estoque/movimentos, custos e relatórios, sem mudar silenciosamente o escopo.
+4. SQL e seeds completos no Git em PR, testes reproduzíveis em PostgreSQL descartável e relatório de resultados.
+5. Plano de alterações de código para conectar as nove áreas ao PostgreSQL, com riscos e gates de aprovação.
+
+---
 
 ## 1. Constatações que mudam o plano
 
@@ -41,7 +74,7 @@ Legenda de prontidão: **Código** = o que existe; **Banco hoje** = persistênci
 
 **Resposta direta: "o que já está operacional?"** Hoje **nenhum menu está operacional de ponta a ponta com o PostgreSQL**; o banco está vazio e as telas usam dados do navegador. Mais próximos: **Login** (código real, falta banco) e as **APIs** de Clientes/Proveedores/Productos (código real, falta banco e as telas as usarem).
 
-## 3. Recomendação de escopo mínimo para a primeira demo (proposta, depende da seção 7)
+## 3. Proposta inicial SUPERADA pelas decisões definitivas acima
 
 1. Login real + empresa **NEXIT DEMO S.A.** + usuário demo (sem credencial pública).
 2. **Clientes, Proveedores, Productos** persistindo no PostgreSQL (criar, listar, abrir, editar) com dados fictícios identificados.
@@ -86,7 +119,7 @@ Estas colunas/constraints serão derivadas **do SQL da própria app** (única fo
 
 **Recomendação: B (com o modelo guardado como seed S-004).** Acesso sem senha pública: o operador gera um **link de convite de uso único e curto** (ou envia a senha por canal privado); a senha inicial é definida na execução, trocada no primeiro login, e expira com a demo. **Reset:** `demo_reiniciar(empresa_id)` apaga e recarrega apenas dados de empresas com `es_demo = true` (nunca toca em empresa real: recusa por guarda e é auditada). Limites: tamanho de campos já validado pela API; cota de registros por demo; limpeza de dados pessoais ao expirar.
 
-## 7. Perguntas que preciso que você responda antes de eu escrever os SQL
+## 7. Perguntas históricas — RESPONDIDAS no bloco de decisões definitivas
 
 1. **P1 — Migrations 001–017:** existem? Onde (máquina do dev, outro repositório)? Se sim, você as envia (sem dados) e eu as uso como base; se não, derivo do SQL da app (recomendado confirmar).
 2. **P2 — Escopo da primeira demo:** confirma só **Login + Clientes + Proveedores + Productos**? Entram também Listas de precios, Depósitos, Stock/Movimientos, Dashboard, Recepciones ou Facturas (cada um é desenvolvimento novo)?
@@ -99,6 +132,8 @@ Estas colunas/constraints serão derivadas **do SQL da própria app** (única fo
 
 Antes de cada aplicação: `pg_dump -Fc` do banco `nexit` fora do volume + checksum + restore testado em contêiner descartável. Rollback por migration: arquivos `-down.sql` só para ambientes **descartáveis**; na VM, o rollback é **restore do dump**, nunca `down -v`, nunca remover `nexit_pgdata`.
 
-## 9. Não escopo desta PR
+## 9. Limites da PR após aprovação
 
-Qualquer SQL ou execução; alteração de `infra/nexit/`; módulos fora da seção 3; SIFEN real, pagamentos ou mensagens; relatórios de custo; P008.
+**Permitido:** preparar SQL, seeds e ensaios PostgreSQL descartáveis para os nove itens confirmados, inclusive base necessária para relatórios de custo/XLSX, sem afirmar que SQL substitui APIs/UI.
+
+**Não autorizado:** executar SQL na VM, alterar infraestrutura real ou `infra/nexit/`, fazer merge, usar dados reais sem backup testado, implementar módulos não selecionados, SIFEN real, pagamentos ou mensagens.
