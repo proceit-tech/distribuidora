@@ -63,4 +63,5 @@ def main():
     for f, l, e in fallas: print(f"  FALLA {f}:{l}  {e}")
     sys.exit(1 if fallas else 0)
 
-main()
+if __name__ == "__main__":
+    main()

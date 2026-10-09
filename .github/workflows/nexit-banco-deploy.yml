@@ -1,0 +1,98 @@
+# Implantación del banco Nexit V1 en la VM de Google Cloud. PREPARADO, NO EJECUTADO: requiere autorización expresa del responsable,
+# el entorno protegido 'nexit-produccion' (revisores obligatorios) y los secretos descritos en
+# documentacao/banco/nexit/v1/docs/05-IMPLANTACION-AUTOMATIZADA.md. Solo disparo manual; nunca por push.
+name: nexit-banco-deploy
+on:
+  workflow_dispatch:
+    inputs:
+      confirmar:
+        description: 'Escriba exactamente IMPLANTAR-NEXIT-DB para continuar'
+        required: true
+      fase:
+        description: 'plan = solo verificación y plan; completo = respaldo, prueba de restauración, copia externa, migración y pruebas'
+        type: choice
+        options: [plan, completo]
+        default: plan
+permissions:
+  contents: read
+concurrency:
+  group: nexit-banco-deploy
+  cancel-in-progress: false
+jobs:
+  ci:
+    uses: ./.github/workflows/nexit-banco-ci.yml
+  desplegar:
+    needs: ci
+    if: ${{ inputs.confirmar == 'IMPLANTAR-NEXIT-DB' && github.ref == 'refs/heads/main' }}   # solo desde main (tras merge autorizado)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    environment: nexit-produccion        # revisores obligatorios + restringido a la rama main
+    env:
+      SHA: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Preparar SSH (clave dedicada, host fijado)
+        env:
+          NEXIT_SSH_KEY: ${{ secrets.NEXIT_DEPLOY_SSH_KEY }}
+          NEXIT_KNOWN_HOSTS: ${{ secrets.NEXIT_DEPLOY_KNOWN_HOSTS }}
+          NEXIT_HOST: ${{ secrets.NEXIT_DEPLOY_HOST }}
+          NEXIT_USER: ${{ secrets.NEXIT_DEPLOY_USER }}
+          NEXIT_PROXY: ${{ secrets.NEXIT_DEPLOY_PROXYCOMMAND }}   # opcional (p. ej. túnel IAP de Google Cloud)
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$NEXIT_SSH_KEY" > ~/.ssh/id; chmod 600 ~/.ssh/id
+          printf '%s\n' "$NEXIT_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          {
+            echo "Host nexitvm"
+            echo "  HostName $NEXIT_HOST"
+            echo "  User $NEXIT_USER"
+            echo "  IdentityFile ~/.ssh/id"
+            echo "  IdentitiesOnly yes"
+            echo "  StrictHostKeyChecking yes"
+            [ -n "$NEXIT_PROXY" ] && echo "  ProxyCommand $NEXIT_PROXY"
+          } > ~/.ssh/config
+          chmod 600 ~/.ssh/config
+      - name: Empaquetar la versión (git archive; solo v1/)
+        run: |
+          git archive --format=tar --prefix=v1/ "$SHA:documentacao/banco/nexit/v1" | gzip -n > /tmp/release.tgz
+          sha256sum /tmp/release.tgz | cut -d' ' -f1 > /tmp/release.sha256
+          echo "paquete: $(wc -c </tmp/release.tgz) bytes sha256=$(cat /tmp/release.sha256)"
+      - name: 1. Verificar entorno
+        run: ssh nexitvm entorno
+      - name: 2. Enviar versión
+        run: ssh nexitvm "recibir $SHA $(cat /tmp/release.sha256)" < /tmp/release.tgz
+      - name: 3. Migraciones pendientes (plan)
+        run: ssh nexitvm "planificar $SHA"
+      - name: 4. Respaldo
+        if: ${{ inputs.fase == 'completo' }}
+        run: ssh nexitvm "respaldar $SHA"
+      - name: 5. Prueba de restauración (entorno descartable aislado)
+        if: ${{ inputs.fase == 'completo' }}
+        run: ssh nexitvm "probar-restauracion $SHA"
+      - name: 6. Copia externa
+        if: ${{ inputs.fase == 'completo' }}
+        run: ssh nexitvm "copiar-externo $SHA"
+      - name: 7. Migrar (solo con 4–6 vigentes; checksums registrados)
+        if: ${{ inputs.fase == 'completo' }}
+        run: ssh nexitvm "migrar $SHA"
+      - name: 8. Catálogos globales
+        if: ${{ inputs.fase == 'completo' }}
+        run: ssh nexitvm "sembrar-catalogos $SHA"
+      - name: 9. Validar estructura y pruebas posteriores
+        if: ${{ inputs.fase == 'completo' }}
+        run: |
+          ssh nexitvm "verificar $SHA"
+          ssh nexitvm "pruebas-post $SHA"
+      - name: Registrar resultado
+        if: ${{ always() }}
+        run: |
+          {
+            echo "### Implantación Nexit DB"
+            echo "- commit: \`$SHA\`"
+            echo "- fase: ${{ inputs.fase }}"
+            echo "- estado: ${{ job.status }}"
+            echo "- recuperación: ver docs/05-IMPLANTACION-AUTOMATIZADA.md §Recuperación (restaurar en base nueva; nunca sobrescribir)"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Limpiar claves
+        if: ${{ always() }}
+        run: rm -rf ~/.ssh /tmp/release.tgz

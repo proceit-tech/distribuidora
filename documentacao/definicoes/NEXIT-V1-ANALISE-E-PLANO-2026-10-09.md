@@ -1,5 +1,7 @@
 # Nexit V1 — Análise, matriz dos nove itens e plano para validação (09/10/2026)
 
+> **SUPERADO (2026-10-09):** a escolha A/B da seção 3 foi resolvida: a única estrutura oficial é NEX-001…015 (`banco/nexit/v1/docs/01-DECISAO-ESTRUTURA-OFICIAL.md`). Mantido como histórico.
+
 **Status:** para validação do responsável e revisão do ChatGPT. Nenhuma mudança estrutural de grande alcance foi iniciada; nada foi executado na VM, nenhum merge, nenhum deploy.
 
 ## 0. Confirmação de entendimento

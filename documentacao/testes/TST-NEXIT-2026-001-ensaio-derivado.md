@@ -1,5 +1,7 @@
 # TST-NEXIT-2026-001 — Ensaio da proposta derivada do código (PostgreSQL 16 descartável)
 
+> **SUPERADO por `TST-NEXIT-2026-002-banco-v1.md`** (NEX-001…015, 319 PASS). Este registro cobre apenas NEX-001…013 (125 PASS).
+
 Data: 2026-10-09 · Escopo: `documentacao/banco/nexit/v1/` · Nenhum SQL na VM.
 
 | Bloco | Resultado |
