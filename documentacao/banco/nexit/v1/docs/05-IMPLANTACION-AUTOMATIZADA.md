@@ -46,3 +46,11 @@ O script foi executado em modo `local` contra PG16 descartável (sem contêiner)
 - **Isolamento de leitura:** `nexit_runtime` atualmente tem `SELECT` abrangente e a RLS opcional não está ativada. Uma rota com filtro de empresa incorreto pode vazar dados. **BLOQUEADOR para disponibilização a clientes reais**: integrar e testar escopo tenant no backend e escolher política RLS real antes de homologação da aplicação. Não ligar a RLS sem preparar o contexto transacional da conexão e a função de login.
 - **Permissões na VM:** usuário no grupo Docker equivale a administrador/root na máquina. Resolver mecanismo de privilégios limitados (serviço de root controlado, política sudo mínima revisada ou execução isolada), além da restrição SSH, antes de ativar segredos.
 - **Verificação de regressão pendente:** estas correções foram aplicadas diretamente ao GitHub. Não houve nova execução do ensaio de restauração pelo ChatGPT e os 319 testes do Claude são anteriores a estas alterações. Claude deverá rodar **somente testes específicos** de restauração/backup e validação sintática do script; não repetir bateria completa sem necessidade.
+
+## Primeira instalação sem Cloud Storage (fase inicial)
+
+Exceção exclusiva para o banco `nexit` sem tabelas, views, sequências ou outros objetos persistentes de usuário. O workflow manual inclui `fase=inicial` e mantém a confirmação `IMPLANTAR-NEXIT-DB`, execução a partir de `main` e aprovação do ambiente `nexit-produccion`. O comando remoto `migrar-inicial <sha>` consulta o catálogo PostgreSQL imediatamente antes de executar NEX-001…015 e falha se detectar qualquer objeto de usuário ou `schema_migrations`.
+
+Essa fase não envia backup externo nem usa GCS, por decisão do proprietário enquanto não há clientes ou dados comerciais. Não altera o container ou volume. **Não é mecanismo de atualização**: depois de instalar as tabelas, `migrar-inicial` fica bloqueado pela própria verificação de banco vazio. A fase `completo` permanece com backup, restauração e cópia externa obrigatórios para próximas alterações.
+
+Ainda faltam configuração de SSH do GitHub Actions, conta de execução restrita, segredos e proteção do ambiente. O script instalado anteriormente na VM precisa ser atualizado para este commit antes de ativar a chave de deploy. Nenhum workflow foi executado nem migrations aplicadas pela publicação deste documento.
