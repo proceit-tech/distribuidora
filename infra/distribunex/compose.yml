@@ -1,0 +1,45 @@
+name: distribunex
+services:
+  app:
+    image: ${DISTRIBUNEX_IMAGE:?Defina DISTRIBUNEX_IMAGE}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://${POSTGRES_USER:?}:${POSTGRES_PASSWORD:?}@db:5432/${POSTGRES_DB:?}
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - private
+      - proxy
+    expose:
+      - "3000"
+    security_opt:
+      - no-new-privileges:true
+  db:
+    image: postgres:16-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?}
+      POSTGRES_USER: ${POSTGRES_USER:?}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - private
+    security_opt:
+      - no-new-privileges:true
+networks:
+  private:
+    internal: true
+  proxy:
+    external: true
+    name: proxy
+volumes:
+  pgdata:
+    name: distribunex_pgdata
