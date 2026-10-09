@@ -4,7 +4,7 @@
 -- Este archivo CREA el rol y los permisos mínimos, pero NO cambia el DATABASE_URL de la VM:
 -- el cambio de conexión es un paso posterior, con autorización del responsable (ver runbook).
 -- La contraseña del rol NO está aquí: se define fuera de Git en el momento de la ejecución (ALTER ROLE ... PASSWORD).
--- Proyecto Nexit (NEXIT-2026-001). ESTADO: PROPUESTA — no ejecutar en la VM sin autorización.
+-- Proyecto Nexit (NEXIT-2026-001). ESTADO: V1 candidata oficial — NO ejecutar en la VM sin autorización expresa del responsable.
 -- =====================================================================
 
 DO $$

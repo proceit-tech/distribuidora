@@ -1,9 +1,9 @@
 -- =====================================================================
 -- NEX-002 — Seguridad y estructura de empresa
 -- Empresas, sucursales, depósitos, usuarios, perfiles, permisos, sesiones y eventos de seguridad.
--- Proyecto Nexit (REQ NEXIT-2026-001). ESTADO: PROPUESTA para revisión técnica.
+-- Proyecto Nexit (REQ NEXIT-2026-001). ESTADO: V1 candidata oficial — pendiente de auditoría (ChatGPT) y aprobación del responsable.
 -- NO ejecutar en la VM ni en el banco 'nexit' sin autorización expresa del responsable.
--- Aplicar con documentacao/banco/nexit/scripts/aplicar-migraciones.sh (transacción única + checksum).
+-- Aplicar con documentacao/banco/nexit/v1/scripts/aplicar-migraciones.sh (transacción única + checksum).
 -- =====================================================================
 
 CREATE TABLE empresas (

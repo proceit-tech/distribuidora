@@ -1,7 +1,7 @@
 -- =====================================================================
 -- S-002 — Empresa-MODELO de la demostración (modelo C): código demo-modelo, datos 100 % ficticios.
 -- Requiere: migraciones NEX-001..012 + semilla S-001.
--- La contraseña NO está aquí ni en Git: se entrega solo el HASH bcrypt ($2a$) generado con scripts/generar-hash-demo.sh:
+-- La contraseña NO está aquí ni en Git: se entrega solo el HASH bcrypt ($2a$) generado con scripts/generar-hash-clave.sh:
 --   psql -v usuario_demo=admin -v hash_demo="$HASH" -f S-002-empresa-modelo.sql
 -- Idempotente: si demo-modelo ya existe no hace nada (para recrearla use demo_reiniciar / demo_eliminar).
 -- =====================================================================

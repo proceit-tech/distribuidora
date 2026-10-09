@@ -1,6 +1,6 @@
 # TST-NEXIT-2026-001 — Ensaio da proposta derivada do código (PostgreSQL 16 descartável)
 
-Data: 2026-10-09 · Escopo: `documentacao/banco/nexit/proposta-derivada-do-codigo/` · Nenhum SQL na VM.
+Data: 2026-10-09 · Escopo: `documentacao/banco/nexit/v1/` · Nenhum SQL na VM.
 
 | Bloco | Resultado |
 |---|---|

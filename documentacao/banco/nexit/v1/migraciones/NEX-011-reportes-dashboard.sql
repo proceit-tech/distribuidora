@@ -3,7 +3,7 @@
 -- Fuente única de datos reales para las pantallas Stock, Movimientos, Reportes (XLSX) y Dashboard.
 -- Todas son security_invoker y exponen empresa_id: la API DEBE filtrar WHERE empresa_id = <sesión>.
 -- Nada aquí contiene números literales: todo se deriva de las tablas de NEX-002..010.
--- Proyecto Nexit (NEXIT-2026-001). ESTADO: PROPUESTA — no ejecutar en la VM sin autorización.
+-- Proyecto Nexit (NEXIT-2026-001). ESTADO: V1 candidata oficial — NO ejecutar en la VM sin autorización expresa del responsable.
 -- =====================================================================
 
 -- Stock por producto y depósito (todos los estados), con mínimos del producto.

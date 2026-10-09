@@ -34,7 +34,8 @@ for f in "$DIR"/NEX-0*.sql; do
   fi
   if [[ $LISTAR -eq 1 ]]; then echo "pendiente     $version  ($sum)"; continue; fi
   echo "aplicando     $version"
-  psql -1 -f "$f" -c "INSERT INTO schema_migrations (version, nombre, checksum) VALUES ('$version', '$base', '$sum')" >/dev/null
+  # El bloqueo consultivo serializa dos ejecuciones simultáneas del runner (la segunda espera y luego falla limpiamente por versión duplicada).
+  psql -1 -c "SELECT pg_advisory_xact_lock(7340001)" -f "$f" -c "INSERT INTO schema_migrations (version, nombre, checksum) VALUES ('$version', '$base', '$sum')" >/dev/null
   tiene_control=$(psql -Atc "select to_regclass('public.schema_migrations') is not null")
 done
 # Re-aplicar permisos del rol de ejecución si ya existe (cubre tablas nuevas de migraciones futuras).

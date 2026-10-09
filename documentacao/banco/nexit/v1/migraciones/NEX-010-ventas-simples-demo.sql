@@ -2,9 +2,9 @@
 -- NEX-010 — Venta simple por movimiento (reemplazable cuando exista Facturación)
 -- DECISIÓN PENDIENTE DEL RESPONSABLE: el reporte "ventas al costo" necesita una fuente de ventas y Facturas está fuera de alcance.
 -- Propuesta: SALIDA con origen VENTA + precio de venta opcional en la línea + cliente en la cabecera. Migración aislada para poder sustituirla.
--- Proyecto Nexit (REQ NEXIT-2026-001). ESTADO: PROPUESTA para revisión técnica.
+-- Proyecto Nexit (REQ NEXIT-2026-001). ESTADO: V1 candidata oficial — pendiente de auditoría (ChatGPT) y aprobación del responsable.
 -- NO ejecutar en la VM ni en el banco 'nexit' sin autorización expresa del responsable.
--- Aplicar con documentacao/banco/nexit/scripts/aplicar-migraciones.sh (transacción única + checksum).
+-- Aplicar con documentacao/banco/nexit/v1/scripts/aplicar-migraciones.sh (transacción única + checksum).
 -- =====================================================================
 
 ALTER TABLE movimientos_inventario

@@ -1,9 +1,9 @@
 -- =====================================================================
 -- NEX-003 — Catálogos globales
 -- Geografía, monedas, incoterms, unidades de medida, impuestos y condiciones de pago (globales, como las lee el código desplegado).
--- Proyecto Nexit (REQ NEXIT-2026-001). ESTADO: PROPUESTA para revisión técnica.
+-- Proyecto Nexit (REQ NEXIT-2026-001). ESTADO: V1 candidata oficial — pendiente de auditoría (ChatGPT) y aprobación del responsable.
 -- NO ejecutar en la VM ni en el banco 'nexit' sin autorización expresa del responsable.
--- Aplicar con documentacao/banco/nexit/scripts/aplicar-migraciones.sh (transacción única + checksum).
+-- Aplicar con documentacao/banco/nexit/v1/scripts/aplicar-migraciones.sh (transacción única + checksum).
 -- =====================================================================
 
 CREATE TABLE referencia_geografica_paises (

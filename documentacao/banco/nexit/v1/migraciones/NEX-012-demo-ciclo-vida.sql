@@ -4,7 +4,7 @@
 -- Datos 100 % ficticios (RUC/CI/nombres inventados, rango reservado 999xxxx). Sin datos reales.
 -- Las funciones demo_* solo operan sobre empresas con es_demo = true y código 'demo-*'.
 -- La contraseña NUNCA va en este archivo: demo_crear_empresa recibe el HASH bcrypt generado fuera del servidor
--- (ver scripts/generar-hash-demo.sh). Proyecto Nexit (NEXIT-2026-001). ESTADO: PROPUESTA — no ejecutar en la VM sin autorización.
+-- (ver scripts/generar-hash-clave.sh). Proyecto Nexit (NEXIT-2026-001). ESTADO: V1 candidata oficial — NO ejecutar en la VM sin autorización expresa del responsable.
 -- =====================================================================
 
 ALTER TABLE empresas

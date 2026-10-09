@@ -17,8 +17,8 @@ BEGIN
   PERFORM pg_temp.ok(cardinality(faltan) = 0, 'existen las ' || cardinality(req) || ' tablas requeridas (faltan: ' || coalesce(array_to_string(faltan, ','), 'ninguna') || ')');
 END $$;
 
-SELECT pg_temp.ok((SELECT count(*) FROM schema_migrations) = 13, 'schema_migrations registra las 13 migraciones');
-SELECT pg_temp.ok((SELECT count(*) FROM schema_migrations WHERE checksum ~ '^[0-9a-f]{64}$') = 13, 'cada migración tiene checksum SHA-256');
+SELECT pg_temp.ok((SELECT count(*) FROM schema_migrations) = 15, 'schema_migrations registra las 15 migraciones');
+SELECT pg_temp.ok((SELECT count(*) FROM schema_migrations WHERE checksum ~ '^[0-9a-f]{64}$') = 15, 'cada migración tiene checksum SHA-256');
 
 -- toda tabla con actualizado_at tiene su trigger
 SELECT pg_temp.ok(NOT EXISTS (

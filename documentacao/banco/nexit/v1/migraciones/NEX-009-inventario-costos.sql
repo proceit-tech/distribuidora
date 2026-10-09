@@ -2,9 +2,9 @@
 -- NEX-009 — Inventario, movimientos y costos (promedio ponderado móvil)
 -- Saldos de stock, movimientos inmutables, costo promedio ponderado móvil por producto y depósito (P007) e inventario_registrar_linea().
 -- Fuera de alcance de la 1.ª demostración: recepciones, facturación (se omiten goods_receipts* e invoice*).
--- Proyecto Nexit (REQ NEXIT-2026-001). ESTADO: PROPUESTA para revisión técnica.
+-- Proyecto Nexit (REQ NEXIT-2026-001). ESTADO: V1 candidata oficial — pendiente de auditoría (ChatGPT) y aprobación del responsable.
 -- NO ejecutar en la VM ni en el banco 'nexit' sin autorización expresa del responsable.
--- Aplicar con documentacao/banco/nexit/scripts/aplicar-migraciones.sh (transacción única + checksum).
+-- Aplicar con documentacao/banco/nexit/v1/scripts/aplicar-migraciones.sh (transacción única + checksum).
 -- =====================================================================
 
 CREATE TABLE stock_lotes (
