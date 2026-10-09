@@ -9,9 +9,9 @@ on:
         description: 'Escriba exactamente IMPLANTAR-NEXIT-DB para continuar'
         required: true
       fase:
-        description: 'plan = solo verificación y plan; completo = respaldo, prueba de restauración, copia externa, migración y pruebas'
+        description: 'plan = inspección; inicial = SOLO banco vacío, sin GCS; completo = migraciones normales con respaldo/restauración/copia externa'
         type: choice
-        options: [plan, completo]
+        options: [plan, inicial, completo]
         default: plan
 permissions:
   contents: read
@@ -72,14 +72,17 @@ jobs:
       - name: 6. Copia externa
         if: ${{ inputs.fase == 'completo' }}
         run: ssh nexitvm "copiar-externo $SHA"
-      - name: 7. Migrar (solo con 4–6 vigentes; checksums registrados)
+      - name: 7a. Instalar esquema SOLO en banco realmente vacío (sin backup externo)
+        if: ${{ inputs.fase == 'inicial' }}
+        run: ssh nexitvm "migrar-inicial $SHA"
+      - name: 7b. Migrar (solo con 4–6 vigentes; checksums registrados)
         if: ${{ inputs.fase == 'completo' }}
         run: ssh nexitvm "migrar $SHA"
       - name: 8. Catálogos globales
-        if: ${{ inputs.fase == 'completo' }}
+        if: ${{ inputs.fase == 'completo' || inputs.fase == 'inicial' }}
         run: ssh nexitvm "sembrar-catalogos $SHA"
       - name: 9. Validar estructura y pruebas posteriores
-        if: ${{ inputs.fase == 'completo' }}
+        if: ${{ inputs.fase == 'completo' || inputs.fase == 'inicial' }}
         run: |
           ssh nexitvm "verificar $SHA"
           ssh nexitvm "pruebas-post $SHA"
