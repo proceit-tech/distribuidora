@@ -120,4 +120,4 @@ Sem nenhum `CREATE` nem `DROP`; somente leitura.
 2. **Localizar as migrations 001–017** citadas no README. Se existirem, versionar como linha de base em `documentacao/banco/baseline/`, com revisão para remover senhas e dados (por exemplo, a `017_administrador_inicial.sql` provavelmente contém um hash de senha).
 3. **Extrair só a estrutura**: `pg_dump --schema-only --no-owner --no-privileges` e consultas a `information_schema.columns`, `pg_indexes`, `pg_constraint`, `pg_trigger`, `pg_proc` e `pg_policies`. Nunca `--data`.
 4. **Conciliar código e banco**: comparar as 46 tabelas e as colunas da §2 com o resultado e registrar as divergências.
-5. **Só então** iniciar as migrations incrementais, no padrão `documentacao/banco/REQ-AAAA-NNN-001-up.sql` e `-down.sql`, a partir da linha de base confirmada (ver `PLANO-EVOLUCAO.md`, REQ-2026-002).
+5. **Só então** iniciar as migrations incrementais, no padrão `documentacao/banco/REQ-AAAA-NNN-001-up.sql` e `-down.sql`, a partir da linha de base confirmada (ver `PLANO-EVOLUCAO.md`, REQ-2026-003 proposto).

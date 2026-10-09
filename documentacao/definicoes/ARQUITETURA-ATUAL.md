@@ -137,3 +137,39 @@ Consequências diretas, inferidas do código:
 | Stack sem menção a estilos | Coexistem CSS Modules, Tailwind 4 e `styled-jsx` global |
 | Não citado | Há 10 arquivos vazios versionados (lista em `MAPA-MODULOS.md` §4) |
 | "Toda tela `page.tsx` deve ter … export default" | Verificado: as 26 páginas têm `export default` |
+
+## 7. Multiempresa e controle de acesso — situação atual
+
+Insumo para o `REQ-2026-002-multiempresa-usuarios-perfiles-menus.md`. Tudo abaixo vem da leitura do código; a estrutura real das tabelas é **NAO_VERIFICADO** (ver `MODELO-DADOS-ATUAL.md` §1).
+
+### 7.1 Entidades de acesso
+
+| Entidade | O que o código mostra | O que precisa ser corrigido ou confirmado |
+|---|---|---|
+| `empresas` | Lida só no login, por `lower(codigo)` e `activo` (`app/api/auth/login/route.ts:128`) | A sessão não volta a conferir se a empresa continua ativa (`lib/auth/session.ts:109-125`): desativar a empresa não derruba sessões abertas |
+| `usuarios` | Um usuário pertence a **uma** empresa (`empresa_id`) e tem **uma** `sucursal_id` opcional; login por empresa + usuário (`login/route.ts:128`); estado, bloqueio e tentativas (`:172-185`) | Unicidade de `(empresa_id, lower(usuario))` NAO_VERIFICADO. Sem API nem tela de administração de usuários. Um usuário não pode ter mais de uma sucursal |
+| `perfiles` | Colunas `id, codigo, activo, es_administrador` (`session.ts:113-117`; `lib/auth/permissions.ts:18-22`) | **Não se sabe se `perfiles` tem `empresa_id`.** Nem a sessão nem `permissions.ts` conferem que o perfil é da mesma empresa do usuário. O shell decide "Administrador" pelo código literal `ADMIN` (`lib/auth/server-context.ts:15`), e `permissions.ts` usa a flag `es_administrador`: dois critérios diferentes |
+| `permisos` | Colunas `id, recurso, accion` (`permissions.ts:20-22`) | O menu usa códigos `RECURSO.ACCION` (`lib/navigation/menu.ts`, 32 itens), mas não há conversão entre os dois formatos. O catálogo real de permissões no banco é NAO_VERIFICADO. Quatro itens de Compras compartilham `COMPRAS.VER`, quatro de Inventário compartilham `INVENTARIO.VER` etc., o que impede menus finos |
+| `perfil_permiso`, `usuario_perfil` | Tabelas de vínculo (`permissions.ts:17-20`; `session.ts:116-117`) | Não há garantia, no código, de que os dois lados do vínculo são da mesma empresa. Sem auditoria de quem atribuiu |
+| Menus | Fixos em código (`lib/navigation/menu.ts`); não existe tabela de menus | `resolveNavigation([])` mostra **todo** o menu quando a lista é vazia (`menu.ts:321-322`), e o contexto sempre envia lista vazia (`server-context.ts:37-38`). Precisa falhar fechado |
+| Sucursales | Só a coluna `usuarios.sucursal_id`; nenhuma tabela `sucursales` é referenciada; nenhuma regra usa a sucursal | Modelo de sucursal e de alcance inexistente no código |
+| Depósitos | `depositos` (empresa) em `GET /api/productos` e em `producto_deposito_configuracion`; nas telas, depósitos fixos (`movimientos/nuevo/page.tsx:29`) | Sem vínculo depósito ↔ sucursal e sem vínculo usuário ↔ depósito |
+| Vínculos de acesso (usuário ↔ sucursal/depósito) | **Inexistentes** | A definir (REQ-2026-002 RN-07, D-04) |
+| Auditoria de acesso | `eventos_seguridad` (login); `set_config('app.usuario_id')` e `app.ip` só no login (`login/route.ts:220`) | As APIs de negócio não definem `app.usuario_id`. Se existirem triggers de auditoria no banco (NAO_VERIFICADO), elas não sabem quem alterou. Não há auditoria de mudança de usuários, perfis ou permissões |
+
+### 7.2 Comportamentos de segurança que já estão corretos
+
+- O `empresa_id` das gravações sempre vem da sessão, nunca do corpo da requisição (`clientes/route.ts:827`; `proveedores/route.ts:651`; `productos/route.ts:272`).
+- As leituras de cadastros filtram por `empresa_id` da sessão.
+- Os perfis e o estado do usuário são relidos do banco a cada requisição (`session.ts:109-125`): bloquear o usuário ou mudar perfis tem efeito imediato na próxima requisição, sem precisar derrubar a sessão.
+- `clientes` e `proveedores` já validam a empresa dos catálogos referenciados (`validarReferenciaEmpresa`).
+
+### 7.3 Lacunas que o REQ-2026-002 precisa fechar
+
+1. Nenhuma rota verifica permissão (R-02); o menu mostra tudo.
+2. `POST /api/productos` aceita IDs de outras empresas (R-06).
+3. Possível cruzamento de empresa em `usuario_perfil` e `perfil_permiso`.
+4. Sucursal e depósito sem modelo de alcance.
+5. Sem administração de usuários e perfis (API e telas).
+6. Modo demo concede administrador por cookie constante (R-01, RN-12 do REQ-2026-002).
+7. Sem auditoria de alterações de acesso.
