@@ -156,7 +156,6 @@ probar-restauracion)
     pg_restore -d "$TMPDB" --no-owner --exit-on-error "$F" >/dev/null 2>"$RAIZ/log/restauracion-$A1.err" || die "pg_restore falló durante la prueba de restauración"
     REST="$(psql -X -q -At -d "$TMPDB" -c "$CONTEOS")"
     VER=ok
-    psql -X -q -d postgres -c "DROP DATABASE IF EXISTS $TMPDB WITH (FORCE)"
   fi
   if [[ "$MODO" == docker ]]; then
     CAT_REST="$(docker exec "$TMPC" psql -X -q -At -U postgres -d restauracion_prueba -c "$CATSQL")"
@@ -164,6 +163,7 @@ probar-restauracion)
     CAT_REST="$(psql -X -q -At -d "$TMPDB" -c "$CATSQL")"
   fi
   [[ "$CAT_ORIG" == "$CAT_REST" ]] || die "la restauración difiere en esquema (columnas, restricciones, índices o funciones)"
+  if [[ "$MODO" != docker ]]; then psql -X -q -d postgres -c "DROP DATABASE IF EXISTS $TMPDB WITH (FORCE)"; fi
   [[ "$ORIG" == "$REST" ]] || die "la base restaurada difiere en conteos de tablas"
   [[ -n "$ORIG" ]] || log "AVISO: la base no tiene tablas; la prueba solo comprueba que el respaldo se restaura"
   log "restauración probada: conteos idénticos en todas las tablas (la estructura Nexit se verifica después de migrar)"
