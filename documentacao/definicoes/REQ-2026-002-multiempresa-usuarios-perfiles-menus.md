@@ -1,6 +1,6 @@
 # REQ-2026-002 — Multiempresa, usuarios, perfiles y menús por permisos
 
-Estado: DEFINIDO PARA ANÁLISIS; NO AUTORIZA CAMBIOS DE CÓDIGO HASTA REVISAR LA ESTRUCTURA REAL DEL BANCO.
+Estado: PRONTO_PARA_AUDITORIA (fase de diseño). Sigue sin autorizar cambios de código hasta la aprobación del diseño y la revisión de la estructura real del banco.
 Prioridad: ALTA — fundamento transversal del DistribuNex.
 Idioma funcional y de interfaz: español (Paraguay).
 Implementador: Claude. Auditor independiente: ChatGPT. Homologación final: responsable PROCEIT.
@@ -57,3 +57,15 @@ No bloquear REQ-2026-001 por estas decisiones; documentar antes de implementaci�
 
 ## Instrucciones para Claude
 Tratar este requisito como regla transversal de producto. Primero completar REQ-2026-001 y documentar tablas/índices/perfiles/permisos reales del banco. Proponer diseño de APIs, autorización server-side, menú filtrado e SQL incremental sem modificar código antes da aprovação. Submeter cada execução para auditoria independente em AUD-REQ-2026-002-R01.md e seguintes.
+
+## Historial
+| Fecha | Autor | Estado | Observación |
+|---|---|---|---|
+| 2026-10-08 | Responsable PROCEIT | DEFINIDO PARA ANÁLISIS | Definición inicial (`ff77929`) |
+| 2026-10-08 | Claude | PRONTO_PARA_AUDITORIA (diseño) | Entregados `DESENHO-REQ-2026-002-multiempresa.md`, `MATRIZ-PERMISOS-REQ-2026-002.md` y `TST-REQ-2026-002.md`. Sin código ni SQL. Pendientes de decisión: D-01 a D-05. Esperando AUD-REQ-2026-002-R01 |
+
+## Caminos alterados (fase de diseño)
+- `documentacao/definicoes/DESENHO-REQ-2026-002-multiempresa.md` (nuevo)
+- `documentacao/definicoes/MATRIZ-PERMISOS-REQ-2026-002.md` (nuevo)
+- `documentacao/testes/TST-REQ-2026-002.md` (nuevo)
+- `documentacao/definicoes/REQ-2026-002-multiempresa-usuarios-perfiles-menus.md` (estado e historial)
