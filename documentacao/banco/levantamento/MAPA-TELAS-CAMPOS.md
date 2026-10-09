@@ -34,3 +34,8 @@ Regra: os campos visíveis em telas determinam os requisitos de dados; tipos, ch
 
 ## Política de scripts
 Pasta de produção: `documentacao/banco/migracoes/`. Cada SQL é uma alteração incremental rastreada a REQ e nunca deve ser reescrito após aplicação. Separar scripts de inspeção e validação de scripts que alterem schema. Aplicação em produção exige backup, plano de rollback, janela aprovada e aceite humano.
+
+## Atualização 2026-10-09 (REQ-2026-003)
+- Mapeamento campo a campo por módulo: `levantamento/campos/*.md` (1.144 campos e 178 divergências).
+- Diagnóstico do que existe, escopo V1 e viabilidade dos relatórios urgentes: `levantamento/DIAGNOSTICO-V1.md`.
+- Propostas SQL (não executáveis em banco real): `migracoes/propostas/`; testes: `validacoes/TESTE-P00N-*.sql`; resultados: `testes/TST-REQ-2026-003.md`.
