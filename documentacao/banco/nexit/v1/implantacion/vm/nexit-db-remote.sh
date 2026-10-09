@@ -126,6 +126,18 @@ probar-restauracion)
   (cd "$RESP" && sha256sum -c "$(basename "$F").sha256" >/dev/null) || die "el sha256 del respaldo no coincide"
   CONTEOS="select string_agg(format('%s=%s', relname, (xpath('/row/c/text()', query_to_xml(format('select count(*) c from %I', relname), false, true, '')))[1]::text), ',' order by relname) from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relkind='r'"
   ORIG="$(PGA -c "$CONTEOS")"
+  # Huella estructural: columnas, restricciones, índices y funciones del esquema public.
+  # Complementa la comparación de conteos; evita declarar OK un restore incompleto.
+  CATSQL="SELECT md5(COALESCE(string_agg(kind || ':' || definition, E'\n' ORDER BY kind, definition), '')) FROM (
+    SELECT 'column' AS kind, format('%s.%s:%s:%s', table_name, column_name, data_type, is_nullable) AS definition
+      FROM information_schema.columns WHERE table_schema = 'public'
+    UNION ALL SELECT 'constraint', c.conrelid::regclass::text || ':' || c.conname || ':' || pg_get_constraintdef(c.oid)
+      FROM pg_constraint c JOIN pg_namespace n ON n.oid=c.connamespace WHERE n.nspname='public'
+    UNION ALL SELECT 'index', indexname || ':' || indexdef FROM pg_indexes WHERE schemaname='public'
+    UNION ALL SELECT 'function', p.proname || ':' || pg_get_functiondef(p.oid)
+      FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public'
+  ) details"
+  CAT_ORIG="$(PGA -c "$CATSQL")"
   if [[ "$MODO" == docker ]]; then
     IMG="$(docker inspect -f '{{.Config.Image}}' "$CONT")"; TMPC="nexit-restore-test-$$"
     # entorno aislado: sin red, contraseña aleatoria efímera, se destruye al terminar
@@ -146,6 +158,12 @@ probar-restauracion)
     VER=ok
     psql -X -q -d postgres -c "DROP DATABASE IF EXISTS $TMPDB WITH (FORCE)"
   fi
+  if [[ "$MODO" == docker ]]; then
+    CAT_REST="$(docker exec "$TMPC" psql -X -q -At -U postgres -d restauracion_prueba -c "$CATSQL")"
+  else
+    CAT_REST="$(psql -X -q -At -d "$TMPDB" -c "$CATSQL")"
+  fi
+  [[ "$CAT_ORIG" == "$CAT_REST" ]] || die "la restauración difiere en esquema (columnas, restricciones, índices o funciones)"
   [[ "$ORIG" == "$REST" ]] || die "la base restaurada difiere en conteos de tablas"
   [[ -n "$ORIG" ]] || log "AVISO: la base no tiene tablas; la prueba solo comprueba que el respaldo se restaura"
   log "restauración probada: conteos idénticos en todas las tablas (la estructura Nexit se verifica después de migrar)"
