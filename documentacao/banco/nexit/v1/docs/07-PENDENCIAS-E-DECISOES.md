@@ -1,13 +1,18 @@
 # 07 — Pendências e decisões que dependem da PROCEIT
 
-## A. Regras de negócio (D-C1…D-C9)
-As definições originais de D-C1…D-C9 **não estão no repositório**; o banco usa só os valores provisórios abaixo, **nenhum é definitivo**. Os demais (D-C1, D-C3, D-C4, D-C6, D-C7, D-C9) **não foram implementados como regra**: confirmar o enunciado original antes de decidir.
-| ID | Tema (como aparece nos testes) | Implementado hoje (provisório) | Teste |
+## A. Regras de custeio (D-C1…D-C9)
+Fonte das definições: branch `docs/REQ-2026-003-mapeamento-banco` (`CUSTEIO-V1.md`, `DECISOES-PENDENTES-CUSTEIO-REQ-2026-003.md`). **Todas seguem pendentes de aprovação**; o banco usa só os defaults provisórios abaixo.
+| ID | Decisão | Default provisório implementado | Teste |
 |---|---|---|---|
-| D-C2 | reservado × físico | opção A: o físico próprio inclui o reservado; reserva não altera valor | T09 |
-| D-C5 | anulação de movimento | opção A: movimento inverso; saída reverte ao **custo congelado**; entrada anulada sai ao promedio vigente | T09 |
-| D-C8 | saldo de abertura | origem `ABERTURA` com custo exato informado | T09 |
-| D-C1, 3, 4, 6, 7, 9 | (enunciado a reconfirmar) | sem regra definitiva; custo médio móvel por produto×depósito (P007), estoque negativo **proibido** por padrão | T04/T09 |
+| D-C1 | custo por produto×depósito ou só produto | produto × depósito | T04 |
+| D-C2 | físico ou só disponível no valor | físico próprio (inclui reservado/quarentena); reserva não altera valor | T09 |
+| D-C3 | IVA recuperável/frete/despesas no custo | custo informado pelo chamador (nada é somado) | — |
+| D-C4 | moeda base e câmbio | custo na moeda informada; **sem tabela de câmbio**; margem só se mesma moeda | T07 |
+| D-C5 | anulação/devolução/correção retroativa | movimento inverso ao custo congelado da saída; entrada anulada sai ao promedio vigente | T09 |
+| D-C6 | custo por lote | por produto/depósito (lotes existem como atributo de saldo, sem custo próprio) | — |
+| D-C7 | mercadoria de terceiros | movimenta saldo, **fora do valor** | T04 |
+| D-C8 | corte e custo de abertura | origem `ABERTURA` com custo exato informado | T09 |
+| D-C9 | base da margem (com/sem IVA) | margem simples venda − custo, só mesma moeda (provisória) | T07 |
 
 ## B. Outras decisões
 1. **Fonte de "Ventas al costo"** — ver 06 (A/B/C).
