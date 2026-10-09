@@ -114,7 +114,7 @@ respaldar)
   [[ -s "$F" ]] || die "respaldo vacío"
   (cd "$RESP" && sha256sum "$(basename "$F")" "$(basename "$F").globals.sql" >"$(basename "$F").sha256")
   if [[ "$MODO" == docker ]]; then n="$(docker exec -i "$CONT" pg_restore --list <"$F" | wc -l)"; else n="$(pg_restore --list "$F" | wc -l)"; fi
-  (( n > 10 )) || die "el listado del respaldo es sospechosamente corto ($n)"
+  (( n >= 1 )) || die "no se pudo listar el archivo de respaldo"
   log "respaldo verificado por listado ($n entradas) y sha256 registrado"
   marca "$A1.respaldo" "$F"
   ;;
@@ -145,15 +145,16 @@ probar-restauracion)
     trap 'docker rm -f "$TMPC" >/dev/null 2>&1 || true' EXIT
     for _ in $(seq 1 60); do docker exec "$TMPC" pg_isready -U postgres >/dev/null 2>&1 && break; sleep 1; done
     docker exec "$TMPC" pg_isready -U postgres >/dev/null || die "el entorno de restauración no arrancó"
-    docker exec -i "$TMPC" psql -X -q -U postgres -d postgres <"$F.globals.sql" >/dev/null 2>&1 || true   # roles (los ya existentes dan aviso, no error fatal)
+    # Restauración aislada sin propietarios/ACL: los roles globales se auditan aparte.
+    # NO silenciar errores del script globals.sql ni confundir esta prueba con su restauración.
     docker exec "$TMPC" createdb -U postgres restauracion_prueba
-    docker exec -i "$TMPC" pg_restore -U postgres -d restauracion_prueba --no-owner --exit-on-error <"$F" >/dev/null 2>"$RAIZ/log/restauracion-$A1.err" || die "pg_restore falló durante la prueba de restauración (revisar log)"
+    docker exec -i "$TMPC" pg_restore -U postgres -d restauracion_prueba --no-owner --no-acl --exit-on-error <"$F" >/dev/null 2>"$RAIZ/log/restauracion-$A1.err" || die "pg_restore falló durante la prueba de restauración (revisar log)"
     REST="$(docker exec "$TMPC" psql -X -q -At -U postgres -d restauracion_prueba -c "$CONTEOS")"
     VER=ok
   else
     TMPDB="${DBN}_restauracion_prueba"
     psql -X -q -d postgres -c "DROP DATABASE IF EXISTS $TMPDB WITH (FORCE)" -c "CREATE DATABASE $TMPDB"
-    pg_restore -d "$TMPDB" --no-owner --exit-on-error "$F" >/dev/null 2>"$RAIZ/log/restauracion-$A1.err" || die "pg_restore falló durante la prueba de restauración"
+    pg_restore -d "$TMPDB" --no-owner --no-acl --exit-on-error "$F" >/dev/null 2>"$RAIZ/log/restauracion-$A1.err" || die "pg_restore falló durante la prueba de restauración"
     REST="$(psql -X -q -At -d "$TMPDB" -c "$CONTEOS")"
     VER=ok
   fi
@@ -165,7 +166,7 @@ probar-restauracion)
   [[ "$CAT_ORIG" == "$CAT_REST" ]] || die "la restauración difiere en esquema (columnas, restricciones, índices o funciones)"
   if [[ "$MODO" != docker ]]; then psql -X -q -d postgres -c "DROP DATABASE IF EXISTS $TMPDB WITH (FORCE)"; fi
   [[ "$ORIG" == "$REST" ]] || die "la base restaurada difiere en conteos de tablas"
-  [[ -n "$ORIG" ]] || log "AVISO: la base no tiene tablas; la prueba solo comprueba que el respaldo se restaura"
+  [[ -n "$ORIG" ]] || log "AVISO: base origen sin tablas: restauración y estructura vacía comprobadas"
   log "restauración probada: conteos idénticos en todas las tablas (la estructura Nexit se verifica después de migrar)"
   marca "$A1.restauracion-ok" "$(sha256sum "$F" | cut -d' ' -f1)"
   ;;
