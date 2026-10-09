@@ -2,6 +2,8 @@
 
 Requisito: REQ-2026-003 · PR #4 · Resposta a **AUD-REQ-2026-003-R01 / F-004** · Escopo: **somente V1** (Clientes, Proveedores, Productos, Depósitos, Stock, Movimientos, custo e vendas ao custo, base de segurança).
 
+> **Como ler os números (R02-F-005):** 1.144 = campos mapeados do código atual · 200 = divergências registradas (178 negócio + 22 segurança) · 156 = divergências do recorte V1 · 66 = tabelas acumuladas P001–P007 (esquema **proposto**) · 56 tabelas / 701 colunas / 133 FKs = recorte V1 **deste dicionário**, gerado do PG descartável. Nenhum número descreve o banco real (NAO_VERIFICADO).
+
 **Como foi gerado (reprodutível, nenhum banco real):** aplicar P001→P007 em PostgreSQL descartável (`validacoes/executar-propostas.sh`) e extrair `information_schema`/`pg_catalog`; as colunas "Legado" e "Origem hoje" vêm do mapa campo a campo (`levantamento/campos/*.md`, coluna *Coluna destino*). O esquema legado (espanhol) continua **NAO_VERIFICADO** — o que está aqui é o esquema **proposto**, não o banco real.
 
 Legenda de **Origem hoje**: `API-SQL` = a API lê/grava hoje (código); `DEMO-localStorage` = só existe no demo do navegador (não é dado real); `SESSAO` = vem da sessão; `—` = coluna nova, sem origem no código (nasce de decisão/ requisito). **Mapa** = ID do campo em `levantamento/campos/` (`—` = não mapeado; coluna técnica, de auditoria ou de P007).
