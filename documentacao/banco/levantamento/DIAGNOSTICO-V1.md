@@ -114,3 +114,7 @@ Faltam como novas propostas, após as decisões do §5: coluna de custo unitári
 5. **PR-E Comercial:** listas de preço (P004) e ajustes.
 
 Antes de qualquer um: REQ-2026-004 (CI e testes) e a introspecção do banco real.
+
+## Atualização — rodada de correção da AUD-REQ-2026-003-R01
+
+Após as decisões `DEC-003-01..04` (`f9f8395`), este diagnóstico passa a ser complementado por: `CUSTEIO-V1.md` (método e fórmulas), P007 (estrutura de custo e views dos relatórios), `DICIONARIO-DADOS.md`, `RELACIONAMENTOS-ENTIDADES.md`, `DIVERGENCIAS-FRONTEND-BACKEND-BANCO.md`, `PLANO-MIGRACAO-INGLES.md` e `validacoes/REPRODUCAO-TESTES.md`. As linhas "Stock", "Movimientos" e "Reportes" da tabela do §2 passam a ter **estrutura SQL proposta e testada em banco descartável**; continuam **sem API, tela, XLSX nem dados reais** e o banco real segue NAO_VERIFICADO. O diagnóstico original acima não foi reescrito.
