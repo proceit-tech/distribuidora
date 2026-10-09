@@ -14,6 +14,7 @@
 #   probar-restauracion <sha>     restaura ese respaldo en un entorno DESCARTABLE y compara conteos/estructura
 #   copiar-externo <sha>          copia respaldo + sha256 a almacenamiento externo (gs:// o file://) y verifica el hash
 #   migrar <sha>                  aplica las migraciones pendientes (solo si respaldo, restauración y copia externa están al día)
+#   migrar-inicial <sha>          primera instalación SOLO si la base nexit no contiene objetos de usuario
 #   verificar <sha> [produccion]  valida la estructura instalada (scripts/verificar-instalacion.sh)
 #   pruebas-post <sha>            verificación + pruebas funcionales con el rol nexit_runtime (todo en una transacción revertida)
 #   sembrar-catalogos <sha>       aplica S-001 (catálogos globales; idempotente)
@@ -198,6 +199,23 @@ migrar)
   limpiar_release_en_db
   marca "$A1.migrada" "ok"
   log "migraciones aplicadas"
+  ;;
+
+
+migrar-inicial)
+  # EXCEPCIÓN ÚNICA para crear el esquema en una base estrictamente vacía.
+  # No desactiva los controles del comando normal 'migrar', que exige respaldo externo.
+  exigir_sha; bloquear
+  [[ "$DBN" == "nexit" ]] || die "la primera instalación solo se permite en la base nexit" 73
+  OBJETOS="$(PGA -c "select count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname !~ '^pg_' and n.nspname <> 'information_schema' and c.relkind in ('r','p','v','m','S','f')")"
+  [[ "$OBJETOS" == "0" ]] || die "instalación inicial prohibida: se encontraron $OBJETOS objetos persistentes de usuario" 73
+  [[ "$(PGA -c "select to_regclass('public.schema_migrations') is null")" == t ]] || die "instalación inicial prohibida: ya existe schema_migrations" 73
+  log "base vacía comprobada: primera instalación excepcional sin Cloud Storage"
+  R="$(preparar_release_en_db)"
+  EN_DB bash "$R/scripts/aplicar-migraciones.sh" --permitir-banco-real
+  limpiar_release_en_db
+  marca "$A1.migrada-inicial" "ok"
+  log "primera instalación completada; próximas migraciones requieren respaldo y copia externa"
   ;;
 
 verificar)
