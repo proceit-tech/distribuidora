@@ -6,7 +6,11 @@
 # O teste usa o papel dn_app_test (NOSUPERUSER, sem BYPASSRLS) criado aqui; bancos temporários chk_Pn são recriados.
 set -u
 R="$(cd "$(dirname "$0")/.." && pwd)"; P="$R/migracoes/propostas"; V="$R/validacoes"
-LOG="${LOG_DIR:-$(mktemp -d)}"
+LOG="${LOG_DIR:-$(mktemp -d)}"; mkdir -p "$LOG"
+# Gate de versão (R02-F-004): P007 usa views security_invoker => PostgreSQL >= 15
+VNUM=$(psql -X -Atc "show server_version_num" 2>/dev/null) || { echo "Sem conexão com o PostgreSQL descartável (PGHOST/PGPORT/PGUSER)"; exit 2; }
+[ "${VNUM:-0}" -ge 150000 ] || { echo "PostgreSQL $VNUM < 15: P007 não é suportada (security_invoker)"; exit 2; }
+echo "PostgreSQL server_version_num=$VNUM"
 declare -A F=( [P001]=P001 [P002]=P002-catalogos-clientes [P003]=P003-fornecedores-produtos [P004]=P004-listas-preco [P005]=P005-estoque-recepciones [P006]=P006-faturamento [P007]=P007-custeio )
 declare -A T=( [P001]=P001-isolamento [P002]=P002-catalogos-clientes [P003]=P003-fornecedores-produtos [P004]=P004-listas-preco [P005]=P005-estoque-recepciones [P006]=P006-faturamento [P007]=P007-custeio )
 order=(P001 P002 P003 P004 P005 P006 P007); fail=0
