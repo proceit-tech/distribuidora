@@ -135,13 +135,13 @@ probar-restauracion)
     docker exec "$TMPC" pg_isready -U postgres >/dev/null || die "el entorno de restauración no arrancó"
     docker exec -i "$TMPC" psql -X -q -U postgres -d postgres <"$F.globals.sql" >/dev/null 2>&1 || true   # roles (los ya existentes dan aviso, no error fatal)
     docker exec "$TMPC" createdb -U postgres restauracion_prueba
-    docker exec -i "$TMPC" pg_restore -U postgres -d restauracion_prueba --no-owner <"$F" >/dev/null 2>"$RAIZ/log/restauracion-$A1.err" || log "pg_restore terminó con avisos (ver restauracion-$A1.err)"
+    docker exec -i "$TMPC" pg_restore -U postgres -d restauracion_prueba --no-owner --exit-on-error <"$F" >/dev/null 2>"$RAIZ/log/restauracion-$A1.err" || die "pg_restore falló durante la prueba de restauración (revisar log)"
     REST="$(docker exec "$TMPC" psql -X -q -At -U postgres -d restauracion_prueba -c "$CONTEOS")"
     VER=ok
   else
     TMPDB="${DBN}_restauracion_prueba"
     psql -X -q -d postgres -c "DROP DATABASE IF EXISTS $TMPDB WITH (FORCE)" -c "CREATE DATABASE $TMPDB"
-    pg_restore -d "$TMPDB" --no-owner "$F" >/dev/null 2>"$RAIZ/log/restauracion-$A1.err" || log "pg_restore terminó con avisos"
+    pg_restore -d "$TMPDB" --no-owner --exit-on-error "$F" >/dev/null 2>"$RAIZ/log/restauracion-$A1.err" || die "pg_restore falló durante la prueba de restauración"
     REST="$(psql -X -q -At -d "$TMPDB" -c "$CONTEOS")"
     VER=ok
     psql -X -q -d postgres -c "DROP DATABASE IF EXISTS $TMPDB WITH (FORCE)"
@@ -248,8 +248,8 @@ restaurar-nueva)
   (cd "$RESP" && sha256sum -c "$A1.sha256" >/dev/null) || die "sha256 no coincide"
   N="nexit_restaurada_$(date -u +%Y%m%d%H%M%S)"
   if [[ "$MODO" == docker ]]; then
-    docker exec "$CONT" createdb -U "$ADMIN" "$N"; docker exec -i "$CONT" pg_restore -U "$ADMIN" -d "$N" --no-owner <"$F" || true
-  else psql -X -q -d postgres -c "CREATE DATABASE $N"; pg_restore -d "$N" --no-owner "$F" || true; fi
+    docker exec "$CONT" createdb -U "$ADMIN" "$N"; docker exec -i "$CONT" pg_restore -U "$ADMIN" -d "$N" --no-owner --exit-on-error <"$F" || die "restaurar-nueva falló; revisar base nueva"
+  else psql -X -q -d postgres -c "CREATE DATABASE $N"; pg_restore -d "$N" --no-owner --exit-on-error "$F" || die "restaurar-nueva falló; revisar base nueva"; fi
   log "restaurado en la base NUEVA $N. No se tocó '$DBN'. Para volver a producción: detener la aplicación, renombrar bases y reiniciar (ver runbook)."
   ;;
 
