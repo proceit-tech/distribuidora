@@ -20,7 +20,7 @@ SELECT demo_nuevo_movimiento(:'e', 'SALIDA', 'VENTA', CURRENT_DATE, :'d1', NULL,
 SELECT inventario_registrar_linea(:'e', :'mv', :'pr', 10, NULL, NULL, 'PROPIO', NULL, 3000, 'PYG') \gset
 SELECT pg_temp.ok((SELECT ventas_mes - :v0 FROM v_dashboard_resumen WHERE empresa_id = :'e') = 30000, 'dashboard.ventas_mes sube exactamente 10 x 3000 = 30000');
 SELECT pg_temp.ok((SELECT costo_ventas_mes > :c0 AND movimientos_mes = :m0 + 1 FROM v_dashboard_resumen WHERE empresa_id = :'e'), 'dashboard: costo de ventas y movimientos del mes aumentan');
-UPDATE movimientos_inventario SET estado = 'ANULADO' WHERE id = :'mv';
+SELECT inventario_anular_movimiento(:'e', :'u', :'mv', 'Venta de prueba anulada') \gset
 SELECT pg_temp.ok((SELECT ventas_mes = :v0 FROM v_dashboard_resumen WHERE empresa_id = :'e'), 'dashboard: anular la venta revierte ventas_mes');
 
 -- Reporte de costo con subtotal por depósito y total general (ROLLUP), como alimentaría el XLSX

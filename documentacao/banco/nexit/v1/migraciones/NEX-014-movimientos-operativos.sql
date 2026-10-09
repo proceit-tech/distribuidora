@@ -27,6 +27,31 @@ ALTER TABLE movimientos_inventario DROP CONSTRAINT movimientos_inventario_origen
 ALTER TABLE movimientos_inventario ADD CONSTRAINT movimientos_inventario_origen_tipo_chk CHECK (tipo_origen IN
   ('MANUAL','COMPRA','VENTA','DEVOLUCION','TRANSFERENCIA','AJUSTE','INVENTARIO','ABERTURA','ANULACION'));
 
+-- 1b) Un movimiento solo pasa a ANULADO si ya existe su movimiento inverso (nadie puede "anular" a mano sin revertir el stock y el costo).
+CREATE OR REPLACE FUNCTION movimientos_inventario_guard() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    IF nex_reinicio_demo_activo(OLD.empresa_id) THEN RETURN OLD; END IF;
+    RAISE EXCEPTION 'movimientos_inventario es inmutable: use inventario_anular_movimiento en lugar de DELETE (movimiento %)', OLD.numero_movimiento
+      USING ERRCODE = 'P0001';
+  END IF;
+  IF (to_jsonb(NEW) - 'estado' - 'actualizado_at') IS DISTINCT FROM (to_jsonb(OLD) - 'estado' - 'actualizado_at') THEN
+    RAISE EXCEPTION 'movimientos_inventario es inmutable: solo el estado puede cambiar (movimiento %)', OLD.numero_movimiento
+      USING ERRCODE = 'P0001';
+  END IF;
+  IF NEW.estado IS DISTINCT FROM OLD.estado THEN
+    IF NOT (OLD.estado = 'REGISTRADO' AND NEW.estado = 'ANULADO') THEN
+      RAISE EXCEPTION 'transición de estado inválida: % -> % (solo REGISTRADO -> ANULADO)', OLD.estado, NEW.estado USING ERRCODE = 'P0001';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM movimientos_inventario a WHERE a.empresa_id = OLD.empresa_id AND a.anula_a_id = OLD.id) THEN
+      RAISE EXCEPTION 'el movimiento % solo pasa a ANULADO mediante inventario_anular_movimiento (falta el movimiento inverso)', OLD.numero_movimiento
+        USING ERRCODE = 'P0001', DETAIL = 'NEX:ANULACION_SIN_INVERSO';
+    END IF;
+  END IF;
+  RETURN NEW;
+END $$;
+
 -- 2) Línea valorizada: ahora acepta un VALOR TOTAL exacto (lo usa la anulación para devolver exactamente el costo congelado)
 DROP FUNCTION inventario_registrar_linea(uuid, uuid, uuid, numeric, numeric, uuid, text, uuid, numeric, text);
 
@@ -445,6 +470,24 @@ SELECT e.empresa_id, e.producto_id, p.codigo AS producto_codigo, p.descripcion A
 WINDOW w AS (PARTITION BY e.empresa_id, e.producto_id, e.deposito_id, e.propiedad
              ORDER BY m.numero_movimiento, e.linea_at, e.linea_id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW);
 
+
+-- 8b) Conciliación del VALOR contra el libro de movimientos: el valor de cada (producto, depósito) debe ser igual a
+--     Σ costo de las líneas que entran − Σ costo de las líneas que salen. Una fila aquí = inconsistencia (debe estar vacía).
+CREATE VIEW v_conciliacion_valor_movimientos WITH (security_invoker = true) AS
+WITH mov AS (
+  SELECT m.empresa_id, l.producto_id, m.deposito_destino_id AS deposito_id, l.costo_total AS v
+    FROM movimientos_inventario m JOIN movimiento_lineas l ON l.empresa_id = m.empresa_id AND l.movimiento_id = m.id
+   WHERE m.tipo_movimiento IN ('ENTRADA','AJUSTE_POSITIVO','TRANSFERENCIA') AND l.costo_total IS NOT NULL
+  UNION ALL
+  SELECT m.empresa_id, l.producto_id, m.deposito_origen_id, -l.costo_total
+    FROM movimientos_inventario m JOIN movimiento_lineas l ON l.empresa_id = m.empresa_id AND l.movimiento_id = m.id
+   WHERE m.tipo_movimiento IN ('SALIDA','AJUSTE_NEGATIVO','TRANSFERENCIA') AND l.costo_total IS NOT NULL)
+SELECT ic.empresa_id, ic.producto_id, ic.deposito_id, ic.valor_total, COALESCE(sum(mov.v), 0) AS valor_movimientos,
+       ic.valor_total - COALESCE(sum(mov.v), 0) AS diferencia
+  FROM inventario_costos ic
+  LEFT JOIN mov ON mov.empresa_id = ic.empresa_id AND mov.producto_id = ic.producto_id AND mov.deposito_id = ic.deposito_id
+ GROUP BY ic.empresa_id, ic.producto_id, ic.deposito_id, ic.valor_total
+HAVING ic.valor_total <> COALESCE(sum(mov.v), 0);
 
 -- 9) Rol de ejecución — política vigente a partir de NEX-014 (reemplaza la de NEX-013; el runner la vuelve a aplicar siempre):
 --    lectura de todo salvo schema_migrations; escritura directa SOLO en cadastros y sesión; saldos, costos y movimientos SOLO vía funciones.

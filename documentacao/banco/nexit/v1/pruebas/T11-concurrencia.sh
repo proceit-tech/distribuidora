@@ -58,6 +58,7 @@ chk "$(cuenta_ok mixta)" 30 "mixto: 30 operaciones simultáneas (20 entradas + 1
 chk "$(Q "select (select valor_total from inventario_costos where empresa_id='$E' and producto_id='$P2' and deposito_id='$D1') = (select sum(case when m.tipo_movimiento in ('ENTRADA') then l.costo_total else -l.costo_total end) from movimiento_lineas l join movimientos_inventario m on m.empresa_id=l.empresa_id and m.id=l.movimiento_id where l.empresa_id='$E' and l.producto_id='$P2')")" t "mixto: valor final = suma de entradas − suma de costos congelados de salidas (conservación exacta)"
 chk "$(Q "select cantidad_valorizada from inventario_costos where empresa_id='$E' and producto_id='$P2' and deposito_id='$D1'")" "20.0000" "mixto: cantidad final = 20 (apertura) + 20 entradas − 10 salidas × 2 u = 20"
 chk "$(Q "select count(*) from v_conciliacion_costo_stock where empresa_id='$E'")" 0 "mixto: conciliación saldo/costo sin diferencias"
+chk "$(Q "select count(*) from v_conciliacion_valor_movimientos where empresa_id='$E'")" 0 "mixto: valor de cada producto×depósito = libro de movimientos"
 chk "$(Q "select count(*) from stock_saldos where empresa_id='$E' and cantidad < 0")" 0 "mixto: ningún saldo negativo"
 
 # ---------- 4) Numeración correlativa sin duplicados ni huecos bajo concurrencia ----------
@@ -80,6 +81,7 @@ lanzar 24 cruz g6
 chk "$(cuenta_ok cruz)" 24 "interbloqueo: 24 transferencias cruzadas simultáneas terminan todas bien"
 chk "$(cuenta_err cruz 'deadlock')" 0 "interbloqueo: ningún 'deadlock detected'"
 chk "$(Q "select count(*) from v_conciliacion_costo_stock where empresa_id='$E'")" 0 "interbloqueo: conciliación saldo/costo sin diferencias"
+chk "$(Q "select count(*) from v_conciliacion_valor_movimientos where empresa_id='$E'")" 0 "interbloqueo: valor = libro de movimientos"
 chk "$(Q "select sum(valor_total) from inventario_costos where empresa_id='$E' and producto_id='$P1' and deposito_id in ('$D1','$D2')")" "1000.0000" "interbloqueo: el valor total de P1 entre los dos depósitos se conserva (100 u × 10)"
 
 echo "------------------------------------------------------------"

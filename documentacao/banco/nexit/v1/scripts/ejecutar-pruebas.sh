@@ -72,6 +72,41 @@ else echo "OMITIDA (el clúster no permite login con contraseña de nexit_runtim
 # T11: concurrencia real (varias sesiones simultáneas)
 paso "T11 concurrencia (idempotencia, sobreventa, valor, deadlocks)"
 "$AQUI/pruebas/T11-concurrencia.sh" >"$LOG/T11" 2>&1; fin $? "$LOG/T11"
+# I1/V1: instalación de una empresa REAL con los scripts de producción (sin contraseña en argumentos ni logs) y validación de la estructura instalada
+PWADM="Adm-$(head -c 24 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 20)"     # contraseña del administrador de prueba (solo en memoria)
+if python3 -c 'import bcrypt' 2>/dev/null; then GENERADOR="real (python3 bcrypt)"; unset NEX_PRUEBAS_GENERADOR_HASH
+else GENERADOR="simulado con pgcrypto (no hay bcrypt local; en CI se usa el real)"
+  printf '#!/usr/bin/env bash\nIFS= read -r PW; [[ ${#PW} -ge 12 ]] || { echo "Contraseña demasiado corta (mínimo 12)." >&2; exit 2; }\necho "select crypt(:'"'"'pw'"'"', gen_salt('"'"'bf'"'"', 12))" | psql -X -Atq -v pw="$PW"\n' >"$LOG/gen-shim.sh"; chmod +x "$LOG/gen-shim.sh"; export NEX_PRUEBAS_GENERADOR_HASH="$LOG/gen-shim.sh"
+fi
+psql -X -q -d postgres -c "CREATE DATABASE ${DB}_prod" >/dev/null 2>&1
+( export PGDATABASE="${DB}_prod"; "$AQUI/scripts/aplicar-migraciones.sh" >/dev/null 2>&1 && psql -X -q -v ON_ERROR_STOP=1 -f "$AQUI/seeds/S-001-catalogos-globales.sql" >/dev/null 2>&1 )
+paso "I1 inicializar-empresa.sh / restablecer-clave.sh (generador: ${GENERADOR%% *})"
+( export PGDATABASE="${DB}_prod"
+  ID1="$(printf '%s\n' "$PWADM" | "$AQUI/scripts/inicializar-empresa.sh" --codigo emp-real --razon-social "Empresa Real S.A. (prueba)" --ruc 80012345 --dv 6 --usuario admin --nombre Magno --email m@example.invalid 2>&1 | tee "$LOG/I1.a" | sed -n 's/^empresa_id=//p')"
+  ID2="$(printf '%s\n' "$PWADM" | "$AQUI/scripts/inicializar-empresa.sh" --codigo emp-real --razon-social "Empresa Real S.A. (prueba)" --ruc 80012345 --dv 6 --usuario admin --nombre Magno 2>&1 | tee "$LOG/I1.b" | sed -n 's/^empresa_id=//p')"
+  [[ -n "$ID1" && "$ID1" == "$ID2" ]] && echo "PASS: la inicialización es repetible (mismo id, sin duplicar)"
+  [[ "$(psql -X -Atc "select count(*) from usuarios u join empresas e on e.id=u.empresa_id where e.codigo='emp-real'")" == 1 ]] && echo "PASS: un solo administrador tras repetir"
+  [[ "$(psql -X -Atc "select password_hash = crypt('$PWADM', password_hash) and password_hash <> '$PWADM' from usuarios u join empresas e on e.id=u.empresa_id where e.codigo='emp-real'")" == t ]] && echo "PASS: la contraseña del administrador valida y solo existe como hash"
+  ! grep -q "$PWADM" "$LOG/I1.a" "$LOG/I1.b" && echo "PASS: la contraseña no aparece en la salida/logs de los scripts"
+  printf 'corta\n' | "$AQUI/scripts/inicializar-empresa.sh" --codigo emp-x --razon-social "X SA" --ruc 80012346 --dv 1 --usuario admin --nombre Z >/dev/null 2>&1; [[ $? -eq 2 ]] && echo "PASS: contraseña corta rechazada por el script (código 2)"
+  PGDATABASE=nexit "$AQUI/scripts/inicializar-empresa.sh" --codigo emp-x --razon-social "X SA" --ruc 80012346 --dv 1 --usuario admin --nombre Z </dev/null >/dev/null 2>&1; [[ $? -eq 3 ]] && echo "PASS: se niega a operar sobre la base 'nexit' sin autorización (código 3)"
+  NUEVA="Nueva-$(head -c 24 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 16)"
+  printf '%s\n' "$NUEVA" | "$AQUI/scripts/restablecer-clave.sh" --empresa emp-real --usuario admin >/dev/null 2>&1
+  [[ "$(psql -X -Atc "select password_hash = crypt('$NUEVA', password_hash) and password_hash <> crypt('$PWADM', password_hash) from usuarios u join empresas e on e.id=u.empresa_id where e.codigo='emp-real'")" == t ]] && echo "PASS: restablecer-clave.sh cambia la clave"
+) >"$LOG/I1" 2>&1; [[ $(grep -c PASS "$LOG/I1") -eq 7 ]]; fin $? "$LOG/I1"
+paso "V1 verificar-instalacion.sh (base de pruebas completa)"; PGDATABASE="$DB" "$AQUI/scripts/verificar-instalacion.sh" >"$LOG/V1" 2>&1; fin $? "$LOG/V1"
+paso "V2 verificar-instalacion.sh --produccion (solo empresa real) y detección de DEMO"
+( export PGDATABASE="${DB}_prod"
+  "$AQUI/scripts/verificar-instalacion.sh" --produccion >"$LOG/V2a" 2>&1; rc1=$?
+  psql -X -q -c "select demo_crear_empresa('demo-intruso','Intruso','admin',(select password_hash from usuarios limit 1))" >/dev/null 2>&1
+  "$AQUI/scripts/verificar-instalacion.sh" --produccion >"$LOG/V2b" 2>&1; rc2=$?
+  [[ $rc1 -eq 0 ]] && echo "PASS: instalación de producción limpia validada"
+  [[ $rc2 -ne 0 ]] && grep -q "FALLA: PRODUCCIÓN: no existen empresas DEMO" "$LOG/V2b" && echo "PASS: una empresa DEMO en producción es detectada"
+  psql -X -q -c "grant insert on stock_saldos to nexit_runtime" >/dev/null 2>&1; "$AQUI/scripts/verificar-instalacion.sh" >"$LOG/V2c" 2>&1; [[ $? -ne 0 ]] && echo "PASS: una concesión indebida al runtime es detectada"
+  MIGRACIONES_DIR="$LOG/mig" "$AQUI/scripts/verificar-instalacion.sh" >"$LOG/V2d" 2>&1; [[ $? -ne 0 ]] && echo "PASS: una migración editada es detectada"
+) >"$LOG/V2" 2>&1; [[ $(grep -c PASS "$LOG/V2") -eq 4 ]]; fin $? "$LOG/V2"
+psql -X -q -d postgres -c "DROP DATABASE IF EXISTS ${DB}_prod WITH (FORCE)" >/dev/null 2>&1
+
 # T08: RLS opcional en una COPIA (la base principal no recibe RLS)
 paso "T08 rls-opcional (en copia ${DB}_rls)"
 psql -X -q -d postgres -c "CREATE DATABASE ${DB}_rls TEMPLATE $DB" >"$LOG/T08" 2>&1 && PGDATABASE="${DB}_rls" psql -X -q -v ON_ERROR_STOP=1 -f T08-rls-opcional.sql >>"$LOG/T08" 2>&1; fin $? "$LOG/T08"

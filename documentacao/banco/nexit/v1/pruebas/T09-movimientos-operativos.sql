@@ -173,6 +173,7 @@ SELECT pg_temp.ok(NOT EXISTS (
    WHERE COALESCE(k.saldo_disponible, 0) <> COALESCE(s.disp, 0) OR COALESCE(k.saldo_reservado, 0) <> COALESCE(s.res, 0) OR COALESCE(k.saldo_cuarentena, 0) <> COALESCE(s.cua, 0)),
   'kardex: el último saldo acumulado coincide con stock_saldos en todos los productos, depósitos y estados');
 SELECT pg_temp.ok((SELECT count(*) FROM v_kardex WHERE empresa_id = :'e' AND producto_id = :'pa' AND deposito_id = :'d1') >= 8, 'kardex: A en DEP-PRINCIPAL tiene su historial completo (incluye anulaciones)');
+SELECT pg_temp.ok(NOT EXISTS (SELECT 1 FROM v_conciliacion_valor_movimientos WHERE empresa_id = :'e') AND (SELECT count(*) FROM inventario_costos WHERE empresa_id = :'e') > 0, 'conciliación del valor: valor de cada producto×depósito = Σ entradas − Σ salidas del libro de movimientos (incluye anulaciones y transferencias)');
 SELECT pg_temp.ok(NOT EXISTS (SELECT 1 FROM v_conciliacion_costo_stock WHERE empresa_id = :'e'), 'conciliación: cantidad valorizada = cantidad de saldos propios en todos los productos y depósitos');
 SELECT pg_temp.ok((SELECT count(*) FROM movimientos_inventario WHERE empresa_id = :'e' AND tipo_origen = 'ANULACION') = (SELECT count(*) FROM movimientos_inventario WHERE empresa_id = :'e' AND estado = 'ANULADO'), 'trazabilidad: cada movimiento ANULADO tiene exactamente un inverso');
 SELECT pg_temp.ok((SELECT count(DISTINCT numero_movimiento) = count(*) FROM movimientos_inventario WHERE empresa_id = :'e'), 'numeración: números de movimiento únicos y correlativos por empresa');

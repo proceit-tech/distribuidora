@@ -59,7 +59,8 @@ SELECT pg_temp.falla(format($f$UPDATE movimiento_lineas SET cantidad = 99 WHERE 
 SELECT pg_temp.falla(format($f$DELETE FROM movimiento_lineas WHERE id = %L$f$, :'l3'), 'P0001', 'línea de movimiento inmutable (DELETE)');
 SELECT pg_temp.falla(format($f$DELETE FROM movimientos_inventario WHERE id = %L$f$, :'m3'), 'P0001', 'movimiento no se puede borrar (empresa DEMO fuera de reinicio)');
 SELECT pg_temp.falla(format($f$UPDATE movimientos_inventario SET motivo = 'cambio' WHERE id = %L$f$, :'m3'), 'P0001', 'solo el estado del movimiento puede cambiar');
-UPDATE movimientos_inventario SET estado = 'ANULADO' WHERE id = :'m3';
-SELECT pg_temp.ok((SELECT estado FROM movimientos_inventario WHERE id = :'m3') = 'ANULADO', 'REGISTRADO -> ANULADO permitido');
+SELECT pg_temp.falla(format($f$UPDATE movimientos_inventario SET estado = 'ANULADO' WHERE id = %L$f$, :'m3'), 'P0001', 'no se puede pasar a ANULADO a mano (falta el movimiento inverso)');
+SELECT inventario_anular_movimiento(:'e', :'u', :'m3', 'Anulación de prueba T04') \gset
+SELECT pg_temp.ok((SELECT estado FROM movimientos_inventario WHERE id = :'m3') = 'ANULADO', 'REGISTRADO -> ANULADO permitido solo mediante inventario_anular_movimiento');
 SELECT pg_temp.falla(format($f$UPDATE movimientos_inventario SET estado = 'REGISTRADO' WHERE id = %L$f$, :'m3'), 'P0001', 'ANULADO no vuelve a REGISTRADO');
 SELECT pg_temp.ok(NOT EXISTS (SELECT 1 FROM v_ventas_al_costo WHERE movimiento_id = :'m3'), 'una venta ANULADA sale del reporte de ventas al costo');
