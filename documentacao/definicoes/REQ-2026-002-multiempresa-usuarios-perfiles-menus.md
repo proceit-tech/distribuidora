@@ -71,6 +71,9 @@ Tratar este requisito como regla transversal de producto. Primero completar REQ-
 | 2026-10-08 | ChatGPT | — | AUD-REQ-2026-002-R03 (`3789fe7`): aprobado condicionalmente como diseño; R03-F-001 ALTA (cuenta intermedia), F-002 a F-004 MEDIA |
 | 2026-10-08 | Responsable PROCEIT (registrado por ChatGPT) | — | D-09 y D-10 aprobadas en `DECISOES-REQ-2026-002-R03-CONTROLES-CRITICOS.md` (`9c76906`) |
 | 2026-10-08 | Claude | PRONTO_PARA_AUDITORIA (diseño v4) | Diseño y matriz v4 en `cfbc8a6`; TST actualizado. Nueva decisión propuesta D-11. Esperando AUD-REQ-2026-002-R04 |
+| 2026-10-09 | ChatGPT | — | AUD-REQ-2026-002-R04 (`cd8e959`): aprobado condicionalmente; R04-F-001 ALTA (D-11), F-002 a F-004 MEDIA |
+| 2026-10-09 | Responsable PROCEIT (registrado por ChatGPT) | — | D-11 y D-12 aprobadas en `DECISOES-REQ-2026-002-R04-OPERADOR-UNICO-E-PRAZOS.md` (`ee59738`) |
+| 2026-10-09 | Claude | PRONTO_PARA_AUDITORIA (diseño v5) | D-11 (autorización formal por operación) y D-12 (plazos 180/365/7/7, parametrización) en diseño, matriz y TST. Esperando AUD-REQ-2026-002-R05 |
 
 ## Caminos alterados (fase de diseño)
 - `documentacao/definicoes/DESENHO-REQ-2026-002-multiempresa.md` (nuevo)

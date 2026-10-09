@@ -1,9 +1,9 @@
 # DESENHO-REQ-2026-002 — Multiempresa, usuários, perfis e menus
 
 Requisito: `REQ-2026-002-multiempresa-usuarios-perfiles-menus.md` · Autor: Claude
-Versão: **4 (decisões D-09 e D-10 e AUD-REQ-2026-002-R03)** · Data: 2026-10-08
+Versão: **5 (decisões D-11 e D-12 e AUD-REQ-2026-002-R04)** · Data: 2026-10-09
 Código analisado: `main` @ `0dbb013` (o código funcional é idêntico ao de `7f4230a`; desde então só entraram documentos)
-Situação: **PROPOSTA PARA APROVAÇÃO DOCUMENTAL.** As decisões de negócio estão registradas em `DECISOES-REQ-2026-002-APROVACAO.md` (D-01 a D-08, `2a007e7`) e `DECISOES-REQ-2026-002-R03-CONTROLES-CRITICOS.md` (D-09 e D-10, `9c76906`); elas não autorizam implementação, migrations nem homologação. Nenhum código, nenhum SQL executável e nenhuma migration fazem parte desta entrega. Os trechos SQL deste documento são ilustrativos e servem para fixar o contrato; não são DDL definitivo (F-001).
+Situação: **PROPOSTA PARA APROVAÇÃO DOCUMENTAL.** As decisões de negócio estão registradas em `DECISOES-REQ-2026-002-APROVACAO.md` (D-01 a D-08, `2a007e7`), `DECISOES-REQ-2026-002-R03-CONTROLES-CRITICOS.md` (D-09 e D-10, `9c76906`) e `DECISOES-REQ-2026-002-R04-OPERADOR-UNICO-E-PRAZOS.md` (D-11 e D-12, `ee59738`); elas não autorizam implementação, migrations nem homologação. Nenhum código, nenhum SQL executável e nenhuma migration fazem parte desta entrega. Os trechos SQL deste documento são ilustrativos e servem para fixar o contrato; não são DDL definitivo (F-001).
 
 Documentos de apoio, no PR #2 (`feature/REQ-2026-001-consolidacao-documental` @ `fd16292`): `ARQUITETURA-ATUAL.md` §2 e §7, `MODELO-DADOS-ATUAL.md` §1.1, `MAPA-MODULOS.md` §1 e §6, `documentacao/banco/INTROSPECCAO-SOMENTE-LEITURA.md`.
 
@@ -37,13 +37,23 @@ Documentos de apoio, no PR #2 (`feature/REQ-2026-001-consolidacao-documental` @ 
 
 | Origem | Ponto | Onde foi tratado |
 |---|---|---|
-| D-09 / R03-F-002 | As 4 ações críticas saem do perfil administrador e passam a exigir concessão individual, rastreável, por recurso/ação; segregação criador ≠ aprovador | §4.1, §4.7, ESC-15; matriz §2.1, §3, §5; testes §11.9 |
+| D-09 / R03-F-002 | As 4 ações críticas saem do perfil administrador e passam a exigir concessão individual, rastreável, por recurso/ação; segregação criador ≠ aprovador | §4.1, §4.7, ESC-15, ESC-16; matriz §2.1, §3, §5; testes §11.9 |
 | D-10 / R03-F-001 | Dado sensível exige segundo aprovador **independente**; estados SOLICITADA, APROBADA, REJEITADA, REVOGADA, EXPIRADA (e CANCELADA); nada é efetivo antes da aprovação | §4.7.2, §4.7.4 |
 | D-10 | Independência verificável: contas diferentes, linhagem de criação, linhagem de poder, identidade (documento e e-mail), MFA, antiguidade do poder; revalidação na aprovação e no uso | §4.7.3, ESC-14 |
 | D-10 | Empresa sem segundo aprovador independente: autorização formal da PROCEIT, vinculada ao pedido da empresa, com responsável de plataforma identificado; não é bypass | §4.7.5, §4.4, §4.6 |
 | Pedido do responsável (item 4) | Autoconcessão impossível por perfil (as permissões controladas não podem estar em perfil) e por conta alternativa (regras de independência) | §4.1, ESC-13, §4.7.3, §11.10 |
 | R03-F-003 / D-04 | Revisão por área continua PENDENTE com o responsável | matriz §8 |
 | R03-F-004 | Banco real e CI continuam dependências (REQ-2026-003 e 004) | §10 |
+
+### 0.3 Resposta à R04 e às decisões D-11 e D-12 (versão 5)
+
+| Origem | Ponto | Onde foi tratado |
+|---|---|---|
+| D-11 / R04-F-001 | Empresa sem segunda pessoa independente: autorização formal da PROCEIT **para cada operação crítica**, sem autoaprovação nem uso de outras contas; vale só para aquele objeto e versão, uma vez | §4.7.7 (substitui a proposta da v4), §4.7.11, §9 |
+| D-12 / R04-F-003 | Validade 180 dias (dado sensível) e 365 (ação crítica); solicitação expira em 7 dias; aprovador com poder há 7 dias, como valores **aprovados** | §4.7.2, IND-06, §4.7.8 |
+| D-12 (condições 1 a 6) | Parametrização controlada e auditada, limites rígidos, revogação imediata, renovação sem automatismo, antiguidade não contornável, exceção PROCEIT sem dispensa de MFA, urgência por processo formal | §4.7.8, §4.7.9, §4.7.12 |
+| R04-F-002 | Independência exige evidência; limites da verificação de identidade declarados; a linhagem de contas não elimina conluio nem identidade dupla | §4.7.10, §13 |
+| R04-F-004 / R03-F-003 / R03-F-004 | D-04, D-07, banco real e CI continuam abertos | matriz §8, §10 (sem mudança) |
 
 ## 1. Pontos de partida
 
@@ -91,7 +101,12 @@ Fonte: `documentacao/definicoes/DECISOES-REQ-2026-002-APROVACAO.md`, registrado 
 
 A D-06 continua valendo e é complementada pela D-10 (como conceder) e pela D-09 (ações críticas).
 
-Decisão nova proposta pelo Claude, **pendente**: **D-11** — como tratar a segregação criador ≠ aprovador em empresas com um único operador (§4.7.7).
+Decisões do `DECISOES-REQ-2026-002-R04-OPERADOR-UNICO-E-PRAZOS.md` (`ee59738`, 2026-10-09):
+
+| ID | Decisão do responsável | Condição obrigatória | Como o desenho atende |
+|---|---|---|---|
+| D-11 | APROVADO — empresa com único operador: autorização formal da PROCEIT para **cada operação crítica** | Operação pendente e sem efeito até a autorização; sem autoaprovação (nem por outras contas); solicitação com empresa, operador, ação, objeto, justificativa e documento; responsável PROCEIT com MFA e competência explícita; registro na empresa e na plataforma; autorização não vale para outras operações; verificar objeto, versão e validade; sem replay nem corrida | §4.7.7, §4.7.11 |
+| D-12 | APROVADO — 180 dias (dado sensível), 365 (ação crítica), solicitação expira em 7, aprovador com poder há 7 dias | Parâmetros controlados e auditados; prazo não é direito permanente; renovação só com nova aprovação; antiguidade não contornável; exceção PROCEIT não dispensa MFA; urgência por processo formal | §4.7.2, §4.7.3 (IND-06), §4.7.8, §4.7.9, §4.7.12 |
 
 Pontos ainda abertos, conforme o registro: detalhes finais da matriz por módulo (D-04), prazos efetivos e base legal por classe de registro (D-07) e o esquema real do banco.
 
@@ -120,6 +135,9 @@ Pontos ainda abertos, conforme o registro: detalhes finais da matriz por módulo
 | `usuario_perfil` | existe | + `empresa_id, asignado_por, asignado_at` | FK composta para `usuarios` e `perfiles` (fecha G-03) |
 | `concesiones_permiso` | inexistente | `id, empresa_id, beneficiario_id, permiso_id, clase` (`DATO_SENSIBLE` \| `ACCION_CRITICA`), `estado`, `canal` (`EMPRESA` \| `PLATAFORMA`), `solicitante_id, motivo, aprobador_id, aprobador_tipo, aprobado_at, rechazo_motivo, vigente_hasta, revocado_por, revocado_at, revocado_motivo, documento_respaldo_id, version` | Uma linha por usuário × permissão controlada (§4.7). FK composta para `usuarios` |
 | `concesiones_permiso_eventos` | inexistente | `id, empresa_id, concesion_id, evento, actor_id, actor_tipo, detalle jsonb, created_at` | Histórico imutável de cada transição |
+| `autorizaciones_operacion` | inexistente | D-11. `id, empresa_id, operacion_tipo` (`AJUSTE_STOCK` \| `PAGO` \| `NOTA_CREDITO` \| `ANULACION_FACTURA`), `objeto_tipo, objeto_id, objeto_huella` (hash do conteúdo da operação), `solicitante_id, beneficiario_id, justificacion, documento_respaldo_id, estado` (`SOLICITADA` \| `AUTORIZADA` \| `RECHAZADA` \| `CANCELADA` \| `EXPIRADA` \| `CONSUMIDA`), `autorizador_plataforma_id, decidido_at, valida_hasta, consumida_at, version, created_at` | Um registro por operação (§4.7.11); histórico em `autorizaciones_operacion_eventos` (imutável) |
+| `parametros_concesion`, `parametros_concesion_historial` | inexistentes | D-12. `clave, valor, empresa_id` (nulo = padrão da plataforma), `version, vigente_desde, modificado_por, motivo`; o histórico guarda valor anterior, valor novo, ator, motivo e hora | Só inserção no histórico; limites rígidos no código (§4.7.8) |
+| `usuario_poder_eventos` | inexistente | `empresa_id, usuario_id, permiso_id, evento` (`CONCEDIDO` \| `RETIRADO`), `origen` (perfil, concessão ou plataforma), `atribuido_por, created_at` (relógio do banco) | Base única da antiguidade do poder de aprovar (IND-06, §4.7.8); só inserção |
 | `auditoria_acceso` | inexistente no código | `id, empresa_id, actor_tipo` (`USUARIO` \| `PLATAFORMA`), `actor_id, accion, entidad, entidad_id, antes jsonb, despues jsonb, motivo, ip, user_agent, created_at` | Só inserção (§9) |
 | `usuarios_plataforma`, `accesos_soporte` | inexistentes | Contas PROCEIT com MFA; concessões de suporte com prazo | §4.6 |
 
@@ -179,6 +197,7 @@ Valem para qualquer operação de administração, inclusive as feitas por quem 
 | ESC-13 | **Nenhum perfil contém permissão controlada:** criar ou editar um perfil com `DATO_SENSIBLE` ou `ACCION_CRITICA` é recusado, seja ele administrador ou não | 422 |
 | ESC-14 | **Independência (D-10):** o aprovador de uma concessão precisa ser independente do solicitante **e** do beneficiário, pelas regras IND-01 a IND-07 (§4.7.3), verificadas na aprovação e de novo no uso | 403, com a regra IND violada no evento |
 | ESC-15 | **Segregação na operação (D-09):** quem cria ou solicita uma operação crítica (ajuste, pagamento, nota de crédito, anulação de fatura) não a aprova. "Mesma pessoa" = mesma conta **ou** mesma identidade (IND-04). A checagem acontece no servidor, dentro da transação da aprovação, com alcance de empresa/sucursal/depósito | 403 |
+| ESC-16 | **Operação crítica sem aprovador independente (D-11):** se não há conta que cumpra IND-01 a IND-07, a operação só executa com autorização formal da PROCEIT **para aquela operação** (§4.7.11), de uso único e ligada ao objeto e à versão | 403 ou 409, com a regra no evento |
 
 ### 4.3 Versão e auditoria
 - Cada mudança de perfis, alcance ou estado incrementa `usuarios.version_acceso`. Cada mudança de permissões de um perfil incrementa `perfiles.version`.
@@ -205,6 +224,7 @@ Valem para qualquer operação de administração, inclusive as feitas por quem 
 - Suporte dentro de uma empresa: concessão em `accesos_soporte`, com empresa, motivo, permissões (somente leitura por padrão) e expiração (padrão: 60 minutos). O acesso aparece na auditoria **da própria empresa** e pode ser revogado antes do prazo.
 - Uma conta de plataforma não usa as telas da empresa sem uma concessão ativa.
 - **Aprovação formal de concessão controlada pela PROCEIT:** só pelo procedimento do §4.7.5, com a permissão de plataforma `PLATAFORMA.CONCESIONES_APROBAR`, por uma pessoa da PROCEIT identificada, com MFA. A conta de plataforma nunca é beneficiária de concessão de empresa.
+- **Autorização por operação (D-11, §4.7.11):** `PLATAFORMA.OPERACIONES_AUTORIZAR`. **Parâmetros de concessão (D-12, §4.7.8):** `PLATAFORMA.PARAMETROS_CONCESION_EDITAR`. As duas exigem MFA recente e motivo.
 
 ### 4.7 Concessões controladas (D-09, D-10)
 
@@ -230,9 +250,10 @@ Para **dado sensível (D-10)**, solicitante, aprovador e beneficiário são semp
 | `REVOGADA` | Não (a partir da próxima requisição) | Retirada, com motivo | Solicitante, aprovador, administrador com a permissão `*.ASIGNAR` da classe ou PROCEIT; também automática quando o beneficiário é bloqueado ou recebe baixa |
 | `EXPIRADA` | Não | Fim da vigência ou solicitação sem decisão no prazo | Automático (verificado na leitura; nenhum processo apaga dados) |
 
-- Vigência proposta: dado sensível 180 dias; ação crítica 365 dias; solicitação sem decisão expira em 7 dias. Os prazos são configuráveis por empresa, nunca sem limite. Renovar = nova solicitação.
+- **Vigência aprovada (D-12):** dado sensível 180 dias; ação crítica 365 dias; solicitação sem decisão expira em 7 dias. Os valores são parâmetros controlados (§4.7.8), nunca sem limite. A vigência (`vigente_hasta`) é gravada na aprovação, a partir do instante da decisão, e não muda quando o parâmetro muda depois. Renovar = nova solicitação (§4.7.9).
+- Um prazo não é direito: bloqueio, revogação ou expiração retiram a capacidade na próxima requisição (§4.7.6, §8.2).
 - Transições permitidas: `SOLICITADA → APROBADA | REJEITADA | CANCELADA | EXPIRADA`; `APROBADA → REVOGADA | EXPIRADA`. Os estados finais não mudam mais.
-- Não existe solicitação duplicada: uma única concessão `SOLICITADA` ou `APROBADA` por beneficiário × permissão (índice único parcial, proposto).
+- Não existe solicitação duplicada: uma única concessão `SOLICITADA` ou `APROBADA` por beneficiário × permissão (índice único parcial, proposto). A renovação (§4.7.9) é a única exceção: pode existir uma `SOLICITADA` de renovação enquanto a anterior está `APROBADA`.
 
 #### 4.7.3 Regras de independência (ESC-14)
 O aprovador `A` é independente do solicitante `S` e do beneficiário `B` somente se **todas** valerem, para cada par (A,S) e (A,B):
@@ -244,12 +265,12 @@ O aprovador `A` é independente do solicitante `S` e do beneficiário `B` soment
 | IND-03 | **Linhagem de poder:** o perfil ou a concessão que dá a `A` o poder de aprovar não foi atribuído por `S` nem por `B`, nem por uma conta descendente deles | Um operador dar poder de aprovação a uma conta que ele controla |
 | IND-04 | **Identidade:** `A`, `S` e `B` têm `documento_hash` e e-mail verificado distintos; contas sem identidade verificada não aprovam | Duas contas da mesma pessoa |
 | IND-05 | **MFA:** `A` tem MFA ativo, e a aprovação exige um fator novo naquele momento | Uso da sessão de outra pessoa |
-| IND-06 | **Antiguidade:** `A` tem o poder de aprovar há pelo menos 7 dias (proposta, configurável) | Montar uma estrutura e aprovar no mesmo dia |
+| IND-06 | **Antiguidade (D-12):** `A` tem o poder de aprovar, de forma contínua, há pelo menos 7 dias, medidos em `usuario_poder_eventos` com o relógio do banco (§4.7.8). Não se contorna por troca de conta, perfil ou administrador, nem por parâmetro alterado depois | Montar uma estrutura e aprovar no mesmo dia |
 | IND-07 | **Estado:** `A`, `S` e `B` estão ativos, na mesma empresa, e o alcance da permissão é compatível com o de `B` | Aprovação a conta bloqueada ou fora do alcance |
 
 Consequência prática: numa empresa em que todas as contas foram criadas pelo único administrador, nenhuma conta é independente dele, e as concessões em que ele participa (como solicitante ou beneficiário) seguem a exceção formal do §4.7.5. O caminho recomendado é o onboarding com aprovador independente criado pela plataforma (§4.4, passo 3).
 
-Limite que regra técnica não fecha: duas **pessoas reais** diferentes que combinam fraudar. Esse risco é tratado por auditoria, relatório periódico e responsabilidade contratual da empresa (§13).
+**O que IND-01 a IND-07 não garantem.** São controles de detecção e bloqueio de relações **registradas no sistema**. Não provam que duas contas são pessoas diferentes, nem que a mesma pessoa não tem outra identidade. A evidência exigida e os limites estão no §4.7.10. Conluio entre duas pessoas reais não é bloqueável por regra técnica; é tratado por auditoria, relatório periódico, revisão humana e responsabilidade contratual da empresa (§13).
 
 #### 4.7.4 Aprovação sem condição de corrida
 Tudo numa única transação (`withTenantTx`):
@@ -265,7 +286,8 @@ Duas aprovações simultâneas: a segunda espera a trava, encontra `APROBADA` e 
 2. A empresa envia um pedido formal, assinado pelo representante legal registrado no onboarding. O documento fica vinculado à solicitação (`documento_respaldo_id`, armazenado no módulo de arquivos da empresa).
 3. Uma pessoa da PROCEIT, identificada pelo nome na conta de plataforma, com MFA e `PLATAFORMA.CONCESIONES_APROBAR`, confere o documento e aprova ou recusa pelo mesmo procedimento do §4.7.4. A aprovação registra `aprobador_tipo = PLATAFORMA`.
 4. A pessoa da PROCEIT não pode ser beneficiária nem ter acesso aos dados concedidos; a decisão aparece na auditoria **da empresa**.
-5. Junto com a decisão, a PROCEIT recomenda o cadastro de um aprovador independente (§4.4, passo 3) para que a exceção não vire rotina. Um relatório da plataforma lista as empresas que dependem da exceção.
+5. A exceção **não dispensa** MFA, aprovação formal nem auditoria (D-12, condição 5). A aprovação da PROCEIT vale também com o antigo prazo: vigência e expiração são as do §4.7.2.
+6. Junto com a decisão, a PROCEIT recomenda o cadastro de um aprovador independente (§4.4, passo 3) para que a exceção não vire rotina. Um relatório da plataforma lista as empresas que dependem da exceção.
 
 #### 4.7.6 Uso, revalidação e revogação
 - **Uso:** toda leitura de dado sensível e toda execução de ação crítica revalida a concessão **dentro da transação** (`SELECT … FOR SHARE` na linha da concessão: estado `APROBADA`, vigência, beneficiário ativo, alcance). Sem isso, nada é devolvido: a API não retorna o campo sensível, nem mascarado com dígitos reais. Também não há prévia para o aprovador, que decide sobre o acesso, não sobre os dados.
@@ -274,7 +296,7 @@ Duas aprovações simultâneas: a segunda espera a trava, encontra `APROBADA` e 
 - **Perda de independência depois da aprovação** (por exemplo, o aprovador recebeu o mesmo documento por correção cadastral): a concessão é marcada para revisão no relatório; não é revogada sozinha, para não interromper a operação sem decisão humana.
 - **Registro de cada transição:** solicitação, solicitante, aprovador e tipo, beneficiário, motivo, empresa, permissão, horários, decisão, vigência, revogação e quem revogou. Nunca o conteúdo do dado sensível.
 
-#### 4.7.7 Segregação nas operações críticas (ESC-15)
+#### 4.7.7 Segregação nas operações críticas (ESC-15) e empresa com único operador (D-11)
 | Operação | Quem cria | Quem aprova ou executa a ação crítica |
 |---|---|---|
 | Ajuste de estoque | `AJUSTES_STOCK.CREAR` | Concessão `AJUSTES_STOCK.APROBAR`; nem a mesma conta nem a mesma identidade de quem criou |
@@ -282,8 +304,64 @@ Duas aprovações simultâneas: a segunda espera a trava, encontra `APROBADA` e 
 | Nota de crédito | `NOTAS_CREDITO.CREAR` | Concessão `NOTAS_CREDITO.APROBAR`; idem |
 | Anulação de fatura | Solicitação de anulação (`FACTURAS.VER` + motivo) | Concessão `FACTURAS.ANULAR`; não pode ser quem emitiu a fatura nem quem pediu a anulação |
 
-Uma empresa com um único operador não consegue cumprir a segregação. Proposta, a decidir: uma exceção formal por empresa, aprovada pela PROCEIT pelo mesmo procedimento do §4.7.5 e revisada periodicamente (decisão pendente **D-11**).
+**Quando a D-11 se aplica.** No momento de aprovar ou executar uma operação crítica, o sistema procura uma conta que cumpra IND-01 a IND-07 em relação a quem criou o registro. Se existir, vale a segregação normal acima. Se **não existir** (empresa com um único operador, ou sem segunda pessoa independente), a operação **não** pode ser aprovada na empresa: exige a autorização formal da PROCEIT **para aquela operação** (§4.7.11). O sistema decide o canal, não o operador: não há campo, perfil, flag ou parâmetro da empresa que faça a D-11 deixar de valer.
 
+Isto não é uma permissão geral. A concessão `*.APROBAR` do §4.7.1 continua necessária para o beneficiário **e** a autorização por operação passa a ser obrigatória adicionalmente nesse caso: uma sem a outra não executa nada. A autorização PROCEIT de uma operação não vira concessão permanente nem cobre a operação seguinte, mesmo igual.
+
+#### 4.7.8 Parametrização controlada (D-12)
+| Parâmetro | Valor aprovado | Limite rígido (no código) | Quem altera |
+|---|---|---|---|
+| `concesion_dias_dato_sensible` | 180 | de 1 a 180 | PROCEIT |
+| `concesion_dias_accion_critica` | 365 | de 1 a 365 | PROCEIT |
+| `solicitud_dias_decision` | 7 | de 1 a 7 | PROCEIT |
+| `aprobador_antiguedad_dias` | 7 | de 7 a 90 | PROCEIT |
+
+- **Onde ficam:** `parametros_concesion` (padrão da plataforma). Uma empresa pode receber, por pedido formal à PROCEIT, valor **mais restritivo** que o padrão (prazo menor, antiguidade maior). Valor mais frouxo que o aprovado, ou fora do limite rígido, só muda com **nova decisão do responsável** registrada no GitHub e nova versão deste desenho. O teto não é editável por tela nem por API.
+- **Quem pode alterar:** pessoa da PROCEIT com a permissão de plataforma `PLATAFORMA.PARAMETROS_CONCESION_EDITAR` e MFA recente. Nenhuma permissão de empresa, nem `CONFIGURACION.EDITAR`, altera estes parâmetros.
+- **Cada alteração exige motivo** e grava: parâmetro, valor anterior, valor novo, versão, ator, motivo, hora e IP, em `parametros_concesion_historial` (só inserção) e em `auditoria_acceso`. Uma alteração sem motivo → 422; fora do limite → 422; sem a permissão → 403.
+- **Sem efeito retroativo.** O valor muda só para as aprovações **posteriores**. A concessão `APROBADA` guarda o `vigente_hasta` calculado na aprovação e a versão do parâmetro usada. Para encurtar uma concessão existente é preciso revogá-la (§4.7.6), com motivo.
+- **Antiguidade não contornável (D-12, condição 4):** a contagem vem de `usuario_poder_eventos`, escrita só pelo servidor com o relógio do banco; o cliente nunca informa a data. A contagem recomeça se o poder for retirado e dado de novo, se o aprovador trocar de conta, de perfil de origem ou de empresa, ou se a identidade (documento) mudar. Reduzir o parâmetro não adianta além do piso de 7 dias do código; aumentá-lo vale para as decisões futuras.
+- Os testes usam um relógio injetável para os casos de limite (§11.11).
+
+#### 4.7.9 Renovação, expiração e urgência
+- **Renovação:** só por nova solicitação e nova aprovação, pelas regras de D-09 e D-10 (inclusive independência e MFA). Nada é renovado automaticamente. Enquanto a renovação está `SOLICITADA`, a concessão anterior segue até o seu `vigente_hasta`; ao aprovar a renovação, a vigência nova conta da decisão e a anterior passa a `EXPIRADA` (motivo `RENOVADA`). Se vencer antes da decisão, o beneficiário fica sem acesso.
+- **Aviso:** um relatório lista as concessões que vencem em breve (janela inicial a confirmar pelo responsável), para pedir a renovação a tempo.
+- **Expiração:** verificada na leitura e no uso (`now() > vigente_hasta` ou `now() > created_at + solicitud_dias_decision`); nenhuma tarefa agendada é necessária para negar acesso. O estado `EXPIRADA` é gravado na primeira leitura ou pelo relatório.
+- **Urgência:** não existe atalho. A urgência usa o mesmo fluxo pelo canal `PLATAFORMA` (§4.7.5): pedido formal, documento, aprovador PROCEIT com MFA e auditoria. Não encurta a antiguidade, não altera parâmetros e não cria concessão sem registro. O motivo "urgente" fica no pedido. Se faltar um aprovador com a antiguidade exigida, a PROCEIT aprova como no §4.7.5; não se rebaixa IND-06.
+
+#### 4.7.10 Evidências de independência e limites da verificação de identidade (R04-F-002)
+**Evidência exigida para uma conta poder ser aprovadora independente** (registrada no onboarding ou na mudança, e conferida por pessoa da PROCEIT):
+1. Identificação oficial do titular (tipo de documento, número só como `documento_hash` com chave da plataforma, país e data da conferência) e referência à evidência arquivada, conferida pelo nome do responsável da PROCEIT que verificou.
+2. Verificação do e-mail e MFA cadastrado (data do cadastro do fator).
+3. Origem autenticada da conta (`creado_por`, `creado_por_tipo`) e do poder de aprovar (`usuario_poder_eventos.atribuido_por`).
+4. Declaração da empresa de que o aprovador não é subordinado nem representante do solicitante para este fim (documento vinculado).
+5. Revisão periódica humana da lista de aprovadores e de concessões (frequência a definir pelo responsável; proposta: semestral), com registro de quem revisou.
+
+**Contas sem origem conhecida** (importadas, criadas por SQL ou migradas, sem `creado_por`) recebem `creado_por_tipo = IMPORTADO` e **não aprovam** até uma conferência humana registrada.
+
+**O que isto não garante** (declarado, não escondido):
+- O sistema não consegue provar que um documento é autêntico, nem que a pessoa que o apresenta é o titular. Um documento falso, ou uma pessoa com dois documentos válidos, passa por IND-04.
+- Duas contas com identidades diferentes podem ser usadas pela mesma pessoa, ou por pessoas que combinam (conluio). O compartilhamento de credenciais e de dispositivo MFA não é detectável com certeza.
+- Vínculos criados fora do sistema (parentesco, subordinação, acordos) não aparecem em `creado_por`.
+- A linhagem de contas **reduz** o risco de autoconcessão pelo mesmo operador; não o elimina. A mitigação final é humana: conferência de identidade, revisão periódica, relatório de concessões e responsabilidade contratual.
+- Com a PROCEIT sendo hoje uma empresa de uma única pessoa, a autorização por operação (§4.7.11) e a edição dos parâmetros dependem da mesma pessoa. Isso é uma concentração de função: compensada por MFA, auditoria na empresa e na plataforma, assinatura do documento pela empresa e revisão pelo responsável, e deve ser reavaliada se a equipe crescer.
+
+#### 4.7.11 Autorização formal por operação (D-11)
+**Estados:** `SOLICITADA → AUTORIZADA | RECHAZADA | CANCELADA | EXPIRADA`; `AUTORIZADA → CONSUMIDA | EXPIRADA | CANCELADA`. `CONSUMIDA`, `RECHAZADA`, `CANCELADA` e `EXPIRADA` são finais. Só `AUTORIZADA` e vigente permite executar, uma vez.
+
+1. **Solicitação.** O operador cria a operação crítica (ela fica pendente e sem efeito). O sistema detecta que não há aprovador independente (§4.7.7), cria a `autorizaciones_operacion` com: empresa, operador (solicitante e beneficiário), tipo de operação, objeto e sua `objeto_huella`, justificativa (obrigatória) e o documento formal de respaldo da empresa, assinado pelo representante legal. Sem documento ou sem justificativa → 422.
+2. **Análise.** Pessoa da PROCEIT identificada, com MFA recente e `PLATAFORMA.OPERACIONES_AUTORIZAR`, confere o documento e a operação e decide, com motivo. Não pode ser beneficiária, nem ter dado da empresa por outra concessão.
+3. **Decisão tomada numa única transação**, com `FOR UPDATE` na autorização e `FOR SHARE` em empresa e operador (§4.7.4, §8.3). Duas decisões simultâneas: a segunda recebe 409. Se a operação mudou desde a solicitação (a `objeto_huella` já não bate) → 409 e é preciso nova solicitação.
+4. **Execução.** Na transação da execução: `SELECT … FOR UPDATE` na autorização; precisa estar `AUTORIZADA`, da mesma empresa, do mesmo executor, do mesmo `objeto_id` e da mesma `objeto_huella` **calculada naquele instante**, e dentro de `valida_hasta`. Então marca `CONSUMIDA` com `consumida_at` e executa a operação no mesmo commit. Qualquer falha desfaz tudo; a autorização só vira `CONSUMIDA` junto com a operação. Uma segunda execução (replay) encontra `CONSUMIDA` → 409.
+5. **Validade da autorização.** `valida_hasta` é pequena e configurável (valor inicial **proposto** em 72 horas; **a confirmar pelo responsável**, pois a D-12 não fixou este prazo). Solicitação sem decisão expira em `solicitud_dias_decision` (7 dias). Se a PROCEIT **rejeita**, a operação não é aprovada nem executada; ela permanece pendente até ser cancelada ou corrigida e solicitada de novo.
+6. **Registro.** Cada transição grava solicitante, beneficiário, responsável PROCEIT, data e hora, decisão, motivo, documento vinculado e ID da operação, **na auditoria da empresa** (`auditoria_acceso`) **e** na trilha da plataforma. Eventos: `AUTORIZACION_OPERACION_SOLICITADA/AUTORIZADA/RECHAZADA/CANCELADA/EXPIRADA/CONSUMIDA`.
+7. **Não vira regra permanente.** Não existe "autorizar todas as operações deste tipo", nem autorização com validade de dias, nem reuso por outra operação com o mesmo valor.
+8. **Empresa com mais de um operador.** Se existe conta independente (IND-01 a IND-07), esse fluxo não se aplica e vale a segregação normal. Se a independência existente deixar de valer (aprovador bloqueado, por exemplo), o sistema volta a exigir a autorização PROCEIT; a verificação é feita a cada operação, não uma vez só.
+
+#### 4.7.12 Revogação (D-11 e D-12)
+- A revogação de uma concessão (§4.7.6) vale na próxima requisição. Uma `autorizaciones_operacion` `AUTORIZADA` do beneficiário revogado, bloqueado ou com baixa passa a `CANCELADA` na mesma transação.
+- A PROCEIT pode cancelar uma autorização `AUTORIZADA` ainda não consumida, com motivo.
+- Alterar um parâmetro (§4.7.8) nunca encurta nem prolonga concessão existente; só a revogação e a expiração retiram o acesso.
 
 ## 5. Isolamento completo entre empresas (F-004, RN-01, RN-02, RN-11)
 
@@ -495,6 +573,8 @@ Nenhuma informação de autorização é guardada fora do banco: o cookie só te
 | EMPRESA_SUSPENDIDA / REACTIVADA, SOPORTE_ACCESO_* | ator de plataforma, motivo, prazo |
 | ACCESO_DENEGADO (`eventos_seguridad`) | permissão ou regra violada, rota, ID solicitado |
 | CONCESION_SOLICITADA / APROBADA / RECHAZADA / CANCELADA / REVOCADA / EXPIRADA | concessão, permissão, classe, beneficiário, solicitante, aprovador e tipo, motivo, vigência, regra IND violada (se recusada pelo sistema) |
+| AUTORIZACION_OPERACION_* | solicitada, autorizada, rechazada, cancelada, expirada, consumida: operação, objeto, `objeto_huella`, solicitante, beneficiário, responsável PROCEIT, motivo, documento (§4.7.11) |
+| PARAMETRO_CONCESION_CAMBIADO | parâmetro, valor anterior e novo, versão, ator de plataforma, motivo |
 | ACCION_CRITICA_EJECUTADA | permissão, registro afetado, criador do registro, executor |
 | DATO_SENSIBLE_CONSULTADO | recurso sensível e ID (contas bancárias, crédito, custo) |
 | TRANSFERENCIA_* | envio, recebimento, cancelamento e conciliação (D-08) |
@@ -679,6 +759,9 @@ Permissões de módulos ainda AUSENTES ou DEMO entram no teste quando o módulo 
 | Uso de ação crítica com concessão vigente por outra conta com o mesmo documento de quem criou | ESC-15, IND-04 | 403 |
 | Uso de ação crítica por usuário independente, com concessão e alcance | ESC-15 | OK; evento `ACCION_CRITICA_EJECUTADA` |
 | Ação crítica em depósito ou sucursal fora do alcance do beneficiário | §6.3 | 403 |
+| Concessão de dado sensível aprovada: `vigente_hasta` = aprovação + 180 dias; de ação crítica: + 365 | §4.7.2 | Valores exatos gravados |
+| Renovação aprovada sem nova solicitação | §4.7.9 | Não existe: nada se renova sozinho; sem acesso depois do vencimento |
+| Renovação solicitada e aprovada com a anterior vigente | §4.7.9 | Nova vigência conta da decisão; anterior `EXPIRADA` (`RENOVADA`) |
 
 ### 11.10 Tentativas de contornar (contas alternativas e perfis)
 | Tentativa | Regra | Esperado |
@@ -697,6 +780,70 @@ Permissões de módulos ainda AUSENTES ou DEMO entram no teste quando o módulo 
 | Conta de plataforma tenta ser beneficiária | §4.7.5 | 422 |
 | Aprovação da PROCEIT | §4.7.5 | `aprobador_tipo = PLATAFORMA`, nome da pessoa e documento de respaldo na auditoria da empresa |
 | Cada tentativa negada acima | §4.3 | Evento `ACCESO_DENEGADO` com a regra; nenhuma mudança de estado |
+
+### 11.11 Prazos, parâmetros e renovação (D-12)
+Todos os testes usam relógio injetável.
+| Teste | Regra | Esperado |
+|---|---|---|
+| Concessão de dado sensível: leitura em 179d23h, em 180d | §4.7.2 | OK; 403 e `EXPIRADA` |
+| Concessão de ação crítica: execução em 364d23h, em 365d | §4.7.2 | OK; 403 e `EXPIRADA` |
+| Aprovação de solicitação em 6d23h, em 7d | §4.7.2 | OK; 409 e `EXPIRADA` |
+| Aprovador com poder há 6d23h, há 7d | IND-06 | 403; OK |
+| Aprovador perde o poder e o recebe de novo: aprova no dia seguinte | §4.7.8 | 403 (contagem recomeçou) |
+| Aprovador muda de perfil de origem ou de conta | §4.7.8 | Contagem recomeça |
+| Aprovação com cliente informando `poder_desde` antigo (corpo ou cabeçalho) | §4.7.8 | Ignorado; relógio do banco |
+| Reduzir `aprobador_antiguedad_dias` para 0 ou 3 | §4.7.8 | 422 (piso 7) |
+| Elevar `concesion_dias_dato_sensible` para 181 ou `concesion_dias_accion_critica` para 366 | §4.7.8 | 422 (teto) |
+| Alterar parâmetro sem motivo | §4.7.8 | 422 |
+| Alterar parâmetro com `CONFIGURACION.EDITAR` da empresa | §4.7.8 | 403 |
+| Alterar parâmetro por plataforma com MFA e motivo | §4.7.8 | OK; histórico com valor anterior, novo, versão, ator |
+| Parâmetro encurtado depois: concessão existente | §4.7.8 | Mantém `vigente_hasta` gravado; só revogação a encurta |
+| Parâmetro de antiguidade aumentado: aprovação em curso | §4.7.8 | Valor em vigor no instante da decisão |
+| Concessão vencida, nova solicitação, aprovação | §4.7.9 | Nova `APROBADA`; a vencida segue `EXPIRADA` |
+| Aprovador pela exceção PROCEIT sem MFA recente | D-12.5 | 403 |
+| Urgência: pedido pelo canal `PLATAFORMA` sem documento | §4.7.9 | 422 |
+| Urgência: tentativa de aprovar com aprovador de 2 dias "por urgência" | §4.7.9 | 403 |
+| Revogação durante a vigência | §4.7.12 | 403 na próxima requisição; autorização por operação do beneficiário vira `CANCELADA` |
+| Relatório de concessões que vencem | §4.7.9 | Lista as corretas, sem dados sensíveis |
+
+### 11.12 Operação crítica em empresa com único operador (D-11)
+| Teste | Regra | Esperado |
+|---|---|---|
+| Único operador cria e tenta aprovar o próprio pagamento | §4.7.7 | 403; operação segue pendente e sem efeito |
+| Mesmo, com concessão `PAGOS.APROBAR` já aprovada | §4.7.7 | 403 sem `AUTORIZADA` da PROCEIT |
+| Operador cria outra conta e aprova por ela | IND-02, §4.7.7 | 403 |
+| Operador tenta marcar a empresa como "com mais operadores" por campo, perfil ou parâmetro | §4.7.7 | Ignorado; o canal vem do sistema |
+| Solicitação sem justificativa, sem documento ou documento de outra empresa | §4.7.11 | 422 |
+| PROCEIT autoriza com MFA, documento e motivo | §4.7.11 | `AUTORIZADA`; auditoria na empresa e na plataforma com todos os campos |
+| PROCEIT autoriza sem `OPERACIONES_AUTORIZAR` ou sem MFA recente | §4.7.11 | 403 |
+| PROCEIT rejeita | §4.7.11 | `RECHAZADA`; operação não executa |
+| Execução com `AUTORIZADA` e objeto igual | §4.7.11 | OK; `CONSUMIDA` junto com a operação |
+| Reuso: segunda execução com a mesma autorização | §4.7.11 | 409 |
+| Reuso: a mesma autorização para outra operação igual (outro `objeto_id`) | §4.7.11 | 403 |
+| Operação alterada (valor, itens) depois da autorização | §4.7.11 | 409 (`objeto_huella`) |
+| Execução depois de `valida_hasta`; de 7 dias sem decisão | §4.7.11 | 403 e `EXPIRADA` |
+| Autorização de empresa A usada na empresa B | §5 | 404/403 |
+| Duas execuções simultâneas com a mesma autorização | §4.7.11 | Uma OK, a outra 409; operação executada uma vez |
+| Decisão da PROCEIT e cancelamento do operador simultâneos | §4.7.11 | Só um vence; o outro 409 |
+| Falha na execução depois de consumir | §4.7.11 | Rollback: autorização segue `AUTORIZADA` |
+| Operador é bloqueado com autorização `AUTORIZADA` | §4.7.12 | `CANCELADA` na mesma transação |
+| Empresa passa a ter aprovador independente | §4.7.11 (8) | Segregação normal; sem exigir PROCEIT |
+| Aprovador independente é bloqueado | §4.7.11 (8) | Volta a exigir PROCEIT, na próxima operação |
+| Pessoa da PROCEIT tenta ser beneficiária | §4.6 | 422 |
+
+### 11.13 Evidência de independência e limites (R04-F-002)
+| Teste | Regra | Esperado |
+|---|---|---|
+| Aprovador com identidade duplicada (mesmo `documento_hash`) | IND-04 | 403 |
+| Aprovador sem identidade verificada | §4.7.10 | 403 |
+| Aprovador com e-mail não verificado | §4.7.10 | 403 |
+| Conta importada (`IMPORTADO`) sem conferência humana | §4.7.10 | 403 |
+| Conta importada após conferência humana registrada | §4.7.10 | Elegível, se IND-01 a IND-07 valerem |
+| Vínculo criado fora do sistema (inserção direta sem `creado_por`) | §4.7.10 | Tratado como `IMPORTADO` |
+| Conta criada pela plataforma sem documento de respaldo | §4.7.10 | Não elegível |
+| Mudança de `documento_hash` de aprovador existente | §4.7.8 | Poder recomeça a contar; relatório de revisão |
+| Relatório periódico de aprovadores e concessões | §4.7.10 | Lista com origem, verificador e data; marca contas sem revisão |
+| Nenhum teste automatizado prova independência de pessoas | §4.7.10 | **Limite declarado:** cobertura só das relações registradas |
 
 ## 12. APIs e telas de administração (fase 4)
 
@@ -740,4 +887,7 @@ Telas: `/administracion/usuarios` (lista, novo, detalhe com abas Datos, Perfiles
 | Identidade falsa no cadastro (documento de outra pessoa) | Aprovadores só com identidade verificada; o aprovador independente recomendado é criado pela plataforma no onboarding, com conferência de documento |
 | Conluio entre duas pessoas reais | Não é bloqueável por regra técnica; mitigado por auditoria, relatório periódico de concessões e responsabilidade da empresa |
 | Empresas pequenas dependentes da exceção PROCEIT | Custo operacional para a PROCEIT; mitigado pelo aprovador independente no onboarding e pelo relatório de empresas em exceção |
-| Segregação impossível em empresa de um só operador | Decisão pendente D-11 (§4.7.7) |
+| Segregação impossível em empresa de um só operador | D-11 aprovada: autorização PROCEIT por operação (§4.7.7, §4.7.11) |
+| PROCEIT, hoje de uma só pessoa, concentra autorização por operação e edição de parâmetros | MFA, auditoria na empresa e na plataforma, documento assinado da empresa, revisão do responsável; reavaliar com equipe maior (§4.7.10) |
+| Bloqueio operacional por prazos curtos ou por dependência da PROCEIT | Relatório de vencimentos, renovação antecipada, processo de urgência formal (§4.7.9); valores revisáveis por nova decisão |
+| Identidade falsa, dupla ou conluio | Limites declarados em §4.7.10; conferência humana e revisão periódica; sem alegar eliminação do risco |

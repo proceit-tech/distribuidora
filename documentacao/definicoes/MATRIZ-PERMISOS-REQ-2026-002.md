@@ -1,6 +1,6 @@
 # MATRIZ-PERMISOS-REQ-2026-002 — Matriz de permissões proposta
 
-Requisito: REQ-2026-002 (RN-04 a RN-08, D-02, D-04) · Autor: Claude · Data: 2026-10-08 · Versão 4 (decisões D-09 e D-10 e AUD-REQ-2026-002-R03; histórico na §9)
+Requisito: REQ-2026-002 (RN-04 a RN-08, D-02, D-04) · Autor: Claude · Data: 2026-10-09 · Versão 5 (decisões D-11 e D-12 e AUD-REQ-2026-002-R04; histórico na §9)
 Situação: **D-04 APROVADA CONDICIONALMENTE** pelo responsável (`DECISOES-REQ-2026-002-APROVACAO.md`): a matriz precisa da revisão por área de negócio (§8) e dos testes por operação antes da implementação. Os perfis da §3 são ilustrativos, como diz o REQ; nenhum é obrigatório. O catálogo real de `permisos` no banco é NAO_VERIFICADO e será conciliado com esta matriz na fase 0 (`DESENHO-REQ-2026-002-multiempresa.md` §10).
 
 ## 1. Ações
@@ -92,7 +92,7 @@ Coluna "Hoje": situação atual da tela (ver `MAPA-MODULOS.md` no REQ-2026-001).
 | `CONFIGURACION` | ● | — | ● | — | — | — | — | — | E | AUSENTE | Fora deste REQ |
 | `AUDITORIA` | ● | — | — | — | — | ● | — | — | E | AUSENTE | Só leitura |
 
-Total proposto: **39 recursos e 142 permissões** (contagem dos ● acima), mais 6 de plataforma. Mudanças por versão na §9.
+Total proposto: **39 recursos e 142 permissões** (contagem dos ● acima), mais 8 de plataforma. Mudanças por versão na §9.
 
 ### 2.1 Classes de permissão (desenho §4.1)
 
@@ -106,7 +106,7 @@ Total proposto: **39 recursos e 142 permissões** (contagem dos ● acima), mais
 As 9 permissões `DATO_SENSIBLE` e `ACCION_CRITICA` ("controladas") nunca são implícitas em outra: `PROVEEDORES.VER` não mostra contas bancárias; `PRODUCTOS.VER` não mostra custo; `PAGOS.CREAR` não aprova; ser administrador não dá nenhuma delas (D-02, D-06, D-09).
 
 ### Permissões de plataforma (fora do alcance das empresas — D-03)
-`PLATAFORMA.EMPRESAS_VER`, `PLATAFORMA.EMPRESAS_CREAR`, `PLATAFORMA.EMPRESAS_SUSPENDER`, `PLATAFORMA.PERMISOS_ADMINISTRAR`, `PLATAFORMA.SOPORTE_ACCESO`, `PLATAFORMA.CONCESIONES_APROBAR` (exceção formal do desenho §4.7.5). Ficam só para `usuarios_plataforma` (com MFA obrigatório); a API de perfis de empresa rejeita esses códigos com 422 (ESC-09). Uso de `PLATAFORMA.SOPORTE_ACCESO` exige motivo e prazo e aparece na auditoria da empresa (desenho §4.6).
+`PLATAFORMA.EMPRESAS_VER`, `PLATAFORMA.EMPRESAS_CREAR`, `PLATAFORMA.EMPRESAS_SUSPENDER`, `PLATAFORMA.PERMISOS_ADMINISTRAR`, `PLATAFORMA.SOPORTE_ACCESO`, `PLATAFORMA.CONCESIONES_APROBAR` (exceção formal do desenho §4.7.5), `PLATAFORMA.OPERACIONES_AUTORIZAR` (autorização formal por operação crítica, D-11, desenho §4.7.11) e `PLATAFORMA.PARAMETROS_CONCESION_EDITAR` (prazos e antiguidade, D-12, desenho §4.7.8). São 8. Ficam só para `usuarios_plataforma` (com MFA obrigatório); a API de perfis de empresa rejeita esses códigos com 422 (ESC-09). Uso de `PLATAFORMA.SOPORTE_ACCESO` exige motivo e prazo e aparece na auditoria da empresa (desenho §4.6).
 
 ## 3. Perfis de referência (ilustrativos)
 
@@ -151,7 +151,9 @@ Alcance sugerido nos exemplos: Ventas e Finanzas por **sucursal**; Depósito por
 
 **† = não faz parte do perfil.** É uma concessão individual típica para quem exerce aquela função, solicitada e aprovada pelo fluxo do desenho §4.7 (D-09, D-10). O perfil de exemplo contém só o que não tem †. `PAGOS.ANULAR` (sem †) é operacional; `FACTURAS.ANULAR` é ação crítica.
 
-Segregação de funções (D-09, ESC-15): nas 4 ações críticas, quem cria ou solicita não aprova, **sem exceção para o administrador**. Para as aprovações operacionais (`SOLICITUDES_COMPRA.APROBAR`, `ORDENES_COMPRA.APROBAR`, `PEDIDOS.APROBAR` etc.), a mesma regra é proposta e fica para a revisão por área (§8). Empresas de um único operador: decisão pendente D-11 (desenho §4.7.7).
+Segregação de funções (D-09, ESC-15): nas 4 ações críticas, quem cria ou solicita não aprova, **sem exceção para o administrador**. Para as aprovações operacionais (`SOLICITUDES_COMPRA.APROBAR`, `ORDENES_COMPRA.APROBAR`, `PEDIDOS.APROBAR` etc.), a mesma regra é proposta e fica para a revisão por área (§8). Empresas de um único operador (D-11 aprovada): sem aprovador independente, cada operação crítica exige a autorização formal da PROCEIT (desenho §4.7.7 e §4.7.11), além da concessão `*.APROBAR`; nenhuma permissão de empresa a substitui.
+
+Prazos aprovados (D-12): concessão de `DATO_SENSIBLE` 180 dias; de `ACCION_CRITICA` 365 dias; solicitação sem decisão expira em 7 dias; aprovador com o poder há 7 dias. São parâmetros controlados só pela plataforma, com limites rígidos (desenho §4.7.8); nenhuma permissão de empresa os altera, e a revisão por área não os muda.
 
 ## 4. Permissão exigida por rota existente
 
@@ -282,7 +284,7 @@ Antes da implementação de cada área, o responsável (ou quem ele indicar, por
 | Ventas | PEDIDOS, VENTAS, ENTREGAS | Quem aprova pedido; alcance por sucursal | PENDENTE |
 | Finanzas | CUENTAS_COBRAR, COBROS, CUENTAS_PAGAR, PAGOS, CAJA | Ações críticas no administrador (§2.1) | PENDENTE |
 | Facturación | FACTURAS, NOTAS_CREDITO, NOTAS_REMISION, DOCUMENTOS_ELECTRONICOS, SIFEN | Dependente do contrato SIFEN (REQ-2026-013 proposto) | PENDENTE |
-| Administración | DASHBOARD, REPORTES, USUARIOS, PERFILES, PERMISOS_SENSIBLES, PERMISOS_CRITICOS, CONFIGURACION, AUDITORIA | Regras ESC e IND; vigências propostas (180/365 dias); relatório de concessões; D-11 | PENDENTE |
+| Administración | DASHBOARD, REPORTES, USUARIOS, PERFILES, PERMISOS_SENSIBLES, PERMISOS_CRITICOS, CONFIGURACION, AUDITORIA | Regras ESC e IND; vigências aprovadas (D-12: 180/365/7/7); relatório de concessões e de vencimentos; autorização por operação (D-11) | PENDENTE |
 
 Cada operação aprovada aqui ganha os quatro casos do teste por operação (desenho §11.7). Uma mudança decidida na revisão gera nova versão da matriz (§9).
 
@@ -294,3 +296,4 @@ Cada operação aprovada aqui ganha os quatro casos do teste por operação (des
 | 2 | 2026-10-08 | AUD-R01 (`0281e63`) | Classificação administrativa/sensível, concessão inicial, mudança e revogação, 32 itens de menu, verificação de cobertura | 37 / 138 |
 | 3 | 2026-10-08 | D-01 a D-08 (`2a007e7`) e AUD-R02 | D-06: administrador sem dado sensível; classes `DATO_SENSIBLE` e `ACCION_CRITICA`; novo `PERMISOS_SENSIBLES.ASIGNAR`; transferência D-08 na área de Inventario; revisão por área (§8) | 38 / 139 |
 | 4 | 2026-10-08 | D-09 e D-10 (`9c76906`) e AUD-R03 | D-09: as 4 ações críticas saem do administrador; D-10: segundo aprovador independente; nenhuma permissão controlada em perfil; novos `PERMISOS_SENSIBLES.APROBAR`, `PERMISOS_CRITICOS.ASIGNAR` e `PERMISOS_CRITICOS.APROBAR`; `PLATAFORMA.CONCESIONES_APROBAR`; † nos perfis de exemplo | 39 / 142 (+6 plataforma) |
+| 5 | 2026-10-09 | D-11 e D-12 (`ee59738`) e AUD-R04 | Acrescentadas 2 permissões de plataforma (`OPERACIONES_AUTORIZAR`, `PARAMETROS_CONCESION_EDITAR`); prazos 180/365/7/7 como valores aprovados; D-11 por operação. Nenhuma permissão de empresa criada, removida ou movida de classe | 39 / 142 (+8 plataforma) |
