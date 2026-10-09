@@ -5,8 +5,6 @@ import { useRouter } from "next/navigation";
 
 import styles from "./login-form.module.css";
 
-const DEMO_COMPANY_CODE = "CASA_MINGO";
-
 function UserIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -27,8 +25,9 @@ function LockIcon() {
 
 export function LoginForm() {
   const router = useRouter();
-  const [usuario, setUsuario] = useState("admin");
-  const [contrasena, setContrasena] = useState("admin123");
+  const [empresa, setEmpresa] = useState("");
+  const [usuario, setUsuario] = useState("");
+  const [contrasena, setContrasena] = useState("");
   const [mostrarContrasena, setMostrarContrasena] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -45,7 +44,7 @@ export function LoginForm() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          empresa: DEMO_COMPANY_CODE,
+          empresa: empresa.trim().toLowerCase(),
           usuario,
           contrasena,
         }),
@@ -69,14 +68,12 @@ export function LoginForm() {
 
   return (
     <form className={styles.form} onSubmit={submit}>
-      <div className={styles.company}>
-        <span>Empresa</span>
-
-        <div>
-          <strong>CASA MINGO S.A.</strong>
-          <small>RUC 80003314-0</small>
+      <label className={styles.field}>
+        <span>Código de empresa</span>
+        <div className={styles.inputWrap}>
+          <input value={empresa} onChange={(event) => setEmpresa(event.target.value)} autoComplete="organization" placeholder="proceit o casa_mingo" maxLength={30} required />
         </div>
-      </div>
+      </label>
 
       <label className={styles.field}>
         <span>Usuario</span>
@@ -135,10 +132,6 @@ export function LoginForm() {
         {loading ? "Ingresando…" : "Ingresar al sistema"}
         {!loading ? <span aria-hidden="true">→</span> : null}
       </button>
-
-      <p className={styles.demoHint}>
-        Acceso demo: <strong>admin / admin123</strong>
-      </p>
     </form>
   );
 }
