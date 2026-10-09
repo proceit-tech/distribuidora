@@ -12,38 +12,38 @@ Requisito: REQ-2026-001 (CA-01, CA-02) · Autor: Claude · Data: 2026-10-08 · B
 | **NAO_VERIFICADO** | Depende do esquema do banco, que não foi inspecionado (sem acesso autorizado). Ver `MODELO-DADOS-ATUAL.md` |
 | **AUSENTE** | Item de menu ou link sem página correspondente (abre o 404 do Next.js) |
 
-Observação geral: todo status **REAL** também é **NAO_VERIFICADO em execução**, porque não houve banco nem build neste levantamento (ver `TST-REQ-2026-001.md`). O status indica o que o código faz, não um teste de ponta a ponta.
+Observação geral: todo status **REAL** também é **NAO_VERIFICADO em execução**, porque não houve banco nem teste de ponta a ponta neste levantamento. O build de cada SHA foi concluído pela integração Vercel (evidência em `TST-REQ-2026-001.md`, V15), o que prova que compila, não que funciona com banco. O status indica o que o código faz.
 
 ## 1. Matriz de rotas de tela (26 páginas)
 
-| # | Rota | Arquivo (linhas) | Fonte de dados | Status | Observações |
-|---|---|---|---|---|---|
-| 1 | `/` | `app/page.tsx` (13) | sessão | REAL | Redireciona para `/dashboard` ou `/login` |
-| 2 | `/login` | `app/(public)/login/page.tsx` (9) + `components/auth/login-form.tsx` | `/api/auth/login` | PARCIAL | A empresa é fixa (`CASA_MINGO`, `login-form.tsx:8`) e não há campo para ela. A senha demo vem pré-preenchida (`:31`) |
-| 3 | `/dashboard` | `dashboard/page.tsx` (430) | constantes no arquivo | DEMO | Indicadores estáticos. 9 dos 13 links levam a rotas inexistentes (`/ventas`, `/pedidos`, `/entregas`, `/finanzas/cuentas-por-cobrar`, `/reportes`) |
-| 4 | `/clientes` | `clientes/page.tsx` (827) | `clientes-storage` | DEMO | Não lê a API. Cliente criado em `/clientes/nuevo` não aparece aqui |
-| 5 | `/clientes/nuevo` | `clientes/nuevo/page.tsx` (2094) | `GET/POST /api/clientes` | PARCIAL | Única tela ligada a API de negócio. Contrato quebrado: espera `paises` (`:290`), que a API não envia (`app/api/clientes/route.ts:572`), e não envia `paisNombre`, que a API exige (`route.ts:667`). Ver §5 |
-| 6 | `/clientes/[id]` | `clientes/[id]/page.tsx` (2012) | `clientes-storage` | DEMO | Detalhe e edição no navegador (`actualizarClienteDemo`, `:572`) |
-| 7 | `/proveedores` | `proveedores/page.tsx` (876) | `proveedores-storage` | DEMO | |
-| 8 | `/proveedores/nuevo` | `proveedores/nuevo/page.tsx` (31) + `_components/proveedor-form.tsx` | `proveedores-storage` | DEMO | `/api/proveedores` existe, mas não é chamada |
-| 9 | `/proveedores/[id]` | `proveedores/[id]/page.tsx` (106) | `proveedores-storage` | DEMO | Reaproveita o formulário |
-| 10 | `/productos` | `productos/page.tsx` (1010) | `productos-storage` | DEMO | 562 produtos base de inventário de prospect |
-| 11 | `/productos/nuevo` | `productos/nuevo/page.tsx` (38) + `_components/producto-form.tsx` | `productos-storage` | DEMO | `/api/productos` existe, mas não é chamada. O produto criado não entra no stock |
-| 12 | `/productos/[id]` | `productos/[id]/page.tsx` (103) | `productos-storage` | DEMO | A edição gera código novo (`lib/mocks/productos-storage.ts:126`) |
-| 13 | `/listas-precio` | `listas-precio/page.tsx` (917) | `listas-precio-storage` | DEMO | Estado VENCIDA calculado na tela (`:38`) |
-| 14 | `/listas-precio/nuevo` | `listas-precio/nuevo/page.tsx` (41) + `_components/lista-precio-form.tsx` | `listas-precio-storage` | DEMO | |
-| 15 | `/listas-precio/[id]` | `listas-precio/[id]/page.tsx` (109) | `listas-precio-storage` | DEMO | |
-| 16 | `/recepciones` | `recepciones/page.tsx` (405) | `recepciones-storage` | DEMO | |
-| 17 | `/recepciones/nuevo` | `recepciones/nuevo/page.tsx` (881) | `recepciones-storage` → `movimientos-stock-storage` | DEMO | Gera movimentos de ENTRADA e altera o stock (no navegador) |
-| 18 | `/recepciones/[id]` | `recepciones/[id]/page.tsx` (316) | `recepciones-storage` | DEMO | Somente leitura |
-| 19 | `/stock` | `stock/page.tsx` (1513) | `stock-storage` | DEMO | Exporta Excel (`:458`, `:632`). O custo exibido é o preço de venda (`:54`) |
-| 20 | `/stock/[id]` | `stock/[id]/page.tsx` (411) | `stock-storage` | DEMO | Somente leitura |
-| 21 | `/movimientos` | `movimientos/page.tsx` (386) | `movimientos-stock-storage` | DEMO | |
-| 22 | `/movimientos/nuevo` | `movimientos/nuevo/page.tsx` (806) | `stock-storage`, `movimientos-stock-storage` | DEMO | Depósitos fixos (`:29`); usuário fixo "admin" (`:93`) |
-| 23 | `/movimientos/[id]` | `movimientos/[id]/page.tsx` (206) | `movimientos-stock-storage` | DEMO | Somente leitura; não há anulação |
-| 24 | `/facturas` | `facturas/page.tsx` (392) | `facturas-storage` | DEMO | |
-| 25 | `/facturas/nuevo` | `facturas/nuevo/page.tsx` (1624) | `facturas-storage`, clientes e productos do `localStorage` | DEMO | Aprova automaticamente com CDC fictício (`lib/mocks/facturas-storage.ts:208-212`). Sem SIFEN |
-| 26 | `/facturas/[id]` | `facturas/[id]/page.tsx` (414) | `facturas-storage` | DEMO | Somente leitura |
+| # | Rota | Arquivo (linhas) | Fonte de dados (leitura) | Escrita: chamada e destino | Status | Observações |
+|---|---|---|---|---|---|---|
+| 1 | `/` | `app/page.tsx` (13) | sessão | — (só leitura de sessão) | REAL | Redireciona para `/dashboard` ou `/login` |
+| 2 | `/login` | `app/(public)/login/page.tsx` (9) + `components/auth/login-form.tsx` | `/api/auth/login` | `POST /api/auth/login` (`login-form.tsx:42`) → `sesiones_usuario` (PostgreSQL) ou cookie demo | PARCIAL | A empresa é fixa (`CASA_MINGO`, `login-form.tsx:8`) e não há campo para ela. A senha demo vem pré-preenchida (`:31`) |
+| 3 | `/dashboard` | `dashboard/page.tsx` (430) | constantes no arquivo | nenhuma | DEMO | Indicadores estáticos. 9 dos 13 links levam a rotas inexistentes (`/ventas`, `/pedidos`, `/entregas`, `/finanzas/cuentas-por-cobrar`, `/reportes`) |
+| 4 | `/clientes` | `clientes/page.tsx` (827) | `clientes-storage` | nenhuma (leitura: `clientes-storage`) | DEMO | Não lê a API. Cliente criado em `/clientes/nuevo` não aparece aqui |
+| 5 | `/clientes/nuevo` | `clientes/nuevo/page.tsx` (2094) | `GET/POST /api/clientes` | `POST /api/clientes` (`clientes/nuevo/page.tsx:490`) → PostgreSQL; em demo, resposta simulada sem persistir | PARCIAL | Única tela ligada a API de negócio. Contrato quebrado: espera `paises` (`:290`), que a API não envia (`app/api/clientes/route.ts:572`), e não envia `paisNombre`, que a API exige (`route.ts:667`). Ver §5 |
+| 6 | `/clientes/[id]` | `clientes/[id]/page.tsx` (2012) | `clientes-storage` | `actualizarClienteDemo` (`clientes/[id]/page.tsx:572`) → `localStorage` | DEMO | Detalhe e edição no navegador (`actualizarClienteDemo`, `:572`) |
+| 7 | `/proveedores` | `proveedores/page.tsx` (876) | `proveedores-storage` | nenhuma | DEMO | |
+| 8 | `/proveedores/nuevo` | `proveedores/nuevo/page.tsx` (31) + `_components/proveedor-form.tsx` | `proveedores-storage` | `crearProveedorDemo` (`proveedores/nuevo/page.tsx:15`) → `localStorage` | DEMO | `/api/proveedores` existe, mas não é chamada |
+| 9 | `/proveedores/[id]` | `proveedores/[id]/page.tsx` (106) | `proveedores-storage` | `actualizarProveedorDemo` (`proveedores/[id]/page.tsx:52`) → `localStorage` | DEMO | Reaproveita o formulário |
+| 10 | `/productos` | `productos/page.tsx` (1010) | `productos-storage` | nenhuma | DEMO | 562 produtos base de inventário de prospect |
+| 11 | `/productos/nuevo` | `productos/nuevo/page.tsx` (38) + `_components/producto-form.tsx` | `productos-storage` | `crearProductoDemo` (`productos/nuevo/page.tsx:19`) → `localStorage` | DEMO | `/api/productos` existe, mas não é chamada. O produto criado não entra no stock |
+| 12 | `/productos/[id]` | `productos/[id]/page.tsx` (103) | `productos-storage` | `actualizarProductoDemo` (`productos/[id]/page.tsx:54`) → `localStorage` | DEMO | A edição gera código novo (`lib/mocks/productos-storage.ts:126`) |
+| 13 | `/listas-precio` | `listas-precio/page.tsx` (917) | `listas-precio-storage` | nenhuma | DEMO | Estado VENCIDA calculado na tela (`:38`) |
+| 14 | `/listas-precio/nuevo` | `listas-precio/nuevo/page.tsx` (41) + `_components/lista-precio-form.tsx` | `listas-precio-storage` | `crearListaPrecioDemo` (`listas-precio/nuevo/page.tsx:21`) → `localStorage` | DEMO | |
+| 15 | `/listas-precio/[id]` | `listas-precio/[id]/page.tsx` (109) | `listas-precio-storage` | `actualizarListaPrecioDemo` (`listas-precio/[id]/page.tsx:60`) → `localStorage` | DEMO | |
+| 16 | `/recepciones` | `recepciones/page.tsx` (405) | `recepciones-storage` | nenhuma | DEMO | |
+| 17 | `/recepciones/nuevo` | `recepciones/nuevo/page.tsx` (881) | `recepciones-storage` → `movimientos-stock-storage` | `crearRecepcionDemo` (`recepciones/nuevo/page.tsx:367`) → `localStorage` (recepções, movimentos e stock) | DEMO | Gera movimentos de ENTRADA e altera o stock (no navegador) |
+| 18 | `/recepciones/[id]` | `recepciones/[id]/page.tsx` (316) | `recepciones-storage` | nenhuma | DEMO | Somente leitura |
+| 19 | `/stock` | `stock/page.tsx` (1513) | `stock-storage` | nenhuma (exporta arquivo no navegador) | DEMO | Exporta Excel (`:458`, `:632`). O custo exibido é o preço de venda (`:54`) |
+| 20 | `/stock/[id]` | `stock/[id]/page.tsx` (411) | `stock-storage` | nenhuma | DEMO | Somente leitura |
+| 21 | `/movimientos` | `movimientos/page.tsx` (386) | `movimientos-stock-storage` | nenhuma | DEMO | |
+| 22 | `/movimientos/nuevo` | `movimientos/nuevo/page.tsx` (806) | `stock-storage`, `movimientos-stock-storage` | `crearMovimientoStockDemo` (`movimientos/nuevo/page.tsx:234`) → `localStorage` (movimentos e stock) | DEMO | Depósitos fixos (`:29`); usuário fixo "admin" (`:93`) |
+| 23 | `/movimientos/[id]` | `movimientos/[id]/page.tsx` (206) | `movimientos-stock-storage` | nenhuma | DEMO | Somente leitura; não há anulação |
+| 24 | `/facturas` | `facturas/page.tsx` (392) | `facturas-storage` | nenhuma | DEMO | |
+| 25 | `/facturas/nuevo` | `facturas/nuevo/page.tsx` (1624) | `facturas-storage`, clientes e productos do `localStorage` | `crearFacturaDemo` (`facturas/nuevo/page.tsx:402`) → `localStorage` | DEMO | Aprova automaticamente com CDC fictício (`lib/mocks/facturas-storage.ts:208-212`). Sem SIFEN |
+| 26 | `/facturas/[id]` | `facturas/[id]/page.tsx` (414) | `facturas-storage` | nenhuma | DEMO | Somente leitura |
 
 Total: 1 REAL, 2 PARCIAL e 23 DEMO.
 
@@ -144,3 +144,19 @@ Também não é usado: `app/(private)/clientes/nuevo/page.module.css`, porque a 
 
 ### 5.5 Lista de preços (DEMO)
 Lê productos e clientes. Os preços calculados não são consumidos por nenhum outro módulo.
+
+## 6. O que não pode ir para produção nesta condição
+
+Atende AUD-REQ-2026-001-R01 F-004. "Produção" = qualquer ambiente usado por cliente com dados reais. Enquanto a condição da coluna 2 existir, a funcionalidade **não** pode ser oferecida como transacional. A UI pronta não é prova de persistência.
+
+| Funcionalidade | Condição atual que bloqueia | Evidência | Liberada por |
+|---|---|---|---|
+| Qualquer tela com status DEMO (23 telas da §1) | Grava só no navegador: os dados se perdem ao limpar o navegador, não são compartilhados entre usuários e podem ser alterados pelo próprio usuário | coluna "Escrita" da §1 | REQ do módulo (006 a 012 propostos) |
+| Cadastro de cliente (`/clientes/nuevo`) | Contrato quebrado com a API (`paises`/`paisNombre`); listagem e edição em DEMO | §5.1 | REQ-2026-007 proposto |
+| Faturas | Aprovação automática com CDC fictício; nenhuma relação com SIFEN, stock ou cobrança | `lib/mocks/facturas-storage.ts:208-212` | REQ-2026-012 e 013 propostos; até lá, rotular "SIMULACIÓN" |
+| Stock, movimentos e recepções | Saldos calculados no navegador, sem transação nem concorrência | `lib/mocks/movimientos-stock-storage.ts:174` | REQ-2026-009 e 010 propostos |
+| Listas de precio | Regras gravadas e nunca aplicadas | `REGRAS-EXISTENTES.md` LP-NI | REQ-2026-011 proposto |
+| `POST /api/productos`, `POST /api/proveedores` | Sem tela que as use; productos sem validação de tenant nas FKs | §3; `PLANO-EVOLUCAO.md` R-06 | REQ-2026-002 e 006/008 propostos |
+| Qualquer rota, com usuários de perfis diferentes | Sem verificação de permissão | `PLANO-EVOLUCAO.md` R-02 | REQ-2026-002 |
+| Ambiente com `DEMO_MODE=true` ou sem `DATABASE_URL` | Cookie de sessão constante = administrador; APIs simulam sucesso | `lib/auth/session.ts:13,92`; `app/api/clientes/route.ts:5-7` | REQ-2026-002 (RN-12) e 005 proposto |
+| Dados demo de produtos | Inventário de prospect real versionado | `lib/mocks/productos.ts` | REQ técnico de limpeza |

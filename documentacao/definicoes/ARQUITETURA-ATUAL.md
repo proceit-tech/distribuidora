@@ -80,7 +80,7 @@ Em modo demo:
 ### 2.6 Banco (`lib/db/index.ts`)
 - O `Pool` é criado no import do módulo, que lança erro se `DATABASE_URL` não existir (`lib/db/index.ts:6`). Os módulos o importam de forma dinâmica para não quebrar o modo demo.
 - Em desenvolvimento, o pool é reaproveitado em `global.distribunexPool`.
-- O esquema SQL **não está no repositório** e nunca esteve: nenhum commit de nenhuma branch contém um arquivo `.sql`. O README cita migrations até `017_administrador_inicial.sql` e um `.env.local.example`, e nenhum dos dois existe. Ver `MODELO-DADOS-ATUAL.md`.
+- O esquema SQL **não está no repositório**: nenhum commit das 4 branches remotas existentes em 2026-10-08 contém um arquivo `.sql` (prova em `TST-REQ-2026-001.md` V6). O README cita migrations até `017_administrador_inicial.sql` e um `.env.local.example`, e nenhum dos dois existe. Ver `MODELO-DADOS-ATUAL.md`.
 
 ## 3. Componentes do cliente
 
@@ -123,7 +123,7 @@ Consequências diretas, inferidas do código:
 | `SESSION_COOKIE_NAME` | Nome do cookie | `lib/auth/session.ts:9` |
 | `NODE_ENV` | Cookie `secure`; cache do pool | login, logout, `lib/db` |
 
-- O histórico mostra deploy demo no Vercel (commits `65a7ade` a `6fe68be`). Por decisão da PROCEIT, o Vercel deixa de ser usado. Na `main` não há Dockerfile; há uma proposta em revisão no PR #1 (`claude/docker`), fora do escopo deste REQ.
+- O histórico mostra deploy demo no Vercel (commits `65a7ade` a `6fe68be`). Por decisão da PROCEIT, o Vercel deixa de ser usado, mas a integração do GitHub com o Vercel **continua ativa** e gera um deploy a cada push (ver `PLANO-EVOLUCAO.md` R-23). Na `main` não há Dockerfile; há uma proposta em revisão no PR #1 (`claude/docker`), fora do escopo deste REQ.
 - O `.gitignore` ignora `.env*` (`.gitignore:12`), inclusive arquivos de exemplo.
 
 ## 6. Correções ao `INVENTARIO-TECNICO-INICIAL.md`

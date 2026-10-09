@@ -7,8 +7,25 @@ Requisito: REQ-2026-001 (RN-03, RN-06, CA-03) · Autor: Claude · Data: 2026-10-
 | Item | Situação | Motivo |
 |---|---|---|
 | Introspecção do PostgreSQL (tabelas, colunas, tipos, índices, constraints, funções, triggers, políticas) | **NAO_VERIFICADO** | Não houve acesso autorizado a nenhum banco do sistema (dependência declarada no REQ-2026-001). Nenhuma conexão foi tentada |
-| Scripts SQL no repositório | **Inexistentes** | Busca em todo o histórico (`git log --all -- '*.sql'`): 0 arquivos em todas as branches (17 commits na `main`) |
+| Scripts SQL no repositório | **Inexistentes** | 0 arquivos `.sql` no histórico de cada uma das 4 branches remotas existentes em 2026-10-08 (`main`, `claude/docker` e as duas `feature/REQ-*`); o repositório não tem tags. Comando e saída em `TST-REQ-2026-001.md` V6. Branches apagadas antes dessa data não podem ser verificadas |
 | Scripts SQL fora do repositório | **NAO_VERIFICADO** | O `README.md` cita migrations numeradas até `017_administrador_inicial.sql`, que não estão em nenhum commit. Sua localização precisa ser informada pelo responsável (RN-06) |
+
+### 1.1 Declaração formal (AUD-REQ-2026-001-R01 F-001)
+
+Em 2026-10-08, **não foi possível** obter um snapshot do PostgreSQL, por três motivos:
+1. Nenhum banco nem credencial somente leitura foi autorizado para esta análise (dependência do próprio REQ-2026-001).
+2. O Claude não aceita credenciais pelo chat (regra da PROCEIT), e o ambiente dele não alcança a VM.
+3. As migrations 001–017 não estão em nenhum commit.
+
+**Delimitação do que pode ser aprovado neste REQ:**
+
+| Pode ser aprovado com base neste documento | Não pode |
+|---|---|
+| A lista de tabelas e colunas **que o código usa**, com referência de linha | Qualquer DDL, migration ou alteração de banco |
+| As dependências implícitas do código (pgcrypto, `inet`, `app.usuario_id`, nomes de constraints) como hipóteses a confirmar | Afirmações sobre tipos, nulabilidade, chaves, índices, triggers ou RLS reais |
+| O roteiro de introspecção (`documentacao/banco/INTROSPECCAO-SOMENTE-LEITURA.md`) | Considerar CA-03 atendido por inventário real: fica atendido só pela alternativa "NAO_VERIFICADO justificado", **se o responsável aceitar** essa limitação |
+
+O caminho para remover a limitação é o REQ-2026-003 (proposto): o responsável executa o roteiro, revisa e versiona o resultado.
 
 **Consequência:** este documento descreve o modelo **que o código espera encontrar**, inferido das consultas SQL das 5 rotas de API e de `lib/auth`. Não é o esquema real. Tipos, nulabilidade, chaves, índices e constraints só serão confirmados pela introspecção (ver §5). Nenhum script de criação foi gerado, conforme o não escopo do REQ.
 
@@ -118,6 +135,6 @@ Sem nenhum `CREATE` nem `DROP`; somente leitura.
 
 1. **Autorização.** O responsável indica qual banco é a referência (desenvolvimento ou demo, nunca produção com dados reais de clientes sem necessidade) e fornece acesso **somente leitura**, por um usuário próprio (`GRANT CONNECT`, `USAGE` e `SELECT` em `information_schema`/`pg_catalog`). A credencial é entregue por segredo do GitHub ou executada pelo próprio responsável, nunca pelo chat.
 2. **Localizar as migrations 001–017** citadas no README. Se existirem, versionar como linha de base em `documentacao/banco/baseline/`, com revisão para remover senhas e dados (por exemplo, a `017_administrador_inicial.sql` provavelmente contém um hash de senha).
-3. **Extrair só a estrutura**: `pg_dump --schema-only --no-owner --no-privileges` e consultas a `information_schema.columns`, `pg_indexes`, `pg_constraint`, `pg_trigger`, `pg_proc` e `pg_policies`. Nunca `--data`.
+3. **Extrair só a estrutura**, seguindo o roteiro reproduzível `documentacao/banco/INTROSPECCAO-SOMENTE-LEITURA.md` (`pg_dump --schema-only` ou consultas Q1–Q11 de catálogo, em sessão somente leitura). Nunca `--data`.
 4. **Conciliar código e banco**: comparar as 46 tabelas e as colunas da §2 com o resultado e registrar as divergências.
 5. **Só então** iniciar as migrations incrementais, no padrão `documentacao/banco/REQ-AAAA-NNN-001-up.sql` e `-down.sql`, a partir da linha de base confirmada (ver `PLANO-EVOLUCAO.md`, REQ-2026-003 proposto).

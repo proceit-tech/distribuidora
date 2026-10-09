@@ -32,6 +32,7 @@ Severidade: **CRÍTICA** (impede uso com dados reais), **ALTA**, **MÉDIA**, **B
 | R-20 | BAIXA | 10 arquivos vazios; CSS module sem uso; tipos duplicados (`types/navigation.ts`); `"use client"` em arquivo de tipos; `await import` no topo de `permissions.ts`; três abordagens de estilo | `MAPA-MODULOS.md` §4 | Limpeza num REQ técnico, sem efeito visual | V15 |
 | R-21 | BAIXA | `xlsx` 0.18.5 (versão do npm) tem vulnerabilidades conhecidas na **leitura** de planilhas; hoje só exporta | `package.json`; `stock/page.tsx:459` | Confirmar com `npm audit` (NAO_EXECUTADO) e avaliar a distribuição oficial do SheetJS antes de qualquer importação | V15 |
 | R-22 | BAIXA | O README descreve um ambiente que não existe (`.env.local.example`, migrations) | `README.md:14-18` | Atualizar no REQ-2026-003 proposto | — |
+| R-23 | MÉDIA | A integração Vercel continua ativa: cada push, inclusive de branches de documentação, gera um deploy (status "Deployment has completed" em todos os SHAs de 2026-10-08). A PROCEIT decidiu deixar o Vercel, e o repositório é público | `gh api repos/proceit-tech/distribuidora/commits/<sha>/status` (TST V15) | Desconectar o projeto no Vercel quando a VM estiver servindo o sistema (até lá, a integração serve de evidência de build) | V13 |
 
 ## 2. Plano de migrations (RN-06)
 
@@ -68,3 +69,19 @@ Decisões que o responsável precisa tomar antes dos REQs 003, 009 e 013 (as dec
 2. Se o MVP do cliente final inclui Compras (Orden de compra) e Ventas (Pedidos), ou só cadastros + estoque + faturamento.
 3. Se a emissão SIFEN usa o produto de fatura eletrônica da própria PROCEIT.
 4. Se o modo demo continua existindo (para vendas) num ambiente separado.
+
+## 4. Registro de numeração dos requisitos
+
+Atende AUD-REQ-2026-001-R01 F-003. Fonte única para os números usados nos documentos e testes. Um número só passa a valer quando o arquivo `REQ-AAAA-NNN-*.md` existe na `main`. Os números "propostos" são sugestões do Claude e podem ser trocados pelo responsável; se forem, esta tabela é atualizada no mesmo PR.
+
+| Número | Título | Situação | Arquivos |
+|---|---|---|---|
+| REQ-2026-001 | Consolidação documental | Definido; em auditoria | `REQ-2026-001-consolidacao-documental.md`, `TST-REQ-2026-001.md`, `AUD-REQ-2026-001-R*.md` |
+| REQ-2026-002 | Multiempresa, usuários, perfis e menus | Definido (`ff77929`); desenho em auditoria (PR #3) | `REQ-2026-002-multiempresa-usuarios-perfiles-menus.md`, `DESENHO-REQ-2026-002-multiempresa.md`, `MATRIZ-PERMISOS-REQ-2026-002.md`, `TST-REQ-2026-002.md`, `AUD-REQ-2026-002-R*.md` |
+| REQ-2026-003 | Linha de base do banco (introspecção) | Proposto | — |
+| REQ-2026-004 | Base de testes e CI | Proposto | — |
+| REQ-2026-005 | Endurecer sessão e erros | Proposto | — |
+| REQ-2026-006 a 013 | Productos, Clientes, Proveedores, Stock, Recepciones, Listas de precio, Faturamento, SIFEN | Propostos | — |
+
+Regra para evitar duplicação: antes de definir um REQ novo, consultar esta tabela e a pasta `documentacao/definicoes/`; o próximo número livre é o primeiro que não tem arquivo `REQ-*` na `main` **nem** aparece aqui como proposto.
+
