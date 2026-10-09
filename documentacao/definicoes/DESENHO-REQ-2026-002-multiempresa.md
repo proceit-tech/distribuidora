@@ -1,9 +1,9 @@
 # DESENHO-REQ-2026-002 — Multiempresa, usuários, perfis e menus
 
 Requisito: `REQ-2026-002-multiempresa-usuarios-perfiles-menus.md` · Autor: Claude
-Versão: **2 (correções da AUD-REQ-2026-002-R01)** · Data: 2026-10-08
+Versão: **3 (decisões D-01 a D-08 do responsável e AUD-REQ-2026-002-R02)** · Data: 2026-10-08
 Código analisado: `main` @ `0dbb013` (o código funcional é idêntico ao de `7f4230a`; desde então só entraram documentos)
-Situação: **PROPOSTA PARA APROVAÇÃO.** Nenhum código, nenhum SQL executável e nenhuma migration fazem parte desta entrega. Os trechos SQL deste documento são ilustrativos e servem para fixar o contrato; não são DDL definitivo (F-001).
+Situação: **PROPOSTA PARA APROVAÇÃO DOCUMENTAL.** As decisões de negócio estão registradas em `DECISOES-REQ-2026-002-APROVACAO.md` (`2a007e7`); elas não autorizam implementação, migrations nem homologação. Nenhum código, nenhum SQL executável e nenhuma migration fazem parte desta entrega. Os trechos SQL deste documento são ilustrativos e servem para fixar o contrato; não são DDL definitivo (F-001).
 
 Documentos de apoio, no PR #2 (`feature/REQ-2026-001-consolidacao-documental` @ `fd16292`): `ARQUITETURA-ATUAL.md` §2 e §7, `MODELO-DADOS-ATUAL.md` §1.1, `MAPA-MODULOS.md` §1 e §6, `documentacao/banco/INTROSPECCAO-SOMENTE-LEITURA.md`.
 
@@ -18,8 +18,20 @@ Documentos de apoio, no PR #2 (`feature/REQ-2026-001-consolidacao-documental` @ 
 | F-005 Janela de autorização incompleta | MEDIA | **§10** reescrito: isolamento aplicado já na fase 1; permissões em modo observação até o catálogo existir; portões de entrada/saída por fase |
 | F-006 Contrato temporal de revogação | MEDIA | **§8** (novo): tabela evento × efeito × momento, bloqueio de linha contra condição de corrida, sem cache de autorização; testes em §11.4 |
 | F-007 Catálogos globais | BAIXA | §3.4: classificação tabela a tabela, com decisão pendente pós-introspecção |
-| Condição R02: decisões D-01 a D-05 | — | §2: recomendação do Claude, parecer do auditor e coluna de decisão do responsável |
+| Condição R02: decisões D-01 a D-05 | — | §2: decisões do responsável registradas em `DECISOES-REQ-2026-002-APROVACAO.md` (versão 3) |
 | Condição R02: matriz de cobertura das rotas | — | `MATRIZ-PERMISOS-REQ-2026-002.md` §4 e §7 (verificação 26/26 páginas, 5/5 APIs, 32/32 itens de menu) |
+
+### 0.1 Resposta à R02 e às decisões do responsável (versão 3)
+
+| Origem | Ponto | Onde foi tratado |
+|---|---|---|
+| D-06 (AJUSTAR) e R02-F-001 | Administrador **não** recebe dados sensíveis automaticamente; concessão explícita, auditada e sem autoconcessão | §2, §4.1, §4.2 (ESC-01, ESC-05, ESC-12, ESC-13), §4.4, §4.6, §9, §11.6; matriz §2 e §5 |
+| D-07 (condicionada) e R02-F-002 | Cinco anos é proposta inicial; classificação dos registros, validação legal, acesso, descarte e backups; nenhum expurgo automático antes da validação | §9.1 |
+| D-08 (aprovada com condições) | Envio → `EN_TRANSITO` → recebimento, validação independente dos dois depósitos, cancelamento, perda e conciliação | §6.4, §6.4.1, §11.3 |
+| R02-F-003 | OBSERVAR só em homologação isolada com dados sintéticos; isolamento entre empresas sempre negado; chave que falha fechada | §10 (regras da chave), §11.5 |
+| R02-F-004 | Decisões registradas; DDL só depois do banco real; testes antes de implementar | §2, §10 |
+| D-04 (condicionada) | Revisão por área de negócio e testes por operação antes de implementar; correções da matriz versionadas | matriz §8 e §9; §11.7 |
+| D-01, D-02, D-03, D-05 (aprovadas) | Incorporadas como regras, não mais como recomendação | §2, §4, §6 |
 
 ## 1. Pontos de partida
 
@@ -49,20 +61,20 @@ Documentos de apoio, no PR #2 (`feature/REQ-2026-001-consolidacao-documental` @ 
 
 ## 2. Decisões (D-01 a D-08)
 
-Quem decide é o responsável PROCEIT. A coluna "Decisão" fica `PENDENTE` até ele registrar a decisão no PR ou no REQ. O restante do desenho usa a recomendação como hipótese.
+Fonte: `documentacao/definicoes/DECISOES-REQ-2026-002-APROVACAO.md`, registrado em 2026-10-08 (commit `2a007e7`). As decisões aprovam diretrizes de negócio e de arquitetura; **não** aprovam implementação, testes, migrations nem homologação.
 
-| ID | Pergunta | Recomendação do Claude | Parecer da AUD-R01 | Decisão do responsável |
-|---|---|---|---|---|
-| D-01 | Um humano em várias empresas | Contas separadas por empresa nesta versão; login empresa + usuário + senha. Uma futura identidade única só exige uma tabela `identidades` ligando contas, sem mudar o isolamento | Aprovar condicionalmente; documentar a migração futura | PENDENTE |
-| D-02 | Agregação de vários perfis | União das permissões concedidas, sem negação. A união **nunca** amplia empresa nem alcance (§6), e permissões sensíveis só existem por concessão específica (não são implícitas em outras) | Aprovar | PENDENTE |
-| D-03 | Funções exclusivas da plataforma PROCEIT | Criar, suspender e reativar empresas; criar o primeiro administrador (bootstrap); manter o catálogo de permissões; suporte com acesso temporário e motivado. Contas de plataforma separadas, com **MFA obrigatório**, sem nenhum bypass no código (§4.6) | Aprovar com restrições: MFA, auditoria de suporte, escopo explícito, sem bypass informal | PENDENTE |
-| D-04 | Lista de permissões e alcance | `MATRIZ-PERMISOS-REQ-2026-002.md`, incluindo concessão inicial e fluxo de mudança (§5 e §6 da matriz) | Pendente: validar cobertura, concessão inicial, mudanças e revogação | PENDENTE |
-| D-05 | Usuário sem sucursal/depósito atribuído | Nega acesso aos recursos de nível sucursal/depósito; acesso amplo só com alcance `TODAS`/`TODOS` explícito | Aprovar | PENDENTE |
-| D-06 (nova) | O perfil administrador da empresa inclui as permissões sensíveis? | Sim, porque o administrador já pode concedê-las a si mesmo por outros meios; toda leitura de dado sensível é auditada | — | PENDENTE |
-| D-07 (nova) | Retenção da auditoria | `auditoria_acceso` só por inserção, guardada por **5 anos**, no mínimo; `eventos_seguridad`, 1 ano. Prazos a confirmar com o contador ou o jurídico da PROCEIT | — (o achado RN-10 pedia retenção) | PENDENTE |
-| D-08 (nova) | Transferência entre sucursais | Em duas etapas (envio e recebimento), cada uma exigindo só o seu depósito (§6.4) | — (F-003 pediu definir) | PENDENTE |
+| ID | Decisão do responsável | Condição obrigatória | Como o desenho atende |
+|---|---|---|---|
+| D-01 | APROVADO — contas separadas por empresa | Manter login empresa + usuário + senha | §3.2; nenhuma mudança no login. Identidade única futura exige novo REQ |
+| D-02 | APROVADO — união das permissões dos perfis | A união nunca ultrapassa empresa e alcance | §4.1, §6.3 (permissão **e** empresa **e** alcance) |
+| D-03 | APROVADO — administração global PROCEIT segregada | Identidades separadas, MFA, suporte explícito, temporário e auditado, sem bypass | §4.6 |
+| D-04 | APROVADO CONDICIONALMENTE — matriz | Revisão por área de negócio; validar concessão inicial, revogação e testes de cada operação antes de implementar; versionar correções | Matriz versão 3 (38 recursos, 139 permissões; mudança registrada na matriz §2.1); checklist por área (matriz §8); teste por operação gerado da matriz (§11.7) |
+| D-05 | APROVADO — alcance vazio nega | `TODAS`/`TODOS` só por concessão explícita | §6.1, §6.2; concessão de `TODAS`/`TODOS` sujeita a ESC-06 e auditada |
+| D-06 | **AJUSTAR** — administrador sem acesso sensível automático | Concessão explícita e auditável por recurso/ação, inclusive para administradores; impedir autoconcessão | §4.1, ESC-12/ESC-13, §4.4, §4.6 |
+| D-07 | APROVADO CONDICIONALMENTE — 5 anos como objetivo | Classificar eventos; validar prazos com jurídico/contabilidade e privacidade antes de expurgo automático; definir acesso, descarte e backups | §9.1 |
+| D-08 | APROVADO — transferência em duas etapas | Envio → `EN_TRANSITO` → recebimento; validação independente dos dois depósitos; cancelamento, perda e conciliação; testes | §6.4.1, §11.3 |
 
-Ações ANULAR e ASIGNAR e a segregação de permissões sensíveis: aprovadas pela AUD-R01, pendentes de registro do responsável.
+Pontos ainda abertos, conforme o registro: detalhes finais da matriz por módulo (D-04), prazos efetivos e base legal por classe de registro (D-07) e o esquema real do banco.
 
 ## 3. Modelo de dados-alvo (condicionado à fase 0)
 
@@ -84,9 +96,9 @@ Ações ANULAR e ASIGNAR e a segregação de permissões sensíveis: aprovadas p
 | `usuarios` | existe | + `alcance_sucursales` (`TODAS` \| `ASIGNADAS`), `alcance_depositos` (`TODOS` \| `ASIGNADOS`), `baja_at`, `debe_cambiar_contrasena`, `version_acceso` | `sucursal_id` atual = sucursal padrão, obrigatoriamente dentro do alcance |
 | `usuario_sucursal`, `usuario_deposito` | inexistentes | `empresa_id, usuario_id, sucursal_id` / `deposito_id`, `asignado_por, asignado_at` | FKs compostas |
 | `perfiles` | existe (`empresa_id` NAO_VERIFICADO) | `id, empresa_id, codigo, nombre, es_administrador, es_sistema, activo, version` | Ver §4 |
-| `permisos` | existe (global) | `id, codigo, recurso, accion, modulo, nivel_alcance` (`EMPRESA` \| `SUCURSAL` \| `DEPOSITO`), `es_sensible`, `es_administrativa` | Catálogo mantido pela plataforma |
+| `permisos` | existe (global) | `id, codigo, recurso, accion, modulo, nivel_alcance` (`EMPRESA` \| `SUCURSAL` \| `DEPOSITO`), `clase` (`OPERACIONAL` \| `DATO_SENSIBLE` \| `ACCION_CRITICA` \| `ADMINISTRATIVA`) | Catálogo mantido pela plataforma |
 | `perfil_permiso` | existe | + `empresa_id` | FK composta para `perfiles` |
-| `usuario_perfil` | existe | + `empresa_id, asignado_por, asignado_at` | FK composta para `usuarios` e `perfiles` (fecha G-03) |
+| `usuario_perfil` | existe | + `empresa_id, asignado_por, asignado_at, motivo` | FK composta para `usuarios` e `perfiles` (fecha G-03); `motivo` obrigatório quando o perfil contém dado sensível (ESC-12) |
 | `auditoria_acceso` | inexistente no código | `id, empresa_id, actor_tipo` (`USUARIO` \| `PLATAFORMA`), `actor_id, accion, entidad, entidad_id, antes jsonb, despues jsonb, motivo, ip, user_agent, created_at` | Só inserção (§9) |
 | `usuarios_plataforma`, `accesos_soporte` | inexistentes | Contas PROCEIT com MFA; concessões de suporte com prazo | §4.6 |
 
@@ -113,10 +125,16 @@ O código atual trata como globais as tabelas lidas sem filtro de empresa. A cla
 ## 4. Proteção contra escalada de privilégios (F-002)
 
 ### 4.1 Definições
-- **Conjunto efetivo** `P(u)`: união das permissões dos perfis ativos do usuário `u`, na empresa dele (D-02).
+- **Conjunto efetivo** `P(u)`: união das permissões dos perfis ativos do usuário `u`, na empresa dele (D-02). A união nunca amplia empresa nem alcance.
+- **Classes de permissão** (coluna `permisos.clase`; lista na matriz §2.1):
+  - `OPERACIONAL`: as demais.
+  - `DATO_SENSIBLE`: leitura ou edição de custo de produtos, crédito de clientes e dados bancários de fornecedores (5 permissões).
+  - `ACCION_CRITICA`: aprovar ajuste de estoque, aprovar pagamento, anular fatura, aprovar nota de crédito (4 permissões).
+  - `ADMINISTRATIVA`: `USUARIOS.*`, `PERFILES.*`, `PERMISOS_SENSIBLES.ASIGNAR`, `CONFIGURACION.*`, `AUDITORIA.*`.
 - **Administrador da empresa**: usuário com ao menos um perfil ativo `es_administrador = true` da própria empresa. É o único critério; o código literal `ADMIN` (`server-context.ts:15`) deixa de ter significado.
-- O perfil `es_administrador` tem `P` = todas as permissões de empresa do catálogo (sensíveis incluídas, conforme D-06), **nunca** permissões `PLATAFORMA.*`.
-- **Permissões administrativas** (`es_administrativa`): `USUARIOS.*`, `PERFILES.*`, `AUDITORIA.*`, `CONFIGURACION.*`.
+- **Conjunto do perfil administrador** (D-06): todas as permissões `OPERACIONAL`, `ACCION_CRITICA` e `ADMINISTRATIVA` da empresa. **Nenhuma** permissão `DATO_SENSIBLE` e nenhuma `PLATAFORMA.*`. Ser administrador não dá acesso a custo, crédito nem contas bancárias.
+- **Dados sensíveis só por concessão explícita**: um usuário — administrador ou não — só tem uma permissão `DATO_SENSIBLE` se recebeu um perfil não administrador que a contém, por uma atribuição explícita, com motivo e auditada (ESC-12). A concessão é por recurso e ação: `PRODUCTOS_COSTO.VER` não traz `CLIENTES_CREDITO.VER`.
+- **Ações críticas no administrador (interpretação a confirmar na R03):** a D-06 cita dados (custo, crédito, bancos). As 4 ações críticas continuam no perfil administrador, mas exigem motivo, ficam auditadas e obedecem à regra "aprovador ≠ criador" (matriz §3). Se o responsável quiser o mesmo regime da D-06 para elas, basta mover as 4 para `DATO_SENSIBLE` na matriz, sem outra mudança no desenho.
 
 ### 4.2 Regras de delegação
 
@@ -124,29 +142,33 @@ Valem para qualquer operação de administração, inclusive as feitas por quem 
 
 | ID | Regra | Retorno quando violada |
 |---|---|---|
-| ESC-01 | **Subconjunto:** ninguém concede o que não tem. Criar ou editar um perfil exige que o conjunto de permissões resultante seja ⊆ `P(ator)`. Atribuir um perfil exige que as permissões dele sejam ⊆ `P(ator)` | 403 |
+| ESC-01 | **Subconjunto:** ninguém concede o que não tem. Criar ou editar um perfil exige que as permissões `OPERACIONAL`, `ACCION_CRITICA` e `ADMINISTRATIVA` resultantes sejam ⊆ `P(ator)`. Atribuir um perfil exige o mesmo para as permissões dele. A **única** exceção são as permissões `DATO_SENSIBLE`, regidas pela ESC-12 | 403 |
 | ESC-02 | **Sem autoalteração:** o ator não altera os próprios perfis, o próprio alcance, o próprio estado nem a própria flag de administrador. Senha e dados pessoais seguem pelo fluxo de "mi cuenta" | 403 |
 | ESC-03 | **Perfil próprio:** editar um perfil que o próprio ator tem também obedece à ESC-01, calculada sobre `P(ator)` **antes** da mudança. Assim, ninguém amplia o próprio acesso editando o perfil que usa | 403 |
 | ESC-04 | **Flag de administrador:** só um administrador pode criar um perfil `es_administrador`, marcar essa flag ou atribuir esse perfil | 403 |
-| ESC-05 | **Permissões administrativas e sensíveis:** só um administrador pode incluí-las num perfil (mesmo que outro ator as tenha) | 403 |
+| ESC-05 | **Permissões administrativas e ações críticas:** só um administrador pode incluí-las num perfil (mesmo que outro ator as tenha) | 403 |
 | ESC-06 | **Alcance:** o ator só atribui sucursais e depósitos que estão no próprio alcance (`S(ator)`, `D(ator)`); só quem tem `TODAS`/`TODOS` concede `TODAS`/`TODOS` | 403 |
 | ESC-07 | **Último administrador:** nenhuma operação pode deixar a empresa sem ao menos um administrador **ativo**: remover perfil, bloquear, dar baixa, desativar o perfil, desmarcar a flag. A checagem roda na mesma transação, depois de `SELECT … FROM empresas WHERE id = $1 FOR UPDATE`, que serializa as alterações de administração por empresa | 409 "La empresa debe conservar al menos un administrador activo." |
 | ESC-08 | **Perfil de sistema:** o perfil `es_sistema` (administrador criado no bootstrap) não pode ser apagado, desativado nem ter as permissões editadas | 409 |
 | ESC-09 | **Catálogo fechado:** só códigos existentes em `permisos`; `PLATAFORMA.*` nunca é aceito numa API de empresa | 422 |
 | ESC-10 | **Concorrência:** toda edição de usuário ou de perfil envia a versão lida (`version_acceso` / `version`); se outra pessoa alterou antes, a resposta é 409 e nada é gravado (bloqueio otimista) | 409 |
 | ESC-11 | **Identificadores de outra empresa:** perfil, usuário, sucursal ou depósito de outra empresa no corpo ou na URL tem o mesmo tratamento de "não existe" | 404 |
+| ESC-12 | **Dados sensíveis (D-06):** incluir uma permissão `DATO_SENSIBLE` num perfil, ou atribuir um perfil que a contenha, exige `PERMISOS_SENSIBLES.ASIGNAR` (não exige que o ator tenha o dado sensível) **e** um motivo escrito. **Nunca** para si mesmo: o ator não pode estar entre os usuários que passariam a ter o acesso, nem por atribuição nem por edição de um perfil que ele usa. Cada concessão gera `CONCESION_SENSIBLE_OTORGADA` com recurso, ação, beneficiário, ator e motivo | 403 (sem permissão ou autoconcessão); 422 (sem motivo) |
+| ESC-13 | **Perfil administrador sem dado sensível:** um perfil `es_administrador` não pode conter permissão `DATO_SENSIBLE`. Quem precisa de administração e de dado sensível recebe dois perfis, e o segundo segue a ESC-12 | 422 |
 
 ### 4.3 Versão e auditoria
 - Cada mudança de perfis, alcance ou estado incrementa `usuarios.version_acceso`. Cada mudança de permissões de um perfil incrementa `perfiles.version`.
 - Toda operação grava em `auditoria_acceso`, na mesma transação, o **antes e o depois** (conjuntos de perfis, permissões e alcance; nunca senha, hash ou token), o ator e o motivo, quando houver.
-- Uma tentativa negada por ESC-01 a ESC-07 gera `ACCESO_DENEGADO` em `eventos_seguridad`, com a regra violada.
+- Uma tentativa negada por qualquer regra ESC gera `ACCESO_DENEGADO` em `eventos_seguridad`, com a regra violada.
+- Concessões e retiradas de dado sensível (`CONCESION_SENSIBLE_OTORGADA` / `_REVOCADA`) aparecem num relatório próprio para revisão periódica pelo responsável da empresa (proposta: trimestral).
 
 ### 4.4 Bootstrap seguro de uma empresa
 1. Só uma conta de plataforma com `PLATAFORMA.EMPRESAS_CREAR` (com MFA) executa o procedimento.
-2. Numa única transação: cria a empresa, uma sucursal inicial, o perfil `ADMINISTRADOR` (`es_administrador`, `es_sistema`) e o primeiro usuário, com alcance `TODAS`/`TODOS`, senha temporária aleatória e `debe_cambiar_contrasena = true`.
+2. Numa única transação: cria a empresa, uma sucursal inicial, o perfil `ADMINISTRADOR` (`es_administrador`, `es_sistema`, **sem** permissões `DATO_SENSIBLE`, D-06) e o primeiro usuário, com alcance `TODAS`/`TODOS` concedido explicitamente e registrado (D-05), senha temporária aleatória e `debe_cambiar_contrasena = true`.
 3. A senha temporária é mostrada uma única vez a quem executou e entregue por canal separado; nunca vai para log, repositório ou auditoria.
 4. No primeiro login, o usuário só consegue trocar a senha.
-5. A função `017_administrador_inicial` citada no README é avaliada na fase 0: se já fizer isso, é reaproveitada; se tiver senha fixa, é substituída.
+5. O primeiro administrador **não** recebe dado sensível no bootstrap. Se a empresa tiver um único administrador e ele precisar de dado sensível, a concessão vem de outro usuário com `PERMISOS_SENSIBLES.ASIGNAR` ou, na falta dele, da plataforma, por pedido formal do representante da empresa (§4.6). Nunca por autoconcessão.
+6. A função `017_administrador_inicial` citada no README é avaliada na fase 0: se já fizer isso, é reaproveitada; se tiver senha fixa, é substituída.
 
 ### 4.5 Mudança de permissões e revogação
 - Permissões nunca são guardadas no cookie nem em cache: cada requisição recalcula `P(u)` (§8). Por isso, retirar uma permissão vale a partir da requisição seguinte.
@@ -157,6 +179,7 @@ Valem para qualquer operação de administração, inclusive as feitas por quem 
 - **Não existe bypass no código**: nem flag, nem usuário mágico, nem variável de ambiente que libere tudo.
 - Suporte dentro de uma empresa: concessão em `accesos_soporte`, com empresa, motivo, permissões (somente leitura por padrão) e expiração (padrão: 60 minutos). O acesso aparece na auditoria **da própria empresa** e pode ser revogado antes do prazo.
 - Uma conta de plataforma não usa as telas da empresa sem uma concessão ativa.
+- **Concessão de dado sensível pela plataforma** (só quando a empresa não tem outro usuário com `PERMISOS_SENSIBLES.ASIGNAR`): exige pedido formal do representante da empresa anexado ao motivo, MFA e registro na auditoria da empresa (`CONCESION_SENSIBLE_OTORGADA`, `actor_tipo = PLATAFORMA`). A conta de plataforma não ganha o acesso para si.
 
 ## 5. Isolamento completo entre empresas (F-004, RN-01, RN-02, RN-11)
 
@@ -254,10 +277,28 @@ As listagens filtram por `S(u)`/`D(u)`. Os totais (por exemplo, o stock consolid
 | Entrada, recepção, ajuste positivo | — | ∈ `D(u)` | |
 | Saída, ajuste negativo, reserva, liberação, quarentena | ∈ `D(u)` | — | |
 | Transferência na mesma sucursal | ∈ `D(u)` | ∈ `D(u)` | Uma etapa; os dois saldos mudam na mesma transação |
-| Transferência entre sucursais — envio | ∈ `D(u)` | qualquer depósito ativo da empresa | O saldo sai da origem e vai para "em trânsito" (o modelo já tem `transito`, `lib/mocks/movimientos-stock-storage.ts:145`) |
-| Transferência entre sucursais — recebimento | — | ∈ `D(u)` do recebedor | Outro usuário pode receber. Até o recebimento, a mercadoria aparece em trânsito para os dois lados |
+| Transferência entre sucursais — envio | ∈ `D(u)` do remetente | qualquer depósito ativo da empresa | Ciclo completo na §6.4.1 (D-08) |
+| Transferência entre sucursais — recebimento | — | ∈ `D(u)` do recebedor | Validação independente da do envio (§6.4.1) |
 
 Em todas: o alcance é conferido **dentro da transação** que grava o movimento, depois de travar as linhas de saldo envolvidas (`SELECT … FOR UPDATE`, em ordem fixa de `deposito_id` para evitar deadlock). Assim, o alcance e o saldo são validados no mesmo instante da gravação.
+
+### 6.4.1 Transferência entre sucursais (D-08)
+
+Estados da transferência (`transferencias_stock`, entidade nova a modelar no REQ de stock, depois da fase 0):
+
+| Estado | Como se chega | Quem pode | Efeito no estoque | Permissão |
+|---|---|---|---|---|
+| `EN_TRANSITO` | Envio confirmado | Usuário com a origem em `D(u)` | Origem: `disponible − q`; destino: `transito + q`. O estoque em trânsito pertence à empresa, entra no saldo virtual (`lib/mocks/movimientos-stock-storage.ts:145`) e é valorizado ao custo da origem | `MOVIMIENTOS_STOCK.CREAR` na origem |
+| `RECIBIDA` | Recebimento de toda a quantidade | Usuário com o destino em `D(u)` (pode ser outro usuário) | Destino: `transito − q`, `disponible + q` | `MOVIMIENTOS_STOCK.CREAR` no destino |
+| `RECIBIDA_CON_DIFERENCIA` | Recebimento de quantidade menor que a enviada | Idem | Destino recebe a quantidade conferida; a diferença vai para "diferencia en tránsito", fora do disponível | Idem; a diferença gera uma conciliação |
+| `CANCELADA` | Cancelamento antes de qualquer recebimento | Usuário com a origem em `D(u)` | Origem: `disponible + q`; destino: `transito − q` | `MOVIMIENTOS_STOCK.ANULAR` na origem |
+| `CONCILIADA` | Diferença tratada: encontrada (volta ao disponível do destino ou da origem) ou baixada como perda | Quem cria a conciliação + aprovador diferente | Perda vira um ajuste negativo vinculado à transferência | `AJUSTES_STOCK.CREAR` + `AJUSTES_STOCK.APROBAR` (aprovador ≠ criador) |
+
+Regras:
+- O envio valida só a origem; o recebimento valida só o destino. Cada validação é independente, no momento da própria gravação, dentro da transação e com as linhas de saldo travadas (§6.4).
+- Uma transferência `RECIBIDA` ou `CONCILIADA` não pode ser cancelada; correções posteriores são uma nova transferência ou um ajuste.
+- Transferências em trânsito há mais de N dias (N configurável por empresa; proposta: 7) aparecem num relatório de pendências.
+- Todos os passos ficam no histórico da transferência, com usuário, data e quantidade.
 
 ### 6.5 Depósitos de terceiros
 O campo "propietario" já aparece nas recepções demo (`lib/mocks/recepciones-storage.ts:247`). Proposta: `depositos.es_de_terceros` e o proprietário no saldo/lote. As regras de alcance são as mesmas; a valorização do estoque exclui o de terceiros. Não há permissão extra nesta fase.
@@ -279,7 +320,8 @@ type AccessContext = {
   esAdministrador: boolean;
   sucursales: ReadonlySet<string>;            // S(u) já resolvido
   depositos: ReadonlySet<string>;             // D(u) já resolvido
-  modo: "OBSERVAR" | "APLICAR";               // §10
+  modo: "OBSERVAR" | "APLICAR";               // §10; ausente ou inválido = APLICAR
+  // esAdministrador NÃO implica dado sensível: só `permisos` decide (D-06)
   demo: boolean;
 };
 getAccessContext(): Promise<AccessContext | null>
@@ -346,12 +388,34 @@ Nenhuma informação de autorização é guardada fora do banco: o cookie só te
 | USUARIO_ALCANCE_CAMBIADO | sucursais e depósitos adicionados e removidos |
 | EMPRESA_SUSPENDIDA / REACTIVADA, SOPORTE_ACCESO_* | ator de plataforma, motivo, prazo |
 | ACCESO_DENEGADO (`eventos_seguridad`) | permissão ou regra violada, rota, ID solicitado |
+| CONCESION_SENSIBLE_OTORGADA / REVOCADA | recurso e ação sensíveis, beneficiário, ator (usuário ou plataforma), motivo |
 | DATO_SENSIBLE_CONSULTADO | recurso sensível e ID (contas bancárias, crédito, custo) |
+| TRANSFERENCIA_* | envio, recebimento, cancelamento e conciliação (D-08) |
 | EXPORTACION | módulo, filtros, quantidade de linhas |
 
 - `auditoria_acceso` é só de inserção: o papel da aplicação não tem `UPDATE` nem `DELETE` nela.
-- Retenção conforme D-07.
+- Retenção: §9.1.
 - `withTenantTx` define `app.usuario_id`, `app.empresa_id` e `app.ip`, o que também alimenta triggers de auditoria que já existam no banco (NAO_VERIFICADO).
+
+### 9.1 Classificação e retenção dos registros (D-07)
+
+**Cinco anos é o objetivo proposto, não um prazo legal.** Os prazos abaixo são propostas iniciais. Cada um precisa ser validado pelo jurídico ou pela contabilidade da PROCEIT e do cliente, inclusive quanto à proteção de dados pessoais, **antes** de existir qualquer rotina automática de descarte. Até essa validação, nada é apagado automaticamente.
+
+| Classe | Conteúdo | Dados pessoais | Retenção proposta | Base legal | Acesso |
+|---|---|---|---|---|---|
+| C1 Administração de acesso | Usuários, perfis, permissões, alcance, concessões sensíveis (antes/depois) | Nome de usuário, ator | 5 anos (objetivo) | A validar | `AUDITORIA.VER` da empresa; plataforma só com concessão de suporte |
+| C2 Segurança | Login, falhas, bloqueios, `ACCESO_DENEGADO` | IP, user-agent | 1 ano (proposta) | A validar | Idem |
+| C3 Consulta de dado sensível | `DATO_SENSIBLE_CONSULTADO` | Ator, ID do registro | 5 anos (objetivo) | A validar | Idem |
+| C4 Exportações | Módulo, filtros, quantidade | Ator | 1 ano (proposta) | A validar | Idem |
+| C5 Operações fiscais e financeiras (REQs futuros) | Faturas, notas, pagamentos e respectivos eventos | Clientes e fornecedores | Seguir a obrigação fiscal aplicável | **Obrigatória a validação contábil** | Conforme o módulo |
+| C6 Logs técnicos | Erros e ID de correlação, sem dados de negócio | IP, quando necessário | 90 dias (proposta) | A validar | Equipe técnica PROCEIT |
+
+Regras para todas as classes:
+- **Gravação:** só inserção. O papel da aplicação não tem `UPDATE` nem `DELETE`. Correções são novos eventos.
+- **Minimização:** sem senha, hash, token, número completo de conta bancária ou documento; IP e user-agent só em C2 e C6.
+- **Descarte:** só depois da validação legal, por procedimento documentado e executado pelo papel de plataforma. O próprio descarte é registrado (classe, período, quantidade, responsável). Retenção legal ou ordem judicial suspende o descarte.
+- **Backups:** criptografados, com acesso restrito à plataforma. Ficam guardados no máximo pelo prazo da classe mais longa que contêm, e os backups antigos seguem o mesmo descarte documentado. Restaurar um backup não traz de volta, sem registro, dados já descartados.
+- A retenção será configurável por classe (e, se necessário, por empresa), sem alterar código.
 
 ## 10. Sequência de implementação (F-005)
 
@@ -360,15 +424,17 @@ Princípio: **o isolamento entre empresas não depende do catálogo de permissõ
 | Fase | Conteúdo | Portão de entrada | Portão de saída (evidência no TST) | DDL? |
 |---|---|---|---|---|
 | 0 | Introspecção somente leitura e verificações de integridade (§10.1) | Responsável autoriza e executa o roteiro | Relatório versionado; divergências registradas; decisões de §3.4 tomadas | Não |
-| 1 | `lib/data` + `withTenantTx` + `assertMismaEmpresa` aplicados nas 5 APIs (isolamento **aplicado**); `access.ts` calculando permissões em **modo OBSERVAR**, que registra "negaria" sem bloquear; menu ainda no comportamento atual; testes de isolamento A/B | Fase 0 aprovada; CI do REQ-2026-004 | CA-01 e CA-05 de isolamento verdes; relatório do modo observação sem negações inesperadas | Não |
-| 2 | Migrations mínimas: catálogo de permissões, perfis por empresa, perfil `ADMINISTRADOR` de sistema e garantia de um administrador por empresa (conversão de códigos antigos), alcance com backfill **explícito** `TODAS`/`TODOS` para os usuários existentes (preserva o comportamento atual e fica marcado para revisão), `version_acceso`, `auditoria_acceso` | Fase 1 | Verificações de §10.1 = 0 inconsistências; toda empresa com ≥ 1 administrador ativo; `up` → `down` → `up` testado | Sim |
+| 1 | `lib/data` + `withTenantTx` + `assertMismaEmpresa` aplicados nas 5 APIs (isolamento **aplicado**); `access.ts` calculando permissões em **modo OBSERVAR**, só em homologação com dados sintéticos, que registra "negaria" sem bloquear; menu ainda no comportamento atual; testes de isolamento A/B | Fase 0 aprovada; CI do REQ-2026-004; ambiente de homologação isolado | CA-01 e CA-05 de isolamento verdes; relatório do modo observação sem negações inesperadas | Não |
+| 2 | Migrations mínimas: catálogo de permissões com `clase`, perfis por empresa, perfil `ADMINISTRADOR` de sistema **sem dado sensível** e garantia de um administrador por empresa (conversão de códigos antigos; perfis existentes com dado sensível listados para revisão e reconcessão pela ESC-12), alcance com backfill **explícito** `TODAS`/`TODOS` para os usuários existentes (preserva o comportamento atual e fica marcado para revisão), `version_acceso`, `auditoria_acceso` | Fase 1 | Verificações de §10.1 = 0 inconsistências; toda empresa com ≥ 1 administrador ativo; `up` → `down` → `up` testado | Sim |
 | 3 | Modo **APLICAR**: menu falha fechado, `requirePermission` bloqueia, alcance aplicado. Liberação progressiva: desenvolvimento → homologação → uma empresa piloto → todas | Fase 2 | CA-03 a CA-07 verdes; teste com usuário sem permissões, perfil vazio e empresa suspensa | Não |
 | 4 | APIs e telas de administração de usuários, perfis e alcance (§12); regras ESC-01 a ESC-11 | Fase 3 | Testes de escalada (§11.2) verdes | Não |
 | 5 | FKs compostas e RLS, tabela a tabela, à medida que cada módulo sai do `localStorage` para o banco | Fase 2 e o módulo no banco | Testes de §11.1 com RLS ligada | Sim |
 
-Regras da chave `AUTHZ_MODO`:
-- Em produção, só `APLICAR` é aceito: a aplicação não inicia com `OBSERVAR`. Nenhum cliente usa o sistema com dados reais antes da fase 3.
-- Voltar de `APLICAR` para `OBSERVAR` só é permitido fora de produção.
+Regras da chave `AUTHZ_MODO` (R02-F-003):
+- **Falha fechada:** sem a variável, ou com um valor diferente de `OBSERVAR`, o modo é `APLICAR`.
+- `OBSERVAR` só é aceito quando **três** condições valem juntas: `NODE_ENV` diferente de `production`, `AMBIENTE=homologacion` e a marca `DATOS_SINTETICOS=true` gravada no próprio banco (tabela de configuração preenchida só pela carga de dados sintéticos). Se qualquer uma faltar, a aplicação não inicia.
+- Mesmo em `OBSERVAR`, o isolamento entre empresas, a validação de IDs de outra empresa, as regras ESC e o acesso a dado sensível são **sempre aplicados**. O modo observação só suspende o bloqueio de permissões operacionais.
+- Banco com dados reais de cliente nunca roda em `OBSERVAR`. A produção é liberada só com `APLICAR` e os testes de §11 verdes.
 - Em nenhuma fase existe um valor que libere tudo.
 
 ### 10.1 Fase 0 — verificações de integridade pré-migração
@@ -404,7 +470,7 @@ Ambiente: PostgreSQL efêmero no CI (REQ-2026-004 proposto), semeado com empresa
 ### 11.2 Escalada de privilégios (F-002)
 | Teste | Regra | Esperado |
 |---|---|---|
-| Usuário com `PERFILES.EDITAR` (sem `PRODUCTOS_COSTO.VER`) cria um perfil com `PRODUCTOS_COSTO.VER` | ESC-01 | 403 |
+| Usuário com `PERFILES.EDITAR` (sem `STOCK.EXPORTAR`) cria um perfil com `STOCK.EXPORTAR` | ESC-01 | 403 |
 | O mesmo usuário adiciona a permissão ao perfil que ele próprio usa | ESC-03 | 403 |
 | Usuário com `PERFILES.ASIGNAR` atribui a si mesmo um perfil | ESC-02 | 403 |
 | Não administrador atribui o perfil administrador a outro | ESC-04 | 403 |
@@ -422,8 +488,16 @@ Ambiente: PostgreSQL efêmero no CI (REQ-2026-004 proposto), semeado com empresa
 |---|---|
 | Usuário com depósito Central faz saída no Norte (ID válido da empresa) | 403 |
 | Transferência na mesma sucursal com destino fora de `D(u)` | 403; nenhum saldo alterado |
-| Envio entre sucursais com origem em `D(u)` | OK; saldo em trânsito |
+| Envio entre sucursais com origem em `D(u)` | OK; estado `EN_TRANSITO`; origem −q, destino trânsito +q |
+| Envio com origem fora de `D(u)` | 403; nada gravado |
 | Recebimento por usuário sem o depósito de destino | 403 |
+| Recebimento total por outro usuário com o destino | `RECIBIDA`; trânsito −q, disponível +q |
+| Recebimento parcial | `RECIBIDA_CON_DIFERENCIA`; diferença fora do disponível |
+| Cancelamento antes do recebimento | `CANCELADA`; saldos voltam ao estado anterior ao envio |
+| Cancelamento depois do recebimento | 409 |
+| Conciliação de perda aprovada pelo próprio criador | 403 (aprovador ≠ criador) |
+| Conciliação de perda aprovada por outro usuário | `CONCILIADA`; ajuste negativo vinculado |
+| Soma de saldos antes e depois de cada caso acima | Igual (nada some sem ajuste aprovado) |
 | Salvar alcance com depósito de sucursal não atribuída | 422 |
 | Remover a sucursal do usuário e repetir a listagem | Registros da sucursal somem na próxima requisição |
 | Stock consolidado | Soma só `D(u)` |
@@ -441,10 +515,44 @@ Ambiente: PostgreSQL efêmero no CI (REQ-2026-004 proposto), semeado com empresa
 ### 11.5 Implantação (F-005)
 | Teste | Esperado |
 |---|---|
-| Fase 1 em OBSERVAR com dados legados | Nenhum bloqueio de permissão; isolamento A/B bloqueando; log de "negaria" |
-| Aplicação iniciada em produção com `AUTHZ_MODO=OBSERVAR` ou `DEMO_MODE=true` | Não inicia |
+| Fase 1 em OBSERVAR, homologação com dados sintéticos | Nenhum bloqueio de permissão operacional; isolamento A/B, ESC e dado sensível bloqueando; log de "negaria" |
+| `AUTHZ_MODO=OBSERVAR` com `NODE_ENV=production`, ou sem `AMBIENTE=homologacion`, ou sem a marca `DATOS_SINTETICOS` no banco | Aplicação não inicia |
+| `AUTHZ_MODO` ausente ou com valor inválido | Modo `APLICAR` |
+| Aplicação iniciada em produção com `DEMO_MODE=true` | Não inicia |
 | Fase 2: migrations `up` → `down` → `up` a partir da linha de base | Sem erro; verificações de §10.1 = 0 |
 | Fase 3 com perfil vazio, usuário sem perfil e empresa suspensa | Menu vazio / 403 / 401 |
+
+### 11.6 Dados sensíveis (D-06, R02-F-001)
+| Teste | Regra | Esperado |
+|---|---|---|
+| Administrador sem concessão consulta custo de produto, crédito de cliente ou conta bancária de fornecedor | §4.1 | 403 nos três; campos ausentes ou mascarados nas listagens |
+| Perfil administrador recebe `PRODUCTOS_COSTO.VER` | ESC-13 | 422 |
+| Administrador atribui a si mesmo um perfil com `CLIENTES_CREDITO.VER` | ESC-12 | 403 |
+| Administrador adiciona `PROVEEDORES_BANCARIO.VER` a um perfil que ele mesmo usa | ESC-12 | 403 |
+| Administrador concede `PRODUCTOS_COSTO.VER` a outro usuário, sem motivo | ESC-12 | 422 |
+| Idem, com motivo | ESC-12 | OK; evento `CONCESION_SENSIBLE_OTORGADA` com recurso, ação, beneficiário, ator e motivo |
+| Usuário sem `PERMISOS_SENSIBLES.ASIGNAR` concede dado sensível | ESC-12 | 403 |
+| Concessão de `PRODUCTOS_COSTO.VER` não dá `CLIENTES_CREDITO.VER` | §4.1 | 403 em crédito |
+| Retirada da concessão; próxima requisição | §8 | 403; evento `CONCESION_SENSIBLE_REVOCADA` |
+| Leitura de dado sensível autorizada | §9 | Evento `DATO_SENSIBLE_CONSULTADO` |
+| Plataforma concede a empresa com um único administrador, com pedido formal e MFA | §4.6 | OK; evento na auditoria da empresa com `actor_tipo = PLATAFORMA`; a conta de plataforma não ganha o acesso |
+| Bootstrap de empresa nova | §4.4 | O primeiro administrador não tem nenhuma permissão `DATO_SENSIBLE` |
+
+### 11.7 Teste por operação gerado da matriz (D-04)
+Um teste parametrizado lê o catálogo da matriz (versão aprovada) e, para **cada** permissão (139), executa:
+1. um usuário com a permissão (e o alcance exigido) consegue a operação;
+2. um usuário sem ela recebe 403 sem alterar dados;
+3. um usuário de outra empresa recebe 404;
+4. para permissões de nível sucursal ou depósito, um usuário fora do alcance recebe 403.
+
+Permissões de módulos ainda AUSENTES ou DEMO entram no teste quando o módulo for para o banco; até lá, aparecem no relatório como "sem operação implementada".
+
+### 11.8 Retenção (D-07)
+| Teste | Esperado |
+|---|---|
+| Papel da aplicação tenta `UPDATE`/`DELETE` em `auditoria_acceso` | Erro de permissão |
+| Busca por rotina de descarte automático no código | Inexistente até a política validada |
+| Evento auditado contém senha, hash, token ou número completo de conta | Nunca (teste de varredura dos campos `antes`/`despues`) |
 
 ## 12. APIs e telas de administração (fase 4)
 
@@ -459,12 +567,15 @@ Interface em espanhol, no padrão visual existente.
 | `POST /api/admin/usuarios/{id}/bloquear` · `/reactivar` | `USUARIOS.EDITAR` | ESC-02, ESC-07; revoga sessões (§8) |
 | `POST /api/admin/usuarios/{id}/baja` | `USUARIOS.ELIMINAR` | ESC-02, ESC-07; revoga sessões |
 | `POST /api/admin/usuarios/{id}/restablecer-contrasena` | `USUARIOS.EDITAR` | Revoga sessões do alvo |
-| `PUT /api/admin/usuarios/{id}/perfiles` | `PERFILES.ASIGNAR` | ESC-01, 02, 04, 07, 10, 11 |
+| `PUT /api/admin/usuarios/{id}/perfiles` | `PERFILES.ASIGNAR` (+ `PERMISOS_SENSIBLES.ASIGNAR` e `motivo` se algum perfil tiver dado sensível) | ESC-01, 02, 04, 07, 10, 11, 12 |
 | `PUT /api/admin/usuarios/{id}/alcance` | `USUARIOS.EDITAR` | ESC-02, 06, 10; coerência §6.2 |
 | `GET/POST /api/admin/perfiles`, `PATCH /api/admin/perfiles/{id}` | `PERFILES.VER/CREAR/EDITAR` | ESC-01, 03, 04, 05, 08, 10 |
-| `PUT /api/admin/perfiles/{id}/permisos` | `PERFILES.EDITAR` | ESC-01, 03, 05, 08, 09, 10 |
+| `PUT /api/admin/perfiles/{id}/permisos` | `PERFILES.EDITAR` (+ `PERMISOS_SENSIBLES.ASIGNAR` e `motivo` para dado sensível) | ESC-01, 03, 05, 08, 09, 10, 12, 13 |
+| `GET /api/admin/concesiones-sensibles` | `AUDITORIA.VER` | Relatório de quem tem dado sensível, desde quando, por quem e por quê |
 | `GET /api/admin/permisos` | `PERFILES.VER` | Catálogo sem `PLATAFORMA.*` |
 | `GET /api/admin/auditoria` | `AUDITORIA.VER` | Só a empresa da sessão |
+
+A tela de perfis mostra as permissões `DATO_SENSIBLE` num bloco separado, com o campo de motivo obrigatório.
 
 Telas: `/administracion/usuarios` (lista, novo, detalhe com abas Datos, Perfiles, Alcance), `/administracion/roles` (grade módulo × ação, com as permissões que o ator não pode conceder desabilitadas) e `/administracion/auditoria`. `/administracion/configuracion` fica fora deste REQ.
 
@@ -477,3 +588,5 @@ Telas: `/administracion/usuarios` (lista, novo, detalhe com abas Datos, Perfiles
 | Custo de recalcular permissões e de travar linhas a cada requisição | Uma consulta agregada por requisição; `FOR SHARE` só nas gravações; medir antes de otimizar |
 | RLS mal configurada | Fase 5 por tabela, testes antes de ativar, papel de migração separado |
 | Telas cliente inteiras dificultam o gate por página | Layout de servidor por módulo |
+| Um administrador cria uma segunda conta e concede dado sensível a ela, contornando a ESC-12 | Não é possível impedir tecnicamente sem um segundo aprovador. Mitigação: concessão sensível a uma conta criada pelo mesmo ator nos últimos 30 dias fica destacada no relatório `concesiones-sensibles`; as duas operações ficam na auditoria C1. Exigir segundo aprovador pode ser decidido depois pelo responsável |
+| As 4 ações críticas continuam no perfil administrador | Interpretação da D-06 registrada em §4.1, para confirmação na R03 |

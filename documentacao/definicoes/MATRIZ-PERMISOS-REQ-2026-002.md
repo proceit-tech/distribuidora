@@ -1,7 +1,7 @@
 # MATRIZ-PERMISOS-REQ-2026-002 — Matriz de permissões proposta
 
-Requisito: REQ-2026-002 (RN-04 a RN-08, D-02, D-04) · Autor: Claude · Data: 2026-10-08 · Versão 2 (correções da AUD-REQ-2026-002-R01)
-Situação: **PROPOSTA PARA APROVAÇÃO.** Os perfis da §3 são ilustrativos, como diz o REQ; nenhum é obrigatório. O catálogo real de `permisos` no banco é NAO_VERIFICADO e será conciliado com esta matriz na fase 0 (`DESENHO-REQ-2026-002-multiempresa.md` §10).
+Requisito: REQ-2026-002 (RN-04 a RN-08, D-02, D-04) · Autor: Claude · Data: 2026-10-08 · Versão 3 (decisões D-01 a D-08 e AUD-REQ-2026-002-R02; histórico na §9)
+Situação: **D-04 APROVADA CONDICIONALMENTE** pelo responsável (`DECISOES-REQ-2026-002-APROVACAO.md`): a matriz precisa da revisão por área de negócio (§8) e dos testes por operação antes da implementação. Os perfis da §3 são ilustrativos, como diz o REQ; nenhum é obrigatório. O catálogo real de `permisos` no banco é NAO_VERIFICADO e será conciliado com esta matriz na fase 0 (`DESENHO-REQ-2026-002-multiempresa.md` §10).
 
 ## 1. Ações
 
@@ -87,22 +87,29 @@ Coluna "Hoje": situação atual da tela (ver `MAPA-MODULOS.md` no REQ-2026-001).
 | `REPORTES` | ● | — | — | — | — | ● | — | — | S | AUSENTE | Os dados respeitam o alcance |
 | `USUARIOS` | ● | ● | ● | ● | — | ● | — | — | E | AUSENTE | EDITAR inclui bloquear, reativar, redefinir senha e alcance |
 | `PERFILES` | ● | ● | ● | ● | — | — | — | ● | E | AUSENTE | ASIGNAR = atribuir perfis a usuários |
+| `PERMISOS_SENSIBLES` | — | — | — | — | — | — | — | ● | E | AUSENTE | **Novo na versão 3 (D-06).** ASIGNAR = conceder a outro usuário uma permissão `DATO_SENSIBLE`, com motivo; nunca a si mesmo (ESC-12) |
 | `CONFIGURACION` | ● | — | ● | — | — | — | — | — | E | AUSENTE | Fora deste REQ |
 | `AUDITORIA` | ● | — | — | — | — | ● | — | — | E | AUSENTE | Só leitura |
 
-Total proposto: 37 recursos e 138 permissões (contagem dos ● acima), mais 5 de plataforma. Os números descrevem a proposta; a aprovação depende da decisão D-04 do responsável.
+Total proposto: **38 recursos e 139 permissões** (contagem dos ● acima), mais 5 de plataforma. A versão 2 tinha 37 e 138; a diferença é `PERMISOS_SENSIBLES.ASIGNAR` (§9).
 
-### Classificação para as regras de escalada (desenho §4)
-- **Administrativas** (`es_administrativa`; só um administrador inclui num perfil, ESC-05): todas as de `USUARIOS`, `PERFILES`, `CONFIGURACION` e `AUDITORIA` (14 permissões).
-- **Sensíveis** (`es_sensible`; só um administrador inclui num perfil, ESC-05; leitura auditada): todas as de `CLIENTES_CREDITO`, `PROVEEDORES_BANCARIO` e `PRODUCTOS_COSTO`, mais `AJUSTES_STOCK.APROBAR`, `PAGOS.APROBAR`, `FACTURAS.ANULAR` e `NOTAS_CREDITO.APROBAR` (9 permissões).
-- Uma permissão sensível **nunca** é implícita em outra: `PROVEEDORES.VER` não mostra contas bancárias; `PRODUCTOS.VER` não mostra custo (D-02).
+### 2.1 Classes de permissão (desenho §4.1)
+
+| Classe | Permissões | Perfil administrador recebe? | Quem pode incluir num perfil ou atribuir |
+|---|---|---|---|
+| `DATO_SENSIBLE` (5) | `PRODUCTOS_COSTO.VER`; `CLIENTES_CREDITO.VER`, `CLIENTES_CREDITO.EDITAR`; `PROVEEDORES_BANCARIO.VER`, `PROVEEDORES_BANCARIO.EDITAR` | **Não** (D-06, ESC-13) | Quem tem `PERMISOS_SENSIBLES.ASIGNAR`, com motivo, nunca para si (ESC-12) |
+| `ACCION_CRITICA` (4) | `AJUSTES_STOCK.APROBAR`, `PAGOS.APROBAR`, `FACTURAS.ANULAR`, `NOTAS_CREDITO.APROBAR` | Sim, com motivo obrigatório na ação e "aprovador ≠ criador" (interpretação da D-06 a confirmar na R03, desenho §4.1) | Só administrador (ESC-05) |
+| `ADMINISTRATIVA` (15) | Todas de `USUARIOS` (5), `PERFILES` (5), `PERMISOS_SENSIBLES` (1), `CONFIGURACION` (2), `AUDITORIA` (2) | Sim | Só administrador (ESC-05) |
+| `OPERACIONAL` (115) | As demais | Sim | Quem tem a permissão e `PERFILES.EDITAR`/`ASIGNAR` (ESC-01) |
+
+Uma permissão `DATO_SENSIBLE` nunca é implícita em outra: `PROVEEDORES.VER` não mostra contas bancárias; `PRODUCTOS.VER` não mostra custo; ser administrador não mostra nenhum dos dois (D-02, D-06).
 
 ### Permissões de plataforma (fora do alcance das empresas — D-03)
 `PLATAFORMA.EMPRESAS_VER`, `PLATAFORMA.EMPRESAS_CREAR`, `PLATAFORMA.EMPRESAS_SUSPENDER`, `PLATAFORMA.PERMISOS_ADMINISTRAR`, `PLATAFORMA.SOPORTE_ACCESO`. Ficam só para `usuarios_plataforma` (com MFA obrigatório); a API de perfis de empresa rejeita esses códigos com 422 (ESC-09). Uso de `PLATAFORMA.SOPORTE_ACCESO` exige motivo e prazo e aparece na auditoria da empresa (desenho §4.6).
 
 ## 3. Perfis de referência (ilustrativos)
 
-Exemplos para o responsável aprovar, ajustar ou descartar. Cada empresa cria os seus. O administrador da empresa (`es_administrador`) recebe todas as permissões da §2 da própria empresa e não aparece nesta tabela. Leitura: **V** ver · **C** criar · **E** editar · **X** eliminar · **A** aprovar · **Ex** exportar · **N** anular · **As** asignar.
+Exemplos para o responsável aprovar, ajustar ou descartar. Cada empresa cria os seus. O administrador da empresa (`es_administrador`) recebe todas as permissões da §2 da própria empresa **exceto as 5 de `DATO_SENSIBLE`** (§2.1) e não aparece nesta tabela. Leitura: **V** ver · **C** criar · **E** editar · **X** eliminar · **A** aprovar · **Ex** exportar · **N** anular · **As** asignar.
 
 | Recurso | Ventas | Depósito | Compras | Finanzas | Consulta |
 |---|---|---|---|---|---|
@@ -141,7 +148,7 @@ Exemplos para o responsável aprovar, ajustar ou descartar. Cada empresa cria os
 
 Alcance sugerido nos exemplos: Ventas e Finanzas por **sucursal**; Depósito por **depósito**; Compras e Consulta com todas as sucursais. Isso cobre os cenários de referência do REQ: o vendedor vê só vendas e o que lhe foi concedido; o depósito vê estoque, recepções e movimentos.
 
-Pelas regras ESC-01 e ESC-05 do desenho, os perfis que contêm permissões sensíveis (como Finanzas e Compras acima) só podem ser criados ou atribuídos por um administrador.
+Os perfis de exemplo que contêm dado sensível (Ventas: crédito; Compras: custo; Finanzas: crédito, bancos e custo) só podem receber essas permissões, e só podem ser atribuídos, por quem tem `PERMISOS_SENSIBLES.ASIGNAR`, com motivo e nunca para si (ESC-12). As ações críticas de Finanzas (aprovar pagamento, anular fatura, aprovar nota de crédito) só podem ser incluídas por um administrador (ESC-05).
 
 Separação de funções sugerida (a confirmar): quem **cria** um ajuste de estoque, uma ordem de compra ou um pagamento não deveria **aprovar** o mesmo registro. Proposta: regra de aplicação "aprovador ≠ criador", exceto para o administrador da empresa, e configurável por empresa.
 
@@ -227,9 +234,10 @@ As APIs de administração e as permissões que cada uma exige estão no desenho
 
 | Situação | O que é concedido | Quem concede |
 |---|---|---|
-| Empresa nova (bootstrap, desenho §4.4) | Perfil de sistema `ADMINISTRADOR` com todas as permissões de empresa (D-06) e o primeiro usuário com esse perfil e alcance `TODAS`/`TODOS` | Plataforma PROCEIT, com MFA |
-| Empresa existente na migração (fase 2) | Perfil `ADMINISTRADOR` de sistema; os perfis existentes são convertidos pela tabela da §4.3; os usuários existentes recebem alcance explícito `TODAS`/`TODOS` para não perder acesso, marcados para revisão | Migration aprovada pelo responsável |
-| Usuário novo criado pelo administrador | **Nenhuma** permissão e nenhum alcance até que perfis e alcance sejam atribuídos (D-05, CA-06). Menu vazio | Administrador ou quem tem `USUARIOS.CREAR` + `PERFILES.ASIGNAR`, sujeito a ESC-01 a ESC-06 |
+| Empresa nova (bootstrap, desenho §4.4) | Perfil de sistema `ADMINISTRADOR` com as permissões `OPERACIONAL`, `ACCION_CRITICA` e `ADMINISTRATIVA` (**sem** `DATO_SENSIBLE`, D-06) e o primeiro usuário com esse perfil e alcance `TODAS`/`TODOS` concedido explicitamente | Plataforma PROCEIT, com MFA |
+| Empresa existente na migração (fase 2) | Perfil `ADMINISTRADOR` de sistema, sem dado sensível; os perfis existentes são convertidos pela tabela da §4.3, e os que tiverem dado sensível ficam listados para reconcessão explícita pela ESC-12; os usuários existentes recebem alcance explícito `TODAS`/`TODOS` para não perder acesso, marcados para revisão | Migration aprovada pelo responsável |
+| Usuário novo criado pelo administrador | **Nenhuma** permissão e nenhum alcance até que perfis e alcance sejam atribuídos (D-05, CA-06). Menu vazio | Administrador ou quem tem `USUARIOS.CREAR` + `PERFILES.ASIGNAR`, sujeito a ESC-01 a ESC-06; dado sensível só pela ESC-12 |
+| Dado sensível para o único administrador da empresa | Concedido por outro usuário com `PERMISOS_SENSIBLES.ASIGNAR` ou, na falta dele, pela plataforma com pedido formal do representante e MFA | Desenho §4.4 e §4.6 |
 | Perfis de referência da §3 | **Não** são criados automaticamente. A tela de perfis oferece modelos ("plantillas") que o administrador pode copiar e ajustar | Administrador |
 
 ## 6. Mudança de permissões e revogação
@@ -237,8 +245,10 @@ As APIs de administração e as permissões que cada uma exige estão no desenho
 | Mudança | Regras de escalada | Efeito | Auditoria |
 |---|---|---|---|
 | Adicionar permissão a um perfil | ESC-01, 03, 05, 09, 10 | Próxima requisição de todos os usuários com o perfil | `PERFIL_PERMISOS_CAMBIADOS`, antes/depois, versão |
+| Adicionar dado sensível a um perfil, ou atribuir perfil que o contém | ESC-12, 13 (motivo; nunca o próprio ator; nunca no perfil administrador) | Próxima requisição | `CONCESION_SENSIBLE_OTORGADA` + relatório de concessões sensíveis |
+| Retirar dado sensível | ESC-10 | Próxima requisição | `CONCESION_SENSIBLE_REVOCADA` |
 | Retirar permissão de um perfil | ESC-08, 10 | Próxima requisição; gravações sensíveis em curso revalidam dentro da transação (desenho §8.3) | idem |
-| Atribuir ou retirar perfil de um usuário | ESC-01, 02, 04, 07, 10, 11 | Próxima requisição | `USUARIO_PERFILES_CAMBIADOS` |
+| Atribuir ou retirar perfil de um usuário | ESC-01, 02, 04, 07, 10, 11, 12 | Próxima requisição | `USUARIO_PERFILES_CAMBIADOS` |
 | Desativar perfil | ESC-07, 08 | Próxima requisição | `PERFIL_DESACTIVADO` |
 | Alterar alcance | ESC-02, 06, 10; coerência do desenho §6.2 | Próxima requisição | `USUARIO_ALCANCE_CAMBIADO` |
 | Bloquear, dar baixa, suspender empresa | ESC-02, 07 | Sessões revogadas na mesma transação; gravações em curso falham | Eventos do desenho §9 |
@@ -256,3 +266,28 @@ Executada com um script sobre o código de `0dbb013` e esta matriz (TST-REQ-2026
 | Itens de menu (`lib/navigation/menu.ts`) | 32 | 32 (§4.3) | 0 |
 | Códigos de permissão atuais do menu | 18 distintos | 18 (§4.3) | 0 |
 | Link fixo do Dashboard | 1 | 1 | 0 |
+
+## 8. Revisão por área de negócio (condição da D-04)
+
+Antes da implementação de cada área, o responsável (ou quem ele indicar, por exemplo o cliente piloto) confirma a lista de permissões e o comportamento de cada operação. O Claude não marca nenhum item como revisado.
+
+| Área | Recursos | Pontos a confirmar | Revisão |
+|---|---|---|---|
+| Maestros | CLIENTES, CLIENTES_CREDITO, PROVEEDORES, PROVEEDORES_BANCARIO, PRODUCTOS, PRODUCTOS_COSTO, LISTAS_PRECIO, VENDEDORES, ZONAS_RUTAS | ELIMINAR = baixa lógica; aprovação de lista de preço | PENDENTE |
+| Compras | SOLICITUDES_COMPRA, ORDENES_COMPRA, RECEPCIONES, DEVOLUCIONES_COMPRA | Fluxo de aprovação de ordem; alcance por depósito na recepção | PENDENTE |
+| Inventario | STOCK, MOVIMIENTOS_STOCK, AJUSTES_STOCK, DEPOSITOS, REPOSICION | Transferência D-08 (`CREAR` no envio e no recebimento, `ANULAR` no cancelamento, `AJUSTES_STOCK` na conciliação); limite para aprovação de ajuste | PENDENTE |
+| Ventas | PEDIDOS, VENTAS, ENTREGAS | Quem aprova pedido; alcance por sucursal | PENDENTE |
+| Finanzas | CUENTAS_COBRAR, COBROS, CUENTAS_PAGAR, PAGOS, CAJA | Ações críticas no administrador (§2.1) | PENDENTE |
+| Facturación | FACTURAS, NOTAS_CREDITO, NOTAS_REMISION, DOCUMENTOS_ELECTRONICOS, SIFEN | Dependente do contrato SIFEN (REQ-2026-013 proposto) | PENDENTE |
+| Administración | DASHBOARD, REPORTES, USUARIOS, PERFILES, PERMISOS_SENSIBLES, CONFIGURACION, AUDITORIA | Regras ESC; relatório de concessões sensíveis | PENDENTE |
+
+Cada operação aprovada aqui ganha os quatro casos do teste por operação (desenho §11.7). Uma mudança decidida na revisão gera nova versão da matriz (§9).
+
+## 9. Histórico de versões da matriz
+
+| Versão | Data | Origem | Mudança | Contagem |
+|---|---|---|---|---|
+| 1 | 2026-10-08 | Proposta inicial (`eee771d`) | Catálogo, perfis de exemplo, permissão por rota | 37 recursos, 138 permissões |
+| 2 | 2026-10-08 | AUD-R01 (`0281e63`) | Classificação administrativa/sensível, concessão inicial, mudança e revogação, 32 itens de menu, verificação de cobertura | 37 / 138 |
+| 3 | 2026-10-08 | D-01 a D-08 (`2a007e7`) e AUD-R02 | D-06: administrador sem dado sensível; classes `DATO_SENSIBLE` e `ACCION_CRITICA`; novo `PERMISOS_SENSIBLES.ASIGNAR`; transferência D-08 na área de Inventario; revisão por área (§8) | 38 / 139 |
+
