@@ -1,6 +1,6 @@
 # REQ-2026-002 — Multiempresa, usuarios, perfiles y menús por permisos
 
-Estado: PRONTO_PARA_AUDITORIA (fase de diseño). Sigue sin autorizar cambios de código hasta la aprobación del diseño y la revisión de la estructura real del banco.
+Estado: PRONTO_PARA_AUDITORIA (fase de diseño, versión 2 tras AUD-R01). Sigue sin autorizar cambios de código hasta la aprobación del diseño y la revisión de la estructura real del banco.
 Prioridad: ALTA — fundamento transversal del DistribuNex.
 Idioma funcional y de interfaz: español (Paraguay).
 Implementador: Claude. Auditor independiente: ChatGPT. Homologación final: responsable PROCEIT.
@@ -63,6 +63,8 @@ Tratar este requisito como regla transversal de producto. Primero completar REQ-
 |---|---|---|---|
 | 2026-10-08 | Responsable PROCEIT | DEFINIDO PARA ANÁLISIS | Definición inicial (`ff77929`) |
 | 2026-10-08 | Claude | PRONTO_PARA_AUDITORIA (diseño) | Entregados `DESENHO-REQ-2026-002-multiempresa.md`, `MATRIZ-PERMISOS-REQ-2026-002.md` y `TST-REQ-2026-002.md`. Sin código ni SQL. Pendientes de decisión: D-01 a D-05. Esperando AUD-REQ-2026-002-R01 |
+| 2026-10-08 | ChatGPT | CORRECAO_SOLICITADA | AUD-REQ-2026-002-R01: 7 hallazgos (F-001 y F-002 ALTA; F-003 a F-006 MEDIA; F-007 BAJA); diseño no aprobado para implementación |
+| 2026-10-08 | Claude | PRONTO_PARA_AUDITORIA (diseño v2) | Correcciones de la R01 en `0281e63` y TST. Decisiones D-01 a D-08 pendientes del responsable. Esperando AUD-REQ-2026-002-R02 |
 
 ## Caminos alterados (fase de diseño)
 - `documentacao/definicoes/DESENHO-REQ-2026-002-multiempresa.md` (nuevo)
