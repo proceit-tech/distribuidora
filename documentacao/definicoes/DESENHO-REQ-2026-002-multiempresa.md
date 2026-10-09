@@ -1,9 +1,9 @@
 # DESENHO-REQ-2026-002 — Multiempresa, usuários, perfis e menus
 
 Requisito: `REQ-2026-002-multiempresa-usuarios-perfiles-menus.md` · Autor: Claude
-Versão: **3 (decisões D-01 a D-08 do responsável e AUD-REQ-2026-002-R02)** · Data: 2026-10-08
+Versão: **4 (decisões D-09 e D-10 e AUD-REQ-2026-002-R03)** · Data: 2026-10-08
 Código analisado: `main` @ `0dbb013` (o código funcional é idêntico ao de `7f4230a`; desde então só entraram documentos)
-Situação: **PROPOSTA PARA APROVAÇÃO DOCUMENTAL.** As decisões de negócio estão registradas em `DECISOES-REQ-2026-002-APROVACAO.md` (`2a007e7`); elas não autorizam implementação, migrations nem homologação. Nenhum código, nenhum SQL executável e nenhuma migration fazem parte desta entrega. Os trechos SQL deste documento são ilustrativos e servem para fixar o contrato; não são DDL definitivo (F-001).
+Situação: **PROPOSTA PARA APROVAÇÃO DOCUMENTAL.** As decisões de negócio estão registradas em `DECISOES-REQ-2026-002-APROVACAO.md` (D-01 a D-08, `2a007e7`) e `DECISOES-REQ-2026-002-R03-CONTROLES-CRITICOS.md` (D-09 e D-10, `9c76906`); elas não autorizam implementação, migrations nem homologação. Nenhum código, nenhum SQL executável e nenhuma migration fazem parte desta entrega. Os trechos SQL deste documento são ilustrativos e servem para fixar o contrato; não são DDL definitivo (F-001).
 
 Documentos de apoio, no PR #2 (`feature/REQ-2026-001-consolidacao-documental` @ `fd16292`): `ARQUITETURA-ATUAL.md` §2 e §7, `MODELO-DADOS-ATUAL.md` §1.1, `MAPA-MODULOS.md` §1 e §6, `documentacao/banco/INTROSPECCAO-SOMENTE-LEITURA.md`.
 
@@ -32,6 +32,18 @@ Documentos de apoio, no PR #2 (`feature/REQ-2026-001-consolidacao-documental` @ 
 | R02-F-004 | Decisões registradas; DDL só depois do banco real; testes antes de implementar | §2, §10 |
 | D-04 (condicionada) | Revisão por área de negócio e testes por operação antes de implementar; correções da matriz versionadas | matriz §8 e §9; §11.7 |
 | D-01, D-02, D-03, D-05 (aprovadas) | Incorporadas como regras, não mais como recomendação | §2, §4, §6 |
+
+### 0.2 Resposta à R03 e às decisões D-09 e D-10 (versão 4)
+
+| Origem | Ponto | Onde foi tratado |
+|---|---|---|
+| D-09 / R03-F-002 | As 4 ações críticas saem do perfil administrador e passam a exigir concessão individual, rastreável, por recurso/ação; segregação criador ≠ aprovador | §4.1, §4.7, ESC-15; matriz §2.1, §3, §5; testes §11.9 |
+| D-10 / R03-F-001 | Dado sensível exige segundo aprovador **independente**; estados SOLICITADA, APROBADA, REJEITADA, REVOGADA, EXPIRADA (e CANCELADA); nada é efetivo antes da aprovação | §4.7.2, §4.7.4 |
+| D-10 | Independência verificável: contas diferentes, linhagem de criação, linhagem de poder, identidade (documento e e-mail), MFA, antiguidade do poder; revalidação na aprovação e no uso | §4.7.3, ESC-14 |
+| D-10 | Empresa sem segundo aprovador independente: autorização formal da PROCEIT, vinculada ao pedido da empresa, com responsável de plataforma identificado; não é bypass | §4.7.5, §4.4, §4.6 |
+| Pedido do responsável (item 4) | Autoconcessão impossível por perfil (as permissões controladas não podem estar em perfil) e por conta alternativa (regras de independência) | §4.1, ESC-13, §4.7.3, §11.10 |
+| R03-F-003 / D-04 | Revisão por área continua PENDENTE com o responsável | matriz §8 |
+| R03-F-004 | Banco real e CI continuam dependências (REQ-2026-003 e 004) | §10 |
 
 ## 1. Pontos de partida
 
@@ -68,11 +80,18 @@ Fonte: `documentacao/definicoes/DECISOES-REQ-2026-002-APROVACAO.md`, registrado 
 | D-01 | APROVADO — contas separadas por empresa | Manter login empresa + usuário + senha | §3.2; nenhuma mudança no login. Identidade única futura exige novo REQ |
 | D-02 | APROVADO — união das permissões dos perfis | A união nunca ultrapassa empresa e alcance | §4.1, §6.3 (permissão **e** empresa **e** alcance) |
 | D-03 | APROVADO — administração global PROCEIT segregada | Identidades separadas, MFA, suporte explícito, temporário e auditado, sem bypass | §4.6 |
-| D-04 | APROVADO CONDICIONALMENTE — matriz | Revisão por área de negócio; validar concessão inicial, revogação e testes de cada operação antes de implementar; versionar correções | Matriz versão 3 (38 recursos, 139 permissões; mudança registrada na matriz §2.1); checklist por área (matriz §8); teste por operação gerado da matriz (§11.7) |
+| D-04 | APROVADO CONDICIONALMENTE — matriz | Revisão por área de negócio; validar concessão inicial, revogação e testes de cada operação antes de implementar; versionar correções | Matriz versão 4 (39 recursos, 142 permissões; histórico na matriz §9); checklist por área (matriz §8); teste por operação gerado da matriz (§11.7) |
 | D-05 | APROVADO — alcance vazio nega | `TODAS`/`TODOS` só por concessão explícita | §6.1, §6.2; concessão de `TODAS`/`TODOS` sujeita a ESC-06 e auditada |
-| D-06 | **AJUSTAR** — administrador sem acesso sensível automático | Concessão explícita e auditável por recurso/ação, inclusive para administradores; impedir autoconcessão | §4.1, ESC-12/ESC-13, §4.4, §4.6 |
+| D-06 | **AJUSTAR** — administrador sem acesso sensível automático | Concessão explícita e auditável por recurso/ação, inclusive para administradores; impedir autoconcessão | §4.1, §4.7, ESC-12 a ESC-14, §4.4, §4.6 |
 | D-07 | APROVADO CONDICIONALMENTE — 5 anos como objetivo | Classificar eventos; validar prazos com jurídico/contabilidade e privacidade antes de expurgo automático; definir acesso, descarte e backups | §9.1 |
 | D-08 | APROVADO — transferência em duas etapas | Envio → `EN_TRANSITO` → recebimento; validação independente dos dois depósitos; cancelamento, perda e conciliação; testes | §6.4.1, §11.3 |
+
+| D-09 | APROVADO — ações críticas com concessão explícita, inclusive para administrador | Rastreável (ator, beneficiário, empresa, recurso, ação, motivo, data, situação); segregação criador ≠ aprovador; checagem no servidor com alcance; revogação pelo contrato do §8 | §4.1, §4.7, ESC-15, §8.2 |
+| D-10 | APROVADO — dado sensível com segundo aprovador independente | Sem autoaprovação direta, por perfil ou por contas do mesmo operador; registro completo; efetivo só após aprovação; exceção formal PROCEIT; estados e expiração; sem condição de corrida; revalidação na aprovação e no uso | §4.7 |
+
+A D-06 continua valendo e é complementada pela D-10 (como conceder) e pela D-09 (ações críticas).
+
+Decisão nova proposta pelo Claude, **pendente**: **D-11** — como tratar a segregação criador ≠ aprovador em empresas com um único operador (§4.7.7).
 
 Pontos ainda abertos, conforme o registro: detalhes finais da matriz por módulo (D-04), prazos efetivos e base legal por classe de registro (D-07) e o esquema real do banco.
 
@@ -93,12 +112,14 @@ Pontos ainda abertos, conforme o registro: detalhes finais da matriz por módulo
 | `empresas` | existe | `id, codigo, razon_social, ruc, estado` (`ACTIVA` \| `SUSPENDIDA`), `version_acceso` | `codigo` único global (usado no login) |
 | `sucursales` | não referenciada; confirmar na fase 0 | `id, empresa_id, codigo, nombre, establecimiento_sifen, activo` | `UNIQUE (empresa_id, codigo)` |
 | `depositos` | existe | + `sucursal_id` (FK composta), `es_de_terceros`, `activo` | Todo depósito pertence a uma sucursal da mesma empresa |
-| `usuarios` | existe | + `alcance_sucursales` (`TODAS` \| `ASIGNADAS`), `alcance_depositos` (`TODOS` \| `ASIGNADOS`), `baja_at`, `debe_cambiar_contrasena`, `version_acceso` | `sucursal_id` atual = sucursal padrão, obrigatoriamente dentro do alcance |
+| `usuarios` | existe | + `alcance_sucursales` (`TODAS` \| `ASIGNADAS`), `alcance_depositos` (`TODOS` \| `ASIGNADOS`), `baja_at`, `debe_cambiar_contrasena`, `version_acceso`, `creado_por`, `creado_por_tipo` (`USUARIO` \| `PLATAFORMA`), `documento_hash` (HMAC do documento de identidade, nunca o número), `email_verificado`, `mfa_activo` | `sucursal_id` atual = sucursal padrão, obrigatoriamente dentro do alcance |
 | `usuario_sucursal`, `usuario_deposito` | inexistentes | `empresa_id, usuario_id, sucursal_id` / `deposito_id`, `asignado_por, asignado_at` | FKs compostas |
 | `perfiles` | existe (`empresa_id` NAO_VERIFICADO) | `id, empresa_id, codigo, nombre, es_administrador, es_sistema, activo, version` | Ver §4 |
 | `permisos` | existe (global) | `id, codigo, recurso, accion, modulo, nivel_alcance` (`EMPRESA` \| `SUCURSAL` \| `DEPOSITO`), `clase` (`OPERACIONAL` \| `DATO_SENSIBLE` \| `ACCION_CRITICA` \| `ADMINISTRATIVA`) | Catálogo mantido pela plataforma |
 | `perfil_permiso` | existe | + `empresa_id` | FK composta para `perfiles` |
-| `usuario_perfil` | existe | + `empresa_id, asignado_por, asignado_at, motivo` | FK composta para `usuarios` e `perfiles` (fecha G-03); `motivo` obrigatório quando o perfil contém dado sensível (ESC-12) |
+| `usuario_perfil` | existe | + `empresa_id, asignado_por, asignado_at` | FK composta para `usuarios` e `perfiles` (fecha G-03) |
+| `concesiones_permiso` | inexistente | `id, empresa_id, beneficiario_id, permiso_id, clase` (`DATO_SENSIBLE` \| `ACCION_CRITICA`), `estado`, `canal` (`EMPRESA` \| `PLATAFORMA`), `solicitante_id, motivo, aprobador_id, aprobador_tipo, aprobado_at, rechazo_motivo, vigente_hasta, revocado_por, revocado_at, revocado_motivo, documento_respaldo_id, version` | Uma linha por usuário × permissão controlada (§4.7). FK composta para `usuarios` |
+| `concesiones_permiso_eventos` | inexistente | `id, empresa_id, concesion_id, evento, actor_id, actor_tipo, detalle jsonb, created_at` | Histórico imutável de cada transição |
 | `auditoria_acceso` | inexistente no código | `id, empresa_id, actor_tipo` (`USUARIO` \| `PLATAFORMA`), `actor_id, accion, entidad, entidad_id, antes jsonb, despues jsonb, motivo, ip, user_agent, created_at` | Só inserção (§9) |
 | `usuarios_plataforma`, `accesos_soporte` | inexistentes | Contas PROCEIT com MFA; concessões de suporte com prazo | §4.6 |
 
@@ -125,16 +146,17 @@ O código atual trata como globais as tabelas lidas sem filtro de empresa. A cla
 ## 4. Proteção contra escalada de privilégios (F-002)
 
 ### 4.1 Definições
-- **Conjunto efetivo** `P(u)`: união das permissões dos perfis ativos do usuário `u`, na empresa dele (D-02). A união nunca amplia empresa nem alcance.
 - **Classes de permissão** (coluna `permisos.clase`; lista na matriz §2.1):
-  - `OPERACIONAL`: as demais.
-  - `DATO_SENSIBLE`: leitura ou edição de custo de produtos, crédito de clientes e dados bancários de fornecedores (5 permissões).
-  - `ACCION_CRITICA`: aprovar ajuste de estoque, aprovar pagamento, anular fatura, aprovar nota de crédito (4 permissões).
-  - `ADMINISTRATIVA`: `USUARIOS.*`, `PERFILES.*`, `PERMISOS_SENSIBLES.ASIGNAR`, `CONFIGURACION.*`, `AUDITORIA.*`.
+  - `OPERACIONAL`: as do dia a dia.
+  - `ADMINISTRATIVA`: `USUARIOS.*`, `PERFILES.*`, `PERMISOS_SENSIBLES.*`, `PERMISOS_CRITICOS.*`, `CONFIGURACION.*`, `AUDITORIA.*`.
+  - `DATO_SENSIBLE` (5): ver ou editar custo de produtos, crédito de clientes e dados bancários de fornecedores.
+  - `ACCION_CRITICA` (4): aprovar ajuste de estoque, aprovar pagamento, anular fatura, aprovar nota de crédito.
+  - `DATO_SENSIBLE` e `ACCION_CRITICA` formam as **permissões controladas**.
+- **Permissões controladas nunca ficam em perfil.** Elas só existem como concessão individual, em `concesiones_permiso`, para um usuário e uma permissão, e só valem no estado `APROBADA` e dentro da vigência (§4.7). Assim, ninguém as obtém editando ou atribuindo um perfil (ESC-13).
+- **Conjunto efetivo** `P(u)` = (união das permissões `OPERACIONAL` e `ADMINISTRATIVA` dos perfis ativos de `u`) ∪ (permissões das concessões `APROBADA` e vigentes de `u`). Tudo dentro da empresa de `u`. A união nunca amplia empresa nem alcance (D-02).
 - **Administrador da empresa**: usuário com ao menos um perfil ativo `es_administrador = true` da própria empresa. É o único critério; o código literal `ADMIN` (`server-context.ts:15`) deixa de ter significado.
-- **Conjunto do perfil administrador** (D-06): todas as permissões `OPERACIONAL`, `ACCION_CRITICA` e `ADMINISTRATIVA` da empresa. **Nenhuma** permissão `DATO_SENSIBLE` e nenhuma `PLATAFORMA.*`. Ser administrador não dá acesso a custo, crédito nem contas bancárias.
-- **Dados sensíveis só por concessão explícita**: um usuário — administrador ou não — só tem uma permissão `DATO_SENSIBLE` se recebeu um perfil não administrador que a contém, por uma atribuição explícita, com motivo e auditada (ESC-12). A concessão é por recurso e ação: `PRODUCTOS_COSTO.VER` não traz `CLIENTES_CREDITO.VER`.
-- **Ações críticas no administrador (interpretação a confirmar na R03):** a D-06 cita dados (custo, crédito, bancos). As 4 ações críticas continuam no perfil administrador, mas exigem motivo, ficam auditadas e obedecem à regra "aprovador ≠ criador" (matriz §3). Se o responsável quiser o mesmo regime da D-06 para elas, basta mover as 4 para `DATO_SENSIBLE` na matriz, sem outra mudança no desenho.
+- **Conjunto do perfil administrador** (D-06, D-09): todas as permissões `OPERACIONAL` e `ADMINISTRATIVA` da empresa. **Nenhuma** permissão controlada e nenhuma `PLATAFORMA.*`. Ser administrador não dá acesso a custo, crédito, contas bancárias, nem às 4 ações críticas.
+- As concessões são por recurso e ação: `PRODUCTOS_COSTO.VER` não traz `CLIENTES_CREDITO.VER`; `PAGOS.APROBAR` não traz `FACTURAS.ANULAR`.
 
 ### 4.2 Regras de delegação
 
@@ -142,33 +164,36 @@ Valem para qualquer operação de administração, inclusive as feitas por quem 
 
 | ID | Regra | Retorno quando violada |
 |---|---|---|
-| ESC-01 | **Subconjunto:** ninguém concede o que não tem. Criar ou editar um perfil exige que as permissões `OPERACIONAL`, `ACCION_CRITICA` e `ADMINISTRATIVA` resultantes sejam ⊆ `P(ator)`. Atribuir um perfil exige o mesmo para as permissões dele. A **única** exceção são as permissões `DATO_SENSIBLE`, regidas pela ESC-12 | 403 |
+| ESC-01 | **Subconjunto:** ninguém concede o que não tem. Criar ou editar um perfil exige que as permissões resultantes sejam ⊆ `P(ator)`. Atribuir um perfil exige o mesmo para as permissões dele. Permissões controladas não passam por aqui: seguem o §4.7 | 403 |
 | ESC-02 | **Sem autoalteração:** o ator não altera os próprios perfis, o próprio alcance, o próprio estado nem a própria flag de administrador. Senha e dados pessoais seguem pelo fluxo de "mi cuenta" | 403 |
 | ESC-03 | **Perfil próprio:** editar um perfil que o próprio ator tem também obedece à ESC-01, calculada sobre `P(ator)` **antes** da mudança. Assim, ninguém amplia o próprio acesso editando o perfil que usa | 403 |
 | ESC-04 | **Flag de administrador:** só um administrador pode criar um perfil `es_administrador`, marcar essa flag ou atribuir esse perfil | 403 |
-| ESC-05 | **Permissões administrativas e ações críticas:** só um administrador pode incluí-las num perfil (mesmo que outro ator as tenha) | 403 |
+| ESC-05 | **Permissões administrativas:** só um administrador pode incluí-las num perfil (mesmo que outro ator as tenha) | 403 |
 | ESC-06 | **Alcance:** o ator só atribui sucursais e depósitos que estão no próprio alcance (`S(ator)`, `D(ator)`); só quem tem `TODAS`/`TODOS` concede `TODAS`/`TODOS` | 403 |
 | ESC-07 | **Último administrador:** nenhuma operação pode deixar a empresa sem ao menos um administrador **ativo**: remover perfil, bloquear, dar baixa, desativar o perfil, desmarcar a flag. A checagem roda na mesma transação, depois de `SELECT … FROM empresas WHERE id = $1 FOR UPDATE`, que serializa as alterações de administração por empresa | 409 "La empresa debe conservar al menos un administrador activo." |
 | ESC-08 | **Perfil de sistema:** o perfil `es_sistema` (administrador criado no bootstrap) não pode ser apagado, desativado nem ter as permissões editadas | 409 |
 | ESC-09 | **Catálogo fechado:** só códigos existentes em `permisos`; `PLATAFORMA.*` nunca é aceito numa API de empresa | 422 |
 | ESC-10 | **Concorrência:** toda edição de usuário ou de perfil envia a versão lida (`version_acceso` / `version`); se outra pessoa alterou antes, a resposta é 409 e nada é gravado (bloqueio otimista) | 409 |
 | ESC-11 | **Identificadores de outra empresa:** perfil, usuário, sucursal ou depósito de outra empresa no corpo ou na URL tem o mesmo tratamento de "não existe" | 404 |
-| ESC-12 | **Dados sensíveis (D-06):** incluir uma permissão `DATO_SENSIBLE` num perfil, ou atribuir um perfil que a contenha, exige `PERMISOS_SENSIBLES.ASIGNAR` (não exige que o ator tenha o dado sensível) **e** um motivo escrito. **Nunca** para si mesmo: o ator não pode estar entre os usuários que passariam a ter o acesso, nem por atribuição nem por edição de um perfil que ele usa. Cada concessão gera `CONCESION_SENSIBLE_OTORGADA` com recurso, ação, beneficiário, ator e motivo | 403 (sem permissão ou autoconcessão); 422 (sem motivo) |
-| ESC-13 | **Perfil administrador sem dado sensível:** um perfil `es_administrador` não pode conter permissão `DATO_SENSIBLE`. Quem precisa de administração e de dado sensível recebe dois perfis, e o segundo segue a ESC-12 | 422 |
+| ESC-12 | **Concessão controlada só pelo fluxo:** permissões `DATO_SENSIBLE` e `ACCION_CRITICA` só são obtidas por solicitação em `concesiones_permiso`, com motivo, aprovada conforme o §4.7. O solicitante precisa de `PERMISOS_SENSIBLES.ASIGNAR` ou `PERMISOS_CRITICOS.ASIGNAR`, conforme a classe, e nunca é o beneficiário | 403 (sem permissão ou solicitante = beneficiário); 422 (sem motivo) |
+| ESC-13 | **Nenhum perfil contém permissão controlada:** criar ou editar um perfil com `DATO_SENSIBLE` ou `ACCION_CRITICA` é recusado, seja ele administrador ou não | 422 |
+| ESC-14 | **Independência (D-10):** o aprovador de uma concessão precisa ser independente do solicitante **e** do beneficiário, pelas regras IND-01 a IND-07 (§4.7.3), verificadas na aprovação e de novo no uso | 403, com a regra IND violada no evento |
+| ESC-15 | **Segregação na operação (D-09):** quem cria ou solicita uma operação crítica (ajuste, pagamento, nota de crédito, anulação de fatura) não a aprova. "Mesma pessoa" = mesma conta **ou** mesma identidade (IND-04). A checagem acontece no servidor, dentro da transação da aprovação, com alcance de empresa/sucursal/depósito | 403 |
 
 ### 4.3 Versão e auditoria
 - Cada mudança de perfis, alcance ou estado incrementa `usuarios.version_acceso`. Cada mudança de permissões de um perfil incrementa `perfiles.version`.
 - Toda operação grava em `auditoria_acceso`, na mesma transação, o **antes e o depois** (conjuntos de perfis, permissões e alcance; nunca senha, hash ou token), o ator e o motivo, quando houver.
 - Uma tentativa negada por qualquer regra ESC gera `ACCESO_DENEGADO` em `eventos_seguridad`, com a regra violada.
-- Concessões e retiradas de dado sensível (`CONCESION_SENSIBLE_OTORGADA` / `_REVOCADA`) aparecem num relatório próprio para revisão periódica pelo responsável da empresa (proposta: trimestral).
+- Toda transição de concessão controlada fica em `concesiones_permiso_eventos` e em `auditoria_acceso` (§4.7.6). Um relatório de concessões vigentes, pendentes e recusadas serve à revisão periódica pelo responsável da empresa (proposta: trimestral).
 
 ### 4.4 Bootstrap seguro de uma empresa
 1. Só uma conta de plataforma com `PLATAFORMA.EMPRESAS_CREAR` (com MFA) executa o procedimento.
-2. Numa única transação: cria a empresa, uma sucursal inicial, o perfil `ADMINISTRADOR` (`es_administrador`, `es_sistema`, **sem** permissões `DATO_SENSIBLE`, D-06) e o primeiro usuário, com alcance `TODAS`/`TODOS` concedido explicitamente e registrado (D-05), senha temporária aleatória e `debe_cambiar_contrasena = true`.
-3. A senha temporária é mostrada uma única vez a quem executou e entregue por canal separado; nunca vai para log, repositório ou auditoria.
-4. No primeiro login, o usuário só consegue trocar a senha.
-5. O primeiro administrador **não** recebe dado sensível no bootstrap. Se a empresa tiver um único administrador e ele precisar de dado sensível, a concessão vem de outro usuário com `PERMISOS_SENSIBLES.ASIGNAR` ou, na falta dele, da plataforma, por pedido formal do representante da empresa (§4.6). Nunca por autoconcessão.
-6. A função `017_administrador_inicial` citada no README é avaliada na fase 0: se já fizer isso, é reaproveitada; se tiver senha fixa, é substituída.
+2. Numa única transação: cria a empresa, uma sucursal inicial, o perfil `ADMINISTRADOR` (`es_administrador`, `es_sistema`, sem permissão controlada, D-06/D-09) e o primeiro usuário, com alcance `TODAS`/`TODOS` concedido explicitamente e registrado (D-05), `creado_por_tipo = PLATAFORMA`, senha temporária aleatória e `debe_cambiar_contrasena = true`.
+3. **Aprovador independente da empresa (recomendado):** no mesmo onboarding, a plataforma pode criar uma segunda conta para uma pessoa diferente indicada formalmente pela empresa (por exemplo, sócio ou representante legal), com identidade verificada (IND-04), MFA e um perfil com `PERMISOS_SENSIBLES.APROBAR` e `PERMISOS_CRITICOS.APROBAR`. Por ter sido criada pela plataforma, ela é independente do primeiro administrador (IND-02). Sem essa conta, as concessões controladas da empresa seguem a exceção formal da PROCEIT (§4.7.5).
+4. As senhas temporárias são mostradas uma única vez a quem executou e entregues por canal separado; nunca vão para log, repositório ou auditoria.
+5. No primeiro login, o usuário só consegue trocar a senha e ativar o MFA (obrigatório para quem tem poder de aprovar).
+6. Nenhuma conta nasce com permissão controlada.
+7. A função `017_administrador_inicial` citada no README é avaliada na fase 0: se já fizer isso, é reaproveitada; se tiver senha fixa, é substituída.
 
 ### 4.5 Mudança de permissões e revogação
 - Permissões nunca são guardadas no cookie nem em cache: cada requisição recalcula `P(u)` (§8). Por isso, retirar uma permissão vale a partir da requisição seguinte.
@@ -179,7 +204,86 @@ Valem para qualquer operação de administração, inclusive as feitas por quem 
 - **Não existe bypass no código**: nem flag, nem usuário mágico, nem variável de ambiente que libere tudo.
 - Suporte dentro de uma empresa: concessão em `accesos_soporte`, com empresa, motivo, permissões (somente leitura por padrão) e expiração (padrão: 60 minutos). O acesso aparece na auditoria **da própria empresa** e pode ser revogado antes do prazo.
 - Uma conta de plataforma não usa as telas da empresa sem uma concessão ativa.
-- **Concessão de dado sensível pela plataforma** (só quando a empresa não tem outro usuário com `PERMISOS_SENSIBLES.ASIGNAR`): exige pedido formal do representante da empresa anexado ao motivo, MFA e registro na auditoria da empresa (`CONCESION_SENSIBLE_OTORGADA`, `actor_tipo = PLATAFORMA`). A conta de plataforma não ganha o acesso para si.
+- **Aprovação formal de concessão controlada pela PROCEIT:** só pelo procedimento do §4.7.5, com a permissão de plataforma `PLATAFORMA.CONCESIONES_APROBAR`, por uma pessoa da PROCEIT identificada, com MFA. A conta de plataforma nunca é beneficiária de concessão de empresa.
+
+### 4.7 Concessões controladas (D-09, D-10)
+
+Regras únicas para as 9 permissões controladas (5 `DATO_SENSIBLE` e 4 `ACCION_CRITICA`). Uma concessão é sempre **um beneficiário × uma permissão**.
+
+#### 4.7.1 Papéis
+| Papel | Quem é | Permissão exigida |
+|---|---|---|
+| Solicitante | Quem propõe a concessão | `PERMISOS_SENSIBLES.ASIGNAR` (dado sensível) ou `PERMISOS_CRITICOS.ASIGNAR` (ação crítica) |
+| Aprovador | Quem decide | `PERMISOS_SENSIBLES.APROBAR` ou `PERMISOS_CRITICOS.APROBAR`, MFA ativo e independência (§4.7.3) |
+| Beneficiário | Quem recebe o acesso | Usuário ativo da mesma empresa; nunca é solicitante nem aprovador da própria concessão |
+| Aprovador de plataforma | Pessoa da PROCEIT, só na exceção do §4.7.5 | `PLATAFORMA.CONCESIONES_APROBAR`, MFA |
+
+Para **dado sensível (D-10)**, solicitante, aprovador e beneficiário são sempre três contas independentes entre si. Para **ação crítica (D-09)**, a concessão também passa por aprovação explícita, com as mesmas regras de independência. O administrador não tem nenhuma das 9 permissões por ser administrador.
+
+#### 4.7.2 Estados
+| Estado | Concede acesso? | Como se chega | Quem |
+|---|---|---|---|
+| `SOLICITADA` | Não | Criação da solicitação, com motivo | Solicitante |
+| `APROBADA` | **Sim**, enquanto vigente | Aprovação válida (§4.7.4) | Aprovador independente ou PROCEIT (§4.7.5) |
+| `REJEITADA` | Não | Recusa, com motivo | Aprovador |
+| `CANCELADA` | Não | Desistência antes da decisão | Solicitante |
+| `REVOGADA` | Não (a partir da próxima requisição) | Retirada, com motivo | Solicitante, aprovador, administrador com a permissão `*.ASIGNAR` da classe ou PROCEIT; também automática quando o beneficiário é bloqueado ou recebe baixa |
+| `EXPIRADA` | Não | Fim da vigência ou solicitação sem decisão no prazo | Automático (verificado na leitura; nenhum processo apaga dados) |
+
+- Vigência proposta: dado sensível 180 dias; ação crítica 365 dias; solicitação sem decisão expira em 7 dias. Os prazos são configuráveis por empresa, nunca sem limite. Renovar = nova solicitação.
+- Transições permitidas: `SOLICITADA → APROBADA | REJEITADA | CANCELADA | EXPIRADA`; `APROBADA → REVOGADA | EXPIRADA`. Os estados finais não mudam mais.
+- Não existe solicitação duplicada: uma única concessão `SOLICITADA` ou `APROBADA` por beneficiário × permissão (índice único parcial, proposto).
+
+#### 4.7.3 Regras de independência (ESC-14)
+O aprovador `A` é independente do solicitante `S` e do beneficiário `B` somente se **todas** valerem, para cada par (A,S) e (A,B):
+
+| ID | Regra | O que impede |
+|---|---|---|
+| IND-01 | Contas diferentes: `A ≠ S`, `A ≠ B` e `S ≠ B` | Autoaprovação direta e autossolicitação |
+| IND-02 | **Linhagem de criação:** `A` não é ancestral nem descendente de `S` ou de `B` na cadeia `usuarios.creado_por` (contas criadas pela plataforma são raízes) | Um operador criar uma conta alternativa, ou uma cadeia de contas, para aprovar o próprio pedido |
+| IND-03 | **Linhagem de poder:** o perfil ou a concessão que dá a `A` o poder de aprovar não foi atribuído por `S` nem por `B`, nem por uma conta descendente deles | Um operador dar poder de aprovação a uma conta que ele controla |
+| IND-04 | **Identidade:** `A`, `S` e `B` têm `documento_hash` e e-mail verificado distintos; contas sem identidade verificada não aprovam | Duas contas da mesma pessoa |
+| IND-05 | **MFA:** `A` tem MFA ativo, e a aprovação exige um fator novo naquele momento | Uso da sessão de outra pessoa |
+| IND-06 | **Antiguidade:** `A` tem o poder de aprovar há pelo menos 7 dias (proposta, configurável) | Montar uma estrutura e aprovar no mesmo dia |
+| IND-07 | **Estado:** `A`, `S` e `B` estão ativos, na mesma empresa, e o alcance da permissão é compatível com o de `B` | Aprovação a conta bloqueada ou fora do alcance |
+
+Consequência prática: numa empresa em que todas as contas foram criadas pelo único administrador, nenhuma conta é independente dele, e as concessões em que ele participa (como solicitante ou beneficiário) seguem a exceção formal do §4.7.5. O caminho recomendado é o onboarding com aprovador independente criado pela plataforma (§4.4, passo 3).
+
+Limite que regra técnica não fecha: duas **pessoas reais** diferentes que combinam fraudar. Esse risco é tratado por auditoria, relatório periódico e responsabilidade contratual da empresa (§13).
+
+#### 4.7.4 Aprovação sem condição de corrida
+Tudo numa única transação (`withTenantTx`):
+1. `SELECT … FROM concesiones_permiso WHERE id = $1 AND empresa_id = $2 FOR UPDATE`; o estado precisa ser `SOLICITADA` e não expirado, e a `version` precisa ser a lida pelo aprovador. Senão → 409.
+2. Trava compartilhada (`FOR SHARE`) nas linhas de `usuarios` de A, S e B e na linha da empresa (§8.3). Assim, um bloqueio ou uma baixa concorrente espera ou faz a aprovação falhar.
+3. Revalida IND-01 a IND-07, as permissões de A e o alcance de B **com os dados do momento**.
+4. Grava `APROBADA`, `aprobador_id`, `aprobado_at`, `vigente_hasta`, `version + 1`, o evento em `concesiones_permiso_eventos` e em `auditoria_acceso`.
+
+Duas aprovações simultâneas: a segunda espera a trava, encontra `APROBADA` e recebe 409. Aprovação e cancelamento simultâneos: o primeiro a travar vence; o outro recebe 409.
+
+#### 4.7.5 Exceção formal da PROCEIT (empresa sem aprovador independente)
+1. A solicitação é criada normalmente pelo solicitante. O sistema verifica se existe na empresa alguma conta que cumpra IND-01 a IND-07; se não existir, o canal passa a `PLATAFORMA`, e a solicitação fica `SOLICITADA` aguardando a PROCEIT. **Nada é concedido automaticamente.**
+2. A empresa envia um pedido formal, assinado pelo representante legal registrado no onboarding. O documento fica vinculado à solicitação (`documento_respaldo_id`, armazenado no módulo de arquivos da empresa).
+3. Uma pessoa da PROCEIT, identificada pelo nome na conta de plataforma, com MFA e `PLATAFORMA.CONCESIONES_APROBAR`, confere o documento e aprova ou recusa pelo mesmo procedimento do §4.7.4. A aprovação registra `aprobador_tipo = PLATAFORMA`.
+4. A pessoa da PROCEIT não pode ser beneficiária nem ter acesso aos dados concedidos; a decisão aparece na auditoria **da empresa**.
+5. Junto com a decisão, a PROCEIT recomenda o cadastro de um aprovador independente (§4.4, passo 3) para que a exceção não vire rotina. Um relatório da plataforma lista as empresas que dependem da exceção.
+
+#### 4.7.6 Uso, revalidação e revogação
+- **Uso:** toda leitura de dado sensível e toda execução de ação crítica revalida a concessão **dentro da transação** (`SELECT … FOR SHARE` na linha da concessão: estado `APROBADA`, vigência, beneficiário ativo, alcance). Sem isso, nada é devolvido: a API não retorna o campo sensível, nem mascarado com dígitos reais. Também não há prévia para o aprovador, que decide sobre o acesso, não sobre os dados.
+- **Revogação:** `UPDATE … SET estado = 'REVOGADA'` trava a mesma linha; uma leitura ou execução em curso termina antes, ou falha depois. Vale a partir da próxima requisição (§8.2).
+- **Revogação automática:** bloquear, dar baixa ou suspender a empresa revoga as concessões do beneficiário na mesma transação.
+- **Perda de independência depois da aprovação** (por exemplo, o aprovador recebeu o mesmo documento por correção cadastral): a concessão é marcada para revisão no relatório; não é revogada sozinha, para não interromper a operação sem decisão humana.
+- **Registro de cada transição:** solicitação, solicitante, aprovador e tipo, beneficiário, motivo, empresa, permissão, horários, decisão, vigência, revogação e quem revogou. Nunca o conteúdo do dado sensível.
+
+#### 4.7.7 Segregação nas operações críticas (ESC-15)
+| Operação | Quem cria | Quem aprova ou executa a ação crítica |
+|---|---|---|
+| Ajuste de estoque | `AJUSTES_STOCK.CREAR` | Concessão `AJUSTES_STOCK.APROBAR`; nem a mesma conta nem a mesma identidade de quem criou |
+| Pagamento | `PAGOS.CREAR` | Concessão `PAGOS.APROBAR`; idem |
+| Nota de crédito | `NOTAS_CREDITO.CREAR` | Concessão `NOTAS_CREDITO.APROBAR`; idem |
+| Anulação de fatura | Solicitação de anulação (`FACTURAS.VER` + motivo) | Concessão `FACTURAS.ANULAR`; não pode ser quem emitiu a fatura nem quem pediu a anulação |
+
+Uma empresa com um único operador não consegue cumprir a segregação. Proposta, a decidir: uma exceção formal por empresa, aprovada pela PROCEIT pelo mesmo procedimento do §4.7.5 e revisada periodicamente (decisão pendente **D-11**).
+
 
 ## 5. Isolamento completo entre empresas (F-004, RN-01, RN-02, RN-11)
 
@@ -366,13 +470,15 @@ Nenhuma informação de autorização é guardada fora do banco: o cookie só te
 | Alcance alterado | `usuario_sucursal`/`usuario_deposito`, `version_acceso + 1` | Próxima requisição | Mantidas |
 | Sucursal ou depósito desativado | `activo = false` | Próxima requisição | Mantidas |
 | Concessão de suporte expirada ou revogada | `accesos_soporte.revocada_at` | Próxima requisição | Sessão de suporte encerrada |
+| Concessão controlada aprovada | `concesiones_permiso.estado = APROBADA` (§4.7.4) | Próxima requisição do beneficiário | Mantidas |
+| Concessão controlada revogada ou expirada | `estado = REVOGADA` ou vigência vencida | Próxima requisição; leitura ou execução em curso revalida dentro da transação (§4.7.6) | Mantidas |
 
 ### 8.3 Condição de corrida
 - **Leitura:** uma requisição que começou antes da revogação pode terminar e devolver dados que o usuário podia ver naquele instante. Esse limite é aceito e documentado.
 - **Gravação:** `revalidarAcceso` (chamada dentro de `withTenantTx`, §5.2) faz `SELECT … FROM empresas WHERE id = $1 FOR SHARE` e `SELECT … FROM usuarios WHERE id = $2 FOR SHARE` e confere estado e `version_acceso` contra o contexto. A revogação faz `UPDATE` nessas mesmas linhas. O PostgreSQL serializa as duas operações:
   - se a gravação travou primeiro, a revogação espera ela terminar;
   - se a revogação gravou primeiro, a gravação vê o estado novo e falha com 401/403, sem gravar nada.
-- **Permissões de perfil:** para operações sensíveis e administrativas, `revalidarAcceso` também relê as permissões dentro da transação. Para as demais, vale a leitura do início da requisição (diferença de milissegundos, aceita).
+- **Permissões de perfil e concessões:** para operações administrativas, leitura de dado sensível e execução de ação crítica, `revalidarAcceso` também relê as permissões e a concessão dentro da transação (§4.7.6). Para as demais, vale a leitura do início da requisição (diferença de milissegundos, aceita).
 - **Sem cache:** nenhuma camada guarda autorização entre requisições. Se, no futuro, for preciso cache por desempenho, a chave inclui `empresas.version_acceso`, `usuarios.version_acceso` e as versões dos perfis, e o cache é descartado quando qualquer uma delas mudar.
 
 ## 9. Auditoria (RN-10)
@@ -388,7 +494,8 @@ Nenhuma informação de autorização é guardada fora do banco: o cookie só te
 | USUARIO_ALCANCE_CAMBIADO | sucursais e depósitos adicionados e removidos |
 | EMPRESA_SUSPENDIDA / REACTIVADA, SOPORTE_ACCESO_* | ator de plataforma, motivo, prazo |
 | ACCESO_DENEGADO (`eventos_seguridad`) | permissão ou regra violada, rota, ID solicitado |
-| CONCESION_SENSIBLE_OTORGADA / REVOCADA | recurso e ação sensíveis, beneficiário, ator (usuário ou plataforma), motivo |
+| CONCESION_SOLICITADA / APROBADA / RECHAZADA / CANCELADA / REVOCADA / EXPIRADA | concessão, permissão, classe, beneficiário, solicitante, aprovador e tipo, motivo, vigência, regra IND violada (se recusada pelo sistema) |
+| ACCION_CRITICA_EJECUTADA | permissão, registro afetado, criador do registro, executor |
 | DATO_SENSIBLE_CONSULTADO | recurso sensível e ID (contas bancárias, crédito, custo) |
 | TRANSFERENCIA_* | envio, recebimento, cancelamento e conciliação (D-08) |
 | EXPORTACION | módulo, filtros, quantidade de linhas |
@@ -425,7 +532,7 @@ Princípio: **o isolamento entre empresas não depende do catálogo de permissõ
 |---|---|---|---|---|
 | 0 | Introspecção somente leitura e verificações de integridade (§10.1) | Responsável autoriza e executa o roteiro | Relatório versionado; divergências registradas; decisões de §3.4 tomadas | Não |
 | 1 | `lib/data` + `withTenantTx` + `assertMismaEmpresa` aplicados nas 5 APIs (isolamento **aplicado**); `access.ts` calculando permissões em **modo OBSERVAR**, só em homologação com dados sintéticos, que registra "negaria" sem bloquear; menu ainda no comportamento atual; testes de isolamento A/B | Fase 0 aprovada; CI do REQ-2026-004; ambiente de homologação isolado | CA-01 e CA-05 de isolamento verdes; relatório do modo observação sem negações inesperadas | Não |
-| 2 | Migrations mínimas: catálogo de permissões com `clase`, perfis por empresa, perfil `ADMINISTRADOR` de sistema **sem dado sensível** e garantia de um administrador por empresa (conversão de códigos antigos; perfis existentes com dado sensível listados para revisão e reconcessão pela ESC-12), alcance com backfill **explícito** `TODAS`/`TODOS` para os usuários existentes (preserva o comportamento atual e fica marcado para revisão), `version_acceso`, `auditoria_acceso` | Fase 1 | Verificações de §10.1 = 0 inconsistências; toda empresa com ≥ 1 administrador ativo; `up` → `down` → `up` testado | Sim |
+| 2 | Migrations mínimas: catálogo de permissões com `clase`, perfis por empresa, perfil `ADMINISTRADOR` de sistema **sem permissão controlada** e garantia de um administrador por empresa (conversão de códigos antigos). Permissões controladas encontradas em perfis existentes são retiradas do perfil e viram solicitações `SOLICITADA` para os usuários afetados, à espera de aprovação independente (nenhum acesso sensível ou crítico migra automaticamente); `concesiones_permiso`, alcance com backfill **explícito** `TODAS`/`TODOS` para os usuários existentes (preserva o comportamento atual e fica marcado para revisão), `version_acceso`, `auditoria_acceso` | Fase 1 | Verificações de §10.1 = 0 inconsistências; toda empresa com ≥ 1 administrador ativo; `up` → `down` → `up` testado | Sim |
 | 3 | Modo **APLICAR**: menu falha fechado, `requirePermission` bloqueia, alcance aplicado. Liberação progressiva: desenvolvimento → homologação → uma empresa piloto → todas | Fase 2 | CA-03 a CA-07 verdes; teste com usuário sem permissões, perfil vazio e empresa suspensa | Não |
 | 4 | APIs e telas de administração de usuários, perfis e alcance (§12); regras ESC-01 a ESC-11 | Fase 3 | Testes de escalada (§11.2) verdes | Não |
 | 5 | FKs compostas e RLS, tabela a tabela, à medida que cada módulo sai do `localStorage` para o banco | Fase 2 e o módulo no banco | Testes de §11.1 com RLS ligada | Sim |
@@ -522,24 +629,19 @@ Ambiente: PostgreSQL efêmero no CI (REQ-2026-004 proposto), semeado com empresa
 | Fase 2: migrations `up` → `down` → `up` a partir da linha de base | Sem erro; verificações de §10.1 = 0 |
 | Fase 3 com perfil vazio, usuário sem perfil e empresa suspensa | Menu vazio / 403 / 401 |
 
-### 11.6 Dados sensíveis (D-06, R02-F-001)
+### 11.6 Dados sensíveis e ações críticas sem herança (D-06, D-09)
 | Teste | Regra | Esperado |
 |---|---|---|
-| Administrador sem concessão consulta custo de produto, crédito de cliente ou conta bancária de fornecedor | §4.1 | 403 nos três; campos ausentes ou mascarados nas listagens |
-| Perfil administrador recebe `PRODUCTOS_COSTO.VER` | ESC-13 | 422 |
-| Administrador atribui a si mesmo um perfil com `CLIENTES_CREDITO.VER` | ESC-12 | 403 |
-| Administrador adiciona `PROVEEDORES_BANCARIO.VER` a um perfil que ele mesmo usa | ESC-12 | 403 |
-| Administrador concede `PRODUCTOS_COSTO.VER` a outro usuário, sem motivo | ESC-12 | 422 |
-| Idem, com motivo | ESC-12 | OK; evento `CONCESION_SENSIBLE_OTORGADA` com recurso, ação, beneficiário, ator e motivo |
-| Usuário sem `PERMISOS_SENSIBLES.ASIGNAR` concede dado sensível | ESC-12 | 403 |
-| Concessão de `PRODUCTOS_COSTO.VER` não dá `CLIENTES_CREDITO.VER` | §4.1 | 403 em crédito |
-| Retirada da concessão; próxima requisição | §8 | 403; evento `CONCESION_SENSIBLE_REVOCADA` |
+| Administrador sem concessão consulta custo, crédito ou conta bancária | §4.1 | 403 nos três; campos ausentes nas listagens |
+| Administrador sem concessão aprova ajuste, aprova pagamento, anula fatura ou aprova nota de crédito | §4.1, D-09 | 403 nos quatro, sem alterar dados |
+| Criar ou editar qualquer perfil (administrador ou não) com uma das 9 permissões controladas | ESC-13 | 422 |
+| Bootstrap de empresa nova | §4.4 | Nenhuma conta com permissão controlada |
+| Migração de perfil existente com `PAGOS.APROBAR` | §10 fase 2 | Permissão sai do perfil; solicitação `SOLICITADA` criada; o usuário perde o acesso até a aprovação |
+| Concessão de `PRODUCTOS_COSTO.VER` aprovada | §4.1 | Não dá `CLIENTES_CREDITO.VER` (403) |
 | Leitura de dado sensível autorizada | §9 | Evento `DATO_SENSIBLE_CONSULTADO` |
-| Plataforma concede a empresa com um único administrador, com pedido formal e MFA | §4.6 | OK; evento na auditoria da empresa com `actor_tipo = PLATAFORMA`; a conta de plataforma não ganha o acesso |
-| Bootstrap de empresa nova | §4.4 | O primeiro administrador não tem nenhuma permissão `DATO_SENSIBLE` |
 
 ### 11.7 Teste por operação gerado da matriz (D-04)
-Um teste parametrizado lê o catálogo da matriz (versão aprovada) e, para **cada** permissão (139), executa:
+Um teste parametrizado lê o catálogo da matriz (versão aprovada) e, para **cada** permissão (142), executa:
 1. um usuário com a permissão (e o alcance exigido) consegue a operação;
 2. um usuário sem ela recebe 403 sem alterar dados;
 3. um usuário de outra empresa recebe 404;
@@ -554,6 +656,48 @@ Permissões de módulos ainda AUSENTES ou DEMO entram no teste quando o módulo 
 | Busca por rotina de descarte automático no código | Inexistente até a política validada |
 | Evento auditado contém senha, hash, token ou número completo de conta | Nunca (teste de varredura dos campos `antes`/`despues`) |
 
+### 11.9 Fluxo de concessão controlada (D-09, D-10)
+| Teste | Regra | Esperado |
+|---|---|---|
+| Solicitação sem motivo | ESC-12 | 422 |
+| Solicitante sem `*.ASIGNAR` da classe | ESC-12 | 403 |
+| Solicitante pede para si mesmo | IND-01 | 403 |
+| Solicitante aprova a própria solicitação | IND-01 | 403 |
+| Beneficiário aprova a solicitação em que é beneficiário | IND-01 | 403 |
+| Leitura do dado com a concessão `SOLICITADA`, `REJEITADA`, `CANCELADA` | §4.7.2 | 403 em todas |
+| Aprovação por conta independente (criada pela plataforma, MFA, poder há mais de 7 dias) | §4.7.4 | `APROBADA`; acesso na próxima requisição; eventos registrados |
+| Aprovação sem MFA recente | IND-05 | 403 |
+| Aprovador com poder recebido há 2 dias | IND-06 | 403 |
+| Duas aprovações simultâneas | §4.7.4 | Uma `APROBADA`, a outra 409 |
+| Aprovação e cancelamento simultâneos | §4.7.4 | Só um vence; o outro 409 |
+| Aprovação enquanto o beneficiário é bloqueado | §4.7.4 | A aprovação falha ou a concessão é revogada no bloqueio; nunca fica `APROBADA` para usuário bloqueado |
+| Revogação durante uma leitura sensível em curso | §4.7.6 | A leitura termina antes da revogação ou falha depois; nenhuma leitura depois do commit da revogação |
+| Concessão expirada | §4.7.2 | 403; estado `EXPIRADA` |
+| Solicitação sem decisão há mais de 7 dias | §4.7.2 | `EXPIRADA`; não pode mais ser aprovada (409) |
+| Solicitação duplicada para a mesma permissão e beneficiário | §4.7.2 | 409 |
+| Uso de ação crítica com concessão vigente por quem criou o registro | ESC-15 | 403 |
+| Uso de ação crítica com concessão vigente por outra conta com o mesmo documento de quem criou | ESC-15, IND-04 | 403 |
+| Uso de ação crítica por usuário independente, com concessão e alcance | ESC-15 | OK; evento `ACCION_CRITICA_EJECUTADA` |
+| Ação crítica em depósito ou sucursal fora do alcance do beneficiário | §6.3 | 403 |
+
+### 11.10 Tentativas de contornar (contas alternativas e perfis)
+| Tentativa | Regra | Esperado |
+|---|---|---|
+| Administrador A cria a conta X e a usa para aprovar uma concessão para A | IND-02 | 403 (X é descendente de A) |
+| A cria X e Y; X solicita e Y aprova uma concessão para A | IND-02 | 403 (Y é descendente de A, beneficiário) |
+| A cria X; X cria Y; Y aprova uma concessão solicitada por A | IND-02 | 403 (cadeia de criação) |
+| Usuário B, criado pela plataforma, recebe de A o perfil com `PERMISOS_SENSIBLES.APROBAR` e aprova um pedido de A | IND-03 | 403 (poder atribuído pelo solicitante) |
+| Duas contas com o mesmo documento ou e-mail se aprovam mutuamente | IND-04 | 403 |
+| Conta criada pela plataforma sem identidade verificada tenta aprovar | IND-04 | 403 |
+| A edita um perfil que usa, para incluir `PRODUCTOS_COSTO.VER` | ESC-13 | 422 |
+| A cria o perfil "Contador" com `PAGOS.APROBAR` e atribui a X | ESC-13 | 422 |
+| A concede `PERMISOS_SENSIBLES.APROBAR` a X e, no mesmo dia, X aprova um pedido feito por outra pessoa para A | IND-02, IND-03, IND-06 | 403 |
+| Empresa com um único administrador pede dado sensível para ele | §4.7.5 | Canal `PLATAFORMA`; nenhum acesso até a aprovação formal da PROCEIT |
+| PROCEIT aprova sem documento de respaldo vinculado | §4.7.5 | 422 |
+| Conta de plataforma tenta ser beneficiária | §4.7.5 | 422 |
+| Aprovação da PROCEIT | §4.7.5 | `aprobador_tipo = PLATAFORMA`, nome da pessoa e documento de respaldo na auditoria da empresa |
+| Cada tentativa negada acima | §4.3 | Evento `ACCESO_DENEGADO` com a regra; nenhuma mudança de estado |
+
 ## 12. APIs e telas de administração (fase 4)
 
 Interface em espanhol, no padrão visual existente.
@@ -567,15 +711,19 @@ Interface em espanhol, no padrão visual existente.
 | `POST /api/admin/usuarios/{id}/bloquear` · `/reactivar` | `USUARIOS.EDITAR` | ESC-02, ESC-07; revoga sessões (§8) |
 | `POST /api/admin/usuarios/{id}/baja` | `USUARIOS.ELIMINAR` | ESC-02, ESC-07; revoga sessões |
 | `POST /api/admin/usuarios/{id}/restablecer-contrasena` | `USUARIOS.EDITAR` | Revoga sessões do alvo |
-| `PUT /api/admin/usuarios/{id}/perfiles` | `PERFILES.ASIGNAR` (+ `PERMISOS_SENSIBLES.ASIGNAR` e `motivo` se algum perfil tiver dado sensível) | ESC-01, 02, 04, 07, 10, 11, 12 |
+| `PUT /api/admin/usuarios/{id}/perfiles` | `PERFILES.ASIGNAR` | ESC-01, 02, 04, 07, 10, 11 |
 | `PUT /api/admin/usuarios/{id}/alcance` | `USUARIOS.EDITAR` | ESC-02, 06, 10; coerência §6.2 |
 | `GET/POST /api/admin/perfiles`, `PATCH /api/admin/perfiles/{id}` | `PERFILES.VER/CREAR/EDITAR` | ESC-01, 03, 04, 05, 08, 10 |
-| `PUT /api/admin/perfiles/{id}/permisos` | `PERFILES.EDITAR` (+ `PERMISOS_SENSIBLES.ASIGNAR` e `motivo` para dado sensível) | ESC-01, 03, 05, 08, 09, 10, 12, 13 |
-| `GET /api/admin/concesiones-sensibles` | `AUDITORIA.VER` | Relatório de quem tem dado sensível, desde quando, por quem e por quê |
+| `PUT /api/admin/perfiles/{id}/permisos` | `PERFILES.EDITAR` | ESC-01, 03, 05, 08, 09, 10, 13 |
+| `POST /api/admin/concesiones` | `PERMISOS_SENSIBLES.ASIGNAR` ou `PERMISOS_CRITICOS.ASIGNAR` | ESC-12, IND-01, IND-07; define o canal (empresa ou plataforma) |
+| `POST /api/admin/concesiones/{id}/aprobar` · `/rechazar` | `PERMISOS_SENSIBLES.APROBAR` ou `PERMISOS_CRITICOS.APROBAR` + MFA | ESC-14 (IND-01 a IND-07), §4.7.4 |
+| `POST /api/admin/concesiones/{id}/cancelar` · `/revocar` | Solicitante; aprovador; `*.ASIGNAR` da classe | §4.7.2, motivo obrigatório na revogação |
+| `GET /api/admin/concesiones` | `AUDITORIA.VER` ou `*.ASIGNAR`/`*.APROBAR` | Pendentes, vigentes, recusadas e revogadas; sem conteúdo sensível |
+| `POST /plataforma/concesiones/{id}/aprobar` | `PLATAFORMA.CONCESIONES_APROBAR` + MFA (serviço de plataforma) | §4.7.5; documento de respaldo obrigatório |
 | `GET /api/admin/permisos` | `PERFILES.VER` | Catálogo sem `PLATAFORMA.*` |
 | `GET /api/admin/auditoria` | `AUDITORIA.VER` | Só a empresa da sessão |
 
-A tela de perfis mostra as permissões `DATO_SENSIBLE` num bloco separado, com o campo de motivo obrigatório.
+A tela de perfis não mostra as 9 permissões controladas. Elas ficam numa tela própria, `/administracion/concesiones`, com solicitação, fila de aprovação (só para aprovadores independentes daquele pedido) e histórico.
 
 Telas: `/administracion/usuarios` (lista, novo, detalhe com abas Datos, Perfiles, Alcance), `/administracion/roles` (grade módulo × ação, com as permissões que o ator não pode conceder desabilitadas) e `/administracion/auditoria`. `/administracion/configuracion` fica fora deste REQ.
 
@@ -588,5 +736,8 @@ Telas: `/administracion/usuarios` (lista, novo, detalhe com abas Datos, Perfiles
 | Custo de recalcular permissões e de travar linhas a cada requisição | Uma consulta agregada por requisição; `FOR SHARE` só nas gravações; medir antes de otimizar |
 | RLS mal configurada | Fase 5 por tabela, testes antes de ativar, papel de migração separado |
 | Telas cliente inteiras dificultam o gate por página | Layout de servidor por módulo |
-| Um administrador cria uma segunda conta e concede dado sensível a ela, contornando a ESC-12 | Não é possível impedir tecnicamente sem um segundo aprovador. Mitigação: concessão sensível a uma conta criada pelo mesmo ator nos últimos 30 dias fica destacada no relatório `concesiones-sensibles`; as duas operações ficam na auditoria C1. Exigir segundo aprovador pode ser decidido depois pelo responsável |
-| As 4 ações críticas continuam no perfil administrador | Interpretação da D-06 registrada em §4.1, para confirmação na R03 |
+| Conta alternativa criada pelo mesmo operador | Bloqueada pela linhagem de criação e de poder (IND-02, IND-03) e pela identidade (IND-04); testes em §11.10 |
+| Identidade falsa no cadastro (documento de outra pessoa) | Aprovadores só com identidade verificada; o aprovador independente recomendado é criado pela plataforma no onboarding, com conferência de documento |
+| Conluio entre duas pessoas reais | Não é bloqueável por regra técnica; mitigado por auditoria, relatório periódico de concessões e responsabilidade da empresa |
+| Empresas pequenas dependentes da exceção PROCEIT | Custo operacional para a PROCEIT; mitigado pelo aprovador independente no onboarding e pelo relatório de empresas em exceção |
+| Segregação impossível em empresa de um só operador | Decisão pendente D-11 (§4.7.7) |
