@@ -1,6 +1,6 @@
 # REQ-2026-002 — Multiempresa, usuarios, perfiles y menús por permisos
 
-Estado: DEFINIDO PARA ANÁLISIS; NO AUTORIZA CAMBIOS DE CÓDIGO HASTA REVISAR LA ESTRUCTURA REAL DEL BANCO.
+Estado: PRONTO_PARA_AUDITORIA (fase de diseño, versión 4 tras decisiones D-09 y D-10 y AUD-R03). Sigue sin autorizar cambios de código hasta la aprobación del diseño y la revisión de la estructura real del banco.
 Prioridad: ALTA — fundamento transversal del DistribuNex.
 Idioma funcional y de interfaz: español (Paraguay).
 Implementador: Claude. Auditor independiente: ChatGPT. Homologación final: responsable PROCEIT.
@@ -57,3 +57,26 @@ No bloquear REQ-2026-001 por estas decisiones; documentar antes de implementaci�
 
 ## Instrucciones para Claude
 Tratar este requisito como regla transversal de producto. Primero completar REQ-2026-001 y documentar tablas/índices/perfiles/permisos reales del banco. Proponer diseño de APIs, autorización server-side, menú filtrado e SQL incremental sem modificar código antes da aprovação. Submeter cada execução para auditoria independente em AUD-REQ-2026-002-R01.md e seguintes.
+
+## Historial
+| Fecha | Autor | Estado | Observación |
+|---|---|---|---|
+| 2026-10-08 | Responsable PROCEIT | DEFINIDO PARA ANÁLISIS | Definición inicial (`ff77929`) |
+| 2026-10-08 | Claude | PRONTO_PARA_AUDITORIA (diseño) | Entregados `DESENHO-REQ-2026-002-multiempresa.md`, `MATRIZ-PERMISOS-REQ-2026-002.md` y `TST-REQ-2026-002.md`. Sin código ni SQL. Pendientes de decisión: D-01 a D-05. Esperando AUD-REQ-2026-002-R01 |
+| 2026-10-08 | ChatGPT | CORRECAO_SOLICITADA | AUD-REQ-2026-002-R01: 7 hallazgos (F-001 y F-002 ALTA; F-003 a F-006 MEDIA; F-007 BAJA); diseño no aprobado para implementación |
+| 2026-10-08 | Claude | PRONTO_PARA_AUDITORIA (diseño v2) | Correcciones de la R01 en `0281e63` y TST. Decisiones D-01 a D-08 pendientes del responsable. Esperando AUD-REQ-2026-002-R02 |
+| 2026-10-08 | ChatGPT | — | AUD-REQ-2026-002-R02 (`7b7af37`): diseño aprobable condicionalmente; 4 puntos nuevos (R02-F-001 a F-004) |
+| 2026-10-08 | Responsable PROCEIT (registrado por ChatGPT) | — | Decisiones D-01 a D-08 en `DECISOES-REQ-2026-002-APROVACAO.md` (`2a007e7`): D-06 AJUSTAR; D-04 y D-07 condicionadas; demás aprobadas |
+| 2026-10-08 | Claude | PRONTO_PARA_AUDITORIA (diseño v3) | Diseño y matriz v3 en `f657c2b`; TST actualizado. Esperando AUD-REQ-2026-002-R03 |
+| 2026-10-08 | ChatGPT | — | AUD-REQ-2026-002-R03 (`3789fe7`): aprobado condicionalmente como diseño; R03-F-001 ALTA (cuenta intermedia), F-002 a F-004 MEDIA |
+| 2026-10-08 | Responsable PROCEIT (registrado por ChatGPT) | — | D-09 y D-10 aprobadas en `DECISOES-REQ-2026-002-R03-CONTROLES-CRITICOS.md` (`9c76906`) |
+| 2026-10-08 | Claude | PRONTO_PARA_AUDITORIA (diseño v4) | Diseño y matriz v4 en `cfbc8a6`; TST actualizado. Nueva decisión propuesta D-11. Esperando AUD-REQ-2026-002-R04 |
+| 2026-10-09 | ChatGPT | — | AUD-REQ-2026-002-R04 (`cd8e959`): aprobado condicionalmente; R04-F-001 ALTA (D-11), F-002 a F-004 MEDIA |
+| 2026-10-09 | Responsable PROCEIT (registrado por ChatGPT) | — | D-11 y D-12 aprobadas en `DECISOES-REQ-2026-002-R04-OPERADOR-UNICO-E-PRAZOS.md` (`ee59738`) |
+| 2026-10-09 | Claude | PRONTO_PARA_AUDITORIA (diseño v5) | D-11 (autorización formal por operación) y D-12 (plazos 180/365/7/7, parametrización) en diseño, matriz y TST. Esperando AUD-REQ-2026-002-R05 |
+
+## Caminos alterados (fase de diseño)
+- `documentacao/definicoes/DESENHO-REQ-2026-002-multiempresa.md` (nuevo)
+- `documentacao/definicoes/MATRIZ-PERMISOS-REQ-2026-002.md` (nuevo)
+- `documentacao/testes/TST-REQ-2026-002.md` (nuevo)
+- `documentacao/definicoes/REQ-2026-002-multiempresa-usuarios-perfiles-menus.md` (estado e historial)
