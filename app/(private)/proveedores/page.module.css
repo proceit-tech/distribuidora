@@ -576,9 +576,3 @@
   font-size: 8px;
 }
 
-.toast {
-  position: fixed;
-  top: 18px;
-  right: 20px;
-  z-index: 100;
-  display: grid;
