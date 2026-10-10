@@ -20,12 +20,24 @@ import type {
 } from "@/types/clientes";
 
 import styles from "./page.module.css";
+import {
+  HijosEditor,
+  hijosDesdeApi,
+  hijosParaApi,
+  hijosVacios,
+  validarHijos,
+  type HijosForm,
+  type OpcionGeo,
+} from "./_components/hijos";
 
 type TabId =
   | "fiscal"
   | "comercial"
   | "contacto"
-  | "logistica";
+  | "logistica"
+  | "contactos"
+  | "direcciones"
+  | "documentos";
 
 type FormState = {
   naturaleza: ClienteNaturaleza;
@@ -103,6 +115,18 @@ const TABS: Array<{
     id: "logistica",
     label: "Entrega y ventas",
   },
+  {
+    id: "contactos",
+    label: "Contactos",
+  },
+  {
+    id: "direcciones",
+    label: "Direcciones",
+  },
+  {
+    id: "documentos",
+    label: "Documentos",
+  },
 ];
 
 type Opcion = {
@@ -119,6 +143,7 @@ type Catalogos = {
   rutasEntrega: Opcion[];
   zonasComerciales: Opcion[];
   paises: { codigo: string; nombre: string }[];
+  departamentosParaguay: OpcionGeo[];
 };
 
 const CATALOGOS_VACIOS: Catalogos = {
@@ -130,6 +155,7 @@ const CATALOGOS_VACIOS: Catalogos = {
   rutasEntrega: [],
   zonasComerciales: [],
   paises: [],
+  departamentosParaguay: [],
 };
 
 // dd/mm/yyyy (API) <-> yyyy-mm-dd (input type=date)
@@ -411,6 +437,9 @@ export default function ClienteDetallePage() {
   const [error, setError] =
     useState("");
 
+  const [hijos, setHijos] =
+    useState<HijosForm>(hijosVacios);
+
   const [catalogos, setCatalogos] =
     useState<Catalogos>(
       CATALOGOS_VACIOS,
@@ -442,6 +471,9 @@ export default function ClienteDetallePage() {
         const datos =
           (await rCliente.json()) as {
             cliente?: ClienteDetalle;
+            contactos?: Parameters<typeof hijosDesdeApi>[0]["contactos"];
+            direcciones?: Parameters<typeof hijosDesdeApi>[0]["direcciones"];
+            documentos?: Parameters<typeof hijosDesdeApi>[0]["documentos"];
             error?: string;
           };
 
@@ -465,6 +497,7 @@ export default function ClienteDetallePage() {
             ...CATALOGOS_VACIOS,
             ...(cat.catalogos ?? {}),
           });
+          setHijos(hijosDesdeApi(datos));
           setCliente(datos.cliente);
           setForm(
             fromCliente(datos.cliente),
@@ -606,6 +639,19 @@ export default function ClienteDetallePage() {
       return;
     }
 
+    const errorHijos = validarHijos(hijos);
+    if (errorHijos) {
+      setTab(
+        errorHijos.includes("contacto")
+          ? "contactos"
+          : errorHijos.includes("documento")
+            ? "documentos"
+            : "direcciones",
+      );
+      setError(errorHijos);
+      return;
+    }
+
     setSaving(true);
 
     try {
@@ -695,6 +741,7 @@ export default function ClienteDetallePage() {
             observacionLogistica:
               form.observacionLogistica,
             activo: form.activo,
+            ...hijosParaApi(hijos),
           }),
         },
       );
@@ -1649,6 +1696,21 @@ export default function ClienteDetallePage() {
                 </div>
               </div>
             </section>
+          ) : null}
+
+          {tab === "contactos" ||
+          tab === "direcciones" ||
+          tab === "documentos" ? (
+            <HijosEditor
+              tab={tab}
+              valor={hijos}
+              onChange={setHijos}
+              paises={catalogos.paises}
+              departamentos={
+                catalogos.departamentosParaguay
+              }
+              onError={setError}
+            />
           ) : null}
 
           {tab === "contacto" ? (

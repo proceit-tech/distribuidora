@@ -156,8 +156,17 @@ Branch: `feature/NEXIT-2026-001-banco-demo`. Regra: uma funcionalidade por vez; 
 - Estoque de terceiros: exige cadastro de proprietários; hoje só se criam movimentos PROPIO.
 - Múltiplos produtos por movimento: o banco suporta várias linhas; a tela registra um produto por movimento.
 
+## Correção 2 da auditoria — edição completa de Clientes (2026-10-10)
+- `PUT /api/clientes/[id]` agora sincroniza `cliente_contactos`, `direcciones_cliente` e `cliente_documentos` na MESMA transação da ficha principal (`BEGIN` … `COMMIT`; qualquer erro → `ROLLBACK` de tudo). `GET` devolve `contactos`, `direcciones`, `documentos` com seus `id`. Lógica em `lib/clientes/relacionados.ts`; `POST /api/clientes` não foi alterado; nenhuma migration alterada (tabelas NEX-005 existentes).
+- Semântica: coleção ausente no corpo = não toca; item com `id` = UPDATE dessa linha (id preservado; campos não enviados mantêm o valor atual); item sem `id` = INSERT; **só se apaga** com ids em `contactosEliminar` / `direccionesEliminar` / `documentosEliminar` (omitir um item nunca apaga).
+- `empresa_id`: sempre da sessão, em todo SELECT/UPDATE/DELETE dos filhos (o `empresa_id` do corpo é ignorado; INSERT herda pelo trigger). Ids que não pertencem ao cliente/empresa → 400; cliente de outra empresa → 404.
+- Validações espelham o cadastro: contato com nome e e-mail válido; endereço com tipo, texto e país, geografia PRY (departamento/distrito/cidade validados em BD, nomes tomados da BD), latitude/longitude; documento com tipo, nome, URL, datas dd/mm/yyyy e vencimento ≥ emissão; no máximo 1 contato principal, 1 dirección fiscal e 1 entrega predeterminada no estado final (troca de principal/fiscal/entrega permitida no mesmo envio); ids repetidos ou "atualizar+eliminar" → 400.
+- Interface (`clientes/[id]/page.tsx` + `_components/hijos.tsx`): três novas abas "Contactos", "Direcciones", "Documentos" no mesmo layout/estilos da edição, textos em espanhol; linhas existentes mantêm o id, remover uma linha existente a registra para eliminação explícita ao salvar; cascata geográfica Paraguay.
+- Testes (PG16 descartável, handlers reais + `permissions.ts` real, runtime `nexit_runtime`): 64 PASS / 0 FALLA — criar → editar → reabrir → persistência com ids preservados; omissão não apaga; eliminação explícita; trocas de flags; validações (16 casos); rollback (pai e filhos intactos); isolamento entre empresas (GET/PUT 404, ids alheios 400, empresa_id do corpo ignorado, dados de B intactos); permissões (401, VER sem EDITAR 403 sem escrita, EDITAR sem VER, sem permissões, admin da empresa). Navegação/menus (nvt) 7 PASS.
+- NÃO executado: build do Next, lint, teste visual no navegador (sem registry/browser neste ambiente); tsc só com ruído de ambiente pré-existente. Estado: implementado + testado em PG de teste; NÃO validado na VM nem homologado.
+
 ## Pendências conhecidas de Clientes
-- Editar contatos, direcciones, documentos adicionais e demais tabelas filhas de um cliente existente ainda não é possível (só são criados em `clientes/nuevo`); o `PUT` altera apenas a ficha principal.
+- (Resolvido na Correção 2, 2026-10-10 — ver abaixo) Edição de contatos, direcciones e documentos de um cliente existente.
 - Não há exclusão de clientes (apenas inativar/bloquear vendas).
 - Build/typecheck/lint não executados; sem teste HTTP/visual; a correção do mapeamento de `tipo_operacion` (commit `f20fa7a`, feita pelo proprietário) não foi reexecutada por mim.
 - Regras provisórias D-C1..D-C9 não implementadas como aprovadas; Validação de DV do RUC (algoritmo) pendente de decisão.

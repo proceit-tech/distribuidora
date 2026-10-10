@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { denyIfNoPermission } from "@/lib/auth/permissions";
+import { ErrorValidacion, leerEntrada, leerHijos, sincronizarHijos } from "@/lib/clientes/relacionados";
 
 type Contexto = { params: Promise<{ id: string }> };
 type Json = Record<string, unknown>;
@@ -115,6 +116,7 @@ export async function GET(_request: Request, contexto: Contexto) {
     );
     const c = r.rows[0];
     if (!c) return NextResponse.json({ error: "Cliente no encontrado." }, { status: 404 });
+    const hijos = await leerHijos(db, session.user.empresaId, id);
 
     return NextResponse.json({
       cliente: {
@@ -164,6 +166,7 @@ export async function GET(_request: Request, contexto: Contexto) {
         creadoEn: c.creado_at,
         actualizadoEn: c.actualizado_at,
       },
+      ...hijos,
     });
   } catch (error) {
     console.error("Error al cargar el cliente:", error);
@@ -253,6 +256,7 @@ export async function PUT(request: Request, contexto: Contexto) {
     const condicionPagoId = opcional(cuerpo.condicionPagoId);
     if (condicionPagoId && !UUID.test(condicionPagoId)) throw new Error("La condición de pago no es válida.");
 
+    const entradaHijos = leerEntrada(cuerpo);
     await conexion.query("BEGIN");
 
     const actual = await conexion.query(
@@ -322,8 +326,11 @@ export async function PUT(request: Request, contexto: Contexto) {
       ],
     );
 
+    // Contactos, direcciones y documentos: misma transacción, mismo empresa_id.
+    const resumen = await sincronizarHijos(conexion, empresaId, id, session.user.id, entradaHijos);
+
     await conexion.query("COMMIT");
-    return NextResponse.json({ ok: true, id });
+    return NextResponse.json({ ok: true, id, hijos: resumen });
   } catch (error) {
     await conexion.query("ROLLBACK").catch(() => undefined);
     const pg = error as { code?: string };
@@ -333,7 +340,7 @@ export async function PUT(request: Request, contexto: Contexto) {
     if (pg.code && /^(22|23)/.test(pg.code)) {
       return NextResponse.json({ error: "Los datos informados no cumplen las reglas del cliente." }, { status: 400 });
     }
-    if (error instanceof Error && !pg.code) {
+    if (error instanceof ErrorValidacion || (error instanceof Error && !pg.code)) {
       return NextResponse.json({ error: error.message }, { status: 400 });
     }
     console.error("Error al actualizar el cliente:", error);

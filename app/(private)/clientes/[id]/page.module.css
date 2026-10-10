@@ -607,3 +607,67 @@
     flex: 1;
   }
 }
+
+/* Contactos, direcciones y documentos (edición) */
+.repeated {
+  margin: 0 0 12px;
+  padding: 12px;
+  border: 1px solid #e3ebf0;
+  border-radius: 10px;
+  background: #fbfdfe;
+  display: grid;
+  gap: 10px;
+}
+
+.repeatedHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #284c66;
+  font-size: 9px;
+}
+
+.addButton,
+.removeButton {
+  min-height: 30px;
+  border-radius: 8px;
+  padding: 0 11px;
+  font: inherit;
+  font-size: 8px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.addButton {
+  border: 1px solid #1f7a6d;
+  color: #1f7a6d;
+  background: #ffffff;
+}
+
+.removeButton {
+  border: 1px solid #efc7c7;
+  color: #b23a3a;
+  background: #ffffff;
+}
+
+.checkRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+
+.checkItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #526e83;
+  font-size: 8px;
+  font-weight: 700;
+}
+
+.emptyHint {
+  margin: 4px 0 12px;
+  color: #6d8497;
+  font-size: 9px;
+}
