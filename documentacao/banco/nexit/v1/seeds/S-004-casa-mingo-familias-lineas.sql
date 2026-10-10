@@ -1,10 +1,11 @@
 -- =====================================================================
--- S-004 (OPCIONAL, NO se ejecuta automáticamente) — Familias y Líneas de producto de CASA MINGO
--- Origen: listas que estaban fijas en el formulario de Productos (retiradas del código en el commit 23fd404 al conectarlo al banco).
--- Requiere confirmación del responsable de que son el catálogo real de la empresa cliente. Sin códigos (se pueden asignar luego).
--- Uso (solo en un banco autorizado, después de NEX-017):
---   psql -v empresa_codigo=casa_mingo -f S-004-casa_mingo-familias-lineas.sql
+-- S-004 — Familias y Líneas de producto de CASA MINGO (DATOS REALES, no demostrativos)
+-- Origen: catálogo entregado por CASA MINGO en una planilla Excel (51 familias / 203 líneas); coincide 1:1 con las listas que
+-- estaban incorporadas al formulario de Productos antes del commit 23fd404. Cada línea queda asociada a su familia. Sin códigos.
+-- Ejecución MANUAL, solo después de NEX-017 y solo para la empresa indicada (nunca en demos ni en otros clientes):
+--   psql -v empresa_codigo=casa_mingo -f S-004-casa-mingo-familias-lineas.sql
 -- Idempotente (ON CONFLICT DO NOTHING). Aborta si la empresa no existe o es DEMO. No toca productos existentes.
+-- Resultado esperado en una empresa vacía de familias: familias = 51, lineas = 203.
 -- =====================================================================
 \set ON_ERROR_STOP on
 \if :{?empresa_codigo}

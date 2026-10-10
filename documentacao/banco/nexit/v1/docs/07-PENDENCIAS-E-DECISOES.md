@@ -22,7 +22,7 @@ Fonte das definições: branch `docs/REQ-2026-003-mapeamento-banco` (`CUSTEIO-V1
 5. **RLS** (isolamento adicional no banco): ativar na V1 ou depois (exige `SET nex.empresa_id` por conexão na app).
 6. Geografia/UM/impostos em S-001 são **referência ilustrativa**, não carga oficial SIFEN/DNIT: carga oficial pendente.
 7. Mecanismo de implantação: conexão (IAP/IP fixo/runner próprio), usuário na VM (docker = root efetivo), bucket de cópia externa.
-8. **Productos (NEX-017)**: confirmar se `S-004-casa-mingo-familias-lineas.sql` (51 famílias / 203 linhas do formulário antigo) é o catálogo real de CASA MINGO; telas administrativas de Famílias, Linhas, Categorias e Marcas (pendentes); permissão específica para preço de referência (hoje `PRODUCTOS.EDITAR`); ver 08.
+8. **Productos (NEX-017)**: S-004 (51 famílias / 203 linhas) **confirmado como dados reais fornecidos pela CASA MINGO (Excel)**; aplicar NEX-017 + S-004 no banco `nexit` é passo humano/autorizado (ver 08); pendentes: telas administrativas de Famílias, Linhas, Categorias e Marcas; permissão específica para preço de referência (hoje `PRODUCTOS.EDITAR`).
 9. Dados reais: nome/RUC/razão social da empresa e do administrador (a senha será definida por quem a usa; nunca no Git).
 
 ## C. Arquivos a localizar
