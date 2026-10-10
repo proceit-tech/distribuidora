@@ -101,23 +101,6 @@ function ArrowIcon() {
   );
 }
 
-function PlusIcon() {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      width="15"
-      height="15"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-      aria-hidden="true"
-    >
-      <path d="M12 5v14M5 12h14" />
-    </svg>
-  );
-}
-
 export default function DashboardPage() {
   const [periodo, setPeriodo] = useState<DashboardPeriodo>("7d");
   const [depositoId, setDepositoId] = useState("");
@@ -173,14 +156,6 @@ export default function DashboardPage() {
             maestros de la empresa.
           </p>
         </div>
-
-        <Link
-          href="/facturas/nuevo"
-          className={styles.primaryAction}
-        >
-          <PlusIcon />
-          Emitir factura
-        </Link>
       </header>
 
       <section className={styles.filters}>

@@ -92,6 +92,8 @@ Branch: `feature/NEXIT-2026-001-banco-demo`. Regra: uma funcionalidade por vez; 
 - Testes (rotas reais + `permissions.ts` real como `nexit_runtime` em PG16 descartável, 23 verificações): 401/403/400, empresa vazia = zeros, valores após movimentos reais (gráfico, KPIs, valor, alertas, stock, últimos), filtro de depósito e período, anulação não duplica, seções por permissão, alcance de depósitos, aislamiento A×B, 503. `tsc` parcial sem erros novos.
 - NÃO executado: build/lint completos (sem registry no sandbox), HTTP real, teste visual. Limitação: "hoje" usa a data do servidor de banco; a série mede unidades, não valor.
 
+- **Correção 1 da auditoria (2026-10-10):** removido da Dashboard o botão "Emitir factura" (`/facturas/nuevo`), pois Facturación não faz parte da V1 operacional; também removido o `PlusIcon` que ficou sem uso. Demais indicadores e visual intactos. Links restantes verificados (rota existente e em `V1_HREFS`): `/productos`, `/clientes`, `/stock`, `/movimientos`, `/movimientos/<id>`; nenhuma referência a `/facturas` na Dashboard, no `lib/dashboard` nem na API.
+
 ## Item 8b — Reportes: 1. Stock general
 - Páginas `/reportes` (índice) e `/reportes/stock-general` (guard `REPORTES.VER`), item "Stock general" no menu Reportes. Visual do módulo Stock (cards, filtros, tabela, paginação).
 - API: `GET /api/reportes/stock-general` (`REPORTES.VER`) e `GET /api/reportes/stock-general/exportar?formato=xlsx|pdf` (`REPORTES.VER` + `REPORTES.EXPORTAR`); mesmos filtros nos dois; `empresa_id` da sessão; só depósitos com alcance do usuário (fora do alcance = 403); 401/400/403/413/503.
