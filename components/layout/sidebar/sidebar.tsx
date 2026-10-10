@@ -32,6 +32,11 @@ function isActivePath(pathname: string, href: string) {
     return pathname === href;
   }
 
+  // "Productos" no se marca activo dentro de su submódulo propio "Catálogos de productos".
+  if (href === "/productos" && pathname.startsWith("/productos/catalogos")) {
+    return false;
+  }
+
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 

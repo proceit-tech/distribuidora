@@ -31,6 +31,13 @@ export const NAVIGATION_GROUPS: ShellNavigationGroup[] = [
         permission: "PRODUCTOS.VER",
       },
       {
+        id: "product-catalogs",
+        label: "Catálogos de productos",
+        href: "/productos/catalogos",
+        icon: "products",
+        permission: "PRODUCTOS.VER",
+      },
+      {
         id: "price-lists",
         label: "Listas de precios",
         href: "/listas-precio",
@@ -331,6 +338,7 @@ const V1_HREFS = new Set([
   "/clientes",
   "/proveedores",
   "/productos",
+  "/productos/catalogos",
   "/listas-precio",
   "/stock",
   "/movimientos",
