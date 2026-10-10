@@ -365,3 +365,80 @@ export type StockCriticoRespuesta = {
   };
   cobertura: string[];
 };
+
+// Reporte 5 — Lotes y vencimientos
+export type ClaseVencimiento = "VENCIDO" | "PROXIMO" | "VIGENTE" | "SIN_FECHA";
+export type VistaLotes = "LOTE" | "DEPOSITO";
+
+export type LotesFiltros = {
+  vista: VistaLotes;
+  q: string;
+  lote: string;
+  depositoId: string;
+  categoriaId: string;
+  marcaId: string;
+  familiaId: string;
+  clase: "" | ClaseVencimiento;
+  existencia: "CON" | "SIN" | "TODOS";
+  horizonte: number;
+  vencDesde: string;
+  vencHasta: string;
+};
+
+export type LotesFila = {
+  productoId: string;
+  loteId: string;
+  codigo: string;
+  descripcion: string;
+  categoria: string;
+  marca: string;
+  familia: string;
+  unidad: string;
+  lote: string;
+  // Vista DEPOSITO: depósito de la fila. Vista LOTE: vacío y `depositos` = cuántos depósitos del alcance tienen saldo del lote.
+  deposito: string;
+  depositos: number;
+  vencimiento: string;
+  diasRestantes: number | null;
+  clase: ClaseVencimiento;
+  // Stock PROPIO (nunca incluye terceros)
+  disponible: number;
+  reservado: number;
+  cuarentena: number;
+  fisico: number;
+  // Stock de TERCEROS en columnas aparte
+  terceros: number;
+  tercerosEstados: { disponible: number; reservado: number; cuarentena: number; transito: number };
+};
+
+export type LotesTotalClase = { clase: ClaseVencimiento; lotes: number; fisico: number; terceros: number };
+
+export type LotesTotales = {
+  lotes: number;
+  filas: number;
+  clases: LotesTotalClase[];
+  disponible: number;
+  reservado: number;
+  cuarentena: number;
+  fisico: number;
+  terceros: number;
+  tercerosPorEstado: { disponible: number; reservado: number; cuarentena: number; transito: number };
+  hoy: string;
+};
+
+export type LotesRespuesta = {
+  empresa: { nombre: string; moneda: string };
+  generado: string;
+  sello: string;
+  filtros: LotesFiltros;
+  pagina: { numero: number; tamano: number; totalFilas: number };
+  filas: LotesFila[];
+  totales: LotesTotales;
+  catalogos: {
+    depositos: { id: string; nombre: string }[];
+    categorias: { id: string; nombre: string }[];
+    marcas: { id: string; nombre: string }[];
+    familias: { id: string; nombre: string }[];
+  };
+  cobertura: string[];
+};
