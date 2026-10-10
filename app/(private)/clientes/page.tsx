@@ -7,12 +7,8 @@ import {
   useState,
 } from "react";
 
-import {
-  consumirClienteFlash,
-  obtenerClientesDemo,
-} from "@/lib/mocks/clientes-storage";
 import type {
-  ClienteDemo,
+  ClienteLista,
   ClienteNaturaleza,
   ClienteOperacion,
 } from "@/types/clientes";
@@ -44,7 +40,76 @@ function dinero(value: number) {
   ).format(value);
 }
 
-function documento(cliente: ClienteDemo) {
+const OPERACIONES: ClienteOperacion[] = [
+  "B2C",
+  "B2B",
+  "B2C",
+  "B2G",
+  "B2F",
+];
+
+function texto(valor: unknown) {
+  return typeof valor === "string"
+    ? valor
+    : "";
+}
+
+function desdeApi(
+  fila: Record<string, unknown>,
+): ClienteLista {
+  return {
+    id: texto(fila.id),
+    codigo: texto(fila.codigo),
+    naturaleza:
+      Number(fila.naturaleza_receptor) === 1
+        ? "CONTRIBUYENTE"
+        : "NO_CONTRIBUYENTE",
+    tipoOperacion:
+      OPERACIONES[
+        Number(fila.tipo_operacion)
+      ] ?? "B2C",
+    tipoDocumento: texto(
+      fila.tipo_documento,
+    ),
+    numeroDocumento: texto(
+      fila.numero_documento,
+    ),
+    dv: texto(fila.dv),
+    razonSocial: texto(
+      fila.razon_social,
+    ),
+    nombreFantasia: texto(
+      fila.nombre_fantasia,
+    ),
+    paisNombre: texto(fila.pais_nombre),
+    email: texto(fila.email),
+    telefono: texto(fila.telefono),
+    celular: texto(fila.celular),
+    gln: texto(fila.gln),
+    limiteCredito:
+      Number(fila.limite_credito) || 0,
+    grupoCliente: texto(
+      fila.grupo_cliente_nombre,
+    ),
+    condicionPago: texto(
+      fila.condicion_pago_nombre,
+    ),
+    vendedor: texto(
+      fila.vendedor_nombre,
+    ),
+    rutaEntrega: texto(
+      fila.ruta_entrega_nombre,
+    ),
+    zonaComercial: texto(
+      fila.zona_comercial_nombre,
+    ),
+    bloqueadoVentas:
+      fila.bloqueado_ventas === true,
+    activo: fila.activo !== false,
+  };
+}
+
+function documento(cliente: ClienteLista) {
   if (
     cliente.naturaleza ===
     "CONTRIBUYENTE"
@@ -70,7 +135,7 @@ function documento(cliente: ClienteDemo) {
 }
 
 function contactoPrincipal(
-  cliente: ClienteDemo,
+  cliente: ClienteLista,
 ) {
   return (
     cliente.telefono ||
@@ -81,7 +146,7 @@ function contactoPrincipal(
 
 export default function ClientesPage() {
   const [clientes, setClientes] =
-    useState<ClienteDemo[]>([]);
+    useState<ClienteLista[]>([]);
 
   const [busqueda, setBusqueda] =
     useState("");
@@ -110,14 +175,82 @@ export default function ClientesPage() {
   const [flash, setFlash] =
     useState("");
 
-  useEffect(() => {
-    setClientes(
-      obtenerClientesDemo(),
-    );
+  const [cargando, setCargando] =
+    useState(true);
 
-    setFlash(
-      consumirClienteFlash(),
-    );
+  const [errorCarga, setErrorCarga] =
+    useState("");
+
+  useEffect(() => {
+    let activo = true;
+
+    async function cargar() {
+      try {
+        const respuesta = await fetch(
+          "/api/clientes",
+          { cache: "no-store" },
+        );
+        const datos =
+          (await respuesta.json()) as {
+            clientes?: Record<
+              string,
+              unknown
+            >[];
+            error?: string;
+          };
+
+        if (!respuesta.ok) {
+          throw new Error(
+            datos.error ??
+              "No fue posible cargar los clientes.",
+          );
+        }
+
+        if (activo) {
+          setClientes(
+            (datos.clientes ?? []).map(
+              desdeApi,
+            ),
+          );
+        }
+      } catch (error) {
+        if (activo) {
+          setClientes([]);
+          setErrorCarga(
+            error instanceof Error
+              ? error.message
+              : "No fue posible cargar los clientes.",
+          );
+        }
+      } finally {
+        if (activo) {
+          setCargando(false);
+        }
+      }
+    }
+
+    void cargar();
+
+    const ok = new URLSearchParams(
+      window.location.search,
+    ).get("ok");
+
+    if (ok) {
+      setFlash(
+        ok === "creado"
+          ? "Cliente registrado correctamente."
+          : "Cliente actualizado correctamente.",
+      );
+      window.history.replaceState(
+        null,
+        "",
+        "/clientes",
+      );
+    }
+
+    return () => {
+      activo = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -326,12 +459,6 @@ export default function ClientesPage() {
               }
             >
               MAESTROS
-            </span>
-
-            <span
-              className={styles.demoPill}
-            >
-              DEMO
             </span>
           </div>
 
@@ -578,18 +705,39 @@ export default function ClientesPage() {
         </div>
 
         <div className={styles.list}>
-          {paginaActual.length ===
+          {cargando ? (
+            <div
+              className={styles.empty}
+            >
+              <strong>
+                Cargando clientes...
+              </strong>
+            </div>
+          ) : errorCarga ? (
+            <div
+              className={styles.empty}
+              role="alert"
+            >
+              <strong>
+                No fue posible cargar
+                los clientes
+              </strong>
+              <span>{errorCarga}</span>
+            </div>
+          ) : paginaActual.length ===
           0 ? (
             <div
               className={styles.empty}
             >
               <strong>
-                No encontramos clientes
+                {clientes.length === 0
+                  ? "Aún no hay clientes registrados"
+                  : "No encontramos clientes"}
               </strong>
               <span>
-                Cambie los filtros o
-                registre un nuevo
-                cliente.
+                {clientes.length === 0
+                  ? "Registre el primer cliente con el botón Nuevo cliente."
+                  : "Cambie los filtros o registre un nuevo cliente."}
               </span>
             </div>
           ) : (

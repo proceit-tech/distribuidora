@@ -483,6 +483,10 @@ export async function GET(request: Request) {
               c.limite_credito,
               c.bloqueado_ventas,
               c.activo,
+              c.pais_codigo,
+              c.pais_nombre,
+              c.gln,
+              zc.nombre AS zona_comercial_nombre,
               gc.nombre AS grupo_cliente_nombre,
               cp.nombre AS condicion_pago_nombre,
               lp.nombre AS lista_precio_nombre,
@@ -494,6 +498,7 @@ export async function GET(request: Request) {
             LEFT JOIN listas_precio lp ON lp.id = c.lista_precio_id
             LEFT JOIN vendedores v ON v.id = c.vendedor_id
             LEFT JOIN rutas_entrega r ON r.id = c.ruta_entrega_id
+            LEFT JOIN zonas_comerciales zc ON zc.id = c.zona_comercial_id
             WHERE c.empresa_id = $1
             ORDER BY c.activo DESC, c.razon_social ASC
           `,
@@ -510,6 +515,7 @@ export async function GET(request: Request) {
       vendedoresResultado,
       canalesResultado,
       departamentosResultado,
+      paisesResultado,
     ] = await Promise.all([
       clientesConsulta,
       db.query(
@@ -571,6 +577,11 @@ export async function GET(request: Request) {
          FROM referencia_geografica_departamentos
          ORDER BY nombre`,
       ),
+      db.query(
+        `SELECT codigo, nombre
+         FROM referencia_geografica_paises
+         ORDER BY nombre`,
+      ),
     ]);
 
     return NextResponse.json({
@@ -585,6 +596,7 @@ export async function GET(request: Request) {
         vendedores: vendedoresResultado.rows,
         canalesVenta: canalesResultado.rows,
         departamentosParaguay: departamentosResultado.rows,
+        paises: paisesResultado.rows,
       },
     });
   } catch (error) {
@@ -898,8 +910,8 @@ export async function POST(request: Request) {
           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
           $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
           $21, $22, $23, $24, $25, $26, $27, $28, $29, $30,
-          $31, CASE WHEN $30 THEN now() ELSE NULL END,
-          CASE WHEN $30 THEN $32 ELSE NULL END,
+          $31, CASE WHEN $30::boolean THEN now() ELSE NULL END,
+          CASE WHEN $30::boolean THEN $32::uuid ELSE NULL END,
           $33, $34, $35, $36, $37, $38, $39,
           $40, $41, $42, $43, $44
         )

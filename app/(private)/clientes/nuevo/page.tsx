@@ -511,7 +511,7 @@ export default function NuevoClientePage() {
         throw new Error(datos.error ?? "No fue posible guardar el cliente.");
       }
 
-      router.push("/clientes");
+      router.push("/clientes?ok=creado");
       router.refresh();
     } catch (errorGuardado) {
       setError(

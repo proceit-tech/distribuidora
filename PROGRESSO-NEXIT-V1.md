@@ -5,7 +5,7 @@ Branch: `feature/NEXIT-2026-001-banco-demo`. Regra: uma funcionalidade por vez; 
 | # | Item | Estado | Commit |
 |---|---|---|---|
 | 1 | Menu e acesso por perfil | **ENTREGUE (pendente: typecheck/build no seu ambiente)** | ver git log |
-| 2 | Clientes | pendente | |
+| 2 | Clientes | **ENTREGUE (pendente: build + teste manual na tela)** | ver git log |
 | 3 | Proveedores | pendente | |
 | 4 | Productos | pendente | |
 | 5 | Listas de precios | pendente | |
@@ -20,6 +20,14 @@ Branch: `feature/NEXIT-2026-001-banco-demo`. Regra: uma funcionalidade por vez; 
 - APIs `clientes`, `productos`, `proveedores`: GET exige `VER`, POST exige `CREAR` (403 sem permissão).
 - Layouts de módulo (`app/(private)/<modulo>/layout.tsx`): bloqueiam por URL (404) sem permissão; `facturas` e `recepciones` (fora da V1) retornam 404; `/administracion/*` só administrador de plataforma.
 - `/administracion/empresas`: lista real de empresas (somente leitura). `/` redireciona PROCEIT para ela.
+
+## Item 2 — Clientes (sem mock/localStorage)
+- Lista (`clientes/page.tsx`): `GET /api/clientes` (filtra `empresa_id` da sessão); busca/filtros/paginação seguem no cliente sobre os dados reais; vazia se não houver clientes; estados de carga/erro.
+- Detalhe/edição (`clientes/[id]/page.tsx`): `GET`/`PUT /api/clientes/[id]` (novo; `PUT` exige `CLIENTES.EDITAR`; empresa sempre da sessão; catálogos reais por id; bloqueio de vendas grava data/usuário; duplicidade de documento → 409).
+- Cadastro (`clientes/nuevo`) já usava a API; agora volta a `/clientes?ok=creado`. Corrigido: a API não devolvia `paises` (select de país vazio) e F-01 (`$32::uuid`).
+- Removidos: `lib/mocks/clientes.ts`, `lib/mocks/clientes-storage.ts`, `ClienteDemo`, pills DEMO e os catálogos fixos do detalhe.
+- Testes (PG16 descartável): 72 consultas da app (inclui as novas) com PREPARE = 0 falhas, F-01 já não precisa de correção; UPDATE/SELECT reais: dono edita e persiste; outra empresa → 0 linhas (UPDATE e SELECT); FK composta rejeita grupo de outra empresa; bloqueio/desbloqueio; inativar.
+- NÃO executado: typecheck completo/build/lint (npm sem registry), chamadas HTTP, teste visual. Contatos/direcções/documentos (tabelas filhas) só se criam em `nuevo`; a edição deles ainda não existe.
 
 ## Correções da revisão do ChatGPT/proprietário (item 1)
 - `hasPermission` nega SEMPRE permissões operacionais ao administrador de plataforma; `getAccessContext` zera `permissions`/`isCompanyAdmin` quando é global. Acesso global = `hasPlatformAccess`/`guardPlatformApi`/`guardPlatformPage` (separado). `proceit/admin` não opera APIs/páginas de CASA MINGO (nem da própria PROCEIT): 403/404.
