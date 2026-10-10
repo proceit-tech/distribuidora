@@ -3,15 +3,17 @@
 import Link from "next/link";
 import {
   FormEvent,
+  useEffect,
   useMemo,
   useState,
 } from "react";
 
 import type {
-  NuevoProveedorDemo,
+  CatalogoProveedores,
+  NuevoProveedor,
   ProveedorContacto,
   ProveedorCuentaBancaria,
-  ProveedorDemo,
+  ProveedorDetalle,
   ProveedorDireccion,
   ProveedorDocumento,
   ProveedorEstadoHomologacion,
@@ -26,8 +28,9 @@ type Mode = "create" | "edit";
 
 type Props = {
   mode: Mode;
-  initial?: ProveedorDemo;
-  onSave: (data: NuevoProveedorDemo) => Promise<void> | void;
+  initial?: ProveedorDetalle;
+  catalogos: CatalogoProveedores;
+  onSave: (data: NuevoProveedor) => Promise<void> | void;
 };
 
 type TabId =
@@ -49,53 +52,6 @@ const tabs: Array<{ id: TabId; label: string }> = [
   { id: "bancos", label: "Cuentas bancarias" },
   { id: "retenciones", label: "Retenciones" },
   { id: "documentos", label: "Documentos" },
-];
-
-const paises = [
-  ["PRY", "Paraguay"],
-  ["ARG", "Argentina"],
-  ["BRA", "Brasil"],
-  ["URY", "Uruguay"],
-  ["BOL", "Bolivia"],
-];
-
-const grupos = [
-  "Materias primas",
-  "Bebidas",
-  "Importados",
-  "Logística",
-  "Tecnología",
-  "Servicios",
-  "Limpieza",
-];
-
-const condiciones = [
-  "Contado",
-  "Crédito 15 días",
-  "Crédito 30 días",
-  "Crédito 45 días",
-  "Crédito 60 días",
-];
-
-const mediosPago = [
-  "Transferencia",
-  "Cheque",
-  "Efectivo",
-  "Tarjeta",
-];
-
-const incoterms = [
-  "EXW",
-  "FCA",
-  "FAS",
-  "FOB",
-  "CFR",
-  "CIF",
-  "CPT",
-  "CIP",
-  "DAP",
-  "DPU",
-  "DDP",
 ];
 
 function uid(prefix: string) {
@@ -184,7 +140,7 @@ function emptyDocumento(): ProveedorDocumento {
   };
 }
 
-function initialForm(initial?: ProveedorDemo): NuevoProveedorDemo {
+function initialForm(initial?: ProveedorDetalle): NuevoProveedor {
   if (initial) {
     const {
       id: _id,
@@ -199,7 +155,7 @@ function initialForm(initial?: ProveedorDemo): NuevoProveedorDemo {
 
   return {
     tipoPersona: "JURIDICA",
-    grupoProveedor: "",
+    grupoProveedorId: null,
     tipoDocumento: "RUC",
     numeroDocumento: "",
     dv: "",
@@ -210,9 +166,9 @@ function initialForm(initial?: ProveedorDemo): NuevoProveedorDemo {
     email: "",
     telefono: "",
     sitioWeb: "",
-    condicionPago: "",
+    condicionPagoId: null,
     monedaCodigoPredeterminada: "PYG",
-    medioPagoPreferido: "",
+    medioPagoPreferidoId: null,
     diaPagoPreferido: null,
     plazoEntregaDias: null,
     descuentoComercialPct: 0,
@@ -257,16 +213,145 @@ function Field({
   );
 }
 
+type Opcion = { codigo: number; nombre: string };
+
+/** Paraguay: departamento / distrito / ciudad desde el catálogo oficial; otros países: texto libre. */
+function GeografiaDireccion({
+  direccion,
+  departamentos,
+  onChange,
+}: {
+  direccion: ProveedorDireccion;
+  departamentos: Opcion[];
+  onChange: (patch: Partial<ProveedorDireccion>) => void;
+}) {
+  const [distritos, setDistritos] = useState<Opcion[]>([]);
+  const [ciudades, setCiudades] = useState<Opcion[]>([]);
+  const esPy = direccion.paisCodigo === "PRY";
+  const dep = direccion.departamentoCodigo;
+  const dis = direccion.distritoCodigo;
+
+  useEffect(() => {
+    if (!esPy || !dep) {
+      setDistritos([]);
+      return;
+    }
+    let activo = true;
+    fetch(`/api/proveedores?catalogo=distritos&departamento=${encodeURIComponent(dep)}`)
+      .then((r) => (r.ok ? r.json() : { datos: [] }))
+      .then((j) => activo && setDistritos(j.datos ?? []))
+      .catch(() => activo && setDistritos([]));
+    return () => {
+      activo = false;
+    };
+  }, [esPy, dep]);
+
+  useEffect(() => {
+    if (!esPy || !dep || !dis) {
+      setCiudades([]);
+      return;
+    }
+    let activo = true;
+    fetch(
+      `/api/proveedores?catalogo=ciudades&departamento=${encodeURIComponent(dep)}&distrito=${encodeURIComponent(dis)}`,
+    )
+      .then((r) => (r.ok ? r.json() : { datos: [] }))
+      .then((j) => activo && setCiudades(j.datos ?? []))
+      .catch(() => activo && setCiudades([]));
+    return () => {
+      activo = false;
+    };
+  }, [esPy, dep, dis]);
+
+  if (!esPy) {
+    return (
+      <>
+        <Field label="Departamento / estado">
+          <input
+            value={direccion.departamento}
+            onChange={(event) => onChange({ departamento: event.target.value })}
+          />
+        </Field>
+        <Field label="Distrito / región">
+          <input
+            value={direccion.distrito}
+            onChange={(event) => onChange({ distrito: event.target.value })}
+          />
+        </Field>
+        <Field label="Ciudad">
+          <input
+            value={direccion.ciudad}
+            onChange={(event) => onChange({ ciudad: event.target.value })}
+          />
+        </Field>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <Field label="Departamento *">
+        <select
+          value={dep}
+          onChange={(event) =>
+            onChange({ departamentoCodigo: event.target.value, distritoCodigo: "", ciudadCodigo: "" })
+          }
+        >
+          <option value="">Seleccione</option>
+          {departamentos.map((item) => (
+            <option key={item.codigo} value={String(item.codigo)}>
+              {item.nombre}
+            </option>
+          ))}
+        </select>
+      </Field>
+      <Field label="Distrito *">
+        <select
+          value={dis}
+          disabled={!dep}
+          onChange={(event) => onChange({ distritoCodigo: event.target.value, ciudadCodigo: "" })}
+        >
+          <option value="">Seleccione</option>
+          {distritos.map((item) => (
+            <option key={item.codigo} value={String(item.codigo)}>
+              {item.nombre}
+            </option>
+          ))}
+        </select>
+      </Field>
+      <Field label="Ciudad *">
+        <select
+          value={direccion.ciudadCodigo}
+          disabled={!dis}
+          onChange={(event) => onChange({ ciudadCodigo: event.target.value })}
+        >
+          <option value="">Seleccione</option>
+          {ciudades.map((item) => (
+            <option key={item.codigo} value={String(item.codigo)}>
+              {item.nombre}
+            </option>
+          ))}
+        </select>
+      </Field>
+    </>
+  );
+}
+
 export default function ProveedorForm({
   mode,
   initial,
+  catalogos,
   onSave,
 }: Props) {
+  const paises = catalogos.paises.map(
+    (pais) => [pais.codigo, pais.nombre] as const,
+  );
+
   const [tab, setTab] =
     useState<TabId>("general");
 
   const [form, setForm] =
-    useState<NuevoProveedorDemo>(() =>
+    useState<NuevoProveedor>(() =>
       initialForm(initial),
     );
 
@@ -276,9 +361,9 @@ export default function ProveedorForm({
   const [saving, setSaving] =
     useState(false);
 
-  function update<K extends keyof NuevoProveedorDemo>(
+  function update<K extends keyof NuevoProveedor>(
     key: K,
-    value: NuevoProveedorDemo[K],
+    value: NuevoProveedor[K],
   ) {
     setForm((current) => ({
       ...current,
@@ -342,9 +427,11 @@ export default function ProveedorForm({
         emailPagos: form.emailPagos.trim(),
         observacion: form.observacion.trim(),
       });
-    } catch {
+    } catch (err) {
       setError(
-        mode === "create"
+        err instanceof Error && err.message
+          ? err.message
+          : mode === "create"
           ? "No fue posible registrar el proveedor."
           : "No fue posible actualizar el proveedor.",
       );
@@ -356,7 +443,7 @@ export default function ProveedorForm({
   const sectionDone = useMemo(() => {
     return {
       general: Boolean(form.razonSocial && form.numeroDocumento),
-      compras: Boolean(form.condicionPago || form.medioPagoPreferido),
+      compras: Boolean(form.condicionPagoId || form.medioPagoPreferidoId),
       homologacion: form.estadoHomologacion !== "PENDIENTE",
       contactos: form.contactos.length > 0,
       direcciones: form.direcciones.length > 0,
@@ -373,9 +460,6 @@ export default function ProveedorForm({
           <div className={styles.heroMeta}>
             <span className={styles.modulePill}>
               PROVEEDORES
-            </span>
-            <span className={styles.demoPill}>
-              DEMO
             </span>
           </div>
 
@@ -584,14 +668,16 @@ export default function ProveedorForm({
 
                 <Field label="Grupo de proveedor">
                   <select
-                    value={form.grupoProveedor}
+                    value={form.grupoProveedorId ?? ""}
                     onChange={(event) =>
-                      update("grupoProveedor", event.target.value)
+                      update("grupoProveedorId", event.target.value || null)
                     }
                   >
                     <option value="">Sin grupo</option>
-                    {grupos.map((item) => (
-                      <option key={item}>{item}</option>
+                    {catalogos.grupos.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.nombre}
+                      </option>
                     ))}
                   </select>
                 </Field>
@@ -680,14 +766,16 @@ export default function ProveedorForm({
               <div className={styles.gridFour}>
                 <Field label="Condición de pago">
                   <select
-                    value={form.condicionPago}
+                    value={form.condicionPagoId ?? ""}
                     onChange={(event) =>
-                      update("condicionPago", event.target.value)
+                      update("condicionPagoId", event.target.value || null)
                     }
                   >
                     <option value="">Sin condición</option>
-                    {condiciones.map((item) => (
-                      <option key={item}>{item}</option>
+                    {catalogos.condicionesPago.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.nombre}
+                      </option>
                     ))}
                   </select>
                 </Field>
@@ -699,21 +787,26 @@ export default function ProveedorForm({
                       update("monedaCodigoPredeterminada", event.target.value)
                     }
                   >
-                    <option value="PYG">PYG · Guaraníes</option>
-                    <option value="USD">USD · Dólares</option>
+                    {catalogos.monedas.map((item) => (
+                      <option key={item.codigo} value={item.codigo}>
+                        {item.codigo} · {item.nombre}
+                      </option>
+                    ))}
                   </select>
                 </Field>
 
                 <Field label="Medio de pago preferido">
                   <select
-                    value={form.medioPagoPreferido}
+                    value={form.medioPagoPreferidoId ?? ""}
                     onChange={(event) =>
-                      update("medioPagoPreferido", event.target.value)
+                      update("medioPagoPreferidoId", event.target.value || null)
                     }
                   >
                     <option value="">Sin medio</option>
-                    {mediosPago.map((item) => (
-                      <option key={item}>{item}</option>
+                    {catalogos.mediosPago.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.nombre}
+                      </option>
                     ))}
                   </select>
                 </Field>
@@ -908,8 +1001,10 @@ export default function ProveedorForm({
                     }
                   >
                     <option value="">Sin Incoterm</option>
-                    {incoterms.map((item) => (
-                      <option key={item}>{item}</option>
+                    {catalogos.incoterms.map((item) => (
+                      <option key={item.codigo} value={item.codigo}>
+                        {item.codigo}
+                      </option>
                     ))}
                   </select>
                 </Field>
@@ -1234,53 +1329,20 @@ export default function ProveedorForm({
                         </select>
                       </Field>
 
-                      <Field label="Departamento / estado">
-                        <input
-                          value={direccion.departamento}
-                          onChange={(event) =>
-                            update(
-                              "direcciones",
-                              form.direcciones.map((item) =>
-                                item.id === direccion.id
-                                  ? { ...item, departamento: event.target.value }
-                                  : item,
-                              ),
-                            )
-                          }
-                        />
-                      </Field>
-
-                      <Field label="Distrito / región">
-                        <input
-                          value={direccion.distrito}
-                          onChange={(event) =>
-                            update(
-                              "direcciones",
-                              form.direcciones.map((item) =>
-                                item.id === direccion.id
-                                  ? { ...item, distrito: event.target.value }
-                                  : item,
-                              ),
-                            )
-                          }
-                        />
-                      </Field>
-
-                      <Field label="Ciudad">
-                        <input
-                          value={direccion.ciudad}
-                          onChange={(event) =>
-                            update(
-                              "direcciones",
-                              form.direcciones.map((item) =>
-                                item.id === direccion.id
-                                  ? { ...item, ciudad: event.target.value }
-                                  : item,
-                              ),
-                            )
-                          }
-                        />
-                      </Field>
+                      <GeografiaDireccion
+                        direccion={direccion}
+                        departamentos={catalogos.departamentos}
+                        onChange={(patch) =>
+                          update(
+                            "direcciones",
+                            form.direcciones.map((item) =>
+                              item.id === direccion.id
+                                ? { ...item, ...patch }
+                                : item,
+                            ),
+                          )
+                        }
+                      />
                     </div>
                   </article>
                 ))}
@@ -1409,8 +1471,11 @@ export default function ProveedorForm({
                             )
                           }
                         >
-                          <option value="PYG">PYG</option>
-                          <option value="USD">USD</option>
+                          {catalogos.monedas.map((item) => (
+                            <option key={item.codigo} value={item.codigo}>
+                              {item.codigo}
+                            </option>
+                          ))}
                         </select>
                       </Field>
 
@@ -1751,8 +1816,8 @@ export default function ProveedorForm({
 
         <footer className={styles.footer}>
           <div>
-            <span>Modo demostración</span>
-            <small>Los cambios quedan guardados en este navegador.</small>
+            <span>{mode === "create" ? "Nuevo proveedor" : "Edición de proveedor"}</span>
+            <small>Los cambios se guardan en la base de datos de su empresa.</small>
           </div>
 
           <div className={styles.footerActions}>

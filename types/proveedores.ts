@@ -71,6 +71,7 @@ export type ProveedorCuentaBancaria = {
 
 export type ProveedorRetencion = {
   id: string;
+  impuestoId?: string | null;
   tipo: "IVA" | "RENTA" | "OTRA";
   porcentaje: number;
   certificadoObligatorio: boolean;
@@ -95,12 +96,12 @@ export type ProveedorDocumento = {
   observacion: string;
 };
 
-export type ProveedorDemo = {
+export type ProveedorDetalle = {
   id: string;
   codigo: string;
 
   tipoPersona: ProveedorTipoPersona;
-  grupoProveedor: string;
+  grupoProveedorId: string | null;
 
   tipoDocumento: string;
   numeroDocumento: string;
@@ -114,9 +115,9 @@ export type ProveedorDemo = {
   telefono: string;
   sitioWeb: string;
 
-  condicionPago: string;
+  condicionPagoId: string | null;
   monedaCodigoPredeterminada: string;
-  medioPagoPreferido: string;
+  medioPagoPreferidoId: string | null;
   diaPagoPreferido: number | null;
   plazoEntregaDias: number | null;
   descuentoComercialPct: number;
@@ -151,7 +152,39 @@ export type ProveedorDemo = {
   actualizadoEn: string;
 };
 
-export type NuevoProveedorDemo = Omit<
-  ProveedorDemo,
+export type NuevoProveedor = Omit<
+  ProveedorDetalle,
   "id" | "codigo" | "creadoEn" | "actualizadoEn"
 >;
+
+/** Fila de la lista (GET /api/proveedores), ya mapeada a camelCase. */
+export type ProveedorLista = {
+  id: string;
+  codigo: string;
+  razonSocial: string;
+  nombreFantasia: string;
+  tipoDocumento: string;
+  numeroDocumento: string;
+  dv: string;
+  paisNombre: string;
+  email: string;
+  telefono: string;
+  grupoNombre: string;
+  condicionPagoNombre: string;
+  monedaCodigoPredeterminada: string;
+  montoMinimoCompra: number;
+  estadoHomologacion: ProveedorEstadoHomologacion;
+  nivelRiesgo: ProveedorNivelRiesgo;
+  calificacionActual: number | null;
+  activo: boolean;
+};
+
+export type CatalogoProveedores = {
+  grupos: { id: string; codigo: string; nombre: string }[];
+  condicionesPago: { id: string; codigo: string; nombre: string }[];
+  monedas: { codigo: string; nombre: string; simbolo?: string }[];
+  mediosPago: { id: string; codigo: string; nombre: string }[];
+  paises: { codigo: string; nombre: string }[];
+  incoterms: { codigo: string; nombre: string }[];
+  departamentos: { codigo: number; nombre: string }[];
+};

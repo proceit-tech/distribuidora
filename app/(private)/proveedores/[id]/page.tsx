@@ -1,97 +1,101 @@
 "use client";
 
 import Link from "next/link";
-import {
-  useEffect,
-  useState,
-} from "react";
-import {
-  useParams,
-  useRouter,
-} from "next/navigation";
+import { useEffect, useState } from "react";
+import { useParams, useRouter } from "next/navigation";
 
 import ProveedorForm from "@/app/(private)/proveedores/_components/proveedor-form";
-import {
-  actualizarProveedorDemo,
-  buscarProveedorDemo,
-} from "@/lib/mocks/proveedores-storage";
+import { cargarCatalogos, mensajeError } from "@/lib/proveedores/cliente-api";
 import type {
-  NuevoProveedorDemo,
-  ProveedorDemo,
+  CatalogoProveedores,
+  NuevoProveedor,
+  ProveedorDetalle,
 } from "@/types/proveedores";
 
 export default function EditarProveedorPage() {
-  const params = useParams<{
-    id: string;
-  }>();
-
+  const params = useParams<{ id: string }>();
   const router = useRouter();
 
-  const [
-    proveedor,
-    setProveedor,
-  ] = useState<ProveedorDemo | null>(
-    null,
-  );
-
-  const [loading, setLoading] =
-    useState(true);
+  const [proveedor, setProveedor] = useState<ProveedorDetalle | null>(null);
+  const [catalogos, setCatalogos] = useState<CatalogoProveedores | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
   useEffect(() => {
-    setProveedor(
-      buscarProveedorDemo(params.id),
-    );
+    let activo = true;
 
-    setLoading(false);
-  }, [params.id]);
+    async function cargar() {
+      try {
+        const [respuesta, cats] = await Promise.all([
+          fetch(`/api/proveedores/${encodeURIComponent(params.id)}`, {
+            cache: "no-store",
+          }),
+          cargarCatalogos(),
+        ]);
 
-  async function guardar(
-    data: NuevoProveedorDemo,
-  ) {
-    const updated =
-      actualizarProveedorDemo(
-        params.id,
-        data,
-      );
+        if (!respuesta.ok) {
+          if (respuesta.status === 404) {
+            if (activo) setProveedor(null);
+            return;
+          }
+          throw new Error(
+            await mensajeError(respuesta, "No fue posible cargar el proveedor."),
+          );
+        }
 
-    if (!updated) {
-      throw new Error();
+        const json = (await respuesta.json()) as { proveedor: ProveedorDetalle };
+        if (activo) {
+          setProveedor(json.proveedor);
+          setCatalogos(cats);
+        }
+      } catch (e) {
+        if (activo) {
+          setError(e instanceof Error ? e.message : "No fue posible cargar el proveedor.");
+        }
+      } finally {
+        if (activo) setLoading(false);
+      }
     }
 
-    await new Promise((resolve) =>
-      window.setTimeout(resolve, 400),
+    cargar();
+    return () => {
+      activo = false;
+    };
+  }, [params.id]);
+
+  async function guardar(data: NuevoProveedor) {
+    const respuesta = await fetch(
+      `/api/proveedores/${encodeURIComponent(params.id)}`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      },
     );
 
-    router.push("/proveedores");
+    if (!respuesta.ok) {
+      throw new Error(
+        await mensajeError(respuesta, "No fue posible actualizar el proveedor."),
+      );
+    }
+
+    router.push("/proveedores?ok=actualizado");
     router.refresh();
   }
 
   if (loading) {
-    return (
-      <main
-        style={{
-          padding: 24,
-        }}
-      >
-        Cargando proveedor...
-      </main>
-    );
+    return <main style={{ padding: 24 }}>Cargando proveedor...</main>;
   }
 
-  if (!proveedor) {
-    return (
-      <main
-        style={{
-          padding: 24,
-        }}
-      >
-        <h1>
-          Proveedor no encontrado
-        </h1>
+  if (error) {
+    return <main style={{ padding: 24 }}>{error}</main>;
+  }
 
-        <Link href="/proveedores">
-          Volver a proveedores
-        </Link>
+  if (!proveedor || !catalogos) {
+    return (
+      <main style={{ padding: 24 }}>
+        <h1>Proveedor no encontrado</h1>
+        <Link href="/proveedores">Volver a proveedores</Link>
       </main>
     );
   }
@@ -100,6 +104,7 @@ export default function EditarProveedorPage() {
     <ProveedorForm
       mode="edit"
       initial={proveedor}
+      catalogos={catalogos}
       onSave={guardar}
     />
   );

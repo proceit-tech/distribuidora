@@ -6,7 +6,7 @@ Branch: `feature/NEXIT-2026-001-banco-demo`. Regra: uma funcionalidade por vez; 
 |---|---|---|---|
 | 1 | Menu e acesso por perfil | **ENTREGUE (pendente: typecheck/build no seu ambiente)** | ver git log |
 | 2 | Clientes | **ENTREGUE (pendente: build + teste manual na tela)** | ver git log |
-| 3 | Proveedores | pendente | |
+| 3 | Proveedores | **ENTREGUE (pendente: build + teste manual na tela)** | ver git log |
 | 4 | Productos | pendente | |
 | 5 | Listas de precios | pendente | |
 | 6 | Movimientos | pendente | |
@@ -28,6 +28,21 @@ Branch: `feature/NEXIT-2026-001-banco-demo`. Regra: uma funcionalidade por vez; 
 - Removidos: `lib/mocks/clientes.ts`, `lib/mocks/clientes-storage.ts`, `ClienteDemo`, pills DEMO e os catálogos fixos do detalhe.
 - Testes (PG16 descartável): 72 consultas da app (inclui as novas) com PREPARE = 0 falhas, F-01 já não precisa de correção; UPDATE/SELECT reais: dono edita e persiste; outra empresa → 0 linhas (UPDATE e SELECT); FK composta rejeita grupo de outra empresa; bloqueio/desbloqueio; inativar.
 - NÃO executado: typecheck completo/build/lint (npm sem registry), chamadas HTTP, teste visual. Contatos/direcções/documentos (tabelas filhas) só se criam em `nuevo`; a edição deles ainda não existe.
+
+## Item 3 — Proveedores (sem mock/localStorage)
+- Lista (`proveedores/page.tsx`): `GET /api/proveedores` (filtra `empresa_id` da sessão); busca/filtros/paginação sobre dados reais; vazia ("Aún no hay proveedores registrados") se não houver; estados de carga/erro; aviso `?ok=creado|actualizado`.
+- Cadastro (`nuevo`) e edição (`[id]`): mesmo formulário `_components/proveedor-form.tsx` (layout intacto). Catálogos vêm do PostgreSQL (grupos, condições e meios de pagamento, moedas, Incoterms, países, departamento→distrito→cidade em cascata para PRY); removidas as listas fixas.
+- API: `POST /api/proveedores` (`PROVEEDORES.CREAR`), novo `GET`/`PUT /api/proveedores/[id]` (`VER` / `EDITAR`). Validação e gravação compartilhadas em `lib/proveedores/shared.ts`; `empresa_id` e `creado_por` sempre da sessão; referências (grupo, meio de pagamento) validadas contra a empresa; duplicidade de documento → 409; transação com ROLLBACK. `PUT` reemplaza contatos/direcciones/cuentas/retenciones/documentos pelo que o formulário envia; `pais_nombre` é recalculado.
+- Sem `DATABASE_URL` e sem `DEMO_MODE=true` → 503 (nunca dados simulados).
+- Removidos: `lib/mocks/proveedores.ts`, `lib/mocks/proveedores-storage.ts`, `ProveedorDemo`/`NuevoProveedorDemo`, pills "DEMO" e "Modo demostración".
+- Testes (PG16 descartável, rotas reais + `permissions.ts` real, driver mínimo local no lugar de `pg`): 48 verificações, 0 falhas — 401/403 por perfil (sem permissão, só VER, VER+CREAR, VER+EDITAR, só EDITAR), lista vazia, catálogos só da empresa, criação com 5 tipos de filhos, `empresa_id` do body ignorado, duplicado 409, grupo/meio de outra empresa 400, rollback, empresa B não vê/edita/lê proveedores da A (404), mesmo RUC em empresas distintas, edição/inativação, 503 sem banco.
+- NÃO executado: typecheck completo/build/lint (npm sem registry; `tsc` parcial sem erros de tipos de Proveedores além dos ruídos por falta de `react`/`next`), HTTP real, teste visual. Não há exclusão de proveedores (só inativar por `activo`). Upload real de documentos não existe: documento = nome + URL.
+
+## Pendências conhecidas de Clientes
+- Editar contatos, direcciones, documentos adicionais e demais tabelas filhas de um cliente existente ainda não é possível (só são criados em `clientes/nuevo`); o `PUT` altera apenas a ficha principal.
+- Não há exclusão de clientes (apenas inativar/bloquear vendas).
+- Build/typecheck/lint não executados; sem teste HTTP/visual; a correção do mapeamento de `tipo_operacion` (commit `f20fa7a`, feita pelo proprietário) não foi reexecutada por mim.
+- Regras provisórias D-C1..D-C9 não implementadas como aprovadas; Validação de DV do RUC (algoritmo) pendente de decisão.
 
 ## Correções da revisão do ChatGPT/proprietário (item 1)
 - `hasPermission` nega SEMPRE permissões operacionais ao administrador de plataforma; `getAccessContext` zera `permissions`/`isCompanyAdmin` quando é global. Acesso global = `hasPlatformAccess`/`guardPlatformApi`/`guardPlatformPage` (separado). `proceit/admin` não opera APIs/páginas de CASA MINGO (nem da própria PROCEIT): 403/404.
