@@ -5,9 +5,11 @@ import { opcional, texto } from "@/lib/productos/shared";
 
 // Administración de catálogos de Productos: Categorías, Marcas (NEX-004), Familias y Líneas (NEX-017).
 // Tablas existentes; sin migraciones. empresa_id SIEMPRE de la sesión. No hay borrado físico: se inactiva.
+// Categorías y Marcas se escriben SOLO mediante catalogo_producto_guardar() (NEX-020, SECURITY DEFINER): el rol de ejecución no
+// tiene INSERT/UPDATE directos sobre esas tablas. Familias y Líneas conservan su escritura directa (NEX-017).
 // Duplicados (sin distinguir mayúsculas ni espacios extremos): nombre único por empresa (línea: por familia) y
-// código único por empresa. Familias/Líneas además tienen índices únicos en BD; Categorías/Marcas no los tienen, por lo
-// que la regla se aplica aquí bajo un bloqueo consultivo por empresa+tabla.
+// código único por empresa. Los cuatro catálogos tienen índices únicos en BD (NEX-017 / NEX-020); la verificación previa aquí solo
+// produce mensajes claros bajo un bloqueo consultivo por empresa+tabla.
 
 export type TipoCatalogo = "categorias" | "marcas" | "familias" | "lineas";
 const CFG: Record<TipoCatalogo, { tabla: string; que: string; columnaProducto: string; clave: string; descripcion: boolean }> = {
@@ -16,6 +18,7 @@ const CFG: Record<TipoCatalogo, { tabla: string; que: string; columnaProducto: s
   familias: { tabla: "familias_producto", que: "familia", columnaProducto: "familia_id", clave: "familia", descripcion: true },
   lineas: { tabla: "lineas_producto", que: "línea", columnaProducto: "linea_id", clave: "linea", descripcion: true },
 };
+const MOTOR: Record<string, string> = { categorias: "CATEGORIA", marcas: "MARCA" };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DEMO_MODE = process.env.DEMO_MODE === "true";
 
@@ -47,10 +50,9 @@ function fallo(error: unknown, tipo: TipoCatalogo, accion: string) {
   if (pg.code === "23505") {
     return NextResponse.json({ error: `Ya existe una ${CFG[tipo].que} con ese ${(pg.constraint ?? "").includes("codigo") ? "código" : "nombre"}.` }, { status: 409 });
   }
-  if (pg.code === "42501") {
-    // nexit_runtime solo tiene SELECT en categorias_producto / marcas_producto (NEX-013); requiere una migración de permisos autorizada.
-    return NextResponse.json({ error: "Este catálogo aún no admite escritura en la base de datos (permisos pendientes de migración autorizada)." }, { status: 503 });
-  }
+  if (pg.code === "42501") return NextResponse.json({ error: "No tiene permiso para esta acción." }, { status: 403 });
+  if (pg.code === "P0002") return NextResponse.json({ error: "Registro no encontrado." }, { status: 404 });
+  if (pg.code === "P0001") return NextResponse.json({ error: (error as Error).message }, { status: 400 });
   if (pg.code === "23503") return NextResponse.json({ error: "La familia indicada no existe en su empresa o el registro tiene productos vinculados." }, { status: 400 });
   console.error(`Error al ${accion} ${CFG[tipo].que}:`, error);
   return NextResponse.json({ error: `No fue posible ${accion} la ${CFG[tipo].que}.` }, { status: 500 });
@@ -163,6 +165,10 @@ export async function crearCatalogo(tipo: TipoCatalogo, request: Request) {
     const fila = await enTransaccion(b.db, async (c) => {
       const familiaId = tipo === "lineas" ? await familiaDeLaEmpresa(c, empresaId, cuerpo.familiaId, true) : null;
       await verificarDuplicados(c, tipo, empresaId, d, familiaId, null);
+      if (tipo === "categorias" || tipo === "marcas") {
+        const g = await c.query(`SELECT catalogo_producto_guardar($1, $2, $3, NULL, $4, $5, $6) AS id`, [empresaId, b.session.user.id, MOTOR[tipo], d.codigo, d.nombre, d.activo ?? true]);
+        return (await c.query(`SELECT ${proyectar(tipo)} FROM ${t.tabla} t WHERE t.id = $1 AND t.empresa_id = $2`, [g.rows[0].id, empresaId])).rows[0];
+      }
       const cols = ["empresa_id", "codigo", "nombre", ...(t.descripcion ? ["descripcion"] : []), ...(tipo === "lineas" ? ["familia_id"] : []), "activo"];
       const vals = [empresaId, d.codigo, d.nombre, ...(t.descripcion ? [d.descripcion] : []), ...(tipo === "lineas" ? [familiaId] : []), d.activo ?? true];
       const r = await c.query(`INSERT INTO ${t.tabla} (${cols.join(",")}) VALUES (${cols.map((_, i) => `$${i + 1}`).join(",")}) RETURNING id`, vals);
@@ -190,7 +196,9 @@ export async function editarCatalogo(tipo: TipoCatalogo, request: Request, id: s
     const d = leer(tipo, cuerpo);
     const t = CFG[tipo];
     const fila = await enTransaccion(b.db, async (c) => {
-      const actual = await c.query(`SELECT * FROM ${t.tabla} WHERE id = $1 AND empresa_id = $2 FOR UPDATE`, [id, empresaId]);
+      // Categorías/Marcas: el rol no tiene UPDATE, así que no puede usar FOR UPDATE; la función bloquea la fila al actualizarla.
+      const bloqueo = tipo === "categorias" || tipo === "marcas" ? "" : " FOR UPDATE";
+      const actual = await c.query(`SELECT * FROM ${t.tabla} WHERE id = $1 AND empresa_id = $2${bloqueo}`, [id, empresaId]);
       if (!actual.rowCount) throw new ErrorCatalogo("Registro no encontrado.", 404);
       const a = actual.rows[0];
       const activo = d.activo ?? (a.activo as boolean);
@@ -205,6 +213,10 @@ export async function editarCatalogo(tipo: TipoCatalogo, request: Request, id: s
         }
       }
       await verificarDuplicados(c, tipo, empresaId, d, familiaId, id);
+      if (tipo === "categorias" || tipo === "marcas") {
+        await c.query(`SELECT catalogo_producto_guardar($1, $2, $3, $4, $5, $6, $7)`, [empresaId, b.session.user.id, MOTOR[tipo], id, d.codigo, d.nombre, activo]);
+        return (await c.query(`SELECT ${proyectar(tipo)} FROM ${t.tabla} t WHERE t.id = $1 AND t.empresa_id = $2`, [id, empresaId])).rows[0];
+      }
       const sets = ["codigo = $3", "nombre = $4", ...(t.descripcion ? ["descripcion = $5"] : []), ...(tipo === "lineas" ? [`familia_id = $${t.descripcion ? 6 : 5}`] : []), `activo = $${t.descripcion ? (tipo === "lineas" ? 7 : 6) : 5}`];
       const vals = [id, empresaId, d.codigo, d.nombre, ...(t.descripcion ? [d.descripcion] : []), ...(tipo === "lineas" ? [familiaId] : []), activo];
       await c.query(`UPDATE ${t.tabla} SET ${sets.join(", ")} WHERE id = $1 AND empresa_id = $2`, vals);
