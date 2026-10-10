@@ -22,10 +22,10 @@
 
 ## Direcciones — comportamiento de negocio acordado
 - País obligatorio, Paraguay `PRY` seleccionado por defecto en clientes nacionales.
-- Paraguay: Departamento → Distrito → Ciudad → Barrio; los cuatro son **opcionales**, pero cada selector depende del precedente; al cambiar un valor padre se limpian los descendientes.
+- Paraguay: Departamento → Distrito → Ciudad; los tres son **opcionales**, pero cada selector depende del precedente (sin departamento, distrito y ciudad quedan vacíos; con departamento se puede dejar distrito y ciudad vacíos); al cambiar un valor padre se limpian los descendientes.
 - Para países distintos de `PRY`, esos cuatro combos paraguayos no son necesarios; la dirección puede usar texto libre si el formulario lo soporta.
 - Validar combinaciones de códigos con claves compuestas `(departamento_codigo, distrito_codigo, codigo)`.
-- La tabla de barrios no existe todavía en esquema V1: NO fingir que está implementada; primero definir la migración y carga desde la planilla ya proporcionada, con revisión.
+- **Barrio está FUERA del alcance actual de la V1** (decisión del responsable; no es obligatorio para el registro SIFEN): no hay tabla de barrios, columnas de barrio, combo ni carga de los 1.104 barrios. La planilla y el histórico `fontes-historicas/025_*` quedan como referencia para una fase futura; reabrir solo con autorización expresa.
 - Clientes y Proveedores deben compartir catálogos y comportamiento; no crear tablas/listas paralelas.
 
 ## Homologación
