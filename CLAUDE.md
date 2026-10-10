@@ -2,6 +2,17 @@
 
 O contexto do projeto vive no GitHub, não na memória da conversa. Claude implementa; ChatGPT audita (AUD-RNN); a homologação final é humana. Nunca marcar HOMOLOGADO, nunca editar arquivos AUD, nunca fazer merge em `main`.
 
+## Regra permanente — contexto e responsabilidades (Claude Code + ChatGPT)
+- **Antes de CADA tarefa, nova conversa, retorno de homologação ou compactação de contexto**, as duas IAs devem consultar no GitHub a versão mais recente de `CLAUDE.md`, `documentacao/PROTOCOLO-IA.md`, e as seções pertinentes de `PROGRESSO-NEXIT-V1.md`; verificar branch/commit atual e arquivos da tarefa. Não se apoiar só na memória do chat ou em cópia local desatualizada.
+- **Claude Code**: implementa exclusivamente a tarefa autorizada, prepara arquivos de código/SQL/docs, executa somente testes em ambiente de teste autorizado, faz **git commit e git push** na branch correta e para para auditoria. Não acessa VM, Docker ou PostgreSQL real; não aplica SQL/migrations e não faz deploy.
+- **ChatGPT**: lê os mesmos documentos atualizados antes de auditorias/instruções de implementação, revisa commits e diffs, prepara orientações e, quando expressamente autorizado, pode editar/commitar arquivos no GitHub. Não deve afirmar que executou alterações na VM; comandos de implantação são entregues ao responsável humano.
+- **Responsável humano**: decide e executa na VM `git pull`, scripts no `nexit-db`, Docker/deploy e homologação; nada disso é executado pelas IAs. **Não confundir commit/push no Git com execução de SQL ou deploy.**
+- Se uma IA não conseguir ler os arquivos atuais, deve declarar a limitação e evitar orientação destrutiva ou decisões baseadas em versões antigas. Ao encontrar divergência entre texto e estado real do banco, registrar o fato e solicitar verificação — não reaplicar migrations por suposição.
+- Revisão por **tarefa única**, sem auditoria geral ou leitura integral de arquivos gigantes; ler integralmente os dois documentos curtos de protocolo e apenas trechos necessários do progresso, requisitos e código para economizar tokens.
+- Estado operacional confirmado pelo responsável: **NEX-020 já aplicada** no PostgreSQL real; **NEX-021 ainda proposta, não aplicada**. Não reaplicar NEX-020 nem assumir que arquivos de SQL publicados no Git foram executados.
+- Pasta local de Claude Code: `C:\\projetos\\PROCEIT\\distribuidora` (conferir branch); branch de trabalho `feature/NEXIT-2026-001-banco-demo`. Preservar arquivos não versionados `Dockerfile` e `.dockerignore` se presentes. Não efetuar checkout destrutivo.
+- Não perder tokens discutindo assinaturas `Unverified`, trailers de coautoria ou conectores quando o Git terminal estiver funcionando.
+
 ## 1. Rotina obrigatória (antes de cada módulo e após qualquer compactação de contexto)
 1. Ler este `CLAUDE.md` e `documentacao/PROTOCOLO-IA.md` (e a definição `documentacao/definicoes/REQ-*.md` aplicável).
 2. Ler `PROGRESSO-NEXIT-V1.md`: o que está concluído, em revisão e pendente.
@@ -21,7 +32,7 @@ O contexto do projeto vive no GitHub, não na memória da conversa. Claude imple
 
 ## 3. Regras de dados e segurança
 - Multi-tenant: sempre `empresa_id` da sessão; permissões `RECURSO.ACCION` via `hasPermission`/`getAccessContext`; alcance de depósitos via `usuario_puede_deposito`.
-- Banco: não alterar produção, contêineres ou VM; não modificar migrations aplicadas (NEX-001..019); mudança estrutural só em nova migration versionada (próxima livre: NEX-020), com necessidade comprovada e aprovação prévia. O papel `nexit_runtime` só escreve via funções SECURITY DEFINER.
+- Banco: não alterar produção, contêineres ou VM; não modificar migrations aplicadas (NEX-001..020); mudança estrutural só em nova migration versionada (NEX-021 está em proposta e precisa aprovação), com necessidade comprovada e aprovação prévia. O papel `nexit_runtime` só escreve via funções SECURITY DEFINER.
 - `DEMO_MODE=false` em produção; sem `DATABASE_URL` e sem `DEMO_MODE` ⇒ 503; nunca dados simulados diante de falha do banco.
 - Sem segredos no GitHub. Sem dependências novas se o registry não estiver acessível (exportações de relatórios usam `lib/reportes/{export,xlsx,pdf}.ts`).
 - Valores monetários: `numeric` como texto, somados no PostgreSQL; nunca float. Custos só de `inventario_costos`; nunca inventar custo, margem ou histórico.
