@@ -247,6 +247,13 @@ export const NAVIGATION_GROUPS: ShellNavigationGroup[] = [
         icon: "reports",
         permission: "REPORTES.VER",
       },
+      {
+        id: "report-stock-general",
+        label: "Stock general",
+        href: "/reportes/stock-general",
+        icon: "reports",
+        permission: "REPORTES.VER",
+      },
     ],
   },
   {

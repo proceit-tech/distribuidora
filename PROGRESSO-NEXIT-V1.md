@@ -12,7 +12,7 @@ Branch: `feature/NEXIT-2026-001-banco-demo`. Regra: uma funcionalidade por vez; 
 | 6 | Movimientos | **ENTREGUE (pendente: build + teste manual na tela; sem migração nova)** | ver git log |
 | 7 | Stock | **ENTREGUE (pendente: build + teste manual na tela; sem migração nova)** | ver git log |
 | 8a | Dashboard | **ENTREGUE (pendente: build + teste manual na tela; sem migração nova)** | ver git log |
-| 8b | Relatórios/XLSX | pendente | |
+| 8b | Reportes (5 relatórios; escopo: `documentacao/v1/REPORTES-V1-ALCANCE-APROBADO.md`) | **EM ANDAMENTO — 1/5: Stock general entregue (aguarda revisão técnica)**; 2 Valorización, 3 Kardex, 4 Stock crítico, 5 Lotes: pendentes | ver git log |
 
 ## Item 1 — o que existe
 - `lib/auth/permissions.ts`: `getAccessContext` (perfis/permissões reais no PostgreSQL, sempre por `empresa_id` da sessão; administrador de plataforma via `administradores_plataforma`), `guardApi`, `denyIfNoPermission` (401/403), `guardPage`, `guardPlatformPage`.
@@ -91,6 +91,15 @@ Branch: `feature/NEXIT-2026-001-banco-demo`. Regra: uma funcionalidade por vez; 
 - **Dependem de módulos futuros (sem dado hoje, não se inventa):** vendas do dia, pedidos ativos, contas a receber/vencidas, entregas e rotas, compras, finanças; "Emitir factura" leva à tela de facturas ainda mock.
 - Testes (rotas reais + `permissions.ts` real como `nexit_runtime` em PG16 descartável, 23 verificações): 401/403/400, empresa vazia = zeros, valores após movimentos reais (gráfico, KPIs, valor, alertas, stock, últimos), filtro de depósito e período, anulação não duplica, seções por permissão, alcance de depósitos, aislamiento A×B, 503. `tsc` parcial sem erros novos.
 - NÃO executado: build/lint completos (sem registry no sandbox), HTTP real, teste visual. Limitação: "hoje" usa a data do servidor de banco; a série mede unidades, não valor.
+
+## Item 8b — Reportes: 1. Stock general
+- Páginas `/reportes` (índice) e `/reportes/stock-general` (guard `REPORTES.VER`), item "Stock general" no menu Reportes. Visual do módulo Stock (cards, filtros, tabela, paginação).
+- API: `GET /api/reportes/stock-general` (`REPORTES.VER`) e `GET /api/reportes/stock-general/exportar?formato=xlsx|pdf` (`REPORTES.VER` + `REPORTES.EXPORTAR`); mesmos filtros nos dois; `empresa_id` da sessão; só depósitos com alcance do usuário (fora do alcance = 403); 401/400/403/413/503.
+- Vistas: agregado por produto e detalhe por depósito/lote/propriedade (totais sempre do agregado; propio e terceros separados, sem dupla contagem). Filtros: texto (código, cód. inventário, GTIN, descrição), depósito, categoria, marca, família, situação, lote, existência (com/sem stock = físico propio + terceros). Totais e indicadores sobre todo o filtro (não só a página); paginação de 50.
+- Regras (iguais a `lib/stock/shared.ts`): físico = disponível + reservado + cuarentena; virtual = físico + trânsito; situação por mínimo/máximo do produto. Aviso de cobertura na tela e nos arquivos: TRÂNSITO sem fluxo produtor em V1, foto atual, limites por produto.
+- Exportação: Excel (.xlsx, escritor próprio em `lib/reportes/xlsx.ts`, sem dependência nova) e PDF (A4 horizontal, `lib/reportes/pdf.ts`, sem dependência nova; várias páginas com cabeçalho repetido). Mesmos filtros/valores/totais da tela; nome dinâmico `Stock_General_<Vista>_<Empresa>_<AAAAMMDD-HHMM>.ext`; máx. 50.000 linhas (acima disso 413 pedindo reduzir filtros).
+- Testes (rotas reais + `permissions.ts` real como `nexit_runtime` em PG16 descartável, 43 verificações): 401/403 (inclui VER sem EXPORTAR), 400, empresa sem movimentos, dados reais após movimentos (entradas, reserva, cuarentena, transferência, lotes, terceros), conciliação com `/api/stock`, filtros (depósito, categoria, marca, GTIN, descrição, `%` escapado, situação, existência, lote), detalhe × agregado, paginação, anulação, alcance de depósitos, isolamento A×B, XLSX lido com openpyxl, PDF lido com pdftotext/pdftoppm (inclusive 400 linhas em 10 páginas), 503.
+- NÃO executado: build/lint completos e navegador real (sem registry no sandbox), exportação acima de 50.000 linhas, teste visual da tela (só dos PDFs). Sem migração nova.
 
 ## Pendências futuras de Movimientos
 - Unidades identificadas (série/etiqueta, `UNIDAD_ETIQUETADA`): exige tabela de unidades (próxima migração livre: NEX-020).
