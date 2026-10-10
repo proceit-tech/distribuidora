@@ -4,9 +4,15 @@ import { denyIfNoPermission } from "@/lib/auth/permissions";
 import type { PoolClient } from "pg";
 
 
-const DEMO_MODE =
-  process.env.DEMO_MODE === "true" ||
-  !process.env.DATABASE_URL;
+// Solo DEMO explícito usa respuestas simuladas. La falta de DATABASE_URL NUNCA activa datos ficticios.
+const DEMO_MODE = process.env.DEMO_MODE === "true";
+
+function errorConfiguracion() {
+  return NextResponse.json(
+    { error: "Servicio no disponible: base de datos no configurada." },
+    { status: 503 },
+  );
+}
 
 async function obtenerSesionActual() {
   const { getCurrentSession } = await import("@/lib/auth/session");
@@ -93,6 +99,10 @@ const errorPg = (e: unknown): e is { code?: string } =>
   typeof e === "object" && e !== null;
 
 export async function GET() {
+  if (!DEMO_MODE && !process.env.DATABASE_URL) {
+    return errorConfiguracion();
+  }
+
   if (DEMO_MODE) {
     return respuestaProductosDemo();
   }
@@ -179,6 +189,10 @@ export async function POST(request: Request) {
       { error: "Los datos enviados no son válidos." },
       { status: 400 },
     );
+  }
+
+  if (!DEMO_MODE && !process.env.DATABASE_URL) {
+    return errorConfiguracion();
   }
 
   if (DEMO_MODE) {

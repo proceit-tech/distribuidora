@@ -9,9 +9,14 @@ import type { AuthSession, AuthUser } from "@/types/auth";
 export type AccessContext = {
   /** Códigos RECURSO.ACCION concedidos por los perfiles activos del usuario. */
   permissions: string[];
-  /** Algún perfil activo es administrador de la empresa (pasa todas las acciones operacionales). */
+  /** Algún perfil activo es administrador de la empresa (pasa las acciones operacionales de SU empresa). */
   isCompanyAdmin: boolean;
-  /** Administrador global de plataforma (tabla administradores_plataforma, solo PROCEIT). */
+  /**
+   * Administrador global de plataforma (tabla administradores_plataforma, solo PROCEIT).
+   * Es un rol DISTINTO: no recibe permisos operacionales de ninguna empresa, ni de la propia,
+   * ni por el perfil ADMIN empresarial. Las operaciones entre empresas deben usar autorización
+   * de plataforma explícita (hasPlatformAccess), nunca hasPermission.
+   */
   isPlatformAdmin: boolean;
 };
 
@@ -61,10 +66,14 @@ export async function getAccessContext(
   if (!row) {
     return { permissions: [], isCompanyAdmin: false, isPlatformAdmin: false };
   }
+  if (row.plataforma) {
+    // Separación estricta: el administrador global no hereda nada operacional.
+    return { permissions: [], isCompanyAdmin: false, isPlatformAdmin: true };
+  }
   return {
     permissions: row.codigos,
     isCompanyAdmin: row.es_admin,
-    isPlatformAdmin: row.plataforma,
+    isPlatformAdmin: false,
   };
 }
 
@@ -73,10 +82,17 @@ export function hasPermission(
   recurso: string,
   accion: string,
 ) {
+  // Permisos OPERACIONALES de empresa. La plataforma nunca los obtiene por ser global.
+  if (access.isPlatformAdmin) return false;
   return (
     access.isCompanyAdmin ||
     access.permissions.includes(`${recurso}.${accion}`.toUpperCase())
   );
+}
+
+/** Autorización de plataforma (administración global). Independiente de los permisos de empresa. */
+export function hasPlatformAccess(access: AccessContext) {
+  return access.isPlatformAdmin;
 }
 
 /** Compatibilidad con el código existente. */
@@ -130,7 +146,7 @@ export async function guardPlatformPage() {
   const session = await getCurrentSession();
   if (!session) redirect("/login");
   const access = await getAccessContext(session.user, session.demo === true);
-  if (!access.isPlatformAdmin) notFound();
+  if (!hasPlatformAccess(access)) notFound();
   return { session, access };
 }
 
@@ -146,4 +162,26 @@ export async function denyIfNoPermission(
     { error: "No tiene permiso para esta acción." },
     { status: 403 },
   );
+}
+
+/** Para rutas API de administración global: exige administrador de plataforma, no un perfil de empresa. */
+export async function guardPlatformApi(): Promise<ApiGuard> {
+  const session = await getCurrentSession();
+  if (!session) {
+    return {
+      ok: false,
+      response: NextResponse.json({ error: "Sesión no válida." }, { status: 401 }),
+    };
+  }
+  const access = await getAccessContext(session.user, session.demo === true);
+  if (!hasPlatformAccess(access)) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        { error: "Requiere administración de plataforma." },
+        { status: 403 },
+      ),
+    };
+  }
+  return { ok: true, session, access };
 }

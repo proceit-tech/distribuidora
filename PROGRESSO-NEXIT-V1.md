@@ -21,6 +21,11 @@ Branch: `feature/NEXIT-2026-001-banco-demo`. Regra: uma funcionalidade por vez; 
 - Layouts de módulo (`app/(private)/<modulo>/layout.tsx`): bloqueiam por URL (404) sem permissão; `facturas` e `recepciones` (fora da V1) retornam 404; `/administracion/*` só administrador de plataforma.
 - `/administracion/empresas`: lista real de empresas (somente leitura). `/` redireciona PROCEIT para ela.
 
+## Correções da revisão do ChatGPT/proprietário (item 1)
+- `hasPermission` nega SEMPRE permissões operacionais ao administrador de plataforma; `getAccessContext` zera `permissions`/`isCompanyAdmin` quando é global. Acesso global = `hasPlatformAccess`/`guardPlatformApi`/`guardPlatformPage` (separado). `proceit/admin` não opera APIs/páginas de CASA MINGO (nem da própria PROCEIT): 403/404.
+- APIs clientes/productos/proveedores: sem `DATABASE_URL` e sem `DEMO_MODE=true` → 503, nunca dados simulados.
+- `/dashboard` redireciona o administrador global para `/administracion/empresas`.
+
 ## Pendências conhecidas
 - Typecheck/lint/build **não foram executados** (npm sem acesso ao registry na sessão do Claude). Rodar `npm ci && npx tsc --noEmit && npm run lint && npm run build`.
 - `/dashboard` e o link fixo "Dashboard" da sidebar ainda são mock (item 8).
@@ -31,4 +36,5 @@ Branch: `feature/NEXIT-2026-001-banco-demo`. Regra: uma funcionalidade por vez; 
 ## Testes do item 1 (executados)
 - SQL de `getAccessContext` contra PG16 descartável (NEX-001..016 + S-001): `proceit/admin` → plataforma; `casa_mingo/admin` → admin de empresa, não plataforma; `casa_mingo/ventas` → {CLIENTES.VER, STOCK.VER}; `casa_mingo/sinperfil` → nada.
 - `resolveNavigation` (node): PROCEIT → só /administracion/empresas; CASA MINGO admin → 6 módulos; perfil VENTAS → /clientes,/stock; sem perfil → vazio.
-- Não executado: chamadas HTTP reais, build.
+- Revisão: `hasPermission`/`hasPlatformAccess` (node, 6 casos PASS: plataforma não opera; admin de empresa não é plataforma; perfil limitado VER sim/CREAR não).
+- **Não executados:** typecheck completo, lint, `next build`, chamadas HTTP reais (npm sem acesso ao registry na sessão do Claude). O 503 sem DATABASE_URL foi verificado só por leitura do código.
