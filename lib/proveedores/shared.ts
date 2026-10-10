@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import type { PoolClient } from "pg";
 
+import { resolverUbicacionParaguay } from "@/lib/geografia/referencia";
+
 // Lógica compartida de validación y persistencia de proveedores (POST y PUT).
 // Toda consulta es parametrizada; empresa_id siempre llega de la sesión autenticada.
 
@@ -453,13 +455,13 @@ export async function insertarHijos(conexion: PoolClient, proveedorId: string, d
       const paisDireccion = (texto(direccion.paisCodigo, 3).toUpperCase() || d.paisCodigo);
       await validarReferenciaGlobal(conexion, "referencia_geografica_paises", "codigo", paisDireccion, `país de la dirección ${indice + 1}`);
 
-      const departamentoCodigo = codigoGeografico(direccion.departamentoCodigo, "El departamento");
-      const distritoCodigo = codigoGeografico(direccion.distritoCodigo, "El distrito");
-      const ciudadCodigo = codigoGeografico(direccion.ciudadCodigo, "La ciudad");
-
-      if (paisDireccion === "PRY" && (!departamentoCodigo || !distritoCodigo || !ciudadCodigo)) {
-        throw new Error(`La dirección ${indice + 1} de Paraguay requiere departamento, distrito y ciudad.`);
-      }
+      // Paraguay: departamento + distrito + ciudad deben existir y pertenecerse (catálogo oficial); otros países: sin códigos.
+      const ubicacion = paisDireccion === "PRY"
+        ? await resolverUbicacionParaguay(conexion, direccion.departamentoCodigo, direccion.distritoCodigo, direccion.ciudadCodigo, `La dirección ${indice + 1}`)
+        : null;
+      const departamentoCodigo = ubicacion?.departamentoCodigo ?? null;
+      const distritoCodigo = ubicacion?.distritoCodigo ?? null;
+      const ciudadCodigo = ubicacion?.ciudadCodigo ?? null;
 
       await conexion.query(
         `INSERT INTO proveedor_direcciones (
@@ -474,9 +476,9 @@ export async function insertarHijos(conexion: PoolClient, proveedorId: string, d
           texto(direccion.direccion, 300),
           opcional(direccion.numeroCasa, 20),
           paisDireccion,
-          paisDireccion === "PRY" ? departamentoCodigo : null,
-          paisDireccion === "PRY" ? distritoCodigo : null,
-          paisDireccion === "PRY" ? ciudadCodigo : null,
+          departamentoCodigo,
+          distritoCodigo,
+          ciudadCodigo,
           paisDireccion === "PRY" ? null : opcional(direccion.departamento, 150),
           paisDireccion === "PRY" ? null : opcional(direccion.distrito, 150),
           paisDireccion === "PRY" ? null : opcional(direccion.ciudad, 150),

@@ -1,6 +1,8 @@
 import type { PoolClient } from "pg";
 import { NextResponse } from "next/server";
 
+import { resolverPais, resolverUbicacionParaguay } from "@/lib/geografia/referencia";
+
 import { denyIfNoPermission } from "@/lib/auth/permissions";
 
 
@@ -210,18 +212,6 @@ function numeroOpcional(valor: unknown, minimo?: number, maximo?: number) {
   return numero;
 }
 
-function codigoGeografico(valor: unknown, etiqueta: string) {
-  if (valor === null || valor === undefined || valor === "") return null;
-
-  const codigo = Number(valor);
-
-  if (!Number.isInteger(codigo) || codigo <= 0) {
-    throw new Error(`${etiqueta} no es válido.`);
-  }
-
-  return codigo;
-}
-
 function fechaIso(valor: unknown, etiqueta: string) {
   const fecha = texto(valor);
   if (!fecha) return null;
@@ -312,52 +302,13 @@ async function validarDireccionParaguay(
 
   if (paisCodigo !== "PRY") return;
 
-  const departamentoCodigo = codigoGeografico(
+  return resolverUbicacionParaguay(
+    conexion,
     direccion.departamentoCodigo,
-    "El departamento",
-  );
-  const distritoCodigo = codigoGeografico(
     direccion.distritoCodigo,
-    "El distrito",
+    direccion.ciudadCodigo,
+    "La dirección",
   );
-  const ciudadCodigo = codigoGeografico(direccion.ciudadCodigo, "La ciudad");
-
-  if (!departamentoCodigo || !distritoCodigo || !ciudadCodigo) {
-    throw new Error(
-      "Para una dirección de Paraguay seleccione departamento, distrito y ciudad.",
-    );
-  }
-
-  const resultado = await conexion.query(
-    `
-      SELECT
-        d.nombre AS departamento,
-        di.nombre AS distrito,
-        c.nombre AS ciudad
-      FROM referencia_geografica_departamentos d
-      JOIN referencia_geografica_distritos di
-        ON di.departamento_codigo = d.codigo
-      JOIN referencia_geografica_ciudades c
-        ON c.distrito_codigo = di.codigo
-      WHERE d.codigo = $1
-        AND di.codigo = $2
-        AND c.codigo = $3
-    `,
-    [departamentoCodigo, distritoCodigo, ciudadCodigo],
-  );
-
-  if (resultado.rowCount !== 1) {
-    throw new Error(
-      "La combinación de departamento, distrito y ciudad no es válida.",
-    );
-  }
-
-  return {
-    departamentoCodigo,
-    distritoCodigo,
-    ciudadCodigo,
-    ...resultado.rows[0],
-  };
 }
 
 async function catalogoGeografico(
@@ -372,6 +323,7 @@ async function catalogoGeografico(
     const resultado = await db.query(
       `SELECT codigo, nombre
        FROM referencia_geografica_departamentos
+       WHERE activo = true
        ORDER BY nombre`,
     );
 
@@ -391,7 +343,7 @@ async function catalogoGeografico(
     const resultado = await db.query(
       `SELECT codigo, nombre, departamento_codigo
        FROM referencia_geografica_distritos
-       WHERE departamento_codigo = $1
+       WHERE departamento_codigo = $1 AND activo = true
        ORDER BY nombre`,
       [departamento],
     );
@@ -414,6 +366,7 @@ async function catalogoGeografico(
        FROM referencia_geografica_ciudades
        WHERE departamento_codigo = $1
          AND distrito_codigo = $2
+         AND activo = true
        ORDER BY nombre`,
       [departamento, distrito],
     );
@@ -575,11 +528,13 @@ export async function GET(request: Request) {
       db.query(
         `SELECT codigo, nombre
          FROM referencia_geografica_departamentos
+         WHERE activo = true
          ORDER BY nombre`,
       ),
       db.query(
         `SELECT codigo, nombre
          FROM referencia_geografica_paises
+         WHERE activo = true
          ORDER BY nombre`,
       ),
     ]);
@@ -662,7 +617,6 @@ export async function POST(request: Request) {
     const dv = texto(cuerpo.dv, 5);
     const razonSocial = texto(cuerpo.razonSocial, 200);
     const paisCodigo = texto(cuerpo.paisCodigo, 3).toUpperCase();
-    const paisNombre = texto(cuerpo.paisNombre, 60);
     const descripcionDocumentoIdentidad = opcional(
       cuerpo.descripcionDocumentoIdentidad,
       100,
@@ -698,7 +652,7 @@ export async function POST(request: Request) {
       throw new Error("Seleccione el tipo de contribuyente.");
     }
 
-    if (!paisCodigo || !paisNombre) {
+    if (!paisCodigo) {
       throw new Error("Informe el país del cliente.");
     }
 
@@ -857,6 +811,9 @@ export async function POST(request: Request) {
       throw new Error("Ya existe un cliente con esa identificación.");
     }
 
+    // El nombre oficial del país sale del catálogo PostgreSQL; el cuerpo de la solicitud solo aporta el código.
+    const paisCliente = await resolverPais(conexion, paisCodigo, "El país del cliente");
+
     const clienteResultado = await conexion.query(
       `
         INSERT INTO clientes (
@@ -923,8 +880,8 @@ export async function POST(request: Request) {
         TIPO_OPERACION_SIFEN[
           tipoOperacion as keyof typeof TIPO_OPERACION_SIFEN
         ],
-        paisCodigo,
-        paisNombre,
+        paisCliente.codigo,
+        paisCliente.nombre,
         tipoPersona,
         TIPO_CONTRIBUYENTE_SIFEN[
           tipoPersona as keyof typeof TIPO_CONTRIBUYENTE_SIFEN
@@ -1024,6 +981,7 @@ export async function POST(request: Request) {
 
     for (const direccion of direcciones) {
       const tipo = texto(direccion.tipo).toUpperCase() || "COMERCIAL";
+      const paisDireccion = await resolverPais(conexion, direccion.paisCodigo, "El país de la dirección");
       const geografia = await validarDireccionParaguay(conexion, direccion);
 
       await conexion.query(
@@ -1074,8 +1032,8 @@ export async function POST(request: Request) {
           opcional(direccion.etiqueta, 100),
           opcional(direccion.numeroCasa, 20),
           opcional(direccion.complemento, 200),
-          texto(direccion.paisCodigo, 3).toUpperCase(),
-          texto(direccion.paisNombre, 60),
+          paisDireccion.codigo,
+          paisDireccion.nombre,
           geografia?.departamentoCodigo ?? null,
           geografia?.distritoCodigo ?? null,
           geografia?.distrito ?? opcional(direccion.distrito, 100),

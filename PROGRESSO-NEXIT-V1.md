@@ -206,3 +206,11 @@ Branch: `feature/NEXIT-2026-001-banco-demo`. Regra: uma funcionalidade por vez; 
 - `resolveNavigation` (node): PROCEIT → só /administracion/empresas; CASA MINGO admin → 6 módulos; perfil VENTAS → /clientes,/stock; sem perfil → vazio.
 - Revisão: `hasPermission`/`hasPlatformAccess` (node, 6 casos PASS: plataforma não opera; admin de empresa não é plataforma; perfil limitado VER sim/CREAR não).
 - **Não executados:** typecheck completo, lint, `next build`, chamadas HTTP reais (npm sem acesso ao registry na sessão do Claude). O 503 sem DATABASE_URL foi verificado só por leitura do código.
+
+## Ajuste — Localização geográfica (Clientes e Proveedores)
+- Ambos os módulos usam as mesmas tabelas `referencia_geografica_{paises,departamentos,distritos,ciudades}`; sem cadastro paralelo, sem migration, sem alterar tabelas geográficas.
+- Novo `lib/geografia/referencia.ts`: `resolverPais` (nome oficial do país vem do catálogo PostgreSQL, o `paisNombre` do corpo é ignorado) e `resolverUbicacionParaguay` (departamento→distrito→ciudad validados pela hierarquia completa; combinação inválida = 400).
+- Clientes: corrigida a inconsistência (POST exigia `paisNombre`, formulário enviava só `paisCodigo`); POST/PUT/`relacionados` usam o resolver; catálogos filtram `activo`; formulário de edição não fixa mais Argentina, Paraguay por padrão e outros países só em B2F.
+- Proveedores: `insertarHijos` (POST/PUT) valida a combinação geográfica pelo mesmo resolver.
+- Testes (ambiente de teste, `nexit_runtime`): 62 PASS geo (criar/editar/persistir/reabrir nos dois módulos, combinações inválidas, país inexistente, isolamento); regressão Clientes 64 e Catálogos 101 PASS.
+- Limitação: a planilha Excel SIFEN não estava disponível no sandbox; testado com o catálogo INE histórico (`fontes-historicas/025`: 272 distritos, 6752 ciudades). O seed S-001 do repositório contém só amostra. Estado: implementado / validado em teste; NÃO homologado.

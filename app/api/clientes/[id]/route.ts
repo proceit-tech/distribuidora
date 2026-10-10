@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { denyIfNoPermission } from "@/lib/auth/permissions";
+import { resolverPais } from "@/lib/geografia/referencia";
 import { ErrorValidacion, leerEntrada, leerHijos, sincronizarHijos } from "@/lib/clientes/relacionados";
 
 type Contexto = { params: Promise<{ id: string }> };
@@ -206,7 +207,6 @@ export async function PUT(request: Request, contexto: Contexto) {
     const dv = texto(cuerpo.dv, 5);
     const razonSocial = texto(cuerpo.razonSocial, 200);
     const paisCodigo = texto(cuerpo.paisCodigo, 3).toUpperCase();
-    const paisNombre = texto(cuerpo.paisNombre, 60);
     const descDoc = opcional(cuerpo.descripcionDocumentoIdentidad, 100);
     const limiteTemporal = numero(cuerpo.limiteCreditoTemporal, 0);
     const vencimiento = fechaIso(cuerpo.fechaVencimientoCredito);
@@ -256,6 +256,8 @@ export async function PUT(request: Request, contexto: Contexto) {
     const condicionPagoId = opcional(cuerpo.condicionPagoId);
     if (condicionPagoId && !UUID.test(condicionPagoId)) throw new Error("La condición de pago no es válida.");
 
+    // Nombre oficial del país: siempre del catálogo, nunca del cuerpo de la solicitud.
+    const pais = await resolverPais(conexion, paisCodigo, "El país del cliente");
     const entradaHijos = leerEntrada(cuerpo);
     await conexion.query("BEGIN");
 
@@ -302,7 +304,7 @@ export async function PUT(request: Request, contexto: Contexto) {
         id, empresaId,
         NATURALEZA[naturaleza as keyof typeof NATURALEZA],
         OPERACION[tipoOperacion as keyof typeof OPERACION],
-        paisCodigo, paisNombre || paisCodigo,
+        pais.codigo, pais.nombre,
         tipoPersona, CONTRIBUYENTE[tipoPersona as keyof typeof CONTRIBUYENTE],
         naturaleza === "CONTRIBUYENTE" ? "RUC" : tipoDocumento,
         naturaleza === "CONTRIBUYENTE" ? null : DOC_SIFEN[tipoDocumento as keyof typeof DOC_SIFEN],

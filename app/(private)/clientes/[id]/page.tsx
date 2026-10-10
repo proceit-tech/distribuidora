@@ -589,13 +589,14 @@ export default function ClienteDetallePage() {
       return {
         ...current,
         tipoOperacion: value,
+        // Paraguay por defecto; en B2F el país se elige del catálogo (sin valores fijos).
         paisCodigo:
           value === "B2F"
-            ? "ARG"
+            ? ""
             : "PRY",
         paisNombre:
           value === "B2F"
-            ? "Argentina"
+            ? ""
             : "Paraguay",
         tipoDocumento:
           value === "B2F"
@@ -649,6 +650,12 @@ export default function ClienteDetallePage() {
             : "direcciones",
       );
       setError(errorHijos);
+      return;
+    }
+
+    if (!form.paisCodigo) {
+      setTab("fiscal");
+      setError("Seleccione el país del cliente.");
       return;
     }
 
@@ -1075,9 +1082,22 @@ export default function ClienteDetallePage() {
                       "B2F"
                     }
                   >
-                    {catalogos.paises.map((pais) => (
-<option key={pais.codigo} value={pais.codigo}>{pais.nombre}</option>
-))}
+                    {form.tipoOperacion === "B2F" ? (
+                      <option value="">
+                        Seleccione un país
+                      </option>
+                    ) : null}
+                    {catalogos.paises
+                      .filter((pais) =>
+                        form.tipoOperacion === "B2F"
+                          ? pais.codigo !== "PRY"
+                          : pais.codigo === "PRY",
+                      )
+                      .map((pais) => (
+                        <option key={pais.codigo} value={pais.codigo}>
+                          {pais.nombre}
+                        </option>
+                      ))}
                   </SelectInput>
                 </Field>
 

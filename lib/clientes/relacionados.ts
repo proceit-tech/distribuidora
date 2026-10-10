@@ -1,5 +1,7 @@
 import type { Pool, PoolClient } from "pg";
 
+import { resolverPais, resolverUbicacionParaguay } from "@/lib/geografia/referencia";
+
 // Datos relacionados del cliente (contactos, direcciones y documentos): lectura y sincronización para la EDICIÓN.
 // Mismas reglas y tablas que el alta (POST /api/clientes). Todo se ejecuta dentro de la transacción del llamador y
 // SIEMPRE con empresa_id de la sesión. Semántica:
@@ -34,13 +36,6 @@ function numeroOpcional(v: unknown, min: number, max: number) {
   if (!Number.isFinite(n)) throw new ErrorValidacion("Uno de los valores numéricos informados no es válido.");
   if (n < min) throw new ErrorValidacion(`El valor debe ser igual o mayor a ${min}.`);
   if (n > max) throw new ErrorValidacion(`El valor debe ser igual o menor a ${max}.`);
-  return n;
-}
-
-function codigoGeografico(v: unknown, etiqueta: string) {
-  if (v === null || v === undefined || v === "") return null;
-  const n = Number(v);
-  if (!Number.isInteger(n) || n <= 0) throw new ErrorValidacion(`${etiqueta} no es válido.`);
   return n;
 }
 
@@ -126,23 +121,10 @@ const documentoDeFila = (r: Json): DocumentoApi => ({
 });
 
 // ---------------------------------------------------------------- Geografía (Paraguay), igual que el alta
-type Geo = { departamentoCodigo: number; distritoCodigo: number; ciudadCodigo: number; departamento: string; distrito: string; ciudad: string };
+type Geo = Awaited<ReturnType<typeof resolverUbicacionParaguay>>;
 async function validarGeografiaParaguay(c: Conn, d: DireccionApi): Promise<Geo | null> {
   if (texto(d.paisCodigo, 3).toUpperCase() !== "PRY") return null;
-  const dep = codigoGeografico(d.departamentoCodigo, "El departamento");
-  const dis = codigoGeografico(d.distritoCodigo, "El distrito");
-  const ciu = codigoGeografico(d.ciudadCodigo, "La ciudad");
-  if (!dep || !dis || !ciu) throw new ErrorValidacion("Para una dirección de Paraguay seleccione departamento, distrito y ciudad.");
-  const r = await c.query(
-    `SELECT d.nombre AS departamento, di.nombre AS distrito, ci.nombre AS ciudad
-       FROM referencia_geografica_departamentos d
-       JOIN referencia_geografica_distritos di ON di.departamento_codigo = d.codigo
-       JOIN referencia_geografica_ciudades ci ON ci.distrito_codigo = di.codigo
-      WHERE d.codigo = $1 AND di.codigo = $2 AND ci.codigo = $3`,
-    [dep, dis, ciu],
-  );
-  if (r.rowCount !== 1) throw new ErrorValidacion("La combinación de departamento, distrito y ciudad no es válida.");
-  return { departamentoCodigo: dep, distritoCodigo: dis, ciudadCodigo: ciu, ...(r.rows[0] as Pick<Geo, "departamento" | "distrito" | "ciudad">) };
+  return resolverUbicacionParaguay(c, d.departamentoCodigo, d.distritoCodigo, d.ciudadCodigo, "La dirección");
 }
 
 // ---------------------------------------------------------------- Cuerpo de la solicitud
@@ -279,6 +261,9 @@ export async function sincronizarHijos(c: Conn, empresaId: string, clienteId: st
       v.tipo = tipo;
       numeroOpcional(v.latitud, -90, 90);
       numeroOpcional(v.longitud, -180, 180);
+      const pais = await resolverPais(c, v.paisCodigo, "El país de la dirección");
+      v.paisCodigo = pais.codigo;
+      v.paisNombre = pais.nombre;
       finales.push({ id, v, geo: await validarGeografiaParaguay(c, v), fiscal: bool(v.esFiscal) || tipo === "FISCAL" });
     }
     const idsMod = new Set(finales.filter((f) => f.id).map((f) => f.id as string));
@@ -306,14 +291,14 @@ export async function sincronizarHijos(c: Conn, empresaId: string, clienteId: st
       const p = [
         opcional(v.etiqueta, 100) ?? v.tipo, texto(v.direccion, 300), geo?.ciudad ?? opcional(v.ciudad, 100), geo?.departamento ?? opcional(v.departamento, 100),
         numeroOpcional(v.latitud, -90, 90), numeroOpcional(v.longitud, -180, 180), fiscal, bool(v.esEntregaDefault), v.tipo, opcional(v.etiqueta, 100),
-        opcional(v.numeroCasa, 20), opcional(v.complemento, 200), texto(v.paisCodigo, 3).toUpperCase(), texto(v.paisNombre, 60) || null,
+        opcional(v.numeroCasa, 20), opcional(v.complemento, 200), v.paisCodigo, v.paisNombre,
         geo?.departamentoCodigo ?? null, geo?.distritoCodigo ?? null, geo?.distrito ?? opcional(v.distrito, 100), geo?.ciudadCodigo ?? null,
         opcional(v.codigoPostal, 15), opcional(v.contactoNombre, 200), opcional(v.contactoTelefono, 30), opcional(v.horarioRecepcion, 200), opcional(v.observacion, 500),
       ];
       if (id) {
         await c.query(
           `UPDATE direcciones_cliente SET descripcion=$4, direccion=$5, ciudad=$6, departamento=$7, latitud=$8, longitud=$9, es_fiscal=$10, es_entrega_default=$11, tipo=$12,
-                  etiqueta=$13, numero_casa=$14, complemento=$15, pais_codigo=$16, pais_nombre=COALESCE($17, pais_nombre), departamento_codigo=$18, distrito_codigo=$19, distrito=$20,
+                  etiqueta=$13, numero_casa=$14, complemento=$15, pais_codigo=$16, pais_nombre=$17, departamento_codigo=$18, distrito_codigo=$19, distrito=$20,
                   ciudad_codigo=$21, codigo_postal=$22, contacto_nombre=$23, contacto_telefono=$24, horario_recepcion=$25, observacion=$26
             WHERE id = $1 AND empresa_id = $2 AND cliente_id = $3`,
           [id, empresaId, clienteId, ...p],
