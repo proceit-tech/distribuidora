@@ -8,9 +8,9 @@ Branch: `feature/NEXIT-2026-001-banco-demo`. Regra: uma funcionalidade por vez; 
 | 2 | Clientes | **ENTREGUE (pendente: build + teste manual na tela)** | ver git log |
 | 3 | Proveedores | **ENTREGUE (pendente: build + teste manual na tela)** | ver git log |
 | 4 | Productos | **ENTREGUE (pendente: build + teste manual na tela)** | ver git log |
-| 5 | Listas de precios | **ENTREGUE (pendente: aplicar NEX-018 no `nexit` real + build + teste manual na tela)** | ver git log |
+| 5 | Listas de precios | **ENTREGUE (NEX-018 já aplicada no `nexit` real; pendente: build + teste manual na tela)** | ver git log |
 | 6 | Movimientos | **ENTREGUE (pendente: build + teste manual na tela; sem migração nova)** | ver git log |
-| 7 | Stock | pendente | |
+| 7 | Stock | **ENTREGUE (pendente: build + teste manual na tela; sem migração nova)** | ver git log |
 | 8 | Dashboard e relatórios/XLSX | pendente | |
 
 ## Item 1 — o que existe
@@ -58,7 +58,7 @@ Branch: `feature/NEXIT-2026-001-banco-demo`. Regra: uma funcionalidade por vez; 
 - API: `GET/POST /api/listas-precio` (`?modo=catalogos` devolve moedas, grupos, zonas, canais, clientes, produtos com custo médio e preço de referência, listas base), `GET/PUT /api/listas-precio/[id]` (`LISTAS_PRECIO.VER/CREAR/EDITAR` no backend; `empresa_id`/`creado_por` da sessão; 401/403/404; 503 sem `DATABASE_URL`). Validação/gravação em `lib/listas-precio/shared.ts`; PUT substitui itens, escalões e regras na mesma transação (rollback total em erro). Código automático `LP-nnn` por empresa; tipos VENTA e COMPRA mantidos.
 - Campos preservados: tipo, moeda (do catálogo `monedas`), estado, modo de preço, lista base (sem ciclos), ajuste geral, vigência, prioridade, desconto máximo, IVA incluído, alcance (grupo/cliente/zona/canal), preço por produto (custo, base, lista, margem, quantidade mínima), regras comerciais. Complementos de tela sem mudar o layout: escalões por produto, desconto/vigência/ativo por produto e seletor de referência + vigência por regra (já existiam no banco e não eram editáveis).
 - **Lista de referência (NEX-017) integrada, sem estrutura duplicada:** aparece na lista como `REF-VENTA` (`es_referencia`); seus itens são os mesmos `lista_precio_items` do "Precio de venta de referencia" de Productos. Editar o preço aqui altera o preço em Productos e vice-versa. Fica travada: tipo VENTA, preço fixo, sem lista base/alcance, ativa, código imutável.
-- **Migração `NEX-018-listas-precio-integridad.sql` (nova; precisa ser aplicada no `nexit` real):** CHECKs de vigência/percentuais/quantidades/preços, `referencia_id` das regras exige existir na mesma empresa e no tipo indicado, moeda do item = moeda da lista (inclusive bloqueia trocar a moeda da lista com preços em outra).
+- **Migração `NEX-018-listas-precio-integridad.sql` (nova; já aplicada no `nexit` real, conforme informado pelo proprietário):** CHECKs de vigência/percentuais/quantidades/preços, `referencia_id` das regras exige existir na mesma empresa e no tipo indicado, moeda do item = moeda da lista (inclusive bloqueia trocar a moeda da lista com preços em outra).
 - Testes: SQL `T13` (30 verificações, incluído em `ejecutar-pruebas.sh`) + bateria completa em PG16 descartável; API com rotas reais + `permissions.ts` real como `nexit_runtime` (63 verificações: 401/403/404, criar/editar/persistência, validações, rollback, isolamento entre empresas, integração com o preço de referência de Productos, 503).
 - NÃO executado: build/lint completos (sem registry no sandbox; `tsc` parcial sem erros além do ruído ambiental), HTTP real, teste visual.
 - Pendências: cálculo de preço por regra (aplicação em vendas) pertence ao módulo de vendas; ajuste massivo continua só no formulário (-5/-10/+5 %).
@@ -73,6 +73,19 @@ Branch: `feature/NEXIT-2026-001-banco-demo`. Regra: uma funcionalidade por vez; 
 - **Pendências documentadas (campos preservados):** (1) produtos com *unidade identificada* (série/etiqueta, `UNIDAD_ETIQUETADA`) são recusados com mensagem clara — o banco não tem tabela de unidades; (2) stock de TERCERO: o banco aceita `propiedad/propietario_id` mas não há cadastro de proprietários, então a tela só cria movimentos PROPIO (movimentos TERCERO existentes são exibidos); (3) a tela registra um produto por movimento (o banco suporta várias linhas; o detalhe já as lista); (4) os mocks `lib/mocks/movimientos-stock*.ts` e `types` `MovimientoStockDemo` seguem só porque `recepciones-storage` (mock) os importa; (5) o módulo Stock continua com mocks (próximo item).
 - Testes (API com rotas reais + `permissions.ts` real, conectado como `nexit_runtime` em PG16 descartável, 69 verificações): 401/403/404, entrada, saída, transferência, ajustes, reserva/quarentena, lote, bloqueio de saldo negativo, idempotência, alcance de depósito, persistência (usuário/motivo/custo/data), anulação, isolamento A×B, conciliação kardex/valor, 503. Sem mudança de schema: bateria SQL anterior (382) não foi repetida.
 - NÃO executado: build/lint completos (sem registry no sandbox; `tsc` parcial sem erros além do ruído ambiental), HTTP real, teste visual.
+
+## Item 7 — Stock (sem mock/localStorage)
+- Telas existentes preservadas (`stock/page.tsx`, `stock/[id]/page.tsx`): filtros, pesquisa, indicadores, detalhe, stock por depósito, lotes e exportações XLSX. Removidos `obtenerStockDemo`/`buscarStockDemo`, pills "DEMO"/"MINGO 2026", markup fictício (+20 %) e nomes fixos de arquivo.
+- API (somente leitura): `GET /api/stock`, `GET /api/stock/[id]` (`STOCK.VER` no backend; `empresa_id` da sessão em todas as consultas; 401/403/404/503; sem dados fictícios se o banco falha). Lógica em `lib/stock/shared.ts`; cliente em `lib/stock/cliente-api.ts`.
+- Dados reais: `stock_saldos` (por produto × depósito × estado × lote) alimentados pelos Movimientos; quantidades disponível, reservada, em quarentena, em trânsito, total físico e virtual (só PROPIO; TERCERO aparece à parte); custo promedio e valor de inventário de `inventario_costos` (nulo e exibido "—" sem saldo valorizado); preço de venda = lista de referência (NEX-017), nulo se não existir (nada é inventado); mínimo/máximo/ponto de reposição do produto definem o nível (SIN_STOCK/BAJO/NORMAL/SOBRESTOCK); moeda = moeda base da empresa.
+- Testes (rotas reais + `permissions.ts` real como `nexit_runtime` em PG16 descartável, 20 verificações): 401/403, `MOVIMIENTOS.*` não dá `STOCK.VER`, empresa sem movimentos = saldos 0 sem custo/preço, saldos após movimentos reais (entradas, reserva, quarentena, transferência, lote), custo promedio 150, preço de referência, aislamento A×B (listado e detalhe 404), 503 sem `DATABASE_URL`. `tsc` parcial sem erros novos.
+- NÃO executado: build/lint completos (sem registry no sandbox), HTTP real, teste visual.
+- **Lacunas documentadas (campos preservados, sem migração):** (1) *Em trânsito* sempre 0: nenhum tipo de movimento atual gera `TRANSITO` (virá com despacho/recepção entre depósitos); (2) não há tabela de ubicações físicas dentro do depósito — a coluna "Ubicación" mostra o depósito; (3) não há cadastro de proprietários para stock de TERCERO — o proprietário aparece como "não registrado"; (4) mínimo/máximo por depósito (`producto_deposito_configuracion`) ainda não usado — vale o do produto; (5) `lib/mocks/stock*.ts` e `StockDemo` seguem só porque o mock `movimientos-stock-storage` os importa.
+
+## Pendências futuras de Movimientos
+- Unidades identificadas (série/etiqueta, `UNIDAD_ETIQUETADA`): exige tabela de unidades (próxima migração livre: NEX-020).
+- Estoque de terceiros: exige cadastro de proprietários; hoje só se criam movimentos PROPIO.
+- Múltiplos produtos por movimento: o banco suporta várias linhas; a tela registra um produto por movimento.
 
 ## Pendências conhecidas de Clientes
 - Editar contatos, direcciones, documentos adicionais e demais tabelas filhas de um cliente existente ainda não é possível (só são criados em `clientes/nuevo`); o `PUT` altera apenas a ficha principal.
