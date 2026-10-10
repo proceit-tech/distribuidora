@@ -40,6 +40,13 @@
   --shadow-float:
     0 16px 42px rgba(8, 29, 51, 0.15);
 
+  /* Escala tipográfica V1 (px). Mínimos: texto principal/tablas/campos/botones 15; rótulos, pestañas, filtros y menú 14-15;
+     auxiliar >= 13; títulos de página 26-30. Los módulos usan estos valores; no declarar font-size por debajo de --fs-aux. */
+  --fs-aux: 13px;
+  --fs-label: 14px;
+  --fs-body: 15px;
+  --fs-title: 28px;
+
   --transition-fast: 150ms ease;
   --transition-normal: 200ms ease;
 }
@@ -64,7 +71,7 @@ body {
     Arial,
     Helvetica,
     sans-serif;
-  font-size: 15.33px;
+  font-size: var(--fs-body);
   line-height: 1.45;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;

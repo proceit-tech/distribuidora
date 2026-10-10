@@ -19,7 +19,7 @@
 .breadcrumbs {
   margin: 0 0 10px;
   color: #7890aa;
-  font-size: 13.33px;
+  font-size: 14px;
 }
 
 .breadcrumbs span {
@@ -51,7 +51,7 @@
 
 .cardHead span {
   color: #6482a2;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 800;
   letter-spacing: 1px;
 }
@@ -66,7 +66,7 @@
   border-radius: 7px;
   color: #118274;
   background: #effaf8;
-  font-size: 12.33px;
+  font-size: 15px;
   font-weight: 700;
 }
 
@@ -109,7 +109,7 @@
 .sectionTitle p {
   margin: 0;
   color: #7790ad;
-  font-size: 13.33px;
+  font-size: 15px;
 }
 
 .grid {
@@ -137,7 +137,7 @@
 
 .field span {
   color: #6a84a3;
-  font-size: 12px;
+  font-size: 15px;
   font-weight: 800;
 }
 
@@ -153,7 +153,7 @@
   color: #244a70;
   background: #ffffff;
   font: inherit;
-  font-size: 13.33px;
+  font-size: 15px;
 }
 
 .field input:focus,
@@ -193,7 +193,7 @@
   border-radius: 7px;
   padding: 10px 12px;
   background: #fbfdff;
-  font-size: 12.33px;
+  font-size: 15px;
 }
 
 .repeat {

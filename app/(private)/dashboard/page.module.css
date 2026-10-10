@@ -29,28 +29,28 @@
 }
 
 .companyPill {
-  min-height: 22px;
+  min-height:28px;
   padding: 0 8px;
   color: #0a7780;
   background: #e8f7f7;
-  font-size: 8px;
+  font-size: 13px;
   letter-spacing: 0.55px;
 }
 
 .demoPill {
-  min-height: 20px;
+  min-height:28px;
   padding: 0 7px;
   color: #7c8fa0;
   background: #ffffff;
   border: 1px solid #dce6ed;
-  font-size: 7px;
+  font-size: 13px;
   letter-spacing: 0.7px;
 }
 
 .hero h1 {
   margin: 0;
   color: #112f4a;
-  font-size: 25px;
+  font-size: 28px;
   font-weight: 780;
   letter-spacing: -0.65px;
 }
@@ -58,7 +58,7 @@
 .hero p {
   margin: 4px 0 0;
   color: #7c8ea0;
-  font-size: 10px;
+  font-size: 14px;
 }
 
 .primaryAction {
@@ -78,7 +78,7 @@
     );
   box-shadow:
     0 8px 20px rgba(11, 145, 155, 0.16);
-  font-size: 10px;
+  font-size: 14px;
   font-weight: 800;
   text-decoration: none;
 }
@@ -150,7 +150,7 @@
 .kpiTop > span:first-child {
   overflow: hidden;
   color: #778b9f;
-  font-size: 7px;
+  font-size: 13px;
   font-weight: 850;
   letter-spacing: 0.8px;
   text-transform: uppercase;
@@ -160,13 +160,13 @@
 
 .trend {
   display: inline-flex;
-  min-height: 19px;
+  min-height:28px;
   align-items: center;
   border-radius: 999px;
   padding: 0 6px;
   color: #11755f;
   background: #e8f7f1;
-  font-size: 7px;
+  font-size: 13px;
   font-weight: 800;
 }
 
@@ -192,7 +192,7 @@
   display: block;
   overflow: hidden;
   color: #8b9daf;
-  font-size: 8px;
+  font-size: 13px;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
@@ -251,7 +251,7 @@
   display: block;
   margin-bottom: 3px;
   color: #8193a5;
-  font-size: 6px;
+  font-size: 14px;
   font-weight: 900;
   letter-spacing: 1px;
 }
@@ -259,7 +259,7 @@
 .panelHeader h2 {
   margin: 0;
   color: #143a58;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 770;
 }
 
@@ -268,7 +268,7 @@
   align-items: center;
   gap: 3px;
   color: #0b8992;
-  font-size: 8px;
+  font-size: 14px;
   font-weight: 800;
   text-decoration: none;
   white-space: nowrap;
@@ -288,7 +288,7 @@
   justify-content: space-between;
   padding: 1px 0 17px;
   color: #91a1b1;
-  font-size: 6px;
+  font-size: 13px;
   text-align: right;
 }
 
@@ -380,26 +380,26 @@
   padding: 4px 6px;
   color: #ffffff;
   background: #173d5b;
-  font-size: 6px;
+  font-size: 13px;
   font-weight: 800;
   white-space: nowrap;
 }
 
 .barColumn small {
   color: #8295a7;
-  font-size: 6px;
+  font-size: 13px;
   text-align: center;
 }
 
 .alertTotal {
   display: grid;
   width: 26px;
-  height: 26px;
+  height:28px;
   place-items: center;
   border-radius: 9px;
   color: #ad6d11;
   background: #fff4df;
-  font-size: 9px;
+  font-size: 13px;
   font-weight: 850;
 }
 
@@ -465,14 +465,14 @@
 
 .alertText strong {
   color: #294b67;
-  font-size: 9px;
+  font-size: 15px;
   font-weight: 750;
 }
 
 .alertText small {
   margin-top: 3px;
   color: #8b9cac;
-  font-size: 7px;
+  font-size: 13px;
 }
 
 .alertRow > svg {
@@ -520,19 +520,19 @@
 
 .orderRow > div strong {
   color: #1d4361;
-  font-size: 8px;
+  font-size: 15px;
   font-weight: 800;
 }
 
 .orderRow > div small {
   margin-top: 2px;
   color: #8b9cac;
-  font-size: 7px;
+  font-size: 13px;
 }
 
 .orderAmount {
   color: #31536e;
-  font-size: 8px;
+  font-size: 13px;
   font-weight: 780;
   text-align: right;
   white-space: nowrap;
@@ -540,12 +540,12 @@
 
 .status {
   display: inline-flex;
-  min-height: 21px;
+  min-height:28px;
   align-items: center;
   justify-content: center;
   border-radius: 999px;
   padding: 0 7px;
-  font-size: 6px;
+  font-size: 13px;
   font-weight: 850;
   white-space: nowrap;
 }
@@ -584,7 +584,7 @@
 
 .stockHeadline span {
   color: #7f92a4;
-  font-size: 8px;
+  font-size: 14px;
 }
 
 .progress {
@@ -646,7 +646,7 @@
 .stockStats strong {
   display: inline;
   color: #294d69;
-  font-size: 9px;
+  font-size: 13px;
   font-weight: 820;
 }
 
@@ -655,7 +655,7 @@
   margin-top: 3px;
   overflow: hidden;
   color: #8b9cac;
-  font-size: 6px;
+  font-size: 13px;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
@@ -711,7 +711,7 @@
   display: grid;
   gap: 4px;
   color: #7c8ea0;
-  font-size: 8px;
+  font-size: 14px;
   font-weight: 800;
   letter-spacing: 0.4px;
 }
@@ -724,7 +724,7 @@
   padding: 0 10px;
   color: #112f4a;
   background: #ffffff;
-  font-size: 10px;
+  font-size: 14px;
 }
 
 .refresh {
@@ -734,7 +734,7 @@
   padding: 0 14px;
   color: #0b8992;
   background: #ffffff;
-  font-size: 10px;
+  font-size: 14px;
   font-weight: 800;
   cursor: pointer;
 }
@@ -747,7 +747,7 @@
 .filterError {
   margin: 0;
   color: #b3394a;
-  font-size: 10px;
+  font-size: 14px;
   font-weight: 700;
 }
 
@@ -764,7 +764,7 @@
   gap: 16px;
   padding: 0 14px 12px;
   color: #7c8ea0;
-  font-size: 9px;
+  font-size: 13px;
 }
 
 .legend span {
@@ -798,12 +798,12 @@
   padding: 18px;
   color: #7c8ea0;
   text-align: center;
-  font-size: 10px;
+  font-size: 14px;
 }
 
 .emptyState strong {
   color: #46617a;
-  font-size: 11px;
+  font-size: 14px;
 }
 
 div.kpiCard {

@@ -102,7 +102,7 @@
   margin-top: 2px;
   overflow: hidden;
   color: #718ba2;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 750;
   letter-spacing: 1.3px;
   text-transform: uppercase;
@@ -213,14 +213,14 @@
 
 .primaryText strong {
   color: inherit;
-  font-size: 12px;
+  font-size: 15px;
   font-weight: 750;
 }
 
 .primaryText small {
   margin-top: 2px;
   color: #68849b;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .activeIndicator {
@@ -235,7 +235,7 @@
 .menuCaption {
   margin: 15px 8px 6px;
   color: #546f86;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 850;
   letter-spacing: 1.35px;
 }
@@ -301,7 +301,7 @@
   min-width: 0;
   flex: 1;
   overflow: hidden;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 800;
   letter-spacing: 0.85px;
   text-transform: uppercase;
@@ -371,7 +371,7 @@
   min-width: 0;
   flex: 1;
   overflow: hidden;
-  font-size: 12px;
+  font-size: 15px;
   font-weight: 560;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -382,7 +382,7 @@
   padding: 2px 5px;
   color: #ffffff;
   background: #e5a12e;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 800;
 }
 
@@ -421,12 +421,12 @@
 .userAvatar {
   display: grid;
   width: 30px;
-  height: 30px;
+  height:32px;
   flex: 0 0 30px;
   place-items: center;
   border-radius: 9px;
   color: #ffffff;
-  font-size: 12px;
+  font-size: 15px;
   font-weight: 850;
 }
 
@@ -467,7 +467,7 @@
 
 .companyText small {
   color: #54758c;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 800;
   letter-spacing: 0.8px;
 }
@@ -476,7 +476,7 @@
 .userText strong {
   margin-top: 1px;
   color: #eaf2f7;
-  font-size: 12px;
+  font-size: 15px;
   font-weight: 750;
 }
 
@@ -484,7 +484,7 @@
 .userText small {
   margin-top: 1px;
   color: #68859b;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .logoutButton {

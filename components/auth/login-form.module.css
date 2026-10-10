@@ -16,7 +16,7 @@
 
 .company > span {
   color: #7a8ca0;
-  font-size: 11px;
+  font-size: 14px;
   font-weight: 650;
 }
 
@@ -32,21 +32,21 @@
 
 .company strong {
   color: #0c7180;
-  font-size: 12px;
+  font-size: 15px;
   font-weight: 800;
 }
 
 .company small {
   margin-top: 2px;
   color: #8294a6;
-  font-size: 9px;
+  font-size: 13px;
 }
 
 .field {
   display: grid;
   gap: 7px;
   color: #173a5d;
-  font-size: 12px;
+  font-size: 15px;
   font-weight: 700;
 }
 
@@ -87,7 +87,7 @@
   outline: 0;
   color: #123454;
   background: transparent;
-  font-size: 13px;
+  font-size: 15px;
 }
 
 .inputWrap input::placeholder {
@@ -101,7 +101,7 @@
   color: #0b929d;
   background: transparent;
   cursor: pointer;
-  font-size: 10px;
+  font-size: 14px;
   font-weight: 750;
 }
 
@@ -118,7 +118,7 @@
   background: linear-gradient(90deg, #099ca7, #16b3b6);
   box-shadow: 0 10px 20px rgba(8, 164, 172, 0.2);
   cursor: pointer;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 800;
 }
 
@@ -138,13 +138,13 @@
   border-radius: 9px;
   color: #c53045;
   background: #fff4f5;
-  font-size: 11px;
+  font-size: 14px;
 }
 
 .demoHint {
   margin: -4px 0 0;
   color: #8b9bad;
-  font-size: 9px;
+  font-size: 13px;
   text-align: center;
 }
 

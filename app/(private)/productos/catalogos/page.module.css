@@ -15,14 +15,14 @@
 
 .modulePill {
   display: inline-flex;
-  min-height: 20px;
+  min-height:28px;
   align-items: center;
   margin-bottom: 5px;
   border-radius: 999px;
   padding: 0 7px;
   color: #0a7880;
   background: #e7f7f7;
-  font-size: 7px;
+  font-size: 13px;
   font-weight: 850;
   letter-spacing: 0.8px;
 }
@@ -30,7 +30,7 @@
 .hero h1 {
   margin: 0;
   color: #112f4a;
-  font-size: 25px;
+  font-size: 28px;
   font-weight: 780;
   letter-spacing: -0.65px;
 }
@@ -38,7 +38,7 @@
 .hero p {
   margin: 4px 0 0;
   color: #7c8ea0;
-  font-size: 10px;
+  font-size: 14px;
 }
 
 .primaryButton,
@@ -51,7 +51,7 @@
   border-radius: 10px;
   padding: 0 14px;
   font: inherit;
-  font-size: 9px;
+  font-size: 15px;
   font-weight: 800;
   text-decoration: none;
   cursor: pointer;
@@ -76,13 +76,13 @@
 }
 
 .rowButton {
-  min-height: 28px;
+  min-height:32px;
   border: 1px solid #d8e2e9;
   border-radius: 8px;
   padding: 0 10px;
   color: #284c66;
   background: #ffffff;
-  font-size: 8px;
+  font-size: 15px;
 }
 
 .tabs {
@@ -100,7 +100,7 @@
   color: #526e83;
   background: #ffffff;
   font: inherit;
-  font-size: 9px;
+  font-size: 14px;
   font-weight: 800;
   cursor: pointer;
 }
@@ -137,7 +137,7 @@
   color: #284c66;
   background: #f8fafc;
   font: inherit;
-  font-size: 9px;
+  font-size: 15px;
 }
 
 .toolbar select {
@@ -148,7 +148,7 @@
   color: #284c66;
   background: #ffffff;
   font: inherit;
-  font-size: 9px;
+  font-size: 15px;
 }
 
 .filters {
@@ -165,13 +165,13 @@
   padding: 10px 13px;
   border-bottom: 1px solid #edf2f5;
   color: #284c66;
-  font-size: 9px;
+  font-size: 14px;
 }
 
 .head {
   color: #7c8ea0;
   background: #f8fafc;
-  font-size: 7px;
+  font-size: 14px;
   font-weight: 850;
   letter-spacing: 0.6px;
   text-transform: uppercase;
@@ -184,12 +184,12 @@
 
 .pill {
   display: inline-flex;
-  min-height: 20px;
+  min-height:28px;
   width: fit-content;
   align-items: center;
   border-radius: 999px;
   padding: 0 8px;
-  font-size: 7px;
+  font-size: 13px;
   font-weight: 850;
 }
 
@@ -214,7 +214,7 @@
 
 .empty strong {
   color: #45637a;
-  font-size: 10px;
+  font-size: 14px;
 }
 
 .error,
@@ -222,7 +222,7 @@
   margin-bottom: 12px;
   border-radius: 10px;
   padding: 10px 12px;
-  font-size: 9px;
+  font-size: 13px;
 }
 
 .error {
@@ -252,14 +252,14 @@
   grid-column: 1 / -1;
   margin: 0;
   color: #112f4a;
-  font-size: 12px;
+  font-size: 15px;
 }
 
 .field {
   display: grid;
   gap: 5px;
   color: #526e83;
-  font-size: 8px;
+  font-size: 15px;
   font-weight: 800;
 }
 
@@ -273,7 +273,7 @@
   color: #284c66;
   background: #ffffff;
   font: inherit;
-  font-size: 9px;
+  font-size: 15px;
 }
 
 .field input,

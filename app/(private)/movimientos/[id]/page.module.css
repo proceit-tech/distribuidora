@@ -22,11 +22,11 @@
 .modulePill,
 .demoPill {
   display: inline-flex;
-  min-height: 20px;
+  min-height:28px;
   align-items: center;
   border-radius: 999px;
   padding: 0 7px;
-  font-size: 7px;
+  font-size: 13px;
   font-weight: 850;
 }
 
@@ -44,13 +44,13 @@
 .hero h1 {
   margin: 0;
   color: #112f4a;
-  font-size: 25px;
+  font-size: 28px;
 }
 
 .hero p {
   margin: 4px 0 0;
   color: #7c8ea0;
-  font-size: 10px;
+  font-size: 14px;
 }
 
 .backButton {
@@ -62,7 +62,7 @@
   padding: 0 12px;
   color: #41647d;
   background: #ffffff;
-  font-size: 8px;
+  font-size: 15px;
   font-weight: 800;
   text-decoration: none;
 }
@@ -86,7 +86,7 @@
 
 .cardHeader > div > span {
   color: #0a858e;
-  font-size: 7px;
+  font-size: 14px;
   font-weight: 900;
 }
 
@@ -99,18 +99,18 @@
 .cardHeader p {
   margin: 3px 0 0;
   color: #889aaa;
-  font-size: 7px;
+  font-size: 14px;
 }
 
 .status {
   display: inline-flex;
-  min-height: 22px;
+  min-height:28px;
   align-items: center;
   border-radius: 999px;
   padding: 0 8px;
   color: #14745f;
   background: #e7f7f0;
-  font-size: 7px;
+  font-size: 13px;
   font-weight: 850;
 }
 
@@ -137,14 +137,14 @@
 .infoGrid span,
 .observation span {
   color: #8496a6;
-  font-size: 7px;
+  font-size: 13px;
 }
 
 .infoGrid strong,
 .observation strong {
   margin-top: 4px;
   color: #31526c;
-  font-size: 9px;
+  font-size: 13px;
 }
 
 .observation {
@@ -171,7 +171,7 @@
 
 .state a {
   color: #0b8c95;
-  font-size: 12px;
+  font-size: 15px;
   font-weight: 800;
   text-decoration: none;
 }
