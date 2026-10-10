@@ -4,6 +4,7 @@ import type { PoolClient } from "pg";
 import { denyIfNoPermission } from "@/lib/auth/permissions";
 import {
   columnasProducto,
+  fijarPrecioReferencia,
   insertarHijos,
   prepararProducto,
   resolverPais,
@@ -56,6 +57,7 @@ export async function GET(_request: Request, contexto: Contexto) {
               coalesce(p.codigo_sifen,'') AS "codigoSifen", coalesce(p.codigo_barras,'') AS "codigoBarras",
               p.descripcion, p.descripcion_factura AS "descripcionFactura", p.tipo_producto AS "tipoProducto",
               coalesce(p.categoria_id::text,'') AS "categoriaId", coalesce(p.marca_id::text,'') AS "marcaId",
+              coalesce(p.familia_id::text,'') AS "familiaId", coalesce(p.linea_id::text,'') AS "lineaId",
               coalesce(p.origen_etiqueta,'') AS procedencia,
               p.unidad_medida_id AS "unidadMedidaId", coalesce(p.impuesto_id::text,'') AS "impuestoId",
               p.controla_stock AS "controlaStock", p.modo_control_stock AS "modoControlStock",
@@ -80,7 +82,7 @@ export async function GET(_request: Request, contexto: Contexto) {
     );
     if (!principal.rowCount) return noEncontrado();
 
-    const [codigos, unidades, proveedores, depositos, alternativos, componentes, documentos] = await Promise.all([
+    const [codigos, unidades, proveedores, depositos, alternativos, componentes, documentos, precio, stock, costo, apertura] = await Promise.all([
       db.query(
         `SELECT id, tipo, codigo, coalesce(descripcion,'') AS descripcion, es_principal AS "esPrincipal"
            FROM producto_codigos WHERE producto_id = $1 AND empresa_id = $2 ORDER BY creado_at, id`,
@@ -140,12 +142,53 @@ export async function GET(_request: Request, contexto: Contexto) {
            FROM producto_documentos WHERE producto_id = $1 AND empresa_id = $2 ORDER BY creado_at, id`,
         [id, empresaId],
       ),
+      // Precio de venta de referencia (lista de referencia) y su moneda; sin fila => sin precio.
+      db.query(
+        `SELECT precio::float8 AS precio, moneda FROM v_producto_precio_referencia WHERE empresa_id = $2 AND producto_id = $1`,
+        [id, empresaId],
+      ),
+      // Stock real por depósito (saldos DISPONIBLE propios, el mismo criterio de v_stock_producto).
+      db.query(
+        `SELECT d.id AS "depositoId", d.nombre AS "depositoNombre", sum(s.cantidad)::float8 AS cantidad
+           FROM stock_saldos s JOIN depositos d ON d.empresa_id = s.empresa_id AND d.id = s.deposito_id
+          WHERE s.empresa_id = $2 AND s.producto_id = $1 AND s.estado_stock = 'DISPONIBLE' AND s.propiedad = 'PROPIO'
+          GROUP BY d.id, d.nombre ORDER BY d.nombre`,
+        [id, empresaId],
+      ),
+      db.query(
+        `SELECT costo_promedio::float8 AS costo FROM v_producto_costo_promedio WHERE empresa_id = $2 AND producto_id = $1`,
+        [id, empresaId],
+      ),
+      db.query(
+        `SELECT mi.numero_movimiento AS numero, to_char(mi.fecha_movimiento, 'YYYY-MM-DD') AS fecha, ml.cantidad::float8 AS cantidad,
+                ml.costo_unitario::float8 AS "costoUnitario", d.nombre AS "depositoNombre"
+           FROM movimiento_lineas ml
+           JOIN movimientos_inventario mi ON mi.empresa_id = ml.empresa_id AND mi.id = ml.movimiento_id
+           LEFT JOIN depositos d ON d.empresa_id = mi.empresa_id AND d.id = mi.deposito_destino_id
+          WHERE ml.empresa_id = $2 AND ml.producto_id = $1 AND mi.tipo_origen = 'ABERTURA' AND mi.estado = 'REGISTRADO'
+          ORDER BY mi.fecha_movimiento, mi.creado_at LIMIT 1`,
+        [id, empresaId],
+      ),
     ]);
+    const monedaBase = await db.query(
+      `SELECT coalesce((SELECT moneda_codigo FROM listas_precio WHERE empresa_id = e.id AND es_referencia), e.moneda_base_codigo) AS moneda
+         FROM empresas e WHERE e.id = $1`,
+      [empresaId],
+    );
+    const stockRows = stock.rows as Array<{ depositoId: string; depositoNombre: string; cantidad: number }>;
 
     const base = principal.rows[0] as Record<string, unknown>;
     return NextResponse.json({
       producto: {
         ...base,
+        precioVentaReferencia: precio.rowCount ? (precio.rows[0] as { precio: number }).precio : null,
+        monedaPrecioReferencia: precio.rowCount
+          ? (precio.rows[0] as { moneda: string }).moneda
+          : ((monedaBase.rows[0] as { moneda?: string } | undefined)?.moneda ?? ""),
+        stockActual: stockRows.reduce((total, fila) => total + fila.cantidad, 0),
+        stockPorDeposito: stockRows,
+        costoPromedio: costo.rowCount ? (costo.rows[0] as { costo: number | null }).costo : null,
+        aperturaRegistrada: apertura.rowCount ? apertura.rows[0] : null,
         codigos: codigos.rows,
         unidades: unidades.rows,
         proveedores: proveedores.rows,
@@ -217,6 +260,9 @@ export async function PUT(request: Request, contexto: Contexto) {
     );
 
     await insertarHijos(conexion, id, datos, session.user.id);
+    // Precio de referencia: valor => alta/actualización; null => se quita; si el campo no viene en el cuerpo no se toca. El inventario inicial NO se toca al editar
+    // (los cambios de stock se hacen con movimientos).
+    if (datos.precioEnviado) await fijarPrecioReferencia(conexion, empresaId, id, datos.precioVentaReferencia);
     await conexion.query("COMMIT");
 
     return NextResponse.json({ message: `Producto ${datos.codigo} actualizado correctamente.`, producto: { id, codigo: datos.codigo } });

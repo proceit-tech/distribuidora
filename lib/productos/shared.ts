@@ -114,6 +114,31 @@ export function prepararProducto(d: Cuerpo) {
     return { tipo, nombre, url, emision, vencimiento, observacion: opcional(doc.observacion, 500) };
   });
 
+  const familiaId = opcional(d.familiaId);
+  const lineaId = opcional(d.lineaId);
+  if (lineaId && !familiaId) throw new Error("Seleccione la familia de la línea.");
+
+  // Precio de venta de referencia: vacío/null = sin precio (nunca se asume 0).
+  const precioVentaReferencia = numero(d.precioVentaReferencia, "Precio de venta de referencia", 0);
+  if (precioVentaReferencia !== null && Math.round(precioVentaReferencia * 10000) / 10000 !== precioVentaReferencia) {
+    throw new Error("Precio de venta de referencia: hasta 4 decimales.");
+  }
+
+  // Inventario inicial (solo se usa en el alta): cantidad + costo de apertura + depósito => movimiento real.
+  const apertura = (d.inventarioInicial && typeof d.inventarioInicial === "object" ? d.inventarioInicial : {}) as Fila;
+  const aperturaCantidad = numero(apertura.cantidad, "Inventario inicial", 0) ?? 0;
+  const aperturaCosto = numero(apertura.costoUnitario, "Costo de apertura", 0);
+  const aperturaDeposito = opcional(apertura.depositoId);
+  if (aperturaCantidad > 0) {
+    if (Math.round(aperturaCantidad * 10000) / 10000 !== aperturaCantidad) throw new Error("Inventario inicial: hasta 4 decimales.");
+    if (!si(d.controlaStock)) throw new Error("El inventario inicial requiere que el producto controle stock.");
+    if (modoControl !== "CANTIDAD") {
+      throw new Error("Para productos controlados por lote o serie, registre el inventario inicial desde Movimientos (requiere identificar el lote).");
+    }
+    if (!aperturaDeposito) throw new Error("Seleccione el depósito del inventario inicial.");
+    if (aperturaCosto === null) throw new Error("Informe el costo unitario de apertura del inventario inicial.");
+  }
+
   const paisOrigenCodigo = opcional(d.paisOrigenCodigo, 3)?.toUpperCase() ?? null;
   if (paisOrigenCodigo && !/^[A-Z]{3}$/.test(paisOrigenCodigo)) throw new Error("País de origen no válido.");
 
@@ -127,6 +152,11 @@ export function prepararProducto(d: Cuerpo) {
     tipoProducto,
     categoriaId: opcional(d.categoriaId),
     marcaId: opcional(d.marcaId),
+    familiaId,
+    lineaId,
+    precioVentaReferencia,
+    precioEnviado: Object.prototype.hasOwnProperty.call(d, "precioVentaReferencia"),
+    inventarioInicial: { cantidad: aperturaCantidad, costoUnitario: aperturaCosto, depositoId: aperturaDeposito },
     procedencia: opcional(d.procedencia, 100),
     unidadMedidaId,
     impuestoId: opcional(d.impuestoId),
@@ -207,6 +237,8 @@ export function columnasProducto(d: DatosProducto, codigo: string): Array<[strin
     ["tipo_producto", d.tipoProducto],
     ["categoria_id", d.categoriaId],
     ["marca_id", d.marcaId],
+    ["familia_id", d.familiaId],
+    ["linea_id", d.lineaId],
     ["origen_etiqueta", d.procedencia],
     ["unidad_medida_id", d.unidadMedidaId],
     ["impuesto_id", d.impuestoId],
@@ -330,6 +362,38 @@ export async function insertarHijos(conexion: PoolClient, productoId: string, d:
   }
 }
 
+/** Precio de venta de referencia en la lista de referencia (NEX-017). null => quita el precio. */
+export async function fijarPrecioReferencia(conexion: PoolClient, empresaId: string, productoId: string, precio: number | null) {
+  await conexion.query(`SELECT producto_fijar_precio_referencia($1, $2, $3)`, [empresaId, productoId, precio]);
+}
+
+/**
+ * Inventario inicial = movimiento REAL (ENTRADA / origen ABERTURA) en el depósito indicado, en la MISMA transacción del alta.
+ * Lo valida y registra inventario_registrar_movimiento (permiso MOVIMIENTOS.CREAR, alcance de depósito, costo, idempotencia).
+ * Devuelve el número del movimiento, o null si no hay cantidad.
+ */
+export async function registrarInventarioInicial(
+  conexion: PoolClient,
+  empresaId: string,
+  usuarioId: string,
+  productoId: string,
+  d: DatosProducto,
+) {
+  const a = d.inventarioInicial;
+  if (!(a.cantidad > 0) || !a.depositoId) return null;
+  const r = await conexion.query(
+    `SELECT o_numero FROM inventario_registrar_movimiento($1, $2, 'ENTRADA', 'ABERTURA', NULL, NULL, $3, $4::jsonb, $5, NULL, 'Inventario inicial', NULL, NULL)`,
+    [
+      empresaId,
+      usuarioId,
+      a.depositoId,
+      JSON.stringify([{ producto_id: productoId, cantidad: a.cantidad, costo_unitario: a.costoUnitario }]),
+      `apertura:${productoId}`,
+    ],
+  );
+  return (r.rows[0] as { o_numero: string }).o_numero;
+}
+
 export function respuestaError(error: unknown, accion: string) {
   console.error(`Error al ${accion} producto:`, error);
   const pg = error as { code?: string; constraint?: string; message?: string };
@@ -345,7 +409,14 @@ export function respuestaError(error: unknown, accion: string) {
     return NextResponse.json({ error: mensaje }, { status: 409 });
   }
   if (pg.code === "23503") {
-    return NextResponse.json({ error: "Existe una referencia (categoría, marca, proveedor, depósito o producto) que no es válida o no pertenece a su empresa." }, { status: 400 });
+    const c = pg.constraint ?? "";
+    const mensaje = c.includes("linea")
+      ? "La línea seleccionada no pertenece a la familia elegida."
+      : "Existe una referencia (categoría, marca, familia, línea, proveedor, depósito o producto) que no es válida o no pertenece a su empresa.";
+    return NextResponse.json({ error: mensaje }, { status: 400 });
+  }
+  if (pg.code === "42501") {
+    return NextResponse.json({ error: pg.message ?? "No tiene permiso para esta operación." }, { status: 403 });
   }
   if (pg.code === "P0001") {
     return NextResponse.json({ error: pg.message ?? "Los datos no cumplen las reglas del producto." }, { status: 400 });

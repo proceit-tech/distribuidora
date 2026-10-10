@@ -78,10 +78,19 @@ function initialForm(
       id: _id,
       creadoEn: _creadoEn,
       actualizadoEn: _actualizadoEn,
+      stockActual: _stockActual,
+      stockPorDeposito: _stockPorDeposito,
+      costoPromedio: _costoPromedio,
+      aperturaRegistrada: _aperturaRegistrada,
+      monedaPrecioReferencia: _monedaPrecioReferencia,
       ...rest
     } = initial;
 
-    return structuredClone(rest);
+    return {
+      ...structuredClone(rest),
+      // En edición el inventario inicial no se vuelve a registrar (ya existe como movimiento): los cambios de stock van por Movimientos.
+      inventarioInicial: { cantidad: 0, costoUnitario: null, depositoId: "" },
+    };
   }
 
   return {
@@ -95,6 +104,14 @@ function initialForm(
 
     categoriaId: "",
     marcaId: "",
+    familiaId: "",
+    lineaId: "",
+    precioVentaReferencia: null,
+    inventarioInicial: {
+      cantidad: 0,
+      costoUnitario: null,
+      depositoId: catalogos.depositos.length === 1 ? catalogos.depositos[0].id : "",
+    },
     procedencia: "",
     unidadMedidaId: "",
     impuestoId:
@@ -848,6 +865,61 @@ export default function ProductoForm({
               </div>
 
               <div className={styles.gridFour}>
+                <Field label="Familia">
+                  <select
+                    value={form.familiaId}
+                    onChange={(event) => {
+                      const id = event.target.value;
+                      update("familiaId", id);
+                      // La línea debe pertenecer a la familia elegida.
+                      const pertenece = catalogos.lineas.some(
+                        (linea) =>
+                          linea.id === form.lineaId &&
+                          linea.familiaId === id,
+                      );
+                      if (!pertenece) update("lineaId", "");
+                    }}
+                  >
+                    <option value="">
+                      {catalogos.familias.length
+                        ? "Seleccione familia"
+                        : "Sin familias registradas"}
+                    </option>
+
+                    {catalogos.familias.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.nombre}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+
+                <Field label="Línea">
+                  <select
+                    value={form.lineaId}
+                    disabled={!form.familiaId}
+                    onChange={(event) =>
+                      update("lineaId", event.target.value)
+                    }
+                  >
+                    <option value="">
+                      {form.familiaId
+                        ? "Seleccione línea"
+                        : "Seleccione familia primero"}
+                    </option>
+
+                    {catalogos.lineas
+                      .filter(
+                        (linea) =>
+                          linea.familiaId === form.familiaId,
+                      )
+                      .map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.nombre}
+                        </option>
+                      ))}
+                  </select>
+                </Field>
 
                 <Field label="Procedencia">
                   <input
@@ -884,6 +956,47 @@ export default function ProductoForm({
               </div>
 
               <div className={styles.gridFour}>
+                <Field
+                  label={`Precio venta referencia${
+                    catalogos.monedaReferencia
+                      ? ` (${catalogos.monedaReferencia})`
+                      : ""
+                  }`}
+                >
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    placeholder="Sin precio"
+                    value={form.precioVentaReferencia ?? ""}
+                    onChange={(event) =>
+                      update(
+                        "precioVentaReferencia",
+                        event.target.value === ""
+                          ? null
+                          : Number(event.target.value),
+                      )
+                    }
+                  />
+                </Field>
+
+                <Field label="Valor venta referencia">
+                  <input
+                    value={
+                      form.precioVentaReferencia === null ||
+                      !initial
+                        ? ""
+                        : new Intl.NumberFormat("es-PY", {
+                            maximumFractionDigits: 0,
+                          }).format(
+                            form.precioVentaReferencia *
+                              initial.stockActual,
+                          )
+                    }
+                    placeholder="Precio × stock actual"
+                    readOnly
+                  />
+                </Field>
 
                 <Field label="Imagen URL">
                   <input
@@ -1353,6 +1466,86 @@ export default function ProductoForm({
               </div>
 
               <div className={styles.gridFour}>
+                {mode === "create" ? (
+                  <>
+                    <NumberField
+                      label="Inventario inicial"
+                      value={form.inventarioInicial.cantidad}
+                      step="0.0001"
+                      onChange={(value) =>
+                        update("inventarioInicial", {
+                          ...form.inventarioInicial,
+                          cantidad: value,
+                        })
+                      }
+                    />
+
+                    <Field label="Costo unitario de apertura">
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.0001"
+                        placeholder="Obligatorio si hay inventario inicial"
+                        value={form.inventarioInicial.costoUnitario ?? ""}
+                        onChange={(event) =>
+                          update("inventarioInicial", {
+                            ...form.inventarioInicial,
+                            costoUnitario:
+                              event.target.value === ""
+                                ? null
+                                : Number(event.target.value),
+                          })
+                        }
+                      />
+                    </Field>
+
+                    <Field label="Depósito de apertura">
+                      <select
+                        value={form.inventarioInicial.depositoId}
+                        onChange={(event) =>
+                          update("inventarioInicial", {
+                            ...form.inventarioInicial,
+                            depositoId: event.target.value,
+                          })
+                        }
+                      >
+                        <option value="">Seleccione depósito</option>
+                        {catalogos.depositos.map((item) => (
+                          <option key={item.id} value={item.id}>
+                            {item.nombre}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                  </>
+                ) : (
+                  <>
+                    <Field label="Inventario inicial">
+                      <input
+                        readOnly
+                        value={
+                          initial?.aperturaRegistrada
+                            ? `${initial.aperturaRegistrada.cantidad} · mov. ${initial.aperturaRegistrada.numero}`
+                            : "Sin movimiento de apertura"
+                        }
+                      />
+                    </Field>
+
+                    <Field label="Costo de apertura">
+                      <input
+                        readOnly
+                        value={initial?.aperturaRegistrada?.costoUnitario ?? ""}
+                      />
+                    </Field>
+
+                    <Field label="Depósito de apertura">
+                      <input
+                        readOnly
+                        value={initial?.aperturaRegistrada?.depositoNombre ?? ""}
+                      />
+                    </Field>
+                  </>
+                )}
 
                 <NumberField
                   label="Vida útil (días)"
@@ -1364,6 +1557,44 @@ export default function ProductoForm({
                     )
                   }
                 />
+              </div>
+
+              <div className={styles.gridFour}>
+                <Field label="Stock actual (real)">
+                  <input
+                    readOnly
+                    value={
+                      mode === "create"
+                        ? form.inventarioInicial.cantidad > 0
+                          ? `${form.inventarioInicial.cantidad} (tras guardar)`
+                          : "0"
+                        : String(initial?.stockActual ?? 0)
+                    }
+                  />
+                </Field>
+
+                <Field
+                  label={`Costo promedio${
+                    catalogos.monedaReferencia
+                      ? ` (${catalogos.monedaReferencia})`
+                      : ""
+                  }`}
+                >
+                  <input
+                    readOnly
+                    placeholder="Sin saldo valorizado"
+                    value={initial?.costoPromedio ?? ""}
+                  />
+                </Field>
+
+                {initial?.stockPorDeposito.map((deposito) => (
+                  <Field
+                    key={deposito.depositoId}
+                    label={`Stock en ${deposito.depositoNombre}`}
+                  >
+                    <input readOnly value={deposito.cantidad} />
+                  </Field>
+                ))}
               </div>
 
               <div className={styles.checkGrid}>

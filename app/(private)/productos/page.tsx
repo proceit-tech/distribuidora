@@ -25,6 +25,12 @@ type TipoFiltro =
   | "TODOS"
   | ProductoTipo;
 
+function money(value: number, moneda: string) {
+  return `${moneda || ""} ${new Intl.NumberFormat("es-PY", {
+    maximumFractionDigits: 2,
+  }).format(value)}`.trim();
+}
+
 function initials(value: string) {
   return value
     .split(/\s+/)
@@ -55,8 +61,16 @@ type FilaApi = {
   marca: string | null;
   impuesto: string | null;
   unidad_nombre: string | null;
+  familia_id: string | null;
+  familia: string | null;
+  linea_id: string | null;
+  linea: string | null;
   stock_disponible: number;
   bajo_minimo: boolean;
+  costo_promedio: number | null;
+  precio_venta_referencia: number | null;
+  moneda_precio_referencia: string | null;
+  inventario_inicial: number;
 };
 
 function desdeApi(fila: FilaApi): ProductoLista {
@@ -71,6 +85,10 @@ function desdeApi(fila: FilaApi): ProductoLista {
     tipoProducto: fila.tipo_producto,
     categoriaNombre: fila.categoria ?? "",
     marcaNombre: fila.marca ?? "",
+    familiaId: fila.familia_id ?? "",
+    familiaNombre: fila.familia ?? "",
+    lineaId: fila.linea_id ?? "",
+    lineaNombre: fila.linea ?? "",
     impuestoNombre: fila.impuesto ?? "",
     unidadMedidaNombre: fila.unidad_nombre ?? "",
     procedencia: fila.origen_etiqueta ?? "",
@@ -80,6 +98,14 @@ function desdeApi(fila: FilaApi): ProductoLista {
     puntoReposicion: Number(fila.punto_reposicion ?? 0),
     stockDisponible: Number(fila.stock_disponible ?? 0),
     bajoMinimo: fila.bajo_minimo,
+    costoPromedio:
+      fila.costo_promedio === null ? null : Number(fila.costo_promedio),
+    precioVentaReferencia:
+      fila.precio_venta_referencia === null
+        ? null
+        : Number(fila.precio_venta_referencia),
+    monedaPrecioReferencia: fila.moneda_precio_referencia ?? "",
+    inventarioInicial: Number(fila.inventario_inicial ?? 0),
     activo: fila.activo,
   };
 }
@@ -108,6 +134,12 @@ export default function ProductosPage() {
     useState<TipoFiltro>("TODOS");
 
   const [filtroMarca, setFiltroMarca] =
+    useState("TODAS");
+
+  const [filtroFamilia, setFiltroFamilia] =
+    useState("TODAS");
+
+  const [filtroLinea, setFiltroLinea] =
     useState("TODAS");
 
   const [
@@ -185,6 +217,8 @@ export default function ProductosPage() {
     filtroEstado,
     filtroTipo,
     filtroMarca,
+    filtroFamilia,
+    filtroLinea,
     filtroProcedencia,
   ]);
 
@@ -203,6 +237,35 @@ export default function ProductosPage() {
         a.localeCompare(b),
       ),
     [productos],
+  );
+
+  const familias = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          productos
+            .map((item) => item.familiaNombre)
+            .filter(Boolean),
+        ),
+      ).sort((a, b) => a.localeCompare(b)),
+    [productos],
+  );
+
+  const lineas = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          productos
+            .filter(
+              (item) =>
+                filtroFamilia === "TODAS" ||
+                item.familiaNombre === filtroFamilia,
+            )
+            .map((item) => item.lineaNombre)
+            .filter(Boolean),
+        ),
+      ).sort((a, b) => a.localeCompare(b)),
+    [productos, filtroFamilia],
   );
 
   const procedencias = useMemo(
@@ -248,6 +311,15 @@ export default function ProductosPage() {
           acc.bajoMinimo += 1;
         }
 
+        // Valor a precio de venta de referencia: solo productos con precio cargado (sin precio no suman).
+        if (producto.precioVentaReferencia !== null) {
+          acc.valorVenta +=
+            producto.precioVentaReferencia *
+            Number(producto.stockDisponible || 0);
+          acc.monedaValor =
+            producto.monedaPrecioReferencia || acc.monedaValor;
+        }
+
         return acc;
       },
       {
@@ -256,6 +328,8 @@ export default function ProductosPage() {
         inventario: 0,
         sinStock: 0,
         bajoMinimo: 0,
+        valorVenta: 0,
+        monedaValor: "",
       },
     );
   }, [productos]);
@@ -303,6 +377,20 @@ export default function ProductosPage() {
         }
 
         if (
+          filtroFamilia !== "TODAS" &&
+          producto.familiaNombre !== filtroFamilia
+        ) {
+          return false;
+        }
+
+        if (
+          filtroLinea !== "TODAS" &&
+          producto.lineaNombre !== filtroLinea
+        ) {
+          return false;
+        }
+
+        if (
           filtroProcedencia !==
             "TODAS" &&
           producto.procedencia !==
@@ -325,6 +413,8 @@ export default function ProductosPage() {
               producto.descripcion,
               producto.descripcionFactura,
               producto.marcaNombre,
+              producto.familiaNombre,
+              producto.lineaNombre,
               producto.categoriaNombre,
               producto.procedencia,
               producto.paisOrigenNombre,
@@ -342,6 +432,8 @@ export default function ProductosPage() {
     filtroEstado,
     filtroTipo,
     filtroMarca,
+    filtroFamilia,
+    filtroLinea,
     filtroProcedencia,
   ]);
 
@@ -367,6 +459,8 @@ export default function ProductosPage() {
     setFiltroEstado("TODOS");
     setFiltroTipo("TODOS");
     setFiltroMarca("TODAS");
+    setFiltroFamilia("TODAS");
+    setFiltroLinea("TODAS");
     setFiltroProcedencia("TODAS");
   }
 
@@ -456,7 +550,7 @@ export default function ProductosPage() {
           </strong>
 
           <small>
-            Productos con saldo cero
+            Saldo cero · {resumen.bajoMinimo} bajo el mínimo
           </small>
         </article>
 
@@ -464,15 +558,18 @@ export default function ProductosPage() {
           className={`${styles.summaryCard} ${styles.summaryPurple}`}
         >
           <span>
-            BAJO EL MÍNIMO
+            VALOR A PRECIO VENTA
           </span>
 
           <strong>
-            {resumen.bajoMinimo}
+            {money(
+              resumen.valorVenta,
+              resumen.monedaValor,
+            )}
           </strong>
 
           <small>
-            Stock bajo el mínimo configurado
+            Solo productos con precio de referencia
           </small>
         </article>
       </section>
@@ -501,7 +598,7 @@ export default function ProductosPage() {
                   event.target.value,
                 )
               }
-              placeholder="Buscar por código, código inventario, descripción, marca, categoría..."
+              placeholder="Buscar por código, código inventario, descripción, marca, familia, línea..."
             />
           </label>
 
@@ -609,6 +706,49 @@ export default function ProductosPage() {
           </label>
 
           <label>
+            <span>Familia</span>
+
+            <select
+              value={filtroFamilia}
+              onChange={(event) => {
+                setFiltroFamilia(event.target.value);
+                setFiltroLinea("TODAS");
+              }}
+            >
+              <option value="TODAS">
+                Todas
+              </option>
+
+              {familias.map((familia) => (
+                <option key={familia} value={familia}>
+                  {familia}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label>
+            <span>Línea</span>
+
+            <select
+              value={filtroLinea}
+              onChange={(event) =>
+                setFiltroLinea(event.target.value)
+              }
+            >
+              <option value="TODAS">
+                Todas
+              </option>
+
+              {lineas.map((linea) => (
+                <option key={linea} value={linea}>
+                  {linea}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label>
             <span>
               Procedencia
             </span>
@@ -668,7 +808,7 @@ export default function ProductosPage() {
             Inventario
           </span>
           <span>
-            Reposición
+            Precio venta
           </span>
           <span />
         </div>
@@ -794,20 +934,18 @@ export default function ProductosPage() {
                   }
                 >
                   <strong>
-                    {producto.categoriaNombre ||
-                      "Sin categoría"}
+                    {producto.familiaNombre ||
+                      "Sin familia"}
                   </strong>
 
                   <span>
-                    {producto.tipoProducto.replaceAll(
-                      "_",
-                      " ",
-                    )}
+                    {producto.lineaNombre ||
+                      "Sin línea"}
                   </span>
 
                   <small>
-                    {producto.impuestoNombre ||
-                      "Sin impuesto"}
+                    {producto.categoriaNombre ||
+                      "Sin categoría"}
                   </small>
                 </div>
 
@@ -834,7 +972,7 @@ export default function ProductosPage() {
                   </strong>
 
                   <span>
-                    Mínimo:{" "}
+                    Inicial:{" "}
                     {new Intl.NumberFormat(
                       "es-PY",
                       {
@@ -842,7 +980,7 @@ export default function ProductosPage() {
                       },
                     ).format(
                       Number(
-                        producto.stockMinimo ||
+                        producto.inventarioInicial ||
                           0,
                       ),
                     )}
@@ -873,27 +1011,30 @@ export default function ProductosPage() {
                   }
                 >
                   <strong>
-                    {new Intl.NumberFormat(
-                      "es-PY",
-                      {
-                        maximumFractionDigits: 2,
-                      },
-                    ).format(
-                      Number(
-                        producto.puntoReposicion ||
-                          0,
-                      ),
-                    )}
+                    {producto.precioVentaReferencia === null
+                      ? "Sin precio"
+                      : money(
+                          producto.precioVentaReferencia,
+                          producto.monedaPrecioReferencia,
+                        )}
                   </strong>
 
                   <span>
-                    Punto de reposición
+                    Valor:{" "}
+                    {producto.precioVentaReferencia === null
+                      ? "—"
+                      : money(
+                          producto.precioVentaReferencia *
+                            Number(producto.stockDisponible || 0),
+                          producto.monedaPrecioReferencia,
+                        )}
                   </span>
 
                   <small>
-                    Código de barras:{" "}
-                    {producto.codigoBarras ||
-                      "—"}
+                    Costo promedio:{" "}
+                    {producto.costoPromedio === null
+                      ? "—"
+                      : money(producto.costoPromedio, "")}
                   </small>
                 </div>
 

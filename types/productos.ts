@@ -112,6 +112,8 @@ export type ProductoDetalle = {
 
   categoriaId: string;
   marcaId: string;
+  familiaId: string;
+  lineaId: string;
   procedencia: string;
 
   unidadMedidaId: string;
@@ -125,6 +127,25 @@ export type ProductoDetalle = {
   stockMinimo: number;
   stockMaximo: number;
   puntoReposicion: number;
+
+  /** Precio de venta de referencia (lista de referencia, NEX-017). null = sin precio cargado. */
+  precioVentaReferencia: number | null;
+  /** Moneda del precio de referencia (moneda de la lista; en alta, moneda base de la empresa). Solo lectura. */
+  monedaPrecioReferencia: string;
+
+  /** Stock real (v_stock_producto / stock_saldos). Solo lectura: lo mueven los movimientos. */
+  stockActual: number;
+  stockPorDeposito: { depositoId: string; depositoNombre: string; cantidad: number }[];
+  /** Costo promedio real (inventario_costos). null = sin saldo valorizado. Solo lectura. */
+  costoPromedio: number | null;
+  /** Movimiento de apertura ya registrado (solo lectura). */
+  aperturaRegistrada: {
+    numero: string;
+    fecha: string;
+    cantidad: number;
+    costoUnitario: number | null;
+    depositoNombre: string;
+  } | null;
 
   partidaArancelaria: string;
   ncm: string;
@@ -168,10 +189,25 @@ export type ProductoDetalle = {
   actualizadoEn: string;
 };
 
+/** Inventario inicial: solo en el alta; genera un movimiento real ENTRADA/ABERTURA en el depósito indicado. */
+export type InventarioInicialForm = {
+  cantidad: number;
+  /** Costo unitario de apertura; obligatorio si cantidad > 0 (no se inventa costo). */
+  costoUnitario: number | null;
+  depositoId: string;
+};
+
 export type NuevoProducto = Omit<
   ProductoDetalle,
-  "id" | "creadoEn" | "actualizadoEn"
->;
+  | "id"
+  | "creadoEn"
+  | "actualizadoEn"
+  | "stockActual"
+  | "stockPorDeposito"
+  | "costoPromedio"
+  | "aperturaRegistrada"
+  | "monedaPrecioReferencia"
+> & { inventarioInicial: InventarioInicialForm };
 
 /** Fila de la lista (GET /api/productos) ya mapeada a camelCase. */
 export type ProductoLista = {
@@ -185,6 +221,10 @@ export type ProductoLista = {
   tipoProducto: ProductoTipo;
   categoriaNombre: string;
   marcaNombre: string;
+  familiaId: string;
+  familiaNombre: string;
+  lineaId: string;
+  lineaNombre: string;
   impuestoNombre: string;
   unidadMedidaNombre: string;
   procedencia: string;
@@ -193,6 +233,10 @@ export type ProductoLista = {
   stockMinimo: number;
   puntoReposicion: number;
   stockDisponible: number;
+  costoPromedio: number | null;
+  precioVentaReferencia: number | null;
+  monedaPrecioReferencia: string;
+  inventarioInicial: number;
   bajoMinimo: boolean;
   activo: boolean;
 };
@@ -200,6 +244,10 @@ export type ProductoLista = {
 export type CatalogoProductos = {
   categorias: { id: string; codigo: string; nombre: string }[];
   marcas: { id: string; codigo: string; nombre: string }[];
+  familias: { id: string; codigo: string; nombre: string }[];
+  lineas: { id: string; familiaId: string; codigo: string; nombre: string }[];
+  /** Moneda del precio de venta de referencia (moneda base de la empresa o la de la lista de referencia). */
+  monedaReferencia: string;
   unidades: { id: string; codigo: string; nombre: string }[];
   impuestos: { id: string; codigo: string; nombre: string; porcentaje: number }[];
   proveedores: { id: string; codigo: string; razon_social: string }[];
