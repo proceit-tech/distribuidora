@@ -7104,4 +7104,17 @@ INSERT INTO referencia_geografica_ciudades (codigo, departamento_codigo, distrit
 ON CONFLICT (departamento_codigo, distrito_codigo, codigo) DO UPDATE SET nombre = EXCLUDED.nombre, activo = EXCLUDED.activo;
 
 
+-- Sete localidades da planilha oficial omitidas no gerador historico 025.
+-- Codigo composto: departamento_codigo, distrito_codigo, codigo.
+INSERT INTO referencia_geografica_ciudades (codigo, departamento_codigo, distrito_codigo, nombre, activo) VALUES
+ (682, 6, 69, 'CALLE 1 (COL.PTE.STROESSNER)', true),
+ (1676, 3, 21, 'CALLE SAN FELIPE', true),
+ (2670, 5, 46, 'SAN SALVADOR', true),
+ (3668, 15, 188, 'GRAL.DELGADO', true),
+ (4662, 17, 195, 'PUERTO GUARANI', true),
+ (5658, 17, 233, 'TTE.1RO. H.MENDOZA', true),
+ (6672, 15, 261, 'COM INDIG DIEZ LEGUAS-KARANTILLA', true)
+ON CONFLICT (departamento_codigo, distrito_codigo, codigo)
+DO UPDATE SET nombre = EXCLUDED.nombre, activo = EXCLUDED.activo;
+
 COMMIT;
