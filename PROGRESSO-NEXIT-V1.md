@@ -9,7 +9,7 @@ Branch: `feature/NEXIT-2026-001-banco-demo`. Regra: uma funcionalidade por vez; 
 | 3 | Proveedores | **ENTREGUE (pendente: build + teste manual na tela)** | ver git log |
 | 4 | Productos | **ENTREGUE (pendente: build + teste manual na tela)** | ver git log |
 | 5 | Listas de precios | **ENTREGUE (pendente: aplicar NEX-018 no `nexit` real + build + teste manual na tela)** | ver git log |
-| 6 | Movimientos | pendente | |
+| 6 | Movimientos | **ENTREGUE (pendente: build + teste manual na tela; sem migração nova)** | ver git log |
 | 7 | Stock | pendente | |
 | 8 | Dashboard e relatórios/XLSX | pendente | |
 
@@ -62,6 +62,17 @@ Branch: `feature/NEXIT-2026-001-banco-demo`. Regra: uma funcionalidade por vez; 
 - Testes: SQL `T13` (30 verificações, incluído em `ejecutar-pruebas.sh`) + bateria completa em PG16 descartável; API com rotas reais + `permissions.ts` real como `nexit_runtime` (63 verificações: 401/403/404, criar/editar/persistência, validações, rollback, isolamento entre empresas, integração com o preço de referência de Productos, 503).
 - NÃO executado: build/lint completos (sem registry no sandbox; `tsc` parcial sem erros além do ruído ambiental), HTTP real, teste visual.
 - Pendências: cálculo de preço por regra (aplicação em vendas) pertence ao módulo de vendas; ajuste massivo continua só no formulário (-5/-10/+5 %).
+
+## Item 6 — Movimientos de inventario (sem mock/localStorage)
+- Telas existentes preservadas (`movimientos/page.tsx`, `nuevo`, `[id]`); removidos localStorage, pills "DEMO", depósitos/produtos fixos e o rodapé "Modo demostración". Aviso pós-registro via `?ok=<MOV-nnnnnn>`.
+- API: `GET/POST /api/movimientos` (`?modo=catalogos`: depósitos permitidos ao usuário, produtos que controlam stock com saldos por depósito, custo médio e lotes), `GET /api/movimientos/[id]`, `POST /api/movimientos/[id]/anular`. Permissões `MOVIMIENTOS.VER/CREAR` e `MOVIMIENTOS.ANULAR` (ação crítica, só administradores) no backend; `empresa_id`/usuário da sessão; 401/403/404/409; 503 sem `DATABASE_URL`.
+- Toda escrita usa `inventario_registrar_movimiento` / `inventario_anular_movimiento` (o papel de execução não escreve saldos): atualiza `stock_saldos` e `inventario_costos`, bloqueia stock negativo, valida alcance de depósito, deixa histórico imutável (anulação = movimento inverso) e é idempotente (chave gerada pelo formulário; clique duplo não duplica).
+- Tipos: entrada, saída, transferência, ajuste +/−, reserva/liberação, quarentena/liberação. Registra produto, depósito(s), quantidade, custo, tipo, origem, motivo, documento, usuário, data e hora (hora gravada pelo servidor).
+- Adicionado ao formulário o campo **Costo unitario** (obrigatório em ENTRADA e AJUSTE_POSITIVO: o custo não se inventa) e, na tela de detalhe, custo, vínculo da anulação e botão de anulação com motivo.
+- **Lotes:** produto por lote exige lote; entrada/ajuste + criam o lote (com vencimento), demais operações exigem lote existente.
+- **Pendências documentadas (campos preservados):** (1) produtos com *unidade identificada* (série/etiqueta, `UNIDAD_ETIQUETADA`) são recusados com mensagem clara — o banco não tem tabela de unidades; (2) stock de TERCERO: o banco aceita `propiedad/propietario_id` mas não há cadastro de proprietários, então a tela só cria movimentos PROPIO (movimentos TERCERO existentes são exibidos); (3) a tela registra um produto por movimento (o banco suporta várias linhas; o detalhe já as lista); (4) os mocks `lib/mocks/movimientos-stock*.ts` e `types` `MovimientoStockDemo` seguem só porque `recepciones-storage` (mock) os importa; (5) o módulo Stock continua com mocks (próximo item).
+- Testes (API com rotas reais + `permissions.ts` real, conectado como `nexit_runtime` em PG16 descartável, 69 verificações): 401/403/404, entrada, saída, transferência, ajustes, reserva/quarentena, lote, bloqueio de saldo negativo, idempotência, alcance de depósito, persistência (usuário/motivo/custo/data), anulação, isolamento A×B, conciliação kardex/valor, 503. Sem mudança de schema: bateria SQL anterior (382) não foi repetida.
+- NÃO executado: build/lint completos (sem registry no sandbox; `tsc` parcial sem erros além do ruído ambiental), HTTP real, teste visual.
 
 ## Pendências conhecidas de Clientes
 - Editar contatos, direcciones, documentos adicionais e demais tabelas filhas de um cliente existente ainda não é possível (só são criados em `clientes/nuevo`); o `PUT` altera apenas a ficha principal.

@@ -7,13 +7,10 @@ import {
   useState,
 } from "react";
 
-import {
-  consumirMovimientoStockFlash,
-  obtenerMovimientosStockDemo,
-} from "@/lib/mocks/movimientos-stock-storage";
+import { cargarMovimientos } from "@/lib/movimientos/cliente-api";
 
 import {
-  MovimientoStockDemo,
+  MovimientoStockFila,
   MovimientoStockTipo,
 } from "@/types/movimientos-stock";
 
@@ -50,7 +47,7 @@ function tipoLabel(
 
 export default function MovimientosPage() {
   const [movimientos, setMovimientos] =
-    useState<MovimientoStockDemo[]>([]);
+    useState<MovimientoStockFila[]>([]);
 
   const [busqueda, setBusqueda] =
     useState("");
@@ -61,14 +58,48 @@ export default function MovimientosPage() {
   const [flash, setFlash] =
     useState("");
 
-  useEffect(() => {
-    setMovimientos(
-      obtenerMovimientosStockDemo(),
-    );
+  const [cargando, setCargando] =
+    useState(true);
 
-    setFlash(
-      consumirMovimientoStockFlash(),
-    );
+  const [errorCarga, setErrorCarga] =
+    useState("");
+
+  useEffect(() => {
+    let activo = true;
+
+    cargarMovimientos()
+      .then((datos) => {
+        if (activo) setMovimientos(datos);
+      })
+      .catch((e: unknown) => {
+        if (activo)
+          setErrorCarga(
+            e instanceof Error
+              ? e.message
+              : "No fue posible cargar los movimientos.",
+          );
+      })
+      .finally(() => {
+        if (activo) setCargando(false);
+      });
+
+    // Aviso tras registrar (?ok=<número>).
+    const ok = new URLSearchParams(
+      window.location.search,
+    ).get("ok");
+
+    if (ok) {
+      setFlash(`Movimiento ${ok} registrado correctamente.`);
+      window.history.replaceState(
+        null,
+        "",
+        window.location.pathname,
+      );
+    }
+
+    return () => {
+      activo = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -183,9 +214,6 @@ export default function MovimientosPage() {
           <div className={styles.heroMeta}>
             <span className={styles.modulePill}>
               INVENTARIO
-            </span>
-            <span className={styles.demoPill}>
-              DEMO
             </span>
           </div>
 
@@ -304,7 +332,7 @@ export default function MovimientosPage() {
 
         {filtrados.map((mov) => (
           <article
-            key={mov.id}
+            key={mov.lineaId}
             className={styles.row}
           >
             <div>
@@ -315,6 +343,15 @@ export default function MovimientosPage() {
                 <span className={styles.typeBadge}>
                   {tipoLabel(mov.tipo)}
                 </span>
+                {mov.estado === "ANULADO" ? (
+                  <span className={styles.typeBadge}>
+                    Anulado
+                  </span>
+                ) : mov.origen === "ANULACION" ? (
+                  <span className={styles.typeBadge}>
+                    Anulación
+                  </span>
+                ) : null}
               </div>
 
               <small>
@@ -373,12 +410,17 @@ export default function MovimientosPage() {
         {filtrados.length === 0 ? (
           <div className={styles.empty}>
             <strong>
-              No se encontraron movimientos.
+              {cargando
+                ? "Cargando movimientos..."
+                : errorCarga ||
+                  "No se encontraron movimientos."}
             </strong>
-            <span>
-              Modifique los filtros o
-              registre un nuevo movimiento.
-            </span>
+            {!cargando && !errorCarga ? (
+              <span>
+                Modifique los filtros o
+                registre un nuevo movimiento.
+              </span>
+            ) : null}
           </div>
         ) : null}
       </section>

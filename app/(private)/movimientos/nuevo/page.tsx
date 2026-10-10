@@ -3,7 +3,8 @@
 import Link from "next/link";
 import {
   FormEvent,
-  useMemo,
+  useEffect,
+  useRef,
   useState,
 } from "react";
 import {
@@ -11,43 +12,24 @@ import {
 } from "next/navigation";
 
 import {
-  crearMovimientoStockDemo,
-} from "@/lib/mocks/movimientos-stock-storage";
+  cargarCatalogosMovimientos,
+  registrarMovimientoApi,
+} from "@/lib/movimientos/cliente-api";
 
 import {
-  obtenerStockDemo,
-} from "@/lib/mocks/stock-storage";
-
-import {
+  CatalogoMovimientos,
   MovimientoStockOrigen,
   MovimientoStockTipo,
-  NuevoMovimientoStockDemo,
+  NuevoMovimientoStock,
 } from "@/types/movimientos-stock";
 
 import styles from "./page.module.css";
 
-const DEPOSITOS = [
-  {
-    id: "dep-central",
-    codigo: "DEP-CEN",
-    nombre: "Depósito Central",
-  },
-  {
-    id: "dep-norte",
-    codigo: "DEP-NOR",
-    nombre: "Depósito Norte",
-  },
-  {
-    id: "dep-sur",
-    codigo: "DEP-SUR",
-    nombre: "Depósito Sur",
-  },
-];
-
 function today() {
-  return new Date()
-    .toISOString()
-    .slice(0, 10);
+  const d = new Date();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${mm}-${dd}`;
 }
 
 function timeNow() {
@@ -59,39 +41,35 @@ function timeNow() {
 export default function NuevoMovimientoPage() {
   const router = useRouter();
 
-  const productos =
-    useMemo(
-      () => obtenerStockDemo(),
-      [],
-    );
+  const [catalogo, setCatalogo] =
+    useState<CatalogoMovimientos | null>(null);
+
+  const productos = catalogo?.productos ?? [];
+
+  const depositos = (
+    catalogo?.depositos ?? []
+  ).filter((dep) => dep.permitido);
 
   const [form, setForm] =
-    useState<NuevoMovimientoStockDemo>({
+    useState<NuevoMovimientoStock>({
       tipo: "ENTRADA",
       origen: "MANUAL",
       fecha: today(),
-      hora: timeNow(),
       productoId: "",
-      productoCodigo: "",
-      productoDescripcion: "",
-      unidadMedidaNombre: "",
-      depositoOrigenId: "",
-      depositoOrigenCodigo: "",
-      depositoOrigenNombre: "",
-      depositoDestinoId: "dep-central",
-      depositoDestinoCodigo: "DEP-CEN",
-      depositoDestinoNombre: "Depósito Central",
       cantidad: 1,
+      costoUnitario: null,
+      depositoOrigenId: "",
+      depositoDestinoId: "",
       lote: "",
       fechaVencimiento: "",
-      propiedad: "PROPIO",
-      propietarioId: "",
-      propietarioNombre: "CASA MINGO S.A.",
       documentoReferencia: "",
       motivo: "",
       observacion: "",
-      usuario: "admin",
+      claveIdempotencia: "",
     });
+
+  // Clave de idempotencia: se renueva con cada cambio del formulario; un doble clic reenvía la misma y no duplica el movimiento.
+  const clave = useRef("");
 
   const [error, setError] =
     useState("");
@@ -99,10 +77,33 @@ export default function NuevoMovimientoPage() {
   const [saving, setSaving] =
     useState(false);
 
-  function set<K extends keyof NuevoMovimientoStockDemo>(
+  useEffect(() => {
+    let activo = true;
+
+    cargarCatalogosMovimientos()
+      .then((c) => {
+        if (activo) setCatalogo(c);
+      })
+      .catch((e: unknown) => {
+        if (activo)
+          setError(
+            e instanceof Error
+              ? e.message
+              : "No fue posible cargar los catálogos.",
+          );
+      });
+
+    return () => {
+      activo = false;
+    };
+  }, []);
+
+  function set<K extends keyof NuevoMovimientoStock>(
     key: K,
-    value: NuevoMovimientoStockDemo[K],
+    value: NuevoMovimientoStock[K],
   ) {
+    clave.current = "";
+
     setForm((current) => ({
       ...current,
       [key]: value,
@@ -127,51 +128,54 @@ export default function NuevoMovimientoPage() {
       "AJUSTE_POSITIVO",
     ].includes(form.tipo);
 
+  const requiereCosto =
+    [
+      "ENTRADA",
+      "AJUSTE_POSITIVO",
+    ].includes(form.tipo);
+
   const productoSeleccionado =
     productos.find(
       (item) =>
-        item.productoId ===
-        form.productoId,
+        item.id === form.productoId,
     );
 
-  function elegirDeposito(
-    kind: "origen" | "destino",
-    id: string,
-  ) {
-    const dep =
-      DEPOSITOS.find(
-        (item) =>
-          item.id === id,
-      );
+  // Saldos del depósito relevante (origen, si no destino); sin depósito, el total de la empresa.
+  const depositoRef =
+    form.depositoOrigenId ||
+    form.depositoDestinoId;
 
-    if (kind === "origen") {
-      set(
-        "depositoOrigenId",
-        id,
-      );
-      set(
-        "depositoOrigenCodigo",
-        dep?.codigo ?? "",
-      );
-      set(
-        "depositoOrigenNombre",
-        dep?.nombre ?? "",
-      );
-    } else {
-      set(
-        "depositoDestinoId",
-        id,
-      );
-      set(
-        "depositoDestinoCodigo",
-        dep?.codigo ?? "",
-      );
-      set(
-        "depositoDestinoNombre",
-        dep?.nombre ?? "",
-      );
-    }
-  }
+  const snapshot = (
+    productoSeleccionado?.stock ?? []
+  )
+    .filter(
+      (x) =>
+        !depositoRef ||
+        x.depositoId === depositoRef,
+    )
+    .reduce(
+      (acc, x) => ({
+        disponible: acc.disponible + x.disponible,
+        reservado: acc.reservado + x.reservado,
+        cuarentena: acc.cuarentena + x.cuarentena,
+        transito: acc.transito + x.transito,
+      }),
+      {
+        disponible: 0,
+        reservado: 0,
+        cuarentena: 0,
+        transito: 0,
+      },
+    );
+
+  // Lotes ya existentes del depósito relevante (sugerencias para elegir el lote).
+  const lotesSugeridos = (
+    productoSeleccionado?.lotes ?? []
+  ).filter(
+    (x) =>
+      !depositoRef ||
+      x.depositoId === depositoRef,
+  );
 
   async function submit(
     event: FormEvent<HTMLFormElement>,
@@ -228,23 +232,44 @@ export default function NuevoMovimientoPage() {
       return;
     }
 
+    if (
+      requiereCosto &&
+      (form.costoUnitario === null ||
+        form.costoUnitario < 0)
+    ) {
+      setError(
+        "Ingrese el costo unitario de la entrada.",
+      );
+      return;
+    }
+
+    if (
+      productoSeleccionado?.modoControl ===
+        "LOTE" &&
+      !form.lote.trim()
+    ) {
+      setError(
+        "Ingrese el lote del producto.",
+      );
+      return;
+    }
+
     setSaving(true);
 
     try {
-      crearMovimientoStockDemo(
-        form,
-      );
+      if (!clave.current) {
+        clave.current = crypto.randomUUID();
+      }
 
-      await new Promise(
-        (resolve) =>
-          window.setTimeout(
-            resolve,
-            350,
-          ),
-      );
+      const numero =
+        await registrarMovimientoApi({
+          ...form,
+          claveIdempotencia:
+            clave.current,
+        });
 
       router.push(
-        "/movimientos",
+        `/movimientos?ok=${encodeURIComponent(numero)}`,
       );
       router.refresh();
     } catch (e) {
@@ -265,9 +290,6 @@ export default function NuevoMovimientoPage() {
           <div className={styles.heroMeta}>
             <span className={styles.modulePill}>
               INVENTARIO
-            </span>
-            <span className={styles.demoPill}>
-              DEMO
             </span>
           </div>
 
@@ -447,13 +469,9 @@ export default function NuevoMovimientoPage() {
               <span>Hora *</span>
               <input
                 type="time"
-                value={form.hora}
-                onChange={(event) =>
-                  set(
-                    "hora",
-                    event.target.value,
-                  )
-                }
+                value={timeNow()}
+                readOnly
+                title="La hora la registra el servidor"
               />
             </label>
           </div>
@@ -468,49 +486,14 @@ export default function NuevoMovimientoPage() {
               <select
                 value={form.productoId}
                 onChange={(event) => {
-                  const id =
-                    event.target.value;
-
-                  const producto =
-                    productos.find(
-                      (item) =>
-                        item.productoId ===
-                        id,
-                    );
-
                   set(
                     "productoId",
-                    id,
+                    event.target.value,
                   );
+                  set("lote", "");
                   set(
-                    "productoCodigo",
-                    producto?.productoCodigo ??
-                      "",
-                  );
-                  set(
-                    "productoDescripcion",
-                    producto?.productoDescripcion ??
-                      "",
-                  );
-                  set(
-                    "unidadMedidaNombre",
-                    producto?.unidadMedidaNombre ??
-                      "",
-                  );
-                  set(
-                    "propiedad",
-                    producto?.propiedad ??
-                      "PROPIO",
-                  );
-                  set(
-                    "propietarioId",
-                    producto?.propietarioId ??
-                      "",
-                  );
-                  set(
-                    "propietarioNombre",
-                    producto?.propietarioNombre ??
-                      "CASA MINGO S.A.",
+                    "fechaVencimiento",
+                    "",
                   );
                 }}
               >
@@ -522,10 +505,10 @@ export default function NuevoMovimientoPage() {
                   (item) => (
                     <option
                       key={item.id}
-                      value={item.productoId}
+                      value={item.id}
                     >
-                      {item.productoCodigo} ·{" "}
-                      {item.productoDescripcion}
+                      {item.codigo} ·{" "}
+                      {item.descripcion}
                     </option>
                   ),
                 )}
@@ -555,11 +538,39 @@ export default function NuevoMovimientoPage() {
               <span>Unidad</span>
               <input
                 value={
-                  form.unidadMedidaNombre
+                  productoSeleccionado?.unidadMedidaNombre ??
+                  ""
                 }
                 readOnly
               />
             </label>
+
+            {requiereCosto ? (
+              <label>
+                <span>
+                  Costo unitario *{" "}
+                  ({catalogo?.monedaBase ?? ""})
+                </span>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.0001"
+                  value={
+                    form.costoUnitario ?? ""
+                  }
+                  onChange={(event) =>
+                    set(
+                      "costoUnitario",
+                      event.target.value === ""
+                        ? null
+                        : Number(
+                            event.target.value,
+                          ),
+                    )
+                  }
+                />
+              </label>
+            ) : null}
           </div>
 
           {productoSeleccionado ? (
@@ -568,7 +579,7 @@ export default function NuevoMovimientoPage() {
                 <span>Disponible</span>
                 <strong>
                   {
-                    productoSeleccionado.disponible
+                    snapshot.disponible
                   }
                 </strong>
               </div>
@@ -577,7 +588,7 @@ export default function NuevoMovimientoPage() {
                 <span>Reservado</span>
                 <strong>
                   {
-                    productoSeleccionado.reservado
+                    snapshot.reservado
                   }
                 </strong>
               </div>
@@ -586,7 +597,7 @@ export default function NuevoMovimientoPage() {
                 <span>Cuarentena</span>
                 <strong>
                   {
-                    productoSeleccionado.cuarentena
+                    snapshot.cuarentena
                   }
                 </strong>
               </div>
@@ -595,7 +606,7 @@ export default function NuevoMovimientoPage() {
                 <span>Tránsito</span>
                 <strong>
                   {
-                    productoSeleccionado.transito
+                    snapshot.transito
                   }
                 </strong>
               </div>
@@ -619,8 +630,8 @@ export default function NuevoMovimientoPage() {
                   form.depositoOrigenId
                 }
                 onChange={(event) =>
-                  elegirDeposito(
-                    "origen",
+                  set(
+                    "depositoOrigenId",
                     event.target.value,
                   )
                 }
@@ -629,7 +640,7 @@ export default function NuevoMovimientoPage() {
                   Sin depósito origen
                 </option>
 
-                {DEPOSITOS.map(
+                {depositos.map(
                   (dep) => (
                     <option
                       key={dep.id}
@@ -655,8 +666,8 @@ export default function NuevoMovimientoPage() {
                   form.depositoDestinoId
                 }
                 onChange={(event) =>
-                  elegirDeposito(
-                    "destino",
+                  set(
+                    "depositoDestinoId",
                     event.target.value,
                   )
                 }
@@ -665,7 +676,7 @@ export default function NuevoMovimientoPage() {
                   Sin depósito destino
                 </option>
 
-                {DEPOSITOS.map(
+                {depositos.map(
                   (dep) => (
                     <option
                       key={dep.id}
@@ -689,9 +700,10 @@ export default function NuevoMovimientoPage() {
 
               <div className={styles.gridTwo}>
                 <label>
-                  <span>Lote</span>
+                  <span>Lote *</span>
                   <input
                     value={form.lote}
+                    list="lotes-sugeridos"
                     onChange={(event) =>
                       set(
                         "lote",
@@ -699,25 +711,41 @@ export default function NuevoMovimientoPage() {
                       )
                     }
                   />
+                  <datalist id="lotes-sugeridos">
+                    {lotesSugeridos.map(
+                      (x, i) => (
+                        <option
+                          key={`${x.codigo}-${x.estado}-${i}`}
+                          value={x.codigo}
+                        >
+                          {x.estado} · {x.cantidad}
+                        </option>
+                      ),
+                    )}
+                  </datalist>
                 </label>
 
-                <label>
-                  <span>
-                    Fecha de vencimiento
-                  </span>
-                  <input
-                    type="date"
-                    value={
-                      form.fechaVencimiento
-                    }
-                    onChange={(event) =>
-                      set(
-                        "fechaVencimiento",
-                        event.target.value,
-                      )
-                    }
-                  />
-                </label>
+                {requiereDestino &&
+                form.tipo !==
+                  "TRANSFERENCIA" ? (
+                  <label>
+                    <span>
+                      Fecha de vencimiento
+                    </span>
+                    <input
+                      type="date"
+                      value={
+                        form.fechaVencimiento
+                      }
+                      onChange={(event) =>
+                        set(
+                          "fechaVencimiento",
+                          event.target.value,
+                        )
+                      }
+                    />
+                  </label>
+                ) : null}
               </div>
             </>
           ) : null}
@@ -775,10 +803,11 @@ export default function NuevoMovimientoPage() {
 
         <footer className={styles.footer}>
           <div>
-            <span>Modo demostración</span>
+            <span>Movimiento de inventario</span>
             <small>
-              Al guardar, el stock se
-              actualiza en localStorage.
+              Al guardar, los saldos y el
+              costo se actualizan en la
+              base de datos.
             </small>
           </div>
 
