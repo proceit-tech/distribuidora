@@ -164,6 +164,7 @@ Branch: `feature/NEXIT-2026-001-banco-demo`. Regra: uma funcionalidade por vez; 
 - Interface (`clientes/[id]/page.tsx` + `_components/hijos.tsx`): três novas abas "Contactos", "Direcciones", "Documentos" no mesmo layout/estilos da edição, textos em espanhol; linhas existentes mantêm o id, remover uma linha existente a registra para eliminação explícita ao salvar; cascata geográfica Paraguay.
 - Testes (PG16 descartável, handlers reais + `permissions.ts` real, runtime `nexit_runtime`): 64 PASS / 0 FALLA — criar → editar → reabrir → persistência com ids preservados; omissão não apaga; eliminação explícita; trocas de flags; validações (16 casos); rollback (pai e filhos intactos); isolamento entre empresas (GET/PUT 404, ids alheios 400, empresa_id do corpo ignorado, dados de B intactos); permissões (401, VER sem EDITAR 403 sem escrita, EDITAR sem VER, sem permissões, admin da empresa). Navegação/menus (nvt) 7 PASS.
 - NÃO executado: build do Next, lint, teste visual no navegador (sem registry/browser neste ambiente); tsc só com ruído de ambiente pré-existente. Estado: implementado + testado em PG de teste; NÃO validado na VM nem homologado.
+- Política de leitura seletiva e economia de contexto registrada em `CLAUDE.md` (seção 6), a pedido do responsável (2026-10-10).
 
 ## Pendências conhecidas de Clientes
 - (Resolvido na Correção 2, 2026-10-10 — ver abaixo) Edição de contatos, direcciones e documentos de um cliente existente.

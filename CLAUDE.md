@@ -34,3 +34,15 @@ O contexto do projeto vive no GitHub, não na memória da conversa. Claude imple
 
 ## 5. Protocolo de auditoria
 Seguir `documentacao/PROTOCOLO-IA.md` (REQ/TST/AUD/HOM e máquina de estados). Corrigir cada achado AUD citando o commit, preservar auditorias anteriores e pedir nova rodada. A aprovação técnica não substitui a homologação humana. GitHub é canal ASSÍNCRONO entre IAs: não há execução automática nem mensagens diretas.
+
+## 6. Leitura seletiva e economia de contexto
+O GitHub é a fonte de verdade; a conversa não guarda o histórico do projeto.
+1. Ler `CLAUDE.md` e apenas o resumo atual de `PROGRESSO-NEXIT-V1.md` (topo + seção do módulo em curso).
+2. Consultar só as seções e arquivos necessários à tarefa autorizada.
+3. Não carregar migrations completas, arquivos grandes ou históricos extensos quando bastar uma função/tabela específica (`grep`/busca por símbolo, `sed -n` por faixa).
+4. Buscar por símbolos, funções e trechos antes de abrir arquivos inteiros.
+5. Não repetir testes ou análises já documentados, salvo quando necessários para validar a alteração atual.
+6. Manter saídas de comandos curtas (`tail`, `head`, `grep -c`, filtros).
+7. Ao concluir cada tarefa, registrar decisões, alterações e pendências no GitHub (`PROGRESSO-NEXIT-V1.md` + commit/push).
+8. Após compactação, recuperar o contexto mínimo por `CLAUDE.md`, `PROGRESSO-NEXIT-V1.md` e `git log --oneline -5`/commit atual; não reconstruir a conversa.
+9. Economizar contexto nunca altera o escopo nem descarta requisitos da última autorização do responsável.
