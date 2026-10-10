@@ -49,10 +49,31 @@ export type TablaPdf = {
 };
 
 export function generarPdf(t: TablaPdf): Buffer {
-  const PW = 842, PH = 595, M = 28, FS = 6.2, RH = 11.5;
+  const PW = 842, PH = 595, M = 28, RH = 11.5;
   const anchoUtil = PW - 2 * M;
-  const suma = t.columnas.reduce((a, c) => a + c.peso, 0);
-  const anchos = t.columnas.map((c) => (c.peso / suma) * anchoUtil);
+
+  // Ajuste automático: se busca la letra más grande (6,2 → 5,0) y el tope de ancho por columna que permitan mostrar
+  // los textos completos; solo si no cabe se recorta con "…" (proporcional a los pesos).
+  const pesoTotal = t.columnas.reduce((a, c) => a + c.peso, 0);
+  let FS = 5;
+  let anchos = t.columnas.map((c) => (c.peso / pesoTotal) * anchoUtil);
+  buscar: for (let fs = 6.2; fs >= 5; fs -= 0.2) {
+    for (const tope of [200, 140, 100, 80, 65, 52]) {
+      const nat = t.columnas.map((c, i) => {
+        let m = anchoTexto(c.titulo, fs, true);
+        for (const f of t.filas) m = Math.max(m, anchoTexto(f[i] ?? "", fs));
+        if (t.totales) m = Math.max(m, anchoTexto(t.totales[i] ?? "", fs, true));
+        for (const f of t.totalesExtra ?? []) m = Math.max(m, anchoTexto(f[i] ?? "", fs, true));
+        return Math.min(m, tope) + 6;
+      });
+      const suma = nat.reduce((a, b) => a + b, 0);
+      if (suma <= anchoUtil) {
+        FS = fs;
+        anchos = nat.map((w) => (w / suma) * anchoUtil);
+        break buscar;
+      }
+    }
+  }
 
   const paginas: Buffer[][] = [];
   let cur: Buffer[] = [];

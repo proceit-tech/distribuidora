@@ -1,10 +1,11 @@
 import { generarPdf, type ColumnaPdf } from "@/lib/reportes/pdf";
+import { fmtNum, textoTercerosEstados, TEXTO_PROPIEDAD } from "@/lib/reportes/formato";
 import { generarXlsxSimple, type CeldaXlsx } from "@/lib/reportes/xlsx";
 import type { StockGeneralFiltros, StockGeneralFila, StockGeneralRespuesta } from "@/types/reportes";
 
 // Exportación de Stock general: usa exactamente las mismas filas, totales y filtros que la pantalla.
 
-export const fmtNum = (v: number) => new Intl.NumberFormat("es-PY", { maximumFractionDigits: 4 }).format(v);
+export { fmtNum };
 
 export const NIVEL: Record<string, string> = { SIN_STOCK: "Sin stock", BAJO: "Bajo", NORMAL: "Normal", SOBRESTOCK: "Sobrestock" };
 
@@ -29,46 +30,41 @@ export type Col = { titulo: string; peso: number; cant?: Cant | "terceros"; valo
 export function columnas(vista: StockGeneralFiltros["vista"]): Col[] {
   const base: Col[] = [
     { titulo: "Código", peso: 5.5, valor: (f) => f.codigo },
-    { titulo: "Cód. inv. / GTIN", peso: 9, valor: (f) => [f.codigoInventario, f.codigoBarras].filter(Boolean).join(" / ") },
-    { titulo: "Descripción", peso: 12, valor: (f) => f.descripcion },
-    { titulo: "Categoría", peso: 7, valor: (f) => f.categoria },
-    { titulo: "Marca", peso: 6, valor: (f) => f.marca },
-    { titulo: "Familia", peso: 6, valor: (f) => f.familia },
-    { titulo: "Línea", peso: 5, valor: (f) => f.linea },
+    { titulo: "Cód. inv. / GTIN", peso: 8, valor: (f) => [f.codigoInventario, f.codigoBarras].filter(Boolean).join(" / ") },
+    { titulo: "Descripción", peso: 11, valor: (f) => f.descripcion },
+    { titulo: "Categoría", peso: 6.5, valor: (f) => f.categoria },
+    { titulo: "Marca", peso: 5.5, valor: (f) => f.marca },
+    { titulo: "Familia", peso: 5.5, valor: (f) => f.familia },
+    { titulo: "Línea", peso: 4.5, valor: (f) => f.linea },
     { titulo: "Unidad", peso: 4, valor: (f) => f.unidad },
   ];
-  const cant = (titulo: string, k: Cant, peso = 6): Col => ({ titulo, peso, cant: k, valor: (f) => f[k] });
-  if (vista === "PRODUCTO") {
-    return [
-      ...base,
-      cant("Disponible", "disponible"), cant("Reservado", "reservado"), cant("Cuarentena", "cuarentena"), cant("En tránsito", "transito"),
-      cant("Físico", "fisico"), cant("Virtual", "virtual"),
-      { titulo: "Terceros", peso: 6, cant: "terceros", valor: (f) => f.terceros },
-      { titulo: "Situación", peso: 6, valor: (f) => NIVEL[f.nivel] },
-    ];
-  }
+  const cant = (titulo: string, k: Cant): Col => ({ titulo, peso: 5.8, cant: k, valor: (f) => f[k] });
+  // Mismas columnas de cantidad en las dos vistas: Disponible…Virtual = stock PROPIO; Terceros = stock de terceros (todos los estados).
+  const cantidades: Col[] = [
+    cant("Disponible", "disponible"), cant("Reservado", "reservado"), cant("Cuarentena", "cuarentena"), cant("En tránsito", "transito"),
+    cant("Físico", "fisico"), cant("Virtual", "virtual"),
+    { titulo: "Terceros", peso: 5.8, cant: "terceros", valor: (f) => f.terceros },
+    { titulo: "Terceros por estado", peso: 11, valor: (f) => textoTercerosEstados(f.tercerosEstados) },
+  ];
+  if (vista === "PRODUCTO") return [...base, ...cantidades, { titulo: "Situación", peso: 5.5, valor: (f) => NIVEL[f.nivel] }];
   return [
     ...base,
-    { titulo: "Depósito", peso: 9, valor: (f) => f.deposito },
-    { titulo: "Lote", peso: 5, valor: (f) => f.lote },
-    { titulo: "Vencimiento", peso: 6.5, valor: (f) => f.fechaVencimiento },
-    { titulo: "Propiedad", peso: 6, valor: (f) => (f.propiedad === "TERCERO" ? "Tercero" : "Propio") },
-    cant("Disponible", "disponible", 6), cant("Reservado", "reservado", 6), cant("Cuarentena", "cuarentena", 6), cant("En tránsito", "transito", 6),
-    cant("Físico", "fisico", 6), cant("Virtual", "virtual", 6),
+    { titulo: "Depósito", peso: 8, valor: (f) => f.deposito },
+    { titulo: "Lote", peso: 4.5, valor: (f) => f.lote },
+    { titulo: "Vencimiento", peso: 6, valor: (f) => f.fechaVencimiento },
+    { titulo: "Propiedad", peso: 6.5, valor: (f) => TEXTO_PROPIEDAD[f.propiedad] ?? "" },
+    ...cantidades,
   ];
 }
 
-/** Filas de totales (las mismas que muestra la pantalla): PRODUCTO = una fila; DETALLE = propio y terceros por separado. */
-export function filasTotales(r: StockGeneralRespuesta): { etiqueta: string; valores: Record<string, number> }[] {
+/** Fila de totales: la misma que muestra la pantalla, en las dos vistas (propio y terceros en columnas separadas). */
+export function filasTotales(r: StockGeneralRespuesta): { etiqueta: string; valores: Record<string, number>; texto: string }[] {
   const t = r.totales;
-  if (r.filtros.vista === "PRODUCTO") {
-    return [{ etiqueta: "TOTAL", valores: { disponible: t.disponible, reservado: t.reservado, cuarentena: t.cuarentena, transito: t.transito, fisico: t.fisico, virtual: t.virtual, terceros: t.terceros } }];
-  }
-  const e = t.tercerosPorEstado;
-  return [
-    { etiqueta: "TOTAL PROPIO", valores: { disponible: t.disponible, reservado: t.reservado, cuarentena: t.cuarentena, transito: t.transito, fisico: t.fisico, virtual: t.virtual } },
-    { etiqueta: "TOTAL TERCEROS", valores: { disponible: e.disponible, reservado: e.reservado, cuarentena: e.cuarentena, transito: e.transito, fisico: e.disponible + e.reservado + e.cuarentena, virtual: t.terceros } },
-  ];
+  return [{
+    etiqueta: "TOTAL",
+    valores: { disponible: t.disponible, reservado: t.reservado, cuarentena: t.cuarentena, transito: t.transito, fisico: t.fisico, virtual: t.virtual, terceros: t.terceros },
+    texto: textoTercerosEstados(t.tercerosPorEstado),
+  }];
 }
 
 export function nombreArchivo(r: StockGeneralRespuesta, ext: string) {
@@ -76,8 +72,8 @@ export function nombreArchivo(r: StockGeneralRespuesta, ext: string) {
   return `Stock_General_${r.filtros.vista === "PRODUCTO" ? "Producto" : "Detalle"}_${slug}_${r.sello}.${ext}`;
 }
 
-const filaTotal = (cols: Col[], etiqueta: string, valores: Record<string, number>) =>
-  cols.map((c, i) => (i === 0 ? etiqueta : c.cant && valores[c.cant] !== undefined ? valores[c.cant] : ""));
+const filaTotal = (cols: Col[], etiqueta: string, valores: Record<string, number>, texto: string) =>
+  cols.map((c, i) => (i === 0 ? etiqueta : c.cant ? valores[c.cant] : c.titulo === "Terceros por estado" ? texto : ""));
 
 export function generarXlsx(r: StockGeneralRespuesta): Buffer {
   const cols = columnas(r.filtros.vista);
@@ -85,7 +81,7 @@ export function generarXlsx(r: StockGeneralRespuesta): Buffer {
     ["Reporte: Stock general"], [`Empresa: ${r.empresa.nombre}`], [`Generado: ${r.generado} (hora de Asunción)`],
     ...describirFiltros(r).map((l) => [l]), [],
   ];
-  const totales = filasTotales(r).map((t) => filaTotal(cols, t.etiqueta, t.valores));
+  const totales = filasTotales(r).map((t) => filaTotal(cols, t.etiqueta, t.valores, t.texto));
   const filas: CeldaXlsx[][] = [
     ...cabecera,
     cols.map((c) => c.titulo),
@@ -110,7 +106,7 @@ export function generarPdfStock(r: StockGeneralRespuesta): Buffer {
   const txt = (c: Col, v: string | number) => (typeof v === "number" ? fmtNum(v) : v);
   // En el PDF la etiqueta del total va en la columna Descripción (más ancha) para que no se recorte.
   const totales = filasTotales(r).map((t) => {
-    const fila = filaTotal(cols, "", t.valores).map((v, i) => txt(cols[i], v));
+    const fila = filaTotal(cols, "", t.valores, t.texto).map((v, i) => txt(cols[i], v));
     fila[2] = t.etiqueta;
     return fila;
   });

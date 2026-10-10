@@ -24,19 +24,20 @@ export type StockGeneralFila = {
   familia: string;
   linea: string;
   unidad: string;
-  // Vista DETALLE: depósito/lote/vencimiento/propiedad de la fila. Vista PRODUCTO: vacíos (agregado de los depósitos filtrados).
+  // Vista DETALLE: depósito/lote/vencimiento de la fila y qué stock tiene (PROPIO, TERCERO o AMBOS). Vista PRODUCTO: vacíos (agregado de los depósitos filtrados).
   deposito: string;
   lote: string;
   fechaVencimiento: string;
-  propiedad: "" | "PROPIO" | "TERCERO";
+  propiedad: "" | "PROPIO" | "TERCERO" | "AMBOS";
   disponible: number;
   reservado: number;
   cuarentena: number;
   transito: number;
   fisico: number;
   virtual: number;
-  // Solo vista PRODUCTO: stock de terceros, separado de las cantidades propias.
+  // Stock de terceros (todos los estados), SIEMPRE separado de las cantidades propias. Igual significado en las dos vistas.
   terceros: number;
+  tercerosEstados: { disponible: number; reservado: number; cuarentena: number; transito: number };
   nivel: NivelStock;
 };
 

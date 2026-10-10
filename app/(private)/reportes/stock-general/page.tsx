@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { cargarStockGeneral, descargarStockGeneral } from "@/lib/reportes/cliente-stock-general";
+import { fmtNum, TEXTO_PROPIEDAD, textoTercerosEstados } from "@/lib/reportes/formato";
 import type { NivelStock, StockGeneralFiltros, StockGeneralFila, StockGeneralRespuesta } from "@/types/reportes";
 
 import styles from "./page.module.css";
@@ -13,23 +14,17 @@ const FILTROS_VACIOS: StockGeneralFiltros = {
   vista: "PRODUCTO", q: "", depositoId: "", categoriaId: "", marcaId: "", familiaId: "", situacion: "", lote: "", existencia: "TODOS",
 };
 
-const num = (v: number) => new Intl.NumberFormat("es-PY", { maximumFractionDigits: 4 }).format(v);
+const num = fmtNum;
 
 type Cant = "disponible" | "reservado" | "cuarentena" | "transito" | "fisico" | "virtual";
 const CANTIDADES: [string, Cant][] = [
   ["Disponible", "disponible"], ["Reservado", "reservado"], ["Cuarentena", "cuarentena"], ["En tránsito", "transito"], ["Físico", "fisico"], ["Virtual", "virtual"],
 ];
 
-function filasTotales(r: StockGeneralRespuesta): { etiqueta: string; v: Partial<Record<Cant | "terceros", number>> }[] {
+// Fila de totales única en las dos vistas: Disponible…Virtual = propio; Terceros aparte (mismo significado que en las filas).
+function filaTotal(r: StockGeneralRespuesta): Partial<Record<Cant | "terceros", number>> {
   const t = r.totales;
-  if (r.filtros.vista === "PRODUCTO") {
-    return [{ etiqueta: "TOTAL", v: { disponible: t.disponible, reservado: t.reservado, cuarentena: t.cuarentena, transito: t.transito, fisico: t.fisico, virtual: t.virtual, terceros: t.terceros } }];
-  }
-  const e = t.tercerosPorEstado;
-  return [
-    { etiqueta: "TOTAL PROPIO", v: { disponible: t.disponible, reservado: t.reservado, cuarentena: t.cuarentena, transito: t.transito, fisico: t.fisico, virtual: t.virtual } },
-    { etiqueta: "TOTAL TERCEROS", v: { disponible: e.disponible, reservado: e.reservado, cuarentena: e.cuarentena, transito: e.transito, fisico: e.disponible + e.reservado + e.cuarentena, virtual: t.terceros } },
-  ];
+  return { disponible: t.disponible, reservado: t.reservado, cuarentena: t.cuarentena, transito: t.transito, fisico: t.fisico, virtual: t.virtual, terceros: t.terceros };
 }
 
 export default function ReporteStockGeneralPage() {
@@ -228,7 +223,8 @@ export default function ReporteStockGeneralPage() {
                 <th>Código</th><th>Cód. inv. / GTIN</th><th>Descripción</th><th>Categoría</th><th>Marca</th><th>Familia</th><th>Línea</th><th>Unidad</th>
                 {detalle ? <><th>Depósito</th><th>Lote</th><th>Vencimiento</th><th>Propiedad</th></> : null}
                 {CANTIDADES.map(([titulo]) => <th key={titulo} className={styles.num}>{titulo}</th>)}
-                {detalle ? null : <><th className={styles.num}>Terceros</th><th>Situación</th></>}
+                <th className={styles.num}>Terceros</th><th>Terceros por estado</th>
+                {detalle ? null : <th>Situación</th>}
               </tr>
             </thead>
             <tbody>
@@ -238,21 +234,23 @@ export default function ReporteStockGeneralPage() {
                   <td>{[f.codigoInventario, f.codigoBarras].filter(Boolean).join(" / ") || "—"}</td>
                   <td className={styles.desc} title={f.descripcion}>{f.descripcion}</td>
                   <td>{f.categoria || "—"}</td><td>{f.marca || "—"}</td><td>{f.familia || "—"}</td><td>{f.linea || "—"}</td><td>{f.unidad || "—"}</td>
-                  {detalle ? <><td>{f.deposito}</td><td>{f.lote || "—"}</td><td>{f.fechaVencimiento || "—"}</td><td>{f.propiedad === "TERCERO" ? "Tercero" : "Propio"}</td></> : null}
+                  {detalle ? <><td>{f.deposito}</td><td>{f.lote || "—"}</td><td>{f.fechaVencimiento || "—"}</td><td>{TEXTO_PROPIEDAD[f.propiedad]}</td></> : null}
                   {CANTIDADES.map(([, k]) => celdaNum(f, k))}
-                  {detalle ? null : <>{celdaNum(f, "terceros")}<td><span className={[styles.badge, styles[`badge${f.nivel}`]].join(" ")}>{NIVEL[f.nivel]}</span></td></>}
+                  {celdaNum(f, "terceros")}
+                  <td>{textoTercerosEstados(f.tercerosEstados) || "—"}</td>
+                  {detalle ? null : <td><span className={[styles.badge, styles[`badge${f.nivel}`]].join(" ")}>{NIVEL[f.nivel]}</span></td>}
                 </tr>
               ))}
             </tbody>
             {datos && datos.filas.length > 0 ? (
               <tfoot>
-                {filasTotales(datos).map((fila) => (
-                  <tr key={fila.etiqueta}>
-                    <td colSpan={detalle ? 12 : 8}>{fila.etiqueta} (todos los resultados del filtro)</td>
-                    {CANTIDADES.map(([, k]) => <td key={k} className={styles.num}>{fila.v[k] === undefined ? "" : num(fila.v[k]!)}</td>)}
-                    {detalle ? null : <><td className={styles.num}>{num(fila.v.terceros ?? 0)}</td><td /></>}
-                  </tr>
-                ))}
+                <tr>
+                  <td colSpan={detalle ? 12 : 8}>TOTAL (todos los resultados del filtro)</td>
+                  {CANTIDADES.map(([, k]) => <td key={k} className={styles.num}>{num(filaTotal(datos)[k] ?? 0)}</td>)}
+                  <td className={styles.num}>{num(datos.totales.terceros)}</td>
+                  <td>{textoTercerosEstados(datos.totales.tercerosPorEstado) || "—"}</td>
+                  {detalle ? null : <td />}
+                </tr>
               </tfoot>
             ) : null}
           </table>

@@ -19,7 +19,7 @@ const NIVELES = ["SIN_STOCK", "BAJO", "NORMAL", "SOBRESTOCK"];
 export const MAX_FILAS_EXPORTACION = 50000;
 
 export const COBERTURA_STOCK_GENERAL = [
-  "Cantidades propias: físico = disponible + reservado + cuarentena; virtual = físico + en tránsito. El stock de terceros se muestra aparte y no se suma al propio.",
+  "Cantidades propias: físico = disponible + reservado + cuarentena; virtual = físico + en tránsito. El stock de terceros se muestra en columnas aparte (Terceros) y nunca se suma a las cantidades propias.",
   "En V1 ningún movimiento genera el estado TRÁNSITO: la columna En tránsito es 0 hasta que exista ese flujo.",
   "Situación (sin stock / bajo / normal / sobrestock) según el mínimo y máximo del producto, sobre los depósitos filtrados; no son límites por depósito.",
   "Foto actual de los saldos; no es un stock histórico a fecha.",
@@ -126,7 +126,9 @@ const filaDeProducto = (r: Record<string, unknown>): StockGeneralFila => ({
   descripcion: r.descripcion as string, categoria: r.categoria as string, marca: r.marca as string, familia: r.familia as string,
   linea: r.linea as string, unidad: r.unidad as string, deposito: "", lote: "", fechaVencimiento: "", propiedad: "",
   disponible: r.disponible as number, reservado: r.reservado as number, cuarentena: r.cuarentena as number, transito: r.transito as number,
-  fisico: r.fisico as number, virtual: r.virtual as number, terceros: r.terceros as number, nivel: r.nivel as NivelStock,
+  fisico: r.fisico as number, virtual: r.virtual as number, terceros: r.terceros as number,
+  tercerosEstados: { disponible: r.t_disponible as number, reservado: r.t_reservado as number, cuarentena: r.t_cuarentena as number, transito: r.t_transito as number },
+  nivel: r.nivel as NivelStock,
 });
 
 export async function leerStockGeneral(
@@ -174,22 +176,29 @@ export async function leerStockGeneral(
       `WITH ${cte}
        SELECT id, codigo, ci, gtin, descripcion, categoria, marca, familia, linea, unidad, ${N("disponible")} AS disponible, ${N("reservado")} AS reservado,
               ${N("cuarentena")} AS cuarentena, ${N("transito")} AS transito, ${N("fisico")} AS fisico, ${N("virtual")} AS virtual,
-              ${N("terceros")} AS terceros, nivel
+              ${N("terceros")} AS terceros, ${N("t_disponible")} AS t_disponible, ${N("t_reservado")} AS t_reservado,
+              ${N("t_cuarentena")} AS t_cuarentena, ${N("t_transito")} AS t_transito, nivel
          FROM fil ORDER BY codigo, id LIMIT ${p(limite)} OFFSET ${p(desplazamiento)}`,
       params,
     );
     filas = r.rows.map(filaDeProducto);
   } else {
     const loteDet = loteN ? ` AND s.lote_id IN (SELECT id FROM stock_lotes WHERE empresa_id = $1 AND codigo_lote ILIKE ${loteN})` : "";
+    // Una fila por producto × depósito × lote. Las columnas de cantidad son SIEMPRE del stock PROPIO (igual que en la vista
+    // por producto); el stock de terceros va en sus propias columnas. Así cada columna suma y concilia con el agregado.
     const det = `det AS (
-        SELECT s.producto_id, s.deposito_id, s.lote_id, s.propiedad,
-               coalesce(sum(s.cantidad) FILTER (WHERE s.estado_stock = 'DISPONIBLE'), 0) AS disponible,
-               coalesce(sum(s.cantidad) FILTER (WHERE s.estado_stock = 'RESERVADO'), 0) AS reservado,
-               coalesce(sum(s.cantidad) FILTER (WHERE s.estado_stock = 'CUARENTENA'), 0) AS cuarentena,
-               coalesce(sum(s.cantidad) FILTER (WHERE s.estado_stock = 'TRANSITO'), 0) AS transito
+        SELECT s.producto_id, s.deposito_id, s.lote_id,
+               coalesce(sum(s.cantidad) FILTER (WHERE s.propiedad = 'PROPIO' AND s.estado_stock = 'DISPONIBLE'), 0) AS disponible,
+               coalesce(sum(s.cantidad) FILTER (WHERE s.propiedad = 'PROPIO' AND s.estado_stock = 'RESERVADO'), 0) AS reservado,
+               coalesce(sum(s.cantidad) FILTER (WHERE s.propiedad = 'PROPIO' AND s.estado_stock = 'CUARENTENA'), 0) AS cuarentena,
+               coalesce(sum(s.cantidad) FILTER (WHERE s.propiedad = 'PROPIO' AND s.estado_stock = 'TRANSITO'), 0) AS transito,
+               coalesce(sum(s.cantidad) FILTER (WHERE s.propiedad = 'TERCERO' AND s.estado_stock = 'DISPONIBLE'), 0) AS t_disponible,
+               coalesce(sum(s.cantidad) FILTER (WHERE s.propiedad = 'TERCERO' AND s.estado_stock = 'RESERVADO'), 0) AS t_reservado,
+               coalesce(sum(s.cantidad) FILTER (WHERE s.propiedad = 'TERCERO' AND s.estado_stock = 'CUARENTENA'), 0) AS t_cuarentena,
+               coalesce(sum(s.cantidad) FILTER (WHERE s.propiedad = 'TERCERO' AND s.estado_stock = 'TRANSITO'), 0) AS t_transito
           FROM stock_saldos s
          WHERE s.empresa_id = $1 AND s.deposito_id = ANY($2::uuid[]) AND s.producto_id IN (SELECT id FROM fil)${loteDet}
-         GROUP BY s.producto_id, s.deposito_id, s.lote_id, s.propiedad
+         GROUP BY s.producto_id, s.deposito_id, s.lote_id
         HAVING sum(s.cantidad) > 0
       )`;
     const base = `WITH ${cte}, ${det}`;
@@ -198,18 +207,21 @@ export async function leerStockGeneral(
       `${base}
        SELECT f.id, f.codigo, f.ci, f.gtin, f.descripcion, f.categoria, f.marca, f.familia, f.linea, f.unidad, f.nivel,
               d.nombre AS deposito, coalesce(l.codigo_lote, '') AS lote, coalesce(to_char(l.fecha_vencimiento, 'YYYY-MM-DD'), '') AS venc,
-              det.propiedad, ${N("det.disponible")} AS disponible, ${N("det.reservado")} AS reservado, ${N("det.cuarentena")} AS cuarentena,
+              ${N("det.disponible")} AS disponible, ${N("det.reservado")} AS reservado, ${N("det.cuarentena")} AS cuarentena,
               ${N("det.transito")} AS transito, ${N("det.disponible + det.reservado + det.cuarentena")} AS fisico,
-              ${N("det.disponible + det.reservado + det.cuarentena + det.transito")} AS virtual
+              ${N("det.disponible + det.reservado + det.cuarentena + det.transito")} AS virtual,
+              ${N("det.t_disponible + det.t_reservado + det.t_cuarentena + det.t_transito")} AS terceros,
+              ${N("det.t_disponible")} AS t_disponible, ${N("det.t_reservado")} AS t_reservado, ${N("det.t_cuarentena")} AS t_cuarentena, ${N("det.t_transito")} AS t_transito,
+              ((det.disponible + det.reservado + det.cuarentena + det.transito) > 0) AS tiene_propio
          FROM det JOIN fil f ON f.id = det.producto_id
          JOIN depositos d ON d.empresa_id = $1 AND d.id = det.deposito_id
          LEFT JOIN stock_lotes l ON l.empresa_id = $1 AND l.id = det.lote_id
-        ORDER BY f.codigo, f.id, d.nombre, lote, det.propiedad LIMIT ${p(limite)} OFFSET ${p(desplazamiento)}`,
+        ORDER BY f.codigo, f.id, d.nombre, lote LIMIT ${p(limite)} OFFSET ${p(desplazamiento)}`,
       params,
     );
     filas = r.rows.map((x) => ({
       ...filaDeProducto(x), deposito: x.deposito as string, lote: x.lote as string, fechaVencimiento: x.venc as string,
-      propiedad: x.propiedad as "PROPIO" | "TERCERO", terceros: 0,
+      propiedad: x.tiene_propio ? ((x.terceros as number) > 0 ? "AMBOS" : "PROPIO") : "TERCERO",
     }));
   }
   if (todas && filas.length > MAX_FILAS_EXPORTACION) return { error: `La exportación supera ${MAX_FILAS_EXPORTACION} filas; reduzca los filtros.`, status: 413 };
