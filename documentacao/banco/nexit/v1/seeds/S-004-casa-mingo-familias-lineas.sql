@@ -3,7 +3,7 @@
 -- Origen: listas que estaban fijas en el formulario de Productos (retiradas del código en el commit 23fd404 al conectarlo al banco).
 -- Requiere confirmación del responsable de que son el catálogo real de la empresa cliente. Sin códigos (se pueden asignar luego).
 -- Uso (solo en un banco autorizado, después de NEX-017):
---   psql -v empresa_codigo=casa-mingo -f S-004-casa-mingo-familias-lineas.sql
+--   psql -v empresa_codigo=casa_mingo -f S-004-casa_mingo-familias-lineas.sql
 -- Idempotente (ON CONFLICT DO NOTHING). Aborta si la empresa no existe o es DEMO. No toca productos existentes.
 -- =====================================================================
 \set ON_ERROR_STOP on
