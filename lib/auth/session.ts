@@ -65,6 +65,20 @@ function parseSessionToken(value?: string) {
   return { id, secret };
 }
 
+/**
+ * Credencial de la sesión autenticada (id + secreto del token de la cookie), para funciones PostgreSQL que
+ * verifican la identidad por sí mismas (p. ej. NEX-020). Devuelve null sin cookie o en modo demo.
+ */
+export async function getSessionCredentials() {
+  if (isDemoMode()) {
+    return null;
+  }
+
+  const cookieStore = await cookies();
+
+  return parseSessionToken(cookieStore.get(COOKIE_NAME)?.value);
+}
+
 function createDemoSession(): AuthSession {
   return {
     id: "demo-session",

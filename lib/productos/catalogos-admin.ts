@@ -39,6 +39,11 @@ function leer(tipo: TipoCatalogo, d: Record<string, unknown>) {
   return { nombre, codigo, descripcion, activo: d.activo as boolean | undefined };
 }
 
+async function credencial() {
+  const { getSessionCredentials } = await import("@/lib/auth/session");
+  return getSessionCredentials();
+}
+
 async function sesion() {
   const { getCurrentSession } = await import("@/lib/auth/session");
   return getCurrentSession();
@@ -149,6 +154,13 @@ async function familiaDeLaEmpresa(c: Cliente, empresaId: string, familiaId: unkn
   return id;
 }
 
+/** Categorías/Marcas: la función de BD verifica la sesión con su credencial; sin ella no se escribe. */
+async function exigirCredencial(tipo: TipoCatalogo) {
+  const cred = await credencial();
+  if (!cred && (tipo === "categorias" || tipo === "marcas")) throw new ErrorCatalogo("Sesión no válida.", 401);
+  return cred ?? { id: "", secret: "" };
+}
+
 export async function crearCatalogo(tipo: TipoCatalogo, request: Request) {
   let cuerpo: Record<string, unknown>;
   try {
@@ -162,11 +174,12 @@ export async function crearCatalogo(tipo: TipoCatalogo, request: Request) {
   try {
     const d = leer(tipo, cuerpo);
     const t = CFG[tipo];
+    const cred = await exigirCredencial(tipo);
     const fila = await enTransaccion(b.db, async (c) => {
       const familiaId = tipo === "lineas" ? await familiaDeLaEmpresa(c, empresaId, cuerpo.familiaId, true) : null;
       await verificarDuplicados(c, tipo, empresaId, d, familiaId, null);
       if (tipo === "categorias" || tipo === "marcas") {
-        const g = await c.query(`SELECT catalogo_producto_guardar($1, $2, $3, NULL, $4, $5, $6) AS id`, [empresaId, b.session.user.id, MOTOR[tipo], d.codigo, d.nombre, d.activo ?? true]);
+        const g = await c.query(`SELECT catalogo_producto_guardar($1, $2, $3, NULL, $4, $5, $6) AS id`, [cred.id, cred.secret, MOTOR[tipo], d.codigo, d.nombre, d.activo ?? true]);
         return (await c.query(`SELECT ${proyectar(tipo)} FROM ${t.tabla} t WHERE t.id = $1 AND t.empresa_id = $2`, [g.rows[0].id, empresaId])).rows[0];
       }
       const cols = ["empresa_id", "codigo", "nombre", ...(t.descripcion ? ["descripcion"] : []), ...(tipo === "lineas" ? ["familia_id"] : []), "activo"];
@@ -195,6 +208,7 @@ export async function editarCatalogo(tipo: TipoCatalogo, request: Request, id: s
   try {
     const d = leer(tipo, cuerpo);
     const t = CFG[tipo];
+    const cred = await exigirCredencial(tipo);
     const fila = await enTransaccion(b.db, async (c) => {
       // Categorías/Marcas: el rol no tiene UPDATE, así que no puede usar FOR UPDATE; la función bloquea la fila al actualizarla.
       const bloqueo = tipo === "categorias" || tipo === "marcas" ? "" : " FOR UPDATE";
@@ -214,7 +228,7 @@ export async function editarCatalogo(tipo: TipoCatalogo, request: Request, id: s
       }
       await verificarDuplicados(c, tipo, empresaId, d, familiaId, id);
       if (tipo === "categorias" || tipo === "marcas") {
-        await c.query(`SELECT catalogo_producto_guardar($1, $2, $3, $4, $5, $6, $7)`, [empresaId, b.session.user.id, MOTOR[tipo], id, d.codigo, d.nombre, activo]);
+        await c.query(`SELECT catalogo_producto_guardar($1, $2, $3, $4, $5, $6, $7)`, [cred.id, cred.secret, MOTOR[tipo], id, d.codigo, d.nombre, activo]);
         return (await c.query(`SELECT ${proyectar(tipo)} FROM ${t.tabla} t WHERE t.id = $1 AND t.empresa_id = $2`, [id, empresaId])).rows[0];
       }
       const sets = ["codigo = $3", "nombre = $4", ...(t.descripcion ? ["descripcion = $5"] : []), ...(tipo === "lineas" ? [`familia_id = $${t.descripcion ? 6 : 5}`] : []), `activo = $${t.descripcion ? (tipo === "lineas" ? 7 : 6) : 5}`];

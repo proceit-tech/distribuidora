@@ -6,8 +6,14 @@
 --   1) Índices únicos por empresa (nombre y código, sin distinguir mayúsculas ni espacios extremos), igual que familias/líneas (NEX-017).
 --      Antes de crearlos se verifica que NO existan duplicados; si existen, la migración aborta con el detalle y no cambia nada.
 --   2) Función SECURITY DEFINER catalogo_producto_guardar(): alta y edición/inactivación de CATEGORIA o MARCA.
---      * Valida usuario + empresa + permiso con usuario_tiene_permiso() (usuario ACTIVO de ESA empresa, perfil con PRODUCTOS.CREAR/EDITAR).
---      * search_path fijo (public, pg_temp); toda sentencia filtra por empresa_id = p_empresa; ningún camino toca otra empresa.
+--      * MODELO DE CONFIANZA: la función NO recibe empresa ni usuario del llamador. Recibe la credencial de la sesión autenticada
+--        (id de sesión + secreto del token de la cookie) y la VERIFICA en sesiones_usuario (bcrypt: token_hash = crypt(secreto, token_hash),
+--        sin revocar, sin expirar, usuario ACTIVO y no bloqueado, empresa ACTIVA). Empresa y usuario se DERIVAN de esa fila.
+--        El secreto (256 bits aleatorios) solo existe en la cookie del usuario; en la BD solo está su hash bcrypt, que el rol de ejecución
+--        puede leer pero no invertir. Conocer el UUID de otro administrador (o de otra empresa) no sirve para representarlo.
+--        No se usa ninguna variable de sesión de PostgreSQL como prueba de identidad.
+--      * Luego valida PRODUCTOS.CREAR / PRODUCTOS.EDITAR con usuario_tiene_permiso() sobre la empresa/usuario derivados.
+--      * search_path fijo (public, pg_temp); toda sentencia filtra por la empresa derivada; ningún camino toca otra empresa.
 --      * Sin DELETE físico (la función no borra; el rol no recibe DELETE).
 --   3) nex_aplicar_grants_runtime() se redefine (idéntica a NEX-017) añadiendo SOLO EXECUTE sobre la nueva función.
 -- Preserva registros y UUID existentes (no modifica filas). NO modifica NEX-001..019. Re-ejecutable por el runner (checksum).
@@ -45,24 +51,38 @@ CREATE UNIQUE INDEX marcas_producto_empresa_nombre_key     ON marcas_producto (e
 CREATE UNIQUE INDEX marcas_producto_empresa_codigo_key     ON marcas_producto (empresa_id, lower(btrim(codigo))) WHERE codigo IS NOT NULL AND btrim(codigo) <> '';
 
 -- 3) Escritura controlada. p_catalogo: 'CATEGORIA' | 'MARCA'. p_id NULL => alta (PRODUCTOS.CREAR); p_id => edición/(in)activación (PRODUCTOS.EDITAR).
---    p_activo NULL => en la edición conserva el estado actual; en el alta equivale a true. Devuelve el id del registro.
---    Errores: 42501 sin permiso/usuario ajeno; P0001 datos inválidos; P0002 registro inexistente (o de otra empresa); 23505 duplicado (índices).
+--    p_sesion_id / p_secreto: credencial de la sesión autenticada (ver arriba). p_activo NULL => en la edición conserva el estado; en el alta = true.
+--    Devuelve el id del registro. Errores: 42501 sesión inválida o sin permiso; P0001 datos inválidos; P0002 registro inexistente (o de otra empresa);
+--    23505 duplicado (índices únicos).
 CREATE OR REPLACE FUNCTION catalogo_producto_guardar(
-  p_empresa uuid, p_usuario uuid, p_catalogo text, p_id uuid, p_codigo text, p_nombre text, p_activo boolean DEFAULT NULL)
+  p_sesion_id uuid, p_secreto text, p_catalogo text, p_id uuid, p_codigo text, p_nombre text, p_activo boolean DEFAULT NULL)
 RETURNS uuid
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
 DECLARE
-  v_nombre text := btrim(p_nombre);
-  v_codigo text := NULLIF(btrim(p_codigo), '');
-  v_id     uuid;
+  v_empresa uuid;
+  v_usuario uuid;
+  v_nombre  text := btrim(p_nombre);
+  v_codigo  text := NULLIF(btrim(p_codigo), '');
+  v_id      uuid;
 BEGIN
-  IF p_empresa IS NULL OR p_usuario IS NULL THEN
-    RAISE EXCEPTION 'empresa y usuario son obligatorios' USING ERRCODE = '42501';
+  IF p_sesion_id IS NULL OR p_secreto IS NULL OR p_secreto = '' THEN
+    RAISE EXCEPTION 'sesión no válida' USING ERRCODE = '42501';
+  END IF;
+  -- Identidad autenticada: se deriva de la sesión verificada, nunca de parámetros de empresa/usuario.
+  SELECT s.empresa_id, s.usuario_id INTO v_empresa, v_usuario
+    FROM sesiones_usuario s
+    JOIN usuarios u ON u.empresa_id = s.empresa_id AND u.id = s.usuario_id AND u.estado = 'ACTIVO'
+                   AND (u.bloqueado_hasta IS NULL OR u.bloqueado_hasta <= now())
+    JOIN empresas e ON e.id = s.empresa_id AND e.estado = 'ACTIVA'
+   WHERE s.id = p_sesion_id AND s.revocada_at IS NULL AND s.expira_at > now()
+     AND s.token_hash = crypt(p_secreto, s.token_hash);
+  IF v_empresa IS NULL THEN
+    RAISE EXCEPTION 'sesión no válida' USING ERRCODE = '42501';
   END IF;
   IF p_catalogo IS NULL OR p_catalogo NOT IN ('CATEGORIA', 'MARCA') THEN
     RAISE EXCEPTION 'catálogo inválido (%)', p_catalogo USING ERRCODE = 'P0001';
   END IF;
-  IF NOT usuario_tiene_permiso(p_empresa, p_usuario, 'PRODUCTOS', CASE WHEN p_id IS NULL THEN 'CREAR' ELSE 'EDITAR' END) THEN
+  IF NOT usuario_tiene_permiso(v_empresa, v_usuario, 'PRODUCTOS', CASE WHEN p_id IS NULL THEN 'CREAR' ELSE 'EDITAR' END) THEN
     RAISE EXCEPTION 'el usuario no tiene permiso PRODUCTOS.% en esta empresa', CASE WHEN p_id IS NULL THEN 'CREAR' ELSE 'EDITAR' END USING ERRCODE = '42501';
   END IF;
   IF v_nombre IS NULL OR v_nombre = '' OR char_length(v_nombre) > 120 THEN
@@ -74,17 +94,17 @@ BEGIN
 
   IF p_catalogo = 'CATEGORIA' THEN
     IF p_id IS NULL THEN
-      INSERT INTO categorias_producto (empresa_id, codigo, nombre, activo) VALUES (p_empresa, v_codigo, v_nombre, COALESCE(p_activo, true)) RETURNING id INTO v_id;
+      INSERT INTO categorias_producto (empresa_id, codigo, nombre, activo) VALUES (v_empresa, v_codigo, v_nombre, COALESCE(p_activo, true)) RETURNING id INTO v_id;
     ELSE
       UPDATE categorias_producto SET codigo = v_codigo, nombre = v_nombre, activo = COALESCE(p_activo, activo)
-       WHERE id = p_id AND empresa_id = p_empresa RETURNING id INTO v_id;
+       WHERE id = p_id AND empresa_id = v_empresa RETURNING id INTO v_id;
     END IF;
   ELSE
     IF p_id IS NULL THEN
-      INSERT INTO marcas_producto (empresa_id, codigo, nombre, activo) VALUES (p_empresa, v_codigo, v_nombre, COALESCE(p_activo, true)) RETURNING id INTO v_id;
+      INSERT INTO marcas_producto (empresa_id, codigo, nombre, activo) VALUES (v_empresa, v_codigo, v_nombre, COALESCE(p_activo, true)) RETURNING id INTO v_id;
     ELSE
       UPDATE marcas_producto SET codigo = v_codigo, nombre = v_nombre, activo = COALESCE(p_activo, activo)
-       WHERE id = p_id AND empresa_id = p_empresa RETURNING id INTO v_id;
+       WHERE id = p_id AND empresa_id = v_empresa RETURNING id INTO v_id;
     END IF;
   END IF;
   IF v_id IS NULL THEN
