@@ -15,6 +15,8 @@ Este protocolo vincula **Claude Code e ChatGPT**. No início **de toda solicita�
 
 **Estado confirmado até esta atualização:** NEX-001 a NEX-020 aplicadas no banco real; NEX-021 ainda não aplicada. O trabalho pendente de países/bairros está em V1. Respeitar a branch `feature/NEXIT-2026-001-banco-demo`. Esta informação é uma fotografia; conferir `PROGRESSO-NEXIT-V1.md` e novos registros de execução para atualizações futuras.
 
+**Decisão operacional — clone local e sincronização por Git:** o GitHub continua como única fonte oficial. Claude Code trabalha no clone local `C:\projetos\PROCEIT\distribuidora` (branch `feature/NEXIT-2026-001-banco-demo`), sem depender do GitHub MCP enquanto o Git pelo terminal funcionar. Antes de cada tarefa: `git status`, confirmar branch, `git fetch` e `git merge --ff-only`; nunca descartar modificações locais nem sobrescrever arquivos sem aprovação (conflito ⇒ interromper e informar). Ao terminar: testes locais pertinentes, commit e push, informar o SHA e parar para revisão do ChatGPT. Sem acesso à VM e sem migrations/SQL/deploy no banco real; o responsável não transfere arquivos manualmente.
+
 ## Estrutura obrigatória
 - `documentacao/definicoes/`: requisitos e regras de negócio aprovadas para implementação.
 - `documentacao/banco/`: scripts de banco de dados vinculados aos requisitos.
