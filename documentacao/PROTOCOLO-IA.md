@@ -17,6 +17,8 @@ Este protocolo vincula **Claude Code e ChatGPT**. No início **de toda solicita�
 
 **Decisão operacional — clone local e sincronização por Git:** o GitHub continua como única fonte oficial. Claude Code trabalha no clone local `C:\projetos\PROCEIT\distribuidora` (branch `feature/NEXIT-2026-001-banco-demo`), sem depender do GitHub MCP enquanto o Git pelo terminal funcionar. Antes de cada tarefa: `git status`, confirmar branch, `git fetch` e `git merge --ff-only`; nunca descartar modificações locais nem sobrescrever arquivos sem aprovação (conflito ⇒ interromper e informar). Ao terminar: testes locais pertinentes, commit e push, informar o SHA e parar para revisão do ChatGPT. Sem acesso à VM e sem migrations/SQL/deploy no banco real; o responsável não transfere arquivos manualmente.
 
+**Relatório econômico obrigatório:** na resposta ao responsável, informar apenas resultado/estado, testes em números, bloqueios reais e SHA do commit. NÃO colar SQL, comandos SELECT, trechos de código, listas de arquivos alterados, diffs ou repetir regras já registradas no Git. Detalhes técnicos ficam nos próprios arquivos versionados e no diff/commit; documentar apenas decisões, estado, testes e informações que não estejam recuperáveis do código. Fornecer comandos ou caminhos somente quando solicitados expressamente ou quando forem indispensáveis para uma ação imediata do responsável. Evitar narrar microetapas ou operações de ferramenta.
+
 ## Estrutura obrigatória
 - `documentacao/definicoes/`: requisitos e regras de negócio aprovadas para implementação.
 - `documentacao/banco/`: scripts de banco de dados vinculados aos requisitos.
