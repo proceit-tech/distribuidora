@@ -26,6 +26,8 @@ export type TablaReporte = {
   /** Columna del PDF donde se escribe la etiqueta de los totales (una columna ancha, para que no se recorte). */
   colEtiquetaPdf: number;
   notas: string[];
+  /** El PDF continúa en varias líneas los textos largos de las columnas (en vez de recortarlos). */
+  multilinea?: boolean;
 };
 
 const textoCelda = (c: ColRep, v: Celda): string => {
@@ -88,5 +90,6 @@ export function generarPdfTabla(t: TablaReporte): Buffer {
     totales: filasTot[0],
     totalesExtra: filasTot.slice(1),
     notas: t.notas,
+    multilinea: t.multilinea,
   });
 }

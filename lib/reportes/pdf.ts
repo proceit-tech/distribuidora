@@ -46,7 +46,26 @@ export type TablaPdf = {
   totales?: string[]; // misma cantidad de columnas que `columnas`
   totalesExtra?: string[][];
   notas: string[];
+  /** Los textos que no caben en la columna continúan en una segunda y tercera línea (en vez de recortarse con "…"). */
+  multilinea?: boolean;
 };
+
+/** Parte un texto en hasta `max` líneas que caben en `ancho`; si aún sobra texto, la última línea termina en "…". */
+export function partirTexto(t: string, ancho: number, size: number, max: number, negrita = false): string[] {
+  const out: string[] = [];
+  let resto = t.trim();
+  while (resto.length && out.length < max) {
+    if (out.length === max - 1) { out.push(recortar(resto, ancho, size, negrita)); break; }
+    if (anchoTexto(resto, size, negrita) <= ancho) { out.push(resto); break; }
+    let corte = resto.length;
+    while (corte > 1 && anchoTexto(resto.slice(0, corte), size, negrita) > ancho) corte--;
+    const sp = resto.lastIndexOf(" ", corte);
+    if (sp > 0 && corte < resto.length) corte = sp;
+    out.push(resto.slice(0, corte).trimEnd());
+    resto = resto.slice(corte).trimStart();
+  }
+  return out.length ? out : [""];
+}
 
 export function generarPdf(t: TablaPdf): Buffer {
   const PW = 842, PH = 595, M = 28, RH = 11.5;
@@ -58,7 +77,7 @@ export function generarPdf(t: TablaPdf): Buffer {
   let FS = 5;
   let anchos = t.columnas.map((c) => (c.peso / pesoTotal) * anchoUtil);
   buscar: for (let fs = 6.2; fs >= 5; fs -= 0.2) {
-    for (const tope of [200, 140, 100, 80, 65, 52]) {
+    for (const tope of t.multilinea ? [200, 140, 100, 80, 65, 52, 44] : [200, 140, 100, 80, 65, 52]) {
       const nat = t.columnas.map((c, i) => {
         let m = anchoTexto(c.titulo, fs, true);
         for (const f of t.filas) m = Math.max(m, anchoTexto(f[i] ?? "", fs));
@@ -104,8 +123,10 @@ export function generarPdf(t: TablaPdf): Buffer {
     y -= 26;
     if (primera) {
       for (const l of t.lineas) {
-        texto(M, y, recortar(l, anchoUtil, 7.5), 7.5);
-        y -= 10;
+        for (const parte of partirTexto(l, anchoUtil, 7.5, 3)) {
+          texto(M, y, parte, 7.5);
+          y -= 10;
+        }
       }
       y -= 4;
     } else y -= 2;
@@ -115,14 +136,20 @@ export function generarPdf(t: TablaPdf): Buffer {
 
   let y = nuevaPagina(true);
   const filaTexto = (cells: string[], negrita: boolean, gris?: number) => {
-    if (gris !== undefined) fondo(M, y - 3, anchoUtil, RH, gris);
+    const partes = cells.map((v, i) =>
+      t.multilinea && !t.columnas[i].derecha ? partirTexto(v, anchos[i] - 4, FS, 3, negrita) : [recortar(v, anchos[i] - 4, FS, negrita)]);
+    const lineas = Math.max(1, ...partes.map((p) => p.length));
+    const h = lineas === 1 ? RH : lineas * (FS + 1.8) + 4;
+    if (lineas > 1 && y - (h - RH) < M + 28) y = nuevaPagina(false);
+    const fondoY = y - 3 - (h - RH);
+    if (gris !== undefined) fondo(M, fondoY, anchoUtil, h, gris);
     let x = M;
-    cells.forEach((v, i) => {
-      texto(x + 2, y, recortar(v, anchos[i] - 4, FS, negrita), FS, negrita, t.columnas[i].derecha ? anchos[i] - 4 : 0);
+    partes.forEach((p, i) => {
+      p.forEach((l, k) => texto(x + 2, y - k * (FS + 1.8), l, FS, negrita, t.columnas[i].derecha ? anchos[i] - 4 : 0));
       x += anchos[i];
     });
-    linea(M, y - 3, M + anchoUtil, 0.88);
-    y -= RH;
+    linea(M, fondoY, M + anchoUtil, 0.88);
+    y -= h;
   };
 
   t.filas.forEach((f) => {

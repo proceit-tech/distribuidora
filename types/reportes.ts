@@ -140,3 +140,126 @@ export type ValorizacionRespuesta = {
   };
   cobertura: string[];
 };
+
+// ---- Reporte 3: Kardex de movimientos ----
+export type VistaKardex = "DETALLE" | "RESUMEN";
+export type KardexFiltros = {
+  vista: VistaKardex;
+  q: string;
+  depositoId: string;
+  tipo: string;
+  usuarioId: string;
+  documento: string;
+  /** Estado del movimiento (REGISTRADO / ANULADO). */
+  estado: "" | "REGISTRADO" | "ANULADO";
+  /** Solo filas que cambian este estado de stock. */
+  estadoStock: "" | "DISPONIBLE" | "RESERVADO" | "CUARENTENA";
+  lote: string;
+  /** Período por FECHA DE REGISTRO del movimiento (momento en que cambió el saldo), YYYY-MM-DD. */
+  desde: string;
+  hasta: string;
+};
+
+export type KardexSaldos = { disponible: number; reservado: number; cuarentena: number; fisico: number };
+
+export type KardexFila = {
+  clave: string;
+  numero: string;
+  fechaRegistro: string;
+  horaRegistro: string;
+  fechaMovimiento: string;
+  /** La fecha del movimiento es distinta de la fecha de registro (movimiento retroactivo). */
+  retroactivo: boolean;
+  tipo: string;
+  origen: string;
+  estado: string;
+  documento: string;
+  motivo: string;
+  observacion: string;
+  usuario: string;
+  productoCodigo: string;
+  productoDescripcion: string;
+  deposito: string;
+  /** Otro depósito de la transferencia ("" si no aplica). */
+  contraparte: string;
+  lote: string;
+  propiedad: string;
+  /** ENTRADA/SALIDA = cambio de cantidad física; ESTADO = reserva/cuarentena (el físico no cambia). */
+  efecto: "ENTRADA" | "SALIDA" | "ESTADO";
+  entrada: number;
+  salida: number;
+  dDisponible: number;
+  dReservado: number;
+  dCuarentena: number;
+  saldoDisponible: number;
+  saldoReservado: number;
+  saldoCuarentena: number;
+  saldoFisico: number;
+  costoUnitario: string | null;
+  costoTotal: string | null;
+  moneda: string;
+  /** Número del movimiento vinculado: el que anula a este, o el anulado por este. */
+  vinculado: string;
+  vinculoTipo: "" | "ANULADO_POR" | "ANULA_A";
+};
+
+export type KardexResumenFila = {
+  clave: string;
+  productoCodigo: string;
+  productoDescripcion: string;
+  deposito: string;
+  lote: string;
+  propiedad: string;
+  saldoInicial: number;
+  entradas: number;
+  salidas: number;
+  transfEntradas: number;
+  transfSalidas: number;
+  saldoFinal: number;
+  finalDisponible: number;
+  finalReservado: number;
+  finalCuarentena: number;
+};
+
+export type KardexTotales = {
+  filas: number;
+  saldoInicial: KardexSaldos;
+  saldoFinal: KardexSaldos;
+  /** Entradas/salidas físicas SIN transferencias (incluyen reversiones por anulación). */
+  entradas: number;
+  salidas: number;
+  /** Las dos puntas de las transferencias, aparte: en el consolidado de la empresa se compensan. */
+  transfEntradas: number;
+  transfSalidas: number;
+  cambiosEstado: number;
+  anulaciones: number;
+  /** saldoInicial.fisico + entradas − salidas + transfEntradas − transfSalidas === saldoFinal.fisico (solo sin filtros de fila). */
+  cuadra: boolean;
+  /** Hay filtros de tipo/usuario/documento/estado: los saldos son los reales del libro, los totales solo de las filas filtradas. */
+  filtrosDeFila: boolean;
+};
+
+export type KardexConciliacion = {
+  /** Combinaciones producto × depósito × lote × propiedad comparadas contra stock_saldos (hoy). */
+  combinaciones: number;
+  divergentes: number;
+  conciliado: boolean;
+};
+
+export type KardexRespuesta = {
+  empresa: { nombre: string; moneda: string };
+  generado: string;
+  sello: string;
+  filtros: KardexFiltros;
+  pagina: { numero: number; tamano: number; totalFilas: number };
+  filas: KardexFila[];
+  resumen: KardexResumenFila[];
+  totales: KardexTotales;
+  conciliacion: KardexConciliacion;
+  catalogos: {
+    depositos: { id: string; nombre: string }[];
+    usuarios: { id: string; nombre: string }[];
+    tipos: { id: string; nombre: string }[];
+  };
+  cobertura: string[];
+};

@@ -261,6 +261,13 @@ export const NAVIGATION_GROUPS: ShellNavigationGroup[] = [
         icon: "reports",
         permission: "REPORTES.VER",
       },
+      {
+        id: "report-kardex",
+        label: "Kardex de movimientos",
+        href: "/reportes/kardex",
+        icon: "reports",
+        permission: "REPORTES.VER",
+      },
     ],
   },
   {
