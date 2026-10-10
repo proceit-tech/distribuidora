@@ -1,8 +1,8 @@
 -- =====================================================================
--- NEX-021 — PROPUESTA (NO aplicada; fuera de migraciones/ para que aplicar-migraciones.sh no la tome)
--- Ubicación geográfica OPCIONAL y jerárquica (Departamento → Distrito → Ciudad) para Paraguay
+-- NEX-021 — Ubicación geográfica OPCIONAL y jerárquica (Departamento → Distrito → Ciudad) para Paraguay
 -- en direcciones de Clientes y de Proveedores.
--- Requiere autorización expresa antes de aplicarse en la VM. Para activarla: moverla a migraciones/NEX-021-*.sql.
+-- NO ejecutar en la VM ni en el banco 'nexit' sin autorización expresa del responsable.
+-- Aplicar con documentacao/banco/nexit/v1/scripts/aplicar-migraciones.sh (transacción única + checksum en schema_migrations).
 --
 -- ALCANCE: Barrio está FUERA del alcance de la V1 (decisión del responsable): esta migración NO crea
 -- tabla de barrios ni columnas de barrio. Solo hace opcional la ubicación paraguaya.
