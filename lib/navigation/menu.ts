@@ -254,6 +254,13 @@ export const NAVIGATION_GROUPS: ShellNavigationGroup[] = [
         icon: "reports",
         permission: "REPORTES.VER",
       },
+      {
+        id: "report-valorizacion",
+        label: "Valorización de inventario",
+        href: "/reportes/valorizacion",
+        icon: "reports",
+        permission: "REPORTES.VER",
+      },
     ],
   },
   {

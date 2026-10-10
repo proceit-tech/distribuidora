@@ -1,11 +1,8 @@
-import { generarPdf, type ColumnaPdf } from "@/lib/reportes/pdf";
+import type { Celda, TablaReporte } from "@/lib/reportes/export";
 import { fmtNum, textoTercerosEstados, TEXTO_PROPIEDAD } from "@/lib/reportes/formato";
-import { generarXlsxSimple, type CeldaXlsx } from "@/lib/reportes/xlsx";
 import type { StockGeneralFiltros, StockGeneralFila, StockGeneralRespuesta } from "@/types/reportes";
 
 // Exportación de Stock general: usa exactamente las mismas filas, totales y filtros que la pantalla.
-
-export { fmtNum };
 
 export const NIVEL: Record<string, string> = { SIN_STOCK: "Sin stock", BAJO: "Bajo", NORMAL: "Normal", SOBRESTOCK: "Sobrestock" };
 
@@ -67,57 +64,25 @@ export function filasTotales(r: StockGeneralRespuesta): { etiqueta: string; valo
   }];
 }
 
-export function nombreArchivo(r: StockGeneralRespuesta, ext: string) {
-  const slug = r.empresa.nombre.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^A-Za-z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 30);
-  return `Stock_General_${r.filtros.vista === "PRODUCTO" ? "Producto" : "Detalle"}_${slug}_${r.sello}.${ext}`;
-}
-
-const filaTotal = (cols: Col[], etiqueta: string, valores: Record<string, number>, texto: string) =>
+const filaTotal = (cols: Col[], etiqueta: string, valores: Record<string, number>, texto: string): Celda[] =>
   cols.map((c, i) => (i === 0 ? etiqueta : c.cant ? valores[c.cant] : c.titulo === "Terceros por estado" ? texto : ""));
 
-export function generarXlsx(r: StockGeneralRespuesta): Buffer {
+/** Mismas filas, filtros y totales que la pantalla; la escritura de Excel/PDF es común a todos los reportes (lib/reportes/export.ts). */
+export function tablaStockGeneral(r: StockGeneralRespuesta): TablaReporte {
   const cols = columnas(r.filtros.vista);
-  const cabecera: CeldaXlsx[][] = [
-    ["Reporte: Stock general"], [`Empresa: ${r.empresa.nombre}`], [`Generado: ${r.generado} (hora de Asunción)`],
-    ...describirFiltros(r).map((l) => [l]), [],
-  ];
-  const totales = filasTotales(r).map((t) => filaTotal(cols, t.etiqueta, t.valores, t.texto));
-  const filas: CeldaXlsx[][] = [
-    ...cabecera,
-    cols.map((c) => c.titulo),
-    ...r.filas.map((f) => cols.map((c) => c.valor(f))),
-    ...totales,
-    [], ...r.cobertura.map((n) => [n]),
-  ];
-  const iEnc = cabecera.length;
-  const iTot = iEnc + 1 + r.filas.length;
-  return generarXlsxSimple({
-    hoja: "Stock general",
-    filas,
-    anchos: cols.map((c) => Math.max(10, Math.round(c.peso * 2.2))),
-    negritaFilas: [0, iEnc, ...totales.map((_, i) => iTot + i)],
-    inmovilizarHasta: iEnc + 1,
-  });
-}
-
-export function generarPdfStock(r: StockGeneralRespuesta): Buffer {
-  const cols = columnas(r.filtros.vista);
-  const columnasPdf: ColumnaPdf[] = cols.map((c) => ({ titulo: c.titulo, peso: c.peso, derecha: !!c.cant }));
-  const txt = (c: Col, v: string | number) => (typeof v === "number" ? fmtNum(v) : v);
-  // En el PDF la etiqueta del total va en la columna Descripción (más ancha) para que no se recorte.
-  const totales = filasTotales(r).map((t) => {
-    const fila = filaTotal(cols, "", t.valores, t.texto).map((v, i) => txt(cols[i], v));
-    fila[2] = t.etiqueta;
-    return fila;
-  });
-  const filtros = describirFiltros(r).join("   ·   ");
-  return generarPdf({
+  return {
     titulo: "Stock general",
-    lineas: [`Empresa: ${r.empresa.nombre}   ·   Generado: ${r.generado} (hora de Asunción)   ·   Filas: ${fmtNum(r.pagina.totalFilas)}`, filtros],
-    columnas: columnasPdf,
-    filas: r.filas.map((f) => cols.map((c) => txt(c, c.valor(f)))),
-    totales: totales[0],
-    totalesExtra: totales.slice(1),
+    hoja: "Stock general",
+    nombreBase: `Stock_General_${r.filtros.vista === "PRODUCTO" ? "Producto" : "Detalle"}`,
+    empresa: r.empresa.nombre,
+    generado: r.generado,
+    sello: r.sello,
+    filtros: describirFiltros(r),
+    totalFilas: r.pagina.totalFilas,
+    columnas: cols.map((c) => ({ titulo: c.titulo, peso: c.peso, tipo: c.cant ? "cantidad" : "texto" })),
+    filas: r.filas.map((f) => cols.map((c) => c.valor(f))),
+    totales: filasTotales(r).map((t) => ({ etiqueta: t.etiqueta, celdas: filaTotal(cols, "", t.valores, t.texto) })),
+    colEtiquetaPdf: 2,
     notas: r.cobertura,
-  });
+  };
 }

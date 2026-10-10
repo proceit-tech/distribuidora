@@ -15,3 +15,16 @@ export function textoTercerosEstados(e: Estados): string {
 }
 
 export const TEXTO_PROPIEDAD: Record<string, string> = { PROPIO: "Propio", TERCERO: "Tercero", AMBOS: "Propio y tercero" };
+
+/**
+ * Importes monetarios: llegan de PostgreSQL como texto `numeric` (sin pasar por float) y se formatean sin perder precisión.
+ * Quita ceros finales (hasta 4 decimales) y usa punto de miles y coma decimal (es-PY). Sin dato => "—".
+ */
+export function fmtDinero(v: string | null | undefined): string {
+  if (v === null || v === undefined || v === "") return "—";
+  const m = /^(-?)(\d+)(?:\.(\d+))?$/.exec(v);
+  if (!m) return v;
+  const entero = m[2].replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  const dec = (m[3] ?? "").replace(/0+$/, "");
+  return `${m[1]}${entero}${dec ? `,${dec}` : ""}`;
+}

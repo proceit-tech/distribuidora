@@ -4,7 +4,7 @@ import styles from "./page.module.css";
 
 const REPORTES = [
   { href: "/reportes/stock-general", titulo: "Stock general", detalle: "Saldos por producto, depósito y lote: disponible, reservado, cuarentena, tránsito, físico y virtual.", activo: true },
-  { href: "", titulo: "Valorización de inventario", detalle: "Costo promedio real y valor de inventario por producto y depósito.", activo: false },
+  { href: "/reportes/valorizacion", titulo: "Valorización de inventario", detalle: "Costo promedio real y valor de inventario por producto y depósito.", activo: true },
   { href: "", titulo: "Kardex de movimientos", detalle: "Entradas, salidas y saldo acumulado por producto.", activo: false },
   { href: "", titulo: "Stock crítico y reposición", detalle: "Productos sin stock o bajo el mínimo y cantidad sugerida a reponer.", activo: false },
   { href: "", titulo: "Lotes y vencimientos", detalle: "Lotes vencidos, próximos a vencer y vigentes.", activo: false },
