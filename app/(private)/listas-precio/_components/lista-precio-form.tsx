@@ -8,36 +8,29 @@ import {
   useState,
 } from "react";
 
-import {
-  LISTAS_PRECIO_CANALES,
-  LISTAS_PRECIO_GRUPOS_CLIENTE,
-  LISTAS_PRECIO_ZONAS,
-} from "@/lib/mocks/listas-precio";
+import { cargarCatalogosListas } from "@/lib/listas-precio/cliente-api";
 
 import {
-  obtenerClientesParaListaPrecio,
-  obtenerListasBaseDemo,
-  obtenerProductosParaListaPrecio,
-} from "@/lib/mocks/listas-precio-storage";
-
-import {
-  ListaPrecioDemo,
+  CatalogoListasPrecio,
+  ListaPrecioCatalogoOpcion,
+  ListaPrecioDetalle,
+  ListaPrecioEscala,
   ListaPrecioEstado,
   ListaPrecioModo,
   ListaPrecioMoneda,
   ListaPrecioProducto,
   ListaPrecioReglaComercial,
   ListaPrecioTipo,
-  NuevaListaPrecioDemo,
+  NuevaListaPrecio,
 } from "@/types/lista-precio";
 
 import styles from "./lista-precio-form.module.css";
 
 type Props = {
   mode: "create" | "edit";
-  initial?: ListaPrecioDemo;
+  initial?: ListaPrecioDetalle;
   onSave: (
-    data: NuevaListaPrecioDemo,
+    data: NuevaListaPrecio,
   ) => Promise<void> | void;
 };
 
@@ -46,27 +39,7 @@ type TabId =
   | "productos"
   | "reglas";
 
-type ProductoOpcion = {
-  id: string;
-  codigo: string;
-  descripcion: string;
-  unidadMedidaId: string;
-  unidadMedidaNombre: string;
-  costoPromedio: number;
-};
-
-type ClienteOpcion = {
-  id: string;
-  codigo: string;
-  nombre: string;
-};
-
-type ListaBaseOpcion = {
-  id: string;
-  codigo: string;
-  nombre: string;
-  monedaCodigo: ListaPrecioMoneda;
-};
+type ProductoOpcion = CatalogoListasPrecio["productos"][number];
 
 const TABS: Array<{
   id: TabId;
@@ -93,13 +66,14 @@ function uid(prefix: string) {
 }
 
 function initialForm(
-  initial?: ListaPrecioDemo,
-): NuevaListaPrecioDemo {
+  initial?: ListaPrecioDetalle,
+): NuevaListaPrecio {
   if (initial) {
     const {
       id: _id,
       creadoEn: _creadoEn,
       actualizadoEn: _actualizadoEn,
+      esReferencia: _esReferencia,
       ...rest
     } = initial;
 
@@ -241,30 +215,15 @@ export default function ListaPrecioForm({
     useState<TabId>("informacion");
 
   const [form, setForm] =
-    useState<NuevaListaPrecioDemo>(
+    useState<NuevaListaPrecio>(
       () => initialForm(initial),
     );
 
-  const [
-    productosCatalogo,
-    setProductosCatalogo,
-  ] = useState<ProductoOpcion[]>(
-    [],
-  );
+  const [catalogo, setCatalogo] =
+    useState<CatalogoListasPrecio | null>(null);
 
-  const [
-    clientesCatalogo,
-    setClientesCatalogo,
-  ] = useState<ClienteOpcion[]>(
-    [],
-  );
-
-  const [
-    listasBase,
-    setListasBase,
-  ] = useState<ListaBaseOpcion[]>(
-    [],
-  );
+  const productosCatalogo = catalogo?.productos ?? [];
+  const bloqueada = initial?.esReferencia === true;
 
   const [error, setError] =
     useState("");
@@ -273,26 +232,37 @@ export default function ListaPrecioForm({
     useState(false);
 
   useEffect(() => {
-    setProductosCatalogo(
-      obtenerProductosParaListaPrecio(),
-    );
+    let activo = true;
+    cargarCatalogosListas()
+      .then((c) => {
+        if (activo) setCatalogo(c);
+      })
+      .catch((e: unknown) => {
+        if (activo)
+          setError(
+            e instanceof Error
+              ? e.message
+              : "No fue posible cargar los catálogos.",
+          );
+      });
+    return () => {
+      activo = false;
+    };
+  }, []);
 
-    setClientesCatalogo(
-      obtenerClientesParaListaPrecio(),
-    );
-
-    setListasBase(
-      obtenerListasBaseDemo(
-        initial?.id,
-      ),
-    );
-  }, [initial?.id]);
+  const listasBase = (catalogo?.listasBase ?? []).filter(
+    (item) => item.id !== initial?.id,
+  );
+  const grupos = catalogo?.gruposCliente ?? [];
+  const zonas = catalogo?.zonas ?? [];
+  const canales = catalogo?.canales ?? [];
+  const clientesCatalogo = catalogo?.clientes ?? [];
 
   function update<
-    K extends keyof NuevaListaPrecioDemo,
+    K extends keyof NuevaListaPrecio,
   >(
     key: K,
-    value: NuevaListaPrecioDemo[K],
+    value: NuevaListaPrecio[K],
   ) {
     setForm((current) => ({
       ...current,
@@ -356,8 +326,10 @@ export default function ListaPrecioForm({
       costoReferencia:
         producto.costoPromedio,
       precioBase:
+        producto.precioReferencia ??
         producto.costoPromedio,
       precioLista:
+        producto.precioReferencia ??
         producto.costoPromedio,
       margenPct: 0,
       descuentoPct: 0,
@@ -414,8 +386,10 @@ export default function ListaPrecioForm({
               costoReferencia:
                 producto.costoPromedio,
               precioBase:
+                producto.precioReferencia ??
                 producto.costoPromedio,
               precioLista:
+                producto.precioReferencia ??
                 producto.costoPromedio,
               margenPct: 0,
               descuentoPct: 0,
@@ -517,6 +491,56 @@ export default function ListaPrecioForm({
     );
   }
 
+  function cambiarProducto(
+    id: string,
+    parche: Partial<ListaPrecioProducto>,
+  ) {
+    update(
+      "productos",
+      form.productos.map((item) =>
+        item.id === id
+          ? { ...item, ...parche }
+          : item,
+      ),
+    );
+  }
+
+  function cambiarEscala(
+    producto: ListaPrecioProducto,
+    escalaId: string,
+    parche: Partial<ListaPrecioEscala>,
+  ) {
+    cambiarProducto(producto.id, {
+      escalas: producto.escalas.map((e) =>
+        e.id === escalaId ? { ...e, ...parche } : e,
+      ),
+    });
+  }
+
+  function cambiarRegla(
+    id: string,
+    parche: Partial<ListaPrecioReglaComercial>,
+  ) {
+    update(
+      "reglasComerciales",
+      form.reglasComerciales.map((item) =>
+        item.id === id
+          ? { ...item, ...parche }
+          : item,
+      ),
+    );
+  }
+
+  function opcionesReferencia(
+    tipo: ListaPrecioReglaComercial["tipoAplicacion"],
+  ): ListaPrecioCatalogoOpcion[] {
+    if (tipo === "GRUPO_CLIENTE") return grupos;
+    if (tipo === "CLIENTE") return clientesCatalogo;
+    if (tipo === "ZONA") return zonas;
+    if (tipo === "CANAL_VENTA") return canales;
+    return [];
+  }
+
   async function submit(
     event: FormEvent<HTMLFormElement>,
   ) {
@@ -553,11 +577,13 @@ export default function ListaPrecioForm({
         observacion:
           form.observacion.trim(),
       });
-    } catch {
+    } catch (e) {
       setError(
-        mode === "create"
-          ? "No fue posible registrar la lista."
-          : "No fue posible actualizar la lista.",
+        e instanceof Error && e.message
+          ? e.message
+          : mode === "create"
+            ? "No fue posible registrar la lista."
+            : "No fue posible actualizar la lista.",
       );
     } finally {
       setSaving(false);
@@ -572,9 +598,11 @@ export default function ListaPrecioForm({
             <span className={styles.modulePill}>
               LISTAS DE PRECIOS
             </span>
-            <span className={styles.demoPill}>
-              DEMO
-            </span>
+            {bloqueada ? (
+              <span className={styles.demoPill}>
+                REFERENCIA
+              </span>
+            ) : null}
           </div>
 
           <h1>
@@ -643,6 +671,17 @@ export default function ListaPrecioForm({
           </div>
         </div>
 
+        {bloqueada ? (
+          <div className={styles.empty}>
+            <strong>Lista de referencia de la empresa.</strong>
+            <span>
+              Es una lista de venta de precio fijo, sin lista base ni alcance
+              comercial; sus precios son el precio de venta de referencia de
+              Productos.
+            </span>
+          </div>
+        ) : null}
+
         {error ? (
           <div className={styles.error}>
             {error}
@@ -705,6 +744,7 @@ export default function ListaPrecioForm({
 
                 <Field label="Tipo">
                   <select
+                    disabled={bloqueada}
                     value={form.tipo}
                     onChange={(event) =>
                       update(
@@ -725,6 +765,7 @@ export default function ListaPrecioForm({
 
                 <Field label="Moneda">
                   <select
+                    disabled={bloqueada}
                     value={form.monedaCodigo}
                     onChange={(event) =>
                       update(
@@ -734,18 +775,20 @@ export default function ListaPrecioForm({
                       )
                     }
                   >
-                    <option value="PYG">
-                      PYG
-                    </option>
-                    <option value="USD">
-                      USD
-                    </option>
-                    <option value="BRL">
-                      BRL
-                    </option>
-                    <option value="EUR">
-                      EUR
-                    </option>
+                    {(catalogo?.monedas ?? [
+                      {
+                        codigo: form.monedaCodigo,
+                        nombre: form.monedaCodigo,
+                        simbolo: "",
+                      },
+                    ]).map((m) => (
+                      <option
+                        key={m.codigo}
+                        value={m.codigo}
+                      >
+                        {m.codigo}
+                      </option>
+                    ))}
                   </select>
                 </Field>
               </div>
@@ -753,6 +796,7 @@ export default function ListaPrecioForm({
               <div className={styles.gridFour}>
                 <Field label="Estado">
                   <select
+                    disabled={bloqueada}
                     value={form.estado}
                     onChange={(event) =>
                       update(
@@ -776,6 +820,7 @@ export default function ListaPrecioForm({
 
                 <Field label="Modo de precio">
                   <select
+                    disabled={bloqueada}
                     value={form.modoPrecio}
                     onChange={(event) =>
                       update(
@@ -799,6 +844,7 @@ export default function ListaPrecioForm({
 
                 <Field label="Lista base">
                   <select
+                    disabled={bloqueada}
                     value={form.listaBaseId}
                     onChange={(event) => {
                       const id =
@@ -1079,8 +1125,8 @@ export default function ListaPrecioForm({
 
                   {form.productos.map(
                     (producto) => (
+                      <div key={producto.id}>
                       <div
-                        key={producto.id}
                         className={styles.priceLine}
                       >
                         <div className={styles.productName}>
@@ -1228,6 +1274,151 @@ export default function ListaPrecioForm({
                           ×
                         </button>
                       </div>
+
+                      <details>
+                        <summary>
+                          Escalones, descuento y vigencia
+                          {producto.escalas.length > 0
+                            ? ` (${producto.escalas.length} escalones)`
+                            : ""}
+                        </summary>
+
+                        <div className={styles.gridFour}>
+                          <NumberField
+                            label="Descuento %"
+                            value={producto.descuentoPct}
+                            step="0.01"
+                            onChange={(value) =>
+                              cambiarProducto(producto.id, {
+                                descuentoPct: value,
+                              })
+                            }
+                          />
+
+                          <Field label="Vigencia desde">
+                            <input
+                              type="date"
+                              value={producto.vigenteDesde}
+                              onChange={(event) =>
+                                cambiarProducto(producto.id, {
+                                  vigenteDesde:
+                                    event.target.value,
+                                })
+                              }
+                            />
+                          </Field>
+
+                          <Field label="Vigencia hasta">
+                            <input
+                              type="date"
+                              value={producto.vigenteHasta}
+                              onChange={(event) =>
+                                cambiarProducto(producto.id, {
+                                  vigenteHasta:
+                                    event.target.value,
+                                })
+                              }
+                            />
+                          </Field>
+
+                          <Check
+                            label="Precio activo"
+                            checked={producto.activo}
+                            onChange={(value) =>
+                              cambiarProducto(producto.id, {
+                                activo: value,
+                              })
+                            }
+                          />
+                        </div>
+
+                        {producto.escalas.map(
+                          (escala, indice) => (
+                            <div
+                              key={escala.id}
+                              className={styles.gridFour}
+                            >
+                              <NumberField
+                                label={`Escalón ${indice + 1} · desde`}
+                                value={escala.cantidadMinima}
+                                onChange={(value) =>
+                                  cambiarEscala(producto, escala.id, {
+                                    cantidadMinima: value,
+                                  })
+                                }
+                              />
+                              <Field label="Hasta (vacío = sin límite)">
+                                <input
+                                  type="number"
+                                  value={escala.cantidadMaxima ?? ""}
+                                  onChange={(event) =>
+                                    cambiarEscala(producto, escala.id, {
+                                      cantidadMaxima:
+                                        event.target.value === ""
+                                          ? null
+                                          : Number(event.target.value),
+                                    })
+                                  }
+                                />
+                              </Field>
+                              <NumberField
+                                label="Precio"
+                                value={escala.precio}
+                                onChange={(value) =>
+                                  cambiarEscala(producto, escala.id, {
+                                    precio: value,
+                                  })
+                                }
+                              />
+                              <NumberField
+                                label="Descuento %"
+                                value={escala.descuentoPct}
+                                step="0.01"
+                                onChange={(value) =>
+                                  cambiarEscala(producto, escala.id, {
+                                    descuentoPct: value,
+                                  })
+                                }
+                              />
+                              <button
+                                type="button"
+                                className={styles.removeButton}
+                                onClick={() =>
+                                  cambiarProducto(producto.id, {
+                                    escalas: producto.escalas.filter(
+                                      (e) => e.id !== escala.id,
+                                    ),
+                                  })
+                                }
+                              >
+                                ×
+                              </button>
+                            </div>
+                          ),
+                        )}
+
+                        <button
+                          type="button"
+                          className={styles.secondaryAction}
+                          onClick={() =>
+                            cambiarProducto(producto.id, {
+                              escalas: [
+                                ...producto.escalas,
+                                {
+                                  id: uid("escala"),
+                                  cantidadMinima: 1,
+                                  cantidadMaxima: null,
+                                  precio: producto.precioLista,
+                                  descuentoPct: 0,
+                                },
+                              ],
+                            })
+                          }
+                        >
+                          ＋ Agregar escalón
+                        </button>
+                      </details>
+                      </div>
                     ),
                   )}
                 </div>
@@ -1245,13 +1436,14 @@ export default function ListaPrecioForm({
               <div className={styles.gridFour}>
                 <Field label="Grupo de cliente">
                   <select
+                    disabled={bloqueada}
                     value={form.grupoClienteId}
                     onChange={(event) => {
                       const id =
                         event.target.value;
 
                       const selected =
-                        LISTAS_PRECIO_GRUPOS_CLIENTE.find(
+                        grupos.find(
                           (item) =>
                             item.id === id,
                         );
@@ -1271,7 +1463,7 @@ export default function ListaPrecioForm({
                       Todos
                     </option>
 
-                    {LISTAS_PRECIO_GRUPOS_CLIENTE.map(
+                    {grupos.map(
                       (item) => (
                         <option
                           key={item.id}
@@ -1287,6 +1479,7 @@ export default function ListaPrecioForm({
 
                 <Field label="Cliente específico">
                   <select
+                    disabled={bloqueada}
                     value={form.clienteId}
                     onChange={(event) => {
                       const id =
@@ -1334,13 +1527,14 @@ export default function ListaPrecioForm({
 
                 <Field label="Zona">
                   <select
+                    disabled={bloqueada}
                     value={form.zonaId}
                     onChange={(event) => {
                       const id =
                         event.target.value;
 
                       const selected =
-                        LISTAS_PRECIO_ZONAS.find(
+                        zonas.find(
                           (item) =>
                             item.id === id,
                         );
@@ -1360,7 +1554,7 @@ export default function ListaPrecioForm({
                       Todas
                     </option>
 
-                    {LISTAS_PRECIO_ZONAS.map(
+                    {zonas.map(
                       (item) => (
                         <option
                           key={item.id}
@@ -1376,13 +1570,14 @@ export default function ListaPrecioForm({
 
                 <Field label="Canal de venta">
                   <select
+                    disabled={bloqueada}
                     value={form.canalVentaId}
                     onChange={(event) => {
                       const id =
                         event.target.value;
 
                       const selected =
-                        LISTAS_PRECIO_CANALES.find(
+                        canales.find(
                           (item) =>
                             item.id === id,
                         );
@@ -1402,7 +1597,7 @@ export default function ListaPrecioForm({
                       Todos
                     </option>
 
-                    {LISTAS_PRECIO_CANALES.map(
+                    {canales.map(
                       (item) => (
                         <option
                           key={item.id}
@@ -1488,6 +1683,9 @@ export default function ListaPrecioForm({
                                             tipoAplicacion:
                                               event.target
                                                 .value as ListaPrecioReglaComercial["tipoAplicacion"],
+                                            referenciaId: "",
+                                            referenciaCodigo: "",
+                                            referenciaNombre: "",
                                           }
                                         : item,
                                   ),
@@ -1576,6 +1774,77 @@ export default function ListaPrecioForm({
                             }
                           />
                         </div>
+
+                        <div className={styles.gridFour}>
+                          {regla.tipoAplicacion !== "GENERAL" ? (
+                            <Field label="Referencia *">
+                              <select
+                                value={regla.referenciaId}
+                                onChange={(event) => {
+                                  const sel = opcionesReferencia(
+                                    regla.tipoAplicacion,
+                                  ).find((o) => o.id === event.target.value);
+                                  cambiarRegla(regla.id, {
+                                    referenciaId: event.target.value,
+                                    referenciaCodigo: sel?.codigo ?? "",
+                                    referenciaNombre: sel?.nombre ?? "",
+                                  });
+                                }}
+                              >
+                                <option value="">Seleccione</option>
+                                {opcionesReferencia(regla.tipoAplicacion).map(
+                                  (o) => (
+                                    <option key={o.id} value={o.id}>
+                                      {o.codigo} · {o.nombre}
+                                    </option>
+                                  ),
+                                )}
+                              </select>
+                            </Field>
+                          ) : null}
+
+                          <Field label="Vigencia desde">
+                            <input
+                              type="date"
+                              value={regla.vigenteDesde}
+                              onChange={(event) =>
+                                cambiarRegla(regla.id, {
+                                  vigenteDesde: event.target.value,
+                                })
+                              }
+                            />
+                          </Field>
+
+                          <Field label="Vigencia hasta">
+                            <input
+                              type="date"
+                              value={regla.vigenteHasta}
+                              onChange={(event) =>
+                                cambiarRegla(regla.id, {
+                                  vigenteHasta: event.target.value,
+                                })
+                              }
+                            />
+                          </Field>
+
+                          <Check
+                            label="Permite descuento adicional"
+                            checked={regla.permiteDescuentoAdicional}
+                            onChange={(value) =>
+                              cambiarRegla(regla.id, {
+                                permiteDescuentoAdicional: value,
+                              })
+                            }
+                          />
+
+                          <Check
+                            label="Regla activa"
+                            checked={regla.activo}
+                            onChange={(value) =>
+                              cambiarRegla(regla.id, { activo: value })
+                            }
+                          />
+                        </div>
                       </article>
                     ),
                   )}
@@ -1600,11 +1869,14 @@ export default function ListaPrecioForm({
         <footer className={styles.footer}>
           <div>
             <span>
-              Modo demostración
+              {bloqueada
+                ? "Lista de referencia"
+                : "Lista de precios"}
             </span>
             <small>
-              Los cambios quedan guardados
-              en este navegador.
+              {bloqueada
+                ? "Sus precios son los precios de venta de referencia de Productos."
+                : "Los cambios se guardan en la base de datos de la empresa."}
             </small>
           </div>
 

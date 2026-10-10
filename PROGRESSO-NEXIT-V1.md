@@ -8,7 +8,7 @@ Branch: `feature/NEXIT-2026-001-banco-demo`. Regra: uma funcionalidade por vez; 
 | 2 | Clientes | **ENTREGUE (pendente: build + teste manual na tela)** | ver git log |
 | 3 | Proveedores | **ENTREGUE (pendente: build + teste manual na tela)** | ver git log |
 | 4 | Productos | **ENTREGUE (pendente: build + teste manual na tela)** | ver git log |
-| 5 | Listas de precios | pendente | |
+| 5 | Listas de precios | **ENTREGUE (pendente: aplicar NEX-018 no `nexit` real + build + teste manual na tela)** | ver git log |
 | 6 | Movimientos | pendente | |
 | 7 | Stock | pendente | |
 | 8 | Dashboard e relatórios/XLSX | pendente | |
@@ -52,6 +52,16 @@ Branch: `feature/NEXIT-2026-001-banco-demo`. Regra: uma funcionalidade por vez; 
 - Testes: SQL `T12` (30 verificações) + bateria completa 351 PASS/0 falhas em PG16 descartável (migrações do zero, reaplicação idempotente); API com rotas reais + `permissions.ts` real conectadas como **`nexit_runtime`**: regressão de Productos 55 + 59 novas (401/403 por perfil, familias/líneas isoladas por empresa, línea de outra família/empresa → 400, precio de referencia alta/atualização/remoção sem duplicar, abertura com movimento/saldo/custo reais, 403 sem `MOVIMIENTOS.CREAR` ou sem alcance de depósito, ROLLBACK total em falhas, edição não altera stock, empresa B não vê nada de A).
 - NÃO executado: typecheck completo/build/lint (npm sem registry; `tsc` parcial sem erros além do ruído por falta de `react`/`next`/`@types/node`), HTTP real, teste visual.
 - Pendências de Productos: telas administrativas de Famílias, Linhas, Categorias e Marcas; histórico de preços e preço por lista (item 5 Listas de precios); ajustes de stock só via Movimientos (item 6); `lib/mocks/productos*.ts` e `ProductoDemo` seguem só porque Stock/Movimientos/Recepciones (mocks) os importam; sem exclusão de produtos (apenas inativar); documentos = nome + URL; ubicación preferida por depósito sem campo na tela; `demo_reiniciar` não limpa as tabelas novas (só afeta empresas DEMO).
+
+## Item 5 — Listas de precios (sem mock/localStorage)
+- Telas existentes preservadas (`listas-precio/page.tsx`, `nuevo`, `[id]`, `_components/lista-precio-form.tsx`); removidos `lib/mocks/listas-precio*.ts`, localStorage, pills "DEMO" e o rodapé "Modo demostración". Aviso pós-gravação via `?ok=creado|actualizado`.
+- API: `GET/POST /api/listas-precio` (`?modo=catalogos` devolve moedas, grupos, zonas, canais, clientes, produtos com custo médio e preço de referência, listas base), `GET/PUT /api/listas-precio/[id]` (`LISTAS_PRECIO.VER/CREAR/EDITAR` no backend; `empresa_id`/`creado_por` da sessão; 401/403/404; 503 sem `DATABASE_URL`). Validação/gravação em `lib/listas-precio/shared.ts`; PUT substitui itens, escalões e regras na mesma transação (rollback total em erro). Código automático `LP-nnn` por empresa; tipos VENTA e COMPRA mantidos.
+- Campos preservados: tipo, moeda (do catálogo `monedas`), estado, modo de preço, lista base (sem ciclos), ajuste geral, vigência, prioridade, desconto máximo, IVA incluído, alcance (grupo/cliente/zona/canal), preço por produto (custo, base, lista, margem, quantidade mínima), regras comerciais. Complementos de tela sem mudar o layout: escalões por produto, desconto/vigência/ativo por produto e seletor de referência + vigência por regra (já existiam no banco e não eram editáveis).
+- **Lista de referência (NEX-017) integrada, sem estrutura duplicada:** aparece na lista como `REF-VENTA` (`es_referencia`); seus itens são os mesmos `lista_precio_items` do "Precio de venta de referencia" de Productos. Editar o preço aqui altera o preço em Productos e vice-versa. Fica travada: tipo VENTA, preço fixo, sem lista base/alcance, ativa, código imutável.
+- **Migração `NEX-018-listas-precio-integridad.sql` (nova; precisa ser aplicada no `nexit` real):** CHECKs de vigência/percentuais/quantidades/preços, `referencia_id` das regras exige existir na mesma empresa e no tipo indicado, moeda do item = moeda da lista (inclusive bloqueia trocar a moeda da lista com preços em outra).
+- Testes: SQL `T13` (30 verificações, incluído em `ejecutar-pruebas.sh`) + bateria completa em PG16 descartável; API com rotas reais + `permissions.ts` real como `nexit_runtime` (63 verificações: 401/403/404, criar/editar/persistência, validações, rollback, isolamento entre empresas, integração com o preço de referência de Productos, 503).
+- NÃO executado: build/lint completos (sem registry no sandbox; `tsc` parcial sem erros além do ruído ambiental), HTTP real, teste visual.
+- Pendências: cálculo de preço por regra (aplicação em vendas) pertence ao módulo de vendas; ajuste massivo continua só no formulário (-5/-10/+5 %).
 
 ## Pendências conhecidas de Clientes
 - Editar contatos, direcciones, documentos adicionais e demais tabelas filhas de um cliente existente ainda não é possível (só são criados em `clientes/nuevo`); o `PUT` altera apenas a ficha principal.
