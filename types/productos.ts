@@ -97,6 +97,121 @@ export type ProductoDocumento = {
   observacion: string;
 };
 
+/** Modelo de la ficha (formulario) tal como lo devuelve GET /api/productos/[id]. */
+export type ProductoDetalle = {
+  id: string;
+
+  codigo: string;
+  codigoInventario: string;
+  codigoSifen: string;
+  codigoBarras: string;
+
+  descripcion: string;
+  descripcionFactura: string;
+  tipoProducto: ProductoTipo;
+
+  categoriaId: string;
+  marcaId: string;
+  procedencia: string;
+
+  unidadMedidaId: string;
+  impuestoId: string;
+
+  controlaStock: boolean;
+  modoControlStock: ProductoModoControlStock;
+  permiteTerceros: boolean;
+  requiereVencimiento: boolean;
+
+  stockMinimo: number;
+  stockMaximo: number;
+  puntoReposicion: number;
+
+  partidaArancelaria: string;
+  ncm: string;
+  dncpGeneral: string;
+  dncpEspecifico: string;
+
+  paisOrigenCodigo: string;
+  paisOrigenNombre: string;
+
+  informacionFactura: string;
+
+  relacionMercaderia: string;
+  porcentajeMerma: number;
+  cantidadMerma: number;
+
+  vendible: boolean;
+  comprable: boolean;
+  requiereInspeccionCalidad: boolean;
+  vidaUtilDias: number;
+
+  pesoNetoKg: number;
+  pesoBrutoKg: number;
+  largoCm: number;
+  anchoCm: number;
+  altoCm: number;
+  volumenM3: number;
+
+  imagenUrl: string;
+  observacion: string;
+  activo: boolean;
+
+  codigos: ProductoCodigo[];
+  unidades: ProductoPresentacion[];
+  proveedores: ProductoProveedor[];
+  depositos: ProductoDeposito[];
+  alternativos: ProductoAlternativo[];
+  componentes: ProductoComponente[];
+  documentos: ProductoDocumento[];
+
+  creadoEn: string;
+  actualizadoEn: string;
+};
+
+export type NuevoProducto = Omit<
+  ProductoDetalle,
+  "id" | "creadoEn" | "actualizadoEn"
+>;
+
+/** Fila de la lista (GET /api/productos) ya mapeada a camelCase. */
+export type ProductoLista = {
+  id: string;
+  codigo: string;
+  codigoInventario: string;
+  codigoSifen: string;
+  codigoBarras: string;
+  descripcion: string;
+  descripcionFactura: string;
+  tipoProducto: ProductoTipo;
+  categoriaNombre: string;
+  marcaNombre: string;
+  impuestoNombre: string;
+  unidadMedidaNombre: string;
+  procedencia: string;
+  paisOrigenNombre: string;
+  controlaStock: boolean;
+  stockMinimo: number;
+  puntoReposicion: number;
+  stockDisponible: number;
+  bajoMinimo: boolean;
+  activo: boolean;
+};
+
+export type CatalogoProductos = {
+  categorias: { id: string; codigo: string; nombre: string }[];
+  marcas: { id: string; codigo: string; nombre: string }[];
+  unidades: { id: string; codigo: string; nombre: string }[];
+  impuestos: { id: string; codigo: string; nombre: string; porcentaje: number }[];
+  proveedores: { id: string; codigo: string; razon_social: string }[];
+  depositos: { id: string; codigo: string; nombre: string }[];
+  paises: { codigo: string; nombre: string }[];
+  productos: { id: string; codigo: string; descripcion: string }[];
+};
+
+/**
+ * LEGADO: solo lo usan los mocks de Stock/Movimientos/Recepciones (lib/mocks/productos*.ts),
+ * pendientes de sus propios ítems. Productos ya no los utiliza. Eliminar junto con esos mocks.
+ */
 export type ProductoDemo = {
   id: string;
 

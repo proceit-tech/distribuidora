@@ -7,7 +7,7 @@ Branch: `feature/NEXIT-2026-001-banco-demo`. Regra: uma funcionalidade por vez; 
 | 1 | Menu e acesso por perfil | **ENTREGUE (pendente: typecheck/build no seu ambiente)** | ver git log |
 | 2 | Clientes | **ENTREGUE (pendente: build + teste manual na tela)** | ver git log |
 | 3 | Proveedores | **ENTREGUE (pendente: build + teste manual na tela)** | ver git log |
-| 4 | Productos | pendente | |
+| 4 | Productos | **ENTREGUE (pendente: build + teste manual na tela)** | ver git log |
 | 5 | Listas de precios | pendente | |
 | 6 | Movimientos | pendente | |
 | 7 | Stock | pendente | |
@@ -37,6 +37,16 @@ Branch: `feature/NEXIT-2026-001-banco-demo`. Regra: uma funcionalidade por vez; 
 - Removidos: `lib/mocks/proveedores.ts`, `lib/mocks/proveedores-storage.ts`, `ProveedorDemo`/`NuevoProveedorDemo`, pills "DEMO" e "Modo demostración".
 - Testes (PG16 descartável, rotas reais + `permissions.ts` real, driver mínimo local no lugar de `pg`): 48 verificações, 0 falhas — 401/403 por perfil (sem permissão, só VER, VER+CREAR, VER+EDITAR, só EDITAR), lista vazia, catálogos só da empresa, criação com 5 tipos de filhos, `empresa_id` do body ignorado, duplicado 409, grupo/meio de outra empresa 400, rollback, empresa B não vê/edita/lê proveedores da A (404), mesmo RUC em empresas distintas, edição/inativação, 503 sem banco.
 - NÃO executado: typecheck completo/build/lint (npm sem registry; `tsc` parcial sem erros de tipos de Proveedores além dos ruídos por falta de `react`/`next`), HTTP real, teste visual. Não há exclusão de proveedores (só inativar por `activo`). Upload real de documentos não existe: documento = nome + URL.
+
+## Item 4 — Productos (sem mock/localStorage)
+- Lista (`productos/page.tsx`): `GET /api/productos` (filtra `empresa_id` da sessão); busca/filtros/paginação sobre dados reais; **stock disponível real** (`v_stock_producto`) e alerta "bajo el mínimo"; vazia ("Aún no hay productos registrados") se não houver; estados de carga/erro.
+- Cadastro (`nuevo`) e edição (`[id]`): mesmo formulário `_components/producto-form.tsx` (layout intacto), catálogos do PostgreSQL (categorias, marcas, unidades, impostos, proveedores, depósitos, países e produtos da empresa para alternativos/kits).
+- API: `POST /api/productos` (`PRODUCTOS.CREAR`), novo `GET`/`PUT /api/productos/[id]` (`VER`/`EDITAR`). Validação/gravação compartilhadas em `lib/productos/shared.ts`; `empresa_id`/`creado_por` da sessão; código `PRD-nnnnnn` automático se vazio; país de origem tomado do catálogo; FKs compostas impedem categoria/marca/proveedor/depósito/produto de outra empresa; `PUT` substitui códigos, presentaciones, proveedores, depósitos, alternativos, componentes (kit) e documentos; `costo_promedio` NÃO é gravado pelo formulário (custo é de Inventário).
+- Corrigido: o formulário enviava datas `yyyy-mm-dd` e a API só aceitava `dd/mm/yyyy`; POST exigia código mesmo com placeholder "Automático".
+- Removidos da tela por não terem coluna/catálogo no banco: **Familia, Línea** (listas fixas do cliente), **Precio/Valor de venta de referencia** (pertence a Listas de precios), **Inventario inicial / Stock actual demo / Costo promedio** (pertencem a Movimientos/Stock). Procedencia passou a texto livre (`origen_etiqueta`). Removidos pills "DEMO"/"INVENTARIO MINGO" e o texto "Modo demostración".
+- Testes (PG16 descartável, rotas reais + `permissions.ts` real): 55 verificações, 0 falhas — 401/403 por perfil, lista vazia, catálogos só da empresa, criação com hijos, body com `empresa_id` ignorado, duplicado 409, referências de outra empresa 400, rollback, B não vê/edita A (404), mesmo código em empresas distintas, stock real na lista, edição/inativação, KIT (componentes, ciclo, troca de tipo), 503 sem banco.
+- NÃO executado: typecheck completo/build/lint (npm sem registry), HTTP real, teste visual.
+- Pendências de Productos: Familia/Línea precisam de catálogo + migração (NEX-017+) e decisão sua; preço de referência virá em Listas de precios; `lib/mocks/productos*.ts` e tipos legados `ProductoDemo` seguem no repositório só porque Stock/Movimientos/Recepciones (mocks, ainda não migrados) os importam — apagar com os itens 6/7; sem exclusão de produtos (apenas inativar); documentos = nome + URL (sem upload); ubicación preferida por depósito não tem campo na tela.
 
 ## Pendências conhecidas de Clientes
 - Editar contatos, direcciones, documentos adicionais e demais tabelas filhas de um cliente existente ainda não é possível (só são criados em `clientes/nuevo`); o `PUT` altera apenas a ficha principal.

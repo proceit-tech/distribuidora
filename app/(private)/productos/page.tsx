@@ -8,11 +8,7 @@ import {
 } from "react";
 
 import {
-  obtenerProductosDemo,
-} from "@/lib/mocks/productos-storage";
-
-import {
-  ProductoDemo,
+  ProductoLista,
   ProductoTipo,
 } from "@/types/productos";
 
@@ -29,15 +25,6 @@ type TipoFiltro =
   | "TODOS"
   | ProductoTipo;
 
-function money(value: number) {
-  return `Gs. ${new Intl.NumberFormat(
-    "es-PY",
-    {
-      maximumFractionDigits: 0,
-    },
-  ).format(value)}`;
-}
-
 function initials(value: string) {
   return value
     .split(/\s+/)
@@ -47,6 +34,54 @@ function initials(value: string) {
       item.charAt(0).toUpperCase(),
     )
     .join("");
+}
+
+type FilaApi = {
+  id: string;
+  codigo: string;
+  codigo_inventario: string | null;
+  codigo_sifen: string | null;
+  codigo_barras: string | null;
+  descripcion: string;
+  descripcion_factura: string;
+  tipo_producto: ProductoTipo;
+  controla_stock: boolean;
+  stock_minimo: number;
+  punto_reposicion: number | null;
+  activo: boolean;
+  origen_etiqueta: string | null;
+  pais_origen_nombre: string | null;
+  categoria: string | null;
+  marca: string | null;
+  impuesto: string | null;
+  unidad_nombre: string | null;
+  stock_disponible: number;
+  bajo_minimo: boolean;
+};
+
+function desdeApi(fila: FilaApi): ProductoLista {
+  return {
+    id: fila.id,
+    codigo: fila.codigo,
+    codigoInventario: fila.codigo_inventario ?? "",
+    codigoSifen: fila.codigo_sifen ?? "",
+    codigoBarras: fila.codigo_barras ?? "",
+    descripcion: fila.descripcion,
+    descripcionFactura: fila.descripcion_factura,
+    tipoProducto: fila.tipo_producto,
+    categoriaNombre: fila.categoria ?? "",
+    marcaNombre: fila.marca ?? "",
+    impuestoNombre: fila.impuesto ?? "",
+    unidadMedidaNombre: fila.unidad_nombre ?? "",
+    procedencia: fila.origen_etiqueta ?? "",
+    paisOrigenNombre: fila.pais_origen_nombre ?? "",
+    controlaStock: fila.controla_stock,
+    stockMinimo: Number(fila.stock_minimo ?? 0),
+    puntoReposicion: Number(fila.punto_reposicion ?? 0),
+    stockDisponible: Number(fila.stock_disponible ?? 0),
+    bajoMinimo: fila.bajo_minimo,
+    activo: fila.activo,
+  };
 }
 
 function normalizar(value: string) {
@@ -61,7 +96,7 @@ function normalizar(value: string) {
 
 export default function ProductosPage() {
   const [productos, setProductos] =
-    useState<ProductoDemo[]>([]);
+    useState<ProductoLista[]>([]);
 
   const [busqueda, setBusqueda] =
     useState("");
@@ -75,12 +110,6 @@ export default function ProductosPage() {
   const [filtroMarca, setFiltroMarca] =
     useState("TODAS");
 
-  const [filtroFamilia, setFiltroFamilia] =
-    useState("TODAS");
-
-  const [filtroLinea, setFiltroLinea] =
-    useState("TODAS");
-
   const [
     filtroProcedencia,
     setFiltroProcedencia,
@@ -89,10 +118,64 @@ export default function ProductosPage() {
   const [pagina, setPagina] =
     useState(1);
 
+  const [cargando, setCargando] =
+    useState(true);
+
+  const [errorCarga, setErrorCarga] =
+    useState("");
+
   useEffect(() => {
-    setProductos(
-      obtenerProductosDemo(),
-    );
+    let activo = true;
+
+    async function cargar() {
+      try {
+        const respuesta = await fetch(
+          "/api/productos",
+          { cache: "no-store" },
+        );
+
+        if (!respuesta.ok) {
+          const json = (await respuesta
+            .json()
+            .catch(() => ({}))) as {
+            error?: string;
+          };
+          throw new Error(
+            json.error ??
+              "No fue posible cargar los productos.",
+          );
+        }
+
+        const json =
+          (await respuesta.json()) as {
+            productos: FilaApi[];
+          };
+
+        if (activo) {
+          setProductos(
+            json.productos.map(desdeApi),
+          );
+        }
+      } catch (e) {
+        if (activo) {
+          setErrorCarga(
+            e instanceof Error
+              ? e.message
+              : "No fue posible cargar los productos.",
+          );
+        }
+      } finally {
+        if (activo) {
+          setCargando(false);
+        }
+      }
+    }
+
+    void cargar();
+
+    return () => {
+      activo = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -102,8 +185,6 @@ export default function ProductosPage() {
     filtroEstado,
     filtroTipo,
     filtroMarca,
-    filtroFamilia,
-    filtroLinea,
     filtroProcedencia,
   ]);
 
@@ -115,40 +196,6 @@ export default function ProductosPage() {
             .map(
               (item) =>
                 item.marcaNombre,
-            )
-            .filter(Boolean),
-        ),
-      ).sort((a, b) =>
-        a.localeCompare(b),
-      ),
-    [productos],
-  );
-
-  const familias = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          productos
-            .map(
-              (item) =>
-                item.familiaNombre,
-            )
-            .filter(Boolean),
-        ),
-      ).sort((a, b) =>
-        a.localeCompare(b),
-      ),
-    [productos],
-  );
-
-  const lineas = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          productos
-            .map(
-              (item) =>
-                item.lineaNombre,
             )
             .filter(Boolean),
         ),
@@ -186,21 +233,19 @@ export default function ProductosPage() {
 
         acc.inventario +=
           Number(
-            producto.stockActual || 0,
-          );
-
-        acc.valorVenta +=
-          Number(
-            producto.valorVentaReferencia ||
-              0,
+            producto.stockDisponible || 0,
           );
 
         if (
           Number(
-            producto.stockActual || 0,
+            producto.stockDisponible || 0,
           ) <= 0
         ) {
           acc.sinStock += 1;
+        }
+
+        if (producto.bajoMinimo) {
+          acc.bajoMinimo += 1;
         }
 
         return acc;
@@ -210,7 +255,7 @@ export default function ProductosPage() {
         activos: 0,
         inventario: 0,
         sinStock: 0,
-        valorVenta: 0,
+        bajoMinimo: 0,
       },
     );
   }, [productos]);
@@ -258,24 +303,6 @@ export default function ProductosPage() {
         }
 
         if (
-          filtroFamilia !==
-            "TODAS" &&
-          producto.familiaNombre !==
-            filtroFamilia
-        ) {
-          return false;
-        }
-
-        if (
-          filtroLinea !==
-            "TODAS" &&
-          producto.lineaNombre !==
-            filtroLinea
-        ) {
-          return false;
-        }
-
-        if (
           filtroProcedencia !==
             "TODAS" &&
           producto.procedencia !==
@@ -298,8 +325,7 @@ export default function ProductosPage() {
               producto.descripcion,
               producto.descripcionFactura,
               producto.marcaNombre,
-              producto.familiaNombre,
-              producto.lineaNombre,
+              producto.categoriaNombre,
               producto.procedencia,
               producto.paisOrigenNombre,
             ].join(" "),
@@ -316,8 +342,6 @@ export default function ProductosPage() {
     filtroEstado,
     filtroTipo,
     filtroMarca,
-    filtroFamilia,
-    filtroLinea,
     filtroProcedencia,
   ]);
 
@@ -343,8 +367,6 @@ export default function ProductosPage() {
     setFiltroEstado("TODOS");
     setFiltroTipo("TODOS");
     setFiltroMarca("TODAS");
-    setFiltroFamilia("TODAS");
-    setFiltroLinea("TODAS");
     setFiltroProcedencia("TODAS");
   }
 
@@ -360,22 +382,13 @@ export default function ProductosPage() {
             >
               MAESTROS
             </span>
-
-            <span
-              className={
-                styles.demoPill
-              }
-            >
-              INVENTARIO MINGO
-            </span>
           </div>
 
           <h1>Productos</h1>
 
           <p>
-            Catálogo completo basado en
-            el inventario real del
-            cliente.
+            Catálogo de productos de su
+            empresa.
           </p>
         </div>
 
@@ -429,7 +442,7 @@ export default function ProductosPage() {
           </strong>
 
           <small>
-            Stock inicial consolidado
+            Stock disponible consolidado
           </small>
         </article>
 
@@ -451,17 +464,15 @@ export default function ProductosPage() {
           className={`${styles.summaryCard} ${styles.summaryPurple}`}
         >
           <span>
-            VALOR A PRECIO VENTA
+            BAJO EL MÍNIMO
           </span>
 
           <strong>
-            {money(
-              resumen.valorVenta,
-            )}
+            {resumen.bajoMinimo}
           </strong>
 
           <small>
-            Referencia del inventario
+            Stock bajo el mínimo configurado
           </small>
         </article>
       </section>
@@ -490,7 +501,7 @@ export default function ProductosPage() {
                   event.target.value,
                 )
               }
-              placeholder="Buscar por código, código inventario, descripción, marca, familia, línea..."
+              placeholder="Buscar por código, código inventario, descripción, marca, categoría..."
             />
           </label>
 
@@ -598,62 +609,6 @@ export default function ProductosPage() {
           </label>
 
           <label>
-            <span>Familia</span>
-
-            <select
-              value={filtroFamilia}
-              onChange={(event) =>
-                setFiltroFamilia(
-                  event.target.value,
-                )
-              }
-            >
-              <option value="TODAS">
-                Todas
-              </option>
-
-              {familias.map(
-                (familia) => (
-                  <option
-                    key={familia}
-                    value={familia}
-                  >
-                    {familia}
-                  </option>
-                ),
-              )}
-            </select>
-          </label>
-
-          <label>
-            <span>Línea</span>
-
-            <select
-              value={filtroLinea}
-              onChange={(event) =>
-                setFiltroLinea(
-                  event.target.value,
-                )
-              }
-            >
-              <option value="TODAS">
-                Todas
-              </option>
-
-              {lineas.map(
-                (linea) => (
-                  <option
-                    key={linea}
-                    value={linea}
-                  >
-                    {linea}
-                  </option>
-                ),
-              )}
-            </select>
-          </label>
-
-          <label>
             <span>
               Procedencia
             </span>
@@ -713,13 +668,43 @@ export default function ProductosPage() {
             Inventario
           </span>
           <span>
-            Precio venta
+            Reposición
           </span>
           <span />
         </div>
 
         <div className={styles.list}>
-          {paginaActual.map(
+          {cargando ? (
+            <div className={styles.empty}>
+              <strong>
+                Cargando productos...
+              </strong>
+            </div>
+          ) : errorCarga ? (
+            <div
+              className={styles.empty}
+              role="alert"
+            >
+              <strong>
+                No fue posible cargar los productos
+              </strong>
+              <span>{errorCarga}</span>
+            </div>
+          ) : paginaActual.length === 0 ? (
+            <div className={styles.empty}>
+              <strong>
+                {productos.length === 0
+                  ? "Aún no hay productos registrados"
+                  : "No se encontraron productos."}
+              </strong>
+              <span>
+                {productos.length === 0
+                  ? "Registre el primer producto con el botón Nuevo producto."
+                  : "Modifique los filtros aplicados."}
+              </span>
+            </div>
+          ) : (
+            paginaActual.map(
             (producto) => (
               <article
                 key={producto.id}
@@ -809,19 +794,20 @@ export default function ProductosPage() {
                   }
                 >
                   <strong>
-                    {producto.familiaNombre ||
-                      "Sin familia"}
+                    {producto.categoriaNombre ||
+                      "Sin categoría"}
                   </strong>
 
                   <span>
-                    {producto.lineaNombre ||
-                      "Sin línea"}
+                    {producto.tipoProducto.replaceAll(
+                      "_",
+                      " ",
+                    )}
                   </span>
 
                   <small>
-                    {
-                      producto.categoriaNombre
-                    }
+                    {producto.impuestoNombre ||
+                      "Sin impuesto"}
                   </small>
                 </div>
 
@@ -838,7 +824,7 @@ export default function ProductosPage() {
                       },
                     ).format(
                       Number(
-                        producto.stockActual ||
+                        producto.stockDisponible ||
                           0,
                       ),
                     )}{" "}
@@ -848,7 +834,7 @@ export default function ProductosPage() {
                   </strong>
 
                   <span>
-                    Inicial:{" "}
+                    Mínimo:{" "}
                     {new Intl.NumberFormat(
                       "es-PY",
                       {
@@ -856,7 +842,7 @@ export default function ProductosPage() {
                       },
                     ).format(
                       Number(
-                        producto.inventarioInicial ||
+                        producto.stockMinimo ||
                           0,
                       ),
                     )}
@@ -865,7 +851,7 @@ export default function ProductosPage() {
                   <span
                     className={
                       Number(
-                        producto.stockActual ||
+                        producto.stockDisponible ||
                           0,
                       ) <= 0
                         ? styles.statusDanger
@@ -873,7 +859,7 @@ export default function ProductosPage() {
                     }
                   >
                     {Number(
-                      producto.stockActual ||
+                      producto.stockDisponible ||
                         0,
                     ) <= 0
                       ? "Sin stock"
@@ -887,32 +873,27 @@ export default function ProductosPage() {
                   }
                 >
                   <strong>
-                    {money(
+                    {new Intl.NumberFormat(
+                      "es-PY",
+                      {
+                        maximumFractionDigits: 2,
+                      },
+                    ).format(
                       Number(
-                        producto.precioVentaReferencia ||
+                        producto.puntoReposicion ||
                           0,
                       ),
                     )}
                   </strong>
 
                   <span>
-                    Valor:{" "}
-                    {money(
-                      Number(
-                        producto.valorVentaReferencia ||
-                          0,
-                      ),
-                    )}
+                    Punto de reposición
                   </span>
 
                   <small>
-                    Costo promedio:{" "}
-                    {money(
-                      Number(
-                        producto.costoPromedio ||
-                          0,
-                      ),
-                    )}
+                    Código de barras:{" "}
+                    {producto.codigoBarras ||
+                      "—"}
                   </small>
                 </div>
 
@@ -927,26 +908,7 @@ export default function ProductosPage() {
                 </Link>
               </article>
             ),
-          )}
-
-          {paginaActual.length ===
-          0 ? (
-            <div
-              className={
-                styles.empty
-              }
-            >
-              <strong>
-                No se encontraron
-                productos.
-              </strong>
-
-              <span>
-                Modifique los filtros
-                aplicados.
-              </span>
-            </div>
-          ) : null}
+          ))}
         </div>
 
         <footer

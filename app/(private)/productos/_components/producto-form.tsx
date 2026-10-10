@@ -3,30 +3,17 @@
 import Link from "next/link";
 import {
   FormEvent,
-  useEffect,
   useMemo,
   useState,
 } from "react";
 
-import {
-  PRODUCTO_CATEGORIAS,
-  PRODUCTO_DEPOSITOS,
-  PRODUCTO_IMPUESTOS,
-  PRODUCTO_MARCAS,
-  PRODUCTO_UNIDADES,
-} from "@/lib/mocks/productos";
-
-import {
-  obtenerProductosDemo,
-  obtenerProveedoresParaProducto,
-} from "@/lib/mocks/productos-storage";
-
-import {
-  NuevoProductoDemo,
+import type {
+  CatalogoProductos,
+  NuevoProducto,
   ProductoAlternativo,
   ProductoCodigo,
   ProductoComponente,
-  ProductoDemo,
+  ProductoDetalle,
   ProductoDeposito,
   ProductoDocumento,
   ProductoModoControlStock,
@@ -50,9 +37,10 @@ type TabId =
 
 type Props = {
   mode: Mode;
-  initial?: ProductoDemo;
+  initial?: ProductoDetalle;
+  catalogos: CatalogoProductos;
   onSave: (
-    data: NuevoProductoDemo,
+    data: NuevoProducto,
   ) => Promise<void> | void;
 };
 
@@ -75,409 +63,16 @@ const TABS: Array<{
   { id: "documentos", label: "Documentos" },
 ];
 
-const PAISES = [
-  ["PRY", "Paraguay"],
-  ["ARG", "Argentina"],
-  ["BRA", "Brasil"],
-  ["URY", "Uruguay"],
-  ["BOL", "Bolivia"],
-  ["FRA", "Francia"],
-  ["ITA", "Italia"],
-  ["ESP", "España"],
-  ["CHN", "China"],
-  ["OTR", "Otro"],
-];
-
-const FAMILIAS_INVENTARIO = [
-  "ACCESORIOS DE VINO",
-  "BOLS",
-  "BOTELLA",
-  "CACEROLA",
-  "CAFETERA",
-  "CAFETERIA",
-  "CASEROLA",
-  "CENICERO",
-  "COCTELERA",
-  "COCTELERIA",
-  "COKTAIL",
-  "COMPOTERAS",
-  "COPAS EN ESTUCHES",
-  "COPAS SUELTAS",
-  "DECANTER",
-  "DESCORCHADOR",
-  "ENSALADERAS",
-  "ESTUCHE DE COPAS",
-  "ESTUCHE DE VASOS",
-  "FLANERO",
-  "FUENTE",
-  "FUENTES",
-  "HUEVERA",
-  "JARRA",
-  "JARRA MEDIDORA",
-  "JARRO",
-  "JGO DE JARRA DE VASOS",
-  "JGO DE PLATOS",
-  "MANIJAS",
-  "MANTEQUERITA",
-  "MIXING",
-  "MOLDE",
-  "MOLINILLO",
-  "PLATO",
-  "PLATOS",
-  "RAMEQUIN",
-  "SALERO",
-  "SERVILLETAS",
-  "TARRO C/ DISEÑO",
-  "TARROS TRANSP",
-  "TARTERA",
-  "TAZA",
-  "TAZA C/ PLATITO",
-  "TAZA C/PLATO",
-  "TAZA CAPUCHINO",
-  "TAZA S/ PLATO",
-  "TUPPERS",
-  "UTENSILLOS DE COCINA",
-  "VASOS EN ESTUCHES",
-  "VASOS SUELTOS",
-  "VINAGRERO"
-] as const;
-
-const LINEAS_POR_FAMILIA: Record<
-  string,
-  readonly string[]
-> = {
-  "ACCESORIOS DE VINO": [
-    "DESCAPSULADOR",
-    "SACACORCHO",
-    "SACACORCHOS",
-    "SARTEN"
-  ],
-  "BOLS": [
-    "CARINE NOIR",
-    "COSMOS",
-    "EVOLUTION PEPS",
-    "FLASHY",
-    "HOTELIERE",
-    "OCUISINE",
-    "STRUCTURE TRANSPARENTE"
-  ],
-  "BOTELLA": [
-    "FLUID"
-  ],
-  "CACEROLA": [
-    "INDUCCION",
-    "OCUISINE"
-  ],
-  "CAFETERA": [
-    "A GAS",
-    "INDUCCION",
-    "PRENSA",
-    "RECAMBIO"
-  ],
-  "CASEROLA": [
-    "OCUISINE"
-  ],
-  "CENICERO": [
-    "CENICEROS"
-  ],
-  "COCTELERA": [
-    "COCKTAIL"
-  ],
-  "COKTAIL": [
-    "NEW YORK"
-  ],
-  "COMPOTERAS": [
-    "CARINE BLANCO",
-    "CARINE NEGRO",
-    "DIWALI BLANCO",
-    "EVOLUTION PEPS",
-    "QUADRATO BLANCO",
-    "QUADRATO NEGRO",
-    "STRUCTURE SHELLS BCO"
-  ],
-  "COPAS EN ESTUCHES": [
-    "BALLON",
-    "COCTKAIL",
-    "ELEGANCE",
-    "EUKLASE",
-    "EXALTACION",
-    "GRAND CHAIS",
-    "MALVIDES",
-    "OPEN UP",
-    "PALMIER",
-    "PRINCESA",
-    "QUADRO",
-    "REVEAL UP",
-    "SO WINE",
-    "SPIRITS",
-    "SYMETRIE",
-    "TULIPE"
-  ],
-  "COPAS SUELTAS": [
-    "BROADWAY",
-    "CERVOISE",
-    "COCTKAIL",
-    "COÑAC",
-    "LICOR",
-    "RAINDROP"
-  ],
-  "DECANTER": [
-    "ABONDANCE",
-    "MACARON",
-    "OPEN UP"
-  ],
-  "ENSALADERAS": [
-    "APILABLE",
-    "CARINE BLANCO",
-    "CARINE NOIR",
-    "COSMOS",
-    "DIWALI BLANCO",
-    "EVOLUTION PEPS",
-    "QUADRATO BLANCO",
-    "QUADRATO NEGRO"
-  ],
-  "ESTUCHE DE COPAS": [
-    "LADY DIAMOND",
-    "LONGCHAMP",
-    "MACASSAR"
-  ],
-  "ESTUCHE DE VASOS": [
-    "LADY DIAMOND",
-    "LONGCHAMP",
-    "MACASSAR"
-  ],
-  "FLANERO": [
-    "SMART  CUISINE BCO"
-  ],
-  "FUENTE": [
-    "OCUISINE",
-    "SMART  CUISINE BCO"
-  ],
-  "FUENTES": [
-    "EVOLUTION PEPS",
-    "QUADRATO NEGRO"
-  ],
-  "HUEVERA": [
-    "POULE"
-  ],
-  "JARRA": [
-    "ARC",
-    "BRIGTON",
-    "IMPERATOR",
-    "KONE",
-    "OCTIME",
-    "ORIENT",
-    "QUADRO",
-    "ROC",
-    "TIVOLI",
-    "VICTORIA",
-    "WHAVY"
-  ],
-  "JARRA MEDIDORA": [
-    "OCUISINE"
-  ],
-  "JARRO": [
-    "BONE",
-    "EVOLUTIONS PEPS",
-    "NEW MORNING",
-    "NUEVO",
-    "TRANSPORTABLE"
-  ],
-  "JGO DE JARRA DE VASOS": [
-    "BRIGHTON",
-    "IMPERATOR",
-    "MARTIGUES - KONE",
-    "NEO-KONE",
-    "OCTIME",
-    "PALM SPRINGS"
-  ],
-  "JGO DE PLATOS": [
-    "CARINE FELITSA"
-  ],
-  "MANIJAS": [
-    "CHOOP"
-  ],
-  "MANTEQUERITA": [
-    "APILABLE"
-  ],
-  "MIXING": [
-    "OCUISINE"
-  ],
-  "MOLDE": [
-    "OCUISINE",
-    "SMART  CUISINE BCO"
-  ],
-  "MOLINILLO": [
-    "CAFETERIA",
-    "PIMENTERO"
-  ],
-  "PLATO": [
-    "DIWALI BLANCO"
-  ],
-  "PLATOS": [
-    "CARINE BLANCO",
-    "CARINE NEGRO",
-    "CARINE NOIR",
-    "COTTAGE GRANIT",
-    "DIWALI LIGTH TURQUOISE",
-    "EVOLUTION GRANIT",
-    "EVOLUTION PEPS",
-    "EVOLUTION PEPS NEGRO",
-    "HOTELIERE",
-    "INTENSITY BCO",
-    "QUADRATO BLANCO",
-    "QUADRATO NEGRO",
-    "STRUCTURE SHELLS BCO"
-  ],
-  "RAMEQUIN": [
-    "SMART  CUISINE BCO"
-  ],
-  "SALERO": [
-    "SALERO"
-  ],
-  "SERVILLETAS": [
-    "VARIADOS"
-  ],
-  "TARRO C/ DISEÑO": [
-    "VARIADOS DISEÑOS"
-  ],
-  "TARROS TRANSP": [
-    "PURE JAR CLUB"
-  ],
-  "TARTERA": [
-    "OCUISINE"
-  ],
-  "TAZA": [
-    "EVOLUTION PEPS"
-  ],
-  "TAZA C/ PLATITO": [
-    "CARINE BLANCO",
-    "EVOLUTION PEPS",
-    "HOTELIERE"
-  ],
-  "TAZA C/PLATO": [
-    "AROMA"
-  ],
-  "TAZA CAPUCHINO": [
-    "FOOTED MUG",
-    "IRISH COFFE",
-    "LATINO"
-  ],
-  "TAZA S/ PLATO": [
-    "AROMA",
-    "FLASHY",
-    "JUMBO"
-  ],
-  "TUPPERS": [
-    "EASY BOX AZUL RECTANGULAR",
-    "EASY BOX CUADRADO",
-    "EASY BOX REDONDO",
-    "KEEP LAGON CUADRADO",
-    "KEEP LAGON RECTANGULAR",
-    "KEEP LAGON REDONDO",
-    "PURE BOX  REDONDO",
-    "PURE BOX CUADRADO",
-    "PURE BOX RECTANGULAR"
-  ],
-  "UTENSILLOS DE COCINA": [
-    "CIERRA BOLSAS",
-    "CORTADOR",
-    "CUCHARA",
-    "CUCHARON",
-    "DISPENSADOR",
-    "ENCENDEDOR",
-    "ESPATULA",
-    "ESPIRALIZADOR",
-    "ESPUMADERA",
-    "ESPÁTULA",
-    "ESTANTE",
-    "EXPRIMIDOR",
-    "GUANTE",
-    "MANDOLINA",
-    "MANGA",
-    "PALETA",
-    "PELADOR",
-    "PINCEL",
-    "PINZA",
-    "RALLADOR",
-    "REBANADOR",
-    "REMOVEDOR",
-    "RODILLO",
-    "ROMPE",
-    "ROMPENUECES",
-    "SOPLETE",
-    "TABLA",
-    "TAMIZADOR",
-    "TRINCHAPOLLOS",
-    "TRITURADOR"
-  ],
-  "VASOS EN ESTUCHES": [
-    "ASCOT",
-    "IMPERATOR",
-    "ISLANDE",
-    "OCTIME",
-    "OCTIME DIAMOND",
-    "OPEN UP",
-    "SALTO ICE BLUE",
-    "SALTO ICE PINK",
-    "STERLING ICE BLUE",
-    "STERLING ICE PINK",
-    "STERLING TRANSP"
-  ],
-  "VASOS SUELTOS": [
-    "ARCADIE",
-    "BOURDON",
-    "BRASIERE",
-    "BROADWAY",
-    "GASTON SKALE",
-    "GIN",
-    "GRANITY",
-    "HOT SHOT",
-    "ISLANDE",
-    "LINZ",
-    "MARTIGUES",
-    "NEW AMERICA",
-    "OLD SQUARE",
-    "PRIMARY",
-    "SALTO",
-    "STARLINE"
-  ],
-  "VINAGRERO": [
-    "VINAGRERO"
-  ]
-};
-
-const PROCEDENCIAS_INVENTARIO = [
-  "ESPAÑA",
-  "FRANCIA",
-  "FRANCIA/NAINJING",
-  "ITALIA",
-  "NAINJING"
-] as const;
-
 function uid(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random()
     .toString(16)
     .slice(2)}`;
 }
 
-function findName(
-  id: string,
-  options: Array<{
-    id: string;
-    nombre: string;
-  }>,
-) {
-  return (
-    options.find(
-      (item) => item.id === id,
-    )?.nombre ?? ""
-  );
-}
-
 function initialForm(
-  initial?: ProductoDemo,
-): NuevoProductoDemo {
+  initial: ProductoDetalle | undefined,
+  catalogos: CatalogoProductos,
+): NuevoProducto {
   if (initial) {
     const {
       id: _id,
@@ -486,23 +81,7 @@ function initialForm(
       ...rest
     } = initial;
 
-    return {
-      ...structuredClone(rest),
-      codigoInventario:
-        initial.codigoInventario ?? "",
-      familiaNombre:
-        initial.familiaNombre ?? "",
-      lineaNombre:
-        initial.lineaNombre ?? "",
-      procedencia:
-        initial.procedencia ?? "",
-      inventarioInicial:
-        initial.inventarioInicial ?? 0,
-      precioVentaReferencia:
-        initial.precioVentaReferencia ?? 0,
-      valorVentaReferencia:
-        initial.valorVentaReferencia ?? 0,
-    };
+    return structuredClone(rest);
   }
 
   return {
@@ -515,16 +94,13 @@ function initialForm(
     tipoProducto: "MERCADERIA",
 
     categoriaId: "",
-    categoriaNombre: "",
     marcaId: "",
-    marcaNombre: "",
-    familiaNombre: "",
-    lineaNombre: "",
     procedencia: "",
     unidadMedidaId: "",
-    unidadMedidaNombre: "",
-    impuestoId: "iva10",
-    impuestoNombre: "IVA 10%",
+    impuestoId:
+      catalogos.impuestos.find(
+        (item) => item.porcentaje === 10,
+      )?.id ?? "",
 
     controlaStock: true,
     modoControlStock: "CANTIDAD",
@@ -533,18 +109,13 @@ function initialForm(
     stockMinimo: 0,
     stockMaximo: 0,
     puntoReposicion: 0,
-    stockActual: 0,
-    inventarioInicial: 0,
-    costoPromedio: 0,
-    precioVentaReferencia: 0,
-    valorVentaReferencia: 0,
 
     partidaArancelaria: "",
     ncm: "",
     dncpGeneral: "",
     dncpEspecifico: "",
     paisOrigenCodigo: "PRY",
-    paisOrigenNombre: "Paraguay",
+    paisOrigenNombre: "",
     informacionFactura: "",
 
     relacionMercaderia: "",
@@ -694,28 +265,31 @@ function Empty({
 export default function ProductoForm({
   mode,
   initial,
+  catalogos,
   onSave,
 }: Props) {
   const [tab, setTab] =
     useState<TabId>("general");
 
   const [form, setForm] =
-    useState<NuevoProductoDemo>(
-      () => initialForm(initial),
+    useState<NuevoProducto>(
+      () => initialForm(initial, catalogos),
     );
 
-  const [
-    proveedoresCatalogo,
-    setProveedoresCatalogo,
-  ] = useState<ProveedorOpcion[]>(
-    [],
-  );
+  const proveedoresCatalogo: ProveedorOpcion[] =
+    catalogos.proveedores.map((item) => ({
+      id: item.id,
+      codigo: item.codigo,
+      nombre: item.razon_social,
+    }));
 
-  const [
-    productosCatalogo,
-    setProductosCatalogo,
-  ] = useState<ProductoDemo[]>(
-    [],
+  const productosCatalogo =
+    catalogos.productos.filter(
+      (item) => item.id !== initial?.id,
+    );
+
+  const PAISES = catalogos.paises.map(
+    (pais) => [pais.codigo, pais.nombre] as const,
   );
 
   const [error, setError] =
@@ -724,43 +298,11 @@ export default function ProductoForm({
   const [saving, setSaving] =
     useState(false);
 
-  useEffect(() => {
-    const proveedores =
-      obtenerProveedoresParaProducto();
-
-    setProveedoresCatalogo(
-      proveedores.length
-        ? proveedores
-        : [
-            {
-              id: "demo-prv-001",
-              codigo: "PRV-000001",
-              nombre:
-                "ALIMENTOS DEL PARAGUAY S.A.",
-            },
-            {
-              id: "demo-prv-002",
-              codigo: "PRV-000002",
-              nombre:
-                "BEBIDAS NACIONALES S.A.",
-            },
-          ],
-    );
-
-    setProductosCatalogo(
-      obtenerProductosDemo().filter(
-        (producto) =>
-          producto.id !==
-          initial?.id,
-      ),
-    );
-  }, [initial?.id]);
-
   function update<
-    K extends keyof NuevoProductoDemo,
+    K extends keyof NuevoProducto,
   >(
     key: K,
-    value: NuevoProductoDemo[K],
+    value: NuevoProducto[K],
   ) {
     setForm((current) => ({
       ...current,
@@ -851,27 +393,18 @@ export default function ProductoForm({
             .toUpperCase(),
         descripcionFactura:
           form.descripcionFactura.trim(),
-        familiaNombre:
-          form.familiaNombre.trim(),
-        lineaNombre:
-          form.lineaNombre.trim(),
         procedencia:
           form.procedencia.trim(),
-        valorVentaReferencia:
-          Number(
-            form.precioVentaReferencia || 0,
-          ) *
-          Number(
-            form.stockActual || 0,
-          ),
         imagenUrl:
           form.imagenUrl.trim(),
         observacion:
           form.observacion.trim(),
       });
-    } catch {
+    } catch (err) {
       setError(
-        mode === "create"
+        err instanceof Error && err.message
+          ? err.message
+          : mode === "create"
           ? "No fue posible registrar el producto."
           : "No fue posible actualizar el producto.",
       );
@@ -1020,9 +553,6 @@ export default function ProductoForm({
           <div className={styles.heroMeta}>
             <span className={styles.modulePill}>
               PRODUCTOS
-            </span>
-            <span className={styles.demoPill}>
-              DEMO
             </span>
           </div>
 
@@ -1245,28 +775,15 @@ export default function ProductoForm({
                 <Field label="Unidad base *">
                   <select
                     value={form.unidadMedidaId}
-                    onChange={(event) => {
-                      const id =
-                        event.target.value;
-
-                      update(
-                        "unidadMedidaId",
-                        id,
-                      );
-                      update(
-                        "unidadMedidaNombre",
-                        findName(
-                          id,
-                          PRODUCTO_UNIDADES,
-                        ),
-                      );
-                    }}
+                    onChange={(event) =>
+                      update("unidadMedidaId", event.target.value)
+                    }
                   >
                     <option value="">
                       Seleccione unidad
                     </option>
 
-                    {PRODUCTO_UNIDADES.map(
+                    {catalogos.unidades.map(
                       (item) => (
                         <option
                           key={item.id}
@@ -1283,28 +800,15 @@ export default function ProductoForm({
                 <Field label="Categoría">
                   <select
                     value={form.categoriaId}
-                    onChange={(event) => {
-                      const id =
-                        event.target.value;
-
-                      update(
-                        "categoriaId",
-                        id,
-                      );
-                      update(
-                        "categoriaNombre",
-                        findName(
-                          id,
-                          PRODUCTO_CATEGORIAS,
-                        ),
-                      );
-                    }}
+                    onChange={(event) =>
+                      update("categoriaId", event.target.value)
+                    }
                   >
                     <option value="">
                       Sin categoría
                     </option>
 
-                    {PRODUCTO_CATEGORIAS.map(
+                    {catalogos.categorias.map(
                       (item) => (
                         <option
                           key={item.id}
@@ -1321,34 +825,20 @@ export default function ProductoForm({
                 <Field label="Marca">
                   <select
                     value={form.marcaId}
-                    onChange={(event) => {
-                      const id =
-                        event.target.value;
-
-                      update(
-                        "marcaId",
-                        id,
-                      );
-                      update(
-                        "marcaNombre",
-                        findName(
-                          id,
-                          PRODUCTO_MARCAS,
-                        ),
-                      );
-                    }}
+                    onChange={(event) =>
+                      update("marcaId", event.target.value)
+                    }
                   >
                     <option value="">
                       Sin marca
                     </option>
 
-                    {PRODUCTO_MARCAS.map(
+                    {catalogos.marcas.map(
                       (item) => (
                         <option
                           key={item.id}
                           value={item.id}
                         >
-                          {item.codigo} ·{" "}
                           {item.nombre}
                         </option>
                       ),
@@ -1358,87 +848,10 @@ export default function ProductoForm({
               </div>
 
               <div className={styles.gridFour}>
-                <Field label="Familia">
-                  <select
-                    value={form.familiaNombre}
-                    onChange={(event) => {
-                      const value =
-                        event.target.value;
-
-                      update(
-                        "familiaNombre",
-                        value,
-                      );
-
-                      const lineas =
-                        LINEAS_POR_FAMILIA[
-                          value
-                        ] ?? [];
-
-                      if (
-                        form.lineaNombre &&
-                        !lineas.includes(
-                          form.lineaNombre,
-                        )
-                      ) {
-                        update(
-                          "lineaNombre",
-                          "",
-                        );
-                      }
-                    }}
-                  >
-                    <option value="">
-                      Seleccione familia
-                    </option>
-
-                    {FAMILIAS_INVENTARIO.map(
-                      (familia) => (
-                        <option
-                          key={familia}
-                          value={familia}
-                        >
-                          {familia}
-                        </option>
-                      ),
-                    )}
-                  </select>
-                </Field>
-
-                <Field label="Línea">
-                  <select
-                    value={form.lineaNombre}
-                    disabled={!form.familiaNombre}
-                    onChange={(event) =>
-                      update(
-                        "lineaNombre",
-                        event.target.value,
-                      )
-                    }
-                  >
-                    <option value="">
-                      {form.familiaNombre
-                        ? "Seleccione línea"
-                        : "Seleccione familia primero"}
-                    </option>
-
-                    {(
-                      LINEAS_POR_FAMILIA[
-                        form.familiaNombre
-                      ] ?? []
-                    ).map((linea) => (
-                      <option
-                        key={linea}
-                        value={linea}
-                      >
-                        {linea}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
 
                 <Field label="Procedencia">
-                  <select
+                  <input
+                    maxLength={100}
                     value={form.procedencia}
                     onChange={(event) =>
                       update(
@@ -1446,45 +859,17 @@ export default function ProductoForm({
                         event.target.value,
                       )
                     }
-                  >
-                    <option value="">
-                      Seleccione procedencia
-                    </option>
-
-                    {PROCEDENCIAS_INVENTARIO.map(
-                      (procedencia) => (
-                        <option
-                          key={procedencia}
-                          value={procedencia}
-                        >
-                          {procedencia}
-                        </option>
-                      ),
-                    )}
-                  </select>
+                  />
                 </Field>
 
                 <Field label="Impuesto / IVA">
                   <select
                     value={form.impuestoId}
-                    onChange={(event) => {
-                      const id =
-                        event.target.value;
-
-                      update(
-                        "impuestoId",
-                        id,
-                      );
-                      update(
-                        "impuestoNombre",
-                        findName(
-                          id,
-                          PRODUCTO_IMPUESTOS,
-                        ),
-                      );
-                    }}
+                    onChange={(event) =>
+                      update("impuestoId", event.target.value)
+                    }
                   >
-                    {PRODUCTO_IMPUESTOS.map(
+                    {catalogos.impuestos.map(
                       (item) => (
                         <option
                           key={item.id}
@@ -1499,36 +884,6 @@ export default function ProductoForm({
               </div>
 
               <div className={styles.gridFour}>
-                <NumberField
-                  label="Precio venta referencia"
-                  value={form.precioVentaReferencia}
-                  onChange={(value) =>
-                    update(
-                      "precioVentaReferencia",
-                      value,
-                    )
-                  }
-                />
-
-                <Field label="Valor venta referencia">
-                  <input
-                    value={new Intl.NumberFormat(
-                      "es-PY",
-                      {
-                        maximumFractionDigits: 0,
-                      },
-                    ).format(
-                      Number(
-                        form.precioVentaReferencia ||
-                          0,
-                      ) *
-                        Number(
-                          form.stockActual || 0,
-                        ),
-                    )}
-                    readOnly
-                  />
-                </Field>
 
                 <Field label="Imagen URL">
                   <input
@@ -1998,47 +1353,6 @@ export default function ProductoForm({
               </div>
 
               <div className={styles.gridFour}>
-                <NumberField
-                  label="Inventario inicial"
-                  value={form.inventarioInicial}
-                  onChange={(value) => {
-                    update(
-                      "inventarioInicial",
-                      value,
-                    );
-
-                    if (
-                      mode === "create"
-                    ) {
-                      update(
-                        "stockActual",
-                        value,
-                      );
-                    }
-                  }}
-                />
-
-                <NumberField
-                  label="Stock actual demo"
-                  value={form.stockActual}
-                  onChange={(value) =>
-                    update(
-                      "stockActual",
-                      value,
-                    )
-                  }
-                />
-
-                <NumberField
-                  label="Costo promedio"
-                  value={form.costoPromedio}
-                  onChange={(value) =>
-                    update(
-                      "costoPromedio",
-                      value,
-                    )
-                  }
-                />
 
                 <NumberField
                   label="Vida útil (días)"
@@ -2153,10 +1467,9 @@ export default function ProductoForm({
                                           depositoId:
                                             id,
                                           depositoNombre:
-                                            findName(
-                                              id,
-                                              PRODUCTO_DEPOSITOS,
-                                            ),
+                                            catalogos.depositos.find(
+                                              (d) => d.id === id,
+                                            )?.nombre ?? "",
                                         }
                                       : item,
                                 ),
@@ -2167,7 +1480,7 @@ export default function ProductoForm({
                               Seleccione depósito
                             </option>
 
-                            {PRODUCTO_DEPOSITOS.map(
+                            {catalogos.depositos.map(
                               (item) => (
                                 <option
                                   key={item.id}
@@ -2326,7 +1639,7 @@ export default function ProductoForm({
                               Seleccione unidad
                             </option>
 
-                            {PRODUCTO_UNIDADES.map(
+                            {catalogos.unidades.map(
                               (item) => (
                                 <option
                                   key={item.id}
@@ -3295,12 +2608,14 @@ export default function ProductoForm({
         <footer className={styles.footer}>
           <div>
             <span>
-              Modo demostración
+              {mode === "create"
+                ? "Nuevo producto"
+                : "Edición de producto"}
             </span>
             <small>
-              Los cambios quedan
-              guardados localmente en
-              este navegador.
+              Los cambios se guardan en
+              la base de datos de su
+              empresa.
             </small>
           </div>
 
