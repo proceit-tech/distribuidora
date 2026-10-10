@@ -289,10 +289,10 @@ export async function sincronizarHijos(c: Conn, empresaId: string, clienteId: st
     }
     for (const { id, v, geo, fiscal } of finales) {
       const p = [
-        opcional(v.etiqueta, 100) ?? v.tipo, texto(v.direccion, 300), geo?.ciudad ?? opcional(v.ciudad, 100), geo?.departamento ?? opcional(v.departamento, 100),
+        opcional(v.etiqueta, 100) ?? v.tipo, texto(v.direccion, 300), geo ? geo.ciudad : opcional(v.ciudad, 100), geo ? geo.departamento : opcional(v.departamento, 100),
         numeroOpcional(v.latitud, -90, 90), numeroOpcional(v.longitud, -180, 180), fiscal, bool(v.esEntregaDefault), v.tipo, opcional(v.etiqueta, 100),
         opcional(v.numeroCasa, 20), opcional(v.complemento, 200), v.paisCodigo, v.paisNombre,
-        geo?.departamentoCodigo ?? null, geo?.distritoCodigo ?? null, geo?.distrito ?? opcional(v.distrito, 100), geo?.ciudadCodigo ?? null,
+        geo?.departamentoCodigo ?? null, geo?.distritoCodigo ?? null, geo ? geo.distrito : opcional(v.distrito, 100), geo?.ciudadCodigo ?? null,
         opcional(v.codigoPostal, 15), opcional(v.contactoNombre, 200), opcional(v.contactoTelefono, 30), opcional(v.horarioRecepcion, 200), opcional(v.observacion, 500),
       ];
       if (id) {

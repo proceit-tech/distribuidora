@@ -290,7 +290,7 @@ function GeografiaDireccion({
 
   return (
     <>
-      <Field label="Departamento *">
+      <Field label="Departamento">
         <select
           value={dep}
           onChange={(event) =>
@@ -305,7 +305,7 @@ function GeografiaDireccion({
           ))}
         </select>
       </Field>
-      <Field label="Distrito *">
+      <Field label="Distrito">
         <select
           value={dis}
           disabled={!dep}
@@ -319,7 +319,7 @@ function GeografiaDireccion({
           ))}
         </select>
       </Field>
-      <Field label="Ciudad *">
+      <Field label="Ciudad">
         <select
           value={direccion.ciudadCodigo}
           disabled={!dis}
@@ -702,7 +702,7 @@ export default function ProveedorForm({
                   >
                     {paises.map(([code, name]) => (
                       <option key={code} value={code}>
-                        {code} · {name}
+                        {name}
                       </option>
                     ))}
                   </select>
@@ -1315,6 +1315,12 @@ export default function ProveedorForm({
                                       ...item,
                                       paisCodigo: code,
                                       paisNombre: country?.[1] ?? "",
+                                      departamentoCodigo: "",
+                                      distritoCodigo: "",
+                                      ciudadCodigo: "",
+                                      departamento: "",
+                                      distrito: "",
+                                      ciudad: "",
                                     }
                                   : item,
                               ),
@@ -1323,7 +1329,7 @@ export default function ProveedorForm({
                         >
                           {paises.map(([code, name]) => (
                             <option key={code} value={code}>
-                              {code} · {name}
+                              {name}
                             </option>
                           ))}
                         </select>

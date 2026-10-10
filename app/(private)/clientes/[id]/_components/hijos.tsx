@@ -67,7 +67,6 @@ export function validarHijos(h: HijosForm): string {
   for (const d of h.direcciones) {
     if (!d.direccion.trim()) return "Informe la dirección de cada ubicación registrada.";
     if (!d.paisCodigo) return "Informe el país de cada dirección.";
-    if (d.paisCodigo === "PRY" && (!d.departamentoCodigo || !d.distritoCodigo || !d.ciudadCodigo)) return "Para una dirección de Paraguay seleccione departamento, distrito y ciudad.";
   }
   for (const d of h.documentos) if (!d.nombreArchivo.trim() || !d.urlArchivo.trim()) return "Cada documento requiere nombre de archivo y URL segura.";
   return "";
@@ -250,9 +249,9 @@ export function HijosEditor({ tab, valor, onChange, paises, departamentos, onErr
             </div>
             {d.paisCodigo === "PRY" ? (
               <div className={styles.gridThree}>
-                <Campo label="Departamento *"><Lista value={d.departamentoCodigo} onChange={(v) => void elegirDepartamento(d, v)}>{optGeo(departamentos, "Seleccione un departamento")}</Lista></Campo>
-                <Campo label="Distrito *"><Lista disabled={!d.departamentoCodigo} value={d.distritoCodigo} onChange={(v) => void elegirDistrito(d, v)}>{optGeo(distritos[d.k] ?? [], "Seleccione un distrito")}</Lista></Campo>
-                <Campo label="Ciudad *"><Lista disabled={!d.distritoCodigo} value={d.ciudadCodigo} onChange={(v) => setD(d.k, { ciudadCodigo: v, ciudad: (ciudades[d.k] ?? []).find((o) => String(o.codigo) === v)?.nombre ?? "" })}>{optGeo(ciudades[d.k] ?? [], "Seleccione una ciudad")}</Lista></Campo>
+                <Campo label="Departamento"><Lista value={d.departamentoCodigo} onChange={(v) => void elegirDepartamento(d, v)}>{optGeo(departamentos, "Seleccione un departamento")}</Lista></Campo>
+                <Campo label="Distrito"><Lista disabled={!d.departamentoCodigo} value={d.distritoCodigo} onChange={(v) => void elegirDistrito(d, v)}>{optGeo(distritos[d.k] ?? [], "Seleccione un distrito")}</Lista></Campo>
+                <Campo label="Ciudad"><Lista disabled={!d.distritoCodigo} value={d.ciudadCodigo} onChange={(v) => setD(d.k, { ciudadCodigo: v, ciudad: (ciudades[d.k] ?? []).find((o) => String(o.codigo) === v)?.nombre ?? "" })}>{optGeo(ciudades[d.k] ?? [], "Seleccione una ciudad")}</Lista></Campo>
               </div>
             ) : null}
             <div className={styles.gridThree}>

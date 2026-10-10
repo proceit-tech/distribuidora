@@ -1,7 +1,7 @@
 import type { PoolClient } from "pg";
 import { NextResponse } from "next/server";
 
-import { resolverPais, resolverUbicacionParaguay } from "@/lib/geografia/referencia";
+import { resolverPais, resolverUbicacionParaguay, validarPaisPorOperacion } from "@/lib/geografia/referencia";
 
 import { denyIfNoPermission } from "@/lib/auth/permissions";
 
@@ -655,6 +655,7 @@ export async function POST(request: Request) {
     if (!paisCodigo) {
       throw new Error("Informe el país del cliente.");
     }
+    validarPaisPorOperacion(tipoOperacion, paisCodigo);
 
     if (!razonSocial) {
       throw new Error("Informe el nombre o razón social del cliente.");
@@ -1022,8 +1023,8 @@ export async function POST(request: Request) {
           cliente.id,
           opcional(direccion.etiqueta, 100) ?? tipo,
           texto(direccion.direccion, 300),
-          geografia?.ciudad ?? opcional(direccion.ciudad, 100),
-          geografia?.departamento ?? opcional(direccion.departamento, 100),
+          geografia ? geografia.ciudad : opcional(direccion.ciudad, 100),
+          geografia ? geografia.departamento : opcional(direccion.departamento, 100),
           numeroOpcional(direccion.latitud, -90, 90),
           numeroOpcional(direccion.longitud, -180, 180),
           booleano(direccion.esFiscal) || tipo === "FISCAL",
@@ -1036,7 +1037,7 @@ export async function POST(request: Request) {
           paisDireccion.nombre,
           geografia?.departamentoCodigo ?? null,
           geografia?.distritoCodigo ?? null,
-          geografia?.distrito ?? opcional(direccion.distrito, 100),
+          geografia ? geografia.distrito : opcional(direccion.distrito, 100),
           geografia?.ciudadCodigo ?? null,
           opcional(direccion.codigoPostal, 15),
           opcional(direccion.contactoNombre, 200),

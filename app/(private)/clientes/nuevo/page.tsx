@@ -1213,7 +1213,7 @@ export default function NuevoClientePage() {
                   {esParaguay ? (
                     <div className="clienteNuevo__grid clienteNuevo__grid--tres">
                       <Select
-                        label="Departamento *"
+                        label="Departamento"
                         onChange={(valor) =>
                           void seleccionarDepartamento(indice, valor)
                         }
@@ -1225,7 +1225,7 @@ export default function NuevoClientePage() {
                       />
                       <Select
                         disabled={!direccion.departamentoCodigo}
-                        label="Distrito *"
+                        label="Distrito"
                         onChange={(valor) =>
                           void seleccionarDistrito(indice, valor)
                         }
@@ -1237,7 +1237,7 @@ export default function NuevoClientePage() {
                       />
                       <Select
                         disabled={!direccion.distritoCodigo}
-                        label="Ciudad *"
+                        label="Ciudad"
                         onChange={(valor) => seleccionarCiudad(indice, valor)}
                         opciones={opcionesCatalogo(
                           ciudadesPorDireccion[indice] ?? [],

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { denyIfNoPermission } from "@/lib/auth/permissions";
-import { resolverPais } from "@/lib/geografia/referencia";
+import { resolverPais, validarPaisPorOperacion } from "@/lib/geografia/referencia";
 import { ErrorValidacion, leerEntrada, leerHijos, sincronizarHijos } from "@/lib/clientes/relacionados";
 
 type Contexto = { params: Promise<{ id: string }> };
@@ -222,6 +222,7 @@ export async function PUT(request: Request, contexto: Contexto) {
     if (!(tipoOperacion in OPERACION)) throw new Error("Seleccione un tipo de operación válido.");
     if (!(tipoPersona in CONTRIBUYENTE)) throw new Error("Seleccione el tipo de contribuyente.");
     if (!paisCodigo) throw new Error("Informe el país del cliente.");
+    validarPaisPorOperacion(tipoOperacion, paisCodigo);
     if (!razonSocial) throw new Error("Informe el nombre o razón social del cliente.");
     if (naturaleza === "CONTRIBUYENTE") {
       if (!numeroDocumento || !dv) throw new Error("Para un contribuyente informe RUC y DV.");
