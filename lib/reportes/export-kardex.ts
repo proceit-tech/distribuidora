@@ -1,6 +1,7 @@
 import type { Celda, ColRep, TablaReporte } from "@/lib/reportes/export";
+import { fmtNum } from "@/lib/reportes/formato";
 import { ORIGENES_KARDEX, TIPOS_KARDEX } from "@/lib/reportes/kardex-textos";
-import type { KardexFila, KardexFiltros, KardexResumenFila, KardexRespuesta } from "@/types/reportes";
+import type { KardexFila, KardexFiltros, KardexMovimientos, KardexResumenFila, KardexRespuesta } from "@/types/reportes";
 
 // Exportación del Kardex: mismas filas (en el mismo orden), filtros, saldos y totales que la pantalla.
 
@@ -61,35 +62,71 @@ export const COLUMNAS_KARDEX: ColK[] = [
   txt("Vinculado", 6.5, textoVinculo),
 ];
 
-type ColR = ColRep & { valor: (f: KardexResumenFila) => Celda };
-const rt = (titulo: string, peso: number, valor: (f: KardexResumenFila) => string): ColR => ({ titulo, peso, tipo: "texto", valor });
-const rq = (titulo: string, peso: number, valor: (f: KardexResumenFila) => number): ColR => ({ titulo, peso, tipo: "cantidad", valor });
-export const COLUMNAS_RESUMEN: ColR[] = [
-  rt("Código", 6, (f) => f.productoCodigo), rt("Producto", 12, (f) => f.productoDescripcion), rt("Depósito", 8, (f) => f.deposito), rt("Lote", 5, (f) => f.lote),
-  rq("Saldo inicial", 6, (f) => f.saldoInicial), rq("Entradas", 5, (f) => f.entradas), rq("Salidas", 5, (f) => f.salidas),
-  rq("Transf. entrada", 5.5, (f) => f.transfEntradas), rq("Transf. salida", 5.5, (f) => f.transfSalidas), rq("Saldo final", 6, (f) => f.saldoFinal),
-  rq("Disponible", 5, (f) => f.finalDisponible), rq("Reservado", 5, (f) => f.finalReservado), rq("Cuarentena", 5, (f) => f.finalCuarentena),
-];
+type ColR = ColRep & { k: string; valor: (f: KardexResumenFila) => Celda };
+const rt = (k: string, titulo: string, peso: number, valor: (f: KardexResumenFila) => string): ColR => ({ k, titulo, peso, tipo: "texto", valor });
+const rq = (k: string, titulo: string, peso: number, valor: (f: KardexResumenFila) => number): ColR => ({ k, titulo, peso, tipo: "cantidad", valor });
+/** Con filtros de fila, los movimientos son los filtrados y aparece la columna "Fuera del filtro" (variación neta del resto del período). */
+export function columnasResumen(filtrosDeFila: boolean): ColR[] {
+  const fl = filtrosDeFila ? " filtradas" : "";
+  return [
+    rt("cod", "Código", 6, (f) => f.productoCodigo), rt("prod", "Producto", 12, (f) => f.productoDescripcion), rt("dep", "Depósito", 8, (f) => f.deposito), rt("lote", "Lote", 5, (f) => f.lote),
+    rq("ini", "Saldo inicial", 6, (f) => f.saldoInicial), rq("ent", "Entradas" + fl, 5.5, (f) => f.entradas), rq("sal", "Salidas" + fl, 5.5, (f) => f.salidas),
+    rq("tent", "Transf. entrada" + fl, 6, (f) => f.transfEntradas), rq("tsal", "Transf. salida" + fl, 6, (f) => f.transfSalidas),
+    ...(filtrosDeFila ? [rq("fuera", "Fuera del filtro (neto)", 6.5, (f) => f.fueraDelFiltro)] : []),
+    rq("fin", "Saldo final", 6, (f) => f.saldoFinal),
+    rq("disp", "Disponible", 5, (f) => f.finalDisponible), rq("res", "Reservado", 5, (f) => f.finalReservado), rq("cuar", "Cuarentena", 5, (f) => f.finalCuarentena),
+  ];
+}
+
+export const neto = (m: KardexMovimientos) => m.entradas - m.salidas + m.transfEntradas - m.transfSalidas;
 
 export function tablaKardex(r: KardexRespuesta): TablaReporte {
   const t = r.totales;
   const detalle = r.filtros.vista === "DETALLE";
-  const cols: (ColK | ColR)[] = detalle ? COLUMNAS_KARDEX : COLUMNAS_RESUMEN;
-  const fila = (valores: Record<string, Celda>): Celda[] => cols.map((c) => (c.titulo in valores ? valores[c.titulo] : ""));
-  const totales = detalle
-    ? [
-        { etiqueta: "SALDO INICIAL", celdas: fila({ "Saldo físico": t.saldoInicial.fisico, Disponible: t.saldoInicial.disponible, Reservado: t.saldoInicial.reservado, Cuarentena: t.saldoInicial.cuarentena }) },
-        { etiqueta: "TOTAL MOVIMIENTOS", celdas: fila({ Entrada: t.entradas, Salida: t.salidas }) },
-        { etiqueta: "TRANSFERENCIAS", celdas: fila({ Entrada: t.transfEntradas, Salida: t.transfSalidas }) },
-        { etiqueta: "SALDO FINAL", celdas: fila({ "Saldo físico": t.saldoFinal.fisico, Disponible: t.saldoFinal.disponible, Reservado: t.saldoFinal.reservado, Cuarentena: t.saldoFinal.cuarentena }) },
-      ]
-    : [{ etiqueta: "TOTAL", celdas: fila({ "Saldo inicial": t.saldoInicial.fisico, Entradas: t.entradas, Salidas: t.salidas, "Transf. entrada": t.transfEntradas, "Transf. salida": t.transfSalidas, "Saldo final": t.saldoFinal.fisico, Disponible: t.saldoFinal.disponible, Reservado: t.saldoFinal.reservado, Cuarentena: t.saldoFinal.cuarentena }) }];
+  const fl = t.filtrosDeFila;
+  const colsR = columnasResumen(fl);
+  const cols: ColRep[] = detalle ? COLUMNAS_KARDEX : colsR;
+  const fila = (valores: Record<string, Celda>): Celda[] =>
+    detalle ? COLUMNAS_KARDEX.map((c) => (c.titulo in valores ? valores[c.titulo] : "")) : colsR.map((c) => (c.k in valores ? valores[c.k] : ""));
+  let totales: TablaReporte["totales"];
+  if (detalle) {
+    const sal = (x: typeof t.saldoInicial) => ({ "Saldo físico": x.fisico, Disponible: x.disponible, Reservado: x.reservado, Cuarentena: x.cuarentena });
+    totales = [
+      { etiqueta: "SALDO INICIAL", celdas: fila(sal(t.saldoInicial)) },
+      { etiqueta: fl ? "MOV. FILTRADOS" : "TOTAL MOVIMIENTOS", celdas: fila({ Entrada: t.filtrado.entradas, Salida: t.filtrado.salidas }) },
+      { etiqueta: fl ? "TRANSF. FILTRADAS" : "TRANSFERENCIAS", celdas: fila({ Entrada: t.filtrado.transfEntradas, Salida: t.filtrado.transfSalidas }) },
+      ...(fl
+        ? [
+            { etiqueta: "MOV. FUERA DEL FILTRO", celdas: fila({ Entrada: t.fueraDelFiltro.entradas, Salida: t.fueraDelFiltro.salidas }) },
+            { etiqueta: "TRANSF. FUERA DEL FILTRO", celdas: fila({ Entrada: t.fueraDelFiltro.transfEntradas, Salida: t.fueraDelFiltro.transfSalidas }) },
+          ]
+        : []),
+      { etiqueta: "SALDO FINAL", celdas: fila(sal(t.saldoFinal)) },
+    ];
+  } else {
+    const q = t.resumen!;
+    totales = [{
+      etiqueta: fl ? "TOTAL FILAS MOSTRADAS" : "TOTAL",
+      celdas: fila({ ini: q.saldoInicial, ent: q.entradas, sal: q.salidas, tent: q.transfEntradas, tsal: q.transfSalidas, fuera: q.fueraDelFiltro, fin: q.saldoFinal, disp: q.finalDisponible, res: q.finalReservado, cuar: q.finalCuarentena }),
+    }];
+    if (fl) {
+      totales.push({
+        etiqueta: "CONCILIACIÓN COMPLETA",
+        celdas: fila({ ini: t.saldoInicial.fisico, ent: t.completo.entradas, sal: t.completo.salidas, tent: t.completo.transfEntradas, tsal: t.completo.transfSalidas, fin: t.saldoFinal.fisico, disp: t.saldoFinal.disponible, res: t.saldoFinal.reservado, cuar: t.saldoFinal.cuarentena }),
+      });
+    }
+  }
   const notas = [
-    "Totales: saldo inicial = antes del período; total movimientos = entradas y salidas sin transferencias; las transferencias se compensan en el consolidado de la empresa.",
     r.conciliacion.conciliado
       ? `Conciliación con Stock (hoy): el libro de movimientos coincide con los saldos de stock en ${r.conciliacion.combinaciones} combinaciones producto × depósito × lote.`
       : `ATENCIÓN: el libro de movimientos NO coincide con Stock en ${r.conciliacion.divergentes} de ${r.conciliacion.combinaciones} combinaciones producto × depósito × lote; los saldos acumulados pueden no ser confiables.`,
-    ...(t.filtrosDeFila ? ["Hay filtros de tipo, usuario, documento o estado: los saldos son los reales del libro; los totales de movimientos suman solo las filas filtradas."] : []),
+    ...(fl
+      ? [
+          `Hay filtros de tipo, usuario, documento o estado. Los saldos son los reales del libro; los totales de movimientos corresponden SOLO a las filas filtradas y no explican por sí solos la variación del saldo. Conciliación completa del período: saldo inicial ${fmtNum(t.saldoInicial.fisico)} + movimientos filtrados ${fmtNum(neto(t.filtrado))} + movimientos fuera del filtro ${fmtNum(neto(t.fueraDelFiltro))} = saldo final ${fmtNum(t.saldoFinal.fisico)}${t.cuadra ? "" : " (NO CUADRA: inconsistencia del libro)"}.`,
+          ...(detalle ? [] : ["TOTAL FILAS MOSTRADAS suma solo las combinaciones que tienen movimientos filtrados; CONCILIACIÓN COMPLETA incluye todas las combinaciones del período."]),
+        ]
+      : t.cuadra ? [] : ["ATENCIÓN: el saldo inicial más los movimientos del período no coincide con el saldo final (inconsistencia del libro)."]),
+    "Totales: saldo inicial = antes del período; movimientos = entradas y salidas sin transferencias; las transferencias se compensan en el consolidado de la empresa.",
     ...r.cobertura,
   ];
   return {
@@ -102,7 +139,7 @@ export function tablaKardex(r: KardexRespuesta): TablaReporte {
     filtros: describirFiltrosKardex(r),
     totalFilas: r.pagina.totalFilas,
     columnas: cols.map(({ titulo, peso, tipo }) => ({ titulo, peso, tipo })),
-    filas: detalle ? r.filas.map((f) => COLUMNAS_KARDEX.map((c) => c.valor(f))) : r.resumen.map((f) => COLUMNAS_RESUMEN.map((c) => c.valor(f))),
+    filas: detalle ? r.filas.map((f) => COLUMNAS_KARDEX.map((c) => c.valor(f))) : r.resumen.map((f) => colsR.map((c) => c.valor(f))),
     totales,
     colEtiquetaPdf: detalle ? 6 : 1,
     notas,

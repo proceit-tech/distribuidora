@@ -211,10 +211,38 @@ export type KardexResumenFila = {
   lote: string;
   propiedad: string;
   saldoInicial: number;
+  /** Movimientos que cumplen los filtros de fila (sin filtros de fila: todos los del período). */
   entradas: number;
   salidas: number;
   transfEntradas: number;
   transfSalidas: number;
+  /** Variación neta física de los movimientos del período que quedan FUERA de los filtros de fila (0 sin filtros). */
+  fueraDelFiltro: number;
+  saldoFinal: number;
+  finalDisponible: number;
+  finalReservado: number;
+  finalCuarentena: number;
+};
+
+/** Cantidades físicas de un conjunto de movimientos (transferencias aparte; se compensan en el consolidado). */
+export type KardexMovimientos = {
+  /** Entradas/salidas físicas SIN transferencias (incluyen reversiones por anulación). */
+  entradas: number;
+  salidas: number;
+  transfEntradas: number;
+  transfSalidas: number;
+  cambiosEstado: number;
+  anulaciones: number;
+};
+
+export type KardexResumenTotales = {
+  filas: number;
+  saldoInicial: number;
+  entradas: number;
+  salidas: number;
+  transfEntradas: number;
+  transfSalidas: number;
+  fueraDelFiltro: number;
   saldoFinal: number;
   finalDisponible: number;
   finalReservado: number;
@@ -222,21 +250,23 @@ export type KardexResumenFila = {
 };
 
 export type KardexTotales = {
+  /** Filas que cumplen todos los filtros (movimientos del DETALLE). */
   filas: number;
+  /** Hay filtros de tipo/usuario/documento/estado/estado de stock (filtros de fila). */
+  filtrosDeFila: boolean;
+  /** Saldos REALES del libro (todos los movimientos anteriores al período / hasta el fin del período), sin filtros de fila. */
   saldoInicial: KardexSaldos;
   saldoFinal: KardexSaldos;
-  /** Entradas/salidas físicas SIN transferencias (incluyen reversiones por anulación). */
-  entradas: number;
-  salidas: number;
-  /** Las dos puntas de las transferencias, aparte: en el consolidado de la empresa se compensan. */
-  transfEntradas: number;
-  transfSalidas: number;
-  cambiosEstado: number;
-  anulaciones: number;
-  /** saldoInicial.fisico + entradas − salidas + transfEntradas − transfSalidas === saldoFinal.fisico (solo sin filtros de fila). */
+  /** Movimientos del período que cumplen los filtros de fila: lo que muestran las filas. NO explican por sí solos la variación del saldo. */
+  filtrado: KardexMovimientos;
+  /** Movimientos del período que NO cumplen los filtros de fila (todo en cero si no hay filtros de fila). */
+  fueraDelFiltro: KardexMovimientos;
+  /** Conciliación completa: TODOS los movimientos del período, sin filtros de fila. */
+  completo: KardexMovimientos;
+  /** saldoInicial.fisico + completo(entradas − salidas + transf.) === saldoFinal.fisico, y filtrado + fuera del filtro = completo. Independiente de los filtros de fila. */
   cuadra: boolean;
-  /** Hay filtros de tipo/usuario/documento/estado: los saldos son los reales del libro, los totales solo de las filas filtradas. */
-  filtrosDeFila: boolean;
+  /** Solo vista RESUMEN: suma de las filas mostradas (mismo criterio que las filas). */
+  resumen: KardexResumenTotales | null;
 };
 
 export type KardexConciliacion = {

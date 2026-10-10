@@ -2,7 +2,7 @@ import type { Pool } from "pg";
 
 import { ORIGENES_KARDEX, TIPOS_KARDEX } from "@/lib/reportes/kardex-textos";
 import { depositosPermitidos, MAX_FILAS_EXPORTACION } from "@/lib/reportes/stock-general";
-import type { KardexFiltros, KardexFila, KardexResumenFila, KardexRespuesta, KardexSaldos, KardexTotales } from "@/types/reportes";
+import type { KardexFiltros, KardexFila, KardexMovimientos, KardexResumenFila, KardexRespuesta, KardexSaldos, KardexTotales } from "@/types/reportes";
 
 // Reporte 3 — Kardex de movimientos. Fuente: libro de movimientos (movimientos_inventario + movimiento_lineas).
 // Todo cambio de stock pasa por funciones SECURITY DEFINER que escriben una línea, por lo que el saldo de cada
@@ -138,6 +138,16 @@ export async function leerKardex(
   const sumas = (col: string, hastaTotal = false) =>
     `coalesce(sum(${col}) FILTER (WHERE ${hastaTotal ? (f.hasta ? `reg_fecha <= ${ph}::date` : "true") : f.desde ? `reg_fecha < ${pd}::date` : "false"}), 0)`;
   const fis = "(dd + dr + dc)";
+  // Tres conjuntos de movimientos del período (mismo cálculo, distinta condición): los que cumplen los filtros de fila (f),
+  // los que quedan fuera de ellos (o) y todos (c = conciliación completa). Transferencias siempre aparte.
+  const fuera = `(${enPer}) AND NOT (${pasa})`;
+  const movCols = (px: string, cond: string, agg = (x: string) => x) => `
+              ${agg(`coalesce(sum(${fis}) FILTER (WHERE ${cond} AND tipo_movimiento <> 'TRANSFERENCIA' AND ${fis} > 0), 0)::float8`)} AS ${px}_ent,
+              ${agg(`coalesce(-sum(${fis}) FILTER (WHERE ${cond} AND tipo_movimiento <> 'TRANSFERENCIA' AND ${fis} < 0), 0)::float8`)} AS ${px}_sal,
+              ${agg(`coalesce(sum(dd) FILTER (WHERE ${cond} AND tipo_movimiento = 'TRANSFERENCIA' AND dd > 0), 0)::float8`)} AS ${px}_tent,
+              ${agg(`coalesce(-sum(dd) FILTER (WHERE ${cond} AND tipo_movimiento = 'TRANSFERENCIA' AND dd < 0), 0)::float8`)} AS ${px}_tsal,
+              count(*) FILTER (WHERE ${cond} AND efecto = 'ESTADO')::int AS ${px}_cam,
+              count(DISTINCT movimiento_id) FILTER (WHERE ${cond} AND tipo_origen = 'ANULACION')::int AS ${px}_anu`;
 
   const [tq, cq, em] = await Promise.all([
     db.query(
@@ -145,12 +155,7 @@ export async function leerKardex(
        SELECT count(*) FILTER (WHERE ${sel})::int AS filas,
               ${sumas("dd")}::float8 AS i_disp, ${sumas("dr")}::float8 AS i_res, ${sumas("dc")}::float8 AS i_cuar,
               ${sumas("dd", true)}::float8 AS f_disp, ${sumas("dr", true)}::float8 AS f_res, ${sumas("dc", true)}::float8 AS f_cuar,
-              coalesce(sum(${fis}) FILTER (WHERE ${sel} AND tipo_movimiento <> 'TRANSFERENCIA' AND ${fis} > 0), 0)::float8 AS entradas,
-              coalesce(-sum(${fis}) FILTER (WHERE ${sel} AND tipo_movimiento <> 'TRANSFERENCIA' AND ${fis} < 0), 0)::float8 AS salidas,
-              coalesce(sum(dd) FILTER (WHERE ${sel} AND tipo_movimiento = 'TRANSFERENCIA' AND dd > 0), 0)::float8 AS t_ent,
-              coalesce(-sum(dd) FILTER (WHERE ${sel} AND tipo_movimiento = 'TRANSFERENCIA' AND dd < 0), 0)::float8 AS t_sal,
-              count(*) FILTER (WHERE ${sel} AND efecto = 'ESTADO')::int AS cambios,
-              count(DISTINCT movimiento_id) FILTER (WHERE ${sel} AND tipo_origen = 'ANULACION')::int AS anulaciones
+              ${movCols("f", sel)}, ${movCols("o", fuera)}, ${movCols("c", enPer)}
          FROM sal`,
       params,
     ),
@@ -180,15 +185,28 @@ export async function leerKardex(
   ]);
   const t = tq.rows[0];
   const saldo = (d: unknown, r: unknown, c: unknown): KardexSaldos => ({ disponible: n(d), reservado: n(r), cuarentena: n(c), fisico: n(d) + n(r) + n(c) });
+  const movs = (px: string): KardexMovimientos => ({
+    entradas: n(t[`${px}_ent`]), salidas: n(t[`${px}_sal`]), transfEntradas: n(t[`${px}_tent`]), transfSalidas: n(t[`${px}_tsal`]),
+    cambiosEstado: t[`${px}_cam`], anulaciones: t[`${px}_anu`],
+  });
+  const neto = (m: KardexMovimientos) => m.entradas - m.salidas + m.transfEntradas - m.transfSalidas;
   const totales: KardexTotales = {
     filas: t.filas,
+    filtrosDeFila,
     saldoInicial: saldo(t.i_disp, t.i_res, t.i_cuar),
     saldoFinal: saldo(t.f_disp, t.f_res, t.f_cuar),
-    entradas: n(t.entradas), salidas: n(t.salidas), transfEntradas: n(t.t_ent), transfSalidas: n(t.t_sal),
-    cambiosEstado: t.cambios, anulaciones: t.anulaciones, cuadra: false, filtrosDeFila,
+    filtrado: movs("f"),
+    fueraDelFiltro: movs("o"),
+    completo: movs("c"),
+    cuadra: false,
+    resumen: null,
   };
-  const cuentas = (totales.saldoInicial.fisico + totales.entradas - totales.salidas + totales.transfEntradas - totales.transfSalidas);
-  totales.cuadra = Math.abs(cuentas - totales.saldoFinal.fisico) < 0.00005;
+  // Cuadre SIEMPRE sobre la conciliación completa (todos los movimientos), nunca sobre los totales filtrados:
+  // saldo inicial + movimientos del período = saldo final, y filtrados + fuera del filtro = completo.
+  const eps = 0.00005;
+  totales.cuadra =
+    Math.abs(totales.saldoInicial.fisico + neto(totales.completo) - totales.saldoFinal.fisico) < eps &&
+    Math.abs(neto(totales.filtrado) + neto(totales.fueraDelFiltro) - neto(totales.completo)) < eps;
 
   let totalFilas = t.filas as number;
   const limite = todas ? MAX_FILAS_EXPORTACION + 1 : tamano;
@@ -240,19 +258,34 @@ export async function leerKardex(
                coalesce(-sum(${fis}) FILTER (WHERE ${sel} AND tipo_movimiento <> 'TRANSFERENCIA' AND ${fis} < 0), 0) AS salidas,
                coalesce(sum(dd) FILTER (WHERE ${sel} AND tipo_movimiento = 'TRANSFERENCIA' AND dd > 0), 0) AS t_ent,
                coalesce(-sum(dd) FILTER (WHERE ${sel} AND tipo_movimiento = 'TRANSFERENCIA' AND dd < 0), 0) AS t_sal,
+               coalesce(sum(${fis}) FILTER (WHERE ${fuera}), 0) AS fuera_filtro,
                coalesce(sum(dd) FILTER (WHERE ${fin}), 0) AS f_disp, coalesce(sum(dr) FILTER (WHERE ${fin}), 0) AS f_res,
                coalesce(sum(dc) FILTER (WHERE ${fin}), 0) AS f_cuar,
                count(*) FILTER (WHERE ${sel}) AS en_filtro
           FROM sal GROUP BY producto_id, deposito_id, lote_id, propietario_id
       ),
       gf AS (SELECT * FROM g WHERE en_filtro > 0${filtrosDeFila ? "" : " OR inicial <> 0"})`;
-    const cnt = await db.query(`WITH ${cte}, ${grupo} SELECT count(*)::int AS n FROM gf`, params);
-    totalFilas = cnt.rows[0].n;
+    // Totales de las filas mostradas (mismo conjunto gf que las filas): el TOTAL del resumen es la suma exacta de sus filas.
+    const cnt = await db.query(
+      `WITH ${cte}, ${grupo}
+       SELECT count(*)::int AS n, coalesce(sum(inicial), 0)::float8 AS inicial, coalesce(sum(entradas), 0)::float8 AS entradas, coalesce(sum(salidas), 0)::float8 AS salidas,
+              coalesce(sum(t_ent), 0)::float8 AS t_ent, coalesce(sum(t_sal), 0)::float8 AS t_sal, coalesce(sum(fuera_filtro), 0)::float8 AS fuera,
+              coalesce(sum(f_disp + f_res + f_cuar), 0)::float8 AS final, coalesce(sum(f_disp), 0)::float8 AS f_disp,
+              coalesce(sum(f_res), 0)::float8 AS f_res, coalesce(sum(f_cuar), 0)::float8 AS f_cuar
+         FROM gf`,
+      params,
+    );
+    const c0 = cnt.rows[0];
+    totalFilas = c0.n;
+    totales.resumen = {
+      filas: c0.n, saldoInicial: c0.inicial, entradas: c0.entradas, salidas: c0.salidas, transfEntradas: c0.t_ent, transfSalidas: c0.t_sal,
+      fueraDelFiltro: c0.fuera, saldoFinal: c0.final, finalDisponible: c0.f_disp, finalReservado: c0.f_res, finalCuarentena: c0.f_cuar,
+    };
     const rows = await db.query(
       `WITH ${cte}, ${grupo}
        SELECT gf.producto_id::text || ':' || d.id::text || ':' || coalesce(gf.lote_id::text, '') AS clave, gf.pcodigo, gf.pdesc, d.nombre AS deposito,
               coalesce(gf.codigo_lote, '') AS lote, gf.inicial::float8 AS inicial, gf.entradas::float8 AS entradas, gf.salidas::float8 AS salidas,
-              gf.t_ent::float8 AS t_ent, gf.t_sal::float8 AS t_sal, (gf.f_disp + gf.f_res + gf.f_cuar)::float8 AS final,
+              gf.t_ent::float8 AS t_ent, gf.t_sal::float8 AS t_sal, gf.fuera_filtro::float8 AS fuera, (gf.f_disp + gf.f_res + gf.f_cuar)::float8 AS final,
               gf.f_disp::float8 AS f_disp, gf.f_res::float8 AS f_res, gf.f_cuar::float8 AS f_cuar
          FROM gf JOIN depositos d ON d.empresa_id = $1 AND d.id = gf.deposito_id
         ORDER BY gf.pcodigo, d.nombre, gf.codigo_lote NULLS FIRST, gf.producto_id
@@ -262,7 +295,7 @@ export async function leerKardex(
     if (todas && rows.rows.length > MAX_FILAS_EXPORTACION) return { error: `La exportación supera ${MAX_FILAS_EXPORTACION} filas; reduzca los filtros.`, status: 413 };
     resumen = rows.rows.map((x): KardexResumenFila => ({
       clave: x.clave, productoCodigo: x.pcodigo, productoDescripcion: x.pdesc, deposito: x.deposito, lote: x.lote, propiedad: "PROPIO",
-      saldoInicial: x.inicial, entradas: x.entradas, salidas: x.salidas, transfEntradas: x.t_ent, transfSalidas: x.t_sal,
+      saldoInicial: x.inicial, entradas: x.entradas, salidas: x.salidas, transfEntradas: x.t_ent, transfSalidas: x.t_sal, fueraDelFiltro: x.fuera,
       saldoFinal: x.final, finalDisponible: x.f_disp, finalReservado: x.f_res, finalCuarentena: x.f_cuar,
     }));
   }

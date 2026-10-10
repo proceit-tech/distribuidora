@@ -4,7 +4,7 @@ import Link from "next/link";
 import { Fragment, useEffect, useState } from "react";
 
 import { cargarKardex, descargarKardex } from "@/lib/reportes/cliente-kardex";
-import { textoCambioEstado, textoEstadoMov, textoTipo, textoVinculo } from "@/lib/reportes/export-kardex";
+import { neto, textoCambioEstado, textoEstadoMov, textoTipo, textoVinculo } from "@/lib/reportes/export-kardex";
 import { fmtDinero, fmtNum } from "@/lib/reportes/formato";
 import type { KardexFiltros, KardexFila, KardexRespuesta, KardexResumenFila } from "@/types/reportes";
 
@@ -102,22 +102,28 @@ export default function ReporteKardexPage() {
 
       <section className={styles.summaryGrid}>
         <article className={[styles.summaryCard, styles.summaryTeal].join(" ")}>
-          <span>SALDO INICIAL (FÍSICO)</span>
+          <span>SALDO INICIAL REAL (FÍSICO)</span>
           <strong>{t ? fmtNum(t.saldoInicial.fisico) : "—"}</strong>
           <small>Antes del período{filtros.desde ? ` (${filtros.desde})` : ""}</small>
         </article>
         <article className={[styles.summaryCard, styles.summaryBlue].join(" ")}>
-          <span>ENTRADAS / SALIDAS</span>
-          <strong>{t ? `${fmtNum(t.entradas)} / ${fmtNum(t.salidas)}` : "—"}</strong>
-          <small>Sin transferencias · {t ? fmtNum(t.anulaciones) : "—"} anulaciones</small>
+          <span>{t?.filtrosDeFila ? "ENTRADAS / SALIDAS (FILTRADAS)" : "ENTRADAS / SALIDAS"}</span>
+          <strong>{t ? `${fmtNum(t.filtrado.entradas)} / ${fmtNum(t.filtrado.salidas)}` : "—"}</strong>
+          <small>
+            {t?.filtrosDeFila
+              ? `Del período completo: ${fmtNum(t.completo.entradas)} / ${fmtNum(t.completo.salidas)}`
+              : `Sin transferencias · ${t ? fmtNum(t.filtrado.anulaciones) : "—"} anulaciones`}
+          </small>
         </article>
         <article className={[styles.summaryCard, styles.summaryAmber].join(" ")}>
-          <span>TRANSFERENCIAS</span>
-          <strong>{t ? `${fmtNum(t.transfEntradas)} / ${fmtNum(t.transfSalidas)}` : "—"}</strong>
-          <small>Entrada / salida · se compensan en el consolidado</small>
+          <span>{t?.filtrosDeFila ? "TRANSFERENCIAS (FILTRADAS)" : "TRANSFERENCIAS"}</span>
+          <strong>{t ? `${fmtNum(t.filtrado.transfEntradas)} / ${fmtNum(t.filtrado.transfSalidas)}` : "—"}</strong>
+          <small>
+            {t?.filtrosDeFila ? `Del período completo: ${fmtNum(t.completo.transfEntradas)} / ${fmtNum(t.completo.transfSalidas)}` : "Entrada / salida · se compensan en el consolidado"}
+          </small>
         </article>
         <article className={[styles.summaryCard, styles.summaryPurple].join(" ")}>
-          <span>SALDO FINAL (FÍSICO)</span>
+          <span>SALDO FINAL REAL (FÍSICO)</span>
           <strong>{t ? fmtNum(t.saldoFinal.fisico) : "—"}</strong>
           <small>{t ? `Disp. ${fmtNum(t.saldoFinal.disponible)} · Res. ${fmtNum(t.saldoFinal.reservado)} · Cuar. ${fmtNum(t.saldoFinal.cuarentena)}` : "—"}</small>
         </article>
@@ -220,7 +226,13 @@ export default function ReporteKardexPage() {
           <div className={styles.okBox}>Libro de movimientos conciliado con Stock en {fmtNum(cc.combinaciones)} combinaciones producto × depósito × lote.</div>
         ) : null}
         {t?.filtrosDeFila ? (
-          <div className={styles.okBox}>Con filtros de tipo, usuario, documento o estado, los saldos son los reales del libro y los totales de movimientos suman solo las filas filtradas.</div>
+          <div className={styles.okBox}>
+            <strong>Totales filtrados ≠ variación del saldo.</strong> Las filas y los totales de movimientos corresponden solo a los filtros de tipo, usuario, documento o estado; los saldos inicial y final son los reales del libro.
+            {" "}Conciliación completa del período: saldo inicial {fmtNum(t.saldoInicial.fisico)} + movimientos filtrados {sgn(neto(t.filtrado))} + movimientos fuera del filtro {sgn(neto(t.fueraDelFiltro))} = saldo final {fmtNum(t.saldoFinal.fisico)}.
+          </div>
+        ) : null}
+        {t && !t.cuadra ? (
+          <div className={styles.alertBox}>Inconsistencia del libro: el saldo inicial más los movimientos del período no coincide con el saldo final. Informe a soporte antes de usar este reporte.</div>
         ) : null}
         {error ? <div className={styles.errorBox}>{error}</div> : null}
 
@@ -278,20 +290,32 @@ export default function ReporteKardexPage() {
               {datos && t && (datos.filas.length > 0 || t.saldoInicial.fisico !== 0 || t.saldoFinal.fisico !== 0) ? (
                 <tfoot>
                   <tr>
-                    <td colSpan={8}>SALDO INICIAL (antes del período)</td><td /><td /><td />
+                    <td colSpan={8}>SALDO INICIAL REAL (todos los movimientos anteriores al período)</td><td /><td /><td />
                     <td className={styles.num}>{fmtNum(t.saldoInicial.fisico)}</td><td className={styles.num}>{fmtNum(t.saldoInicial.disponible)}</td>
                     <td className={styles.num}>{fmtNum(t.saldoInicial.reservado)}</td><td className={styles.num}>{fmtNum(t.saldoInicial.cuarentena)}</td><td colSpan={5} />
                   </tr>
                   <tr>
-                    <td colSpan={8}>TOTAL MOVIMIENTOS (sin transferencias; todo el filtro)</td>
-                    <td className={styles.num}>{fmtNum(t.entradas)}</td><td className={styles.num}>{fmtNum(t.salidas)}</td><td colSpan={9} />
+                    <td colSpan={8}>{t.filtrosDeFila ? "MOVIMIENTOS FILTRADOS (sin transferencias; todo el filtro)" : "TOTAL MOVIMIENTOS (sin transferencias; todo el filtro)"}</td>
+                    <td className={styles.num}>{fmtNum(t.filtrado.entradas)}</td><td className={styles.num}>{fmtNum(t.filtrado.salidas)}</td><td colSpan={9} />
                   </tr>
                   <tr>
-                    <td colSpan={8}>TRANSFERENCIAS (entrada / salida; se compensan en el consolidado)</td>
-                    <td className={styles.num}>{fmtNum(t.transfEntradas)}</td><td className={styles.num}>{fmtNum(t.transfSalidas)}</td><td colSpan={9} />
+                    <td colSpan={8}>{t.filtrosDeFila ? "TRANSFERENCIAS FILTRADAS (entrada / salida)" : "TRANSFERENCIAS (entrada / salida; se compensan en el consolidado)"}</td>
+                    <td className={styles.num}>{fmtNum(t.filtrado.transfEntradas)}</td><td className={styles.num}>{fmtNum(t.filtrado.transfSalidas)}</td><td colSpan={9} />
                   </tr>
+                  {t.filtrosDeFila ? (
+                    <>
+                      <tr>
+                        <td colSpan={8}>MOVIMIENTOS FUERA DEL FILTRO (sin transferencias; no incluidos en las filas)</td>
+                        <td className={styles.num}>{fmtNum(t.fueraDelFiltro.entradas)}</td><td className={styles.num}>{fmtNum(t.fueraDelFiltro.salidas)}</td><td colSpan={9} />
+                      </tr>
+                      <tr>
+                        <td colSpan={8}>TRANSFERENCIAS FUERA DEL FILTRO (entrada / salida)</td>
+                        <td className={styles.num}>{fmtNum(t.fueraDelFiltro.transfEntradas)}</td><td className={styles.num}>{fmtNum(t.fueraDelFiltro.transfSalidas)}</td><td colSpan={9} />
+                      </tr>
+                    </>
+                  ) : null}
                   <tr>
-                    <td colSpan={8}>SALDO FINAL</td><td /><td /><td />
+                    <td colSpan={8}>SALDO FINAL REAL</td><td /><td /><td />
                     <td className={styles.num}>{fmtNum(t.saldoFinal.fisico)}</td><td className={styles.num}>{fmtNum(t.saldoFinal.disponible)}</td>
                     <td className={styles.num}>{fmtNum(t.saldoFinal.reservado)}</td><td className={styles.num}>{fmtNum(t.saldoFinal.cuarentena)}</td><td colSpan={5} />
                   </tr>
@@ -303,8 +327,11 @@ export default function ReporteKardexPage() {
               <thead>
                 <tr>
                   <th>Código</th><th>Producto</th><th>Depósito</th><th>Lote</th>
-                  <th className={styles.num}>Saldo inicial</th><th className={styles.num}>Entradas</th><th className={styles.num}>Salidas</th>
-                  <th className={styles.num}>Transf. entrada</th><th className={styles.num}>Transf. salida</th><th className={styles.num}>Saldo final</th>
+                  <th className={styles.num}>Saldo inicial</th>
+                  <th className={styles.num}>{t?.filtrosDeFila ? "Entradas filtradas" : "Entradas"}</th><th className={styles.num}>{t?.filtrosDeFila ? "Salidas filtradas" : "Salidas"}</th>
+                  <th className={styles.num}>{t?.filtrosDeFila ? "Transf. entrada filtrada" : "Transf. entrada"}</th><th className={styles.num}>{t?.filtrosDeFila ? "Transf. salida filtrada" : "Transf. salida"}</th>
+                  {t?.filtrosDeFila ? <th className={styles.num}>Fuera del filtro (neto)</th> : null}
+                  <th className={styles.num}>Saldo final</th>
                   <th className={styles.num}>Disponible</th><th className={styles.num}>Reservado</th><th className={styles.num}>Cuarentena</th>
                 </tr>
               </thead>
@@ -314,20 +341,31 @@ export default function ReporteKardexPage() {
                     <td>{f.productoCodigo}</td><td className={styles.desc} title={f.productoDescripcion}>{f.productoDescripcion}</td><td>{f.deposito}</td><td>{f.lote || "—"}</td>
                     <td className={styles.num}>{fmtNum(f.saldoInicial)}</td><td className={styles.num}>{fmtNum(f.entradas)}</td><td className={styles.num}>{fmtNum(f.salidas)}</td>
                     <td className={styles.num}>{fmtNum(f.transfEntradas)}</td><td className={styles.num}>{fmtNum(f.transfSalidas)}</td>
+                    {t?.filtrosDeFila ? <td className={styles.num}>{sgn(f.fueraDelFiltro)}</td> : null}
                     <td className={styles.num}><strong>{fmtNum(f.saldoFinal)}</strong></td>
                     <td className={styles.num}>{fmtNum(f.finalDisponible)}</td><td className={styles.num}>{fmtNum(f.finalReservado)}</td><td className={styles.num}>{fmtNum(f.finalCuarentena)}</td>
                   </tr>
                 ))}
               </tbody>
-              {datos && t && datos.resumen.length > 0 ? (
+              {datos && t?.resumen && datos.resumen.length > 0 ? (
                 <tfoot>
                   <tr>
-                    <td colSpan={4}>TOTAL (todo el filtro)</td>
-                    <td className={styles.num}>{fmtNum(t.saldoInicial.fisico)}</td><td className={styles.num}>{fmtNum(t.entradas)}</td><td className={styles.num}>{fmtNum(t.salidas)}</td>
-                    <td className={styles.num}>{fmtNum(t.transfEntradas)}</td><td className={styles.num}>{fmtNum(t.transfSalidas)}</td>
-                    <td className={styles.num}>{fmtNum(t.saldoFinal.fisico)}</td>
-                    <td className={styles.num}>{fmtNum(t.saldoFinal.disponible)}</td><td className={styles.num}>{fmtNum(t.saldoFinal.reservado)}</td><td className={styles.num}>{fmtNum(t.saldoFinal.cuarentena)}</td>
+                    <td colSpan={4}>{t.filtrosDeFila ? "TOTAL FILAS MOSTRADAS (combinaciones con movimientos filtrados)" : "TOTAL (todo el filtro)"}</td>
+                    <td className={styles.num}>{fmtNum(t.resumen.saldoInicial)}</td><td className={styles.num}>{fmtNum(t.resumen.entradas)}</td><td className={styles.num}>{fmtNum(t.resumen.salidas)}</td>
+                    <td className={styles.num}>{fmtNum(t.resumen.transfEntradas)}</td><td className={styles.num}>{fmtNum(t.resumen.transfSalidas)}</td>
+                    {t.filtrosDeFila ? <td className={styles.num}>{sgn(t.resumen.fueraDelFiltro)}</td> : null}
+                    <td className={styles.num}>{fmtNum(t.resumen.saldoFinal)}</td>
+                    <td className={styles.num}>{fmtNum(t.resumen.finalDisponible)}</td><td className={styles.num}>{fmtNum(t.resumen.finalReservado)}</td><td className={styles.num}>{fmtNum(t.resumen.finalCuarentena)}</td>
                   </tr>
+                  {t.filtrosDeFila ? (
+                    <tr>
+                      <td colSpan={4}>CONCILIACIÓN COMPLETA (todas las combinaciones y todos los movimientos del período)</td>
+                      <td className={styles.num}>{fmtNum(t.saldoInicial.fisico)}</td><td className={styles.num}>{fmtNum(t.completo.entradas)}</td><td className={styles.num}>{fmtNum(t.completo.salidas)}</td>
+                      <td className={styles.num}>{fmtNum(t.completo.transfEntradas)}</td><td className={styles.num}>{fmtNum(t.completo.transfSalidas)}</td><td />
+                      <td className={styles.num}>{fmtNum(t.saldoFinal.fisico)}</td>
+                      <td className={styles.num}>{fmtNum(t.saldoFinal.disponible)}</td><td className={styles.num}>{fmtNum(t.saldoFinal.reservado)}</td><td className={styles.num}>{fmtNum(t.saldoFinal.cuarentena)}</td>
+                    </tr>
+                  ) : null}
                 </tfoot>
               ) : null}
             </table>
