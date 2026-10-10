@@ -327,6 +327,11 @@ const V1_HREFS = new Set([
   "/listas-precio",
   "/stock",
   "/movimientos",
+  "/reportes",
+  "/reportes/stock-general",
+  "/reportes/valorizacion",
+  "/reportes/kardex",
+  "/reportes/stock-critico",
 ]);
 
 export const PLATFORM_GROUP: ShellNavigationGroup = {
