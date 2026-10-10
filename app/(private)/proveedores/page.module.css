@@ -468,6 +468,8 @@
   right: 20px;
   z-index: 100;
   display: grid;
+}
+
   grid-template-columns: 26px minmax(0, 1fr) 24px;
   width: min(370px, calc(100vw - 40px));
   align-items: center;
