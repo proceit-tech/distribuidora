@@ -19,7 +19,7 @@
 .breadcrumbs {
   margin: 0 0 10px;
   color: #7890aa;
-  font-size: 12px;
+  font-size: 13.33px;
 }
 
 .breadcrumbs span {
@@ -28,7 +28,7 @@
 
 .head h1 {
   margin: 0 0 7px;
-  font-size: 31px;
+  font-size: 32.33px;
   font-weight: 500;
 }
 
@@ -51,14 +51,14 @@
 
 .cardHead span {
   color: #6482a2;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 800;
   letter-spacing: 1px;
 }
 
 .cardHead h2 {
   margin: 6px 0 0;
-  font-size: 19px;
+  font-size: 20.33px;
 }
 
 .auto {
@@ -66,7 +66,7 @@
   border-radius: 7px;
   color: #118274;
   background: #effaf8;
-  font-size: 11px;
+  font-size: 12.33px;
   font-weight: 700;
 }
 
@@ -103,13 +103,13 @@
 
 .sectionTitle h3 {
   margin: 0 0 5px;
-  font-size: 17px;
+  font-size: 18.33px;
 }
 
 .sectionTitle p {
   margin: 0;
   color: #7790ad;
-  font-size: 12px;
+  font-size: 13.33px;
 }
 
 .grid {
@@ -137,7 +137,7 @@
 
 .field span {
   color: #6a84a3;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 800;
 }
 
@@ -153,7 +153,7 @@
   color: #244a70;
   background: #ffffff;
   font: inherit;
-  font-size: 12px;
+  font-size: 13.33px;
 }
 
 .field input:focus,
@@ -193,7 +193,7 @@
   border-radius: 7px;
   padding: 10px 12px;
   background: #fbfdff;
-  font-size: 11px;
+  font-size: 12.33px;
 }
 
 .repeat {
