@@ -28,7 +28,7 @@ Fonte das definições: branch `docs/REQ-2026-003-mapeamento-banco` (`CUSTEIO-V1
 - Migration **003** (incorporar ao GitHub), **018–021** (comparar, não aplicar), DOCX funcional v1.0.
 
 ## D. Código da aplicação (PR separada — não incluída aqui)
-F-01 (`$32::uuid`), remover `admin/admin123` da UI, `DEMO_MODE=false`, APIs de Stock/Movimientos/Reportes/Dashboard sobre as funções/views novas, permissões por menu, filtro por empresa em toda consulta, XLSX, testes E2E.
+F-01 (`$32::uuid`), remover a credencial pública antiga da UI, `DEMO_MODE=false`, APIs de Stock/Movimientos/Reportes/Dashboard sobre as funções/views novas, permissões por menu, filtro por empresa em toda consulta, XLSX, testes E2E.
 
 ## E. Riscos / itens abertos
 PR #5 com `app-lint` vermelho; AUD-REQ-2026-002-R05 (achado anterior) a reconferir; testes E2E reais não executados; vazão de numeração por empresa; restauração real em contêiner e `gs://` não provadas.
