@@ -293,3 +293,75 @@ export type KardexRespuesta = {
   };
   cobertura: string[];
 };
+
+// Reporte 4 — Stock crítico y reposición
+export type VistaStockCritico = "PRODUCTO" | "DEPOSITO";
+export type ObjetivoReposicion = "MINIMO" | "MAXIMO";
+
+export type StockCriticoFiltros = {
+  vista: VistaStockCritico;
+  q: string;
+  depositoId: string;
+  categoriaId: string;
+  marcaId: string;
+  familiaId: string;
+  situacion: "" | NivelStock;
+  objetivo: ObjetivoReposicion;
+};
+
+export type StockCriticoFila = {
+  productoId: string;
+  codigo: string;
+  descripcion: string;
+  categoria: string;
+  marca: string;
+  familia: string;
+  unidad: string;
+  // Vista DEPOSITO: depósito de la fila. Vista PRODUCTO: vacío.
+  deposito: string;
+  // Disponible propio del depósito de la fila (vista DEPOSITO) o del depósito filtrado (vista PRODUCTO con filtro); null si no aplica.
+  disponibleDeposito: number | null;
+  // Valores del PRODUCTO sobre todos los depósitos con alcance del usuario (base de la situación y de la reposición).
+  disponible: number;
+  fisico: number;
+  minimo: number;
+  maximo: number | null;
+  puntoReposicion: number | null;
+  nivel: NivelStock;
+  enPuntoReposicion: boolean;
+  cantidadSugerida: number;
+  // numeric exacto como texto; null si el producto no tiene costo registrado.
+  costoReferencia: string | null;
+  valorSugerido: string | null;
+};
+
+export type StockCriticoTotales = {
+  productos: number;
+  sinStock: number;
+  bajo: number;
+  normal: number;
+  sobrestock: number;
+  enPuntoReposicion: number;
+  aReponer: number;
+  cantidadSugerida: number;
+  valorSugerido: string;
+  sugeridoSinCosto: number;
+  moneda: string;
+};
+
+export type StockCriticoRespuesta = {
+  empresa: { nombre: string; moneda: string };
+  generado: string;
+  sello: string;
+  filtros: StockCriticoFiltros;
+  pagina: { numero: number; tamano: number; totalFilas: number };
+  filas: StockCriticoFila[];
+  totales: StockCriticoTotales;
+  catalogos: {
+    depositos: { id: string; nombre: string }[];
+    categorias: { id: string; nombre: string }[];
+    marcas: { id: string; nombre: string }[];
+    familias: { id: string; nombre: string }[];
+  };
+  cobertura: string[];
+};

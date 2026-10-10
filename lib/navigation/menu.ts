@@ -268,6 +268,13 @@ export const NAVIGATION_GROUPS: ShellNavigationGroup[] = [
         icon: "reports",
         permission: "REPORTES.VER",
       },
+      {
+        id: "report-stock-critico",
+        label: "Stock crítico y reposición",
+        href: "/reportes/stock-critico",
+        icon: "reports",
+        permission: "REPORTES.VER",
+      },
     ],
   },
   {
