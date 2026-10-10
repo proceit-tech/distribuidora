@@ -19,7 +19,7 @@ type SessionRow = {
   empresa_id: string;
   sucursal_id: string | null;
   nombre: string;
-  apellido: string;
+  apellido: string | null;
   usuario: string;
   email: string | null;
   perfiles: string[] | null;

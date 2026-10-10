@@ -1,6 +1,8 @@
 import type { PoolClient } from "pg";
 import { NextResponse } from "next/server";
 
+import { denyIfNoPermission } from "@/lib/auth/permissions";
+
 
 const DEMO_MODE =
   process.env.DEMO_MODE === "true" ||
@@ -436,6 +438,9 @@ export async function GET(request: Request) {
       );
     }
 
+  const denegadoVer = await denyIfNoPermission(session, "CLIENTES", "VER");
+  if (denegadoVer) return denegadoVer;
+
     const db = await obtenerDb();
     const respuestaGeografica = await catalogoGeografico(url, db);
 
@@ -615,6 +620,9 @@ export async function POST(request: Request) {
       { status: 401 },
     );
   }
+
+  const denegadoCrear = await denyIfNoPermission(session, "CLIENTES", "CREAR");
+  if (denegadoCrear) return denegadoCrear;
 
   const db = await obtenerDb();
   let conexion: PoolClient | undefined;

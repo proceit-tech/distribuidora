@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+
+import { denyIfNoPermission } from "@/lib/auth/permissions";
 import type { PoolClient } from "pg";
 
 
@@ -104,6 +106,9 @@ export async function GET() {
     );
   }
 
+  const denegadoVer = await denyIfNoPermission(session, "PRODUCTOS", "VER");
+  if (denegadoVer) return denegadoVer;
+
   const db = await obtenerDb();
 
   try {
@@ -197,6 +202,9 @@ export async function POST(request: Request) {
       { status: 401 },
     );
   }
+
+  const denegadoCrear = await denyIfNoPermission(session, "PRODUCTOS", "CREAR");
+  if (denegadoCrear) return denegadoCrear;
 
   const db = await obtenerDb();
   let conexion: PoolClient | undefined;

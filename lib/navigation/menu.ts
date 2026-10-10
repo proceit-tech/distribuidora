@@ -98,14 +98,14 @@ export const NAVIGATION_GROUPS: ShellNavigationGroup[] = [
         label: "Stock",
         href: "/stock",
         icon: "stock",
-        permission: "INVENTARIO.VER",
+        permission: "STOCK.VER",
       },
       {
         id: "stock-movements",
         label: "Movimientos",
         href: "/movimientos",
         icon: "movements",
-        permission: "INVENTARIO.VER",
+        permission: "MOVIMIENTOS.VER",
       },
       {
         id: "warehouses",
@@ -286,53 +286,58 @@ export const NAVIGATION_GROUPS: ShellNavigationGroup[] = [
   },
 ];
 
-function canShowItem(
-  item: ShellNavigationItem,
-  permissions: Set<string>,
-  enforcePermissions: boolean,
-) {
-  if (!enforcePermissions || !item.permission) {
-    return true;
-  }
+/**
+ * Rutas con página y API reales dentro del alcance de la V1. El resto del menú
+ * (compras, ventas, finanzas, facturación, etc.) queda oculto hasta existir.
+ * Las páginas todavía con datos de prueba se retiran de aquí al conectarse a PostgreSQL
+ * solo cuando el módulo esté listo; ver PROGRESSO-NEXIT-V1.md.
+ */
+const V1_HREFS = new Set([
+  "/clientes",
+  "/proveedores",
+  "/productos",
+  "/listas-precio",
+  "/stock",
+  "/movimientos",
+]);
 
-  return permissions.has(
-    item.permission.trim().toUpperCase(),
-  );
+export const PLATFORM_GROUP: ShellNavigationGroup = {
+  id: "platform",
+  label: "Plataforma",
+  icon: "admin",
+  items: [
+    {
+      id: "platform-companies",
+      label: "Empresas",
+      href: "/administracion/empresas",
+      icon: "admin",
+    },
+  ],
+};
+
+export type NavigationAccess = {
+  permissions: string[];
+  isCompanyAdmin: boolean;
+  isPlatformAdmin: boolean;
+};
+
+function canShowItem(item: ShellNavigationItem, access: NavigationAccess) {
+  if (!V1_HREFS.has(item.href)) return false;
+  if (access.isCompanyAdmin) return true;
+  if (!item.permission) return false;
+  return access.permissions.includes(item.permission.trim().toUpperCase());
 }
 
-export function resolveNavigation(
-  permissionCodes: string[] = [],
-): ShellNavigationGroup[] {
-  const permissions = new Set(
-    permissionCodes
-      .map((permission) =>
-        permission.trim().toUpperCase(),
-      )
-      .filter(Boolean),
-  );
+/**
+ * Menú por perfil. Administrador global de plataforma (PROCEIT): solo el menú de plataforma.
+ * Usuarios de empresa: únicamente los módulos que sus perfiles permiten. Sin permisos => sin módulos.
+ * El menú es solo comodidad visual: el control real está en el servidor (guardApi/guardPage).
+ */
+export function resolveNavigation(access: NavigationAccess): ShellNavigationGroup[] {
+  if (access.isPlatformAdmin) return [PLATFORM_GROUP];
 
-  /*
-   * Para el mockup:
-   * si no recibimos permisos, mostramos todo el menú.
-   *
-   * Más adelante, cuando la sesión real entregue permisos,
-   * el mismo método filtrará automáticamente los módulos.
-   */
-  const enforcePermissions =
-    permissions.size > 0;
-
-  return NAVIGATION_GROUPS.map(
-    (group) => ({
-      ...group,
-      items: group.items.filter((item) =>
-        canShowItem(
-          item,
-          permissions,
-          enforcePermissions,
-        ),
-      ),
-    }),
-  ).filter(
-    (group) => group.items.length > 0,
-  );
+  return NAVIGATION_GROUPS.map((group) => ({
+    ...group,
+    items: group.items.filter((item) => canShowItem(item, access)),
+  })).filter((group) => group.items.length > 0);
 }
