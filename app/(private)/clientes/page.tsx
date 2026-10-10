@@ -40,13 +40,12 @@ function dinero(value: number) {
   ).format(value);
 }
 
-const OPERACIONES: ClienteOperacion[] = [
-  "B2C",
-  "B2B",
-  "B2C",
-  "B2G",
-  "B2F",
-];
+const OPERACIONES: Record<number, ClienteOperacion> = {
+  1: "B2B",
+  2: "B2C",
+  3: "B2G",
+  4: "B2F",
+};
 
 function texto(valor: unknown) {
   return typeof valor === "string"
@@ -65,9 +64,7 @@ function desdeApi(
         ? "CONTRIBUYENTE"
         : "NO_CONTRIBUYENTE",
     tipoOperacion:
-      OPERACIONES[
-        Number(fila.tipo_operacion)
-      ] ?? "B2C",
+      OPERACIONES[Number(fila.tipo_operacion)] ?? "B2C",
     tipoDocumento: texto(
       fila.tipo_documento,
     ),
