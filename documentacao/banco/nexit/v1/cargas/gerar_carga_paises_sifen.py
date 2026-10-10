@@ -77,6 +77,8 @@ def literal(valor):
 
 
 def generar_sql(catalogo, origen, sha256):
+    # La cabecera cita siempre la URL oficial (no rutas locales del equipo que genera);
+    # con --xsd solo se añade el nombre del archivo usado.
     valores = ",\n".join(f"  ({literal(c)}, {literal(n)})" for c, n in sorted(catalogo.items()))
     return (
         "-- Catálogo de países desde Paises_v100.xsd publicado por SIFEN.\n"
@@ -110,7 +112,10 @@ def main():
     if catalogo["PRY"] != "Paraguay":
         raise SystemExit(f"PRY no figura como 'Paraguay' en el XSD ({catalogo['PRY']}). Revisar la fuente.")
     destino = Path(args.salida)
-    destino.write_text(generar_sql(catalogo, args.xsd or URL, hashlib.sha256(xml).hexdigest()), encoding="utf-8")
+    origen = URL if not args.xsd else f"{URL} (archivo local: {Path(args.xsd).name})"
+    # newline="\n": el SQL se publica con saltos LF aunque se genere en Windows.
+    with open(destino, "w", encoding="utf-8", newline="\n") as f:
+        f.write(generar_sql(catalogo, origen, hashlib.sha256(xml).hexdigest()))
     print(f"Generado {destino}: {len(catalogo)} países; descartados no ISO: {descartados or 'ninguno'}.")
 
 
