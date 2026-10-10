@@ -1,5 +1,3 @@
-import { db } from "@/lib/db";
-
 import styles from "./page.module.css";
 
 type EmpresaRow = {
@@ -16,6 +14,7 @@ export const dynamic = "force-dynamic";
 
 export default async function EmpresasPage() {
   // El layout de /administracion ya exigió administrador global; las empresas DEMO no se listan.
+  const { db } = await import("@/lib/db");
   const result = await db.query<EmpresaRow>(
     `SELECT e.codigo, e.razon_social, e.ruc, e.dv, e.estado, e.creado_at,
             (SELECT count(*) FROM usuarios u WHERE u.empresa_id = e.id) AS usuarios
@@ -43,7 +42,7 @@ export default async function EmpresasPage() {
             <tr key={e.codigo}>
               <td>{e.codigo}</td>
               <td>{e.razon_social}</td>
-              <td>{e.ruc ? `${e.ruc}${e.dv ? "-" + e.dv : ""}` : "—"}</td>
+              <td>{e.ruc ? `${e.ruc}${e.dv !== null ? "-" + e.dv : ""}` : "—"}</td>
               <td>{e.estado}</td>
               <td>{e.usuarios}</td>
             </tr>
