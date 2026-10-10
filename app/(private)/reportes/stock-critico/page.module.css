@@ -481,3 +481,12 @@
   font-size: 0.84rem;
   line-height: 1.5;
 }
+
+.refCol {
+  font-style: italic;
+}
+
+.refCell {
+  color: #64748b;
+  font-style: italic;
+}

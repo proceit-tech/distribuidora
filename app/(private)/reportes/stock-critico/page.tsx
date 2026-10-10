@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { cargarStockCritico, descargarStockCritico } from "@/lib/reportes/cliente-stock-critico";
+import { NOTA_NO_ADITIVO, TITULO_SUGERIDA, TITULO_VALOR } from "@/lib/reportes/export-stock-critico";
 import { fmtDinero, fmtNum } from "@/lib/reportes/formato";
 import type { NivelStock, StockCriticoFiltros, StockCriticoRespuesta } from "@/types/reportes";
 
@@ -133,6 +134,8 @@ export default function ReporteStockCriticoPage() {
           el filtro de depósito solo muestra los productos con stock allí y cuánto hay en ese depósito.
         </div>
 
+        {porDeposito ? <div className={styles.policyNote} role="note"><strong>Sugerencia única por producto.</strong> {NOTA_NO_ADITIVO}</div> : null}
+
         <div className={styles.toolbar}>
           <label className={styles.search}>
             <input
@@ -213,8 +216,8 @@ export default function ReporteStockCriticoPage() {
                 {porDeposito ? <th>Depósito</th> : null}
                 {colDeposito ? <th className={styles.num}>Disp. en depósito</th> : null}
                 <th className={styles.num}>Disponible (total)</th><th className={styles.num}>Mínimo</th><th className={styles.num}>Máximo</th>
-                <th className={styles.num}>Punto reposición</th><th>Situación</th><th className={styles.num}>Cant. sugerida</th>
-                <th className={styles.num}>Costo ref.</th><th className={styles.num}>Valor sugerido</th>
+                <th className={styles.num}>Punto reposición</th><th>Situación</th><th className={[styles.num, porDeposito ? styles.refCol : ""].join(" ")}>{TITULO_SUGERIDA(aplicados.vista)}</th>
+                <th className={styles.num}>Costo ref.</th><th className={[styles.num, porDeposito ? styles.refCol : ""].join(" ")}>{TITULO_VALOR(aplicados.vista)}</th>
               </tr>
             </thead>
             <tbody>
@@ -233,16 +236,16 @@ export default function ReporteStockCriticoPage() {
                     <span className={[styles.badge, styles[`badge${f.nivel}`]].join(" ")}>{NIVEL[f.nivel]}</span>
                     {f.enPuntoReposicion && f.nivel !== "SIN_STOCK" && f.nivel !== "BAJO" ? <small> en punto</small> : null}
                   </td>
-                  <td className={styles.num}>{num(f.cantidadSugerida)}</td>
+                  <td className={[styles.num, porDeposito ? styles.refCell : ""].join(" ")}>{num(f.cantidadSugerida)}</td>
                   <td className={styles.num}>{fmtDinero(f.costoReferencia)}</td>
-                  <td className={styles.num}>{fmtDinero(f.valorSugerido)}</td>
+                  <td className={[styles.num, porDeposito ? styles.refCell : ""].join(" ")}>{fmtDinero(f.valorSugerido)}</td>
                 </tr>
               ))}
             </tbody>
             {datos && datos.filas.length > 0 ? (
               <tfoot>
                 <tr>
-                  <td colSpan={colTotal - 1}>TOTAL (productos del filtro, cada uno una sola vez)</td>
+                  <td colSpan={colTotal - 1}>TOTAL GENERAL (productos únicos)</td>
                   <td className={styles.num}>{num(datos.totales.cantidadSugerida)}</td>
                   <td />
                   <td className={styles.num}>{fmtDinero(datos.totales.valorSugerido)}</td>

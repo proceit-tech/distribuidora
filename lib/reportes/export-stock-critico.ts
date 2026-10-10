@@ -27,6 +27,12 @@ export function describirFiltrosStockCritico(r: StockCriticoRespuesta): string[]
 
 type Col = ColRep & { valor: (x: StockCriticoFila) => Celda };
 
+// En la vista por depósito la sugerencia es única por producto: se repite como REFERENCIA en cada fila de depósito y no es aditiva.
+export const TITULO_SUGERIDA = (vista: StockCriticoFiltros["vista"]) => (vista === "DEPOSITO" ? "Sugerida (ref. no sumar)" : "Cant. sugerida");
+export const TITULO_VALOR = (vista: StockCriticoFiltros["vista"]) => (vista === "DEPOSITO" ? "Valor sug. (ref. no sumar)" : "Valor sugerido");
+export const NOTA_NO_ADITIVO =
+  "Vista por depósito: las columnas \"Sugerida (ref. no sumar)\" y \"Valor sug. (ref. no sumar)\" son únicas por producto; la cantidad sugerida y su valor son únicos por producto (se calculan con el disponible consolidado y los límites del producto). Se repiten como referencia en cada fila de depósito del mismo producto y NO son aditivos entre depósitos: no sume las filas. El TOTAL GENERAL cuenta cada producto una sola vez. El disponible total, el mínimo, el máximo, el punto de reposición y la situación también son del producto; solo \"Disp. en depósito\" corresponde a cada depósito.";
+
 export function columnasStockCritico(f: StockCriticoFiltros): Col[] {
   const txt = (titulo: string, peso: number, valor: (x: StockCriticoFila) => string): Col => ({ titulo, peso, tipo: "texto", valor });
   const cant = (titulo: string, peso: number, valor: (x: StockCriticoFila) => number | null): Col => ({ titulo, peso, tipo: "cantidad", valor });
@@ -40,9 +46,9 @@ export function columnasStockCritico(f: StockCriticoFiltros): Col[] {
     cant("Disponible (total)", 6.5, (x) => x.disponible), cant("Mínimo", 4.5, (x) => x.minimo), cant("Máximo", 4.5, (x) => x.maximo),
     cant("Punto reposición", 5.5, (x) => x.puntoReposicion),
     txt("Situación", 5.5, (x) => NIVEL_CRITICO[x.nivel] + (x.enPuntoReposicion && x.nivel !== "SIN_STOCK" && x.nivel !== "BAJO" ? " (en punto)" : "")),
-    cant("Cant. sugerida", 5.5, (x) => x.cantidadSugerida),
+    cant(TITULO_SUGERIDA(f.vista), f.vista === "DEPOSITO" ? 9 : 5.5, (x) => x.cantidadSugerida),
     { titulo: "Costo ref.", peso: 6, tipo: "dinero", valor: (x) => x.costoReferencia },
-    { titulo: "Valor sugerido", peso: 6.5, tipo: "dinero", valor: (x) => x.valorSugerido },
+    { titulo: TITULO_VALOR(f.vista), peso: f.vista === "DEPOSITO" ? 9.5 : 6.5, tipo: "dinero", valor: (x) => x.valorSugerido },
   );
   return cols;
 }
@@ -50,7 +56,8 @@ export function columnasStockCritico(f: StockCriticoFiltros): Col[] {
 export function tablaStockCritico(r: StockCriticoRespuesta): TablaReporte {
   const cols = columnasStockCritico(r.filtros);
   const t = r.totales;
-  const tot: Record<string, Celda> = { "Cant. sugerida": t.cantidadSugerida, "Valor sugerido": t.valorSugerido };
+  const v = r.filtros.vista;
+  const tot: Record<string, Celda> = { [TITULO_SUGERIDA(v)]: t.cantidadSugerida, [TITULO_VALOR(v)]: t.valorSugerido };
   const celdas: Celda[] = cols.map((c) => (c.titulo in tot ? tot[c.titulo] : ""));
   return {
     titulo: "Stock crítico y reposición",
@@ -63,10 +70,11 @@ export function tablaStockCritico(r: StockCriticoRespuesta): TablaReporte {
     totalFilas: r.pagina.totalFilas,
     columnas: cols.map(({ titulo, peso, tipo }) => ({ titulo, peso, tipo })),
     filas: r.filas.map((x) => cols.map((c) => c.valor(x))),
-    totales: [{ etiqueta: "TOTAL (productos)", celdas }],
+    totales: [{ etiqueta: "TOTAL GENERAL (productos únicos)", celdas }],
     colEtiquetaPdf: 1,
     multilinea: true,
     notas: [
+      ...(v === "DEPOSITO" ? [NOTA_NO_ADITIVO] : []),
       `Productos: ${fmtNum(t.productos)} · Sin stock: ${t.sinStock} · Bajo: ${t.bajo} · Normal: ${t.normal} · Sobrestock: ${t.sobrestock} · En punto de reposición: ${t.enPuntoReposicion} · A reponer: ${t.aReponer}. Los totales cuentan cada producto una sola vez (también en la vista por depósito). Importes en ${t.moneda}.`,
       ...(t.sugeridoSinCosto > 0 ? [`${t.sugeridoSinCosto} producto(s) con reposición sugerida no tienen costo registrado: no suman al valor sugerido.`] : []),
       "Máximo o punto de reposición vacíos = no definidos en el cadastro del producto.",
