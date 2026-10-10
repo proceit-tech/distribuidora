@@ -697,3 +697,115 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* Filtros, leyenda y estados vacíos del panel con datos reales */
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.filters label {
+  display: grid;
+  gap: 4px;
+  color: #7c8ea0;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.4px;
+}
+
+.filters select {
+  min-height: 34px;
+  min-width: 170px;
+  border: 1px solid #dce6ed;
+  border-radius: 10px;
+  padding: 0 10px;
+  color: #112f4a;
+  background: #ffffff;
+  font-size: 10px;
+}
+
+.refresh {
+  min-height: 34px;
+  border: 1px solid #dce6ed;
+  border-radius: 10px;
+  padding: 0 14px;
+  color: #0b8992;
+  background: #ffffff;
+  font-size: 10px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.refresh:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.filterError {
+  margin: 0;
+  color: #b3394a;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.barSalida {
+  background: linear-gradient(180deg, #f0c777, #dfa229);
+}
+
+.barArea {
+  gap: 3px;
+}
+
+.legend {
+  display: flex;
+  gap: 16px;
+  padding: 0 14px 12px;
+  color: #7c8ea0;
+  font-size: 9px;
+}
+
+.legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legendEntrada,
+.legendSalida {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+}
+
+.legendEntrada {
+  background: #1aafb3;
+}
+
+.legendSalida {
+  background: #dfa229;
+}
+
+.emptyState {
+  display: grid;
+  gap: 4px;
+  place-items: center;
+  align-content: center;
+  min-height: 120px;
+  padding: 18px;
+  color: #7c8ea0;
+  text-align: center;
+  font-size: 10px;
+}
+
+.emptyState strong {
+  color: #46617a;
+  font-size: 11px;
+}
+
+div.kpiCard {
+  cursor: default;
+}

@@ -11,7 +11,8 @@ Branch: `feature/NEXIT-2026-001-banco-demo`. Regra: uma funcionalidade por vez; 
 | 5 | Listas de precios | **ENTREGUE (NEX-018 já aplicada no `nexit` real; pendente: build + teste manual na tela)** | ver git log |
 | 6 | Movimientos | **ENTREGUE (pendente: build + teste manual na tela; sem migração nova)** | ver git log |
 | 7 | Stock | **ENTREGUE (pendente: build + teste manual na tela; sem migração nova)** | ver git log |
-| 8 | Dashboard e relatórios/XLSX | pendente | |
+| 8a | Dashboard | **ENTREGUE (pendente: build + teste manual na tela; sem migração nova)** | ver git log |
+| 8b | Relatórios/XLSX | pendente | |
 
 ## Item 1 — o que existe
 - `lib/auth/permissions.ts`: `getAccessContext` (perfis/permissões reais no PostgreSQL, sempre por `empresa_id` da sessão; administrador de plataforma via `administradores_plataforma`), `guardApi`, `denyIfNoPermission` (401/403), `guardPage`, `guardPlatformPage`.
@@ -81,6 +82,15 @@ Branch: `feature/NEXIT-2026-001-banco-demo`. Regra: uma funcionalidade por vez; 
 - Testes (rotas reais + `permissions.ts` real como `nexit_runtime` em PG16 descartável, 20 verificações): 401/403, `MOVIMIENTOS.*` não dá `STOCK.VER`, empresa sem movimentos = saldos 0 sem custo/preço, saldos após movimentos reais (entradas, reserva, quarentena, transferência, lote), custo promedio 150, preço de referência, aislamento A×B (listado e detalhe 404), 503 sem `DATABASE_URL`. `tsc` parcial sem erros novos.
 - NÃO executado: build/lint completos (sem registry no sandbox), HTTP real, teste visual.
 - **Lacunas documentadas (campos preservados, sem migração):** (1) *Em trânsito* sempre 0: nenhum tipo de movimento atual gera `TRANSITO` (virá com despacho/recepção entre depósitos); (2) não há tabela de ubicações físicas dentro do depósito — a coluna "Ubicación" mostra o depósito; (3) não há cadastro de proprietários para stock de TERCERO — o proprietário aparece como "não registrado"; (4) mínimo/máximo por depósito (`producto_deposito_configuracion`) ainda não usado — vale o do produto; (5) `lib/mocks/stock*.ts` e `StockDemo` seguem só porque o mock `movimientos-stock-storage` os importa.
+
+## Item 8a — Dashboard (sem mock/dados fixos)
+- Tela `dashboard/page.tsx` mantém cards, gráfico de barras, painel de alertas, lista de atividade recente, painel de stock, ícones e CSS; removidos os valores fixos, o pill "DEMO" e o nome fixo da empresa. Adicionada barra de filtros (período, depósito, Actualizar) com estilos no mesmo padrão.
+- API de leitura `GET /api/dashboard?periodo=7d|15d|30d|90d&depositoId=` (`lib/dashboard/shared.ts`): exige `DASHBOARD.VER`; cada seção exige o `VER` do módulo de origem (sem permissão = seção nula, a tela mostra "Sin permiso"); `empresa_id` da sessão em todas as consultas; só depósitos dentro do alcance do usuário (`usuario_puede_deposito`; depósito fora do alcance = 403); 401/400/503; sem dados fictícios se o banco falha.
+- Indicadores: produtos ativos (e que controlam stock); clientes ativos; valor de inventário (`inventario_costos`, moeda base); movimentos do período (entradas/saídas em unidades; só `REGISTRADO` e sem a contrapartida de anulações); stock crítico (bajo mínimo + sem stock); gráfico entradas × saídas por dia (90 dias = por semana); disponibilidade de stock (% de produtos com disponível > 0, disponíveis/baixo/sem stock); alertas reais (sem stock, stock baixo, lotes vencidos com saldo, lotes que vencem em 30 dias, produtos em quarentena); últimos 6 movimentos (link para o detalhe).
+- Botões: KPIs e painéis levam a Productos/Clientes/Stock/Movimientos; "Ver reporte" (rota inexistente) virou "Ver movimientos"; "Emitir factura" mantém o link existente; filtros e "Actualizar" recarregam a API.
+- **Dependem de módulos futuros (sem dado hoje, não se inventa):** vendas do dia, pedidos ativos, contas a receber/vencidas, entregas e rotas, compras, finanças; "Emitir factura" leva à tela de facturas ainda mock.
+- Testes (rotas reais + `permissions.ts` real como `nexit_runtime` em PG16 descartável, 23 verificações): 401/403/400, empresa vazia = zeros, valores após movimentos reais (gráfico, KPIs, valor, alertas, stock, últimos), filtro de depósito e período, anulação não duplica, seções por permissão, alcance de depósitos, aislamiento A×B, 503. `tsc` parcial sem erros novos.
+- NÃO executado: build/lint completos (sem registry no sandbox), HTTP real, teste visual. Limitação: "hoje" usa a data do servidor de banco; a série mede unidades, não valor.
 
 ## Pendências futuras de Movimientos
 - Unidades identificadas (série/etiqueta, `UNIDAD_ETIQUETADA`): exige tabela de unidades (próxima migração livre: NEX-020).
