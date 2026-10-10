@@ -99,3 +99,8 @@ Pruebas mínimas: emisor/receptor válido/inválido, NC parcial/excesiva, NR con
 
 ## 9. Trazabilidad documental
 Fuente aportada: ZIP de 28 archivos, incluidos 26 PDFs de notas técnicas, 1 manual PDF y 1 XLSX geográfico. Los campos E980-E994 y evento GET003 están extraídos del texto del manual. La clasificación de módulos, rutas, UX, estructuras PostgreSQL y prioridades son **diseño Nexit propuesto**, no disposiciones textuales del manual. Se recomienda añadir un inventario y matriz exacta grupo/campo/condición/versión de todas las NT antes de generar validadores XML.
+
+## 10. Decisión de alcance V1/V2 — Facturación (2026-10-10)
+**Decisión aprobada:** el módulo Facturación electrónica se desarrollará en **Nexit V2**, no en V1. En V1 debe permanecer fuera de `V1_HREFS`, sin páginas operativas simuladas ni botones hacia `/facturas/nuevo` (se retiró el botón «Emitir factura» de Dashboard en commit `8829b0d`). No se inicia la implementación fiscal durante el cierre y la homologación de V1.
+
+En V2 se desarrollará como módulo real sobre esta especificación SIFEN: emisión de facturas, notas de crédito y notas de remisión; documentos electrónicos y KuDE; monitor, estados, rechazos, reintentos y eventos aplicables; numeración/timbrados y certificados; perfiles, aislamiento por empresa, integración con ventas/stock según alcance aprobado. Los requisitos y los flujos se validarán contra normativa vigente al momento de implementar. Quedan abiertas las decisiones de integración API externa versus conexión directa y las demás preguntas de la sección 8; esta decisión de fase no las resuelve.
