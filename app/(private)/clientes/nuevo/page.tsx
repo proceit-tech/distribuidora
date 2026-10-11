@@ -574,15 +574,15 @@ export default function NuevoClientePage() {
     <main className="clienteNuevo">
       <header className="clienteNuevo__header">
         <div>
-          <p className="clienteNuevo__miga">
-            Distribuidora Central <span>/</span> Clientes <span>/</span> Nuevo
-            cliente
-          </p>
+          <nav className="clienteNuevo__miga" aria-label="Ruta de navegación">
+            <span>Maestros</span>
+            <i aria-hidden="true">/</i>
+            <Link href="/clientes">Clientes</Link>
+            <i aria-hidden="true">/</i>
+            <span aria-current="page">Nuevo cliente</span>
+          </nav>
+
           <h1>Nuevo cliente</h1>
-          <p className="clienteNuevo__subtitulo">
-            Registro comercial, logístico y fiscal para ventas y facturación
-            electrónica.
-          </p>
         </div>
 
         <Link href="/clientes" className="clienteNuevo__secundario">
@@ -591,23 +591,11 @@ export default function NuevoClientePage() {
       </header>
 
       <form onSubmit={guardar} className="clienteNuevo__card">
-        <div className="clienteNuevo__cardHeader">
-          <div>
-            <span>NUEVO CLIENTE</span>
-            <h2>Datos del cliente</h2>
-            <p>El código interno se genera automáticamente al guardar.</p>
+        {error ? (
+          <div className="clienteNuevo__error" role="alert">
+            {error}
           </div>
-
-          <div className="clienteNuevo__codigoAuto">
-            <b>✓</b>
-            <span>
-              <strong>Código automático</strong>
-              <small>No se utiliza código cliente SIFEN.</small>
-            </span>
-          </div>
-        </div>
-
-        {error ? <div className="clienteNuevo__error">{error}</div> : null}
+        ) : null}
 
         <nav className="clienteNuevo__tabs" aria-label="Secciones del cliente">
           {[
@@ -619,6 +607,7 @@ export default function NuevoClientePage() {
             ["documentos", "Documentos"],
           ].map(([identificador, etiqueta]) => (
             <button
+              aria-current={tab === identificador ? "step" : undefined}
               className={tab === identificador ? "activo" : ""}
               key={identificador}
               onClick={() => setTab(identificador)}
@@ -628,7 +617,7 @@ export default function NuevoClientePage() {
             </button>
           ))}
         </nav>
-
+        <p className="clienteNuevo__nota">Los campos con * son obligatorios.</p>
         {tab === "fiscal" ? (
           <section className="clienteNuevo__contenido">
             <Titulo
@@ -1555,374 +1544,381 @@ export default function NuevoClientePage() {
             disabled={guardando}
             type="submit"
           >
-            {guardando ? "Guardando..." : "Guardar cliente →"}
+            {guardando ? "Guardando..." : "Guardar cliente"}
           </button>
         </footer>
       </form>
 
       <style jsx global>{`
+        /* Padrón de formularios V1 (referencia: Nuevo cliente). Etiquetas fijas sobre el campo, 40px de alto,
+           título 24px, pestañas 13.5px, botones 38px. */
         .clienteNuevo {
-          max-width: 1180px;
+          max-width: 1240px;
           margin: 0 auto;
-          color: #082d58;
+          padding: 16px 20px 24px;
+          color: #173b59;
         }
-
         .clienteNuevo__header,
-        .clienteNuevo__cardHeader,
         .clienteNuevo__titulo,
         .clienteNuevo__repetidoHeader,
         .clienteNuevo__footer {
           display: flex;
-          align-items: flex-start;
+          align-items: center;
           justify-content: space-between;
-          gap: 20px;
+          gap: 16px;
         }
-
         .clienteNuevo__header {
-          margin-bottom: 28px;
+          align-items: flex-end;
+          margin-bottom: 12px;
         }
-
         .clienteNuevo__miga {
-          margin: 0;
-          color: #7190b2;
-          font-size: 15px;
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          margin: 0 0 4px;
+          color: #7c8ea0;
+          font-size: 12px;
+          font-weight: 450;
         }
-
-        .clienteNuevo__miga span {
-          margin: 0 8px;
+        .clienteNuevo__miga a {
+          color: inherit;
+          text-decoration: none;
         }
-
+        .clienteNuevo__miga a:hover {
+          color: #0a7f88;
+          text-decoration: underline;
+        }
+        .clienteNuevo__miga i {
+          color: #a6b4c1;
+          font-style: normal;
+        }
+        .clienteNuevo__miga span[aria-current] {
+          color: #4f6a82;
+          font-weight: 600;
+        }
         .clienteNuevo__header h1 {
-          margin: 16px 0 8px;
-          font-size: 34px;
-        }
-
-        .clienteNuevo__subtitulo,
-        .clienteNuevo__cardHeader p,
-        .clienteNuevo__titulo p {
           margin: 0;
-          color: #6686aa;
-          font-size: 14px;
+          color: #112f4a;
+          font-size: 24px;
+          font-weight: 700;
+          line-height: 1.2;
+          letter-spacing: -0.4px;
         }
-
         .clienteNuevo__secundario,
         .clienteNuevo__primario,
         .clienteNuevo__agregar {
           display: inline-flex;
           align-items: center;
           justify-content: center;
-          min-height: 42px;
+          gap: 6px;
+          height: 38px;
           border-radius: 9px;
-          padding: 10px 16px;
-          font-size: 15px;
-          font-weight: 800;
+          padding: 0 16px;
+          font: inherit;
+          font-size: 13px;
+          font-weight: 600;
           text-decoration: none;
+          white-space: nowrap;
           cursor: pointer;
         }
-
         .clienteNuevo__secundario {
-          border: 1px solid #cadced;
+          border: 1px solid #d3dfe8;
           background: #fff;
-          color: #16436d;
+          color: #41647d;
         }
-
+        .clienteNuevo__secundario:hover {
+          border-color: #aadadd;
+          background: #f3fbfb;
+          color: #0a7f88;
+        }
         .clienteNuevo__primario {
           border: 0;
-          background: #16aab3;
+          background: linear-gradient(135deg, #13a9af, #0c919b);
           color: #fff;
-          box-shadow: 0 9px 18px rgba(22, 170, 179, 0.18);
+          box-shadow: 0 6px 14px rgba(11, 145, 155, 0.16);
         }
-
         .clienteNuevo__primario:disabled {
           cursor: progress;
-          opacity: 0.68;
+          opacity: 0.65;
         }
-
+        .clienteNuevo__secundario:focus-visible,
+        .clienteNuevo__primario:focus-visible,
+        .clienteNuevo__agregar:focus-visible,
+        .clienteNuevo__eliminar:focus-visible,
+        .clienteNuevo__tabs button:focus-visible {
+          outline: 3px solid rgba(15, 156, 165, 0.4);
+          outline-offset: 2px;
+        }
         .clienteNuevo__card {
-          overflow: hidden;
-          border: 1px solid #d8e5f0;
-          border-radius: 14px;
+          border: 1px solid #dce6ed;
+          border-radius: 12px;
           background: #fff;
-          box-shadow: 0 12px 30px rgba(22, 59, 90, 0.05);
+          box-shadow: 0 5px 14px rgba(20, 50, 77, 0.035);
         }
-
-        .clienteNuevo__cardHeader {
-          padding: 30px 36px;
-          border-bottom: 1px solid #e2ecf4;
-        }
-
-        .clienteNuevo__cardHeader > div > span {
-          color: #6584a7;
-          font-size: 14px;
-          font-weight: 800;
-          letter-spacing: 1px;
-        }
-
-        .clienteNuevo__cardHeader h2 {
-          margin: 8px 0;
-          font-size: 27px;
-        }
-
-        .clienteNuevo__codigoAuto {
-          display: flex;
-          align-items: center;
-          gap: 9px;
-          border: 1px solid #b7e9e7;
-          border-radius: 9px;
-          background: #effcfb;
-          padding: 11px;
-          color: #087d8b;
-        }
-
-        .clienteNuevo__codigoAuto > b {
-          display: grid;
-          width: 22px;
-          height: 22px;
-          place-items: center;
-          border-radius: 50%;
-          background: #16aab3;
-          color: #fff;
-        }
-
-        .clienteNuevo__codigoAuto span {
-          display: grid;
-          gap: 3px;
-          font-size: 15px;
-        }
-
-        .clienteNuevo__codigoAuto small {
-          font-size: 13px;
-        }
-
         .clienteNuevo__error {
-          margin: 20px 36px;
-          border: 1px solid #ffc5cc;
-          border-radius: 8px;
-          background: #fff5f6;
-          padding: 12px;
-          color: #b62d40;
-          font-size: 15px;
+          margin: 14px 20px 0;
+          border: 1px solid #f0c5cb;
+          border-radius: 9px;
+          background: #fff4f5;
+          padding: 10px 12px;
+          color: #b3263b;
+          font-size: 13.5px;
+          line-height: 1.45;
         }
-
         .clienteNuevo__tabs {
           display: flex;
+          gap: 2px;
           overflow-x: auto;
-          border-bottom: 1px solid #dfe9f1;
-          padding: 12px 36px 0;
+          border-bottom: 1px solid #e3ebf1;
+          padding: 0 14px;
+          scrollbar-width: thin;
         }
-
         .clienteNuevo__tabs button {
           flex: 0 0 auto;
+          height: 44px;
           border: 0;
           border-bottom: 3px solid transparent;
           background: transparent;
-          padding: 11px 13px;
-          color: #6887a8;
-          font-size: 15px;
-          font-weight: 800;
+          padding: 0 14px;
+          color: #5c7388;
+          font: inherit;
+          font-size: 13.5px;
+          font-weight: 600;
           white-space: nowrap;
           cursor: pointer;
         }
-
-        .clienteNuevo__tabs button.activo {
-          border-color: #14adb5;
-          color: #063d68;
+        .clienteNuevo__tabs button:hover {
+          background: #f6f9fb;
+          color: #234560;
         }
-
+        .clienteNuevo__tabs button.activo {
+          border-bottom-color: #0f9ca5;
+          background: #f3fbfb;
+          color: #0a7880;
+        }
+        .clienteNuevo__nota {
+          margin: 12px 20px 0;
+          color: #6f8498;
+          font-size: 12px;
+        }
         .clienteNuevo__contenido,
         .clienteNuevo__repetidor {
-          padding: 30px 36px;
+          padding: 16px 20px 8px;
         }
-
         .clienteNuevo__titulo {
-          margin: 0 0 21px;
+          margin: 0 0 12px;
         }
-
         .clienteNuevo__titulo h3 {
-          margin: 0 0 5px;
-          font-size: 19px;
+          margin: 0;
+          color: #173b59;
+          font-size: 16px;
+          font-weight: 650;
         }
-
-        .clienteNuevo__titulo small {
-          color: #7190b2;
-          font-size: 13px;
-          white-space: nowrap;
-        }
-
         .clienteNuevo__grid {
           display: grid;
-          gap: 15px;
-          margin-bottom: 15px;
+          gap: 12px 14px;
+          margin-bottom: 12px;
         }
-
         .clienteNuevo__grid--cuatro {
           grid-template-columns: repeat(4, minmax(0, 1fr));
         }
-
         .clienteNuevo__grid--tres {
           grid-template-columns: repeat(3, minmax(0, 1fr));
         }
-
         .clienteNuevo__grid--dos {
           grid-template-columns: repeat(2, minmax(0, 1fr));
         }
-
         .clienteNuevo__campo {
-          position: relative;
+          display: grid;
+          gap: 4px;
+          min-width: 0;
+          align-content: start;
         }
-
+        .clienteNuevo__campo > span {
+          color: #526e83;
+          font-size: 12.5px;
+          font-weight: 600;
+          line-height: 1.3;
+        }
+        .clienteNuevo__campo > span b {
+          color: #c0394d;
+          font-weight: 600;
+        }
         .clienteNuevo__campo input,
         .clienteNuevo__campo select,
         .clienteNuevo__campo textarea {
           box-sizing: border-box;
           width: 100%;
-          height: 52px;
-          border: 1px solid #cadced;
+          height: 40px;
+          border: 1px solid #cfdde9;
           border-radius: 8px;
           outline: 0;
           background: #fff;
-          padding: 20px 12px 7px;
-          color: #173d63;
+          padding: 0 11px;
+          color: #173b59;
           font: inherit;
-          font-size: 15px;
+          font-size: 14px;
+          font-weight: 450;
         }
-
         .clienteNuevo__campo textarea {
-          min-height: 86px;
-          height: 86px;
+          min-height: 76px;
+          height: 76px;
+          padding: 9px 11px;
+          line-height: 1.4;
           resize: vertical;
         }
-
+        .clienteNuevo__campo input::placeholder,
+        .clienteNuevo__campo textarea::placeholder {
+          color: #8b9dae;
+        }
+        .clienteNuevo__campo input:hover,
+        .clienteNuevo__campo select:hover,
+        .clienteNuevo__campo textarea:hover {
+          border-color: #9fbdd0;
+        }
         .clienteNuevo__campo input:focus,
         .clienteNuevo__campo select:focus,
         .clienteNuevo__campo textarea:focus {
-          border-color: #16aab3;
-          box-shadow: 0 0 0 3px rgba(22, 170, 179, 0.12);
+          border-color: #0f9ca5;
+          box-shadow: 0 0 0 3px rgba(15, 156, 165, 0.16);
         }
-
         .clienteNuevo__campo input:disabled,
-        .clienteNuevo__campo select:disabled {
+        .clienteNuevo__campo select:disabled,
+        .clienteNuevo__campo textarea:disabled {
           cursor: not-allowed;
-          background: #f4f7fa;
-          color: #8097ac;
+          background: #f3f6f9;
+          color: #7f93a6;
         }
-
-        .clienteNuevo__campo label {
-          position: absolute;
-          top: 8px;
-          left: 12px;
-          color: #6685a6;
-          font-size: 14px;
-          font-weight: 700;
-          pointer-events: none;
-        }
-
         .clienteNuevo__checks {
           display: flex;
           flex-wrap: wrap;
-          gap: 14px 18px;
-          margin: 14px 0;
+          gap: 10px 20px;
+          margin: 4px 0 12px;
         }
-
         .clienteNuevo__checks label {
           display: flex;
           align-items: center;
           gap: 7px;
           color: #315575;
-          font-size: 14px;
-          font-weight: 700;
+          font-size: 13.5px;
+          font-weight: 500;
+          cursor: pointer;
         }
-
         .clienteNuevo__checks input {
-          accent-color: #16aab3;
+          width: 16px;
+          height: 16px;
+          accent-color: #0f9ca5;
         }
-
         .clienteNuevo__repetido {
-          margin-top: 14px;
+          margin-bottom: 12px;
           border: 1px solid #dbe7f0;
           border-radius: 10px;
-          background: #fcfeff;
-          padding: 19px;
+          background: #fbfdfe;
+          padding: 14px 16px 4px;
         }
-
         .clienteNuevo__repetidoHeader {
-          align-items: center;
-          margin-bottom: 15px;
+          margin-bottom: 12px;
           color: #315575;
-          font-size: 14px;
+          font-size: 13.5px;
         }
-
+        .clienteNuevo__repetidoHeader strong {
+          font-weight: 650;
+        }
         .clienteNuevo__agregar {
           border: 1px solid #a5e0de;
           background: #effcfb;
           color: #087d8b;
         }
-
+        .clienteNuevo__agregar:hover {
+          background: #e0f8f6;
+        }
         .clienteNuevo__eliminar {
           border: 0;
+          border-radius: 6px;
           background: transparent;
+          padding: 4px 6px;
           color: #bf4050;
-          font-weight: 800;
+          font: inherit;
+          font-size: 13px;
+          font-weight: 600;
           cursor: pointer;
         }
-
+        .clienteNuevo__eliminar:hover {
+          background: #fff0f2;
+        }
         .clienteNuevo__sinRegistros {
-          border: 1px dashed #cadced;
+          margin-bottom: 12px;
+          border: 1px dashed #cfdde9;
           border-radius: 9px;
-          padding: 24px;
-          color: #7190b2;
+          padding: 14px;
+          color: #6f8498;
           text-align: center;
-          font-size: 15px;
+          font-size: 13.5px;
         }
-
         .clienteNuevo__textoAuxiliar {
-          margin: 0;
+          margin: 0 0 10px;
           color: #315575;
-          font-size: 15px;
-          font-weight: 800;
+          font-size: 13.5px;
+          font-weight: 600;
         }
-
         .clienteNuevo__footer {
-          align-items: center;
+          position: sticky;
+          bottom: 0;
+          z-index: 5;
           justify-content: flex-end;
-          border-top: 1px solid #dfe9f1;
-          padding: 20px 36px;
+          border-top: 1px solid #e3ebf1;
+          border-radius: 0 0 12px 12px;
+          background: rgba(255, 255, 255, 0.97);
+          padding: 12px 20px;
         }
-
-        @media (max-width: 900px) {
+        @media (max-width: 1100px) {
           .clienteNuevo__grid--cuatro,
           .clienteNuevo__grid--tres {
             grid-template-columns: repeat(2, minmax(0, 1fr));
           }
         }
-
-        @media (max-width: 650px) {
+        @media (max-width: 640px) {
+          .clienteNuevo {
+            padding: 12px;
+          }
           .clienteNuevo__header,
-          .clienteNuevo__cardHeader,
           .clienteNuevo__titulo {
+            align-items: stretch;
             flex-direction: column;
           }
-
           .clienteNuevo__contenido,
-          .clienteNuevo__repetidor,
-          .clienteNuevo__cardHeader,
-          .clienteNuevo__footer {
-            padding-right: 20px;
-            padding-left: 20px;
+          .clienteNuevo__repetidor {
+            padding-right: 14px;
+            padding-left: 14px;
           }
-
           .clienteNuevo__grid--cuatro,
           .clienteNuevo__grid--tres,
           .clienteNuevo__grid--dos {
             grid-template-columns: 1fr;
           }
-
-          .clienteNuevo__header h1 {
-            font-size: 28px;
+          .clienteNuevo__campo input,
+          .clienteNuevo__campo select,
+          .clienteNuevo__campo textarea {
+            font-size: 16px;
+          }
+          .clienteNuevo__footer {
+            padding: 10px 14px;
           }
         }
       `}</style>
     </main>
+  );
+}
+
+function EtiquetaCampo({ label }: { label: string }) {
+  const obligatorio = label.trimEnd().endsWith("*");
+  const base = obligatorio ? label.trimEnd().slice(0, -1).trimEnd() : label;
+
+  return (
+    <span>
+      {base}
+      {obligatorio ? <b aria-hidden="true"> *</b> : null}
+    </span>
   );
 }
 
@@ -1935,14 +1931,14 @@ function Input({
   onChange: (valor: string) => void;
 } & Omit<React.InputHTMLAttributes<HTMLInputElement>, "onChange">) {
   return (
-    <div className="clienteNuevo__campo">
+    <label className="clienteNuevo__campo">
+      <EtiquetaCampo label={label} />
       <input
         {...propiedades}
+        aria-required={label.trimEnd().endsWith("*") ? true : undefined}
         onChange={(evento) => onChange(evento.target.value)}
-        placeholder={propiedades.placeholder ?? " "}
       />
-      <label>{label}</label>
-    </div>
+    </label>
   );
 }
 
@@ -1957,9 +1953,11 @@ function Select({
   onChange: (valor: string) => void;
 } & Omit<React.SelectHTMLAttributes<HTMLSelectElement>, "onChange">) {
   return (
-    <div className="clienteNuevo__campo">
+    <label className="clienteNuevo__campo">
+      <EtiquetaCampo label={label} />
       <select
         {...propiedades}
+        aria-required={label.trimEnd().endsWith("*") ? true : undefined}
         onChange={(evento) => onChange(evento.target.value)}
       >
         {opciones.map((opcion) => (
@@ -1968,8 +1966,7 @@ function Select({
           </option>
         ))}
       </select>
-      <label>{label}</label>
-    </div>
+    </label>
   );
 }
 
@@ -1982,25 +1979,20 @@ function Area({
   onChange: (valor: string) => void;
 } & Omit<React.TextareaHTMLAttributes<HTMLTextAreaElement>, "onChange">) {
   return (
-    <div className="clienteNuevo__campo">
+    <label className="clienteNuevo__campo">
+      <EtiquetaCampo label={label} />
       <textarea
         {...propiedades}
         onChange={(evento) => onChange(evento.target.value)}
-        placeholder=" "
       />
-      <label>{label}</label>
-    </div>
+    </label>
   );
 }
 
-function Titulo({ titulo, texto }: { titulo: string; texto: string }) {
+function Titulo({ titulo }: { titulo: string; texto?: string }) {
   return (
     <div className="clienteNuevo__titulo">
-      <div>
-        <h3>{titulo}</h3>
-        <p>{texto}</p>
-      </div>
-      <small>Los campos con * son obligatorios.</small>
+      <h3>{titulo}</h3>
     </div>
   );
 }
@@ -2053,13 +2045,12 @@ function CabeceraRepetido({
 
 function Repeater({
   titulo,
-  texto,
   agregar,
   onAgregar,
   children,
 }: {
   titulo: string;
-  texto: string;
+  texto?: string;
   agregar: string;
   onAgregar: () => void;
   children: React.ReactNode;
@@ -2071,10 +2062,7 @@ function Repeater({
   return (
     <section className="clienteNuevo__repetidor">
       <div className="clienteNuevo__titulo">
-        <div>
-          <h3>{titulo}</h3>
-          <p>{texto}</p>
-        </div>
+        <h3>{titulo}</h3>
         <button
           className="clienteNuevo__agregar"
           onClick={onAgregar}
@@ -2083,6 +2071,7 @@ function Repeater({
           + {agregar}
         </button>
       </div>
+
       {hayRegistros ? (
         children
       ) : (
