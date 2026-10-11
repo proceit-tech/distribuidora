@@ -11,6 +11,8 @@ import {
 } from "@/lib/fiscal/campos-receptor";
 import { mensajeRestriccionCliente } from "@/lib/clientes/errores-bd";
 import { evaluarAptitudSifen } from "@/lib/fiscal/aptitud-sifen";
+import { validarDiaPreferidoCobro } from "@/lib/clientes/dia-cobro";
+import { validarTelefonoFiscal } from "@/lib/fiscal/telefono";
 import { ErrorGeografia, resolverPais, validarPaisPorOperacion } from "@/lib/geografia/referencia";
 import { ErrorValidacion, leerEntrada, leerHijos, sincronizarHijos } from "@/lib/clientes/relacionados";
 
@@ -112,7 +114,7 @@ export async function GET(_request: Request, contexto: Contexto) {
       `SELECT c.id, c.codigo, c.naturaleza_receptor, c.tipo_operacion, c.tipo_persona,
               c.pais_codigo, c.pais_nombre, c.tipo_documento, c.descripcion_documento_identidad,
               c.numero_documento, c.dv, c.razon_social, c.nombre_fantasia,
-              c.email, c.email_copia, c.telefono, c.celular,
+              c.email, c.email_copia, c.telefono, c.celular, c.telefono_ddi, c.celular_ddi,
               c.limite_credito, c.limite_credito_temporal,
               to_char(c.fecha_vencimiento_credito, 'DD/MM/YYYY') AS fecha_vencimiento_credito,
               c.grupo_cliente_id, c.condicion_pago_id, c.moneda_codigo_predeterminada,
@@ -194,6 +196,8 @@ export async function GET(_request: Request, contexto: Contexto) {
         emailCopia: c.email_copia ?? "",
         telefono: c.telefono ?? "",
         celular: c.celular ?? "",
+        telefonoDdi: c.telefono_ddi ?? "",
+        celularDdi: c.celular_ddi ?? "",
         limiteCredito: Number(c.limite_credito),
         limiteCreditoTemporal: c.limite_credito_temporal === null ? "" : String(Number(c.limite_credito_temporal)),
         fechaVencimientoCredito: c.fecha_vencimiento_credito ?? "",
@@ -319,7 +323,7 @@ export async function PUT(request: Request, contexto: Contexto) {
     await conexion.query("BEGIN");
 
     const actual = await conexion.query(
-      "SELECT bloqueado_ventas, naturaleza_receptor, numero_documento, dv, descripcion_documento_identidad, razon_social, nombre_fantasia, email, telefono, celular , tipo_operacion, tipo_documento, gln FROM clientes WHERE id = $1 AND empresa_id = $2 FOR UPDATE",
+      "SELECT bloqueado_ventas, naturaleza_receptor, numero_documento, dv, descripcion_documento_identidad, razon_social, nombre_fantasia, email, telefono, celular, telefono_ddi, celular_ddi, tipo_operacion, tipo_documento, gln FROM clientes WHERE id = $1 AND empresa_id = $2 FOR UPDATE",
       [id, empresaId],
     );
     if (actual.rowCount !== 1) {
@@ -358,6 +362,24 @@ export async function PUT(request: Request, contexto: Contexto) {
     if (errorReceptor) {
       throw new Error(errorReceptor);
     }
+
+    // Teléfono/celular fiscales (D214/D215): DDI separado + número nacional normalizado. Un valor anterior a NEX-024
+    // (sin DDI) que no cambia se conserva tal cual; si se modifica el número o el DDI se exige DDI y formato.
+    const resolverTelefono = (campo: "telefono" | "celular", ddiEntrada: unknown, numeroEntrada: unknown) => {
+      const numero = textoCrudo(numeroEntrada);
+      const ddi = textoCrudo(ddiEntrada);
+      const sinCambio = numero === s(previo[campo]) && ddi === s(previo[`${campo}_ddi`]);
+      if (sinCambio) return { ok: true as const, ddi, numero };
+      const r = validarTelefonoFiscal(campo, ddi, numero);
+      if (!r.ok) throw new Error(r.error);
+      return r;
+    };
+    const telefonoGuardar = resolverTelefono("telefono", cuerpo.telefonoDdi, cuerpo.telefono);
+    const celularGuardar = resolverTelefono("celular", cuerpo.celularDdi, cuerpo.celular);
+
+    // Día preferido de cobro: entero 1–31 (DEC-CLI-COB-06); se guarda la preferencia original.
+    const diaCobro = validarDiaPreferidoCobro(cuerpo.diaPreferidoCobro);
+    if (!diaCobro.ok) throw new Error(diaCobro.error);
 
     // RUC/DV: misma regla que el alta (cálculo compartido). Un contribuyente ya grabado cuyo RUC y DV
     // no cambian se tolera (datos anteriores a la regla) hasta que se modifique alguno de los dos.
@@ -427,7 +449,7 @@ export async function PUT(request: Request, contexto: Contexto) {
          dia_preferido_cobro = $35, ruta_entrega_id = $36, zona_comercial_id = $37, vendedor_id = $38,
          frecuencia_entrega = $39, dias_entrega = $40, requiere_orden_compra = $41,
          email_facturacion = $42, email_cobranzas = $43, recibe_documento_electronico = $44,
-         observacion_comercial = $45, observacion_logistica = $46, activo = $47
+         observacion_comercial = $45, observacion_logistica = $46, activo = $47, telefono_ddi = $48, celular_ddi = $49
        WHERE id = $1 AND empresa_id = $2`,
       [
         id, empresaId,
@@ -440,7 +462,7 @@ export async function PUT(request: Request, contexto: Contexto) {
         naturaleza === "CONTRIBUYENTE" ? null : descDoc,
         numeroDocumento, naturaleza === "CONTRIBUYENTE" ? dv : null,
         razonSocial, opcional(cuerpo.nombreFantasia, 255),
-        email, emailCopia, opcional(cuerpo.telefono, 30), opcional(cuerpo.celular, 30),
+        email, emailCopia, telefonoGuardar.numero || null, celularGuardar.numero || null,
         numero(cuerpo.limiteCredito, 0) ?? 0,
         condicionPagoId, refs.listaPrecioId, refs.grupoClienteId,
         opcional(cuerpo.monedaCodigoPredeterminada, 3)?.toUpperCase() ?? null,
@@ -448,12 +470,14 @@ export async function PUT(request: Request, contexto: Contexto) {
         numero(cuerpo.descuentoComercialPct, 0, 100) ?? 0,
         limiteTemporal, vencimiento,
         bloqueado, motivo, estabaBloqueado, session.user.id,
-        numero(cuerpo.diaPreferidoCobro, 1, 31),
+        diaCobro.dia,
         refs.rutaEntregaId, refs.zonaComercialId, refs.vendedorId,
         frecuencia, dias(cuerpo.diasEntrega), cuerpo.requiereOrdenCompra === true,
         emailFacturacion, emailCobranzas, cuerpo.recibeDocumentoElectronico !== false,
         opcional(cuerpo.observacionComercial, 1000), opcional(cuerpo.observacionLogistica, 1000),
         cuerpo.activo !== false,
+        telefonoGuardar.numero === "" ? null : telefonoGuardar.ddi,
+        celularGuardar.numero === "" ? null : celularGuardar.ddi,
       ],
     );
 

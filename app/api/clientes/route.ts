@@ -15,6 +15,8 @@ import {
   validarUrlDocumento,
 } from "@/lib/fiscal/campos-receptor";
 import { mensajeRestriccionCliente } from "@/lib/clientes/errores-bd";
+import { validarDiaPreferidoCobro } from "@/lib/clientes/dia-cobro";
+import { validarTelefonoFiscal } from "@/lib/fiscal/telefono";
 
 
 // Solo DEMO explícito usa respuestas simuladas. La falta de DATABASE_URL NUNCA activa datos ficticios.
@@ -705,6 +707,16 @@ export async function POST(request: Request) {
     }
 
     // Campos D3 del SIFEN: tamaños y formatos oficiales sobre el valor recibido (sin truncar).
+    // D214/D215: DDI separado + número nacional normalizado (solo dígitos); sin DDI no se acepta un número.
+    const telefonoFiscal = validarTelefonoFiscal("telefono", textoCrudo(cuerpo.telefonoDdi), textoCrudo(cuerpo.telefono));
+    if (!telefonoFiscal.ok) throw new Error(telefonoFiscal.error);
+    const celularFiscal = validarTelefonoFiscal("celular", textoCrudo(cuerpo.celularDdi), textoCrudo(cuerpo.celular));
+    if (!celularFiscal.ok) throw new Error(celularFiscal.error);
+
+    // Día preferido de cobro: entero 1–31 (DEC-CLI-COB-06); se guarda la preferencia original.
+    const diaCobro = validarDiaPreferidoCobro(cuerpo.diaPreferidoCobro);
+    if (!diaCobro.ok) throw new Error(diaCobro.error);
+
     const errorReceptor = validarCamposReceptor({
       naturaleza,
       tipoDocumento,
@@ -946,7 +958,9 @@ export async function POST(request: Request) {
           email_cobranzas,
           recibe_documento_electronico,
           observacion_comercial,
-          observacion_logistica
+          observacion_logistica,
+          telefono_ddi,
+          celular_ddi
         )
         VALUES (
           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
@@ -955,7 +969,7 @@ export async function POST(request: Request) {
           $31, CASE WHEN $30::boolean THEN now() ELSE NULL END,
           CASE WHEN $30::boolean THEN $32::uuid ELSE NULL END,
           $33, $34, $35, $36, $37, $38, $39,
-          $40, $41, $42, $43, $44
+          $40, $41, $42, $43, $44, $45, $46
         )
         RETURNING id, codigo, razon_social
       `,
@@ -984,8 +998,8 @@ export async function POST(request: Request) {
         opcional(cuerpo.nombreFantasia, 255),
         email,
         emailCopia,
-        opcional(cuerpo.telefono, 30),
-        opcional(cuerpo.celular, 30),
+        telefonoFiscal.numero || null,
+        celularFiscal.numero || null,
         numeroOpcional(cuerpo.limiteCredito, 0) ?? 0,
         opcional(cuerpo.condicionPagoId),
         opcional(cuerpo.listaPrecioId),
@@ -1000,7 +1014,7 @@ export async function POST(request: Request) {
         bloqueadoVentas,
         motivoBloqueoVentas,
         session.user.id,
-        numeroOpcional(cuerpo.diaPreferidoCobro, 1, 31),
+        diaCobro.dia,
         opcional(cuerpo.rutaEntregaId),
         opcional(cuerpo.zonaComercialId),
         opcional(cuerpo.vendedorId),
@@ -1012,6 +1026,8 @@ export async function POST(request: Request) {
         cuerpo.recibeDocumentoElectronico !== false,
         opcional(cuerpo.observacionComercial, 1000),
         opcional(cuerpo.observacionLogistica, 1000),
+        telefonoFiscal.numero === "" ? null : telefonoFiscal.ddi,
+        celularFiscal.numero === "" ? null : celularFiscal.ddi,
       ],
     );
 

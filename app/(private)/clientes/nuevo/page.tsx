@@ -5,6 +5,8 @@ import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { calcularDvRuc, validarRucDv } from "@/lib/fiscal/calcular-dv-ruc";
+import { TelefonoDdi } from "@/components/clientes/telefono-ddi";
+import { validarTelefonoFiscal } from "@/lib/fiscal/telefono";
 import {
   NOMBRE_INNOMINADO,
   validarCamposReceptor,
@@ -99,6 +101,8 @@ type Formulario = {
   email: string;
   emailCopia: string;
   telefono: string;
+  telefonoDdi: string;
+  celularDdi: string;
   celular: string;
   limiteCredito: string;
   grupoClienteId: string;
@@ -154,6 +158,8 @@ const formularioInicial: Formulario = {
   email: "",
   emailCopia: "",
   telefono: "",
+  telefonoDdi: "595",
+  celularDdi: "595",
   celular: "",
   limiteCredito: "0",
   grupoClienteId: "",
@@ -637,6 +643,10 @@ export default function NuevoClientePage() {
         razonSocial: f.razonSocial.trim(),
       });
     if (errorReglas) return fiscal(errorReglas, "cli-tipo-documento");
+    const telefonoFiscal = validarTelefonoFiscal("telefono", f.telefonoDdi, f.telefono);
+    if (!telefonoFiscal.ok) return fiscal(telefonoFiscal.error, "cli-telefono");
+    const celularFiscal = validarTelefonoFiscal("celular", f.celularDdi, f.celular);
+    if (!celularFiscal.ok) return fiscal(celularFiscal.error, "cli-celular");
     if (f.email.trim() && !FORMATO_CORREO.test(f.email.trim())) {
       return fiscal("El correo electrónico no tiene un formato válido.", "cli-email");
     }
@@ -1160,7 +1170,7 @@ export default function NuevoClientePage() {
               texto="Datos generales del cliente. Puede agregar personas específicas en la pestaña Contactos."
             />
 
-            <div className="clienteNuevo__grid clienteNuevo__grid--cuatro">
+            <div className="clienteNuevo__grid clienteNuevo__grid--dos">
               <Input
                 id="cli-email"
                 label="Correo electrónico"
@@ -1175,17 +1185,38 @@ export default function NuevoClientePage() {
                 type="email"
                 value={formulario.emailCopia}
               />
-              <Input
+            </div>
+
+            <div className="clienteNuevo__grid clienteNuevo__grid--dos">
+              <TelefonoDdi
+                campo="telefono"
+                clases={{ campo: "clienteNuevo__campo" }}
+                ddi={formulario.telefonoDdi}
+                etiqueta="Teléfono"
                 id="cli-telefono"
-                label="Teléfono"
-                onChange={(valor) => actualizarFormulario("telefono", valor)}
-                value={formulario.telefono}
+                numero={formulario.telefono}
+                onChange={(cambio) =>
+                  setFormulario((actual) => ({
+                    ...actual,
+                    ...(cambio.ddi !== undefined ? { telefonoDdi: cambio.ddi } : {}),
+                    ...(cambio.numero !== undefined ? { telefono: cambio.numero } : {}),
+                  }))
+                }
               />
-              <Input
+              <TelefonoDdi
+                campo="celular"
+                clases={{ campo: "clienteNuevo__campo" }}
+                ddi={formulario.celularDdi}
+                etiqueta="Celular"
                 id="cli-celular"
-                label="Celular"
-                onChange={(valor) => actualizarFormulario("celular", valor)}
-                value={formulario.celular}
+                numero={formulario.celular}
+                onChange={(cambio) =>
+                  setFormulario((actual) => ({
+                    ...actual,
+                    ...(cambio.ddi !== undefined ? { celularDdi: cambio.ddi } : {}),
+                    ...(cambio.numero !== undefined ? { celular: cambio.numero } : {}),
+                  }))
+                }
               />
             </div>
           </section>
@@ -1483,6 +1514,12 @@ export default function NuevoClientePage() {
                       marcado: contacto.recibeCobranzas,
                       cambiar: (valor) =>
                         actualizarContacto(indice, "recibeCobranzas", valor),
+                    },
+                    {
+                      etiqueta: "Recibe notificaciones",
+                      marcado: contacto.recibeNotificaciones,
+                      cambiar: (valor) =>
+                        actualizarContacto(indice, "recibeNotificaciones", valor),
                     },
                     {
                       etiqueta: "Recibe documentos electrónicos",

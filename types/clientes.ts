@@ -57,6 +57,8 @@ export type ClienteDetalle = {
   emailCopia: string;
   telefono: string;
   celular: string;
+  telefonoDdi: string;
+  celularDdi: string;
   limiteCredito: number;
   limiteCreditoTemporal: string;
   fechaVencimientoCredito: string;

@@ -23,6 +23,7 @@ import {
   calcularDvRuc,
   validarRucDv,
 } from "@/lib/fiscal/calcular-dv-ruc";
+import { TelefonoDdi } from "@/components/clientes/telefono-ddi";
 import { validarCamposReceptor } from "@/lib/fiscal/campos-receptor";
 
 import styles from "./page.module.css";
@@ -64,6 +65,8 @@ type FormState = {
   emailCopia: string;
   telefono: string;
   celular: string;
+  telefonoDdi: string;
+  celularDdi: string;
 
   limiteCredito: string;
   limiteCreditoTemporal: string;
@@ -244,6 +247,8 @@ function fromCliente(
       cliente.emailCopia,
     telefono: cliente.telefono,
     celular: cliente.celular,
+    telefonoDdi: cliente.telefonoDdi ?? "",
+    celularDdi: cliente.celularDdi ?? "",
 
     limiteCredito:
       String(cliente.limiteCredito),
@@ -751,6 +756,8 @@ export default function ClienteDetallePage() {
             emailCopia: form.emailCopia,
             telefono: form.telefono,
             celular: form.celular,
+            telefonoDdi: form.telefonoDdi,
+            celularDdi: form.celularDdi,
             limiteCredito: money(
               form.limiteCredito,
             ),
@@ -1845,31 +1852,68 @@ export default function ClienteDetallePage() {
                   />
                 </Field>
 
-                <Field label="Teléfono">
-                  <TextInput
-                    value={
-                      form.telefono
-                    }
-                    onChange={(value) =>
-                      update(
-                        "telefono",
-                        value,
-                      )
-                    }
-                  />
-                </Field>
+              </div>
 
-                <Field label="Celular">
-                  <TextInput
-                    value={form.celular}
-                    onChange={(value) =>
-                      update(
-                        "celular",
-                        value,
-                      )
-                    }
-                  />
-                </Field>
+              <div
+                className={
+                  styles.gridTwo
+                }
+              >
+                <TelefonoDdi
+                  campo="telefono"
+                  clases={{
+                    campo: styles.field,
+                    selector: styles.select,
+                    entrada: styles.input,
+                  }}
+                  ddi={form.telefonoDdi}
+                  etiqueta="Teléfono"
+                  id="cli-edit-telefono"
+                  numero={form.telefono}
+                  onChange={(cambio) =>
+                    setForm((current) =>
+                      current
+                        ? {
+                            ...current,
+                            ...(cambio.ddi !== undefined
+                              ? { telefonoDdi: cambio.ddi }
+                              : {}),
+                            ...(cambio.numero !== undefined
+                              ? { telefono: cambio.numero }
+                              : {}),
+                          }
+                        : current,
+                    )
+                  }
+                />
+
+                <TelefonoDdi
+                  campo="celular"
+                  clases={{
+                    campo: styles.field,
+                    selector: styles.select,
+                    entrada: styles.input,
+                  }}
+                  ddi={form.celularDdi}
+                  etiqueta="Celular"
+                  id="cli-edit-celular"
+                  numero={form.celular}
+                  onChange={(cambio) =>
+                    setForm((current) =>
+                      current
+                        ? {
+                            ...current,
+                            ...(cambio.ddi !== undefined
+                              ? { celularDdi: cambio.ddi }
+                              : {}),
+                            ...(cambio.numero !== undefined
+                              ? { celular: cambio.numero }
+                              : {}),
+                          }
+                        : current,
+                    )
+                  }
+                />
               </div>
 
               <div
