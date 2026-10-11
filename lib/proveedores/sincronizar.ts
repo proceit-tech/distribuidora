@@ -51,6 +51,11 @@ type ColeccionSync<T extends { id: string | null }> = {
   columnas: (item: T) => Columnas;
   /** Nombre de la columna booleana «principal», si la tabla tiene una (para ordenar las actualizaciones). */
   principal?: string;
+  /**
+   * Gancho previo a actualizar una fila existente: devuelve las columnas a escribir (puede añadir otras), o null si ya se
+   * encargó de la fila (por ejemplo, creando una revisión pendiente en lugar de sobrescribir una cuenta aprobada).
+   */
+  antesDeActualizar?: (conexion: PoolClient, item: T, fila: Record<string, unknown>, columnas: Columnas) => Promise<Columnas | null>;
 };
 
 const IGNORADAS = new Set(["actualizado_at", "creado_at"]);
@@ -102,7 +107,12 @@ async function sincronizarColeccion<T extends { id: string | null }>(conexion: P
   const orden = (item: T) => (c.principal && porId.get(item.id as string)?.[c.principal] === true && c.columnas(item).find(([k]) => k === c.principal)?.[1] === false ? 0 : 1);
 
   for (const item of [...actualizar].sort((a, b) => orden(a) - orden(b))) {
-    const columnas = c.columnas(item);
+    const fila = porId.get(item.id as string) as Record<string, unknown>;
+    const base = c.columnas(item);
+    const columnas = c.antesDeActualizar ? await c.antesDeActualizar(conexion, item, fila, base) : base;
+
+    if (columnas === null) continue;
+
     const sets = columnas.map(([nombre], i) => `${nombre} = $${i + 4}`).join(", ");
     const cambios = columnas.map(([nombre], i) => `x.${nombre} IS DISTINCT FROM $${i + 4}`).join(" OR ");
     const r = await conexion.query(
@@ -130,6 +140,52 @@ async function sincronizarColeccion<T extends { id: string | null }>(conexion: P
 
     await registrarEvento(conexion, { empresaId, proveedorId, entidad: c.entidad, entidadId: r.rows[0].id, accion: "ALTA", nuevo: r.rows[0].fila, usuarioId });
   }
+}
+
+const igualValor = (a: unknown, b: unknown) => (a ?? null) === (b ?? null);
+
+/**
+ * Control de aprobación bancaria (DEC-PRV-04/07): una cuenta APROBADA nunca se sobrescribe por la edición común; el cambio queda como
+ * revisión pendiente (una sola por cuenta; una nueva solicitud reemplaza a la anterior) hasta que alguien con PROVEEDORES.APROBAR_BANCO
+ * la apruebe. Una cuenta pendiente o rechazada se corrige en el lugar; si estaba rechazada y cambia, vuelve a PENDIENTE.
+ */
+async function controlarCuenta(
+  conexion: PoolClient,
+  empresaId: string,
+  proveedorId: string,
+  usuarioId: string,
+  cuentaId: string,
+  fila: Record<string, unknown>,
+  columnas: Columnas,
+): Promise<Columnas | null> {
+  const cambiada = columnas.some(([nombre, valor]) => !igualValor(fila[nombre], valor));
+
+  if (!cambiada) return fila.estado_aprobacion === "APROBADA" ? null : columnas;
+
+  if (fila.estado_aprobacion === "APROBADA") {
+    const propuesta = Object.fromEntries(columnas);
+    const anterior = Object.fromEntries(columnas.map(([nombre]) => [nombre, fila[nombre] ?? null]));
+    const actualizada = await conexion.query(
+      `UPDATE proveedor_cuenta_revisiones SET datos = $4::jsonb, solicitado_por = $5, solicitado_at = now()
+        WHERE cuenta_id = $1 AND proveedor_id = $2 AND empresa_id = $3 AND estado = 'PENDIENTE' RETURNING id`,
+      [cuentaId, proveedorId, empresaId, JSON.stringify(propuesta), usuarioId],
+    );
+
+    if (!actualizada.rowCount) {
+      await conexion.query(
+        `INSERT INTO proveedor_cuenta_revisiones (empresa_id, proveedor_id, cuenta_id, datos, solicitado_por) VALUES ($1,$2,$3,$4::jsonb,$5)`,
+        [empresaId, proveedorId, cuentaId, JSON.stringify(propuesta), usuarioId],
+      );
+    }
+
+    await registrarEvento(conexion, { empresaId, proveedorId, entidad: "CUENTA", entidadId: cuentaId, accion: "CUENTA_REVISION_SOLICITADA", anterior, nuevo: propuesta, usuarioId });
+
+    return null;
+  }
+
+  if (fila.estado_aprobacion === "RECHAZADA") return [...columnas, ["estado_aprobacion", "PENDIENTE"], ["motivo_resolucion", null]];
+
+  return columnas;
 }
 
 /** Sincroniza las cuatro colecciones relacionadas editables (los documentos tienen su propio flujo de archivos). */
@@ -207,6 +263,7 @@ export async function sincronizarHijos(conexion: PoolClient, empresaId: string, 
       ["iban", x.iban],
       ["es_principal", x.esPrincipal],
     ],
+    antesDeActualizar: (cx, item, fila, columnas) => controlarCuenta(cx, empresaId, proveedorId, usuarioId, item.id as string, fila, columnas),
   });
 
   await sincronizarColeccion(conexion, empresaId, proveedorId, usuarioId, {

@@ -29,6 +29,10 @@ type Props = {
   catalogos: CatalogoProveedores;
   /** Recibe el contrato de la API; debe lanzar ErrorValidacion (con campo) si el servidor lo rechaza. */
   onSave: (datos: Record<string, unknown>) => Promise<void> | void;
+  /** Relee la ficha tras una acción administrativa (homologación, riesgo, bloqueo, aprobación bancaria). */
+  onRecargar?: () => void;
+  pestanaInicial?: PestanaId;
+  alCambiarPestana?: (pestana: PestanaId) => void;
 };
 
 const PESTANAS: Array<{ id: PestanaId; etiqueta: string }> = [
@@ -104,9 +108,16 @@ function nuevaCuenta(moneda: string): ProveedorCuentaBancaria {
   };
 }
 
-export default function ProveedorForm({ mode, initial, catalogos, onSave }: Props) {
-  const [form, setForm] = useState<FormularioProveedor>(() => (initial ? formularioDesdeDetalle(initial) : formularioInicial()));
-  const [tab, setTab] = useState<PestanaId>("general");
+export default function ProveedorForm({ mode, initial, catalogos, onSave, onRecargar, pestanaInicial, alCambiarPestana }: Props) {
+  const [formularioBase] = useState<FormularioProveedor>(() => (initial ? formularioDesdeDetalle(initial) : formularioInicial()));
+  const [form, setForm] = useState<FormularioProveedor>(formularioBase);
+  const [tab, setTabInterno] = useState<PestanaId>(pestanaInicial ?? "general");
+  const sucio = form !== formularioBase && JSON.stringify(form) !== JSON.stringify(formularioBase);
+
+  function setTab(pestana: PestanaId) {
+    setTabInterno(pestana);
+    alCambiarPestana?.(pestana);
+  }
   const [errores, setErrores] = useState<Errores>({});
   const [pestanaConError, setPestanaConError] = useState<PestanaId | "">("");
   const [error, setError] = useState("");
@@ -247,6 +258,8 @@ export default function ProveedorForm({ mode, initial, catalogos, onSave }: Prop
     detalle: initial,
     catalogos,
     errores,
+    sucio,
+    recargar: () => onRecargar?.(),
     set,
     cambiarIdentificacion,
     agregar,

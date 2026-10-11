@@ -5,6 +5,7 @@ import type { ProveedorCuentaBancaria } from "@/types/proveedores";
 import { Casilla, Selector, SinRegistros, Texto } from "../campos";
 import type { ContextoFormulario } from "../contexto";
 import styles from "../proveedor-form.module.css";
+import { ResolucionCuenta } from "./resolucion-cuenta";
 
 export function PestanaBancos({ ctx }: { ctx: ContextoFormulario }) {
   const { form, errores, catalogos } = ctx;
@@ -75,6 +76,8 @@ export function PestanaBancos({ ctx }: { ctx: ContextoFormulario }) {
               <div className={styles.checkGrid}>
                 <Casilla etiqueta="Cuenta principal de esta moneda" campo={`${p}.esPrincipal`} valor={c.esPrincipal} alCambiar={(v) => ctx.marcarPrincipal("cuentasBancarias", c.id, v)} />
               </div>
+
+              <ResolucionCuenta ctx={ctx} cuenta={c} />
             </article>
           );
         })}

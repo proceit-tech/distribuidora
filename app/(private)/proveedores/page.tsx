@@ -17,6 +17,8 @@ import { compararTexto, ordenarLista, siguienteOrden, type Orden } from "@/compo
 import { ThOrdenable } from "@/components/ui/lista-padrao/th-ordenable";
 import ui from "@/components/ui/lista-padrao/lista.module.css";
 import { formatearMonto } from "@/lib/formato/listas";
+import { hoyAsuncion } from "@/lib/proveedores/fechas";
+import { homologacionVencida } from "@/lib/proveedores/gobernanza";
 
 import styles from "./page.module.css";
 
@@ -155,6 +157,8 @@ type FilaApi = {
   estado_homologacion: ProveedorEstadoHomologacion;
   nivel_riesgo: ProveedorNivelRiesgo;
   calificacion_actual: string | number | null;
+  fecha_vencimiento_homologacion: string | Date | null;
+  bloqueado: boolean;
   activo: boolean;
 };
 
@@ -184,7 +188,18 @@ function desdeApi(fila: FilaApi): ProveedorLista {
         ? null
         : String(fila.calificacion_actual),
     activo: fila.activo,
+    bloqueado: fila.bloqueado === true,
+    homologacionVencida: homologacionVencida(
+      { estadoHomologacion: fila.estado_homologacion, fechaVencimientoHomologacion: isoDe(fila.fecha_vencimiento_homologacion) },
+      hoyAsuncion(),
+    ),
   };
+}
+
+function isoDe(valor: string | Date | null): string {
+  if (!valor) return "";
+
+  return typeof valor === "string" ? valor.slice(0, 10) : valor.toISOString().slice(0, 10);
 }
 
 export default function ProveedoresPage() {
@@ -340,7 +355,8 @@ export default function ProveedoresPage() {
 
         if (
           proveedor.estadoHomologacion ===
-          "HOMOLOGADO"
+            "HOMOLOGADO" &&
+          !proveedor.homologacionVencida
         ) {
           acc.homologados += 1;
         }
@@ -703,9 +719,10 @@ export default function ProveedoresPage() {
                     <td>
                       <div className={ui.cell}>
                         <div className={styles.badgeRow}>
-                          <span className={[styles.badge, homologacionClass(proveedor.estadoHomologacion)].join(" ")}>
-                            {HOMOLOGACION_TEXTO[proveedor.estadoHomologacion] ?? proveedor.estadoHomologacion}
+                          <span className={[styles.badge, homologacionClass(proveedor.homologacionVencida ? "VENCIDO" : proveedor.estadoHomologacion)].join(" ")}>
+                            {proveedor.homologacionVencida && proveedor.estadoHomologacion === "HOMOLOGADO" ? "Homologación vencida" : HOMOLOGACION_TEXTO[proveedor.estadoHomologacion] ?? proveedor.estadoHomologacion}
                           </span>
+                          {proveedor.bloqueado ? <span className={[styles.badge, styles.badgeDanger].join(" ")}>Bloqueado</span> : null}
                           <span className={[styles.badge, riesgoClass(proveedor.nivelRiesgo)].join(" ")}>
                             {RIESGO_TEXTO[proveedor.nivelRiesgo] ?? proveedor.nivelRiesgo}
                           </span>

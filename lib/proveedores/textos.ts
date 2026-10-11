@@ -45,3 +45,42 @@ export const TIPO_DOCUMENTO_TEXTO: Record<string, string> = {
   LICENCIA: "Licencia",
   OTRO: "Otro",
 };
+
+/** Acciones de auditoría (proveedor_eventos.accion) en español. */
+export const EVENTO_TEXTO: Record<string, string> = {
+  CREACION: "Proveedor creado",
+  ACTUALIZACION: "Datos del proveedor actualizados",
+  ALTA: "Registro agregado",
+  MODIFICACION: "Registro modificado",
+  BAJA: "Registro eliminado",
+  HOMOLOGACION_EN_EVALUACION: "Pasó a evaluación",
+  HOMOLOGACION_APROBADA: "Homologación aprobada",
+  HOMOLOGACION_RECHAZADA: "Homologación rechazada",
+  HOMOLOGACION_SUSPENDIDA: "Homologación suspendida",
+  HOMOLOGACION_RENOVADA: "Homologación renovada",
+  RIESGO_EVALUADO: "Riesgo evaluado",
+  BLOQUEO: "Proveedor bloqueado",
+  DESBLOQUEO: "Proveedor desbloqueado",
+  CUENTA_REVISION_SOLICITADA: "Cambio de cuenta bancaria solicitado",
+  CUENTA_APROBADA: "Cuenta bancaria aprobada",
+  CUENTA_RECHAZADA: "Cuenta bancaria rechazada",
+  CUENTA_REVISION_APROBADA: "Cambio de cuenta bancaria aprobado",
+  CUENTA_REVISION_RECHAZADA: "Cambio de cuenta bancaria rechazado",
+  RETENCION_ACTIVADA: "Retención activada",
+  RETENCION_DESACTIVADA: "Retención desactivada",
+  DOC_CARGA: "Documento cargado",
+  DOC_REEMPLAZO: "Documento reemplazado (nueva versión)",
+  DOC_EDICION: "Datos del documento editados",
+  DOC_ELIMINACION: "Documento eliminado",
+  DOC_RESTAURACION: "Documento restaurado",
+  DOC_RECUPERACION: "Versión de documento recuperada",
+};
+
+export const ENTIDAD_TEXTO: Record<string, string> = {
+  PROVEEDOR: "Proveedor",
+  CONTACTO: "Contacto",
+  DIRECCION: "Dirección",
+  CUENTA: "Cuenta bancaria",
+  RETENCION: "Retención",
+  DOCUMENTO: "Documento",
+};

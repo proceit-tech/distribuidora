@@ -19,6 +19,10 @@ export type ContextoFormulario = {
   detalle?: ProveedorDetalle;
   catalogos: CatalogoProveedores;
   errores: Errores;
+  /** Hay cambios sin guardar en el formulario (las acciones administrativas recargan la ficha y los descartarían). */
+  sucio: boolean;
+  /** Vuelve a leer la ficha del servidor (tras una acción administrativa). */
+  recargar: () => void;
   set: <K extends keyof FormularioProveedor>(clave: K, valor: FormularioProveedor[K]) => void;
   cambiarIdentificacion: (parche: Partial<Pick<FormularioProveedor, "paisCodigo" | "tipoDocumento" | "numeroDocumento">>) => void;
   agregar: (coleccion: ColeccionClave) => void;

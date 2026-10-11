@@ -365,6 +365,11 @@ function detalleBase() {
     documentos: [],
     observacion: "",
     activo: true,
+    bloqueado: false,
+    motivoBloqueo: "",
+    homologacionVencida: false,
+    estadoOperativo: { elegible: false, motivos: [] as string[] },
+    permisos: { editar: true, homologar: false, evaluarRiesgo: false, bloquear: false, aprobarBanco: false },
     creadoEn: "",
     actualizadoEn: "",
   };

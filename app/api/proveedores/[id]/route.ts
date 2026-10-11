@@ -3,6 +3,9 @@ import type { PoolClient } from "pg";
 
 import { denyIfNoPermission } from "@/lib/auth/permissions";
 import { ErrorValidacion } from "@/lib/proveedores/errores";
+import { hoyAsuncion } from "@/lib/proveedores/fechas";
+import { estadoOperativo, homologacionVencida } from "@/lib/proveedores/gobernanza";
+import { autorizarProveedores } from "@/lib/proveedores/http";
 import { normalizarProveedor } from "@/lib/proveedores/normalizar";
 import {
   columnasProveedor,
@@ -90,7 +93,8 @@ export async function GET(_request: Request, contexto: Contexto) {
          p.dias_confirmacion_pedido AS "diasConfirmacionPedido",
          p.permite_entrega_parcial AS "permiteEntregaParcial",
          coalesce(p.observacion, '') AS observacion,
-         p.activo, p.creado_at AS "creadoEn", p.actualizado_at AS "actualizadoEn",
+         p.activo, p.bloqueado, coalesce(p.motivo_bloqueo, '') AS "motivoBloqueo",
+         p.creado_at AS "creadoEn", p.actualizado_at AS "actualizadoEn",
          to_char(p.actualizado_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US') AS version
        FROM proveedores p
        WHERE p.id = $1 AND p.empresa_id = $2`,
@@ -132,7 +136,13 @@ export async function GET(_request: Request, contexto: Contexto) {
                 coalesce(documento_titular,'') AS "documentoTitular", tipo_cuenta AS "tipoCuenta",
                 numero_cuenta AS "numeroCuenta", moneda_codigo AS "monedaCodigo",
                 coalesce(alias_cuenta,'') AS "aliasCuenta", coalesce(codigo_swift,'') AS "codigoSwift",
-                coalesce(iban,'') AS iban, es_principal AS "esPrincipal"
+                coalesce(iban,'') AS iban, es_principal AS "esPrincipal",
+                estado_aprobacion AS "estadoAprobacion", coalesce(motivo_resolucion,'') AS "motivoResolucion",
+                coalesce(to_char(aprobado_at AT TIME ZONE 'America/Asuncion','DD/MM/YYYY HH24:MI'),'') AS "aprobadoEn",
+                (SELECT jsonb_build_object('id', r.id, 'datos', r.datos,
+                          'solicitadoEn', to_char(r.solicitado_at AT TIME ZONE 'America/Asuncion','DD/MM/YYYY HH24:MI'))
+                   FROM proveedor_cuenta_revisiones r
+                  WHERE r.cuenta_id = proveedor_cuentas_bancarias.id AND r.empresa_id = proveedor_cuentas_bancarias.empresa_id AND r.estado = 'PENDIENTE') AS "revisionPendiente"
          FROM proveedor_cuentas_bancarias WHERE proveedor_id = $1 AND empresa_id = $2 ORDER BY creado_at, id`,
         [id, empresaId],
       ),
@@ -155,9 +165,33 @@ export async function GET(_request: Request, contexto: Contexto) {
       ),
     ]);
 
+    const base = principal.rows[0];
+    const hoy = hoyAsuncion();
+    const gobierno = {
+      activo: base.activo as boolean,
+      bloqueado: base.bloqueado as boolean,
+      motivoBloqueo: base.motivoBloqueo as string,
+      estadoHomologacion: base.estadoHomologacion as string,
+      fechaHomologacion: base.fechaHomologacion as string,
+      fechaVencimientoHomologacion: base.fechaVencimientoHomologacion as string,
+      nivelRiesgo: base.nivelRiesgo as string,
+      calificacionActual: base.calificacionActual as string | null,
+    };
+    const acceso = await autorizarProveedores();
+    const permisos = "permisos" in acceso ? acceso.permisos : null;
+
     return NextResponse.json({
       proveedor: {
-        ...principal.rows[0],
+        ...base,
+        homologacionVencida: homologacionVencida(gobierno, hoy),
+        estadoOperativo: estadoOperativo(gobierno, hoy),
+        permisos: {
+          editar: permisos?.editar ?? false,
+          homologar: permisos?.homologar ?? false,
+          evaluarRiesgo: permisos?.evaluarRiesgo ?? false,
+          bloquear: permisos?.bloquear ?? false,
+          aprobarBanco: permisos?.aprobarBanco ?? false,
+        },
         contactos: contactos.rows,
         direcciones: direcciones.rows,
         cuentasBancarias: cuentas.rows,

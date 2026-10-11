@@ -71,6 +71,11 @@ export type ProveedorCuentaBancaria = {
   codigoSwift: string;
   iban: string;
   esPrincipal: boolean;
+  /** Solo lectura (lo devuelve el servidor): una cuenta aprobada no se sobrescribe, sus cambios quedan en revisión. */
+  estadoAprobacion?: "PENDIENTE" | "APROBADA" | "RECHAZADA";
+  motivoResolucion?: string;
+  aprobadoEn?: string;
+  revisionPendiente?: { id: string; datos: Record<string, unknown>; solicitadoEn: string } | null;
 };
 
 export type ProveedorRetencion = {
@@ -163,6 +168,12 @@ export type ProveedorDetalle = {
   observacion: string;
   activo: boolean;
 
+  bloqueado: boolean;
+  motivoBloqueo: string;
+  homologacionVencida: boolean;
+  estadoOperativo: { elegible: boolean; motivos: string[] };
+  permisos: { editar: boolean; homologar: boolean; evaluarRiesgo: boolean; bloquear: boolean; aprobarBanco: boolean };
+
   creadoEn: string;
   actualizadoEn: string;
 };
@@ -176,6 +187,11 @@ export type NuevoProveedor = Omit<
   | "creadoEn"
   | "actualizadoEn"
   | "paisNombre"
+  | "bloqueado"
+  | "motivoBloqueo"
+  | "homologacionVencida"
+  | "estadoOperativo"
+  | "permisos"
   | "estadoHomologacion"
   | "fechaHomologacion"
   | "fechaVencimientoHomologacion"
@@ -206,6 +222,8 @@ export type ProveedorLista = {
   nivelRiesgo: ProveedorNivelRiesgo;
   calificacionActual: string | null;
   activo: boolean;
+  bloqueado: boolean;
+  homologacionVencida: boolean;
 };
 
 export type CatalogoProveedores = {
