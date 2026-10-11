@@ -26,3 +26,23 @@ Status: **AUDITORIA VISUAL/ESTÁTICA — PENDENTE DE IMPLEMENTAÇÃO E ACEITE HU
 ## Evidências e autorização
 - Capturas: seis imagens anexadas à conversa do responsável, **não gravadas no repositório nesta entrega** (pendente arquivamento de imagens originais). 
 - É especificação/auditoria apenas. Claude implementa somente com autorização posterior do responsável. Nenhuma aplicação SQL, Docker ou VM autorizada.
+
+
+## Autorização expressa do responsável — implementar TODOS os ajustes (2026-10-11)
+
+**Decisão:** o responsável aprovou a implementação de todos os nove itens da revisão. Esta seção **substitui exclusivamente** a restrição anterior “não autoriza implementação” para esses nove itens; não autoriza operações na VM, aplicação de SQL, Docker ou deploy. Claude Code pode criar e versionar SQL incremental *quando necessário*, sem executá-lo, conforme `CLAUDE.md` e `PROTOCOLO-IA.md`.
+
+**Escopo obrigatório a entregar:**
+1. **Documentos:** retirar campo obrigatório `URL segura` e fluxo de links externos como UX principal; implementar seleção, upload real, armazenamento **privado em volume persistente na VM**, download autenticado com isolamento `empresa_id`, metadados nome/tipo/datas/observação, regras seguras de tamanho/extensões, substituição e remoção sem perda silenciosa. Preparar configurações e eventuais SQL/Compose como arquivos no Git, **sem instalar volume, executar script ou configurar a VM**. Decisões não especificadas (tipos/tamanho/retencão) devem ser propostas/documentadas de maneira explícita, sem inventar aprovação do responsável.
+2. **Fiscal — telefones:** compactar busca/seletor de país/DDI/número, sem reduzir a lista mundial nem perder área condicional, zeros e persistência. Reutilizar em Contatos; confirmar mobile.
+3. **Fiscal — título:** renomear `Contacto principal` para `Datos de contacto del cliente`, sem confundir com contato principal da aba Contatos.
+4. **Comercial — prazo:** confrontar semântica de campo SQL/API antes de renomear `Vencimiento del crédito` para `Vencimiento del límite temporal`; não trocar semântica só por rótulo, nem gerar regressão de persistência.
+5. **Comercial — moeda:** exibir código da moeda escolhida junto ao crédito normal/temporário; sem valores presumidos.
+6. **Comercial — conversão:** na **edição**, ao trocar a moeda, pedir taxa de câmbio **informada pelo usuário**, mostrar valores origem/destino e pedir confirmação explícita antes da persistência; preservar `numeric` como decimal exato e definir arredondamento/auditoria, sem taxa automática. Compatibilizar API/SQL e não reinterpretar saldos em outras operações.
+7. **Direções:** verificar exigência de endereço fiscal de acordo com matriz normativa por natureza/operação e bloquear salvar quando de fato exigido. Mesmo endereço pode ser fiscal + entrega padrão.
+8. **Entrega:** validar dias selecionados para frequências diária, semanal e quinzenal conforme regra aprovada, em UI e API; não inventar novas regras para mensal e `A_DEMANDA`.
+9. **Todas:** retirar instrução genérica repetida em cada aba quando não acrescentar informação; marcar os obrigatórios reais, condicionais, com mensagens contextualizadas.
+
+**Critérios globais:** cobrir criação E edição e API sem duplicar lógica; confrontar a regra oficial e migrations em Git; preservar código automático, segurança/multitenancy e integridade. Não reescrever módulos alheios; criar migrations incrementais apenas se comprovadamente necessárias; não editar migrations já aplicadas; documentar testes realmente realizados; realizar commit/push e parar para auditoria ChatGPT. Nenhum teste com banco/VM real, nenhum deploy. A implementação **não equivale a homologação humana**.
+
+**Rastreabilidade:** aprovação expressa registrada nesta seção. Prints originais das seis abas foram mostrados na conversa, **não versionados** no GitHub; não declarar evidência visual arquivada.
