@@ -511,7 +511,7 @@ export default function NuevoClientePage() {
         throw new Error(datos.error ?? "No fue posible guardar el cliente.");
       }
 
-      router.push("/clientes");
+      router.push("/clientes?ok=creado");
       router.refresh();
     } catch (errorGuardado) {
       setError(
@@ -1213,7 +1213,7 @@ export default function NuevoClientePage() {
                   {esParaguay ? (
                     <div className="clienteNuevo__grid clienteNuevo__grid--tres">
                       <Select
-                        label="Departamento *"
+                        label="Departamento"
                         onChange={(valor) =>
                           void seleccionarDepartamento(indice, valor)
                         }
@@ -1225,7 +1225,7 @@ export default function NuevoClientePage() {
                       />
                       <Select
                         disabled={!direccion.departamentoCodigo}
-                        label="Distrito *"
+                        label="Distrito"
                         onChange={(valor) =>
                           void seleccionarDistrito(indice, valor)
                         }
@@ -1237,7 +1237,7 @@ export default function NuevoClientePage() {
                       />
                       <Select
                         disabled={!direccion.distritoCodigo}
-                        label="Ciudad *"
+                        label="Ciudad"
                         onChange={(valor) => seleccionarCiudad(indice, valor)}
                         opciones={opcionesCatalogo(
                           ciudadesPorDireccion[indice] ?? [],
@@ -1585,7 +1585,7 @@ export default function NuevoClientePage() {
         .clienteNuevo__miga {
           margin: 0;
           color: #7190b2;
-          font-size: 13px;
+          font-size: 15px;
         }
 
         .clienteNuevo__miga span {
@@ -1614,7 +1614,7 @@ export default function NuevoClientePage() {
           min-height: 42px;
           border-radius: 9px;
           padding: 10px 16px;
-          font-size: 13px;
+          font-size: 15px;
           font-weight: 800;
           text-decoration: none;
           cursor: pointer;
@@ -1653,7 +1653,7 @@ export default function NuevoClientePage() {
 
         .clienteNuevo__cardHeader > div > span {
           color: #6584a7;
-          font-size: 11px;
+          font-size: 14px;
           font-weight: 800;
           letter-spacing: 1px;
         }
@@ -1687,11 +1687,11 @@ export default function NuevoClientePage() {
         .clienteNuevo__codigoAuto span {
           display: grid;
           gap: 3px;
-          font-size: 12px;
+          font-size: 15px;
         }
 
         .clienteNuevo__codigoAuto small {
-          font-size: 10px;
+          font-size: 13px;
         }
 
         .clienteNuevo__error {
@@ -1701,7 +1701,7 @@ export default function NuevoClientePage() {
           background: #fff5f6;
           padding: 12px;
           color: #b62d40;
-          font-size: 13px;
+          font-size: 15px;
         }
 
         .clienteNuevo__tabs {
@@ -1718,7 +1718,7 @@ export default function NuevoClientePage() {
           background: transparent;
           padding: 11px 13px;
           color: #6887a8;
-          font-size: 12px;
+          font-size: 15px;
           font-weight: 800;
           white-space: nowrap;
           cursor: pointer;
@@ -1745,7 +1745,7 @@ export default function NuevoClientePage() {
 
         .clienteNuevo__titulo small {
           color: #7190b2;
-          font-size: 11px;
+          font-size: 13px;
           white-space: nowrap;
         }
 
@@ -1784,7 +1784,7 @@ export default function NuevoClientePage() {
           padding: 20px 12px 7px;
           color: #173d63;
           font: inherit;
-          font-size: 13px;
+          font-size: 15px;
         }
 
         .clienteNuevo__campo textarea {
@@ -1812,7 +1812,7 @@ export default function NuevoClientePage() {
           top: 8px;
           left: 12px;
           color: #6685a6;
-          font-size: 10px;
+          font-size: 14px;
           font-weight: 700;
           pointer-events: none;
         }
@@ -1829,7 +1829,7 @@ export default function NuevoClientePage() {
           align-items: center;
           gap: 7px;
           color: #315575;
-          font-size: 12px;
+          font-size: 14px;
           font-weight: 700;
         }
 
@@ -1849,7 +1849,7 @@ export default function NuevoClientePage() {
           align-items: center;
           margin-bottom: 15px;
           color: #315575;
-          font-size: 13px;
+          font-size: 14px;
         }
 
         .clienteNuevo__agregar {
@@ -1872,13 +1872,13 @@ export default function NuevoClientePage() {
           padding: 24px;
           color: #7190b2;
           text-align: center;
-          font-size: 13px;
+          font-size: 15px;
         }
 
         .clienteNuevo__textoAuxiliar {
           margin: 0;
           color: #315575;
-          font-size: 13px;
+          font-size: 15px;
           font-weight: 800;
         }
 

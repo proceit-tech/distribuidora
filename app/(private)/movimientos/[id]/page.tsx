@@ -10,11 +10,12 @@ import {
 } from "next/navigation";
 
 import {
-  buscarMovimientoStockDemo,
-} from "@/lib/mocks/movimientos-stock-storage";
+  anularMovimientoApi,
+  cargarMovimiento,
+} from "@/lib/movimientos/cliente-api";
 
 import {
-  MovimientoStockDemo,
+  MovimientoStockDetalle,
 } from "@/types/movimientos-stock";
 
 import styles from "./page.module.css";
@@ -25,22 +26,66 @@ export default function MovimientoDetallePage() {
   }>();
 
   const [mov, setMov] =
-    useState<MovimientoStockDemo | null>(
+    useState<MovimientoStockDetalle | null>(
       null,
     );
 
   const [loading, setLoading] =
     useState(true);
 
-  useEffect(() => {
-    setMov(
-      buscarMovimientoStockDemo(
-        params.id,
-      ),
-    );
+  const [error, setError] =
+    useState("");
 
-    setLoading(false);
+  const [motivoAnulacion, setMotivoAnulacion] =
+    useState("");
+
+  const [anulando, setAnulando] =
+    useState(false);
+
+  const [aviso, setAviso] =
+    useState("");
+
+  function recargar() {
+    return cargarMovimiento(params.id)
+      .then(setMov)
+      .catch((e: unknown) =>
+        setError(
+          e instanceof Error
+            ? e.message
+            : "No fue posible cargar el movimiento.",
+        ),
+      )
+      .finally(() => setLoading(false));
+  }
+
+  useEffect(() => {
+    recargar();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.id]);
+
+  async function anular() {
+    setError("");
+    setAnulando(true);
+
+    try {
+      setAviso(
+        await anularMovimientoApi(
+          params.id,
+          motivoAnulacion,
+        ),
+      );
+      setMotivoAnulacion("");
+      await recargar();
+    } catch (e) {
+      setError(
+        e instanceof Error
+          ? e.message
+          : "No fue posible anular el movimiento.",
+      );
+    } finally {
+      setAnulando(false);
+    }
+  }
 
   if (loading) {
     return (
@@ -54,8 +99,12 @@ export default function MovimientoDetallePage() {
     return (
       <main className={styles.state}>
         <h1>
-          Movimiento no encontrado
+          {error
+            ? "No fue posible cargar el movimiento"
+            : "Movimiento no encontrado"}
         </h1>
+
+        {error ? <p>{error}</p> : null}
         <Link href="/movimientos">
           Volver a movimientos
         </Link>
@@ -70,9 +119,6 @@ export default function MovimientoDetallePage() {
           <div className={styles.heroMeta}>
             <span className={styles.modulePill}>
               MOVIMIENTO
-            </span>
-            <span className={styles.demoPill}>
-              DEMO
             </span>
           </div>
 
@@ -187,12 +233,99 @@ export default function MovimientoDetallePage() {
           </div>
 
           <div>
-            <span>Propietario</span>
+            <span>Costo unitario</span>
             <strong>
-              {mov.propietarioNombre}
+              {mov.costoUnitario === null
+                ? "—"
+                : `${mov.costoUnitario} ${mov.monedaCosto}`}
             </strong>
           </div>
+
+          <div>
+            <span>Costo total</span>
+            <strong>
+              {mov.costoTotal === null
+                ? "—"
+                : `${mov.costoTotal} ${mov.monedaCosto}`}
+            </strong>
+          </div>
+
+          {mov.anuladoPor ? (
+            <div>
+              <span>Anulado por</span>
+              <strong>{mov.anuladoPor}</strong>
+            </div>
+          ) : null}
+
+          {mov.anulaA ? (
+            <div>
+              <span>Anula al movimiento</span>
+              <strong>{mov.anulaA}</strong>
+            </div>
+          ) : null}
         </div>
+
+        {mov.lineas.length > 1 ? (
+          <div className={styles.observation}>
+            <span>Líneas del movimiento</span>
+            {mov.lineas.map((linea) => (
+              <strong key={linea.lineaId}>
+                {linea.productoCodigo} ·{" "}
+                {linea.productoDescripcion}:{" "}
+                {linea.cantidad}{" "}
+                {linea.unidadMedidaNombre}
+                {linea.lote
+                  ? ` · Lote ${linea.lote}`
+                  : ""}
+              </strong>
+            ))}
+          </div>
+        ) : null}
+
+        {aviso ? (
+          <div className={styles.observation}>
+            <strong>{aviso}</strong>
+          </div>
+        ) : null}
+
+        {error ? (
+          <div className={styles.observation}>
+            <strong>{error}</strong>
+          </div>
+        ) : null}
+
+        {mov.estado === "REGISTRADO" &&
+        !mov.anulaA ? (
+          <div className={styles.observation}>
+            <span>
+              Anular movimiento (genera un
+              movimiento inverso; requiere
+              permiso de anulación)
+            </span>
+            <input
+              value={motivoAnulacion}
+              placeholder="Motivo de la anulación (mínimo 5 caracteres)"
+              onChange={(event) =>
+                setMotivoAnulacion(
+                  event.target.value,
+                )
+              }
+            />
+            <button
+              type="button"
+              disabled={
+                anulando ||
+                motivoAnulacion.trim()
+                  .length < 5
+              }
+              onClick={anular}
+            >
+              {anulando
+                ? "Anulando..."
+                : "Anular movimiento"}
+            </button>
+          </div>
+        ) : null}
 
         <div className={styles.observation}>
           <span>Observación</span>

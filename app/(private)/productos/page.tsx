@@ -8,11 +8,7 @@ import {
 } from "react";
 
 import {
-  obtenerProductosDemo,
-} from "@/lib/mocks/productos-storage";
-
-import {
-  ProductoDemo,
+  ProductoLista,
   ProductoTipo,
 } from "@/types/productos";
 
@@ -29,13 +25,10 @@ type TipoFiltro =
   | "TODOS"
   | ProductoTipo;
 
-function money(value: number) {
-  return `Gs. ${new Intl.NumberFormat(
-    "es-PY",
-    {
-      maximumFractionDigits: 0,
-    },
-  ).format(value)}`;
+function money(value: number, moneda: string) {
+  return `${moneda || ""} ${new Intl.NumberFormat("es-PY", {
+    maximumFractionDigits: 2,
+  }).format(value)}`.trim();
 }
 
 function initials(value: string) {
@@ -47,6 +40,74 @@ function initials(value: string) {
       item.charAt(0).toUpperCase(),
     )
     .join("");
+}
+
+type FilaApi = {
+  id: string;
+  codigo: string;
+  codigo_inventario: string | null;
+  codigo_sifen: string | null;
+  codigo_barras: string | null;
+  descripcion: string;
+  descripcion_factura: string;
+  tipo_producto: ProductoTipo;
+  controla_stock: boolean;
+  stock_minimo: number;
+  punto_reposicion: number | null;
+  activo: boolean;
+  origen_etiqueta: string | null;
+  pais_origen_nombre: string | null;
+  categoria: string | null;
+  marca: string | null;
+  impuesto: string | null;
+  unidad_nombre: string | null;
+  familia_id: string | null;
+  familia: string | null;
+  linea_id: string | null;
+  linea: string | null;
+  stock_disponible: number;
+  bajo_minimo: boolean;
+  costo_promedio: number | null;
+  precio_venta_referencia: number | null;
+  moneda_precio_referencia: string | null;
+  inventario_inicial: number;
+};
+
+function desdeApi(fila: FilaApi): ProductoLista {
+  return {
+    id: fila.id,
+    codigo: fila.codigo,
+    codigoInventario: fila.codigo_inventario ?? "",
+    codigoSifen: fila.codigo_sifen ?? "",
+    codigoBarras: fila.codigo_barras ?? "",
+    descripcion: fila.descripcion,
+    descripcionFactura: fila.descripcion_factura,
+    tipoProducto: fila.tipo_producto,
+    categoriaNombre: fila.categoria ?? "",
+    marcaNombre: fila.marca ?? "",
+    familiaId: fila.familia_id ?? "",
+    familiaNombre: fila.familia ?? "",
+    lineaId: fila.linea_id ?? "",
+    lineaNombre: fila.linea ?? "",
+    impuestoNombre: fila.impuesto ?? "",
+    unidadMedidaNombre: fila.unidad_nombre ?? "",
+    procedencia: fila.origen_etiqueta ?? "",
+    paisOrigenNombre: fila.pais_origen_nombre ?? "",
+    controlaStock: fila.controla_stock,
+    stockMinimo: Number(fila.stock_minimo ?? 0),
+    puntoReposicion: Number(fila.punto_reposicion ?? 0),
+    stockDisponible: Number(fila.stock_disponible ?? 0),
+    bajoMinimo: fila.bajo_minimo,
+    costoPromedio:
+      fila.costo_promedio === null ? null : Number(fila.costo_promedio),
+    precioVentaReferencia:
+      fila.precio_venta_referencia === null
+        ? null
+        : Number(fila.precio_venta_referencia),
+    monedaPrecioReferencia: fila.moneda_precio_referencia ?? "",
+    inventarioInicial: Number(fila.inventario_inicial ?? 0),
+    activo: fila.activo,
+  };
 }
 
 function normalizar(value: string) {
@@ -61,7 +122,7 @@ function normalizar(value: string) {
 
 export default function ProductosPage() {
   const [productos, setProductos] =
-    useState<ProductoDemo[]>([]);
+    useState<ProductoLista[]>([]);
 
   const [busqueda, setBusqueda] =
     useState("");
@@ -89,10 +150,64 @@ export default function ProductosPage() {
   const [pagina, setPagina] =
     useState(1);
 
+  const [cargando, setCargando] =
+    useState(true);
+
+  const [errorCarga, setErrorCarga] =
+    useState("");
+
   useEffect(() => {
-    setProductos(
-      obtenerProductosDemo(),
-    );
+    let activo = true;
+
+    async function cargar() {
+      try {
+        const respuesta = await fetch(
+          "/api/productos",
+          { cache: "no-store" },
+        );
+
+        if (!respuesta.ok) {
+          const json = (await respuesta
+            .json()
+            .catch(() => ({}))) as {
+            error?: string;
+          };
+          throw new Error(
+            json.error ??
+              "No fue posible cargar los productos.",
+          );
+        }
+
+        const json =
+          (await respuesta.json()) as {
+            productos: FilaApi[];
+          };
+
+        if (activo) {
+          setProductos(
+            json.productos.map(desdeApi),
+          );
+        }
+      } catch (e) {
+        if (activo) {
+          setErrorCarga(
+            e instanceof Error
+              ? e.message
+              : "No fue posible cargar los productos.",
+          );
+        }
+      } finally {
+        if (activo) {
+          setCargando(false);
+        }
+      }
+    }
+
+    void cargar();
+
+    return () => {
+      activo = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -129,15 +244,10 @@ export default function ProductosPage() {
       Array.from(
         new Set(
           productos
-            .map(
-              (item) =>
-                item.familiaNombre,
-            )
+            .map((item) => item.familiaNombre)
             .filter(Boolean),
         ),
-      ).sort((a, b) =>
-        a.localeCompare(b),
-      ),
+      ).sort((a, b) => a.localeCompare(b)),
     [productos],
   );
 
@@ -146,16 +256,16 @@ export default function ProductosPage() {
       Array.from(
         new Set(
           productos
-            .map(
+            .filter(
               (item) =>
-                item.lineaNombre,
+                filtroFamilia === "TODAS" ||
+                item.familiaNombre === filtroFamilia,
             )
+            .map((item) => item.lineaNombre)
             .filter(Boolean),
         ),
-      ).sort((a, b) =>
-        a.localeCompare(b),
-      ),
-    [productos],
+      ).sort((a, b) => a.localeCompare(b)),
+    [productos, filtroFamilia],
   );
 
   const procedencias = useMemo(
@@ -186,21 +296,28 @@ export default function ProductosPage() {
 
         acc.inventario +=
           Number(
-            producto.stockActual || 0,
-          );
-
-        acc.valorVenta +=
-          Number(
-            producto.valorVentaReferencia ||
-              0,
+            producto.stockDisponible || 0,
           );
 
         if (
           Number(
-            producto.stockActual || 0,
+            producto.stockDisponible || 0,
           ) <= 0
         ) {
           acc.sinStock += 1;
+        }
+
+        if (producto.bajoMinimo) {
+          acc.bajoMinimo += 1;
+        }
+
+        // Valor a precio de venta de referencia: solo productos con precio cargado (sin precio no suman).
+        if (producto.precioVentaReferencia !== null) {
+          acc.valorVenta +=
+            producto.precioVentaReferencia *
+            Number(producto.stockDisponible || 0);
+          acc.monedaValor =
+            producto.monedaPrecioReferencia || acc.monedaValor;
         }
 
         return acc;
@@ -210,7 +327,9 @@ export default function ProductosPage() {
         activos: 0,
         inventario: 0,
         sinStock: 0,
+        bajoMinimo: 0,
         valorVenta: 0,
+        monedaValor: "",
       },
     );
   }, [productos]);
@@ -258,19 +377,15 @@ export default function ProductosPage() {
         }
 
         if (
-          filtroFamilia !==
-            "TODAS" &&
-          producto.familiaNombre !==
-            filtroFamilia
+          filtroFamilia !== "TODAS" &&
+          producto.familiaNombre !== filtroFamilia
         ) {
           return false;
         }
 
         if (
-          filtroLinea !==
-            "TODAS" &&
-          producto.lineaNombre !==
-            filtroLinea
+          filtroLinea !== "TODAS" &&
+          producto.lineaNombre !== filtroLinea
         ) {
           return false;
         }
@@ -300,6 +415,7 @@ export default function ProductosPage() {
               producto.marcaNombre,
               producto.familiaNombre,
               producto.lineaNombre,
+              producto.categoriaNombre,
               producto.procedencia,
               producto.paisOrigenNombre,
             ].join(" "),
@@ -360,22 +476,13 @@ export default function ProductosPage() {
             >
               MAESTROS
             </span>
-
-            <span
-              className={
-                styles.demoPill
-              }
-            >
-              INVENTARIO MINGO
-            </span>
           </div>
 
           <h1>Productos</h1>
 
           <p>
-            Catálogo completo basado en
-            el inventario real del
-            cliente.
+            Catálogo de productos de su
+            empresa.
           </p>
         </div>
 
@@ -429,7 +536,7 @@ export default function ProductosPage() {
           </strong>
 
           <small>
-            Stock inicial consolidado
+            Stock disponible consolidado
           </small>
         </article>
 
@@ -443,7 +550,7 @@ export default function ProductosPage() {
           </strong>
 
           <small>
-            Productos con saldo cero
+            Saldo cero · {resumen.bajoMinimo} bajo el mínimo
           </small>
         </article>
 
@@ -457,11 +564,12 @@ export default function ProductosPage() {
           <strong>
             {money(
               resumen.valorVenta,
+              resumen.monedaValor,
             )}
           </strong>
 
           <small>
-            Referencia del inventario
+            Solo productos con precio de referencia
           </small>
         </article>
       </section>
@@ -602,26 +710,20 @@ export default function ProductosPage() {
 
             <select
               value={filtroFamilia}
-              onChange={(event) =>
-                setFiltroFamilia(
-                  event.target.value,
-                )
-              }
+              onChange={(event) => {
+                setFiltroFamilia(event.target.value);
+                setFiltroLinea("TODAS");
+              }}
             >
               <option value="TODAS">
                 Todas
               </option>
 
-              {familias.map(
-                (familia) => (
-                  <option
-                    key={familia}
-                    value={familia}
-                  >
-                    {familia}
-                  </option>
-                ),
-              )}
+              {familias.map((familia) => (
+                <option key={familia} value={familia}>
+                  {familia}
+                </option>
+              ))}
             </select>
           </label>
 
@@ -631,25 +733,18 @@ export default function ProductosPage() {
             <select
               value={filtroLinea}
               onChange={(event) =>
-                setFiltroLinea(
-                  event.target.value,
-                )
+                setFiltroLinea(event.target.value)
               }
             >
               <option value="TODAS">
                 Todas
               </option>
 
-              {lineas.map(
-                (linea) => (
-                  <option
-                    key={linea}
-                    value={linea}
-                  >
-                    {linea}
-                  </option>
-                ),
-              )}
+              {lineas.map((linea) => (
+                <option key={linea} value={linea}>
+                  {linea}
+                </option>
+              ))}
             </select>
           </label>
 
@@ -719,7 +814,37 @@ export default function ProductosPage() {
         </div>
 
         <div className={styles.list}>
-          {paginaActual.map(
+          {cargando ? (
+            <div className={styles.empty}>
+              <strong>
+                Cargando productos...
+              </strong>
+            </div>
+          ) : errorCarga ? (
+            <div
+              className={styles.empty}
+              role="alert"
+            >
+              <strong>
+                No fue posible cargar los productos
+              </strong>
+              <span>{errorCarga}</span>
+            </div>
+          ) : paginaActual.length === 0 ? (
+            <div className={styles.empty}>
+              <strong>
+                {productos.length === 0
+                  ? "Aún no hay productos registrados"
+                  : "No se encontraron productos."}
+              </strong>
+              <span>
+                {productos.length === 0
+                  ? "Registre el primer producto con el botón Nuevo producto."
+                  : "Modifique los filtros aplicados."}
+              </span>
+            </div>
+          ) : (
+            paginaActual.map(
             (producto) => (
               <article
                 key={producto.id}
@@ -819,9 +944,8 @@ export default function ProductosPage() {
                   </span>
 
                   <small>
-                    {
-                      producto.categoriaNombre
-                    }
+                    {producto.categoriaNombre ||
+                      "Sin categoría"}
                   </small>
                 </div>
 
@@ -838,7 +962,7 @@ export default function ProductosPage() {
                       },
                     ).format(
                       Number(
-                        producto.stockActual ||
+                        producto.stockDisponible ||
                           0,
                       ),
                     )}{" "}
@@ -865,7 +989,7 @@ export default function ProductosPage() {
                   <span
                     className={
                       Number(
-                        producto.stockActual ||
+                        producto.stockDisponible ||
                           0,
                       ) <= 0
                         ? styles.statusDanger
@@ -873,7 +997,7 @@ export default function ProductosPage() {
                     }
                   >
                     {Number(
-                      producto.stockActual ||
+                      producto.stockDisponible ||
                         0,
                     ) <= 0
                       ? "Sin stock"
@@ -887,32 +1011,30 @@ export default function ProductosPage() {
                   }
                 >
                   <strong>
-                    {money(
-                      Number(
-                        producto.precioVentaReferencia ||
-                          0,
-                      ),
-                    )}
+                    {producto.precioVentaReferencia === null
+                      ? "Sin precio"
+                      : money(
+                          producto.precioVentaReferencia,
+                          producto.monedaPrecioReferencia,
+                        )}
                   </strong>
 
                   <span>
                     Valor:{" "}
-                    {money(
-                      Number(
-                        producto.valorVentaReferencia ||
-                          0,
-                      ),
-                    )}
+                    {producto.precioVentaReferencia === null
+                      ? "—"
+                      : money(
+                          producto.precioVentaReferencia *
+                            Number(producto.stockDisponible || 0),
+                          producto.monedaPrecioReferencia,
+                        )}
                   </span>
 
                   <small>
                     Costo promedio:{" "}
-                    {money(
-                      Number(
-                        producto.costoPromedio ||
-                          0,
-                      ),
-                    )}
+                    {producto.costoPromedio === null
+                      ? "—"
+                      : money(producto.costoPromedio, "")}
                   </small>
                 </div>
 
@@ -927,26 +1049,7 @@ export default function ProductosPage() {
                 </Link>
               </article>
             ),
-          )}
-
-          {paginaActual.length ===
-          0 ? (
-            <div
-              className={
-                styles.empty
-              }
-            >
-              <strong>
-                No se encontraron
-                productos.
-              </strong>
-
-              <span>
-                Modifique los filtros
-                aplicados.
-              </span>
-            </div>
-          ) : null}
+          ))}
         </div>
 
         <footer

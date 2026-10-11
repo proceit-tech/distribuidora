@@ -23,11 +23,11 @@
 .demoPill,
 .codePill {
   display: inline-flex;
-  min-height: 20px;
+  min-height:28px;
   align-items: center;
   border-radius: 999px;
   padding: 0 7px;
-  font-size: 7px;
+  font-size: 13px;
   font-weight: 850;
   letter-spacing: 0.8px;
 }
@@ -51,7 +51,7 @@
 .hero h1 {
   margin: 0;
   color: #112f4a;
-  font-size: 25px;
+  font-size: 28px;
   font-weight: 780;
   letter-spacing: -0.65px;
 }
@@ -59,7 +59,7 @@
 .hero p {
   margin: 4px 0 0;
   color: #7c8ea0;
-  font-size: 10px;
+  font-size: 14px;
 }
 
 .secondaryButton {
@@ -72,7 +72,7 @@
   padding: 0 12px;
   color: #41647d;
   background: #ffffff;
-  font-size: 9px;
+  font-size: 15px;
   font-weight: 800;
   text-decoration: none;
 }
@@ -116,7 +116,7 @@
       #e5f7f7,
       #effafa
     );
-  font-size: 9px;
+  font-size: 13px;
   font-weight: 850;
 }
 
@@ -124,7 +124,7 @@
   display: block;
   margin-bottom: 3px;
   color: #0a858e;
-  font-size: 7px;
+  font-size: 14px;
   font-weight: 900;
   letter-spacing: 1px;
 }
@@ -139,7 +139,7 @@
 .cardHeader p {
   margin: 3px 0 0;
   color: #8697a7;
-  font-size: 7px;
+  font-size: 14px;
 }
 
 .statusSummary {
@@ -153,11 +153,11 @@
 .statusInactive,
 .statusBlocked {
   display: inline-flex;
-  min-height: 22px;
+  min-height:28px;
   align-items: center;
   border-radius: 999px;
   padding: 0 7px;
-  font-size: 7px;
+  font-size: 13px;
   font-weight: 850;
 }
 
@@ -185,7 +185,7 @@
   padding: 9px 11px;
   color: #a74350;
   background: #fff5f6;
-  font-size: 8px;
+  font-size: 13px;
 }
 
 .tabs {
@@ -203,7 +203,7 @@
   border-right: 1px solid #e9eef2;
   color: #72879a;
   background: transparent;
-  font-size: 8px;
+  font-size: 14px;
   font-weight: 750;
 }
 
@@ -249,19 +249,19 @@
 .sectionTitle h3 {
   margin: 0;
   color: #1b405e;
-  font-size: 12px;
+  font-size: 15px;
   font-weight: 780;
 }
 
 .sectionTitle p {
   margin: 3px 0 0;
   color: #899aaa;
-  font-size: 7px;
+  font-size: 14px;
 }
 
 .sectionTitle small {
   color: #a0aeb9;
-  font-size: 6px;
+  font-size: 13px;
 }
 
 .gridFour,
@@ -299,7 +299,7 @@
 
 .field > span {
   color: #667f93;
-  font-size: 7px;
+  font-size: 15px;
   font-weight: 800;
   letter-spacing: 0.35px;
 }
@@ -313,7 +313,7 @@
   color: #284c66;
   background: #ffffff;
   font: inherit;
-  font-size: 9px;
+  font-size: 15px;
 }
 
 .input,
@@ -380,13 +380,13 @@
 
 .optionCard strong {
   color: #31516a;
-  font-size: 8px;
+  font-size: 15px;
 }
 
 .optionCard small {
   margin-top: 2px;
   color: #8c9caa;
-  font-size: 7px;
+  font-size: 13px;
 }
 
 .optionDanger {
@@ -406,7 +406,7 @@
   display: block;
   margin-bottom: 7px;
   color: #667f93;
-  font-size: 7px;
+  font-size: 13px;
   font-weight: 800;
 }
 
@@ -418,12 +418,12 @@
 
 .deliveryDays button {
   min-width: 42px;
-  height: 29px;
+  height:32px;
   border: 1px solid #dbe4ea;
   border-radius: 8px;
   color: #6e8496;
   background: #ffffff;
-  font-size: 7px;
+  font-size: 15px;
   font-weight: 800;
 }
 
@@ -447,7 +447,7 @@
 .footerHint {
   display: block;
   color: #0a8189;
-  font-size: 7px;
+  font-size: 13px;
   font-weight: 850;
   letter-spacing: 0.65px;
   text-transform: uppercase;
@@ -457,7 +457,7 @@
   display: block;
   margin-top: 2px;
   color: #8b9baa;
-  font-size: 7px;
+  font-size: 13px;
 }
 
 .footerActions {
@@ -474,7 +474,7 @@
   justify-content: center;
   border-radius: 8px;
   padding: 0 13px;
-  font-size: 8px;
+  font-size: 15px;
   font-weight: 800;
 }
 
@@ -527,19 +527,19 @@
 
 .stateCard strong {
   color: #244760;
-  font-size: 11px;
+  font-size: 14px;
 }
 
 .stateCard p {
   max-width: 320px;
   margin: 0;
-  font-size: 8px;
+  font-size: 13px;
   line-height: 1.5;
 }
 
 .stateCard a {
   color: #0b8992;
-  font-size: 8px;
+  font-size: 13px;
   font-weight: 800;
 }
 
@@ -606,4 +606,68 @@
   .saveButton {
     flex: 1;
   }
+}
+
+/* Contactos, direcciones y documentos (edición) */
+.repeated {
+  margin: 0 0 12px;
+  padding: 12px;
+  border: 1px solid #e3ebf0;
+  border-radius: 10px;
+  background: #fbfdfe;
+  display: grid;
+  gap: 10px;
+}
+
+.repeatedHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #284c66;
+  font-size: 14px;
+}
+
+.addButton,
+.removeButton {
+  min-height:32px;
+  border-radius: 8px;
+  padding: 0 11px;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.addButton {
+  border: 1px solid #1f7a6d;
+  color: #1f7a6d;
+  background: #ffffff;
+}
+
+.removeButton {
+  border: 1px solid #efc7c7;
+  color: #b23a3a;
+  background: #ffffff;
+}
+
+.checkRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+
+.checkItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #526e83;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.emptyHint {
+  margin: 4px 0 12px;
+  color: #6d8497;
+  font-size: 13px;
 }

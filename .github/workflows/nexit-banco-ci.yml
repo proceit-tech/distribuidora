@@ -1,0 +1,40 @@
+# CI del banco Nexit V1: batería completa sobre un PostgreSQL 16 DESCARTABLE (servicio del runner). No toca ningún entorno real.
+name: nexit-banco-ci
+on:
+  pull_request:
+    paths:
+      - 'documentacao/banco/nexit/v1/**'
+      - '.github/workflows/nexit-banco-*.yml'
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  pruebas:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: ci-efimero-sin-valor      # clúster descartable del runner; sin relación con ningún entorno real
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      PGHOST: localhost
+      PGPORT: '5432'
+      PGUSER: postgres
+      PGPASSWORD: ci-efimero-sin-valor
+    steps:
+      - uses: actions/checkout@v4
+      - name: Herramientas (cliente psql 16, bcrypt real)
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client-16 python3-bcrypt shellcheck
+      - name: Sin secretos en el árbol de la V1
+        run: documentacao/banco/nexit/v1/scripts/verificar-sin-secretos.sh
+      - name: shellcheck de scripts de implantación
+        run: shellcheck -S error documentacao/banco/nexit/v1/implantacion/vm/nexit-db-remote.sh
+      - name: Batería completa (migraciones, T01–T11, respaldo/restauración, runtime)
+        env:
+          APP_REPO: ${{ github.workspace }}
+        run: documentacao/banco/nexit/v1/scripts/ejecutar-pruebas.sh

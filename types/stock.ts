@@ -98,3 +98,37 @@ export type StockResumenDemo = {
   valorInventario: number;
   valorVentaReferencia: number;
 };
+/** Stock real (PostgreSQL). Cantidades = stock PROPIO; `terceros` = stock de terceros (todas las situaciones). */
+export type StockLote = {
+  id: string;
+  lote: string;
+  fechaVencimiento: string;
+  cantidad: number;
+  estado: StockEstado;
+  depositoId: string;
+  /** Nombre del depósito (la ubicación física dentro del depósito no existe en el banco). */
+  ubicacion: string;
+  propietario: string;
+};
+
+export type StockItem = Omit<
+  StockDemo,
+  | "precioVentaReferencia"
+  | "valorVentaReferencia"
+  | "costoPromedio"
+  | "lotes"
+  | "stockMaximo"
+  | "puntoReposicion"
+> & {
+  stockMaximo: number;
+  puntoReposicion: number;
+  /** null = sin costo registrado / sin precio de referencia (nunca se inventan). */
+  costoPromedio: number | null;
+  precioVentaReferencia: number | null;
+  valorVentaReferencia: number | null;
+  monedaPrecio: string;
+  terceros: number;
+  lotes: StockLote[];
+};
+
+export type StockRespuesta = { stock: StockItem[]; monedaBase: string };

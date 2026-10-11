@@ -12,24 +12,32 @@ import {
   useRouter,
 } from "next/navigation";
 
-import {
-  actualizarClienteDemo,
-  buscarClienteDemo,
-} from "@/lib/mocks/clientes-storage";
 import type {
-  ClienteDemo,
+  ClienteDetalle,
   ClienteNaturaleza,
   ClienteOperacion,
   ClienteTipoPersona,
 } from "@/types/clientes";
 
 import styles from "./page.module.css";
+import {
+  HijosEditor,
+  hijosDesdeApi,
+  hijosParaApi,
+  hijosVacios,
+  validarHijos,
+  type HijosForm,
+  type OpcionGeo,
+} from "./_components/hijos";
 
 type TabId =
   | "fiscal"
   | "comercial"
   | "contacto"
-  | "logistica";
+  | "logistica"
+  | "contactos"
+  | "direcciones"
+  | "documentos";
 
 type FormState = {
   naturaleza: ClienteNaturaleza;
@@ -107,77 +115,67 @@ const TABS: Array<{
     id: "logistica",
     label: "Entrega y ventas",
   },
+  {
+    id: "contactos",
+    label: "Contactos",
+  },
+  {
+    id: "direcciones",
+    label: "Direcciones",
+  },
+  {
+    id: "documentos",
+    label: "Documentos",
+  },
 ];
 
-const OPTIONS = {
-  paises: [
-    ["PRY", "Paraguay"],
-    ["ARG", "Argentina"],
-    ["BRA", "Brasil"],
-    ["URY", "Uruguay"],
-    ["BOL", "Bolivia"],
-  ],
-  grupos: [
-    "Mayoristas",
-    "Minoristas",
-    "Supermercados",
-    "Distribuidores",
-    "Instituciones",
-    "Exterior",
-  ],
-  condiciones: [
-    "Contado",
-    "Crédito 7 días",
-    "Crédito 15 días",
-    "Crédito 30 días",
-    "Crédito 45 días",
-    "Crédito 60 días",
-  ],
-  listas: [
-    "Minorista",
-    "Mayorista A",
-    "Mayorista B",
-    "Distribuidor",
-    "Institucional",
-    "Exportación",
-  ],
-  canales: [
-    "Venta directa",
-    "Ejecutivo comercial",
-    "Preventista",
-    "WhatsApp",
-    "Licitaciones",
-  ],
-  vendedores: [
-    "Carlos Benítez",
-    "Laura Franco",
-    "Andrea López",
-    "José Ramírez",
-  ],
-  rutas: [
-    "Ruta Central 01",
-    "Ruta Central 02",
-    "Ruta Central 03",
-    "Ruta Central 04",
-    "Ruta Norte 01",
-    "Ruta Norte 02",
-    "Ruta Sur 01",
-    "Ruta Sur 02",
-    "Ruta Institucional",
-  ],
-  zonas: [
-    "Gran Asunción",
-    "Asunción",
-    "Asunción Norte",
-    "Fernando de la Mora",
-    "San Lorenzo",
-    "Luque",
-    "Lambaré",
-    "Ñemby",
-    "Mariano Roque Alonso",
-    "Exterior",
-  ],
+type Opcion = {
+  id: string;
+  nombre: string;
 };
+
+type Catalogos = {
+  grupos: Opcion[];
+  condicionesPago: Opcion[];
+  listasPrecio: Opcion[];
+  canalesVenta: Opcion[];
+  vendedores: Opcion[];
+  rutasEntrega: Opcion[];
+  zonasComerciales: Opcion[];
+  paises: { codigo: string; nombre: string }[];
+  departamentosParaguay: OpcionGeo[];
+};
+
+const CATALOGOS_VACIOS: Catalogos = {
+  grupos: [],
+  condicionesPago: [],
+  listasPrecio: [],
+  canalesVenta: [],
+  vendedores: [],
+  rutasEntrega: [],
+  zonasComerciales: [],
+  paises: [],
+  departamentosParaguay: [],
+};
+
+// dd/mm/yyyy (API) <-> yyyy-mm-dd (input type=date)
+function aInputFecha(valor: string) {
+  const m = valor.match(
+    /^(\d{2})\/(\d{2})\/(\d{4})$/,
+  );
+  return m
+    ? `${m[3]}-${m[2]}-${m[1]}`
+    : "";
+}
+
+function aApiFecha(valor: string) {
+  const m = valor.match(
+    /^(\d{4})-(\d{2})-(\d{2})$/,
+  );
+  return m
+    ? `${m[3]}/${m[2]}/${m[1]}`
+    : "";
+}
 
 function formatDate(value: string) {
   if (!value) {
@@ -210,7 +208,7 @@ function money(value: string) {
 }
 
 function fromCliente(
-  cliente: ClienteDemo,
+  cliente: ClienteDetalle,
 ): FormState {
   return {
     naturaleza: cliente.naturaleza,
@@ -244,22 +242,23 @@ function fromCliente(
     limiteCredito:
       String(cliente.limiteCredito),
     limiteCreditoTemporal:
-      String(
-        cliente.limiteCreditoTemporal,
-      ),
+      cliente.limiteCreditoTemporal,
     fechaVencimientoCredito:
-      cliente.fechaVencimientoCredito,
+      aInputFecha(
+        cliente.fechaVencimientoCredito,
+      ),
 
     grupoCliente:
-      cliente.grupoCliente,
+      cliente.grupoClienteId,
     condicionPago:
-      cliente.condicionPago,
-    moneda: cliente.moneda,
+      cliente.condicionPagoId,
+    moneda:
+      cliente.monedaCodigoPredeterminada,
     listaPrecio:
-      cliente.listaPrecio,
+      cliente.listaPrecioId,
     canalVenta:
-      cliente.canalVenta,
-    vendedor: cliente.vendedor,
+      cliente.canalVentaId,
+    vendedor: cliente.vendedorId,
 
     codigoExterno:
       cliente.codigoExterno,
@@ -291,9 +290,9 @@ function fromCliente(
       cliente.recibeDocumentoElectronico,
 
     rutaEntrega:
-      cliente.rutaEntrega,
+      cliente.rutaEntregaId,
     zonaComercial:
-      cliente.zonaComercial,
+      cliente.zonaComercialId,
     frecuenciaEntrega:
       cliente.frecuenciaEntrega,
     diasEntrega: [
@@ -324,7 +323,7 @@ function SectionTitle({
       </div>
 
       <small>
-        Los cambios se guardan localmente para la demostración.
+        Los cambios se guardan en la base de datos.
       </small>
     </div>
   );
@@ -417,7 +416,7 @@ export default function ClienteDetallePage() {
   const id = params.id;
 
   const [cliente, setCliente] =
-    useState<ClienteDemo | null>(
+    useState<ClienteDetalle | null>(
       null,
     );
 
@@ -438,17 +437,92 @@ export default function ClienteDetallePage() {
   const [error, setError] =
     useState("");
 
+  const [hijos, setHijos] =
+    useState<HijosForm>(hijosVacios);
+
+  const [catalogos, setCatalogos] =
+    useState<Catalogos>(
+      CATALOGOS_VACIOS,
+    );
+
   useEffect(() => {
-    const found =
-      buscarClienteDemo(id);
+    let activo = true;
 
-    setCliente(found);
+    async function cargar() {
+      try {
+        const [rCliente, rCatalogos] =
+          await Promise.all([
+            fetch(`/api/clientes/${id}`, {
+              cache: "no-store",
+            }),
+            fetch(
+              "/api/clientes?modo=catalogos",
+              { cache: "no-store" },
+            ),
+          ]);
 
-    if (found) {
-      setForm(fromCliente(found));
+        if (rCliente.status === 404) {
+          if (activo) {
+            setCliente(null);
+          }
+          return;
+        }
+
+        const datos =
+          (await rCliente.json()) as {
+            cliente?: ClienteDetalle;
+            contactos?: Parameters<typeof hijosDesdeApi>[0]["contactos"];
+            direcciones?: Parameters<typeof hijosDesdeApi>[0]["direcciones"];
+            documentos?: Parameters<typeof hijosDesdeApi>[0]["documentos"];
+            error?: string;
+          };
+
+        if (
+          !rCliente.ok ||
+          !datos.cliente
+        ) {
+          throw new Error(
+            datos.error ??
+              "No fue posible cargar el cliente.",
+          );
+        }
+
+        const cat =
+          (await rCatalogos.json()) as {
+            catalogos?: Partial<Catalogos>;
+          };
+
+        if (activo) {
+          setCatalogos({
+            ...CATALOGOS_VACIOS,
+            ...(cat.catalogos ?? {}),
+          });
+          setHijos(hijosDesdeApi(datos));
+          setCliente(datos.cliente);
+          setForm(
+            fromCliente(datos.cliente),
+          );
+        }
+      } catch (e) {
+        if (activo) {
+          setError(
+            e instanceof Error
+              ? e.message
+              : "No fue posible cargar el cliente.",
+          );
+        }
+      } finally {
+        if (activo) {
+          setLoading(false);
+        }
+      }
     }
 
-    setLoading(false);
+    void cargar();
+
+    return () => {
+      activo = false;
+    };
   }, [id]);
 
   const operacionesPermitidas =
@@ -515,13 +589,14 @@ export default function ClienteDetallePage() {
       return {
         ...current,
         tipoOperacion: value,
+        // Paraguay por defecto; en B2F el país se elige del catálogo (sin valores fijos).
         paisCodigo:
           value === "B2F"
-            ? "ARG"
+            ? ""
             : "PRY",
         paisNombre:
           value === "B2F"
-            ? "Argentina"
+            ? ""
             : "Paraguay",
         tipoDocumento:
           value === "B2F"
@@ -565,138 +640,140 @@ export default function ClienteDetallePage() {
       return;
     }
 
+    const errorHijos = validarHijos(hijos);
+    if (errorHijos) {
+      setTab(
+        errorHijos.includes("contacto")
+          ? "contactos"
+          : errorHijos.includes("documento")
+            ? "documentos"
+            : "direcciones",
+      );
+      setError(errorHijos);
+      return;
+    }
+
+    if (!form.paisCodigo) {
+      setTab("fiscal");
+      setError("Seleccione el país del cliente.");
+      return;
+    }
+
     setSaving(true);
 
     try {
-      const updated =
-        actualizarClienteDemo(
-          cliente.id,
-          {
-            naturaleza:
-              form.naturaleza,
+      const respuesta = await fetch(
+        `/api/clientes/${cliente.id}`,
+        {
+          method: "PUT",
+          headers: {
+            "Content-Type":
+              "application/json",
+          },
+          body: JSON.stringify({
+            naturaleza: form.naturaleza,
             tipoOperacion:
               form.tipoOperacion,
-            tipoPersona:
-              form.tipoPersona,
-
-            paisCodigo:
-              form.paisCodigo,
-            paisNombre:
-              form.paisNombre,
-
+            tipoPersona: form.tipoPersona,
+            paisCodigo: form.paisCodigo,
+            paisNombre: form.paisNombre,
             tipoDocumento:
               form.tipoDocumento,
+            descripcionDocumentoIdentidad:
+              cliente.descripcionDocumentoIdentidad,
             numeroDocumento:
-              form.numeroDocumento.trim(),
-            dv: form.dv.trim(),
-
+              form.numeroDocumento,
+            dv: form.dv,
             razonSocial:
-              form.razonSocial
-                .trim()
-                .toUpperCase(),
+              form.razonSocial.toUpperCase(),
             nombreFantasia:
-              form.nombreFantasia.trim(),
-
-            email:
-              form.email.trim(),
-            emailCopia:
-              form.emailCopia.trim(),
-            telefono:
-              form.telefono.trim(),
-            celular:
-              form.celular.trim(),
-
-            limiteCredito:
-              money(
-                form.limiteCredito,
-              ),
+              form.nombreFantasia,
+            email: form.email,
+            emailCopia: form.emailCopia,
+            telefono: form.telefono,
+            celular: form.celular,
+            limiteCredito: money(
+              form.limiteCredito,
+            ),
             limiteCreditoTemporal:
-              money(
-                form.limiteCreditoTemporal,
-              ),
+              form.limiteCreditoTemporal
+                .replace(/\D/g, ""),
             fechaVencimientoCredito:
-              form.fechaVencimientoCredito,
-
-            grupoCliente:
-              form.grupoCliente,
-            condicionPago:
-              form.condicionPago,
-            moneda:
-              form.moneda,
-            listaPrecio:
-              form.listaPrecio,
-            canalVenta:
-              form.canalVenta,
-            vendedor:
-              form.vendedor,
-
-            codigoExterno:
-              form.codigoExterno.trim(),
-            gln: form.gln.trim(),
-            descuentoComercialPct:
-              money(
-                form.descuentoComercialPct,
+              aApiFecha(
+                form.fechaVencimientoCredito,
               ),
-
+            grupoClienteId:
+              form.grupoCliente,
+            condicionPagoId:
+              form.condicionPago,
+            monedaCodigoPredeterminada:
+              form.moneda,
+            listaPrecioId:
+              form.listaPrecio,
+            canalVentaId: form.canalVenta,
+            vendedorId: form.vendedor,
+            codigoExterno:
+              form.codigoExterno,
+            gln: form.gln,
+            descuentoComercialPct: money(
+              form.descuentoComercialPct,
+            ),
             bloqueadoVentas:
               form.bloqueadoVentas,
             motivoBloqueoVentas:
-              form.motivoBloqueoVentas.trim(),
-
+              form.motivoBloqueoVentas,
             diaPreferidoCobro:
               form.diaPreferidoCobro
                 ? Number(
                     form.diaPreferidoCobro,
                   )
                 : null,
-
             requiereOrdenCompra:
               form.requiereOrdenCompra,
-
             emailFacturacion:
-              form.emailFacturacion.trim(),
+              form.emailFacturacion,
             emailCobranzas:
-              form.emailCobranzas.trim(),
+              form.emailCobranzas,
             recibeDocumentoElectronico:
               form.recibeDocumentoElectronico,
-
-            rutaEntrega:
+            rutaEntregaId:
               form.rutaEntrega,
-            zonaComercial:
+            zonaComercialId:
               form.zonaComercial,
             frecuenciaEntrega:
               form.frecuenciaEntrega,
-            diasEntrega: [
-              ...form.diasEntrega,
-            ],
-
+            diasEntrega: form.diasEntrega,
             observacionComercial:
-              form.observacionComercial.trim(),
+              form.observacionComercial,
             observacionLogistica:
-              form.observacionLogistica.trim(),
-
-            activo:
-              form.activo,
-          },
-        );
-
-      if (!updated) {
-        throw new Error();
-      }
-
-      await new Promise(
-        (resolve) =>
-          window.setTimeout(
-            resolve,
-            400,
-          ),
+              form.observacionLogistica,
+            activo: form.activo,
+            ...hijosParaApi(hijos),
+          }),
+        },
       );
 
-      router.push("/clientes");
+      const datos =
+        (await respuesta.json()) as {
+          error?: string;
+        };
+
+      if (!respuesta.ok) {
+        throw new Error(
+          datos.error ??
+            "No fue posible actualizar el cliente.",
+        );
+      }
+
+      router.push(
+        "/clientes?ok=actualizado",
+      );
       router.refresh();
-    } catch {
+    } catch (e) {
       setError(
-        "No fue posible actualizar el cliente de demostración.",
+        e instanceof Error
+          ? e.message
+          : "No fue posible actualizar el cliente.",
       );
     } finally {
       setSaving(false);
@@ -731,13 +808,15 @@ export default function ClienteDetallePage() {
           className={styles.stateCard}
         >
           <strong>
-            Cliente no encontrado
+            {error
+              ? "No fue posible cargar el cliente"
+              : "Cliente no encontrado"}
           </strong>
 
           <p>
             El registro puede haber sido
-            eliminado o los datos demo
-            fueron restaurados.
+            eliminado o pertenecer a otra
+            empresa.
           </p>
 
           <Link href="/clientes">
@@ -771,12 +850,6 @@ export default function ClienteDetallePage() {
               className={styles.codePill}
             >
               {cliente.codigo}
-            </span>
-
-            <span
-              className={styles.demoPill}
-            >
-              DEMO
             </span>
           </div>
 
@@ -988,9 +1061,9 @@ export default function ClienteDetallePage() {
                     }
                     onChange={(value) => {
                       const country =
-                        OPTIONS.paises.find(
-                          ([code]) =>
-                            code === value,
+                        catalogos.paises.find(
+                          (pais) =>
+                            pais.codigo === value,
                         );
 
                       update(
@@ -1000,7 +1073,7 @@ export default function ClienteDetallePage() {
 
                       update(
                         "paisNombre",
-                        country?.[1] ??
+                        country?.nombre ??
                           "",
                       );
                     }}
@@ -1009,16 +1082,22 @@ export default function ClienteDetallePage() {
                       "B2F"
                     }
                   >
-                    {OPTIONS.paises.map(
-                      ([code, name]) => (
-                        <option
-                          key={code}
-                          value={code}
-                        >
-                          {name}
+                    {form.tipoOperacion === "B2F" ? (
+                      <option value="">
+                        Seleccione un país
+                      </option>
+                    ) : null}
+                    {catalogos.paises
+                      .filter((pais) =>
+                        form.tipoOperacion === "B2F"
+                          ? pais.codigo !== "PRY"
+                          : pais.codigo === "PRY",
+                      )
+                      .map((pais) => (
+                        <option key={pais.codigo} value={pais.codigo}>
+                          {pais.nombre}
                         </option>
-                      ),
-                    )}
+                      ))}
                   </SelectInput>
                 </Field>
 
@@ -1352,16 +1431,12 @@ export default function ClienteDetallePage() {
                       )
                     }
                   >
-                    {OPTIONS.grupos.map(
-                      (item) => (
-                        <option
-                          key={item}
-                          value={item}
-                        >
-                          {item}
-                        </option>
-                      ),
-                    )}
+                    <>
+<option value="">Sin asignar</option>
+{catalogos.grupos.map((item) => (
+<option key={item.id} value={item.id}>{item.nombre}</option>
+))}
+</>
                   </SelectInput>
                 </Field>
 
@@ -1377,16 +1452,12 @@ export default function ClienteDetallePage() {
                       )
                     }
                   >
-                    {OPTIONS.condiciones.map(
-                      (item) => (
-                        <option
-                          key={item}
-                          value={item}
-                        >
-                          {item}
-                        </option>
-                      ),
-                    )}
+                    <>
+<option value="">Sin asignar</option>
+{catalogos.condicionesPago.map((item) => (
+<option key={item.id} value={item.id}>{item.nombre}</option>
+))}
+</>
                   </SelectInput>
                 </Field>
 
@@ -1402,7 +1473,8 @@ export default function ClienteDetallePage() {
                       )
                     }
                   >
-                    <option value="PYG">
+                    <option value="">Sin definir</option>
+<option value="PYG">
                       Guaraníes · PYG
                     </option>
                     <option value="USD">
@@ -1423,16 +1495,12 @@ export default function ClienteDetallePage() {
                       )
                     }
                   >
-                    {OPTIONS.listas.map(
-                      (item) => (
-                        <option
-                          key={item}
-                          value={item}
-                        >
-                          {item}
-                        </option>
-                      ),
-                    )}
+                    <>
+<option value="">Sin asignar</option>
+{catalogos.listasPrecio.map((item) => (
+<option key={item.id} value={item.id}>{item.nombre}</option>
+))}
+</>
                   </SelectInput>
                 </Field>
               </div>
@@ -1526,16 +1594,12 @@ export default function ClienteDetallePage() {
                       )
                     }
                   >
-                    {OPTIONS.canales.map(
-                      (item) => (
-                        <option
-                          key={item}
-                          value={item}
-                        >
-                          {item}
-                        </option>
-                      ),
-                    )}
+                    <>
+<option value="">Sin asignar</option>
+{catalogos.canalesVenta.map((item) => (
+<option key={item.id} value={item.id}>{item.nombre}</option>
+))}
+</>
                   </SelectInput>
                 </Field>
 
@@ -1551,16 +1615,12 @@ export default function ClienteDetallePage() {
                       )
                     }
                   >
-                    {OPTIONS.vendedores.map(
-                      (item) => (
-                        <option
-                          key={item}
-                          value={item}
-                        >
-                          {item}
-                        </option>
-                      ),
-                    )}
+                    <>
+<option value="">Sin asignar</option>
+{catalogos.vendedores.map((item) => (
+<option key={item.id} value={item.id}>{item.nombre}</option>
+))}
+</>
                   </SelectInput>
                 </Field>
 
@@ -1656,6 +1716,21 @@ export default function ClienteDetallePage() {
                 </div>
               </div>
             </section>
+          ) : null}
+
+          {tab === "contactos" ||
+          tab === "direcciones" ||
+          tab === "documentos" ? (
+            <HijosEditor
+              tab={tab}
+              valor={hijos}
+              onChange={setHijos}
+              paises={catalogos.paises}
+              departamentos={
+                catalogos.departamentosParaguay
+              }
+              onError={setError}
+            />
           ) : null}
 
           {tab === "contacto" ? (
@@ -1791,16 +1866,12 @@ export default function ClienteDetallePage() {
                       Sin ruta asignada
                     </option>
 
-                    {OPTIONS.rutas.map(
-                      (item) => (
-                        <option
-                          key={item}
-                          value={item}
-                        >
-                          {item}
-                        </option>
-                      ),
-                    )}
+                    <>
+<option value="">Sin asignar</option>
+{catalogos.rutasEntrega.map((item) => (
+<option key={item.id} value={item.id}>{item.nombre}</option>
+))}
+</>
                   </SelectInput>
                 </Field>
 
@@ -1816,16 +1887,12 @@ export default function ClienteDetallePage() {
                       )
                     }
                   >
-                    {OPTIONS.zonas.map(
-                      (item) => (
-                        <option
-                          key={item}
-                          value={item}
-                        >
-                          {item}
-                        </option>
-                      ),
-                    )}
+                    <>
+<option value="">Sin asignar</option>
+{catalogos.zonasComerciales.map((item) => (
+<option key={item.id} value={item.id}>{item.nombre}</option>
+))}
+</>
                   </SelectInput>
                 </Field>
 

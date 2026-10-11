@@ -5,7 +5,15 @@ import { useRouter } from "next/navigation";
 
 import styles from "./login-form.module.css";
 
-const DEMO_COMPANY_CODE = "CASA_MINGO";
+function BuildingIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4 20V5a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v15" />
+      <path d="M14 10h5a1 1 0 0 1 1 1v9" />
+      <path d="M2.5 20h19M8 8h2M8 12h2M8 16h2" />
+    </svg>
+  );
+}
 
 function UserIcon() {
   return (
@@ -27,8 +35,9 @@ function LockIcon() {
 
 export function LoginForm() {
   const router = useRouter();
-  const [usuario, setUsuario] = useState("admin");
-  const [contrasena, setContrasena] = useState("admin123");
+  const [empresa, setEmpresa] = useState("");
+  const [usuario, setUsuario] = useState("");
+  const [contrasena, setContrasena] = useState("");
   const [mostrarContrasena, setMostrarContrasena] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -45,7 +54,7 @@ export function LoginForm() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          empresa: DEMO_COMPANY_CODE,
+          empresa: empresa.trim().toLowerCase(),
           usuario,
           contrasena,
         }),
@@ -69,14 +78,23 @@ export function LoginForm() {
 
   return (
     <form className={styles.form} onSubmit={submit}>
-      <div className={styles.company}>
-        <span>Empresa</span>
+      <label className={styles.field}>
+        <span>Código de empresa</span>
+        <div className={styles.inputWrap}>
+          <BuildingIcon />
 
-        <div>
-          <strong>CASA MINGO S.A.</strong>
-          <small>RUC 80003314-0</small>
+          <input
+            value={empresa}
+            onChange={(event) => setEmpresa(event.target.value)}
+            autoComplete="organization"
+            autoCapitalize="none"
+            spellCheck={false}
+            placeholder="Ingrese el código de empresa"
+            maxLength={30}
+            required
+          />
         </div>
-      </div>
+      </label>
 
       <label className={styles.field}>
         <span>Usuario</span>
@@ -88,6 +106,8 @@ export function LoginForm() {
             value={usuario}
             onChange={(event) => setUsuario(event.target.value)}
             autoComplete="username"
+            autoCapitalize="none"
+            spellCheck={false}
             placeholder="Ingrese su usuario"
             maxLength={80}
             required
@@ -102,6 +122,7 @@ export function LoginForm() {
           <LockIcon />
 
           <input
+            id="login-contrasena"
             type={mostrarContrasena ? "text" : "password"}
             value={contrasena}
             onChange={(event) => setContrasena(event.target.value)}
@@ -114,6 +135,9 @@ export function LoginForm() {
           <button
             className={styles.showPassword}
             type="button"
+            aria-controls="login-contrasena"
+            aria-pressed={mostrarContrasena}
+            aria-label={mostrarContrasena ? "Ocultar contraseña" : "Mostrar contraseña"}
             onClick={() => setMostrarContrasena((value) => !value)}
           >
             {mostrarContrasena ? "Ocultar" : "Mostrar"}
@@ -135,10 +159,6 @@ export function LoginForm() {
         {loading ? "Ingresando…" : "Ingresar al sistema"}
         {!loading ? <span aria-hidden="true">→</span> : null}
       </button>
-
-      <p className={styles.demoHint}>
-        Acceso demo: <strong>admin / admin123</strong>
-      </p>
     </form>
   );
 }

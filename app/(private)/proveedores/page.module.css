@@ -22,11 +22,11 @@
 .modulePill,
 .demoPill {
   display: inline-flex;
-  min-height: 20px;
+  min-height:28px;
   align-items: center;
   border-radius: 999px;
   padding: 0 7px;
-  font-size: 7px;
+  font-size: 13px;
   font-weight: 850;
   letter-spacing: 0.8px;
 }
@@ -45,7 +45,7 @@
 .hero h1 {
   margin: 0;
   color: #112f4a;
-  font-size: 25px;
+  font-size: 28px;
   font-weight: 780;
   letter-spacing: -0.65px;
 }
@@ -53,7 +53,7 @@
 .hero p {
   margin: 4px 0 0;
   color: #7c8ea0;
-  font-size: 10px;
+  font-size: 14px;
 }
 
 .primaryButton {
@@ -67,7 +67,7 @@
   color: #ffffff;
   background: linear-gradient(135deg, #13a9af, #0c919b);
   box-shadow: 0 8px 20px rgba(11, 145, 155, 0.16);
-  font-size: 10px;
+  font-size: 15px;
   font-weight: 800;
   text-decoration: none;
 }
@@ -115,7 +115,7 @@
 
 .summaryCard > span {
   color: #7b8fa3;
-  font-size: 7px;
+  font-size: 13px;
   font-weight: 850;
   letter-spacing: 0.85px;
 }
@@ -129,7 +129,7 @@
 
 .summaryCard small {
   color: #8b9daf;
-  font-size: 8px;
+  font-size: 13px;
 }
 
 .contentCard {
@@ -167,12 +167,12 @@
   border: 0;
   outline: 0;
   background: transparent;
-  font-size: 9px;
+  font-size: 15px;
 }
 
 .resultCount {
   color: #7e91a4;
-  font-size: 8px;
+  font-size: 13px;
   font-weight: 700;
 }
 
@@ -193,7 +193,7 @@
 
 .filters label > span {
   color: #7e91a4;
-  font-size: 7px;
+  font-size: 14px;
   font-weight: 800;
   letter-spacing: 0.6px;
   text-transform: uppercase;
@@ -205,7 +205,7 @@
   border-radius: 8px;
   padding: 0 9px;
   background: #ffffff;
-  font-size: 9px;
+  font-size: 14px;
 }
 
 .clearButton {
@@ -215,7 +215,7 @@
   padding: 0 9px;
   color: #0b8c95;
   background: transparent;
-  font-size: 8px;
+  font-size: 15px;
   font-weight: 800;
 }
 
@@ -235,7 +235,7 @@
   color: #8798a8;
   background: #f6f9fb;
   border-bottom: 1px solid #eaf0f4;
-  font-size: 7px;
+  font-size: 14px;
   font-weight: 850;
   letter-spacing: 0.65px;
   text-transform: uppercase;
@@ -268,7 +268,7 @@
   border-radius: 10px;
   color: #0a7c84;
   background: #e8f7f7;
-  font-size: 9px;
+  font-size: 13px;
   font-weight: 850;
 }
 
@@ -288,7 +288,7 @@
 .identityTop strong {
   overflow: hidden;
   color: #1b405e;
-  font-size: 10px;
+  font-size: 14px;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
@@ -298,7 +298,7 @@
   padding: 2px 6px;
   color: #6c8296;
   background: #eef3f6;
-  font-size: 6px;
+  font-size: 13px;
   font-weight: 800;
 }
 
@@ -306,7 +306,7 @@
   display: block;
   margin-top: 3px;
   color: #6f8599;
-  font-size: 8px;
+  font-size: 13px;
 }
 
 .document i {
@@ -320,7 +320,7 @@
   gap: 10px;
   margin-top: 5px;
   color: #91a0ae;
-  font-size: 7px;
+  font-size: 13px;
 }
 
 .commercial strong,
@@ -332,20 +332,20 @@
 
 .commercial strong {
   color: #31526c;
-  font-size: 9px;
+  font-size: 13px;
 }
 
 .commercial span {
   margin-top: 3px;
   color: #748a9d;
-  font-size: 8px;
+  font-size: 13px;
 }
 
 .commercial small,
 .homologation small {
   margin-top: 3px;
   color: #9aa8b5;
-  font-size: 7px;
+  font-size: 13px;
 }
 
 .badgeRow {
@@ -359,11 +359,11 @@
 .statusActive,
 .statusInactive {
   display: inline-flex;
-  min-height: 19px;
+  min-height:28px;
   align-items: center;
   border-radius: 999px;
   padding: 0 6px;
-  font-size: 6px;
+  font-size: 13px;
   font-weight: 850;
 }
 
@@ -421,7 +421,7 @@
 
 .detailButton {
   display: inline-flex;
-  height: 30px;
+  height:32px;
   align-items: center;
   justify-content: center;
   gap: 5px;
@@ -429,7 +429,7 @@
   border-radius: 8px;
   color: #41647d;
   background: #ffffff;
-  font-size: 7px;
+  font-size: 15px;
   font-weight: 800;
   text-decoration: none;
 }
@@ -443,7 +443,7 @@
   border-top: 1px solid #edf2f5;
   background: #fbfcfd;
   color: #8092a4;
-  font-size: 7px;
+  font-size: 13px;
 }
 
 .pagination > div {
@@ -496,12 +496,12 @@
 }
 
 .toast strong {
-  font-size: 9px;
+  font-size: 13px;
 }
 
 .toast small {
   margin-top: 2px;
-  font-size: 7px;
+  font-size: 13px;
 }
 
 .toast button {
@@ -551,3 +551,28 @@
     width: 100%;
   }
 }
+
+.pagination strong {
+  color: #506b81;
+  font-size: 13px;
+}
+
+.empty {
+  display: grid;
+  min-height: 180px;
+  place-items: center;
+  align-content: center;
+  gap: 5px;
+  color: #8193a5;
+  text-align: center;
+}
+
+.empty strong {
+  color: #45637b;
+  font-size: 14px;
+}
+
+.empty span {
+  font-size: 13px;
+}
+

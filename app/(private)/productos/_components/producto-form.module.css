@@ -27,11 +27,11 @@
 .modulePill,
 .demoPill {
   display: inline-flex;
-  min-height: 20px;
+  min-height:28px;
   align-items: center;
   border-radius: 999px;
   padding: 0 7px;
-  font-size: 7px;
+  font-size: 13px;
   font-weight: 850;
   letter-spacing: 0.8px;
 }
@@ -50,13 +50,13 @@
 .hero h1 {
   margin: 0;
   color: #112f4a;
-  font-size: 25px;
+  font-size: 28px;
 }
 
 .hero p {
   margin: 4px 0 0;
   color: #7c8ea0;
-  font-size: 10px;
+  font-size: 14px;
 }
 
 .secondaryButton,
@@ -70,7 +70,7 @@
 
 .secondaryButton {
   padding: 10px 12px;
-  font-size: 9px;
+  font-size: 15px;
   font-weight: 800;
 }
 
@@ -91,7 +91,7 @@
   display: block;
   margin-bottom: 4px;
   color: #0a858e;
-  font-size: 7px;
+  font-size: 14px;
   font-weight: 900;
 }
 
@@ -104,7 +104,7 @@
 .cardHeader p {
   margin: 3px 0 0;
   color: #8697a7;
-  font-size: 8px;
+  font-size: 14px;
 }
 
 .autoCode {
@@ -135,13 +135,13 @@
 
 .autoCode strong {
   color: #2c5e50;
-  font-size: 8px;
+  font-size: 13px;
 }
 
 .autoCode small {
   margin-top: 2px;
   color: #749187;
-  font-size: 7px;
+  font-size: 13px;
 }
 
 .statusGroup {
@@ -153,11 +153,11 @@
 .statusInactive,
 .statusNeutral {
   display: inline-flex;
-  min-height: 22px;
+  min-height:28px;
   align-items: center;
   border-radius: 999px;
   padding: 0 7px;
-  font-size: 7px;
+  font-size: 13px;
   font-weight: 850;
 }
 
@@ -183,7 +183,7 @@
   padding: 9px 11px;
   color: #a74350;
   background: #fff5f6;
-  font-size: 8px;
+  font-size: 13px;
 }
 
 .tabs {
@@ -203,7 +203,7 @@
   border-right: 1px solid #e9eef2;
   color: #72879a;
   background: transparent;
-  font-size: 7px;
+  font-size: 14px;
   font-weight: 750;
 }
 
@@ -247,13 +247,13 @@
 .sectionTitle h3 {
   margin: 0;
   color: #1b405e;
-  font-size: 12px;
+  font-size: 15px;
 }
 
 .sectionTitle p {
   margin: 3px 0 0;
   color: #899aaa;
-  font-size: 7px;
+  font-size: 14px;
 }
 
 .gridFour,
@@ -283,7 +283,7 @@
 
 .field > span {
   color: #667f93;
-  font-size: 7px;
+  font-size: 15px;
   font-weight: 800;
 }
 
@@ -296,7 +296,7 @@
   outline: 0;
   color: #284c66;
   background: #ffffff;
-  font-size: 9px;
+  font-size: 15px;
 }
 
 .field input,
@@ -339,7 +339,7 @@
   padding: 0 9px;
   color: #60798d;
   background: #fafcfd;
-  font-size: 8px;
+  font-size: 13px;
 }
 
 .check input {
@@ -351,13 +351,13 @@
 }
 
 .addButton {
-  min-height: 31px;
+  min-height:32px;
   border: 1px solid #cfe3e5;
   border-radius: 8px;
   padding: 0 9px;
   color: #0b858e;
   background: #f5fbfb;
-  font-size: 8px;
+  font-size: 15px;
   font-weight: 800;
 }
 
@@ -383,14 +383,14 @@
 
 .repeaterCard header strong {
   color: #31516a;
-  font-size: 9px;
+  font-size: 14px;
 }
 
 .repeaterCard header button {
   border: 0;
   color: #b34856;
   background: transparent;
-  font-size: 7px;
+  font-size: 14px;
   font-weight: 800;
 }
 
@@ -409,12 +409,12 @@
 
 .empty strong {
   color: #46657c;
-  font-size: 10px;
+  font-size: 14px;
 }
 
 .empty span {
   color: #8798a8;
-  font-size: 8px;
+  font-size: 13px;
 }
 
 .footer {
@@ -427,7 +427,7 @@
 .footer > div:first-child span {
   display: block;
   color: #0a8189;
-  font-size: 7px;
+  font-size: 13px;
   font-weight: 850;
   text-transform: uppercase;
 }
@@ -436,7 +436,7 @@
   display: block;
   margin-top: 2px;
   color: #8b9baa;
-  font-size: 7px;
+  font-size: 13px;
 }
 
 .footerActions {
@@ -451,7 +451,7 @@
   align-items: center;
   justify-content: center;
   padding: 0 13px;
-  font-size: 8px;
+  font-size: 15px;
   font-weight: 800;
 }
 

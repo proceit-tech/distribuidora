@@ -2,6 +2,25 @@
 
 Este repositório utiliza o GitHub como fonte única de verdade. Claude implementa; ChatGPT audita; o responsável humano realiza a homologação final. Nenhuma aprovação técnica substitui a homologação humana.
 
+## Norma operacional permanente — leitura do contexto e separação de ambientes
+
+Este protocolo vincula **Claude Code e ChatGPT**. No início **de toda solicitação de implementação, revisão, retomada, nova conversa ou após compactação**, ambas as IAs devem consultar no GitHub a versão atual de `CLAUDE.md`, deste `documentacao/PROTOCOLO-IA.md` e os trechos relevantes de `PROGRESSO-NEXIT-V1.md`, além de branch, commit e arquivos relacionados. Os documentos versionados prevalecem sobre lembranças imprecisas de chat. Usar leitura seletiva de código e progresso; não realizar auditorias gerais sem pedido.
+
+**Fluxo de responsabilidades sem exceções presumidas:**
+1. Claude Code implementa tarefa única autorizada, prepara/atualiza código, documentação e arquivos SQL, testa em ambiente de teste autorizado, faz **commit e push GitHub** e **para**. Não acessa VM, Docker nem PostgreSQL real para aplicar scripts ou fazer deploy.
+2. ChatGPT consulta o repositório e os documentos a cada tarefa, revisa a entrega, identifica defeitos concretos e orienta a execução. Pode publicar correções diretamente no GitHub somente mediante autorização do usuário; isso **não** significa aplicar SQL no banco real.
+3. O responsável humano revisa/aprova, executa **git pull na VM**, comandos Docker, migrations/cargas SQL e deploy quando pertinente; homologa resultados. Git commit/push não significa banco atualizado ou aplicação publicada.
+4. Nunca limpar/recriar banco, containers ou volumes como rotina. Proteger dados reais e versões de migration já aplicadas. Quando houver dúvida sobre estado efetivo, perguntar ou verificar no ambiente antes de autorizar execução.
+5. Se GitHub ou documentos estiverem inacessíveis, declarar que não houve verificação e não inventar estado. Registrar mudanças de decisão no Git, para sobreviver à perda de contexto das duas IAs.
+
+**Estado confirmado até esta atualização:** NEX-001 a NEX-020 aplicadas no banco real; NEX-021 versionada em `migraciones/`, ainda não aplicada. O trabalho pendente de países e localização opcional (Departamento → Distrito → Ciudad) está em V1; **Barrio está fora do escopo atual da V1**. Respeitar a branch `feature/NEXIT-2026-001-banco-demo`. Esta informação é uma fotografia; conferir `PROGRESSO-NEXIT-V1.md` e novos registros de execução para atualizações futuras.
+
+**Decisão operacional — clone local e sincronização por Git:** o GitHub continua como única fonte oficial. Claude Code trabalha no clone local `C:\projetos\PROCEIT\distribuidora` (branch `feature/NEXIT-2026-001-banco-demo`), sem depender do GitHub MCP enquanto o Git pelo terminal funcionar. Antes de cada tarefa: `git status`, confirmar branch, `git fetch` e `git merge --ff-only`; nunca descartar modificações locais nem sobrescrever arquivos sem aprovação (conflito ⇒ interromper e informar). Ao terminar: testes locais pertinentes, commit e push, informar o SHA e parar para revisão do ChatGPT. Sem acesso à VM e sem migrations/SQL/deploy no banco real; o responsável não transfere arquivos manualmente.
+
+**Relatório econômico obrigatório:** na resposta ao responsável, informar apenas resultado/estado, testes em números, bloqueios reais e SHA do commit. NÃO colar SQL, comandos SELECT, trechos de código, listas de arquivos alterados, diffs ou repetir regras já registradas no Git. Detalhes técnicos ficam nos próprios arquivos versionados e no diff/commit; documentar apenas decisões, estado, testes e informações que não estejam recuperáveis do código. Fornecer comandos ou caminhos somente quando solicitados expressamente ou quando forem indispensáveis para uma ação imediata do responsável. Evitar narrar microetapas ou operações de ferramenta.
+
+**Regra permanente — documentação operacional como fonte única:** antes de solicitar ao responsável comandos, nomes de serviços/containers, caminhos, estrutura Docker, ambiente, banco, deploy ou qualquer dado já estabelecido, consultar primeiro os arquivos atuais do GitHub (incluindo documentação de infraestrutura/implantação e configuração Compose). ChatGPT e Claude Code devem recuperar contexto técnico pelo repositório, sem exigir que o responsável repita decisões ou diagnósticos antigos. Se faltar um dado, buscar nos arquivos pertinentes; só pedir confirmação quando realmente não estiver documentado ou quando o estado real puder ter mudado. Após confirmação, atualizar o documento operacional apropriado no GitHub para não repetir a pergunta. Documentar procedimentos reais de atualização da VM e containers, protegendo PostgreSQL e dados. Nunca registrar senhas, tokens ou segredos. Não inventar valores ausentes, nem executar ações na VM sem autorização. Relatórios no chat permanecem breves: resultado e SHA.
+
 ## Estrutura obrigatória
 - `documentacao/definicoes/`: requisitos e regras de negócio aprovadas para implementação.
 - `documentacao/banco/`: scripts de banco de dados vinculados aos requisitos.

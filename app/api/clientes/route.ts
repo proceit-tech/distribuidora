@@ -1,10 +1,20 @@
 import type { PoolClient } from "pg";
 import { NextResponse } from "next/server";
 
+import { resolverPais, resolverUbicacionParaguay, validarPaisPorOperacion } from "@/lib/geografia/referencia";
 
-const DEMO_MODE =
-  process.env.DEMO_MODE === "true" ||
-  !process.env.DATABASE_URL;
+import { denyIfNoPermission } from "@/lib/auth/permissions";
+
+
+// Solo DEMO explícito usa respuestas simuladas. La falta de DATABASE_URL NUNCA activa datos ficticios.
+const DEMO_MODE = process.env.DEMO_MODE === "true";
+
+function errorConfiguracion() {
+  return NextResponse.json(
+    { error: "Servicio no disponible: base de datos no configurada." },
+    { status: 503 },
+  );
+}
 
 async function obtenerSesionActual() {
   const { getCurrentSession } = await import("@/lib/auth/session");
@@ -202,18 +212,6 @@ function numeroOpcional(valor: unknown, minimo?: number, maximo?: number) {
   return numero;
 }
 
-function codigoGeografico(valor: unknown, etiqueta: string) {
-  if (valor === null || valor === undefined || valor === "") return null;
-
-  const codigo = Number(valor);
-
-  if (!Number.isInteger(codigo) || codigo <= 0) {
-    throw new Error(`${etiqueta} no es válido.`);
-  }
-
-  return codigo;
-}
-
 function fechaIso(valor: unknown, etiqueta: string) {
   const fecha = texto(valor);
   if (!fecha) return null;
@@ -304,52 +302,13 @@ async function validarDireccionParaguay(
 
   if (paisCodigo !== "PRY") return;
 
-  const departamentoCodigo = codigoGeografico(
+  return resolverUbicacionParaguay(
+    conexion,
     direccion.departamentoCodigo,
-    "El departamento",
-  );
-  const distritoCodigo = codigoGeografico(
     direccion.distritoCodigo,
-    "El distrito",
+    direccion.ciudadCodigo,
+    "La dirección",
   );
-  const ciudadCodigo = codigoGeografico(direccion.ciudadCodigo, "La ciudad");
-
-  if (!departamentoCodigo || !distritoCodigo || !ciudadCodigo) {
-    throw new Error(
-      "Para una dirección de Paraguay seleccione departamento, distrito y ciudad.",
-    );
-  }
-
-  const resultado = await conexion.query(
-    `
-      SELECT
-        d.nombre AS departamento,
-        di.nombre AS distrito,
-        c.nombre AS ciudad
-      FROM referencia_geografica_departamentos d
-      JOIN referencia_geografica_distritos di
-        ON di.departamento_codigo = d.codigo
-      JOIN referencia_geografica_ciudades c
-        ON c.distrito_codigo = di.codigo
-      WHERE d.codigo = $1
-        AND di.codigo = $2
-        AND c.codigo = $3
-    `,
-    [departamentoCodigo, distritoCodigo, ciudadCodigo],
-  );
-
-  if (resultado.rowCount !== 1) {
-    throw new Error(
-      "La combinación de departamento, distrito y ciudad no es válida.",
-    );
-  }
-
-  return {
-    departamentoCodigo,
-    distritoCodigo,
-    ciudadCodigo,
-    ...resultado.rows[0],
-  };
 }
 
 async function catalogoGeografico(
@@ -364,6 +323,7 @@ async function catalogoGeografico(
     const resultado = await db.query(
       `SELECT codigo, nombre
        FROM referencia_geografica_departamentos
+       WHERE activo = true
        ORDER BY nombre`,
     );
 
@@ -383,7 +343,7 @@ async function catalogoGeografico(
     const resultado = await db.query(
       `SELECT codigo, nombre, departamento_codigo
        FROM referencia_geografica_distritos
-       WHERE departamento_codigo = $1
+       WHERE departamento_codigo = $1 AND activo = true
        ORDER BY nombre`,
       [departamento],
     );
@@ -406,6 +366,7 @@ async function catalogoGeografico(
        FROM referencia_geografica_ciudades
        WHERE departamento_codigo = $1
          AND distrito_codigo = $2
+         AND activo = true
        ORDER BY nombre`,
       [departamento, distrito],
     );
@@ -422,6 +383,10 @@ async function catalogoGeografico(
 export async function GET(request: Request) {
   const url = new URL(request.url);
 
+  if (!DEMO_MODE && !process.env.DATABASE_URL) {
+    return errorConfiguracion();
+  }
+
   if (DEMO_MODE) {
     return respuestaDemoCatalogos(url);
   }
@@ -435,6 +400,9 @@ export async function GET(request: Request) {
         { status: 401 },
       );
     }
+
+  const denegadoVer = await denyIfNoPermission(session, "CLIENTES", "VER");
+  if (denegadoVer) return denegadoVer;
 
     const db = await obtenerDb();
     const respuestaGeografica = await catalogoGeografico(url, db);
@@ -468,6 +436,10 @@ export async function GET(request: Request) {
               c.limite_credito,
               c.bloqueado_ventas,
               c.activo,
+              c.pais_codigo,
+              c.pais_nombre,
+              c.gln,
+              zc.nombre AS zona_comercial_nombre,
               gc.nombre AS grupo_cliente_nombre,
               cp.nombre AS condicion_pago_nombre,
               lp.nombre AS lista_precio_nombre,
@@ -479,6 +451,7 @@ export async function GET(request: Request) {
             LEFT JOIN listas_precio lp ON lp.id = c.lista_precio_id
             LEFT JOIN vendedores v ON v.id = c.vendedor_id
             LEFT JOIN rutas_entrega r ON r.id = c.ruta_entrega_id
+            LEFT JOIN zonas_comerciales zc ON zc.id = c.zona_comercial_id
             WHERE c.empresa_id = $1
             ORDER BY c.activo DESC, c.razon_social ASC
           `,
@@ -495,6 +468,7 @@ export async function GET(request: Request) {
       vendedoresResultado,
       canalesResultado,
       departamentosResultado,
+      paisesResultado,
     ] = await Promise.all([
       clientesConsulta,
       db.query(
@@ -554,6 +528,13 @@ export async function GET(request: Request) {
       db.query(
         `SELECT codigo, nombre
          FROM referencia_geografica_departamentos
+         WHERE activo = true
+         ORDER BY nombre`,
+      ),
+      db.query(
+        `SELECT codigo, nombre
+         FROM referencia_geografica_paises
+         WHERE activo = true
          ORDER BY nombre`,
       ),
     ]);
@@ -570,6 +551,7 @@ export async function GET(request: Request) {
         vendedores: vendedoresResultado.rows,
         canalesVenta: canalesResultado.rows,
         departamentosParaguay: departamentosResultado.rows,
+        paises: paisesResultado.rows,
       },
     });
   } catch (error) {
@@ -594,6 +576,10 @@ export async function POST(request: Request) {
     );
   }
 
+  if (!DEMO_MODE && !process.env.DATABASE_URL) {
+    return errorConfiguracion();
+  }
+
   if (DEMO_MODE) {
     const cliente = crearClienteDemo(cuerpo);
 
@@ -616,6 +602,9 @@ export async function POST(request: Request) {
     );
   }
 
+  const denegadoCrear = await denyIfNoPermission(session, "CLIENTES", "CREAR");
+  if (denegadoCrear) return denegadoCrear;
+
   const db = await obtenerDb();
   let conexion: PoolClient | undefined;
 
@@ -628,7 +617,6 @@ export async function POST(request: Request) {
     const dv = texto(cuerpo.dv, 5);
     const razonSocial = texto(cuerpo.razonSocial, 200);
     const paisCodigo = texto(cuerpo.paisCodigo, 3).toUpperCase();
-    const paisNombre = texto(cuerpo.paisNombre, 60);
     const descripcionDocumentoIdentidad = opcional(
       cuerpo.descripcionDocumentoIdentidad,
       100,
@@ -664,9 +652,10 @@ export async function POST(request: Request) {
       throw new Error("Seleccione el tipo de contribuyente.");
     }
 
-    if (!paisCodigo || !paisNombre) {
+    if (!paisCodigo) {
       throw new Error("Informe el país del cliente.");
     }
+    validarPaisPorOperacion(tipoOperacion, paisCodigo);
 
     if (!razonSocial) {
       throw new Error("Informe el nombre o razón social del cliente.");
@@ -823,6 +812,9 @@ export async function POST(request: Request) {
       throw new Error("Ya existe un cliente con esa identificación.");
     }
 
+    // El nombre oficial del país sale del catálogo PostgreSQL; el cuerpo de la solicitud solo aporta el código.
+    const paisCliente = await resolverPais(conexion, paisCodigo, "El país del cliente");
+
     const clienteResultado = await conexion.query(
       `
         INSERT INTO clientes (
@@ -876,8 +868,8 @@ export async function POST(request: Request) {
           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
           $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
           $21, $22, $23, $24, $25, $26, $27, $28, $29, $30,
-          $31, CASE WHEN $30 THEN now() ELSE NULL END,
-          CASE WHEN $30 THEN $32 ELSE NULL END,
+          $31, CASE WHEN $30::boolean THEN now() ELSE NULL END,
+          CASE WHEN $30::boolean THEN $32::uuid ELSE NULL END,
           $33, $34, $35, $36, $37, $38, $39,
           $40, $41, $42, $43, $44
         )
@@ -889,8 +881,8 @@ export async function POST(request: Request) {
         TIPO_OPERACION_SIFEN[
           tipoOperacion as keyof typeof TIPO_OPERACION_SIFEN
         ],
-        paisCodigo,
-        paisNombre,
+        paisCliente.codigo,
+        paisCliente.nombre,
         tipoPersona,
         TIPO_CONTRIBUYENTE_SIFEN[
           tipoPersona as keyof typeof TIPO_CONTRIBUYENTE_SIFEN
@@ -990,6 +982,7 @@ export async function POST(request: Request) {
 
     for (const direccion of direcciones) {
       const tipo = texto(direccion.tipo).toUpperCase() || "COMERCIAL";
+      const paisDireccion = await resolverPais(conexion, direccion.paisCodigo, "El país de la dirección");
       const geografia = await validarDireccionParaguay(conexion, direccion);
 
       await conexion.query(
@@ -1030,8 +1023,8 @@ export async function POST(request: Request) {
           cliente.id,
           opcional(direccion.etiqueta, 100) ?? tipo,
           texto(direccion.direccion, 300),
-          geografia?.ciudad ?? opcional(direccion.ciudad, 100),
-          geografia?.departamento ?? opcional(direccion.departamento, 100),
+          geografia ? geografia.ciudad : opcional(direccion.ciudad, 100),
+          geografia ? geografia.departamento : opcional(direccion.departamento, 100),
           numeroOpcional(direccion.latitud, -90, 90),
           numeroOpcional(direccion.longitud, -180, 180),
           booleano(direccion.esFiscal) || tipo === "FISCAL",
@@ -1040,11 +1033,11 @@ export async function POST(request: Request) {
           opcional(direccion.etiqueta, 100),
           opcional(direccion.numeroCasa, 20),
           opcional(direccion.complemento, 200),
-          texto(direccion.paisCodigo, 3).toUpperCase(),
-          texto(direccion.paisNombre, 60),
+          paisDireccion.codigo,
+          paisDireccion.nombre,
           geografia?.departamentoCodigo ?? null,
           geografia?.distritoCodigo ?? null,
-          geografia?.distrito ?? opcional(direccion.distrito, 100),
+          geografia ? geografia.distrito : opcional(direccion.distrito, 100),
           geografia?.ciudadCodigo ?? null,
           opcional(direccion.codigoPostal, 15),
           opcional(direccion.contactoNombre, 200),

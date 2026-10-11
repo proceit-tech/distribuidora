@@ -7,12 +7,10 @@ import {
   useState,
 } from "react";
 
-import {
-  obtenerStockDemo,
-} from "@/lib/mocks/stock-storage";
+import { cargarStock } from "@/lib/stock/cliente-api";
 
 import {
-  StockDemo,
+  StockItem,
   StockNivel,
   StockPropiedad,
 } from "@/types/stock";
@@ -29,8 +27,11 @@ type PropiedadFiltro =
   | "TODOS"
   | StockPropiedad;
 
+// Moneda de los costos: moneda base de la empresa (se actualiza al cargar el stock).
+let MONEDA_BASE = "PYG";
+
 function money(value: number) {
-  return `Gs. ${new Intl.NumberFormat(
+  return `${MONEDA_BASE === "PYG" ? "Gs." : MONEDA_BASE} ${new Intl.NumberFormat(
     "es-PY",
     {
       maximumFractionDigits: 0,
@@ -49,39 +50,38 @@ function normalizar(value: string) {
 }
 
 
-const MARKUP_DEMO = 0.2;
-
-function costoUnitario(item: StockDemo) {
-  return Number(
-    item.precioVentaReferencia || 0,
-  );
+// Costos y precios reales: costo promedio de inventario_costos y precio de venta de referencia (lista de referencia).
+// Sin costo o sin precio registrado el valor es 0 en los totales y se muestra "—" en la ficha; nada se inventa.
+function costoUnitario(item: StockItem) {
+  return Number(item.costoPromedio ?? 0);
 }
 
-function valorCosto(item: StockDemo) {
-  return (
-    costoUnitario(item) *
-    Number(item.disponible || 0)
-  );
+function valorCosto(item: StockItem) {
+  return Number(item.valorInventario || 0);
 }
 
-function precioVentaDemo(item: StockDemo) {
-  return costoUnitario(item) *
-    (1 + MARKUP_DEMO);
+function precioVentaReferencia(item: StockItem) {
+  return Number(item.precioVentaReferencia ?? 0);
 }
 
-function valorVentaDemo(item: StockDemo) {
-  return (
-    precioVentaDemo(item) *
-    Number(item.disponible || 0)
-  );
+function valorVentaReferencia(item: StockItem) {
+  return Number(item.valorVentaReferencia ?? 0);
 }
 
 function gananciaPotencial(
-  item: StockDemo,
+  item: StockItem,
 ) {
+  if (
+    item.precioVentaReferencia === null ||
+    item.costoPromedio === null
+  ) {
+    return 0;
+  }
+
   return (
-    valorVentaDemo(item) -
-    valorCosto(item)
+    valorVentaReferencia(item) -
+    costoUnitario(item) *
+      Number(item.disponible || 0)
   );
 }
 
@@ -133,7 +133,7 @@ function descargarWorkbook(
 
 export default function StockPage() {
   const [stock, setStock] =
-    useState<StockDemo[]>([]);
+    useState<StockItem[]>([]);
 
   const [busqueda, setBusqueda] =
     useState("");
@@ -171,10 +171,35 @@ export default function StockPage() {
   const [pagina, setPagina] =
     useState(1);
 
+  const [cargando, setCargando] =
+    useState(true);
+
+  const [errorCarga, setErrorCarga] =
+    useState("");
+
   useEffect(() => {
-    setStock(
-      obtenerStockDemo(),
-    );
+    let activo = true;
+
+    cargarStock()
+      .then((r) => {
+        MONEDA_BASE = r.monedaBase;
+        if (activo) setStock(r.stock);
+      })
+      .catch((e: unknown) => {
+        if (activo)
+          setErrorCarga(
+            e instanceof Error
+              ? e.message
+              : "No fue posible cargar el stock.",
+          );
+      })
+      .finally(() => {
+        if (activo) setCargando(false);
+      });
+
+    return () => {
+      activo = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -295,7 +320,7 @@ export default function StockPage() {
           valorCosto(item);
 
         acc.valorVenta +=
-          valorVentaDemo(item);
+          valorVentaReferencia(item);
 
         if (
           item.nivel === "BAJO"
@@ -485,12 +510,10 @@ export default function StockPage() {
           costoUnitario(item),
         "Valor a costo":
           valorCosto(item),
-        "Markup %":
-          MARKUP_DEMO,
-        "Precio venta demo":
-          precioVentaDemo(item),
-        "Valor venta demo":
-          valorVentaDemo(item),
+        "Precio venta referencia":
+          precioVentaReferencia(item),
+        "Valor venta referencia":
+          valorVentaReferencia(item),
         "Ganancia potencial":
           gananciaPotencial(item),
         Estado:
@@ -533,11 +556,11 @@ export default function StockPage() {
       },
       {
         Indicador:
-          "Valor venta demo",
+          "Valor venta referencia",
         Valor: filtrados.reduce(
           (acc, item) =>
             acc +
-            valorVentaDemo(item),
+            valorVentaReferencia(item),
           0,
         ),
       },
@@ -550,11 +573,6 @@ export default function StockPage() {
             gananciaPotencial(item),
           0,
         ),
-      },
-      {
-        Indicador:
-          "Markup aplicado",
-        Valor: MARKUP_DEMO,
       },
     ];
 
@@ -599,12 +617,12 @@ export default function StockPage() {
     );
 
     resumenSheet["!autofilter"] = {
-      ref: "A1:B7",
+      ref: "A1:B6",
     };
 
     if (detalle.length > 0) {
       detalleSheet["!autofilter"] = {
-        ref: `A1:P${
+        ref: `A1:O${
           detalle.length + 1
         }`,
       };
@@ -625,7 +643,7 @@ export default function StockPage() {
     descargarWorkbook(
       XLSX,
       workbook,
-      `Stock_Valorizado_Casa_Mingo_${fechaArchivo()}.xlsx`,
+      `Stock_Valorizado_${fechaArchivo()}.xlsx`,
     );
   }
 
@@ -663,7 +681,7 @@ export default function StockPage() {
       );
       actual.costo += valorCosto(item);
       actual.venta +=
-        valorVentaDemo(item);
+        valorVentaReferencia(item);
       actual.ganancia +=
         gananciaPotencial(item);
 
@@ -698,7 +716,7 @@ export default function StockPage() {
             Unidades: item.unidades,
             "Valor a costo":
               item.costo,
-            "Valor venta demo":
+            "Valor venta referencia":
               item.venta,
             "Ganancia potencial":
               item.ganancia,
@@ -748,7 +766,7 @@ export default function StockPage() {
     descargarWorkbook(
       XLSX,
       workbook,
-      `Stock_Costo_por_Marca_Casa_Mingo_${fechaArchivo()}.xlsx`,
+      `Stock_Costo_por_Marca_${fechaArchivo()}.xlsx`,
     );
   }
 
@@ -763,14 +781,6 @@ export default function StockPage() {
               }
             >
               INVENTARIO
-            </span>
-
-            <span
-              className={
-                styles.demoPill
-              }
-            >
-              MINGO 2026
             </span>
           </div>
 
@@ -920,7 +930,7 @@ export default function StockPage() {
           </strong>
 
           <small>
-            Costo según archivo original
+            Costo promedio de inventario
           </small>
         </article>
 
@@ -928,7 +938,7 @@ export default function StockPage() {
           className={`${styles.summaryCard} ${styles.summaryBlue}`}
         >
           <span>
-            VALOR VENTA DEMO
+            VALOR VENTA REFERENCIA
           </span>
 
           <strong>
@@ -938,7 +948,7 @@ export default function StockPage() {
           </strong>
 
           <small>
-            Costo + 20%
+            Precio de la lista de referencia
           </small>
         </article>
       </section>
@@ -1412,10 +1422,12 @@ export default function StockPage() {
                   </span>
 
                   <small>
-                    Venta demo (+20%):{" "}
-                    {money(
-                      precioVentaDemo(item),
-                    )}
+                    Venta referencia:{" "}
+                    {item.precioVentaReferencia === null
+                      ? "—"
+                      : money(
+                          precioVentaReferencia(item),
+                        )}
                   </small>
                 </div>
 
@@ -1440,14 +1452,18 @@ export default function StockPage() {
               }
             >
               <strong>
-                No se encontraron
-                productos.
+                {cargando
+                  ? "Cargando stock..."
+                  : errorCarga ||
+                    "No se encontraron productos."}
               </strong>
 
-              <span>
-                Modifique los filtros
-                aplicados.
-              </span>
+              {!cargando && !errorCarga ? (
+                <span>
+                  Modifique los filtros
+                  aplicados.
+                </span>
+              ) : null}
             </div>
           ) : null}
         </div>

@@ -22,11 +22,11 @@
 .modulePill,
 .demoPill {
   display: inline-flex;
-  min-height: 20px;
+  min-height:28px;
   align-items: center;
   border-radius: 999px;
   padding: 0 7px;
-  font-size: 7px;
+  font-size: 13px;
   font-weight: 850;
 }
 
@@ -44,13 +44,13 @@
 .hero h1 {
   margin: 0;
   color: #112f4a;
-  font-size: 25px;
+  font-size: 28px;
 }
 
 .hero p {
   margin: 4px 0 0;
   color: #7c8ea0;
-  font-size: 10px;
+  font-size: 14px;
 }
 
 .primaryButton {
@@ -61,7 +61,7 @@
   padding: 0 14px;
   color: #ffffff;
   background: linear-gradient(135deg, #13a9af, #0c919b);
-  font-size: 9px;
+  font-size: 15px;
   font-weight: 800;
   text-decoration: none;
 }
@@ -88,7 +88,7 @@
 
 .summaryGrid span {
   color: #7b8fa3;
-  font-size: 7px;
+  font-size: 13px;
   font-weight: 850;
 }
 
@@ -100,7 +100,7 @@
 
 .summaryGrid small {
   color: #8b9daf;
-  font-size: 7px;
+  font-size: 13px;
 }
 
 .card {
@@ -136,7 +136,7 @@
   border: 0;
   outline: 0;
   background: transparent;
-  font-size: 9px;
+  font-size: 15px;
 }
 
 .filter {
@@ -147,7 +147,7 @@
 
 .filter span {
   color: #7e91a4;
-  font-size: 7px;
+  font-size: 14px;
   font-weight: 800;
 }
 
@@ -157,7 +157,7 @@
   border-radius: 9px;
   padding: 0 9px;
   background: #ffffff;
-  font-size: 9px;
+  font-size: 14px;
 }
 
 .listHeader,
@@ -177,7 +177,7 @@
   padding: 8px 13px;
   color: #8798a8;
   background: #f6f9fb;
-  font-size: 7px;
+  font-size: 14px;
   font-weight: 850;
   text-transform: uppercase;
 }
@@ -195,13 +195,13 @@
 
 .row strong {
   color: #31526c;
-  font-size: 9px;
+  font-size: 15px;
 }
 
 .row small {
   margin-top: 3px;
   color: #8295a6;
-  font-size: 7px;
+  font-size: 13px;
 }
 
 .rowTitle {
@@ -212,26 +212,26 @@
 
 .typeBadge {
   display: inline-flex;
-  min-height: 19px;
+  min-height:28px;
   align-items: center;
   border-radius: 999px;
   padding: 0 6px;
   color: #0b7d86;
   background: #e8f7f7;
-  font-size: 6px;
+  font-size: 13px;
   font-weight: 850;
 }
 
 .detailButton {
   display: inline-flex;
-  height: 30px;
+  height:32px;
   align-items: center;
   justify-content: center;
   border: 1px solid #d9e4eb;
   border-radius: 8px;
   color: #41647d;
   background: #ffffff;
-  font-size: 7px;
+  font-size: 15px;
   font-weight: 800;
   text-decoration: none;
 }
@@ -247,11 +247,11 @@
 
 .empty strong {
   color: #45637a;
-  font-size: 10px;
+  font-size: 14px;
 }
 
 .empty span {
-  font-size: 8px;
+  font-size: 13px;
 }
 
 .toast {

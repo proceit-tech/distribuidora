@@ -7,13 +7,10 @@ import {
   useState,
 } from "react";
 
-import {
-  consumirListaPrecioFlash,
-  obtenerListasPrecioDemo,
-} from "@/lib/mocks/listas-precio-storage";
+import { cargarListas } from "@/lib/listas-precio/cliente-api";
 
 import {
-  ListaPrecioDemo,
+  ListaPrecioFila,
   ListaPrecioEstado,
   ListaPrecioMoneda,
   ListaPrecioTipo,
@@ -36,7 +33,7 @@ type MonedaFiltro =
   | ListaPrecioMoneda;
 
 function getEstadoReal(
-  lista: ListaPrecioDemo,
+  lista: ListaPrecioFila,
 ): ListaPrecioEstado {
   if (
     lista.vigenteHasta &&
@@ -79,7 +76,7 @@ function formatMoneda(
 }
 
 function getAplicacion(
-  lista: ListaPrecioDemo,
+  lista: ListaPrecioFila,
 ) {
   if (lista.clienteNombre) {
     return `Cliente · ${lista.clienteNombre}`;
@@ -101,7 +98,7 @@ function getAplicacion(
 }
 
 function getModoLabel(
-  lista: ListaPrecioDemo,
+  lista: ListaPrecioFila,
 ) {
   if (
     lista.modoPrecio ===
@@ -136,7 +133,7 @@ function getModoLabel(
 
 export default function ListasPrecioPage() {
   const [listas, setListas] =
-    useState<ListaPrecioDemo[]>([]);
+    useState<ListaPrecioFila[]>([]);
 
   const [busqueda, setBusqueda] =
     useState("");
@@ -156,14 +153,53 @@ export default function ListasPrecioPage() {
   const [flash, setFlash] =
     useState("");
 
-  useEffect(() => {
-    setListas(
-      obtenerListasPrecioDemo(),
-    );
+  const [cargando, setCargando] =
+    useState(true);
 
-    setFlash(
-      consumirListaPrecioFlash(),
-    );
+  const [errorCarga, setErrorCarga] =
+    useState("");
+
+  useEffect(() => {
+    let activo = true;
+
+    cargarListas()
+      .then((datos) => {
+        if (activo) setListas(datos);
+      })
+      .catch((e: unknown) => {
+        if (activo)
+          setErrorCarga(
+            e instanceof Error
+              ? e.message
+              : "No fue posible cargar las listas de precios.",
+          );
+      })
+      .finally(() => {
+        if (activo) setCargando(false);
+      });
+
+    // Aviso tras crear/editar (?ok=creado|actualizado).
+    const ok = new URLSearchParams(
+      window.location.search,
+    ).get("ok");
+
+    if (ok === "creado") {
+      setFlash("Lista de precios registrada correctamente.");
+    } else if (ok === "actualizado") {
+      setFlash("Lista de precios actualizada correctamente.");
+    }
+
+    if (ok) {
+      window.history.replaceState(
+        null,
+        "",
+        window.location.pathname,
+      );
+    }
+
+    return () => {
+      activo = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -381,13 +417,6 @@ export default function ListasPrecioPage() {
               MAESTROS
             </span>
 
-            <span
-              className={
-                styles.demoPill
-              }
-            >
-              DEMO
-            </span>
           </div>
 
           <h1>
@@ -588,18 +617,17 @@ export default function ListasPrecioPage() {
               <option value="TODOS">
                 Todas
               </option>
-              <option value="PYG">
-                PYG
-              </option>
-              <option value="USD">
-                USD
-              </option>
-              <option value="BRL">
-                BRL
-              </option>
-              <option value="EUR">
-                EUR
-              </option>
+              {Array.from(
+                new Set(
+                  listas.map((l) => l.monedaCodigo),
+                ),
+              )
+                .sort()
+                .map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
             </select>
           </label>
 
@@ -711,8 +739,7 @@ export default function ListasPrecioPage() {
                         }
                       >
                         <span>
-                          {lista.productos
-                            .length}{" "}
+                          {lista.productosCount}{" "}
                           productos
                         </span>
 
@@ -844,14 +871,18 @@ export default function ListasPrecioPage() {
               }
             >
               <strong>
-                No se encontraron
-                listas de precios.
+                {cargando
+                  ? "Cargando listas de precios..."
+                  : errorCarga ||
+                    "No se encontraron listas de precios."}
               </strong>
 
-              <span>
-                Modifique los filtros
-                o cree una nueva lista.
-              </span>
+              {!cargando && !errorCarga ? (
+                <span>
+                  Modifique los filtros
+                  o cree una nueva lista.
+                </span>
+              ) : null}
             </div>
           ) : null}
         </div>

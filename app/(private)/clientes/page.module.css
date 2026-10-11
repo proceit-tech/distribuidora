@@ -22,11 +22,11 @@
 .modulePill,
 .demoPill {
   display: inline-flex;
-  min-height: 20px;
+  min-height:28px;
   align-items: center;
   border-radius: 999px;
   padding: 0 7px;
-  font-size: 7px;
+  font-size: 13px;
   font-weight: 850;
   letter-spacing: 0.8px;
 }
@@ -45,7 +45,7 @@
 .hero h1 {
   margin: 0;
   color: #112f4a;
-  font-size: 25px;
+  font-size: 28px;
   font-weight: 780;
   letter-spacing: -0.65px;
 }
@@ -53,7 +53,7 @@
 .hero p {
   margin: 4px 0 0;
   color: #7c8ea0;
-  font-size: 10px;
+  font-size: 14px;
 }
 
 .primaryButton {
@@ -73,7 +73,7 @@
     );
   box-shadow:
     0 8px 20px rgba(11, 145, 155, 0.16);
-  font-size: 10px;
+  font-size: 15px;
   font-weight: 800;
   text-decoration: none;
 }
@@ -132,7 +132,7 @@
   display: block;
   overflow: hidden;
   color: #7b8fa3;
-  font-size: 7px;
+  font-size: 13px;
   font-weight: 850;
   letter-spacing: 0.85px;
   white-space: nowrap;
@@ -153,7 +153,7 @@
 
 .summaryCard small {
   color: #8b9daf;
-  font-size: 8px;
+  font-size: 13px;
 }
 
 .contentCard {
@@ -206,12 +206,12 @@
   outline: 0;
   color: #274964;
   background: transparent;
-  font-size: 9px;
+  font-size: 15px;
 }
 
 .resultCount {
   color: #7e91a4;
-  font-size: 8px;
+  font-size: 13px;
   font-weight: 700;
 }
 
@@ -232,7 +232,7 @@
 
 .filters label > span {
   color: #7e91a4;
-  font-size: 7px;
+  font-size: 14px;
   font-weight: 800;
   letter-spacing: 0.6px;
   text-transform: uppercase;
@@ -246,7 +246,7 @@
   padding: 0 9px;
   color: #31516a;
   background: #ffffff;
-  font-size: 9px;
+  font-size: 14px;
 }
 
 .clearButton {
@@ -256,7 +256,7 @@
   padding: 0 9px;
   color: #0b8c95;
   background: transparent;
-  font-size: 8px;
+  font-size: 15px;
   font-weight: 800;
 }
 
@@ -276,7 +276,7 @@
   color: #8798a8;
   background: #f6f9fb;
   border-bottom: 1px solid #eaf0f4;
-  font-size: 7px;
+  font-size: 14px;
   font-weight: 850;
   letter-spacing: 0.65px;
   text-transform: uppercase;
@@ -331,7 +331,7 @@
       #e5f7f7,
       #effafa
     );
-  font-size: 9px;
+  font-size: 13px;
   font-weight: 850;
 }
 
@@ -351,7 +351,7 @@
   min-width: 0;
   overflow: hidden;
   color: #1b405e;
-  font-size: 10px;
+  font-size: 14px;
   font-weight: 800;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -363,7 +363,7 @@
   padding: 2px 6px;
   color: #6c8296;
   background: #eef3f6;
-  font-size: 6px;
+  font-size: 13px;
   font-weight: 800;
 }
 
@@ -372,7 +372,7 @@
   margin-top: 3px;
   overflow: hidden;
   color: #6f8599;
-  font-size: 8px;
+  font-size: 13px;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
@@ -389,7 +389,7 @@
   gap: 10px;
   margin-top: 5px;
   color: #91a0ae;
-  font-size: 7px;
+  font-size: 13px;
 }
 
 .contactLine span {
@@ -417,7 +417,7 @@
 .commercial strong,
 .creditBlock > strong {
   color: #31526c;
-  font-size: 9px;
+  font-size: 13px;
   font-weight: 780;
 }
 
@@ -425,13 +425,13 @@
 .creditBlock > span {
   margin-top: 3px;
   color: #748a9d;
-  font-size: 8px;
+  font-size: 13px;
 }
 
 .commercial small {
   margin-top: 3px;
   color: #9aa8b5;
-  font-size: 7px;
+  font-size: 13px;
 }
 
 .statuses {
@@ -445,11 +445,11 @@
 .statusInactive,
 .statusBlocked {
   display: inline-flex;
-  min-height: 19px;
+  min-height:28px;
   align-items: center;
   border-radius: 999px;
   padding: 0 6px;
-  font-size: 6px;
+  font-size: 13px;
   font-weight: 850;
 }
 
@@ -470,7 +470,7 @@
 
 .detailButton {
   display: inline-flex;
-  height: 30px;
+  height:32px;
   align-items: center;
   justify-content: center;
   gap: 5px;
@@ -478,7 +478,7 @@
   border-radius: 8px;
   color: #41647d;
   background: #ffffff;
-  font-size: 7px;
+  font-size: 15px;
   font-weight: 800;
   text-decoration: none;
 }
@@ -490,7 +490,7 @@
 }
 
 .detailButton span {
-  font-size: 13px;
+  font-size: 15px;
 }
 
 .pagination {
@@ -503,7 +503,7 @@
   border-top: 1px solid #edf2f5;
   color: #8092a4;
   background: #fbfcfd;
-  font-size: 7px;
+  font-size: 13px;
 }
 
 .pagination > div {
@@ -515,13 +515,13 @@
 .pagination button {
   display: grid;
   width: 29px;
-  height: 29px;
+  height:32px;
   place-items: center;
   border: 1px solid #d9e4eb;
   border-radius: 8px;
   color: #41647d;
   background: #ffffff;
-  font-size: 14px;
+  font-size: 15px;
 }
 
 .pagination button:disabled {
@@ -530,7 +530,7 @@
 
 .pagination strong {
   color: #506b81;
-  font-size: 7px;
+  font-size: 13px;
 }
 
 .empty {
@@ -545,11 +545,11 @@
 
 .empty strong {
   color: #45637b;
-  font-size: 11px;
+  font-size: 14px;
 }
 
 .empty span {
-  font-size: 8px;
+  font-size: 13px;
 }
 
 .toast {
@@ -574,12 +574,12 @@
 .toast > span {
   display: grid;
   width: 26px;
-  height: 26px;
+  height:30px;
   place-items: center;
   border-radius: 8px;
   color: #ffffff;
   background: #1b9c78;
-  font-size: 11px;
+  font-size: 14px;
   font-weight: 900;
 }
 
@@ -589,13 +589,13 @@
 }
 
 .toast strong {
-  font-size: 9px;
+  font-size: 13px;
 }
 
 .toast small {
   margin-top: 2px;
   color: #64877b;
-  font-size: 7px;
+  font-size: 13px;
 }
 
 .toast button {

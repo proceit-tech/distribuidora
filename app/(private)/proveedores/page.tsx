@@ -7,13 +7,8 @@ import {
   useState,
 } from "react";
 
-import {
-  consumirProveedorFlash,
-  obtenerProveedoresDemo,
-} from "@/lib/mocks/proveedores-storage";
-
 import type {
-  ProveedorDemo,
+  ProveedorLista,
   ProveedorEstadoHomologacion,
   ProveedorNivelRiesgo,
 } from "@/types/proveedores";
@@ -57,7 +52,7 @@ function money(
 }
 
 function documento(
-  proveedor: ProveedorDemo,
+  proveedor: ProveedorLista,
 ) {
   if (
     proveedor.tipoDocumento === "RUC"
@@ -133,11 +128,63 @@ function riesgoClass(
   return styles.riskNeutral;
 }
 
+type FilaApi = {
+  id: string;
+  codigo: string;
+  razon_social: string;
+  nombre_fantasia: string | null;
+  tipo_documento: string;
+  numero_documento: string;
+  dv: string | null;
+  pais_nombre: string | null;
+  email: string | null;
+  telefono: string | null;
+  grupo_nombre: string | null;
+  condicion_pago_nombre: string | null;
+  moneda_codigo_predeterminada: string | null;
+  monto_minimo_compra: string | number | null;
+  estado_homologacion: ProveedorEstadoHomologacion;
+  nivel_riesgo: ProveedorNivelRiesgo;
+  calificacion_actual: string | number | null;
+  activo: boolean;
+};
+
+function desdeApi(fila: FilaApi): ProveedorLista {
+  return {
+    id: fila.id,
+    codigo: fila.codigo,
+    razonSocial: fila.razon_social,
+    nombreFantasia: fila.nombre_fantasia ?? "",
+    tipoDocumento: fila.tipo_documento,
+    numeroDocumento: fila.numero_documento,
+    dv: fila.dv ?? "",
+    paisNombre: fila.pais_nombre ?? "",
+    email: fila.email ?? "",
+    telefono: fila.telefono ?? "",
+    grupoNombre: fila.grupo_nombre ?? "",
+    condicionPagoNombre:
+      fila.condicion_pago_nombre ?? "",
+    monedaCodigoPredeterminada:
+      fila.moneda_codigo_predeterminada ?? "PYG",
+    montoMinimoCompra: Number(
+      fila.monto_minimo_compra ?? 0,
+    ),
+    estadoHomologacion:
+      fila.estado_homologacion,
+    nivelRiesgo: fila.nivel_riesgo,
+    calificacionActual:
+      fila.calificacion_actual === null
+        ? null
+        : Number(fila.calificacion_actual),
+    activo: fila.activo,
+  };
+}
+
 export default function ProveedoresPage() {
   const [
     proveedores,
     setProveedores,
-  ] = useState<ProveedorDemo[]>([]);
+  ] = useState<ProveedorLista[]>([]);
 
   const [busqueda, setBusqueda] =
     useState("");
@@ -168,14 +215,83 @@ export default function ProveedoresPage() {
   const [flash, setFlash] =
     useState("");
 
-  useEffect(() => {
-    setProveedores(
-      obtenerProveedoresDemo(),
-    );
+  const [cargando, setCargando] =
+    useState(true);
 
-    setFlash(
-      consumirProveedorFlash(),
-    );
+  const [errorCarga, setErrorCarga] =
+    useState("");
+
+  useEffect(() => {
+    let activo = true;
+
+    async function cargar() {
+      try {
+        const respuesta = await fetch(
+          "/api/proveedores",
+          { cache: "no-store" },
+        );
+
+        if (!respuesta.ok) {
+          const json = (await respuesta
+            .json()
+            .catch(() => ({}))) as {
+            error?: string;
+          };
+          throw new Error(
+            json.error ??
+              "No fue posible cargar los proveedores.",
+          );
+        }
+
+        const json =
+          (await respuesta.json()) as {
+            proveedores: FilaApi[];
+          };
+
+        if (activo) {
+          setProveedores(
+            json.proveedores.map(
+              desdeApi,
+            ),
+          );
+        }
+      } catch (e) {
+        if (activo) {
+          setErrorCarga(
+            e instanceof Error
+              ? e.message
+              : "No fue posible cargar los proveedores.",
+          );
+        }
+      } finally {
+        if (activo) {
+          setCargando(false);
+        }
+      }
+    }
+
+    void cargar();
+
+    const ok = new URLSearchParams(
+      window.location.search,
+    ).get("ok");
+
+    if (ok) {
+      setFlash(
+        ok === "creado"
+          ? "Proveedor registrado correctamente."
+          : "Proveedor actualizado correctamente.",
+      );
+      window.history.replaceState(
+        null,
+        "",
+        "/proveedores",
+      );
+    }
+
+    return () => {
+      activo = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -291,8 +407,8 @@ export default function ProveedoresPage() {
           proveedor.numeroDocumento,
           proveedor.email,
           proveedor.telefono,
-          proveedor.grupoProveedor,
-          proveedor.condicionPago,
+          proveedor.grupoNombre,
+          proveedor.condicionPagoNombre,
           proveedor.paisNombre,
           proveedor.estadoHomologacion,
           proveedor.nivelRiesgo,
@@ -377,11 +493,6 @@ export default function ProveedoresPage() {
               MAESTROS
             </span>
 
-            <span
-              className={styles.demoPill}
-            >
-              DEMO
-            </span>
           </div>
 
           <h1>Proveedores</h1>
@@ -635,7 +746,35 @@ export default function ProveedoresPage() {
         </div>
 
         <div className={styles.list}>
-          {paginaActual.map(
+          {cargando ? (
+            <div className={styles.empty}>
+              <strong>Cargando proveedores...</strong>
+            </div>
+          ) : errorCarga ? (
+            <div
+              className={styles.empty}
+              role="alert"
+            >
+              <strong>
+                No fue posible cargar los proveedores
+              </strong>
+              <span>{errorCarga}</span>
+            </div>
+          ) : paginaActual.length === 0 ? (
+            <div className={styles.empty}>
+              <strong>
+                {proveedores.length === 0
+                  ? "Aún no hay proveedores registrados"
+                  : "No encontramos proveedores"}
+              </strong>
+              <span>
+                {proveedores.length === 0
+                  ? "Registre el primer proveedor con el botón Nuevo proveedor."
+                  : "Cambie los filtros o registre un nuevo proveedor."}
+              </span>
+            </div>
+          ) : (
+            paginaActual.map(
             (proveedor) => (
               <article
                 key={proveedor.id}
@@ -723,13 +862,13 @@ export default function ProveedoresPage() {
                   }
                 >
                   <strong>
-                    {proveedor.grupoProveedor ||
+                    {proveedor.grupoNombre ||
                       "Sin grupo"}
                   </strong>
 
                   <span>
                     {
-                      proveedor.condicionPago
+                      proveedor.condicionPagoNombre
                     }
                   </span>
 
@@ -811,7 +950,7 @@ export default function ProveedoresPage() {
                 </Link>
               </article>
             ),
-          )}
+          ))}
         </div>
 
         <footer

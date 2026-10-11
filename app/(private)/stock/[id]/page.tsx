@@ -10,20 +10,22 @@ import {
   useParams,
 } from "next/navigation";
 
-import {
-  buscarStockDemo,
-} from "@/lib/mocks/stock-storage";
+import { cargarStockItem } from "@/lib/stock/cliente-api";
 
 import {
-  StockDemo,
+  StockItem,
 } from "@/types/stock";
 
 import styles from "./page.module.css";
 
+let MONEDA_BASE = "PYG";
+
 function money(
-  value: number,
+  value: number | null,
 ) {
-  return `Gs. ${new Intl.NumberFormat(
+  if (value === null) return "—";
+
+  return `${MONEDA_BASE === "PYG" ? "Gs." : MONEDA_BASE} ${new Intl.NumberFormat(
     "es-PY",
     {
       maximumFractionDigits: 0,
@@ -58,21 +60,40 @@ export default function StockDetallePage() {
   }>();
 
   const [item, setItem] =
-    useState<StockDemo | null>(
+    useState<StockItem | null>(
       null,
     );
 
   const [loading, setLoading] =
     useState(true);
 
-  useEffect(() => {
-    setItem(
-      buscarStockDemo(
-        params.id,
-      ),
-    );
+  const [errorCarga, setErrorCarga] =
+    useState("");
 
-    setLoading(false);
+  useEffect(() => {
+    let activo = true;
+
+    cargarStockItem(params.id)
+      .then((r) => {
+        if (!r) return;
+        MONEDA_BASE = r.monedaBase;
+        if (activo) setItem(r.item);
+      })
+      .catch((e: unknown) => {
+        if (activo)
+          setErrorCarga(
+            e instanceof Error
+              ? e.message
+              : "No fue posible cargar el stock.",
+          );
+      })
+      .finally(() => {
+        if (activo) setLoading(false);
+      });
+
+    return () => {
+      activo = false;
+    };
   }, [params.id]);
 
   if (loading) {
@@ -90,6 +111,10 @@ export default function StockDetallePage() {
           Stock no encontrado
         </h1>
 
+        {errorCarga ? (
+          <p>{errorCarga}</p>
+        ) : null}
+
         <Link href="/stock">
           Volver a stock
         </Link>
@@ -104,10 +129,6 @@ export default function StockDetallePage() {
           <div className={styles.heroMeta}>
             <span className={styles.modulePill}>
               STOCK
-            </span>
-
-            <span className={styles.demoPill}>
-              DEMO
             </span>
           </div>
 
@@ -372,7 +393,7 @@ export default function StockDetallePage() {
             <span>Vencimiento</span>
             <span>Cantidad</span>
             <span>Estado</span>
-            <span>Ubicación</span>
+            <span>Depósito</span>
             <span>Propietario</span>
           </div>
 
