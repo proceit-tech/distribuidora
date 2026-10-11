@@ -12,3 +12,6 @@
 
 ## Escopo autorizado para Claude — E2 regras fiscais
 Auditar campo a campo UI, POST, PUT e schema efetivo antes da implementação. Aplicar as regras normativas já comprovadas em UI e API e corrigir divergências, sem alterar XML V2 ou outros módulos. **Se migration for indispensável, preparar proposta/arquivo incremental em etapa separada e pedir autorização antes de alterar banco**, sem bloquear correções independentes. Para campos cuja regra esteja efetivamente ambígua (NT002 vs NT023 B2F), manter a decisão cadastral aprovada e não inventar interpretação XML. Documentar achados, commit+push e parar para auditoria ChatGPT; nada de VM/deploy.
+
+## Correção operacional aprovada — scripts incrementais
+**Na implementação E2 autorizada, Claude deve criar e publicar junto ao código as novas migrations/scripts incrementais que se mostrarem necessários**, verificando antes sequenciamento, esquema, scripts aplicados e convenções atuais no GitHub. **Não solicitar autorização apenas para criar o arquivo**. Não modificar migrations já aplicadas. Não EXECUTAR os scripts nem alterar o banco de dados da VM/produção: o responsável aplica somente após revisão/autorização de execução. Esta regra corrige e substitui a frase anterior que pedia autorização antes de preparar migration.
