@@ -1,12 +1,12 @@
 # Claude — protocolo PROCEIT / Nexit
 
-O contexto do projeto vive no GitHub, não na memória da conversa. Claude implementa; ChatGPT audita (AUD-RNN); a homologação final é humana. Nunca marcar HOMOLOGADO, nunca editar arquivos AUD, nunca fazer merge em `main`.
+O contexto do projeto vive no GitHub, não na memória da conversa. Claude implementa; ChatGPT audita (AUD-RNN); a validação operacional de cada entrega no único ambiente real cabe ao responsável humano. Nunca marcar HOMOLOGADO, nunca editar arquivos AUD, nunca fazer merge em `main`.
 
 ## Regra permanente — contexto e responsabilidades (Claude Code + ChatGPT)
 - **Antes de CADA tarefa, nova conversa, retorno de homologação ou compactação de contexto**, as duas IAs devem consultar no GitHub a versão mais recente de `CLAUDE.md`, `documentacao/PROTOCOLO-IA.md`, e as seções pertinentes de `PROGRESSO-NEXIT-V1.md`; verificar branch/commit atual e arquivos da tarefa. Não se apoiar só na memória do chat ou em cópia local desatualizada.
 - **Claude Code**: implementa exclusivamente a tarefa autorizada, prepara arquivos de código/SQL/docs, executa somente testes em ambiente de teste autorizado, faz **git commit e git push** na branch correta e para para auditoria. Não acessa VM, Docker ou PostgreSQL real; não aplica SQL/migrations e não faz deploy.
 - **ChatGPT**: lê os mesmos documentos atualizados antes de auditorias/instruções de implementação, revisa commits e diffs, prepara orientações e, quando expressamente autorizado, pode editar/commitar arquivos no GitHub. Não deve afirmar que executou alterações na VM; comandos de implantação são entregues ao responsável humano.
-- **Responsável humano**: decide e executa na VM `git pull`, scripts no `nexit-db`, Docker/deploy e homologação; nada disso é executado pelas IAs. **Não confundir commit/push no Git com execução de SQL ou deploy.**
+- **Responsável humano**: decide e executa na VM `git pull`, scripts no `nexit-db`, Docker/deploy e validação operacional no único ambiente real; nada disso é executado pelas IAs. **Não confundir commit/push no Git com execução de SQL ou deploy.**
 - Se uma IA não conseguir ler os arquivos atuais, deve declarar a limitação e evitar orientação destrutiva ou decisões baseadas em versões antigas. Ao encontrar divergência entre texto e estado real do banco, registrar o fato e solicitar verificação — não reaplicar migrations por suposição.
 - Revisão por **tarefa única**, sem auditoria geral ou leitura integral de arquivos gigantes; ler integralmente os dois documentos curtos de protocolo e apenas trechos necessários do progresso, requisitos e código para economizar tokens.
 - Estado operacional confirmado pelo responsável: **NEX-020 já aplicada** no PostgreSQL real; **NEX-021 versionada em `migraciones/`, ainda não aplicada**. Não reaplicar NEX-020 nem assumir que arquivos de SQL publicados no Git foram executados.
@@ -52,7 +52,7 @@ O contexto do projeto vive no GitHub, não na memória da conversa. Claude imple
 - **V2** (`documentacao/v2/`, ex.: auditoria funcional e roadmap, SIFEN): **apenas planejamento**. Não implementar funcionalidades V2 nem antecipá-las, e não alterar a documentação V2, sem autorização expressa.
 
 ## 5. Protocolo de auditoria
-Seguir `documentacao/PROTOCOLO-IA.md` (REQ/TST/AUD/HOM e máquina de estados). Corrigir cada achado AUD citando o commit, preservar auditorias anteriores e pedir nova rodada. A aprovação técnica não substitui a homologação humana. GitHub é canal ASSÍNCRONO entre IAs: não há execução automática nem mensagens diretas.
+Seguir `documentacao/PROTOCOLO-IA.md` (REQ/TST/AUD/HOM e máquina de estados). Corrigir cada achado AUD citando o commit, preservar auditorias anteriores e pedir nova rodada. A aprovação técnica não significa que a mudança já foi aplicada ou validada operacionalmente. GitHub é canal ASSÍNCRONO entre IAs: não há execução automática nem mensagens diretas.
 
 ## 6. Leitura seletiva e economia de contexto
 O GitHub é a fonte de verdade; a conversa não guarda o histórico do projeto.
@@ -74,3 +74,6 @@ O GitHub é a fonte de verdade; a conversa não guarda o histórico do projeto.
 
 ## Regra definitiva de evolução do banco — 11/10/2026
 Quando a funcionalidade autorizada exigir evolução estrutural, **Claude cria e versiona normalmente o novo script SQL/migration incremental e documentos associados no GitHub, na mesma entrega de código**. NÃO precisa interromper para pedir autorização separada somente para ESCREVER/VERSIONAR scripts. É vedado editar scripts/migrations já aplicados ou executar SQL/migration no banco real, VM, container ou produção: **somente o responsável humano aplica, após revisão e autorização de execução**. Consultar sempre no Git o histórico e as convenções para escolher numeração disponível, sem presumir status de aplicação. Essa regra supera passagens antigas que exigiam aprovação prévia para preparar o arquivo SQL. Esta é a política de crescimento contínuo do projeto, preservando dados existentes e compatibilidade. Vale também para ChatGPT ao redigir instruções: nunca confundir CRIAR script com APLICAR no banco.
+
+### Regra operacional de ambiente único — 11/10/2026
+O projeto Nexit dispõe de **um único ambiente operacional com dados reais**. Não existe ambiente paralelo de homologação, staging ou testes, e é proibido presumir que existam. Claude cria código e SQL incremental e publica no Git sem acessar VM ou banco. ChatGPT audita os commits. O responsável aplica as mudanças no único ambiente real e confere o resultado funcional, com cautela, backup e estratégia de reversão adequada quando houver alteração de banco. Não exigir 'homologação em ambiente separado' ou uma etapa adicional fictícia antes do próximo desenvolvimento. Documentos históricos HOM/AUD podem continuar existindo como rastreabilidade, mas a expressão 'homologação' não deve sugerir outro ambiente. Alterações do banco real nunca são automáticas nem realizadas pelas IAs.
