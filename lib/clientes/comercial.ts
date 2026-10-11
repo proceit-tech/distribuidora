@@ -11,16 +11,29 @@ type Opciones = { min: number; max: number; decimales: number };
 export function decimalAcotado(valor: unknown, etiqueta: string, { min, max, decimales }: Opciones): number | null {
   if (valor === null || valor === undefined || valor === "") return null;
 
-  const texto = typeof valor === "number" ? String(valor) : typeof valor === "string" ? valor.trim() : "";
+  const bruto = typeof valor === "number" ? String(valor) : typeof valor === "string" ? valor.trim() : "";
 
-  if (!/^-?[0-9]+(\.[0-9]+)?$/.test(texto)) throw new Error(`${etiqueta} no es un número válido.`);
+  // Formato estricto: dígitos con UN solo separador decimal (punto o coma) y nada más. Nunca se quitan ni se reinterpretan
+  // caracteres: signos, letras, separadores de miles (1.234,5), varios separadores o notación científica se rechazan.
+  if (bruto.startsWith("-") || bruto.startsWith("+")) {
+    throw new Error(`${etiqueta} no admite signo: ${bruto.startsWith("-") ? "no puede ser negativo" : "escriba el número sin el signo +"}.`);
+  }
+  if (!/^[0-9]+([.,][0-9]+)?$/.test(bruto)) {
+    throw new Error(`${etiqueta} no es un número válido: use solo dígitos y un único separador decimal (punto o coma), sin separador de miles.`);
+  }
 
-  const numero = Number(texto);
-  const fraccion = texto.split(".")[1] ?? "";
+  const [entera = "", fraccion = ""] = bruto.split(/[.,]/);
 
+  // "1.500" / "1,500": un separador seguido de exactamente 3 dígitos tras una parte entera corta es ambiguo (¿miles o decimales?).
+  if (fraccion.length === 3 && entera !== "0" && entera.length <= 3 && !entera.startsWith("0")) {
+    throw new Error(`${etiqueta} es ambiguo ("${bruto}"): escriba el número sin separador de miles (p. ej. 1500) o con decimales explícitos (p. ej. ${entera},${fraccion}0).`);
+  }
   if (fraccion.replace(/0+$/, "").length > decimales) {
     throw new Error(`${etiqueta} admite como máximo ${decimales} decimales.`);
   }
+
+  const numero = Number(`${entera}.${fraccion || "0"}`);
+
   if (numero < min) throw new Error(`${etiqueta} debe ser igual o mayor a ${min}.`);
   if (numero > max) throw new Error(`${etiqueta} debe ser igual o menor a ${max}.`);
 
@@ -47,15 +60,4 @@ export async function validarCondicionYMoneda(db: ConsultaDb, condicionPagoId: s
 
     if (ok.rowCount !== 1) throw new Error(`La moneda predeterminada (${monedaCodigo}) no está disponible.`);
   }
-}
-
-/**
- * Entrada de un importe/porcentaje en un campo de texto: acepta dígitos y un único separador decimal (punto o coma);
- * devuelve el valor canónico con punto decimal. No interpreta "." como separador de miles (evita convertir 2.5 en 25).
- */
-export function normalizarDecimalEntrada(valor: string): string {
-  const limpio = valor.replace(",", ".").replace(/[^0-9.]/g, "");
-  const primero = limpio.indexOf(".");
-
-  return primero === -1 ? limpio : `${limpio.slice(0, primero + 1)}${limpio.slice(primero + 1).replace(/\./g, "")}`;
 }

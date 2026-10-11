@@ -25,7 +25,7 @@ import {
 } from "@/lib/fiscal/calcular-dv-ruc";
 import { TelefonoPais } from "@/components/clientes/telefono-pais";
 import { validarCamposReceptor } from "@/lib/fiscal/campos-receptor";
-import { DESCUENTO_COMERCIAL, LIMITE_CREDITO, decimalAcotado, normalizarDecimalEntrada } from "@/lib/clientes/comercial";
+import { DESCUENTO_COMERCIAL, LIMITE_CREDITO, decimalAcotado } from "@/lib/clientes/comercial";
 import { pestanaDeErrorApi } from "@/lib/clientes/pestanas";
 
 import styles from "./page.module.css";
@@ -1608,7 +1608,7 @@ export default function ClienteDetallePage() {
                     onChange={(value) =>
                       update(
                         "limiteCredito",
-                        normalizarDecimalEntrada(value),
+                        value,
                       )
                     }
                   />
@@ -1623,7 +1623,7 @@ export default function ClienteDetallePage() {
                     onChange={(value) =>
                       update(
                         "limiteCreditoTemporal",
-                        normalizarDecimalEntrada(value),
+                        value,
                       )
                     }
                   />
@@ -1653,7 +1653,7 @@ export default function ClienteDetallePage() {
                     onChange={(value) =>
                       update(
                         "descuentoComercialPct",
-                        normalizarDecimalEntrada(value),
+                        value,
                       )
                     }
                   />

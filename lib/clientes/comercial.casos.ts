@@ -2,7 +2,7 @@
  * Casos de regresión de la pestaña Comercial y crédito (importes, porcentaje, entrada decimal, pestaña de error).
  * No se ejecutan automáticamente: `verificarCasosComercial()` devuelve los fallos (lista vacía = todos coinciden).
  */
-import { DESCUENTO_COMERCIAL, LIMITE_CREDITO, decimalAcotado, normalizarDecimalEntrada } from "@/lib/clientes/comercial";
+import { DESCUENTO_COMERCIAL, LIMITE_CREDITO, decimalAcotado } from "@/lib/clientes/comercial";
 import { pestanaDeErrorApi } from "@/lib/clientes/pestanas";
 
 export function verificarCasosComercial(): string[] {
@@ -44,10 +44,35 @@ export function verificarCasosComercial(): string[] {
   falla("12.345", DESCUENTO_COMERCIAL, "descuento con 3 decimales");
   falla("-0.5", DESCUENTO_COMERCIAL, "descuento negativo");
 
-  // Entrada decimal: coma o punto, un solo separador, sin miles
-  for (const [entrada, esperado] of [["2,5", "2.5"], ["2.5", "2.5"], ["1.234,5", "1.2345"], ["abc12", "12"], ["1..2", "1.2"], ["", ""]] as Array<[string, string]>) {
-    if (normalizarDecimalEntrada(entrada) !== esperado) fallos.push(`normalizarDecimalEntrada("${entrada}") ≠ "${esperado}"`);
-  }
+  // F-CLI-DEC-01: ninguna entrada se transforma en otra; coma o punto como ÚNICO separador decimal
+  ok("2,5", DESCUENTO_COMERCIAL, 2.5, "coma decimal válida");
+  ok("2.5", DESCUENTO_COMERCIAL, 2.5, "punto decimal válido");
+  ok("1500,5", LIMITE_CREDITO, 1500.5, "límite con coma decimal");
+  ok("0,125", LIMITE_CREDITO, 0.125, "0,125 (parte entera 0): decimal legítimo de 3 cifras");
+  ok("1000.1234", LIMITE_CREDITO, 1000.1234, "4 decimales con punto");
+  ok("1234567", LIMITE_CREDITO, 1234567, "entero sin separadores");
+  ok(1500.5, LIMITE_CREDITO, 1500.5, "número JSON");
+  falla("1.234,5", LIMITE_CREDITO, "1.234,5 (miles + decimal) NO se convierte en 1.2345");
+  falla("1,234.5", LIMITE_CREDITO, "1,234.5 (miles + decimal)");
+  falla("-25", LIMITE_CREDITO, "-25 NO se convierte en 25");
+  falla("-25", DESCUENTO_COMERCIAL, "descuento -25");
+  falla("+25", LIMITE_CREDITO, "signo + no válido");
+  falla("abc12", LIMITE_CREDITO, "abc12 NO se convierte en 12");
+  falla("12abc", LIMITE_CREDITO, "12abc");
+  falla("1..2", LIMITE_CREDITO, "dos puntos");
+  falla("1,,2", LIMITE_CREDITO, "dos comas");
+  falla("1.2.3", LIMITE_CREDITO, "varios separadores");
+  falla("1,5.5", LIMITE_CREDITO, "coma y punto mezclados");
+  falla("1.500", LIMITE_CREDITO, "1.500 ambiguo (¿miles o decimal?)");
+  falla("1,500", LIMITE_CREDITO, "1,500 ambiguo");
+  falla("25.000", DESCUENTO_COMERCIAL, "25.000 ambiguo/fuera de precisión");
+  falla(".5", LIMITE_CREDITO, "sin parte entera");
+  falla("5.", LIMITE_CREDITO, "separador sin decimales");
+  falla("1 000", LIMITE_CREDITO, "espacio como miles");
+  falla("12,345", DESCUENTO_COMERCIAL, "descuento con 3 decimales");
+  falla("100,01", DESCUENTO_COMERCIAL, "descuento > 100");
+  falla("1e3", LIMITE_CREDITO, "notación científica");
+  falla(" ", LIMITE_CREDITO, "solo espacios");
 
   // Pestaña de los mensajes de la API (alta y edición comparten la misma función)
   for (const [mensaje, pestana] of [
