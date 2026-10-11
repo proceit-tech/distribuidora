@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { borrarArchivo, guardarArchivo, nuevaClave, validarArchivo } from "@/lib/almacenamiento/archivos-privados";
 import { validarMetadatosDocumento } from "@/lib/clientes/documentos";
-import { UUID, autorizar, clienteNoEncontrado, leerFormulario, respuestaDeError } from "@/lib/clientes/documentos-http";
+import { UUID, antiguedadDelCliente, autorizar, clienteNoEncontrado, exigir, leerFormulario, respuestaDeError } from "@/lib/clientes/documentos-http";
 
 type Contexto = { params: Promise<{ id: string }> };
 
@@ -15,11 +15,26 @@ export async function POST(request: Request, contexto: Contexto) {
 
   if (!UUID.test(id)) return clienteNoEncontrado();
 
-  const auth = await autorizar("MODIFICAR");
+  const auth = await autorizar();
 
   if ("respuesta" in auth) return auth.respuesta;
 
   const empresaId = auth.sesion.user.empresaId;
+
+  // Permisos ANTES de leer el cuerpo: CLIENTES.EDITAR, o CLIENTES.CREAR solo mientras el cliente es recién creado (alta).
+  let antiguedad: number | null;
+
+  try {
+    antiguedad = await antiguedadDelCliente(id, empresaId);
+  } catch (e) {
+    return respuestaDeError(e, "Error al verificar el cliente del documento:");
+  }
+
+  if (antiguedad === null) return clienteNoEncontrado();
+
+  const denegado = exigir("CARGAR", auth.permisos, antiguedad);
+
+  if (denegado) return denegado;
   let clave: string | null = null;
 
   try {

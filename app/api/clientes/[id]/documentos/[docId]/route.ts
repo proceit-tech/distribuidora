@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { borrarArchivo, guardarArchivo, leerArchivo, nuevaClave, validarArchivo } from "@/lib/almacenamiento/archivos-privados";
 import { validarMetadatosDocumento } from "@/lib/clientes/documentos";
-import { UUID, autorizar, leerFormulario, noEncontrado, respuestaDeError } from "@/lib/clientes/documentos-http";
+import { UUID, autorizar, exigir, leerFormulario, noEncontrado, respuestaDeError } from "@/lib/clientes/documentos-http";
 
 type Contexto = { params: Promise<{ id: string; docId: string }> };
 
@@ -14,9 +14,13 @@ export async function GET(_request: Request, contexto: Contexto) {
 
   if (!idsValidos(id, docId)) return noEncontrado();
 
-  const auth = await autorizar("VER");
+  const auth = await autorizar();
 
   if ("respuesta" in auth) return auth.respuesta;
+
+  const denegado = exigir("DESCARGAR", auth.permisos, null);
+
+  if (denegado) return denegado;
 
   try {
     const { db } = await import("@/lib/db");
@@ -56,9 +60,13 @@ export async function PUT(request: Request, contexto: Contexto) {
 
   if (!idsValidos(id, docId)) return noEncontrado();
 
-  const auth = await autorizar("MODIFICAR");
+  const auth = await autorizar();
 
   if ("respuesta" in auth) return auth.respuesta;
+
+  const denegado = exigir("EDITAR_DATOS", auth.permisos, null);
+
+  if (denegado) return denegado;
 
   const empresaId = auth.sesion.user.empresaId;
   let claveNueva: string | null = null;
@@ -113,9 +121,13 @@ export async function DELETE(_request: Request, contexto: Contexto) {
 
   if (!idsValidos(id, docId)) return noEncontrado();
 
-  const auth = await autorizar("MODIFICAR");
+  const auth = await autorizar();
 
   if ("respuesta" in auth) return auth.respuesta;
+
+  const denegado = exigir("ELIMINAR", auth.permisos, null);
+
+  if (denegado) return denegado;
 
   try {
     const { db } = await import("@/lib/db");

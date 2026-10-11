@@ -408,3 +408,7 @@ Branch: `feature/NEXIT-2026-001-banco-demo`. Regra: uma funcionalidade por vez; 
 - **Outros pontos a verificar na próxima rodada:** fluxo de upload após cadastro se algum arquivo falhar (cliente pode já ter sido salvo), limite de leitura de multipart sem Content-Length confiável, tratamento de arquivos legados, NEX-028/029 com permissões/constraints e integrações reais. Zero testes executados; cobertura completa não comprovada.
 
 **Fluxo:** Claude corrige no Git, faz commit/push e para. ChatGPT audita; apenas responsável executa na VM mediante decisão expressa.
+
+### Clientes — corrección F-CLI-09-01 (auditoría 9e412c3)
+- `autorizar("MODIFICAR")` ya no acepta CREAR para todo. Nueva política pura `lib/clientes/permisos-documentos.ts`: descargar = VER; cargar = EDITAR, o CREAR solo con el cliente recién creado (≤ 15 min, antigüedad consultada con `empresa_id` de la sesión); reemplazar/editar datos/eliminar = solo EDITAR. Las cuatro rutas (GET/POST/PUT/DELETE) deciden antes de leer el cuerpo; el alta conserva su carga inicial. F-CLI-09-02 (taxa cero) no se tocó (descartado por la auditoría).
+- Casos escritos (NO ejecutados): `lib/clientes/permisos-documentos.casos.ts` (matriz de permisos, límites de la ventana, y verificación estática de `empresa_id` en cada sentencia de las rutas). Sin migración; NEX-022…NEX-029 siguen sin validar ni aplicar.
