@@ -23,3 +23,9 @@ Não usar substituição cega de font-size nem impor 15px a todos os elementos. 
 Uma tarefa específica para Sidebar + Dashboard; consultar protocolos GitHub antes de alterar; não iniciar Next Dev/Webpack/Turbopack no notebook; testes estáticos leves e commit/push na branch correta; revisão ChatGPT e deploy/homologação pelo responsável. Não reverter globalmente as 575 mudanças nem alterar outras telas de forma indiscriminada.
 
 **Critério final:** aprovado somente após novo print da VM e aceite expresso do responsável.
+
+## Segunda rodada visual — REPROVADA (2026-10-10)
+
+Após commits `5be99f2` e `a7c2bdb`, a sidebar foi ampliada de 236px para 268px. O responsável reprovou o resultado: aumentou espaço ocupado pelo menu e reduziu indevidamente a área principal. O print mostra os textos dos submenus mais completos, mas a proporção geral piorou.
+
+**Nova direção obrigatória:** voltar à largura aproximadamente original de 236px (sem aumentar a sidebar para resolver rótulos); otimizar recuos, espaçamento, pesos e fonte contextual de 12–13px para grupos e ~13px para submenus; permitir duas linhas somente quando necessário, manter navegação e menu recolhido. Não esconder informações do Dashboard e não fazer nova substituição global de fontes. Testar visualmente na VM após revisão do commit. **Estado: REPROVADO, correção ainda não implementada.**
