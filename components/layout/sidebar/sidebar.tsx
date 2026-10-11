@@ -128,7 +128,7 @@ export default function Sidebar({
           <Link
             href="/dashboard"
             className={styles.brand}
-            aria-label="DistribuNex"
+            aria-label="Nexit"
           >
             <span className={styles.brandMark}>
               <span />
@@ -139,8 +139,8 @@ export default function Sidebar({
             {!collapsed ? (
               <span className={styles.brandCopy}>
                 <strong>
-                  Distribu
-                  <em>Nex</em>
+                  Nex
+                  <em>it</em>
                 </strong>
                 <small>Una solución PROCEIT</small>
               </span>

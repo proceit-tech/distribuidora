@@ -28,12 +28,12 @@
 
 .brandArea {
   display: flex;
-  height: 68px;
-  flex: 0 0 68px;
+  height: 72px;
+  flex: 0 0 72px;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 0 13px 0 15px;
+  padding: 0 12px 0 14px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.07);
 }
 
@@ -86,9 +86,9 @@
 .brandCopy strong {
   display: block;
   color: #ffffff;
-  font-size: 16.33px;
+  font-size: 21px;
   font-weight: 850;
-  letter-spacing: -0.4px;
+  letter-spacing: -0.5px;
   white-space: nowrap;
 }
 
@@ -100,14 +100,13 @@
 .brandCopy small {
   display: block;
   margin-top: 2px;
-  overflow: hidden;
   color: #718ba2;
-  font-size: 14px;
-  font-weight: 750;
-  letter-spacing: 1.3px;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.9px;
   text-transform: uppercase;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  white-space: normal;
+  line-height: 1.25;
 }
 
 .collapseButton {
@@ -132,7 +131,7 @@
   flex: 1;
   overflow-x: hidden;
   overflow-y: auto;
-  padding: 12px 10px 10px;
+  padding: 14px 10px 12px;
   scrollbar-width: thin;
   scrollbar-color:
     rgba(67, 139, 158, 0.55)
@@ -142,7 +141,7 @@
 .dashboardLink {
   position: relative;
   display: flex;
-  min-height: 50px;
+  min-height: 52px;
   align-items: center;
   gap: 10px;
   border: 1px solid transparent;
@@ -181,8 +180,10 @@
 .groupIcon,
 .itemIcon {
   display: grid;
-  flex: 0 0 auto;
+  flex: 0 0 18px;
   place-items: center;
+  width: 18px;
+  height: 18px;
 }
 
 .primaryIcon {
@@ -206,20 +207,22 @@
 .primaryText strong,
 .primaryText small {
   display: block;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  white-space: normal;
+  font-size: 12.5px;
+  line-height: 1.25;
 }
 
 .primaryText strong {
   color: inherit;
-  font-size: 15px;
-  font-weight: 750;
+  font-size: 14.5px;
+  font-weight: 700;
+  white-space: normal;
+  line-height: 1.25;
 }
 
 .primaryText small {
   margin-top: 2px;
-  color: #68849b;
+  color: #8aa3b6;
   font-size: 14px;
 }
 
@@ -233,11 +236,11 @@
 }
 
 .menuCaption {
-  margin: 15px 8px 6px;
-  color: #546f86;
-  font-size: 14px;
-  font-weight: 850;
-  letter-spacing: 1.35px;
+  margin: 16px 8px 6px;
+  color: #7894ab;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 1.2px;
 }
 
 .compactDivider {
@@ -258,13 +261,13 @@
 .groupButton {
   display: flex;
   width: 100%;
-  min-height: 36px;
+  min-height: 38px;
   align-items: center;
   gap: 9px;
   border: 1px solid transparent;
   border-radius: 9px;
-  padding: 0 9px;
-  color: #7790a5;
+  padding: 4px 9px;
+  color: #93abbe;
   background: transparent;
   text-align: left;
 }
@@ -300,13 +303,12 @@
 .groupLabel {
   min-width: 0;
   flex: 1;
-  overflow: hidden;
-  font-size: 14px;
-  font-weight: 800;
-  letter-spacing: 0.85px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
   text-transform: uppercase;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  white-space: normal;
+  line-height: 1.25;
 }
 
 .groupChevron {
@@ -322,20 +324,20 @@
 
 .groupItems {
   display: grid;
-  gap: 1px;
-  margin: 2px 0 5px 21px;
-  padding: 3px 0 3px 8px;
+  gap: 2px;
+  margin: 2px 0 6px 18px;
+  padding: 3px 0 3px 6px;
   border-left: 1px solid rgba(68, 132, 151, 0.28);
 }
 
 .itemLink {
   display: flex;
-  min-height: 31px;
+  min-height: 34px;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   border-radius: 7px;
-  padding: 5px 8px;
-  color: #8199ad;
+  padding: 6px 8px;
+  color: #a3b8c9;
   text-decoration: none;
   transition:
     color 150ms ease,
@@ -370,20 +372,21 @@
 .itemLabel {
   min-width: 0;
   flex: 1;
-  overflow: hidden;
-  font-size: 15px;
-  font-weight: 560;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  font-size: 14px;
+  font-weight: 500;
+  white-space: normal;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
 }
 
 .badge {
   border-radius: 999px;
-  padding: 2px 5px;
+  padding: 2px 6px;
   color: #ffffff;
   background: #e5a12e;
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 800;
+  flex: 0 0 auto;
 }
 
 .footer {
@@ -420,13 +423,13 @@
 .companyAvatar,
 .userAvatar {
   display: grid;
-  width: 30px;
-  height:32px;
-  flex: 0 0 30px;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
   place-items: center;
   border-radius: 9px;
   color: #ffffff;
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 850;
 }
 
@@ -460,38 +463,37 @@
 .userText strong,
 .userText small {
   display: block;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
 }
 
 .companyText small {
   color: #54758c;
-  font-size: 14px;
-  font-weight: 800;
-  letter-spacing: 0.8px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
 }
 
 .companyText strong,
 .userText strong {
   margin-top: 1px;
   color: #eaf2f7;
-  font-size: 15px;
-  font-weight: 750;
+  font-size: 14px;
+  font-weight: 700;
 }
 
 .companyText span,
 .userText small {
   margin-top: 1px;
-  color: #68859b;
-  font-size: 14px;
+  color: #7d98ad;
+  font-size: 12.5px;
 }
 
 .logoutButton {
   display: grid;
-  width: 28px;
-  height: 28px;
-  flex: 0 0 28px;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
   place-items: center;
   border: 0;
   border-radius: 8px;
@@ -513,7 +515,7 @@
   .collapsed {
     position: fixed;
     inset: 0 auto 0 0;
-    width: 236px;
+    width: 268px;
     transform: translateX(-100%);
     transition: transform 180ms ease;
   }
@@ -530,4 +532,14 @@
     border: 0;
     background: rgba(4, 19, 34, 0.55);
   }
+}
+
+/* Menú recolhido: marca y botón apilados para que ambos quepan en el ancho reducido. */
+.collapsed .brandArea {
+  height: auto;
+  flex: 0 0 auto;
+  flex-direction: column;
+  justify-content: center;
+  gap: 10px;
+  padding: 12px 0;
 }
