@@ -40,3 +40,11 @@ ChatGPT documenta especificação, critérios e revisão; **não altera código 
 
 ## Implementação (2026-10-11) — aguardando build, captura DEPOIS e homologação na VM
 LIS-01 a LIS-12 implementados em `/clientes` (tela de referência). Decisões: tabela semântica com colunas Cliente, Identificación, Comercial, Contacto principal, Crédito, Estado e Acciones (Crédito mantido para não ocultar informação já exibida); ordenação por Cliente, Identificación, Comercial, Crédito e Estado sobre o conjunto filtrado completo antes de paginar (todos os clientes já são carregados pela API atual; ciclo sem ordem → asc → desc → sem ordem; sem ordem = ordem da API); única ação real existente: "Ver ficha" (`/clientes/[id]`, que também edita). Descrição genérica removida. APIs, banco e permissões inalterados. Nada validado no notebook por determinação do responsável.
+
+## Avaliação visual DEPOIS — 2026-10-11
+
+O responsável enviou captura da versão publicada de `/clientes` após commit `081b587`. **Avaliação ChatGPT: APROVADO VISUALMENTE para o estado sem registros**, sujeito ao aceite humano explícito. Cabeçalho compacto, quatro KPIs, toolbar única com busca/filtros, cabeçalhos de tabela, paginação e empty state apresentam hierarquia e proporção melhores do que ANTES. Não alterar visual novamente sem apontamento concreto.
+
+**Pendentes de homologação funcional:** com clientes reais, conferir conteúdo das células, ordenação asc/desc, filtros, paginação, ações e responsividade. No print havia 0 de 0 clientes, portanto essas funcionalidades não foram demonstradas.
+
+**Evidências:** ANTES e DEPOIS recebidas em conversa. Os arquivos PNG **ainda não estão versionados no GitHub**; nomes previstos em `capturas/` permanecem pendentes de upload e verificação. Não declarar arquivo físico presente.
