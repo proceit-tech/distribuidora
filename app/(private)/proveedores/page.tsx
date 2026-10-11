@@ -16,6 +16,7 @@ import type {
 import { compararTexto, ordenarLista, siguienteOrden, type Orden } from "@/components/ui/lista-padrao/orden";
 import { ThOrdenable } from "@/components/ui/lista-padrao/th-ordenable";
 import ui from "@/components/ui/lista-padrao/lista.module.css";
+import { formatearMonto } from "@/lib/formato/listas";
 
 import styles from "./page.module.css";
 
@@ -38,25 +39,8 @@ type RiesgoFiltro =
   | "TODOS"
   | ProveedorNivelRiesgo;
 
-function money(
-  value: number,
-  currency: string,
-) {
-  if (currency === "USD") {
-    return `USD ${new Intl.NumberFormat(
-      "es-PY",
-      {
-        maximumFractionDigits: 2,
-      },
-    ).format(value)}`;
-  }
-
-  return `Gs. ${new Intl.NumberFormat(
-    "es-PY",
-    {
-      maximumFractionDigits: 0,
-    },
-  ).format(value)}`;
+function money(value: number, currency: string) {
+  return formatearMonto(value, currency);
 }
 
 function documento(
@@ -135,6 +119,23 @@ function riesgoClass(
 
   return styles.riskNeutral;
 }
+
+const HOMOLOGACION_TEXTO: Record<string, string> = {
+  HOMOLOGADO: "Homologado",
+  PENDIENTE: "Pendiente",
+  EN_EVALUACION: "En evaluación",
+  SUSPENDIDO: "Suspendido",
+  VENCIDO: "Vencido",
+  RECHAZADO: "Rechazado",
+};
+
+const RIESGO_TEXTO: Record<string, string> = {
+  NO_EVALUADO: "Riesgo no evaluado",
+  BAJO: "Riesgo bajo",
+  MEDIO: "Riesgo medio",
+  ALTO: "Riesgo alto",
+  CRITICO: "Riesgo crítico",
+};
 
 type FilaApi = {
   id: string;
@@ -686,7 +687,7 @@ export default function ProveedoresPage() {
                     <td>
                       <div className={ui.cell}>
                         <strong>{proveedor.telefono || "Sin teléfono"}</strong>
-                        <span className={ui.breakable}>{proveedor.email || "Sin correo"}</span>
+                        <span className={ui.email}>{proveedor.email || "Sin correo"}</span>
                       </div>
                     </td>
 
@@ -704,10 +705,10 @@ export default function ProveedoresPage() {
                       <div className={ui.cell}>
                         <div className={styles.badgeRow}>
                           <span className={[styles.badge, homologacionClass(proveedor.estadoHomologacion)].join(" ")}>
-                            {proveedor.estadoHomologacion.replaceAll("_", " ")}
+                            {HOMOLOGACION_TEXTO[proveedor.estadoHomologacion] ?? proveedor.estadoHomologacion}
                           </span>
                           <span className={[styles.badge, riesgoClass(proveedor.nivelRiesgo)].join(" ")}>
-                            {proveedor.nivelRiesgo}
+                            {RIESGO_TEXTO[proveedor.nivelRiesgo] ?? proveedor.nivelRiesgo}
                           </span>
                         </div>
                         <span>

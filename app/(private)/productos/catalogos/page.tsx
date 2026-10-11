@@ -403,7 +403,7 @@ export default function CatalogosProductosPage() {
                 paginaActual.map((f) => (
                   <tr key={f.id} className={ui.row}>
                     <td>
-                      <span className={ui.mono}>{f.codigo || "—"}</span>
+                      {f.codigo ? <span className={ui.mono}>{f.codigo}</span> : <span className={ui.muted}>Sin código</span>}
                     </td>
                     <td>
                       <strong>{f.nombre}</strong>

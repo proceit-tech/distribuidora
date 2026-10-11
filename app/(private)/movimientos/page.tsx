@@ -17,6 +17,7 @@ import {
 import { compararTexto, ordenarLista, siguienteOrden, type Orden } from "@/components/ui/lista-padrao/orden";
 import { ThOrdenable } from "@/components/ui/lista-padrao/th-ordenable";
 import ui from "@/components/ui/lista-padrao/lista.module.css";
+import { formatearCantidad, formatearFechaIso } from "@/lib/formato/listas";
 
 const PAGE_SIZE = 20;
 
@@ -375,7 +376,7 @@ export default function MovimientosPage() {
                         ) : null}
                       </strong>
                       <span>
-                        {mov.fecha} · {mov.hora}
+                        {formatearFechaIso(mov.fecha)} · {mov.hora}
                         {mov.documentoReferencia ? ` · ${mov.documentoReferencia}` : ""}
                       </span>
                     </div>
@@ -402,7 +403,7 @@ export default function MovimientosPage() {
                   <td className={ui.numeric}>
                     <div className={ui.cell}>
                       <strong className={ui.mono}>
-                        {mov.cantidad} {mov.unidadMedidaNombre}
+                        {formatearCantidad(mov.cantidad)} {mov.unidadMedidaNombre}
                       </strong>
                       <span>
                         {mov.lote ? `Lote ${mov.lote}` : mov.propiedad === "TERCERO" ? "Stock tercero" : "Stock propio"}

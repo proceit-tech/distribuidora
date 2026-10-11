@@ -414,6 +414,7 @@
 
 .breakable {
   overflow-wrap: anywhere;
+  text-transform: lowercase;
 }
 
 .statuses {

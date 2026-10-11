@@ -762,6 +762,94 @@
   background: #effaf4;
 }
 
+/* ---- Refinamiento de consistencia ---- */
+/* Toolbar densa (Productos, Stock): búsqueda en su propia fila; filtros repartidos; limpiar + contador juntos. */
+.toolbarDensa .search {
+  flex: 1 1 100%;
+}
+
+.toolbarDensa .filterField {
+  flex: 1 1 150px;
+  max-width: 240px;
+}
+
+.toolbarDensa .filterField select {
+  width: 100%;
+  min-width: 0;
+}
+
+.toolbarEnd {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+}
+
+.toolbarDensa .toolbarEnd {
+  align-self: flex-end;
+  min-height: 36px;
+}
+
+.toolbarEnd .resultCount {
+  margin-left: 0;
+}
+
+/* Indicadores: composición por cantidad de tarjetas (4 / 6) sin dejar tarjetas huérfanas. */
+.summaryGrid:has(> :nth-child(4):last-child) {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.summaryGrid:has(> :nth-child(6):last-child) {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+@media (min-width: 1500px) {
+  .summaryGrid:has(> :nth-child(6):last-child) {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 1000px) {
+  .summaryGrid:has(> :nth-child(4):last-child),
+  .summaryGrid:has(> :nth-child(6):last-child) {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 560px) {
+  .summaryGrid:has(> :nth-child(4):last-child),
+  .summaryGrid:has(> :nth-child(6):last-child) {
+    grid-template-columns: 1fr;
+  }
+}
+
+.email {
+  text-transform: lowercase;
+  overflow-wrap: anywhere;
+}
+
+.muted {
+  color: #8092a4;
+  font-weight: 450;
+}
+
+.clamp2 {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow-wrap: anywhere;
+}
+
+.legendNote {
+  margin: 0;
+  padding: 8px 14px;
+  border-top: 1px solid #edf2f5;
+  color: #6f8498;
+  font-size: 12px;
+}
+
 @media (max-width: 760px) {
   .page {
     padding: 12px;

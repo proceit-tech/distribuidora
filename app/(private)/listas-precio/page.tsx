@@ -73,6 +73,21 @@ function formatearFecha(
   );
 }
 
+function textoVigencia(lista: ListaPrecioFila) {
+  const desde = lista.vigenteDesde ? formatearFecha(lista.vigenteDesde) : "";
+  const hasta = lista.vigenteHasta ? formatearFecha(lista.vigenteHasta) : "";
+
+  if (desde && hasta) {
+    return `${desde} → ${hasta}`;
+  }
+
+  if (desde) {
+    return `Desde ${desde} · sin vencimiento`;
+  }
+
+  return hasta ? `Hasta ${hasta}` : "Sin vigencia definida";
+}
+
 function formatMoneda(
   moneda: ListaPrecioMoneda,
 ) {
@@ -557,8 +572,9 @@ export default function ListasPrecioPage() {
                           <Link href={`/listas-precio/${lista.id}`} className={ui.clientName}>
                             {lista.nombre}
                           </Link>
-                          <span className={ui.code}>
-                            {lista.codigo} · {lista.descripcion || "Sin descripción"}
+                          <span className={ui.code}>{lista.codigo}</span>
+                          <span className={[ui.code, ui.clamp2].join(" ")} title={lista.descripcion || undefined}>
+                            {lista.descripcion || "Sin descripción"}
                           </span>
                           <span className={ui.code}>
                             {lista.productosCount} productos · {formatMoneda(lista.monedaCodigo)} ·{" "}
@@ -583,9 +599,7 @@ export default function ListasPrecioPage() {
                     <td>
                       <div className={ui.cell}>
                         <strong>{getModoLabel(lista)}</strong>
-                        <span>
-                          {formatearFecha(lista.vigenteDesde)} → {formatearFecha(lista.vigenteHasta)}
-                        </span>
+                        <span>{textoVigencia(lista)}</span>
                       </div>
                     </td>
 

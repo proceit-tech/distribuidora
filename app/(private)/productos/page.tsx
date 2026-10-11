@@ -15,6 +15,7 @@ import {
 import { compararTexto, ordenarLista, siguienteOrden, type Orden } from "@/components/ui/lista-padrao/orden";
 import { ThOrdenable } from "@/components/ui/lista-padrao/th-ordenable";
 import ui from "@/components/ui/lista-padrao/lista.module.css";
+import { formatearCantidad, formatearMonto } from "@/lib/formato/listas";
 
 const PAGE_SIZE = 20;
 
@@ -30,9 +31,7 @@ type TipoFiltro =
   | ProductoTipo;
 
 function money(value: number, moneda: string) {
-  return `${moneda || ""} ${new Intl.NumberFormat("es-PY", {
-    maximumFractionDigits: 2,
-  }).format(value)}`.trim();
+  return formatearMonto(value, moneda);
 }
 
 function initials(value: string) {
@@ -524,7 +523,7 @@ export default function ProductosPage() {
 
         <article className={[ui.summaryCard, ui.summaryBlue].join(" ")}>
           <span>Unidades inventario</span>
-          <strong>{new Intl.NumberFormat("es-PY", { maximumFractionDigits: 2 }).format(resumen.inventario)}</strong>
+          <strong>{formatearCantidad(resumen.inventario)}</strong>
           <small>Stock disponible consolidado</small>
         </article>
 
@@ -542,7 +541,7 @@ export default function ProductosPage() {
       </section>
 
       <section className={ui.contentCard}>
-        <div className={ui.toolbar}>
+        <div className={[ui.toolbar, ui.toolbarDensa].join(" ")}>
           <label className={ui.search}>
             <span aria-hidden="true">⌕</span>
 
@@ -628,13 +627,15 @@ export default function ProductosPage() {
             </select>
           </label>
 
-          <button type="button" className={ui.clearButton} onClick={limpiarFiltros}>
-            Limpiar filtros
-          </button>
+          <div className={ui.toolbarEnd}>
+            <button type="button" className={ui.clearButton} onClick={limpiarFiltros}>
+              Limpiar filtros
+            </button>
 
-          <span className={ui.resultCount} aria-live="polite">
+            <span className={ui.resultCount} aria-live="polite">
             {filtrados.length} de {resumen.total}
           </span>
+          </div>
         </div>
 
         <div className={ui.tableScroll}>
@@ -723,16 +724,12 @@ export default function ProductosPage() {
                     <td className={ui.numeric}>
                       <div className={ui.cell}>
                         <strong className={ui.mono}>
-                          {new Intl.NumberFormat("es-PY", { maximumFractionDigits: 2 }).format(
-                            Number(producto.stockDisponible || 0),
-                          )}{" "}
+                          {formatearCantidad(Number(producto.stockDisponible || 0))}{" "}
                           {producto.unidadMedidaNombre}
                         </strong>
                         <span>
                           Inicial:{" "}
-                          {new Intl.NumberFormat("es-PY", { maximumFractionDigits: 2 }).format(
-                            Number(producto.inventarioInicial || 0),
-                          )}
+                          {formatearCantidad(Number(producto.inventarioInicial || 0))}
                         </span>
                         <span>
                           <span className={Number(producto.stockDisponible || 0) <= 0 ? ui.statusDanger : ui.statusActive}>
@@ -759,7 +756,7 @@ export default function ProductosPage() {
                               )}
                         </span>
                         <span>
-                          Costo promedio: {producto.costoPromedio === null ? "—" : money(producto.costoPromedio, "")}
+                          Costo promedio: {producto.costoPromedio === null ? "—" : money(producto.costoPromedio, "PYG")}
                         </span>
                       </div>
                     </td>

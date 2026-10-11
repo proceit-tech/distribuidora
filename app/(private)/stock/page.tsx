@@ -18,6 +18,7 @@ import {
 import { compararTexto, ordenarLista, siguienteOrden, type Orden } from "@/components/ui/lista-padrao/orden";
 import { ThOrdenable } from "@/components/ui/lista-padrao/th-ordenable";
 import ui from "@/components/ui/lista-padrao/lista.module.css";
+import { formatearCantidad, formatearMonto } from "@/lib/formato/listas";
 
 const PAGE_SIZE = 25;
 
@@ -35,12 +36,7 @@ type PropiedadFiltro =
 let MONEDA_BASE = "PYG";
 
 function money(value: number) {
-  return `${MONEDA_BASE === "PYG" ? "Gs." : MONEDA_BASE} ${new Intl.NumberFormat(
-    "es-PY",
-    {
-      maximumFractionDigits: 0,
-    },
-  ).format(value)}`;
+  return formatearMonto(value, MONEDA_BASE);
 }
 
 function normalizar(value: string) {
@@ -837,7 +833,7 @@ export default function StockPage() {
 
         <article className={[ui.summaryCard, ui.summaryBlue].join(" ")}>
           <span>Unidades disponibles</span>
-          <strong>{new Intl.NumberFormat("es-PY", { maximumFractionDigits: 2 }).format(resumen.disponible)}</strong>
+          <strong>{formatearCantidad(resumen.disponible)}</strong>
           <small>Stock disponible</small>
         </article>
 
@@ -867,7 +863,7 @@ export default function StockPage() {
       </section>
 
       <section className={ui.contentCard}>
-        <div className={ui.toolbar}>
+        <div className={[ui.toolbar, ui.toolbarDensa].join(" ")}>
           <label className={ui.search}>
             <span aria-hidden="true">⌕</span>
 
@@ -959,13 +955,15 @@ export default function StockPage() {
             </select>
           </label>
 
-          <button type="button" className={ui.clearButton} onClick={limpiar}>
-            Limpiar filtros
-          </button>
+          <div className={ui.toolbarEnd}>
+            <button type="button" className={ui.clearButton} onClick={limpiar}>
+              Limpiar filtros
+            </button>
 
-          <span className={ui.resultCount} aria-live="polite">
+            <span className={ui.resultCount} aria-live="polite">
             {filtrados.length} productos
           </span>
+          </div>
         </div>
 
         <div className={ui.tableScroll}>
@@ -1020,19 +1018,17 @@ export default function StockPage() {
                   <td className={ui.numeric}>
                     <div className={ui.cell}>
                       <strong className={ui.mono}>
-                        {new Intl.NumberFormat("es-PY", { maximumFractionDigits: 2 }).format(
-                          Number(item.disponible || 0),
-                        )}{" "}
+                        {formatearCantidad(Number(item.disponible || 0))}{" "}
                         {item.unidadMedidaNombre}
                       </strong>
                       <span>
-                        <span className={ui.statusInfo} title="Reservado">
+                        <span className={ui.statusInfo} title="Reservado" aria-label={`Reservado ${item.reservado}`}>
                           R {item.reservado}
                         </span>{" "}
-                        <span className={ui.statusWarning} title="Cuarentena">
+                        <span className={ui.statusWarning} title="Cuarentena" aria-label={`Cuarentena ${item.cuarentena}`}>
                           C {item.cuarentena}
                         </span>{" "}
-                        <span className={ui.statusPurple} title="En tránsito">
+                        <span className={ui.statusPurple} title="En tránsito" aria-label={`En tránsito ${item.transito}`}>
                           T {item.transito}
                         </span>
                       </span>
@@ -1108,6 +1104,11 @@ export default function StockPage() {
             </tbody>
           </table>
         </div>
+
+        <p className={ui.legendNote}>
+          R = reservado · C = cuarentena · T = en tránsito. Sobrestock: existencia física propia (disponible + reservado +
+          cuarentena) mayor que el stock máximo del producto.
+        </p>
 
         <footer className={ui.pagination}>
           <span>
