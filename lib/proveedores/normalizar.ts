@@ -364,14 +364,23 @@ export function normalizarRetenciones(valor: unknown): RetencionNormalizada[] {
 
     pares(desde, hasta, `${p}.fechaVigenciaHasta`, `La vigencia final de la retención ${n} no puede ser anterior a la inicial.`);
 
+    const certificadoObligatorio = booleano(r.certificadoObligatorio, false);
+    const activa = booleano(r.activa, true);
+    const documentoCertificadoId = uuidOpcional(r.documentoCertificadoId, `${p}.documentoCertificadoId`, `El certificado de la retención ${n}`);
+
+    // DEC-PRV-08: una retención que exige certificado solo puede estar activa con un certificado válido vinculado.
+    if (certificadoObligatorio && activa && !documentoCertificadoId) {
+      bad(`La retención ${n} exige certificado: vincule un certificado de retención válido o déjela inactiva.`, `${p}.documentoCertificadoId`);
+    }
+
     return {
       id: idPersistido(r.id),
       tipo: tipo as RetencionNormalizada["tipo"],
       impuestoId: uuidOpcional(r.impuestoId, `${p}.impuestoId`, `El impuesto de la retención ${n}`),
       porcentaje: pct.valor as string,
-      certificadoObligatorio: booleano(r.certificadoObligatorio, false),
-      activa: booleano(r.activa, true),
-      documentoCertificadoId: uuidOpcional(r.documentoCertificadoId, `${p}.documentoCertificadoId`, `El certificado de la retención ${n}`),
+      certificadoObligatorio,
+      activa,
+      documentoCertificadoId,
       fechaVigenciaDesde: desde,
       fechaVigenciaHasta: hasta,
       observacion: opcional(r.observacion, `${p}.observacion`, `La observación de la retención ${n}`, 1000),

@@ -4,6 +4,8 @@ import type { PoolClient } from "pg";
 import { resolverUbicacionParaguay } from "@/lib/geografia/referencia";
 import { ErrorValidacion } from "@/lib/proveedores/errores";
 import type { DatosProveedor } from "@/lib/proveedores/normalizar";
+import { certificadoValido } from "@/lib/proveedores/documentos";
+import { hoyAsuncion } from "@/lib/proveedores/fechas";
 import { registrarEvento, sincronizarHijos, diferenciasFila } from "@/lib/proveedores/sincronizar";
 
 // Persistencia de Proveedores (POST y PUT). Toda consulta es parametrizada; empresa_id siempre llega de la sesión autenticada.
@@ -63,6 +65,36 @@ export async function validarReferencias(conexion: PoolClient, d: DatosProveedor
   for (const [i, retencion] of d.retenciones.entries()) {
     if (retencion.impuestoId && !(await existeActivo(conexion, "SELECT 1 FROM impuestos WHERE id = $1 AND activo = true", [retencion.impuestoId]))) {
       falla(`El impuesto de la retención ${i + 1} no existe o está inactivo.`, `retenciones.${i}.impuestoId`);
+    }
+  }
+}
+
+/**
+ * Certificados de retención (DEC-PRV-08): el documento vinculado debe ser del MISMO proveedor y, para activar una retención que lo
+ * exige, un certificado de retención con archivo, no eliminado y no vencido. En el alta (proveedorId = null) aún no hay documentos.
+ */
+export async function validarCertificados(conexion: PoolClient, empresaId: string, proveedorId: string | null, d: DatosProveedor) {
+  const hoy = hoyAsuncion();
+
+  for (const [i, r] of d.retenciones.entries()) {
+    if (!r.documentoCertificadoId) continue;
+
+    const campo = `retenciones.${i}.documentoCertificadoId`;
+
+    if (proveedorId === null) throw new ErrorValidacion("Aún no hay documentos: guarde el proveedor, cargue el certificado y luego vincúlelo a la retención.", campo);
+
+    const doc = await conexion.query(
+      `SELECT tipo, almacen_clave IS NOT NULL AS tiene_archivo, eliminado_at IS NOT NULL AS eliminado, coalesce(to_char(fecha_vencimiento, 'YYYY-MM-DD'), '') AS fv
+         FROM proveedor_documentos WHERE id = $1 AND proveedor_id = $2 AND empresa_id = $3`,
+      [r.documentoCertificadoId, proveedorId, empresaId],
+    );
+
+    if (!doc.rowCount) throw new ErrorValidacion(`El certificado de la retención ${i + 1} no existe en este proveedor.`, campo);
+
+    const valido = certificadoValido({ tipo: doc.rows[0].tipo, tieneArchivo: doc.rows[0].tiene_archivo === true, eliminado: doc.rows[0].eliminado === true, fechaVencimiento: doc.rows[0].fv }, hoy);
+
+    if (r.certificadoObligatorio && r.activa && !valido) {
+      throw new ErrorValidacion(`El certificado de la retención ${i + 1} no es válido: debe ser un certificado de retención con archivo, vigente y no eliminado.`, campo);
     }
   }
 }

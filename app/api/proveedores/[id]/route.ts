@@ -6,6 +6,8 @@ import { ErrorValidacion } from "@/lib/proveedores/errores";
 import { hoyAsuncion } from "@/lib/proveedores/fechas";
 import { estadoOperativo, homologacionVencida } from "@/lib/proveedores/gobernanza";
 import { autorizarProveedores } from "@/lib/proveedores/http";
+import { certificadoValido } from "@/lib/proveedores/documentos";
+import { decidirAccesoDocumento } from "@/lib/proveedores/permisos-documentos";
 import { normalizarProveedor } from "@/lib/proveedores/normalizar";
 import {
   columnasProveedor,
@@ -13,6 +15,7 @@ import {
   registrarEvento,
   respuestaError,
   sincronizarHijos,
+  validarCertificados,
   validarReferencias,
   verificarDocumentoUnico,
   type ProveedorBody,
@@ -94,11 +97,13 @@ export async function GET(_request: Request, contexto: Contexto) {
          p.permite_entrega_parcial AS "permiteEntregaParcial",
          coalesce(p.observacion, '') AS observacion,
          p.activo, p.bloqueado, coalesce(p.motivo_bloqueo, '') AS "motivoBloqueo",
+         (p.creado_por IS NOT DISTINCT FROM $3::uuid AND p.creado_por IS NOT NULL) AS "esCreador",
+         p.carga_documentos_inicial_abierta AS "cargaDocumentosInicialAbierta",
          p.creado_at AS "creadoEn", p.actualizado_at AS "actualizadoEn",
          to_char(p.actualizado_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US') AS version
        FROM proveedores p
        WHERE p.id = $1 AND p.empresa_id = $2`,
-      [id, empresaId],
+      [id, empresaId, session.user.id],
     );
 
     if (!principal.rowCount) {
@@ -148,7 +153,8 @@ export async function GET(_request: Request, contexto: Contexto) {
       ),
       db.query(
         `SELECT id, tipo, impuesto_id AS "impuestoId", porcentaje::text AS porcentaje,
-                certificado_obligatorio AS "certificadoObligatorio",
+                certificado_obligatorio AS "certificadoObligatorio", activa,
+                documento_certificado_id AS "documentoCertificadoId",
                 coalesce(to_char(fecha_vigencia_desde,'YYYY-MM-DD'),'') AS "fechaVigenciaDesde",
                 coalesce(to_char(fecha_vigencia_hasta,'YYYY-MM-DD'),'') AS "fechaVigenciaHasta",
                 coalesce(observacion,'') AS observacion
@@ -156,11 +162,12 @@ export async function GET(_request: Request, contexto: Contexto) {
         [id, empresaId],
       ),
       db.query(
-        `SELECT id, tipo, nombre_archivo AS "nombreArchivo", url_archivo AS "urlArchivo",
+        `SELECT id, tipo, nombre_archivo AS "nombreArchivo", coalesce(url_archivo,'') AS "urlArchivo",
+                (almacen_clave IS NOT NULL) AS "tieneArchivo", tamano_bytes, coalesce(tipo_mime,'') AS "tipoMime", version_vigente AS version,
                 coalesce(to_char(fecha_emision,'YYYY-MM-DD'),'') AS "fechaEmision",
                 coalesce(to_char(fecha_vencimiento,'YYYY-MM-DD'),'') AS "fechaVencimiento",
                 coalesce(observacion,'') AS observacion
-         FROM proveedor_documentos WHERE proveedor_id = $1 AND empresa_id = $2 ORDER BY creado_at, id`,
+         FROM proveedor_documentos WHERE proveedor_id = $1 AND empresa_id = $2 AND eliminado_at IS NULL ORDER BY creado_at, id`,
         [id, empresaId],
       ),
     ]);
@@ -180,9 +187,20 @@ export async function GET(_request: Request, contexto: Contexto) {
     const acceso = await autorizarProveedores();
     const permisos = "permisos" in acceso ? acceso.permisos : null;
 
+    const permisosDoc = permisos ?? { ver: false, editar: false, crear: false };
+    const contextoDoc = { esCreador: base.esCreador === true, cargaInicialAbierta: base.cargaDocumentosInicialAbierta === true };
+    const puede = (a: Parameters<typeof decidirAccesoDocumento>[0]) => decidirAccesoDocumento(a, permisosDoc, contextoDoc).permitido;
+    const documentosLista = documentos.rows.map((d) => ({ ...d, tamanoBytes: d.tamano_bytes === null ? null : Number(d.tamano_bytes), version: Number(d.version), tamano_bytes: undefined }));
+    const retencionesLista = retenciones.rows.map((r) => {
+      const doc = documentosLista.find((d) => d.id === r.documentoCertificadoId);
+
+      return { ...r, certificadoValido: doc ? certificadoValido({ tipo: doc.tipo, tieneArchivo: doc.tieneArchivo, eliminado: false, fechaVencimiento: doc.fechaVencimiento }, hoy) : false };
+    });
+
     return NextResponse.json({
       proveedor: {
         ...base,
+        permisosDocumentos: { cargar: puede("CARGAR"), gestionar: puede("EDITAR_DATOS"), historial: puede("VER_HISTORIAL"), finalizar: puede("FINALIZAR_CARGA") },
         homologacionVencida: homologacionVencida(gobierno, hoy),
         estadoOperativo: estadoOperativo(gobierno, hoy),
         permisos: {
@@ -195,8 +213,8 @@ export async function GET(_request: Request, contexto: Contexto) {
         contactos: contactos.rows,
         direcciones: direcciones.rows,
         cuentasBancarias: cuentas.rows,
-        retenciones: retenciones.rows,
-        documentos: documentos.rows,
+        retenciones: retencionesLista,
+        documentos: documentosLista,
       },
     });
   } catch (error) {
@@ -273,11 +291,14 @@ export async function PUT(request: Request, contexto: Contexto) {
 
     await validarReferencias(conexion, datos, empresaId);
     await verificarDocumentoUnico(conexion, empresaId, datos, id);
+    await validarCertificados(conexion, empresaId, id, datos);
 
     const columnas = columnasProveedor(datos);
     const sets = columnas.map(([nombre], i) => `${nombre} = $${i + 3}`);
     // pais_nombre se recalcula desde el catálogo cuando cambia el país (el trigger solo completa si es NULL).
     sets.push(`pais_nombre = (SELECT nombre FROM referencia_geografica_paises WHERE codigo = $${columnas.length + 3})`);
+    // La primera edición del proveedor cierra la carga inicial de documentos (quien solo tiene CREAR deja de poder agregarlos).
+    sets.push("carga_documentos_inicial_abierta = false");
 
     const actualizado = await conexion.query(
       `UPDATE proveedores x SET ${sets.join(", ")} FROM proveedores old

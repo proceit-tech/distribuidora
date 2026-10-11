@@ -1,0 +1,83 @@
+# Proveedores V1 — Diccionario, trazabilidad y contratos (2026-10-11)
+
+Fuente de requisitos: `MATRIZ-NORMATIVA-CAMPO-A-CAMPO-PROVEEDORES-V1` (94 ítems + DEC-PRV-01…10), `ADENDA-14-CORRECCIONES-PROVEEDORES` (PRV-A01…A14) y la revisión visual de las ocho pestañas. **Estado: implementado en Git, NO homologado.** Las migraciones NEX-033…036 están versionadas, **no aplicadas ni validadas en PostgreSQL**. Ningún texto de este documento afirma que el banco real las ejecutó.
+
+## 1. Migraciones (orden, dependencias y qué verificar tras aplicarlas)
+
+| Migración | Contenido | Requiere | Reversión (aborta si perdería datos) |
+|---|---|---|---|
+| NEX-033 | `razon_social`/`nombre_fantasia` hasta 255 (PRV-A02); código PRV inmutable (trigger) | NEX-006 | `reversion-NEX-033.sql` (aborta si hay nombres > 200) |
+| NEX-034 | `proveedor_eventos` (auditoría append-only), permisos `PROVEEDORES.HOMOLOGAR / EVALUAR_RIESGO / BLOQUEAR / APROBAR_BANCO`, `bloqueado_por/at`, motivo de bloqueo obligatorio (NOT VALID), `proveedor_elegible_para_compra()` | NEX-006, NEX-033 | `reversion-NEX-034.sql` (aborta con auditoría, bloqueos con autor o permisos asignados) |
+| NEX-035 | Aprobación de cuentas (`estado_aprobacion`), `proveedor_cuenta_revisiones`, principal por moneda (solo aprobadas), `proveedor_cuenta_pagable()` | NEX-034 | `reversion-NEX-035.sql` (aborta con aprobaciones/revisiones) |
+| NEX-036 | Documentos como archivos privados (versiones, exclusión lógica), `carga_documentos_inicial_abierta`, retenciones `activa` + `documento_certificado_id` + trigger de activación | NEX-034 | `reversion-NEX-036.sql` (aborta con archivos, versiones, eliminados o retenciones vinculadas) |
+
+Aplicar **en este orden**, después de NEX-001…032 (el responsable informó NEX-001…032 registradas; confirmar con `aplicar-migraciones.sh --solo-listar`). Con backup previo (pg_dump) y autorización expresa. El volumen privado (`NEXIT_ARCHIVOS_DIR`) es prerrequisito de los documentos (`documentacao/infra/VOLUMEN-ARCHIVOS-PRIVADOS.md`).
+
+Verificaciones sugeridas tras aplicar (solo lectura, por el responsable): existencia de las tablas/columnas/índices/triggers/funciones listados; que `nexit_runtime` no tenga `DELETE` sobre `proveedor_documentos` ni `UPDATE/DELETE` sobre `proveedor_eventos`; que `\d proveedor_cuentas_bancarias` muestre el índice `proveedor_cuentas_bancarias_principal_moneda_uq` y no el de una principal global; que los permisos nuevos aparezcan en `permisos`.
+
+Efectos sobre datos existentes (decisiones conservadoras, ver §5): las **cuentas bancarias** existentes quedan `PENDIENTE` (nadie las aprobó con este control); las **retenciones** que exigen certificado quedan inactivas hasta vincular un certificado válido; los **documentos** con enlace se conservan como «enlace anterior»; los proveedores existentes quedan con la carga inicial de documentos cerrada.
+
+## 2. Trazabilidad de los 94 ítems (UI → API → SQL)
+
+Archivos: normalización pura `lib/proveedores/normalizar.ts`; persistencia `lib/proveedores/shared.ts` + `sincronizar.ts`; rutas `app/api/proveedores/**`; formulario `app/(private)/proveedores/_components/**`. Los límites se validan en la UI y en el servidor con la misma función (`normalizarProveedor`).
+
+| Ítems | Implementación |
+|---|---|
+| PRV-01-01 Código | Trigger NEX-006 (único por empresa) + inmutable NEX-033; solo lectura en la ficha |
+| 01-02 Tipo de persona, 01-03 Grupo | Selectores; grupo validado contra la empresa de la sesión (`validarReferencias`) |
+| 01-04/05/06 Documento, número, DV | `identificacion.ts`: PRY exige RUC 3–8 dígitos ASCII con DV módulo 11 DNIT (`lib/fiscal/calcular-dv-ruc.ts`), DV calculado en la UI y **revalidado en POST y PUT**; exterior: documento fiscal del país (1–50, sin espacios, mayúsculas, sin DV), un RUC paraguayo en el exterior sigue validándose; unicidad por empresa+tipo+número con mensaje sobre el campo |
+| 01-07/08 Razón social, fantasía | Hasta 255 (servidor y UI); la base admite 255 con NEX-033 (antes, 200 con mensaje explícito); nunca se trunca |
+| 01-09 País | Catálogo activo; PRY por defecto solo al crear |
+| 01-10/11/12 Teléfono, correo, web | Longitudes 50/150/300; correo con formato; web solo http(s). El teléfono no infiere DDI (estructura DDI = «propuesta», no aprobada) |
+| 01-13 Activo | Casilla; no cambia la homologación |
+| 01-14/15 Bloqueado, motivo | **Solo** por la acción `BLOQUEAR/DESBLOQUEAR` (permiso `PROVEEDORES.BLOQUEAR`, motivo obligatorio, autor y fecha, auditoría) |
+| 01-16 Observación general | Un único campo, solo en Información |
+| 02-01…12 Compras y pagos | Condición/moneda/medio validados; día 1–31; plazo ≥ 0; **descuento y mínimo como cadena decimal exacta** (`decimal.ts`; GET devuelve `::text`); fechas dd/mm/aaaa en pantalla, ISO en la API; fin ≥ inicio |
+| 03-01…05 Homologación, fechas, riesgo, nota | **Solo** por acciones auditadas (`/gobernanza`) con permisos `HOMOLOGAR` / `EVALUAR_RIESGO`; el PUT rechaza cualquier cambio con 403 |
+| 03-06…10 Incoterm, entrega, transporte, días, parcial | Edición cadastral normal (catálogos validados; transporte restringido; condición ≤ 500) |
+| 04-01…15 Contactos | Nombre obligatorio, límites 100/50/150, un solo principal, siete preferencias de comunicación |
+| 05-01…13 Direcciones | Tipo, descripción*, dirección*, nro. casa, país, geografía oficial (PRY) o texto, código postal, principal por tipo |
+| 06-01…11 Cuentas | Banco*, titular*, número*, moneda*, SWIFT (8/11) e IBAN (módulo 97) opcionales, principal **por moneda**; número duplicado rechazado |
+| 06-12 Aprobación bancaria | NEX-035 + `/cuentas/{id}/resolucion` (permiso `APROBAR_BANCO`); una cuenta aprobada no se sobrescribe |
+| 07-01…07 Retenciones | Tipo, impuesto (catálogo), porcentaje exacto 0–100, vigencia, certificado obligatorio, observación; **activa** solo con certificado válido vinculado |
+| 08-01…09 Documentos | Archivo privado (PDF/JPG/PNG/DOCX/XLSX ≤ 10 MB, firma verificada), metadatos, versiones recuperables, exclusión lógica y restauración, auditoría; enlaces anteriores conservados |
+
+Adenda: A01 ✔ · A02 ✔ (NEX-033) · A03 ✔ · A04 ✔ · A05 ✔ · A06 ✔ · A07 ✔ · A08 ✔ · A09 ✔ (sin DELETE+INSERT) · A10 ✔ · A11 ✔ · A12 ✔ (observación única, fechas PY, errores con campo y pestaña) · A13 ✔ · A14 ✔ (confrontación campo a campo por `columnasProveedor` y la sincronización; ver pruebas).
+
+## 3. Decisiones DEC-PRV-01…10
+
+| Decisión | Implementación | Pendiente fuera de este paquete |
+|---|---|---|
+| 01 elegibilidad | `estadoOperativo()` y `proveedor_elegible_para_compra()` (activo, no bloqueado, HOMOLOGADO, vigente) | Que **Compras** la consulte en el servidor al confirmar una OC |
+| 02 permiso específico | `PROVEEDORES.HOMOLOGAR`; acciones EN_EVALUACION / HOMOLOGAR / RECHAZAR / SUSPENDER / RENOVAR con justificación | — |
+| 03 vencida | El vencimiento vale hasta el final del día (hora de Asunción); el estado almacenado no cambia solo; renovar exige permiso y nuevo vencimiento | Sin cron (no autorizado) |
+| 04 cuentas nuevas/alteradas | Estado de aprobación + revisión pendiente; cuenta aprobada intacta hasta aprobar | Que **Pagos** exija `proveedor_cuenta_pagable()` |
+| 05 exterior | Documento del país de origen sin RUC obligatorio; SWIFT/IBAN opcionales | Catálogo de tipos por país (no se inventaron validaciones universales) |
+| 06 bloqueo | Motivo obligatorio, autor/fecha, auditoría; no toca homologación ni `activo`; no bloquea obligaciones previas | — |
+| 07 principal por moneda | Índice único parcial sobre cuentas aprobadas | — |
+| 08 retenciones con certificado | Trigger + validación del servidor + vínculo a un documento válido; el cadastro no calcula | Rutina tributaria posterior |
+| 09 padrones comerciales | Se guardan como padrones y restricciones | Aplicación y excepciones con permiso: módulos Compras/Pagos (no modificados) |
+| 10 riesgo manual | `EVALUAR_RIESGO` con nivel, nota exacta, justificación y auditoría | — |
+
+## 4. Contrato para Compras y Pagos (NO implementado aquí)
+
+- **Nueva OC / confirmación de OC:** el servidor debe llamar a `proveedor_elegible_para_compra(empresa, proveedor)`; si es falso, rechazar con los motivos (usar `estadoOperativo()` para el texto). No cancelar pedidos ni obligaciones anteriores.
+- **Pago a una cuenta:** exigir `proveedor_cuenta_pagable(empresa, cuenta)`; usar la cuenta principal **aprobada** de la moneda del pago (`es_principal AND estado_aprobacion='APROBADA'`).
+- **Padrones DEC-PRV-09:** condición de pago, moneda, descuento, mínimo, anticipos y «requiere OC» son valores por defecto y restricciones a validar en el servidor de Compras; los desvíos requieren un permiso específico de excepción (por definir con Compras).
+- **Retenciones:** consumir solo las `activa = true` y vigentes; el cálculo pertenece a la rutina tributaria.
+
+## 5. Decisiones tomadas que la especificación no cubría (para validación del responsable)
+
+1. Permisos nuevos con clase **OPERACIONAL** (asignables a perfiles; el administrador de la empresa los tiene): `HOMOLOGAR`, `EVALUAR_RIESGO`, `BLOQUEAR`, `APROBAR_BANCO`. No se creó un permiso de «excepción» (DEC-09) porque no hay consumidor todavía.
+2. Transiciones de homologación: pasar a evaluación (desde pendiente/rechazado/suspendido/vencido), homologar (pendiente/en evaluación/suspendido), rechazar (pendiente/en evaluación), suspender (homologado), renovar (homologado o vencido, con nuevo vencimiento obligatorio). La fecha de homologación la fija el servidor (hoy).
+3. Cuentas bancarias existentes: **pendientes** de aprobación (no se presume una aprobación que nadie dio). Retenciones existentes que exigen certificado: **inactivas** hasta vincular uno válido.
+4. No se exige que quien aprueba una cuenta sea distinto de quien la cargó (segregación de funciones): decisión comercial pendiente.
+5. Las bajas de contactos, direcciones, cuentas y retenciones son **explícitas**, físicas y quedan en la auditoría con la fila completa; los documentos nunca se borran (exclusión lógica).
+6. `PROVEEDORES_BANCARIO.VER` (dato sensible, ya sembrado) **no** se aplicó para ocultar datos bancarios en la ficha: hoy los ve quien tiene `PROVEEDORES.VER`, como antes. Decisión pendiente.
+7. Un certificado vinculado a una retención activa que lo exige no puede eliminarse mientras esté en uso.
+
+## 6. Limitaciones y pendientes operativos
+
+- Nada se probó contra PostgreSQL ni en navegador. Las pruebas de este paquete son locales (lógica pura, sincronización con una conexión simulada y verificaciones estáticas del SQL/rutas). La concurrencia real (bloqueos `FOR UPDATE`, índices únicos parciales, triggers) debe validarse en el banco por el responsable.
+- La edición común detecta la modificación concurrente con una marca de versión (`actualizado_at` a microsegundos); las filas relacionadas se actualizan por identificador.
+- Validación visual y responsiva en navegador pendiente de aceite humano.

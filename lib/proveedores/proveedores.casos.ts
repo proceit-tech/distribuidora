@@ -231,7 +231,7 @@ export async function verificarCasosProveedores(): Promise<string[]> {
   campoDe("vigencia invertida", () => conRet([{ ...ret, fechaVigenciaDesde: "2026-02-01", fechaVigenciaHasta: "2026-01-01" }]), "retenciones.0.fechaVigenciaHasta", "retenciones");
   campoDe("impuesto no UUID", () => conRet([{ ...ret, impuestoId: "abc" }]), "retenciones.0.impuestoId", "retenciones");
   campoDe("observación de retención > 1000", () => conRet([{ ...ret, observacion: "x".repeat(1001) }]), "retenciones.0.observacion", "retenciones");
-  igual("retención: certificado obligatorio", conRet([{ ...ret, certificadoObligatorio: true }]).retenciones[0].certificadoObligatorio, true);
+  igual("retención: certificado obligatorio", conRet([{ ...ret, certificadoObligatorio: true, activa: false }]).retenciones[0].certificadoObligatorio, true);
 
   // ── Eliminaciones explícitas
   igual("eliminaciones: solo UUID válidos", normalizarProveedor(base({ eliminaciones: { contactos: [FILA_A, "nuevo-1", FILA_A] } })).eliminaciones.contactos, [FILA_A]);
@@ -367,6 +367,9 @@ function detalleBase() {
     activo: true,
     bloqueado: false,
     motivoBloqueo: "",
+    esCreador: true,
+    cargaDocumentosInicialAbierta: true,
+    permisosDocumentos: { cargar: true, gestionar: true, historial: true, finalizar: true },
     homologacionVencida: false,
     estadoOperativo: { elegible: false, motivos: [] as string[] },
     permisos: { editar: true, homologar: false, evaluarRiesgo: false, bloquear: false, aprobarBanco: false },

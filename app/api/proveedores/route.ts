@@ -11,6 +11,7 @@ import {
   registrarEvento,
   respuestaError,
   sincronizarHijos,
+  validarCertificados,
   validarReferencias,
   verificarDocumentoUnico,
   type ProveedorBody,
@@ -357,10 +358,12 @@ export async function POST(request: Request) {
     await conexion.query("BEGIN");
     await validarReferencias(conexion, datos, empresaId);
     await verificarDocumentoUnico(conexion, empresaId, datos, null);
+    await validarCertificados(conexion, empresaId, null, datos);
 
     const columnas = columnasProveedor(datos);
-    const nombres = ["empresa_id", "creado_por", ...columnas.map(([nombre]) => nombre)];
-    const valores = [empresaId, session.user.id, ...columnas.map(([, valor]) => valor)];
+    // El alta abre la carga inicial de documentos: el creador (aun con solo PROVEEDORES.CREAR) puede subirlos hasta finalizar el alta.
+    const nombres = ["empresa_id", "creado_por", "carga_documentos_inicial_abierta", ...columnas.map(([nombre]) => nombre)];
+    const valores = [empresaId, session.user.id, true, ...columnas.map(([, valor]) => valor)];
     const marcadores = valores.map((_, i) => `$${i + 1}`).join(",");
 
     const insertado = await conexion.query(

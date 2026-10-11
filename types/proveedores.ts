@@ -85,6 +85,11 @@ export type ProveedorRetencion = {
   /** Porcentaje como cadena decimal exacta («10.00»). */
   porcentaje: string;
   certificadoObligatorio: boolean;
+  /** Una retención que exige certificado solo puede estar activa con un certificado de retención válido vinculado. */
+  activa: boolean;
+  documentoCertificadoId: string | null;
+  /** Solo lectura: lo calcula el servidor con el documento vinculado. */
+  certificadoValido?: boolean;
   fechaVigenciaDesde: string;
   fechaVigenciaHasta: string;
   observacion: string;
@@ -100,11 +105,19 @@ export type ProveedorDocumento = {
     | "LICENCIA"
     | "OTRO";
   nombreArchivo: string;
+  /** Enlace anterior (documentos cargados antes del archivo privado); vacío si tiene archivo. */
   urlArchivo: string;
+  tieneArchivo: boolean;
+  tamanoBytes: number | null;
+  tipoMime: string;
+  version: number;
   fechaEmision: string;
   fechaVencimiento: string;
   observacion: string;
 };
+
+/** Permisos de documentos para el usuario y este proveedor (la decisión final siempre la toma el servidor). */
+export type PermisosDocumentosProveedor = { cargar: boolean; gestionar: boolean; historial: boolean; finalizar: boolean };
 
 /** Filas relacionadas que el usuario quitó explícitamente en esta edición (solo identificadores persistidos). */
 export type EliminacionesProveedor = {
@@ -170,6 +183,9 @@ export type ProveedorDetalle = {
 
   bloqueado: boolean;
   motivoBloqueo: string;
+  esCreador: boolean;
+  cargaDocumentosInicialAbierta: boolean;
+  permisosDocumentos: PermisosDocumentosProveedor;
   homologacionVencida: boolean;
   estadoOperativo: { elegible: boolean; motivos: string[] };
   permisos: { editar: boolean; homologar: boolean; evaluarRiesgo: boolean; bloquear: boolean; aprobarBanco: boolean };
@@ -189,6 +205,10 @@ export type NuevoProveedor = Omit<
   | "paisNombre"
   | "bloqueado"
   | "motivoBloqueo"
+  | "esCreador"
+  | "cargaDocumentosInicialAbierta"
+  | "permisosDocumentos"
+  | "documentos"
   | "homologacionVencida"
   | "estadoOperativo"
   | "permisos"

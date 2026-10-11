@@ -23,7 +23,7 @@ import { EXTENSIONES_TEXTO, TAMANO_MAXIMO_BYTES, TIPOS_PERMITIDOS } from "@/lib/
 export { EXTENSIONES_TEXTO, TAMANO_MAXIMO_BYTES, TIPOS_PERMITIDOS };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const CLAVE = /^[0-9a-f-]{36}\/clientes\/[0-9a-f-]{36}\/[0-9a-f-]{36}$/i;
+const CLAVE = /^[0-9a-f-]{36}\/(clientes|proveedores)\/[0-9a-f-]{36}\/[0-9a-f-]{36}$/i;
 
 export class ErrorArchivo extends Error {
   constructor(
@@ -72,10 +72,11 @@ export function validarArchivo(nombreOriginal: string, contenido: ArrayBuffer | 
   return { buffer, nombre, mime: tipo.mime, tamano: buffer.length, sha256: createHash("sha256").update(buffer).digest("hex") };
 }
 
-export function nuevaClave(empresaId: string, clienteId: string): string {
-  if (!UUID.test(empresaId) || !UUID.test(clienteId)) throw new ErrorArchivo("Identificador no válido.");
+/** Clave interna `<empresa>/<ámbito>/<entidad>/<uuid>`: el ámbito (clientes o proveedores) separa los archivos de cada módulo. */
+export function nuevaClave(empresaId: string, entidadId: string, ambito: "clientes" | "proveedores" = "clientes"): string {
+  if (!UUID.test(empresaId) || !UUID.test(entidadId)) throw new ErrorArchivo("Identificador no válido.");
 
-  return `${empresaId}/clientes/${clienteId}/${randomUUID()}`;
+  return `${empresaId}/${ambito}/${entidadId}/${randomUUID()}`;
 }
 
 function rutaDe(clave: string): string {

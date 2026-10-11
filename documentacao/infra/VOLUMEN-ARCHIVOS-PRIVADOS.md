@@ -67,7 +67,7 @@ Configuración real de Docker Compose identificada mediante `docker inspect` por
          - /srv/stacks/distribuidora/data/nexit-archivos:/data/archivos
    ```
    (Alternativa: volumen con nombre `nexit_archivos` declarado en `volumes:`; igual de válido. Lo importante: **persistente y fuera del contenedor**.)
-4. **Aplicar las migraciones** NEX-028 (documentos como archivo), NEX-029 (auditoría de conversiones), NEX-030 (autoría de la carga inicial), NEX-031 (exclusión lógica, versiones y auditoría de documentos) y NEX-032 (día del mes de entrega) con el procedimiento habitual (`scripts/aplicar-migraciones.sh`), después de las NEX-022…NEX-027 pendientes y de validar cada una según lo acordado.
+4. **Aplicar las migraciones** NEX-028 (documentos como archivo), NEX-029 (auditoría de conversiones), NEX-030 (autoría de la carga inicial), NEX-031 (exclusión lógica, versiones y auditoría de documentos) y NEX-032 (día del mes de entrega) de Clientes y, para **Proveedores**, NEX-033 (nombres 255 y código inmutable), NEX-034 (auditoría y permisos de gobernanza), NEX-035 (aprobación de cuentas bancarias) y NEX-036 (documentos como archivos privados y retenciones con certificado) con el procedimiento habitual (`scripts/aplicar-migraciones.sh`), después de las NEX-022…NEX-027 pendientes y de validar cada una según lo acordado.
 5. **Reconstruir/desplegar** la aplicación con el procedimiento habitual.
 6. **Verificación operativa** (sin exponer datos): cargar un PDF de prueba a un cliente de prueba, descargarlo, confirmar que el archivo existe en el host bajo `<empresa_id>/clientes/<cliente_id>/…` con permisos `600`, y que **no** es accesible por ninguna URL pública ni sin sesión (`GET /api/clientes/{id}/documentos/{docId}` sin cookie → 401).
 7. **Respaldo del volumen**: incluir el directorio en la copia de seguridad externa junto con el dump de PostgreSQL; base y archivos deben restaurarse juntos (la base referencia la clave del archivo).
@@ -75,7 +75,7 @@ Configuración real de Docker Compose identificada mediante `docker inspect` por
 ## Reversión
 
 - Quitar el montaje/variable deja la aplicación respondiendo 503 en documentos; los archivos permanecen en el host.
-- Las reversiones `scripts/reversion-NEX-028.sql` y `reversion-NEX-031.sql` **abortan** si hay documentos cargados, versiones, eliminados o auditoría (no se pierde historial ni se dejan archivos huérfanos); exportar y decidir de forma explícita antes.
+- Las reversiones `scripts/reversion-NEX-028.sql`, `reversion-NEX-031.sql` y `reversion-NEX-036.sql` (documentos de Proveedores; claves `<empresa>/proveedores/<proveedor>/<uuid>` en el mismo volumen) **abortan** si hay documentos cargados, versiones, eliminados o auditoría (no se pierde historial ni se dejan archivos huérfanos); exportar y decidir de forma explícita antes.
 
 ## Límites conocidos
 

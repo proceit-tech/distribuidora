@@ -4,6 +4,7 @@ import Link from "next/link";
 import { FormEvent, useEffect, useRef, useState } from "react";
 
 import { calcularDvRuc } from "@/lib/fiscal/calcular-dv-ruc";
+import { validarPendientes, type DocumentoPendiente } from "@/lib/proveedores/documento-pendiente";
 import { ErrorValidacion } from "@/lib/proveedores/errores";
 import { formularioAPayload, formularioDesdeDetalle, formularioInicial, type FormularioProveedor } from "@/lib/proveedores/formulario";
 import { normalizarProveedor, UUID } from "@/lib/proveedores/normalizar";
@@ -28,9 +29,11 @@ type Props = {
   initial?: ProveedorDetalle;
   catalogos: CatalogoProveedores;
   /** Recibe el contrato de la API; debe lanzar ErrorValidacion (con campo) si el servidor lo rechaza. */
-  onSave: (datos: Record<string, unknown>) => Promise<void> | void;
+  onSave: (datos: Record<string, unknown>, documentos: DocumentoPendiente[]) => Promise<void> | void;
   /** Relee la ficha tras una acción administrativa (homologación, riesgo, bloqueo, aprobación bancaria). */
   onRecargar?: () => void;
+  /** Aviso informativo bajo el encabezado (por ejemplo, documentos del alta que no pudieron cargarse). */
+  aviso?: string;
   pestanaInicial?: PestanaId;
   alCambiarPestana?: (pestana: PestanaId) => void;
 };
@@ -108,7 +111,7 @@ function nuevaCuenta(moneda: string): ProveedorCuentaBancaria {
   };
 }
 
-export default function ProveedorForm({ mode, initial, catalogos, onSave, onRecargar, pestanaInicial, alCambiarPestana }: Props) {
+export default function ProveedorForm({ mode, initial, catalogos, onSave, onRecargar, aviso, pestanaInicial, alCambiarPestana }: Props) {
   const [formularioBase] = useState<FormularioProveedor>(() => (initial ? formularioDesdeDetalle(initial) : formularioInicial()));
   const [form, setForm] = useState<FormularioProveedor>(formularioBase);
   const [tab, setTabInterno] = useState<PestanaId>(pestanaInicial ?? "general");
@@ -122,6 +125,7 @@ export default function ProveedorForm({ mode, initial, catalogos, onSave, onReca
   const [pestanaConError, setPestanaConError] = useState<PestanaId | "">("");
   const [error, setError] = useState("");
   const [guardando, setGuardando] = useState(false);
+  const [pendientes, setPendientes] = useState<DocumentoPendiente[]>([]);
   const enfocar = useRef<string | null>(null);
 
   // Tras mostrar la pestaña del error se enfoca el campo exacto.
@@ -165,7 +169,7 @@ export default function ProveedorForm({ mode, initial, catalogos, onSave, onReca
         ...actual,
         retenciones: [
           ...actual.retenciones,
-          { id: temporal("retencion"), impuestoId: null, tipo: "IVA", porcentaje: "0", certificadoObligatorio: false, fechaVigenciaDesde: "", fechaVigenciaHasta: "", observacion: "" },
+          { id: temporal("retencion"), impuestoId: null, tipo: "IVA", porcentaje: "0", certificadoObligatorio: false, activa: true, documentoCertificadoId: null, fechaVigenciaDesde: "", fechaVigenciaHasta: "", observacion: "" },
         ],
       };
     });
@@ -232,6 +236,7 @@ export default function ProveedorForm({ mode, initial, catalogos, onSave, onReca
     try {
       payload = formularioAPayload(form, mode === "create" ? "crear" : "editar");
       normalizarProveedor(payload); // la misma validación que ejecuta el servidor
+      validarPendientes(pendientes);
     } catch (e) {
       mostrarError(e instanceof ErrorValidacion ? e : new ErrorValidacion(e instanceof Error ? e.message : "Los datos no son válidos."));
       return;
@@ -240,7 +245,7 @@ export default function ProveedorForm({ mode, initial, catalogos, onSave, onReca
     setGuardando(true);
 
     try {
-      await onSave(payload);
+      await onSave(payload, pendientes);
     } catch (e) {
       mostrarError(
         e instanceof ErrorValidacion
@@ -258,6 +263,8 @@ export default function ProveedorForm({ mode, initial, catalogos, onSave, onReca
     detalle: initial,
     catalogos,
     errores,
+    pendientes,
+    setPendientes,
     sucio,
     recargar: () => onRecargar?.(),
     set,
@@ -299,6 +306,12 @@ export default function ProveedorForm({ mode, initial, catalogos, onSave, onReca
       </header>
 
       <form className={styles.card} onSubmit={submit} noValidate>
+        {aviso ? (
+          <div className={styles.aviso} role="status">
+            {aviso}
+          </div>
+        ) : null}
+
         {error ? (
           <div className={styles.error} role="alert">
             {error}

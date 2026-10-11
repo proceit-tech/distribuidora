@@ -1,3 +1,4 @@
+import type { DocumentoPendiente } from "@/lib/proveedores/documento-pendiente";
 import type { FormularioProveedor, RetencionFormulario } from "@/lib/proveedores/formulario";
 import type { CatalogoProveedores, ProveedorContacto, ProveedorCuentaBancaria, ProveedorDetalle, ProveedorDireccion } from "@/types/proveedores";
 
@@ -19,6 +20,9 @@ export type ContextoFormulario = {
   detalle?: ProveedorDetalle;
   catalogos: CatalogoProveedores;
   errores: Errores;
+  /** Alta: documentos adjuntos que se cargan al guardar el proveedor. */
+  pendientes: DocumentoPendiente[];
+  setPendientes: (pendientes: DocumentoPendiente[]) => void;
   /** Hay cambios sin guardar en el formulario (las acciones administrativas recargan la ficha y los descartarían). */
   sucio: boolean;
   /** Vuelve a leer la ficha del servidor (tras una acción administrativa). */

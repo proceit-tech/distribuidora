@@ -58,7 +58,7 @@ type ColeccionSync<T extends { id: string | null }> = {
   antesDeActualizar?: (conexion: PoolClient, item: T, fila: Record<string, unknown>, columnas: Columnas) => Promise<Columnas | null>;
 };
 
-const IGNORADAS = new Set(["actualizado_at", "creado_at"]);
+const IGNORADAS = new Set(["actualizado_at", "creado_at", "carga_documentos_inicial_abierta"]);
 
 export function diferenciasFila(anterior: Record<string, unknown>, nuevo: Record<string, unknown>) {
   const antes: Record<string, unknown> = {};
@@ -126,6 +126,10 @@ async function sincronizarColeccion<T extends { id: string | null }>(conexion: P
       const { antes, despues } = diferenciasFila(r.rows[0].anterior, r.rows[0].nuevo);
 
       await registrarEvento(conexion, { empresaId, proveedorId, entidad: c.entidad, entidadId: item.id, accion: "MODIFICACION", anterior: antes, nuevo: despues, usuarioId });
+
+      if (c.entidad === "RETENCION" && "activa" in despues) {
+        await registrarEvento(conexion, { empresaId, proveedorId, entidad: c.entidad, entidadId: item.id, accion: despues.activa ? "RETENCION_ACTIVADA" : "RETENCION_DESACTIVADA", anterior: { activa: antes.activa }, nuevo: { activa: despues.activa, documentoCertificadoId: r.rows[0].nuevo.documento_certificado_id ?? null }, usuarioId });
+      }
     }
   }
 
@@ -278,6 +282,8 @@ export async function sincronizarHijos(conexion: PoolClient, empresaId: string, 
       ["impuesto_id", x.impuestoId],
       ["porcentaje", x.porcentaje],
       ["certificado_obligatorio", x.certificadoObligatorio],
+      ["activa", x.activa],
+      ["documento_certificado_id", x.documentoCertificadoId],
       ["fecha_vigencia_desde", x.fechaVigenciaDesde],
       ["fecha_vigencia_hasta", x.fechaVigenciaHasta],
       ["observacion", x.observacion],

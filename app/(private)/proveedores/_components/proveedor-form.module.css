@@ -602,3 +602,14 @@
   color: #6f8498;
   font-size: 12.5px;
 }
+
+.aviso {
+  margin: 14px 20px 0;
+  border: 1px solid #f2d99a;
+  border-radius: 9px;
+  background: #fff9e8;
+  padding: 10px 12px;
+  color: #7a5a12;
+  font-size: 13.5px;
+  line-height: 1.45;
+}

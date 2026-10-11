@@ -18,6 +18,7 @@ export default function EditarProveedorPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [recarga, setRecarga] = useState(0);
+  const [avisoDocumentos, setAvisoDocumentos] = useState(false);
   const [pestana, setPestana] = useState<PestanaId>("general");
 
   const recargar = useCallback(() => setRecarga((n) => n + 1), []);
@@ -55,6 +56,16 @@ export default function EditarProveedorPage() {
     }
 
     void cargar();
+
+    // Tras un alta con documentos pendientes de cargar se abre la pestaña de documentos con un aviso.
+    if (new URLSearchParams(window.location.search).get("aviso") === "documentos") {
+      void Promise.resolve().then(() => {
+        setPestana("documentos");
+        setAvisoDocumentos(true);
+      });
+      window.history.replaceState(null, "", window.location.pathname);
+    }
+
     return () => {
       activo = false;
     };
@@ -96,6 +107,7 @@ export default function EditarProveedorPage() {
       catalogos={catalogos}
       onSave={guardar}
       onRecargar={recargar}
+      aviso={avisoDocumentos ? "El proveedor se registró, pero algunos documentos no pudieron cargarse. Cárguelos desde esta pestaña." : undefined}
       pestanaInicial={pestana}
       alCambiarPestana={setPestana}
     />
