@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { denyIfNoPermission } from "@/lib/auth/permissions";
+import { validarRucDv } from "@/lib/fiscal/calcular-dv-ruc";
 import { resolverPais, validarPaisPorOperacion } from "@/lib/geografia/referencia";
 import { ErrorValidacion, leerEntrada, leerHijos, sincronizarHijos } from "@/lib/clientes/relacionados";
 
@@ -263,7 +264,7 @@ export async function PUT(request: Request, contexto: Contexto) {
     await conexion.query("BEGIN");
 
     const actual = await conexion.query(
-      "SELECT bloqueado_ventas FROM clientes WHERE id = $1 AND empresa_id = $2 FOR UPDATE",
+      "SELECT bloqueado_ventas, naturaleza_receptor, numero_documento, dv FROM clientes WHERE id = $1 AND empresa_id = $2 FOR UPDATE",
       [id, empresaId],
     );
     if (actual.rowCount !== 1) {
@@ -271,6 +272,20 @@ export async function PUT(request: Request, contexto: Contexto) {
       return NextResponse.json({ error: "Cliente no encontrado." }, { status: 404 });
     }
     const estabaBloqueado = actual.rows[0].bloqueado_ventas === true;
+
+    // RUC/DV: misma regla que el alta (cálculo compartido). Un contribuyente ya grabado cuyo RUC y DV
+    // no cambian se tolera (datos anteriores a la regla) hasta que se modifique alguno de los dos.
+    if (naturaleza === "CONTRIBUYENTE") {
+      const sinCambio =
+        actual.rows[0].naturaleza_receptor === NATURALEZA.CONTRIBUYENTE &&
+        actual.rows[0].numero_documento === numeroDocumento &&
+        (actual.rows[0].dv ?? "") === dv;
+      const rucDv = validarRucDv(numeroDocumento, dv);
+
+      if (!sinCambio && !rucDv.ok) {
+        throw new Error(rucDv.error);
+      }
+    }
 
     const duplicado = await conexion.query(
       `SELECT 1 FROM clientes

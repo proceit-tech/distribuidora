@@ -248,3 +248,10 @@ Branch: `feature/NEXIT-2026-001-banco-demo`. Regra: uma funcionalidade por vez; 
 - **Preservado sin cambios:** DV como campo editable (cálculo automático **bloqueado**: faltan algoritmo oficial y vectores — DEC-CLI-02), `recibeNotificaciones` (valor y envío intactos, sin control visible — D-12), etiquetas "Gs." de límites (D-10), código CLI automático, geografía PRY opcional (NEX-021), empresa por sesión.
 - **Pendiente para E2/decisiones:** unicidad de Innominado y mensajes por restricción, matriz natureza×operación en backend, URL http(s), truncamientos, DV, limitaciones SIFEN contextuales al DE (p. ej. número de casa).
 - **Testes:** no ejecutados (determinación del responsable); sin build/tsc/navegador. No homologado.
+
+## Clientes — DV del RUC automático (DEC-CLI-02) — 2026-10-11
+- **Fuente:** DNIT "Dígito Verificador.pdf" (URL en `ESPECIFICACAO-DV-RUC-DNIT-IMPLEMENTACAO-2026-10-11.md`); el PDF **no** está archivado como binario en el repositorio.
+- **Implementado:** `lib/fiscal/calcular-dv-ruc.ts` (módulo 11, función pura y única, RUC como texto de 3–8 dígitos). Formularios de **alta** y de **edición**: DV calculado al escribir el RUC, solo lectura, vacío si el RUC es inválido/vacío; no se calcula ni envía para No contribuyente (incluye B2F). API **POST**: exige RUC 3–8 dígitos y DV idéntico al cálculo (rechaza DV distinto/ausente aun sin UI). API **PUT**: misma regla, pero un contribuyente existente con RUC y DV sin cambios se tolera (datos anteriores) hasta que se modifique alguno.
+- **Vectores:** `VETORES-DV-RUC-DNIT-2026-10-11.md` (12 vectores calculados a mano con dos métodos independientes, más entradas rechazadas). **No se ejecutó ningún test**; no son RUC reales ni consultados en el Marangatu.
+- **Sin cambios:** migraciones, banco, XML SIFEN V2, E1, B2F, Innominado, seis pestañas, código CLI, aislamiento por empresa.
+- **Atención al homologar:** clientes contribuyentes anteriores con DV digitado a mano pueden figurar con DV incorrecto; quedan editables mientras RUC/DV no cambien. Pendiente de verificación en VM (build, HTTP real).

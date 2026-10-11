@@ -19,6 +19,11 @@ import type {
   ClienteTipoPersona,
 } from "@/types/clientes";
 
+import {
+  calcularDvRuc,
+  validarRucDv,
+} from "@/lib/fiscal/calcular-dv-ruc";
+
 import styles from "./page.module.css";
 import {
   HijosEditor,
@@ -640,6 +645,22 @@ export default function ClienteDetallePage() {
       return;
     }
 
+    if (form.naturaleza === "CONTRIBUYENTE") {
+      const sinCambio =
+        form.numeroDocumento === cliente.numeroDocumento &&
+        form.dv === cliente.dv;
+      const rucDv = validarRucDv(
+        form.numeroDocumento,
+        form.dv,
+      );
+
+      if (!sinCambio && !rucDv.ok) {
+        setTab("fiscal");
+        setError(rucDv.error);
+        return;
+      }
+    }
+
     const errorHijos = validarHijos(hijos);
     if (errorHijos) {
       setTab(
@@ -1147,17 +1168,21 @@ export default function ClienteDetallePage() {
                       }
                       inputMode="numeric"
                       maxLength={8}
-                      onChange={(value) =>
-                        update(
-                          "numeroDocumento",
-                          value
-                            .replace(
-                              /\D/g,
-                              "",
-                            )
-                            .slice(0, 8),
-                        )
-                      }
+                      onChange={(value) => {
+                        const ruc = value
+                          .replace(/\D/g, "")
+                          .slice(0, 8);
+
+                        setForm((current) =>
+                          current
+                            ? {
+                                ...current,
+                                numeroDocumento: ruc,
+                                dv: calcularDvRuc(ruc) ?? "",
+                              }
+                            : current,
+                        );
+                      }}
                     />
                   ) : (
                     <SelectInput
@@ -1195,24 +1220,14 @@ export default function ClienteDetallePage() {
 
                 {esContribuyente ? (
                   <Field
-                    label="DV"
+                    label="DV (automático)"
                     required
                   >
                     <TextInput
                       value={form.dv}
-                      inputMode="numeric"
-                      maxLength={1}
-                      onChange={(value) =>
-                        update(
-                          "dv",
-                          value
-                            .replace(
-                              /\D/g,
-                              "",
-                            )
-                            .slice(0, 1),
-                        )
-                      }
+                      readOnly
+                      tabIndex={-1}
+                      onChange={() => undefined}
                     />
                   </Field>
                 ) : (

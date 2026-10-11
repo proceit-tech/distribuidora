@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { resolverPais, resolverUbicacionParaguay, validarPaisPorOperacion } from "@/lib/geografia/referencia";
 
 import { denyIfNoPermission } from "@/lib/auth/permissions";
+import { validarRucDv } from "@/lib/fiscal/calcular-dv-ruc";
 
 
 // Solo DEMO explícito usa respuestas simuladas. La falta de DATABASE_URL NUNCA activa datos ficticios.
@@ -664,6 +665,12 @@ export async function POST(request: Request) {
     if (naturaleza === "CONTRIBUYENTE") {
       if (!numeroDocumento || !dv) {
         throw new Error("Para un contribuyente informe RUC y DV.");
+      }
+
+      const rucDv = validarRucDv(numeroDocumento, dv);
+
+      if (!rucDv.ok) {
+        throw new Error(rucDv.error);
       }
     } else {
       if (!(tipoDocumento in TIPO_DOCUMENTO_IDENTIDAD_SIFEN)) {

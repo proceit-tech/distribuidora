@@ -4,6 +4,8 @@ import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import { calcularDvRuc, validarRucDv } from "@/lib/fiscal/calcular-dv-ruc";
+
 type Opcion = {
   id?: string;
   codigo?: string | number;
@@ -578,7 +580,8 @@ export default function NuevoClientePage() {
     if (!f.paisCodigo) return fiscal("Seleccione el país del cliente.", "cli-pais");
     if (contribuyente) {
       if (!f.numeroDocumento.trim()) return fiscal("Informe el RUC del cliente.", "cli-numero");
-      if (!f.dv.trim()) return fiscal("Informe el DV del RUC.", "cli-dv");
+      const rucDv = validarRucDv(f.numeroDocumento, f.dv);
+      if (!rucDv.ok) return fiscal(rucDv.error, "cli-numero");
     } else {
       if (!f.tipoDocumento) return fiscal("Seleccione el tipo de documento del cliente.", "cli-tipo-documento");
       if (!f.numeroDocumento.trim()) return fiscal("Informe el número de documento del cliente.", "cli-numero");
@@ -946,18 +949,23 @@ export default function NuevoClientePage() {
                     inputMode="numeric"
                     label="RUC *"
                     maxLength={8}
-                    onChange={(valor) =>
-                      actualizarFormulario(
-                        "numeroDocumento",
-                        valor.replace(/\D/g, "").slice(0, 8),
-                      )
-                    }
+                    onChange={(valor) => {
+                      const ruc = valor.replace(/\D/g, "").slice(0, 8);
+
+                      setFormulario((actual) => ({
+                        ...actual,
+                        numeroDocumento: ruc,
+                        dv: calcularDvRuc(ruc) ?? "",
+                      }));
+                    }}
                     value={formulario.numeroDocumento}
                   />
                   <Input
                     id="cli-dv"
-                    label="DV *"
-                    onChange={(valor) => actualizarFormulario("dv", valor)}
+                    label="DV (automático) *"
+                    onChange={() => undefined}
+                    readOnly
+                    tabIndex={-1}
                     value={formulario.dv}
                   />
                 </>
