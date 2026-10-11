@@ -57,3 +57,25 @@ CA-09: registrar claramente quais mudanças exigem API, migration ou autorizaç�
 
 ## 6. Fluxo e próxima ação
 Responsável decide prioridades e aprova implementação específica. **Claude, quando autorizado**, deve consultar novamente CLAUDE.md, PROTOCOLO-IA.md, PROGRESSO e esta auditoria; cruzar integralmente matrizes e contratos atuais, registrar divergências no GitHub, propor plano por correção, implementar **somente** o recorte autorizado, fazer commits/push e parar para revisão do ChatGPT. Sem testes/build/TypeScript/ESLint/Next.js/Docker/servidores/PG no notebook, sem VM, sem deploy conforme restrição vigente. Até lá: nenhuma alteração de código autorizada por esta auditoria.
+
+
+## 7. Adendo normativo — confronto direto com a DNIT (2026-10-11)
+**Fonte primária efetivamente consultada nesta rodada:** Manual Técnico SIFEN v150, grupo D3 do receptor (páginas 71–73) e tabela de validações (páginas 166–168), https://www.dnit.gov.py/documents/20123/420592/Manual%2BT%C3%A9cnico%2BVersi%C3%B3n%2B150.pdf/e706f7c7-6d93-21d4-b45b-5d22d07b2d22?t=1687362295907 . Catálogo de notas técnicas: https://www.dnit.gov.py/en/web/e-kuatia/documentacion-tecnica . A DNIT confirma a v150 como manual vigente, **com notas técnicas complementares**; ainda não houve confronto exaustivo de TODAS as notas técnicas e XSD. Portanto: achados normativos abaixo são referências do MT150 original, sujeitos à análise de notas aplicáveis antes de homologar regras de produção.
+
+| Campo SIFEN | Regra indicada no MT150 original | Implicação para Nexit V1 |
+|---|---|---|
+| D201 iNatRec | 1 contribuinte / 2 não contribuinte; obrigatório | Natureza selecionada primeiro. |
+| D202 iTiOpe | 1 B2B, 2 B2C, 3 B2G, 4 B2F; B2F para serviços a empresas/pessoas do exterior | Não generalizar B2F a qualquer venda internacional sem decisão fiscal. |
+| D205 iTiContRec | Obrigatório quando D201=1; **não informar quando D201=2**; 1 PF/2 PJ | Tipo de contribuinte SIFEN é condicional. Distinguir armazenamento interno tipo_persona da montagem do XML; esquema atual exige tipo_persona para todos, de modo que ocultar o campo requer solução de contrato e autorização. |
+| D206 dRucRec | Obrigatório quando contribuinte, não informar quando não contribuinte | Preservar dado cadastral e mapear corretamente em futura emissão. |
+| D207 dDVRec | Obrigatório se RUC informado; comprimento 1, algoritmo módulo 11 | Distinguir DV SIFEN de texto livre varchar(5) atual. Não calcular sem especificação/vetores aprovados. |
+| D208 iTipIDRec | Obrigatório para não contribuinte exceto B2F; **não informar para contribuinte nem B2F** | Captura B2F+Brasil+CI PY pode ser dado interno, mas **não deve ser usado como iTipIDRec** na montagem de XML segundo MT150. |
+| D210 dNumIDRec | Obrigatório para não contribuinte exceto B2F; **não informar para contribuinte nem B2F**. Innominado = 0 | **Corrige a interpretação da DIV-CLI-01:** 'opcional' na UI B2F não é simplesmente ausência tolerada no XML; o campo D210 não deve existir no XML B2F. API/DB cadastrais exigem numeroDocumento para todos; requer desenho de persistência interna específico, sem inventar documento ou ajustar DB sem autorização. |
+| D211 dNomRec | Nome/razão social obrigatório; innominado ‘Sin Nombre’ | Conferir separadamente rótulo UI e mapeamento SIFEN. |
+| D213 dDirRec | Endereço obrigatório quando B2F ou nota de remissão (e outros casos conforme notas técnicas) | Cadastro pode ser preliminar; validação de emissão depende do contexto do DE. |
+| D218 dNumCasRec | Se informa endereço D213, número de casa exigido; numérico 1–6 | Asterisco no cadastro não equivale automaticamente a obrigatoriedade universal; definir condição por cenário de emissão. |
+| D219 cDepRec | Com endereço e operação diferente de B2F, departamento obrigatório; não informar em B2F | Conciliar geografia opcional no cadastro com completude fiscal na emissão. |
+
+**Correção de rigor:** A observação anterior 'documento B2F obrigatório segundo SIFEN' seria ERRADA: essa obrigatoriedade é apenas do POST/DB cadastrais atuais; segundo MT150 o tipo e número de identidade não devem ser enviados no XML B2F. Não presumir que a identificação comercial de um estrangeiro seja proibida em base de clientes. NÃO usar esta seção como autorização de implementação. Prioridade: conferir notas técnicas recentes e XSD, depois produzir matriz normativa final e submeter decisões ao responsável.
+
+**Status:** verificação primária parcial realizada; **auditoria fiscal ainda não homologada**. Nenhuma alteração no código da aplicação.
