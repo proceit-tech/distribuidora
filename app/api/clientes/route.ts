@@ -15,7 +15,8 @@ import {
 } from "@/lib/fiscal/campos-receptor";
 import { mensajeRestriccionCliente } from "@/lib/clientes/errores-bd";
 import { validarDiaPreferidoCobro } from "@/lib/clientes/dia-cobro";
-import { validarFrecuenciaYDias } from "@/lib/clientes/logistica";
+import { leerDiaMes, validarFrecuenciaYDias } from "@/lib/clientes/logistica";
+import { evaluarAptitudCliente, evaluarAptitudEmpresa, mensajeRegularizacionFiscal } from "@/lib/clientes/aptitud-cliente";
 import { validarDireccionFiscalRequerida } from "@/lib/clientes/obligatoriedad-fiscal";
 import { DESCUENTO_COMERCIAL, LIMITE_CREDITO, decimalAcotado, validarCondicionYMoneda } from "@/lib/clientes/comercial";
 import { leerTelefonoEntrada, validarTelefono, type CampoTelefonico } from "@/lib/fiscal/telefono";
@@ -442,6 +443,7 @@ export async function GET(request: Request) {
               c.celular,
               c.limite_credito,
               c.moneda_codigo_predeterminada,
+              c.grupo_cliente_id,
               c.bloqueado_ventas,
               c.activo,
               c.pais_codigo,
@@ -477,7 +479,17 @@ export async function GET(request: Request) {
 
     // Listado: solo las filas de clientes (sin los once catálogos del formulario).
     if (url.searchParams.get("modo") === "lista") {
-      return NextResponse.json({ clientes: (await clientesConsulta).rows });
+      const filas = (await clientesConsulta).rows as Array<Record<string, unknown>>;
+      // Aptitud SIFEN de cada cliente (misma evaluación que el detalle y la compuerta de guardado), solo de la empresa de la sesión.
+      const aptitud = await evaluarAptitudEmpresa(db, empresaId);
+
+      return NextResponse.json({
+        clientes: filas.map((fila) => {
+          const a = aptitud.get(String(fila.id));
+
+          return { ...fila, aptitud_apto: a?.apto === true, aptitud_pendientes: a?.pendientes ?? [] };
+        }),
+      });
     }
 
     const [
@@ -749,7 +761,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const errorLogistica = validarFrecuenciaYDias(frecuenciaEntrega, dias ?? []);
+    const errorLogistica = validarFrecuenciaYDias(frecuenciaEntrega, dias ?? [], cuerpo.diaMesEntrega);
     if (errorLogistica) throw new Error(errorLogistica);
 
     const bloqueadoVentas = booleano(cuerpo.bloqueadoVentas);
@@ -962,7 +974,8 @@ export async function POST(request: Request) {
           celular_pais,
           celular_area,
           creado_por,
-          carga_documentos_inicial_abierta
+          carga_documentos_inicial_abierta,
+          dia_mes_entrega
         )
         VALUES (
           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
@@ -971,7 +984,7 @@ export async function POST(request: Request) {
           $31, CASE WHEN $30::boolean THEN now() ELSE NULL END,
           CASE WHEN $30::boolean THEN $32::uuid ELSE NULL END,
           $33, $34, $35, $36, $37, $38, $39,
-          $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51::uuid, true
+          $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51::uuid, true, $52
         )
         RETURNING id, codigo, razon_social
       `,
@@ -993,7 +1006,7 @@ export async function POST(request: Request) {
           : TIPO_DOCUMENTO_IDENTIDAD_SIFEN[
               tipoDocumento as keyof typeof TIPO_DOCUMENTO_IDENTIDAD_SIFEN
             ],
-        naturaleza === "CONTRIBUYENTE" ? null : descripcionDocumentoIdentidad,
+        naturaleza === "CONTRIBUYENTE" || tipoDocumento !== "OTRO" ? null : descripcionDocumentoIdentidad,
         numeroDocumento,
         naturaleza === "CONTRIBUYENTE" ? dv : null,
         razonSocial,
@@ -1035,6 +1048,7 @@ export async function POST(request: Request) {
         celularFiscal.valor.pais,
         celularFiscal.valor.area,
         session.user.id,
+        frecuenciaEntrega === "MENSUAL" && leerDiaMes(cuerpo.diaMesEntrega) !== null ? leerDiaMes(cuerpo.diaMesEntrega) : null,
       ],
     );
 
@@ -1175,6 +1189,11 @@ export async function POST(request: Request) {
       );
     }
 
+
+    // Compuerta fiscal (decisión 10): el estado final del cliente nuevo (con sus direcciones y contactos) debe estar fiscalmente completo.
+    const mensajeFiscal = mensajeRegularizacionFiscal(await evaluarAptitudCliente(conexion as never, session.user.empresaId, cliente.id));
+
+    if (mensajeFiscal) throw new Error(mensajeFiscal);
 
     await conexion.query("COMMIT");
 

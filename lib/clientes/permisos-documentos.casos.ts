@@ -4,6 +4,7 @@
  * (lista vacía = todos coinciden).
  */
 import { readFileSync } from "node:fs";
+import { contador } from "@/lib/clientes/contador-casos";
 import { join } from "node:path";
 
 import {
@@ -15,7 +16,7 @@ import {
 
 const P = (ver: boolean, editar: boolean, crear: boolean): PermisosClientes => ({ ver, editar, crear });
 const CTX = (esCreador: boolean, cargaInicialAbierta: boolean): ContextoCargaInicial => ({ esCreador, cargaInicialAbierta });
-const ACCIONES: AccionDocumento[] = ["DESCARGAR", "CARGAR", "FINALIZAR_CARGA", "REEMPLAZAR", "EDITAR_DATOS", "ELIMINAR"];
+const ACCIONES: AccionDocumento[] = ["DESCARGAR", "CARGAR", "FINALIZAR_CARGA", "REEMPLAZAR", "EDITAR_DATOS", "ELIMINAR", "RESTAURAR", "VER_HISTORIAL", "RECUPERAR_VERSION"];
 const CONTEXTOS: Array<ContextoCargaInicial | null> = [null, CTX(true, true), CTX(true, false), CTX(false, true), CTX(false, false)];
 
 export function verificarCasosPermisosDocumentos(): string[] {
@@ -23,6 +24,7 @@ export function verificarCasosPermisosDocumentos(): string[] {
   const permitido = (accion: AccionDocumento, permisos: PermisosClientes, contexto: ContextoCargaInicial | null) =>
     decidirAccesoDocumento(accion, permisos, contexto).permitido;
   const esperar = (nombre: string, obtenido: boolean, esperado: boolean) => {
+    contador.n += 1;
     if (obtenido !== esperado) fallos.push(`${nombre}: esperado ${esperado}, obtenido ${obtenido}`);
   };
 
@@ -37,7 +39,7 @@ export function verificarCasosPermisosDocumentos(): string[] {
   }
   // La antigüedad del cliente ya no concede nada: no hay plazo (un cliente "recién creado" por otro usuario sigue siendo ajeno)
   esperar("CREAR: recién creado por OTRO usuario no autoriza", permitido("CARGAR", soloCrear, CTX(false, true)), false);
-  for (const accion of ["REEMPLAZAR", "EDITAR_DATOS", "ELIMINAR"] as const) {
+  for (const accion of ["REEMPLAZAR", "EDITAR_DATOS", "ELIMINAR", "RESTAURAR", "VER_HISTORIAL", "RECUPERAR_VERSION"] as const) {
     for (const contexto of CONTEXTOS) esperar(`CREAR: ${accion} (${JSON.stringify(contexto)})`, permitido(accion, soloCrear, contexto), false);
   }
   esperar("CREAR sin VER: descargar", permitido("DESCARGAR", soloCrear, CTX(true, true)), false);
@@ -51,7 +53,7 @@ export function verificarCasosPermisosDocumentos(): string[] {
   // Solo VER: descarga, nada más (ni siquiera siendo creador con carga abierta)
   const lector = P(true, false, false);
   esperar("VER: descargar", permitido("DESCARGAR", lector, null), true);
-  for (const accion of ["CARGAR", "FINALIZAR_CARGA", "REEMPLAZAR", "EDITAR_DATOS", "ELIMINAR"] as const) {
+  for (const accion of ["CARGAR", "FINALIZAR_CARGA", "REEMPLAZAR", "EDITAR_DATOS", "ELIMINAR", "RESTAURAR", "VER_HISTORIAL", "RECUPERAR_VERSION"] as const) {
     esperar(`VER: ${accion} aun siendo creador`, permitido(accion, lector, CTX(true, true)), false);
   }
 
@@ -71,6 +73,9 @@ export function verificarCasosPermisosDocumentos(): string[] {
     "app/api/clientes/[id]/documentos/route.ts",
     "app/api/clientes/[id]/documentos/[docId]/route.ts",
     "app/api/clientes/[id]/documentos/finalizar/route.ts",
+    "app/api/clientes/[id]/documentos/[docId]/restaurar/route.ts",
+    "app/api/clientes/[id]/documentos/[docId]/versiones/route.ts",
+    "app/api/clientes/[id]/documentos/[docId]/versiones/[version]/recuperar/route.ts",
     "lib/clientes/documentos-http.ts",
   ];
 
@@ -116,6 +121,24 @@ export function verificarCasosPermisosDocumentos(): string[] {
   for (const accion of ["EDITAR_DATOS", "ELIMINAR", "DESCARGAR"]) {
     if (!leer("app/api/clientes/[id]/documentos/[docId]/route.ts").includes(`exigir("${accion}"`)) fallos.push(`falta exigir("${accion}") en la ruta de documento`);
   }
+
+  // Decisiones 3 y 4: NINGÚN archivo se destruye por eliminar ni por reemplazar (solo se limpia un archivo nuevo que nunca llegó a registrarse)
+  for (const ruta of rutas) {
+    const codigo = leer(ruta);
+
+    if (/DELETE\s+FROM\s+cliente_documento/i.test(codigo)) fallos.push(`${ruta}: no debe borrar filas de documentos/versiones/eventos`);
+    if (/\b(unlink|rmSync|rm)\(/.test(codigo)) fallos.push(`${ruta}: no debe borrar archivos del volumen`);
+
+    for (const m of codigo.matchAll(/borrarArchivo\(([^)]*)\)/g)) {
+      if (!/^(clave|claveNueva)$/.test((m[1] ?? "").trim())) fallos.push(`${ruta}: borrarArchivo(${m[1]}) solo puede limpiar un archivo nuevo no registrado`);
+    }
+  }
+  const eliminar = leer("app/api/clientes/[id]/documentos/[docId]/route.ts");
+  if (!/UPDATE cliente_documentos SET eliminado_at = now\(\)/.test(eliminar)) fallos.push("DELETE debe ser una exclusión lógica (eliminado_at)");
+  if (!/accion: "ELIMINACION_LOGICA"/.test(eliminar) || !/accion: "REEMPLAZO"/.test(eliminar)) fallos.push("eliminar y reemplazar deben registrar auditoría");
+  if (!/INSERT INTO cliente_documento_versiones/.test(eliminar)) fallos.push("reemplazar debe crear una nueva versión");
+  const migracion = leer("documentacao/banco/nexit/v1/migraciones/NEX-031-cliente-documentos-versiones-auditoria.sql");
+  if (!/REVOKE DELETE ON public\.cliente_documentos FROM nexit_runtime/.test(migracion)) fallos.push("NEX-031 debe revocar DELETE sobre documentos al rol de la aplicación");
 
   return fallos;
 }

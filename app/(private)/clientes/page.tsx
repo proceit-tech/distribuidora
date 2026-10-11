@@ -13,6 +13,8 @@ import type {
   ClienteOperacion,
 } from "@/types/clientes";
 
+import { filtrarClientes } from "@/lib/clientes/filtros-listado";
+
 import styles from "./page.module.css";
 
 const PAGE_SIZE = 8;
@@ -20,8 +22,17 @@ const PAGE_SIZE = 8;
 type EstadoFiltro =
   | "TODOS"
   | "ACTIVOS"
-  | "INACTIVOS"
-  | "BLOQUEADOS";
+  | "INACTIVOS";
+
+type BloqueoFiltro =
+  | "TODOS"
+  | "BLOQUEADOS"
+  | "SIN_BLOQUEO";
+
+type AptitudFiltro =
+  | "TODAS"
+  | "APTOS"
+  | "NO_APTOS";
 
 type NaturalezaFiltro =
   | "TODAS"
@@ -70,8 +81,6 @@ const OPERACIONES: Record<number, ClienteOperacion> = {
 function telefonoVisible(ddi: string, numero: string) {
   return numero ? (ddi ? `+${ddi} ${numero}` : numero) : "";
 }
-
-const soloDigitos = (valor: string) => valor.replace(/\D/g, "");
 
 function texto(valor: unknown) {
   return typeof valor === "string"
@@ -122,6 +131,9 @@ function desdeApi(
       celularDdi: texto(fila.contacto_celular_ddi),
     },
     moneda: texto(fila.moneda_codigo_predeterminada),
+    grupoClienteId: texto(fila.grupo_cliente_id),
+    aptitudApto: fila.aptitud_apto === true,
+    aptitudPendientes: Array.isArray(fila.aptitud_pendientes) ? (fila.aptitud_pendientes as unknown[]).map(String) : [],
     limiteCredito:
       Number(fila.limite_credito) || 0,
     grupoCliente: texto(
@@ -197,6 +209,19 @@ export default function ClientesPage() {
     setFiltroEstado,
   ] =
     useState<EstadoFiltro>("TODOS");
+
+  const [filtroBloqueo, setFiltroBloqueo] =
+    useState<BloqueoFiltro>("TODOS");
+
+  const [filtroAptitud, setFiltroAptitud] =
+    useState<AptitudFiltro>("TODAS");
+
+  // "" = todos; el grupo se filtra por id y la moneda por código (opciones tomadas de los clientes de la empresa)
+  const [filtroGrupo, setFiltroGrupo] =
+    useState("");
+
+  const [filtroMoneda, setFiltroMoneda] =
+    useState("");
 
   const [
     filtroNaturaleza,
@@ -279,10 +304,15 @@ export default function ClientesPage() {
     ).get("ok");
 
     if (ok) {
-      setFlash(
-        ok === "creado"
-          ? "Cliente registrado correctamente."
-          : "Cliente actualizado correctamente.",
+      // Aviso diferido: el mensaje se fija en un callback (no de forma síncrona en el cuerpo del efecto).
+      window.setTimeout(
+        () =>
+          setFlash(
+            ok === "creado"
+              ? "Cliente registrado correctamente."
+              : "Cliente actualizado correctamente.",
+          ),
+        0,
       );
       window.history.replaceState(
         null,
@@ -296,15 +326,14 @@ export default function ClientesPage() {
     };
   }, []);
 
-  useEffect(() => {
+  // Al cambiar búsqueda, filtros u orden se vuelve a la primera página (ajuste de estado durante el render, sin efecto).
+  const firmaConsulta = JSON.stringify([busqueda, filtroEstado, filtroBloqueo, filtroAptitud, filtroGrupo, filtroMoneda, filtroNaturaleza, filtroOperacion, orden]);
+  const [firmaPrevia, setFirmaPrevia] = useState(firmaConsulta);
+
+  if (firmaConsulta !== firmaPrevia) {
+    setFirmaPrevia(firmaConsulta);
     setPagina(1);
-  }, [
-    busqueda,
-    filtroEstado,
-    filtroNaturaleza,
-    filtroOperacion,
-    orden,
-  ]);
+  }
 
   useEffect(() => {
     if (!flash) {
@@ -352,96 +381,38 @@ export default function ClientesPage() {
     );
   }, [clientes]);
 
-  const filtrados = useMemo(() => {
-    const term =
-      busqueda
-        .trim()
-        .toLocaleLowerCase("es");
+  // Búsqueda y filtros: lógica pura compartida y probada en lib/clientes/filtros-listado.ts
+  const filtrados = useMemo(
+    () =>
+      filtrarClientes(clientes, {
+        busqueda,
+        estado: filtroEstado,
+        bloqueo: filtroBloqueo,
+        aptitud: filtroAptitud,
+        grupo: filtroGrupo,
+        moneda: filtroMoneda,
+        naturaleza: filtroNaturaleza,
+        operacion: filtroOperacion,
+      }),
+    [clientes, busqueda, filtroEstado, filtroBloqueo, filtroAptitud, filtroGrupo, filtroMoneda, filtroNaturaleza, filtroOperacion],
+  );
 
-    return clientes.filter(
-      (cliente) => {
-        if (
-          filtroEstado ===
-            "ACTIVOS" &&
-          !cliente.activo
-        ) {
-          return false;
-        }
+  // Opciones de los filtros: solo grupos y monedas que existen en los clientes de la empresa de la sesión.
+  const opcionesGrupo = useMemo(() => {
+    const mapa = new Map<string, string>();
 
-        if (
-          filtroEstado ===
-            "INACTIVOS" &&
-          cliente.activo
-        ) {
-          return false;
-        }
+    for (const cliente of clientes) {
+      if (cliente.grupoClienteId) mapa.set(cliente.grupoClienteId, cliente.grupoCliente || "Grupo sin nombre");
+    }
 
-        if (
-          filtroEstado ===
-            "BLOQUEADOS" &&
-          !cliente.bloqueadoVentas
-        ) {
-          return false;
-        }
+    return [...mapa.entries()].sort((a, b) => a[1].localeCompare(b[1], "es"));
+  }, [clientes]);
 
-        if (
-          filtroNaturaleza !==
-            "TODAS" &&
-          cliente.naturaleza !==
-            filtroNaturaleza
-        ) {
-          return false;
-        }
-
-        if (
-          filtroOperacion !==
-            "TODAS" &&
-          cliente.tipoOperacion !==
-            filtroOperacion
-        ) {
-          return false;
-        }
-
-        if (!term) {
-          return true;
-        }
-
-        const principal = cliente.contactoPrincipal;
-        const campos = [
-          cliente.codigo,
-          cliente.razonSocial,
-          cliente.nombreFantasia,
-          cliente.numeroDocumento,
-          cliente.dv,
-          cliente.email,
-          cliente.telefono,
-          cliente.celular,
-          cliente.gln,
-          cliente.grupoCliente,
-          cliente.vendedor,
-          cliente.rutaEntrega,
-          cliente.zonaComercial,
-          principal.nombre,
-          principal.telefono,
-          principal.celular,
-        ];
-        const digitos = soloDigitos(term);
-        // Teléfonos: se compara también solo por dígitos (con o sin DDI, espacios o guiones).
-        const numeros = [cliente.telefono, cliente.celular, principal.telefono, principal.celular].map(soloDigitos).filter(Boolean);
-
-        return (
-          campos.join(" ").toLocaleLowerCase("es").includes(term) ||
-          (digitos.length >= 3 && numeros.some((n) => n.includes(digitos)))
-        );
-      },
-    );
-  }, [
-    clientes,
-    busqueda,
-    filtroEstado,
-    filtroNaturaleza,
-    filtroOperacion,
-  ]);
+  const opcionesMoneda = useMemo(
+    () => [...new Set(clientes.map((cliente) => cliente.moneda).filter(Boolean))].sort(),
+    [clientes],
+  );
+  const hayClientesSinMoneda = useMemo(() => clientes.some((cliente) => cliente.moneda === ""), [clientes]);
 
   // Ordenación sobre el conjunto filtrado COMPLETO (todos los clientes están cargados en el cliente), antes de paginar.
   const ordenados = useMemo(() => {
@@ -489,24 +460,25 @@ export default function ClientesPage() {
     ),
   );
 
-  useEffect(() => {
-    if (pagina > totalPaginas) {
-      setPagina(totalPaginas);
-    }
-  }, [pagina, totalPaginas]);
+  // Página vigente: nunca excede el total (p. ej. al filtrar), sin efecto de corrección.
+  const paginaVigente = Math.min(pagina, totalPaginas);
 
   const paginaActual = useMemo(
     () =>
       ordenados.slice(
-        (pagina - 1) * PAGE_SIZE,
-        pagina * PAGE_SIZE,
+        (paginaVigente - 1) * PAGE_SIZE,
+        paginaVigente * PAGE_SIZE,
       ),
-    [ordenados, pagina],
+    [ordenados, paginaVigente],
   );
 
   function limpiarFiltros() {
     setBusqueda("");
     setFiltroEstado("TODOS");
+    setFiltroBloqueo("TODOS");
+    setFiltroAptitud("TODAS");
+    setFiltroGrupo("");
+    setFiltroMoneda("");
     setFiltroNaturaleza("TODAS");
     setFiltroOperacion("TODAS");
   }
@@ -592,7 +564,55 @@ export default function ClientesPage() {
               <option value="TODOS">Todos</option>
               <option value="ACTIVOS">Activos</option>
               <option value="INACTIVOS">Inactivos</option>
+            </select>
+          </label>
+
+          <label className={styles.filterField}>
+            <span>Bloqueo</span>
+            <select
+              value={filtroBloqueo}
+              onChange={(event) => setFiltroBloqueo(event.target.value as BloqueoFiltro)}
+            >
+              <option value="TODOS">Todos</option>
               <option value="BLOQUEADOS">Ventas bloqueadas</option>
+              <option value="SIN_BLOQUEO">Sin bloqueo</option>
+            </select>
+          </label>
+
+          <label className={styles.filterField}>
+            <span>Aptitud SIFEN</span>
+            <select
+              value={filtroAptitud}
+              onChange={(event) => setFiltroAptitud(event.target.value as AptitudFiltro)}
+            >
+              <option value="TODAS">Todas</option>
+              <option value="APTOS">Aptos</option>
+              <option value="NO_APTOS">Fiscal incompleto</option>
+            </select>
+          </label>
+
+          <label className={styles.filterField}>
+            <span>Grupo</span>
+            <select value={filtroGrupo} onChange={(event) => setFiltroGrupo(event.target.value)}>
+              <option value="">Todos</option>
+              {opcionesGrupo.map(([id, nombre]) => (
+                <option key={id} value={id}>
+                  {nombre}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className={styles.filterField}>
+            <span>Moneda</span>
+            <select value={filtroMoneda} onChange={(event) => setFiltroMoneda(event.target.value)}>
+              <option value="">Todas</option>
+              {opcionesMoneda.map((codigo) => (
+                <option key={codigo} value={codigo}>
+                  {codigo}
+                </option>
+              ))}
+              {hayClientesSinMoneda ? <option value="SIN_MONEDA">Sin moneda</option> : null}
             </select>
           </label>
 
@@ -773,6 +793,13 @@ export default function ClientesPage() {
                         {cliente.bloqueadoVentas ? (
                           <span className={styles.statusBlocked}>Bloqueado</span>
                         ) : null}
+
+                        <span
+                          className={cliente.aptitudApto ? styles.statusActive : styles.statusBlocked}
+                          title={cliente.aptitudApto ? "Datos fiscales completos para SIFEN" : cliente.aptitudPendientes.join(" · ")}
+                        >
+                          {cliente.aptitudApto ? "Apto SIFEN" : "Fiscal incompleto"}
+                        </span>
                       </div>
                     </td>
 
@@ -795,29 +822,29 @@ export default function ClientesPage() {
 
         <footer className={styles.pagination}>
           <span>
-            Mostrando {filtrados.length === 0 ? 0 : (pagina - 1) * PAGE_SIZE + 1}–
-            {Math.min(pagina * PAGE_SIZE, filtrados.length)} de {filtrados.length}
+            Mostrando {filtrados.length === 0 ? 0 : (paginaVigente - 1) * PAGE_SIZE + 1}–
+            {Math.min(paginaVigente * PAGE_SIZE, filtrados.length)} de {filtrados.length}
           </span>
 
           <div>
             <button
               type="button"
               aria-label="Página anterior"
-              disabled={pagina === 1}
-              onClick={() => setPagina((actual) => actual - 1)}
+              disabled={paginaVigente === 1}
+              onClick={() => setPagina(paginaVigente - 1)}
             >
               ‹
             </button>
 
             <strong>
-              {pagina} / {totalPaginas}
+              {paginaVigente} / {totalPaginas}
             </strong>
 
             <button
               type="button"
               aria-label="Página siguiente"
-              disabled={pagina === totalPaginas}
-              onClick={() => setPagina((actual) => actual + 1)}
+              disabled={paginaVigente === totalPaginas}
+              onClick={() => setPagina(paginaVigente + 1)}
             >
               ›
             </button>

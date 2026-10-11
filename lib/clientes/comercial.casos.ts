@@ -2,12 +2,14 @@
  * Casos de regresión de la pestaña Comercial y crédito (importes, porcentaje, entrada decimal, pestaña de error).
  * No se ejecutan automáticamente: `verificarCasosComercial()` devuelve los fallos (lista vacía = todos coinciden).
  */
+import { contador } from "@/lib/clientes/contador-casos";
 import { DESCUENTO_COMERCIAL, LIMITE_CREDITO, decimalAcotado } from "@/lib/clientes/comercial";
 import { pestanaDeErrorApi } from "@/lib/clientes/pestanas";
 
 export function verificarCasosComercial(): string[] {
   const fallos: string[] = [];
   const ok = (valor: unknown, opciones: typeof LIMITE_CREDITO | typeof DESCUENTO_COMERCIAL, esperado: string | null, nombre: string) => {
+    contador.n += 1;
     try {
       const r = decimalAcotado(valor, "Campo", opciones);
       if (r !== esperado) fallos.push(`${nombre}: esperado ${esperado}, obtenido ${r}`);
@@ -16,6 +18,7 @@ export function verificarCasosComercial(): string[] {
     }
   };
   const falla = (valor: unknown, opciones: typeof LIMITE_CREDITO | typeof DESCUENTO_COMERCIAL, nombre: string) => {
+    contador.n += 1;
     try {
       decimalAcotado(valor, "Campo", opciones);
       fallos.push(`${nombre}: debía fallar`);

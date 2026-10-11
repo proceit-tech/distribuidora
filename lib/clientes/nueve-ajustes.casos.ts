@@ -3,6 +3,7 @@
  * reglas y validación de archivos). No se ejecutan automáticamente: `verificarCasosNueveAjustes()` devuelve los fallos
  * (lista vacía = todos coinciden). Datos ficticios.
  */
+import { contador } from "@/lib/clientes/contador-casos";
 import { ErrorArchivo, validarArchivo } from "@/lib/almacenamiento/archivos-privados";
 import { validarNombreYTamano, TAMANO_MAXIMO_BYTES } from "@/lib/almacenamiento/archivos-reglas";
 import { convertirImporte, convertirLimites, requiereConversion, validarTasa } from "@/lib/clientes/cambio";
@@ -13,9 +14,11 @@ import { validarMetadatosDocumento } from "@/lib/clientes/documentos";
 export function verificarCasosNueveAjustes(): string[] {
   const fallos: string[] = [];
   const igual = (nombre: string, obtenido: unknown, esperado: unknown) => {
+    contador.n += 1;
     if (obtenido !== esperado) fallos.push(`${nombre}: esperado ${String(esperado)}, obtenido ${String(obtenido)}`);
   };
   const lanza = (nombre: string, f: () => unknown) => {
+    contador.n += 1;
     try {
       f();
       fallos.push(`${nombre}: debía fallar`);
@@ -50,7 +53,8 @@ export function verificarCasosNueveAjustes(): string[] {
   igual("SEMANAL con días", validarFrecuenciaYDias("SEMANAL", [1, 4]), null);
   igual("DIARIA sin días (sin exigencia aprobada)", validarFrecuenciaYDias("DIARIA", []), null);
   igual("DIARIA con días", validarFrecuenciaYDias("DIARIA", [1, 2, 3, 4, 5]), null);
-  igual("MENSUAL sin días (no se inventa regla)", validarFrecuenciaYDias("MENSUAL", []), null);
+  igual("MENSUAL sin días de semana pero con día del mes", validarFrecuenciaYDias("MENSUAL", [], 5), null);
+  igual("MENSUAL sin día del mes (decisión 9: se solicita)", validarFrecuenciaYDias("MENSUAL", []) !== null, true);
   igual("A_DEMANDA sin días (no se inventa regla)", validarFrecuenciaYDias("A_DEMANDA", []), null);
   igual("sin frecuencia, sin días", validarFrecuenciaYDias("", []), null);
   igual("frecuencia inválida", validarFrecuenciaYDias("SEMESTRAL", [1]) !== null, true);

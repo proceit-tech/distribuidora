@@ -46,18 +46,6 @@ function correo(v: string | null, etiqueta: string) {
   if (v && !EMAIL.test(v)) throw new ErrorValidacion(`${etiqueta} no tiene un formato válido.`);
 }
 
-/** dd/mm/yyyy -> yyyy-mm-dd (mismo formato que usa el alta). */
-function fechaIso(v: unknown, etiqueta: string) {
-  const f = texto(v);
-  if (!f) return null;
-  const m = f.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-  if (!m) throw new ErrorValidacion(`${etiqueta} debe tener el formato dd/mm/yyyy.`);
-  const d = new Date(Date.UTC(+m[3], +m[2] - 1, +m[1]));
-  if (d.getUTCFullYear() !== +m[3] || d.getUTCMonth() !== +m[2] - 1 || d.getUTCDate() !== +m[1]) {
-    throw new ErrorValidacion(`${etiqueta} no es una fecha válida.`);
-  }
-  return `${m[3]}-${m[2]}-${m[1]}`;
-}
 
 const idsDe = (v: unknown, etiqueta: string): string[] => {
   if (v === undefined || v === null) return [];
@@ -83,7 +71,7 @@ export type DireccionApi = {
 export type DocumentoApi = {
   id: string; tipo: string; nombreArchivo: string; fechaEmision: string; fechaVencimiento: string; observacion: string;
   /** true = archivo almacenado en el volumen privado (descarga por la API); false = enlace anterior a NEX-028. */
-  tieneArchivo: boolean; tamanoBytes: number | null; tipoMime: string;
+  tieneArchivo: boolean; tamanoBytes: number | null; tipoMime: string; version: number;
   /** Solo documentos anteriores (enlace externo). Los nuevos nunca exponen una URL ni una ruta. */
   urlArchivo: string;
 };
@@ -96,8 +84,8 @@ export async function leerHijos(db: Db, empresaId: string, clienteId: string): P
     db.query(`SELECT * FROM cliente_contactos WHERE empresa_id = $1 AND cliente_id = $2 ORDER BY es_principal DESC, creado_at, id`, [empresaId, clienteId]),
     db.query(`SELECT * FROM direcciones_cliente WHERE empresa_id = $1 AND cliente_id = $2 ORDER BY es_fiscal DESC, es_entrega_default DESC, creado_at, id`, [empresaId, clienteId]),
     db.query(
-      `SELECT id, tipo, nombre_archivo, url_archivo, almacen_clave, tamano_bytes, tipo_mime, to_char(fecha_emision, 'DD/MM/YYYY') AS fe, to_char(fecha_vencimiento, 'DD/MM/YYYY') AS fv, observacion
-         FROM cliente_documentos WHERE empresa_id = $1 AND cliente_id = $2 ORDER BY creado_at, id`,
+      `SELECT id, tipo, nombre_archivo, url_archivo, almacen_clave, tamano_bytes, tipo_mime, version_vigente, to_char(fecha_emision, 'DD/MM/YYYY') AS fe, to_char(fecha_vencimiento, 'DD/MM/YYYY') AS fv, observacion
+         FROM cliente_documentos WHERE empresa_id = $1 AND cliente_id = $2 AND eliminado_at IS NULL ORDER BY creado_at, id`,
       [empresaId, clienteId],
     ),
   ]);
@@ -127,7 +115,7 @@ const direccionDeFila = (r: Json): DireccionApi => ({
 });
 const documentoDeFila = (r: Json): DocumentoApi => ({
   id: r.id as string, tipo: s(r.tipo), nombreArchivo: s(r.nombre_archivo), urlArchivo: s(r.url_archivo), fechaEmision: s(r.fe), fechaVencimiento: s(r.fv),
-  observacion: s(r.observacion), tieneArchivo: !!r.almacen_clave, tamanoBytes: r.tamano_bytes === null || r.tamano_bytes === undefined ? null : Number(r.tamano_bytes), tipoMime: s(r.tipo_mime),
+  observacion: s(r.observacion), tieneArchivo: !!r.almacen_clave, tamanoBytes: r.tamano_bytes === null || r.tamano_bytes === undefined ? null : Number(r.tamano_bytes), tipoMime: s(r.tipo_mime), version: Number(r.version_vigente ?? 1),
 });
 
 // ---------------------------------------------------------------- Geografía (Paraguay), igual que el alta

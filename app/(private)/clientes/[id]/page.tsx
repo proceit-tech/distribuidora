@@ -24,7 +24,7 @@ import {
   validarRucDv,
 } from "@/lib/fiscal/calcular-dv-ruc";
 import { TelefonoPais } from "@/components/clientes/telefono-pais";
-import { validarCamposReceptor } from "@/lib/fiscal/campos-receptor";
+import { validarCamposReceptor, validarGln } from "@/lib/fiscal/campos-receptor";
 import { DESCUENTO_COMERCIAL, LIMITE_CREDITO, decimalAcotado } from "@/lib/clientes/comercial";
 import { pestanaDeErrorApi } from "@/lib/clientes/pestanas";
 import { convertirLimites, requiereConversion, validarTasa } from "@/lib/clientes/cambio";
@@ -61,6 +61,8 @@ type FormState = {
   paisNombre: string;
 
   tipoDocumento: string;
+  /** D209: descripción del documento, obligatoria (9–41) solo con tipo OTRO; vacía en los demás tipos. */
+  descripcionDocumentoIdentidad: string;
   numeroDocumento: string;
   dv: string;
 
@@ -106,6 +108,7 @@ type FormState = {
   rutaEntrega: string;
   zonaComercial: string;
   frecuenciaEntrega: string;
+  diaMesEntrega: string;
   diasEntrega: number[];
 
   observacionComercial: string;
@@ -235,6 +238,7 @@ function fromCliente(
 
     tipoDocumento:
       cliente.tipoDocumento,
+    descripcionDocumentoIdentidad: cliente.descripcionDocumentoIdentidad ?? "",
     numeroDocumento:
       cliente.numeroDocumento,
     dv: cliente.dv,
@@ -314,6 +318,7 @@ function fromCliente(
       cliente.zonaComercialId,
     frecuenciaEntrega:
       cliente.frecuenciaEntrega,
+    diaMesEntrega: cliente.diaMesEntrega ?? "",
     diasEntrega: [
       ...cliente.diasEntrega,
     ],
@@ -469,17 +474,6 @@ export default function ClienteDetallePage() {
   // Cambio de moneda con límites vigentes: tasa informada por el usuario y confirmación expresa (CLI-VIS-05/06).
   const [tasaCambio, setTasaCambio] = useState("");
   const [conversionConfirmada, setConversionConfirmada] = useState(false);
-
-  // Aviso al venir del alta con documentos que no se pudieron cargar (el cliente ya existe).
-  useEffect(() => {
-    const parametro = new URLSearchParams(window.location.search).get("avisoDocumentos");
-
-    if (parametro) {
-      setAviso(parametro);
-      setTab("documentos");
-      window.history.replaceState(null, "", window.location.pathname);
-    }
-  }, []);
 
   async function recargarDocumentos() {
     const r = await fetch(`/api/clientes/${id}`, { cache: "no-store" });
@@ -737,7 +731,7 @@ export default function ClienteDetallePage() {
         naturaleza: form.naturaleza,
         tipoDocumento: form.tipoDocumento,
         numeroDocumento: form.numeroDocumento.trim(),
-        descripcionDocumento: (cliente.descripcionDocumentoIdentidad ?? "").trim(),
+        descripcionDocumento: form.tipoDocumento === "OTRO" ? form.descripcionDocumentoIdentidad.trim() : "",
         razonSocial: form.razonSocial.trim().toUpperCase(),
         nombreFantasia: form.nombreFantasia.trim(),
         email: form.email.trim(),
@@ -774,6 +768,15 @@ export default function ClienteDetallePage() {
       return;
     }
 
+    // GLN opcional: si se informa, exactamente 13 dígitos y dígito verificador GS1.
+    const errorGln = validarGln(form.gln.trim());
+
+    if (errorGln) {
+      setTab("comercial");
+      setError(errorGln);
+      return;
+    }
+
     try {
       decimalAcotado(form.limiteCredito, "El límite de crédito", LIMITE_CREDITO);
       decimalAcotado(form.limiteCreditoTemporal, "El límite de crédito temporal", LIMITE_CREDITO);
@@ -794,8 +797,8 @@ export default function ClienteDetallePage() {
     // (un cliente anterior que no la toca no se bloquea; el servidor aplica la misma tolerancia).
     const diasOrdenados = (dias: number[]) => [...dias].sort((a, b) => a - b).join(",");
     const logisticaCambio =
-      (form.frecuenciaEntrega || "") !== (cliente.frecuenciaEntrega || "") || diasOrdenados(form.diasEntrega) !== diasOrdenados(cliente.diasEntrega ?? []);
-    const errorLogistica = logisticaCambio ? validarFrecuenciaYDias(form.frecuenciaEntrega, form.diasEntrega) : null;
+      (form.frecuenciaEntrega || "") !== (cliente.frecuenciaEntrega || "") || diasOrdenados(form.diasEntrega) !== diasOrdenados(cliente.diasEntrega ?? []) || (form.diaMesEntrega || "") !== (cliente.diaMesEntrega || "");
+    const errorLogistica = logisticaCambio ? validarFrecuenciaYDias(form.frecuenciaEntrega, form.diasEntrega, form.diaMesEntrega) : null;
 
     if (errorLogistica) {
       setTab("logistica");
@@ -871,7 +874,7 @@ export default function ClienteDetallePage() {
             tipoDocumento:
               form.tipoDocumento,
             descripcionDocumentoIdentidad:
-              cliente.descripcionDocumentoIdentidad,
+              form.naturaleza !== "CONTRIBUYENTE" && form.tipoDocumento === "OTRO" ? form.descripcionDocumentoIdentidad.trim() : "",
             numeroDocumento:
               form.numeroDocumento,
             dv: form.dv,
@@ -935,6 +938,7 @@ export default function ClienteDetallePage() {
             frecuenciaEntrega:
               form.frecuenciaEntrega,
             diasEntrega: form.diasEntrega,
+            diaMesEntrega: form.diaMesEntrega,
             observacionComercial:
               form.observacionComercial,
             observacionLogistica:
@@ -1163,7 +1167,7 @@ export default function ClienteDetallePage() {
               ))}
             </ul>
             <p>
-              Puede seguir editando datos comerciales; corrija estos datos para dejarlo apto.
+              Para guardar cualquier cambio de este cliente debe regularizar antes estos datos fiscales (decisión del responsable): corríjalos en las pestañas indicadas.
             </p>
           </div>
         ) : null}
@@ -1417,12 +1421,25 @@ export default function ClienteDetallePage() {
                       <option value="INNOMINADO">
                         Innominado
                       </option>
+                      <option value="TARJETA_DIPLOMATICA">
+                        Tarjeta diplomática
+                      </option>
                       <option value="OTRO">
                         Otro
                       </option>
                     </SelectInput>
                   )}
                 </Field>
+
+                {!esContribuyente && form.tipoDocumento === "OTRO" ? (
+                  <Field label="Descripción del documento * (9 a 41 caracteres)">
+                    <TextInput
+                      maxLength={41}
+                      onChange={(value) => update("descripcionDocumentoIdentidad", value)}
+                      value={form.descripcionDocumentoIdentidad}
+                    />
+                  </Field>
+                ) : null}
 
                 {esContribuyente ? (
                   <Field
@@ -1810,7 +1827,7 @@ export default function ClienteDetallePage() {
                   ) : (
                     <>
                       <span>
-                        Los límites de arriba están en {cliente?.monedaCodigoPredeterminada}. Informe la tasa de cambio (no se consulta ninguna cotización) y confirme la conversión. Los saldos u
+                        Los límites de arriba están en {cliente?.monedaCodigoPredeterminada} y no deben modificarse en este mismo guardado (el servidor lo rechaza). Informe la tasa de cambio (no se consulta ninguna cotización) y confirme la conversión. Los saldos u
                         operaciones de otros módulos no se convierten.
                       </span>
                       <Field label={`Tasa: 1 ${cliente?.monedaCodigoPredeterminada} = ? ${form.moneda}`}>
@@ -2247,12 +2264,11 @@ export default function ClienteDetallePage() {
                     value={
                       form.frecuenciaEntrega
                     }
-                    onChange={(value) =>
-                      update(
-                        "frecuenciaEntrega",
-                        value,
-                      )
-                    }
+                    onChange={(value) => {
+                      update("frecuenciaEntrega", value);
+                      // El día del mes solo aplica a la frecuencia mensual: al cambiar de frecuencia se limpia (no se conserva un dato que no aplica).
+                      if (value !== "MENSUAL") update("diaMesEntrega", "");
+                    }}
                   >
                     <option value="">
                       Sin frecuencia
@@ -2269,11 +2285,22 @@ export default function ClienteDetallePage() {
                     <option value="MENSUAL">
                       Mensual
                     </option>
-                    <option value="SEGUN_PEDIDO">
-                      Según pedido
+                    <option value="A_DEMANDA">
+                      A demanda
                     </option>
                   </SelectInput>
                 </Field>
+
+                {form.frecuenciaEntrega === "MENSUAL" ? (
+                  <Field label="Día del mes de entrega * (1 a 31)">
+                    <TextInput
+                      inputMode="numeric"
+                      maxLength={2}
+                      onChange={(value) => update("diaMesEntrega", value)}
+                      value={form.diaMesEntrega}
+                    />
+                  </Field>
+                ) : null}
               </div>
 
               <div

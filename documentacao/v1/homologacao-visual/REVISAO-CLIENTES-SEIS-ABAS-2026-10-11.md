@@ -50,3 +50,6 @@ Status: **AUDITORIA VISUAL/ESTÁTICA — PENDENTE DE IMPLEMENTAÇÃO E ACEITE HU
 
 ## Estado de implementación (Claude Code, 2026-10-11)
 Los nueve ajustes CLI-VIS-01…09 fueron **implementados en el Git y no ejecutados** (sin pruebas, SQL, VM ni despliegue), y quedan **pendientes de auditoría independiente y de aceite humano de la pantalla publicada**. Detalle: `PROGRESSO-NEXIT-V1.md` (sección «nueve ajustes») y `documentacao/banco/nexit/v1/docs/11-DICCIONARIO-CLIENTES.md`. Migraciones NEX-028 (archivos) y NEX-029 (conversión de moneda) versionadas, **no aplicadas**.
+
+## Estado tras la finalización del módulo (Claude Code, 2026-10-11)
+Los nueve ajustes y las diez decisiones finales están implementados en el Git; verificaciones locales ejecutadas: `tsc`, ESLint, `next build` y los casos de regresión de `scripts/casos-clientes` (sin base de datos). **Pendiente**: validación de NEX-022…NEX-032 en PostgreSQL por el responsable, auditoría independiente y aceite humano de las pantallas publicadas. No homologado.

@@ -19,3 +19,7 @@
 *.pem
 *.log
 __pycache__/
+
+# Salida de compilación de los casos de regresión locales
+.tmp-casos/
+*.tsbuildinfo

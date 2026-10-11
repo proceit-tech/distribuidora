@@ -10,14 +10,14 @@ import {
   validarNaturalezaOperacion,
 } from "@/lib/fiscal/campos-receptor";
 import { mensajeRestriccionCliente } from "@/lib/clientes/errores-bd";
-import { evaluarAptitudSifen } from "@/lib/fiscal/aptitud-sifen";
+import { evaluarAptitudCliente, mensajeRegularizacionFiscal } from "@/lib/clientes/aptitud-cliente";
 import { validarDiaPreferidoCobro } from "@/lib/clientes/dia-cobro";
 import { DESCUENTO_COMERCIAL, LIMITE_CREDITO, decimalAcotado, numericoCanonico, validarCondicionYMoneda } from "@/lib/clientes/comercial";
 import { leerTelefonoEntrada, validarTelefono } from "@/lib/fiscal/telefono";
 import { REDONDEO_CONVERSION, convertirLimites, requiereConversion, type ConversionLimites } from "@/lib/clientes/cambio";
-import { validarFrecuenciaYDias } from "@/lib/clientes/logistica";
+import { leerDiaMes, validarFrecuenciaYDias } from "@/lib/clientes/logistica";
 import { validarDireccionFiscalRequerida } from "@/lib/clientes/obligatoriedad-fiscal";
-import { ErrorGeografia, resolverPais, validarPaisPorOperacion } from "@/lib/geografia/referencia";
+import { resolverPais, validarPaisPorOperacion } from "@/lib/geografia/referencia";
 import { ErrorValidacion, leerEntrada, leerHijos, sincronizarHijos } from "@/lib/clientes/relacionados";
 
 type Contexto = { params: Promise<{ id: string }> };
@@ -119,7 +119,7 @@ export async function GET(_request: Request, contexto: Contexto) {
               c.bloqueado_ventas, c.motivo_bloqueo_ventas, c.dia_preferido_cobro,
               c.requiere_orden_compra, c.email_facturacion, c.email_cobranzas,
               c.recibe_documento_electronico, c.ruta_entrega_id, c.zona_comercial_id,
-              c.frecuencia_entrega, c.dias_entrega, c.observacion_comercial, c.observacion_logistica,
+              c.frecuencia_entrega, c.dias_entrega, c.dia_mes_entrega, c.observacion_comercial, c.observacion_logistica,
               c.activo, c.creado_at, c.actualizado_at
          FROM clientes c
         WHERE c.id = $1 AND c.empresa_id = $2`,
@@ -128,55 +128,12 @@ export async function GET(_request: Request, contexto: Contexto) {
     const c = r.rows[0];
     if (!c) return NextResponse.json({ error: "Cliente no encontrado." }, { status: 404 });
     const hijos = await leerHijos(db, session.user.empresaId, id);
-    const dirFiscal = hijos.direcciones.find((d) => d.esFiscal || d.tipo === "FISCAL") ?? null;
     // Códigos de la base -> texto de la API. Un código desconocido NUNCA se sustituye por un valor válido:
     // se devuelve marcado para que la aptitud SIFEN lo informe como pendiente.
     const naturalezaTxt = ({ 1: "CONTRIBUYENTE", 2: "NO_CONTRIBUYENTE" } as Record<number, string>)[Number(c.naturaleza_receptor)] ?? `DESCONOCIDA_${c.naturaleza_receptor}`;
     const operacionTxt = ({ 1: "B2B", 2: "B2C", 3: "B2G", 4: "B2F" } as Record<number, string>)[Number(c.tipo_operacion)] ?? `DESCONOCIDA_${c.tipo_operacion}`;
-    // Existencia del país en el catálogo oficial (referencia_geografica_paises, activo): true / false / null (no verificable).
-    const paisEnCatalogo = async (codigo: unknown): Promise<boolean | null> => {
-      try {
-        await resolverPais(db, codigo, "El país");
-        return true;
-      } catch (error) {
-        return error instanceof ErrorGeografia ? false : null;
-      }
-    };
-    const aptitudSifen = evaluarAptitudSifen(
-      {
-        naturaleza: naturalezaTxt,
-        tipoOperacion: operacionTxt,
-        tipoPersona: c.tipo_persona ?? "",
-        paisCodigo: c.pais_codigo ?? "",
-        paisEnCatalogo: await paisEnCatalogo(c.pais_codigo),
-        tipoDocumento: c.tipo_documento,
-        numeroDocumento: c.numero_documento ?? "",
-        dv: c.dv ?? "",
-        descripcionDocumento: c.descripcion_documento_identidad ?? "",
-        razonSocial: c.razon_social ?? "",
-        nombreFantasia: c.nombre_fantasia ?? "",
-        email: c.email ?? "",
-        telefono: c.telefono ?? "",
-        celular: c.celular ?? "",
-        telefonoPais: c.telefono_pais ?? "",
-        telefonoDdi: c.telefono_ddi ?? "",
-        telefonoArea: c.telefono_area ?? "",
-        celularPais: c.celular_pais ?? "",
-        celularDdi: c.celular_ddi ?? "",
-        celularArea: c.celular_area ?? "",
-      },
-      dirFiscal
-        ? {
-            direccion: dirFiscal.direccion,
-            numeroCasa: dirFiscal.numeroCasa,
-            departamentoCodigo: String(dirFiscal.departamentoCodigo ?? ""),
-            distritoCodigo: String(dirFiscal.distritoCodigo ?? ""),
-            ciudadCodigo: String(dirFiscal.ciudadCodigo ?? ""),
-            paisCodigo: dirFiscal.paisCodigo ?? "",
-            paisEnCatalogo: await paisEnCatalogo(dirFiscal.paisCodigo),
-          }
-        : null,
-    );
+    // Aptitud SIFEN con el estado real de la base (misma implementación que el listado y la compuerta de guardado).
+    const aptitudSifen = await evaluarAptitudCliente(db, session.user.empresaId, id);
 
     return NextResponse.json({
       aptitudSifen,
@@ -227,6 +184,7 @@ export async function GET(_request: Request, contexto: Contexto) {
         zonaComercialId: c.zona_comercial_id ?? "",
         frecuenciaEntrega: c.frecuencia_entrega ?? "",
         diasEntrega: (c.dias_entrega ?? []).map(Number),
+        diaMesEntrega: c.dia_mes_entrega === null || c.dia_mes_entrega === undefined ? "" : String(c.dia_mes_entrega),
         observacionComercial: c.observacion_comercial ?? "",
         observacionLogistica: c.observacion_logistica ?? "",
         activo: c.activo,
@@ -329,7 +287,7 @@ export async function PUT(request: Request, contexto: Contexto) {
     await conexion.query("BEGIN");
 
     const actual = await conexion.query(
-      "SELECT bloqueado_ventas, naturaleza_receptor, numero_documento, dv, descripcion_documento_identidad, razon_social, nombre_fantasia, email, telefono, celular, telefono_ddi, celular_ddi, telefono_pais, telefono_area, celular_pais, celular_area, tipo_operacion, tipo_documento, gln, condicion_pago_id, moneda_codigo_predeterminada, limite_credito, limite_credito_temporal, frecuencia_entrega, dias_entrega FROM clientes WHERE id = $1 AND empresa_id = $2 FOR UPDATE",
+      "SELECT bloqueado_ventas, naturaleza_receptor, numero_documento, dv, descripcion_documento_identidad, razon_social, nombre_fantasia, email, telefono, celular, telefono_ddi, celular_ddi, telefono_pais, telefono_area, celular_pais, celular_area, tipo_operacion, tipo_documento, gln, condicion_pago_id, moneda_codigo_predeterminada, limite_credito, limite_credito_temporal, frecuencia_entrega, dias_entrega, dia_mes_entrega FROM clientes WHERE id = $1 AND empresa_id = $2 FOR UPDATE",
       [id, empresaId],
     );
     if (actual.rowCount !== 1) {
@@ -345,13 +303,17 @@ export async function PUT(request: Request, contexto: Contexto) {
       monedaNueva === (actual.rows[0].moneda_codigo_predeterminada ?? null) ? null : monedaNueva,
     );
 
-    // Entrega y ventas: días obligatorios con frecuencia semanal/quincenal. Se valida al crear o cambiar la combinación;
-    // un cliente anterior que no la cambia se tolera (no se bloquea su mantenimiento).
+    // Entrega y ventas (decisiones 10 y 9): días obligatorios con frecuencia semanal/quincenal; MENSUAL pide el día del mes (1–31);
+    // A_DEMANDA sin calendario. Se valida al crear o cambiar la combinación; un cliente anterior que no la cambia se tolera.
     const diasNuevos = dias(cuerpo.diasEntrega) ?? [];
     const diasPrevios = ((actual.rows[0].dias_entrega as unknown[] | null) ?? []).map(Number);
+    const diaMesNuevo = leerDiaMes(cuerpo.diaMesEntrega);
+    const diaMesPrevio = actual.rows[0].dia_mes_entrega === null || actual.rows[0].dia_mes_entrega === undefined ? null : Number(actual.rows[0].dia_mes_entrega);
     const logisticaCambio =
-      (frecuencia ?? "") !== (actual.rows[0].frecuencia_entrega ?? "") || diasNuevos.join(",") !== [...diasPrevios].sort((a, b) => a - b).join(",");
-    const errorLogistica = logisticaCambio ? validarFrecuenciaYDias(frecuencia, diasNuevos) : null;
+      (frecuencia ?? "") !== (actual.rows[0].frecuencia_entrega ?? "") ||
+      diasNuevos.join(",") !== [...diasPrevios].sort((a, b) => a - b).join(",") ||
+      (Number.isNaN(diaMesNuevo) ? true : diaMesNuevo !== diaMesPrevio);
+    const errorLogistica = logisticaCambio ? validarFrecuenciaYDias(frecuencia, diasNuevos, cuerpo.diaMesEntrega) : null;
     if (errorLogistica) throw new Error(errorLogistica);
 
     // Límites de crédito y cambio de moneda (CLI-VIS-05/06, D-10). Los límites del cuerpo están expresados en la moneda
@@ -361,6 +323,18 @@ export async function PUT(request: Request, contexto: Contexto) {
     let temporalGuardar = limiteTemporal;
     let conversion: ConversionLimites | null = null;
     const monedaPrevia = (actual.rows[0].moneda_codigo_predeterminada as string | null) ?? null;
+    const previo0 = actual.rows[0];
+
+    // Auditoría exacta: al cambiar la moneda los límites enviados deben ser los GUARDADOS (no se editan importes en el mismo guardado
+    // que cambia la moneda); así «valores anteriores» de la auditoría son siempre los realmente almacenados.
+    if (monedaPrevia && monedaNueva && monedaPrevia !== monedaNueva && requiereConversion(numericoCanonico(previo0.limite_credito), previo0.limite_credito_temporal === null ? null : numericoCanonico(previo0.limite_credito_temporal))) {
+      if (
+        limiteGuardar !== numericoCanonico(previo0.limite_credito) ||
+        (temporalGuardar ?? "") !== (previo0.limite_credito_temporal === null ? "" : numericoCanonico(previo0.limite_credito_temporal))
+      ) {
+        throw new Error("Para cambiar la moneda no modifique los importes de los límites en el mismo guardado: guarde primero los importes y luego cambie la moneda.");
+      }
+    }
 
     if (monedaPrevia && monedaNueva && monedaPrevia !== monedaNueva && requiereConversion(limiteGuardar, temporalGuardar)) {
       const c = (typeof cuerpo.conversionMoneda === "object" && cuerpo.conversionMoneda !== null ? cuerpo.conversionMoneda : null) as Json | null;
@@ -462,7 +436,7 @@ export async function PUT(request: Request, contexto: Contexto) {
       ? validarInnominado({ tipoDocumento, naturaleza, tipoOperacion, numeroDocumento, razonSocial })
       : null;
     const glnTexto = textoCrudo(cuerpo.gln);
-    const errorGln = glnTexto !== s(previo.gln) ? validarGln(glnTexto) : null;
+    const errorGln = validarGln(glnTexto); // decisión 7: si se informa, siempre 13 dígitos + dígito GS1 (también en registros anteriores)
     const errorReglas = errorMatriz ?? errorInnominado ?? errorGln;
     if (errorReglas) throw new Error(errorReglas);
 
@@ -505,7 +479,7 @@ export async function PUT(request: Request, contexto: Contexto) {
          dia_preferido_cobro = $35, ruta_entrega_id = $36, zona_comercial_id = $37, vendedor_id = $38,
          frecuencia_entrega = $39, dias_entrega = $40, requiere_orden_compra = $41,
          email_facturacion = $42, email_cobranzas = $43, recibe_documento_electronico = $44,
-         observacion_comercial = $45, observacion_logistica = $46, activo = $47, telefono_ddi = $48, celular_ddi = $49, telefono_pais = $50, telefono_area = $51, celular_pais = $52, celular_area = $53, carga_documentos_inicial_abierta = false
+         observacion_comercial = $45, observacion_logistica = $46, activo = $47, telefono_ddi = $48, celular_ddi = $49, telefono_pais = $50, telefono_area = $51, celular_pais = $52, celular_area = $53, carga_documentos_inicial_abierta = false, dia_mes_entrega = $54
        WHERE id = $1 AND empresa_id = $2`,
       [
         id, empresaId,
@@ -515,7 +489,7 @@ export async function PUT(request: Request, contexto: Contexto) {
         tipoPersona, CONTRIBUYENTE[tipoPersona as keyof typeof CONTRIBUYENTE],
         naturaleza === "CONTRIBUYENTE" ? "RUC" : tipoDocumento,
         naturaleza === "CONTRIBUYENTE" ? null : DOC_SIFEN[tipoDocumento as keyof typeof DOC_SIFEN],
-        naturaleza === "CONTRIBUYENTE" ? null : descDoc,
+        naturaleza === "CONTRIBUYENTE" || tipoDocumento !== "OTRO" ? null : descDoc,
         numeroDocumento, naturaleza === "CONTRIBUYENTE" ? dv : null,
         razonSocial, opcional(cuerpo.nombreFantasia, 255),
         email, emailCopia, telefonoGuardar.numero, celularGuardar.numero,
@@ -538,6 +512,7 @@ export async function PUT(request: Request, contexto: Contexto) {
         telefonoGuardar.area,
         celularGuardar.pais,
         celularGuardar.area,
+        frecuencia === "MENSUAL" && diaMesNuevo !== null && !Number.isNaN(diaMesNuevo) ? diaMesNuevo : null,
       ],
     );
 
@@ -570,6 +545,13 @@ export async function PUT(request: Request, contexto: Contexto) {
 
       if (mensajeB2F) throw new Error(mensajeB2F);
     }
+
+    // Compuerta fiscal (decisión 10): el estado FINAL del cliente (con sus contactos, direcciones y documentos ya sincronizados en
+    // esta transacción) debe estar fiscalmente completo conforme a natureza/operación/SIFEN; los registros anteriores incompletos
+    // exigen regularización ANTES de guardar cualquier edición. Nada se modifica en silencio: se rechaza y se lista lo pendiente.
+    const mensajeFiscal = mensajeRegularizacionFiscal(await evaluarAptitudCliente(conexion as never, empresaId, id));
+
+    if (mensajeFiscal) throw new Error(mensajeFiscal);
 
     await conexion.query("COMMIT");
     return NextResponse.json({ ok: true, id, hijos: resumen });

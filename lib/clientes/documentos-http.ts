@@ -1,5 +1,6 @@
 /** Utilidades HTTP comunes de las rutas de documentos de Clientes (autenticación, permisos y lectura del formulario). */
 import { NextResponse } from "next/server";
+import type { PoolClient } from "pg";
 
 import { getAccessContext, hasPermission } from "@/lib/auth/permissions";
 import { decidirAccesoDocumento, type AccionDocumento, type ContextoCargaInicial, type PermisosClientes } from "@/lib/clientes/permisos-documentos";
@@ -80,3 +81,36 @@ export function respuestaDeError(e: unknown, contexto: string): NextResponse {
 
 export const noEncontrado = () => error("Documento no encontrado.", 404);
 export const clienteNoEncontrado = () => error("Cliente no encontrado.", 404);
+
+/** Ejecuta `fn` en una transacción (BEGIN/COMMIT, ROLLBACK ante cualquier error) sobre una conexión del pool. */
+export async function conTransaccion<T>(fn: (conexion: PoolClient) => Promise<T>): Promise<T> {
+  const { db } = await import("@/lib/db");
+  const conexion = await db.connect();
+
+  try {
+    await conexion.query("BEGIN");
+    const resultado = await fn(conexion);
+    await conexion.query("COMMIT");
+
+    return resultado;
+  } catch (e) {
+    await conexion.query("ROLLBACK").catch(() => undefined);
+    throw e;
+  } finally {
+    conexion.release();
+  }
+}
+
+export type AccionEvento = "CARGA" | "REEMPLAZO" | "EDICION_DATOS" | "ELIMINACION_LOGICA" | "RESTAURACION" | "RECUPERACION_VERSION";
+
+/** Auditoría de documentos (solo altas): usuario, acción, versión y detalle. Va en la MISMA transacción que la acción auditada. */
+export async function registrarEvento(
+  conexion: PoolClient,
+  p: { empresaId: string; clienteId: string; documentoId: string; accion: AccionEvento; version: number | null; usuarioId: string; detalle?: Record<string, unknown> },
+): Promise<void> {
+  await conexion.query(
+    `INSERT INTO cliente_documento_eventos (empresa_id, cliente_id, documento_id, accion, version, usuario_id, detalle)
+     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
+    [p.empresaId, p.clienteId, p.documentoId, p.accion, p.version, p.usuarioId, JSON.stringify(p.detalle ?? {})],
+  );
+}

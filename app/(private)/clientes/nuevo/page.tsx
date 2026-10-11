@@ -142,6 +142,7 @@ type Formulario = {
   zonaComercialId: string;
   vendedorId: string;
   frecuenciaEntrega: string;
+  diaMesEntrega: string;
   diasEntrega: number[];
   observacionComercial: string;
   observacionLogistica: string;
@@ -203,6 +204,7 @@ const formularioInicial: Formulario = {
   zonaComercialId: "",
   vendedorId: "",
   frecuenciaEntrega: "",
+  diaMesEntrega: "",
   diasEntrega: [],
   observacionComercial: "",
   observacionLogistica: "",
@@ -343,10 +345,6 @@ export default function NuevoClientePage() {
   const [docsSubidos, setDocsSubidos] = useState<string[]>([]);
   const [erroresDocs, setErroresDocs] = useState<Record<string, string>>({});
 
-  useEffect(() => {
-    void cargarCatalogos();
-  }, []);
-
   async function cargarCatalogos() {
     try {
       const respuesta = await fetch("/api/clientes?modo=catalogos", {
@@ -383,6 +381,11 @@ export default function NuevoClientePage() {
       );
     }
   }
+
+  useEffect(() => {
+    // Carga diferida (no síncrona en el cuerpo del efecto)
+    void Promise.resolve().then(cargarCatalogos);
+  }, []);
 
   function actualizarFormulario<K extends keyof Formulario>(
     campo: K,
@@ -725,7 +728,7 @@ export default function NuevoClientePage() {
       return comercial("Informe el motivo del bloqueo de ventas.", "cli-motivo-bloqueo");
     }
 
-    const errorLogistica = validarFrecuenciaYDias(f.frecuenciaEntrega, f.diasEntrega);
+    const errorLogistica = validarFrecuenciaYDias(f.frecuenciaEntrega, f.diasEntrega, f.diaMesEntrega);
     if (errorLogistica) return { pestana: "logistica", mensaje: errorLogistica, campo: "cli-frecuencia" };
 
     for (let i = 0; i < contactos.length; i += 1) {
@@ -1953,9 +1956,11 @@ export default function NuevoClientePage() {
               <Select
                 id="cli-frecuencia"
                 label="Frecuencia de entrega"
-                onChange={(valor) =>
-                  actualizarFormulario("frecuenciaEntrega", valor)
-                }
+                onChange={(valor) => {
+                  actualizarFormulario("frecuenciaEntrega", valor);
+                  // El día del mes solo aplica a la frecuencia mensual: se limpia al cambiar de frecuencia.
+                  if (valor !== "MENSUAL") actualizarFormulario("diaMesEntrega", "");
+                }}
                 opciones={[
                   { value: "", label: "A definir" },
                   { value: "DIARIA", label: "Diaria" },
@@ -1966,6 +1971,16 @@ export default function NuevoClientePage() {
                 ]}
                 value={formulario.frecuenciaEntrega}
               />
+              {formulario.frecuenciaEntrega === "MENSUAL" ? (
+                <Input
+                  id="cli-dia-mes-entrega"
+                  inputMode="numeric"
+                  label="Día del mes de entrega * (1 a 31)"
+                  maxLength={2}
+                  onChange={(valor) => actualizarFormulario("diaMesEntrega", valor)}
+                  value={formulario.diaMesEntrega}
+                />
+              ) : null}
             </div>
 
             <p className="clienteNuevo__textoAuxiliar">

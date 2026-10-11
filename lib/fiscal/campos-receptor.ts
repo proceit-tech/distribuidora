@@ -140,9 +140,27 @@ export function validarInnominado(c: { tipoDocumento: string; naturaleza: string
   return null;
 }
 
-/** GLN (ERP): opcional; si se informa, 13 dígitos (sin truncar). La verificación del dígito GS1 queda en D-08. */
+/**
+ * Dígito verificador GS1 (módulo 10) de un GLN/EAN-13: los 12 primeros dígitos se ponderan 1,3,1,3… de izquierda a derecha;
+ * el dígito de control completa la suma a múltiplo de 10. Devuelve el dígito esperado (0–9) para los 12 dígitos dados.
+ */
+export function digitoGs1(doce: string): number {
+  let suma = 0;
+
+  for (let i = 0; i < 12; i += 1) suma += Number(doce[i]) * (i % 2 === 0 ? 1 : 3);
+
+  return (10 - (suma % 10)) % 10;
+}
+
+/** GLN (D-08, decisión 7 del responsable): opcional; si se informa, EXACTAMENTE 13 dígitos numéricos y dígito verificador GS1 correcto. */
 export function validarGln(valor: string): string | null {
-  return valor === "" || /^\d{13}$/.test(valor) ? null : "El GLN debe tener exactamente 13 dígitos.";
+  if (valor === "") return null;
+  if (!/^\d{13}$/.test(valor)) return "El GLN debe tener exactamente 13 dígitos numéricos.";
+  if (digitoGs1(valor.slice(0, 12)) !== Number(valor[12])) {
+    return `El dígito verificador GS1 del GLN no es correcto (debería terminar en ${digitoGs1(valor.slice(0, 12))}).`;
+  }
+
+  return null;
 }
 
 /** URL de documento (ERP): http/https reales; se rechazan javascript:, data: y similares. */

@@ -36,6 +36,10 @@ export type ClienteLista = {
   limiteCredito: number;
   /** Moneda de los límites (moneda predeterminada del cliente); vacía si no está definida. */
   moneda: string;
+  grupoClienteId: string;
+  /** Aptitud SIFEN calculada por el servidor con las reglas compartidas (vacío de pendientes = apto). */
+  aptitudApto: boolean;
+  aptitudPendientes: string[];
   grupoCliente: string;
   condicionPago: string;
   vendedor: string;
@@ -92,6 +96,8 @@ export type ClienteDetalle = {
   rutaEntregaId: string;
   zonaComercialId: string;
   frecuenciaEntrega: string;
+  /** Día del mes (1–31) de entrega cuando la frecuencia es MENSUAL; vacío en cualquier otro caso. */
+  diaMesEntrega: string;
   diasEntrega: number[];
   observacionComercial: string;
   observacionLogistica: string;

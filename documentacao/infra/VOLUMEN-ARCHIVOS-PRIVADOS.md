@@ -9,16 +9,16 @@
 - La base (`cliente_documentos`, migración NEX-028) guarda solo metadatos y la clave relativa (`almacen_clave`). La descarga pasa por `GET /api/clientes/{id}/documentos/{docId}` (sesión + permiso `CLIENTES.VER` + `empresa_id` de la sesión), con `Content-Disposition: attachment`, `X-Content-Type-Options: nosniff` y `Cache-Control: private, no-store`.
 - El contenedor corre con usuario **`nextjs` UID/GID 1001** (fijados en el `Dockerfile`).
 
-## Política V1 propuesta (el responsable aún no la fijó; ajustable en `lib/almacenamiento/archivos-reglas.ts`)
+## Política V1 aprobada (decisiones finales del responsable, 2026-10-11)
 
-| Tema | Valor propuesto |
+| Tema | Valor |
 |---|---|
-| Formatos | PDF, PNG, JPG/JPEG, DOCX, XLSX (extensión **y** firma del contenido verificadas) |
+| Formatos | PDF, JPG/JPEG, PNG, DOCX, XLSX (extensión **y** firma del contenido verificadas en el servidor) |
 | Tamaño máximo | 10 MB por archivo |
-| Sustitución | Se reemplaza el archivo conservando el registro; el archivo anterior se elimina del volumen |
-| Eliminación | Acción explícita con confirmación; borra la fila y el archivo (sin papelera) |
-| Retención / copia | La retención y las copias de seguridad son las del volumen (ver abajo); no hay purga automática |
-| Documentos anteriores | Los que se cargaron como enlace (`url_archivo`) se conservan y se muestran como «enlace anterior» hasta que se les cargue un archivo |
+| Sustitución | **Versionamiento**: la versión anterior se conserva en el historial y puede recuperarse; nada se borra del volumen |
+| Eliminación | **Exclusión lógica**: se oculta de las listas operacionales; el archivo, el historial y la auditoría se conservan; puede restaurarse. **Nunca** se borra un archivo del volumen |
+| Retención | Preservación obligatoria; ninguna purga automática. Descarte definitivo o plazos: requiere nueva aprobación |
+| Documentos anteriores | Los cargados como enlace (`url_archivo`) se conservan y se muestran como «enlace anterior» hasta que se les cargue un archivo |
 
 ## Pasos para el responsable (cuando decida aplicarlo)
 
@@ -41,7 +41,7 @@ Valores a confirmar contra los archivos reales de `/srv/stacks/distribuidora` (n
          - /srv/stacks/distribuidora/data/nexit-archivos:/data/archivos
    ```
    (Alternativa: volumen con nombre `nexit_archivos` declarado en `volumes:`; igual de válido. Lo importante: **persistente y fuera del contenedor**.)
-4. **Aplicar las migraciones** NEX-028 (documentos como archivo) y NEX-029 (auditoría de conversiones de moneda) con el procedimiento habitual (`scripts/aplicar-migraciones.sh`), después de las NEX-022…NEX-027 pendientes y de validar cada una según lo acordado.
+4. **Aplicar las migraciones** NEX-028 (documentos como archivo), NEX-029 (auditoría de conversiones), NEX-030 (autoría de la carga inicial), NEX-031 (exclusión lógica, versiones y auditoría de documentos) y NEX-032 (día del mes de entrega) con el procedimiento habitual (`scripts/aplicar-migraciones.sh`), después de las NEX-022…NEX-027 pendientes y de validar cada una según lo acordado.
 5. **Reconstruir/desplegar** la aplicación con el procedimiento habitual.
 6. **Verificación operativa** (sin exponer datos): cargar un PDF de prueba a un cliente de prueba, descargarlo, confirmar que el archivo existe en el host bajo `<empresa_id>/clientes/<cliente_id>/…` con permisos `600`, y que **no** es accesible por ninguna URL pública ni sin sesión (`GET /api/clientes/{id}/documentos/{docId}` sin cookie → 401).
 7. **Respaldo del volumen**: incluir el directorio en la copia de seguridad externa junto con el dump de PostgreSQL; base y archivos deben restaurarse juntos (la base referencia la clave del archivo).
@@ -49,7 +49,7 @@ Valores a confirmar contra los archivos reales de `/srv/stacks/distribuidora` (n
 ## Reversión
 
 - Quitar el montaje/variable deja la aplicación respondiendo 503 en documentos; los archivos permanecen en el host.
-- `scripts/reversion-NEX-028.sql` **aborta** si ya hay documentos cargados como archivo (para no dejar archivos huérfanos); exportar o eliminar esos documentos de forma explícita antes.
+- Las reversiones `scripts/reversion-NEX-028.sql` y `reversion-NEX-031.sql` **abortan** si hay documentos cargados, versiones, eliminados o auditoría (no se pierde historial ni se dejan archivos huérfanos); exportar y decidir de forma explícita antes.
 
 ## Límites conocidos
 

@@ -44,8 +44,7 @@ function raiz(): string {
 
 /** Nombre original saneado para mostrar/descargar: sin rutas ni caracteres de control, hasta 255 caracteres. */
 export function nombreSeguro(original: string): string {
-  const base = original.split(/[\/]/).pop() ?? "";
-  // eslint-disable-next-line no-control-regex
+  const base = original.split(/[\\/]/).pop() ?? "";
   const limpio = base.replace(/[\u0000-\u001f\u007f"<>|:*?]/g, "").trim();
 
   if (!limpio || limpio === "." || limpio === "..") throw new ErrorArchivo("El archivo no tiene un nombre válido.");
