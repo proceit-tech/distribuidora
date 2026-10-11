@@ -178,3 +178,31 @@ Legendas: **OK-base** = trilha UI→tipo→shared→NEX-006 identificada; **R** 
 - Nenhuma operação de exclusão/substituição de fornecedor pode apagar bytes previamente versionados; tratar também a estratégia atual de DELETE/reinserção das tabelas filhas antes de operacionalizar histórico.
 
 **Estado:** decisão de requisito **registrada somente na documentação**; este aceite não autoriza Claude/ChatGPT a editar código, criar/aplicar SQL/migrations, mexer no Docker, volume ou VM, nem publicar/deploy. Implementação dependerá de autorização posterior explícita. Esta decisão resolve **somente** a questão 1 da seção “Questões objetivas”; as demais permanecem pendentes.
+
+
+## Parecer técnico propositivo ChatGPT — regras recomendadas para aprovação (2026-10-11)
+
+**Responsabilidade:** ChatGPT revisa e PROPÕE regras finais; responsável aprova ou corrige; Claude implementa apenas após autorização. Esta seção não altera decisões já aprovadas nem autoriza código/SQL/VM. Comparação conceitual com SAP Business Partner Supplier (dados gerais, compras, pagamentos/contabilidade), SAP bloqueio de pagamentos e Dynamics 365 workflow de alteração bancária.
+
+### Proposta técnica detalhada
+- **Identidade**: PRV automático, sem edição; fornecedor PY com RUC/DV validado por algoritmo compartilhado, documento estrangeiro coerente com país; CPF ou cédula não forçar SIFEN de receptor; evitar duplicidade por `empresa_id, tipo_documento, numero_documento`; revisar RUC mudança de pessoa, na UI e API.
+- **Compras/pagamentos**: preferências de condições/meio/moeda, desconto e mínimo. `numeric(18,2)` e `numeric(5,2)` como texto decimal canônico, mantendo precisão e limites; mínimo identificado na moeda do fornecedor; antecipos e pedido obrigatório são políticas prospectivas dos módulos operacionais, não prometer enforcement inexistente.
+- **Homologação**: separar `activo` de `estado_homologacion` e `nivel_riesgo`. Novo fornecedor PENDIENTE; aprovação/rejeição/suspensão por perfil autorizado, motivo e trilha; VENCIDO indicado por data quando apropriado. PROPOSTA de bloquear **NOVAS ordens de compra** em PENDIENTE, EN_EVALUACION, RECHAZADO, SUSPENDIDO, VENCIDO; não bloquear consulta/edição nem pagamentos por obrigações já contraídas. O responsável deve confirmar gate e perfil aprovador antes de implementar.
+- **Contatos**: opcionais; no máximo um principal; sete flags de recebimento distintos, sem prometer disparo automático nesta etapa; telefone internacional com DDI e zeros preservados.
+- **Endereços**: vários por tipo, principal por tipo; para PY selects encadeados oficiais, fora do PY texto/seleção internacional; descrição + endereço obrigatórios se existir linha; não impor SIFEN.
+- **Contas bancárias**: não substituir dados ativos silenciosamente; histórico de alterações e permissão específica de aprovação recomendados; contas novas/alteradas ficam PENDENTES DE APROVAÇÃO antes de elegíveis para pagamento, com registro de quem/antes/depois/quando. Conta principal por moeda, somente uma ativa/aprovada por moeda; número, alias, SWIFT/IBAN como texto preservando zeros. Não apagar/reinserir todas contas na edição do fornecedor.
+- **Retenções**: tipo/imposto/percentual e datas, certificado obrigatório quando assinalado; sugerir exigência do anexo válido antes de marcar aplicação da retenção, mas não acionar cálculo fiscal neste cadastro; percentuais exatos `numeric(5,2)`; checar regras DNIT específicas quando integrar pagamentos.
+- **Documentos**: JÁ APROVADO: upload privado em VM, PDF/JPG/PNG/DOCX/XLSX até 10MB, exclusão lógica, versão/recuperação e auditoria; `PROVEEDORES` permission, empresa e proveedor distintos de Clientes.
+- **Update sem perda**: preservar IDs, versões, relações, autoria e auditoria; substituir `DELETE ALL + INSERT` por diff autorizado por ID/tenant em transação, e soft delete onde necessário. Investigar FK e migrations posteriores antes de projetar.
+- **UX e dados**: replicar padrão Clientes (sem título duplicado/cartão de código automático), labels espanhol PY (`Sucursal bancaria`, `Titular`, `Documento del titular`); datas dd/mm/yyyy na UI e ISO na API; campos condicionais, mensagens, acessibilidade e mobile; não descartar os campos ocultos nos screenshots.
+- **Organização futura**: master de fornecedor prepara integrações com Compras, Recepção/Inventário e Pagamentos, sem desenvolver esses módulos agora.
+
+### Fronteira: o que já se pode decidir pela engenharia, sem perguntar ao responsável
+Preservação de IDs, multitenancy, precisão decimal, validação de RUC/DV, normalização segura, não exclusão destrutiva, rótulos claros, consistência visual e autorização por módulo são exigências técnicas da implementação.
+
+### Três decisões de negócio para aprovação do responsável
+1. Gate de homologação em novas ordens: apenas HOMOLOGADO e ATIVO podem receber nova ordem? Quem aprova: perfil dedicado COMPRAS_APROVAR/HOMOLOGAR ou administrativo?
+2. Dados bancários: aprovar novas/alteradas contas antes do pagamento, com auditoria completa, ou registrar somente trilha sem fluxo de aprovação?
+3. Fornecedores de fora do PY: aceitar identificação fiscal/documental local de cada país e IBAN/SWIFT quando cabível, sem exigir RUC PY? **Recomendação: SIM.**
+
+**Estado:** proposta; decisões 1–3 acima ainda não aprovadas. Nenhuma implementação autorizada por esta atualização.
