@@ -165,3 +165,31 @@ Relacionamentos `id UUID`, `cliente_id`, `empresa_id`, `cargado_por UUID`, times
 5. **Separação fiscal:** seleção do país do número independe de D203 (país do receptor), D214/D215 da SIFEN e política de emissão XML V2 ainda pendente. Não definir serialização fiscal por suposição.
 6. **Critérios de aceite:** todos os países/territórios UIT com códigos atribuídos acessíveis e pesquisáveis, casos PRY/BRA/ARG/URY/USA/CAN/países remotos e territórios que compartilham DDI, país real preservado em GET/POST/PUT, cobertura de contatos, alteração de país sem perda silenciosa, dados legados, duplicidade autorizada, testes de build e regressão documentados. Nenhum deploy/SQL na VM sem auditoria e autorização.
 **Esta decisão substitui expressamente a opção 'Otro país' com código `OTR` como representação definitiva do país.**
+
+
+## Decisões do responsável — fechamento do escopo Clientes V1 (2026-10-11, rodada comercial/UX)
+
+**Status:** decisões funcionais registradas; **NÃO constituem autorização de implementação, criação/execução de SQL, acesso à VM, deploy ou homologação.** Se divergirem de comportamento anterior, estas decisões mais recentes prevalecem **no âmbito identificado**, após especificação e aceite de critérios. Regras SIFEN e distinção entre ERP e XML permanecem vinculantes.
+
+| Questão | Decisão do responsável | Delimitação / critério de aceite |
+|---|---|---|
+| 01 — cadastro fiscal incompleto | **Não permitir salvar cliente com dados fiscais obrigatórios incompletos.** | Definir matriz de obrigatoriedade CONDICIONAL por natureza/operação (B2B/B2C/B2G/B2F/Innominado), compatível com SIFEN e com as regras ERP aprovadas. Não transformar campos fiscais opcionais pela norma em obrigatórios sem regra explícita. Vale para criação e para alterações fiscais na edição; impacto nos clientes legados exige decisão específica. Substitui orientação anterior de aceitar cadastro fiscal incompleto. |
+| 02 — GLN (D-08) | **PENDENTE** | Não impor novo DV GS1 obrigatório sem aprovação. |
+| 03 — moeda de crédito (D-10) | **Moeda padrão do cliente** para limite normal e temporário (PYG, USD, BRL etc.). | Uma moeda por cliente para interpretar ambos; não implica conversão cambial automática nem moeda por lista de preços. |
+| 04 — crédito zero (D-10) | **Zero significa sem crédito autorizado; venda à vista permitida.** | Integração futura deve distinguir venda à vista de concessão de crédito; não bloquear cadastro. |
+| 05 — crédito temporário (D-10) | **Somar ao limite normal até o vencimento.** | Após o vencimento, considerar somente o normal, sem apagar o valor histórico; definir detalhes de instante/data e exposição do saldo no módulo operacional. |
+| 06 — desconto | **Sugerir percentual em pedido/venda, admitindo alteração por usuário autorizado.** | Não aplicar automaticamente no cadastro nem aprovar regra de permissões/limite de desconto não especificada; consumo pelo módulo operacional. |
+| 07 — bloquear ventas (D-11) | **Impedir novos pedidos e vendas; permitir consultar/editar o cliente.** | Prever checagem no backend dos módulos operacionais quando existirem; não impedir leitura/manutenção cadastral. |
+| 08 — OC (D-11) | **Quando exigida, número de OC obrigatório antes da confirmação do pedido.** | Regra de confirmação no módulo Pedidos; cadastrar preferência agora. |
+| 09 — documento eletrônico (D-11) | **Preferência de envio**, automação quando módulo correspondente existir. | Não alegar envio automático implementado nesta V1 do cadastro. |
+| 10 — logística (D-13) | **Dias obrigatórios para frequência semanal/quinzenal; frequência diária usa dias selecionados.** | Definir para demais frequências (mensal e sob demanda) sem impor exigência nova por suposição. |
+| 11 — endereços | **Um mesmo endereço pode ser fiscal e entrega padrão.** | Permitir ambos flags no mesmo registro, respeitando limites de unicidade por empresa/cliente e demais regras. |
+| 12 — contato | **Contatos opcionais; se múltiplos, no máximo um principal.** | Não exigir contato principal para salvar; manter índice/constraint de máximo um principal. |
+| 13 — documentos | **Upload e armazenamento efetivo de arquivo na V1.** | **Mudança de escopo** frente à regra anterior 'URL HTTP/HTTPS externa'; requer especificar armazenamento privado, autenticação/autorização por empresa, download seguro, tamanho/tipos, exclusão, substituição, retenção e metadados antes de implementar. Não presumir fornecedor, bucket ou diretório. |
+| 14 — filtros da listagem | **PENDENTE / não respondido.** | Preservar escopo já implementado; não inferir filtros adicionais. |
+| 15 — cabeçalho | Exibir **código, razão social, situação, bloqueio e aptidão fiscal** na ficha. | Aptidão deve refletir critérios fiscais reais; não mostrar verde/apto para dados incompletos. |
+| 16 — escopo do menu | **Cadastro completo e integrações preparadas; operações ficam nos módulos próprios.** | Sem CRM, extrato de vendas, contas a receber ou motor operacional dentro de Clientes nesta etapa. |
+
+**Questões de esclarecimento essenciais antes de implementação:** (A) em 01, matriz de obrigatórios conforme norma por operação + política ERP; definir comportamento de PUT sobre legados fiscais inválidos para não bloquear manutenção sem consentimento; (B) em 03, mudança da moeda padrão quando já houver limites/saldo de crédito: não converter silenciosamente nem reinterpretar dinheiro; (C) em 13, destino e política de guarda de arquivos e exposição (upload privado seguro); (D) 14 e D-08 explicitamente não decididas. Também recuperar definição original de D-01 se for outra decisão distinta do item 01 deste questionário.
+
+**Execução separada:** Claude implementa somente após nova autorização explícita; ChatGPT especifica/audita GitHub; responsável aplica SQL/deploy e valida no único ambiente real. Nenhuma execução neste registro.
