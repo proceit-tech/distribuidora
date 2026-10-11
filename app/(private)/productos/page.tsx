@@ -12,9 +12,13 @@ import {
   ProductoTipo,
 } from "@/types/productos";
 
-import styles from "./page.module.css";
+import { compararTexto, ordenarLista, siguienteOrden, type Orden } from "@/components/ui/lista-padrao/orden";
+import { ThOrdenable } from "@/components/ui/lista-padrao/th-ordenable";
+import ui from "@/components/ui/lista-padrao/lista.module.css";
 
 const PAGE_SIZE = 20;
+
+type CampoOrden = "producto" | "clasificacion" | "inventario" | "precio";
 
 type EstadoFiltro =
   | "TODOS"
@@ -156,6 +160,8 @@ export default function ProductosPage() {
   const [errorCarga, setErrorCarga] =
     useState("");
 
+  const [orden, setOrden] = useState<Orden<CampoOrden>>(null);
+
   useEffect(() => {
     let activo = true;
 
@@ -220,6 +226,7 @@ export default function ProductosPage() {
     filtroFamilia,
     filtroLinea,
     filtroProcedencia,
+    orden,
   ]);
 
   const marcas = useMemo(
@@ -437,6 +444,31 @@ export default function ProductosPage() {
     filtroProcedencia,
   ]);
 
+  // Ordenación sobre el conjunto filtrado COMPLETO (toda la lista está cargada), antes de paginar.
+  const ordenados = useMemo(
+    () =>
+      ordenarLista(filtrados, orden, (campo, a, b) => {
+        switch (campo) {
+          case "producto":
+            return compararTexto(a.descripcion, b.descripcion);
+          case "clasificacion":
+            return compararTexto(
+              `${a.familiaNombre} ${a.lineaNombre}`,
+              `${b.familiaNombre} ${b.lineaNombre}`,
+            );
+          case "inventario":
+            return Number(a.stockDisponible || 0) - Number(b.stockDisponible || 0);
+          case "precio":
+            return (a.precioVentaReferencia ?? -1) - (b.precioVentaReferencia ?? -1);
+        }
+      }),
+    [filtrados, orden],
+  );
+
+  function cambiarOrden(campo: CampoOrden) {
+    setOrden((actual) => siguienteOrden(actual, campo));
+  }
+
   const totalPaginas = Math.max(
     1,
     Math.ceil(
@@ -447,11 +479,11 @@ export default function ProductosPage() {
 
   const paginaActual = useMemo(
     () =>
-      filtrados.slice(
+      ordenados.slice(
         (pagina - 1) * PAGE_SIZE,
         pagina * PAGE_SIZE,
       ),
-    [filtrados, pagina],
+    [ordenados, pagina],
   );
 
   function limpiarFiltros() {
@@ -465,249 +497,97 @@ export default function ProductosPage() {
   }
 
   return (
-    <section className={styles.page}>
-      <header className={styles.hero}>
-        <div>
-          <div className={styles.heroMeta}>
-            <span
-              className={
-                styles.modulePill
-              }
-            >
-              MAESTROS
-            </span>
-          </div>
+    <section className={ui.page}>
+      <header className={ui.topbar}>
+        <div className={ui.titleBlock}>
+          <nav className={ui.breadcrumb} aria-label="Ruta de navegación">
+            <span>Maestros</span>
+            <i aria-hidden="true">/</i>
+            <span aria-current="page">Productos</span>
+          </nav>
 
           <h1>Productos</h1>
-
-          <p>
-            Catálogo de productos de su
-            empresa.
-          </p>
         </div>
 
-        <Link
-          href="/productos/nuevo"
-          className={
-            styles.primaryButton
-          }
-        >
-          ＋ Nuevo producto
+        <Link href="/productos/nuevo" className={ui.primaryButton}>
+          <span aria-hidden="true">+</span>
+          Nuevo producto
         </Link>
       </header>
 
-      <section
-        className={
-          styles.summaryGrid
-        }
-      >
-        <article
-          className={`${styles.summaryCard} ${styles.summaryTeal}`}
-        >
-          <span>
-            PRODUCTOS ACTIVOS
-          </span>
-
-          <strong>
-            {resumen.activos}
-          </strong>
-
-          <small>
-            Registros habilitados
-          </small>
+      <section className={ui.summaryGrid} aria-label="Resumen de productos">
+        <article className={[ui.summaryCard, ui.summaryTeal].join(" ")}>
+          <span>Productos activos</span>
+          <strong>{resumen.activos}</strong>
+          <small>Registros habilitados</small>
         </article>
 
-        <article
-          className={`${styles.summaryCard} ${styles.summaryBlue}`}
-        >
-          <span>
-            UNIDADES INVENTARIO
-          </span>
-
-          <strong>
-            {new Intl.NumberFormat(
-              "es-PY",
-              {
-                maximumFractionDigits: 2,
-              },
-            ).format(
-              resumen.inventario,
-            )}
-          </strong>
-
-          <small>
-            Stock disponible consolidado
-          </small>
+        <article className={[ui.summaryCard, ui.summaryBlue].join(" ")}>
+          <span>Unidades inventario</span>
+          <strong>{new Intl.NumberFormat("es-PY", { maximumFractionDigits: 2 }).format(resumen.inventario)}</strong>
+          <small>Stock disponible consolidado</small>
         </article>
 
-        <article
-          className={`${styles.summaryCard} ${styles.summaryAmber}`}
-        >
-          <span>SIN STOCK</span>
-
-          <strong>
-            {resumen.sinStock}
-          </strong>
-
-          <small>
-            Saldo cero · {resumen.bajoMinimo} bajo el mínimo
-          </small>
+        <article className={[ui.summaryCard, ui.summaryAmber].join(" ")}>
+          <span>Sin stock</span>
+          <strong>{resumen.sinStock}</strong>
+          <small>Saldo cero · {resumen.bajoMinimo} bajo el mínimo</small>
         </article>
 
-        <article
-          className={`${styles.summaryCard} ${styles.summaryPurple}`}
-        >
-          <span>
-            VALOR A PRECIO VENTA
-          </span>
-
-          <strong>
-            {money(
-              resumen.valorVenta,
-              resumen.monedaValor,
-            )}
-          </strong>
-
-          <small>
-            Solo productos con precio de referencia
-          </small>
+        <article className={[ui.summaryCard, ui.summaryViolet].join(" ")}>
+          <span>Valor a precio venta</span>
+          <strong>{money(resumen.valorVenta, resumen.monedaValor)}</strong>
+          <small>Solo productos con precio de referencia</small>
         </article>
       </section>
 
-      <section
-        className={
-          styles.contentCard
-        }
-      >
-        <div
-          className={
-            styles.toolbar
-          }
-        >
-          <label
-            className={
-              styles.search
-            }
-          >
-            <span>⌕</span>
+      <section className={ui.contentCard}>
+        <div className={ui.toolbar}>
+          <label className={ui.search}>
+            <span aria-hidden="true">⌕</span>
 
             <input
               value={busqueda}
-              onChange={(event) =>
-                setBusqueda(
-                  event.target.value,
-                )
-              }
+              onChange={(event) => setBusqueda(event.target.value)}
               placeholder="Buscar por código, código inventario, descripción, marca, familia, línea..."
+              aria-label="Buscar productos"
             />
           </label>
 
-          <span
-            className={
-              styles.resultCount
-            }
-          >
-            {filtrados.length} de{" "}
-            {resumen.total}
-          </span>
-        </div>
-
-        <div
-          className={
-            styles.filters
-          }
-        >
-          <label>
+          <label className={ui.filterField}>
             <span>Estado</span>
-
-            <select
-              value={filtroEstado}
-              onChange={(event) =>
-                setFiltroEstado(
-                  event.target
-                    .value as EstadoFiltro,
-                )
-              }
-            >
-              <option value="TODOS">
-                Todos
-              </option>
-
-              <option value="ACTIVOS">
-                Activos
-              </option>
-
-              <option value="INACTIVOS">
-                Inactivos
-              </option>
+            <select value={filtroEstado} onChange={(event) => setFiltroEstado(event.target.value as EstadoFiltro)}>
+              <option value="TODOS">Todos</option>
+              <option value="ACTIVOS">Activos</option>
+              <option value="INACTIVOS">Inactivos</option>
             </select>
           </label>
 
-          <label>
+          <label className={ui.filterField}>
             <span>Tipo</span>
-
-            <select
-              value={filtroTipo}
-              onChange={(event) =>
-                setFiltroTipo(
-                  event.target
-                    .value as TipoFiltro,
-                )
-              }
-            >
-              <option value="TODOS">
-                Todos
-              </option>
-
-              <option value="MERCADERIA">
-                Mercadería
-              </option>
-
-              <option value="SERVICIO">
-                Servicio
-              </option>
-
-              <option value="KIT">
-                Kit / combo
-              </option>
-
-              <option value="ACTIVO_FIJO">
-                Activo fijo
-              </option>
+            <select value={filtroTipo} onChange={(event) => setFiltroTipo(event.target.value as TipoFiltro)}>
+              <option value="TODOS">Todos</option>
+              <option value="MERCADERIA">Mercadería</option>
+              <option value="SERVICIO">Servicio</option>
+              <option value="KIT">Kit / combo</option>
+              <option value="ACTIVO_FIJO">Activo fijo</option>
             </select>
           </label>
 
-          <label>
+          <label className={ui.filterField}>
             <span>Marca</span>
-
-            <select
-              value={filtroMarca}
-              onChange={(event) =>
-                setFiltroMarca(
-                  event.target.value,
-                )
-              }
-            >
-              <option value="TODAS">
-                Todas
-              </option>
-
-              {marcas.map(
-                (marca) => (
-                  <option
-                    key={marca}
-                    value={marca}
-                  >
-                    {marca}
-                  </option>
-                ),
-              )}
+            <select value={filtroMarca} onChange={(event) => setFiltroMarca(event.target.value)}>
+              <option value="TODAS">Todas</option>
+              {marcas.map((marca) => (
+                <option key={marca} value={marca}>
+                  {marca}
+                </option>
+              ))}
             </select>
           </label>
 
-          <label>
+          <label className={ui.filterField}>
             <span>Familia</span>
-
             <select
               value={filtroFamilia}
               onChange={(event) => {
@@ -715,10 +595,7 @@ export default function ProductosPage() {
                 setFiltroLinea("TODAS");
               }}
             >
-              <option value="TODAS">
-                Todas
-              </option>
-
+              <option value="TODAS">Todas</option>
               {familias.map((familia) => (
                 <option key={familia} value={familia}>
                   {familia}
@@ -727,19 +604,10 @@ export default function ProductosPage() {
             </select>
           </label>
 
-          <label>
+          <label className={ui.filterField}>
             <span>Línea</span>
-
-            <select
-              value={filtroLinea}
-              onChange={(event) =>
-                setFiltroLinea(event.target.value)
-              }
-            >
-              <option value="TODAS">
-                Todas
-              </option>
-
+            <select value={filtroLinea} onChange={(event) => setFiltroLinea(event.target.value)}>
+              <option value="TODAS">Todas</option>
               {lineas.map((linea) => (
                 <option key={linea} value={linea}>
                   {linea}
@@ -748,361 +616,196 @@ export default function ProductosPage() {
             </select>
           </label>
 
-          <label>
-            <span>
-              Procedencia
-            </span>
-
-            <select
-              value={
-                filtroProcedencia
-              }
-              onChange={(event) =>
-                setFiltroProcedencia(
-                  event.target.value,
-                )
-              }
-            >
-              <option value="TODAS">
-                Todas
-              </option>
-
-              {procedencias.map(
-                (procedencia) => (
-                  <option
-                    key={
-                      procedencia
-                    }
-                    value={
-                      procedencia
-                    }
-                  >
-                    {procedencia}
-                  </option>
-                ),
-              )}
+          <label className={ui.filterField}>
+            <span>Procedencia</span>
+            <select value={filtroProcedencia} onChange={(event) => setFiltroProcedencia(event.target.value)}>
+              <option value="TODAS">Todas</option>
+              {procedencias.map((procedencia) => (
+                <option key={procedencia} value={procedencia}>
+                  {procedencia}
+                </option>
+              ))}
             </select>
           </label>
 
-          <button
-            type="button"
-            className={
-              styles.clearButton
-            }
-            onClick={limpiarFiltros}
-          >
-            Limpiar
+          <button type="button" className={ui.clearButton} onClick={limpiarFiltros}>
+            Limpiar filtros
           </button>
+
+          <span className={ui.resultCount} aria-live="polite">
+            {filtrados.length} de {resumen.total}
+          </span>
         </div>
 
-        <div
-          className={
-            styles.listHeader
-          }
-        >
-          <span>Producto</span>
-          <span>
-            Clasificación
-          </span>
-          <span>
-            Inventario
-          </span>
-          <span>
-            Precio venta
-          </span>
-          <span />
-        </div>
+        <div className={ui.tableScroll}>
+          <table className={ui.table}>
+            <thead>
+              <tr>
+                <ThOrdenable titulo="Producto" campo="producto" orden={orden} onOrden={cambiarOrden} />
+                <ThOrdenable titulo="Clasificación" campo="clasificacion" orden={orden} onOrden={cambiarOrden} />
+                <ThOrdenable titulo="Inventario" campo="inventario" orden={orden} onOrden={cambiarOrden} alinear="derecha" />
+                <ThOrdenable titulo="Precio venta" campo="precio" orden={orden} onOrden={cambiarOrden} alinear="derecha" />
+                <ThOrdenable titulo="Acciones" alinear="derecha" />
+              </tr>
+            </thead>
 
-        <div className={styles.list}>
-          {cargando ? (
-            <div className={styles.empty}>
-              <strong>
-                Cargando productos...
-              </strong>
-            </div>
-          ) : errorCarga ? (
-            <div
-              className={styles.empty}
-              role="alert"
-            >
-              <strong>
-                No fue posible cargar los productos
-              </strong>
-              <span>{errorCarga}</span>
-            </div>
-          ) : paginaActual.length === 0 ? (
-            <div className={styles.empty}>
-              <strong>
-                {productos.length === 0
-                  ? "Aún no hay productos registrados"
-                  : "No se encontraron productos."}
-              </strong>
-              <span>
-                {productos.length === 0
-                  ? "Registre el primer producto con el botón Nuevo producto."
-                  : "Modifique los filtros aplicados."}
-              </span>
-            </div>
-          ) : (
-            paginaActual.map(
-            (producto) => (
-              <article
-                key={producto.id}
-                className={
-                  styles.productRow
-                }
-              >
-                <div
-                  className={
-                    styles.productMain
-                  }
-                >
-                  <div
-                    className={
-                      styles.avatar
-                    }
-                  >
-                    {initials(
-                      producto.descripcion,
-                    )}
-                  </div>
-
-                  <div
-                    className={
-                      styles.productIdentity
-                    }
-                  >
-                    <div
-                      className={
-                        styles.identityTop
-                      }
-                    >
+            <tbody>
+              {cargando ? (
+                <tr>
+                  <td colSpan={5} className={ui.emptyCell}>
+                    <div className={ui.empty}>
+                      <strong>Cargando productos...</strong>
+                    </div>
+                  </td>
+                </tr>
+              ) : errorCarga ? (
+                <tr>
+                  <td colSpan={5} className={ui.emptyCell}>
+                    <div className={ui.empty} role="alert">
+                      <strong>No fue posible cargar los productos</strong>
+                      <span>{errorCarga}</span>
+                    </div>
+                  </td>
+                </tr>
+              ) : paginaActual.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className={ui.emptyCell}>
+                    <div className={ui.empty}>
                       <strong>
-                        {
-                          producto.descripcion
-                        }
+                        {productos.length === 0 ? "Aún no hay productos registrados" : "No se encontraron productos"}
                       </strong>
-
-                      <span
-                        className={
-                          styles.code
-                        }
-                      >
-                        {
-                          producto.codigo
-                        }
+                      <span>
+                        {productos.length === 0
+                          ? "Cree su primer producto para comenzar a operar."
+                          : "Modifique los filtros aplicados."}
                       </span>
+                      {productos.length === 0 ? (
+                        <Link href="/productos/nuevo" className={ui.emptyAction}>
+                          + Nuevo producto
+                        </Link>
+                      ) : null}
                     </div>
+                  </td>
+                </tr>
+              ) : (
+                paginaActual.map((producto) => (
+                  <tr key={producto.id} className={ui.row}>
+                    <td>
+                      <div className={ui.clientMain}>
+                        <div className={ui.avatar} aria-hidden="true">
+                          {initials(producto.descripcion)}
+                        </div>
 
-                    <span
-                      className={
-                        styles.inventoryCode
-                      }
-                    >
-                      Código inventario:{" "}
-                      {producto.codigoInventario ||
-                        "—"}
-                    </span>
+                        <div className={ui.clientIdentity}>
+                          <Link href={`/productos/${producto.id}`} className={ui.clientName}>
+                            {producto.descripcion}
+                          </Link>
+                          <span className={ui.code}>
+                            {producto.codigo} · Cód. inventario: {producto.codigoInventario || "—"}
+                          </span>
+                          <span className={ui.code}>
+                            {[producto.marcaNombre || "Sin marca", producto.procedencia || "Sin procedencia", producto.unidadMedidaNombre]
+                              .filter(Boolean)
+                              .join(" · ")}
+                          </span>
+                        </div>
+                      </div>
+                    </td>
 
-                    <div
-                      className={
-                        styles.metaLine
-                      }
-                    >
-                      <span>
-                        {producto.marcaNombre ||
-                          "Sin marca"}
-                      </span>
+                    <td>
+                      <div className={ui.cell}>
+                        <strong>{producto.familiaNombre || "Sin familia"}</strong>
+                        <span>{producto.lineaNombre || "Sin línea"}</span>
+                        <span>{producto.categoriaNombre || "Sin categoría"}</span>
+                      </div>
+                    </td>
 
-                      <span>
-                        {producto.procedencia ||
-                          "Sin procedencia"}
-                      </span>
-
-                      <span>
-                        {
-                          producto.unidadMedidaNombre
-                        }
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                <div
-                  className={
-                    styles.classification
-                  }
-                >
-                  <strong>
-                    {producto.familiaNombre ||
-                      "Sin familia"}
-                  </strong>
-
-                  <span>
-                    {producto.lineaNombre ||
-                      "Sin línea"}
-                  </span>
-
-                  <small>
-                    {producto.categoriaNombre ||
-                      "Sin categoría"}
-                  </small>
-                </div>
-
-                <div
-                  className={
-                    styles.stockBlock
-                  }
-                >
-                  <strong>
-                    {new Intl.NumberFormat(
-                      "es-PY",
-                      {
-                        maximumFractionDigits: 2,
-                      },
-                    ).format(
-                      Number(
-                        producto.stockDisponible ||
-                          0,
-                      ),
-                    )}{" "}
-                    {
-                      producto.unidadMedidaNombre
-                    }
-                  </strong>
-
-                  <span>
-                    Inicial:{" "}
-                    {new Intl.NumberFormat(
-                      "es-PY",
-                      {
-                        maximumFractionDigits: 2,
-                      },
-                    ).format(
-                      Number(
-                        producto.inventarioInicial ||
-                          0,
-                      ),
-                    )}
-                  </span>
-
-                  <span
-                    className={
-                      Number(
-                        producto.stockDisponible ||
-                          0,
-                      ) <= 0
-                        ? styles.statusDanger
-                        : styles.statusActive
-                    }
-                  >
-                    {Number(
-                      producto.stockDisponible ||
-                        0,
-                    ) <= 0
-                      ? "Sin stock"
-                      : "Disponible"}
-                  </span>
-                </div>
-
-                <div
-                  className={
-                    styles.priceBlock
-                  }
-                >
-                  <strong>
-                    {producto.precioVentaReferencia === null
-                      ? "Sin precio"
-                      : money(
-                          producto.precioVentaReferencia,
-                          producto.monedaPrecioReferencia,
-                        )}
-                  </strong>
-
-                  <span>
-                    Valor:{" "}
-                    {producto.precioVentaReferencia === null
-                      ? "—"
-                      : money(
-                          producto.precioVentaReferencia *
+                    <td className={ui.numeric}>
+                      <div className={ui.cell}>
+                        <strong className={ui.mono}>
+                          {new Intl.NumberFormat("es-PY", { maximumFractionDigits: 2 }).format(
                             Number(producto.stockDisponible || 0),
-                          producto.monedaPrecioReferencia,
-                        )}
-                  </span>
+                          )}{" "}
+                          {producto.unidadMedidaNombre}
+                        </strong>
+                        <span>
+                          Inicial:{" "}
+                          {new Intl.NumberFormat("es-PY", { maximumFractionDigits: 2 }).format(
+                            Number(producto.inventarioInicial || 0),
+                          )}
+                        </span>
+                        <span>
+                          <span className={Number(producto.stockDisponible || 0) <= 0 ? ui.statusDanger : ui.statusActive}>
+                            {Number(producto.stockDisponible || 0) <= 0 ? "Sin stock" : "Disponible"}
+                          </span>
+                        </span>
+                      </div>
+                    </td>
 
-                  <small>
-                    Costo promedio:{" "}
-                    {producto.costoPromedio === null
-                      ? "—"
-                      : money(producto.costoPromedio, "")}
-                  </small>
-                </div>
+                    <td className={ui.numeric}>
+                      <div className={ui.cell}>
+                        <strong className={ui.mono}>
+                          {producto.precioVentaReferencia === null
+                            ? "Sin precio"
+                            : money(producto.precioVentaReferencia, producto.monedaPrecioReferencia)}
+                        </strong>
+                        <span>
+                          Valor:{" "}
+                          {producto.precioVentaReferencia === null
+                            ? "—"
+                            : money(
+                                producto.precioVentaReferencia * Number(producto.stockDisponible || 0),
+                                producto.monedaPrecioReferencia,
+                              )}
+                        </span>
+                        <span>
+                          Costo promedio: {producto.costoPromedio === null ? "—" : money(producto.costoPromedio, "")}
+                        </span>
+                      </div>
+                    </td>
 
-                <Link
-                  href={`/productos/${producto.id}`}
-                  className={
-                    styles.detailButton
-                  }
-                >
-                  Ver ficha
-                  <span>›</span>
-                </Link>
-              </article>
-            ),
-          ))}
+                    <td className={ui.actionsCell}>
+                      <Link
+                        href={`/productos/${producto.id}`}
+                        className={ui.detailButton}
+                        aria-label={`Ver ficha de ${producto.descripcion}`}
+                      >
+                        Ver ficha
+                        <span aria-hidden="true">›</span>
+                      </Link>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
         </div>
 
-        <footer
-          className={
-            styles.pagination
-          }
-        >
+        <footer className={ui.pagination}>
           <span>
-            Mostrando{" "}
-            {filtrados.length === 0
-              ? 0
-              : (pagina - 1) *
-                  PAGE_SIZE +
-                1}
-            –
-            {Math.min(
-              pagina * PAGE_SIZE,
-              filtrados.length,
-            )}{" "}
-            de {filtrados.length}
+            Mostrando {filtrados.length === 0 ? 0 : (pagina - 1) * PAGE_SIZE + 1}–
+            {Math.min(pagina * PAGE_SIZE, filtrados.length)} de {filtrados.length}
           </span>
 
           <div>
             <button
               type="button"
+              aria-label="Página anterior"
               disabled={pagina === 1}
-              onClick={() =>
-                setPagina(
-                  (actual) =>
-                    actual - 1,
-                )
-              }
+              onClick={() => setPagina((actual) => actual - 1)}
             >
               ‹
             </button>
 
             <strong>
-              {pagina} /{" "}
-              {totalPaginas}
+              {pagina} / {totalPaginas}
             </strong>
 
             <button
               type="button"
-              disabled={
-                pagina ===
-                totalPaginas
-              }
-              onClick={() =>
-                setPagina(
-                  (actual) =>
-                    actual + 1,
-                )
-              }
+              aria-label="Página siguiente"
+              disabled={pagina === totalPaginas}
+              onClick={() => setPagina((actual) => actual + 1)}
             >
               ›
             </button>

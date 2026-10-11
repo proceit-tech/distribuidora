@@ -551,6 +551,90 @@
   opacity: 0.45;
 }
 
+/* ---- Variantes compartidas (indicadores, estados, avisos) ---- */
+.summaryAmber::before {
+  background: #e0a028;
+}
+
+.statusDanger,
+.statusWarning,
+.statusInfo {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0 9px;
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.statusDanger {
+  color: #a53f4d;
+  background: #fff0f2;
+}
+
+.statusWarning {
+  color: #9b6a17;
+  background: #fff4df;
+}
+
+.statusInfo {
+  color: #3269b3;
+  background: #edf4ff;
+}
+
+.mono {
+  font-variant-numeric: tabular-nums;
+}
+
+.toast {
+  position: fixed;
+  top: 18px;
+  right: 20px;
+  z-index: 100;
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) 24px;
+  width: min(370px, calc(100vw - 40px));
+  align-items: center;
+  gap: 9px;
+  border: 1px solid #cce9df;
+  border-radius: 11px;
+  padding: 9px 10px;
+  color: #255a4b;
+  background: #f4fcf8;
+  box-shadow: 0 16px 40px rgba(18, 67, 54, 0.13);
+}
+
+.toast > span {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  border-radius: 8px;
+  color: #ffffff;
+  background: #1b9c78;
+}
+
+.toast strong,
+.toast small {
+  display: block;
+}
+
+.toast strong {
+  font-size: 13px;
+}
+
+.toast small {
+  margin-top: 2px;
+  font-size: 13px;
+}
+
+.toast button {
+  border: 0;
+  background: transparent;
+}
+
 @media (max-width: 760px) {
   .page {
     padding: 12px;
