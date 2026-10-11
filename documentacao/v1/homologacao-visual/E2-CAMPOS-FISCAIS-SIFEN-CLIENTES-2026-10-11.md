@@ -28,3 +28,6 @@ Para comportar os máximos oficiais de 255 caracteres em `clientes.razon_social`
 
 ## Ambiguidades preservadas (não resolvidas por suposição)
 NT002 × NT023 sobre D208/D210 em B2F no XML; geografia obrigatória no D3 vs. NEX-021; formato de telefone (prefixo da cidade se PRY) — só comprimentos foram aplicados; NT 021 ausente.
+
+## Atualização — por que a NEX-022 ainda não foi escrita
+A política vigente permite versionar a migration sem autorização separada, mas a ampliação de `razon_social` esbarra numa dependência real: as views `v_movimientos_detalle` e `v_ventas_al_costo` (NEX-011) leem `clientes.razon_social`, e o PostgreSQL **não permite `ALTER COLUMN … TYPE` em coluna usada por view**, mesmo ao apenas ampliar o `varchar`. A migration correta precisa, numa única transação, recriar essas views (e qualquer view/regra dependente, p. ex. `v_dashboard_*` se derivarem delas) preservando `security_invoker` e grants, o que exige conferir as definições **efetivas no banco real** (não só no Git, onde podem ter sido alteradas por migrations posteriores) e não pode ser validado no notebook. Por isso, e para não entregar um SQL não verificável, a NEX-022 fica **pendente de escopo próprio**; os limites efetivos permanecem em 200 (rejeição explícita, sem truncamento). Nome fantasia (`nombre_fantasia`) não é usado por views e poderia ser ampliado isoladamente.
