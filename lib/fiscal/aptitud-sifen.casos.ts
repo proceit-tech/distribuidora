@@ -97,7 +97,9 @@ export const CASOS_APTITUD_SIFEN: Caso[] = [
   { nombre: "teléfono paraguayo válido", datos: { ...base, telefono: "021123456", telefonoPais: "PRY", telefonoDdi: "595" }, apto: true },
   { nombre: "teléfono anterior sin país y con forma válida (legado)", datos: { ...base, telefono: "021123456" }, apto: true },
   { nombre: "teléfono anterior sin país con letras", datos: { ...base, telefono: "021-ABC" }, apto: false, pendiente: "teléfono" },
-  { nombre: "celular de Brasil sin DDD", datos: { ...base, celular: "987654321", celularPais: "BRA", celularDdi: "55" }, apto: false, pendiente: "código de área" },
+  { nombre: "celular de Brasil sin DDD: aviso de interfaz, no impide la aptitud", datos: { ...base, celular: "987654321", celularPais: "BRA", celularDdi: "55" }, apto: true },
+  { nombre: "celular con país OTR (histórico, sin identificar)", datos: { ...base, celular: "987654321", celularPais: "OTR", celularDdi: "81" }, apto: false, pendiente: "celular" },
+  { nombre: "teléfono de Ascensión (+247, identificador interno XAC)", datos: { ...base, telefono: "6000", telefonoPais: "XAC", telefonoDdi: "247" }, apto: true },
   { nombre: "celular con país no configurado", datos: { ...base, celular: "987654321", celularPais: "ZZZ" }, apto: false, pendiente: "celular" },
   // ---- Inválidos: identificación
   { nombre: "DV incorrecto", datos: { ...contribuyente, dv: "5" }, apto: false, pendiente: "DV" },

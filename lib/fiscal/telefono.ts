@@ -38,6 +38,8 @@ export type PlanPais = {
   ayuda: string;
   /** true = país del catálogo sin plan de numeración propio: solo DDI + límites UIT. */
   generico?: boolean;
+  /** ISO = código ISO 3166-1 asignado; USR = identificador interno del rango XAA–XZZ (destino UIT sin ISO propio). */
+  origen?: "ISO" | "USR";
 };
 
 /** Paraguay: el número se guarda tal como se informa; los límites son los de D214/D215 aplicados al número paraguayo. */
@@ -64,8 +66,8 @@ const PLANES_DETALLADOS: PlanPais[] = [
   { iso: "URY", nombre: "Uruguay", ddi: "598", area: null, nsn: [8], ayuda: "Número de 8 dígitos, sin el 0 de discado nacional." },
 ];
 
-const AYUDA_NANP = "Plan norteamericano (+1): código de área de 3 dígitos y número de 7 dígitos.";
-const AYUDA_GENERICA = "País sin regla de numeración propia configurada: solo se verifica que sean dígitos, al menos 4 y, con el DDI, no más de 15 (UIT E.164).";
+const AYUDA_NANP = "Plan norteamericano (+1): estructura habitual de código de área de 3 dígitos + número de 7 (aviso, no bloquea).";
+const AYUDA_GENERICA = "Destino sin regla de numeración propia configurada: se verifica solo que sean dígitos y que DDI + número no superen 15 dígitos (UIT E.164). Los ceros se conservan.";
 
 /**
  * Todos los países del catálogo `PAISES_DDI`: los que tienen plan detallado arriba lo conservan; los del plan
@@ -75,13 +77,14 @@ const AYUDA_GENERICA = "País sin regla de numeración propia configurada: solo 
 export const PLANES_TELEFONIA: PlanPais[] = (() => {
   const detallados = new Map(PLANES_DETALLADOS.map((p) => [p.iso, p]));
   const todos: PlanPais[] = PAISES_DDI.map((fila) => {
-    const [iso, nombre, ddi] = fila.split("|");
+    const [iso, nombre, ddi, origenFila = "ISO"] = fila.split("|");
+    const origen = origenFila.startsWith("USR") ? ("USR" as const) : ("ISO" as const);
     const detallado = detallados.get(iso);
 
-    if (detallado) return detallado;
-    if (ddi === "1") return { iso, nombre, ddi, area: { min: 3, max: 3 }, nsn: [10], ayuda: AYUDA_NANP };
+    if (detallado) return { ...detallado, origen };
+    if (ddi === "1") return { iso, nombre, ddi, area: { min: 3, max: 3 }, nsn: [10], ayuda: AYUDA_NANP, origen };
 
-    return { iso, nombre, ddi, area: null, nsn: [], ayuda: AYUDA_GENERICA, generico: true };
+    return { iso, nombre, ddi, area: null, nsn: [], ayuda: AYUDA_GENERICA, generico: true, origen };
   });
 
   return todos.sort((a, b) => (a.iso === PAIS_POR_DEFECTO ? -1 : b.iso === PAIS_POR_DEFECTO ? 1 : a.nombre.localeCompare(b.nombre, "es")));
@@ -157,40 +160,58 @@ export function validarTelefono(
     return { ok: true, valor: { pais: "PRY", ddi: plan.ddi, area: null, numero } };
   }
 
-  // Resto del mundo: solo se rechaza lo que ningún número real puede ser (UIT E.164) o contradice el plan de área conocido.
-  // El largo nacional típico del país NO bloquea: se informa como advertencia (`advertenciaTelefono`).
+  // Resto del mundo. BLOQUEA solo lo que ninguna llamada internacional puede ser o rompe el modelo de datos:
+  // dígitos únicamente, área solo si el país la muestra (máx. 5 dígitos, columna varchar(5)) y E.164: DDI + área + número ≤ 15
+  // dígitos (Rec. UIT-T E.164 fija ese máximo; NO fija un mínimo universal). Largos/áreas/ceros "habituales" del país son
+  // reglas NO confirmadas contra fuente oficial por destino y se informan como AVISO (`avisosTelefono`), nunca bloquean.
   if (plan.area === null && area !== "") return fallo(`de ${plan.nombre} no usa código de área separado: inclúyalo en el número.`);
-  if (plan.area !== null) {
-    if (!/^[0-9]+$/.test(area)) return fallo(`necesita el código de área de ${plan.nombre} (solo dígitos).`);
-    if (area.length < plan.area.min || area.length > plan.area.max) {
-      return fallo(`necesita un código de área de ${plan.area.min === plan.area.max ? plan.area.min : `${plan.area.min} a ${plan.area.max}`} dígitos para ${plan.nombre}.`);
-    }
-    if (area.startsWith("0")) return fallo("no debe llevar el 0 de discado nacional en el código de área.");
-  }
+  if (area !== "" && !/^[0-9]{1,5}$/.test(area)) return fallo("tiene un código de área inválido (solo dígitos, hasta 5).");
 
   const total = area.length + numero.length;
 
-  if (total < 4 || plan.ddi.length + total > 15) return fallo(`debe tener al menos 4 dígitos y, con el DDI (+${plan.ddi}), no más de 15 (UIT E.164).`);
+  if (plan.ddi.length + total > 15) return fallo(`excede los 15 dígitos de la UIT E.164 con el DDI (+${plan.ddi}); se ingresaron ${plan.ddi.length + total}.`);
 
   return { ok: true, valor: { pais: plan.iso, ddi: plan.ddi, area: area === "" ? null : area, numero } };
 }
 
 /**
- * Aviso NO bloqueante: el largo (o un 0 inicial) no coincide con el patrón habitual conocido del país. Nunca impide guardar;
- * el catálogo mundial no incluye planes detallados de todos los países, por lo que no se rechazan números por esa diferencia.
+ * AVISOS no bloqueantes sobre un teléfono ya válido: patrones habituales del país (código de área esperado en los destinos
+ * +1/ARG/BRA, largo habitual, 0 inicial). Provienen de planes compilados sin homologar por destino; nunca impiden guardar
+ * ni cambian aptitud SIFEN.
  */
-export function advertenciaTelefono(entrada: TelefonoForm): string | null {
+export function avisosTelefono(entrada: TelefonoForm): string[] {
   const plan = planDe(entrada.pais.trim());
   const normalizado = normalizarNumeroTelefonico(entrada.numero);
 
-  if (!plan || plan.generico || plan.iso === "PRY" || "error" in normalizado || normalizado.numero === "") return null;
+  if (!plan || plan.iso === "PRY" || "error" in normalizado || normalizado.numero === "") return [];
 
-  const total = entrada.area.trim().length + normalizado.numero.length;
+  const avisos: string[] = [];
+  const area = entrada.area.trim();
+  const numero = normalizado.numero;
 
-  if (!plan.nsn.includes(total)) return `El largo habitual en ${plan.nombre} es de ${plan.nsn.join(" o ")} dígitos; se ingresaron ${total}. Verifique el número (se puede guardar igual).`;
-  if (normalizado.numero.startsWith("0")) return "El número empieza con 0: en formato internacional normalmente se omite el 0 de discado nacional (se puede guardar igual).";
+  if (plan.area !== null) {
+    if (area === "") avisos.push(`En ${plan.nombre} el número suele llevar código de área${plan.area.min === plan.area.max ? ` de ${plan.area.min} dígitos` : ` de ${plan.area.min} a ${plan.area.max} dígitos`}; no se indicó.`);
+    else if (area.length < plan.area.min || area.length > plan.area.max) avisos.push(`El código de área habitual en ${plan.nombre} tiene ${plan.area.min === plan.area.max ? plan.area.min : `${plan.area.min} a ${plan.area.max}`} dígitos.`);
+    if (area.startsWith("0")) avisos.push("El código de área empieza con 0: en formato internacional normalmente se omite el 0 de discado nacional.");
+  }
 
-  return null;
+  if (!plan.generico) {
+    const total = area.length + numero.length;
+
+    if (plan.nsn.length > 0 && !plan.nsn.includes(total)) avisos.push(`El largo habitual en ${plan.nombre} es de ${plan.nsn.join(" o ")} dígitos; se ingresaron ${total}.`);
+    if (numero.startsWith("0")) avisos.push("El número empieza con 0: en formato internacional normalmente se omite el 0 de discado nacional.");
+  }
+
+  if (area.length + numero.length < 4) avisos.push("El número es muy corto; verifique que esté completo.");
+
+  return avisos;
+}
+
+/** Aviso único para la interfaz (se puede guardar igual). */
+export function advertenciaTelefono(entrada: TelefonoForm): string | null {
+  const avisos = avisosTelefono(entrada);
+
+  return avisos.length > 0 ? `${avisos.join(" ")} Se puede guardar igual.` : null;
 }
 
 /**

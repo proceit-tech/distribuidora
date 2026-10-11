@@ -4,8 +4,9 @@
  * (lista vacía = todos coinciden). Los números son ficticios.
  */
 import { diaDeCobroEnMes, ultimoDiaDelMes, validarDiaPreferidoCobro } from "@/lib/clientes/dia-cobro";
-import { PAISES_DDI } from "@/lib/fiscal/paises-ddi";
-import { PLANES_TELEFONIA, advertenciaTelefono, buscarPaisesTelefonia, planDe, validarTelefono, type CampoTelefonico, type TelefonoForm } from "@/lib/fiscal/telefono";
+import { createHash } from "node:crypto";
+import { HUELLA_CATALOGO_MD5, PAISES_DDI } from "@/lib/fiscal/paises-ddi";
+import { PLANES_TELEFONIA, advertenciaTelefono, avisosTelefono, buscarPaisesTelefonia, planDe, validarTelefono, type CampoTelefonico, type TelefonoForm } from "@/lib/fiscal/telefono";
 
 type CasoTel = { nombre: string; campo: CampoTelefonico; entrada: Partial<TelefonoForm> & { numero: string }; ok: boolean; esperado?: Partial<{ pais: string; ddi: string; area: string | null; numero: string }>; error?: string };
 
@@ -23,8 +24,8 @@ export const CASOS_TELEFONO: CasoTel[] = [
   // Otros países: área condicional y largo por plan
   { nombre: "BRA DDD 11 + celular de 9 dígitos", campo: "celular", entrada: { pais: "BRA", area: "11", numero: "98765-4321" }, ok: true, esperado: { pais: "BRA", ddi: "55", area: "11", numero: "987654321" } },
   { nombre: "BRA fijo de 8 dígitos", campo: "telefono", entrada: { pais: "BRA", area: "21", numero: "3456 7890" }, ok: true },
-  { nombre: "BRA sin DDD", campo: "celular", entrada: { pais: "BRA", numero: "987654321" }, ok: false },
-  { nombre: "BRA DDD con 0 de discado nacional", campo: "celular", entrada: { pais: "BRA", area: "011", numero: "987654321" }, ok: false },
+  { nombre: "BRA sin DDD: solo aviso (regla no bloqueante)", campo: "celular", entrada: { pais: "BRA", numero: "987654321" }, ok: true },
+  { nombre: "BRA DDD con 0 de discado nacional: solo aviso", campo: "celular", entrada: { pais: "BRA", area: "011", numero: "987654321" }, ok: true },
   { nombre: "ARG área 3 dígitos + número de 7 (total 10)", campo: "telefono", entrada: { pais: "ARG", area: "351", numero: "4123456" }, ok: true, esperado: { ddi: "54", area: "351" } },
   { nombre: "ARG con 15 sobrante (total 12): largo atípico solo advierte, no rechaza", campo: "celular", entrada: { pais: "ARG", area: "351", numero: "15412345678" }, ok: true },
   { nombre: "URY celular de 8 dígitos sin campo de área", campo: "celular", entrada: { pais: "URY", numero: "99 123 456" }, ok: true, esperado: { ddi: "598", area: null, numero: "99123456" } },
@@ -38,13 +39,13 @@ export const CASOS_TELEFONO: CasoTel[] = [
   { nombre: "ISL (DDI 354, números de 7 dígitos)", campo: "telefono", entrada: { pais: "ISL", numero: "5551234" }, ok: true, esperado: { pais: "ISL", ddi: "354" } },
   { nombre: "ITA conserva el 0 inicial de los fijos", campo: "telefono", entrada: { pais: "ITA", numero: "06 1234 5678" }, ok: true, esperado: { numero: "0612345678" } },
   { nombre: "país sin plan no admite campo de área", campo: "telefono", entrada: { pais: "JPN", area: "3", numero: "12345678" }, ok: false },
-  { nombre: "DDI + número > 15 dígitos rechazado (E.164)", campo: "telefono", entrada: { pais: "JPN", numero: "1234567890123" }, ok: false },
-  { nombre: "número de 3 dígitos rechazado", campo: "telefono", entrada: { pais: "JPN", numero: "123" }, ok: false },
+  { nombre: "DDI + número > 15 dígitos rechazado (E.164)", campo: "telefono", entrada: { pais: "JPN", numero: "12345678901234" }, ok: false },
+  { nombre: "número corto: sin mínimo universal UIT, solo aviso", campo: "telefono", entrada: { pais: "JPN", numero: "123" }, ok: true },
   { nombre: "OTR ya no es país válido (registro anterior: pedir país real)", campo: "telefono", entrada: { pais: "OTR", ddi: "81", numero: "9012345678" }, ok: false },
   // DDI compartido: +1 (NANP), +7, +44, +590, +599, +262, +358
   { nombre: "DOM comparte +1 con área 809", campo: "celular", entrada: { pais: "DOM", area: "809", numero: "555-0123" }, ok: true, esperado: { pais: "DOM", ddi: "1", area: "809" } },
   { nombre: "PRI comparte +1 con área 787", campo: "telefono", entrada: { pais: "PRI", area: "787", numero: "5550123" }, ok: true, esperado: { pais: "PRI", ddi: "1" } },
-  { nombre: "JAM +1 sin área rechazado (plan NANP)", campo: "telefono", entrada: { pais: "JAM", numero: "5550123" }, ok: false },
+  { nombre: "JAM +1 sin área: solo aviso (no se asume obligatoriedad)", campo: "telefono", entrada: { pais: "JAM", numero: "5550123" }, ok: true },
   { nombre: "KAZ comparte +7 con Rusia", campo: "celular", entrada: { pais: "KAZ", numero: "7012345678" }, ok: true, esperado: { pais: "KAZ", ddi: "7" } },
   { nombre: "GGY comparte +44 con Reino Unido", campo: "telefono", entrada: { pais: "GGY", numero: "1481123456" }, ok: true, esperado: { pais: "GGY", ddi: "44" } },
   { nombre: "GLP comparte +590 con San Bartolomé", campo: "celular", entrada: { pais: "GLP", numero: "690123456" }, ok: true, esperado: { pais: "GLP", ddi: "590" } },
@@ -118,7 +119,7 @@ export function verificarCatalogoMundial(): string[] {
     if (!planDe(iso)) fallos.push(`sin plan en PLANES_TELEFONIA: ${iso}`);
   }
 
-  if (PAISES_DDI.length < 230) fallos.push(`catálogo incompleto (${PAISES_DDI.length} entradas)`);
+  if (PAISES_DDI.length !== 247) fallos.push(`catálogo con ${PAISES_DDI.length} entradas (se esperaban 247)`);
   if (PLANES_TELEFONIA.length !== PAISES_DDI.length) fallos.push("PLANES_TELEFONIA no cubre todo el catálogo");
   if (PLANES_TELEFONIA[0]?.iso !== "PRY") fallos.push("Paraguay debe ser el primero");
   if (planDe("OTR")) fallos.push("OTR no puede ser un país del catálogo");
@@ -143,6 +144,42 @@ export function verificarCatalogoMundial(): string[] {
   // Aislamiento entre empresas / repetición: validar el mismo número dos veces siempre es válido (no hay unicidad ni contexto de empresa)
   const mismo = { pais: "PRY", ddi: "595", area: "", numero: "0981123456" };
   if (!validarTelefono("celular", mismo).ok || !validarTelefono("celular", mismo).ok) fallos.push("el mismo número debe poder repetirse");
+
+  return fallos;
+}
+
+/** C9/C10: destinos sin ISO propio, huella canónica del catálogo, avisos no bloqueantes y coherencia con la aptitud. */
+export function verificarCatalogoC8C9C10(): string[] {
+  const fallos: string[] = [];
+
+  // C8: huella canónica == constante exportada (la misma se verifica en SQL con scripts/verificar-paises-telefonia.sql)
+  const filas = PAISES_DDI.map((f) => {
+    const [iso, nombre, ddi, origen = "ISO"] = f.split("|");
+    return `${iso}|${nombre}|${ddi}|${origen}`;
+  }).sort((a, b) => (a.split("|")[0]! < b.split("|")[0]! ? -1 : 1));
+  const huella = createHash("md5").update(`${filas.join("\n")}\n`, "utf8").digest("hex");
+
+  if (huella !== HUELLA_CATALOGO_MD5) fallos.push(`huella del catálogo ${huella} ≠ HUELLA_CATALOGO_MD5 ${HUELLA_CATALOGO_MD5}: actualizar la constante y el seed SQL`);
+
+  // C9: destinos UIT sin ISO propio o con identificación especial
+  const esperados: Array<[string, string, string]> = [["XAC", "247", "USR"], ["IOT", "246", "ISO"], ["SHN", "290", "ISO"], ["VAT", "39", "ISO"], ["XKX", "383", "USR"]];
+  for (const [iso, ddi, origen] of esperados) {
+    const p = planDe(iso);
+    if (!p || p.ddi !== ddi || p.origen !== origen) fallos.push(`destino ${iso}: se esperaba +${ddi} origen ${origen}`);
+  }
+  if (!buscarPaisesTelefonia("ascension").some((p) => p.iso === "XAC")) fallos.push("búsqueda 'ascension' no encuentra XAC");
+  if (!buscarPaisesTelefonia("diego").some((p) => p.iso === "IOT")) fallos.push("búsqueda 'diego' no encuentra IOT");
+  if (!buscarPaisesTelefonia("+247").some((p) => p.iso === "XAC")) fallos.push("búsqueda '+247' no encuentra XAC");
+  if (!validarTelefono("telefono", { pais: "XAC", ddi: "", area: "", numero: "6000" }).ok) fallos.push("número corto de Ascensión (+247) no debe bloquearse");
+
+  // C10: sin mínimo universal; máximo E.164; avisos no bloqueantes
+  if (!validarTelefono("telefono", { pais: "JPN", ddi: "", area: "", numero: "12" }).ok) fallos.push("sin mínimo universal: 2 dígitos válidos");
+  if (validarTelefono("telefono", { pais: "JPN", ddi: "", area: "", numero: "12345678901234" }).ok) fallos.push("JPN +81 con 14 dígitos = 16 excede 15");
+  if (!validarTelefono("telefono", { pais: "JPN", ddi: "", area: "", numero: "1234567890123" }).ok) fallos.push("JPN +81 con 13 dígitos = 15 es válido");
+  if (avisosTelefono({ pais: "BRA", ddi: "55", area: "", numero: "987654321" }).length === 0) fallos.push("BRA sin DDD debe avisar");
+  if (avisosTelefono({ pais: "USA", ddi: "1", area: "", numero: "5550123" }).length === 0) fallos.push("+1 sin área debe avisar");
+  if (avisosTelefono({ pais: "USA", ddi: "1", area: "305", numero: "5550123" }).length !== 0) fallos.push("USA área 305 + 7 dígitos no avisa");
+  if (avisosTelefono({ pais: "PRY", ddi: "595", area: "", numero: "0981123456" }).length !== 0) fallos.push("PRY no emite avisos de plan extranjero");
 
   return fallos;
 }
