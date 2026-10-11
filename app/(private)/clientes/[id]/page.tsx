@@ -443,6 +443,12 @@ export default function ClienteDetallePage() {
   const [error, setError] =
     useState("");
 
+  const [aptitud, setAptitud] =
+    useState<{
+      apto: boolean;
+      pendientes: string[];
+    } | null>(null);
+
   const [hijos, setHijos] =
     useState<HijosForm>(hijosVacios);
 
@@ -480,6 +486,7 @@ export default function ClienteDetallePage() {
             contactos?: Parameters<typeof hijosDesdeApi>[0]["contactos"];
             direcciones?: Parameters<typeof hijosDesdeApi>[0]["direcciones"];
             documentos?: Parameters<typeof hijosDesdeApi>[0]["documentos"];
+            aptitudSifen?: { apto: boolean; pendientes: string[] };
             error?: string;
           };
 
@@ -504,6 +511,7 @@ export default function ClienteDetallePage() {
             ...(cat.catalogos ?? {}),
           });
           setHijos(hijosDesdeApi(datos));
+          setAptitud(datos.aptitudSifen ?? null);
           setCliente(datos.cliente);
           setForm(
             fromCliente(datos.cliente),
@@ -1000,6 +1008,25 @@ export default function ClienteDetallePage() {
             ) : null}
           </div>
         </div>
+
+        {aptitud && !aptitud.apto ? (
+          <div
+            className={styles.error}
+            role="status"
+          >
+            <strong>
+              Datos fiscales pendientes: este cliente aún no está apto para la emisión SIFEN
+            </strong>
+            <ul>
+              {aptitud.pendientes.map((pendiente) => (
+                <li key={pendiente}>{pendiente}</li>
+              ))}
+            </ul>
+            <p>
+              Puede seguir editando datos comerciales; corrija estos datos para dejarlo apto.
+            </p>
+          </div>
+        ) : null}
 
         {error ? (
           <div

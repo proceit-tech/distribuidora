@@ -236,9 +236,9 @@ export async function sincronizarHijos(c: Conn, empresaId: string, clienteId: st
         resumen.contactos.actualizados++;
       } else {
         await c.query(
-          `INSERT INTO cliente_contactos (cliente_id, nombre, apellido, cargo, departamento, telefono, celular, email, es_principal, recibe_pedidos, recibe_facturacion, recibe_cobranzas, recibe_documentos_electronicos, recibe_notificaciones)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
-          [clienteId, ...p],
+          `INSERT INTO cliente_contactos (empresa_id, cliente_id, nombre, apellido, cargo, departamento, telefono, celular, email, es_principal, recibe_pedidos, recibe_facturacion, recibe_cobranzas, recibe_documentos_electronicos, recibe_notificaciones)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+          [empresaId, clienteId, ...p],
         );
         resumen.contactos.nuevos++;
       }
@@ -328,10 +328,10 @@ export async function sincronizarHijos(c: Conn, empresaId: string, clienteId: st
         resumen.direcciones.actualizados++;
       } else {
         await c.query(
-          `INSERT INTO direcciones_cliente (cliente_id, descripcion, direccion, ciudad, departamento, latitud, longitud, es_fiscal, es_entrega_default, tipo, etiqueta, numero_casa, complemento,
+          `INSERT INTO direcciones_cliente (empresa_id, cliente_id, descripcion, direccion, ciudad, departamento, latitud, longitud, es_fiscal, es_entrega_default, tipo, etiqueta, numero_casa, complemento,
                   pais_codigo, pais_nombre, departamento_codigo, distrito_codigo, distrito, ciudad_codigo, codigo_postal, contacto_nombre, contacto_telefono, horario_recepcion, observacion)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)`,
-          [clienteId, ...p],
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)`,
+          [empresaId, clienteId, ...p],
         );
         resumen.direcciones.nuevos++;
       }
@@ -379,8 +379,8 @@ export async function sincronizarHijos(c: Conn, empresaId: string, clienteId: st
         resumen.documentos.actualizados++;
       } else {
         await c.query(
-          `INSERT INTO cliente_documentos (cliente_id, tipo, nombre_archivo, url_archivo, fecha_emision, fecha_vencimiento, observacion, cargado_por) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-          [clienteId, ...p, usuarioId],
+          `INSERT INTO cliente_documentos (empresa_id, cliente_id, tipo, nombre_archivo, url_archivo, fecha_emision, fecha_vencimiento, observacion, cargado_por) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+          [empresaId, clienteId, ...p, usuarioId],
         );
         resumen.documentos.nuevos++;
       }

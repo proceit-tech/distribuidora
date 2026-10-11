@@ -2,22 +2,34 @@
 -- NEX-022 — Clientes: razón social y nombre de fantasía hasta 255 caracteres (D211 / D212 del SIFEN).
 -- NO ejecutar en la VM ni en el banco 'nexit' sin autorización expresa del responsable (backup previo).
 -- Aplicar con documentacao/banco/nexit/v1/scripts/aplicar-migraciones.sh (transacción única + checksum).
--- Antes: scripts/preinspeccion-NEX-022-023.sql (solo lectura). Reversión: scripts/reversion-NEX-022-023.sql.
+-- Antes: scripts/preinspeccion-NEX-022-023.sql (solo lectura; la sección 3 debe devolver 0 bloqueos).
+-- Reversión: scripts/reversion-NEX-022-023.sql (generada con el mismo procedimiento).
 --
 -- PostgreSQL no permite ALTER COLUMN ... TYPE en columnas usadas por vistas (aunque solo se amplíe el varchar).
 -- Las vistas que leen clientes.razon_social / clientes.nombre_fantasia (hoy v_movimientos_detalle y
 -- v_ventas_al_costo, NEX-011, y las que dependan de ellas) se DETECTAN en el catálogo en el momento de aplicar
--- (sin copiar definiciones del Git, para no depender de drift), se guardan con su definición, propietario,
--- opciones (security_invoker), comentario y privilegios, se eliminan en orden inverso de dependencia, se amplían
--- las columnas y se recrean en el orden directo restaurando propietario, opciones, comentario y GRANTs.
--- Si algo no se puede restaurar, la transacción completa se revierte sin cambios. No toca filas.
--- No cubre: vistas materializadas (aborta si existieran) ni privilegios por columna (no se usan).
+-- (no se copian definiciones del Git, para no depender de drift).
+--
+-- SEGURIDAD (todo dentro de UNA transacción; ante cualquier discrepancia se ABORTA y se revierte todo):
+--  1) Se aborta ANTES de tocar nada si alguna de esas vistas tiene: triggers, reglas distintas de la regla de vista,
+--     valores por defecto en columnas, o si es materializada.
+--  2) Se guardan definición, propietario, opciones, comentarios (vista y columnas), privilegios de la vista y
+--     privilegios POR COLUMNA.
+--  3) Las vistas se eliminan SIN CASCADE: si cualquier otro objeto depende de ellas (funciones con su tipo de fila,
+--     otras vistas no detectadas, etc.), el DROP falla y la transacción se revierte.
+--  4) Tras recrear se restauran propietario, comentarios y privilegios (se revocan primero los que la creación
+--     heredó de ALTER DEFAULT PRIVILEGES) y se VERIFICA objetivamente que cada vista quedó idéntica: definición
+--     textual, opciones, propietario, comentarios, ACL de vista y ACL por columna. Si algo difiere, se aborta.
+-- No toca filas. No cubre: políticas RLS sobre vistas (no existen en vistas), objetos que dependan de los tipos de
+-- fila de las vistas (los detecta el DROP sin CASCADE).
 -- =====================================================================
 
 DO $$
 DECLARE
   r record;
   v_ddl text;
+  v_oid regclass;
+  v_cuenta integer;
 BEGIN
   IF to_regclass('public.clientes') IS NULL THEN
     RAISE EXCEPTION 'NEX-022 abortada: no existe public.clientes.';
@@ -46,41 +58,63 @@ BEGIN
   )
   SELECT oid_vista, relkind, max(nivel) AS nivel FROM dep GROUP BY oid_vista, relkind;
 
+  -- (1) Bloqueos previos: nada de esto se puede recrear con fidelidad.
   IF EXISTS (SELECT 1 FROM nex022_vistas WHERE relkind = 'm') THEN
     RAISE EXCEPTION 'NEX-022 abortada: hay vistas materializadas que dependen de clientes; no soportadas por esta migración.';
   END IF;
+  SELECT count(*) INTO v_cuenta FROM nex022_vistas t WHERE EXISTS (SELECT 1 FROM pg_trigger g WHERE g.tgrelid = t.oid_vista AND NOT g.tgisinternal);
+  IF v_cuenta > 0 THEN RAISE EXCEPTION 'NEX-022 abortada: % vista(s) dependiente(s) tienen triggers.', v_cuenta; END IF;
+  SELECT count(*) INTO v_cuenta FROM nex022_vistas t WHERE EXISTS (SELECT 1 FROM pg_rewrite w WHERE w.ev_class = t.oid_vista AND w.rulename <> '_RETURN');
+  IF v_cuenta > 0 THEN RAISE EXCEPTION 'NEX-022 abortada: % vista(s) dependiente(s) tienen reglas adicionales.', v_cuenta; END IF;
+  SELECT count(*) INTO v_cuenta FROM nex022_vistas t WHERE EXISTS (SELECT 1 FROM pg_attrdef x WHERE x.adrelid = t.oid_vista);
+  IF v_cuenta > 0 THEN RAISE EXCEPTION 'NEX-022 abortada: % vista(s) dependiente(s) tienen valores por defecto en columnas.', v_cuenta; END IF;
 
+  -- (2) Estado a restaurar y a verificar.
   CREATE TEMP TABLE nex022_def ON COMMIT DROP AS
   SELECT t.nivel, n.nspname, c.relname, pg_get_userbyid(c.relowner) AS propietario,
-         regexp_replace(pg_get_viewdef(c.oid, true), '[;[:space:]]+$', '') AS definicion,
-         c.reloptions, obj_description(c.oid, 'pg_class') AS comentario, c.oid AS oid_vista
+         pg_get_viewdef(c.oid, true) AS definicion,
+         c.reloptions, obj_description(c.oid, 'pg_class') AS comentario, c.oid AS oid_vista,
+         (SELECT array_agg(x::text ORDER BY x::text) FROM unnest(coalesce(c.relacl, acldefault('r', c.relowner))) x) AS acl_vista,
+         (SELECT string_agg(a.attname || '=' || (SELECT string_agg(y::text, ',' ORDER BY y::text) FROM unnest(a.attacl) y), ';' ORDER BY a.attnum)
+            FROM pg_attribute a WHERE a.attrelid = c.oid AND a.attacl IS NOT NULL AND NOT a.attisdropped) AS acl_columnas
     FROM nex022_vistas t
     JOIN pg_class c ON c.oid = t.oid_vista
     JOIN pg_namespace n ON n.oid = c.relnamespace;
 
   CREATE TEMP TABLE nex022_grants ON COMMIT DROP AS
-  SELECT d.nspname, d.relname, x.privilege_type, x.is_grantable,
+  SELECT d.nspname, d.relname, NULL::text AS columna, x.privilege_type, x.is_grantable,
          CASE WHEN x.grantee = 0 THEN 'PUBLIC' ELSE quote_ident(pg_get_userbyid(x.grantee)) END AS receptor
     FROM nex022_def d
     JOIN pg_class c ON c.oid = d.oid_vista
     CROSS JOIN LATERAL aclexplode(c.relacl) x
-   WHERE c.relacl IS NOT NULL;
+   WHERE c.relacl IS NOT NULL
+  UNION ALL
+  SELECT d.nspname, d.relname, a.attname::text, x.privilege_type, x.is_grantable,
+         CASE WHEN x.grantee = 0 THEN 'PUBLIC' ELSE quote_ident(pg_get_userbyid(x.grantee)) END
+    FROM nex022_def d
+    JOIN pg_attribute a ON a.attrelid = d.oid_vista AND a.attacl IS NOT NULL AND NOT a.attisdropped
+    CROSS JOIN LATERAL aclexplode(a.attacl) x;
 
-  -- 1) Eliminar vistas, de las más dependientes a las menos.
+  CREATE TEMP TABLE nex022_colcom ON COMMIT DROP AS
+  SELECT d.nspname, d.relname, a.attname::text AS columna, col_description(d.oid_vista, a.attnum) AS comentario
+    FROM nex022_def d JOIN pg_attribute a ON a.attrelid = d.oid_vista AND a.attnum > 0 AND NOT a.attisdropped
+   WHERE col_description(d.oid_vista, a.attnum) IS NOT NULL;
+
+  -- (3) Eliminar vistas, de las más dependientes a las menos. SIN CASCADE.
   FOR r IN SELECT * FROM nex022_def ORDER BY nivel DESC, relname LOOP
     EXECUTE format('DROP VIEW %I.%I', r.nspname, r.relname);
   END LOOP;
 
-  -- 2) Ampliar columnas (solo cambia el máximo; los datos no se tocan).
+  -- Ampliar columnas (solo cambia el máximo; los datos no se tocan).
   ALTER TABLE public.clientes
     ALTER COLUMN razon_social TYPE varchar(255),
     ALTER COLUMN nombre_fantasia TYPE varchar(255);
 
-  -- 3) Recrear vistas, de las menos dependientes a las más, y restaurar propietario/comentario/privilegios.
+  -- (4) Recrear vistas, de las menos dependientes a las más, y restaurar propietario / comentarios / privilegios.
   FOR r IN SELECT * FROM nex022_def ORDER BY nivel ASC, relname LOOP
     v_ddl := format('CREATE VIEW %I.%I %s AS %s', r.nspname, r.relname,
                     CASE WHEN r.reloptions IS NULL THEN '' ELSE 'WITH (' || array_to_string(r.reloptions, ', ') || ')' END,
-                    r.definicion);
+                    regexp_replace(r.definicion, '[;[:space:]]+$', ''));
     EXECUTE v_ddl;
     IF r.propietario <> current_user THEN
       EXECUTE format('ALTER VIEW %I.%I OWNER TO %I', r.nspname, r.relname, r.propietario);
@@ -88,17 +122,59 @@ BEGIN
     IF r.comentario IS NOT NULL THEN
       EXECUTE format('COMMENT ON VIEW %I.%I IS %L', r.nspname, r.relname, r.comentario);
     END IF;
+    -- Privilegios heredados de ALTER DEFAULT PRIVILEGES: revocar y dejar solo los guardados.
+    EXECUTE format('REVOKE ALL ON %I.%I FROM PUBLIC', r.nspname, r.relname);
   END LOOP;
 
-  FOR r IN SELECT * FROM nex022_grants LOOP
+  -- Revocar a cada rol (no propietario) los privilegios heredados y reaplicar exactamente los guardados.
+  FOR r IN
+    SELECT DISTINCT d.nspname, d.relname, pg_get_userbyid(x.grantee) AS rol
+      FROM nex022_def d
+      JOIN pg_class c ON c.relname = d.relname AND c.relnamespace = d.nspname::regnamespace
+      CROSS JOIN LATERAL aclexplode(c.relacl) x
+     WHERE c.relacl IS NOT NULL AND x.grantee <> 0 AND x.grantee <> c.relowner
+  LOOP
+    EXECUTE format('REVOKE ALL ON %I.%I FROM %I', r.nspname, r.relname, r.rol);
+  END LOOP;
+
+  FOR r IN SELECT * FROM nex022_grants WHERE columna IS NULL LOOP
     EXECUTE format('GRANT %s ON %I.%I TO %s%s', r.privilege_type, r.nspname, r.relname, r.receptor,
                    CASE WHEN r.is_grantable THEN ' WITH GRANT OPTION' ELSE '' END);
   END LOOP;
 
-  -- 4) Verificación final dentro de la misma transacción (si falla, se revierte todo).
+  FOR r IN SELECT * FROM nex022_grants WHERE columna IS NOT NULL LOOP
+    EXECUTE format('GRANT %s (%I) ON %I.%I TO %s%s', r.privilege_type, r.columna, r.nspname, r.relname, r.receptor,
+                   CASE WHEN r.is_grantable THEN ' WITH GRANT OPTION' ELSE '' END);
+  END LOOP;
+
+  FOR r IN SELECT * FROM nex022_colcom LOOP
+    EXECUTE format('COMMENT ON COLUMN %I.%I.%I IS %L', r.nspname, r.relname, r.columna, r.comentario);
+  END LOOP;
+
+  -- (5) Verificación objetiva: cada vista debe quedar idéntica a la original (si no, se revierte TODO).
   FOR r IN SELECT * FROM nex022_def LOOP
-    IF to_regclass(format('%I.%I', r.nspname, r.relname)) IS NULL THEN
+    v_oid := to_regclass(format('%I.%I', r.nspname, r.relname));
+    IF v_oid IS NULL THEN
       RAISE EXCEPTION 'NEX-022 abortada: no se pudo recrear la vista %.%.', r.nspname, r.relname;
+    END IF;
+    IF pg_get_viewdef(v_oid, true) IS DISTINCT FROM r.definicion THEN
+      RAISE EXCEPTION 'NEX-022 abortada: la definición de %.% cambió al recrearla.', r.nspname, r.relname;
+    END IF;
+    IF (SELECT c.reloptions FROM pg_class c WHERE c.oid = v_oid) IS DISTINCT FROM r.reloptions THEN
+      RAISE EXCEPTION 'NEX-022 abortada: las opciones de %.% no coinciden.', r.nspname, r.relname;
+    END IF;
+    IF (SELECT pg_get_userbyid(c.relowner) FROM pg_class c WHERE c.oid = v_oid) IS DISTINCT FROM r.propietario THEN
+      RAISE EXCEPTION 'NEX-022 abortada: el propietario de %.% no coincide.', r.nspname, r.relname;
+    END IF;
+    IF obj_description(v_oid, 'pg_class') IS DISTINCT FROM r.comentario THEN
+      RAISE EXCEPTION 'NEX-022 abortada: el comentario de %.% no coincide.', r.nspname, r.relname;
+    END IF;
+    IF (SELECT array_agg(x::text ORDER BY x::text) FROM pg_class c, LATERAL unnest(coalesce(c.relacl, acldefault('r', c.relowner))) x WHERE c.oid = v_oid) IS DISTINCT FROM r.acl_vista THEN
+      RAISE EXCEPTION 'NEX-022 abortada: los privilegios de %.% no coinciden.', r.nspname, r.relname;
+    END IF;
+    IF (SELECT string_agg(a.attname || '=' || (SELECT string_agg(y::text, ',' ORDER BY y::text) FROM unnest(a.attacl) y), ';' ORDER BY a.attnum)
+          FROM pg_attribute a WHERE a.attrelid = v_oid AND a.attacl IS NOT NULL AND NOT a.attisdropped) IS DISTINCT FROM r.acl_columnas THEN
+      RAISE EXCEPTION 'NEX-022 abortada: los privilegios por columna de %.% no coinciden.', r.nspname, r.relname;
     END IF;
   END LOOP;
 

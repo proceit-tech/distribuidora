@@ -10,6 +10,7 @@ import {
   validarNaturalezaOperacion,
 } from "@/lib/fiscal/campos-receptor";
 import { mensajeRestriccionCliente } from "@/lib/clientes/errores-bd";
+import { evaluarAptitudSifen } from "@/lib/fiscal/aptitud-sifen";
 import { resolverPais, validarPaisPorOperacion } from "@/lib/geografia/referencia";
 import { ErrorValidacion, leerEntrada, leerHijos, sincronizarHijos } from "@/lib/clientes/relacionados";
 
@@ -129,8 +130,34 @@ export async function GET(_request: Request, contexto: Contexto) {
     const c = r.rows[0];
     if (!c) return NextResponse.json({ error: "Cliente no encontrado." }, { status: 404 });
     const hijos = await leerHijos(db, session.user.empresaId, id);
+    const dirFiscal = hijos.direcciones.find((d) => d.esFiscal || d.tipo === "FISCAL") ?? null;
+    const aptitudSifen = evaluarAptitudSifen(
+      {
+        naturaleza: c.naturaleza_receptor === 1 ? "CONTRIBUYENTE" : "NO_CONTRIBUYENTE",
+        tipoOperacion: (["", "B2B", "B2C", "B2G", "B2F"] as const)[c.tipo_operacion] ?? "B2C",
+        tipoDocumento: c.tipo_documento,
+        numeroDocumento: c.numero_documento ?? "",
+        dv: c.dv ?? "",
+        descripcionDocumento: c.descripcion_documento_identidad ?? "",
+        razonSocial: c.razon_social ?? "",
+        nombreFantasia: c.nombre_fantasia ?? "",
+        email: c.email ?? "",
+        telefono: c.telefono ?? "",
+        celular: c.celular ?? "",
+      },
+      dirFiscal
+        ? {
+            direccion: dirFiscal.direccion,
+            numeroCasa: dirFiscal.numeroCasa,
+            departamentoCodigo: String(dirFiscal.departamentoCodigo ?? ""),
+            distritoCodigo: String(dirFiscal.distritoCodigo ?? ""),
+            ciudadCodigo: String(dirFiscal.ciudadCodigo ?? ""),
+          }
+        : null,
+    );
 
     return NextResponse.json({
+      aptitudSifen,
       cliente: {
         id: c.id,
         codigo: c.codigo,

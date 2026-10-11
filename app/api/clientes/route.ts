@@ -1025,6 +1025,7 @@ export async function POST(request: Request) {
       await conexion.query(
         `
           INSERT INTO cliente_contactos (
+            empresa_id,
             cliente_id,
             nombre,
             apellido,
@@ -1041,11 +1042,12 @@ export async function POST(request: Request) {
             recibe_notificaciones
           )
           VALUES (
-            $1, $2, $3, $4, $5, $6, $7,
-            $8, $9, $10, $11, $12, $13, $14
+            $1, $2, $3, $4, $5, $6, $7, $8,
+            $9, $10, $11, $12, $13, $14, $15
           )
         `,
         [
+          session.user.empresaId,
           cliente.id,
           texto(contacto.nombre, 100),
           opcional(contacto.apellido, 100),
@@ -1072,6 +1074,7 @@ export async function POST(request: Request) {
       await conexion.query(
         `
           INSERT INTO direcciones_cliente (
+            empresa_id,
             cliente_id,
             descripcion,
             direccion,
@@ -1100,10 +1103,11 @@ export async function POST(request: Request) {
           VALUES (
             $1, $2, $3, $4, $5, $6, $7, $8,
             $9, $10, $11, $12, $13, $14, $15, $16,
-            $17, $18, $19, $20, $21, $22, $23, $24
+            $17, $18, $19, $20, $21, $22, $23, $24, $25
           )
         `,
         [
+          session.user.empresaId,
           cliente.id,
           opcional(direccion.etiqueta, 100) ?? tipo,
           texto(direccion.direccion, 300),
@@ -1151,6 +1155,7 @@ export async function POST(request: Request) {
       await conexion.query(
         `
           INSERT INTO cliente_documentos (
+            empresa_id,
             cliente_id,
             tipo,
             nombre_archivo,
@@ -1160,9 +1165,10 @@ export async function POST(request: Request) {
             observacion,
             cargado_por
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         `,
         [
+          session.user.empresaId,
           cliente.id,
           texto(documento.tipo).toUpperCase(),
           texto(documento.nombreArchivo, 255),
