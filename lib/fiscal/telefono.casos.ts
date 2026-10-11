@@ -5,6 +5,8 @@
  */
 import { diaDeCobroEnMes, ultimoDiaDelMes, validarDiaPreferidoCobro } from "@/lib/clientes/dia-cobro";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { HUELLA_CATALOGO_MD5, PAISES_DDI } from "@/lib/fiscal/paises-ddi";
 import { PLANES_TELEFONIA, advertenciaTelefono, avisosTelefono, buscarPaisesTelefonia, planDe, validarTelefono, type CampoTelefonico, type TelefonoForm } from "@/lib/fiscal/telefono";
 
@@ -180,6 +182,63 @@ export function verificarCatalogoC8C9C10(): string[] {
   if (avisosTelefono({ pais: "USA", ddi: "1", area: "", numero: "5550123" }).length === 0) fallos.push("+1 sin área debe avisar");
   if (avisosTelefono({ pais: "USA", ddi: "1", area: "305", numero: "5550123" }).length !== 0) fallos.push("USA área 305 + 7 dígitos no avisa");
   if (avisosTelefono({ pais: "PRY", ddi: "595", area: "", numero: "0981123456" }).length !== 0) fallos.push("PRY no emite avisos de plan extranjero");
+
+  return fallos;
+}
+
+const huellaDe = (filas: readonly string[]) => {
+  const canonicas = filas
+    .map((f) => {
+      const [iso, nombre, ddi, origen = "ISO"] = f.split("|");
+      return `${iso}|${nombre}|${ddi}|${origen}`;
+    })
+    .sort((a, b) => (a.split("|")[0]! < b.split("|")[0]! ? -1 : 1));
+
+  return createHash("md5").update(`${canonicas.join("\n")}\n`, "utf8").digest("hex");
+};
+
+/** Filas del seed de NEX-027 reconstruidas desde el SQL versionado (mismo formato canónico que el catálogo TypeScript). */
+function filasSeedSql(): string[] {
+  const sql = readFileSync(join(process.cwd(), "documentacao/banco/nexit/v1/migraciones/NEX-027-catalogo-paises-telefonia-canonico.sql"), "utf8");
+  const filas: string[] = [];
+
+  for (const m of sql.matchAll(/\('([A-Z]{3})', '([^']*)', '([0-9]{1,3})', '(ISO|USR)', (NULL|'[A-Z]{3}'), true\)/g)) {
+    const origen = m[4] === "USR" ? `USR${m[5] === "NULL" ? "" : `:${m[5]!.replace(/'/g, "")}`}` : "ISO";
+    filas.push(`${m[1]}|${m[2]}|${m[3]}|${origen}`);
+  }
+
+  return filas;
+}
+
+/** C11: coherencia TypeScript ↔ seed SQL ↔ huella ↔ script de verificación, y detección de divergencias simuladas. */
+export function verificarCoherenciaYDivergenciasCatalogo(): string[] {
+  const fallos: string[] = [];
+  const base = [...PAISES_DDI];
+
+  if (huellaDe(base) !== HUELLA_CATALOGO_MD5) fallos.push("la huella del catálogo TypeScript no coincide con HUELLA_CATALOGO_MD5");
+
+  // Seed SQL versionado == catálogo TypeScript (mismo conjunto, mismos DDI/nombres/orígenes)
+  const sql = filasSeedSql();
+  if (sql.length !== base.length) fallos.push(`seed SQL con ${sql.length} filas, catálogo TypeScript con ${base.length}`);
+  if (huellaDe(sql) !== HUELLA_CATALOGO_MD5) fallos.push("la huella del seed SQL NEX-027 no coincide con HUELLA_CATALOGO_MD5");
+
+  // El script de verificación debe llevar la misma huella
+  const verificacion = readFileSync(join(process.cwd(), "documentacao/banco/nexit/v1/scripts/verificar-paises-telefonia.sql"), "utf8");
+  if (!verificacion.includes(HUELLA_CATALOGO_MD5)) fallos.push("scripts/verificar-paises-telefonia.sql no contiene la huella vigente");
+
+  // Divergencias simuladas: toda alteración debe cambiar la huella
+  const divergencias: Array<[string, string[]]> = [
+    ["DDI cambiado (VAT 39→379)", base.map((f) => (f.startsWith("VAT|") ? "VAT|Ciudad del Vaticano|379" : f))],
+    ["país eliminado (PCN)", base.filter((f) => !f.startsWith("PCN|"))],
+    ["país agregado (ZZZ)", [...base, "ZZZ|Inventado|999"]],
+    ["nombre alterado (JPN)", base.map((f) => (f.startsWith("JPN|") ? "JPN|Japon|81" : f))],
+    ["origen alterado (XAC sin jurisdicción)", base.map((f) => (f.startsWith("XAC|") ? "XAC|Ascensión (identificador interno)|247|USR" : f))],
+    ["ISO duplicado", [...base, "PRY|Paraguay|595"]],
+    ["fila de seed SQL perdida (SQL)", sql.slice(1)],
+  ];
+  for (const [nombre, filas] of divergencias) {
+    if (huellaDe(filas) === HUELLA_CATALOGO_MD5) fallos.push(`divergencia no detectada por la huella: ${nombre}`);
+  }
 
   return fallos;
 }

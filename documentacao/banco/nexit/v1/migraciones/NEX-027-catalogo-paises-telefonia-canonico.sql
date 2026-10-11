@@ -1,7 +1,7 @@
 -- =====================================================================
 -- NEX-027 — Catálogo de países/DDI: espejo SQL del catálogo CANÓNICO de Git (corrección C8/C9 de la auditoría 90280bb).
 -- NO ejecutar en la VM ni en el banco 'nexit' sin autorización expresa del responsable (backup previo).
--- Requiere NEX-026 (tabla public.paises_telefonia). NEX-026 no se modifica. Reversión: scripts/reversion-NEX-027.sql.
+-- Requiere NEX-026 (tabla public.paises_telefonia). NEX-026 no se modifica. Reversión INTEGRAL (con la foto previa): scripts/reversion-NEX-027.sql.
 --
 -- FUENTE CANÓNICA: lib/fiscal/paises-ddi.ts (Git). Esta tabla es un ESPEJO de consulta: la interfaz y las API NO la leen y su
 -- columna 'activo' es informativa (no gobierna la validación). La igualdad se comprueba con la huella MD5 que publica
@@ -11,6 +11,32 @@
 -- (SGS, +500) y Ascensión (+247) con identificador interno XAC (rango XAA–XZZ de ISO 3166-1 reservado al usuario; NO es un
 -- código ISO oficial; jurisdicción ISO SHN). Kosovo (XKX) también es identificador USR. No se tocan clientes ni contactos.
 -- =====================================================================
+
+-- ---------------------------------------------------------------------
+-- SALVAGUARDA DE REVERSIÓN (C11): foto EXACTA del catálogo anterior, tomada antes de cualquier cambio, en la misma
+-- transacción. Es lo único que permite a scripts/reversion-NEX-027.sql restaurar filas preexistentes, DDI cambiados,
+-- filas inactivas/editadas a mano y eliminar los destinos nuevos. La migración ABORTA si ya hay una foto (no se sobrescribe
+-- la foto original) o si las columnas nuevas ya existen (indicio de que NEX-027 ya se aplicó). Complemento obligatorio:
+-- copia de seguridad (pg_dump) previa al aplicar, a cargo del responsable.
+-- ---------------------------------------------------------------------
+DO $$
+BEGIN
+  IF to_regclass('public.paises_telefonia') IS NULL THEN
+    RAISE EXCEPTION 'NEX-027 requiere NEX-026 (public.paises_telefonia no existe).';
+  END IF;
+  IF to_regclass('public.paises_telefonia_previo_nex027') IS NOT NULL THEN
+    RAISE EXCEPTION 'Ya existe public.paises_telefonia_previo_nex027: NEX-027 parece aplicada o su reversión quedó incompleta. No se sobrescribe la foto original.';
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'paises_telefonia' AND column_name IN ('origen', 'jurisdiccion_iso')) THEN
+    RAISE EXCEPTION 'public.paises_telefonia ya tiene origen/jurisdiccion_iso: NEX-027 ya fue aplicada (o hay un esquema distinto al esperado). Verifique antes de continuar.';
+  END IF;
+END $$;
+
+CREATE TABLE public.paises_telefonia_previo_nex027 AS
+  SELECT iso3, nombre, ddi, activo, now() AS capturado_en FROM public.paises_telefonia;
+
+ALTER TABLE public.paises_telefonia_previo_nex027 ADD PRIMARY KEY (iso3);
+COMMENT ON TABLE public.paises_telefonia_previo_nex027 IS 'Foto del catálogo anterior a NEX-027 (para scripts/reversion-NEX-027.sql). Se elimina al revertir; conservar mientras la reversión pueda ser necesaria.';
 
 ALTER TABLE public.paises_telefonia
   ADD COLUMN IF NOT EXISTS origen varchar(3) NOT NULL DEFAULT 'ISO',
