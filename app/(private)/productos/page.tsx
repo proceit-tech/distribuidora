@@ -55,8 +55,8 @@ type FilaApi = {
   descripcion_factura: string;
   tipo_producto: ProductoTipo;
   controla_stock: boolean;
-  stock_minimo: number;
-  punto_reposicion: number | null;
+  stock_minimo: number | string;
+  punto_reposicion: number | string | null;
   activo: boolean;
   origen_etiqueta: string | null;
   pais_origen_nombre: string | null;
@@ -68,12 +68,12 @@ type FilaApi = {
   familia: string | null;
   linea_id: string | null;
   linea: string | null;
-  stock_disponible: number;
+  stock_disponible: number | string;
   bajo_minimo: boolean;
-  costo_promedio: number | null;
-  precio_venta_referencia: number | null;
+  costo_promedio: number | string | null;
+  precio_venta_referencia: number | string | null;
   moneda_precio_referencia: string | null;
-  inventario_inicial: number;
+  inventario_inicial: number | string;
 };
 
 function desdeApi(fila: FilaApi): ProductoLista {

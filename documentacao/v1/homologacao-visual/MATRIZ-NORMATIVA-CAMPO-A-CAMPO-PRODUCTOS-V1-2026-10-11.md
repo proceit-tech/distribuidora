@@ -267,3 +267,30 @@ ChatGPT deve completar o confronto normativo com PDF do grupo de itens e confirm
 **Limitações normativas:** pacote SIFEN MT v150/NT até 027 sem NT021, XSD vigente e cálculo fiscal operacional não auditados; não liberar geração de DTE, integração SEPSA nem importador de ERP pela alteração cadastral.
 
 **Critérios para Claude:** registrar por campo matriz final com estado UI→payload→GET/POST/PUT→DDL; corrigir código estritamente para regras já aprovadas/defeitos verificáveis; registrar divergências novas e não as converter em decisão implícita; executar tsc, lint, build, casos e regressões, fazer commit/push e parar para auditoria do ChatGPT. Se build global falhar em /clientes/nuevo ou /login, demonstrar se é regressão, sem esconder falha nem fazer deploy.
+
+## 10. Implementação controlada (Claude Code, 2026-10-11) — estado exato
+
+**Escopo executado:** correções técnicas comprovadas + novo layout (sete abas preservadas). **Nada foi testado em PostgreSQL nem em navegador**; NEX-038 está versionada e **NÃO aplicada**. As DEC-PRD-01…12 **não foram tratadas como aprovadas**.
+
+| Ref | Estado | Como ficou |
+|---|---|---|
+| PRD-A01 | Implementado | Cabeçalho único (migalha + título + chip de código em edição); removidos o cartão «Código automático», o rodapé descritivo e as descrições repetidas. Código gerado automaticamente (POST rejeita código enviado). |
+| PRD-A02 | Implementado | `descripcionFactura` editável só em Información (espelho somente leitura em SIFEN); `paisOrigenCodigo` editável só em SIFEN (espelho em Información). Um único estado no formulário. |
+| PRD-A03 / PRD-API-03/05 | Implementado | `lib/productos/decimales.ts` (reusa `decimalExacto`): decimais como string exata (numeric(18,4)/(18,6)/(7,4)); GET devolve `::text`; sem `Number`/`float8` em shared/rotas de produto; precio, costo de apertura e cantidad de apertura chegam ao SQL como string. Lista (`GET /api/productos`) também em texto; a conversão para número só ocorre para formatar a exibição. |
+| PRD-A04 | Implementado | Nenhum texto é truncado: o excesso é rejeitado com campo e mensagem. Inclui a administração de catálogos (`texto/opcional` agora rejeitam). Limites mantidos (código SIFEN 20, descrição fiscal 120): **não ampliados** (decisão pendente). |
+| PRD-A05 / PRD-API-07 | **Parcial** | Documentos preservados como enlace (nome + URL), com datas dd/mm/aaaa ↔ ISO, vencimento ≥ emissão, edição por id. **Upload privado/versões/exclusão lógica NÃO implementado** (DEC-PRD-04 pendente; exige migration e armazenamento). Nenhuma migração destrutiva. |
+| PRD-A06 | Implementado | `SKU_PROVEEDOR` no tipo TS, UI, API e SQL. |
+| PRD-A07 | Parcial | Fator de fornecedor e de presentação validados > 0 na aplicação. A CHECK `>= 0` da DDL **não foi alterada** (decisão/migration pendente; dados antigos com 0 continuariam existindo). |
+| PRD-A08 | Implementado | `producto-form.tsx` (2878 linhas) substituído por casca + 7 abas + `campos.tsx`, `contexto.ts`, `lib/productos/{normalizar,formulario,pestanas,sincronizar}` (padrão Clientes/Proveedores). |
+| PRD-A09 / PRD-API-01 | Implementado | PUT sem DELETE-ALL: eliminações explícitas (ids), UPDATE por id só se mudou, INSERT das novas, ausentes intocadas; registro referenciado (23503) não se elimina (409). Ordem: eliminações → produto → atualizações/altas (KIT→outro tipo exige remover componentes). |
+| PRD-A10 | Implementado | Datas dd/mm/aaaa na tela, ISO na API (a API aceita ambos). |
+| PRD-A11 | Implementado | Validação real por aba: a mesma `normalizarProducto` no formulário e no servidor; erro com campo → abre a aba e foca o campo; abas sem «check» falso. |
+| PRD-A12 | Mantido | Nenhuma emissão SIFEN/XML/SEPSA/ERP. |
+| PRD-API-02 | Implementado | PUT conserva o código (rejeita alteração com 409; nunca o atualiza) + **NEX-038** (trigger `productos_codigo_inmutable`) + reversão. |
+| PRD-API-04 | Preservado | Transação, `MOVIMIENTOS.CREAR`, `inventario_registrar_movimiento` (idempotência `apertura:<id>`), alcance de depósito pela função SQL. Abertura só no POST (rejeitada no PUT). |
+| PRD-API-06 | Implementado | Referências validadas (categoria, marca, família, linha↔família, unidade, imposto, fornecedor, depósito, moeda, produtos alternativos/componentes) por empresa e vigência, com campo; valores já gravados e hoje inativos são admitidos. Unicidade de código/depósito/principal tratada em UI e servidor. |
+| §8 (E8) | Implementado só o fundamentado | NCM 6–8 dígitos; partida 4 dígitos; DNCP específico 3–4 e geral ≤ 8 alfanuméricos (sem obrigatoriedade B2G, NT026); país ISO3. **Não implementado:** checksum GS1 (DEC-PRD-02), E701 1–50 / E708 1–2000, mapeamento de unidades/Tabela 5, E713 4–30. |
+
+**Decisões comerciais NÃO impostas (pendentes):** DEC-PRD-02 (checksum GTIN), 03 (SERVICIO/KIT), 04 (documentos privados), 06 (GTIN principal ↔ `codigoBarras`), 08 (elegibilidade de fornecedor), 09, 10, 11 (merma/volume sem efeitos automáticos), limites 20→50 e 120→2000, relação max ≥ min de estoque (dados antigos têm máximo 0).
+
+**Observações para a auditoria:** (1) a regra NCM/partida/DNCP pode rejeitar a *edição* de produtos antigos com valores fora do padrão até que sejam corrigidos; (2) o formulário antigo gravava `0` em máximo/pesos/dimensões; agora vazio = NULL e `0` existente é preservado como 0; (3) sem tabela de auditoria de produtos (não existia; eventos de produto ficam como pendência).

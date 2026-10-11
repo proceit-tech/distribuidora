@@ -22,6 +22,7 @@ Module._resolveFilename = function (request, ...resto) {
   const dpr = cargar("lib/proveedores/documentos.casos.js");
   const cau = cargar("lib/proveedores/cuentas-auditoria.casos.js");
   const rea = cargar("lib/proveedores/reactivacion.casos.js");
+  const pro = cargar("lib/productos/productos.casos.js");
   const suites = [
     ["teléfono y día de cobro", async () => tel.verificarCasosTelefonoYCobro(), () => tel.CASOS_TELEFONO.length + 11 + 6 + 2],
     ["catálogo mundial", async () => tel.verificarCatalogoMundial(), null],
@@ -37,6 +38,7 @@ Module._resolveFilename = function (request, ...resto) {
     ["Proveedores: documentos y retenciones", async () => dpr.verificarCasosDocumentosProveedores(), null],
     ["Proveedores: bajas de cuentas y auditoría inmutable", async () => cau.verificarCasosCuentasYAuditoria(), null],
     ["Proveedores: reactivación administrativa de cuentas", async () => rea.verificarCasosReactivacion(), null],
+    ["Productos V1", async () => pro.verificarCasosProductos(), null],
   ];
   let total = 0;
   let fallosTotal = 0;

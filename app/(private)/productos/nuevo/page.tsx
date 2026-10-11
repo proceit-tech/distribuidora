@@ -4,11 +4,8 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import ProductoForm from "@/app/(private)/productos/_components/producto-form";
-import { cargarCatalogos, mensajeError } from "@/lib/productos/cliente-api";
-import type {
-  CatalogoProductos,
-  NuevoProducto,
-} from "@/types/productos";
+import { cargarCatalogos, errorDeRespuesta } from "@/lib/productos/cliente-api";
+import type { CatalogoProductos } from "@/types/productos";
 
 export default function NuevoProductoPage() {
   const router = useRouter();
@@ -21,7 +18,7 @@ export default function NuevoProductoPage() {
       .catch((e: Error) => setError(e.message));
   }, []);
 
-  async function guardar(data: NuevoProducto) {
+  async function guardar(data: Record<string, unknown>) {
     const respuesta = await fetch("/api/productos", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -29,9 +26,7 @@ export default function NuevoProductoPage() {
     });
 
     if (!respuesta.ok) {
-      throw new Error(
-        await mensajeError(respuesta, "No fue posible registrar el producto."),
-      );
+      throw await errorDeRespuesta(respuesta, "No fue posible registrar el producto.");
     }
 
     router.push("/productos");

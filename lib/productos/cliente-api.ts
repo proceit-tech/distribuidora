@@ -1,4 +1,16 @@
+import { ErrorValidacion } from "@/lib/productos/errores";
 import type { CatalogoProductos } from "@/types/productos";
+
+/** Error de la API como ErrorValidacion (conserva el campo para enfocarlo en la pantalla). */
+export async function errorDeRespuesta(respuesta: Response, porDefecto: string) {
+  try {
+    const json = (await respuesta.json()) as { error?: string; campo?: string | null };
+
+    return new ErrorValidacion(json.error || porDefecto, json.campo ?? null, respuesta.status);
+  } catch {
+    return new ErrorValidacion(porDefecto, null, respuesta.status);
+  }
+}
 
 /** Lectura del mensaje de error de la API (nunca datos ficticios). */
 export async function mensajeError(respuesta: Response, porDefecto: string) {

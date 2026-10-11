@@ -1,204 +1,21 @@
 import { NextResponse } from "next/server";
 import type { PoolClient } from "pg";
 
-// Validación y persistencia compartidas de productos (POST y PUT).
-// Consultas parametrizadas; empresa_id siempre llega de la sesión autenticada.
+import { ErrorValidacion } from "@/lib/productos/errores";
+import type { DatosProducto } from "@/lib/productos/normalizar";
 
-type Cuerpo = Record<string, unknown>;
-type Fila = Record<string, unknown>;
+// Persistencia compartida de productos (POST y PUT). Consultas parametrizadas; empresa_id siempre llega de la sesión autenticada.
+// La validación vive en lib/productos/normalizar.ts (misma función en el formulario y en la API).
 
+/** Texto recortado; si supera el máximo se RECHAZA (nunca se trunca en silencio). Lo usa la administración de catálogos. */
 export const texto = (valor: unknown, maximo?: number) => {
   const resultado = typeof valor === "string" ? valor.trim() : "";
-  return maximo ? resultado.slice(0, maximo) : resultado;
+
+  if (maximo && resultado.length > maximo) throw new Error(`El texto admite hasta ${maximo} caracteres (ingresó ${resultado.length}).`);
+
+  return resultado;
 };
 export const opcional = (valor: unknown, maximo?: number) => texto(valor, maximo) || null;
-const lista = <T>(valor: unknown): T[] => (Array.isArray(valor) ? (valor as T[]) : []);
-const si = (valor: unknown) => valor === true;
-
-function numero(valor: unknown, etiqueta: string, minimo?: number, maximo?: number) {
-  if (valor === "" || valor === undefined || valor === null) return null;
-  const resultado = Number(valor);
-  if (
-    !Number.isFinite(resultado) ||
-    (minimo !== undefined && resultado < minimo) ||
-    (maximo !== undefined && resultado > maximo)
-  ) {
-    throw new Error(`${etiqueta} no es válido.`);
-  }
-  return resultado;
-}
-
-/** Acepta yyyy-mm-dd (input type=date) o dd/mm/yyyy. Devuelve ISO o null. */
-function fecha(valor: unknown, etiqueta: string) {
-  const entrada = texto(valor);
-  if (!entrada) return null;
-  let yyyy: string, mm: string, dd: string;
-  const iso = entrada.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  const local = entrada.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-  if (iso) [, yyyy, mm, dd] = iso;
-  else if (local) [, dd, mm, yyyy] = local;
-  else throw new Error(`${etiqueta} no tiene un formato válido.`);
-  const prueba = new Date(Date.UTC(+yyyy, +mm - 1, +dd));
-  if (prueba.getUTCFullYear() !== +yyyy || prueba.getUTCMonth() !== +mm - 1 || prueba.getUTCDate() !== +dd) {
-    throw new Error(`${etiqueta} no es válida.`);
-  }
-  return `${yyyy}-${mm}-${dd}`;
-}
-
-const TIPOS_PRODUCTO = ["MERCADERIA", "SERVICIO", "KIT", "ACTIVO_FIJO"];
-const MODOS_STOCK = ["CANTIDAD", "LOTE", "UNIDAD_ETIQUETADA"];
-const TIPOS_CODIGO = ["GTIN", "GTIN_EMPAQUE", "EAN", "UPC", "CODIGO_ALTERNO", "SKU_PROVEEDOR", "OTRO"];
-const TIPOS_ALTERNATIVO = ["SUSTITUTO", "COMPLEMENTARIO", "UPSELL"];
-const TIPOS_DOCUMENTO = ["FICHA_TECNICA", "HOJA_SEGURIDAD", "CERTIFICADO", "IMAGEN", "OTRO"];
-
-export type DatosProducto = ReturnType<typeof prepararProducto>;
-
-/** Valida y normaliza el cuerpo. Lanza Error con mensaje en español si algo no es válido. */
-export function prepararProducto(d: Cuerpo) {
-  const codigo = texto(d.codigo, 80); // vacío => se asigna PRD-nnnnnn al crear
-  const descripcion = texto(d.descripcion, 300);
-  const descripcionFactura = texto(d.descripcionFactura, 120);
-  const unidadMedidaId = texto(d.unidadMedidaId);
-  const tipoProducto = texto(d.tipoProducto).toUpperCase() || "MERCADERIA";
-  const modoControl = texto(d.modoControlStock).toUpperCase() || "CANTIDAD";
-
-  if (!descripcion || !descripcionFactura || !unidadMedidaId) {
-    throw new Error("Descripción, descripción para factura y unidad base son obligatorios.");
-  }
-  if (!TIPOS_PRODUCTO.includes(tipoProducto)) throw new Error("Tipo de producto no válido.");
-  if (!MODOS_STOCK.includes(modoControl)) throw new Error("Modo de control de stock no válido.");
-
-  const codigoSifen = opcional(d.codigoSifen, 20);
-  const codigos = lista<Fila>(d.codigos);
-  const unidades = lista<Fila>(d.unidades);
-  const proveedores = lista<Fila>(d.proveedores);
-  const depositos = lista<Fila>(d.depositos);
-  const alternativos = lista<Fila>(d.alternativos);
-  const componentes = lista<Fila>(d.componentes);
-  const documentos = lista<Fila>(d.documentos);
-
-  for (const c of codigos) {
-    const tipo = texto(c.tipo).toUpperCase();
-    const valor = texto(c.codigo, 80);
-    if (!TIPOS_CODIGO.includes(tipo) || !valor) throw new Error("Existe un código de producto incompleto.");
-    if (["GTIN", "GTIN_EMPAQUE", "EAN", "UPC"].includes(tipo) && !/^[0-9]{8,14}$/.test(valor)) {
-      throw new Error("GTIN/EAN/UPC debe contener entre 8 y 14 dígitos.");
-    }
-  }
-  if (codigos.filter((c) => si(c.esPrincipal)).length > 1) throw new Error("Solo puede existir un código principal.");
-  for (const u of unidades) {
-    if (!texto(u.unidadMedidaId) || !texto(u.nombrePresentacion, 100) || !(numero(u.factorConversion, "Factor de conversión", 0) ?? 0)) {
-      throw new Error("Cada presentación requiere unidad, nombre y factor de conversión.");
-    }
-  }
-  if (unidades.filter((u) => si(u.esUnidadBase)).length > 1) throw new Error("Solo puede existir una unidad base.");
-  if (proveedores.filter((p) => si(p.esPrincipal)).length > 1) throw new Error("Solo puede existir un proveedor principal.");
-  for (const p of proveedores) if (!texto(p.proveedorId)) throw new Error("Cada proveedor del producto requiere seleccionar un proveedor.");
-  for (const x of depositos) if (!texto(x.depositoId)) throw new Error("Cada configuración por depósito requiere seleccionar un depósito.");
-  for (const a of alternativos) {
-    if (!texto(a.productoAlternativoId)) throw new Error("Cada producto alternativo requiere seleccionar un producto.");
-    if (!TIPOS_ALTERNATIVO.includes(texto(a.tipo).toUpperCase() || "SUSTITUTO")) throw new Error("Tipo de alternativo no válido.");
-  }
-  if (componentes.length && tipoProducto !== "KIT") throw new Error("Solo un producto de tipo KIT puede tener componentes.");
-  for (const c of componentes) if (!texto(c.productoComponenteId)) throw new Error("Cada componente requiere seleccionar un producto.");
-
-  const documentosOk = documentos.map((doc) => {
-    const tipo = texto(doc.tipo).toUpperCase();
-    const nombre = texto(doc.nombreArchivo, 255);
-    const url = texto(doc.urlArchivo);
-    if (!TIPOS_DOCUMENTO.includes(tipo)) throw new Error("Tipo de documento no válido.");
-    if (!nombre || !url) throw new Error("Cada documento requiere nombre y URL.");
-    const emision = fecha(doc.fechaEmision, "La fecha de emisión");
-    const vencimiento = fecha(doc.fechaVencimiento, "La fecha de vencimiento");
-    if (vencimiento && emision && vencimiento < emision) throw new Error("El vencimiento no puede ser anterior a la emisión.");
-    return { tipo, nombre, url, emision, vencimiento, observacion: opcional(doc.observacion, 500) };
-  });
-
-  const familiaId = opcional(d.familiaId);
-  const lineaId = opcional(d.lineaId);
-  if (lineaId && !familiaId) throw new Error("Seleccione la familia de la línea.");
-
-  // Precio de venta de referencia: vacío/null = sin precio (nunca se asume 0).
-  const precioVentaReferencia = numero(d.precioVentaReferencia, "Precio de venta de referencia", 0);
-  if (precioVentaReferencia !== null && Math.round(precioVentaReferencia * 10000) / 10000 !== precioVentaReferencia) {
-    throw new Error("Precio de venta de referencia: hasta 4 decimales.");
-  }
-
-  // Inventario inicial (solo se usa en el alta): cantidad + costo de apertura + depósito => movimiento real.
-  const apertura = (d.inventarioInicial && typeof d.inventarioInicial === "object" ? d.inventarioInicial : {}) as Fila;
-  const aperturaCantidad = numero(apertura.cantidad, "Inventario inicial", 0) ?? 0;
-  const aperturaCosto = numero(apertura.costoUnitario, "Costo de apertura", 0);
-  const aperturaDeposito = opcional(apertura.depositoId);
-  if (aperturaCantidad > 0) {
-    if (Math.round(aperturaCantidad * 10000) / 10000 !== aperturaCantidad) throw new Error("Inventario inicial: hasta 4 decimales.");
-    if (!si(d.controlaStock)) throw new Error("El inventario inicial requiere que el producto controle stock.");
-    if (modoControl !== "CANTIDAD") {
-      throw new Error("Para productos controlados por lote o serie, registre el inventario inicial desde Movimientos (requiere identificar el lote).");
-    }
-    if (!aperturaDeposito) throw new Error("Seleccione el depósito del inventario inicial.");
-    if (aperturaCosto === null) throw new Error("Informe el costo unitario de apertura del inventario inicial.");
-  }
-
-  const paisOrigenCodigo = opcional(d.paisOrigenCodigo, 3)?.toUpperCase() ?? null;
-  if (paisOrigenCodigo && !/^[A-Z]{3}$/.test(paisOrigenCodigo)) throw new Error("País de origen no válido.");
-
-  return {
-    codigo,
-    codigoInventario: opcional(d.codigoInventario, 80),
-    codigoSifen,
-    codigoBarras: opcional(d.codigoBarras, 80),
-    descripcion,
-    descripcionFactura,
-    tipoProducto,
-    categoriaId: opcional(d.categoriaId),
-    marcaId: opcional(d.marcaId),
-    familiaId,
-    lineaId,
-    precioVentaReferencia,
-    precioEnviado: Object.prototype.hasOwnProperty.call(d, "precioVentaReferencia"),
-    inventarioInicial: { cantidad: aperturaCantidad, costoUnitario: aperturaCosto, depositoId: aperturaDeposito },
-    procedencia: opcional(d.procedencia, 100),
-    unidadMedidaId,
-    impuestoId: opcional(d.impuestoId),
-    controlaStock: si(d.controlaStock),
-    modoControl,
-    permiteTerceros: si(d.permiteTerceros),
-    requiereVencimiento: si(d.requiereVencimiento),
-    stockMinimo: numero(d.stockMinimo, "Stock mínimo", 0) ?? 0,
-    stockMaximo: numero(d.stockMaximo, "Stock máximo", 0),
-    puntoReposicion: numero(d.puntoReposicion, "Punto de reposición", 0),
-    partidaArancelaria: opcional(d.partidaArancelaria, 4),
-    ncm: opcional(d.ncm, 8),
-    dncpGeneral: opcional(d.dncpGeneral, 8),
-    dncpEspecifico: opcional(d.dncpEspecifico, 4),
-    paisOrigenCodigo,
-    paisOrigenNombre: null as string | null, // se completa desde el catálogo (resolverPais)
-    informacionFactura: opcional(d.informacionFactura, 500),
-    relacionMercaderia: numero(d.relacionMercaderia, "Relación de mercadería", 1, 2),
-    porcentajeMerma: numero(d.porcentajeMerma, "Porcentaje de merma", 0, 100),
-    cantidadMerma: numero(d.cantidadMerma, "Cantidad de merma", 0),
-    vendible: d.vendible !== false,
-    comprable: d.comprable !== false,
-    requiereInspeccionCalidad: si(d.requiereInspeccionCalidad),
-    vidaUtilDias: numero(d.vidaUtilDias, "Vida útil", 0),
-    pesoNetoKg: numero(d.pesoNetoKg, "Peso neto", 0),
-    pesoBrutoKg: numero(d.pesoBrutoKg, "Peso bruto", 0),
-    largoCm: numero(d.largoCm, "Largo", 0),
-    anchoCm: numero(d.anchoCm, "Ancho", 0),
-    altoCm: numero(d.altoCm, "Alto", 0),
-    volumenM3: numero(d.volumenM3, "Volumen", 0),
-    imagenUrl: opcional(d.imagenUrl),
-    observacion: opcional(d.observacion, 1000),
-    activo: d.activo !== false,
-    codigos,
-    unidades,
-    proveedores,
-    depositos,
-    alternativos,
-    componentes,
-    documentos: documentosOk,
-  };
-}
 
 /** Completa el nombre del país de origen desde el catálogo (no se confía en el cliente). */
 export async function resolverPais(conexion: PoolClient, datos: DatosProducto) {
@@ -275,95 +92,8 @@ export function columnasProducto(d: DatosProducto, codigo: string): Array<[strin
   ];
 }
 
-export const TABLAS_HIJAS: Array<[string, string]> = [
-  ["producto_codigos", "producto_id"],
-  ["producto_unidades", "producto_id"],
-  ["producto_proveedores", "producto_id"],
-  ["producto_deposito_configuracion", "producto_id"],
-  ["producto_alternativos", "producto_id"],
-  ["producto_componentes", "producto_kit_id"],
-  ["producto_documentos", "producto_id"],
-];
-
-/** empresa_id de cada hija lo hereda un trigger del producto; las FK compuestas impiden referencias de otra empresa. */
-export async function insertarHijos(conexion: PoolClient, productoId: string, d: DatosProducto, usuarioId: string) {
-  for (const c of d.codigos) {
-    await conexion.query(
-      `INSERT INTO producto_codigos(producto_id,tipo,codigo,descripcion,es_principal) VALUES($1,$2,$3,$4,$5)`,
-      [productoId, texto(c.tipo).toUpperCase(), texto(c.codigo, 80), opcional(c.descripcion, 120), si(c.esPrincipal)],
-    );
-  }
-  for (const u of d.unidades) {
-    await conexion.query(
-      `INSERT INTO producto_unidades(producto_id,unidad_medida_id,nombre_presentacion,factor_conversion,es_unidad_base,es_unidad_compra,es_unidad_venta,codigo_barras,peso_bruto_kg,volumen_m3) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-      [
-        productoId,
-        texto(u.unidadMedidaId),
-        texto(u.nombrePresentacion, 100),
-        numero(u.factorConversion, "Factor de conversión", 0),
-        si(u.esUnidadBase),
-        si(u.esUnidadCompra),
-        si(u.esUnidadVenta),
-        opcional(u.codigoBarras, 80),
-        numero(u.pesoBrutoKg, "Peso bruto", 0),
-        numero(u.volumenM3, "Volumen", 0),
-      ],
-    );
-  }
-  for (const p of d.proveedores) {
-    await conexion.query(
-      `INSERT INTO producto_proveedores(producto_id,proveedor_id,codigo_proveedor,descripcion_proveedor,unidad_medida_id,factor_conversion,costo_referencia,moneda_codigo,cantidad_minima_compra,plazo_entrega_dias,es_principal) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-      [
-        productoId,
-        texto(p.proveedorId),
-        opcional(p.codigoProveedor, 80),
-        opcional(p.descripcionProveedor, 300),
-        opcional(p.unidadMedidaId),
-        numero(p.factorConversion, "Factor", 0) ?? 1,
-        numero(p.costoReferencia, "Costo", 0),
-        opcional(p.monedaCodigo, 3),
-        numero(p.cantidadMinimaCompra, "Cantidad mínima", 0),
-        numero(p.plazoEntregaDias, "Plazo", 0),
-        si(p.esPrincipal),
-      ],
-    );
-  }
-  for (const x of d.depositos) {
-    await conexion.query(
-      `INSERT INTO producto_deposito_configuracion(producto_id,deposito_id,ubicacion_preferida_id,stock_minimo,stock_maximo,punto_reposicion,cantidad_reposicion) VALUES($1,$2,$3,$4,$5,$6,$7)`,
-      [
-        productoId,
-        texto(x.depositoId),
-        opcional(x.ubicacionPreferidaId),
-        numero(x.stockMinimo, "Stock mínimo", 0),
-        numero(x.stockMaximo, "Stock máximo", 0),
-        numero(x.puntoReposicion, "Punto", 0),
-        numero(x.cantidadReposicion, "Cantidad", 0),
-      ],
-    );
-  }
-  for (const a of d.alternativos) {
-    await conexion.query(
-      `INSERT INTO producto_alternativos(producto_id,producto_alternativo_id,tipo,prioridad) VALUES($1,$2,$3,$4)`,
-      [productoId, texto(a.productoAlternativoId), texto(a.tipo).toUpperCase() || "SUSTITUTO", numero(a.prioridad, "Prioridad", 1) ?? 1],
-    );
-  }
-  for (const c of d.componentes) {
-    await conexion.query(
-      `INSERT INTO producto_componentes(producto_kit_id,producto_componente_id,cantidad,es_opcional,orden) VALUES($1,$2,$3,$4,$5)`,
-      [productoId, texto(c.productoComponenteId), numero(c.cantidad, "Cantidad", 0), si(c.esOpcional), numero(c.orden, "Orden", 1) ?? 1],
-    );
-  }
-  for (const doc of d.documentos) {
-    await conexion.query(
-      `INSERT INTO producto_documentos(producto_id,tipo,nombre_archivo,url_archivo,fecha_emision,fecha_vencimiento,observacion,cargado_por) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
-      [productoId, doc.tipo, doc.nombre, doc.url, doc.emision, doc.vencimiento, doc.observacion, usuarioId],
-    );
-  }
-}
-
 /** Precio de venta de referencia en la lista de referencia (NEX-017). null => quita el precio. */
-export async function fijarPrecioReferencia(conexion: PoolClient, empresaId: string, productoId: string, precio: number | null) {
+export async function fijarPrecioReferencia(conexion: PoolClient, empresaId: string, productoId: string, precio: string | null) {
   await conexion.query(`SELECT producto_fijar_precio_referencia($1, $2, $3)`, [empresaId, productoId, precio]);
 }
 
@@ -380,7 +110,7 @@ export async function registrarInventarioInicial(
   d: DatosProducto,
 ) {
   const a = d.inventarioInicial;
-  if (!(a.cantidad > 0) || !a.depositoId) return null;
+  if (a.cantidad === null || !a.depositoId) return null; // la cantidad ya viene validada como mayor que cero
   const r = await conexion.query(
     `SELECT o_numero FROM inventario_registrar_movimiento($1, $2, 'ENTRADA', 'ABERTURA', NULL, NULL, $3, $4::jsonb, $5, NULL, 'Inventario inicial', NULL, NULL)`,
     [
@@ -431,4 +161,52 @@ export function respuestaError(error: unknown, accion: string) {
     { error: error instanceof Error ? error.message : `No fue posible ${accion} el producto.` },
     { status: 400 },
   );
+}
+
+type Previo = Partial<Record<"categoria_id" | "marca_id" | "familia_id" | "linea_id" | "unidad_medida_id" | "impuesto_id", string | null>>;
+
+/**
+ * Valida con mensaje por campo las referencias del producto: existen, son de la empresa (catálogos propios) y están activas.
+ * Un valor que el producto ya tenía (edición) se admite aunque el catálogo se haya desactivado después. La línea debe pertenecer
+ * a la familia (NEX-017). Las FK compuestas de la base siguen siendo la defensa final.
+ */
+export async function validarReferencias(conexion: PoolClient, empresaId: string, d: DatosProducto, previo: Previo = {}) {
+  async function verificar(tabla: string, ids: string[], porEmpresa: boolean, campo: (i: number) => string, mensaje: string, conservados: Array<string | null | undefined> = [], clave = "id", nuevos?: boolean[]) {
+    for (const [i, id] of ids.entries()) {
+      if (!id) continue;
+
+      const r = await conexion.query(
+        `SELECT ${tabla === "monedas" || tabla === "productos" ? "true" : "activo"} AS activo FROM ${tabla} WHERE ${clave} = $1${porEmpresa ? " AND empresa_id = $2" : ""}`,
+        porEmpresa ? [id, empresaId] : [id],
+      );
+
+      if (!r.rowCount) throw new ErrorValidacion(`${mensaje} no existe o no pertenece a su empresa.`, campo(i));
+      if (!(r.rows[0] as { activo: boolean }).activo && !conservados.includes(id) && (nuevos ? nuevos[i] : true)) throw new ErrorValidacion(`${mensaje} está inactivo.`, campo(i));
+    }
+  }
+  const unico = (id: string | null, campo: string, tabla: string, porEmpresa: boolean, mensaje: string, anterior?: string | null) =>
+    verificar(tabla, id ? [id] : [], porEmpresa, () => campo, mensaje, [anterior]);
+
+  await unico(d.categoriaId, "categoriaId", "categorias_producto", true, "La categoría", previo.categoria_id);
+  await unico(d.marcaId, "marcaId", "marcas_producto", true, "La marca", previo.marca_id);
+  await unico(d.familiaId, "familiaId", "familias_producto", true, "La familia", previo.familia_id);
+  await unico(d.unidadMedidaId, "unidadMedidaId", "unidades_medida", false, "La unidad base", previo.unidad_medida_id);
+  await unico(d.impuestoId, "impuestoId", "impuestos", false, "El impuesto", previo.impuesto_id);
+
+  if (d.lineaId) {
+    const r = await conexion.query("SELECT familia_id, activo FROM lineas_producto WHERE empresa_id = $1 AND id = $2", [empresaId, d.lineaId]);
+
+    if (!r.rowCount) throw new ErrorValidacion("La línea no existe o no pertenece a su empresa.", "lineaId");
+    if ((r.rows[0] as { familia_id: string }).familia_id !== d.familiaId) throw new ErrorValidacion("La línea seleccionada no pertenece a la familia elegida.", "lineaId");
+    if (!(r.rows[0] as { activo: boolean }).activo && previo.linea_id !== d.lineaId) throw new ErrorValidacion("La línea está inactiva.", "lineaId");
+  }
+
+  await verificar("unidades_medida", d.unidades.map((x) => x.unidadMedidaId), false, (i) => `unidades.${i}.unidadMedidaId`, "La unidad de la presentación", [], "id", d.unidades.map((x) => x.id === null));
+  await verificar("proveedores", d.proveedores.map((x) => x.proveedorId), true, (i) => `proveedores.${i}.proveedorId`, "El proveedor", [], "id", d.proveedores.map((x) => x.id === null));
+  await verificar("unidades_medida", d.proveedores.map((x) => x.unidadMedidaId ?? ""), false, (i) => `proveedores.${i}.unidadMedidaId`, "La unidad del proveedor");
+  await verificar("monedas", d.proveedores.map((x) => x.monedaCodigo ?? ""), false, (i) => `proveedores.${i}.monedaCodigo`, "La moneda", [], "codigo");
+  await verificar("depositos", d.depositos.map((x) => x.depositoId), true, (i) => `depositos.${i}.depositoId`, "El depósito", [], "id", d.depositos.map((x) => x.id === null));
+  await verificar("productos", d.alternativos.map((x) => x.productoAlternativoId), true, (i) => `alternativos.${i}.productoAlternativoId`, "El producto alternativo");
+  await verificar("productos", d.componentes.map((x) => x.productoComponenteId), true, (i) => `componentes.${i}.productoComponenteId`, "El componente");
+  await verificar("depositos", d.inventarioInicial.depositoId ? [d.inventarioInicial.depositoId] : [], true, () => "inventarioInicial.depositoId", "El depósito de apertura");
 }

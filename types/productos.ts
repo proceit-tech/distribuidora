@@ -9,15 +9,15 @@ export type ProductoModoControlStock =
   | "LOTE"
   | "UNIDAD_ETIQUETADA";
 
+export type ProductoCodigoTipo = "GTIN" | "GTIN_EMPAQUE" | "EAN" | "UPC" | "CODIGO_ALTERNO" | "SKU_PROVEEDOR" | "OTRO";
+
+/**
+ * Contrato de la ficha (GET /api/productos/[id]). Los importes, cantidades y factores viajan como CADENAS decimales exactas
+ * (numeric de PostgreSQL ::text); "" = sin valor (NULL). Nunca Number: no se pierde precisión.
+ */
 export type ProductoCodigo = {
   id: string;
-  tipo:
-    | "GTIN"
-    | "GTIN_EMPAQUE"
-    | "EAN"
-    | "UPC"
-    | "CODIGO_ALTERNO"
-    | "OTRO";
+  tipo: ProductoCodigoTipo;
   codigo: string;
   descripcion: string;
   esPrincipal: boolean;
@@ -27,13 +27,13 @@ export type ProductoPresentacion = {
   id: string;
   unidadMedidaId: string;
   nombrePresentacion: string;
-  factorConversion: number;
+  factorConversion: string;
   esUnidadBase: boolean;
   esUnidadCompra: boolean;
   esUnidadVenta: boolean;
   codigoBarras: string;
-  pesoBrutoKg: number;
-  volumenM3: number;
+  pesoBrutoKg: string;
+  volumenM3: string;
 };
 
 export type ProductoProveedor = {
@@ -43,11 +43,11 @@ export type ProductoProveedor = {
   codigoProveedor: string;
   descripcionProveedor: string;
   unidadMedidaId: string;
-  factorConversion: number;
-  costoReferencia: number;
+  factorConversion: string;
+  costoReferencia: string;
   monedaCodigo: string;
-  cantidadMinimaCompra: number;
-  plazoEntregaDias: number;
+  cantidadMinimaCompra: string;
+  plazoEntregaDias: string;
   esPrincipal: boolean;
 };
 
@@ -56,48 +56,41 @@ export type ProductoDeposito = {
   depositoId: string;
   depositoNombre: string;
   ubicacionPreferidaId: string;
-  stockMinimo: number;
-  stockMaximo: number;
-  puntoReposicion: number;
-  cantidadReposicion: number;
+  stockMinimo: string;
+  stockMaximo: string;
+  puntoReposicion: string;
+  cantidadReposicion: string;
 };
 
 export type ProductoAlternativo = {
   id: string;
   productoAlternativoId: string;
   productoAlternativoNombre: string;
-  tipo:
-    | "SUSTITUTO"
-    | "COMPLEMENTARIO"
-    | "UPSELL";
-  prioridad: number;
+  tipo: "SUSTITUTO" | "COMPLEMENTARIO" | "UPSELL";
+  prioridad: string;
 };
 
 export type ProductoComponente = {
   id: string;
   productoComponenteId: string;
   productoComponenteNombre: string;
-  cantidad: number;
+  cantidad: string;
   esOpcional: boolean;
-  orden: number;
+  orden: string;
 };
 
 export type ProductoDocumento = {
   id: string;
-  tipo:
-    | "FICHA_TECNICA"
-    | "HOJA_SEGURIDAD"
-    | "CERTIFICADO"
-    | "IMAGEN"
-    | "OTRO";
+  tipo: "FICHA_TECNICA" | "HOJA_SEGURIDAD" | "CERTIFICADO" | "IMAGEN" | "OTRO";
   nombreArchivo: string;
   urlArchivo: string;
+  /** ISO (yyyy-mm-dd) en la API; la pantalla muestra dd/mm/aaaa. */
   fechaEmision: string;
   fechaVencimiento: string;
   observacion: string;
 };
 
-/** Modelo de la ficha (formulario) tal como lo devuelve GET /api/productos/[id]. */
+/** Modelo de la ficha tal como lo devuelve GET /api/productos/[id]. */
 export type ProductoDetalle = {
   id: string;
 
@@ -124,26 +117,26 @@ export type ProductoDetalle = {
   permiteTerceros: boolean;
   requiereVencimiento: boolean;
 
-  stockMinimo: number;
-  stockMaximo: number;
-  puntoReposicion: number;
+  stockMinimo: string;
+  stockMaximo: string;
+  puntoReposicion: string;
 
-  /** Precio de venta de referencia (lista de referencia, NEX-017). null = sin precio cargado. */
-  precioVentaReferencia: number | null;
-  /** Moneda del precio de referencia (moneda de la lista; en alta, moneda base de la empresa). Solo lectura. */
+  /** Precio de venta de referencia (lista de referencia, NEX-017). null = sin precio cargado (distinto de 0). */
+  precioVentaReferencia: string | null;
+  /** Moneda del precio de referencia. Solo lectura. */
   monedaPrecioReferencia: string;
 
-  /** Stock real (v_stock_producto / stock_saldos). Solo lectura: lo mueven los movimientos. */
-  stockActual: number;
-  stockPorDeposito: { depositoId: string; depositoNombre: string; cantidad: number }[];
+  /** Stock real (stock_saldos). Solo lectura: lo mueven los movimientos. */
+  stockActual: string;
+  stockPorDeposito: { depositoId: string; depositoNombre: string; cantidad: string }[];
   /** Costo promedio real (inventario_costos). null = sin saldo valorizado. Solo lectura. */
-  costoPromedio: number | null;
+  costoPromedio: string | null;
   /** Movimiento de apertura ya registrado (solo lectura). */
   aperturaRegistrada: {
     numero: string;
     fecha: string;
-    cantidad: number;
-    costoUnitario: number | null;
+    cantidad: string;
+    costoUnitario: string | null;
     depositoNombre: string;
   } | null;
 
@@ -158,20 +151,20 @@ export type ProductoDetalle = {
   informacionFactura: string;
 
   relacionMercaderia: string;
-  porcentajeMerma: number;
-  cantidadMerma: number;
+  porcentajeMerma: string;
+  cantidadMerma: string;
 
   vendible: boolean;
   comprable: boolean;
   requiereInspeccionCalidad: boolean;
-  vidaUtilDias: number;
+  vidaUtilDias: string;
 
-  pesoNetoKg: number;
-  pesoBrutoKg: number;
-  largoCm: number;
-  anchoCm: number;
-  altoCm: number;
-  volumenM3: number;
+  pesoNetoKg: string;
+  pesoBrutoKg: string;
+  largoCm: string;
+  anchoCm: string;
+  altoCm: string;
+  volumenM3: string;
 
   imagenUrl: string;
   observacion: string;
@@ -188,26 +181,6 @@ export type ProductoDetalle = {
   creadoEn: string;
   actualizadoEn: string;
 };
-
-/** Inventario inicial: solo en el alta; genera un movimiento real ENTRADA/ABERTURA en el depósito indicado. */
-export type InventarioInicialForm = {
-  cantidad: number;
-  /** Costo unitario de apertura; obligatorio si cantidad > 0 (no se inventa costo). */
-  costoUnitario: number | null;
-  depositoId: string;
-};
-
-export type NuevoProducto = Omit<
-  ProductoDetalle,
-  | "id"
-  | "creadoEn"
-  | "actualizadoEn"
-  | "stockActual"
-  | "stockPorDeposito"
-  | "costoPromedio"
-  | "aperturaRegistrada"
-  | "monedaPrecioReferencia"
-> & { inventarioInicial: InventarioInicialForm };
 
 /** Fila de la lista (GET /api/productos) ya mapeada a camelCase. */
 export type ProductoLista = {
@@ -249,12 +222,21 @@ export type CatalogoProductos = {
   /** Moneda del precio de venta de referencia (moneda base de la empresa o la de la lista de referencia). */
   monedaReferencia: string;
   unidades: { id: string; codigo: string; nombre: string }[];
-  impuestos: { id: string; codigo: string; nombre: string; porcentaje: number }[];
+  impuestos: { id: string; codigo: string; nombre: string; porcentaje: string }[];
   proveedores: { id: string; codigo: string; razon_social: string }[];
   depositos: { id: string; codigo: string; nombre: string }[];
   paises: { codigo: string; nombre: string }[];
+  monedas: { codigo: string; nombre: string }[];
   productos: { id: string; codigo: string; descripcion: string }[];
 };
+
+export type ProductoCodigoDemo = { id: string; tipo: "GTIN" | "GTIN_EMPAQUE" | "EAN" | "UPC" | "CODIGO_ALTERNO" | "OTRO"; codigo: string; descripcion: string; esPrincipal: boolean };
+export type ProductoPresentacionDemo = { id: string; unidadMedidaId: string; nombrePresentacion: string; factorConversion: number; esUnidadBase: boolean; esUnidadCompra: boolean; esUnidadVenta: boolean; codigoBarras: string; pesoBrutoKg: number; volumenM3: number };
+export type ProductoProveedorDemo = { id: string; proveedorId: string; proveedorNombre: string; codigoProveedor: string; descripcionProveedor: string; unidadMedidaId: string; factorConversion: number; costoReferencia: number; monedaCodigo: string; cantidadMinimaCompra: number; plazoEntregaDias: number; esPrincipal: boolean };
+export type ProductoDepositoDemo = { id: string; depositoId: string; depositoNombre: string; ubicacionPreferidaId: string; stockMinimo: number; stockMaximo: number; puntoReposicion: number; cantidadReposicion: number };
+export type ProductoAlternativoDemo = { id: string; productoAlternativoId: string; productoAlternativoNombre: string; tipo: "SUSTITUTO" | "COMPLEMENTARIO" | "UPSELL"; prioridad: number };
+export type ProductoComponenteDemo = { id: string; productoComponenteId: string; productoComponenteNombre: string; cantidad: number; esOpcional: boolean; orden: number };
+export type ProductoDocumentoDemo = { id: string; tipo: "FICHA_TECNICA" | "HOJA_SEGURIDAD" | "CERTIFICADO" | "IMAGEN" | "OTRO"; nombreArchivo: string; urlArchivo: string; fechaEmision: string; fechaVencimiento: string; observacion: string };
 
 /**
  * LEGADO: solo lo usan los mocks de Stock/Movimientos/Recepciones (lib/mocks/productos*.ts),
@@ -335,13 +317,13 @@ export type ProductoDemo = {
   observacion: string;
   activo: boolean;
 
-  codigos: ProductoCodigo[];
-  unidades: ProductoPresentacion[];
-  proveedores: ProductoProveedor[];
-  depositos: ProductoDeposito[];
-  alternativos: ProductoAlternativo[];
-  componentes: ProductoComponente[];
-  documentos: ProductoDocumento[];
+  codigos: ProductoCodigoDemo[];
+  unidades: ProductoPresentacionDemo[];
+  proveedores: ProductoProveedorDemo[];
+  depositos: ProductoDepositoDemo[];
+  alternativos: ProductoAlternativoDemo[];
+  componentes: ProductoComponenteDemo[];
+  documentos: ProductoDocumentoDemo[];
 
   creadoEn: string;
   actualizadoEn: string;

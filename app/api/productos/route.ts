@@ -5,13 +5,15 @@ import { denyIfNoPermission } from "@/lib/auth/permissions";
 import {
   columnasProducto,
   fijarPrecioReferencia,
-  insertarHijos,
-  prepararProducto,
   registrarInventarioInicial,
   resolverPais,
   respuestaError,
   siguienteCodigo,
+  validarReferencias,
 } from "@/lib/productos/shared";
+import { ErrorValidacion } from "@/lib/productos/errores";
+import { normalizarProducto } from "@/lib/productos/normalizar";
+import { guardarHijos } from "@/lib/productos/sincronizar";
 
 // Solo DEMO explícito usa respuestas simuladas. La falta de DATABASE_URL NUNCA activa datos ficticios.
 const DEMO_MODE = process.env.DEMO_MODE === "true";
@@ -44,6 +46,7 @@ const CATALOGOS_VACIOS = {
   proveedores: [],
   depositos: [],
   paises: [],
+  monedas: [],
   productos: [],
 };
 
@@ -69,23 +72,23 @@ export async function GET(request: Request) {
 
   try {
     const empresaId = session.user.empresaId;
-    const [productos, categorias, marcas, familias, lineas, moneda, unidades, impuestos, proveedores, depositos, paises, catalogoProductos] =
+    const [productos, categorias, marcas, familias, lineas, moneda, unidades, impuestos, proveedores, depositos, paises, monedas, catalogoProductos] =
       await Promise.all([
         soloCatalogos
           ? Promise.resolve({ rows: [] as unknown[] })
           : db.query(
               `SELECT p.id, p.codigo, p.codigo_inventario, p.codigo_sifen, p.codigo_barras,
                       p.descripcion, p.descripcion_factura, p.tipo_producto, p.controla_stock,
-                      p.stock_minimo::float8 AS stock_minimo, p.punto_reposicion::float8 AS punto_reposicion,
+                      p.stock_minimo::text AS stock_minimo, p.punto_reposicion::text AS punto_reposicion,
                       p.activo, p.origen_etiqueta, p.pais_origen_nombre,
                       c.nombre AS categoria, m.nombre AS marca, i.nombre AS impuesto,
                       u.nombre AS unidad_nombre,
                       p.familia_id, f.nombre AS familia, p.linea_id, l.nombre AS linea,
-                      COALESCE(sp.disponible, 0)::float8 AS stock_disponible,
+                      COALESCE(sp.disponible, 0)::text AS stock_disponible,
                       COALESCE(sp.bajo_minimo, false) AS bajo_minimo,
-                      cp.costo_promedio::float8 AS costo_promedio,
-                      pr.precio::float8 AS precio_venta_referencia, pr.moneda AS moneda_precio_referencia,
-                      COALESCE(ap.cantidad, 0)::float8 AS inventario_inicial
+                      cp.costo_promedio::text AS costo_promedio,
+                      pr.precio::text AS precio_venta_referencia, pr.moneda AS moneda_precio_referencia,
+                      COALESCE(ap.cantidad, 0)::text AS inventario_inicial
                  FROM productos p
                  LEFT JOIN familias_producto f ON f.empresa_id = p.empresa_id AND f.id = p.familia_id
                  LEFT JOIN lineas_producto l ON l.empresa_id = p.empresa_id AND l.id = p.linea_id
@@ -117,10 +120,11 @@ export async function GET(request: Request) {
           [empresaId],
         ),
         db.query(`SELECT id, codigo, nombre FROM unidades_medida WHERE activo = true ORDER BY nombre`),
-        db.query(`SELECT id, codigo, nombre, porcentaje::float8 AS porcentaje FROM impuestos WHERE activo = true ORDER BY porcentaje, nombre`),
+        db.query(`SELECT id, codigo, nombre, porcentaje::text AS porcentaje FROM impuestos WHERE activo = true ORDER BY porcentaje, nombre`),
         db.query(`SELECT id, codigo, razon_social FROM proveedores WHERE empresa_id = $1 AND activo = true ORDER BY razon_social`, [empresaId]),
         db.query(`SELECT id, codigo, nombre FROM depositos WHERE empresa_id = $1 AND activo = true ORDER BY nombre`, [empresaId]),
         db.query(`SELECT codigo, nombre FROM referencia_geografica_paises WHERE activo = true ORDER BY nombre`),
+        db.query(`SELECT codigo, nombre FROM monedas WHERE activo = true ORDER BY codigo`),
         soloCatalogos
           ? db.query(`SELECT id, codigo, descripcion FROM productos WHERE empresa_id = $1 AND activo = true ORDER BY descripcion`, [empresaId])
           : Promise.resolve({ rows: [] as unknown[] }),
@@ -144,6 +148,7 @@ export async function GET(request: Request) {
         proveedores: proveedores.rows,
         depositos: depositos.rows,
         paises: paises.rows,
+        monedas: monedas.rows,
         productos: catalogoProductos.rows,
       },
     });
@@ -182,11 +187,12 @@ export async function POST(request: Request) {
   let conexion: PoolClient | undefined;
 
   try {
-    const datos = prepararProducto(cuerpo);
+    const datos = normalizarProducto(cuerpo, { modo: "crear" });
     const empresaId = session.user.empresaId;
 
     // El inventario inicial es un movimiento real: exige además MOVIMIENTOS.CREAR (y la función valida el alcance del depósito).
-    if (datos.inventarioInicial.cantidad > 0) {
+    if (datos.codigo) throw new ErrorValidacion("El código interno se genera automáticamente y no puede indicarse.", "codigo");
+    if (datos.inventarioInicial.cantidad !== null) {
       const denegadoMov = await denyIfNoPermission(session, "MOVIMIENTOS", "CREAR");
       if (denegadoMov) return denegadoMov;
     }
@@ -195,7 +201,9 @@ export async function POST(request: Request) {
     await conexion.query("BEGIN");
     await resolverPais(conexion, datos);
 
-    const codigo = datos.codigo || (await siguienteCodigo(conexion, empresaId));
+    await validarReferencias(conexion, empresaId, datos);
+
+    const codigo = await siguienteCodigo(conexion, empresaId);
     const columnas = columnasProducto(datos, codigo);
     const nombres = ["empresa_id", "creado_por", ...columnas.map(([n]) => n)];
     const valores = [empresaId, session.user.id, ...columnas.map(([, v]) => v)];
@@ -207,7 +215,7 @@ export async function POST(request: Request) {
     );
     const producto = insertado.rows[0] as { id: string; codigo: string; descripcion: string };
 
-    await insertarHijos(conexion, producto.id, datos, session.user.id);
+    await guardarHijos(conexion, empresaId, producto.id, datos, session.user.id);
     if (datos.precioVentaReferencia !== null) {
       await fijarPrecioReferencia(conexion, empresaId, producto.id, datos.precioVentaReferencia);
     }

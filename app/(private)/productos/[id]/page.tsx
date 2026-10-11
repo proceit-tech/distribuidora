@@ -5,12 +5,8 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 
 import ProductoForm from "@/app/(private)/productos/_components/producto-form";
-import { cargarCatalogos, mensajeError } from "@/lib/productos/cliente-api";
-import type {
-  CatalogoProductos,
-  NuevoProducto,
-  ProductoDetalle,
-} from "@/types/productos";
+import { cargarCatalogos, errorDeRespuesta, mensajeError } from "@/lib/productos/cliente-api";
+import type { CatalogoProductos, ProductoDetalle } from "@/types/productos";
 
 export default function EditarProductoPage() {
   const params = useParams<{ id: string }>();
@@ -63,7 +59,7 @@ export default function EditarProductoPage() {
     };
   }, [params.id]);
 
-  async function guardar(data: NuevoProducto) {
+  async function guardar(data: Record<string, unknown>) {
     const respuesta = await fetch(
       `/api/productos/${encodeURIComponent(params.id)}`,
       {
@@ -74,9 +70,7 @@ export default function EditarProductoPage() {
     );
 
     if (!respuesta.ok) {
-      throw new Error(
-        await mensajeError(respuesta, "No fue posible actualizar el producto."),
-      );
+      throw await errorDeRespuesta(respuesta, "No fue posible actualizar el producto.");
     }
 
     router.push("/productos");
