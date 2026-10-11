@@ -5,10 +5,9 @@ import { useParams, useRouter } from "next/navigation";
 
 import EstadoPagina from "@/app/(private)/proveedores/_components/estado-pagina";
 import ProveedorForm from "@/app/(private)/proveedores/_components/proveedor-form";
-import { cargarCatalogos, mensajeError } from "@/lib/proveedores/cliente-api";
+import { cargarCatalogos, errorDeRespuesta, mensajeError } from "@/lib/proveedores/cliente-api";
 import type {
   CatalogoProveedores,
-  NuevoProveedor,
   ProveedorDetalle,
 } from "@/types/proveedores";
 
@@ -63,7 +62,7 @@ export default function EditarProveedorPage() {
     };
   }, [params.id]);
 
-  async function guardar(data: NuevoProveedor) {
+  async function guardar(data: Record<string, unknown>) {
     const respuesta = await fetch(
       `/api/proveedores/${encodeURIComponent(params.id)}`,
       {
@@ -74,9 +73,7 @@ export default function EditarProveedorPage() {
     );
 
     if (!respuesta.ok) {
-      throw new Error(
-        await mensajeError(respuesta, "No fue posible actualizar el proveedor."),
-      );
+      throw await errorDeRespuesta(respuesta, "No fue posible actualizar el proveedor.");
     }
 
     router.push("/proveedores?ok=actualizado");

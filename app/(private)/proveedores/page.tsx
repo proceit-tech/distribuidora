@@ -175,16 +175,14 @@ function desdeApi(fila: FilaApi): ProveedorLista {
       fila.condicion_pago_nombre ?? "",
     monedaCodigoPredeterminada:
       fila.moneda_codigo_predeterminada ?? "PYG",
-    montoMinimoCompra: Number(
-      fila.monto_minimo_compra ?? 0,
-    ),
+    montoMinimoCompra: String(fila.monto_minimo_compra ?? "0"),
     estadoHomologacion:
       fila.estado_homologacion,
     nivelRiesgo: fila.nivel_riesgo,
     calificacionActual:
       fila.calificacion_actual === null
         ? null
-        : Number(fila.calificacion_actual),
+        : String(fila.calificacion_actual),
     activo: fila.activo,
   };
 }
@@ -288,10 +286,12 @@ export default function ProveedoresPage() {
     ).get("ok");
 
     if (ok) {
-      setFlash(
-        ok === "creado"
-          ? "Proveedor registrado correctamente."
-          : "Proveedor actualizado correctamente.",
+      void Promise.resolve().then(() =>
+        setFlash(
+          ok === "creado"
+            ? "Proveedor registrado correctamente."
+            : "Proveedor actualizado correctamente.",
+        ),
       );
       window.history.replaceState(
         null,
@@ -305,15 +305,14 @@ export default function ProveedoresPage() {
     };
   }, []);
 
-  useEffect(() => {
+  // Al cambiar búsqueda, filtros u orden se vuelve a la primera página (se ajusta durante el render, sin efecto).
+  const claveFiltros = [busqueda, filtroEstado, filtroHomologacion, filtroRiesgo, orden?.campo ?? "", orden?.dir ?? ""].join("|");
+  const [claveAnterior, setClaveAnterior] = useState(claveFiltros);
+
+  if (claveAnterior !== claveFiltros) {
+    setClaveAnterior(claveFiltros);
     setPagina(1);
-  }, [
-    busqueda,
-    filtroEstado,
-    filtroHomologacion,
-    filtroRiesgo,
-    orden,
-  ]);
+  }
 
   useEffect(() => {
     if (!flash) {
@@ -696,7 +695,7 @@ export default function ProveedoresPage() {
                         <strong>{proveedor.grupoNombre || "Sin grupo"}</strong>
                         <span>{proveedor.condicionPagoNombre}</span>
                         <span>
-                          {money(proveedor.montoMinimoCompra, proveedor.monedaCodigoPredeterminada)} mínimo
+                          {money(Number(proveedor.montoMinimoCompra), proveedor.monedaCodigoPredeterminada)} mínimo
                         </span>
                       </div>
                     </td>

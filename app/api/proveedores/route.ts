@@ -3,13 +3,16 @@ import { NextResponse } from "next/server";
 import { denyIfNoPermission } from "@/lib/auth/permissions";
 import type { PoolClient } from "pg";
 
+import { ErrorValidacion } from "@/lib/proveedores/errores";
+
+import { normalizarProveedor } from "@/lib/proveedores/normalizar";
 import {
   columnasProveedor,
-  insertarHijos,
-  prepararProveedor,
+  registrarEvento,
   respuestaError,
-  texto,
+  sincronizarHijos,
   validarReferencias,
+  verificarDocumentoUnico,
   type ProveedorBody,
 } from "@/lib/proveedores/shared";
 
@@ -56,6 +59,7 @@ function respuestaProveedoresDemo(url: URL) {
       paises: [],
       incoterms: [],
       departamentos: [],
+      impuestos: [],
     },
     demo: true,
   });
@@ -67,15 +71,9 @@ function crearProveedorDemo(body: ProveedorBody) {
   return {
     id: `demo-proveedor-${Date.now()}`,
     codigo,
-    razon_social:
-      texto(body.razonSocial, 200) ||
-      "Proveedor demo",
-    pais_codigo:
-      texto(body.paisCodigo, 3).toUpperCase() ||
-      "PRY",
-    estado_homologacion:
-      texto(body.estadoHomologacion).toUpperCase() ||
-      "PENDIENTE",
+    razon_social: typeof body.razonSocial === "string" && body.razonSocial.trim() ? body.razonSocial.trim() : "Proveedor demo",
+    pais_codigo: typeof body.paisCodigo === "string" && body.paisCodigo.trim() ? body.paisCodigo.trim().toUpperCase() : "PRY",
+    estado_homologacion: "PENDIENTE",
   };
 }
 
@@ -222,7 +220,7 @@ export async function GET(request: Request) {
           [empresaId],
         );
 
-    const [proveedores, grupos, condicionesPago, monedas, mediosPago, paises, incoterms, departamentos] =
+    const [proveedores, grupos, condicionesPago, monedas, mediosPago, paises, incoterms, departamentos, impuestos] =
       await Promise.all([
         proveedoresConsulta,
         db.query(
@@ -269,6 +267,12 @@ export async function GET(request: Request) {
            WHERE activo = true
            ORDER BY nombre`,
         ),
+        db.query(
+          `SELECT id, codigo, nombre, porcentaje::text AS porcentaje
+           FROM impuestos
+           WHERE activo = true
+           ORDER BY codigo`,
+        ),
       ]);
 
     return NextResponse.json({
@@ -282,6 +286,7 @@ export async function GET(request: Request) {
         paises: paises.rows,
         incoterms: incoterms.rows,
         departamentos: departamentos.rows,
+        impuestos: impuestos.rows,
       },
     });
   } catch (error) {
@@ -336,12 +341,22 @@ export async function POST(request: Request) {
   let conexion: PoolClient | null = null;
 
   try {
-    const datos = prepararProveedor(body);
+    // Los datos gobernados (homologación, riesgo, bloqueo) nacen con su valor inicial y solo cambian por sus acciones auditadas.
+    for (const campo of ["estadoHomologacion", "fechaHomologacion", "fechaVencimientoHomologacion", "nivelRiesgo", "calificacionActual", "bloqueado", "motivoBloqueo"]) {
+      const valor = body[campo];
+      const inicial = campo === "estadoHomologacion" ? "PENDIENTE" : campo === "nivelRiesgo" ? "NO_EVALUADO" : campo === "bloqueado" ? false : null;
+      if (valor !== undefined && valor !== null && valor !== "" && valor !== inicial) {
+        throw new ErrorValidacion("La homologación, el riesgo y el bloqueo no se definen al registrar: use las acciones específicas con su permiso.", campo, 403);
+      }
+    }
+
+    const datos = normalizarProveedor(body);
     const empresaId = session.user.empresaId;
 
     conexion = await db.connect();
     await conexion.query("BEGIN");
     await validarReferencias(conexion, datos, empresaId);
+    await verificarDocumentoUnico(conexion, empresaId, datos, null);
 
     const columnas = columnasProveedor(datos);
     const nombres = ["empresa_id", "creado_por", ...columnas.map(([nombre]) => nombre)];
@@ -355,7 +370,8 @@ export async function POST(request: Request) {
     );
     const proveedor = insertado.rows[0] as { id: string; codigo: string };
 
-    await insertarHijos(conexion, proveedor.id, datos, session.user.id);
+    await registrarEvento(conexion, { empresaId, proveedorId: proveedor.id, entidad: "PROVEEDOR", entidadId: proveedor.id, accion: "CREACION", nuevo: { codigo: proveedor.codigo, razonSocial: datos.razonSocial }, usuarioId: session.user.id });
+    await sincronizarHijos(conexion, empresaId, proveedor.id, datos, session.user.id);
 
     await conexion.query("COMMIT");
     return NextResponse.json(

@@ -17,6 +17,7 @@ Module._resolveFilename = function (request, ...resto) {
   const nue = cargar("lib/clientes/nueve-ajustes.casos.js");
   const per = cargar("lib/clientes/permisos-documentos.casos.js");
   const cie = cargar("lib/clientes/cierre-modulo.casos.js");
+  const prv = cargar("lib/proveedores/proveedores.casos.js");
   const suites = [
     ["teléfono y día de cobro", async () => tel.verificarCasosTelefonoYCobro(), () => tel.CASOS_TELEFONO.length + 11 + 6 + 2],
     ["catálogo mundial", async () => tel.verificarCatalogoMundial(), null],
@@ -27,6 +28,7 @@ Module._resolveFilename = function (request, ...resto) {
     ["nueve ajustes", async () => nue.verificarCasosNueveAjustes(), null],
     ["permisos de documentos", async () => per.verificarCasosPermisosDocumentos(), null],
     ["cierre del módulo", async () => cie.verificarCasosCierreModulo(), null],
+    ["Proveedores V1", async () => prv.verificarCasosProveedores(), null],
   ];
   let total = 0;
   let fallosTotal = 0;

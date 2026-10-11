@@ -2,12 +2,16 @@ import { NextResponse } from "next/server";
 import type { PoolClient } from "pg";
 
 import { denyIfNoPermission } from "@/lib/auth/permissions";
+import { ErrorValidacion } from "@/lib/proveedores/errores";
+import { normalizarProveedor } from "@/lib/proveedores/normalizar";
 import {
   columnasProveedor,
-  insertarHijos,
-  prepararProveedor,
+  diferenciasFila,
+  registrarEvento,
   respuestaError,
+  sincronizarHijos,
   validarReferencias,
+  verificarDocumentoUnico,
   type ProveedorBody,
 } from "@/lib/proveedores/shared";
 
@@ -68,8 +72,8 @@ export async function GET(_request: Request, contexto: Contexto) {
          p.medio_pago_preferido_id AS "medioPagoPreferidoId",
          p.dia_pago_preferido AS "diaPagoPreferido",
          p.plazo_entrega_dias AS "plazoEntregaDias",
-         p.descuento_comercial_pct::float8 AS "descuentoComercialPct",
-         p.monto_minimo_compra::float8 AS "montoMinimoCompra",
+         p.descuento_comercial_pct::text AS "descuentoComercialPct",
+         p.monto_minimo_compra::text AS "montoMinimoCompra",
          p.permite_anticipos AS "permiteAnticipos",
          p.requiere_orden_compra AS "requiereOrdenCompra",
          coalesce(p.email_pagos, '') AS "emailPagos",
@@ -79,14 +83,15 @@ export async function GET(_request: Request, contexto: Contexto) {
          coalesce(to_char(p.fecha_homologacion, 'YYYY-MM-DD'), '') AS "fechaHomologacion",
          coalesce(to_char(p.fecha_vencimiento_homologacion, 'YYYY-MM-DD'), '') AS "fechaVencimientoHomologacion",
          p.nivel_riesgo AS "nivelRiesgo",
-         p.calificacion_actual::float8 AS "calificacionActual",
+         p.calificacion_actual::text AS "calificacionActual",
          coalesce(p.incoterm_codigo, '') AS "incotermCodigo",
          coalesce(p.condicion_entrega, '') AS "condicionEntrega",
          coalesce(p.metodo_transporte_preferido, '') AS "metodoTransportePreferido",
          p.dias_confirmacion_pedido AS "diasConfirmacionPedido",
          p.permite_entrega_parcial AS "permiteEntregaParcial",
          coalesce(p.observacion, '') AS observacion,
-         p.activo, p.creado_at AS "creadoEn", p.actualizado_at AS "actualizadoEn"
+         p.activo, p.creado_at AS "creadoEn", p.actualizado_at AS "actualizadoEn",
+         to_char(p.actualizado_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US') AS version
        FROM proveedores p
        WHERE p.id = $1 AND p.empresa_id = $2`,
       [id, empresaId],
@@ -132,7 +137,7 @@ export async function GET(_request: Request, contexto: Contexto) {
         [id, empresaId],
       ),
       db.query(
-        `SELECT id, tipo, impuesto_id AS "impuestoId", porcentaje::float8 AS porcentaje,
+        `SELECT id, tipo, impuesto_id AS "impuestoId", porcentaje::text AS porcentaje,
                 certificado_obligatorio AS "certificadoObligatorio",
                 coalesce(to_char(fecha_vigencia_desde,'YYYY-MM-DD'),'') AS "fechaVigenciaDesde",
                 coalesce(to_char(fecha_vigencia_hasta,'YYYY-MM-DD'),'') AS "fechaVigenciaHasta",
@@ -191,46 +196,71 @@ export async function PUT(request: Request, contexto: Contexto) {
   let conexion: PoolClient | null = null;
 
   try {
-    const datos = prepararProveedor(body);
+    const datos = normalizarProveedor(body);
 
     conexion = await db.connect();
     await conexion.query("BEGIN");
 
     const existente = await conexion.query(
-      `SELECT codigo FROM proveedores WHERE id = $1 AND empresa_id = $2 FOR UPDATE`,
+      `SELECT codigo, estado_homologacion, coalesce(to_char(fecha_homologacion,'YYYY-MM-DD'),'') AS fecha_homologacion,
+              coalesce(to_char(fecha_vencimiento_homologacion,'YYYY-MM-DD'),'') AS fecha_vencimiento_homologacion,
+              nivel_riesgo, calificacion_actual::text AS calificacion_actual, bloqueado, coalesce(motivo_bloqueo,'') AS motivo_bloqueo,
+              to_char(actualizado_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US') AS version
+         FROM proveedores WHERE id = $1 AND empresa_id = $2 FOR UPDATE`,
       [id, empresaId],
     );
     if (!existente.rowCount) {
       await conexion.query("ROLLBACK");
       return NextResponse.json({ error: "Proveedor no encontrado." }, { status: 404 });
     }
+    const actual = existente.rows[0] as Record<string, string | boolean | null>;
+
+    // Concurrencia optimista: si otro usuario guardó después de cargar la ficha, no se pisa su trabajo.
+    if (typeof body.version === "string" && body.version !== actual.version) {
+      throw new ErrorValidacion("Otro usuario modificó este proveedor mientras usted lo editaba. Recargue la ficha para ver los cambios antes de guardar.", null, 409);
+    }
+
+    // Los datos gobernados no se cambian por la edición común (DEC-PRV-02/06/10): solo por sus acciones con permiso y auditoría.
+    const gobernados: Array<[string, unknown, unknown]> = [
+      ["estadoHomologacion", body.estadoHomologacion, actual.estado_homologacion],
+      ["fechaHomologacion", body.fechaHomologacion, actual.fecha_homologacion],
+      ["fechaVencimientoHomologacion", body.fechaVencimientoHomologacion, actual.fecha_vencimiento_homologacion],
+      ["nivelRiesgo", body.nivelRiesgo, actual.nivel_riesgo],
+      ["calificacionActual", body.calificacionActual, actual.calificacion_actual],
+      ["bloqueado", body.bloqueado, actual.bloqueado],
+      ["motivoBloqueo", body.motivoBloqueo, actual.motivo_bloqueo],
+    ];
+    for (const [campo, enviado, guardado] of gobernados) {
+      const vacio = enviado === undefined || enviado === null || enviado === "";
+      if (!vacio && String(enviado) !== String(guardado ?? "")) {
+        throw new ErrorValidacion("Este dato se modifica solo con la acción específica (homologación, riesgo o bloqueo), con su permiso y auditoría.", campo, 403);
+      }
+    }
 
     await validarReferencias(conexion, datos, empresaId);
+    await verificarDocumentoUnico(conexion, empresaId, datos, id);
 
     const columnas = columnasProveedor(datos);
     const sets = columnas.map(([nombre], i) => `${nombre} = $${i + 3}`);
     // pais_nombre se recalcula desde el catálogo cuando cambia el país (el trigger solo completa si es NULL).
     sets.push(`pais_nombre = (SELECT nombre FROM referencia_geografica_paises WHERE codigo = $${columnas.length + 3})`);
 
-    await conexion.query(
-      `UPDATE proveedores SET ${sets.join(", ")} WHERE id = $1 AND empresa_id = $2`,
+    const actualizado = await conexion.query(
+      `UPDATE proveedores x SET ${sets.join(", ")} FROM proveedores old
+        WHERE x.id = $1 AND x.empresa_id = $2 AND old.id = x.id
+        RETURNING to_jsonb(old.*) AS anterior, to_jsonb(x.*) AS nuevo`,
       [id, empresaId, ...columnas.map(([, valor]) => valor), datos.paisCodigo],
     );
-
-    // Las listas hijas del formulario reemplazan a las anteriores (misma transacción).
-    for (const tabla of [
-      "proveedor_contactos",
-      "proveedor_direcciones",
-      "proveedor_cuentas_bancarias",
-      "proveedor_retenciones",
-      "proveedor_documentos",
-    ]) {
-      await conexion.query(`DELETE FROM ${tabla} WHERE proveedor_id = $1 AND empresa_id = $2`, [id, empresaId]);
+    const { antes, despues } = diferenciasFila(actualizado.rows[0].anterior, actualizado.rows[0].nuevo);
+    if (Object.keys(despues).length > 0) {
+      await registrarEvento(conexion, { empresaId, proveedorId: id, entidad: "PROVEEDOR", entidadId: id, accion: "ACTUALIZACION", anterior: antes, nuevo: despues, usuarioId: session.user.id });
     }
-    await insertarHijos(conexion, id, datos, session.user.id);
+
+    // Filas relacionadas: actualización selectiva por identificador; solo se elimina lo que el usuario eliminó explícitamente.
+    await sincronizarHijos(conexion, empresaId, id, datos, session.user.id);
 
     await conexion.query("COMMIT");
-    const codigo = (existente.rows[0] as { codigo: string }).codigo;
+    const codigo = actual.codigo as string;
     return NextResponse.json({ message: `Proveedor ${codigo} actualizado correctamente.`, proveedor: { id, codigo } });
   } catch (error) {
     if (conexion) await conexion.query("ROLLBACK").catch(() => undefined);

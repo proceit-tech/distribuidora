@@ -11,6 +11,11 @@
     "plugins": [],
     "baseUrl": "../.."
   },
-  "include": ["../../lib/**/*.casos.ts", "../../next-env.d.ts"],
-  "exclude": ["../../node_modules"]
+  "include": [
+    "../../lib/**/*.casos.ts",
+    "../../next-env.d.ts"
+  ],
+  "exclude": [
+    "../../node_modules"
+  ]
 }

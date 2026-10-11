@@ -517,3 +517,88 @@
     padding: 10px 14px;
   }
 }
+
+/* Mensajes por campo */
+.campoError {
+  color: #b3263b;
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.field.conError input,
+.field.conError select,
+.field.conError textarea {
+  border-color: #c0394d;
+  box-shadow: 0 0 0 3px rgba(192, 57, 77, 0.12);
+}
+
+.ayuda {
+  color: #6f8498;
+  font-size: 12px;
+}
+
+.soloLectura {
+  display: flex;
+  align-items: center;
+  min-height: 40px;
+  border: 1px solid #e3ebf1;
+  border-radius: 8px;
+  background: #f6f9fb;
+  padding: 0 11px;
+  color: #315575;
+  font-size: 14px;
+}
+
+.bloque {
+  margin-bottom: 14px;
+  border: 1px solid #dbe7f0;
+  border-radius: 10px;
+  background: #fbfdfe;
+  padding: 14px 16px 6px;
+}
+
+.bloque h4 {
+  margin: 0 0 10px;
+  color: #315575;
+  font-size: 13.5px;
+  font-weight: 650;
+}
+
+.etiquetaEstado {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  border-radius: 999px;
+  padding: 0 10px;
+  background: #eef3f6;
+  color: #49657a;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.etiquetaAlerta {
+  background: #fff5df;
+  color: #88702f;
+}
+
+.etiquetaOk {
+  background: #e7f7f0;
+  color: #14745f;
+}
+
+.etiquetaPeligro {
+  background: #fdecee;
+  color: #b3263b;
+}
+
+.acciones {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 4px 0 12px;
+}
+
+.textoSecundario {
+  color: #6f8498;
+  font-size: 12.5px;
+}

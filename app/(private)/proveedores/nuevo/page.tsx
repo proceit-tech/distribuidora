@@ -5,11 +5,8 @@ import { useRouter } from "next/navigation";
 
 import EstadoPagina from "@/app/(private)/proveedores/_components/estado-pagina";
 import ProveedorForm from "@/app/(private)/proveedores/_components/proveedor-form";
-import { cargarCatalogos, mensajeError } from "@/lib/proveedores/cliente-api";
-import type {
-  CatalogoProveedores,
-  NuevoProveedor,
-} from "@/types/proveedores";
+import { cargarCatalogos, errorDeRespuesta } from "@/lib/proveedores/cliente-api";
+import type { CatalogoProveedores } from "@/types/proveedores";
 
 export default function NuevoProveedorPage() {
   const router = useRouter();
@@ -22,7 +19,7 @@ export default function NuevoProveedorPage() {
       .catch((e: Error) => setError(e.message));
   }, []);
 
-  async function guardar(data: NuevoProveedor) {
+  async function guardar(data: Record<string, unknown>) {
     const respuesta = await fetch("/api/proveedores", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -30,9 +27,7 @@ export default function NuevoProveedorPage() {
     });
 
     if (!respuesta.ok) {
-      throw new Error(
-        await mensajeError(respuesta, "No fue posible registrar el proveedor."),
-      );
+      throw await errorDeRespuesta(respuesta, "No fue posible registrar el proveedor.");
     }
 
     router.push("/proveedores?ok=creado");
@@ -47,7 +42,5 @@ export default function NuevoProveedorPage() {
     return <EstadoPagina titulo="Cargando formulario..." />;
   }
 
-  return (
-    <ProveedorForm mode="create" catalogos={catalogos} onSave={guardar} />
-  );
+  return <ProveedorForm mode="create" catalogos={catalogos} onSave={guardar} />;
 }

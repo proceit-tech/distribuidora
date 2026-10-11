@@ -17,6 +17,10 @@ export type ProveedorNivelRiesgo =
   | "ALTO"
   | "CRITICO";
 
+/**
+ * Los identificadores de las filas relacionadas son los del servidor (UUID). Una fila nueva en el formulario usa un identificador
+ * temporal («nuevo-…»): el servidor lo reemplaza por el definitivo y, al editar, conserva el de las filas existentes.
+ */
 export type ProveedorContacto = {
   id: string;
   nombre: string;
@@ -71,9 +75,10 @@ export type ProveedorCuentaBancaria = {
 
 export type ProveedorRetencion = {
   id: string;
-  impuestoId?: string | null;
+  impuestoId: string | null;
   tipo: "IVA" | "RENTA" | "OTRA";
-  porcentaje: number;
+  /** Porcentaje como cadena decimal exacta («10.00»). */
+  porcentaje: string;
   certificadoObligatorio: boolean;
   fechaVigenciaDesde: string;
   fechaVigenciaHasta: string;
@@ -96,9 +101,19 @@ export type ProveedorDocumento = {
   observacion: string;
 };
 
+/** Filas relacionadas que el usuario quitó explícitamente en esta edición (solo identificadores persistidos). */
+export type EliminacionesProveedor = {
+  contactos: string[];
+  direcciones: string[];
+  cuentasBancarias: string[];
+  retenciones: string[];
+};
+
 export type ProveedorDetalle = {
   id: string;
   codigo: string;
+  /** Marca de concurrencia: la edición se rechaza si otro usuario guardó antes. */
+  version: string;
 
   tipoPersona: ProveedorTipoPersona;
   grupoProveedorId: string | null;
@@ -120,8 +135,8 @@ export type ProveedorDetalle = {
   medioPagoPreferidoId: string | null;
   diaPagoPreferido: number | null;
   plazoEntregaDias: number | null;
-  descuentoComercialPct: number;
-  montoMinimoCompra: number;
+  descuentoComercialPct: string;
+  montoMinimoCompra: string;
   permiteAnticipos: boolean;
   requiereOrdenCompra: boolean;
   emailPagos: string;
@@ -132,7 +147,7 @@ export type ProveedorDetalle = {
   fechaHomologacion: string;
   fechaVencimientoHomologacion: string;
   nivelRiesgo: ProveedorNivelRiesgo;
-  calificacionActual: number | null;
+  calificacionActual: string | null;
   incotermCodigo: string;
   condicionEntrega: string;
   metodoTransportePreferido: string;
@@ -152,10 +167,24 @@ export type ProveedorDetalle = {
   actualizadoEn: string;
 };
 
+/** Datos editables enviados por el formulario (sin identidad, auditoría ni los datos gobernados por acciones propias). */
 export type NuevoProveedor = Omit<
   ProveedorDetalle,
-  "id" | "codigo" | "creadoEn" | "actualizadoEn"
->;
+  | "id"
+  | "codigo"
+  | "version"
+  | "creadoEn"
+  | "actualizadoEn"
+  | "paisNombre"
+  | "estadoHomologacion"
+  | "fechaHomologacion"
+  | "fechaVencimientoHomologacion"
+  | "nivelRiesgo"
+  | "calificacionActual"
+> & {
+  version?: string;
+  eliminaciones?: EliminacionesProveedor;
+};
 
 /** Fila de la lista (GET /api/proveedores), ya mapeada a camelCase. */
 export type ProveedorLista = {
@@ -172,10 +201,10 @@ export type ProveedorLista = {
   grupoNombre: string;
   condicionPagoNombre: string;
   monedaCodigoPredeterminada: string;
-  montoMinimoCompra: number;
+  montoMinimoCompra: string;
   estadoHomologacion: ProveedorEstadoHomologacion;
   nivelRiesgo: ProveedorNivelRiesgo;
-  calificacionActual: number | null;
+  calificacionActual: string | null;
   activo: boolean;
 };
 
@@ -187,4 +216,5 @@ export type CatalogoProveedores = {
   paises: { codigo: string; nombre: string }[];
   incoterms: { codigo: string; nombre: string }[];
   departamentos: { codigo: number; nombre: string }[];
+  impuestos: { id: string; codigo: string; nombre: string; porcentaje: string }[];
 };
