@@ -363,14 +363,14 @@ export default function CatalogosProductosPage() {
           <table className={ui.table} style={{ minWidth: 820 }}>
             <thead>
               <tr>
-                <ThOrdenable titulo="Código" campo="codigo" orden={orden} onOrden={cambiarOrden} />
+                <ThOrdenable titulo="Código" campo="codigo" orden={orden} onOrden={cambiarOrden} className={ui.colCodigo} />
                 <ThOrdenable titulo="Nombre" campo="nombre" orden={orden} onOrden={cambiarOrden} />
                 {tipo === "lineas" ? (
                   <ThOrdenable titulo="Familia" campo="familia" orden={orden} onOrden={cambiarOrden} />
                 ) : null}
                 {meta.descripcion ? <ThOrdenable titulo="Descripción" /> : null}
-                <ThOrdenable titulo="Productos" campo="productos" orden={orden} onOrden={cambiarOrden} alinear="derecha" />
-                <ThOrdenable titulo="Estado" campo="estado" orden={orden} onOrden={cambiarOrden} />
+                <ThOrdenable titulo="Productos" campo="productos" orden={orden} onOrden={cambiarOrden} alinear="derecha" className={ui.colNumero} />
+                <ThOrdenable titulo="Estado" campo="estado" orden={orden} onOrden={cambiarOrden} className={ui.colEstado} />
                 <ThOrdenable titulo="Acciones" alinear="derecha" />
               </tr>
             </thead>
@@ -403,10 +403,10 @@ export default function CatalogosProductosPage() {
                 paginaActual.map((f) => (
                   <tr key={f.id} className={ui.row}>
                     <td>
-                      {f.codigo ? <span className={ui.mono}>{f.codigo}</span> : <span className={ui.muted}>Sin código</span>}
+                      {f.codigo ? <span className={[ui.code, ui.mono].join(" ")}>{f.codigo}</span> : <span className={[ui.code, ui.muted].join(" ")}>Sin código</span>}
                     </td>
                     <td>
-                      <strong>{f.nombre}</strong>
+                      <span className={ui.principal}>{f.nombre}</span>
                     </td>
                     {tipo === "lineas" ? <td>{f.familia}</td> : null}
                     {meta.descripcion ? <td className={ui.breakable}>{f.descripcion}</td> : null}

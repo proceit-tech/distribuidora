@@ -572,13 +572,12 @@ export default function ListasPrecioPage() {
                           <Link href={`/listas-precio/${lista.id}`} className={ui.clientName}>
                             {lista.nombre}
                           </Link>
-                          <span className={ui.code}>{lista.codigo}</span>
-                          <span className={[ui.code, ui.clamp2].join(" ")} title={lista.descripcion || undefined}>
-                            {lista.descripcion || "Sin descripción"}
-                          </span>
                           <span className={ui.code}>
-                            {lista.productosCount} productos · {formatMoneda(lista.monedaCodigo)} ·{" "}
+                            {lista.codigo} · {lista.productosCount} productos · {formatMoneda(lista.monedaCodigo)} ·{" "}
                             {lista.incluyeIva ? "IVA incluido" : "IVA no incluido"}
+                          </span>
+                          <span className={[ui.descr, ui.clamp2].join(" ")} title={lista.descripcion || undefined}>
+                            {lista.descripcion || "Sin descripción"}
                           </span>
                         </div>
                       </div>

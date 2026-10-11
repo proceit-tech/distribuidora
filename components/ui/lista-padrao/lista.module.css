@@ -70,7 +70,7 @@
   color: #ffffff;
   background: linear-gradient(135deg, #13a9af, #0c919b);
   box-shadow: 0 6px 14px rgba(11, 145, 155, 0.16);
-  font-size: 13.5px;
+  font-size: 13px;
   font-weight: 600;
   text-decoration: none;
   white-space: nowrap;
@@ -400,7 +400,7 @@
 
 .code {
   color: #6f8498;
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 500;
 }
 
@@ -409,6 +409,33 @@
   min-width: 0;
   gap: 2px;
   line-height: 1.35;
+}
+
+.table td > strong,
+.principal {
+  color: #234560;
+  font-size: 14px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.descr {
+  color: #7f92a5;
+  font-size: 12.5px;
+  font-weight: 400;
+  line-height: 1.4;
+}
+
+.colCodigo {
+  width: 130px;
+}
+
+.colNumero {
+  width: 110px;
+}
+
+.colEstado {
+  width: 120px;
 }
 
 .cell strong {
@@ -448,7 +475,7 @@
   border-radius: 999px;
   padding: 0 9px;
   font-size: 12px;
-  font-weight: 650;
+  font-weight: 600;
   white-space: nowrap;
 }
 
@@ -474,7 +501,7 @@
 
 .detailButton {
   display: inline-flex;
-  height: 32px;
+  height: 34px;
   align-items: center;
   justify-content: center;
   gap: 5px;
@@ -582,7 +609,7 @@
   border-radius: 999px;
   padding: 0 9px;
   font-size: 12px;
-  font-weight: 650;
+  font-weight: 600;
   white-space: nowrap;
 }
 
@@ -610,7 +637,7 @@
   color: #5d46b6;
   background: #f0ecfd;
   font-size: 12px;
-  font-weight: 650;
+  font-weight: 600;
   white-space: nowrap;
 }
 
@@ -679,7 +706,7 @@
   color: #41647d;
   background: #ffffff;
   font: inherit;
-  font-size: 13.5px;
+  font-size: 13px;
   font-weight: 600;
   text-decoration: none;
   white-space: nowrap;
@@ -687,7 +714,7 @@
 }
 
 .rowButton {
-  height: 32px;
+  height: 34px;
   padding: 0 11px;
   border-radius: 8px;
   font-size: 13px;
@@ -763,12 +790,23 @@
 }
 
 /* ---- Refinamiento de consistencia ---- */
-/* Toolbar densa (Productos, Stock): búsqueda en su propia fila; filtros repartidos; limpiar + contador juntos. */
+/* Toolbar densa (Productos, Stock): fila 1 = búsqueda + acciones (ayuda, limpiar, contador); fila 2+ = filtros. */
 .toolbarDensa .search {
-  flex: 1 1 100%;
+  order: 0;
+  flex: 1 1 calc(100% - 300px);
+  min-width: 260px;
+}
+
+.toolbarDensa .toolbarEnd {
+  order: 1;
+  flex: 0 0 auto;
+  align-self: flex-end;
+  min-height: 36px;
+  margin-left: 0;
 }
 
 .toolbarDensa .filterField {
+  order: 2;
   flex: 1 1 150px;
   max-width: 240px;
 }
@@ -781,17 +819,78 @@
 .toolbarEnd {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   margin-left: auto;
-}
-
-.toolbarDensa .toolbarEnd {
-  align-self: flex-end;
-  min-height: 36px;
 }
 
 .toolbarEnd .resultCount {
   margin-left: 0;
+}
+
+/* Ayuda contextual accesible (details/summary: operable con teclado, sin ocupar una fila). */
+.ayuda {
+  position: relative;
+}
+
+.ayuda summary {
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #d3dfe8;
+  border-radius: 50%;
+  color: #41647d;
+  background: #ffffff;
+  font-size: 14px;
+  font-weight: 650;
+  cursor: pointer;
+  list-style: none;
+}
+
+.ayuda summary::-webkit-details-marker {
+  display: none;
+}
+
+.ayuda summary:hover,
+.ayuda[open] summary {
+  color: #0a7f88;
+  border-color: #aadadd;
+  background: #f3fbfb;
+}
+
+.ayuda summary:focus-visible {
+  outline: 3px solid rgba(15, 156, 165, 0.4);
+  outline-offset: 2px;
+}
+
+.ayudaPanel {
+  position: absolute;
+  top: 36px;
+  right: 0;
+  z-index: 20;
+  width: 320px;
+  max-width: calc(100vw - 40px);
+  border: 1px solid #d3dfe8;
+  border-radius: 10px;
+  padding: 12px 14px;
+  color: #3c566c;
+  background: #ffffff;
+  box-shadow: 0 12px 28px rgba(20, 50, 77, 0.16);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.ayudaPanel strong {
+  display: block;
+  margin-bottom: 4px;
+  color: #173b59;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.ayudaPanel p {
+  margin: 0 0 6px;
 }
 
 /* Indicadores: composición por cantidad de tarjetas (4 / 6) sin dejar tarjetas huérfanas. */
@@ -841,15 +940,6 @@
   line-clamp: 2;
   overflow-wrap: anywhere;
 }
-
-.legendNote {
-  margin: 0;
-  padding: 8px 14px;
-  border-top: 1px solid #edf2f5;
-  color: #6f8498;
-  font-size: 12px;
-}
-
 @media (max-width: 760px) {
   .page {
     padding: 12px;

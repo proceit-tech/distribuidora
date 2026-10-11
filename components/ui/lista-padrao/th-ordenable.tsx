@@ -7,16 +7,17 @@ type Props<C extends string> = {
   orden?: Orden<C>;
   onOrden?: (campo: C) => void;
   alinear?: "derecha";
+  className?: string;
 };
 
 /** Encabezado de columna de los listados V1: ordenable (botón con indicador y aria-sort) o simple. */
-export function ThOrdenable<C extends string>({ titulo, campo, orden, onOrden, alinear }: Props<C>) {
+export function ThOrdenable<C extends string>({ titulo, campo, orden, onOrden, alinear, className }: Props<C>) {
   const activo = campo !== undefined && orden?.campo === campo;
 
   return (
     <th
       scope="col"
-      className={alinear === "derecha" ? styles.numericHead : undefined}
+      className={[alinear === "derecha" ? styles.numericHead : "", className ?? ""].filter(Boolean).join(" ") || undefined}
       aria-sort={
         campo === undefined ? undefined : activo ? (orden?.dir === "asc" ? "ascending" : "descending") : "none"
       }

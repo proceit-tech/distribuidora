@@ -956,6 +956,21 @@ export default function StockPage() {
           </label>
 
           <div className={ui.toolbarEnd}>
+          <details className={ui.ayuda}>
+            <summary aria-label="Ayuda: significado de R, C, T y Sobrestock" title="Ayuda: R, C, T y Sobrestock">
+              ?
+            </summary>
+            <div className={ui.ayudaPanel} role="note">
+              <strong>Columnas R / C / T</strong>
+              <p>R = reservado · C = cuarentena · T = en tránsito.</p>
+              <strong>Sobrestock</strong>
+              <p>
+                Existencia física propia (disponible + reservado + cuarentena) mayor que el stock máximo registrado en la
+                ficha del producto.
+              </p>
+            </div>
+          </details>
+
             <button type="button" className={ui.clearButton} onClick={limpiar}>
               Limpiar filtros
             </button>
@@ -1104,11 +1119,6 @@ export default function StockPage() {
             </tbody>
           </table>
         </div>
-
-        <p className={ui.legendNote}>
-          R = reservado · C = cuarentena · T = en tránsito. Sobrestock: existencia física propia (disponible + reservado +
-          cuarentena) mayor que el stock máximo del producto.
-        </p>
 
         <footer className={ui.pagination}>
           <span>

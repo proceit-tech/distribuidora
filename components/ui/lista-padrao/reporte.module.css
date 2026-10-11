@@ -83,7 +83,7 @@
   border-radius: 9px;
   padding: 0 14px;
   font: inherit;
-  font-size: 13.5px;
+  font-size: 13px;
   font-weight: 600;
   text-decoration: none;
   white-space: nowrap;
@@ -449,7 +449,7 @@
   border-radius: 999px;
   padding: 0 9px;
   font-size: 12px;
-  font-weight: 650;
+  font-weight: 600;
   white-space: nowrap;
 }
 

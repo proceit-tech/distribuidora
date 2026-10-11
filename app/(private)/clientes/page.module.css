@@ -458,7 +458,7 @@
 
 .detailButton {
   display: inline-flex;
-  height: 32px;
+  height: 34px;
   align-items: center;
   justify-content: center;
   gap: 5px;

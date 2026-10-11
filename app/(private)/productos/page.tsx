@@ -704,10 +704,9 @@ export default function ProductosPage() {
                           <span className={ui.code}>
                             {producto.codigo} · Cód. inventario: {producto.codigoInventario || "—"}
                           </span>
-                          <span className={ui.code}>
-                            {[producto.marcaNombre || "Sin marca", producto.procedencia || "Sin procedencia", producto.unidadMedidaNombre]
-                              .filter(Boolean)
-                              .join(" · ")}
+                          <span className={ui.descr}>
+                            Marca: {producto.marcaNombre || "—"} · Procedencia: {producto.procedencia || "—"}
+                            {producto.unidadMedidaNombre ? ` · ${producto.unidadMedidaNombre}` : ""}
                           </span>
                         </div>
                       </div>
@@ -716,8 +715,8 @@ export default function ProductosPage() {
                     <td>
                       <div className={ui.cell}>
                         <strong>{producto.familiaNombre || "Sin familia"}</strong>
-                        <span>{producto.lineaNombre || "Sin línea"}</span>
-                        <span>{producto.categoriaNombre || "Sin categoría"}</span>
+                        <span>Línea: {producto.lineaNombre || "—"}</span>
+                        <span className={ui.descr}>Categoría: {producto.categoriaNombre || "Sin categoría"}</span>
                       </div>
                     </td>
 
