@@ -11,7 +11,7 @@ import {
 } from "@/lib/fiscal/campos-receptor";
 import { mensajeRestriccionCliente } from "@/lib/clientes/errores-bd";
 import { evaluarAptitudSifen } from "@/lib/fiscal/aptitud-sifen";
-import { resolverPais, validarPaisPorOperacion } from "@/lib/geografia/referencia";
+import { ErrorGeografia, resolverPais, validarPaisPorOperacion } from "@/lib/geografia/referencia";
 import { ErrorValidacion, leerEntrada, leerHijos, sincronizarHijos } from "@/lib/clientes/relacionados";
 
 type Contexto = { params: Promise<{ id: string }> };
@@ -135,12 +135,22 @@ export async function GET(_request: Request, contexto: Contexto) {
     // se devuelve marcado para que la aptitud SIFEN lo informe como pendiente.
     const naturalezaTxt = ({ 1: "CONTRIBUYENTE", 2: "NO_CONTRIBUYENTE" } as Record<number, string>)[Number(c.naturaleza_receptor)] ?? `DESCONOCIDA_${c.naturaleza_receptor}`;
     const operacionTxt = ({ 1: "B2B", 2: "B2C", 3: "B2G", 4: "B2F" } as Record<number, string>)[Number(c.tipo_operacion)] ?? `DESCONOCIDA_${c.tipo_operacion}`;
+    // Existencia del país en el catálogo oficial (referencia_geografica_paises, activo): true / false / null (no verificable).
+    const paisEnCatalogo = async (codigo: unknown): Promise<boolean | null> => {
+      try {
+        await resolverPais(db, codigo, "El país");
+        return true;
+      } catch (error) {
+        return error instanceof ErrorGeografia ? false : null;
+      }
+    };
     const aptitudSifen = evaluarAptitudSifen(
       {
         naturaleza: naturalezaTxt,
         tipoOperacion: operacionTxt,
         tipoPersona: c.tipo_persona ?? "",
         paisCodigo: c.pais_codigo ?? "",
+        paisEnCatalogo: await paisEnCatalogo(c.pais_codigo),
         tipoDocumento: c.tipo_documento,
         numeroDocumento: c.numero_documento ?? "",
         dv: c.dv ?? "",
@@ -158,6 +168,8 @@ export async function GET(_request: Request, contexto: Contexto) {
             departamentoCodigo: String(dirFiscal.departamentoCodigo ?? ""),
             distritoCodigo: String(dirFiscal.distritoCodigo ?? ""),
             ciudadCodigo: String(dirFiscal.ciudadCodigo ?? ""),
+            paisCodigo: dirFiscal.paisCodigo ?? "",
+            paisEnCatalogo: await paisEnCatalogo(dirFiscal.paisCodigo),
           }
         : null,
     );

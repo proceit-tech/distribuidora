@@ -12,6 +12,7 @@ const base: DatosAptitud = {
   tipoOperacion: "B2C",
   tipoPersona: "FISICA",
   paisCodigo: "PRY",
+  paisEnCatalogo: true,
   tipoDocumento: "CEDULA_PARAGUAYA",
   numeroDocumento: "1234567",
   dv: "",
@@ -40,6 +41,18 @@ const direccionPry: DireccionFiscalAptitud = {
   departamentoCodigo: "1",
   distritoCodigo: "1",
   ciudadCodigo: "1",
+  paisCodigo: "PRY",
+  paisEnCatalogo: true,
+};
+
+const sinGeografia: DireccionFiscalAptitud = {
+  direccion: "Dirección exterior 1",
+  numeroCasa: "1",
+  departamentoCodigo: "",
+  distritoCodigo: "",
+  ciudadCodigo: "",
+  paisCodigo: "BRA",
+  paisEnCatalogo: true,
 };
 
 type Caso = { nombre: string; datos: DatosAptitud; fiscal?: DireccionFiscalAptitud | null; apto: boolean; pendiente?: string };
@@ -55,18 +68,24 @@ export const CASOS_APTITUD_SIFEN: Caso[] = [
   {
     nombre: "no contribuyente B2F en Brasil con pasaporte y dirección fiscal sin geografía paraguaya",
     datos: { ...base, tipoOperacion: "B2F", paisCodigo: "BRA", tipoDocumento: "PASAPORTE", numeroDocumento: "AB123456" },
-    fiscal: { direccion: "Rua das Flores 10", numeroCasa: "10", departamentoCodigo: "", distritoCodigo: "", ciudadCodigo: "" },
+    fiscal: { ...sinGeografia, direccion: "Rua das Flores 10", numeroCasa: "10" },
     apto: true,
   },
   // ---- Inválidos: natureza × operación × país
   { nombre: "contribuyente B2F", datos: { ...contribuyente, tipoOperacion: "B2F", paisCodigo: "BRA" }, apto: false, pendiente: "contribuyente" },
   { nombre: "no contribuyente B2B", datos: { ...base, tipoOperacion: "B2B" }, apto: false, pendiente: "no contribuyente" },
-  { nombre: "B2F con país Paraguay", datos: { ...base, tipoOperacion: "B2F", tipoDocumento: "PASAPORTE", numeroDocumento: "AB1" }, fiscal: { direccion: "x", numeroCasa: "1", departamentoCodigo: "", distritoCodigo: "", ciudadCodigo: "" }, apto: false, pendiente: "B2F" },
+  { nombre: "B2F con país Paraguay", datos: { ...base, tipoOperacion: "B2F", tipoDocumento: "PASAPORTE", numeroDocumento: "AB1" }, fiscal: sinGeografia, apto: false, pendiente: "B2F" },
   { nombre: "B2C con país extranjero", datos: { ...base, paisCodigo: "BRA" }, apto: false, pendiente: "Paraguay" },
   { nombre: "país vacío", datos: { ...base, paisCodigo: "" }, apto: false, pendiente: "país" },
   { nombre: "código de operación desconocido (no se sustituye por B2C)", datos: { ...base, tipoOperacion: "DESCONOCIDA_9" }, apto: false, pendiente: "tipo de operación" },
   { nombre: "código de naturaleza desconocido", datos: { ...base, naturaleza: "DESCONOCIDA_7" }, apto: false, pendiente: "naturaleza" },
   { nombre: "tipo de persona vacío", datos: { ...base, tipoPersona: "" }, apto: false, pendiente: "tipo de persona" },
+  // ---- País y catálogo oficial (C5)
+  { nombre: "B2F con país extranjero válido en el catálogo (BRA)", datos: { ...base, tipoOperacion: "B2F", paisCodigo: "BRA", paisEnCatalogo: true, tipoDocumento: "PASAPORTE", numeroDocumento: "AB123456" }, fiscal: sinGeografia, apto: true },
+  { nombre: "B2F con país inexistente ZZZ", datos: { ...base, tipoOperacion: "B2F", paisCodigo: "ZZZ", paisEnCatalogo: false, tipoDocumento: "PASAPORTE", numeroDocumento: "AB123456" }, fiscal: sinGeografia, apto: false, pendiente: "catálogo oficial de países" },
+  { nombre: "B2C con código PRY inactivo/inexistente en el catálogo", datos: { ...base, paisEnCatalogo: false }, apto: false, pendiente: "catálogo oficial de países" },
+  { nombre: "país no verificable (catálogo no consultado)", datos: { ...base, paisEnCatalogo: null }, apto: false, pendiente: "No fue posible verificar" },
+  { nombre: "domicilio fiscal con país inexistente", datos: { ...base, tipoOperacion: "B2F", paisCodigo: "BRA", paisEnCatalogo: true, tipoDocumento: "PASAPORTE", numeroDocumento: "AB123456" }, fiscal: { ...sinGeografia, paisCodigo: "ZZZ", paisEnCatalogo: false }, apto: false, pendiente: "domicilio fiscal" },
   // ---- Inválidos: identificación
   { nombre: "DV incorrecto", datos: { ...contribuyente, dv: "5" }, apto: false, pendiente: "DV" },
   { nombre: "RUC con letras", datos: { ...contribuyente, numeroDocumento: "80A00005" }, apto: false, pendiente: "RUC" },
@@ -76,7 +95,7 @@ export const CASOS_APTITUD_SIFEN: Caso[] = [
   { nombre: "no contribuyente con DV", datos: { ...base, dv: "1" }, apto: false, pendiente: "DV" },
   { nombre: "documento de más de 20 caracteres", datos: { ...base, numeroDocumento: "123456789012345678901" }, apto: false, pendiente: "número de documento" },
   { nombre: "documento Otro sin descripción", datos: { ...base, tipoDocumento: "OTRO" }, apto: false, pendiente: "descripción" },
-  { nombre: "Innominado en B2F", datos: { ...base, tipoOperacion: "B2F", paisCodigo: "BRA", tipoDocumento: "INNOMINADO", numeroDocumento: "0", razonSocial: "Sin Nombre" }, fiscal: { direccion: "x", numeroCasa: "1", departamentoCodigo: "", distritoCodigo: "", ciudadCodigo: "" }, apto: false, pendiente: "Innominado" },
+  { nombre: "Innominado en B2F", datos: { ...base, tipoOperacion: "B2F", paisCodigo: "BRA", tipoDocumento: "INNOMINADO", numeroDocumento: "0", razonSocial: "Sin Nombre" }, fiscal: sinGeografia, apto: false, pendiente: "Innominado" },
   { nombre: "Innominado con nombre distinto", datos: { ...base, tipoDocumento: "INNOMINADO", numeroDocumento: "0", razonSocial: "Pedro" }, apto: false, pendiente: "Innominado" },
   { nombre: "razón social de 2 caracteres", datos: { ...base, razonSocial: "AB" }, apto: false, pendiente: "razón social" },
   // ---- Inválidos: domicilio fiscal

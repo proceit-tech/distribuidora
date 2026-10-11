@@ -26,6 +26,8 @@ export type DatosAptitud = {
   tipoOperacion: string;
   tipoPersona: string;
   paisCodigo: string;
+  /** Resultado de buscar `paisCodigo` en el catálogo oficial (referencia_geografica_paises, activo): true/false; null = no se pudo verificar. */
+  paisEnCatalogo: boolean | null;
   tipoDocumento: string;
   numeroDocumento: string;
   dv: string;
@@ -43,6 +45,8 @@ export type DireccionFiscalAptitud = {
   departamentoCodigo: string;
   distritoCodigo: string;
   ciudadCodigo: string;
+  paisCodigo: string;
+  paisEnCatalogo: boolean | null;
 };
 
 export type AptitudSifen = { apto: boolean; pendientes: string[] };
@@ -59,6 +63,12 @@ const TIPOS_DOCUMENTO_IDENTIDAD = [
   "TARJETA_DIPLOMATICA",
   "OTRO",
 ];
+
+function mensajeCatalogoPais(codigo: string, enCatalogo: boolean | null, de: string): string | null {
+  if (enCatalogo === true) return null;
+  if (enCatalogo === false) return `El país ${de} (${codigo}) no existe o no está activo en el catálogo oficial de países.`;
+  return `No fue posible verificar el país ${de} (${codigo}) contra el catálogo oficial de países.`;
+}
 
 export function evaluarAptitudSifen(c: DatosAptitud, fiscal: DireccionFiscalAptitud | null): AptitudSifen {
   const pendientes: string[] = [];
@@ -79,11 +89,16 @@ export function evaluarAptitudSifen(c: DatosAptitud, fiscal: DireccionFiscalApti
   if (naturalezaOk && operacionOk) agregar(validarNaturalezaOperacion(c.naturaleza, c.tipoOperacion));
   if (!limpio(c.paisCodigo)) {
     agregar("El país del receptor no está informado.");
-  } else if (operacionOk) {
-    try {
-      validarPaisPorOperacion(c.tipoOperacion, limpio(c.paisCodigo).toUpperCase());
-    } catch (error) {
-      agregar(error instanceof Error ? error.message : "El país no es compatible con la operación.");
+  } else {
+    // D203/D204: el código debe existir (y estar activo) en el catálogo oficial de países; PRY/exterior por sí solo no basta.
+    agregar(mensajeCatalogoPais(limpio(c.paisCodigo), c.paisEnCatalogo, "del receptor"));
+
+    if (operacionOk) {
+      try {
+        validarPaisPorOperacion(c.tipoOperacion, limpio(c.paisCodigo).toUpperCase());
+      } catch (error) {
+        agregar(error instanceof Error ? error.message : "El país no es compatible con la operación.");
+      }
     }
   }
 
@@ -127,6 +142,11 @@ export function evaluarAptitudSifen(c: DatosAptitud, fiscal: DireccionFiscalApti
 
   // D213/D218/D219–D223 (domicilio fiscal).
   if (fiscal) {
+    if (limpio(fiscal.paisCodigo)) {
+      agregar(mensajeCatalogoPais(limpio(fiscal.paisCodigo), fiscal.paisEnCatalogo, "del domicilio fiscal"));
+    } else {
+      agregar("El país del domicilio fiscal no está informado.");
+    }
     agregar(
       validarDireccionFiscal(limpio(fiscal.direccion), limpio(fiscal.numeroCasa), {
         exigir: c.tipoOperacion !== "B2F",

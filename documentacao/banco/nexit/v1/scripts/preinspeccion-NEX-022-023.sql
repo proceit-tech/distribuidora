@@ -71,12 +71,14 @@ SELECT max(length(razon_social)) AS razon_max, max(length(nombre_fantasia)) AS f
 -- NO CUBRE (no se puede ni debe verificar en SQL): sintaxis completa del e-mail (solo longitud), existencia del RUC en
 -- el Marangatu, estado del contribuyente ante la DNIT ni la política de emisión V2. "0 pendientes" significa
 -- "sin inconsistencias internas detectables por estas reglas", NO "validado por la DNIT".
+-- EQUIVALENCIA CON LA API (diferencias explícitas): (1) el país se confirma contra referencia_geografica_paises (activo) tanto en-- el GET (resolverPais) como aquí (EXISTS sobre la misma tabla), para el receptor y para el domicilio fiscal; si la consulta del-- GET falla por un error ajeno al catálogo, la API informa 'no fue posible verificar' y aquí no existe ese estado. (2) Los-- contadores por condición pueden solaparse (p. ej. una operación desconocida también marca la matriz); solo clientes_con_pendientes-- cuenta cada cliente una vez. (3) La API recorta espacios (trim) y trata ''-como-vacío: aquí se replica con btrim/nullif. (4) La-- sintaxis del e-mail no se evalúa aquí. (5) Las reglas están duplicadas (TypeScript y SQL): un cambio en una exige actualizar la otra.
 WITH f AS (
   SELECT c.id, c.empresa_id, c.codigo,
-         c.naturaleza_receptor AS nat, c.tipo_operacion AS op, c.tipo_persona, c.pais_codigo, c.tipo_documento,
-         c.numero_documento AS num, c.dv, c.descripcion_documento_identidad AS descr, c.razon_social AS razon,
-         c.nombre_fantasia AS fantasia, c.email, c.telefono, c.celular,
-         (SELECT d FROM direcciones_cliente d WHERE d.empresa_id = c.empresa_id AND d.cliente_id = c.id AND (d.es_fiscal OR d.tipo = 'FISCAL') LIMIT 1) AS fiscal
+         c.naturaleza_receptor AS nat, c.tipo_operacion AS op, c.tipo_persona, upper(btrim(c.pais_codigo)) AS pais_codigo, c.tipo_documento,
+         btrim(c.numero_documento) AS num, nullif(btrim(c.dv), '') AS dv, nullif(btrim(c.descripcion_documento_identidad), '') AS descr, btrim(c.razon_social) AS razon,
+         nullif(btrim(c.nombre_fantasia), '') AS fantasia, nullif(btrim(c.email), '') AS email, nullif(btrim(c.telefono), '') AS telefono, nullif(btrim(c.celular), '') AS celular,
+         (SELECT d FROM direcciones_cliente d WHERE d.empresa_id = c.empresa_id AND d.cliente_id = c.id AND (d.es_fiscal OR d.tipo = 'FISCAL')
+           ORDER BY d.es_fiscal DESC, d.es_entrega_default DESC, d.creado_at, d.id LIMIT 1) AS fiscal
     FROM clientes c
 ), p AS (
   SELECT f.id, f.empresa_id, f.codigo,
@@ -84,6 +86,7 @@ WITH f AS (
     (op NOT IN (1, 2, 3, 4))                                                                               AS operacion_desconocida,
     (nat = 1 AND op NOT IN (1, 2, 3)) OR (nat = 2 AND op NOT IN (2, 4))                                    AS matriz_invalida,
     (op = 4 AND pais_codigo = 'PRY') OR (op IN (1, 2, 3) AND pais_codigo IS DISTINCT FROM 'PRY')           AS pais_incompatible,
+(pais_codigo IS NULL OR pais_codigo = '' OR NOT EXISTS (SELECT 1 FROM referencia_geografica_paises x WHERE x.codigo = pais_codigo AND x.activo)) AS pais_inexistente,
     (tipo_persona IS NULL OR tipo_persona NOT IN ('FISICA', 'JURIDICA'))                                  AS tipo_persona_invalido,
     (nat = 1 AND tipo_documento <> 'RUC')
       OR (nat = 2 AND tipo_documento NOT IN ('CEDULA_PARAGUAYA','PASAPORTE','CEDULA_EXTRANJERA','CARNET_RESIDENCIA','INNOMINADO','TARJETA_DIPLOMATICA','OTRO')) AS tipo_documento_invalido,
@@ -101,20 +104,21 @@ WITH f AS (
     (telefono IS NOT NULL AND length(telefono) NOT BETWEEN 6 AND 15)                                       AS telefono_fuera_6_15,
     (celular IS NOT NULL AND length(celular) NOT BETWEEN 10 AND 20)                                        AS celular_fuera_10_20,
     (op = 4 AND (fiscal).id IS NULL)                                                                            AS b2f_sin_domicilio_fiscal,
+((fiscal).id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM referencia_geografica_paises x WHERE x.codigo = upper(btrim((fiscal).pais_codigo)) AND x.activo)) AS fiscal_pais_inexistente,
     ((fiscal).id IS NOT NULL AND (length(btrim((fiscal).direccion)) NOT BETWEEN 1 AND 255))                     AS fiscal_direccion_fuera_1_255,
-    ((fiscal).id IS NOT NULL AND coalesce((fiscal).numero_casa, '') !~ '^[0-9]{1,6}$')                          AS fiscal_numero_casa_invalido,
+    ((fiscal).id IS NOT NULL AND coalesce(btrim((fiscal).numero_casa), '') !~ '^[0-9]{1,6}$')                          AS fiscal_numero_casa_invalido,
     ((fiscal).id IS NOT NULL AND op IS DISTINCT FROM 4
        AND ((fiscal).departamento_codigo IS NULL OR (fiscal).distrito_codigo IS NULL OR (fiscal).ciudad_codigo IS NULL)) AS fiscal_sin_geografia
     FROM f
 )
 SELECT count(*) AS clientes_total,
-       count(*) FILTER (WHERE naturaleza_desconocida OR operacion_desconocida OR matriz_invalida OR pais_incompatible OR tipo_persona_invalido
+       count(*) FILTER (WHERE naturaleza_desconocida OR operacion_desconocida OR matriz_invalida OR pais_incompatible OR pais_inexistente OR fiscal_pais_inexistente OR tipo_persona_invalido
                           OR tipo_documento_invalido OR ruc_formato_invalido OR dv_incorrecto OR dv_en_no_contribuyente OR documento_fuera_1_20
                           OR descripcion_otro_fuera_9_41 OR innominado_incorrecto OR razon_fuera_4_255 OR fantasia_fuera_4_255 OR email_fuera_3_80
                           OR telefono_fuera_6_15 OR celular_fuera_10_20 OR b2f_sin_domicilio_fiscal OR fiscal_direccion_fuera_1_255
                           OR fiscal_numero_casa_invalido OR fiscal_sin_geografia) AS clientes_con_pendientes,
        count(*) FILTER (WHERE naturaleza_desconocida) AS naturaleza_desconocida, count(*) FILTER (WHERE operacion_desconocida) AS operacion_desconocida,
-       count(*) FILTER (WHERE matriz_invalida) AS matriz_invalida, count(*) FILTER (WHERE pais_incompatible) AS pais_incompatible,
+       count(*) FILTER (WHERE matriz_invalida) AS matriz_invalida, count(*) FILTER (WHERE pais_incompatible) AS pais_incompatible, count(*) FILTER (WHERE pais_inexistente) AS pais_inexistente, count(*) FILTER (WHERE fiscal_pais_inexistente) AS fiscal_pais_inexistente,
        count(*) FILTER (WHERE tipo_persona_invalido) AS tipo_persona_invalido, count(*) FILTER (WHERE tipo_documento_invalido) AS tipo_documento_invalido,
        count(*) FILTER (WHERE ruc_formato_invalido) AS ruc_formato_invalido, count(*) FILTER (WHERE dv_incorrecto) AS dv_incorrecto,
        count(*) FILTER (WHERE dv_en_no_contribuyente) AS dv_en_no_contribuyente, count(*) FILTER (WHERE documento_fuera_1_20) AS documento_fuera_1_20,
