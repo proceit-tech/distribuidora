@@ -255,3 +255,7 @@ Branch: `feature/NEXIT-2026-001-banco-demo`. Regra: uma funcionalidade por vez; 
 - **Vectores:** `VETORES-DV-RUC-DNIT-2026-10-11.md` (12 vectores calculados a mano con dos métodos independientes, más entradas rechazadas). **No se ejecutó ningún test**; no son RUC reales ni consultados en el Marangatu.
 - **Sin cambios:** migraciones, banco, XML SIFEN V2, E1, B2F, Innominado, seis pestañas, código CLI, aislamiento por empresa.
 - **Atención al homologar:** clientes contribuyentes anteriores con DV digitado a mano pueden figurar con DV incorrecto; quedan editables mientras RUC/DV no cambien. Pendiente de verificación en VM (build, HTTP real).
+
+## Clientes — E2 campos fiscais SIFEN (D3) — 2026-10-11
+- Regra única `lib/fiscal/campos-receptor.ts` aplicada em alta, edição, POST, PUT e endereço fiscal (PUT de hijos). Tamanhos/obligatoriedades: documento 1–20, descrição Otro 9–41, razón social/fantasía 4–200 (255 SIFEN exige migration NEX-022 **não criada**, aguarda autorização), e-mail 3–80, teléfono 6–15, celular 10–20, dirección fiscal 1–255, nro. casa fiscal obrigatório numérico 1–6. Sin truncamientos; campos sin cambios se toleran en edición.
+- Detalhe e tabela completa: `E2-CAMPOS-FISCAIS-SIFEN-CLIENTES-2026-10-11.md`. Sin cambios en migraciones, XML V2 ni otros módulos. **Testes não executados.**

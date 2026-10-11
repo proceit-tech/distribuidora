@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { denyIfNoPermission } from "@/lib/auth/permissions";
 import { validarRucDv } from "@/lib/fiscal/calcular-dv-ruc";
+import { textoCrudo, validarCamposReceptor } from "@/lib/fiscal/campos-receptor";
 import { resolverPais, validarPaisPorOperacion } from "@/lib/geografia/referencia";
 import { ErrorValidacion, leerEntrada, leerHijos, sincronizarHijos } from "@/lib/clientes/relacionados";
 
@@ -264,7 +265,7 @@ export async function PUT(request: Request, contexto: Contexto) {
     await conexion.query("BEGIN");
 
     const actual = await conexion.query(
-      "SELECT bloqueado_ventas, naturaleza_receptor, numero_documento, dv FROM clientes WHERE id = $1 AND empresa_id = $2 FOR UPDATE",
+      "SELECT bloqueado_ventas, naturaleza_receptor, numero_documento, dv, descripcion_documento_identidad, razon_social, nombre_fantasia, email, telefono, celular FROM clientes WHERE id = $1 AND empresa_id = $2 FOR UPDATE",
       [id, empresaId],
     );
     if (actual.rowCount !== 1) {
@@ -272,6 +273,37 @@ export async function PUT(request: Request, contexto: Contexto) {
       return NextResponse.json({ error: "Cliente no encontrado." }, { status: 404 });
     }
     const estabaBloqueado = actual.rows[0].bloqueado_ventas === true;
+
+    // Campos D3 del SIFEN (tamaños y formatos oficiales, sin truncar); un campo sin cambios respecto de lo
+    // guardado se tolera (datos anteriores a la regla) hasta que se modifique.
+    const previo = actual.rows[0];
+    const s = (v: unknown) => (typeof v === "string" ? v : "");
+    const errorReceptor = validarCamposReceptor(
+      {
+        naturaleza,
+        tipoDocumento,
+        numeroDocumento: textoCrudo(cuerpo.numeroDocumento),
+        descripcionDocumento: textoCrudo(cuerpo.descripcionDocumentoIdentidad),
+        razonSocial: textoCrudo(cuerpo.razonSocial),
+        nombreFantasia: textoCrudo(cuerpo.nombreFantasia),
+        email: textoCrudo(cuerpo.email),
+        telefono: textoCrudo(cuerpo.telefono),
+        celular: textoCrudo(cuerpo.celular),
+      },
+      {
+        numeroDocumento: s(previo.numero_documento),
+        descripcionDocumento: s(previo.descripcion_documento_identidad),
+        razonSocial: s(previo.razon_social),
+        nombreFantasia: s(previo.nombre_fantasia),
+        email: s(previo.email),
+        telefono: s(previo.telefono),
+        celular: s(previo.celular),
+      },
+    );
+
+    if (errorReceptor) {
+      throw new Error(errorReceptor);
+    }
 
     // RUC/DV: misma regla que el alta (cálculo compartido). Un contribuyente ya grabado cuyo RUC y DV
     // no cambian se tolera (datos anteriores a la regla) hasta que se modifique alguno de los dos.

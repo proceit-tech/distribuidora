@@ -5,6 +5,11 @@ import { resolverPais, resolverUbicacionParaguay, validarPaisPorOperacion } from
 
 import { denyIfNoPermission } from "@/lib/auth/permissions";
 import { validarRucDv } from "@/lib/fiscal/calcular-dv-ruc";
+import {
+  textoCrudo,
+  validarCamposReceptor,
+  validarDireccionFiscal,
+} from "@/lib/fiscal/campos-receptor";
 
 
 // Solo DEMO explícito usa respuestas simuladas. La falta de DATABASE_URL NUNCA activa datos ficticios.
@@ -688,6 +693,23 @@ export async function POST(request: Request) {
       }
     }
 
+    // Campos D3 del SIFEN: tamaños y formatos oficiales sobre el valor recibido (sin truncar).
+    const errorReceptor = validarCamposReceptor({
+      naturaleza,
+      tipoDocumento,
+      numeroDocumento: textoCrudo(cuerpo.numeroDocumento),
+      descripcionDocumento: textoCrudo(cuerpo.descripcionDocumentoIdentidad),
+      razonSocial: textoCrudo(cuerpo.razonSocial),
+      nombreFantasia: textoCrudo(cuerpo.nombreFantasia),
+      email: textoCrudo(cuerpo.email),
+      telefono: textoCrudo(cuerpo.telefono),
+      celular: textoCrudo(cuerpo.celular),
+    });
+
+    if (errorReceptor) {
+      throw new Error(errorReceptor);
+    }
+
     if (fechaVencimientoCredito && limiteCreditoTemporal === null) {
       throw new Error(
         "Para informar vencimiento, indique también un límite de crédito temporal.",
@@ -723,6 +745,17 @@ export async function POST(request: Request) {
 
       if (!texto(direccion.paisCodigo, 3)) {
         throw new Error("Informe el país de cada dirección.");
+      }
+
+      if (tipo === "FISCAL" || (direccion as { esFiscal?: unknown }).esFiscal === true) {
+        const errorFiscal = validarDireccionFiscal(
+          textoCrudo(direccion.direccion),
+          textoCrudo(direccion.numeroCasa),
+        );
+
+        if (errorFiscal) {
+          throw new Error(errorFiscal);
+        }
       }
     }
 

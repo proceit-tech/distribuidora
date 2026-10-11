@@ -1,5 +1,6 @@
 import type { Pool, PoolClient } from "pg";
 
+import { textoCrudo, validarDireccionFiscal } from "@/lib/fiscal/campos-receptor";
 import { resolverPais, resolverUbicacionParaguay } from "@/lib/geografia/referencia";
 
 // Datos relacionados del cliente (contactos, direcciones y documentos): lectura y sincronización para la EDICIÓN.
@@ -258,6 +259,13 @@ export async function sincronizarHijos(c: Conn, empresaId: string, clienteId: st
       if (!TIPOS_DIRECCION.has(tipo)) throw new ErrorValidacion("Existe una dirección con tipo no válido.");
       if (!texto(v.direccion, 300)) throw new ErrorValidacion("Informe la dirección de cada ubicación registrada.");
       if (!texto(v.paisCodigo, 3)) throw new ErrorValidacion("Informe el país de cada dirección.");
+      // Domicilio fiscal (D213/D218 del SIFEN): se valida al crearlo o modificarlo; si dirección y número
+      // no cambiaron respecto de lo guardado se tolera (datos anteriores a la regla).
+      if (bool(v.esFiscal) || tipo === "FISCAL") {
+        const sinCambio = !!id && base.direccion === v.direccion && base.numeroCasa === v.numeroCasa;
+        const errorFiscal = sinCambio ? null : validarDireccionFiscal(textoCrudo(v.direccion), textoCrudo(v.numeroCasa));
+        if (errorFiscal) throw new ErrorValidacion(errorFiscal);
+      }
       v.tipo = tipo;
       numeroOpcional(v.latitud, -90, 90);
       numeroOpcional(v.longitud, -180, 180);

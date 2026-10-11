@@ -23,6 +23,7 @@ import {
   calcularDvRuc,
   validarRucDv,
 } from "@/lib/fiscal/calcular-dv-ruc";
+import { validarCamposReceptor } from "@/lib/fiscal/campos-receptor";
 
 import styles from "./page.module.css";
 import {
@@ -659,6 +660,35 @@ export default function ClienteDetallePage() {
         setError(rucDv.error);
         return;
       }
+    }
+
+    const errorReceptor = validarCamposReceptor(
+      {
+        naturaleza: form.naturaleza,
+        tipoDocumento: form.tipoDocumento,
+        numeroDocumento: form.numeroDocumento.trim(),
+        descripcionDocumento: (cliente.descripcionDocumentoIdentidad ?? "").trim(),
+        razonSocial: form.razonSocial.trim().toUpperCase(),
+        nombreFantasia: form.nombreFantasia.trim(),
+        email: form.email.trim(),
+        telefono: form.telefono.trim(),
+        celular: form.celular.trim(),
+      },
+      {
+        numeroDocumento: cliente.numeroDocumento,
+        descripcionDocumento: cliente.descripcionDocumentoIdentidad ?? "",
+        razonSocial: cliente.razonSocial,
+        nombreFantasia: cliente.nombreFantasia,
+        email: cliente.email,
+        telefono: cliente.telefono,
+        celular: cliente.celular,
+      },
+    );
+
+    if (errorReceptor) {
+      setTab("fiscal");
+      setError(errorReceptor);
+      return;
     }
 
     const errorHijos = validarHijos(hijos);

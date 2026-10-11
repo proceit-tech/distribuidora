@@ -5,6 +5,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { calcularDvRuc, validarRucDv } from "@/lib/fiscal/calcular-dv-ruc";
+import { validarCamposReceptor, validarDireccionFiscal } from "@/lib/fiscal/campos-receptor";
 
 type Opcion = {
   id?: string;
@@ -590,6 +591,33 @@ export default function NuevoClientePage() {
       }
     }
     if (!f.razonSocial.trim()) return fiscal("Informe el nombre o razón social del cliente.", "cli-razon-social");
+    const errorReceptor = validarCamposReceptor({
+      naturaleza: f.naturaleza,
+      tipoDocumento: f.tipoDocumento,
+      numeroDocumento: f.numeroDocumento.trim(),
+      descripcionDocumento: f.descripcionDocumentoIdentidad.trim(),
+      razonSocial: f.razonSocial.trim(),
+      nombreFantasia: f.nombreFantasia.trim(),
+      email: f.email.trim(),
+      telefono: f.telefono.trim(),
+      celular: f.celular.trim(),
+    });
+    if (errorReceptor) {
+      const campo = /documento|descripci/i.test(errorReceptor)
+        ? /descripci/i.test(errorReceptor)
+          ? "cli-descripcion-documento"
+          : "cli-numero"
+        : /fantas/i.test(errorReceptor)
+          ? "cli-nombre-fantasia"
+          : /razón/i.test(errorReceptor)
+            ? "cli-razon-social"
+            : /correo/i.test(errorReceptor)
+              ? "cli-email"
+              : /celular/i.test(errorReceptor)
+                ? "cli-celular"
+                : "cli-telefono";
+      return fiscal(errorReceptor, campo);
+    }
     if (f.email.trim() && !FORMATO_CORREO.test(f.email.trim())) {
       return fiscal("El correo electrónico no tiene un formato válido.", "cli-email");
     }
@@ -647,6 +675,16 @@ export default function NuevoClientePage() {
       }
       if (!d.paisCodigo) {
         return { pestana: "direcciones", mensaje: `Seleccione el país de la dirección ${n}.`, campo: `cli-direccion-${i}-pais` };
+      }
+      if (d.esFiscal || d.tipo === "FISCAL") {
+        const errorFiscal = validarDireccionFiscal(d.direccion.trim(), d.numeroCasa.trim());
+        if (errorFiscal) {
+          return {
+            pestana: "direcciones",
+            mensaje: `Dirección ${n}: ${errorFiscal}`,
+            campo: `cli-direccion-${i}-${/número/i.test(errorFiscal) ? "numero" : "direccion"}`,
+          };
+        }
       }
     }
     if (direcciones.filter((d) => d.esFiscal || d.tipo === "FISCAL").length > 1) {
@@ -1003,8 +1041,7 @@ export default function NuevoClientePage() {
                   <Input
                     disabled={esInnominado}
                     id="cli-numero"
-                    label="Número de documento *"
-                    maxLength={20}
+                    label="Número de documento * (1 a 20)"
                     onChange={(valor) =>
                       actualizarFormulario("numeroDocumento", valor)
                     }
@@ -1035,6 +1072,7 @@ export default function NuevoClientePage() {
                 value={formulario.razonSocial}
               />
               <Input
+                id="cli-nombre-fantasia"
                 label="Nombre de fantasía"
                 onChange={(valor) =>
                   actualizarFormulario("nombreFantasia", valor)
@@ -1064,11 +1102,13 @@ export default function NuevoClientePage() {
                 value={formulario.emailCopia}
               />
               <Input
+                id="cli-telefono"
                 label="Teléfono"
                 onChange={(valor) => actualizarFormulario("telefono", valor)}
                 value={formulario.telefono}
               />
               <Input
+                id="cli-celular"
                 label="Celular"
                 onChange={(valor) => actualizarFormulario("celular", valor)}
                 value={formulario.celular}
@@ -1439,7 +1479,9 @@ export default function NuevoClientePage() {
                       value={direccion.direccion}
                     />
                     <Input
-                      label="Nro. de casa"
+                      id={`cli-direccion-${indice}-numero`}
+                      inputMode="numeric"
+                      label={direccion.esFiscal || direccion.tipo === "FISCAL" ? "Nro. de casa *" : "Nro. de casa"}
                       onChange={(valor) =>
                         actualizarDireccion(indice, "numeroCasa", valor)
                       }
