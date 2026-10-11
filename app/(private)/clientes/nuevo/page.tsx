@@ -607,7 +607,7 @@ export default function NuevoClientePage() {
             ["documentos", "Documentos"],
           ].map(([identificador, etiqueta]) => (
             <button
-              aria-current={tab === identificador ? "step" : undefined}
+              aria-current={tab === identificador ? "true" : undefined}
               className={tab === identificador ? "activo" : ""}
               key={identificador}
               onClick={() => setTab(identificador)}
@@ -1759,6 +1759,14 @@ export default function NuevoClientePage() {
           font: inherit;
           font-size: 14px;
           font-weight: 450;
+        }
+        .clienteNuevo__campo input,
+        .clienteNuevo__campo select,
+        .clienteNuevo__campo textarea,
+        .clienteNuevo__checks input,
+        .clienteNuevo__agregar,
+        .clienteNuevo__eliminar {
+          scroll-margin-bottom: 88px;
         }
         .clienteNuevo__campo textarea {
           min-height: 76px;
