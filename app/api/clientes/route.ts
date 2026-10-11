@@ -9,7 +9,12 @@ import {
   textoCrudo,
   validarCamposReceptor,
   validarDireccionFiscal,
+  validarGln,
+  validarInnominado,
+  validarNaturalezaOperacion,
+  validarUrlDocumento,
 } from "@/lib/fiscal/campos-receptor";
+import { mensajeRestriccionCliente } from "@/lib/clientes/errores-bd";
 
 
 // Solo DEMO explícito usa respuestas simuladas. La falta de DATABASE_URL NUNCA activa datos ficticios.
@@ -183,7 +188,13 @@ function texto(valor: unknown, maximo?: number) {
   if (typeof valor !== "string") return "";
 
   const resultado = valor.trim();
-  return maximo ? resultado.slice(0, maximo) : resultado;
+
+  // Nunca se trunca en silencio: un valor más largo que la columna se rechaza.
+  if (maximo && resultado.length > maximo) {
+    throw new Error(`Un valor supera el máximo permitido de ${maximo} caracteres.`);
+  }
+
+  return resultado;
 }
 
 function opcional(valor: unknown, maximo?: number) {
@@ -621,7 +632,7 @@ export async function POST(request: Request) {
     const tipoDocumento = texto(cuerpo.tipoDocumento).toUpperCase();
     const numeroDocumento = texto(cuerpo.numeroDocumento, 30);
     const dv = texto(cuerpo.dv, 5);
-    const razonSocial = texto(cuerpo.razonSocial, 200);
+    const razonSocial = texto(cuerpo.razonSocial, 255);
     const paisCodigo = texto(cuerpo.paisCodigo, 3).toUpperCase();
     const descripcionDocumentoIdentidad = opcional(
       cuerpo.descripcionDocumentoIdentidad,
@@ -710,6 +721,15 @@ export async function POST(request: Request) {
       throw new Error(errorReceptor);
     }
 
+    const errorReglas =
+      validarNaturalezaOperacion(naturaleza, tipoOperacion) ??
+      validarInnominado({ tipoDocumento, naturaleza, tipoOperacion, numeroDocumento, razonSocial }) ??
+      validarGln(textoCrudo(cuerpo.gln));
+
+    if (errorReglas) {
+      throw new Error(errorReglas);
+    }
+
     if (fechaVencimientoCredito && limiteCreditoTemporal === null) {
       throw new Error(
         "Para informar vencimiento, indique también un límite de crédito temporal.",
@@ -751,6 +771,12 @@ export async function POST(request: Request) {
         const errorFiscal = validarDireccionFiscal(
           textoCrudo(direccion.direccion),
           textoCrudo(direccion.numeroCasa),
+          {
+            exigir: tipoOperacion !== "B2F",
+            departamento: String(direccion.departamentoCodigo ?? "").trim(),
+            distrito: String(direccion.distritoCodigo ?? "").trim(),
+            ciudad: String(direccion.ciudadCodigo ?? "").trim(),
+          },
         );
 
         if (errorFiscal) {
@@ -779,6 +805,12 @@ export async function POST(request: Request) {
         throw new Error(
           "Cada documento requiere nombre de archivo y URL segura.",
         );
+      }
+
+      const errorUrl = validarUrlDocumento(textoCrudo(documento.urlArchivo));
+
+      if (errorUrl) {
+        throw new Error(errorUrl);
       }
     }
 
@@ -830,8 +862,16 @@ export async function POST(request: Request) {
       ),
     ]);
 
-    const identificacionExistente = await conexion.query(
-      `
+    // Innominado: un único cliente por empresa (DEC-CLI-03). La barrera definitiva es el índice de NEX-023;
+    // esta comprobación da el mensaje claro y funciona también antes de aplicar la migración.
+    const identificacionExistente =
+      tipoDocumento === "INNOMINADO" && naturaleza !== "CONTRIBUYENTE"
+        ? await conexion.query(
+            `SELECT 1 FROM clientes WHERE empresa_id = $1 AND tipo_documento = 'INNOMINADO' LIMIT 1`,
+            [session.user.empresaId],
+          )
+        : await conexion.query(
+            `
         SELECT 1
         FROM clientes
         WHERE empresa_id = $1
@@ -840,16 +880,20 @@ export async function POST(request: Request) {
           AND COALESCE(dv, '') = COALESCE($4, '')
         LIMIT 1
       `,
-      [
-        session.user.empresaId,
-        naturaleza === "CONTRIBUYENTE" ? "RUC" : tipoDocumento,
-        numeroDocumento,
-        naturaleza === "CONTRIBUYENTE" ? dv : null,
-      ],
-    );
+            [
+              session.user.empresaId,
+              naturaleza === "CONTRIBUYENTE" ? "RUC" : tipoDocumento,
+              numeroDocumento,
+              naturaleza === "CONTRIBUYENTE" ? dv : null,
+            ],
+          );
 
     if (identificacionExistente.rowCount) {
-      throw new Error("Ya existe un cliente con esa identificación.");
+      throw new Error(
+        tipoDocumento === "INNOMINADO" && naturaleza !== "CONTRIBUYENTE"
+          ? mensajeRestriccionCliente({ code: "23505", constraint: "clientes_empresa_innominado_key" }) ?? ""
+          : "Ya existe un cliente con esa identificación.",
+      );
     }
 
     // El nombre oficial del país sale del catálogo PostgreSQL; el cuerpo de la solicitud solo aporta el código.
@@ -937,7 +981,7 @@ export async function POST(request: Request) {
         numeroDocumento,
         naturaleza === "CONTRIBUYENTE" ? dv : null,
         razonSocial,
-        opcional(cuerpo.nombreFantasia, 200),
+        opcional(cuerpo.nombreFantasia, 255),
         email,
         emailCopia,
         opcional(cuerpo.telefono, 30),
@@ -1147,14 +1191,15 @@ export async function POST(request: Request) {
 
     console.error("Error al registrar cliente:", error);
 
-    if (esErrorPostgres(error) && error.code === "23505") {
-      return NextResponse.json(
-        {
-          error:
-            "Ya existe un cliente con esa identificación o código externo.",
-        },
-        { status: 409 },
-      );
+    if (esErrorPostgres(error)) {
+      const mensajeBd = mensajeRestriccionCliente(error as { code?: string; constraint?: string });
+
+      if (mensajeBd) {
+        return NextResponse.json(
+          { error: mensajeBd },
+          { status: error.code === "23505" ? 409 : 400 },
+        );
+      }
     }
 
     if (error instanceof Error) {

@@ -14,13 +14,10 @@ export const LIMITES_RECEPTOR = {
   documento: { min: 1, max: 20 },
   /** D209 dDTipIDRec (descripción cuando D208 = 9 Otro): A 9–41. */
   descripcionOtro: { min: 9, max: 41 },
-  /**
-   * D211 dNomRec: A 4–255. La columna `clientes.razon_social` (NEX-005) es varchar(200): hasta que se
-   * autorice una migración incremental el máximo efectivo es 200 (propuesta en el documento E2).
-   */
-  razonSocial: { min: 4, max: 200, maxSifen: 255 },
-  /** D212 dNomFanRec: A 4–255 si se informa. Columna varchar(200): máximo efectivo 200 (idem). */
-  nombreFantasia: { min: 4, max: 200, maxSifen: 255 },
+  /** D211 dNomRec: A 4–255 (columna varchar(255) desde NEX-022; con la migración sin aplicar el INSERT fallaría). */
+  razonSocial: { min: 4, max: 255 },
+  /** D212 dNomFanRec: A 4–255 si se informa (varchar(255) desde NEX-022). */
+  nombreFantasia: { min: 4, max: 255 },
   /** D216 dEmailRec: A 3–80. */
   email: { min: 3, max: 80 },
   /** D214 dTelRec: A 6–15. */
@@ -101,10 +98,16 @@ export function validarCamposReceptor(c: CamposReceptor, previos?: Partial<Campo
 
 /**
  * Dirección destinada al receptor (domicilio fiscal): D213 1–255 y, al informarla, número de casa
- * obligatorio, numérico de 1 a 6 dígitos (D218, validación 68). La geografía (D219–D223) no se exige
- * aquí: sigue opcional en el cadastro (NEX-021).
+ * obligatorio, numérico de 1 a 6 dígitos (D218, validación 68). Con `geo.exigir` (operación distinta de B2F,
+ * NT 003: D219/D223 obligatorios si se informa D213) exige además departamento, distrito y ciudad (el
+ * distrito es parte de la cadena jerárquica de NEX-021); en B2F no se exige ni se envía geografía paraguaya.
+ * Las direcciones no fiscales siguen con ubicación opcional (NEX-021).
  */
-export function validarDireccionFiscal(direccion: string, numeroCasa: string): string | null {
+export function validarDireccionFiscal(
+  direccion: string,
+  numeroCasa: string,
+  geo?: { exigir: boolean; departamento: string; distrito: string; ciudad: string },
+): string | null {
   const L = LIMITES_RECEPTOR;
 
   if (!rango(direccion, L.direccion.min, L.direccion.max)) {
@@ -115,5 +118,57 @@ export function validarDireccionFiscal(direccion: string, numeroCasa: string): s
     return `El número de casa de la dirección fiscal es obligatorio y debe ser numérico (${L.numeroCasa.min} a ${L.numeroCasa.max} dígitos).`;
   }
 
+  if (geo?.exigir && (!geo.departamento || !geo.distrito || !geo.ciudad)) {
+    return "La dirección fiscal requiere departamento, distrito y ciudad (excepto en operaciones B2F).";
+  }
+
+  return null;
+}
+
+/** Matriz natureza × operación (D201/D202): contribuyente B2B/B2C/B2G; no contribuyente B2C/B2F. */
+export function validarNaturalezaOperacion(naturaleza: string, tipoOperacion: string): string | null {
+  const permitidas = naturaleza === "CONTRIBUYENTE" ? ["B2B", "B2C", "B2G"] : ["B2C", "B2F"];
+
+  return permitidas.includes(tipoOperacion)
+    ? null
+    : naturaleza === "CONTRIBUYENTE"
+      ? "Un contribuyente solo admite operaciones B2B, B2C o B2G."
+      : "Un no contribuyente solo admite operaciones B2C o B2F.";
+}
+
+/** Cliente Innominado (D208 = 5): solo no contribuyente en B2C, número "0" y nombre "Sin Nombre". */
+export const NOMBRE_INNOMINADO = "Sin Nombre";
+
+export function validarInnominado(c: { tipoDocumento: string; naturaleza: string; tipoOperacion: string; numeroDocumento: string; razonSocial: string }): string | null {
+  if (c.tipoDocumento !== "INNOMINADO") return null;
+  if (c.naturaleza !== "NO_CONTRIBUYENTE" || c.tipoOperacion !== "B2C") {
+    return "El documento Innominado solo se permite para un no contribuyente en operación B2C.";
+  }
+  if (c.numeroDocumento !== "0") return 'Un cliente Innominado debe tener el número de documento "0".';
+  if (c.razonSocial.toLowerCase() !== NOMBRE_INNOMINADO.toLowerCase()) return `Un cliente Innominado debe llamarse "${NOMBRE_INNOMINADO}".`;
+  return null;
+}
+
+/** GLN (ERP): opcional; si se informa, 13 dígitos (sin truncar). La verificación del dígito GS1 queda en D-08. */
+export function validarGln(valor: string): string | null {
+  return valor === "" || /^\d{13}$/.test(valor) ? null : "El GLN debe tener exactamente 13 dígitos.";
+}
+
+/** URL de documento (ERP): http/https reales; se rechazan javascript:, data: y similares. */
+export function validarUrlDocumento(valor: string): string | null {
+  try {
+    const url = new URL(valor);
+    if ((url.protocol === "http:" || url.protocol === "https:") && url.hostname) return null;
+  } catch {
+    // se informa abajo
+  }
+  return "La URL del documento debe ser una dirección http:// o https:// válida.";
+}
+
+/** Longitudes máximas de las columnas (NEX-005…023) para rechazar en lugar de truncar. Devuelve el primer exceso. */
+export function validarLongitudes(items: Array<[valor: string, max: number, etiqueta: string]>): string | null {
+  for (const [valor, max, etiqueta] of items) {
+    if (valor.length > max) return `${etiqueta} no puede superar ${max} caracteres.`;
+  }
   return null;
 }

@@ -1,6 +1,6 @@
 import type { Pool, PoolClient } from "pg";
 
-import { textoCrudo, validarDireccionFiscal } from "@/lib/fiscal/campos-receptor";
+import { textoCrudo, validarDireccionFiscal, validarUrlDocumento } from "@/lib/fiscal/campos-receptor";
 import { resolverPais, resolverUbicacionParaguay } from "@/lib/geografia/referencia";
 
 // Datos relacionados del cliente (contactos, direcciones y documentos): lectura y sincronización para la EDICIÓN.
@@ -27,7 +27,9 @@ export class ErrorValidacion extends Error {}
 function texto(v: unknown, max?: number) {
   if (typeof v !== "string") return "";
   const r = v.trim();
-  return max ? r.slice(0, max) : r;
+  // Nunca se trunca en silencio: un valor más largo que la columna se rechaza.
+  if (max && r.length > max) throw new ErrorValidacion(`Un valor supera el máximo permitido de ${max} caracteres.`);
+  return r;
 }
 const opcional = (v: unknown, max?: number) => texto(v, max) || null;
 
@@ -248,6 +250,9 @@ export async function sincronizarHijos(c: Conn, empresaId: string, clienteId: st
     const act = (await c.query(`SELECT * FROM direcciones_cliente WHERE empresa_id = $1 AND cliente_id = $2 FOR UPDATE`, [empresaId, clienteId])).rows as Json[];
     const actApi = new Map(act.map((r) => [r.id as string, direccionDeFila(r)]));
     validarIds(e.direcciones, e.eliminar.direcciones, new Set(actApi.keys()), "direcciones");
+    // B2F (tipo_operacion = 4): no se exige ni se envía geografía paraguaya en el domicilio fiscal.
+    const operacion = (await c.query(`SELECT tipo_operacion FROM clientes WHERE empresa_id = $1 AND id = $2`, [empresaId, clienteId])).rows[0]?.tipo_operacion;
+    const exigirGeoFiscal = operacion !== 4;
     const finales: { id: string | null; v: DireccionApi; geo: Geo | null; fiscal: boolean }[] = [];
     for (const x of e.direcciones ?? []) {
       const id = idEntrada(x);
@@ -262,8 +267,17 @@ export async function sincronizarHijos(c: Conn, empresaId: string, clienteId: st
       // Domicilio fiscal (D213/D218 del SIFEN): se valida al crearlo o modificarlo; si dirección y número
       // no cambiaron respecto de lo guardado se tolera (datos anteriores a la regla).
       if (bool(v.esFiscal) || tipo === "FISCAL") {
-        const sinCambio = !!id && base.direccion === v.direccion && base.numeroCasa === v.numeroCasa;
-        const errorFiscal = sinCambio ? null : validarDireccionFiscal(textoCrudo(v.direccion), textoCrudo(v.numeroCasa));
+        const sinCambio =
+          !!id && base.direccion === v.direccion && base.numeroCasa === v.numeroCasa &&
+          base.departamentoCodigo === v.departamentoCodigo && base.distritoCodigo === v.distritoCodigo && base.ciudadCodigo === v.ciudadCodigo;
+        const errorFiscal = sinCambio
+          ? null
+          : validarDireccionFiscal(textoCrudo(v.direccion), textoCrudo(v.numeroCasa), {
+              exigir: exigirGeoFiscal,
+              departamento: String(v.departamentoCodigo ?? "").trim(),
+              distrito: String(v.distritoCodigo ?? "").trim(),
+              ciudad: String(v.ciudadCodigo ?? "").trim(),
+            });
         if (errorFiscal) throw new ErrorValidacion(errorFiscal);
       }
       v.tipo = tipo;
@@ -343,6 +357,8 @@ export async function sincronizarHijos(c: Conn, empresaId: string, clienteId: st
       v.tipo = texto(v.tipo).toUpperCase();
       if (!TIPOS_DOCUMENTO.has(v.tipo)) throw new ErrorValidacion("Existe un tipo de documento de cliente no válido.");
       if (!texto(v.nombreArchivo, 255) || !texto(v.urlArchivo)) throw new ErrorValidacion("Cada documento requiere nombre de archivo y URL segura.");
+      const errorUrl = base.urlArchivo === v.urlArchivo && id ? null : validarUrlDocumento(texto(v.urlArchivo));
+      if (errorUrl) throw new ErrorValidacion(errorUrl);
       const fe = fechaIso(v.fechaEmision, "La fecha de emisión del documento");
       const fv = fechaIso(v.fechaVencimiento, "La fecha de vencimiento del documento");
       if (fe && fv && fv < fe) throw new ErrorValidacion("La fecha de vencimiento de un documento no puede ser anterior a su emisión.");

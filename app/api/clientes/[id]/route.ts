@@ -2,7 +2,14 @@ import { NextResponse } from "next/server";
 
 import { denyIfNoPermission } from "@/lib/auth/permissions";
 import { validarRucDv } from "@/lib/fiscal/calcular-dv-ruc";
-import { textoCrudo, validarCamposReceptor } from "@/lib/fiscal/campos-receptor";
+import {
+  textoCrudo,
+  validarCamposReceptor,
+  validarGln,
+  validarInnominado,
+  validarNaturalezaOperacion,
+} from "@/lib/fiscal/campos-receptor";
+import { mensajeRestriccionCliente } from "@/lib/clientes/errores-bd";
 import { resolverPais, validarPaisPorOperacion } from "@/lib/geografia/referencia";
 import { ErrorValidacion, leerEntrada, leerHijos, sincronizarHijos } from "@/lib/clientes/relacionados";
 
@@ -38,7 +45,9 @@ const DEMO_MODE = process.env.DEMO_MODE === "true";
 function texto(v: unknown, max?: number) {
   if (typeof v !== "string") return "";
   const r = v.trim();
-  return max ? r.slice(0, max) : r;
+  // Nunca se trunca en silencio: un valor más largo que la columna se rechaza.
+  if (max && r.length > max) throw new Error(`Un valor supera el máximo permitido de ${max} caracteres.`);
+  return r;
 }
 const opcional = (v: unknown, max?: number) => texto(v, max) || null;
 function numero(v: unknown, min?: number, max?: number) {
@@ -207,7 +216,7 @@ export async function PUT(request: Request, contexto: Contexto) {
     const tipoDocumento = texto(cuerpo.tipoDocumento).toUpperCase();
     const numeroDocumento = texto(cuerpo.numeroDocumento, 30);
     const dv = texto(cuerpo.dv, 5);
-    const razonSocial = texto(cuerpo.razonSocial, 200);
+    const razonSocial = texto(cuerpo.razonSocial, 255);
     const paisCodigo = texto(cuerpo.paisCodigo, 3).toUpperCase();
     const descDoc = opcional(cuerpo.descripcionDocumentoIdentidad, 100);
     const limiteTemporal = numero(cuerpo.limiteCreditoTemporal, 0);
@@ -265,7 +274,7 @@ export async function PUT(request: Request, contexto: Contexto) {
     await conexion.query("BEGIN");
 
     const actual = await conexion.query(
-      "SELECT bloqueado_ventas, naturaleza_receptor, numero_documento, dv, descripcion_documento_identidad, razon_social, nombre_fantasia, email, telefono, celular FROM clientes WHERE id = $1 AND empresa_id = $2 FOR UPDATE",
+      "SELECT bloqueado_ventas, naturaleza_receptor, numero_documento, dv, descripcion_documento_identidad, razon_social, nombre_fantasia, email, telefono, celular , tipo_operacion, tipo_documento, gln FROM clientes WHERE id = $1 AND empresa_id = $2 FOR UPDATE",
       [id, empresaId],
     );
     if (actual.rowCount !== 1) {
@@ -319,14 +328,41 @@ export async function PUT(request: Request, contexto: Contexto) {
       }
     }
 
-    const duplicado = await conexion.query(
-      `SELECT 1 FROM clientes
+    // Natureza × operación, Innominado y GLN: se validan al crear o cambiar; lo ya guardado sin cambios se tolera.
+    const naturalezaCambio = previo.naturaleza_receptor !== NATURALEZA[naturaleza as keyof typeof NATURALEZA];
+    const operacionCambio = previo.tipo_operacion !== OPERACION[tipoOperacion as keyof typeof OPERACION];
+    const errorMatriz = naturalezaCambio || operacionCambio ? validarNaturalezaOperacion(naturaleza, tipoOperacion) : null;
+    const innominadoCambio =
+      tipoDocumento === "INNOMINADO" &&
+      (previo.tipo_documento !== "INNOMINADO" || previo.numero_documento !== numeroDocumento || previo.razon_social !== razonSocial);
+    const errorInnominado = innominadoCambio
+      ? validarInnominado({ tipoDocumento, naturaleza, tipoOperacion, numeroDocumento, razonSocial })
+      : null;
+    const glnTexto = textoCrudo(cuerpo.gln);
+    const errorGln = glnTexto !== s(previo.gln) ? validarGln(glnTexto) : null;
+    const errorReglas = errorMatriz ?? errorInnominado ?? errorGln;
+    if (errorReglas) throw new Error(errorReglas);
+
+    const esInnominado = tipoDocumento === "INNOMINADO" && naturaleza !== "CONTRIBUYENTE";
+    const duplicado = esInnominado
+      ? await conexion.query(
+          `SELECT 1 FROM clientes WHERE empresa_id = $1 AND id <> $2 AND tipo_documento = 'INNOMINADO'`,
+          [empresaId, id],
+        )
+      : await conexion.query(
+          `SELECT 1 FROM clientes
         WHERE empresa_id = $1 AND id <> $2 AND tipo_documento = $3
           AND numero_documento = $4 AND COALESCE(dv, '') = COALESCE($5, '')`,
-      [empresaId, id, naturaleza === "CONTRIBUYENTE" ? "RUC" : tipoDocumento, numeroDocumento,
-        naturaleza === "CONTRIBUYENTE" ? dv : null],
-    );
-    if (duplicado.rowCount) throw new Error("Ya existe otro cliente con esa identificación.");
+          [empresaId, id, naturaleza === "CONTRIBUYENTE" ? "RUC" : tipoDocumento, numeroDocumento,
+            naturaleza === "CONTRIBUYENTE" ? dv : null],
+        );
+    if (duplicado.rowCount) {
+      throw new Error(
+        esInnominado
+          ? mensajeRestriccionCliente({ code: "23505", constraint: "clientes_empresa_innominado_key" }) ?? ""
+          : "Ya existe otro cliente con esa identificación.",
+      );
+    }
 
     await conexion.query(
       `UPDATE clientes SET
@@ -358,7 +394,7 @@ export async function PUT(request: Request, contexto: Contexto) {
         naturaleza === "CONTRIBUYENTE" ? null : DOC_SIFEN[tipoDocumento as keyof typeof DOC_SIFEN],
         naturaleza === "CONTRIBUYENTE" ? null : descDoc,
         numeroDocumento, naturaleza === "CONTRIBUYENTE" ? dv : null,
-        razonSocial, opcional(cuerpo.nombreFantasia, 200),
+        razonSocial, opcional(cuerpo.nombreFantasia, 255),
         email, emailCopia, opcional(cuerpo.telefono, 30), opcional(cuerpo.celular, 30),
         numero(cuerpo.limiteCredito, 0) ?? 0,
         condicionPagoId, refs.listaPrecioId, refs.grupoClienteId,
@@ -384,8 +420,9 @@ export async function PUT(request: Request, contexto: Contexto) {
   } catch (error) {
     await conexion.query("ROLLBACK").catch(() => undefined);
     const pg = error as { code?: string };
-    if (pg.code === "23505") {
-      return NextResponse.json({ error: "Ya existe un cliente con esa identificación o código externo." }, { status: 409 });
+    const mensajeBd = mensajeRestriccionCliente(error as { code?: string; constraint?: string });
+    if (mensajeBd) {
+      return NextResponse.json({ error: mensajeBd }, { status: pg.code === "23505" ? 409 : 400 });
     }
     if (pg.code && /^(22|23)/.test(pg.code)) {
       return NextResponse.json({ error: "Los datos informados no cumplen las reglas del cliente." }, { status: 400 });

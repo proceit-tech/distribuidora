@@ -5,7 +5,16 @@ import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { calcularDvRuc, validarRucDv } from "@/lib/fiscal/calcular-dv-ruc";
-import { validarCamposReceptor, validarDireccionFiscal } from "@/lib/fiscal/campos-receptor";
+import {
+  NOMBRE_INNOMINADO,
+  validarCamposReceptor,
+  validarDireccionFiscal,
+  validarGln,
+  validarInnominado,
+  validarLongitudes,
+  validarNaturalezaOperacion,
+  validarUrlDocumento,
+} from "@/lib/fiscal/campos-receptor";
 
 type Opcion = {
   id?: string;
@@ -618,6 +627,16 @@ export default function NuevoClientePage() {
                 : "cli-telefono";
       return fiscal(errorReceptor, campo);
     }
+    const errorReglas =
+      validarNaturalezaOperacion(f.naturaleza, f.tipoOperacion) ??
+      validarInnominado({
+        tipoDocumento: f.tipoDocumento,
+        naturaleza: f.naturaleza,
+        tipoOperacion: f.tipoOperacion,
+        numeroDocumento: f.numeroDocumento.trim(),
+        razonSocial: f.razonSocial.trim(),
+      });
+    if (errorReglas) return fiscal(errorReglas, "cli-tipo-documento");
     if (f.email.trim() && !FORMATO_CORREO.test(f.email.trim())) {
       return fiscal("El correo electrónico no tiene un formato válido.", "cli-email");
     }
@@ -630,6 +649,19 @@ export default function NuevoClientePage() {
       mensaje,
       campo,
     });
+    const errorGln = validarGln(f.gln.trim());
+    if (errorGln) return comercial(errorGln, "cli-gln");
+    const errorLargoComercial = validarLongitudes([
+      [f.codigoExterno.trim(), 100, "El código externo"],
+      [f.observacionComercial.trim(), 1000, "Las observaciones comerciales"],
+      [f.motivoBloqueoVentas.trim(), 500, "El motivo del bloqueo"],
+      [f.emailCopia.trim(), 150, "El correo en copia"],
+      [f.emailFacturacion.trim(), 150, "El correo de facturación"],
+      [f.emailCobranzas.trim(), 150, "El correo de cobranzas"],
+    ]);
+    if (errorLargoComercial) return comercial(errorLargoComercial);
+    const errorLargoLogistica = validarLongitudes([[f.observacionLogistica.trim(), 1000, "Las observaciones logísticas"]]);
+    if (errorLargoLogistica) return { pestana: "logistica", mensaje: errorLargoLogistica };
     if (f.limiteCreditoTemporal.trim() === "" && f.fechaVencimientoCredito.trim()) {
       return comercial("Para informar el vencimiento, indique también un límite de crédito temporal.", "cli-limite-temporal");
     }
@@ -662,6 +694,16 @@ export default function NuevoClientePage() {
       if (!c.nombre.trim()) {
         return { pestana: "contactos", mensaje: `El contacto ${n} necesita nombre.`, campo: `cli-contacto-${i}-nombre` };
       }
+      const largoContacto = validarLongitudes([
+        [c.nombre.trim(), 100, `El nombre del contacto ${n}`],
+        [c.apellido.trim(), 100, `El apellido del contacto ${n}`],
+        [c.cargo.trim(), 100, `El cargo del contacto ${n}`],
+        [c.departamento.trim(), 100, `El departamento del contacto ${n}`],
+        [c.telefono.trim(), 30, `El teléfono del contacto ${n}`],
+        [c.celular.trim(), 30, `El celular del contacto ${n}`],
+        [c.email.trim(), 150, `El correo del contacto ${n}`],
+      ]);
+      if (largoContacto) return { pestana: "contactos", mensaje: largoContacto, campo: `cli-contacto-${i}-nombre` };
       if (c.email.trim() && !FORMATO_CORREO.test(c.email.trim())) {
         return { pestana: "contactos", mensaje: `El correo del contacto ${n} no tiene un formato válido.`, campo: `cli-contacto-${i}-email` };
       }
@@ -676,8 +718,25 @@ export default function NuevoClientePage() {
       if (!d.paisCodigo) {
         return { pestana: "direcciones", mensaje: `Seleccione el país de la dirección ${n}.`, campo: `cli-direccion-${i}-pais` };
       }
+      const largoDireccion = validarLongitudes([
+        [d.etiqueta.trim(), 100, `La etiqueta de la dirección ${n}`],
+        [d.direccion.trim(), 300, `La dirección ${n}`],
+        [d.numeroCasa.trim(), 20, `El número de casa de la dirección ${n}`],
+        [d.complemento.trim(), 200, `El complemento de la dirección ${n}`],
+        [d.codigoPostal.trim(), 15, `El código postal de la dirección ${n}`],
+        [d.contactoNombre.trim(), 200, `El contacto de recepción de la dirección ${n}`],
+        [d.contactoTelefono.trim(), 30, `El teléfono de recepción de la dirección ${n}`],
+        [d.horarioRecepcion.trim(), 200, `El horario de recepción de la dirección ${n}`],
+        [d.observacion.trim(), 500, `La observación de la dirección ${n}`],
+      ]);
+      if (largoDireccion) return { pestana: "direcciones", mensaje: largoDireccion, campo: `cli-direccion-${i}-direccion` };
       if (d.esFiscal || d.tipo === "FISCAL") {
-        const errorFiscal = validarDireccionFiscal(d.direccion.trim(), d.numeroCasa.trim());
+        const errorFiscal = validarDireccionFiscal(d.direccion.trim(), d.numeroCasa.trim(), {
+          exigir: f.tipoOperacion !== "B2F",
+          departamento: d.departamentoCodigo,
+          distrito: d.distritoCodigo,
+          ciudad: d.ciudadCodigo,
+        });
         if (errorFiscal) {
           return {
             pestana: "direcciones",
@@ -703,6 +762,15 @@ export default function NuevoClientePage() {
       if (!d.urlArchivo.trim()) {
         return { pestana: "documentos", mensaje: `El documento ${n} necesita la URL del archivo.`, campo: `cli-documento-${i}-url` };
       }
+      const errorUrl = validarUrlDocumento(d.urlArchivo.trim());
+      if (errorUrl) {
+        return { pestana: "documentos", mensaje: `Documento ${n}: ${errorUrl}`, campo: `cli-documento-${i}-url` };
+      }
+      const largoDocumento = validarLongitudes([
+        [d.nombreArchivo.trim(), 255, `El nombre del archivo del documento ${n}`],
+        [d.observacion.trim(), 500, `La observación del documento ${n}`],
+      ]);
+      if (largoDocumento) return { pestana: "documentos", mensaje: largoDocumento, campo: `cli-documento-${i}-nombre` };
       if (d.fechaEmision.trim() && !fechaValida(d.fechaEmision)) {
         return { pestana: "documentos", mensaje: `La fecha de emisión del documento ${n} debe tener formato dd/mm/yyyy y ser válida.`, campo: `cli-documento-${i}-emision` };
       }
@@ -1033,6 +1101,12 @@ export default function NuevoClientePage() {
                             : "",
                         numeroDocumento:
                           valor === "INNOMINADO" ? "0" : actual.numeroDocumento === "0" ? "" : actual.numeroDocumento,
+                        razonSocial:
+                          valor === "INNOMINADO"
+                            ? NOMBRE_INNOMINADO
+                            : actual.razonSocial === NOMBRE_INNOMINADO
+                              ? ""
+                              : actual.razonSocial,
                       }));
                     }}
                     opciones={opcionesDocumentoIdentidad}
@@ -1297,8 +1371,8 @@ export default function NuevoClientePage() {
                 value={formulario.codigoExterno}
               />
               <Input
-                label="GLN"
-                maxLength={13}
+                id="cli-gln"
+                label="GLN (13 dígitos)"
                 onChange={(valor) => actualizarFormulario("gln", valor)}
                 value={formulario.gln}
               />
