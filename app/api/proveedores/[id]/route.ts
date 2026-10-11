@@ -210,6 +210,7 @@ export async function GET(_request: Request, contexto: Contexto) {
           evaluarRiesgo: permisos?.evaluarRiesgo ?? false,
           bloquear: permisos?.bloquear ?? false,
           aprobarBanco: permisos?.aprobarBanco ?? false,
+          reactivarCuenta: permisos?.administrador ?? false,
         },
         contactos: contactos.rows,
         direcciones: direcciones.rows,

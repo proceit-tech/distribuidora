@@ -16,6 +16,8 @@ export type PermisosProveedores = {
   evaluarRiesgo: boolean;
   bloquear: boolean;
   aprobarBanco: boolean;
+  /** Administrador de la empresa (perfil con es_administrador). Autoridad exclusiva de la reactivación de cuentas bancarias. */
+  administrador: boolean;
 };
 
 const error = (mensaje: string, status: number) => NextResponse.json({ error: mensaje }, { status });
@@ -43,6 +45,7 @@ export async function autorizarProveedores(): Promise<{ sesion: SesionProveedore
       evaluarRiesgo: tiene("EVALUAR_RIESGO"),
       bloquear: tiene("BLOQUEAR"),
       aprobarBanco: tiene("APROBAR_BANCO"),
+      administrador: acceso.isCompanyAdmin && !acceso.isPlatformAdmin,
     },
   };
 }

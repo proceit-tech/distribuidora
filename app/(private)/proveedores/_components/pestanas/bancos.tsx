@@ -5,6 +5,7 @@ import type { ProveedorCuentaBancaria } from "@/types/proveedores";
 import { Casilla, Selector, SinRegistros, Texto } from "../campos";
 import type { ContextoFormulario } from "../contexto";
 import styles from "../proveedor-form.module.css";
+import { ReactivarCuenta } from "./reactivar-cuenta";
 import { ResolucionCuenta } from "./resolucion-cuenta";
 
 export function PestanaBancos({ ctx }: { ctx: ContextoFormulario }) {
@@ -37,6 +38,7 @@ export function PestanaBancos({ ctx }: { ctx: ContextoFormulario }) {
                   <span className={[styles.etiquetaEstado, styles.etiquetaPeligro].join(" ")}>Desactivada{guardada.desactivadaEn ? ` el ${guardada.desactivadaEn}` : ""}</span>
                 </header>
                 <p className={styles.textoSecundario}>Titular: {c.titular}. La cuenta se conserva con su historial y auditoría, pero no puede usarse en pagos.</p>
+                <ReactivarCuenta ctx={ctx} cuentaId={c.id} />
               </article>
             );
           }

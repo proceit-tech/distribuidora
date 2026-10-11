@@ -191,7 +191,7 @@ export type ProveedorDetalle = {
   permisosDocumentos: PermisosDocumentosProveedor;
   homologacionVencida: boolean;
   estadoOperativo: { elegible: boolean; motivos: string[] };
-  permisos: { editar: boolean; homologar: boolean; evaluarRiesgo: boolean; bloquear: boolean; aprobarBanco: boolean };
+  permisos: { editar: boolean; homologar: boolean; evaluarRiesgo: boolean; bloquear: boolean; aprobarBanco: boolean; reactivarCuenta: boolean };
 
   creadoEn: string;
   actualizadoEn: string;

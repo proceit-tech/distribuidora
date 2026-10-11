@@ -62,6 +62,8 @@ export const EVENTO_TEXTO: Record<string, string> = {
   BLOQUEO: "Proveedor bloqueado",
   DESBLOQUEO: "Proveedor desbloqueado",
   CUENTA_REVISION_SOLICITADA: "Cambio de cuenta bancaria solicitado",
+  CUENTA_DESACTIVADA: "Cuenta bancaria desactivada",
+  CUENTA_REACTIVADA: "Cuenta bancaria reactivada",
   CUENTA_APROBADA: "Cuenta bancaria aprobada",
   CUENTA_RECHAZADA: "Cuenta bancaria rechazada",
   CUENTA_REVISION_APROBADA: "Cambio de cuenta bancaria aprobado",

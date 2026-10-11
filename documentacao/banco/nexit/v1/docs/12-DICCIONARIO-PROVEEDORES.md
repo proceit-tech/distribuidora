@@ -103,3 +103,13 @@ Adenda: A01 ✔ · A02 ✔ (NEX-033) · A03 ✔ · A04 ✔ · A05 ✔ · A06 ✔
 - Si se necesita migration adicional para consolidar controles del servidor/BD, **prepararla incrementalmente posterior a NEX-037**, sin editar migrations históricas, sin aplicar SQL ni entrar en VM.
 
 **Estado:** regla aprobada, implementación pendiente de Claude Code, homologación PostgreSQL/navegador pendiente. Las decisiones de separación de solicitante/aprobador y visibilidad de datos bancarios siguen pendientes y no se resuelven con esta aprobación.
+
+### 8.1 Implementación (2026-10-11) — NO validada en PostgreSQL ni navegador
+
+- **Ruta:** `POST /api/proveedores/[id]/cuentas/[cuentaId]/reactivar` (cuerpo `{ motivo }`). Autoridad: **administrador de la empresa** = perfil activo con `es_administrador` (`getAccessContext().isCompanyAdmin`, excluido el administrador de plataforma). `APROBAR_BANCO`, `EDITAR` u otros permisos NO bastan. La UI solo muestra «Reactivar cuenta» con `permisos.reactivarCuenta`, pero la decisión es del servidor.
+- **Lógica:** `lib/proveedores/reactivacion.ts` — transacción, `SELECT … FOR UPDATE` filtrado por id, proveedor y empresa (cuenta ajena o inexistente = 404 indistinguible), 409 si la cuenta ya está activa, justificación obligatoria (1–1000) validada en el servidor.
+- **Efecto:** `activa = true` y se limpian `desactivada_at/por` y `motivo_desactivacion` (el CHECK de NEX-037 lo exige); NO toca estado de aprobación, `aprobado_*`, `es_principal` (queda en false: no vuelve a ser principal), banco, número, titular, moneda, ni `proveedor_cuenta_revisiones` (la revisión cancelada no se reabre, nada se aprueba).
+- **Auditoría:** evento `CUENTA_REACTIVADA` en `proveedor_eventos` (misma transacción) con empresa, proveedor, cuenta, administrador, fecha (`creado_at`), justificación, estado anterior (incluida la desactivación original: fecha, autor, motivo) y nuevo. El evento original `CUENTA_DESACTIVADA` y todo el historial se conservan.
+- **Pagabilidad:** sin cambios en SQL: `proveedor_cuenta_pagable` exige APROBADA y activa. Una cuenta aprobada reactivada vuelve a ser pagable; pendiente/rechazada reactivada sigue sin serlo.
+- **PUT cadastral:** no puede reactivar (cuenta desactivada = solo lectura, 409; `activa` no figura entre las columnas escribibles).
+- **Migración:** no fue necesaria (NEX-037 ya contiene las columnas, el CHECK y los triggers; no se bloquea el UPDATE de reactivación). Pendiente de la validación del responsable: ejecutar la reactivación contra PostgreSQL real y revisar la pantalla.

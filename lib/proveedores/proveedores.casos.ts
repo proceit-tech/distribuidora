@@ -372,7 +372,7 @@ function detalleBase() {
     permisosDocumentos: { cargar: true, gestionar: true, historial: true, finalizar: true },
     homologacionVencida: false,
     estadoOperativo: { elegible: false, motivos: [] as string[] },
-    permisos: { editar: true, homologar: false, evaluarRiesgo: false, bloquear: false, aprobarBanco: false },
+    permisos: { editar: true, homologar: false, evaluarRiesgo: false, bloquear: false, aprobarBanco: false, reactivarCuenta: false },
     creadoEn: "",
     actualizadoEn: "",
   };
