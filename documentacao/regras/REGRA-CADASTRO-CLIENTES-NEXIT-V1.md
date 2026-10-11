@@ -1,0 +1,122 @@
+# REGRA OFICIAL — Cadastro de Clientes Nexit V1
+**Estado:** ESPECIFICAÇÃO FUNCIONAL PARA IMPLEMENTAÇÃO; NÃO HOMOLOGADA. **Responsável pela análise:** ChatGPT/PROCEIT. **Desenvolvedor:** Claude Code. **Branch:** `feature/NEXIT-2026-001-banco-demo`.
+**Fontes de controle:** CLAUDE.md; documentacao/PROTOCOLO-IA.md; PROGRESSO-NEXIT-V1.md; matriz normativa SIFEN MT150 + NTs originais arquivadas; decisões de Clientes (B2F, Innominado, DV, limites); E1/E2; NEX-005 e migrations posteriores. **Regra:** nunca confundir o texto da tela com os códigos fiscais e com os valores persistidos. Os dados D3 usados na emissão devem ser válidos desde o cadastro conforme condições normativas. Emissão XML/integração efetiva continua fora da V1. As regras internas de ERP não são exigências da SIFEN.
+
+## Contrato técnico obrigatório
+Para cada linha: **T** texto ES-PY exibido na tela; **API** chave JSON atual; **DB** coluna e tipo de NEX-005 (confirmar migrations posteriores); **F** campo SIFEN e mapeamento/condição, ou **ERP** regra interna. Atualizar todos os fluxos de criar/editar/consultar, incluindo catálogos, coleções, errors e componentes, mantendo a única fonte de conversão e validação no backend. O backend deve rejeitar valor inválido sem corte silencioso; campos opcionais sem valor seguem NULL/default real. Os códigos D3 indicam o valor do futuro XML, não exigem criar emissor V2 nesta tarefa. Usar `empresa_id` da sessão e FKs compostas.
+
+## A. Información fiscal — campos mestres
+| T / API | DB (NEX-005) | F: SIFEN / regra obrigatória |
+|---|---|---|
+| Naturaleza / naturaleza | naturaleza_receptor SMALLINT NOT NULL | D201: tela Contribuyente/No contribuyente; API CONTRIBUYENTE/NO_CONTRIBUYENTE; DB e SIFEN **1/2** respectivamente; CHECK 1,2. |
+| Tipo de persona / tipoPersona | tipo_persona TEXT NOT NULL; tipo_contribuyente_sifen SMALLINT NOT NULL | D205: tela Física/Jurídica; API FISICA/JURIDICA; DB código 1/2 e tipo texto. D205 só transmitido quando D201=1. Para não contribuinte manter seleção explícita e modelo ERP já aprovado, sem inferir XML. |
+| Tipo de operación / tipoOperacion | tipo_operacion SMALLINT NOT NULL | D202: tela B2B/B2C/B2G/B2F; API mesmos enums; DB/SIFEN 1/2/3/4. Contribuinte B2B/B2C/B2G; não contribuinte B2C/B2F; B2F implica não contribuinte, país exterior. OEE/B2G não inferir pelo nome. |
+| País / paisCodigo | pais_codigo TEXT NOT NULL; pais_nombre nome derivado do catálogo | D203/D204: código PRY fora B2F e país não PRY em B2F, descrição de país do catálogo válido, não digitada. |
+| RUC / numeroDocumento se contribuinte | numero_documento VARCHAR(30) NOT NULL, tipo_documento='RUC' | D206: 3–8 dígitos ASCII, sem DV; validar UI+API; manter string, zeros iniciais. |
+| DV / dv | dv VARCHAR(5) | D207: 1 dígito, módulo 11 DNIT; somente leitura calculado e reconferido API. |
+| Tipo de documento / tipoDocumento | tipo_documento VARCHAR(30); tipo_documento_identidad_sifen SMALLINT | D208: CEDULA_PARAGUAYA→1; PASAPORTE→2; CEDULA_EXTRANJERA→3; CARNET_RESIDENCIA→4; INNOMINADO→5; TARJETA_DIPLOMATICA→6; OTRO→9. Apenas não contribuinte, cadastro B2F também exige documento por regra ERP. |
+| Descripción del documento / descripcionDocumentoIdentidad | descripcion_documento_identidad VARCHAR(100) | D209: se OTRO obrigatória, 9–41 caracteres; fora OTRO nulo. |
+| Número de documento / numeroDocumento se não contribuinte | numero_documento VARCHAR(30) | D210: 1–20 caracteres; obrigatório no ERP inclusive B2F. Innominado '0' e nome 'Sin Nombre', somente B2C e **único por empresa inclusive em concorrência via constraint**. D208/D210 no XML B2F: conciliar NT002×NT023, não inventar emissão. |
+| Nombre o razón social / razonSocial | razon_social VARCHAR(200) **A ALTERAR** | D211: obrigatório 4–255; nome Innominado 'Sin Nombre'. NEX-022 incremental para VARCHAR(255), UI/API 255. |
+| Nombre de fantasía / nombreFantasia | nombre_fantasia VARCHAR(200) **A ALTERAR** | D212: opcional, 4–255 se preenchido. NEX-022 VARCHAR(255). |
+| Correo electrónico / email | email VARCHAR(150) | D216: opcional, 3–80 se preenchido, sintaxe válida; entrada/API não truncam. |
+| Correo en copia / emailCopia | email_copia VARCHAR(150) | ERP: opcional e-mail válido, finalidade cópia; não é D216. |
+| Teléfono / telefono | telefono VARCHAR(30) | D214: opcional 6–15 se preenchido; regra de prefixo PRY da NT quando aplicável. |
+| Celular / celular | celular VARCHAR(30) | D215: opcional 10–20 se preenchido; regra de prefixo PRY quando aplicável. |
+| Código cliente (somente leitura) | codigo VARCHAR(50), trigger clientes_asignar_codigo | D217: gerado CLI-NNNNNN, comprimento oficial 3–15; único por empresa, nunca fornecido manualmente no POST. |
+
+## B. Comercial y crédito — exclusivamente ERP
+| T / API | DB | Regra obrigatória do Nexit |
+|---|---|---|
+| Grupo de cliente / grupoClienteId | grupo_cliente_id UUID | Opcional; catálogo `grupos_cliente` ativo da mesma empresa; persistir ID e FK (empresa,id). |
+| Condición de pago / condicionPagoId | condicion_pago_id UUID | Opcional; FK catálogo `condiciones_pago`; não inventar prazo nem prometer aplicação em módulo de vendas não desenvolvido. |
+| Moneda predeterminada / monedaCodigoPredeterminada | moneda_codigo_predeterminada TEXT | Código da moeda válida `monedas.codigo`, default UI PYG; não gravar descrição. D-10: moeda dos limites e listas não decidida. |
+| Lista de precios / listaPrecioId | lista_precio_id UUID | Opcional; catálogo da mesma empresa, validar ID. Não inventar vigência/compatibilidade sem regra aprovada. |
+| Límite de crédito / limiteCredito | limite_credito NUMERIC(18,4) NOT NULL DEFAULT 0 | Valor >=0, até precisão DB. Rótulo Gs. só se regra monetária de limites for Gs. confirmada. D-10 semântica de zero/limite em outras moedas pendente; não implementar bloqueio não aprovado. |
+| Descuento comercial (%) / descuentoComercialPct | descuento_comercial_pct NUMERIC(5,2) DEFAULT 0 | 0–100, preservar precisão. |
+| Límite temporal / limiteCreditoTemporal | limite_credito_temporal NUMERIC(18,4) | Opcional >=0; vencimento coerente; regra acumular/substituir D-10 pendente. |
+| Vencimiento del crédito / fechaVencimientoCredito | fecha_vencimiento_credito DATE | Data calendário válida DD/MM/YYYY na tela → DATE DB; existente CHECK se data então limite temporário não NULL. |
+| Día preferido de cobro / diaPreferidoCobro | dia_preferido_cobro SMALLINT | Opcional, inteiro 1–31; rejeitar decimais na API. |
+| Correo de facturación / emailFacturacion | email_facturacion VARCHAR(150) | Opcional, sintaxe e-mail válida; independente do e-mail fiscal. |
+| Correo de cobranzas / emailCobranzas | email_cobranzas VARCHAR(150) | Opcional, sintaxe e-mail válida. |
+| Recibir documento electrónico / recibeDocumentoElectronico | recibe_documento_electronico BOOLEAN DEFAULT true | Persistir boolean verdadeiro/falso; D-11 efeito de envio automático não aprovado. |
+| Requiere orden de compra / requiereOrdenCompra | requiere_orden_compra BOOLEAN DEFAULT false | Persistir boolean; D-11 efeito em pedido/venda não aprovado. |
+| Bloquear ventas / bloqueadoVentas | bloqueado_ventas BOOLEAN DEFAULT false | Persistir; motivo exigido quando true, registrar usuário e hora de ativação; D-11 escopo de bloqueio operacional ainda não aprovado. |
+| Motivo del bloqueo / motivoBloqueoVentas | motivo_bloqueo_ventas VARCHAR(500) | Obrigatório não vazio se bloqueado. |
+| Observaciones comerciales / observacionComercial | observacion_comercial VARCHAR(1000) | Opcional, não truncar; até 1000. |
+| Canal de venta / canalVentaId | canal_venta_id UUID | Opcional, referência `canales_venta` da própria empresa. |
+| Código externo / codigoExterno | codigo_externo VARCHAR(100) | Opcional, unicidade por empresa do SQL; não truncar. |
+| GLN / gln | gln VARCHAR(13) | Opcional. Para ser GLN válido, formato GS1 13 dígitos e DV GS1; política de exigir DV permanece D-08 (não inferir). Nunca cortar em 13 silenciosamente. |
+| Bloqueio hora/usuário (sem controle editável) | bloqueado_ventas_at TIMESTAMPTZ; bloqueado_ventas_por UUID | Definidos pelo backend na ativação e limpos ao remover; usuário deve ser da empresa. |
+| Situação ativa (edição) / activo | activo BOOLEAN DEFAULT true | Diferente de bloqueio de vendas; consulta/edição expõem corretamente. |
+
+## C. Contactos — tabela `cliente_contactos`, exclusivamente ERP
+| T / JSON | DB | Regra |
+|---|---|---|
+| Nombre / nombre | nombre VARCHAR(100) NOT NULL | Obrigatório em contato incluído, sem item parcial descartado em silêncio. |
+| Apellido / apellido | apellido VARCHAR(100) | Opcional até 100. |
+| Cargo / cargo | cargo VARCHAR(100) | Opcional até 100. |
+| Departamento / departamento | departamento VARCHAR(100) | Área profissional, não geográfica. |
+| Teléfono / telefono | telefono VARCHAR(30) | Opcional, dado de contato, não D214. |
+| Celular / celular | celular VARCHAR(30) | Opcional, dado de contato, não D215. |
+| Correo electrónico / email | email VARCHAR(150) | Opcional, formato válido. |
+| Principal / esPrincipal | es_principal BOOLEAN DEFAULT false | No máximo um principal por cliente, índice único e mensagem por índice. |
+| Recibe pedidos / recibePedidos | recibe_pedidos BOOLEAN DEFAULT false | Preferência independente. |
+| Recibe facturación / recibeFacturacion | recibe_facturacion BOOLEAN DEFAULT false | Preferência independente. |
+| Recibe cobranzas / recibeCobranzas | recibe_cobranzas BOOLEAN DEFAULT false | Preferência independente. |
+| Recibe documentos electrónicos / recibeDocumentosElectronicos | recibe_documentos_electronicos BOOLEAN DEFAULT false | Preferência independente. |
+| Recibe notificaciones / recibeNotificaciones | recibe_notificaciones BOOLEAN DEFAULT true | Interno, sem checkbox atual; D-12 não decidido: não alterar por suposição. |
+Cada contato tem id UUID, empresa_id UUID e cliente_id UUID; CRUD da coleção deve preservar valores e respeitar escopo.
+
+## D. Direcciones — tabela `direcciones_cliente`
+| T / JSON | DB | Regra fiscal ou ERP |
+|---|---|---|
+| Tipo / tipo | tipo TEXT | ERP: FISCAL/COMERCIAL/ENTREGA/SUCURSAL/OTRA, coerência com `es_fiscal`. |
+| Etiqueta / etiqueta | etiqueta VARCHAR(100) | ERP: identificação opcional. |
+| Dirección / direccion | direccion VARCHAR(300) | D213 quando usada como endereço fiscal receptor: 1–255. Endereços comerciais obedecem ao limite DB, sem aplicar D3 indevidamente. |
+| Nro. casa / numeroCasa | numero_casa VARCHAR(20) | D218, se D213 usado no receptor: numérico 1–6 dígitos e obrigatório conforme condição. |
+| País / paisCodigo | pais_codigo TEXT | Código válido. Não confundir país do endereço com país receptor D203. |
+| Complemento / complemento | complemento VARCHAR(200) | ERP opcional. |
+| Código postal / codigoPostal | codigo_postal VARCHAR(15) | ERP opcional. |
+| Departamento / departamentoCodigo | departamento_codigo INTEGER; departamento VARCHAR(100) | D219/220: exigir e mapear códigos/descrição quando D3 e D213 + não B2F conforme NT; derivar descrição do catálogo. |
+| Distrito / distritoCodigo | distrito_codigo INTEGER; distrito VARCHAR(100) | D221/222 e coerência geográfica quando aplicável; relação de catálogo. |
+| Ciudad / ciudadCodigo | ciudad_codigo INTEGER; ciudad VARCHAR(100) | D223/224, relação válida com departamento e distrito. |
+| Contacto recepción / contactoNombre | contacto_nombre VARCHAR(200) | ERP opcional. |
+| Teléfono recepción / contactoTelefono | contacto_telefono VARCHAR(30) | ERP opcional. |
+| Horario recepción / horarioRecepcion | horario_recepcion VARCHAR(200) | ERP opcional. |
+| Observación / observacion | observacion VARCHAR(500) | ERP opcional. |
+| Es fiscal / esFiscal | es_fiscal BOOLEAN DEFAULT false | Máximo um por cliente, índice; conciliar `tipo=FISCAL`. |
+| Entrega predeterminada / esEntregaDefault | es_entrega_default BOOLEAN DEFAULT false | Máximo um por cliente, índice. |
+| Descripción (interno) / descripcion | descripcion VARCHAR(100) | Não é `etiqueta`; preservar dado histórico, não inventar novo controle. |
+| Latitud / latitud | latitud NUMERIC(9,6) | ERP -90..90; D-12 sem exposição aprovada. |
+| Longitud / longitud | longitud NUMERIC(9,6) | ERP -180..180; D-12 sem exposição aprovada. |
+Cada direção tem id/empresa_id/cliente_id e timestamps. Geografia: NEX-021 torna localização geral opcional; **a condição fiscal D3 prevalece para endereço usado na SIFEN**. Para B2F não impor códigos PY no DE. Preservar dados ao mudar endereço fiscal e evitar 23505.
+
+## E. Entrega y ventas — campos em `clientes`, exclusivamente ERP
+| T / API | DB | Regra |
+|---|---|---|
+| Ruta de entrega / rutaEntregaId | ruta_entrega_id UUID | Catálogo por empresa. |
+| Zona comercial / zonaComercialId | zona_comercial_id UUID | Catálogo por empresa. |
+| Vendedor responsable / vendedorId | vendedor_id UUID | Catálogo vendedores por empresa. |
+| Frecuencia / frecuenciaEntrega | frecuencia_entrega TEXT | DIARIA/SEMANAL/QUINCENAL/MENSUAL/A_DEMANDA; nulo se não definida. |
+| Lunes a Domingo / diasEntrega | dias_entrega SMALLINT[] | 1=Seg, 2=Ter, 3=Qua, 4=Qui, 5=Sex, 6=Sáb, 7=Dom; sem valores inválidos/duplicados; D-13 coerência frequência×dias ainda não aprovada. |
+| Observaciones logísticas / observacionLogistica | observacion_logistica VARCHAR(1000) | Opcional, até 1000. |
+
+## F. Documentos — tabela `cliente_documentos`, exclusivamente ERP
+| T / JSON | DB | Regra |
+|---|---|---|
+| Tipo / tipo | tipo TEXT | RUC/CONTRATO/CREDITO/EXONERACION/OTRO. Não confundir com D208. |
+| Nombre de archivo / nombreArchivo | nombre_archivo VARCHAR(255) | Obrigatório para documento incluído; 1–255. |
+| URL segura / urlArchivo | url_archivo TEXT | Obrigatório; validar URL HTTP/HTTPS real, não aceitar javascript:/data:. Referência externa, não upload. |
+| Fecha emisión / fechaEmision | fecha_emision DATE | Data real, entrada DD/MM/YYYY. |
+| Fecha vencimiento / fechaVencimiento | fecha_vencimiento DATE | Data válida; >= emissão quando ambas fornecidas. |
+| Observación / observacion | observacion VARCHAR(500) | Opcional até 500. |
+Relacionamentos `id UUID`, `cliente_id`, `empresa_id`, `cargado_por UUID`, timestamps e FK composta; operações CRUD atômicas sem excluir itens parciais silenciosamente.
+
+## G. Auditoria e aceitação — sem atalhos
+1. Claude deve implementar as telas de novo/editar/consultar, componentes, APIs GET/POST/PUT, validações e controllers/serviços aplicáveis, catálogos, sincronização de contatos/endereços/documentos, dicionário de dados e migrations incrementais. Não criar controllers artificiais onde Next.js usa route handlers.
+2. **NEX-022** necessária para `razon_social` e `nombre_fantasia` 255. Examinar dependências de views `v_movimientos_detalle`, `v_ventas_al_costo` e dependentes; criar migration transacional versionada preservando grants, regras e opções, com pré-inspeção somente leitura para checar drift antes de aplicar. NUNCA editar migration já aplicada e NUNCA executar SQL na VM. Criar outras migrations incrementais se precisar para integridade Innominado/geografia.
+3. Não truncar texto no front ou backend silenciosamente; evitar default fiscal inventado; rejeitar erro com campo/aba e preservação do formulário; validar também o PUT; não tolerar dados históricos inválidos sem política explícita de regularização.
+4. **Benchmark de ERP:** AUD-R02 documentou captura externa para ordem/compactação/UX; capturas não estão versionadas. Não inventar requisitos concorrentes. UI compacta, moderna, responsiva, espanhol PY, boa hierarquia e estados visuais; homologação visual depende do usuário.
+5. Registrar para **cada linha** valor da tela, JSON, DB, condição, teste de código e resultado, e ajustar dicionário de dados existente. Não criar relatório repetitivo. Indicar bloqueios somente se tecnicamente intransponíveis com dados do Git ou se exigirem decisões D-01/D-08/D-10/D-11/D-12/D-13; não inventar decisão.
+6. Claude faz commit/push na branch e para. ChatGPT faz auditoria independente do **código completo + SQL + dicionário**, sem aprovar apenas com relatório de Claude. Usuário somente depois decide aplicação no **único ambiente real**, com backup, inspeção e plano de reversão. Estado '100% no Git' não implica migration aplicada ou funcionamento na VM.
