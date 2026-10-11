@@ -131,10 +131,16 @@ export async function GET(_request: Request, contexto: Contexto) {
     if (!c) return NextResponse.json({ error: "Cliente no encontrado." }, { status: 404 });
     const hijos = await leerHijos(db, session.user.empresaId, id);
     const dirFiscal = hijos.direcciones.find((d) => d.esFiscal || d.tipo === "FISCAL") ?? null;
+    // Códigos de la base -> texto de la API. Un código desconocido NUNCA se sustituye por un valor válido:
+    // se devuelve marcado para que la aptitud SIFEN lo informe como pendiente.
+    const naturalezaTxt = ({ 1: "CONTRIBUYENTE", 2: "NO_CONTRIBUYENTE" } as Record<number, string>)[Number(c.naturaleza_receptor)] ?? `DESCONOCIDA_${c.naturaleza_receptor}`;
+    const operacionTxt = ({ 1: "B2B", 2: "B2C", 3: "B2G", 4: "B2F" } as Record<number, string>)[Number(c.tipo_operacion)] ?? `DESCONOCIDA_${c.tipo_operacion}`;
     const aptitudSifen = evaluarAptitudSifen(
       {
-        naturaleza: c.naturaleza_receptor === 1 ? "CONTRIBUYENTE" : "NO_CONTRIBUYENTE",
-        tipoOperacion: (["", "B2B", "B2C", "B2G", "B2F"] as const)[c.tipo_operacion] ?? "B2C",
+        naturaleza: naturalezaTxt,
+        tipoOperacion: operacionTxt,
+        tipoPersona: c.tipo_persona ?? "",
+        paisCodigo: c.pais_codigo ?? "",
         tipoDocumento: c.tipo_documento,
         numeroDocumento: c.numero_documento ?? "",
         dv: c.dv ?? "",
@@ -161,8 +167,8 @@ export async function GET(_request: Request, contexto: Contexto) {
       cliente: {
         id: c.id,
         codigo: c.codigo,
-        naturaleza: c.naturaleza_receptor === 1 ? "CONTRIBUYENTE" : "NO_CONTRIBUYENTE",
-        tipoOperacion: (["", "B2B", "B2C", "B2G", "B2F"] as const)[c.tipo_operacion] ?? "B2C",
+        naturaleza: naturalezaTxt,
+        tipoOperacion: operacionTxt,
         tipoPersona: c.tipo_persona,
         paisCodigo: c.pais_codigo,
         paisNombre: c.pais_nombre ?? "",

@@ -4,14 +4,28 @@
  * El PUT tolera valores fiscales anteriores a las reglas para no impedir cambios comerciales legítimos
  * (ver `validarCamposReceptor(…, previos)`), pero eso NO significa que el cliente sirva para emitir:
  * esta evaluación lista, con las MISMAS reglas compartidas, lo que impediría usarlo como receptor.
- * Es informativa (no bloquea ninguna operación) y el cadastro nunca se declara "apto" si hay pendientes.
+ * Es informativa (no bloquea ninguna operación) y NUNCA devuelve `apto: true` si hay una inconsistencia
+ * detectable: un código desconocido (naturaleza, operación, tipo de persona, tipo de documento, país) es
+ * siempre una pendiente, jamás se sustituye por un valor por defecto.
+ *
+ * Alcance: coherencia interna de los datos del receptor según las reglas del cadastro (D201–D224 del Manual
+ * v150 y NT 002/003/005/010/023/024 ya adoptadas en `campos-receptor.ts`). NO es una validación contra la
+ * DNIT (existencia del RUC en el Marangatu, estado del contribuyente) ni define la política de emisión V2.
  */
 import { validarRucDv } from "@/lib/fiscal/calcular-dv-ruc";
-import { validarCamposReceptor, validarDireccionFiscal, validarInnominado } from "@/lib/fiscal/campos-receptor";
+import {
+  validarCamposReceptor,
+  validarDireccionFiscal,
+  validarInnominado,
+  validarNaturalezaOperacion,
+} from "@/lib/fiscal/campos-receptor";
+import { validarPaisPorOperacion } from "@/lib/geografia/referencia";
 
 export type DatosAptitud = {
   naturaleza: string;
   tipoOperacion: string;
+  tipoPersona: string;
+  paisCodigo: string;
   tipoDocumento: string;
   numeroDocumento: string;
   dv: string;
@@ -33,48 +47,97 @@ export type DireccionFiscalAptitud = {
 
 export type AptitudSifen = { apto: boolean; pendientes: string[] };
 
+const NATURALEZAS = ["CONTRIBUYENTE", "NO_CONTRIBUYENTE"];
+const OPERACIONES = ["B2B", "B2C", "B2G", "B2F"];
+const TIPOS_PERSONA = ["FISICA", "JURIDICA"];
+const TIPOS_DOCUMENTO_IDENTIDAD = [
+  "CEDULA_PARAGUAYA",
+  "PASAPORTE",
+  "CEDULA_EXTRANJERA",
+  "CARNET_RESIDENCIA",
+  "INNOMINADO",
+  "TARJETA_DIPLOMATICA",
+  "OTRO",
+];
+
 export function evaluarAptitudSifen(c: DatosAptitud, fiscal: DireccionFiscalAptitud | null): AptitudSifen {
   const pendientes: string[] = [];
-  const sinNada = (v: string) => (v ?? "").trim();
+  const limpio = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+  const agregar = (mensaje: string | null) => {
+    if (mensaje && !pendientes.includes(mensaje)) pendientes.push(mensaje);
+  };
 
-  if (c.naturaleza === "CONTRIBUYENTE") {
-    const rucDv = validarRucDv(sinNada(c.numeroDocumento), sinNada(c.dv));
-    if (!rucDv.ok) pendientes.push(rucDv.error);
+  const naturalezaOk = NATURALEZAS.includes(c.naturaleza);
+  const operacionOk = OPERACIONES.includes(c.tipoOperacion);
+
+  // Códigos desconocidos: pendiente explícita, sin valores por defecto.
+  if (!naturalezaOk) agregar(`La naturaleza del receptor (${limpio(c.naturaleza) || "vacía"}) no es válida.`);
+  if (!operacionOk) agregar(`El tipo de operación (${limpio(c.tipoOperacion) || "vacío"}) no es válido.`);
+  if (!TIPOS_PERSONA.includes(c.tipoPersona)) agregar("El tipo de persona (física o jurídica) no está definido o no es válido.");
+
+  // D201 × D202 y D203 (país según operación).
+  if (naturalezaOk && operacionOk) agregar(validarNaturalezaOperacion(c.naturaleza, c.tipoOperacion));
+  if (!limpio(c.paisCodigo)) {
+    agregar("El país del receptor no está informado.");
+  } else if (operacionOk) {
+    try {
+      validarPaisPorOperacion(c.tipoOperacion, limpio(c.paisCodigo).toUpperCase());
+    } catch (error) {
+      agregar(error instanceof Error ? error.message : "El país no es compatible con la operación.");
+    }
   }
 
-  const errorCampos = validarCamposReceptor({
-    naturaleza: c.naturaleza,
-    tipoDocumento: c.tipoDocumento,
-    numeroDocumento: sinNada(c.numeroDocumento),
-    descripcionDocumento: sinNada(c.descripcionDocumento),
-    razonSocial: sinNada(c.razonSocial),
-    nombreFantasia: sinNada(c.nombreFantasia),
-    email: sinNada(c.email),
-    telefono: sinNada(c.telefono),
-    celular: sinNada(c.celular),
-  });
-  if (errorCampos) pendientes.push(errorCampos);
+  // D206/D207 (contribuyente) o D208–D210 (no contribuyente).
+  if (c.naturaleza === "CONTRIBUYENTE") {
+    if (c.tipoDocumento !== "RUC") agregar("Un contribuyente debe identificarse con RUC.");
+    const rucDv = validarRucDv(limpio(c.numeroDocumento), limpio(c.dv));
+    if (!rucDv.ok) agregar(rucDv.error);
+  } else if (c.naturaleza === "NO_CONTRIBUYENTE") {
+    if (!TIPOS_DOCUMENTO_IDENTIDAD.includes(c.tipoDocumento)) {
+      agregar(`El tipo de documento (${limpio(c.tipoDocumento) || "vacío"}) no es válido para un no contribuyente.`);
+    }
+    if (limpio(c.dv)) agregar("Un no contribuyente no debe tener DV.");
+  }
 
-  const errorInnominado = validarInnominado({
-    tipoDocumento: c.tipoDocumento,
-    naturaleza: c.naturaleza,
-    tipoOperacion: c.tipoOperacion,
-    numeroDocumento: sinNada(c.numeroDocumento),
-    razonSocial: sinNada(c.razonSocial),
-  });
-  if (errorInnominado) pendientes.push(errorInnominado);
+  // Tamaños y condicionales D209–D216 y nombre D211/D212.
+  agregar(
+    validarCamposReceptor({
+      naturaleza: c.naturaleza,
+      tipoDocumento: c.tipoDocumento,
+      numeroDocumento: limpio(c.numeroDocumento),
+      descripcionDocumento: limpio(c.descripcionDocumento),
+      razonSocial: limpio(c.razonSocial),
+      nombreFantasia: limpio(c.nombreFantasia),
+      email: limpio(c.email),
+      telefono: limpio(c.telefono),
+      celular: limpio(c.celular),
+    }),
+  );
 
+  // D208 = 5 (Innominado).
+  agregar(
+    validarInnominado({
+      tipoDocumento: c.tipoDocumento,
+      naturaleza: c.naturaleza,
+      tipoOperacion: c.tipoOperacion,
+      numeroDocumento: limpio(c.numeroDocumento),
+      razonSocial: limpio(c.razonSocial),
+    }),
+  );
+
+  // D213/D218/D219–D223 (domicilio fiscal).
   if (fiscal) {
-    const errorFiscal = validarDireccionFiscal(sinNada(fiscal.direccion), sinNada(fiscal.numeroCasa), {
-      exigir: c.tipoOperacion !== "B2F",
-      departamento: sinNada(fiscal.departamentoCodigo),
-      distrito: sinNada(fiscal.distritoCodigo),
-      ciudad: sinNada(fiscal.ciudadCodigo),
-    });
-    if (errorFiscal) pendientes.push(errorFiscal);
+    agregar(
+      validarDireccionFiscal(limpio(fiscal.direccion), limpio(fiscal.numeroCasa), {
+        exigir: c.tipoOperacion !== "B2F",
+        departamento: limpio(fiscal.departamentoCodigo),
+        distrito: limpio(fiscal.distritoCodigo),
+        ciudad: limpio(fiscal.ciudadCodigo),
+      }),
+    );
   } else if (c.tipoOperacion === "B2F") {
     // D213 es obligatorio cuando D202 = 4 (Manual v150).
-    pendientes.push("Una operación B2F requiere dirección fiscal del receptor.");
+    agregar("Una operación B2F requiere dirección fiscal del receptor.");
   }
 
   return { apto: pendientes.length === 0, pendientes };
