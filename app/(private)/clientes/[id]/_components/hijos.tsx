@@ -9,7 +9,7 @@ import { validarTelefono } from "@/lib/fiscal/telefono";
 // Cada fila existente conserva su `id`; una fila solo se elimina cuando el usuario la quita explícitamente.
 
 export type ContactoForm = {
-  nombre: string; apellido: string; cargo: string; departamento: string; telefono: string; celular: string; email: string;
+  k: string; id?: string;
   telefonoPais: string; telefonoDdi: string; telefonoArea: string; celularPais: string; celularDdi: string; celularArea: string;
   nombre: string; apellido: string; cargo: string; departamento: string; telefono: string; celular: string; email: string;
   esPrincipal: boolean; recibePedidos: boolean; recibeFacturacion: boolean; recibeCobranzas: boolean;
