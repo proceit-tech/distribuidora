@@ -101,12 +101,18 @@ export function verificarCasosPermisosDocumentos(): string[] {
     if (/\b(let|const|var)\s+contexto\b/.test(leer(ruta))) fallos.push(`${ruta}: declara una variable llamada contexto (duplica el parámetro de la ruta)`);
   }
 
-  // F-CLI-09-05: el alta verifica la respuesta del cierre y conserva el cliente creado para reintentar solo el cierre
+  // F-CLI-09-05 / F-CLI-09-06: el alta crea el cliente una sola vez, conserva su identidad y los documentos pendientes, reintenta
+  // solo lo que falló (sin EDITAR), cierra la carga verificando la respuesta y no redirige a la ficha por una falla de upload
   const pagina = leer("app/(private)/clientes/nuevo/page.tsx");
   if (/documentos\/finalizar`[^)]*\)\.catch\(\(\) => undefined\)/.test(pagina)) fallos.push("el alta no debe ignorar la respuesta de /documentos/finalizar");
-  if (!/cerrarCargaInicial\(clienteId\)\)\) return;/.test(pagina)) fallos.push("el alta debe detenerse si el cierre de la carga inicial falla");
-  if (!/respuesta\.ok\)\s*\{\s*setPendienteCierre\(null\)/.test(pagina)) fallos.push("el cierre debe verificar respuesta.ok");
-  if (!/if \(pendienteCierre\)\s*\{[\s\S]*?cerrarCargaInicial\(pendienteCierre\.id\)/.test(pagina)) fallos.push("debe existir reintento seguro del cierre sin repetir el alta");
+  if (/avisoDocumentos/.test(pagina)) fallos.push("una falla de upload no debe redirigir a la ficha (exigiría EDITAR); se reintenta en el propio formulario");
+  if (!/if \(!clienteId\) \{\s*const respuesta = await fetch\("\/api\/clientes"/.test(pagina)) fallos.push("POST /api/clientes solo debe ejecutarse mientras no exista cliente creado");
+  if (!/setAltaCreada\(\{ id: clienteId \}\)/.test(pagina)) fallos.push("debe conservarse la identidad del cliente creado");
+  if (!/subidos\.includes\(documento\.uid\)\) continue;/.test(pagina)) fallos.push("no deben reenviarse los documentos ya cargados");
+  if (!/subirPendientes\(clienteId\)\)\) \{[\s\S]*?return;[\s\S]*?\}[\s\S]*?cerrarCargaInicial\(clienteId\)\)\) return;/.test(pagina)) fallos.push("el cierre solo debe ocurrir tras completar los uploads y verificar su respuesta");
+  if (!/respuesta\.ok\) return true;/.test(pagina)) fallos.push("el cierre debe verificar respuesta.ok");
+  if (!/async function finalizarSinPendientes\(\)[\s\S]*?window\.confirm[\s\S]*?cerrarCargaInicial\(altaCreada\.id\)/.test(pagina)) fallos.push("debe existir el cierre explícito sin pendientes, con confirmación");
+  if (!/!altaCreada \|\| identificador === "documentos"/.test(pagina)) fallos.push("tras crear el cliente solo debe quedar disponible la pestaña de documentos");
   for (const accion of ["EDITAR_DATOS", "ELIMINAR", "DESCARGAR"]) {
     if (!leer("app/api/clientes/[id]/documentos/[docId]/route.ts").includes(`exigir("${accion}"`)) fallos.push(`falta exigir("${accion}") en la ruta de documento`);
   }

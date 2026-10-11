@@ -89,6 +89,8 @@ type Direccion = {
 };
 
 type Documento = {
+  /** Identificador estable de la fila (los índices cambian al eliminar filas): permite saber cuáles ya se cargaron. */
+  uid: string;
   tipo: string;
   /** Archivo real elegido por el usuario; se sube a almacenamiento privado una vez creado el cliente. */
   archivo: File | null;
@@ -256,8 +258,11 @@ function crearDireccion(): Direccion {
   };
 }
 
+let contadorDocumentos = 0;
+
 function crearDocumento(): Documento {
   return {
+    uid: `d${++contadorDocumentos}`,
     tipo: "OTRO",
     archivo: null,
     fechaEmision: "",
@@ -333,8 +338,10 @@ export default function NuevoClientePage() {
   const [pestanaConError, setPestanaConError] = useState("");
   const [aviso, setAviso] = useState("");
   const [guardando, setGuardando] = useState(false);
-  // Cliente ya creado cuyo cierre de carga inicial falló: se conserva su identidad para reintentar SOLO el cierre (nunca otro alta).
-  const [pendienteCierre, setPendienteCierre] = useState<{ id: string } | null>(null);
+  // Cliente ya creado (identidad conservada): a partir de aquí el formulario nunca vuelve a crear otro; solo reintenta documentos pendientes y el cierre.
+  const [altaCreada, setAltaCreada] = useState<{ id: string } | null>(null);
+  const [docsSubidos, setDocsSubidos] = useState<string[]>([]);
+  const [erroresDocs, setErroresDocs] = useState<Record<string, string>>({});
 
   useEffect(() => {
     void cargarCatalogos();
@@ -836,27 +843,66 @@ export default function NuevoClientePage() {
     }
   }
 
-  // Cierra la carga inicial de documentos del cliente recién creado verificando la RESPUESTA (F-CLI-09-05). Si falla, el alta
-  // NO se presenta como concluida: se conserva la identidad del cliente creado y el siguiente envío solo reintenta el cierre.
+  // ---- Alta con documentos (F-CLI-09-05 / F-CLI-09-06) ------------------------------------------------------------------
+  // El cliente se crea UNA sola vez. Después se suben los archivos pendientes; los que fallan se reintentan solos (los ya
+  // cargados no se reenvían y `POST /api/clientes` no se repite). La carga inicial se cierra al terminar los uploads o por
+  // acción explícita del usuario. Todo el flujo corre con la autorización del creador (CLIENTES.CREAR), sin exigir EDITAR.
+
+  // Cierra la carga inicial verificando la RESPUESTA; si falla, el alta no se presenta como concluida.
   async function cerrarCargaInicial(clienteId: string): Promise<boolean> {
     try {
       const respuesta = await fetch(`/api/clientes/${clienteId}/documentos/finalizar`, { method: "POST" });
 
-      if (respuesta.ok) {
-        setPendienteCierre(null);
-        return true;
-      }
+      if (respuesta.ok) return true;
 
       const detalle = (await respuesta.json().catch(() => ({}))) as { error?: string };
 
-      setError(`El cliente ya se creó, pero no se pudo cerrar la carga inicial de sus documentos (${detalle.error ?? `error ${respuesta.status}`}). Pulse «Reintentar cierre»; no se creará otro cliente.`);
+      setError(`El cliente ya se creó, pero no se pudo cerrar la carga inicial de sus documentos (${detalle.error ?? `error ${respuesta.status}`}). Pulse «Reintentar» para volver a intentarlo; no se creará otro cliente.`);
     } catch {
-      setError("El cliente ya se creó, pero no se pudo cerrar la carga inicial de sus documentos por un error de conexión. Pulse «Reintentar cierre»; no se creará otro cliente.");
+      setError("El cliente ya se creó, pero no se pudo cerrar la carga inicial de sus documentos por un error de conexión. Pulse «Reintentar» para volver a intentarlo; no se creará otro cliente.");
     }
 
-    setPendienteCierre({ id: clienteId });
-
     return false;
+  }
+
+  // Sube SOLO los documentos con archivo que aún no se cargaron. Devuelve true si no queda ninguno pendiente.
+  async function subirPendientes(clienteId: string): Promise<boolean> {
+    const subidos = [...docsSubidos];
+    const errores: Record<string, string> = {};
+
+    for (const documento of documentos) {
+      if (!documento.archivo || subidos.includes(documento.uid)) continue;
+
+      const formularioArchivo = new FormData();
+      formularioArchivo.set("archivo", documento.archivo);
+      formularioArchivo.set("tipo", documento.tipo);
+      formularioArchivo.set("fechaEmision", documento.fechaEmision.trim());
+      formularioArchivo.set("fechaVencimiento", documento.fechaVencimiento.trim());
+      formularioArchivo.set("observacion", documento.observacion.trim());
+
+      try {
+        const subida = await fetch(`/api/clientes/${clienteId}/documentos`, { method: "POST", body: formularioArchivo });
+
+        if (subida.ok) {
+          subidos.push(documento.uid);
+        } else {
+          const detalle = (await subida.json().catch(() => ({}))) as { error?: string };
+          errores[documento.uid] = detalle.error ?? `no se pudo cargar (error ${subida.status})`;
+        }
+      } catch {
+        errores[documento.uid] = "error de conexión";
+      }
+    }
+
+    setDocsSubidos(subidos);
+    setErroresDocs(errores);
+
+    return Object.keys(errores).length === 0;
+  }
+
+  function terminarAlta() {
+    router.push("/clientes?ok=creado");
+    router.refresh();
   }
 
   async function guardar(evento: FormEvent<HTMLFormElement>) {
@@ -864,80 +910,53 @@ export default function NuevoClientePage() {
     setError("");
     setPestanaConError("");
 
-    // Reintento seguro: el cliente ya existe; solo se repite el cierre de la carga inicial.
-    if (pendienteCierre) {
-      setGuardando(true);
+    let clienteId = altaCreada?.id ?? null;
 
-      try {
-        if (await cerrarCargaInicial(pendienteCierre.id)) {
-          router.push("/clientes?ok=creado");
-          router.refresh();
-        }
-      } finally {
-        setGuardando(false);
+    if (!clienteId) {
+      const incidencia = validar();
+      if (incidencia) {
+        mostrarIncidencia(incidencia);
+        return;
       }
-
-      return;
-    }
-
-    const incidencia = validar();
-    if (incidencia) {
-      mostrarIncidencia(incidencia);
-      return;
     }
 
     setGuardando(true);
 
     try {
-      const respuesta = await fetch("/api/clientes", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        // Los documentos son archivos reales: se suben a almacenamiento privado DESPUÉS de crear el cliente.
-        body: JSON.stringify({ ...formulario, contactos, direcciones, documentos: [] }),
-      });
-      const datos = (await respuesta.json()) as { error?: string; cliente?: { id?: string } };
+      if (!clienteId) {
+        const respuesta = await fetch("/api/clientes", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          // Los documentos son archivos reales: se suben a almacenamiento privado DESPUÉS de crear el cliente.
+          body: JSON.stringify({ ...formulario, contactos, direcciones, documentos: [] }),
+        });
+        const datos = (await respuesta.json()) as { error?: string; cliente?: { id?: string } };
 
-      if (!respuesta.ok) {
-        throw new Error(datos.error ?? "No fue posible guardar el cliente.");
-      }
+        if (!respuesta.ok) {
+          throw new Error(datos.error ?? "No fue posible guardar el cliente.");
+        }
 
-      const clienteId = datos.cliente?.id;
-      const fallidos: string[] = [];
+        clienteId = datos.cliente?.id ?? null;
 
-      for (const [posicion, documento] of documentos.entries()) {
-        if (!documento.archivo || !clienteId) continue;
-
-        const formularioArchivo = new FormData();
-        formularioArchivo.set("archivo", documento.archivo);
-        formularioArchivo.set("tipo", documento.tipo);
-        formularioArchivo.set("fechaEmision", documento.fechaEmision.trim());
-        formularioArchivo.set("fechaVencimiento", documento.fechaVencimiento.trim());
-        formularioArchivo.set("observacion", documento.observacion.trim());
-
-        try {
-          const subida = await fetch(`/api/clientes/${clienteId}/documentos`, { method: "POST", body: formularioArchivo });
-
-          if (!subida.ok) {
-            const detalle = (await subida.json().catch(() => ({}))) as { error?: string };
-            fallidos.push(`Documento ${posicion + 1} (${documento.archivo.name}): ${detalle.error ?? "no se pudo cargar"}`);
-          }
-        } catch {
-          fallidos.push(`Documento ${posicion + 1} (${documento.archivo.name}): error de conexión`);
+        // Identidad del cliente creado: de aquí en adelante este formulario nunca vuelve a crear otro.
+        if (clienteId) {
+          setAltaCreada({ id: clienteId });
+          setTab("documentos");
         }
       }
 
-      // El cliente ya existe: si algún archivo falló NO se vuelve a enviar el formulario (duplicaría el cliente);
-      // se abre su ficha para reintentar solo los documentos pendientes.
-      if (fallidos.length > 0 && clienteId) {
-        router.push(`/clientes/${clienteId}?avisoDocumentos=${encodeURIComponent(`El cliente se creó, pero no se cargaron: ${fallidos.join(" · ")}`)}`);
-        router.refresh();
-        return;
+      if (clienteId) {
+        if (!(await subirPendientes(clienteId))) {
+          setTab("documentos");
+          setError("El cliente ya se creó, pero algunos documentos no se cargaron. Corrija lo indicado y pulse «Reintentar documentos pendientes» (solo se reenvían los pendientes), o finalice sin ellos.");
+          return;
+        }
+
+        // Alta completa: se cierra la carga inicial (quien solo puede crear deja de poder agregar documentos a este cliente).
+        if (!(await cerrarCargaInicial(clienteId))) return;
       }
 
-      // Alta completa: se cierra la carga inicial de documentos (quien solo puede crear deja de poder agregar documentos a este cliente).
-      if (clienteId && !(await cerrarCargaInicial(clienteId))) return;
-      router.push("/clientes?ok=creado");
-      router.refresh();
+      terminarAlta();
     } catch (errorGuardado) {
       const mensaje =
         errorGuardado instanceof Error
@@ -947,6 +966,22 @@ export default function NuevoClientePage() {
       setPestanaConError(pestana);
       setTab(pestana);
       setError(`${PESTANAS[pestana]}: ${mensaje}`);
+    } finally {
+      setGuardando(false);
+    }
+  }
+
+  // Acción explícita del usuario: cerrar la carga inicial SIN los documentos pendientes (deberá agregarlos alguien con permiso de edición).
+  async function finalizarSinPendientes() {
+    if (!altaCreada) return;
+
+    if (!window.confirm("Se cerrará la carga inicial de documentos de este cliente. Los documentos pendientes no se cargarán y, para agregarlos después, se necesitará permiso de edición. ¿Desea continuar?")) return;
+
+    setError("");
+    setGuardando(true);
+
+    try {
+      if (await cerrarCargaInicial(altaCreada.id)) terminarAlta();
     } finally {
       setGuardando(false);
     }
@@ -1024,10 +1059,10 @@ export default function NuevoClientePage() {
         {error ? (
           <div className="clienteNuevo__error" role="alert">
             {error}
-            {pendienteCierre ? (
+            {altaCreada ? (
               <>
                 {" "}
-                <Link href={`/clientes/${pendienteCierre.id}`}>Ir a la ficha del cliente creado</Link>
+                <Link href={`/clientes/${altaCreada.id}`}>Ir a la ficha del cliente creado</Link>
               </>
             ) : null}
           </div>
@@ -1041,7 +1076,7 @@ export default function NuevoClientePage() {
             ["direcciones", "Direcciones"],
             ["logistica", "Entrega y ventas"],
             ["documentos", "Documentos"],
-          ].map(([identificador, etiqueta]) => (
+          ].filter(([identificador]) => !altaCreada || identificador === "documentos").map(([identificador, etiqueta]) => (
             <button
               aria-current={tab === identificador ? "true" : undefined}
               className={[
@@ -2058,16 +2093,27 @@ export default function NuevoClientePage() {
             texto={`Formatos ${EXTENSIONES_TEXTO} · máximo ${TAMANO_MAXIMO_BYTES / 1024 / 1024} MB por archivo.`}
             titulo="Documentos comerciales"
           >
-            {documentos.map((documento, indice) => (
-              <article className="clienteNuevo__repetido" key={indice}>
+            {documentos.map((documento, indice) => {
+              const yaCargado = docsSubidos.includes(documento.uid);
+
+              return (
+              <article className="clienteNuevo__repetido" key={documento.uid}>
                 <CabeceraRepetido
-                  etiqueta={`Documento ${indice + 1}`}
-                  onEliminar={() =>
-                    setDocumentos((actuales) =>
-                      actuales.filter((_, posicion) => posicion !== indice),
-                    )
-                  }
+                  etiqueta={`Documento ${indice + 1}${yaCargado ? " · cargado ✓" : ""}`}
+                  onEliminar={() => {
+                    if (yaCargado) {
+                      window.alert("Este documento ya se cargó al cliente creado; para quitarlo se necesita permiso de edición desde la ficha del cliente.");
+                      return;
+                    }
+                    setDocumentos((actuales) => actuales.filter((d) => d.uid !== documento.uid));
+                  }}
                 />
+                {erroresDocs[documento.uid] ? (
+                  <p className="clienteNuevo__error" role="alert">
+                    No se cargó: {erroresDocs[documento.uid]}. Corrija el archivo o los datos y reintente.
+                  </p>
+                ) : null}
+                <fieldset disabled={yaCargado} style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
 
                 <div className="clienteNuevo__grid clienteNuevo__grid--cuatro">
                   <Select
@@ -2128,21 +2174,36 @@ export default function NuevoClientePage() {
                   }
                   value={documento.observacion}
                 />
+                </fieldset>
               </article>
-            ))}
+              );
+            })}
           </Repeater>
         ) : null}
 
         <footer className="clienteNuevo__footer">
-          <Link href="/clientes" className="clienteNuevo__secundario">
-            Cancelar
-          </Link>
+          {altaCreada ? null : (
+            <Link href="/clientes" className="clienteNuevo__secundario">
+              Cancelar
+            </Link>
+          )}
+          {altaCreada ? (
+            <button className="clienteNuevo__secundario" disabled={guardando} onClick={() => void finalizarSinPendientes()} type="button">
+              Finalizar sin los documentos pendientes
+            </button>
+          ) : null}
           <button
             className="clienteNuevo__primario"
             disabled={guardando}
             type="submit"
           >
-            {guardando ? "Guardando..." : pendienteCierre ? "Reintentar cierre de la carga inicial" : "Guardar cliente"}
+            {guardando
+              ? "Guardando..."
+              : altaCreada
+                ? documentos.some((d) => d.archivo && !docsSubidos.includes(d.uid))
+                  ? "Reintentar documentos pendientes"
+                  : "Reintentar cierre de la carga inicial"
+                : "Guardar cliente"}
           </button>
         </footer>
       </form>
