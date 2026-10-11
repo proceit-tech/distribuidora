@@ -3,6 +3,10 @@
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 
+import { compararTexto, ordenarLista, siguienteOrden, type Orden } from "@/components/ui/lista-padrao/orden";
+import { ThOrdenable } from "@/components/ui/lista-padrao/th-ordenable";
+import ui from "@/components/ui/lista-padrao/lista.module.css";
+
 import styles from "./page.module.css";
 
 type Tipo = "categorias" | "marcas" | "familias" | "lineas";
@@ -33,6 +37,10 @@ const TABS: Array<{ id: Tipo; label: string; singular: string; descripcion: bool
   { id: "lineas", label: "Líneas", singular: "línea", descripcion: true },
 ];
 
+const PAGE_SIZE = 20;
+
+type CampoOrden = "codigo" | "nombre" | "familia" | "productos" | "estado";
+
 const VACIO: Formulario = { id: null, codigo: "", nombre: "", descripcion: "", familiaId: "" };
 
 export default function CatalogosProductosPage() {
@@ -48,6 +56,8 @@ export default function CatalogosProductosPage() {
   const [filtroFamilia, setFiltroFamilia] = useState("");
   const [form, setForm] = useState<Formulario | null>(null);
   const [guardando, setGuardando] = useState(false);
+  const [orden, setOrden] = useState<Orden<CampoOrden>>(null);
+  const [pagina, setPagina] = useState(1);
 
   const meta = TABS.find((t) => t.id === tipo)!;
 
@@ -81,6 +91,7 @@ export default function CatalogosProductosPage() {
 
   function cambiarTab(nuevo: Tipo) {
     setTipo(nuevo);
+    setOrden(null);
     setForm(null);
     setBusqueda("");
     setEstado("TODOS");
@@ -98,6 +109,47 @@ export default function CatalogosProductosPage() {
       return !q || f.nombre.toLowerCase().includes(q) || f.codigo.toLowerCase().includes(q);
     });
   }, [filas, busqueda, estado, filtroFamilia]);
+
+  // Ordenación sobre el conjunto filtrado COMPLETO (toda la lista está cargada), antes de paginar.
+  const ordenados = useMemo(
+    () =>
+      ordenarLista(visibles, orden, (campo, a, b) => {
+        switch (campo) {
+          case "codigo":
+            return compararTexto(a.codigo, b.codigo);
+          case "nombre":
+            return compararTexto(a.nombre, b.nombre);
+          case "familia":
+            return compararTexto(a.familia ?? "", b.familia ?? "");
+          case "productos":
+            return a.productos - b.productos;
+          case "estado":
+            return Number(b.activo) - Number(a.activo);
+        }
+      }),
+    [visibles, orden],
+  );
+
+  function cambiarOrden(campo: CampoOrden) {
+    setOrden((actual) => siguienteOrden(actual, campo));
+  }
+
+  const totalPaginas = Math.max(1, Math.ceil(visibles.length / PAGE_SIZE));
+
+  useEffect(() => {
+    setPagina(1);
+  }, [tipo, busqueda, estado, filtroFamilia, orden]);
+
+  useEffect(() => {
+    if (pagina > totalPaginas) {
+      setPagina(totalPaginas);
+    }
+  }, [pagina, totalPaginas]);
+
+  const paginaActual = useMemo(
+    () => ordenados.slice((pagina - 1) * PAGE_SIZE, pagina * PAGE_SIZE),
+    [ordenados, pagina],
+  );
 
   async function enviar(url: string, metodo: "POST" | "PUT", cuerpo: Record<string, unknown>) {
     const r = await fetch(url, { method: metodo, headers: { "Content-Type": "application/json" }, body: JSON.stringify(cuerpo) });
@@ -146,36 +198,68 @@ export default function CatalogosProductosPage() {
 
   const familiasActivas = familias.filter((f) => f.activo || f.id === form?.familiaId);
 
+  const columnas = 5 + (tipo === "lineas" ? 1 : 0) + (meta.descripcion ? 1 : 0);
+
   return (
-    <section className={styles.page}>
-      <header className={styles.hero}>
-        <div>
-          <span className={styles.modulePill}>MAESTROS</span>
+    <section className={ui.page}>
+      <header className={ui.topbar}>
+        <div className={ui.titleBlock}>
+          <nav className={ui.breadcrumb} aria-label="Ruta de navegación">
+            <span>Maestros</span>
+            <i aria-hidden="true">/</i>
+            <Link href="/productos">Productos</Link>
+            <i aria-hidden="true">/</i>
+            <span aria-current="page">Catálogos</span>
+          </nav>
+
           <h1>Catálogos de productos</h1>
-          <p>Categorías, marcas, familias y líneas que alimentan la ficha de Productos.</p>
         </div>
-        <div className={styles.actions}>
-          <Link href="/productos" className={styles.secondaryButton}>
+
+        <div className={ui.actionsGroup}>
+          <Link href="/productos" className={ui.secondaryButton}>
             ← Productos
           </Link>
           {permisos.crear ? (
-            <button type="button" className={styles.primaryButton} onClick={() => { setForm({ ...VACIO }); setAviso(""); setError(""); }}>
-              ＋ Nueva {meta.singular}
+            <button
+              type="button"
+              className={ui.primaryButton}
+              onClick={() => {
+                setForm({ ...VACIO });
+                setAviso("");
+                setError("");
+              }}
+            >
+              <span aria-hidden="true">+</span>
+              Nueva {meta.singular}
             </button>
           ) : null}
         </div>
       </header>
 
-      <nav className={styles.tabs} aria-label="Catálogos">
+      <nav className={ui.tabs} aria-label="Catálogos">
         {TABS.map((t) => (
-          <button key={t.id} type="button" className={[styles.tab, tipo === t.id ? styles.tabActive : ""].join(" ")} onClick={() => cambiarTab(t.id)}>
+          <button
+            key={t.id}
+            type="button"
+            className={[ui.tab, tipo === t.id ? ui.tabActive : ""].join(" ")}
+            aria-current={tipo === t.id ? "page" : undefined}
+            onClick={() => cambiarTab(t.id)}
+          >
             {t.label}
           </button>
         ))}
       </nav>
 
-      {error ? <div className={styles.error}>{error}</div> : null}
-      {aviso ? <div className={styles.ok}>{aviso}</div> : null}
+      {error ? (
+        <div className={ui.alertError} role="alert">
+          {error}
+        </div>
+      ) : null}
+      {aviso ? (
+        <div className={ui.alertOk} role="status">
+          {aviso}
+        </div>
+      ) : null}
 
       {form ? (
         <form className={styles.form} onSubmit={guardar}>
@@ -186,7 +270,10 @@ export default function CatalogosProductosPage() {
               <select value={form.familiaId} onChange={(e) => setForm({ ...form, familiaId: e.target.value })}>
                 <option value="">Seleccione una familia</option>
                 {familiasActivas.map((f) => (
-                  <option key={f.id} value={f.id}>{f.nombre}{f.activo ? "" : " (inactiva)"}</option>
+                  <option key={f.id} value={f.id}>
+                    {f.nombre}
+                    {f.activo ? "" : " (inactiva)"}
+                  </option>
                 ))}
               </select>
             </label>
@@ -202,69 +289,199 @@ export default function CatalogosProductosPage() {
           {meta.descripcion ? (
             <label className={[styles.field, styles.wide].join(" ")}>
               <span>Descripción</span>
-              <textarea maxLength={500} value={form.descripcion} onChange={(e) => setForm({ ...form, descripcion: e.target.value })} />
+              <textarea
+                maxLength={500}
+                value={form.descripcion}
+                onChange={(e) => setForm({ ...form, descripcion: e.target.value })}
+              />
             </label>
           ) : null}
           <div className={styles.formActions}>
-            <button type="button" className={styles.secondaryButton} onClick={() => setForm(null)}>Cancelar</button>
-            <button type="submit" className={styles.primaryButton} disabled={guardando}>{guardando ? "Guardando..." : "Guardar"}</button>
+            <button type="button" className={ui.secondaryButton} onClick={() => setForm(null)}>
+              Cancelar
+            </button>
+            <button type="submit" className={ui.primaryButton} disabled={guardando}>
+              {guardando ? "Guardando..." : "Guardar"}
+            </button>
           </div>
         </form>
       ) : null}
 
-      <div className={styles.card}>
-        <div className={styles.toolbar}>
-          <input className={styles.search} placeholder="Buscar por nombre o código" value={busqueda} onChange={(e) => setBusqueda(e.target.value)} />
-          <div className={styles.filters}>
-            {tipo === "lineas" ? (
-              <select value={filtroFamilia} onChange={(e) => setFiltroFamilia(e.target.value)} aria-label="Familia">
+      <section className={ui.contentCard}>
+        <div className={ui.toolbar}>
+          <label className={ui.search}>
+            <span aria-hidden="true">⌕</span>
+            <input
+              placeholder="Buscar por nombre o código"
+              value={busqueda}
+              onChange={(e) => setBusqueda(e.target.value)}
+              aria-label="Buscar en el catálogo"
+            />
+          </label>
+
+          {tipo === "lineas" ? (
+            <label className={ui.filterField}>
+              <span>Familia</span>
+              <select value={filtroFamilia} onChange={(e) => setFiltroFamilia(e.target.value)}>
                 <option value="">Todas las familias</option>
-                {familias.map((f) => <option key={f.id} value={f.id}>{f.nombre}</option>)}
+                {familias.map((f) => (
+                  <option key={f.id} value={f.id}>
+                    {f.nombre}
+                  </option>
+                ))}
               </select>
-            ) : null}
-            <select value={estado} onChange={(e) => setEstado(e.target.value as typeof estado)} aria-label="Estado">
+            </label>
+          ) : null}
+
+          <label className={ui.filterField}>
+            <span>Estado</span>
+            <select value={estado} onChange={(e) => setEstado(e.target.value as typeof estado)}>
               <option value="TODOS">Todos</option>
               <option value="ACTIVOS">Activos</option>
               <option value="INACTIVOS">Inactivos</option>
             </select>
-          </div>
+          </label>
+
+          <button
+            type="button"
+            className={ui.clearButton}
+            onClick={() => {
+              setBusqueda("");
+              setEstado("TODOS");
+              setFiltroFamilia("");
+            }}
+          >
+            Limpiar filtros
+          </button>
+
+          <span className={ui.resultCount} aria-live="polite">
+            {visibles.length} de {filas.length}
+          </span>
         </div>
 
-        <div className={styles.head}>
-          <span>Código</span><span>Nombre</span><span>{tipo === "lineas" ? "Familia" : ""}</span><span>{meta.descripcion ? "Descripción" : ""}</span><span>Productos</span><span>Estado</span><span>Acciones</span>
-        </div>
-
-        {cargando ? (
-          <div className={styles.empty}><strong>Cargando...</strong></div>
-        ) : visibles.length === 0 ? (
-          <div className={styles.empty}>
-            <strong>{filas.length === 0 ? `Todavía no hay ${meta.label.toLowerCase()} registradas.` : "Ningún registro coincide con los filtros."}</strong>
-          </div>
-        ) : (
-          visibles.map((f) => (
-            <div className={styles.row} key={f.id}>
-              <span>{f.codigo || "—"}</span>
-              <strong>{f.nombre}</strong>
-              <span>{tipo === "lineas" ? f.familia : ""}</span>
-              <span>{f.descripcion}</span>
-              <span>{f.productos}</span>
-              <span className={[styles.pill, f.activo ? styles.activo : styles.inactivo].join(" ")}>{f.activo ? "ACTIVO" : "INACTIVO"}</span>
-              <div className={styles.actions}>
-                {permisos.editar ? (
-                  <>
-                    <button type="button" className={styles.rowButton} onClick={() => { setForm({ id: f.id, codigo: f.codigo, nombre: f.nombre, descripcion: f.descripcion, familiaId: f.familiaId ?? "" }); setAviso(""); setError(""); }}>
-                      Editar
-                    </button>
-                    <button type="button" className={styles.rowButton} onClick={() => void cambiarEstado(f)}>
-                      {f.activo ? "Inactivar" : "Activar"}
-                    </button>
-                  </>
+        <div className={ui.tableScroll}>
+          <table className={ui.table} style={{ minWidth: 820 }}>
+            <thead>
+              <tr>
+                <ThOrdenable titulo="Código" campo="codigo" orden={orden} onOrden={cambiarOrden} />
+                <ThOrdenable titulo="Nombre" campo="nombre" orden={orden} onOrden={cambiarOrden} />
+                {tipo === "lineas" ? (
+                  <ThOrdenable titulo="Familia" campo="familia" orden={orden} onOrden={cambiarOrden} />
                 ) : null}
-              </div>
-            </div>
-          ))
-        )}
-      </div>
+                {meta.descripcion ? <ThOrdenable titulo="Descripción" /> : null}
+                <ThOrdenable titulo="Productos" campo="productos" orden={orden} onOrden={cambiarOrden} alinear="derecha" />
+                <ThOrdenable titulo="Estado" campo="estado" orden={orden} onOrden={cambiarOrden} />
+                <ThOrdenable titulo="Acciones" alinear="derecha" />
+              </tr>
+            </thead>
+
+            <tbody>
+              {cargando ? (
+                <tr>
+                  <td colSpan={columnas} className={ui.emptyCell}>
+                    <div className={ui.empty}>
+                      <strong>Cargando...</strong>
+                    </div>
+                  </td>
+                </tr>
+              ) : visibles.length === 0 ? (
+                <tr>
+                  <td colSpan={columnas} className={ui.emptyCell}>
+                    <div className={ui.empty}>
+                      <strong>
+                        {filas.length === 0
+                          ? `Todavía no hay ${meta.label.toLowerCase()} registradas`
+                          : "Ningún registro coincide con los filtros"}
+                      </strong>
+                      {filas.length === 0 && permisos.crear ? (
+                        <span>Cree la primera {meta.singular} con el botón Nueva {meta.singular}.</span>
+                      ) : null}
+                    </div>
+                  </td>
+                </tr>
+              ) : (
+                paginaActual.map((f) => (
+                  <tr key={f.id} className={ui.row}>
+                    <td>
+                      <span className={ui.mono}>{f.codigo || "—"}</span>
+                    </td>
+                    <td>
+                      <strong>{f.nombre}</strong>
+                    </td>
+                    {tipo === "lineas" ? <td>{f.familia}</td> : null}
+                    {meta.descripcion ? <td className={ui.breakable}>{f.descripcion}</td> : null}
+                    <td className={ui.numeric}>
+                      <span className={ui.mono}>{f.productos}</span>
+                    </td>
+                    <td>
+                      <span className={f.activo ? ui.statusActive : ui.statusInactive}>
+                        {f.activo ? "Activo" : "Inactivo"}
+                      </span>
+                    </td>
+                    <td className={ui.actionsCell}>
+                      {permisos.editar ? (
+                        <div className={ui.actionsGroup}>
+                          <button
+                            type="button"
+                            className={ui.rowButton}
+                            onClick={() => {
+                              setForm({
+                                id: f.id,
+                                codigo: f.codigo,
+                                nombre: f.nombre,
+                                descripcion: f.descripcion,
+                                familiaId: f.familiaId ?? "",
+                              });
+                              setAviso("");
+                              setError("");
+                            }}
+                          >
+                            Editar
+                          </button>
+                          <button type="button" className={ui.rowButton} onClick={() => void cambiarEstado(f)}>
+                            {f.activo ? "Inactivar" : "Activar"}
+                          </button>
+                        </div>
+                      ) : null}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <footer className={ui.pagination}>
+          <span>
+            Mostrando {visibles.length === 0 ? 0 : (pagina - 1) * PAGE_SIZE + 1}–
+            {Math.min(pagina * PAGE_SIZE, visibles.length)} de {visibles.length}
+          </span>
+
+          <div>
+            <button
+              type="button"
+              aria-label="Página anterior"
+              disabled={pagina === 1}
+              onClick={() => setPagina((actual) => actual - 1)}
+            >
+              ‹
+            </button>
+
+            <strong>
+              {pagina} / {totalPaginas}
+            </strong>
+
+            <button
+              type="button"
+              aria-label="Página siguiente"
+              disabled={pagina === totalPaginas}
+              onClick={() => setPagina((actual) => actual + 1)}
+            >
+              ›
+            </button>
+          </div>
+        </footer>
+      </section>
     </section>
   );
 }

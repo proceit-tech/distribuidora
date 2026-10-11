@@ -35,6 +35,16 @@
   font-style: normal;
 }
 
+.breadcrumb a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.breadcrumb a:hover {
+  color: #0a7f88;
+  text-decoration: underline;
+}
+
 .breadcrumb span[aria-current] {
   color: #4f6a82;
   font-weight: 600;
@@ -64,6 +74,13 @@
   font-weight: 600;
   text-decoration: none;
   white-space: nowrap;
+  border: 0;
+  cursor: pointer;
+}
+
+.primaryButton:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 .primaryButton span {
@@ -633,6 +650,103 @@
 .toast button {
   border: 0;
   background: transparent;
+}
+
+/* ---- Botones secundarios, pestañas y avisos en línea (listas con edición en la misma pantalla) ---- */
+.secondaryButton,
+.rowButton {
+  display: inline-flex;
+  height: 38px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid #d3dfe8;
+  border-radius: 9px;
+  padding: 0 14px;
+  color: #41647d;
+  background: #ffffff;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.rowButton {
+  height: 32px;
+  padding: 0 11px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.secondaryButton:hover,
+.rowButton:hover {
+  color: #0a7f88;
+  border-color: #aadadd;
+  background: #f3fbfb;
+}
+
+.secondaryButton:focus-visible,
+.rowButton:focus-visible,
+.tab:focus-visible {
+  outline: 3px solid rgba(15, 156, 165, 0.4);
+  outline-offset: 2px;
+}
+
+.actionsGroup {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.tab {
+  height: 36px;
+  border: 1px solid #dce6ed;
+  border-radius: 9px;
+  padding: 0 14px;
+  color: #526e83;
+  background: #ffffff;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.tabActive {
+  border-color: #0c919b;
+  color: #0a7880;
+  background: #e7f7f7;
+}
+
+.alertError,
+.alertOk {
+  margin-bottom: 12px;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.alertError {
+  border: 1px solid #efc7c7;
+  color: #a33a3a;
+  background: #fdf1f1;
+}
+
+.alertOk {
+  border: 1px solid #bfe3d0;
+  color: #0a7a4f;
+  background: #effaf4;
 }
 
 @media (max-width: 760px) {
