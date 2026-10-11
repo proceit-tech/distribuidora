@@ -12,6 +12,7 @@ import {
 import { mensajeRestriccionCliente } from "@/lib/clientes/errores-bd";
 import { evaluarAptitudSifen } from "@/lib/fiscal/aptitud-sifen";
 import { validarDiaPreferidoCobro } from "@/lib/clientes/dia-cobro";
+import { DESCUENTO_COMERCIAL, LIMITE_CREDITO, decimalAcotado, validarCondicionYMoneda } from "@/lib/clientes/comercial";
 import { leerTelefonoEntrada, validarTelefono } from "@/lib/fiscal/telefono";
 import { ErrorGeografia, resolverPais, validarPaisPorOperacion } from "@/lib/geografia/referencia";
 import { ErrorValidacion, leerEntrada, leerHijos, sincronizarHijos } from "@/lib/clientes/relacionados";
@@ -53,14 +54,6 @@ function texto(v: unknown, max?: number) {
   return r;
 }
 const opcional = (v: unknown, max?: number) => texto(v, max) || null;
-function numero(v: unknown, min?: number, max?: number) {
-  if (v === null || v === undefined || v === "") return null;
-  const n = Number(v);
-  if (!Number.isFinite(n)) throw new Error("Uno de los valores numéricos informados no es válido.");
-  if (min !== undefined && n < min) throw new Error(`El valor debe ser igual o mayor a ${min}.`);
-  if (max !== undefined && n > max) throw new Error(`El valor debe ser igual o menor a ${max}.`);
-  return n;
-}
 function correo(v: string | null, etiqueta: string) {
   if (v && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) throw new Error(`${etiqueta} no tiene un formato válido.`);
 }
@@ -278,7 +271,7 @@ export async function PUT(request: Request, contexto: Contexto) {
     const razonSocial = texto(cuerpo.razonSocial, 255);
     const paisCodigo = texto(cuerpo.paisCodigo, 3).toUpperCase();
     const descDoc = opcional(cuerpo.descripcionDocumentoIdentidad, 100);
-    const limiteTemporal = numero(cuerpo.limiteCreditoTemporal, 0);
+    const limiteTemporal = decimalAcotado(cuerpo.limiteCreditoTemporal, "El límite de crédito temporal", LIMITE_CREDITO);
     const vencimiento = fechaIso(cuerpo.fechaVencimientoCredito);
     const frecuencia = opcional(cuerpo.frecuenciaEntrega)?.toUpperCase() ?? null;
     const email = opcional(cuerpo.email, 150);
@@ -333,7 +326,7 @@ export async function PUT(request: Request, contexto: Contexto) {
     await conexion.query("BEGIN");
 
     const actual = await conexion.query(
-      "SELECT bloqueado_ventas, naturaleza_receptor, numero_documento, dv, descripcion_documento_identidad, razon_social, nombre_fantasia, email, telefono, celular, telefono_ddi, celular_ddi, telefono_pais, telefono_area, celular_pais, celular_area, tipo_operacion, tipo_documento, gln FROM clientes WHERE id = $1 AND empresa_id = $2 FOR UPDATE",
+      "SELECT bloqueado_ventas, naturaleza_receptor, numero_documento, dv, descripcion_documento_identidad, razon_social, nombre_fantasia, email, telefono, celular, telefono_ddi, celular_ddi, telefono_pais, telefono_area, celular_pais, celular_area, tipo_operacion, tipo_documento, gln, condicion_pago_id, moneda_codigo_predeterminada FROM clientes WHERE id = $1 AND empresa_id = $2 FOR UPDATE",
       [id, empresaId],
     );
     if (actual.rowCount !== 1) {
@@ -341,6 +334,13 @@ export async function PUT(request: Request, contexto: Contexto) {
       return NextResponse.json({ error: "Cliente no encontrado." }, { status: 404 });
     }
     const estabaBloqueado = actual.rows[0].bloqueado_ventas === true;
+    // Un valor de catálogo que no cambia se tolera (puede haberse inactivado después); solo se verifica lo nuevo o modificado.
+    const monedaNueva = opcional(cuerpo.monedaCodigoPredeterminada, 3)?.toUpperCase() ?? null;
+    await validarCondicionYMoneda(
+      conexion,
+      condicionPagoId === (actual.rows[0].condicion_pago_id ?? null) ? null : condicionPagoId,
+      monedaNueva === (actual.rows[0].moneda_codigo_predeterminada ?? null) ? null : monedaNueva,
+    );
 
     // Campos D3 del SIFEN (tamaños y formatos oficiales, sin truncar); un campo sin cambios respecto de lo
     // guardado se tolera (datos anteriores a la regla) hasta que se modifique.
@@ -479,11 +479,11 @@ export async function PUT(request: Request, contexto: Contexto) {
         numeroDocumento, naturaleza === "CONTRIBUYENTE" ? dv : null,
         razonSocial, opcional(cuerpo.nombreFantasia, 255),
         email, emailCopia, telefonoGuardar.numero, celularGuardar.numero,
-        numero(cuerpo.limiteCredito, 0) ?? 0,
+        decimalAcotado(cuerpo.limiteCredito, "El límite de crédito", LIMITE_CREDITO) ?? 0,
         condicionPagoId, refs.listaPrecioId, refs.grupoClienteId,
         opcional(cuerpo.monedaCodigoPredeterminada, 3)?.toUpperCase() ?? null,
         refs.canalVentaId, opcional(cuerpo.codigoExterno, 100), opcional(cuerpo.gln, 13),
-        numero(cuerpo.descuentoComercialPct, 0, 100) ?? 0,
+        decimalAcotado(cuerpo.descuentoComercialPct, "El descuento comercial", DESCUENTO_COMERCIAL) ?? 0,
         limiteTemporal, vencimiento,
         bloqueado, motivo, estabaBloqueado, session.user.id,
         diaCobro.dia,

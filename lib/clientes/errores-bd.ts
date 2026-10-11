@@ -15,6 +15,8 @@ export function mensajeRestriccionCliente(error: { code?: string; constraint?: s
   }
 
   if (error.code === "22001") return "Un valor supera la longitud máxima permitida por la base de datos.";
+  if (error.code === "22003") return "Un valor numérico excede el rango o la precisión permitidos.";
+  if (error.code === "23503") return "Un dato seleccionado (catálogo, moneda o condición) no está disponible; actualice la pantalla y vuelva a elegirlo.";
 
   return null;
 }

@@ -25,6 +25,8 @@ import {
 } from "@/lib/fiscal/calcular-dv-ruc";
 import { TelefonoPais } from "@/components/clientes/telefono-pais";
 import { validarCamposReceptor } from "@/lib/fiscal/campos-receptor";
+import { DESCUENTO_COMERCIAL, LIMITE_CREDITO, decimalAcotado, normalizarDecimalEntrada } from "@/lib/clientes/comercial";
+import { pestanaDeErrorApi } from "@/lib/clientes/pestanas";
 
 import styles from "./page.module.css";
 import {
@@ -208,16 +210,6 @@ function formatDate(value: string) {
       timeStyle: "short",
     },
   ).format(date);
-}
-
-function money(value: string) {
-  const parsed = Number(
-    value.replace(/\./g, "").replace(",", "."),
-  );
-
-  return Number.isFinite(parsed)
-    ? parsed
-    : 0;
 }
 
 function fromCliente(
@@ -727,6 +719,16 @@ export default function ClienteDetallePage() {
       return;
     }
 
+    try {
+      decimalAcotado(form.limiteCredito, "El límite de crédito", LIMITE_CREDITO);
+      decimalAcotado(form.limiteCreditoTemporal, "El límite de crédito temporal", LIMITE_CREDITO);
+      decimalAcotado(form.descuentoComercialPct, "El descuento comercial", DESCUENTO_COMERCIAL);
+    } catch (errorNumerico) {
+      setTab("comercial");
+      setError((errorNumerico as Error).message);
+      return;
+    }
+
     if (!form.paisCodigo) {
       setTab("fiscal");
       setError("Seleccione el país del cliente.");
@@ -772,12 +774,8 @@ export default function ClienteDetallePage() {
             celularPais: form.celularPais,
             celularDdi: form.celularDdi,
             celularArea: form.celularArea,
-            limiteCredito: money(
-              form.limiteCredito,
-            ),
-            limiteCreditoTemporal:
-              form.limiteCreditoTemporal
-                .replace(/\D/g, ""),
+            limiteCredito: form.limiteCredito.trim(),
+            limiteCreditoTemporal: form.limiteCreditoTemporal.trim(),
             fechaVencimientoCredito:
               aApiFecha(
                 form.fechaVencimientoCredito,
@@ -795,9 +793,7 @@ export default function ClienteDetallePage() {
             codigoExterno:
               form.codigoExterno,
             gln: form.gln,
-            descuentoComercialPct: money(
-              form.descuentoComercialPct,
-            ),
+            descuentoComercialPct: form.descuentoComercialPct.trim(),
             bloqueadoVentas:
               form.bloqueadoVentas,
             motivoBloqueoVentas:
@@ -850,11 +846,11 @@ export default function ClienteDetallePage() {
       );
       router.refresh();
     } catch (e) {
-      setError(
-        e instanceof Error
-          ? e.message
-          : "No fue posible actualizar el cliente.",
-      );
+      const mensaje = e instanceof Error ? e.message : "No fue posible actualizar el cliente.";
+
+      // Los datos del formulario se conservan; se abre la pestaña a la que pertenece el error.
+      setTab(pestanaDeErrorApi(mensaje));
+      setError(mensaje);
     } finally {
       setSaving(false);
     }
@@ -1608,14 +1604,11 @@ export default function ClienteDetallePage() {
                     value={
                       form.limiteCredito
                     }
-                    inputMode="numeric"
+                    inputMode="decimal"
                     onChange={(value) =>
                       update(
                         "limiteCredito",
-                        value.replace(
-                          /\D/g,
-                          "",
-                        ),
+                        normalizarDecimalEntrada(value),
                       )
                     }
                   />
@@ -1626,14 +1619,11 @@ export default function ClienteDetallePage() {
                     value={
                       form.limiteCreditoTemporal
                     }
-                    inputMode="numeric"
+                    inputMode="decimal"
                     onChange={(value) =>
                       update(
                         "limiteCreditoTemporal",
-                        value.replace(
-                          /\D/g,
-                          "",
-                        ),
+                        normalizarDecimalEntrada(value),
                       )
                     }
                   />
@@ -1663,7 +1653,7 @@ export default function ClienteDetallePage() {
                     onChange={(value) =>
                       update(
                         "descuentoComercialPct",
-                        value,
+                        normalizarDecimalEntrada(value),
                       )
                     }
                   />

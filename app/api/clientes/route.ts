@@ -16,6 +16,7 @@ import {
 } from "@/lib/fiscal/campos-receptor";
 import { mensajeRestriccionCliente } from "@/lib/clientes/errores-bd";
 import { validarDiaPreferidoCobro } from "@/lib/clientes/dia-cobro";
+import { DESCUENTO_COMERCIAL, LIMITE_CREDITO, decimalAcotado, validarCondicionYMoneda } from "@/lib/clientes/comercial";
 import { leerTelefonoEntrada, validarTelefono, type CampoTelefonico } from "@/lib/fiscal/telefono";
 
 
@@ -468,6 +469,14 @@ export async function GET(request: Request) {
               c.pais_codigo,
               c.pais_nombre,
               c.gln,
+              c.telefono_ddi,
+              c.celular_ddi,
+              cc.nombre AS contacto_nombre,
+              cc.apellido AS contacto_apellido,
+              cc.telefono AS contacto_telefono,
+              cc.celular AS contacto_celular,
+              cc.telefono_ddi AS contacto_telefono_ddi,
+              cc.celular_ddi AS contacto_celular_ddi,
               zc.nombre AS zona_comercial_nombre,
               gc.nombre AS grupo_cliente_nombre,
               cp.nombre AS condicion_pago_nombre,
@@ -481,11 +490,18 @@ export async function GET(request: Request) {
             LEFT JOIN vendedores v ON v.id = c.vendedor_id
             LEFT JOIN rutas_entrega r ON r.id = c.ruta_entrega_id
             LEFT JOIN zonas_comerciales zc ON zc.id = c.zona_comercial_id
+            LEFT JOIN cliente_contactos cc ON cc.empresa_id = c.empresa_id AND cc.cliente_id = c.id AND cc.es_principal
             WHERE c.empresa_id = $1
             ORDER BY c.activo DESC, c.razon_social ASC
           `,
           [empresaId],
         );
+
+    // Listado: solo las filas de clientes (sin los once catálogos del formulario).
+    if (url.searchParams.get("modo") === "lista") {
+      return NextResponse.json({ clientes: (await clientesConsulta).rows });
+    }
+
     const [
       clientesResultado,
       gruposResultado,
@@ -653,10 +669,7 @@ export async function POST(request: Request) {
     const contactos = lista<ContactoEntrada>(cuerpo.contactos);
     const direcciones = lista<DireccionEntrada>(cuerpo.direcciones);
     const documentos = lista<DocumentoEntrada>(cuerpo.documentos);
-    const limiteCreditoTemporal = numeroOpcional(
-      cuerpo.limiteCreditoTemporal,
-      0,
-    );
+    const limiteCreditoTemporal = decimalAcotado(cuerpo.limiteCreditoTemporal, "El límite de crédito temporal", LIMITE_CREDITO);
     const fechaVencimientoCredito = fechaIso(
       cuerpo.fechaVencimientoCredito,
       "La fecha de vencimiento del crédito",
@@ -885,6 +898,7 @@ export async function POST(request: Request) {
         "canal de venta",
       ),
     ]);
+    await validarCondicionYMoneda(conexion, opcional(cuerpo.condicionPagoId), opcional(cuerpo.monedaCodigoPredeterminada, 3)?.toUpperCase() ?? null);
 
     // Innominado: un único cliente por empresa (DEC-CLI-03). La barrera definitiva es el índice de NEX-023;
     // esta comprobación da el mensaje claro y funciona también antes de aplicar la migración.
@@ -1016,7 +1030,7 @@ export async function POST(request: Request) {
         emailCopia,
         telefonoFiscal.valor.numero,
         celularFiscal.valor.numero,
-        numeroOpcional(cuerpo.limiteCredito, 0) ?? 0,
+        decimalAcotado(cuerpo.limiteCredito, "El límite de crédito", LIMITE_CREDITO) ?? 0,
         opcional(cuerpo.condicionPagoId),
         opcional(cuerpo.listaPrecioId),
         opcional(cuerpo.grupoClienteId),
@@ -1024,7 +1038,7 @@ export async function POST(request: Request) {
         opcional(cuerpo.canalVentaId),
         opcional(cuerpo.codigoExterno, 100),
         opcional(cuerpo.gln, 13),
-        numeroOpcional(cuerpo.descuentoComercialPct, 0, 100) ?? 0,
+        decimalAcotado(cuerpo.descuentoComercialPct, "El descuento comercial", DESCUENTO_COMERCIAL) ?? 0,
         limiteCreditoTemporal,
         fechaVencimientoCredito,
         bloqueadoVentas,

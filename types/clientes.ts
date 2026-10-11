@@ -16,8 +16,9 @@ export type ClienteTipoPersona =
 export type ClienteLista = {
   id: string;
   codigo: string;
-  naturaleza: ClienteNaturaleza;
-  tipoOperacion: ClienteOperacion;
+  /** "DESCONOCIDA" = código no reconocido en la base: se muestra como dato a revisar, nunca como otro valor válido. */
+  naturaleza: ClienteNaturaleza | "DESCONOCIDA";
+  tipoOperacion: ClienteOperacion | "DESCONOCIDA";
   tipoDocumento: string;
   numeroDocumento: string;
   dv: string;
@@ -28,6 +29,10 @@ export type ClienteLista = {
   telefono: string;
   celular: string;
   gln: string;
+  telefonoDdi: string;
+  celularDdi: string;
+  /** Contacto marcado como principal en la pestaña Contactos (campos vacíos si no hay). */
+  contactoPrincipal: { nombre: string; telefono: string; celular: string; telefonoDdi: string; celularDdi: string };
   limiteCredito: number;
   grupoCliente: string;
   condicionPago: string;

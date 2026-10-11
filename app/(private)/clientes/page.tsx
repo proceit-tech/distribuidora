@@ -54,7 +54,7 @@ function dinero(value: number) {
   return new Intl.NumberFormat(
     "es-PY",
     {
-      maximumFractionDigits: 0,
+      maximumFractionDigits: 4,
     },
   ).format(value);
 }
@@ -65,6 +65,13 @@ const OPERACIONES: Record<number, ClienteOperacion> = {
   3: "B2G",
   4: "B2F",
 };
+
+/** Teléfono para mostrar: "+DDI número" si se conoce el DDI (sin país guardado = registro anterior, solo el número). */
+function telefonoVisible(ddi: string, numero: string) {
+  return numero ? (ddi ? `+${ddi} ${numero}` : numero) : "";
+}
+
+const soloDigitos = (valor: string) => valor.replace(/\D/g, "");
 
 function texto(valor: unknown) {
   return typeof valor === "string"
@@ -78,12 +85,15 @@ function desdeApi(
   return {
     id: texto(fila.id),
     codigo: texto(fila.codigo),
+    // Un código desconocido nunca se sustituye por un valor válido (ni B2C ni "no contribuyente"): se marca para revisión.
     naturaleza:
       Number(fila.naturaleza_receptor) === 1
         ? "CONTRIBUYENTE"
-        : "NO_CONTRIBUYENTE",
+        : Number(fila.naturaleza_receptor) === 2
+          ? "NO_CONTRIBUYENTE"
+          : "DESCONOCIDA",
     tipoOperacion:
-      OPERACIONES[Number(fila.tipo_operacion)] ?? "B2C",
+      OPERACIONES[Number(fila.tipo_operacion)] ?? "DESCONOCIDA",
     tipoDocumento: texto(
       fila.tipo_documento,
     ),
@@ -102,6 +112,15 @@ function desdeApi(
     telefono: texto(fila.telefono),
     celular: texto(fila.celular),
     gln: texto(fila.gln),
+    telefonoDdi: texto(fila.telefono_ddi),
+    celularDdi: texto(fila.celular_ddi),
+    contactoPrincipal: {
+      nombre: [texto(fila.contacto_nombre), texto(fila.contacto_apellido)].filter(Boolean).join(" "),
+      telefono: texto(fila.contacto_telefono),
+      celular: texto(fila.contacto_celular),
+      telefonoDdi: texto(fila.contacto_telefono_ddi),
+      celularDdi: texto(fila.contacto_celular_ddi),
+    },
     limiteCredito:
       Number(fila.limite_credito) || 0,
     grupoCliente: texto(
@@ -150,14 +169,19 @@ function documento(cliente: ClienteLista) {
   )} ${cliente.numeroDocumento}`;
 }
 
-function contactoPrincipal(
-  cliente: ClienteLista,
-) {
-  return (
-    cliente.telefono ||
-    cliente.celular ||
-    "Sin teléfono"
-  );
+/** Columna "Contacto principal": el contacto marcado como principal; si no hay, los datos fiscales del cliente. */
+function contactoPrincipal(cliente: ClienteLista) {
+  const c = cliente.contactoPrincipal;
+  const telefonoContacto = telefonoVisible(c.telefonoDdi, c.telefono) || telefonoVisible(c.celularDdi, c.celular);
+
+  if (c.nombre) {
+    return { titulo: c.nombre, detalle: telefonoContacto || "Sin teléfono" };
+  }
+
+  return {
+    titulo: telefonoVisible(cliente.telefonoDdi, cliente.telefono) || telefonoVisible(cliente.celularDdi, cliente.celular) || "Sin teléfono",
+    detalle: "",
+  };
 }
 
 export default function ClientesPage() {
@@ -205,7 +229,7 @@ export default function ClientesPage() {
     async function cargar() {
       try {
         const respuesta = await fetch(
-          "/api/clientes",
+          "/api/clientes?modo=lista",
           { cache: "no-store" },
         );
         const datos =
@@ -382,7 +406,8 @@ export default function ClientesPage() {
           return true;
         }
 
-        return [
+        const principal = cliente.contactoPrincipal;
+        const campos = [
           cliente.codigo,
           cliente.razonSocial,
           cliente.nombreFantasia,
@@ -396,10 +421,18 @@ export default function ClientesPage() {
           cliente.vendedor,
           cliente.rutaEntrega,
           cliente.zonaComercial,
-        ]
-          .join(" ")
-          .toLocaleLowerCase("es")
-          .includes(term);
+          principal.nombre,
+          principal.telefono,
+          principal.celular,
+        ];
+        const digitos = soloDigitos(term);
+        // Teléfonos: se compara también solo por dígitos (con o sin DDI, espacios o guiones).
+        const numeros = [cliente.telefono, cliente.celular, principal.telefono, principal.celular].map(soloDigitos).filter(Boolean);
+
+        return (
+          campos.join(" ").toLocaleLowerCase("es").includes(term) ||
+          (digitos.length >= 3 && numeros.some((n) => n.includes(digitos)))
+        );
       },
     );
   }, [
@@ -519,9 +552,9 @@ export default function ClientesPage() {
         </article>
 
         <article className={[styles.summaryCard, styles.summaryBlue].join(" ")}>
-          <span>Crédito autorizado</span>
-          <strong>Gs. {dinero(resumo.credito)}</strong>
-          <small>Límite comercial total</small>
+          <span>Suma de límites de crédito</span>
+          <strong>{dinero(resumo.credito)}</strong>
+          <small>Moneda de los límites por definir</small>
         </article>
 
         <article className={[styles.summaryCard, styles.summaryRed].join(" ")}>
@@ -545,7 +578,7 @@ export default function ClientesPage() {
             <input
               value={busqueda}
               onChange={(event) => setBusqueda(event.target.value)}
-              placeholder="Buscar por nombre, código, RUC, GLN, vendedor..."
+              placeholder="Buscar por nombre, código, RUC, teléfono, contacto, GLN, vendedor..."
               aria-label="Buscar clientes"
             />
           </label>
@@ -701,7 +734,7 @@ export default function ClientesPage() {
                       <div className={styles.cell}>
                         <strong>{documento(cliente)}</strong>
                         <span>
-                          {cliente.tipoOperacion}
+                          {cliente.tipoOperacion === "DESCONOCIDA" ? "Operación a revisar" : cliente.tipoOperacion}
                           <i>·</i>
                           {cliente.paisNombre}
                         </span>
@@ -718,14 +751,15 @@ export default function ClientesPage() {
 
                     <td>
                       <div className={styles.cell}>
-                        <strong>{contactoPrincipal(cliente)}</strong>
+                        <strong>{contactoPrincipal(cliente).titulo}</strong>
+                        {contactoPrincipal(cliente).detalle ? <span>{contactoPrincipal(cliente).detalle}</span> : null}
                         <span className={styles.breakable}>{cliente.email || "Sin correo"}</span>
                       </div>
                     </td>
 
                     <td className={styles.numeric}>
                       <div className={styles.cell}>
-                        <strong>Gs. {dinero(cliente.limiteCredito)}</strong>
+                        <strong>{dinero(cliente.limiteCredito)}</strong>
                         <span>{cliente.condicionPago}</span>
                       </div>
                     </td>

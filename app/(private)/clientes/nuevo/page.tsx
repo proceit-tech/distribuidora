@@ -7,6 +7,8 @@ import { useRouter } from "next/navigation";
 import { calcularDvRuc, validarRucDv } from "@/lib/fiscal/calcular-dv-ruc";
 import { TelefonoPais } from "@/components/clientes/telefono-pais";
 import { validarTelefono } from "@/lib/fiscal/telefono";
+import { DESCUENTO_COMERCIAL, LIMITE_CREDITO, decimalAcotado } from "@/lib/clientes/comercial";
+import { pestanaDeErrorApi } from "@/lib/clientes/pestanas";
 import {
   NOMBRE_INNOMINADO,
   validarCamposReceptor,
@@ -295,22 +297,6 @@ const PESTANAS: Record<string, string> = {
 
 type Incidencia = { pestana: string; mensaje: string; campo?: string };
 
-// Ubica la pestaña de un error devuelto por la API (mensajes del POST de /api/clientes).
-function pestanaDeErrorApi(mensaje: string) {
-  const texto = mensaje.toLowerCase();
-  if (/contacto/.test(texto)) return "contactos";
-  if (/documento de cliente|nombre de archivo|url segura|fecha de vencimiento de un documento/.test(texto)) {
-    return "documentos";
-  }
-  if (/direcci|ubicaci|departamento|distrito|ciudad|fiscal|entrega predeterminada/.test(texto) && !/identificaci/.test(texto)) {
-    return "direcciones";
-  }
-  if (/frecuencia|días de entrega|ruta|zona|vendedor/.test(texto)) return "logistica";
-  if (/crédito|cobro|bloqueo|descuento|moneda|lista de precios|condici|canal|gln|código externo|correo de (facturación|cobranzas)/.test(texto)) {
-    return "comercial";
-  }
-  return "fiscal";
-}
 
 function valorOpcion(opcion: Opcion) {
   return opcion.id ?? String(opcion.codigo ?? "");
@@ -703,6 +689,21 @@ export default function NuevoClientePage() {
       if (!Number.isInteger(dia) || dia < 1 || dia > 31) {
         return comercial("El día preferido de cobro debe ser un número entero entre 1 y 31.", "cli-dia-cobro");
       }
+    }
+    try {
+      decimalAcotado(f.limiteCredito, "El límite de crédito", LIMITE_CREDITO);
+    } catch (errorNumerico) {
+      return comercial((errorNumerico as Error).message, "cli-limite-credito");
+    }
+    try {
+      decimalAcotado(f.limiteCreditoTemporal, "El límite de crédito temporal", LIMITE_CREDITO);
+    } catch (errorNumerico) {
+      return comercial((errorNumerico as Error).message, "cli-limite-temporal");
+    }
+    try {
+      decimalAcotado(f.descuentoComercialPct, "El descuento comercial", DESCUENTO_COMERCIAL);
+    } catch (errorNumerico) {
+      return comercial((errorNumerico as Error).message, "cli-descuento");
     }
     if (f.emailFacturacion.trim() && !FORMATO_CORREO.test(f.emailFacturacion.trim())) {
       return comercial("El correo de facturación no tiene un formato válido.", "cli-email-facturacion");
@@ -1292,7 +1293,9 @@ export default function NuevoClientePage() {
 
             <div className="clienteNuevo__grid clienteNuevo__grid--cuatro">
               <Input
-                label="Límite de crédito (Gs.)"
+                id="cli-limite-credito"
+                label="Límite de crédito"
+                step="any"
                 min="0"
                 onChange={(valor) =>
                   actualizarFormulario("limiteCredito", valor)
@@ -1301,7 +1304,9 @@ export default function NuevoClientePage() {
                 value={formulario.limiteCredito}
               />
               <Input
+                id="cli-descuento"
                 label="Descuento comercial (%)"
+                step="any"
                 max="100"
                 min="0"
                 onChange={(valor) =>
@@ -1312,7 +1317,8 @@ export default function NuevoClientePage() {
               />
               <Input
                 id="cli-limite-temporal"
-                label="Límite temporal (Gs.)"
+                label="Límite temporal"
+                step="any"
                 min="0"
                 onChange={(valor) =>
                   actualizarFormulario("limiteCreditoTemporal", valor)
