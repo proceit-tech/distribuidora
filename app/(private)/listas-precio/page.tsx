@@ -16,9 +16,13 @@ import {
   ListaPrecioTipo,
 } from "@/types/lista-precio";
 
-import styles from "./page.module.css";
+import { compararTexto, ordenarLista, siguienteOrden, type Orden } from "@/components/ui/lista-padrao/orden";
+import { ThOrdenable } from "@/components/ui/lista-padrao/th-ordenable";
+import ui from "@/components/ui/lista-padrao/lista.module.css";
 
 const PAGE_SIZE = 8;
+
+type CampoOrden = "lista" | "aplicacion" | "vigencia" | "tipo" | "estado";
 
 type EstadoFiltro =
   | "TODOS"
@@ -159,6 +163,8 @@ export default function ListasPrecioPage() {
   const [errorCarga, setErrorCarga] =
     useState("");
 
+  const [orden, setOrden] = useState<Orden<CampoOrden>>(null);
+
   useEffect(() => {
     let activo = true;
 
@@ -209,6 +215,7 @@ export default function ListasPrecioPage() {
     filtroEstado,
     filtroTipo,
     filtroMoneda,
+    orden,
   ]);
 
   useEffect(() => {
@@ -353,6 +360,30 @@ export default function ListasPrecioPage() {
     filtroMoneda,
   ]);
 
+  // Ordenación sobre el conjunto filtrado COMPLETO (toda la lista está cargada), antes de paginar.
+  const ordenados = useMemo(
+    () =>
+      ordenarLista(filtradas, orden, (campo, a, b) => {
+        switch (campo) {
+          case "lista":
+            return compararTexto(a.nombre, b.nombre);
+          case "aplicacion":
+            return compararTexto(getAplicacion(a), getAplicacion(b));
+          case "vigencia":
+            return compararTexto(a.vigenteHasta || "9999-12-31", b.vigenteHasta || "9999-12-31");
+          case "tipo":
+            return compararTexto(a.tipo, b.tipo);
+          case "estado":
+            return compararTexto(getEstadoReal(a), getEstadoReal(b));
+        }
+      }),
+    [filtradas, orden],
+  );
+
+  function cambiarOrden(campo: CampoOrden) {
+    setOrden((actual) => siguienteOrden(actual, campo));
+  }
+
   const totalPaginas =
     Math.max(
       1,
@@ -365,263 +396,111 @@ export default function ListasPrecioPage() {
   const paginaActual =
     useMemo(
       () =>
-        filtradas.slice(
+        ordenados.slice(
           (pagina - 1) *
             PAGE_SIZE,
           pagina * PAGE_SIZE,
         ),
-      [filtradas, pagina],
+    [ordenados, pagina],
     );
 
   return (
-    <section className={styles.page}>
+    <section className={ui.page}>
       {flash ? (
-        <div
-          className={styles.toast}
-          role="status"
-        >
+        <div className={ui.toast} role="status">
           <span>✓</span>
-
           <div>
-            <strong>
-              Operación realizada
-            </strong>
-            <small>
-              {flash}
-            </small>
+            <strong>Operación realizada</strong>
+            <small>{flash}</small>
           </div>
 
-          <button
-            type="button"
-            onClick={() =>
-              setFlash("")
-            }
-          >
+          <button type="button" aria-label="Cerrar mensaje" onClick={() => setFlash("")}>
             ×
           </button>
         </div>
       ) : null}
 
-      <header className={styles.hero}>
-        <div>
-          <div
-            className={
-              styles.heroMeta
-            }
-          >
-            <span
-              className={
-                styles.modulePill
-              }
-            >
-              MAESTROS
-            </span>
+      <header className={ui.topbar}>
+        <div className={ui.titleBlock}>
+          <nav className={ui.breadcrumb} aria-label="Ruta de navegación">
+            <span>Maestros</span>
+            <i aria-hidden="true">/</i>
+            <span aria-current="page">Listas de precios</span>
+          </nav>
 
-          </div>
-
-          <h1>
-            Listas de precios
-          </h1>
-
-          <p>
-            Precios por mercado,
-            cliente, grupo comercial,
-            moneda y vigencia.
-          </p>
+          <h1>Listas de precios</h1>
         </div>
 
-        <Link
-          href="/listas-precio/nuevo"
-          className={
-            styles.primaryButton
-          }
-        >
-          <span>＋</span>
+        <Link href="/listas-precio/nuevo" className={ui.primaryButton}>
+          <span aria-hidden="true">+</span>
           Nueva lista
         </Link>
       </header>
 
-      <section
-        className={
-          styles.summaryGrid
-        }
-      >
-        <article
-          className={`${styles.summaryCard} ${styles.summaryTeal}`}
-        >
-          <span>
-            LISTAS ACTIVAS
-          </span>
-          <strong>
-            {resumen.activas}
-          </strong>
-          <small>
-            Disponibles para operar
-          </small>
+      <section className={ui.summaryGrid} aria-label="Resumen de listas de precios">
+        <article className={[ui.summaryCard, ui.summaryTeal].join(" ")}>
+          <span>Listas activas</span>
+          <strong>{resumen.activas}</strong>
+          <small>Disponibles para operar</small>
         </article>
 
-        <article
-          className={`${styles.summaryCard} ${styles.summaryBlue}`}
-        >
-          <span>
-            LISTAS DE VENTA
-          </span>
-          <strong>
-            {resumen.venta}
-          </strong>
-          <small>
-            Precios comerciales
-          </small>
+        <article className={[ui.summaryCard, ui.summaryBlue].join(" ")}>
+          <span>Listas de venta</span>
+          <strong>{resumen.venta}</strong>
+          <small>Precios comerciales</small>
         </article>
 
-        <article
-          className={`${styles.summaryCard} ${styles.summaryPurple}`}
-        >
-          <span>
-            LISTAS DE COMPRA
-          </span>
-          <strong>
-            {resumen.compra}
-          </strong>
-          <small>
-            Referencias de costo
-          </small>
+        <article className={[ui.summaryCard, ui.summaryViolet].join(" ")}>
+          <span>Listas de compra</span>
+          <strong>{resumen.compra}</strong>
+          <small>Referencias de costo</small>
         </article>
 
-        <article
-          className={`${styles.summaryCard} ${styles.summaryAmber}`}
-        >
-          <span>
-            PRÓXIMAS A VENCER
-          </span>
-          <strong>
-            {
-              resumen.proximasAVencer
-            }
-          </strong>
-          <small>
-            Dentro de 30 días
-          </small>
+        <article className={[ui.summaryCard, ui.summaryAmber].join(" ")}>
+          <span>Próximas a vencer</span>
+          <strong>{resumen.proximasAVencer}</strong>
+          <small>Dentro de 30 días</small>
         </article>
       </section>
 
-      <section
-        className={
-          styles.contentCard
-        }
-      >
-        <div
-          className={
-            styles.toolbar
-          }
-        >
-          <label
-            className={
-              styles.search
-            }
-          >
-            <span>⌕</span>
+      <section className={ui.contentCard}>
+        <div className={ui.toolbar}>
+          <label className={ui.search}>
+            <span aria-hidden="true">⌕</span>
 
             <input
               value={busqueda}
-              onChange={(event) =>
-                setBusqueda(
-                  event.target.value,
-                )
-              }
+              onChange={(event) => setBusqueda(event.target.value)}
               placeholder="Buscar por código, nombre, grupo, cliente, canal..."
+              aria-label="Buscar listas de precios"
             />
           </label>
 
-          <span
-            className={
-              styles.resultCount
-            }
-          >
-            {filtradas.length} de{" "}
-            {resumen.total}
-          </span>
-        </div>
-
-        <div
-          className={
-            styles.filters
-          }
-        >
-          <label>
+          <label className={ui.filterField}>
             <span>Estado</span>
-
-            <select
-              value={filtroEstado}
-              onChange={(event) =>
-                setFiltroEstado(
-                  event.target
-                    .value as EstadoFiltro,
-                )
-              }
-            >
-              <option value="TODOS">
-                Todos
-              </option>
-              <option value="ACTIVA">
-                Activas
-              </option>
-              <option value="BORRADOR">
-                Borrador
-              </option>
-              <option value="INACTIVA">
-                Inactivas
-              </option>
-              <option value="VENCIDA">
-                Vencidas
-              </option>
+            <select value={filtroEstado} onChange={(event) => setFiltroEstado(event.target.value as EstadoFiltro)}>
+              <option value="TODOS">Todos</option>
+              <option value="ACTIVA">Activas</option>
+              <option value="BORRADOR">Borrador</option>
+              <option value="INACTIVA">Inactivas</option>
+              <option value="VENCIDA">Vencidas</option>
             </select>
           </label>
 
-          <label>
+          <label className={ui.filterField}>
             <span>Tipo</span>
-
-            <select
-              value={filtroTipo}
-              onChange={(event) =>
-                setFiltroTipo(
-                  event.target
-                    .value as TipoFiltro,
-                )
-              }
-            >
-              <option value="TODOS">
-                Todos
-              </option>
-              <option value="VENTA">
-                Venta
-              </option>
-              <option value="COMPRA">
-                Compra
-              </option>
+            <select value={filtroTipo} onChange={(event) => setFiltroTipo(event.target.value as TipoFiltro)}>
+              <option value="TODOS">Todos</option>
+              <option value="VENTA">Venta</option>
+              <option value="COMPRA">Compra</option>
             </select>
           </label>
 
-          <label>
+          <label className={ui.filterField}>
             <span>Moneda</span>
-
-            <select
-              value={filtroMoneda}
-              onChange={(event) =>
-                setFiltroMoneda(
-                  event.target
-                    .value as MonedaFiltro,
-                )
-              }
-            >
-              <option value="TODOS">
-                Todas
-              </option>
-              {Array.from(
-                new Set(
-                  listas.map((l) => l.monedaCodigo),
-                ),
-              )
+            <select value={filtroMoneda} onChange={(event) => setFiltroMoneda(event.target.value as MonedaFiltro)}>
+              <option value="TODOS">Todas</option>
+              {Array.from(new Set(listas.map((l) => l.monedaCodigo)))
                 .sort()
                 .map((m) => (
                   <option key={m} value={m}>
@@ -633,311 +512,182 @@ export default function ListasPrecioPage() {
 
           <button
             type="button"
-            className={
-              styles.clearButton
-            }
+            className={ui.clearButton}
             onClick={() => {
               setBusqueda("");
-              setFiltroEstado(
-                "TODOS",
-              );
-              setFiltroTipo(
-                "TODOS",
-              );
-              setFiltroMoneda(
-                "TODOS",
-              );
+              setFiltroEstado("TODOS");
+              setFiltroTipo("TODOS");
+              setFiltroMoneda("TODOS");
             }}
           >
             Limpiar filtros
           </button>
+
+          <span className={ui.resultCount} aria-live="polite">
+            {filtradas.length} de {resumen.total}
+          </span>
         </div>
 
-        <div
-          className={
-            styles.listHeader
-          }
-        >
-          <span>
-            Lista de precios
-          </span>
-          <span>
-            Aplicación
-          </span>
-          <span>
-            Condiciones
-          </span>
-          <span />
-        </div>
+        <div className={ui.tableScroll}>
+          <table className={ui.table}>
+            <thead>
+              <tr>
+                <ThOrdenable titulo="Lista de precios" campo="lista" orden={orden} onOrden={cambiarOrden} />
+                <ThOrdenable titulo="Aplicación" campo="aplicacion" orden={orden} onOrden={cambiarOrden} />
+                <ThOrdenable titulo="Condiciones" campo="vigencia" orden={orden} onOrden={cambiarOrden} />
+                <ThOrdenable titulo="Tipo" campo="tipo" orden={orden} onOrden={cambiarOrden} />
+                <ThOrdenable titulo="Estado" campo="estado" orden={orden} onOrden={cambiarOrden} />
+                <ThOrdenable titulo="Acciones" alinear="derecha" />
+              </tr>
+            </thead>
 
-        <div className={styles.list}>
-          {paginaActual.map(
-            (lista) => {
-              const estado =
-                getEstadoReal(
-                  lista,
-                );
+            <tbody>
+              {paginaActual.map((lista) => {
+                const estado = getEstadoReal(lista);
 
-              return (
-                <article
-                  key={lista.id}
-                  className={
-                    styles.priceRow
-                  }
-                >
-                  <div
-                    className={
-                      styles.priceMain
-                    }
-                  >
-                    <div
-                      className={
-                        styles.avatar
-                      }
-                    >
-                      {lista.tipo ===
-                      "VENTA"
-                        ? "$"
-                        : "C"}
-                    </div>
+                return (
+                  <tr key={lista.id} className={ui.row}>
+                    <td>
+                      <div className={ui.clientMain}>
+                        <div className={ui.avatar} aria-hidden="true">
+                          {lista.tipo === "VENTA" ? "$" : "C"}
+                        </div>
 
-                    <div
-                      className={
-                        styles.priceIdentity
-                      }
-                    >
-                      <div
-                        className={
-                          styles.identityTop
-                        }
-                      >
-                        <strong>
-                          {lista.nombre}
-                        </strong>
+                        <div className={ui.clientIdentity}>
+                          <Link href={`/listas-precio/${lista.id}`} className={ui.clientName}>
+                            {lista.nombre}
+                          </Link>
+                          <span className={ui.code}>
+                            {lista.codigo} · {lista.descripcion || "Sin descripción"}
+                          </span>
+                          <span className={ui.code}>
+                            {lista.productosCount} productos · {formatMoneda(lista.monedaCodigo)} ·{" "}
+                            {lista.incluyeIva ? "IVA incluido" : "IVA no incluido"}
+                          </span>
+                        </div>
+                      </div>
+                    </td>
 
-                        <span
-                          className={
-                            styles.code
-                          }
-                        >
-                          {lista.codigo}
+                    <td>
+                      <div className={ui.cell}>
+                        <strong>{getAplicacion(lista)}</strong>
+                        <span>
+                          {lista.listaBaseNombre
+                            ? `Base: ${lista.listaBaseCodigo} · ${lista.listaBaseNombre}`
+                            : "Sin lista base"}
+                        </span>
+                        <span>Prioridad {lista.prioridad}</span>
+                      </div>
+                    </td>
+
+                    <td>
+                      <div className={ui.cell}>
+                        <strong>{getModoLabel(lista)}</strong>
+                        <span>
+                          {formatearFecha(lista.vigenteDesde)} → {formatearFecha(lista.vigenteHasta)}
                         </span>
                       </div>
+                    </td>
 
-                      <span
-                        className={
-                          styles.description
-                        }
-                      >
-                        {lista.descripcion ||
-                          "Sin descripción"}
+                    <td>
+                      <span className={lista.tipo === "VENTA" ? ui.statusInfo : ui.statusPurple}>
+                        {lista.tipo === "VENTA" ? "Venta" : "Compra"}
                       </span>
+                    </td>
 
-                      <div
-                        className={
-                          styles.metaLine
-                        }
-                      >
-                        <span>
-                          {lista.productosCount}{" "}
-                          productos
-                        </span>
-
-                        <span>
-                          {formatMoneda(
-                            lista.monedaCodigo,
-                          )}
-                        </span>
-
-                        <span>
-                          {lista.incluyeIva
-                            ? "IVA incluido"
-                            : "IVA no incluido"}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div
-                    className={
-                      styles.application
-                    }
-                  >
-                    <strong>
-                      {getAplicacion(
-                        lista,
-                      )}
-                    </strong>
-
-                    <span>
-                      {lista.listaBaseNombre
-                        ? `Base: ${lista.listaBaseCodigo} · ${lista.listaBaseNombre}`
-                        : "Sin lista base"}
-                    </span>
-
-                    <small>
-                      Prioridad{" "}
-                      {lista.prioridad}
-                    </small>
-                  </div>
-
-                  <div
-                    className={
-                      styles.conditions
-                    }
-                  >
-                    <strong>
-                      {getModoLabel(
-                        lista,
-                      )}
-                    </strong>
-
-                    <span>
-                      {formatearFecha(
-                        lista.vigenteDesde,
-                      )}{" "}
-                      →{" "}
-                      {formatearFecha(
-                        lista.vigenteHasta,
-                      )}
-                    </span>
-
-                    <div
-                      className={
-                        styles.statuses
-                      }
-                    >
+                    <td>
                       <span
                         className={
-                          lista.tipo ===
-                          "VENTA"
-                            ? styles.statusSale
-                            : styles.statusPurchase
+                          estado === "ACTIVA"
+                            ? ui.statusActive
+                            : estado === "VENCIDA"
+                              ? ui.statusDanger
+                              : estado === "BORRADOR"
+                                ? ui.statusWarning
+                                : ui.statusInactive
                         }
                       >
-                        {lista.tipo ===
-                        "VENTA"
-                          ? "Venta"
-                          : "Compra"}
-                      </span>
-
-                      <span
-                        className={
-                          estado ===
-                          "ACTIVA"
-                            ? styles.statusActive
-                            : estado ===
-                                "VENCIDA"
-                              ? styles.statusExpired
-                              : estado ===
-                                  "BORRADOR"
-                                ? styles.statusDraft
-                                : styles.statusInactive
-                        }
-                      >
-                        {estado ===
-                        "ACTIVA"
+                        {estado === "ACTIVA"
                           ? "Activa"
-                          : estado ===
-                              "VENCIDA"
+                          : estado === "VENCIDA"
                             ? "Vencida"
-                            : estado ===
-                                "BORRADOR"
+                            : estado === "BORRADOR"
                               ? "Borrador"
                               : "Inactiva"}
                       </span>
+                    </td>
+
+                    <td className={ui.actionsCell}>
+                      <Link
+                        href={`/listas-precio/${lista.id}`}
+                        className={ui.detailButton}
+                        aria-label={`Ver lista ${lista.nombre}`}
+                      >
+                        Ver lista
+                        <span aria-hidden="true">›</span>
+                      </Link>
+                    </td>
+                  </tr>
+                );
+              })}
+
+              {paginaActual.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className={ui.emptyCell}>
+                    <div className={ui.empty} role={errorCarga ? "alert" : undefined}>
+                      <strong>
+                        {cargando
+                          ? "Cargando listas de precios..."
+                          : errorCarga ||
+                            (listas.length === 0
+                              ? "Aún no hay listas de precios registradas"
+                              : "No se encontraron listas de precios")}
+                      </strong>
+                      {!cargando && !errorCarga ? (
+                        <span>
+                          {listas.length === 0
+                            ? "Cree su primera lista para comenzar a operar."
+                            : "Modifique los filtros o cree una nueva lista."}
+                        </span>
+                      ) : null}
+                      {!cargando && !errorCarga && listas.length === 0 ? (
+                        <Link href="/listas-precio/nuevo" className={ui.emptyAction}>
+                          + Nueva lista
+                        </Link>
+                      ) : null}
                     </div>
-                  </div>
-
-                  <Link
-                    href={`/listas-precio/${lista.id}`}
-                    className={
-                      styles.detailButton
-                    }
-                  >
-                    Ver lista
-                    <span>›</span>
-                  </Link>
-                </article>
-              );
-            },
-          )}
-
-          {paginaActual.length ===
-          0 ? (
-            <div
-              className={
-                styles.empty
-              }
-            >
-              <strong>
-                {cargando
-                  ? "Cargando listas de precios..."
-                  : errorCarga ||
-                    "No se encontraron listas de precios."}
-              </strong>
-
-              {!cargando && !errorCarga ? (
-                <span>
-                  Modifique los filtros
-                  o cree una nueva lista.
-                </span>
+                  </td>
+                </tr>
               ) : null}
-            </div>
-          ) : null}
+            </tbody>
+          </table>
         </div>
 
-        <footer
-          className={
-            styles.pagination
-          }
-        >
+        <footer className={ui.pagination}>
           <span>
-            Mostrando{" "}
-            {filtradas.length === 0
-              ? 0
-              : (pagina - 1) *
-                  PAGE_SIZE +
-                1}
-            –
-            {Math.min(
-              pagina * PAGE_SIZE,
-              filtradas.length,
-            )}{" "}
-            de {filtradas.length}
+            Mostrando {filtradas.length === 0 ? 0 : (pagina - 1) * PAGE_SIZE + 1}–
+            {Math.min(pagina * PAGE_SIZE, filtradas.length)} de {filtradas.length}
           </span>
 
           <div>
             <button
               type="button"
+              aria-label="Página anterior"
               disabled={pagina === 1}
-              onClick={() =>
-                setPagina(
-                  (actual) =>
-                    actual - 1,
-                )
-              }
+              onClick={() => setPagina((actual) => actual - 1)}
             >
               ‹
             </button>
 
             <strong>
-              {pagina} /{" "}
-              {totalPaginas}
+              {pagina} / {totalPaginas}
             </strong>
 
             <button
               type="button"
-              disabled={
-                pagina ===
-                totalPaginas
-              }
-              onClick={() =>
-                setPagina(
-                  (actual) =>
-                    actual + 1,
-                )
-              }
+              aria-label="Página siguiente"
+              disabled={pagina === totalPaginas}
+              onClick={() => setPagina((actual) => actual + 1)}
             >
               ›
             </button>

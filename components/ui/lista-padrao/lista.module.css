@@ -601,6 +601,19 @@
   background: #edf4ff;
 }
 
+.statusPurple {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0 9px;
+  color: #5d46b6;
+  background: #f0ecfd;
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
 .mono {
   font-variant-numeric: tabular-nums;
 }
