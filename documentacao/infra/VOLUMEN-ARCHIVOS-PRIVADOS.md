@@ -2,6 +2,32 @@
 
 **Estado:** PREPARADO EN GIT, **NO EJECUTADO**. Ninguna IA accede a la VM, a Docker ni crea el volumen: los pasos siguientes los ejecuta el responsable humano, con revisión, tras publicar el código. Decisión del responsable (2026-10-11): archivos de documentos en **almacenamiento privado dentro de la propia VM**, en **volumen persistente separado**, fuera de `public/`, sin URL pública, con carga y descarga autenticadas y aisladas por `empresa_id`.
 
+## Configuración real de Docker Compose — confirmada 2026-10-11
+
+Fuente: salida de `docker inspect nexit-app` proporcionada por el responsable de la VM; no inferir nombres de los archivos por su presencia en el directorio.
+
+| Elemento | Valor confirmado |
+|---|---|
+| Proyecto Compose | `nexit` |
+| Servicio Compose de la aplicación | `app` (**no** `nexit-app`) |
+| Contenedor de la aplicación | `nexit-app` |
+| Primer archivo Compose | `/srv/stacks/distribuidora/compose.yml` |
+| Segundo archivo Compose | `/srv/stacks/distribuidora/app.compose.yml` |
+| Directorio del stack | `/srv/stacks/distribuidora` |
+| Contenedor PostgreSQL | `nexit-db` |
+| Banco / usuario informado por el entorno | `nexit` / `nexit_app` |
+
+Comando de referencia para operar Compose en este entorno (primero inspeccionar `config` antes de cualquier recreación):
+
+```bash
+cd /srv/stacks/distribuidora
+docker compose -p nexit -f compose.yml -f app.compose.yml config --services
+```
+
+El repositorio GitHub contiene documentación y código de la aplicación, pero **no contiene los archivos Compose reales ni los archivos .env del stack de la VM**. Se deben inspeccionar los Compose efectivos antes de editar, sin exponer credenciales de los archivos de entorno. Nunca volver a solicitar al responsable que descubra de cero los nombres de proyecto, servicio o archivos ya confirmados; volver a inspeccionar solo si la infraestructura cambia.
+
+Estado informado 2026-10-11: migrations `NEX-001` hasta `NEX-032` registradas en `schema_migrations` (`32` filas); contenedor `nexit-app` en ejecución con imagen `nexit-app:teste`, Next.js 16.2.6. Esto no certifica homologación funcional ni confirma que el volumen de archivos esté montado.
+
 ## Qué hace el código
 
 - La aplicación guarda los archivos en el directorio indicado por la variable `NEXIT_ARCHIVOS_DIR`. **No existe valor por defecto**: si la variable falta, la carga y la descarga responden 503 («almacenamiento no configurado»). Así nunca se escribe dentro del contenedor (que se perdería al recrearlo) ni dentro de `public/`.
@@ -22,7 +48,7 @@
 
 ## Pasos para el responsable (cuando decida aplicarlo)
 
-Valores a confirmar contra los archivos reales de `/srv/stacks/distribuidora` (no versionados) antes de ejecutar; nada de lo siguiente se aplicó.
+Configuración real de Docker Compose identificada mediante `docker inspect` por el responsable el 2026-10-11 (archivos de ejecución fuera del Git). El montaje privado todavía no está confirmado como aplicado; validar configuración efectiva antes de reiniciar.
 
 1. **Copia de seguridad previa** de la base y de la configuración del stack.
 2. **Directorio del volumen en el host** (ejemplo, ajustar a la convención de la VM):
@@ -31,10 +57,10 @@ Valores a confirmar contra los archivos reales de `/srv/stacks/distribuidora` (n
    sudo chown 1001:1001 /srv/stacks/distribuidora/data/nexit-archivos
    sudo chmod 700 /srv/stacks/distribuidora/data/nexit-archivos
    ```
-3. **Compose** — en el servicio `nexit-app` (archivo del stack, fuera del Git), montar el directorio y definir la variable:
+3. **Compose** — en el servicio `app` (contenedor `nexit-app`; archivos del stack fuera del Git), montar el directorio y definir la variable:
    ```yaml
    services:
-     nexit-app:
+     app:
        environment:
          NEXIT_ARCHIVOS_DIR: /data/archivos
        volumes:
