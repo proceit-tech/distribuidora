@@ -52,6 +52,20 @@ export async function contextoCargaInicial(clienteId: string, empresaId: string,
   return r.rowCount === 1 ? { esCreador: r.rows[0].es_creador === true, cargaInicialAbierta: r.rows[0].abierta === true } : null;
 }
 
+/**
+ * Igual que `contextoCargaInicial` pero DENTRO de la transacción y con bloqueo de la fila del cliente (FOR UPDATE, tenant + creador + indicador).
+ * Se serializa con el cierre de la carga inicial (finalizar / edición del cliente, que hacen UPDATE de la misma fila): tras obtener el bloqueo
+ * la lectura ya ve el estado confirmado, de modo que quien solo tiene CLIENTES.CREAR no puede grabar después del cierre (F-CLI-10-01).
+ */
+export async function bloquearContextoCargaInicial(conexion: PoolClient, clienteId: string, empresaId: string, usuarioId: string): Promise<ContextoCargaInicial | null> {
+  const r = await conexion.query(
+    "SELECT (creado_por IS NOT DISTINCT FROM $3::uuid AND creado_por IS NOT NULL) AS es_creador, carga_documentos_inicial_abierta AS abierta FROM clientes WHERE id = $1 AND empresa_id = $2 FOR UPDATE",
+    [clienteId, empresaId, usuarioId],
+  );
+
+  return r.rowCount === 1 ? { esCreador: r.rows[0].es_creador === true, cargaInicialAbierta: r.rows[0].abierta === true } : null;
+}
+
 /** Lee el multipart limitando el tamaño ANTES de cargarlo en memoria (Content-Length) y de nuevo al validar el archivo. */
 export async function leerFormulario(request: Request): Promise<FormData> {
   const largo = Number(request.headers.get("content-length") ?? "0");

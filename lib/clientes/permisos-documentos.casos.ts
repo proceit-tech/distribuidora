@@ -100,6 +100,19 @@ export function verificarCasosPermisosDocumentos(): string[] {
   if (!/creado_por,\s*carga_documentos_inicial_abierta/.test(alta)) fallos.push("POST /api/clientes debe registrar creado_por y abrir carga_documentos_inicial_abierta");
   if (!/carga_documentos_inicial_abierta = false/.test(leer("app/api/clientes/[id]/route.ts"))) fallos.push("PUT /api/clientes/{id} debe cerrar la carga inicial");
   if (!leer("app/api/clientes/[id]/documentos/route.ts").includes('exigir("CARGAR", auth.permisos, estadoCarga)')) fallos.push("POST de documentos debe decidir con el contexto de creación");
+  // F-CLI-10-01: la autorización se REVALIDA dentro de la transacción, bajo bloqueo de la fila del cliente
+  const postDocs = leer("app/api/clientes/[id]/documentos/route.ts");
+  const dentro = postDocs.slice(postDocs.indexOf("await conTransaccion("), postDocs.indexOf("INSERT INTO cliente_documentos\n"));
+  if (!/bloquearContextoCargaInicial\(c, id, empresaId, usuarioId\)/.test(dentro)) fallos.push("F-CLI-10-01: el POST debe bloquear y releer el contexto dentro de la transacción");
+  if (!/decidirAccesoDocumento\("CARGAR", auth\.permisos, bloqueado\)/.test(dentro)) fallos.push("F-CLI-10-01: el POST debe decidir de nuevo con el contexto bloqueado antes del INSERT");
+  if (!/FOR UPDATE/.test(leer("lib/clientes/documentos-http.ts").slice(leer("lib/clientes/documentos-http.ts").indexOf("bloquearContextoCargaInicial")))) fallos.push("F-CLI-10-01: la relectura debe usar FOR UPDATE sobre clientes (empresa + creador + indicador)");
+  if (!/empresa_id = \$2 FOR UPDATE/.test(leer("lib/clientes/documentos-http.ts"))) fallos.push("F-CLI-10-01: el bloqueo debe filtrar por empresa_id de la sesión");
+  if (!/typeof documentoId !== "string"[\s\S]*?documentoId\.estado/.test(postDocs)) fallos.push("F-CLI-10-01: un rechazo bajo bloqueo debe responder con su estado sin registrar nada");
+  // Carrera simulada: la comprobación previa vio la carga ABIERTA, pero al obtener el bloqueo ya estaba CERRADA ⇒ solo CREAR no graba; EDITAR sí
+  esperar("F-CLI-10-01: previa abierta, bajo bloqueo cerrada, solo CREAR", permitido("CARGAR", soloCrear, CTX(true, false)), false);
+  esperar("F-CLI-10-01: previa abierta, bajo bloqueo abierta, solo CREAR", permitido("CARGAR", soloCrear, CTX(true, true)), true);
+  esperar("F-CLI-10-01: bajo bloqueo cerrada, con EDITAR", permitido("CARGAR", P(false, true, false), CTX(false, false)), true);
+  esperar("F-CLI-10-01: bajo bloqueo, cliente desaparecido/otra empresa", permitido("CARGAR", soloCrear, null), false);
 
   // F-CLI-09-04: ningún identificador local repite el parámetro `contexto` de las rutas
   for (const ruta of ["app/api/clientes/[id]/documentos/route.ts", "app/api/clientes/[id]/documentos/[docId]/route.ts", "app/api/clientes/[id]/documentos/finalizar/route.ts"]) {

@@ -2,9 +2,11 @@ import { NextResponse } from "next/server";
 
 import { borrarArchivo, guardarArchivo, nuevaClave, validarArchivo } from "@/lib/almacenamiento/archivos-privados";
 import { validarMetadatosDocumento } from "@/lib/clientes/documentos";
+import { decidirAccesoDocumento } from "@/lib/clientes/permisos-documentos";
 import {
   UUID,
   autorizar,
+  bloquearContextoCargaInicial,
   clienteNoEncontrado,
   conTransaccion,
   contextoCargaInicial,
@@ -64,6 +66,16 @@ export async function POST(request: Request, contexto: Contexto) {
     await guardarArchivo(clave, validado.buffer);
 
     const documentoId = await conTransaccion(async (c) => {
+      // F-CLI-10-01: revalidar bajo bloqueo de la fila del cliente (serializa con el cierre de la carga inicial y con la edición).
+      const bloqueado = await bloquearContextoCargaInicial(c, id, empresaId, usuarioId);
+
+      if (bloqueado === null) return { rechazo: "Cliente no encontrado.", estado: 404 };
+
+      const decision = decidirAccesoDocumento("CARGAR", auth.permisos, bloqueado);
+
+      if (!decision.permitido) return { rechazo: decision.mensaje, estado: decision.estado };
+
+      const cargaInicial = decision.cargaInicial;
       const r = await c.query(
         `INSERT INTO cliente_documentos
            (empresa_id, cliente_id, tipo, nombre_archivo, url_archivo, almacen_clave, tamano_bytes, tipo_mime, sha256,
@@ -87,11 +99,18 @@ export async function POST(request: Request, contexto: Contexto) {
         accion: "CARGA",
         version: 1,
         usuarioId,
-        detalle: { nombreArchivo: validado.nombre, tamanoBytes: validado.tamano, sha256: validado.sha256, cargaInicial: estadoCarga.esCreador && estadoCarga.cargaInicialAbierta && !auth.permisos.editar },
+        detalle: { nombreArchivo: validado.nombre, tamanoBytes: validado.tamano, sha256: validado.sha256, cargaInicial },
       });
 
       return nuevoId;
     });
+
+    if (typeof documentoId !== "string") {
+      // Rechazado bajo bloqueo: el archivo nuevo nunca se registró; solo ese archivo se limpia.
+      if (clave) await borrarArchivo(clave).catch(() => undefined);
+
+      return NextResponse.json({ error: documentoId.rechazo }, { status: documentoId.estado });
+    }
 
     registrado = true;
 
