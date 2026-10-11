@@ -15,9 +15,13 @@ import {
   StockPropiedad,
 } from "@/types/stock";
 
-import styles from "./page.module.css";
+import { compararTexto, ordenarLista, siguienteOrden, type Orden } from "@/components/ui/lista-padrao/orden";
+import { ThOrdenable } from "@/components/ui/lista-padrao/th-ordenable";
+import ui from "@/components/ui/lista-padrao/lista.module.css";
 
 const PAGE_SIZE = 25;
+
+type CampoOrden = "producto" | "clasificacion" | "disponible" | "costo";
 
 type NivelFiltro =
   | "TODOS"
@@ -177,6 +181,8 @@ export default function StockPage() {
   const [errorCarga, setErrorCarga] =
     useState("");
 
+  const [orden, setOrden] = useState<Orden<CampoOrden>>(null);
+
   useEffect(() => {
     let activo = true;
 
@@ -213,6 +219,7 @@ export default function StockPage() {
     linea,
     procedencia,
     deposito,
+    orden,
   ]);
 
   const marcas = useMemo(
@@ -451,6 +458,28 @@ export default function StockPage() {
     deposito,
   ]);
 
+  // Ordenación sobre el conjunto filtrado COMPLETO (toda la lista está cargada), antes de paginar.
+  const ordenados = useMemo(
+    () =>
+      ordenarLista(filtrados, orden, (campo, a, b) => {
+        switch (campo) {
+          case "producto":
+            return compararTexto(a.productoDescripcion, b.productoDescripcion);
+          case "clasificacion":
+            return compararTexto(`${a.familia} ${a.linea}`, `${b.familia} ${b.linea}`);
+          case "disponible":
+            return Number(a.disponible || 0) - Number(b.disponible || 0);
+          case "costo":
+            return costoUnitario(a) - costoUnitario(b);
+        }
+      }),
+    [filtrados, orden],
+  );
+
+  function cambiarOrden(campo: CampoOrden) {
+    setOrden((actual) => siguienteOrden(actual, campo));
+  }
+
   const totalPaginas = Math.max(
     1,
     Math.ceil(
@@ -461,11 +490,11 @@ export default function StockPage() {
 
   const paginaActual = useMemo(
     () =>
-      filtrados.slice(
+      ordenados.slice(
         (pagina - 1) * PAGE_SIZE,
         pagina * PAGE_SIZE,
       ),
-    [filtrados, pagina],
+    [ordenados, pagina],
   );
 
   function limpiar() {
@@ -771,754 +800,340 @@ export default function StockPage() {
   }
 
   return (
-    <section className={styles.page}>
-      <header className={styles.hero}>
-        <div>
-          <div className={styles.heroMeta}>
-            <span
-              className={
-                styles.modulePill
-              }
-            >
-              INVENTARIO
-            </span>
-          </div>
+    <section className={ui.page}>
+      <header className={ui.topbar}>
+        <div className={ui.titleBlock}>
+          <nav className={ui.breadcrumb} aria-label="Ruta de navegación">
+            <span>Inventario</span>
+            <i aria-hidden="true">/</i>
+            <span aria-current="page">Stock</span>
+          </nav>
 
           <h1>Stock</h1>
-
-          <p>
-            Inventario consolidado por
-            producto, clasificación y
-            procedencia.
-          </p>
         </div>
 
-        <div
-          className={
-            styles.heroActions
-          }
-        >
-          <button
-            type="button"
-            className={
-              styles.secondaryButton
-            }
-            onClick={
-              exportarListadoExcel
-            }
-          >
+        <div className={ui.actionsGroup}>
+          <button type="button" className={ui.secondaryButton} onClick={exportarListadoExcel}>
             Exportar Excel
           </button>
-
-          <button
-            type="button"
-            className={
-              styles.secondaryButton
-            }
-            onClick={
-              exportarValorizadoMarca
-            }
-          >
+          <button type="button" className={ui.secondaryButton} onClick={exportarValorizadoMarca}>
             Valorizado por marca
           </button>
-
-          <Link
-            href="/movimientos"
-            className={
-              styles.secondaryButton
-            }
-          >
+          <Link href="/movimientos" className={ui.secondaryButton}>
             Movimientos
           </Link>
-
-          <Link
-            href="/reposicion"
-            className={
-              styles.primaryButton
-            }
-          >
+          <Link href="/reposicion" className={ui.primaryButton}>
             Reposición
           </Link>
         </div>
       </header>
 
-      <section
-        className={
-          styles.summaryGrid
-        }
-      >
-        <article
-          className={`${styles.summaryCard} ${styles.summaryTeal}`}
-        >
+      <section className={ui.summaryGrid} aria-label="Resumen de stock">
+        <article className={[ui.summaryCard, ui.summaryTeal].join(" ")}>
           <span>SKU</span>
-
-          <strong>
-            {resumen.sku}
-          </strong>
-
-          <small>
-            Productos inventariados
-          </small>
+          <strong>{resumen.sku}</strong>
+          <small>Productos inventariados</small>
         </article>
 
-        <article
-          className={`${styles.summaryCard} ${styles.summaryBlue}`}
-        >
-          <span>
-            UNIDADES DISPONIBLES
-          </span>
-
-          <strong>
-            {new Intl.NumberFormat(
-              "es-PY",
-              {
-                maximumFractionDigits: 2,
-              },
-            ).format(
-              resumen.disponible,
-            )}
-          </strong>
-
-          <small>
-            Stock disponible
-          </small>
+        <article className={[ui.summaryCard, ui.summaryBlue].join(" ")}>
+          <span>Unidades disponibles</span>
+          <strong>{new Intl.NumberFormat("es-PY", { maximumFractionDigits: 2 }).format(resumen.disponible)}</strong>
+          <small>Stock disponible</small>
         </article>
 
-        <article
-          className={`${styles.summaryCard} ${styles.summaryAmber}`}
-        >
-          <span>
-            STOCK BAJO
-          </span>
-
-          <strong>
-            {resumen.stockBajo}
-          </strong>
-
-          <small>
-            Debajo del mínimo
-          </small>
+        <article className={[ui.summaryCard, ui.summaryAmber].join(" ")}>
+          <span>Stock bajo</span>
+          <strong>{resumen.stockBajo}</strong>
+          <small>Debajo del mínimo</small>
         </article>
 
-        <article
-          className={`${styles.summaryCard} ${styles.summaryRed}`}
-        >
-          <span>
-            SIN STOCK
-          </span>
-
-          <strong>
-            {resumen.sinStock}
-          </strong>
-
-          <small>
-            Saldo disponible cero
-          </small>
+        <article className={[ui.summaryCard, ui.summaryRed].join(" ")}>
+          <span>Sin stock</span>
+          <strong>{resumen.sinStock}</strong>
+          <small>Saldo disponible cero</small>
         </article>
 
-        <article
-          className={`${styles.summaryCard} ${styles.summaryPurple}`}
-        >
-          <span>
-            VALOR A COSTO
-          </span>
-
-          <strong>
-            {money(
-              resumen.valorCosto,
-            )}
-          </strong>
-
-          <small>
-            Costo promedio de inventario
-          </small>
+        <article className={[ui.summaryCard, ui.summaryViolet].join(" ")}>
+          <span>Valor a costo</span>
+          <strong>{money(resumen.valorCosto)}</strong>
+          <small>Costo promedio de inventario</small>
         </article>
 
-        <article
-          className={`${styles.summaryCard} ${styles.summaryBlue}`}
-        >
-          <span>
-            VALOR VENTA REFERENCIA
-          </span>
-
-          <strong>
-            {money(
-              resumen.valorVenta,
-            )}
-          </strong>
-
-          <small>
-            Precio de la lista de referencia
-          </small>
+        <article className={[ui.summaryCard, ui.summaryBlue].join(" ")}>
+          <span>Valor venta referencia</span>
+          <strong>{money(resumen.valorVenta)}</strong>
+          <small>Precio de la lista de referencia</small>
         </article>
       </section>
 
-      <section
-        className={
-          styles.contentCard
-        }
-      >
-        <div
-          className={
-            styles.toolbar
-          }
-        >
-          <label
-            className={
-              styles.search
-            }
-          >
-            <span>⌕</span>
+      <section className={ui.contentCard}>
+        <div className={ui.toolbar}>
+          <label className={ui.search}>
+            <span aria-hidden="true">⌕</span>
 
             <input
               value={busqueda}
-              onChange={(event) =>
-                setBusqueda(
-                  event.target.value,
-                )
-              }
+              onChange={(event) => setBusqueda(event.target.value)}
               placeholder="Buscar por código, código inventario, producto, marca, familia, línea..."
+              aria-label="Buscar en el stock"
             />
           </label>
 
-          <span
-            className={
-              styles.resultCount
-            }
-          >
+          <label className={ui.filterField}>
+            <span>Nivel</span>
+            <select value={nivel} onChange={(event) => setNivel(event.target.value as NivelFiltro)}>
+              <option value="TODOS">Todos</option>
+              <option value="NORMAL">Normal</option>
+              <option value="BAJO">Stock bajo</option>
+              <option value="SIN_STOCK">Sin stock</option>
+              <option value="SOBRESTOCK">Sobrestock</option>
+            </select>
+          </label>
+
+          <label className={ui.filterField}>
+            <span>Marca</span>
+            <select value={marca} onChange={(event) => setMarca(event.target.value)}>
+              <option value="TODAS">Todas</option>
+              {marcas.map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className={ui.filterField}>
+            <span>Familia</span>
+            <select value={familia} onChange={(event) => setFamilia(event.target.value)}>
+              <option value="TODAS">Todas</option>
+              {familias.map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className={ui.filterField}>
+            <span>Línea</span>
+            <select value={linea} onChange={(event) => setLinea(event.target.value)}>
+              <option value="TODAS">Todas</option>
+              {lineas.map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className={ui.filterField}>
+            <span>Procedencia</span>
+            <select value={procedencia} onChange={(event) => setProcedencia(event.target.value)}>
+              <option value="TODAS">Todas</option>
+              {procedencias.map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className={ui.filterField}>
+            <span>Propiedad</span>
+            <select value={propiedad} onChange={(event) => setPropiedad(event.target.value as PropiedadFiltro)}>
+              <option value="TODOS">Todos</option>
+              <option value="PROPIO">Propio</option>
+              <option value="TERCERO">Tercero</option>
+            </select>
+          </label>
+
+          <label className={ui.filterField}>
+            <span>Depósito</span>
+            <select value={deposito} onChange={(event) => setDeposito(event.target.value)}>
+              <option value="TODOS">Todos</option>
+              {depositos.map(([id, nombre]) => (
+                <option key={id} value={id}>
+                  {nombre}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <button type="button" className={ui.clearButton} onClick={limpiar}>
+            Limpiar filtros
+          </button>
+
+          <span className={ui.resultCount} aria-live="polite">
             {filtrados.length} productos
           </span>
         </div>
 
-        <div
-          className={
-            styles.filters
-          }
-        >
-          <label>
-            <span>Nivel</span>
+        <div className={ui.tableScroll}>
+          <table className={ui.table}>
+            <thead>
+              <tr>
+                <ThOrdenable titulo="Producto" campo="producto" orden={orden} onOrden={cambiarOrden} />
+                <ThOrdenable titulo="Clasificación" campo="clasificacion" orden={orden} onOrden={cambiarOrden} />
+                <ThOrdenable titulo="Disponibilidad" campo="disponible" orden={orden} onOrden={cambiarOrden} alinear="derecha" />
+                <ThOrdenable titulo="Costo / valor" campo="costo" orden={orden} onOrden={cambiarOrden} alinear="derecha" />
+                <ThOrdenable titulo="Acciones" alinear="derecha" />
+              </tr>
+            </thead>
 
-            <select
-              value={nivel}
-              onChange={(event) =>
-                setNivel(
-                  event.target
-                    .value as NivelFiltro,
-                )
-              }
-            >
-              <option value="TODOS">
-                Todos
-              </option>
+            <tbody>
+              {paginaActual.map((item) => (
+                <tr key={item.id} className={ui.row}>
+                  <td>
+                    <div className={ui.clientMain}>
+                      <div className={ui.avatar} aria-hidden="true">
+                        {item.productoDescripcion
+                          .split(" ")
+                          .slice(0, 2)
+                          .map((word) => word.charAt(0))
+                          .join("")}
+                      </div>
 
-              <option value="NORMAL">
-                Normal
-              </option>
+                      <div className={ui.clientIdentity}>
+                        <Link href={`/stock/${item.id}`} className={ui.clientName}>
+                          {item.productoDescripcion}
+                        </Link>
+                        <span className={ui.code}>
+                          {item.productoCodigo} · Cód. inventario: {item.productoCodigoInventario || "—"}
+                        </span>
+                        <span className={ui.code}>
+                          {item.propiedad === "TERCERO" ? `Propietario: ${item.propietarioNombre}` : "Stock propio"}
+                        </span>
+                      </div>
+                    </div>
+                  </td>
 
-              <option value="BAJO">
-                Stock bajo
-              </option>
-
-              <option value="SIN_STOCK">
-                Sin stock
-              </option>
-
-              <option value="SOBRESTOCK">
-                Sobrestock
-              </option>
-            </select>
-          </label>
-
-          <label>
-            <span>Marca</span>
-
-            <select
-              value={marca}
-              onChange={(event) =>
-                setMarca(
-                  event.target.value,
-                )
-              }
-            >
-              <option value="TODAS">
-                Todas
-              </option>
-
-              {marcas.map(
-                (value) => (
-                  <option
-                    key={value}
-                    value={value}
-                  >
-                    {value}
-                  </option>
-                ),
-              )}
-            </select>
-          </label>
-
-          <label>
-            <span>Familia</span>
-
-            <select
-              value={familia}
-              onChange={(event) =>
-                setFamilia(
-                  event.target.value,
-                )
-              }
-            >
-              <option value="TODAS">
-                Todas
-              </option>
-
-              {familias.map(
-                (value) => (
-                  <option
-                    key={value}
-                    value={value}
-                  >
-                    {value}
-                  </option>
-                ),
-              )}
-            </select>
-          </label>
-
-          <label>
-            <span>Línea</span>
-
-            <select
-              value={linea}
-              onChange={(event) =>
-                setLinea(
-                  event.target.value,
-                )
-              }
-            >
-              <option value="TODAS">
-                Todas
-              </option>
-
-              {lineas.map(
-                (value) => (
-                  <option
-                    key={value}
-                    value={value}
-                  >
-                    {value}
-                  </option>
-                ),
-              )}
-            </select>
-          </label>
-
-          <label>
-            <span>
-              Procedencia
-            </span>
-
-            <select
-              value={procedencia}
-              onChange={(event) =>
-                setProcedencia(
-                  event.target.value,
-                )
-              }
-            >
-              <option value="TODAS">
-                Todas
-              </option>
-
-              {procedencias.map(
-                (value) => (
-                  <option
-                    key={value}
-                    value={value}
-                  >
-                    {value}
-                  </option>
-                ),
-              )}
-            </select>
-          </label>
-
-          <label>
-            <span>Propiedad</span>
-
-            <select
-              value={propiedad}
-              onChange={(event) =>
-                setPropiedad(
-                  event.target
-                    .value as PropiedadFiltro,
-                )
-              }
-            >
-              <option value="TODOS">
-                Todos
-              </option>
-
-              <option value="PROPIO">
-                Propio
-              </option>
-
-              <option value="TERCERO">
-                Tercero
-              </option>
-            </select>
-          </label>
-
-          <label>
-            <span>Depósito</span>
-
-            <select
-              value={deposito}
-              onChange={(event) =>
-                setDeposito(
-                  event.target.value,
-                )
-              }
-            >
-              <option value="TODOS">
-                Todos
-              </option>
-
-              {depositos.map(
-                ([id, nombre]) => (
-                  <option
-                    key={id}
-                    value={id}
-                  >
-                    {nombre}
-                  </option>
-                ),
-              )}
-            </select>
-          </label>
-
-          <button
-            type="button"
-            className={
-              styles.clearButton
-            }
-            onClick={limpiar}
-          >
-            Limpiar
-          </button>
-        </div>
-
-        <div
-          className={
-            styles.listHeader
-          }
-        >
-          <span>Producto</span>
-          <span>
-            Clasificación
-          </span>
-          <span>
-            Disponibilidad
-          </span>
-          <span>
-            Costo / valor
-          </span>
-          <span />
-        </div>
-
-        <div className={styles.list}>
-          {paginaActual.map(
-            (item) => (
-              <article
-                key={item.id}
-                className={
-                  styles.stockRow
-                }
-              >
-                <div
-                  className={
-                    styles.productBlock
-                  }
-                >
-                  <div
-                    className={
-                      styles.avatar
-                    }
-                  >
-                    {item.productoDescripcion
-                      .split(" ")
-                      .slice(0, 2)
-                      .map((word) =>
-                        word.charAt(0),
-                      )
-                      .join("")}
-                  </div>
-
-                  <div
-                    className={
-                      styles.productIdentity
-                    }
-                  >
-                    <div
-                      className={
-                        styles.identityTop
-                      }
-                    >
-                      <strong>
-                        {
-                          item.productoDescripcion
-                        }
-                      </strong>
-
-                      <span
-                        className={
-                          styles.code
-                        }
-                      >
-                        {
-                          item.productoCodigo
-                        }
+                  <td>
+                    <div className={ui.cell}>
+                      <strong>{item.familia || "Sin familia"}</strong>
+                      <span>{item.linea || "Sin línea"}</span>
+                      <span>
+                        {item.marca || "Sin marca"} · {item.procedencia || "Sin procedencia"}
                       </span>
                     </div>
+                  </td>
 
-                    <span
-                      className={
-                        styles.inventoryCode
-                      }
+                  <td className={ui.numeric}>
+                    <div className={ui.cell}>
+                      <strong className={ui.mono}>
+                        {new Intl.NumberFormat("es-PY", { maximumFractionDigits: 2 }).format(
+                          Number(item.disponible || 0),
+                        )}{" "}
+                        {item.unidadMedidaNombre}
+                      </strong>
+                      <span>
+                        <span className={ui.statusInfo} title="Reservado">
+                          R {item.reservado}
+                        </span>{" "}
+                        <span className={ui.statusWarning} title="Cuarentena">
+                          C {item.cuarentena}
+                        </span>{" "}
+                        <span className={ui.statusPurple} title="En tránsito">
+                          T {item.transito}
+                        </span>
+                      </span>
+                      <span>
+                        <span
+                          className={
+                            item.nivel === "NORMAL"
+                              ? ui.statusActive
+                              : item.nivel === "BAJO"
+                                ? ui.statusWarning
+                                : item.nivel === "SIN_STOCK"
+                                  ? ui.statusDanger
+                                  : ui.statusInfo
+                          }
+                        >
+                          {item.nivel === "NORMAL"
+                            ? "Normal"
+                            : item.nivel === "BAJO"
+                              ? "Stock bajo"
+                              : item.nivel === "SIN_STOCK"
+                                ? "Sin stock"
+                                : "Sobrestock"}
+                        </span>
+                      </span>
+                    </div>
+                  </td>
+
+                  <td className={ui.numeric}>
+                    <div className={ui.cell}>
+                      <strong className={ui.mono}>{money(costoUnitario(item))}</strong>
+                      <span>Valor costo: {money(valorCosto(item))}</span>
+                      <span>
+                        Venta referencia:{" "}
+                        {item.precioVentaReferencia === null ? "—" : money(precioVentaReferencia(item))}
+                      </span>
+                    </div>
+                  </td>
+
+                  <td className={ui.actionsCell}>
+                    <Link
+                      href={`/stock/${item.id}`}
+                      className={ui.detailButton}
+                      aria-label={`Ver detalle de ${item.productoDescripcion}`}
                     >
-                      Código inventario:{" "}
-                      {item.productoCodigoInventario ||
-                        "—"}
-                    </span>
+                      Ver detalle
+                      <span aria-hidden="true">›</span>
+                    </Link>
+                  </td>
+                </tr>
+              ))}
 
-                    <small>
-                      {item.propiedad ===
-                      "TERCERO"
-                        ? `Propietario: ${item.propietarioNombre}`
-                        : "Stock propio"}
-                    </small>
-                  </div>
-                </div>
-
-                <div
-                  className={
-                    styles.classification
-                  }
-                >
-                  <strong>
-                    {item.familia ||
-                      "Sin familia"}
-                  </strong>
-
-                  <span>
-                    {item.linea ||
-                      "Sin línea"}
-                  </span>
-
-                  <small>
-                    {item.marca ||
-                      "Sin marca"}
-                    {" · "}
-                    {item.procedencia ||
-                      "Sin procedencia"}
-                  </small>
-                </div>
-
-                <div
-                  className={
-                    styles.availability
-                  }
-                >
-                  <strong>
-                    {new Intl.NumberFormat(
-                      "es-PY",
-                      {
-                        maximumFractionDigits: 2,
-                      },
-                    ).format(
-                      Number(
-                        item.disponible ||
-                          0,
-                      ),
-                    )}{" "}
-                    {
-                      item.unidadMedidaNombre
-                    }
-                  </strong>
-
-                  <div
-                    className={
-                      styles.stockPills
-                    }
-                  >
-                    <span
-                      className={
-                        styles.reserved
-                      }
-                    >
-                      R {item.reservado}
-                    </span>
-
-                    <span
-                      className={
-                        styles.quarantine
-                      }
-                    >
-                      C {item.cuarentena}
-                    </span>
-
-                    <span
-                      className={
-                        styles.transit
-                      }
-                    >
-                      T {item.transito}
-                    </span>
-                  </div>
-
-                  <span
-                    className={
-                      item.nivel ===
-                      "NORMAL"
-                        ? styles.statusNormal
-                        : item.nivel ===
-                            "BAJO"
-                          ? styles.statusWarning
-                          : item.nivel ===
-                              "SIN_STOCK"
-                            ? styles.statusDanger
-                            : styles.statusOver
-                    }
-                  >
-                    {item.nivel ===
-                    "NORMAL"
-                      ? "Normal"
-                      : item.nivel ===
-                          "BAJO"
-                        ? "Stock bajo"
-                        : item.nivel ===
-                            "SIN_STOCK"
-                          ? "Sin stock"
-                          : "Sobrestock"}
-                  </span>
-                </div>
-
-                <div
-                  className={
-                    styles.valueBlock
-                  }
-                >
-                  <strong>
-                    {money(
-                      costoUnitario(item),
-                    )}
-                  </strong>
-
-                  <span>
-                    Valor costo:{" "}
-                    {money(
-                      valorCosto(item),
-                    )}
-                  </span>
-
-                  <small>
-                    Venta referencia:{" "}
-                    {item.precioVentaReferencia === null
-                      ? "—"
-                      : money(
-                          precioVentaReferencia(item),
-                        )}
-                  </small>
-                </div>
-
-                <Link
-                  href={`/stock/${item.id}`}
-                  className={
-                    styles.detailButton
-                  }
-                >
-                  Ver detalle
-                  <span>›</span>
-                </Link>
-              </article>
-            ),
-          )}
-
-          {paginaActual.length ===
-          0 ? (
-            <div
-              className={
-                styles.empty
-              }
-            >
-              <strong>
-                {cargando
-                  ? "Cargando stock..."
-                  : errorCarga ||
-                    "No se encontraron productos."}
-              </strong>
-
-              {!cargando && !errorCarga ? (
-                <span>
-                  Modifique los filtros
-                  aplicados.
-                </span>
+              {paginaActual.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className={ui.emptyCell}>
+                    <div className={ui.empty} role={errorCarga ? "alert" : undefined}>
+                      <strong>
+                        {cargando
+                          ? "Cargando stock..."
+                          : errorCarga ||
+                            (stock.length === 0 ? "Aún no hay productos en el inventario" : "No se encontraron productos")}
+                      </strong>
+                      {!cargando && !errorCarga ? (
+                        <span>
+                          {stock.length === 0
+                            ? "Registre un movimiento de entrada para comenzar a operar."
+                            : "Modifique los filtros aplicados."}
+                        </span>
+                      ) : null}
+                    </div>
+                  </td>
+                </tr>
               ) : null}
-            </div>
-          ) : null}
+            </tbody>
+          </table>
         </div>
 
-        <footer
-          className={
-            styles.pagination
-          }
-        >
+        <footer className={ui.pagination}>
           <span>
-            Mostrando{" "}
-            {filtrados.length === 0
-              ? 0
-              : (pagina - 1) *
-                  PAGE_SIZE +
-                1}
-            –
-            {Math.min(
-              pagina * PAGE_SIZE,
-              filtrados.length,
-            )}{" "}
-            de {filtrados.length}
+            Mostrando {filtrados.length === 0 ? 0 : (pagina - 1) * PAGE_SIZE + 1}–
+            {Math.min(pagina * PAGE_SIZE, filtrados.length)} de {filtrados.length}
           </span>
 
           <div>
             <button
               type="button"
+              aria-label="Página anterior"
               disabled={pagina === 1}
-              onClick={() =>
-                setPagina(
-                  (actual) =>
-                    actual - 1,
-                )
-              }
+              onClick={() => setPagina((actual) => actual - 1)}
             >
               ‹
             </button>
 
             <strong>
-              {pagina} /{" "}
-              {totalPaginas}
+              {pagina} / {totalPaginas}
             </strong>
 
             <button
               type="button"
-              disabled={
-                pagina ===
-                totalPaginas
-              }
-              onClick={() =>
-                setPagina(
-                  (actual) =>
-                    actual + 1,
-                )
-              }
+              aria-label="Página siguiente"
+              disabled={pagina === totalPaginas}
+              onClick={() => setPagina((actual) => actual + 1)}
             >
               ›
             </button>
