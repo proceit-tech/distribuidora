@@ -194,3 +194,55 @@ Uma única linha de título; retirar duplicidade “ALTA DE PRODUCTO” e cartã
 ## Próxima etapa
 
 ChatGPT deve completar o confronto normativo com PDF do grupo de itens e confirmar migrations posteriores/GET/PUT antes de aprovar escopo técnico final. Claude **somente implementa**, após decisões do proprietário. As capturas originais estão na conversa e NÃO foram arquivadas no Git. Nenhuma VM/SQL/Deploy foi tocada.
+
+## 8. Auditoria normativa DNIT — grupo E8 (documento original conferido, 2026-10-11)
+
+**Fonte primária examinada diretamente:** `documentacao/referencias/sifen/NT_E_KUATIA_027_MT_V150(3).zip` (cópia também fornecida ao ChatGPT), `Manual Técnico Versión 150 - 01-2.pdf`, **páginas impressas 85–87**, seção **E8 — Campos que describen los ítems de la operación (E700–E899)**; emendas `NT_E_KUATIA_009_MT_V150.pdf` **página 1**, `NT_E_KUATIA_023_MT_V150.pdf` **página 1** e `NT_E_KUATIA_026_MT_V150.pdf` **páginas 1–2**. As NTs prevalecem onde alteram expressamente o MT. Trata-se de confronto de versão fornecida, **não certificação da normativa hoje vigente na DNIT nem de XSD completo**.
+
+| ID/Tag SIFEN | Definição efetiva no pacote | Regra normativa do DE (não necessariamente do cadastro) | Campo Nexit e desvio |
+|---|---|---|---|
+| E700 `gCamItem` | 1–999 grupos por DE (MT p.85) | Item da operação é obrigatório | Entidade do produto é mestre; linhas DE pertencem à futura emissão |
+| **E701 `dCodInt`** | **1–50** alfanuméricos (**NT009 p.1**, atualiza 1–20 MT) | Obrigatório; código não identifica produtos distintos no cadastro do emissor | `codigoSifen` limitado a **20** no NEX-007: aceita subset legal, mas **não representa todo o limite normativo**; `codigo` admite 80 e não pode ir diretamente ao XML se >50. **P0: definir fonte estável e política 1–50 antes da integração** |
+| E702 `dParAranc` | Numérico comprimento **4**, ocorrência 0–1 (MT p.85) | Opcional no grupo E8 | `partidaArancelaria` DB máx.4; além do comprimento validar **somente dígitos** quando aplicável |
+| E703 `dNCM` | Numérico **6–8**, ocorrência 0–1 (MT p.85) | Opcional no grupo E8 | `ncm` DB máx.8; rejeitar caracteres não numéricos e comprimento fora 6–8 quando informado, conforme versão fiscal; verificar necessidade aduaneira por operação |
+| **E704 `dDncpG`** | Alfanumérico **8** e **0–1**, **NT026 p.1–2** retira a exigência automática em B2G | Se código DNCP existir, preencher à esquerda com zero; a NT026 elimina a validação E704/1800 que tornava obrigatório no B2G | `dncpGeneral` até 8; **não obrigar universalmente nem exigir só por B2G** |
+| **E705 `dDncpE`** | Alfanumérico **3–4** e **0–1**, **NT026 p.1–2** elimina obrigatoriedade atrelada a E704 | Informar se existir; padding conforme NT; sem obrigatoriedade automática com E704 na NT026 | `dncpEspecifico` até 4; validar mínimo 3 quando informado |
+| E706 `dGtin` | Numérico 8,12,13,14, 0–1 (MT p.86) | Informar se mercadoria tem GTIN | `codigos[]` / `codigoBarras`; validar comprimento e checksum GS1; mapear 1 GTIN **do item** |
+| E707 `dGtinPq` | Numérico 8,12,13,14, 0–1 (MT p.86) | Informar se pacote tem GTIN | `producto_unidades.codigo_barras` e códigos GTIN_EMPAQUE; distinguir GTIN pacote de unidade |
+| **E708 `dDesProSer`** | **1–2000** alfanuméricos (**NT009 p.1** amplia 1–120 MT) | Descrição obrigatória do produto/serviço no DE | `descripcionFactura` tem teto **120** DDL (subset conservador), não representa limite SIFEN; decisão de ampliar 2000 ou manter limite empresarial menor; **não declarar 120 como máximo legal atual** |
+| E709 `cUniMed` | Numérico **1–5**, obrigatório, MT p.86 | Código da **Tabela 5** da unidade; B2G pode referir dados WS DNCP | `unidadMedidaId` é UUID, **não enviar UUID no XML**; requer mapeamento da unidade para código SIFEN |
+| E710 `dDesUniMed` | Alfanumérico **1–10**, obrigatório, MT p.86 | Descrição/código relacionado à unidade | Catálogo de unidade deve guardar correspondência fiscal válida |
+| **E711 `dCantProSer`** | Numérico **1–10p(0–8)** (**NT023 p.1** amplia escala 0–4) | Quantidade obrigatória de item | Qty e conversões de ERP com precisão suficiente; regras de inventário `numeric(18,4)` são distintas da quantidade fiscal até 8 decimais; **não mudar toda a DDL de estoque sem decisão** |
+| E712 `cPaisOrig` | Alfanumérico 3, 0–1, MT p.86 | Código de país opcional | `paisOrigenCodigo`, ISO3 da referência fiscal |
+| E713 `dDesPaisOrig` | Alfanumérico **4–30**, condicionado à presença de E712 (MT p.86) | Descrição necessária se informou país | `paisOrigenNombre`, catálogo de país; validar 4–30 e grafia apropriada |
+| E714 `dInfItem` | Alfanumérico **1–500**, 0–1, MT p.86 | Informação de interesse do emissor sobre item | `informacionFactura`, ≤500; não enviar `observacion` interna automaticamente |
+| E715 `cRelMerc` | Numérico 1, 0–1, valores 1 quiebra / 2 merma (MT p.86) | Relacionado a dados de relevância das mercadorias; condicional ao tipo DE | `relacionMercaderia` mapeia CHECK (1,2); especificar quando incluir no documento |
+| E716 `dDesRelMerc` | Alfanumérico **19–21**, condicional com E715 (MT p.86) | Descrição textual canônica 1/2 | Não há campo mestre obrigatório: derivar do código por tabela normativa |
+| E717 `dCanQuiMer` | Numérico **1–10(0–4)**, condicional à presença de E715 (MT p.87) | Quantidade de quebra/merma na unidade E709 | `cantidadMerma` no mestre pode ser default; **quantidade do DE deve vir da operação real**, não copiar estático indiscriminadamente |
+| E718 `dPorQuiMer` | Numérico **1–3(0–8)**, condicional à presença de E715 (MT p.87) | Percentual da operação | `porcentajeMerma` DDL `numeric(7,4)` não representa 8 casas; separar política mestre/fiscal e precisão de transmissão |
+
+**Atenção:** no MT original, E704 era apresentado como obrigatório em D202=3 e E705 obrigatório junto a E704; **NT026 exclui explicitamente essas duas validações**. Na matriz anterior esses campos estavam assinalados “a confirmar”: a partir desta seção está comprovada a prevalência no pacote consultado. A NT009 modifica também E701/E708; NT023 modifica E711. **Faturamento eletrônico é planejado V2**, portanto os campos de um **DE emitido** não transformam automaticamente a ficha de cadastro V1 em XML, nem autorizam nova integração fiscal.
+
+### 8.1. Achados do confronto GET/PUT versus banco
+
+**Caminhos inspecionados:** `app/api/productos/[id]/route.ts`, `app/api/productos/route.ts`, `lib/productos/shared.ts`, `NEX-007-productos.sql`, além dos tipos e formulário da matriz.
+
+| Referência | Achado comprovado no código | Consequência / especificação de correção |
+|---|---|---|
+| PRD-API-01 | `PUT /api/productos/[id]` faz `DELETE` de **todas** as coleções `TABLAS_HIJAS` e `insertarHijos` para recriá-las | **P0:** perde IDs, dificulta FK futuras, versões e histórico; migrar para sincronização por ID, auditoria e deleção explícita |
+| PRD-API-02 | `PUT` recebe `datos.codigo` e o utiliza no `UPDATE productos` depois de `SELECT codigo … FOR UPDATE` | **P0:** não há nessa rota garantia explícita de imutabilidade; proteger código no servidor/DB antes de homologar |
+| PRD-API-03 | `GET` converte `precio::float8`, `costo_promedio::float8`, `cantidad::float8` e valores relacionados | **P0:** incompatível com contrato de decimal exato; devolver `numeric` como texto sem perda de precisão |
+| PRD-API-04 | `POST` usa `prepararProducto` e `insertarHijos`; abertura chama função de movimento real | Preservar transação, idempotência, permissão de movimentação e restrições por depósito |
+| PRD-API-05 | `shared.ts` usa `Number` em custo/quantidade/preço e corta strings usando `.slice` | **P0:** erro explícito por limite e transporte monetário/quantidade como decimal canônico |
+| PRD-API-06 | `NEX-007` tem registros independentes para `producto_codigos`, `producto_unidades`, `producto_proveedores`, `producto_deposito_configuracion`, `producto_alternativos`, `producto_componentes`, `producto_documentos` | Necessita respeitar FKs de empresa, unicidade, principals e preservação de identidades nas sete coleções |
+| PRD-API-07 | `producto_documentos` opera por `nombre_archivo` + `url_archivo`; não prova arquivo seguro persistente | Documentos privados nos padrões Clientes/Proveedores com migration incremental quando aprovado |
+| PRD-API-08 | `NEX-007` limita `codigo_sifen` a 20 e `descripcion_factura` a 120, enquanto NT009 permite até 50 e 2000 no XML | Desalinhamento de capacidade máxima, **não necessariamente violação fiscal**: limites empresariais menores podem ser decisão válida; exigir decisão explícita |
+
+### 8.2. Itens ainda dependentes de normativa mais recente ou comprovação operacional
+
+- Confirmar XSD e regras finais vigentes DNIT na data de implementação, inclusive alterações posteriores ao pacote MT v150/NT027. O pacote analisado não inclui NT021.
+- Campos `gValorItem`/IVA, preço, descontos, outras regras de cálculo e eventos devem ser especificados **para a emissão**, não inferidos do cadastro.
+- As migrations posteriores à NEX-007 precisam ser confrontadas especificamente quanto a `familia_id`, `linea_id`, lista de referência e integridade de catálogos; não marcar essa checagem como concluída somente com a DDL inicial.
+- Validar autorização granular/escopo em ambiente real, triggers, cardinalidade, comportamento de transação, e aceitação humana do novo layout quando implementado.
+
+**Estado:** seção fiscal E8 auditada diretamente no manual e nas NT009/023/026 arquivadas; revisão GET/PUT comprovada estaticamente. **Não marca auditoria de todas as migrations e do XML completo como encerrada.** Nenhum SQL, deploy ou VM foi executado.
