@@ -162,3 +162,19 @@ Legendas: **OK-base** = trilha UI→tipo→shared→NEX-006 identificada; **R** 
 - Se código novo exigir migrations, arquivos versionados somente, nunca aplicados pelas IAs; sem alterar migrações já aplicadas.
 - Ações de atualização de registros relacionados não devem apagar historicamente IDs ou arquivos sem escolha expressa.
 - Nenhuma mudança de código é autorizada por esta matriz; aguardar autorização de implementação.
+
+
+## Decisão aprovada — política documental de Proveedores (2026-10-11)
+
+**Aprovação expressa do responsável:** o módulo **Proveedores** deve adotar **a mesma política documental definida para Clientes V1**:
+
+- Upload real e armazenamento **privado em volume persistente na mesma VM**, fora de `public/` e sem URL pública; reutilizar infraestrutura comum segura quando compatível.
+- Formatos **PDF, JPG/JPEG, PNG, DOCX e XLSX**; limite **10 MB por arquivo**, com validação do conteúdo no servidor.
+- **Exclusão lógica**, preservando arquivo e trilha de auditoria, com possibilidade de restauração.
+- **Substituição versionada**, preservando histórico e permitindo recuperar versões anteriores.
+- **Auditoria** de upload, substituição, edição de metadados, exclusão lógica, restauração e recuperação de versões, com autoria e data/hora.
+- **Separação obrigatória** entre Clientes e Proveedores: tabelas e vínculos próprios do fornecedor, controle de acesso por permissão `PROVEEDORES`, escopo `empresa_id`, identificador do fornecedor e chaves de armazenamento distintas. **Nunca** herdar permissões `CLIENTES` para autorizar documentos de fornecedores.
+- O campo atual **“URL del archivo”** é legado e deve ser substituído na implementação futura por seleção/upload de arquivo, sem perder metadados existentes por alteração implícita. Migrar preservando registros antigos quando houver.
+- Nenhuma operação de exclusão/substituição de fornecedor pode apagar bytes previamente versionados; tratar também a estratégia atual de DELETE/reinserção das tabelas filhas antes de operacionalizar histórico.
+
+**Estado:** decisão de requisito **registrada somente na documentação**; este aceite não autoriza Claude/ChatGPT a editar código, criar/aplicar SQL/migrations, mexer no Docker, volume ou VM, nem publicar/deploy. Implementação dependerá de autorização posterior explícita. Esta decisão resolve **somente** a questão 1 da seção “Questões objetivas”; as demais permanecem pendentes.
