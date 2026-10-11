@@ -25,3 +25,10 @@ Não recriar banco/contêineres/volumes/empresas; não reinicializar; migrations
 1. Meus testes assumiam 15 migrations — corrigido (320 PASS).
 2. O texto de `PROCEIT-CASA-MINGO-NEX-016.md` indica `nexit_app` para inicializar; o plano do banco previa `nexit_runtime` para a app — decidir quando a app trocar de papel.
 3. O usuário `cliente` de CASA MINGO precisa de perfil/permissões definidos (a NEX-015 criou o perfil ADMIN da empresa).
+
+## Atualização operacional confirmada — 2026-10-10
+- **Confirmado pelo responsável na VM:** a aplicação `nexit-app` pertence ao serviço Compose `app` e foi criada com **dois arquivos**, nesta ordem: `/srv/stacks/distribuidora/compose.yml` e `/srv/stacks/distribuidora/app.compose.yml`. Executar `docker compose` com apenas `compose.yml` causa `no such service: app`.
+- **Build da aplicação:** no checkout atualizado `/tmp/nexit-instalacao`, `docker build -t nexit-app:teste .`.
+- **Recriar somente a aplicação após build bem-sucedido:** em `/srv/stacks/distribuidora`, executar `docker compose -f compose.yml -f app.compose.yml up -d --no-deps --force-recreate app`.
+- **Execução confirmada:** saída `Container nexit-app Started`, seguida de `nexit-app Up 5 seconds nexit-app:teste`. Isso comprova o novo processo de container, **não** comprova sozinho versão do CSS, saúde HTTP ou homologação visual. O PostgreSQL `nexit-db` não deve ser recriado nem seus volumes alterados neste procedimento.
+- **Referência visual:** tipografia V1 commit `cf576f7`; homologação por capturas em `documentacao/v1/homologacao-visual/README.md`.
