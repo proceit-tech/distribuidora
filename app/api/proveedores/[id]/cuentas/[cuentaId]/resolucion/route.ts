@@ -40,6 +40,8 @@ export async function POST(request: Request, contexto: Contexto) {
       if (!cuenta.rowCount) return null;
 
       const fila = cuenta.rows[0].fila as Record<string, unknown>;
+
+      if (fila.activa === false) throw new ErrorValidacion("La cuenta está desactivada: no se aprueba ni se rechaza.", null, 409);
       const revision = await c.query("SELECT id, datos FROM proveedor_cuenta_revisiones WHERE cuenta_id = $1 AND empresa_id = $2 AND estado = 'PENDIENTE' FOR UPDATE", [cuentaId, empresaId]);
       const { plan, motivo } = planDeResolucion(cuerpo.decision, String(fila.estado_aprobacion), (revision.rowCount ?? 0) > 0, cuerpo.motivo);
 

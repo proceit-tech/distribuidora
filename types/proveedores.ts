@@ -75,6 +75,9 @@ export type ProveedorCuentaBancaria = {
   estadoAprobacion?: "PENDIENTE" | "APROBADA" | "RECHAZADA";
   motivoResolucion?: string;
   aprobadoEn?: string;
+  /** Solo lectura: una cuenta desactivada se conserva con su historial pero no es pagable ni editable. */
+  activa?: boolean;
+  desactivadaEn?: string;
   revisionPendiente?: { id: string; datos: Record<string, unknown>; solicitadoEn: string } | null;
 };
 

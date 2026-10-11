@@ -56,6 +56,8 @@ type ColeccionSync<T extends { id: string | null }> = {
    * encargó de la fila (por ejemplo, creando una revisión pendiente en lugar de sobrescribir una cuenta aprobada).
    */
   antesDeActualizar?: (conexion: PoolClient, item: T, fila: Record<string, unknown>, columnas: Columnas) => Promise<Columnas | null>;
+  /** Sustituye la baja física por defecto (por ejemplo, desactivación lógica de una cuenta aprobada). */
+  darDeBaja?: (conexion: PoolClient, id: string, fila: Record<string, unknown>) => Promise<void>;
 };
 
 const IGNORADAS = new Set(["actualizado_at", "creado_at", "carga_documentos_inicial_abierta"]);
@@ -98,6 +100,11 @@ async function sincronizarColeccion<T extends { id: string | null }>(conexion: P
 
   // 1) Eliminaciones explícitas (la fila completa queda en la auditoría)
   for (const id of c.eliminar) {
+    if (c.darDeBaja) {
+      await c.darDeBaja(conexion, id, porId.get(id) as Record<string, unknown>);
+      continue;
+    }
+
     await conexion.query(`DELETE FROM ${c.tabla} WHERE id = $1 AND proveedor_id = $2 AND empresa_id = $3`, [id, proveedorId, empresaId]);
     await registrarEvento(conexion, { empresaId, proveedorId, entidad: c.entidad, entidadId: id, accion: "BAJA", anterior: porId.get(id), usuarioId });
   }
@@ -153,6 +160,60 @@ const igualValor = (a: unknown, b: unknown) => (a ?? null) === (b ?? null);
  * revisión pendiente (una sola por cuenta; una nueva solicitud reemplaza a la anterior) hasta que alguien con PROVEEDORES.APROBAR_BANCO
  * la apruebe. Una cuenta pendiente o rechazada se corrige en el lugar; si estaba rechazada y cambia, vuelve a PENDIENTE.
  */
+/**
+ * Baja de una cuenta bancaria (PRV-AUD-01). Una cuenta que alguna vez fue APROBADA, o que está referenciada por otra tabla, NO se
+ * elimina: se DESACTIVA (activa = false, autor, fecha y motivo), conservando identificador, datos, historial y auditoría; su revisión
+ * pendiente se cancela y deja de ser pagable y de ocupar la «principal de la moneda». Solo una cuenta nunca aprobada (pendiente o
+ * rechazada) y sin referencias se elimina físicamente, con la fila completa en la auditoría.
+ */
+async function darDeBajaCuenta(conexion: PoolClient, empresaId: string, proveedorId: string, usuarioId: string, id: string, fila: Record<string, unknown>) {
+  if (fila.activa === false) return; // ya desactivada: la baja es idempotente
+
+  const alguna_vez_aprobada = fila.estado_aprobacion === "APROBADA" || (fila.aprobado_por ?? null) !== null;
+
+  if (!alguna_vez_aprobada) {
+    await conexion.query("SAVEPOINT baja_cuenta");
+
+    try {
+      await conexion.query("DELETE FROM proveedor_cuentas_bancarias WHERE id = $1 AND proveedor_id = $2 AND empresa_id = $3", [id, proveedorId, empresaId]);
+      await conexion.query("RELEASE SAVEPOINT baja_cuenta");
+      await registrarEvento(conexion, { empresaId, proveedorId, entidad: "CUENTA", entidadId: id, accion: "BAJA", anterior: fila, usuarioId });
+
+      return;
+    } catch (e) {
+      const codigo = (e as { code?: string }).code;
+
+      await conexion.query("ROLLBACK TO SAVEPOINT baja_cuenta");
+      await conexion.query("RELEASE SAVEPOINT baja_cuenta");
+
+      // Referenciada por otra tabla (23503) o protegida por el trigger (P0001): se desactiva en lugar de eliminarse.
+      if (codigo !== "23503" && codigo !== "P0001") throw e;
+    }
+  }
+
+  await conexion.query(
+    `UPDATE proveedor_cuentas_bancarias
+        SET activa = false, es_principal = false, desactivada_at = now(), desactivada_por = $4, motivo_desactivacion = $5
+      WHERE id = $1 AND proveedor_id = $2 AND empresa_id = $3`,
+    [id, proveedorId, empresaId, usuarioId, "Desactivada desde la edición del proveedor"],
+  );
+  await conexion.query(
+    `UPDATE proveedor_cuenta_revisiones SET estado = 'RECHAZADA', resuelto_por = $4, resuelto_at = now(), motivo = 'Cuenta desactivada'
+      WHERE cuenta_id = $1 AND proveedor_id = $2 AND empresa_id = $3 AND estado = 'PENDIENTE'`,
+    [id, proveedorId, empresaId, usuarioId],
+  );
+  await registrarEvento(conexion, {
+    empresaId,
+    proveedorId,
+    entidad: "CUENTA",
+    entidadId: id,
+    accion: "CUENTA_DESACTIVADA",
+    anterior: { activa: true, estado: fila.estado_aprobacion, principal: fila.es_principal },
+    nuevo: { activa: false },
+    usuarioId,
+  });
+}
+
 async function controlarCuenta(
   conexion: PoolClient,
   empresaId: string,
@@ -163,6 +224,13 @@ async function controlarCuenta(
   columnas: Columnas,
 ): Promise<Columnas | null> {
   const cambiada = columnas.some(([nombre, valor]) => !igualValor(fila[nombre], valor));
+
+  // Una cuenta desactivada no se modifica (ni se reactiva) desde la edición común.
+  if (fila.activa === false) {
+    if (cambiada) throw new ErrorValidacion("Una cuenta desactivada no se puede modificar.", null, 409);
+
+    return null;
+  }
 
   if (!cambiada) return fila.estado_aprobacion === "APROBADA" ? null : columnas;
 
@@ -268,6 +336,7 @@ export async function sincronizarHijos(conexion: PoolClient, empresaId: string, 
       ["es_principal", x.esPrincipal],
     ],
     antesDeActualizar: (cx, item, fila, columnas) => controlarCuenta(cx, empresaId, proveedorId, usuarioId, item.id as string, fila, columnas),
+    darDeBaja: (cx, id, fila) => darDeBajaCuenta(cx, empresaId, proveedorId, usuarioId, id, fila),
   });
 
   await sincronizarColeccion(conexion, empresaId, proveedorId, usuarioId, {

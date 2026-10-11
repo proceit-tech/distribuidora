@@ -24,14 +24,38 @@ export function PestanaBancos({ ctx }: { ctx: ContextoFormulario }) {
       <div className={styles.repeaterList}>
         {form.cuentasBancarias.map((c, i) => {
           const p = `cuentasBancarias.${i}`;
+          const guardada = ctx.detalle?.cuentasBancarias.find((x) => x.id === c.id);
+
+          // Cuenta desactivada: se conserva con su historial, solo lectura (no es pagable).
+          if (guardada?.activa === false) {
+            return (
+              <article key={c.id} className={styles.repeaterCard}>
+                <header>
+                  <strong>
+                    Cuenta {i + 1} · {c.banco} · {c.numeroCuenta} ({c.monedaCodigo})
+                  </strong>
+                  <span className={[styles.etiquetaEstado, styles.etiquetaPeligro].join(" ")}>Desactivada{guardada.desactivadaEn ? ` el ${guardada.desactivadaEn}` : ""}</span>
+                </header>
+                <p className={styles.textoSecundario}>Titular: {c.titular}. La cuenta se conserva con su historial y auditoría, pero no puede usarse en pagos.</p>
+              </article>
+            );
+          }
+
           const cambiar = (parche: Partial<ProveedorCuentaBancaria>) => ctx.actualizar("cuentasBancarias", c.id, parche);
 
           return (
             <article key={c.id} className={styles.repeaterCard}>
               <header>
                 <strong>Cuenta {i + 1}</strong>
-                <button type="button" onClick={() => ctx.quitar("cuentasBancarias", c.id)}>
-                  Eliminar
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (guardada?.estadoAprobacion === "APROBADA" && !window.confirm("Esta cuenta está aprobada: no se elimina, se DESACTIVA (se conserva con su historial y deja de poder usarse en pagos). ¿Desea continuar?")) return;
+
+                    ctx.quitar("cuentasBancarias", c.id);
+                  }}
+                >
+                  {guardada?.estadoAprobacion === "APROBADA" ? "Desactivar" : "Eliminar"}
                 </button>
               </header>
 

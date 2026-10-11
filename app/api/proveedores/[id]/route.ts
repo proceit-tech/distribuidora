@@ -142,7 +142,8 @@ export async function GET(_request: Request, contexto: Contexto) {
                 numero_cuenta AS "numeroCuenta", moneda_codigo AS "monedaCodigo",
                 coalesce(alias_cuenta,'') AS "aliasCuenta", coalesce(codigo_swift,'') AS "codigoSwift",
                 coalesce(iban,'') AS iban, es_principal AS "esPrincipal",
-                estado_aprobacion AS "estadoAprobacion", coalesce(motivo_resolucion,'') AS "motivoResolucion",
+                estado_aprobacion AS "estadoAprobacion", coalesce(motivo_resolucion,'') AS "motivoResolucion", activa,
+                coalesce(to_char(desactivada_at AT TIME ZONE 'America/Asuncion','DD/MM/YYYY HH24:MI'),'') AS "desactivadaEn",
                 coalesce(to_char(aprobado_at AT TIME ZONE 'America/Asuncion','DD/MM/YYYY HH24:MI'),'') AS "aprobadoEn",
                 (SELECT jsonb_build_object('id', r.id, 'datos', r.datos,
                           'solicitadoEn', to_char(r.solicitado_at AT TIME ZONE 'America/Asuncion','DD/MM/YYYY HH24:MI'))
