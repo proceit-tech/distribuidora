@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-import styles from "./page.module.css";
+import styles from "@/components/ui/lista-padrao/reporte.module.css";
 
 const REPORTES = [
   { href: "/reportes/stock-general", titulo: "Stock general", detalle: "Saldos por producto, depósito y lote: disponible, reservado, cuarentena, tránsito, físico y virtual.", activo: true },
@@ -15,9 +15,12 @@ export default function ReportesPage() {
     <section className={styles.page}>
       <header className={styles.hero}>
         <div>
-          <div className={styles.heroMeta}>
-            <span className={styles.modulePill}>REPORTES</span>
-          </div>
+          <nav className={styles.breadcrumb} aria-label="Ruta de navegación">
+            <span>Reportes</span>
+            <i aria-hidden="true">/</i>
+            <span aria-current="page">Reportes operativos</span>
+          </nav>
+
           <h1>Reportes operativos</h1>
           <p>Reportes de inventario con datos reales, exportables a Excel y PDF.</p>
         </div>

@@ -8,7 +8,7 @@ import { CLASE_LOTE, textoDias } from "@/lib/reportes/export-lotes";
 import { fmtNum, textoTercerosEstados } from "@/lib/reportes/formato";
 import type { ClaseVencimiento, LotesFiltros, LotesRespuesta } from "@/types/reportes";
 
-import styles from "./page.module.css";
+import styles from "@/components/ui/lista-padrao/reporte.module.css";
 
 const FILTROS_VACIOS: LotesFiltros = {
   vista: "LOTE", q: "", lote: "", depositoId: "", categoriaId: "", marcaId: "", familiaId: "", clase: "", existencia: "CON",
@@ -82,9 +82,11 @@ export default function ReporteLotesPage() {
     <section className={styles.page}>
       <header className={styles.hero}>
         <div>
-          <div className={styles.heroMeta}>
-            <span className={styles.modulePill}>REPORTES</span>
-          </div>
+          <nav className={styles.breadcrumb} aria-label="Ruta de navegación">
+            <Link href="/reportes">Reportes</Link>
+            <i aria-hidden="true">/</i>
+            <span aria-current="page">Lotes y vencimientos</span>
+          </nav>
           <h1>Lotes y vencimientos</h1>
           <p>
             Lotes reales con su vencimiento y su stock por depósito, propio y de terceros por separado.

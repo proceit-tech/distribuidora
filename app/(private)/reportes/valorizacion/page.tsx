@@ -8,7 +8,7 @@ import { SITUACION_COSTO } from "@/lib/reportes/export-valorizacion";
 import { fmtDinero, fmtNum } from "@/lib/reportes/formato";
 import type { ValorizacionFiltros, ValorizacionFila, ValorizacionRespuesta } from "@/types/reportes";
 
-import styles from "./page.module.css";
+import styles from "@/components/ui/lista-padrao/reporte.module.css";
 
 const FILTROS_VACIOS: ValorizacionFiltros = { vista: "DETALLE", q: "", depositoId: "", categoriaId: "", familiaId: "", existencia: "CON", costo: "TODOS" };
 const VISTAS: [ValorizacionFiltros["vista"], string][] = [["DETALLE", "Detalle"], ["PRODUCTO", "Por producto"], ["DEPOSITO", "Por depósito"], ["CATEGORIA", "Por categoría"]];
@@ -74,9 +74,11 @@ export default function ReporteValorizacionPage() {
     <section className={styles.page}>
       <header className={styles.hero}>
         <div>
-          <div className={styles.heroMeta}>
-            <span className={styles.modulePill}>REPORTES</span>
-          </div>
+          <nav className={styles.breadcrumb} aria-label="Ruta de navegación">
+            <Link href="/reportes">Reportes</Link>
+            <i aria-hidden="true">/</i>
+            <span aria-current="page">Valorización de inventario</span>
+          </nav>
           <h1>Valorización de inventario</h1>
           <p>
             Costo promedio real y valor del inventario a hoy.

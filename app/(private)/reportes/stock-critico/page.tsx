@@ -8,7 +8,7 @@ import { NOTA_NO_ADITIVO, TITULO_SUGERIDA, TITULO_VALOR } from "@/lib/reportes/e
 import { fmtDinero, fmtNum } from "@/lib/reportes/formato";
 import type { NivelStock, StockCriticoFiltros, StockCriticoRespuesta } from "@/types/reportes";
 
-import styles from "./page.module.css";
+import styles from "@/components/ui/lista-padrao/reporte.module.css";
 
 const NIVEL: Record<NivelStock, string> = { SIN_STOCK: "Sin stock", BAJO: "Bajo", NORMAL: "Normal", SOBRESTOCK: "Sobrestock" };
 const FILTROS_VACIOS: StockCriticoFiltros = {
@@ -78,9 +78,11 @@ export default function ReporteStockCriticoPage() {
     <section className={styles.page}>
       <header className={styles.hero}>
         <div>
-          <div className={styles.heroMeta}>
-            <span className={styles.modulePill}>REPORTES</span>
-          </div>
+          <nav className={styles.breadcrumb} aria-label="Ruta de navegación">
+            <Link href="/reportes">Reportes</Link>
+            <i aria-hidden="true">/</i>
+            <span aria-current="page">Stock crítico y reposición</span>
+          </nav>
           <h1>Stock crítico y reposición</h1>
           <p>
             Productos sin stock, bajo el mínimo, normales y en sobrestock, con la cantidad sugerida a reponer.

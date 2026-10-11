@@ -7,7 +7,7 @@ import { cargarStockGeneral, descargarStockGeneral } from "@/lib/reportes/client
 import { fmtNum, TEXTO_PROPIEDAD, textoTercerosEstados } from "@/lib/reportes/formato";
 import type { NivelStock, StockGeneralFiltros, StockGeneralFila, StockGeneralRespuesta } from "@/types/reportes";
 
-import styles from "./page.module.css";
+import styles from "@/components/ui/lista-padrao/reporte.module.css";
 
 const NIVEL: Record<NivelStock, string> = { SIN_STOCK: "Sin stock", BAJO: "Bajo", NORMAL: "Normal", SOBRESTOCK: "Sobrestock" };
 const FILTROS_VACIOS: StockGeneralFiltros = {
@@ -89,9 +89,11 @@ export default function ReporteStockGeneralPage() {
     <section className={styles.page}>
       <header className={styles.hero}>
         <div>
-          <div className={styles.heroMeta}>
-            <span className={styles.modulePill}>REPORTES</span>
-          </div>
+          <nav className={styles.breadcrumb} aria-label="Ruta de navegación">
+            <Link href="/reportes">Reportes</Link>
+            <i aria-hidden="true">/</i>
+            <span aria-current="page">Stock general</span>
+          </nav>
           <h1>Stock general</h1>
           <p>
             Saldos reales por producto, depósito y lote.
