@@ -16,7 +16,7 @@ import {
 } from "@/lib/fiscal/campos-receptor";
 import { mensajeRestriccionCliente } from "@/lib/clientes/errores-bd";
 import { validarDiaPreferidoCobro } from "@/lib/clientes/dia-cobro";
-import { validarTelefonoFiscal } from "@/lib/fiscal/telefono";
+import { leerTelefonoEntrada, validarTelefono, type CampoTelefonico } from "@/lib/fiscal/telefono";
 
 
 // Solo DEMO explícito usa respuestas simuladas. La falta de DATABASE_URL NUNCA activa datos ficticios.
@@ -201,6 +201,16 @@ function texto(valor: unknown, maximo?: number) {
 
 function opcional(valor: unknown, maximo?: number) {
   return texto(valor, maximo) || null;
+}
+
+// Teléfono/celular de un contacto: mismo modelo por país que el del cliente (ERP: no es D214/D215). Lanza Error si es inválido.
+function validarTelefonoContacto(contacto: unknown, campo: CampoTelefonico, numeroContacto: number) {
+  const etiqueta = `${campo === "telefono" ? "el teléfono" : "el celular"} del contacto ${numeroContacto}`;
+  const resultado = validarTelefono(campo, leerTelefonoEntrada(contacto as Record<string, unknown>, campo), etiqueta);
+
+  if (!resultado.ok) throw new Error(resultado.error);
+
+  return resultado;
 }
 
 function booleano(valor: unknown) {
@@ -708,9 +718,9 @@ export async function POST(request: Request) {
 
     // Campos D3 del SIFEN: tamaños y formatos oficiales sobre el valor recibido (sin truncar).
     // D214/D215: DDI separado + número nacional normalizado (solo dígitos); sin DDI no se acepta un número.
-    const telefonoFiscal = validarTelefonoFiscal("telefono", textoCrudo(cuerpo.telefonoDdi), textoCrudo(cuerpo.telefono));
+    const telefonoFiscal = validarTelefono("telefono", leerTelefonoEntrada(cuerpo, "telefono"));
     if (!telefonoFiscal.ok) throw new Error(telefonoFiscal.error);
-    const celularFiscal = validarTelefonoFiscal("celular", textoCrudo(cuerpo.celularDdi), textoCrudo(cuerpo.celular));
+    const celularFiscal = validarTelefono("celular", leerTelefonoEntrada(cuerpo, "celular"));
     if (!celularFiscal.ok) throw new Error(celularFiscal.error);
 
     // Día preferido de cobro: entero 1–31 (DEC-CLI-COB-06); se guarda la preferencia original.
@@ -797,12 +807,14 @@ export async function POST(request: Request) {
       }
     }
 
-    for (const contacto of contactos) {
+    for (const [indiceContacto, contacto] of contactos.entries()) {
       if (!texto(contacto.nombre, 100)) {
         throw new Error("Cada contacto debe tener nombre.");
       }
 
       validarCorreo(opcional(contacto.email, 150), "El correo de un contacto");
+      validarTelefonoContacto(contacto, "telefono", indiceContacto + 1);
+      validarTelefonoContacto(contacto, "celular", indiceContacto + 1);
     }
 
     for (const documento of documentos) {
@@ -960,7 +972,11 @@ export async function POST(request: Request) {
           observacion_comercial,
           observacion_logistica,
           telefono_ddi,
-          celular_ddi
+          celular_ddi,
+          telefono_pais,
+          telefono_area,
+          celular_pais,
+          celular_area
         )
         VALUES (
           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
@@ -969,7 +985,7 @@ export async function POST(request: Request) {
           $31, CASE WHEN $30::boolean THEN now() ELSE NULL END,
           CASE WHEN $30::boolean THEN $32::uuid ELSE NULL END,
           $33, $34, $35, $36, $37, $38, $39,
-          $40, $41, $42, $43, $44, $45, $46
+          $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50
         )
         RETURNING id, codigo, razon_social
       `,
@@ -998,8 +1014,8 @@ export async function POST(request: Request) {
         opcional(cuerpo.nombreFantasia, 255),
         email,
         emailCopia,
-        telefonoFiscal.numero || null,
-        celularFiscal.numero || null,
+        telefonoFiscal.valor.numero,
+        celularFiscal.valor.numero,
         numeroOpcional(cuerpo.limiteCredito, 0) ?? 0,
         opcional(cuerpo.condicionPagoId),
         opcional(cuerpo.listaPrecioId),
@@ -1026,8 +1042,12 @@ export async function POST(request: Request) {
         cuerpo.recibeDocumentoElectronico !== false,
         opcional(cuerpo.observacionComercial, 1000),
         opcional(cuerpo.observacionLogistica, 1000),
-        telefonoFiscal.numero === "" ? null : telefonoFiscal.ddi,
-        celularFiscal.numero === "" ? null : celularFiscal.ddi,
+        telefonoFiscal.valor.ddi,
+        celularFiscal.valor.ddi,
+        telefonoFiscal.valor.pais,
+        telefonoFiscal.valor.area,
+        celularFiscal.valor.pais,
+        celularFiscal.valor.area,
       ],
     );
 
@@ -1038,6 +1058,9 @@ export async function POST(request: Request) {
     };
 
     for (const contacto of contactos) {
+      const telContacto = validarTelefonoContacto(contacto, "telefono", 0);
+      const celContacto = validarTelefonoContacto(contacto, "celular", 0);
+
       await conexion.query(
         `
           INSERT INTO cliente_contactos (
@@ -1055,11 +1078,18 @@ export async function POST(request: Request) {
             recibe_facturacion,
             recibe_cobranzas,
             recibe_documentos_electronicos,
-            recibe_notificaciones
+            recibe_notificaciones,
+            telefono_pais,
+            telefono_ddi,
+            telefono_area,
+            celular_pais,
+            celular_ddi,
+            celular_area
           )
           VALUES (
             $1, $2, $3, $4, $5, $6, $7, $8,
-            $9, $10, $11, $12, $13, $14, $15
+            $9, $10, $11, $12, $13, $14, $15,
+            $16, $17, $18, $19, $20, $21
           )
         `,
         [
@@ -1069,8 +1099,8 @@ export async function POST(request: Request) {
           opcional(contacto.apellido, 100),
           opcional(contacto.cargo, 100),
           opcional(contacto.departamento, 100),
-          opcional(contacto.telefono, 30),
-          opcional(contacto.celular, 30),
+          telContacto.valor.numero,
+          celContacto.valor.numero,
           opcional(contacto.email, 150),
           booleano(contacto.esPrincipal),
           booleano(contacto.recibePedidos),
@@ -1078,6 +1108,12 @@ export async function POST(request: Request) {
           booleano(contacto.recibeCobranzas),
           booleano(contacto.recibeDocumentosElectronicos),
           contacto.recibeNotificaciones !== false,
+          telContacto.valor.pais,
+          telContacto.valor.ddi,
+          telContacto.valor.area,
+          celContacto.valor.pais,
+          celContacto.valor.ddi,
+          celContacto.valor.area,
         ],
       );
     }

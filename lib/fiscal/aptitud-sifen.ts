@@ -19,6 +19,7 @@ import {
   validarInnominado,
   validarNaturalezaOperacion,
 } from "@/lib/fiscal/campos-receptor";
+import { validarNumeroTelefonicoLegado, validarTelefono } from "@/lib/fiscal/telefono";
 import { validarPaisPorOperacion } from "@/lib/geografia/referencia";
 
 export type DatosAptitud = {
@@ -37,6 +38,13 @@ export type DatosAptitud = {
   email: string;
   telefono: string;
   celular: string;
+  /** País, DDI y código de área de cada número (vacíos = registro anterior sin país). */
+  telefonoPais: string;
+  telefonoDdi: string;
+  telefonoArea: string;
+  celularPais: string;
+  celularDdi: string;
+  celularArea: string;
 };
 
 export type DireccionFiscalAptitud = {
@@ -128,6 +136,24 @@ export function evaluarAptitudSifen(c: DatosAptitud, fiscal: DireccionFiscalApti
       celular: limpio(c.celular),
     }),
   );
+
+  // D214/D215: teléfono y celular por país del número (regla cadastral por país; la serialización XML de V2 es aparte).
+  for (const campo of ["telefono", "celular"] as const) {
+    const numero = limpio(campo === "telefono" ? c.telefono : c.celular);
+    if (numero === "") continue;
+    const pais = limpio(campo === "telefono" ? c.telefonoPais : c.celularPais);
+    if (pais === "") {
+      agregar(validarNumeroTelefonicoLegado(campo, numero));
+    } else {
+      const r = validarTelefono(campo, {
+        numero,
+        pais,
+        ddi: limpio(campo === "telefono" ? c.telefonoDdi : c.celularDdi),
+        area: limpio(campo === "telefono" ? c.telefonoArea : c.celularArea),
+      });
+      if (!r.ok) agregar(r.error);
+    }
+  }
 
   // D208 = 5 (Innominado).
   agregar(

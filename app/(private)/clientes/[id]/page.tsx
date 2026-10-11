@@ -23,7 +23,7 @@ import {
   calcularDvRuc,
   validarRucDv,
 } from "@/lib/fiscal/calcular-dv-ruc";
-import { TelefonoDdi } from "@/components/clientes/telefono-ddi";
+import { TelefonoPais } from "@/components/clientes/telefono-pais";
 import { validarCamposReceptor } from "@/lib/fiscal/campos-receptor";
 
 import styles from "./page.module.css";
@@ -65,8 +65,12 @@ type FormState = {
   emailCopia: string;
   telefono: string;
   celular: string;
+  telefonoPais: string;
   telefonoDdi: string;
+  telefonoArea: string;
+  celularPais: string;
   celularDdi: string;
+  celularArea: string;
 
   limiteCredito: string;
   limiteCreditoTemporal: string;
@@ -247,8 +251,14 @@ function fromCliente(
       cliente.emailCopia,
     telefono: cliente.telefono,
     celular: cliente.celular,
-    telefonoDdi: cliente.telefonoDdi ?? "",
-    celularDdi: cliente.celularDdi ?? "",
+    // Registro con número y sin país (anterior a la retificación): se deja sin país hasta que el usuario lo elija;
+    // sin número se propone Paraguay (+595) como predeterminado.
+    telefonoPais: cliente.telefono ? cliente.telefonoPais ?? "" : "PRY",
+    telefonoDdi: cliente.telefono ? cliente.telefonoDdi ?? "" : "595",
+    telefonoArea: cliente.telefonoArea ?? "",
+    celularPais: cliente.celular ? cliente.celularPais ?? "" : "PRY",
+    celularDdi: cliente.celular ? cliente.celularDdi ?? "" : "595",
+    celularArea: cliente.celularArea ?? "",
 
     limiteCredito:
       String(cliente.limiteCredito),
@@ -756,8 +766,12 @@ export default function ClienteDetallePage() {
             emailCopia: form.emailCopia,
             telefono: form.telefono,
             celular: form.celular,
+            telefonoPais: form.telefonoPais,
             telefonoDdi: form.telefonoDdi,
+            telefonoArea: form.telefonoArea,
+            celularPais: form.celularPais,
             celularDdi: form.celularDdi,
+            celularArea: form.celularArea,
             limiteCredito: money(
               form.limiteCredito,
             ),
@@ -1859,60 +1873,64 @@ export default function ClienteDetallePage() {
                   styles.gridTwo
                 }
               >
-                <TelefonoDdi
+                <TelefonoPais
                   campo="telefono"
                   clases={{
                     campo: styles.field,
                     selector: styles.select,
                     entrada: styles.input,
                   }}
-                  ddi={form.telefonoDdi}
                   etiqueta="Teléfono"
                   id="cli-edit-telefono"
-                  numero={form.telefono}
-                  onChange={(cambio) =>
+                  onChange={(nuevo) =>
                     setForm((current) =>
                       current
                         ? {
                             ...current,
-                            ...(cambio.ddi !== undefined
-                              ? { telefonoDdi: cambio.ddi }
-                              : {}),
-                            ...(cambio.numero !== undefined
-                              ? { telefono: cambio.numero }
-                              : {}),
+                            telefonoPais: nuevo.pais,
+                            telefonoDdi: nuevo.ddi,
+                            telefonoArea: nuevo.area,
+                            telefono: nuevo.numero,
                           }
                         : current,
                     )
                   }
+                  valor={{
+                    pais: form.telefonoPais,
+                    ddi: form.telefonoDdi,
+                    area: form.telefonoArea,
+                    numero: form.telefono,
+                  }}
                 />
 
-                <TelefonoDdi
+                <TelefonoPais
                   campo="celular"
                   clases={{
                     campo: styles.field,
                     selector: styles.select,
                     entrada: styles.input,
                   }}
-                  ddi={form.celularDdi}
                   etiqueta="Celular"
                   id="cli-edit-celular"
-                  numero={form.celular}
-                  onChange={(cambio) =>
+                  onChange={(nuevo) =>
                     setForm((current) =>
                       current
                         ? {
                             ...current,
-                            ...(cambio.ddi !== undefined
-                              ? { celularDdi: cambio.ddi }
-                              : {}),
-                            ...(cambio.numero !== undefined
-                              ? { celular: cambio.numero }
-                              : {}),
+                            celularPais: nuevo.pais,
+                            celularDdi: nuevo.ddi,
+                            celularArea: nuevo.area,
+                            celular: nuevo.numero,
                           }
                         : current,
                     )
                   }
+                  valor={{
+                    pais: form.celularPais,
+                    ddi: form.celularDdi,
+                    area: form.celularArea,
+                    numero: form.celular,
+                  }}
                 />
               </div>
 

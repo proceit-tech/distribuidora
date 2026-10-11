@@ -2,12 +2,15 @@
 
 import { useEffect, useRef, useState } from "react";
 import styles from "../page.module.css";
+import { TelefonoPais } from "@/components/clientes/telefono-pais";
+import { validarTelefono } from "@/lib/fiscal/telefono";
 
 // Edición de contactos, direcciones y documentos del cliente (mismas tablas y campos que el alta).
 // Cada fila existente conserva su `id`; una fila solo se elimina cuando el usuario la quita explícitamente.
 
 export type ContactoForm = {
-  k: string; id?: string;
+  nombre: string; apellido: string; cargo: string; departamento: string; telefono: string; celular: string; email: string;
+  telefonoPais: string; telefonoDdi: string; telefonoArea: string; celularPais: string; celularDdi: string; celularArea: string;
   nombre: string; apellido: string; cargo: string; departamento: string; telefono: string; celular: string; email: string;
   esPrincipal: boolean; recibePedidos: boolean; recibeFacturacion: boolean; recibeCobranzas: boolean;
   recibeDocumentosElectronicos: boolean; recibeNotificaciones: boolean;
@@ -35,10 +38,22 @@ const nuevaClave = () => `n${++seq}`;
 
 export const hijosVacios: HijosForm = { contactos: [], direcciones: [], documentos: [], contactosEliminar: [], direccionesEliminar: [], documentosEliminar: [] };
 
+// Contacto sin número: se propone Paraguay (+595). Con número y sin país (registro anterior): sin país hasta que el usuario lo elija.
+function conTelefonoPredeterminado(x: Omit<ContactoForm, "k">) {
+  return {
+    telefonoPais: x.telefono ? x.telefonoPais ?? "" : "PRY",
+    telefonoDdi: x.telefono ? x.telefonoDdi ?? "" : "595",
+    telefonoArea: x.telefonoArea ?? "",
+    celularPais: x.celular ? x.celularPais ?? "" : "PRY",
+    celularDdi: x.celular ? x.celularDdi ?? "" : "595",
+    celularArea: x.celularArea ?? "",
+  };
+}
+
 export function hijosDesdeApi(d: { contactos?: Omit<ContactoForm, "k">[]; direcciones?: Omit<DireccionForm, "k">[]; documentos?: Omit<DocumentoForm, "k">[] }): HijosForm {
   return {
     ...hijosVacios,
-    contactos: (d.contactos ?? []).map((x) => ({ ...x, k: x.id ?? nuevaClave() })),
+    contactos: (d.contactos ?? []).map((x) => ({ ...x, k: x.id ?? nuevaClave(), ...conTelefonoPredeterminado(x) })),
     direcciones: (d.direcciones ?? []).map((x) => ({ ...x, k: x.id ?? nuevaClave() })),
     documentos: (d.documentos ?? []).map((x) => ({ ...x, k: x.id ?? nuevaClave() })),
   };
@@ -63,7 +78,18 @@ export function hijosParaApi(h: HijosForm) {
 
 /** Validación previa en el cliente (el servidor vuelve a validar todo). Devuelve mensaje o "". */
 export function validarHijos(h: HijosForm): string {
-  for (const c of h.contactos) if (!c.nombre.trim()) return "Cada contacto debe tener nombre.";
+  for (const [i, c] of h.contactos.entries()) {
+    if (!c.nombre.trim()) return "Cada contacto debe tener nombre.";
+    // Un número sin país (registro anterior) lo tolera el servidor mientras no se modifique; si hay país se valida completo.
+    if (c.telefonoPais || c.telefonoArea) {
+      const r = validarTelefono("telefono", { pais: c.telefonoPais, ddi: c.telefonoDdi, area: c.telefonoArea, numero: c.telefono }, `el teléfono del contacto ${i + 1}`);
+      if (!r.ok) return `Contacto ${i + 1}: ${r.error}`;
+    }
+    if (c.celularPais || c.celularArea) {
+      const r = validarTelefono("celular", { pais: c.celularPais, ddi: c.celularDdi, area: c.celularArea, numero: c.celular }, `el celular del contacto ${i + 1}`);
+      if (!r.ok) return `Contacto ${i + 1}: ${r.error}`;
+    }
+  }
   for (const d of h.direcciones) {
     if (!d.direccion.trim()) return "Informe la dirección de cada ubicación registrada.";
     if (!d.paisCodigo) return "Informe el país de cada dirección.";
@@ -72,7 +98,7 @@ export function validarHijos(h: HijosForm): string {
   return "";
 }
 
-const crearContacto = (): ContactoForm => ({ k: nuevaClave(), nombre: "", apellido: "", cargo: "", departamento: "", telefono: "", celular: "", email: "", esPrincipal: false, recibePedidos: false, recibeFacturacion: false, recibeCobranzas: false, recibeDocumentosElectronicos: false, recibeNotificaciones: true });
+const crearContacto = (): ContactoForm => ({ k: nuevaClave(), nombre: "", apellido: "", cargo: "", departamento: "", telefono: "", telefonoPais: "PRY", telefonoDdi: "595", telefonoArea: "", celular: "", celularPais: "PRY", celularDdi: "595", celularArea: "", email: "", esPrincipal: false, recibePedidos: false, recibeFacturacion: false, recibeCobranzas: false, recibeDocumentosElectronicos: false, recibeNotificaciones: true });
 const crearDireccion = (): DireccionForm => ({ k: nuevaClave(), tipo: "COMERCIAL", etiqueta: "", direccion: "", numeroCasa: "", complemento: "", paisCodigo: "PRY", paisNombre: "Paraguay", departamentoCodigo: "", departamento: "", distritoCodigo: "", distrito: "", ciudadCodigo: "", ciudad: "", codigoPostal: "", contactoNombre: "", contactoTelefono: "", horarioRecepcion: "", observacion: "", esFiscal: false, esEntregaDefault: false, latitud: "", longitud: "" });
 const crearDocumento = (): DocumentoForm => ({ k: nuevaClave(), tipo: "OTRO", nombreArchivo: "", urlArchivo: "", fechaEmision: "", fechaVencimiento: "", observacion: "" });
 
@@ -200,9 +226,17 @@ export function HijosEditor({ tab, valor, onChange, paises, departamentos, onErr
               <Campo label="Apellido"><Texto maxLength={100} value={c.apellido} onChange={(v) => setC(c.k, { apellido: v })} /></Campo>
               <Campo label="Cargo"><Texto maxLength={100} value={c.cargo} onChange={(v) => setC(c.k, { cargo: v })} /></Campo>
               <Campo label="Departamento"><Texto maxLength={100} value={c.departamento} onChange={(v) => setC(c.k, { departamento: v })} /></Campo>
-              <Campo label="Teléfono"><Texto maxLength={30} value={c.telefono} onChange={(v) => setC(c.k, { telefono: v })} /></Campo>
-              <Campo label="Celular"><Texto maxLength={30} value={c.celular} onChange={(v) => setC(c.k, { celular: v })} /></Campo>
               <Campo label="E-mail" className={styles.spanTwo}><Texto type="email" maxLength={150} value={c.email} onChange={(v) => setC(c.k, { email: v })} /></Campo>
+            </div>
+            <div className={styles.gridTwo}>
+              <TelefonoPais campo="telefono" etiqueta="Teléfono" etiquetaError={`el teléfono del contacto ${i + 1}`} id={`edit-contacto-${i}-telefono`}
+                clases={{ campo: styles.field, selector: styles.select, entrada: styles.input }}
+                valor={{ pais: c.telefonoPais, ddi: c.telefonoDdi, area: c.telefonoArea, numero: c.telefono }}
+                onChange={(n) => setC(c.k, { telefonoPais: n.pais, telefonoDdi: n.ddi, telefonoArea: n.area, telefono: n.numero })} />
+              <TelefonoPais campo="celular" etiqueta="Celular" etiquetaError={`el celular del contacto ${i + 1}`} id={`edit-contacto-${i}-celular`}
+                clases={{ campo: styles.field, selector: styles.select, entrada: styles.input }}
+                valor={{ pais: c.celularPais, ddi: c.celularDdi, area: c.celularArea, numero: c.celular }}
+                onChange={(n) => setC(c.k, { celularPais: n.pais, celularDdi: n.ddi, celularArea: n.area, celular: n.numero })} />
             </div>
             <div className={styles.checkRow}>
               <Marca etiqueta="Contacto principal" marcado={c.esPrincipal} cambiar={(m) => onChange({ ...valor, contactos: unico(valor.contactos, c.k, "esPrincipal", m) })} />

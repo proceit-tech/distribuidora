@@ -1,6 +1,7 @@
 import type { Pool, PoolClient } from "pg";
 
 import { textoCrudo, validarDireccionFiscal, validarUrlDocumento } from "@/lib/fiscal/campos-receptor";
+import { leerTelefonoEntrada, validarTelefono, type TelefonoGuardar } from "@/lib/fiscal/telefono";
 import { resolverPais, resolverUbicacionParaguay } from "@/lib/geografia/referencia";
 
 // Datos relacionados del cliente (contactos, direcciones y documentos): lectura y sincronización para la EDICIÓN.
@@ -72,6 +73,7 @@ export type ContactoApi = {
   id: string; nombre: string; apellido: string; cargo: string; departamento: string; telefono: string; celular: string; email: string;
   esPrincipal: boolean; recibePedidos: boolean; recibeFacturacion: boolean; recibeCobranzas: boolean;
   recibeDocumentosElectronicos: boolean; recibeNotificaciones: boolean;
+  telefonoPais: string; telefonoDdi: string; telefonoArea: string; celularPais: string; celularDdi: string; celularArea: string;
 };
 export type DireccionApi = {
   id: string; tipo: string; etiqueta: string; direccion: string; numeroCasa: string; complemento: string; paisCodigo: string; paisNombre: string;
@@ -108,6 +110,8 @@ const contactoDeFila = (r: Json): ContactoApi => ({
   celular: s(r.celular), email: s(r.email), esPrincipal: r.es_principal === true, recibePedidos: r.recibe_pedidos === true,
   recibeFacturacion: r.recibe_facturacion === true, recibeCobranzas: r.recibe_cobranzas === true,
   recibeDocumentosElectronicos: r.recibe_documentos_electronicos === true, recibeNotificaciones: r.recibe_notificaciones !== false,
+  telefonoPais: s(r.telefono_pais), telefonoDdi: s(r.telefono_ddi), telefonoArea: s(r.telefono_area),
+  celularPais: s(r.celular_pais), celularDdi: s(r.celular_ddi), celularArea: s(r.celular_area),
 });
 const direccionDeFila = (r: Json): DireccionApi => ({
   id: r.id as string, tipo: s(r.tipo), etiqueta: s(r.etiqueta), direccion: s(r.direccion), numeroCasa: s(r.numero_casa), complemento: s(r.complemento),
@@ -199,14 +203,35 @@ export async function sincronizarHijos(c: Conn, empresaId: string, clienteId: st
     const act = (await c.query(`SELECT * FROM cliente_contactos WHERE empresa_id = $1 AND cliente_id = $2 FOR UPDATE`, [empresaId, clienteId])).rows as Json[];
     const actApi = new Map(act.map((r) => [r.id as string, contactoDeFila(r)]));
     validarIds(e.contactos, e.eliminar.contactos, new Set(actApi.keys()), "contactos");
-    const finales: { id: string | null; v: ContactoApi }[] = [];
+    const finales: { id: string | null; v: ContactoApi; tel: TelefonoGuardar; cel: TelefonoGuardar }[] = [];
+    // Teléfono/celular del contacto: mismo modelo por país que el del cliente. Lo ya grabado que no cambia se conserva
+    // (incluye registros anteriores sin país); lo nuevo o modificado se valida completo. Los números pueden repetirse.
+    const resolverTelefonoContacto = (campo: "telefono" | "celular", v: ContactoApi, base: ContactoApi, ordinal: number): TelefonoGuardar => {
+      const k = campo === "telefono" ? { n: "telefono", p: "telefonoPais", d: "telefonoDdi", a: "telefonoArea" } : { n: "celular", p: "celularPais", d: "celularDdi", a: "celularArea" };
+      const val = v as unknown as Record<string, string>;
+      const bas = base as unknown as Record<string, string>;
+      const entrada = leerTelefonoEntrada(val, campo);
+      if (entrada.numero === (bas[k.n] ?? "").trim() && entrada.pais === (bas[k.p] ?? "") && entrada.ddi === (bas[k.d] ?? "") && entrada.area === (bas[k.a] ?? "")) {
+        return { numero: entrada.numero || null, pais: entrada.pais || null, ddi: entrada.ddi || null, area: entrada.area || null };
+      }
+      const r = validarTelefono(campo, entrada, `${campo === "telefono" ? "el teléfono" : "el celular"} del contacto ${ordinal}`);
+      if (!r.ok) throw new ErrorValidacion(r.error);
+      return r.valor;
+    };
+    let ordinalContacto = 0;
     for (const x of e.contactos ?? []) {
+      ordinalContacto += 1;
       const id = idEntrada(x);
-      const base = id ? actApi.get(id)! : ({ id: "", nombre: "", apellido: "", cargo: "", departamento: "", telefono: "", celular: "", email: "", esPrincipal: false, recibePedidos: false, recibeFacturacion: false, recibeCobranzas: false, recibeDocumentosElectronicos: false, recibeNotificaciones: true } as ContactoApi);
+      const base = id ? actApi.get(id)! : ({ id: "", nombre: "", apellido: "", cargo: "", departamento: "", telefono: "", celular: "", email: "", esPrincipal: false, recibePedidos: false, recibeFacturacion: false, recibeCobranzas: false, recibeDocumentosElectronicos: false, recibeNotificaciones: true, telefonoPais: "", telefonoDdi: "", telefonoArea: "", celularPais: "", celularDdi: "", celularArea: "" } as ContactoApi);
       const v = mezclar(base, x);
       if (!texto(v.nombre, 100)) throw new ErrorValidacion("Cada contacto debe tener nombre.");
       correo(opcional(v.email, 150), "El correo de un contacto");
-      finales.push({ id, v });
+      finales.push({
+        id,
+        v,
+        tel: resolverTelefonoContacto("telefono", v, base, ordinalContacto),
+        cel: resolverTelefonoContacto("celular", v, base, ordinalContacto),
+      });
     }
     const idsMod = new Set(finales.filter((f) => f.id).map((f) => f.id as string));
     const principales = [
@@ -223,21 +248,24 @@ export async function sincronizarHijos(c: Conn, empresaId: string, clienteId: st
       // Evita choques transitorios con el índice único del contacto principal al cambiar de principal.
       await c.query(`UPDATE cliente_contactos SET es_principal = false WHERE empresa_id = $1 AND cliente_id = $2 AND id = ANY($3::uuid[])`, [empresaId, clienteId, [...idsMod]]);
     }
-    for (const { id, v } of finales) {
-      const p = [texto(v.nombre, 100), opcional(v.apellido, 100), opcional(v.cargo, 100), opcional(v.departamento, 100), opcional(v.telefono, 30), opcional(v.celular, 30), opcional(v.email, 150),
-        bool(v.esPrincipal), bool(v.recibePedidos), bool(v.recibeFacturacion), bool(v.recibeCobranzas), bool(v.recibeDocumentosElectronicos), v.recibeNotificaciones !== false];
+    for (const { id, v, tel, cel } of finales) {
+      const p = [texto(v.nombre, 100), opcional(v.apellido, 100), opcional(v.cargo, 100), opcional(v.departamento, 100), tel.numero, cel.numero, opcional(v.email, 150),
+        bool(v.esPrincipal), bool(v.recibePedidos), bool(v.recibeFacturacion), bool(v.recibeCobranzas), bool(v.recibeDocumentosElectronicos), v.recibeNotificaciones !== false,
+        tel.pais, tel.ddi, tel.area, cel.pais, cel.ddi, cel.area];
       if (id) {
         await c.query(
           `UPDATE cliente_contactos SET nombre=$4, apellido=$5, cargo=$6, departamento=$7, telefono=$8, celular=$9, email=$10, es_principal=$11, recibe_pedidos=$12,
-                  recibe_facturacion=$13, recibe_cobranzas=$14, recibe_documentos_electronicos=$15, recibe_notificaciones=$16
+                  recibe_facturacion=$13, recibe_cobranzas=$14, recibe_documentos_electronicos=$15, recibe_notificaciones=$16,
+                  telefono_pais=$17, telefono_ddi=$18, telefono_area=$19, celular_pais=$20, celular_ddi=$21, celular_area=$22
             WHERE id = $1 AND empresa_id = $2 AND cliente_id = $3`,
           [id, empresaId, clienteId, ...p],
         );
         resumen.contactos.actualizados++;
       } else {
         await c.query(
-          `INSERT INTO cliente_contactos (empresa_id, cliente_id, nombre, apellido, cargo, departamento, telefono, celular, email, es_principal, recibe_pedidos, recibe_facturacion, recibe_cobranzas, recibe_documentos_electronicos, recibe_notificaciones)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+          `INSERT INTO cliente_contactos (empresa_id, cliente_id, nombre, apellido, cargo, departamento, telefono, celular, email, es_principal, recibe_pedidos, recibe_facturacion, recibe_cobranzas, recibe_documentos_electronicos, recibe_notificaciones,
+                  telefono_pais, telefono_ddi, telefono_area, celular_pais, celular_ddi, celular_area)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`,
           [empresaId, clienteId, ...p],
         );
         resumen.contactos.nuevos++;

@@ -12,7 +12,7 @@ import {
 import { mensajeRestriccionCliente } from "@/lib/clientes/errores-bd";
 import { evaluarAptitudSifen } from "@/lib/fiscal/aptitud-sifen";
 import { validarDiaPreferidoCobro } from "@/lib/clientes/dia-cobro";
-import { validarTelefonoFiscal } from "@/lib/fiscal/telefono";
+import { leerTelefonoEntrada, validarTelefono } from "@/lib/fiscal/telefono";
 import { ErrorGeografia, resolverPais, validarPaisPorOperacion } from "@/lib/geografia/referencia";
 import { ErrorValidacion, leerEntrada, leerHijos, sincronizarHijos } from "@/lib/clientes/relacionados";
 
@@ -114,7 +114,7 @@ export async function GET(_request: Request, contexto: Contexto) {
       `SELECT c.id, c.codigo, c.naturaleza_receptor, c.tipo_operacion, c.tipo_persona,
               c.pais_codigo, c.pais_nombre, c.tipo_documento, c.descripcion_documento_identidad,
               c.numero_documento, c.dv, c.razon_social, c.nombre_fantasia,
-              c.email, c.email_copia, c.telefono, c.celular, c.telefono_ddi, c.celular_ddi,
+              c.email, c.email_copia, c.telefono, c.celular, c.telefono_ddi, c.celular_ddi, c.telefono_pais, c.telefono_area, c.celular_pais, c.celular_area,
               c.limite_credito, c.limite_credito_temporal,
               to_char(c.fecha_vencimiento_credito, 'DD/MM/YYYY') AS fecha_vencimiento_credito,
               c.grupo_cliente_id, c.condicion_pago_id, c.moneda_codigo_predeterminada,
@@ -162,6 +162,12 @@ export async function GET(_request: Request, contexto: Contexto) {
         email: c.email ?? "",
         telefono: c.telefono ?? "",
         celular: c.celular ?? "",
+        telefonoPais: c.telefono_pais ?? "",
+        telefonoDdi: c.telefono_ddi ?? "",
+        telefonoArea: c.telefono_area ?? "",
+        celularPais: c.celular_pais ?? "",
+        celularDdi: c.celular_ddi ?? "",
+        celularArea: c.celular_area ?? "",
       },
       dirFiscal
         ? {
@@ -197,6 +203,10 @@ export async function GET(_request: Request, contexto: Contexto) {
         telefono: c.telefono ?? "",
         celular: c.celular ?? "",
         telefonoDdi: c.telefono_ddi ?? "",
+        telefonoPais: c.telefono_pais ?? "",
+        telefonoArea: c.telefono_area ?? "",
+        celularPais: c.celular_pais ?? "",
+        celularArea: c.celular_area ?? "",
         celularDdi: c.celular_ddi ?? "",
         limiteCredito: Number(c.limite_credito),
         limiteCreditoTemporal: c.limite_credito_temporal === null ? "" : String(Number(c.limite_credito_temporal)),
@@ -323,7 +333,7 @@ export async function PUT(request: Request, contexto: Contexto) {
     await conexion.query("BEGIN");
 
     const actual = await conexion.query(
-      "SELECT bloqueado_ventas, naturaleza_receptor, numero_documento, dv, descripcion_documento_identidad, razon_social, nombre_fantasia, email, telefono, celular, telefono_ddi, celular_ddi, tipo_operacion, tipo_documento, gln FROM clientes WHERE id = $1 AND empresa_id = $2 FOR UPDATE",
+      "SELECT bloqueado_ventas, naturaleza_receptor, numero_documento, dv, descripcion_documento_identidad, razon_social, nombre_fantasia, email, telefono, celular, telefono_ddi, celular_ddi, telefono_pais, telefono_area, celular_pais, celular_area, tipo_operacion, tipo_documento, gln FROM clientes WHERE id = $1 AND empresa_id = $2 FOR UPDATE",
       [id, empresaId],
     );
     if (actual.rowCount !== 1) {
@@ -363,19 +373,25 @@ export async function PUT(request: Request, contexto: Contexto) {
       throw new Error(errorReceptor);
     }
 
-    // Teléfono/celular fiscales (D214/D215): DDI separado + número nacional normalizado. Un valor anterior a NEX-024
-    // (sin DDI) que no cambia se conserva tal cual; si se modifica el número o el DDI se exige DDI y formato.
-    const resolverTelefono = (campo: "telefono" | "celular", ddiEntrada: unknown, numeroEntrada: unknown) => {
-      const numero = textoCrudo(numeroEntrada);
-      const ddi = textoCrudo(ddiEntrada);
-      const sinCambio = numero === s(previo[campo]) && ddi === s(previo[`${campo}_ddi`]);
-      if (sinCambio) return { ok: true as const, ddi, numero };
-      const r = validarTelefonoFiscal(campo, ddi, numero);
+    // Teléfono/celular fiscales: país del número + DDI asociado + código de área (si el plan lo usa) + número nacional
+    // normalizado (retificación 2026-10-11). Un valor anterior que no cambia (aunque no tenga país) se conserva tal cual;
+    // si cambia cualquiera de los cuatro datos se valida completo. No hay restricción de números repetidos.
+    const resolverTelefono = (campo: "telefono" | "celular") => {
+      const entrada = leerTelefonoEntrada(cuerpo, campo);
+      const sinCambio =
+        entrada.numero === s(previo[campo]) &&
+        entrada.pais === s(previo[`${campo}_pais`]) &&
+        entrada.ddi === s(previo[`${campo}_ddi`]) &&
+        entrada.area === s(previo[`${campo}_area`]);
+      if (sinCambio) {
+        return { numero: entrada.numero || null, pais: entrada.pais || null, ddi: entrada.ddi || null, area: entrada.area || null };
+      }
+      const r = validarTelefono(campo, entrada);
       if (!r.ok) throw new Error(r.error);
-      return r;
+      return r.valor;
     };
-    const telefonoGuardar = resolverTelefono("telefono", cuerpo.telefonoDdi, cuerpo.telefono);
-    const celularGuardar = resolverTelefono("celular", cuerpo.celularDdi, cuerpo.celular);
+    const telefonoGuardar = resolverTelefono("telefono");
+    const celularGuardar = resolverTelefono("celular");
 
     // Día preferido de cobro: entero 1–31 (DEC-CLI-COB-06); se guarda la preferencia original.
     const diaCobro = validarDiaPreferidoCobro(cuerpo.diaPreferidoCobro);
@@ -449,7 +465,7 @@ export async function PUT(request: Request, contexto: Contexto) {
          dia_preferido_cobro = $35, ruta_entrega_id = $36, zona_comercial_id = $37, vendedor_id = $38,
          frecuencia_entrega = $39, dias_entrega = $40, requiere_orden_compra = $41,
          email_facturacion = $42, email_cobranzas = $43, recibe_documento_electronico = $44,
-         observacion_comercial = $45, observacion_logistica = $46, activo = $47, telefono_ddi = $48, celular_ddi = $49
+         observacion_comercial = $45, observacion_logistica = $46, activo = $47, telefono_ddi = $48, celular_ddi = $49, telefono_pais = $50, telefono_area = $51, celular_pais = $52, celular_area = $53
        WHERE id = $1 AND empresa_id = $2`,
       [
         id, empresaId,
@@ -462,7 +478,7 @@ export async function PUT(request: Request, contexto: Contexto) {
         naturaleza === "CONTRIBUYENTE" ? null : descDoc,
         numeroDocumento, naturaleza === "CONTRIBUYENTE" ? dv : null,
         razonSocial, opcional(cuerpo.nombreFantasia, 255),
-        email, emailCopia, telefonoGuardar.numero || null, celularGuardar.numero || null,
+        email, emailCopia, telefonoGuardar.numero, celularGuardar.numero,
         numero(cuerpo.limiteCredito, 0) ?? 0,
         condicionPagoId, refs.listaPrecioId, refs.grupoClienteId,
         opcional(cuerpo.monedaCodigoPredeterminada, 3)?.toUpperCase() ?? null,
@@ -476,8 +492,12 @@ export async function PUT(request: Request, contexto: Contexto) {
         emailFacturacion, emailCobranzas, cuerpo.recibeDocumentoElectronico !== false,
         opcional(cuerpo.observacionComercial, 1000), opcional(cuerpo.observacionLogistica, 1000),
         cuerpo.activo !== false,
-        telefonoGuardar.numero === "" ? null : telefonoGuardar.ddi,
-        celularGuardar.numero === "" ? null : celularGuardar.ddi,
+        telefonoGuardar.ddi,
+        celularGuardar.ddi,
+        telefonoGuardar.pais,
+        telefonoGuardar.area,
+        celularGuardar.pais,
+        celularGuardar.area,
       ],
     );
 

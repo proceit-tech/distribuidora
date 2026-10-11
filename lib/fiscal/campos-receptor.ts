@@ -9,7 +9,6 @@
  * en ambos lados, sin truncar ni "corregir" valores en silencio. El RUC/DV se valida en `calcular-dv-ruc.ts`.
  */
 
-import { validarNumeroTelefonico } from "@/lib/fiscal/telefono";
 
 export const LIMITES_RECEPTOR = {
   /** D210 dNumIDRec: A 1–20. */
@@ -22,7 +21,7 @@ export const LIMITES_RECEPTOR = {
   nombreFantasia: { min: 4, max: 255 },
   /** D216 dEmailRec: A 3–80. */
   email: { min: 3, max: 80 },
-  // D214/D215 (teléfono 6–15, celular 10–20): ver LIMITES_TELEFONO en lib/fiscal/telefono.ts (única fuente).
+  // D214/D215: teléfono y celular se validan por país del número en lib/fiscal/telefono.ts (no aquí).
   /** D213 dDirRec: A 1–255. */
   direccion: { min: 1, max: 255 },
   /** D218 dNumCasRec: N 1–6. */
@@ -84,12 +83,6 @@ export function validarCamposReceptor(c: CamposReceptor, previos?: Partial<Campo
     return `El correo electrónico debe tener entre ${L.email.min} y ${L.email.max} caracteres.`;
   }
 
-  // D214/D215: número nacional normalizado (solo dígitos); el DDI se valida aparte (lib/fiscal/telefono.ts).
-  const errorTelefono = c.telefono && cambio("telefono") ? validarNumeroTelefonico("telefono", c.telefono) : null;
-  if (errorTelefono) return errorTelefono;
-
-  const errorCelular = c.celular && cambio("celular") ? validarNumeroTelefonico("celular", c.celular) : null;
-  if (errorCelular) return errorCelular;
 
   return null;
 }

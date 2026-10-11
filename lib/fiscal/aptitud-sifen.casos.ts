@@ -22,6 +22,12 @@ const base: DatosAptitud = {
   email: "",
   telefono: "",
   celular: "",
+  telefonoPais: "",
+  telefonoDdi: "",
+  telefonoArea: "",
+  celularPais: "",
+  celularDdi: "",
+  celularArea: "",
 };
 
 const contribuyente: DatosAptitud = {
@@ -86,6 +92,13 @@ export const CASOS_APTITUD_SIFEN: Caso[] = [
   { nombre: "B2C con código PRY inactivo/inexistente en el catálogo", datos: { ...base, paisEnCatalogo: false }, apto: false, pendiente: "catálogo oficial de países" },
   { nombre: "país no verificable (catálogo no consultado)", datos: { ...base, paisEnCatalogo: null }, apto: false, pendiente: "No fue posible verificar" },
   { nombre: "domicilio fiscal con país inexistente", datos: { ...base, tipoOperacion: "B2F", paisCodigo: "BRA", paisEnCatalogo: true, tipoDocumento: "PASAPORTE", numeroDocumento: "AB123456" }, fiscal: { ...sinGeografia, paisCodigo: "ZZZ", paisEnCatalogo: false }, apto: false, pendiente: "domicilio fiscal" },
+  // ---- Teléfono / celular por país del número (independiente del país fiscal del receptor)
+  { nombre: "cliente PRY con celular de Brasil (país del teléfono ≠ país fiscal)", datos: { ...base, celular: "987654321", celularPais: "BRA", celularDdi: "55", celularArea: "11" }, apto: true },
+  { nombre: "teléfono paraguayo válido", datos: { ...base, telefono: "021123456", telefonoPais: "PRY", telefonoDdi: "595" }, apto: true },
+  { nombre: "teléfono anterior sin país y con forma válida (legado)", datos: { ...base, telefono: "021123456" }, apto: true },
+  { nombre: "teléfono anterior sin país con letras", datos: { ...base, telefono: "021-ABC" }, apto: false, pendiente: "teléfono" },
+  { nombre: "celular de Brasil sin DDD", datos: { ...base, celular: "987654321", celularPais: "BRA", celularDdi: "55" }, apto: false, pendiente: "código de área" },
+  { nombre: "celular con país no configurado", datos: { ...base, celular: "987654321", celularPais: "ZZZ" }, apto: false, pendiente: "celular" },
   // ---- Inválidos: identificación
   { nombre: "DV incorrecto", datos: { ...contribuyente, dv: "5" }, apto: false, pendiente: "DV" },
   { nombre: "RUC con letras", datos: { ...contribuyente, numeroDocumento: "80A00005" }, apto: false, pendiente: "RUC" },

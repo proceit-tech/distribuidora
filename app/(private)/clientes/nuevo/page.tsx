@@ -5,8 +5,8 @@ import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { calcularDvRuc, validarRucDv } from "@/lib/fiscal/calcular-dv-ruc";
-import { TelefonoDdi } from "@/components/clientes/telefono-ddi";
-import { validarTelefonoFiscal } from "@/lib/fiscal/telefono";
+import { TelefonoPais } from "@/components/clientes/telefono-pais";
+import { validarTelefono } from "@/lib/fiscal/telefono";
 import {
   NOMBRE_INNOMINADO,
   validarCamposReceptor,
@@ -44,7 +44,13 @@ type Contacto = {
   cargo: string;
   departamento: string;
   telefono: string;
+  telefonoPais: string;
+  telefonoDdi: string;
+  telefonoArea: string;
   celular: string;
+  celularPais: string;
+  celularDdi: string;
+  celularArea: string;
   email: string;
   esPrincipal: boolean;
   recibePedidos: boolean;
@@ -101,9 +107,13 @@ type Formulario = {
   email: string;
   emailCopia: string;
   telefono: string;
+  telefonoPais: string;
   telefonoDdi: string;
-  celularDdi: string;
+  telefonoArea: string;
   celular: string;
+  celularPais: string;
+  celularDdi: string;
+  celularArea: string;
   limiteCredito: string;
   grupoClienteId: string;
   condicionPagoId: string;
@@ -158,9 +168,13 @@ const formularioInicial: Formulario = {
   email: "",
   emailCopia: "",
   telefono: "",
+  telefonoPais: "PRY",
   telefonoDdi: "595",
-  celularDdi: "595",
+  telefonoArea: "",
   celular: "",
+  celularPais: "PRY",
+  celularDdi: "595",
+  celularArea: "",
   limiteCredito: "0",
   grupoClienteId: "",
   condicionPagoId: "",
@@ -195,7 +209,13 @@ function crearContacto(): Contacto {
     cargo: "",
     departamento: "",
     telefono: "",
+    telefonoPais: "PRY",
+    telefonoDdi: "595",
+    telefonoArea: "",
     celular: "",
+    celularPais: "PRY",
+    celularDdi: "595",
+    celularArea: "",
     email: "",
     esPrincipal: false,
     recibePedidos: false,
@@ -643,9 +663,9 @@ export default function NuevoClientePage() {
         razonSocial: f.razonSocial.trim(),
       });
     if (errorReglas) return fiscal(errorReglas, "cli-tipo-documento");
-    const telefonoFiscal = validarTelefonoFiscal("telefono", f.telefonoDdi, f.telefono);
+    const telefonoFiscal = validarTelefono("telefono", { pais: f.telefonoPais, ddi: f.telefonoDdi, area: f.telefonoArea, numero: f.telefono });
     if (!telefonoFiscal.ok) return fiscal(telefonoFiscal.error, "cli-telefono");
-    const celularFiscal = validarTelefonoFiscal("celular", f.celularDdi, f.celular);
+    const celularFiscal = validarTelefono("celular", { pais: f.celularPais, ddi: f.celularDdi, area: f.celularArea, numero: f.celular });
     if (!celularFiscal.ok) return fiscal(celularFiscal.error, "cli-celular");
     if (f.email.trim() && !FORMATO_CORREO.test(f.email.trim())) {
       return fiscal("El correo electrónico no tiene un formato válido.", "cli-email");
@@ -704,6 +724,10 @@ export default function NuevoClientePage() {
       if (!c.nombre.trim()) {
         return { pestana: "contactos", mensaje: `El contacto ${n} necesita nombre.`, campo: `cli-contacto-${i}-nombre` };
       }
+      const telContacto = validarTelefono("telefono", { pais: c.telefonoPais, ddi: c.telefonoDdi, area: c.telefonoArea, numero: c.telefono }, `el teléfono del contacto ${n}`);
+      if (!telContacto.ok) return { pestana: "contactos", mensaje: telContacto.error, campo: `cli-contacto-${i}-telefono` };
+      const celContacto = validarTelefono("celular", { pais: c.celularPais, ddi: c.celularDdi, area: c.celularArea, numero: c.celular }, `el celular del contacto ${n}`);
+      if (!celContacto.ok) return { pestana: "contactos", mensaje: celContacto.error, campo: `cli-contacto-${i}-celular` };
       const largoContacto = validarLongitudes([
         [c.nombre.trim(), 100, `El nombre del contacto ${n}`],
         [c.apellido.trim(), 100, `El apellido del contacto ${n}`],
@@ -1188,35 +1212,37 @@ export default function NuevoClientePage() {
             </div>
 
             <div className="clienteNuevo__grid clienteNuevo__grid--dos">
-              <TelefonoDdi
+              <TelefonoPais
                 campo="telefono"
                 clases={{ campo: "clienteNuevo__campo" }}
-                ddi={formulario.telefonoDdi}
                 etiqueta="Teléfono"
                 id="cli-telefono"
-                numero={formulario.telefono}
-                onChange={(cambio) =>
+                onChange={(nuevo) =>
                   setFormulario((actual) => ({
                     ...actual,
-                    ...(cambio.ddi !== undefined ? { telefonoDdi: cambio.ddi } : {}),
-                    ...(cambio.numero !== undefined ? { telefono: cambio.numero } : {}),
+                    telefonoPais: nuevo.pais,
+                    telefonoDdi: nuevo.ddi,
+                    telefonoArea: nuevo.area,
+                    telefono: nuevo.numero,
                   }))
                 }
+                valor={{ pais: formulario.telefonoPais, ddi: formulario.telefonoDdi, area: formulario.telefonoArea, numero: formulario.telefono }}
               />
-              <TelefonoDdi
+              <TelefonoPais
                 campo="celular"
                 clases={{ campo: "clienteNuevo__campo" }}
-                ddi={formulario.celularDdi}
                 etiqueta="Celular"
                 id="cli-celular"
-                numero={formulario.celular}
-                onChange={(cambio) =>
+                onChange={(nuevo) =>
                   setFormulario((actual) => ({
                     ...actual,
-                    ...(cambio.ddi !== undefined ? { celularDdi: cambio.ddi } : {}),
-                    ...(cambio.numero !== undefined ? { celular: cambio.numero } : {}),
+                    celularPais: nuevo.pais,
+                    celularDdi: nuevo.ddi,
+                    celularArea: nuevo.area,
+                    celular: nuevo.numero,
                   }))
                 }
+                valor={{ pais: formulario.celularPais, ddi: formulario.celularDdi, area: formulario.celularArea, numero: formulario.celular }}
               />
             </div>
           </section>
@@ -1463,21 +1489,44 @@ export default function NuevoClientePage() {
                   />
                 </div>
 
+                <div className="clienteNuevo__grid clienteNuevo__grid--dos">
+                  <TelefonoPais
+                    campo="telefono"
+                    clases={{ campo: "clienteNuevo__campo" }}
+                    etiqueta="Teléfono"
+                    etiquetaError={`el teléfono del contacto ${indice + 1}`}
+                    id={`cli-contacto-${indice}-telefono`}
+                    onChange={(nuevo) =>
+                      setContactos((actuales) =>
+                        actuales.map((c, i) =>
+                          i === indice
+                            ? { ...c, telefonoPais: nuevo.pais, telefonoDdi: nuevo.ddi, telefonoArea: nuevo.area, telefono: nuevo.numero }
+                            : c,
+                        ),
+                      )
+                    }
+                    valor={{ pais: contacto.telefonoPais, ddi: contacto.telefonoDdi, area: contacto.telefonoArea, numero: contacto.telefono }}
+                  />
+                  <TelefonoPais
+                    campo="celular"
+                    clases={{ campo: "clienteNuevo__campo" }}
+                    etiqueta="Celular"
+                    etiquetaError={`el celular del contacto ${indice + 1}`}
+                    id={`cli-contacto-${indice}-celular`}
+                    onChange={(nuevo) =>
+                      setContactos((actuales) =>
+                        actuales.map((c, i) =>
+                          i === indice
+                            ? { ...c, celularPais: nuevo.pais, celularDdi: nuevo.ddi, celularArea: nuevo.area, celular: nuevo.numero }
+                            : c,
+                        ),
+                      )
+                    }
+                    valor={{ pais: contacto.celularPais, ddi: contacto.celularDdi, area: contacto.celularArea, numero: contacto.celular }}
+                  />
+                </div>
+
                 <div className="clienteNuevo__grid clienteNuevo__grid--tres">
-                  <Input
-                    label="Teléfono"
-                    onChange={(valor) =>
-                      actualizarContacto(indice, "telefono", valor)
-                    }
-                    value={contacto.telefono}
-                  />
-                  <Input
-                    label="Celular"
-                    onChange={(valor) =>
-                      actualizarContacto(indice, "celular", valor)
-                    }
-                    value={contacto.celular}
-                  />
                   <Input
                     id={`cli-contacto-${indice}-email`}
                     label="Correo electrónico"

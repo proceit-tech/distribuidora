@@ -1,101 +1,179 @@
 /**
- * Teléfono y celular fiscales del receptor (D214 dTelRec / D215 dCelRec del SIFEN): DDI separado + número.
+ * Teléfono y celular por país (Clientes: cliente principal y contactos) — REGLAS CADASTRALES.
+ * Retificación aprobada 2026-10-11 (documentacao/regras/REGRA-CADASTRO-CLIENTES-NEXIT-V1.md):
+ *  - el usuario elige el PAÍS DEL NÚMERO (Paraguay por defecto); país del teléfono ≠ DDI ≠ DDD y ≠ país fiscal del receptor;
+ *  - Paraguay: sin campo de DDD; el DDI +595 se asocia solo; el número se guarda tal como se informa (con su prefijo
+ *    local; los ceros no se quitan);
+ *  - otros países: campo de código de área (DDD) solo donde el plan de numeración lo usa; el DDI se asocia solo;
+ *  - los números PUEDEN REPETIRSE (clientes, contactos, empresas): no hay ni habrá unicidad sobre teléfonos;
+ *  - un número que COMIENZA por los mismos dígitos del DDI es válido (coincidencia); solo se rechazan los formatos de
+ *    discado ambiguos ("+" y prefijo internacional "00") pidiendo separar el país, sin cortar ni adivinar;
+ *  - la futura serialización D214/D215 del XML SIFEN (V2) es una regla SEPARADA y no está decidida aquí.
  *
- * FUENTE NORMATIVA (Manual Técnico v150, D3, págs. 72–73; NT 014 GENFE023/024; no hay NT que lo modifique):
- *  - D214 dTelRec: tipo A, 6–15 posiciones, opcional; "Debe incluir el prefijo de la ciudad si D203 = PRY".
- *  - D215 dCelRec: tipo A, 10–20 posiciones, opcional; sin observación de prefijo.
- * LA NORMA NO DICE NADA SOBRE EL DDI (código de país) ni sobre el formato de números internacionales.
- * Por eso, sin inventar formato (DEC-CLI-TEL-03/04):
- *  - el DDI se guarda aparte (columnas `telefono_ddi` / `celular_ddi`, NEX-024) y el número nacional en
- *    `telefono` / `celular`, solo dígitos y con ceros iniciales preservados;
- *  - las longitudes del SIFEN (6–15 / 10–20) se aplican al NÚMERO NACIONAL normalizado;
- *  - NO se decide si el valor transmitido en el XML (V2) lleva el DDI antepuesto: queda pendiente de decisión
- *    (DEC-CLI-TEL-PEND), y al estar el DDI guardado aparte cualquiera de las dos opciones se puede aplicar sin
- *    perder datos;
- *  - el prefijo de ciudad para PRY es responsabilidad de quien escribe el número (no hay tabla oficial de
- *    prefijos en el paquete DNIT): la pantalla lo indica, el sistema solo valida dígitos y largo.
- * El catálogo de DDI de esta lista es una ayuda de la interfaz (UIT E.164), NO una tabla del SIFEN; "Otro"
- * permite indicar cualquier DDI de 1 a 3 dígitos.
+ * NORMA SIFEN (Manual v150 D214/D215, NT 014 GENFE023/024; ninguna NT lo modifica): tipo A, teléfono 6–15 y celular 10–20,
+ * opcionales; el teléfono "debe incluir el prefijo de la ciudad si D203 = PRY". La norma NO menciona DDI/DDD ni números
+ * internacionales. Por eso los límites 6–15 / 10–20 se aplican SOLO a números paraguayos (como regla cadastral de PRY);
+ * los demás países se validan con su plan de numeración. No se declara que la DNIT exija DDI/DDD.
+ *
+ * FUENTES de los planes (ITU-T E.164 y planes nacionales de numeración; longitudes nacionales significativas, sin el
+ * prefijo de discado nacional "0", según la metadata pública de libphonenumber de Google). Son una compilación de
+ * Claude que el responsable debe confirmar antes de homologar; cada entrada es editable aquí y es la ÚNICA fuente de
+ * la interfaz y de las API. Países no listados: opción explícita "Otro país" con los únicos límites de la UIT E.164
+ * (DDI de 1–3 dígitos; DDI + número ≤ 15 dígitos), sin reglas por país.
  */
 
 export type CampoTelefonico = "telefono" | "celular";
 
-export const LIMITES_TELEFONO: Record<CampoTelefonico, { min: number; max: number; etiqueta: string }> = {
-  telefono: { min: 6, max: 15, etiqueta: "El teléfono" },
-  celular: { min: 10, max: 20, etiqueta: "El celular" },
+export type PlanPais = {
+  iso: string;
+  nombre: string;
+  ddi: string;
+  /** Código de área / DDD en campo propio. `null` = el plan no lo usa como campo separado. */
+  area: { min: number; max: number } | null;
+  /** Largos válidos del número nacional significativo (área + número, sin "0" de discado nacional). */
+  nsn: number[];
+  ayuda: string;
 };
 
-/** Ayuda de interfaz (UIT E.164): DDI de uso frecuente. Cualquier otro se informa con "Otro". */
-export const DDI_FRECUENTES: Array<{ ddi: string; pais: string }> = [
-  { ddi: "595", pais: "Paraguay" },
-  { ddi: "54", pais: "Argentina" },
-  { ddi: "55", pais: "Brasil" },
-  { ddi: "598", pais: "Uruguay" },
-  { ddi: "591", pais: "Bolivia" },
-  { ddi: "56", pais: "Chile" },
-  { ddi: "57", pais: "Colombia" },
-  { ddi: "51", pais: "Perú" },
-  { ddi: "593", pais: "Ecuador" },
-  { ddi: "58", pais: "Venezuela" },
-  { ddi: "1", pais: "Estados Unidos / Canadá" },
-  { ddi: "34", pais: "España" },
-  { ddi: "39", pais: "Italia" },
-  { ddi: "49", pais: "Alemania" },
-  { ddi: "81", pais: "Japón" },
-  { ddi: "86", pais: "China" },
+/** Paraguay: el número se guarda tal como se informa; los límites son los de D214/D215 aplicados al número paraguayo. */
+export const LIMITES_PARAGUAY: Record<CampoTelefonico, { min: number; max: number }> = {
+  telefono: { min: 6, max: 15 },
+  celular: { min: 10, max: 20 },
+};
+
+export const PAIS_OTRO = "OTR";
+export const PAIS_POR_DEFECTO = "PRY";
+
+export const PLANES_TELEFONIA: PlanPais[] = [
+  { iso: "PRY", nombre: "Paraguay", ddi: "595", area: null, nsn: [], ayuda: "Sin campo de código de área: escriba el número con su prefijo local (el teléfono debe incluir el prefijo de la ciudad; no se quitan ceros)." },
+  { iso: "ARG", nombre: "Argentina", ddi: "54", area: { min: 2, max: 4 }, nsn: [10], ayuda: "Código de área de 2 a 4 dígitos (sin el 0) y número sin el 15; área + número = 10 dígitos." },
+  { iso: "BOL", nombre: "Bolivia", ddi: "591", area: null, nsn: [8], ayuda: "Número de 8 dígitos (incluye el código de área de los fijos)." },
+  { iso: "BRA", nombre: "Brasil", ddi: "55", area: { min: 2, max: 2 }, nsn: [10, 11], ayuda: "DDD de 2 dígitos (sin el 0) y número de 8 (fijo) o 9 (celular) dígitos." },
+  { iso: "CAN", nombre: "Canadá", ddi: "1", area: { min: 3, max: 3 }, nsn: [10], ayuda: "Código de área de 3 dígitos y número de 7 dígitos." },
+  { iso: "CHL", nombre: "Chile", ddi: "56", area: null, nsn: [9], ayuda: "Número de 9 dígitos (incluye el código de área de los fijos)." },
+  { iso: "COL", nombre: "Colombia", ddi: "57", area: null, nsn: [8, 10], ayuda: "Fijo de 8 dígitos (con indicativo de ciudad) o celular de 10 dígitos." },
+  { iso: "ESP", nombre: "España", ddi: "34", area: null, nsn: [9], ayuda: "Número de 9 dígitos." },
+  { iso: "USA", nombre: "Estados Unidos", ddi: "1", area: { min: 3, max: 3 }, nsn: [10], ayuda: "Código de área de 3 dígitos y número de 7 dígitos." },
+  { iso: "PER", nombre: "Perú", ddi: "51", area: null, nsn: [8, 9], ayuda: "Fijo de 8 dígitos (con indicativo de ciudad) o celular de 9 dígitos." },
+  { iso: "URY", nombre: "Uruguay", ddi: "598", area: null, nsn: [8], ayuda: "Número de 8 dígitos, sin el 0 de discado nacional." },
 ];
 
-const DDI_FORMATO = /^[0-9]{1,3}$/;
+export type TelefonoForm = { pais: string; ddi: string; area: string; numero: string };
+export type TelefonoGuardar = { pais: string | null; ddi: string | null; area: string | null; numero: string | null };
 
-/**
- * Número nacional canónico: se aceptan espacios, guiones, puntos y paréntesis solo como separación visual y se
- * guardan únicamente dígitos (ceros iniciales preservados). Se rechaza todo lo ambiguo: letras, "+", "00" de
- * discado internacional o un número que ya empiece por el DDI no se interpretan ni se corrigen.
- */
+export const telefonoVacio = (pais: string = PAIS_POR_DEFECTO): TelefonoForm => ({ pais, ddi: pais === PAIS_OTRO ? "" : planDe(pais)?.ddi ?? "", area: "", numero: "" });
+
+export function planDe(iso: string): PlanPais | undefined {
+  return PLANES_TELEFONIA.find((p) => p.iso === iso);
+}
+
+const ETIQUETA: Record<CampoTelefonico, string> = { telefono: "el teléfono", celular: "el celular" };
+
+/** Separadores visuales permitidos; solo se guardan dígitos. Devuelve error si hay formato de discado ambiguo. */
 export function normalizarNumeroTelefonico(entrada: string): { numero: string } | { error: string } {
   const texto = entrada.trim();
 
   if (texto === "") return { numero: "" };
-  if (texto.includes("+")) return { error: "no incluya el signo + ni el DDI en el número: seleccione el DDI aparte" };
+  if (texto.includes("+")) return { error: "no debe incluir el signo +: seleccione el país del número y escriba solo el número" };
   if (!/^[0-9 .\-()]+$/.test(texto)) return { error: "solo puede contener dígitos (se admiten espacios, guiones, puntos y paréntesis)" };
 
-  return { numero: texto.replace(/[ .\-()]/g, "") };
+  const digitos = texto.replace(/[ .\-()]/g, "");
+
+  if (digitos.startsWith("00")) return { error: "no debe incluir el prefijo de discado internacional (00): seleccione el país del número y escriba solo el número" };
+
+  return { numero: digitos };
 }
 
-/** Valida DDI + número de un campo telefónico. Devuelve el valor canónico a guardar o el mensaje de error. */
-export function validarTelefonoFiscal(
+/**
+ * Valida un teléfono/celular completo y devuelve el valor canónico a guardar.
+ * `etiqueta` opcional para los mensajes (p. ej. "el celular del contacto 2"). No cuenta repetición de números (permitida).
+ */
+export function validarTelefono(
   campo: CampoTelefonico,
-  ddi: string,
-  numeroEntrada: string,
-): { ok: true; ddi: string; numero: string } | { ok: false; error: string } {
-  const L = LIMITES_TELEFONO[campo];
-  const normalizado = normalizarNumeroTelefonico(numeroEntrada);
+  entrada: TelefonoForm,
+  etiqueta: string = ETIQUETA[campo],
+): { ok: true; valor: TelefonoGuardar } | { ok: false; error: string } {
+  const fallo = (detalle: string) => ({ ok: false as const, error: `${etiqueta.charAt(0).toUpperCase()}${etiqueta.slice(1)} ${detalle}` });
+  const normalizado = normalizarNumeroTelefonico(entrada.numero);
 
-  if ("error" in normalizado) return { ok: false, error: `${L.etiqueta} ${normalizado.error}.` };
-  if (normalizado.numero === "") return { ok: true, ddi: "", numero: "" };
+  if ("error" in normalizado) return fallo(`${normalizado.error}.`);
 
-  if (normalizado.numero.length < L.min || normalizado.numero.length > L.max) {
-    return { ok: false, error: `${L.etiqueta} debe tener entre ${L.min} y ${L.max} dígitos (sin el DDI).` };
+  const area = entrada.area.trim();
+
+  if (normalizado.numero === "") {
+    return area === "" ? { ok: true, valor: { pais: null, ddi: null, area: null, numero: null } } : fallo("tiene código de área pero no tiene número.");
   }
 
-  const ddiLimpio = ddi.trim();
+  const pais = entrada.pais.trim();
+  const numero = normalizado.numero;
 
-  if (!DDI_FORMATO.test(ddiLimpio)) {
-    return { ok: false, error: `Seleccione el DDI (código de país, de 1 a 3 dígitos) para ${campo === "telefono" ? "el teléfono" : "el celular"}.` };
+  if (pais === PAIS_OTRO) {
+    const ddi = entrada.ddi.trim();
+
+    if (!/^[0-9]{1,3}$/.test(ddi)) return fallo("necesita el DDI del país (1 a 3 dígitos).");
+    if (area !== "") return fallo("no admite código de área para un país sin plan de numeración configurado: inclúyalo en el número.");
+    if (numero.length < 4 || ddi.length + numero.length > 15) return fallo("debe tener al menos 4 dígitos y, con el DDI, no más de 15 (UIT E.164).");
+
+    return { ok: true, valor: { pais: PAIS_OTRO, ddi, area: null, numero } };
   }
 
-  return { ok: true, ddi: ddiLimpio, numero: normalizado.numero };
+  const plan = planDe(pais);
+
+  if (!plan) return fallo("necesita un país válido para el número (seleccione el país).");
+
+  if (plan.iso === "PRY") {
+    const L = LIMITES_PARAGUAY[campo];
+
+    if (area !== "") return fallo("de Paraguay no usa campo de código de área: escriba el número con su prefijo local.");
+    if (numero.length < L.min || numero.length > L.max) return fallo(`debe tener entre ${L.min} y ${L.max} dígitos (Paraguay, con su prefijo local).`);
+
+    return { ok: true, valor: { pais: "PRY", ddi: plan.ddi, area: null, numero } };
+  }
+
+  // Resto de países: código de área solo si el plan lo usa; sin el "0" de discado nacional; largo total según el plan.
+  if (plan.area === null && area !== "") return fallo(`de ${plan.nombre} no usa código de área separado: inclúyalo en el número.`);
+  if (plan.area !== null) {
+    if (!/^[0-9]+$/.test(area)) return fallo(`necesita el código de área de ${plan.nombre} (solo dígitos).`);
+    if (area.length < plan.area.min || area.length > plan.area.max) {
+      return fallo(`necesita un código de área de ${plan.area.min === plan.area.max ? plan.area.min : `${plan.area.min} a ${plan.area.max}`} dígitos para ${plan.nombre}.`);
+    }
+  }
+  if (area.startsWith("0") || numero.startsWith("0")) return fallo("no debe llevar el 0 de discado nacional (escriba el número sin ese 0).");
+
+  const total = area.length + numero.length;
+
+  if (!plan.nsn.includes(total)) {
+    return fallo(`no tiene un largo válido para ${plan.nombre} (${plan.nsn.join(" o ")} dígitos${plan.area ? " entre código de área y número" : ""}; se ingresaron ${total}).`);
+  }
+
+  return { ok: true, valor: { pais: plan.iso, ddi: plan.ddi, area: area === "" ? null : area, numero } };
 }
 
-/** Solo la forma del número (sin exigir DDI): para evaluar datos ya grabados y tolerar los anteriores al DDI. */
-export function validarNumeroTelefonico(campo: CampoTelefonico, numeroEntrada: string): string | null {
-  const L = LIMITES_TELEFONO[campo];
+/**
+ * Registro anterior a la retificación: número sin país. Solo se evalúa su forma (dígitos y largo D214/D215 como
+ * antes) para informar la aptitud; no se corrige ni se reinterpreta.
+ */
+export function validarNumeroTelefonicoLegado(campo: CampoTelefonico, numeroEntrada: string): string | null {
+  const L = LIMITES_PARAGUAY[campo];
   const normalizado = normalizarNumeroTelefonico(numeroEntrada);
 
-  if ("error" in normalizado) return `${L.etiqueta} ${normalizado.error}.`;
+  if ("error" in normalizado) return `${ETIQUETA[campo].charAt(0).toUpperCase()}${ETIQUETA[campo].slice(1)} ${normalizado.error}.`;
   if (normalizado.numero === "") return null;
 
   return normalizado.numero.length >= L.min && normalizado.numero.length <= L.max
     ? null
-    : `${L.etiqueta} debe tener entre ${L.min} y ${L.max} dígitos (sin el DDI).`;
+    : `${ETIQUETA[campo].charAt(0).toUpperCase()}${ETIQUETA[campo].slice(1)} (sin país registrado) debe tener entre ${L.min} y ${L.max} dígitos.`;
+}
+
+/** Lee de un cuerpo JSON los cuatro datos de un teléfono (`telefono`, `telefonoPais`, `telefonoDdi`, `telefonoArea`) sin truncar. */
+export function leerTelefonoEntrada(cuerpo: Record<string, unknown>, campo: CampoTelefonico, prefijo: string = campo): TelefonoForm {
+  const texto = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+  const clave = (sufijo: string) => (sufijo ? `${prefijo}${sufijo}` : prefijo);
+
+  return {
+    numero: texto(cuerpo[clave("")]),
+    pais: texto(cuerpo[clave("Pais")]).toUpperCase(),
+    ddi: texto(cuerpo[clave("Ddi")]),
+    area: texto(cuerpo[clave("Area")]),
+  };
 }
