@@ -1,0 +1,25 @@
+# Nexit V1 — Homologação visual: Dashboard e Sidebar
+
+**Resultado:** REPROVADO VISUALMENTE pelo responsável, após publicação dos ajustes globais de tipografia (`cf576f7`). **Data:** 2026-10-10.
+**Origem:** seis capturas fornecidas pelo responsável: dashboard completo, área inferior com atividade/inventário, menus expandidos Maestros/Inventario/Reportes e menu recolhido. Prints recebidos na conversa; **não publicados no GitHub**. Cópias de captura somente com autorização e revisão de privacidade.
+**Escopo:** corrigir a aparência de Dashboard e Sidebar, preservar dados, APIs, filtros, navegação e permissões. Não considerar aprovadas as telas internas sem avaliação separada.
+
+| ID | Prioridade | Evidência | Critério de aceite |
+|---|---|---|---|
+| VIS-DASH-01 | Alta | Sidebar mantém marca `DistribuNex` enquanto login usa `Nexit` | Marca Nexit uniforme em sidebar expandida e recolhida, sem alterações de autenticação/infra |
+| VIS-DASH-02 | Alta | Menus longos cortados, particularmente Reportes (`Valorización de inventario`, `Stock crítico y reposición`) | Todos os nomes legíveis por inteiro: adaptar largura/recuos e/ou quebra em múltiplas linhas; nenhuma opção inacessível |
+| VIS-DASH-03 | Alta | Aumento global deixou títulos e letras do menu desproporcionais | Escala contextual para menu (seções 12–13px, submenu 13–14px, principal ~14px), com pesos equilibrados e contraste legível |
+| VIS-DASH-04 | Média-alta | Marca/subtítulo e rodapé de usuário/empresa truncados | Nome Nexit, empresa, RUC e usuário apresentados adequadamente, sem cortar informação crítica; área de navegação rolável |
+| VIS-DASH-05 | Alta | Cartões KPI truncam textos e descrições com reticências | Mostrar informações relevantes completas por adaptação responsiva de layout/colunas; não esconder valor, unidade ou significado do indicador |
+| VIS-DASH-06 | Média | Hierarquia do Dashboard pesada, muitos rótulos em caixa alta e negrito | Melhorar equilíbrio dos pesos, espaçamentos e legibilidade; preservar gráficos, filtros, indicadores e links |
+| VIS-DASH-07 | Alta | Não houve verificação visual em diversas larguras após 575 alterações globais | Conferir desktop, notebook e modo sidebar recolhida, sem sobreposições/cortes; itens de menu abrem e navegam; Dashboard carrega dados reais |
+
+## Diretriz de escala
+
+Não usar substituição cega de font-size nem impor 15px a todos os elementos. Como referência: conteúdo primário ~14px; menu 13–14px; grupos 12–13px; texto auxiliar 12–13px quando legível; campos ~15px; KPIs 18–22px; título da página 26–28px. **Legibilidade, conteúdo completo e responsividade prevalecem sobre um mínimo global arbitrário**. Refinar dimensões, line-height, quebras, recuos e altura dos itens. Evitar tanto fonte minúscula quanto fonte desproporcional.
+
+## Procedimento
+
+Uma tarefa específica para Sidebar + Dashboard; consultar protocolos GitHub antes de alterar; não iniciar Next Dev/Webpack/Turbopack no notebook; testes estáticos leves e commit/push na branch correta; revisão ChatGPT e deploy/homologação pelo responsável. Não reverter globalmente as 575 mudanças nem alterar outras telas de forma indiscriminada.
+
+**Critério final:** aprovado somente após novo print da VM e aceite expresso do responsável.
