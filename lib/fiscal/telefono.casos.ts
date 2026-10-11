@@ -4,7 +4,8 @@
  * (lista vacía = todos coinciden). Los números son ficticios.
  */
 import { diaDeCobroEnMes, ultimoDiaDelMes, validarDiaPreferidoCobro } from "@/lib/clientes/dia-cobro";
-import { validarTelefono, type CampoTelefonico, type TelefonoForm } from "@/lib/fiscal/telefono";
+import { PAISES_DDI } from "@/lib/fiscal/paises-ddi";
+import { PLANES_TELEFONIA, advertenciaTelefono, buscarPaisesTelefonia, planDe, validarTelefono, type CampoTelefonico, type TelefonoForm } from "@/lib/fiscal/telefono";
 
 type CasoTel = { nombre: string; campo: CampoTelefonico; entrada: Partial<TelefonoForm> & { numero: string }; ok: boolean; esperado?: Partial<{ pais: string; ddi: string; area: string | null; numero: string }>; error?: string };
 
@@ -25,15 +26,28 @@ export const CASOS_TELEFONO: CasoTel[] = [
   { nombre: "BRA sin DDD", campo: "celular", entrada: { pais: "BRA", numero: "987654321" }, ok: false },
   { nombre: "BRA DDD con 0 de discado nacional", campo: "celular", entrada: { pais: "BRA", area: "011", numero: "987654321" }, ok: false },
   { nombre: "ARG área 3 dígitos + número de 7 (total 10)", campo: "telefono", entrada: { pais: "ARG", area: "351", numero: "4123456" }, ok: true, esperado: { ddi: "54", area: "351" } },
-  { nombre: "ARG con 15 sobrante (total 12)", campo: "celular", entrada: { pais: "ARG", area: "351", numero: "15412345678" }, ok: false },
+  { nombre: "ARG con 15 sobrante (total 12): largo atípico solo advierte, no rechaza", campo: "celular", entrada: { pais: "ARG", area: "351", numero: "15412345678" }, ok: true },
   { nombre: "URY celular de 8 dígitos sin campo de área", campo: "celular", entrada: { pais: "URY", numero: "99 123 456" }, ok: true, esperado: { ddi: "598", area: null, numero: "99123456" } },
   { nombre: "URY con campo de área", campo: "celular", entrada: { pais: "URY", area: "2", numero: "99123456" }, ok: false },
-  { nombre: "URY con 0 de discado nacional", campo: "celular", entrada: { pais: "URY", numero: "099123456" }, ok: false },
+  { nombre: "URY con 0 de discado nacional: solo advierte, no rechaza", campo: "celular", entrada: { pais: "URY", numero: "099123456" }, ok: true },
   { nombre: "USA área 3 + 7", campo: "telefono", entrada: { pais: "USA", area: "305", numero: "555-0123" }, ok: true, esperado: { ddi: "1" } },
   { nombre: "CHL celular de 9 dígitos", campo: "celular", entrada: { pais: "CHL", numero: "9 8765 4321" }, ok: true },
-  { nombre: "otro país con DDI manual", campo: "telefono", entrada: { pais: "OTR", ddi: "81", numero: "9012345678" }, ok: true, esperado: { pais: "OTR", ddi: "81" } },
-  { nombre: "otro país sin DDI", campo: "telefono", entrada: { pais: "OTR", numero: "9012345678" }, ok: false },
-  { nombre: "otro país con DDI + número > 15", campo: "telefono", entrada: { pais: "OTR", ddi: "81", numero: "12345678901234" }, ok: false },
+  // Catálogo mundial: países lejanos / planes no detallados (solo DDI + límites E.164), ISO real, nunca OTR
+  { nombre: "JPN (sin plan detallado) conserva ISO y DDI 81", campo: "telefono", entrada: { pais: "JPN", numero: "90 1234 5678" }, ok: true, esperado: { pais: "JPN", ddi: "81", area: null, numero: "9012345678" } },
+  { nombre: "ZWE DDI 263", campo: "celular", entrada: { pais: "ZWE", numero: "771234567" }, ok: true, esperado: { pais: "ZWE", ddi: "263" } },
+  { nombre: "ISL (DDI 354, números de 7 dígitos)", campo: "telefono", entrada: { pais: "ISL", numero: "5551234" }, ok: true, esperado: { pais: "ISL", ddi: "354" } },
+  { nombre: "ITA conserva el 0 inicial de los fijos", campo: "telefono", entrada: { pais: "ITA", numero: "06 1234 5678" }, ok: true, esperado: { numero: "0612345678" } },
+  { nombre: "país sin plan no admite campo de área", campo: "telefono", entrada: { pais: "JPN", area: "3", numero: "12345678" }, ok: false },
+  { nombre: "DDI + número > 15 dígitos rechazado (E.164)", campo: "telefono", entrada: { pais: "JPN", numero: "1234567890123" }, ok: false },
+  { nombre: "número de 3 dígitos rechazado", campo: "telefono", entrada: { pais: "JPN", numero: "123" }, ok: false },
+  { nombre: "OTR ya no es país válido (registro anterior: pedir país real)", campo: "telefono", entrada: { pais: "OTR", ddi: "81", numero: "9012345678" }, ok: false },
+  // DDI compartido: +1 (NANP), +7, +44, +590, +599, +262, +358
+  { nombre: "DOM comparte +1 con área 809", campo: "celular", entrada: { pais: "DOM", area: "809", numero: "555-0123" }, ok: true, esperado: { pais: "DOM", ddi: "1", area: "809" } },
+  { nombre: "PRI comparte +1 con área 787", campo: "telefono", entrada: { pais: "PRI", area: "787", numero: "5550123" }, ok: true, esperado: { pais: "PRI", ddi: "1" } },
+  { nombre: "JAM +1 sin área rechazado (plan NANP)", campo: "telefono", entrada: { pais: "JAM", numero: "5550123" }, ok: false },
+  { nombre: "KAZ comparte +7 con Rusia", campo: "celular", entrada: { pais: "KAZ", numero: "7012345678" }, ok: true, esperado: { pais: "KAZ", ddi: "7" } },
+  { nombre: "GGY comparte +44 con Reino Unido", campo: "telefono", entrada: { pais: "GGY", numero: "1481123456" }, ok: true, esperado: { pais: "GGY", ddi: "44" } },
+  { nombre: "GLP comparte +590 con San Bartolomé", campo: "celular", entrada: { pais: "GLP", numero: "690123456" }, ok: true, esperado: { pais: "GLP", ddi: "590" } },
   // Formatos ambiguos y país
   { nombre: "signo + rechazado", campo: "celular", entrada: { ...pry, numero: "+595981123456" }, ok: false },
   { nombre: "prefijo internacional 00 rechazado", campo: "celular", entrada: { ...pry, numero: "00595981123456" }, ok: false },
@@ -84,6 +98,51 @@ export function verificarCasosTelefonoYCobro(): string[] {
   }
   if (ultimoDiaDelMes(2100, 2) !== 28) fallos.push("2100 no es bisiesto (febrero = 28)");
   if (ultimoDiaDelMes(2000, 2) !== 29) fallos.push("2000 es bisiesto (febrero = 29)");
+
+  return fallos;
+}
+
+/** Cobertura mundial: invariantes del catálogo, DDI compartido, búsqueda, advertencias no bloqueantes y registros anteriores. */
+export function verificarCatalogoMundial(): string[] {
+  const fallos: string[] = [];
+  const vistos = new Set<string>();
+
+  for (const fila of PAISES_DDI) {
+    const [iso, nombre, ddi] = fila.split("|");
+
+    if (!/^[A-Z]{3}$/.test(iso ?? "")) fallos.push(`ISO inválido: ${fila}`);
+    if (!nombre) fallos.push(`sin nombre: ${fila}`);
+    if (!/^[0-9]{1,3}$/.test(ddi ?? "")) fallos.push(`DDI inválido: ${fila}`);
+    if (vistos.has(iso)) fallos.push(`ISO duplicado: ${iso}`);
+    vistos.add(iso);
+    if (!planDe(iso)) fallos.push(`sin plan en PLANES_TELEFONIA: ${iso}`);
+  }
+
+  if (PAISES_DDI.length < 230) fallos.push(`catálogo incompleto (${PAISES_DDI.length} entradas)`);
+  if (PLANES_TELEFONIA.length !== PAISES_DDI.length) fallos.push("PLANES_TELEFONIA no cubre todo el catálogo");
+  if (PLANES_TELEFONIA[0]?.iso !== "PRY") fallos.push("Paraguay debe ser el primero");
+  if (planDe("OTR")) fallos.push("OTR no puede ser un país del catálogo");
+
+  const compartido = (ddi: string) => PLANES_TELEFONIA.filter((p) => p.ddi === ddi).length;
+  for (const [ddi, minimo] of [["1", 20], ["7", 2], ["44", 4], ["590", 3], ["599", 2], ["262", 2]] as Array<[string, number]>) {
+    if (compartido(ddi) < minimo) fallos.push(`DDI compartido +${ddi}: se esperaban ≥${minimo} destinos`);
+  }
+
+  // Búsqueda por nombre (con/sin acentos), ISO y DDI (con/sin "+")
+  const busquedas: Array<[string, string]> = [["paraguay", "PRY"], ["japon", "JPN"], ["BRA", "BRA"], ["+595", "PRY"], ["81", "JPN"], ["+1", "USA"], ["peru", "PER"], ["tailandia", "THA"]];
+  for (const [texto, iso] of busquedas) {
+    if (!buscarPaisesTelefonia(texto).some((p) => p.iso === iso)) fallos.push(`búsqueda "${texto}" no encuentra ${iso}`);
+  }
+  if (buscarPaisesTelefonia("zzzz").length !== 0) fallos.push("búsqueda sin coincidencias debe quedar vacía");
+
+  // Advertencias NO bloqueantes
+  if (advertenciaTelefono({ pais: "ARG", ddi: "54", area: "351", numero: "15412345678" }) === null) fallos.push("ARG largo atípico debe advertir");
+  if (advertenciaTelefono({ pais: "ARG", ddi: "54", area: "351", numero: "4123456" }) !== null) fallos.push("ARG 10 dígitos no debe advertir");
+  if (advertenciaTelefono({ pais: "JPN", ddi: "81", area: "", numero: "9012345678" }) !== null) fallos.push("país genérico no advierte");
+
+  // Aislamiento entre empresas / repetición: validar el mismo número dos veces siempre es válido (no hay unicidad ni contexto de empresa)
+  const mismo = { pais: "PRY", ddi: "595", area: "", numero: "0981123456" };
+  if (!validarTelefono("celular", mismo).ok || !validarTelefono("celular", mismo).ok) fallos.push("el mismo número debe poder repetirse");
 
   return fallos;
 }
