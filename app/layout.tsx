@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "DistribuNex",
+  title: "Nexit",
   description: "Sistema de gestión para distribuidoras",
 };
 

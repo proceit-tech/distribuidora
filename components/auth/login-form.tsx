@@ -5,6 +5,16 @@ import { useRouter } from "next/navigation";
 
 import styles from "./login-form.module.css";
 
+function BuildingIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4 20V5a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v15" />
+      <path d="M14 10h5a1 1 0 0 1 1 1v9" />
+      <path d="M2.5 20h19M8 8h2M8 12h2M8 16h2" />
+    </svg>
+  );
+}
+
 function UserIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -71,7 +81,18 @@ export function LoginForm() {
       <label className={styles.field}>
         <span>Código de empresa</span>
         <div className={styles.inputWrap}>
-          <input value={empresa} onChange={(event) => setEmpresa(event.target.value)} autoComplete="organization" placeholder="proceit o casa_mingo" maxLength={30} required />
+          <BuildingIcon />
+
+          <input
+            value={empresa}
+            onChange={(event) => setEmpresa(event.target.value)}
+            autoComplete="organization"
+            autoCapitalize="none"
+            spellCheck={false}
+            placeholder="Ingrese el código de empresa"
+            maxLength={30}
+            required
+          />
         </div>
       </label>
 
@@ -85,6 +106,8 @@ export function LoginForm() {
             value={usuario}
             onChange={(event) => setUsuario(event.target.value)}
             autoComplete="username"
+            autoCapitalize="none"
+            spellCheck={false}
             placeholder="Ingrese su usuario"
             maxLength={80}
             required
@@ -99,6 +122,7 @@ export function LoginForm() {
           <LockIcon />
 
           <input
+            id="login-contrasena"
             type={mostrarContrasena ? "text" : "password"}
             value={contrasena}
             onChange={(event) => setContrasena(event.target.value)}
@@ -111,6 +135,9 @@ export function LoginForm() {
           <button
             className={styles.showPassword}
             type="button"
+            aria-controls="login-contrasena"
+            aria-pressed={mostrarContrasena}
+            aria-label={mostrarContrasena ? "Ocultar contraseña" : "Mostrar contraseña"}
             onClick={() => setMostrarContrasena((value) => !value)}
           >
             {mostrarContrasena ? "Ocultar" : "Mostrar"}

@@ -29,3 +29,6 @@
 ## Critério de conclusão
 
 **PENDENTE** até implementação autorizada, revisão do commit pelo ChatGPT, deploy controlado pelo responsável e aceitação visual + funcional no navegador. O print atual é evidência do estado anterior à correção.
+
+## Implementação (2026-10-10) — aguardando revisão e homologação
+Itens VIS-LOGIN-01 a 06 implementados em código (marca Nexit e título da aba; placeholder neutro "Ingrese el código de empresa", sem alterar a regra de identificação nem a autenticação; três campos com a mesma caixa e ícone; "Mostrar/Ocultar" integrado ao campo, com `aria-pressed`/`aria-label`; texto institucional restrito ao escopo V1; tipografia 15/16/≥13). Verificações estáticas: `tsc` e `eslint` sem erros. **VIS-LOGIN-07 (teste funcional e visual no navegador) pendente**, a cargo da homologação na VM. O sidebar interno ainda exibe "DistribuNex" (fora do escopo desta tela).
