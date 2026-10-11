@@ -39,3 +39,13 @@ Reverificar após qualquer `git pull`/clone com `sha256sum` (ou `Get-FileHash -A
 | NT 024 | D208c: Innominado vedado com total ≥ Gs. 7.000.000 (exceção amostras médicas) |
 | Demais (001, 004, 006–009, 011–016, 018–019, 022, 025–027) | Sem alteração direta dos campos do receptor encontrada na triagem; não equivale a declarar irrelevância para emissão |
 | Planilha geográfica | Pendente de confronto com `NEX-021` e catálogos reais |
+
+## Documento adicional — Dígito Verificador (DNIT)
+| Item | Valor |
+|---|---|
+| Arquivo | `documentacao/referencias/sifen/Digito-Verificador-DNIT.pdf` ("Dígito Verificador.pdf") |
+| Origem | URL oficial da DNIT registrada em `ESPECIFICACAO-DV-RUC-DNIT-IMPLEMENTACAO-2026-10-11.md`, baixada em 2026-10-11 (HTTP 200, `application/pdf`) |
+| Tamanho | 21.199 bytes |
+| SHA-256 | `43ab0fe42250d9219e403428888575f89d4a6f4284f35e0e52ee37f70206fca2` |
+| Uso | Fonte do algoritmo módulo 11 do DV do RUC (`lib/fiscal/calcular-dv-ruc.ts`; vetores em `VETORES-DV-RUC-DNIT-2026-10-11.md`) |
+| Observação | O hash identifica a cópia obtida nessa data; a DNIT pode republicar o arquivo. Reverificar com `sha256sum` após clonar. |
