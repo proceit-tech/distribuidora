@@ -427,3 +427,8 @@ Branch: `feature/NEXIT-2026-001-banco-demo`. Regra: uma funcionalidade por vez; 
 - **F-CLI-09-04 (BLOQUEANTE, build):** `app/api/clientes/[id]/documentos/route.ts::POST(request, contexto: Contexto)` declara no mesmo escopo `let contexto: Awaited<ReturnType<typeof contextoCargaInicial>>;`, causando identificador duplicado no TypeScript. Corrigir nome da variável local sem mudar política de autorização.
 - **F-CLI-09-05 (ALTA, finalização):** `app/(private)/clientes/nuevo/page.tsx` usa `await fetch(.../documentos/finalizar).catch(() => undefined)` sem verificar `response.ok`, então pode redirecionar como cadastro concluído enquanto a carga inicial segue aberta; tratar falha explicitamente, preservar estado/identidade do cliente e permitir retomar finalização. Não abrir novas janelas temporais nem encobrir erros.
 - Revisão restrita ao commit. Estado real PostgreSQL/VM não consultado nem modificado. NEX-022..030 sem confirmação de aplicação; usuário é único executor das operações na VM.
+
+### Clientes — correcciones F-CLI-09-04 y F-CLI-09-05 (auditoría d4b69d6)
+- **F-CLI-09-04:** variable local de `POST /api/clientes/{id}/documentos` renombrada a `estadoCarga` (ya no duplica el parámetro `contexto`); política de autorización idéntica.
+- **F-CLI-09-05:** el alta verifica la respuesta de `/documentos/finalizar`; si falla no redirige, conserva el cliente creado (estado `pendienteCierre`), enlaza a su ficha y permite reintentar solo el cierre. NEX-030 sin cambios.
+- Casos (escritos, NO ejecutados) ampliados en `lib/clientes/permisos-documentos.casos.ts`: sin variable `contexto` duplicada y verificación estática del cierre verificado/reintento. Revisión estática de balanceo de llaves y paréntesis. NEX-022…NEX-030 sin validar en PostgreSQL ni aplicadas.

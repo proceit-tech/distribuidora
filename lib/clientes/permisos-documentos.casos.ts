@@ -94,7 +94,19 @@ export function verificarCasosPermisosDocumentos(): string[] {
   const alta = leer("app/api/clientes/route.ts");
   if (!/creado_por,\s*carga_documentos_inicial_abierta/.test(alta)) fallos.push("POST /api/clientes debe registrar creado_por y abrir carga_documentos_inicial_abierta");
   if (!/carga_documentos_inicial_abierta = false/.test(leer("app/api/clientes/[id]/route.ts"))) fallos.push("PUT /api/clientes/{id} debe cerrar la carga inicial");
-  if (!/exigir\("CARGAR", auth\.permisos, contexto\)/.test(leer("app/api/clientes/[id]/documentos/route.ts"))) fallos.push("POST de documentos debe decidir con el contexto de creación");
+  if (!leer("app/api/clientes/[id]/documentos/route.ts").includes('exigir("CARGAR", auth.permisos, estadoCarga)')) fallos.push("POST de documentos debe decidir con el contexto de creación");
+
+  // F-CLI-09-04: ningún identificador local repite el parámetro `contexto` de las rutas
+  for (const ruta of ["app/api/clientes/[id]/documentos/route.ts", "app/api/clientes/[id]/documentos/[docId]/route.ts", "app/api/clientes/[id]/documentos/finalizar/route.ts"]) {
+    if (/\b(let|const|var)\s+contexto\b/.test(leer(ruta))) fallos.push(`${ruta}: declara una variable llamada contexto (duplica el parámetro de la ruta)`);
+  }
+
+  // F-CLI-09-05: el alta verifica la respuesta del cierre y conserva el cliente creado para reintentar solo el cierre
+  const pagina = leer("app/(private)/clientes/nuevo/page.tsx");
+  if (/documentos\/finalizar`[^)]*\)\.catch\(\(\) => undefined\)/.test(pagina)) fallos.push("el alta no debe ignorar la respuesta de /documentos/finalizar");
+  if (!/cerrarCargaInicial\(clienteId\)\)\) return;/.test(pagina)) fallos.push("el alta debe detenerse si el cierre de la carga inicial falla");
+  if (!/respuesta\.ok\)\s*\{\s*setPendienteCierre\(null\)/.test(pagina)) fallos.push("el cierre debe verificar respuesta.ok");
+  if (!/if \(pendienteCierre\)\s*\{[\s\S]*?cerrarCargaInicial\(pendienteCierre\.id\)/.test(pagina)) fallos.push("debe existir reintento seguro del cierre sin repetir el alta");
   for (const accion of ["EDITAR_DATOS", "ELIMINAR", "DESCARGAR"]) {
     if (!leer("app/api/clientes/[id]/documentos/[docId]/route.ts").includes(`exigir("${accion}"`)) fallos.push(`falta exigir("${accion}") en la ruta de documento`);
   }

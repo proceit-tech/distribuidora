@@ -333,6 +333,8 @@ export default function NuevoClientePage() {
   const [pestanaConError, setPestanaConError] = useState("");
   const [aviso, setAviso] = useState("");
   const [guardando, setGuardando] = useState(false);
+  // Cliente ya creado cuyo cierre de carga inicial falló: se conserva su identidad para reintentar SOLO el cierre (nunca otro alta).
+  const [pendienteCierre, setPendienteCierre] = useState<{ id: string } | null>(null);
 
   useEffect(() => {
     void cargarCatalogos();
@@ -834,10 +836,49 @@ export default function NuevoClientePage() {
     }
   }
 
+  // Cierra la carga inicial de documentos del cliente recién creado verificando la RESPUESTA (F-CLI-09-05). Si falla, el alta
+  // NO se presenta como concluida: se conserva la identidad del cliente creado y el siguiente envío solo reintenta el cierre.
+  async function cerrarCargaInicial(clienteId: string): Promise<boolean> {
+    try {
+      const respuesta = await fetch(`/api/clientes/${clienteId}/documentos/finalizar`, { method: "POST" });
+
+      if (respuesta.ok) {
+        setPendienteCierre(null);
+        return true;
+      }
+
+      const detalle = (await respuesta.json().catch(() => ({}))) as { error?: string };
+
+      setError(`El cliente ya se creó, pero no se pudo cerrar la carga inicial de sus documentos (${detalle.error ?? `error ${respuesta.status}`}). Pulse «Reintentar cierre»; no se creará otro cliente.`);
+    } catch {
+      setError("El cliente ya se creó, pero no se pudo cerrar la carga inicial de sus documentos por un error de conexión. Pulse «Reintentar cierre»; no se creará otro cliente.");
+    }
+
+    setPendienteCierre({ id: clienteId });
+
+    return false;
+  }
+
   async function guardar(evento: FormEvent<HTMLFormElement>) {
     evento.preventDefault();
     setError("");
     setPestanaConError("");
+
+    // Reintento seguro: el cliente ya existe; solo se repite el cierre de la carga inicial.
+    if (pendienteCierre) {
+      setGuardando(true);
+
+      try {
+        if (await cerrarCargaInicial(pendienteCierre.id)) {
+          router.push("/clientes?ok=creado");
+          router.refresh();
+        }
+      } finally {
+        setGuardando(false);
+      }
+
+      return;
+    }
 
     const incidencia = validar();
     if (incidencia) {
@@ -894,10 +935,7 @@ export default function NuevoClientePage() {
       }
 
       // Alta completa: se cierra la carga inicial de documentos (quien solo puede crear deja de poder agregar documentos a este cliente).
-      if (clienteId) {
-        await fetch(`/api/clientes/${clienteId}/documentos/finalizar`, { method: "POST" }).catch(() => undefined);
-      }
-
+      if (clienteId && !(await cerrarCargaInicial(clienteId))) return;
       router.push("/clientes?ok=creado");
       router.refresh();
     } catch (errorGuardado) {
@@ -986,6 +1024,12 @@ export default function NuevoClientePage() {
         {error ? (
           <div className="clienteNuevo__error" role="alert">
             {error}
+            {pendienteCierre ? (
+              <>
+                {" "}
+                <Link href={`/clientes/${pendienteCierre.id}`}>Ir a la ficha del cliente creado</Link>
+              </>
+            ) : null}
           </div>
         ) : null}
 
@@ -2098,7 +2142,7 @@ export default function NuevoClientePage() {
             disabled={guardando}
             type="submit"
           >
-            {guardando ? "Guardando..." : "Guardar cliente"}
+            {guardando ? "Guardando..." : pendienteCierre ? "Reintentar cierre de la carga inicial" : "Guardar cliente"}
           </button>
         </footer>
       </form>

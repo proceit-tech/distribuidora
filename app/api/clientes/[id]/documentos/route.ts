@@ -22,17 +22,17 @@ export async function POST(request: Request, contexto: Contexto) {
   const empresaId = auth.sesion.user.empresaId;
 
   // Permisos ANTES de leer el cuerpo: CLIENTES.EDITAR, o CLIENTES.CREAR solo para el cliente que el propio usuario creó y con la carga inicial abierta.
-  let contexto: Awaited<ReturnType<typeof contextoCargaInicial>>;
+  let estadoCarga: Awaited<ReturnType<typeof contextoCargaInicial>>;
 
   try {
-    contexto = await contextoCargaInicial(id, empresaId, auth.sesion.user.id);
+    estadoCarga = await contextoCargaInicial(id, empresaId, auth.sesion.user.id);
   } catch (e) {
     return respuestaDeError(e, "Error al verificar el cliente del documento:");
   }
 
-  if (contexto === null) return clienteNoEncontrado();
+  if (estadoCarga === null) return clienteNoEncontrado();
 
-  const denegado = exigir("CARGAR", auth.permisos, contexto);
+  const denegado = exigir("CARGAR", auth.permisos, estadoCarga);
 
   if (denegado) return denegado;
   let clave: string | null = null;
