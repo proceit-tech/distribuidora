@@ -1,9 +1,9 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 
+import EstadoPagina from "@/app/(private)/proveedores/_components/estado-pagina";
 import ProveedorForm from "@/app/(private)/proveedores/_components/proveedor-form";
 import { cargarCatalogos, mensajeError } from "@/lib/proveedores/cliente-api";
 import type {
@@ -84,20 +84,15 @@ export default function EditarProveedorPage() {
   }
 
   if (loading) {
-    return <main style={{ padding: 24 }}>Cargando proveedor...</main>;
+    return <EstadoPagina titulo="Cargando proveedor..." />;
   }
 
   if (error) {
-    return <main style={{ padding: 24 }}>{error}</main>;
+    return <EstadoPagina titulo="No fue posible cargar el proveedor" texto={error} volver />;
   }
 
   if (!proveedor || !catalogos) {
-    return (
-      <main style={{ padding: 24 }}>
-        <h1>Proveedor no encontrado</h1>
-        <Link href="/proveedores">Volver a proveedores</Link>
-      </main>
-    );
+    return <EstadoPagina titulo="Proveedor no encontrado" texto="El registro no existe o no pertenece a su empresa." volver />;
   }
 
   return (

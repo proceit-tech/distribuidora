@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import EstadoPagina from "@/app/(private)/proveedores/_components/estado-pagina";
 import ProveedorForm from "@/app/(private)/proveedores/_components/proveedor-form";
 import { cargarCatalogos, mensajeError } from "@/lib/proveedores/cliente-api";
 import type {
@@ -39,11 +40,11 @@ export default function NuevoProveedorPage() {
   }
 
   if (error) {
-    return <main style={{ padding: 24 }}>{error}</main>;
+    return <EstadoPagina titulo="No fue posible cargar el formulario" texto={error} volver />;
   }
 
   if (!catalogos) {
-    return <main style={{ padding: 24 }}>Cargando catálogos...</main>;
+    return <EstadoPagina titulo="Cargando formulario..." />;
   }
 
   return (

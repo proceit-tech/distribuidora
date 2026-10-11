@@ -4,7 +4,6 @@ import Link from "next/link";
 import {
   FormEvent,
   useEffect,
-  useMemo,
   useState,
 } from "react";
 
@@ -53,6 +52,15 @@ const tabs: Array<{ id: TabId; label: string }> = [
   { id: "retenciones", label: "Retenciones" },
   { id: "documentos", label: "Documentos" },
 ];
+
+const HOMOLOGACION_TEXTO: Record<string, string> = {
+  HOMOLOGADO: "Homologado",
+  PENDIENTE: "Pendiente",
+  EN_EVALUACION: "En evaluación",
+  SUSPENDIDO: "Suspendido",
+  VENCIDO: "Vencido",
+  RECHAZADO: "Rechazado",
+};
 
 function uid(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -207,7 +215,10 @@ function Field({
 }) {
   return (
     <label className={styles.field}>
-      <span>{label}</span>
+      <span>
+        {label.trimEnd().endsWith("*") ? label.trimEnd().slice(0, -1).trimEnd() : label}
+        {label.trimEnd().endsWith("*") ? <b aria-hidden="true"> *</b> : null}
+      </span>
       {children}
     </label>
   );
@@ -361,6 +372,9 @@ export default function ProveedorForm({
   const [saving, setSaving] =
     useState(false);
 
+  const [tabError, setTabError] =
+    useState<TabId | "">("");
+
   function update<K extends keyof NuevoProveedor>(
     key: K,
     value: NuevoProveedor[K],
@@ -376,19 +390,16 @@ export default function ProveedorForm({
       ? "Nuevo proveedor"
       : "Editar proveedor";
 
-  const pageDescription =
-    mode === "create"
-      ? "Información comercial, compras, pagos, homologación y logística."
-      : `Actualización de ${initial?.codigo ?? "proveedor"}.`;
-
   async function submit(
     event: FormEvent<HTMLFormElement>,
   ) {
     event.preventDefault();
     setError("");
+    setTabError("");
 
     if (!form.razonSocial.trim()) {
       setTab("general");
+      setTabError("general");
       setError("Informe el nombre o razón social del proveedor.");
       return;
     }
@@ -398,6 +409,7 @@ export default function ProveedorForm({
       form.tipoDocumento !== "RUC"
     ) {
       setTab("general");
+      setTabError("general");
       setError("Un proveedor de Paraguay debe utilizar RUC.");
       return;
     }
@@ -410,6 +422,7 @@ export default function ProveedorForm({
       )
     ) {
       setTab("general");
+      setTabError("general");
       setError("El RUC debe tener entre 3 y 8 dígitos y un DV de un dígito.");
       return;
     }
@@ -440,139 +453,68 @@ export default function ProveedorForm({
     }
   }
 
-  const sectionDone = useMemo(() => {
-    return {
-      general: Boolean(form.razonSocial && form.numeroDocumento),
-      compras: Boolean(form.condicionPagoId || form.medioPagoPreferidoId),
-      homologacion: form.estadoHomologacion !== "PENDIENTE",
-      contactos: form.contactos.length > 0,
-      direcciones: form.direcciones.length > 0,
-      bancos: form.cuentasBancarias.length > 0,
-      retenciones: form.retenciones.length > 0,
-      documentos: form.documentos.length > 0,
-    } satisfies Record<TabId, boolean>;
-  }, [form]);
-
   return (
-    <section className={styles.page}>
-      <header className={styles.hero}>
+    <main className={styles.page}>
+      <header className={styles.header}>
         <div>
-          <div className={styles.heroMeta}>
-            <span className={styles.modulePill}>
-              PROVEEDORES
-            </span>
-          </div>
+          <nav className={styles.miga} aria-label="Ruta de navegación">
+            <span>Maestros</span>
+            <i aria-hidden="true">/</i>
+            <Link href="/proveedores">Proveedores</Link>
+            <i aria-hidden="true">/</i>
+            <span aria-current="page">{pageTitle}</span>
+          </nav>
 
-          <h1>{pageTitle}</h1>
-          <p>{pageDescription}</p>
+          <div className={styles.titulo}>
+            <h1>{mode === "edit" && initial ? initial.razonSocial : pageTitle}</h1>
+
+            {mode === "edit" && initial ? (
+              <>
+                <span className={styles.codigo}>{initial.codigo}</span>
+                <span className={form.activo ? styles.statusActive : styles.statusInactive}>
+                  {form.activo ? "Activo" : "Inactivo"}
+                </span>
+                <span className={styles.statusNeutral}>
+                  {HOMOLOGACION_TEXTO[form.estadoHomologacion] ?? form.estadoHomologacion}
+                </span>
+              </>
+            ) : null}
+          </div>
         </div>
 
-        <Link
-          href="/proveedores"
-          className={styles.secondaryButton}
-        >
+        <Link href="/proveedores" className={styles.secondaryButton}>
           ← Volver a proveedores
         </Link>
       </header>
 
-      <form
-        className={styles.card}
-        onSubmit={submit}
-      >
-        <div className={styles.cardHeader}>
-          <div>
-            <span className={styles.cardEyebrow}>
-              {mode === "create"
-                ? "ALTA DE PROVEEDOR"
-                : "FICHA DEL PROVEEDOR"}
-            </span>
-
-            <h2>
-              {initial?.codigo ??
-                "Código automático"}
-            </h2>
-
-            <p>
-              {mode === "create"
-                ? "El código PRV se asignará al guardar."
-                : `Última actualización: ${
-                    initial
-                      ? new Date(
-                          initial.actualizadoEn,
-                        ).toLocaleString(
-                          "es-PY",
-                        )
-                      : ""
-                  }`}
-            </p>
-          </div>
-
-          {initial ? (
-            <div className={styles.statusGroup}>
-              <span
-                className={
-                  form.activo
-                    ? styles.statusActive
-                    : styles.statusInactive
-                }
-              >
-                {form.activo
-                  ? "Activo"
-                  : "Inactivo"}
-              </span>
-
-              <span className={styles.statusNeutral}>
-                {form.estadoHomologacion.replaceAll("_", " ")}
-              </span>
-            </div>
-          ) : (
-            <div className={styles.autoCode}>
-              <span>✓</span>
-              <div>
-                <strong>
-                  Código automático
-                </strong>
-                <small>
-                  PRV-0000XX
-                </small>
-              </div>
-            </div>
-          )}
-        </div>
-
+      <form className={styles.card} onSubmit={submit}>
         {error ? (
-          <div className={styles.error}>
+          <div className={styles.error} role="alert">
             {error}
           </div>
         ) : null}
 
-        <nav className={styles.tabs}>
+        <nav className={styles.tabs} aria-label="Secciones del proveedor">
           {tabs.map((item) => (
             <button
               key={item.id}
               type="button"
+              aria-current={tab === item.id ? "true" : undefined}
               className={[
-                styles.tab,
-                tab === item.id
-                  ? styles.tabActive
-                  : "",
-              ].join(" ")}
+                tab === item.id ? styles.tabActive : "",
+                tabError === item.id ? styles.tabError : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
               onClick={() => setTab(item.id)}
             >
-              <span
-                className={[
-                  styles.tabDot,
-                  sectionDone[item.id]
-                    ? styles.tabDone
-                    : "",
-                ].join(" ")}
-              >
-                {sectionDone[item.id] ? "✓" : "•"}
-              </span>
               {item.label}
+              {tabError === item.id ? <span className={styles.sr}>(contiene un error)</span> : null}
             </button>
           ))}
         </nav>
+
+        {tab === "general" ? <p className={styles.nota}>Los campos con * son obligatorios.</p> : null}
 
         <div className={styles.content}>
           {tab === "general" ? (
@@ -580,7 +522,6 @@ export default function ProveedorForm({
               <div className={styles.sectionTitle}>
                 <div>
                   <h3>Identificación y contacto</h3>
-                  <p>Datos principales del proveedor.</p>
                 </div>
               </div>
 
@@ -759,7 +700,6 @@ export default function ProveedorForm({
               <div className={styles.sectionTitle}>
                 <div>
                   <h3>Compras y pagos</h3>
-                  <p>Valores predeterminados para abastecimiento y cuentas por pagar.</p>
                 </div>
               </div>
 
@@ -934,7 +874,6 @@ export default function ProveedorForm({
               <div className={styles.sectionTitle}>
                 <div>
                   <h3>Homologación y logística</h3>
-                  <p>Control de aprobación, riesgo y condiciones logísticas.</p>
                 </div>
               </div>
 
@@ -1094,7 +1033,6 @@ export default function ProveedorForm({
               <div className={styles.sectionTitle}>
                 <div>
                   <h3>Contactos</h3>
-                  <p>Personas y responsabilidades asociadas al proveedor.</p>
                 </div>
 
                 <button
@@ -1107,7 +1045,7 @@ export default function ProveedorForm({
                     ])
                   }
                 >
-                  ＋ Agregar contacto
+                  + Agregar contacto
                 </button>
               </div>
 
@@ -1184,7 +1122,6 @@ export default function ProveedorForm({
               <div className={styles.sectionTitle}>
                 <div>
                   <h3>Direcciones</h3>
-                  <p>Ubicaciones fiscales, comerciales, de retiro o pagos.</p>
                 </div>
 
                 <button
@@ -1197,7 +1134,7 @@ export default function ProveedorForm({
                     ])
                   }
                 >
-                  ＋ Agregar dirección
+                  + Agregar dirección
                 </button>
               </div>
 
@@ -1361,7 +1298,6 @@ export default function ProveedorForm({
               <div className={styles.sectionTitle}>
                 <div>
                   <h3>Cuentas bancarias</h3>
-                  <p>Datos bancarios para transferencias y pagos.</p>
                 </div>
 
                 <button
@@ -1374,7 +1310,7 @@ export default function ProveedorForm({
                     ])
                   }
                 >
-                  ＋ Agregar cuenta
+                  + Agregar cuenta
                 </button>
               </div>
 
@@ -1402,8 +1338,15 @@ export default function ProveedorForm({
                     </header>
 
                     <div className={styles.gridFour}>
-                      {(["banco", "sucursalBanco", "titular", "documentoTitular"] as const).map((key) => (
-                        <Field key={key} label={key}>
+                      {(
+                        [
+                          ["banco", "Banco"],
+                          ["sucursalBanco", "Sucursal"],
+                          ["titular", "Titular"],
+                          ["documentoTitular", "Documento del titular"],
+                        ] as const
+                      ).map(([key, etiqueta]) => (
+                        <Field key={key} label={etiqueta}>
                           <input
                             value={cuenta[key]}
                             onChange={(event) =>
@@ -1512,7 +1455,6 @@ export default function ProveedorForm({
               <div className={styles.sectionTitle}>
                 <div>
                   <h3>Retenciones</h3>
-                  <p>Configuración de retenciones aplicables al proveedor.</p>
                 </div>
 
                 <button
@@ -1525,7 +1467,7 @@ export default function ProveedorForm({
                     ])
                   }
                 >
-                  ＋ Agregar retención
+                  + Agregar retención
                 </button>
               </div>
 
@@ -1650,7 +1592,6 @@ export default function ProveedorForm({
               <div className={styles.sectionTitle}>
                 <div>
                   <h3>Documentos</h3>
-                  <p>Contratos, constancias, certificados y licencias.</p>
                 </div>
 
                 <button
@@ -1663,7 +1604,7 @@ export default function ProveedorForm({
                     ])
                   }
                 >
-                  ＋ Agregar documento
+                  + Agregar documento
                 </button>
               </div>
 
@@ -1821,24 +1762,12 @@ export default function ProveedorForm({
         </div>
 
         <footer className={styles.footer}>
-          <div>
-            <span>{mode === "create" ? "Nuevo proveedor" : "Edición de proveedor"}</span>
-            <small>Los cambios se guardan en la base de datos de su empresa.</small>
-          </div>
-
           <div className={styles.footerActions}>
-            <Link
-              href="/proveedores"
-              className={styles.cancelButton}
-            >
+            <Link href="/proveedores" className={styles.cancelButton}>
               Cancelar
             </Link>
 
-            <button
-              type="submit"
-              disabled={saving}
-              className={styles.saveButton}
-            >
+            <button type="submit" disabled={saving} className={styles.saveButton}>
               {saving
                 ? mode === "create"
                   ? "Guardando..."
@@ -1850,7 +1779,7 @@ export default function ProveedorForm({
           </div>
         </footer>
       </form>
-    </section>
+    </main>
   );
 }
 
@@ -1866,9 +1795,6 @@ function RepeaterEmpty({
   }
 
   return (
-    <div className={styles.empty}>
-      <strong>{text}</strong>
-      <span>Use el botón superior para agregar un registro.</span>
-    </div>
+    <div className={styles.empty}>{text}</div>
   );
 }
