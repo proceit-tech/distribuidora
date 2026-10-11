@@ -396,3 +396,15 @@ Branch: `feature/NEXIT-2026-001-banco-demo`. Regra: uma funcionalidade por vez; 
 - Migraciones nuevas, versionadas y NO aplicadas: NEX-028 y NEX-029 (+ reversiones `reversion-NEX-028.sql`, `reversion-NEX-029.sql`; ambas abortan si hay datos que perder). NEX-022…NEX-029 sin validar en PostgreSQL.
 - Casos escritos (NO ejecutados): `lib/clientes/nueve-ajustes.casos.ts` (conversión exacta, frecuencia×días, B2F, archivos, metadatos).
 - Decisiones propuestas pendientes de aprobación del responsable: formatos/tamaño/eliminación de archivos, redondeo y auditoría de la conversión. Sin decidir y sin tocar: GLN (D-08), filtros del listado (pregunta 14), reglas MENSUAL/A_DEMANDA, legados fiscalmente inválidos. Prints de las seis pestañas siguen sin versionar.
+
+
+## Auditoria independente ChatGPT — 1ff11953 — nove ajustes Clientes (2026-10-11)
+
+**Veredito: PENDENTE; não liberar aplicação das NEX-028/029 nem atualização da VM.** Revisão estática de arquivos do commit e protocolos; testes, SQL, build e VM **não executados** pelo ChatGPT. Os nove itens foram versionados, mas não homologados.
+
+- **F-CLI-09-01 (ALTA — autorização de documentos):** `lib/clientes/documentos-http.ts::autorizar("MODIFICAR")` tenta `guardApi("CLIENTES","EDITAR")` e, se falhar, aceita `guardApi("CLIENTES","CREAR")` indiscriminadamente. Assim, possuidor de permissão só de criação pode substituir/excluir documentos de qualquer cliente da própria empresa por PUT/DELETE. Definir separação de autorização: criação de cliente e upload inicial no seu fluxo autorizado versus edição/exclusão de documento existente, com `EDITAR` obrigatório. Cobrir GET/POST/PUT/DELETE, multiempresa e casos negativos.
+- **F-CLI-09-02 (MÉDIA — taxa inválida):** `lib/clientes/cambio.ts::TASA_CAMBIO` declara mínimo `"0.00000001"` e `validarTasa` depende de `decimalAcotado`. Conferir controle rigoroso de taxa >0 em toda rota de conversão, inclusive zero e formas canonizadas; NEX-029 declara `tasa >0` e erro não deve chegar como violação SQL inesperada. **Revalidar este achado antes de corrigir**, comparando o mínimo efetivo do helper de validação, pois a constante é positiva.
+- **Pendências de decisão do responsável (não presumir aprovação):** política de arquivos PDF/PNG/JPEG/DOCX/XLSX 10MB, exclusão definitiva, arredondamento cambial HALF_UP_4. Não alterar configurações reais do Docker nem instalar volume.
+- **Outros pontos a verificar na próxima rodada:** fluxo de upload após cadastro se algum arquivo falhar (cliente pode já ter sido salvo), limite de leitura de multipart sem Content-Length confiável, tratamento de arquivos legados, NEX-028/029 com permissões/constraints e integrações reais. Zero testes executados; cobertura completa não comprovada.
+
+**Fluxo:** Claude corrige no Git, faz commit/push e para. ChatGPT audita; apenas responsável executa na VM mediante decisão expressa.
