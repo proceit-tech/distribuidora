@@ -1,6 +1,6 @@
 import type { Pool, PoolClient } from "pg";
 
-import { textoCrudo, validarDireccionFiscal, validarUrlDocumento } from "@/lib/fiscal/campos-receptor";
+import { textoCrudo, validarDireccionFiscal } from "@/lib/fiscal/campos-receptor";
 import { leerTelefonoEntrada, validarTelefono, type TelefonoGuardar } from "@/lib/fiscal/telefono";
 import { resolverPais, resolverUbicacionParaguay } from "@/lib/geografia/referencia";
 
@@ -20,7 +20,6 @@ type Conn = PoolClient;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const TIPOS_DIRECCION = new Set(["FISCAL", "COMERCIAL", "ENTREGA", "SUCURSAL", "OTRA"]);
-const TIPOS_DOCUMENTO = new Set(["RUC", "CONTRATO", "CREDITO", "EXONERACION", "OTRO"]);
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export class ErrorValidacion extends Error {}
@@ -82,7 +81,11 @@ export type DireccionApi = {
   esFiscal: boolean; esEntregaDefault: boolean; latitud: string; longitud: string;
 };
 export type DocumentoApi = {
-  id: string; tipo: string; nombreArchivo: string; urlArchivo: string; fechaEmision: string; fechaVencimiento: string; observacion: string;
+  id: string; tipo: string; nombreArchivo: string; fechaEmision: string; fechaVencimiento: string; observacion: string;
+  /** true = archivo almacenado en el volumen privado (descarga por la API); false = enlace anterior a NEX-028. */
+  tieneArchivo: boolean; tamanoBytes: number | null; tipoMime: string;
+  /** Solo documentos anteriores (enlace externo). Los nuevos nunca exponen una URL ni una ruta. */
+  urlArchivo: string;
 };
 export type HijosApi = { contactos: ContactoApi[]; direcciones: DireccionApi[]; documentos: DocumentoApi[] };
 
@@ -93,7 +96,7 @@ export async function leerHijos(db: Db, empresaId: string, clienteId: string): P
     db.query(`SELECT * FROM cliente_contactos WHERE empresa_id = $1 AND cliente_id = $2 ORDER BY es_principal DESC, creado_at, id`, [empresaId, clienteId]),
     db.query(`SELECT * FROM direcciones_cliente WHERE empresa_id = $1 AND cliente_id = $2 ORDER BY es_fiscal DESC, es_entrega_default DESC, creado_at, id`, [empresaId, clienteId]),
     db.query(
-      `SELECT id, tipo, nombre_archivo, url_archivo, to_char(fecha_emision, 'DD/MM/YYYY') AS fe, to_char(fecha_vencimiento, 'DD/MM/YYYY') AS fv, observacion
+      `SELECT id, tipo, nombre_archivo, url_archivo, almacen_clave, tamano_bytes, tipo_mime, to_char(fecha_emision, 'DD/MM/YYYY') AS fe, to_char(fecha_vencimiento, 'DD/MM/YYYY') AS fv, observacion
          FROM cliente_documentos WHERE empresa_id = $1 AND cliente_id = $2 ORDER BY creado_at, id`,
       [empresaId, clienteId],
     ),
@@ -124,7 +127,7 @@ const direccionDeFila = (r: Json): DireccionApi => ({
 });
 const documentoDeFila = (r: Json): DocumentoApi => ({
   id: r.id as string, tipo: s(r.tipo), nombreArchivo: s(r.nombre_archivo), urlArchivo: s(r.url_archivo), fechaEmision: s(r.fe), fechaVencimiento: s(r.fv),
-  observacion: s(r.observacion),
+  observacion: s(r.observacion), tieneArchivo: !!r.almacen_clave, tamanoBytes: r.tamano_bytes === null || r.tamano_bytes === undefined ? null : Number(r.tamano_bytes), tipoMime: s(r.tipo_mime),
 });
 
 // ---------------------------------------------------------------- Geografía (Paraguay), igual que el alta
@@ -366,53 +369,10 @@ export async function sincronizarHijos(c: Conn, empresaId: string, clienteId: st
     }
   }
 
-  // ---- Documentos
-  if (toca(e.documentos, e.eliminar.documentos)) {
-    const act = (
-      await c.query(
-        `SELECT id, tipo, nombre_archivo, url_archivo, to_char(fecha_emision, 'DD/MM/YYYY') AS fe, to_char(fecha_vencimiento, 'DD/MM/YYYY') AS fv, observacion
-           FROM cliente_documentos WHERE empresa_id = $1 AND cliente_id = $2 FOR UPDATE`,
-        [empresaId, clienteId],
-      )
-    ).rows as Json[];
-    const actApi = new Map(act.map((r) => [r.id as string, documentoDeFila(r)]));
-    validarIds(e.documentos, e.eliminar.documentos, new Set(actApi.keys()), "documentos");
-    const finales: { id: string | null; v: DocumentoApi; fe: string | null; fv: string | null }[] = [];
-    for (const x of e.documentos ?? []) {
-      const id = idEntrada(x);
-      const base = id ? actApi.get(id)! : ({ id: "", tipo: "OTRO", nombreArchivo: "", urlArchivo: "", fechaEmision: "", fechaVencimiento: "", observacion: "" } as DocumentoApi);
-      const v = mezclar(base, x);
-      v.tipo = texto(v.tipo).toUpperCase();
-      if (!TIPOS_DOCUMENTO.has(v.tipo)) throw new ErrorValidacion("Existe un tipo de documento de cliente no válido.");
-      if (!texto(v.nombreArchivo, 255) || !texto(v.urlArchivo)) throw new ErrorValidacion("Cada documento requiere nombre de archivo y URL segura.");
-      const errorUrl = base.urlArchivo === v.urlArchivo && id ? null : validarUrlDocumento(texto(v.urlArchivo));
-      if (errorUrl) throw new ErrorValidacion(errorUrl);
-      const fe = fechaIso(v.fechaEmision, "La fecha de emisión del documento");
-      const fv = fechaIso(v.fechaVencimiento, "La fecha de vencimiento del documento");
-      if (fe && fv && fv < fe) throw new ErrorValidacion("La fecha de vencimiento de un documento no puede ser anterior a su emisión.");
-      finales.push({ id, v, fe, fv });
-    }
-    if (e.eliminar.documentos.length) {
-      await c.query(`DELETE FROM cliente_documentos WHERE empresa_id = $1 AND cliente_id = $2 AND id = ANY($3::uuid[])`, [empresaId, clienteId, e.eliminar.documentos]);
-      resumen.documentos.eliminados = e.eliminar.documentos.length;
-    }
-    for (const { id, v, fe, fv } of finales) {
-      const p = [v.tipo, texto(v.nombreArchivo, 255), texto(v.urlArchivo), fe, fv, opcional(v.observacion, 500)];
-      if (id) {
-        await c.query(
-          `UPDATE cliente_documentos SET tipo=$4, nombre_archivo=$5, url_archivo=$6, fecha_emision=$7, fecha_vencimiento=$8, observacion=$9
-            WHERE id = $1 AND empresa_id = $2 AND cliente_id = $3`,
-          [id, empresaId, clienteId, ...p],
-        );
-        resumen.documentos.actualizados++;
-      } else {
-        await c.query(
-          `INSERT INTO cliente_documentos (empresa_id, cliente_id, tipo, nombre_archivo, url_archivo, fecha_emision, fecha_vencimiento, observacion, cargado_por) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-          [empresaId, clienteId, ...p, usuarioId],
-        );
-        resumen.documentos.nuevos++;
-      }
-    }
+  // ---- Documentos: ya NO se sincronizan por JSON. Son archivos reales (almacenamiento privado) que se cargan, reemplazan
+  // y eliminan con las rutas /api/clientes/{id}/documentos; aquí cualquier intento se rechaza en lugar de descartarse en silencio.
+  if ((e.documentos?.length ?? 0) > 0 || e.eliminar.documentos.length > 0) {
+    throw new ErrorValidacion("Los documentos se gestionan como archivos (carga, reemplazo y eliminación) desde la pestaña Documentos.");
   }
   return resumen;
 }

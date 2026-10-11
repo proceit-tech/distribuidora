@@ -11,7 +11,7 @@ export function pestanaDeErrorApi(mensaje: string): PestanaCliente {
     return "direcciones";
   }
   if (/frecuencia|días de entrega|ruta|zona|vendedor/.test(texto)) return "logistica";
-  if (/crédito|cobro|bloqueo|descuento|moneda|lista de precios|condici|canal|gln|código externo|correo de (facturación|cobranzas)/.test(texto)) {
+  if (/crédito|límite|tasa de cambio|conversi|cobro|bloqueo|descuento|moneda|lista de precios|condici|canal|gln|código externo|correo de (facturación|cobranzas)/.test(texto)) {
     return "comercial";
   }
   return "fiscal";

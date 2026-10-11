@@ -121,6 +121,7 @@ function desdeApi(
       telefonoDdi: texto(fila.contacto_telefono_ddi),
       celularDdi: texto(fila.contacto_celular_ddi),
     },
+    moneda: texto(fila.moneda_codigo_predeterminada),
     limiteCredito:
       Number(fila.limite_credito) || 0,
     grupoCliente: texto(
@@ -337,8 +338,7 @@ export default function ClientesPage() {
           acc.bloqueados += 1;
         }
 
-        acc.credito +=
-          cliente.limiteCredito;
+        acc.credito[cliente.moneda || "sin moneda"] =          (acc.credito[cliente.moneda || "sin moneda"] ?? 0) + cliente.limiteCredito;
 
         return acc;
       },
@@ -347,7 +347,7 @@ export default function ClientesPage() {
         activos: 0,
         inactivos: 0,
         bloqueados: 0,
-        credito: 0,
+        credito: {} as Record<string, number>,
       },
     );
   }, [clientes]);
@@ -553,8 +553,8 @@ export default function ClientesPage() {
 
         <article className={[styles.summaryCard, styles.summaryBlue].join(" ")}>
           <span>Suma de límites de crédito</span>
-          <strong>{dinero(resumo.credito)}</strong>
-          <small>Moneda de los límites por definir</small>
+          <strong>{Object.entries(resumo.credito).map(([moneda, valor]) => `${moneda} ${dinero(valor)}`).join(" · ") || "0"}</strong>
+          <small>Una suma por moneda del cliente</small>
         </article>
 
         <article className={[styles.summaryCard, styles.summaryRed].join(" ")}>
@@ -759,7 +759,7 @@ export default function ClientesPage() {
 
                     <td className={styles.numeric}>
                       <div className={styles.cell}>
-                        <strong>{dinero(cliente.limiteCredito)}</strong>
+                        <strong>{cliente.moneda ? `${cliente.moneda} ` : ""}{dinero(cliente.limiteCredito)}</strong>
                         <span>{cliente.condicionPago}</span>
                       </div>
                     </td>

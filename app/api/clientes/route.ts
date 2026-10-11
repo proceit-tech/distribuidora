@@ -12,10 +12,11 @@ import {
   validarGln,
   validarInnominado,
   validarNaturalezaOperacion,
-  validarUrlDocumento,
 } from "@/lib/fiscal/campos-receptor";
 import { mensajeRestriccionCliente } from "@/lib/clientes/errores-bd";
 import { validarDiaPreferidoCobro } from "@/lib/clientes/dia-cobro";
+import { validarFrecuenciaYDias } from "@/lib/clientes/logistica";
+import { validarDireccionFiscalRequerida } from "@/lib/clientes/obligatoriedad-fiscal";
 import { DESCUENTO_COMERCIAL, LIMITE_CREDITO, decimalAcotado, validarCondicionYMoneda } from "@/lib/clientes/comercial";
 import { leerTelefonoEntrada, validarTelefono, type CampoTelefonico } from "@/lib/fiscal/telefono";
 
@@ -127,15 +128,6 @@ type DireccionEntrada = {
   longitud?: unknown;
 };
 
-type DocumentoEntrada = {
-  tipo?: unknown;
-  nombreArchivo?: unknown;
-  urlArchivo?: unknown;
-  fechaEmision?: unknown;
-  fechaVencimiento?: unknown;
-  observacion?: unknown;
-};
-
 const NATURALEZA_RECEPTOR = {
   CONTRIBUYENTE: 1,
   NO_CONTRIBUYENTE: 2,
@@ -171,21 +163,6 @@ const TIPOS_DIRECCION = new Set([
   "OTRA",
 ]);
 
-const TIPOS_DOCUMENTO_CLIENTE = new Set([
-  "RUC",
-  "CONTRATO",
-  "CREDITO",
-  "EXONERACION",
-  "OTRO",
-]);
-
-const FRECUENCIAS_ENTREGA = new Set([
-  "DIARIA",
-  "SEMANAL",
-  "QUINCENAL",
-  "MENSUAL",
-  "A_DEMANDA",
-]);
 
 function texto(valor: unknown, maximo?: number) {
   if (typeof valor !== "string") return "";
@@ -464,6 +441,7 @@ export async function GET(request: Request) {
               c.telefono,
               c.celular,
               c.limite_credito,
+              c.moneda_codigo_predeterminada,
               c.bloqueado_ventas,
               c.activo,
               c.pais_codigo,
@@ -668,7 +646,7 @@ export async function POST(request: Request) {
     );
     const contactos = lista<ContactoEntrada>(cuerpo.contactos);
     const direcciones = lista<DireccionEntrada>(cuerpo.direcciones);
-    const documentos = lista<DocumentoEntrada>(cuerpo.documentos);
+    const documentos = lista<unknown>(cuerpo.documentos);
     const limiteCreditoTemporal = decimalAcotado(cuerpo.limiteCreditoTemporal, "El límite de crédito temporal", LIMITE_CREDITO);
     const fechaVencimientoCredito = fechaIso(
       cuerpo.fechaVencimientoCredito,
@@ -767,13 +745,12 @@ export async function POST(request: Request) {
 
     if (fechaVencimientoCredito && limiteCreditoTemporal === null) {
       throw new Error(
-        "Para informar vencimiento, indique también un límite de crédito temporal.",
+        "Para informar el vencimiento del límite temporal, indique también el límite temporal.",
       );
     }
 
-    if (frecuenciaEntrega && !FRECUENCIAS_ENTREGA.has(frecuenciaEntrega)) {
-      throw new Error("La frecuencia de entrega no es válida.");
-    }
+    const errorLogistica = validarFrecuenciaYDias(frecuenciaEntrega, dias ?? []);
+    if (errorLogistica) throw new Error(errorLogistica);
 
     const bloqueadoVentas = booleano(cuerpo.bloqueadoVentas);
     const motivoBloqueoVentas = opcional(cuerpo.motivoBloqueoVentas, 500);
@@ -820,6 +797,14 @@ export async function POST(request: Request) {
       }
     }
 
+    // Cadastro fiscal completo (decisión 01): una operación B2F (D202 = 4) exige dirección fiscal del receptor (D213).
+    // En las demás operaciones la dirección fiscal es facultativa y no se impone.
+    const mensajeFiscalB2F = validarDireccionFiscalRequerida(
+      tipoOperacion,
+      direcciones.some((d) => String(d.tipo ?? "").toUpperCase() === "FISCAL" || (d as { esFiscal?: unknown }).esFiscal === true),
+    );
+    if (mensajeFiscalB2F) throw new Error(mensajeFiscalB2F);
+
     for (const [indiceContacto, contacto] of contactos.entries()) {
       if (!texto(contacto.nombre, 100)) {
         throw new Error("Cada contacto debe tener nombre.");
@@ -830,25 +815,10 @@ export async function POST(request: Request) {
       validarTelefonoContacto(contacto, "celular", indiceContacto + 1);
     }
 
-    for (const documento of documentos) {
-      if (!TIPOS_DOCUMENTO_CLIENTE.has(texto(documento.tipo).toUpperCase())) {
-        throw new Error("Existe un tipo de documento de cliente no válido.");
-      }
-
-      if (
-        !texto(documento.nombreArchivo, 255) ||
-        !texto(documento.urlArchivo)
-      ) {
-        throw new Error(
-          "Cada documento requiere nombre de archivo y URL segura.",
-        );
-      }
-
-      const errorUrl = validarUrlDocumento(textoCrudo(documento.urlArchivo));
-
-      if (errorUrl) {
-        throw new Error(errorUrl);
-      }
+    // Los documentos son archivos reales: se cargan DESPUÉS de crear el cliente con POST /api/clientes/[id]/documentos
+    // (almacenamiento privado). Ya no se aceptan enlaces externos en el alta; nada se descarta en silencio.
+    if (documentos.length > 0) {
+      throw new Error("Los documentos se cargan como archivos con POST /api/clientes/{id}/documentos una vez creado el cliente.");
     }
 
     conexion = await db.connect();
@@ -1202,50 +1172,6 @@ export async function POST(request: Request) {
       );
     }
 
-    for (const documento of documentos) {
-      const fechaEmision = fechaIso(
-        documento.fechaEmision,
-        "La fecha de emisión del documento",
-      );
-      const fechaVencimiento = fechaIso(
-        documento.fechaVencimiento,
-        "La fecha de vencimiento del documento",
-      );
-
-      if (fechaEmision && fechaVencimiento && fechaVencimiento < fechaEmision) {
-        throw new Error(
-          "La fecha de vencimiento de un documento no puede ser anterior a su emisión.",
-        );
-      }
-
-      await conexion.query(
-        `
-          INSERT INTO cliente_documentos (
-            empresa_id,
-            cliente_id,
-            tipo,
-            nombre_archivo,
-            url_archivo,
-            fecha_emision,
-            fecha_vencimiento,
-            observacion,
-            cargado_por
-          )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-        `,
-        [
-          session.user.empresaId,
-          cliente.id,
-          texto(documento.tipo).toUpperCase(),
-          texto(documento.nombreArchivo, 255),
-          texto(documento.urlArchivo),
-          fechaEmision,
-          fechaVencimiento,
-          opcional(documento.observacion, 500),
-          session.user.id,
-        ],
-      );
-    }
 
     await conexion.query("COMMIT");
 

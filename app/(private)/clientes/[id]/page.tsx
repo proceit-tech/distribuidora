@@ -27,8 +27,12 @@ import { TelefonoPais } from "@/components/clientes/telefono-pais";
 import { validarCamposReceptor } from "@/lib/fiscal/campos-receptor";
 import { DESCUENTO_COMERCIAL, LIMITE_CREDITO, decimalAcotado } from "@/lib/clientes/comercial";
 import { pestanaDeErrorApi } from "@/lib/clientes/pestanas";
+import { convertirLimites, requiereConversion, validarTasa } from "@/lib/clientes/cambio";
+import { validarFrecuenciaYDias } from "@/lib/clientes/logistica";
+import { validarDireccionFiscalRequerida } from "@/lib/clientes/obligatoriedad-fiscal";
 
 import styles from "./page.module.css";
+import { DocumentosCliente, type DocumentoCliente } from "./_components/documentos";
 import {
   HijosEditor,
   hijosDesdeApi,
@@ -150,6 +154,7 @@ type Opcion = {
 };
 
 type Catalogos = {
+  monedas: { codigo: string; nombre: string }[];
   grupos: Opcion[];
   condicionesPago: Opcion[];
   listasPrecio: Opcion[];
@@ -162,6 +167,7 @@ type Catalogos = {
 };
 
 const CATALOGOS_VACIOS: Catalogos = {
+  monedas: [],
   grupos: [],
   condicionesPago: [],
   listasPrecio: [],
@@ -456,6 +462,32 @@ export default function ClienteDetallePage() {
       pendientes: string[];
     } | null>(null);
 
+  // Documentos: archivos reales; se gestionan aparte del «Guardar» del cliente (carga/reemplazo/eliminación inmediatos).
+  const [documentos, setDocumentos] = useState<DocumentoCliente[]>([]);
+  const [aviso, setAviso] = useState("");
+
+  // Cambio de moneda con límites vigentes: tasa informada por el usuario y confirmación expresa (CLI-VIS-05/06).
+  const [tasaCambio, setTasaCambio] = useState("");
+  const [conversionConfirmada, setConversionConfirmada] = useState(false);
+
+  // Aviso al venir del alta con documentos que no se pudieron cargar (el cliente ya existe).
+  useEffect(() => {
+    const parametro = new URLSearchParams(window.location.search).get("avisoDocumentos");
+
+    if (parametro) {
+      setAviso(parametro);
+      setTab("documentos");
+      window.history.replaceState(null, "", window.location.pathname);
+    }
+  }, []);
+
+  async function recargarDocumentos() {
+    const r = await fetch(`/api/clientes/${id}`, { cache: "no-store" });
+    const j = (await r.json().catch(() => ({}))) as { documentos?: DocumentoCliente[] };
+
+    if (r.ok) setDocumentos(j.documentos ?? []);
+  }
+
   const [hijos, setHijos] =
     useState<HijosForm>(hijosVacios);
 
@@ -492,7 +524,7 @@ export default function ClienteDetallePage() {
             cliente?: ClienteDetalle;
             contactos?: Parameters<typeof hijosDesdeApi>[0]["contactos"];
             direcciones?: Parameters<typeof hijosDesdeApi>[0]["direcciones"];
-            documentos?: Parameters<typeof hijosDesdeApi>[0]["documentos"];
+            documentos?: DocumentoCliente[];
             aptitudSifen?: { apto: boolean; pendientes: string[] };
             error?: string;
           };
@@ -518,6 +550,7 @@ export default function ClienteDetallePage() {
             ...(cat.catalogos ?? {}),
           });
           setHijos(hijosDesdeApi(datos));
+          setDocumentos(datos.documentos ?? []);
           setAptitud(datos.aptitudSifen ?? null);
           setCliente(datos.cliente);
           setForm(
@@ -630,6 +663,28 @@ export default function ClienteDetallePage() {
     });
   }
 
+  // Los límites que se ven están en la moneda GUARDADA del cliente; si se elige otra moneda se convierten al guardar con la
+  // tasa que informe el usuario (sin cotización automática) y su confirmación expresa. Cálculo exacto, half-up a 4 decimales.
+  const monedaLimites = cliente?.monedaCodigoPredeterminada || form?.moneda || "sin moneda";
+  const monedaCambia = Boolean(cliente?.monedaCodigoPredeterminada && form?.moneda && cliente.monedaCodigoPredeterminada !== form.moneda);
+  const vistaConversion = ((): { tipo: "sin-limites" } | { tipo: "esperando" } | { tipo: "error"; mensaje: string } | { tipo: "listo"; limite: string; temporal: string | null; limiteDestino: string; temporalDestino: string | null } | null => {
+    if (!form || !monedaCambia) return null;
+
+    try {
+      const limite = decimalAcotado(form.limiteCredito, "El límite de crédito", LIMITE_CREDITO) ?? "0";
+      const temporal = decimalAcotado(form.limiteCreditoTemporal, "El límite de crédito temporal", LIMITE_CREDITO);
+
+      if (!requiereConversion(limite, temporal)) return { tipo: "sin-limites" };
+      if (tasaCambio.trim() === "") return { tipo: "esperando" };
+
+      const c = convertirLimites(limite, temporal, tasaCambio);
+
+      return { tipo: "listo", limite, temporal, limiteDestino: c.limiteDestino, temporalDestino: c.temporalDestino };
+    } catch (errorVista) {
+      return { tipo: "error", mensaje: (errorVista as Error).message };
+    }
+  })();
+
   async function guardar(
     event: FormEvent<HTMLFormElement>,
   ) {
@@ -735,6 +790,66 @@ export default function ClienteDetallePage() {
       return;
     }
 
+    // Entrega y ventas: días obligatorios con frecuencia semanal/quincenal. Se valida al cambiar la combinación
+    // (un cliente anterior que no la toca no se bloquea; el servidor aplica la misma tolerancia).
+    const diasOrdenados = (dias: number[]) => [...dias].sort((a, b) => a - b).join(",");
+    const logisticaCambio =
+      (form.frecuenciaEntrega || "") !== (cliente.frecuenciaEntrega || "") || diasOrdenados(form.diasEntrega) !== diasOrdenados(cliente.diasEntrega ?? []);
+    const errorLogistica = logisticaCambio ? validarFrecuenciaYDias(form.frecuenciaEntrega, form.diasEntrega) : null;
+
+    if (errorLogistica) {
+      setTab("logistica");
+      setError(errorLogistica);
+      return;
+    }
+
+    // B2F exige dirección fiscal (decisión 01). Un cliente B2F anterior sin tocar direcciones se tolera.
+    const direccionesTocadas = hijos.direccionesEliminar.length > 0 || hijos.direcciones.some((d) => !d.id);
+    const errorB2F =
+      form.tipoOperacion === "B2F" && (cliente.tipoOperacion !== "B2F" || direccionesTocadas)
+        ? validarDireccionFiscalRequerida(form.tipoOperacion, hijos.direcciones.some((d) => d.esFiscal || d.tipo === "FISCAL"))
+        : null;
+
+    if (errorB2F) {
+      setTab("direcciones");
+      setError(errorB2F);
+      return;
+    }
+
+    // Cambio de moneda con límites vigentes: tasa informada + confirmación expresa; el servidor recalcula y valida.
+    const monedaPrevia = cliente.monedaCodigoPredeterminada || "";
+    let conversionMoneda: Record<string, unknown> | undefined;
+
+    if (monedaPrevia && form.moneda && monedaPrevia !== form.moneda) {
+      const limiteOrigen = decimalAcotado(form.limiteCredito, "El límite de crédito", LIMITE_CREDITO) ?? "0";
+      const temporalOrigen = decimalAcotado(form.limiteCreditoTemporal, "El límite de crédito temporal", LIMITE_CREDITO);
+
+      if (requiereConversion(limiteOrigen, temporalOrigen)) {
+        try {
+          validarTasa(tasaCambio);
+
+          if (!conversionConfirmada) {
+            throw new Error("Confirme expresamente la conversión de los límites para cambiar la moneda.");
+          }
+
+          const c = convertirLimites(limiteOrigen, temporalOrigen, tasaCambio);
+
+          conversionMoneda = {
+            monedaOrigen: monedaPrevia,
+            monedaDestino: form.moneda,
+            tasa: c.tasa,
+            limiteDestino: c.limiteDestino,
+            temporalDestino: c.temporalDestino ?? "",
+            confirmada: true,
+          };
+        } catch (errorConversion) {
+          setTab("comercial");
+          setError((errorConversion as Error).message);
+          return;
+        }
+      }
+    }
+
     setSaving(true);
 
     try {
@@ -786,6 +901,7 @@ export default function ClienteDetallePage() {
               form.condicionPago,
             monedaCodigoPredeterminada:
               form.moneda,
+            conversionMoneda,
             listaPrecioId:
               form.listaPrecio,
             canalVentaId: form.canalVenta,
@@ -987,6 +1103,7 @@ export default function ClienteDetallePage() {
               <h2>
                 {cliente.codigo}
               </h2>
+              <strong>{cliente.razonSocial}</strong>
 
               <p>
                 Última actualización:{" "}
@@ -1023,6 +1140,12 @@ export default function ClienteDetallePage() {
                 Ventas bloqueadas
               </span>
             ) : null}
+
+            {aptitud ? (
+              <span className={aptitud.apto ? styles.statusActive : styles.statusBlocked}>
+                {aptitud.apto ? "Apto para SIFEN" : `Fiscal incompleto (${aptitud.pendientes.length})`}
+              </span>
+            ) : null}
           </div>
         </div>
 
@@ -1042,6 +1165,15 @@ export default function ClienteDetallePage() {
             <p>
               Puede seguir editando datos comerciales; corrija estos datos para dejarlo apto.
             </p>
+          </div>
+        ) : null}
+
+        {aviso ? (
+          <div className={styles.error} role="status">
+            <span>{aviso}</span>
+            <button onClick={() => setAviso("")} type="button">
+              Entendido
+            </button>
           </div>
         ) : null}
 
@@ -1555,20 +1687,24 @@ export default function ClienteDetallePage() {
                     value={
                       form.moneda
                     }
-                    onChange={(value) =>
+                    onChange={(value) => {
                       update(
                         "moneda",
                         value,
-                      )
-                    }
+                      );
+                      setTasaCambio("");
+                      setConversionConfirmada(false);
+                    }}
                   >
                     <option value="">Sin definir</option>
-<option value="PYG">
-                      Guaraníes · PYG
-                    </option>
-                    <option value="USD">
-                      Dólares · USD
-                    </option>
+                    {catalogos.monedas.map((m) => (
+                      <option key={m.codigo} value={m.codigo}>
+                        {m.nombre} · {m.codigo}
+                      </option>
+                    ))}
+                    {form.moneda && !catalogos.monedas.some((m) => m.codigo === form.moneda) ? (
+                      <option value={form.moneda}>{form.moneda}</option>
+                    ) : null}
                   </SelectInput>
                 </Field>
 
@@ -1599,7 +1735,7 @@ export default function ClienteDetallePage() {
                   styles.gridFour
                 }
               >
-                <Field label="Límite de crédito">
+                <Field label={`Límite de crédito (${monedaLimites})`}>
                   <TextInput
                     value={
                       form.limiteCredito
@@ -1614,7 +1750,7 @@ export default function ClienteDetallePage() {
                   />
                 </Field>
 
-                <Field label="Crédito temporal">
+                <Field label={`Límite temporal (${monedaLimites})`}>
                   <TextInput
                     value={
                       form.limiteCreditoTemporal
@@ -1629,7 +1765,7 @@ export default function ClienteDetallePage() {
                   />
                 </Field>
 
-                <Field label="Vencimiento crédito temporal">
+                <Field label="Vencimiento del límite temporal">
                   <TextInput
                     type="date"
                     value={
@@ -1659,6 +1795,84 @@ export default function ClienteDetallePage() {
                   />
                 </Field>
               </div>
+
+              {monedaCambia && vistaConversion ? (
+                <div
+                  aria-live="polite"
+                  role="group"
+                  style={{ border: "1px solid #e0b34a", background: "rgba(224, 179, 74, 0.12)", borderRadius: 10, padding: 12, margin: "8px 0", display: "grid", gap: 8 }}
+                >
+                  <strong>
+                    Cambio de moneda: {cliente?.monedaCodigoPredeterminada} → {form.moneda}
+                  </strong>
+                  {vistaConversion.tipo === "sin-limites" ? (
+                    <span>No hay límites de crédito vigentes para convertir: la moneda se cambia sin tasa.</span>
+                  ) : (
+                    <>
+                      <span>
+                        Los límites de arriba están en {cliente?.monedaCodigoPredeterminada}. Informe la tasa de cambio (no se consulta ninguna cotización) y confirme la conversión. Los saldos u
+                        operaciones de otros módulos no se convierten.
+                      </span>
+                      <Field label={`Tasa: 1 ${cliente?.monedaCodigoPredeterminada} = ? ${form.moneda}`}>
+                        <TextInput
+                          inputMode="decimal"
+                          onChange={(valor) => {
+                            setTasaCambio(valor);
+                            setConversionConfirmada(false);
+                          }}
+                          value={tasaCambio}
+                        />
+                      </Field>
+                      {vistaConversion.tipo === "error" ? (
+                        <span role="alert" style={{ color: "#b3263b" }}>
+                          {vistaConversion.mensaje}
+                        </span>
+                      ) : null}
+                      {vistaConversion.tipo === "listo" ? (
+                        <>
+                          <table style={{ borderCollapse: "collapse" }}>
+                            <tbody>
+                              <tr>
+                                <td style={{ padding: "2px 12px 2px 0" }}>Límite de crédito</td>
+                                <td style={{ padding: "2px 12px 2px 0" }}>
+                                  {vistaConversion.limite} {cliente?.monedaCodigoPredeterminada}
+                                </td>
+                                <td style={{ padding: "2px 12px 2px 0" }}>→</td>
+                                <td>
+                                  <strong>
+                                    {vistaConversion.limiteDestino} {form.moneda}
+                                  </strong>
+                                </td>
+                              </tr>
+                              {vistaConversion.temporal !== null ? (
+                                <tr>
+                                  <td style={{ padding: "2px 12px 2px 0" }}>Límite temporal</td>
+                                  <td style={{ padding: "2px 12px 2px 0" }}>
+                                    {vistaConversion.temporal} {cliente?.monedaCodigoPredeterminada}
+                                  </td>
+                                  <td style={{ padding: "2px 12px 2px 0" }}>→</td>
+                                  <td>
+                                    <strong>
+                                      {vistaConversion.temporalDestino} {form.moneda}
+                                    </strong>
+                                  </td>
+                                </tr>
+                              ) : null}
+                            </tbody>
+                          </table>
+                          <small>Redondeo half-up a 4 decimales (escala del importe). El servidor vuelve a calcular y rechaza si no coincide.</small>
+                          <label className={styles.checkItem}>
+                            <input checked={conversionConfirmada} onChange={(evento) => setConversionConfirmada(evento.target.checked)} type="checkbox" />
+                            <span>
+                              Confirmo la conversión con la tasa 1 {cliente?.monedaCodigoPredeterminada} = {tasaCambio.trim()} {form.moneda}
+                            </span>
+                          </label>
+                        </>
+                      ) : null}
+                    </>
+                  )}
+                </div>
+              ) : null}
 
               <div
                 className={
@@ -1801,9 +2015,17 @@ export default function ClienteDetallePage() {
             </section>
           ) : null}
 
-          {tab === "contactos" ||
-          tab === "direcciones" ||
-          tab === "documentos" ? (
+          {tab === "documentos" ? (
+            <DocumentosCliente
+              clienteId={cliente.id}
+              documentos={documentos}
+              onAviso={setAviso}
+              onError={setError}
+              onRecargar={recargarDocumentos}
+            />
+          ) : null}
+
+          {tab === "contactos" || tab === "direcciones" ? (
             <HijosEditor
               tab={tab}
               valor={hijos}
@@ -1819,8 +2041,8 @@ export default function ClienteDetallePage() {
           {tab === "contacto" ? (
             <section>
               <SectionTitle
-                title="Contacto y facturación"
-                description="Datos generales y correos operativos del cliente."
+                title="Datos de contacto del cliente"
+                description="Correo y teléfonos generales del cliente y correos operativos. Las personas de contacto están en la pestaña Contactos."
               />
 
               <div
@@ -2060,7 +2282,7 @@ export default function ClienteDetallePage() {
                 }
               >
                 <span>
-                  Días de entrega
+                  {["SEMANAL", "QUINCENAL"].includes(form.frecuenciaEntrega) ? "Días de entrega * (obligatorios con esta frecuencia)" : "Días de entrega"}
                 </span>
 
                 <div>

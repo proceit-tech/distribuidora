@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useRef, useState, type KeyboardEvent } from "react";
 
 import {
   PAIS_LEGADO_SIN_IDENTIFICAR,
@@ -9,13 +9,14 @@ import {
   planDe,
   validarTelefono,
   type CampoTelefonico,
+  type PlanPais,
   type TelefonoForm,
 } from "@/lib/fiscal/telefono";
 
 type Props = {
   campo: CampoTelefonico;
   etiqueta: string;
-  /** El número recibe el foco en `${id}`; la búsqueda en `${id}-buscar`, el país en `${id}-pais` y el área en `${id}-area`. */
+  /** El número recibe el foco en `${id}`; el país en `${id}-pais` y el área en `${id}-area`. */
   id: string;
   valor: TelefonoForm;
   onChange: (nuevo: TelefonoForm) => void;
@@ -25,66 +26,154 @@ type Props = {
   etiquetaError?: string;
 };
 
+const MAXIMO_RESULTADOS = 80;
+
 /**
- * Teléfono / celular por país (catálogo mundial UIT E.164, decisión 2026-10-11): búsqueda por nombre, ISO o DDI sobre TODOS
- * los países y territorios con DDI; Paraguay (+595) por defecto y sin DDD; el DDI se asocia solo; código de área únicamente
- * donde el plan del país lo usa; el ISO real se conserva (nunca "otro"). La regla vive en `lib/fiscal/telefono.ts`
- * (misma que las API). No antepone nada ni corrige lo escrito.
+ * Teléfono / celular por país (catálogo mundial UIT E.164) en UNA fila compacta: selector de país con búsqueda integrada
+ * (nombre, ISO o DDI; Paraguay +595 por defecto), código de área solo donde el plan del país lo usa y número. Una sola línea
+ * de ayuda (error, aviso o «Se guardará…»). La regla vive en `lib/fiscal/telefono.ts` (la misma de las API); no antepone ni
+ * corrige nada. Se adapta al ancho: en móvil los controles se reparten en dos líneas.
  */
 export function TelefonoPais({ campo, etiqueta, id, valor, onChange, clases, etiquetaError }: Props) {
-  const [busqueda, setBusqueda] = useState("");
+  const listaId = useId();
+  const contenedor = useRef<HTMLDivElement>(null);
+  const [texto, setTexto] = useState<string | null>(null);
+  const [indice, setIndice] = useState(0);
   const plan = planDe(valor.pais);
   const legado = valor.pais === PAIS_LEGADO_SIN_IDENTIFICAR;
   const resultado = valor.numero.trim() === "" && valor.area.trim() === "" ? null : validarTelefono(campo, valor, etiquetaError);
   const advertencia = resultado !== null && resultado.ok ? advertenciaTelefono(valor) : null;
   const ayudaId = `${id}-ayuda`;
-  const coincidencias = buscarPaisesTelefonia(busqueda);
-  const opciones = plan && !coincidencias.some((p) => p.iso === plan.iso) ? [plan, ...coincidencias] : coincidencias;
-  const columnas = [plan?.area ? "96px" : null, "1fr"].filter(Boolean).join(" ");
+  const abierto = texto !== null;
+  const coincidencias = abierto ? buscarPaisesTelefonia(texto) : [];
+  const visibles = coincidencias.slice(0, MAXIMO_RESULTADOS);
+  const etiquetaPais = plan ? `${plan.nombre} (+${plan.ddi})` : legado ? `País sin identificar${valor.ddi ? ` (+${valor.ddi})` : ""}` : "";
 
-  function cambiarPais(iso: string) {
-    const nuevoPlan = planDe(iso);
-
-    if (valor.area.trim() !== "" && !nuevoPlan?.area) {
-      if (!window.confirm("El país elegido no usa código de área separado: se borrará el código de área escrito. ¿Desea continuar?")) return;
+  function elegir(p: PlanPais) {
+    if (valor.area.trim() !== "" && !p.area) {
+      if (!window.confirm("El país elegido no usa código de área separado: se borrará el código de área escrito. ¿Desea continuar?")) {
+        setTexto(null);
+        return;
+      }
     }
 
-    onChange({ pais: iso, ddi: nuevoPlan?.ddi ?? "", area: nuevoPlan?.area ? valor.area : "", numero: valor.numero });
+    onChange({ pais: p.iso, ddi: p.ddi, area: p.area ? valor.area : "", numero: valor.numero });
+    setTexto(null);
   }
 
+  function teclado(evento: KeyboardEvent<HTMLInputElement>) {
+    if (evento.key === "ArrowDown") {
+      evento.preventDefault();
+      if (!abierto) setTexto("");
+      else setIndice((i) => Math.min(i + 1, Math.max(visibles.length - 1, 0)));
+    } else if (evento.key === "ArrowUp") {
+      evento.preventDefault();
+      setIndice((i) => Math.max(i - 1, 0));
+    } else if (evento.key === "Enter" && abierto) {
+      evento.preventDefault();
+      if (visibles[indice]) elegir(visibles[indice]);
+    } else if (evento.key === "Escape" && abierto) {
+      evento.preventDefault();
+      setTexto(null);
+    }
+  }
+
+  const mensaje =
+    resultado !== null && !resultado.ok
+      ? resultado.error
+      : resultado !== null && resultado.ok
+        ? `Se guardará: +${resultado.valor.ddi}${resultado.valor.area ? ` (${resultado.valor.area})` : ""} ${resultado.valor.numero}${advertencia ? ` — ${advertencia}` : ""}`
+        : valor.pais === ""
+          ? "Seleccione el país del número."
+          : legado
+            ? "País sin identificar (registro anterior): seleccione el país real."
+            : "";
+  const estiloControl = { flex: "1 1 190px", minWidth: 0, position: "relative" as const };
+
   return (
-    <div className={clases?.campo} role="group" aria-labelledby={`${id}-etiqueta`}>
+    <div className={clases?.campo} role="group" aria-labelledby={`${id}-etiqueta`} ref={contenedor}>
       <span id={`${id}-etiqueta`}>{etiqueta}</span>
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(90px, 28%) 1fr", gap: 8 }}>
-        <input
-          aria-label={`Buscar país por nombre, ISO o DDI — ${etiqueta}`}
-          autoComplete="off"
-          className={clases?.entrada}
-          id={`${id}-buscar`}
-          onChange={(evento) => setBusqueda(evento.target.value)}
-          placeholder="Buscar país / DDI"
-          type="search"
-          value={busqueda}
-        />
-        <select
-          aria-label={`País del número — ${etiqueta}`}
-          className={clases?.selector}
-          id={`${id}-pais`}
-          onChange={(evento) => cambiarPais(evento.target.value)}
-          value={valor.pais}
-        >
-          <option value="">{legado ? `País sin identificar${valor.ddi ? ` (+${valor.ddi})` : ""} — seleccione…` : "País…"}</option>
-          {opciones.map((p) => (
-            <option key={p.iso} value={p.iso}>
-              {p.nombre} · {p.iso} (+{p.ddi})
-            </option>
-          ))}
-        </select>
-      </div>
-      {busqueda.trim() !== "" && coincidencias.length === 0 ? (
-        <small style={{ color: "#b3263b", fontSize: 12 }}>Ningún país coincide con «{busqueda.trim()}».</small>
-      ) : null}
-      <div style={{ display: "grid", gridTemplateColumns: columnas, gap: 8, marginTop: 6 }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+        <div style={estiloControl}>
+          <input
+            aria-autocomplete="list"
+            aria-controls={abierto ? listaId : undefined}
+            aria-expanded={abierto}
+            aria-label={`País del número — ${etiqueta} (escriba para buscar por nombre, ISO o DDI)`}
+            autoComplete="off"
+            className={clases?.entrada ?? clases?.selector}
+            id={`${id}-pais`}
+            onBlur={() => setTexto(null)}
+            onChange={(evento) => {
+              setTexto(evento.target.value);
+              setIndice(0);
+            }}
+            onFocus={(evento) => {
+              setTexto("");
+              setIndice(0);
+              evento.target.select();
+            }}
+            onKeyDown={teclado}
+            placeholder={etiquetaPais || "País…"}
+            role="combobox"
+            style={{ width: "100%" }}
+            type="text"
+            value={abierto ? texto : etiquetaPais}
+          />
+          {abierto ? (
+            <ul
+              id={listaId}
+              role="listbox"
+              style={{
+                position: "absolute",
+                zIndex: 30,
+                left: 0,
+                right: 0,
+                top: "100%",
+                margin: "2px 0 0",
+                padding: 4,
+                maxHeight: 240,
+                overflowY: "auto",
+                listStyle: "none",
+                background: "var(--surface, #fff)",
+                color: "inherit",
+                border: "1px solid #cbd5df",
+                borderRadius: 8,
+                boxShadow: "0 8px 24px rgba(15, 35, 55, 0.18)",
+              }}
+            >
+              {visibles.length === 0 ? (
+                <li style={{ padding: "6px 8px", fontSize: 13, color: "#b3263b" }}>Ningún país coincide con «{texto?.trim()}».</li>
+              ) : (
+                visibles.map((p, i) => (
+                  <li
+                    aria-selected={p.iso === valor.pais}
+                    key={p.iso}
+                    onMouseDown={(evento) => {
+                      evento.preventDefault();
+                      elegir(p);
+                    }}
+                    role="option"
+                    style={{
+                      padding: "5px 8px",
+                      fontSize: 13,
+                      cursor: "pointer",
+                      borderRadius: 6,
+                      background: i === indice ? "rgba(21, 128, 120, 0.14)" : "transparent",
+                      fontWeight: p.iso === valor.pais ? 600 : 400,
+                    }}
+                  >
+                    {p.nombre} · {p.iso} <span style={{ opacity: 0.7 }}>(+{p.ddi})</span>
+                  </li>
+                ))
+              )}
+              {coincidencias.length > visibles.length ? (
+                <li style={{ padding: "4px 8px", fontSize: 12, opacity: 0.7 }}>Hay más resultados: escriba para acotar la búsqueda.</li>
+              ) : null}
+            </ul>
+          ) : null}
+        </div>
+
         {plan?.area ? (
           <input
             aria-label={`Código de área (DDD) — ${etiqueta}`}
@@ -93,6 +182,8 @@ export function TelefonoPais({ campo, etiqueta, id, valor, onChange, clases, eti
             inputMode="numeric"
             onChange={(evento) => onChange({ ...valor, area: evento.target.value })}
             placeholder="Área"
+            style={{ flex: "0 0 84px", minWidth: 0 }}
+            title={`Código de área de ${plan.nombre}`}
             value={valor.area}
           />
         ) : null}
@@ -106,19 +197,27 @@ export function TelefonoPais({ campo, etiqueta, id, valor, onChange, clases, eti
           id={id}
           inputMode="tel"
           onChange={(evento) => onChange({ ...valor, numero: evento.target.value })}
+          placeholder="Número"
+          style={{ flex: "2 1 150px", minWidth: 0 }}
+          title={plan?.ayuda}
           type="tel"
           value={valor.numero}
         />
       </div>
-      <small id={ayudaId} style={{ color: resultado !== null && !resultado.ok ? "#b3263b" : "#6f8498", fontSize: 12 }}>
-        {resultado !== null && !resultado.ok
-          ? resultado.error
-          : resultado !== null && resultado.ok
-            ? `Se guardará: ${resultado.valor.pais} +${resultado.valor.ddi}${resultado.valor.area ? ` (${resultado.valor.area})` : ""} ${resultado.valor.numero}${advertencia ? ` — ${advertencia}` : ""}`
-            : valor.pais === ""
-              ? "Seleccione el país del número."
-              : plan?.ayuda}
-      </small>
+      {mensaje ? (
+        <small
+          id={ayudaId}
+          style={{
+            display: "block",
+            marginTop: 2,
+            color: resultado !== null && !resultado.ok ? "#b3263b" : advertencia ? "#8a5a00" : "#6f8498",
+            fontSize: 12,
+            lineHeight: 1.3,
+          }}
+        >
+          {mensaje}
+        </small>
+      ) : null}
     </div>
   );
 }

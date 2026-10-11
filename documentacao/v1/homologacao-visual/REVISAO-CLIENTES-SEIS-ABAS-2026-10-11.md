@@ -46,3 +46,7 @@ Status: **AUDITORIA VISUAL/ESTÁTICA — PENDENTE DE IMPLEMENTAÇÃO E ACEITE HU
 **Critérios globais:** cobrir criação E edição e API sem duplicar lógica; confrontar a regra oficial e migrations em Git; preservar código automático, segurança/multitenancy e integridade. Não reescrever módulos alheios; criar migrations incrementais apenas se comprovadamente necessárias; não editar migrations já aplicadas; documentar testes realmente realizados; realizar commit/push e parar para auditoria ChatGPT. Nenhum teste com banco/VM real, nenhum deploy. A implementação **não equivale a homologação humana**.
 
 **Rastreabilidade:** aprovação expressa registrada nesta seção. Prints originais das seis abas foram mostrados na conversa, **não versionados** no GitHub; não declarar evidência visual arquivada.
+
+
+## Estado de implementación (Claude Code, 2026-10-11)
+Los nueve ajustes CLI-VIS-01…09 fueron **implementados en el Git y no ejecutados** (sin pruebas, SQL, VM ni despliegue), y quedan **pendientes de auditoría independiente y de aceite humano de la pantalla publicada**. Detalle: `PROGRESSO-NEXIT-V1.md` (sección «nueve ajustes») y `documentacao/banco/nexit/v1/docs/11-DICCIONARIO-CLIENTES.md`. Migraciones NEX-028 (archivos) y NEX-029 (conversión de moneda) versionadas, **no aplicadas**.

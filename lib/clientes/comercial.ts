@@ -98,3 +98,10 @@ export async function validarCondicionYMoneda(db: ConsultaDb, condicionPagoId: s
     if (ok.rowCount !== 1) throw new Error(`La moneda predeterminada (${monedaCodigo}) no está disponible.`);
   }
 }
+
+/** ¿El decimal canónico (punto decimal, ya validado) está dentro de [min, max]? Comparación por cifras, sin Number. */
+export function dentroDeRango(canonico: string, { min, max }: Pick<Opciones, "min" | "max">): boolean {
+  const valor = partirDecimal(canonico);
+
+  return compararDecimales(valor, partirDecimal(min)) >= 0 && compararDecimales(valor, partirDecimal(max)) <= 0;
+}

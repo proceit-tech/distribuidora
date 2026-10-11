@@ -10,7 +10,8 @@ FROM node:22-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
-RUN addgroup -S nextjs && adduser -S nextjs -G nextjs
+# UID/GID fijos (1001): el volumen de archivos privados del host se prepara con ese propietario (documentacao/infra/VOLUMEN-ARCHIVOS-PRIVADOS.md).
+RUN addgroup -S -g 1001 nextjs && adduser -S -u 1001 -G nextjs nextjs
 COPY --from=builder --chown=nextjs:nextjs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nextjs /app/.next/static ./.next/static
 COPY --from=builder --chown=nextjs:nextjs /app/public ./public

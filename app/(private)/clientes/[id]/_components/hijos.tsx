@@ -5,7 +5,8 @@ import styles from "../page.module.css";
 import { TelefonoPais } from "@/components/clientes/telefono-pais";
 import { validarTelefono } from "@/lib/fiscal/telefono";
 
-// Edición de contactos, direcciones y documentos del cliente (mismas tablas y campos que el alta).
+// Edición de contactos y direcciones del cliente (mismas tablas y campos que el alta). Los documentos son archivos y se gestionan
+// aparte (documentos.tsx, rutas /api/clientes/{id}/documentos).
 // Cada fila existente conserva su `id`; una fila solo se elimina cuando el usuario la quita explícitamente.
 
 export type ContactoForm = {
@@ -22,13 +23,9 @@ export type DireccionForm = {
   codigoPostal: string; contactoNombre: string; contactoTelefono: string; horarioRecepcion: string; observacion: string;
   esFiscal: boolean; esEntregaDefault: boolean; latitud: string; longitud: string;
 };
-export type DocumentoForm = {
-  k: string; id?: string;
-  tipo: string; nombreArchivo: string; urlArchivo: string; fechaEmision: string; fechaVencimiento: string; observacion: string;
-};
 export type HijosForm = {
-  contactos: ContactoForm[]; direcciones: DireccionForm[]; documentos: DocumentoForm[];
-  contactosEliminar: string[]; direccionesEliminar: string[]; documentosEliminar: string[];
+  contactos: ContactoForm[]; direcciones: DireccionForm[];
+  contactosEliminar: string[]; direccionesEliminar: string[];
 };
 export type OpcionGeo = { codigo?: string | number; nombre: string };
 type Pais = { codigo: string; nombre: string };
@@ -36,7 +33,7 @@ type Pais = { codigo: string; nombre: string };
 let seq = 0;
 const nuevaClave = () => `n${++seq}`;
 
-export const hijosVacios: HijosForm = { contactos: [], direcciones: [], documentos: [], contactosEliminar: [], direccionesEliminar: [], documentosEliminar: [] };
+export const hijosVacios: HijosForm = { contactos: [], direcciones: [], contactosEliminar: [], direccionesEliminar: [] };
 
 // Contacto sin número: se propone Paraguay (+595). Con número y sin país (registro anterior): sin país hasta que el usuario lo elija.
 function conTelefonoPredeterminado(x: Omit<ContactoForm, "k">) {
@@ -50,12 +47,11 @@ function conTelefonoPredeterminado(x: Omit<ContactoForm, "k">) {
   };
 }
 
-export function hijosDesdeApi(d: { contactos?: Omit<ContactoForm, "k">[]; direcciones?: Omit<DireccionForm, "k">[]; documentos?: Omit<DocumentoForm, "k">[] }): HijosForm {
+export function hijosDesdeApi(d: { contactos?: Omit<ContactoForm, "k">[]; direcciones?: Omit<DireccionForm, "k">[] }): HijosForm {
   return {
     ...hijosVacios,
     contactos: (d.contactos ?? []).map((x) => ({ ...x, k: x.id ?? nuevaClave(), ...conTelefonoPredeterminado(x) })),
     direcciones: (d.direcciones ?? []).map((x) => ({ ...x, k: x.id ?? nuevaClave() })),
-    documentos: (d.documentos ?? []).map((x) => ({ ...x, k: x.id ?? nuevaClave() })),
   };
 }
 
@@ -69,10 +65,8 @@ export function hijosParaApi(h: HijosForm) {
   return {
     contactos: h.contactos.map(limpio),
     direcciones: h.direcciones.map(limpio),
-    documentos: h.documentos.map(limpio),
     contactosEliminar: h.contactosEliminar,
     direccionesEliminar: h.direccionesEliminar,
-    documentosEliminar: h.documentosEliminar,
   };
 }
 
@@ -94,13 +88,11 @@ export function validarHijos(h: HijosForm): string {
     if (!d.direccion.trim()) return "Informe la dirección de cada ubicación registrada.";
     if (!d.paisCodigo) return "Informe el país de cada dirección.";
   }
-  for (const d of h.documentos) if (!d.nombreArchivo.trim() || !d.urlArchivo.trim()) return "Cada documento requiere nombre de archivo y URL segura.";
   return "";
 }
 
 const crearContacto = (): ContactoForm => ({ k: nuevaClave(), nombre: "", apellido: "", cargo: "", departamento: "", telefono: "", telefonoPais: "PRY", telefonoDdi: "595", telefonoArea: "", celular: "", celularPais: "PRY", celularDdi: "595", celularArea: "", email: "", esPrincipal: false, recibePedidos: false, recibeFacturacion: false, recibeCobranzas: false, recibeDocumentosElectronicos: false, recibeNotificaciones: true });
 const crearDireccion = (): DireccionForm => ({ k: nuevaClave(), tipo: "COMERCIAL", etiqueta: "", direccion: "", numeroCasa: "", complemento: "", paisCodigo: "PRY", paisNombre: "Paraguay", departamentoCodigo: "", departamento: "", distritoCodigo: "", distrito: "", ciudadCodigo: "", ciudad: "", codigoPostal: "", contactoNombre: "", contactoTelefono: "", horarioRecepcion: "", observacion: "", esFiscal: false, esEntregaDefault: false, latitud: "", longitud: "" });
-const crearDocumento = (): DocumentoForm => ({ k: nuevaClave(), tipo: "OTRO", nombreArchivo: "", urlArchivo: "", fechaEmision: "", fechaVencimiento: "", observacion: "" });
 
 function Campo({ label, children, className }: { label: string; children: React.ReactNode; className?: string }) {
   return (
@@ -154,7 +146,7 @@ const optGeo = (lista: OpcionGeo[], vacio: string) => (
   </>
 );
 
-type Tab = "contactos" | "direcciones" | "documentos";
+type Tab = "contactos" | "direcciones";
 
 export function HijosEditor({ tab, valor, onChange, paises, departamentos, onError }: {
   tab: Tab; valor: HijosForm; onChange: (v: HijosForm) => void; paises: Pais[]; departamentos: OpcionGeo[]; onError: (m: string) => void;
@@ -192,7 +184,6 @@ export function HijosEditor({ tab, valor, onChange, paises, departamentos, onErr
 
   const setC = (k: string, p: Partial<ContactoForm>) => onChange({ ...valor, contactos: valor.contactos.map((x) => (x.k === k ? { ...x, ...p } : x)) });
   const setD = (k: string, p: Partial<DireccionForm>) => onChange({ ...valor, direcciones: valor.direcciones.map((x) => (x.k === k ? { ...x, ...p } : x)) });
-  const setO = (k: string, p: Partial<DocumentoForm>) => onChange({ ...valor, documentos: valor.documentos.map((x) => (x.k === k ? { ...x, ...p } : x)) });
 
   const unico = <T extends { k: string }>(lista: T[], k: string, campo: keyof T, marcado: boolean): T[] =>
     lista.map((x) => (x.k === k ? { ...x, [campo]: marcado } : marcado ? { ...x, [campo]: false } : x));
@@ -305,28 +296,5 @@ export function HijosEditor({ tab, valor, onChange, paises, departamentos, onErr
       </section>
     );
   }
-
-  return (
-    <section>
-      <Cabecera titulo="Documentos comerciales" descripcion="Enlace seguro a documentos comerciales vigentes." agregar="Agregar documento" onAgregar={() => onChange({ ...valor, documentos: [...valor.documentos, crearDocumento()] })} />
-      {valor.documentos.length === 0 ? <p className={styles.emptyHint}>Este cliente no tiene documentos registrados.</p> : null}
-      {valor.documentos.map((o, i) => (
-        <Fila key={o.k} titulo={`Documento ${i + 1}`} existente={!!o.id}
-          onQuitar={() => onChange({ ...valor, documentos: valor.documentos.filter((x) => x.k !== o.k), documentosEliminar: o.id ? [...valor.documentosEliminar, o.id] : valor.documentosEliminar })}>
-          <div className={styles.gridFour}>
-            <Campo label="Tipo">
-              <Lista value={o.tipo} onChange={(v) => setO(o.k, { tipo: v })}>
-                <option value="RUC">Constancia de RUC</option><option value="CONTRATO">Contrato</option><option value="CREDITO">Documento de crédito</option><option value="EXONERACION">Exoneración</option><option value="OTRO">Otro</option>
-              </Lista>
-            </Campo>
-            <Campo label="Nombre del archivo *"><Texto maxLength={255} value={o.nombreArchivo} onChange={(v) => setO(o.k, { nombreArchivo: v })} /></Campo>
-            <Campo label="URL segura *"><Texto value={o.urlArchivo} onChange={(v) => setO(o.k, { urlArchivo: v })} /></Campo>
-            <Campo label="Fecha de emisión"><Texto placeholder="dd/mm/yyyy" value={o.fechaEmision} onChange={(v) => setO(o.k, { fechaEmision: v })} /></Campo>
-            <Campo label="Fecha de vencimiento"><Texto placeholder="dd/mm/yyyy" value={o.fechaVencimiento} onChange={(v) => setO(o.k, { fechaVencimiento: v })} /></Campo>
-            <Campo label="Observación" className={styles.spanTwo}><Texto maxLength={500} value={o.observacion} onChange={(v) => setO(o.k, { observacion: v })} /></Campo>
-          </div>
-        </Fila>
-      ))}
-    </section>
-  );
+  return null;
 }

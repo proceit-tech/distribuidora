@@ -14,6 +14,9 @@ import { evaluarAptitudSifen } from "@/lib/fiscal/aptitud-sifen";
 import { validarDiaPreferidoCobro } from "@/lib/clientes/dia-cobro";
 import { DESCUENTO_COMERCIAL, LIMITE_CREDITO, decimalAcotado, numericoCanonico, validarCondicionYMoneda } from "@/lib/clientes/comercial";
 import { leerTelefonoEntrada, validarTelefono } from "@/lib/fiscal/telefono";
+import { REDONDEO_CONVERSION, convertirLimites, requiereConversion, type ConversionLimites } from "@/lib/clientes/cambio";
+import { validarFrecuenciaYDias } from "@/lib/clientes/logistica";
+import { validarDireccionFiscalRequerida } from "@/lib/clientes/obligatoriedad-fiscal";
 import { ErrorGeografia, resolverPais, validarPaisPorOperacion } from "@/lib/geografia/referencia";
 import { ErrorValidacion, leerEntrada, leerHijos, sincronizarHijos } from "@/lib/clientes/relacionados";
 
@@ -295,7 +298,7 @@ export async function PUT(request: Request, contexto: Contexto) {
       if (tipoDocumento === "OTRO" && !descDoc) throw new Error("Describa el tipo de documento seleccionado como Otro.");
     }
     if (vencimiento && limiteTemporal === null) {
-      throw new Error("Para informar vencimiento, indique también un límite de crédito temporal.");
+      throw new Error("Para informar el vencimiento del límite temporal, indique también el límite temporal.");
     }
     if (frecuencia && !FRECUENCIAS.has(frecuencia)) throw new Error("La frecuencia de entrega no es válida.");
     if (bloqueado && !motivo) throw new Error("Informe el motivo del bloqueo de ventas.");
@@ -326,7 +329,7 @@ export async function PUT(request: Request, contexto: Contexto) {
     await conexion.query("BEGIN");
 
     const actual = await conexion.query(
-      "SELECT bloqueado_ventas, naturaleza_receptor, numero_documento, dv, descripcion_documento_identidad, razon_social, nombre_fantasia, email, telefono, celular, telefono_ddi, celular_ddi, telefono_pais, telefono_area, celular_pais, celular_area, tipo_operacion, tipo_documento, gln, condicion_pago_id, moneda_codigo_predeterminada FROM clientes WHERE id = $1 AND empresa_id = $2 FOR UPDATE",
+      "SELECT bloqueado_ventas, naturaleza_receptor, numero_documento, dv, descripcion_documento_identidad, razon_social, nombre_fantasia, email, telefono, celular, telefono_ddi, celular_ddi, telefono_pais, telefono_area, celular_pais, celular_area, tipo_operacion, tipo_documento, gln, condicion_pago_id, moneda_codigo_predeterminada, limite_credito, limite_credito_temporal, frecuencia_entrega, dias_entrega FROM clientes WHERE id = $1 AND empresa_id = $2 FOR UPDATE",
       [id, empresaId],
     );
     if (actual.rowCount !== 1) {
@@ -341,6 +344,43 @@ export async function PUT(request: Request, contexto: Contexto) {
       condicionPagoId === (actual.rows[0].condicion_pago_id ?? null) ? null : condicionPagoId,
       monedaNueva === (actual.rows[0].moneda_codigo_predeterminada ?? null) ? null : monedaNueva,
     );
+
+    // Entrega y ventas: días obligatorios con frecuencia semanal/quincenal. Se valida al crear o cambiar la combinación;
+    // un cliente anterior que no la cambia se tolera (no se bloquea su mantenimiento).
+    const diasNuevos = dias(cuerpo.diasEntrega) ?? [];
+    const diasPrevios = ((actual.rows[0].dias_entrega as unknown[] | null) ?? []).map(Number);
+    const logisticaCambio =
+      (frecuencia ?? "") !== (actual.rows[0].frecuencia_entrega ?? "") || diasNuevos.join(",") !== [...diasPrevios].sort((a, b) => a - b).join(",");
+    const errorLogistica = logisticaCambio ? validarFrecuenciaYDias(frecuencia, diasNuevos) : null;
+    if (errorLogistica) throw new Error(errorLogistica);
+
+    // Límites de crédito y cambio de moneda (CLI-VIS-05/06, D-10). Los límites del cuerpo están expresados en la moneda
+    // ACTUAL (la que tiene guardada); si la moneda cambia y hay algo que convertir, se exige tasa informada y confirmación
+    // expresa y el servidor RECALCULA (aritmética decimal exacta, half-up a 4 decimales): no confía en el cliente.
+    let limiteGuardar = decimalAcotado(cuerpo.limiteCredito, "El límite de crédito", LIMITE_CREDITO) ?? "0";
+    let temporalGuardar = limiteTemporal;
+    let conversion: ConversionLimites | null = null;
+    const monedaPrevia = (actual.rows[0].moneda_codigo_predeterminada as string | null) ?? null;
+
+    if (monedaPrevia && monedaNueva && monedaPrevia !== monedaNueva && requiereConversion(limiteGuardar, temporalGuardar)) {
+      const c = (typeof cuerpo.conversionMoneda === "object" && cuerpo.conversionMoneda !== null ? cuerpo.conversionMoneda : null) as Json | null;
+
+      if (!c || c.confirmada !== true) {
+        throw new Error(`Al cambiar la moneda de ${monedaPrevia} a ${monedaNueva} con límites de crédito debe informar la tasa de cambio y confirmar expresamente la conversión.`);
+      }
+      if (c.monedaOrigen !== monedaPrevia || c.monedaDestino !== monedaNueva) {
+        throw new Error("La conversión confirmada no corresponde a las monedas actuales del cliente: vuelva a abrir la edición.");
+      }
+
+      conversion = convertirLimites(limiteGuardar, temporalGuardar, c.tasa);
+
+      if (numericoCanonico(c.limiteDestino) !== conversion.limiteDestino || numericoCanonico(c.temporalDestino) !== (conversion.temporalDestino ?? "")) {
+        throw new Error("Los valores convertidos que confirmó no coinciden con el cálculo del servidor: revise la tasa y confirme nuevamente.");
+      }
+
+      limiteGuardar = conversion.limiteDestino;
+      temporalGuardar = conversion.temporalDestino;
+    }
 
     // Campos D3 del SIFEN (tamaños y formatos oficiales, sin truncar); un campo sin cambios respecto de lo
     // guardado se tolera (datos anteriores a la regla) hasta que se modifique.
@@ -479,12 +519,12 @@ export async function PUT(request: Request, contexto: Contexto) {
         numeroDocumento, naturaleza === "CONTRIBUYENTE" ? dv : null,
         razonSocial, opcional(cuerpo.nombreFantasia, 255),
         email, emailCopia, telefonoGuardar.numero, celularGuardar.numero,
-        decimalAcotado(cuerpo.limiteCredito, "El límite de crédito", LIMITE_CREDITO) ?? "0",
+        limiteGuardar,
         condicionPagoId, refs.listaPrecioId, refs.grupoClienteId,
         opcional(cuerpo.monedaCodigoPredeterminada, 3)?.toUpperCase() ?? null,
         refs.canalVentaId, opcional(cuerpo.codigoExterno, 100), opcional(cuerpo.gln, 13),
         decimalAcotado(cuerpo.descuentoComercialPct, "El descuento comercial", DESCUENTO_COMERCIAL) ?? "0",
-        limiteTemporal, vencimiento,
+        temporalGuardar, vencimiento,
         bloqueado, motivo, estabaBloqueado, session.user.id,
         diaCobro.dia,
         refs.rutaEntregaId, refs.zonaComercialId, refs.vendedorId,
@@ -501,8 +541,35 @@ export async function PUT(request: Request, contexto: Contexto) {
       ],
     );
 
+    // Auditoría de la conversión de moneda: misma transacción que el UPDATE de los límites.
+    if (conversion) {
+      await conexion.query(
+        `INSERT INTO cliente_conversiones_moneda
+           (empresa_id, cliente_id, moneda_origen, moneda_destino, tasa, limite_origen, limite_destino,
+            limite_temporal_origen, limite_temporal_destino, redondeo, confirmado_por)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+        [empresaId, id, monedaPrevia, monedaNueva, conversion.tasa, conversion.limiteOrigen, conversion.limiteDestino,
+          conversion.temporalOrigen, conversion.temporalDestino, REDONDEO_CONVERSION, session.user.id],
+      );
+    }
+
     // Contactos, direcciones y documentos: misma transacción, mismo empresa_id.
     const resumen = await sincronizarHijos(conexion, empresaId, id, session.user.id, entradaHijos);
+
+    // Cadastro fiscal completo (decisión 01): B2F exige dirección fiscal. Se verifica sobre el estado FINAL de la
+    // transacción cuando se pasa a B2F o se tocan las direcciones (un cliente B2F anterior sin tocar direcciones se tolera).
+    const operacionCambioAB2F = tipoOperacion === "B2F" && previo.tipo_operacion !== OPERACION.B2F;
+    const direccionesTocadas = resumen.direcciones.nuevos + resumen.direcciones.actualizados + resumen.direcciones.eliminados > 0;
+
+    if (tipoOperacion === "B2F" && (operacionCambioAB2F || direccionesTocadas)) {
+      const fiscal = await conexion.query(
+        "SELECT 1 FROM direcciones_cliente WHERE empresa_id = $1 AND cliente_id = $2 AND (es_fiscal OR tipo = 'FISCAL') LIMIT 1",
+        [empresaId, id],
+      );
+      const mensajeB2F = validarDireccionFiscalRequerida(tipoOperacion, fiscal.rowCount === 1);
+
+      if (mensajeB2F) throw new Error(mensajeB2F);
+    }
 
     await conexion.query("COMMIT");
     return NextResponse.json({ ok: true, id, hijos: resumen });

@@ -9,6 +9,9 @@ import { TelefonoPais } from "@/components/clientes/telefono-pais";
 import { validarTelefono } from "@/lib/fiscal/telefono";
 import { DESCUENTO_COMERCIAL, LIMITE_CREDITO, decimalAcotado } from "@/lib/clientes/comercial";
 import { pestanaDeErrorApi } from "@/lib/clientes/pestanas";
+import { ACCEPT_ARCHIVOS, EXTENSIONES_TEXTO, TAMANO_MAXIMO_BYTES, tamanoLegible, validarNombreYTamano } from "@/lib/almacenamiento/archivos-reglas";
+import { validarFrecuenciaYDias } from "@/lib/clientes/logistica";
+import { validarDireccionFiscalRequerida } from "@/lib/clientes/obligatoriedad-fiscal";
 import {
   NOMBRE_INNOMINADO,
   validarCamposReceptor,
@@ -17,7 +20,6 @@ import {
   validarInnominado,
   validarLongitudes,
   validarNaturalezaOperacion,
-  validarUrlDocumento,
 } from "@/lib/fiscal/campos-receptor";
 
 type Opcion = {
@@ -88,8 +90,8 @@ type Direccion = {
 
 type Documento = {
   tipo: string;
-  nombreArchivo: string;
-  urlArchivo: string;
+  /** Archivo real elegido por el usuario; se sube a almacenamiento privado una vez creado el cliente. */
+  archivo: File | null;
   fechaEmision: string;
   fechaVencimiento: string;
   observacion: string;
@@ -257,8 +259,7 @@ function crearDireccion(): Direccion {
 function crearDocumento(): Documento {
   return {
     tipo: "OTRO",
-    nombreArchivo: "",
-    urlArchivo: "",
+    archivo: null,
     fechaEmision: "",
     fechaVencimiento: "",
     observacion: "",
@@ -679,10 +680,10 @@ export default function NuevoClientePage() {
     const errorLargoLogistica = validarLongitudes([[f.observacionLogistica.trim(), 1000, "Las observaciones logísticas"]]);
     if (errorLargoLogistica) return { pestana: "logistica", mensaje: errorLargoLogistica };
     if (f.limiteCreditoTemporal.trim() === "" && f.fechaVencimientoCredito.trim()) {
-      return comercial("Para informar el vencimiento, indique también un límite de crédito temporal.", "cli-limite-temporal");
+      return comercial("Para informar el vencimiento del límite temporal, indique también el límite temporal.", "cli-limite-temporal");
     }
     if (f.fechaVencimientoCredito.trim() && !fechaValida(f.fechaVencimientoCredito)) {
-      return comercial("El vencimiento del crédito debe ser una fecha válida con formato dd/mm/yyyy.", "cli-vencimiento");
+      return comercial("El vencimiento del límite temporal debe ser una fecha válida con formato dd/mm/yyyy.", "cli-vencimiento");
     }
     if (f.diaPreferidoCobro.trim()) {
       const dia = Number(f.diaPreferidoCobro);
@@ -714,6 +715,9 @@ export default function NuevoClientePage() {
     if (f.bloqueadoVentas && !f.motivoBloqueoVentas.trim()) {
       return comercial("Informe el motivo del bloqueo de ventas.", "cli-motivo-bloqueo");
     }
+
+    const errorLogistica = validarFrecuenciaYDias(f.frecuenciaEntrega, f.diasEntrega);
+    if (errorLogistica) return { pestana: "logistica", mensaje: errorLogistica, campo: "cli-frecuencia" };
 
     for (let i = 0; i < contactos.length; i += 1) {
       const c = contactos[i];
@@ -781,6 +785,8 @@ export default function NuevoClientePage() {
         }
       }
     }
+    const errorB2F = validarDireccionFiscalRequerida(f.tipoOperacion, direcciones.some((d) => d.esFiscal || d.tipo === "FISCAL"));
+    if (errorB2F) return { pestana: "direcciones", mensaje: errorB2F };
     if (direcciones.filter((d) => d.esFiscal || d.tipo === "FISCAL").length > 1) {
       return { pestana: "direcciones", mensaje: "Solo puede haber una dirección fiscal." };
     }
@@ -791,21 +797,15 @@ export default function NuevoClientePage() {
     for (let i = 0; i < documentos.length; i += 1) {
       const d = documentos[i];
       const n = i + 1;
-      if (!d.nombreArchivo.trim()) {
-        return { pestana: "documentos", mensaje: `El documento ${n} necesita nombre del archivo; si no lo necesita, elimínelo.`, campo: `cli-documento-${i}-nombre` };
+      if (!d.archivo) {
+        return { pestana: "documentos", mensaje: `El documento ${n} necesita el archivo; si no lo necesita, elimínelo.`, campo: `cli-documento-${i}-archivo` };
       }
-      if (!d.urlArchivo.trim()) {
-        return { pestana: "documentos", mensaje: `El documento ${n} necesita la URL del archivo.`, campo: `cli-documento-${i}-url` };
+      const errorArchivo = validarNombreYTamano(d.archivo.name, d.archivo.size);
+      if (errorArchivo) {
+        return { pestana: "documentos", mensaje: `Documento ${n}: ${errorArchivo}`, campo: `cli-documento-${i}-archivo` };
       }
-      const errorUrl = validarUrlDocumento(d.urlArchivo.trim());
-      if (errorUrl) {
-        return { pestana: "documentos", mensaje: `Documento ${n}: ${errorUrl}`, campo: `cli-documento-${i}-url` };
-      }
-      const largoDocumento = validarLongitudes([
-        [d.nombreArchivo.trim(), 255, `El nombre del archivo del documento ${n}`],
-        [d.observacion.trim(), 500, `La observación del documento ${n}`],
-      ]);
-      if (largoDocumento) return { pestana: "documentos", mensaje: largoDocumento, campo: `cli-documento-${i}-nombre` };
+      const largoDocumento = validarLongitudes([[d.observacion.trim(), 500, `La observación del documento ${n}`]]);
+      if (largoDocumento) return { pestana: "documentos", mensaje: largoDocumento, campo: `cli-documento-${i}-observacion` };
       if (d.fechaEmision.trim() && !fechaValida(d.fechaEmision)) {
         return { pestana: "documentos", mensaje: `La fecha de emisión del documento ${n} debe tener formato dd/mm/yyyy y ser válida.`, campo: `cli-documento-${i}-emision` };
       }
@@ -851,12 +851,46 @@ export default function NuevoClientePage() {
       const respuesta = await fetch("/api/clientes", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...formulario, contactos, direcciones, documentos }),
+        // Los documentos son archivos reales: se suben a almacenamiento privado DESPUÉS de crear el cliente.
+        body: JSON.stringify({ ...formulario, contactos, direcciones, documentos: [] }),
       });
-      const datos = (await respuesta.json()) as { error?: string };
+      const datos = (await respuesta.json()) as { error?: string; cliente?: { id?: string } };
 
       if (!respuesta.ok) {
         throw new Error(datos.error ?? "No fue posible guardar el cliente.");
+      }
+
+      const clienteId = datos.cliente?.id;
+      const fallidos: string[] = [];
+
+      for (const [posicion, documento] of documentos.entries()) {
+        if (!documento.archivo || !clienteId) continue;
+
+        const formularioArchivo = new FormData();
+        formularioArchivo.set("archivo", documento.archivo);
+        formularioArchivo.set("tipo", documento.tipo);
+        formularioArchivo.set("fechaEmision", documento.fechaEmision.trim());
+        formularioArchivo.set("fechaVencimiento", documento.fechaVencimiento.trim());
+        formularioArchivo.set("observacion", documento.observacion.trim());
+
+        try {
+          const subida = await fetch(`/api/clientes/${clienteId}/documentos`, { method: "POST", body: formularioArchivo });
+
+          if (!subida.ok) {
+            const detalle = (await subida.json().catch(() => ({}))) as { error?: string };
+            fallidos.push(`Documento ${posicion + 1} (${documento.archivo.name}): ${detalle.error ?? "no se pudo cargar"}`);
+          }
+        } catch {
+          fallidos.push(`Documento ${posicion + 1} (${documento.archivo.name}): error de conexión`);
+        }
+      }
+
+      // El cliente ya existe: si algún archivo falló NO se vuelve a enviar el formulario (duplicaría el cliente);
+      // se abre su ficha para reintentar solo los documentos pendientes.
+      if (fallidos.length > 0 && clienteId) {
+        router.push(`/clientes/${clienteId}?avisoDocumentos=${encodeURIComponent(`El cliente se creó, pero no se cargaron: ${fallidos.join(" · ")}`)}`);
+        router.refresh();
+        return;
       }
 
       router.push("/clientes?ok=creado");
@@ -877,6 +911,8 @@ export default function NuevoClientePage() {
 
   const esContribuyente = formulario.naturaleza === "CONTRIBUYENTE";
   const esB2F = formulario.tipoOperacion === "B2F";
+  // Moneda de los límites (D-10: una moneda por cliente para el límite normal y el temporal); nunca se presume PYG.
+  const monedaEtiqueta = formulario.monedaCodigoPredeterminada || "sin moneda";
   const esInnominado =
     !esContribuyente && formulario.tipoDocumento === "INNOMINADO";
 
@@ -984,7 +1020,17 @@ export default function NuevoClientePage() {
             </button>
           </div>
         ) : null}
-        <p className="clienteNuevo__nota">Los campos con * son obligatorios.</p>
+        {tab === "fiscal" ||
+        (tab === "contactos" && contactos.length > 0) ||
+        (tab === "direcciones" && direcciones.length > 0) ||
+        (tab === "documentos" && documentos.length > 0) ? (
+          <p className="clienteNuevo__nota">
+            {tab === "fiscal" ? "Los campos con * son obligatorios." : "* Obligatorio en cada registro agregado."}
+          </p>
+        ) : null}
+        {tab === "direcciones" && esB2F ? (
+          <p className="clienteNuevo__nota">Operación B2F: la dirección fiscal es obligatoria (agregue una y márquela como fiscal).</p>
+        ) : null}
         {tab === "fiscal" ? (
           <section className="clienteNuevo__contenido">
             <Titulo
@@ -1191,8 +1237,8 @@ export default function NuevoClientePage() {
             </div>
 
             <Titulo
-              titulo="Contacto principal"
-              texto="Datos generales del cliente. Puede agregar personas específicas en la pestaña Contactos."
+              titulo="Datos de contacto del cliente"
+              texto="Correo y teléfonos generales del cliente. Las personas de contacto se registran en la pestaña Contactos."
             />
 
             <div className="clienteNuevo__grid clienteNuevo__grid--dos">
@@ -1294,7 +1340,7 @@ export default function NuevoClientePage() {
             <div className="clienteNuevo__grid clienteNuevo__grid--cuatro">
               <Input
                 id="cli-limite-credito"
-                label="Límite de crédito"
+                label={`Límite de crédito (${monedaEtiqueta})`}
                 step="any"
                 min="0"
                 onChange={(valor) =>
@@ -1317,7 +1363,7 @@ export default function NuevoClientePage() {
               />
               <Input
                 id="cli-limite-temporal"
-                label="Límite temporal"
+                label={`Límite temporal (${monedaEtiqueta})`}
                 step="any"
                 min="0"
                 onChange={(valor) =>
@@ -1328,7 +1374,7 @@ export default function NuevoClientePage() {
               />
               <Input
                 id="cli-vencimiento"
-                label="Vencimiento del crédito (dd/mm/yyyy)"
+                label="Vencimiento del límite temporal (dd/mm/yyyy)"
                 onChange={(valor) =>
                   actualizarFormulario("fechaVencimientoCredito", valor)
                 }
@@ -1821,6 +1867,7 @@ export default function NuevoClientePage() {
                 value={formulario.vendedorId}
               />
               <Select
+                id="cli-frecuencia"
                 label="Frecuencia de entrega"
                 onChange={(valor) =>
                   actualizarFormulario("frecuenciaEntrega", valor)
@@ -1838,7 +1885,7 @@ export default function NuevoClientePage() {
             </div>
 
             <p className="clienteNuevo__textoAuxiliar">
-              Días habituales de entrega
+              {["SEMANAL", "QUINCENAL"].includes(formulario.frecuenciaEntrega) ? "Días de entrega * (obligatorios con esta frecuencia)" : "Días habituales de entrega"}
             </p>
             <Checks
               valores={[
@@ -1959,7 +2006,7 @@ export default function NuevoClientePage() {
             onAgregar={() =>
               setDocumentos((actuales) => [...actuales, crearDocumento()])
             }
-            texto="Registre el enlace seguro a documentos comerciales vigentes."
+            texto={`Formatos ${EXTENSIONES_TEXTO} · máximo ${TAMANO_MAXIMO_BYTES / 1024 / 1024} MB por archivo.`}
             titulo="Documentos comerciales"
           >
             {documentos.map((documento, indice) => (
@@ -1988,22 +2035,23 @@ export default function NuevoClientePage() {
                     ]}
                     value={documento.tipo}
                   />
-                  <Input
-                    id={`cli-documento-${indice}-nombre`}
-                    label="Nombre del archivo *"
-                    onChange={(valor) =>
-                      actualizarDocumento(indice, "nombreArchivo", valor)
-                    }
-                    value={documento.nombreArchivo}
-                  />
-                  <Input
-                    id={`cli-documento-${indice}-url`}
-                    label="URL segura *"
-                    onChange={(valor) =>
-                      actualizarDocumento(indice, "urlArchivo", valor)
-                    }
-                    value={documento.urlArchivo}
-                  />
+                  <label className="clienteNuevo__campo">
+                    <EtiquetaCampo label="Archivo *" />
+                    <input
+                      accept={ACCEPT_ARCHIVOS}
+                      aria-required="true"
+                      id={`cli-documento-${indice}-archivo`}
+                      onChange={(evento) =>
+                        actualizarDocumento(indice, "archivo", evento.target.files?.[0] ?? null)
+                      }
+                      type="file"
+                    />
+                    <small>
+                      {documento.archivo
+                        ? `${documento.archivo.name} · ${tamanoLegible(documento.archivo.size)}`
+                        : `${EXTENSIONES_TEXTO} · máx. ${TAMANO_MAXIMO_BYTES / 1024 / 1024} MB`}
+                    </small>
+                  </label>
                   <Input
                     id={`cli-documento-${indice}-emision`}
                     label="Fecha de emisión (dd/mm/yyyy)"
@@ -2013,9 +2061,6 @@ export default function NuevoClientePage() {
                     placeholder="dd/mm/yyyy"
                     value={documento.fechaEmision}
                   />
-                </div>
-
-                <div className="clienteNuevo__grid clienteNuevo__grid--dos">
                   <Input
                     id={`cli-documento-${indice}-vencimiento`}
                     label="Fecha de vencimiento (dd/mm/yyyy)"
@@ -2025,14 +2070,15 @@ export default function NuevoClientePage() {
                     placeholder="dd/mm/yyyy"
                     value={documento.fechaVencimiento}
                   />
-                  <Area
-                    label="Observación"
-                    onChange={(valor) =>
-                      actualizarDocumento(indice, "observacion", valor)
-                    }
-                    value={documento.observacion}
-                  />
                 </div>
+
+                <Area
+                  label="Observación"
+                  onChange={(valor) =>
+                    actualizarDocumento(indice, "observacion", valor)
+                  }
+                  value={documento.observacion}
+                />
               </article>
             ))}
           </Repeater>
