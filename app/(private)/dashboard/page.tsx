@@ -141,64 +141,51 @@ export default function DashboardPage() {
 
   return (
     <section className={styles.page}>
-      <header className={styles.hero}>
-        <div>
-          <div className={styles.heroMeta}>
-            <span className={styles.companyPill}>
-              {(datos?.empresa.nombre ?? "EMPRESA").toUpperCase()}
-            </span>
-          </div>
+      <header className={styles.topbar}>
+        <h1>Panel general</h1>
 
-          <h1>Panel general</h1>
+        <div className={styles.filters}>
+          <label>
+            <span>Período</span>
+            <select
+              value={periodo}
+              onChange={(e) => setPeriodo(e.target.value as DashboardPeriodo)}
+            >
+              {PERIODOS.map((p) => (
+                <option key={p.clave} value={p.clave}>
+                  {p.etiqueta}
+                </option>
+              ))}
+            </select>
+          </label>
 
-          <p>
-            Visión ejecutiva de inventario, movimientos y
-            maestros de la empresa.
-          </p>
+          <label>
+            <span>Depósito</span>
+            <select
+              value={depositoId}
+              onChange={(e) => setDepositoId(e.target.value)}
+            >
+              <option value="">Todos los depósitos</option>
+              {(datos?.filtros.depositos ?? []).map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.nombre}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <button
+            type="button"
+            className={styles.refresh}
+            onClick={() => setRecarga((n) => n + 1)}
+            disabled={cargando}
+          >
+            {cargando ? "Actualizando..." : "Actualizar"}
+          </button>
         </div>
-      </header>
-
-      <section className={styles.filters}>
-        <label>
-          <span>Período</span>
-          <select
-            value={periodo}
-            onChange={(e) => setPeriodo(e.target.value as DashboardPeriodo)}
-          >
-            {PERIODOS.map((p) => (
-              <option key={p.clave} value={p.clave}>
-                {p.etiqueta}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label>
-          <span>Depósito</span>
-          <select
-            value={depositoId}
-            onChange={(e) => setDepositoId(e.target.value)}
-          >
-            <option value="">Todos los depósitos</option>
-            {(datos?.filtros.depositos ?? []).map((d) => (
-              <option key={d.id} value={d.id}>
-                {d.nombre}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <button
-          type="button"
-          className={styles.refresh}
-          onClick={() => setRecarga((n) => n + 1)}
-          disabled={cargando}
-        >
-          {cargando ? "Actualizando..." : "Actualizar"}
-        </button>
 
         {error ? <p className={styles.filterError}>{error}</p> : null}
-      </section>
+      </header>
 
       <section className={styles.kpiGrid}>
         {tarjetas.map((kpi) => {

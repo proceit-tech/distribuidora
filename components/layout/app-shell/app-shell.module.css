@@ -1,6 +1,6 @@
 .shell {
-  --shell-sidebar-width: 268px;
-  --shell-sidebar-collapsed-width: 76px;
+  --shell-sidebar-width: 236px;
+  --shell-sidebar-collapsed-width: 72px;
 
   display: grid;
   grid-template-columns:
