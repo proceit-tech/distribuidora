@@ -37,3 +37,6 @@
 ## Fluxo e responsabilidade
 
 ChatGPT documenta especificação, critérios e revisão; **não altera código sem ordem explícita**. Claude implementa **somente após autorização**, lê protocolos/esta especificação, faz commit+push e para. **Nenhum teste/build/processo local no notebook**, conforme ordem do responsável; o responsável executa build/deploy e homologação na VM. Resposta Claude: resultado, testes não executados, bloqueios reais e SHA, sem listas de arquivos e diffs. Não aplicar este padrão automaticamente a outros módulos antes da homologação de Clientes.
+
+## Implementação (2026-10-11) — aguardando build, captura DEPOIS e homologação na VM
+LIS-01 a LIS-12 implementados em `/clientes` (tela de referência). Decisões: tabela semântica com colunas Cliente, Identificación, Comercial, Contacto principal, Crédito, Estado e Acciones (Crédito mantido para não ocultar informação já exibida); ordenação por Cliente, Identificación, Comercial, Crédito e Estado sobre o conjunto filtrado completo antes de paginar (todos os clientes já são carregados pela API atual; ciclo sem ordem → asc → desc → sem ordem; sem ordem = ordem da API); única ação real existente: "Ver ficha" (`/clientes/[id]`, que também edita). Descrição genérica removida. APIs, banco e permissões inalterados. Nada validado no notebook por determinação do responsável.

@@ -31,6 +31,25 @@ type OperacionFiltro =
   | "TODAS"
   | ClienteOperacion;
 
+type CampoOrden = "cliente" | "identificacion" | "comercial" | "credito" | "estado";
+
+type Orden = { campo: CampoOrden; dir: "asc" | "desc" } | null;
+
+const COLUMNAS: {
+  clave: string;
+  titulo: string;
+  orden?: CampoOrden;
+  clase?: string;
+}[] = [
+  { clave: "cliente", titulo: "Cliente", orden: "cliente" },
+  { clave: "identificacion", titulo: "Identificación", orden: "identificacion" },
+  { clave: "comercial", titulo: "Comercial", orden: "comercial" },
+  { clave: "contacto", titulo: "Contacto principal" },
+  { clave: "credito", titulo: "Crédito", orden: "credito", clase: "numericHead" },
+  { clave: "estado", titulo: "Estado", orden: "estado" },
+  { clave: "acciones", titulo: "Acciones", clase: "actionsHead" },
+];
+
 function dinero(value: number) {
   return new Intl.NumberFormat(
     "es-PY",
@@ -178,6 +197,8 @@ export default function ClientesPage() {
   const [errorCarga, setErrorCarga] =
     useState("");
 
+  const [orden, setOrden] = useState<Orden>(null);
+
   useEffect(() => {
     let activo = true;
 
@@ -257,6 +278,7 @@ export default function ClientesPage() {
     filtroEstado,
     filtroNaturaleza,
     filtroOperacion,
+    orden,
   ]);
 
   useEffect(() => {
@@ -388,6 +410,44 @@ export default function ClientesPage() {
     filtroOperacion,
   ]);
 
+  // Ordenación sobre el conjunto filtrado COMPLETO (todos los clientes están cargados en el cliente), antes de paginar.
+  const ordenados = useMemo(() => {
+    if (!orden) {
+      return filtrados;
+    }
+
+    const factor = orden.dir === "asc" ? 1 : -1;
+    const texto = (a: string, b: string) =>
+      a.localeCompare(b, "es", { numeric: true, sensitivity: "base" });
+    const rango = (c: ClienteLista) => (!c.activo ? 2 : c.bloqueadoVentas ? 1 : 0);
+
+    return [...filtrados].sort((a, b) => {
+      switch (orden.campo) {
+        case "cliente":
+          return factor * texto(a.razonSocial, b.razonSocial);
+        case "identificacion":
+          return factor * texto(documento(a), documento(b));
+        case "comercial":
+          return factor * texto(a.grupoCliente, b.grupoCliente);
+        case "credito":
+          return factor * (a.limiteCredito - b.limiteCredito);
+        case "estado":
+          return factor * (rango(a) - rango(b));
+      }
+    });
+  }, [filtrados, orden]);
+
+  // Ciclo: sin orden (el de la API) → ascendente → descendente → sin orden.
+  function cambiarOrden(campo: CampoOrden) {
+    setOrden((actual) => {
+      if (!actual || actual.campo !== campo) {
+        return { campo, dir: "asc" };
+      }
+
+      return actual.dir === "asc" ? { campo, dir: "desc" } : null;
+    });
+  }
+
   const totalPaginas = Math.max(
     1,
     Math.ceil(
@@ -404,11 +464,11 @@ export default function ClientesPage() {
 
   const paginaActual = useMemo(
     () =>
-      filtrados.slice(
+      ordenados.slice(
         (pagina - 1) * PAGE_SIZE,
         pagina * PAGE_SIZE,
       ),
-    [filtrados, pagina],
+    [ordenados, pagina],
   );
 
   function limpiarFiltros() {
@@ -421,546 +481,309 @@ export default function ClientesPage() {
   return (
     <section className={styles.page}>
       {flash ? (
-        <div
-          className={styles.toast}
-          role="status"
-        >
+        <div className={styles.toast} role="status">
           <span>✓</span>
           <div>
-            <strong>
-              Operación realizada
-            </strong>
+            <strong>Operación realizada</strong>
             <small>{flash}</small>
           </div>
 
-          <button
-            type="button"
-            aria-label="Cerrar mensaje"
-            onClick={() =>
-              setFlash("")
-            }
-          >
+          <button type="button" aria-label="Cerrar mensaje" onClick={() => setFlash("")}>
             ×
           </button>
         </div>
       ) : null}
 
-      <header className={styles.hero}>
-        <div>
-          <div
-            className={styles.heroMeta}
-          >
-            <span
-              className={
-                styles.modulePill
-              }
-            >
-              MAESTROS
-            </span>
-          </div>
+      <header className={styles.topbar}>
+        <div className={styles.titleBlock}>
+          <nav className={styles.breadcrumb} aria-label="Ruta de navegación">
+            <span>Maestros</span>
+            <i aria-hidden="true">/</i>
+            <span aria-current="page">Clientes</span>
+          </nav>
 
           <h1>Clientes</h1>
-
-          <p>
-            Gestión fiscal, comercial,
-            crédito, contactos y
-            logística de clientes.
-          </p>
         </div>
 
-        <Link
-          href="/clientes/nuevo"
-          className={
-            styles.primaryButton
-          }
-        >
-          <span>＋</span>
+        <Link href="/clientes/nuevo" className={styles.primaryButton}>
+          <span aria-hidden="true">+</span>
           Nuevo cliente
         </Link>
       </header>
 
-      <section
-        className={styles.summaryGrid}
-      >
-        <article
-          className={[
-            styles.summaryCard,
-            styles.summaryTeal,
-          ].join(" ")}
-        >
-          <span>
-            CLIENTES ACTIVOS
-          </span>
-          <strong>
-            {resumo.activos}
-          </strong>
-          <small>
-            Disponibles para operar
-          </small>
+      <section className={styles.summaryGrid} aria-label="Resumen de clientes">
+        <article className={[styles.summaryCard, styles.summaryTeal].join(" ")}>
+          <span>Clientes activos</span>
+          <strong>{resumo.activos}</strong>
+          <small>Disponibles para operar</small>
         </article>
 
-        <article
-          className={[
-            styles.summaryCard,
-            styles.summaryBlue,
-          ].join(" ")}
-        >
-          <span>
-            CRÉDITO AUTORIZADO
-          </span>
-          <strong>
-            Gs.{" "}
-            {dinero(
-              resumo.credito,
-            )}
-          </strong>
-          <small>
-            Límite comercial total
-          </small>
+        <article className={[styles.summaryCard, styles.summaryBlue].join(" ")}>
+          <span>Crédito autorizado</span>
+          <strong>Gs. {dinero(resumo.credito)}</strong>
+          <small>Límite comercial total</small>
         </article>
 
-        <article
-          className={[
-            styles.summaryCard,
-            styles.summaryRed,
-          ].join(" ")}
-        >
-          <span>
-            VENTAS BLOQUEADAS
-          </span>
-          <strong>
-            {resumo.bloqueados}
-          </strong>
-          <small>
-            Requieren revisión
-          </small>
+        <article className={[styles.summaryCard, styles.summaryRed].join(" ")}>
+          <span>Ventas bloqueadas</span>
+          <strong>{resumo.bloqueados}</strong>
+          <small>Requieren revisión</small>
         </article>
 
-        <article
-          className={[
-            styles.summaryCard,
-            styles.summaryViolet,
-          ].join(" ")}
-        >
-          <span>
-            INACTIVOS
-          </span>
-          <strong>
-            {resumo.inactivos}
-          </strong>
-          <small>
-            Sin operación habilitada
-          </small>
+        <article className={[styles.summaryCard, styles.summaryViolet].join(" ")}>
+          <span>Inactivos</span>
+          <strong>{resumo.inactivos}</strong>
+          <small>Sin operación habilitada</small>
         </article>
       </section>
 
-      <section
-        className={styles.contentCard}
-      >
-        <div
-          className={styles.toolbar}
-        >
-          <label
-            className={styles.search}
-          >
-            <span>⌕</span>
+      <section className={styles.contentCard}>
+        <div className={styles.toolbar}>
+          <label className={styles.search}>
+            <span aria-hidden="true">⌕</span>
 
             <input
               value={busqueda}
-              onChange={(event) =>
-                setBusqueda(
-                  event.target.value,
-                )
-              }
+              onChange={(event) => setBusqueda(event.target.value)}
               placeholder="Buscar por nombre, código, RUC, GLN, vendedor..."
+              aria-label="Buscar clientes"
             />
           </label>
 
-          <div
-            className={
-              styles.toolbarRight
-            }
-          >
-            <span
-              className={
-                styles.resultCount
-              }
-            >
-              {filtrados.length} de{" "}
-              {resumo.total}
-            </span>
-          </div>
-        </div>
-
-        <div
-          className={styles.filters}
-        >
-          <label>
+          <label className={styles.filterField}>
             <span>Estado</span>
             <select
               value={filtroEstado}
-              onChange={(event) =>
-                setFiltroEstado(
-                  event.target
-                    .value as EstadoFiltro,
-                )
-              }
+              onChange={(event) => setFiltroEstado(event.target.value as EstadoFiltro)}
             >
-              <option value="TODOS">
-                Todos
-              </option>
-              <option value="ACTIVOS">
-                Activos
-              </option>
-              <option value="INACTIVOS">
-                Inactivos
-              </option>
-              <option value="BLOQUEADOS">
-                Ventas bloqueadas
-              </option>
+              <option value="TODOS">Todos</option>
+              <option value="ACTIVOS">Activos</option>
+              <option value="INACTIVOS">Inactivos</option>
+              <option value="BLOQUEADOS">Ventas bloqueadas</option>
             </select>
           </label>
 
-          <label>
+          <label className={styles.filterField}>
             <span>Naturaleza</span>
             <select
-              value={
-                filtroNaturaleza
-              }
-              onChange={(event) =>
-                setFiltroNaturaleza(
-                  event.target
-                    .value as NaturalezaFiltro,
-                )
-              }
+              value={filtroNaturaleza}
+              onChange={(event) => setFiltroNaturaleza(event.target.value as NaturalezaFiltro)}
             >
-              <option value="TODAS">
-                Todas
-              </option>
-              <option value="CONTRIBUYENTE">
-                Contribuyente
-              </option>
-              <option value="NO_CONTRIBUYENTE">
-                No contribuyente
-              </option>
+              <option value="TODAS">Todas</option>
+              <option value="CONTRIBUYENTE">Contribuyente</option>
+              <option value="NO_CONTRIBUYENTE">No contribuyente</option>
             </select>
           </label>
 
-          <label>
+          <label className={styles.filterField}>
             <span>Operación</span>
             <select
-              value={
-                filtroOperacion
-              }
-              onChange={(event) =>
-                setFiltroOperacion(
-                  event.target
-                    .value as OperacionFiltro,
-                )
-              }
+              value={filtroOperacion}
+              onChange={(event) => setFiltroOperacion(event.target.value as OperacionFiltro)}
             >
-              <option value="TODAS">
-                Todas
-              </option>
-              <option value="B2B">
-                B2B
-              </option>
-              <option value="B2C">
-                B2C
-              </option>
-              <option value="B2G">
-                B2G
-              </option>
-              <option value="B2F">
-                B2F
-              </option>
+              <option value="TODAS">Todas</option>
+              <option value="B2B">B2B</option>
+              <option value="B2C">B2C</option>
+              <option value="B2G">B2G</option>
+              <option value="B2F">B2F</option>
             </select>
           </label>
 
-          <button
-            type="button"
-            className={
-              styles.clearButton
-            }
-            onClick={limpiarFiltros}
-          >
+          <button type="button" className={styles.clearButton} onClick={limpiarFiltros}>
             Limpiar filtros
           </button>
+
+          <span className={styles.resultCount} aria-live="polite">
+            {filtrados.length} de {resumo.total}
+          </span>
         </div>
 
-        <div
-          className={styles.listHeader}
-        >
-          <span>Cliente</span>
-          <span>
-            Comercial / logística
-          </span>
-          <span>
-            Crédito / estado
-          </span>
-          <span />
-        </div>
-
-        <div className={styles.list}>
-          {cargando ? (
-            <div
-              className={styles.empty}
-            >
-              <strong>
-                Cargando clientes...
-              </strong>
-            </div>
-          ) : errorCarga ? (
-            <div
-              className={styles.empty}
-              role="alert"
-            >
-              <strong>
-                No fue posible cargar
-                los clientes
-              </strong>
-              <span>{errorCarga}</span>
-            </div>
-          ) : paginaActual.length ===
-          0 ? (
-            <div
-              className={styles.empty}
-            >
-              <strong>
-                {clientes.length === 0
-                  ? "Aún no hay clientes registrados"
-                  : "No encontramos clientes"}
-              </strong>
-              <span>
-                {clientes.length === 0
-                  ? "Registre el primer cliente con el botón Nuevo cliente."
-                  : "Cambie los filtros o registre un nuevo cliente."}
-              </span>
-            </div>
-          ) : (
-            paginaActual.map(
-              (cliente) => (
-                <article
-                  key={cliente.id}
-                  className={
-                    styles.clientRow
-                  }
-                >
-                  <div
-                    className={
-                      styles.clientMain
+        <div className={styles.tableScroll}>
+          <table className={styles.table}>
+            <thead>
+              <tr>
+                {COLUMNAS.map((columna) => (
+                  <th
+                    key={columna.clave}
+                    scope="col"
+                    className={columna.clase ? styles[columna.clase] : undefined}
+                    aria-sort={
+                      !columna.orden
+                        ? undefined
+                        : orden?.campo === columna.orden
+                          ? orden.dir === "asc"
+                            ? "ascending"
+                            : "descending"
+                          : "none"
                     }
                   >
-                    <div
-                      className={
-                        styles.avatar
-                      }
-                    >
-                      {cliente.razonSocial
-                        .split(/\s+/)
-                        .slice(0, 2)
-                        .map((part) =>
-                          part
-                            .charAt(0)
-                            .toUpperCase(),
-                        )
-                        .join("")}
+                    {columna.orden ? (
+                      <button
+                        type="button"
+                        className={styles.sortButton}
+                        onClick={() => cambiarOrden(columna.orden as CampoOrden)}
+                        title={`Ordenar por ${columna.titulo.toLowerCase()}`}
+                      >
+                        {columna.titulo}
+                        <i aria-hidden="true">
+                          {orden?.campo === columna.orden ? (orden.dir === "asc" ? "▲" : "▼") : "⇅"}
+                        </i>
+                      </button>
+                    ) : (
+                      columna.titulo
+                    )}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+
+            <tbody>
+              {cargando ? (
+                <tr>
+                  <td colSpan={COLUMNAS.length} className={styles.emptyCell}>
+                    <div className={styles.empty}>
+                      <strong>Cargando clientes...</strong>
                     </div>
-
-                    <div
-                      className={
-                        styles.clientIdentity
-                      }
-                    >
-                      <div
-                        className={
-                          styles.identityTop
-                        }
-                      >
-                        <strong>
-                          {
-                            cliente.razonSocial
-                          }
-                        </strong>
-
-                        <span
-                          className={
-                            styles.code
-                          }
-                        >
-                          {cliente.codigo}
-                        </span>
-                      </div>
-
-                      <span
-                        className={
-                          styles.document
-                        }
-                      >
-                        {documento(
-                          cliente,
-                        )}
-                        <i>·</i>
-                        {
-                          cliente.tipoOperacion
-                        }
-                        <i>·</i>
-                        {
-                          cliente.paisNombre
-                        }
-                      </span>
-
-                      <div
-                        className={
-                          styles.contactLine
-                        }
-                      >
-                        <span>
-                          {contactoPrincipal(
-                            cliente,
-                          )}
-                        </span>
-
-                        <span>
-                          {cliente.email ||
-                            "Sin correo"}
-                        </span>
-                      </div>
+                  </td>
+                </tr>
+              ) : errorCarga ? (
+                <tr>
+                  <td colSpan={COLUMNAS.length} className={styles.emptyCell}>
+                    <div className={styles.empty} role="alert">
+                      <strong>No fue posible cargar los clientes</strong>
+                      <span>{errorCarga}</span>
                     </div>
-                  </div>
-
-                  <div
-                    className={
-                      styles.commercial
-                    }
-                  >
-                    <strong>
-                      {cliente.grupoCliente ||
-                        "Sin grupo"}
-                    </strong>
-
-                    <span>
-                      {cliente.vendedor ||
-                        "Sin vendedor"}
-                    </span>
-
-                    <small>
-                      {cliente.rutaEntrega ||
-                        cliente.zonaComercial ||
-                        "Sin ruta o zona"}
-                    </small>
-                  </div>
-
-                  <div
-                    className={
-                      styles.creditBlock
-                    }
-                  >
-                    <strong>
-                      Gs.{" "}
-                      {dinero(
-                        cliente.limiteCredito,
-                      )}
-                    </strong>
-
-                    <span>
-                      {
-                        cliente.condicionPago
-                      }
-                    </span>
-
-                    <div
-                      className={
-                        styles.statuses
-                      }
-                    >
-                      <span
-                        className={
-                          cliente.activo
-                            ? styles.statusActive
-                            : styles.statusInactive
-                        }
-                      >
-                        {cliente.activo
-                          ? "Activo"
-                          : "Inactivo"}
+                  </td>
+                </tr>
+              ) : paginaActual.length === 0 ? (
+                <tr>
+                  <td colSpan={COLUMNAS.length} className={styles.emptyCell}>
+                    <div className={styles.empty}>
+                      <strong>
+                        {clientes.length === 0 ? "Aún no hay clientes registrados" : "No encontramos clientes"}
+                      </strong>
+                      <span>
+                        {clientes.length === 0
+                          ? "Cree su primer cliente para comenzar a operar."
+                          : "Cambie los filtros o registre un nuevo cliente."}
                       </span>
-
-                      {cliente.bloqueadoVentas ? (
-                        <span
-                          className={
-                            styles.statusBlocked
-                          }
-                        >
-                          Bloqueado
-                        </span>
+                      {clientes.length === 0 ? (
+                        <Link href="/clientes/nuevo" className={styles.emptyAction}>
+                          + Nuevo cliente
+                        </Link>
                       ) : null}
                     </div>
-                  </div>
+                  </td>
+                </tr>
+              ) : (
+                paginaActual.map((cliente) => (
+                  <tr key={cliente.id} className={styles.row}>
+                    <td>
+                      <div className={styles.clientMain}>
+                        <div className={styles.avatar} aria-hidden="true">
+                          {cliente.razonSocial
+                            .split(/\s+/)
+                            .slice(0, 2)
+                            .map((part) => part.charAt(0).toUpperCase())
+                            .join("")}
+                        </div>
 
-                  <Link
-                    href={`/clientes/${cliente.id}`}
-                    className={
-                      styles.detailButton
-                    }
-                  >
-                    Ver ficha
-                    <span>›</span>
-                  </Link>
-                </article>
-              ),
-            )
-          )}
+                        <div className={styles.clientIdentity}>
+                          <Link href={`/clientes/${cliente.id}`} className={styles.clientName}>
+                            {cliente.razonSocial}
+                          </Link>
+                          <span className={styles.code}>{cliente.codigo}</span>
+                        </div>
+                      </div>
+                    </td>
+
+                    <td>
+                      <div className={styles.cell}>
+                        <strong>{documento(cliente)}</strong>
+                        <span>
+                          {cliente.tipoOperacion}
+                          <i>·</i>
+                          {cliente.paisNombre}
+                        </span>
+                      </div>
+                    </td>
+
+                    <td>
+                      <div className={styles.cell}>
+                        <strong>{cliente.grupoCliente || "Sin grupo"}</strong>
+                        <span>{cliente.vendedor || "Sin vendedor"}</span>
+                        <span>{cliente.rutaEntrega || cliente.zonaComercial || "Sin ruta o zona"}</span>
+                      </div>
+                    </td>
+
+                    <td>
+                      <div className={styles.cell}>
+                        <strong>{contactoPrincipal(cliente)}</strong>
+                        <span className={styles.breakable}>{cliente.email || "Sin correo"}</span>
+                      </div>
+                    </td>
+
+                    <td className={styles.numeric}>
+                      <div className={styles.cell}>
+                        <strong>Gs. {dinero(cliente.limiteCredito)}</strong>
+                        <span>{cliente.condicionPago}</span>
+                      </div>
+                    </td>
+
+                    <td>
+                      <div className={styles.statuses}>
+                        <span className={cliente.activo ? styles.statusActive : styles.statusInactive}>
+                          {cliente.activo ? "Activo" : "Inactivo"}
+                        </span>
+
+                        {cliente.bloqueadoVentas ? (
+                          <span className={styles.statusBlocked}>Bloqueado</span>
+                        ) : null}
+                      </div>
+                    </td>
+
+                    <td className={styles.actionsCell}>
+                      <Link
+                        href={`/clientes/${cliente.id}`}
+                        className={styles.detailButton}
+                        aria-label={`Ver ficha de ${cliente.razonSocial}`}
+                      >
+                        Ver ficha
+                        <span aria-hidden="true">›</span>
+                      </Link>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
         </div>
 
-        <footer
-          className={styles.pagination}
-        >
+        <footer className={styles.pagination}>
           <span>
-            Mostrando{" "}
-            {filtrados.length === 0
-              ? 0
-              : (pagina - 1) *
-                  PAGE_SIZE +
-                1}
-            –
-            {Math.min(
-              pagina * PAGE_SIZE,
-              filtrados.length,
-            )}{" "}
-            de {filtrados.length}
+            Mostrando {filtrados.length === 0 ? 0 : (pagina - 1) * PAGE_SIZE + 1}–
+            {Math.min(pagina * PAGE_SIZE, filtrados.length)} de {filtrados.length}
           </span>
 
           <div>
             <button
               type="button"
+              aria-label="Página anterior"
               disabled={pagina === 1}
-              onClick={() =>
-                setPagina(
-                  (actual) =>
-                    actual - 1,
-                )
-              }
+              onClick={() => setPagina((actual) => actual - 1)}
             >
               ‹
             </button>
 
             <strong>
-              {pagina} /{" "}
-              {totalPaginas}
+              {pagina} / {totalPaginas}
             </strong>
 
             <button
               type="button"
-              disabled={
-                pagina === totalPaginas
-              }
-              onClick={() =>
-                setPagina(
-                  (actual) =>
-                    actual + 1,
-                )
-              }
+              aria-label="Página siguiente"
+              disabled={pagina === totalPaginas}
+              onClick={() => setPagina((actual) => actual + 1)}
             >
               ›
             </button>
