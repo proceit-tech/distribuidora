@@ -29,3 +29,9 @@ Uma tarefa específica para Sidebar + Dashboard; consultar protocolos GitHub ant
 Após commits `5be99f2` e `a7c2bdb`, a sidebar foi ampliada de 236px para 268px. O responsável reprovou o resultado: aumentou espaço ocupado pelo menu e reduziu indevidamente a área principal. O print mostra os textos dos submenus mais completos, mas a proporção geral piorou.
 
 **Nova direção obrigatória:** voltar à largura aproximadamente original de 236px (sem aumentar a sidebar para resolver rótulos); otimizar recuos, espaçamento, pesos e fonte contextual de 12–13px para grupos e ~13px para submenus; permitir duas linhas somente quando necessário, manter navegação e menu recolhido. Não esconder informações do Dashboard e não fazer nova substituição global de fontes. Testar visualmente na VM após revisão do commit. **Estado: REPROVADO, correção ainda não implementada.**
+
+## Terceira observação — topo do Dashboard (2026-10-10)
+
+**REPROVADO pelo responsável.** A captura recortada evidencia excesso de altura/vazio no topo, duplicação do nome CASA MINGO S.A. já disponível na sidebar, cabeçalho sem composição e filtros soltos.
+
+**Diretriz de correção:** remover o badge repetido da empresa no Dashboard; organizar `Panel general`, seletor de período, seletor de depósito e ação `Actualizar` em uma barra compacta e responsiva, com alinhamento e espaçamento coerentes, preservando filtros e comportamento existentes. Descrição secundária pode ser reduzida ou retirada caso não acrescente informação; não sacrificar a área de KPIs/gráficos. Em telas estreitas, permitir quebra organizada em vez de sobreposição. Não redesenhar dados nem APIs. **Aprovação depende de novo print da VM.**
