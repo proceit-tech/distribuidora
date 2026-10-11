@@ -1,15 +1,15 @@
 # PROCEIT — Protocolo de desenvolvimento colaborativo por IA (v1.0)
 
-Este repositório utiliza o GitHub como fonte única de verdade. Claude implementa; ChatGPT audita; o responsável humano realiza a homologação final. Nenhuma aprovação técnica substitui a homologação humana.
+Este repositório utiliza o GitHub como fonte única de verdade. Claude implementa; ChatGPT audita; o responsável humano aplica e valida as entregas no único ambiente operacional real. Nenhuma aprovação técnica substitui a homologação humana.
 
 ## Norma operacional permanente — leitura do contexto e separação de ambientes
 
 Este protocolo vincula **Claude Code e ChatGPT**. No início **de toda solicitação de implementação, revisão, retomada, nova conversa ou após compactação**, ambas as IAs devem consultar no GitHub a versão atual de `CLAUDE.md`, deste `documentacao/PROTOCOLO-IA.md` e os trechos relevantes de `PROGRESSO-NEXIT-V1.md`, além de branch, commit e arquivos relacionados. Os documentos versionados prevalecem sobre lembranças imprecisas de chat. Usar leitura seletiva de código e progresso; não realizar auditorias gerais sem pedido.
 
 **Fluxo de responsabilidades sem exceções presumidas:**
-1. Claude Code implementa tarefa única autorizada, prepara/atualiza código, documentação e arquivos SQL, testa em ambiente de teste autorizado, faz **commit e push GitHub** e **para**. Não acessa VM, Docker nem PostgreSQL real para aplicar scripts ou fazer deploy.
+1. Claude Code implementa tarefa única autorizada, prepara/atualiza código, documentação e arquivos SQL, realiza apenas verificações permitidas pelas instruções do projeto, faz **commit e push GitHub** e **para**. Não acessa VM, Docker nem PostgreSQL real para aplicar scripts ou fazer deploy.
 2. ChatGPT consulta o repositório e os documentos a cada tarefa, revisa a entrega, identifica defeitos concretos e orienta a execução. Pode publicar correções diretamente no GitHub somente mediante autorização do usuário; isso **não** significa aplicar SQL no banco real.
-3. O responsável humano revisa/aprova, executa **git pull na VM**, comandos Docker, migrations/cargas SQL e deploy quando pertinente; homologa resultados. Git commit/push não significa banco atualizado ou aplicação publicada.
+3. O responsável humano revisa/aprova, executa **git pull na VM**, comandos Docker, migrations/cargas SQL e deploy quando pertinente; confere os resultados no único ambiente real. Git commit/push não significa banco atualizado ou aplicação publicada.
 4. Nunca limpar/recriar banco, containers ou volumes como rotina. Proteger dados reais e versões de migration já aplicadas. Quando houver dúvida sobre estado efetivo, perguntar ou verificar no ambiente antes de autorizar execução.
 5. Se GitHub ou documentos estiverem inacessíveis, declarar que não houve verificação e não inventar estado. Registrar mudanças de decisão no Git, para sobreviver à perda de contexto das duas IAs.
 
@@ -71,3 +71,6 @@ Trabalhar por branch `feature/REQ-AAAA-NNN-slug` e PR; auditorias preferencialme
 
 ## Regra vinculante — criação de scripts versus execução (11/10/2026)
 Claude Code, em toda tarefa autorizada que exija mudança no esquema, **deve criar e versionar migrations/scripts SQL incrementais** seguindo a sequência e padrões reais do Git, sem pedir aprovação adicional para a criação do arquivo. A autorização da funcionalidade abrange seus artefatos de código, SQL e documentação. **Somente a execução/aplicação no banco real/VM** pertence ao responsável humano, depois de revisão e decisão de aplicação. Nunca modificar migration aplicada nem executar SQL em produção. GitHub é fonte única; ChatGPT e Claude leem normas, progresso e estrutura Git atual antes de cada tarefa. Esta decisão prevalece sobre textos anteriores que exigiam autorização até para elaborar scripts.
+
+## Regra operacional definitiva — ambiente único (11/10/2026)
+O Nexit possui **somente um ambiente operacional, com banco e dados reais**. Não existe ambiente separado de homologação, teste, staging ou laboratório do projeto. Não orientar o responsável a implantar em ambiente inexistente nem inventar fases de homologação. Fluxo: Claude versiona código e scripts SQL incrementais na branch; ChatGPT audita; o responsável decide quando aplicar no único ambiente real e verifica o comportamento da aplicação ali. Ao executar alteração de banco, preservar dados, avaliar backup e reversão antes da operação. O usuário não precisa repetir esta decisão. Referências históricas ao estado HOMOLOGADO significam, quando aplicável, aceite funcional do responsável no ambiente real, e não existência de ambiente adicional.
