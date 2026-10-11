@@ -89,3 +89,17 @@ Adenda: A01 ✔ · A02 ✔ (NEX-033) · A03 ✔ · A04 ✔ · A05 ✔ · A06 ✔
 - **Auditoría `proveedor_eventos`:** inmutable por estructura (triggers que rechazan UPDATE, DELETE y TRUNCATE para cualquier rol; el DELETE solo se admite si el proveedor ya no existe, que ocurre únicamente en el reinicio de empresas DEMO). Privilegio efectivo del rol de la aplicación: SELECT e INSERT.
 - **Reaplicación de grants:** `nex_aplicar_grants_runtime()` (NEX-013…) hace REVOKE ALL y concede solo lo que enumera; tras reaplicarla las tablas nuevas perdían INSERT y `proveedor_documentos` recuperaba DELETE. NEX-037 conserva esa función como `nex_aplicar_grants_runtime_base()` y define un envoltorio que luego llama a `nex_aplicar_grants_proveedores()`. **Convención:** toda migración futura que redefina `nex_aplicar_grants_runtime()` debe seguir llamando a `nex_aplicar_grants_proveedores()`.
 - **Observación fuera de alcance:** las tablas de auditoría/versiones de Clientes (NEX-031) tienen la misma fragilidad ante la reaplicación de grants; no se modificaron.
+
+## 8. Decisión aprobada — reactivación administrativa de cuenta bancaria (2026-10-11)
+
+**APROBADO POR EL RESPONSABLE:** se permite reactivar una cuenta bancaria desactivada **únicamente por un administrador de la empresa**, con **justificación obligatoria y auditoría**. Esta decisión sustituye la indicación anterior de «reactivación no existe / pendiente» en la sección 7. Su aprobación documental NO significa que la función esté implementada.
+
+**Contrato funcional obligatorio para el desarrollo:**
+- Acción separada «Reactivar»; nunca mediante edición común del proveedor, alteración de `activa` por PUT, ni aprobación bancaria general. Verificar identidad, empresa y autoridad administrativa en el servidor. El identificador, datos anteriores y eventos de la cuenta se conservan.
+- Rechazar una justificación vacía; registrar actor, fecha/hora, motivo, estado anterior y nuevo en `proveedor_eventos`. Preservar el evento original de desactivación y cualquier revisión histórica.
+- La reactivación **no puede aprobar automáticamente cambios bancarios** ni convertir una cuenta a principal: debe respetar el estado de aprobación previamente almacenado y la regla de una principal aprobada por moneda. Una cuenta pendiente/rechazada reactivada sigue sin ser pagable. Si la cuenta previamente aprobada se reactiva sin cambiar datos aprobados, su elegibilidad de pago puede recuperarse al reactivarse, siempre que el resto de las reglas la permita; no reactivar como principal de forma implícita.
+- Rechazar reactivación de cuenta activa; impedir que una revisión pendiente cancelada vuelva a estar pendiente automáticamente. Usar transacción, bloqueo de fila y defensa multiempresa. No reescribir historial.
+- La concesión del rol administrador debe confrontarse con el mecanismo real de RBAC de Nexit; **no asumir que `PROVEEDORES.APROBAR_BANCO` por sí solo autoriza reactivación**. Registrar en código y tests la verificación efectiva del rol administrativo.
+- Si se necesita migration adicional para consolidar controles del servidor/BD, **prepararla incrementalmente posterior a NEX-037**, sin editar migrations históricas, sin aplicar SQL ni entrar en VM.
+
+**Estado:** regla aprobada, implementación pendiente de Claude Code, homologación PostgreSQL/navegador pendiente. Las decisiones de separación de solicitante/aprobador y visibilidad de datos bancarios siguen pendientes y no se resuelven con esta aprobación.
