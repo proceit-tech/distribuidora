@@ -505,7 +505,7 @@ export async function PUT(request: Request, contexto: Contexto) {
          dia_preferido_cobro = $35, ruta_entrega_id = $36, zona_comercial_id = $37, vendedor_id = $38,
          frecuencia_entrega = $39, dias_entrega = $40, requiere_orden_compra = $41,
          email_facturacion = $42, email_cobranzas = $43, recibe_documento_electronico = $44,
-         observacion_comercial = $45, observacion_logistica = $46, activo = $47, telefono_ddi = $48, celular_ddi = $49, telefono_pais = $50, telefono_area = $51, celular_pais = $52, celular_area = $53
+         observacion_comercial = $45, observacion_logistica = $46, activo = $47, telefono_ddi = $48, celular_ddi = $49, telefono_pais = $50, telefono_area = $51, celular_pais = $52, celular_area = $53, carga_documentos_inicial_abierta = false
        WHERE id = $1 AND empresa_id = $2`,
       [
         id, empresaId,

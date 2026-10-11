@@ -893,6 +893,11 @@ export default function NuevoClientePage() {
         return;
       }
 
+      // Alta completa: se cierra la carga inicial de documentos (quien solo puede crear deja de poder agregar documentos a este cliente).
+      if (clienteId) {
+        await fetch(`/api/clientes/${clienteId}/documentos/finalizar`, { method: "POST" }).catch(() => undefined);
+      }
+
       router.push("/clientes?ok=creado");
       router.refresh();
     } catch (errorGuardado) {

@@ -2,7 +2,7 @@
 import { NextResponse } from "next/server";
 
 import { getAccessContext, hasPermission } from "@/lib/auth/permissions";
-import { decidirAccesoDocumento, type AccionDocumento, type PermisosClientes } from "@/lib/clientes/permisos-documentos";
+import { decidirAccesoDocumento, type AccionDocumento, type ContextoCargaInicial, type PermisosClientes } from "@/lib/clientes/permisos-documentos";
 import { ErrorArchivo, TAMANO_MAXIMO_BYTES } from "@/lib/almacenamiento/archivos-privados";
 
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -31,21 +31,24 @@ export async function autorizar(): Promise<{ sesion: SesionCliente; permisos: Pe
 }
 
 /** Aplica la política de permisos; devuelve una respuesta 403 o null si se permite. */
-export function exigir(accion: AccionDocumento, permisos: PermisosClientes, antiguedadClienteMs: number | null): NextResponse | null {
-  const decision = decidirAccesoDocumento(accion, permisos, antiguedadClienteMs);
+export function exigir(accion: AccionDocumento, permisos: PermisosClientes, contexto: ContextoCargaInicial | null): NextResponse | null {
+  const decision = decidirAccesoDocumento(accion, permisos, contexto);
 
   return decision.permitido ? null : error(decision.mensaje, decision.estado);
 }
 
-/** Milisegundos desde la creación del cliente de la EMPRESA de la sesión (null si el cliente no existe en esa empresa). */
-export async function antiguedadDelCliente(clienteId: string, empresaId: string): Promise<number | null> {
+/**
+ * Estado de la carga inicial del cliente dentro de la EMPRESA de la sesión: ¿lo creó este usuario y sigue abierta?
+ * null = el cliente no existe en esa empresa (un cliente ajeno es indistinguible de uno inexistente).
+ */
+export async function contextoCargaInicial(clienteId: string, empresaId: string, usuarioId: string): Promise<ContextoCargaInicial | null> {
   const { db } = await import("@/lib/db");
   const r = await db.query(
-    "SELECT (EXTRACT(EPOCH FROM (now() - creado_at)) * 1000)::bigint AS ms FROM clientes WHERE id = $1 AND empresa_id = $2",
-    [clienteId, empresaId],
+    "SELECT (creado_por IS NOT DISTINCT FROM $3::uuid AND creado_por IS NOT NULL) AS es_creador, carga_documentos_inicial_abierta AS abierta FROM clientes WHERE id = $1 AND empresa_id = $2",
+    [clienteId, empresaId, usuarioId],
   );
 
-  return r.rowCount === 1 ? Number(r.rows[0].ms) : null;
+  return r.rowCount === 1 ? { esCreador: r.rows[0].es_creador === true, cargaInicialAbierta: r.rows[0].abierta === true } : null;
 }
 
 /** Lee el multipart limitando el tamaño ANTES de cargarlo en memoria (Content-Length) y de nuevo al validar el archivo. */

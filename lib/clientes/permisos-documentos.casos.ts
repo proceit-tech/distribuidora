@@ -1,73 +1,84 @@
 /**
- * Casos de regresión de permisos y aislamiento por empresa de las rutas de documentos de Clientes (F-CLI-09-01).
- * No se ejecutan automáticamente: `verificarCasosPermisosDocumentos()` devuelve los fallos (lista vacía = todos coinciden).
+ * Casos de regresión de permisos, autoría de la carga inicial y aislamiento por empresa de los documentos de Clientes
+ * (F-CLI-09-01 y F-CLI-09-03). No se ejecutan automáticamente: `verificarCasosPermisosDocumentos()` devuelve los fallos
+ * (lista vacía = todos coinciden).
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import {
-  VENTANA_CARGA_INICIAL_MS,
   decidirAccesoDocumento,
   type AccionDocumento,
+  type ContextoCargaInicial,
   type PermisosClientes,
 } from "@/lib/clientes/permisos-documentos";
 
 const P = (ver: boolean, editar: boolean, crear: boolean): PermisosClientes => ({ ver, editar, crear });
-const ACCIONES: AccionDocumento[] = ["DESCARGAR", "CARGAR", "REEMPLAZAR", "EDITAR_DATOS", "ELIMINAR"];
+const CTX = (esCreador: boolean, cargaInicialAbierta: boolean): ContextoCargaInicial => ({ esCreador, cargaInicialAbierta });
+const ACCIONES: AccionDocumento[] = ["DESCARGAR", "CARGAR", "FINALIZAR_CARGA", "REEMPLAZAR", "EDITAR_DATOS", "ELIMINAR"];
+const CONTEXTOS: Array<ContextoCargaInicial | null> = [null, CTX(true, true), CTX(true, false), CTX(false, true), CTX(false, false)];
 
 export function verificarCasosPermisosDocumentos(): string[] {
   const fallos: string[] = [];
-  const permitido = (accion: AccionDocumento, permisos: PermisosClientes, antiguedad: number | null) =>
-    decidirAccesoDocumento(accion, permisos, antiguedad).permitido;
+  const permitido = (accion: AccionDocumento, permisos: PermisosClientes, contexto: ContextoCargaInicial | null) =>
+    decidirAccesoDocumento(accion, permisos, contexto).permitido;
   const esperar = (nombre: string, obtenido: boolean, esperado: boolean) => {
     if (obtenido !== esperado) fallos.push(`${nombre}: esperado ${esperado}, obtenido ${obtenido}`);
   };
 
-  // Solo CREAR (sin EDITAR): únicamente la carga inicial dentro de la ventana del alta
+  // Solo CREAR: carga/finalización únicamente para el CREADOR de ese cliente con la carga inicial ABIERTA
   const soloCrear = P(false, false, true);
-  esperar("CREAR: carga inicial recién creado", permitido("CARGAR", soloCrear, 5_000), true);
-  esperar("CREAR: carga en el límite de la ventana", permitido("CARGAR", soloCrear, VENTANA_CARGA_INICIAL_MS), true);
-  esperar("CREAR: carga fuera de la ventana", permitido("CARGAR", soloCrear, VENTANA_CARGA_INICIAL_MS + 1), false);
-  esperar("CREAR: carga a un cliente antiguo (1 día)", permitido("CARGAR", soloCrear, 24 * 60 * 60 * 1000), false);
-  esperar("CREAR: antigüedad desconocida", permitido("CARGAR", soloCrear, null), false);
-  esperar("CREAR: antigüedad negativa (reloj inconsistente)", permitido("CARGAR", soloCrear, -1), false);
-  for (const accion of ["REEMPLAZAR", "EDITAR_DATOS", "ELIMINAR"] as const) {
-    esperar(`CREAR: ${accion} recién creado`, permitido(accion, soloCrear, 1_000), false);
-    esperar(`CREAR: ${accion} cliente antiguo`, permitido(accion, soloCrear, 7 * 24 * 60 * 60 * 1000), false);
+  for (const accion of ["CARGAR", "FINALIZAR_CARGA"] as const) {
+    esperar(`CREAR: ${accion} creador con carga abierta`, permitido(accion, soloCrear, CTX(true, true)), true);
+    esperar(`CREAR: ${accion} creador con carga CERRADA`, permitido(accion, soloCrear, CTX(true, false)), false);
+    esperar(`CREAR: ${accion} otro usuario (no creador), carga abierta`, permitido(accion, soloCrear, CTX(false, true)), false);
+    esperar(`CREAR: ${accion} otro usuario, carga cerrada`, permitido(accion, soloCrear, CTX(false, false)), false);
+    esperar(`CREAR: ${accion} cliente inexistente/de otra empresa`, permitido(accion, soloCrear, null), false);
   }
-  esperar("CREAR: descargar sin VER", permitido("DESCARGAR", soloCrear, 1_000), false);
+  // La antigüedad del cliente ya no concede nada: no hay plazo (un cliente "recién creado" por otro usuario sigue siendo ajeno)
+  esperar("CREAR: recién creado por OTRO usuario no autoriza", permitido("CARGAR", soloCrear, CTX(false, true)), false);
+  for (const accion of ["REEMPLAZAR", "EDITAR_DATOS", "ELIMINAR"] as const) {
+    for (const contexto of CONTEXTOS) esperar(`CREAR: ${accion} (${JSON.stringify(contexto)})`, permitido(accion, soloCrear, contexto), false);
+  }
+  esperar("CREAR sin VER: descargar", permitido("DESCARGAR", soloCrear, CTX(true, true)), false);
 
-  // EDITAR: todo menos descargar si no tiene VER (la descarga exige VER)
+  // EDITAR: todo, en cualquier contexto (la descarga además exige VER)
   const editor = P(true, true, false);
-  for (const accion of ACCIONES) esperar(`EDITAR+VER: ${accion}`, permitido(accion, editor, 10 * 24 * 60 * 60 * 1000), true);
+  for (const accion of ACCIONES) for (const contexto of CONTEXTOS) esperar(`EDITAR+VER: ${accion} (${JSON.stringify(contexto)})`, permitido(accion, editor, contexto), true);
   esperar("EDITAR sin VER: descargar", permitido("DESCARGAR", P(false, true, false), null), false);
   esperar("EDITAR sin VER: eliminar", permitido("ELIMINAR", P(false, true, false), null), true);
 
-  // Solo VER: descarga, nada más
+  // Solo VER: descarga, nada más (ni siquiera siendo creador con carga abierta)
   const lector = P(true, false, false);
   esperar("VER: descargar", permitido("DESCARGAR", lector, null), true);
-  for (const accion of ["CARGAR", "REEMPLAZAR", "EDITAR_DATOS", "ELIMINAR"] as const) esperar(`VER: ${accion}`, permitido(accion, lector, 1_000), false);
+  for (const accion of ["CARGAR", "FINALIZAR_CARGA", "REEMPLAZAR", "EDITAR_DATOS", "ELIMINAR"] as const) {
+    esperar(`VER: ${accion} aun siendo creador`, permitido(accion, lector, CTX(true, true)), false);
+  }
 
   // Sin permisos
-  for (const accion of ACCIONES) esperar(`sin permisos: ${accion}`, permitido(accion, P(false, false, false), 1_000), false);
+  for (const accion of ACCIONES) for (const contexto of CONTEXTOS) esperar(`sin permisos: ${accion} (${JSON.stringify(contexto)})`, permitido(accion, P(false, false, false), contexto), false);
 
-  // CREAR+VER (alta con descarga): sigue sin poder reemplazar/eliminar
+  // CREAR+VER: descarga y carga inicial propia; nunca reemplazar ni eliminar
   const creadorConVer = P(true, false, true);
   esperar("CREAR+VER: descargar", permitido("DESCARGAR", creadorConVer, null), true);
-  esperar("CREAR+VER: eliminar", permitido("ELIMINAR", creadorConVer, 1_000), false);
-  esperar("CREAR+VER: reemplazar", permitido("REEMPLAZAR", creadorConVer, 1_000), false);
+  esperar("CREAR+VER: cargar (creador, abierta)", permitido("CARGAR", creadorConVer, CTX(true, true)), true);
+  esperar("CREAR+VER: eliminar", permitido("ELIMINAR", creadorConVer, CTX(true, true)), false);
+  esperar("CREAR+VER: reemplazar", permitido("REEMPLAZAR", creadorConVer, CTX(true, true)), false);
 
-  // Aislamiento entre empresas (verificación estática): toda sentencia sobre `clientes` / `cliente_documentos` de las rutas
-  // y de sus utilidades filtra o inserta `empresa_id`, que sale de la sesión.
-  const archivos = [
+  // Verificaciones estáticas sobre el código versionado
+  const leer = (ruta: string) => readFileSync(join(process.cwd(), ruta), "utf8");
+  const rutas = [
     "app/api/clientes/[id]/documentos/route.ts",
     "app/api/clientes/[id]/documentos/[docId]/route.ts",
+    "app/api/clientes/[id]/documentos/finalizar/route.ts",
     "lib/clientes/documentos-http.ts",
   ];
-  for (const ruta of archivos) {
-    const codigo = readFileSync(join(process.cwd(), ruta), "utf8");
 
-    for (const m of codigo.matchAll(/(["`])((?:(?!\1)[\s\S])*?(?:cliente_documentos|FROM clientes)(?:(?!\1)[\s\S])*?)\1/g)) {
+  // Aislamiento entre empresas: toda sentencia sobre clientes/cliente_documentos filtra o inserta empresa_id (de la sesión)
+  for (const ruta of rutas) {
+    const codigo = leer(ruta);
+
+    for (const m of codigo.matchAll(/(["`])((?:(?!\1)[\s\S])*?(?:cliente_documentos|FROM clientes|UPDATE clientes)(?:(?!\1)[\s\S])*?)\1/g)) {
       const sql = m[2] ?? "";
 
       if (/^(SELECT|UPDATE|DELETE|INSERT)/i.test(sql.trim()) && !sql.includes("empresa_id")) {
@@ -76,6 +87,16 @@ export function verificarCasosPermisosDocumentos(): string[] {
     }
 
     if (/cuerpo\.empresaId|formulario\.get\(["']empresa/i.test(codigo)) fallos.push(`${ruta}: no debe leer empresa_id del cuerpo`);
+    if (/VENTANA|antiguedad/i.test(codigo)) fallos.push(`${ruta}: no debe usar ventanas temporales para autorizar`);
+  }
+
+  // Autoría y estado: el alta registra al creador y abre la carga; la edición la cierra; el POST de documentos usa el contexto
+  const alta = leer("app/api/clientes/route.ts");
+  if (!/creado_por,\s*carga_documentos_inicial_abierta/.test(alta)) fallos.push("POST /api/clientes debe registrar creado_por y abrir carga_documentos_inicial_abierta");
+  if (!/carga_documentos_inicial_abierta = false/.test(leer("app/api/clientes/[id]/route.ts"))) fallos.push("PUT /api/clientes/{id} debe cerrar la carga inicial");
+  if (!/exigir\("CARGAR", auth\.permisos, contexto\)/.test(leer("app/api/clientes/[id]/documentos/route.ts"))) fallos.push("POST de documentos debe decidir con el contexto de creación");
+  for (const accion of ["EDITAR_DATOS", "ELIMINAR", "DESCARGAR"]) {
+    if (!leer("app/api/clientes/[id]/documentos/[docId]/route.ts").includes(`exigir("${accion}"`)) fallos.push(`falta exigir("${accion}") en la ruta de documento`);
   }
 
   return fallos;

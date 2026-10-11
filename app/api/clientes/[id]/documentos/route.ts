@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { borrarArchivo, guardarArchivo, nuevaClave, validarArchivo } from "@/lib/almacenamiento/archivos-privados";
 import { validarMetadatosDocumento } from "@/lib/clientes/documentos";
-import { UUID, antiguedadDelCliente, autorizar, clienteNoEncontrado, exigir, leerFormulario, respuestaDeError } from "@/lib/clientes/documentos-http";
+import { UUID, contextoCargaInicial, autorizar, clienteNoEncontrado, exigir, leerFormulario, respuestaDeError } from "@/lib/clientes/documentos-http";
 
 type Contexto = { params: Promise<{ id: string }> };
 
@@ -21,18 +21,18 @@ export async function POST(request: Request, contexto: Contexto) {
 
   const empresaId = auth.sesion.user.empresaId;
 
-  // Permisos ANTES de leer el cuerpo: CLIENTES.EDITAR, o CLIENTES.CREAR solo mientras el cliente es recién creado (alta).
-  let antiguedad: number | null;
+  // Permisos ANTES de leer el cuerpo: CLIENTES.EDITAR, o CLIENTES.CREAR solo para el cliente que el propio usuario creó y con la carga inicial abierta.
+  let contexto: Awaited<ReturnType<typeof contextoCargaInicial>>;
 
   try {
-    antiguedad = await antiguedadDelCliente(id, empresaId);
+    contexto = await contextoCargaInicial(id, empresaId, auth.sesion.user.id);
   } catch (e) {
     return respuestaDeError(e, "Error al verificar el cliente del documento:");
   }
 
-  if (antiguedad === null) return clienteNoEncontrado();
+  if (contexto === null) return clienteNoEncontrado();
 
-  const denegado = exigir("CARGAR", auth.permisos, antiguedad);
+  const denegado = exigir("CARGAR", auth.permisos, contexto);
 
   if (denegado) return denegado;
   let clave: string | null = null;

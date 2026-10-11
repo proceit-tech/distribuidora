@@ -960,7 +960,9 @@ export async function POST(request: Request) {
           telefono_pais,
           telefono_area,
           celular_pais,
-          celular_area
+          celular_area,
+          creado_por,
+          carga_documentos_inicial_abierta
         )
         VALUES (
           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
@@ -969,7 +971,7 @@ export async function POST(request: Request) {
           $31, CASE WHEN $30::boolean THEN now() ELSE NULL END,
           CASE WHEN $30::boolean THEN $32::uuid ELSE NULL END,
           $33, $34, $35, $36, $37, $38, $39,
-          $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50
+          $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51::uuid, true
         )
         RETURNING id, codigo, razon_social
       `,
@@ -1032,6 +1034,7 @@ export async function POST(request: Request) {
         telefonoFiscal.valor.area,
         celularFiscal.valor.pais,
         celularFiscal.valor.area,
+        session.user.id,
       ],
     );
 
