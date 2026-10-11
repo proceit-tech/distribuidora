@@ -206,3 +206,32 @@ Relacionamentos `id UUID`, `cliente_id`, `empresa_id`, `cargado_por UUID`, times
 **Pendências reais não decididas pelo responsável:** D-08 (GLN); questão 14 (filtros da listagem); regra de arredondamento/taxa/auditoria cambial; política de arquivos (tipos, tamanho, exclusão/substituição); condições de frequência MENSAL/A_DEMANDA; tratamento de registros legados fiscalmente inválidos; definição histórica D-01, se houver. Outros detalhes podem ser especificados a partir das regras existentes sem apresentar escolhas novas ao responsável desnecessariamente.
 
 **Estado:** documentação apenas; **zero SQL, testes operacionais ou alterações de VM executados por IA**.
+
+
+## Decisões finais aprovadas pelo responsável — Clientes Nexit V1 (2026-10-11)
+
+**Autoridade e escopo:** aprovação expressa do responsável **apenas para documentação**. Este registro prevalece sobre alternativas e propostas anteriores nos dez temas abaixo, inclusive propostas incorporadas no código NEX-028/029/030. **Não autoriza implementar código, criar/alterar/aplicar SQL, migrations, Docker, volume, VM ou deploy.** Mudanças necessárias ficam para autorização futura.
+
+| Nº | Tema | Decisão final obrigatória |
+|---|---|---|
+| 1 | Formatos permitidos | **PDF, JPG/JPEG, PNG, DOCX e XLSX**. Validar formato no servidor, não apenas extensão declarada. |
+| 2 | Limite por arquivo | **10 MB por arquivo**. |
+| 3 | Exclusão de documentos | **Exclusão lógica**: ocultar o documento das listas operacionais, **preservar arquivo e trilha de auditoria**. Não apagar fisicamente o arquivo no ato da exclusão. |
+| 4 | Substituição de documentos | **Versionamento**: preservar histórico de versões e permitir **recuperação de versões anteriores**. Substituir não apaga a versão anterior. |
+| 5 | Arredondamento cambial | Converter limites com **4 casas decimais**, método **HALF-UP**, compatível com `numeric(18,4)`. Taxa informada e confirmada pelo usuário, como já aprovado; não converter saldos de operações futuras por suposição. |
+| 6 | Auditoria de câmbio | Registrar **usuário, data/hora, moedas origem/destino, taxa informada, valores anteriores e novos** de ambos os limites pertinentes. |
+| 7 | GLN (D-08) | Quando informado, validar **exatamente 13 dígitos numéricos e dígito verificador GS1**; a decisão não torna GLN obrigatório. |
+| 8 | Filtros da listagem | **Busca + situação, grupo, moeda, tipo de operação, bloqueio e aptidão SIFEN**. Preservar controle de acesso/escopo por empresa. |
+| 9 | Entrega mensal/sob demanda | **MENSAL:** solicitar **dia do mês de 1 a 31**. **A_DEMANDA:** sem calendário obrigatório. A seleção de dia 29–31 em meses curtos exige especificação de comportamento antes de operacionalizar entregas; não presumir calendário/geração automática. Permanecem as regras já aprovadas para DIARIA, SEMANAL e QUINCENAL. |
+| 10 | Registros anteriores fiscalmente incompletos | **Exigir regularização dos campos fiscais aplicáveis antes de permitir salvar qualquer edição**, conforme matriz condicional por natureza/tipo de operação e Nexit/SIFEN. Não modificar dados silenciosamente. |
+
+### Divergências frente ao código já versionado — NÃO IMPLEMENTAR NESTA AUTORIZAÇÃO
+
+- NEX-028 / rotas de documentos atualmente preveem **DELETE físico** de arquivo e substituição com remoção do anterior. **Isso conflita com as decisões 3 e 4.** Exigirá desenho de metadados, exclusão lógica, autoria, histórico de versões e recuperação, com migrations incrementais versionadas e políticas de acesso por empresa. **Não modificar nem executar SQL agora.**
+- A política proposta em código de formatos e 10 MB está **ratificada** (1 e 2).
+- O arredondamento `HALF_UP_4` e o conjunto de auditoria da conversão da NEX-029 estão **ratificados** (5 e 6), mas seguem sem validação operacional.
+- D-08, filtros (questão 14), frequência mensal/sob demanda e política de legados deixaram de ser pendências de decisão geral: agora são decisões fechadas (7 a 10), sem inferir implementação existente.
+- Retenção de documentos excluídos/versionados: **preservação obrigatória**; nenhuma purga física automática foi autorizada. Política de descarte definitivo ou prazo futuro precisa de nova aprovação.
+- A definição histórica de D-01, caso seja uma decisão distinta das dez, não foi alterada nem presumida.
+
+**Estado operacional inalterado:** migrations NEX-022 a NEX-030 não foram aplicadas por esta atualização documental; nenhum teste, VM ou deploy executado. Validar estado real com o responsável quando ele autorizar implantação.
