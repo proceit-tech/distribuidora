@@ -68,7 +68,7 @@ export type ClienteDetalle = {
   telefonoArea: string;
   celularPais: string;
   celularArea: string;
-  limiteCredito: number;
+  limiteCredito: string;
   limiteCreditoTemporal: string;
   fechaVencimientoCredito: string;
   grupoClienteId: string;
@@ -79,7 +79,7 @@ export type ClienteDetalle = {
   vendedorId: string;
   codigoExterno: string;
   gln: string;
-  descuentoComercialPct: number;
+  descuentoComercialPct: string;
   bloqueadoVentas: boolean;
   motivoBloqueoVentas: string;
   diaPreferidoCobro: number | null;

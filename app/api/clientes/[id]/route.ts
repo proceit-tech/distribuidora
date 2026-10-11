@@ -12,7 +12,7 @@ import {
 import { mensajeRestriccionCliente } from "@/lib/clientes/errores-bd";
 import { evaluarAptitudSifen } from "@/lib/fiscal/aptitud-sifen";
 import { validarDiaPreferidoCobro } from "@/lib/clientes/dia-cobro";
-import { DESCUENTO_COMERCIAL, LIMITE_CREDITO, decimalAcotado, validarCondicionYMoneda } from "@/lib/clientes/comercial";
+import { DESCUENTO_COMERCIAL, LIMITE_CREDITO, decimalAcotado, numericoCanonico, validarCondicionYMoneda } from "@/lib/clientes/comercial";
 import { leerTelefonoEntrada, validarTelefono } from "@/lib/fiscal/telefono";
 import { ErrorGeografia, resolverPais, validarPaisPorOperacion } from "@/lib/geografia/referencia";
 import { ErrorValidacion, leerEntrada, leerHijos, sincronizarHijos } from "@/lib/clientes/relacionados";
@@ -201,8 +201,8 @@ export async function GET(_request: Request, contexto: Contexto) {
         celularPais: c.celular_pais ?? "",
         celularArea: c.celular_area ?? "",
         celularDdi: c.celular_ddi ?? "",
-        limiteCredito: Number(c.limite_credito),
-        limiteCreditoTemporal: c.limite_credito_temporal === null ? "" : String(Number(c.limite_credito_temporal)),
+        limiteCredito: numericoCanonico(c.limite_credito),
+        limiteCreditoTemporal: c.limite_credito_temporal === null ? "" : numericoCanonico(c.limite_credito_temporal),
         fechaVencimientoCredito: c.fecha_vencimiento_credito ?? "",
         grupoClienteId: c.grupo_cliente_id ?? "",
         condicionPagoId: c.condicion_pago_id ?? "",
@@ -212,7 +212,7 @@ export async function GET(_request: Request, contexto: Contexto) {
         vendedorId: c.vendedor_id ?? "",
         codigoExterno: c.codigo_externo ?? "",
         gln: c.gln ?? "",
-        descuentoComercialPct: Number(c.descuento_comercial_pct),
+        descuentoComercialPct: numericoCanonico(c.descuento_comercial_pct),
         bloqueadoVentas: c.bloqueado_ventas,
         motivoBloqueoVentas: c.motivo_bloqueo_ventas ?? "",
         diaPreferidoCobro: c.dia_preferido_cobro,
@@ -479,11 +479,11 @@ export async function PUT(request: Request, contexto: Contexto) {
         numeroDocumento, naturaleza === "CONTRIBUYENTE" ? dv : null,
         razonSocial, opcional(cuerpo.nombreFantasia, 255),
         email, emailCopia, telefonoGuardar.numero, celularGuardar.numero,
-        decimalAcotado(cuerpo.limiteCredito, "El límite de crédito", LIMITE_CREDITO) ?? 0,
+        decimalAcotado(cuerpo.limiteCredito, "El límite de crédito", LIMITE_CREDITO) ?? "0",
         condicionPagoId, refs.listaPrecioId, refs.grupoClienteId,
         opcional(cuerpo.monedaCodigoPredeterminada, 3)?.toUpperCase() ?? null,
         refs.canalVentaId, opcional(cuerpo.codigoExterno, 100), opcional(cuerpo.gln, 13),
-        decimalAcotado(cuerpo.descuentoComercialPct, "El descuento comercial", DESCUENTO_COMERCIAL) ?? 0,
+        decimalAcotado(cuerpo.descuentoComercialPct, "El descuento comercial", DESCUENTO_COMERCIAL) ?? "0",
         limiteTemporal, vencimiento,
         bloqueado, motivo, estabaBloqueado, session.user.id,
         diaCobro.dia,
