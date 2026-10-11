@@ -235,3 +235,22 @@ Relacionamentos `id UUID`, `cliente_id`, `empresa_id`, `cargado_por UUID`, times
 - A definição histórica de D-01, caso seja uma decisão distinta das dez, não foi alterada nem presumida.
 
 **Estado operacional inalterado:** migrations NEX-022 a NEX-030 não foram aplicadas por esta atualização documental; nenhum teste, VM ou deploy executado. Validar estado real com o responsável quando ele autorizar implantação.
+
+
+## Autorização posterior — FINALIZAR implementação do menu Clientes V1 (2026-10-11)
+
+**Aprovação expressa do responsável:** Claude Code está autorizado a **implementar e versionar no GitHub** todos os requisitos ainda pendentes do menu Clientes V1, inclusive os dez itens da seção “Decisões finais aprovadas”. Esta autorização **substitui somente** a restrição “NÃO IMPLEMENTAR NESTA AUTORIZAÇÃO” anterior quanto à preparação de código, documentação, arquivos de migrations SQL incrementais e configurações versionadas. **Não autoriza executar migrations/SQL, acessar o banco ou VM real, Docker, volumes, nem fazer deploy.** Apenas o responsável humano executa instalação e homologação no ambiente real.
+
+**Escopo de fechamento, sem omissões:**
+1. Documentos reais privados: PDF/JPG/JPEG/PNG/DOCX/XLSX, 10 MB por arquivo; isolamento multiempresa, permissões verificadas em servidor, upload/download seguros; **exclusão lógica preservando bytes e auditoria; histórico recuperável de cada substituição**, com metadados/ações/autor; nenhuma deleção física automática ou purga. Atualizar APIs, UI de criação/edição e migrations incrementais quando necessário, considerando NEX-028 e NEX-030 já versionadas e **não aplicadas** segundo último registro. Manter fluxo de criador com carga inicial aberta, reenvio seletivo e finalização explícita sem cliente duplicado.
+2. Crédito/câmbio: moeda dos limites, conversão mediante taxa digitada + confirmação, cálculo exato `numeric(18,4)` arredondamento HALF-UP, auditoria usuário/data-hora/moedas/taxa/valores anterior-novo; aplicar no servidor, não depender só de validação visual. Sem conversão de saldos de outras operações.
+3. Fiscal: matriz real de campos obrigatórios conforme natureza/tipo de operação/SIFEN e regras Nexit; criação e edição, inclusive **regularizar legado antes de salvar qualquer edição**, sem alteração silenciosa.
+4. GLN opcional, quando presente exatamente 13 dígitos com dígito verificador GS1 em frontend e API.
+5. Listagem: busca e filtros por situação, grupo, moeda, operação, bloqueio, aptidão SIFEN, isolamento por empresa, paginação/contagem coerentes.
+6. Entrega: frequências diária/semanal/quinzenal conforme decisão anterior; mensal com dia 1–31, sob demanda sem calendário obrigatório; não inventar regra de execução de dias 29–31 em mês curto.
+7. Seis abas criadas e editadas: manter experiência visual profissional, responsividade, título de contato correto, telefone internacional compacto, campos completos, estados/erros; manter código automático, contato principal único/opcional, endereço fiscal condicional e endereço fiscal+entrega no mesmo registro.
+8. Confrontar UI→API→migrations→dicionário/SQL campo por campo. Corrigir regressões de tipagem/build e compatibilidade; preparar testes possíveis **somente em ambiente local permitido**. Não declarar execução de testes inexistente nem homologação.
+
+**Entrega por Claude:** sincronizar branch e ler `CLAUDE.md`, `documentacao/PROTOCOLO-IA.md` e esta regra integralmente; trabalhar exclusivamente no módulo Clientes e infraestrutura declarativa estritamente necessária; fazer commit/push, atualizar documentação/progresso e parar para auditoria independente ChatGPT. Identificar SQL novo por NEX-031 em diante se indispensável, **sem sobrescrever migrations já versionadas ou aplicadas**. Não inventar dados, banco de teste, servidor alternativo ou autorizações de VM. Relatar SHA, testes realmente executados, arquivos/migrations envolvidos e bloqueios.
+
+**Critério de “finalizado”:** código versionado e revisão estática são apenas etapas; “100% homologado” exige build/testes pertinentes, execução humana autorizada das migrations pendentes e validação operacional na única VM real. Não dar aprovação automática de deploy.
