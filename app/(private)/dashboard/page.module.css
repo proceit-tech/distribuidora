@@ -486,9 +486,6 @@
 .orderRow {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 112px 100px;
-    minmax(160px, 1.5fr)
-    105px
-    82px;
   min-height: 45px;
   align-items: center;
   gap: 10px;
