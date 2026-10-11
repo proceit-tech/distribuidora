@@ -246,3 +246,12 @@ ChatGPT deve completar o confronto normativo com PDF do grupo de itens e confirm
 - Validar autorização granular/escopo em ambiente real, triggers, cardinalidade, comportamento de transação, e aceitação humana do novo layout quando implementado.
 
 **Estado:** seção fiscal E8 auditada diretamente no manual e nas NT009/023/026 arquivadas; revisão GET/PUT comprovada estaticamente. **Não marca auditoria de todas as migrations e do XML completo como encerrada.** Nenhum SQL, deploy ou VM foi executado.
+
+### 8.3. Confirmação das evoluções posteriores à NEX-007 diretamente no Git
+
+- **NEX-017 — confirmada:** `productos.familia_id` e `linea_id` **já existiam na NEX-007** e receberam FKs compostas por empresa para `familias_producto` e `lineas_producto`; a linha é associada à família por `(empresa_id, familia_id, linea_id)` e há CHECK `linea_id IS NULL OR familia_id IS NOT NULL`. O documento anterior dizia “coluna de evolução posterior”, impreciso: **coluna é NEX-007; integridade é NEX-017**. A validação UI/API deve reproduzir esta regra e emitir mensagem por campo.
+- **NEX-017 — preço de referência confirmado:** funções `lista_precio_referencia` e `producto_fijar_precio_referencia`, vista `v_producto_precio_referencia` e índice parcial de uma lista de referência por empresa. A API GET obtém `precio::float8` desta vista, o que causa risco de precisão já assinalado, enquanto POST/PUT chamam função para preço referencial. Não armazenar preço diretamente em `productos`.
+- **NEX-018 — inspecionada:** migration de integridade das listas de preço, não representa uma nova coluna do produto. Checar seu contrato funcional ao rever preço e moeda, sem tentar criar outra lista/valor paralelo.
+- **NEX-020 — confirmada:** catálogos `categorias_producto` e `marcas_producto` recebem índices únicos por empresa/nome ou código normalizados; existe função `catalogo_producto_guardar` e grants de operação. Não permitir catálogo de outra empresa nem duplo por variação de maiúsculas ou espaços.
+
+**Escopo da revisão estática:** foram inspecionados os arquivos NEX-017, NEX-018 e NEX-020 que evoluem diretamente o módulo. Não afirmamos que toda migration NEX-008 a NEX-037 foi auditada linha a linha, nem que triggers/grants estão exercitados no PostgreSQL. Outras migrations podem afetar integrações indiretas e exigem conferência na implementação respectiva.
