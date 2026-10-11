@@ -45,3 +45,22 @@
 4. Manter exclusão de Barrio e Facturación fora do escopo V1.
 5. Screenshots ANTES recebidos em conversa; DEPOIS ainda por coletar. Preparar nomes `V1-[MODULO]-LISTA-ANTES-2026-10-11.png` e `V1-[MODULO]-LISTA-DEPOIS-AAAA-MM-DD.png`. Upload real para GitHub requer verificação de visibilidade e privacidade.
 6. O Claude **não deve executar testes/build/servidores/processos no notebook**. Somente leitura, edição e commit/push após autorização. Revisão pelo ChatGPT; testes e homologação pelo responsável na VM.
+
+## Revisão pós-refinamento — capturas 2026-10-11, rodada 3
+
+O responsável enviou oito novas capturas: Dashboard, Clientes, Proveedores, Productos, Catálogos de productos, Listas de precios, Stock e Movimientos após o commit `2629450`. **Evidências recebidas no chat; PNGs ainda não versionados no GitHub.** Estado: aguardando correção e novo aceite; não alterar o código nesta etapa de auditoria.
+
+| ID | Prioridade | Constatação e correção verificável |
+|---|---|---|
+| CON-15 | Alta | **Catálogos:** nomes das categorias em negrito excessivo comparados às demais tabelas. Padronizar nome principal em 14px/peso 550–600, secundários 12–13px/400–500; não alterar os dados nem os pesos de toda a aplicação. |
+| CON-16 | Média | **Catálogos:** coluna Código com `Sin código` em todas as linhas e largura maior do que o conteúdo; ajustar a distribuição das colunas, mantendo código opcional, rótulo discreto e tabela semanticamente íntegra. |
+| CON-17 | Média | **Catálogos:** ações `Editar` e `Inactivar` diferem das ações de listagem; unificar dimensão (altura 34–36px), borda, foco e hierarquia. Preservar ambas as operações e tratamento de confirmação. |
+| CON-18 | Média | **Productos:** família/linha/procedência/categoria precisam de pesos e cores claramente hierarquizados, sem confundir campos semânticos nem forçar categoria onde não existe. |
+| CON-19 | Média-alta | **Stock:** filtros já estão alinhados em uma faixa dedicada, mas `Limpiar filtros` e contador ficam na terceira linha; reduzir altura excessiva da toolbar e integrar ações sem comprimir a busca. Se necessário, usar barra secundária justificada à direita, com gap/padding contidos. |
+| CON-20 | Média | **Stock:** legenda textual de R/C/T e Sobrestock ocupa linha larga permanente. Fazer ajuda contextual visível ao usuário (tooltip/popover/ícone com rótulo acessível) e preservar significado, acessibilidade por teclado e definição completa; não esconder a explicação sem alternativa. |
+| CON-21 | Média | **Listas de precios:** nomes, códigos, descrições e quantidade de produtos precisam de hierarquia consistente; descrição longa em até duas linhas sem predominar sobre o nome nem desaparecer sem acesso ao conteúdo. |
+| CON-22 | Alta | **Padrão compartilhado:** garantir 14px/550–600 para principal, 12–13px/400–500 para secundário, 12px/500 para códigos, 12px/650 para TH, 14px/600 para valores, 12px/600 para badges, 13px/550–600 para botões, 12–13px para paginação; aplicar de modo contextual sem afetar funcionalidades. |
+| CON-23 | Média | **Dashboard/Clientes/Proveedores/Movimientos:** visual atual coerente; preservar sem alterações cosméticas não justificadas. |
+| CON-24 | Alta | **Dados:** continua visível `FRANCIA` como procedência, `Sin categoría` no produto e `FRANCESA` no catálogo; manter a pendência de mapeamento de negócio, sem alterar vínculo por CSS nem por suposição. |
+
+**Critérios:** olhar todas as telas como um único conjunto; preservar sidebar 236px, filtros, tabela, ações, ordenação, paginação, APIs e dados. Capturas DEPOIS só depois da implementação e deploy aprovados pelo responsável. Não executar testes/build nem processos no notebook. ChatGPT especifica; Claude implementa após autorização do responsável.
