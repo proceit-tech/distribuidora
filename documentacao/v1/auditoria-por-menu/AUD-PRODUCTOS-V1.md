@@ -314,10 +314,10 @@ Este arquivo é a fonte única da auditoria do menu **Productos**. Registrar, co
 ### Decisões de negócio abertas após análise estática
 
 - **DEC-PRD-U08 — APROVADA (12/10/2026):** FE com payload fiscal já gravado e imutável **não bloqueia a troca da unidade-base apenas por aguardar envio/resultado SIFEN**, desde que o estoque esteja integralmente zerado e não haja operação física pendente. Unidade, quantidade, preço, IVA e total históricos da factura permanecem congelados. Sem snapshot comprovado, a exceção não se aplica. Ver seção XVIII.
-- **DEC-PRD-U09 — apresentações utilizadas:** para uma apresentação que já participou de compra/venda, é permitido editar o fator na mesma linha, preservando versão antiga, ou somente criar **nova versão da apresentação** e desativar a anterior? Recomenda-se versionar sem apagar nem sobrescrever o fator utilizado.
+- **DEC-PRD-U09 — APROVADA (12/10/2026):** apresentação já utilizada em operação de compra/venda/movimento não terá `factor_conversion` nem unidade original sobrescritos. Quando houver mudança (ex.: caixa de 12 → 10 unidades), **encerrar a vigência da versão anterior, conservar histórico e criar nova versão**, sendo somente uma versão da MESMA apresentação vigente para novas operações. Outras apresentações do mesmo produto permanecem independentes e podem continuar ativas. Ver seção XIX.
 - **DEC-PRD-U10 — preços:** ao trocar unidade-base com estoque zero, exigir revisão/atualização explícita dos preços de referência e listas ativas associados à unidade antiga antes de concluir, ou permitir mudar a unidade e deixar o produto sem preço vendável até a revisão? Nenhuma recalculação automática de preço foi aprovada.
 
-**Estado atualizado:** DEC-PRD-U08 já aprovada na seção XVIII; continuam abertas DEC-PRD-U09 (versões de apresentações) e DEC-PRD-U10 (preços). Nenhum teste, PostgreSQL, navegador, migration ou alteração funcional executado. Auditoria ABERTA.
+**Estado atualizado:** DEC-PRD-U08 (seção XVIII) e DEC-PRD-U09 (seção XIX) **APROVADAS**; DEC-PRD-U10 (política de preços ao trocar unidade-base) continua aberta. Nenhum teste, PostgreSQL, navegador, migration ou alteração funcional executado. Auditoria ABERTA.
 
 ## XVIII. DEC-PRD-U08 — FE congelada não bloqueia troca de unidade-base (12/10/2026) — APROVADA
 
@@ -346,3 +346,33 @@ Este arquivo é a fonte única da auditoria do menu **Productos**. Registrar, co
 - Reenvio após troca da base: nem E709/E711/E721 nem `payload_hash` podem ser reescritos. Concorrência entre gravação fiscal, estoque e troca requer consistência atômica.
 
 **Estado:** DEC-PRD-U08 APROVADA/ENCERRADA. Ainda abertas DEC-PRD-U03 (`esUnidadBase`), U04, U05, U09, U10 e auditoria integral de Productos. Nenhum código, SQL, VM, teste operacional ou implementação autorizada.
+
+## XIX. Decisão DEC-PRD-U09 — histórico versionado de apresentações e fatores (12/10/2026) — APROVADA
+
+**Pergunta apresentada ao responsável:** “Imagine uma apresentação Caja de 12 unidades que já foi utilizada em vendas. Posteriormente, o fornecedor passa a entregar caixas de 10 unidades. Minha recomendação é preservar a apresentação antiga com seu fator 12 no histórico e criar uma nova versão com fator 10, mantendo somente a versão mais recente ativa para novas operações. As facturas e movimentações anteriores continuam vinculadas ao fator 12. Você aprova esse versionamento histórico das apresentações, sem sobrescrever fatores que já foram utilizados?” **Resposta expressa:** “sim”.
+
+### Contrato funcional aprovado
+
+1. Um mesmo produto pode ter **múltiplas apresentações comerciais distintas ativas simultaneamente** para compra e/ou venda. A regra de **somente uma versão ativa** aplica-se **a cada apresentação lógica/versionada**, NÃO a todas as apresentações de um produto. Uma única unidade-base do produto vigente continua definida pela DEC-PRD-U07, como conceito separado.
+2. Quando uma apresentação já tiver sido **efetivamente utilizada** em operação comercial ou de estoque, a troca de fator, unidade da apresentação ou outra propriedade que altere a quantidade física/fiscal **não poderá sobrescrever os atributos históricos**. A mudança encerra a vigência da versão antiga e cria uma nova versão rastreável, com nova identidade/versionamento e fator atualizado.
+3. Exemplo aprovado: **Caja v1 = 12 UNI** utilizada em documentos antigos; a partir da troca, **Caja v2 = 10 UNI** para novas operações. Vendas, compras, conversões, movimentos e FE anteriores continuam interpretados como 12 UNI por caixa. Outras apresentações (p.ex. UNI, Bandeja 6) não são desativadas pela troca da Caja.
+4. Preservar **origem e cadeia de versões**, datas de vigência sem sobreposição, usuário/motivo de alteração, fator, unidade comercial/base de referência no instante da versão, indicadores compra/venda, barcode e demais atributos relevantes quando usados. Cada fato operacional deve manter o **snapshot da apresentação/versionamento/fator efetivamente aplicado**, mesmo depois da desativação da versão antiga.
+5. **Nunca DELETE físico ou UPDATE destrutivo de apresentação já utilizada**; a desativação conserva histórico consultável. Não reconstruir nota de crédito, devolução, estorno, reenvio ou KuDE de uma transação antiga com a versão nova. Para transações com reserva/compra pendente, o vínculo com a versão original tem de permanecer estável; regras específicas serão confrontadas na auditoria por menu.
+6. O sistema deverá validar no backend: identidade da apresentação e produto/empresa, vigência para **novas operações**, fator positivo, coerência da unidade-base e da apresentação e ausência de versões vigentes sobrepostas. O browser não será fonte da verdade do fator. As fórmulas e precisões continuam vinculadas às decisões U03/U07 e às regras SIFEN vigentes.
+7. A decisão não aprova alterar automaticamente preços, custos, tributos ou estoques antigos quando o fator mudar. O efeito sobre preço por apresentação e lista fica na auditoria de Listas de precios / DEC-PRD-U10. A condição precisa para editar em lugar apresentações **nunca usadas** continua sujeita ao desenho da implementação e à exigência de integridade; não inferir autorização para sobrescrever uma versão já referenciada.
+
+### Evidências da lacuna atual
+
+- `NEX-007-productos.sql:99-120` cria `producto_unidades` apenas com `factor_conversion`, flags e `creado_at`/`actualizado_at`, **sem versão, vigência, inativação ou trilha imutável**. O índice `producto_unidades_uno_base_uq` controla no máximo uma apresentação marcada `es_unidad_base`, não versionamento histórico.
+- `lib/productos/sincronizar.ts:40-57,127-157,162-186` permite hoje `UPDATE` de `factor_conversion` e `DELETE` de apresentações como elementos de coleção; não detecta utilização histórica para preservar a versão anterior. Evidência transversal PRD-A30.
+- `lib/facturacion/emision.ts` ainda seleciona só a base fiscal do produto, sem `producto_unidades.id` e versão por linha. A futura associação comercial→fiscal precisa usar a versão histórica e manter o payload imutável (DEC-PRD-U03/U08).
+
+### Critérios de aceite da implementação futura (não executados)
+
+- Caja v1=12 registrada e utilizada: edição do fator para 10 **não** reescreve v1; cria Caja v2=10 como vigente; v1 permanece legível no histórico. Uma venda antiga de 2 caixas permanece equivalente a 24 UNI; nova venda de 2 caixas equivale a 20 UNI.
+- A troca de Caja não altera Bandeja/UNI ou outras apresentações ativas; não pode haver duas versões simultaneamente vigentes da mesma apresentação lógica.
+- Documento/estorno/NC/reenvio antigos conservam unidade, quantidade, fator e preço do snapshot original. Versionamento não duplica operação nem diminui ou aumenta estoque silenciosamente.
+- Solicitação direta à API de `UPDATE` destrutivo ou `DELETE` de apresentação usada: deve resultar em versão histórica preservada e resposta coerente, **nunca perda silenciosa de histórico**.
+- Simultaneidade de duas alterações de factor e operação em andamento exige serialização/versão esperada; falhar em conflito, não gravar duas versões ativas.
+
+**Status:** DEC-PRD-U09 **APROVADA**. Implementação, estrutura SQL incremental e testes operacionais ainda não autorizados; DEC-PRD-U10 e a subdecisão de `esUnidadBase` continuam abertas. Auditoria integral Productos **ABERTA**.
