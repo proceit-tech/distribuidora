@@ -17,7 +17,9 @@ Política (`lib/reposicion/calculo.ts`, testada):
 - Parâmetros por depósito (`producto_deposito_configuracion`) comparam-se com o saldo desse depósito; os do produto, com o consolidado dos depósitos autorizados.
 - Posição = **disponível próprio**; reservado não se subtrai de novo; quarentena não conta; **trânsito não conta** por padrão (opção «Considerar como ingresso»).
 - Necessita se disponível ≤ 0, < mínimo ou ≤ ponto de reposição. Sugerido = máximo − posição; sem máximo, a «cantidade de reposición» do depósito; sem nenhum, **sem quantidade** (aviso, não se inventa meta).
-- **Transferência antes da compra:** outros depósitos autorizados cedem o disponível acima do próprio ponto/mínimo (sem parâmetros: sinalizado); o restante é compra ao fornecedor principal (plazo e quantidade mínima de compra só informativos, não aplicados). Nunca se transfere nem se compra automaticamente.
+- **Transferência antes da compra:** outros depósitos autorizados **com parâmetros** cedem o disponível acima do próprio ponto/mínimo (quantidade transferível confirmada); um depósito **sem parâmetros não cede nada automaticamente**: seu disponível aparece como «a validar manualmente», fora da quantidade transferível e sem reduzir a compra. O restante é compra ao fornecedor principal (plazo e quantidade mínima de compra só informativos, não aplicados). Nunca se transfere nem se compra automaticamente.
+- **Um único plano por produto (AUD-REP-01):** se o produto tem parâmetros por depósito, o renglão consolidado (parâmetros globais) fica apenas como **referência** — não gera necessidade, compra nem transferência e não se soma aos planos por depósito. Sem parâmetros por depósito, o consolidado é o plano.
+- **Quantidade de reposição sem gatilho (AUD-REP-03):** se há «cantidad de reposición» mas nenhum mínimo, ponto ou máximo, a situação é «Cantidad sin gatillo» com advertência explícita; não se gera plano nem se oculta a incoerência.
 - Devolução de cliente e ajuste de inventário: informação (entradas registradas em Movimientos com autorização); sem botões que aparentem operação gravada. Link «Ir a Movimientos» só com `MOVIMIENTOS.CREAR` e destino real.
 - Menu: `/reposicion` em `V1_HREFS` e permissão do item alinhada a `STOCK.VER`.
 
@@ -28,7 +30,7 @@ Auditoria, matriz documento × fato físico, projeto de vínculo forte e decisõ
 1. Trânsito não confirmado conta como ingresso no planejamento? (hoje não, por opção do usuário).
 2. Meta quando não há máximo nem cantidad de reposición; múltiplos/lote mínimo de compra e unidade de compra (hoje informativos).
 3. Fornecedor preferencial além de `es_principal`; lead time na sugestão.
-4. Transferir desde depósitos sem parâmetros: ceder 100 % do disponível (hoje sinalizado).
+4. Política para ceder estoque de depósitos sem parâmetros (hoje: disponibilidade a validar manualmente, fora do plano).
 5. Política de saldo negativo, custo das devoluções, visibilidade de saldos de terceiros.
 6. Toda a Etapa C: momento de baixa por venda, finalidades de remisión, tránsito em traslados, modelo de documentos/eventos físicos (ver contrato).
 7. Localização física (modelo de ubicações) inexistente.

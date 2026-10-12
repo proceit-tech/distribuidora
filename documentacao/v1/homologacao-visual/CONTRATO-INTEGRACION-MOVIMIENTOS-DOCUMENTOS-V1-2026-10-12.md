@@ -33,7 +33,9 @@
 | Ajuste / pérdida / avería / cuarentena / reserva | Operación manual autorizada | `AJUSTE_*`, `CUARENTENA`, `RESERVA` con motivo | según tipo | clave manual |
 | Estorno | Corrección de un movimiento | Movimiento inverso ligado (`inventario_anular_movimiento`) | — | `anula_a_id` |
 
-**Regla de oro:** para un mismo evento físico y línea existe **un solo efecto**. `decidirEfecto` lo garantiza lógicamente (efecto previo ⇒ ninguno) y produce la clave `fis:<evento>:<línea>:<efecto>` para pasarla como `clave_idempotencia`, por lo que un reintento o un segundo documento del mismo despacho no puede crear otro movimiento.
+**Regla de oro (objetivo del diseño):** para un mismo evento físico y línea debe existir **un solo efecto**.
+
+> **Estado real (AUD-DOC-01): la prevención de baja duplicada por factura + remisión NO existe todavía como garantía persistida.** No hay en el banco ningún vínculo entre documentos, líneas y eventos físicos (solo `documento_referencia` de texto libre), ni hay módulo de documentos conectado a Movimientos. `decidirEfecto` es una función pura que **no está conectada** a la API ni al SQL de movimientos: recibe `efectosPrevios` que debe aportar el llamador (sin verificación en el banco) y solo propone la clave `fis:<evento>:<línea>:<efecto>`. La idempotencia de `inventario_registrar_movimiento` protege únicamente los reintentos de una **misma** solicitud con la misma clave; no relaciona una factura con una remisión. La unicidad «un evento físico = un efecto» solo estará garantizada cuando exista (1) el vínculo persistido de §3 con su `UNIQUE` y (2) la integración transaccional que lo registre junto con el movimiento. Hasta entonces no debe afirmarse que el sistema impide la doble baja.
 
 ## 3. Proyecto de vínculo fuerte (NO migrado)
 
@@ -44,11 +46,11 @@ Para cerrar la brecha de §1 sin depender de texto libre, se propone (cuando exi
 - `UNIQUE (empresa_id, evento_fisico_id, documento_linea_id|línea física, efecto)` → un efecto por hecho físico, garantizado por el banco;
 - índice por `(empresa_id, documento_tipo, documento_id)` para trazabilidad.
 
-No se creó la migration porque (a) los documentos no existen aún en Nexit, (b) el modelo de eventos físicos no está confirmado y (c) la clave de idempotencia determinista ya evita el doble efecto sin DDL. Se numeraría tras NEX-045.
+No se creó la migration porque (a) los documentos no existen aún en Nexit y (b) el modelo de eventos físicos no está confirmado. La clave de idempotencia determinista es solo un paso preparatorio (protege reintentos de la misma solicitud), **no** sustituye al vínculo persistido. Se numeraría tras NEX-045.
 
 ## 4. Contrato de la función de decisión (`lib/movimientos/documentos.ts`)
 
-Entrada: tipo de documento, `documentoId`, `eventoFisicoId`, línea (cantidad **en unidad base** o `null` si no se conoce el factor — nunca se estima —, depósitos, propiedad, lote), finalidad de la remisión, tipo de nota de crédito, confirmaciones (`hechoFisicoConfirmado`, `retornoFisicoConfirmado`), `momentoBajaVenta` y los efectos ya registrados. Salida: `efecto` (`NINGUNO`/`SALIDA`/`ENTRADA`/`TRANSFERENCIA`), motivo, `bloqueos[]` y `claveIdempotencia`. Es una función pura: no registra nada. Cualquier caller futuro debe: (1) decidir, (2) validar permisos y alcance de depósitos de la sesión, (3) invocar `inventario_registrar_movimiento` con la clave, (4) conservar el vínculo.
+Entrada: tipo de documento, `documentoId`, `eventoFisicoId`, línea (cantidad **en unidad base** o `null` si no se conoce el factor — nunca se estima —, depósitos, propiedad, lote), finalidad de la remisión, tipo de nota de crédito, confirmaciones (`hechoFisicoConfirmado`, `retornoFisicoConfirmado`), `momentoBajaVenta` y los efectos ya registrados. Salida: `efecto` (`NINGUNO`/`SALIDA`/`ENTRADA`/`TRANSFERENCIA`), motivo, `bloqueos[]` y `claveIdempotencia`. Es una función pura: no registra nada y hoy no tiene ningún llamador. Cualquier caller futuro debe: (1) decidir, (2) validar permisos y alcance de depósitos de la sesión, (3) invocar `inventario_registrar_movimiento` con la clave, (4) conservar el vínculo.
 
 ## 5. Decisiones pendientes (no inventadas)
 

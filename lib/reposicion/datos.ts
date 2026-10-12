@@ -105,7 +105,9 @@ export async function leerEntradasReposicion(db: Db, empresaId: string, usuarioI
       });
     }
 
-    // 2) Un renglón consolidado con los parámetros globales del producto (contra el saldo de todos los depósitos visibles).
+    // 2) Un renglón consolidado con los parámetros globales del producto (contra el saldo de todos los depósitos visibles). Si el producto ya tiene
+    //    plan por depósito, el consolidado es solo referencia (no genera necesidad ni se suma: evita duplicar la sugerencia sobre el mismo saldo).
+    const tienePlanPorDeposito = entradas.some((x) => x.productoId === p.id && x.ambito === "DEPOSITO");
     const global = { minimo: p.minimo as number | null, punto: p.punto as number | null, maximo: p.maximo as number | null };
 
     if ([global.minimo, global.punto, global.maximo].some((v) => v !== null && v > 0)) {
@@ -125,6 +127,7 @@ export async function leerEntradasReposicion(db: Db, empresaId: string, usuarioI
         saldo,
         parametros: { ...global, cantidadReposicion: null },
         otrosDepositos: [],
+        soloReferencia: tienePlanPorDeposito,
       });
     }
   }

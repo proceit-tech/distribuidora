@@ -125,7 +125,13 @@ export async function verificarCasosStockReposicionMovimientos(): Promise<string
   igual("bajo mínimo: sugiere hasta el máximo (100 − 10)", [calc({}).criticidad, calc({}).sugerida], ["BAJO_MINIMO", 90]);
   igual("en el punto de reposición (posición = punto) necesita; por encima no", [calc({ saldo: { ...base.saldo, disponible: 30 } }).criticidad, calc({ saldo: { ...base.saldo, disponible: 31 } }).necesita], ["EN_PUNTO", false]);
   igual("sin stock con parámetros", calc({ saldo: { disponible: 0, reservado: 9, cuarentena: 9, transito: 0 } }).criticidad, "SIN_STOCK");
-  igual("sin parámetros: no se sugiere nada", [calc({ parametros: { minimo: null, punto: null, maximo: null, cantidadReposicion: null } }).criticidad, calc({ parametros: { minimo: 0, punto: 0, maximo: 0, cantidadReposicion: 5 } }).sugerida], ["SIN_PARAMETROS", 0]);
+  igual("sin parámetros: no se sugiere nada", [calc({ parametros: { minimo: null, punto: null, maximo: null, cantidadReposicion: null } }).criticidad, calc({ parametros: { minimo: 0, punto: 0, maximo: 0, cantidadReposicion: null } }).sugerida], ["SIN_PARAMETROS", 0]);
+  // AUD-REP-03: cantidad de reposición sin gatillo
+  const sinGatillo = calc({ saldo: { disponible: 0, reservado: 0, cuarentena: 0, transito: 0 }, parametros: { minimo: null, punto: 0, maximo: null, cantidadReposicion: 5 } });
+
+  igual("cantidad de reposición sin mínimo, punto ni máximo: «cantidad sin gatillo», sin plan y con advertencia clara (aunque no haya stock)", [sinGatillo.criticidad, sinGatillo.necesita, sinGatillo.sugerida, sinGatillo.sugeridaCompra, /sin mínimo|no mínimo|no hay un criterio/i.test(sinGatillo.advertencias[0] ?? "")], ["SIN_GATILLO", false, 0, 0, true]);
+  igual("la advertencia de cantidad sin gatillo menciona la cantidad y pide configurar un criterio", /cantidad de reposición \(5\)/.test(sinGatillo.advertencias[0]) && /Configure al menos uno/.test(sinGatillo.advertencias[0]), true);
+  igual("con un gatillo (mínimo) la cantidad de reposición sí actúa como meta", calc({ parametros: { minimo: 20, punto: null, maximo: null, cantidadReposicion: 5 } }).sugerida, 5);
   igual("sin máximo usa la cantidad de reposición del depósito", calc({ parametros: { minimo: 20, punto: null, maximo: null, cantidadReposicion: 40 } }).sugerida, 40);
   const sinMeta = calc({ parametros: { minimo: 20, punto: null, maximo: null, cantidadReposicion: null } });
 
@@ -142,11 +148,22 @@ export async function verificarCasosStockReposicionMovimientos(): Promise<string
   ];
   const conOtros = calc({ otrosDepositos: otros });
 
-  igual("transferencia primero: cede lo que excede su punto (70 − 30 = 40) y completa con otro; el resto es compra", conOtros.transferencias.map((t) => [t.depositoId, t.cantidad, t.origenSinParametros]), [[D2, 40, false], [D3, 25, true]]);
-  igual("la compra es el saldo restante (90 − 65 = 25)", [conOtros.sugeridaTransferencia, conOtros.sugeridaCompra], [65, 25]);
+  // AUD-REP-02: un depósito sin parámetros NO cede automáticamente
+  igual("transferencia confirmada solo desde depósitos con parámetros: cede lo que excede su punto (70 − 30 = 40)", conOtros.transferencias.map((t) => [t.depositoId, t.cantidad]), [[D2, 40]]);
+  igual("el disponible de un depósito sin parámetros queda «a validar manualmente», fuera de la cantidad transferible y de la compra", conOtros.aValidarManualmente, [{ depositoId: D3, depositoNombre: "Depósito 3", disponible: 25 }]);
+  igual("la compra es todo lo que la transferencia confirmada no cubre (90 − 40 = 50)", [conOtros.sugeridaTransferencia, conOtros.sugeridaCompra], [40, 50]);
+  const soloSinParametros = calc({ otrosDepositos: [{ id: D3, nombre: "Depósito 3", disponible: 500, minimo: null, punto: null }] });
+
+  igual("si el único origen no tiene parámetros: ninguna transferencia confirmada y toda la necesidad es compra", [soloSinParametros.transferencias, soloSinParametros.sugeridaTransferencia, soloSinParametros.sugeridaCompra, soloSinParametros.aValidarManualmente.length], [[], 0, 90, 1]);
+  igual("origen con mínimo en cero explícito también se considera sin parámetros", calc({ otrosDepositos: [{ id: D3, nombre: "X", disponible: 40, minimo: 0, punto: 0 }] }).transferencias, []);
   igual("un origen en o bajo su propio punto no cede nada", conOtros.transferencias.some((t) => t.depositoId === "d4"), false);
   igual("si un origen cubre todo, no hay compra", [calc({ otrosDepositos: [{ id: D2, nombre: "S", disponible: 500, minimo: 10, punto: 20 }] }).sugeridaCompra, calc({ otrosDepositos: [{ id: D2, nombre: "S", disponible: 500, minimo: 10, punto: 20 }] }).transferencias[0].cantidad], [0, 90]);
-  igual("renglón consolidado: no ofrece transferencias", calc({ ambito: "CONSOLIDADO", otrosDepositos: otros }).transferencias, []);
+  igual("renglón consolidado: no ofrece transferencias ni disponibilidad a validar", [calc({ ambito: "CONSOLIDADO", otrosDepositos: otros }).transferencias, calc({ ambito: "CONSOLIDADO", otrosDepositos: otros }).aValidarManualmente], [[], []]);
+  // AUD-REP-01: un solo plan por producto
+  const refer = calc({ ambito: "CONSOLIDADO", soloReferencia: true, depositoId: null, depositoNombre: "Todos los depósitos", otrosDepositos: otros });
+
+  igual("consolidado de referencia (el producto ya tiene plan por depósito): no genera necesidad, compra ni transferencia y avisa", [refer.necesita, refer.sugerida, refer.sugeridaCompra, refer.transferencias, refer.criticidad, /no genera compra ni transferencia ni se suma/.test(refer.advertencias.join(" "))], [false, 0, 0, [], "BAJO_MINIMO", true]);
+  igual("el mismo consolidado sin plan por depósito sí genera su sugerencia (comportamiento anterior preservado)", [calc({ ambito: "CONSOLIDADO", depositoId: null }).necesita, calc({ ambito: "CONSOLIDADO", depositoId: null }).sugerida], [true, 90]);
   igual("sin necesidad no hay transferencias ni compra", [calc({ saldo: { ...base.saldo, disponible: 80 }, otrosDepositos: otros }).transferencias, calc({ saldo: { ...base.saldo, disponible: 80 } }).sugeridaCompra], [[], 0]);
   const filas = [calc({ saldo: { ...base.saldo, disponible: 25 }, productoDescripcion: "B" }), calc({ saldo: { ...base.saldo, disponible: 0 }, productoDescripcion: "A" }), calc({ saldo: { ...base.saldo, disponible: 5 }, productoDescripcion: "C" })];
 
@@ -168,7 +185,32 @@ export async function verificarCasosStockReposicionMovimientos(): Promise<string
   } as never;
   const lectura = await leerEntradasReposicion(dbR, EMPRESA, USUARIO);
 
-  igual("datos: un renglón por depósito con parámetros propios (el depósito sin parámetros no genera renglón) más un consolidado del producto", lectura.entradas.map((e) => [e.ambito, e.depositoNombre]), [["DEPOSITO", "Central"], ["CONSOLIDADO", "Todos los depósitos"]]);
+  igual("datos: un renglón por depósito con parámetros propios (el depósito sin parámetros no genera renglón) más un consolidado del producto, que queda solo como referencia", lectura.entradas.map((e) => [e.ambito, e.depositoNombre, e.soloReferencia ?? false]), [["DEPOSITO", "Central", false], ["CONSOLIDADO", "Todos los depósitos", true]]);
+  const calculadas = lectura.entradas.map((e) => calcularReposicion(e, { incluirTransito: false }));
+
+  igual("mismo producto en 2 depósitos con parámetros globales y por depósito: una sola necesidad (no se duplica la compra)", [calculadas.filter((f) => f.necesita).length, calculadas.filter((f) => f.necesita && f.sugeridaCompra).length], [1, 1]);
+  const dosDepositos = (await leerEntradasReposicion({
+    async query(sql: string) {
+      if (/FROM productos p/.test(sql)) return { rows: [{ id: P1, codigo: "P-1", descripcion: "Leche", marca: "", unidad: "U", minimo: 10, maximo: 100, punto: 20, proveedorNombre: null, proveedorPlazo: null, proveedorMinima: null }], rowCount: 1 };
+      if (/FROM stock_saldos s/.test(sql)) return { rows: [{ productoId: P1, depositoId: D1, estado: "DISPONIBLE", cantidad: 1 }, { productoId: P1, depositoId: D2, estado: "DISPONIBLE", cantidad: 1 }], rowCount: 2 };
+      if (/FROM producto_deposito_configuracion/.test(sql)) return { rows: [{ productoId: P1, depositoId: D1, minimo: 5, maximo: 50, punto: 8, reposicion: null }, { productoId: P1, depositoId: D2, minimo: 5, maximo: 50, punto: 8, reposicion: null }], rowCount: 2 };
+      if (/SELECT count\(\*\)::int AS n FROM depositos/.test(sql)) return { rows: [{ n: 2 }], rowCount: 1 };
+      if (/FROM depositos d JOIN usuarios u/.test(sql)) return { rows: [{ id: D1, codigo: "C", nombre: "Central" }, { id: D2, codigo: "S", nombre: "Sucursal" }], rowCount: 2 };
+
+      return { rows: [], rowCount: 0 };
+    },
+  } as never, EMPRESA, USUARIO)).entradas.map((e) => calcularReposicion(e, { incluirTransito: false }));
+
+  igual("mismo producto en 2 depósitos: 2 planes por depósito y el total solo como referencia (3 renglones, 2 necesidades, sin suma)", [dosDepositos.length, dosDepositos.filter((f) => f.necesita).length, dosDepositos.filter((f) => f.soloReferencia).length, dosDepositos.filter((f) => f.soloReferencia && f.sugeridaCompra !== 0).length], [3, 2, 1, 0]);
+  igual("sin parámetros por depósito, el consolidado del producto sigue siendo el plan (no es referencia)", (await leerEntradasReposicion({
+    async query(sql: string) {
+      if (/FROM productos p/.test(sql)) return { rows: [{ id: P1, codigo: "P-1", descripcion: "Leche", marca: "", unidad: "U", minimo: 10, maximo: 100, punto: 20, proveedorNombre: null, proveedorPlazo: null, proveedorMinima: null }], rowCount: 1 };
+      if (/SELECT count\(\*\)::int AS n FROM depositos/.test(sql)) return { rows: [{ n: 1 }], rowCount: 1 };
+      if (/FROM depositos d JOIN usuarios u/.test(sql)) return { rows: [{ id: D1, codigo: "C", nombre: "Central" }], rowCount: 1 };
+
+      return { rows: [], rowCount: 0 };
+    },
+  } as never, EMPRESA, USUARIO)).entradas.map((e) => e.soloReferencia ?? false), [false]);
   igual("datos: el consolidado suma los depósitos visibles con los parámetros GLOBALES; el de depósito usa los suyos", [lectura.entradas[1].saldo.disponible, lectura.entradas[1].parametros.maximo, lectura.entradas[0].saldo.disponible, lectura.entradas[0].parametros.maximo], [68, 100, 8, 90]);
   igual("datos: el tránsito se suma aparte y los otros depósitos con disponible son candidatos de transferencia", [lectura.entradas[1].saldo.transito, lectura.entradas[0].otrosDepositos.map((o) => [o.id, o.disponible])], [3, [[D2, 60]]]);
   igual("datos: proveedor principal real (plazo y mínimo de compra solo informativos)", lectura.entradas[0].proveedorPrincipal, { nombre: "Prov", plazoDias: 5, cantidadMinimaCompra: 12 });

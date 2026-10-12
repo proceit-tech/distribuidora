@@ -5,6 +5,10 @@
  * para un mismo evento físico y línea existe UN solo efecto. Este módulo solo DECIDE y VALIDA (funciones puras, sin base de datos y sin
  * efectos): nada aquí registra movimientos ni emite documentos. El registro real seguiría pasando por inventario_registrar_movimiento /
  * inventario_anular_movimiento (SECURITY DEFINER). El momento de baja/alta por documento es una decisión pendiente del responsable.
+ *
+ * IMPORTANTE (AUD-DOC-01): esta función NO impide hoy la baja duplicada por factura + remisión. No está conectada a la API ni al SQL, confía en los
+ * «efectosPrevios» que aporte el llamador y no existe en el banco un vínculo persistido documento/línea/evento físico. La garantía «un evento físico =
+ * un efecto» solo existirá con ese vínculo (UNIQUE) y su registro transaccional junto con el movimiento. Ver el contrato en documentacao.
  */
 
 export type TipoDocumento = "FACTURA_VENTA" | "NOTA_REMISION" | "NOTA_CREDITO_VENTA" | "RECEPCION_COMPRA" | "FACTURA_COMPRA" | "DEVOLUCION_PROVEEDOR";

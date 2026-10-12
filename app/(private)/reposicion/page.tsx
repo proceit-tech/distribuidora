@@ -15,6 +15,7 @@ type CampoOrden = "producto" | "deposito" | "disponible" | "criticidad" | "suger
 type Respuesta = { entradas: EntradaReposicion[]; depositos: Array<{ id: string; nombre: string }>; alcanceParcial: boolean; permisos?: { movimientos: boolean } };
 
 const ETIQUETA: Record<Criticidad, string> = {
+  SIN_GATILLO: "Cantidad sin gatillo",
   SIN_STOCK: "Sin stock",
   BAJO_MINIMO: "Bajo mínimo",
   EN_PUNTO: "En punto de reposición",
@@ -23,6 +24,7 @@ const ETIQUETA: Record<Criticidad, string> = {
 };
 
 const CLASE: Record<Criticidad, string> = {
+  SIN_GATILLO: ui.statusInactive,
   SIN_STOCK: ui.statusBlocked,
   BAJO_MINIMO: ui.statusBlocked,
   EN_PUNTO: ui.statusInactive,
@@ -30,7 +32,7 @@ const CLASE: Record<Criticidad, string> = {
   SIN_PARAMETROS: ui.muted,
 };
 
-const PESO: Record<Criticidad, number> = { SIN_STOCK: 0, BAJO_MINIMO: 1, EN_PUNTO: 2, OK: 3, SIN_PARAMETROS: 4 };
+const PESO: Record<Criticidad, number> = { SIN_STOCK: 0, BAJO_MINIMO: 1, EN_PUNTO: 2, OK: 3, SIN_GATILLO: 4, SIN_PARAMETROS: 5 };
 
 const cant = (n: number | null) => (n === null ? "—" : formatearCantidad(n));
 
@@ -230,6 +232,7 @@ export default function ReposicionPage() {
               <option value="BAJO_MINIMO">Bajo mínimo</option>
               <option value="EN_PUNTO">En punto de reposición</option>
               <option value="OK">Normal</option>
+              <option value="SIN_GATILLO">Cantidad sin gatillo</option>
               <option value="SIN_PARAMETROS">Sin parámetros</option>
             </select>
           </label>
@@ -311,7 +314,7 @@ export default function ReposicionPage() {
                     <td>
                       {f.depositoNombre}
                       <br />
-                      <small className={ui.muted}>{f.ambito === "CONSOLIDADO" ? "Parámetros del producto" : "Parámetros del depósito"}</small>
+                      <small className={ui.muted}>{f.ambito === "CONSOLIDADO" ? (f.soloReferencia ? "Referencia (no se suma al plan por depósito)" : "Parámetros del producto") : "Parámetros del depósito"}</small>
                     </td>
                     <td className={ui.numeric}>
                       <span className={ui.mono}>{cant(f.saldo.disponible)}</span>
@@ -343,7 +346,6 @@ export default function ReposicionPage() {
                           {f.transferencias.map((t) => (
                             <small key={t.depositoId} style={{ display: "block" }}>
                               Transferir {cant(t.cantidad)} desde {t.depositoNombre}
-                              {t.origenSinParametros ? " (origen sin parámetros)" : ""}
                             </small>
                           ))}
                           {f.sugeridaCompra ? (
@@ -358,6 +360,11 @@ export default function ReposicionPage() {
                       ) : (
                         <small className={ui.muted}>{f.necesita ? "Defina la meta" : "—"}</small>
                       )}
+                      {f.aValidarManualmente.map((v) => (
+                        <small key={v.depositoId} className={ui.muted} style={{ display: "block" }}>
+                          A validar manualmente: {v.depositoNombre} tiene {cant(v.disponible)} disponible(s) pero no tiene parámetros; no se incluye en la sugerencia.
+                        </small>
+                      ))}
                     </td>
                     <td className={ui.numeric}>
                       {f.necesita ? (
@@ -419,7 +426,8 @@ export default function ReposicionPage() {
           <li>Se usa el stock <strong>propio disponible</strong>: lo reservado no se resta otra vez, la cuarentena no es vendible y el tránsito sin confirmar no se cuenta salvo que lo active en el filtro.</li>
           <li>Necesita reposición si el disponible es 0, menor que el mínimo o igual o menor que el punto de reposición. La cantidad sugerida completa hasta el máximo (o usa la cantidad de reposición del depósito); sin ninguno de los dos no se inventa una meta.</li>
           <li>Los parámetros por depósito se comparan con ese depósito; los del producto, con el total de los depósitos autorizados.</li>
-          <li><strong>Transferencia</strong> desde otro depósito con excedente (su disponible por encima de su propio punto/mínimo) se propone antes que la compra; <strong>compra</strong> al proveedor principal por el saldo restante.</li>
+          <li><strong>Transferencia</strong> desde otro depósito con parámetros y excedente (su disponible por encima de su propio punto/mínimo) se propone antes que la compra; un depósito sin parámetros solo aparece como «a validar manualmente» y no reduce la compra. <strong>Compra</strong> al proveedor principal por el saldo restante.</li>
+          <li>Si el producto tiene parámetros por depósito, el total consolidado queda como referencia y no se suma: hay un único plan por producto. Una «cantidad de reposición» sin mínimo, punto ni máximo no define cuándo reponer y se señala como tal.</li>
           <li><strong>Devolución de cliente</strong> y <strong>ajuste de inventario</strong> son entradas que se registran en Movimientos, con la autorización correspondiente; no se calculan aquí ni se generan automáticamente.</li>
         </ul>
       </details>
