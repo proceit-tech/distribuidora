@@ -76,6 +76,21 @@ export function PestanaInventario({ ctx }: { ctx: ContextoFormulario }) {
         {detalle?.stockPorDeposito.map((s) => <Dato key={s.depositoId} etiqueta={`Stock en ${s.depositoNombre}`} valor={s.cantidad} />)}
       </div>
 
+      {ctx.modo === "editar" ? (
+        <>
+          <SubTitulo>Historial de la unidad base (solo lectura)</SubTitulo>
+          {(detalle?.historialUnidadBase ?? []).length === 0 ? (
+            <div className={styles.empty}>Sin cambios de unidad base registrados.</div>
+          ) : (
+            <div className={styles.gridFour}>
+              {(detalle?.historialUnidadBase ?? []).map((h, i) => (
+                <Dato key={`${h.fecha}-${i}`} etiqueta={h.fecha} valor={`${h.unidadAnterior} → ${h.unidadNueva}${h.responsable ? ` · ${h.responsable}` : ""}`} />
+              ))}
+            </div>
+          )}
+        </>
+      ) : null}
+
       <TituloColeccion titulo="Políticas por depósito" boton="Agregar depósito" alAgregar={() => ctx.agregar("depositos")} />
 
       {form.depositos.length === 0 ? <div className={styles.empty}>Sin políticas por depósito.</div> : null}

@@ -5,6 +5,7 @@ import { denyIfNoPermission } from "@/lib/auth/permissions";
 import { decidirAccesoDocumento } from "@/lib/productos/permisos-documentos";
 import { autorizarProductos } from "@/lib/productos/http";
 import { ErrorValidacion } from "@/lib/productos/errores";
+import { alcanceConsultaDeposito, validarAlcanceConfiguraciones } from "@/lib/productos/alcance";
 import { normalizarProducto } from "@/lib/productos/normalizar";
 import { componentesRestantes, eliminarHijos, guardarHijos } from "@/lib/productos/sincronizar";
 import {
@@ -126,8 +127,8 @@ export async function GET(_request: Request, contexto: Contexto) {
                 coalesce(c.punto_reposicion::text,'') AS "puntoReposicion", coalesce(c.cantidad_reposicion::text,'') AS "cantidadReposicion"
            FROM producto_deposito_configuracion c
            JOIN depositos d ON d.empresa_id = c.empresa_id AND d.id = c.deposito_id
-          WHERE c.producto_id = $1 AND c.empresa_id = $2 ORDER BY c.creado_at, c.id`,
-        [id, empresaId],
+          WHERE c.producto_id = $1 AND c.empresa_id = $2 AND ${alcanceConsultaDeposito("c.deposito_id", "$2", "$3")} ORDER BY c.creado_at, c.id`,
+        [id, empresaId, session.user.id],
       ),
       db.query(
         `SELECT a.id, a.producto_alternativo_id AS "productoAlternativoId", p.descripcion AS "productoAlternativoNombre",
@@ -163,13 +164,13 @@ export async function GET(_request: Request, contexto: Contexto) {
         `SELECT d.id AS "depositoId", d.nombre AS "depositoNombre", sum(s.cantidad)::text AS cantidad
            FROM stock_saldos s JOIN depositos d ON d.empresa_id = s.empresa_id AND d.id = s.deposito_id
           WHERE s.empresa_id = $2 AND s.producto_id = $1 AND s.estado_stock = 'DISPONIBLE' AND s.propiedad = 'PROPIO'
-            AND usuario_puede_deposito($2::uuid, $3::uuid, s.deposito_id)
+            AND ${alcanceConsultaDeposito("s.deposito_id", "$2", "$3")}
           GROUP BY d.id, d.nombre ORDER BY d.nombre`,
         [id, empresaId, session.user.id],
       ),
       db.query(
         `SELECT CASE WHEN sum(c.cantidad_valorizada) > 0 THEN round(sum(c.valor_total) / sum(c.cantidad_valorizada), 4)::text END AS costo
-           FROM inventario_costos c WHERE c.empresa_id = $2 AND c.producto_id = $1 AND usuario_puede_deposito($2::uuid, $3::uuid, c.deposito_id)
+           FROM inventario_costos c WHERE c.empresa_id = $2 AND c.producto_id = $1 AND ${alcanceConsultaDeposito("c.deposito_id", "$2", "$3")}
           HAVING count(*) > 0`,
         [id, empresaId, session.user.id],
       ),
@@ -180,11 +181,28 @@ export async function GET(_request: Request, contexto: Contexto) {
            JOIN movimientos_inventario mi ON mi.empresa_id = ml.empresa_id AND mi.id = ml.movimiento_id
            LEFT JOIN depositos d ON d.empresa_id = mi.empresa_id AND d.id = mi.deposito_destino_id
           WHERE ml.empresa_id = $2 AND ml.producto_id = $1 AND mi.tipo_origen = 'ABERTURA' AND mi.estado = 'REGISTRADO'
-            AND usuario_puede_deposito($2::uuid, $3::uuid, mi.deposito_destino_id)
+            AND ${alcanceConsultaDeposito("mi.deposito_destino_id", "$2", "$3")}
           ORDER BY mi.fecha_movimiento, mi.creado_at LIMIT 1`,
         [id, empresaId, session.user.id],
       ),
     ]);
+    // PRD-R02-03: historial de cambios de unidad base (NEX-052), solo lectura. Si la migración aún no existe, la lista queda vacía.
+    const hayHistorial = ((await db.query("SELECT to_regclass('public.producto_unidad_base_historial') IS NOT NULL AS ok")).rows[0] as { ok?: boolean } | undefined)?.ok === true;
+    const historialUnidadBase = hayHistorial
+      ? (
+          await db.query(
+            `SELECT to_char(h.cambiado_at AT TIME ZONE 'America/Asuncion', 'DD/MM/YYYY HH24:MI') AS fecha,
+                    ua.codigo || ' · ' || ua.nombre AS "unidadAnterior", un.codigo || ' · ' || un.nombre AS "unidadNueva",
+                    trim(coalesce(u.nombre, '') || ' ' || coalesce(u.apellido, '')) AS responsable
+               FROM producto_unidad_base_historial h
+               JOIN unidades_medida ua ON ua.id = h.unidad_anterior_id
+               JOIN unidades_medida un ON un.id = h.unidad_nueva_id
+               LEFT JOIN usuarios u ON u.empresa_id = h.empresa_id AND u.id = h.cambiado_por
+              WHERE h.empresa_id = $2 AND h.producto_id = $1 ORDER BY h.cambiado_at DESC, h.id DESC LIMIT 50`,
+            [id, empresaId],
+          )
+        ).rows
+      : [];
     const monedaBase = await db.query(
       `SELECT coalesce((SELECT moneda_codigo FROM listas_precio WHERE empresa_id = e.id AND es_referencia), e.moneda_base_codigo) AS moneda
          FROM empresas e WHERE e.id = $1`,
@@ -199,7 +217,7 @@ export async function GET(_request: Request, contexto: Contexto) {
     const stockTotal = await db.query(
       `SELECT coalesce(sum(cantidad),0)::text AS total FROM stock_saldos
         WHERE empresa_id = $2 AND producto_id = $1 AND estado_stock = 'DISPONIBLE' AND propiedad = 'PROPIO'
-          AND usuario_puede_deposito($2::uuid, $3::uuid, deposito_id)`,
+          AND ${alcanceConsultaDeposito("deposito_id", "$2", "$3")}`,
       [id, empresaId, session.user.id],
     );
 
@@ -215,6 +233,7 @@ export async function GET(_request: Request, contexto: Contexto) {
         stockPorDeposito: stockRows,
         costoPromedio: costo.rowCount ? (costo.rows[0] as { costo: string | null }).costo : null,
         aperturaRegistrada: apertura.rowCount ? apertura.rows[0] : null,
+        historialUnidadBase,
         codigos: codigos.rows,
         unidades: unidades.rows,
         proveedores: proveedores.rows,
@@ -278,6 +297,8 @@ export async function PUT(request: Request, contexto: Contexto) {
 
     await resolverPais(conexion, datos);
     await validarReferencias(conexion, empresaId, datos, actual);
+    // PRD-R02-02: ninguna política de un depósito fuera de alcance puede crearse, modificarse ni eliminarse por este usuario (las no visibles se conservan intactas).
+    await validarAlcanceConfiguraciones(conexion, empresaId, session.user.id, id, datos);
 
     // PRD-A21: solo si la unidad base REALMENTE cambia respecto de la persistida; sin cambio, la edición es normal. Un producto sin unidad persistida (legado) no se bloquea.
     if (datos.unidadMedidaId && actual.unidad_medida_id && datos.unidadMedidaId !== actual.unidad_medida_id) {

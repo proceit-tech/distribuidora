@@ -12,6 +12,7 @@ import {
   validarReferencias,
 } from "@/lib/productos/shared";
 import { ErrorValidacion } from "@/lib/productos/errores";
+import { alcanceConsultaDeposito } from "@/lib/productos/alcance";
 import { esVendibleFiscal, normalizarProducto } from "@/lib/productos/normalizar";
 import { guardarHijos } from "@/lib/productos/sincronizar";
 
@@ -92,11 +93,11 @@ export async function GET(request: Request) {
                  FROM productos p
                  LEFT JOIN familias_producto f ON f.empresa_id = p.empresa_id AND f.id = p.familia_id
                  LEFT JOIN lineas_producto l ON l.empresa_id = p.empresa_id AND l.id = p.linea_id
-                 -- PRD-A23: costo, stock e inventario inicial agregan SOLO los depósitos que el usuario puede operar (usuario_puede_deposito, como Stock).
+                 -- PRD-A23/R02-01: costo, stock e inventario inicial agregan SOLO los depósitos dentro del alcance de consulta del usuario (el mismo criterio de Stock, activos o no).
                  LEFT JOIN LATERAL (
                    SELECT CASE WHEN sum(c.cantidad_valorizada) > 0 THEN round(sum(c.valor_total) / sum(c.cantidad_valorizada), 4) END AS costo_promedio
                      FROM inventario_costos c
-                    WHERE c.empresa_id = p.empresa_id AND c.producto_id = p.id AND usuario_puede_deposito($1::uuid, $2::uuid, c.deposito_id)
+                    WHERE c.empresa_id = p.empresa_id AND c.producto_id = p.id AND ${alcanceConsultaDeposito("c.deposito_id", "$1", "$2")}
                  ) cp ON true
                  LEFT JOIN v_producto_precio_referencia pr ON pr.empresa_id = p.empresa_id AND pr.producto_id = p.id
                  LEFT JOIN LATERAL (
@@ -105,7 +106,7 @@ export async function GET(request: Request) {
                      JOIN movimientos_inventario mi ON mi.empresa_id = ml.empresa_id AND mi.id = ml.movimiento_id
                     WHERE ml.empresa_id = p.empresa_id AND ml.producto_id = p.id
                       AND mi.tipo_origen = 'ABERTURA' AND mi.estado = 'REGISTRADO'
-                      AND usuario_puede_deposito($1::uuid, $2::uuid, mi.deposito_destino_id)
+                      AND ${alcanceConsultaDeposito("mi.deposito_destino_id", "$1", "$2")}
                  ) ap ON true
                  LEFT JOIN categorias_producto c ON c.empresa_id = p.empresa_id AND c.id = p.categoria_id
                  LEFT JOIN marcas_producto m ON m.empresa_id = p.empresa_id AND m.id = p.marca_id
@@ -115,7 +116,7 @@ export async function GET(request: Request) {
                    SELECT sum(s.cantidad) AS disponible
                      FROM stock_saldos s
                     WHERE s.empresa_id = p.empresa_id AND s.producto_id = p.id AND s.estado_stock = 'DISPONIBLE' AND s.propiedad = 'PROPIO'
-                      AND usuario_puede_deposito($1::uuid, $2::uuid, s.deposito_id)
+                      AND ${alcanceConsultaDeposito("s.deposito_id", "$1", "$2")}
                  ) sp ON true
                 WHERE p.empresa_id = $1
                 ORDER BY p.activo DESC, p.descripcion`,

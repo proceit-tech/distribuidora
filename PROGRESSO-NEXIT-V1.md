@@ -656,3 +656,11 @@ Integridade fiscal do produto vendável (PRD-A02, A15, A16, A26; DEC-PRD-U02/U06
 - **CLI-A04:** a ficha verifica `rCatalogos.ok` e, em 401/403/500, mostra o erro com o código em vez de catálogos vazios (não se limpam vínculos).
 - **CLI-A02:** `useProtegerCambios` em `clientes/nuevo` (ficha, contactos, direcções, documentos; depois de criar, só arquivos pendentes) e `clientes/[id]` (huella da ficha + contactos/direcções + rascunho de documento).
 - Fora da rodada (como autorizado): CLI-A05. Local: 2116 verificações, 0 falhas (24 novas da suíte «Clientes: estabilización»); tsc/ESLint/build OK.
+
+### Productos — correção final AUD-R02 (AUD-PRODUCTOS-V1 §XXIII, 2026-10-12)
+Sem migration nova; NEX-052/053 seguem versionadas e NÃO aplicadas (só o script de reversão da 052 mudou). Nada executado em PostgreSQL/VM; Productos NÃO homologado.
+- **PRD-R02-01:** lista e detalhe (estoque por depósito, total, custo médio, abertura) usam o **alcance de consulta de Stock** (`lib/productos/alcance.ts`: alcance TODOS ou depósitos atribuídos, ativos ou não; não depende da NEX-046). `usuario_puede_deposito` (exige depósito ativo) permanece só para operações novas (catálogo de depósitos da abertura); funções de movimento intactas.
+- **PRD-R02-02:** o detalhe só devolve as políticas por depósito do alcance do usuário (a regra anterior de devolver todas fica substituída). Preservação: a sincronização não apaga por omissão e o PUT rejeita (403) criar, alterar ou eliminar política de depósito fora do alcance, mesmo com requisição fabricada.
+- **PRD-R02-03:** a pestaña Inventario mostra, ao editar, o **Historial de la unidad base** (unidade anterior/nova, data em hora do Paraguai, responsável), somente leitura; sem a tabela da NEX-052 a lista vem vazia.
+- **PRD-R02-04:** `reversion-NEX-052.sql` aborta se NEX-053 estiver aplicada (objeto `nex_aplicar_grants_clientes` ou fila 'NEX-053' em schema_migrations); ordem de reversão 053 → 052.
+- Local: 2132 verificações, 0 falhas (14 novas de Productos + 2 de regressão de Clientes); tsc/ESLint/build OK.

@@ -147,6 +147,8 @@ export type ProductoDetalle = {
   stockPorDeposito: { depositoId: string; depositoNombre: string; cantidad: string }[];
   /** Costo promedio real (inventario_costos). null = sin saldo valorizado. Solo lectura. */
   costoPromedio: string | null;
+  /** Cambios de unidad base (NEX-052), del más reciente al más antiguo. Solo lectura. */
+  historialUnidadBase: { fecha: string; unidadAnterior: string; unidadNueva: string; responsable: string }[];
   /** Movimiento de apertura ya registrado (solo lectura). */
   aperturaRegistrada: {
     numero: string;

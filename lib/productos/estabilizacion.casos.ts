@@ -7,7 +7,9 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { contador } from "@/lib/clientes/contador-casos";
+import { alcanceConsultaDeposito, validarAlcanceConfiguraciones } from "@/lib/productos/alcance";
 import { ErrorValidacion } from "@/lib/productos/errores";
+import { normalizarProducto } from "@/lib/productos/normalizar";
 import { validarMetadatosDocumento } from "@/lib/productos/documentos";
 import { validarCambioUnidadBase } from "@/lib/productos/shared";
 
@@ -129,14 +131,87 @@ export async function verificarCasosEstabilizacionProductos(): Promise<string[]>
   cierto("A21 SQL: el historial es inmutable, solo lo escribe la función (el runtime solo lee) y el cambio no recalcula precios ni toca documentos históricos", /BEFORE UPDATE OR DELETE ON public\.producto_unidad_base_historial/.test(m52) && /GRANT SELECT ON public\.producto_unidad_base_historial TO nexit_runtime/.test(m52) && !/INSERT, UPDATE|DELETE ON public\.producto_unidad_base_historial TO/.test(m52) && !/lista_precio|documentos_electronicos|producto_unidades/.test(norm(m52.slice(m52.indexOf("FUNCTION public.producto_cambiar_unidad_base_validar")))));
   cierto("NEX-052: incremental con precondiciones y no-reaplicación, reversión protegida, verificación de solo lectura y envoltorio de grants que descubre todos los ayudantes", /NEX-052 requiere/.test(m52) && /NEX-052 parece aplicada/.test(m52) && /ABORTA si el historial/.test(rev52) && /RAISE EXCEPTION 'el historial de unidad base tiene filas/.test(rev52) && !/\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE)\b/i.test(norm(ver52).replace(/'[^']*'/g, "")) && /LIKE 'nex\\_aplicar\\_grants\\_%'/.test(m52) && /NOT IN \('nex_aplicar_grants_runtime', 'nex_aplicar_grants_runtime_base'\)/.test(m52));
 
-  // ── PRD-A23: alcance de depósitos en la lista, el detalle y el catálogo
+  // ── PRD-A23 / PRD-R02-01 / PRD-R02-02: alcance de depósitos (paridad con Stock), políticas ocultas y conservadas
   const detalle = leer("app/api/productos/[id]/route.ts").slice(0, leer("app/api/productos/[id]/route.ts").indexOf("export async function PUT"));
+  const stockSrc = leer("lib/stock/shared.ts");
+  const m46 = leer("documentacao/banco/nexit/v1/migraciones/NEX-046-depositos-gestion.sql");
+  const frag = alcanceConsultaDeposito("s.deposito_id", "$1", "$2");
 
-  cierto("A23: la lista de productos agrega stock, costo e inventario inicial SOLO de depósitos con usuario_puede_deposito y ya no usa las vistas globales", (post.match(/usuario_puede_deposito\(\$1::uuid, \$2::uuid, (s\.deposito_id|c\.deposito_id|mi\.deposito_destino_id)\)/g) ?? []).length === 3 && !/v_stock_producto|v_producto_costo_promedio/.test(post) && /\[empresaId, session\.user\.id\]/.test(post));
-  cierto("A23: el catálogo de depósitos del formulario también respeta el alcance del usuario", /FROM depositos WHERE empresa_id = \$1 AND activo = true AND usuario_puede_deposito\(\$1::uuid, \$2::uuid, id\)/.test(post));
-  cierto("A23: el detalle limita stock por depósito, total, costo promedio y apertura a los depósitos del usuario (sin agregados de depósitos invisibles)", (detalle.match(/usuario_puede_deposito\(\$2::uuid, \$3::uuid, (s\.deposito_id|c\.deposito_id|mi\.deposito_destino_id|deposito_id)\)/g) ?? []).length === 4 && !/v_producto_costo_promedio/.test(detalle) && (detalle.match(/\[id, empresaId, session\.user\.id\]/g) ?? []).length >= 4);
+  cierto("R02-01: el criterio de Stock es 'TODOS o asignados, activos o no' y la función de gestión de NEX-046 lo confirma; el fragmento de Productos usa el MISMO criterio (usuarios.alcance_depositos + usuario_deposito, sin exigir depositos.activo)", /alcance_depositos = 'TODOS'/.test(stockSrc) && /activos o no/.test(stockSrc) && !/d\.activo/.test(stockSrc.slice(stockSrc.indexOf("const PERMITIDOS"), stockSrc.indexOf("export async function leerStock"))) && /deposito_en_alcance/.test(m46) && /activos o no/.test(m46) && /u_alc\.alcance_depositos = 'TODOS'/.test(frag) && /usuario_deposito ud_alc/.test(frag) && !/activo/.test(frag));
+  igual("R02-01: el fragmento filtra por la empresa y el usuario de la sesión (parámetros), con la columna de depósito pedida", [/u_alc\.empresa_id = \$1::uuid AND u_alc\.id = \$2::uuid/.test(frag), /ud_alc\.deposito_id = s\.deposito_id/.test(frag), /ud_alc\.empresa_id = u_alc\.empresa_id/.test(frag)], [true, true, true]);
+  cierto("R02-01: lista, detalle (stock por depósito, total, costo y apertura) usan el alcance de consulta y ya no usan usuario_puede_deposito (que exige depósito activo) ni las vistas globales; el catálogo de depósitos para nuevas aperturas SÍ sigue exigiendo depósito activo y operable", (post.match(/\$\{alcanceConsultaDeposito\("(s\.deposito_id|c\.deposito_id|mi\.deposito_destino_id)", "\$1", "\$2"\)\}/g) ?? []).length === 3 && (detalle.match(/\$\{alcanceConsultaDeposito\("(s\.deposito_id|c\.deposito_id|mi\.deposito_destino_id|deposito_id)", "\$2", "\$3"\)\}/g) ?? []).length === 5 && !/usuario_puede_deposito/.test(detalle) && !/(FROM|JOIN) (v_stock_producto|v_producto_costo_promedio)/.test(post + detalle) && /FROM depositos WHERE empresa_id = \$1 AND activo = true AND usuario_puede_deposito\(\$1::uuid, \$2::uuid, id\)/.test(post));
+  cierto("R02-01: no se tocan las funciones de permisos de movimiento (usuario_puede_deposito sigue exigiendo activo en NEX-014) ni se agrega ninguna escritura de stock", /JOIN depositos d ON d\.empresa_id = u\.empresa_id AND d\.id = p_deposito AND d\.activo/.test(leer("documentacao/banco/nexit/v1/migraciones/NEX-014-movimientos-operativos.sql")) && !/INSERT INTO stock|UPDATE stock|inventario_registrar/.test(leer("lib/productos/alcance.ts")));
   cierto("A23: todo sigue filtrado por empresa_id de la sesión (multiempresa) y el bajo-mínimo se calcula con el disponible visible", /s\.empresa_id = p\.empresa_id/.test(post) && /c\.empresa_id = p\.empresa_id/.test(post) && /COALESCE\(sp\.disponible, 0\) < p\.stock_minimo/.test(post) && /s\.empresa_id = \$2 AND s\.producto_id = \$1/.test(detalle));
-  cierto("A23: las filas de configuración por depósito NO se filtran en el detalle (evita que una edición de usuario restringido borre configuraciones de depósitos que no ve)", /FROM producto_deposito_configuracion c/.test(detalle) && !/producto_deposito_configuracion[\s\S]{0,400}usuario_puede_deposito/.test(detalle));
+
+  const configSql = detalle.slice(detalle.indexOf("FROM producto_deposito_configuracion c") - 400, detalle.indexOf("FROM producto_deposito_configuracion c") + 700);
+
+  cierto("R02-02: el detalle devuelve solo las políticas por depósito del alcance del usuario (misma regla que el stock)", /JOIN depositos d ON d\.empresa_id = c\.empresa_id AND d\.id = c\.deposito_id/.test(configSql) && /\$\{alcanceConsultaDeposito\("c\.deposito_id", "\$2", "\$3"\)\}/.test(configSql) && /\[id, empresaId, session\.user\.id\]/.test(configSql));
+
+  // Conservación: la sincronización no borra por omisión y el PUT rechaza tocar políticas fuera de alcance
+  type Q = { sql: string; p: unknown[] };
+  const D_VISIBLE = "d1d1d1d1-d1d1-4d1d-8d1d-d1d1d1d1d1d1";
+  const D_OCULTO = "d2d2d2d2-d2d2-4d2d-8d2d-d2d2d2d2d2d2";
+  const CFG_OCULTA = "e2e2e2e2-e2e2-4e2e-8e2e-e2e2e2e2e2e2";
+  const CFG_VISIBLE = "e1e1e1e1-e1e1-4e1e-8e1e-e1e1e1e1e1e1";
+  const conexionAlcance = (visibles: string[]) => {
+    const consultas: Q[] = [];
+
+    return {
+      consultas,
+      c: {
+        async query(sql: string, p: unknown[] = []) {
+          consultas.push({ sql, p });
+          if (/FROM producto_deposito_configuracion/.test(sql)) {
+            const ids = p[2] as string[];
+
+            return { rows: ids.map((id) => ({ deposito_id: id === CFG_OCULTA ? D_OCULTO : D_VISIBLE })), rowCount: ids.length };
+          }
+          if (/FROM depositos d/.test(sql)) return { rows: (p[2] as string[]).filter((d) => visibles.includes(d)).map((id) => ({ id })), rowCount: 0 };
+
+          return { rows: [], rowCount: 0 };
+        },
+      } as never,
+    };
+  };
+  const cuerpoDepositos = (depositos: unknown[], eliminar: string[] = []) => normalizarProducto({ descripcion: "P", descripcionFactura: "P", unidadMedidaId: "a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1", vendible: false, depositos, eliminaciones: { depositos: eliminar } }, { modo: "editar" });
+  const resultado = async (visibles: string[], depositos: unknown[], eliminar: string[] = []) => {
+    const x = conexionAlcance(visibles);
+
+    try {
+      await validarAlcanceConfiguraciones(x.c, "11111111-1111-4111-8111-111111111111", "33333333-3333-4333-8333-333333333333", "22222222-2222-4222-8222-222222222222", cuerpoDepositos(depositos, eliminar));
+
+      return { ok: true, estado: 0, consultas: x.consultas.length };
+    } catch (e) {
+      return { ok: false, estado: (e as ErrorValidacion).estado, consultas: x.consultas.length };
+    }
+  };
+  const fila = (id: string | null, depositoId: string) => ({ id, depositoId, stockMinimo: "1" });
+
+  igual("R02-02 positivo: usuario restringido que edita solo una política visible (las ocultas ni se envían) se acepta", (await resultado([D_VISIBLE], [fila(CFG_VISIBLE, D_VISIBLE)])).ok, true);
+  igual("R02-02 negativo: modificar (por id) o eliminar una política de un depósito fuera de alcance se rechaza 403, aunque la solicitud sea fabricada", [(await resultado([D_VISIBLE], [fila(CFG_OCULTA, D_VISIBLE)])).estado, (await resultado([D_VISIBLE], [], [CFG_OCULTA])).estado], [403, 403]);
+  igual("R02-02 negativo: crear una política nueva para un depósito fuera de alcance se rechaza 403 (no se revela que ya exista)", (await resultado([D_VISIBLE], [fila(null, D_OCULTO)])).estado, 403);
+  igual("R02-02 positivo: administrador/alcance TODOS (todos los depósitos visibles) puede editar y eliminar cualquier política", [(await resultado([D_VISIBLE, D_OCULTO], [fila(CFG_OCULTA, D_OCULTO)])).ok, (await resultado([D_VISIBLE, D_OCULTO], [], [CFG_OCULTA])).ok], [true, true]);
+  igual("R02-02: sin políticas en la solicitud no se consulta nada (los registros no enviados no se tocan)", (await resultado([], [])).consultas, 0);
+
+  const sincro = leer("lib/productos/sincronizar.ts");
+
+  cierto("R02-02 conservación: la sincronización no borra por omisión (solo eliminaciones explícitas por id) y el PUT valida el alcance antes de sincronizar", /una fila ausente del envío no se toca/.test(sincro) && /únicamente se eliminan las filas que el usuario pidió eliminar explícitamente/.test(sincro) && put.indexOf("validarAlcanceConfiguraciones(") > put.indexOf("validarReferencias(") && put.indexOf("validarAlcanceConfiguraciones(") < put.indexOf("eliminarHijos("));
+  cierto("R02-02: la comprobación filtra por la empresa de la sesión y usa el mismo fragmento de alcance", /WHERE empresa_id = \$1 AND producto_id = \$2 AND id = ANY\(\$3::uuid\[\]\)/.test(leer("lib/productos/alcance.ts")) && /WHERE d\.empresa_id = \$1 AND d\.id = ANY\(\$3::uuid\[\]\) AND \$\{alcanceConsultaDeposito\("d\.id", "\$1", "\$2"\)\}/.test(leer("lib/productos/alcance.ts")));
+
+  // ── PRD-R02-03: historial de la unidad base consultable
+  const inventarioUi = leer("app/(private)/productos/_components/pestanas/inventario.tsx");
+
+  cierto("R02-03: el detalle lee el historial (anterior, nueva, fecha en hora de Paraguay y responsable) solo si la tabla de NEX-052 existe, filtrado por empresa y producto, del más reciente al más antiguo; sin migración devuelve lista vacía", /to_regclass\('public\.producto_unidad_base_historial'\) IS NOT NULL/.test(detalle) && /FROM producto_unidad_base_historial h/.test(detalle) && /WHERE h\.empresa_id = \$2 AND h\.producto_id = \$1 ORDER BY h\.cambiado_at DESC/.test(detalle) && /AT TIME ZONE 'America\/Asuncion'/.test(detalle.slice(detalle.indexOf("producto_unidad_base_historial h") - 400, detalle.indexOf("producto_unidad_base_historial h"))) && /: \[\];/.test(detalle) && /historialUnidadBase,/.test(detalle));
+  cierto("R02-03: la ficha (pestaña Inventario, solo al editar) lista el historial en modo lectura con los datos pedidos y sin controles de edición; types lo declara", /Historial de la unidad base \(solo lectura\)/.test(inventarioUi) && /Sin cambios de unidad base registrados/.test(inventarioUi) && /h\.unidadAnterior} → \$\{h\.unidadNueva\}/.test(inventarioUi.replace(/\\/g, "")) && !/ctx\.set\("historial/.test(inventarioUi) && /historialUnidadBase: \{ fecha: string; unidadAnterior: string; unidadNueva: string; responsable: string \}\[\]/.test(leer("types/productos.ts")));
+  cierto("R02-03: el historial sigue siendo inmutable y de escritura exclusiva de la función (el runtime solo lee); la ficha no ofrece editarlo", /BEFORE UPDATE OR DELETE ON public\.producto_unidad_base_historial/.test(m52) && /GRANT SELECT ON public\.producto_unidad_base_historial TO nexit_runtime/.test(m52) && !/INSERT INTO producto_unidad_base_historial|UPDATE producto_unidad_base_historial|DELETE FROM producto_unidad_base_historial/.test(put + post + detalle));
+
+  // ── PRD-R02-04: la reversión de NEX-052 respeta la dependencia con NEX-053
+  const rev = norm(rev52);
+  const posGuarda = rev.indexOf("nex_aplicar_grants_clientes()");
+
+  cierto("R02-04: la reversión de NEX-052 se niega mientras exista NEX-053 (objeto nex_aplicar_grants_clientes o fila NEX-053 en schema_migrations) y esa guarda se evalúa ANTES de cualquier cambio; el orden es 053 → 052", posGuarda > 0 && posGuarda < rev.indexOf("CREATE OR REPLACE FUNCTION") && /WHERE version = 'NEX-053'/.test(rev) && /RAISE EXCEPTION 'NEX-053 sigue aplicada/.test(rev) && /RAISE EXCEPTION 'schema_migrations registra NEX-053/.test(rev) && /053 -> 052/.test(rev) && rev.indexOf("RAISE EXCEPTION 'NEX-053 sigue aplicada") < rev.indexOf("DROP TABLE"));
+  cierto("R02-04: la guarda lee schema_migrations de forma dinámica (no falla si el libro no existe) y usa el mismo formato de versión del runner ('NEX-053'); la reversión de NEX-053 sigue disponible y no depende de 052", /EXECUTE \$q\$SELECT EXISTS \(SELECT 1 FROM public\.schema_migrations/.test(rev52) && /IF to_regclass\('public\.schema_migrations'\) IS NOT NULL/.test(rev52) && /version="\$\{base%%-\*\}-\$\(echo "\$base" \| cut -d- -f2\)"/.test(leer("documentacao/banco/nexit/v1/scripts/aplicar-migraciones.sh")) && /DROP FUNCTION public\.nex_aplicar_grants_clientes\(\)/.test(leer("documentacao/banco/nexit/v1/scripts/reversion-NEX-053.sql")) && !/NEX-052/.test(norm(leer("documentacao/banco/nexit/v1/scripts/reversion-NEX-053.sql"))));
+  cierto("R02-04: ni NEX-052 ni NEX-053 ni ninguna migración NEX-001…051 se modifican en esta rodada (solo el script de reversión y verificación)", !/nex_aplicar_grants_clientes/.test(m52.replace(/--[^\n]*/g, "")));
 
   // ── PRD-A04/A05: protección de borrador
   const form = leer("app/(private)/productos/_components/producto-form.tsx");

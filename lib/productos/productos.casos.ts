@@ -319,7 +319,7 @@ export async function verificarCasosProductos(): Promise<string[]> {
     id: PROD, codigo: "PRD-000007", codigoInventario: "", codigoSifen: "", codigoBarras: "", descripcion: "X", descripcionFactura: "X", tipoProducto: "MERCADERIA",
     categoriaId: "", marcaId: "", familiaId: "", lineaId: "", procedencia: "", unidadMedidaId: U1, impuestoId: "", afectacionIva: "", proporcionGravadaIva: "", controlaStock: true, modoControlStock: "CANTIDAD",
     permiteTerceros: false, requiereVencimiento: false, stockMinimo: "1.5000", stockMaximo: "", puntoReposicion: "", precioVentaReferencia: "9999999.9999", monedaPrecioReferencia: "PYG",
-    stockActual: "3.1234", stockPorDeposito: [], costoPromedio: "10.1234", aperturaRegistrada: null, partidaArancelaria: "", ncm: "", dncpGeneral: "", dncpEspecifico: "",
+    stockActual: "3.1234", stockPorDeposito: [], costoPromedio: "10.1234", historialUnidadBase: [], aperturaRegistrada: null, partidaArancelaria: "", ncm: "", dncpGeneral: "", dncpEspecifico: "",
     paisOrigenCodigo: "PRY", paisOrigenNombre: "Paraguay", informacionFactura: "", relacionMercaderia: "", porcentajeMerma: "", cantidadMerma: "", vendible: true, comprable: true,
     requiereInspeccionCalidad: false, vidaUtilDias: "", pesoNetoKg: "0.0001", pesoBrutoKg: "", largoCm: "", anchoCm: "", altoCm: "", volumenM3: "", imagenUrl: "", observacion: "", activo: true,
     codigos: [{ id: U1, tipo: "SKU_PROVEEDOR", codigo: "A1", descripcion: "", esPrincipal: true }], unidades: [], proveedores: [], depositos: [], alternativos: [], componentes: [],

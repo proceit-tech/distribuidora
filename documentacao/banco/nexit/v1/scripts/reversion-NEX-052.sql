@@ -3,8 +3,19 @@
 -- ABORTA si el historial de cambios de unidad base tiene filas (es evidencia de auditoría: expórtela antes). Restaura inventario_agregar_linea con el cuerpo de NEX-014
 -- (sin FOR SHARE) y un envoltorio de grants con la lista conocida (cada ayudante solo si existe). Después hay que borrar la fila 'NEX-052' de schema_migrations.
 -- ADVERTENCIA: sin NEX-052 la aplicación vuelve a rechazar cualquier cambio de unidad base de un producto (la protección contra carreras de stock ya no existe).
+-- ORDEN OBLIGATORIO: NEX-053 depende de NEX-052; si sigue aplicada, primero se revierte NEX-053 (reversion-NEX-053.sql) y recién después esta.
 DO $$
+DECLARE v_053 boolean := false;
 BEGIN
+  IF to_regprocedure('public.nex_aplicar_grants_clientes()') IS NOT NULL THEN
+    RAISE EXCEPTION 'NEX-053 sigue aplicada (existe nex_aplicar_grants_clientes): revierta primero NEX-053 con reversion-NEX-053.sql; el orden de reversión es 053 -> 052.';
+  END IF;
+  IF to_regclass('public.schema_migrations') IS NOT NULL THEN
+    EXECUTE $q$SELECT EXISTS (SELECT 1 FROM public.schema_migrations WHERE version = 'NEX-053')$q$ INTO v_053;
+    IF v_053 THEN
+      RAISE EXCEPTION 'schema_migrations registra NEX-053 como aplicada: revierta primero NEX-053 (y borre su fila) antes de revertir NEX-052.';
+    END IF;
+  END IF;
   IF to_regclass('public.producto_unidad_base_historial') IS NULL THEN
     RAISE EXCEPTION 'producto_unidad_base_historial no existe: NEX-052 no está aplicada.';
   END IF;
