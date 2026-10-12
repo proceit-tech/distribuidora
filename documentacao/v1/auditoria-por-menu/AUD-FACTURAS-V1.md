@@ -108,3 +108,13 @@ O responsável esclareceu que uma mercadoria possui unidade-base de estoque, mú
 - **Cenários regressivos obrigatórios:** FE congelada aguardando envio e mudança de base; reconsulta/reenvio após a mudança com hashes e campos fiscais iguais; estoque reservado/terceiro positivo bloqueia; evento físico pendente bloqueia; falta de snapshot imutável não pode ser tratada como exceção aprovada.
 
 **Estado:** DEC-PRD-U08 APROVADA, auditoria de Facturas continua ABERTA. NEX-047…050 não foram aplicadas/testadas nesta análise, nenhum código/SQL/VM alterado.
+
+## Regra histórica de apresentações DEC-PRD-U09 (12/10/2026) — aprovada
+
+O responsável aprovou que **apresentações já utilizadas** não tenham fator/unidade sobrescritos: mudança de Caja 12 UNI para Caja 10 UNI encerra a versão usada e cria uma nova versão vigente da MESMA apresentação; múltiplas apresentações distintas podem continuar ativas em paralelo. Ver `AUD-PRODUCTOS-V1.md`, seção XIX.
+
+**Contrato de Facturas:** um documento emitido por Caja v1=12 UNI continua com sua apresentação/fator de 12, unidade SIFEN, quantidade fiscal, preço e IVA históricos inclusive em reconsulta/reenvio, nota de crédito ou devolução. Novas operações passam à versão v2=10 UNI. A operação fiscal não deve deduzir fator de nome comercial nem reconstruir item do cadastro atual.
+
+**Lacuna transversal já confirmada:** `lib/facturacion/emision.ts:82-92,220-244` lê unidade-base, não versão da apresentação. `NEX-048` guarda o payload fiscal imutável, mas sem chave relacional por item para apresentação/versionamento no esquema atual. Adicionar critérios de teste para mudança de fator entre operações sem alterar documentos antigos.
+
+**Estado:** regra de negócio aprovada; nenhuma implementação, SQL ou teste operacional executado; auditoria Facturas continua aberta.
