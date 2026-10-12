@@ -1,7 +1,7 @@
 import type { Pool } from "pg";
 
 import { evaluarAptitudCliente } from "@/lib/clientes/aptitud-cliente";
-import { textoDec } from "@/lib/facturacion/calculo";
+import { parseDec, textoDec } from "@/lib/facturacion/calculo";
 import { construirPayloadFE, FORMAS_PAGO, INDICADORES_PRESENCIA, resumenCalculo, TIPOS_TRANSACCION, totalFactura, validarEntradaFE, type EntradaFE, type LineaFE, type ReceptorFE } from "@/lib/facturacion/payload-fe";
 import { ErrorFacturacion, ErrorValidacionFiscal } from "@/lib/facturacion/shared";
 
@@ -34,16 +34,26 @@ export async function catalogosFactura(db: Db, empresaId: string, usuarioId: str
   return { sucursales: r.rows as F[] };
 }
 
-/** Clientes facturables que coinciden con el texto (máx. 10), con su aptitud SIFEN. */
+/** Mínimo de caracteres para buscar: nunca se lista el catálogo completo sin una búsqueda explícita. */
+export const MIN_BUSQUEDA = 2;
+
+/** Clientes facturables que coinciden con el texto (máx. 10), con su ficha fiscal y aptitud SIFEN. Sin texto suficiente no devuelve nada. */
 export async function buscarClientesFactura(db: Db, empresaId: string, texto: string) {
   const q = texto.trim().slice(0, 80);
+
+  if (q.length < MIN_BUSQUEDA) return { clientes: [], minimo: MIN_BUSQUEDA };
+
   const r = await db.query(
-    `SELECT c.id, c.codigo, c.razon_social AS "razonSocial", c.numero_documento AS "numeroDocumento", c.dv, c.naturaleza_receptor AS naturaleza, c.tipo_operacion AS "tipoOperacion"
+    `SELECT c.id, c.codigo, c.razon_social AS "razonSocial", c.nombre_fantasia AS "nombreFantasia", c.numero_documento AS "numeroDocumento", c.dv, c.naturaleza_receptor AS naturaleza,
+            c.tipo_operacion AS "tipoOperacion", c.tipo_contribuyente_sifen AS "tipoContribuyente", c.email, c.email_facturacion AS "emailFacturacion", c.telefono, c.celular,
+            d.direccion, d.numero_casa AS "numeroCasa"
        FROM clientes c
+       LEFT JOIN LATERAL (SELECT x.direccion, x.numero_casa FROM direcciones_cliente x WHERE x.empresa_id = c.empresa_id AND x.cliente_id = c.id AND (x.es_fiscal OR x.tipo = 'FISCAL')
+                           ORDER BY x.es_fiscal DESC, x.creado_at, x.id LIMIT 1) d ON true
       WHERE c.empresa_id = $1 AND c.activo AND NOT c.bloqueado_ventas
-        AND ($2 = '' OR concat_ws(' ', c.codigo, c.razon_social, c.nombre_fantasia, c.numero_documento) ILIKE $3 ESCAPE '!')
+        AND concat_ws(' ', c.codigo, c.razon_social, c.nombre_fantasia, c.numero_documento) ILIKE $2 ESCAPE '!'
       ORDER BY c.razon_social LIMIT 10`,
-    [empresaId, q, `%${comodin(q)}%`],
+    [empresaId, `%${comodin(q)}%`],
   );
   const clientes = await Promise.all(
     r.rows.map(async (c) => {
@@ -57,26 +67,35 @@ export async function buscarClientesFactura(db: Db, empresaId: string, texto: st
 }
 
 const SELECT_PRODUCTOS = `
-  SELECT p.id, p.codigo, p.descripcion_factura AS descripcion, um.unidad_sifen_codigo AS "unidadSifen", p.afectacion_iva AS afectacion,
+  SELECT p.id, p.codigo, p.descripcion_factura AS descripcion, um.unidad_sifen_codigo AS "unidadSifen", us.representacion AS "unidadSimbolo", us.descripcion AS "unidadNombre", p.afectacion_iva AS afectacion,
          p.proporcion_gravada_iva::text AS proporcion, i.porcentaje::int AS tasa, pr.precio::text AS precio, pr.moneda AS "monedaPrecio",
          coalesce((SELECT pc.codigo FROM producto_codigos pc WHERE pc.empresa_id = p.empresa_id AND pc.producto_id = p.id AND pc.tipo = 'GTIN' AND pc.codigo ~ '^[0-9]{8,14}$'
                     ORDER BY pc.es_principal DESC, pc.creado_at LIMIT 1), CASE WHEN p.codigo_barras ~ '^[0-9]{8,14}$' THEN p.codigo_barras END) AS gtin
     FROM productos p
     JOIN unidades_medida um ON um.id = p.unidad_medida_id
+    LEFT JOIN unidades_medida_sifen us ON us.codigo = um.unidad_sifen_codigo
     LEFT JOIN impuestos i ON i.id = p.impuesto_id
     LEFT JOIN v_producto_precio_referencia pr ON pr.empresa_id = p.empresa_id AND pr.producto_id = p.id
    WHERE p.empresa_id = $1 AND p.activo AND p.tipo_producto IN ('MERCADERIA','SERVICIO')`;
 
+/** Productos facturables por código, descripción, código de barras, GTIN o código alterno. Sin texto suficiente no devuelve nada (no se lista el catálogo). */
 export async function buscarProductosFactura(db: Db, empresaId: string, texto: string) {
   const q = texto.trim().slice(0, 80);
-  const r = await db.query(`${SELECT_PRODUCTOS} AND ($2 = '' OR concat_ws(' ', p.codigo, p.descripcion, p.codigo_barras) ILIKE $3 ESCAPE '!') ORDER BY p.descripcion LIMIT 20`, [empresaId, q, `%${comodin(q)}%`]);
+
+  if (q.length < MIN_BUSQUEDA) return { productos: [], minimo: MIN_BUSQUEDA };
+
+  const r = await db.query(
+    `${SELECT_PRODUCTOS} AND (concat_ws(' ', p.codigo, p.descripcion, p.descripcion_factura, p.codigo_barras) ILIKE $2 ESCAPE '!'
+       OR EXISTS (SELECT 1 FROM producto_codigos pc WHERE pc.empresa_id = p.empresa_id AND pc.producto_id = p.id AND pc.codigo ILIKE $2 ESCAPE '!')) ORDER BY p.descripcion LIMIT 20`,
+    [empresaId, `%${comodin(q)}%`],
+  );
 
   return { productos: r.rows as F[] };
 }
 
 export type CuerpoFactura = {
   claveIdempotencia: string; sucursalId: string; puntoId: string; clienteId: string; tipoTransaccion: number; presencia: number;
-  pagos: Array<{ tipo: number }>; infoAdicional: string; lineas: Array<{ productoId: string; cantidad: string }>;
+  pagos: Array<{ tipo: number }>; infoAdicional: string; lineas: Array<{ productoId: string; cantidad: string; precio: string | null }>;
 };
 
 const entero = (v: unknown) => (typeof v === "number" && Number.isInteger(v) ? v : typeof v === "string" && /^\d{1,3}$/.test(v) ? Number(v) : NaN);
@@ -90,6 +109,8 @@ export function leerCuerpoFactura(c: Record<string, unknown>): CuerpoFactura | s
   if (![c.sucursalId, c.puntoId, c.clienteId].every((v) => typeof v === "string" && UUID.test(v))) return "Seleccione sucursal, punto de expedición y cliente.";
   if (lineas.length === 0 || lineas.length > 999) return "Agregue al menos un ítem (máximo 999).";
   if (!lineas.every((l) => l && typeof l === "object" && typeof (l as F).productoId === "string" && UUID.test(s((l as F).productoId)) && typeof (l as F).cantidad === "string")) return "Los ítems no son válidos.";
+  // Precio unitario IVA incluido propuesto por el operador (opcional). Solo su FORMA se valida aquí; el servidor lo contrasta con el precio de referencia y el permiso.
+  if (!lineas.every((l) => (l as F).precio === undefined || (l as F).precio === null || (l as F).precio === "" || (typeof (l as F).precio === "string" && /^\d{1,12}(\.\d{1,4})?$/.test(s((l as F).precio).trim())))) return "El precio unitario de un ítem no es válido.";
   if (pagos.length === 0 || pagos.length > 1 || !pagos.every((p) => p && typeof p === "object" && Number.isInteger(entero((p as F).tipo)))) return "Seleccione la forma de pago.";
 
   return {
@@ -101,7 +122,7 @@ export function leerCuerpoFactura(c: Record<string, unknown>): CuerpoFactura | s
     presencia: entero(c.presencia),
     pagos: pagos.map((p) => ({ tipo: entero((p as F).tipo) })),
     infoAdicional: typeof c.infoAdicional === "string" ? c.infoAdicional.trim() : "",
-    lineas: lineas.map((l) => ({ productoId: s((l as F).productoId), cantidad: s((l as F).cantidad).trim() })),
+    lineas: lineas.map((l) => ({ productoId: s((l as F).productoId), cantidad: s((l as F).cantidad).trim(), precio: s((l as F).precio).trim() === "" ? null : s((l as F).precio).trim() })),
   };
 }
 
@@ -180,6 +201,8 @@ export async function prepararFactura(db: Db, empresaId: string, usuarioId: stri
 
   const porId = new Map((productos.rows as F[]).map((p) => [s(p.id), p]));
   const lineas: LineaFE[] = [];
+  const precios: Array<{ referencia: string; modificado: boolean }> = [];
+  let puedePrecio: boolean | null = null;
 
   for (const l of cuerpo.lineas) {
     const p = porId.get(l.productoId);
@@ -187,9 +210,25 @@ export async function prepararFactura(db: Db, empresaId: string, usuarioId: stri
     if (!p) throw new ErrorFacturacion(422, "Uno de los productos no existe, está inactivo o no es facturable (solo mercadería y servicios).");
     if (p.precio === null || p.monedaPrecio !== "PYG") throw new ErrorFacturacion(422, `El producto ${s(p.codigo)} no tiene precio de venta de referencia en guaraníes.`);
 
+    // El precio de referencia del catálogo manda. Un precio distinto del navegador solo se acepta con el permiso FACTURACION_ELECTRONICA.PRECIO (consultado
+    // en el servidor); es siempre positivo, con a lo sumo 4 decimales (ya validado en la lectura), IVA incluido, y queda en el payload inmutable.
+    const referencia = parseDec(s(p.precio), 8);
+    const propuesto = l.precio === null ? null : parseDec(l.precio, 4);
+    const modificado = propuesto !== null && referencia !== null && propuesto !== referencia;
+
+    if (l.precio !== null && (propuesto === null || propuesto <= parseDec("0", 0)!)) throw new ErrorFacturacion(422, `El precio del producto ${s(p.codigo)} debe ser mayor que cero.`);
+    if (modificado) {
+      puedePrecio ??= await permisoPrecio(db, empresaId, usuarioId);
+
+      if (!puedePrecio) throw new ErrorFacturacion(403, `No tiene permiso para modificar el precio del producto ${s(p.codigo)}. Se factura con el precio de lista.`);
+    }
+    // Cantidad coherente con la unidad: la unidad SIFEN «Unidad» (77) no admite fracciones.
+    if (Number(p.unidadSifen) === 77 && !/^\d+$/.test(l.cantidad.replace(/\.0+$/, ""))) throw new ErrorFacturacion(422, `El producto ${s(p.codigo)} se vende por unidad: la cantidad debe ser un número entero.`);
+    precios.push({ referencia: s(p.precio), modificado });
+
     lineas.push({
       codigoInterno: s(p.codigo), gtin: p.gtin === null ? null : s(p.gtin), descripcion: s(p.descripcion), unidadSifen: p.unidadSifen === null ? null : Number(p.unidadSifen),
-      cantidad: l.cantidad, precio: s(p.precio), afectacion: p.afectacion === null ? null : Number(p.afectacion), tasa: p.tasa === null ? null : Number(p.tasa), proporcion: p.proporcion === null ? null : s(p.proporcion),
+      cantidad: l.cantidad, precio: modificado ? (l.precio as string) : s(p.precio), afectacion: p.afectacion === null ? null : Number(p.afectacion), tasa: p.tasa === null ? null : Number(p.tasa), proporcion: p.proporcion === null ? null : s(p.proporcion),
     });
   }
 
@@ -219,7 +258,7 @@ export async function prepararFactura(db: Db, empresaId: string, usuarioId: stri
     condicion: "Contado",
     formaPago: ETIQUETA_PAGO[cuerpo.pagos[0].tipo] ?? "",
     moneda: "PYG",
-    lineas: lineas.map((l, i) => ({ codigo: l.codigoInterno, descripcion: l.descripcion, cantidad: l.cantidad, precio: l.precio, afectacion: l.afectacion, tasa: l.tasa, total: calculo.items[i] })),
+    lineas: lineas.map((l, i) => ({ codigo: l.codigoInterno, descripcion: l.descripcion, unidad: s(porId.get(cuerpo.lineas[i].productoId)?.unidadSimbolo), cantidad: l.cantidad, precio: l.precio, precioLista: precios[i].referencia, precioModificado: precios[i].modificado, afectacion: l.afectacion, tasa: l.tasa, total: calculo.items[i] })),
     totales: { exento: calculo.exento, exonerado: calculo.exonerado, gravado5: calculo.gravado5, gravado10: calculo.gravado10, iva5: calculo.iva5, iva10: calculo.iva10, totalIva: calculo.totalIva, total: calculo.total },
   };
 
@@ -243,6 +282,17 @@ export async function crearFacturaElectronica(db: Db, empresaId: string, usuario
     // Carrera de la misma clave: la otra transacción ya la confirmó; releer devuelve su documento (o el conflicto si el contenido difiere).
     if ((error as { code?: string }).code === "23505") return (await llamar()).rows[0] as F;
     throw error;
+  }
+}
+
+/** ¿Puede el usuario facturar a un precio distinto del de lista? Permiso propio (NEX-051); sin él (o sin la migración) siempre falso. */
+export async function permisoPrecio(db: Db, empresaId: string, usuarioId: string): Promise<boolean> {
+  try {
+    const r = await db.query("SELECT usuario_tiene_permiso($1::uuid, $2::uuid, 'FACTURACION_ELECTRONICA', 'PRECIO') AS ok", [empresaId, usuarioId]);
+
+    return (r.rows[0] as F | undefined)?.ok === true;
+  } catch {
+    return false;
   }
 }
 

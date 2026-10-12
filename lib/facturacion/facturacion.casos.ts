@@ -9,7 +9,8 @@ import { contador } from "@/lib/clientes/contador-casos";
 import { ETIQUETA_SIFEN, estadoSifenDesdeGateway, numeroDocumento } from "@/lib/facturacion/estados";
 import { claveToken, consultarDocumentoGateway, enviarDocumentoGateway, interpretarRecepcion, interpretarConsulta, leerCredenciales, limpiarCacheTokens, sanearRespuesta, tamanoCacheTokens, tipoDocConsulta, type FetchLike, type ResultadoEnvio } from "@/lib/facturacion/gateway";
 import { calcularItem, calcularSubtotales, numeroDec, parseDec, textoDec } from "@/lib/facturacion/calculo";
-import { crearFacturaElectronica, leerCuerpoFactura, prepararFactura } from "@/lib/facturacion/emision";
+import { buscarClientesFactura, buscarProductosFactura, crearFacturaElectronica, leerCuerpoFactura, permisoPrecio, prepararFactura } from "@/lib/facturacion/emision";
+import { formatearFechaHoraPy, formatearFechaPy } from "@/lib/formato/listas";
 import { emitirFactura, enviarDocumento } from "@/lib/facturacion/envio";
 import { construirPayloadFE, FORMAS_PAGO, validarEntradaFE, totalFactura, type EntradaFE, type LineaFE, type ReceptorFE } from "@/lib/facturacion/payload-fe";
 import { construirConsultas, consultarEstado, ErrorFacturacion, ErrorValidacionFiscal, leerDocumentos, normalizarConsulta, respuestaErrorFacturacion } from "@/lib/facturacion/shared";
@@ -369,7 +370,7 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
 
   const parseado = leerCuerpoFactura({ ...cuerpo(), lineas: [{ productoId: PRODUCTO, cantidad: "1", precio: "1", afectacion: 3, tasa: 0 }], empresaId: "otra", total: "1" });
 
-  igual("cuerpo: precio, IVA, total y empresa enviados por el navegador se IGNORAN (solo cuentan ids y cantidades)", [JSON.stringify(parseado).includes("otra"), JSON.stringify(parseado).includes('"precio"'), JSON.stringify(parseado).includes('"afectacion"')], [false, false, false]);
+  igual("cuerpo: IVA, afectación, total y empresa enviados por el navegador se IGNORAN; el precio solo se conserva como propuesta (el servidor lo contrasta)", [JSON.stringify(parseado).includes("otra"), JSON.stringify(parseado).includes('"afectacion"'), JSON.stringify(parseado).includes('"total"'), (parseado as { lineas: Array<{ precio: string | null }> }).lineas[0].precio], [false, false, false, "1"]);
 
   const creada = await crearFacturaElectronica(dbCrear(), EMPRESA, USUARIO, leerCuerpoFactura(cuerpo()) as never);
   const crear = llamadasCrear.find((l) => /fe_documento_crear_fe/.test(l.sql))!;
@@ -409,7 +410,7 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
   const formulario = leer("app/(private)/facturas/nueva/page.tsx");
 
   cierto("API de emisión: exige CREAR y toma empresa/usuario de la sesión; la validación y creación (emision.ts) no conoce el gateway: solo envio.ts transmite", /prepararFacturacion\("CREAR"\)/.test(apiFacturas) && !/gateway/.test(emisionTs.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "")) && /enviarDocumentoGateway/.test(leer("lib/facturacion/envio.ts")) && /b\.empresaId, b\.usuarioId/.test(apiFacturas));
-  cierto("formulario: el navegador solo envía ids, cantidades y forma de pago (nunca precio, IVA ni total), con clave de idempotencia por operación, sin localStorage y con protección de cambios", /claveIdempotencia: clave/.test(formulario) && /crypto\.randomUUID\(\)/.test(formulario) && !/precio:|total:|afectacion:/.test(formulario.slice(formulario.indexOf("const cuerpoFactura"), formulario.indexOf("const cuerpoFactura") + 520)) && !/localStorage/.test(formulario) && /useProtegerCambios/.test(formulario));
+  cierto("formulario: el navegador envía ids, cantidades y forma de pago; el precio SOLO si difiere del de lista (nunca IVA, total ni afectación), con clave de idempotencia por operación, sin localStorage y con protección de cambios", /claveIdempotencia: clave/.test(formulario) && /crypto\.randomUUID\(\)/.test(formulario) && !/total:|afectacion:|iva:/.test(formulario.slice(formulario.indexOf("const cuerpoFactura"), formulario.indexOf("const cuerpoFactura") + 760)) && /precioModificado\(l\) \? \{ precio: l\.precio \}/.test(formulario) && !/localStorage/.test(formulario) && /useProtegerCambios/.test(formulario));
 
   // ══ F-02 completa: Grabar → resumen → Enviar → envío por el backend ═══════════════════════════════════════════════════════════════════════════════
   const DOC_ENVIO = { tipo: "FE", establecimiento: "001", puntoExpedicion: "002", numero: "0050000" };
@@ -490,7 +491,7 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
   const previa = await prepararFactura(espia, EMPRESA, USUARIO, leerCuerpoFactura(cuerpo()) as never);
 
   igual("previa: calcula y valida en el servidor sin tocar funciones de escritura ni reservar número", [consultasPrevia.some((q) => /fe_documento_crear_fe|fe_documento_iniciar_envio|fe_documento_registrar|INSERT|UPDATE/i.test(q)), previa.resumen.numero, previa.resumen.punto, previa.resumen.establecimiento], [false, "Se asigna al enviar la factura", "002", "001"]);
-  igual("previa: el resumen trae empresa, sucursal, cliente, líneas con precio/IVA/total y totales calculados por el servidor", [previa.resumen.empresa, previa.resumen.cliente.razonSocial, previa.resumen.lineas[0], previa.resumen.totales.total, previa.resumen.totales.iva10, previa.resumen.formaPago], ["EMPRESA SINTETICA", "EMPRESA SINTETICA SA", { codigo: "P-1", descripcion: "Producto de prueba", cantidad: "1", precio: "11000", afectacion: 1, tasa: 10, total: 11000 }, 11000, 1000, "Efectivo"]);
+  igual("previa: el resumen trae empresa, sucursal, cliente, líneas con precio/IVA/total y totales calculados por el servidor", [previa.resumen.empresa, previa.resumen.cliente.razonSocial, previa.resumen.lineas[0], previa.resumen.totales.total, previa.resumen.totales.iva10, previa.resumen.formaPago], ["EMPRESA SINTETICA", "EMPRESA SINTETICA SA", { codigo: "P-1", descripcion: "Producto de prueba", unidad: "", cantidad: "1", precio: "11000", precioLista: "11000", precioModificado: false, afectacion: 1, tasa: 10, total: 11000 }, 11000, 1000, "Efectivo"]);
   igual("previa: el JSON a enviar coincide con lo mostrado (mismo total e IVA)", [(previa.payload as unknown as { Subtotales: Array<Record<string, unknown>> }).Subtotales[0].dTotGralOpe, (previa.payload as unknown as { Subtotales: Array<Record<string, unknown>> }).Subtotales[0].dTotIVA], [previa.resumen.totales.total, previa.resumen.totales.iva10]);
   igual("previa: el punto de expedición ajeno/inactivo o la sucursal fuera de alcance se rechaza", await (async () => { try { await prepararFactura(dbCrear({ sinPunto: true }), EMPRESA, USUARIO, leerCuerpoFactura(cuerpo()) as never); return "sin error"; } catch (e) { return e instanceof ErrorFacturacion ? e.estado : -1; } })(), 422);
 
@@ -754,6 +755,75 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
   const cuerpoCf = { dEst: "001", dPunExp: "002", dNumDoc: "0050000", dSerieNum: null, tipoDoc: "FE" };
 
   igual("contrato: consulta_de de FE envía tipoDoc «FE» con dEst/dPunExp/dNumDoc/dSerieNum y renueva el token una vez ante «Token inválido»", [gCf.llamadas.filter((l) => l.url.endsWith("consulta_de")).map((l) => l.body), gCf.llamadas.filter((l) => l.url.endsWith("login")).length], [[cuerpoCf, cuerpoCf], 2]);
+
+  // ═ AUD-FE-UX-02: selectores explícitos, precio controlado, cantidades por unidad, fechas dd/MM/yyyy ═══════════════════════════════════════════════
+  const cuerpoPrecio = (precio: string | undefined, cantidad = "1") => cuerpo({ lineas: [{ productoId: PRODUCTO, cantidad, ...(precio === undefined ? {} : { precio }) }] });
+  const consultasUx: string[] = [];
+  const dbConPermiso = (permiso: boolean, productos?: Array<Record<string, unknown>>) => {
+    const base = dbCrear({ productos }) as unknown as { query: (s: string, p?: unknown[]) => Promise<unknown> };
+
+    return { async query(sql: string, parametros: unknown[] = []) { consultasUx.push(sql); return /usuario_tiene_permiso/.test(sql) ? { rows: [{ ok: permiso }], rowCount: 1 } : base.query(sql, parametros); } } as never;
+  };
+  const estadoError = async (p: Promise<unknown>) => { try { await p; return 0; } catch (e) { return (e as { estado?: number }).estado ?? -1; } };
+
+  consultasUx.length = 0;
+
+  const sinPermiso = await estadoError(prepararFactura(dbConPermiso(false), EMPRESA, USUARIO, leerCuerpoFactura(cuerpoPrecio("9000")) as never));
+
+  igual("precio: un precio distinto del de lista SIN permiso FACTURACION_ELECTRONICA.PRECIO se rechaza (403) y se consulta el permiso en el servidor", [sinPermiso, consultasUx.some((q) => /usuario_tiene_permiso/.test(q))], [403, true]);
+
+  const conPermiso = await prepararFactura(dbConPermiso(true), EMPRESA, USUARIO, leerCuerpoFactura(cuerpoPrecio("9000", "2")) as never);
+
+  igual("precio: con permiso, el precio propuesto reemplaza al de lista (IVA incluido, sin sumar IVA otra vez), el servidor recalcula y marca la línea modificada", [conPermiso.resumen.lineas[0].precio, conPermiso.resumen.lineas[0].precioLista, conPermiso.resumen.lineas[0].precioModificado, conPermiso.resumen.totales.total, conPermiso.resumen.totales.iva10, conPermiso.resumen.totales.gravado10], ["9000", "11000", true, 18000, 1636.36363636, 18000]);
+
+  consultasUx.length = 0;
+
+  const igualLista = await prepararFactura(dbConPermiso(false), EMPRESA, USUARIO, leerCuerpoFactura(cuerpoPrecio("11000")) as never);
+
+  igual("precio: un precio igual al de lista no requiere permiso ni se marca como modificado", [igualLista.resumen.lineas[0].precioModificado, consultasUx.some((q) => /usuario_tiene_permiso/.test(q))], [false, false]);
+  igual("precio: forma inválida (negativo, texto, más de 4 decimales) se rechaza al leer el cuerpo; cero se rechaza en el servidor (422) aun con permiso", [
+    typeof leerCuerpoFactura(cuerpoPrecio("-5")), typeof leerCuerpoFactura(cuerpoPrecio("abc")), typeof leerCuerpoFactura(cuerpoPrecio("1.23456")), typeof leerCuerpoFactura(cuerpoPrecio("1500.5")),
+    await estadoError(prepararFactura(dbConPermiso(true), EMPRESA, USUARIO, leerCuerpoFactura(cuerpoPrecio("0")) as never)),
+  ], ["string", "string", "string", "object", 422]);
+  igual("precio: sin la migración (la consulta del permiso falla) se factura solo a precio de lista", await permisoPrecio({ async query() { throw new Error("la función no existe"); } } as never, EMPRESA, USUARIO), false);
+  igual("cantidad: la unidad SIFEN «Unidad» (77) no admite fracciones (422); otra unidad sí admite hasta 4 decimales", [
+    await estadoError(prepararFactura(dbConPermiso(false), EMPRESA, USUARIO, leerCuerpoFactura(cuerpoPrecio(undefined, "1.5")) as never)),
+    await estadoError(prepararFactura(dbConPermiso(false), EMPRESA, USUARIO, leerCuerpoFactura(cuerpoPrecio(undefined, "2.0")) as never)),
+    await estadoError(prepararFactura(dbConPermiso(false, [{ ...filaProducto, unidadSifen: 86 }]), EMPRESA, USUARIO, leerCuerpoFactura(cuerpoPrecio(undefined, "1.5")) as never)),
+  ], [422, 0, 0]);
+
+  // Búsquedas explícitas: sin texto suficiente no se consulta la base ni se lista el catálogo
+  const spyBusq: string[] = [];
+  const dbBusq = { async query(sql: string, p: unknown[] = []) { spyBusq.push(sql + JSON.stringify(p)); return { rows: [], rowCount: 0 }; } } as never;
+  const vaciosC = await buscarClientesFactura(dbBusq, EMPRESA, " a ");
+  const vaciosP = await buscarProductosFactura(dbBusq, EMPRESA, "");
+
+  igual("búsqueda: con menos de 2 caracteres no se consulta la base y no se lista ningún cliente ni producto", [vaciosC.clientes, vaciosP.productos, spyBusq.length], [[], [], 0]);
+
+  await buscarProductosFactura(dbBusq, EMPRESA, "7891_%");
+  await buscarClientesFactura(dbBusq, EMPRESA, "ales");
+
+  igual("búsqueda: productos por código, descripción, código de barras, GTIN y códigos alternos (con comodines escapados); clientes por código, nombre y documento", [
+    /producto_codigos pc/.test(spyBusq[0]) && /p\.codigo_barras/.test(spyBusq[0]) && /p\.descripcion_factura/.test(spyBusq[0]), spyBusq[0].includes("%7891!_!%%"), /c\.numero_documento/.test(spyBusq[1]) && /c\.codigo, c\.razon_social/.test(spyBusq[1]) && !/\$2 = ''/.test(spyBusq[1]),
+  ], [true, true, true]);
+
+  // Fechas dd/MM/yyyy en hora de Paraguay, sin depender del idioma del navegador
+  igual("fechas: dd/MM/yyyy y dd/MM/yyyy HH:mm:ss en la hora de Paraguay (UTC-3), también al cruzar el día", [formatearFechaPy("2026-10-12T15:15:46Z"), formatearFechaHoraPy("2026-10-12T15:15:46Z"), formatearFechaHoraPy("2026-10-12T02:00:00Z"), formatearFechaPy("no es fecha")], ["12/10/2026", "12/10/2026 12:15:46", "11/10/2026 23:00:00", "no es fecha"]);
+
+  const docPageUx = leer("app/(private)/documentos/page.tsx");
+  const permisoSql = leer("documentacao/banco/nexit/v1/migraciones/NEX-051-facturacion-permiso-precio.sql");
+  const reversion51 = leer("documentacao/banco/nexit/v1/scripts/reversion-NEX-051.sql");
+
+  cierto("UX-01/02: al entrar no se lista ningún cliente ni producto: las consultas viven solo en las funciones de búsqueda de los selectores (botón «Buscar»), no en efectos", !/useEffect\([\s\S]{0,260}api\/facturas\/(clientes|productos)/.test(formulario) && (formulario.match(/api\/facturas\/clientes\?q=/g) ?? []).length === 1 && (formulario.match(/api\/facturas\/productos\?q=/g) ?? []).length === 1 && /async function buscar\(\)/.test(formulario) && /onSubmit=\{\(e\) => \{ e\.preventDefault\(\); void buscar\(\); \}\}/.test(formulario) && />Buscar cliente</.test(formulario) && />Añadir producto</.test(formulario));
+  cierto("UX-01: selector dedicado de cliente con ficha fiscal (razón social, RUC-DV, tipo de contribuyente, dirección y casa, teléfono, correo, aptitud), cambio de cliente y pendientes que remiten a Clientes sin editar el cadastro", /role="dialog"/.test(formulario) && /Ficha fiscal del cliente/.test(formulario) && /Tipo de contribuyente/.test(formulario) && /Dirección fiscal/.test(formulario) && /0 \(no cargado; se informa 0\)/.test(formulario) && /Cambiar cliente/.test(formulario) && /Regularizar en Clientes/.test(formulario) && /disabled=\{!c\.apto\}/.test(formulario));
+  cierto("UX-02: el selector de productos muestra el impedimento exacto (IVA, unidad SIFEN, precio) con enlace a Productos y bloquea «Añadir»", /No se puede facturar: /.test(formulario) && /Corregir en Productos/.test(formulario) && /disabled=\{pr\.length > 0\}/.test(formulario) && /sin unidad de medida SIFEN/.test(formulario) && /sin clasificación de IVA/.test(formulario));
+  cierto("UX-03: tabla de ítems con producto, afectación, % IVA, unidad, cantidad, precio unitario IVA incluido, subtotal y acciones; cantidad y precio editables, precio solo con permiso", ["Producto", "Afectación IVA", "% IVA", "Unidad", "Cantidad", "Precio unitario (IVA incl.)", "Subtotal"].every((t) => formulario.includes(`>${t}</th>`)) && /puedeEditarPrecio \? \(/.test(formulario) && /Restaurar/.test(formulario) && /aria-invalid=\{cantOk \? undefined : true\}/.test(formulario) && /aria-invalid=\{precOk \? undefined : true\}/.test(formulario));
+  cierto("UX-05: secciones Cabecera, Cliente, Detalle, Totales e Información adicional, total general destacado, barra de acciones con lo que falta, modales con Escape", ["Cabecera", "Cliente *", "Detalle de la factura *", "Totales (guaraníes)", "Información adicional"].every((t) => formulario.includes(t)) && /totalGeneral/.test(formulario) && /Falta: /.test(formulario) && /useEscape/.test(formulario) && /@media \(max-width: 760px\)/.test(leer("app/(private)/facturas/nueva/page.module.css")));
+  cierto("UX-04: fechas en dd/MM/yyyy — Documentos usa el campo de fecha local (sin type=\"date\") y el formateador fijo de Paraguay; el formulario muestra la fecha con el mismo formateador", !/type="date"/.test(docPageUx) && /CampoFecha/.test(docPageUx) && /formatearFechaHoraPy/.test(docPageUx) && !/new Date\([^)]*\)\.toLocale/.test(docPageUx) && /formatearFechaPy\(new Date\(\)\)/.test(formulario) && !/type="date"/.test(formulario));
+  cierto("UX-06: se conserva Grabar → resumen calculado en el servidor → Enviar factura → modal técnico; el resumen marca los precios modificados", /\/api\/facturas\/previa/.test(formulario) && /Resumen de la factura/.test(formulario) && /Precio modificado \(lista/.test(formulario) && /Envío al gateway \(diagnóstico de prueba\)/.test(formulario));
+  cierto("NEX-051: solo registra el permiso (sin asignarlo a perfiles), exige NEX-048, no se reaplica y su reversión aborta si hay perfiles con el permiso; NEX-047…050 no se tocan", /FACTURACION_ELECTRONICA\.PRECIO/.test(permisoSql) && /NEX-051 requiere NEX-048/.test(permisoSql) && /NEX-051 parece aplicada/.test(permisoSql) && !/perfil_permiso/.test(permisoSql.replace(/--.*$/gm, "")) && /hay perfiles con FACTURACION_ELECTRONICA\.PRECIO asignado/.test(reversion51) && /ABORTA/.test(reversion51));
+  cierto("catálogos: la API informa si el usuario puede editar precios (para mostrar el campo); el servidor decide siempre", /puedeEditarPrecio: await permisoPrecio\(/.test(leer("app/api/facturas/catalogos/route.ts")));
+
 
 
   return fallos;

@@ -2,6 +2,7 @@
 
 import { Fragment, useEffect, useState } from "react";
 
+import { CampoFecha } from "@/components/ui/campo-fecha";
 import ui from "@/components/ui/lista-padrao/lista.module.css";
 import { siguienteOrden, type Orden } from "@/components/ui/lista-padrao/orden";
 import { ThOrdenable } from "@/components/ui/lista-padrao/th-ordenable";
@@ -21,6 +22,7 @@ import {
   type GrupoIndicador,
   type TipoDocumento,
 } from "@/lib/facturacion/estados";
+import { formatearFechaHoraPy } from "@/lib/formato/listas";
 
 const PAGE_SIZE = 20;
 
@@ -53,7 +55,13 @@ const INDICADORES: Array<{ grupo: GrupoIndicador | ""; titulo: string; ayuda: st
 const claseSifen = (e: EstadoSifen) => (e === "APROBADO" ? ui.statusActive : e === "RECHAZADO" || e === "CANCELADO" || e === "INUTILIZADO" ? ui.statusDanger : e === "PENDIENTE" ? ui.statusWarning : ui.statusInfo);
 const claseLocal = (e: EstadoLocal) => (e === "ENVIADO" ? ui.statusActive : e === "ERROR_ENVIO" ? ui.statusDanger : ui.statusWarning);
 const claseEmail = (e: EstadoEmail) => (e === "ENVIADO" ? ui.statusActive : e === "ERROR" ? ui.statusDanger : e === "PENDIENTE" ? ui.statusWarning : ui.statusInfo);
-const fechaHora = (v: string) => new Date(v).toLocaleString("es-PY", { timeZone: "America/Asuncion" });
+const fechaHora = (v: string) => formatearFechaHoraPy(v);
+// Fechas que informa el gateway como texto (sin zona): se reordenan a dd/MM/yyyy sin convertir la hora.
+const fechaGateway = (v: string | null) => {
+  const m = v ? /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}:\d{2}(?::\d{2})?))?/.exec(v) : null;
+
+  return m ? `${m[3]}/${m[2]}/${m[1]}${m[4] ? ` ${m[4]}` : ""}` : (v ?? "—");
+};
 const importe = (d: Documento) => `${Number(d.total).toLocaleString("es-PY", { maximumFractionDigits: d.moneda === "PYG" ? 0 : 2 })} ${d.moneda}`;
 
 async function leerJson<T>(r: Response, porDefecto: string): Promise<T> {
@@ -263,12 +271,12 @@ export default function DocumentosPage() {
 
           <label className={ui.filterField}>
             <span>Emisión desde</span>
-            <input type="date" value={desde} max={hasta || undefined} onChange={(e) => setDesde(e.target.value)} />
+            <CampoFecha valor={desde} alCambiar={setDesde} />
           </label>
 
           <label className={ui.filterField}>
             <span>Emisión hasta</span>
-            <input type="date" value={hasta} min={desde || undefined} onChange={(e) => setHasta(e.target.value)} />
+            <CampoFecha valor={hasta} alCambiar={setHasta} />
           </label>
 
           <button type="button" className={ui.clearButton} onClick={limpiar}>
@@ -348,8 +356,8 @@ export default function DocumentosPage() {
                             <div><dt className={ui.muted}>Estado informado</dt><dd style={{ margin: 0 }}>{d.estadoGatewayTexto ?? "—"}</dd></div>
                             <div><dt className={ui.muted}>Último mensaje SIFEN</dt><dd style={{ margin: 0 }}>{d.codRespuesta ? `${d.codRespuesta} · ` : ""}{d.mensajeRespuesta ?? "—"}</dd></div>
                             <div><dt className={ui.muted}>Lote</dt><dd style={{ margin: 0 }}>{d.lote ?? "No informado"}</dd></div>
-                            <div><dt className={ui.muted}>Fecha de firma</dt><dd style={{ margin: 0 }}>{d.fechaFirma ?? "—"}</dd></div>
-                            <div><dt className={ui.muted}>Fecha de envío</dt><dd style={{ margin: 0 }}>{d.fechaEnvio ?? "—"}</dd></div>
+                            <div><dt className={ui.muted}>Fecha de firma</dt><dd style={{ margin: 0 }}>{fechaGateway(d.fechaFirma)}</dd></div>
+                            <div><dt className={ui.muted}>Fecha de envío</dt><dd style={{ margin: 0 }}>{fechaGateway(d.fechaEnvio)}</dd></div>
                             <div><dt className={ui.muted}>Última consulta</dt><dd style={{ margin: 0 }}>{d.ultimaConsultaAt ? `${fechaHora(d.ultimaConsultaAt)} · ${ETIQUETA_RESULTADO_INTENTO[d.ultimaConsultaResultado ?? ""] ?? d.ultimaConsultaResultado}` : "Nunca consultado"}</dd></div>
                           </dl>
 
