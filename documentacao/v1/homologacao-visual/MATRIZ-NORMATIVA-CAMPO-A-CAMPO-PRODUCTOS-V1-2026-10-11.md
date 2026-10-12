@@ -379,7 +379,7 @@ ChatGPT deve completar o confronto normativo com PDF do grupo de itens e confirm
 ### 11.4. Estado e decisões pendentes
 
 - A tabela oficial de unidades **foi identificada e transcrita**; falta verificar seeds concretos/linhas reais e definir fonte/versionamento dos códigos e representação fiscal. Não alegar que `unidades_medida` já contém toda a tabela.
-- **DEC-PRD-13 (nova):** aprovar catálogo canônico das 35 unidades oficiais da Tabela 5 com `codigo_sifen`, representação e vínculo com `unidades_medida` (sem perder IDs/referências já existentes).
+- **DEC-PRD-13 (nova):** aprovar catálogo canônico das 34 unidades oficiais da Tabela 5 com `codigo_sifen`, representação e vínculo com `unidades_medida` (sem perder IDs/referências já existentes).
 - **DEC-PRD-14 (nova):** aprovar classificação fiscal padrão por produto com afetação IVA 1–4, taxa e proporção condicionais, independente do cálculo do DTE na operação; definir permissões e política de mudança.
 - Nenhuma dessas novas regras foi implementada nem aprovada implicitamente por esta auditoria. Claude só implementa após autorização específica do responsável; migraciones devem ser incrementais e não aplicadas na VM pelas IAs.
 
@@ -487,3 +487,22 @@ Cada bloco mostra um indicador discreto de «aptidão fiscal» (pendências), se
 **Riscos:** (1) vínculos de unidade incorretos já semeados na VM (LT/MT) alimentariam XML errado — corrigir *antes* de qualquer emissão; (2) `EXE` mal classificado muda o tratamento fiscal; (3) restringir GTIN a {8,12,13,14} pode rejeitar a edição de produtos antigos com 9–11 dígitos; (4) unidades globais compartilhadas por todas as empresas: qualquer correção afeta todos os tenants (deve ser feita por migration/seed controlado, nunca por tela de empresa).
 
 **Estado:** confronto documentado; propostas sem implementação; nenhuma verificação em PostgreSQL ou navegador; manifesto das fontes DNIT permanece o do repositório.
+
+## 13. Auditoria independente ChatGPT da proposta §12 — commit 119467d7 (2026-10-12)
+
+**Parecer:** APROVADA A DOCUMENTAÇÃO COMO BASE DE DECISÃO, **COM CORREÇÕES E CONDIÇÕES ANTES DE IMPLEMENTAR**. Nenhuma migration NEX-039/040 foi criada/aplicada, nenhuma execução na VM; a aprovação técnica não significa autorização comercial DEC-PRD-13/14. Revisão do commit, NEX-003, seed S-001, API catálogos e texto original PDF MT v150 Tabela 5 (p. 211–212), Tabela 6. Demais fórmulas da NT013 foram reportadas e documentadas por Claude, não reexecutadas aqui como teste fiscal operacional.
+
+| ID | Constatação verificada | Consequência obrigatória |
+|---|---|---|
+| PRD-SIF-AUD-01 | A Tabela 5 tem **34 entradas**, não 35. Códigos 87/m e 108/MT ambos correspondem a Metros; 88/ML ≠ 660/ml. | A DEC-PRD-13 no §11.4 foi corrigida para 34; catálogo keyed **pelo código numérico**, nunca descrição/nome sem case. |
+| PRD-SIF-AUD-02 | Seed S-001 contém UN→77, KG→83, **LT→87 (incorreto: 89)** e **MT→86 (incorreto: 87 ou 108)**; CJ/DOC possuem valores não numéricos e sem correspondência Tabela 5. | Separar correção de **dados atuais** de seed de instalação nova. Escolha entre códigos 87 e 108 para MT fica expressamente pendente. |
+| PRD-SIF-AUD-03 | S-001 executa `ON CONFLICT (codigo) DO NOTHING`. | **Corrigir somente o seed NÃO altera unidades existentes** no banco. Exigir SELECT somente leitura do estado real, plano idempotente de reconciliação, registro de antes/depois e escopo restrito aos mapeamentos fiscais; preservar IDs, FKs e histórico. |
+| PRD-SIF-AUD-04 | O modelo `unidades_medida` NEX-003 **já possui** `codigo_sifen` e `descripcion_sifen`, ambos livres e legados. | NEX-039 deve deixar claro se faz referência por nova FK ou substitui/normaliza essas colunas. Se mantiver legado, evitar **duas fontes fiscais ativas divergentes**; definir compatibilidade, leitura e política de sincronização/descontinuação. |
+| PRD-SIF-AUD-05 | `impuestos` tem IVA10, IVA5 e EXE; `EXE` representa exenta no seed mas não prova equivalência segura com afetación 2/3 de todos os usos. | Não inferir E731 pela alíquota 0. Propor seleção fiscal explícita e defaults aplicados só a novos produtos ou mediante consentimento; preservar cadastros e documentos anteriores. |
+| PRD-SIF-AUD-06 | A classificação IVA pelo imposto global e a proporção por produto são possíveis, mas tributação depende da natureza da **operação**. | Definir override fiscal contextual (tipo DTE, regime/isenção, exportação, destinação), coerência da combinação no backend, valor persistido na transação e tratamento de catálogos sem mapeamento; sem emissão V1. |
+| PRD-SIF-AUD-07 | NEX-007 permite GTIN numérico de 8–14 dígitos; E706/E707 exigem 8/12/13/14. | Regra nova no servidor e formulário para codigos GTIN; auditá-la contra dados pré-existentes antes de eventual CHECK DB; não rejeitar SKU/CODIGO_ALTERNO como GTIN. Dígito verificador GS1 requer decisão separada. |
+| PRD-SIF-AUD-08 | Não houve acesso ao PostgreSQL da VM nem testes do plano de migrations/DDL. | Não definir `NEX-039`/`NEX-040` como liberadas; revisar grants, FK, seeds seguros, ordem de migração e rollback **não destrutivo** depois de aprovar decisões. |
+
+**Nota de UX:** o aviso proposto `Sin equivalencia SIFEN: no podrá emitirse` deve ser substituído por **`Sin equivalencia SIFEN configurada`** enquanto emissão está fora da V1; não prometer certeza sobre emissão futura. A migração de códigos fiscais não pode modificar a unidade comercial, as conversões ou o inventário existente. Critério de aceitação obrigatório: toda unidade de produto/presentação resolve código E709 válido, representação E710, ou é explicitamente marcada como sem mapeamento; sem falsas homologações fiscais.
+
+**Estado final:** documentação §12 revisada estaticamente e útil como especificação proposta; **pendente a aprovação DEC-PRD-13/14 pelo responsável**, resultado da consulta SQL de leitura do catálogo da VM, confirmação das normas atuais/XSD quando houver integração e testes das futuras migrations em ambiente autorizado. Não homologado para deploy.
