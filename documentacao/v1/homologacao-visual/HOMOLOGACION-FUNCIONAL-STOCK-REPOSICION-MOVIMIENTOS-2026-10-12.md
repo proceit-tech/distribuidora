@@ -22,7 +22,7 @@ Revisão de `lib/movimientos/formulario.ts`, `lib/movimientos/shared.ts`, `app/a
 
 Nenhuma divergência de regra de estoque foi encontrada.
 
-## 2. Matriz de origens permitidas por tipo — PROPOSTA (não implementada como política)
+## 2. Matriz de origens permitidas por tipo — APROVADA e implementada em UI e API (ver IMPLEMENTACAO-CORRECOES-AUDITORIA-71AE486-MOVIMIENTOS-2026-10-12.md)
 
 Hoje: SQL e API aceitam qualquer origem em qualquer tipo; a UI (commit `1fc2bedc`) apenas **orienta** com a lista abaixo. Proposta para aprovação do responsável, antes de converter em regra de API/SQL:
 
@@ -37,7 +37,7 @@ Hoje: SQL e API aceitam qualquer origem em qualquer tipo; a UI (commit `1fc2bedc
 
 Decisões pendentes: (a) se a restrição passa a ser validada em `prepararMovimiento` (API) e/ou no SQL (CHECK/função, nova migration); (b) se DEVOLUCION deve distinguir cliente/fornecedor por tipo; (c) migração de movimentos históricos com combinações fora da matriz (nenhum seria alterado: a regra valeria só para novos).
 
-## 3. Obrigatoriedade de motivo por tipo — PROPOSTA
+## 3. Obrigatoriedade de motivo por tipo — APROVADA e implementada em UI e API (a tabela abaixo é a proposta original; a regra vigente está em lib/movimientos/reglas.ts)
 
 Hoje: o SQL só exige motivo na **anulação** (≥ 5 caracteres); ao registrar é opcional (≤ 300 na API).
 

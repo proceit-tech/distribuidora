@@ -11,7 +11,9 @@ import {
 } from "@/lib/movimientos/formulario";
 import { claveEfectoFisico, decidirEfecto, planEstorno, validarLinea, type ContextoDocumento } from "@/lib/movimientos/documentos";
 import { calcularPlanReposicion, calcularReposicion, compararUrgencia, transferenciasPlanificadas, type EntradaReposicion } from "@/lib/reposicion/calculo";
-import { resolverLote } from "@/lib/movimientos/shared";
+import { construirConsultas, leerHistorial, leerLineasMovimiento, movimientoExiste, normalizarConsulta } from "@/lib/movimientos/historial";
+import { mensajeMotivoObligatorio, motivoObligatorio, ORIGENES_POR_TIPO } from "@/lib/movimientos/reglas";
+import { prepararMovimiento, resolverLote } from "@/lib/movimientos/shared";
 import { navegacionInternaAbandona } from "@/lib/ui/proteger-cambios";
 import { leerEntradasReposicion } from "@/lib/reposicion/datos";
 import { leerStock } from "@/lib/stock/shared";
@@ -379,7 +381,7 @@ export async function verificarCasosStockReposicionMovimientos(): Promise<string
   igual("entrada vacía: errores por campo en orden visual (producto, cantidad, costo, destino)", Object.keys(vacios), ["productoId", "cantidad", "costoUnitario", "depositoDestinoId"]);
   igual("sin errores con una entrada completa", val({ productoId: P1, cantidad: 5, costoUnitario: 120, depositoDestinoId: D1 }), {});
   igual("costo 0 es válido; negativo no", [Object.keys(val({ productoId: P1, cantidad: 1, costoUnitario: 0, depositoDestinoId: D1 })).length, val({ productoId: P1, cantidad: 1, costoUnitario: -1, depositoDestinoId: D1 }).costoUnitario !== undefined], [0, true]);
-  igual("la salida no exige costo", Object.keys(val({ tipo: "SALIDA", productoId: P1, cantidad: 1, depositoOrigenId: D1 })), []);
+  igual("la salida no exige costo", Object.keys(val({ tipo: "SALIDA", origen: "VENTA", productoId: P1, cantidad: 1, depositoOrigenId: D1 })), []);
   igual("cantidad: cero, negativa o con más de 4 decimales", [val({ cantidad: 0 }).cantidad, val({ cantidad: -2 }).cantidad, val({ cantidad: 1.00001 }).cantidad, val({ cantidad: 1.0001 }).cantidad], ["La cantidad debe ser mayor que cero.", "La cantidad debe ser mayor que cero.", "La cantidad admite hasta 4 decimales.", undefined]);
   igual("fecha futura rechazada (como la función SQL); hoy y pasadas válidas", [val({ fecha: "2026-10-13" }).fecha, val({ fecha: HOY }).fecha, val({ fecha: "2026-01-01" }).fecha], ["La fecha del movimiento no puede ser futura.", undefined, undefined]);
   igual("fecha vacía (inválida) se señala en el campo", val({ fecha: "" }).fecha, "Ingrese una fecha válida.");
@@ -496,6 +498,74 @@ export async function verificarCasosStockReposicionMovimientos(): Promise<string
   cierto("la clave de idempotencia se serializa por empresa+clave con bloqueo asesor transaccional y compara huella de la solicitud (NEX-014)", /pg_advisory_xact_lock\(hashtextextended\('movimientos\.idem:'/.test(leer("documentacao/banco/nexit/v1/migraciones/NEX-014-movimientos-operativos.sql")) && /IDEMPOTENCIA_CONFLICTO/.test(leer("documentacao/banco/nexit/v1/migraciones/NEX-014-movimientos-operativos.sql")));
   cierto("existe el script de prueba de idempotencia con PostgreSQL real, protegido contra ejecución accidental", /CONFIRMO_PRUEBA_EN_AMBIENTE_REAL/.test(leer("documentacao/banco/nexit/v1/scripts/prueba-idempotencia-movimientos.js")) && /Promise\.all/.test(leer("documentacao/banco/nexit/v1/scripts/prueba-idempotencia-movimientos.js")));
   cierto("la lista de Movimientos ya no usa setState en efectos para paginar y conserva ?ok= y ?buscar=", !/setPagina\(1\);\s*\}, \[busqueda/.test(leer("app/(private)/movimientos/page.tsx")) && /consulta\.get\("ok"\)/.test(leer("app/(private)/movimientos/page.tsx")) && /consulta\.get\("buscar"\)/.test(leer("app/(private)/movimientos/page.tsx")));
+
+  // ── Correcciones de la auditoría 71ae486: alcance del historial, paginación en el servidor, aviso confirmado, matriz de origen y motivo
+  // Reglas aprobadas (formulario y API usan el mismo módulo)
+  igual("matriz de orígenes aprobada (primero = predeterminado)", ORDEN_TIPOS.map((t) => ORIGENES_POR_TIPO[t]), [["COMPRA", "DEVOLUCION", "INVENTARIO", "MANUAL"], ["VENTA", "DEVOLUCION", "INVENTARIO", "MANUAL"], ["TRANSFERENCIA"], ["AJUSTE", "INVENTARIO", "MANUAL"], ["AJUSTE", "INVENTARIO", "MANUAL"], ["AJUSTE", "MANUAL"], ["AJUSTE", "MANUAL"], ["AJUSTE", "MANUAL"], ["AJUSTE", "MANUAL"]]);
+  igual("el formulario toma los orígenes de la misma matriz que la API", ORDEN_TIPOS.every((t) => TIPOS_INFO[t].origenes === ORIGENES_POR_TIPO[t]), true);
+  igual("motivo obligatorio: ajustes, cuarentena, reservas y entradas/salidas manuales o de inventario", [
+    motivoObligatorio("AJUSTE_POSITIVO", "AJUSTE"), motivoObligatorio("AJUSTE_NEGATIVO", "MANUAL"), motivoObligatorio("CUARENTENA", "AJUSTE"), motivoObligatorio("LIBERACION_CUARENTENA", "MANUAL"),
+    motivoObligatorio("RESERVA", "AJUSTE"), motivoObligatorio("LIBERACION_RESERVA", "MANUAL"), motivoObligatorio("ENTRADA", "MANUAL"), motivoObligatorio("ENTRADA", "INVENTARIO"), motivoObligatorio("SALIDA", "MANUAL"), motivoObligatorio("SALIDA", "INVENTARIO"),
+  ], Array(10).fill(true));
+  igual("motivo opcional: compra, devolución, venta y transferencia", [motivoObligatorio("ENTRADA", "COMPRA"), motivoObligatorio("ENTRADA", "DEVOLUCION"), motivoObligatorio("SALIDA", "VENTA"), motivoObligatorio("SALIDA", "DEVOLUCION"), motivoObligatorio("TRANSFERENCIA", "TRANSFERENCIA")], Array(5).fill(false));
+  const cuerpoOk = { tipo: "ENTRADA", origen: "COMPRA", fecha: "2026-10-12", productoId: "11111111-1111-4111-8111-111111111111", cantidad: 2, costoUnitario: 10, depositoDestinoId: "22222222-2222-4222-8222-222222222222" };
+  const prepara = (c: Record<string, unknown>) => { try { return prepararMovimiento({ ...cuerpoOk, ...c }).origen; } catch (e) { return (e as Error).message; } };
+
+  igual("API: origen coherente con el tipo se acepta", prepara({}), "COMPRA");
+  igual("API: origen fuera de la matriz se rechaza (ENTRADA con VENTA, TRANSFERENCIA con MANUAL, RESERVA con COMPRA)", [prepara({ origen: "VENTA" }), prepara({ tipo: "TRANSFERENCIA", origen: "MANUAL", depositoOrigenId: "33333333-3333-4333-8333-333333333333" }), prepara({ tipo: "RESERVA", origen: "COMPRA", depositoOrigenId: "33333333-3333-4333-8333-333333333333" })], ["El origen VENTA no es válido para el tipo ENTRADA.", "El origen MANUAL no es válido para el tipo TRANSFERENCIA.", "El origen COMPRA no es válido para el tipo RESERVA."]);
+  igual("API: sin origen se usa el predeterminado del tipo", prepara({ origen: "", tipo: "AJUSTE_POSITIVO", motivo: "Conteo físico" }), "AJUSTE");
+  igual("API: origen inexistente sigue rechazado", prepara({ origen: "XYZ" }), "Origen de movimiento no válido.");
+  igual("API: motivo obligatorio (menos de 5 caracteres) se rechaza; con motivo se acepta", [prepara({ tipo: "AJUSTE_POSITIVO", origen: "AJUSTE" }), prepara({ tipo: "AJUSTE_POSITIVO", origen: "AJUSTE", motivo: "abc" }), prepara({ tipo: "AJUSTE_POSITIVO", origen: "AJUSTE", motivo: "Conteo físico" })], [mensajeMotivoObligatorio, mensajeMotivoObligatorio, "AJUSTE"]);
+  igual("API: motivo opcional en una compra", prepara({ motivo: "" }), "COMPRA");
+  igual("formulario: origen fuera de matriz y motivo faltante se señalan por campo", [val({ origen: "VENTA" }).origen, val({ tipo: "AJUSTE_POSITIVO", origen: "AJUSTE", motivo: "" }).motivo, val({ tipo: "AJUSTE_POSITIVO", origen: "AJUSTE", motivo: "Conteo físico" }).motivo], ["Ese origen no es válido para el tipo de movimiento.", mensajeMotivoObligatorio, undefined]);
+  cierto("Nuevo movimiento: etiqueta el motivo como obligatorio solo cuando corresponde", /motivoObligatorio\(form\.tipo, form\.origen\)/.test(nuevoPage) && /Obligatorio para este tipo y origen/.test(nuevoPage));
+  cierto("la política de origen y motivo no toca SQL ni migrations (las funciones siguen aceptando todo)", !/CREATE OR REPLACE FUNCTION/.test(leer("lib/movimientos/reglas.ts")) && /no se modificó ninguna función ni migration/.test(leer("lib/movimientos/reglas.ts")));
+
+  // Historial: alcance, paginación y filtros en el servidor
+  const consultas = construirConsultas(EMPRESA, USUARIO, { q: "Leche_100%", tipo: "TRANSFERENCIA", orden: "cantidad", dir: "desc", pagina: 3, tamano: 20 }, 3);
+
+  cierto("historial: la consulta filtra por empresa de la sesión y por el alcance de depósitos (origen y destino) del usuario", /m\.empresa_id = \$1/.test(consultas.lista.sql) && /alcance_depositos = 'TODOS'/.test(consultas.lista.sql) && /usuario_deposito/.test(consultas.lista.sql) && /m\.deposito_origen_id IN/.test(consultas.lista.sql) && /m\.deposito_destino_id IN/.test(consultas.lista.sql) && consultas.lista.params[0] === EMPRESA && consultas.lista.params[1] === USUARIO);
+  cierto("historial: el conteo usa exactamente el mismo alcance y filtros que la lista", /alcance_depositos = 'TODOS'/.test(consultas.conteo.sql) && /m\.deposito_origen_id IN/.test(consultas.conteo.sql) && JSON.stringify(consultas.conteo.params) === JSON.stringify(consultas.lista.params.slice(0, consultas.conteo.params.length)));
+  cierto("historial: el movimiento sin ningún depósito no se muestra y el alcance incluye depósitos inactivos", /deposito_origen_id IS NOT NULL OR m\.deposito_destino_id IS NOT NULL/.test(consultas.lista.sql) && !/d\.activo/.test(consultas.lista.sql));
+  igual("historial: tipo, búsqueda (comodines escapados), orden y desplazamiento llegan como parámetros", [consultas.lista.params.slice(2), /m\.tipo_movimiento = \$3/.test(consultas.lista.sql), /ILIKE \$4 ESCAPE '!'/.test(consultas.lista.sql), /ORDER BY l\.cantidad DESC, m\.numero_movimiento DESC, l\.creado_at, l\.id LIMIT \$5 OFFSET \$6/.test(consultas.lista.sql)], [["TRANSFERENCIA", "%Leche!_100!%%", 20, 40], true, true, true]);
+  igual("historial: valores no permitidos (tipo, orden, tamaño, página) se normalizan y nunca llegan al SQL como texto", ((n) => [n.tipo, n.orden, n.dir, n.pagina, n.tamano])(normalizarConsulta({ tipo: "X'; DROP TABLE", orden: "m.id; DELETE", dir: "sideways", pagina: -4, tamano: 100000 })), ["", null, "asc", 1, 100]);
+  cierto("historial: sin orden explícito se mantiene el orden por número descendente", /ORDER BY m\.numero_movimiento DESC, m\.numero_movimiento DESC/.test(construirConsultas(EMPRESA, USUARIO, {}, 1).lista.sql));
+
+  const regH: Array<{ sql: string; parametros: unknown[] }> = [];
+  const dbH = (lineas: number, movs: number) => ({
+    async query(sql: string, parametros: unknown[] = []) {
+      regH.push({ sql, parametros });
+      if (/count\(\*\)::int AS lineas/.test(sql)) return { rows: [{ lineas, movimientos: movs }], rowCount: 1 };
+      if (/AS entradas/.test(sql)) return { rows: [{ movimientos: 50, entradas: 20, salidas: 25, transferencias: 5 }], rowCount: 1 };
+      if (/LIMIT \$\d+ OFFSET/.test(sql)) return { rows: [{ id: "m1", lineaId: "l1", numero: "MOV-000001" }], rowCount: 1 };
+
+      return { rows: [], rowCount: 0 };
+    },
+  } as never);
+  const h1 = await leerHistorial(dbH(45, 40), EMPRESA, USUARIO, { pagina: 2, tamano: 20 });
+
+  igual("historial: paginación real (45 líneas / 40 movimientos, 20 por página → 3 páginas, página 2, desplazamiento 20)", [h1.total, h1.totalMovimientos, h1.totalPaginas, h1.pagina, regH.find((q) => /LIMIT/.test(q.sql))?.parametros.slice(-2)], [45, 40, 3, 2, [20, 20]]);
+  igual("historial: el resumen cuenta movimientos dentro del alcance, sin filtros", h1.resumen, { movimientos: 50, entradas: 20, salidas: 25, transferencias: 5 });
+  cierto("historial: el resumen aplica el mismo alcance de depósitos", regH.filter((q) => /AS entradas/.test(q.sql)).every((q) => /m\.deposito_origen_id IN/.test(q.sql)));
+  igual("historial: página fuera de rango se ajusta a la última", (await leerHistorial(dbH(45, 40), EMPRESA, USUARIO, { pagina: 99, tamano: 20 })).pagina, 3);
+  igual("historial: sin resultados no consulta la lista y devuelve 1 página", ((r) => [r.movimientos, r.totalPaginas, r.total])(await leerHistorial(dbH(0, 0), EMPRESA, USUARIO, {})), [[], 1, 0]);
+  const antes = regH.length;
+
+  igual("confirmación: un número con formato inválido no consulta la base y no confirma", [await movimientoExiste(dbH(0, 0), EMPRESA, USUARIO, "MOV-1; DROP"), regH.length], [false, antes]);
+  igual("confirmación: consulta con empresa y usuario de la sesión y alcance", await (async () => { const d = { async query(sql: string, p: unknown[]) { regH.push({ sql, parametros: p }); return { rows: [{}], rowCount: 1 }; } } as never; const ok = await movimientoExiste(d, EMPRESA, USUARIO, "MOV-000123"); const q = regH[regH.length - 1]; return [ok, q.parametros, /alcance_depositos = 'TODOS'/.test(q.sql)]; })(), [true, [EMPRESA, USUARIO, "MOV-000123"], true]);
+  igual("detalle: las líneas del movimiento se leen con el mismo alcance (404 si algún depósito está fuera)", await (async () => { await leerLineasMovimiento(dbH(0, 0), EMPRESA, USUARIO, "mov-id"); const q = regH[regH.length - 1]; return [q.parametros, /m\.deposito_origen_id IN/.test(q.sql) && /m\.deposito_destino_id IN/.test(q.sql)]; })(), [[EMPRESA, USUARIO, "mov-id"], true]);
+
+  // Rutas y pantalla (contenido real)
+  const movRuta = leer("app/api/movimientos/route.ts");
+  const detRuta = leer("app/api/movimientos/[id]/route.ts");
+  const movLista = leer("app/(private)/movimientos/page.tsx");
+
+  cierto("API del historial: sin límite fijo de 2000 filas; usa leerHistorial con paginación del servidor y la sesión", !/LIMIT 2000/.test(movRuta) && /leerHistorial\(db, empresaId, session\.user\.id/.test(movRuta));
+  cierto("API del detalle: usa el alcance de depósitos (leerLineasMovimiento con el usuario de la sesión)", /leerLineasMovimiento\(db, empresaId, session\.user\.id, id\)/.test(detRuta) && !/\$\{SELECT_FILAS\} WHERE m\.empresa_id = \$1 AND m\.id = \$2/.test(detRuta));
+  cierto("Movimientos (lista): búsqueda, tipo, orden y página se envían al servidor (sin filtrar un arreglo local)", /cargarMovimientos\(\{/.test(movLista) && /orden: orden\?\.campo/.test(movLista) && !/\.filter\(/.test(movLista) && !/ordenarLista/.test(movLista));
+  cierto("Movimientos (lista): el aviso de registro solo aparece si el servidor lo confirma; el error de carga es un aviso aparte", /datos\.confirmado === true/.test(movLista) && /No se pudo confirmar el registro/.test(movLista) && /className=\{ui\.alertError\} role="alert" style=\{\{ margin: "0 0 8px" \}\}/.test(movLista) && !/setFlash\(`Movimiento \$\{ok\}/.test(movLista));
+  cierto("Movimientos (lista): distingue líneas de movimientos en los contadores", /línea\(s\)/.test(movLista) && /totalMovimientos/.test(movLista));
+  cierto("Reposición: comunica sugerida, planificada y preparada y no registra nada", /Sugerida<\/strong> es el cálculo del plan/.test(repPage) && /Planificado \{cant\(escrita\)\}: transferir/.test(repPage) && !/method:\s*"(POST|PUT|DELETE)"/.test(repPage));
 
   return fallos;
 }

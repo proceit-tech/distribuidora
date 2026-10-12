@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { denyIfNoPermission } from "@/lib/auth/permissions";
-import { SELECT_FILAS } from "@/lib/movimientos/shared";
+import { leerLineasMovimiento } from "@/lib/movimientos/historial";
 
 type Contexto = { params: Promise<{ id: string }> };
 
@@ -28,7 +28,8 @@ export async function GET(_request: Request, contexto: Contexto) {
   const empresaId = session.user.empresaId;
 
   try {
-    const lineas = await db.query(`${SELECT_FILAS} WHERE m.empresa_id = $1 AND m.id = $2 ORDER BY l.creado_at, l.id`, [empresaId, id]);
+    // Fuera del alcance de depósitos del usuario el movimiento «no existe» (404), igual que uno de otra empresa.
+    const lineas = await leerLineasMovimiento(db, empresaId, session.user.id, id);
     if (!lineas.rowCount) return noEncontrado();
     const vinculos = await db.query(
       `SELECT coalesce((SELECT a.numero_movimiento FROM movimientos_inventario a WHERE a.empresa_id = m.empresa_id AND a.anula_a_id = m.id), '') AS "anuladoPor",

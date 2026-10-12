@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import type { PoolClient } from "pg";
 
 import { denyIfNoPermission } from "@/lib/auth/permissions";
-import { prepararMovimiento, registrarMovimiento, respuestaError, SELECT_FILAS } from "@/lib/movimientos/shared";
+import { leerHistorial, movimientoExiste } from "@/lib/movimientos/historial";
+import { prepararMovimiento, registrarMovimiento, respuestaError } from "@/lib/movimientos/shared";
 
 // Solo DEMO explícito usa respuestas simuladas. La falta de DATABASE_URL NUNCA activa datos ficticios.
 const DEMO_MODE = process.env.DEMO_MODE === "true";
@@ -90,11 +91,21 @@ export async function GET(request: Request) {
       });
     }
 
-    const r = await db.query(
-      `${SELECT_FILAS} WHERE m.empresa_id = $1 ORDER BY m.numero_movimiento DESC, l.creado_at DESC LIMIT 2000`,
-      [empresaId],
-    );
-    return NextResponse.json({ movimientos: r.rows });
+    // Historial paginado en el servidor y limitado a los depósitos que el usuario puede ver (ver lib/movimientos/historial.ts).
+    const p = new URL(request.url).searchParams;
+    const datos = await leerHistorial(db, empresaId, session.user.id, {
+      q: p.get("q") ?? undefined,
+      tipo: p.get("tipo") ?? undefined,
+      orden: p.get("orden") ?? undefined,
+      dir: p.get("dir") ?? undefined,
+      pagina: Number(p.get("pagina") ?? 1),
+      tamano: Number(p.get("tamano") ?? 20),
+    });
+    // Confirmación del aviso de registro (?ok=<número>): solo es verdadera si ese movimiento existe y el usuario puede verlo.
+    const numero = p.get("confirmar");
+    const confirmado = numero ? await movimientoExiste(db, empresaId, session.user.id, numero.trim()) : undefined;
+
+    return NextResponse.json({ ...datos, ...(numero ? { confirmado } : {}) });
   } catch (error) {
     console.error("Error al cargar movimientos:", error);
     return NextResponse.json({ error: "No fue posible cargar los movimientos." }, { status: 500 });

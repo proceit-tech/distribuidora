@@ -1,20 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import {
-  useEffect,
-  useMemo,
-  useState,
-} from "react";
+import { useEffect, useState } from "react";
 
-import { cargarMovimientos } from "@/lib/movimientos/cliente-api";
+import { cargarMovimientos, type RespuestaHistorial } from "@/lib/movimientos/cliente-api";
+import type { MovimientoStockTipo } from "@/types/movimientos-stock";
 
-import {
-  MovimientoStockFila,
-  MovimientoStockTipo,
-} from "@/types/movimientos-stock";
-
-import { compararTexto, ordenarLista, siguienteOrden, type Orden } from "@/components/ui/lista-padrao/orden";
+import { siguienteOrden, type Orden } from "@/components/ui/lista-padrao/orden";
 import { ThOrdenable } from "@/components/ui/lista-padrao/th-ordenable";
 import ui from "@/components/ui/lista-padrao/lista.module.css";
 import { formatearCantidad, formatearFechaIso } from "@/lib/formato/listas";
@@ -23,225 +15,136 @@ const PAGE_SIZE = 20;
 
 type CampoOrden = "movimiento" | "producto" | "deposito" | "cantidad";
 
-type TipoFiltro =
-  | "TODOS"
-  | MovimientoStockTipo;
+type TipoFiltro = "TODOS" | MovimientoStockTipo;
 
-function tipoLabel(
-  tipo: MovimientoStockTipo,
-) {
-  switch (tipo) {
-    case "ENTRADA":
-      return "Entrada";
-    case "SALIDA":
-      return "Salida";
-    case "TRANSFERENCIA":
-      return "Transferencia";
-    case "AJUSTE_POSITIVO":
-      return "Ajuste +";
-    case "AJUSTE_NEGATIVO":
-      return "Ajuste -";
-    case "RESERVA":
-      return "Reserva";
-    case "LIBERACION_RESERVA":
-      return "Liberar reserva";
-    case "CUARENTENA":
-      return "Cuarentena";
-    case "LIBERACION_CUARENTENA":
-      return "Liberar cuarentena";
-  }
-}
+const ETIQUETA_TIPO: Record<MovimientoStockTipo, string> = {
+  ENTRADA: "Entrada",
+  SALIDA: "Salida",
+  TRANSFERENCIA: "Transferencia",
+  AJUSTE_POSITIVO: "Ajuste +",
+  AJUSTE_NEGATIVO: "Ajuste -",
+  RESERVA: "Reserva",
+  LIBERACION_RESERVA: "Liberar reserva",
+  CUARENTENA: "Cuarentena",
+  LIBERACION_CUARENTENA: "Liberar cuarentena",
+};
 
 export default function MovimientosPage() {
-  const [movimientos, setMovimientos] =
-    useState<MovimientoStockFila[]>([]);
-
-  const [busqueda, setBusqueda] =
-    useState("");
-
-  const [tipo, setTipo] =
-    useState<TipoFiltro>("TODOS");
-
-  const [flash, setFlash] =
-    useState("");
-
-  const [cargando, setCargando] =
-    useState(true);
-
-  const [errorCarga, setErrorCarga] =
-    useState("");
+  const [busqueda, setBusqueda] = useState("");
+  const [busquedaAplicada, setBusquedaAplicada] = useState("");
+  const [tipo, setTipo] = useState<TipoFiltro>("TODOS");
   const [orden, setOrden] = useState<Orden<CampoOrden>>(null);
   const [paginacion, setPaginacion] = useState({ clave: "", pagina: 1 });
+  const [listo, setListo] = useState(false);
+  const [recarga, setRecarga] = useState(0);
+  const [resultado, setResultado] = useState<{ clave: string; datos: RespuestaHistorial | null; error: string } | null>(null);
+  // Aviso de registro: solo se muestra si el servidor confirma que el movimiento existe y es visible para el usuario.
+  const [flash, setFlash] = useState("");
+  const [avisoSinConfirmar, setAvisoSinConfirmar] = useState("");
+  const [pendienteConfirmar, setPendienteConfirmar] = useState("");
 
+  // Parámetros de la dirección: ?ok=<número> (tras registrar) y ?buscar=<código de producto>. Se leen una sola vez, fuera del cuerpo del efecto.
   useEffect(() => {
     let activo = true;
 
-    cargarMovimientos()
-      .then((datos) => {
-        if (activo) setMovimientos(datos);
-      })
-      .catch((e: unknown) => {
-        if (activo)
-          setErrorCarga(
-            e instanceof Error
-              ? e.message
-              : "No fue posible cargar los movimientos.",
-          );
-      })
-      .finally(() => {
-        if (!activo) return;
+    Promise.resolve().then(() => {
+      if (!activo) return;
 
-        setCargando(false);
+      const consulta = new URLSearchParams(window.location.search);
+      const ok = consulta.get("ok");
+      const buscar = consulta.get("buscar");
 
-        // Aviso tras registrar (?ok=<número>) y búsqueda inicial desde otras pantallas (?buscar=<código de producto>).
-        const consulta = new URLSearchParams(
-          window.location.search,
-        );
-        const ok = consulta.get("ok");
-        const buscar = consulta.get("buscar");
-
-        if (buscar) setBusqueda(buscar.slice(0, 80));
-
-        if (ok) {
-          setFlash(`Movimiento ${ok} registrado correctamente.`);
-        }
-
-        if (ok || buscar) {
-          window.history.replaceState(
-            null,
-            "",
-            window.location.pathname,
-          );
-        }
-      });
+      if (buscar) {
+        setBusqueda(buscar.slice(0, 80));
+        setBusquedaAplicada(buscar.slice(0, 80));
+      }
+      if (ok) setPendienteConfirmar(ok.slice(0, 30));
+      if (ok || buscar) window.history.replaceState(null, "", window.location.pathname);
+      setListo(true);
+    });
 
     return () => {
       activo = false;
     };
   }, []);
 
+  // La búsqueda se aplica tras una pausa para no consultar en cada tecla.
   useEffect(() => {
-    if (!flash) {
-      return;
-    }
+    const t = window.setTimeout(() => setBusquedaAplicada(busqueda.trim()), 300);
 
-    const timer =
-      window.setTimeout(
-        () => setFlash(""),
-        4200,
-      );
+    return () => window.clearTimeout(t);
+  }, [busqueda]);
 
-    return () =>
-      window.clearTimeout(timer);
+  const claveFiltros = JSON.stringify([busquedaAplicada, tipo, orden]);
+  const pagina = paginacion.clave === claveFiltros ? paginacion.pagina : 1;
+  const claveConsulta = JSON.stringify([claveFiltros, pagina, recarga]);
+
+  useEffect(() => {
+    if (!listo) return;
+
+    let activo = true;
+
+    cargarMovimientos({
+      q: busquedaAplicada,
+      tipo: tipo === "TODOS" ? undefined : tipo,
+      orden: orden?.campo,
+      dir: orden?.dir,
+      pagina,
+      tamano: PAGE_SIZE,
+      confirmar: pendienteConfirmar || undefined,
+    })
+      .then((datos) => {
+        if (!activo) return;
+
+        setResultado({ clave: claveConsulta, datos, error: "" });
+        if (pendienteConfirmar) {
+          if (datos.confirmado === true) setFlash(`Movimiento ${pendienteConfirmar} registrado correctamente.`);
+          else setAvisoSinConfirmar(`No se pudo confirmar el registro del movimiento ${pendienteConfirmar}. Verifique en el historial antes de repetir la operación.`);
+          setPendienteConfirmar("");
+        }
+      })
+      .catch((e: unknown) => {
+        // Un error de carga nunca se presenta como éxito: el aviso pendiente queda sin confirmar.
+        if (!activo) return;
+
+        setResultado({ clave: claveConsulta, datos: null, error: e instanceof Error ? e.message : "No fue posible cargar los movimientos." });
+        if (pendienteConfirmar) {
+          setAvisoSinConfirmar(`No se pudo confirmar el registro del movimiento ${pendienteConfirmar} porque el historial no se pudo cargar. Verifique antes de repetir la operación.`);
+          setPendienteConfirmar("");
+        }
+      });
+
+    return () => {
+      activo = false;
+    };
+    // pendienteConfirmar solo se consume en la primera carga; limpiarlo no debe provocar otra consulta.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [listo, claveConsulta]);
+
+  useEffect(() => {
+    if (!flash) return;
+
+    const timer = window.setTimeout(() => setFlash(""), 4200);
+
+    return () => window.clearTimeout(timer);
   }, [flash]);
 
-  const resumen = useMemo(() => {
-    return movimientos.reduce(
-      (acc, mov) => {
-        acc.total += 1;
-
-        if (mov.tipo === "ENTRADA") {
-          acc.entradas += 1;
-        }
-
-        if (mov.tipo === "SALIDA") {
-          acc.salidas += 1;
-        }
-
-        if (
-          mov.tipo ===
-          "TRANSFERENCIA"
-        ) {
-          acc.transferencias += 1;
-        }
-
-        return acc;
-      },
-      {
-        total: 0,
-        entradas: 0,
-        salidas: 0,
-        transferencias: 0,
-      },
-    );
-  }, [movimientos]);
-
-  const filtrados = useMemo(() => {
-    const term =
-      busqueda
-        .trim()
-        .toLocaleLowerCase("es");
-
-    return movimientos.filter(
-      (mov) => {
-        if (
-          tipo !== "TODOS" &&
-          mov.tipo !== tipo
-        ) {
-          return false;
-        }
-
-        if (!term) {
-          return true;
-        }
-
-        return [
-          mov.numero,
-          mov.productoCodigo,
-          mov.productoDescripcion,
-          mov.documentoReferencia,
-          mov.motivo,
-          mov.depositoOrigenNombre,
-          mov.depositoDestinoNombre,
-        ]
-          .join(" ")
-          .toLocaleLowerCase("es")
-          .includes(term);
-      },
-    );
-  }, [
-    movimientos,
-    busqueda,
-    tipo,
-  ]);
-
-  // Ordenación sobre el conjunto filtrado COMPLETO (toda la lista está cargada), antes de paginar.
-  const ordenados = useMemo(
-    () =>
-      ordenarLista(filtrados, orden, (campo, a, b) => {
-        switch (campo) {
-          case "movimiento":
-            return compararTexto(a.creadoEn || `${a.fecha} ${a.hora}`, b.creadoEn || `${b.fecha} ${b.hora}`);
-          case "producto":
-            return compararTexto(a.productoDescripcion, b.productoDescripcion);
-          case "deposito":
-            return compararTexto(
-              a.depositoDestinoNombre || a.depositoOrigenNombre,
-              b.depositoDestinoNombre || b.depositoOrigenNombre,
-            );
-          case "cantidad":
-            return a.cantidad - b.cantidad;
-        }
-      }),
-    [filtrados, orden],
-  );
+  const cargando = !listo || resultado?.clave !== claveConsulta;
+  const datos = resultado?.datos ?? null;
+  const errorCarga = resultado?.error ?? "";
+  const filas = datos?.movimientos ?? [];
+  const resumen = datos?.resumen ?? { movimientos: 0, entradas: 0, salidas: 0, transferencias: 0 };
+  const totalLineas = datos?.total ?? 0;
+  const totalPaginas = datos?.totalPaginas ?? 1;
+  const paginaMostrada = datos?.pagina ?? pagina;
+  const hayFiltros = busquedaAplicada !== "" || tipo !== "TODOS";
 
   function cambiarOrden(campo: CampoOrden) {
     setOrden((actual) => siguienteOrden(actual, campo));
   }
 
-  const totalPaginas = Math.max(1, Math.ceil(filtrados.length / PAGE_SIZE));
+  const setPagina = (valor: number) => setPaginacion({ clave: claveFiltros, pagina: Math.max(1, valor) });
 
-  // La página se reinicia al cambiar búsqueda, tipo u orden y nunca excede el total (derivada, sin efectos).
-  const claveFiltros = JSON.stringify([busqueda, tipo, orden]);
-  const pagina = paginacion.clave === claveFiltros ? Math.min(paginacion.pagina, totalPaginas) : 1;
-  const setPagina = (valor: number | ((actual: number) => number)) =>
-    setPaginacion({ clave: claveFiltros, pagina: typeof valor === "function" ? valor(pagina) : valor });
-
-  const paginaActual = useMemo(
-    () => ordenados.slice((pagina - 1) * PAGE_SIZE, pagina * PAGE_SIZE),
-    [ordenados, pagina],
-  );
   return (
     <section className={ui.page}>
       {flash ? (
@@ -254,6 +157,15 @@ export default function MovimientosPage() {
 
           <button type="button" aria-label="Cerrar mensaje" onClick={() => setFlash("")}>
             ×
+          </button>
+        </div>
+      ) : null}
+
+      {avisoSinConfirmar ? (
+        <div className={ui.alertError} role="alert">
+          {avisoSinConfirmar}{" "}
+          <button type="button" className={ui.clearButton} onClick={() => setAvisoSinConfirmar("")}>
+            Cerrar
           </button>
         </div>
       ) : null}
@@ -277,9 +189,9 @@ export default function MovimientosPage() {
 
       <section className={ui.summaryGrid} aria-label="Resumen de movimientos">
         <article className={[ui.summaryCard, ui.summaryTeal].join(" ")}>
-          <span>Total</span>
-          <strong>{resumen.total}</strong>
-          <small>Movimientos registrados</small>
+          <span>Movimientos</span>
+          <strong>{resumen.movimientos}</strong>
+          <small>En sus depósitos autorizados</small>
         </article>
 
         <article className={[ui.summaryCard, ui.summaryBlue].join(" ")}>
@@ -309,7 +221,7 @@ export default function MovimientosPage() {
             <input
               value={busqueda}
               onChange={(event) => setBusqueda(event.target.value)}
-              placeholder="Buscar por movimiento, producto, documento, depósito..."
+              placeholder="Buscar por movimiento, producto, documento, depósito, lote..."
               aria-label="Buscar movimientos"
             />
           </label>
@@ -335,6 +247,7 @@ export default function MovimientosPage() {
             className={ui.clearButton}
             onClick={() => {
               setBusqueda("");
+              setBusquedaAplicada("");
               setTipo("TODOS");
             }}
           >
@@ -342,9 +255,22 @@ export default function MovimientosPage() {
           </button>
 
           <span className={ui.resultCount} aria-live="polite">
-            {filtrados.length} de {resumen.total}
+            {datos
+              ? hayFiltros
+                ? `${totalLineas} línea(s) · ${datos.totalMovimientos} de ${resumen.movimientos} movimiento(s)`
+                : `${totalLineas} línea(s) · ${datos.totalMovimientos} movimiento(s)`
+              : ""}
           </span>
         </div>
+
+        {errorCarga && !cargando ? (
+          <div className={ui.alertError} role="alert" style={{ margin: "0 0 8px" }}>
+            {errorCarga}{" "}
+            <button type="button" className={ui.clearButton} onClick={() => setRecarga((n) => n + 1)}>
+              Reintentar
+            </button>
+          </div>
+        ) : null}
 
         <div className={ui.tableScroll}>
           <table className={ui.table}>
@@ -359,7 +285,7 @@ export default function MovimientosPage() {
             </thead>
 
             <tbody>
-              {paginaActual.map((mov) => (
+              {filas.map((mov) => (
                 <tr key={mov.lineaId} className={ui.row}>
                   <td>
                     <div className={ui.cell}>
@@ -367,7 +293,7 @@ export default function MovimientosPage() {
                         <Link href={`/movimientos/${mov.id}`} className={ui.clientName}>
                           {mov.numero}
                         </Link>{" "}
-                        <span className={ui.statusInfo}>{tipoLabel(mov.tipo)}</span>
+                        <span className={ui.statusInfo}>{ETIQUETA_TIPO[mov.tipo]}</span>
                         {mov.estado === "ANULADO" ? (
                           <>
                             {" "}
@@ -410,18 +336,12 @@ export default function MovimientosPage() {
                       <strong className={ui.mono}>
                         {formatearCantidad(mov.cantidad)} {mov.unidadMedidaNombre}
                       </strong>
-                      <span>
-                        {mov.lote ? `Lote ${mov.lote}` : mov.propiedad === "TERCERO" ? "Stock tercero" : "Stock propio"}
-                      </span>
+                      <span>{mov.lote ? `Lote ${mov.lote}` : mov.propiedad === "TERCERO" ? "Stock tercero" : "Stock propio"}</span>
                     </div>
                   </td>
 
                   <td className={ui.actionsCell}>
-                    <Link
-                      href={`/movimientos/${mov.id}`}
-                      className={ui.detailButton}
-                      aria-label={`Ver detalle del movimiento ${mov.numero}`}
-                    >
+                    <Link href={`/movimientos/${mov.id}`} className={ui.detailButton} aria-label={`Ver detalle del movimiento ${mov.numero}`}>
                       Ver detalle
                       <span aria-hidden="true">›</span>
                     </Link>
@@ -429,26 +349,21 @@ export default function MovimientosPage() {
                 </tr>
               ))}
 
-              {paginaActual.length === 0 ? (
+              {filas.length === 0 ? (
                 <tr>
                   <td colSpan={5} className={ui.emptyCell}>
-                    <div className={ui.empty} role={errorCarga ? "alert" : undefined}>
+                    <div className={ui.empty}>
                       <strong>
                         {cargando
                           ? "Cargando movimientos..."
-                          : errorCarga ||
-                            (movimientos.length === 0
-                              ? "Aún no hay movimientos registrados"
-                              : "No se encontraron movimientos")}
+                          : errorCarga
+                            ? "No se pudo cargar el historial"
+                            : !hayFiltros
+                              ? "Aún no hay movimientos en sus depósitos"
+                              : "No se encontraron movimientos"}
                       </strong>
-                      {!cargando && !errorCarga ? (
-                        <span>
-                          {movimientos.length === 0
-                            ? "Registre el primer movimiento para comenzar a operar."
-                            : "Modifique los filtros o registre un nuevo movimiento."}
-                        </span>
-                      ) : null}
-                      {!cargando && !errorCarga && movimientos.length === 0 ? (
+                      {!cargando && !errorCarga ? <span>{!hayFiltros ? "Registre el primer movimiento para comenzar a operar." : "Modifique los filtros o registre un nuevo movimiento."}</span> : null}
+                      {!cargando && !errorCarga && !hayFiltros ? (
                         <Link href="/movimientos/nuevo" className={ui.emptyAction}>
                           + Nuevo movimiento
                         </Link>
@@ -463,30 +378,19 @@ export default function MovimientosPage() {
 
         <footer className={ui.pagination}>
           <span>
-            Mostrando {filtrados.length === 0 ? 0 : (pagina - 1) * PAGE_SIZE + 1}–
-            {Math.min(pagina * PAGE_SIZE, filtrados.length)} de {filtrados.length}
+            Mostrando {totalLineas === 0 ? 0 : (paginaMostrada - 1) * PAGE_SIZE + 1}–{Math.min(paginaMostrada * PAGE_SIZE, totalLineas)} de {totalLineas} línea(s)
           </span>
 
           <div>
-            <button
-              type="button"
-              aria-label="Página anterior"
-              disabled={pagina === 1}
-              onClick={() => setPagina((actual) => actual - 1)}
-            >
+            <button type="button" aria-label="Página anterior" disabled={paginaMostrada <= 1 || cargando} onClick={() => setPagina(paginaMostrada - 1)}>
               ‹
             </button>
 
             <strong>
-              {pagina} / {totalPaginas}
+              {paginaMostrada} / {totalPaginas}
             </strong>
 
-            <button
-              type="button"
-              aria-label="Página siguiente"
-              disabled={pagina === totalPaginas}
-              onClick={() => setPagina((actual) => actual + 1)}
-            >
+            <button type="button" aria-label="Página siguiente" disabled={paginaMostrada >= totalPaginas || cargando} onClick={() => setPagina(paginaMostrada + 1)}>
               ›
             </button>
           </div>

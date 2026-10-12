@@ -4,6 +4,7 @@
  * Nada de lo que se precarga por la dirección (producto, tipo, depósitos, cantidad) se acepta sin validarlo contra el catálogo que la API
  * entrega para la sesión (depósitos autorizados, productos activos con control de stock).
  */
+import { motivoObligatorio, mensajeMotivoObligatorio, MOTIVO_MINIMO, ORIGENES_POR_TIPO } from "@/lib/movimientos/reglas";
 import type { CatalogoMovimientos, MovimientoProductoOpcion, MovimientoStockOrigen, MovimientoStockTipo, NuevoMovimientoStock } from "@/types/movimientos-stock";
 
 export type TipoInfo = {
@@ -20,15 +21,15 @@ export type TipoInfo = {
 };
 
 export const TIPOS_INFO: Record<MovimientoStockTipo, TipoInfo> = {
-  ENTRADA: { etiqueta: "Entrada", descripcion: "Ingresa stock propio disponible al depósito destino, con su costo.", origen: false, destino: true, costo: true, origenes: ["COMPRA", "DEVOLUCION", "INVENTARIO", "MANUAL"] },
-  SALIDA: { etiqueta: "Salida", descripcion: "Descuenta stock disponible del depósito origen al costo promedio vigente.", origen: true, destino: false, costo: false, origenes: ["VENTA", "DEVOLUCION", "INVENTARIO", "MANUAL"], consume: "disponible" },
-  TRANSFERENCIA: { etiqueta: "Transferencia", descripcion: "Traslada stock disponible entre dos depósitos distintos.", origen: true, destino: true, costo: false, origenes: ["TRANSFERENCIA"], consume: "disponible" },
-  AJUSTE_POSITIVO: { etiqueta: "Ajuste positivo", descripcion: "Aumenta el stock disponible por una diferencia de inventario, con su costo.", origen: false, destino: true, costo: true, origenes: ["AJUSTE", "INVENTARIO", "MANUAL"] },
-  AJUSTE_NEGATIVO: { etiqueta: "Ajuste negativo", descripcion: "Disminuye el stock disponible por una diferencia de inventario.", origen: true, destino: false, costo: false, origenes: ["AJUSTE", "INVENTARIO", "MANUAL"], consume: "disponible" },
-  RESERVA: { etiqueta: "Reserva", descripcion: "Pasa stock de disponible a reservado en el mismo depósito.", origen: true, destino: false, costo: false, origenes: ["AJUSTE", "MANUAL"], consume: "disponible" },
-  LIBERACION_RESERVA: { etiqueta: "Liberación de reserva", descripcion: "Devuelve stock de reservado a disponible en el mismo depósito.", origen: true, destino: false, costo: false, origenes: ["AJUSTE", "MANUAL"], consume: "reservado" },
-  CUARENTENA: { etiqueta: "Cuarentena", descripcion: "Pasa stock de disponible a cuarentena (no vendible) en el mismo depósito.", origen: true, destino: false, costo: false, origenes: ["AJUSTE", "MANUAL"], consume: "disponible" },
-  LIBERACION_CUARENTENA: { etiqueta: "Liberación de cuarentena", descripcion: "Devuelve stock de cuarentena a disponible en el mismo depósito.", origen: true, destino: false, costo: false, origenes: ["AJUSTE", "MANUAL"], consume: "cuarentena" },
+  ENTRADA: { etiqueta: "Entrada", descripcion: "Ingresa stock propio disponible al depósito destino, con su costo.", origen: false, destino: true, costo: true, origenes: ORIGENES_POR_TIPO.ENTRADA },
+  SALIDA: { etiqueta: "Salida", descripcion: "Descuenta stock disponible del depósito origen al costo promedio vigente.", origen: true, destino: false, costo: false, origenes: ORIGENES_POR_TIPO.SALIDA, consume: "disponible" },
+  TRANSFERENCIA: { etiqueta: "Transferencia", descripcion: "Traslada stock disponible entre dos depósitos distintos.", origen: true, destino: true, costo: false, origenes: ORIGENES_POR_TIPO.TRANSFERENCIA, consume: "disponible" },
+  AJUSTE_POSITIVO: { etiqueta: "Ajuste positivo", descripcion: "Aumenta el stock disponible por una diferencia de inventario, con su costo.", origen: false, destino: true, costo: true, origenes: ORIGENES_POR_TIPO.AJUSTE_POSITIVO },
+  AJUSTE_NEGATIVO: { etiqueta: "Ajuste negativo", descripcion: "Disminuye el stock disponible por una diferencia de inventario.", origen: true, destino: false, costo: false, origenes: ORIGENES_POR_TIPO.AJUSTE_NEGATIVO, consume: "disponible" },
+  RESERVA: { etiqueta: "Reserva", descripcion: "Pasa stock de disponible a reservado en el mismo depósito.", origen: true, destino: false, costo: false, origenes: ORIGENES_POR_TIPO.RESERVA, consume: "disponible" },
+  LIBERACION_RESERVA: { etiqueta: "Liberación de reserva", descripcion: "Devuelve stock de reservado a disponible en el mismo depósito.", origen: true, destino: false, costo: false, origenes: ORIGENES_POR_TIPO.LIBERACION_RESERVA, consume: "reservado" },
+  CUARENTENA: { etiqueta: "Cuarentena", descripcion: "Pasa stock de disponible a cuarentena (no vendible) en el mismo depósito.", origen: true, destino: false, costo: false, origenes: ORIGENES_POR_TIPO.CUARENTENA, consume: "disponible" },
+  LIBERACION_CUARENTENA: { etiqueta: "Liberación de cuarentena", descripcion: "Devuelve stock de cuarentena a disponible en el mismo depósito.", origen: true, destino: false, costo: false, origenes: ORIGENES_POR_TIPO.LIBERACION_CUARENTENA, consume: "cuarentena" },
 };
 
 export const ORDEN_TIPOS = Object.keys(TIPOS_INFO) as MovimientoStockTipo[];
@@ -78,6 +79,7 @@ export function validarMovimiento(f: NuevoMovimientoStock, catalogo: CatalogoMov
   const permitidos = new Set((catalogo?.depositos ?? []).filter((d) => d.permitido).map((d) => d.id));
 
   if (!info) e.tipo = "Seleccione el tipo de movimiento.";
+  if (info && !info.origenes.includes(f.origen)) e.origen = "Ese origen no es válido para el tipo de movimiento.";
   if (!f.fecha) e.fecha = "Ingrese una fecha válida.";
   else if (f.fecha > hoy) e.fecha = "La fecha del movimiento no puede ser futura.";
 
@@ -107,6 +109,7 @@ export function validarMovimiento(f: NuevoMovimientoStock, catalogo: CatalogoMov
   }
   if (f.fechaVencimiento && f.fechaVencimiento < f.fecha && !e.fecha) e.fechaVencimiento = "El vencimiento no puede ser anterior a la fecha del movimiento.";
 
+  if (motivoObligatorio(f.tipo, f.origen) && f.motivo.trim().length < MOTIVO_MINIMO) e.motivo = mensajeMotivoObligatorio;
   if (f.documentoReferencia.trim().length > 120) e.documentoReferencia = "La referencia no puede superar los 120 caracteres.";
   if (f.motivo.trim().length > 300) e.motivo = "El motivo no puede superar los 300 caracteres.";
   if (f.observacion.trim().length > 1000) e.observacion = "La observación no puede superar los 1000 caracteres.";

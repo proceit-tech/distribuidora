@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import type { PoolClient } from "pg";
 
+import { MOTIVO_MINIMO, mensajeMotivoObligatorio, motivoObligatorio, ORIGENES_POR_TIPO, origenPermitido, type TipoMovimiento } from "@/lib/movimientos/reglas";
+
 // Validación y registro de movimientos de inventario. Toda la escritura de stock/costos pasa por
 // inventario_registrar_movimiento / inventario_anular_movimiento (el rol de ejecución no escribe saldos directamente).
 
@@ -36,9 +38,13 @@ export type DatosMovimiento = ReturnType<typeof prepararMovimiento>;
 
 export function prepararMovimiento(d: Cuerpo) {
   const tipo = texto(d.tipo, 40).toUpperCase();
-  const origen = texto(d.origen, 40).toUpperCase() || "MANUAL";
   if (!(TIPOS as readonly string[]).includes(tipo)) throw new Error("Tipo de movimiento no válido.");
+  const origen = texto(d.origen, 40).toUpperCase() || ORIGENES_POR_TIPO[tipo as TipoMovimiento][0];
   if (!ORIGENES.includes(origen)) throw new Error("Origen de movimiento no válido.");
+  // Matriz de orígenes aprobada (misma regla que el formulario). Las funciones SQL siguen aceptando todos; los movimientos ya registrados no se tocan.
+  if (!origenPermitido(tipo, origen)) throw new Error(`El origen ${origen} no es válido para el tipo ${tipo}.`);
+  const motivoTexto = texto(d.motivo, 300);
+  if (motivoObligatorio(tipo, origen) && motivoTexto.length < MOTIVO_MINIMO) throw new Error(mensajeMotivoObligatorio);
 
   const productoId = texto(d.productoId, 40);
   if (!UUID.test(productoId)) throw new Error("Seleccione un producto.");

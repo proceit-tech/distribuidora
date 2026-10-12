@@ -7,6 +7,7 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import styles from "@/app/(private)/productos/catalogos/page.module.css";
 import { CampoFecha } from "@/components/ui/campo-fecha";
 import ui from "@/components/ui/lista-padrao/lista.module.css";
+import { motivoObligatorio } from "@/lib/movimientos/reglas";
 import { hoyAsuncion } from "@/lib/listas-precio/calculos";
 import { useProtegerCambios } from "@/lib/ui/proteger-cambios";
 import { cargarCatalogosMovimientos, registrarMovimientoApi } from "@/lib/movimientos/cliente-api";
@@ -81,6 +82,7 @@ export default function NuevoMovimientoPage() {
   const productos = catalogo?.productos ?? [];
   const depositos = (catalogo?.depositos ?? []).filter((d) => d.permitido);
   const info = TIPOS_INFO[form.tipo];
+  const motivoRequerido = motivoObligatorio(form.tipo, form.origen);
   const producto = productos.find((p) => p.id === form.productoId);
   const depositoRef = form.depositoOrigenId || form.depositoDestinoId;
   const saldos = saldoVisible(producto, depositoRef);
@@ -417,9 +419,11 @@ export default function NuevoMovimientoPage() {
           </label>
 
           <label className={claseCampo("motivo", styles.wide)}>
-            <span>Motivo</span>
+            <span>
+              Motivo {motivoRequerido ? <b>*</b> : null}
+            </span>
             <input {...ariaCampo("motivo")} value={form.motivo} maxLength={300} onChange={(e) => cambiar({ motivo: e.target.value }, "motivo")} />
-            {mensaje("motivo")}
+            {errores.motivo ? mensaje("motivo") : <span className={styles.ayuda}>{motivoRequerido ? "Obligatorio para este tipo y origen (mínimo 5 caracteres)." : "Opcional para este tipo y origen."}</span>}
           </label>
 
           <label className={claseCampo("observacion", styles.full)}>

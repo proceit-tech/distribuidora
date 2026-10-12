@@ -167,7 +167,7 @@ export default function ReposicionPage() {
       </header>
 
       <p className={ui.resultCount} role="status" style={{ margin: "0 0 8px" }}>
-        Planificación: las cantidades son sugerencias calculadas con el stock propio disponible; esta pantalla no registra compras, transferencias ni movimientos.
+        Planificación: <strong>Sugerida</strong> es el cálculo del plan con el stock propio disponible; <strong>A planificar</strong> es una simulación local que no se guarda; <strong>Preparar transferencia</strong> solo abre Nuevo movimiento con esa cantidad (nunca supera lo que el plan confirma) y no registra nada hasta que usted lo confirme allí. Esta pantalla no registra compras, transferencias ni movimientos.
         {datos?.alcanceParcial ? " Solo se consideran los depósitos que usted tiene autorizados." : ""}
       </p>
 
@@ -426,6 +426,22 @@ export default function ReposicionPage() {
                       ) : (
                         "—"
                       )}
+                      {f.necesita && f.sugerida !== null
+                        ? (() => {
+                            const escrita = planEscrita(f);
+
+                            if (escrita === null) return <small className={ui.muted} style={{ display: "block" }}>Sin simulación: se usa la sugerida ({cant(f.sugerida)}).</small>;
+
+                            const preparada = transferenciasPlanificadas(f, escrita).reduce((a, t) => a + t.cantidad, 0);
+
+                            return (
+                              <small className={ui.muted} style={{ display: "block" }}>
+                                Planificado {cant(escrita)}: transferir {cant(preparada)} · comprar {cant(Math.max(0, Math.round((escrita - preparada) * 10000) / 10000))}
+                                {escrita > f.sugerida ? " (por encima de la sugerida)" : ""}
+                              </small>
+                            );
+                          })()
+                        : null}
                     </td>
                     <td className={ui.actionsCell}>
                       <div className={ui.actionsGroup}>

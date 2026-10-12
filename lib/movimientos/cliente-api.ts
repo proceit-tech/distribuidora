@@ -13,10 +13,30 @@ async function mensajeError(r: Response, porDefecto: string) {
   }
 }
 
-export async function cargarMovimientos(): Promise<MovimientoStockFila[]> {
-  const r = await fetch("/api/movimientos", { cache: "no-store" });
+export type RespuestaHistorial = {
+  movimientos: MovimientoStockFila[];
+  /** Líneas que cumplen el filtro (cada fila de la tabla es una línea). */
+  total: number;
+  /** Movimientos distintos que cumplen el filtro. */
+  totalMovimientos: number;
+  pagina: number;
+  tamano: number;
+  totalPaginas: number;
+  resumen: { movimientos: number; entradas: number; salidas: number; transferencias: number };
+  /** Presente solo si se pidió confirmar un número de movimiento. */
+  confirmado?: boolean;
+};
+
+export type ConsultaHistorialCliente = { q?: string; tipo?: string; orden?: string; dir?: string; pagina?: number; tamano?: number; confirmar?: string };
+
+export async function cargarMovimientos(consulta: ConsultaHistorialCliente = {}): Promise<RespuestaHistorial> {
+  const p = new URLSearchParams();
+
+  for (const [k, v] of Object.entries(consulta)) if (v !== undefined && v !== "") p.set(k, String(v));
+
+  const r = await fetch(`/api/movimientos${p.size ? `?${p.toString()}` : ""}`, { cache: "no-store" });
   if (!r.ok) throw new Error(await mensajeError(r, "No fue posible cargar los movimientos."));
-  return ((await r.json()) as { movimientos: MovimientoStockFila[] }).movimientos;
+  return (await r.json()) as RespuestaHistorial;
 }
 
 export async function cargarCatalogosMovimientos(): Promise<CatalogoMovimientos> {
