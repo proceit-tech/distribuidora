@@ -6,6 +6,15 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { compararTexto, ordenarLista, siguienteOrden, type Orden } from "@/components/ui/lista-padrao/orden";
 import { ThOrdenable } from "@/components/ui/lista-padrao/th-ordenable";
 import ui from "@/components/ui/lista-padrao/lista.module.css";
+import {
+  campoDeErrorServidor,
+  formularioSucio,
+  primerCampoConError,
+  validarFormularioCatalogo,
+  type CampoCatalogo,
+  type ErroresCatalogo,
+  type FormularioCatalogo,
+} from "@/lib/productos/catalogos-formulario";
 
 import styles from "./page.module.css";
 
@@ -20,14 +29,9 @@ type Fila = {
   productos: number;
   familiaId?: string;
   familia?: string;
-};
-
-type Formulario = {
-  id: string | null;
-  codigo: string;
-  nombre: string;
-  descripcion: string;
-  familiaId: string;
+  /** Familias: su categoría. Líneas: la categoría de su familia. null = familia histórica pendiente de clasificar. */
+  categoriaId?: string | null;
+  categoria?: string | null;
 };
 
 const TABS: Array<{ id: Tipo; label: string; singular: string; descripcion: boolean }> = [
@@ -38,15 +42,19 @@ const TABS: Array<{ id: Tipo; label: string; singular: string; descripcion: bool
 ];
 
 const PAGE_SIZE = 20;
+const SIN_CATEGORIA = "__sin__";
 
-type CampoOrden = "codigo" | "nombre" | "familia" | "productos" | "estado";
+type CampoOrden = "codigo" | "nombre" | "familia" | "categoria" | "productos" | "estado";
 
-const VACIO: Formulario = { id: null, codigo: "", nombre: "", descripcion: "", familiaId: "" };
+const VACIO: FormularioCatalogo = { id: null, codigo: "", nombre: "", descripcion: "", familiaId: "", categoriaId: "" };
+
+const idCampo = (campo: CampoCatalogo) => `cat-${campo}`;
 
 export default function CatalogosProductosPage() {
   const [tipo, setTipo] = useState<Tipo>("categorias");
   const [filas, setFilas] = useState<Fila[]>([]);
   const [familias, setFamilias] = useState<Fila[]>([]);
+  const [categorias, setCategorias] = useState<Fila[]>([]);
   const [permisos, setPermisos] = useState({ crear: false, editar: false });
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
@@ -54,20 +62,28 @@ export default function CatalogosProductosPage() {
   const [busqueda, setBusqueda] = useState("");
   const [estado, setEstado] = useState<"TODOS" | "ACTIVOS" | "INACTIVOS">("TODOS");
   const [filtroFamilia, setFiltroFamilia] = useState("");
-  const [form, setForm] = useState<Formulario | null>(null);
+  const [filtroCategoria, setFiltroCategoria] = useState("");
+  const [form, setForm] = useState<FormularioCatalogo | null>(null);
+  const [base, setBase] = useState<FormularioCatalogo | null>(null);
+  const [errores, setErrores] = useState<ErroresCatalogo>({});
+  const [errorForm, setErrorForm] = useState("");
   const [guardando, setGuardando] = useState(false);
   const [orden, setOrden] = useState<Orden<CampoOrden>>(null);
   const [paginacion, setPaginacion] = useState({ clave: "", pagina: 1 });
 
   const meta = TABS.find((t) => t.id === tipo)!;
+  const sucio = formularioSucio(form, base);
+  // Familia histórica sin categoría: se puede editar e inactivar sin clasificarla; la categoría se asigna manualmente cuando corresponda.
+  const categoriaPendiente = tipo === "familias" && form?.id !== null && base?.categoriaId === "";
 
   const cargar = useCallback(async () => {
     setCargando(true);
     setError("");
     try {
-      const [r, rf] = await Promise.all([
+      const [r, rf, rk] = await Promise.all([
         fetch(`/api/productos/${tipo}`, { cache: "no-store" }),
         tipo === "lineas" ? fetch("/api/productos/familias", { cache: "no-store" }) : Promise.resolve(null),
+        tipo === "familias" || tipo === "lineas" ? fetch("/api/productos/categorias", { cache: "no-store" }) : Promise.resolve(null),
       ]);
       const j = (await r.json()) as Record<string, unknown> & { error?: string; permisos?: { crear: boolean; editar: boolean } };
       if (!r.ok) throw new Error(j.error ?? "No fue posible cargar el catálogo.");
@@ -76,6 +92,10 @@ export default function CatalogosProductosPage() {
       if (rf) {
         const jf = (await rf.json()) as { familias?: Fila[] };
         setFamilias(jf.familias ?? []);
+      }
+      if (rk) {
+        const jk = (await rk.json()) as { categorias?: Fila[] };
+        setCategorias(jk.categorias ?? []);
       }
     } catch (e) {
       setFilas([]);
@@ -90,15 +110,58 @@ export default function CatalogosProductosPage() {
     void Promise.resolve().then(cargar);
   }, [cargar]);
 
+  // Aviso del navegador al cerrar o recargar con cambios sin guardar.
+  useEffect(() => {
+    if (!sucio) return;
+
+    const alSalir = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+
+    window.addEventListener("beforeunload", alSalir);
+
+    return () => window.removeEventListener("beforeunload", alSalir);
+  }, [sucio]);
+
+  /** Política única: solo se pide confirmación si hay cambios efectivos sin guardar. */
+  function confirmarDescarte(): boolean {
+    return !sucio || window.confirm("Hay cambios sin guardar en el formulario. Si continúa, se perderán. ¿Desea continuar?");
+  }
+
+  function abrirFormulario(f: FormularioCatalogo) {
+    setForm(f);
+    setBase(f);
+    setErrores({});
+    setErrorForm("");
+    setAviso("");
+    setError("");
+  }
+
+  function cerrarFormulario() {
+    setForm(null);
+    setBase(null);
+    setErrores({});
+    setErrorForm("");
+  }
+
   function cambiarTab(nuevo: Tipo) {
+    if (nuevo === tipo || !confirmarDescarte()) return;
+
     setTipo(nuevo);
     setOrden(null);
-    setForm(null);
+    cerrarFormulario();
     setBusqueda("");
     setEstado("TODOS");
     setFiltroFamilia("");
+    setFiltroCategoria("");
     setAviso("");
     setError("");
+  }
+
+  function actualizar(campo: CampoCatalogo, valor: string) {
+    setForm((actual) => (actual ? { ...actual, [campo]: valor } : actual));
+    setErrores((actual) => (actual[campo] ? { ...actual, [campo]: undefined } : actual));
   }
 
   const visibles = useMemo(() => {
@@ -107,9 +170,11 @@ export default function CatalogosProductosPage() {
       if (estado === "ACTIVOS" && !f.activo) return false;
       if (estado === "INACTIVOS" && f.activo) return false;
       if (filtroFamilia && f.familiaId !== filtroFamilia) return false;
+      if (filtroCategoria === SIN_CATEGORIA && (f.categoriaId ?? null) !== null) return false;
+      if (filtroCategoria && filtroCategoria !== SIN_CATEGORIA && f.categoriaId !== filtroCategoria) return false;
       return !q || f.nombre.toLowerCase().includes(q) || f.codigo.toLowerCase().includes(q);
     });
-  }, [filas, busqueda, estado, filtroFamilia]);
+  }, [filas, busqueda, estado, filtroFamilia, filtroCategoria]);
 
   // Ordenación sobre el conjunto filtrado COMPLETO (toda la lista está cargada), antes de paginar.
   const ordenados = useMemo(
@@ -122,6 +187,8 @@ export default function CatalogosProductosPage() {
             return compararTexto(a.nombre, b.nombre);
           case "familia":
             return compararTexto(a.familia ?? "", b.familia ?? "");
+          case "categoria":
+            return compararTexto(a.categoria ?? "", b.categoria ?? "");
           case "productos":
             return a.productos - b.productos;
           case "estado":
@@ -138,7 +205,7 @@ export default function CatalogosProductosPage() {
   const totalPaginas = Math.max(1, Math.ceil(visibles.length / PAGE_SIZE));
 
   // La página vuelve a 1 cuando cambian los filtros o el orden y nunca excede el total: se deriva en el render (sin efecto).
-  const claveFiltros = JSON.stringify([tipo, busqueda, estado, filtroFamilia, orden]);
+  const claveFiltros = JSON.stringify([tipo, busqueda, estado, filtroFamilia, filtroCategoria, orden]);
   const pagina = paginacion.clave === claveFiltros ? Math.min(paginacion.pagina, totalPaginas) : 1;
   const setPagina = (valor: number | ((actual: number) => number)) =>
     setPaginacion({ clave: claveFiltros, pagina: typeof valor === "function" ? valor(pagina) : valor });
@@ -150,9 +217,13 @@ export default function CatalogosProductosPage() {
 
   async function enviar(url: string, metodo: "POST" | "PUT", cuerpo: Record<string, unknown>) {
     const r = await fetch(url, { method: metodo, headers: { "Content-Type": "application/json" }, body: JSON.stringify(cuerpo) });
-    const j = (await r.json()) as { error?: string; message?: string };
+    const j = (await r.json().catch(() => ({}))) as { error?: string; message?: string };
     if (!r.ok) throw new Error(j.error ?? "No fue posible guardar.");
     return j;
+  }
+
+  function enfocar(campo: CampoCatalogo | null) {
+    if (campo) window.setTimeout(() => document.getElementById(idCampo(campo))?.focus(), 0);
   }
 
   async function guardar(event: FormEvent) {
@@ -160,19 +231,39 @@ export default function CatalogosProductosPage() {
     if (!form) return;
     setError("");
     setAviso("");
-    if (!form.nombre.trim()) return setError("El nombre es obligatorio.");
-    if (tipo === "lineas" && !form.familiaId) return setError("Seleccione la familia de la línea.");
+    setErrorForm("");
+
+    const locales = validarFormularioCatalogo(tipo, form, categoriaPendiente);
+
+    if (primerCampoConError(locales)) {
+      setErrores(locales);
+      enfocar(primerCampoConError(locales));
+
+      return;
+    }
+
+    setErrores({});
     setGuardando(true);
     try {
       const cuerpo: Record<string, unknown> = { codigo: form.codigo, nombre: form.nombre };
       if (meta.descripcion) cuerpo.descripcion = form.descripcion;
       if (tipo === "lineas") cuerpo.familiaId = form.familiaId;
+      if (tipo === "familias") cuerpo.categoriaId = form.categoriaId;
       const j = form.id ? await enviar(`/api/productos/${tipo}/${form.id}`, "PUT", cuerpo) : await enviar(`/api/productos/${tipo}`, "POST", cuerpo);
       setAviso(j.message ?? "Guardado correctamente.");
-      setForm(null);
+      cerrarFormulario();
       await cargar();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "No fue posible guardar.");
+      // El formulario se mantiene abierto con lo escrito: el error se muestra junto al campo (o arriba si es general).
+      const mensaje = e instanceof Error ? e.message : "No fue posible guardar.";
+      const campo = campoDeErrorServidor(tipo, mensaje);
+
+      if (campo) {
+        setErrores({ [campo]: mensaje });
+        enfocar(campo);
+      } else {
+        setErrorForm(mensaje);
+      }
     } finally {
       setGuardando(false);
     }
@@ -181,6 +272,18 @@ export default function CatalogosProductosPage() {
   async function cambiarEstado(fila: Fila) {
     setError("");
     setAviso("");
+
+    if (fila.activo && (fila.productos > 0 || tipo === "familias")) {
+      const detalle = [
+        fila.productos > 0 ? `Tiene ${fila.productos} producto(s) asociado(s) (total, activos e inactivos); conservarán el vínculo.` : "",
+        tipo === "familias" ? "Sus líneas no se inactivan automáticamente." : "",
+      ]
+        .filter(Boolean)
+        .join(" ");
+
+      if (!window.confirm(`¿Inactivar «${fila.nombre}»? ${detalle}`)) return;
+    }
+
     try {
       const cuerpo: Record<string, unknown> = { codigo: fila.codigo, nombre: fila.nombre, activo: !fila.activo };
       if (meta.descripcion) cuerpo.descripcion = fila.descripcion;
@@ -194,8 +297,23 @@ export default function CatalogosProductosPage() {
   }
 
   const familiasActivas = familias.filter((f) => f.activo || f.id === form?.familiaId);
+  const categoriasActivas = categorias.filter((c) => c.activo || c.id === form?.categoriaId);
+  const conCategoria = tipo === "familias" || tipo === "lineas";
 
-  const columnas = 5 + (tipo === "lineas" ? 1 : 0) + (meta.descripcion ? 1 : 0);
+  const columnas = 5 + (tipo === "lineas" ? 1 : 0) + (conCategoria ? 1 : 0) + (meta.descripcion ? 1 : 0);
+
+  const claseCampo = (campo: CampoCatalogo, extra = "") => [styles.field, errores[campo] ? styles.conError : "", extra].filter(Boolean).join(" ");
+  const ariaCampo = (campo: CampoCatalogo) => ({
+    id: idCampo(campo),
+    "aria-invalid": errores[campo] ? true : undefined,
+    "aria-describedby": errores[campo] ? `${idCampo(campo)}-error` : undefined,
+  });
+  const mensajeCampo = (campo: CampoCatalogo) =>
+    errores[campo] ? (
+      <span id={`${idCampo(campo)}-error`} className={styles.campoError} role="alert">
+        {errores[campo]}
+      </span>
+    ) : null;
 
   return (
     <section className={ui.page}>
@@ -213,7 +331,13 @@ export default function CatalogosProductosPage() {
         </div>
 
         <div className={ui.actionsGroup}>
-          <Link href="/productos" className={ui.secondaryButton}>
+          <Link
+            href="/productos"
+            className={ui.secondaryButton}
+            onClick={(e) => {
+              if (!confirmarDescarte()) e.preventDefault();
+            }}
+          >
             ← Productos
           </Link>
           {permisos.crear ? (
@@ -221,9 +345,9 @@ export default function CatalogosProductosPage() {
               type="button"
               className={ui.primaryButton}
               onClick={() => {
-                setForm({ ...VACIO });
-                setAviso("");
-                setError("");
+                if (!confirmarDescarte()) return;
+                abrirFormulario({ ...VACIO });
+                enfocar(tipo === "familias" ? "categoriaId" : tipo === "lineas" ? "familiaId" : "codigo");
               }}
             >
               <span aria-hidden="true">+</span>
@@ -259,42 +383,81 @@ export default function CatalogosProductosPage() {
       ) : null}
 
       {form ? (
-        <form className={styles.form} onSubmit={guardar}>
+        <form className={styles.form} onSubmit={guardar} noValidate aria-label={form.id ? `Editar ${meta.singular}` : `Nueva ${meta.singular}`}>
           <h3>{form.id ? `Editar ${meta.singular}` : `Nueva ${meta.singular}`}</h3>
+          {errorForm ? (
+            <div className={styles.alertaForm} role="alert">
+              {errorForm}
+            </div>
+          ) : null}
+          {tipo === "familias" && categoriaPendiente ? (
+            <p className={styles.nota}>
+              <span className={styles.sinClasificar}>Esta familia histórica todavía no tiene categoría.</span> Asígnela cuando corresponda; no se completa automáticamente.
+            </p>
+          ) : null}
+
+          {tipo === "familias" ? (
+            <label className={claseCampo("categoriaId", styles.wide)}>
+              <span>
+                Categoría {categoriaPendiente ? "" : <b>*</b>}
+              </span>
+              <select {...ariaCampo("categoriaId")} value={form.categoriaId} onChange={(e) => actualizar("categoriaId", e.target.value)}>
+                <option value="">{categoriaPendiente ? "Sin categoría (pendiente de clasificar)" : "Seleccione una categoría"}</option>
+                {categoriasActivas.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.nombre}
+                    {c.activo ? "" : " (inactiva)"}
+                  </option>
+                ))}
+              </select>
+              {mensajeCampo("categoriaId")}
+            </label>
+          ) : null}
           {tipo === "lineas" ? (
-            <label className={styles.field}>
-              <span>Familia *</span>
-              <select value={form.familiaId} onChange={(e) => setForm({ ...form, familiaId: e.target.value })}>
+            <label className={claseCampo("familiaId", styles.wide)}>
+              <span>
+                Familia <b>*</b>
+              </span>
+              <select {...ariaCampo("familiaId")} value={form.familiaId} onChange={(e) => actualizar("familiaId", e.target.value)}>
                 <option value="">Seleccione una familia</option>
                 {familiasActivas.map((f) => (
                   <option key={f.id} value={f.id}>
                     {f.nombre}
+                    {f.categoria ? ` · ${f.categoria}` : " · sin categoría"}
                     {f.activo ? "" : " (inactiva)"}
                   </option>
                 ))}
               </select>
+              {mensajeCampo("familiaId")}
             </label>
           ) : null}
-          <label className={styles.field}>
+          <label className={claseCampo("codigo")}>
             <span>Código</span>
-            <input maxLength={40} value={form.codigo} onChange={(e) => setForm({ ...form, codigo: e.target.value })} />
+            <input {...ariaCampo("codigo")} maxLength={40} value={form.codigo} onChange={(e) => actualizar("codigo", e.target.value)} />
+            {mensajeCampo("codigo")}
           </label>
-          <label className={[styles.field, styles.wide].join(" ")}>
-            <span>Nombre *</span>
-            <input maxLength={120} value={form.nombre} onChange={(e) => setForm({ ...form, nombre: e.target.value })} />
+          <label className={claseCampo("nombre", styles.wide)}>
+            <span>
+              Nombre <b>*</b>
+            </span>
+            <input {...ariaCampo("nombre")} maxLength={120} value={form.nombre} onChange={(e) => actualizar("nombre", e.target.value)} />
+            {mensajeCampo("nombre")}
           </label>
           {meta.descripcion ? (
-            <label className={[styles.field, styles.wide].join(" ")}>
+            <label className={claseCampo("descripcion", styles.full)}>
               <span>Descripción</span>
-              <textarea
-                maxLength={500}
-                value={form.descripcion}
-                onChange={(e) => setForm({ ...form, descripcion: e.target.value })}
-              />
+              <textarea {...ariaCampo("descripcion")} maxLength={500} rows={2} value={form.descripcion} onChange={(e) => actualizar("descripcion", e.target.value)} />
+              {mensajeCampo("descripcion")}
             </label>
           ) : null}
           <div className={styles.formActions}>
-            <button type="button" className={ui.secondaryButton} onClick={() => setForm(null)}>
+            <button
+              type="button"
+              className={ui.secondaryButton}
+              onClick={() => {
+                if (confirmarDescarte()) cerrarFormulario();
+              }}
+            >
               Cancelar
             </button>
             <button type="submit" className={ui.primaryButton} disabled={guardando}>
@@ -315,6 +478,21 @@ export default function CatalogosProductosPage() {
               aria-label="Buscar en el catálogo"
             />
           </label>
+
+          {conCategoria ? (
+            <label className={ui.filterField}>
+              <span>Categoría</span>
+              <select value={filtroCategoria} onChange={(e) => setFiltroCategoria(e.target.value)}>
+                <option value="">Todas las categorías</option>
+                <option value={SIN_CATEGORIA}>Sin categoría (por clasificar)</option>
+                {categorias.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.nombre}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
 
           {tipo === "lineas" ? (
             <label className={ui.filterField}>
@@ -346,6 +524,7 @@ export default function CatalogosProductosPage() {
               setBusqueda("");
               setEstado("TODOS");
               setFiltroFamilia("");
+              setFiltroCategoria("");
             }}
           >
             Limpiar filtros
@@ -362,11 +541,12 @@ export default function CatalogosProductosPage() {
               <tr>
                 <ThOrdenable titulo="Código" campo="codigo" orden={orden} onOrden={cambiarOrden} className={ui.colCodigo} />
                 <ThOrdenable titulo="Nombre" campo="nombre" orden={orden} onOrden={cambiarOrden} />
+                {conCategoria ? <ThOrdenable titulo="Categoría" campo="categoria" orden={orden} onOrden={cambiarOrden} /> : null}
                 {tipo === "lineas" ? (
                   <ThOrdenable titulo="Familia" campo="familia" orden={orden} onOrden={cambiarOrden} />
                 ) : null}
                 {meta.descripcion ? <ThOrdenable titulo="Descripción" /> : null}
-                <ThOrdenable titulo="Productos" campo="productos" orden={orden} onOrden={cambiarOrden} alinear="derecha" className={ui.colNumero} />
+                <ThOrdenable titulo="Productos (total)" campo="productos" orden={orden} onOrden={cambiarOrden} alinear="derecha" className={ui.colNumero} />
                 <ThOrdenable titulo="Estado" campo="estado" orden={orden} onOrden={cambiarOrden} className={ui.colEstado} />
                 <ThOrdenable titulo="Acciones" alinear="derecha" />
               </tr>
@@ -405,6 +585,7 @@ export default function CatalogosProductosPage() {
                     <td>
                       <span className={ui.principal}>{f.nombre}</span>
                     </td>
+                    {conCategoria ? <td>{f.categoria ? f.categoria : <span className={ui.muted}>Sin categoría</span>}</td> : null}
                     {tipo === "lineas" ? <td>{f.familia}</td> : null}
                     {meta.descripcion ? <td className={ui.breakable}>{f.descripcion}</td> : null}
                     <td className={ui.numeric}>
@@ -422,15 +603,15 @@ export default function CatalogosProductosPage() {
                             type="button"
                             className={ui.rowButton}
                             onClick={() => {
-                              setForm({
+                              if (!confirmarDescarte()) return;
+                              abrirFormulario({
                                 id: f.id,
                                 codigo: f.codigo,
                                 nombre: f.nombre,
                                 descripcion: f.descripcion,
                                 familiaId: f.familiaId ?? "",
+                                categoriaId: tipo === "familias" ? (f.categoriaId ?? "") : "",
                               });
-                              setAviso("");
-                              setError("");
                             }}
                           >
                             Editar

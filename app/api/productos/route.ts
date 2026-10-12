@@ -112,7 +112,7 @@ export async function GET(request: Request) {
             ),
         db.query(`SELECT id, codigo, nombre FROM categorias_producto WHERE empresa_id = $1 AND activo = true ORDER BY nombre`, [empresaId]),
         db.query(`SELECT id, coalesce(codigo, '') AS codigo, nombre FROM marcas_producto WHERE empresa_id = $1 AND activo = true ORDER BY nombre`, [empresaId]),
-        db.query(`SELECT id, coalesce(codigo, '') AS codigo, nombre FROM familias_producto WHERE empresa_id = $1 AND activo = true ORDER BY nombre`, [empresaId]),
+        db.query(`SELECT id, coalesce(codigo, '') AS codigo, nombre, categoria_id AS "categoriaId" FROM familias_producto WHERE empresa_id = $1 AND activo = true ORDER BY nombre`, [empresaId]),
         db.query(`SELECT id, familia_id, coalesce(codigo, '') AS codigo, nombre FROM lineas_producto WHERE empresa_id = $1 AND activo = true ORDER BY nombre`, [empresaId]),
         db.query(
           `SELECT coalesce((SELECT moneda_codigo FROM listas_precio WHERE empresa_id = e.id AND es_referencia), e.moneda_base_codigo) AS moneda

@@ -193,6 +193,16 @@ export async function validarReferencias(conexion: PoolClient, empresaId: string
   await unico(d.categoriaId, "categoriaId", "categorias_producto", true, "La categoría", previo.categoria_id);
   await unico(d.marcaId, "marcaId", "marcas_producto", true, "La marca", previo.marca_id);
   await unico(d.familiaId, "familiaId", "familias_producto", true, "La familia", previo.familia_id);
+  // Jerarquía Categoría → Familia → Línea (NEX-044). Solo se exige cuando la familia YA tiene categoría asignada (las familias históricas sin
+  // clasificar no bloquean) y cuando el par categoría/familia cambia: un producto histórico incoherente no se bloquea por editar otros datos.
+  if (d.familiaId && d.categoriaId && !(previo.categoria_id === d.categoriaId && previo.familia_id === d.familiaId)) {
+    const f = await conexion.query("SELECT categoria_id FROM familias_producto WHERE id = $1 AND empresa_id = $2", [d.familiaId, empresaId]);
+    const categoriaFamilia = (f.rows[0] as { categoria_id?: string | null } | undefined)?.categoria_id ?? null;
+
+    if (categoriaFamilia !== null && categoriaFamilia !== d.categoriaId) {
+      throw new ErrorValidacion("La familia seleccionada no pertenece a la categoría elegida.", "familiaId");
+    }
+  }
   await unico(d.unidadMedidaId, "unidadMedidaId", "unidades_medida", false, "La unidad base", previo.unidad_medida_id);
   await unico(d.impuestoId, "impuestoId", "impuestos", false, "El impuesto", previo.impuesto_id);
 

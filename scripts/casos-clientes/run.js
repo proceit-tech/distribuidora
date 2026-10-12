@@ -27,6 +27,7 @@ Module._resolveFilename = function (request, ...resto) {
   const fis = cargar("lib/productos/fiscal.casos.js");
   const mig = cargar("lib/productos/migraciones-fiscales.casos.js");
   const arc = cargar("lib/productos/documentos-archivos.casos.js");
+  const jer = cargar("lib/productos/jerarquia-catalogos.casos.js");
   const suites = [
     ["teléfono y día de cobro", async () => tel.verificarCasosTelefonoYCobro(), () => tel.CASOS_TELEFONO.length + 11 + 6 + 2],
     ["catálogo mundial", async () => tel.verificarCatalogoMundial(), null],
@@ -47,6 +48,7 @@ Module._resolveFilename = function (request, ...resto) {
     ["Productos: evolución fiscal SIFEN (NEX-039/040, GTIN)", async () => fis.verificarCasosFiscales(), null],
     ["Productos: runner, grants y migraciones 038-040 (PRD-AUD-03…06)", async () => mig.verificarCasosMigracionesFiscales(), null],
     ["Productos: documentos privados, foto, NEX-041 y pantalla (PRD-REV-03…06)", async () => arc.verificarCasosDocumentosProductos(), null],
+    ["Productos: jerarquía de catálogos Categoría → Familia → Línea (NEX-044, CAT-012)", async () => jer.verificarCasosJerarquiaCatalogos(), null],
   ];
   let total = 0;
   let fallosTotal = 0;

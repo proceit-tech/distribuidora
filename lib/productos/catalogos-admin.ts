@@ -58,7 +58,7 @@ function fallo(error: unknown, tipo: TipoCatalogo, accion: string) {
   if (pg.code === "42501") return NextResponse.json({ error: "No tiene permiso para esta acción." }, { status: 403 });
   if (pg.code === "P0002") return NextResponse.json({ error: "Registro no encontrado." }, { status: 404 });
   if (pg.code === "P0001") return NextResponse.json({ error: (error as Error).message }, { status: 400 });
-  if (pg.code === "23503") return NextResponse.json({ error: "La familia indicada no existe en su empresa o el registro tiene productos vinculados." }, { status: 400 });
+  if (pg.code === "23503") return NextResponse.json({ error: "La referencia indicada (categoría o familia) no existe en su empresa o el registro tiene productos vinculados." }, { status: 400 });
   console.error(`Error al ${accion} ${CFG[tipo].que}:`, error);
   return NextResponse.json({ error: `No fue posible ${accion} la ${CFG[tipo].que}.` }, { status: 500 });
 }
@@ -87,9 +87,16 @@ async function preparar(accion: "VER" | "CREAR" | "EDITAR"): Promise<Base> {
 type Fila = Record<string, unknown>;
 const proyectar = (tipo: TipoCatalogo, t = "t") => {
   const c = CFG[tipo];
+  // Jerarquía Categoría → Familia → Línea (NEX-044): la familia expone su categoría; la línea, la de su familia (para filtrar).
+  const jerarquia =
+    tipo === "familias"
+      ? `, ${t}.categoria_id AS "categoriaId", (SELECT k.nombre FROM categorias_producto k WHERE k.empresa_id = ${t}.empresa_id AND k.id = ${t}.categoria_id) AS categoria`
+      : tipo === "lineas"
+        ? `, (SELECT f.categoria_id FROM familias_producto f WHERE f.empresa_id = ${t}.empresa_id AND f.id = ${t}.familia_id) AS "categoriaId", (SELECT k.nombre FROM categorias_producto k JOIN familias_producto f ON f.empresa_id = k.empresa_id AND f.categoria_id = k.id WHERE f.empresa_id = ${t}.empresa_id AND f.id = ${t}.familia_id) AS categoria`
+        : "";
   return `${t}.id, coalesce(${t}.codigo,'') AS codigo, ${t}.nombre, ${c.descripcion ? `coalesce(${t}.descripcion,'')` : `''`} AS descripcion, ${t}.activo` +
     (tipo === "lineas" ? `, ${t}.familia_id AS "familiaId", (SELECT f.nombre FROM familias_producto f WHERE f.empresa_id = ${t}.empresa_id AND f.id = ${t}.familia_id) AS familia` : "") +
-    `, (SELECT count(*)::int FROM productos p WHERE p.empresa_id = ${t}.empresa_id AND p.${c.columnaProducto} = ${t}.id) AS productos`;
+    jerarquia + `, (SELECT count(*)::int FROM productos p WHERE p.empresa_id = ${t}.empresa_id AND p.${c.columnaProducto} = ${t}.id) AS productos`;
 };
 
 export async function listarCatalogo(tipo: TipoCatalogo, request: Request) {
@@ -154,6 +161,20 @@ async function familiaDeLaEmpresa(c: Cliente, empresaId: string, familiaId: unkn
   return id;
 }
 
+/**
+ * Categoría de una Familia (NEX-044). Obligatoria en las familias NUEVAS; en una edición solo se valida si cambia (una familia histórica sin
+ * categoría puede seguir editándose/inactivándose mientras no se clasifique). Nunca se deduce de nombres: la asigna una persona.
+ */
+async function categoriaDeLaEmpresa(c: Cliente, empresaId: string, categoriaId: unknown, exigirActiva: boolean) {
+  const id = texto(categoriaId);
+  if (!id) throw new ErrorCatalogo("Seleccione la categoría de la familia.");
+  if (!UUID.test(id)) throw new ErrorCatalogo("La categoría indicada no es válida.");
+  const k = await c.query(`SELECT activo FROM categorias_producto WHERE id = $1 AND empresa_id = $2`, [id, empresaId]);
+  if (!k.rowCount) throw new ErrorCatalogo("La categoría indicada no existe en su empresa.");
+  if (exigirActiva && k.rows[0].activo !== true) throw new ErrorCatalogo("La categoría está inactiva; actívela antes de usarla en una familia.");
+  return id;
+}
+
 /** Categorías/Marcas: la función de BD verifica la sesión con su credencial; sin ella no se escribe. */
 async function exigirCredencial(tipo: TipoCatalogo) {
   const cred = await credencial();
@@ -177,13 +198,14 @@ export async function crearCatalogo(tipo: TipoCatalogo, request: Request) {
     const cred = await exigirCredencial(tipo);
     const fila = await enTransaccion(b.db, async (c) => {
       const familiaId = tipo === "lineas" ? await familiaDeLaEmpresa(c, empresaId, cuerpo.familiaId, true) : null;
+      const categoriaId = tipo === "familias" ? await categoriaDeLaEmpresa(c, empresaId, cuerpo.categoriaId, true) : null;
       await verificarDuplicados(c, tipo, empresaId, d, familiaId, null);
       if (tipo === "categorias" || tipo === "marcas") {
         const g = await c.query(`SELECT catalogo_producto_guardar($1, $2, $3, NULL, $4, $5, $6) AS id`, [cred.id, cred.secret, MOTOR[tipo], d.codigo, d.nombre, d.activo ?? true]);
         return (await c.query(`SELECT ${proyectar(tipo)} FROM ${t.tabla} t WHERE t.id = $1 AND t.empresa_id = $2`, [g.rows[0].id, empresaId])).rows[0];
       }
-      const cols = ["empresa_id", "codigo", "nombre", ...(t.descripcion ? ["descripcion"] : []), ...(tipo === "lineas" ? ["familia_id"] : []), "activo"];
-      const vals = [empresaId, d.codigo, d.nombre, ...(t.descripcion ? [d.descripcion] : []), ...(tipo === "lineas" ? [familiaId] : []), d.activo ?? true];
+      const cols = ["empresa_id", "codigo", "nombre", ...(t.descripcion ? ["descripcion"] : []), ...(tipo === "lineas" ? ["familia_id"] : []), ...(tipo === "familias" ? ["categoria_id"] : []), "activo"];
+      const vals = [empresaId, d.codigo, d.nombre, ...(t.descripcion ? [d.descripcion] : []), ...(tipo === "lineas" ? [familiaId] : []), ...(tipo === "familias" ? [categoriaId] : []), d.activo ?? true];
       const r = await c.query(`INSERT INTO ${t.tabla} (${cols.join(",")}) VALUES (${cols.map((_, i) => `$${i + 1}`).join(",")}) RETURNING id`, vals);
       return (await c.query(`SELECT ${proyectar(tipo)} FROM ${t.tabla} t WHERE t.id = $1 AND t.empresa_id = $2`, [r.rows[0].id, empresaId])).rows[0];
     });
@@ -226,13 +248,41 @@ export async function editarCatalogo(tipo: TipoCatalogo, request: Request, id: s
           if (usos.rowCount) throw new ErrorCatalogo("La línea tiene productos vinculados; no puede cambiar de familia.", 409);
         }
       }
+      let categoriaId: string | null = null;
+      if (tipo === "familias") {
+        const actualCat = (a.categoria_id as string | null) ?? null;
+        const pedida = cuerpo.categoriaId === undefined ? actualCat : texto(cuerpo.categoriaId) || null;
+        if (pedida === actualCat) {
+          categoriaId = actualCat; // sin cambio: una familia histórica sin categoría sigue editable hasta que se clasifique
+        } else {
+          if (actualCat !== null && pedida === null) throw new ErrorCatalogo("La familia ya tiene categoría; no puede quedar sin ella.");
+          categoriaId = await categoriaDeLaEmpresa(c, empresaId, pedida, true);
+          // No se reclasifica en silencio: si hay productos de esta familia con otra categoría, el cambio los dejaría incoherentes.
+          const conflicto = await c.query(
+            `SELECT count(*)::int AS n FROM productos WHERE empresa_id = $1 AND familia_id = $2 AND categoria_id IS NOT NULL AND categoria_id <> $3`,
+            [empresaId, id, categoriaId],
+          );
+          const n = Number(conflicto.rows[0].n);
+          if (n > 0) {
+            throw new ErrorCatalogo(`La familia tiene ${n} producto(s) con otra categoría; reclasifíquelos antes de cambiar la categoría de la familia.`, 409);
+          }
+        }
+      }
       await verificarDuplicados(c, tipo, empresaId, d, familiaId, id);
       if (tipo === "categorias" || tipo === "marcas") {
         await c.query(`SELECT catalogo_producto_guardar($1, $2, $3, $4, $5, $6, $7)`, [cred.id, cred.secret, MOTOR[tipo], id, d.codigo, d.nombre, activo]);
         return (await c.query(`SELECT ${proyectar(tipo)} FROM ${t.tabla} t WHERE t.id = $1 AND t.empresa_id = $2`, [id, empresaId])).rows[0];
       }
-      const sets = ["codigo = $3", "nombre = $4", ...(t.descripcion ? ["descripcion = $5"] : []), ...(tipo === "lineas" ? [`familia_id = $${t.descripcion ? 6 : 5}`] : []), `activo = $${t.descripcion ? (tipo === "lineas" ? 7 : 6) : 5}`];
-      const vals = [id, empresaId, d.codigo, d.nombre, ...(t.descripcion ? [d.descripcion] : []), ...(tipo === "lineas" ? [familiaId] : []), activo];
+      const vals: unknown[] = [id, empresaId, d.codigo, d.nombre];
+      const sets = ["codigo = $3", "nombre = $4"];
+      const agregar = (columna: string, valor: unknown) => {
+        vals.push(valor);
+        sets.push(`${columna} = $${vals.length}`);
+      };
+      if (t.descripcion) agregar("descripcion", d.descripcion);
+      if (tipo === "lineas") agregar("familia_id", familiaId);
+      if (tipo === "familias") agregar("categoria_id", categoriaId);
+      agregar("activo", activo);
       await c.query(`UPDATE ${t.tabla} SET ${sets.join(", ")} WHERE id = $1 AND empresa_id = $2`, vals);
       return (await c.query(`SELECT ${proyectar(tipo)} FROM ${t.tabla} t WHERE t.id = $1 AND t.empresa_id = $2`, [id, empresaId])).rows[0];
     });

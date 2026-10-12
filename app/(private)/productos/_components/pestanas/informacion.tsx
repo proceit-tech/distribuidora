@@ -19,7 +19,24 @@ const TIPOS: Array<[ProductoTipo, string]> = [
 
 export function PestanaInformacion({ ctx }: { ctx: ContextoFormulario }) {
   const { form, errores, catalogos, detalle } = ctx;
+  // Selectores en cascada Categoría → Familia → Línea. Con categoría elegida se ofrecen sus familias y las históricas aún sin clasificar
+  // (que no bloquean); la familia ya guardada siempre sigue visible para no perder el dato al editar.
+  const familiasVisibles = catalogos.familias.filter((f) => !form.categoriaId || f.categoriaId === form.categoriaId || f.categoriaId === null || f.id === form.familiaId);
   const lineas = catalogos.lineas.filter((l) => l.familiaId === form.familiaId);
+
+  function cambiarCategoria(categoriaId: string) {
+    const familia = catalogos.familias.find((f) => f.id === form.familiaId);
+    const incompatible = categoriaId !== "" && familia !== undefined && familia.categoriaId !== null && familia.categoriaId !== categoriaId;
+
+    if (incompatible && !window.confirm("La familia y la línea elegidas no pertenecen a la nueva categoría y se limpiarán. ¿Continuar?")) return;
+
+    ctx.set("categoriaId", categoriaId);
+
+    if (incompatible) {
+      ctx.set("familiaId", "");
+      ctx.set("lineaId", "");
+    }
+  }
   const impuesto = catalogos.impuestos.find((i) => i.id === form.impuestoId);
   const pais = catalogos.paises.find((p) => p.codigo === form.paisOrigenCodigo);
   const valor = detalle && form.precioVentaReferencia ? productoRedondeado(form.precioVentaReferencia, detalle.stockActual) : null;
@@ -51,7 +68,7 @@ export function PestanaInformacion({ ctx }: { ctx: ContextoFormulario }) {
 
       <SubTitulo>Clasificación</SubTitulo>
       <div className={styles.gridFour}>
-        <Selector etiqueta="Categoría" campo="categoriaId" errores={errores} valor={form.categoriaId} alCambiar={(v) => ctx.set("categoriaId", v)} opciones={[["", "Sin categoría"], ...catalogos.categorias.map((c): [string, string] => [c.id, `${c.codigo} · ${c.nombre}`])]} />
+        <Selector etiqueta="Categoría" campo="categoriaId" errores={errores} valor={form.categoriaId} alCambiar={cambiarCategoria} opciones={[["", "Sin categoría"], ...catalogos.categorias.map((c): [string, string] => [c.id, `${c.codigo} · ${c.nombre}`])]} />
         <Selector etiqueta="Marca" campo="marcaId" errores={errores} valor={form.marcaId} alCambiar={(v) => ctx.set("marcaId", v)} opciones={[["", "Sin marca"], ...catalogos.marcas.map((m): [string, string] => [m.id, m.nombre])]} />
         <Selector
           etiqueta="Familia"
@@ -63,7 +80,7 @@ export function PestanaInformacion({ ctx }: { ctx: ContextoFormulario }) {
             // La línea debe pertenecer a la familia elegida.
             if (!catalogos.lineas.some((l) => l.id === form.lineaId && l.familiaId === v)) ctx.set("lineaId", "");
           }}
-          opciones={[["", catalogos.familias.length ? "Sin familia" : "Sin familias registradas"], ...catalogos.familias.map((f): [string, string] => [f.id, f.nombre])]}
+          opciones={[["", catalogos.familias.length ? "Sin familia" : "Sin familias registradas"], ...familiasVisibles.map((f): [string, string] => [f.id, f.categoriaId === null ? `${f.nombre} (sin categoría asignada)` : f.nombre])]}
         />
         <Selector
           etiqueta="Línea"

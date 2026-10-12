@@ -240,7 +240,8 @@ export type ProductoLista = {
 export type CatalogoProductos = {
   categorias: { id: string; codigo: string; nombre: string }[];
   marcas: { id: string; codigo: string; nombre: string }[];
-  familias: { id: string; codigo: string; nombre: string }[];
+  /** categoriaId = null: familia histórica aún sin clasificar (no se presume categoría por el nombre). */
+  familias: { id: string; codigo: string; nombre: string; categoriaId: string | null }[];
   lineas: { id: string; familiaId: string; codigo: string; nombre: string }[];
   /** Moneda del precio de venta de referencia (moneda base de la empresa o la de la lista de referencia). */
   monedaReferencia: string;
