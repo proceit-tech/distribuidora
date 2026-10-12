@@ -36,7 +36,7 @@ function CamposDocumento({ prefijo, valor, errores, alCambiar, archivoObligatori
         <Fecha etiqueta="Fecha de vencimiento" campo={`${prefijo}.fechaVencimiento`} errores={errores} valor={valor.fechaVencimiento} alCambiar={(v) => alCambiar({ ...valor, fechaVencimiento: v })} />
       </div>
       <div className={styles.gridTwo}>
-        <Texto etiqueta="Observación" campo={`${prefijo}.observacion`} errores={errores} valor={valor.observacion} alCambiar={(v) => alCambiar({ ...valor, observacion: v })} maxLength={1000} />
+        <Texto etiqueta="Observación" campo={`${prefijo}.observacion`} errores={errores} valor={valor.observacion} alCambiar={(v) => alCambiar({ ...valor, observacion: v })} maxLength={500} ayuda="Hasta 500 caracteres." />
       </div>
     </>
   );

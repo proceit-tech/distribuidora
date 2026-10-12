@@ -12,6 +12,7 @@ import {
   fijarPrecioReferencia,
   resolverPais,
   respuestaError,
+  validarCambioUnidadBase,
   validarReferencias,
 } from "@/lib/productos/shared";
 
@@ -162,12 +163,15 @@ export async function GET(_request: Request, contexto: Contexto) {
         `SELECT d.id AS "depositoId", d.nombre AS "depositoNombre", sum(s.cantidad)::text AS cantidad
            FROM stock_saldos s JOIN depositos d ON d.empresa_id = s.empresa_id AND d.id = s.deposito_id
           WHERE s.empresa_id = $2 AND s.producto_id = $1 AND s.estado_stock = 'DISPONIBLE' AND s.propiedad = 'PROPIO'
+            AND usuario_puede_deposito($2::uuid, $3::uuid, s.deposito_id)
           GROUP BY d.id, d.nombre ORDER BY d.nombre`,
-        [id, empresaId],
+        [id, empresaId, session.user.id],
       ),
       db.query(
-        `SELECT costo_promedio::text AS costo FROM v_producto_costo_promedio WHERE empresa_id = $2 AND producto_id = $1`,
-        [id, empresaId],
+        `SELECT CASE WHEN sum(c.cantidad_valorizada) > 0 THEN round(sum(c.valor_total) / sum(c.cantidad_valorizada), 4)::text END AS costo
+           FROM inventario_costos c WHERE c.empresa_id = $2 AND c.producto_id = $1 AND usuario_puede_deposito($2::uuid, $3::uuid, c.deposito_id)
+          HAVING count(*) > 0`,
+        [id, empresaId, session.user.id],
       ),
       db.query(
         `SELECT mi.numero_movimiento AS numero, to_char(mi.fecha_movimiento, 'YYYY-MM-DD') AS fecha, ml.cantidad::text AS cantidad,
@@ -176,8 +180,9 @@ export async function GET(_request: Request, contexto: Contexto) {
            JOIN movimientos_inventario mi ON mi.empresa_id = ml.empresa_id AND mi.id = ml.movimiento_id
            LEFT JOIN depositos d ON d.empresa_id = mi.empresa_id AND d.id = mi.deposito_destino_id
           WHERE ml.empresa_id = $2 AND ml.producto_id = $1 AND mi.tipo_origen = 'ABERTURA' AND mi.estado = 'REGISTRADO'
+            AND usuario_puede_deposito($2::uuid, $3::uuid, mi.deposito_destino_id)
           ORDER BY mi.fecha_movimiento, mi.creado_at LIMIT 1`,
-        [id, empresaId],
+        [id, empresaId, session.user.id],
       ),
     ]);
     const monedaBase = await db.query(
@@ -193,8 +198,9 @@ export async function GET(_request: Request, contexto: Contexto) {
     const stockRows = stock.rows as Array<{ depositoId: string; depositoNombre: string; cantidad: string }>;
     const stockTotal = await db.query(
       `SELECT coalesce(sum(cantidad),0)::text AS total FROM stock_saldos
-        WHERE empresa_id = $2 AND producto_id = $1 AND estado_stock = 'DISPONIBLE' AND propiedad = 'PROPIO'`,
-      [id, empresaId],
+        WHERE empresa_id = $2 AND producto_id = $1 AND estado_stock = 'DISPONIBLE' AND propiedad = 'PROPIO'
+          AND usuario_puede_deposito($2::uuid, $3::uuid, deposito_id)`,
+      [id, empresaId, session.user.id],
     );
 
     const base = principal.rows[0] as Record<string, unknown>;
@@ -272,6 +278,11 @@ export async function PUT(request: Request, contexto: Contexto) {
 
     await resolverPais(conexion, datos);
     await validarReferencias(conexion, empresaId, datos, actual);
+
+    // PRD-A21: solo si la unidad base REALMENTE cambia respecto de la persistida; sin cambio, la edición es normal. Un producto sin unidad persistida (legado) no se bloquea.
+    if (datos.unidadMedidaId && actual.unidad_medida_id && datos.unidadMedidaId !== actual.unidad_medida_id) {
+      await validarCambioUnidadBase(conexion, empresaId, session.user.id, id, actual.unidad_medida_id, datos.unidadMedidaId);
+    }
 
     // Sincronización selectiva: primero solo las eliminaciones explícitas (así un cambio de KIT a otro tipo no choca con la guarda de
     // componentes), después el producto y por último las actualizaciones por id y las altas. Nada se borra y recrea.

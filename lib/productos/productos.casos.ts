@@ -352,7 +352,7 @@ export async function verificarCasosProductos(): Promise<string[]> {
   cierto("POST: el código siempre es automático (rechaza uno enviado)", /El código interno se genera automáticamente/.test(post) && /await siguienteCodigo\(/.test(post));
   cierto("POST: referencias validadas dentro de la transacción", post.indexOf("validarReferencias(") > post.indexOf("BEGIN"));
   cierto("GET/PUT: sin float8 (decimales como texto)", !/float8/.test(put) && !/float8/.test(post));
-  cierto("GET: stock, costo, precio y cantidades salen ::text", /precio::text/.test(put) && /costo_promedio::text/.test(put) && /sum\(s\.cantidad\)::text/.test(put) && /ml\.cantidad::text/.test(put));
+  cierto("GET: stock, costo, precio y cantidades salen ::text", /precio::text/.test(put) && /round\(sum\(c\.valor_total\) \/ sum\(c\.cantidad_valorizada\), 4\)::text/.test(put) && /sum\(s\.cantidad\)::text/.test(put) && /ml\.cantidad::text/.test(put));
   cierto("shared: sin Number() ni .slice() sobre datos del usuario", !/\bNumber\(/.test(shared) && !/\.slice\(0,/.test(shared.replace(/left\(nombre, 30\)/, "")));
   cierto("normalizar: sin Number() sobre importes ni truncamiento", !/Number\(texto\)|parseFloat|\.slice\(0, ?maximo/.test(norm.replace("const n = Number(texto);", "")));
   cierto("normalizar: el límite se rechaza, no se corta", /admite hasta \$\{maximo\} caracteres/.test(norm));

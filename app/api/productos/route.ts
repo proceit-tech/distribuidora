@@ -85,14 +85,19 @@ export async function GET(request: Request) {
                       u.nombre AS unidad_nombre,
                       p.familia_id, f.nombre AS familia, p.linea_id, l.nombre AS linea,
                       COALESCE(sp.disponible, 0)::text AS stock_disponible,
-                      COALESCE(sp.bajo_minimo, false) AS bajo_minimo,
+                      (p.controla_stock AND p.stock_minimo > 0 AND COALESCE(sp.disponible, 0) < p.stock_minimo) AS bajo_minimo,
                       cp.costo_promedio::text AS costo_promedio,
                       pr.precio::text AS precio_venta_referencia, pr.moneda AS moneda_precio_referencia,
                       COALESCE(ap.cantidad, 0)::text AS inventario_inicial
                  FROM productos p
                  LEFT JOIN familias_producto f ON f.empresa_id = p.empresa_id AND f.id = p.familia_id
                  LEFT JOIN lineas_producto l ON l.empresa_id = p.empresa_id AND l.id = p.linea_id
-                 LEFT JOIN v_producto_costo_promedio cp ON cp.empresa_id = p.empresa_id AND cp.producto_id = p.id
+                 -- PRD-A23: costo, stock e inventario inicial agregan SOLO los depósitos que el usuario puede operar (usuario_puede_deposito, como Stock).
+                 LEFT JOIN LATERAL (
+                   SELECT CASE WHEN sum(c.cantidad_valorizada) > 0 THEN round(sum(c.valor_total) / sum(c.cantidad_valorizada), 4) END AS costo_promedio
+                     FROM inventario_costos c
+                    WHERE c.empresa_id = p.empresa_id AND c.producto_id = p.id AND usuario_puede_deposito($1::uuid, $2::uuid, c.deposito_id)
+                 ) cp ON true
                  LEFT JOIN v_producto_precio_referencia pr ON pr.empresa_id = p.empresa_id AND pr.producto_id = p.id
                  LEFT JOIN LATERAL (
                    SELECT sum(ml.cantidad) AS cantidad
@@ -100,15 +105,21 @@ export async function GET(request: Request) {
                      JOIN movimientos_inventario mi ON mi.empresa_id = ml.empresa_id AND mi.id = ml.movimiento_id
                     WHERE ml.empresa_id = p.empresa_id AND ml.producto_id = p.id
                       AND mi.tipo_origen = 'ABERTURA' AND mi.estado = 'REGISTRADO'
+                      AND usuario_puede_deposito($1::uuid, $2::uuid, mi.deposito_destino_id)
                  ) ap ON true
                  LEFT JOIN categorias_producto c ON c.empresa_id = p.empresa_id AND c.id = p.categoria_id
                  LEFT JOIN marcas_producto m ON m.empresa_id = p.empresa_id AND m.id = p.marca_id
                  LEFT JOIN impuestos i ON i.id = p.impuesto_id
                  LEFT JOIN unidades_medida u ON u.id = p.unidad_medida_id
-                 LEFT JOIN v_stock_producto sp ON sp.empresa_id = p.empresa_id AND sp.producto_id = p.id
+                 LEFT JOIN LATERAL (
+                   SELECT sum(s.cantidad) AS disponible
+                     FROM stock_saldos s
+                    WHERE s.empresa_id = p.empresa_id AND s.producto_id = p.id AND s.estado_stock = 'DISPONIBLE' AND s.propiedad = 'PROPIO'
+                      AND usuario_puede_deposito($1::uuid, $2::uuid, s.deposito_id)
+                 ) sp ON true
                 WHERE p.empresa_id = $1
                 ORDER BY p.activo DESC, p.descripcion`,
-              [empresaId],
+              [empresaId, session.user.id],
             ),
         db.query(`SELECT id, codigo, nombre FROM categorias_producto WHERE empresa_id = $1 AND activo = true ORDER BY nombre`, [empresaId]),
         db.query(`SELECT id, coalesce(codigo, '') AS codigo, nombre FROM marcas_producto WHERE empresa_id = $1 AND activo = true ORDER BY nombre`, [empresaId]),
@@ -126,7 +137,7 @@ export async function GET(request: Request) {
         ),
         db.query(`SELECT id, codigo, nombre, porcentaje::text AS porcentaje FROM impuestos WHERE activo = true ORDER BY porcentaje, nombre`),
         db.query(`SELECT id, codigo, razon_social FROM proveedores WHERE empresa_id = $1 AND activo = true ORDER BY razon_social`, [empresaId]),
-        db.query(`SELECT id, codigo, nombre FROM depositos WHERE empresa_id = $1 AND activo = true ORDER BY nombre`, [empresaId]),
+        db.query(`SELECT id, codigo, nombre FROM depositos WHERE empresa_id = $1 AND activo = true AND usuario_puede_deposito($1::uuid, $2::uuid, id) ORDER BY nombre`, [empresaId, session.user.id]),
         db.query(`SELECT codigo, nombre FROM referencia_geografica_paises WHERE activo = true ORDER BY nombre`),
         db.query(`SELECT codigo, nombre FROM monedas WHERE activo = true ORDER BY codigo`),
         soloCatalogos

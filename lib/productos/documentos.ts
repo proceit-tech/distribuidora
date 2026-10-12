@@ -28,7 +28,7 @@ export function validarMetadatosDocumento(entrada: Record<string, unknown>): Met
 
   const observacion = typeof entrada.observacion === "string" ? entrada.observacion.trim() : "";
 
-  if (observacion.length > 1000) throw new ErrorValidacion("La observación supera los 1000 caracteres.", "observacion");
+  if (observacion.length > 500) throw new ErrorValidacion("La observación del documento admite hasta 500 caracteres.", "observacion");
 
   const fechaEmision = fecha(entrada.fechaEmision, "fechaEmision", "La fecha de emisión");
   const fechaVencimiento = fecha(entrada.fechaVencimiento, "fechaVencimiento", "La fecha de vencimiento");

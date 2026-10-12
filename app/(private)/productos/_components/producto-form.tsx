@@ -10,6 +10,7 @@ import { TAMANO_MAXIMO_BYTES } from "@/lib/almacenamiento/archivos-reglas";
 import { formularioAPayload, formularioDesdeDetalle, formularioInicial, type FormularioProducto } from "@/lib/productos/formulario";
 import { UUID, normalizarProducto, type Coleccion } from "@/lib/productos/normalizar";
 import { idCampo, pestanaDeCampo, type PestanaId } from "@/lib/productos/pestanas";
+import { useProtegerCambios } from "@/lib/ui/proteger-cambios";
 import type { CatalogoProductos, ProductoDetalle } from "@/types/productos";
 
 import type { Errores } from "./campos";
@@ -82,6 +83,10 @@ export default function ProductoForm({ mode, initial, catalogos, onSave, onRecar
   const [pendientes, setPendientes] = useState<DocumentoPendiente[]>([]);
   const [fotoPendiente, setFotoPendiente] = useState<File | null>(null);
   const sucio = form !== formularioBase && JSON.stringify(form) !== JSON.stringify(formularioBase);
+  const [guardado, setGuardado] = useState(false);
+
+  // Cambios efectivos en la ficha o archivos pendientes (documentos, foto): avisa al recargar/cerrar y al abandonar con enlaces (Volver, Cancelar, menú).
+  useProtegerCambios((sucio || pendientes.length > 0 || fotoPendiente !== null) && !guardado);
 
   function setTab(pestana: PestanaId) {
     setTabInterno(pestana);
@@ -185,6 +190,7 @@ export default function ProductoForm({ mode, initial, catalogos, onSave, onRecar
 
     try {
       await onSave(payload, pendientes, fotoPendiente);
+      setGuardado(true);
     } catch (e) {
       mostrarError(
         e instanceof ErrorValidacion

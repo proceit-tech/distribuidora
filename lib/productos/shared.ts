@@ -166,6 +166,38 @@ export function respuestaError(error: unknown, accion: string) {
   );
 }
 
+const MENSAJES_CAMBIO_UNIDAD: Record<string, string> = {
+  "NEX:STOCK_NO_CERO": "La unidad base no puede cambiarse mientras el producto tenga stock en algún depósito, estado, propiedad o lote. Deje todos los saldos en cero con Movimientos y vuelva a intentarlo.",
+  "NEX:COSTO_VALORIZADO": "El producto tiene cantidad valorizada en el inventario: la unidad base no puede cambiarse hasta resolver esa inconsistencia.",
+  "NEX:UNIDAD_CAMBIO_CONCURRENTE": "La unidad base del producto cambió mientras se editaba. Recargue la ficha antes de guardar.",
+  "NEX:UNIDAD_INVALIDA": "La unidad base elegida no existe o está inactiva.",
+  "NEX:UNIDAD_SIN_CAMBIO": "La unidad base nueva debe ser distinta de la actual.",
+};
+
+/**
+ * PRD-A21 / DEC-PRD-U07: la unidad base de un producto EXISTENTE solo puede cambiar con TODOS los saldos en cero. La verificación vive en la base
+ * (producto_cambiar_unidad_base_validar, NEX-052): bloquea el producto y serializa con los escritores de stock, de modo que un movimiento concurrente
+ * no puede colarse entre la comprobación y el UPDATE. Sin esa función (migración no aplicada) el cambio se RECHAZA: nunca se edita la unidad sin protección.
+ * Debe llamarse dentro de la transacción de la edición y ANTES del UPDATE del producto.
+ */
+export async function validarCambioUnidadBase(conexion: PoolClient, empresaId: string, usuarioId: string, productoId: string, anterior: string, nueva: string) {
+  const marca = await conexion.query("SELECT to_regprocedure('public.producto_cambiar_unidad_base_validar(uuid,uuid,uuid,uuid,uuid)') IS NOT NULL AS ok");
+
+  if ((marca.rows[0] as { ok?: boolean } | undefined)?.ok !== true) {
+    throw new ErrorValidacion("El cambio de unidad base está bloqueado hasta aplicar la migración NEX-052 (protección contra movimientos de stock simultáneos). Los demás datos del producto sí pueden editarse.", "unidadMedidaId", 409);
+  }
+
+  try {
+    await conexion.query("SELECT public.producto_cambiar_unidad_base_validar($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::uuid)", [empresaId, usuarioId, productoId, anterior, nueva]);
+  } catch (error) {
+    const detalle = (error as { detail?: string }).detail ?? "";
+
+    if (MENSAJES_CAMBIO_UNIDAD[detalle]) throw new ErrorValidacion(MENSAJES_CAMBIO_UNIDAD[detalle], "unidadMedidaId", 409);
+
+    throw error;
+  }
+}
+
 type Previo = Partial<Record<"categoria_id" | "marca_id" | "familia_id" | "linea_id" | "unidad_medida_id" | "impuesto_id", string | null>>;
 
 /**
