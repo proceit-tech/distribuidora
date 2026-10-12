@@ -80,3 +80,11 @@ O responsável esclareceu que uma mercadoria possui unidade-base de estoque, mú
 **Evidência do defeito técnico atual:** `lib/facturacion/emision.ts:82-92,201,220-244` lê somente a unidade-base, sem apresentação/fator por linha; `lib/facturacion/payload-fe.ts:186-188` constrói os campos fiscais a partir dos valores recebidos. A correção futura deve alcançar DTO, UI, backend, cálculos, armazenamento e relatórios; não é mero ajuste de select.
 
 **Status:** decisão de **conversão automática APROVADA**, implementação ainda não autorizada, auditoria do menu **ABERTA**, não homologada. Não modificar NEX-001…051 nem executar scripts na VM.
+
+## Complemento da auditoria Produtos × estoque × preço (12/10/2026)
+
+**FAT-X03 / BLOQUEANTE / preço/quantidade por apresentação:** com a conversão automática aprovada (DEC-PRD-U03), a emissão deve usar snapshot fiscal e comercial e manter preço/quantidade coerentes. Contudo, `productos.unidad_medida_id` hoje pode ser editada após operações, e `lista_precio_items.unidad_medida_id` pode não acompanhar (`NEX-008/017`, `app/api/productos/[id]/route.ts`). Se o servidor de FE assumir o preço de referência como preço atual da unidade-base, há risco de faturação unitária e total errados.
+
+**FAT-X04 / precisão:** fator de apresentação com 6 decimais contra estoque/linhas de movimentação a 4; validar integridade antes de calcular E709/E711/preço do item e impedir discrepância de valor total. Sem presumir que emitir FE hoje afeta o estoque.
+
+**Fonte:** `AUD-PRODUCTOS-V1.md`, seção XIV; auditoria Facturas continua aberta.
