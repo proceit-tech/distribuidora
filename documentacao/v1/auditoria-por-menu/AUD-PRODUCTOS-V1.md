@@ -67,7 +67,7 @@ Este arquivo é a fonte única da auditoria do menu **Productos**. Registrar, co
 - **DEC-PRD-U03**: apresentação declarada base deve obrigatoriamente equivaler a unidade base do produto com fator 1? Recomendação: sim. Antes de mudar constraint, conferir registros legados.
 - **DEC-PRD-U04**: classificação e GTIN de embalagens — precedência entre `codigoBarras`, `producto_codigos.esPrincipal` e `producto_unidades.codigo_barras`, antes de atribuir E706/E707 ao gateway.
 - **DEC-PRD-U05**: abrangência do saldo por depósito para usuários com alcance de sucursal limitado; regra sugerida restritiva, mas requer confronto com autorização real.
-- **DEC-PRD-U06**: seleção automática de IVA 10% no formulário de novo produto (default) versus obrigatoriedade de escolha explícita.
+- **DEC-PRD-U06 — APROVADA PELO RESPONSÁVEL (12/10/2026):** manter **IVA 10% — Gravado (E731=1)** como **padrão inicial** do formulário de novo produto, quando existir imposto de 10% ativo no catálogo. O usuário pode alterar imposto e afetação conforme o produto real (5%, Exento, Exonerado, Gravado parcial etc.), e o backend valida todas as combinações. Padrão selecionado **não dispensa** o contrato de completude fiscal obrigatória DEC-PRD-U02. Nunca aplicar default retroativo nos produtos históricos.
 
 ## VI. Revisões pendentes antes de considerar 100% do menu
 
@@ -77,7 +77,7 @@ Este arquivo é a fonte única da auditoria do menu **Productos**. Registrar, co
 - [ ] Auditar todas as dependências de inventário, listas de preços, clientes/faturação; evitar alterar tabelas interligadas sem mapa de impacto.
 - [ ] Revisar constraints/triggers/índices e SQL incremental NEX-003…051 em todos pontos de dependência, sem executar nem modificar SQL aplicado.
 - [ ] Testes locais automatizados realmente executados e registrados; testes manuais/visuais na VM pelo responsável.
-- [ ] Obter respostas a DEC-PRD-U03…U06; DEC-PRD-U01 e DEC-PRD-U02 aprovadas em 12/10/2026. Somente depois fechar parecer do menu, separar achados confirmados e tarefas aprovadas para Claude.
+- [ ] Obter respostas a DEC-PRD-U03…U05; DEC-PRD-U01, DEC-PRD-U02 e DEC-PRD-U06 aprovadas em 12/10/2026. Somente depois fechar parecer do menu, separar achados confirmados e tarefas aprovadas para Claude.
 
 **Auditoria permanece ABERTA. O responsável pediu perguntas de negócio ANTES de encerrar cada menu; respostas devem ser registradas aqui.**
 
@@ -128,4 +128,18 @@ Este arquivo é a fonte única da auditoria do menu **Productos**. Registrar, co
 - A regra aprovada não é uma ordem para corrigir silenciosamente IVA/unidade fiscal de produtos históricos nem alterar suas movimentações. A política de edição de registros legados e a elegibilidade dos tipos não vendáveis será confrontada posteriormente.
 - **Lacuna técnica comprovada:** `lib/productos/normalizar.ts:109-118` aceita `afectacionIva` em branco (`null`); `lib/productos/shared.ts:206-213` valida existência da unidade e coerência de IVA *somente se preenchida*, mas não impõe completude; `app/(private)/productos/_components/pestanas/sifen.tsx` oferece `Sin clasificar` e admite unidade sem equivalência; `NEX-040` permite `NULL` por retrocompatibilidade. Exigir nova validação em criação sem editar NEX-040 aplicada; nova constraint de banco só após análise de impacto e migration incremental autorizada.
 
-**Estado:** DEC-PRD-U02 **APROVADA E ENCERRADA**. A dúvida sobre default de IVA 10% (**DEC-PRD-U06**) continua ABERTA: classificação completa obrigatória não autoriza presumir a taxa de todos os produtos.
+**Estado:** DEC-PRD-U02 **APROVADA E ENCERRADA**. **Atualização posterior:** DEC-PRD-U06 também aprovada: IVA 10% — Gravado é o padrão inicial editável de novos produtos; nunca obriga classificar incorretamente um produto que tenha outro enquadramento.
+
+## XI. Decisão do responsável — DEC-PRD-U06 (12/10/2026) — APROVADA
+
+**Pergunta apresentada:** manter seleção automática de IVA 10% — Gravado, com possibilidade de o usuário alterar, ou exigir escolha explícita? **Resposta:** “sim é o standar”.
+
+**Interpretação aprovada:**
+- Cadastro de **novo produto** começa com **IVA 10% e E731=1 — Gravado** pré-selecionados, desde que exista imposto de 10% ativo no catálogo.
+- O usuário **pode e deve modificar** os campos para o enquadramento efetivo de seu produto (IVA 5%, Exento, Exonerado, Gravado parcial etc.) quando 10% não for aplicável.
+- Toda alteração deve validar coerência entre imposto/taxa, afetação e eventual proporção gravada no cliente e no servidor. Nunca deixar uma combinação inválida ser gravada apenas porque 10% era o default.
+- A escolha do default é somente comportamento inicial da UI: **não implica tributar todas as mercadorias e serviços a 10%**, não cria regra fiscal universal, não preenche registros históricos e não autoriza alterações em NEX-001…051.
+- **Evidência do comportamento atual:** `lib/productos/formulario.ts:96-98` já pré-seleciona o imposto de taxa 10% e E731=1 se existir, em novos produtos; `formularioDesdeDetalle()` preserva valores existentes. A auditoria ainda deverá conferir fallback quando 10% não estiver disponível e erros por alteração da afetação.
+- **Critério de aceite:** novo produto tem IVA 10% — Gravado como sugestão editável; alteração para tipo tributário permitido é persistida corretamente; formulário não salva classificação incoerente ou incompleta (DEC-PRD-U02); edição de produto existente não modifica IVA por default.
+
+**Status:** DEC-PRD-U06 ENCERRADA. Permanecem pendentes DEC-PRD-U03…U05 e a auditoria integral de Productos.
