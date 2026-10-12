@@ -1,3 +1,4 @@
+import { REFERENCIAS_CLIENTE, leerVersionEsperada, validarReferenciasCliente } from "@/lib/clientes/referencias-version";
 import { NextResponse } from "next/server";
 
 import { denyIfNoPermission } from "@/lib/auth/permissions";
@@ -37,14 +38,6 @@ const DOC_SIFEN = {
   OTRO: 9,
 } as const;
 const FRECUENCIAS = new Set(["DIARIA", "SEMANAL", "QUINCENAL", "MENSUAL", "A_DEMANDA"]);
-const REFERENCIAS = {
-  grupoClienteId: ["grupos_cliente", "grupo de cliente"],
-  listaPrecioId: ["listas_precio", "lista de precios"],
-  rutaEntregaId: ["rutas_entrega", "ruta de entrega"],
-  zonaComercialId: ["zonas_comerciales", "zona comercial"],
-  vendedorId: ["vendedores", "vendedor"],
-  canalVentaId: ["canales_venta", "canal de venta"],
-} as const;
 
 // Solo DEMO explícito usa respuestas simuladas; sin DATABASE_URL se responde 503.
 const DEMO_MODE = process.env.DEMO_MODE === "true";
@@ -128,6 +121,18 @@ export async function GET(_request: Request, contexto: Contexto) {
     const c = r.rows[0];
     if (!c) return NextResponse.json({ error: "Cliente no encontrado." }, { status: 404 });
     const hijos = await leerHijos(db, session.user.empresaId, id);
+    // CLI-A01: referencias comerciales que el cliente YA tiene pero que hoy están inactivas (no aparecen en los catálogos activos). Se informan para mostrarlas y
+    // conservarlas; no se agregan a los catálogos de elección.
+    const historicas = await db.query(
+      `SELECT 'grupoClienteId' AS campo, id::text, codigo, nombre FROM grupos_cliente WHERE empresa_id = $1 AND id = $2::uuid AND NOT activo
+       UNION ALL SELECT 'listaPrecioId', id::text, codigo, nombre FROM listas_precio WHERE empresa_id = $1 AND id = $3::uuid AND NOT activo
+       UNION ALL SELECT 'rutaEntregaId', id::text, codigo, nombre FROM rutas_entrega WHERE empresa_id = $1 AND id = $4::uuid AND NOT activo
+       UNION ALL SELECT 'zonaComercialId', id::text, codigo, nombre FROM zonas_comerciales WHERE empresa_id = $1 AND id = $5::uuid AND NOT activo
+       UNION ALL SELECT 'vendedorId', id::text, codigo, nombre FROM vendedores WHERE empresa_id = $1 AND id = $6::uuid AND NOT activo
+       UNION ALL SELECT 'canalVentaId', id::text, codigo, nombre FROM canales_venta WHERE empresa_id = $1 AND id = $7::uuid AND NOT activo`,
+      [session.user.empresaId, c.grupo_cliente_id, c.lista_precio_id, c.ruta_entrega_id, c.zona_comercial_id, c.vendedor_id, c.canal_venta_id],
+    );
+    const referenciasHistoricas = Object.fromEntries((historicas.rows as Array<{ campo: string; id: string; codigo: string | null; nombre: string }>).map((h) => [h.campo, { id: h.id, codigo: h.codigo ?? "", nombre: h.nombre }]));
     // Códigos de la base -> texto de la API. Un código desconocido NUNCA se sustituye por un valor válido:
     // se devuelve marcado para que la aptitud SIFEN lo informe como pendiente.
     const naturalezaTxt = ({ 1: "CONTRIBUYENTE", 2: "NO_CONTRIBUYENTE" } as Record<number, string>)[Number(c.naturaleza_receptor)] ?? `DESCONOCIDA_${c.naturaleza_receptor}`;
@@ -189,8 +194,9 @@ export async function GET(_request: Request, contexto: Contexto) {
         observacionLogistica: c.observacion_logistica ?? "",
         activo: c.activo,
         creadoEn: c.creado_at,
-        actualizadoEn: c.actualizado_at,
+        actualizadoEn: c.actualizado_at instanceof Date ? c.actualizado_at.toISOString() : c.actualizado_at,
       },
+      referenciasHistoricas,
       ...hijos,
     });
   } catch (error) {
@@ -265,19 +271,16 @@ export async function PUT(request: Request, contexto: Contexto) {
     correo(emailFacturacion, "El correo de facturación");
     correo(emailCobranzas, "El correo de cobranzas");
 
-    // Referencias: deben pertenecer a la empresa de la sesión y estar activas.
+    // Referencias: formato aquí; la pertenencia a la empresa y la actividad se verifican tras bloquear la fila (una referencia que el cliente YA tiene y no cambia
+    // se tolera aunque se haya inactivado; solo lo nuevo o modificado debe ser de la empresa y estar activo).
     const refs: Record<string, string | null> = {};
-    for (const [campo, [tabla, etiqueta]] of Object.entries(REFERENCIAS)) {
+    for (const [campo, [, etiqueta]] of Object.entries(REFERENCIAS_CLIENTE)) {
       const valor = opcional(cuerpo[campo]);
       refs[campo] = valor;
-      if (!valor) continue;
-      if (!UUID.test(valor)) throw new Error(`El valor seleccionado para ${etiqueta} no está disponible.`);
-      const ok = await conexion.query(
-        `SELECT 1 FROM ${tabla} WHERE id = $1 AND empresa_id = $2 AND activo = true`,
-        [valor, empresaId],
-      );
-      if (ok.rowCount !== 1) throw new Error(`El valor seleccionado para ${etiqueta} no está disponible.`);
+      if (valor && !UUID.test(valor)) throw new Error(`El valor seleccionado para ${etiqueta} no está disponible.`);
     }
+    // CLI-A03: versión de la ficha que el operador tenía en pantalla (ISO con milisegundos). Sin versión válida no se guarda.
+    const versionEsperada = leerVersionEsperada(cuerpo.actualizadoEn);
     const condicionPagoId = opcional(cuerpo.condicionPagoId);
     if (condicionPagoId && !UUID.test(condicionPagoId)) throw new Error("La condición de pago no es válida.");
 
@@ -287,13 +290,23 @@ export async function PUT(request: Request, contexto: Contexto) {
     await conexion.query("BEGIN");
 
     const actual = await conexion.query(
-      "SELECT bloqueado_ventas, naturaleza_receptor, numero_documento, dv, descripcion_documento_identidad, razon_social, nombre_fantasia, email, telefono, celular, telefono_ddi, celular_ddi, telefono_pais, telefono_area, celular_pais, celular_area, tipo_operacion, tipo_documento, gln, condicion_pago_id, moneda_codigo_predeterminada, limite_credito, limite_credito_temporal, frecuencia_entrega, dias_entrega, dia_mes_entrega FROM clientes WHERE id = $1 AND empresa_id = $2 FOR UPDATE",
-      [id, empresaId],
+      "SELECT (date_trunc('milliseconds', actualizado_at) = $3::timestamptz) AS version_vigente, grupo_cliente_id::text, lista_precio_id::text, ruta_entrega_id::text, zona_comercial_id::text, vendedor_id::text, canal_venta_id::text, bloqueado_ventas, naturaleza_receptor, numero_documento, dv, descripcion_documento_identidad, razon_social, nombre_fantasia, email, telefono, celular, telefono_ddi, celular_ddi, telefono_pais, telefono_area, celular_pais, celular_area, tipo_operacion, tipo_documento, gln, condicion_pago_id, moneda_codigo_predeterminada, limite_credito, limite_credito_temporal, frecuencia_entrega, dias_entrega, dia_mes_entrega FROM clientes WHERE id = $1 AND empresa_id = $2 FOR UPDATE",
+      [id, empresaId, versionEsperada],
     );
     if (actual.rowCount !== 1) {
       await conexion.query("ROLLBACK");
       return NextResponse.json({ error: "Cliente no encontrado." }, { status: 404 });
     }
+    // CLI-A03: pre-condición de versión, verificada DESPUÉS de bloquear la fila y ANTES de cualquier escritura. Si otro operador guardó entretanto, no se pisa su edición.
+    if (actual.rows[0].version_vigente !== true) {
+      await conexion.query("ROLLBACK");
+      return NextResponse.json(
+        { error: "Otro usuario modificó este cliente después de que usted abrió la ficha (o la ficha está desactualizada). Sus cambios NO se guardaron y siguen en pantalla: copie lo necesario, recargue la ficha y repita la edición." },
+        { status: 409 },
+      );
+    }
+    // CLI-A01: lo nuevo o modificado debe ser de la empresa y estar activo; lo que el cliente ya tenía se conserva tal cual (lib/clientes/referencias-version.ts).
+    await validarReferenciasCliente(conexion, empresaId, refs, actual.rows[0]);
     const estabaBloqueado = actual.rows[0].bloqueado_ventas === true;
     // Un valor de catálogo que no cambia se tolera (puede haberse inactivado después); solo se verifica lo nuevo o modificado.
     const monedaNueva = opcional(cuerpo.monedaCodigoPredeterminada, 3)?.toUpperCase() ?? null;
@@ -553,8 +566,12 @@ export async function PUT(request: Request, contexto: Contexto) {
 
     if (mensajeFiscal) throw new Error(mensajeFiscal);
 
+    const nueva = await conexion.query("SELECT actualizado_at FROM clientes WHERE id = $1 AND empresa_id = $2", [id, empresaId]);
+
     await conexion.query("COMMIT");
-    return NextResponse.json({ ok: true, id, hijos: resumen });
+    const actualizadoAt = (nueva.rows[0] as { actualizado_at?: Date } | undefined)?.actualizado_at;
+
+    return NextResponse.json({ ok: true, id, hijos: resumen, actualizadoEn: actualizadoAt instanceof Date ? actualizadoAt.toISOString() : null });
   } catch (error) {
     await conexion.query("ROLLBACK").catch(() => undefined);
     const pg = error as { code?: string };

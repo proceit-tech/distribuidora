@@ -9,6 +9,7 @@ import { TelefonoPais } from "@/components/clientes/telefono-pais";
 import { validarTelefono } from "@/lib/fiscal/telefono";
 import { DESCUENTO_COMERCIAL, LIMITE_CREDITO, decimalAcotado } from "@/lib/clientes/comercial";
 import { pestanaDeErrorApi } from "@/lib/clientes/pestanas";
+import { useProtegerCambios } from "@/lib/ui/proteger-cambios";
 import { ACCEPT_ARCHIVOS, EXTENSIONES_TEXTO, TAMANO_MAXIMO_BYTES, tamanoLegible, validarNombreYTamano } from "@/lib/almacenamiento/archivos-reglas";
 import { validarFrecuenciaYDias } from "@/lib/clientes/logistica";
 import { validarDireccionFiscalRequerida } from "@/lib/clientes/obligatoriedad-fiscal";
@@ -344,6 +345,13 @@ export default function NuevoClientePage() {
   const [altaCreada, setAltaCreada] = useState<{ id: string } | null>(null);
   const [docsSubidos, setDocsSubidos] = useState<string[]>([]);
   const [erroresDocs, setErroresDocs] = useState<Record<string, string>>({});
+
+  // CLI-A02: avisa antes de perder datos escritos (ficha, contactos, direcciones, documentos con archivo). Tras crear el cliente solo protege los archivos que faltan por subir.
+  const sucio = altaCreada
+    ? documentos.some((d) => d.archivo && !docsSubidos.includes(d.uid))
+    : JSON.stringify(formulario) !== JSON.stringify(formularioInicial) || contactos.length > 0 || direcciones.length > 0 || documentos.length > 0;
+
+  useProtegerCambios(sucio && !guardando);
 
   async function cargarCatalogos() {
     try {

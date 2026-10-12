@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { ACCEPT_ARCHIVOS, EXTENSIONES_TEXTO, TAMANO_MAXIMO_BYTES, tamanoLegible, validarNombreYTamano } from "@/lib/almacenamiento/archivos-reglas";
 
@@ -94,18 +94,28 @@ export function DocumentosCliente({
   onRecargar,
   onError,
   onAviso,
+  onBorrador,
 }: {
   clienteId: string;
   documentos: DocumentoCliente[];
   onRecargar: () => Promise<void>;
   onError: (mensaje: string) => void;
   onAviso: (mensaje: string) => void;
+  /** Informa si hay un documento en preparación (alta o edición) que aún no se envió: la pantalla lo usa para avisar antes de perderlo. */
+  onBorrador?: (hay: boolean) => void;
 }) {
   const [nuevo, setNuevo] = useState<Borrador | null>(null);
   const [editando, setEditando] = useState<{ id: string; borrador: Borrador } | null>(null);
   const [historial, setHistorial] = useState<{ id: string; datos: Historial } | null>(null);
   const [eliminados, setEliminados] = useState<Eliminado[] | null>(null);
   const [ocupado, setOcupado] = useState(false);
+  const hayBorrador = nuevo !== null || editando !== null;
+
+  useEffect(() => {
+    onBorrador?.(hayBorrador);
+
+    return () => onBorrador?.(false);
+  }, [hayBorrador, onBorrador]);
   const base = `/api/clientes/${clienteId}/documentos`;
 
   /** Ejecuta una acción contra la API y devuelve el JSON (o null tras informar el error). */

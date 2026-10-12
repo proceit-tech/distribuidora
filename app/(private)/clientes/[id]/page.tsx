@@ -30,6 +30,7 @@ import { pestanaDeErrorApi } from "@/lib/clientes/pestanas";
 import { convertirLimites, requiereConversion, validarTasa } from "@/lib/clientes/cambio";
 import { validarFrecuenciaYDias } from "@/lib/clientes/logistica";
 import { validarDireccionFiscalRequerida } from "@/lib/clientes/obligatoriedad-fiscal";
+import { useProtegerCambios } from "@/lib/ui/proteger-cambios";
 
 import styles from "./page.module.css";
 import { DocumentosCliente, type DocumentoCliente } from "./_components/documentos";
@@ -485,6 +486,13 @@ export default function ClienteDetallePage() {
   const [hijos, setHijos] =
     useState<HijosForm>(hijosVacios);
 
+  // CLI-A02: huella de lo que el servidor entregó (ficha + contactos + direcciones) y borrador de documento sin enviar; avisa al recargar/cerrar y al usar enlaces.
+  const [huellaBase, setHuellaBase] = useState("");
+  const [borradorDocumento, setBorradorDocumento] = useState(false);
+  const sucio = !saving && ((huellaBase !== "" && JSON.stringify({ form, hijos }) !== huellaBase) || borradorDocumento);
+
+  useProtegerCambios(sucio);
+
   const [catalogos, setCatalogos] =
     useState<Catalogos>(
       CATALOGOS_VACIOS,
@@ -520,6 +528,7 @@ export default function ClienteDetallePage() {
             direcciones?: Parameters<typeof hijosDesdeApi>[0]["direcciones"];
             documentos?: DocumentoCliente[];
             aptitudSifen?: { apto: boolean; pendientes: string[] };
+            referenciasHistoricas?: Record<string, { id: string; codigo: string; nombre: string }>;
             error?: string;
           };
 
@@ -533,23 +542,49 @@ export default function ClienteDetallePage() {
           );
         }
 
+        // CLI-A04: un fallo del catálogo (401/403/500) NO se convierte en listas vacías: eso borraría vínculos al guardar y parecería un cliente normal.
+        if (!rCatalogos.ok) {
+          const detalle = (await rCatalogos.json().catch(() => ({}))) as { error?: string };
+
+          throw new Error(
+            `No fue posible cargar los catálogos del cliente (código ${rCatalogos.status}): ${
+              detalle.error ?? (rCatalogos.status === 401 || rCatalogos.status === 403 ? "no tiene permiso para consultarlos." : "el servicio no respondió correctamente.")
+            } La ficha no se muestra para no perder sus vínculos; recargue la página o pida acceso.`,
+          );
+        }
+
         const cat =
           (await rCatalogos.json()) as {
             catalogos?: Partial<Catalogos>;
           };
+        const catalogosCompletos = { ...CATALOGOS_VACIOS, ...(cat.catalogos ?? {}) };
+        const formularioInicial = fromCliente(datos.cliente);
+        const hijosIniciales = hijosDesdeApi(datos);
 
         if (activo) {
+          // CLI-A01: una referencia que el cliente ya tiene pero hoy está inactiva se muestra (marcada) para conservarla; no se ofrece como elección nueva.
+          const historicas = datos.referenciasHistoricas ?? {};
+          const conHistorica = (lista: Opcion[], campo: string) => {
+            const h = historicas[campo];
+
+            return h && !lista.some((o) => o.id === h.id) ? [...lista, { id: h.id, nombre: `${h.nombre} (inactivo)` }] : lista;
+          };
+
           setCatalogos({
-            ...CATALOGOS_VACIOS,
-            ...(cat.catalogos ?? {}),
+            ...catalogosCompletos,
+            grupos: conHistorica(catalogosCompletos.grupos, "grupoClienteId"),
+            listasPrecio: conHistorica(catalogosCompletos.listasPrecio, "listaPrecioId"),
+            canalesVenta: conHistorica(catalogosCompletos.canalesVenta, "canalVentaId"),
+            vendedores: conHistorica(catalogosCompletos.vendedores, "vendedorId"),
+            rutasEntrega: conHistorica(catalogosCompletos.rutasEntrega, "rutaEntregaId"),
+            zonasComerciales: conHistorica(catalogosCompletos.zonasComerciales, "zonaComercialId"),
           });
-          setHijos(hijosDesdeApi(datos));
+          setHijos(hijosIniciales);
           setDocumentos(datos.documentos ?? []);
           setAptitud(datos.aptitudSifen ?? null);
           setCliente(datos.cliente);
-          setForm(
-            fromCliente(datos.cliente),
-          );
+          setForm(formularioInicial);
+          setHuellaBase(JSON.stringify({ form: formularioInicial, hijos: hijosIniciales }));
         }
       } catch (e) {
         if (activo) {
@@ -865,6 +900,8 @@ export default function ClienteDetallePage() {
               "application/json",
           },
           body: JSON.stringify({
+            // CLI-A03: versión de la ficha cargada; el servidor rechaza (409) si otro usuario guardó antes.
+            actualizadoEn: cliente.actualizadoEn,
             naturaleza: form.naturaleza,
             tipoOperacion:
               form.tipoOperacion,
@@ -2039,6 +2076,7 @@ export default function ClienteDetallePage() {
               onAviso={setAviso}
               onError={setError}
               onRecargar={recargarDocumentos}
+              onBorrador={setBorradorDocumento}
             />
           ) : null}
 
