@@ -50,3 +50,15 @@ O responsável esclareceu que uma mercadoria possui unidade-base de estoque, mú
 **Impacto:** o sistema não tem fluxo comprovado para escolha e faturação de apresentação alternativa com quantidade/preço fiscal coerentes e movimento correto do estoque em unidade-base. A futura auditoria do menu Facturas deverá detalhar seleção de apresentação de venda, preço por apresentação, fator de conversão, validação SIFEN por apresentação, arredondamento, emissão de DE, KuDE e baixa/estorno de estoque. Não presumir que `Caja` sempre corresponde a fator 12, e não enviar código fiscal por simples nome da apresentação.
 
 **Decisão de negócio pendente:** tratamento de apresentação comercial que não possui equivalente fiscal apropriado, a ser decidido com responsável antes de fechar PRD-U03 ou implementar.
+
+## Confirmação do responsável — unidade do documento eletrônico (12/10/2026)
+
+**Declaração:** “sim, para sifen tem que ser a unidade que existe.”
+
+**REGRA CONFIRMADA:** qualquer unidade enviada na factura eletrônica deve ser um código existente e fiscalmente válido no catálogo oficial SIFEN. Apresentações comerciais podem ser distintas e múltiplas por produto; sua descrição comercial não constitui, por si só, autorização para enviar tal descrição ou um código inventado ao SIFEN. Unidade fiscal, quantidade e preço precisam permanecer matematicamente coerentes.
+
+**Aplicação na auditoria:** no cadastro de Productos, manter unidade-base de controle de estoque e apresentações com fatores próprios. Na emissão, validar no backend o código SIFEN efetivamente enviado no item; testar unidade de apresentação existente no catálogo e apresentação sem equivalente fiscal. **Não** considerar resolvido o defeito de que `lib/facturacion/emision.ts` hoje utiliza apenas a unidade-base do produto.
+
+**PENDENTE, ainda não deliberado:** para apresentação sem equivalente fiscal na tabela SIFEN, converter automaticamente a linha para a unidade-base fiscal reconhecida (com quantidade e preço equivalentes) **ou** impedir a emissão até configurar uma equivalência fiscal. A resposta acima só confirmou a obrigatoriedade do catálogo SIFEN, não escolheu expressamente uma dessas duas políticas. Perguntar ao responsável com exemplo antes de encerrar DEC-PRD-U03.
+
+**Execução:** nenhuma alteração de código, SQL, VM ou migration autorizada; auditoria continua aberta.
