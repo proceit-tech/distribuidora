@@ -38,4 +38,5 @@ DROP TABLE IF EXISTS public.documento_electronico_intentos;
 DROP TABLE IF EXISTS public.documentos_electronicos;
 DROP TABLE IF EXISTS public.fe_gateway_config;
 DROP FUNCTION IF EXISTS public.fe_documentos_inmutable();
+DROP FUNCTION IF EXISTS public.fe_cdc_coherente(text, text, text, text, text);
 DELETE FROM public.permisos WHERE recurso = 'FACTURACION_ELECTRONICA';

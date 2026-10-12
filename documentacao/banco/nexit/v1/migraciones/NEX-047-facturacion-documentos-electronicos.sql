@@ -13,6 +13,9 @@
 --  · documento_electronico_intentos: evidencia inmutable (solo altas) de cada consulta (y, en F-02, envío) con HTTP, resultado, respuesta saneada.
 --  · fe_gateway_config: URL base HTTPS y REFERENCIA del secreto (nombre lógico) por empresa. NUNCA contiene ruc/clave/token: las credenciales viven
 --    en variables de entorno del servidor.
+--  · Integridad (revisión tras la auditoría de F-01): el CDC debe ser coherente con la identidad del documento (MT v150 §10.1: tipo 2 + RUC 8 + DV 1 +
+--    establecimiento 3 + punto 3 + número 7 + …; C002: FE=01, AFE=04, NCE=05, NDE=06, NRE=07); estado SIFEN distinto de «sin consultar» exige estado local
+--    ENVIADO; el cliente del documento es inmutable (solo puede pasar a NULL durante el reinicio DEMO, por la FK SET NULL).
 --  · Escritura solo por funciones SECURITY DEFINER; el rol de la aplicación solo lee. F-01 no crea documentos (la emisión es F-02); la única
 --    función es fe_documento_registrar_consulta (EDITAR + sucursal en alcance), que registra el intento y actualiza estados en una transacción.
 --  · Sin movimiento de stock; sin exportación ni contratación pública; sin notas de crédito (F-03).
@@ -61,6 +64,15 @@ CREATE TABLE public.fe_gateway_config (
 COMMENT ON TABLE public.fe_gateway_config IS 'Gateway de facturación electrónica por empresa. credencial_ref es el nombre lógico de las variables de entorno NEXIT_FE_<REF>_RUC / NEXIT_FE_<REF>_PASSWORD del servidor; nunca se guardan credenciales aquí.';
 
 -- 3) Documentos electrónicos.
+-- CDC coherente con la identidad (MT v150 §10.1): posiciones 1-2 tipo de DE, 12-14 establecimiento, 15-17 punto de expedición, 18-24 número.
+CREATE OR REPLACE FUNCTION public.fe_cdc_coherente(p_tipo text, p_est text, p_pun text, p_num text, p_cdc text) RETURNS boolean
+LANGUAGE sql IMMUTABLE AS $$
+  SELECT p_cdc IS NULL OR (
+    p_cdc ~ '^[0-9]{44}$'
+    AND substr(p_cdc, 1, 2) = CASE p_tipo WHEN 'FE' THEN '01' WHEN 'AFE' THEN '04' WHEN 'NCE' THEN '05' WHEN 'NDE' THEN '06' WHEN 'NRE' THEN '07' END
+    AND substr(p_cdc, 12, 3) = p_est AND substr(p_cdc, 15, 3) = p_pun AND substr(p_cdc, 18, 7) = p_num)
+$$;
+
 CREATE TABLE public.documentos_electronicos (
   id                  uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
   empresa_id          uuid        NOT NULL REFERENCES public.empresas (id),
@@ -92,6 +104,9 @@ CREATE TABLE public.documentos_electronicos (
   creado_at           timestamptz NOT NULL DEFAULT now(),
   actualizado_at      timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT documentos_electronicos_empresa_id_id_key UNIQUE (empresa_id, id),
+  CONSTRAINT documentos_electronicos_cdc_coherente_chk CHECK (public.fe_cdc_coherente(tipo, establecimiento, punto_expedicion, numero, cdc)),
+  CONSTRAINT documentos_electronicos_estados_chk CHECK (estado_sifen = 'SIN_CONSULTA' OR estado_local = 'ENVIADO'),
+  CONSTRAINT documentos_electronicos_consulta_chk CHECK (ultima_consulta_resultado IS NULL OR ultima_consulta_resultado IN ('OK','NO_ENCONTRADO','ERROR_HTTP','TIMEOUT','RED','RESPUESTA_INVALIDA','CDC_DIVERGENTE')),
   CONSTRAINT documentos_electronicos_sucursal_fk FOREIGN KEY (empresa_id, sucursal_id) REFERENCES public.sucursales (empresa_id, id) ON DELETE CASCADE,
   CONSTRAINT documentos_electronicos_cliente_fk  FOREIGN KEY (empresa_id, cliente_id)  REFERENCES public.clientes (empresa_id, id) ON DELETE SET NULL (cliente_id),
   CONSTRAINT documentos_electronicos_creador_fk  FOREIGN KEY (empresa_id, creado_por)  REFERENCES public.usuarios (empresa_id, id) ON DELETE CASCADE
@@ -116,7 +131,7 @@ CREATE TABLE public.documento_electronico_intentos (
   http_status     integer     CHECK (http_status IS NULL OR http_status BETWEEN 100 AND 599),
   request_id      text        CHECK (request_id IS NULL OR char_length(request_id) <= 80),
   estado_gateway  text,
-  estado_sifen    text,
+  estado_sifen    text        CHECK (estado_sifen IS NULL OR estado_sifen IN ('PENDIENTE','APROBADO','RECHAZADO','CANCELADO','INUTILIZADO','NO_RECONOCIDO')),
   cod_respuesta   text,
   mensaje         text        CHECK (mensaje IS NULL OR char_length(mensaje) <= 500),
   respuesta       jsonb       CHECK (respuesta IS NULL OR pg_column_size(respuesta) < 65536),
@@ -154,6 +169,11 @@ BEGIN
      OR NEW.moneda IS DISTINCT FROM OLD.moneda OR NEW.total IS DISTINCT FROM OLD.total OR NEW.clave_idempotencia IS DISTINCT FROM OLD.clave_idempotencia
      OR NEW.creado_por IS DISTINCT FROM OLD.creado_por OR NEW.creado_at IS DISTINCT FROM OLD.creado_at THEN
     RAISE EXCEPTION 'la identidad y los importes de un documento electrónico son inmutables' USING ERRCODE = 'P0001', DETAIL = 'NEX:DOCUMENTO_INMUTABLE';
+  END IF;
+  -- El cliente no se reasigna. La única transición admitida es valor → NULL mientras se depura una empresa DEMO (FK ON DELETE SET NULL).
+  IF NEW.cliente_id IS DISTINCT FROM OLD.cliente_id
+     AND NOT (OLD.cliente_id IS NOT NULL AND NEW.cliente_id IS NULL AND public.nex_reinicio_demo_activo(OLD.empresa_id)) THEN
+    RAISE EXCEPTION 'el cliente de un documento electrónico es inmutable' USING ERRCODE = 'P0001', DETAIL = 'NEX:DOCUMENTO_INMUTABLE';
   END IF;
   IF OLD.cdc IS NOT NULL AND NEW.cdc IS DISTINCT FROM OLD.cdc THEN
     RAISE EXCEPTION 'el CDC de un documento electrónico no cambia una vez informado' USING ERRCODE = 'P0001', DETAIL = 'NEX:CDC_INMUTABLE';
@@ -197,8 +217,10 @@ BEGIN
     RAISE EXCEPTION 'documento no encontrado' USING ERRCODE = 'P0001', DETAIL = 'NEX:DOCUMENTO_NO_ENCONTRADO';
   END IF;
 
-  -- El CDC informado no puede contradecir el ya guardado: se registra el intento como divergente y NO se toca el documento.
-  IF p_resultado = 'OK' AND p_cdc IS NOT NULL AND d.cdc IS NOT NULL AND p_cdc <> d.cdc THEN
+  -- El CDC informado no puede contradecir el ya guardado ni la identidad del documento (tipo, establecimiento, punto, número): se registra el intento
+  -- como divergente y NO se toca el documento.
+  IF p_resultado = 'OK' AND p_cdc IS NOT NULL
+     AND ((d.cdc IS NOT NULL AND p_cdc <> d.cdc) OR NOT public.fe_cdc_coherente(d.tipo, d.establecimiento, d.punto_expedicion, d.numero, p_cdc)) THEN
     v_resultado := 'CDC_DIVERGENTE';
   END IF;
 

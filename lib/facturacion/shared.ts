@@ -198,6 +198,17 @@ export class ErrorFacturacion extends Error {
   }
 }
 
+/** Error de validación fiscal con la lista de motivos (la API los devuelve en `detalles`). */
+export class ErrorValidacionFiscal extends ErrorFacturacion {
+  constructor(
+    estado: number,
+    mensaje: string,
+    public detalles: string[],
+  ) {
+    super(estado, mensaje);
+  }
+}
+
 /**
  * Consulta el estado del documento en el gateway y lo persiste. La llamada HTTP se hace FUERA de cualquier transacción; luego una sola sentencia
  * (fe_documento_registrar_consulta) guarda el intento y actualiza los estados con la fila bloqueada. Un fallo del gateway queda como evidencia y no
@@ -209,7 +220,8 @@ export async function consultarEstado(db: Db, empresaId: string, usuarioId: stri
   if (!doc) throw new ErrorFacturacion(404, "Documento no encontrado.");
 
   const cfg = await db.query(`SELECT base_url AS "baseUrl", credencial_ref AS "credencialRef", timeout_ms AS "timeoutMs" FROM fe_gateway_config WHERE empresa_id = $1 AND activo`, [empresaId]);
-  const config = cfg.rows[0] as { baseUrl: string; credencialRef: string; timeoutMs: number } | undefined;
+  const fila = cfg.rows[0] as { baseUrl: string; credencialRef: string; timeoutMs: number } | undefined;
+  const config = fila ? { ...fila, empresaId } : undefined;
 
   if (!config) throw new ErrorFacturacion(409, "La empresa no tiene configurado el gateway de facturación electrónica.");
 
@@ -235,12 +247,18 @@ export async function consultarEstado(db: Db, empresaId: string, usuarioId: stri
 }
 
 export function respuestaErrorFacturacion(error: unknown, accion: string) {
+  if (error instanceof ErrorValidacionFiscal) return NextResponse.json({ error: error.message, detalles: error.detalles }, { status: error.estado });
   if (error instanceof ErrorFacturacion) return NextResponse.json({ error: error.message }, { status: error.estado });
 
   const pg = error as { code?: string; message?: string; detail?: string };
 
   if (pg.code === "42501") return NextResponse.json({ error: "No tiene permiso para esta acción." }, { status: 403 });
   if (pg.detail === "NEX:DOCUMENTO_NO_ENCONTRADO") return NextResponse.json({ error: "Documento no encontrado." }, { status: 404 });
+  if (pg.detail === "NEX:IDEMPOTENCIA_CONFLICTO") return NextResponse.json({ error: "La clave de la operación ya se usó con otro contenido. Recargue el formulario e intente de nuevo." }, { status: 409 });
+  if (pg.detail && /^NEX:(SUCURSAL_INVALIDA|SIN_ESTABLECIMIENTO|CLIENTE_INVALIDO|PUNTO_INVALIDO|NUMERACION_AGOTADA|PAYLOAD_INVALIDO)$/.test(pg.detail)) {
+    return NextResponse.json({ error: pg.message ?? "La operación no cumple las reglas de facturación." }, { status: 409 });
+  }
+  if (pg.code === "P0001") return NextResponse.json({ error: pg.message ?? "La operación no cumple las reglas de facturación." }, { status: 400 });
   if (pg.code === "23505") return NextResponse.json({ error: "El CDC informado ya pertenece a otro documento de la empresa." }, { status: 409 });
   console.error(`Error al ${accion} el documento electrónico:`, error);
 

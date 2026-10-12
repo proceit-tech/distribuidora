@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { estadoSifenDesdeGateway, type EstadoSifen } from "@/lib/facturacion/estados";
 
 /**
@@ -11,7 +13,8 @@ import { estadoSifenDesdeGateway, type EstadoSifen } from "@/lib/facturacion/est
  * clave no se registran ni se devuelven. Todas las dependencias externas (fetch, entorno, reloj) son inyectables para probar sin red.
  */
 
-export type ConfigGateway = { baseUrl: string; credencialRef: string; timeoutMs: number };
+/** empresaId forma parte de la clave del token en caché: dos empresas nunca comparten sesión del gateway, ni siquiera con la misma referencia. */
+export type ConfigGateway = { empresaId: string; baseUrl: string; credencialRef: string; timeoutMs: number };
 export type FetchLike = (url: string, init: { method: string; headers: Record<string, string>; body: string; signal: AbortSignal }) => Promise<{ status: number; text(): Promise<string> }>;
 export type Dependencias = { fetch?: FetchLike; env?: Record<string, string | undefined>; ahora?: () => number };
 
@@ -142,8 +145,24 @@ async function enviar(url: string, headers: Record<string, string>, body: unknow
   }
 }
 
-// El token se cachea en memoria por gateway+credencial. Vence con el `exp` del JWT (si lo trae) o a los 10 minutos; ante un 401 se renueva una vez.
+// El token se cachea en memoria por EMPRESA + gateway + referencia + huella de las credenciales (SHA-256 de ruc:clave, nunca la clave): cambiar la
+// clave o el RUC invalida el token anterior y ninguna empresa puede reutilizar el de otra. Vence con el `exp` del JWT (si lo trae) o a los 10 minutos;
+// ante un 401 se renueva una vez. Tamaño acotado (las entradas vencidas se descartan primero, luego la más antigua).
 const cacheTokens = new Map<string, { token: string; vence: number }>();
+const MAX_TOKENS = 200;
+
+export const claveToken = (config: ConfigGateway, ruc: string, password: string) =>
+  [config.empresaId, config.baseUrl, config.credencialRef, createHash("sha256").update(`${ruc}:${password}`).digest("hex")].join("|");
+
+function guardarToken(clave: string, token: string, vence: number, ahora: number) {
+  if (cacheTokens.size >= MAX_TOKENS) {
+    for (const [k, v] of cacheTokens) if (v.vence <= ahora) cacheTokens.delete(k);
+    if (cacheTokens.size >= MAX_TOKENS) cacheTokens.delete(cacheTokens.keys().next().value as string);
+  }
+  cacheTokens.set(clave, { token, vence });
+}
+
+export const tamanoCacheTokens = () => cacheTokens.size;
 
 export const limpiarCacheTokens = () => cacheTokens.clear();
 
@@ -162,7 +181,7 @@ function venceToken(token: string, ahora: number) {
 type ErrorLogin = { error: true; resultado: "ERROR_HTTP" | "TIMEOUT" | "RED"; http: number | null; mensaje: string };
 
 async function obtenerToken(config: ConfigGateway, ruc: string, password: string, d: Required<Pick<Dependencias, "fetch" | "ahora">>, forzar: boolean): Promise<string | ErrorLogin> {
-  const clave = `${config.baseUrl}|${config.credencialRef}`;
+  const clave = claveToken(config, ruc, password);
   const guardado = cacheTokens.get(clave);
 
   if (!forzar && guardado && guardado.vence > d.ahora()) return guardado.token;
@@ -182,7 +201,7 @@ async function obtenerToken(config: ConfigGateway, ruc: string, password: string
   }
   if (!token) return { error: true, resultado: "ERROR_HTTP", http: r.status, mensaje: "El gateway rechazó la autenticación (credenciales de la empresa)." };
 
-  cacheTokens.set(clave, { token, vence: venceToken(token, d.ahora()) });
+  guardarToken(clave, token, venceToken(token, d.ahora()), d.ahora());
 
   return token;
 }

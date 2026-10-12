@@ -8,16 +8,16 @@ import { NextResponse } from "next/server";
 const DEMO_MODE = process.env.DEMO_MODE === "true";
 
 export type Base =
-  | { ok: true; empresaId: string; usuarioId: string; db: typeof import("@/lib/db")["db"]; permisos: { editar: boolean } }
+  | { ok: true; empresaId: string; usuarioId: string; db: typeof import("@/lib/db")["db"]; permisos: { editar: boolean; crear: boolean } }
   | { ok: false; respuesta: NextResponse };
 
-export async function prepararFacturacion(accion: "VER" | "EDITAR"): Promise<Base> {
+export async function prepararFacturacion(accion: "VER" | "EDITAR" | "CREAR"): Promise<Base> {
   if (!DEMO_MODE && !process.env.DATABASE_URL) {
     return { ok: false, respuesta: NextResponse.json({ error: "Servicio no disponible: base de datos no configurada." }, { status: 503 }) };
   }
   if (DEMO_MODE) {
     return accion === "VER"
-      ? { ok: false, respuesta: NextResponse.json({ documentos: [], demo: true, permisos: { editar: false } }) }
+      ? { ok: false, respuesta: NextResponse.json({ documentos: [], demo: true, permisos: { editar: false, crear: false } }) }
       : { ok: false, respuesta: NextResponse.json({ error: "Operación no disponible en modo demo." }, { status: 400 }) };
   }
 
@@ -34,5 +34,5 @@ export async function prepararFacturacion(accion: "VER" | "EDITAR"): Promise<Bas
   const acceso = await getAccessContext(session.user, session.demo === true);
   const { db } = await import("@/lib/db");
 
-  return { ok: true, empresaId: session.user.empresaId, usuarioId: session.user.id, db, permisos: { editar: hasPermission(acceso, "FACTURACION_ELECTRONICA", "EDITAR") } };
+  return { ok: true, empresaId: session.user.empresaId, usuarioId: session.user.id, db, permisos: { editar: hasPermission(acceso, "FACTURACION_ELECTRONICA", "EDITAR"), crear: hasPermission(acceso, "FACTURACION_ELECTRONICA", "CREAR") } };
 }

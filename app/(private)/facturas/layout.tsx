@@ -1,6 +1,6 @@
-import { notFound } from "next/navigation";
+import { guardPage } from "@/lib/auth/permissions";
 
-// Módulo fuera del alcance de la V1: no accesible por URL hasta tener API y PostgreSQL reales.
-export default function OutOfScopeLayout(): never {
-  notFound();
+export default async function FacturasLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+  await guardPage("FACTURACION_ELECTRONICA", "CREAR");
+  return children;
 }

@@ -224,7 +224,7 @@ export const NAVIGATION_GROUPS: ShellNavigationGroup[] = [
         label: "Facturas",
         href: "/facturas",
         icon: "invoice",
-        permission: "FACTURACION_ELECTRONICA.VER",
+        permission: "FACTURACION_ELECTRONICA.CREAR",
       },
       {
         id: "credit-notes",
@@ -352,6 +352,7 @@ const V1_HREFS = new Set([
   "/reposicion",
   "/depositos",
   "/documentos",
+  "/facturas",
   "/movimientos",
   "/reportes",
   "/reportes/stock-general",
