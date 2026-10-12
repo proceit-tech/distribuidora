@@ -62,7 +62,7 @@ Este arquivo é a fonte única da auditoria do menu **Productos**. Registrar, co
 
 ## V. Decisões de negócio pendentes — NÃO ENCERRAR antes de responder
 
-- **DEC-PRD-U01**: `MT — Metro` já existe no banco e o SIFEN oferece **87/m** e **108/MT**. Selecionar qual mapeamento se aplicará à unidade histórica, sem apagar a outra opção oficial do catálogo de novas seleções.
+- **DEC-PRD-U01 — APROVADA PELO RESPONSÁVEL (12/10/2026):** a unidade histórica `MT — Metro` já existente no NEXIT deve mapear para SIFEN **108 — MT**. Os dois códigos oficiais **87 — m** e **108 — MT** permanecem disponíveis no catálogo para seleção, distintos por código. Não modificar migrations executadas nem atualizar VM automaticamente.
 - **DEC-PRD-U02**: decidir se um produto novo `MERCADERIA/SERVICIO` com `vendible=true` deve ser impedido de salvar quando a classificação IVA não estiver definida, ou se fica salvo como cadastro incompleto e bloqueado apenas na emissão. O código hoje aceita e deixa a emissão bloquear; unidade fiscal foi expressamente definida como obrigatória.
 - **DEC-PRD-U03**: apresentação declarada base deve obrigatoriamente equivaler a unidade base do produto com fator 1? Recomendação: sim. Antes de mudar constraint, conferir registros legados.
 - **DEC-PRD-U04**: classificação e GTIN de embalagens — precedência entre `codigoBarras`, `producto_codigos.esPrincipal` e `producto_unidades.codigo_barras`, antes de atribuir E706/E707 ao gateway.
@@ -77,7 +77,7 @@ Este arquivo é a fonte única da auditoria do menu **Productos**. Registrar, co
 - [ ] Auditar todas as dependências de inventário, listas de preços, clientes/faturação; evitar alterar tabelas interligadas sem mapa de impacto.
 - [ ] Revisar constraints/triggers/índices e SQL incremental NEX-003…051 em todos pontos de dependência, sem executar nem modificar SQL aplicado.
 - [ ] Testes locais automatizados realmente executados e registrados; testes manuais/visuais na VM pelo responsável.
-- [ ] Obter respostas a DEC-PRD-U01…U06; somente depois fechar parecer do menu, separar achados confirmados e tarefas aprovadas para Claude.
+- [ ] Obter respostas a DEC-PRD-U02…U06; DEC-PRD-U01 aprovada em 12/10/2026. Somente depois fechar parecer do menu, separar achados confirmados e tarefas aprovadas para Claude.
 
 **Auditoria permanece ABERTA. O responsável pediu perguntas de negócio ANTES de encerrar cada menu; respostas devem ser registradas aqui.**
 
@@ -100,3 +100,17 @@ Este arquivo é a fonte única da auditoria do menu **Productos**. Registrar, co
 **Pontos positivos documentados, não homologados:** persistência de filho por sincronização seletiva `lib/productos/sincronizar.ts` em vez de delete-all; erros de campo via `ErrorValidacion`; criação de estoque por movimento real (não ajuste direto de saldos); arquivos de produtos com permissões de ação, versionamento e recuperação; área de catálogo protegida por usuário/empresa nos handlers básicos. Cobertura visual real e de RLS/escopo continua pendente.
 
 **Ainda fora de cobertura:** leitura linha-a-linha e execução de todo pacote normativo SIFEN no ZIP do repositório; controle SQL atualizado completo (NEX-001…051 e funções runtime interdependentes); testes browser/VM; todos os detalhes operacionais dos demais menus.
+
+
+## IX. Decisão do responsável — DEC-PRD-U01 (12/10/2026)
+
+**Texto decidido:** “Para a unidade MT — Metro existente no NEXIT, utilizar o código SIFEN 108. Os dois códigos oficiais devem continuar disponíveis no catálogo.”
+
+- **Unidade histórica** da tabela `unidades_medida`, `codigo = 'MT'`, `nombre = 'Metro'`: vincular ao `unidad_sifen_codigo = 108` (`MT`). Preservar UUID, produtos, apresentações, estoque e histórico.
+- **Catálogo fiscal completo** `unidades_medida_sifen`: manter `87 — m — Metros` e `108 — MT — Metros` como opções distintas. Não eliminar nem consolidar registros por descrição.
+- A escolha do código **108** vincula **somente a unidade histórica MT**. Não pressupor que a escolha de todas as novas unidades `Metros` seja 108.
+- Qualquer futura alteração técnica deve respeitar os contratos de `productos.unidad_medida_id`, `producto_unidades.unidad_medida_id`, `producto_proveedores.unidad_medida_id`, suas FKs e o envio E709.
+- **Sem execução nem autorização de SQL nesta etapa.** NEX-001…051 são migrations já aplicadas e imutáveis. Não executar nem editar `NEX-039`, `NEX-043`, script de reconciliação ou atualizar dados na VM agora.
+- **Aceite futuro**: seletor oferece 87 e 108; histórico MT mantém identidade e usa 108; factura derivada desse produto envia E709=108; sem alterações de saldo, apresentação e histórico.
+
+**Estado: DEC-PRD-U01 APROVADA E ENCERRADA.** DEC-PRD-U02…U06 e auditoria integral de Productos seguem abertas.
