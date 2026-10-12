@@ -43,7 +43,7 @@ O responsável mostrou NEX-001…051 já aplicadas na VM. Proibido editar script
 
 **LPR-X02 / ALTA:** `NEX-008:63-88` contém uma única linha por produto/lista, embora guarde `unidad_medida_id`; `NEX-017:90-121` grava preço referência por unidade-base e `v_producto_precio_referencia` oculta a unidade. Sem contrato de preço por `producto_unidades.id`, não é possível afirmar que a venda por caixa/pacote terá preço correto ou desconto calculado. Alterar a unidade-base com estoque zero não autoriza transportar o mesmo preço nominal para outra unidade.
 
-**Decisão aberta DEC-PRD-U10** no documento canônico Productos: exigir revisão prévia de listas de preço, ou permitir troca com preço temporariamente não vendável. Não converter/recalcular margem/preço por presunção. Auditoria de Listas de precios ainda ABERTA.
+**DEC-PRD-U10 encerrada pelo responsável:** na V1, alteração da unidade-base **não exige revisão de preços e não suspende vendas por esse motivo**. Conservar valores numéricos e permitir edição voluntária, sem recálculo automático. Garantir apenas coerência técnica de vínculo de unidade por solução simples. Ver `AUD-PRODUCTOS-V1.md` §XX. Auditoria de Listas de precios ainda ABERTA.
 
 ## DEC-PRD-U09 — vínculo dos preços às versões da apresentação (12/10/2026)
 
@@ -51,4 +51,10 @@ O responsável mostrou NEX-001…051 já aplicadas na VM. Proibido editar script
 
 **Lacuna LPR-X03:** `NEX-008` mantém unicidade `(empresa_id, lista_precio_id, producto_id)` e unidade por item, sem preço/versão por apresentação; `NEX-017` grava preço de referência com a unidade-base. Não há contrato comprovado de preço por versão de apresentação. Vincular eventual preço futuro à apresentação/versão com vigência e condições comerciais próprias; não presumir que a mudança do fator altere automaticamente o preço de caixa ou a margem.
 
-**Pendente:** DEC-PRD-U10 sobre regra de preço ao trocar a unidade-base; auditoria Listas de precios continua ABERTA, sem código/SQL executado.
+**DEC-PRD-U10 resolvida por simplificação de escopo V1:** nenhuma obrigatoriedade de rever preços nem bloqueio de vendas por mudança de unidade-base. Auditoria Listas de precios continua ABERTA, sem código/SQL executado.
+
+## Alinhamento de escopo V1 — preços sem processo de revisão obrigatório (12/10/2026)
+
+Orientação do responsável: **se o cliente trocar a unidade-base, o cadastro registra a troca** (respeitadas as salvaguardas U07 de saldo zero/sem pendências), e não nasce um fluxo adicional de aprovação/revisão de preços. **Manter valores numéricos de preços existentes**, sem reajuste automático, bloqueio comercial nem inativação preventiva; cliente pode modificar os preços quando quiser. Garantir que o vínculo técnico da unidade usada no preço permaneça coerente com o contrato, sem alterar documentos antigos. Ver `AUD-PRODUCTOS-V1.md` §XX.
+
+Não criar wizard de precificação, bloqueio temporário de vendas, conversão automática de preços de caixa/unidade ou outra complexidade apenas por esta decisão. A lacuna de múltiplos preços por apresentação pode ser tratada como evolução conforme uso real. Auditoria estática ABERTA; não houve código, SQL, VM ou testes alterados.
