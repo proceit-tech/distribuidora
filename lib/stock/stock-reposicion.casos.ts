@@ -567,5 +567,18 @@ export async function verificarCasosStockReposicionMovimientos(): Promise<string
   cierto("Movimientos (lista): distingue líneas de movimientos en los contadores", /línea\(s\)/.test(movLista) && /totalMovimientos/.test(movLista));
   cierto("Reposición: comunica sugerida, planificada y preparada y no registra nada", /Sugerida<\/strong> es el cálculo del plan/.test(repPage) && /Planificado \{cant\(escrita\)\}: transferir/.test(repPage) && !/method:\s*"(POST|PUT|DELETE)"/.test(repPage));
 
+  // ── Auditoría de campo (d0e11ba): detalle de movimiento / anulación, Reposición vacía, Depósitos (bloqueado)
+  const detMov = leer("app/(private)/movimientos/[id]/page.tsx");
+  const anularRuta = leer("app/api/movimientos/[id]/anular/route.ts");
+
+  cierto("VIS-03 detalle: anulación con etiqueta, campo, error inline (mínimo 5), foco, confirmación de acción crítica y estado de envío", /Motivo de la anulación/.test(detMov) && /MOTIVO_MINIMO/.test(detMov) && /getElementById\("anular-motivo"\)/.test(detMov) && /window\.confirm\(/.test(detMov) && /Anulando\.\.\./.test(detMov) && /aria-invalid/.test(detMov));
+  cierto("VIS-03 detalle: la anulación solo se muestra con MOVIMIENTOS.ANULAR, movimiento REGISTRADO y que no sea una anulación", /permisos\.anular && mov\.estado === "REGISTRADO" && !mov\.anulaA/.test(detMov) && /hasPermission\(acceso, "MOVIMIENTOS", "ANULAR"\)/.test(leer("app/api/movimientos/[id]/route.ts")));
+  cierto("VIS-03 detalle: reintento de la misma anulación usa la misma clave de idempotencia (se renueva al cambiar el motivo)", /clave\.current = crypto\.randomUUID\(\)/.test(detMov) && /anularMovimientoApi\(params\.id, motivo\.trim\(\), clave\.current\)/.test(detMov) && /claveIdempotencia: string = crypto\.randomUUID\(\)/.test(leer("lib/movimientos/cliente-api.ts")));
+  cierto("VIS-03 detalle: usa el patrón visual de lista/catálogos, protege motivo escrito y no usa el CSS antiguo con aviso duplicado", /lista-padrao\/lista\.module\.css/.test(detMov) && /useProtegerCambios/.test(detMov) && !/MOVIMIENTO<\/span>/.test(detMov));
+  cierto("VIS-03 anular: la API valida permiso ANULAR y el mismo alcance de depósitos; el estorno sigue siendo la función SQL compensatoria", /denyIfNoPermission\(session, "MOVIMIENTOS", "ANULAR"\)/.test(anularRuta) && /ALCANCE_MOVIMIENTO/.test(anularRuta) && /inventario_anular_movimiento/.test(anularRuta) && !/DELETE FROM|UPDATE movimientos_inventario/.test(anularRuta));
+  cierto("VIS-05 Reposición: estado vacío específico («Ningún producto necesita reposición») con «Ver todos», sin cambiar el filtro inicial ni el cálculo", /Ningún producto necesita reposición/.test(repPage) && /Ver todos los renglones/.test(repPage) && /useState<"TODAS" \| "NECESITAN" \| Criticidad>\("NECESITAN"\)/.test(repPage) && /calcularPlanReposicion\(/.test(repPage));
+  cierto("VIS-01 Depósitos: el menú sigue fuera de V1_HREFS mientras no exista la página/API (no se habilita un acceso que no funciona)", !existsSync(join(raiz, "app/(private)/depositos/page.tsx")) && !/"\/depositos"/.test(menu.slice(menu.indexOf("V1_HREFS"))));
+  cierto("VIS-01 Depósitos: la semilla de permisos no define INVENTARIO.* y el menú pide INVENTARIO.VER (decisión bloqueante registrada, sin migration creada)", !/'INVENTARIO'/.test(leer("documentacao/banco/nexit/v1/seeds/S-001-catalogos-globales.sql")) && /permission: "INVENTARIO\.VER"/.test(menu));
+
   return fallos;
 }

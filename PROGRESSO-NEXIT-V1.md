@@ -559,3 +559,6 @@ Protegido contra perda de alterações em qualquer link interno (hook de captura
 
 ### Correções da auditoria 71ae486 — Movimientos (2026-10-12)
 Histórico e detalhe limitados ao alcance de depósitos do usuário (transferência visível só se origem e destino estão no alcance); paginação/busca/tipo/ordem no servidor com contagem de linhas × movimentos; aviso de registro confirmado pela API (nunca sucesso sem confirmação; erro de carga separado); matriz de origens e motivo contextual aprovados aplicados em formulário e API (`lib/movimientos/reglas.ts`); Reposición com legenda sugerida/planificada/preparada. Sem migration; funções SQL intactas; registros existentes preservados. Decisões bloqueadas: transferência parcialmente visível, imposição no SQL. Local: 1773 verificações, 0 falhas; tsc/ESLint/build OK; não validado em navegador/PostgreSQL; não homologado.
+
+### Auditoria de campo d0e11ba (2026-10-12)
+Detalhe de Movimientos refeito (anulação com validação, confirmação crítica, permissão ANULAR, alcance); Reposición com estado vazio explicativo. Depósitos (VIS-01) BLOQUEADO: não existem permissões INVENTARIO.* nem escrita de runtime em depositos; requer migration NEX-046 — questão registrada no documento de homologação funcional. Sem migration criada. Local: 1781 verificações, 0 falhas; tsc/ESLint/build OK.

@@ -45,11 +45,14 @@ export async function cargarCatalogosMovimientos(): Promise<CatalogoMovimientos>
   return ((await r.json()) as { catalogos: CatalogoMovimientos }).catalogos;
 }
 
-export async function cargarMovimiento(id: string): Promise<MovimientoStockDetalle | null> {
+export type RespuestaMovimiento = { movimiento: MovimientoStockDetalle; permisos: { anular: boolean; crear: boolean } };
+
+export async function cargarMovimiento(id: string): Promise<RespuestaMovimiento | null> {
   const r = await fetch(`/api/movimientos/${id}`, { cache: "no-store" });
   if (r.status === 404) return null;
   if (!r.ok) throw new Error(await mensajeError(r, "No fue posible cargar el movimiento."));
-  return ((await r.json()) as { movimiento: MovimientoStockDetalle }).movimiento;
+  const j = (await r.json()) as { movimiento: MovimientoStockDetalle; permisos?: RespuestaMovimiento["permisos"] };
+  return { movimiento: j.movimiento, permisos: j.permisos ?? { anular: false, crear: false } };
 }
 
 export async function registrarMovimientoApi(datos: NuevoMovimientoStock): Promise<string> {
@@ -58,11 +61,12 @@ export async function registrarMovimientoApi(datos: NuevoMovimientoStock): Promi
   return ((await r.json()) as { movimiento: { numero: string } }).movimiento.numero;
 }
 
-export async function anularMovimientoApi(id: string, motivo: string): Promise<string> {
+/** claveIdempotencia: la misma clave en reintentos de la misma anulación (doble clic, corte de red) evita anular dos veces. */
+export async function anularMovimientoApi(id: string, motivo: string, claveIdempotencia: string = crypto.randomUUID()): Promise<string> {
   const r = await fetch(`/api/movimientos/${id}/anular`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ motivo, claveIdempotencia: crypto.randomUUID() }),
+    body: JSON.stringify({ motivo, claveIdempotencia }),
   });
   if (!r.ok) throw new Error(await mensajeError(r, "No fue posible anular el movimiento."));
   return ((await r.json()) as { message: string }).message;

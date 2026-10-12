@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { denyIfNoPermission } from "@/lib/auth/permissions";
+import { denyIfNoPermission, getAccessContext, hasPermission } from "@/lib/auth/permissions";
 import { leerLineasMovimiento } from "@/lib/movimientos/historial";
 
 type Contexto = { params: Promise<{ id: string }> };
@@ -37,7 +37,13 @@ export async function GET(_request: Request, contexto: Contexto) {
          FROM movimientos_inventario m WHERE m.empresa_id = $1 AND m.id = $2`,
       [empresaId, id],
     );
-    return NextResponse.json({ movimiento: { ...(lineas.rows[0] as object), lineas: lineas.rows, ...(vinculos.rows[0] as object) } });
+    // Solo para mostrar u ocultar la acción de anular; la API de anulación y la función SQL verifican su propio permiso y alcance.
+    const acceso = await getAccessContext(session.user, session.demo === true);
+
+    return NextResponse.json({
+      movimiento: { ...(lineas.rows[0] as object), lineas: lineas.rows, ...(vinculos.rows[0] as object) },
+      permisos: { anular: hasPermission(acceso, "MOVIMIENTOS", "ANULAR"), crear: hasPermission(acceso, "MOVIMIENTOS", "CREAR") },
+    });
   } catch (error) {
     console.error("Error al cargar movimiento:", error);
     return NextResponse.json({ error: "No fue posible cargar el movimiento." }, { status: 500 });

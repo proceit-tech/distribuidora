@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import type { PoolClient } from "pg";
 
 import { denyIfNoPermission } from "@/lib/auth/permissions";
+import { ALCANCE_MOVIMIENTO } from "@/lib/movimientos/historial";
 import { respuestaError } from "@/lib/movimientos/shared";
 
 type Contexto = { params: Promise<{ id: string }> };
@@ -38,7 +39,8 @@ export async function POST(request: Request, contexto: Contexto) {
   try {
     conexion = await db.connect();
     await conexion.query("BEGIN");
-    const existe = await conexion.query(`SELECT 1 FROM movimientos_inventario WHERE empresa_id = $1 AND id = $2`, [session.user.empresaId, id]);
+    // Mismo alcance de depósitos que el historial: fuera del alcance el movimiento «no existe» (la función SQL lo vuelve a exigir).
+    const existe = await conexion.query(`SELECT 1 FROM movimientos_inventario m WHERE m.empresa_id = $1 AND m.id = $3 AND ${ALCANCE_MOVIMIENTO}`, [session.user.empresaId, session.user.id, id]);
     if (!existe.rowCount) {
       await conexion.query("ROLLBACK");
       return NextResponse.json({ error: "Movimiento no encontrado." }, { status: 404 });

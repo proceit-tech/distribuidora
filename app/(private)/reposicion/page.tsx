@@ -115,6 +115,8 @@ export default function ReposicionPage() {
     [filas],
   );
 
+  // Filtro inicial «Necesitan reposición» sin otros filtros y sin coincidencias: se explica en vez de mostrar una tabla vacía sin contexto.
+  const sinFiltrosExtra = filas.length > 0 && criticidad === "NECESITAN" && !busqueda && deposito === "TODOS" && marca === "TODAS";
   const totalPaginas = Math.max(1, Math.ceil(visibles.length / PAGE_SIZE));
   const claveFiltros = JSON.stringify([busqueda, deposito, marca, criticidad, incluirTransito, orden]);
   const pagina = paginacion.clave === claveFiltros ? Math.min(paginacion.pagina, totalPaginas) : 1;
@@ -318,8 +320,16 @@ export default function ReposicionPage() {
                 <tr>
                   <td colSpan={10} className={ui.emptyCell}>
                     <div className={ui.empty}>
-                      <strong>{filas.length === 0 ? "Ningún producto tiene stock mínimo, punto de reposición o máximo configurado" : "Ningún registro coincide con los filtros"}</strong>
+                      <strong>{filas.length === 0 ? "Ningún producto tiene stock mínimo, punto de reposición o máximo configurado" : sinFiltrosExtra ? "Ningún producto necesita reposición" : "Ningún registro coincide con los filtros"}</strong>
                       {filas.length === 0 ? <span>Configure los parámetros en la ficha del producto (por producto o por depósito) para obtener sugerencias.</span> : null}
+                      {sinFiltrosExtra ? (
+                        <>
+                          <span>Con los parámetros configurados y el stock disponible actual, ningún producto está en el punto de reposición ni bajo el mínimo (por ejemplo, un producto con sobrestock no necesita reposición).</span>
+                          <button type="button" className={ui.emptyAction} onClick={() => setCriticidad("TODAS")}>
+                            Ver todos los renglones ({filas.length})
+                          </button>
+                        </>
+                      ) : null}
                     </div>
                   </td>
                 </tr>
