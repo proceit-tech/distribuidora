@@ -24,6 +24,7 @@ Module._resolveFilename = function (request, ...resto) {
   const rea = cargar("lib/proveedores/reactivacion.casos.js");
   const pro = cargar("lib/productos/productos.casos.js");
   const sin = cargar("lib/productos/sincronizar.casos.js");
+  const fis = cargar("lib/productos/fiscal.casos.js");
   const suites = [
     ["teléfono y día de cobro", async () => tel.verificarCasosTelefonoYCobro(), () => tel.CASOS_TELEFONO.length + 11 + 6 + 2],
     ["catálogo mundial", async () => tel.verificarCatalogoMundial(), null],
@@ -41,6 +42,7 @@ Module._resolveFilename = function (request, ...resto) {
     ["Proveedores: reactivación administrativa de cuentas", async () => rea.verificarCasosReactivacion(), null],
     ["Productos V1", async () => pro.verificarCasosProductos(), null],
     ["Productos: sincronización en dos fases (PRD-AUD-01)", async () => sin.verificarCasosSincronizacion(), null],
+    ["Productos: evolución fiscal SIFEN (NEX-039/040, GTIN)", async () => fis.verificarCasosFiscales(), null],
   ];
   let total = 0;
   let fallosTotal = 0;

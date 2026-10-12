@@ -61,6 +61,7 @@ export async function GET(_request: Request, contexto: Contexto) {
               coalesce(p.familia_id::text,'') AS "familiaId", coalesce(p.linea_id::text,'') AS "lineaId",
               coalesce(p.origen_etiqueta,'') AS procedencia,
               p.unidad_medida_id AS "unidadMedidaId", coalesce(p.impuesto_id::text,'') AS "impuestoId",
+              coalesce(p.afectacion_iva::text,'') AS "afectacionIva", coalesce(p.proporcion_gravada_iva::text,'') AS "proporcionGravadaIva",
               p.controla_stock AS "controlaStock", p.modo_control_stock AS "modoControlStock",
               p.permite_terceros AS "permiteTerceros", p.requiere_vencimiento AS "requiereVencimiento",
               p.stock_minimo::text AS "stockMinimo", coalesce(p.stock_maximo::text,'') AS "stockMaximo",

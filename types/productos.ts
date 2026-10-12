@@ -111,6 +111,10 @@ export type ProductoDetalle = {
 
   unidadMedidaId: string;
   impuestoId: string;
+  /** Clasificación IVA estándar (E731): "" = sin clasificar (legado), "1"…"4". */
+  afectacionIva: string;
+  /** E733 informada (solo afectación 4); "" en los demás casos. */
+  proporcionGravadaIva: string;
 
   controlaStock: boolean;
   modoControlStock: ProductoModoControlStock;
@@ -221,7 +225,8 @@ export type CatalogoProductos = {
   lineas: { id: string; familiaId: string; codigo: string; nombre: string }[];
   /** Moneda del precio de venta de referencia (moneda base de la empresa o la de la lista de referencia). */
   monedaReferencia: string;
-  unidades: { id: string; codigo: string; nombre: string }[];
+  /** `sifenCodigo`/`sifenRepresentacion`: equivalencia oficial E709/E710 (Tabla 5); null = sin equivalencia SIFEN configurada. */
+  unidades: { id: string; codigo: string; nombre: string; sifenCodigo: number | null; sifenRepresentacion: string }[];
   impuestos: { id: string; codigo: string; nombre: string; porcentaje: string }[];
   proveedores: { id: string; codigo: string; razon_social: string }[];
   depositos: { id: string; codigo: string; nombre: string }[];

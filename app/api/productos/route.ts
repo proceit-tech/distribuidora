@@ -119,7 +119,11 @@ export async function GET(request: Request) {
              FROM empresas e WHERE e.id = $1`,
           [empresaId],
         ),
-        db.query(`SELECT id, codigo, nombre FROM unidades_medida WHERE activo = true ORDER BY nombre`),
+        db.query(
+          `SELECT u.id, u.codigo, u.nombre, u.unidad_sifen_codigo AS "sifenCodigo", coalesce(s.representacion, '') AS "sifenRepresentacion"
+             FROM unidades_medida u LEFT JOIN unidades_medida_sifen s ON s.codigo = u.unidad_sifen_codigo
+            WHERE u.activo = true ORDER BY u.nombre`,
+        ),
         db.query(`SELECT id, codigo, nombre, porcentaje::text AS porcentaje FROM impuestos WHERE activo = true ORDER BY porcentaje, nombre`),
         db.query(`SELECT id, codigo, razon_social FROM proveedores WHERE empresa_id = $1 AND activo = true ORDER BY razon_social`, [empresaId]),
         db.query(`SELECT id, codigo, nombre FROM depositos WHERE empresa_id = $1 AND activo = true ORDER BY nombre`, [empresaId]),

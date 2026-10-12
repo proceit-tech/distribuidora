@@ -3,6 +3,7 @@
  * matriz normativa; ningún texto se trunca (lo que excede el límite se rechaza con su campo), los decimales viajan como cadenas
  * exactas, y cada error lleva la ruta del campo para enfocarlo. Sin acceso a base de datos.
  */
+import { coherenciaIva, LONGITUDES_GTIN, TIPOS_CODIGO_GTIN } from "@/lib/productos/fiscal";
 import { CANTIDAD_18_4, FACTOR_18_6, PORCENTAJE_7_4, decimal, entero } from "@/lib/productos/decimales";
 import { ErrorValidacion } from "@/lib/productos/errores";
 import { esFechaIsoReal, localAIso } from "@/lib/proveedores/fechas";
@@ -16,7 +17,7 @@ export const MODOS_STOCK = ["CANTIDAD", "LOTE", "UNIDAD_ETIQUETADA"] as const;
 export const TIPOS_CODIGO = ["GTIN", "GTIN_EMPAQUE", "EAN", "UPC", "CODIGO_ALTERNO", "SKU_PROVEEDOR", "OTRO"] as const;
 export const TIPOS_ALTERNATIVO = ["SUSTITUTO", "COMPLEMENTARIO", "UPSELL"] as const;
 export const TIPOS_DOCUMENTO = ["FICHA_TECNICA", "HOJA_SEGURIDAD", "CERTIFICADO", "IMAGEN", "OTRO"] as const;
-const CODIGOS_NUMERICOS = ["GTIN", "GTIN_EMPAQUE", "EAN", "UPC"];
+const CODIGOS_NUMERICOS: readonly string[] = TIPOS_CODIGO_GTIN;
 
 export const COLECCIONES = ["codigos", "unidades", "proveedores", "depositos", "alternativos", "componentes", "documentos"] as const;
 export type Coleccion = (typeof COLECCIONES)[number];
@@ -70,7 +71,8 @@ export type ProductoDocumentoDatos = { id: string | null; tipo: string; nombre: 
 
 export type DatosProducto = ReturnType<typeof normalizarProducto>;
 
-export type OpcionesNormalizar = { modo: "crear" | "editar"; productoId?: string };
+/** `tasaImpuesto`: porcentaje del impuesto elegido (el formulario lo pasa desde el catálogo; el servidor lo valida contra la base). undefined = no se verifica aquí. */
+export type OpcionesNormalizar = { modo: "crear" | "editar"; productoId?: string; tasaImpuesto?: string | null };
 
 function filas<T>(origen: Cuerpo[], campo: string, f: (fila: Cuerpo, p: string, indice: number) => T): T[] {
   return origen.map((fila, i) => f(fila, `${campo}.${i}`, i));
@@ -121,6 +123,17 @@ export function normalizarProducto(d: Cuerpo, opciones: OpcionesNormalizar = { m
 
   if (relacion && relacion !== "1" && relacion !== "2") throw new ErrorValidacion("La relación de mercadería debe ser 1 (quiebra) o 2 (merma).", "relacionMercaderia");
 
+  // Clasificación IVA estándar (E731/E733): vacío = sin clasificar (productos existentes). La tasa viene del impuesto elegido.
+  const afectacionTexto = texto(d.afectacionIva, "La afectación IVA", "afectacionIva", 1);
+
+  if (afectacionTexto && !/^[1-4]$/.test(afectacionTexto)) throw new ErrorValidacion("La afectación IVA debe ser 1, 2, 3 o 4.", "afectacionIva");
+
+  const afectacionIva = afectacionTexto ? Number(afectacionTexto) : null;
+  const proporcionGravadaIva = decimal(d.proporcionGravadaIva, PORCENTAJE_7_4, "La proporción gravada", "proporcionGravadaIva");
+  const incoherencia = opciones.tasaImpuesto === undefined ? (afectacionIva === null && proporcionGravadaIva !== null ? coherenciaIva(null, null, proporcionGravadaIva) : afectacionIva !== null && afectacionIva !== 4 && proporcionGravadaIva !== null ? coherenciaIva(afectacionIva, afectacionIva === 1 ? "10" : "0", proporcionGravadaIva) : null) : coherenciaIva(afectacionIva, opciones.tasaImpuesto, proporcionGravadaIva);
+
+  if (incoherencia) throw new ErrorValidacion(incoherencia.mensaje, incoherencia.campo);
+
   // Precio de venta de referencia: vacío = sin precio (nunca se asume 0).
   const precioVentaReferencia = decimal(d.precioVentaReferencia, CANTIDAD_18_4, "El precio de venta de referencia", "precioVentaReferencia");
 
@@ -147,7 +160,10 @@ export function normalizarProducto(d: Cuerpo, opciones: OpcionesNormalizar = { m
     const valor = texto(c.codigo, "El código", `${p}.codigo`, 80);
 
     if (!valor) throw new ErrorValidacion("El código es obligatorio.", `${p}.codigo`);
-    if (CODIGOS_NUMERICOS.includes(tipo) && !/^[0-9]{8,14}$/.test(valor)) throw new ErrorValidacion("GTIN/EAN/UPC debe contener entre 8 y 14 dígitos.", `${p}.codigo`);
+    if (CODIGOS_NUMERICOS.includes(tipo)) {
+      if (!/^[0-9]+$/.test(valor)) throw new ErrorValidacion("El GTIN solo admite dígitos.", `${p}.codigo`);
+      if (!(LONGITUDES_GTIN as readonly number[]).includes(valor.length)) throw new ErrorValidacion(`El GTIN debe tener ${LONGITUDES_GTIN.join(", ")} dígitos (ingresó ${valor.length}).`, `${p}.codigo`);
+    }
 
     return { id: idP(c.id), tipo, codigo: valor, descripcion: opcional(c.descripcion, "La descripción del código", `${p}.descripcion`, 120), esPrincipal: si(c.esPrincipal) };
   });
@@ -306,6 +322,8 @@ export function normalizarProducto(d: Cuerpo, opciones: OpcionesNormalizar = { m
     procedencia: opcional(d.procedencia, "La procedencia", "procedencia", 100),
     unidadMedidaId,
     impuestoId: opcional(d.impuestoId, "El impuesto", "impuestoId"),
+    afectacionIva,
+    proporcionGravadaIva,
     controlaStock: si(d.controlaStock),
     modoControl,
     permiteTerceros: si(d.permiteTerceros),

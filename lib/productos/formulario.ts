@@ -33,6 +33,10 @@ export type FormularioProducto = {
   procedencia: string;
   unidadMedidaId: string;
   impuestoId: string;
+  /** E731: "" = sin clasificar; "1" Gravado, "2" Exonerado, "3" Exento, "4" Gravado parcial. */
+  afectacionIva: string;
+  /** E733: solo con afectación 4 (en 1/2/3 la proporción es fija y se deriva). */
+  proporcionGravadaIva: string;
   precioVentaReferencia: string;
   controlaStock: boolean;
   modoControlStock: ProductoModoControlStock;
@@ -93,6 +97,9 @@ export function formularioInicial(catalogos: CatalogoProductos): FormularioProdu
     procedencia: "",
     unidadMedidaId: "",
     impuestoId: catalogos.impuestos.find((i) => Number(i.porcentaje) === 10)?.id ?? "",
+    // Valor sugerido solo para productos NUEVOS (IVA 10 % gravado); los existentes conservan lo que tengan.
+    afectacionIva: catalogos.impuestos.some((i) => Number(i.porcentaje) === 10) ? "1" : "",
+    proporcionGravadaIva: "",
     precioVentaReferencia: "",
     controlaStock: true,
     modoControlStock: "CANTIDAD",
@@ -151,6 +158,8 @@ export function formularioDesdeDetalle(d: ProductoDetalle): FormularioProducto {
     procedencia: d.procedencia,
     unidadMedidaId: d.unidadMedidaId,
     impuestoId: d.impuestoId,
+    afectacionIva: d.afectacionIva,
+    proporcionGravadaIva: d.proporcionGravadaIva,
     precioVentaReferencia: d.precioVentaReferencia ?? "",
     controlaStock: d.controlaStock,
     modoControlStock: d.modoControlStock,

@@ -329,7 +329,7 @@ export async function verificarCasosProductos(): Promise<string[]> {
 
   const detalle = {
     id: PROD, codigo: "PRD-000007", codigoInventario: "", codigoSifen: "", codigoBarras: "", descripcion: "X", descripcionFactura: "X", tipoProducto: "MERCADERIA",
-    categoriaId: "", marcaId: "", familiaId: "", lineaId: "", procedencia: "", unidadMedidaId: U1, impuestoId: "", controlaStock: true, modoControlStock: "CANTIDAD",
+    categoriaId: "", marcaId: "", familiaId: "", lineaId: "", procedencia: "", unidadMedidaId: U1, impuestoId: "", afectacionIva: "", proporcionGravadaIva: "", controlaStock: true, modoControlStock: "CANTIDAD",
     permiteTerceros: false, requiereVencimiento: false, stockMinimo: "1.5000", stockMaximo: "", puntoReposicion: "", precioVentaReferencia: "9999999.9999", monedaPrecioReferencia: "PYG",
     stockActual: "3.1234", stockPorDeposito: [], costoPromedio: "10.1234", aperturaRegistrada: null, partidaArancelaria: "", ncm: "", dncpGeneral: "", dncpEspecifico: "",
     paisOrigenCodigo: "PRY", paisOrigenNombre: "Paraguay", informacionFactura: "", relacionMercaderia: "", porcentajeMerma: "", cantidadMerma: "", vendible: true, comprable: true,

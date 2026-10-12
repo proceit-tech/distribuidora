@@ -1,5 +1,7 @@
 "use client";
 
+import { etiquetaUnidad } from "@/lib/fiscal/unidades-sifen";
+
 import { Casilla, Selector, Texto } from "../campos";
 import type { ContextoFormulario } from "../contexto";
 import styles from "../producto-form.module.css";
@@ -7,7 +9,7 @@ import { TarjetaFila, TituloColeccion } from "./repetidores";
 
 export function PestanaCompras({ ctx }: { ctx: ContextoFormulario }) {
   const { form, errores, catalogos } = ctx;
-  const unidades = [["", "Seleccione unidad"], ...catalogos.unidades.map((u): [string, string] => [u.id, `${u.codigo} · ${u.nombre}`])] as Array<[string, string]>;
+  const unidades = [["", "Seleccione unidad"], ...catalogos.unidades.map((u): [string, string] => [u.id, etiquetaUnidad(u)])] as Array<[string, string]>;
 
   return (
     <>

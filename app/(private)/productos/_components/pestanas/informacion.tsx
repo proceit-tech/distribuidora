@@ -1,6 +1,8 @@
 "use client";
 
+import { etiquetaUnidad } from "@/lib/fiscal/unidades-sifen";
 import { productoRedondeado } from "@/lib/productos/decimales";
+import { textoAfectacion } from "@/lib/productos/fiscal";
 import type { ProductoTipo } from "@/types/productos";
 
 import { Casilla, Texto, Selector } from "../campos";
@@ -17,6 +19,7 @@ const TIPOS: Array<[ProductoTipo, string]> = [
 export function PestanaInformacion({ ctx }: { ctx: ContextoFormulario }) {
   const { form, errores, catalogos, detalle } = ctx;
   const lineas = catalogos.lineas.filter((l) => l.familiaId === form.familiaId);
+  const impuesto = catalogos.impuestos.find((i) => i.id === form.impuestoId);
   const pais = catalogos.paises.find((p) => p.codigo === form.paisOrigenCodigo);
   const valor = detalle && form.precioVentaReferencia ? productoRedondeado(form.precioVentaReferencia, detalle.stockActual) : null;
 
@@ -41,7 +44,7 @@ export function PestanaInformacion({ ctx }: { ctx: ContextoFormulario }) {
           errores={errores}
           valor={form.unidadMedidaId}
           alCambiar={(v) => ctx.set("unidadMedidaId", v)}
-          opciones={[["", "Seleccione unidad"], ...catalogos.unidades.map((u): [string, string] => [u.id, `${u.codigo} · ${u.nombre}`])]}
+          opciones={[["", "Seleccione unidad"], ...catalogos.unidades.map((u): [string, string] => [u.id, etiquetaUnidad(u)])]}
         />
         <Selector etiqueta="Categoría" campo="categoriaId" errores={errores} valor={form.categoriaId} alCambiar={(v) => ctx.set("categoriaId", v)} opciones={[["", "Sin categoría"], ...catalogos.categorias.map((c): [string, string] => [c.id, `${c.codigo} · ${c.nombre}`])]} />
         <Selector etiqueta="Marca" campo="marcaId" errores={errores} valor={form.marcaId} alCambiar={(v) => ctx.set("marcaId", v)} opciones={[["", "Sin marca"], ...catalogos.marcas.map((m): [string, string] => [m.id, m.nombre])]} />
@@ -70,7 +73,7 @@ export function PestanaInformacion({ ctx }: { ctx: ContextoFormulario }) {
           opciones={[["", form.familiaId ? "Sin línea" : "Seleccione familia primero"], ...lineas.map((l): [string, string] => [l.id, l.nombre])]}
         />
         <Texto etiqueta="Procedencia" campo="procedencia" errores={errores} valor={form.procedencia} alCambiar={(v) => ctx.set("procedencia", v)} maxLength={100} />
-        <Selector etiqueta="Impuesto / IVA" campo="impuestoId" errores={errores} valor={form.impuestoId} alCambiar={(v) => ctx.set("impuestoId", v)} opciones={[["", "Sin impuesto"], ...catalogos.impuestos.map((i): [string, string] => [i.id, i.nombre])]} />
+        <Texto etiqueta="Impuesto / IVA" campo="impuestoMirror" errores={errores} valor={impuesto ? `${impuesto.nombre}${form.afectacionIva ? ` · ${textoAfectacion(Number(form.afectacionIva))}` : " · sin clasificar"}` : "Sin impuesto"} alCambiar={() => undefined} readOnly ayuda="Se edita en SIFEN y códigos." />
       </div>
 
       <div className={styles.gridFour}>

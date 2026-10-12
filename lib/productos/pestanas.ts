@@ -13,6 +13,9 @@ const POR_COLECCION: Record<string, PestanaId> = {
 
 const POR_CAMPO: Record<string, PestanaId> = {
   codigoSifen: "sifen",
+  impuestoId: "sifen",
+  afectacionIva: "sifen",
+  proporcionGravadaIva: "sifen",
   ncm: "sifen",
   partidaArancelaria: "sifen",
   dncpGeneral: "sifen",

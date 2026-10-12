@@ -3,7 +3,7 @@
 -- Contenido de REFERENCIA para la demostración. NO es una carga oficial SIFEN/DNIT:
 --   * geografía: subconjunto ilustrativo (Capital y Central) con códigos únicos globales
 --     (el código desplegado une ciudades solo por distrito_codigo);
---   * unidades/impuestos: valores usuales; códigos SIFEN de unidades a confirmar en la carga oficial.
+--   * unidades/impuestos: valores usuales; equivalencias SIFEN de unidades por NEX-039 (solo lo inequívoco).
 -- Seguro de re-ejecutar: ON CONFLICT DO NOTHING. No contiene datos de clientes reales ni contraseñas.
 -- =====================================================================
 INSERT INTO monedas (codigo, nombre, simbolo, decimales) VALUES
@@ -37,9 +37,12 @@ INSERT INTO incoterms (codigo, nombre) VALUES
   ('EXW','En fábrica'),('FCA','Franco transportista'),('FOB','Franco a bordo'),('CIF','Costo, seguro y flete'),('DAP','Entregada en lugar'),('DDP','Entregada derechos pagados')
 ON CONFLICT (codigo) DO NOTHING;
 
-INSERT INTO unidades_medida (codigo, nombre, codigo_sifen, descripcion_sifen) VALUES
-  ('UN','Unidad','77','Unidad'),('KG','Kilogramo','83','Kilogramo'),('LT','Litro','87','Litro'),
-  ('CJ','Caja','CJ','Caja'),('MT','Metro','86','Metro'),('DOC','Docena','DOC','Docena')
+-- Equivalencia SIFEN (Tabla 5 del MT v150) por el vínculo de NEX-039. Solo lo inequívoco: UN→77, KG→83, LT→89 (Litros).
+-- Metro (87/m ó 108/MT: decisión pendiente), Caja y Docena (sin equivalencia en la Tabla 5) quedan SIN vínculo; no se inventa ninguno.
+-- Seguro de re-ejecutar y NO modifica unidades existentes (ON CONFLICT DO NOTHING): para bases existentes, scripts/reconciliar-fiscal-NEX-039-040.sql.
+INSERT INTO unidades_medida (codigo, nombre, unidad_sifen_codigo) VALUES
+  ('UN','Unidad',77),('KG','Kilogramo',83),('LT','Litro',89),
+  ('CJ','Caja',NULL),('MT','Metro',NULL),('DOC','Docena',NULL)
 ON CONFLICT (codigo) DO NOTHING;
 
 INSERT INTO impuestos (codigo, nombre, porcentaje) VALUES

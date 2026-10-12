@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import type { PoolClient } from "pg";
 
 import { ErrorValidacion } from "@/lib/productos/errores";
+import { coherenciaIva } from "@/lib/productos/fiscal";
 import type { DatosProducto } from "@/lib/productos/normalizar";
 
 // Persistencia compartida de productos (POST y PUT). Consultas parametrizadas; empresa_id siempre llega de la sesión autenticada.
@@ -59,6 +60,8 @@ export function columnasProducto(d: DatosProducto, codigo: string): Array<[strin
     ["origen_etiqueta", d.procedencia],
     ["unidad_medida_id", d.unidadMedidaId],
     ["impuesto_id", d.impuestoId],
+    ["afectacion_iva", d.afectacionIva],
+    ["proporcion_gravada_iva", d.proporcionGravadaIva],
     ["controla_stock", d.controlaStock],
     ["modo_control_stock", d.modoControl],
     ["permite_terceros", d.permiteTerceros],
@@ -192,6 +195,12 @@ export async function validarReferencias(conexion: PoolClient, empresaId: string
   await unico(d.familiaId, "familiaId", "familias_producto", true, "La familia", previo.familia_id);
   await unico(d.unidadMedidaId, "unidadMedidaId", "unidades_medida", false, "La unidad base", previo.unidad_medida_id);
   await unico(d.impuestoId, "impuestoId", "impuestos", false, "El impuesto", previo.impuesto_id);
+
+  // Coherencia de la clasificación IVA (E731 × E734 × E733) contra la tasa REAL del impuesto elegido (global, sin empresa_id).
+  const tasa = d.impuestoId ? await conexion.query("SELECT porcentaje::text AS porcentaje FROM impuestos WHERE id = $1", [d.impuestoId]) : null;
+  const incoherencia = coherenciaIva(d.afectacionIva, tasa && tasa.rowCount ? (tasa.rows[0] as { porcentaje: string }).porcentaje : null, d.proporcionGravadaIva);
+
+  if (incoherencia) throw new ErrorValidacion(incoherencia.mensaje, incoherencia.campo);
 
   if (d.lineaId) {
     const r = await conexion.query("SELECT familia_id, activo FROM lineas_producto WHERE empresa_id = $1 AND id = $2", [empresaId, d.lineaId]);

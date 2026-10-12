@@ -1,5 +1,6 @@
 "use client";
 
+import { AFECTACIONES_IVA, coherenciaIva, proporcionEfectiva } from "@/lib/productos/fiscal";
 import type { ProductoCodigo } from "@/types/productos";
 
 import { Area, Casilla, Selector, Texto } from "../campos";
@@ -8,34 +9,34 @@ import styles from "../producto-form.module.css";
 import { TarjetaFila, TituloColeccion } from "./repetidores";
 
 const TIPOS_CODIGO: Array<[ProductoCodigo["tipo"], string]> = [
-  ["GTIN", "GTIN producto"],
-  ["GTIN_EMPAQUE", "GTIN empaque"],
-  ["EAN", "EAN"],
-  ["UPC", "UPC"],
+  ["GTIN", "GTIN del producto (E706)"],
+  ["GTIN_EMPAQUE", "GTIN del empaque (E707)"],
+  ["EAN", "EAN (GTIN)"],
+  ["UPC", "UPC (GTIN)"],
   ["CODIGO_ALTERNO", "Código alterno"],
   ["SKU_PROVEEDOR", "SKU del proveedor"],
-  ["OTRO", "Otro"],
+  ["OTRO", "Otro identificador (ERP externo)"],
 ];
+
+const ES_GTIN = ["GTIN", "GTIN_EMPAQUE", "EAN", "UPC"];
 
 export function PestanaSifen({ ctx }: { ctx: ContextoFormulario }) {
   const { form, errores, catalogos } = ctx;
+  const impuesto = catalogos.impuestos.find((i) => i.id === form.impuestoId);
+  const afectacion = form.afectacionIva ? Number(form.afectacionIva) : null;
+  const proporcion = proporcionEfectiva(afectacion, form.proporcionGravadaIva.trim() || null);
+  const incoherencia = afectacion !== null ? coherenciaIva(afectacion, impuesto?.porcentaje ?? null, form.proporcionGravadaIva.trim() || null) : null;
+  const unidad = catalogos.unidades.find((u) => u.id === form.unidadMedidaId);
 
   return (
     <>
       <div className={styles.sectionTitle}>
-        <h3>SIFEN y códigos</h3>
+        <h3>Identificación fiscal del producto</h3>
       </div>
 
       <div className={styles.gridFour}>
-        <Texto etiqueta="Código SIFEN" campo="codigoSifen" errores={errores} valor={form.codigoSifen} alCambiar={(v) => ctx.set("codigoSifen", v)} maxLength={20} />
+        <Texto etiqueta="Código SIFEN del producto" campo="codigoSifen" errores={errores} valor={form.codigoSifen} alCambiar={(v) => ctx.set("codigoSifen", v)} maxLength={20} ayuda="Distinto del código interno Nexit." />
         <Texto etiqueta="Descripción para factura" campo="descripcionFacturaMirror" errores={errores} valor={form.descripcionFactura} alCambiar={() => undefined} readOnly ayuda="Se edita en Información." />
-        <Texto etiqueta="NCM" campo="ncm" errores={errores} valor={form.ncm} alCambiar={(v) => ctx.set("ncm", v)} maxLength={8} modo="numeric" ayuda="6 a 8 dígitos." />
-        <Texto etiqueta="Partida arancelaria" campo="partidaArancelaria" errores={errores} valor={form.partidaArancelaria} alCambiar={(v) => ctx.set("partidaArancelaria", v)} maxLength={4} modo="numeric" ayuda="4 dígitos." />
-      </div>
-
-      <div className={styles.gridFour}>
-        <Texto etiqueta="DNCP general" campo="dncpGeneral" errores={errores} valor={form.dncpGeneral} alCambiar={(v) => ctx.set("dncpGeneral", v)} maxLength={8} />
-        <Texto etiqueta="DNCP específico" campo="dncpEspecifico" errores={errores} valor={form.dncpEspecifico} alCambiar={(v) => ctx.set("dncpEspecifico", v)} maxLength={4} ayuda="3 o 4 caracteres." />
         <Selector
           etiqueta="País de origen"
           campo="paisOrigenCodigo"
@@ -49,7 +50,78 @@ export function PestanaSifen({ ctx }: { ctx: ContextoFormulario }) {
 
       <Area etiqueta="Información adicional en factura" campo="informacionFactura" errores={errores} valor={form.informacionFactura} alCambiar={(v) => ctx.set("informacionFactura", v)} maxLength={500} />
 
-      <TituloColeccion titulo="Códigos de barras y GTIN" boton="Agregar código" alAgregar={() => ctx.agregar("codigos")} />
+      <div className={styles.sectionTitle}>
+        <h3>Clasificación y afectación IVA</h3>
+      </div>
+
+      <div className={styles.gridFour}>
+        <Selector
+          etiqueta="Impuesto (tasa)"
+          campo="impuestoId"
+          errores={errores}
+          valor={form.impuestoId}
+          alCambiar={(v) => ctx.set("impuestoId", v)}
+          opciones={[["", "Sin impuesto"], ...catalogos.impuestos.map((i): [string, string] => [i.id, `${i.nombre} (${Number(i.porcentaje)} %)`])]}
+        />
+        <Selector
+          etiqueta="Afectación IVA"
+          campo="afectacionIva"
+          errores={errores}
+          valor={form.afectacionIva}
+          alCambiar={(v) => {
+            ctx.set("afectacionIva", v);
+            // La proporción informada solo existe con «Gravado parcial»; en los demás casos es fija y se deriva.
+            if (v !== "4") ctx.set("proporcionGravadaIva", "");
+          }}
+          opciones={[["", "Sin clasificar"], ...AFECTACIONES_IVA.map((a): [string, string] => [String(a.codigo), `${a.codigo} · ${a.texto}`])]}
+        />
+        {afectacion === 4 ? (
+          <Texto etiqueta="Proporción gravada (%) *" campo="proporcionGravadaIva" errores={errores} valor={form.proporcionGravadaIva} alCambiar={(v) => ctx.set("proporcionGravadaIva", v)} modo="decimal" maxLength={8} ayuda="Mayor que 0 y menor que 100." />
+        ) : (
+          <Texto etiqueta="Proporción gravada (%)" campo="proporcionEfectiva" errores={errores} valor={proporcion ?? ""} alCambiar={() => undefined} readOnly ayuda={afectacion === null ? "Sin clasificar." : "Fija según la afectación."} />
+        )}
+        <Texto etiqueta="Tasa del IVA (%)" campo="tasaMirror" errores={errores} valor={impuesto ? String(Number(impuesto.porcentaje)) : ""} alCambiar={() => undefined} readOnly ayuda="Derivada del impuesto." />
+      </div>
+
+      {afectacion === null ? (
+        <p className={styles.nota} role="status">
+          Sin clasificación fiscal estándar: no se asume Exento ni Exonerado. Las bases y la liquidación (E735–E737) se calculan en la operación, no en el producto.
+        </p>
+      ) : null}
+      {incoherencia && !errores[incoherencia.campo] ? (
+        <p className={styles.nota} role="status">
+          {incoherencia.mensaje}
+        </p>
+      ) : null}
+
+      <div className={styles.sectionTitle}>
+        <h3>Unidad de medida SIFEN</h3>
+      </div>
+
+      <div className={styles.gridFour}>
+        <Texto etiqueta="Unidad base (comercial)" campo="unidadBaseMirror" errores={errores} valor={unidad ? `${unidad.codigo} · ${unidad.nombre}` : ""} alCambiar={() => undefined} readOnly ayuda="Se edita en Información." />
+        <Texto etiqueta="Código SIFEN (E709)" campo="unidadSifenCodigo" errores={errores} valor={unidad?.sifenCodigo ? String(unidad.sifenCodigo) : ""} alCambiar={() => undefined} readOnly placeholder="—" />
+        <Texto etiqueta="Representación (E710)" campo="unidadSifenRepresentacion" errores={errores} valor={unidad?.sifenRepresentacion ?? ""} alCambiar={() => undefined} readOnly placeholder="—" />
+      </div>
+
+      {unidad && !unidad.sifenCodigo ? (
+        <p className={styles.nota} role="status">
+          Sin equivalencia SIFEN configurada para esta unidad. No impide guardar el producto.
+        </p>
+      ) : null}
+
+      <div className={styles.sectionTitle}>
+        <h3>NCM, partida arancelaria y DNCP</h3>
+      </div>
+
+      <div className={styles.gridFour}>
+        <Texto etiqueta="NCM" campo="ncm" errores={errores} valor={form.ncm} alCambiar={(v) => ctx.set("ncm", v)} maxLength={8} modo="numeric" ayuda="6 a 8 dígitos." />
+        <Texto etiqueta="Partida arancelaria" campo="partidaArancelaria" errores={errores} valor={form.partidaArancelaria} alCambiar={(v) => ctx.set("partidaArancelaria", v)} maxLength={4} modo="numeric" ayuda="4 dígitos." />
+        <Texto etiqueta="DNCP general" campo="dncpGeneral" errores={errores} valor={form.dncpGeneral} alCambiar={(v) => ctx.set("dncpGeneral", v)} maxLength={8} />
+        <Texto etiqueta="DNCP específico" campo="dncpEspecifico" errores={errores} valor={form.dncpEspecifico} alCambiar={(v) => ctx.set("dncpEspecifico", v)} maxLength={4} ayuda="3 o 4 caracteres." />
+      </div>
+
+      <TituloColeccion titulo="GTIN y códigos adicionales" boton="Agregar código" alAgregar={() => ctx.agregar("codigos")} />
 
       {form.codigos.length === 0 ? <div className={styles.empty}>Sin códigos adicionales.</div> : null}
 
@@ -61,7 +133,7 @@ export function PestanaSifen({ ctx }: { ctx: ContextoFormulario }) {
             <TarjetaFila key={c.id} ctx={ctx} coleccion="codigos" id={c.id} titulo={`Código ${i + 1}`}>
               <div className={styles.gridFour}>
                 <Selector etiqueta="Tipo *" campo={`${p}.tipo`} errores={errores} valor={c.tipo} alCambiar={(v) => ctx.actualizar("codigos", c.id, { tipo: v })} opciones={TIPOS_CODIGO} />
-                <Texto etiqueta="Código *" campo={`${p}.codigo`} errores={errores} valor={c.codigo} alCambiar={(v) => ctx.actualizar("codigos", c.id, { codigo: v })} maxLength={80} />
+                <Texto etiqueta="Código *" campo={`${p}.codigo`} errores={errores} valor={c.codigo} alCambiar={(v) => ctx.actualizar("codigos", c.id, { codigo: v })} maxLength={80} ayuda={ES_GTIN.includes(c.tipo) ? "GTIN: 8, 12, 13 o 14 dígitos." : undefined} />
                 <Texto etiqueta="Descripción" campo={`${p}.descripcion`} errores={errores} valor={c.descripcion} alCambiar={(v) => ctx.actualizar("codigos", c.id, { descripcion: v })} maxLength={120} />
                 <div className={styles.checkGrid}>
                   <Casilla etiqueta="Principal" campo={`${p}.esPrincipal`} valor={c.esPrincipal} alCambiar={(v) => ctx.marcarPrincipal("codigos", c.id, v)} />
