@@ -7,6 +7,7 @@ import { compararTexto, ordenarLista, siguienteOrden, type Orden } from "@/compo
 import { ThOrdenable } from "@/components/ui/lista-padrao/th-ordenable";
 import ui from "@/components/ui/lista-padrao/lista.module.css";
 import { formatearCantidad } from "@/lib/formato/listas";
+import { enlaceNuevoMovimiento } from "@/lib/movimientos/formulario";
 import { calcularPlanReposicion, compararUrgencia, type Criticidad, type EntradaReposicion, type FilaReposicion } from "@/lib/reposicion/calculo";
 
 const PAGE_SIZE = 25;
@@ -104,8 +105,9 @@ export default function ReposicionPage() {
   const resumen = useMemo(
     () => ({
       necesitan: filas.filter((f) => f.necesita).length,
-      sinStock: filas.filter((f) => f.criticidad === "SIN_STOCK").length,
-      bajoMinimo: filas.filter((f) => f.criticidad === "BAJO_MINIMO").length,
+      // Solo renglones que son plan: el consolidado de referencia no se cuenta (coherente con «Necesitan reposición»).
+      sinStock: filas.filter((f) => f.necesita && f.criticidad === "SIN_STOCK").length,
+      bajoMinimo: filas.filter((f) => f.necesita && f.criticidad === "BAJO_MINIMO").length,
       conTransferencia: filas.filter((f) => f.sugeridaTransferencia > 0).length,
       sinMeta: filas.filter((f) => f.necesita && f.sugerida === null).length,
       sinParametros: filas.filter((f) => f.criticidad === "SIN_PARAMETROS").length,
@@ -191,6 +193,9 @@ export default function ReposicionPage() {
           <small>Falta máximo o cantidad de reposición</small>
         </article>
       </section>
+      <p className={ui.resultCount} style={{ margin: "6px 0 8px" }}>
+        Los indicadores cuentan todos los renglones calculados con sus depósitos autorizados; los filtros de abajo solo afectan la tabla.
+      </p>
 
       <section className={ui.contentCard}>
         <div className={[ui.toolbar, ui.toolbarDensa].join(" ")}>
@@ -264,6 +269,15 @@ export default function ReposicionPage() {
           </span>
         </div>
 
+        {criticidad === "NECESITAN" && filas.length > visibles.length && !busqueda && deposito === "TODOS" && marca === "TODAS" ? (
+          <p className={ui.resultCount} role="status" style={{ margin: "0 0 8px" }}>
+            El filtro «Necesitan reposición» oculta {filas.length - visibles.length} renglón(es) que no necesitan reposición, son de referencia o no tienen parámetros.{" "}
+            <button type="button" className={ui.clearButton} onClick={() => setCriticidad("TODAS")}>
+              Ver todos
+            </button>
+          </p>
+        ) : null}
+
         <div className={ui.tableScroll}>
           <table className={ui.table} style={{ minWidth: 1180 }}>
             <thead>
@@ -276,7 +290,7 @@ export default function ReposicionPage() {
                 <ThOrdenable titulo="Situación" campo="criticidad" orden={orden} onOrden={(c) => setOrden((a) => siguienteOrden(a, c))} />
                 <ThOrdenable titulo="Sugerida" campo="sugerida" orden={orden} onOrden={(c) => setOrden((a) => siguienteOrden(a, c))} alinear="derecha" className={ui.colNumero} />
                 <ThOrdenable titulo="Alternativas (sugerencia)" />
-                <ThOrdenable titulo="A planificar" alinear="derecha" />
+                <ThOrdenable titulo="A planificar (simulación local, no se guarda)" alinear="derecha" />
                 <ThOrdenable titulo="Acciones" alinear="derecha" />
               </tr>
             </thead>
@@ -346,6 +360,14 @@ export default function ReposicionPage() {
                           {f.transferencias.map((t) => (
                             <small key={t.depositoId} style={{ display: "block" }}>
                               Transferir {cant(t.cantidad)} desde {t.depositoNombre}
+                              {datos?.permisos?.movimientos && f.ambito === "DEPOSITO" && f.depositoId ? (
+                                <>
+                                  {" · "}
+                                  <Link href={enlaceNuevoMovimiento({ productoId: f.productoId, tipo: "TRANSFERENCIA", depositoOrigenId: t.depositoId, depositoDestinoId: f.depositoId, cantidad: t.cantidad })} title="Abre Nuevo movimiento con estos datos precargados; no registra nada hasta que usted confirme allí.">
+                                    Preparar transferencia
+                                  </Link>
+                                </>
+                              ) : null}
                             </small>
                           ))}
                           {f.sugeridaCompra ? (
@@ -388,11 +410,6 @@ export default function ReposicionPage() {
                         <Link href={`/stock/${f.productoId}`} className={ui.rowButton}>
                           Ver stock
                         </Link>
-                        {datos?.permisos?.movimientos && f.transferencias.length > 0 ? (
-                          <Link href="/movimientos/nuevo" className={ui.rowButton}>
-                            Ir a Movimientos
-                          </Link>
-                        ) : null}
                       </div>
                     </td>
                   </tr>

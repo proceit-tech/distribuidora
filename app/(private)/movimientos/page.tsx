@@ -92,13 +92,20 @@ export default function MovimientosPage() {
         if (activo) setCargando(false);
       });
 
-    // Aviso tras registrar (?ok=<número>).
-    const ok = new URLSearchParams(
+    // Aviso tras registrar (?ok=<número>) y búsqueda inicial desde otras pantallas (?buscar=<código de producto>).
+    const consulta = new URLSearchParams(
       window.location.search,
-    ).get("ok");
+    );
+    const ok = consulta.get("ok");
+    const buscar = consulta.get("buscar");
+
+    if (buscar) setBusqueda(buscar.slice(0, 80));
 
     if (ok) {
       setFlash(`Movimiento ${ok} registrado correctamente.`);
+    }
+
+    if (ok || buscar) {
       window.history.replaceState(
         null,
         "",

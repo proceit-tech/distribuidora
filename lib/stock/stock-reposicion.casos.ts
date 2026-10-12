@@ -6,11 +6,15 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { contador } from "@/lib/clientes/contador-casos";
+import {
+  advertenciaSaldo, aplicarTipo, enlaceNuevoMovimiento, formularioInicial, movimientoSucio, ORDEN_TIPOS, precargarDesdeConsulta, saldoVisible, TIPOS_INFO, validarMovimiento,
+} from "@/lib/movimientos/formulario";
 import { claveEfectoFisico, decidirEfecto, planEstorno, validarLinea, type ContextoDocumento } from "@/lib/movimientos/documentos";
 import { calcularPlanReposicion, calcularReposicion, compararUrgencia, type EntradaReposicion } from "@/lib/reposicion/calculo";
 import { leerEntradasReposicion } from "@/lib/reposicion/datos";
 import { leerStock } from "@/lib/stock/shared";
 import { clasificarNivel, resumenStock, vistaPorDeposito } from "@/lib/stock/vista";
+import type { CatalogoMovimientos, NuevoMovimientoStock } from "@/types/movimientos-stock";
 import type { StockItem } from "@/types/stock";
 
 const raiz = process.cwd();
@@ -331,8 +335,103 @@ export async function verificarCasosStockReposicionMovimientos(): Promise<string
   cierto("Reposición: página, layout con STOCK.VER, API de solo lectura con STOCK.VER, ruta en V1_HREFS y menú con STOCK.VER", existsSync(join(raiz, "app/(private)/reposicion/page.tsx")) && /guardPage\("STOCK", "VER"\)/.test(leer("app/(private)/reposicion/layout.tsx")) && /denyIfNoPermission\(session, "STOCK", "VER"\)/.test(leer("app/api/reposicion/route.ts")) && !/export (async )?function (POST|PUT|DELETE|PATCH)|export const (POST|PUT|DELETE|PATCH)/.test(leer("app/api/reposicion/route.ts")) && /"\/reposicion"/.test(menu.slice(menu.indexOf("V1_HREFS"))) && /href: "\/reposicion",\s+icon: "replenishment",\s+permission: "STOCK\.VER"/.test(menu));
   const repPage = leer("app/(private)/reposicion/page.tsx");
 
-  cierto("Reposición: solo planificación (sin POST/PUT, sin botones de compra) y la acción hacia Movimientos solo con permiso y destino real", !/method:\s*"(POST|PUT|DELETE)"/.test(repPage) && !/Comprar ahora|Generar pedido|Crear orden/i.test(repPage) && /datos\?\.permisos\?\.movimientos/.test(repPage) && /href="\/movimientos\/nuevo"/.test(repPage) && existsSync(join(raiz, "app/(private)/movimientos/nuevo/page.tsx")));
+  cierto("Reposición: solo planificación (sin POST/PUT, sin botones de compra) y la acción hacia Movimientos solo con permiso y destino real", !/method:\s*"(POST|PUT|DELETE)"/.test(repPage) && !/Comprar ahora|Generar pedido|Crear orden/i.test(repPage) && /datos\?\.permisos\?\.movimientos/.test(repPage) && /enlaceNuevoMovimiento/.test(repPage) && existsSync(join(raiz, "app/(private)/movimientos/nuevo/page.tsx")));
   cierto("la API de stock aplica el alcance de depósitos del usuario", /session\.user\.id/.test(leer("app/api/stock/route.ts")) && /session\.user\.id/.test(leer("app/api/stock/[id]/route.ts")));
+
+  // ── Revisión visual y funcional: Detalle de Stock, Reposición y Nuevo movimiento (UX-01…UX-24)
+  const HOY = "2026-10-12";
+  const catMov: CatalogoMovimientos = {
+    monedaBase: "PYG",
+    depositos: [
+      { id: D1, codigo: "C", nombre: "Central", permitido: true },
+      { id: D2, codigo: "S", nombre: "Sucursal", permitido: true },
+      { id: D3, codigo: "X", nombre: "Ajeno", permitido: false },
+    ],
+    productos: [
+      { id: P1, codigo: "P-1", descripcion: "Leche", unidadMedidaNombre: "Unidad", modoControl: "CANTIDAD", stock: [{ depositoId: D1, disponible: 10, reservado: 2, cuarentena: 1, transito: 0, costoPromedio: 100 }, { depositoId: D2, disponible: 5, reservado: 0, cuarentena: 0, transito: 3, costoPromedio: null }], lotes: [] },
+      { id: "p2", codigo: "P-2", descripcion: "Yogur", unidadMedidaNombre: "Caja", modoControl: "LOTE", stock: [], lotes: [] },
+      { id: "p3", codigo: "P-3", descripcion: "Equipo", unidadMedidaNombre: "Unidad", modoControl: "UNIDAD_ETIQUETADA", stock: [], lotes: [] },
+    ],
+  };
+  const f0 = formularioInicial(HOY);
+  const val = (parcial: Partial<NuevoMovimientoStock>) => validarMovimiento({ ...f0, ...parcial }, catMov, HOY);
+
+  igual("formulario inicial: sin producto ni cantidad; el estado inicial no es «registrado»", [f0.productoId, f0.cantidad, f0.tipo, f0.origen, f0.claveIdempotencia], ["", 0, "ENTRADA", "COMPRA", ""]);
+  igual("todos los tipos de la API siguen disponibles en la pantalla", ORDEN_TIPOS, ["ENTRADA", "SALIDA", "TRANSFERENCIA", "AJUSTE_POSITIVO", "AJUSTE_NEGATIVO", "RESERVA", "LIBERACION_RESERVA", "CUARENTENA", "LIBERACION_CUARENTENA"]);
+  igual("campos requeridos por tipo (origen/destino/costo) coinciden con lib/movimientos/shared.ts", ORDEN_TIPOS.map((t) => [TIPOS_INFO[t].origen, TIPOS_INFO[t].destino, TIPOS_INFO[t].costo]), [[false, true, true], [true, false, false], [true, true, false], [false, true, true], [true, false, false], [true, false, false], [true, false, false], [true, false, false], [true, false, false]]);
+  cierto("cada tipo tiene descripción en español y orígenes coherentes (el primero es el predeterminado)", ORDEN_TIPOS.every((t) => TIPOS_INFO[t].descripcion.length > 10 && TIPOS_INFO[t].origenes.length > 0));
+  igual("transferencia: el origen queda fijo en TRANSFERENCIA", TIPOS_INFO.TRANSFERENCIA.origenes, ["TRANSFERENCIA"]);
+
+  // aplicarTipo: limpia lo que ya no aplica
+  const conDatos: NuevoMovimientoStock = { ...f0, depositoOrigenId: D1, depositoDestinoId: D2, costoUnitario: 50, fechaVencimiento: "2026-12-01", origen: "COMPRA" };
+  const aSalida = aplicarTipo(conDatos, "SALIDA");
+
+  igual("ENTRADA → SALIDA: se limpian destino, costo y vencimiento y el origen pasa a uno coherente", [aSalida.depositoDestinoId, aSalida.costoUnitario, aSalida.fechaVencimiento, aSalida.origen, aSalida.depositoOrigenId], ["", null, "", "VENTA", D1]);
+  igual("SALIDA no ofrece COMPRA como origen: pasa a VENTA", aSalida.origen, "VENTA");
+  igual("ENTRADA → TRANSFERENCIA: origen TRANSFERENCIA, sin costo, sin vencimiento, conserva ambos depósitos", ((t) => [t.origen, t.costoUnitario, t.fechaVencimiento, t.depositoOrigenId, t.depositoDestinoId])(aplicarTipo(conDatos, "TRANSFERENCIA")), ["TRANSFERENCIA", null, "", D1, D2]);
+  igual("RESERVA: solo origen; sin destino ni costo", ((t) => [t.depositoOrigenId, t.depositoDestinoId, t.costoUnitario])(aplicarTipo(conDatos, "RESERVA")), [D1, "", null]);
+
+  // validación por campo, en orden visual
+  const vacios = val({});
+
+  igual("entrada vacía: errores por campo en orden visual (producto, cantidad, costo, destino)", Object.keys(vacios), ["productoId", "cantidad", "costoUnitario", "depositoDestinoId"]);
+  igual("sin errores con una entrada completa", val({ productoId: P1, cantidad: 5, costoUnitario: 120, depositoDestinoId: D1 }), {});
+  igual("costo 0 es válido; negativo no", [Object.keys(val({ productoId: P1, cantidad: 1, costoUnitario: 0, depositoDestinoId: D1 })).length, val({ productoId: P1, cantidad: 1, costoUnitario: -1, depositoDestinoId: D1 }).costoUnitario !== undefined], [0, true]);
+  igual("la salida no exige costo", Object.keys(val({ tipo: "SALIDA", productoId: P1, cantidad: 1, depositoOrigenId: D1 })), []);
+  igual("cantidad: cero, negativa o con más de 4 decimales", [val({ cantidad: 0 }).cantidad, val({ cantidad: -2 }).cantidad, val({ cantidad: 1.00001 }).cantidad, val({ cantidad: 1.0001 }).cantidad], ["La cantidad debe ser mayor que cero.", "La cantidad debe ser mayor que cero.", "La cantidad admite hasta 4 decimales.", undefined]);
+  igual("fecha futura rechazada (como la función SQL); hoy y pasadas válidas", [val({ fecha: "2026-10-13" }).fecha, val({ fecha: HOY }).fecha, val({ fecha: "2026-01-01" }).fecha], ["La fecha del movimiento no puede ser futura.", undefined, undefined]);
+  igual("fecha vacía (inválida) se señala en el campo", val({ fecha: "" }).fecha, "Ingrese una fecha válida.");
+  igual("producto con unidad identificada: rechazado con mensaje claro", val({ productoId: "p3" }).productoId, "Los productos con unidad identificada (serie/etiqueta) aún no se pueden mover desde esta pantalla.");
+  igual("producto desconocido o fuera del catálogo de la sesión", val({ productoId: "otra-empresa" }).productoId, "El producto no está disponible para movimientos.");
+  igual("lote obligatorio solo en productos por lote; vencimiento no anterior a la fecha", [val({ productoId: "p2", cantidad: 1, costoUnitario: 1, depositoDestinoId: D1 }).lote, val({ productoId: P1, cantidad: 1, costoUnitario: 1, depositoDestinoId: D1 }).lote, val({ productoId: "p2", cantidad: 1, costoUnitario: 1, depositoDestinoId: D1, lote: "L1", fechaVencimiento: "2026-10-01" }).fechaVencimiento], ["Ingrese el lote: este producto se controla por lote.", undefined, "El vencimiento no puede ser anterior a la fecha del movimiento."]);
+  igual("transferencia con el mismo depósito: error en destino", val({ tipo: "TRANSFERENCIA", productoId: P1, cantidad: 1, depositoOrigenId: D1, depositoDestinoId: D1 }).depositoDestinoId, "El depósito origen y destino deben ser diferentes.");
+  igual("depósito sin acceso (permitido=false): se rechaza en la pantalla (la API/SQL lo vuelve a verificar)", [val({ tipo: "SALIDA", productoId: P1, cantidad: 1, depositoOrigenId: D3 }).depositoOrigenId, val({ productoId: P1, cantidad: 1, costoUnitario: 1, depositoDestinoId: D3 }).depositoDestinoId], ["No tiene acceso a ese depósito.", "No tiene acceso a ese depósito."]);
+  igual("límites de texto: referencia 120, motivo 300, observación 1000", [val({ documentoReferencia: "x".repeat(121) }).documentoReferencia !== undefined, val({ motivo: "x".repeat(301) }).motivo !== undefined, val({ observacion: "x".repeat(1001) }).observacion !== undefined, val({ documentoReferencia: "x".repeat(120), motivo: "x".repeat(300) }).motivo], [true, true, true, undefined]);
+  igual("el motivo no es obligatorio al registrar (el SQL solo lo exige al anular)", val({ productoId: P1, cantidad: 1, costoUnitario: 1, depositoDestinoId: D1, motivo: "" }).motivo, undefined);
+
+  // saldo visible y advertencia
+  igual("saldo visible: por depósito de referencia y total de los depósitos autorizados", [saldoVisible(catMov.productos[0], D1), saldoVisible(catMov.productos[0], "")], [{ disponible: 10, reservado: 2, cuarentena: 1, transito: 0 }, { disponible: 15, reservado: 2, cuarentena: 1, transito: 3 }]);
+  igual("advertencia (no bloqueante) cuando la cantidad supera el disponible visible del origen", [advertenciaSaldo({ ...f0, tipo: "SALIDA", cantidad: 11, depositoOrigenId: D1 }, catMov.productos[0]).startsWith("La cantidad supera el disponible visible"), advertenciaSaldo({ ...f0, tipo: "SALIDA", cantidad: 10, depositoOrigenId: D1 }, catMov.productos[0]), advertenciaSaldo({ ...f0, tipo: "ENTRADA", cantidad: 999 }, catMov.productos[0])], [true, "", ""]);
+  cierto("la liberación de reserva compara contra lo reservado", /reservado visible/.test(advertenciaSaldo({ ...f0, tipo: "LIBERACION_RESERVA", cantidad: 5, depositoOrigenId: D1 }, catMov.productos[0])));
+
+  // cambios sin guardar
+  igual("cambios sin guardar: igual al estado base = limpio; cualquier edición = sucio; espacios no cuentan", [movimientoSucio(f0, f0), movimientoSucio({ ...f0, motivo: "  " }, f0), movimientoSucio({ ...f0, cantidad: 3 }, f0), movimientoSucio({ ...f0, productoId: P1 }, f0)], [false, false, true, true]);
+
+  // precarga desde la dirección (Stock y Reposición): siempre contra el catálogo de la sesión
+  const q = (s: string) => new URLSearchParams(s);
+  const pre = precargarDesdeConsulta(q(`producto=${P1}&tipo=TRANSFERENCIA&depositoOrigen=${D1}&depositoDestino=${D2}&cantidad=4.5`), catMov, f0);
+
+  igual("precarga válida (transferencia desde Reposición): producto, tipo, depósitos y cantidad", [pre.formulario.productoId, pre.formulario.tipo, pre.formulario.origen, pre.formulario.depositoOrigenId, pre.formulario.depositoDestinoId, pre.formulario.cantidad, pre.descartados, pre.precargado], [P1, "TRANSFERENCIA", "TRANSFERENCIA", D1, D2, 4.5, [], true]);
+  igual("precarga con depósito no autorizado: se descarta y se informa", ((p) => [p.formulario.depositoOrigenId, p.descartados])(precargarDesdeConsulta(q(`tipo=SALIDA&depositoOrigen=${D3}`), catMov, f0)), ["", ["el depósito origen"]]);
+  igual("precarga con producto inexistente o de unidad identificada: descartado", [precargarDesdeConsulta(q("producto=inventado"), catMov, f0).descartados, precargarDesdeConsulta(q("producto=p3"), catMov, f0).formulario.productoId], [["el producto"], ""]);
+  igual("precarga con tipo inválido o cantidad inválida: descartados, el formulario queda intacto", ((p) => [p.formulario, p.descartados, p.precargado])(precargarDesdeConsulta(q("tipo=ROBO&cantidad=-3"), catMov, f0)), [f0, ["el tipo de movimiento", "la cantidad"], false]);
+  igual("precarga de depósito destino en una SALIDA (no aplica al tipo): descartado", precargarDesdeConsulta(q(`tipo=SALIDA&depositoDestino=${D2}`), catMov, f0).descartados, ["el depósito destino"]);
+  igual("precarga sin parámetros: formulario sin cambios y sin aviso", ((p) => [p.formulario, p.descartados, p.precargado])(precargarDesdeConsulta(q(""), catMov, f0)), [f0, [], false]);
+  igual("enlace de contexto: solo ids y cantidad, y se reconstruye igual", ((url) => precargarDesdeConsulta(new URLSearchParams(url.split("?")[1]), catMov, f0).formulario.depositoDestinoId)(enlaceNuevoMovimiento({ productoId: P1, tipo: "ENTRADA", depositoDestinoId: D2 })), D2);
+  cierto("el enlace no incluye cantidades inválidas", !/cantidad/.test(enlaceNuevoMovimiento({ productoId: P1, cantidad: 0 })) && /^\/movimientos\/nuevo\?producto=/.test(enlaceNuevoMovimiento({ productoId: P1 })));
+
+  // pantallas y API (contenido real del código)
+  const nuevoPage = leer("app/(private)/movimientos/nuevo/page.tsx");
+  const detallePage = leer("app/(private)/stock/[id]/page.tsx");
+  const movApi = leer("app/api/movimientos/route.ts");
+
+  cierto("Nuevo movimiento: sin badge «Registrado» antes de guardar; estado «Sin registrar»; sin aviso duplicado del número", !/>\s*Registrado\s*</.test(nuevoPage) && /Sin registrar/.test(nuevoPage) && !/MOV-XXXXXX se\s+genera/.test(nuevoPage));
+  cierto("Nuevo movimiento: validación por campo con foco, cambios sin guardar y envío único", /validarMovimiento\(/.test(nuevoPage) && /getElementById\(idCampo/.test(nuevoPage) && /beforeunload/.test(nuevoPage) && /window\.confirm\(/.test(nuevoPage) && /if \(saving\) return/.test(nuevoPage) && /disabled=\{saving \|\| cargando\}/.test(nuevoPage));
+  cierto("Nuevo movimiento: idempotencia preservada (clave por formulario, renovada al editar)", /crypto\.randomUUID\(\)/.test(nuevoPage) && /clave\.current = ""/.test(nuevoPage) && /claveIdempotencia: clave\.current/.test(nuevoPage));
+  cierto("Nuevo movimiento: campos condicionales (origen/destino/costo/lote según tipo y producto) y fecha local es-PY", /info\.origen \?/.test(nuevoPage) && /info\.destino \?/.test(nuevoPage) && /info\.costo \?/.test(nuevoPage) && /modoControl === "LOTE"/.test(nuevoPage) && /CampoFecha/.test(nuevoPage));
+  cierto("Nuevo movimiento: la referencia se declara como texto libre sin vínculo fiscal", /no se vincula ni se valida contra facturas/.test(nuevoPage));
+  cierto("Nuevo movimiento: layout con MOVIMIENTOS.CREAR (la API ya exige CREAR al registrar)", /guardPage\("MOVIMIENTOS", "CREAR"\)/.test(leer("app/(private)/movimientos/nuevo/layout.tsx")) && /denyIfNoPermission\(session, "MOVIMIENTOS", "CREAR"\)/.test(movApi));
+  cierto("API de catálogos de movimientos: saldos y lotes limitados a los depósitos que el usuario puede operar", (movApi.match(/usuario_puede_deposito\(\$1::uuid, \$2::uuid, s\.deposito_id\)/g) ?? []).length === 2);
+  cierto("Movimientos: el registro sigue pasando por la función SQL oficial (sin escritura directa de saldos)", /inventario_registrar_movimiento/.test(leer("lib/movimientos/shared.ts")) && !/INSERT INTO stock_saldos|UPDATE stock_saldos/.test(movApi + nuevoPage + detallePage + leer("lib/movimientos/shared.ts")));
+  cierto("Detalle de Stock: cabecera con ruta, accesos condicionados por permisos y sin acciones fiscales/de compra", /movimientosCrear/.test(detallePage) && /movimientosVer/.test(detallePage) && /enlaceNuevoMovimiento/.test(detallePage) && !/Factura|Nota de crédito|Orden de compra|Comprar/i.test(detallePage));
+  cierto("Detalle de Stock: conserva todas las secciones (5 indicadores, política, valorización, depósitos, lotes) y «Sin ubicación registrada»", ["Disponible", "Reservado", "Cuarentena", "Tránsito", "Valor físico", "Stock mínimo", "Punto de reposición", "Stock máximo", "Total físico", "Total virtual", "Costo promedio", "Propiedad", "Propietario", "Lotes y vencimientos", "Stock por depósito", "Sin ubicación registrada"].every((t) => detallePage.includes(t)));
+  cierto("Detalle de Stock: la acción de mover se oculta para unidades identificadas y sin permiso", /puedeMover = permisos\.movimientosCrear && item\.modoControl !== "UNIDAD_ETIQUETADA"/.test(detallePage));
+  cierto("Detalle de Stock: el valor físico no se llama «costo promedio»", !/Valor físico[\s\S]{0,200}Costo promedio<\/small>/.test(detallePage));
+  cierto("API del detalle de stock: devuelve permisos solo para mostrar accesos (cada API verifica el suyo)", /movimientosCrear: hasPermission\(acceso, "MOVIMIENTOS", "CREAR"\)/.test(leer("app/api/stock/[id]/route.ts")));
+  cierto("Reposición: transferencia precargada solo con permiso, desde el cálculo auditado; sin botones de compra ni escritura", /enlaceNuevoMovimiento\(\{ productoId: f\.productoId, tipo: "TRANSFERENCIA"/.test(repPage) && /Preparar transferencia/.test(repPage) && !/method:\s*"(POST|PUT|DELETE)"/.test(repPage) && !/Comprar ahora|Generar pedido|Crear orden/i.test(repPage));
+  cierto("Reposición: indicadores con el mismo criterio que la tabla (solo planes) y aviso de lo que oculta el filtro por defecto", /f\.necesita && f\.criticidad === "SIN_STOCK"/.test(repPage) && /oculta \{filas\.length - visibles\.length\}/.test(repPage) && /simulación local, no se guarda/.test(repPage));
+  cierto("Reposición: sigue usando el plan global auditado (AUD-REP-01…04)", /calcularPlanReposicion\(/.test(repPage));
+  cierto("Movimientos: la lista acepta ?buscar=<código> (histórico del producto con datos reales)", /get\("buscar"\)/.test(leer("app/(private)/movimientos/page.tsx")));
 
   return fallos;
 }

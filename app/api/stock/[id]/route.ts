@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { denyIfNoPermission } from "@/lib/auth/permissions";
+import { denyIfNoPermission, getAccessContext, hasPermission } from "@/lib/auth/permissions";
 import { leerStock } from "@/lib/stock/shared";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -26,7 +26,11 @@ export async function GET(_request: Request, contexto: { params: Promise<{ id: s
     const { db } = await import("@/lib/db");
     const r = await leerStock(db, session.user.empresaId, id, session.user.id);
     if (!r.stock.length) return noEncontrado();
-    return NextResponse.json({ item: r.stock[0], monedaBase: r.monedaBase, alcanceParcial: r.alcanceParcial });
+    // Solo para mostrar u ocultar accesos: cada API vuelve a verificar su propio permiso al operar.
+    const acceso = await getAccessContext(session.user, session.demo === true);
+    const permisos = { movimientosCrear: hasPermission(acceso, "MOVIMIENTOS", "CREAR"), movimientosVer: hasPermission(acceso, "MOVIMIENTOS", "VER") };
+
+    return NextResponse.json({ item: r.stock[0], monedaBase: r.monedaBase, alcanceParcial: r.alcanceParcial, permisos });
   } catch (error) {
     console.error("Error al cargar stock:", error);
     return NextResponse.json({ error: "No fue posible cargar el stock." }, { status: 500 });

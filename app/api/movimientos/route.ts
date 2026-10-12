@@ -35,6 +35,7 @@ export async function GET(request: Request) {
   try {
     if (soloCatalogos) {
       const [depositos, productos, stock, lotes, moneda] = await Promise.all([
+        // Los saldos y lotes del catálogo se limitan a los depósitos que el usuario puede operar (igual que la vista de Stock).
         db.query(
           `SELECT d.id, d.codigo, d.nombre, usuario_puede_deposito($1::uuid, $2::uuid, d.id) AS permitido
              FROM depositos d WHERE d.empresa_id = $1 AND d.activo ORDER BY d.nombre`,
@@ -55,16 +56,17 @@ export async function GET(request: Request) {
                   max(ic.costo_promedio)::float8 AS "costoPromedio"
              FROM stock_saldos s
              LEFT JOIN inventario_costos ic ON ic.empresa_id = s.empresa_id AND ic.producto_id = s.producto_id AND ic.deposito_id = s.deposito_id
-            WHERE s.empresa_id = $1 AND s.propiedad = 'PROPIO'
+            WHERE s.empresa_id = $1 AND s.propiedad = 'PROPIO' AND usuario_puede_deposito($1::uuid, $2::uuid, s.deposito_id)
             GROUP BY s.producto_id, s.deposito_id`,
-          [empresaId],
+          [empresaId, session.user.id],
         ),
         db.query(
           `SELECT s.producto_id AS "productoId", s.deposito_id AS "depositoId", sl.codigo_lote AS codigo,
                   coalesce(to_char(sl.fecha_vencimiento, 'YYYY-MM-DD'), '') AS "fechaVencimiento", s.estado_stock AS estado, s.cantidad::float8 AS cantidad
              FROM stock_saldos s JOIN stock_lotes sl ON sl.empresa_id = s.empresa_id AND sl.id = s.lote_id
-            WHERE s.empresa_id = $1 AND s.cantidad > 0 AND s.propiedad = 'PROPIO' ORDER BY sl.fecha_vencimiento NULLS LAST, sl.codigo_lote`,
-          [empresaId],
+            WHERE s.empresa_id = $1 AND s.cantidad > 0 AND s.propiedad = 'PROPIO' AND usuario_puede_deposito($1::uuid, $2::uuid, s.deposito_id)
+            ORDER BY sl.fecha_vencimiento NULLS LAST, sl.codigo_lote`,
+          [empresaId, session.user.id],
         ),
         db.query(`SELECT moneda_base_codigo AS moneda FROM empresas WHERE id = $1`, [empresaId]),
       ]);
