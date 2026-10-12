@@ -42,3 +42,11 @@ O responsável mostrou NEX-001…051 já aplicadas na VM. Proibido editar script
 ## Regra upstream confirmada: Productos → Facturas (DEC-PRD-U02, 12/10/2026)
 
 O responsável aprovou que nenhum produto **novo destinado à venda** seja cadastrado sem classificação IVA completa e campos fiscais SIFEN exigidos para sua operação. Fonte canônica: `documentacao/v1/auditoria-por-menu/AUD-PRODUCTOS-V1.md`, seção X. Facturas deve revalidar a aptidão fiscal de cada item no backend no momento da emissão, inclusive para produtos históricos, sem confiar somente na validação de cadastro; não ignorar `vendible=false` (FAT-X01). A decisão não autoriza inferir IVA, reaplicar migrations antigas nem alterar saldos/histórico.
+
+## Dependência transversal adicional — faturação por apresentação, PRD-A20 (12/10/2026)
+
+O responsável esclareceu que uma mercadoria possui unidade-base de estoque, múltiplas apresentações para compra/venda e que SIFEN aceita apenas sua tabela fiscal de unidades. `lib/facturacion/emision.ts:82-92,201,220-244` usa atualmente apenas `productos.unidad_medida_id` para resolver `unidadSifen`, independentemente de `producto_unidades` e seu fator. `lib/facturacion/payload-fe.ts:186-188` gera E709/E711/E721 com esses valores.
+
+**Impacto:** o sistema não tem fluxo comprovado para escolha e faturação de apresentação alternativa com quantidade/preço fiscal coerentes e movimento correto do estoque em unidade-base. A futura auditoria do menu Facturas deverá detalhar seleção de apresentação de venda, preço por apresentação, fator de conversão, validação SIFEN por apresentação, arredondamento, emissão de DE, KuDE e baixa/estorno de estoque. Não presumir que `Caja` sempre corresponde a fator 12, e não enviar código fiscal por simples nome da apresentação.
+
+**Decisão de negócio pendente:** tratamento de apresentação comercial que não possui equivalente fiscal apropriado, a ser decidido com responsável antes de fechar PRD-U03 ou implementar.
