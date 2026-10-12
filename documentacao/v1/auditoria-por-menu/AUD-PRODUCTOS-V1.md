@@ -63,7 +63,7 @@ Este arquivo é a fonte única da auditoria do menu **Productos**. Registrar, co
 ## V. Decisões de negócio pendentes — NÃO ENCERRAR antes de responder
 
 - **DEC-PRD-U01 — APROVADA PELO RESPONSÁVEL (12/10/2026):** a unidade histórica `MT — Metro` já existente no NEXIT deve mapear para SIFEN **108 — MT**. Os dois códigos oficiais **87 — m** e **108 — MT** permanecem disponíveis no catálogo para seleção, distintos por código. Não modificar migrations executadas nem atualizar VM automaticamente.
-- **DEC-PRD-U02**: decidir se um produto novo `MERCADERIA/SERVICIO` com `vendible=true` deve ser impedido de salvar quando a classificação IVA não estiver definida, ou se fica salvo como cadastro incompleto e bloqueado apenas na emissão. O código hoje aceita e deixa a emissão bloquear; unidade fiscal foi expressamente definida como obrigatória.
+- **DEC-PRD-U02 — APROVADA PELO RESPONSÁVEL (12/10/2026):** novos produtos destinados à venda (`MERCADERIA` ou `SERVICIO` com `vendible=true`) **NÃO podem ser gravados sem os dados SIFEN obrigatórios aplicáveis e classificação IVA integralmente válida**. Exigir, no mínimo, unidade fiscal SIFEN válida/vigente, imposto/taxa e `afectacion_iva` (1/2/3/4) coerentes, e `proporcion_gravada_iva` quando E731=4. Campos SIFEN condicionais somente quando sua regra normativa exigir; não presumir que NCM/GTIN/DNCP sejam sempre obrigatórios. Validar no frontend E no backend POST, com erros por campo e sem criação parcial. Editar dados antigos, tratamento de produtos não destinados à venda e seleção explícita/default de IVA são decisões distintas, ainda pendentes de exame.
 - **DEC-PRD-U03**: apresentação declarada base deve obrigatoriamente equivaler a unidade base do produto com fator 1? Recomendação: sim. Antes de mudar constraint, conferir registros legados.
 - **DEC-PRD-U04**: classificação e GTIN de embalagens — precedência entre `codigoBarras`, `producto_codigos.esPrincipal` e `producto_unidades.codigo_barras`, antes de atribuir E706/E707 ao gateway.
 - **DEC-PRD-U05**: abrangência do saldo por depósito para usuários com alcance de sucursal limitado; regra sugerida restritiva, mas requer confronto com autorização real.
@@ -77,7 +77,7 @@ Este arquivo é a fonte única da auditoria do menu **Productos**. Registrar, co
 - [ ] Auditar todas as dependências de inventário, listas de preços, clientes/faturação; evitar alterar tabelas interligadas sem mapa de impacto.
 - [ ] Revisar constraints/triggers/índices e SQL incremental NEX-003…051 em todos pontos de dependência, sem executar nem modificar SQL aplicado.
 - [ ] Testes locais automatizados realmente executados e registrados; testes manuais/visuais na VM pelo responsável.
-- [ ] Obter respostas a DEC-PRD-U02…U06; DEC-PRD-U01 aprovada em 12/10/2026. Somente depois fechar parecer do menu, separar achados confirmados e tarefas aprovadas para Claude.
+- [ ] Obter respostas a DEC-PRD-U03…U06; DEC-PRD-U01 e DEC-PRD-U02 aprovadas em 12/10/2026. Somente depois fechar parecer do menu, separar achados confirmados e tarefas aprovadas para Claude.
 
 **Auditoria permanece ABERTA. O responsável pediu perguntas de negócio ANTES de encerrar cada menu; respostas devem ser registradas aqui.**
 
@@ -113,4 +113,19 @@ Este arquivo é a fonte única da auditoria do menu **Productos**. Registrar, co
 - **Sem execução nem autorização de SQL nesta etapa.** NEX-001…051 são migrations já aplicadas e imutáveis. Não executar nem editar `NEX-039`, `NEX-043`, script de reconciliação ou atualizar dados na VM agora.
 - **Aceite futuro**: seletor oferece 87 e 108; histórico MT mantém identidade e usa 108; factura derivada desse produto envia E709=108; sem alterações de saldo, apresentação e histórico.
 
-**Estado: DEC-PRD-U01 APROVADA E ENCERRADA.** DEC-PRD-U02…U06 e auditoria integral de Productos seguem abertas.
+**Estado desta seção histórica: DEC-PRD-U01 APROVADA; DEC-PRD-U02 também foi APROVADA posteriormente (seção X).** DEC-PRD-U03…U06 e auditoria integral de Productos seguem abertas.
+
+## X. Decisão do responsável — DEC-PRD-U02 (12/10/2026)
+
+**Texto decidido:** “Você quer que um produto novo destinado à venda só possa ser salvo quando a classificação do IVA estiver completa, não pode ser incompleto, sifen é campo obrigatorio.”
+
+**Regra fechada (cadastro de produto novo destinado à venda):**
+- Na criação, um produto `MERCADERIA` ou `SERVICIO` destinado à venda (`vendible=true`) **não pode ser persistido** enquanto houver requisito fiscal SIFEN aplicável incompleto, ausente ou inválido.
+- Exigências verificáveis da classificação tributária: **imposto/taxa**, **afetação IVA (E731)** e suas regras de coerência, **proporção gravada (E733)** somente em caso `afectacion_iva=4`, com taxa validada por `coherenciaIva` no servidor e pelas restrições do banco. Para E731=1/2/3 as proporções derivadas não devem ser digitadas/gravadas como campo adicional.
+- **Unidade SIFEN (E709/E710) obrigatória**, selecionada de catálogo oficial válido; não aceitar `unidades_medida.unidad_sifen_codigo IS NULL` para novos produtos vendáveis. Rejeitar unidade inexistente/inativa/não vigente segundo o catálogo fiscal e regra aprovada para utilização.
+- **Demais campos fiscais:** respeitar a obrigatoriedade real e as condições de aplicação do Manual SIFEN e das NTs específicas; não inventar obrigatoriedade universal de NCM, DNCP, GTIN, país de origem etc. A matriz normativa por campo/condição será fechada durante esta auditoria.
+- Validação **antes de salvar**, tanto no formulário quanto em `POST /api/productos` (a UI sozinha não garante o contrato), com erro orientativo no campo e aba correta; dados incompletos não devem gerar um produto no banco nem uma abertura de estoque.
+- A regra aprovada não é uma ordem para corrigir silenciosamente IVA/unidade fiscal de produtos históricos nem alterar suas movimentações. A política de edição de registros legados e a elegibilidade dos tipos não vendáveis será confrontada posteriormente.
+- **Lacuna técnica comprovada:** `lib/productos/normalizar.ts:109-118` aceita `afectacionIva` em branco (`null`); `lib/productos/shared.ts:206-213` valida existência da unidade e coerência de IVA *somente se preenchida*, mas não impõe completude; `app/(private)/productos/_components/pestanas/sifen.tsx` oferece `Sin clasificar` e admite unidade sem equivalência; `NEX-040` permite `NULL` por retrocompatibilidade. Exigir nova validação em criação sem editar NEX-040 aplicada; nova constraint de banco só após análise de impacto e migration incremental autorizada.
+
+**Estado:** DEC-PRD-U02 **APROVADA E ENCERRADA**. A dúvida sobre default de IVA 10% (**DEC-PRD-U06**) continua ABERTA: classificação completa obrigatória não autoriza presumir a taxa de todos os produtos.
