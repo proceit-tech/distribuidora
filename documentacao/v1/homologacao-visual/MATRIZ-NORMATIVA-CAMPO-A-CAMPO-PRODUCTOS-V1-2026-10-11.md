@@ -294,3 +294,87 @@ ChatGPT deve completar o confronto normativo com PDF do grupo de itens e confirm
 **Decisões comerciais NÃO impostas (pendentes):** DEC-PRD-02 (checksum GTIN), 03 (SERVICIO/KIT), 04 (documentos privados), 06 (GTIN principal ↔ `codigoBarras`), 08 (elegibilidade de fornecedor), 09, 10, 11 (merma/volume sem efeitos automáticos), limites 20→50 e 120→2000, relação max ≥ min de estoque (dados antigos têm máximo 0).
 
 **Observações para a auditoria:** (1) a regra NCM/partida/DNCP pode rejeitar a *edição* de produtos antigos com valores fora do padrão até que sejam corrigidos; (2) o formulário antigo gravava `0` em máximo/pesos/dimensões; agora vazio = NULL e `0` existente é preservado como 0; (3) sem tabela de auditoria de produtos (não existia; eventos de produto ficam como pendência).
+
+## 11. Catálogos oficiais SIFEN: unidades de medida, afetação IVA e códigos fiscais (2026-10-12)
+
+**Origem:** Manual Técnico v150 arquivado no GitHub, tabela 5 (página impressa 211), tabela 6 (p. 212), grupo E8 item (p. 85–87), grupo E8.2 IVA (p. 89–90); NT013 para fórmula de base gravada e base exenta em operação parcial. Referências apresentadas pelo responsável em capturas de sistema concorrente: apenas **comparação de UI**, não fonte normativa. A lista de concorrência contém unidades da Tabela 5, mas não autoriza copiar seu código ou taxonomia.
+
+### 11.1. Tabela 5 — unidades oficiais do item (E709/E710)
+
+| E709 código numérico | E710 representação | Nome da unidade da Tabela 5 |
+|---|---|---|
+| 87 | m | Metros |
+| 2366 | CPM | Costo por Mil |
+| 2329 | UI | Unidad Internacional |
+| 110 | M3 | Metros cúbicos |
+| 77 | UNI | Unidad |
+| 86 | g | Gramos |
+| 89 | LT | Litros |
+| 90 | MG | Miligramos |
+| 91 | CM | Centimetros |
+| 92 | CM2 | Centimetros cuadrados |
+| 93 | CM3 | Centimetros cubicos |
+| 94 | PUL | Pulgadas |
+| 96 | MM2 | Milímetros cuadrados |
+| 79 | kg/m² | Kilogramos s/ metro cuadrado |
+| 97 | AA | Año |
+| 98 | ME | Mes |
+| 99 | TN | Tonelada |
+| 100 | Hs | Hora |
+| 101 | Mi | Minuto |
+| 104 | DET | Determinación |
+| 103 | Ya | Yardas |
+| 108 | MT | Metros |
+| 109 | M2 | Metros cuadrados |
+| 95 | MM | Milímetros |
+| 666 | Se | Segundo |
+| 102 | Di | Día |
+| 83 | kg | Kilogramos |
+| 88 | ML | Mililitros |
+| 625 | Km | Kilómetros |
+| 660 | ml | Metro lineal |
+| 885 | GL | Unidad Medida Global |
+| 891 | pm | Por Milaje |
+| 869 | ha | Hectáreas |
+| 569 | ración | Ración |
+
+**Atenção:** há **Metros 87/m e Metros 108/MT** na tabela fonte: preservar os códigos, sem deduplicar pelo nome. A representação de kg/m² e ración deve ser confrontada com o XSD antes da emissão. No caso de operação B2G, E709 remete também ao WS DNCP, como indicado no MT.
+
+**Nexit atual:** `NEX-003-catalogos-globales.sql` define `unidades_medida` com `id`, `codigo` e `nombre`; `GET /api/productos` consulta `SELECT id,codigo,nombre FROM unidades_medida WHERE activo=true`. **Não há prova de que `codigo` corresponda ao E709 numérico** nem de que o catálogo possua a representação do E710. Definir mapeamento explícito (código fiscal e representação), preservar IDs internos usados por produtos e converter na geração futura de DTE. Não substituir catálogo nem inventar que seed está aplicado. Verificar primeiro seeds e registros reais.
+
+### 11.2. Tabela 6 e grupo E8.2 — IVA por item
+
+| Código/Tag | Conceito normativo | Origem / regra de aplicação |
+|---|---|---|
+| E731 iAfecIVA = 1 | Gravado IVA | Tabela 6, p.212 e grupo E8.2 |
+| E731 = 2 | Exonerado | Tabela 6; conferir denominação legal atual: MT referencia legislação específica |
+| E731 = 3 | Exento | Tabela 6 |
+| E731 = 4 | Gravado parcial | Tabela 6; requer proporção tributada |
+| E733 dPropIVA | Proporción gravada | 0–100 segundo condições da operação; não copiar `100` cegamente do concorrente |
+| E734 dTasaIVA | Tasa del IVA | 0 para exonerado/exento; 5 ou 10 para gravado ou parcial, conforme MT |
+| E735/E736/E737 | Base gravada, liquidação, base exenta | **Cálculo de operação**, ver NT013, não atributo estático de produto |
+
+**Nexit atual:** `NEX-003` define `impuestos` por `codigo,nombre,porcentaje` (numeric(5,2)); API produtos retorna `id,codigo,nombre,porcentaje`; UI só oferece `Impuesto / IVA`. Portanto **não existe evidência de campo próprio de afetação E731 e proporção E733** no contrato de cadastro analisado. Uma taxa 5/10 no produto não identifica sozinha exento/exonerado/gravado parcial. A alternativa recomendada é estruturar **classificação fiscal padrão do produto** separada da tributação efetiva da operação: afetação (1–4), taxa (0/5/10) e proporção gravada quando 4; validar coerência no backend, permitir política de substituição legítima pela operação e versionar migration incremental se aprovada. Não alterar tributação de itens históricos nem emitir DTE nesta V1.
+
+### 11.3. Demais códigos e campos associados mostrados pelo concorrente
+
+| Campo visual | Fonte SIFEN / Nexit | Recomendação |
+|---|---|---|
+| Tipo Producto/Servicio | E701/E708 e natureza do item; formulário Nexit usa MERCADERIA/SERVICIO/KIT/ACTIVO_FIJO | Mapear seleção fiscal produto/serviço no ato da emissão; categorias ERP podem ser mais detalhadas |
+| Unidad de Medida | E709/E710 Tabela 5 | Seleção pelo catálogo oficial e conversão para unidade base/apresentação |
+| Afectación IVA | E731 Tabela 6 | Falta modelo explícito no cadastro atual para classificação padrão |
+| % IVA | E734 | Não assumir 10% para todos |
+| Proporción IVA | E733 | Só quando pertinente; para parcial deve haver regra, validação e persistência |
+| Código de Producto | E701 + `codigo_sifen` Nexit | Limite do pacote NT009 até 50; hoje coluna 20, aguarda decisão de ampliar |
+| DNCP General/Específico | E704/E705 e NT026 | Ambos já existem no cadastro; padronização e condicional conforme documentos atuais, não obrigatoriedade genérica |
+| Código de barras | E706/E707 | Nexit possui `codigo_barras`, `producto_codigos`, código de embalagem em apresentações; usar GTIN correto, não campo genérico indiscriminado |
+| Precio | Grupo E8.1 da operação fiscal | Preço de referência Nexit não equivale a preço final faturado |
+
+**Atenção ao padrão visual:** **não reproduzir a tela do concorrente** (um formulário com todos os atributos sem distinção). O Nexit preserva suas sete abas; em SIFEN concentrar classificação fiscal e códigos, em Información apenas o necessário para identificação comercial, e em Compras/Inventario preservar políticas independentes. Campos fiscais novos demandam regra, DB, API e validação completos; não adicionar apenas controle visual.
+
+### 11.4. Estado e decisões pendentes
+
+- A tabela oficial de unidades **foi identificada e transcrita**; falta verificar seeds concretos/linhas reais e definir fonte/versionamento dos códigos e representação fiscal. Não alegar que `unidades_medida` já contém toda a tabela.
+- **DEC-PRD-13 (nova):** aprovar catálogo canônico das 35 unidades oficiais da Tabela 5 com `codigo_sifen`, representação e vínculo com `unidades_medida` (sem perder IDs/referências já existentes).
+- **DEC-PRD-14 (nova):** aprovar classificação fiscal padrão por produto com afetação IVA 1–4, taxa e proporção condicionais, independente do cálculo do DTE na operação; definir permissões e política de mudança.
+- Nenhuma dessas novas regras foi implementada nem aprovada implicitamente por esta auditoria. Claude só implementa após autorização específica do responsável; migraciones devem ser incrementais e não aplicadas na VM pelas IAs.
