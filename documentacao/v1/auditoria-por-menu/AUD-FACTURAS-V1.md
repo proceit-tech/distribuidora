@@ -93,6 +93,18 @@ O responsável esclareceu que uma mercadoria possui unidade-base de estoque, mú
 
 **FAT-X05 / ALTA:** `NEX-047:76-122` define estados local/SIFEN independentes, mas não possui linhas fiscais ligadas por FK ao produto; `NEX-048:50-64` congela payload JSONB com `dCodInt` e unidades fiscais, sem `productoId` relacional. Portanto não se consegue estabelecer automaticamente uma matriz de **FEs pendentes por produto** somente por chaves relacionais. Não bloquear todos os produtos por qualquer documento pendente da empresa e não ignorar documento pendente real do produto.
 
-**Decisão DEC-PRD-U08:** confirmar se uma FE cujo payload está imutável e estoque zero deve bloquear a troca da base até estado fiscal concluído, ou se o documento fiscal por si só não bloqueia e somente o fato físico pendente bloqueia. Ver `AUD-PRODUCTOS-V1.md` §XVII. Nenhum impacto retroativo sobre DE, preço, IVA ou estoque pode ser presumido.
+**Decisão DEC-PRD-U08 — APROVADA (12/10/2026):** factura com payload fiscal persistido e imutável **não bloqueia** a troca da unidade-base só por estar pendente de envio/consulta/resultado SIFEN, desde que o produto tenha estoque zerado e nenhuma operação física pendente. Unidade fiscal, quantidade, preço, IVA, total e snapshot histórico devem permanecer intocados inclusive em reenvio/consulta. Ver `AUD-PRODUCTOS-V1.md` §XVIII.
 
 **Estado:** auditoria cruzada aberta, sem testes na VM/gateway.
+
+## DEC-PRD-U08 — contrato de histórico fiscal imutável ao alterar unidade-base (12/10/2026)
+
+**Aprovado pelo responsável:** permitir trocar a unidade-base com estoque zero e nenhuma movimentação física pendente, **mesmo se a FE do produto ainda aguarda envio ou resposta SIFEN**, mas somente quando seus dados fiscais já estiverem gravados/congelados.
+
+- **Snapshot fonte de verdade:** `NEX-048:50-64,67-90,153-163` prevê `documento_electronico_solicitudes.payload` JSONB imutável, com hash e versão; a transmissão/reconsulta deverá utilizar exatamente essa versão fiscal persistida, não um novo cálculo por `productos.unidad_medida_id` ou `producto_unidades.factor_conversion` vigentes.
+- **Campos preservados por item:** `cUniMed` (E709), `dCantProSer` (E711), `dPUniProSer` (E721), preço/quantidade comerciais e apresentação/fator quando aplicáveis, descrição, IVA, total, CDC/número quando existentes; o processo fiscal não pode mudar por alteração posterior do cadastro.
+- **Estados fiscais não equivalem a operação física:** `NEX-047:76-122` separa `estado_local` e `estado_sifen`; estados `PENDIENTE_ENVIO`, `ENVIO_INDETERMINADO` ou `ENVIANDO`, por si sós, não bloqueiam a mudança. Ação física pendente **sempre bloqueia**, pela DEC-PRD-U07.
+- **Garantias ainda não implementadas:** a ausência de FK relacional por item `documento → producto` (FAT-X05) exige rastreabilidade determinística na futura integração estoque/FE. O contrato aprovado não dispensa resolver o histórico de apresentação do produto; prévia editável/não persistida não é FE fiscalmente congelada.
+- **Cenários regressivos obrigatórios:** FE congelada aguardando envio e mudança de base; reconsulta/reenvio após a mudança com hashes e campos fiscais iguais; estoque reservado/terceiro positivo bloqueia; evento físico pendente bloqueia; falta de snapshot imutável não pode ser tratada como exceção aprovada.
+
+**Estado:** DEC-PRD-U08 APROVADA, auditoria de Facturas continua ABERTA. NEX-047…050 não foram aplicadas/testadas nesta análise, nenhum código/SQL/VM alterado.
