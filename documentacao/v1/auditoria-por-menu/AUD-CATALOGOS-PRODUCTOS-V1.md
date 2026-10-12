@@ -69,3 +69,33 @@ Prioridade funcional ao terminar Proveedores: **CAT-A01, A03 e A04** (falha de c
 **Critérios de homologação pendentes:** cenários HTTP 401/403/500, alternância rápida de abas, rascunhos, edição com registros inativos, duas edições concorrentes e categorias com descendentes; isolamento multiempresa, INSERT/UPDATE com grants reais, conflito de FK, dados legados, testes de regressão + browser/PG na VM por responsável. ChatGPT realizou **0 testes**, 0 builds, 0 PostgreSQL/VM, 0 screenshots neste turno.
 
 **Estado:** AUD-CAT-R01 — auditoria dirigida documentada; Catálogos de Productos **ABERTA / NÃO HOMOLOGADA**, sem implementação autorizada ou alteração do app/SQL. Claude permanece autorizado **somente** a Proveedores até retornar com commits para nova auditoria.
+
+## VI. HANDOFF CONJUNTO AUTORIZADO — Catálogos de Productos + ajustes residuais de Proveedores (12/10/2026)
+
+**Origem do pedido do responsável:** auditar retorno Claude Proveedores commit `ddc137a07e8cb550eceaa11044f7cb05018c7a55` e, se houvesse observações, **mandar correções junto com Catálogos de Productos**. Parecer independente: `AUD-PROVEEDORES-V1.md` §VI (AUD-PRV-R01). A implementação Proveedores M01/M02/M03 foi aceita estaticamente, M04 melhorou a resposta HTTP, mas restam PRV-R01-01…04 para fluxos reais de recuperação/documentos (sem abrir novo cadastro). **Autorização deste pacote = implementação pelo Claude Code em Git somente.**
+
+### Escopo exclusivo Catálogos de Productos
+
+Implementar **CAT-A01…CAT-A06** da seção II, na medida em que se resolvam com correções mínimas e regressões focadas, sem inventar política nova:
+
+1. **CAT-A01 / catálogos auxiliares:** validar sucesso e contrato de `rf` (Familias) e `rk` (Categorías), não mostrar selector vazio enganoso ao receber HTTP 401/403/500; erro visível e estado preservado. Evitar `setFilas([])` como se sucesso vazio fosse real quando houve erro; no carregamento falho, não executar gravações com opções insuficientes.
+2. **CAT-A02 / troca rápida de aba:** descartar/cancelar resposta obsoleta e preservar em tela somente dados/permissões da aba atual. Testes de latência invertida Categorías→Líneas→Familias, sem stale state.
+3. **CAT-A03 / rascunho:** usar proteção de navegação oficial do projeto (`useProtegerCambios`) para menu lateral e links internos além do `beforeunload`; manter confirmações pontuais de trocas internas, evitando dois prompts para um mesmo clique.
+4. **CAT-A04 / históricos inativos:** no cadastro de Productos, devolver e renderizar **somente referências históricas do produto corrente e da mesma empresa** para Categoria, Marca, Família, Línea inativas; rotular `(inactivo)` e preservar IDs; escolhas de novas associações continuam ativas. Não reimplementar o formulário de Productos nem reabrir decisões U03/U07/U09. Testar salvamento de campo não relacionado com referência antiga.
+5. **CAT-A05 / inativação de categoria:** quando Categoria possui famílias/linhas descendentes (ainda que `Productos (total)=0` por vínculo direto), alertar com confirmação antes de inativar. Não mudar política lógica de inativação, não inativar descendentes em cascata, não alterar contagem `Productos (total)` para valor inventado. Se contagem de dependentes for usada, buscar contagem de fato pela API/SQL.
+6. **CAT-A06 / concorrência de catálogo:** `NEX-004` e `NEX-017` já possuem `actualizado_at` em todas as quatro tabelas; usar precondição de versão nos GET/PUT atuais com retorno 409 antes da gravação, sem exigir nova migration. Categoria/Marca escrevem via função `catalogo_producto_guardar()` (NEX-020, SECURITY DEFINER); respeitar RBAC e o advisory lock atual; verificar serialização e comparação de versão **no mesmo contrato transacional**, não entregar uma mera checagem desprotegida por corrida. Se não houver forma segura sem modificar SQL já aplicado ou grants, **parar somente essa parte, descrever bloqueio preciso e entregar os cinco demais**; NÃO alterar migration antiga. Cobrir 2 editores e alteração de estado em paralelo com edição.
+
+### Escopo residual único de Proveedores
+
+Implementar somente **PRV-R01-01…04** de `AUD-PROVEEDORES-V1.md` §VI: (01) conservar fornecedor/ID recuperável após refresh quando cierre falhar, (02) retry de documentos parcialmente falhados para CREAR-only sem usar ficha que exige VER ou duplicar POST inicial, (03) `FINALIZAR_CARGA` verdadeiramente idempotente para o próprio criador quando servidor já fechou mas resposta 200 se perdeu — sem abrir POST de upload após fechamento, (04) `GET /api/proveedores?modo=catalogos` compatível com perfil CREAR-only nos catálogos MÍNIMOS da alta, mantendo listagem/detalhe protegidos por VER. Ajuste menor de precedência PRV-R01-05 pode acompanhar se puder ser feito no mesmo arquivo sem risco, e deve ter teste específico.
+
+**Preservar PRV-M01…M03 e correções básicas M04, contas bancárias, governança, documentos privados e regras fiscal/empresa.** Não mexer em Clientes, estoque, SIFEN, migrations NEX-001…053, NEX-052/053 ou papéis da empresa; nenhuma nova tela administrativa. Sem ampliação de escopo sob pretexto de finalizar menu.
+
+### Preparação e entrega exigidas
+
+- **Antes de começar:** `git status`, branch `feature/NEXIT-2026-001-banco-demo`, `git fetch` e sincronização sem sobrescrever trabalho; ler INTEGRALMENTE `CLAUDE.md` e `documentacao/PROTOCOLO-IA.md`, seções pertinentes de `PROGRESSO-NEXIT-V1.md`, esta auditoria §I–VI e `AUD-PROVEEDORES-V1.md` §VI, e contratos reais de auth/SQL. GitHub é a fonte oficial; Claude Code implementa e faz push, ChatGPT audita, responsável humano aplica/homologa.
+- Separar commits em **Proveedores** e **Catálogos de Productos**; executar testes unitários de helpers e testes simulados, além de `tsc`, ESLint e build; se não testou PG/browser, dizer explicitamente. Evitar testes apenas regex sem cenário real de comportamento em funções puras quando simulador permite; demonstrar erros 401/403/500, timeout/reload, sessão CREAR-only, comparações/versionamento, multiempresa e inatividade.
+- Atualizar somente `PROGRESSO-NEXIT-V1.md` quando necessário; **Claude não edita `AUD-*`**, migrations históricas, documentação duplicada nem banco; nenhum `psql`, VM, Docker, SIFEN ou deploy. Se descobrir requisito que exija migration adicional/DB real, registrar blocker e parar a parte correspondente.
+- Commit + push na branch oficial, relatório econômico somente resultados, números de testes/falhas, bloqueios concretos e SHAs completos. **PARAR para nova auditoria ChatGPT.** Menus não são HOMOLOGADOS sem aprovação operacional e visual do responsável.
+
+**Estado:** handoff conjunto autorizado pelo pedido atual; Catálogos e Proveedores **AINDA NÃO corrigidos/homologados** nesta rodada. Nenhum código, SQL ou VM alterado pelo ChatGPT.
