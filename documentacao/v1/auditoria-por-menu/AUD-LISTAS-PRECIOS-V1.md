@@ -38,3 +38,9 @@ O responsável mostrou NEX-001…051 já aplicadas na VM. Proibido editar script
 **LPR-X01 / ALTA / mismatch:** `NEX-008` guarda `lista_precio_items.unidad_medida_id`; `NEX-017:90-111` só sincroniza a unidade quando `producto_fijar_precio_referencia` é executada; `app/api/productos/[id]/route.ts:253-296` pode editar `productos.unidad_medida_id` sem chamar essa função caso `precioEnviado` seja falso. Resultado: o preço de referência permanece vinculado à unidade anterior do produto. Mesmo que haja ajuste de unidade-base depois, o preço e histórico devem ter unidade explicitada e jamais recalculada arbitrariamente.
 
 **Fonte:** `AUD-PRODUCTOS-V1.md`, seção XIV. Auditória deste menu permanece aberta; não implementar política comercial sem decisão.
+
+## Matrizes de preços × apresentações × troca de unidade-base — complemento 12/10/2026
+
+**LPR-X02 / ALTA:** `NEX-008:63-88` contém uma única linha por produto/lista, embora guarde `unidad_medida_id`; `NEX-017:90-121` grava preço referência por unidade-base e `v_producto_precio_referencia` oculta a unidade. Sem contrato de preço por `producto_unidades.id`, não é possível afirmar que a venda por caixa/pacote terá preço correto ou desconto calculado. Alterar a unidade-base com estoque zero não autoriza transportar o mesmo preço nominal para outra unidade.
+
+**Decisão aberta DEC-PRD-U10** no documento canônico Productos: exigir revisão prévia de listas de preço, ou permitir troca com preço temporariamente não vendável. Não converter/recalcular margem/preço por presunção. Auditoria de Listas de precios ainda ABERTA.
