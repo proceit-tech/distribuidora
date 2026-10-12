@@ -664,3 +664,6 @@ Sem migration nova; NEX-052/053 seguem versionadas e NÃO aplicadas (só o scrip
 - **PRD-R02-03:** a pestaña Inventario mostra, ao editar, o **Historial de la unidad base** (unidade anterior/nova, data em hora do Paraguai, responsável), somente leitura; sem a tabela da NEX-052 a lista vem vazia.
 - **PRD-R02-04:** `reversion-NEX-052.sql` aborta se NEX-053 estiver aplicada (objeto `nex_aplicar_grants_clientes` ou fila 'NEX-053' em schema_migrations); ordem de reversão 053 → 052.
 - Local: 2132 verificações, 0 falhas (14 novas de Productos + 2 de regressão de Clientes); tsc/ESLint/build OK.
+
+### Clientes — encerramento técnico AUD-R02 (AUD-CLIENTES-V1 §VIII, 2026-10-12)
+Sem alteração de código de Clientes (verificação regressiva). A suíte «Clientes: estabilización» mantém A01 (referências inativas preservadas), A03 (409 com rollback antes de escrever), A04 (erro de catálogo sem listas vazias), A02 (rascunho) e A06 (grants dos documentos privados, NEX-053) e ganhou 2 verificações de que a guarda de reversão 053 → 052 não altera Clientes. NEX-053 continua NÃO aplicada e exige a NEX-052; Clientes NÃO homologado. Local: 2132 verificações, 0 falhas.

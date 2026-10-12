@@ -77,6 +77,13 @@ export async function verificarCasosEstabilizacionClientes(): Promise<string[]> 
   cierto("NEX-053: reversión protegida y verificación con has_table_privilege (parte 1 de solo lectura; la reaplicación solo en entorno de prueba, comentada)", /RAISE EXCEPTION 'nex_aplicar_grants_clientes no existe/.test(leer("documentacao/banco/nexit/v1/scripts/reversion-NEX-053.sql")) && (leer("documentacao/banco/nexit/v1/scripts/verificar-NEX-053.sql").match(/has_table_privilege/g) ?? []).length >= 10 && /--   SELECT public\.nex_aplicar_grants_runtime\(\);/.test(leer("documentacao/banco/nexit/v1/scripts/verificar-NEX-053.sql")));
   cierto("A06: la aplicación no emite DELETE sobre cliente_documentos (exclusión lógica) ni UPDATE sobre versiones/eventos", !/DELETE FROM\s+cliente_documentos|UPDATE\s+cliente_documento_(versiones|eventos)|DELETE FROM\s+cliente_documento_(versiones|eventos)/i.test([leer("app/api/clientes/[id]/documentos/route.ts"), leer("lib/clientes/relacionados.ts")].join("\n")));
 
+  // ── AUD-R02: la guarda de dependencia entre NEX-052 y NEX-053 no altera Clientes
+  const rev52 = leer("documentacao/banco/nexit/v1/scripts/reversion-NEX-052.sql");
+  const rev53 = leer("documentacao/banco/nexit/v1/scripts/reversion-NEX-053.sql");
+
+  cierto("R02: revertir NEX-052 exige haber revertido antes NEX-053 (guarda por objeto y por schema_migrations); el orden 053 → 052 deja a Clientes sin el ayudante pero sin tocar datos ni privilegios actuales", /nex_aplicar_grants_clientes\(\)/.test(rev52) && /NEX-053 sigue aplicada/.test(rev52) && /WHERE version = 'NEX-053'/.test(rev52) && /Los privilegios actuales NO se tocan/.test(rev53) && !/DELETE FROM public\.cliente|UPDATE public\.cliente|REVOKE|GRANT/.test(sinComentarios(rev53)));
+  cierto("R02: la reversión de NEX-052 restaura un envoltorio que sigue aplicando el ayudante de Clientes si existiera (lista conocida con 'clientes') y NEX-053 conserva su precondición sobre NEX-052", /'facturacion_envio', 'clientes'\]/.test(rev52) && /NEX-053 requiere NEX-052/.test(m53));
+
   // ── CLI-A01: referencias inactivas inalteradas
   type Q = { sql: string; p: unknown[] };
   const conexion = (devuelve: (q: Q) => number) => {
