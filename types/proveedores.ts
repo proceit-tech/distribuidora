@@ -135,6 +135,8 @@ export type ProveedorDetalle = {
   codigo: string;
   /** Marca de concurrencia: la edición se rechaza si otro usuario guardó antes. */
   version: string;
+  /** Grupo y medio de pago ya asignados que hoy están inactivos (se muestran «(inactivo)» sin ofrecerlos como elección nueva). */
+  referenciasHistoricas?: Record<string, { id: string; codigo: string; nombre: string }>;
 
   tipoPersona: ProveedorTipoPersona;
   grupoProveedorId: string | null;

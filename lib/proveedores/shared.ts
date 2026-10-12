@@ -20,17 +20,42 @@ async function existeActivo(conexion: PoolClient, sql: string, parametros: unkno
   return ((await conexion.query(sql, parametros)).rowCount ?? 0) > 0;
 }
 
-/** Verifica que las referencias de catálogo existan y estén activas (las de empresa, dentro de la empresa de la sesión). */
-export async function validarReferencias(conexion: PoolClient, d: DatosProveedor, empresaId: string) {
+/**
+ * PRV-M01: concurrencia optimista OBLIGATORIA. `enviada` es la versión (actualizado_at con microsegundos) que el operador tenía en pantalla; `actual` es la leída tras bloquear
+ * la fila (FOR UPDATE). Ausente, vacía, no textual o distinta → 409 y no se escribe nada.
+ */
+export function exigirVersion(enviada: unknown, actual: unknown) {
+  if (typeof enviada !== "string" || enviada.trim() === "") {
+    throw new ErrorValidacion("Falta la versión de la ficha: recargue el proveedor antes de guardar. No se guardó ningún cambio.", null, 409);
+  }
+  if (enviada !== actual) {
+    throw new ErrorValidacion("Otro usuario modificó este proveedor mientras usted lo editaba (o la versión enviada no es válida). Recargue la ficha para ver los cambios antes de guardar; no se guardó ningún cambio.", null, 409);
+  }
+}
+
+/** Valores que el proveedor YA tiene guardados (PRV-M02): un vínculo histórico idéntico se tolera aunque se haya inactivado; lo nuevo o modificado debe estar activo. */
+export type ReferenciasPrevias = { grupoProveedorId?: string | null; medioPagoId?: string | null };
+
+/**
+ * Verifica que las referencias de catálogo existan y estén activas (las de empresa, dentro de la empresa de la sesión). Con `previo` (edición, bajo FOR UPDATE), el grupo y el
+ * medio de pago que NO cambian se aceptan aunque estén inactivos, siempre que pertenezcan a la empresa; nunca se anulan ni se reemplazan en silencio.
+ */
+export async function validarReferencias(conexion: PoolClient, d: DatosProveedor, empresaId: string, previo: ReferenciasPrevias = {}) {
   const falla = (mensaje: string, campo: string): never => {
     throw new ErrorValidacion(mensaje, campo);
   };
 
-  if (d.grupoProveedorId && !(await existeActivo(conexion, "SELECT 1 FROM grupos_proveedor WHERE id = $1 AND empresa_id = $2 AND activo = true", [d.grupoProveedorId, empresaId]))) {
-    falla("El grupo de proveedor seleccionado no es válido o no está activo.", "grupoProveedorId");
+  if (d.grupoProveedorId) {
+    const sinCambio = d.grupoProveedorId === (previo.grupoProveedorId ?? null);
+    const sql = sinCambio ? "SELECT 1 FROM grupos_proveedor WHERE id = $1 AND empresa_id = $2" : "SELECT 1 FROM grupos_proveedor WHERE id = $1 AND empresa_id = $2 AND activo = true";
+
+    if (!(await existeActivo(conexion, sql, [d.grupoProveedorId, empresaId]))) falla("El grupo de proveedor seleccionado no es válido o no está activo.", "grupoProveedorId");
   }
-  if (d.medioPagoId && !(await existeActivo(conexion, "SELECT 1 FROM medios_pago WHERE id = $1 AND empresa_id = $2 AND activo = true", [d.medioPagoId, empresaId]))) {
-    falla("El medio de pago seleccionado no es válido o no está activo.", "medioPagoPreferidoId");
+  if (d.medioPagoId) {
+    const sinCambio = d.medioPagoId === (previo.medioPagoId ?? null);
+    const sql = sinCambio ? "SELECT 1 FROM medios_pago WHERE id = $1 AND empresa_id = $2" : "SELECT 1 FROM medios_pago WHERE id = $1 AND empresa_id = $2 AND activo = true";
+
+    if (!(await existeActivo(conexion, sql, [d.medioPagoId, empresaId]))) falla("El medio de pago seleccionado no es válido o no está activo.", "medioPagoPreferidoId");
   }
   if (d.condicionPagoId && !(await existeActivo(conexion, "SELECT 1 FROM condiciones_pago WHERE id = $1 AND activo = true", [d.condicionPagoId]))) {
     falla("La condición de pago seleccionada no existe o está inactiva.", "condicionPagoId");

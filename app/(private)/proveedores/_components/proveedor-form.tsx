@@ -10,6 +10,7 @@ import { formularioAPayload, formularioDesdeDetalle, formularioInicial, type For
 import { normalizarProveedor, UUID } from "@/lib/proveedores/normalizar";
 import { idCampo, pestanaDeCampo, type PestanaId } from "@/lib/proveedores/pestanas";
 import { HOMOLOGACION_TEXTO } from "@/lib/proveedores/textos";
+import { useProtegerCambios } from "@/lib/ui/proteger-cambios";
 import type { CatalogoProveedores, ProveedorContacto, ProveedorCuentaBancaria, ProveedorDetalle, ProveedorDireccion } from "@/types/proveedores";
 
 import type { Errores } from "./campos";
@@ -111,13 +112,31 @@ function nuevaCuenta(moneda: string): ProveedorCuentaBancaria {
   };
 }
 
-export default function ProveedorForm({ mode, initial, catalogos, onSave, onRecargar, aviso, pestanaInicial, alCambiarPestana }: Props) {
+/** PRV-M02: el grupo / medio de pago ya asignados pero hoy inactivos se muestran «(inactivo)» para conservarlos; no se ofrecen como elección nueva si no son los actuales. */
+export function catalogosConHistoricas(catalogos: CatalogoProveedores, historicas: ProveedorDetalle["referenciasHistoricas"]): CatalogoProveedores {
+  const agregar = <T extends { id: string; nombre: string }>(lista: T[], campo: string): T[] => {
+    const h = historicas?.[campo];
+
+    return h && !lista.some((o) => o.id === h.id) ? [...lista, { ...(h as unknown as T), id: h.id, codigo: h.codigo, nombre: `${h.nombre} (inactivo)` }] : lista;
+  };
+
+  return { ...catalogos, grupos: agregar(catalogos.grupos, "grupoProveedorId"), mediosPago: agregar(catalogos.mediosPago, "medioPagoPreferidoId") };
+}
+
+export default function ProveedorForm({ mode, initial, catalogos: catalogosActivos, onSave, onRecargar, aviso, pestanaInicial, alCambiarPestana }: Props) {
+  const catalogos = catalogosConHistoricas(catalogosActivos, initial?.referenciasHistoricas);
   const [formularioBase] = useState<FormularioProveedor>(() => (initial ? formularioDesdeDetalle(initial) : formularioInicial()));
   const [form, setForm] = useState<FormularioProveedor>(formularioBase);
   const [tab, setTabInterno] = useState<PestanaId>(pestanaInicial ?? "general");
   const sucio = form !== formularioBase && JSON.stringify(form) !== JSON.stringify(formularioBase);
 
+  const [borradorDocumento, setBorradorDocumento] = useState(false);
+  const [guardado, setGuardado] = useState(false);
+
   function setTab(pestana: PestanaId) {
+    // PRV-M03: salir de la pestaña de documentos con un documento en preparación lo descartaría; se pide confirmación específica.
+    if (tab === "documentos" && pestana !== "documentos" && borradorDocumento && !window.confirm("Hay un documento en preparación en la pestaña Documentos. Si cambia de pestaña se perderá. ¿Desea continuar?")) return;
+
     setTabInterno(pestana);
     alCambiarPestana?.(pestana);
   }
@@ -126,6 +145,10 @@ export default function ProveedorForm({ mode, initial, catalogos, onSave, onReca
   const [error, setError] = useState("");
   const [guardando, setGuardando] = useState(false);
   const [pendientes, setPendientes] = useState<DocumentoPendiente[]>([]);
+
+  // PRV-M03: avisa al recargar/cerrar y al usar enlaces (Volver, Cancelar, menú) cuando hay cambios de la ficha, documentos adjuntos pendientes o un documento en preparación.
+  useProtegerCambios((sucio || pendientes.length > 0 || borradorDocumento) && !guardado);
+
   const enfocar = useRef<string | null>(null);
 
   // Tras mostrar la pestaña del error se enfoca el campo exacto.
@@ -246,6 +269,7 @@ export default function ProveedorForm({ mode, initial, catalogos, onSave, onReca
 
     try {
       await onSave(payload, pendientes);
+      setGuardado(true);
     } catch (e) {
       mostrarError(
         e instanceof ErrorValidacion
@@ -266,6 +290,7 @@ export default function ProveedorForm({ mode, initial, catalogos, onSave, onReca
     pendientes,
     setPendientes,
     sucio,
+    marcarBorradorDocumento: setBorradorDocumento,
     recargar: () => onRecargar?.(),
     set,
     cambiarIdentificacion,

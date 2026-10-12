@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { ACCEPT_ARCHIVOS, EXTENSIONES_TEXTO, TAMANO_MAXIMO_BYTES, tamanoLegible, validarNombreYTamano } from "@/lib/almacenamiento/archivos-reglas";
 import { documentoPendienteVacio, formDataDeDocumento, type DocumentoPendiente } from "@/lib/proveedores/documento-pendiente";
@@ -85,6 +85,15 @@ function DocumentosFicha({ ctx }: { ctx: ContextoFormulario }) {
   const [ocupado, setOcupado] = useState(false);
   const [error, setError] = useState<ErrorValidacion | null>(null);
   const [aviso, setAviso] = useState("");
+  const hayBorrador = nuevo !== null || editando !== null;
+  const marcarBorrador = ctx.marcarBorradorDocumento;
+
+  // PRV-M03: el borrador vive en esta pestaña; se informa al formulario para protegerlo (cambio de pestaña, Volver/Cancelar, cierre).
+  useEffect(() => {
+    marcarBorrador(hayBorrador);
+
+    return () => marcarBorrador(false);
+  }, [hayBorrador, marcarBorrador]);
 
   if (!d) return null;
 

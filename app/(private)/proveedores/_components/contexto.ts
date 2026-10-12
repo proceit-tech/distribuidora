@@ -25,6 +25,8 @@ export type ContextoFormulario = {
   setPendientes: (pendientes: DocumentoPendiente[]) => void;
   /** Hay cambios sin guardar en el formulario (las acciones administrativas recargan la ficha y los descartarían). */
   sucio: boolean;
+  /** La pestaña de documentos informa si tiene un documento en preparación (alta o edición) que aún no se envió: se avisa antes de perderlo. */
+  marcarBorradorDocumento: (hay: boolean) => void;
   /** Vuelve a leer la ficha del servidor (tras una acción administrativa). */
   recargar: () => void;
   set: <K extends keyof FormularioProveedor>(clave: K, valor: FormularioProveedor[K]) => void;

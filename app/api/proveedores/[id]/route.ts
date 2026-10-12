@@ -12,6 +12,7 @@ import { normalizarProveedor } from "@/lib/proveedores/normalizar";
 import {
   columnasProveedor,
   diferenciasFila,
+  exigirVersion,
   registrarEvento,
   respuestaError,
   sincronizarHijos,
@@ -109,6 +110,14 @@ export async function GET(_request: Request, contexto: Contexto) {
     if (!principal.rowCount) {
       return NextResponse.json({ error: "Proveedor no encontrado." }, { status: 404 });
     }
+
+    // PRV-M02: grupo y medio de pago que el proveedor ya tiene pero que hoy están inactivos (no figuran en los catálogos activos): se informan para mostrarlos como «(inactivo)».
+    const historicas = await db.query(
+      `SELECT 'grupoProveedorId' AS campo, id::text, codigo, nombre FROM grupos_proveedor WHERE empresa_id = $1 AND id = $2::uuid AND NOT activo
+       UNION ALL SELECT 'medioPagoPreferidoId', id::text, codigo, nombre FROM medios_pago WHERE empresa_id = $1 AND id = $3::uuid AND NOT activo`,
+      [empresaId, principal.rows[0].grupoProveedorId, principal.rows[0].medioPagoPreferidoId],
+    );
+    const referenciasHistoricas = Object.fromEntries((historicas.rows as Array<{ campo: string; id: string; codigo: string | null; nombre: string }>).map((h) => [h.campo, { id: h.id, codigo: h.codigo ?? "", nombre: h.nombre }]));
 
     const [contactos, direcciones, cuentas, retenciones, documentos] = await Promise.all([
       db.query(
@@ -212,6 +221,7 @@ export async function GET(_request: Request, contexto: Contexto) {
           aprobarBanco: permisos?.aprobarBanco ?? false,
           reactivarCuenta: permisos?.administrador ?? false,
         },
+        referenciasHistoricas,
         contactos: contactos.rows,
         direcciones: direcciones.rows,
         cuentasBancarias: cuentas.rows,
@@ -256,7 +266,7 @@ export async function PUT(request: Request, contexto: Contexto) {
     await conexion.query("BEGIN");
 
     const existente = await conexion.query(
-      `SELECT codigo, estado_homologacion, coalesce(to_char(fecha_homologacion,'YYYY-MM-DD'),'') AS fecha_homologacion,
+      `SELECT codigo, grupo_proveedor_id::text AS grupo_proveedor_id, medio_pago_preferido_id::text AS medio_pago_preferido_id, estado_homologacion, coalesce(to_char(fecha_homologacion,'YYYY-MM-DD'),'') AS fecha_homologacion,
               coalesce(to_char(fecha_vencimiento_homologacion,'YYYY-MM-DD'),'') AS fecha_vencimiento_homologacion,
               nivel_riesgo, calificacion_actual::text AS calificacion_actual, bloqueado, coalesce(motivo_bloqueo,'') AS motivo_bloqueo,
               to_char(actualizado_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US') AS version
@@ -269,10 +279,8 @@ export async function PUT(request: Request, contexto: Contexto) {
     }
     const actual = existente.rows[0] as Record<string, string | boolean | null>;
 
-    // Concurrencia optimista: si otro usuario guardó después de cargar la ficha, no se pisa su trabajo.
-    if (typeof body.version === "string" && body.version !== actual.version) {
-      throw new ErrorValidacion("Otro usuario modificó este proveedor mientras usted lo editaba. Recargue la ficha para ver los cambios antes de guardar.", null, 409);
-    }
+    // Concurrencia optimista (PRV-M01): la versión es OBLIGATORIA; se compara tras bloquear la fila y antes de validar o escribir nada.
+    exigirVersion(body.version, actual.version);
 
     // Los datos gobernados no se cambian por la edición común (DEC-PRV-02/06/10): solo por sus acciones con permiso y auditoría.
     const gobernados: Array<[string, unknown, unknown]> = [
@@ -291,7 +299,7 @@ export async function PUT(request: Request, contexto: Contexto) {
       }
     }
 
-    await validarReferencias(conexion, datos, empresaId);
+    await validarReferencias(conexion, datos, empresaId, { grupoProveedorId: actual.grupo_proveedor_id as string | null, medioPagoId: actual.medio_pago_preferido_id as string | null });
     await verificarDocumentoUnico(conexion, empresaId, datos, id);
     await validarCertificados(conexion, empresaId, id, datos);
 
