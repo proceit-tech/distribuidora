@@ -1,13 +1,16 @@
 -- =====================================================================
 -- NEX-039 — Unidades de medida SIFEN (Tabla 5 del Manual Técnico v150, 34 entradas; E709 código, E710 representación).
--- Requiere NEX-003 (unidades_medida). NO ejecutar en la VM ni en el banco 'nexit' sin autorización expresa del responsable (backup previo).
--- Reversión: scripts/reversion-NEX-039.sql (aborta si ya hay vínculos). Reconciliación de datos EXISTENTES: scripts/reconciliar-fiscal-NEX-039-040.sql.
+-- Requiere NEX-003 (unidades_medida) y NEX-037 (envoltorio de grants nex_aplicar_grants_runtime / nex_aplicar_grants_proveedores). NO ejecutar en la VM ni en el banco 'nexit' sin autorización expresa del responsable (backup previo).
+-- Reversión: scripts/reversion-NEX-039.sql (aborta si ya hay vínculos). Reconciliación de unidades EXISTENTES: scripts/reconciliar-unidades-sifen-NEX-039.sql.
 --
 --   · Catálogo oficial unidades_medida_sifen con clave en el CÓDIGO NUMÉRICO. NO hay UNIQUE sobre descripción ni representación: Metros figura
 --     dos veces (87/m y 108/MT) y 'ml' (660) difiere de 'ML' (88) solo por mayúsculas.
 --   · unidades_medida.unidad_sifen_codigo (N:1, nullable): se conservan IDs, referencias, apresentaciones y movimientos. NO se fusiona ni se renombra nada.
 --   · Una sola fuente de verdad: las columnas legadas codigo_sifen/descripcion_sifen quedan como ESPEJO derivado; un trigger las rellena desde el catálogo
---     cuando existe el vínculo (sin vínculo no se leen: la aplicación solo usa unidad_sifen_codigo). No se borra ningún dato.
+--     cuando existe el vínculo; si el vínculo se RETIRA, se limpian y el valor anterior queda en fiscal_reconciliacion_log (nunca un código
+--     antiguo que parezca válido sin vínculo canónico). La aplicación solo usa unidad_sifen_codigo. Ningún dato se pierde sin rastro.
+--   · Grants: el catálogo es de SOLO LECTURA para el rol de la aplicación y el registro de reconciliación no es accesible para él (guarda instantáneas de
+--     varias empresas). nex_aplicar_grants_runtime() (que hace REVOKE ALL y reconcede) se envuelve para reaplicar también estos permisos (convención de NEX-037).
 --   · No vincula ni modifica ninguna unidad existente (eso lo hace el script de reconciliación, con registro antes/después).
 --   · Decisión pendiente (NO tomada aquí): código de Metro (87 ó 108); Caja y Docena no tienen equivalencia en la Tabla 5.
 -- =====================================================================
@@ -15,6 +18,9 @@ DO $$
 BEGIN
   IF to_regclass('public.unidades_medida') IS NULL THEN
     RAISE EXCEPTION 'NEX-039 requiere NEX-003 (unidades_medida).';
+  END IF;
+  IF to_regprocedure('public.nex_aplicar_grants_runtime_base()') IS NULL OR to_regprocedure('public.nex_aplicar_grants_proveedores()') IS NULL THEN
+    RAISE EXCEPTION 'NEX-039 requiere NEX-037 (envoltorio de grants del runtime).';
   END IF;
   IF to_regclass('public.unidades_medida_sifen') IS NOT NULL THEN
     RAISE EXCEPTION 'unidades_medida_sifen ya existe: NEX-039 parece aplicada; no se reaplica por suposición.';
@@ -80,15 +86,24 @@ LANGUAGE plpgsql AS $$
 DECLARE v_repr text;
 BEGIN
   IF NEW.unidad_sifen_codigo IS NOT NULL THEN
+    -- Con vínculo, los campos legados son SIEMPRE el espejo del catálogo (aunque alguien intente escribirlos).
     SELECT representacion INTO v_repr FROM public.unidades_medida_sifen WHERE codigo = NEW.unidad_sifen_codigo;
     NEW.codigo_sifen := NEW.unidad_sifen_codigo::text;
     NEW.descripcion_sifen := v_repr;
+  ELSIF TG_OP = 'UPDATE' AND OLD.unidad_sifen_codigo IS NOT NULL THEN
+    -- Vínculo retirado: el código legado deja de existir como «válido». El valor anterior queda trazado.
+    INSERT INTO public.fiscal_reconciliacion_log (script, tabla, registro_id, antes, despues)
+    VALUES ('trigger/unidades_medida_espejo_sifen/desvinculo', 'unidades_medida', OLD.id,
+            jsonb_build_object('unidad_sifen_codigo', OLD.unidad_sifen_codigo, 'codigo_sifen', OLD.codigo_sifen, 'descripcion_sifen', OLD.descripcion_sifen),
+            jsonb_build_object('unidad_sifen_codigo', NULL, 'codigo_sifen', NULL, 'descripcion_sifen', NULL));
+    NEW.codigo_sifen := NULL;
+    NEW.descripcion_sifen := NULL;
   END IF;
   RETURN NEW;
 END $$;
 
 CREATE TRIGGER unidades_medida_espejo_sifen_trg
-  BEFORE INSERT OR UPDATE OF unidad_sifen_codigo ON public.unidades_medida
+  BEFORE INSERT OR UPDATE OF unidad_sifen_codigo, codigo_sifen, descripcion_sifen ON public.unidades_medida
   FOR EACH ROW EXECUTE FUNCTION public.unidades_medida_espejo_sifen();
 
 -- Registro de las reconciliaciones fiscales de datos existentes (antes/después). Global; el rol de la aplicación solo lee (grants por nex_aplicar_grants_runtime).
@@ -102,3 +117,29 @@ CREATE TABLE public.fiscal_reconciliacion_log (
   ejecutado_por text        NOT NULL DEFAULT current_user,
   ejecutado_at  timestamptz NOT NULL DEFAULT now()
 );
+
+-- Permisos del rol de la aplicación sobre las tablas NUEVAS (idempotentes y resistentes a nex_aplicar_grants_runtime(), que hace REVOKE ALL):
+--   · unidades_medida_sifen: solo SELECT (catálogo oficial; sin INSERT/UPDATE/DELETE).
+--   · fiscal_reconciliacion_log: sin acceso (instantáneas de datos de varias empresas; solo el administrador de la base).
+CREATE OR REPLACE FUNCTION public.nex_aplicar_grants_fiscal() RETURNS void
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'nexit_runtime') THEN
+    RETURN;
+  END IF;
+
+  REVOKE ALL ON public.unidades_medida_sifen FROM nexit_runtime;
+  GRANT SELECT ON public.unidades_medida_sifen TO nexit_runtime;
+  REVOKE ALL ON public.fiscal_reconciliacion_log FROM nexit_runtime;
+END $$;
+
+-- Convención de NEX-037: el envoltorio llama a la función base y a cada función de permisos por módulo.
+CREATE OR REPLACE FUNCTION public.nex_aplicar_grants_runtime() RETURNS void
+LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM public.nex_aplicar_grants_runtime_base();
+  PERFORM public.nex_aplicar_grants_proveedores();
+  PERFORM public.nex_aplicar_grants_fiscal();
+END $$;
+
+SELECT public.nex_aplicar_grants_fiscal();

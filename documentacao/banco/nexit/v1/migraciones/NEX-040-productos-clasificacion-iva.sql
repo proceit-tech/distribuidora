@@ -6,7 +6,8 @@
 --   · La tasa (E734) NO se duplica: es el porcentaje del impuesto elegido (impuestos.porcentaje), validado por trigger: 5/10 para afectación 1 y 4; 0 para 2 y 3.
 --   · Proporción: 100 (afectación 1) y 0 (2/3) son valores fijos DERIVADOS, no se almacenan; con afectación 4 es obligatoria y 0 < x < 100.
 --   · NO se reclasifica ningún producto existente: afectacion_iva queda NULL («sin clasificar»). El impuesto legado EXE (0 %) NO se convierte en Exento ni Exonerado.
---     La reconciliación opcional (scripts/reconciliar-fiscal-NEX-039-040.sql) solo clasifica IVA10/IVA5 como Gravado, con registro antes/después.
+--     NINGÚN script ejecuta ni automatiza la reclasificación de productos existentes: scripts/reclasificar-iva-productos-NEX-040.sql existe pero
+--     aborta sin autorización expresa del responsable (PRD-AUD-06).
 --   · E735–E737 (bases y liquidación) son cálculo de la operación: no se guardan en el producto.
 --   · No toca impuestos, precios, unidades, saldos, costos ni movimientos.
 -- =====================================================================
@@ -41,10 +42,10 @@ BEGIN
       RAISE EXCEPTION 'La afectación IVA requiere un impuesto con tasa definida.' USING ERRCODE = 'P0001';
     END IF;
     IF NEW.afectacion_iva IN (1, 4) AND v_tasa NOT IN (5, 10) THEN
-      RAISE EXCEPTION 'Gravado IVA y Gravado parcial exigen tasa 5 o 10 (impuesto con %).', v_tasa USING ERRCODE = 'P0001';
+      RAISE EXCEPTION 'Gravado IVA y Gravado parcial exigen una tasa de 5 o 10 por ciento (el impuesto elegido tiene una tasa de % por ciento).', v_tasa USING ERRCODE = 'P0001';
     END IF;
     IF NEW.afectacion_iva IN (2, 3) AND v_tasa <> 0 THEN
-      RAISE EXCEPTION 'Exonerado y Exento exigen tasa 0 (impuesto con %).', v_tasa USING ERRCODE = 'P0001';
+      RAISE EXCEPTION 'Exonerado y Exento exigen una tasa de 0 por ciento (el impuesto elegido tiene una tasa de % por ciento).', v_tasa USING ERRCODE = 'P0001';
     END IF;
   END IF;
   RETURN NEW;

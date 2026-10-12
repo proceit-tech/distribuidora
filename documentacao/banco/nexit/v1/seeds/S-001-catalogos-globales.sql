@@ -39,7 +39,7 @@ ON CONFLICT (codigo) DO NOTHING;
 
 -- Equivalencia SIFEN (Tabla 5 del MT v150) por el vínculo de NEX-039. Solo lo inequívoco: UN→77, KG→83, LT→89 (Litros).
 -- Metro (87/m ó 108/MT: decisión pendiente), Caja y Docena (sin equivalencia en la Tabla 5) quedan SIN vínculo; no se inventa ninguno.
--- Seguro de re-ejecutar y NO modifica unidades existentes (ON CONFLICT DO NOTHING): para bases existentes, scripts/reconciliar-fiscal-NEX-039-040.sql.
+-- Seguro de re-ejecutar y NO modifica unidades existentes (ON CONFLICT DO NOTHING): para bases existentes, scripts/reconciliar-unidades-sifen-NEX-039.sql.
 INSERT INTO unidades_medida (codigo, nombre, unidad_sifen_codigo) VALUES
   ('UN','Unidad',77),('KG','Kilogramo',83),('LT','Litro',89),
   ('CJ','Caja',NULL),('MT','Metro',NULL),('DOC','Docena',NULL)

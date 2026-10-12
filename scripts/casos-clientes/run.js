@@ -25,6 +25,7 @@ Module._resolveFilename = function (request, ...resto) {
   const pro = cargar("lib/productos/productos.casos.js");
   const sin = cargar("lib/productos/sincronizar.casos.js");
   const fis = cargar("lib/productos/fiscal.casos.js");
+  const mig = cargar("lib/productos/migraciones-fiscales.casos.js");
   const suites = [
     ["teléfono y día de cobro", async () => tel.verificarCasosTelefonoYCobro(), () => tel.CASOS_TELEFONO.length + 11 + 6 + 2],
     ["catálogo mundial", async () => tel.verificarCatalogoMundial(), null],
@@ -43,6 +44,7 @@ Module._resolveFilename = function (request, ...resto) {
     ["Productos V1", async () => pro.verificarCasosProductos(), null],
     ["Productos: sincronización en dos fases (PRD-AUD-01)", async () => sin.verificarCasosSincronizacion(), null],
     ["Productos: evolución fiscal SIFEN (NEX-039/040, GTIN)", async () => fis.verificarCasosFiscales(), null],
+    ["Productos: runner, grants y migraciones 038-040 (PRD-AUD-03…06)", async () => mig.verificarCasosMigracionesFiscales(), null],
   ];
   let total = 0;
   let fallosTotal = 0;

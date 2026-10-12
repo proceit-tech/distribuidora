@@ -12,6 +12,15 @@ BEGIN
   END IF;
 END $$;
 
+-- Restaura el envoltorio de grants de NEX-037 (base + proveedores) y retira la función de permisos fiscales.
+CREATE OR REPLACE FUNCTION public.nex_aplicar_grants_runtime() RETURNS void
+LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM public.nex_aplicar_grants_runtime_base();
+  PERFORM public.nex_aplicar_grants_proveedores();
+END $$;
+DROP FUNCTION IF EXISTS public.nex_aplicar_grants_fiscal();
+
 DROP TRIGGER IF EXISTS unidades_medida_espejo_sifen_trg ON public.unidades_medida;
 DROP FUNCTION IF EXISTS public.unidades_medida_espejo_sifen();
 DROP INDEX IF EXISTS public.unidades_medida_unidad_sifen_idx;

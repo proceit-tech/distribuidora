@@ -162,15 +162,28 @@ export async function verificarCasosFiscales(): Promise<string[]> {
   cierto("seed: no altera unidades existentes", /ON CONFLICT \(codigo\) DO NOTHING/.test(bloque));
 
   // ── Reconciliación separada, idempotente, con registro y sin ambigüedades
-  const rec = leer("documentacao/banco/nexit/v1/scripts/reconciliar-fiscal-NEX-039-040.sql");
+  const rec = leer("documentacao/banco/nexit/v1/scripts/reconciliar-unidades-sifen-NEX-039.sql");
   const regla = /VALUES \(('UN'[^)]*\)(?:, \('[A-Z]+'[^)]*\))*)/.exec(rec)?.[0] ?? "";
+  const sinComentarios = (t: string) => t.replace(/--.*$/gm, "");
 
   cierto("reconciliación unidades: solo UN, KG y LT por código y nombre exactos", /\('UN', 'unidad', 77\)/.test(regla) && /\('KG', 'kilogramo', 83\)/.test(regla) && /\('LT', 'litro', 89\)/.test(regla) && !/'MT'|'CJ'|'DOC'/.test(regla));
-  cierto("reconciliación idempotente: solo filas aún no vinculadas / clasificadas", /unidad_sifen_codigo IS NULL/.test(rec) && /p\.afectacion_iva IS NULL/.test(rec));
-  cierto("reconciliación registra antes y después", (rec.match(/INSERT INTO public\.fiscal_reconciliacion_log/g) ?? []).length === 2 && /antes, despues/.test(rec));
-  cierto("reconciliación IVA: solo IVA10/IVA5 → Gravado; EXE no se toca", /i\.codigo = 'IVA10' AND i\.porcentaje = 10/.test(rec) && /i\.codigo = 'IVA5' AND i\.porcentaje = 5/.test(rec) && !/'EXE'[^)]*\)\s*\)/.test(rec.replace(/--.*$/gm, "")) && /SET afectacion_iva = 1/.test(rec));
-  cierto("reconciliación: informes de solo lectura de lo pendiente (unidades, IVA, GTIN)", /SELECT 'unidad sin equivalencia SIFEN'/.test(rec) && /SELECT 'productos sin clasificación IVA/.test(rec) && /SELECT 'GTIN con longitud no admitida/.test(rec));
-  cierto("reconciliación no toca stock, costos, presentaciones ni movimientos", !/stock_saldos|inventario_costos|movimiento|producto_unidades|precio/i.test(rec.replace(/--.*$/gm, "")));
+  cierto("reconciliación unidades idempotente y con registro antes/después", /unidad_sifen_codigo IS NULL/.test(rec) && (rec.match(/INSERT INTO public\.fiscal_reconciliacion_log/g) ?? []).length === 1 && /antes, despues/.test(rec));
+  cierto("PRD-AUD-06: la reconciliación de unidades NO reclasifica productos ni toca impuestos", !/UPDATE public\.(productos|impuestos)|afectacion_iva\s*=/.test(sinComentarios(rec)));
+  cierto("reconciliación: informes de solo lectura (unidades, código legado sin vínculo, GTIN, IVA pendiente)", /SELECT 'unidad sin equivalencia SIFEN'/.test(rec) && /código SIFEN LEGADO sin vínculo canónico/.test(rec) && /SELECT 'GTIN con longitud no admitida/.test(rec) && /NO se reclasifica/.test(rec));
+  cierto("reconciliación no toca stock, costos, presentaciones ni movimientos", !/stock_saldos|inventario_costos|movimiento|producto_unidades|precio/i.test(sinComentarios(rec)));
+
+  // PRD-AUD-06: la reclasificación IVA es otro script, que aborta sin autorización expresa y nadie ejecuta solo
+  const recl = leer("documentacao/banco/nexit/v1/scripts/reclasificar-iva-productos-NEX-040.sql");
+  const reclSql = sinComentarios(recl);
+
+  cierto("reclasificación IVA: la primera sentencia es la guarda de autorización expresa", reclSql.indexOf("nex.autorizacion_reclasificacion") >= 0 && reclSql.indexOf("nex.autorizacion_reclasificacion") < reclSql.indexOf("UPDATE public.productos") && /RAISE EXCEPTION 'Reclasificación IVA no autorizada/.test(recl));
+  cierto("reclasificación IVA: solo IVA10/IVA5 → Gravado, idempotente, con registro; EXE intacto", /i\.codigo = 'IVA10' AND i\.porcentaje = 10/.test(recl) && /i\.codigo = 'IVA5' AND i\.porcentaje = 5/.test(recl) && /p\.afectacion_iva IS NULL/.test(recl) && /fiscal_reconciliacion_log/.test(recl) && !/'EXE'/.test(reclSql));
+  const invocadores = ["documentacao/banco/nexit/v1/scripts/aplicar-migraciones.sh", "documentacao/banco/nexit/v1/implantacion/vm/nexit-db-remote.sh", "documentacao/banco/nexit/v1/scripts/ejecutar-pruebas.sh", "documentacao/banco/nexit/v1/seeds/S-001-catalogos-globales.sql", "documentacao/banco/nexit/v1/migraciones/NEX-039-unidades-medida-sifen.sql", "documentacao/banco/nexit/v1/migraciones/NEX-040-productos-clasificacion-iva.sql"];
+
+  for (const r of invocadores) cierto(`${r.split("/").pop()}: no ejecuta la reclasificación IVA`, !/\b(psql|\\i|\\ir)\b[^\n]*reclasificar-iva/.test(sinComentarios(leer(r))));
+  const n40doc = leer("documentacao/banco/nexit/v1/migraciones/NEX-040-productos-clasificacion-iva.sql");
+
+  cierto("NEX-040 ya no promete reclasificar y apunta al script protegido", !/reconciliar-fiscal/.test(n40doc) && /aborta sin autorización expresa/.test(n40doc));
 
   // ── NEX-040
   const n40 = leer("documentacao/banco/nexit/v1/migraciones/NEX-040-productos-clasificacion-iva.sql");

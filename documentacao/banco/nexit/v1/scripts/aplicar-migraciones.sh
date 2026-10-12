@@ -38,8 +38,16 @@ for f in "$DIR"/NEX-0*.sql; do
   psql -1 -c "SELECT pg_advisory_xact_lock(7340001)" -f "$f" -c "INSERT INTO schema_migrations (version, nombre, checksum) VALUES ('$version', '$base', '$sum')" >/dev/null
   tiene_control=$(psql -Atc "select to_regclass('public.schema_migrations') is not null")
 done
-# Re-aplicar permisos del rol de ejecución si ya existe (cubre tablas nuevas de migraciones futuras).
+# Re-aplicar permisos del rol de ejecución (cubre tablas nuevas de migraciones futuras). to_regprocedure recibe la FIRMA completa (to_regproc
+# recibe solo el nombre y con paréntesis devolvería NULL, saltándose los permisos en silencio). Si la función existe, un fallo de la concesión
+# ABORTA el runner (set -e): nunca se enmascara. Si no existe (NEX-013 aún no aplicada) se informa explícitamente que no hay permisos que reaplicar.
 if [[ $LISTAR -eq 0 ]]; then
-  psql -Atc "select case when to_regproc('nex_aplicar_grants_runtime()') is not null then (select nex_aplicar_grants_runtime()::text) end" >/dev/null || true
+  existe_grants=$(psql -Atc "select to_regprocedure('public.nex_aplicar_grants_runtime()') is not null")
+  if [[ "$existe_grants" == "t" ]]; then
+    psql -Atc "select public.nex_aplicar_grants_runtime()" >/dev/null
+    echo "permisos del rol de ejecución reaplicados"
+  else
+    echo "aviso: nex_aplicar_grants_runtime() no existe (NEX-013 pendiente): no hay permisos que reaplicar"
+  fi
 fi
 echo "listo."
