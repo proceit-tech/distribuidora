@@ -125,14 +125,12 @@ async function existentes(conexion: PoolClient, empresaId: string, productoId: s
   return new Map<string, Fila>(r.rows.map((x) => [String(x.fila.id), x.fila as Fila]));
 }
 
-function verificarIds(c: Definicion, porId: Map<string, Fila>, eliminar: string[]) {
+/** Una fila modificada debe existir y no puede figurar a la vez como eliminada. */
+function verificarItems(c: Definicion, porId: Map<string, Fila>, eliminar: string[]) {
   c.items.forEach((item, i) => {
-    if (item.id !== null && !porId.has(item.id)) throw new ErrorValidacion(`El registro ${i + 1} de ${c.etiqueta} ya no existe o no pertenece a este producto; recargue la ficha.`, `${c.campo}.${i}`, 409);
     if (item.id !== null && eliminar.includes(item.id)) throw new ErrorValidacion(`El registro ${i + 1} de ${c.etiqueta} figura a la vez como modificado y como eliminado.`, `${c.campo}.${i}`, 400);
+    if (item.id !== null && !porId.has(item.id)) throw new ErrorValidacion(`El registro ${i + 1} de ${c.etiqueta} ya no existe o no pertenece a este producto; recargue la ficha.`, `${c.campo}.${i}`, 409);
   });
-  for (const id of eliminar) {
-    if (!porId.has(id)) throw new ErrorValidacion(`Un registro de ${c.etiqueta} a eliminar ya no existe; recargue la ficha.`, c.campo, 409);
-  }
 }
 
 /** Fase 1 (antes del UPDATE del producto): eliminaciones explícitas. Un registro referenciado no se elimina. */
@@ -142,7 +140,12 @@ export async function eliminarHijos(conexion: PoolClient, empresaId: string, pro
 
     if (eliminar.length === 0) continue;
 
-    verificarIds(c, await existentes(conexion, empresaId, productoId, c), eliminar);
+    const porId = await existentes(conexion, empresaId, productoId, c);
+
+    verificarItems(c, porId, eliminar);
+    for (const id of eliminar) {
+      if (!porId.has(id)) throw new ErrorValidacion(`Un registro de ${c.etiqueta} a eliminar ya no existe; recargue la ficha.`, c.campo, 409);
+    }
 
     for (const id of eliminar) {
       await conexion.query("SAVEPOINT baja_hija");
@@ -169,7 +172,8 @@ export async function guardarHijos(conexion: PoolClient, empresaId: string, prod
   for (const c of definiciones(d)) {
     const porId = await existentes(conexion, empresaId, productoId, c);
 
-    verificarIds(c, porId, d.eliminaciones[c.campo]);
+    // Las filas eliminadas ya no existen (la fase 1 las validó y las borró): aquí solo se exige que existan las que se modifican.
+    verificarItems(c, porId, d.eliminaciones[c.campo]);
 
     const columnasDe = c.columnas as (item: unknown) => Columnas;
     const actualizar = c.items.filter((i) => i.id !== null);
