@@ -499,3 +499,20 @@ Este arquivo é a fonte única da auditoria do menu **Productos**. Registrar, co
 - Não reimplementar ETAPA 01, não introduzir funcionalidades avançadas U03/U09, não modificar migrations NEX-001…051, não acessar banco/VM. Se as migrations 052/053 já tiverem sido aplicadas fora do registro Git, verificar estado antes de modificar seus arquivos.
 
 **Status:** AUD-R02 **CORREÇÃO SOLICITADA**, apenas revisão estática do Git; faltam testes reais, aplicação autorizada de migrations, screenshots e homologação humana. Menus Productos/Clientes ainda ABERTOS.
+
+## XXIV. AUD-R03 — parecer independente do ajuste final Productos (12/10/2026)
+
+**Revisado:** commit de implementação `0ff07fe36c144af17214e802c14728660f81423a`, teste Clientes `6f6253d9c85bcf68dcb46c7576c4dcebcd06ab80` e merge `beb9fbf75ebd42a6a9b30bbe2ae5dd92e3c94397`. Leitura comparativa de diff e fontes atuais `lib/productos/alcance.ts`, lista/detalhe/PUT de Productos, aba Inventario, tipos, script de reversão NEX-052, teste `estabilizacion.casos.ts` e critério `lib/stock/shared.ts` / NEX-046. `CLAUDE.md`, `PROTOCOLO-IA.md` e progresso atual consultados antes da emissão.
+
+**Veredito:** **APROVADO ESTATICAMENTE para o recorte PRD-R02-01…04; nenhum novo defeito bloqueante comprovado neste diff**. Não significa menu integralmente auditado, que a VM recebeu o código ou que a NEX-052 foi aplicada. Não devolver ajustes de Productos ao Claude sem regressão concreta na verificação operacional.
+
+- **R02-01:** `alcanceConsultaDeposito` usa empresa/usuário da sessão, `alcance_depositos = TODOS` ou `usuario_deposito`, inclusive depósito inativo, coerente com Stock; lista e detalhe o aplicam a agregados/saldos/custo/abertura. Catálogo de depósito para abertura continua exigindo depósito ativo. Conferir em PostgreSQL real a paridade em TODOS/ASIGNADOS e depósitos inativos.
+- **R02-02:** políticas do detalhe têm filtro por alcance em GET; `validarAlcanceConfiguraciones` em PUT valida IDs de políticas antigas, exclusões explícitas e depósito alvo, retornando 403 para depósito fora do alcance. Sincronização seletiva não exclui por omissão. Conferir com fornecedor de sessão restrita e requests fabricados, sem tratar testes simulados como evidência de VM.
+- **R02-03:** GET verifica `to_regclass` e, se existir, lê `producto_unidad_base_historial` por empresa/produto com data America/Asuncion e responsável; aba Inventario renderiza somente leitura. Sem tabela, retorna array vazio, coerente com a regra de não executar NEX-052 pelo assistente.
+- **R02-04:** `reversion-NEX-052.sql` aborta se `nex_aplicar_grants_clientes()` existe **ou** NEX-053 consta em `schema_migrations`; guarda precede DDL destrutivo e respeita dependência 053 → 052. Falta testar a guarda no PostgreSQL autorizado.
+
+**Testes e evidência:** Claude relatou 2132 verificações, zero falhas, `tsc`, ESLint e `next build` aprovados; essa contagem não foi reexecutada pelo ChatGPT. Há testes de fonte e simulados, não ensaios reais de concorrência, privilégios ou isolamento. Nenhum teste PostgreSQL, navegador, VM ou SIFEN executado nesta auditoria.
+
+**Pendências exclusivamente OPERACIONAIS:** responsável humano deverá verificar status/migrations NEX-052/053, fazer backup e validações de segurança antes de aplicação; executar verificadores autorizados, teste de duas transações, grants e alcance restrito no banco real, depois fazer revisão visual das telas. Até isso, a mudança da unidade-base fica bloqueada por 409 sem NEX-052. **PROVEEDORES é a próxima tarefa de implementação; não reabrir Productos por padrão.**
+
+**Estado:** AUD-R03 aprovada **somente estaticamente**; Productos ABERTO para homologação humana, nenhum SQL/deploy autorizado ou executado.
