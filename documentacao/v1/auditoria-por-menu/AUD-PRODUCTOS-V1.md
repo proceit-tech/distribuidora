@@ -224,3 +224,24 @@ Este arquivo é a fonte única da auditoria do menu **Productos**. Registrar, co
 - **Requisitos de software adicionais derivados:** contrato de alteração de unidade-base, preservação de preço na unidade correta, tratamento transacional da conversão, filtro por depósito, testabilidade da idempotência e limites uniformes de anexos.
 
 **Status deste marco:** novos achados PRD-A21…A28 documentados; nenhuma homologação, implantação, mutation de schema, migração ou alteração de código realizada. A auditoria continua ABERTA. Os pontos de decisão de negócio `esUnidadBase` e regras de alteração da unidade-base após movimentação continuam abertos à ratificação.
+
+## XV. Política de evolução da unidade-base com histórico — declaração do responsável (12/10/2026)
+
+**Manifestação do responsável:** “pode ter um produto com historial de unidade de medida mas somente um ativo, o quero fica historial?” Contexto: revisão da proposta anterior de bloquear definitivamente a troca da unidade-base após haver movimentos.
+
+**Regra de negócio proposta/confirmada no princípio (ainda falta condição de transição):** cada produto terá **somente uma unidade-base vigente**, mas poderá possuir **várias versões históricas** de unidade-base, preservadas com intervalo de vigência, unidade anterior/nova, usuário responsável, data/hora, motivo e fator/snapshot da mudança. O produto não deve perder movimentações históricas. As **apresentações de compra e venda são independentes** e várias podem permanecer ativas ao mesmo tempo; não confundir a unicidade da unidade-base com limitar apresentações.
+
+**Separação essencial:** `productos.unidad_medida_id` representa hoje a base atual (NEX-007); `producto_unidades.es_unidad_base` tem índice parcial que garante **no máximo uma apresentação marcada base**, não é uma trilha temporal. Não há modelo versionado de unidades-base nem snapshot obrigatório da unidade por `movimiento_lineas` em NEX-009/014. O histórico desejado **não existe integralmente no esquema atual**, mesmo que a troca de um UUID deixe algum rastro por outras fontes. Será necessário definir modelo incremental de histórico/vigência e compatibilizar a geração de documentos, apresentações, preços, lotes, custo e movimentos.
+
+**Regras técnicas que não dependem da decisão restante:**
+- Um único registro de unidade-base **vigente por produto**, com constraint transacional que impeça duas versões ativas; versões antigas jamais são apagadas nem reativadas retroativamente.
+- Cada movimento ou documento deve continuar legível com a **unidade e fator efetivamente utilizados no momento**. Para movimentos anteriores à implantação de snapshots, definir política de reconstrução verificável; não inventar unidade histórica a partir da unidade atual.
+- Em caso de troca autorizada, registrar versão anterior/nova, data de início/fim, responsável, motivo e, quando aplicável, fator, quantidades/custos antes/depois, vínculos de documentos e auditoria; preservar IDs das unidades globais e dos produtos.
+- Não converter saldos, lotes, unidades identificadas, reservas, trânsito, pedidos, preços ou custos automaticamente sem regra aprovada, reconciliação completa e transação segura; nunca reescrever eventos antigos para parecerem emitidos na nova unidade.
+- Uma alteração de unidade-base sem estoque atual pode ainda impactar pedidos, reservas, faturas, notas de crédito e tabelas de preço; o sistema terá de bloquear ou migrar esses vínculos conforme regra a ser auditada.
+
+**PRD-A21 continua válido:** a API atual troca `unidad_medida_id` sem histórico e sem reconciliar valores. O risco de integridade não desaparece pela criação de uma trilha temporal; o campo só pode mudar por um fluxo controlado.
+
+**DEC-PRD-U07 — PERGUNTA ABERTA, necessária antes de concluir o menu:** o responsável quer permitir a troca da unidade-base **mesmo com saldo de estoque positivo**, mediante conversão controlada de todos os saldos/custos/reservas/lotes, ou exigir **estoque totalmente zerado e operações pendentes resolvidas** antes de ativar a unidade nova? Recomenda-se a segunda política para o primeiro escopo operacional, com procedimento extraordinário separado quando necessário. **Não presumir resposta.**
+
+**Estado:** histórico e unicidade da base atual = intenção confirmada; condições de troca = EM DISCUSSÃO. Esta seção substitui a proposta de bloqueio permanente da unidade após a primeira movimentação, sem revogar a necessidade de proteger históricos. Nenhuma implementação/SQL autorizada.
