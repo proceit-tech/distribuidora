@@ -350,6 +350,7 @@ const V1_HREFS = new Set([
   "/catalogos-comerciales",
   "/stock",
   "/reposicion",
+  "/depositos",
   "/movimientos",
   "/reportes",
   "/reportes/stock-general",

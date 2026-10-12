@@ -562,3 +562,6 @@ Histórico e detalhe limitados ao alcance de depósitos do usuário (transferên
 
 ### Auditoria de campo d0e11ba (2026-10-12)
 Detalhe de Movimientos refeito (anulação com validação, confirmação crítica, permissão ANULAR, alcance); Reposición com estado vazio explicativo. Depósitos (VIS-01) BLOQUEADO: não existem permissões INVENTARIO.* nem escrita de runtime em depositos; requer migration NEX-046 — questão registrada no documento de homologação funcional. Sem migration criada. Local: 1781 verificações, 0 falhas; tsc/ESLint/build OK.
+
+### Gestão de Depósitos — NEX-046 (2026-10-12)
+Módulo /depositos (lista, cadastro, edição de nome/sucursal, ativar/inativar; sem exclusão; código imutável) com APIs e permissões INVENTARIO.VER/CREAR/EDITAR (criadas sem atribuir a perfis); escrita só por funções SECURITY DEFINER; menu habilitado. Migration NEX-046 + reversão versionadas, **NÃO aplicadas**. Inativar com saldo é bloqueado (decisão por incompatibilidade com usuario_puede_deposito). Detalhe de Movimientos conserva a tela após anular. Local: 1803 verificações, 0 falhas; tsc/ESLint/build OK; sem PostgreSQL/navegador.

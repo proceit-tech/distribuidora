@@ -51,7 +51,12 @@ export default function MovimientoDetallePage() {
 
   async function recargar() {
     try {
-      setDatos(await cargarMovimiento(params.id));
+      const r = await cargarMovimiento(params.id);
+
+      // Tras anular nunca se reemplaza la pantalla por «no encontrado» ni se oculta el resultado: si la recarga no lo devuelve, se conserva lo
+      // mostrado y se avisa (la anulación ya fue confirmada por la API).
+      if (r) setDatos(r);
+      else setError("La anulación se confirmó, pero no se pudo volver a consultar el movimiento con su alcance actual. Verifique en el listado de Movimientos.");
     } catch (e) {
       setError(e instanceof Error ? e.message : "No fue posible recargar el movimiento.");
     }

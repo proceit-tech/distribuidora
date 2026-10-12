@@ -22,13 +22,13 @@ export type CampoOrdenHistorial = "movimiento" | "producto" | "deposito" | "cant
 export type ConsultaHistorial = { q?: string; tipo?: string; orden?: string; dir?: string; pagina?: number; tamano?: number };
 
 /** $1 = empresa, $2 = usuario (siempre de la sesión). */
-const VISIBLES = `SELECT d.id FROM depositos d JOIN usuarios u ON u.empresa_id = d.empresa_id AND u.id = $2
+export const DEPOSITOS_EN_ALCANCE = `SELECT d.id FROM depositos d JOIN usuarios u ON u.empresa_id = d.empresa_id AND u.id = $2
     WHERE d.empresa_id = $1 AND (u.alcance_depositos = 'TODOS'
        OR EXISTS (SELECT 1 FROM usuario_deposito ud WHERE ud.empresa_id = u.empresa_id AND ud.usuario_id = u.id AND ud.deposito_id = d.id))`;
 
 export const ALCANCE_MOVIMIENTO = `(m.deposito_origen_id IS NOT NULL OR m.deposito_destino_id IS NOT NULL)
-    AND (m.deposito_origen_id IS NULL OR m.deposito_origen_id IN (${VISIBLES}))
-    AND (m.deposito_destino_id IS NULL OR m.deposito_destino_id IN (${VISIBLES}))`;
+    AND (m.deposito_origen_id IS NULL OR m.deposito_origen_id IN (${DEPOSITOS_EN_ALCANCE}))
+    AND (m.deposito_destino_id IS NULL OR m.deposito_destino_id IN (${DEPOSITOS_EN_ALCANCE}))`;
 
 const FROM_FILAS = SELECT_FILAS.slice(SELECT_FILAS.indexOf("FROM movimientos_inventario m"));
 

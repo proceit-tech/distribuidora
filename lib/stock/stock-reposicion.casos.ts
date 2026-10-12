@@ -11,6 +11,8 @@ import {
 } from "@/lib/movimientos/formulario";
 import { claveEfectoFisico, decidirEfecto, planEstorno, validarLinea, type ContextoDocumento } from "@/lib/movimientos/documentos";
 import { calcularPlanReposicion, calcularReposicion, compararUrgencia, transferenciasPlanificadas, type EntradaReposicion } from "@/lib/reposicion/calculo";
+import { formularioDepositoSucio, validarDeposito } from "@/lib/depositos/validacion";
+import { listarDepositos, respuestaErrorDeposito } from "@/lib/depositos/shared";
 import { construirConsultas, leerHistorial, leerLineasMovimiento, movimientoExiste, normalizarConsulta } from "@/lib/movimientos/historial";
 import { mensajeMotivoObligatorio, motivoObligatorio, ORIGENES_POR_TIPO } from "@/lib/movimientos/reglas";
 import { prepararMovimiento, resolverLote } from "@/lib/movimientos/shared";
@@ -577,8 +579,48 @@ export async function verificarCasosStockReposicionMovimientos(): Promise<string
   cierto("VIS-03 detalle: usa el patrón visual de lista/catálogos, protege motivo escrito y no usa el CSS antiguo con aviso duplicado", /lista-padrao\/lista\.module\.css/.test(detMov) && /useProtegerCambios/.test(detMov) && !/MOVIMIENTO<\/span>/.test(detMov));
   cierto("VIS-03 anular: la API valida permiso ANULAR y el mismo alcance de depósitos; el estorno sigue siendo la función SQL compensatoria", /denyIfNoPermission\(session, "MOVIMIENTOS", "ANULAR"\)/.test(anularRuta) && /ALCANCE_MOVIMIENTO/.test(anularRuta) && /inventario_anular_movimiento/.test(anularRuta) && !/DELETE FROM|UPDATE movimientos_inventario/.test(anularRuta));
   cierto("VIS-05 Reposición: estado vacío específico («Ningún producto necesita reposición») con «Ver todos», sin cambiar el filtro inicial ni el cálculo", /Ningún producto necesita reposición/.test(repPage) && /Ver todos los renglones/.test(repPage) && /useState<"TODAS" \| "NECESITAN" \| Criticidad>\("NECESITAN"\)/.test(repPage) && /calcularPlanReposicion\(/.test(repPage));
-  cierto("VIS-01 Depósitos: el menú sigue fuera de V1_HREFS mientras no exista la página/API (no se habilita un acceso que no funciona)", !existsSync(join(raiz, "app/(private)/depositos/page.tsx")) && !/"\/depositos"/.test(menu.slice(menu.indexOf("V1_HREFS"))));
-  cierto("VIS-01 Depósitos: la semilla de permisos no define INVENTARIO.* y el menú pide INVENTARIO.VER (decisión bloqueante registrada, sin migration creada)", !/'INVENTARIO'/.test(leer("documentacao/banco/nexit/v1/seeds/S-001-catalogos-globales.sql")) && /permission: "INVENTARIO\.VER"/.test(menu));
+
+  // ── Gestión de Depósitos (NEX-046)
+  const mig46 = leer("documentacao/banco/nexit/v1/migraciones/NEX-046-depositos-gestion.sql");
+  const rev46 = leer("documentacao/banco/nexit/v1/scripts/reversion-NEX-046.sql");
+  const dpApi = leer("app/api/depositos/route.ts");
+  const dpId = leer("app/api/depositos/[id]/route.ts");
+  const dpEstado = leer("app/api/depositos/[id]/estado/route.ts");
+  const dpPage = leer("app/(private)/depositos/page.tsx");
+  const dpOk = { codigo: "DEP-NUEVO", nombre: "Depósito nuevo", sucursalId: D1 };
+
+  igual("depósito: formulario válido sin errores (alta)", validarDeposito(dpOk, true), {});
+  igual("depósito: código obligatorio y con formato (sin espacios, hasta 30)", [validarDeposito({ ...dpOk, codigo: "" }, true).codigo, validarDeposito({ ...dpOk, codigo: "DEP 1" }, true).codigo !== undefined, validarDeposito({ ...dpOk, codigo: "X".repeat(31) }, true).codigo !== undefined, validarDeposito({ ...dpOk, codigo: "dep.1-a_b" }, true).codigo], ["El código es obligatorio.", true, true, undefined]);
+  igual("depósito: al editar el código no se valida (es inmutable)", validarDeposito({ ...dpOk, codigo: "" }, false), {});
+  igual("depósito: nombre obligatorio (máx. 120) y sucursal obligatoria", [validarDeposito({ ...dpOk, nombre: "  " }, true).nombre, validarDeposito({ ...dpOk, nombre: "x".repeat(121) }, true).nombre !== undefined, validarDeposito({ ...dpOk, sucursalId: "" }, true).sucursalId], ["El nombre es obligatorio.", true, "Seleccione la sucursal."]);
+  igual("depósito: errores en orden visual (código, nombre, sucursal)", Object.keys(validarDeposito({ codigo: "", nombre: "", sucursalId: "" }, true)), ["codigo", "nombre", "sucursalId"]);
+  igual("depósito: cambios sin guardar", [formularioDepositoSucio(dpOk, dpOk), formularioDepositoSucio({ ...dpOk, nombre: " Depósito nuevo " }, dpOk), formularioDepositoSucio({ ...dpOk, nombre: "Otro" }, dpOk)], [false, false, true]);
+
+  const regD: Array<{ sql: string; parametros: unknown[] }> = [];
+  const listaD = await listarDepositos({ async query(sql: string, parametros: unknown[] = []) { regD.push({ sql, parametros }); return { rows: [], rowCount: 0 }; } } as never, EMPRESA, USUARIO);
+  const consultaD = regD.find((q) => /FROM depositos d JOIN sucursales s/.test(q.sql))!;
+
+  igual("depósito: la lista usa empresa y usuario de la sesión y el alcance de depósitos, incluyendo inactivos", [consultaD.parametros, /alcance_depositos = 'TODOS'/.test(consultaD.sql), /usuario_deposito/.test(consultaD.sql), /(WHERE|AND) d\.activo/.test(consultaD.sql)], [[EMPRESA, USUARIO], true, true, false]);
+  igual("depósito: las sucursales ofrecidas están en el alcance del usuario", [/alcance_sucursales = 'TODAS'/.test(regD.map((q) => q.sql).join(" ")), /usuario_sucursal/.test(regD.map((q) => q.sql).join(" ")), listaD.depositos], [true, true, []]);
+  igual("depósito: errores SQL → HTTP (permiso 403, duplicado 409, saldo 409, no encontrado 404, regla 400)", await Promise.all([{ code: "42501" }, { code: "P0001", detail: "NEX:DEPOSITO_CODIGO_DUPLICADO" }, { code: "P0001", detail: "NEX:DEPOSITO_CON_SALDO", message: "aún tiene saldo" }, { code: "P0001", detail: "NEX:DEPOSITO_NO_ENCONTRADO" }, { code: "P0001", message: "regla" }].map(async (e) => respuestaErrorDeposito(e, "x").status)), [403, 409, 409, 404, 400]);
+
+  cierto("NEX-046: precondiciones y no reaplicación por suposición (códigos duplicados abortan sin tocar datos)", /to_regclass\('public\.depositos'\)/.test(mig46) && /to_regprocedure\('public\.deposito_crear\(uuid,uuid,uuid,text,text\)'\) IS NOT NULL/.test(mig46) && /GROUP BY empresa_id, lower\(codigo\) HAVING count\(\*\) > 1/.test(mig46) && /no se reaplica por suposición/.test(mig46));
+  cierto("NEX-046: permisos INVENTARIO.VER/CREAR/EDITAR creados SIN asignarlos a ningún perfil", /\('INVENTARIO','VER'\), \('INVENTARIO','CREAR'\), \('INVENTARIO','EDITAR'\)/.test(mig46) && !/INSERT INTO\s+(public\.)?perfil_permiso/i.test(mig46) && /OPERACIONAL/.test(mig46));
+  cierto("NEX-046: código inmutable por trigger; sin exclusión física (sin DELETE ni TRUNCATE para el rol de la aplicación)", /depositos_codigo_inmutable_trg BEFORE UPDATE/.test(mig46) && /NEW\.codigo IS DISTINCT FROM OLD\.codigo/.test(mig46) && !/GRANT[^;]*(INSERT|UPDATE|DELETE)[^;]*public\.depositos/i.test(mig46) && !/DELETE FROM/i.test(mig46));
+  cierto("NEX-046: las tres funciones son SECURITY DEFINER con search_path fijo y validan permiso INVENTARIO y alcance dentro de la función", ["deposito_crear", "deposito_editar", "deposito_cambiar_estado"].every((fn) => new RegExp(`FUNCTION public\\.${fn}\\([^)]*\\)\\s+RETURNS \\w+\\s+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp`).test(mig46)) && /usuario_tiene_permiso\(p_empresa, p_usuario, 'INVENTARIO', 'CREAR'\)/.test(mig46) && (mig46.match(/usuario_tiene_permiso\(p_empresa, p_usuario, 'INVENTARIO', 'EDITAR'\)/g) ?? []).length === 2 && (mig46.match(/deposito_en_alcance\(p_empresa, p_usuario, p_deposito\)/g) ?? []).length === 2 && /sucursal_en_alcance\(p_empresa, p_usuario, p_sucursal\)/.test(mig46));
+  cierto("NEX-046: inactivar con saldo se bloquea (el depósito inactivo no permite operar) y activar siempre es posible; el historial no se toca", /NEX:DEPOSITO_CON_SALDO/.test(mig46) && /cantidad <> 0/.test(mig46) && !/UPDATE public\.(movimientos_inventario|stock_saldos|inventario_costos)/.test(mig46));
+  cierto("NEX-046: envoltorio de grants conserva base+proveedores+fiscal+productos+comercial y agrega depósitos; solo EXECUTE para el runtime", /nex_aplicar_grants_comercial\(\);\s+PERFORM public\.nex_aplicar_grants_depositos\(\)/.test(mig46) && /GRANT EXECUTE ON FUNCTION public\.deposito_crear/.test(mig46) && /REVOKE ALL ON FUNCTION public\.deposito_crear[^;]*FROM PUBLIC/.test(mig46));
+  cierto("NEX-046: reversión protegida (aborta si hay perfiles con INVENTARIO.* y restaura el envoltorio anterior); no borra depósitos", /perfil_permiso/.test(rev46) && /RAISE EXCEPTION/.test(rev46) && !/DELETE FROM public\.depositos|DROP TABLE/i.test(rev46) && /nex_aplicar_grants_comercial\(\);\s+END/.test(rev46));
+  cierto("NEX-046 no modifica funciones transaccionales de inventario ni migrations anteriores", !/inventario_registrar_movimiento|inventario_anular_movimiento|inventario_registrar_linea/.test(mig46.replace(/--.*$/gm, "")));
+  cierto("API de depósitos: permisos INVENTARIO.VER/CREAR/EDITAR, empresa y usuario de la sesión, sin DELETE y sin SQL de escritura directa", /prepararDepositos\("VER"\)/.test(dpApi) && /prepararDepositos\("CREAR"\)/.test(dpApi) && /prepararDepositos\("EDITAR"\)/.test(dpId) && /prepararDepositos\("EDITAR"\)/.test(dpEstado) && !/export (async )?function DELETE/.test(dpApi + dpId + dpEstado) && !/INSERT INTO depositos|UPDATE depositos|DELETE FROM depositos/.test(dpApi + dpId + dpEstado + leer("lib/depositos/shared.ts")) && /session\.user\.empresaId/.test(leer("lib/depositos/servidor.ts")) && /deposito_crear/.test(dpApi) && /deposito_editar/.test(dpId) && /deposito_cambiar_estado/.test(dpEstado));
+  cierto("API de depósitos: el código no se puede modificar por PATCH y el alcance fuera de rango es 404", /cuerpo\.codigo !== undefined/.test(dpId) && /noEncontrado\(\)/.test(dpId) && /DEPOSITOS_EN_ALCANCE/.test(leer("lib/depositos/shared.ts")));
+  cierto("Depósitos: layout con INVENTARIO.VER; acciones de crear/editar solo con permiso; código deshabilitado al editar; sin acción de borrar", /guardPage\("INVENTARIO", "VER"\)/.test(leer("app/(private)/depositos/layout.tsx")) && /puedeCrear \?/.test(dpPage) && /puedeEditar \?/.test(dpPage) && /disabled=\{form\.id !== null\}/.test(dpPage) && !/Eliminar|Borrar/.test(dpPage) && /useProtegerCambios/.test(dpPage));
+  cierto("Menú: Depósitos habilitado (INVENTARIO.VER) solo porque existen página, APIs y permisos", existsSync(join(raiz, "app/(private)/depositos/page.tsx")) && existsSync(join(raiz, "app/api/depositos/route.ts")) && /"\/depositos"/.test(menu.slice(menu.indexOf("V1_HREFS"))) && /permission: "INVENTARIO\.VER"/.test(menu));
+  cierto("Integración: Movimientos solo ofrece depósitos activos y autorizados para operar; el historial y Stock conservan los inactivos del alcance", /d\.activo ORDER BY d\.nombre/.test(movApi) && !/d\.activo/.test(consultas.lista.sql) && /activos o no/.test(leer("lib/stock/shared.ts")));
+  cierto("Integración: no se tocaron los cálculos de Reposición ni las funciones de stock por la gestión de depósitos", /calcularPlanReposicion\(/.test(repPage) && !/depositos[/]shared/.test(leer("lib/reposicion/calculo.ts")));
+
+  // Movimiento no encontrado tras anular
+  cierto("Detalle: tras anular nunca se reemplaza la pantalla por «no encontrado»; se conserva lo mostrado y se avisa", /if \(r\) setDatos\(r\);/.test(detMov) && /La anulación se confirmó, pero no se pudo volver a consultar/.test(detMov));
 
   return fallos;
 }
