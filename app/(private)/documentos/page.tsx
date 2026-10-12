@@ -9,6 +9,7 @@ import {
   ESTADOS_SIFEN,
   ETIQUETA_EMAIL,
   ETIQUETA_LOCAL,
+  etiquetaIntento,
   ETIQUETA_RESULTADO_INTENTO,
   ETIQUETA_SIFEN,
   ETIQUETA_TIPO,
@@ -28,11 +29,11 @@ type Documento = {
   id: string; tipo: TipoDocumento; establecimiento: string; puntoExpedicion: string; numero: string; serie: string | null; cdc: string | null; fechaEmision: string;
   sucursalNombre: string; receptorNombre: string; receptorDocumento: string | null; moneda: string; total: string; estadoLocal: EstadoLocal; estadoSifen: EstadoSifen;
   estadoEmail: EstadoEmail; estadoGatewayTexto: string | null; codRespuesta: string | null; mensajeRespuesta: string | null; fechaFirma: string | null; fechaEnvio: string | null;
-  ultimaConsultaAt: string | null; ultimaConsultaResultado: string | null;
+  ultimaConsultaAt: string | null; ultimaConsultaResultado: string | null; lote: string | null;
 };
-type Intento = { id: string; tipo: string; resultado: string; httpStatus: number | null; estadoGateway: string | null; estadoSifen: string | null; codRespuesta: string | null; mensaje: string | null; creadoAt: string; actorNombre: string };
+type Intento = { id: string; tipo: string; fase: string | null; lote: string | null; resultado: string; httpStatus: number | null; estadoGateway: string | null; estadoSifen: string | null; codRespuesta: string | null; mensaje: string | null; creadoAt: string; actorNombre: string };
 type Respuesta = {
-  documentos: Documento[]; total: number; pagina: number; totalPaginas: number; resumen: Record<string, number>; sucursales: Array<{ id: string; nombre: string }>; permisos: { editar: boolean };
+  documentos: Documento[]; total: number; pagina: number; totalPaginas: number; resumen: Record<string, number>; sucursales: Array<{ id: string; nombre: string }>; permisos: { editar: boolean; crear: boolean };
 };
 type Detalle = { cargando: boolean; error: string; intentos: Intento[]; aviso: string; consultando: boolean };
 
@@ -116,6 +117,7 @@ export default function DocumentosPage() {
   const total = datos?.total ?? 0;
   const hayFiltros = busquedaAplicada !== "" || tipo !== "" || sucursal !== "" || estadoSifen !== "" || grupo !== "" || desde !== "" || hasta !== "";
   const editar = datos?.permisos.editar === true;
+  const crear = datos?.permisos.crear === true;
 
   function cambiarOrden(campo: CampoOrden) {
     setOrden((actual) => siguienteOrden(actual, campo));
@@ -162,6 +164,22 @@ export default function DocumentosPage() {
       setRecarga((n) => n + 1);
     } catch (e) {
       actualizarDetalle(d.id, { consultando: false, error: e instanceof Error ? e.message : "No fue posible consultar el estado." });
+    }
+  }
+
+  async function enviarAlGateway(d: Documento) {
+    actualizarDetalle(d.id, { consultando: true, aviso: "", error: "" });
+    try {
+      const j = await leerJson<{ resultado: string; mensaje: string | null; http: number | null; lote: string | null; errores: string[]; intentos: Intento[] }>(
+        await fetch(`/api/documentos/${d.id}/enviar`, { method: "POST" }),
+        "No fue posible enviar el documento.",
+      );
+      const partes = [etiquetaIntento("ENVIO", j.resultado), j.http ? `HTTP ${j.http}` : "", j.lote ? `lote ${j.lote}` : "", j.mensaje ?? "", ...j.errores].filter(Boolean);
+
+      actualizarDetalle(d.id, { consultando: false, intentos: j.intentos, aviso: partes.join(" · ") });
+      setRecarga((n) => n + 1);
+    } catch (e) {
+      actualizarDetalle(d.id, { consultando: false, error: e instanceof Error ? e.message : "No fue posible enviar el documento." });
     }
   }
 
@@ -327,6 +345,7 @@ export default function DocumentosPage() {
                             <div><dt className={ui.muted}>CDC</dt><dd className={ui.mono} style={{ overflowWrap: "anywhere", margin: 0 }}>{d.cdc ?? "Aún no informado"}</dd></div>
                             <div><dt className={ui.muted}>Estado informado</dt><dd style={{ margin: 0 }}>{d.estadoGatewayTexto ?? "—"}</dd></div>
                             <div><dt className={ui.muted}>Último mensaje SIFEN</dt><dd style={{ margin: 0 }}>{d.codRespuesta ? `${d.codRespuesta} · ` : ""}{d.mensajeRespuesta ?? "—"}</dd></div>
+                            <div><dt className={ui.muted}>Lote</dt><dd style={{ margin: 0 }}>{d.lote ?? "No informado"}</dd></div>
                             <div><dt className={ui.muted}>Fecha de firma</dt><dd style={{ margin: 0 }}>{d.fechaFirma ?? "—"}</dd></div>
                             <div><dt className={ui.muted}>Fecha de envío</dt><dd style={{ margin: 0 }}>{d.fechaEnvio ?? "—"}</dd></div>
                             <div><dt className={ui.muted}>Última consulta</dt><dd style={{ margin: 0 }}>{d.ultimaConsultaAt ? `${fechaHora(d.ultimaConsultaAt)} · ${ETIQUETA_RESULTADO_INTENTO[d.ultimaConsultaResultado ?? ""] ?? d.ultimaConsultaResultado}` : "Nunca consultado"}</dd></div>
@@ -334,6 +353,11 @@ export default function DocumentosPage() {
 
                           <p className={ui.muted} style={{ margin: "4px 0" }}>PDF/KuDE y XML: descarga no disponible (endpoint del proveedor sin confirmar).</p>
 
+                          {crear && (d.estadoLocal === "PENDIENTE_ENVIO" || d.estadoLocal === "ERROR_ENVIO") ? (
+                            <button type="button" className={ui.primaryButton} disabled={det.consultando} onClick={() => enviarAlGateway(d)}>
+                              {det.consultando ? "Enviando..." : "Enviar al gateway"}
+                            </button>
+                          ) : null}{" "}
                           {editar ? (
                             <button type="button" className={ui.secondaryButton} disabled={det.consultando} onClick={() => reconsultar(d)}>
                               {det.consultando ? "Consultando..." : "Consultar estado en SIFEN"}
@@ -351,13 +375,14 @@ export default function DocumentosPage() {
                             <div className={ui.tableScroll}>
                               <table className={ui.table} style={{ minWidth: 560 }}>
                                 <thead>
-                                  <tr><th>Fecha</th><th>Resultado</th><th>HTTP</th><th>Estado informado</th><th>Realizado por</th></tr>
+                                  <tr><th>Fecha</th><th>Intento</th><th>Resultado</th><th>HTTP</th><th>Estado informado</th><th>Realizado por</th></tr>
                                 </thead>
                                 <tbody>
                                   {det.intentos.map((i) => (
                                     <tr key={i.id} className={ui.row}>
                                       <td>{fechaHora(i.creadoAt)}</td>
-                                      <td>{ETIQUETA_RESULTADO_INTENTO[i.resultado] ?? i.resultado}{i.mensaje ? <><br /><small className={ui.muted}>{i.mensaje}</small></> : null}</td>
+                                      <td>{i.tipo === "ENVIO" ? "Envío" : "Consulta"}{i.fase ? ` · ${i.fase.toLowerCase()}` : ""}</td>
+                                      <td>{etiquetaIntento(i.tipo, i.resultado)}{i.lote ? ` · lote ${i.lote}` : ""}{i.mensaje ? <><br /><small className={ui.muted}>{i.mensaje}</small></> : null}</td>
                                       <td>{i.httpStatus ?? "—"}</td>
                                       <td>{i.estadoGateway ?? "—"}</td>
                                       <td>{i.actorNombre}</td>

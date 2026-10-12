@@ -2,7 +2,7 @@ import type { Pool } from "pg";
 
 import { evaluarAptitudCliente } from "@/lib/clientes/aptitud-cliente";
 import { textoDec } from "@/lib/facturacion/calculo";
-import { construirPayloadFE, FORMAS_PAGO, totalFactura, validarEntradaFE, type EntradaFE, type LineaFE, type ReceptorFE } from "@/lib/facturacion/payload-fe";
+import { construirPayloadFE, FORMAS_PAGO, INDICADORES_PRESENCIA, resumenCalculo, TIPOS_TRANSACCION, totalFactura, validarEntradaFE, type EntradaFE, type LineaFE, type ReceptorFE } from "@/lib/facturacion/payload-fe";
 import { ErrorFacturacion, ErrorValidacionFiscal } from "@/lib/facturacion/shared";
 
 /**
@@ -74,7 +74,7 @@ export async function buscarProductosFactura(db: Db, empresaId: string, texto: s
   return { productos: r.rows as F[] };
 }
 
-type CuerpoFactura = {
+export type CuerpoFactura = {
   claveIdempotencia: string; sucursalId: string; puntoId: string; clienteId: string; tipoTransaccion: number; presencia: number;
   pagos: Array<{ tipo: number }>; infoAdicional: string; lineas: Array<{ productoId: string; cantidad: string }>;
 };
@@ -150,20 +150,33 @@ async function receptorDe(db: Db, empresaId: string, clienteId: string): Promise
   };
 }
 
+const ETIQUETA_TRANSACCION = TIPOS_TRANSACCION as Record<number, string>;
+const ETIQUETA_PRESENCIA = INDICADORES_PRESENCIA as Record<number, string>;
+const ETIQUETA_PAGO = FORMAS_PAGO as Record<number, string>;
+
 /**
- * Crea la Factura Electrónica (documento + payload inmutable, número reservado) de forma idempotente. Devuelve errores de validación fiscal como
- * ErrorFacturacion 422 con la lista en `detalles`. La clave de idempotencia evita duplicados ante doble clic, reintento o pérdida de respuesta.
+ * Valida y calcula la factura SIN escribir nada ni reservar número: es la base de la previa («Grabar») y de la emisión. Todo sale de los cadastros de la
+ * empresa de la sesión y se recalcula en el servidor. Lanza ErrorFacturacion / ErrorValidacionFiscal (422) con los motivos.
  */
-export async function crearFacturaElectronica(db: Db, empresaId: string, usuarioId: string, cuerpo: CuerpoFactura) {
+export async function prepararFactura(db: Db, empresaId: string, usuarioId: string, cuerpo: CuerpoFactura) {
   if (!Object.keys(FORMAS_PAGO).map(Number).includes(cuerpo.pagos[0].tipo)) throw new ErrorFacturacion(422, "La forma de pago no es válida.");
 
-  const [receptor, aptitud, productos] = await Promise.all([
+  const [receptor, aptitud, productos, punto] = await Promise.all([
     receptorDe(db, empresaId, cuerpo.clienteId),
     evaluarAptitudCliente(db as never, empresaId, cuerpo.clienteId),
     db.query(`${SELECT_PRODUCTOS} AND p.id = ANY($2::uuid[])`, [empresaId, [...new Set(cuerpo.lineas.map((l) => l.productoId))]]),
+    // Sucursal activa en el alcance del usuario, con establecimiento SIFEN, y punto de expedición activo de ESA sucursal.
+    db.query(
+      `SELECT e.razon_social AS empresa, sc.nombre AS sucursal, sc.establecimiento_sifen AS establecimiento, p.codigo AS punto, p.nombre AS "puntoNombre"
+         FROM sucursales sc JOIN empresas e ON e.id = sc.empresa_id
+         JOIN fe_puntos_expedicion p ON p.empresa_id = sc.empresa_id AND p.sucursal_id = sc.id AND p.id = $3 AND p.activo
+        WHERE sc.empresa_id = $1 AND sc.id = $2 AND sc.activo AND sc.establecimiento_sifen IS NOT NULL AND sucursal_en_alcance($1::uuid, $4::uuid, sc.id)`,
+      [empresaId, cuerpo.sucursalId, cuerpo.puntoId, usuarioId],
+    ),
   ]);
 
   if (aptitud && !aptitud.apto) throw detalles(422, "El cliente tiene datos fiscales pendientes de regularizar.", aptitud.pendientes);
+  if (punto.rows.length === 0) throw new ErrorFacturacion(422, "La sucursal o el punto de expedición no son válidos (inactivos, sin establecimiento SIFEN o fuera de su alcance).");
 
   const porId = new Map((productos.rows as F[]).map((p) => [s(p.id), p]));
   const lineas: LineaFE[] = [];
@@ -192,12 +205,37 @@ export async function crearFacturaElectronica(db: Db, empresaId: string, usuario
   if (errores.length > 0) throw detalles(422, "La factura no cumple las reglas fiscales.", errores);
 
   const payload = construirPayloadFE(final) as { Subtotales: Array<{ dTotGralOpe: number }> };
-  const totalTexto = String(payload.Subtotales[0].dTotGralOpe);
-  const nombre = receptor.razonSocial;
+  const calculo = resumenCalculo(lineas);
+  const fila = punto.rows[0] as F;
+  const resumen = {
+    empresa: s(fila.empresa),
+    sucursal: s(fila.sucursal),
+    establecimiento: s(fila.establecimiento),
+    punto: s(fila.punto),
+    numero: "Se asigna al enviar la factura",
+    cliente: { codigo: receptor.codigo, razonSocial: receptor.razonSocial, documento: receptor.naturaleza === 1 ? `${receptor.ruc}-${receptor.dv}` : receptor.numeroDocumento },
+    tipoTransaccion: ETIQUETA_TRANSACCION[cuerpo.tipoTransaccion] ?? "",
+    presencia: ETIQUETA_PRESENCIA[cuerpo.presencia] ?? "",
+    condicion: "Contado",
+    formaPago: ETIQUETA_PAGO[cuerpo.pagos[0].tipo] ?? "",
+    moneda: "PYG",
+    lineas: lineas.map((l, i) => ({ codigo: l.codigoInterno, descripcion: l.descripcion, cantidad: l.cantidad, precio: l.precio, afectacion: l.afectacion, tasa: l.tasa, total: calculo.items[i] })),
+    totales: { exento: calculo.exento, exonerado: calculo.exonerado, gravado5: calculo.gravado5, gravado10: calculo.gravado10, iva5: calculo.iva5, iva10: calculo.iva10, totalIva: calculo.totalIva, total: calculo.total },
+  };
+
+  return { entrada: final, payload, totalTexto: String(payload.Subtotales[0].dTotGralOpe), receptor, resumen };
+}
+
+/**
+ * Crea la Factura Electrónica (documento + payload inmutable, número reservado UNA vez) de forma idempotente. La clave de idempotencia evita duplicados
+ * ante doble clic, reintento o pérdida de respuesta. Solo se llama al CONFIRMAR el envío: revisar o volver a editar no consume numeración.
+ */
+export async function crearFacturaElectronica(db: Db, empresaId: string, usuarioId: string, cuerpo: CuerpoFactura) {
+  const { payload, totalTexto, receptor } = await prepararFactura(db, empresaId, usuarioId, cuerpo);
   const documento = receptor.naturaleza === 1 ? `${receptor.ruc}-${receptor.dv}` : receptor.numeroDocumento;
   const llamar = () =>
     db.query(`SELECT o_documento_id AS "documentoId", o_numero AS numero, o_reutilizado AS reutilizado FROM fe_documento_crear_fe($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5, $6::uuid, $7, $8, 'PYG', $9::numeric, $10::jsonb)`,
-      [empresaId, usuarioId, cuerpo.sucursalId, cuerpo.puntoId, cuerpo.claveIdempotencia, cuerpo.clienteId, documento, nombre, totalTexto, JSON.stringify(payload)]);
+      [empresaId, usuarioId, cuerpo.sucursalId, cuerpo.puntoId, cuerpo.claveIdempotencia, cuerpo.clienteId, documento, receptor.razonSocial, totalTexto, JSON.stringify(payload)]);
 
   try {
     return (await llamar()).rows[0] as F;

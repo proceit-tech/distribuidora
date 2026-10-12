@@ -15,6 +15,22 @@ type Opciones = { tiposTransaccion: Record<string, string>; presencias: Record<s
 type Cliente = { id: string; codigo: string; razonSocial: string; numeroDocumento: string; dv: string | null; apto: boolean; pendientes: string[] };
 type Producto = { id: string; codigo: string; descripcion: string; unidadSifen: number | null; afectacion: number | null; proporcion: string | null; tasa: number | null; precio: string | null; monedaPrecio: string | null; gtin: string | null };
 type Linea = { clave: number; producto: Producto; cantidad: string };
+type Resumen = {
+  empresa: string; sucursal: string; establecimiento: string; punto: string; numero: string; cliente: { codigo: string; razonSocial: string; documento: string };
+  tipoTransaccion: string; presencia: string; condicion: string; formaPago: string; moneda: string;
+  lineas: Array<{ codigo: string; descripcion: string; cantidad: string; precio: string; afectacion: number; tasa: number; total: number }>;
+  totales: { exento: number; exonerado: number; gravado5: number; gravado10: number; iva5: number; iva10: number; totalIva: number; total: number };
+};
+type FaseEnvio = { fase: string; ok: boolean; detalle: string; http?: number | null };
+type ResultadoEnvio = {
+  documentoId: string; numero: string; reutilizado: boolean; estadoLocal: string; resultado: string; http: number | null; mensaje: string | null; lote: string | null; cdc: string | null;
+  estadoGateway: string | null; errores: string[]; fases: FaseEnvio[];
+};
+const ETIQUETA_FASE: Record<string, string> = { AUTENTICACION: "Autenticación", TRANSMISION: "Transmisión", RESPUESTA: "Respuesta" };
+const ETIQUETA_RESULTADO: Record<string, string> = {
+  OK: "Recibido por el gateway", ERROR_HTTP: "Rechazado o error del gateway", TIMEOUT: "Tiempo de espera agotado", RED: "Error de red", RESPUESTA_INVALIDA: "Respuesta no interpretable", YA_ENVIADO: "Ya enviado anteriormente",
+};
+const ETIQUETA_ESTADO_LOCAL: Record<string, string> = { ENVIADO: "Enviado", ERROR_ENVIO: "Error de envío (puede reintentarse)", ENVIO_INDETERMINADO: "Envío indeterminado (no reenviar sin consultar)" };
 
 const ETIQUETA_IVA: Record<number, string> = { 1: "Gravado", 2: "Exonerado", 3: "Exento", 4: "Gravado parcial" };
 const gs = (n: number) => n.toLocaleString("es-PY", { maximumFractionDigits: 8 });
@@ -61,11 +77,14 @@ export default function NuevaFacturaPage() {
   const [lineas, setLineas] = useState<Linea[]>([]);
   const [siguienteClave, setSiguienteClave] = useState(1);
   const [clave, setClave] = useState(() => crypto.randomUUID());
-  const [enviando, setEnviando] = useState(false);
+  const [revisando, setRevisando] = useState(false);
   const [errores, setErrores] = useState<string[]>([]);
-  const [creada, setCreada] = useState<{ numero: string; reutilizado: boolean } | null>(null);
+  const [resumen, setResumen] = useState<Resumen | null>(null);
+  const [enviando, setEnviando] = useState(false);
+  const [resultado, setResultado] = useState<ResultadoEnvio | null>(null);
+  const [mostrarEnvio, setMostrarEnvio] = useState(false);
 
-  const sucio = creada === null && (cliente !== null || lineas.length > 0 || infoAdicional !== "");
+  const sucio = resultado === null && (cliente !== null || lineas.length > 0 || infoAdicional !== "");
 
   useProtegerCambios(sucio);
 
@@ -126,36 +145,77 @@ export default function NuevaFacturaPage() {
   const calculo = resumenCalculo(lineas.map(aLineaFE));
   const problemas = lineas.flatMap((l) => problemasProducto(l.producto).map((p) => `${l.producto.codigo}: ${p}.`));
   const cantidadesValidas = lineas.every((l) => /^\d{1,10}(\.\d{1,4})?$/.test(l.cantidad) && Number(l.cantidad) > 0);
-  const puedeGuardar = !enviando && sucursalId !== "" && puntoId !== "" && cliente !== null && cliente.apto && lineas.length > 0 && cantidadesValidas && problemas.length === 0 && calculo.completo;
+  const puedeGuardar = !revisando && !enviando && sucursalId !== "" && puntoId !== "" && cliente !== null && cliente.apto && lineas.length > 0 && cantidadesValidas && problemas.length === 0 && calculo.completo;
 
   function agregar(p: Producto) {
     setLineas((ls) => [...ls, { clave: siguienteClave, producto: p, cantidad: "1" }]);
     setSiguienteClave((n) => n + 1);
   }
 
-  async function guardar() {
+  const cuerpoFactura = () => ({
+    claveIdempotencia: clave, sucursalId, puntoId, clienteId: cliente?.id, tipoTransaccion: Number(tipoTransaccion), presencia: Number(presencia),
+    pagos: [{ tipo: Number(formaPago) }], infoAdicional, lineas: lineas.map((l) => ({ productoId: l.producto.id, cantidad: l.cantidad })),
+  });
+
+  // «Grabar»: solo revisión. El servidor valida y calcula; NO se reserva número ni se transmite nada.
+  async function grabar() {
     if (!cliente) return;
 
-    setEnviando(true);
+    setRevisando(true);
     setErrores([]);
     try {
-      const r = await leer<{ documentoId: string; numero: string; reutilizado: boolean }>(
-        await fetch("/api/facturas", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            claveIdempotencia: clave, sucursalId, puntoId, clienteId: cliente.id, tipoTransaccion: Number(tipoTransaccion), presencia: Number(presencia),
-            pagos: [{ tipo: Number(formaPago) }], infoAdicional, lineas: lineas.map((l) => ({ productoId: l.producto.id, cantidad: l.cantidad })),
-          }),
-        }),
-        "No fue posible registrar la factura.",
+      const r = await leer<{ resumen: Resumen }>(
+        await fetch("/api/facturas/previa", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(cuerpoFactura()) }),
+        "No fue posible revisar la factura.",
       );
 
-      setCreada({ numero: r.numero, reutilizado: r.reutilizado });
+      setResumen(r.resumen);
     } catch (e) {
       const d = (e as { detalles?: string[] }).detalles ?? [];
 
-      setErrores([e instanceof Error ? e.message : "No fue posible registrar la factura.", ...d]);
+      setErrores([e instanceof Error ? e.message : "No fue posible revisar la factura.", ...d]);
+    } finally {
+      setRevisando(false);
+    }
+  }
+
+  // «Enviar factura»: confirma. La clave de idempotencia es la misma en cada reintento, así que no se duplica documento, número ni envío.
+  async function enviar() {
+    setEnviando(true);
+    setMostrarEnvio(true);
+    setErrores([]);
+    try {
+      const r = await leer<ResultadoEnvio>(
+        await fetch("/api/facturas", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(cuerpoFactura()) }),
+        "No fue posible enviar la factura.",
+      );
+
+      setResultado(r);
+      setResumen(null);
+    } catch (e) {
+      const d = (e as { detalles?: string[] }).detalles ?? [];
+
+      setMostrarEnvio(false);
+      setResumen(null);
+      setErrores([e instanceof Error ? e.message : "No fue posible enviar la factura.", ...d]);
+    } finally {
+      setEnviando(false);
+    }
+  }
+
+  // Reintento de un documento que ya existe con error de envío: usa el endpoint del documento (sin crear ni consumir numeración).
+  async function reintentar() {
+    if (!resultado) return;
+
+    setEnviando(true);
+    setMostrarEnvio(true);
+    try {
+      const r = await leer<ResultadoEnvio>(await fetch(`/api/documentos/${resultado.documentoId}/enviar`, { method: "POST" }), "No fue posible reintentar el envío.");
+
+      setResultado({ ...r, documentoId: resultado.documentoId, reutilizado: true });
+    } catch (e) {
+      setMostrarEnvio(false);
+      setErrores([e instanceof Error ? e.message : "No fue posible reintentar el envío."]);
     } finally {
       setEnviando(false);
     }
@@ -168,7 +228,9 @@ export default function NuevaFacturaPage() {
     setBusquedaCliente("");
     setBusquedaProducto("");
     setErrores([]);
-    setCreada(null);
+    setResultado(null);
+    setResumen(null);
+    setMostrarEnvio(false);
     setClave(crypto.randomUUID());
   }
 
@@ -188,10 +250,13 @@ export default function NuevaFacturaPage() {
 
       {errorCarga ? <div className={ui.alertError} role="alert">{errorCarga}</div> : null}
 
-      {creada ? (
-        <div className={ui.alertOk} role="status">
-          <strong>{creada.reutilizado ? "Esta factura ya estaba registrada" : "Factura registrada"}: {creada.numero}.</strong> Queda <strong>pendiente de envío</strong>: el envío al gateway aún no está habilitado y no se ha generado ningún CDC ni aprobación.{" "}
-          <Link href="/documentos">Ver documentos electrónicos</Link> · <button type="button" className={ui.clearButton} onClick={nueva}>Nueva factura</button>
+      {resultado ? (
+        <div className={resultado.estadoLocal === "ENVIADO" ? ui.alertOk : ui.alertError} role="status">
+          <strong>Factura {resultado.numero}: {ETIQUETA_ESTADO_LOCAL[resultado.estadoLocal] ?? resultado.estadoLocal}.</strong> El estado fiscal (SIFEN) se confirma en Documentos electrónicos con la consulta de estado; recibir la factura no equivale a aprobarla.{" "}
+          <Link href="/documentos">Ver documentos electrónicos</Link>
+          {resultado.estadoLocal === "ERROR_ENVIO" ? <> · <button type="button" className={ui.clearButton} disabled={enviando} onClick={reintentar}>Reintentar envío</button></> : null}
+          {" "}· <button type="button" className={ui.clearButton} onClick={nueva}>Nueva factura</button>{" "}
+          <button type="button" className={ui.clearButton} onClick={() => setMostrarEnvio(true)}>Ver detalle técnico</button>
         </div>
       ) : (
         <>
@@ -363,12 +428,102 @@ export default function NuevaFacturaPage() {
 
           <div className={estilos.actions}>
             <Link href="/documentos" className={ui.secondaryButton}>Cancelar</Link>
-            <button type="button" className={ui.primaryButton} disabled={!puedeGuardar} onClick={guardar}>
-              {enviando ? "Registrando..." : "Registrar factura"}
+            <button type="button" className={ui.primaryButton} disabled={!puedeGuardar} onClick={grabar}>
+              {revisando ? "Revisando..." : "Grabar"}
             </button>
           </div>
         </>
       )}
+
+      {resumen ? (
+        <div className={estilos.overlay} role="presentation">
+          <div className={estilos.modal} role="dialog" aria-modal="true" aria-labelledby="titulo-resumen">
+            <h2 id="titulo-resumen">Resumen de la factura</h2>
+            <p className={estilos.hint}>Revise los datos. Todavía no se asignó número ni se transmitió nada: el número se reserva al enviar.</p>
+            <dl className={estilos.totals}>
+              <div><dt>Empresa</dt><dd>{resumen.empresa}</dd></div>
+              <div><dt>Establecimiento / sucursal</dt><dd>{resumen.establecimiento} · {resumen.sucursal}</dd></div>
+              <div><dt>Punto de expedición</dt><dd>{resumen.punto}</dd></div>
+              <div><dt>Número</dt><dd>{resumen.numero}</dd></div>
+              <div><dt>Cliente</dt><dd>{resumen.cliente.razonSocial} ({resumen.cliente.documento})</dd></div>
+              <div><dt>Transacción · presencia</dt><dd>{resumen.tipoTransaccion} · {resumen.presencia}</dd></div>
+              <div><dt>Condición · pago</dt><dd>{resumen.condicion} · {resumen.formaPago}</dd></div>
+            </dl>
+            <div className={ui.tableScroll} style={{ margin: "10px 0" }}>
+              <table className={ui.table} style={{ minWidth: 520 }}>
+                <thead><tr><th>Producto</th><th>Cant.</th><th>Precio (IVA incl.)</th><th>IVA</th><th>Total</th></tr></thead>
+                <tbody>
+                  {resumen.lineas.map((l, i) => (
+                    <tr key={i} className={ui.row}>
+                      <td>{l.descripcion}<br /><small className={ui.muted}>{l.codigo}</small></td>
+                      <td className={ui.numeric}>{l.cantidad}</td>
+                      <td className={ui.numeric}>{gs(Number(l.precio))}</td>
+                      <td>{ETIQUETA_IVA[l.afectacion]}{l.tasa ? ` ${l.tasa}%` : ""}</td>
+                      <td className={ui.numeric}>{gs(l.total)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <dl className={estilos.totals}>
+              <div><dt>Exento</dt><dd>{gs(resumen.totales.exento)}</dd></div>
+              <div><dt>Exonerado</dt><dd>{gs(resumen.totales.exonerado)}</dd></div>
+              <div><dt>Gravado 5 %</dt><dd>{gs(resumen.totales.gravado5)}</dd></div>
+              <div><dt>Gravado 10 %</dt><dd>{gs(resumen.totales.gravado10)}</dd></div>
+              <div><dt>IVA 5 %</dt><dd>{gs(resumen.totales.iva5)}</dd></div>
+              <div><dt>IVA 10 %</dt><dd>{gs(resumen.totales.iva10)}</dd></div>
+              <div><dt>Total IVA</dt><dd>{gs(resumen.totales.totalIva)}</dd></div>
+              <div><dt>Total general</dt><dd>{gs(resumen.totales.total)}</dd></div>
+            </dl>
+            <div className={estilos.actions} style={{ marginTop: 14 }}>
+              <button type="button" className={ui.secondaryButton} onClick={() => setResumen(null)}>Volver a editar</button>
+              <button type="button" className={ui.primaryButton} disabled={enviando} onClick={enviar}>Enviar factura</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {mostrarEnvio ? (
+        <div className={estilos.overlay} role="presentation">
+          <div className={estilos.modal} role="dialog" aria-modal="true" aria-labelledby="titulo-envio">
+            <h2 id="titulo-envio">Envío al gateway (diagnóstico de prueba)</h2>
+            {enviando ? (
+              <p role="status">Autenticando y transmitiendo… no cierre esta ventana.</p>
+            ) : resultado ? (
+              <>
+                <dl className={estilos.totals}>
+                  <div><dt>Documento</dt><dd>{resultado.numero}</dd></div>
+                  <div><dt>Resultado</dt><dd>{ETIQUETA_RESULTADO[resultado.resultado] ?? resultado.resultado}</dd></div>
+                  <div><dt>HTTP</dt><dd>{resultado.http ?? "—"}</dd></div>
+                  <div><dt>Estado de envío</dt><dd>{ETIQUETA_ESTADO_LOCAL[resultado.estadoLocal] ?? resultado.estadoLocal}</dd></div>
+                  {resultado.lote ? <div><dt>Lote (informado por el gateway)</dt><dd>{resultado.lote}</dd></div> : null}
+                  {resultado.cdc ? <div><dt>CDC (informado por el gateway)</dt><dd style={{ overflowWrap: "anywhere" }}>{resultado.cdc}</dd></div> : null}
+                  {resultado.estadoGateway ? <div><dt>Estado informado</dt><dd>{resultado.estadoGateway}</dd></div> : null}
+                </dl>
+                <h3 style={{ fontSize: 13.5, margin: "12px 0 4px" }}>Fases</h3>
+                <ol className={estilos.errorList}>
+                  {resultado.fases.length === 0 ? <li>Sin transmisión: el documento ya había sido enviado.</li> : null}
+                  {resultado.fases.map((f, i) => (
+                    <li key={i}><strong>{f.ok ? "✔" : "✖"} {ETIQUETA_FASE[f.fase] ?? f.fase}</strong>{f.http ? ` (HTTP ${f.http})` : ""}: {f.detalle}</li>
+                  ))}
+                </ol>
+                {resultado.mensaje ? <p><strong>Mensaje del gateway:</strong> {resultado.mensaje}</p> : null}
+                {resultado.errores.length > 0 ? (
+                  <div className={ui.alertError} role="alert">
+                    Errores de validación informados:
+                    <ul className={estilos.errorList}>{resultado.errores.map((m, i) => <li key={i}>{m}</li>)}</ul>
+                  </div>
+                ) : null}
+                <p className={estilos.hint}>«Recibido» y HTTP 200 no significan aprobado por SIFEN. La aprobación solo se confirma con la consulta de estado en Documentos electrónicos.</p>
+                <div className={estilos.actions}>
+                  <button type="button" className={ui.secondaryButton} onClick={() => setMostrarEnvio(false)}>Cerrar</button>
+                  <Link href="/documentos" className={ui.primaryButton}>Ver documentos electrónicos</Link>
+                </div>
+              </>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }

@@ -7,9 +7,10 @@ import { join } from "node:path";
 
 import { contador } from "@/lib/clientes/contador-casos";
 import { ETIQUETA_SIFEN, estadoSifenDesdeGateway, numeroDocumento } from "@/lib/facturacion/estados";
-import { claveToken, consultarDocumentoGateway, interpretarConsulta, leerCredenciales, limpiarCacheTokens, sanearRespuesta, tamanoCacheTokens, tipoDocConsulta, type FetchLike } from "@/lib/facturacion/gateway";
+import { claveToken, consultarDocumentoGateway, enviarDocumentoGateway, interpretarRecepcion, interpretarConsulta, leerCredenciales, limpiarCacheTokens, sanearRespuesta, tamanoCacheTokens, tipoDocConsulta, type FetchLike } from "@/lib/facturacion/gateway";
 import { calcularItem, calcularSubtotales, numeroDec, parseDec, textoDec } from "@/lib/facturacion/calculo";
-import { crearFacturaElectronica, leerCuerpoFactura } from "@/lib/facturacion/emision";
+import { crearFacturaElectronica, leerCuerpoFactura, prepararFactura } from "@/lib/facturacion/emision";
+import { emitirFactura } from "@/lib/facturacion/envio";
 import { construirPayloadFE, validarEntradaFE, totalFactura, type EntradaFE, type LineaFE, type ReceptorFE } from "@/lib/facturacion/payload-fe";
 import { construirConsultas, consultarEstado, ErrorFacturacion, ErrorValidacionFiscal, leerDocumentos, normalizarConsulta, respuestaErrorFacturacion } from "@/lib/facturacion/shared";
 
@@ -158,7 +159,7 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
 
   cierto("listado: empresa y usuario de la sesión son $1/$2 y el alcance de sucursales se exige en conteo y lista", q.conteo.params[0] === EMPRESA && q.conteo.params[1] === USUARIO && /sucursal_en_alcance\(\$1::uuid, \$2::uuid, d\.sucursal_id\)/.test(q.conteo.sql) && /sucursal_en_alcance\(\$1::uuid, \$2::uuid, d\.sucursal_id\)/.test(q.lista.sql) && /d\.empresa_id = \$1/.test(q.lista.sql));
   igual("listado: filtros como parámetros (nunca concatenados) y comodines del texto escapados", [q.conteo.params.slice(2), /ESCAPE '!'/.test(q.conteo.sql)], [["FE", SUC, "APROBADO", "2026-10-01", "2026-10-12", "%50!%!_x%"], true]);
-  cierto("listado: fechas de emisión en hora de Paraguay y el grupo del indicador es un fragmento fijo (no texto del usuario)", /AT TIME ZONE 'America\/Asuncion'/.test(q.conteo.sql) && /d\.estado_local IN \('PENDIENTE_ENVIO','ENVIO_INDETERMINADO','ERROR_ENVIO'\)/.test(q.conteo.sql));
+  cierto("listado: fechas de emisión en hora de Paraguay y el grupo del indicador es un fragmento fijo (no texto del usuario)", /AT TIME ZONE 'America\/Asuncion'/.test(q.conteo.sql) && /d\.estado_local IN \('PENDIENTE_ENVIO','ENVIANDO','ENVIO_INDETERMINADO','ERROR_ENVIO'\)/.test(q.conteo.sql));
   igual("listado: tamaño acotado a 100, página 3 → OFFSET 200, orden pedido con desempate estable por id", [q.lista.params.slice(-2), /ORDER BY d\.total ASC, d\.id DESC LIMIT/.test(q.lista.sql)], [[100, 200], true]);
   igual("listado: valores desconocidos se descartan (tipo, estado, grupo, sucursal no UUID, fechas inválidas, orden con inyección)", (() => { const n = normalizarConsulta({ tipo: "XX", estadoSifen: "ok", estadoLocal: "x", estadoEmail: "y", grupo: "z", sucursal: "no-uuid", desde: "12/10/2026", hasta: "2026-13", orden: "fecha; DROP TABLE x", dir: "raro" }); return [n.tipo, n.estadoSifen, n.estadoLocal, n.estadoEmail, n.grupo, n.sucursal, n.desde, n.hasta, n.orden, n.dir]; })(), ["", "", "", "", "", "", "", "", "", "desc"]);
   igual("listado: sin orden pedido se usa la fecha de emisión descendente", /ORDER BY d\.fecha_emision DESC, d\.id DESC/.test(construirConsultas(EMPRESA, USUARIO, {}, 1).lista.sql), true);
@@ -243,7 +244,7 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
   cierto("pantalla: estados separados (SIFEN, envío, e-mail) con texto, detalle con CDC/mensaje/historial de consultas y aviso de PDF/XML no disponibles", /SIFEN: \{ETIQUETA_SIFEN/.test(pagina) && /Envío: \{ETIQUETA_LOCAL/.test(pagina) && /ETIQUETA_EMAIL\[d\.estadoEmail\]/.test(pagina) && /Historial de consultas/.test(pagina) && /descarga no disponible/.test(pagina) && /aria-expanded/.test(pagina) && /aria-pressed/.test(pagina));
   cierto("la consulta de estado solo se ofrece con permiso EDITAR", /editar \? \(/.test(pagina) && /Consultar estado en SIFEN/.test(pagina));
   cierto("sin movimiento de stock ni credenciales en el código; la URL del gateway sale de la configuración por empresa, no del código", !/movimientos_inventario|stock_saldos|inventario_registrar_movimiento/.test(todo) && !/e-factura-hub|gateway-bebidas/i.test(todo + mig) && !/(password|ruc)\s*[:=]\s*["'][^"']{3,}/i.test(todo.replace(/\/\/.*$/gm, "")));
-  cierto("sin endpoints de PDF/XML ni de recepción inventados", !/recepcion_de|\/pdf|\/xml|kude/i.test(todo.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "").replace(/PDF\/KuDE/g, "")));
+  cierto("sin endpoints de PDF/XML inventados; recepcion_de aparece solo en el cliente del gateway (contrato confirmado), nunca en pantallas ni APIs", !/\/pdf|\/xml|kude|descarga\/|download/i.test(todo.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "").replace(/PDF\/KuDE/g, "")) && !/recepcion_de/.test(pagina + apis.join("\n") + leer("lib/facturacion/shared.ts")) && /\/api\/recepcion_de/.test(leer("lib/facturacion/gateway.ts")));
 
 
   // ══ Correcciones de la auditoría de F-01 ═════════════════════════════════════════════════════════════════════════════════════════════════════════
@@ -337,7 +338,7 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
   const filaCliente = { codigo: "CLI-000001", naturaleza_receptor: 1, tipo_operacion: 1, tipo_contribuyente_sifen: 2, pais_codigo: "PRY", tipo_documento_identidad_sifen: null, descripcion_documento_identidad: null, numero_documento: "80000005", dv: "6", razon_social: "EMPRESA SINTETICA SA", nombre_fantasia: null, email: "a@b.com", email_copia: null, email_facturacion: null, telefono: null, celular: null, activo: true, bloqueado_ventas: false, direccion: "Calle 1", numero_casa: "123", departamento_codigo: "1", distrito_codigo: "1", ciudad_codigo: "1" };
   const filaProducto = { id: PRODUCTO, codigo: "P-1", descripcion: "Producto de prueba", unidadSifen: 77, afectacion: 1, proporcion: null, tasa: 10, precio: "11000", monedaPrecio: "PYG", gtin: null };
   const llamadasCrear: Array<{ sql: string; parametros: unknown[] }> = [];
-  const dbCrear = (opciones: { cliente?: Record<string, unknown> | null; productos?: Array<Record<string, unknown>>; conflicto?: boolean; aptitudMala?: boolean } = {}) => {
+  const dbCrear = (opciones: { cliente?: Record<string, unknown> | null; productos?: Array<Record<string, unknown>>; conflicto?: boolean; aptitudMala?: boolean; sinPunto?: boolean } = {}) => {
     let intentos = 0;
 
     return {
@@ -347,6 +348,7 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
         if (/SELECT c\.id, c\.naturaleza_receptor/.test(sql)) return { rows: [{ ...(opciones.cliente ?? filaCliente), id: CLIENTE, tipo_persona: "JURIDICA", tipo_documento: "RUC", pais_codigo: "PRY" }], rowCount: 1 };
         if (/FROM direcciones_cliente/.test(sql)) return { rows: [{ cliente_id: CLIENTE, direccion: "Calle 1", numero_casa: "123", departamento_codigo: "1", distrito_codigo: "1", ciudad_codigo: "1", pais_codigo: "PRY" }], rowCount: 1 };
         if (/FROM referencia_geografica_paises/.test(sql)) return { rows: [{ codigo: "PRY" }], rowCount: 1 };
+        if (/FROM sucursales sc JOIN empresas e/.test(sql)) return { rows: opciones.sinPunto ? [] : [{ empresa: "EMPRESA SINTETICA", sucursal: "Casa Central", establecimiento: "001", punto: "002", puntoNombre: "Punto 002" }], rowCount: 1 };
         if (/FROM productos p/.test(sql)) return { rows: opciones.productos ?? [filaProducto], rowCount: 1 };
         if (/fe_documento_crear_fe/.test(sql)) {
           intentos += 1;
@@ -406,8 +408,176 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
   const emisionTs = leer("lib/facturacion/emision.ts");
   const formulario = leer("app/(private)/facturas/nueva/page.tsx");
 
-  cierto("API de emisión: exige CREAR, empresa/usuario de la sesión, no envía al gateway (no importa el cliente del gateway ni nombra recepcion_de en código ejecutable)", /prepararFacturacion\("CREAR"\)/.test(apiFacturas) && !/gateway/.test(emisionTs.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "")) && !/recepcion_de|api\/login/.test(apiFacturas + emisionTs.replace(/\/\*[\s\S]*?\*\//g, "")) && /b\.empresaId, b\.usuarioId/.test(apiFacturas));
-  cierto("formulario: no calcula impuestos en el navegador para enviar (solo ids y cantidades), clave de idempotencia por operación, sin localStorage, estados de carga/error, aviso de «pendiente de envío»", /claveIdempotencia: clave/.test(formulario) && /crypto\.randomUUID\(\)/.test(formulario) && !/precio:|total:|afectacion:/.test(formulario.slice(formulario.indexOf("body: JSON.stringify"), formulario.indexOf("body: JSON.stringify") + 420)) && /pendiente de envío/.test(formulario) && /useProtegerCambios/.test(formulario) && /Registrando\.\.\./.test(formulario));
+  cierto("API de emisión: exige CREAR y toma empresa/usuario de la sesión; la validación y creación (emision.ts) no conoce el gateway: solo envio.ts transmite", /prepararFacturacion\("CREAR"\)/.test(apiFacturas) && !/gateway/.test(emisionTs.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "")) && /enviarDocumentoGateway/.test(leer("lib/facturacion/envio.ts")) && /b\.empresaId, b\.usuarioId/.test(apiFacturas));
+  cierto("formulario: el navegador solo envía ids, cantidades y forma de pago (nunca precio, IVA ni total), con clave de idempotencia por operación, sin localStorage y con protección de cambios", /claveIdempotencia: clave/.test(formulario) && /crypto\.randomUUID\(\)/.test(formulario) && !/precio:|total:|afectacion:/.test(formulario.slice(formulario.indexOf("const cuerpoFactura"), formulario.indexOf("const cuerpoFactura") + 520)) && !/localStorage/.test(formulario) && /useProtegerCambios/.test(formulario));
+
+  // ══ F-02 completa: Grabar → resumen → Enviar → envío por el backend ═══════════════════════════════════════════════════════════════════════════════
+  const PAYLOAD_ENVIO = { iTiDE: 1, dEst: "001", dPunExp: "002", dNumDoc: "0050000", dSerieNum: null, Subtotales: [{ dTotGralOpe: 11000 }] };
+  const bodyRecepcion = (g: ReturnType<typeof gateway>) => g.llamadas.filter((l) => l.url.endsWith("/api/recepcion_de"));
+  const resultadoDe = (r: unknown) => r as import("@/lib/facturacion/gateway").ResultadoEnvio;
+
+  // ── Interpretación de recepcion_de (sin inventar su forma)
+  const exito = interpretarRecepcion(200, JSON.stringify({ status: "success", message: "Documento recibido" }));
+
+  igual("recepción: 2xx con status success → recibido (ENVIADO), sin lote ni CDC inventados y sin estado fiscal", [exito.resultado, exito.estadoLocal, exito.lote, exito.cdc, exito.estadoGateway, exito.mensaje], ["OK", "ENVIADO", null, null, null, "Documento recibido"]);
+  igual("recepción: el lote solo aparece si la respuesta lo trae (búsqueda tolerante por nombre) y el CDC solo si es válido", (() => { const a = interpretarRecepcion(200, JSON.stringify({ status: "success", data: { NroLote: 12345, CDC: CDC } })); const b = interpretarRecepcion(200, JSON.stringify({ status: "success", cdc: "123" })); return [a.lote, a.cdc, b.cdc]; })(), ["12345", CDC, null]);
+  igual("recepción: 2xx con status error → rechazo informado (ERROR_ENVIO) con sus errores de validación", (() => { const r = interpretarRecepcion(200, JSON.stringify({ status: "error", message: "Validación fallida", errors: ["dRucRec inválido", { campo: "dDVRec", detalle: "DV incorrecto" }] })); return [r.resultado, r.estadoLocal, r.mensaje, r.errores.length, r.errores[0]]; })(), ["ERROR_HTTP", "ERROR_ENVIO", "Validación fallida", 2, "dRucRec inválido"]);
+  igual("recepción: 4xx → ERROR_ENVIO (no hubo recepción); 5xx → ENVIO_INDETERMINADO; 2xx sin forma reconocible o no JSON → ENVIO_INDETERMINADO", [
+    interpretarRecepcion(400, JSON.stringify({ message: "Datos inválidos" })).estadoLocal, interpretarRecepcion(422, "{}").estadoLocal, interpretarRecepcion(500, "boom").estadoLocal,
+    interpretarRecepcion(200, "<html>").estadoLocal, interpretarRecepcion(200, JSON.stringify({ ok: true })).estadoLocal, interpretarRecepcion(200, "[]").estadoLocal,
+  ], ["ERROR_ENVIO", "ERROR_ENVIO", "ENVIO_INDETERMINADO", "ENVIO_INDETERMINADO", "ENVIO_INDETERMINADO", "ENVIO_INDETERMINADO"]);
+  igual("recepción: la respuesta guardada está saneada (sin token ni clave)", JSON.stringify(interpretarRecepcion(200, JSON.stringify({ status: "success", token: TOKEN, password: SECRETO })).respuesta).includes(TOKEN) || JSON.stringify(interpretarRecepcion(200, JSON.stringify({ status: "success", password: SECRETO })).respuesta).includes(SECRETO), false);
+
+  // ── Transporte del envío (fetch simulado)
+  limpiarCacheTokens();
+  const ge1 = gateway({ consulta: [{ status: 200, cuerpo: { status: "success", message: "ok", lote: "L-77" } }] });
+  const e1 = resultadoDe(await enviarDocumentoGateway(CONFIG, PAYLOAD_ENVIO, { fetch: ge1.fetch, env: ENV }));
+
+  igual("envío: login y luego POST /api/recepcion_de con Bearer y el payload TAL CUAL se guardó (sin campos añadidos)", [ge1.llamadas.map((l) => l.url.replace(CONFIG.baseUrl, "")), bodyRecepcion(ge1)[0].headers.Authorization, bodyRecepcion(ge1)[0].body], [["/api/login", "/api/recepcion_de"], `Bearer ${TOKEN}`, PAYLOAD_ENVIO]);
+  igual("envío: fases autenticación → transmisión (HTTP) → respuesta, lote informado y estado local ENVIADO", [e1.fases.map((f) => `${f.fase}:${f.ok}`), e1.fases[1].http, e1.lote, e1.estadoLocal, e1.faseFinal], [["AUTENTICACION:true", "TRANSMISION:true", "RESPUESTA:true"], 200, "L-77", "ENVIADO", "TRANSMISION"]);
+  igual("envío: el resultado nunca contiene clave ni token", [JSON.stringify(e1).includes(SECRETO), JSON.stringify(e1).includes(TOKEN)], [false, false]);
+
+  limpiarCacheTokens();
+  const ge2 = gateway({ consulta: [{ status: 401, cuerpo: {} }, { status: 200, cuerpo: { status: "success" } }] });
+  const e2 = resultadoDe(await enviarDocumentoGateway(CONFIG, PAYLOAD_ENVIO, { fetch: ge2.fetch, env: ENV }));
+
+  igual("envío: ante 401 renueva la sesión UNA vez y reintenta (un 401 no procesó nada)", [e2.estadoLocal, ge2.llamadas.map((l) => l.url.replace(CONFIG.baseUrl, ""))], ["ENVIADO", ["/api/login", "/api/recepcion_de", "/api/login", "/api/recepcion_de"]]);
+
+  limpiarCacheTokens();
+  const ge3 = gateway({ consulta: ["TIMEOUT"] });
+  const ge4 = gateway({ consulta: ["RED"] });
+  const e3 = resultadoDe(await enviarDocumentoGateway(CONFIG, PAYLOAD_ENVIO, { fetch: ge3.fetch, env: ENV }));
+  limpiarCacheTokens();
+  const e4 = resultadoDe(await enviarDocumentoGateway(CONFIG, PAYLOAD_ENVIO, { fetch: ge4.fetch, env: ENV }));
+
+  igual("envío: timeout o error de red DESPUÉS de transmitir → ENVIO_INDETERMINADO (jamás reenvío ciego)", [e3.resultado, e3.estadoLocal, e4.resultado, e4.estadoLocal], ["TIMEOUT", "ENVIO_INDETERMINADO", "RED", "ENVIO_INDETERMINADO"]);
+
+  limpiarCacheTokens();
+  const ge5 = gateway({ login: [{ status: 401, cuerpo: { status: "error", message: `clave ${SECRETO}` } }], consulta: [] });
+  const e5 = resultadoDe(await enviarDocumentoGateway(CONFIG, PAYLOAD_ENVIO, { fetch: ge5.fetch, env: ENV }));
+
+  igual("envío: falla de autenticación → nada se transmite, fase AUTENTICACION, ERROR_ENVIO (reintentable) y sin filtrar la clave", [e5.faseFinal, e5.estadoLocal, bodyRecepcion(ge5).length, JSON.stringify(e5).includes(SECRETO), e5.fases[0].ok], ["AUTENTICACION", "ERROR_ENVIO", 0, false, false]);
+
+  limpiarCacheTokens();
+  const ge6 = gateway({ consulta: [{ status: 400, cuerpo: { status: "error", message: "dRucRec inválido", errors: ["dRucRec: formato"] } }] });
+  const e6 = resultadoDe(await enviarDocumentoGateway(CONFIG, PAYLOAD_ENVIO, { fetch: ge6.fetch, env: ENV }));
+
+  igual("envío: rechazo 400 del gateway → ERROR_ENVIO con mensaje y errores de validación visibles, HTTP 400, sin lote", [e6.estadoLocal, e6.http, e6.mensaje, e6.errores, e6.lote], ["ERROR_ENVIO", 400, "dRucRec inválido", ["dRucRec: formato"], null]);
+  igual("envío: sin credenciales no se llama a nadie", await enviarDocumentoGateway(CONFIG, PAYLOAD_ENVIO, { fetch: gateway({ consulta: [] }).fetch, env: {} }), { sinContrato: "CREDENCIALES" });
+
+  // ── Previa («Grabar»): sin escrituras ni numeración
+  const consultasPrevia: string[] = [];
+  const dbPrevia = dbCrear();
+  const espia = { async query(sql: string, parametros: unknown[] = []) { consultasPrevia.push(sql); return (dbPrevia as unknown as { query: (s: string, p?: unknown[]) => Promise<unknown> }).query(sql, parametros); } } as never;
+  const previa = await prepararFactura(espia, EMPRESA, USUARIO, leerCuerpoFactura(cuerpo()) as never);
+
+  igual("previa: calcula y valida en el servidor sin tocar funciones de escritura ni reservar número", [consultasPrevia.some((q) => /fe_documento_crear_fe|fe_documento_iniciar_envio|fe_documento_registrar|INSERT|UPDATE/i.test(q)), previa.resumen.numero, previa.resumen.punto, previa.resumen.establecimiento], [false, "Se asigna al enviar la factura", "002", "001"]);
+  igual("previa: el resumen trae empresa, sucursal, cliente, líneas con precio/IVA/total y totales calculados por el servidor", [previa.resumen.empresa, previa.resumen.cliente.razonSocial, previa.resumen.lineas[0], previa.resumen.totales.total, previa.resumen.totales.iva10, previa.resumen.formaPago], ["EMPRESA SINTETICA", "EMPRESA SINTETICA SA", { codigo: "P-1", descripcion: "Producto de prueba", cantidad: "1", precio: "11000", afectacion: 1, tasa: 10, total: 11000 }, 11000, 1000, "Efectivo"]);
+  igual("previa: el JSON a enviar coincide con lo mostrado (mismo total e IVA)", [(previa.payload as unknown as { Subtotales: Array<Record<string, unknown>> }).Subtotales[0].dTotGralOpe, (previa.payload as unknown as { Subtotales: Array<Record<string, unknown>> }).Subtotales[0].dTotIVA], [previa.resumen.totales.total, previa.resumen.totales.iva10]);
+  igual("previa: el punto de expedición ajeno/inactivo o la sucursal fuera de alcance se rechaza", await (async () => { try { await prepararFactura(dbCrear({ sinPunto: true }), EMPRESA, USUARIO, leerCuerpoFactura(cuerpo()) as never); return "sin error"; } catch (e) { return e instanceof ErrorFacturacion ? e.estado : -1; } })(), 422);
+
+  // ── Emisión completa: preflight → crear → iniciar → transmitir → registrar
+  type SqlEnvio = { sql: string; parametros: unknown[] };
+  const mkDb = (o: { cfg?: boolean; inicio?: string; crearError?: string; reutilizado?: boolean; iniciarDetalle?: string } = {}) => {
+    const llamadas: SqlEnvio[] = [];
+    const base = dbCrear() as unknown as { query: (s: string, p?: unknown[]) => Promise<{ rows: unknown[] }> };
+    const db = {
+      async query(sql: string, parametros: unknown[] = []) {
+        llamadas.push({ sql, parametros });
+        if (/FROM fe_gateway_config/.test(sql)) return { rows: o.cfg === false ? [] : [{ baseUrl: CONFIG.baseUrl, credencialRef: CONFIG.credencialRef, timeoutMs: 1000 }] };
+        if (/fe_documento_crear_fe/.test(sql)) return { rows: [{ documentoId: DOC, numero: "0050000", reutilizado: o.reutilizado === true }] };
+        if (/fe_documento_iniciar_envio/.test(sql)) {
+          if (o.iniciarDetalle) throw Object.assign(new Error("estado"), { detail: o.iniciarDetalle });
+
+          return { rows: [{ resultado: o.inicio ?? "INICIADO", payload: o.inicio === "INDETERMINADO" ? null : PAYLOAD_ENVIO, numero: "0050000" }] };
+        }
+        if (/fe_documento_registrar_envio/.test(sql)) return { rows: [{ fe_documento_registrar_envio: parametros[5] }] };
+
+        return base.query(sql, parametros);
+      },
+    } as never;
+
+    return { db, llamadas };
+  };
+  const ejecutar = (db: never, fetchSim: FetchLike, env: Record<string, string | undefined> = ENV) => emitirFactura(db, EMPRESA, USUARIO, leerCuerpoFactura(cuerpo()) as never, { fetch: fetchSim, env });
+  const orden = (l: SqlEnvio[]) => l.map((x) => (/fe_gateway_config/.test(x.sql) ? "config" : /fe_documento_crear_fe/.test(x.sql) ? "crear" : /fe_documento_iniciar_envio/.test(x.sql) ? "iniciar" : /fe_documento_registrar_envio/.test(x.sql) ? "registrar" : "otro")).filter((x) => x !== "otro");
+
+  limpiarCacheTokens();
+  const gE = gateway({ consulta: [{ status: 200, cuerpo: { status: "success", message: "Recibido" } }] });
+  const m1 = mkDb();
+  const em = await ejecutar(m1.db, gE.fetch);
+
+  igual("emisión: orden config → crear → iniciar envío → registrar envío, con una sola transmisión", [orden(m1.llamadas), bodyRecepcion(gE).length], [["config", "crear", "config", "iniciar", "registrar"], 1]);
+  igual("emisión: respuesta con documento, número reservado, estado ENVIADO, HTTP 200, sin lote inventado y sin CDC", [em.documentoId, em.numero, em.reutilizado, em.estadoLocal, em.resultado, em.http, em.lote, em.cdc, em.fases.length], [DOC, "0050000", false, "ENVIADO", "OK", 200, null, null, 3]);
+  const reg = m1.llamadas.find((l) => /fe_documento_registrar_envio/.test(l.sql))!;
+
+  igual("emisión: registra fase TRANSMISION, resultado OK, estado ENVIADO, HTTP 200 con empresa/usuario de la sesión; no envía estado SIFEN", [reg.parametros.slice(0, 6), reg.parametros[6], /estado_sifen/i.test(reg.sql)], [[EMPRESA, USUARIO, DOC, "TRANSMISION", "OK", "ENVIADO"], 200, false]);
+  igual("emisión: el payload transmitido es exactamente el guardado en la solicitud (el de la base), no uno reconstruido", bodyRecepcion(gE)[0].body, PAYLOAD_ENVIO);
+
+  const antesSql = (db: { llamadas: SqlEnvio[] }) => orden(db.llamadas);
+  const mSinCfg = mkDb({ cfg: false });
+  const codigo = async (p: Promise<unknown>) => { try { await p; return 0; } catch (e) { return e instanceof ErrorFacturacion ? e.estado : -1; } };
+
+  igual("emisión: sin gateway configurado o sin credenciales NO se reserva número (409 antes de crear)", [await codigo(ejecutar(mSinCfg.db, gateway({ consulta: [] }).fetch)), antesSql(mSinCfg).includes("crear"), await codigo(ejecutar(mkDb().db, gateway({ consulta: [] }).fetch, {}))], [409, false, 409]);
+
+  limpiarCacheTokens();
+  const gR = gateway({ consulta: [] });
+  const mYa = mkDb({ reutilizado: true, iniciarDetalle: "NEX:YA_ENVIADO" });
+  const ya = await ejecutar(mYa.db, gR.fetch);
+
+  igual("emisión: repetir una operación ya enviada devuelve el documento (reutilizado) SIN transmitir de nuevo", [ya.resultado, ya.reutilizado, ya.numero, bodyRecepcion(gR).length, gR.llamadas.length], ["YA_ENVIADO", true, "0050000", 0, 0]);
+
+  igual("emisión: envío en curso o indeterminado → 409 indicando el número, sin transmitir", [
+    await codigo(ejecutar(mkDb({ iniciarDetalle: "NEX:ENVIO_EN_CURSO" }).db, gR.fetch)), await codigo(ejecutar(mkDb({ inicio: "INDETERMINADO" }).db, gR.fetch)), gR.llamadas.length,
+  ], [409, 409, 0]);
+
+  limpiarCacheTokens();
+  const mErr = mkDb();
+  const gErr = gateway({ consulta: [{ status: 400, cuerpo: { status: "error", message: "Rechazado", errors: ["x"] } }] });
+  const emErr = await ejecutar(mErr.db, gErr.fetch);
+
+  igual("emisión: rechazo del gateway → ERROR_ENVIO persistido con HTTP 400 y errores devueltos para el modal", [emErr.estadoLocal, emErr.http, emErr.errores, mErr.llamadas.find((l) => /fe_documento_registrar_envio/.test(l.sql))!.parametros.slice(3, 7)], ["ERROR_ENVIO", 400, ["x"], ["TRANSMISION", "ERROR_HTTP", "ERROR_ENVIO", 400]]);
+
+  limpiarCacheTokens();
+  const mTo = mkDb();
+  const emTo = await ejecutar(mTo.db, gateway({ consulta: ["TIMEOUT"] }).fetch);
+
+  igual("emisión: timeout al transmitir → ENVIO_INDETERMINADO persistido (no reenvía; el reintento queda bloqueado por la base)", [emTo.estadoLocal, emTo.resultado, mTo.llamadas.find((l) => /fe_documento_registrar_envio/.test(l.sql))!.parametros[5]], ["ENVIO_INDETERMINADO", "TIMEOUT", "ENVIO_INDETERMINADO"]);
+
+  limpiarCacheTokens();
+  const mAu = mkDb();
+  const emAu = await ejecutar(mAu.db, gateway({ login: [{ status: 401, cuerpo: { status: "error" } }], consulta: [] }).fetch);
+
+  igual("emisión: falla de autenticación → ERROR_ENVIO en fase AUTENTICACION (documento conservado, reintentable)", [emAu.estadoLocal, mAu.llamadas.find((l) => /fe_documento_registrar_envio/.test(l.sql))!.parametros[3], emAu.fases[0].ok], ["ERROR_ENVIO", "AUTENTICACION", false]);
+
+  // ── NEX-049 y reglas de numeración
+  const m49 = leer("documentacao/banco/nexit/v1/migraciones/NEX-049-facturacion-envio-fe.sql");
+  const r49 = leer("documentacao/banco/nexit/v1/scripts/reversion-NEX-049.sql");
+  const sc49 = m49.split("\n").filter((l) => !l.trim().startsWith("--")).join("\n");
+  const ini49 = sc49.slice(sc49.indexOf("CREATE OR REPLACE FUNCTION public.fe_documento_iniciar_envio"), sc49.indexOf("CREATE OR REPLACE FUNCTION public.fe_documento_registrar_envio"));
+  const reg49 = sc49.slice(sc49.indexOf("CREATE OR REPLACE FUNCTION public.fe_documento_registrar_envio"), sc49.indexOf("CREATE OR REPLACE FUNCTION public.nex_aplicar_grants_facturacion_envio"));
+
+  cierto("NEX-049: incremental (no toca 047/048), exige NEX-048, no reaplica; ENVIANDO en el CHECK; lote y envio_iniciado_at; fase en intentos", /NEX-049 requiere NEX-048/.test(m49) && /NEX-049 parece aplicada/.test(m49) && /'PENDIENTE_ENVIO','ENVIANDO','ENVIO_INDETERMINADO','ENVIADO','ERROR_ENVIO'/.test(m49) && /ADD COLUMN envio_iniciado_at timestamptz/.test(m49) && /fase IN \('AUTENTICACION','TRANSMISION','CONSULTA'\)/.test(m49) && !/ENVIANDO/.test(leer("documentacao/banco/nexit/v1/migraciones/NEX-047-facturacion-documentos-electronicos.sql")) && !/envio_iniciado_at/.test(leer("documentacao/banco/nexit/v1/migraciones/NEX-048-facturacion-emision-fe.sql")));
+  cierto("NEX-049: iniciar envío exige CREAR, bloquea la fila y solo avanza desde pendiente/error; ya enviado, indeterminado y en curso se rechazan; un ENVIANDO huérfano (>2 min) pasa a indeterminado y se CONFIRMA (RETURN, no excepción)", ini49.indexOf("'FACTURACION_ELECTRONICA', 'CREAR'") > 0 && ini49.indexOf("FOR UPDATE") > ini49.indexOf("'CREAR'") && /NEX:YA_ENVIADO/.test(ini49) && /NEX:ENVIO_INDETERMINADO/.test(ini49) && /NEX:ENVIO_EN_CURSO/.test(ini49) && /interval '2 minutes'/.test(ini49) && /SET estado_local = 'ENVIO_INDETERMINADO'[^;]*;\s+RETURN QUERY SELECT 'INDETERMINADO'/.test(ini49) && /solo se envían facturas electrónicas/.test(ini49));
+  cierto("NEX-049: registrar envío exige que el documento esté ENVIANDO, valida resultado↔estado, guarda el intento ANTES de actualizar, fija el CDC solo si es coherente y NUNCA toca estado_sifen", /d\.estado_local <> 'ENVIANDO'/.test(reg49) && /\(p_resultado = 'OK'\) <> \(p_estado_local = 'ENVIADO'\)/.test(reg49) && reg49.indexOf("INSERT INTO public.documento_electronico_intentos") < reg49.indexOf("UPDATE public.documentos_electronicos") && /public\.fe_cdc_coherente\(tipo, establecimiento, punto_expedicion, numero, p_cdc\)/.test(reg49) && !/estado_sifen/.test(reg49.slice(reg49.indexOf("UPDATE public.documentos_electronicos"))));
+  cierto("NEX-049: el runtime solo ejecuta las dos funciones; el wrapper de grants las incluye; la reversión aborta si hay envíos y restaura el CHECK anterior", /GRANT EXECUTE ON FUNCTION public\.fe_documento_iniciar_envio\(uuid, uuid, uuid\) TO nexit_runtime/.test(m49) && !/GRANT[^;]*(INSERT|UPDATE|DELETE)[^;]*TO nexit_runtime/i.test(m49) && /PERFORM public\.nex_aplicar_grants_facturacion_emision\(\);\s+PERFORM public\.nex_aplicar_grants_facturacion_envio\(\);/.test(m49) && /hay envíos registrados/.test(r49) && r49.indexOf("RAISE EXCEPTION") < r49.indexOf("DROP FUNCTION") && /CHECK \(estado_local IN \('PENDIENTE_ENVIO','ENVIO_INDETERMINADO','ENVIADO','ERROR_ENVIO'\)\)/.test(r49));
+  const cfgPunto = leer("documentacao/banco/nexit/v1/scripts/configurar-punto-expedicion-prueba-NEX-048.sql");
+
+  igual("numeración de prueba: ultimo_numero 49999 → primera factura 001-002-0050000 (la reserva suma 1 y rellena a 7 dígitos)", [String(49999 + 1).padStart(7, "0"), /v_num := v_punto\.ultimo_numero \+ 1/.test(m48), /lpad\(v_num::text, 7, '0'\)/.test(m48)], ["0050000", true, true]);
+  cierto("script de configuración del punto de prueba: manual, establecimiento 001 / punto 002 / 49999, valida la sucursal, no reinicia un punto existente y no es una migración ni un valor por defecto", /'002'/.test(cfgPunto) && /49999/.test(cfgPunto) && /establecimiento_sifen IS DISTINCT FROM '001'/.test(cfgPunto) && /ya existe: no se reinicia la numeración/.test(cfgPunto) && /set_config\('nexit\.empresa'/.test(cfgPunto) && !/INSERT INTO public\.fe_puntos_expedicion[\s\S]*SELECT/.test(cfgPunto) && !existsSync(join(raiz, "documentacao/banco/nexit/v1/migraciones/NEX-050-puntos.sql")));
+
+  // ── Pantallas
+  const apiPrevia = leer("app/api/facturas/previa/route.ts");
+  const apiEnviarDoc = leer("app/api/documentos/[id]/enviar/route.ts");
+  const docPage = leer("app/(private)/documentos/page.tsx");
+  const quitarComentarios = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+
+  cierto("formulario: «Grabar» solo llama a la previa; el modal-resumen ofrece «Volver a editar» y «Enviar factura»; solo «Enviar factura» llama a la API de emisión", /onClick=\{grabar\}/.test(formulario) && /fetch\("\/api\/facturas\/previa"/.test(formulario) && /Volver a editar/.test(formulario) && /onClick=\{enviar\}/.test(formulario) && /fetch\("\/api\/facturas", \{ method: "POST"/.test(formulario) && formulario.split('fetch("/api/facturas", { method: "POST"').length === 2 && /role="dialog" aria-modal="true"/.test(formulario) && !/Registrar factura/.test(formulario));
+  cierto("formulario: modal técnico con fases, HTTP, resultado, mensaje, errores de validación y lote/CDC solo si vienen; aclara que recibido/200 no es aprobado; sin token ni clave", /Envío al gateway \(diagnóstico de prueba\)/.test(formulario) && /resultado\.lote \?/.test(formulario) && /resultado\.errores\.length > 0/.test(formulario) && /no significan aprobado por SIFEN/.test(formulario) && /Autenticando y transmitiendo/.test(formulario) && !/token|password|Authorization|Bearer/i.test(formulario));
+  cierto("formulario: la clave de idempotencia es la misma en cada reintento y el reintento de un documento existente usa el endpoint del documento (no crea ni consume número)", /claveIdempotencia: clave/.test(formulario) && /\/api\/documentos\/\$\{resultado\.documentoId\}\/enviar/.test(formulario) && /resultado\.estadoLocal === "ERROR_ENVIO"/.test(formulario));
+  cierto("API: la previa no importa envío ni gateway (no puede escribir ni transmitir); la emisión usa emitirFactura; el reenvío del documento exige CREAR y alcance", !/envio|gateway/i.test(quitarComentarios(apiPrevia)) && /emitirFactura/.test(apiFacturas) && /prepararFacturacion\("CREAR"\)/.test(apiEnviarDoc) && /leerDocumento\(b\.db, b\.empresaId, b\.usuarioId, id\)/.test(apiEnviarDoc));
+  cierto("Documentos electrónicos: estado «Enviando», lote, historial con tipo de intento y fase, y botón «Enviar al gateway» solo con permiso CREAR y estado pendiente/error; HTTP 200 de envío no se muestra como aprobado", /ETIQUETA_LOCAL/.test(docPage) && /ENVIANDO: "Enviando"/.test(leer("lib/facturacion/estados.ts")) && /Enviar al gateway/.test(docPage) && /crear && \(d\.estadoLocal === "PENDIENTE_ENVIO" \|\| d\.estadoLocal === "ERROR_ENVIO"\)/.test(docPage) && /etiquetaIntento\(i\.tipo, i\.resultado\)/.test(docPage) && /Recibido por el gateway \(estado fiscal por consultar\)/.test(leer("lib/facturacion/estados.ts")) && /d\.lote \?\? "No informado"/.test(docPage));
+  cierto("el envío nunca fija estado_sifen y no mueve stock: ni envio.ts ni la API de envío mencionan estado_sifen/APROBADO ni inventario", !/estado_sifen|APROBADO|movimientos_inventario|stock_saldos/.test(quitarComentarios(leer("lib/facturacion/envio.ts") + apiEnviarDoc + apiFacturas)));
 
   return fallos;
 }

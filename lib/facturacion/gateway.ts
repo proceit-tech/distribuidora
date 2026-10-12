@@ -237,3 +237,156 @@ export async function consultarDocumentoGateway(config: ConfigGateway, doc: Docu
 
   return vacio("ERROR_HTTP", 401, "El gateway rechazó el token tras renovarlo.");
 }
+
+// ── Envío (recepcion_de) ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+// Contrato CONFIRMADO: POST {base}/api/recepcion_de con Bearer y el JSON de la FE. NO está comprobado el cuerpo de la respuesta: no se inventan campos.
+// Solo se aprovecha lo que la respuesta efectivamente trae (búsqueda tolerante por nombre) y todo lo demás queda en la respuesta saneada que se guarda.
+// Un HTTP 2xx significa «el gateway respondió», NUNCA «aprobado por SIFEN»: estado_sifen solo lo fija la consulta de estado.
+
+export type EstadoLocalEnvio = "ENVIADO" | "ERROR_ENVIO" | "ENVIO_INDETERMINADO";
+export type FaseEnvio = { fase: "AUTENTICACION" | "TRANSMISION" | "RESPUESTA"; ok: boolean; detalle: string; http?: number | null };
+
+export type ResultadoEnvio = {
+  resultado: "OK" | "ERROR_HTTP" | "TIMEOUT" | "RED" | "RESPUESTA_INVALIDA";
+  /** Fase en la que terminó el intento (para el historial). */
+  faseFinal: "AUTENTICACION" | "TRANSMISION";
+  estadoLocal: EstadoLocalEnvio;
+  http: number | null;
+  mensaje: string | null;
+  lote: string | null;
+  cdc: string | null;
+  estadoGateway: string | null;
+  errores: string[];
+  respuesta: Record<string, unknown> | null;
+  fases: FaseEnvio[];
+};
+
+const norm = (k: string) => k.toLowerCase().replace(/[^a-z0-9]/g, "");
+const CLAVES_LOTE = new Set(["lote", "nrolote", "numerolote", "nrodelote", "numerodelote"]);
+const CLAVES_ERRORES = new Set(["errors", "errores", "validaciones", "validationerrors", "erroresvalidacion"]);
+const CLAVES_MENSAJE = new Set(["message", "mensaje", "msg"]);
+const CLAVES_CDC = new Set(["cdc"]);
+const CLAVES_ESTADO = new Set(["estado"]);
+
+function buscar(v: unknown, claves: Set<string>, profundidad = 0): unknown {
+  if (profundidad > 5 || v === null || typeof v !== "object") return undefined;
+  if (Array.isArray(v)) {
+    for (const x of v.slice(0, 20)) {
+      const r = buscar(x, claves, profundidad + 1);
+
+      if (r !== undefined) return r;
+    }
+
+    return undefined;
+  }
+  for (const [k, x] of Object.entries(v as Record<string, unknown>)) if (claves.has(norm(k)) && x !== null && x !== undefined && x !== "") return x;
+  for (const x of Object.values(v as Record<string, unknown>)) {
+    const r = buscar(x, claves, profundidad + 1);
+
+    if (r !== undefined) return r;
+  }
+
+  return undefined;
+}
+
+const comoTexto = (v: unknown, max = 300): string | null => (typeof v === "string" && v.trim() ? v.trim().slice(0, max) : typeof v === "number" ? String(v) : null);
+
+function listaErrores(v: unknown): string[] {
+  if (v === undefined || v === null) return [];
+
+  const items = Array.isArray(v) ? v : typeof v === "object" ? Object.entries(v as Record<string, unknown>).map(([k, x]) => `${k}: ${typeof x === "string" ? x : JSON.stringify(sanearRespuesta(x))}`) : [v];
+
+  return items.slice(0, 20).map((x) => (typeof x === "string" ? x.slice(0, 300) : JSON.stringify(sanearRespuesta(x)).slice(0, 300)));
+}
+
+const resultadoEnvioVacio = (resultado: ResultadoEnvio["resultado"], faseFinal: ResultadoEnvio["faseFinal"], estadoLocal: EstadoLocalEnvio, http: number | null, mensaje: string | null, fases: FaseEnvio[]): ResultadoEnvio => ({
+  resultado, faseFinal, estadoLocal, http, mensaje, lote: null, cdc: null, estadoGateway: null, errores: [], respuesta: null, fases,
+});
+
+/**
+ * Interpreta la respuesta de recepcion_de sin suponer su forma:
+ *  · 2xx + JSON con status «success»  → OK / ENVIADO (el gateway lo recibió; el estado fiscal queda por consultar).
+ *  · 2xx + status «error»              → rechazo informado por el gateway (ERROR_ENVIO, con sus mensajes de validación).
+ *  · 2xx sin forma reconocible         → RESPUESTA_INVALIDA / ENVIO_INDETERMINADO (pudo haberlo recibido: no se reenvía a ciegas).
+ *  · 4xx                               → el gateway lo rechazó: ERROR_ENVIO (los datos deben corregirse; no hubo recepción).
+ *  · 5xx                               → ENVIO_INDETERMINADO (el servidor pudo haber procesado parte de la solicitud).
+ */
+export function interpretarRecepcion(http: number, cuerpoTexto: string, fases: FaseEnvio[] = []): ResultadoEnvio {
+  let cuerpo: unknown;
+
+  try {
+    cuerpo = JSON.parse(cuerpoTexto);
+  } catch {
+    cuerpo = undefined;
+  }
+
+  const raiz = cuerpo && typeof cuerpo === "object" && !Array.isArray(cuerpo) ? (cuerpo as Record<string, unknown>) : null;
+  const cdcTexto = raiz ? comoTexto(buscar(raiz, CLAVES_CDC), 60) : null;
+  const mensaje = raiz ? comoTexto(buscar(raiz, CLAVES_MENSAJE)) : null;
+  const base = (r: ResultadoEnvio["resultado"], estado: EstadoLocalEnvio, texto: string | null): ResultadoEnvio => ({
+    ...resultadoEnvioVacio(r, "TRANSMISION", estado, http, texto, fases),
+    respuesta: cuerpo === undefined ? null : respuestaParaGuardar(cuerpo),
+    lote: raiz ? comoTexto(buscar(raiz, CLAVES_LOTE), 60) : null,
+    cdc: cdcTexto && /^\d{44}$/.test(cdcTexto) ? cdcTexto : null,
+    estadoGateway: raiz ? comoTexto(buscar(raiz, CLAVES_ESTADO), 120) : null,
+    errores: raiz ? listaErrores(buscar(raiz, CLAVES_ERRORES)) : [],
+  });
+
+  if (http >= 500) return base("ERROR_HTTP", "ENVIO_INDETERMINADO", mensaje ?? `El gateway respondió HTTP ${http}.`);
+  if (http >= 400) return base("ERROR_HTTP", "ERROR_ENVIO", mensaje ?? `El gateway rechazó la solicitud (HTTP ${http}).`);
+  if (http >= 200 && http < 300 && raiz) {
+    if (raiz.status === "success") return base("OK", "ENVIADO", mensaje);
+    if (raiz.status === "error") return base("ERROR_HTTP", "ERROR_ENVIO", mensaje ?? "El gateway informó un error.");
+  }
+
+  return base("RESPUESTA_INVALIDA", "ENVIO_INDETERMINADO", "La respuesta del gateway no se pudo interpretar; el documento pudo haber sido recibido.");
+}
+
+/**
+ * Autentica y transmite UN documento ya reservado y persistido. No lanza por fallos del gateway: devuelve el resultado y las fases para el registro y
+ * el modal técnico. Sin credenciales no se llama a nadie. El 401 de recepcion_de (token vencido) se renueva UNA vez: un 401 no procesó nada.
+ */
+export async function enviarDocumentoGateway(config: ConfigGateway, payload: Record<string, unknown>, dep: Dependencias = {}): Promise<ResultadoEnvio | { sinContrato: "CREDENCIALES" }> {
+  const credenciales = leerCredenciales(config.credencialRef, dep.env);
+
+  if (!credenciales) return { sinContrato: "CREDENCIALES" };
+
+  const d = { fetch: dep.fetch ?? (globalThis.fetch as unknown as FetchLike), ahora: dep.ahora ?? Date.now };
+  const fases: FaseEnvio[] = [];
+
+  for (const forzar of [false, true]) {
+    const token = await obtenerToken(config, credenciales.ruc, credenciales.password, d, forzar);
+
+    if (typeof token !== "string") {
+      fases.push({ fase: "AUTENTICACION", ok: false, detalle: token.mensaje, http: token.http });
+
+      // Nada se transmitió: es seguro reintentar más tarde.
+      return resultadoEnvioVacio(token.resultado, "AUTENTICACION", "ERROR_ENVIO", token.http, token.mensaje, fases);
+    }
+    fases.push({ fase: "AUTENTICACION", ok: true, detalle: forzar ? "Sesión renovada con el gateway." : "Autenticación obtenida." });
+
+    const r = await enviar(`${config.baseUrl}/api/recepcion_de`, { Authorization: `Bearer ${token}` }, payload, config.timeoutMs, d.fetch);
+
+    if (!r.ok) {
+      const m = r.motivo === "TIMEOUT" ? "Tiempo de espera agotado: el gateway pudo haber recibido el documento." : "Error de red durante la transmisión: el gateway pudo haber recibido el documento.";
+
+      fases.push({ fase: "TRANSMISION", ok: false, detalle: m });
+
+      return resultadoEnvioVacio(r.motivo, "TRANSMISION", "ENVIO_INDETERMINADO", null, m, fases);
+    }
+    if (r.status === 401 && !forzar) {
+      fases.push({ fase: "TRANSMISION", ok: false, detalle: "Token rechazado (HTTP 401); se renueva la sesión.", http: 401 });
+      continue;
+    }
+
+    fases.push({ fase: "TRANSMISION", ok: true, detalle: "Solicitud transmitida.", http: r.status });
+
+    const res = interpretarRecepcion(r.status, r.texto, fases);
+
+    fases.push({ fase: "RESPUESTA", ok: res.resultado === "OK", detalle: res.resultado === "OK" ? "El gateway recibió el documento. El estado fiscal (SIFEN) aún no está confirmado." : (res.mensaje ?? "Respuesta del gateway"), http: r.status });
+
+    return res;
+  }
+
+  return resultadoEnvioVacio("ERROR_HTTP", "AUTENTICACION", "ERROR_ENVIO", 401, "El gateway rechazó el token tras renovarlo.", fases);
+}

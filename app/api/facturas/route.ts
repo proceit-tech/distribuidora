@@ -1,11 +1,13 @@
 import { NextResponse } from "next/server";
 
-import { crearFacturaElectronica, leerCuerpoFactura } from "@/lib/facturacion/emision";
+import { leerCuerpoFactura } from "@/lib/facturacion/emision";
+import { emitirFactura } from "@/lib/facturacion/envio";
 import { prepararFacturacion } from "@/lib/facturacion/servidor";
 import { respuestaErrorFacturacion } from "@/lib/facturacion/shared";
 
-// Crea una Factura Electrónica (FACTURACION_ELECTRONICA.CREAR): reserva el número, guarda el documento y su payload inmutable en PENDIENTE_ENVIO.
-// No envía nada al gateway. empresa_id y usuario salen de la sesión; precios, IVA, unidad y datos del receptor se leen de los cadastros.
+// «Enviar factura» (FACTURACION_ELECTRONICA.CREAR): confirma la operación, registra la intención de forma idempotente (reserva el número UNA vez), genera el
+// payload final y transmite a recepcion_de desde el servidor. El HTTP 200 de esta API no implica aprobación SIFEN: el resultado trae el estado de envío y
+// las fases; el estado fiscal solo lo fija la consulta de estado. empresa_id y usuario salen de la sesión.
 export async function POST(request: Request) {
   const b = await prepararFacturacion("CREAR");
 
@@ -25,10 +27,8 @@ export async function POST(request: Request) {
   if (typeof datos === "string") return NextResponse.json({ error: datos }, { status: 400 });
 
   try {
-    const r = await crearFacturaElectronica(b.db, b.empresaId, b.usuarioId, datos);
-
-    return NextResponse.json(r, { status: r.reutilizado === true ? 200 : 201 });
+    return NextResponse.json(await emitirFactura(b.db, b.empresaId, b.usuarioId, datos));
   } catch (error) {
-    return respuestaErrorFacturacion(error, "crear");
+    return respuestaErrorFacturacion(error, "enviar");
   }
 }

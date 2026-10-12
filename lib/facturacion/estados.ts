@@ -14,7 +14,7 @@ export const ETIQUETA_TIPO: Record<TipoDocumento, string> = {
   AFE: "Autofactura",
 };
 
-export const ESTADOS_LOCAL = ["PENDIENTE_ENVIO", "ENVIO_INDETERMINADO", "ENVIADO", "ERROR_ENVIO"] as const;
+export const ESTADOS_LOCAL = ["PENDIENTE_ENVIO", "ENVIANDO", "ENVIO_INDETERMINADO", "ENVIADO", "ERROR_ENVIO"] as const;
 export const ESTADOS_SIFEN = ["SIN_CONSULTA", "PENDIENTE", "APROBADO", "RECHAZADO", "CANCELADO", "INUTILIZADO", "NO_RECONOCIDO"] as const;
 export const ESTADOS_EMAIL = ["NO_INFORMADO", "SIN_EMAIL", "PENDIENTE", "ENVIADO", "ERROR"] as const;
 
@@ -24,6 +24,7 @@ export type EstadoEmail = (typeof ESTADOS_EMAIL)[number];
 
 export const ETIQUETA_LOCAL: Record<EstadoLocal, string> = {
   PENDIENTE_ENVIO: "Pendiente de envío",
+  ENVIANDO: "Enviando",
   ENVIO_INDETERMINADO: "Envío indeterminado",
   ENVIADO: "Enviado",
   ERROR_ENVIO: "Error de envío",
@@ -56,6 +57,17 @@ export const ETIQUETA_RESULTADO_INTENTO: Record<string, string> = {
   RESPUESTA_INVALIDA: "Respuesta no interpretable",
   CDC_DIVERGENTE: "CDC distinto del registrado",
 };
+
+/** Etiqueta del resultado de un intento según su tipo: un OK de ENVÍO significa «recibido por el gateway», nunca aprobación SIFEN. */
+export function etiquetaIntento(tipo: string, resultado: string): string {
+  if (tipo === "ENVIO") {
+    return (
+      ({ OK: "Recibido por el gateway (estado fiscal por consultar)", ERROR_HTTP: "Rechazado o error del gateway", TIMEOUT: "Tiempo de espera agotado (indeterminado)", RED: "Error de red (indeterminado)", RESPUESTA_INVALIDA: "Respuesta no interpretable (indeterminado)" } as Record<string, string>)[resultado] ?? resultado
+    );
+  }
+
+  return ETIQUETA_RESULTADO_INTENTO[resultado] ?? resultado;
+}
 
 const sinTildes = (t: string) => t.normalize("NFD").replace(/[̀-ͯ]/g, "");
 
