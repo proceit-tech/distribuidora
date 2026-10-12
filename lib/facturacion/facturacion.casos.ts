@@ -11,7 +11,7 @@ import { claveToken, consultarDocumentoGateway, enviarDocumentoGateway, interpre
 import { calcularItem, calcularSubtotales, numeroDec, parseDec, textoDec } from "@/lib/facturacion/calculo";
 import { crearFacturaElectronica, leerCuerpoFactura, prepararFactura } from "@/lib/facturacion/emision";
 import { emitirFactura } from "@/lib/facturacion/envio";
-import { construirPayloadFE, validarEntradaFE, totalFactura, type EntradaFE, type LineaFE, type ReceptorFE } from "@/lib/facturacion/payload-fe";
+import { construirPayloadFE, FORMAS_PAGO, validarEntradaFE, totalFactura, type EntradaFE, type LineaFE, type ReceptorFE } from "@/lib/facturacion/payload-fe";
 import { construirConsultas, consultarEstado, ErrorFacturacion, ErrorValidacionFiscal, leerDocumentos, normalizarConsulta, respuestaErrorFacturacion } from "@/lib/facturacion/shared";
 
 const raiz = process.cwd();
@@ -579,5 +579,29 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
   cierto("Documentos electrónicos: estado «Enviando», lote, historial con tipo de intento y fase, y botón «Enviar al gateway» solo con permiso CREAR y estado pendiente/error; HTTP 200 de envío no se muestra como aprobado", /ETIQUETA_LOCAL/.test(docPage) && /ENVIANDO: "Enviando"/.test(leer("lib/facturacion/estados.ts")) && /Enviar al gateway/.test(docPage) && /crear && \(d\.estadoLocal === "PENDIENTE_ENVIO" \|\| d\.estadoLocal === "ERROR_ENVIO"\)/.test(docPage) && /etiquetaIntento\(i\.tipo, i\.resultado\)/.test(docPage) && /Recibido por el gateway \(estado fiscal por consultar\)/.test(leer("lib/facturacion/estados.ts")) && /d\.lote \?\? "No informado"/.test(docPage));
   cierto("el envío nunca fija estado_sifen y no mueve stock: ni envio.ts ni la API de envío mencionan estado_sifen/APROBADO ni inventario", !/estado_sifen|APROBADO|movimientos_inventario|stock_saldos/.test(quitarComentarios(leer("lib/facturacion/envio.ts") + apiEnviarDoc + apiFacturas)));
 
+  // ══ Decisiones 47ff44c / AUD-FE-CAMPOS: fixture sintética equivalente al JSON funcional ═════════════════════════════════════════════════════════════
+  const lineasEjemplo = [linea({ codigoInterno: "A", precio: "24600" }), linea({ codigoInterno: "B", precio: "24600" }), linea({ codigoInterno: "C", precio: "58100" })];
+  const pagoEjemplo = [{ tipo: 1, monto: "107300" }];
+  const ejemploFE = construirPayloadFE(entradaFE({ lineas: lineasEjemplo, pagos: pagoEjemplo })) as Record<string, unknown>;
+  const subEj = (ejemploFE.Subtotales as Array<Record<string, number>>)[0];
+
+  igual("AUD-FE-01: fixture del JSON funcional — total 107300, IVA 9754.54545454, base 97545.45454546 y dLiqTotIVA10 = IVA (no 0)", [subEj.dTotGralOpe, subEj.dSub10, subEj.dIVA10, subEj.dLiqTotIVA10, subEj.dTotIVA, subEj.dBaseGrav10, subEj.dTBasGraIVA, subEj.dTotalGs, subEj.dLiqTotIVA5, subEj.dIVA5], [107300, 107300, 9754.54545454, 9754.54545454, 9754.54545454, 97545.45454546, 97545.45454546, 107300, 0, 0]);
+  igual("AUD-FE-01: ítems del ejemplo (24.600 → base 22363.63636364 / IVA 2236.36363636; 58.100 → 52818.18181818 / 5281.81818182)", (ejemploFE.Detalles as Array<Record<string, number>>).map((d) => [d.dTotOpeItem, d.dBasGravIVA, d.dLiqIVAItem]), [[24600, 22363.63636364, 2236.36363636], [24600, 22363.63636364, 2236.36363636], [58100, 52818.18181818, 5281.81818182]]);
+  igual("AUD-FE-01: al 5 % dLiqTotIVA5 = dIVA5 (coherente con el total de IVA)", (() => { const p = construirPayloadFE(entradaFE({ lineas: [linea({ precio: "10500", tasa: 5 })], pagos: [{ tipo: 1, monto: "10500" }] })) as { Subtotales: Array<Record<string, number>> }; return [p.Subtotales[0].dIVA5, p.Subtotales[0].dLiqTotIVA5, p.Subtotales[0].dLiqTotIVA10, p.Subtotales[0].dTotIVA]; })(), [500, 500, 0, 500]);
+  igual("AUD-FE-02: dDVRec y dNumCasRec viajan como NÚMERO; RUC sin DV como texto", [typeof ejemploFE.dDVRec, ejemploFE.dDVRec, typeof ejemploFE.dNumCasRec, ejemploFE.dNumCasRec, ejemploFE.dRucRec], ["number", 6, "number", 123, "80000005"]);
+  igual("número de casa: se conserva el del cadastro; 0 solo si no hay uno utilizable (primera prueba); sin dirección, null", [
+    (construirPayloadFE(entradaFE({ receptor: { ...receptor, numeroCasa: "45" } })) as Record<string, unknown>).dNumCasRec,
+    (construirPayloadFE(entradaFE({ receptor: { ...receptor, numeroCasa: "" } })) as Record<string, unknown>).dNumCasRec,
+    (construirPayloadFE(entradaFE({ receptor: { ...receptor, numeroCasa: "S/N" } })) as Record<string, unknown>).dNumCasRec,
+    (construirPayloadFE(entradaFE({ receptor: { ...receptor, direccion: "", numeroCasa: "" } })) as Record<string, unknown>).dNumCasRec,
+  ], [45, 0, 0, null]);
+  cierto("AUD-FE-03: no se envían tags de localización no presentes en el JSON funcional (cDepRec/cDisRec/cCiuRec) ni se inventan opcionales", !("cDepRec" in ejemploFE) && !("cDisRec" in ejemploFE) && !("cCiuRec" in ejemploFE));
+  igual("pago: solo Efectivo (iTiPago 1) por el total; cualquier otra forma se rechaza en la validación y en el backend", [
+    (ejemploFE.FormaPago as Array<Record<string, unknown>>), /forma de pago no es válida/.test(errorDe(entradaFE({ pagos: [{ tipo: 2, monto: "11000" }] }))),
+    await rechaza(dbCrear(), cuerpo({ pagos: [{ tipo: 3 }] })),
+  ], [[{ iTiPago: 1, dMonTiPag: 107300, cMoneTiPag: "PYG", dTiCamTiPag: null }], true, "422:La forma de pago no es válida."]);
+
+  igual("catálogo del formulario: la lista de formas de pago ofrece únicamente Efectivo", JSON.stringify(FORMAS_PAGO), '{"1":"Efectivo"}');
+  cierto("cliente fiscalmente incompleto: la emisión se bloquea con los pendientes de aptitud SIFEN, sin completar valores inventados", /evaluarAptitudCliente/.test(emisionTs) && /datos fiscales pendientes de regularizar/.test(emisionTs));
   return fallos;
 }

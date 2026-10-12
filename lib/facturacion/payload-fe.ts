@@ -12,8 +12,8 @@ import { B, S, calcularItem, calcularSubtotales, numeroDec, parseDec, type Afect
 
 export const TIPOS_TRANSACCION = { 1: "Venta de mercadería", 2: "Prestación de servicios", 3: "Mixto (mercadería y servicios)" } as const;
 export const INDICADORES_PRESENCIA = { 1: "Operación presencial", 2: "Operación electrónica", 3: "Operación telemarketing", 4: "Venta a domicilio", 5: "Operación bancaria", 6: "Operación cíclica" } as const;
-/** E606 (MT v150): formas de pago al contado habilitadas en esta etapa. */
-export const FORMAS_PAGO = { 1: "Efectivo", 2: "Cheque", 3: "Tarjeta de crédito", 4: "Tarjeta de débito", 5: "Transferencia", 17: "Pago móvil", 21: "Pago electrónico" } as const;
+/** E606 (MT v150): en la primera emisión de prueba SOLO se habilita Efectivo (decisión del responsable); otras formas exigen validar sus condicionales fiscales. */
+export const FORMAS_PAGO = { 1: "Efectivo" } as const;
 
 /** NT 024: sin nombre (Innominado) no se admite con total general ≥ Gs. 7.000.000 (D208c). */
 export const LIMITE_INNOMINADO = B(7000000) * S;
@@ -202,17 +202,16 @@ export function construirPayloadFE(e: EntradaFE): Record<string, unknown> {
     cPaisRec: r.pais,
     iTiContRec: contribuyente ? r.tipoContribuyente : null,
     dRucRec: contribuyente ? r.ruc : null,
-    dDVRec: contribuyente ? r.dv : null,
+    // En el JSON funcional el DV viaja como número.
+    dDVRec: contribuyente ? Number(r.dv) : null,
     iTipIDRec: contribuyente || sinDocumento ? null : r.tipoDocumentoIdentidad,
     dDTipIDRec: contribuyente || sinDocumento ? null : nulo(r.descripcionTipoDocumento),
     dNumIDRec: contribuyente || sinDocumento ? null : nulo(r.numeroDocumento),
     dNomRec: r.razonSocial,
     dNomFanRec: nulo(r.nombreFantasia),
     dDirRec: nulo(r.direccion),
-    dNumCasRec: nulo(r.numeroCasa),
-    cDepRec: nulo(r.departamento),
-    cDisRec: nulo(r.distrito),
-    cCiuRec: nulo(r.ciudad),
+    // Numérico como en el JSON funcional. 0 solo si el cadastro no trae un número utilizable (parámetro de la primera prueba; no sobrescribe la ficha).
+    dNumCasRec: nulo(r.direccion) === null ? null : /^\d{1,6}$/.test(r.numeroCasa.trim()) ? Number(r.numeroCasa.trim()) : 0,
     dTelRec: nulo(r.telefono),
     dCelRec: nulo(r.celular),
     dEmailRec: nulo(r.email),
@@ -230,7 +229,7 @@ export function construirPayloadFE(e: EntradaFE): Record<string, unknown> {
       {
         dSubExe: num(sub.dSubExe), dSubExo: num(sub.dSubExo), dSub5: num(sub.dSub5), dSub10: num(sub.dSub10), dTotOpe: num(sub.dTotOpe),
         dTotDesc: 0, dTotDescGlotem: 0, dTotAntItem: 0, dTotAnt: 0, dPorcDescTotal: 0, dDescTotal: 0, dAnticipo: 0, dRedon: 0,
-        dTotGralOpe: num(sub.dTotGralOpe), dIVA5: num(sub.dIVA5), dIVA10: num(sub.dIVA10), dLiqTotIVA5: 0, dLiqTotIVA10: 0, dTotIVA: num(sub.dTotIVA),
+        dTotGralOpe: num(sub.dTotGralOpe), dIVA5: num(sub.dIVA5), dIVA10: num(sub.dIVA10), dLiqTotIVA5: num(sub.dIVA5), dLiqTotIVA10: num(sub.dIVA10), dTotIVA: num(sub.dTotIVA),
         dBaseGrav5: num(sub.dBaseGrav5), dBaseGrav10: num(sub.dBaseGrav10), dTBasGraIVA: num(sub.dTBasGraIVA), dTotalGs: num(sub.dTotalGs),
       },
     ],
