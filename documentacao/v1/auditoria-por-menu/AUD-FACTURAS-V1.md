@@ -88,3 +88,11 @@ O responsável esclareceu que uma mercadoria possui unidade-base de estoque, mú
 **FAT-X04 / precisão:** fator de apresentação com 6 decimais contra estoque/linhas de movimentação a 4; validar integridade antes de calcular E709/E711/preço do item e impedir discrepância de valor total. Sem presumir que emitir FE hoje afeta o estoque.
 
 **Fonte:** `AUD-PRODUCTOS-V1.md`, seção XIV; auditoria Facturas continua aberta.
+
+## Bloqueador fiscal de unidade-base — complemento 12/10/2026
+
+**FAT-X05 / ALTA:** `NEX-047:76-122` define estados local/SIFEN independentes, mas não possui linhas fiscais ligadas por FK ao produto; `NEX-048:50-64` congela payload JSONB com `dCodInt` e unidades fiscais, sem `productoId` relacional. Portanto não se consegue estabelecer automaticamente uma matriz de **FEs pendentes por produto** somente por chaves relacionais. Não bloquear todos os produtos por qualquer documento pendente da empresa e não ignorar documento pendente real do produto.
+
+**Decisão DEC-PRD-U08:** confirmar se uma FE cujo payload está imutável e estoque zero deve bloquear a troca da base até estado fiscal concluído, ou se o documento fiscal por si só não bloqueia e somente o fato físico pendente bloqueia. Ver `AUD-PRODUCTOS-V1.md` §XVII. Nenhum impacto retroativo sobre DE, preço, IVA ou estoque pode ser presumido.
+
+**Estado:** auditoria cruzada aberta, sem testes na VM/gateway.
