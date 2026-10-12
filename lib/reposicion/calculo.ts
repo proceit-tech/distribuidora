@@ -43,6 +43,8 @@ export type EntradaReposicion = {
   proveedorPrincipal: { nombre: string; plazoDias: number | null; cantidadMinimaCompra: number | null } | null;
   /** true = el producto ya tiene su plan por depósito: este renglón consolidado solo sirve de referencia y no se suma. */
   soloReferencia?: boolean;
+  /** Modo de control de stock del producto. «UNIDAD_ETIQUETADA» (serie/etiqueta) aún no se puede mover desde Movimientos. */
+  modoControl?: "CANTIDAD" | "LOTE" | "UNIDAD_ETIQUETADA";
 };
 
 /** Cantidad transferible CONFIRMADA: el depósito de origen tiene parámetros y se respeta su propio punto/mínimo. */
@@ -161,6 +163,27 @@ export function calcularReposicion(e: EntradaReposicion, opciones: { incluirTran
     sugeridaCompra: sugerida === null ? null : redondear(sugerida - sugeridaTransferencia),
     advertencias,
   };
+}
+
+/**
+ * Transferencias a PREPARAR dado el valor de «A planificar» (simulación local) de la fila. Nunca supera lo confirmado por el plan global (AUD-REP-04):
+ * se reparte la cantidad planificada entre las transferencias en el mismo orden del plan y el excedente sobre lo transferible es compra, no traslado.
+ * Sin cantidad planificada escrita (null) se usa la sugerida. Pura: no registra nada.
+ */
+export function transferenciasPlanificadas(f: FilaReposicion, planificada: number | null): Transferencia[] {
+  let restante = planificada === null ? f.sugeridaTransferencia : Math.max(0, planificada);
+  const r: Transferencia[] = [];
+
+  for (const t of f.transferencias) {
+    if (restante <= 0) break;
+
+    const cantidad = redondear(Math.min(t.cantidad, restante));
+
+    if (cantidad > 0) r.push({ ...t, cantidad });
+    restante = redondear(restante - cantidad);
+  }
+
+  return r;
 }
 
 /** Orden por urgencia: sin stock, bajo mínimo, en punto, resto; y mayor cantidad sugerida primero. */

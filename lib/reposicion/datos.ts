@@ -19,7 +19,7 @@ export async function leerEntradasReposicion(db: Db, empresaId: string, usuarioI
     db.query(
       `SELECT p.id, p.codigo, p.descripcion, coalesce(m.nombre, '') AS marca, coalesce(um.nombre, '') AS unidad,
               p.stock_minimo::float8 AS minimo, p.stock_maximo::float8 AS maximo, p.punto_reposicion::float8 AS punto,
-              pp.proveedor AS "proveedorNombre", pp.plazo AS "proveedorPlazo", pp.minima AS "proveedorMinima"
+              p.modo_control_stock AS "modoControl", pp.proveedor AS "proveedorNombre", pp.plazo AS "proveedorPlazo", pp.minima AS "proveedorMinima"
          FROM productos p
          LEFT JOIN marcas_producto m ON m.empresa_id = p.empresa_id AND m.id = p.marca_id
          LEFT JOIN unidades_medida um ON um.id = p.unidad_medida_id
@@ -70,7 +70,7 @@ export async function leerEntradasReposicion(db: Db, empresaId: string, usuarioI
     const proveedorPrincipal = p.proveedorNombre
       ? { nombre: p.proveedorNombre as string, plazoDias: (p.proveedorPlazo as number | null) ?? null, cantidadMinimaCompra: (p.proveedorMinima as number | null) ?? null }
       : null;
-    const base = { productoId: p.id as string, productoCodigo: p.codigo as string, productoDescripcion: p.descripcion as string, marca: p.marca as string, unidad: p.unidad as string, proveedorPrincipal };
+    const base = { modoControl: p.modoControl as EntradaReposicion["modoControl"], productoId: p.id as string, productoCodigo: p.codigo as string, productoDescripcion: p.descripcion as string, marca: p.marca as string, unidad: p.unidad as string, proveedorPrincipal };
     const configs = configPorProducto.get(p.id as string) ?? [];
     const deConfig = new Map(configs.map((c) => [c.depositoId as string, c]));
 

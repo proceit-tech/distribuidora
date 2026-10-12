@@ -8,7 +8,7 @@ import { ThOrdenable } from "@/components/ui/lista-padrao/th-ordenable";
 import ui from "@/components/ui/lista-padrao/lista.module.css";
 import { formatearCantidad } from "@/lib/formato/listas";
 import { enlaceNuevoMovimiento } from "@/lib/movimientos/formulario";
-import { calcularPlanReposicion, compararUrgencia, type Criticidad, type EntradaReposicion, type FilaReposicion } from "@/lib/reposicion/calculo";
+import { calcularPlanReposicion, compararUrgencia, transferenciasPlanificadas, type Criticidad, type EntradaReposicion, type FilaReposicion } from "@/lib/reposicion/calculo";
 
 const PAGE_SIZE = 25;
 
@@ -120,6 +120,17 @@ export default function ReposicionPage() {
   const pagina = paginacion.clave === claveFiltros ? Math.min(paginacion.pagina, totalPaginas) : 1;
   const setPagina = (v: number | ((a: number) => number)) => setPaginacion({ clave: claveFiltros, pagina: typeof v === "function" ? v(pagina) : v });
   const paginaActual = useMemo(() => ordenados.slice((pagina - 1) * PAGE_SIZE, pagina * PAGE_SIZE), [ordenados, pagina]);
+
+  // Cantidad escrita en «A planificar» si es válida; null = sin simulación (se usa la sugerida).
+  const planEscrita = (f: FilaReposicion): number | null => {
+    const escrito = plan[f.clave];
+
+    if (escrito === undefined || escrito === "") return null;
+
+    const n = Number(escrito);
+
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  };
 
   const cantidadPlanificada = (f: FilaReposicion) => {
     const escrito = plan[f.clave];
@@ -357,19 +368,30 @@ export default function ReposicionPage() {
                     <td>
                       {f.necesita && f.sugerida ? (
                         <>
-                          {f.transferencias.map((t) => (
-                            <small key={t.depositoId} style={{ display: "block" }}>
-                              Transferir {cant(t.cantidad)} desde {t.depositoNombre}
-                              {datos?.permisos?.movimientos && f.ambito === "DEPOSITO" && f.depositoId ? (
-                                <>
-                                  {" · "}
-                                  <Link href={enlaceNuevoMovimiento({ productoId: f.productoId, tipo: "TRANSFERENCIA", depositoOrigenId: t.depositoId, depositoDestinoId: f.depositoId, cantidad: t.cantidad })} title="Abre Nuevo movimiento con estos datos precargados; no registra nada hasta que usted confirme allí.">
-                                    Preparar transferencia
-                                  </Link>
-                                </>
-                              ) : null}
+                          {f.transferencias.map((t) => {
+                            // La cantidad preparada respeta «A planificar» (simulación local) sin superar nunca lo confirmado por el plan global.
+                            const preparada = transferenciasPlanificadas(f, planEscrita(f)).find((x) => x.depositoId === t.depositoId)?.cantidad ?? 0;
+                            const movible = f.modoControl !== "UNIDAD_ETIQUETADA";
+
+                            return (
+                              <small key={t.depositoId} style={{ display: "block" }}>
+                                Transferir {cant(t.cantidad)} desde {t.depositoNombre}
+                                {datos?.permisos?.movimientos && f.ambito === "DEPOSITO" && f.depositoId && movible && preparada > 0 ? (
+                                  <>
+                                    {" · "}
+                                    <Link href={enlaceNuevoMovimiento({ productoId: f.productoId, tipo: "TRANSFERENCIA", depositoOrigenId: t.depositoId, depositoDestinoId: f.depositoId, cantidad: preparada })} title="Abre Nuevo movimiento con estos datos precargados; no registra nada hasta que usted confirme allí.">
+                                      Preparar transferencia{preparada !== t.cantidad ? ` de ${cant(preparada)} (según A planificar)` : ""}
+                                    </Link>
+                                  </>
+                                ) : null}
+                              </small>
+                            );
+                          })}
+                          {f.modoControl === "UNIDAD_ETIQUETADA" && f.transferencias.length > 0 ? (
+                            <small className={ui.muted} style={{ display: "block" }}>
+                              Unidad identificada (serie/etiqueta): aún no se puede transferir desde Movimientos; la sugerencia es solo de planificación.
                             </small>
-                          ))}
+                          ) : null}
                           {f.sugeridaCompra ? (
                             <small style={{ display: "block" }}>
                               Comprar {cant(f.sugeridaCompra)}

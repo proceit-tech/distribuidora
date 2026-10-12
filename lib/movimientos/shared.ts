@@ -86,7 +86,7 @@ export function prepararMovimiento(d: Cuerpo) {
 }
 
 /** Resuelve el lote según el modo de control del producto. Devuelve el id del lote o null. */
-async function resolverLote(c: PoolClient, empresaId: string, d: DatosMovimiento) {
+export async function resolverLote(c: PoolClient, empresaId: string, d: DatosMovimiento) {
   const p = await c.query(`SELECT modo_control_stock AS modo, controla_stock FROM productos WHERE empresa_id = $1 AND id = $2`, [empresaId, d.productoId]);
   if (!p.rowCount) throw new Error("El producto no existe en su empresa.");
   const { modo } = p.rows[0] as { modo: string };
@@ -100,21 +100,34 @@ async function resolverLote(c: PoolClient, empresaId: string, d: DatosMovimiento
   }
   if (!d.lote) throw new Error("Ingrese el lote: este producto se controla por lote.");
 
-  const existente = await c.query(
-    `SELECT id, to_char(fecha_vencimiento, 'YYYY-MM-DD') AS venc FROM stock_lotes WHERE empresa_id = $1 AND producto_id = $2 AND codigo_lote = $3`,
-    [empresaId, d.productoId, d.lote],
-  );
-  if (existente.rowCount) {
-    const l = existente.rows[0] as { id: string; venc: string | null };
+  const buscar = () =>
+    c.query(
+      `SELECT id, to_char(fecha_vencimiento, 'YYYY-MM-DD') AS venc FROM stock_lotes WHERE empresa_id = $1 AND producto_id = $2 AND codigo_lote = $3`,
+      [empresaId, d.productoId, d.lote],
+    );
+  const usar = (fila: unknown) => {
+    const l = fila as { id: string; venc: string | null };
     if (d.vencimiento && l.venc && d.vencimiento !== l.venc) throw new Error(`El lote ${d.lote} ya existe con vencimiento ${l.venc}.`);
     return l.id;
-  }
+  };
+
+  const existente = await buscar();
+  if (existente.rowCount) return usar(existente.rows[0]);
   if (!CREAN_LOTE.includes(d.tipo)) throw new Error(`El lote ${d.lote} no existe para este producto.`);
+
+  // Dos solicitudes simultáneas con un lote nuevo: la segunda espera a la primera (ON CONFLICT) y reutiliza el lote creado, en lugar de fallar con
+  // una violación de unicidad. Si la primera se revierte, la segunda lo crea.
   const nuevo = await c.query(
-    `INSERT INTO stock_lotes (empresa_id, producto_id, codigo_lote, fecha_vencimiento) VALUES ($1,$2,$3,$4) RETURNING id`,
+    `INSERT INTO stock_lotes (empresa_id, producto_id, codigo_lote, fecha_vencimiento) VALUES ($1,$2,$3,$4)
+     ON CONFLICT (empresa_id, producto_id, codigo_lote) DO NOTHING RETURNING id`,
     [empresaId, d.productoId, d.lote, d.vencimiento],
   );
-  return (nuevo.rows[0] as { id: string }).id;
+  if (nuevo.rowCount) return (nuevo.rows[0] as { id: string }).id;
+
+  const tras = await buscar();
+  if (!tras.rowCount) throw new Error(`No fue posible resolver el lote ${d.lote}; intente de nuevo.`);
+
+  return usar(tras.rows[0]);
 }
 
 export async function registrarMovimiento(c: PoolClient, empresaId: string, usuarioId: string, d: DatosMovimiento) {

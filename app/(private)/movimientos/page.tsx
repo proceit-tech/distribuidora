@@ -71,7 +71,7 @@ export default function MovimientosPage() {
   const [errorCarga, setErrorCarga] =
     useState("");
   const [orden, setOrden] = useState<Orden<CampoOrden>>(null);
-  const [pagina, setPagina] = useState(1);
+  const [paginacion, setPaginacion] = useState({ clave: "", pagina: 1 });
 
   useEffect(() => {
     let activo = true;
@@ -89,29 +89,31 @@ export default function MovimientosPage() {
           );
       })
       .finally(() => {
-        if (activo) setCargando(false);
+        if (!activo) return;
+
+        setCargando(false);
+
+        // Aviso tras registrar (?ok=<número>) y búsqueda inicial desde otras pantallas (?buscar=<código de producto>).
+        const consulta = new URLSearchParams(
+          window.location.search,
+        );
+        const ok = consulta.get("ok");
+        const buscar = consulta.get("buscar");
+
+        if (buscar) setBusqueda(buscar.slice(0, 80));
+
+        if (ok) {
+          setFlash(`Movimiento ${ok} registrado correctamente.`);
+        }
+
+        if (ok || buscar) {
+          window.history.replaceState(
+            null,
+            "",
+            window.location.pathname,
+          );
+        }
       });
-
-    // Aviso tras registrar (?ok=<número>) y búsqueda inicial desde otras pantallas (?buscar=<código de producto>).
-    const consulta = new URLSearchParams(
-      window.location.search,
-    );
-    const ok = consulta.get("ok");
-    const buscar = consulta.get("buscar");
-
-    if (buscar) setBusqueda(buscar.slice(0, 80));
-
-    if (ok) {
-      setFlash(`Movimiento ${ok} registrado correctamente.`);
-    }
-
-    if (ok || buscar) {
-      window.history.replaceState(
-        null,
-        "",
-        window.location.pathname,
-      );
-    }
 
     return () => {
       activo = false;
@@ -230,15 +232,11 @@ export default function MovimientosPage() {
 
   const totalPaginas = Math.max(1, Math.ceil(filtrados.length / PAGE_SIZE));
 
-  useEffect(() => {
-    setPagina(1);
-  }, [busqueda, tipo, orden]);
-
-  useEffect(() => {
-    if (pagina > totalPaginas) {
-      setPagina(totalPaginas);
-    }
-  }, [pagina, totalPaginas]);
+  // La página se reinicia al cambiar búsqueda, tipo u orden y nunca excede el total (derivada, sin efectos).
+  const claveFiltros = JSON.stringify([busqueda, tipo, orden]);
+  const pagina = paginacion.clave === claveFiltros ? Math.min(paginacion.pagina, totalPaginas) : 1;
+  const setPagina = (valor: number | ((actual: number) => number)) =>
+    setPaginacion({ clave: claveFiltros, pagina: typeof valor === "function" ? valor(pagina) : valor });
 
   const paginaActual = useMemo(
     () => ordenados.slice((pagina - 1) * PAGE_SIZE, pagina * PAGE_SIZE),

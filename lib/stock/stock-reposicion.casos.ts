@@ -10,7 +10,9 @@ import {
   advertenciaSaldo, aplicarTipo, enlaceNuevoMovimiento, formularioInicial, movimientoSucio, ORDEN_TIPOS, precargarDesdeConsulta, saldoVisible, TIPOS_INFO, validarMovimiento,
 } from "@/lib/movimientos/formulario";
 import { claveEfectoFisico, decidirEfecto, planEstorno, validarLinea, type ContextoDocumento } from "@/lib/movimientos/documentos";
-import { calcularPlanReposicion, calcularReposicion, compararUrgencia, type EntradaReposicion } from "@/lib/reposicion/calculo";
+import { calcularPlanReposicion, calcularReposicion, compararUrgencia, transferenciasPlanificadas, type EntradaReposicion } from "@/lib/reposicion/calculo";
+import { resolverLote } from "@/lib/movimientos/shared";
+import { navegacionInternaAbandona } from "@/lib/ui/proteger-cambios";
 import { leerEntradasReposicion } from "@/lib/reposicion/datos";
 import { leerStock } from "@/lib/stock/shared";
 import { clasificarNivel, resumenStock, vistaPorDeposito } from "@/lib/stock/vista";
@@ -416,7 +418,7 @@ export async function verificarCasosStockReposicionMovimientos(): Promise<string
   const movApi = leer("app/api/movimientos/route.ts");
 
   cierto("Nuevo movimiento: sin badge «Registrado» antes de guardar; estado «Sin registrar»; sin aviso duplicado del número", !/>\s*Registrado\s*</.test(nuevoPage) && /Sin registrar/.test(nuevoPage) && !/MOV-XXXXXX se\s+genera/.test(nuevoPage));
-  cierto("Nuevo movimiento: validación por campo con foco, cambios sin guardar y envío único", /validarMovimiento\(/.test(nuevoPage) && /getElementById\(idCampo/.test(nuevoPage) && /beforeunload/.test(nuevoPage) && /window\.confirm\(/.test(nuevoPage) && /if \(saving\) return/.test(nuevoPage) && /disabled=\{saving \|\| cargando\}/.test(nuevoPage));
+  cierto("Nuevo movimiento: validación por campo con foco, cambios sin guardar y envío único", /validarMovimiento\(/.test(nuevoPage) && /getElementById\(idCampo/.test(nuevoPage) && /useProtegerCambios/.test(nuevoPage) && /if \(saving\) return/.test(nuevoPage) && /disabled=\{saving \|\| cargando\}/.test(nuevoPage));
   cierto("Nuevo movimiento: idempotencia preservada (clave por formulario, renovada al editar)", /crypto\.randomUUID\(\)/.test(nuevoPage) && /clave\.current = ""/.test(nuevoPage) && /claveIdempotencia: clave\.current/.test(nuevoPage));
   cierto("Nuevo movimiento: campos condicionales (origen/destino/costo/lote según tipo y producto) y fecha local es-PY", /info\.origen \?/.test(nuevoPage) && /info\.destino \?/.test(nuevoPage) && /info\.costo \?/.test(nuevoPage) && /modoControl === "LOTE"/.test(nuevoPage) && /CampoFecha/.test(nuevoPage));
   cierto("Nuevo movimiento: la referencia se declara como texto libre sin vínculo fiscal", /no se vincula ni se valida contra facturas/.test(nuevoPage));
@@ -432,6 +434,68 @@ export async function verificarCasosStockReposicionMovimientos(): Promise<string
   cierto("Reposición: indicadores con el mismo criterio que la tabla (solo planes) y aviso de lo que oculta el filtro por defecto", /f\.necesita && f\.criticidad === "SIN_STOCK"/.test(repPage) && /oculta \{filas\.length - visibles\.length\}/.test(repPage) && /simulación local, no se guarda/.test(repPage));
   cierto("Reposición: sigue usando el plan global auditado (AUD-REP-01…04)", /calcularPlanReposicion\(/.test(repPage));
   cierto("Movimientos: la lista acepta ?buscar=<código> (histórico del producto con datos reales)", /get\("buscar"\)/.test(leer("app/(private)/movimientos/page.tsx")));
+
+  // ── Auditoría complementaria (HOM-UX): navegación interna, unidad identificada, simulación vs transferencia preparada, lotes concurrentes
+  const loc = { origen: "https://app.test", ruta: "/movimientos/nuevo", consulta: "" };
+  const nav = (a: Parameters<typeof navegacionInternaAbandona>[0]) => navegacionInternaAbandona(a, loc);
+
+  igual("navegación interna: enlace a otra ruta de la aplicación pide confirmación (menú, migas, volver)", [nav({ href: "/stock" }), nav({ href: "https://app.test/reposicion" }), nav({ href: "/movimientos?buscar=P-1" })], [true, true, true]);
+  igual("navegación interna: misma ruta/consulta, ancla, otra pestaña, modificadores, descargas, botón del medio y otros sitios no piden confirmación aquí", [nav({ href: "/movimientos/nuevo" }), nav({ href: "#campo" }), nav({ href: "/stock", target: "_blank" }), nav({ href: "/stock", modificador: true }), nav({ href: "/x.pdf", download: true }), nav({ href: "/stock", boton: 1 }), nav({ href: "https://otro.com/x" }), nav({ href: "mailto:a@b.c" }), nav({ href: "/stock", target: "_self" })], [false, false, false, false, false, false, false, false, true]);
+  igual("navegación interna: misma ruta con otra consulta sí abandona el estado del formulario", nav({ href: "/movimientos/nuevo?producto=1" }), true);
+  cierto("el hook se registra en captura en el documento (antes del enrutador) y cubre beforeunload; Nuevo movimiento lo usa", /addEventListener\("click", alHacerClic, true\)/.test(leer("lib/ui/proteger-cambios.ts")) && /beforeunload/.test(leer("lib/ui/proteger-cambios.ts")) && /useProtegerCambios\(sucio\)/.test(nuevoPage) && !/confirmarSalida/.test(nuevoPage));
+  cierto("el límite del botón «Atrás» está declarado en el código y en la documentación", /botón «Atrás»/.test(leer("lib/ui/proteger-cambios.ts")) && /Atrás/.test(leer("documentacao/v1/homologacao-visual/HOMOLOGACION-FUNCIONAL-STOCK-REPOSICION-MOVIMIENTOS-2026-10-12.md")));
+
+  // Reposición: unidades identificadas
+  const lecturaModo = await leerEntradasReposicion({
+    async query(sql: string) {
+      if (/FROM productos p/.test(sql)) return { rows: [{ id: P1, codigo: "P-1", descripcion: "Equipo", marca: "", unidad: "U", modoControl: "UNIDAD_ETIQUETADA", minimo: 10, maximo: 100, punto: 20, proveedorNombre: null, proveedorPlazo: null, proveedorMinima: null }], rowCount: 1 };
+      if (/SELECT count\(\*\)::int AS n FROM depositos/.test(sql)) return { rows: [{ n: 1 }], rowCount: 1 };
+      if (/FROM depositos d JOIN usuarios u/.test(sql)) return { rows: [{ id: D1, codigo: "C", nombre: "Central" }], rowCount: 1 };
+
+      return { rows: [], rowCount: 0 };
+    },
+  } as never, EMPRESA, USUARIO);
+
+  igual("Reposición: el modo de control del producto llega a cada renglón y la sugerencia se calcula igual (planificación)", [lecturaModo.entradas[0].modoControl, calcularReposicion(lecturaModo.entradas[0], { incluirTransito: false }).sugerida], ["UNIDAD_ETIQUETADA", 100]);
+  cierto("Reposición: la consulta lee modo_control_stock y la pantalla no ofrece «Preparar transferencia» para unidades identificadas", /p\.modo_control_stock AS "modoControl"/.test(leer("lib/reposicion/datos.ts")) && /f\.modoControl !== "UNIDAD_ETIQUETADA"/.test(repPage) && /Unidad identificada \(serie\/etiqueta\)/.test(repPage));
+
+  // Reposición: simulación vs transferencia preparada (nunca supera lo confirmado por el plan global)
+  const D6 = "d6d6d6d6-d6d6-4d6d-8d6d-d6d6d6d6d6d6";
+  const dosOrigenes = calcularPlanReposicion([{ ...base, saldo: { disponible: 10, reservado: 0, cuarentena: 0, transito: 0 }, otrosDepositos: [{ id: D2, nombre: "S", disponible: 60, minimo: 10, punto: 30 }, { id: D6, nombre: "N", disponible: 50, minimo: 10, punto: 30 }] }], { incluirTransito: false })[0];
+  const prep = (p: number | null) => transferenciasPlanificadas(dosOrigenes, p).map((t) => [t.depositoId, t.cantidad]);
+
+  igual("plan base: 90 sugeridos; transferencias confirmadas 30 (S) + 20 (N); compra 40", [dosOrigenes.sugerida, dosOrigenes.transferencias.map((t) => [t.depositoId, t.cantidad]), dosOrigenes.sugeridaCompra], [90, [[D2, 30], [D6, 20]], 40]);
+  igual("sin simulación escrita se prepara lo confirmado por el plan", prep(null), [[D2, 30], [D6, 20]]);
+  igual("simulación menor que lo transferible: se prepara solo esa cantidad, en el orden del plan", [prep(10), prep(30), prep(35)], [[[D2, 10]], [[D2, 30]], [[D2, 30], [D6, 5]]]);
+  igual("simulación mayor que lo confirmado: el excedente es compra, nunca traslado (no se supera la disponibilidad de los orígenes)", [prep(500), prep(90)], [[[D2, 30], [D6, 20]], [[D2, 30], [D6, 20]]]);
+  igual("simulación 0: no se prepara ninguna transferencia", prep(0), []);
+  igual("la simulación no altera el cálculo auditado", [dosOrigenes.sugeridaTransferencia, dosOrigenes.sugeridaCompra], [50, 40]);
+  cierto("Reposición: el enlace usa la cantidad planificada (transferenciasPlanificadas) y lo explica", /transferenciasPlanificadas\(f, planEscrita\(f\)\)/.test(repPage) && /según A planificar/.test(repPage));
+
+  // Movimientos: lote nuevo concurrente (ON CONFLICT) y repetición de la misma solicitud
+  const consultasLote: string[] = [];
+  const clienteLote = (carrera: boolean) => {
+    let buscado = 0;
+
+    return {
+      async query(sql: string) {
+        consultasLote.push(sql);
+        if (/SELECT modo_control_stock/.test(sql)) return { rows: [{ modo: "LOTE" }], rowCount: 1 };
+        if (/FROM stock_lotes/.test(sql)) return carrera && ++buscado > 1 ? { rows: [{ id: "lote-creado-por-otra", venc: null }], rowCount: 1 } : { rows: [], rowCount: 0 };
+        if (/INSERT INTO stock_lotes/.test(sql)) return carrera ? { rows: [], rowCount: 0 } : { rows: [{ id: "lote-nuevo" }], rowCount: 1 };
+
+        return { rows: [], rowCount: 0 };
+      },
+    } as never;
+  };
+  const datosLote = { tipo: "ENTRADA", productoId: P1, lote: "L-9", vencimiento: null } as never;
+
+  igual("lote nuevo sin carrera: se crea", await resolverLote(clienteLote(false), EMPRESA, datosLote), "lote-nuevo");
+  igual("lote nuevo con solicitud simultánea (ON CONFLICT DO NOTHING): reutiliza el lote creado por la otra en lugar de fallar", await resolverLote(clienteLote(true), EMPRESA, datosLote), "lote-creado-por-otra");
+  cierto("el alta de lote usa ON CONFLICT sobre la clave única (empresa, producto, código)", consultasLote.some((q) => /ON CONFLICT \(empresa_id, producto_id, codigo_lote\) DO NOTHING/.test(q)));
+  cierto("la clave de idempotencia se serializa por empresa+clave con bloqueo asesor transaccional y compara huella de la solicitud (NEX-014)", /pg_advisory_xact_lock\(hashtextextended\('movimientos\.idem:'/.test(leer("documentacao/banco/nexit/v1/migraciones/NEX-014-movimientos-operativos.sql")) && /IDEMPOTENCIA_CONFLICTO/.test(leer("documentacao/banco/nexit/v1/migraciones/NEX-014-movimientos-operativos.sql")));
+  cierto("existe el script de prueba de idempotencia con PostgreSQL real, protegido contra ejecución accidental", /CONFIRMO_PRUEBA_EN_AMBIENTE_REAL/.test(leer("documentacao/banco/nexit/v1/scripts/prueba-idempotencia-movimientos.js")) && /Promise\.all/.test(leer("documentacao/banco/nexit/v1/scripts/prueba-idempotencia-movimientos.js")));
+  cierto("la lista de Movimientos ya no usa setState en efectos para paginar y conserva ?ok= y ?buscar=", !/setPagina\(1\);\s*\}, \[busqueda/.test(leer("app/(private)/movimientos/page.tsx")) && /consulta\.get\("ok"\)/.test(leer("app/(private)/movimientos/page.tsx")) && /consulta\.get\("buscar"\)/.test(leer("app/(private)/movimientos/page.tsx")));
 
   return fallos;
 }

@@ -8,6 +8,7 @@ import styles from "@/app/(private)/productos/catalogos/page.module.css";
 import { CampoFecha } from "@/components/ui/campo-fecha";
 import ui from "@/components/ui/lista-padrao/lista.module.css";
 import { hoyAsuncion } from "@/lib/listas-precio/calculos";
+import { useProtegerCambios } from "@/lib/ui/proteger-cambios";
 import { cargarCatalogosMovimientos, registrarMovimientoApi } from "@/lib/movimientos/cliente-api";
 import {
   advertenciaSaldo,
@@ -75,18 +76,7 @@ export default function NuevoMovimientoPage() {
 
   const sucio = !registrado && movimientoSucio(form, base);
 
-  useEffect(() => {
-    if (!sucio) return;
-
-    const alSalir = (e: BeforeUnloadEvent) => {
-      e.preventDefault();
-      e.returnValue = "";
-    };
-
-    window.addEventListener("beforeunload", alSalir);
-
-    return () => window.removeEventListener("beforeunload", alSalir);
-  }, [sucio]);
+  useProtegerCambios(sucio);
 
   const productos = catalogo?.productos ?? [];
   const depositos = (catalogo?.depositos ?? []).filter((d) => d.permitido);
@@ -111,10 +101,6 @@ export default function NuevoMovimientoPage() {
     if (!TIPOS_INFO[tipo].costo) setCostoTxt("");
     setErrores({});
     setErrorForm("");
-  }
-
-  function confirmarSalida(e: React.MouseEvent) {
-    if (sucio && !window.confirm("Hay cambios sin registrar en el formulario. Si sale, se perderán. ¿Desea salir?")) e.preventDefault();
   }
 
   function enfocar(campo: CampoMovimiento | undefined) {
@@ -175,7 +161,7 @@ export default function NuevoMovimientoPage() {
           <nav className={ui.breadcrumb} aria-label="Ruta de navegación">
             <span>Inventario</span>
             <i aria-hidden="true">/</i>
-            <Link href="/movimientos" onClick={confirmarSalida}>
+            <Link href="/movimientos">
               Movimientos
             </Link>
             <i aria-hidden="true">/</i>
@@ -188,7 +174,7 @@ export default function NuevoMovimientoPage() {
           <span className={local.estado} title="El movimiento solo existe después de registrarlo; el número MOV-XXXXXX lo asigna el servidor.">
             Sin registrar
           </span>
-          <Link href="/movimientos" className={ui.secondaryButton} onClick={confirmarSalida}>
+          <Link href="/movimientos" className={ui.secondaryButton}>
             ← Movimientos
           </Link>
         </div>
@@ -443,7 +429,7 @@ export default function NuevoMovimientoPage() {
           </label>
 
           <div className={styles.formActions}>
-            <Link href="/movimientos" className={ui.secondaryButton} onClick={confirmarSalida}>
+            <Link href="/movimientos" className={ui.secondaryButton}>
               Cancelar
             </Link>
             <button type="submit" className={ui.primaryButton} disabled={saving || cargando}>
