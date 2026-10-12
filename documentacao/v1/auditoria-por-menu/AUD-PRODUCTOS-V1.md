@@ -392,3 +392,43 @@ Este arquivo é a fonte única da auditoria do menu **Productos**. Registrar, co
 **Conduta do analista daqui em diante:** não repetir perguntas sobre políticas já resolvidas; fazer inventário e apontar defeitos concretos por menu, priorizando bugs que impedem cadastro, estoque e SIFEN. Anotar opções avançadas como melhoria futura, não bloqueadores automáticos da V1. Só solicitar decisão quando houver ambiguidade substantiva que não possa ser resolvida pela regra vigente.
 
 **Situação:** orientação do cliente registrada; auditoria de Productos ABERTA; nenhuma implementação, teste operacional, SQL, VM ou migration alterada.
+
+## XXI. ENTREGA 01 — instrução de implementação para Claude Code (primeiro recorte de auditoria, 12/10/2026)
+
+**STATUS DA AUDITORIA:** parcial e ABERTA, porém o responsável solicitou liberar correções comprovadas de forma incremental, sem aguardar 100% da auditoria de Productos. Esta seção **autoriza somente a ETAPA 01**, não os demais achados. NÃO marcar o menu como AUDITADO COMPLETO/HOMOLOGADO nem afirmar que o ChatGPT testou VM, PostgreSQL ou SIFEN.
+
+**TAREFA ÚNICA — integridade fiscal de produtos vendáveis e seleção para factura.** Implementar de forma mínima os achados **PRD-A02, PRD-A15, PRD-A16 (catálogo marcado não vigente, conforme fonte oficial já modelada) e PRD-A26** com regras **DEC-PRD-U02** (completude de SIFEN em produto novo vendável) e **DEC-PRD-U06** (IVA 10%/Gravado como pré-seleção, editável). É um recorte funcional coeso; demais achados permanecem no backlog de auditoria e **não estão autorizados nesta execução**.
+
+### Escopo funcional autorizado
+
+1. **Alta de produto vendável:** para **NOVO** produto com `tipo_producto` em (`MERCADERIA`, `SERVICIO`) e `vendible=true`, `POST /api/productos` só grava quando a unidade-base comercial selecionada está ligada a um código oficial SIFEN **existente e vigente**, e imposto/taxa + afetação IVA estão completos e coerentes. Para `iAfecIVA=4`, exigir proporção gravada válida. Validar no backend dentro do fluxo existente, antes do INSERT/movimento de abertura; mensagem por campo na UI. O formulário não pode afirmar que ausência fiscal não bloqueia. Usar catálogo oficial de 64 códigos já versionado no projeto e sua relação `unidades_medida.unidad_sifen_codigo`, **sem trocar os UUIDs comerciais por inteiros fiscais**.
+2. **Padrão tributário:** `IVA 10% — Gravado` continua preseleção **editável** para produto novo quando imposto 10% ativo existe. Usuário pode selecionar 5%, Exento, Exonerado, Parcial conforme coerência normativa. Não criar classificador fiscal geral nem inferir enquadramento de todos os produtos.
+3. **Compatibilidade histórica:** produto antigo com campos fiscais incompletos deve continuar visível/consultável; **não** efetuar backfill, atualização silenciosa, bloqueio massivo nem alteração automática de registros históricos. Não ampliar escopo de validação do PUT legado sem análise de compatibilidade específica. Produtos não vendáveis/`KIT`/`ACTIVO_FIJO` não são tornados fiscalmente obrigatórios por esta tarefa.
+4. **Faturação:** `lib/facturacion/emision.ts` deve aplicar `p.vendible=true` ao catálogo, à prévia e à emissão; nenhum request direto pode faturar produto ativo mas `vendible=false`. Na seleção/validação fiscal, rejeitar unidade SIFEN ausente, inexistente ou `vigente=false` com erro útil. Corrigir no servidor, não só esconder na UI. Manter idempotência e snapshot do documento FE, sem reescrever payloads já gravados.
+5. **Sem dados inventados:** `DEC-PRD-U01` já define o vínculo da unidade histórica MT existente com código 108, preservando também 87 no catálogo oficial; **não executar reconciliação de banco na VM**, não inferir vínculo de outras unidades arbitrariamente. Se as seis unidades comerciais do banco real ainda não têm vínculo SIFEN, o sistema deverá explicar a falta e o Claude deverá relatar esse **bloqueio operacional real** de forma objetiva, citando o script de reconciliação já existente, em vez de criar atalhos que permitam faturar sem código fiscal válido. Se precisar de SQL adicional para código fiscal no banco real, PARAR e pedir autorização separada antes de criar/aplicar migration.
+
+### Evidência de referência
+
+- `app/api/productos/route.ts` (POST), `lib/productos/{normalizar,shared,formulario,fiscal}.ts`, `app/(private)/productos/_components/pestanas/{informacion,sifen}.tsx`, `lib/facturacion/{emision,payload-fe}.ts`, `lib/productos/{fiscal,productos}.casos.ts`, `lib/facturacion/facturacion.casos.ts`, NEX-007/039/040/043, `documentacao/banco/nexit/v1/scripts/reconciliar-unidades-sifen-NEX-039.sql`.
+- Lacunas verificadas: `lib/productos/shared.ts:206-213` aceita base sem código fiscal, `normalizar.ts:109-118` permite ausência de afetação, `lib/facturacion/emision.ts:82-92` não exige `vendible`, nem consulta `us.vigente`.
+- Conferir também requisitos oficiais DNIT já versionados na documentação SIFEN do repositório; não inventar NCM/GTIN/DNCP obrigatório universal, nem alterar os limites comerciais antigos sem autorização.
+
+### Critérios mínimos para o Claude demonstrar em testes locais
+
+- `POST`: vendável novo sem SIFEN mapeado ou sem classificação IVA -> erro de validação com campo e **nenhum produto/movimento inicial inserido**; com unidade vigente e IVA coerente -> grava normalmente.
+- IVA inicial 10% editável; 5% / exento / exonerado / parcial validados corretamente; combinação inválida ou parcial sem proporção -> erro; legado não é reclassificado silenciosamente.
+- Produto `vendible=false` não aparece como selecionável na factura nem passa pela emissão via request direto; produtos fiscalmente inaptos não são faturados; a seleção/consulta de catálogo trata `vigente=false`.
+- Regressões existentes permanecem verdes, com fixtures adequadas para novas regras; testes comprovados de rotas/contratos e execução local de `tsc`, ESLint e build quando disponíveis. Não chamar teste mockado de homologação em VM.
+
+### Condições de execução e parada (protocolo oficial)
+
+- Claude Code trabalha apenas na branch `feature/NEXIT-2026-001-banco-demo`, no clone local. Antes de começar, `git status`, conferir branch, sincronizar com segurança e **ler `CLAUDE.md`, `documentacao/PROTOCOLO-IA.md`, trechos pertinentes de `PROGRESSO-NEXIT-V1.md`, esta auditoria e regras fiscais reais**. Não alterar outros menus além dos pontos de integração da tarefa.
+- Não editar arquivos `AUD-*` nem migrations históricas NEX-001…051; não criar documento duplicado nem reabrir perguntas já aprovadas; nenhuma operação no PostgreSQL, Docker, VM, SIFEN/gateway ou deploy. Sem permissões novas ou mudança de layout não relacionada. Se houver bloqueio técnico que torne esse recorte inviável sem migrar DB, **parar apenas a parte bloqueada, documentar motivo concreto e entregar as demais correções seguras**.
+- Executar testes **locais**, corrigir regressões, commit+push, reportar somente resultado, quantidade de testes/falhas, bloqueios reais e SHA. **PARAR** após a entrega para nova auditoria independente do ChatGPT, antes da próxima etapa.
+
+### Backlog NÃO AUTORIZADO para esta entrega
+
+- PRD-A01 (UX/catálogo comercial 64 unidades), A04/A05 (dirty guard), A07 (base redundante), A20 (facturação por apresentação), A21/A29 (troca de base/histórico), A24 (observação documental 500 vs 1000), A30/U09 (histórico de apresentações), A31 (preço por apresentação), A32 (rastreabilidade da FE), e todos os demais achados da ficha.
+- Regras U03/U07/U08/U09/U10 permanecem **aprovadas como negócio**, mas sua implementação está reservada a tarefas futuras de escopo próprio. Não projetar históricos/cadastros adicionais durante este recorte fiscal.
+
+**PONTO DE CONTROLE:** ETAPA 01 AUTORIZADA PARA CLAUDE CODE; resultado AINDA NÃO IMPLEMENTADO nem HOMOLOGADO. Auditoria integral de Productos ainda ABERTA.
