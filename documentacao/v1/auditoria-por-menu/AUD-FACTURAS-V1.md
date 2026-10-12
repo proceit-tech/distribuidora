@@ -49,7 +49,7 @@ O responsável esclareceu que uma mercadoria possui unidade-base de estoque, mú
 
 **Impacto:** o sistema não tem fluxo comprovado para escolha e faturação de apresentação alternativa com quantidade/preço fiscal coerentes e movimento correto do estoque em unidade-base. A futura auditoria do menu Facturas deverá detalhar seleção de apresentação de venda, preço por apresentação, fator de conversão, validação SIFEN por apresentação, arredondamento, emissão de DE, KuDE e baixa/estorno de estoque. Não presumir que `Caja` sempre corresponde a fator 12, e não enviar código fiscal por simples nome da apresentação.
 
-**Decisão de negócio pendente:** tratamento de apresentação comercial que não possui equivalente fiscal apropriado, a ser decidido com responsável antes de fechar PRD-U03 ou implementar.
+**Decisão confirmada em 12/10/2026:** quando a apresentação comercial não tiver equivalente fiscal apropriado, converter automaticamente quantidade e preço para a unidade-base fiscal SIFEN válida do produto, preservando o total (DEC-PRD-U03). A implementação permanece pendente de auditoria.
 
 ## Confirmação do responsável — unidade do documento eletrônico (12/10/2026)
 
@@ -59,6 +59,24 @@ O responsável esclareceu que uma mercadoria possui unidade-base de estoque, mú
 
 **Aplicação na auditoria:** no cadastro de Productos, manter unidade-base de controle de estoque e apresentações com fatores próprios. Na emissão, validar no backend o código SIFEN efetivamente enviado no item; testar unidade de apresentação existente no catálogo e apresentação sem equivalente fiscal. **Não** considerar resolvido o defeito de que `lib/facturacion/emision.ts` hoje utiliza apenas a unidade-base do produto.
 
-**PENDENTE, ainda não deliberado:** para apresentação sem equivalente fiscal na tabela SIFEN, converter automaticamente a linha para a unidade-base fiscal reconhecida (com quantidade e preço equivalentes) **ou** impedir a emissão até configurar uma equivalência fiscal. A resposta acima só confirmou a obrigatoriedade do catálogo SIFEN, não escolheu expressamente uma dessas duas políticas. Perguntar ao responsável com exemplo antes de encerrar DEC-PRD-U03.
+**ATUALIZAÇÃO POSTERIOR:** a decisão foi tomada pelo responsável: **CONVERSÃO AUTOMÁTICA** para unidade-base fiscal, com quantidade/preço equivalentes e preservação do total. O detalhamento está abaixo e na auditoria de Productos, seção XIII.
 
 **Execução:** nenhuma alteração de código, SQL, VM ou migration autorizada; auditoria continua aberta.
+
+## Decisão fiscal homologável em código — apresentação comercial sem unidade SIFEN (DEC-PRD-U03, 12/10/2026)
+
+**Regra de negócio aprovada pelo responsável:** permitir venda por apresentação comercial não presente na tabela oficial SIFEN; **converter automaticamente** a linha para a unidade-base do produto com código SIFEN válido. Exemplo aprovado: **1 bandeja de 6 unidades → 6 UNI, SIFEN 77**, ajustando o preço unitário fiscal e preservando o valor total vendido.
+
+**Requisitos de auditoria e futuros testes:**
+
+1. Manter no contrato original apresentação, quantidade comercial, fator de conversão, preço comercial e total. A escolha da apresentação pode ser múltipla por produto, e a unidade-base comercial não deve ser alterada.
+2. Na preparação no servidor, obter a apresentação e seu fator do banco, por empresa e produto; quando não houver equivalência fiscal própria, usar unidade-base com SIFEN válido/vigente. Não converter apenas com base no rótulo.
+3. Converter quantidade fiscal = quantidade comercial × fator (na unidade-base); preço fiscal = total comercial ÷ quantidade fiscal, observando a escala permitida e a legislação. **Preservar o total** da operação e seus componentes tributários; não alterar o total por arredondamento silencioso. Se a representação exata não for possível nos limites do gateway, impedir apenas aquela emissão e apresentar motivo/possibilidade de correção.
+4. Enviar ao SIFEN somente `cUniMed` oficial e quantidade/preço correspondentes nos campos `dCantProSer` e `dPUniProSer`; verificar também IVA, subtotal e arredondamento conforme manual/NTs.
+5. Exigir validação no backend independentemente do navegador; preservar snapshot da apresentação comercial e dos dados convertidos para auditoria, documento eletrônico, XML/KuDE, consultas e eventuais notas de crédito/cancelamentos.
+6. Confrontar a integração de Inventario: baixa/estorno, se e quando esse fluxo existir, deve usar a **quantidade em unidade-base**. A auditoria não pode presumir que a emissão FE atual já efetua baixa de estoque.
+7. Casos regressivos: bandeja de 6 e 12 unidades equivalentes, equivalente fiscal próprio, fator de conversão inválido, preço sem divisão exata, produto não vendível, unidade-base sem SIFEN, unidade fiscal inativa, empresa/depósito fora do alcance.
+
+**Evidência do defeito técnico atual:** `lib/facturacion/emision.ts:82-92,201,220-244` lê somente a unidade-base, sem apresentação/fator por linha; `lib/facturacion/payload-fe.ts:186-188` constrói os campos fiscais a partir dos valores recebidos. A correção futura deve alcançar DTO, UI, backend, cálculos, armazenamento e relatórios; não é mero ajuste de select.
+
+**Status:** decisão de **conversão automática APROVADA**, implementação ainda não autorizada, auditoria do menu **ABERTA**, não homologada. Não modificar NEX-001…051 nem executar scripts na VM.
