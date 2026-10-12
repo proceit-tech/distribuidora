@@ -603,3 +603,11 @@ Decisões de `6d3be64`. **NEX-049 versionada, NÃO aplicada** (ordem 046 → 047
 - **Controle de reenvio após 4xx (ENV-02):** 400/404/422 → ERROR_ENVIO causa RECHAZO (reenvio só com confirmação explícita, mesmo documento e número, nunca outro número); 401/403 → AUTENTICACION e 429 → TRANSITORIO (reenvio livre); 408/409/423/425 e mensagens de duplicado/«ya existe» → indeterminado (bloqueado). 
 - **Persistência (NEX-050):** `envio_error_tipo` no documento, `cdc_informado` no intento, CDC no documento só se coerente; `fe_documento_iniciar_envio(…, p_confirma_rechazo)` e `fe_documento_registrar_envio` com as novas assinaturas. Indeterminado: UI avisa para verificar no gateway e não oferece reenvio; consulta de FE segue bloqueada até confirmar `tipoDoc` (sem inventar «FE»).
 - Documentos electrónicos: botão «Reenviar el mismo documento (confirmar)» só após rechazo; histórico mostra o CDC informado. Local: 2007 verificações, 0 falhas.
+
+### Facturación F-02 — contrato real do gateway (fbc691b, 2026-10-12)
+Sem migration nova (NEX-047…050 continuam NÃO aplicadas; os campos lote/CDC já existiam). Nenhum envio real, SQL ou VM.
+- **consulta_de FE:** `tipoDoc: "FE"` habilitado (NCE mantido); o tipo AFE/NDE/NRE segue sem contrato. Reconsulta de FE desbloqueada; o reenvio de um indeterminado continua exigindo verificação.
+- **Recepção:** `status:success` + `nro_lote` (≤60) = ENVIADO (recepção pelo gateway, sem CDC, nunca SIFEN aprovado). Lote vazio/longo, CDC ou número contraditórios, ou Aceptados de outro documento → indeterminado.
+- **Rechazados[]:** `response.Rechazados` indexado pelo número fiscal; só se atribui ao documento se o número coincide; erros mostrados como «EEE-PPP-NNNNNNN · campo: mensagem» (histórico, modal e Documentos). Rechazo ⇒ ERROR_ENVIO/RECHAZO (reenvio só com confirmação, mesmo número).
+- **Token inválido** (inclusive HTTP 400, em recepcion_de e consulta_de): autenticação, não rechazo; renovação de sessão e UM reintento; persistindo, ERROR_ENVIO/AUTENTICACION.
+- Local: 2023 verificações, 0 falhas (191 de Facturación, 16 novas com respostas sintéticas equivalentes); tsc/ESLint/build.

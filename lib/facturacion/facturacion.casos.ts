@@ -7,7 +7,7 @@ import { join } from "node:path";
 
 import { contador } from "@/lib/clientes/contador-casos";
 import { ETIQUETA_SIFEN, estadoSifenDesdeGateway, numeroDocumento } from "@/lib/facturacion/estados";
-import { claveToken, consultarDocumentoGateway, enviarDocumentoGateway, interpretarRecepcion, interpretarConsulta, leerCredenciales, limpiarCacheTokens, sanearRespuesta, tamanoCacheTokens, tipoDocConsulta, type FetchLike } from "@/lib/facturacion/gateway";
+import { claveToken, consultarDocumentoGateway, enviarDocumentoGateway, interpretarRecepcion, interpretarConsulta, leerCredenciales, limpiarCacheTokens, sanearRespuesta, tamanoCacheTokens, tipoDocConsulta, type FetchLike, type ResultadoEnvio } from "@/lib/facturacion/gateway";
 import { calcularItem, calcularSubtotales, numeroDec, parseDec, textoDec } from "@/lib/facturacion/calculo";
 import { crearFacturaElectronica, leerCuerpoFactura, prepararFactura } from "@/lib/facturacion/emision";
 import { emitirFactura, enviarDocumento } from "@/lib/facturacion/envio";
@@ -100,7 +100,7 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
 
   // ── Credenciales por entorno
   igual("credenciales: salen de NEXIT_FE_<REF>_RUC/_PASSWORD; sin ellas o con referencia inválida → null", [leerCredenciales("PRUEBA", ENV), leerCredenciales("PRUEBA", {}), leerCredenciales("prueba", ENV), leerCredenciales("A;B", ENV)], [{ ruc: "80000005", password: SECRETO }, null, null, null]);
-  igual("tipoDoc de consulta: solo NCE está confirmado; FE/NDE/NRE/AFE no se envían hasta confirmar", ["NCE", "FE", "NDE", "NRE", "AFE"].map(tipoDocConsulta), ["NCE", null, null, null, null]);
+  igual("tipoDoc de consulta: NCE y FE confirmados; NDE/NRE/AFE no se envían hasta confirmar", ["NCE", "FE", "NDE", "NRE", "AFE"].map(tipoDocConsulta), ["NCE", "FE", null, null, null]);
 
   // ── Cliente del gateway (fetch simulado)
   limpiarCacheTokens();
@@ -149,7 +149,7 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
   const g5 = gateway({ consulta: [] });
 
   igual("gateway: tipo sin contrato confirmado o sin credenciales no llama a nadie", [
-    await consultarDocumentoGateway(CONFIG, { ...NCE, tipo: "FE" }, { fetch: g5.fetch, env: ENV }),
+    await consultarDocumentoGateway(CONFIG, { ...NCE, tipo: "AFE" }, { fetch: g5.fetch, env: ENV }),
     await consultarDocumentoGateway(CONFIG, NCE, { fetch: g5.fetch, env: {} }),
     g5.llamadas.length,
   ], [{ sinContrato: "TIPO" }, { sinContrato: "CREDENCIALES" }, 0]);
@@ -196,7 +196,7 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
   igual("consultar: documento ajeno/fuera de alcance 404; sin gateway configurado 409; tipo sin contrato 409; sin credenciales 409 — ninguno registra un intento", [
     await codigoError(consultarEstado(dbConsulta(true, false), EMPRESA, USUARIO, DOC, { fetch: g6.fetch, env: ENV })),
     await codigoError(consultarEstado(dbConsulta(false, true), EMPRESA, USUARIO, DOC, { fetch: g6.fetch, env: ENV })),
-    await codigoError(consultarEstado({ async query(sql: string) { return /fe_gateway_config/.test(sql) ? { rows: [CONFIG] } : { rows: [{ ...filaDoc, tipo: "FE" }] }; } } as never, EMPRESA, USUARIO, DOC, { fetch: g6.fetch, env: ENV })),
+    await codigoError(consultarEstado({ async query(sql: string) { return /fe_gateway_config/.test(sql) ? { rows: [CONFIG] } : { rows: [{ ...filaDoc, tipo: "AFE" }] }; } } as never, EMPRESA, USUARIO, DOC, { fetch: g6.fetch, env: ENV })),
     await codigoError(consultarEstado(dbConsulta(true, true), EMPRESA, USUARIO, DOC, { fetch: g6.fetch, env: {} })),
     registrar.length - previo,
   ], [404, 409, 409, 409, 0]);
@@ -420,10 +420,10 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
 
   // ── Interpretación de recepcion_de (sin inventar su forma)
   const exito = interpretarRecepcion(200, JSON.stringify({ status: "success", message: "Documento recibido", cdc: CDC_FE }), [], DOC_ENVIO);
-  const sinIdentificar = interpretarRecepcion(200, JSON.stringify({ status: "success", message: "Documento recibido", lote: "L-1" }), [], DOC_ENVIO);
+  const sinIdentificar = interpretarRecepcion(200, JSON.stringify({ status: "success", message: "Documento recibido" }), [], DOC_ENVIO);
 
   igual("recepción: 2xx success con CDC coherente con el documento → recepción confirmada (ENVIADO); el CDC y el mensaje son los informados y no hay estado fiscal", [exito.resultado, exito.estadoLocal, exito.lote, exito.cdc, exito.estadoGateway, exito.mensaje], ["OK", "ENVIADO", null, CDC_FE, null, "Documento recibido"]);
-  igual("recepción: 2xx success que NO identifica el documento (solo lote/mensaje) NO confirma la recepción → ENVIO_INDETERMINADO, conservando el lote informado", [sinIdentificar.resultado, sinIdentificar.estadoLocal, sinIdentificar.lote, sinIdentificar.cdc, sinIdentificar.errorTipo], ["RESPUESTA_INVALIDA", "ENVIO_INDETERMINADO", "L-1", null, null]);
+  igual("recepción: 2xx success que NO identifica el documento (solo mensaje, sin lote/CDC/número) NO confirma la recepción → ENVIO_INDETERMINADO", [sinIdentificar.resultado, sinIdentificar.estadoLocal, sinIdentificar.lote, sinIdentificar.cdc, sinIdentificar.errorTipo], ["RESPUESTA_INVALIDA", "ENVIO_INDETERMINADO", null, null, null]);
   igual("recepción: sin conocer el documento enviado ninguna respuesta puede certificar la recepción", interpretarRecepcion(200, JSON.stringify({ status: "success", cdc: CDC_FE })).estadoLocal, "ENVIO_INDETERMINADO");
   igual("recepción: número devuelto (dEst/dPunExp/dNumDoc) igual al enviado confirma; distinto o CDC de otro documento → indeterminado (nunca éxito)", [
     interpretarRecepcion(200, JSON.stringify({ status: "success", data: { dEst: "001", dPunExp: "002", dNumDoc: "0050000" } }), [], DOC_ENVIO).estadoLocal,
@@ -627,10 +627,10 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
   // ENV-01: éxito sin certificar el documento → indeterminado persistido, con lote conservado
   limpiarCacheTokens();
   const mSin = mkDb();
-  const emSin = await ejecutar(mSin.db, gateway({ consulta: [{ status: 200, cuerpo: { status: "success", message: "ok", lote: "L-9" } }] }).fetch);
+  const emSin = await ejecutar(mSin.db, gateway({ consulta: [{ status: 200, cuerpo: { status: "success", message: "ok" } }] }).fetch);
 
-  igual("ENV-01: éxito del gateway que no identifica el documento → ENVIO_INDETERMINADO persistido (RESPUESTA_INVALIDA), con el lote informado conservado y sin CDC en el documento", [emSin.estadoLocal, emSin.resultado, emSin.lote, emSin.cdc, regDe(mSin).slice(3, 8), regDe(mSin)[11]], ["ENVIO_INDETERMINADO", "RESPUESTA_INVALIDA", "L-9", null, ["TRANSMISION", "RESPUESTA_INVALIDA", "ENVIO_INDETERMINADO", null, 200], "L-9"]);
-  igual("ENV-01: la fase de respuesta del modal NO dice que la recepción esté confirmada", emSin.fases.at(-1), { fase: "RESPUESTA", ok: false, detalle: "Recepción NO confirmada: El gateway respondió sin identificar el documento recibido (sin CDC ni número): no se confirma la recepción; verifique en el gateway antes de reenviar.", http: 200 });
+  igual("ENV-01: éxito del gateway que no identifica el documento → ENVIO_INDETERMINADO persistido (RESPUESTA_INVALIDA), sin lote ni CDC", [emSin.estadoLocal, emSin.resultado, emSin.lote, emSin.cdc, regDe(mSin).slice(3, 8), regDe(mSin)[11]], ["ENVIO_INDETERMINADO", "RESPUESTA_INVALIDA", null, null, ["TRANSMISION", "RESPUESTA_INVALIDA", "ENVIO_INDETERMINADO", null, 200], null]);
+  igual("ENV-01: la fase de respuesta del modal NO dice que la recepción esté confirmada", emSin.fases.at(-1), { fase: "RESPUESTA", ok: false, detalle: "Recepción NO confirmada: El gateway respondió sin identificar el documento recibido (sin lote, CDC ni número): no se confirma la recepción; verifique en el gateway antes de reenviar.", http: 200 });
 
   // PERSISTENCIA lote/CDC: CDC coherente informado → documento y evidencia; CDC ajeno → solo evidencia y documento indeterminado
   limpiarCacheTokens();
@@ -694,7 +694,67 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
 
   // UX-01 / ENV-03: Documentos electrónicos y formulario
   cierto("UI: tras un rechazo por validación solo se ofrece reenviar con confirmación y se explica que no se genera otro número; el envío indeterminado muestra la necesidad de verificar en el gateway y NO ofrece reenviar", /Reenviar el mismo documento \(confirmar\)/.test(docPage) && /window\.confirm\(/.test(docPage) && /no se genera otro número/.test(docPage) && /Verifique el documento en el gateway antes de cualquier reenvío/.test(docPage) && !/ENVIO_INDETERMINADO"[^)]{0,80}enviarAlGateway/.test(docPage) && /resultado\.errorTipo !== "RECHAZO"/.test(formulario) && !/token|password|Authorization|Bearer/i.test(formulario + docPage));
-  cierto("ENV-03: la consulta de estado de FE sigue bloqueada hasta confirmar tipoDoc (no se inventa «FE»)", tipoDocConsulta("FE") === null && tipoDocConsulta("NCE") === "NCE");
+  cierto("ENV-03: la consulta de estado de FE usa tipoDoc «FE» (confirmado); NCE se conserva; los demás tipos siguen sin contrato", tipoDocConsulta("FE") === "FE" && tipoDocConsulta("NCE") === "NCE" && tipoDocConsulta("NDE") === null);
+
+  // ═ Contrato confirmado del gateway (fbc691b): consulta FE, success + nro_lote, Rechazados[], Token inválido ═══════════════════════════════════
+  const LOTE_REAL = "80020653-1-001-001-0017009-20261012151546-212066495";
+  const OK_REAL = { status: "success", message: "Documento recibido correctamente", nro_lote: LOTE_REAL };
+  const RZ_REAL = { status: "error", message: "Se detectaron valores inválidos en algunos documentos", aceptados: 0, rechazados: 1, response: { Aceptados: [], Rechazados: [{ "001-002-0050000": { iCondOpe: "Campo obligatorio requerido." } }] } };
+  const TK_REAL = { status: "error", message: "Token inválido" };
+  const okLote = interpretarRecepcion(200, JSON.stringify(OK_REAL), [], DOC_ENVIO);
+  const estadoDe = (http: number, cuerpo: unknown) => interpretarRecepcion(http, JSON.stringify(cuerpo), [], DOC_ENVIO).estadoLocal;
+
+  igual("contrato: success + nro_lote (sin CDC) → recepción confirmada ENVIADO con el lote; no fabrica CDC ni estado SIFEN", [okLote.resultado, okLote.estadoLocal, okLote.lote, okLote.cdc, okLote.estadoGateway, okLote.errorTipo, okLote.mensaje], ["OK", "ENVIADO", LOTE_REAL, null, null, null, "Documento recibido correctamente"]);
+  igual("contrato: success con lote vacío o de más de 60 caracteres → indeterminado (no cabe en la restricción SQL) y sin lote truncado", [estadoDe(200, { status: "success", nro_lote: "" }), estadoDe(200, { status: "success", nro_lote: "L".repeat(61) }), interpretarRecepcion(200, JSON.stringify({ status: "success", nro_lote: "L".repeat(61) }), [], DOC_ENVIO).lote], ["ENVIO_INDETERMINADO", "ENVIO_INDETERMINADO", null]);
+  igual("contrato: lote con CDC ajeno o con número devuelto distinto → indeterminado aunque haya lote", [estadoDe(200, { ...OK_REAL, cdc: CDC }), estadoDe(200, { ...OK_REAL, dEst: "001", dPunExp: "002", dNumDoc: "0050001" })], ["ENVIO_INDETERMINADO", "ENVIO_INDETERMINADO"]);
+  igual("contrato: success con lote pero Aceptados de otro documento → indeterminado; con el propio → ENVIADO", [estadoDe(200, { ...OK_REAL, response: { Aceptados: [{ "001-002-0050009": {} }], Rechazados: [] } }), estadoDe(200, { ...OK_REAL, response: { Aceptados: [{ "001-002-0050000": {} }], Rechazados: [] } })], ["ENVIO_INDETERMINADO", "ENVIADO"]);
+
+  for (const http of [200, 400, 422]) {
+    const rz = interpretarRecepcion(http, JSON.stringify(RZ_REAL), [], DOC_ENVIO);
+
+    igual(`contrato: Rechazados[] (HTTP ${http}) → ERROR_ENVIO/RECHAZO con número fiscal, campo y mensaje; sin lote`, [rz.estadoLocal, rz.errorTipo, rz.errores, rz.lote, rz.mensaje], ["ERROR_ENVIO", "RECHAZO", ["001-002-0050000 · iCondOpe: Campo obligatorio requerido."], null, "Se detectaron valores inválidos en algunos documentos"]);
+  }
+  igual("contrato: Rechazados con número de OTRO documento (o aceptado y rechazado a la vez) no se atribuye → indeterminado, sin errores ajenos", [
+    interpretarRecepcion(200, JSON.stringify({ ...RZ_REAL, response: { Aceptados: [], Rechazados: [{ "001-002-0050007": { iCondOpe: "x" } }] } }), [], DOC_ENVIO),
+    interpretarRecepcion(200, JSON.stringify({ ...RZ_REAL, response: { Aceptados: [{ "001-002-0050000": {} }], Rechazados: [{ "001-002-0050000": { iCondOpe: "x" } }] } }), [], DOC_ENVIO),
+  ].map((r) => [r.estadoLocal, r.errorTipo, r.errores]), [["ENVIO_INDETERMINADO", null, []], ["ENVIO_INDETERMINADO", null, []]]);
+  igual("contrato: varios campos rechazados del mismo documento se listan todos", interpretarRecepcion(200, JSON.stringify({ ...RZ_REAL, response: { Rechazados: [{ "001-002-0050000": { iCondOpe: "a", dRucRec: "b" } }] } }), [], DOC_ENVIO).errores, ["001-002-0050000 · iCondOpe: a", "001-002-0050000 · dRucRec: b"]);
+
+  const tk = interpretarRecepcion(400, JSON.stringify(TK_REAL), [], DOC_ENVIO);
+
+  igual("contrato: «Token inválido» con HTTP 400 → ERROR_ENVIO/AUTENTICACION (no RECHAZO)", [tk.estadoLocal, tk.errorTipo, tk.mensaje, tk.http], ["ERROR_ENVIO", "AUTENTICACION", "Token inválido", 400]);
+  igual("contrato: un 400 de validación cualquiera sigue siendo RECHAZO (solo el mensaje de token es autorización)", interpretarRecepcion(400, JSON.stringify({ status: "error", message: "dRucRec inválido" }), [], DOC_ENVIO).errorTipo, "RECHAZO");
+
+  limpiarCacheTokens();
+
+  const gTk = gateway({ consulta: [{ status: 400, cuerpo: TK_REAL }, { status: 200, cuerpo: OK_REAL }] });
+  const rTk = await enviarDocumentoGateway(CONFIG, PAYLOAD_ENVIO, DOC_ENVIO, { fetch: gTk.fetch, env: ENV }) as ResultadoEnvio;
+
+  igual("contrato: token inválido 400 → nuevo login y UN reintento con token fresco; termina ENVIADO por lote", [gTk.llamadas.map((l) => l.url.split("/api/")[1]), rTk.estadoLocal, rTk.lote, rTk.fases.map((f) => f.fase + ":" + f.ok)], [["login", "recepcion_de", "login", "recepcion_de"], "ENVIADO", LOTE_REAL, ["AUTENTICACION:true", "TRANSMISION:false", "AUTENTICACION:true", "TRANSMISION:true", "RESPUESTA:true"]]);
+  limpiarCacheTokens();
+
+  const gTk2 = gateway({ consulta: [{ status: 400, cuerpo: TK_REAL }, { status: 400, cuerpo: TK_REAL }, { status: 200, cuerpo: OK_REAL }] });
+  const rTk2 = await enviarDocumentoGateway(CONFIG, PAYLOAD_ENVIO, DOC_ENVIO, { fetch: gTk2.fetch, env: ENV }) as ResultadoEnvio;
+
+  igual("contrato: token inválido persistente → ERROR_ENVIO/AUTENTICACION tras UN solo reintento (2 transmisiones), sin tratarlo como rechazo", [gTk2.llamadas.filter((l) => l.url.endsWith("recepcion_de")).length, rTk2.estadoLocal, rTk2.errorTipo], [2, "ERROR_ENVIO", "AUTENTICACION"]);
+  limpiarCacheTokens();
+
+  const gRz = gateway({ consulta: [{ status: 200, cuerpo: RZ_REAL }, { status: 200, cuerpo: OK_REAL }] });
+  const rRz = await enviarDocumentoGateway(CONFIG, PAYLOAD_ENVIO, DOC_ENVIO, { fetch: gRz.fetch, env: ENV }) as ResultadoEnvio;
+
+  igual("contrato: el rechazo por validación no renueva el token ni reintenta (una sola transmisión)", [gRz.llamadas.filter((l) => l.url.endsWith("recepcion_de")).length, rRz.errorTipo, rRz.errores], [1, "RECHAZO", ["001-002-0050000 · iCondOpe: Campo obligatorio requerido."]]);
+  cierto("contrato: resultados y fases no contienen el token", !JSON.stringify([rTk, rTk2, rRz]).includes(TOKEN));
+
+  limpiarCacheTokens();
+
+  const gCf = gateway({ consulta: [{ status: 400, cuerpo: TK_REAL }, { status: 200, cuerpo: { status: "success" } }] });
+
+  await consultarDocumentoGateway(CONFIG, { tipo: "FE", establecimiento: "001", puntoExpedicion: "002", numero: "0050000", serie: null }, { fetch: gCf.fetch, env: ENV });
+
+  const cuerpoCf = { dEst: "001", dPunExp: "002", dNumDoc: "0050000", dSerieNum: null, tipoDoc: "FE" };
+
+  igual("contrato: consulta_de de FE envía tipoDoc «FE» con dEst/dPunExp/dNumDoc/dSerieNum y renueva el token una vez ante «Token inválido»", [gCf.llamadas.filter((l) => l.url.endsWith("consulta_de")).map((l) => l.body), gCf.llamadas.filter((l) => l.url.endsWith("login")).length], [[cuerpoCf, cuerpoCf], 2]);
+
 
   return fallos;
 }
