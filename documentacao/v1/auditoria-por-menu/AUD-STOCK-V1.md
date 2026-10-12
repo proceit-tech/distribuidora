@@ -67,3 +67,13 @@ Consultar **`AUD-PRODUCTOS-V1.md` §XVII**: `stock_saldos` deve ser zero em **to
 **STK-X04 / BLOQUEANTE antes de permitir a mudança de base:** API Productos bloqueia apenas produto no PUT; `NEX-014:224-249,282-359` grava movimentos sem bloqueio compartilhado por `productos.id`. A mudança futura exige serialização transacional comum entre a guarda de saldo zero e novos movimentos. Snapshot histórico de unidade-base/versões não existe nos movimentos atuais; não reescrever fatos passados.
 
 **Estado:** dependência identificada, sem código/SQL/VM aplicados; homologação pendente.
+
+## Distinção entre pendência fiscal e pendência física — DEC-PRD-U08 (12/10/2026)
+
+**Decisão aprovada:** com **todos os saldos de estoque zerados** e **nenhuma operação física pendente**, uma FE cujo payload fiscal já está efetivamente persistido e imutável **não bloqueia a mudança da unidade-base** apenas por seu envio, consulta ou resultado SIFEN estar pendente. O documento conserva unidade, quantidade, preço, IVA, total e demais dados fiscais históricos.
+
+**A guarda física da DEC-PRD-U07 não foi flexibilizada:** saldo em qualquer estado/depósito/propriedade ou operação de inventário pendente impede a troca; estados de FE `PENDIENTE_ENVIO`, `ENVIANDO`, `ENVIO_INDETERMINADO` não são, isoladamente, movimentação de estoque. Acesso ao snapshot imutável e reenvio são da auditoria de Facturas; não recalcular movimentos históricos a partir da base atual.
+
+**Evidência/pendência técnica:** `NEX-014` registra movimentos reais; `NEX-047/048` modelam estados fiscais e solicitação fiscal imutável, sem vínculo de linhas físicas que prove efeito. Mapear só pendências físicas reais, mantendo separação entre documentos e eventos; verificar futuras integrações com Inventario antes de implementação. Ver `AUD-PRODUCTOS-V1.md` §XVIII e `AUD-FACTURAS-V1.md` DEC-PRD-U08.
+
+**Estado:** regra aprovada; nenhum PostgreSQL, SQL, código ou teste operacional executado; auditoria de Stock ABERTA.
