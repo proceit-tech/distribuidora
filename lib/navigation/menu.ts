@@ -213,6 +213,13 @@ export const NAVIGATION_GROUPS: ShellNavigationGroup[] = [
     icon: "billing",
     items: [
       {
+        id: "electronic-documents",
+        label: "Documentos electrónicos",
+        href: "/documentos",
+        icon: "documents",
+        permission: "FACTURACION_ELECTRONICA.VER",
+      },
+      {
         id: "invoices",
         label: "Facturas",
         href: "/facturas",
@@ -231,13 +238,6 @@ export const NAVIGATION_GROUPS: ShellNavigationGroup[] = [
         label: "Notas de remisión",
         href: "/notas-remision",
         icon: "remission",
-        permission: "FACTURACION_ELECTRONICA.VER",
-      },
-      {
-        id: "electronic-documents",
-        label: "Todos los documentos",
-        href: "/documentos",
-        icon: "documents",
         permission: "FACTURACION_ELECTRONICA.VER",
       },
       {
@@ -351,6 +351,7 @@ const V1_HREFS = new Set([
   "/stock",
   "/reposicion",
   "/depositos",
+  "/documentos",
   "/movimientos",
   "/reportes",
   "/reportes/stock-general",

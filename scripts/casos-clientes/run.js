@@ -30,6 +30,7 @@ Module._resolveFilename = function (request, ...resto) {
   const jer = cargar("lib/productos/jerarquia-catalogos.casos.js");
   const lco = cargar("lib/listas-precio/listas-comerciales.casos.js");
   const srm = cargar("lib/stock/stock-reposicion.casos.js");
+  const fac = cargar("lib/facturacion/facturacion.casos.js");
   const suites = [
     ["teléfono y día de cobro", async () => tel.verificarCasosTelefonoYCobro(), () => tel.CASOS_TELEFONO.length + 11 + 6 + 2],
     ["catálogo mundial", async () => tel.verificarCatalogoMundial(), null],
@@ -53,6 +54,7 @@ Module._resolveFilename = function (request, ...resto) {
     ["Productos: jerarquía de catálogos Categoría → Familia → Línea (NEX-044, CAT-012)", async () => jer.verificarCasosJerarquiaCatalogos(), null],
     ["Listas de precios y Catálogos comerciales (NEX-045, tipos de cambio manuales)", async () => lco.verificarCasosListasComerciales(), null],
     ["Stock, Reposición y contrato Movimientos ↔ documentos (Etapas A, B y C)", async () => srm.verificarCasosStockReposicionMovimientos(), null],
+    ["Facturación F-01: documentos electrónicos, gateway y NEX-047", async () => fac.verificarCasosFacturacion(), null],
   ];
   let total = 0;
   let fallosTotal = 0;
