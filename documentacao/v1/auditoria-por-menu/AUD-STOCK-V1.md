@@ -77,3 +77,11 @@ Consultar **`AUD-PRODUCTOS-V1.md` §XVII**: `stock_saldos` deve ser zero em **to
 **Evidência/pendência técnica:** `NEX-014` registra movimentos reais; `NEX-047/048` modelam estados fiscais e solicitação fiscal imutável, sem vínculo de linhas físicas que prove efeito. Mapear só pendências físicas reais, mantendo separação entre documentos e eventos; verificar futuras integrações com Inventario antes de implementação. Ver `AUD-PRODUCTOS-V1.md` §XVIII e `AUD-FACTURAS-V1.md` DEC-PRD-U08.
 
 **Estado:** regra aprovada; nenhum PostgreSQL, SQL, código ou teste operacional executado; auditoria de Stock ABERTA.
+
+## DEC-PRD-U09 — rastreabilidade de fator comercial por versão (12/10/2026)
+
+**Regra aprovada:** apresentações comerciais já usadas são imutáveis quanto à unidade/fator que definem a conversão. Alterar Caja de 12 para 10 UNI gera nova versão ativa dessa apresentação, preservando a antiga; outras apresentações comerciais seguem ativas. Um movimento antigo deve continuar interpretado pelo fator original, e novo movimento adota a versão atual somente a partir de sua vigência.
+
+**Risco operacional:** `NEX-009/014` movimenta `cantidad` em unidade-base, sem FK/versão da apresentação no `movimiento_lineas` atual. `lib/productos/sincronizar.ts` ainda permite UPDATE/DELETE da apresentação; a futura associação ou snapshot de quantidade comercial, base e fator é necessária para auditoria e reversões. Não alterar movimentos e custos anteriores nem inferir novos saldos pela atualização do cadastro.
+
+**Estado:** DEC-PRD-U09 aprovada na fonte canônica `AUD-PRODUCTOS-V1.md` §XIX, Stock ainda em auditoria, sem execução SQL/VM.
