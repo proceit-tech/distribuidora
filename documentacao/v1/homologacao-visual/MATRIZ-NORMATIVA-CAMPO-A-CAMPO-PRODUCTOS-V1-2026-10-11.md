@@ -382,3 +382,108 @@ ChatGPT deve completar o confronto normativo com PDF do grupo de itens e confirm
 - **DEC-PRD-13 (nova):** aprovar catálogo canônico das 35 unidades oficiais da Tabela 5 com `codigo_sifen`, representação e vínculo com `unidades_medida` (sem perder IDs/referências já existentes).
 - **DEC-PRD-14 (nova):** aprovar classificação fiscal padrão por produto com afetação IVA 1–4, taxa e proporção condicionais, independente do cálculo do DTE na operação; definir permissões e política de mudança.
 - Nenhuma dessas novas regras foi implementada nem aprovada implicitamente por esta auditoria. Claude só implementa após autorização específica do responsável; migraciones devem ser incrementais e não aplicadas na VM pelas IAs.
+
+## 12. Confronto técnico e proposta de evolução cadastral SIFEN (Claude Code, 2026-10-12)
+
+**Natureza:** documentação e proposta. **Nada foi implementado, nenhuma migration foi criada, nenhum SQL foi executado, e DEC-PRD-13 e DEC-PRD-14 NÃO foram aprovadas nem implementadas.** Não houve acesso ao PostgreSQL real: o conteúdo efetivo dos catálogos da VM é **desconhecido**; o que se afirma sobre dados vem dos seeds e migrations versionados no Git (que podem não refletir o banco real). Fontes: Manual Técnico v150 (`Manual Técnico Versión 150 - 01-2.pdf`, extraído do ZIP arquivado com `pdftotext`; Tabelas 5 e 6 p. 211–212; E8 p. 85–87; E8.2 p. 89–90; validações 151–156 p. 178), NT009, NT013, NT023, NT026 e NT027.
+
+### 12.1. Verificação da transcrição da §11
+
+- **Tabela 5 conferida contra o PDF:** os 34 pares código/representação/descrição transcritos na §11.1 coincidem com o manual. São **34 unidades, não 35** (28 na p. 211 + 6 na p. 212: 625, 660, 885, 891, 869, 569); corrigir o «35» do texto de DEC-PRD-13. `Metros` aparece duas vezes (**87/`m`** e **108/`MT`**); `ml` (660, Metro lineal) e `ML` (88, Mililitros) diferem só por maiúsculas; `MM` (95) e `MM2` (96): **nenhuma unicidade por nome nem por `lower(representación)`**.
+- **Tabela 6 conferida:** 1 Gravado IVA; 2 Exonerado (Art. 83 – Ley 125/91); 3 Exento; 4 Gravado parcial (Grav-Exento).
+- **Regras E8.2 conferidas (validações 151–156 do MT, NT013):** E731 ∈ {1,2,3,4}; E732 é a descrição canônica do código; **E733 = 100 se E731=1; = 0 se E731=2/3; 0 < E733 < 100 se E731=4**; **E734 = 0 se E731=2/3; ∈ {5,10} se E731=1/4**; E735 base gravada = 100·EA008·E733 / (10000 + E734·E733) (NT013); E736 = E735·E734/100; E737 base exenta (só E731=4) = 100·EA008·(100−E733) / (10000 + E734·E733) (NT013). **E735–E737 dependem do valor da linha (EA008): são cálculo da operação, nunca atributo do cadastro.** E730/E731 são obrigatórios conforme D013 e C002 (contexto do documento): o cadastro guarda só o **padrão sugerido**.
+
+### 12.2. Unidades de medida — situação real e proposta
+
+**Estado versionado (NEX-003 + S-001):** `unidades_medida(id uuid, codigo text UNIQUE, nombre, codigo_sifen text, descripcion_sifen text, activo)`; global (sem `empresa_id`). **Sem CHECK nem índice único em `codigo_sifen`** (a fonte histórica 023 criava `varchar(5)` + índice único parcial; a V1 não). Referenciada por `productos`, `producto_unidades`, `producto_proveedores` e `lista_precio_items` (FK por `id`). Nenhum código TS/API/formulário usa `codigo_sifen`: `GET /api/productos` e o formulário usam só `id, codigo, nombre`.
+
+| Código interno (seed S-001) | `codigo_sifen` semeado | Tabela 5 oficial | Juízo |
+|---|---|---|---|
+| UN Unidad | `77` | 77 / UNI / Unidad | Correto. `descripcion_sifen` semeada = «Unidad» (E710 oficial = `UNI`). |
+| KG Kilogramo | `83` | 83 / kg / Kilogramos | Correto (representação oficial `kg`). |
+| LT Litro | **`87`** | 87 = **Metros (`m`)**; Litros = **89 / LT** | **Divergente: o seed mapeia Litro para o código de Metros.** |
+| MT Metro | **`86`** | 86 = **Gramos (`g`)**; Metro = **87 / m** ou **108 / MT** | **Divergente: o seed mapeia Metro para o código de Gramos; além disso há dois códigos oficiais para metro (decisão).** |
+| CJ Caja | `CJ` | não existe na Tabela 5 | Valor não numérico; E709 exige numérico 1–5 da Tabela 5. Caja é *apresentação* (fator sobre a unidade), não unidade fiscal. |
+| DOC Docena | `DOC` | não existe | Idem. |
+
+Os produtos DEMO (NEX-012) usam `UN`. Se a VM foi carregada com S-001, `LT` e `MT` estão com código fiscal errado e `CJ`/`DOC` sem equivalente: **verificação somente-leitura pelo responsável** (resultado deve ser anexado ao GitHub):
+
+```sql
+SELECT codigo, nombre, codigo_sifen, descripcion_sifen, activo,
+       (SELECT count(*) FROM productos p WHERE p.unidad_medida_id = u.id) AS produtos
+  FROM unidades_medida u ORDER BY codigo;
+```
+
+**Proposta estrutural (NEX-039, a criar só após aprovação de DEC-PRD-13):**
+1. Tabela de referência **`unidades_medida_sifen`** (global, só leitura para o papel runtime): `codigo integer PRIMARY KEY CHECK (codigo BETWEEN 1 AND 99999)` (E709, numérico 1–5), `representacion text NOT NULL CHECK (char_length(representacion) BETWEEN 1 AND 10)` (E710), `descripcion text NOT NULL`, `fuente text NOT NULL DEFAULT 'MT150-T5'`, `vigente boolean`. **Sem UNIQUE em `representacion`/`descripcion`** (Metros ×2; `ml`/`ML`). 34 linhas carregadas por seed separado (S-005), com checksum da fonte.
+2. **Nova coluna `unidades_medida.unidad_sifen_codigo integer NULL REFERENCES unidades_medida_sifen(codigo)`** (relação N:1: várias unidades internas podem apontar para o mesmo código oficial). **Os IDs e FKs existentes ficam intactos; nenhuma unidade é fundida, renomeada ou apagada.** As colunas atuais `codigo_sifen`/`descripcion_sifen` ficam **obsoletas e preservadas** (sem DROP); a fonte da verdade passa a ser o vínculo.
+3. **Backfill NÃO automático:** seed separado e revisável que só vincula o inequívoco (UN→77, KG→83, LT→89) e deixa MT, CJ e DOC **sem vínculo** até decisão (MT: 87/`m` ou 108/`MT`; CJ/DOC: política — normalmente unidade fiscal UNI 77 com a caixa como apresentação).
+4. Reversão: `DROP COLUMN unidad_sifen_codigo` + `DROP TABLE unidades_medida_sifen` (sem perda de dados originais). Grants: SELECT para `nexit_runtime`; sem escrita runtime (catálogo global administrado por seed/plataforma).
+5. **API:** `GET /api/productos?modo=catalogos` devolve por unidade `unidadSifen: { codigo, representacion, descripcion } | null`. **Validação:** sem vínculo = **aviso de «aptidão fiscal» (informativo)**, nunca bloqueio de cadastro na V1 (não há emissão). `producto_unidades` herda a unidade fiscal da unidade da presentação. Nunca enviar o UUID no XML (E709 é o código oficial).
+6. **UI:** nenhum segundo seletor de unidade. Em *SIFEN y códigos*, bloco «Unidad fiscal» **somente leitura** com a unidade base escolhida em Información (`UNI · 77`) e, se faltar vínculo, aviso curto «Sin equivalencia SIFEN: no podrá emitirse».
+
+### 12.3. Tributação IVA — situação real e proposta (DEC-PRD-14 pendente)
+
+**Estado versionado:** `impuestos(id, codigo UNIQUE, nombre, porcentaje numeric(5,2) 0–100, activo)`, global; seed: `IVA10` (10), `IVA5` (5), `EXE` «Exenta» (0). `productos.impuesto_id` (FK, opcional; também `proveedores.impuesto_id`). **Não existe** campo de afetação (E731) nem de proporção (E733); a taxa (E734) existe como `porcentaje`. `EXE` (0%) é **ambíguo**: pode ser Exento (3) ou Exonerado (2), com consequências fiscais distintas; **não deve ser inferido.** O formulário tem um único seletor «Impuesto / IVA» (padrão IVA 10 % para novos), e o POST/PUT só persistem `impuesto_id`.
+
+**Contrato proposto de «classificação fiscal padrão do produto»** (independente do cálculo do DTE; a operação pode legitimamente diferir e é a que se transmite):
+
+| E731 afetação | Taxa padrão (E734) | Proporção gravada (E733) | Cadastro guarda | Operação calcula |
+|---|---|---|---|---|
+| 1 Gravado IVA | 5 ou 10 | 100 (fixa) | afetação + taxa | E735, E736 |
+| 2 Exonerado (Art. 83 – Ley 125/91) | 0 | 0 (fixa) | afetação | zeros |
+| 3 Exento | 0 | 0 (fixa) | afetação | zeros |
+| 4 Gravado parcial | 5 ou 10 | **0 < x < 100 (informada)** | afetação + taxa + proporção | E735, E736, E737 |
+
+**Estrutura recomendada (NEX-040, só após aprovação):**
+- **Classificação no catálogo `impuestos`** (preserva a FK `productos.impuesto_id` e a semântica de `porcentaje`): `afectacion_iva smallint NULL CHECK (IN 1..4)`, `tasa_iva smallint NULL CHECK (IN 0,5,10)`; CHECKs de coerência (afetação 1 ⇒ tasa 5/10; 2/3 ⇒ tasa 0; 4 ⇒ tasa 5/10) e `porcentaje = tasa_iva` quando ambas existirem. Novas linhas de catálogo (ex.: `EXENTO`, `EXONERADO`, `GRAV_PARCIAL`) em seed separado, **sem alterar `EXE`**.
+- **Proporção no produto:** `productos.proporcion_gravada_iva numeric(7,4) NULL` com CHECK `0 < x < 100`, obrigatória se (e somente se) a afetação do imposto escolhido for 4; verificada por trigger (regra entre tabelas) e pela API.
+- **Backfill:** IVA10 → (1, 10), IVA5 → (1, 5); **`EXE` fica sem classificação (NULL) até o responsável decidir 2 ou 3.** Produtos existentes não mudam de imposto; nenhum histórico é reclassificado.
+- **Permissões e política de mudança:** alterar o imposto de um produto com movimentos continua com `PRODUCTOS.EDITAR`; propõe-se permissão própria só se a decisão exigir segregação (pendente). Mudança futura não afeta documentos já emitidos (a operação grava seu próprio valor).
+- **API/validação:** `normalizarProducto` valida a combinação proporção × afetação do imposto (E733a/b); o catálogo devolve `afectacionIva`, `tasaIva`. Imposto sem classificação = aviso de aptidão fiscal. **UI:** seletor de imposto passa a viver em *SIFEN y códigos* (bloco «IVA»), com chips derivados (afetação, taxa) e campo «Proporción gravada» visível só para afetação 4; em *Información* fica o valor em somente leitura (fonte única).
+
+### 12.4. Demais códigos fiscais — situação real campo a campo
+
+| Tag | Regra do pacote | Campo Nexit / limite | Situação real | Ação proposta |
+|---|---|---|---|---|
+| E701 dCodInt | 1–50 (NT009) | `codigo_sifen` ≤ 20; `codigo` ≤ 80 | Conservador (subconjunto). `codigo` não pode ir direto ao XML se > 50. | **Manter 20** (sem aprovação não se amplia). Definir na emissão a fonte (`codigo_sifen`, senão `codigo` se ≤ 50). Ampliar para 50 = `ALTER` simples de CHECK + `maxLength`; decisão do responsável. |
+| E702 dParAranc | numérico, 4 | `partida_arancelaria` ≤ 4 | **Implementado:** 4 dígitos (V1.1). | — |
+| E703 dNCM | numérico 6–8 | `ncm` ≤ 8 | **Implementado:** 6–8 dígitos. | — |
+| E704 dDncpG | alfanum. 8, 0–1; **NT026 retira obrigatoriedade B2G** | `dncp_general` ≤ 8 | Implementado: 1–8 alfanuméricos, opcional. O manual exige preencher com zeros à esquerda quando existir. | Não preencher na gravação; aplicar *padding* na emissão (proposta) ou normalizar a 8 na entrada (decisão). |
+| E705 dDncpE | alfanum. 3–4, 0–1 | `dncp_especifico` ≤ 4 | **Implementado:** 3–4, opcional. | — |
+| E706 dGtin | numérico **8, 12, 13 ou 14**, 0–1 | `producto_codigos` tipos GTIN/EAN/UPC; CHECK de BD: **8–14** dígitos | **Desvio:** a BD e a API aceitam 9, 10 e 11 dígitos, que o E706 não admite. | Restringir a {8,12,13,14} no aplicativo para esses tipos (sem alterar a CHECK da BD); checksum GS1 = DEC-PRD-02 pendente. |
+| E707 dGtinPq | idem, GTIN do pacote | tipo `GTIN_EMPAQUE`; `producto_unidades.codigo_barras` (texto livre ≤ 80) | `codigo_barras` da apresentação **sem validação de GTIN**. | Validar como GTIN quando a apresentação for a embalagem; distinguir E706 (item) de E707 (pacote). Pendente DEC-PRD-06 (principal). |
+| E708 dDesProSer | 1–2000 (NT009) | `descripcion_factura` ≤ 120 | Subconjunto conservador. | **Manter 120.** Ampliação = decisão (impacto de impressão). |
+| E709/E710 | Tabela 5 | `unidad_medida_id` (UUID) | Sem vínculo oficial verificado (ver §12.2). | NEX-039. |
+| E711 dCantProSer | 1–10p(0–8) (NT023) | estoque `numeric(18,4)` | Escala de estoque (4) < fiscal (8). | **Não alterar o estoque.** A quantidade fiscal vem da operação. |
+| E712/E713 | país ISO3; descrição 4–30 | `pais_origen_codigo`/`_nombre` (≤ 30) | Código validado ISO3; nome copiado do catálogo (`left(…,30)`). | Aviso se o nome do catálogo tiver < 4 caracteres. |
+| E714 dInfItem | 1–500 | `informacion_factura` ≤ 500 | Implementado, sem truncar. | — |
+| E715–E718 | merma/quebra | `relacion_mercaderia`, `cantidad_merma`, `porcentaje_merma(7,4)` | E718 admite 8 decimais; coluna tem 4. | Mestre = padrão; valor fiscal vem da operação (DEC-PRD-11 pendente). |
+| E731–E734 | §12.1 | — | Inexistentes no cadastro (exceto taxa em `porcentaje`). | NEX-040. |
+| E735–E737 | cálculo | — | Fora do cadastro. | Sem campo. |
+
+**Limites 20→50 e 120→2000:** nenhuma alteração. Opções para o responsável: (a) manter limites empresariais menores (válidos); (b) ampliar `codigo_sifen` para 50 (baixo risco); (c) ampliar descrição fiscal para 2000 (exige revisar impressão/tickets). Não há dependência técnica desta etapa dos limites.
+
+### 12.5. Estrutura proposta da aba «SIFEN y códigos» (sem alterar as sete abas)
+
+Layout do padrão Nexit (grade 4/2/1, cartões compactos, mensagens por campo), **sem copiar o formulário do concorrente**, em blocos curtos:
+1. **Identificação do item** — Código SIFEN (E701); Información adicional en factura (E714); `Descripción para factura` e `País de origen` aparecem só como **valores de leitura** com atalho à aba onde se editam (fonte única; sem duplicar edição).
+2. **IVA** (DEC-PRD-14) — seletor de imposto; chips derivados *Afectación* e *Tasa*; *Proporción gravada* apenas se afetação = 4.
+3. **Unidade fiscal** (DEC-PRD-13) — leitura da unidade base (e suas presentações) com `código · representação`; aviso se não há equivalência.
+4. **Classificação aduaneira e contratações** — NCM, partida arancelaria, DNCP geral/específico.
+5. **GTIN e códigos** — coleção atual `codigos` com rótulos E706 (item) / E707 (embalagem); um principal.
+Cada bloco mostra um indicador discreto de «aptidão fiscal» (pendências), sem bloquear o salvamento na V1.
+
+### 12.6. Plano de implementação (aguarda autorização específica)
+
+| Etapa | Conteúdo | Dependência |
+|---|---|---|
+| A | Aprovação de DEC-PRD-13/14, política MT (87 vs 108), `EXE`, CJ/DOC e confirmação dos dados reais da VM (consulta §12.2) | Responsável |
+| B | NEX-039 (+ reversão) e seed S-005 (34 unidades); seed separado de vínculo inequívoco | A |
+| C | NEX-040 (+ reversão) e seed de classificações; `normalizarProducto` (proporção/afetação), catálogos na API | A |
+| D | Aba SIFEN conforme §12.5; aviso de aptidão fiscal | B, C |
+| E | Regressões (estáticas + base simulada); verificação em PostgreSQL pelo responsável | B–D |
+
+**Riscos:** (1) vínculos de unidade incorretos já semeados na VM (LT/MT) alimentariam XML errado — corrigir *antes* de qualquer emissão; (2) `EXE` mal classificado muda o tratamento fiscal; (3) restringir GTIN a {8,12,13,14} pode rejeitar a edição de produtos antigos com 9–11 dígitos; (4) unidades globais compartilhadas por todas as empresas: qualquer correção afeta todos os tenants (deve ser feita por migration/seed controlado, nunca por tela de empresa).
+
+**Estado:** confronto documentado; propostas sem implementação; nenhuma verificação em PostgreSQL ou navegador; manifesto das fontes DNIT permanece o do repositório.
