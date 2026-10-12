@@ -432,3 +432,42 @@ Este arquivo é a fonte única da auditoria do menu **Productos**. Registrar, co
 - Regras U03/U07/U08/U09/U10 permanecem **aprovadas como negócio**, mas sua implementação está reservada a tarefas futuras de escopo próprio. Não projetar históricos/cadastros adicionais durante este recorte fiscal.
 
 **PONTO DE CONTROLE:** ETAPA 01 AUTORIZADA PARA CLAUDE CODE; resultado AINDA NÃO IMPLEMENTADO nem HOMOLOGADO. Auditoria integral de Productos ainda ABERTA.
+
+## XXII. AUD-R01 — parecer independente da ENTREGA 01 e pacote conjunto Clientes + Productos (12/10/2026)
+
+### 1. Auditoria da implementação publicada
+
+**Fonte efetiva:** commit `1a72c7e56edd1786c47e51ee7eb866962fd2787b`, filho do commit de autorização `5fba3683bafa41f2d43f41a2164fe098bb9a77e9`; SHA entregue pelo Claude `f811741dfb5fc1d71c51dee5bb3f83d706454025` é um **MERGE** da implementação com a auditoria de Clientes `438d7a0cd6fb8d54012c50f13d12e8376e073cec`, portanto não deve ser usado sozinho como diff de implementação. Revisados arquivos alterados (`normalizar.ts`, `shared.ts`, POST Productos, formulário, seletores, `emision.ts`, Facturas UI, tipos, suites) e contratos NEX-039/040/043 e de emissão.
+
+**Veredito da ETAPA 01: ACEITE ESTÁTICO DO RECORTE, SEM HOMOLOGAÇÃO OPERACIONAL.**
+
+- **PRD-A02 corrigido estaticamente na criação nova vendável:** `normalizarProducto` exige IVA/imposto; `POST /api/productos` chama `validarReferencias(..., { exigirUnidadSifen: ... })` dentro de `BEGIN` antes de INSERT/abertura; a query consulta `unidades_medida_sifen.vigente` e distingue vínculo ausente, código inexistente e não vigente. Mantém legados/PUT sem reclassificação.
+- **PRD-A15 corrigido estaticamente:** `SELECT_PRODUCTOS` usado na seleção/prévia/emissão agora filtra `p.vendible`, não só `p.activo`. Requisição direta para não vendível não o encontra e falha antes de reservar número.
+- **PRD-A16 corrigido estaticamente:** a query expõe `unidadVigente` e `prepararFactura` rejeita vínculo ausente/inexistente/desativado com 422. A UI distingue não vigente.
+- **PRD-A26 ajustado:** fixtures históricas sem classificação agora são explicitamente `vendible:false` e cenários novos cobrem IVA obrigatório, vigente/inexistente, não vendível e bloqueio de emissão; **não confundir fixtures/mocks e testes por inspeção de fonte com teste PostgreSQL ponta a ponta**.
+- **DEC-PRD-U06 preservada:** default de IVA 10% Gravado na criação permanece editável. Nenhuma migration histórica alterada nesse commit.
+
+**Contagem de testes:** Claude informa `tsc`, ESLint, `next build` e **2068 verificações / 0 falhas / 23 novas** locais; ChatGPT **NÃO reexecutou** essas verificações nem testou API/DB/VM/SIFEN. A reconciliação de unidades SIFEN é **condicional ao estado verificado do banco** e não é autorização de execução cega do script `reconciliar-unidades-sifen-NEX-039.sql`. NEX-001…051: preservação estrita de migrações já aplicadas, conforme registro operacional do responsável.
+
+**Conclusão:** o recorte fiscal implementado não requer reapresentar ao Claude um novo trabalho A02/A15/A16/A26 sem regressão comprovada. O menu Productos, porém, não está homologado nem encerrado: os itens abaixo são anteriores/independentes da Etapa 01.
+
+### 2. RODADA CONJUNTA AUTORIZADA pelo responsável — estabilização funcional V1 Clientes + Productos
+
+**Pedido atual:** revisar a entrega Productos e, caso haja ajustes, **passar junto com os achados de Clientes para finalizar os dois menus**, sem burocracia nem expansão de escopo. Esta autorização é de **preparar/implementar correções em código Git** pelo Claude Code, não de aplicar SQL, acessar VM, executar scripts de reconciliação ou declarar menus homologados.
+
+**Prioridades Productos (somente defeitos já identificados):**
+
+1. **PRD-A21/U07 — BLOQUEANTE integridade de estoque:** ao tentar alterar `productos.unidad_medida_id` em PUT, comparar com a unidade atualmente persistida. Se não mudou, edição normal. Se mudou, só permitir com **TODOS** os saldos do produto zerados em todos depósitos, estados, propriedades e lotes, sem operações físicas efetivamente pendentes; histórico de unidade anterior preservado/auditável. Fazer verificação no servidor na mesma transação, **serializada com os escritores efetivos de estoque**; a simples leitura de SUM e `FOR UPDATE` apenas do produto não garante ausência de corrida com NEX-014. Não bloquear só pela existência de movimentos históricos concluídos ou por FE congelada e sem pendência física (U08). Não obrigar revisão de preços nem criar wizard/aprovação (U10). Se uma proteção completa exigir alteração de funções SQL já aplicadas, propor **migration incremental NEX-052+** na branch, sem editar NEX-001…051 nem executar. Se inviável no recorte, documentar exatamente a parte bloqueada — nunca abrir alteração insegura.
+2. **PRD-A23 — ALTA isolamento:** harmonizar listagem de Produtos, detalhe (`stockPorDeposito`, total e eventuais custos/saldos agregados) e lista de depósitos com a mesma política de alcance efetivo por usuário adotada por Stock (`usuario_puede_deposito`, empresa da sessão). Não exibir saldos de depósitos fora do alcance por GET direto nem calcular agregados a partir de depósitos invisíveis; preservar usuário admin/TODOS e perfis restritos. Cobrir casos multiempresa e alcance parcial.
+3. **PRD-A24 — ALTA erro direto de validação:** `producto_documentos.observacion` tem CHECK de 500 caracteres em NEX-007 e UI/validador aceitam 1000. Alinhar **UI e API a 500**, devolver erro de campo útil para 501; não mudar coluna do banco para uma observação simples, não editar migration aplicada. Testar exatamente 500 e 501 no POST/PUT e via browser.
+4. **PRD-A04/A05 — proteção simples de rascunho:** formulário Produtos já calcula `sucio` mas não protege Volver/Cancelar/saída, nem inclui fotos/documentos pendentes. Integrar proteção mínima reutilizável com Clientes, apenas ao haver alterações efetivas, incluindo arquivos. Não redesenhar menu nem substituir todos os modais de ação nesta rodada.
+
+**Critérios negativos do pacote:** PRD-A17 (paginação remota), A25 (idempotência pós-COMMIT), A30/U09 (estrutura completa de versões de apresentações), A31 (precificação por apresentação), A20/U03 (faturação por apresentação), GTIN/E706-E707 e refatorações ERP avançadas **não entram neste pacote de estabilização**. As decisões U03/U07/U08/U09/U10 continuam válidas na fonte canônica; o que depende de uma integração maior com Facturas/Movimientos fica como trabalho próprio e NÃO se declara implementado/homologado por esta entrega. `esUnidadBase` inconsistente permanece achado documentado, sem abrir nova discussão nesta rodada.
+
+### 3. Acoplamento com Clientes e condições de parada
+
+**Ler `AUD-CLIENTES-V1.md` seção VII** para os ajustes CLI-A06 (grants documentais), CLI-A01 (referências inativas inalteradas), CLI-A03 (gravação obsoleta), CLI-A04 (catálogo com erro) e CLI-A02 (proteção de rascunho); CLI-A05 só exige medição quando houver lentidão, não reescrever listagem na V1.
+
+**Protocolo de Claude Code para UMA rodada conjunta:** antes de qualquer mudança, `git status`, confirmar branch `feature/NEXIT-2026-001-banco-demo`, sincronizar de modo seguro (`fetch` + fast-forward quando possível), ler integralmente `CLAUDE.md` e `documentacao/PROTOCOLO-IA.md`, trechos pertinentes do `PROGRESSO-NEXIT-V1.md`, esta seção XXII, seção VII de Clientes e regras fiscais/SQL reais. Separar commits por menu para revisão sem mistura; commits/push apenas na branch oficial, sem mexer em `AUD-*`. Não tocar VM, PostgreSQL real, Docker/deploy, gateways SIFEN nem executar SQL. Se nova NEX-052+ for indispensável, preparar justificativa, pré-inspeção e aplicação/reversão seguras no Git; **NÃO aplicar** e solicitar validação do responsável antes da implantação. Não criar documentação/status duplicado. Testes locais direcionados, TypeScript, lint e build, cobertura negativa segurança/concorrência/limites. Terminadas as alterações, relatar objetivamente resultados numéricos, bloqueios reais e SHAs, e **PARAR para nova auditoria independente do ChatGPT**.
+
+**Estado:** Etapa 01 ACEITA ESTATICAMENTE; rodada conjunta de correções **AUTORIZADA PARA O CLAUDE**, mas AINDA NÃO IMPLEMENTADA. Nenhuma homologação, execução de testes pelo ChatGPT, PostgreSQL, VM ou migration. Auditoria integral Productos ABERTA; fechamento depende de inspeção do novo commit e aceite operacional humano.
