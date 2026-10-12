@@ -67,6 +67,26 @@ export async function listarUsuariosDeposito(db: Db, empresaId: string, actorId:
   return r.rows as F[];
 }
 
+/**
+ * Historial de accesos del depósito (deposito_usuario_eventos, solo altas), del más reciente al más antiguo, máx. 200. Solo si el depósito está en el
+ * alcance de quien consulta. Se muestra el nombre vigente de las personas; la fila solo guarda identificadores. $1 empresa, $2 actor, $3 depósito.
+ */
+export async function listarEventosAcceso(db: Db, empresaId: string, actorId: string, depositoId: string) {
+  const r = await db.query(
+    `SELECT e.id, e.evento, e.origen, e.creado_at AS "creadoAt",
+            trim(coalesce(u.nombre, '') || ' ' || coalesce(u.apellido, '')) AS "usuarioNombre", u.usuario AS "usuarioCodigo",
+            trim(coalesce(a.nombre, '') || ' ' || coalesce(a.apellido, '')) AS "actorNombre", a.usuario AS "actorCodigo"
+       FROM deposito_usuario_eventos e
+       JOIN usuarios u ON u.empresa_id = e.empresa_id AND u.id = e.usuario_id
+       JOIN usuarios a ON a.empresa_id = e.empresa_id AND a.id = e.actor_id
+      WHERE e.empresa_id = $1 AND e.deposito_id = $3 AND e.deposito_id IN (${DEPOSITOS_EN_ALCANCE})
+      ORDER BY e.creado_at DESC, e.id DESC LIMIT 200`,
+    [empresaId, actorId, depositoId],
+  );
+
+  return r.rows as F[];
+}
+
 export async function enTransaccion<T>(db: { connect: () => Promise<PoolClient> }, fn: (c: PoolClient) => Promise<T>): Promise<T> {
   const c = await db.connect();
 

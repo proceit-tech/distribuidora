@@ -568,3 +568,6 @@ Módulo /depositos (lista, cadastro, edição de nome/sucursal, ativar/inativar;
 
 ### Depósitos — CRUD com atribuições de usuários (2026-10-12)
 NEX-046 revisada (ainda **não aplicada**) e reversão atualizada: funções de atribuir/revogar usuários (só ASIGNADOS; TODOS = acesso amplo), autoatribuição do criador explícita, guarda contra saldo em depósito inativo sem corrida, mudança de sucursal bloqueada com movimentos/usuários incompatíveis, inativação preserva vínculos e histórico. API e tela «Usuarios». Funções de inventário intactas. Local: 1818 verificações, 0 falhas; tsc/ESLint/build OK; sem PostgreSQL/navegador.
+
+### Depósitos — sucursal imutável e auditoria de acessos (2026-10-12)
+NEX-046 revisada (ainda **não aplicada**): sucursal imutável após qualquer movimento (função + trigger + sem corrida) e auditoria persistente/transacional de atribuições e revogações efetivas (inclui atribuição inicial do criador), sem eventos em repetições ou rejeições; histórico consultável. Reversão atualizada. Local: 1832 verificações, 0 falhas; tsc/ESLint/build OK; sem PostgreSQL/navegador.

@@ -14,7 +14,8 @@ type Deposito = { id: string; codigo: string; nombre: string; activo: boolean; s
 type Sucursal = { id: string; codigo: string; nombre: string; activo: boolean };
 type UsuarioDeposito = { id: string; usuario: string; nombre: string; apellido: string; estado: string; alcanceDepositos: "TODOS" | "ASIGNADOS"; alcanceSucursales: string; asignado: boolean; asignadoAt: string | null; sucursalCompatible: boolean; esUsted: boolean };
 type Datos = { depositos: Deposito[]; sucursales: Sucursal[]; permisos: { crear: boolean; editar: boolean }; actor: { alcanceDepositos: "TODOS" | "ASIGNADOS" } | null };
-type Panel = { deposito: Deposito; usuarios: UsuarioDeposito[] | null; error: string; ocupado: string };
+type EventoAcceso = { id: string; evento: "ATRIBUIR" | "REVOCAR"; origen: "MANUAL" | "CREACION"; creadoAt: string; usuarioNombre: string; usuarioCodigo: string; actorNombre: string; actorCodigo: string };
+type Panel = { deposito: Deposito; usuarios: UsuarioDeposito[] | null; eventos: EventoAcceso[]; error: string; ocupado: string };
 type CampoOrden = "codigo" | "nombre" | "sucursal" | "estado";
 type FormEstado = FormularioDeposito & { id: string | null; asignarme: boolean };
 
@@ -156,15 +157,17 @@ export default function DepositosPage() {
   }
 
   async function abrirUsuarios(d: Deposito) {
-    setPanel({ deposito: d, usuarios: null, error: "", ocupado: "" });
+    setPanel({ deposito: d, usuarios: null, eventos: [], error: "", ocupado: "" });
     try {
-      const r = await fetch(`/api/depositos/${d.id}/usuarios`, { cache: "no-store" });
+      const [r, h] = await Promise.all([fetch(`/api/depositos/${d.id}/usuarios`, { cache: "no-store" }), fetch(`/api/depositos/${d.id}/historial-acceso`, { cache: "no-store" })]);
       const j = (await r.json().catch(() => ({}))) as { usuarios?: UsuarioDeposito[]; error?: string };
+      const jh = (await h.json().catch(() => ({}))) as { eventos?: EventoAcceso[]; error?: string };
 
       if (!r.ok) throw new Error(j.error ?? "No fue posible cargar los usuarios.");
-      setPanel({ deposito: d, usuarios: j.usuarios ?? [], error: "", ocupado: "" });
+      if (!h.ok) throw new Error(jh.error ?? "No fue posible cargar el historial de accesos.");
+      setPanel({ deposito: d, usuarios: j.usuarios ?? [], eventos: jh.eventos ?? [], error: "", ocupado: "" });
     } catch (e) {
-      setPanel({ deposito: d, usuarios: [], error: e instanceof Error ? e.message : "No fue posible cargar los usuarios.", ocupado: "" });
+      setPanel({ deposito: d, usuarios: [], eventos: [], error: e instanceof Error ? e.message : "No fue posible cargar los usuarios.", ocupado: "" });
     }
   }
 
@@ -193,9 +196,8 @@ export default function DepositosPage() {
       const j = (await r.json().catch(() => ({}))) as { usuarios?: UsuarioDeposito[]; error?: string; message?: string };
 
       if (!r.ok) throw new Error(j.error ?? "No fue posible cambiar el acceso.");
-      setPanel({ deposito: d, usuarios: j.usuarios ?? [], error: "", ocupado: "" });
       setAviso(j.message ?? "Acceso actualizado.");
-      await cargar();
+      await Promise.all([cargar(), abrirUsuarios(d)]);
     } catch (e) {
       setPanel((p) => (p ? { ...p, error: e instanceof Error ? e.message : "No fue posible cambiar el acceso.", ocupado: "" } : p));
     }
@@ -428,6 +430,52 @@ export default function DepositosPage() {
                       </tr>
                     );
                   })
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          <h4 style={{ margin: "14px 0 6px", fontSize: 13.5 }}>Historial de accesos</h4>
+          <div className={ui.tableScroll}>
+            <table className={ui.table} style={{ minWidth: 640 }}>
+              <thead>
+                <tr>
+                  <th>Fecha</th>
+                  <th>Evento</th>
+                  <th>Usuario afectado</th>
+                  <th>Realizado por</th>
+                </tr>
+              </thead>
+              <tbody>
+                {panel.eventos.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className={ui.emptyCell}>
+                      <div className={ui.empty}>
+                        <strong>Sin cambios de acceso registrados</strong>
+                        <span>Solo se registran las autorizaciones y revocaciones efectivas.</span>
+                      </div>
+                    </td>
+                  </tr>
+                ) : (
+                  panel.eventos.map((ev) => (
+                    <tr key={ev.id} className={ui.row}>
+                      <td>{new Date(ev.creadoAt).toLocaleString("es-PY", { timeZone: "America/Asuncion" })}</td>
+                      <td>
+                        <span className={ev.evento === "ATRIBUIR" ? ui.statusActive : ui.statusInactive}>{ev.evento === "ATRIBUIR" ? "Autorizado" : "Revocado"}</span>
+                        {ev.origen === "CREACION" ? <small className={ui.muted}> · al crear el depósito</small> : null}
+                      </td>
+                      <td>
+                        {ev.usuarioNombre || ev.usuarioCodigo}
+                        <br />
+                        <small className={ui.muted}>{ev.usuarioCodigo}</small>
+                      </td>
+                      <td>
+                        {ev.actorNombre || ev.actorCodigo}
+                        <br />
+                        <small className={ui.muted}>{ev.actorCodigo}</small>
+                      </td>
+                    </tr>
+                  ))
                 )}
               </tbody>
             </table>

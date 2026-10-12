@@ -28,9 +28,17 @@
 --    SIN CARRERA: la inactivación bloquea la fila del depósito (FOR UPDATE) y un trigger en stock_saldos toma FOR SHARE sobre esa fila antes de crear
 --    o aumentar un saldo y rechaza el depósito inactivo. Un movimiento concurrente o espera a la inactivación (y falla al ver el depósito inactivo)
 --    o la inactivación espera a que ese movimiento confirme (y entonces ve el saldo y se rechaza). No se modifica ninguna función de inventario.
---  · Cambio de sucursal de un depósito: BLOQUEADO si el depósito tiene movimientos (su historial conserva la sucursal de cada movimiento y los
---    informes por sucursal se partirían) o si algún usuario atribuido no tiene la nueva sucursal en su alcance (el vínculo quedaría inconsistente;
---    antes hay que revocarlo). Cambiar solo el nombre es siempre posible.
+--  · SUCURSAL IMUTABLE TRAS EL PRIMER MOVIMIENTO (decisión aprobada): se rechaza cambiar sucursal_id si existe CUALQUIER movimiento del depósito
+--    (incluidos anulados y aperturas), por la función Y por trigger (también ante SQL directo). Mientras nunca se movió, el cambio exige además
+--    sucursal activa y en el alcance, y que los usuarios atribuidos la tengan en su alcance (si no, antes hay que revocarlos). Sin carrera: un trigger
+--    en movimientos_inventario toma FOR SHARE sobre el depósito y fija la sucursal vigente en el movimiento, de modo que no puede nacer el primer
+--    movimiento con una sucursal vieja mientras se cambia. Los movimientos históricos y los saldos no se reclasifican. Cambiar solo el nombre es libre.
+--  · AUDITORÍA PERSISTENTE Y TRANSACCIONAL de toda atribución y revocación EFECTIVA: tabla de solo altas deposito_usuario_eventos (empresa, depósito,
+--    usuario afectado, actor, evento ATRIBUIR/REVOCAR, origen MANUAL/CREACION y fecha del servidor; solo identificadores, sin datos sensibles). La
+--    escribe únicamente la misma función que cambia el vínculo, en la misma transacción, y solo si el vínculo realmente cambió (ROW_COUNT): los
+--    intentos repetidos o rechazados no dejan evento. Incluye la atribución inicial del creador (origen CREACION). Sin UPDATE/DELETE/TRUNCATE; el
+--    DELETE solo se admite durante el reinicio de una empresa DEMO (nex_reinicio_demo_activo). Sobrevive a revocaciones, inactivaciones y cambios de
+--    perfil. El rol de la aplicación solo tiene SELECT.
 --  · Unicidad de código sin distinguir mayúsculas dentro de la empresa; si ya hubiera códigos que solo difieren en mayúsculas la migración ABORTA
 --    sin cambiar nada. La unicidad de nombre NO está decidida y no se impone.
 --  · No se agrega DELETE ni trigger de borrado: NEX-012 elimina depósitos al depurar una empresa DEMO; el rol de la aplicación no tiene DELETE y las
@@ -42,6 +50,12 @@ BEGIN
   IF to_regclass('public.depositos') IS NULL OR to_regclass('public.sucursales') IS NULL OR to_regclass('public.usuario_deposito') IS NULL
      OR to_regclass('public.usuario_sucursal') IS NULL OR to_regclass('public.stock_saldos') IS NULL OR to_regclass('public.movimientos_inventario') IS NULL THEN
     RAISE EXCEPTION 'NEX-046 requiere NEX-002 (depositos, sucursales, usuario_deposito, usuario_sucursal) y NEX-009/NEX-014 (stock_saldos, movimientos_inventario).';
+  END IF;
+  IF to_regprocedure('public.nex_reinicio_demo_activo(uuid)') IS NULL THEN
+    RAISE EXCEPTION 'NEX-046 requiere NEX-012 (nex_reinicio_demo_activo).';
+  END IF;
+  IF to_regclass('public.deposito_usuario_eventos') IS NOT NULL THEN
+    RAISE EXCEPTION 'deposito_usuario_eventos ya existe: NEX-046 parece aplicada; no se reaplica por suposición.';
   END IF;
   IF to_regprocedure('public.usuario_tiene_permiso(uuid,uuid,text,text)') IS NULL OR to_regprocedure('public.usuario_puede_deposito(uuid,uuid,uuid)') IS NULL THEN
     RAISE EXCEPTION 'NEX-046 requiere NEX-014 (usuario_tiene_permiso, usuario_puede_deposito).';
@@ -79,6 +93,10 @@ BEGIN
   IF NEW.empresa_id IS DISTINCT FROM OLD.empresa_id OR NEW.es_de_terceros IS DISTINCT FROM OLD.es_de_terceros THEN
     RAISE EXCEPTION 'la empresa y el tipo (propio / de terceros) del depósito % no se modifican', OLD.codigo USING ERRCODE = 'P0001';
   END IF;
+  IF NEW.sucursal_id IS DISTINCT FROM OLD.sucursal_id
+     AND EXISTS (SELECT 1 FROM public.movimientos_inventario m WHERE m.empresa_id = OLD.empresa_id AND (m.deposito_origen_id = OLD.id OR m.deposito_destino_id = OLD.id)) THEN
+    RAISE EXCEPTION 'el depósito % ya tiene movimientos: su sucursal es inmutable', OLD.codigo USING ERRCODE = 'P0001', DETAIL = 'NEX:DEPOSITO_SUCURSAL_CON_MOVIMIENTOS';
+  END IF;
   RETURN NEW;
 END $$;
 
@@ -103,6 +121,70 @@ END $$;
 
 CREATE TRIGGER stock_saldos_deposito_activo_trg BEFORE INSERT OR UPDATE ON public.stock_saldos
   FOR EACH ROW EXECUTE FUNCTION public.stock_saldos_deposito_activo();
+
+-- 2c) Sin carrera entre el primer movimiento y un cambio de sucursal: el movimiento toma FOR SHARE sobre el/los depósito(s) (conflicta con el FOR UPDATE de
+--     deposito_editar) y adopta la sucursal vigente del depósito. En el flujo normal el valor es idéntico al que ya calculó la función de inventario.
+CREATE OR REPLACE FUNCTION public.movimientos_deposito_sucursal() RETURNS trigger
+LANGUAGE plpgsql SET search_path = public, pg_temp AS $$
+DECLARE
+  v_suc uuid;
+BEGIN
+  IF NEW.deposito_origen_id IS NULL AND NEW.deposito_destino_id IS NULL THEN
+    RETURN NEW;
+  END IF;
+
+  PERFORM 1 FROM public.depositos WHERE empresa_id = NEW.empresa_id AND id IN (NEW.deposito_origen_id, NEW.deposito_destino_id) ORDER BY id FOR SHARE;
+  SELECT sucursal_id INTO v_suc FROM public.depositos WHERE empresa_id = NEW.empresa_id AND id = COALESCE(NEW.deposito_origen_id, NEW.deposito_destino_id);
+  IF v_suc IS NOT NULL THEN
+    NEW.sucursal_id := v_suc;
+  END IF;
+  RETURN NEW;
+END $$;
+
+CREATE TRIGGER movimientos_deposito_sucursal_trg BEFORE INSERT ON public.movimientos_inventario
+  FOR EACH ROW EXECUTE FUNCTION public.movimientos_deposito_sucursal();
+
+-- 2d) Auditoría de atribuciones (solo altas). Sin datos sensibles: solo identificadores.
+CREATE TABLE public.deposito_usuario_eventos (
+  id           uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+  empresa_id   uuid        NOT NULL REFERENCES public.empresas (id),
+  deposito_id  uuid        NOT NULL,
+  usuario_id   uuid        NOT NULL,
+  actor_id     uuid        NOT NULL,
+  evento       text        NOT NULL CHECK (evento IN ('ATRIBUIR','REVOCAR')),
+  origen       text        NOT NULL DEFAULT 'MANUAL' CHECK (origen IN ('MANUAL','CREACION')),
+  creado_at    timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT deposito_usuario_eventos_deposito_fk FOREIGN KEY (empresa_id, deposito_id) REFERENCES public.depositos (empresa_id, id) ON DELETE CASCADE,
+  CONSTRAINT deposito_usuario_eventos_usuario_fk  FOREIGN KEY (empresa_id, usuario_id)  REFERENCES public.usuarios (empresa_id, id) ON DELETE CASCADE,
+  CONSTRAINT deposito_usuario_eventos_actor_fk    FOREIGN KEY (empresa_id, actor_id)    REFERENCES public.usuarios (empresa_id, id) ON DELETE CASCADE,
+  CONSTRAINT deposito_usuario_eventos_origen_chk  CHECK (origen = 'MANUAL' OR evento = 'ATRIBUIR')
+);
+
+CREATE INDEX deposito_usuario_eventos_deposito_idx ON public.deposito_usuario_eventos (empresa_id, deposito_id, creado_at DESC);
+CREATE INDEX deposito_usuario_eventos_usuario_idx  ON public.deposito_usuario_eventos (empresa_id, usuario_id, creado_at DESC);
+
+COMMENT ON TABLE public.deposito_usuario_eventos IS 'Auditoría (solo altas) de las atribuciones y revocaciones efectivas de usuarios a depósitos: quién, a quién, en qué depósito, evento y fecha del servidor.';
+
+CREATE OR REPLACE FUNCTION public.deposito_usuario_eventos_inmutable() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'TRUNCATE' THEN
+    RAISE EXCEPTION 'deposito_usuario_eventos es de solo altas: no se vacía.' USING ERRCODE = 'P0001';
+  END IF;
+  IF TG_OP = 'UPDATE' THEN
+    RAISE EXCEPTION 'deposito_usuario_eventos es de solo altas: no se modifica.' USING ERRCODE = 'P0001';
+  END IF;
+  -- DELETE: solo durante el reinicio/eliminación de una empresa DEMO (cascada), nunca en operación normal.
+  IF NOT public.nex_reinicio_demo_activo(OLD.empresa_id) THEN
+    RAISE EXCEPTION 'deposito_usuario_eventos es de solo altas: no se elimina.' USING ERRCODE = 'P0001';
+  END IF;
+  RETURN OLD;
+END $$;
+
+CREATE TRIGGER deposito_usuario_eventos_inmutable_fila_trg BEFORE UPDATE OR DELETE ON public.deposito_usuario_eventos
+  FOR EACH ROW EXECUTE FUNCTION public.deposito_usuario_eventos_inmutable();
+CREATE TRIGGER deposito_usuario_eventos_inmutable_truncate_trg BEFORE TRUNCATE ON public.deposito_usuario_eventos
+  FOR EACH STATEMENT EXECUTE FUNCTION public.deposito_usuario_eventos_inmutable();
 
 -- 3) Alcance. Funciones auxiliares (solo lectura).
 CREATE OR REPLACE FUNCTION public.sucursal_en_alcance(p_empresa uuid, p_usuario uuid, p_sucursal uuid) RETURNS boolean
@@ -132,6 +214,7 @@ DECLARE
   v_codigo text := btrim(coalesce(p_codigo, ''));
   v_nombre text := btrim(coalesce(p_nombre, ''));
   v_id uuid;
+  v_n integer;
 BEGIN
   IF NOT public.usuario_tiene_permiso(p_empresa, p_usuario, 'INVENTARIO', 'CREAR') THEN
     RAISE EXCEPTION 'el usuario no tiene permiso INVENTARIO.CREAR en esta empresa' USING ERRCODE = '42501';
@@ -160,6 +243,12 @@ BEGIN
     SELECT u.empresa_id, u.id, v_id, u.id FROM public.usuarios u
      WHERE u.empresa_id = p_empresa AND u.id = p_usuario AND u.alcance_depositos = 'ASIGNADOS'
     ON CONFLICT DO NOTHING;
+    GET DIAGNOSTICS v_n = ROW_COUNT;
+    -- Atribución inicial auditada (misma transacción), solo si el vínculo se creó realmente.
+    IF v_n = 1 THEN
+      INSERT INTO public.deposito_usuario_eventos (empresa_id, deposito_id, usuario_id, actor_id, evento, origen)
+      VALUES (p_empresa, v_id, p_usuario, p_usuario, 'ATRIBUIR', 'CREACION');
+    END IF;
   END IF;
 
   RETURN v_id;
@@ -244,6 +333,7 @@ DECLARE
   v_suc uuid;
   v_alcance text;
   v_estado text;
+  v_n integer;
 BEGIN
   IF NOT public.usuario_tiene_permiso(p_empresa, p_actor, 'INVENTARIO', 'EDITAR') THEN
     RAISE EXCEPTION 'el usuario no tiene permiso INVENTARIO.EDITAR en esta empresa' USING ERRCODE = '42501';
@@ -268,11 +358,20 @@ BEGIN
   INSERT INTO public.usuario_deposito (empresa_id, usuario_id, deposito_id, asignado_por)
   VALUES (p_empresa, p_usuario, p_deposito, p_actor)
   ON CONFLICT DO NOTHING;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+
+  -- Auditoría atómica y solo de la operación efectiva: una repetición (el vínculo ya existía) no deja evento.
+  IF v_n = 1 THEN
+    INSERT INTO public.deposito_usuario_eventos (empresa_id, deposito_id, usuario_id, actor_id, evento, origen)
+    VALUES (p_empresa, p_deposito, p_usuario, p_actor, 'ATRIBUIR', 'MANUAL');
+  END IF;
 END $$;
 
 CREATE OR REPLACE FUNCTION public.deposito_usuario_revocar(p_empresa uuid, p_actor uuid, p_deposito uuid, p_usuario uuid)
 RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE
+  v_n integer;
 BEGIN
   IF NOT public.usuario_tiene_permiso(p_empresa, p_actor, 'INVENTARIO', 'EDITAR') THEN
     RAISE EXCEPTION 'el usuario no tiene permiso INVENTARIO.EDITAR en esta empresa' USING ERRCODE = '42501';
@@ -284,6 +383,13 @@ BEGIN
   PERFORM 1 FROM public.depositos WHERE empresa_id = p_empresa AND id = p_deposito FOR UPDATE;
   -- Solo se borra el vínculo (idempotente): movimientos, saldos y costos no se tocan.
   DELETE FROM public.usuario_deposito WHERE empresa_id = p_empresa AND deposito_id = p_deposito AND usuario_id = p_usuario;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+
+  -- Auditoría atómica y solo si había un vínculo que revocar (DELETE sin vínculo no deja evento).
+  IF v_n = 1 THEN
+    INSERT INTO public.deposito_usuario_eventos (empresa_id, deposito_id, usuario_id, actor_id, evento, origen)
+    VALUES (p_empresa, p_deposito, p_usuario, p_actor, 'REVOCAR', 'MANUAL');
+  END IF;
 END $$;
 
 -- 6) Privilegios del rol de la aplicación: solo ejecutar las funciones (sin escritura directa sobre depositos ni usuario_deposito).
@@ -304,6 +410,9 @@ BEGIN
   GRANT EXECUTE ON FUNCTION public.deposito_cambiar_estado(uuid, uuid, uuid, boolean) TO nexit_runtime;
   GRANT EXECUTE ON FUNCTION public.deposito_usuario_asignar(uuid, uuid, uuid, uuid) TO nexit_runtime;
   GRANT EXECUTE ON FUNCTION public.deposito_usuario_revocar(uuid, uuid, uuid, uuid) TO nexit_runtime;
+  -- Auditoría: el rol de la aplicación solo la lee; la escriben únicamente las funciones SECURITY DEFINER de arriba.
+  REVOKE ALL ON public.deposito_usuario_eventos FROM nexit_runtime;
+  GRANT SELECT ON public.deposito_usuario_eventos TO nexit_runtime;
   GRANT EXECUTE ON FUNCTION public.deposito_en_alcance(uuid, uuid, uuid) TO nexit_runtime;
   GRANT EXECUTE ON FUNCTION public.sucursal_en_alcance(uuid, uuid, uuid) TO nexit_runtime;
 END $$;
