@@ -138,3 +138,13 @@ Examinar próxima rodada por prioridade: integridade de GET/POST/PUT dos filhos 
 **Testes informados pelo Claude:** rodada conjunta 2116 verificações, 0 falhas; `tsc` e `next build` aprovados, ESLint apenas dos arquivos alterados. ChatGPT fez somente leitura GitHub e comparação textual; **zero testes locais executados nesta auditoria**, zero PostgreSQL real, VM ou SIFEN.
 
 **Status:** Clientes em **ACEITE ESTÁTICO PROVISÓRIO** das correções direcionadas; NEX-053 **NÃO LIBERADA PARA APLICAÇÃO** até correção/verificação de dependência 052 e validação operacional autorizada. Menu Clientes ainda ABERTO e NÃO HOMOLOGADO.
+
+## IX. AUD-R03 — revisão dirigida de regressão Clientes e dependência NEX-052/053 (12/10/2026)
+
+**Fonte:** commit `6f6253d9c85bcf68dcb46c7576c4dcebcd06ab80` (testes e progresso, **sem alteração funcional Clientes**); ajuste Productos `0ff07fe36c144af17214e802c14728660f81423a`; merge `beb9fbf75ebd42a6a9b30bbe2ae5dd92e3c94397`. Protocolos e progresso atuais lidos. Conferido diff da suíte `lib/clientes/estabilizacion.casos.ts` e leitura da guarda `reversion-NEX-052.sql` em relação à NEX-053.
+
+**Veredito:** **ACEITE ESTÁTICO DA VERIFICAÇÃO REGRESSIVA, sem novo bug comprovado em Clientes nesta rodada**. As duas novas verificações testam principalmente **contratos/expressões do SQL versionado**; não comprovam o estado dos grants nem execução de rollback no PostgreSQL. O código de Clientes e NEX-053 não foram alterados neste commit.
+
+**Reporte do Claude:** 2132 verificações locais, zero falhas, TypeScript/ESLint/build aprovados; ChatGPT não reexecutou. As guardas de dependência não tornam NEX-052/053 aplicadas nem dispensam backup/verificação da ordem de aplicação (052 → 053) e reversão (053 → 052).
+
+**Orientação:** não encaminhar retrabalho de Clientes ao Claude sem nova regressão demonstrada. Priorizar Proveedores na próxima execução. Clientes mantém **homologação operacional humana PENDENTE** (grants, transações, UI, VM), sem declarar o menu encerrado/implantado. Nenhum PostgreSQL, SQL ou deploy executado pelo ChatGPT.
