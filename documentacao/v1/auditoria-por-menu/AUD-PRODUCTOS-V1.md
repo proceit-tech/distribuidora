@@ -315,9 +315,9 @@ Este arquivo é a fonte única da auditoria do menu **Productos**. Registrar, co
 
 - **DEC-PRD-U08 — APROVADA (12/10/2026):** FE com payload fiscal já gravado e imutável **não bloqueia a troca da unidade-base apenas por aguardar envio/resultado SIFEN**, desde que o estoque esteja integralmente zerado e não haja operação física pendente. Unidade, quantidade, preço, IVA e total históricos da factura permanecem congelados. Sem snapshot comprovado, a exceção não se aplica. Ver seção XVIII.
 - **DEC-PRD-U09 — APROVADA (12/10/2026):** apresentação já utilizada em operação de compra/venda/movimento não terá `factor_conversion` nem unidade original sobrescritos. Quando houver mudança (ex.: caixa de 12 → 10 unidades), **encerrar a vigência da versão anterior, conservar histórico e criar nova versão**, sendo somente uma versão da MESMA apresentação vigente para novas operações. Outras apresentações do mesmo produto permanecem independentes e podem continuar ativas. Ver seção XIX.
-- **DEC-PRD-U10 — preços:** ao trocar unidade-base com estoque zero, exigir revisão/atualização explícita dos preços de referência e listas ativas associados à unidade antiga antes de concluir, ou permitir mudar a unidade e deixar o produto sem preço vendável até a revisão? Nenhuma recalculação automática de preço foi aprovada.
+- **DEC-PRD-U10 — SIMPLIFICADA/ENCERRADA por orientação do responsável (12/10/2026):** ao trocar a unidade-base nas condições já aprovadas em U07, **não exigir revisão de preços, não suspender vendas nem lançar perguntas adicionais**. A alteração solicitada pelo cliente deve ser salva; os valores nominais dos preços permanecem como estão até edição voluntária, **sem recálculo automático**. Na futura implementação, manter a unidade referencial tecnicamente coerente e não modificar documentos históricos. Ver seção XX.
 
-**Estado atualizado:** DEC-PRD-U08 (seção XVIII) e DEC-PRD-U09 (seção XIX) **APROVADAS**; DEC-PRD-U10 (política de preços ao trocar unidade-base) continua aberta. Nenhum teste, PostgreSQL, navegador, migration ou alteração funcional executado. Auditoria ABERTA.
+**Estado atualizado:** DEC-PRD-U08/U09 aprovadas; DEC-PRD-U10 simplificada e encerrada na seção XX. Auditoria técnica continua ABERTA, sem novas perguntas repetidas sobre mudança da unidade-base/preços.
 
 ## XVIII. DEC-PRD-U08 — FE congelada não bloqueia troca de unidade-base (12/10/2026) — APROVADA
 
@@ -375,4 +375,20 @@ Este arquivo é a fonte única da auditoria do menu **Productos**. Registrar, co
 - Solicitação direta à API de `UPDATE` destrutivo ou `DELETE` de apresentação usada: deve resultar em versão histórica preservada e resposta coerente, **nunca perda silenciosa de histórico**.
 - Simultaneidade de duas alterações de factor e operação em andamento exige serialização/versão esperada; falhar em conflito, não gravar duas versões ativas.
 
-**Status:** DEC-PRD-U09 **APROVADA**. Implementação, estrutura SQL incremental e testes operacionais ainda não autorizados; DEC-PRD-U10 e a subdecisão de `esUnidadBase` continuam abertas. Auditoria integral Productos **ABERTA**.
+**Status atualizado:** DEC-PRD-U09 APROVADA; U10 encerrada por simplificação da V1 na seção XX. A subdecisão técnica de `esUnidadBase` deve ser resolvida no parecer sem insistir em questionário repetitivo. Auditoria integral Productos ABERTA, nenhuma implementação autorizada.
+
+## XX. Orientação de escopo para a V1 — preços e troca de unidade-base (12/10/2026)
+
+**Manifestação do responsável:** “nao precisa de tudo isso, se o cliente trocar trouco. para a primeira versao nao precisa ser tanto assim, voce ja pergutou 5 vezes praticamente a mesma coisa.” Trata-se de correção explícita do excesso de detalhamento e das opções artificiais propostas para DEC-PRD-U10.
+
+**REGRA SIMPLES V1 / DEC-PRD-U10 ENCERRADA:** ao cliente trocar a unidade-base dentro da regra U07 (estoque zero e nenhuma operação física pendente), o NEXIT **salva a nova unidade**, **sem exigir revisão obrigatória de preços**, **sem bloquear vendas por esse motivo**, **sem apagar preços existentes** e **sem recalcular automaticamente valores numéricos**. Se o cliente quiser mudar os preços, altera-os diretamente nos cadastros existentes. Preservar coerência do vínculo de unidade nos registros de preço futuros; alterações antigas continuam históricas, sem reconstrução de documentos fiscais emitidos.
+
+**Não interpretar como revogação das escolhas anteriores:** mantém-se U07 (troca só com estoque zero e sem operações físicas pendentes), U08 (factura congelada não bloqueia) e U09 (não sobrescrever fator de apresentação já utilizado). A intenção é eliminar etapas e obrigações extras na UX da V1, não permitir corrupção de saldos/histórico.
+
+**Escopo que NÃO deve ser exigido na V1 apenas para esta regra:** assistente de revisão de preços, bloqueio temporário de venda por preço anterior, recálculo/migração automática de tabelas de preço, aprovações adicionais para troca da unidade, telas de reconciliação avançadas, workflow de múltiplas confirmações.
+
+**Nota de auditoria PRD-A22:** o descompasso possível entre `productos.unidad_medida_id` e `lista_precio_items.unidad_medida_id` continua um fato técnico a ser evitado com solução interna mínima, sem impor burocracia ao usuário nem alterar os valores dos preços. Não tocar nas migrations já aplicadas; proposta técnica posterior deve ser pequena e compatível.
+
+**Conduta do analista daqui em diante:** não repetir perguntas sobre políticas já resolvidas; fazer inventário e apontar defeitos concretos por menu, priorizando bugs que impedem cadastro, estoque e SIFEN. Anotar opções avançadas como melhoria futura, não bloqueadores automáticos da V1. Só solicitar decisão quando houver ambiguidade substantiva que não possa ser resolvida pela regra vigente.
+
+**Situação:** orientação do cliente registrada; auditoria de Productos ABERTA; nenhuma implementação, teste operacional, SQL, VM ou migration alterada.
