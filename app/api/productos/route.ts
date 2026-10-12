@@ -12,7 +12,7 @@ import {
   validarReferencias,
 } from "@/lib/productos/shared";
 import { ErrorValidacion } from "@/lib/productos/errores";
-import { normalizarProducto } from "@/lib/productos/normalizar";
+import { esVendibleFiscal, normalizarProducto } from "@/lib/productos/normalizar";
 import { guardarHijos } from "@/lib/productos/sincronizar";
 
 // Solo DEMO explícito usa respuestas simuladas. La falta de DATABASE_URL NUNCA activa datos ficticios.
@@ -120,7 +120,7 @@ export async function GET(request: Request) {
           [empresaId],
         ),
         db.query(
-          `SELECT u.id, u.codigo, u.nombre, u.unidad_sifen_codigo AS "sifenCodigo", coalesce(s.representacion, '') AS "sifenRepresentacion"
+          `SELECT u.id, u.codigo, u.nombre, u.unidad_sifen_codigo AS "sifenCodigo", coalesce(s.representacion, '') AS "sifenRepresentacion", s.vigente AS "sifenVigente"
              FROM unidades_medida u LEFT JOIN unidades_medida_sifen s ON s.codigo = u.unidad_sifen_codigo
             WHERE u.activo = true ORDER BY u.nombre`,
         ),
@@ -205,7 +205,7 @@ export async function POST(request: Request) {
     await conexion.query("BEGIN");
     await resolverPais(conexion, datos);
 
-    await validarReferencias(conexion, empresaId, datos);
+    await validarReferencias(conexion, empresaId, datos, {}, { exigirUnidadSifen: esVendibleFiscal("crear", datos.tipoProducto, datos.vendible) });
 
     const codigo = await siguienteCodigo(conexion, empresaId);
     const columnas = columnasProducto(datos, codigo);

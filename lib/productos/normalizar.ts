@@ -55,7 +55,16 @@ export type ProductoComponenteDatos = { id: string | null; productoComponenteId:
 export type DatosProducto = ReturnType<typeof normalizarProducto>;
 
 /** `tasaImpuesto`: porcentaje del impuesto elegido (el formulario lo pasa desde el catálogo; el servidor lo valida contra la base). undefined = no se verifica aquí. */
-export type OpcionesNormalizar = { modo: "crear" | "editar"; productoId?: string; tasaImpuesto?: string | null };
+export type OpcionesNormalizar = {
+  modo: "crear" | "editar";
+  productoId?: string;
+  tasaImpuesto?: string | null;
+  /** Equivalencia SIFEN (E709) de la unidad base elegida, para el producto NUEVO vendible. undefined = no se verifica aquí (el servidor la verifica contra la base); null = unidad desconocida. */
+  unidadFiscal?: { sifenCodigo: number | null; sifenVigente?: boolean | null } | null;
+};
+
+/** DEC-PRD-U02: un producto NUEVO de tipo MERCADERIA/SERVICIO destinado a la venta no se guarda con la clasificación fiscal incompleta. Los productos existentes no se reclasifican. */
+export const esVendibleFiscal = (modo: "crear" | "editar", tipoProducto: string, vendible: boolean) => modo === "crear" && vendible && (tipoProducto === "MERCADERIA" || tipoProducto === "SERVICIO");
 
 function filas<T>(origen: Cuerpo[], campo: string, f: (fila: Cuerpo, p: string, indice: number) => T): T[] {
   return origen.map((fila, i) => f(fila, `${campo}.${i}`, i));
@@ -116,6 +125,17 @@ export function normalizarProducto(d: Cuerpo, opciones: OpcionesNormalizar = { m
   const incoherencia = opciones.tasaImpuesto === undefined ? (afectacionIva === null && proporcionGravadaIva !== null ? coherenciaIva(null, null, proporcionGravadaIva) : afectacionIva !== null && afectacionIva !== 4 && proporcionGravadaIva !== null ? coherenciaIva(afectacionIva, afectacionIva === 1 ? "10" : "0", proporcionGravadaIva) : null) : coherenciaIva(afectacionIva, opciones.tasaImpuesto, proporcionGravadaIva);
 
   if (incoherencia) throw new ErrorValidacion(incoherencia.mensaje, incoherencia.campo);
+
+  if (esVendibleFiscal(opciones.modo, tipoProducto, d.vendible !== false)) {
+    if (afectacionIva === null) throw new ErrorValidacion("Seleccione la afectación IVA: un producto nuevo destinado a la venta no se guarda sin clasificación fiscal.", "afectacionIva");
+    if (!opcional(d.impuestoId, "El impuesto", "impuestoId")) throw new ErrorValidacion("Seleccione el impuesto (tasa de IVA): un producto nuevo destinado a la venta no se guarda sin clasificación fiscal.", "impuestoId");
+    if (opciones.unidadFiscal !== undefined) {
+      const u = opciones.unidadFiscal;
+
+      if (u === null || u.sifenCodigo === null) throw new ErrorValidacion("La unidad base no tiene equivalencia SIFEN (E709): no se puede crear un producto vendible con ella. Elija una unidad con código SIFEN.", "unidadMedidaId");
+      if (u.sifenVigente === false) throw new ErrorValidacion("El código SIFEN de la unidad base no está vigente en el catálogo oficial: elija otra unidad.", "unidadMedidaId");
+    }
+  }
 
   // Precio de venta de referencia: vacío = sin precio (nunca se asume 0).
   const precioVentaReferencia = decimal(d.precioVentaReferencia, CANTIDAD_18_4, "El precio de venta de referencia", "precioVentaReferencia");

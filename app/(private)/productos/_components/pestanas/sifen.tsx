@@ -73,7 +73,7 @@ export function PestanaSifen({ ctx }: { ctx: ContextoFormulario }) {
             // La proporción informada solo existe con «Gravado parcial»; en los demás casos es fija y se deriva.
             if (v !== "4") ctx.set("proporcionGravadaIva", "");
           }}
-          opciones={[["", "Sin clasificar"], ...AFECTACIONES_IVA.map((a): [string, string] => [String(a.codigo), `${a.codigo} · ${a.texto}`])]}
+          opciones={[["", ctx.modo === "editar" ? "Sin clasificar" : "Seleccione la afectación"], ...AFECTACIONES_IVA.map((a): [string, string] => [String(a.codigo), `${a.codigo} · ${a.texto}`])]}
         />
         {afectacion === 4 ? (
           <Texto etiqueta="Proporción gravada (%) *" campo="proporcionGravadaIva" errores={errores} valor={form.proporcionGravadaIva} alCambiar={(v) => ctx.set("proporcionGravadaIva", v)} modo="decimal" maxLength={8} ayuda="Mayor que 0 y menor que 100." />
@@ -104,7 +104,9 @@ export function PestanaSifen({ ctx }: { ctx: ContextoFormulario }) {
 
       {unidad && !unidad.sifenCodigo ? (
         <p className={styles.nota} role="status">
-          Sin equivalencia SIFEN configurada para esta unidad. No impide guardar el producto.
+          {ctx.modo === "editar"
+            ? "Sin equivalencia SIFEN configurada para esta unidad: el producto no podrá facturarse hasta que se vincule. Al editar no se bloquea el guardado."
+            : "Sin equivalencia SIFEN configurada para esta unidad: no se puede crear un producto vendible con ella. Elija una unidad con código SIFEN."}
         </p>
       ) : null}
 

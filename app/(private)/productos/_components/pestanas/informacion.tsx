@@ -62,7 +62,7 @@ export function PestanaInformacion({ ctx }: { ctx: ContextoFormulario }) {
           errores={errores}
           valor={form.unidadMedidaId}
           alCambiar={(v) => ctx.set("unidadMedidaId", v)}
-          opciones={[["", "Seleccione unidad"], ...catalogos.unidades.map((u): [string, string] => [u.id, etiquetaUnidad(u)])]}
+          opciones={[["", "Seleccione unidad"], ...catalogos.unidades.map((u): [string, string] => [u.id, `${etiquetaUnidad(u)}${u.sifenCodigo ? (u.sifenVigente === false ? " — SIFEN no vigente" : "") : " — sin código SIFEN"}`])]}
         />
       </div>
 

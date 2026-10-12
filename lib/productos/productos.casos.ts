@@ -25,7 +25,8 @@ const K1 = "e1e1e1e1-e1e1-4e1e-8e1e-e1e1e1e1e1e1";
 
 type Consulta = { sql: string; parametros: unknown[] };
 
-const base = { descripcion: "Producto", descripcionFactura: "Producto factura", unidadMedidaId: U1 };
+// Fixture de producto no vendible: las pruebas ajenas a la regla DEC-PRD-U02 no dependen de la clasificación fiscal (la regla se prueba aparte con vendible: true).
+const base = { descripcion: "Producto", descripcionFactura: "Producto factura", unidadMedidaId: U1, vendible: false };
 const raiz = process.cwd();
 const leer = (ruta: string) => readFileSync(join(raiz, ruta), "utf8");
 

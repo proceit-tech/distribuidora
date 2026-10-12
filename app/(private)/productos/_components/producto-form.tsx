@@ -170,6 +170,11 @@ export default function ProductoForm({ mode, initial, catalogos, onSave, onRecar
         modo: mode === "create" ? "crear" : "editar",
         productoId: initial?.id,
         tasaImpuesto: form.impuestoId ? (catalogos.impuestos.find((i) => i.id === form.impuestoId)?.porcentaje ?? null) : null,
+        unidadFiscal: (() => {
+          const u = catalogos.unidades.find((x) => x.id === form.unidadMedidaId);
+
+          return u ? { sifenCodigo: u.sifenCodigo, sifenVigente: u.sifenVigente } : null;
+        })(),
       }); // la misma validación que ejecuta el servidor
     } catch (e) {
       mostrarError(e instanceof ErrorValidacion ? e : new ErrorValidacion(e instanceof Error ? e.message : "Los datos no son válidos."));

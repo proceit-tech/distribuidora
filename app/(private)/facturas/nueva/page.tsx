@@ -18,7 +18,7 @@ type Cliente = {
   email: string | null; emailFacturacion: string | null; telefono: string | null; celular: string | null; direccion: string | null; numeroCasa: string | null; apto: boolean; pendientes: string[];
 };
 type Producto = {
-  id: string; codigo: string; descripcion: string; unidadSifen: number | null; unidadSimbolo: string | null; unidadNombre: string | null; afectacion: number | null; proporcion: string | null;
+  id: string; codigo: string; descripcion: string; unidadSifen: number | null; unidadSimbolo: string | null; unidadNombre: string | null; unidadVigente?: boolean | null; afectacion: number | null; proporcion: string | null;
   tasa: number | null; precio: string | null; monedaPrecio: string | null; gtin: string | null;
 };
 type Linea = { clave: number; producto: Producto; cantidad: string; precio: string };
@@ -63,6 +63,7 @@ function problemasProducto(p: Producto): string[] {
 
   if (p.afectacion === null) m.push("sin clasificación de IVA");
   if (p.unidadSifen === null) m.push("sin unidad de medida SIFEN");
+  else if (p.unidadVigente === false) m.push("unidad SIFEN no vigente");
   if (p.precio === null || p.monedaPrecio !== "PYG") m.push("sin precio de venta en guaraníes");
 
   return m;

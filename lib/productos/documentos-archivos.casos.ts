@@ -168,7 +168,7 @@ export async function verificarCasosDocumentosProductos(): Promise<string[]> {
   cierto("la ficha lista solo documentos no eliminados y distingue archivo de enlace anterior (legado visible)", /eliminado_at IS NULL/.test(ficha) && /\(almacen_clave IS NOT NULL\) AS "tieneArchivo"/.test(ficha) && /coalesce\(url_archivo,''\) AS "urlArchivo"/.test(ficha));
   cierto("la ficha informa permisos de documentos, creador y foto privada", /permisosDocumentos:/.test(ficha) && /"esCreador"/.test(ficha) && /"imagenPrivada"/.test(ficha));
   cierto("la sincronización de la ficha (PUT) ya no toca producto_documentos: no puede destruir archivos ni versiones", !/producto_documentos/.test(leer("lib/productos/sincronizar.ts")) && !/producto_documentos/.test(ficha.replace(/FROM producto_documentos[\s\S]*?ORDER BY creado_at, id/, "")));
-  igual("el normalizador no persiste documentos enviados con la ficha", Object.prototype.hasOwnProperty.call(normalizarProducto({ descripcion: "P", descripcionFactura: "P", unidadMedidaId: "a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1", documentos: [{ tipo: "OTRO" }] }), "documentos"), false);
+  igual("el normalizador no persiste documentos enviados con la ficha", Object.prototype.hasOwnProperty.call(normalizarProducto({ vendible: false, descripcion: "P", descripcionFactura: "P", unidadMedidaId: "a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1", documentos: [{ tipo: "OTRO" }] }), "documentos"), false);
 
   const imagen = leer("app/api/productos/[id]/imagen/route.ts");
 
@@ -219,7 +219,7 @@ export async function verificarCasosDocumentosProductos(): Promise<string[]> {
 
   // ── PRD-REV-06: unidades comerciales, presentaciones y factores (sin conversiones inventadas)
   const compras = leer("app/(private)/productos/_components/pestanas/compras.tsx");
-  const pres = (nombre: string, factor: string) => ({ descripcion: "P", descripcionFactura: "P", unidadMedidaId: "a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1", unidades: [{ unidadMedidaId: "a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1", nombrePresentacion: nombre, factorConversion: factor }] });
+  const pres = (nombre: string, factor: string) => ({ vendible: false, descripcion: "P", descripcionFactura: "P", unidadMedidaId: "a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1", unidades: [{ unidadMedidaId: "a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1", nombrePresentacion: nombre, factorConversion: factor }] });
 
   igual("«Caja» o «Docena» sin factor se rechazan: nada se deduce del nombre", [lanza(() => normalizarProducto(pres("Caja", "")))?.campo, lanza(() => normalizarProducto(pres("Docena", "")))?.campo], ["unidades.0.factorConversion", "unidades.0.factorConversion"]);
   igual("el factor informado se conserva tal cual (Docena con factor 1 sigue siendo 1)", normalizarProducto(pres("Docena", "1")).unidades[0].factorConversion, "1.000000");

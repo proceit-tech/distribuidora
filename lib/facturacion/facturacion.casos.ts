@@ -845,5 +845,39 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
 
 
 
+
+  // ══ ENTREGA 01 (AUD-PRODUCTOS-V1 §XXI): solo productos vendibles y con unidad SIFEN vigente llegan a la factura (PRD-A15 / A16 / A02) ═════════════════
+  const emisionSrc = leer("lib/facturacion/emision.ts");
+  const prodUnidad = (extra: Record<string, unknown>) => [{ ...filaProducto, ...extra }];
+  const falla = async (productos: Array<Record<string, unknown>>) => {
+    try {
+      await prepararFactura(dbCrear({ productos }), EMPRESA, USUARIO, leerCuerpoFactura(cuerpo()) as never);
+
+      return [0, ""] as const;
+    } catch (e) {
+      return [(e as { estado?: number }).estado ?? -1, (e as Error).message] as const;
+    }
+  };
+
+  cierto("A15: el catálogo base de la factura exige p.vendible (selector, previa y emisión comparten la misma consulta) y consulta la vigencia SIFEN de la unidad", /WHERE p\.empresa_id = \$1 AND p\.activo AND p\.vendible AND p\.tipo_producto IN/.test(emisionSrc) && /us\.vigente AS "unidadVigente"/.test(emisionSrc) && (emisionSrc.match(/SELECT_PRODUCTOS/g) ?? []).length >= 3);
+
+  llamadasCrear.length = 0;
+
+  const [eNoVendible, mNoVendible] = await falla([]);
+  const [eVigenteFalse, mVigenteFalse] = await falla(prodUnidad({ unidadVigente: false }));
+  const [eVigenteNula, mVigenteNula] = await falla(prodUnidad({ unidadVigente: null }));
+  const [eSinUnidad, mSinUnidad] = await falla(prodUnidad({ unidadSifen: null, unidadVigente: null }));
+  const [eOk] = await falla(prodUnidad({ unidadVigente: true }));
+
+  igual("A15: un producto vendible=false (la consulta no lo devuelve) no pasa por la previa ni por la emisión por request directo: 422 y sin reservar número", [eNoVendible, /no está marcado como vendible/.test(mNoVendible), llamadasCrear.some((l) => /fe_documento_crear_fe/.test(l.sql))], [422, true, false]);
+  igual("A16/A02: unidad SIFEN no vigente, inexistente en el catálogo o ausente se rechaza (422) con mensaje útil; vigente pasa", [eVigenteFalse, /no está vigente/.test(mVigenteFalse), eVigenteNula, /no existe en el catálogo oficial/.test(mVigenteNula), eSinUnidad, /sin equivalencia SIFEN|equivalencia SIFEN/.test(mSinUnidad), eOk], [422, true, 422, true, 422, true, 0]);
+
+  llamadasCrear.length = 0;
+
+  const emVend = await estadoError(crearFacturaElectronica(dbCrear({ productos: [] }), EMPRESA, USUARIO, leerCuerpoFactura(cuerpo()) as never));
+
+  igual("A15: crearFacturaElectronica con producto no vendible falla antes de fe_documento_crear_fe (idempotencia y numeración intactas)", [emVend, llamadasCrear.some((l) => /fe_documento_crear_fe/.test(l.sql))], [422, false]);
+  cierto("selector de la factura: marca «unidad SIFEN no vigente» y bloquea Añadir", /unidad SIFEN no vigente/.test(formulario) && /unidadVigente\?: boolean \| null/.test(formulario));
+
   return fallos;
 }

@@ -80,7 +80,7 @@ export async function buscarClientesFactura(db: Db, empresaId: string, texto: st
 }
 
 const SELECT_PRODUCTOS = `
-  SELECT p.id, p.codigo, p.descripcion_factura AS descripcion, um.unidad_sifen_codigo AS "unidadSifen", us.representacion AS "unidadSimbolo", us.descripcion AS "unidadNombre", p.afectacion_iva AS afectacion,
+  SELECT p.id, p.codigo, p.descripcion_factura AS descripcion, um.unidad_sifen_codigo AS "unidadSifen", us.representacion AS "unidadSimbolo", us.descripcion AS "unidadNombre", us.vigente AS "unidadVigente", p.afectacion_iva AS afectacion,
          p.proporcion_gravada_iva::text AS proporcion, i.porcentaje::int AS tasa, pr.precio::text AS precio, pr.moneda AS "monedaPrecio",
          coalesce((SELECT pc.codigo FROM producto_codigos pc WHERE pc.empresa_id = p.empresa_id AND pc.producto_id = p.id AND pc.tipo = 'GTIN' AND pc.codigo ~ '^[0-9]{8,14}$'
                     ORDER BY pc.es_principal DESC, pc.creado_at LIMIT 1), CASE WHEN p.codigo_barras ~ '^[0-9]{8,14}$' THEN p.codigo_barras END) AS gtin
@@ -89,7 +89,7 @@ const SELECT_PRODUCTOS = `
     LEFT JOIN unidades_medida_sifen us ON us.codigo = um.unidad_sifen_codigo
     LEFT JOIN impuestos i ON i.id = p.impuesto_id
     LEFT JOIN v_producto_precio_referencia pr ON pr.empresa_id = p.empresa_id AND pr.producto_id = p.id
-   WHERE p.empresa_id = $1 AND p.activo AND p.tipo_producto IN ('MERCADERIA','SERVICIO')`;
+   WHERE p.empresa_id = $1 AND p.activo AND p.vendible AND p.tipo_producto IN ('MERCADERIA','SERVICIO')`;
 
 /** Productos facturables (mercadería y servicios activos), paginados en el servidor. Sin texto lista todos; con texto filtra por código, descripción, código de barras,
  *  GTIN y códigos alternos. */
@@ -220,7 +220,10 @@ export async function prepararFactura(db: Db, empresaId: string, usuarioId: stri
   for (const l of cuerpo.lineas) {
     const p = porId.get(l.productoId);
 
-    if (!p) throw new ErrorFacturacion(422, "Uno de los productos no existe, está inactivo o no es facturable (solo mercadería y servicios).");
+    if (!p) throw new ErrorFacturacion(422, "Uno de los productos no existe, está inactivo, no está marcado como vendible o no es facturable (solo mercadería y servicios).");
+    if (p.unidadSifen === null) throw new ErrorFacturacion(422, `El producto ${s(p.codigo)} no tiene unidad de medida con equivalencia SIFEN: no se puede facturar hasta vincularla en Catálogos.`);
+    if (p.unidadVigente === null) throw new ErrorFacturacion(422, `El código SIFEN ${s(p.unidadSifen)} de la unidad del producto ${s(p.codigo)} no existe en el catálogo oficial.`);
+    if (p.unidadVigente === false) throw new ErrorFacturacion(422, `El código SIFEN ${s(p.unidadSifen)} de la unidad del producto ${s(p.codigo)} no está vigente en el catálogo oficial.`);
     if (p.precio === null || p.monedaPrecio !== "PYG") throw new ErrorFacturacion(422, `El producto ${s(p.codigo)} no tiene precio de venta de referencia en guaraníes.`);
 
     // El precio de referencia del catálogo manda. Un precio distinto del navegador solo se acepta con el permiso FACTURACION_ELECTRONICA.PRECIO (consultado

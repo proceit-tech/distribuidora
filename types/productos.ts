@@ -246,7 +246,7 @@ export type CatalogoProductos = {
   /** Moneda del precio de venta de referencia (moneda base de la empresa o la de la lista de referencia). */
   monedaReferencia: string;
   /** `sifenCodigo`/`sifenRepresentacion`: equivalencia oficial E709/E710 (Tabla 5); null = sin equivalencia SIFEN configurada. */
-  unidades: { id: string; codigo: string; nombre: string; sifenCodigo: number | null; sifenRepresentacion: string }[];
+  unidades: { id: string; codigo: string; nombre: string; sifenCodigo: number | null; sifenRepresentacion: string; sifenVigente?: boolean | null }[];
   impuestos: { id: string; codigo: string; nombre: string; porcentaje: string }[];
   proveedores: { id: string; codigo: string; razon_social: string }[];
   depositos: { id: string; codigo: string; nombre: string }[];

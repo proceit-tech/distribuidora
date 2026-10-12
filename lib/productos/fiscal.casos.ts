@@ -20,7 +20,8 @@ const U1 = "a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1";
 const IMP = "e1e1e1e1-e1e1-4e1e-8e1e-e1e1e1e1e1e1";
 const raiz = process.cwd();
 const leer = (r: string) => readFileSync(join(raiz, r), "utf8");
-const base = { descripcion: "P", descripcionFactura: "P", unidadMedidaId: U1 };
+// Fixture de producto no vendible: la completitud fiscal del producto nuevo vendible (DEC-PRD-U02) se prueba aparte con vendible: true.
+const base = { descripcion: "P", descripcionFactura: "P", unidadMedidaId: U1, vendible: false };
 
 export async function verificarCasosFiscales(): Promise<string[]> {
   const fallos: string[] = [];
@@ -65,7 +66,7 @@ export async function verificarCasosFiscales(): Promise<string[]> {
 
   // ── Normalizador (formulario y servidor)
   igual("afectación 9 rechazada", campo({ afectacionIva: "9" }), "afectacionIva");
-  igual("afectación vacía = sin clasificar", normalizarProducto({ ...base, afectacionIva: "" }).afectacionIva, null);
+  igual("afectación vacía = sin clasificar (solo producto existente o no vendible; el nuevo vendible la exige)", normalizarProducto({ ...base, afectacionIva: "" }, { modo: "editar" }).afectacionIva, null);
   igual("afectación 4 con proporción exacta", normalizarProducto({ ...base, afectacionIva: "4", proporcionGravadaIva: "33.3333" }, { modo: "crear", tasaImpuesto: "10.00" }).proporcionGravadaIva, "33.3333");
   igual("proporción con 5 decimales rechazada (no se redondea)", campo({ afectacionIva: "4", proporcionGravadaIva: "33.33333" }, "10"), "proporcionGravadaIva");
   igual("proporción 101 rechazada", campo({ afectacionIva: "4", proporcionGravadaIva: "101" }, "10"), "proporcionGravadaIva");
@@ -232,7 +233,7 @@ export async function verificarCasosFiscales(): Promise<string[]> {
   cierto("SIFEN no edita descripción ni unidad base (solo espejos)", !/ctx\.set\("descripcionFactura"|ctx\.set\("unidadMedidaId"/.test(sifen));
   cierto("Información no edita país, impuesto ni afectación (viven en SIFEN)", !/ctx\.set\("paisOrigenCodigo"|ctx\.set\("impuestoId"|ctx\.set\("afectacionIva"/.test(info));
   cierto("SIFEN edita país, impuesto, afectación y proporción una sola vez", (sifen.match(/ctx\.set\("paisOrigenCodigo"/g) ?? []).length === 1 && (sifen.match(/ctx\.set\("impuestoId"/g) ?? []).length === 1 && (sifen.match(/ctx\.set\("afectacionIva"/g) ?? []).length === 1);
-  cierto("aviso sin equivalencia: texto aprobado, no bloquea ni promete emisión", /Sin equivalencia SIFEN configurada/.test(sifen) && !/no podrá emitirse/.test(sifen) && /No impide guardar/.test(sifen));
+  cierto("aviso sin equivalencia: al editar no bloquea; al crear un vendible lo informa (DEC-PRD-U02)", /Sin equivalencia SIFEN configurada/.test(sifen) && !/no podrá emitirse/.test(sifen) && /Al editar no se bloquea/.test(sifen));
   cierto("cinco bloques: identificación, IVA, unidad SIFEN, NCM/DNCP, GTIN", ["Identificación fiscal del producto", "Clasificación y afectación IVA", "Unidad de medida SIFEN", "NCM, partida arancelaria y DNCP", "GTIN y códigos adicionales"].every((t) => sifen.includes(t)));
   cierto("sin estimar E735–E737 en pantalla", !/E735|dBasGravIVA|base gravada/i.test(sifen.replace(/\(E735–E737\)/, "")));
 
@@ -245,6 +246,76 @@ export async function verificarCasosFiscales(): Promise<string[]> {
 
   igual("producto legado: se carga sin clasificar y se guarda sin forzar una afectación", [legado.afectacionIva, normalizarProducto(formularioAPayload(legado, "editar"), { modo: "editar", tasaImpuesto: "10.00" }).afectacionIva], ["", null]);
   igual("ciclo clasificado: afectación 4 conserva la proporción exacta", normalizarProducto(formularioAPayload({ ...legado, afectacionIva: "4", proporcionGravadaIva: "12.3456" }, "editar"), { modo: "editar", tasaImpuesto: "5.00" }).proporcionGravadaIva, "12.3456");
+
+
+  // ══ ENTREGA 01 (AUD-PRODUCTOS-V1 §XXI): integridad fiscal del producto NUEVO vendible (DEC-PRD-U02 / U06; PRD-A02, A15, A16, A26) ═════════════════
+  const vend = { ...base, vendible: true };
+  const campoV = (cuerpo: Record<string, unknown>, opciones: Record<string, unknown> = {}) => {
+    try {
+      normalizarProducto({ ...vend, ...cuerpo }, { modo: "crear", ...opciones } as never);
+
+      return "ok";
+    } catch (e) {
+      return e instanceof ErrorValidacion ? (e.campo ?? "sin-campo") : "excepcion";
+    }
+  };
+  const completo = { impuestoId: IMP, afectacionIva: "1" };
+
+  igual("A26/U02: producto NUEVO vendible sin afectación IVA o sin impuesto NO se normaliza (campo exacto); completo sí", [campoV({}), campoV({ impuestoId: IMP }), campoV({ afectacionIva: "1" }, { tasaImpuesto: "10.00" }), campoV(completo, { tasaImpuesto: "10.00" })], ["afectacionIva", "afectacionIva", "impuestoId", "ok"]);
+  igual("U02: servicios también; vendible por omisión (no enviado) cuenta como vendible", [campoV({ tipoProducto: "SERVICIO" }), campoV({ vendible: undefined }), campoV({ tipoProducto: "SERVICIO", ...completo }, { tasaImpuesto: "10.00" })], ["afectacionIva", "afectacionIva", "ok"]);
+  igual("U02: no vendibles, KIT y ACTIVO_FIJO nuevos no quedan obligados fiscalmente por esta regla", [campoV({ vendible: false }), campoV({ tipoProducto: "KIT" }), campoV({ tipoProducto: "ACTIVO_FIJO" })], ["ok", "ok", "ok"]);
+  igual("legado: la EDICIÓN de un vendible sin clasificar sigue permitida (sin reclasificar en silencio)", (() => { try { return normalizarProducto({ ...vend }, { modo: "editar" }).afectacionIva; } catch { return "error"; } })(), null);
+  igual("U06: 5 %, exonerado, exento y parcial se aceptan con su tasa; combinación inválida o parcial sin proporción se rechazan", [
+    campoV({ impuestoId: IMP, afectacionIva: "1" }, { tasaImpuesto: "5.00" }), campoV({ impuestoId: IMP, afectacionIva: "2" }, { tasaImpuesto: "0.00" }), campoV({ impuestoId: IMP, afectacionIva: "3" }, { tasaImpuesto: "0.00" }),
+    campoV({ impuestoId: IMP, afectacionIva: "4", proporcionGravadaIva: "50" }, { tasaImpuesto: "10.00" }), campoV({ impuestoId: IMP, afectacionIva: "4" }, { tasaImpuesto: "10.00" }), campoV({ impuestoId: IMP, afectacionIva: "2" }, { tasaImpuesto: "10.00" }),
+  ], ["ok", "ok", "ok", "ok", "proporcionGravadaIva", "impuestoId"]);
+  igual("A02: la unidad base del producto nuevo vendible debe tener código SIFEN existente y vigente (cliente: campo unidadMedidaId); undefined = lo verifica el servidor", [
+    campoV(completo, { tasaImpuesto: "10.00", unidadFiscal: null }), campoV(completo, { tasaImpuesto: "10.00", unidadFiscal: { sifenCodigo: null } }), campoV(completo, { tasaImpuesto: "10.00", unidadFiscal: { sifenCodigo: 77, sifenVigente: false } }),
+    campoV(completo, { tasaImpuesto: "10.00", unidadFiscal: { sifenCodigo: 77, sifenVigente: true } }), campoV(completo, { tasaImpuesto: "10.00" }), campoV({ vendible: false }, { unidadFiscal: { sifenCodigo: null } }),
+  ], ["unidadMedidaId", "unidadMedidaId", "unidadMedidaId", "ok", "ok", "ok"]);
+
+  // Servidor: validarReferencias consulta la base (unidad con SIFEN existente y vigente) solo cuando se le pide
+  const consultasU: string[] = [];
+  const baseUnidad = (u: Record<string, unknown> | null) => ({
+    async query(sql: string) {
+      consultasU.push(sql);
+      if (/FROM unidades_medida x LEFT JOIN unidades_medida_sifen/.test(sql)) return { rows: u ? [u] : [], rowCount: u ? 1 : 0 };
+      if (/SELECT porcentaje::text AS porcentaje FROM impuestos/.test(sql)) return { rows: [{ porcentaje: "10.00" }], rowCount: 1 };
+
+      return { rows: [{ activo: true, familia_id: null }], rowCount: 1 };
+    },
+  }) as never;
+  const refsU = async (u: Record<string, unknown> | null, exigir: boolean) => {
+    const d = normalizarProducto({ ...vend, ...completo }, { modo: "crear", tasaImpuesto: "10.00" });
+
+    return validarReferencias(baseUnidad(u), EMPRESA, d, {}, { exigirUnidadSifen: exigir }).then(() => "ok", (e) => (e instanceof ErrorValidacion ? `${e.campo}|${e.message}` : "excepcion"));
+  };
+
+  consultasU.length = 0;
+
+  const rSin = await refsU({ codigo: "CJ", nombre: "Caja", sifenCodigo: null, sifenVigente: null }, true);
+  const rHuerfano = await refsU({ codigo: "X", nombre: "X", sifenCodigo: 999, sifenVigente: null }, true);
+  const rNoVigente = await refsU({ codigo: "X", nombre: "X", sifenCodigo: 87, sifenVigente: false }, true);
+  const rOk = await refsU({ codigo: "UN", nombre: "Unidad", sifenCodigo: 77, sifenVigente: true }, true);
+
+  igual("A02/A16 servidor: unidad sin código SIFEN, con código inexistente o no vigente se rechaza con campo unidadMedidaId; con código vigente pasa", [rSin.split("|")[0], /sin|no tiene equivalencia SIFEN/.test(rSin), rHuerfano.split("|")[0], /no existe en el catálogo oficial/.test(rHuerfano), rNoVigente.split("|")[0], /no está vigente/.test(rNoVigente), rOk], ["unidadMedidaId", true, "unidadMedidaId", true, "unidadMedidaId", true, "ok"]);
+  consultasU.length = 0;
+  igual("legado/edición: sin la opción no se consulta el catálogo SIFEN (una unidad sin código no bloquea editar otros datos)", [await refsU({ codigo: "CJ", nombre: "Caja", sifenCodigo: null, sifenVigente: null }, false), consultasU.some((q) => /unidades_medida_sifen/.test(q))], ["ok", false]);
+  igual("A02: unidad inexistente en la base → mensaje de unidad sin equivalencia (nunca se infiere un vínculo)", (await refsU(null, true)).split("|")[0], "unidadMedidaId");
+
+  const postRuta = leer("app/api/productos/route.ts");
+  const postBloque = postRuta.slice(postRuta.indexOf("export async function POST"));
+  const putRuta = leer("app/api/productos/[id]/route.ts");
+  const normSrc = leer("lib/productos/normalizar.ts");
+
+  cierto("POST: la exigencia fiscal (esVendibleFiscal) se valida contra la base dentro de la transacción, ANTES del INSERT y de la apertura de inventario; el PUT legado no la usa", /exigirUnidadSifen: esVendibleFiscal\("crear", datos\.tipoProducto, datos\.vendible\)/.test(postBloque) && postBloque.indexOf("validarReferencias(") > postBloque.indexOf('"BEGIN"') && postBloque.indexOf("validarReferencias(") < postBloque.indexOf("INSERT INTO productos") && postBloque.indexOf("validarReferencias(") < postBloque.indexOf("guardarHijos(") && !/exigirUnidadSifen/.test(putRuta));
+  cierto("sin reclasificación silenciosa: ninguna migración ni UPDATE masivo; solo se exige en modo crear", /modo === "crear" && vendible/.test(normSrc) && !/UPDATE productos SET afectacion_iva/.test(postRuta + putRuta + leer("lib/productos/shared.ts")));
+  cierto("catálogo del formulario expone la vigencia SIFEN de la unidad y el formulario la verifica antes de enviar; la pantalla ya no dice que no impide guardar", /s\.vigente AS "sifenVigente"/.test(postRuta) && /unidadFiscal:/.test(leer("app/(private)/productos/_components/producto-form.tsx")) && !/No impide guardar el producto/.test(leer("app/(private)/productos/_components/pestanas/sifen.tsx")) && /no se puede crear un producto vendible con ella/.test(leer("app/(private)/productos/_components/pestanas/sifen.tsx")));
+
+  // U06: IVA 10 % Gravado como sugerencia editable
+  const catSin10 = { ...cat, impuestos: [{ id: IMP, codigo: "IVA5", nombre: "IVA 5 %", porcentaje: "5.00" }] };
+
+  igual("U06: sin impuesto del 10 % activo no se pre-selecciona nada (el usuario debe elegir); con 10 % se sugiere y es editable", [formularioInicial(catSin10 as never).afectacionIva, formularioInicial(catSin10 as never).impuestoId, formularioInicial(cat as never).afectacionIva], ["", "", "1"]);
 
   return fallos;
 }

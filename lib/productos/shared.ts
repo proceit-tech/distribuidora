@@ -173,7 +173,7 @@ type Previo = Partial<Record<"categoria_id" | "marca_id" | "familia_id" | "linea
  * Un valor que el producto ya tenía (edición) se admite aunque el catálogo se haya desactivado después. La línea debe pertenecer
  * a la familia (NEX-017). Las FK compuestas de la base siguen siendo la defensa final.
  */
-export async function validarReferencias(conexion: PoolClient, empresaId: string, d: DatosProducto, previo: Previo = {}) {
+export async function validarReferencias(conexion: PoolClient, empresaId: string, d: DatosProducto, previo: Previo = {}, opciones: { exigirUnidadSifen?: boolean } = {}) {
   async function verificar(tabla: string, ids: string[], porEmpresa: boolean, campo: (i: number) => string, mensaje: string, conservados: Array<string | null | undefined> = [], clave = "id", nuevos?: boolean[]) {
     for (const [i, id] of ids.entries()) {
       if (!id) continue;
@@ -205,6 +205,22 @@ export async function validarReferencias(conexion: PoolClient, empresaId: string
   }
   await unico(d.unidadMedidaId, "unidadMedidaId", "unidades_medida", false, "La unidad base", previo.unidad_medida_id);
   await unico(d.impuestoId, "impuestoId", "impuestos", false, "El impuesto", previo.impuesto_id);
+
+  // DEC-PRD-U02 (solo producto NUEVO vendible): la unidad base debe estar ligada a un código SIFEN existente y vigente (E709). No se infiere ningún vínculo.
+  if (opciones.exigirUnidadSifen) {
+    const u = await conexion.query(
+      `SELECT x.codigo, x.nombre, x.unidad_sifen_codigo AS "sifenCodigo", s.vigente AS "sifenVigente"
+         FROM unidades_medida x LEFT JOIN unidades_medida_sifen s ON s.codigo = x.unidad_sifen_codigo WHERE x.id = $1`,
+      [d.unidadMedidaId],
+    );
+    const fila = u.rows[0] as { codigo: string; nombre: string; sifenCodigo: number | null; sifenVigente: boolean | null } | undefined;
+
+    if (!fila || fila.sifenCodigo === null) {
+      throw new ErrorValidacion(`La unidad base ${fila ? `«${fila.codigo} · ${fila.nombre}» ` : ""}no tiene equivalencia SIFEN (E709): no se puede crear un producto vendible con ella. Elija una unidad con código SIFEN o solicite al administrador vincularla.`, "unidadMedidaId");
+    }
+    if (fila.sifenVigente === null) throw new ErrorValidacion(`El código SIFEN ${fila.sifenCodigo} de la unidad base no existe en el catálogo oficial.`, "unidadMedidaId");
+    if (fila.sifenVigente === false) throw new ErrorValidacion(`El código SIFEN ${fila.sifenCodigo} de la unidad base no está vigente en el catálogo oficial: elija otra unidad.`, "unidadMedidaId");
+  }
 
   // Coherencia de la clasificación IVA (E731 × E734 × E733) contra la tasa REAL del impuesto elegido (global, sin empresa_id).
   const tasa = d.impuestoId ? await conexion.query("SELECT porcentaje::text AS porcentaje FROM impuestos WHERE id = $1", [d.impuestoId]) : null;
