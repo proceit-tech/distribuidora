@@ -23,7 +23,7 @@ Este arquivo é a fonte única da auditoria do menu **Clientes**. Registrar, com
 
 ## Achados confirmados até agora (parciais)
 
-Primeira passagem estática concluída em 12/10/2026 (ver seções I–V abaixo). Os achados CLI-A01…CLI-A05 são constatações do código atual, não provas de reprodução na VM. A auditoria continua aberta.
+Primeira passagem estática concluída em 12/10/2026 (ver seções I–V abaixo). Os achados CLI-A01…CLI-A06 são constatações do código/SQL atual, não provas de reprodução na VM. A auditoria continua aberta.
 
 ## Pendências
 
@@ -77,3 +77,26 @@ O responsável mostrou NEX-001…051 já aplicadas na VM. Proibido editar script
 Examinar próxima rodada por prioridade: integridade de GET/POST/PUT dos filhos frente a NEX-005 e NEX-021…032, autorização/download/versionamento/exclusão lógica de documentos, regras D3/SIFEN de aptidão e mensagens por campo, impacto em Facturación e SQL de índices/constraints; confrontar o estado de migrations no ambiente real somente sob procedimento autorizado pelo responsável. Mantêm-se as decisões oficiais do menu: não formular novamente questões já resolvidas no repositório.
 
 **Status:** PRIMEIRA PASSAGEM documentada; auditoria INCOMPLETA, NÃO HOMOLOGADA, nenhuma implementação autorizada ou aplicada pelo ChatGPT.
+
+## VI. Segunda passagem — permissão de documentos privados e reaplicação de grants (12/10/2026)
+
+### CLI-A06 — CRÍTICA / integridade de versões, auditoria e exclusão lógica (CONFIRMADA EM CÓDIGO SQL; execução no PostgreSQL não comprovada)
+
+**Fonte da política:** `NEX-031-cliente-documentos-versiones-auditoria.sql:2-12` declara preservação física de arquivos e histórico, `cliente_documento_eventos` apenas para altas e ações de versão; `:79-88` aplica `REVOKE DELETE ON cliente_documentos` e `GRANT SELECT,INSERT ON cliente_documento_versiones, cliente_documento_eventos` **somente no momento da migration**.
+
+**Fonte do defeito:** `NEX-014-movimientos-operativos.sql:494-518` define `nex_aplicar_grants_runtime()` com `REVOKE ALL ON ALL TABLES IN SCHEMA public`, concede SELECT genérico a todas e INSERT/UPDATE/DELETE a lista fixa que contém `cliente_documentos`, **mas NÃO contém** `cliente_documento_versiones` ou `cliente_documento_eventos` no conjunto de escrita. A função do NEX-014, portanto, ao ser executada **depois do NEX-031**, desfaz simultaneamente:
+
+1. os `INSERT` concedidos a `nexit_runtime` nas tabelas `cliente_documento_versiones` e `cliente_documento_eventos` (deixando o runtime sem privilégios para criar a versão e o evento de auditoria), e
+2. o `REVOKE DELETE` em `cliente_documentos` (o runtime volta a ter capacidade de exclusão física, apesar da política declarada de eliminação somente lógica).
+
+**Confirmação cruzada de falta de reparação:** `NEX-037-proveedores-cuentas-desactivacion-auditoria-inmutable.sql:86-125` cria `nex_aplicar_grants_proveedores` e encadeia a função base; `NEX-041-productos-documentos-archivos-imagen.sql:146-173` e `NEX-046-depositos-gestion.sql:420-429` recompõem o wrapper para Proveedores/Fiscal/Productos/Comercial/Depósitos, **sem uma função de restauração de grants de `cliente_documentos`, `cliente_documento_versiones` e `cliente_documento_eventos`**.
+
+**Impacto em caso de reaplicação:** as rotas `POST /api/clientes/[id]/documentos` (`route.ts:78-103`), `PUT .../[docId]` (`route.ts:141-185`), exclusão/restauração e recuperação de versões dependem dos privilégios de INSERT em versões/eventos. As transações podem falhar por permissão; a garantia de que o role do app não pode executar DELETE direto no cadastro de documentos deixa de ser verdadeira. **Isto é um risco condicional comprovado pelas definições, NÃO prova de que a função foi executada ou de que essas permissões estão atualmente erradas na VM.**
+
+**Aceite técnico mínimo, sem ampliar a V1:** em futura migration incremental AUTORIZADA, garantir helper `nex_aplicar_grants_clientes()` idempotente e encadeado ao wrapper global, que reaplique permanentemente `REVOKE DELETE` em `cliente_documentos`, e `SELECT,INSERT` (sem UPDATE/DELETE) nas tabelas de versões/eventos após qualquer reset de grants. Confrontar grants finais com `has_table_privilege`/`information_schema` no banco efetivo apenas sob procedimento humano autorizado; não reexecutar NEX-014 nem reescrever NEX-031. Se pertinente à garantia append-only, considerar bloqueio por trigger para UPDATE/DELETE/TRUNCATE nas tabelas de auditoria/versões, conforme padrão já usado em outros módulos, mas não impor desenho extra sem validação.
+
+**Casos de regressão obrigatórios:** estado de grants depois de `nex_aplicar_grants_runtime()` executado em PostgreSQL de prova (não VM operacional); runtime pode `SELECT/INSERT` em versões/eventos mas NÃO `UPDATE/DELETE`, `cliente_documentos` permite UPDATE (eliminação lógica) mas NÃO DELETE. Upload, troca de versão, auditoria, eliminação lógica e restauro completam suas transações sem 42501; dados históricos preservados.
+
+**Prioridade de implementação futura:** CLI-A06 é potencial bloqueador de funcionamento/segurança de Documentos e precede melhorias meramente visuais. Não liberar automaticamente Claude para Clientes enquanto trabalha em Productos. Estado atual do PostgreSQL precisa ser confirmado pelo responsável antes de qualquer decisão de aplicação.
+
+**Execução desta análise:** apenas leitura GitHub. 0 testes PostgreSQL, 0 VM, 0 migrations executadas. Auditoria Clientes continua ABERTA, sem implementação autorizada.
