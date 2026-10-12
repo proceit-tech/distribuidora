@@ -102,3 +102,15 @@ CA-01 menu nos três itens aprovados, com guardas e sem rotas vazias/mocks; CA-0
 5. Tipo e payload da NCE antes da emissão de notas de crédito. Enquanto pendente, não inventar API ou JSON.
 
 **Fonte primária do JSON:** mensagem do responsável na conversa (12/10/2026); valores pessoais, CDC, links comerciais e token foram propositadamente omitidos deste documento. Reconstituir fixtures sintéticas a partir do mapeamento, nunca salvar secrets nem dados de cliente do exemplo.
+
+## Correção de auditoria — evidências já entregues e distinção dos contratos
+
+**Revisão ChatGPT (12/10/2026):** o responsável **já forneceu** neste projeto um JSON completo e funcional de Factura Electrónica (contém `cdc`, `iTiDE: 1`, cabeçalho, dados do receptor, `FormaPago[]`, `Detalles[]` e `Subtotales[]`), o endereço real `POST /api/recepcion_de`, método de login `POST /api/login`, autenticação Bearer e consulta `POST /api/consulta_de` com exemplos de respostas. **Não pedir novamente o JSON FE ou os manuais SIFEN como se não existissem.** O Manual Técnico SIFEN v150 encontra-se na biblioteca de arquivos do usuário, com outras cópias e referências anteriores a Notas Técnicas; o Claude deve consultar a documentação legal/técnica disponível e suas versões sem confundir WS oficial SIFEN com a interface JSON proprietária do gateway.
+
+**Distinção factual indispensável:**
+- **Payload FE conhecido**: o JSON fornecido serve de modelo concreto de campos, estrutura e cálculos e deve guiar F-02. O usuário afirmou que esse formato funciona. Não invalidar sua evidência alegando ausência de JSON.
+- **Transporte demonstrado**: endpoint e Bearer para `recepcion_de` foram apresentados em imagem do Postman. A imagem isolada mostra configuração de envio, mas não inclui corpo da requisição e resposta completos dessa chamada. Isso justifica apenas **validar retorno/status e requisito de campos de criação**, não bloquear toda a preparação da emissão.
+- **Manual SIFEN**: define regras fiscais, obrigatoriedade e validação normativa; **não substitui** a documentação específica do gateway `e-factura-hub`. Verificar notas técnicas oficiais para exceções vigentes. Não exigir novamente o manual já disponibilizado.
+- **Execução**: avançar com formulários Facturas e motor de construção/validação de JSON com dados dos cadastros e fixtures sintéticas; desacoplar transporte e reconciliar retornos. Para executar envio real, confirmar somente o detalhe de contrato efetivamente não comprovado pelos exemplos recuperados. Não fabricar sucesso fiscal nem emissão, e não usar senha/token compartilhados em arquivos do Git.
+
+**Orientação corretiva ao Claude:** após ler `CLAUDE.md`, `documentacao/PROTOCOLO-IA.md`, progresso pertinente, esta especificação e as decisões de emissão, auditar a F-01 contra o manual e o JSON já fornecidos, corrigir defeitos concretos pendentes, e preparar F-02 sem redesenhar toda a arquitetura nem perguntar novamente pelo JSON. A F-02 permanece sujeita a autorização normal de desenvolvimento e auditoria antes de deployment, SQL e gateway real.
