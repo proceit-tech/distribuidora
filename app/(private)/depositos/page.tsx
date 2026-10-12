@@ -12,11 +12,13 @@ import { useProtegerCambios } from "@/lib/ui/proteger-cambios";
 
 type Deposito = { id: string; codigo: string; nombre: string; activo: boolean; sucursalId: string; sucursalNombre: string; sucursalCodigo: string; conMovimientos: boolean; conSaldo: boolean };
 type Sucursal = { id: string; codigo: string; nombre: string; activo: boolean };
-type Datos = { depositos: Deposito[]; sucursales: Sucursal[]; permisos: { crear: boolean; editar: boolean } };
+type UsuarioDeposito = { id: string; usuario: string; nombre: string; apellido: string; estado: string; alcanceDepositos: "TODOS" | "ASIGNADOS"; alcanceSucursales: string; asignado: boolean; asignadoAt: string | null; sucursalCompatible: boolean; esUsted: boolean };
+type Datos = { depositos: Deposito[]; sucursales: Sucursal[]; permisos: { crear: boolean; editar: boolean }; actor: { alcanceDepositos: "TODOS" | "ASIGNADOS" } | null };
+type Panel = { deposito: Deposito; usuarios: UsuarioDeposito[] | null; error: string; ocupado: string };
 type CampoOrden = "codigo" | "nombre" | "sucursal" | "estado";
-type FormEstado = FormularioDeposito & { id: string | null };
+type FormEstado = FormularioDeposito & { id: string | null; asignarme: boolean };
 
-const VACIO: FormEstado = { id: null, codigo: "", nombre: "", sucursalId: "" };
+const VACIO: FormEstado = { id: null, codigo: "", nombre: "", sucursalId: "", asignarme: true };
 const idCampo = (c: CampoDeposito) => `deposito-${c}`;
 
 export default function DepositosPage() {
@@ -31,6 +33,7 @@ export default function DepositosPage() {
   const [errores, setErrores] = useState<ErroresDeposito>({});
   const [errorForm, setErrorForm] = useState("");
   const [guardando, setGuardando] = useState(false);
+  const [panel, setPanel] = useState<Panel | null>(null);
 
   const cargar = useCallback(async () => {
     try {
@@ -130,7 +133,7 @@ export default function DepositosPage() {
       const r = await fetch(form.id ? `/api/depositos/${form.id}` : "/api/depositos", {
         method: form.id ? "PATCH" : "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form.id ? { nombre: form.nombre, sucursalId: form.sucursalId } : { codigo: form.codigo, nombre: form.nombre, sucursalId: form.sucursalId }),
+        body: JSON.stringify(form.id ? { nombre: form.nombre, sucursalId: form.sucursalId } : { codigo: form.codigo, nombre: form.nombre, sucursalId: form.sucursalId, asignarme: form.asignarme && datos?.actor?.alcanceDepositos === "ASIGNADOS" }),
       });
       const j = (await r.json().catch(() => ({}))) as { error?: string; campo?: CampoDeposito; message?: string };
 
@@ -149,6 +152,52 @@ export default function DepositosPage() {
       setErrorForm(e instanceof Error ? e.message : "No fue posible guardar el depósito.");
     } finally {
       setGuardando(false);
+    }
+  }
+
+  async function abrirUsuarios(d: Deposito) {
+    setPanel({ deposito: d, usuarios: null, error: "", ocupado: "" });
+    try {
+      const r = await fetch(`/api/depositos/${d.id}/usuarios`, { cache: "no-store" });
+      const j = (await r.json().catch(() => ({}))) as { usuarios?: UsuarioDeposito[]; error?: string };
+
+      if (!r.ok) throw new Error(j.error ?? "No fue posible cargar los usuarios.");
+      setPanel({ deposito: d, usuarios: j.usuarios ?? [], error: "", ocupado: "" });
+    } catch (e) {
+      setPanel({ deposito: d, usuarios: [], error: e instanceof Error ? e.message : "No fue posible cargar los usuarios.", ocupado: "" });
+    }
+  }
+
+  async function cambiarAcceso(u: UsuarioDeposito, autorizar: boolean) {
+    if (!panel) return;
+
+    const d = panel.deposito;
+    const quien = `${u.nombre} ${u.apellido}`.trim();
+
+    if (
+      !autorizar &&
+      !window.confirm(
+        `¿Revocar el acceso de ${quien} al depósito «${d.nombre}»? Dejará de poder ver y operar este depósito (stock, movimientos y reposición); su historial y su alcance general no se modifican.${u.esUsted ? " Es su propio acceso: puede perder la posibilidad de administrar este depósito." : ""}`,
+      )
+    ) {
+      return;
+    }
+
+    setPanel({ ...panel, error: "", ocupado: u.id });
+    try {
+      const r = await fetch(autorizar ? `/api/depositos/${d.id}/usuarios` : `/api/depositos/${d.id}/usuarios/${u.id}`, {
+        method: autorizar ? "POST" : "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: autorizar ? JSON.stringify({ usuarioId: u.id }) : undefined,
+      });
+      const j = (await r.json().catch(() => ({}))) as { usuarios?: UsuarioDeposito[]; error?: string; message?: string };
+
+      if (!r.ok) throw new Error(j.error ?? "No fue posible cambiar el acceso.");
+      setPanel({ deposito: d, usuarios: j.usuarios ?? [], error: "", ocupado: "" });
+      setAviso(j.message ?? "Acceso actualizado.");
+      await cargar();
+    } catch (e) {
+      setPanel((p) => (p ? { ...p, error: e instanceof Error ? e.message : "No fue posible cambiar el acceso.", ocupado: "" } : p));
     }
   }
 
@@ -256,6 +305,20 @@ export default function DepositosPage() {
             {mensaje("sucursalId")}
           </label>
 
+          {form.id === null && datos?.actor?.alcanceDepositos === "ASIGNADOS" ? (
+            <label className={[styles.field, styles.full].join(" ")}>
+              <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input type="checkbox" checked={form.asignarme} onChange={(e) => setForm({ ...form, asignarme: e.target.checked })} />
+                Asignarme este depósito
+              </span>
+              <span className={styles.ayuda}>
+                Su usuario solo ve los depósitos que tiene asignados. Si no lo marca, no verá ni podrá operar el depósito que está creando hasta que otro administrador se lo autorice. No cambia su alcance general.
+              </span>
+            </label>
+          ) : form.id === null && datos?.actor?.alcanceDepositos === "TODOS" ? (
+            <p className={styles.nota}>Su usuario tiene acceso a todos los depósitos: verá el nuevo depósito sin necesidad de asignación. Para autorizar a otros usuarios use «Usuarios» después de crearlo.</p>
+          ) : null}
+
           <div className={styles.formActions}>
             <button type="button" className={ui.secondaryButton} onClick={cerrar}>
               Cancelar
@@ -265,6 +328,111 @@ export default function DepositosPage() {
             </button>
           </div>
         </form>
+      ) : null}
+
+      {panel ? (
+        <section className={ui.contentCard} aria-label={`Usuarios autorizados en ${panel.deposito.nombre}`} style={{ marginBottom: 12 }}>
+          <div className={ui.toolbar} style={{ justifyContent: "space-between" }}>
+            <strong>
+              Usuarios autorizados — {panel.deposito.codigo} · {panel.deposito.nombre}
+              {!panel.deposito.activo ? " (inactivo)" : ""}
+            </strong>
+            <button type="button" className={ui.secondaryButton} onClick={() => setPanel(null)}>
+              Cerrar
+            </button>
+          </div>
+          <p className={ui.resultCount} style={{ margin: "0 0 8px" }}>
+            Los usuarios con alcance «Todos los depósitos» ven todos los depósitos de la empresa y no dependen de una autorización individual. Solo a los usuarios con alcance «Depósitos asignados» se les autoriza o revoca aquí; el alcance
+            general, el perfil y las sucursales de cada usuario no se modifican desde esta pantalla.
+          </p>
+          {panel.error ? (
+            <div className={ui.alertError} role="alert">
+              {panel.error}
+            </div>
+          ) : null}
+          <div className={ui.tableScroll}>
+            <table className={ui.table} style={{ minWidth: 760 }}>
+              <thead>
+                <tr>
+                  <th>Usuario</th>
+                  <th>Alcance de depósitos</th>
+                  <th>Acceso a este depósito</th>
+                  <th className={ui.actionsHead}>Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {panel.usuarios === null ? (
+                  <tr>
+                    <td colSpan={4} className={ui.emptyCell}>
+                      <div className={ui.empty}>
+                        <strong>Cargando usuarios...</strong>
+                      </div>
+                    </td>
+                  </tr>
+                ) : panel.usuarios.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className={ui.emptyCell}>
+                      <div className={ui.empty}>
+                        <strong>No hay usuarios en la empresa</strong>
+                      </div>
+                    </td>
+                  </tr>
+                ) : (
+                  panel.usuarios.map((u) => {
+                    const todos = u.alcanceDepositos === "TODOS";
+
+                    return (
+                      <tr key={u.id} className={ui.row}>
+                        <td>
+                          <span className={ui.principal}>
+                            {u.nombre} {u.apellido}
+                          </span>
+                          {u.esUsted ? <small className={ui.muted}> (usted)</small> : null}
+                          <br />
+                          <small className={ui.muted}>
+                            {u.usuario}
+                            {u.estado !== "ACTIVO" ? ` · ${u.estado === "BLOQUEADO" ? "bloqueado" : "dado de baja"}` : ""}
+                          </small>
+                        </td>
+                        <td>{todos ? "Todos los depósitos" : "Depósitos asignados"}</td>
+                        <td>
+                          {todos ? (
+                            <span className={ui.statusInfo} title="No depende de una autorización individual">
+                              Acceso amplio (por alcance)
+                            </span>
+                          ) : u.asignado ? (
+                            <span className={ui.statusActive}>Autorizado</span>
+                          ) : (
+                            <span className={ui.statusInactive}>Sin acceso</span>
+                          )}
+                        </td>
+                        <td className={ui.actionsCell}>
+                          {todos ? (
+                            <small className={ui.muted}>No requiere autorización</small>
+                          ) : u.asignado ? (
+                            <button type="button" className={ui.rowButton} disabled={panel.ocupado === u.id} onClick={() => void cambiarAcceso(u, false)}>
+                              {panel.ocupado === u.id ? "Revocando..." : "Revocar"}
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              className={ui.rowButton}
+                              disabled={panel.ocupado === u.id || !u.sucursalCompatible}
+                              title={!u.sucursalCompatible ? "La sucursal del depósito no está en el alcance de sucursales de este usuario." : undefined}
+                              onClick={() => void cambiarAcceso(u, true)}
+                            >
+                              {panel.ocupado === u.id ? "Autorizando..." : "Autorizar"}
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
       ) : null}
 
       <section className={ui.contentCard}>
@@ -355,8 +523,11 @@ export default function DepositosPage() {
                     {puedeEditar ? (
                       <td className={ui.actionsCell}>
                         <div className={ui.actionsGroup}>
-                          <button type="button" className={ui.rowButton} onClick={() => abrir({ id: d.id, codigo: d.codigo, nombre: d.nombre, sucursalId: d.sucursalId })}>
+                          <button type="button" className={ui.rowButton} onClick={() => abrir({ id: d.id, codigo: d.codigo, nombre: d.nombre, sucursalId: d.sucursalId, asignarme: false })}>
                             Editar
+                          </button>
+                          <button type="button" className={ui.rowButton} onClick={() => void abrirUsuarios(d)}>
+                            Usuarios
                           </button>
                           <button
                             type="button"

@@ -22,7 +22,7 @@ const SELECT_DEPOSITOS = `
 
 /** Depósitos del alcance del usuario (activos e inactivos). $1 empresa, $2 usuario. */
 export async function listarDepositos(db: Db, empresaId: string, usuarioId: string) {
-  const [depositos, sucursales] = await Promise.all([
+  const [depositos, sucursales, actor] = await Promise.all([
     db.query(`${SELECT_DEPOSITOS} WHERE d.empresa_id = $1 AND d.id IN (${DEPOSITOS_EN_ALCANCE}) ORDER BY d.activo DESC, d.nombre`, [empresaId, usuarioId]),
     // Sucursales que el usuario puede usar al crear/editar: activas y dentro de su alcance (la función SQL lo vuelve a exigir).
     db.query(
@@ -32,15 +32,39 @@ export async function listarDepositos(db: Db, empresaId: string, usuarioId: stri
         ORDER BY s.nombre`,
       [empresaId, usuarioId],
     ),
+    // Alcance del propio usuario: con «ASIGNADOS» la pantalla ofrece (explícitamente) asignarse el depósito que crea.
+    db.query(`SELECT alcance_depositos AS "alcanceDepositos", alcance_sucursales AS "alcanceSucursales" FROM usuarios WHERE empresa_id = $1 AND id = $2`, [empresaId, usuarioId]),
   ]);
 
-  return { depositos: depositos.rows as F[], sucursales: sucursales.rows as F[] };
+  return { depositos: depositos.rows as F[], sucursales: sucursales.rows as F[], actor: (actor.rows[0] as F | undefined) ?? null };
 }
 
 export async function leerDeposito(db: Db, empresaId: string, usuarioId: string, id: string) {
   const r = await db.query(`${SELECT_DEPOSITOS} WHERE d.empresa_id = $1 AND d.id = $3 AND d.id IN (${DEPOSITOS_EN_ALCANCE})`, [empresaId, usuarioId, id]);
 
   return (r.rows[0] as F | undefined) ?? null;
+}
+
+/**
+ * Usuarios de la empresa frente a UN depósito (solo si el depósito está en el alcance de quien consulta): quién tiene acceso, por qué (alcance
+ * TODOS = acceso amplio sin vínculo; ASIGNADOS = vínculo en usuario_deposito) y si se le puede atribuir (sucursal del depósito en su alcance).
+ * Los usuarios dados de baja solo aparecen si conservan un vínculo (para poder revocarlo). $1 empresa, $2 actor, $3 depósito.
+ */
+export async function listarUsuariosDeposito(db: Db, empresaId: string, actorId: string, depositoId: string) {
+  const r = await db.query(
+    `SELECT u.id, u.usuario, u.nombre, coalesce(u.apellido, '') AS apellido, u.estado, u.alcance_depositos AS "alcanceDepositos", u.alcance_sucursales AS "alcanceSucursales",
+            (ud.usuario_id IS NOT NULL) AS asignado, ud.asignado_at AS "asignadoAt",
+            (u.alcance_sucursales = 'TODAS' OR EXISTS (SELECT 1 FROM usuario_sucursal us WHERE us.empresa_id = u.empresa_id AND us.usuario_id = u.id AND us.sucursal_id = d.sucursal_id)) AS "sucursalCompatible",
+            (u.id = $2) AS "esUsted"
+       FROM usuarios u
+       JOIN depositos d ON d.empresa_id = u.empresa_id AND d.id = $3
+       LEFT JOIN usuario_deposito ud ON ud.empresa_id = u.empresa_id AND ud.usuario_id = u.id AND ud.deposito_id = d.id
+      WHERE u.empresa_id = $1 AND d.id IN (${DEPOSITOS_EN_ALCANCE}) AND (u.estado <> 'BAJA' OR ud.usuario_id IS NOT NULL)
+      ORDER BY u.nombre, u.usuario`,
+    [empresaId, actorId, depositoId],
+  );
+
+  return r.rows as F[];
 }
 
 export async function enTransaccion<T>(db: { connect: () => Promise<PoolClient> }, fn: (c: PoolClient) => Promise<T>): Promise<T> {
@@ -68,6 +92,10 @@ export function respuestaErrorDeposito(error: unknown, accion: string) {
   if (pg.detail === "NEX:DEPOSITO_NO_ENCONTRADO") return NextResponse.json({ error: "Depósito no encontrado." }, { status: 404 });
   if (pg.detail === "NEX:DEPOSITO_CODIGO_DUPLICADO" || pg.code === "23505") return NextResponse.json({ error: "Ya existe un depósito con ese código.", campo: "codigo" }, { status: 409 });
   if (pg.detail === "NEX:DEPOSITO_CON_SALDO") return NextResponse.json({ error: pg.message ?? "El depósito aún tiene saldo.", campo: "estado" }, { status: 409 });
+  if (pg.detail === "NEX:USUARIO_NO_ENCONTRADO") return NextResponse.json({ error: "Usuario no encontrado." }, { status: 404 });
+  if (pg.detail && /^NEX:(USUARIO_ALCANCE_TODOS|USUARIO_SUCURSAL_FUERA|DEPOSITO_SUCURSAL_CON_MOVIMIENTOS|DEPOSITO_SUCURSAL_USUARIOS|DEPOSITO_INACTIVO)$/.test(pg.detail)) {
+    return NextResponse.json({ error: pg.message ?? "La operación no cumple las reglas de depósitos." }, { status: 409 });
+  }
   if (pg.code === "P0001") return NextResponse.json({ error: pg.message ?? "La operación no cumple las reglas de depósitos." }, { status: 400 });
   if (pg.code === "22P02" || pg.code === "23503") return NextResponse.json({ error: "Los datos del depósito no son válidos para su empresa." }, { status: 400 });
   console.error(`Error al ${accion} depósito:`, error);

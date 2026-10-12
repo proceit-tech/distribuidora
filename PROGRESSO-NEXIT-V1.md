@@ -565,3 +565,6 @@ Detalhe de Movimientos refeito (anulação com validação, confirmação críti
 
 ### Gestão de Depósitos — NEX-046 (2026-10-12)
 Módulo /depositos (lista, cadastro, edição de nome/sucursal, ativar/inativar; sem exclusão; código imutável) com APIs e permissões INVENTARIO.VER/CREAR/EDITAR (criadas sem atribuir a perfis); escrita só por funções SECURITY DEFINER; menu habilitado. Migration NEX-046 + reversão versionadas, **NÃO aplicadas**. Inativar com saldo é bloqueado (decisão por incompatibilidade com usuario_puede_deposito). Detalhe de Movimientos conserva a tela após anular. Local: 1803 verificações, 0 falhas; tsc/ESLint/build OK; sem PostgreSQL/navegador.
+
+### Depósitos — CRUD com atribuições de usuários (2026-10-12)
+NEX-046 revisada (ainda **não aplicada**) e reversão atualizada: funções de atribuir/revogar usuários (só ASIGNADOS; TODOS = acesso amplo), autoatribuição do criador explícita, guarda contra saldo em depósito inativo sem corrida, mudança de sucursal bloqueada com movimentos/usuários incompatíveis, inativação preserva vínculos e histórico. API e tela «Usuarios». Funções de inventário intactas. Local: 1818 verificações, 0 falhas; tsc/ESLint/build OK; sem PostgreSQL/navegador.

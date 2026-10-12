@@ -1,32 +1,47 @@
 -- =====================================================================
--- NEX-046 — Gestión de Depósitos: permisos INVENTARIO.*, funciones transaccionales de alta/edición/estado y código inmutable.
--- Requiere NEX-002 (depositos, sucursales, usuario_deposito), NEX-014 (usuario_tiene_permiso, usuario_puede_deposito) y el envoltorio de grants
--- de NEX-037/039/041/045. NO ejecutar en la VM ni en el banco 'nexit' sin autorización expresa del responsable (backup previo).
--- Reversión: scripts/reversion-NEX-046.sql.
+-- NEX-046 — Gestión de Depósitos (CRUD completo con atribuciones de usuarios): permisos INVENTARIO.*, funciones transaccionales de alta/edición/
+-- estado y de atribución/revocación de usuarios, código inmutable y guarda contra saldo en depósitos inactivos.
+-- Requiere NEX-002 (depositos, sucursales, usuarios, usuario_deposito, usuario_sucursal), NEX-009 (stock_saldos), NEX-014 (usuario_tiene_permiso,
+-- usuario_puede_deposito) y el envoltorio de grants de NEX-037/039/041/045. NO ejecutar en la VM ni en el banco 'nexit' sin autorización expresa del
+-- responsable (backup previo). Reversión: scripts/reversion-NEX-046.sql.
+-- ESTADO: versionada y NO aplicada (no hay registro de ejecución en schema_migrations ni en PROGRESSO-NEXIT-V1.md); por eso se revisó en su lugar.
+-- Si alguna vez se comprueba que ya se aplicó, esta migración NO se edita (su checksum quedaría distinto): se prepara una incremental.
 --
 -- Decisiones (autorizadas por el responsable):
---  · Alta, consulta, edición e inactivación; SIN exclusión física. El rol de la aplicación NO recibe INSERT/UPDATE/DELETE sobre depositos: solo
---    ejecuta las tres funciones SECURITY DEFINER de abajo, que validan permiso, empresa y alcance dentro de la transacción.
+--  · Alta, consulta, edición, inactivación y administración de los usuarios autorizados por depósito; SIN exclusión física. El rol de la aplicación
+--    NO recibe INSERT/UPDATE/DELETE sobre depositos ni usuario_deposito: solo ejecuta las funciones SECURITY DEFINER de abajo, que validan permiso,
+--    empresa y alcance dentro de la transacción.
 --  · El código es inmutable tras la creación (trigger). Tampoco cambian empresa_id ni es_de_terceros (las funciones crean siempre es_de_terceros =
 --    false: los depósitos de terceros no tienen alta desde esta pantalla porque su semántica no está decidida).
---  · Permisos específicos INVENTARIO.VER / CREAR / EDITAR (clase OPERACIONAL). Esta migración NO los asigna a ningún perfil existente: el
---    administrador de la empresa los tiene por definición y los demás perfiles los reciben solo por decisión expresa del responsable.
---  · La sucursal debe estar en el alcance del usuario (alcance_sucursales = 'TODAS' o sucursales asignadas en usuario_sucursal) y activa.
---  · Quien crea un depósito y tiene alcance 'ASIGNADOS' queda asignado a él (si no, no podría verlo ni operarlo). El alcance de los demás usuarios
---    no se modifica.
---  · Inactivar: permitido aunque el depósito tenga historial (el historial sigue legible; Stock e historial de Movimientos incluyen depósitos
---    inactivos del alcance). BLOQUEADO si el depósito aún tiene saldo (cualquier estado, propio o de terceros): operar exige depósito activo
---    (usuario_puede_deposito), de modo que inactivarlo con saldo dejaría ese stock sin poder moverse ni anular sus movimientos.
+--  · Permisos específicos INVENTARIO.VER / CREAR / EDITAR (clase OPERACIONAL). NO se asignan a ningún perfil existente: el administrador de la
+--    empresa los tiene por definición y los demás perfiles los reciben solo por decisión expresa del responsable. Atribuir/revocar usuarios exige
+--    INVENTARIO.EDITAR y que el actor tenga el depósito en su propio alcance.
+--  · ATRIBUCIONES: solo para usuarios de la empresa con alcance_depositos = 'ASIGNADOS' (los de alcance 'TODOS' ven todo y no dependen de un vínculo
+--    individual: atribuirles no tendría efecto y se rechaza). No se modifica el alcance general de ningún usuario. El usuario debe tener la sucursal
+--    del depósito en su propio alcance de sucursales (alcance_sucursales = 'TODAS' o usuario_sucursal); si no, se rechaza (no se altera su sucursal).
+--    Revocar solo borra el vínculo (usuario_deposito): el historial de movimientos y saldos no se toca.
+--  · Creación: la autoatribución del creador (si tiene alcance 'ASIGNADOS') es EXPLÍCITA: parámetro p_asignar_creador, que la pantalla ofrece
+--    marcado. Sin él, el creador con 'ASIGNADOS' no vería el depósito que acaba de crear.
+--  · Inactivar: permitido aunque el depósito tenga historial (los vínculos de usuarios se conservan y el historial sigue legible; Stock e historial
+--    de Movimientos incluyen depósitos inactivos del alcance). BLOQUEADO si aún tiene saldo (cualquier estado, propio o de terceros): operar exige
+--    depósito activo (usuario_puede_deposito), así que inactivarlo con saldo dejaría ese stock sin poder moverse ni anular sus movimientos.
+--    SIN CARRERA: la inactivación bloquea la fila del depósito (FOR UPDATE) y un trigger en stock_saldos toma FOR SHARE sobre esa fila antes de crear
+--    o aumentar un saldo y rechaza el depósito inactivo. Un movimiento concurrente o espera a la inactivación (y falla al ver el depósito inactivo)
+--    o la inactivación espera a que ese movimiento confirme (y entonces ve el saldo y se rechaza). No se modifica ninguna función de inventario.
+--  · Cambio de sucursal de un depósito: BLOQUEADO si el depósito tiene movimientos (su historial conserva la sucursal de cada movimiento y los
+--    informes por sucursal se partirían) o si algún usuario atribuido no tiene la nueva sucursal en su alcance (el vínculo quedaría inconsistente;
+--    antes hay que revocarlo). Cambiar solo el nombre es siempre posible.
 --  · Unicidad de código sin distinguir mayúsculas dentro de la empresa; si ya hubiera códigos que solo difieren en mayúsculas la migración ABORTA
 --    sin cambiar nada. La unicidad de nombre NO está decidida y no se impone.
---  · No se agrega DELETE ni trigger de borrado: NEX-012 elimina depósitos al depurar una empresa DEMO; el rol de la aplicación simplemente no tiene
---    DELETE y las claves foráneas de movimientos/saldos impiden borrar un depósito con historial.
+--  · No se agrega DELETE ni trigger de borrado: NEX-012 elimina depósitos al depurar una empresa DEMO; el rol de la aplicación no tiene DELETE y las
+--    claves foráneas de movimientos/saldos impiden borrar un depósito con historial.
 -- No modifica ninguna fila existente. No toca saldos, costos ni las funciones de inventario.
 -- =====================================================================
 DO $$
 BEGIN
-  IF to_regclass('public.depositos') IS NULL OR to_regclass('public.sucursales') IS NULL OR to_regclass('public.usuario_deposito') IS NULL THEN
-    RAISE EXCEPTION 'NEX-046 requiere NEX-002 (depositos, sucursales, usuario_deposito).';
+  IF to_regclass('public.depositos') IS NULL OR to_regclass('public.sucursales') IS NULL OR to_regclass('public.usuario_deposito') IS NULL
+     OR to_regclass('public.usuario_sucursal') IS NULL OR to_regclass('public.stock_saldos') IS NULL OR to_regclass('public.movimientos_inventario') IS NULL THEN
+    RAISE EXCEPTION 'NEX-046 requiere NEX-002 (depositos, sucursales, usuario_deposito, usuario_sucursal) y NEX-009/NEX-014 (stock_saldos, movimientos_inventario).';
   END IF;
   IF to_regprocedure('public.usuario_tiene_permiso(uuid,uuid,text,text)') IS NULL OR to_regprocedure('public.usuario_puede_deposito(uuid,uuid,uuid)') IS NULL THEN
     RAISE EXCEPTION 'NEX-046 requiere NEX-014 (usuario_tiene_permiso, usuario_puede_deposito).';
@@ -38,7 +53,7 @@ BEGIN
      OR to_regprocedure('public.nex_aplicar_grants_comercial()') IS NULL THEN
     RAISE EXCEPTION 'NEX-046 requiere NEX-037, NEX-039, NEX-041 y NEX-045 (envoltorio de grants del runtime).';
   END IF;
-  IF to_regprocedure('public.deposito_crear(uuid,uuid,uuid,text,text)') IS NOT NULL THEN
+  IF to_regprocedure('public.deposito_crear(uuid,uuid,uuid,text,text,boolean)') IS NOT NULL THEN
     RAISE EXCEPTION 'deposito_crear ya existe: NEX-046 parece aplicada; no se reaplica por suposición.';
   END IF;
   IF EXISTS (SELECT 1 FROM public.depositos GROUP BY empresa_id, lower(codigo) HAVING count(*) > 1) THEN
@@ -70,7 +85,26 @@ END $$;
 CREATE TRIGGER depositos_codigo_inmutable_trg BEFORE UPDATE ON public.depositos
   FOR EACH ROW EXECUTE FUNCTION public.depositos_codigo_inmutable();
 
--- 3) Funciones transaccionales. El permiso, la empresa y el alcance se validan aquí, además de la API.
+-- 2b) Guarda contra saldo en un depósito inactivo (cierra la carrera entre inactivar y operar). Solo cuando una fila de saldo se crea con cantidad > 0 o
+--     su cantidad AUMENTA (las salidas y las puestas en cero no se bloquean). FOR SHARE sobre la fila del depósito conflicta con el FOR UPDATE de deposito_cambiar_estado.
+CREATE OR REPLACE FUNCTION public.stock_saldos_deposito_activo() RETURNS trigger
+LANGUAGE plpgsql SET search_path = public, pg_temp AS $$
+DECLARE
+  v_activo boolean;
+BEGIN
+  IF NEW.cantidad > 0 AND (TG_OP = 'INSERT' OR NEW.cantidad > OLD.cantidad) THEN
+    SELECT activo INTO v_activo FROM public.depositos WHERE empresa_id = NEW.empresa_id AND id = NEW.deposito_id FOR SHARE;
+    IF v_activo IS DISTINCT FROM true THEN
+      RAISE EXCEPTION 'el depósito está inactivo: no admite saldo' USING ERRCODE = 'P0001', DETAIL = 'NEX:DEPOSITO_INACTIVO';
+    END IF;
+  END IF;
+  RETURN NEW;
+END $$;
+
+CREATE TRIGGER stock_saldos_deposito_activo_trg BEFORE INSERT OR UPDATE ON public.stock_saldos
+  FOR EACH ROW EXECUTE FUNCTION public.stock_saldos_deposito_activo();
+
+-- 3) Alcance. Funciones auxiliares (solo lectura).
 CREATE OR REPLACE FUNCTION public.sucursal_en_alcance(p_empresa uuid, p_usuario uuid, p_sucursal uuid) RETURNS boolean
 LANGUAGE sql STABLE SET search_path = public, pg_temp AS $$
   SELECT EXISTS (
@@ -80,7 +114,18 @@ LANGUAGE sql STABLE SET search_path = public, pg_temp AS $$
             OR EXISTS (SELECT 1 FROM public.usuario_sucursal us WHERE us.empresa_id = u.empresa_id AND us.usuario_id = u.id AND us.sucursal_id = p_sucursal)))
 $$;
 
-CREATE OR REPLACE FUNCTION public.deposito_crear(p_empresa uuid, p_usuario uuid, p_sucursal uuid, p_codigo text, p_nombre text)
+-- Alcance para gestionar: el mismo que Stock e historial (alcance TODOS o depósitos asignados, activos o no).
+CREATE OR REPLACE FUNCTION public.deposito_en_alcance(p_empresa uuid, p_usuario uuid, p_deposito uuid) RETURNS boolean
+LANGUAGE sql STABLE SET search_path = public, pg_temp AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.usuarios u JOIN public.depositos d ON d.empresa_id = u.empresa_id AND d.id = p_deposito
+     WHERE u.empresa_id = p_empresa AND u.id = p_usuario
+       AND (u.alcance_depositos = 'TODOS'
+            OR EXISTS (SELECT 1 FROM public.usuario_deposito ud WHERE ud.empresa_id = u.empresa_id AND ud.usuario_id = u.id AND ud.deposito_id = p_deposito)))
+$$;
+
+-- 4) Funciones transaccionales. El permiso, la empresa y el alcance se validan aquí, además de la API.
+CREATE OR REPLACE FUNCTION public.deposito_crear(p_empresa uuid, p_usuario uuid, p_sucursal uuid, p_codigo text, p_nombre text, p_asignar_creador boolean)
 RETURNS uuid
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
 DECLARE
@@ -109,29 +154,23 @@ BEGIN
   VALUES (p_empresa, p_sucursal, v_codigo, v_nombre, false, true)
   RETURNING id INTO v_id;
 
-  -- Quien lo crea con alcance 'ASIGNADOS' queda asignado (sin esto no podría verlo ni operarlo). Los demás usuarios no cambian.
-  INSERT INTO public.usuario_deposito (empresa_id, usuario_id, deposito_id, asignado_por)
-  SELECT u.empresa_id, u.id, v_id, u.id FROM public.usuarios u
-   WHERE u.empresa_id = p_empresa AND u.id = p_usuario AND u.alcance_depositos = 'ASIGNADOS';
+  -- Autoatribución EXPLÍCITA del creador (solo si su alcance es 'ASIGNADOS'; con 'TODOS' ya lo ve todo). No cambia su alcance general.
+  IF coalesce(p_asignar_creador, false) THEN
+    INSERT INTO public.usuario_deposito (empresa_id, usuario_id, deposito_id, asignado_por)
+    SELECT u.empresa_id, u.id, v_id, u.id FROM public.usuarios u
+     WHERE u.empresa_id = p_empresa AND u.id = p_usuario AND u.alcance_depositos = 'ASIGNADOS'
+    ON CONFLICT DO NOTHING;
+  END IF;
 
   RETURN v_id;
 END $$;
-
--- Alcance para gestionar: el mismo que Stock e historial (alcance TODOS o depósitos asignados, activos o no).
-CREATE OR REPLACE FUNCTION public.deposito_en_alcance(p_empresa uuid, p_usuario uuid, p_deposito uuid) RETURNS boolean
-LANGUAGE sql STABLE SET search_path = public, pg_temp AS $$
-  SELECT EXISTS (
-    SELECT 1 FROM public.usuarios u JOIN public.depositos d ON d.empresa_id = u.empresa_id AND d.id = p_deposito
-     WHERE u.empresa_id = p_empresa AND u.id = p_usuario
-       AND (u.alcance_depositos = 'TODOS'
-            OR EXISTS (SELECT 1 FROM public.usuario_deposito ud WHERE ud.empresa_id = u.empresa_id AND ud.usuario_id = u.id AND ud.deposito_id = p_deposito)))
-$$;
 
 CREATE OR REPLACE FUNCTION public.deposito_editar(p_empresa uuid, p_usuario uuid, p_deposito uuid, p_nombre text, p_sucursal uuid)
 RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
 DECLARE
   v_nombre text := btrim(coalesce(p_nombre, ''));
+  v_suc_actual uuid;
 BEGIN
   IF NOT public.usuario_tiene_permiso(p_empresa, p_usuario, 'INVENTARIO', 'EDITAR') THEN
     RAISE EXCEPTION 'el usuario no tiene permiso INVENTARIO.EDITAR en esta empresa' USING ERRCODE = '42501';
@@ -142,11 +181,24 @@ BEGIN
   IF v_nombre = '' OR char_length(v_nombre) > 120 THEN
     RAISE EXCEPTION 'el nombre es obligatorio (máximo 120 caracteres)' USING ERRCODE = 'P0001';
   END IF;
-  -- Si la sucursal no cambia se conserva aunque esté inactiva o fuera del alcance; si cambia, debe estar activa y en el alcance.
-  IF p_sucursal IS DISTINCT FROM (SELECT sucursal_id FROM public.depositos WHERE empresa_id = p_empresa AND id = p_deposito)
-     AND (NOT EXISTS (SELECT 1 FROM public.sucursales WHERE empresa_id = p_empresa AND id = p_sucursal AND activo)
-          OR NOT public.sucursal_en_alcance(p_empresa, p_usuario, p_sucursal)) THEN
-    RAISE EXCEPTION 'la sucursal no existe en la empresa, está inactiva o está fuera del alcance del usuario' USING ERRCODE = 'P0001';
+
+  -- La fila del depósito se bloquea: serializa con atribuciones, inactivación y movimientos que toman FOR SHARE.
+  SELECT sucursal_id INTO v_suc_actual FROM public.depositos WHERE empresa_id = p_empresa AND id = p_deposito FOR UPDATE;
+
+  IF p_sucursal IS DISTINCT FROM v_suc_actual THEN
+    IF NOT EXISTS (SELECT 1 FROM public.sucursales WHERE empresa_id = p_empresa AND id = p_sucursal AND activo)
+       OR NOT public.sucursal_en_alcance(p_empresa, p_usuario, p_sucursal) THEN
+      RAISE EXCEPTION 'la sucursal no existe en la empresa, está inactiva o está fuera del alcance del usuario' USING ERRCODE = 'P0001';
+    END IF;
+    IF EXISTS (SELECT 1 FROM public.movimientos_inventario WHERE empresa_id = p_empresa AND (deposito_origen_id = p_deposito OR deposito_destino_id = p_deposito)) THEN
+      RAISE EXCEPTION 'el depósito ya tiene movimientos: su sucursal no se puede cambiar (el historial y los informes por sucursal quedarían divididos); solo puede cambiar el nombre'
+        USING ERRCODE = 'P0001', DETAIL = 'NEX:DEPOSITO_SUCURSAL_CON_MOVIMIENTOS';
+    END IF;
+    IF EXISTS (SELECT 1 FROM public.usuario_deposito ud WHERE ud.empresa_id = p_empresa AND ud.deposito_id = p_deposito
+                  AND NOT public.sucursal_en_alcance(p_empresa, ud.usuario_id, p_sucursal)) THEN
+      RAISE EXCEPTION 'hay usuarios atribuidos al depósito que no tienen la nueva sucursal en su alcance: revoque primero su atribución'
+        USING ERRCODE = 'P0001', DETAIL = 'NEX:DEPOSITO_SUCURSAL_USUARIOS';
+    END IF;
   END IF;
 
   UPDATE public.depositos SET nombre = v_nombre, sucursal_id = p_sucursal, actualizado_at = now()
@@ -169,6 +221,7 @@ BEGIN
     RAISE EXCEPTION 'el depósito no existe o está fuera del alcance del usuario' USING ERRCODE = 'P0001', DETAIL = 'NEX:DEPOSITO_NO_ENCONTRADO';
   END IF;
 
+  -- Bloqueo de la fila ANTES de mirar el saldo: ver stock_saldos_deposito_activo (sin carrera con movimientos concurrentes).
   SELECT activo INTO v_actual FROM public.depositos WHERE empresa_id = p_empresa AND id = p_deposito FOR UPDATE;
   IF v_actual = p_activo THEN
     RETURN;
@@ -179,10 +232,61 @@ BEGIN
       USING ERRCODE = 'P0001', DETAIL = 'NEX:DEPOSITO_CON_SALDO';
   END IF;
 
+  -- Solo cambia el estado: los vínculos de usuarios, el historial y los saldos en cero se conservan.
   UPDATE public.depositos SET activo = p_activo, actualizado_at = now() WHERE empresa_id = p_empresa AND id = p_deposito;
 END $$;
 
--- 4) Privilegios del rol de la aplicación: solo ejecutar las funciones (sin escritura directa sobre depositos).
+-- 5) Atribución de usuarios (solo alcance 'ASIGNADOS'; no se toca el alcance general ni el perfil del usuario).
+CREATE OR REPLACE FUNCTION public.deposito_usuario_asignar(p_empresa uuid, p_actor uuid, p_deposito uuid, p_usuario uuid)
+RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE
+  v_suc uuid;
+  v_alcance text;
+  v_estado text;
+BEGIN
+  IF NOT public.usuario_tiene_permiso(p_empresa, p_actor, 'INVENTARIO', 'EDITAR') THEN
+    RAISE EXCEPTION 'el usuario no tiene permiso INVENTARIO.EDITAR en esta empresa' USING ERRCODE = '42501';
+  END IF;
+  IF NOT public.deposito_en_alcance(p_empresa, p_actor, p_deposito) THEN
+    RAISE EXCEPTION 'el depósito no existe o está fuera del alcance del usuario' USING ERRCODE = 'P0001', DETAIL = 'NEX:DEPOSITO_NO_ENCONTRADO';
+  END IF;
+
+  SELECT sucursal_id INTO v_suc FROM public.depositos WHERE empresa_id = p_empresa AND id = p_deposito FOR UPDATE;
+  SELECT alcance_depositos, estado INTO v_alcance, v_estado FROM public.usuarios WHERE empresa_id = p_empresa AND id = p_usuario;
+
+  IF v_alcance IS NULL OR v_estado = 'BAJA' THEN
+    RAISE EXCEPTION 'el usuario no existe en la empresa o está dado de baja' USING ERRCODE = 'P0001', DETAIL = 'NEX:USUARIO_NO_ENCONTRADO';
+  END IF;
+  IF v_alcance <> 'ASIGNADOS' THEN
+    RAISE EXCEPTION 'el usuario tiene acceso a todos los depósitos: no depende de una atribución individual' USING ERRCODE = 'P0001', DETAIL = 'NEX:USUARIO_ALCANCE_TODOS';
+  END IF;
+  IF NOT public.sucursal_en_alcance(p_empresa, p_usuario, v_suc) THEN
+    RAISE EXCEPTION 'la sucursal del depósito no está en el alcance de sucursales del usuario' USING ERRCODE = 'P0001', DETAIL = 'NEX:USUARIO_SUCURSAL_FUERA';
+  END IF;
+
+  INSERT INTO public.usuario_deposito (empresa_id, usuario_id, deposito_id, asignado_por)
+  VALUES (p_empresa, p_usuario, p_deposito, p_actor)
+  ON CONFLICT DO NOTHING;
+END $$;
+
+CREATE OR REPLACE FUNCTION public.deposito_usuario_revocar(p_empresa uuid, p_actor uuid, p_deposito uuid, p_usuario uuid)
+RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+BEGIN
+  IF NOT public.usuario_tiene_permiso(p_empresa, p_actor, 'INVENTARIO', 'EDITAR') THEN
+    RAISE EXCEPTION 'el usuario no tiene permiso INVENTARIO.EDITAR en esta empresa' USING ERRCODE = '42501';
+  END IF;
+  IF NOT public.deposito_en_alcance(p_empresa, p_actor, p_deposito) THEN
+    RAISE EXCEPTION 'el depósito no existe o está fuera del alcance del usuario' USING ERRCODE = 'P0001', DETAIL = 'NEX:DEPOSITO_NO_ENCONTRADO';
+  END IF;
+
+  PERFORM 1 FROM public.depositos WHERE empresa_id = p_empresa AND id = p_deposito FOR UPDATE;
+  -- Solo se borra el vínculo (idempotente): movimientos, saldos y costos no se tocan.
+  DELETE FROM public.usuario_deposito WHERE empresa_id = p_empresa AND deposito_id = p_deposito AND usuario_id = p_usuario;
+END $$;
+
+-- 6) Privilegios del rol de la aplicación: solo ejecutar las funciones (sin escritura directa sobre depositos ni usuario_deposito).
 CREATE OR REPLACE FUNCTION public.nex_aplicar_grants_depositos() RETURNS void
 LANGUAGE plpgsql AS $$
 BEGIN
@@ -190,12 +294,16 @@ BEGIN
     RETURN;
   END IF;
 
-  REVOKE ALL ON FUNCTION public.deposito_crear(uuid, uuid, uuid, text, text) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION public.deposito_crear(uuid, uuid, uuid, text, text, boolean) FROM PUBLIC;
   REVOKE ALL ON FUNCTION public.deposito_editar(uuid, uuid, uuid, text, uuid) FROM PUBLIC;
   REVOKE ALL ON FUNCTION public.deposito_cambiar_estado(uuid, uuid, uuid, boolean) FROM PUBLIC;
-  GRANT EXECUTE ON FUNCTION public.deposito_crear(uuid, uuid, uuid, text, text) TO nexit_runtime;
+  REVOKE ALL ON FUNCTION public.deposito_usuario_asignar(uuid, uuid, uuid, uuid) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION public.deposito_usuario_revocar(uuid, uuid, uuid, uuid) FROM PUBLIC;
+  GRANT EXECUTE ON FUNCTION public.deposito_crear(uuid, uuid, uuid, text, text, boolean) TO nexit_runtime;
   GRANT EXECUTE ON FUNCTION public.deposito_editar(uuid, uuid, uuid, text, uuid) TO nexit_runtime;
   GRANT EXECUTE ON FUNCTION public.deposito_cambiar_estado(uuid, uuid, uuid, boolean) TO nexit_runtime;
+  GRANT EXECUTE ON FUNCTION public.deposito_usuario_asignar(uuid, uuid, uuid, uuid) TO nexit_runtime;
+  GRANT EXECUTE ON FUNCTION public.deposito_usuario_revocar(uuid, uuid, uuid, uuid) TO nexit_runtime;
   GRANT EXECUTE ON FUNCTION public.deposito_en_alcance(uuid, uuid, uuid) TO nexit_runtime;
   GRANT EXECUTE ON FUNCTION public.sucursal_en_alcance(uuid, uuid, uuid) TO nexit_runtime;
 END $$;

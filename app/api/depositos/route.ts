@@ -33,7 +33,7 @@ export async function POST(request: Request) {
 
   try {
     const id = await enTransaccion(b.db, async (c) => {
-      const r = await c.query(`SELECT public.deposito_crear($1::uuid, $2::uuid, $3::uuid, $4, $5) AS id`, [b.empresaId, b.usuarioId, f.sucursalId, f.codigo.trim(), f.nombre.trim()]);
+      const r = await c.query(`SELECT public.deposito_crear($1::uuid, $2::uuid, $3::uuid, $4, $5, $6::boolean) AS id`, [b.empresaId, b.usuarioId, f.sucursalId, f.codigo.trim(), f.nombre.trim(), cuerpo.asignarme === true]);
 
       return (r.rows[0] as { id: string }).id;
     });
