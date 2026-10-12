@@ -313,8 +313,36 @@ Este arquivo é a fonte única da auditoria do menu **Productos**. Registrar, co
 
 ### Decisões de negócio abertas após análise estática
 
-- **DEC-PRD-U08 — FE pendente:** documento fiscal ainda em envio/consulta, com payload de produto já congelado, deve impedir a troca da unidade-base **mesmo quando não existe pedido físico e todo o estoque é zero**? A decisão pode distinguir pendência fiscal imutável (sem movimento físico) de operação física pendente. Sem confirmação, registrar como `NAO_DECIDIDO`; não presumir bloqueio universal por todos documentos da empresa.
+- **DEC-PRD-U08 — APROVADA (12/10/2026):** FE com payload fiscal já gravado e imutável **não bloqueia a troca da unidade-base apenas por aguardar envio/resultado SIFEN**, desde que o estoque esteja integralmente zerado e não haja operação física pendente. Unidade, quantidade, preço, IVA e total históricos da factura permanecem congelados. Sem snapshot comprovado, a exceção não se aplica. Ver seção XVIII.
 - **DEC-PRD-U09 — apresentações utilizadas:** para uma apresentação que já participou de compra/venda, é permitido editar o fator na mesma linha, preservando versão antiga, ou somente criar **nova versão da apresentação** e desativar a anterior? Recomenda-se versionar sem apagar nem sobrescrever o fator utilizado.
 - **DEC-PRD-U10 — preços:** ao trocar unidade-base com estoque zero, exigir revisão/atualização explícita dos preços de referência e listas ativas associados à unidade antiga antes de concluir, ou permitir mudar a unidade e deixar o produto sem preço vendável até a revisão? Nenhuma recalculação automática de preço foi aprovada.
 
-**Estado:** Matriz operacional de bloqueios identificada com fontes reais; dúvidas FE, versão de apresentações e política de preço ainda abertas. Nenhuma execução de teste, PostgreSQL, browser, migration ou mudança funcional feita. A auditoria do menu continua ABERTA.
+**Estado atualizado:** DEC-PRD-U08 já aprovada na seção XVIII; continuam abertas DEC-PRD-U09 (versões de apresentações) e DEC-PRD-U10 (preços). Nenhum teste, PostgreSQL, navegador, migration ou alteração funcional executado. Auditoria ABERTA.
+
+## XVIII. DEC-PRD-U08 — FE congelada não bloqueia troca de unidade-base (12/10/2026) — APROVADA
+
+**Declaração do responsável:** “Opção 2: permitir a troca se a factura já possuir seus dados fiscais congelados, mantendo a unidade histórica, desde que não haja nenhuma movimentação física pendente.”
+
+### Regra de negócio
+
+1. **Manter a condição DEC-PRD-U07:** estoque integralmente zero para o produto em todos os depósitos, estados e propriedades da empresa; nenhuma operação/movimentação física pendente.
+2. Mesmo que o documento esteja `PENDIENTE_ENVIO`, `ENVIANDO`, `ENVIO_INDETERMINADO`, `ERROR_ENVIO`, `ENVIADO` ou aguardando decisão SIFEN, esse **estado fiscal isolado não impede** a troca da unidade-base, contanto que haja **payload fiscal gravado, íntegro e imutável** e nenhuma operação física pendente.
+3. O documento fiscal deve continuar com **a unidade SIFEN histórica E709, quantidade E711, preço E721, IVA, total e demais dados originais**. Após a alteração de unidade-base, reenvio/consulta/KuDE não podem remontar esses valores a partir da unidade fiscal atual do produto. Preservar apresentação/fator originais quando utilizados e versão imutável da factura.
+4. Uma prévia de factura não persistida, formulário ainda editável ou documento sem snapshot fiscal verificável **não satisfaz a condição aprovada**. Não liberar a troca presumindo que a FE está congelada. Se ainda houver evento físico pendente relacionado ao produto, **bloquear independentemente do estado da FE**.
+5. Alterar a base apenas por operação transacional auditada com controle de concorrência e histórico (usuário, instante, unidade anterior/nova), sem editar registros de movimentos, fiscalizações, preços e documentos anteriores.
+
+### Evidência e lacuna para implementação futura
+
+- `NEX-048-facturacion-emision-fe.sql:50-64,67-90,153-163` modela `documento_electronico_solicitudes.payload` JSONB, `payload_hash`, `entrada_hash`, versão, inserção e imutabilidade. A FE efetivamente criada possui a infraestrutura de snapshot fiscal. A existência da estrutura no PostgreSQL operacional **não foi verificada**, portanto não presumir migrations aplicadas.
+- `NEX-047-facturacion-documentos-electronicos.sql:76-122` separa estados locais, fiscais e email; um envio pendente não implica estoque físico pendente.
+- `lib/facturacion/payload-fe.ts:182-194` gera valores fiscais do item no payload; a seleção por apresentação (PRD-A20) segue pendente no código.
+- `PRD-A32` ainda existe: o snapshot de FE **não inclui FK relacional por linha para `productos.id`**, e identificadores fiscais `dCodInt` não substituem vínculo transacional confiável em todo caso. A verificação de operações físicas pendentes é independente; a ausência de FK não autoriza bloquear todos os produtos por qualquer FE da empresa.
+
+### Casos de aceite planejados, não executados
+
+- Estoque zero, sem pendência física, factura já gravada imutável com envio indeterminado: troca **PERMITIDA**, envio/reconsulta conserva unidade, quantidade, IVA, preço e total do snapshot.
+- Saldo em RESERVADO/TRANSITO/terceiro ou qualquer operação física pendente, mesmo que factura imutável: troca **BLOQUEADA**.
+- Só prévia fiscal sem persistência comprovada: não tratar como factura congelada; avaliar o fluxo antes da troca e não presumir autorização.
+- Reenvio após troca da base: nem E709/E711/E721 nem `payload_hash` podem ser reescritos. Concorrência entre gravação fiscal, estoque e troca requer consistência atômica.
+
+**Estado:** DEC-PRD-U08 APROVADA/ENCERRADA. Ainda abertas DEC-PRD-U03 (`esUnidadBase`), U04, U05, U09, U10 e auditoria integral de Productos. Nenhum código, SQL, VM, teste operacional ou implementação autorizada.
