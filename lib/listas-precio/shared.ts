@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import type { PoolClient } from "pg";
 
+import { margenBruto } from "@/lib/listas-precio/calculos";
+
 // Validación y persistencia compartidas de listas de precios (POST y PUT).
 // Consultas parametrizadas; empresa_id siempre llega de la sesión autenticada.
 
@@ -15,13 +17,22 @@ const texto = (v: unknown, max?: number) => {
 };
 const opcional = (v: unknown, max?: number) => texto(v, max) || null;
 const lista = <T>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : []);
-const si = (v: unknown) => v === true;
 
-function numero(v: unknown, etiqueta: string, min?: number, max?: number): number | null {
+/** Error de validación con el campo (ruta) al que corresponde, para mostrarlo junto al campo en la pantalla. */
+export class ErrorLista extends Error {
+  campo: string | null;
+
+  constructor(mensaje: string, campo: string | null = null) {
+    super(mensaje);
+    this.campo = campo;
+  }
+}
+
+function numero(v: unknown, etiqueta: string, min?: number, max?: number, campo: string | null = null): number | null {
   if (v === "" || v === undefined || v === null) return null;
   const n = Number(v);
   if (!Number.isFinite(n) || (min !== undefined && n < min) || (max !== undefined && n > max)) {
-    throw new Error(`${etiqueta} no es válido.`);
+    throw new ErrorLista(`${etiqueta} no es válido.`, campo);
   }
   return n;
 }
@@ -34,7 +45,7 @@ function uuidOpcional(v: unknown, etiqueta: string) {
 }
 
 /** yyyy-mm-dd (input type=date) o dd/mm/yyyy. Devuelve ISO o null. */
-function fecha(v: unknown, etiqueta: string) {
+function fecha(v: unknown, etiqueta: string, campo: string | null = null) {
   const e = texto(v);
   if (!e) return null;
   let yyyy: string, mm: string, dd: string;
@@ -42,10 +53,10 @@ function fecha(v: unknown, etiqueta: string) {
   const loc = e.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
   if (iso) [, yyyy, mm, dd] = iso;
   else if (loc) [, dd, mm, yyyy] = loc;
-  else throw new Error(`${etiqueta} no tiene un formato válido.`);
+  else throw new ErrorLista(`${etiqueta} no tiene un formato válido.`, campo);
   const p = new Date(Date.UTC(+yyyy, +mm - 1, +dd));
   if (p.getUTCFullYear() !== +yyyy || p.getUTCMonth() !== +mm - 1 || p.getUTCDate() !== +dd) {
-    throw new Error(`${etiqueta} no es válida.`);
+    throw new ErrorLista(`${etiqueta} no es válida.`, campo);
   }
   return `${yyyy}-${mm}-${dd}`;
 }
@@ -64,39 +75,44 @@ export function prepararLista(d: Cuerpo) {
   const moneda = texto(d.monedaCodigo).toUpperCase() || "PYG";
   const estado = texto(d.estado).toUpperCase() || "ACTIVA";
   const modo = texto(d.modoPrecio).toUpperCase() || "PRECIO_FIJO";
-  const desde = fecha(d.vigenteDesde, "La vigencia inicial");
-  const hasta = fecha(d.vigenteHasta, "La vigencia final");
+  const desde = fecha(d.vigenteDesde, "La vigencia inicial", "vigenteDesde");
+  const hasta = fecha(d.vigenteHasta, "La vigencia final", "vigenteHasta");
 
-  if (!nombre) throw new Error("Ingrese el nombre de la lista de precios.");
-  if (!desde) throw new Error("Ingrese la fecha de vigencia inicial.");
-  if (hasta && hasta < desde) throw new Error("La vigencia final no puede ser anterior a la inicial.");
-  if (!TIPOS.includes(tipo)) throw new Error("Tipo de lista no válido.");
-  if (!/^[A-Z]{3}$/.test(moneda)) throw new Error("Moneda no válida.");
-  if (!ESTADOS.includes(estado)) throw new Error("Estado no válido.");
-  if (!MODOS.includes(modo)) throw new Error("Modo de precio no válido.");
+  if (!nombre) throw new ErrorLista("Ingrese el nombre de la lista de precios.", "nombre");
+  if (!desde) throw new ErrorLista("Ingrese la fecha de vigencia inicial.", "vigenteDesde");
+  if (hasta && hasta < desde) throw new ErrorLista("La vigencia final no puede ser anterior a la inicial.", "vigenteHasta");
+  if (!TIPOS.includes(tipo)) throw new ErrorLista("Tipo de lista no válido.", "tipo");
+  if (!/^[A-Z]{3}$/.test(moneda)) throw new ErrorLista("Moneda no válida.", "monedaCodigo");
+  if (!ESTADOS.includes(estado)) throw new ErrorLista("Estado no válido.", "estado");
+  if (!MODOS.includes(modo)) throw new ErrorLista("Modo de precio no válido.", "modoPrecio");
 
-  const productos = lista<Fila>(d.productos).map((p) => {
+  const productos = lista<Fila>(d.productos).map((p, i) => {
+    const ruta = `productos.${i}`;
     const productoId = uuidOpcional(p.productoId, "El producto");
-    if (!productoId) throw new Error("Cada precio requiere seleccionar un producto.");
-    const vDesde = fecha(p.vigenteDesde, "La vigencia del producto") ?? desde;
-    const vHasta = fecha(p.vigenteHasta, "La vigencia final del producto");
-    if (vHasta && vHasta < vDesde) throw new Error("La vigencia final de un producto no puede ser anterior a la inicial.");
-    const escalas = lista<Fila>(p.escalas).map((e) => {
-      const min = numero(e.cantidadMinima, "Cantidad mínima del escalón", 0.0001);
-      const max = numero(e.cantidadMaxima, "Cantidad máxima del escalón", 0);
-      if (min === null) throw new Error("Cada escalón requiere cantidad mínima.");
-      if (max !== null && max < min) throw new Error("La cantidad máxima de un escalón no puede ser menor que la mínima.");
-      return { min, max, precio: numero(e.precio, "Precio del escalón", 0) ?? 0, desc: numero(e.descuentoPct, "Descuento del escalón", 0, 100) ?? 0 };
+    if (!productoId) throw new ErrorLista(`El precio ${i + 1} requiere seleccionar un producto.`, `${ruta}.productoId`);
+    const vDesde = fecha(p.vigenteDesde, "La vigencia del producto", `${ruta}.vigenteDesde`) ?? desde;
+    const vHasta = fecha(p.vigenteHasta, "La vigencia final del producto", `${ruta}.vigenteHasta`);
+    if (vHasta && vHasta < vDesde) throw new ErrorLista(`La vigencia final del precio ${i + 1} no puede ser anterior a la inicial.`, `${ruta}.vigenteHasta`);
+    const escalas = lista<Fila>(p.escalas).map((e, k) => {
+      const re = `${ruta}.escalas.${k}`;
+      const min = numero(e.cantidadMinima, "Cantidad mínima del escalón", 0.0001, undefined, `${re}.cantidadMinima`);
+      const max = numero(e.cantidadMaxima, "Cantidad máxima del escalón", 0, undefined, `${re}.cantidadMaxima`);
+      if (min === null) throw new ErrorLista("Cada escalón requiere cantidad mínima.", `${re}.cantidadMinima`);
+      if (max !== null && max < min) throw new ErrorLista("La cantidad máxima de un escalón no puede ser menor que la mínima.", `${re}.cantidadMaxima`);
+      return { min, max, precio: numero(e.precio, "Precio del escalón", 0, undefined, `${re}.precio`) ?? 0, desc: numero(e.descuentoPct, "Descuento del escalón", 0, 100, `${re}.descuentoPct`) ?? 0 };
     });
+    const costo = numero(p.costoReferencia, "Costo de referencia", 0, undefined, `${ruta}.costoReferencia`) ?? 0;
+    const precio = numero(p.precioLista, "Precio de lista", 0, undefined, `${ruta}.precioLista`) ?? 0;
     return {
       productoId,
       unidadMedidaId: uuidOpcional(p.unidadMedidaId, "La unidad"),
-      costo: numero(p.costoReferencia, "Costo de referencia", 0) ?? 0,
-      base: numero(p.precioBase, "Precio base", 0) ?? 0,
-      precio: numero(p.precioLista, "Precio de lista", 0) ?? 0,
-      margen: numero(p.margenPct, "Margen", -999, 999) ?? 0,
-      desc: numero(p.descuentoPct, "Descuento", 0, 100) ?? 0,
-      cantidadMinima: numero(p.cantidadMinima, "Cantidad mínima", 0.0001) ?? 1,
+      costo,
+      base: numero(p.precioBase, "Precio base", 0, undefined, `${ruta}.precioBase`) ?? 0,
+      precio,
+      // El margen lo calcula el servidor (margen bruto sobre el precio); sin precio o sin costo no hay margen definido y se guarda 0.
+      margen: margenBruto(precio, costo) ?? 0,
+      desc: numero(p.descuentoPct, "Descuento", 0, 100, `${ruta}.descuentoPct`) ?? 0,
+      cantidadMinima: numero(p.cantidadMinima, "Cantidad mínima", 0.0001, undefined, `${ruta}.cantidadMinima`) ?? 1,
       desde: vDesde,
       hasta: vHasta,
       activo: p.activo !== false,
@@ -105,25 +121,26 @@ export function prepararLista(d: Cuerpo) {
   });
   const vistos = new Set<string>();
   for (const p of productos) {
-    if (vistos.has(p.productoId)) throw new Error("Un producto no puede repetirse en la misma lista.");
+    if (vistos.has(p.productoId)) throw new ErrorLista("Un producto no puede repetirse en la misma lista.", "productos");
     vistos.add(p.productoId);
   }
 
-  const reglas = lista<Fila>(d.reglasComerciales).map((r) => {
+  const reglas = lista<Fila>(d.reglasComerciales).map((r, i) => {
+    const ruta = `reglasComerciales.${i}`;
     const tipoAplicacion = texto(r.tipoAplicacion).toUpperCase() || "GENERAL";
-    if (!APLICACIONES.includes(tipoAplicacion)) throw new Error("Tipo de aplicación de la regla no válido.");
+    if (!APLICACIONES.includes(tipoAplicacion)) throw new ErrorLista(`El tipo de aplicación de la regla ${i + 1} no es válido.`, `${ruta}.tipoAplicacion`);
     const referenciaId = tipoAplicacion === "GENERAL" ? null : uuidOpcional(r.referenciaId, "La referencia de la regla");
-    if (tipoAplicacion !== "GENERAL" && !referenciaId) throw new Error("Cada regla que no es general requiere seleccionar su referencia.");
-    const vDesde = fecha(r.vigenteDesde, "La vigencia de la regla") ?? desde;
-    const vHasta = fecha(r.vigenteHasta, "La vigencia final de la regla");
-    if (vHasta && vHasta < vDesde) throw new Error("La vigencia final de una regla no puede ser anterior a la inicial.");
+    if (tipoAplicacion !== "GENERAL" && !referenciaId) throw new ErrorLista(`La regla ${i + 1} requiere seleccionar su referencia.`, `${ruta}.referenciaId`);
+    const vDesde = fecha(r.vigenteDesde, "La vigencia de la regla", `${ruta}.vigenteDesde`) ?? desde;
+    const vHasta = fecha(r.vigenteHasta, "La vigencia final de la regla", `${ruta}.vigenteHasta`);
+    if (vHasta && vHasta < vDesde) throw new ErrorLista(`La vigencia final de la regla ${i + 1} no puede ser anterior a la inicial.`, `${ruta}.vigenteHasta`);
     return {
       tipoAplicacion,
       referenciaId,
-      prioridad: Math.trunc(numero(r.prioridad, "Prioridad de la regla", 0) ?? 10),
-      cantidadMinima: numero(r.cantidadMinima, "Cantidad mínima de la regla", 0.0001) ?? 1,
+      prioridad: Math.trunc(numero(r.prioridad, "Prioridad de la regla", 0, undefined, `${ruta}.prioridad`) ?? 10),
+      cantidadMinima: numero(r.cantidadMinima, "Cantidad mínima de la regla", 0.0001, undefined, `${ruta}.cantidadMinima`) ?? 1,
       permiteDescuentoAdicional: r.permiteDescuentoAdicional !== false,
-      descuentoMaximoPct: numero(r.descuentoMaximoPct, "Descuento máximo de la regla", 0, 100) ?? 0,
+      descuentoMaximoPct: numero(r.descuentoMaximoPct, "Descuento máximo de la regla", 0, 100, `${ruta}.descuentoMaximoPct`) ?? 0,
       desde: vDesde,
       hasta: vHasta,
       activo: r.activo !== false,
@@ -140,17 +157,18 @@ export function prepararLista(d: Cuerpo) {
     modo,
     incluyeIva: d.incluyeIva !== false,
     listaBaseId: uuidOpcional(d.listaBaseId, "La lista base"),
-    ajuste: numero(d.ajusteGeneralPct, "Ajuste general", -100, 999) ?? 0,
+    ajuste: numero(d.ajusteGeneralPct, "Ajuste general", -100, 999, "ajusteGeneralPct") ?? 0,
     desde,
     hasta,
-    prioridad: Math.trunc(numero(d.prioridad, "Prioridad", 0) ?? 10),
+    prioridad: Math.trunc(numero(d.prioridad, "Prioridad", 0, undefined, "prioridad") ?? 10),
     permiteDescuentoAdicional: d.permiteDescuentoAdicional !== false,
-    descuentoMaximoPct: numero(d.descuentoMaximoPct, "Descuento máximo", 0, 100) ?? 0,
+    descuentoMaximoPct: numero(d.descuentoMaximoPct, "Descuento máximo", 0, 100, "descuentoMaximoPct") ?? 0,
     grupoClienteId: uuidOpcional(d.grupoClienteId, "El grupo de cliente"),
     clienteId: uuidOpcional(d.clienteId, "El cliente"),
     zonaId: uuidOpcional(d.zonaId, "La zona"),
     canalVentaId: uuidOpcional(d.canalVentaId, "El canal de venta"),
-    activo: d.activo !== false,
+    // Estado y «activo» no pueden contradecirse: la lista está activa solo cuando su estado es ACTIVA (el valor enviado en «activo» se ignora).
+    activo: estado === "ACTIVA",
     observacion: opcional(d.observacion, 1000),
     productos,
     reglas,
@@ -196,11 +214,27 @@ export function columnasLista(d: DatosLista, codigo: string): Array<[string, unk
 }
 
 /** La lista base no puede ser la propia lista ni cerrar un ciclo (A→B→A). */
-export async function validarListaBase(c: PoolClient, empresaId: string, listaId: string | null, baseId: string | null) {
+export type PrevioLista = { baseId: string | null; moneda: string; tipo: string };
+
+export async function validarListaBase(
+  c: PoolClient,
+  empresaId: string,
+  listaId: string | null,
+  baseId: string | null,
+  actual?: { moneda: string; tipo: string; previo: PrevioLista | null },
+) {
   if (!baseId) return;
-  if (listaId && baseId === listaId) throw new Error("Una lista no puede ser su propia lista base.");
-  const base = await c.query(`SELECT tipo_lista FROM listas_precio WHERE empresa_id = $1 AND id = $2`, [empresaId, baseId]);
-  if (!base.rowCount) throw new Error("La lista base no existe en su empresa.");
+  if (listaId && baseId === listaId) throw new ErrorLista("Una lista no puede ser su propia lista base.", "listaBaseId");
+  const base = await c.query(`SELECT tipo_lista, moneda_codigo FROM listas_precio WHERE empresa_id = $1 AND id = $2`, [empresaId, baseId]);
+  if (!base.rowCount) throw new ErrorLista("La lista base no existe en su empresa.", "listaBaseId");
+  // Misma moneda y mismo tipo que la base: no existe una conversión de moneda aprobada y una lista de compra no deriva de una de venta.
+  // Solo se exige al crear o cuando cambia la base, la moneda o el tipo (las listas históricas con otra combinación no quedan bloqueadas).
+  const p = actual?.previo ?? null;
+  if (actual && (!p || p.baseId !== baseId || p.moneda !== actual.moneda || p.tipo !== actual.tipo)) {
+    const b = base.rows[0] as { tipo_lista: string; moneda_codigo: string };
+    if (b.moneda_codigo !== actual.moneda) throw new ErrorLista(`La lista base está en ${b.moneda_codigo}: debe tener la misma moneda (no hay conversión de moneda aprobada).`, "listaBaseId");
+    if (b.tipo_lista !== actual.tipo) throw new ErrorLista("La lista base debe ser del mismo tipo (venta o compra).", "listaBaseId");
+  }
   if (!listaId) return;
   const ciclo = await c.query(
     `WITH RECURSIVE cadena AS (
@@ -210,7 +244,47 @@ export async function validarListaBase(c: PoolClient, empresaId: string, listaId
      SELECT 1 FROM cadena WHERE id = $3`,
     [empresaId, baseId, listaId],
   );
-  if (ciclo.rowCount) throw new Error("La lista base elegida depende de esta lista (referencia circular).");
+  if (ciclo.rowCount) throw new ErrorLista("La lista base elegida depende de esta lista (referencia circular).", "listaBaseId");
+}
+
+const TABLA_REFERENCIA: Record<string, { tabla: string; que: string }> = {
+  GRUPO_CLIENTE: { tabla: "grupos_cliente", que: "El grupo de cliente" },
+  CLIENTE: { tabla: "clientes", que: "El cliente" },
+  ZONA: { tabla: "zonas_comerciales", que: "La zona" },
+  CANAL_VENTA: { tabla: "canales_venta", que: "El canal de venta" },
+};
+
+/**
+ * Referencias comerciales de la cabecera y de las reglas: existen en la empresa de la sesión y están activas. Una referencia que la lista
+ * YA tenía (edición) se admite aunque se haya inactivado después: las listas existentes no quedan bloqueadas ni pierden su vínculo.
+ */
+export async function validarReferenciasComerciales(c: PoolClient, empresaId: string, listaId: string | null, d: DatosLista) {
+  const previas = new Set<string>();
+  if (listaId) {
+    const cab = await c.query(
+      `SELECT grupo_cliente_id, cliente_id, zona_comercial_id, canal_venta_id FROM listas_precio WHERE empresa_id = $1 AND id = $2`,
+      [empresaId, listaId],
+    );
+    for (const v of Object.values((cab.rows[0] ?? {}) as Record<string, string | null>)) if (v) previas.add(v);
+    const reg = await c.query(`SELECT referencia_id FROM lista_precio_reglas WHERE empresa_id = $1 AND lista_precio_id = $2 AND referencia_id IS NOT NULL`, [empresaId, listaId]);
+    for (const r of reg.rows as Array<{ referencia_id: string }>) previas.add(r.referencia_id);
+  }
+
+  async function verificar(tipo: string, id: string | null, campo: string, etiqueta: string) {
+    if (!id) return;
+    const t = TABLA_REFERENCIA[tipo];
+    const r = await c.query(`SELECT activo FROM ${t.tabla} WHERE id = $1 AND empresa_id = $2`, [id, empresaId]);
+    if (!r.rowCount) throw new ErrorLista(`${etiqueta} no existe en su empresa.`, campo);
+    if (r.rows[0].activo !== true && !previas.has(id)) throw new ErrorLista(`${etiqueta} está inactivo(a); actívelo(a) antes de usarlo(a).`, campo);
+  }
+
+  await verificar("GRUPO_CLIENTE", d.grupoClienteId, "grupoClienteId", TABLA_REFERENCIA.GRUPO_CLIENTE.que);
+  await verificar("CLIENTE", d.clienteId, "clienteId", TABLA_REFERENCIA.CLIENTE.que);
+  await verificar("ZONA", d.zonaId, "zonaId", TABLA_REFERENCIA.ZONA.que);
+  await verificar("CANAL_VENTA", d.canalVentaId, "canalVentaId", TABLA_REFERENCIA.CANAL_VENTA.que);
+  for (const [i, r] of d.reglas.entries()) {
+    if (r.tipoAplicacion !== "GENERAL") await verificar(r.tipoAplicacion, r.referenciaId, `reglasComerciales.${i}.referenciaId`, `La referencia de la regla ${i + 1}`);
+  }
 }
 
 /** Hijos: precios por producto (con escalones) y reglas. empresa_id explícito; las FK compuestas impiden referencias de otra empresa. */
@@ -278,6 +352,7 @@ export async function borrarHijos(c: PoolClient, empresaId: string, listaId: str
 }
 
 export function respuestaError(error: unknown, accion: string) {
+  if (error instanceof ErrorLista) return NextResponse.json({ error: error.message, campo: error.campo }, { status: 400 });
   console.error(`Error al ${accion} lista de precios:`, error);
   const pg = error as { code?: string; constraint?: string; message?: string };
 

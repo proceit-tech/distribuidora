@@ -166,8 +166,7 @@ export default function ListasPrecioPage() {
   const [filtroMoneda, setFiltroMoneda] =
     useState<MonedaFiltro>("TODOS");
 
-  const [pagina, setPagina] =
-    useState(1);
+  const [paginacion, setPaginacion] = useState({ clave: "", pagina: 1 });
 
   const [flash, setFlash] =
     useState("");
@@ -204,10 +203,11 @@ export default function ListasPrecioPage() {
       window.location.search,
     ).get("ok");
 
+    // Diferido para no actualizar el estado de forma síncrona dentro del efecto.
     if (ok === "creado") {
-      setFlash("Lista de precios registrada correctamente.");
+      void Promise.resolve().then(() => setFlash("Lista de precios registrada correctamente."));
     } else if (ok === "actualizado") {
-      setFlash("Lista de precios actualizada correctamente.");
+      void Promise.resolve().then(() => setFlash("Lista de precios actualizada correctamente."));
     }
 
     if (ok) {
@@ -222,16 +222,6 @@ export default function ListasPrecioPage() {
       activo = false;
     };
   }, []);
-
-  useEffect(() => {
-    setPagina(1);
-  }, [
-    busqueda,
-    filtroEstado,
-    filtroTipo,
-    filtroMoneda,
-    orden,
-  ]);
 
   useEffect(() => {
     if (!flash) {
@@ -407,6 +397,12 @@ export default function ListasPrecioPage() {
           PAGE_SIZE,
       ),
     );
+
+  // La página vuelve a 1 cuando cambian los filtros o el orden y nunca excede el total: se deriva en el render (sin efecto).
+  const claveFiltros = JSON.stringify([busqueda, filtroEstado, filtroTipo, filtroMoneda, orden]);
+  const pagina = paginacion.clave === claveFiltros ? Math.min(paginacion.pagina, totalPaginas) : 1;
+  const setPagina = (valor: number | ((actual: number) => number)) =>
+    setPaginacion({ clave: claveFiltros, pagina: typeof valor === "function" ? valor(pagina) : valor });
 
   const paginaActual =
     useMemo(

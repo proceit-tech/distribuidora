@@ -35,5 +35,9 @@ export async function guardarLista(datos: NuevaListaPrecio, id?: string): Promis
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(datos),
   });
-  if (!r.ok) throw new Error(await mensajeError(r, "No fue posible guardar la lista de precios."));
+  if (!r.ok) {
+    const j = (await r.json().catch(() => ({}))) as { error?: string; campo?: string | null };
+
+    throw Object.assign(new Error(j.error || "No fue posible guardar la lista de precios."), { campo: j.campo ?? null });
+  }
 }

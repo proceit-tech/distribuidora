@@ -192,7 +192,7 @@ export type CatalogoListasPrecio = {
   canales: ListaPrecioCatalogoOpcion[];
   clientes: ListaPrecioCatalogoOpcion[];
   productos: ListaPrecioProductoOpcion[];
-  listasBase: { id: string; codigo: string; nombre: string; monedaCodigo: string }[];
+  listasBase: { id: string; codigo: string; nombre: string; monedaCodigo: string; tipo: ListaPrecioTipo; activo: boolean }[];
   monedaBase: string;
 };
 
@@ -200,6 +200,8 @@ export type ListaPrecioCatalogoOpcion = {
   id: string;
   codigo: string;
   nombre: string;
+  /** Los catálogos llegan completos: las opciones inactivas solo se ofrecen si ya estaban seleccionadas. */
+  activo?: boolean;
 };
 
 export type ListaPrecioResumen = {

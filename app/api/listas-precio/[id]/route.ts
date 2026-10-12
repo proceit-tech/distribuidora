@@ -9,6 +9,7 @@ import {
   prepararLista,
   respuestaError,
   validarListaBase,
+  validarReferenciasComerciales,
 } from "@/lib/listas-precio/shared";
 
 type Contexto = { params: Promise<{ id: string }> };
@@ -158,14 +159,20 @@ export async function PUT(request: Request, contexto: Contexto) {
     await conexion.query("BEGIN");
 
     const actual = await conexion.query(
-      `SELECT codigo, es_referencia FROM listas_precio WHERE empresa_id = $1 AND id = $2 FOR UPDATE`,
+      `SELECT codigo, es_referencia, lista_precio_base_id::text AS base_id, moneda_codigo, tipo_lista FROM listas_precio WHERE empresa_id = $1 AND id = $2 FOR UPDATE`,
       [empresaId, id],
     );
     if (!actual.rowCount) {
       await conexion.query("ROLLBACK");
       return noEncontrado();
     }
-    const { codigo: codigoActual, es_referencia: esReferencia } = actual.rows[0] as { codigo: string; es_referencia: boolean };
+    const { codigo: codigoActual, es_referencia: esReferencia, base_id: baseActual, moneda_codigo: monedaActual, tipo_lista: tipoActual } = actual.rows[0] as {
+      codigo: string;
+      es_referencia: boolean;
+      base_id: string | null;
+      moneda_codigo: string;
+      tipo_lista: string;
+    };
 
     if (esReferencia) {
       // La lista de referencia (precio de venta de Productos) mantiene su definición: venta, precio fijo, sin alcance ni base.
@@ -180,7 +187,8 @@ export async function PUT(request: Request, contexto: Contexto) {
       }
     }
 
-    await validarListaBase(conexion, empresaId, id, datos.listaBaseId);
+    await validarListaBase(conexion, empresaId, id, datos.listaBaseId, { moneda: datos.moneda, tipo: datos.tipo, previo: { baseId: baseActual, moneda: monedaActual, tipo: tipoActual } });
+    await validarReferenciasComerciales(conexion, empresaId, id, datos);
 
     const columnas = columnasLista(datos, datos.codigo || codigoActual);
     const sets = columnas.map(([n], i) => `${n} = $${i + 3}`);

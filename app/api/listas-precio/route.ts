@@ -9,6 +9,7 @@ import {
   respuestaError,
   siguienteCodigo,
   validarListaBase,
+  validarReferenciasComerciales,
 } from "@/lib/listas-precio/shared";
 
 // Solo DEMO explícito usa respuestas simuladas. La falta de DATABASE_URL NUNCA activa datos ficticios.
@@ -46,10 +47,10 @@ export async function GET(request: Request) {
     if (soloCatalogos) {
       const [monedas, grupos, zonas, canales, clientes, productos, bases, base] = await Promise.all([
         db.query(`SELECT codigo, nombre, coalesce(simbolo, '') AS simbolo FROM monedas WHERE activo = true ORDER BY codigo`),
-        db.query(`SELECT id, codigo, nombre FROM grupos_cliente WHERE empresa_id = $1 AND activo = true ORDER BY nombre`, [empresaId]),
-        db.query(`SELECT id, codigo, nombre FROM zonas_comerciales WHERE empresa_id = $1 AND activo = true ORDER BY nombre`, [empresaId]),
-        db.query(`SELECT id, codigo, nombre FROM canales_venta WHERE empresa_id = $1 AND activo = true ORDER BY nombre`, [empresaId]),
-        db.query(`SELECT id, codigo, razon_social AS nombre FROM clientes WHERE empresa_id = $1 AND activo = true ORDER BY razon_social`, [empresaId]),
+        db.query(`SELECT id, codigo, nombre, activo FROM grupos_cliente WHERE empresa_id = $1 ORDER BY nombre`, [empresaId]),
+        db.query(`SELECT id, codigo, nombre, activo FROM zonas_comerciales WHERE empresa_id = $1 ORDER BY nombre`, [empresaId]),
+        db.query(`SELECT id, codigo, nombre, activo FROM canales_venta WHERE empresa_id = $1 ORDER BY nombre`, [empresaId]),
+        db.query(`SELECT id, codigo, razon_social AS nombre, activo FROM clientes WHERE empresa_id = $1 ORDER BY razon_social`, [empresaId]),
         db.query(
           `SELECT p.id, p.codigo, p.descripcion, p.unidad_medida_id AS "unidadMedidaId", u.nombre AS "unidadMedidaNombre",
                   coalesce(cp.costo_promedio, 0)::float8 AS "costoPromedio", pr.precio::float8 AS "precioReferencia"
@@ -62,7 +63,7 @@ export async function GET(request: Request) {
           [empresaId],
         ),
         db.query(
-          `SELECT id, codigo, nombre, moneda_codigo AS "monedaCodigo" FROM listas_precio WHERE empresa_id = $1 AND activo = true ORDER BY nombre`,
+          `SELECT id, codigo, nombre, moneda_codigo AS "monedaCodigo", tipo_lista AS tipo, activo FROM listas_precio WHERE empresa_id = $1 ORDER BY nombre`,
           [empresaId],
         ),
         db.query(`SELECT moneda_base_codigo AS moneda FROM empresas WHERE id = $1`, [empresaId]),
@@ -141,7 +142,8 @@ export async function POST(request: Request) {
 
     conexion = await db.connect();
     await conexion.query("BEGIN");
-    await validarListaBase(conexion, empresaId, null, datos.listaBaseId);
+    await validarListaBase(conexion, empresaId, null, datos.listaBaseId, { moneda: datos.moneda, tipo: datos.tipo, previo: null });
+    await validarReferenciasComerciales(conexion, empresaId, null, datos);
 
     const codigo = datos.codigo || (await siguienteCodigo(conexion, empresaId));
     const columnas = columnasLista(datos, codigo);

@@ -84,7 +84,7 @@ docker exec nexit-db psql -U nexit_app -d nexit \
   -c "SELECT version, nombre FROM public.schema_migrations ORDER BY version;"
 ```
 
-A última versão registrada até a primeira atualização foi NEX-032; commits posteriores incluem NEX-033 a NEX-044, mas nunca presumir que já foram executadas. Se houver erro, **PARAR antes do deploy** e inspecionar.
+A última versão registrada até a primeira atualização foi NEX-032; commits posteriores incluem NEX-033 a NEX-045, mas nunca presumir que já foram executadas. Se houver erro, **PARAR antes do deploy** e inspecionar.
 
 ## ETAPA 3 — Verificar persistência de arquivos antes de substituir a app
 
@@ -190,3 +190,5 @@ docker exec nexit-db psql -U nexit_app -d nexit -c "SELECT COUNT(*) AS total, MA
 **NEX-039 e NEX-043 (checksum):** a NEX-039 já aplicada no banco real tem SHA-256 `6d5a5d3dea0f00521ab9a2bdcb5bb4722f187069a94198d12ae84793f6e38dab` (34 unidades da Tabela 5) e o arquivo versionado foi restaurado exatamente a essa versão; **não deve ser editada**. As 30 unidades da NT023 (111–140, incl. Caja 131/BX e Docena 113/DOC) entram pela migration incremental **NEX-043**, que só depende da NEX-039. Ordem: 038 → 039 → 040 → 041 → 042 → 043 (nenhuma depende de 043; os seeds/reconciliação de CJ e DOC exigem 043). Sem a 043 aplicada, vincular unidades 111–140 falha pela FK.
 
 **NEX-044 (jerarquia de catálogos):** adiciona `familias_producto.categoria_id` (NULLABLE, FK multiempresa) e dois gatilhos de coerência; não classifica nem altera dados. **Aplicar a migration ANTES de publicar o código** que usa a coluna (as listas de Catálogos e o cadastro de Productos leem `categoria_id`). Depois, o responsável executa o relatório somente leitura `scripts/informe-jerarquia-catalogos-NEX-044.sql` para identificar as famílias a classificar manualmente em Catálogos → Familias. `NOT NULL` fica para uma migration futura, após o saneamento. Reversão: `scripts/reversion-NEX-044.sql` (aborta se houver famílias classificadas).
+
+**NEX-045 (Catálogos comerciales):** cria `tipos_cambio` e habilita escrita (sem DELETE) em `canales_venta`/`zonas_comerciales`; redefine o wrapper `nex_aplicar_grants_runtime` com `nex_aplicar_grants_comercial`. Requer NEX-037, 039 e 041. **Aplicar antes de publicar o código** (menu `/catalogos-comerciales`). Se houver nomes ou códigos duplicados em canais/zonas dentro de uma empresa, a migration ABORTA sem alterar dados: depurar manualmente e repetir. Reversão: `scripts/reversion-NEX-045.sql` (aborta se houver cotações).
