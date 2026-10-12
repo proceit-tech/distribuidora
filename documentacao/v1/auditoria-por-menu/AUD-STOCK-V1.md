@@ -42,3 +42,11 @@ O responsável mostrou NEX-001…051 já aplicadas na VM. Proibido editar script
 **STK-X03 / precisão futura:** apresentação em `producto_unidades.factor_conversion` suporta 6 casas (`NEX-007`), mas movimentos/stock apenas 4 (`NEX-009/014`). Conversão aprovada DEC-PRD-U03 requer rejeitar quantidade não representável, sem arredondamento silencioso. A emissão FE atual não deve ser presumida uma baixa de estoque.
 
 **Fonte:** `AUD-PRODUCTOS-V1.md`, seção XIV; auditoria completa de Stock continua aberta. Sem teste de banco/VM.
+
+## Revisão da regra STK-X01 — unidade-base com versões históricas (12/10/2026)
+
+O responsável esclareceu que deseja **histórico das unidades-base de um produto, somente uma base vigente por vez**, e não um bloqueio permanente de mudança após a primeira movimentação. Apresentações comerciais podem continuar múltiplas.
+
+**A integridade de STK-X01 permanece obrigatória:** nenhuma mudança pode reinterpretar saldos, quantidades/custos ou movimentos antigos. `NEX-009/014` registram quantidades em escala 4 sem snapshot da unidade-base; `NEX-007` mantém somente o FK atual e marcação de apresentação base sem versionamento temporal. Exigir histórico da unidade-base e ligação factual às operações. Decidir com o responsável se a mudança com estoque positivo será permitida sob conversão controlada ou se só ocorrerá com todos os saldos zerados e sem pendências (DEC-PRD-U07, em aberto, `AUD-PRODUCTOS-V1.md` XV).
+
+**Nenhum código/SQL/VM alterado.**
