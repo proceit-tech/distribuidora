@@ -143,3 +143,22 @@ Este arquivo é a fonte única da auditoria do menu **Productos**. Registrar, co
 - **Critério de aceite:** novo produto tem IVA 10% — Gravado como sugestão editável; alteração para tipo tributário permitido é persistida corretamente; formulário não salva classificação incoerente ou incompleta (DEC-PRD-U02); edição de produto existente não modifica IVA por default.
 
 **Status:** DEC-PRD-U06 ENCERRADA. Permanecem pendentes DEC-PRD-U03…U05 e a auditoria integral de Productos.
+
+## XII. Esclarecimento de regra comercial UoM × apresentações × SIFEN — DEC-PRD-U03 (EM DISCUSSÃO, 12/10/2026)
+
+**Manifestação do responsável:** “como funciona nos grande ERPs, o que vai para sifen é somente o que eles aceitam, mas apresentacao pode ter varios tipos”.
+
+**Princípio de negócio expressamente esclarecido:** uma única unidade-base por produto para estoque, múltiplas apresentações comerciais de compra e venda (inclusive nomes de apresentação não necessariamente presentes no catálogo SIFEN), cada uma com fator de conversão explícito para a unidade-base. Quando emitir documento eletrônico, usar **somente** unidade/código SIFEN vigente e compatível com quantidade e preço faturados; a descrição da apresentação por si só não valida um código fiscal.
+
+**Referências externas de comportamento ERP e norma SIFEN:**
+- SAP Business One: https://learning.sap.com/courses/managing-logistics-in-sap-business-one/working-with-units-of-measure-uom-in-sap-business-one (single inventory UoM, multiple purchase/sales UoM, automatic conversion and inventory posting in inventory UoM).
+- Oracle NetSuite: https://docs.oracle.com/en/cloud/saas/netsuite/ns-online-help/chapter_N2211898.html (base/stock/purchase/sale UoM and invoice in sales UoM).
+- DNIT Manual Técnico v150: https://www.dnit.gov.py/documents/20123/420592/Manual%2BT%C3%A9cnico%2BVersi%C3%B3n%2B150.pdf/e706f7c7-6d93-21d4-b45b-5d22d07b2d22?t=1687351495907. E709=cUniMed da Tabela 5; E710=dDesUniMed representacao; E711=dCantProSer quantidade; E721 preço unitário; Nota Técnica 023 e posteriores prevalecem quando aplicáveis.
+
+**PRD-A20 / CRÍTICA DE INTEGRAÇÃO / confirmado pelo código:** o cadastro oferece apresentações em `producto_unidades`, mas `lib/facturacion/emision.ts:82-92,201,220-244` só lê `productos.unidad_medida_id` (unidade-base) via `unidades_medida`, e não busca a apresentação escolhida, fator nem identidade de unidade usada na venda. `lib/facturacion/payload-fe.ts:186-188` emite E709, E711 e preço sem referência à apresentação. O ERP atual não tem contrato de faturação por apresentação; se houver venda de caixas, é preciso definir como representar quantidade e preço coerentes no SIFEN e a baixa real do estoque em unidade-base. Não corrigir só o combo de Produtos.
+
+**Exemplo indicativo (não dado operacional confirmado):** base UNI (1), pacote de 6 (6 UNI), caixa de 24 (24 UNI). Se faturação registra 2 caixas e escolhe SIFEN 131/BX, o DE deve usar E709=131, E711=2 e preço por caixa; inventário baixa 48 UNI; em alternativa fiscal que exige conversão para base, E709=77, E711=48 e preço por UNI ajustado, preservando total. Ambas requerem regra autorizada; não trocar código ou fator automaticamente por nome.
+
+**PONTO A CONFIRMAR PELO RESPONSÁVEL antes de fechar U03:** quando apresentação comercial escolhida para vender não tiver unidade fiscal SIFEN compatível, o sistema deve (a) converter a linha para a unidade-base fiscal reconhecida, preservando valor e histórico, ou (b) impedir venda nessa apresentação até o usuário configurar uma equivalência fiscal válida? (Evitar inventar mapeamento). A definição de `esUnidadBase` redundante em apresentações continua pendente: recomendação de análise é que, se a marcação existe, só possa apontar para a unidade-base real com fator 1, sem proibir outras apresentações alternativas.
+
+**Status:** DEC-PRD-U03 ESCLARECIDA PARCIALMENTE; não encerrar a auditoria nem enviar tarefa ao Claude antes da decisão sobre mapeamento/representação da factura.
