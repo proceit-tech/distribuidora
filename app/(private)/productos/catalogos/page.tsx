@@ -57,7 +57,7 @@ export default function CatalogosProductosPage() {
   const [form, setForm] = useState<Formulario | null>(null);
   const [guardando, setGuardando] = useState(false);
   const [orden, setOrden] = useState<Orden<CampoOrden>>(null);
-  const [pagina, setPagina] = useState(1);
+  const [paginacion, setPaginacion] = useState({ clave: "", pagina: 1 });
 
   const meta = TABS.find((t) => t.id === tipo)!;
 
@@ -86,7 +86,8 @@ export default function CatalogosProductosPage() {
   }, [tipo]);
 
   useEffect(() => {
-    void cargar();
+    // Carga inicial y al cambiar de pestaña (diferida para no actualizar el estado de forma síncrona dentro del efecto).
+    void Promise.resolve().then(cargar);
   }, [cargar]);
 
   function cambiarTab(nuevo: Tipo) {
@@ -136,15 +137,11 @@ export default function CatalogosProductosPage() {
 
   const totalPaginas = Math.max(1, Math.ceil(visibles.length / PAGE_SIZE));
 
-  useEffect(() => {
-    setPagina(1);
-  }, [tipo, busqueda, estado, filtroFamilia, orden]);
-
-  useEffect(() => {
-    if (pagina > totalPaginas) {
-      setPagina(totalPaginas);
-    }
-  }, [pagina, totalPaginas]);
+  // La página vuelve a 1 cuando cambian los filtros o el orden y nunca excede el total: se deriva en el render (sin efecto).
+  const claveFiltros = JSON.stringify([tipo, busqueda, estado, filtroFamilia, orden]);
+  const pagina = paginacion.clave === claveFiltros ? Math.min(paginacion.pagina, totalPaginas) : 1;
+  const setPagina = (valor: number | ((actual: number) => number)) =>
+    setPaginacion({ clave: claveFiltros, pagina: typeof valor === "function" ? valor(pagina) : valor });
 
   const paginaActual = useMemo(
     () => ordenados.slice((pagina - 1) * PAGE_SIZE, pagina * PAGE_SIZE),

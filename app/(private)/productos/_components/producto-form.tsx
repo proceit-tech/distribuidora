@@ -3,7 +3,10 @@
 import Link from "next/link";
 import { FormEvent, useEffect, useRef, useState } from "react";
 
+import { validarPendientes, type DocumentoPendiente } from "@/lib/productos/documento-pendiente";
 import { ErrorValidacion } from "@/lib/productos/errores";
+import { errorDeFoto } from "@/lib/productos/imagen";
+import { TAMANO_MAXIMO_BYTES } from "@/lib/almacenamiento/archivos-reglas";
 import { formularioAPayload, formularioDesdeDetalle, formularioInicial, type FormularioProducto } from "@/lib/productos/formulario";
 import { UUID, normalizarProducto, type Coleccion } from "@/lib/productos/normalizar";
 import { idCampo, pestanaDeCampo, type PestanaId } from "@/lib/productos/pestanas";
@@ -25,7 +28,13 @@ type Props = {
   initial?: ProductoDetalle;
   catalogos: CatalogoProductos;
   /** Recibe el contrato de la API; debe lanzar ErrorValidacion (con campo) si el servidor lo rechaza. */
-  onSave: (datos: Record<string, unknown>) => Promise<void> | void;
+  onSave: (datos: Record<string, unknown>, documentos: DocumentoPendiente[], foto: File | null) => Promise<void> | void;
+  /** Relee la ficha tras una acción sobre documentos o foto. */
+  onRecargar?: () => void;
+  /** Aviso informativo bajo el encabezado (por ejemplo, archivos del alta que no pudieron cargarse). */
+  aviso?: string;
+  pestanaInicial?: PestanaId;
+  alCambiarPestana?: (pestana: PestanaId) => void;
 };
 
 const PESTANAS: Array<{ id: PestanaId; etiqueta: string }> = [
@@ -62,13 +71,20 @@ const NUEVAS: Record<Coleccion, (form: FormularioProducto, catalogos: CatalogoPr
   depositos: () => ({ id: temporal("deposito"), depositoId: "", depositoNombre: "", ubicacionPreferidaId: "", stockMinimo: "", stockMaximo: "", puntoReposicion: "", cantidadReposicion: "" }),
   alternativos: () => ({ id: temporal("alternativo"), productoAlternativoId: "", productoAlternativoNombre: "", tipo: "SUSTITUTO", prioridad: "1" }),
   componentes: (form) => ({ id: temporal("componente"), productoComponenteId: "", productoComponenteNombre: "", cantidad: "1", esOpcional: false, orden: String(form.componentes.length + 1) }),
-  documentos: () => ({ id: temporal("documento"), tipo: "FICHA_TECNICA", nombreArchivo: "", urlArchivo: "", fechaEmision: "", fechaVencimiento: "", observacion: "" }),
 };
 
-export default function ProductoForm({ mode, initial, catalogos, onSave }: Props) {
+export default function ProductoForm({ mode, initial, catalogos, onSave, onRecargar, aviso, pestanaInicial, alCambiarPestana }: Props) {
   const [formularioBase] = useState<FormularioProducto>(() => (initial ? formularioDesdeDetalle(initial) : formularioInicial(catalogos)));
   const [form, setForm] = useState<FormularioProducto>(formularioBase);
-  const [tab, setTab] = useState<PestanaId>("general");
+  const [tab, setTabInterno] = useState<PestanaId>(pestanaInicial ?? "general");
+  const [pendientes, setPendientes] = useState<DocumentoPendiente[]>([]);
+  const [fotoPendiente, setFotoPendiente] = useState<File | null>(null);
+  const sucio = form !== formularioBase && JSON.stringify(form) !== JSON.stringify(formularioBase);
+
+  function setTab(pestana: PestanaId) {
+    setTabInterno(pestana);
+    alCambiarPestana?.(pestana);
+  }
   const [errores, setErrores] = useState<Errores>({});
   const [pestanaConError, setPestanaConError] = useState<PestanaId | "">("");
   const [error, setError] = useState("");
@@ -142,6 +158,12 @@ export default function ProductoForm({ mode, initial, catalogos, onSave }: Props
 
     try {
       payload = formularioAPayload(form, mode === "create" ? "crear" : "editar");
+      if (fotoPendiente) {
+        const errorFoto = errorDeFoto(fotoPendiente.name, fotoPendiente.size, TAMANO_MAXIMO_BYTES);
+
+        if (errorFoto) throw new ErrorValidacion(errorFoto, "imagenPrivada");
+      }
+      validarPendientes(pendientes);
       normalizarProducto(payload, {
         modo: mode === "create" ? "crear" : "editar",
         productoId: initial?.id,
@@ -155,7 +177,7 @@ export default function ProductoForm({ mode, initial, catalogos, onSave }: Props
     setGuardando(true);
 
     try {
-      await onSave(payload);
+      await onSave(payload, pendientes, fotoPendiente);
     } catch (e) {
       mostrarError(
         e instanceof ErrorValidacion
@@ -167,7 +189,19 @@ export default function ProductoForm({ mode, initial, catalogos, onSave }: Props
     }
   }
 
-  const ctx: ContextoFormulario = { modo: mode === "create" ? "crear" : "editar", form, detalle: initial, catalogos, errores, set, agregar, actualizar, quitar, marcarPrincipal };
+  const ctx: ContextoFormulario = {
+    modo: mode === "create" ? "crear" : "editar",
+    form,
+    detalle: initial,
+    catalogos,
+    errores,
+    pendientes,
+    setPendientes,
+    fotoPendiente,
+    setFotoPendiente,
+    sucio,
+    recargar: () => onRecargar?.(),
+    set, agregar, actualizar, quitar, marcarPrincipal };
 
   return (
     <main className={styles.page}>
@@ -200,6 +234,12 @@ export default function ProductoForm({ mode, initial, catalogos, onSave }: Props
       </header>
 
       <form className={styles.card} onSubmit={submit} noValidate>
+        {aviso ? (
+          <div className={styles.aviso} role="status">
+            {aviso}
+          </div>
+        ) : null}
+
         {error ? (
           <div className={styles.error} role="alert">
             {error}

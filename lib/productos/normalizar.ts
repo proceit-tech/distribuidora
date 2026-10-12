@@ -6,7 +6,6 @@
 import { coherenciaIva, LONGITUDES_GTIN, TIPOS_CODIGO_GTIN } from "@/lib/productos/fiscal";
 import { CANTIDAD_18_4, FACTOR_18_6, PORCENTAJE_7_4, decimal, entero } from "@/lib/productos/decimales";
 import { ErrorValidacion } from "@/lib/productos/errores";
-import { esFechaIsoReal, localAIso } from "@/lib/proveedores/fechas";
 
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -16,10 +15,9 @@ export const TIPOS_PRODUCTO = ["MERCADERIA", "SERVICIO", "KIT", "ACTIVO_FIJO"] a
 export const MODOS_STOCK = ["CANTIDAD", "LOTE", "UNIDAD_ETIQUETADA"] as const;
 export const TIPOS_CODIGO = ["GTIN", "GTIN_EMPAQUE", "EAN", "UPC", "CODIGO_ALTERNO", "SKU_PROVEEDOR", "OTRO"] as const;
 export const TIPOS_ALTERNATIVO = ["SUSTITUTO", "COMPLEMENTARIO", "UPSELL"] as const;
-export const TIPOS_DOCUMENTO = ["FICHA_TECNICA", "HOJA_SEGURIDAD", "CERTIFICADO", "IMAGEN", "OTRO"] as const;
 const CODIGOS_NUMERICOS: readonly string[] = TIPOS_CODIGO_GTIN;
 
-export const COLECCIONES = ["codigos", "unidades", "proveedores", "depositos", "alternativos", "componentes", "documentos"] as const;
+export const COLECCIONES = ["codigos", "unidades", "proveedores", "depositos", "alternativos", "componentes"] as const;
 export type Coleccion = (typeof COLECCIONES)[number];
 
 const lista = (valor: unknown): Cuerpo[] => (Array.isArray(valor) ? valor.filter((x): x is Cuerpo => typeof x === "object" && x !== null) : []);
@@ -44,20 +42,6 @@ function enumerado<T extends string>(valor: unknown, permitidos: readonly T[], e
   return t as T;
 }
 
-/** Acepta ISO o dd/mm/aaaa y devuelve ISO (o null si está vacío). */
-function fecha(valor: unknown, etiqueta: string, campo: string): string | null {
-  const t = typeof valor === "string" ? valor.trim() : "";
-
-  if (!t) return null;
-  if (esFechaIsoReal(t)) return t;
-
-  const iso = localAIso(t);
-
-  if (!iso) throw new ErrorValidacion(`${etiqueta} no es una fecha válida (dd/mm/aaaa).`, campo);
-
-  return iso;
-}
-
 /** Identificador persistente de una fila relacionada: UUID real = fila existente; cualquier otro valor (temporal del cliente) = alta. */
 const idPersistente = (valor: unknown): string | null => (typeof valor === "string" && UUID.test(valor) ? valor : null);
 
@@ -67,7 +51,6 @@ export type ProductoProveedorDatos = { id: string | null; proveedorId: string; c
 export type ProductoDepositoDatos = { id: string | null; depositoId: string; ubicacionPreferidaId: string | null; stockMinimo: string | null; stockMaximo: string | null; puntoReposicion: string | null; cantidadReposicion: string | null };
 export type ProductoAlternativoDatos = { id: string | null; productoAlternativoId: string; tipo: string; prioridad: number };
 export type ProductoComponenteDatos = { id: string | null; productoComponenteId: string; cantidad: string; esOpcional: boolean; orden: number };
-export type ProductoDocumentoDatos = { id: string | null; tipo: string; nombre: string; url: string; emision: string | null; vencimiento: string | null; observacion: string | null };
 
 export type DatosProducto = ReturnType<typeof normalizarProducto>;
 
@@ -279,20 +262,7 @@ export function normalizarProducto(d: Cuerpo, opciones: OpcionesNormalizar = { m
 
   if (componentes.length && tipoProducto !== "KIT") throw new ErrorValidacion("Solo un producto de tipo KIT puede tener componentes.", "componentes.0.productoComponenteId");
 
-  const documentos = filas(lista(d.documentos), "documentos", (doc, p): ProductoDocumentoDatos => {
-    const nombre = texto(doc.nombreArchivo, "El nombre del archivo", `${p}.nombreArchivo`, 255);
-    const url = texto(doc.urlArchivo, "La URL del archivo", `${p}.urlArchivo`, 2000);
-
-    if (!nombre) throw new ErrorValidacion("El nombre del documento es obligatorio.", `${p}.nombreArchivo`);
-    if (!url) throw new ErrorValidacion("La URL del documento es obligatoria.", `${p}.urlArchivo`);
-
-    const emision = fecha(doc.fechaEmision, "La fecha de emisión", `${p}.fechaEmision`);
-    const vencimiento = fecha(doc.fechaVencimiento, "La fecha de vencimiento", `${p}.fechaVencimiento`);
-
-    if (emision && vencimiento && vencimiento < emision) throw new ErrorValidacion("El vencimiento no puede ser anterior a la emisión.", `${p}.fechaVencimiento`);
-
-    return { id: idP(doc.id), tipo: enumerado(doc.tipo, TIPOS_DOCUMENTO, "El tipo de documento", `${p}.tipo`), nombre, url, emision, vencimiento, observacion: opcional(doc.observacion, "La observación", `${p}.observacion`, 500) };
-  });
+  // Los DOCUMENTOS ya no forman parte de la ficha (NEX-041): se gestionan con sus propias acciones (archivo privado, versiones, historial).
 
   // Eliminaciones explícitas (ids persistidos); una fila ausente del envío NO se borra.
   const eliminaciones = Object.fromEntries(
@@ -360,7 +330,6 @@ export function normalizarProducto(d: Cuerpo, opciones: OpcionesNormalizar = { m
     depositos,
     alternativos,
     componentes,
-    documentos,
     eliminaciones,
   };
 }

@@ -128,11 +128,17 @@ export async function verificarCasosFiscales(): Promise<string[]> {
 
   cierto("catálogos propios se consultan por empresa; impuestos y unidades son globales", ref.reg.filter((q) => /FROM (categorias_producto|marcas_producto|familias_producto|depositos|proveedores)/.test(q.sql)).every((q) => /empresa_id = \$2/.test(q.sql)) && !/empresa_id/.test(ref.reg.find((q) => /FROM impuestos/.test(q.sql))?.sql ?? ""));
 
-  // ── Catálogo oficial de unidades (Tabla 5): 34 entradas, claves por código
+  // ── Catálogo oficial de unidades: Tabla 5 del MT v150 (34) + NT023 §3.1 (30) = 64 entradas, claves por código
   const T = UNIDADES_SIFEN_TABLA5;
 
-  igual("34 unidades en la Tabla 5", T.length, 34);
-  igual("códigos únicos", new Set(T.map((u) => u.codigo)).size, 34);
+  igual("64 unidades: 34 del MT v150 + 30 de la NT023", T.length, 64);
+  const ANTIGUAS = [87, 2366, 2329, 110, 77, 86, 89, 90, 91, 92, 93, 94, 96, 79, 97, 98, 99, 100, 101, 104, 103, 108, 109, 95, 666, 102, 83, 88, 625, 660, 885, 891, 869, 569];
+
+  igual("se preservan, en su orden, los 34 códigos anteriores", T.slice(0, 34).map((u) => u.codigo), ANTIGUAS);
+  igual("las 30 nuevas son los códigos 111–140 consecutivos (NT023)", T.slice(34).map((u) => u.codigo), Array.from({ length: 30 }, (_, i) => 111 + i));
+  igual("Caja es 131/BX y Docena es 113/DOC (NT023)", [T.find((u) => u.codigo === 131), T.find((u) => u.codigo === 113)], [{ codigo: 131, representacion: "BX", descripcion: "Caja" }, { codigo: 113, representacion: "DOC", descripcion: "Docena" }]);
+  igual("representaciones tal como figuran en la NT023", T.slice(34).map((u) => u.representacion), ["4A", "Ci", "DOC", "GLL", "GRO", "E4", "KT", "M5", "MCU", "MIL", "PAR", "FOT", "FTK", "PCE", "KLT", "RM", "RO", "kWh", "U(JGO)", "DR", "BX", "SET", "PK", "BG", "DPC", "JR", "BL", "AB", "BK", "BW"]);
+  igual("códigos únicos", new Set(T.map((u) => u.codigo)).size, 64);
   igual("Metros figura con 87/m y 108/MT (no se deduplica por nombre)", T.filter((u) => u.descripcion === "Metros").map((u) => [u.codigo, u.representacion]), [[87, "m"], [108, "MT"]]);
   igual("ml (660) y ML (88) coexisten", [T.find((u) => u.codigo === 660)?.representacion, T.find((u) => u.codigo === 88)?.representacion], ["ml", "ML"]);
   cierto("E709 numérico 1–5 y E710 de 1–10 caracteres", T.every((u) => u.codigo >= 1 && u.codigo <= 99999 && u.representacion.length >= 1 && u.representacion.length <= 10));
@@ -141,9 +147,11 @@ export async function verificarCasosFiscales(): Promise<string[]> {
   igual("unidad sin equivalencia: la etiqueta no inventa nada", etiquetaUnidad({ codigo: "CJ", nombre: "Caja", sifenCodigo: null, sifenRepresentacion: "" }), "CJ · Caja");
 
   const n39 = leer("documentacao/banco/nexit/v1/migraciones/NEX-039-unidades-medida-sifen.sql");
-  const filasSql = [...n39.matchAll(/^ {2}\((\d+), '([^']+)', '([^']+)'\)/gm)].map((m) => ({ codigo: Number(m[1]), representacion: m[2], descripcion: m[3] }));
+  const filasSql = [...n39.matchAll(/^ {2}\((\d+), '([^']+)', '([^']+)'(?:, '[A-Z0-9-]+')?\)/gm)].map((m) => ({ codigo: Number(m[1]), representacion: m[2], descripcion: m[3] }));
 
-  igual("NEX-039 carga exactamente las 34 unidades de la Tabla 5", filasSql, T);
+  igual("NEX-039 carga exactamente las 64 unidades (Tabla 5 + NT023) en el mismo orden", filasSql, T);
+  cierto("NEX-039: las 30 de la NT023 llevan su fuente y las 34 del MT la fuente por defecto", (n39.match(/'NT023-T5'\)/g) ?? []).length === 30 && /fuente\s+text\s+NOT NULL DEFAULT 'MT150-T5'/.test(n39));
+  cierto("NEX-039 sigue sin vincular unidades existentes ni elegir Metro", !/UPDATE public\.unidades_medida/.test(n39.replace(/--.*$/gm, "")) && !/'MT'/.test(n39.replace(/--.*$/gm, "").replace(/\(108, 'MT'[^)]*\)/, "")));
   cierto("NEX-039: clave en el código; sin UNIQUE sobre representación ni descripción", /codigo\s+integer\s+PRIMARY KEY/.test(n39) && !/UNIQUE[^;]*(representacion|descripcion)/i.test(n39.replace(/--.*$/gm, "")));
   cierto("NEX-039: vínculo N:1 nullable con FK; no borra ni renombra unidades", /ADD COLUMN unidad_sifen_codigo integer[^;]*REFERENCES public\.unidades_medida_sifen \(codigo\)/.test(n39) && !/DROP COLUMN|DELETE FROM|UPDATE public\.unidades_medida SET/.test(n39.replace(/--.*$/gm, "")));
   cierto("NEX-039: columnas legadas son espejo (una sola fuente de verdad) y no se eliminan", /unidades_medida_espejo_sifen_trg/.test(n39) && /NEW\.codigo_sifen := NEW\.unidad_sifen_codigo::text/.test(n39) && !/DROP COLUMN/.test(n39));
@@ -158,7 +166,8 @@ export async function verificarCasosFiscales(): Promise<string[]> {
   const bloque = /INSERT INTO unidades_medida[\s\S]*?ON CONFLICT \(codigo\) DO NOTHING;/.exec(seed)?.[0] ?? "";
 
   cierto("seed: UN→77, KG→83, LT→89", /\('UN','Unidad',77\)/.test(bloque) && /\('KG','Kilogramo',83\)/.test(bloque) && /\('LT','Litro',89\)/.test(bloque));
-  cierto("seed: Metro, Caja y Docena SIN equivalencia (nada de 86 ni 87 ni 'CJ'/'DOC' como código fiscal)", /\('MT','Metro',NULL\)/.test(bloque) && /\('CJ','Caja',NULL\)/.test(bloque) && /\('DOC','Docena',NULL\)/.test(bloque) && !/'8[67]'|codigo_sifen/.test(bloque));
+  cierto("seed: CJ→131 (BX) y DOC→113 (DOC); Metro SIN vínculo (decisión pendiente); nada de 86/87", /\('CJ','Caja',131\)/.test(bloque) && /\('DOC','Docena',113\)/.test(bloque) && /\('MT','Metro',NULL\)/.test(bloque) && !/'8[67]'|codigo_sifen/.test(bloque));
+  cierto("seed: UN→77, KG→83, LT→89 conservados", /\('UN','Unidad',77\)/.test(bloque) && /\('KG','Kilogramo',83\)/.test(bloque) && /\('LT','Litro',89\)/.test(bloque));
   cierto("seed: no altera unidades existentes", /ON CONFLICT \(codigo\) DO NOTHING/.test(bloque));
 
   // ── Reconciliación separada, idempotente, con registro y sin ambigüedades
@@ -166,7 +175,7 @@ export async function verificarCasosFiscales(): Promise<string[]> {
   const regla = /VALUES \(('UN'[^)]*\)(?:, \('[A-Z]+'[^)]*\))*)/.exec(rec)?.[0] ?? "";
   const sinComentarios = (t: string) => t.replace(/--.*$/gm, "");
 
-  cierto("reconciliación unidades: solo UN, KG y LT por código y nombre exactos", /\('UN', 'unidad', 77\)/.test(regla) && /\('KG', 'kilogramo', 83\)/.test(regla) && /\('LT', 'litro', 89\)/.test(regla) && !/'MT'|'CJ'|'DOC'/.test(regla));
+  cierto("reconciliación unidades: UN, KG, LT, CJ (131) y DOC (113) por código y nombre exactos; Metro NO", /\('UN', 'unidad', 77\)/.test(regla) && /\('KG', 'kilogramo', 83\)/.test(regla) && /\('LT', 'litro', 89\)/.test(regla) && /\('CJ', 'caja', 131\)/.test(regla) && /\('DOC', 'docena', 113\)/.test(regla) && !/'MT'/.test(regla));
   cierto("reconciliación unidades idempotente y con registro antes/después", /unidad_sifen_codigo IS NULL/.test(rec) && (rec.match(/INSERT INTO public\.fiscal_reconciliacion_log/g) ?? []).length === 1 && /antes, despues/.test(rec));
   cierto("PRD-AUD-06: la reconciliación de unidades NO reclasifica productos ni toca impuestos", !/UPDATE public\.(productos|impuestos)|afectacion_iva\s*=/.test(sinComentarios(rec)));
   cierto("reconciliación: informes de solo lectura (unidades, código legado sin vínculo, GTIN, IVA pendiente)", /SELECT 'unidad sin equivalencia SIFEN'/.test(rec) && /código SIFEN LEGADO sin vínculo canónico/.test(rec) && /SELECT 'GTIN con longitud no admitida/.test(rec) && /NO se reclasifica/.test(rec));

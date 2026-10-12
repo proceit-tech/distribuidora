@@ -107,15 +107,6 @@ export function definiciones(d: DatosProducto): Definicion[] {
       items: d.componentes,
       columnas: (x: (typeof d.componentes)[number]) => [["producto_componente_id", x.productoComponenteId], ["cantidad", x.cantidad], ["es_opcional", x.esOpcional], ["orden", x.orden]],
     },
-    {
-      campo: "documentos",
-      tabla: "producto_documentos",
-      fk: "producto_id",
-      etiqueta: "documentos",
-      items: d.documentos,
-      // cargado_por solo se escribe al insertar; el documento editado conserva quién lo cargó.
-      columnas: (x: (typeof d.documentos)[number]) => [["tipo", x.tipo], ["nombre_archivo", x.nombre], ["url_archivo", x.url], ["fecha_emision", x.emision], ["fecha_vencimiento", x.vencimiento], ["observacion", x.observacion]],
-    },
   ];
 }
 
@@ -168,7 +159,7 @@ export async function eliminarHijos(conexion: PoolClient, empresaId: string, pro
 }
 
 /** Fase 2 (después del UPDATE del producto): actualiza por id lo que cambió e inserta lo nuevo. */
-export async function guardarHijos(conexion: PoolClient, empresaId: string, productoId: string, d: DatosProducto, usuarioId: string) {
+export async function guardarHijos(conexion: PoolClient, empresaId: string, productoId: string, d: DatosProducto) {
   for (const c of definiciones(d)) {
     const porId = await existentes(conexion, empresaId, productoId, c);
 
@@ -190,8 +181,7 @@ export async function guardarHijos(conexion: PoolClient, empresaId: string, prod
 
     for (const item of c.items.filter((i) => i.id === null)) {
       const columnas = columnasDe(item);
-      const extra: Columnas = c.campo === "documentos" ? [["cargado_por", usuarioId]] : [];
-      const todas = [...columnas, ...extra];
+      const todas = columnas;
 
       await conexion.query(`INSERT INTO ${c.tabla} (${c.fk}, ${todas.map(([n]) => n).join(", ")}) VALUES ($1, ${todas.map((_, i) => `$${i + 2}`).join(", ")})`, [productoId, ...todas.map(([, v]) => v)]);
     }

@@ -84,7 +84,7 @@ docker exec nexit-db psql -U nexit_app -d nexit \
   -c "SELECT version, nombre FROM public.schema_migrations ORDER BY version;"
 ```
 
-A última versão registrada até a primeira atualização foi NEX-032; commits posteriores incluem NEX-033 a NEX-040, mas nunca presumir que já foram executadas. Se houver erro, **PARAR antes do deploy** e inspecionar.
+A última versão registrada até a primeira atualização foi NEX-032; commits posteriores incluem NEX-033 a NEX-041, mas nunca presumir que já foram executadas. Se houver erro, **PARAR antes do deploy** e inspecionar.
 
 ## ETAPA 3 — Verificar persistência de arquivos antes de substituir a app
 

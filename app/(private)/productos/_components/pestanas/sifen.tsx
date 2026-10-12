@@ -3,7 +3,7 @@
 import { AFECTACIONES_IVA, coherenciaIva, proporcionEfectiva } from "@/lib/productos/fiscal";
 import type { ProductoCodigo } from "@/types/productos";
 
-import { Area, Casilla, Selector, Texto } from "../campos";
+import { Area, Casilla, Dato, Selector, SubTitulo, Texto } from "../campos";
 import type { ContextoFormulario } from "../contexto";
 import styles from "../producto-form.module.css";
 import { TarjetaFila, TituloColeccion } from "./repetidores";
@@ -31,12 +31,14 @@ export function PestanaSifen({ ctx }: { ctx: ContextoFormulario }) {
   return (
     <>
       <div className={styles.sectionTitle}>
-        <h3>Identificación fiscal del producto</h3>
+        <h3>SIFEN y códigos</h3>
       </div>
+
+      <SubTitulo>Identificación fiscal del producto</SubTitulo>
 
       <div className={styles.gridFour}>
         <Texto etiqueta="Código SIFEN del producto" campo="codigoSifen" errores={errores} valor={form.codigoSifen} alCambiar={(v) => ctx.set("codigoSifen", v)} maxLength={20} ayuda="Distinto del código interno Nexit." />
-        <Texto etiqueta="Descripción para factura" campo="descripcionFacturaMirror" errores={errores} valor={form.descripcionFactura} alCambiar={() => undefined} readOnly ayuda="Se edita en Información." />
+        <Dato etiqueta="Descripción para factura" valor={form.descripcionFactura} ayuda="Se edita en Información." />
         <Selector
           etiqueta="País de origen"
           campo="paisOrigenCodigo"
@@ -50,9 +52,7 @@ export function PestanaSifen({ ctx }: { ctx: ContextoFormulario }) {
 
       <Area etiqueta="Información adicional en factura" campo="informacionFactura" errores={errores} valor={form.informacionFactura} alCambiar={(v) => ctx.set("informacionFactura", v)} maxLength={500} />
 
-      <div className={styles.sectionTitle}>
-        <h3>Clasificación y afectación IVA</h3>
-      </div>
+      <SubTitulo>Clasificación y afectación IVA</SubTitulo>
 
       <div className={styles.gridFour}>
         <Selector
@@ -78,9 +78,9 @@ export function PestanaSifen({ ctx }: { ctx: ContextoFormulario }) {
         {afectacion === 4 ? (
           <Texto etiqueta="Proporción gravada (%) *" campo="proporcionGravadaIva" errores={errores} valor={form.proporcionGravadaIva} alCambiar={(v) => ctx.set("proporcionGravadaIva", v)} modo="decimal" maxLength={8} ayuda="Mayor que 0 y menor que 100." />
         ) : (
-          <Texto etiqueta="Proporción gravada (%)" campo="proporcionEfectiva" errores={errores} valor={proporcion ?? ""} alCambiar={() => undefined} readOnly ayuda={afectacion === null ? "Sin clasificar." : "Fija según la afectación."} />
+          <Dato etiqueta="Proporción gravada (%)" valor={proporcion ?? ""} ayuda={afectacion === null ? "Sin clasificar." : "Fija según la afectación."} />
         )}
-        <Texto etiqueta="Tasa del IVA (%)" campo="tasaMirror" errores={errores} valor={impuesto ? String(Number(impuesto.porcentaje)) : ""} alCambiar={() => undefined} readOnly ayuda="Derivada del impuesto." />
+        <Dato etiqueta="Tasa del IVA (%)" valor={impuesto ? String(Number(impuesto.porcentaje)) : ""} ayuda="Derivada del impuesto." />
       </div>
 
       {afectacion === null ? (
@@ -94,14 +94,12 @@ export function PestanaSifen({ ctx }: { ctx: ContextoFormulario }) {
         </p>
       ) : null}
 
-      <div className={styles.sectionTitle}>
-        <h3>Unidad de medida SIFEN</h3>
-      </div>
+      <SubTitulo>Unidad de medida SIFEN</SubTitulo>
 
       <div className={styles.gridFour}>
-        <Texto etiqueta="Unidad base (comercial)" campo="unidadBaseMirror" errores={errores} valor={unidad ? `${unidad.codigo} · ${unidad.nombre}` : ""} alCambiar={() => undefined} readOnly ayuda="Se edita en Información." />
-        <Texto etiqueta="Código SIFEN (E709)" campo="unidadSifenCodigo" errores={errores} valor={unidad?.sifenCodigo ? String(unidad.sifenCodigo) : ""} alCambiar={() => undefined} readOnly placeholder="—" />
-        <Texto etiqueta="Representación (E710)" campo="unidadSifenRepresentacion" errores={errores} valor={unidad?.sifenRepresentacion ?? ""} alCambiar={() => undefined} readOnly placeholder="—" />
+        <Dato etiqueta="Unidad base (comercial)" valor={unidad ? `${unidad.codigo} · ${unidad.nombre}` : ""} ayuda="Se edita en Información." />
+        <Dato etiqueta="Código SIFEN (E709)" valor={unidad?.sifenCodigo ? String(unidad.sifenCodigo) : ""} />
+        <Dato etiqueta="Representación (E710)" valor={unidad?.sifenRepresentacion ?? ""} />
       </div>
 
       {unidad && !unidad.sifenCodigo ? (
@@ -110,9 +108,7 @@ export function PestanaSifen({ ctx }: { ctx: ContextoFormulario }) {
         </p>
       ) : null}
 
-      <div className={styles.sectionTitle}>
-        <h3>NCM, partida arancelaria y DNCP</h3>
-      </div>
+      <SubTitulo>NCM, partida arancelaria y DNCP</SubTitulo>
 
       <div className={styles.gridFour}>
         <Texto etiqueta="NCM" campo="ncm" errores={errores} valor={form.ncm} alCambiar={(v) => ctx.set("ncm", v)} maxLength={8} modo="numeric" ayuda="6 a 8 dígitos." />

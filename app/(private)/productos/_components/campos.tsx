@@ -157,3 +157,19 @@ export function Casilla({ etiqueta, campo, valor, alCambiar, disabled }: { etiqu
 export function SinRegistros({ texto }: { texto: string }) {
   return <div className={styles.empty}>{texto}</div>;
 }
+
+/** Dato informativo (solo lectura): se presenta como texto, no como un campo editable ni deshabilitado. */
+export function Dato({ etiqueta, valor, ayuda, vacio = "—" }: { etiqueta: string; valor: string; ayuda?: string; vacio?: string }) {
+  return (
+    <div className={styles.field}>
+      <span>{etiqueta}</span>
+      <div className={styles.soloLectura}>{valor || vacio}</div>
+      {ayuda ? <small className={styles.ayuda}>{ayuda}</small> : null}
+    </div>
+  );
+}
+
+/** Subtítulo de un grupo de campos dentro de una pestaña. */
+export function SubTitulo({ children }: { children: React.ReactNode }) {
+  return <h4 className={styles.subTitulo}>{children}</h4>;
+}

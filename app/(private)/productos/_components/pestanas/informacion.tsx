@@ -5,9 +5,10 @@ import { productoRedondeado } from "@/lib/productos/decimales";
 import { textoAfectacion } from "@/lib/productos/fiscal";
 import type { ProductoTipo } from "@/types/productos";
 
-import { Casilla, Texto, Selector } from "../campos";
+import { Casilla, Dato, Selector, SubTitulo, Texto } from "../campos";
 import type { ContextoFormulario } from "../contexto";
 import styles from "../producto-form.module.css";
+import { FotoProducto } from "./foto";
 
 const TIPOS: Array<[ProductoTipo, string]> = [
   ["MERCADERIA", "Mercadería"],
@@ -29,13 +30,13 @@ export function PestanaInformacion({ ctx }: { ctx: ContextoFormulario }) {
         <h3>Información comercial</h3>
       </div>
 
+      <SubTitulo>Identificación</SubTitulo>
       <div className={styles.gridFour}>
-        {ctx.modo === "editar" ? <Texto etiqueta="Código interno" campo="codigo" errores={errores} valor={form.codigo} alCambiar={() => undefined} readOnly ayuda="Automático; no se modifica." /> : null}
+        {ctx.modo === "editar" ? <Dato etiqueta="Código interno" valor={form.codigo} ayuda="Automático; no se modifica." /> : null}
         <Texto etiqueta="Código inventario" campo="codigoInventario" errores={errores} valor={form.codigoInventario} alCambiar={(v) => ctx.set("codigoInventario", v)} maxLength={80} />
         <Texto etiqueta="Descripción interna *" campo="descripcion" errores={errores} valor={form.descripcion} alCambiar={(v) => ctx.set("descripcion", v)} maxLength={300} />
         <Texto etiqueta="Descripción para factura *" campo="descripcionFactura" errores={errores} valor={form.descripcionFactura} alCambiar={(v) => ctx.set("descripcionFactura", v)} maxLength={120} ayuda="Hasta 120 caracteres." />
       </div>
-
       <div className={styles.gridFour}>
         <Selector etiqueta="Tipo de producto *" campo="tipoProducto" errores={errores} valor={form.tipoProducto} alCambiar={(v) => ctx.set("tipoProducto", v as ProductoTipo)} opciones={TIPOS} />
         <Selector
@@ -46,11 +47,12 @@ export function PestanaInformacion({ ctx }: { ctx: ContextoFormulario }) {
           alCambiar={(v) => ctx.set("unidadMedidaId", v)}
           opciones={[["", "Seleccione unidad"], ...catalogos.unidades.map((u): [string, string] => [u.id, etiquetaUnidad(u)])]}
         />
-        <Selector etiqueta="Categoría" campo="categoriaId" errores={errores} valor={form.categoriaId} alCambiar={(v) => ctx.set("categoriaId", v)} opciones={[["", "Sin categoría"], ...catalogos.categorias.map((c): [string, string] => [c.id, `${c.codigo} · ${c.nombre}`])]} />
-        <Selector etiqueta="Marca" campo="marcaId" errores={errores} valor={form.marcaId} alCambiar={(v) => ctx.set("marcaId", v)} opciones={[["", "Sin marca"], ...catalogos.marcas.map((m): [string, string] => [m.id, m.nombre])]} />
       </div>
 
+      <SubTitulo>Clasificación</SubTitulo>
       <div className={styles.gridFour}>
+        <Selector etiqueta="Categoría" campo="categoriaId" errores={errores} valor={form.categoriaId} alCambiar={(v) => ctx.set("categoriaId", v)} opciones={[["", "Sin categoría"], ...catalogos.categorias.map((c): [string, string] => [c.id, `${c.codigo} · ${c.nombre}`])]} />
+        <Selector etiqueta="Marca" campo="marcaId" errores={errores} valor={form.marcaId} alCambiar={(v) => ctx.set("marcaId", v)} opciones={[["", "Sin marca"], ...catalogos.marcas.map((m): [string, string] => [m.id, m.nombre])]} />
         <Selector
           etiqueta="Familia"
           campo="familiaId"
@@ -72,10 +74,12 @@ export function PestanaInformacion({ ctx }: { ctx: ContextoFormulario }) {
           alCambiar={(v) => ctx.set("lineaId", v)}
           opciones={[["", form.familiaId ? "Sin línea" : "Seleccione familia primero"], ...lineas.map((l): [string, string] => [l.id, l.nombre])]}
         />
+      </div>
+      <div className={styles.gridFour}>
         <Texto etiqueta="Procedencia" campo="procedencia" errores={errores} valor={form.procedencia} alCambiar={(v) => ctx.set("procedencia", v)} maxLength={100} />
-        <Texto etiqueta="Impuesto / IVA" campo="impuestoMirror" errores={errores} valor={impuesto ? `${impuesto.nombre}${form.afectacionIva ? ` · ${textoAfectacion(Number(form.afectacionIva))}` : " · sin clasificar"}` : "Sin impuesto"} alCambiar={() => undefined} readOnly ayuda="Se edita en SIFEN y códigos." />
       </div>
 
+      <SubTitulo>Precio de referencia y datos fiscales</SubTitulo>
       <div className={styles.gridFour}>
         <Texto
           etiqueta={`Precio venta referencia${catalogos.monedaReferencia ? ` (${catalogos.monedaReferencia})` : ""}`}
@@ -88,11 +92,20 @@ export function PestanaInformacion({ ctx }: { ctx: ContextoFormulario }) {
           placeholder="Sin precio"
           ayuda="Hasta 4 decimales, con punto. Vacío = sin precio."
         />
-        <Texto etiqueta="Valor venta referencia" campo="valorReferencia" errores={errores} valor={valor === null ? "" : new Intl.NumberFormat("es-PY").format(valor)} alCambiar={() => undefined} readOnly placeholder="Precio × stock actual" />
-        <Texto etiqueta="País de origen" campo="paisOrigenMirror" errores={errores} valor={pais ? `${pais.codigo} · ${pais.nombre}` : form.paisOrigenCodigo} alCambiar={() => undefined} readOnly ayuda="Se edita en SIFEN y códigos." />
-        <Texto etiqueta="Imagen (URL)" campo="imagenUrl" errores={errores} valor={form.imagenUrl} alCambiar={(v) => ctx.set("imagenUrl", v)} maxLength={2000} tipo="url" />
+        <Dato etiqueta="Valor venta referencia" valor={valor === null ? "" : new Intl.NumberFormat("es-PY").format(valor)} ayuda="Precio de referencia × stock actual; no es un valor contable del inventario." />
+        <Dato etiqueta="Impuesto / IVA" valor={impuesto ? `${impuesto.nombre}${form.afectacionIva ? ` · ${textoAfectacion(Number(form.afectacionIva))}` : " · sin clasificar"}` : "Sin impuesto"} ayuda="Se edita en SIFEN y códigos." />
+        <Dato etiqueta="País de origen" valor={pais ? `${pais.codigo} · ${pais.nombre}` : form.paisOrigenCodigo} ayuda="Se edita en SIFEN y códigos." />
       </div>
 
+      <SubTitulo>Foto del producto</SubTitulo>
+      <FotoProducto ctx={ctx} />
+      {form.imagenUrl ? (
+        <div className={styles.gridTwo}>
+          <Texto etiqueta="Enlace de imagen anterior" campo="imagenUrl" errores={errores} valor={form.imagenUrl} alCambiar={(v) => ctx.set("imagenUrl", v)} maxLength={2000} tipo="url" ayuda="Se conserva el enlace cargado antes; la foto nueva se carga como archivo." />
+        </div>
+      ) : null}
+
+      <SubTitulo>Disponibilidad</SubTitulo>
       <div className={styles.checkGrid}>
         <Casilla etiqueta="Producto vendible" campo="vendible" valor={form.vendible} alCambiar={(v) => ctx.set("vendible", v)} />
         <Casilla etiqueta="Producto comprable" campo="comprable" valor={form.comprable} alCambiar={(v) => ctx.set("comprable", v)} />

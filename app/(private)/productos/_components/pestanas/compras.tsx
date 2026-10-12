@@ -15,6 +15,10 @@ export function PestanaCompras({ ctx }: { ctx: ContextoFormulario }) {
     <>
       <TituloColeccion titulo="Presentaciones y conversiones" boton="Agregar presentación" alAgregar={() => ctx.agregar("unidades")} />
 
+      <p className={styles.nota} style={{ margin: "0 0 10px" }}>
+        El factor indica cuántas unidades base contiene la presentación. Se informa manualmente: Nexit no lo deduce del nombre ni de la unidad (por ejemplo, una caja o una docena no implican un factor).
+      </p>
+
       {form.unidades.length === 0 ? <div className={styles.empty}>Sin presentaciones adicionales.</div> : null}
 
       <div className={styles.repeaterList}>
@@ -34,6 +38,11 @@ export function PestanaCompras({ ctx }: { ctx: ContextoFormulario }) {
                 <Texto etiqueta="Peso bruto (kg)" campo={`${p}.pesoBrutoKg`} errores={errores} valor={u.pesoBrutoKg} alCambiar={(v) => cambiar({ pesoBrutoKg: v })} modo="decimal" maxLength={19} />
                 <Texto etiqueta="Volumen (m³)" campo={`${p}.volumenM3`} errores={errores} valor={u.volumenM3} alCambiar={(v) => cambiar({ volumenM3: v })} modo="decimal" maxLength={19} />
               </div>
+              {u.esUnidadBase && (u.unidadMedidaId !== form.unidadMedidaId || Number(u.factorConversion) !== 1) ? (
+                <p className={styles.nota} role="status" style={{ margin: "0 0 8px" }}>
+                  Revise: una presentación marcada como unidad base normalmente usa la unidad base del producto con factor 1. No se corrige automáticamente.
+                </p>
+              ) : null}
               <div className={styles.checkGrid}>
                 <Casilla etiqueta="Unidad base" campo={`${p}.esUnidadBase`} valor={u.esUnidadBase} alCambiar={(v) => ctx.set("unidades", form.unidades.map((x) => ({ ...x, esUnidadBase: x.id === u.id ? v : v ? false : x.esUnidadBase })))} />
                 <Casilla etiqueta="Unidad de compra" campo={`${p}.esUnidadCompra`} valor={u.esUnidadCompra} alCambiar={(v) => cambiar({ esUnidadCompra: v })} />

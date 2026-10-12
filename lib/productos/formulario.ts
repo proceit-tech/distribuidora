@@ -3,7 +3,6 @@
  * `formularioAPayload` produce el contrato de la API; la misma validación (`normalizarProducto`) corre en el formulario y en el servidor.
  */
 import { COLECCIONES, UUID, type Coleccion } from "@/lib/productos/normalizar";
-import { isoALocal } from "@/lib/proveedores/fechas";
 import type {
   CatalogoProductos,
   ProductoAlternativo,
@@ -11,7 +10,6 @@ import type {
   ProductoComponente,
   ProductoDetalle,
   ProductoDeposito,
-  ProductoDocumento,
   ProductoModoControlStock,
   ProductoPresentacion,
   ProductoProveedor,
@@ -74,7 +72,6 @@ export type FormularioProducto = {
   depositos: ProductoDeposito[];
   alternativos: ProductoAlternativo[];
   componentes: ProductoComponente[];
-  documentos: ProductoDocumento[];
   /** Ids persistidos que el usuario pidió eliminar de cada colección (una fila ausente nunca se borra). */
   eliminaciones: Record<Coleccion, string[]>;
 };
@@ -137,7 +134,6 @@ export function formularioInicial(catalogos: CatalogoProductos): FormularioProdu
     depositos: [],
     alternativos: [],
     componentes: [],
-    documentos: [],
     eliminaciones: eliminacionesVacias(),
   };
 }
@@ -198,7 +194,6 @@ export function formularioDesdeDetalle(d: ProductoDetalle): FormularioProducto {
     depositos: structuredClone(d.depositos),
     alternativos: structuredClone(d.alternativos),
     componentes: structuredClone(d.componentes),
-    documentos: d.documentos.map((x) => ({ ...x, fechaEmision: isoALocal(x.fechaEmision), fechaVencimiento: isoALocal(x.fechaVencimiento) })),
     eliminaciones: eliminacionesVacias(),
   };
 }

@@ -37,12 +37,12 @@ INSERT INTO incoterms (codigo, nombre) VALUES
   ('EXW','En fábrica'),('FCA','Franco transportista'),('FOB','Franco a bordo'),('CIF','Costo, seguro y flete'),('DAP','Entregada en lugar'),('DDP','Entregada derechos pagados')
 ON CONFLICT (codigo) DO NOTHING;
 
--- Equivalencia SIFEN (Tabla 5 del MT v150) por el vínculo de NEX-039. Solo lo inequívoco: UN→77, KG→83, LT→89 (Litros).
--- Metro (87/m ó 108/MT: decisión pendiente), Caja y Docena (sin equivalencia en la Tabla 5) quedan SIN vínculo; no se inventa ninguno.
+-- Equivalencia SIFEN (Tabla 5 del MT v150 + NT023) por el vínculo de NEX-039: UN→77, KG→83, LT→89 (Litros), CJ→131 (BX, Caja), DOC→113 (DOC, Docena).
+-- Metro (87/m ó 108/MT) queda SIN vínculo: decisión pendiente del responsable; no se elige ninguno.
 -- Seguro de re-ejecutar y NO modifica unidades existentes (ON CONFLICT DO NOTHING): para bases existentes, scripts/reconciliar-unidades-sifen-NEX-039.sql.
 INSERT INTO unidades_medida (codigo, nombre, unidad_sifen_codigo) VALUES
   ('UN','Unidad',77),('KG','Kilogramo',83),('LT','Litro',89),
-  ('CJ','Caja',NULL),('MT','Metro',NULL),('DOC','Docena',NULL)
+  ('CJ','Caja',131),('MT','Metro',NULL),('DOC','Docena',113)
 ON CONFLICT (codigo) DO NOTHING;
 
 INSERT INTO impuestos (codigo, nombre, porcentaje) VALUES

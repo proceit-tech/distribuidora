@@ -16,7 +16,6 @@ import type { CatalogoProductos, ProductoDetalle } from "@/types/productos";
 
 const EMPRESA = "11111111-1111-4111-8111-111111111111";
 const PROD = "22222222-2222-4222-8222-222222222222";
-const USUARIO = "33333333-3333-4333-8333-333333333333";
 const U1 = "a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1";
 const U2 = "a2a2a2a2-a2a2-4a2a-8a2a-a2a2a2a2a2a2";
 const C1 = "c1c1c1c1-c1c1-4c1c-8c1c-c1c1c1c1c1c1";
@@ -80,7 +79,6 @@ export async function verificarCasosProductos(): Promise<string[]> {
   igual("observación 1001 rechazada", campoDe({ observacion: "x".repeat(1001) }), "observacion");
   igual("procedencia 101 rechazada", campoDe({ procedencia: "x".repeat(101) }), "procedencia");
   igual("código de código-barras 81 rechazado", campoDe({ codigoBarras: "x".repeat(81) }), "codigoBarras");
-  igual("documento: nombre 256 rechazado", campoDe({ documentos: [{ tipo: "OTRO", nombreArchivo: "x".repeat(256), urlArchivo: "http://a" }] }), "documentos.0.nombreArchivo");
   igual("valor con espacios se recorta sin cortar", valido({ descripcion: "  Hola  " }).descripcion, "Hola");
 
   // ── Decimales exactos (PRD-A03)
@@ -140,15 +138,10 @@ export async function verificarCasosProductos(): Promise<string[]> {
   igual("componente: cantidad 0 rechazada", campoDe({ tipoProducto: "KIT", componentes: [{ productoComponenteId: C1, cantidad: "0" }] }), "componentes.0.cantidad");
   igual("componente: kit consigo mismo rechazado", campoDe({ tipoProducto: "KIT", componentes: [{ productoComponenteId: PROD, cantidad: "1" }] }), "componentes.0.productoComponenteId");
 
-  // ── Documentos y fechas (dd/mm/aaaa en pantalla, ISO en la API)
-  const doc = (extra: Record<string, unknown>) => ({ documentos: [{ tipo: "FICHA_TECNICA", nombreArchivo: "ficha.pdf", urlArchivo: "https://x/ficha.pdf", ...extra }] });
+  // ── Documentos: ya NO forman parte de la ficha (NEX-041): se gestionan con sus propias acciones (archivo privado, versiones)
+  const conDocs = valido({ documentos: [{ tipo: "OTRO", nombreArchivo: "x.pdf", urlArchivo: "https://x/x.pdf" }], eliminaciones: { documentos: [C1] } });
 
-  igual("documento: fecha dd/mm/aaaa → ISO", valido(doc({ fechaEmision: "05/03/2026" })).documentos[0].emision, "2026-03-05");
-  igual("documento: fecha ISO se conserva", valido(doc({ fechaEmision: "2026-03-05" })).documentos[0].emision, "2026-03-05");
-  igual("documento: fecha inexistente rechazada", campoDe(doc({ fechaEmision: "31/02/2026" })), "documentos.0.fechaEmision");
-  igual("documento: vencimiento anterior a la emisión rechazado", campoDe(doc({ fechaEmision: "10/03/2026", fechaVencimiento: "09/03/2026" })), "documentos.0.fechaVencimiento");
-  igual("documento: tipo inválido rechazado", campoDe(doc({ tipo: "ZZZ" })), "documentos.0.tipo");
-  igual("documento: URL obligatoria", campoDe(doc({ urlArchivo: "" })), "documentos.0.urlArchivo");
+  igual("documentos enviados en la ficha no se procesan ni se persisten", [Object.prototype.hasOwnProperty.call(conDocs, "documentos"), Object.prototype.hasOwnProperty.call(conDocs.eliminaciones, "documentos")], [false, false]);
 
   // ── Información / SIFEN (E8: validaciones cadastrales fundamentadas)
   igual("línea sin familia rechazada", campoDe({ lineaId: C1 }), "familiaId");
@@ -180,12 +173,12 @@ export async function verificarCasosProductos(): Promise<string[]> {
   igual("apertura en cero = sin movimiento", valido(apertura({ cantidad: "0" })).inventarioInicial.cantidad, null);
 
   // ── Identificadores persistentes de las colecciones
-  const ids = valido({ codigos: [{ id: U2, tipo: "OTRO", codigo: "a" }, { id: "nuevo-codigo-1", tipo: "OTRO", codigo: "b" }], eliminaciones: { codigos: [U1, U1, "basura"], documentos: [C1] } }, "editar");
+  const ids = valido({ codigos: [{ id: U2, tipo: "OTRO", codigo: "a" }, { id: "nuevo-codigo-1", tipo: "OTRO", codigo: "b" }], eliminaciones: { codigos: [U1, U1, "basura"], depositos: [C1] } }, "editar");
 
   igual("id UUID se conserva en la edición", ids.codigos[0].id, U2);
   igual("id temporal = alta (null)", ids.codigos[1].id, null);
   igual("eliminaciones: solo UUID y sin duplicados", ids.eliminaciones.codigos, [U1]);
-  igual("eliminaciones de otras colecciones", ids.eliminaciones.documentos, [C1]);
+  igual("eliminaciones de otras colecciones", ids.eliminaciones.depositos, [C1]);
   igual("en el alta todos los ids son nuevos", valido({ codigos: [{ id: U2, tipo: "OTRO", codigo: "a" }] }, "crear").codigos[0].id, null);
 
   // ── Pestaña de cada error
@@ -215,7 +208,7 @@ export async function verificarCasosProductos(): Promise<string[]> {
   const g = conexionSimulada(existentes);
 
   await eliminarHijos(g.conexion, EMPRESA, PROD, datos);
-  await guardarHijos(g.conexion, EMPRESA, PROD, datos, USUARIO);
+  await guardarHijos(g.conexion, EMPRESA, PROD, datos);
 
   const sqls = g.registro.map((c) => c.sql);
 
@@ -246,7 +239,7 @@ export async function verificarCasosProductos(): Promise<string[]> {
 
   // Fila inexistente / de otro producto
   const ajeno = valido({ codigos: [{ id: C1, tipo: "OTRO", codigo: "z" }] }, "editar");
-  const errAjeno = await guardarHijos(conexionSimulada(existentes).conexion, EMPRESA, PROD, ajeno, USUARIO).then(
+  const errAjeno = await guardarHijos(conexionSimulada(existentes).conexion, EMPRESA, PROD, ajeno).then(
     () => null,
     (e) => e as ErrorValidacion,
   );
@@ -263,19 +256,13 @@ export async function verificarCasosProductos(): Promise<string[]> {
   // Fila ausente del envío: no se toca
   const ausente = conexionSimulada(existentes);
 
-  await guardarHijos(ausente.conexion, EMPRESA, PROD, valido({}, "editar"), USUARIO);
+  await guardarHijos(ausente.conexion, EMPRESA, PROD, valido({}, "editar"));
   igual("fila ausente del envío: sin UPDATE/INSERT/DELETE", ausente.registro.filter((c) => /^\s*(UPDATE|INSERT|DELETE)/.test(c.sql)).length, 0);
-
-  // Documentos: el cargado_por solo se escribe al insertar
-  const dd = conexionSimulada({ producto_documentos: [{ id: U1 }] });
-
-  await guardarHijos(dd.conexion, EMPRESA, PROD, valido({ documentos: [{ id: U1, tipo: "OTRO", nombreArchivo: "a", urlArchivo: "u" }, { tipo: "OTRO", nombreArchivo: "b", urlArchivo: "u2" }] }, "editar"), USUARIO);
-  cierto("documento editado conserva quién lo cargó; el nuevo registra al usuario", !dd.registro.some((c) => /^\s*UPDATE producto_documentos/.test(c.sql) && /cargado_por/.test(c.sql)) && dd.registro.some((c) => /^\s*INSERT INTO producto_documentos/.test(c.sql) && c.parametros.includes(USUARIO)));
 
   // Componentes: la FK del kit es producto_kit_id
   const cc = conexionSimulada({ producto_componentes: [] });
 
-  await guardarHijos(cc.conexion, EMPRESA, PROD, valido({ tipoProducto: "KIT", componentes: [{ productoComponenteId: C1, cantidad: "2" }] }, "editar"), USUARIO);
+  await guardarHijos(cc.conexion, EMPRESA, PROD, valido({ tipoProducto: "KIT", componentes: [{ productoComponenteId: C1, cantidad: "2" }] }, "editar"));
   cierto("componentes se insertan por producto_kit_id", cc.registro.some((c) => /^\s*INSERT INTO producto_componentes \(producto_kit_id,/.test(c.sql)));
 
   // ── Referencias (familia, línea, categoría, marca, proveedor, depósito, unidades)
@@ -335,19 +322,17 @@ export async function verificarCasosProductos(): Promise<string[]> {
     paisOrigenCodigo: "PRY", paisOrigenNombre: "Paraguay", informacionFactura: "", relacionMercaderia: "", porcentajeMerma: "", cantidadMerma: "", vendible: true, comprable: true,
     requiereInspeccionCalidad: false, vidaUtilDias: "", pesoNetoKg: "0.0001", pesoBrutoKg: "", largoCm: "", anchoCm: "", altoCm: "", volumenM3: "", imagenUrl: "", observacion: "", activo: true,
     codigos: [{ id: U1, tipo: "SKU_PROVEEDOR", codigo: "A1", descripcion: "", esPrincipal: true }], unidades: [], proveedores: [], depositos: [], alternativos: [], componentes: [],
-    documentos: [{ id: U2, tipo: "OTRO", nombreArchivo: "a.pdf", urlArchivo: "https://x/a.pdf", fechaEmision: "2026-03-05", fechaVencimiento: "", observacion: "" }], creadoEn: "", actualizadoEn: "",
+    documentos: [], imagenPrivada: null, esCreador: true, cargaDocumentosInicialAbierta: false, permisosDocumentos: { cargar: true, gestionar: true, historial: true, finalizar: true }, creadoEn: "", actualizadoEn: "",
   } as ProductoDetalle;
   const f = formularioDesdeDetalle(detalle);
 
   igual("detalle → formulario: decimales exactos sin pérdida", [f.precioVentaReferencia, f.stockMinimo, f.pesoNetoKg], ["9999999.9999", "1.5000", "0.0001"]);
-  igual("detalle → formulario: fecha ISO se muestra dd/mm/aaaa", f.documentos[0].fechaEmision, "05/03/2026");
   const p = formularioAPayload(f, "editar");
   const n = normalizarProducto(p, { modo: "editar", productoId: PROD });
 
   igual("edición: el payload conserva el código", p.codigo, "PRD-000007");
   igual("ciclo detalle → payload → API: precio exacto", n.precioVentaReferencia, "9999999.9999");
-  igual("ciclo: ids persistentes conservados", [n.codigos[0].id, n.documentos[0].id], [U1, U2]);
-  igual("ciclo: fecha vuelve a ISO", n.documentos[0].emision, "2026-03-05");
+  igual("ciclo: ids persistentes conservados", n.codigos[0].id, U1);
   igual("edición: no envía inventario inicial", (p.inventarioInicial as { cantidad: string }).cantidad, "");
 
   // ── Verificaciones estáticas de las rutas y de la persistencia

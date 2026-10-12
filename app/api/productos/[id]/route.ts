@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import type { PoolClient } from "pg";
 
 import { denyIfNoPermission } from "@/lib/auth/permissions";
+import { decidirAccesoDocumento } from "@/lib/productos/permisos-documentos";
+import { autorizarProductos } from "@/lib/productos/http";
 import { ErrorValidacion } from "@/lib/productos/errores";
 import { normalizarProducto } from "@/lib/productos/normalizar";
 import { componentesRestantes, eliminarHijos, guardarHijos } from "@/lib/productos/sincronizar";
@@ -78,9 +80,14 @@ export async function GET(_request: Request, contexto: Contexto) {
               coalesce(p.largo_cm::text,'') AS "largoCm", coalesce(p.ancho_cm::text,'') AS "anchoCm",
               coalesce(p.alto_cm::text,'') AS "altoCm", coalesce(p.volumen_m3::text,'') AS "volumenM3",
               coalesce(p.imagen_url,'') AS "imagenUrl", coalesce(p.observacion,'') AS observacion,
-              p.activo, p.creado_at AS "creadoEn", p.actualizado_at AS "actualizadoEn"
+              p.activo, p.creado_at AS "creadoEn", p.actualizado_at AS "actualizadoEn",
+              (p.creado_por IS NOT DISTINCT FROM $3::uuid AND p.creado_por IS NOT NULL) AS "esCreador",
+              p.carga_documentos_inicial_abierta AS "cargaDocumentosInicialAbierta",
+              CASE WHEN p.imagen_clave IS NULL THEN NULL
+                   ELSE jsonb_build_object('nombre', p.imagen_nombre, 'tamanoBytes', p.imagen_tamano, 'tipoMime', p.imagen_mime,
+                        'actualizadaEn', to_char(p.imagen_actualizada_at AT TIME ZONE 'America/Asuncion', 'DD/MM/YYYY HH24:MI')) END AS "imagenPrivada"
          FROM productos p WHERE p.id = $1 AND p.empresa_id = $2`,
-      [id, empresaId],
+      [id, empresaId, session.user.id],
     );
     if (!principal.rowCount) return noEncontrado();
 
@@ -138,10 +145,11 @@ export async function GET(_request: Request, contexto: Contexto) {
         [id, empresaId],
       ),
       db.query(
-        `SELECT id, tipo, nombre_archivo AS "nombreArchivo", url_archivo AS "urlArchivo",
+        `SELECT id, tipo, nombre_archivo AS "nombreArchivo", coalesce(url_archivo,'') AS "urlArchivo",
+                (almacen_clave IS NOT NULL) AS "tieneArchivo", tamano_bytes, coalesce(tipo_mime,'') AS "tipoMime", version_vigente AS version,
                 ${D("fecha_emision")} AS "fechaEmision", ${D("fecha_vencimiento")} AS "fechaVencimiento",
                 coalesce(observacion,'') AS observacion
-           FROM producto_documentos WHERE producto_id = $1 AND empresa_id = $2 ORDER BY creado_at, id`,
+           FROM producto_documentos WHERE producto_id = $1 AND empresa_id = $2 AND eliminado_at IS NULL ORDER BY creado_at, id`,
         [id, empresaId],
       ),
       // Precio de venta de referencia (lista de referencia) y su moneda; sin fila => sin precio.
@@ -177,6 +185,11 @@ export async function GET(_request: Request, contexto: Contexto) {
          FROM empresas e WHERE e.id = $1`,
       [empresaId],
     );
+    const acceso = await autorizarProductos();
+    const permisosDoc = "permisos" in acceso ? acceso.permisos : { ver: false, editar: false, crear: false };
+    const contextoDoc = { esCreador: (principal.rows[0] as { esCreador: boolean }).esCreador === true, cargaInicialAbierta: (principal.rows[0] as { cargaDocumentosInicialAbierta: boolean }).cargaDocumentosInicialAbierta === true };
+    const puede = (a: Parameters<typeof decidirAccesoDocumento>[0]) => decidirAccesoDocumento(a, permisosDoc, contextoDoc).permitido;
+    const documentosLista = (documentos.rows as Array<Record<string, unknown>>).map((d) => ({ ...d, tamanoBytes: d.tamano_bytes === null ? null : Number(d.tamano_bytes), version: Number(d.version), tamano_bytes: undefined }));
     const stockRows = stock.rows as Array<{ depositoId: string; depositoNombre: string; cantidad: string }>;
     const stockTotal = await db.query(
       `SELECT coalesce(sum(cantidad),0)::text AS total FROM stock_saldos
@@ -202,7 +215,8 @@ export async function GET(_request: Request, contexto: Contexto) {
         depositos: depositos.rows,
         alternativos: alternativos.rows,
         componentes: componentes.rows,
-        documentos: documentos.rows,
+        documentos: documentosLista,
+        permisosDocumentos: { cargar: puede("CARGAR"), gestionar: puede("EDITAR_DATOS"), historial: puede("VER_HISTORIAL"), finalizar: puede("FINALIZAR_CARGA") },
       },
     });
   } catch (error) {
@@ -269,12 +283,14 @@ export async function PUT(request: Request, contexto: Contexto) {
 
     const columnas = columnasProducto(datos, actual.codigo).filter(([nombre]) => nombre !== "codigo");
     const sets = columnas.map(([nombre], i) => `${nombre} = $${i + 3}`);
+    // La primera edición cierra la carga inicial de documentos y foto (quien solo tiene CREAR deja de poder agregarlos).
+    sets.push("carga_documentos_inicial_abierta = false");
     await conexion.query(
       `UPDATE productos SET ${sets.join(", ")}, actualizado_at = now() WHERE id = $1 AND empresa_id = $2`,
       [id, empresaId, ...columnas.map(([, v]) => v)],
     );
 
-    await guardarHijos(conexion, empresaId, id, datos, session.user.id);
+    await guardarHijos(conexion, empresaId, id, datos);
     // Precio de referencia: valor => alta/actualización; null => se quita; si el campo no viene en el cuerpo no se toca. El inventario inicial NO se toca al editar
     // (los cambios de stock se hacen con movimientos).
     if (datos.precioEnviado) await fijarPrecioReferencia(conexion, empresaId, id, datos.precioVentaReferencia);

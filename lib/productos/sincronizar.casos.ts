@@ -14,7 +14,6 @@ import { eliminarHijos, guardarHijos } from "@/lib/productos/sincronizar";
 const EMPRESA = "11111111-1111-4111-8111-111111111111";
 const OTRA = "44444444-4444-4444-8444-444444444444";
 const PROD = "22222222-2222-4222-8222-222222222222";
-const USUARIO = "33333333-3333-4333-8333-333333333333";
 const U1 = "a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1";
 const U2 = "a2a2a2a2-a2a2-4a2a-8a2a-a2a2a2a2a2a2";
 const U3 = "a3a3a3a3-a3a3-4a3a-8a3a-a3a3a3a3a3a3";
@@ -92,7 +91,7 @@ export async function verificarCasosSincronizacion(): Promise<string[]> {
     const d = datos(cuerpo);
     const error = await (async () => {
       await eliminarHijos(x.conexion, empresa, PROD, d);
-      await guardarHijos(x.conexion, empresa, PROD, d, USUARIO);
+      await guardarHijos(x.conexion, empresa, PROD, d);
     })().then(
       () => null,
       (e) => e as ErrorValidacion,
@@ -121,9 +120,9 @@ export async function verificarCasosSincronizacion(): Promise<string[]> {
 
   // 2) Exclusión de varias colecciones a la vez
   db = nuevaDb();
-  r = await secuencia(db, { eliminaciones: { codigos: [U2, U3], documentos: [U1] } });
+  r = await secuencia(db, { eliminaciones: { codigos: [U2, U3], componentes: [U1] } });
   igual("exclusión en varias colecciones: sin error", r.error, null);
-  igual("exclusión en varias colecciones: resultado", [ids(db, "producto_codigos"), ids(db, "producto_documentos")], [[U1], [U2]]);
+  igual("exclusión en varias colecciones: resultado", [ids(db, "producto_codigos"), ids(db, "producto_componentes")], [[U1], [U2]]);
 
   // 3) Exclusión + edición de otra fila
   db = nuevaDb();

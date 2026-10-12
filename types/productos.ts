@@ -79,16 +79,28 @@ export type ProductoComponente = {
   orden: string;
 };
 
+/** Documento técnico del producto: archivo privado con versiones (NEX-041) o enlace anterior (legado, sin archivo). */
 export type ProductoDocumento = {
   id: string;
   tipo: "FICHA_TECNICA" | "HOJA_SEGURIDAD" | "CERTIFICADO" | "IMAGEN" | "OTRO";
   nombreArchivo: string;
+  /** Enlace anterior (documentos cargados antes del archivo privado); vacío si tiene archivo. */
   urlArchivo: string;
+  tieneArchivo: boolean;
+  tamanoBytes: number | null;
+  tipoMime: string;
+  version: number;
   /** ISO (yyyy-mm-dd) en la API; la pantalla muestra dd/mm/aaaa. */
   fechaEmision: string;
   fechaVencimiento: string;
   observacion: string;
 };
+
+/** Permisos de documentos/foto para el usuario y este producto (la decisión final siempre la toma el servidor). */
+export type PermisosDocumentosProducto = { cargar: boolean; gestionar: boolean; historial: boolean; finalizar: boolean };
+
+/** Foto principal privada (NEX-041). La foto anterior por enlace sigue en `imagenUrl`. */
+export type ImagenPrivadaProducto = { nombre: string; tamanoBytes: number; tipoMime: string; actualizadaEn: string };
 
 /** Modelo de la ficha tal como lo devuelve GET /api/productos/[id]. */
 export type ProductoDetalle = {
@@ -170,9 +182,16 @@ export type ProductoDetalle = {
   altoCm: string;
   volumenM3: string;
 
+  /** Enlace de imagen ANTERIOR (legado, se conserva). */
   imagenUrl: string;
+  /** Foto privada cargada como archivo; null si no hay. */
+  imagenPrivada: ImagenPrivadaProducto | null;
   observacion: string;
   activo: boolean;
+
+  esCreador: boolean;
+  cargaDocumentosInicialAbierta: boolean;
+  permisosDocumentos: PermisosDocumentosProducto;
 
   codigos: ProductoCodigo[];
   unidades: ProductoPresentacion[];

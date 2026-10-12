@@ -150,8 +150,7 @@ export default function ProductosPage() {
     setFiltroProcedencia,
   ] = useState("TODAS");
 
-  const [pagina, setPagina] =
-    useState(1);
+  const [paginacion, setPaginacion] = useState({ clave: "", pagina: 1 });
 
   const [cargando, setCargando] =
     useState(true);
@@ -215,18 +214,8 @@ export default function ProductosPage() {
     };
   }, []);
 
-  useEffect(() => {
-    setPagina(1);
-  }, [
-    busqueda,
-    filtroEstado,
-    filtroTipo,
-    filtroMarca,
-    filtroFamilia,
-    filtroLinea,
-    filtroProcedencia,
-    orden,
-  ]);
+  // La página vuelve a 1 cuando cambian los filtros u el orden: se deriva en el render (sin efecto).
+  const claveFiltros = JSON.stringify([busqueda, filtroEstado, filtroTipo, filtroMarca, filtroFamilia, filtroLinea, filtroProcedencia, orden]);
 
   const marcas = useMemo(
     () =>
@@ -475,6 +464,10 @@ export default function ProductosPage() {
         PAGE_SIZE,
     ),
   );
+
+  const pagina = paginacion.clave === claveFiltros ? Math.min(paginacion.pagina, totalPaginas) : 1;
+  const setPagina = (valor: number | ((actual: number) => number)) =>
+    setPaginacion({ clave: claveFiltros, pagina: typeof valor === "function" ? valor(pagina) : valor });
 
   const paginaActual = useMemo(
     () =>

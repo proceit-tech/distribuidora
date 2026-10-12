@@ -1,3 +1,4 @@
+import type { DocumentoPendiente } from "@/lib/productos/documento-pendiente";
 import type { FormularioProducto } from "@/lib/productos/formulario";
 import type { Coleccion } from "@/lib/productos/normalizar";
 import type { CatalogoProductos, ProductoDetalle } from "@/types/productos";
@@ -11,6 +12,16 @@ export type ContextoFormulario = {
   detalle?: ProductoDetalle;
   catalogos: CatalogoProductos;
   errores: Errores;
+  /** Alta: documentos adjuntos que se cargan al guardar el producto. */
+  pendientes: DocumentoPendiente[];
+  setPendientes: (pendientes: DocumentoPendiente[]) => void;
+  /** Alta: foto elegida, que se carga al guardar el producto. */
+  fotoPendiente: File | null;
+  setFotoPendiente: (foto: File | null) => void;
+  /** Hay cambios sin guardar en el formulario (las acciones sobre archivos recargan la ficha y los descartarían). */
+  sucio: boolean;
+  /** Vuelve a leer la ficha del servidor (tras una acción sobre documentos o foto). */
+  recargar: () => void;
   set: <K extends keyof FormularioProducto>(clave: K, valor: FormularioProducto[K]) => void;
   agregar: (coleccion: Coleccion) => void;
   actualizar: (coleccion: Coleccion, id: string, parche: Record<string, unknown>) => void;

@@ -209,8 +209,8 @@ export async function POST(request: Request) {
 
     const codigo = await siguienteCodigo(conexion, empresaId);
     const columnas = columnasProducto(datos, codigo);
-    const nombres = ["empresa_id", "creado_por", ...columnas.map(([n]) => n)];
-    const valores = [empresaId, session.user.id, ...columnas.map(([, v]) => v)];
+    const nombres = ["empresa_id", "creado_por", "carga_documentos_inicial_abierta", ...columnas.map(([n]) => n)];
+    const valores = [empresaId, session.user.id, true, ...columnas.map(([, v]) => v)];
 
     const insertado = await conexion.query(
       `INSERT INTO productos (${nombres.join(",")}) VALUES (${valores.map((_, i) => `$${i + 1}`).join(",")})
@@ -219,7 +219,7 @@ export async function POST(request: Request) {
     );
     const producto = insertado.rows[0] as { id: string; codigo: string; descripcion: string };
 
-    await guardarHijos(conexion, empresaId, producto.id, datos, session.user.id);
+    await guardarHijos(conexion, empresaId, producto.id, datos);
     if (datos.precioVentaReferencia !== null) {
       await fijarPrecioReferencia(conexion, empresaId, producto.id, datos.precioVentaReferencia);
     }

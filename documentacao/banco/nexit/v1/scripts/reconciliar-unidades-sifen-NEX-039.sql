@@ -2,12 +2,13 @@
 -- de seguridad previa:   psql -X -v ON_ERROR_STOP=1 -1 -f reconciliar-unidades-sifen-NEX-039.sql
 -- Requiere NEX-039. IDEMPOTENTE: solo toca unidades que aún no tienen vínculo; cada cambio queda en fiscal_reconciliacion_log (antes/después, incluidos los
 -- campos legados que el trigger de espejo reescribe). NO modifica IDs, referencias, presentaciones, stock, costos ni movimientos.
--- NO vincula: Metro (decisión pendiente 87/108), Caja, Docena ni ninguna unidad cuyo código y nombre no coincidan EXACTAMENTE con la regla.
+-- NO vincula: Metro (decisión pendiente 87/108) ni ninguna unidad cuyo código y nombre no coincidan EXACTAMENTE con la regla (Caja→131/BX y Docena→113/DOC, NT023).
+-- Vincular NO crea conversiones: una caja o una docena no implican factor alguno; los factores de las presentaciones son datos comerciales independientes.
 -- Este script NO toca productos ni impuestos: la reclasificación IVA de productos existentes es otra operación, aparte y con autorización expresa
 -- (scripts/reclasificar-iva-productos-NEX-040.sql).
 
 -- A) Unidades con regla inequívoca: código interno + nombre exactos → código oficial (Tabla 5).
-WITH regla(interno, nombre, oficial) AS (VALUES ('UN', 'unidad', 77), ('KG', 'kilogramo', 83), ('LT', 'litro', 89)),
+WITH regla(interno, nombre, oficial) AS (VALUES ('UN', 'unidad', 77), ('KG', 'kilogramo', 83), ('LT', 'litro', 89), ('CJ', 'caja', 131), ('DOC', 'docena', 113)),
 objetivo AS (
   SELECT u.id, r.oficial, to_jsonb(u) AS antes
     FROM public.unidades_medida u JOIN regla r ON u.codigo = r.interno AND lower(btrim(u.nombre)) = r.nombre
