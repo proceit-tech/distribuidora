@@ -59,3 +59,11 @@ O responsável escolheu a política conservadora: mudança de base é permitida 
 A futura proteção no banco e na API deve ser transacional e imune a corrida contra novos movimentos; não usar apenas saldos disponíveis, totais de tela ou depósitos ao alcance do operador como verificação de integridade. Investigar os vínculos operacionais efetivamente existentes em V1, sem inventar V2. Ver `AUD-PRODUCTOS-V1.md`, seção XVI.
 
 **Estado:** regra aprovada, não implementada. Auditoria integral de Stock aberta; nenhum teste/SQL executado.
+
+## Matriz operacional real V1 para mudança de unidade-base — complemento 12/10/2026
+
+Consultar **`AUD-PRODUCTOS-V1.md` §XVII**: `stock_saldos` deve ser zero em **todos** estados, depósitos, lotes e propriedades, sem filtrar pelo alcance visual do operador. Qualquer `inventario_costos.cantidad_valorizada` remanescente e falta de conciliação bloqueiam; `costo_promedio` isoladamente preservado com quantidade zero não significa saldo. `stock_lotes` sem quantidade não bloqueia só por existir; movimentos com estado `REGISTRADO`/`ANULADO` são fatos concluídos, não pedidos pendentes. Reposição é planejamento somente leitura; Recepciones hoje usa mocks `localStorage` e não é fonte SQL de pendências.
+
+**STK-X04 / BLOQUEANTE antes de permitir a mudança de base:** API Productos bloqueia apenas produto no PUT; `NEX-014:224-249,282-359` grava movimentos sem bloqueio compartilhado por `productos.id`. A mudança futura exige serialização transacional comum entre a guarda de saldo zero e novos movimentos. Snapshot histórico de unidade-base/versões não existe nos movimentos atuais; não reescrever fatos passados.
+
+**Estado:** dependência identificada, sem código/SQL/VM aplicados; homologação pendente.
