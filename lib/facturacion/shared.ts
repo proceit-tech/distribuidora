@@ -68,7 +68,7 @@ const SELECT = `SELECT d.id, d.tipo, d.establecimiento, d.punto_expedicion AS "p
        d.moneda, d.total::text AS total, d.estado_local AS "estadoLocal", d.estado_sifen AS "estadoSifen", d.estado_email AS "estadoEmail",
        d.estado_gateway_texto AS "estadoGatewayTexto", d.cod_respuesta AS "codRespuesta", d.mensaje_respuesta AS "mensajeRespuesta",
        d.fecha_firma_gateway AS "fechaFirma", d.fecha_envio_gateway AS "fechaEnvio", d.ultima_consulta_at AS "ultimaConsultaAt",
-       d.ultima_consulta_resultado AS "ultimaConsultaResultado", d.lote
+       d.ultima_consulta_resultado AS "ultimaConsultaResultado", d.lote, d.envio_error_tipo AS "envioErrorTipo"
   FROM documentos_electronicos d JOIN sucursales s ON s.empresa_id = d.empresa_id AND s.id = d.sucursal_id`;
 
 /** Normaliza y valida la consulta: los valores desconocidos se descartan y nunca llegan a SQL como texto libre. */
@@ -178,7 +178,7 @@ export async function leerDocumento(db: Db, empresaId: string, usuarioId: string
 /** Intentos (evidencia) del documento, del más reciente al más antiguo, máx. 100. Solo se llama tras comprobar que el documento está en el alcance. */
 export async function listarIntentos(db: Db, empresaId: string, documentoId: string) {
   const r = await db.query(
-    `SELECT i.id, i.tipo, i.resultado, i.http_status AS "httpStatus", i.request_id AS "requestId", i.estado_gateway AS "estadoGateway", i.estado_sifen AS "estadoSifen", i.fase, i.lote,
+    `SELECT i.id, i.tipo, i.resultado, i.http_status AS "httpStatus", i.request_id AS "requestId", i.estado_gateway AS "estadoGateway", i.estado_sifen AS "estadoSifen", i.fase, i.lote, i.cdc_informado AS "cdcInformado",
             i.cod_respuesta AS "codRespuesta", i.mensaje, i.creado_at AS "creadoAt",
             trim(coalesce(u.nombre, '') || ' ' || coalesce(u.apellido, '')) AS "actorNombre"
        FROM documento_electronico_intentos i JOIN usuarios u ON u.empresa_id = i.empresa_id AND u.id = i.actor_id
@@ -255,7 +255,7 @@ export function respuestaErrorFacturacion(error: unknown, accion: string) {
   if (pg.code === "42501") return NextResponse.json({ error: "No tiene permiso para esta acción." }, { status: 403 });
   if (pg.detail === "NEX:DOCUMENTO_NO_ENCONTRADO") return NextResponse.json({ error: "Documento no encontrado." }, { status: 404 });
   if (pg.detail === "NEX:IDEMPOTENCIA_CONFLICTO") return NextResponse.json({ error: "La clave de la operación ya se usó con otro contenido. Recargue el formulario e intente de nuevo." }, { status: 409 });
-  if (pg.detail && /^NEX:(YA_ENVIADO|ENVIO_INDETERMINADO|ENVIO_EN_CURSO|TIPO_NO_ENVIABLE|SIN_SOLICITUD|ENVIO_NO_INICIADO)$/.test(pg.detail)) {
+  if (pg.detail && /^NEX:(YA_ENVIADO|ENVIO_INDETERMINADO|ENVIO_EN_CURSO|REENVIO_REQUIERE_CONFIRMACION|TIPO_NO_ENVIABLE|SIN_SOLICITUD|ENVIO_NO_INICIADO)$/.test(pg.detail)) {
     return NextResponse.json({ error: pg.message ?? "El documento no se puede enviar en su estado actual." }, { status: 409 });
   }
   if (pg.detail && /^NEX:(SUCURSAL_INVALIDA|SIN_ESTABLECIMIENTO|CLIENTE_INVALIDO|PUNTO_INVALIDO|NUMERACION_AGOTADA|PAYLOAD_INVALIDO)$/.test(pg.detail)) {

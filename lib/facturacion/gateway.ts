@@ -240,21 +240,35 @@ export async function consultarDocumentoGateway(config: ConfigGateway, doc: Docu
 
 // ── Envío (recepcion_de) ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 // Contrato CONFIRMADO: POST {base}/api/recepcion_de con Bearer y el JSON de la FE. NO está comprobado el cuerpo de la respuesta: no se inventan campos.
-// Solo se aprovecha lo que la respuesta efectivamente trae (búsqueda tolerante por nombre) y todo lo demás queda en la respuesta saneada que se guarda.
+// Clasificación CONSERVADORA (AUD-FE-F02):
+//  · «ENVIADO» solo si la respuesta CERTIFICA la recepción de ESTE documento: trae un CDC coherente con su identidad (tipo, establecimiento, punto, número)
+//    o devuelve esos tres identificadores y coinciden. Un 2xx con status success que no identifica el documento (p. ej. solo un lote o un mensaje) es
+//    ENVIO_INDETERMINADO: se conserva y se muestra lo informado, pero no se da por recibido ni se permite reenviar sin verificar en el gateway.
+//  · Un identificador que CONTRADICE al documento (CDC o número ajenos) es indeterminado, nunca éxito.
+//  · 4xx: solo es «rechazo seguro» (ERROR_ENVIO) lo que no deja duda de que el gateway no lo procesó; 408/409/423/425 y los mensajes de duplicado o ya
+//    existente son ambiguos (posible duplicidad) → ENVIO_INDETERMINADO. 5xx, timeout, red y respuesta ilegible → ENVIO_INDETERMINADO.
 // Un HTTP 2xx significa «el gateway respondió», NUNCA «aprobado por SIFEN»: estado_sifen solo lo fija la consulta de estado.
 
 export type EstadoLocalEnvio = "ENVIADO" | "ERROR_ENVIO" | "ENVIO_INDETERMINADO";
+/** Causa de un ERROR_ENVIO: define si el reenvío es seguro (AUTENTICACION/TRANSITORIO) o exige confirmación explícita (RECHAZO). */
+export type ErrorTipoEnvio = "AUTENTICACION" | "RECHAZO" | "TRANSITORIO";
 export type FaseEnvio = { fase: "AUTENTICACION" | "TRANSMISION" | "RESPUESTA"; ok: boolean; detalle: string; http?: number | null };
+export type DocumentoRecepcion = { tipo: string; establecimiento: string; puntoExpedicion: string; numero: string };
 
 export type ResultadoEnvio = {
   resultado: "OK" | "ERROR_HTTP" | "TIMEOUT" | "RED" | "RESPUESTA_INVALIDA";
   /** Fase en la que terminó el intento (para el historial). */
   faseFinal: "AUTENTICACION" | "TRANSMISION";
   estadoLocal: EstadoLocalEnvio;
+  /** Solo con ERROR_ENVIO. */
+  errorTipo: ErrorTipoEnvio | null;
   http: number | null;
   mensaje: string | null;
   lote: string | null;
+  /** CDC coherente con el documento (el único que se guarda en el documento). */
   cdc: string | null;
+  /** CDC tal como lo informó el gateway (44 dígitos), coherente o no: queda como evidencia del intento. */
+  cdcInformado: string | null;
   estadoGateway: string | null;
   errores: string[];
   respuesta: Record<string, unknown> | null;
@@ -267,6 +281,13 @@ const CLAVES_ERRORES = new Set(["errors", "errores", "validaciones", "validation
 const CLAVES_MENSAJE = new Set(["message", "mensaje", "msg"]);
 const CLAVES_CDC = new Set(["cdc"]);
 const CLAVES_ESTADO = new Set(["estado"]);
+const DUPLICADO = /duplicad|ya existe|ya fue|already|exist[ea]|registrad[oa] previamente|repetid/i;
+const CODIGO_TIPO: Record<string, string> = { FE: "01", AFE: "04", NCE: "05", NDE: "06", NRE: "07" };
+
+/** Mismo criterio que fe_cdc_coherente (SQL): tipo de DE y posiciones de establecimiento, punto y número (MT v150 §10.1). */
+export function cdcCoherente(doc: DocumentoRecepcion, cdc: string): boolean {
+  return /^\d{44}$/.test(cdc) && cdc.slice(0, 2) === CODIGO_TIPO[doc.tipo] && cdc.slice(11, 14) === doc.establecimiento && cdc.slice(14, 17) === doc.puntoExpedicion && cdc.slice(17, 24) === doc.numero;
+}
 
 function buscar(v: unknown, claves: Set<string>, profundidad = 0): unknown {
   if (profundidad > 5 || v === null || typeof v !== "object") return undefined;
@@ -299,19 +320,15 @@ function listaErrores(v: unknown): string[] {
   return items.slice(0, 20).map((x) => (typeof x === "string" ? x.slice(0, 300) : JSON.stringify(sanearRespuesta(x)).slice(0, 300)));
 }
 
-const resultadoEnvioVacio = (resultado: ResultadoEnvio["resultado"], faseFinal: ResultadoEnvio["faseFinal"], estadoLocal: EstadoLocalEnvio, http: number | null, mensaje: string | null, fases: FaseEnvio[]): ResultadoEnvio => ({
-  resultado, faseFinal, estadoLocal, http, mensaje, lote: null, cdc: null, estadoGateway: null, errores: [], respuesta: null, fases,
-});
+const resultadoEnvioVacio = (
+  resultado: ResultadoEnvio["resultado"], faseFinal: ResultadoEnvio["faseFinal"], estadoLocal: EstadoLocalEnvio, errorTipo: ErrorTipoEnvio | null, http: number | null, mensaje: string | null, fases: FaseEnvio[],
+): ResultadoEnvio => ({ resultado, faseFinal, estadoLocal, errorTipo: estadoLocal === "ERROR_ENVIO" ? errorTipo : null, http, mensaje, lote: null, cdc: null, cdcInformado: null, estadoGateway: null, errores: [], respuesta: null, fases });
 
 /**
- * Interpreta la respuesta de recepcion_de sin suponer su forma:
- *  · 2xx + JSON con status «success»  → OK / ENVIADO (el gateway lo recibió; el estado fiscal queda por consultar).
- *  · 2xx + status «error»              → rechazo informado por el gateway (ERROR_ENVIO, con sus mensajes de validación).
- *  · 2xx sin forma reconocible         → RESPUESTA_INVALIDA / ENVIO_INDETERMINADO (pudo haberlo recibido: no se reenvía a ciegas).
- *  · 4xx                               → el gateway lo rechazó: ERROR_ENVIO (los datos deben corregirse; no hubo recepción).
- *  · 5xx                               → ENVIO_INDETERMINADO (el servidor pudo haber procesado parte de la solicitud).
+ * Interpreta la respuesta de recepcion_de sin suponer su forma (ver la política conservadora arriba). `doc` identifica el documento enviado; sin él ninguna
+ * respuesta puede certificar la recepción.
  */
-export function interpretarRecepcion(http: number, cuerpoTexto: string, fases: FaseEnvio[] = []): ResultadoEnvio {
+export function interpretarRecepcion(http: number, cuerpoTexto: string, fases: FaseEnvio[] = [], doc?: DocumentoRecepcion): ResultadoEnvio {
   let cuerpo: unknown;
 
   try {
@@ -322,31 +339,56 @@ export function interpretarRecepcion(http: number, cuerpoTexto: string, fases: F
 
   const raiz = cuerpo && typeof cuerpo === "object" && !Array.isArray(cuerpo) ? (cuerpo as Record<string, unknown>) : null;
   const cdcTexto = raiz ? comoTexto(buscar(raiz, CLAVES_CDC), 60) : null;
+  const cdcInformado = cdcTexto && /^\d{44}$/.test(cdcTexto) ? cdcTexto : null;
   const mensaje = raiz ? comoTexto(buscar(raiz, CLAVES_MENSAJE)) : null;
-  const base = (r: ResultadoEnvio["resultado"], estado: EstadoLocalEnvio, texto: string | null): ResultadoEnvio => ({
-    ...resultadoEnvioVacio(r, "TRANSMISION", estado, http, texto, fases),
+  const errores = raiz ? listaErrores(buscar(raiz, CLAVES_ERRORES)) : [];
+  const duplicado = DUPLICADO.test([mensaje ?? "", ...errores].join(" "));
+  const base = (r: ResultadoEnvio["resultado"], estado: EstadoLocalEnvio, errorTipo: ErrorTipoEnvio | null, texto: string | null): ResultadoEnvio => ({
+    ...resultadoEnvioVacio(r, "TRANSMISION", estado, errorTipo, http, texto, fases),
     respuesta: cuerpo === undefined ? null : respuestaParaGuardar(cuerpo),
     lote: raiz ? comoTexto(buscar(raiz, CLAVES_LOTE), 60) : null,
-    cdc: cdcTexto && /^\d{44}$/.test(cdcTexto) ? cdcTexto : null,
+    cdcInformado,
     estadoGateway: raiz ? comoTexto(buscar(raiz, CLAVES_ESTADO), 120) : null,
-    errores: raiz ? listaErrores(buscar(raiz, CLAVES_ERRORES)) : [],
+    errores,
   });
+  const indeterminado = (texto: string, r: ResultadoEnvio["resultado"] = "RESPUESTA_INVALIDA") => base(r, "ENVIO_INDETERMINADO", null, texto);
 
-  if (http >= 500) return base("ERROR_HTTP", "ENVIO_INDETERMINADO", mensaje ?? `El gateway respondió HTTP ${http}.`);
-  if (http >= 400) return base("ERROR_HTTP", "ERROR_ENVIO", mensaje ?? `El gateway rechazó la solicitud (HTTP ${http}).`);
+  if (http >= 500) return indeterminado(mensaje ?? `El gateway respondió HTTP ${http}.`, "ERROR_HTTP");
+  if (http >= 400) {
+    // Ambiguos: pudo haberse procesado o ya existir (posible duplicidad) → nunca reintentable sin verificar.
+    if ([408, 409, 423, 425].includes(http) || duplicado) return indeterminado(mensaje ?? `El gateway respondió HTTP ${http}: el documento pudo haberse procesado o ya existir.`, "ERROR_HTTP");
+    if (http === 401 || http === 403) return base("ERROR_HTTP", "ERROR_ENVIO", "AUTENTICACION", mensaje ?? `El gateway rechazó la autorización (HTTP ${http}).`);
+    if (http === 429) return base("ERROR_HTTP", "ERROR_ENVIO", "TRANSITORIO", mensaje ?? "El gateway limitó la frecuencia de solicitudes (HTTP 429).");
+
+    return base("ERROR_HTTP", "ERROR_ENVIO", "RECHAZO", mensaje ?? `El gateway rechazó la solicitud (HTTP ${http}).`);
+  }
   if (http >= 200 && http < 300 && raiz) {
-    if (raiz.status === "success") return base("OK", "ENVIADO", mensaje);
-    if (raiz.status === "error") return base("ERROR_HTTP", "ERROR_ENVIO", mensaje ?? "El gateway informó un error.");
+    if (raiz.status === "error") {
+      return duplicado ? indeterminado(mensaje ?? "El gateway informó un error de duplicidad.", "ERROR_HTTP") : base("ERROR_HTTP", "ERROR_ENVIO", "RECHAZO", mensaje ?? "El gateway informó un error.");
+    }
+    if (raiz.status === "success") {
+      const eco = { est: comoTexto(buscar(raiz, new Set(["dest"])), 10), pun: comoTexto(buscar(raiz, new Set(["dpunexp"])), 10), num: comoTexto(buscar(raiz, new Set(["dnumdoc"])), 10) };
+      const hayEco = eco.est !== null || eco.pun !== null || eco.num !== null;
+      const ecoOk = doc !== undefined && eco.est === doc.establecimiento && eco.pun === doc.puntoExpedicion && eco.num === doc.numero;
+
+      if (doc && cdcInformado && !cdcCoherente(doc, cdcInformado)) return indeterminado("El CDC informado por el gateway no corresponde al documento enviado: verifique en el gateway antes de reenviar.");
+      if (doc && hayEco && !ecoOk) return indeterminado("El número de documento devuelto por el gateway no coincide con el enviado: verifique en el gateway antes de reenviar.");
+      if (doc && ((cdcInformado && cdcCoherente(doc, cdcInformado)) || ecoOk)) return { ...base("OK", "ENVIADO", null, mensaje), cdc: cdcInformado };
+
+      return indeterminado("El gateway respondió sin identificar el documento recibido (sin CDC ni número): no se confirma la recepción; verifique en el gateway antes de reenviar.");
+    }
   }
 
-  return base("RESPUESTA_INVALIDA", "ENVIO_INDETERMINADO", "La respuesta del gateway no se pudo interpretar; el documento pudo haber sido recibido.");
+  return indeterminado("La respuesta del gateway no se pudo interpretar; el documento pudo haber sido recibido.");
 }
 
 /**
  * Autentica y transmite UN documento ya reservado y persistido. No lanza por fallos del gateway: devuelve el resultado y las fases para el registro y
  * el modal técnico. Sin credenciales no se llama a nadie. El 401 de recepcion_de (token vencido) se renueva UNA vez: un 401 no procesó nada.
  */
-export async function enviarDocumentoGateway(config: ConfigGateway, payload: Record<string, unknown>, dep: Dependencias = {}): Promise<ResultadoEnvio | { sinContrato: "CREDENCIALES" }> {
+export async function enviarDocumentoGateway(
+  config: ConfigGateway, payload: Record<string, unknown>, doc: DocumentoRecepcion, dep: Dependencias = {},
+): Promise<ResultadoEnvio | { sinContrato: "CREDENCIALES" }> {
   const credenciales = leerCredenciales(config.credencialRef, dep.env);
 
   if (!credenciales) return { sinContrato: "CREDENCIALES" };
@@ -361,7 +403,7 @@ export async function enviarDocumentoGateway(config: ConfigGateway, payload: Rec
       fases.push({ fase: "AUTENTICACION", ok: false, detalle: token.mensaje, http: token.http });
 
       // Nada se transmitió: es seguro reintentar más tarde.
-      return resultadoEnvioVacio(token.resultado, "AUTENTICACION", "ERROR_ENVIO", token.http, token.mensaje, fases);
+      return resultadoEnvioVacio(token.resultado, "AUTENTICACION", "ERROR_ENVIO", "AUTENTICACION", token.http, token.mensaje, fases);
     }
     fases.push({ fase: "AUTENTICACION", ok: true, detalle: forzar ? "Sesión renovada con el gateway." : "Autenticación obtenida." });
 
@@ -372,7 +414,7 @@ export async function enviarDocumentoGateway(config: ConfigGateway, payload: Rec
 
       fases.push({ fase: "TRANSMISION", ok: false, detalle: m });
 
-      return resultadoEnvioVacio(r.motivo, "TRANSMISION", "ENVIO_INDETERMINADO", null, m, fases);
+      return resultadoEnvioVacio(r.motivo, "TRANSMISION", "ENVIO_INDETERMINADO", null, null, m, fases);
     }
     if (r.status === 401 && !forzar) {
       fases.push({ fase: "TRANSMISION", ok: false, detalle: "Token rechazado (HTTP 401); se renueva la sesión.", http: 401 });
@@ -381,12 +423,15 @@ export async function enviarDocumentoGateway(config: ConfigGateway, payload: Rec
 
     fases.push({ fase: "TRANSMISION", ok: true, detalle: "Solicitud transmitida.", http: r.status });
 
-    const res = interpretarRecepcion(r.status, r.texto, fases);
+    const res = interpretarRecepcion(r.status, r.texto, fases, doc);
+    const detalle = res.estadoLocal === "ENVIADO"
+      ? "El gateway confirmó la recepción del documento. El estado fiscal (SIFEN) aún no está confirmado."
+      : res.estadoLocal === "ENVIO_INDETERMINADO" ? `Recepción NO confirmada: ${res.mensaje ?? "respuesta no concluyente"}` : (res.mensaje ?? "Respuesta del gateway");
 
-    fases.push({ fase: "RESPUESTA", ok: res.resultado === "OK", detalle: res.resultado === "OK" ? "El gateway recibió el documento. El estado fiscal (SIFEN) aún no está confirmado." : (res.mensaje ?? "Respuesta del gateway"), http: r.status });
+    fases.push({ fase: "RESPUESTA", ok: res.estadoLocal === "ENVIADO", detalle, http: r.status });
 
     return res;
   }
 
-  return resultadoEnvioVacio("ERROR_HTTP", "AUTENTICACION", "ERROR_ENVIO", 401, "El gateway rechazó el token tras renovarlo.", fases);
+  return resultadoEnvioVacio("ERROR_HTTP", "AUTENTICACION", "ERROR_ENVIO", "AUTENTICACION", 401, "El gateway rechazó el token tras renovarlo.", fases);
 }

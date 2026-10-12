@@ -23,14 +23,18 @@ type Resumen = {
 };
 type FaseEnvio = { fase: string; ok: boolean; detalle: string; http?: number | null };
 type ResultadoEnvio = {
-  documentoId: string; numero: string; reutilizado: boolean; estadoLocal: string; resultado: string; http: number | null; mensaje: string | null; lote: string | null; cdc: string | null;
+  documentoId: string; numero: string; reutilizado: boolean; estadoLocal: string; errorTipo: string | null; resultado: string; http: number | null; mensaje: string | null; lote: string | null; cdc: string | null;
   estadoGateway: string | null; errores: string[]; fases: FaseEnvio[];
 };
 const ETIQUETA_FASE: Record<string, string> = { AUTENTICACION: "Autenticación", TRANSMISION: "Transmisión", RESPUESTA: "Respuesta" };
 const ETIQUETA_RESULTADO: Record<string, string> = {
-  OK: "Recibido por el gateway", ERROR_HTTP: "Rechazado o error del gateway", TIMEOUT: "Tiempo de espera agotado", RED: "Error de red", RESPUESTA_INVALIDA: "Respuesta no interpretable", YA_ENVIADO: "Ya enviado anteriormente",
+  OK: "Recepción confirmada por el gateway", ERROR_HTTP: "Rechazado o error del gateway", TIMEOUT: "Tiempo de espera agotado", RED: "Error de red", RESPUESTA_INVALIDA: "Respuesta no interpretable", YA_ENVIADO: "Ya enviado anteriormente",
 };
-const ETIQUETA_ESTADO_LOCAL: Record<string, string> = { ENVIADO: "Enviado", ERROR_ENVIO: "Error de envío (puede reintentarse)", ENVIO_INDETERMINADO: "Envío indeterminado (no reenviar sin consultar)" };
+const ETIQUETA_ESTADO_LOCAL: Record<string, string> = {
+  ENVIADO: "Recepción confirmada por el gateway",
+  ERROR_ENVIO: "Error de envío",
+  ENVIO_INDETERMINADO: "Recepción NO confirmada (verifique en el gateway; no se reenvía automáticamente)",
+};
 
 const ETIQUETA_IVA: Record<number, string> = { 1: "Gravado", 2: "Exonerado", 3: "Exento", 4: "Gravado parcial" };
 const gs = (n: number) => n.toLocaleString("es-PY", { maximumFractionDigits: 8 });
@@ -254,7 +258,8 @@ export default function NuevaFacturaPage() {
         <div className={resultado.estadoLocal === "ENVIADO" ? ui.alertOk : ui.alertError} role="status">
           <strong>Factura {resultado.numero}: {ETIQUETA_ESTADO_LOCAL[resultado.estadoLocal] ?? resultado.estadoLocal}.</strong> El estado fiscal (SIFEN) se confirma en Documentos electrónicos con la consulta de estado; recibir la factura no equivale a aprobarla.{" "}
           <Link href="/documentos">Ver documentos electrónicos</Link>
-          {resultado.estadoLocal === "ERROR_ENVIO" ? <> · <button type="button" className={ui.clearButton} disabled={enviando} onClick={reintentar}>Reintentar envío</button></> : null}
+          {resultado.estadoLocal === "ERROR_ENVIO" && resultado.errorTipo !== "RECHAZO" ? <> · <button type="button" className={ui.clearButton} disabled={enviando} onClick={reintentar}>Reintentar envío</button></> : null}
+          {resultado.estadoLocal === "ERROR_ENVIO" && resultado.errorTipo === "RECHAZO" ? <> · El gateway rechazó el documento; se conserva su número. El reenvío del mismo contenido se confirma desde Documentos electrónicos.</> : null}
           {" "}· <button type="button" className={ui.clearButton} onClick={nueva}>Nueva factura</button>{" "}
           <button type="button" className={ui.clearButton} onClick={() => setMostrarEnvio(true)}>Ver detalle técnico</button>
         </div>

@@ -10,7 +10,7 @@ import { ETIQUETA_SIFEN, estadoSifenDesdeGateway, numeroDocumento } from "@/lib/
 import { claveToken, consultarDocumentoGateway, enviarDocumentoGateway, interpretarRecepcion, interpretarConsulta, leerCredenciales, limpiarCacheTokens, sanearRespuesta, tamanoCacheTokens, tipoDocConsulta, type FetchLike } from "@/lib/facturacion/gateway";
 import { calcularItem, calcularSubtotales, numeroDec, parseDec, textoDec } from "@/lib/facturacion/calculo";
 import { crearFacturaElectronica, leerCuerpoFactura, prepararFactura } from "@/lib/facturacion/emision";
-import { emitirFactura } from "@/lib/facturacion/envio";
+import { emitirFactura, enviarDocumento } from "@/lib/facturacion/envio";
 import { construirPayloadFE, FORMAS_PAGO, validarEntradaFE, totalFactura, type EntradaFE, type LineaFE, type ReceptorFE } from "@/lib/facturacion/payload-fe";
 import { construirConsultas, consultarEstado, ErrorFacturacion, ErrorValidacionFiscal, leerDocumentos, normalizarConsulta, respuestaErrorFacturacion } from "@/lib/facturacion/shared";
 
@@ -412,15 +412,33 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
   cierto("formulario: el navegador solo envía ids, cantidades y forma de pago (nunca precio, IVA ni total), con clave de idempotencia por operación, sin localStorage y con protección de cambios", /claveIdempotencia: clave/.test(formulario) && /crypto\.randomUUID\(\)/.test(formulario) && !/precio:|total:|afectacion:/.test(formulario.slice(formulario.indexOf("const cuerpoFactura"), formulario.indexOf("const cuerpoFactura") + 520)) && !/localStorage/.test(formulario) && /useProtegerCambios/.test(formulario));
 
   // ══ F-02 completa: Grabar → resumen → Enviar → envío por el backend ═══════════════════════════════════════════════════════════════════════════════
+  const DOC_ENVIO = { tipo: "FE", establecimiento: "001", puntoExpedicion: "002", numero: "0050000" };
+  const CDC_FE = "01" + "80000005" + "6" + "001" + "002" + "0050000" + "1" + "20261012" + "1" + "123456789" + "0"; // coherente con DOC_ENVIO
   const PAYLOAD_ENVIO = { iTiDE: 1, dEst: "001", dPunExp: "002", dNumDoc: "0050000", dSerieNum: null, Subtotales: [{ dTotGralOpe: 11000 }] };
   const bodyRecepcion = (g: ReturnType<typeof gateway>) => g.llamadas.filter((l) => l.url.endsWith("/api/recepcion_de"));
   const resultadoDe = (r: unknown) => r as import("@/lib/facturacion/gateway").ResultadoEnvio;
 
   // ── Interpretación de recepcion_de (sin inventar su forma)
-  const exito = interpretarRecepcion(200, JSON.stringify({ status: "success", message: "Documento recibido" }));
+  const exito = interpretarRecepcion(200, JSON.stringify({ status: "success", message: "Documento recibido", cdc: CDC_FE }), [], DOC_ENVIO);
+  const sinIdentificar = interpretarRecepcion(200, JSON.stringify({ status: "success", message: "Documento recibido", lote: "L-1" }), [], DOC_ENVIO);
 
-  igual("recepción: 2xx con status success → recibido (ENVIADO), sin lote ni CDC inventados y sin estado fiscal", [exito.resultado, exito.estadoLocal, exito.lote, exito.cdc, exito.estadoGateway, exito.mensaje], ["OK", "ENVIADO", null, null, null, "Documento recibido"]);
-  igual("recepción: el lote solo aparece si la respuesta lo trae (búsqueda tolerante por nombre) y el CDC solo si es válido", (() => { const a = interpretarRecepcion(200, JSON.stringify({ status: "success", data: { NroLote: 12345, CDC: CDC } })); const b = interpretarRecepcion(200, JSON.stringify({ status: "success", cdc: "123" })); return [a.lote, a.cdc, b.cdc]; })(), ["12345", CDC, null]);
+  igual("recepción: 2xx success con CDC coherente con el documento → recepción confirmada (ENVIADO); el CDC y el mensaje son los informados y no hay estado fiscal", [exito.resultado, exito.estadoLocal, exito.lote, exito.cdc, exito.estadoGateway, exito.mensaje], ["OK", "ENVIADO", null, CDC_FE, null, "Documento recibido"]);
+  igual("recepción: 2xx success que NO identifica el documento (solo lote/mensaje) NO confirma la recepción → ENVIO_INDETERMINADO, conservando el lote informado", [sinIdentificar.resultado, sinIdentificar.estadoLocal, sinIdentificar.lote, sinIdentificar.cdc, sinIdentificar.errorTipo], ["RESPUESTA_INVALIDA", "ENVIO_INDETERMINADO", "L-1", null, null]);
+  igual("recepción: sin conocer el documento enviado ninguna respuesta puede certificar la recepción", interpretarRecepcion(200, JSON.stringify({ status: "success", cdc: CDC_FE })).estadoLocal, "ENVIO_INDETERMINADO");
+  igual("recepción: número devuelto (dEst/dPunExp/dNumDoc) igual al enviado confirma; distinto o CDC de otro documento → indeterminado (nunca éxito)", [
+    interpretarRecepcion(200, JSON.stringify({ status: "success", data: { dEst: "001", dPunExp: "002", dNumDoc: "0050000" } }), [], DOC_ENVIO).estadoLocal,
+    interpretarRecepcion(200, JSON.stringify({ status: "success", data: { dEst: "001", dPunExp: "002", dNumDoc: "0050001" } }), [], DOC_ENVIO).estadoLocal,
+    interpretarRecepcion(200, JSON.stringify({ status: "success", cdc: CDC }), [], DOC_ENVIO).estadoLocal,
+    interpretarRecepcion(200, JSON.stringify({ status: "success", cdc: CDC }), [], DOC_ENVIO).cdcInformado,
+  ], ["ENVIADO", "ENVIO_INDETERMINADO", "ENVIO_INDETERMINADO", CDC]);
+  igual("recepción 4xx: 400/422/404 → rechazo seguro (RECHAZO); 401/403 → AUTENTICACION; 429 → TRANSITORIO", [400, 422, 404, 401, 403, 429].map((h) => interpretarRecepcion(h, JSON.stringify({ message: "x" }), [], DOC_ENVIO)).map((r) => [r.estadoLocal, r.errorTipo]), [["ERROR_ENVIO", "RECHAZO"], ["ERROR_ENVIO", "RECHAZO"], ["ERROR_ENVIO", "RECHAZO"], ["ERROR_ENVIO", "AUTENTICACION"], ["ERROR_ENVIO", "AUTENTICACION"], ["ERROR_ENVIO", "TRANSITORIO"]]);
+  igual("recepción 4xx ambiguos (408/409/423/425) y mensajes de duplicado/«ya existe» → ENVIO_INDETERMINADO (posible duplicidad), jamás reintentable", [
+    ...[408, 409, 423, 425].map((h) => interpretarRecepcion(h, "{}", [], DOC_ENVIO).estadoLocal),
+    interpretarRecepcion(400, JSON.stringify({ message: "Documento duplicado" }), [], DOC_ENVIO).estadoLocal,
+    interpretarRecepcion(422, JSON.stringify({ errors: ["El documento ya existe"] }), [], DOC_ENVIO).estadoLocal,
+    interpretarRecepcion(200, JSON.stringify({ status: "error", message: "Número ya registrado previamente" }), [], DOC_ENVIO).estadoLocal,
+  ], Array(7).fill("ENVIO_INDETERMINADO"));
+  igual("recepción: el lote solo aparece si la respuesta lo trae (búsqueda tolerante por nombre) y el CDC solo si es válido", (() => { const a = interpretarRecepcion(200, JSON.stringify({ status: "success", data: { NroLote: 12345, CDC: CDC_FE } }), [], DOC_ENVIO); const b = interpretarRecepcion(200, JSON.stringify({ status: "success", cdc: "123" }), [], DOC_ENVIO); return [a.lote, a.cdc, b.cdc]; })(), ["12345", CDC_FE, null]);
   igual("recepción: 2xx con status error → rechazo informado (ERROR_ENVIO) con sus errores de validación", (() => { const r = interpretarRecepcion(200, JSON.stringify({ status: "error", message: "Validación fallida", errors: ["dRucRec inválido", { campo: "dDVRec", detalle: "DV incorrecto" }] })); return [r.resultado, r.estadoLocal, r.mensaje, r.errores.length, r.errores[0]]; })(), ["ERROR_HTTP", "ERROR_ENVIO", "Validación fallida", 2, "dRucRec inválido"]);
   igual("recepción: 4xx → ERROR_ENVIO (no hubo recepción); 5xx → ENVIO_INDETERMINADO; 2xx sin forma reconocible o no JSON → ENVIO_INDETERMINADO", [
     interpretarRecepcion(400, JSON.stringify({ message: "Datos inválidos" })).estadoLocal, interpretarRecepcion(422, "{}").estadoLocal, interpretarRecepcion(500, "boom").estadoLocal,
@@ -430,40 +448,40 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
 
   // ── Transporte del envío (fetch simulado)
   limpiarCacheTokens();
-  const ge1 = gateway({ consulta: [{ status: 200, cuerpo: { status: "success", message: "ok", lote: "L-77" } }] });
-  const e1 = resultadoDe(await enviarDocumentoGateway(CONFIG, PAYLOAD_ENVIO, { fetch: ge1.fetch, env: ENV }));
+  const ge1 = gateway({ consulta: [{ status: 200, cuerpo: { status: "success", message: "ok", lote: "L-77", cdc: CDC_FE } }] });
+  const e1 = resultadoDe(await enviarDocumentoGateway(CONFIG, PAYLOAD_ENVIO, DOC_ENVIO, { fetch: ge1.fetch, env: ENV }));
 
   igual("envío: login y luego POST /api/recepcion_de con Bearer y el payload TAL CUAL se guardó (sin campos añadidos)", [ge1.llamadas.map((l) => l.url.replace(CONFIG.baseUrl, "")), bodyRecepcion(ge1)[0].headers.Authorization, bodyRecepcion(ge1)[0].body], [["/api/login", "/api/recepcion_de"], `Bearer ${TOKEN}`, PAYLOAD_ENVIO]);
   igual("envío: fases autenticación → transmisión (HTTP) → respuesta, lote informado y estado local ENVIADO", [e1.fases.map((f) => `${f.fase}:${f.ok}`), e1.fases[1].http, e1.lote, e1.estadoLocal, e1.faseFinal], [["AUTENTICACION:true", "TRANSMISION:true", "RESPUESTA:true"], 200, "L-77", "ENVIADO", "TRANSMISION"]);
   igual("envío: el resultado nunca contiene clave ni token", [JSON.stringify(e1).includes(SECRETO), JSON.stringify(e1).includes(TOKEN)], [false, false]);
 
   limpiarCacheTokens();
-  const ge2 = gateway({ consulta: [{ status: 401, cuerpo: {} }, { status: 200, cuerpo: { status: "success" } }] });
-  const e2 = resultadoDe(await enviarDocumentoGateway(CONFIG, PAYLOAD_ENVIO, { fetch: ge2.fetch, env: ENV }));
+  const ge2 = gateway({ consulta: [{ status: 401, cuerpo: {} }, { status: 200, cuerpo: { status: "success", cdc: CDC_FE } }] });
+  const e2 = resultadoDe(await enviarDocumentoGateway(CONFIG, PAYLOAD_ENVIO, DOC_ENVIO, { fetch: ge2.fetch, env: ENV }));
 
   igual("envío: ante 401 renueva la sesión UNA vez y reintenta (un 401 no procesó nada)", [e2.estadoLocal, ge2.llamadas.map((l) => l.url.replace(CONFIG.baseUrl, ""))], ["ENVIADO", ["/api/login", "/api/recepcion_de", "/api/login", "/api/recepcion_de"]]);
 
   limpiarCacheTokens();
   const ge3 = gateway({ consulta: ["TIMEOUT"] });
   const ge4 = gateway({ consulta: ["RED"] });
-  const e3 = resultadoDe(await enviarDocumentoGateway(CONFIG, PAYLOAD_ENVIO, { fetch: ge3.fetch, env: ENV }));
+  const e3 = resultadoDe(await enviarDocumentoGateway(CONFIG, PAYLOAD_ENVIO, DOC_ENVIO, { fetch: ge3.fetch, env: ENV }));
   limpiarCacheTokens();
-  const e4 = resultadoDe(await enviarDocumentoGateway(CONFIG, PAYLOAD_ENVIO, { fetch: ge4.fetch, env: ENV }));
+  const e4 = resultadoDe(await enviarDocumentoGateway(CONFIG, PAYLOAD_ENVIO, DOC_ENVIO, { fetch: ge4.fetch, env: ENV }));
 
   igual("envío: timeout o error de red DESPUÉS de transmitir → ENVIO_INDETERMINADO (jamás reenvío ciego)", [e3.resultado, e3.estadoLocal, e4.resultado, e4.estadoLocal], ["TIMEOUT", "ENVIO_INDETERMINADO", "RED", "ENVIO_INDETERMINADO"]);
 
   limpiarCacheTokens();
   const ge5 = gateway({ login: [{ status: 401, cuerpo: { status: "error", message: `clave ${SECRETO}` } }], consulta: [] });
-  const e5 = resultadoDe(await enviarDocumentoGateway(CONFIG, PAYLOAD_ENVIO, { fetch: ge5.fetch, env: ENV }));
+  const e5 = resultadoDe(await enviarDocumentoGateway(CONFIG, PAYLOAD_ENVIO, DOC_ENVIO, { fetch: ge5.fetch, env: ENV }));
 
   igual("envío: falla de autenticación → nada se transmite, fase AUTENTICACION, ERROR_ENVIO (reintentable) y sin filtrar la clave", [e5.faseFinal, e5.estadoLocal, bodyRecepcion(ge5).length, JSON.stringify(e5).includes(SECRETO), e5.fases[0].ok], ["AUTENTICACION", "ERROR_ENVIO", 0, false, false]);
 
   limpiarCacheTokens();
   const ge6 = gateway({ consulta: [{ status: 400, cuerpo: { status: "error", message: "dRucRec inválido", errors: ["dRucRec: formato"] } }] });
-  const e6 = resultadoDe(await enviarDocumentoGateway(CONFIG, PAYLOAD_ENVIO, { fetch: ge6.fetch, env: ENV }));
+  const e6 = resultadoDe(await enviarDocumentoGateway(CONFIG, PAYLOAD_ENVIO, DOC_ENVIO, { fetch: ge6.fetch, env: ENV }));
 
   igual("envío: rechazo 400 del gateway → ERROR_ENVIO con mensaje y errores de validación visibles, HTTP 400, sin lote", [e6.estadoLocal, e6.http, e6.mensaje, e6.errores, e6.lote], ["ERROR_ENVIO", 400, "dRucRec inválido", ["dRucRec: formato"], null]);
-  igual("envío: sin credenciales no se llama a nadie", await enviarDocumentoGateway(CONFIG, PAYLOAD_ENVIO, { fetch: gateway({ consulta: [] }).fetch, env: {} }), { sinContrato: "CREDENCIALES" });
+  igual("envío: sin credenciales no se llama a nadie", await enviarDocumentoGateway(CONFIG, PAYLOAD_ENVIO, DOC_ENVIO, { fetch: gateway({ consulta: [] }).fetch, env: {} }), { sinContrato: "CREDENCIALES" });
 
   // ── Previa («Grabar»): sin escrituras ni numeración
   const consultasPrevia: string[] = [];
@@ -489,7 +507,7 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
         if (/fe_documento_iniciar_envio/.test(sql)) {
           if (o.iniciarDetalle) throw Object.assign(new Error("estado"), { detail: o.iniciarDetalle });
 
-          return { rows: [{ resultado: o.inicio ?? "INICIADO", payload: o.inicio === "INDETERMINADO" ? null : PAYLOAD_ENVIO, numero: "0050000" }] };
+          return { rows: [{ resultado: o.inicio ?? "INICIADO", payload: o.inicio === "INDETERMINADO" ? null : PAYLOAD_ENVIO, numero: "0050000", tipo: "FE", establecimiento: "001", punto: "002" }] };
         }
         if (/fe_documento_registrar_envio/.test(sql)) return { rows: [{ fe_documento_registrar_envio: parametros[5] }] };
 
@@ -503,15 +521,15 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
   const orden = (l: SqlEnvio[]) => l.map((x) => (/fe_gateway_config/.test(x.sql) ? "config" : /fe_documento_crear_fe/.test(x.sql) ? "crear" : /fe_documento_iniciar_envio/.test(x.sql) ? "iniciar" : /fe_documento_registrar_envio/.test(x.sql) ? "registrar" : "otro")).filter((x) => x !== "otro");
 
   limpiarCacheTokens();
-  const gE = gateway({ consulta: [{ status: 200, cuerpo: { status: "success", message: "Recibido" } }] });
+  const gE = gateway({ consulta: [{ status: 200, cuerpo: { status: "success", message: "Recibido", cdc: CDC_FE } }] });
   const m1 = mkDb();
   const em = await ejecutar(m1.db, gE.fetch);
 
   igual("emisión: orden config → crear → iniciar envío → registrar envío, con una sola transmisión", [orden(m1.llamadas), bodyRecepcion(gE).length], [["config", "crear", "config", "iniciar", "registrar"], 1]);
-  igual("emisión: respuesta con documento, número reservado, estado ENVIADO, HTTP 200, sin lote inventado y sin CDC", [em.documentoId, em.numero, em.reutilizado, em.estadoLocal, em.resultado, em.http, em.lote, em.cdc, em.fases.length], [DOC, "0050000", false, "ENVIADO", "OK", 200, null, null, 3]);
+  igual("emisión: respuesta con documento, número reservado, estado ENVIADO, HTTP 200, sin lote inventado; CDC solo el informado y coherente", [em.documentoId, em.numero, em.reutilizado, em.estadoLocal, em.resultado, em.http, em.lote, em.cdc, em.fases.length], [DOC, "0050000", false, "ENVIADO", "OK", 200, null, CDC_FE, 3]);
   const reg = m1.llamadas.find((l) => /fe_documento_registrar_envio/.test(l.sql))!;
 
-  igual("emisión: registra fase TRANSMISION, resultado OK, estado ENVIADO, HTTP 200 con empresa/usuario de la sesión; no envía estado SIFEN", [reg.parametros.slice(0, 6), reg.parametros[6], /estado_sifen/i.test(reg.sql)], [[EMPRESA, USUARIO, DOC, "TRANSMISION", "OK", "ENVIADO"], 200, false]);
+  igual("emisión: registra fase TRANSMISION, resultado OK, estado ENVIADO, HTTP 200 con empresa/usuario de la sesión; no envía estado SIFEN", [reg.parametros.slice(0, 6), reg.parametros[7], /estado_sifen/i.test(reg.sql)], [[EMPRESA, USUARIO, DOC, "TRANSMISION", "OK", "ENVIADO"], 200, false]);
   igual("emisión: el payload transmitido es exactamente el guardado en la solicitud (el de la base), no uno reconstruido", bodyRecepcion(gE)[0].body, PAYLOAD_ENVIO);
 
   const antesSql = (db: { llamadas: SqlEnvio[] }) => orden(db.llamadas);
@@ -536,7 +554,7 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
   const gErr = gateway({ consulta: [{ status: 400, cuerpo: { status: "error", message: "Rechazado", errors: ["x"] } }] });
   const emErr = await ejecutar(mErr.db, gErr.fetch);
 
-  igual("emisión: rechazo del gateway → ERROR_ENVIO persistido con HTTP 400 y errores devueltos para el modal", [emErr.estadoLocal, emErr.http, emErr.errores, mErr.llamadas.find((l) => /fe_documento_registrar_envio/.test(l.sql))!.parametros.slice(3, 7)], ["ERROR_ENVIO", 400, ["x"], ["TRANSMISION", "ERROR_HTTP", "ERROR_ENVIO", 400]]);
+  igual("emisión: rechazo del gateway → ERROR_ENVIO persistido con HTTP 400 y errores devueltos para el modal", [emErr.estadoLocal, emErr.http, emErr.errores, mErr.llamadas.find((l) => /fe_documento_registrar_envio/.test(l.sql))!.parametros.slice(3, 8)], ["ERROR_ENVIO", 400, ["x"], ["TRANSMISION", "ERROR_HTTP", "ERROR_ENVIO", "RECHAZO", 400]]);
 
   limpiarCacheTokens();
   const mTo = mkDb();
@@ -576,7 +594,7 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
   cierto("formulario: modal técnico con fases, HTTP, resultado, mensaje, errores de validación y lote/CDC solo si vienen; aclara que recibido/200 no es aprobado; sin token ni clave", /Envío al gateway \(diagnóstico de prueba\)/.test(formulario) && /resultado\.lote \?/.test(formulario) && /resultado\.errores\.length > 0/.test(formulario) && /no significan aprobado por SIFEN/.test(formulario) && /Autenticando y transmitiendo/.test(formulario) && !/token|password|Authorization|Bearer/i.test(formulario));
   cierto("formulario: la clave de idempotencia es la misma en cada reintento y el reintento de un documento existente usa el endpoint del documento (no crea ni consume número)", /claveIdempotencia: clave/.test(formulario) && /\/api\/documentos\/\$\{resultado\.documentoId\}\/enviar/.test(formulario) && /resultado\.estadoLocal === "ERROR_ENVIO"/.test(formulario));
   cierto("API: la previa no importa envío ni gateway (no puede escribir ni transmitir); la emisión usa emitirFactura; el reenvío del documento exige CREAR y alcance", !/envio|gateway/i.test(quitarComentarios(apiPrevia)) && /emitirFactura/.test(apiFacturas) && /prepararFacturacion\("CREAR"\)/.test(apiEnviarDoc) && /leerDocumento\(b\.db, b\.empresaId, b\.usuarioId, id\)/.test(apiEnviarDoc));
-  cierto("Documentos electrónicos: estado «Enviando», lote, historial con tipo de intento y fase, y botón «Enviar al gateway» solo con permiso CREAR y estado pendiente/error; HTTP 200 de envío no se muestra como aprobado", /ETIQUETA_LOCAL/.test(docPage) && /ENVIANDO: "Enviando"/.test(leer("lib/facturacion/estados.ts")) && /Enviar al gateway/.test(docPage) && /crear && \(d\.estadoLocal === "PENDIENTE_ENVIO" \|\| d\.estadoLocal === "ERROR_ENVIO"\)/.test(docPage) && /etiquetaIntento\(i\.tipo, i\.resultado\)/.test(docPage) && /Recibido por el gateway \(estado fiscal por consultar\)/.test(leer("lib/facturacion/estados.ts")) && /d\.lote \?\? "No informado"/.test(docPage));
+  cierto("Documentos electrónicos: estado «Enviando», lote, historial con tipo de intento y fase, y botón «Enviar al gateway» solo con permiso CREAR y estado pendiente/error; HTTP 200 de envío no se muestra como aprobado", /ETIQUETA_LOCAL/.test(docPage) && /ENVIANDO: "Enviando"/.test(leer("lib/facturacion/estados.ts")) && /Enviar al gateway/.test(docPage) && /crear && \(d\.estadoLocal === "PENDIENTE_ENVIO" \|\| \(d\.estadoLocal === "ERROR_ENVIO" && d\.envioErrorTipo !== "RECHAZO"\)\)/.test(docPage) && /etiquetaIntento\(i\.tipo, i\.resultado\)/.test(docPage) && /Recepción confirmada por el gateway \(estado fiscal por consultar\)/.test(leer("lib/facturacion/estados.ts")) && /d\.lote \?\? "No informado"/.test(docPage));
   cierto("el envío nunca fija estado_sifen y no mueve stock: ni envio.ts ni la API de envío mencionan estado_sifen/APROBADO ni inventario", !/estado_sifen|APROBADO|movimientos_inventario|stock_saldos/.test(quitarComentarios(leer("lib/facturacion/envio.ts") + apiEnviarDoc + apiFacturas)));
 
   // ══ Decisiones 47ff44c / AUD-FE-CAMPOS: fixture sintética equivalente al JSON funcional ═════════════════════════════════════════════════════════════
@@ -603,5 +621,80 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
 
   igual("catálogo del formulario: la lista de formas de pago ofrece únicamente Efectivo", JSON.stringify(FORMAS_PAGO), '{"1":"Efectivo"}');
   cierto("cliente fiscalmente incompleto: la emisión se bloquea con los pendientes de aptitud SIFEN, sin completar valores inventados", /evaluarAptitudCliente/.test(emisionTs) && /datos fiscales pendientes de regularizar/.test(emisionTs));
+  // ══ AUD-FE-F02: clasificación segura, control de reenvío, lote/CDC y emisión indeterminada ═══════════════════════════════════════════════════════════
+  const regDe = (m: { llamadas: SqlEnvio[] }) => m.llamadas.find((l) => /fe_documento_registrar_envio/.test(l.sql))!.parametros;
+
+  // ENV-01: éxito sin certificar el documento → indeterminado persistido, con lote conservado
+  limpiarCacheTokens();
+  const mSin = mkDb();
+  const emSin = await ejecutar(mSin.db, gateway({ consulta: [{ status: 200, cuerpo: { status: "success", message: "ok", lote: "L-9" } }] }).fetch);
+
+  igual("ENV-01: éxito del gateway que no identifica el documento → ENVIO_INDETERMINADO persistido (RESPUESTA_INVALIDA), con el lote informado conservado y sin CDC en el documento", [emSin.estadoLocal, emSin.resultado, emSin.lote, emSin.cdc, regDe(mSin).slice(3, 8), regDe(mSin)[11]], ["ENVIO_INDETERMINADO", "RESPUESTA_INVALIDA", "L-9", null, ["TRANSMISION", "RESPUESTA_INVALIDA", "ENVIO_INDETERMINADO", null, 200], "L-9"]);
+  igual("ENV-01: la fase de respuesta del modal NO dice que la recepción esté confirmada", emSin.fases.at(-1), { fase: "RESPUESTA", ok: false, detalle: "Recepción NO confirmada: El gateway respondió sin identificar el documento recibido (sin CDC ni número): no se confirma la recepción; verifique en el gateway antes de reenviar.", http: 200 });
+
+  // PERSISTENCIA lote/CDC: CDC coherente informado → documento y evidencia; CDC ajeno → solo evidencia y documento indeterminado
+  limpiarCacheTokens();
+  const mOk = mkDb();
+  const emOk = await ejecutar(mOk.db, gateway({ consulta: [{ status: 200, cuerpo: { status: "success", lote: "L-5", cdc: CDC_FE } }] }).fetch);
+
+  igual("persistencia: CDC coherente y lote del gateway viajan a la función (p_cdc = p_cdc_informado) y se devuelven; error_tipo nulo", [emOk.estadoLocal, emOk.lote, emOk.cdc, regDe(mOk)[6], regDe(mOk)[11], regDe(mOk)[12], regDe(mOk)[13]], ["ENVIADO", "L-5", CDC_FE, null, "L-5", CDC_FE, CDC_FE]);
+
+  limpiarCacheTokens();
+  const mAj = mkDb();
+  const emAj = await ejecutar(mAj.db, gateway({ consulta: [{ status: 200, cuerpo: { status: "success", lote: "L-6", cdc: CDC } }] }).fetch);
+
+  igual("persistencia: un CDC que no corresponde al documento NO se guarda en él (p_cdc nulo), queda como evidencia (p_cdc_informado) y el envío es indeterminado", [emAj.estadoLocal, regDe(mAj)[12], regDe(mAj)[13], emAj.cdc], ["ENVIO_INDETERMINADO", null, CDC, null]);
+
+  // ENV-02: rechazo, ambiguos y autenticación
+  limpiarCacheTokens();
+  const mRz = mkDb();
+  const emRz = await ejecutar(mRz.db, gateway({ consulta: [{ status: 422, cuerpo: { message: "Validación", errors: ["dRucRec"] } }] }).fetch);
+
+  igual("ENV-02: 422 de validación → ERROR_ENVIO con causa RECHAZO persistida (reenvío exige confirmación) y número conservado", [emRz.estadoLocal, emRz.errorTipo, regDe(mRz)[6], emRz.numero], ["ERROR_ENVIO", "RECHAZO", "RECHAZO", "0050000"]);
+
+  limpiarCacheTokens();
+  const mDu = mkDb();
+  const emDu = await ejecutar(mDu.db, gateway({ consulta: [{ status: 409, cuerpo: { message: "Conflicto" } }] }).fetch);
+
+  igual("ENV-02: 409 (posible duplicidad) → ENVIO_INDETERMINADO sin causa de error: no se puede reenviar", [emDu.estadoLocal, emDu.errorTipo, regDe(mDu)[6]], ["ENVIO_INDETERMINADO", null, null]);
+
+  limpiarCacheTokens();
+  const mTr = mkDb();
+  const emTr = await ejecutar(mTr.db, gateway({ consulta: [{ status: 429, cuerpo: {} }] }).fetch);
+
+  igual("ENV-02: 429 → ERROR_ENVIO TRANSITORIO (reintentable sin confirmación); falla de autenticación → AUTENTICACION", [emTr.errorTipo, regDe(mTr)[6], regDe(mAu)[6]], ["TRANSITORIO", "TRANSITORIO", "AUTENTICACION"]);
+
+  // ENV-02/03: el reenvío tras rechazo solo con confirmación; el indeterminado nunca se reenvía; la API pasa la confirmación solo si es literalmente true
+  const mConf = mkDb();
+  await enviarDocumento(mConf.db, EMPRESA, USUARIO, DOC, { fetch: gateway({ consulta: [{ status: 200, cuerpo: { status: "success", cdc: CDC_FE } }] }).fetch, env: ENV }, { confirmaRechazo: true });
+  const iniciar = (m: { llamadas: SqlEnvio[] }) => m.llamadas.find((l) => /fe_documento_iniciar_envio/.test(l.sql))!.parametros;
+
+  igual("ENV-02: iniciar envío recibe la confirmación explícita (4.º parámetro) solo cuando se pide; por defecto false", [iniciar(mConf)[3], iniciar(mRz)[3]], [true, false]);
+
+  const apiEnviar = leer("app/api/documentos/[id]/enviar/route.ts");
+
+  cierto("ENV-02: la API de reenvío toma la confirmación solo de `confirmarRechazo === true` y exige CREAR y alcance", /confirmaRechazo: cuerpo\.confirmarRechazo === true/.test(apiEnviar) && /prepararFacturacion\("CREAR"\)/.test(apiEnviar));
+  igual("ENV-02: REENVIO_REQUIERE_CONFIRMACION se informa como 409 con el número del documento en el flujo de emisión", await codigo(ejecutar(mkDb({ iniciarDetalle: "NEX:REENVIO_REQUIERE_CONFIRMACION" }).db, gateway({ consulta: [] }).fetch)), 409);
+
+  const m50 = leer("documentacao/banco/nexit/v1/migraciones/NEX-050-facturacion-envio-control.sql");
+  const r50 = leer("documentacao/banco/nexit/v1/scripts/reversion-NEX-050.sql");
+  const sc50 = m50.split("\n").filter((l) => !l.trim().startsWith("--")).join("\n");
+  const ini50 = sc50.slice(sc50.indexOf("CREATE FUNCTION public.fe_documento_iniciar_envio"), sc50.indexOf("CREATE FUNCTION public.fe_documento_registrar_envio"));
+  const reg50 = sc50.slice(sc50.indexOf("CREATE FUNCTION public.fe_documento_registrar_envio"), sc50.indexOf("CREATE OR REPLACE FUNCTION public.nex_aplicar_grants_facturacion_envio"));
+
+  cierto("NEX-050: incremental sobre NEX-049 (no la modifica), exige NEX-049, no reaplica; causa del error acotada y solo válida con ERROR_ENVIO; CDC informado de 44 dígitos como evidencia", /NEX-050 requiere NEX-049/.test(m50) && /NEX-050 parece aplicada/.test(m50) && /envio_error_tipo IN \('AUTENTICACION','RECHAZO','TRANSITORIO'\)/.test(m50) && /envio_error_tipo IS NULL OR estado_local = 'ERROR_ENVIO'/.test(m50) && /cdc_informado ~ '\^\[0-9\]\{44\}\$'/.test(m50) && !/envio_error_tipo|cdc_informado/.test(leer("documentacao/banco/nexit/v1/migraciones/NEX-049-facturacion-envio-fe.sql")));
+  cierto("NEX-050: un ERROR_ENVIO por RECHAZO solo se reenvía con p_confirma_rechazo (mismo documento y número, sin generar otro); indeterminado, en curso y ya enviado siguen bloqueados; el ENVIANDO huérfano se confirma como indeterminado (RETURN)", /d\.estado_local = 'ERROR_ENVIO' AND d\.envio_error_tipo = 'RECHAZO' AND NOT coalesce\(p_confirma_rechazo, false\)/.test(ini50) && /NEX:REENVIO_REQUIERE_CONFIRMACION/.test(ini50) && /NEX:ENVIO_INDETERMINADO/.test(ini50) && /NEX:ENVIO_EN_CURSO/.test(ini50) && /NEX:YA_ENVIADO/.test(ini50) && /RETURN QUERY SELECT 'INDETERMINADO'/.test(ini50) && !/fe_documento_crear_fe|ultimo_numero/.test(ini50));
+  cierto("NEX-050: registrar envío valida causa↔estado (ERROR_ENVIO exige causa; las demás no), guarda el CDC en el documento solo si es coherente, el informado como evidencia del intento, y nunca toca estado_sifen", /\(p_estado_local = 'ERROR_ENVIO'\) <> \(p_error_tipo IS NOT NULL\)/.test(reg50) && /public\.fe_cdc_coherente\(tipo, establecimiento, punto_expedicion, numero, p_cdc\)/.test(reg50) && /cdc_informado, mensaje, respuesta, actor_id\)/.test(reg50) && !/estado_sifen/.test(reg50.slice(reg50.indexOf("UPDATE public.documentos_electronicos"))));
+  cierto("NEX-050: reemplaza las funciones por las firmas nuevas (DROP de las anteriores), concede EXECUTE solo a las nuevas y la reversión aborta si hay causas/CDC informados y restaura NEX-049", /DROP FUNCTION public\.fe_documento_iniciar_envio\(uuid, uuid, uuid\)/.test(m50) && /GRANT EXECUTE ON FUNCTION public\.fe_documento_registrar_envio\(uuid, uuid, uuid, text, text, text, text, integer, text, text, text, text, text, text, jsonb\) TO nexit_runtime/.test(m50) && !/GRANT[^;]*(INSERT|UPDATE|DELETE)[^;]*TO nexit_runtime/i.test(m50) && /hay causas de error de envío o CDC informados/.test(r50) && r50.indexOf("RAISE EXCEPTION") < r50.indexOf("DROP FUNCTION") && /CREATE OR REPLACE FUNCTION public\.fe_documento_iniciar_envio\(p_empresa uuid, p_usuario uuid, p_documento uuid\)/.test(r50));
+
+  // PAYLOAD-01: identidad que añade la función SQL (tipos exactos del payload que sale hacia el gateway)
+  const crear48 = sc48.slice(sc48.indexOf("v_payload := p_payload || jsonb_build_object"), sc48.indexOf("INSERT INTO public.documentos_electronicos"));
+
+  cierto("PAYLOAD-01: la función SQL completa dEst/dPunExp/dNumDoc como TEXTO de 3/3/7 dígitos (v_est, código del punto, lpad 7), dSerieNum null y dFeEmiDE ISO local; no añade cdc ni otros campos", /'dEst', v_est, 'dPunExp', v_punto\.codigo, 'dNumDoc', v_numero, 'dSerieNum', NULL,/.test(crear48) && /to_char\(now\(\) AT TIME ZONE 'America\/Asuncion', 'YYYY-MM-DD"T"HH24:MI:SS'\)/.test(crear48) && !/cdc/.test(crear48) && /codigo\s+text\s+NOT NULL CHECK \(codigo ~ '\^\[0-9\]\{3\}\$'\)/.test(m48) && /lpad\(v_num::text, 7, '0'\)/.test(m48));
+
+  // UX-01 / ENV-03: Documentos electrónicos y formulario
+  cierto("UI: tras un rechazo por validación solo se ofrece reenviar con confirmación y se explica que no se genera otro número; el envío indeterminado muestra la necesidad de verificar en el gateway y NO ofrece reenviar", /Reenviar el mismo documento \(confirmar\)/.test(docPage) && /window\.confirm\(/.test(docPage) && /no se genera otro número/.test(docPage) && /Verifique el documento en el gateway antes de cualquier reenvío/.test(docPage) && !/ENVIO_INDETERMINADO"[^)]{0,80}enviarAlGateway/.test(docPage) && /resultado\.errorTipo !== "RECHAZO"/.test(formulario) && !/token|password|Authorization|Bearer/i.test(formulario + docPage));
+  cierto("ENV-03: la consulta de estado de FE sigue bloqueada hasta confirmar tipoDoc (no se inventa «FE»)", tipoDocConsulta("FE") === null && tipoDocConsulta("NCE") === "NCE");
+
   return fallos;
 }

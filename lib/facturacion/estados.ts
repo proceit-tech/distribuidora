@@ -62,7 +62,7 @@ export const ETIQUETA_RESULTADO_INTENTO: Record<string, string> = {
 export function etiquetaIntento(tipo: string, resultado: string): string {
   if (tipo === "ENVIO") {
     return (
-      ({ OK: "Recibido por el gateway (estado fiscal por consultar)", ERROR_HTTP: "Rechazado o error del gateway", TIMEOUT: "Tiempo de espera agotado (indeterminado)", RED: "Error de red (indeterminado)", RESPUESTA_INVALIDA: "Respuesta no interpretable (indeterminado)" } as Record<string, string>)[resultado] ?? resultado
+      ({ OK: "Recepción confirmada por el gateway (estado fiscal por consultar)", ERROR_HTTP: "Rechazado o error del gateway", TIMEOUT: "Tiempo de espera agotado (indeterminado)", RED: "Error de red (indeterminado)", RESPUESTA_INVALIDA: "Respuesta no concluyente: recepción NO confirmada (indeterminado)" } as Record<string, string>)[resultado] ?? resultado
     );
   }
 

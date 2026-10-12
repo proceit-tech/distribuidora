@@ -29,9 +29,9 @@ type Documento = {
   id: string; tipo: TipoDocumento; establecimiento: string; puntoExpedicion: string; numero: string; serie: string | null; cdc: string | null; fechaEmision: string;
   sucursalNombre: string; receptorNombre: string; receptorDocumento: string | null; moneda: string; total: string; estadoLocal: EstadoLocal; estadoSifen: EstadoSifen;
   estadoEmail: EstadoEmail; estadoGatewayTexto: string | null; codRespuesta: string | null; mensajeRespuesta: string | null; fechaFirma: string | null; fechaEnvio: string | null;
-  ultimaConsultaAt: string | null; ultimaConsultaResultado: string | null; lote: string | null;
+  ultimaConsultaAt: string | null; ultimaConsultaResultado: string | null; lote: string | null; envioErrorTipo: "AUTENTICACION" | "RECHAZO" | "TRANSITORIO" | null;
 };
-type Intento = { id: string; tipo: string; fase: string | null; lote: string | null; resultado: string; httpStatus: number | null; estadoGateway: string | null; estadoSifen: string | null; codRespuesta: string | null; mensaje: string | null; creadoAt: string; actorNombre: string };
+type Intento = { id: string; tipo: string; fase: string | null; lote: string | null; cdcInformado: string | null; resultado: string; httpStatus: number | null; estadoGateway: string | null; estadoSifen: string | null; codRespuesta: string | null; mensaje: string | null; creadoAt: string; actorNombre: string };
 type Respuesta = {
   documentos: Documento[]; total: number; pagina: number; totalPaginas: number; resumen: Record<string, number>; sucursales: Array<{ id: string; nombre: string }>; permisos: { editar: boolean; crear: boolean };
 };
@@ -167,11 +167,13 @@ export default function DocumentosPage() {
     }
   }
 
-  async function enviarAlGateway(d: Documento) {
+  async function enviarAlGateway(d: Documento, confirmarRechazo = false) {
+    if (confirmarRechazo && !window.confirm("El gateway rechazó este documento por validación. Reenviar el MISMO contenido solo tiene sentido si ya se corrigió la causa en el gateway. No se generará un número nuevo. ¿Reenviar?")) return;
+
     actualizarDetalle(d.id, { consultando: true, aviso: "", error: "" });
     try {
       const j = await leerJson<{ resultado: string; mensaje: string | null; http: number | null; lote: string | null; errores: string[]; intentos: Intento[] }>(
-        await fetch(`/api/documentos/${d.id}/enviar`, { method: "POST" }),
+        await fetch(`/api/documentos/${d.id}/enviar`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirmarRechazo }) }),
         "No fue posible enviar el documento.",
       );
       const partes = [etiquetaIntento("ENVIO", j.resultado), j.http ? `HTTP ${j.http}` : "", j.lote ? `lote ${j.lote}` : "", j.mensaje ?? "", ...j.errores].filter(Boolean);
@@ -353,10 +355,21 @@ export default function DocumentosPage() {
 
                           <p className={ui.muted} style={{ margin: "4px 0" }}>PDF/KuDE y XML: descarga no disponible (endpoint del proveedor sin confirmar).</p>
 
-                          {crear && (d.estadoLocal === "PENDIENTE_ENVIO" || d.estadoLocal === "ERROR_ENVIO") ? (
+                          {crear && (d.estadoLocal === "PENDIENTE_ENVIO" || (d.estadoLocal === "ERROR_ENVIO" && d.envioErrorTipo !== "RECHAZO")) ? (
                             <button type="button" className={ui.primaryButton} disabled={det.consultando} onClick={() => enviarAlGateway(d)}>
                               {det.consultando ? "Enviando..." : "Enviar al gateway"}
                             </button>
+                          ) : null}
+                          {crear && d.estadoLocal === "ERROR_ENVIO" && d.envioErrorTipo === "RECHAZO" ? (
+                            <button type="button" className={ui.secondaryButton} disabled={det.consultando} onClick={() => enviarAlGateway(d, true)}>
+                              {det.consultando ? "Enviando..." : "Reenviar el mismo documento (confirmar)"}
+                            </button>
+                          ) : null}
+                          {d.estadoLocal === "ERROR_ENVIO" && d.envioErrorTipo === "RECHAZO" ? (
+                            <p className={ui.alertError} role="alert">El gateway rechazó este documento por validación. Se conserva su número y el historial; no se genera otro número ni se reenvía automáticamente.</p>
+                          ) : null}
+                          {d.estadoLocal === "ENVIO_INDETERMINADO" ? (
+                            <p className={ui.alertError} role="alert">El resultado del envío no está confirmado. Verifique el documento en el gateway antes de cualquier reenvío: Nexit no reenvía automáticamente un envío indeterminado.</p>
                           ) : null}{" "}
                           {editar ? (
                             <button type="button" className={ui.secondaryButton} disabled={det.consultando} onClick={() => reconsultar(d)}>
@@ -382,7 +395,7 @@ export default function DocumentosPage() {
                                     <tr key={i.id} className={ui.row}>
                                       <td>{fechaHora(i.creadoAt)}</td>
                                       <td>{i.tipo === "ENVIO" ? "Envío" : "Consulta"}{i.fase ? ` · ${i.fase.toLowerCase()}` : ""}</td>
-                                      <td>{etiquetaIntento(i.tipo, i.resultado)}{i.lote ? ` · lote ${i.lote}` : ""}{i.mensaje ? <><br /><small className={ui.muted}>{i.mensaje}</small></> : null}</td>
+                                      <td>{etiquetaIntento(i.tipo, i.resultado)}{i.lote ? ` · lote ${i.lote}` : ""}{i.cdcInformado ? <><br /><small className={ui.muted}>CDC informado: {i.cdcInformado}</small></> : null}{i.mensaje ? <><br /><small className={ui.muted}>{i.mensaje}</small></> : null}</td>
                                       <td>{i.httpStatus ?? "—"}</td>
                                       <td>{i.estadoGateway ?? "—"}</td>
                                       <td>{i.actorNombre}</td>
