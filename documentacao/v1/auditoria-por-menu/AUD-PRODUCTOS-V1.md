@@ -80,3 +80,9 @@ Este arquivo é a fonte única da auditoria do menu **Productos**. Registrar, co
 - [ ] Obter respostas a DEC-PRD-U01…U06; somente depois fechar parecer do menu, separar achados confirmados e tarefas aprovadas para Claude.
 
 **Auditoria permanece ABERTA. O responsável pediu perguntas de negócio ANTES de encerrar cada menu; respostas devem ser registradas aqui.**
+
+## VII. Revisão transversal posterior — seleção de itens vendíveis (confirmado)
+
+**PRD-A15 / CRÍTICA OPERACIONAL / Productos → Facturas:** `lib/productos/normalizar.ts:314` persiste a flag `vendible` (o cadastro e a DDL expõem `productos.vendible`), mas `lib/facturacion/emision.ts:82-92` define `SELECT_PRODUCTOS` apenas com `p.activo` e `p.tipo_producto IN ('MERCADERIA','SERVICIO')`, sem `p.vendible`. O mesmo SELECT é usado tanto na busca `buscarProductosFactura` (`:102`) quanto em `prepararFactura` (`:201`). Resultado demonstrável pelo SQL: mercadoria/serviço ativa marcada `vendible=false` pode ser listada e processada para emissão se cumprir as outras regras fiscais. **Correção a exigir ao Claude futuramente:** filtro/revalidação no servidor; UI deve mostrar somente elegíveis ou explicar exclusão, com teste regressivo `vendible=false`. Não é necessário SQL para este bug.
+
+**PRD-A16 / MODERADA / catálogo fiscal vigente:** `NEX-039` define `unidades_medida_sifen.vigente`; `SELECT_PRODUCTOS` associa a unidade sem condicionar `us.vigente`, e validações observadas bloqueiam apenas código `NULL`. Checar regras DNIT para códigos eventualmente desativados; caso a coluna seja operacional, tanto seleção quanto emissão devem rejeitar `vigente=false`. **Pendente confirmar contrato** antes de converter em defeito de negócio.
