@@ -13,6 +13,7 @@ import {
   columnasProveedor,
   diferenciasFila,
   exigirVersion,
+  exigirVersionPresente,
   registrarEvento,
   respuestaError,
   sincronizarHijos,
@@ -260,6 +261,9 @@ export async function PUT(request: Request, contexto: Contexto) {
   let conexion: PoolClient | null = null;
 
   try {
+    // PRV-R01-05: la ausencia de versión se informa (409) antes que cualquier error de validación del cuerpo; la comparación exacta sigue después del FOR UPDATE.
+    exigirVersionPresente(body.version);
+
     const datos = normalizarProveedor(body);
 
     conexion = await db.connect();

@@ -675,3 +675,12 @@ Só código (sem migration; NEX-052/053 intactas e NÃO aplicadas); nada executa
 - **PRV-M03:** `useProtegerCambios` no formulário (ficha, documentos adjuntos pendentes e documento em preparação; desativado ao salvar); trocar de pestaña a partir de Documentos com documento em preparação pede confirmação específica.
 - **PRV-M04:** o alta verifica o cierre da carga documental (`cerrarCargaInicialProveedor`: HTTP e rede). Se falhar, permanece na mesma tela (não redireciona à ficha, que exige `PROVEEDORES.VER`) com o id conservado, o código HTTP e «Reintentar cierre» idempotente; o formulário não volta, então não há segundo POST de criação. O endpoint e sua autoridade (EDITAR ou criador com carga aberta) não mudaram.
 - Fora do escopo (como autorizado): PRV-M05 (paginação) e PRV-M06 (visibilidade bancária por `VER`, política não decidida). Local: 2158 verificações, 0 falhas (25 novas da suíte «Proveedores: estabilización»); tsc/ESLint/build OK.
+
+### Proveedores — resíduos AUD-PRV-R01 (PRV-R01-01…05, 2026-10-12)
+Só código; sem migration (NEX-001…053 intactas, NÃO aplicadas as 052/053); nada em PostgreSQL/VM/navegador; Proveedores NÃO homologado.
+- **R01-01:** depois de criar o proveedor, a URL passa a `/proveedores/nuevo?retomar=<id>&codigo=…` (`history.replaceState`); ao recarregar, a página mostra a tela de retomada em vez do formulário, então o alta nunca é repetido. Id inválido na URL é ignorado.
+- **R01-02:** anexos que falham não redirecionam à ficha (exige VER); a tela de retomada (`retomar-alta.tsx`) usa só as rotas do alta: carregar documentos (os já enviados saem da lista e não se duplicam) e cerrar a carga. Após recarga pede selecionar de novo os arquivos que faltem.
+- **R01-03:** `FINALIZAR_CARGA` é idempotente para o próprio criador com CREAR mesmo com a carga já fechada (200 perdido → reintento 200); `CARGAR`/reemplazo/edição continuam proibidos após o cierre; outro usuário ou outra empresa seguem negados.
+- **R01-04:** `GET /api/proveedores` aceita CREAR (sem VER) apenas para `modo=catalogos` e catálogos geográficos; a lista e o detalhe continuam sob VER, o POST sob CREAR; nenhum proveedor é devolvido na exceção.
+- **R01-05:** a ausência de `version` responde 409 antes da validação do corpo; a comparação exata segue após o `FOR UPDATE`.
+- Local: 2171 verificações, 0 falhas (13 novas de Proveedores; 1 teste anterior ajustado: o cierre idempotente do criador).

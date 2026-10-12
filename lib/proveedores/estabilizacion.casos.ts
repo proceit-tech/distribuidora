@@ -7,9 +7,12 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { contador } from "@/lib/clientes/contador-casos";
+import { leerRetomada, subirDocumentosPendientes, urlRetomada } from "@/lib/proveedores/alta";
 import { cerrarCargaInicialProveedor } from "@/lib/proveedores/cierre-carga";
+import type { DocumentoPendiente } from "@/lib/proveedores/documento-pendiente";
+import { decidirAccesoDocumento, type AccionDocumento } from "@/lib/proveedores/permisos-documentos";
 import { ErrorValidacion } from "@/lib/proveedores/errores";
-import { exigirVersion, validarReferencias } from "@/lib/proveedores/shared";
+import { exigirVersion, exigirVersionPresente, validarReferencias } from "@/lib/proveedores/shared";
 
 const raiz = process.cwd();
 const leer = (r: string) => readFileSync(join(raiz, r), "utf8").replace(/\r\n/g, "\n");
@@ -178,13 +181,83 @@ export async function verificarCasosEstabilizacionProveedores(): Promise<string[
 
   igual("M04 reintento idempotente: fallo → éxito → éxito; todas las llamadas van al MISMO endpoint de cierre y ninguna al de creación", [a.cerrada, b.cerrada, c.cerrada, reintento.llamadas.every((l) => l.url === `/api/proveedores/${PROV}/documentos/finalizar` && l.metodo === "POST")], [false, true, true, true]);
 
-  const nuevo = leer("app/(private)/proveedores/nuevo/page.tsx");
-  const alta = nuevo.slice(nuevo.indexOf("async function guardar"), nuevo.indexOf("async function reintentarCierre"));
   const finalizar = leer("app/api/proveedores/[id]/documentos/finalizar/route.ts");
 
-  cierto("M04: el alta verifica el cierre (ya no ignora la respuesta ni la red); solo con cierre confirmado muestra 'creado'; si falla conserva el id en pantalla y NO vuelve a llamar a POST /api/proveedores", /cerrarCargaInicialProveedor\(id\)/.test(alta) && !/await fetch\(`\/api\/proveedores\/\$\{id\}\/documentos\/finalizar`/.test(alta) && /setPendienteCierre\(\{ id, mensaje: cierre\.mensaje, estado: cierre\.estado \}\)/.test(alta) && alta.indexOf("cierre.cerrada") < alta.indexOf('router.push("/proveedores?ok=creado")') && (nuevo.match(/method: "POST",\n      headers/g) ?? []).length === 1 && (alta.match(/fetch\("\/api\/proveedores"/g) ?? []).length === 1);
-  cierto("M04: el reintento se hace en la misma pantalla (no redirige a la ficha, que exige PROVEEDORES.VER) con aviso del código HTTP, y reemplaza al formulario para que no se pueda crear un segundo proveedor", /if \(pendienteCierre\)/.test(nuevo) && nuevo.indexOf("if (pendienteCierre)") < nuevo.indexOf("<ProveedorForm") && /Reintentar cierre/.test(nuevo) && /código \$\{pendienteCierre\.estado\}/.test(nuevo) && /NO se vuelve a crear/.test(nuevo) && !/router\.push\(`\/proveedores\/\$\{id\}\?aviso=cierre/.test(nuevo));
   cierto("M04: el endpoint de cierre conserva su autoridad (PROVEEDORES.EDITAR o creador con la carga abierta) y es idempotente; no se concedió lectura ni edición general", /exigir\("FINALIZAR_CARGA", auth\.permisos, estado\)/.test(finalizar) && /UPDATE proveedores SET carga_documentos_inicial_abierta = false WHERE id = \$1 AND empresa_id = \$2/.test(finalizar) && /Idempotente/.test(finalizar));
+
+  // ── PRV-R01-01/02: retomada tras recarga y reenvío de anexos fallidos (sin crear otro proveedor)
+  const uidA = "doc-a";
+  const uidB = "doc-b";
+  const archivo = (n: string) => new File([new Uint8Array([37, 80, 68, 70, 45])], n, { type: "application/pdf" });
+  const pendiente = (uid: string, nombre: string): DocumentoPendiente => ({ uid, tipo: "OTRO", fechaEmision: "", fechaVencimiento: "", observacion: "", archivo: archivo(nombre) });
+  const urlsSubida: string[] = [];
+  const fetchSubida = (resultados: Record<string, Respuesta>) => {
+    return async (url: string, init?: RequestInit) => {
+      urlsSubida.push(`${init?.method} ${url}`);
+
+      const nombre = ((init?.body as FormData).get("archivo") as File).name;
+      const r = resultados[nombre] ?? { status: 200 };
+
+      if (r === "red") throw new TypeError("fetch failed");
+
+      return new Response(JSON.stringify(r.cuerpo ?? { ok: true }), { status: r.status });
+    };
+  };
+
+  const primera = await subirDocumentosPendientes(PROV, [pendiente(uidA, "a.pdf"), pendiente(uidB, "b.pdf")], fetchSubida({ "b.pdf": { status: 500, cuerpo: { error: "Almacenamiento no disponible." } } }));
+
+  igual("R01-02: con 2 anexos (1 éxito, 1 fallo) se informa cuál subió y cuál falló con su código y mensaje", [primera.subidos, primera.fallidos], [[uidA], [{ uid: uidB, estado: 500, mensaje: "Almacenamiento no disponible." }]]);
+
+  urlsSubida.length = 0;
+
+  const reintento2 = await subirDocumentosPendientes(PROV, [pendiente(uidB, "b.pdf")], fetchSubida({}));
+
+  igual("R01-02: el reintento envía SOLO el documento fallido (el que ya subió no se duplica) y siempre al POST de documentos del MISMO proveedor, nunca a POST /api/proveedores", [reintento2.subidos, reintento2.fallidos, urlsSubida], [[uidB], [], [`POST /api/proveedores/${PROV}/documentos`]]);
+
+  const caida = await subirDocumentosPendientes(PROV, [pendiente(uidA, "a.pdf"), pendiente(uidB, "b.pdf")], fetchSubida({ "a.pdf": "red", "b.pdf": { status: 403, cuerpo: { error: "No tiene permiso." } } }));
+
+  igual("R01-02: caída de red y 403 de un documento no abortan los demás; cada fallo conserva estado (null para red) y mensaje útil", caida.fallidos, [{ uid: uidA, estado: null, mensaje: "No hubo conexión con el servidor al cargar el documento." }, { uid: uidB, estado: 403, mensaje: "No tiene permiso." }]);
+  igual("R01-02: un documento sin archivo o con metadatos inválidos cuenta como fallo del documento (no lanza)", (await subirDocumentosPendientes(PROV, [{ ...pendiente(uidA, "a.pdf"), fechaEmision: "31/02/2026" }], fetchSubida({}))).fallidos.map((f) => [f.uid, f.estado]), [[uidA, null]]);
+
+  igual("R01-01: la URL de retomada conserva el id y el código; tras una recarga se reconstruye (id válido); identificadores inválidos o inyectados se ignoran", [
+    urlRetomada(PROV, "PRV-000012"), leerRetomada(`?retomar=${PROV}&codigo=PRV-000012`), leerRetomada(`?retomar=${PROV}`), leerRetomada("?retomar=no-es-uuid"), leerRetomada(`?retomar=${PROV}&codigo=<script>`), leerRetomada(""),
+  ], [`/proveedores/nuevo?retomar=${PROV}&codigo=PRV-000012`, { id: PROV, codigo: "PRV-000012" }, { id: PROV, codigo: "" }, null, { id: PROV, codigo: "" }, null]);
+
+  const nuevo = leer("app/(private)/proveedores/nuevo/page.tsx");
+  const retomar = leer("app/(private)/proveedores/_components/retomar-alta.tsx");
+  const alta = nuevo.slice(nuevo.indexOf("async function guardar"), nuevo.indexOf("if (retomada)"));
+
+  cierto("R01-01/02: el alta conserva el id en la URL (replaceState) y en pantalla tanto si fallan anexos como si falla el cierre; NO redirige a la ficha (exige VER) y hay un único POST de creación", (alta.match(/fetch\("\/api\/proveedores"/g) ?? []).length === 1 && (alta.match(/window\.history\.replaceState\(null, "", urlRetomada\(id, codigo\)\)/g) ?? []).length === 2 && !/router\.push\(`\/proveedores\/\$\{id\}/.test(nuevo) && /leerRetomada\(window\.location\.search\)/.test(nuevo) && /if \(retomada\)/.test(nuevo) && nuevo.indexOf("if (retomada)") < nuevo.indexOf("<ProveedorForm"));
+  cierto("R01-01/02: la pantalla de retomada solo usa las rutas del alta (subir documentos y cerrar la carga), pide volver a elegir archivos tras una recarga, saca de la lista los ya subidos y no contiene ninguna llamada de creación", /subirDocumentosPendientes\(id, pendientes\)/.test(retomar) && /cerrarCargaInicialProveedor\(id\)/.test(retomar) && /pendientes\.filter\(\(p\) => !r\.subidos\.includes\(p\.uid\)\)/.test(retomar) && /seleccione nuevamente solo los que falten/.test(retomar) && !/\/api\/proveedores"/.test(retomar) && /useProtegerCambios/.test(retomar) && /disabled=\{ocupado \|\| pendientes\.length > 0\}/.test(retomar));
+
+  // ── PRV-R01-03: cierre idempotente para el creador, sin ampliar CARGAR
+  const soloCrear = { ver: false, editar: false, crear: true };
+  const ctx = (esCreador: boolean, abierta: boolean) => ({ esCreador, cargaInicialAbierta: abierta });
+  const permitidoPor = (accion: AccionDocumento, permisos: { ver: boolean; editar: boolean; crear: boolean }, contexto: { esCreador: boolean; cargaInicialAbierta: boolean } | null) => decidirAccesoDocumento(accion, permisos, contexto).permitido;
+
+  igual("R01-03: el creador con solo CREAR puede repetir el cierre aunque la carga ya esté cerrada (200 perdido → reintento 200)", [permitidoPor("FINALIZAR_CARGA", soloCrear, ctx(true, true)), permitidoPor("FINALIZAR_CARGA", soloCrear, ctx(true, false))], [true, true]);
+  igual("R01-03 negativo: otro usuario, proveedor inexistente/otra empresa (contexto null) o sin CREAR no pueden cerrar; el creador NO puede cargar documentos tras el cierre ni reemplazar/editar/eliminar", [
+    permitidoPor("FINALIZAR_CARGA", soloCrear, ctx(false, false)), permitidoPor("FINALIZAR_CARGA", soloCrear, null), permitidoPor("FINALIZAR_CARGA", { ver: true, editar: false, crear: false }, ctx(true, false)),
+    permitidoPor("CARGAR", soloCrear, ctx(true, false)), permitidoPor("REEMPLAZAR", soloCrear, ctx(true, false)), permitidoPor("EDITAR_DATOS", soloCrear, ctx(true, true)), permitidoPor("ELIMINAR", soloCrear, ctx(true, true)),
+  ], Array(7).fill(false));
+  igual("R01-03: la decisión marca cargaInicial según el estado real (abierta o ya cerrada)", [decidirAccesoDocumento("FINALIZAR_CARGA", soloCrear, ctx(true, true)), decidirAccesoDocumento("FINALIZAR_CARGA", soloCrear, ctx(true, false))], [{ permitido: true, cargaInicial: true }, { permitido: true, cargaInicial: false }]);
+  cierto("R01-03: la ruta de cierre sigue filtrando por la empresa de la sesión (contexto null → 404) y es un UPDATE idempotente", /contextoCargaInicial\(id, empresaId, auth\.sesion\.user\.id\)/.test(finalizar) && /if \(estado === null\) return proveedorNoEncontrado\(\)/.test(finalizar) && /WHERE id = \$1 AND empresa_id = \$2/.test(finalizar));
+
+  // ── PRV-R01-04: catálogos mínimos de la alta para CREAR-only
+  const lista = leer("app/api/proveedores/route.ts");
+  const get = lista.slice(lista.indexOf("export async function GET"));
+  const posGet = (t: string) => get.indexOf(t);
+
+  cierto("R01-04: sin VER, solo modo=catalogos y los catálogos geográficos se sirven a quien tiene CREAR; cualquier otra consulta (lista) sigue denegada; el POST sigue exigiendo CREAR", /const soloAlta = url\.searchParams\.get\("modo"\) === "catalogos" \|\| url\.searchParams\.has\("catalogo"\)/.test(get) && /!soloAlta \|\| \(await denyIfNoPermission\(session, "PROVEEDORES", "CREAR"\)\)\) return denegadoVer/.test(get) && /denyIfNoPermission\(session, "PROVEEDORES", "CREAR"\)/.test(lista.slice(lista.indexOf("export async function POST"))));
+  cierto("R01-04: en modo catálogos no se consulta ningún proveedor (la consulta de lista queda reemplazada por vacío) y todo filtra por empresa de la sesión; la exención se evalúa antes de cualquier lectura", /soloCatalogos\s*\n?\s*\? Promise\.resolve\(\{ rows: \[\] as unknown\[\] \}\)/.test(get) && posGet("denegadoVer") < posGet("const db = await obtenerDb()") && posGet("denegadoVer") < posGet("catalogoGeografico(url, db)"));
+
+  // ── PRV-R01-05: precedencia de la versión
+  const putSrc = leer("app/api/proveedores/[id]/route.ts");
+  const putBloque = putSrc.slice(putSrc.indexOf("export async function PUT"));
+  const resultadoPresente = (v: unknown) => { const e = lanza(() => exigirVersionPresente(v)); return e ? e.estado : "ok"; };
+
+  igual("R01-05: la ausencia de versión se informa 409 (antes de normalizar un cuerpo inválido); con versión presente el control pasa a la comparación bajo bloqueo", [resultadoPresente(undefined), resultadoPresente(""), resultadoPresente(V1)], [409, 409, "ok"]);
+  cierto("R01-05: en el PUT la presencia de la versión se exige antes de normalizarProveedor y la comparación exacta sigue después del FOR UPDATE", putBloque.indexOf("exigirVersionPresente(body.version)") > 0 && putBloque.indexOf("exigirVersionPresente(body.version)") < putBloque.indexOf("normalizarProveedor(body)") && putBloque.indexOf("FOR UPDATE") < putBloque.indexOf("exigirVersion(body.version, actual.version)"));
 
   // ── Alcance: sin migraciones nuevas ni cambios en Clientes/Productos funcionales
   cierto("Alcance: ningún archivo de migración nuevo y los controles bancarios/homologación no se tocan (el PUT conserva la guarda de datos gobernados)", /Los datos gobernados no se cambian por la edición común/.test(put) && /Este dato se modifica solo con la acción específica/.test(put));

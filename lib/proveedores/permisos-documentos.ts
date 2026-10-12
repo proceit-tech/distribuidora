@@ -5,7 +5,8 @@
  *    ESE proveedor: el usuario de la sesión es su creador (`proveedores.creado_por`) Y la carga inicial sigue abierta
  *    (`proveedores.carga_documentos_inicial_abierta`, NEX-036). Sin plazos: se abre en el alta y se cierra al finalizarla o en la
  *    primera edición del proveedor.
- *  - Finalizar la carga inicial: EDITAR, o el creador con CREAR mientras esté abierta.
+ *  - Finalizar la carga inicial: EDITAR, o el CREADOR con CREAR — también cuando la carga ya está cerrada: el cierre es idempotente (si el servidor cerró pero la respuesta
+ *    se perdió, el reintento debe dar 200). Esto NO amplía CARGAR: después del cierre el creador con solo CREAR no puede agregar documentos.
  *  - Reemplazar (nueva versión), editar datos, eliminar (lógicamente), restaurar, ver historial/eliminados y recuperar versiones:
  *    solo PROVEEDORES.EDITAR (CREAR nunca basta). Ninguna acción destruye un archivo físicamente.
  * El aislamiento por empresa NO se decide aquí: todas las consultas filtran por `empresa_id` de la sesión.
@@ -27,6 +28,9 @@ export function decidirAccesoDocumento(accion: AccionDocumento, permisos: Permis
   }
 
   if (permisos.editar) return { permitido: true, cargaInicial: false };
+
+  // Cierre idempotente: solo el propio creador (de esa empresa; el contexto es null si el proveedor no existe en ella), esté la carga abierta o ya cerrada.
+  if (accion === "FINALIZAR_CARGA" && permisos.crear && contexto !== null && contexto.esCreador) return { permitido: true, cargaInicial: contexto.cargaInicialAbierta };
 
   if ((accion === "CARGAR" || accion === "FINALIZAR_CARGA") && permisos.crear) {
     if (contexto !== null && contexto.esCreador && contexto.cargaInicialAbierta) return { permitido: true, cargaInicial: true };

@@ -49,7 +49,8 @@ export function verificarCasosDocumentosProveedores(): string[] {
 
   for (const a of ["CARGAR", "FINALIZAR_CARGA"] as const) {
     cierto(`CREAR: ${a} creador con carga abierta`, permitido(a, soloCrear, CTX(true, true)));
-    cierto(`CREAR: ${a} creador con carga CERRADA`, !permitido(a, soloCrear, CTX(true, false)));
+    // El cierre (FINALIZAR_CARGA) es idempotente para el creador (PRV-R01-03); cargar documentos tras el cierre sigue prohibido.
+    cierto(`CREAR: ${a} creador con carga CERRADA`, a === "FINALIZAR_CARGA" ? permitido(a, soloCrear, CTX(true, false)) : !permitido(a, soloCrear, CTX(true, false)));
     cierto(`CREAR: ${a} otro usuario`, !permitido(a, soloCrear, CTX(false, true)));
     cierto(`CREAR: ${a} proveedor inexistente/otra empresa`, !permitido(a, soloCrear, null));
     cierto(`EDITAR: ${a} siempre`, permitido(a, P(true, true, false), CTX(false, false)));

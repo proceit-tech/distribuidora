@@ -24,7 +24,7 @@ type Historial = {
   eventos: Array<{ accion: string; usuario: string; cuando: string }>;
 };
 
-function CamposDocumento({ prefijo, valor, errores, alCambiar, archivoObligatorio }: { prefijo: string; valor: Borrador; errores: Errores; alCambiar: (b: Borrador) => void; archivoObligatorio: boolean }) {
+export function CamposDocumento({ prefijo, valor, errores, alCambiar, archivoObligatorio }: { prefijo: string; valor: Borrador; errores: Errores; alCambiar: (b: Borrador) => void; archivoObligatorio: boolean }) {
   return (
     <>
       <div className={styles.gridFour}>

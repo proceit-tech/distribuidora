@@ -153,8 +153,14 @@ export async function GET(request: Request) {
     );
   }
 
+  // PRV-R01-04: la lista y el detalle exigen PROVEEDORES.VER; los catálogos MÍNIMOS de la alta (modo=catalogos y los catálogos geográficos) también los puede leer quien
+  // tiene PROVEEDORES.CREAR, para poder abrir el formulario de alta. Esa excepción no devuelve ningún proveedor.
   const denegadoVer = await denyIfNoPermission(session, "PROVEEDORES", "VER");
-  if (denegadoVer) return denegadoVer;
+  if (denegadoVer) {
+    const soloAlta = url.searchParams.get("modo") === "catalogos" || url.searchParams.has("catalogo");
+
+    if (!soloAlta || (await denyIfNoPermission(session, "PROVEEDORES", "CREAR"))) return denegadoVer;
+  }
 
   const db = await obtenerDb();
 

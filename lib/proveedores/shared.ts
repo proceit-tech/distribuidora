@@ -24,10 +24,14 @@ async function existeActivo(conexion: PoolClient, sql: string, parametros: unkno
  * PRV-M01: concurrencia optimista OBLIGATORIA. `enviada` es la versión (actualizado_at con microsegundos) que el operador tenía en pantalla; `actual` es la leída tras bloquear
  * la fila (FOR UPDATE). Ausente, vacía, no textual o distinta → 409 y no se escribe nada.
  */
-export function exigirVersion(enviada: unknown, actual: unknown) {
+export function exigirVersionPresente(enviada: unknown) {
   if (typeof enviada !== "string" || enviada.trim() === "") {
     throw new ErrorValidacion("Falta la versión de la ficha: recargue el proveedor antes de guardar. No se guardó ningún cambio.", null, 409);
   }
+}
+
+export function exigirVersion(enviada: unknown, actual: unknown) {
+  exigirVersionPresente(enviada);
   if (enviada !== actual) {
     throw new ErrorValidacion("Otro usuario modificó este proveedor mientras usted lo editaba (o la versión enviada no es válida). Recargue la ficha para ver los cambios antes de guardar; no se guardó ningún cambio.", null, 409);
   }
