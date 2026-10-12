@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { catalogosFactura, permisoPrecio } from "@/lib/facturacion/emision";
-import { INDICADORES_PRESENCIA, FORMAS_PAGO, TIPOS_TRANSACCION } from "@/lib/facturacion/payload-fe";
+import { CONDICIONES_OPERACION, INDICADORES_PRESENCIA, FORMAS_PAGO, TIPOS_TRANSACCION } from "@/lib/facturacion/payload-fe";
 import { prepararFacturacion } from "@/lib/facturacion/servidor";
 import { respuestaErrorFacturacion } from "@/lib/facturacion/shared";
 
@@ -12,7 +12,7 @@ export async function GET() {
   if (!b.ok) return b.respuesta;
 
   try {
-    return NextResponse.json({ ...(await catalogosFactura(b.db, b.empresaId, b.usuarioId)), puedeEditarPrecio: await permisoPrecio(b.db, b.empresaId, b.usuarioId), opciones: { tiposTransaccion: TIPOS_TRANSACCION, presencias: INDICADORES_PRESENCIA, formasPago: FORMAS_PAGO } });
+    return NextResponse.json({ ...(await catalogosFactura(b.db, b.empresaId, b.usuarioId)), puedeEditarPrecio: await permisoPrecio(b.db, b.empresaId, b.usuarioId), opciones: { condiciones: CONDICIONES_OPERACION, tiposTransaccion: TIPOS_TRANSACCION, presencias: INDICADORES_PRESENCIA, formasPago: FORMAS_PAGO } });
   } catch (error) {
     return respuestaErrorFacturacion(error, "cargar los catálogos del");
   }

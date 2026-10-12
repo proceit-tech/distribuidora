@@ -544,3 +544,69 @@
     padding: 14px;
   }
 }
+
+/* Ajustes UX-03: cabecera compacta, selectores paginados e indicadores ligeros */
+.meta {
+  font-size: 12.5px;
+  color: #5b7387;
+  font-variant-numeric: tabular-nums;
+}
+
+.paginacion {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  margin-top: 10px;
+  font-size: 12.5px;
+  color: #5b7387;
+}
+
+.paginacion .actions {
+  align-items: center;
+}
+
+.aviso {
+  margin: 0 0 8px;
+  font-size: 12.5px;
+  color: #11683f;
+}
+
+.precio {
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.totalGeneral {
+  border: 1px solid #cfe7e9;
+  background: #f3fbfb;
+  color: #14324d;
+}
+
+.totalGeneral span,
+.totalGeneral small {
+  opacity: 1;
+  color: #5b7387;
+}
+
+.totalGeneral strong {
+  color: #0a6f77;
+}
+
+.cardHead h2 {
+  font-weight: 650;
+}
+
+.field select,
+.field input,
+.field textarea {
+  border-color: #dbe5ec;
+}
+
+.field select:disabled {
+  background: #f6f9fb;
+  color: #35506a;
+}

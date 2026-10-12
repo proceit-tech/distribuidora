@@ -11,7 +11,7 @@ export async function GET(request: Request) {
   if (!b.ok) return b.respuesta;
 
   try {
-    return NextResponse.json(await buscarProductosFactura(b.db, b.empresaId, new URL(request.url).searchParams.get("q") ?? ""));
+    return NextResponse.json(await buscarProductosFactura(b.db, b.empresaId, new URL(request.url).searchParams.get("q") ?? "", { pagina: new URL(request.url).searchParams.get("pagina"), porPagina: new URL(request.url).searchParams.get("porPagina") }));
   } catch (error) {
     return respuestaErrorFacturacion(error, "buscar productos para el");
   }

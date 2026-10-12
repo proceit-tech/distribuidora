@@ -24,6 +24,8 @@ import {
 } from "@/lib/facturacion/estados";
 import { formatearFechaHoraPy } from "@/lib/formato/listas";
 
+import estilos from "./page.module.css";
+
 const PAGE_SIZE = 20;
 
 type CampoOrden = "fecha" | "numero" | "cliente" | "total" | "estado";
@@ -214,8 +216,7 @@ export default function DocumentosPage() {
           <button
             key={i.titulo}
             type="button"
-            className={[ui.summaryCard, i.clase].join(" ")}
-            style={{ textAlign: "left", cursor: "pointer", outline: grupo === i.grupo ? "2px solid currentColor" : undefined }}
+            className={[ui.summaryCard, i.clase, estilos.kpi, grupo === i.grupo ? estilos.kpiActivo : ""].join(" ")}
             aria-pressed={grupo === i.grupo}
             onClick={() => setGrupo(i.grupo)}
           >

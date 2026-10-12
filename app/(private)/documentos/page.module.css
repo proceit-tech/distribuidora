@@ -1,0 +1,25 @@
+/* Indicadores de Documentos electrónicos: botones-filtro con el mismo acento turquesa de las listas (sin contornos negros). */
+.kpi {
+  appearance: none;
+  width: 100%;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+}
+
+.kpi:hover {
+  border-color: #b7d5db;
+}
+
+.kpi:focus-visible {
+  outline: 3px solid rgba(15, 156, 165, 0.4);
+  outline-offset: 2px;
+}
+
+.kpiActivo {
+  border-color: #0f9ca5;
+  background: #f3fbfb;
+  box-shadow: 0 0 0 3px rgba(15, 156, 165, 0.12);
+}

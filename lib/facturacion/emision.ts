@@ -31,39 +31,52 @@ export async function catalogosFactura(db: Db, empresaId: string, usuarioId: str
     [empresaId, usuarioId],
   );
 
-  return { sucursales: r.rows as F[] };
+  // Diagnóstico para el operador: sucursales activas del alcance a las que les falta el establecimiento SIFEN (no se ofrecen en el formulario).
+  const falta = await db.query("SELECT count(*)::int AS n FROM sucursales sc WHERE sc.empresa_id = $1 AND sc.activo AND sc.establecimiento_sifen IS NULL AND sucursal_en_alcance($1::uuid, $2::uuid, sc.id)", [empresaId, usuarioId]);
+
+  return { sucursales: r.rows as F[], sucursalesSinEstablecimiento: Number((falta.rows[0] as F | undefined)?.n ?? 0) };
 }
 
-/** Mínimo de caracteres para buscar: nunca se lista el catálogo completo sin una búsqueda explícita. */
-export const MIN_BUSQUEDA = 2;
+const sinTotal = (fila: F): F => Object.fromEntries(Object.entries(fila).filter(([k]) => k !== "total"));
 
-/** Clientes facturables que coinciden con el texto (máx. 10), con su ficha fiscal y aptitud SIFEN. Sin texto suficiente no devuelve nada. */
-export async function buscarClientesFactura(db: Db, empresaId: string, texto: string) {
+/** Paginación de los selectores: lista inmediata (sin texto), tamaño de página acotado y orden estable. */
+export const POR_PAGINA = 10;
+export const POR_PAGINA_MAX = 25;
+
+export function leerPagina(pagina: unknown, porPagina: unknown) {
+  const p = Number(pagina);
+  const n = Number(porPagina);
+
+  return { pagina: Number.isInteger(p) && p >= 1 && p <= 100000 ? p : 1, porPagina: Number.isInteger(n) && n >= 1 ? Math.min(n, POR_PAGINA_MAX) : POR_PAGINA };
+}
+
+/** Clientes facturables de la empresa (activos y no bloqueados), paginados en el servidor. Sin texto lista todos; con texto filtra por código, razón social, fantasía,
+ *  RUC/CI (con o sin DV). Cada fila trae su ficha fiscal y su aptitud SIFEN con las pendientes. */
+export async function buscarClientesFactura(db: Db, empresaId: string, texto: string, paginacion: { pagina?: unknown; porPagina?: unknown } = {}) {
   const q = texto.trim().slice(0, 80);
-
-  if (q.length < MIN_BUSQUEDA) return { clientes: [], minimo: MIN_BUSQUEDA };
-
+  const { pagina, porPagina } = leerPagina(paginacion.pagina, paginacion.porPagina);
   const r = await db.query(
     `SELECT c.id, c.codigo, c.razon_social AS "razonSocial", c.nombre_fantasia AS "nombreFantasia", c.numero_documento AS "numeroDocumento", c.dv, c.naturaleza_receptor AS naturaleza,
             c.tipo_operacion AS "tipoOperacion", c.tipo_contribuyente_sifen AS "tipoContribuyente", c.email, c.email_facturacion AS "emailFacturacion", c.telefono, c.celular,
-            d.direccion, d.numero_casa AS "numeroCasa"
+            d.direccion, d.numero_casa AS "numeroCasa", count(*) OVER() AS total
        FROM clientes c
        LEFT JOIN LATERAL (SELECT x.direccion, x.numero_casa FROM direcciones_cliente x WHERE x.empresa_id = c.empresa_id AND x.cliente_id = c.id AND (x.es_fiscal OR x.tipo = 'FISCAL')
                            ORDER BY x.es_fiscal DESC, x.creado_at, x.id LIMIT 1) d ON true
       WHERE c.empresa_id = $1 AND c.activo AND NOT c.bloqueado_ventas
-        AND concat_ws(' ', c.codigo, c.razon_social, c.nombre_fantasia, c.numero_documento) ILIKE $2 ESCAPE '!'
-      ORDER BY c.razon_social LIMIT 10`,
-    [empresaId, `%${comodin(q)}%`],
+        AND ($2 = '' OR concat_ws(' ', c.codigo, c.razon_social, c.nombre_fantasia, c.numero_documento, c.numero_documento || '-' || c.dv, c.numero_documento || c.dv) ILIKE $3 ESCAPE '!')
+      ORDER BY c.razon_social, c.id LIMIT $4 OFFSET $5`,
+    [empresaId, q, `%${comodin(q)}%`, porPagina, (pagina - 1) * porPagina],
   );
   const clientes = await Promise.all(
     r.rows.map(async (c) => {
-      const aptitud = await evaluarAptitudCliente(db as never, empresaId, s((c as F).id));
+      const fila = sinTotal(c as F);
+      const aptitud = await evaluarAptitudCliente(db as never, empresaId, s(fila.id));
 
-      return { ...(c as F), apto: aptitud?.apto === true, pendientes: aptitud?.pendientes ?? [] };
+      return { ...fila, apto: aptitud?.apto === true, pendientes: aptitud?.pendientes ?? [] };
     }),
   );
 
-  return { clientes };
+  return { clientes, total: r.rows.length > 0 ? Number((r.rows[0] as F).total) : 0, pagina, porPagina };
 }
 
 const SELECT_PRODUCTOS = `
@@ -78,19 +91,19 @@ const SELECT_PRODUCTOS = `
     LEFT JOIN v_producto_precio_referencia pr ON pr.empresa_id = p.empresa_id AND pr.producto_id = p.id
    WHERE p.empresa_id = $1 AND p.activo AND p.tipo_producto IN ('MERCADERIA','SERVICIO')`;
 
-/** Productos facturables por código, descripción, código de barras, GTIN o código alterno. Sin texto suficiente no devuelve nada (no se lista el catálogo). */
-export async function buscarProductosFactura(db: Db, empresaId: string, texto: string) {
+/** Productos facturables (mercadería y servicios activos), paginados en el servidor. Sin texto lista todos; con texto filtra por código, descripción, código de barras,
+ *  GTIN y códigos alternos. */
+export async function buscarProductosFactura(db: Db, empresaId: string, texto: string, paginacion: { pagina?: unknown; porPagina?: unknown } = {}) {
   const q = texto.trim().slice(0, 80);
-
-  if (q.length < MIN_BUSQUEDA) return { productos: [], minimo: MIN_BUSQUEDA };
-
+  const { pagina, porPagina } = leerPagina(paginacion.pagina, paginacion.porPagina);
+  const filtro = `($2 = '' OR concat_ws(' ', p.codigo, p.descripcion, p.descripcion_factura, p.codigo_barras) ILIKE $3 ESCAPE '!'
+       OR EXISTS (SELECT 1 FROM producto_codigos pc WHERE pc.empresa_id = p.empresa_id AND pc.producto_id = p.id AND pc.codigo ILIKE $3 ESCAPE '!'))`;
   const r = await db.query(
-    `${SELECT_PRODUCTOS} AND (concat_ws(' ', p.codigo, p.descripcion, p.descripcion_factura, p.codigo_barras) ILIKE $2 ESCAPE '!'
-       OR EXISTS (SELECT 1 FROM producto_codigos pc WHERE pc.empresa_id = p.empresa_id AND pc.producto_id = p.id AND pc.codigo ILIKE $2 ESCAPE '!')) ORDER BY p.descripcion LIMIT 20`,
-    [empresaId, `%${comodin(q)}%`],
+    `SELECT t.*, count(*) OVER() AS total FROM (${SELECT_PRODUCTOS} AND ${filtro}) t ORDER BY t.descripcion, t.id LIMIT $4 OFFSET $5`,
+    [empresaId, q, `%${comodin(q)}%`, porPagina, (pagina - 1) * porPagina],
   );
 
-  return { productos: r.rows as F[] };
+  return { productos: r.rows.map((x) => sinTotal(x as F)), total: r.rows.length > 0 ? Number((r.rows[0] as F).total) : 0, pagina, porPagina };
 }
 
 export type CuerpoFactura = {

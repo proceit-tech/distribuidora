@@ -9,10 +9,10 @@ import { contador } from "@/lib/clientes/contador-casos";
 import { ETIQUETA_SIFEN, estadoSifenDesdeGateway, numeroDocumento } from "@/lib/facturacion/estados";
 import { claveToken, consultarDocumentoGateway, enviarDocumentoGateway, interpretarRecepcion, interpretarConsulta, leerCredenciales, limpiarCacheTokens, sanearRespuesta, tamanoCacheTokens, tipoDocConsulta, type FetchLike, type ResultadoEnvio } from "@/lib/facturacion/gateway";
 import { calcularItem, calcularSubtotales, numeroDec, parseDec, textoDec } from "@/lib/facturacion/calculo";
-import { buscarClientesFactura, buscarProductosFactura, crearFacturaElectronica, leerCuerpoFactura, permisoPrecio, prepararFactura } from "@/lib/facturacion/emision";
+import { buscarClientesFactura, buscarProductosFactura, crearFacturaElectronica, leerCuerpoFactura, leerPagina, permisoPrecio, prepararFactura } from "@/lib/facturacion/emision";
 import { formatearFechaHoraPy, formatearFechaPy } from "@/lib/formato/listas";
 import { emitirFactura, enviarDocumento } from "@/lib/facturacion/envio";
-import { construirPayloadFE, FORMAS_PAGO, validarEntradaFE, totalFactura, type EntradaFE, type LineaFE, type ReceptorFE } from "@/lib/facturacion/payload-fe";
+import { CATALOGO_TIPOS_TRANSACCION, CONDICIONES_OPERACION, INDICADORES_PRESENCIA, TIPOS_TRANSACCION, construirPayloadFE, FORMAS_PAGO, validarEntradaFE, totalFactura, type EntradaFE, type LineaFE, type ReceptorFE } from "@/lib/facturacion/payload-fe";
 import { construirConsultas, consultarEstado, ErrorFacturacion, ErrorValidacionFiscal, leerDocumentos, normalizarConsulta, respuestaErrorFacturacion } from "@/lib/facturacion/shared";
 
 const raiz = process.cwd();
@@ -792,20 +792,30 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
     await estadoError(prepararFactura(dbConPermiso(false, [{ ...filaProducto, unidadSifen: 86 }]), EMPRESA, USUARIO, leerCuerpoFactura(cuerpoPrecio(undefined, "1.5")) as never)),
   ], [422, 0, 0]);
 
-  // Búsquedas explícitas: sin texto suficiente no se consulta la base ni se lista el catálogo
-  const spyBusq: string[] = [];
-  const dbBusq = { async query(sql: string, p: unknown[] = []) { spyBusq.push(sql + JSON.stringify(p)); return { rows: [], rowCount: 0 }; } } as never;
-  const vaciosC = await buscarClientesFactura(dbBusq, EMPRESA, " a ");
-  const vaciosP = await buscarProductosFactura(dbBusq, EMPRESA, "");
+  // Selectores: lista paginada inmediata (sin texto), filtro opcional y paginación en el servidor
+  const spyBusq: Array<{ sql: string; p: unknown[] }> = [];
+  const dbBusq = { async query(sql: string, p: unknown[] = []) { spyBusq.push({ sql, p }); return { rows: [], rowCount: 0 }; } } as never;
+  const listaC = await buscarClientesFactura(dbBusq, EMPRESA, "");
+  const listaP = await buscarProductosFactura(dbBusq, EMPRESA, "", { pagina: "3", porPagina: "500" });
 
-  igual("búsqueda: con menos de 2 caracteres no se consulta la base y no se lista ningún cliente ni producto", [vaciosC.clientes, vaciosP.productos, spyBusq.length], [[], [], 0]);
+  igual("selectores: sin texto se consulta de inmediato (sin mínimo de caracteres) con paginación de servidor: página 1 de 10 para clientes; tamaño acotado a 25 y desplazamiento 50 para productos", [spyBusq.length, spyBusq[0].p, spyBusq[1].p, listaC.pagina, listaP.porPagina, listaP.total], [2, [EMPRESA, "", "%%", 10, 0], [EMPRESA, "", "%%", 25, 50], 1, 25, 0]);
+  igual("paginación: valores inválidos vuelven a la página 1 y 10 por página; el tamaño máximo es 25", [leerPagina("x", "y"), leerPagina("0", "-3"), leerPagina("2", "7"), leerPagina(null, "1000")], [{ pagina: 1, porPagina: 10 }, { pagina: 1, porPagina: 10 }, { pagina: 2, porPagina: 7 }, { pagina: 1, porPagina: 25 }]);
 
   await buscarProductosFactura(dbBusq, EMPRESA, "7891_%");
-  await buscarClientesFactura(dbBusq, EMPRESA, "ales");
+  await buscarClientesFactura(dbBusq, EMPRESA, "80000005-6");
 
-  igual("búsqueda: productos por código, descripción, código de barras, GTIN y códigos alternos (con comodines escapados); clientes por código, nombre y documento", [
-    /producto_codigos pc/.test(spyBusq[0]) && /p\.codigo_barras/.test(spyBusq[0]) && /p\.descripcion_factura/.test(spyBusq[0]), spyBusq[0].includes("%7891!_!%%"), /c\.numero_documento/.test(spyBusq[1]) && /c\.codigo, c\.razon_social/.test(spyBusq[1]) && !/\$2 = ''/.test(spyBusq[1]),
-  ], [true, true, true]);
+  igual("filtros: productos por código, descripción, código de barras, GTIN y códigos alternos (comodines escapados); clientes por código, nombre, fantasía y RUC/CI con o sin DV; orden estable y total en la misma consulta", [
+    /producto_codigos pc/.test(spyBusq[2].sql) && /p\.codigo_barras/.test(spyBusq[2].sql) && /p\.descripcion_factura/.test(spyBusq[2].sql) && /count\(\*\) OVER\(\)/.test(spyBusq[2].sql) && /ORDER BY t\.descripcion, t\.id/.test(spyBusq[2].sql),
+    spyBusq[2].p[2], /c\.numero_documento \|\| '-' \|\| c\.dv/.test(spyBusq[3].sql) && /c\.nombre_fantasia/.test(spyBusq[3].sql) && /ORDER BY c\.razon_social, c\.id LIMIT \$4 OFFSET \$5/.test(spyBusq[3].sql), spyBusq[3].p[1],
+  ], [true, "%7891!_!%%", true, "80000005-6"]);
+
+  // Catálogos SIFEN (MT v150): iTipTra D011 completo; habilitados solo los aplicables; iIndPres 1–6; condición y forma de pago separadas
+  igual("catálogo iTipTra (MT v150 D011): los 13 códigos normativos documentados; se habilitan 1–4 (venta de mercadería, servicios, mixto, activo fijo)", [Object.keys(CATALOGO_TIPOS_TRANSACCION).map(Number), Object.keys(TIPOS_TRANSACCION).map(Number), Object.keys(TIPOS_TRANSACCION).every((k) => TIPOS_TRANSACCION[Number(k)] === CATALOGO_TIPOS_TRANSACCION[Number(k)])], [[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13], [1, 2, 3, 4], true]);
+  igual("catálogo iIndPres (MT v150 E011): 1–6 completos; el 9 «Otro» exige texto E012 que el JSON funcional no transporta y no se ofrece. iCondOpe: solo Contado (1); iTiPago: solo Efectivo (1)", [Object.keys(INDICADORES_PRESENCIA).map(Number), Object.keys(CONDICIONES_OPERACION).map(Number), Object.keys(FORMAS_PAGO).map(Number)], [[1, 2, 3, 4, 5, 6], [1], [1]]);
+  igual("validación: el servidor rechaza un tipo de transacción no habilitado (p. ej. 5 divisas) y la presencia 9", [
+    validarEntradaFE({ ...entradaFE(), tipoTransaccion: 5 }).some((m) => /tipo de transacción/.test(m)), validarEntradaFE({ ...entradaFE(), presencia: 9 }).some((m) => /presencia/.test(m)), validarEntradaFE({ ...entradaFE(), tipoTransaccion: 4 }).length,
+  ], [true, true, 0]);
+
 
   // Fechas dd/MM/yyyy en hora de Paraguay, sin depender del idioma del navegador
   igual("fechas: dd/MM/yyyy y dd/MM/yyyy HH:mm:ss en la hora de Paraguay (UTC-3), también al cruzar el día", [formatearFechaPy("2026-10-12T15:15:46Z"), formatearFechaHoraPy("2026-10-12T15:15:46Z"), formatearFechaHoraPy("2026-10-12T02:00:00Z"), formatearFechaPy("no es fecha")], ["12/10/2026", "12/10/2026 12:15:46", "11/10/2026 23:00:00", "no es fecha"]);
@@ -814,7 +824,16 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
   const permisoSql = leer("documentacao/banco/nexit/v1/migraciones/NEX-051-facturacion-permiso-precio.sql");
   const reversion51 = leer("documentacao/banco/nexit/v1/scripts/reversion-NEX-051.sql");
 
-  cierto("UX-01/02: al entrar no se lista ningún cliente ni producto: las consultas viven solo en las funciones de búsqueda de los selectores (botón «Buscar»), no en efectos", !/useEffect\([\s\S]{0,260}api\/facturas\/(clientes|productos)/.test(formulario) && (formulario.match(/api\/facturas\/clientes\?q=/g) ?? []).length === 1 && (formulario.match(/api\/facturas\/productos\?q=/g) ?? []).length === 1 && /async function buscar\(\)/.test(formulario) && /onSubmit=\{\(e\) => \{ e\.preventDefault\(\); void buscar\(\); \}\}/.test(formulario) && />Buscar cliente</.test(formulario) && />Añadir producto</.test(formulario));
+  const cuerpoPagina = formulario.slice(formulario.indexOf("export default function NuevaFacturaPage"));
+  const css = leer("app/(private)/facturas/nueva/page.module.css");
+  const diag = leer("documentacao/banco/nexit/v1/scripts/diagnostico-puntos-expedicion-FE.sql");
+
+  cierto("UX-03 selectores: al abrir listan de inmediato (hook con carga al montar el selector, sin mínimo de caracteres), con filtro opcional y paginación; el formulario en sí no consulta clientes ni productos", /function useListado/.test(formulario) && /function Paginacion/.test(formulario) && !/api\/facturas\/(clientes|productos)/.test(cuerpoPagina) && (formulario.match(/useListado<(Cliente|Producto)>\("\/api\/facturas\/(clientes|productos)"/g) ?? []).length === 2 && !/MIN_BUSQUEDA|al menos \$\{/.test(formulario) && /Filtrar por nombre, RUC, CI o código/.test(formulario) && /Filtrar por código, GTIN o descripción/.test(formulario) && />Buscar cliente</.test(formulario) && />Añadir producto</.test(formulario));
+  cierto("UX-03 cabecera: sin bloque de número, sin «Se asigna al enviar» ni «la fija el sistema», sin caja grande de fecha; solo «Fecha: dd/MM/yyyy · Moneda: PYG» compacto", !/Se asigna al enviar/.test(formulario) && !/la fija el sistema/.test(formulario) && !/<span>Número<\/span>/.test(formulario) && /Fecha: \{hoy \|\| "—"\} · Moneda: PYG/.test(formulario) && !/Solo se factura al contado/.test(formulario) && !/El servidor recalcula todo/.test(formulario));
+  cierto("UX-03 condición y pago: «Condición de la operación» (iCondOpe) y «Forma de pago» (iTiPago) son campos separados, ambos desde el catálogo de la API", /<span>Condición de la operación<\/span>/.test(formulario) && /<span>Forma de pago<\/span>/.test(formulario) && !/Contado · /.test(formulario) && /condiciones: CONDICIONES_OPERACION/.test(leer("app/api/facturas/catalogos/route.ts")));
+  cierto("UX-03 diagnóstico: sin sucursales o sin punto se muestra el motivo real (no se inventa ningún punto en la interfaz) y el sistema cuenta las sucursales sin establecimiento SIFEN", /No hay sucursales habilitadas para facturar/.test(formulario) && /no tienen el establecimiento SIFEN cargado/.test(formulario) && /no tiene puntos de expedición activos/.test(formulario) && !/value="002"|"002"/.test(formulario) && /sucursalesSinEstablecimiento/.test(leer("lib/facturacion/emision.ts")));
+  cierto("UX-03 punto 002: script de diagnóstico de SOLO LECTURA (sin INSERT/UPDATE/DELETE) y script manual de configuración con establecimiento 001, punto 002, último número 49999 y sin reinicio de un punto existente", !/\b(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE)\b/i.test(diag.replace(/--.*$/gm, "")) && /fe_puntos_expedicion/.test(diag) && /ultimo_numero/.test(diag) && /documentos_electronicos/.test(diag) && /'002'/.test(leer("documentacao/banco/nexit/v1/scripts/configurar-punto-expedicion-prueba-NEX-048.sql")) && /49999/.test(leer("documentacao/banco/nexit/v1/scripts/configurar-punto-expedicion-prueba-NEX-048.sql")) && /no se reinicia la numeración/.test(leer("documentacao/banco/nexit/v1/scripts/configurar-punto-expedicion-prueba-NEX-048.sql")));
+  cierto("UX-03 visual: el indicador activo de Documentos ya no usa contorno negro (currentColor) sino clase propia con acento turquesa; totales con panel claro y bordes suaves", !/currentColor/.test(docPageUx) && /estilos\.kpiActivo/.test(docPageUx) && /\.kpiActivo \{[^}]*#0f9ca5/.test(leer("app/(private)/documentos/page.module.css")) && /\.totalGeneral \{[^}]*#f3fbfb/.test(css.slice(css.lastIndexOf(".totalGeneral {"))));
   cierto("UX-01: selector dedicado de cliente con ficha fiscal (razón social, RUC-DV, tipo de contribuyente, dirección y casa, teléfono, correo, aptitud), cambio de cliente y pendientes que remiten a Clientes sin editar el cadastro", /role="dialog"/.test(formulario) && /Ficha fiscal del cliente/.test(formulario) && /Tipo de contribuyente/.test(formulario) && /Dirección fiscal/.test(formulario) && /0 \(no cargado; se informa 0\)/.test(formulario) && /Cambiar cliente/.test(formulario) && /Regularizar en Clientes/.test(formulario) && /disabled=\{!c\.apto\}/.test(formulario));
   cierto("UX-02: el selector de productos muestra el impedimento exacto (IVA, unidad SIFEN, precio) con enlace a Productos y bloquea «Añadir»", /No se puede facturar: /.test(formulario) && /Corregir en Productos/.test(formulario) && /disabled=\{pr\.length > 0\}/.test(formulario) && /sin unidad de medida SIFEN/.test(formulario) && /sin clasificación de IVA/.test(formulario));
   cierto("UX-03: tabla de ítems con producto, afectación, % IVA, unidad, cantidad, precio unitario IVA incluido, subtotal y acciones; cantidad y precio editables, precio solo con permiso", ["Producto", "Afectación IVA", "% IVA", "Unidad", "Cantidad", "Precio unitario (IVA incl.)", "Subtotal"].every((t) => formulario.includes(`>${t}</th>`)) && /puedeEditarPrecio \? \(/.test(formulario) && /Restaurar/.test(formulario) && /aria-invalid=\{cantOk \? undefined : true\}/.test(formulario) && /aria-invalid=\{precOk \? undefined : true\}/.test(formulario));

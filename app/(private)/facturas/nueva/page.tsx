@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
 import ui from "@/components/ui/lista-padrao/lista.module.css";
 import { resumenCalculo, type LineaFE } from "@/lib/facturacion/payload-fe";
@@ -12,7 +12,7 @@ import estilos from "./page.module.css";
 
 type Punto = { id: string; codigo: string; nombre: string };
 type Sucursal = { id: string; nombre: string; establecimiento: string; puntos: Punto[] };
-type Opciones = { tiposTransaccion: Record<string, string>; presencias: Record<string, string>; formasPago: Record<string, string> };
+type Opciones = { condiciones: Record<string, string>; tiposTransaccion: Record<string, string>; presencias: Record<string, string>; formasPago: Record<string, string> };
 type Cliente = {
   id: string; codigo: string; razonSocial: string; nombreFantasia: string | null; numeroDocumento: string; dv: string | null; naturaleza: number; tipoContribuyente: number | null;
   email: string | null; emailFacturacion: string | null; telefono: string | null; celular: string | null; direccion: string | null; numeroCasa: string | null; apto: boolean; pendientes: string[];
@@ -46,7 +46,6 @@ const ETIQUETA_ESTADO_LOCAL: Record<string, string> = {
 const ETIQUETA_IVA: Record<number, string> = { 1: "Gravado", 2: "Exonerado", 3: "Exento", 4: "Gravado parcial" };
 const ETIQUETA_CONTRIBUYENTE: Record<number, string> = { 1: "Persona física", 2: "Persona jurídica" };
 const gs = (n: number) => n.toLocaleString("es-PY", { maximumFractionDigits: 8 });
-const MIN_BUSQUEDA = 2;
 const CANTIDAD_OK = /^\d{1,10}(\.\d{1,4})?$/;
 const PRECIO_OK = /^\d{1,12}(\.\d{1,4})?$/;
 
@@ -92,167 +91,159 @@ function useEscape(alCerrar: () => void) {
   }, [alCerrar]);
 }
 
-/** Selector de clientes: no consulta nada hasta que el operador pulsa «Buscar» (o Enter) con al menos 2 caracteres. */
-function SelectorCliente({ alElegir, alCerrar }: { alElegir: (c: Cliente) => void; alCerrar: () => void }) {
+const POR_PAGINA = 10;
+
+/** Lista paginada del servidor para los selectores: carga la primera página al abrir (sin exigir texto) y vuelve a consultar al filtrar o paginar. */
+function useListado<T>(url: string, campo: "clientes" | "productos", q: string, pagina: number) {
+  const clave = `${q}|${pagina}`;
+  const [datos, setDatos] = useState<{ clave: string; items: T[]; total: number; error: string } | null>(null);
+
+  useEffect(() => {
+    let activo = true;
+    const t = window.setTimeout(() => {
+      fetch(`${url}?q=${encodeURIComponent(q)}&pagina=${pagina}&porPagina=${POR_PAGINA}`, { cache: "no-store" })
+        .then((r) => leer<Record<string, unknown> & { total: number }>(r, "No fue posible cargar la lista."))
+        .then((j) => activo && setDatos({ clave, items: j[campo] as T[], total: j.total, error: "" }))
+        .catch((e: unknown) => activo && setDatos({ clave, items: [], total: 0, error: e instanceof Error ? e.message : "No fue posible cargar la lista." }));
+    }, 0);
+
+    return () => {
+      activo = false;
+      window.clearTimeout(t);
+    };
+  }, [url, campo, q, pagina, clave]);
+
+  return { cargando: datos === null || datos.clave !== clave, items: datos?.items ?? [], total: datos?.total ?? 0, error: datos?.error ?? "" };
+}
+
+/** Filtro con pausa: el texto escrito se aplica a la lista a los 300 ms (o con Enter) y reinicia la paginación. */
+function useFiltro() {
   const [texto, setTexto] = useState("");
-  const [resultados, setResultados] = useState<Cliente[] | null>(null);
-  const [buscando, setBuscando] = useState(false);
-  const [error, setError] = useState("");
-  const ultima = useRef(0);
+  const [q, setQ] = useState("");
+  const [pagina, setPagina] = useState(1);
 
-  useEscape(alCerrar);
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      setQ(texto.trim());
+      setPagina(1);
+    }, 300);
 
-  async function buscar() {
-    const q = texto.trim();
+    return () => window.clearTimeout(t);
+  }, [texto]);
 
-    if (q.length < MIN_BUSQUEDA) {
-      setError(`Escriba al menos ${MIN_BUSQUEDA} caracteres (código, nombre o documento).`);
+  return { texto, setTexto, q, pagina, setPagina, aplicar: () => { setQ(texto.trim()); setPagina(1); } };
+}
 
-      return;
-    }
-
-    const id = ++ultima.current;
-
-    setBuscando(true);
-    setError("");
-    try {
-      const j = await leer<{ clientes: Cliente[] }>(await fetch(`/api/facturas/clientes?q=${encodeURIComponent(q)}`, { cache: "no-store" }), "No fue posible buscar clientes.");
-
-      if (id === ultima.current) setResultados(j.clientes);
-    } catch (e) {
-      if (id === ultima.current) {
-        setResultados(null);
-        setError(e instanceof Error ? e.message : "No fue posible buscar clientes.");
-      }
-    } finally {
-      if (id === ultima.current) setBuscando(false);
-    }
-  }
+function Paginacion({ pagina, total, alCambiar }: { pagina: number; total: number; alCambiar: (p: number) => void }) {
+  const paginas = Math.max(1, Math.ceil(total / POR_PAGINA));
 
   return (
-    <div className={estilos.overlay} role="presentation">
-      <div className={estilos.modal} role="dialog" aria-modal="true" aria-labelledby="titulo-cliente">
-        <div className={estilos.modalHead}>
-          <div>
-            <h2 id="titulo-cliente">Buscar cliente</h2>
-            <p className={estilos.hint} style={{ margin: 0 }}>Busque por código, razón social, nombre de fantasía o documento. Solo se muestran clientes activos y habilitados para ventas.</p>
-          </div>
-          <button type="button" className={estilos.close} onClick={alCerrar} aria-label="Cerrar">×</button>
-        </div>
-
-        <form className={estilos.searchRow} onSubmit={(e) => { e.preventDefault(); void buscar(); }}>
-          <input autoFocus value={texto} onChange={(e) => setTexto(e.target.value)} placeholder="Código, nombre o documento" aria-label="Texto de búsqueda de cliente" />
-          <button type="submit" className={ui.primaryButton} disabled={buscando}>{buscando ? "Buscando..." : "Buscar"}</button>
-        </form>
-
-        {error ? <p className={estilos.fieldError} role="alert">{error}</p> : null}
-
-        {resultados === null ? (
-          <div className={estilos.mensajeVacio}>Escriba un criterio y pulse «Buscar» para ver clientes.</div>
-        ) : resultados.length === 0 ? (
-          <div className={estilos.mensajeVacio}>No se encontraron clientes con ese criterio. <Link href="/clientes">Ir a Clientes</Link></div>
-        ) : (
-          <ul className={estilos.resultados} aria-label="Clientes encontrados">
-            {resultados.map((c) => (
-              <li key={c.id}>
-                <div className={estilos.info}>
-                  <strong>{c.razonSocial}</strong>
-                  <small>{c.codigo} · {documentoCliente(c)} · {tipoContribuyente(c)}</small>
-                  {!c.apto ? <small className={estilos.impedimento}>No apto para facturar: {c.pendientes.join(" · ")}. <Link href="/clientes">Corregir en Clientes</Link></small> : null}
-                </div>
-                <button type="button" className={ui.secondaryButton} disabled={!c.apto} onClick={() => alElegir(c)}>Seleccionar</button>
-              </li>
-            ))}
-          </ul>
-        )}
+    <div className={estilos.paginacion}>
+      <span>{total} resultado{total === 1 ? "" : "s"}</span>
+      <div className={estilos.actions}>
+        <button type="button" className={ui.secondaryButton} disabled={pagina <= 1} onClick={() => alCambiar(pagina - 1)}>Anterior</button>
+        <span aria-live="polite">Página {Math.min(pagina, paginas)} de {paginas}</span>
+        <button type="button" className={ui.secondaryButton} disabled={pagina >= paginas} onClick={() => alCambiar(pagina + 1)}>Siguiente</button>
       </div>
     </div>
   );
 }
 
-/** Selector de productos: igual que el de clientes, sin listado previo. Permite añadir varios sin cerrar. */
-function SelectorProducto({ alAgregar, alCerrar, cantidadItems }: { alAgregar: (p: Producto) => void; alCerrar: () => void; cantidadItems: number }) {
-  const [texto, setTexto] = useState("");
-  const [resultados, setResultados] = useState<Producto[] | null>(null);
-  const [buscando, setBuscando] = useState(false);
-  const [error, setError] = useState("");
-  const [aviso, setAviso] = useState("");
-  const ultima = useRef(0);
+/** Selector de clientes: abre con la lista paginada de los clientes de la empresa; el filtro es opcional (nombre, RUC, CI, código). */
+function SelectorCliente({ alElegir, alCerrar }: { alElegir: (c: Cliente) => void; alCerrar: () => void }) {
+  const f = useFiltro();
+  const l = useListado<Cliente>("/api/facturas/clientes", "clientes", f.q, f.pagina);
 
   useEscape(alCerrar);
 
-  async function buscar() {
-    const q = texto.trim();
+  return (
+    <div className={estilos.overlay} role="presentation">
+      <div className={estilos.modal} role="dialog" aria-modal="true" aria-labelledby="titulo-cliente">
+        <div className={estilos.modalHead}>
+          <h2 id="titulo-cliente">Seleccionar cliente</h2>
+          <button type="button" className={estilos.close} onClick={alCerrar} aria-label="Cerrar">×</button>
+        </div>
 
-    if (q.length < MIN_BUSQUEDA) {
-      setError(`Escriba al menos ${MIN_BUSQUEDA} caracteres (código, código de barras, GTIN o descripción).`);
+        <form className={estilos.searchRow} onSubmit={(e) => { e.preventDefault(); f.aplicar(); }}>
+          <input autoFocus value={f.texto} onChange={(e) => f.setTexto(e.target.value)} placeholder="Filtrar por nombre, RUC, CI o código" aria-label="Filtrar clientes" />
+        </form>
 
-      return;
-    }
+        {l.error ? <p className={estilos.fieldError} role="alert">{l.error}</p> : null}
 
-    const id = ++ultima.current;
+        {l.cargando ? (
+          <div className={estilos.mensajeVacio} role="status">Cargando clientes…</div>
+        ) : l.items.length === 0 && !l.error ? (
+          <div className={estilos.mensajeVacio}>{f.q ? "Ningún cliente coincide con el filtro." : "La empresa no tiene clientes habilitados para facturar."} <Link href="/clientes">Ir a Clientes</Link></div>
+        ) : (
+          <ul className={estilos.resultados} aria-label="Clientes">
+            {l.items.map((c) => (
+              <li key={c.id}>
+                <div className={estilos.info}>
+                  <strong>{c.razonSocial}</strong>
+                  <small>{c.codigo} · {documentoCliente(c)} · {tipoContribuyente(c)}</small>
+                  {!c.apto ? <small className={estilos.impedimento}>Pendiente: {c.pendientes.join(" · ")}. <Link href="/clientes">Corregir en Clientes</Link></small> : null}
+                </div>
+                <span className={`${estilos.badge} ${c.apto ? estilos.badgeOk : estilos.badgeWarn}`}>{c.apto ? "Apto" : "Con pendientes"}</span>
+                <button type="button" className={ui.secondaryButton} disabled={!c.apto} onClick={() => alElegir(c)}>Seleccionar</button>
+              </li>
+            ))}
+          </ul>
+        )}
 
-    setBuscando(true);
-    setError("");
-    setAviso("");
-    try {
-      const j = await leer<{ productos: Producto[] }>(await fetch(`/api/facturas/productos?q=${encodeURIComponent(q)}`, { cache: "no-store" }), "No fue posible buscar productos.");
+        <Paginacion pagina={f.pagina} total={l.total} alCambiar={f.setPagina} />
+      </div>
+    </div>
+  );
+}
 
-      if (id === ultima.current) setResultados(j.productos);
-    } catch (e) {
-      if (id === ultima.current) {
-        setResultados(null);
-        setError(e instanceof Error ? e.message : "No fue posible buscar productos.");
-      }
-    } finally {
-      if (id === ultima.current) setBuscando(false);
-    }
-  }
+/** Selector de productos: lista paginada inmediata; filtro opcional (código, descripción, GTIN, código de barras). Permite añadir varios sin cerrar. */
+function SelectorProducto({ alAgregar, alCerrar, cantidadItems }: { alAgregar: (p: Producto) => void; alCerrar: () => void; cantidadItems: number }) {
+  const f = useFiltro();
+  const l = useListado<Producto>("/api/facturas/productos", "productos", f.q, f.pagina);
+  const [aviso, setAviso] = useState("");
+
+  useEscape(alCerrar);
 
   return (
     <div className={estilos.overlay} role="presentation">
       <div className={`${estilos.modal} ${estilos.modalWide}`} role="dialog" aria-modal="true" aria-labelledby="titulo-producto">
         <div className={estilos.modalHead}>
-          <div>
-            <h2 id="titulo-producto">Añadir producto</h2>
-            <p className={estilos.hint} style={{ margin: 0 }}>Busque por código, código de barras, GTIN o descripción. Se facturan mercaderías y servicios activos.</p>
-          </div>
+          <h2 id="titulo-producto">Añadir producto</h2>
           <button type="button" className={estilos.close} onClick={alCerrar} aria-label="Cerrar">×</button>
         </div>
 
-        <form className={estilos.searchRow} onSubmit={(e) => { e.preventDefault(); void buscar(); }}>
-          <input autoFocus value={texto} onChange={(e) => setTexto(e.target.value)} placeholder="Código, GTIN o descripción" aria-label="Texto de búsqueda de producto" />
-          <button type="submit" className={ui.primaryButton} disabled={buscando}>{buscando ? "Buscando..." : "Buscar"}</button>
+        <form className={estilos.searchRow} onSubmit={(e) => { e.preventDefault(); f.aplicar(); }}>
+          <input autoFocus value={f.texto} onChange={(e) => f.setTexto(e.target.value)} placeholder="Filtrar por código, GTIN o descripción" aria-label="Filtrar productos" />
         </form>
 
-        {error ? <p className={estilos.fieldError} role="alert">{error}</p> : null}
-        {aviso ? <p className={estilos.hint} role="status">{aviso}</p> : null}
+        {l.error ? <p className={estilos.fieldError} role="alert">{l.error}</p> : null}
+        {aviso ? <p className={estilos.aviso} role="status">{aviso}</p> : null}
 
-        {resultados === null ? (
-          <div className={estilos.mensajeVacio}>Escriba un criterio y pulse «Buscar» para ver productos.</div>
-        ) : resultados.length === 0 ? (
-          <div className={estilos.mensajeVacio}>No se encontraron productos con ese criterio. <Link href="/productos">Ir a Productos</Link></div>
+        {l.cargando ? (
+          <div className={estilos.mensajeVacio} role="status">Cargando productos…</div>
+        ) : l.items.length === 0 && !l.error ? (
+          <div className={estilos.mensajeVacio}>{f.q ? "Ningún producto coincide con el filtro." : "La empresa no tiene productos activos para facturar."} <Link href="/productos">Ir a Productos</Link></div>
         ) : (
-          <ul className={estilos.resultados} aria-label="Productos encontrados">
-            {resultados.map((p) => {
+          <ul className={estilos.resultados} aria-label="Productos">
+            {l.items.map((p) => {
               const pr = problemasProducto(p);
 
               return (
                 <li key={p.id}>
                   <div className={estilos.info}>
                     <strong>{p.descripcion}</strong>
-                    <small>
-                      {p.codigo} · {p.unidadSimbolo ?? "sin unidad"} · {p.afectacion ? `${ETIQUETA_IVA[p.afectacion]}${p.tasa ? ` ${p.tasa}%` : ""}` : "IVA sin clasificar"}
-                      {p.precio ? ` · Gs. ${gs(Number(p.precio))} (IVA incl.)` : ""}
-                    </small>
+                    <small>{p.codigo}{p.gtin ? ` · GTIN ${p.gtin}` : ""} · {p.unidadSimbolo ?? "sin unidad"} · {p.afectacion ? `${ETIQUETA_IVA[p.afectacion]}${p.tasa ? ` ${p.tasa}%` : ""}` : "IVA sin clasificar"}</small>
                     {pr.length > 0 ? <small className={estilos.impedimento}>No se puede facturar: {pr.join(", ")}. <Link href="/productos">Corregir en Productos</Link></small> : null}
                   </div>
-                  <button type="button" className={ui.secondaryButton} disabled={pr.length > 0} onClick={() => { alAgregar(p); setAviso(`«${p.descripcion}» añadido a la factura.`); }}>Añadir</button>
+                  <span className={estilos.precio}>{p.precio ? `Gs. ${gs(Number(p.precio))}` : "—"}</span>
+                  <button type="button" className={ui.secondaryButton} disabled={pr.length > 0} onClick={() => { alAgregar(p); setAviso(`«${p.descripcion}» añadido.`); }}>Añadir</button>
                 </li>
               );
             })}
           </ul>
         )}
+
+        <Paginacion pagina={f.pagina} total={l.total} alCambiar={f.setPagina} />
 
         <div className={estilos.actions} style={{ marginTop: 12 }}>
           <span className={estilos.hint} style={{ margin: 0 }}>{cantidadItems} ítem{cantidadItems === 1 ? "" : "s"} en la factura</span>
@@ -267,6 +258,7 @@ export default function NuevaFacturaPage() {
   const [sucursales, setSucursales] = useState<Sucursal[]>([]);
   const [opciones, setOpciones] = useState<Opciones | null>(null);
   const [puedeEditarPrecio, setPuedeEditarPrecio] = useState(false);
+  const [sinEstablecimiento, setSinEstablecimiento] = useState(0);
   const [errorCarga, setErrorCarga] = useState("");
   const [sucursalId, setSucursalId] = useState("");
   const [puntoId, setPuntoId] = useState("");
@@ -295,12 +287,13 @@ export default function NuevaFacturaPage() {
     let activo = true;
 
     fetch("/api/facturas/catalogos", { cache: "no-store" })
-      .then((r) => leer<{ sucursales: Sucursal[]; opciones: Opciones; puedeEditarPrecio?: boolean }>(r, "No fue posible cargar los datos del formulario."))
+      .then((r) => leer<{ sucursales: Sucursal[]; opciones: Opciones; puedeEditarPrecio?: boolean; sucursalesSinEstablecimiento?: number }>(r, "No fue posible cargar los datos del formulario."))
       .then((j) => {
         if (!activo) return;
 
         setHoy(formatearFechaPy(new Date()));
         setSucursales(j.sucursales);
+        setSinEstablecimiento(j.sucursalesSinEstablecimiento ?? 0);
         setOpciones(j.opciones);
         setPuedeEditarPrecio(j.puedeEditarPrecio === true);
         if (j.sucursales.length === 1) {
@@ -458,8 +451,15 @@ export default function NuevaFacturaPage() {
           <section className={estilos.card} aria-labelledby="sec-cabecera">
             <div className={estilos.cardHead}>
               <h2 id="sec-cabecera">Cabecera</h2>
+              <span className={estilos.meta}>Fecha: {hoy || "—"} · Moneda: PYG</span>
             </div>
             <div className={estilos.cardBody}>
+              {sucursales.length === 0 && opciones ? (
+                <div className={ui.alertError} role="alert" style={{ marginBottom: 12 }}>
+                  No hay sucursales habilitadas para facturar en su alcance.
+                  {sinEstablecimiento > 0 ? ` ${sinEstablecimiento} sucursal(es) no tienen el establecimiento SIFEN cargado.` : " Verifique la sucursal, su establecimiento SIFEN y su alcance de acceso."}
+                </div>
+              ) : null}
               <div className={estilos.grid}>
                 <label className={estilos.field}>
                   <span>Sucursal *</span>
@@ -478,27 +478,19 @@ export default function NuevaFacturaPage() {
                   {sucursal && sucursal.puntos.length === 0 ? <small className={estilos.fieldError}>Esta sucursal no tiene puntos de expedición activos.</small> : null}
                 </label>
 
-                <div className={estilos.field}>
-                  <span>Fecha de emisión</span>
-                  <div className={estilos.readonly}>{hoy || "—"} · la fija el sistema al enviar</div>
-                </div>
-
-                <div className={estilos.field}>
-                  <span>Número</span>
-                  <div className={estilos.readonly}>Se asigna al enviar la factura</div>
-                </div>
-
                 <label className={estilos.field}>
-                  <span>Condición y forma de pago</span>
-                  <select value={formaPago} onChange={(e) => setFormaPago(e.target.value)} aria-label="Forma de pago (contado)">
-                    {Object.entries(opciones?.formasPago ?? {}).map(([k, v]) => <option key={k} value={k}>Contado · {v}</option>)}
+                  <span>Condición de la operación</span>
+                  <select value="1" onChange={() => undefined} disabled={Object.keys(opciones?.condiciones ?? { 1: "" }).length < 2}>
+                    {Object.entries(opciones?.condiciones ?? { 1: "Contado" }).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                   </select>
                 </label>
 
-                <div className={estilos.field}>
-                  <span>Moneda</span>
-                  <div className={estilos.readonly}>Guaraníes (PYG)</div>
-                </div>
+                <label className={estilos.field}>
+                  <span>Forma de pago</span>
+                  <select value={formaPago} onChange={(e) => setFormaPago(e.target.value)}>
+                    {Object.entries(opciones?.formasPago ?? {}).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                  </select>
+                </label>
 
                 <label className={estilos.field}>
                   <span>Tipo de transacción</span>
@@ -514,7 +506,6 @@ export default function NuevaFacturaPage() {
                   </select>
                 </label>
               </div>
-              <p className={estilos.hint}>Solo se factura al contado y en guaraníes en esta etapa. El número y la fecha fiscal los asigna el sistema al registrar el envío.</p>
             </div>
           </section>
 
@@ -568,10 +559,6 @@ export default function NuevaFacturaPage() {
             <div className={estilos.cardHead}>
               <div>
                 <h2 id="sec-detalle">Detalle de la factura *</h2>
-                <small>
-                  Precios con IVA incluido.{" "}
-                  {puedeEditarPrecio ? "Puede ajustar la cantidad y el precio unitario de cada ítem." : "El precio es el de lista; modificarlo requiere un permiso especial."}
-                </small>
               </div>
               <button type="button" className={ui.primaryButton} onClick={() => setSelector("producto")}>Añadir producto</button>
             </div>
@@ -665,7 +652,6 @@ export default function NuevaFacturaPage() {
                 <small>IVA incluido{hayPrecioModificado ? " · con precios modificados" : ""}</small>
               </div>
             </div>
-            <p className={estilos.hint} style={{ margin: "0 16px 14px" }}>El servidor recalcula todo con los precios, el IVA y la unidad de los cadastros; este resumen es solo informativo.</p>
           </section>
 
           <section className={estilos.card} aria-labelledby="sec-info">
@@ -704,16 +690,16 @@ export default function NuevaFacturaPage() {
         <div className={estilos.overlay} role="presentation">
           <div className={estilos.modal} role="dialog" aria-modal="true" aria-labelledby="titulo-resumen">
             <h2 id="titulo-resumen">Resumen de la factura</h2>
-            <p className={estilos.hint} style={{ marginTop: 0 }}>Revise los datos. Todavía no se asignó número ni se transmitió nada: el número se reserva al enviar.</p>
+            <p className={estilos.hint} style={{ marginTop: 0 }}>Revise los datos antes de enviar la factura.</p>
             <dl className={estilos.totals}>
               <div><dt>Empresa</dt><dd>{resumen.empresa}</dd></div>
               <div><dt>Establecimiento / sucursal</dt><dd>{resumen.establecimiento} · {resumen.sucursal}</dd></div>
               <div><dt>Punto de expedición</dt><dd>{resumen.punto}</dd></div>
-              <div><dt>Número</dt><dd>{resumen.numero}</dd></div>
-              <div><dt>Fecha de emisión</dt><dd>{hoy || "—"} (la fija el sistema al enviar)</dd></div>
+              <div><dt>Fecha</dt><dd>{hoy || "—"}</dd></div>
               <div><dt>Cliente</dt><dd>{resumen.cliente.razonSocial} ({resumen.cliente.documento})</dd></div>
               <div><dt>Transacción · presencia</dt><dd>{resumen.tipoTransaccion} · {resumen.presencia}</dd></div>
-              <div><dt>Condición · pago</dt><dd>{resumen.condicion} · {resumen.formaPago}</dd></div>
+              <div><dt>Condición de la operación</dt><dd>{resumen.condicion}</dd></div>
+              <div><dt>Forma de pago</dt><dd>{resumen.formaPago}</dd></div>
             </dl>
             <div className={estilos.tableWrap} style={{ margin: "10px 0" }}>
               <table className={estilos.items} style={{ minWidth: 560 }}>

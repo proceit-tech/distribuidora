@@ -10,7 +10,19 @@ import { B, S, calcularItem, calcularSubtotales, numeroDec, parseDec, type Afect
  * exportación, contratación pública ni crédito.
  */
 
-export const TIPOS_TRANSACCION = { 1: "Venta de mercadería", 2: "Prestación de servicios", 3: "Mixto (mercadería y servicios)" } as const;
+/**
+ * iTipTra (MT v150, D011): catálogo normativo COMPLETO, conferido contra el Manual Técnico del repositorio. Solo se habilitan los que una factura al contado en
+ * guaraníes con IVA incluido calcula igual que una venta; los demás exigen reglas que esta etapa no implementa (divisas: tipo de cambio; compras: son de
+ * autofactura; anticipo, crédito fiscal, muestras médicas y donaciones: tratamiento fiscal propio) y NO se ofrecen.
+ */
+export const CATALOGO_TIPOS_TRANSACCION: Record<number, string> = {
+  1: "Venta de mercadería", 2: "Prestación de servicios", 3: "Mixto (venta de mercadería y servicios)", 4: "Venta de activo fijo", 5: "Venta de divisas", 6: "Compra de divisas",
+  7: "Promoción o entrega de muestras", 8: "Donación", 9: "Anticipo", 10: "Compra de productos", 11: "Compra de servicios", 12: "Venta de crédito fiscal", 13: "Muestras médicas (Art. 3 RG 24/2014)",
+};
+export const TIPOS_TRANSACCION = { 1: CATALOGO_TIPOS_TRANSACCION[1], 2: CATALOGO_TIPOS_TRANSACCION[2], 3: CATALOGO_TIPOS_TRANSACCION[3], 4: CATALOGO_TIPOS_TRANSACCION[4] } as Record<number, string>;
+/** iCondOpe (D031): por ahora solo Contado (decisión del responsable); el crédito exige cuotas/plazo. */
+export const CONDICIONES_OPERACION = { 1: "Contado" } as Record<number, string>;
+/** iIndPres (MT v150, E011): 1–6 completos; el código 9 «Otro» exige además un texto descriptivo (E012) que el JSON funcional no transporta, por eso no se ofrece. */
 export const INDICADORES_PRESENCIA = { 1: "Operación presencial", 2: "Operación electrónica", 3: "Operación telemarketing", 4: "Venta a domicilio", 5: "Operación bancaria", 6: "Operación cíclica" } as const;
 /** E606 (MT v150): en la primera emisión de prueba SOLO se habilita Efectivo (decisión del responsable); otras formas exigen validar sus condicionales fiscales. */
 export const FORMAS_PAGO = { 1: "Efectivo" } as const;
