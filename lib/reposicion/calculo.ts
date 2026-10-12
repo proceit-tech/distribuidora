@@ -11,6 +11,11 @@
  *  · Transferencia primero (solo en filas por depósito): otros depósitos visibles con parámetros ceden su disponible por encima de su propio
  *    punto/mínimo. Un depósito SIN parámetros NO cede nada de forma automática: su disponible se informa «a validar manualmente» y no entra en la
  *    cantidad transferible ni reduce la compra. El resto se sugiere como compra. Nunca se transfiere ni se compra automáticamente.
+ *  · Origen compartido (AUD-REP-04): varios destinos del mismo producto pueden competir por el mismo depósito de origen. La disponibilidad transferible de
+ *    cada origen (disponible − máx(punto, mínimo) del origen) se reparte UNA sola vez entre todos los destinos con `calcularPlanReposicion`: primero
+ *    el destino más crítico (sin stock, bajo mínimo, en punto), luego la mayor cantidad sugerida, luego nombre e id (orden estable). Lo que un destino
+ *    toma ya no está disponible para los siguientes; la suma de las transferencias de un origen nunca supera lo transferible y el origen conserva su
+ *    mínimo/punto. El faltante de los destinos de menor prioridad pasa a compra. Los depósitos sin parámetros nunca se asignan.
  *  · Un solo plan por producto. Si el producto tiene parámetros por depósito, el renglón consolidado (parámetros globales) queda solo como
  *    REFERENCIA: no genera necesidad, compra ni transferencia, para no duplicar la sugerencia sobre el mismo saldo.
  *  · «Cantidad de reposición» sin mínimo, punto ni máximo no define un gatillo: se muestra como «Cantidad sin gatillo», nunca como un plan.
@@ -62,7 +67,10 @@ export type FilaReposicion = EntradaReposicion & {
 const positivo = (n: number | null): number => (n !== null && Number.isFinite(n) && n > 0 ? n : 0);
 const redondear = (n: number) => Math.round(n * 10000) / 10000;
 
-export function calcularReposicion(e: EntradaReposicion, opciones: { incluirTransito: boolean }): FilaReposicion {
+/** Disponibilidad transferible aún sin asignar por depósito de origen (de un mismo producto). Se consume al calcular cada destino. */
+export type OrigenRestante = Map<string, number>;
+
+export function calcularReposicion(e: EntradaReposicion, opciones: { incluirTransito: boolean }, restante?: OrigenRestante): FilaReposicion {
   const minimo = positivo(e.parametros.minimo);
   const punto = positivo(e.parametros.punto);
   const maximo = positivo(e.parametros.maximo);
@@ -116,10 +124,15 @@ export function calcularReposicion(e: EntradaReposicion, opciones: { incluirTran
       .map((o) => {
         const reserva = Math.max(positivo(o.punto), positivo(o.minimo));
 
-        return { o, transferible: redondear(Math.max(0, o.disponible - reserva)), sinParametros: reserva === 0 };
+        const total = redondear(Math.max(0, o.disponible - reserva));
+        const libre = restante && reserva > 0 ? Math.min(total, restante.get(o.id) ?? total) : total;
+
+        if (libre < total) advertencias.push(`${o.nombre}: parte de su disponibilidad transferible ya fue asignada a otro depósito de mayor prioridad (quedan ${redondear(Math.max(0, libre))}).`);
+
+        return { o, transferible: redondear(Math.max(0, libre)), sinParametros: reserva === 0 };
       })
       .filter((c) => c.transferible > 0)
-      .sort((a, b) => b.transferible - a.transferible);
+      .sort((a, b) => b.transferible - a.transferible || a.o.nombre.localeCompare(b.o.nombre, "es") || a.o.id.localeCompare(b.o.id));
 
     // Sin parámetros en el depósito de origen no hay base para saber cuánto puede ceder: queda como disponibilidad a validar, fuera del plan.
     for (const c of candidatos.filter((x) => x.sinParametros)) aValidar.push({ depositoId: c.o.id, depositoNombre: c.o.nombre, disponible: c.o.disponible });
@@ -130,6 +143,7 @@ export function calcularReposicion(e: EntradaReposicion, opciones: { incluirTran
       const cantidad = redondear(Math.min(pendiente, c.transferible));
 
       transferencias.push({ depositoId: c.o.id, depositoNombre: c.o.nombre, cantidad });
+      if (restante) restante.set(c.o.id, redondear(c.transferible - cantidad));
       pendiente = redondear(pendiente - cantidad);
     }
   }
@@ -154,4 +168,39 @@ const PESO: Record<Criticidad, number> = { SIN_STOCK: 0, BAJO_MINIMO: 1, EN_PUNT
 
 export function compararUrgencia(a: FilaReposicion, b: FilaReposicion): number {
   return PESO[a.criticidad] - PESO[b.criticidad] || (b.sugerida ?? 0) - (a.sugerida ?? 0) || a.productoDescripcion.localeCompare(b.productoDescripcion, "es");
+}
+
+const PRIORIDAD: Record<Criticidad, number> = { SIN_STOCK: 0, BAJO_MINIMO: 1, EN_PUNTO: 2, OK: 3, SIN_GATILLO: 4, SIN_PARAMETROS: 5 };
+
+/**
+ * Calcula todo el plan asignando cada origen compartido una sola vez por producto (AUD-REP-04). Devuelve las filas en el mismo orden que las entradas.
+ * Prioridad de los destinos: criticidad, mayor cantidad sugerida, nombre del depósito, id (determinista).
+ */
+export function calcularPlanReposicion(entradas: EntradaReposicion[], opciones: { incluirTransito: boolean }): FilaReposicion[] {
+  const previas = entradas.map((e) => calcularReposicion(e, opciones));
+  const orden = previas
+    .map((fila, i) => ({ fila, i }))
+    .sort(
+      (a, b) =>
+        PRIORIDAD[a.fila.criticidad] - PRIORIDAD[b.fila.criticidad] ||
+        (b.fila.sugerida ?? 0) - (a.fila.sugerida ?? 0) ||
+        a.fila.depositoNombre.localeCompare(b.fila.depositoNombre, "es") ||
+        (a.fila.depositoId ?? "").localeCompare(b.fila.depositoId ?? "") ||
+        a.i - b.i,
+    );
+  const restantes = new Map<string, OrigenRestante>();
+  const resultado = new Array<FilaReposicion>(entradas.length);
+
+  for (const { i } of orden) {
+    const e = entradas[i];
+    let restante = restantes.get(e.productoId);
+
+    if (!restante) {
+      restante = new Map();
+      restantes.set(e.productoId, restante);
+    }
+    resultado[i] = calcularReposicion(e, opciones, restante);
+  }
+
+  return resultado;
 }

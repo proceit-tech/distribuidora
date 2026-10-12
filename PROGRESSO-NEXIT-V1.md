@@ -547,3 +547,6 @@ Detalle en `documentacao/v1/homologacao-visual/IMPLEMENTACAO-STOCK-REPOSICION-MO
 
 ### Reposición — correção AUD-REP-01/02/03 e redação AUD-DOC-01 (2026-10-12)
 Um único plano por produto (o consolidado vira «referência» quando existem parâmetros por depósito); depósito sem parâmetros não cede estoque automaticamente (fica «a validar manualmente», fora do transferível e da redução da compra); «cantidad de reposición» sem gatilho = situação «Cantidad sin gatillo» com advertência. Contrato da Etapa C explicita que a prevenção de baixa duplicada por factura/remisión **ainda não existe** como vínculo persistido. Sem migration. Local: 1646 verificações, 0 falhas; tsc/ESLint/build OK.
+
+### Reposición — correção AUD-REP-04 (2026-10-12)
+Origem compartilhada entre vários destinos: o transferível de cada origem (disponível − máx(ponto, mínimo)) é repartido uma única vez por produto (`calcularPlanReposicion`), por prioridade determinística (criticidade, maior quantidade, nome, id); a soma por origem nunca excede o transferível, o faltante vira compra, depósitos sem parâmetros e fora do alcance nunca são alocados. AUD-REP-01/02/03 preservados. Continua só planejamento; sem migration, sem alterar Movimientos. Local: 1668 verificações, 0 falhas; tsc/ESLint/build OK; sem PostgreSQL nem navegador.

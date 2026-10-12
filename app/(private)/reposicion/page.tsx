@@ -7,7 +7,7 @@ import { compararTexto, ordenarLista, siguienteOrden, type Orden } from "@/compo
 import { ThOrdenable } from "@/components/ui/lista-padrao/th-ordenable";
 import ui from "@/components/ui/lista-padrao/lista.module.css";
 import { formatearCantidad } from "@/lib/formato/listas";
-import { calcularReposicion, compararUrgencia, type Criticidad, type EntradaReposicion, type FilaReposicion } from "@/lib/reposicion/calculo";
+import { calcularPlanReposicion, compararUrgencia, type Criticidad, type EntradaReposicion, type FilaReposicion } from "@/lib/reposicion/calculo";
 
 const PAGE_SIZE = 25;
 
@@ -67,7 +67,7 @@ export default function ReposicionPage() {
     };
   }, []);
 
-  const filas = useMemo<FilaReposicion[]>(() => (datos?.entradas ?? []).map((e) => calcularReposicion(e, { incluirTransito })).sort(compararUrgencia), [datos, incluirTransito]);
+  const filas = useMemo<FilaReposicion[]>(() => calcularPlanReposicion(datos?.entradas ?? [], { incluirTransito }).sort(compararUrgencia), [datos, incluirTransito]);
   const marcas = useMemo(() => [...new Set(filas.map((f) => f.marca).filter(Boolean))].sort((a, b) => a.localeCompare(b, "es")), [filas]);
 
   const visibles = useMemo(() => {
@@ -426,7 +426,7 @@ export default function ReposicionPage() {
           <li>Se usa el stock <strong>propio disponible</strong>: lo reservado no se resta otra vez, la cuarentena no es vendible y el tránsito sin confirmar no se cuenta salvo que lo active en el filtro.</li>
           <li>Necesita reposición si el disponible es 0, menor que el mínimo o igual o menor que el punto de reposición. La cantidad sugerida completa hasta el máximo (o usa la cantidad de reposición del depósito); sin ninguno de los dos no se inventa una meta.</li>
           <li>Los parámetros por depósito se comparan con ese depósito; los del producto, con el total de los depósitos autorizados.</li>
-          <li><strong>Transferencia</strong> desde otro depósito con parámetros y excedente (su disponible por encima de su propio punto/mínimo) se propone antes que la compra; un depósito sin parámetros solo aparece como «a validar manualmente» y no reduce la compra. <strong>Compra</strong> al proveedor principal por el saldo restante.</li>
+          <li><strong>Transferencia</strong> desde otro depósito con parámetros y excedente (su disponible por encima de su propio punto/mínimo) se propone antes que la compra (si varios depósitos comparten el mismo origen, su excedente se reparte una sola vez por prioridad: criticidad, mayor cantidad, nombre); un depósito sin parámetros solo aparece como «a validar manualmente» y no reduce la compra. <strong>Compra</strong> al proveedor principal por el saldo restante.</li>
           <li>Si el producto tiene parámetros por depósito, el total consolidado queda como referencia y no se suma: hay un único plan por producto. Una «cantidad de reposición» sin mínimo, punto ni máximo no define cuándo reponer y se señala como tal.</li>
           <li><strong>Devolución de cliente</strong> y <strong>ajuste de inventario</strong> son entradas que se registran en Movimientos, con la autorización correspondiente; no se calculan aquí ni se generan automáticamente.</li>
         </ul>

@@ -7,7 +7,7 @@ import { join } from "node:path";
 
 import { contador } from "@/lib/clientes/contador-casos";
 import { claveEfectoFisico, decidirEfecto, planEstorno, validarLinea, type ContextoDocumento } from "@/lib/movimientos/documentos";
-import { calcularReposicion, compararUrgencia, type EntradaReposicion } from "@/lib/reposicion/calculo";
+import { calcularPlanReposicion, calcularReposicion, compararUrgencia, type EntradaReposicion } from "@/lib/reposicion/calculo";
 import { leerEntradasReposicion } from "@/lib/reposicion/datos";
 import { leerStock } from "@/lib/stock/shared";
 import { clasificarNivel, resumenStock, vistaPorDeposito } from "@/lib/stock/vista";
@@ -168,6 +168,72 @@ export async function verificarCasosStockReposicionMovimientos(): Promise<string
   const filas = [calc({ saldo: { ...base.saldo, disponible: 25 }, productoDescripcion: "B" }), calc({ saldo: { ...base.saldo, disponible: 0 }, productoDescripcion: "A" }), calc({ saldo: { ...base.saldo, disponible: 5 }, productoDescripcion: "C" })];
 
   igual("orden por urgencia: sin stock, luego bajo mínimo, luego en punto", [...filas].sort(compararUrgencia).map((f) => f.criticidad), ["SIN_STOCK", "BAJO_MINIMO", "EN_PUNTO"]);
+
+  // ── AUD-REP-04: origen compartido entre varios destinos (asignación global, sin sobreasignar)
+  const D4 = "d4d4d4d4-d4d4-4d4d-8d4d-d4d4d4d4d4d4";
+  const D5 = "d5d5d5d5-d5d5-4d5d-8d5d-d5d5d5d5d5d5";
+  const ORIG = { id: D3, nombre: "Origen", disponible: 80, minimo: 10, punto: 30 };
+  const dest = (id: string, nombre: string, disponible: number, extra: Partial<EntradaReposicion> = {}): EntradaReposicion => ({
+    ...base, clave: `P|${id}`, depositoId: id, depositoNombre: nombre, saldo: { disponible, reservado: 0, cuarentena: 0, transito: 0 },
+    parametros: { minimo: 20, punto: 30, maximo: 60, cantidadReposicion: null }, otrosDepositos: [ORIG], ...extra,
+  });
+  const totalOrigen = (fs: ReturnType<typeof calcularPlanReposicion>, id = D3) => fs.reduce((a, f) => a + f.transferencias.filter((t) => t.depositoId === id).reduce((b, t) => b + t.cantidad, 0), 0);
+  // origen transferible = 80 − 30 = 50; A (posición 10) necesita 60 − 10 = 50; B (posición 15) necesita 45
+  const dos = calcularPlanReposicion([dest(D1, "A", 10), dest(D2, "B", 15)], { incluirTransito: false });
+
+  igual("2 destinos / 1 origen con 50 transferibles: la suma asignada nunca supera 50", totalOrigen(dos), 50);
+  igual("el destino con mayor cantidad sugerida toma primero y el otro completa con compra", dos.map((f) => [f.depositoNombre, f.sugeridaTransferencia, f.sugeridaCompra]), [["A", 50, 0], ["B", 0, 45]]);
+  igual("el destino sin cupo avisa que el origen ya fue asignado", /ya fue asignada a otro depósito de mayor prioridad/.test(dos[1].advertencias.join(" ")), true);
+  igual("el origen conserva su punto: 80 − asignado ≥ 30", 80 - totalOrigen(dos) >= 30, true);
+  igual("el cálculo independiente (sin plan global) sobreasignaría: es el defecto corregido", calcularReposicion(dest(D1, "A", 10), { incluirTransito: false }).sugeridaTransferencia + calcularReposicion(dest(D2, "B", 15), { incluirTransito: false }).sugeridaTransferencia > 50, true);
+
+  const tres = calcularPlanReposicion([dest(D1, "A", 10), dest(D2, "B", 15), dest(D4, "C", 25)], { incluirTransito: false });
+
+  igual("3 destinos con disponibilidad insuficiente: se reparte por prioridad hasta agotar el cupo", [totalOrigen(tres), tres.map((f) => f.sugeridaTransferencia)], [50, [50, 0, 0]]);
+  igual("el faltante de cada destino es compra (sugerida − transferencia confirmada)", tres.map((f) => f.sugeridaCompra), [0, 45, 35]);
+  const grande = { ...ORIG, disponible: 150 };
+  const amplio = calcularPlanReposicion([dest(D1, "A", 10, { otrosDepositos: [grande] }), dest(D2, "B", 15, { otrosDepositos: [grande] }), dest(D4, "C", 25, { otrosDepositos: [grande] })], { incluirTransito: false });
+
+  igual("cupo de 120 y demanda de 130: se asigna exactamente el cupo y el resto es compra", [amplio.map((f) => f.sugeridaTransferencia), totalOrigen(amplio), amplio.map((f) => f.sugeridaCompra)], [[50, 45, 25], 120, [0, 0, 10]]);
+  igual("el origen no cede por debajo de su punto aunque sobre demanda", 150 - totalOrigen(amplio) >= 30, true);
+  igual("prioridad por criticidad: SIN_STOCK antes que BAJO_MINIMO aunque pida menos", calcularPlanReposicion([dest(D1, "A", 10), dest(D2, "B", 0, { parametros: { minimo: 20, punto: 30, maximo: 40, cantidadReposicion: null } })], { incluirTransito: false }).map((f) => [f.depositoNombre, f.sugeridaTransferencia]), [["A", 10], ["B", 40]]);
+  // empate total (misma criticidad y cantidad): desempata por nombre y luego id; el orden de entrada no importa
+  const empate1 = calcularPlanReposicion([dest(D2, "Beta", 10), dest(D1, "Alfa", 10)], { incluirTransito: false });
+  const empate2 = calcularPlanReposicion([dest(D1, "Alfa", 10), dest(D2, "Beta", 10)], { incluirTransito: false });
+
+  igual("empate exacto: gana el nombre menor (Alfa) y el resultado no depende del orden de entrada", [empate1.find((f) => f.depositoNombre === "Alfa")?.sugeridaTransferencia, empate1.find((f) => f.depositoNombre === "Beta")?.sugeridaTransferencia, empate2.find((f) => f.depositoNombre === "Alfa")?.sugeridaTransferencia], [50, 0, 50]);
+  igual("empate con el mismo nombre: desempata por id del depósito", calcularPlanReposicion([dest(D2, "X", 10), dest(D1, "X", 10)], { incluirTransito: false }).map((f) => [f.depositoId === D1 ? "d1" : "d2", f.sugeridaTransferencia]), [["d2", 0], ["d1", 50]]);
+  igual("las filas se devuelven en el orden de las entradas", dos.map((f) => f.depositoId), [D1, D2]);
+  const otroProducto = calcularPlanReposicion([dest(D1, "A", 10), dest(D2, "B", 10, { productoId: "p2", clave: "p2|d2" })], { incluirTransito: false });
+
+  igual("el cupo se reparte por producto: otro producto en el mismo origen tiene su propio saldo", otroProducto.map((f) => f.sugeridaTransferencia), [50, 50]);
+  // depósitos sin parámetros: nunca se asignan y no consumen cupo
+  const SINP = { id: D5, nombre: "SinParam", disponible: 300, minimo: null, punto: null };
+  const mixto = calcularPlanReposicion([dest(D1, "A", 10, { otrosDepositos: [SINP, ORIG] }), dest(D2, "B", 15, { otrosDepositos: [SINP, ORIG] })], { incluirTransito: false });
+
+  igual("depósito sin parámetros: ninguna asignación, queda a validar manualmente en cada destino", [totalOrigen(mixto, D5), mixto.map((f) => f.aValidarManualmente.map((v) => v.depositoId))], [0, [[D5], [D5]]]);
+  igual("con orígenes con y sin parámetros, el cupo confirmado sigue limitado al origen con parámetros", totalOrigen(mixto), 50);
+  igual("solo orígenes sin parámetros: todo es compra y nada se asigna", calcularPlanReposicion([dest(D1, "A", 10, { otrosDepositos: [SINP] }), dest(D2, "B", 15, { otrosDepositos: [SINP] })], { incluirTransito: false }).map((f) => [f.sugeridaTransferencia, f.sugeridaCompra]), [[0, 50], [0, 45]]);
+  igual("origen sin disponibilidad sobre su punto no se asigna", calcularPlanReposicion([dest(D1, "A", 10, { otrosDepositos: [{ ...ORIG, disponible: 30 }] })], { incluirTransito: false })[0].transferencias, []);
+  igual("renglón consolidado de referencia no consume cupo del origen", calcularPlanReposicion([dest(D1, "A", 10, { ambito: "CONSOLIDADO", soloReferencia: true, depositoId: null, clave: "P|*" }), dest(D2, "B", 15)], { incluirTransito: false }).map((f) => f.sugeridaTransferencia), [0, 45]);
+  igual("AUD-REP-03 se conserva en el plan: sin gatillo no genera transferencias", calcularPlanReposicion([dest(D1, "A", 0, { parametros: { minimo: null, punto: null, maximo: null, cantidadReposicion: 5 } })], { incluirTransito: false }).map((f) => [f.criticidad, f.sugeridaTransferencia]), [["SIN_GATILLO", 0]]);
+
+  // acceso restringido: un depósito de origen que el usuario no puede ver no existe para el plan (nunca se asigna ni se menciona)
+  const restringido = await leerEntradasReposicion({
+    async query(sql: string) {
+      if (/FROM productos p/.test(sql)) return { rows: [{ id: P1, codigo: "P-1", descripcion: "Leche", marca: "", unidad: "U", minimo: null, maximo: null, punto: null, proveedorNombre: null, proveedorPlazo: null, proveedorMinima: null }], rowCount: 1 };
+      if (/FROM stock_saldos s/.test(sql)) return { rows: [{ productoId: P1, depositoId: D1, estado: "DISPONIBLE", cantidad: 5 }, { productoId: P1, depositoId: D2, estado: "DISPONIBLE", cantidad: 5 }, { productoId: P1, depositoId: D3, estado: "DISPONIBLE", cantidad: 500 }], rowCount: 3 };
+      if (/FROM producto_deposito_configuracion/.test(sql)) return { rows: [{ productoId: P1, depositoId: D1, minimo: 20, maximo: 60, punto: 30, reposicion: null }, { productoId: P1, depositoId: D2, minimo: 20, maximo: 60, punto: 30, reposicion: null }, { productoId: P1, depositoId: D3, minimo: 10, maximo: null, punto: 30, reposicion: null }], rowCount: 3 };
+      if (/SELECT count\(\*\)::int AS n FROM depositos/.test(sql)) return { rows: [{ n: 3 }], rowCount: 1 };
+      if (/FROM depositos d JOIN usuarios u/.test(sql)) return { rows: [{ id: D1, codigo: "A", nombre: "A" }, { id: D2, codigo: "B", nombre: "B" }], rowCount: 2 };
+
+      return { rows: [], rowCount: 0 };
+    },
+  } as never, EMPRESA, USUARIO);
+  const planRestringido = calcularPlanReposicion(restringido.entradas, { incluirTransito: false });
+
+  igual("acceso restringido: el origen no autorizado no recibe asignaciones y los dos destinos pasan a compra", [restringido.alcanceParcial, planRestringido.filter((f) => f.necesita).map((f) => [f.sugeridaTransferencia, f.sugeridaCompra]), totalOrigen(planRestringido)], [true, [[0, 55], [0, 55]], 0]);
+  igual("acceso restringido: el origen no autorizado tampoco aparece como disponibilidad a validar", planRestringido.every((f) => f.aValidarManualmente.length === 0), true);
 
   // lectura de datos de reposición (conexión simulada)
   const regR: Array<{ sql: string; parametros: unknown[] }> = [];
