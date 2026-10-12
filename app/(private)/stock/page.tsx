@@ -8,6 +8,7 @@ import {
 } from "react";
 
 import { cargarStock } from "@/lib/stock/cliente-api";
+import { resumenStock, vistaPorDeposito } from "@/lib/stock/vista";
 
 import {
   StockItem,
@@ -64,76 +65,10 @@ function precioVentaReferencia(item: StockItem) {
   return Number(item.precioVentaReferencia ?? 0);
 }
 
-function valorVentaReferencia(item: StockItem) {
-  return Number(item.valorVentaReferencia ?? 0);
-}
-
-function gananciaPotencial(
-  item: StockItem,
-) {
-  if (
-    item.precioVentaReferencia === null ||
-    item.costoPromedio === null
-  ) {
-    return 0;
-  }
-
-  return (
-    valorVentaReferencia(item) -
-    costoUnitario(item) *
-      Number(item.disponible || 0)
-  );
-}
-
-function fechaArchivo() {
-  const now = new Date();
-
-  return [
-    now.getFullYear(),
-    String(now.getMonth() + 1).padStart(
-      2,
-      "0",
-    ),
-    String(now.getDate()).padStart(
-      2,
-      "0",
-    ),
-  ].join("-");
-}
-
-function ajustarColumnas(
-  sheet: {
-    ["!cols"]?: Array<{
-      wch?: number;
-    }>;
-  },
-  widths: number[],
-) {
-  sheet["!cols"] = widths.map(
-    (width) => ({
-      wch: width,
-    }),
-  );
-}
-
-function descargarWorkbook(
-  XLSX: typeof import("xlsx"),
-  workbook: import("xlsx").WorkBook,
-  nombreArchivo: string,
-) {
-  XLSX.writeFile(
-    workbook,
-    nombreArchivo,
-    {
-      bookType: "xlsx",
-      compression: true,
-    },
-  );
-}
-
 export default function StockPage() {
-  const [stock, setStock] =
+  const [stockCompleto, setStock] =
     useState<StockItem[]>([]);
+  const [alcanceParcial, setAlcanceParcial] = useState(false);
 
   const [busqueda, setBusqueda] =
     useState("");
@@ -168,8 +103,7 @@ export default function StockPage() {
     setDeposito,
   ] = useState("TODOS");
 
-  const [pagina, setPagina] =
-    useState(1);
+  const [paginacion, setPaginacion] = useState({ clave: "", pagina: 1 });
 
   const [cargando, setCargando] =
     useState(true);
@@ -185,7 +119,10 @@ export default function StockPage() {
     cargarStock()
       .then((r) => {
         MONEDA_BASE = r.monedaBase;
-        if (activo) setStock(r.stock);
+        if (activo) {
+          setStock(r.stock);
+          setAlcanceParcial(r.alcanceParcial === true);
+        }
       })
       .catch((e: unknown) => {
         if (activo)
@@ -204,19 +141,11 @@ export default function StockPage() {
     };
   }, []);
 
-  useEffect(() => {
-    setPagina(1);
-  }, [
-    busqueda,
-    nivel,
-    propiedad,
-    marca,
-    familia,
-    linea,
-    procedencia,
-    deposito,
-    orden,
-  ]);
+  // Con un depósito elegido TODO (filas, tarjetas, filtros, orden) usa los saldos y el costo de ese depósito; sin él, la visión consolidada.
+  const stock = useMemo(
+    () => (deposito === "TODOS" ? stockCompleto : stockCompleto.flatMap((item) => vistaPorDeposito(item, deposito) ?? [])),
+    [stockCompleto, deposito],
+  );
 
   const marcas = useMemo(
     () =>
@@ -293,7 +222,7 @@ export default function StockPage() {
         string
       >();
 
-    stock.forEach((item) => {
+    stockCompleto.forEach((item) => {
       item.depositos.forEach(
         (dep) => {
           map.set(
@@ -307,49 +236,9 @@ export default function StockPage() {
     return Array.from(
       map.entries(),
     );
-  }, [stock]);
+  }, [stockCompleto]);
 
-  const resumen = useMemo(() => {
-    return stock.reduce(
-      (acc, item) => {
-        acc.sku += 1;
-
-        acc.disponible +=
-          Number(
-            item.disponible || 0,
-          );
-
-        acc.valorCosto +=
-          valorCosto(item);
-
-        acc.valorVenta +=
-          valorVentaReferencia(item);
-
-        if (
-          item.nivel === "BAJO"
-        ) {
-          acc.stockBajo += 1;
-        }
-
-        if (
-          item.nivel ===
-          "SIN_STOCK"
-        ) {
-          acc.sinStock += 1;
-        }
-
-        return acc;
-      },
-      {
-        sku: 0,
-        disponible: 0,
-        stockBajo: 0,
-        sinStock: 0,
-        valorCosto: 0,
-        valorVenta: 0,
-      },
-    );
-  }, [stock]);
+  const resumen = useMemo(() => resumenStock(stock), [stock]);
 
   const filtrados = useMemo(() => {
     const term =
@@ -406,17 +295,6 @@ export default function StockPage() {
           return false;
         }
 
-        if (
-          deposito !== "TODOS" &&
-          !item.depositos.some(
-            (dep) =>
-              dep.depositoId ===
-              deposito,
-          )
-        ) {
-          return false;
-        }
-
         if (!term) {
           return true;
         }
@@ -451,7 +329,6 @@ export default function StockPage() {
     familia,
     linea,
     procedencia,
-    deposito,
   ]);
 
   // Ordenación sobre el conjunto filtrado COMPLETO (toda la lista está cargada), antes de paginar.
@@ -484,6 +361,12 @@ export default function StockPage() {
     ),
   );
 
+  // La página vuelve a 1 cuando cambian los filtros o el orden y nunca excede el total: se deriva en el render (sin efecto).
+  const claveFiltros = JSON.stringify([busqueda, nivel, propiedad, marca, familia, linea, procedencia, deposito, orden]);
+  const pagina = paginacion.clave === claveFiltros ? Math.min(paginacion.pagina, totalPaginas) : 1;
+  const setPagina = (valor: number | ((actual: number) => number)) =>
+    setPaginacion({ clave: claveFiltros, pagina: typeof valor === "function" ? valor(pagina) : valor });
+
   const paginaActual = useMemo(
     () =>
       ordenados.slice(
@@ -505,296 +388,6 @@ export default function StockPage() {
   }
 
 
-  async function exportarListadoExcel() {
-    const XLSX = await import("xlsx");
-
-    const detalle = filtrados.map(
-      (item) => ({
-        Código: item.productoCodigo,
-        "Código inventario":
-          item.productoCodigoInventario ||
-          "",
-        Producto:
-          item.productoDescripcion,
-        Marca: item.marca || "",
-        Familia: item.familia || "",
-        Línea: item.linea || "",
-        Procedencia:
-          item.procedencia || "",
-        Propiedad:
-          item.propiedad === "TERCERO"
-            ? `Tercero - ${
-                item.propietarioNombre ||
-                ""
-              }`
-            : "Propio",
-        "Stock disponible": Number(
-          item.disponible || 0,
-        ),
-        "Costo unitario":
-          costoUnitario(item),
-        "Valor a costo":
-          valorCosto(item),
-        "Precio venta referencia":
-          precioVentaReferencia(item),
-        "Valor venta referencia":
-          valorVentaReferencia(item),
-        "Ganancia potencial":
-          gananciaPotencial(item),
-        Estado:
-          item.nivel === "SIN_STOCK"
-            ? "SIN STOCK"
-            : item.nivel === "BAJO"
-              ? "STOCK BAJO"
-              : item.nivel ===
-                  "SOBRESTOCK"
-                ? "SOBRESTOCK"
-                : "NORMAL",
-      }),
-    );
-
-    const resumenExportacion = [
-      {
-        Indicador: "Productos",
-        Valor: filtrados.length,
-      },
-      {
-        Indicador:
-          "Unidades disponibles",
-        Valor: filtrados.reduce(
-          (acc, item) =>
-            acc +
-            Number(
-              item.disponible || 0,
-            ),
-          0,
-        ),
-      },
-      {
-        Indicador:
-          "Valor total a costo",
-        Valor: filtrados.reduce(
-          (acc, item) =>
-            acc + valorCosto(item),
-          0,
-        ),
-      },
-      {
-        Indicador:
-          "Valor venta referencia",
-        Valor: filtrados.reduce(
-          (acc, item) =>
-            acc +
-            valorVentaReferencia(item),
-          0,
-        ),
-      },
-      {
-        Indicador:
-          "Ganancia potencial",
-        Valor: filtrados.reduce(
-          (acc, item) =>
-            acc +
-            gananciaPotencial(item),
-          0,
-        ),
-      },
-    ];
-
-    const workbook =
-      XLSX.utils.book_new();
-
-    const resumenSheet =
-      XLSX.utils.json_to_sheet(
-        resumenExportacion,
-      );
-
-    const detalleSheet =
-      XLSX.utils.json_to_sheet(
-        detalle,
-      );
-
-    ajustarColumnas(
-      resumenSheet,
-      [28, 22],
-    );
-
-    ajustarColumnas(
-      detalleSheet,
-      [
-        16,
-        18,
-        45,
-        22,
-        24,
-        18,
-        16,
-        20,
-        16,
-        16,
-        18,
-        12,
-        18,
-        18,
-        18,
-        14,
-      ],
-    );
-
-    resumenSheet["!autofilter"] = {
-      ref: "A1:B6",
-    };
-
-    if (detalle.length > 0) {
-      detalleSheet["!autofilter"] = {
-        ref: `A1:O${
-          detalle.length + 1
-        }`,
-      };
-    }
-
-    XLSX.utils.book_append_sheet(
-      workbook,
-      resumenSheet,
-      "Resumen",
-    );
-
-    XLSX.utils.book_append_sheet(
-      workbook,
-      detalleSheet,
-      "Stock valorizado",
-    );
-
-    descargarWorkbook(
-      XLSX,
-      workbook,
-      `Stock_Valorizado_${fechaArchivo()}.xlsx`,
-    );
-  }
-
-  async function exportarValorizadoMarca() {
-    const XLSX = await import("xlsx");
-
-    const agrupado = new Map<
-      string,
-      {
-        skus: number;
-        unidades: number;
-        costo: number;
-        venta: number;
-        ganancia: number;
-      }
-    >();
-
-    filtrados.forEach((item) => {
-      const nombreMarca =
-        item.marca?.trim() ||
-        "SIN MARCA";
-
-      const actual =
-        agrupado.get(nombreMarca) || {
-          skus: 0,
-          unidades: 0,
-          costo: 0,
-          venta: 0,
-          ganancia: 0,
-        };
-
-      actual.skus += 1;
-      actual.unidades += Number(
-        item.disponible || 0,
-      );
-      actual.costo += valorCosto(item);
-      actual.venta +=
-        valorVentaReferencia(item);
-      actual.ganancia +=
-        gananciaPotencial(item);
-
-      agrupado.set(
-        nombreMarca,
-        actual,
-      );
-    });
-
-    const totalCosto =
-      Array.from(
-        agrupado.values(),
-      ).reduce(
-        (acc, item) =>
-          acc + item.costo,
-        0,
-      );
-
-    const resumenMarca =
-      Array.from(
-        agrupado.entries(),
-      )
-        .sort(
-          (a, b) =>
-            b[1].costo -
-            a[1].costo,
-        )
-        .map(
-          ([nombreMarca, item]) => ({
-            Marca: nombreMarca,
-            SKUs: item.skus,
-            Unidades: item.unidades,
-            "Valor a costo":
-              item.costo,
-            "Valor venta referencia":
-              item.venta,
-            "Ganancia potencial":
-              item.ganancia,
-            "Participación costo %":
-              totalCosto > 0
-                ? item.costo /
-                  totalCosto
-                : 0,
-          }),
-        );
-
-    const workbook =
-      XLSX.utils.book_new();
-
-    const sheet =
-      XLSX.utils.json_to_sheet(
-        resumenMarca,
-      );
-
-    ajustarColumnas(
-      sheet,
-      [
-        24,
-        12,
-        14,
-        20,
-        20,
-        20,
-        20,
-      ],
-    );
-
-    if (resumenMarca.length > 0) {
-      sheet["!autofilter"] = {
-        ref: `A1:G${
-          resumenMarca.length + 1
-        }`,
-      };
-    }
-
-    XLSX.utils.book_append_sheet(
-      workbook,
-      sheet,
-      "Resumen por marca",
-    );
-
-    descargarWorkbook(
-      XLSX,
-      workbook,
-      `Stock_Costo_por_Marca_${fechaArchivo()}.xlsx`,
-    );
-  }
-
   return (
     <section className={ui.page}>
       <header className={ui.topbar}>
@@ -809,12 +402,6 @@ export default function StockPage() {
         </div>
 
         <div className={ui.actionsGroup}>
-          <button type="button" className={ui.secondaryButton} onClick={exportarListadoExcel}>
-            Exportar Excel
-          </button>
-          <button type="button" className={ui.secondaryButton} onClick={exportarValorizadoMarca}>
-            Valorizado por marca
-          </button>
           <Link href="/movimientos" className={ui.secondaryButton}>
             Movimientos
           </Link>
@@ -823,6 +410,12 @@ export default function StockPage() {
           </Link>
         </div>
       </header>
+
+      <p className={ui.resultCount} role="status" style={{ margin: "0 0 8px" }}>
+        {deposito === "TODOS"
+          ? `Visión consolidada${alcanceParcial ? " de los depósitos que usted tiene autorizados" : " de todos los depósitos"}.`
+          : `Visión del depósito ${depositos.find(([id]) => id === deposito)?.[1] ?? ""}: cantidades, costo y valores corresponden solo a este depósito; el mínimo y el máximo son los configurados para él.`}
+      </p>
 
       <section className={ui.summaryGrid} aria-label="Resumen de stock">
         <article className={[ui.summaryCard, ui.summaryTeal].join(" ")}>

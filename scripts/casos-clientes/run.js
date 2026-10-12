@@ -29,6 +29,7 @@ Module._resolveFilename = function (request, ...resto) {
   const arc = cargar("lib/productos/documentos-archivos.casos.js");
   const jer = cargar("lib/productos/jerarquia-catalogos.casos.js");
   const lco = cargar("lib/listas-precio/listas-comerciales.casos.js");
+  const srm = cargar("lib/stock/stock-reposicion.casos.js");
   const suites = [
     ["teléfono y día de cobro", async () => tel.verificarCasosTelefonoYCobro(), () => tel.CASOS_TELEFONO.length + 11 + 6 + 2],
     ["catálogo mundial", async () => tel.verificarCatalogoMundial(), null],
@@ -51,6 +52,7 @@ Module._resolveFilename = function (request, ...resto) {
     ["Productos: documentos privados, foto, NEX-041 y pantalla (PRD-REV-03…06)", async () => arc.verificarCasosDocumentosProductos(), null],
     ["Productos: jerarquía de catálogos Categoría → Familia → Línea (NEX-044, CAT-012)", async () => jer.verificarCasosJerarquiaCatalogos(), null],
     ["Listas de precios y Catálogos comerciales (NEX-045, tipos de cambio manuales)", async () => lco.verificarCasosListasComerciales(), null],
+    ["Stock, Reposición y contrato Movimientos ↔ documentos (Etapas A, B y C)", async () => srm.verificarCasosStockReposicionMovimientos(), null],
   ];
   let total = 0;
   let fallosTotal = 0;

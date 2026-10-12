@@ -321,7 +321,7 @@ export default function StockDetallePage() {
             </h2>
             <p>
               Distribución física y
-              virtual por ubicación.
+              virtual por depósito.
             </p>
           </div>
         </div>
@@ -348,11 +348,13 @@ export default function StockDetallePage() {
                 </strong>
                 <small>
                   {deposito.depositoCodigo}
+                  {deposito.terceros > 0 ? ` · Terceros: ${deposito.terceros}` : ""}
+                  {deposito.costoCantidad > 0 ? ` · Costo: ${money(deposito.costoValor)}` : ""}
                 </small>
               </div>
 
-              <span>
-                {deposito.ubicacion}
+              <span title="No existe un modelo de ubicaciones físicas en el banco">
+                {deposito.ubicacion || "Sin ubicación registrada"}
               </span>
               <span>
                 {deposito.disponible}

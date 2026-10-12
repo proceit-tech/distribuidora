@@ -24,9 +24,9 @@ export async function GET(_request: Request, contexto: { params: Promise<{ id: s
 
   try {
     const { db } = await import("@/lib/db");
-    const r = await leerStock(db, session.user.empresaId, id);
+    const r = await leerStock(db, session.user.empresaId, id, session.user.id);
     if (!r.stock.length) return noEncontrado();
-    return NextResponse.json({ item: r.stock[0], monedaBase: r.monedaBase });
+    return NextResponse.json({ item: r.stock[0], monedaBase: r.monedaBase, alcanceParcial: r.alcanceParcial });
   } catch (error) {
     console.error("Error al cargar stock:", error);
     return NextResponse.json({ error: "No fue posible cargar el stock." }, { status: 500 });

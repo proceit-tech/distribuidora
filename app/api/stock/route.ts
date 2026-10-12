@@ -20,7 +20,7 @@ export async function GET() {
 
   try {
     const { db } = await import("@/lib/db");
-    return NextResponse.json(await leerStock(db, session.user.empresaId, null));
+    return NextResponse.json(await leerStock(db, session.user.empresaId, null, session.user.id));
   } catch (error) {
     console.error("Error al cargar stock:", error);
     return NextResponse.json({ error: "No fue posible cargar el stock." }, { status: 500 });

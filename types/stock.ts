@@ -111,8 +111,20 @@ export type StockLote = {
   propietario: string;
 };
 
+/** Detalle real por depósito: saldos PROPIOS, terceros, costo valorizado y parámetros propios del depósito (null = no configurado). */
+export type StockDeposito = StockDepositoDetalleDemo & {
+  terceros: number;
+  costoCantidad: number;
+  costoValor: number;
+  stockMinimo: number | null;
+  stockMaximo: number | null;
+  puntoReposicion: number | null;
+  cantidadReposicion: number | null;
+};
+
 export type StockItem = Omit<
   StockDemo,
+  | "depositos"
   | "precioVentaReferencia"
   | "valorVentaReferencia"
   | "costoPromedio"
@@ -128,7 +140,9 @@ export type StockItem = Omit<
   valorVentaReferencia: number | null;
   monedaPrecio: string;
   terceros: number;
+  depositos: StockDeposito[];
   lotes: StockLote[];
 };
 
-export type StockRespuesta = { stock: StockItem[]; monedaBase: string };
+/** alcanceParcial: el usuario solo ve los depósitos que tiene autorizados (los totales no incluyen los demás). */
+export type StockRespuesta = { stock: StockItem[]; monedaBase: string; alcanceParcial?: boolean };
