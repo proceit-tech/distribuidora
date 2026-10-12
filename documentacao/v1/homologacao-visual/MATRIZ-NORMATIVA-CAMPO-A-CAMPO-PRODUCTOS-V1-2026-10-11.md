@@ -562,3 +562,12 @@ Cada bloco mostra um indicador discreto de «aptidão fiscal» (pendências), se
 **Build (VM-GATE-01):** o `next build` falhava no prerender («Expected workStore to be initialized», em `/login`, `/clientes/nuevo` e até `/_not-found`) **somente** quando executado a partir de `C:\projetos\…` (minúsculas) em vez da ruta real `C:\PROJETOS\…`: o Turbopack carrega duas cópias dos módulos do Next. Executado na ruta real: **exit 0, 0 erros de prerender**. É artefato do ambiente local Windows (o CLAUDE.md cita a ruta em minúsculas), não do código; Docker/Linux não é afetado. Nada foi desativado nem ocultado.
 
 **Testes realizados (locais, sem banco):** `tsc` sem erros; ESLint sem erros nem avisos nos arquivos de Productos; **1385 verificações contadas, 0 falhas** (112 novas de documentos/foto/NEX-041/pantalla/conversões, mais as suítes anteriores atualizadas); `next build` exit 0. **Não equivalem a teste em PostgreSQL.**
+
+## 16. Correções PRD-AUD-07 e PRD-AUD-08 — Claude Code, 2026-10-12
+
+Base: auditoria `AUDITORIA-PRD-REV-07-08-2026-10-12.md`. NEX-042 versionada y NO aplicada; sin PostgreSQL, VM, Docker ni navegador.
+
+| Ref | Corrección |
+|---|---|
+| PRD-AUD-07 | Cierre de la carga inicial con verificación HTTP (200 / 403 / 404 / 500 / error de red). Ante fallo: no se navega a «éxito», no se vuelve a crear el producto, se conservan id y archivos y la ficha ofrece reintentar el cierre mientras la carga siga abierta. El servidor conserva su política (el creador con CREAR solo cierra con la carga abierta; no se reabre la ventana). Sin temporizadores. |
+| PRD-AUD-08 | NEX-042: `producto_imagen_versiones` (solo altas). Una sola foto vigente (`productos.imagen_*`); A→B→quitar conserva A y B con clave estable por empresa/producto; descarga y recuperación con permisos de edición; la clave no se expone; ningún archivo se borra; `imagen_url` intacto. Decisión de negocio pendiente: ninguna (la recuperación reutiliza el patrón de versiones de Documentos). |

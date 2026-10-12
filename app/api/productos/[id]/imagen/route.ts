@@ -106,6 +106,13 @@ export async function POST(request: Request, contexto: Contexto) {
       if (!decision.permitido) return { rechazo: decision.mensaje, estado: decision.estado };
 
       const anterior = await c.query("SELECT imagen_nombre, imagen_sha256, imagen_tamano FROM productos WHERE id = $1 AND empresa_id = $2", [id, empresaId]);
+      // Historial privado (NEX-042): cada archivo cargado queda referenciado por su clave; la fila de productos (bloqueada arriba) serializa el número de versión.
+      const nueva = await c.query(
+        `INSERT INTO producto_imagen_versiones (empresa_id, producto_id, version, almacen_clave, nombre_archivo, tamano_bytes, tipo_mime, sha256, subido_por)
+         VALUES ($1, $2, (SELECT COALESCE(MAX(version), 0) + 1 FROM producto_imagen_versiones WHERE empresa_id = $1 AND producto_id = $2), $3, $4, $5, $6, $7, $8)
+         RETURNING id, version`,
+        [empresaId, id, clave, foto.nombre, foto.tamano, foto.mime, foto.sha256, usuarioId],
+      );
 
       await c.query(
         `UPDATE productos SET imagen_clave = $3, imagen_nombre = $4, imagen_mime = $5, imagen_tamano = $6, imagen_sha256 = $7,
@@ -117,10 +124,11 @@ export async function POST(request: Request, contexto: Contexto) {
         empresaId,
         productoId: id,
         entidad: "IMAGEN",
+        entidadId: nueva.rows[0].id as string,
         accion: "FOTO_ACTUALIZADA",
         usuarioId,
         anterior: anterior.rows[0]?.imagen_nombre ? { nombre: anterior.rows[0].imagen_nombre, sha256: anterior.rows[0].imagen_sha256, tamanoBytes: Number(anterior.rows[0].imagen_tamano) } : null,
-        nuevo: { nombre: foto.nombre, sha256: foto.sha256, tamanoBytes: foto.tamano, cargaInicial: decision.cargaInicial },
+        nuevo: { version: Number(nueva.rows[0].version), nombre: foto.nombre, sha256: foto.sha256, tamanoBytes: foto.tamano, cargaInicial: decision.cargaInicial },
       });
 
       return { ok: true as const };
@@ -161,7 +169,12 @@ export async function DELETE(_request: Request, contexto: Contexto) {
 
   try {
     const hecho = await conTransaccion(async (c) => {
-      const r = await c.query("SELECT imagen_nombre, imagen_sha256, imagen_tamano FROM productos WHERE id = $1 AND empresa_id = $2 AND imagen_clave IS NOT NULL FOR UPDATE", [id, empresaId]);
+      const r = await c.query(
+        `SELECT p.imagen_nombre, p.imagen_sha256, p.imagen_tamano, v.id AS version_id, v.version
+           FROM productos p LEFT JOIN producto_imagen_versiones v ON v.empresa_id = p.empresa_id AND v.producto_id = p.id AND v.almacen_clave = p.imagen_clave
+          WHERE p.id = $1 AND p.empresa_id = $2 AND p.imagen_clave IS NOT NULL FOR UPDATE OF p`,
+        [id, empresaId],
+      );
 
       if (r.rowCount !== 1) return false;
 
@@ -175,9 +188,10 @@ export async function DELETE(_request: Request, contexto: Contexto) {
         empresaId,
         productoId: id,
         entidad: "IMAGEN",
+        entidadId: (r.rows[0].version_id as string | null) ?? null,
         accion: "FOTO_ELIMINADA",
         usuarioId,
-        anterior: { nombre: r.rows[0].imagen_nombre, sha256: r.rows[0].imagen_sha256, tamanoBytes: Number(r.rows[0].imagen_tamano) },
+        anterior: { version: r.rows[0].version === null ? null : Number(r.rows[0].version), nombre: r.rows[0].imagen_nombre, sha256: r.rows[0].imagen_sha256, tamanoBytes: Number(r.rows[0].imagen_tamano) },
       });
 
       return true;

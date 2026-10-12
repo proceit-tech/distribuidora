@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 
 import ProductoForm from "@/app/(private)/productos/_components/producto-form";
+import { cerrarCargaInicial } from "@/lib/productos/cierre-carga";
 import { cargarCatalogos, errorDeRespuesta, mensajeError } from "@/lib/productos/cliente-api";
 import type { PestanaId } from "@/lib/productos/pestanas";
 import type { CatalogoProductos, ProductoDetalle } from "@/types/productos";
@@ -19,6 +20,8 @@ export default function EditarProductoPage() {
   const [error, setError] = useState("");
   const [recarga, setRecarga] = useState(0);
   const [avisoDocumentos, setAvisoDocumentos] = useState(false);
+  const [cierrePendiente, setCierrePendiente] = useState<string | null>(null);
+  const [reintentando, setReintentando] = useState(false);
   const [pestana, setPestana] = useState<PestanaId>("general");
 
   const recargar = useCallback(() => setRecarga((n) => n + 1), []);
@@ -58,10 +61,21 @@ export default function EditarProductoPage() {
     void cargar();
 
     // Tras un alta con archivos pendientes de cargar se abre la pestaña de documentos con un aviso.
-    if (new URLSearchParams(window.location.search).get("aviso") === "documentos") {
+    const consulta = new URLSearchParams(window.location.search);
+
+    if (consulta.get("aviso") === "documentos") {
       void Promise.resolve().then(() => {
         setPestana("documentos");
         setAvisoDocumentos(true);
+      });
+      window.history.replaceState(null, "", window.location.pathname);
+    } else if (consulta.get("aviso") === "cierre") {
+      // El alta y sus archivos están guardados; solo falló confirmar el cierre de la carga inicial (PRD-AUD-07).
+      const estado = consulta.get("estado");
+
+      void Promise.resolve().then(() => {
+        setPestana("documentos");
+        setCierrePendiente(estado && estado !== "red" ? `código HTTP ${estado}` : "sin conexión");
       });
       window.history.replaceState(null, "", window.location.pathname);
     }
@@ -70,6 +84,22 @@ export default function EditarProductoPage() {
       activo = false;
     };
   }, [params.id, recarga]);
+
+  async function reintentarCierre() {
+    setReintentando(true);
+
+    const cierre = await cerrarCargaInicial(params.id);
+
+    setReintentando(false);
+
+    if (cierre.cerrada) {
+      setCierrePendiente(null);
+      recargar();
+    } else {
+      setCierrePendiente(`${cierre.estado === null ? "sin conexión" : `código HTTP ${cierre.estado}`}: ${cierre.mensaje}`);
+      recargar(); // refleja si la carga ya estaba cerrada
+    }
+  }
 
   async function guardar(data: Record<string, unknown>) {
     const respuesta = await fetch(`/api/productos/${encodeURIComponent(params.id)}`, {
@@ -112,7 +142,12 @@ export default function EditarProductoPage() {
       catalogos={catalogos}
       onSave={guardar}
       onRecargar={recargar}
-      aviso={avisoDocumentos ? "El producto se registró, pero algunos archivos no pudieron cargarse. Cárguelos desde la pestaña Documentos o la foto desde Información." : undefined}
+      aviso={
+        cierrePendiente !== null && producto.cargaDocumentosInicialAbierta
+          ? `El producto y sus archivos ya están registrados (no se creó otro producto), pero no se pudo confirmar el cierre de la carga inicial (${cierrePendiente}). Reintente el cierre.`
+          : avisoDocumentos ? "El producto se registró, pero algunos archivos no pudieron cargarse. Cárguelos desde la pestaña Documentos o la foto desde Información." : undefined
+      }
+      accionAviso={cierrePendiente !== null && producto.cargaDocumentosInicialAbierta ? { etiqueta: "Reintentar cierre", onClick: () => void reintentarCierre(), ocupado: reintentando } : undefined}
       pestanaInicial={pestana}
       alCambiarPestana={setPestana}
     />

@@ -86,4 +86,5 @@ Configuración real de Docker Compose identificada mediante `docker inspect` por
 
 - Los documentos técnicos y la foto principal de Productos usan el MISMO volumen y la variable `NEXIT_ARCHIVOS_DIR`, con claves `<empresa>/productos/<producto>/<uuid>`. No hay configuración adicional ni cambio de propietario (UID 1001).
 - Orden de aplicación: NEX-041 después de NEX-037 y NEX-039 (envoltorio de grants). La reversión `scripts/reversion-NEX-041.sql` **aborta** si hay archivos, versiones, fotos o auditoría de Productos.
+- NEX-042 (después de NEX-041) agrega el historial `producto_imagen_versiones`: cada foto cargada queda referenciada y recuperable; la reversión `scripts/reversion-NEX-042.sql` aborta si hay filas.
 - Cambiar o quitar la foto, o eliminar un documento, no borra archivos del volumen: la retención y la copia de seguridad siguen siendo del volumen.

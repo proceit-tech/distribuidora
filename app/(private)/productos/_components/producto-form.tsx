@@ -33,6 +33,8 @@ type Props = {
   onRecargar?: () => void;
   /** Aviso informativo bajo el encabezado (por ejemplo, archivos del alta que no pudieron cargarse). */
   aviso?: string;
+  /** Acción opcional del aviso (p. ej. reintentar el cierre de la carga inicial). */
+  accionAviso?: { etiqueta: string; onClick: () => void; ocupado?: boolean };
   pestanaInicial?: PestanaId;
   alCambiarPestana?: (pestana: PestanaId) => void;
 };
@@ -73,7 +75,7 @@ const NUEVAS: Record<Coleccion, (form: FormularioProducto, catalogos: CatalogoPr
   componentes: (form) => ({ id: temporal("componente"), productoComponenteId: "", productoComponenteNombre: "", cantidad: "1", esOpcional: false, orden: String(form.componentes.length + 1) }),
 };
 
-export default function ProductoForm({ mode, initial, catalogos, onSave, onRecargar, aviso, pestanaInicial, alCambiarPestana }: Props) {
+export default function ProductoForm({ mode, initial, catalogos, onSave, onRecargar, aviso, accionAviso, pestanaInicial, alCambiarPestana }: Props) {
   const [formularioBase] = useState<FormularioProducto>(() => (initial ? formularioDesdeDetalle(initial) : formularioInicial(catalogos)));
   const [form, setForm] = useState<FormularioProducto>(formularioBase);
   const [tab, setTabInterno] = useState<PestanaId>(pestanaInicial ?? "general");
@@ -237,6 +239,14 @@ export default function ProductoForm({ mode, initial, catalogos, onSave, onRecar
         {aviso ? (
           <div className={styles.aviso} role="status">
             {aviso}
+            {accionAviso ? (
+              <>
+                {" "}
+                <button type="button" className={styles.cancelButton} onClick={accionAviso.onClick} disabled={accionAviso.ocupado}>
+                  {accionAviso.ocupado ? "Reintentando..." : accionAviso.etiqueta}
+                </button>
+              </>
+            ) : null}
           </div>
         ) : null}
 

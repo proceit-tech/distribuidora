@@ -11,6 +11,105 @@ import { Campo } from "../campos";
 import type { ContextoFormulario } from "../contexto";
 import styles from "../producto-form.module.css";
 
+type VersionFoto = { version: number; nombreArchivo: string; tamanoBytes: number; vigente: boolean; subidoEn: string; subidoPor: string };
+
+/** Historial privado de fotos (NEX-042): solo con permiso de historial; las fotos anteriores nunca se borran y pueden recuperarse. */
+function HistorialFotos({ ctx, productoId }: { ctx: ContextoFormulario; productoId: string }) {
+  const [abierto, setAbierto] = useState(false);
+  const [versiones, setVersiones] = useState<VersionFoto[] | null>(null);
+  const [mensaje, setMensaje] = useState("");
+  const [ocupado, setOcupado] = useState(false);
+  const puedeRecuperar = ctx.detalle?.permisosDocumentos.gestionar === true;
+
+  async function cargar() {
+    setMensaje("");
+
+    try {
+      const r = await fetch(`/api/productos/${productoId}/imagen/versiones`, { cache: "no-store" });
+      const j = (await r.json().catch(() => ({}))) as { error?: string; versiones?: VersionFoto[] };
+
+      if (!r.ok) {
+        setMensaje(j.error ?? "No fue posible leer el historial de fotos.");
+
+        return;
+      }
+
+      setVersiones(j.versiones ?? []);
+    } catch {
+      setMensaje("Error de conexión.");
+    }
+  }
+
+  async function recuperar(version: number) {
+    if (ctx.sucio && !window.confirm("Hay cambios sin guardar en el formulario: la acción recarga la ficha y se perderían. ¿Desea continuar?")) return;
+    if (!window.confirm(`¿Recuperar la versión ${version} como foto vigente? La foto actual queda en el historial.`)) return;
+
+    setOcupado(true);
+
+    try {
+      const r = await fetch(`/api/productos/${productoId}/imagen/versiones/${version}/recuperar`, { method: "POST" });
+      const j = (await r.json().catch(() => ({}))) as { error?: string };
+
+      if (!r.ok) {
+        setMensaje(j.error ?? "No fue posible recuperar la foto.");
+
+        return;
+      }
+
+      ctx.recargar();
+    } catch {
+      setMensaje("Error de conexión.");
+    } finally {
+      setOcupado(false);
+    }
+  }
+
+  return (
+    <div>
+      <button
+        type="button"
+        className={styles.cancelButton}
+        onClick={() => {
+          const siguiente = !abierto;
+
+          setAbierto(siguiente);
+          if (siguiente) void cargar();
+        }}
+      >
+        {abierto ? "Ocultar historial de fotos" : "Historial de fotos"}
+      </button>
+      {abierto ? (
+        <div>
+          {mensaje ? (
+            <div className={styles.error} role="alert">
+              {mensaje}
+            </div>
+          ) : null}
+          {versiones && versiones.length === 0 ? <p className={styles.textoSecundario}>Todavía no hay fotos registradas.</p> : null}
+          {versiones?.map((v) => (
+            <p key={v.version} className={styles.textoSecundario}>
+              Versión {v.version}
+              {v.vigente ? " (vigente)" : ""} · {v.nombreArchivo} · {tamanoLegible(v.tamanoBytes)} · {v.subidoEn}
+              {v.subidoPor ? ` · ${v.subidoPor}` : ""}{" "}
+              <a href={`/api/productos/${productoId}/imagen/versiones/${v.version}`} target="_blank" rel="noreferrer">
+                Ver
+              </a>
+              {puedeRecuperar && !v.vigente ? (
+                <>
+                  {" · "}
+                  <button type="button" className={styles.cancelButton} disabled={ocupado} onClick={() => void recuperar(v.version)}>
+                    Recuperar
+                  </button>
+                </>
+              ) : null}
+            </p>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 /**
  * Foto principal del producto (archivo privado, NEX-041). En el alta la foto elegida se carga al guardar el producto; en la edición cada
  * acción se aplica de inmediato en el servidor. El enlace de imagen anterior (`imagenUrl`) se conserva y sigue siendo editable mientras exista.
@@ -118,6 +217,8 @@ export function FotoProducto({ ctx }: { ctx: ContextoFormulario }) {
               Quitar foto elegida
             </button>
           ) : null}
+
+          {ctx.modo !== "crear" && d && d.permisosDocumentos.historial ? <HistorialFotos ctx={ctx} productoId={d.id} /> : null}
 
           {privada && puedeQuitar ? (
             <button

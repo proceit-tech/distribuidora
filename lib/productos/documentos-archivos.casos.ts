@@ -9,6 +9,7 @@ import { join } from "node:path";
 
 import { borrarArchivo, guardarArchivo, leerArchivo, nuevaClave, validarArchivo } from "@/lib/almacenamiento/archivos-privados";
 import { contador } from "@/lib/clientes/contador-casos";
+import { cerrarCargaInicial } from "@/lib/productos/cierre-carga";
 import { documentoPendienteVacio, formDataDeDocumento, metadatosIso, validarPendientes } from "@/lib/productos/documento-pendiente";
 import { TIPOS_DOCUMENTO_PRODUCTO, validarMetadatosDocumento } from "@/lib/productos/documentos";
 import { ACCEPT_FOTO, errorDeFoto, MIME_FOTO } from "@/lib/productos/imagen";
@@ -191,7 +192,7 @@ export async function verificarCasosDocumentosProductos(): Promise<string[]> {
   const r41 = leer("documentacao/banco/nexit/v1/scripts/reversion-NEX-041.sql");
 
   cierto("reversión NEX-041: aborta si hay archivos, versiones, fotos o auditoría y restaura el envoltorio de NEX-039", /almacen_clave IS NOT NULL OR eliminado_at IS NOT NULL OR url_archivo IS NULL\) THEN\s+RAISE EXCEPTION/.test(r41) && /producto_documento_versiones\) THEN\s+RAISE EXCEPTION/.test(r41) && /imagen_clave IS NOT NULL\) THEN\s+RAISE EXCEPTION/.test(r41) && /producto_eventos\) THEN\s+RAISE EXCEPTION/.test(r41) && /nex_aplicar_grants_fiscal\(\);\s*END \$\$;\s*DROP FUNCTION IF EXISTS public\.nex_aplicar_grants_productos/.test(r41));
-  cierto("la migración y la reversión no editan migraciones previas y siguen en orden (…040 → 041)", readdirSync(join(raiz, "documentacao/banco/nexit/v1/migraciones")).filter((f) => /^NEX-04/.test(f)).sort().join(",") === "NEX-040-productos-clasificacion-iva.sql,NEX-041-productos-documentos-archivos-imagen.sql");
+  cierto("la migración y la reversión no editan migraciones previas y siguen en orden (…040 → 041 → 042)", readdirSync(join(raiz, "documentacao/banco/nexit/v1/migraciones")).filter((f) => /^NEX-04/.test(f)).sort().join(",") === "NEX-040-productos-clasificacion-iva.sql,NEX-041-productos-documentos-archivos-imagen.sql,NEX-042-productos-imagen-versiones.sql");
 
   // ── Pantalla: mismo patrón que Clientes/Proveedores, sin pantalla nueva, con «Agregar», legado visible
   const ui = leer("app/(private)/productos/_components/pestanas/documentos.tsx");
@@ -228,6 +229,66 @@ export async function verificarCasosDocumentosProductos(): Promise<string[]> {
   const rec = leer("documentacao/banco/nexit/v1/scripts/reconciliar-unidades-sifen-NEX-039.sql");
 
   cierto("vincular Caja/Docena a la Tabla 5 no toca presentaciones ni factores", !/producto_unidades|factor_conversion/i.test(sinComentarios(rec)) && /Vincular NO crea conversiones/.test(rec));
+
+
+  // ── PRD-AUD-07: el cierre de la carga inicial verifica la respuesta HTTP
+  const respuesta = (estado: number, cuerpo: string) => async () => new Response(cuerpo, { status: estado });
+  const cerrado = await cerrarCargaInicial(PROD, respuesta(200, '{"ok":true}'));
+  const prohibido = await cerrarCargaInicial(PROD, respuesta(403, '{"error":"Sin permiso."}'));
+  const ausente = await cerrarCargaInicial(PROD, respuesta(404, '{"error":"Producto no encontrado."}'));
+  const caido = await cerrarCargaInicial(PROD, respuesta(500, "<html>boom</html>"));
+  const sinRed = await cerrarCargaInicial(PROD, async () => {
+    throw new TypeError("fetch failed");
+  });
+  let urlLlamada = "";
+  let metodoLlamado = "";
+
+  await cerrarCargaInicial(PROD, async (u, i) => {
+    urlLlamada = u;
+    metodoLlamado = String(i?.method);
+
+    return new Response("{}", { status: 200 });
+  });
+  igual("cierre 200 → cerrada", cerrado, { cerrada: true });
+  igual("cierre 403 → no cerrada, con estado y mensaje del servidor", prohibido, { cerrada: false, estado: 403, mensaje: "Sin permiso." });
+  igual("cierre 404 → no cerrada", [ausente.cerrada, (ausente as { estado: number | null }).estado], [false, 404]);
+  igual("cierre 500 con cuerpo no JSON → no cerrada con mensaje genérico", caido, { cerrada: false, estado: 500, mensaje: "No fue posible cerrar la carga inicial de archivos." });
+  igual("cierre con error de red → no cerrada, sin estado", [sinRed.cerrada, (sinRed as { estado: number | null }).estado], [false, null]);
+  igual("el cierre llama solo a …/documentos/finalizar por POST con el id del producto", [urlLlamada, metodoLlamado], [`/api/productos/${PROD}/documentos/finalizar`, "POST"]);
+
+  const nuevaPagina = leer("app/(private)/productos/nuevo/page.tsx");
+  const fichaPagina = leer("app/(private)/productos/[id]/page.tsx");
+  const finalizarRuta = leer("app/api/productos/[id]/documentos/finalizar/route.ts");
+
+  cierto("alta: ya no se ignora la respuesta del cierre; usa cerrarCargaInicial y, si falla, abre la ficha del producto creado", /await cerrarCargaInicial\(id\)/.test(nuevaPagina) && /cierre\.cerrada/.test(nuevaPagina) && /aviso=cierre/.test(nuevaPagina) && !/documentos\/finalizar/.test(nuevaPagina));
+  cierto("alta: el producto se crea una sola vez (un único POST /api/productos) y el id se conserva", (nuevaPagina.match(/fetch\("\/api\/productos"/g) ?? []).length === 1);
+  cierto("ficha: ofrece «Reintentar cierre» solo mientras la carga siga abierta y no vuelve a crear el producto", /reintentarCierre/.test(fichaPagina) && /producto\.cargaDocumentosInicialAbierta/.test(fichaPagina) && !/fetch\("\/api\/productos"/.test(fichaPagina));
+  cierto("el servidor mantiene la política: FINALIZAR_CARGA (creador con CREAR solo con la carga abierta) y nunca reabre la ventana", /FINALIZAR_CARGA/.test(finalizarRuta) && !/carga_documentos_inicial_abierta = true/.test(finalizarRuta));
+
+  // ── PRD-AUD-08: historial privado de fotos (NEX-042)
+  const n42 = leer("documentacao/banco/nexit/v1/migraciones/NEX-042-productos-imagen-versiones.sql");
+  const sql42 = sinComentarios(n42);
+  const r42 = leer("documentacao/banco/nexit/v1/scripts/reversion-NEX-042.sql");
+  const imagenRuta = leer("app/api/productos/[id]/imagen/route.ts");
+  const dirVersiones = "app/api/productos/[id]/imagen/versiones";
+  const histRuta = leer(`${dirVersiones}/route.ts`);
+  const verRuta = leer(`${dirVersiones}/[version]/route.ts`);
+  const recRuta = leer(`${dirVersiones}/[version]/recuperar/route.ts`);
+  const rutasFoto = imagenRuta + histRuta + verRuta + recRuta;
+
+  cierto("NEX-042: exige NEX-041, no se reaplica y no altera tablas existentes", /imagen_clave/.test(sql42) && /nex_aplicar_grants_productos/.test(sql42) && /NEX-042 parece aplicada/.test(n42) && !/ALTER TABLE/.test(sql42));
+  cierto("NEX-042: tabla por empresa y producto (FK compuestas), clave única, versión única, solo PNG/JPG", /FOREIGN KEY \(empresa_id, producto_id\) REFERENCES public\.productos \(empresa_id, id\)/.test(sql42) && /UNIQUE \(almacen_clave\)/.test(sql42) && /UNIQUE \(empresa_id, producto_id, version\)/.test(sql42) && /tipo_mime IN \('image\/png', 'image\/jpeg'\)/.test(sql42));
+  cierto("NEX-042: solo altas (triggers) y el rol de la aplicación solo recibe SELECT/INSERT", /BEFORE UPDATE OR DELETE ON public\.producto_imagen_versiones/.test(sql42) && /BEFORE TRUNCATE ON public\.producto_imagen_versiones/.test(sql42) && /GRANT SELECT, INSERT ON public\.producto_imagen_versiones TO nexit_runtime/.test(sql42) && !/GRANT[^;]*(UPDATE|DELETE)[^;]*producto_imagen_versiones/.test(sql42));
+  cierto("NEX-042: las fotos vigentes de NEX-041 pasan a versión 1 sin mover archivos; imagen_url no se toca", /INSERT INTO public\.producto_imagen_versiones[\s\S]*FROM public\.productos p\s+WHERE p\.imagen_clave IS NOT NULL/.test(sql42) && !/imagen_url/.test(sql42));
+  cierto("NEX-042: conserva el envoltorio de grants (solo amplía nex_aplicar_grants_productos) y no borra datos", !/nex_aplicar_grants_runtime\(\)/.test(sql42) && !/\bDROP (TABLE|COLUMN)|DELETE FROM|TRUNCATE TABLE|UPDATE public/.test(sql42));
+  cierto("reversión NEX-042: aborta si hay versiones y restaura los grants de NEX-041 sin la tabla nueva", /producto_imagen_versiones\) THEN\s+RAISE EXCEPTION/.test(r42) && /REVOKE ALL ON public\.producto_eventos, public\.producto_documento_versiones FROM nexit_runtime/.test(r42) && !/GRANT[^;]*producto_imagen_versiones/.test(r42));
+  cierto("las migraciones nuevas siguen en orden (…040 → 041 → 042)", readdirSync(join(raiz, "documentacao/banco/nexit/v1/migraciones")).filter((f) => /^NEX-04/.test(f)).sort().join(",") === "NEX-040-productos-clasificacion-iva.sql,NEX-041-productos-documentos-archivos-imagen.sql,NEX-042-productos-imagen-versiones.sql");
+  cierto("foto: cada carga registra su versión (clave, empresa y producto) en la MISMA transacción que el cambio de la foto vigente", /INSERT INTO producto_imagen_versiones/.test(imagenRuta) && /conTransaccion/.test(imagenRuta) && /entidadId: nueva\.rows\[0\]\.id/.test(imagenRuta));
+  cierto("foto: A→B→quitar conserva A y B: nunca se borra un archivo registrado ni se modifica el historial", !/borrarArchivo\([^)]*(anterior|imagen_clave)/.test(imagenRuta) && /accion: "FOTO_ELIMINADA"/.test(imagenRuta) && !/DELETE FROM producto_imagen_versiones|UPDATE producto_imagen_versiones/.test(rutasFoto));
+  cierto("historial/descarga/recuperación: permisos de historial y de recuperación, siempre por empresa de la sesión y sin caché", /exigir\("VER_HISTORIAL"/.test(histRuta) && /exigir\("VER_HISTORIAL"/.test(verRuta) && /exigir\("RECUPERAR_VERSION"/.test(recRuta) && [histRuta, verRuta, recRuta].every((t) => /empresa_id = \$2|empresaId/.test(t)) && /private, no-store/.test(verRuta) && /nosniff/.test(verRuta));
+  cierto("la clave de almacenamiento nunca se devuelve en el historial ni se guarda en los eventos", !/almacenClave|almacen_clave:/.test(histRuta) && !/(anterior|nuevo): \{[^}]*(clave|almacen)/i.test(imagenRuta + recRuta));
+  cierto("recuperar deja UNA sola vigente (productos.imagen_*), audita FOTO_RECUPERADA y no toca imagen_url", /UPDATE productos SET imagen_clave/.test(recRuta) && /accion: "FOTO_RECUPERADA"/.test(recRuta) && !/imagen_url/.test(sinComentarios(rutasFoto)));
+  cierto("la auditoría tiene texto para la foto recuperada", typeof EVENTO_TEXTO["FOTO_RECUPERADA"] === "string");
 
   return fallos;
 }

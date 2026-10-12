@@ -17,4 +17,5 @@ export const EVENTO_TEXTO: Record<string, string> = {
   DOC_RECUPERACION: "Versión de documento recuperada",
   FOTO_ACTUALIZADA: "Foto del producto actualizada",
   FOTO_ELIMINADA: "Foto del producto quitada",
+  FOTO_RECUPERADA: "Foto anterior del producto recuperada",
 };

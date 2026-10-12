@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 
 import ProductoForm from "@/app/(private)/productos/_components/producto-form";
 import { cargarCatalogos, errorDeRespuesta } from "@/lib/productos/cliente-api";
+import { cerrarCargaInicial } from "@/lib/productos/cierre-carga";
 import { formDataDeDocumento, type DocumentoPendiente } from "@/lib/productos/documento-pendiente";
 import type { CatalogoProductos } from "@/types/productos";
 
@@ -59,14 +60,17 @@ export default function NuevoProductoPage() {
     }
 
     if (fallidos === 0) {
-      try {
-        await fetch(`/api/productos/${id}/documentos/finalizar`, { method: "POST" });
-      } catch {
-        // la carga inicial se cierra de todos modos en la primera edición
+      // Se verifica la respuesta HTTP: si el cierre falla NO se presenta el alta como terminada ni se crea otro producto; la ficha ofrece reintentar.
+      const cierre = await cerrarCargaInicial(id);
+
+      if (cierre.cerrada) {
+        router.push("/productos");
+        router.refresh();
+
+        return;
       }
 
-      router.push("/productos");
-      router.refresh();
+      router.push(`/productos/${id}?aviso=cierre&estado=${cierre.estado ?? "red"}`);
 
       return;
     }
