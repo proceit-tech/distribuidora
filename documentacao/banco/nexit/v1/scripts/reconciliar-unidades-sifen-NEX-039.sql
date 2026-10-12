@@ -3,6 +3,7 @@
 -- Requiere NEX-039. IDEMPOTENTE: solo toca unidades que aún no tienen vínculo; cada cambio queda en fiscal_reconciliacion_log (antes/después, incluidos los
 -- campos legados que el trigger de espejo reescribe). NO modifica IDs, referencias, presentaciones, stock, costos ni movimientos.
 -- NO vincula: Metro (decisión pendiente 87/108) ni ninguna unidad cuyo código y nombre no coincidan EXACTAMENTE con la regla (Caja→131/BX y Docena→113/DOC, NT023).
+-- Caja (131) y Docena (113) existen en el catálogo solo si NEX-043 está aplicada; sin ella esas dos reglas no encuentran código oficial y no vinculan nada.
 -- Vincular NO crea conversiones: una caja o una docena no implican factor alguno; los factores de las presentaciones son datos comerciales independientes.
 -- Este script NO toca productos ni impuestos: la reclasificación IVA de productos existentes es otra operación, aparte y con autorización expresa
 -- (scripts/reclasificar-iva-productos-NEX-040.sql).

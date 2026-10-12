@@ -2,6 +2,7 @@
  * Regresión de la evolución fiscal de Productos (NEX-039 unidades SIFEN, NEX-040 clasificación IVA, GTIN E706/E707):
  * reglas puras, validación contra una base simulada, y verificaciones estáticas de SQL, seed, reconciliación, API y pantalla.
  */
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -149,8 +150,17 @@ export async function verificarCasosFiscales(): Promise<string[]> {
   const n39 = leer("documentacao/banco/nexit/v1/migraciones/NEX-039-unidades-medida-sifen.sql");
   const filasSql = [...n39.matchAll(/^ {2}\((\d+), '([^']+)', '([^']+)'(?:, '[A-Z0-9-]+')?\)/gm)].map((m) => ({ codigo: Number(m[1]), representacion: m[2], descripcion: m[3] }));
 
-  igual("NEX-039 carga exactamente las 64 unidades (Tabla 5 + NT023) en el mismo orden", filasSql, T);
-  cierto("NEX-039: las 30 de la NT023 llevan su fuente y las 34 del MT la fuente por defecto", (n39.match(/'NT023-T5'\)/g) ?? []).length === 30 && /fuente\s+text\s+NOT NULL DEFAULT 'MT150-T5'/.test(n39));
+  igual("NEX-039 (inmutable, ya aplicada) carga exactamente las 34 unidades de la Tabla 5 en el mismo orden", filasSql, T.slice(0, 34));
+  const n43 = leer("documentacao/banco/nexit/v1/migraciones/NEX-043-unidades-medida-sifen-nt023.sql");
+  const filasSql43 = [...n43.matchAll(/^ {2}\((\d+), '([^']+)', '([^']+)'(?:, '[A-Z0-9-]+')?\)/gm)].map((m) => ({ codigo: Number(m[1]), representacion: m[2], descripcion: m[3] }));
+
+  igual("NEX-043 agrega exactamente las 30 unidades de la NT023 (111–140) y NEX-039 + NEX-043 = catálogo TS de 64", [filasSql43, [...filasSql, ...filasSql43]], [T.slice(34), T]);
+  cierto("NEX-039 conserva el checksum confirmado en el banco real (SHA-256 del archivo restaurado)", createHash("sha256").update(readFileSync(join(raiz, "documentacao/banco/nexit/v1/migraciones/NEX-039-unidades-medida-sifen.sql"))).digest("hex") === "6d5a5d3dea0f00521ab9a2bdcb5bb4722f187069a94198d12ae84793f6e38dab");
+  cierto("NEX-043: incremental y no destructivo (solo INSERT de 111–140 con fuente NT023-T5; sin ALTER/DROP/UPDATE/DELETE), exige NEX-039 y no se reaplica", (n43.replace(/--.*$/gm, "").match(/^\s+\(\d+,.*'NT023-T5'\)/gm) ?? []).length === 30 && !/\b(ALTER|DROP|UPDATE|DELETE|TRUNCATE)\b/.test(n43.replace(/--.*$/gm, "")) && /requiere NEX-039/.test(n43) && /NEX-043 parece aplicada/.test(n43) && !/unidades_medida\b(?!_sifen)/.test(n43.replace(/--.*$/gm, "")));
+  const r43 = leer("documentacao/banco/nexit/v1/scripts/reversion-NEX-043.sql");
+
+  cierto("reversión NEX-043: aborta si hay vínculos 111–140 y solo retira las 30 filas NT023", /unidad_sifen_codigo BETWEEN 111 AND 140\) THEN\s+RAISE EXCEPTION/.test(r43) && /DELETE FROM public\.unidades_medida_sifen WHERE codigo BETWEEN 111 AND 140 AND fuente = 'NT023-T5'/.test(r43));
+  cierto("NEX-039: sin filas NT023 (van en NEX-043) y las 34 del MT con la fuente por defecto", (n39.match(/NT023-T5/g) ?? []).length === 0 && /fuente\s+text\s+NOT NULL DEFAULT 'MT150-T5'/.test(n39));
   cierto("NEX-039 sigue sin vincular unidades existentes ni elegir Metro", !/UPDATE public\.unidades_medida/.test(n39.replace(/--.*$/gm, "")) && !/'MT'/.test(n39.replace(/--.*$/gm, "").replace(/\(108, 'MT'[^)]*\)/, "")));
   cierto("NEX-039: clave en el código; sin UNIQUE sobre representación ni descripción", /codigo\s+integer\s+PRIMARY KEY/.test(n39) && !/UNIQUE[^;]*(representacion|descripcion)/i.test(n39.replace(/--.*$/gm, "")));
   cierto("NEX-039: vínculo N:1 nullable con FK; no borra ni renombra unidades", /ADD COLUMN unidad_sifen_codigo integer[^;]*REFERENCES public\.unidades_medida_sifen \(codigo\)/.test(n39) && !/DROP COLUMN|DELETE FROM|UPDATE public\.unidades_medida SET/.test(n39.replace(/--.*$/gm, "")));

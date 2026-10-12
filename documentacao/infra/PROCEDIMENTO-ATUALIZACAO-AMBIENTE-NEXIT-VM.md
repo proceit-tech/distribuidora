@@ -84,7 +84,7 @@ docker exec nexit-db psql -U nexit_app -d nexit \
   -c "SELECT version, nombre FROM public.schema_migrations ORDER BY version;"
 ```
 
-A última versão registrada até a primeira atualização foi NEX-032; commits posteriores incluem NEX-033 a NEX-042, mas nunca presumir que já foram executadas. Se houver erro, **PARAR antes do deploy** e inspecionar.
+A última versão registrada até a primeira atualização foi NEX-032; commits posteriores incluem NEX-033 a NEX-043, mas nunca presumir que já foram executadas. Se houver erro, **PARAR antes do deploy** e inspecionar.
 
 ## ETAPA 3 — Verificar persistência de arquivos antes de substituir a app
 
@@ -186,3 +186,5 @@ docker compose -p nexit -f compose.yml -f app.compose.yml up -d --no-deps --forc
 docker logs --tail 50 nexit-app
 docker exec nexit-db psql -U nexit_app -d nexit -c "SELECT COUNT(*) AS total, MAX(version) AS ultima FROM public.schema_migrations;"
 ```
+
+**NEX-039 e NEX-043 (checksum):** a NEX-039 já aplicada no banco real tem SHA-256 `6d5a5d3dea0f00521ab9a2bdcb5bb4722f187069a94198d12ae84793f6e38dab` (34 unidades da Tabela 5) e o arquivo versionado foi restaurado exatamente a essa versão; **não deve ser editada**. As 30 unidades da NT023 (111–140, incl. Caja 131/BX e Docena 113/DOC) entram pela migration incremental **NEX-043**, que só depende da NEX-039. Ordem: 038 → 039 → 040 → 041 → 042 → 043 (nenhuma depende de 043; os seeds/reconciliação de CJ e DOC exigem 043). Sem a 043 aplicada, vincular unidades 111–140 falha pela FK.

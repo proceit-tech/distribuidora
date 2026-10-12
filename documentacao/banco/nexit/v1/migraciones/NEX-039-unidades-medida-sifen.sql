@@ -1,5 +1,5 @@
 -- =====================================================================
--- NEX-039 — Unidades de medida SIFEN (Tabla 5 del Manual Técnico v150, 34 entradas, ampliada por la NT023 §3.1 con 30: 64 en total; E709 código, E710 representación).
+-- NEX-039 — Unidades de medida SIFEN (Tabla 5 del Manual Técnico v150, 34 entradas; E709 código, E710 representación).
 -- Requiere NEX-003 (unidades_medida) y NEX-037 (envoltorio de grants nex_aplicar_grants_runtime / nex_aplicar_grants_proveedores). NO ejecutar en la VM ni en el banco 'nexit' sin autorización expresa del responsable (backup previo).
 -- Reversión: scripts/reversion-NEX-039.sql (aborta si ya hay vínculos). Reconciliación de unidades EXISTENTES: scripts/reconciliar-unidades-sifen-NEX-039.sql.
 --
@@ -12,8 +12,7 @@
 --   · Grants: el catálogo es de SOLO LECTURA para el rol de la aplicación y el registro de reconciliación no es accesible para él (guarda instantáneas de
 --     varias empresas). nex_aplicar_grants_runtime() (que hace REVOKE ALL y reconcede) se envuelve para reaplicar también estos permisos (convención de NEX-037).
 --   · No vincula ni modifica ninguna unidad existente (eso lo hace el script de reconciliación, con registro antes/después).
---   · Decisión pendiente (NO tomada aquí): código de Metro (87 ó 108). Caja (131/BX) y Docena (113/DOC) SÍ existen desde la NT023; el vínculo con las unidades
---     comerciales CJ y DOC lo realiza el seed (instalaciones nuevas) o el script de reconciliación (bases existentes), nunca esta migración.
+--   · Decisión pendiente (NO tomada aquí): código de Metro (87 ó 108); Caja y Docena no tienen equivalencia en la Tabla 5.
 -- =====================================================================
 DO $$
 BEGIN
@@ -72,40 +71,8 @@ INSERT INTO public.unidades_medida_sifen (codigo, representacion, descripcion) V
   (885, 'GL', 'Unidad Medida Global'),
   (891, 'pm', 'Por Milaje'),
   (869, 'ha', 'Hectáreas'),
-  (569, 'ración', 'Ración');
-
--- NT023 §3.1 amplía la Tabla 5 con 30 unidades (códigos 111–140). El catálogo oficial vigente tiene 34 + 30 = 64 entradas.
-INSERT INTO public.unidades_medida_sifen (codigo, representacion, descripcion, fuente) VALUES
-  (111, '4A', 'Bovinas', 'NT023-T5'),
-  (112, 'Ci', 'Curie', 'NT023-T5'),
-  (113, 'DOC', 'Docena', 'NT023-T5'),
-  (114, 'GLL', 'Galones (US) (3,7843 LT)', 'NT023-T5'),
-  (115, 'GRO', 'Gruesas', 'NT023-T5'),
-  (116, 'E4', 'Kilogramo Bruto', 'NT023-T5'),
-  (117, 'KT', 'Kits', 'NT023-T5'),
-  (118, 'M5', 'Microcurie', 'NT023-T5'),
-  (119, 'MCU', 'Milicurie', 'NT023-T5'),
-  (120, 'MIL', 'Millar', 'NT023-T5'),
-  (121, 'PAR', 'Par', 'NT023-T5'),
-  (122, 'FOT', 'Pies', 'NT023-T5'),
-  (123, 'FTK', 'Pies Cuadradas', 'NT023-T5'),
-  (124, 'PCE', 'Piezas', 'NT023-T5'),
-  (125, 'KLT', 'Quilate', 'NT023-T5'),
-  (126, 'RM', 'Resmas', 'NT023-T5'),
-  (127, 'RO', 'Rollos', 'NT023-T5'),
-  (128, 'kWh', '1000 Kilowatt Hora', 'NT023-T5'),
-  (129, 'U(JGO)', 'Mazos', 'NT023-T5'),
-  (130, 'DR', 'Tambores', 'NT023-T5'),
-  (131, 'BX', 'Caja', 'NT023-T5'),
-  (132, 'SET', 'Juego', 'NT023-T5'),
-  (133, 'PK', 'Paquete', 'NT023-T5'),
-  (134, 'BG', 'Bolsa', 'NT023-T5'),
-  (135, 'DPC', 'Docena Par', 'NT023-T5'),
-  (136, 'JR', 'Pote', 'NT023-T5'),
-  (137, 'BL', 'Fardos', 'NT023-T5'),
-  (138, 'AB', 'Bulto', 'NT023-T5'),
-  (139, 'BK', 'Cesta', 'NT023-T5'),
-  (140, 'BW', 'Peso Base', 'NT023-T5');
+  (569, 'ración', 'Ración')
+ON CONFLICT (codigo) DO NOTHING;
 
 ALTER TABLE public.unidades_medida
   ADD COLUMN unidad_sifen_codigo integer CONSTRAINT unidades_medida_unidad_sifen_fk REFERENCES public.unidades_medida_sifen (codigo);

@@ -38,6 +38,7 @@ INSERT INTO incoterms (codigo, nombre) VALUES
 ON CONFLICT (codigo) DO NOTHING;
 
 -- Equivalencia SIFEN (Tabla 5 del MT v150 + NT023) por el vínculo de NEX-039: UN→77, KG→83, LT→89 (Litros), CJ→131 (BX, Caja), DOC→113 (DOC, Docena).
+-- CJ→131 y DOC→113 requieren NEX-043 (30 unidades NT023); aplicar NEX-043 antes de este seed.
 -- Metro (87/m ó 108/MT) queda SIN vínculo: decisión pendiente del responsable; no se elige ninguno.
 -- Seguro de re-ejecutar y NO modifica unidades existentes (ON CONFLICT DO NOTHING): para bases existentes, scripts/reconciliar-unidades-sifen-NEX-039.sql.
 INSERT INTO unidades_medida (codigo, nombre, unidad_sifen_codigo) VALUES
