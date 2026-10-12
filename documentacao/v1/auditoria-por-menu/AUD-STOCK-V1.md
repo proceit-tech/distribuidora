@@ -47,6 +47,15 @@ O responsável mostrou NEX-001…051 já aplicadas na VM. Proibido editar script
 
 O responsável esclareceu que deseja **histórico das unidades-base de um produto, somente uma base vigente por vez**, e não um bloqueio permanente de mudança após a primeira movimentação. Apresentações comerciais podem continuar múltiplas.
 
-**A integridade de STK-X01 permanece obrigatória:** nenhuma mudança pode reinterpretar saldos, quantidades/custos ou movimentos antigos. `NEX-009/014` registram quantidades em escala 4 sem snapshot da unidade-base; `NEX-007` mantém somente o FK atual e marcação de apresentação base sem versionamento temporal. Exigir histórico da unidade-base e ligação factual às operações. Decidir com o responsável se a mudança com estoque positivo será permitida sob conversão controlada ou se só ocorrerá com todos os saldos zerados e sem pendências (DEC-PRD-U07, em aberto, `AUD-PRODUCTOS-V1.md` XV).
+**A integridade de STK-X01 permanece obrigatória:** nenhuma mudança pode reinterpretar saldos, quantidades/custos ou movimentos antigos. `NEX-009/014` registram quantidades em escala 4 sem snapshot da unidade-base; `NEX-007` mantém somente o FK atual e marcação de apresentação base sem versionamento temporal. Exigir histórico da unidade-base e ligação factual às operações. **Decisão DEC-PRD-U07 tomada em 12/10/2026:** somente permitir mudar a unidade-base com todos os saldos do produto zerados e sem operações pendentes; manter histórico de bases, uma única vigente por vez. Especificação na seção XVI de `AUD-PRODUCTOS-V1.md`.
 
 **Nenhum código/SQL/VM alterado.**
+
+
+## Confirmação DEC-PRD-U07 — guarda de inventário para alteração de unidade-base (12/10/2026)
+
+O responsável escolheu a política conservadora: mudança de base é permitida se e somente se **todo o estoque do produto na empresa** estiver zerado, em **todos os depósitos, estados (DISPONIBLE, RESERVADO, CUARENTENA, TRANSITO etc.) e propriedades (incluindo terceiros)**, sem operações pendentes. Um histórico de unidades-base deve ser preservado, com apenas uma base vigente. Movimentos encerrados não impedem a alteração, mas **nunca são reescritos**.
+
+A futura proteção no banco e na API deve ser transacional e imune a corrida contra novos movimentos; não usar apenas saldos disponíveis, totais de tela ou depósitos ao alcance do operador como verificação de integridade. Investigar os vínculos operacionais efetivamente existentes em V1, sem inventar V2. Ver `AUD-PRODUCTOS-V1.md`, seção XVI.
+
+**Estado:** regra aprovada, não implementada. Auditoria integral de Stock aberta; nenhum teste/SQL executado.
