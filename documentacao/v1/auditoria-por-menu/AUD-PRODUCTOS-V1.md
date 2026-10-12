@@ -64,7 +64,7 @@ Este arquivo é a fonte única da auditoria do menu **Productos**. Registrar, co
 
 - **DEC-PRD-U01 — APROVADA PELO RESPONSÁVEL (12/10/2026):** a unidade histórica `MT — Metro` já existente no NEXIT deve mapear para SIFEN **108 — MT**. Os dois códigos oficiais **87 — m** e **108 — MT** permanecem disponíveis no catálogo para seleção, distintos por código. Não modificar migrations executadas nem atualizar VM automaticamente.
 - **DEC-PRD-U02 — APROVADA PELO RESPONSÁVEL (12/10/2026):** novos produtos destinados à venda (`MERCADERIA` ou `SERVICIO` com `vendible=true`) **NÃO podem ser gravados sem os dados SIFEN obrigatórios aplicáveis e classificação IVA integralmente válida**. Exigir, no mínimo, unidade fiscal SIFEN válida/vigente, imposto/taxa e `afectacion_iva` (1/2/3/4) coerentes, e `proporcion_gravada_iva` quando E731=4. Campos SIFEN condicionais somente quando sua regra normativa exigir; não presumir que NCM/GTIN/DNCP sejam sempre obrigatórios. Validar no frontend E no backend POST, com erros por campo e sem criação parcial. Editar dados antigos, tratamento de produtos não destinados à venda e seleção explícita/default de IVA são decisões distintas, ainda pendentes de exame.
-- **DEC-PRD-U03**: apresentação declarada base deve obrigatoriamente equivaler a unidade base do produto com fator 1? Recomendação: sim. Antes de mudar constraint, conferir registros legados.
+- **DEC-PRD-U03 — PARCIALMENTE APROVADA:** quando uma apresentação comercial não possuir equivalência fiscal SIFEN apropriada, converter automaticamente a quantidade e o preço para a **unidade-base fiscal válida do produto**, preservando o total e registrando as unidades/quantidades originais (decisão explícita do responsável em 12/10/2026). **Subdecisão ainda aberta:** apresentação marcada `esUnidadBase` deve obrigatoriamente ter unidade igual à unidade-base do produto e fator 1? Recomenda-se sim, mas não declarar aprovado sem resposta.
 - **DEC-PRD-U04**: classificação e GTIN de embalagens — precedência entre `codigoBarras`, `producto_codigos.esPrincipal` e `producto_unidades.codigo_barras`, antes de atribuir E706/E707 ao gateway.
 - **DEC-PRD-U05**: abrangência do saldo por depósito para usuários com alcance de sucursal limitado; regra sugerida restritiva, mas requer confronto com autorização real.
 - **DEC-PRD-U06 — APROVADA PELO RESPONSÁVEL (12/10/2026):** manter **IVA 10% — Gravado (E731=1)** como **padrão inicial** do formulário de novo produto, quando existir imposto de 10% ativo no catálogo. O usuário pode alterar imposto e afetação conforme o produto real (5%, Exento, Exonerado, Gravado parcial etc.), e o backend valida todas as combinações. Padrão selecionado **não dispensa** o contrato de completude fiscal obrigatória DEC-PRD-U02. Nunca aplicar default retroativo nos produtos históricos.
@@ -159,9 +159,9 @@ Este arquivo é a fonte única da auditoria do menu **Productos**. Registrar, co
 
 **Exemplo indicativo (não dado operacional confirmado):** base UNI (1), pacote de 6 (6 UNI), caixa de 24 (24 UNI). Se faturação registra 2 caixas e escolhe SIFEN 131/BX, o DE deve usar E709=131, E711=2 e preço por caixa; inventário baixa 48 UNI; em alternativa fiscal que exige conversão para base, E709=77, E711=48 e preço por UNI ajustado, preservando total. Ambas requerem regra autorizada; não trocar código ou fator automaticamente por nome.
 
-**PONTO A CONFIRMAR PELO RESPONSÁVEL antes de fechar U03:** quando apresentação comercial escolhida para vender não tiver unidade fiscal SIFEN compatível, o sistema deve (a) converter a linha para a unidade-base fiscal reconhecida, preservando valor e histórico, ou (b) impedir venda nessa apresentação até o usuário configurar uma equivalência fiscal válida? (Evitar inventar mapeamento). A definição de `esUnidadBase` redundante em apresentações continua pendente: recomendação de análise é que, se a marcação existe, só possa apontar para a unidade-base real com fator 1, sem proibir outras apresentações alternativas.
+**POLÍTICA DEFINIDA PELO RESPONSÁVEL (12/10/2026):** quando a apresentação comercial escolhida não possuir código SIFEN compatível, **converter automaticamente** a linha para a unidade-base com código SIFEN válido do produto, ajustando quantidade/preço fiscal sem alterar o total. A definição de `esUnidadBase` redundante em apresentações continua pendente: se a marcação existir, recomenda-se somente unidade igual à base e fator 1, mas depende de confirmação.
 
-**Status:** DEC-PRD-U03 ESCLARECIDA PARCIALMENTE; não encerrar a auditoria nem enviar tarefa ao Claude antes da decisão sobre mapeamento/representação da factura.
+**Status:** DEC-PRD-U03 com **CONVERSÃO AUTOMÁTICA APROVADA**; restantes de `esUnidadBase`, precisão/arredondamento e auditoria completa continuam abertos. Não liberar correções ao Claude antes de finalizar a auditoria do menu.
 
 ## Confirmação do responsável — unidade do documento eletrônico (12/10/2026)
 
@@ -171,6 +171,30 @@ Este arquivo é a fonte única da auditoria do menu **Productos**. Registrar, co
 
 **Aplicação na auditoria:** no cadastro de Productos, manter unidade-base de controle de estoque e apresentações com fatores próprios. Na emissão, validar no backend o código SIFEN efetivamente enviado no item; testar unidade de apresentação existente no catálogo e apresentação sem equivalente fiscal. **Não** considerar resolvido o defeito de que `lib/facturacion/emision.ts` hoje utiliza apenas a unidade-base do produto.
 
-**PENDENTE, ainda não deliberado:** para apresentação sem equivalente fiscal na tabela SIFEN, converter automaticamente a linha para a unidade-base fiscal reconhecida (com quantidade e preço equivalentes) **ou** impedir a emissão até configurar uma equivalência fiscal. A resposta acima só confirmou a obrigatoriedade do catálogo SIFEN, não escolheu expressamente uma dessas duas políticas. Perguntar ao responsável com exemplo antes de encerrar DEC-PRD-U03.
+**ATUALIZAÇÃO POSTERIOR:** o responsável escolheu expressamente **CONVERSÃO AUTOMÁTICA PARA A UNIDADE-BASE FISCAL** quando a apresentação não possui equivalente SIFEN, com ajuste da quantidade e preço sem alterar o total. Ver seção XIII; a dúvida bloqueio versus conversão foi encerrada.
 
 **Execução:** nenhuma alteração de código, SQL, VM ou migration autorizada; auditoria continua aberta.
+
+## XIII. Decisão aprovada — DEC-PRD-U03 / política de conversão automática de apresentações para SIFEN (12/10/2026)
+
+**Escolha expressa do responsável:** “1. Conversão automática (recomendada): o NEXIT permite vender 1 bandeja de 6 unidades e envia ao SIFEN 6 UNI (código 77), ajustando o preço unitário e preservando o valor total da venda. esta”
+
+### Regra de negócio decidida
+
+1. Produtos têm **unidade-base de estoque** e podem ter diversas apresentações comerciais (compra e venda), com fator de conversão **informado por produto/apresentação**, não deduzido do nome.
+2. Quando a apresentação vendida possui uma unidade fiscal SIFEN oficial apropriada, o documento pode utilizar essa unidade fiscal, respeitados quantidade, preço e regras do documento.
+3. Se a apresentação comercial escolhida **não possui código fiscal SIFEN correspondente**, o NEXIT deve **converter automaticamente** a linha para a unidade-base do produto, que obrigatoriamente terá equivalência SIFEN válida (decisão DEC-PRD-U02). A unidade fiscal do documento será o código SIFEN da unidade-base; **nunca** enviar uma unidade comercial não reconhecida.
+4. Para o caso expresso: 1 bandeja = 6 unidades-base; venda de **1 bandeja → documento eletrônico: 6 unidades SIFEN 77 — UNI**. A quantidade de estoque também equivale a **6 unidades-base**. O preço unitário fiscal é o valor total comercial da bandeja dividido pela quantidade fiscal, preservando o **total monetário da operação**, sujeito às restrições de precisão do contrato fiscal.
+5. Persistir/rastrear separadamente: apresentação selecionada, quantidade comercial, fator de conversão efetivamente aplicado, quantidade na unidade-base, código SIFEN informado no DE, quantidade fiscal, preço comercial, preço fiscal e total. Não deduzir fator 6, 12 ou 24 só de texto como “bandeja”, “docena” ou “caja”.
+6. Fazer cálculos com decimais exatos e ordem de arredondamento compatível com a regra SIFEN, sem divisão por zero e sem ajuste silencioso de tributos ou totais. **Se um caso não puder preservar o total dentro da precisão permitida, sinalizar a impossibilidade antes de emitir**. A fórmula concreta/precisão fiscal deve ser auditada junto à implementação e normas vigentes.
+7. Validar novamente no backend (não somente no frontend) a unidade fiscal oficial, existência da apresentação para esse produto, fator positivo, preço, quantidade, coerência do total e permissões. Não confiar nos valores de conversão enviados pelo navegador.
+8. Preservar IDs, produto, estoque, vínculos, histórico e cadastros anteriores; nenhuma alteração de migration aplicada ou execução na VM é autorizada nesta etapa.
+
+### Impacto técnico identificado para Claude, depois da auditoria
+
+- `producto_unidades` / `producto_proveedores` guardam referências UUID e fatores; `lib/productos/normalizar.ts`, `shared.ts` e `sincronizar.ts` devem preservar compatibilidade e validar apresentação/fator.
+- `lib/facturacion/emision.ts:82-92,201,220-244` **não possui hoje** contrato de apresentação na linha de factura: utiliza apenas a unidade-base do produto. `lib/facturacion/payload-fe.ts:186-188` exige E709 e quantidade/preço já convertidos; será necessária revisão de DTO, consulta/autorização, cálculo e artefatos, não simples ajuste do combo.
+- Os campos `cUniMed`, `dCantProSer`, `dPUniProSer`, cálculos do IVA, armazenamento do snapshot comercial/fiscal e posterior baixa/estorno de estoque devem ser confrontados em Facturas e Inventario, sem presumir que a emissão atual movimenta estoque.
+- Critérios regressivos mínimos: 1 bandeja × fator 6 com base UNI 77; 2 bandejas × fator 6; apresentação com unidade SIFEN oficial própria; apresentação sem unidade fiscal mas com unidade-base fiscal; fator zero/inválido; produto fora da empresa; item `vendible=false`; preço/quantidade fracionária sem representação exata; total e IVA antes/depois.
+
+**Estado:** conversão automática **APROVADA**; subregra `esUnidadBase` versus unidade-base do produto e fator 1 **AINDA NÃO RATIFICADA**. Auditoria integral do menu segue **ABERTA**, não homologada, sem autorização de implementação.
