@@ -242,6 +242,33 @@ Este arquivo é a fonte única da auditoria do menu **Productos**. Registrar, co
 
 **PRD-A21 continua válido:** a API atual troca `unidad_medida_id` sem histórico e sem reconciliar valores. O risco de integridade não desaparece pela criação de uma trilha temporal; o campo só pode mudar por um fluxo controlado.
 
-**DEC-PRD-U07 — PERGUNTA ABERTA, necessária antes de concluir o menu:** o responsável quer permitir a troca da unidade-base **mesmo com saldo de estoque positivo**, mediante conversão controlada de todos os saldos/custos/reservas/lotes, ou exigir **estoque totalmente zerado e operações pendentes resolvidas** antes de ativar a unidade nova? Recomenda-se a segunda política para o primeiro escopo operacional, com procedimento extraordinário separado quando necessário. **Não presumir resposta.**
+**DEC-PRD-U07 — APROVADA (12/10/2026):** a troca da unidade-base só será permitida quando **todo o estoque do produto estiver zerado e não houver operações pendentes**. A base antiga permanece no histórico e somente uma base pode estar vigente. Não há autorização para converter saldo positivo nessa troca. Detalhamento técnico/aceite na seção XVI.
 
-**Estado:** histórico e unicidade da base atual = intenção confirmada; condições de troca = EM DISCUSSÃO. Esta seção substitui a proposta de bloqueio permanente da unidade após a primeira movimentação, sem revogar a necessidade de proteger históricos. Nenhuma implementação/SQL autorizada.
+**Estado atualizado:** histórico e unicidade da base atual, além da condição de troca com estoque zerado e sem operações pendentes, **aprovados** (DEC-PRD-U07; seção XVI). A alteração real continua exigindo fluxo auditado e não foi implementada.
+
+
+## XVI. Decisão formal DEC-PRD-U07 — troca da unidade-base somente com estoque zero e sem pendências (12/10/2026)
+
+**Escolha expressa do responsável:** “Opção 1 — Recomendada: permitir a troca apenas quando todo o estoque estiver zerado e não houver operações pendentes. O histórico continua preservado.”
+
+### Regra aprovada
+
+1. O produto pode ter **várias unidades-base ao longo de sua história**, mas **somente uma vigente por vez**. A unidade-base anterior deve permanecer consultável (unidade/código, data inicial/final, usuário, motivo e demais dados de contexto), nunca ser apagada nem reescrever os fatos históricos.
+2. A unidade-base **pode ser alterada mesmo havendo movimentações históricas**, mas **somente se todos os saldos correntes do produto forem exatamente zero, em todos os depósitos/empresas aplicáveis ao registro, estados e propriedades**, e **não houver operações pendentes vinculadas ao produto**. A verificação não pode limitar-se à visão `DISPONIBLE` nem aos depósitos que o usuário enxerga; deve abranger todos os depósitos **da mesma empresa**, sem varrer dados de empresas alheias.
+3. Bloquear a alteração se existir saldo positivo em DISPONIBLE, RESERVADO, CUARENTENA, TRANSITO, saldo de terceiros ou qualquer outra categoria operacional vigente; considerar lotes, unidades identificadas, custos/saldos conciliados e documentos em andamento na avaliação.
+4. **Operações pendentes**: não presumir que basta `stock_saldos=0`: verificar as fontes e estados reais das operações de compras, vendas/pedidos, separação, transferências, devoluções, reservas, recepções, movimentos não concluídos e documentos pertinentes, **na medida em que realmente existam na V1**. Não inventar tabelas nem exigir fluxos de V2; concluir matriz explícita de bloqueadores a partir do SQL e APIs atuais.
+5. A decisão **não autoriza conversão automática de estoque positivo** ao trocar base, nem alteração retroativa de movimentos, custo, preço ou documentos. A regra de **conversão automática de apresentação na emissão SIFEN** (DEC-PRD-U03) é um processo separado e continua aprovada.
+6. Para a transição, executar em transação com guarda de concorrência, revalidar saldo/pendências **no banco no instante de gravar**, atualizar a versão de vigência, garantir **uma única vigente** por produto e registrar motivo/usuário/data. Não deixar novo movimento disputar a troca sem serialização/controle equivalente.
+7. Futuros movimentos usam a nova unidade-base. Movimentos antigos e os documentos emitidos continuam interpretados na unidade/fator histórico da operação; preservar snapshots e indicar limitações de histórico anterior à implantação do versionamento.
+8. Conferir explicitamente a unidade de preços de referência/listas e apresentações, pois a troca sem estoque não implica que o preço antigo seja numericamente válido para a nova unidade. Não ajustar preços silenciosamente.
+
+### Critérios mínimos de aceite futuros
+
+- Produto sem saldo atual e sem pendências, com movimentos encerrados no passado: **permite** trocar de base e grava versão antiga/nova.
+- Qualquer saldo não zero em qualquer depósito/estado/propriedade da empresa: **bloqueia** com explicação verificável; inclusive o que o usuário não tem permissão para consultar detalhadamente (sem vazar depósitos fora de seu alcance).
+- Zero em `DISPONIBLE`, mas quantidade em RESERVADO/TRANSITO/terceiros: **bloqueia**.
+- Saldos zerados com pedidos/transferências/recepções/reservas pendentes realmente suportadas no sistema: **bloqueia** com motivo adequado.
+- Duas edições concorrentes e movimento registrado no instante da troca: uma operação deve ser rejeitada/reavaliada; jamais persistir base incorreta ou duas vigências.
+- Histórico exibe unidade antiga e nova, períodos e responsável; estoque/movimentos/FE antigos e novos conservam significado e quantidades.
+
+**Estado:** DEC-PRD-U07 **APROVADA**. O detalhamento de tabelas/estados de pendências permanece um trabalho de auditoria técnica, não nova escolha de regra. A subregra `esUnidadBase` em apresentações (DEC-PRD-U03) continua pendente de ratificação. Sem código, migrations, PostgreSQL ou VM alterados; auditoria de Productos ainda ABERTA.
