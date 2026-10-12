@@ -185,3 +185,133 @@ CA-01 menu nos três itens aprovados, com guardas e sem rotas vazias/mocks; CA-0
 **Preservar decisões anteriores:** `dEst=001`, `dPunExp=002`, primeira numeración `0050000` (contador anterior `49999`), timbrado administrado pelo fornecedor, preços com IVA embutido, e fluxo Grabar → resumo → Enviar → modal técnico → Documentos electrónicos. Ambiente de teste por empresa, sem valores fixos globais. Corrigir **AUD-FE-01**: `dLiqTotIVA10` (e análogo 5% quando aplicável) deve ser coerente com o total de IVA e o JSON real, em vez de permanecer artificialmente em zero. Confrontar tipos numéricos do DV, número de casa, localizações e campos opcionais com o manual e o formato do gateway. A edição da especificação não constitui autorização para migrar SQL ou emitir documentos reais.
 
 **Execução pelo Claude:** sincronizar branch; ler `CLAUDE.md`, `documentacao/PROTOCOLO-IA.md`, progresso pertinente, este documento e código/migrations reais antes de alterar. Implementar apenas o escopo aprovado, incluir testes locais/regressivos de valores de IVA e pagamento efectivo, sem segredos, sem acesso à VM ou gateway real; commit/push, entregar resultado curto, SHA e parar para auditoria ChatGPT.
+
+## AUD-FE-100 — inventário exaustivo das chaves do JSON entregue (12/10/2026)
+
+**Escopo exato:** conferência individual das **117 chaves distintas** presentes no exemplo enviado pelo responsável, separadas entre cabecera, FormaPago, Detalles e Subtotales; o array `Cuotas: []` não possui chaves-filhas. A contagem não duplica os 3 objetos de `Detalles`. O exemplo é uma **instância concreta**, não catálogo exaustivo de todo o Manual SIFEN. **Não confundir 100% do JSON enviado com 100% das variantes/condicionais do Manual/Notas Técnicas**. Verificação estática de presença textual das chaves em `lib/facturacion/payload-fe.ts`, e dos cinco campos atribuídos por `NEX-048`; status GERADO **não comprova tipo, valor, correção normativa ou envio aceito**. `cdc` vem do gateway, não deve ser fabricado. Arquivos PDF das Notas Técnicas citadas no código não foram todos localizados individualmente para homologação normativa completa.
+
+**Legenda:** GERADO=chave presente no serializador; NEX-048=adicionada na função SQL que reserva o número; RETORNO GATEWAY=obtida depois do envio; AUSENTE=chave não é produzida pelo serializador atual, sua exigência pelo gateway ainda deve ser confirmada; zeros/null obrigatórios e condicionais exigem comparação de tipos.
+
+| Bloco | Chave exata no JSON entregue | Situação no código atual | Ponto de auditoria |
+|---|---|---|---|
+| Cabecera | `cdc` | RETORNO GATEWAY | — |
+| Cabecera | `dInfoEmi` | GERADO | — |
+| Cabecera | `dInfoFisc` | GERADO | — |
+| Cabecera | `dInfAdic` | GERADO | — |
+| Cabecera | `dEst` | NEX-048 | — |
+| Cabecera | `dPunExp` | NEX-048 | — |
+| Cabecera | `dNumDoc` | NEX-048 | — |
+| Cabecera | `dSerieNum` | NEX-048 | — |
+| Cabecera | `dFeEmiDE` | NEX-048 | — |
+| Cabecera | `iTipTra` | GERADO | — |
+| Cabecera | `iTImp` | GERADO | — |
+| Cabecera | `cMoneOpe` | GERADO | — |
+| Cabecera | `dCondTiCam` | GERADO | — |
+| Cabecera | `dTiCam` | GERADO | — |
+| Cabecera | `iCondAnt` | AUSENTE | Verificar condicionalidade/null |
+| Cabecera | `iTipCont` | AUSENTE | Verificar condicionalidade/null |
+| Cabecera | `gRespDE` | AUSENTE | Verificar condicionalidade/null |
+| Cabecera | `iNatRec` | GERADO | — |
+| Cabecera | `iTiOpe` | GERADO | — |
+| Cabecera | `cPaisRec` | GERADO | — |
+| Cabecera | `iTiContRec` | GERADO | — |
+| Cabecera | `dRucRec` | GERADO | — |
+| Cabecera | `dDVRec` | GERADO | TIPO a conferir |
+| Cabecera | `iTipIDRec` | GERADO | — |
+| Cabecera | `dDTipIDRec` | GERADO | — |
+| Cabecera | `dNumIDRec` | GERADO | — |
+| Cabecera | `dNomRec` | GERADO | — |
+| Cabecera | `dNomFanRec` | GERADO | — |
+| Cabecera | `dDirRec` | GERADO | — |
+| Cabecera | `dNumCasRec` | GERADO | TIPO a conferir |
+| Cabecera | `dTelRec` | GERADO | — |
+| Cabecera | `dCelRec` | GERADO | — |
+| Cabecera | `dEmailRec` | GERADO | — |
+| Cabecera | `dEmailAdic` | GERADO | — |
+| Cabecera | `dEmailAdmin` | GERADO | — |
+| Cabecera | `dCodCliente` | GERADO | — |
+| Cabecera | `iIndPres` | GERADO | — |
+| Cabecera | `dFecEmNR` | GERADO | — |
+| Cabecera | `gCompPub` | AUSENTE | Verificar condicionalidade/null |
+| Cabecera | `iCondOpe` | GERADO | — |
+| Cabecera | `iCondCred` | GERADO | — |
+| Cabecera | `dPlazoCre` | GERADO | — |
+| Cabecera | `dCuotas` | GERADO | — |
+| Cabecera | `dModCont` | AUSENTE | Verificar condicionalidade/null |
+| Cabecera | `dEntCont` | AUSENTE | Verificar condicionalidade/null |
+| Cabecera | `dAnoCont` | AUSENTE | Verificar condicionalidade/null |
+| Cabecera | `dSecCont` | AUSENTE | Verificar condicionalidade/null |
+| Cabecera | `dFeCodCont` | AUSENTE | Verificar condicionalidade/null |
+| Cabecera | `iTiDE` | GERADO | — |
+| FormaPago | `iTiPago` | GERADO | — |
+| FormaPago | `dMonTiPag` | GERADO | — |
+| FormaPago | `cMoneTiPag` | GERADO | — |
+| FormaPago | `dTiCamTiPag` | GERADO | — |
+| Detalles | `dCodInt` | GERADO | — |
+| Detalles | `dParAranc` | AUSENTE | Verificar condicionalidade/null |
+| Detalles | `dNCM` | AUSENTE | Verificar condicionalidade/null |
+| Detalles | `dGtin` | GERADO | — |
+| Detalles | `dGtinPq` | AUSENTE | Verificar condicionalidade/null |
+| Detalles | `dDesProSer` | GERADO | — |
+| Detalles | `cUniMed` | GERADO | — |
+| Detalles | `dCantProSer` | GERADO | — |
+| Detalles | `cPaisOrig` | AUSENTE | Verificar condicionalidade/null |
+| Detalles | `dInfItem` | AUSENTE | Verificar condicionalidade/null |
+| Detalles | `cRelMerc` | AUSENTE | Verificar condicionalidade/null |
+| Detalles | `dCanQuiMer` | AUSENTE | Verificar condicionalidade/null |
+| Detalles | `dPorQuiMer` | AUSENTE | Verificar condicionalidade/null |
+| Detalles | `dCDCAnticipo` | AUSENTE | Verificar condicionalidade/null |
+| Detalles | `dPUniProSer` | GERADO | — |
+| Detalles | `dTotBruOpeItem` | GERADO | — |
+| Detalles | `dDescItem` | AUSENTE | Verificar condicionalidade/null |
+| Detalles | `dPorcDesIt` | AUSENTE | Verificar condicionalidade/null |
+| Detalles | `dDescGloItem` | AUSENTE | Verificar condicionalidade/null |
+| Detalles | `dAntPreUniIt` | AUSENTE | Verificar condicionalidade/null |
+| Detalles | `dAntGloPreUniIt` | AUSENTE | Verificar condicionalidade/null |
+| Detalles | `dTotOpeItem` | GERADO | — |
+| Detalles | `iAfecIVA` | GERADO | — |
+| Detalles | `dPropIVA` | GERADO | — |
+| Detalles | `dTasaIVA` | GERADO | — |
+| Detalles | `dBasGravIVA` | GERADO | — |
+| Detalles | `dLiqIVAItem` | GERADO | — |
+| Detalles | `gVehNuevo` | AUSENTE | Verificar condicionalidade/null |
+| Detalles | `dBasExe` | GERADO | — |
+| Detalles | `dNumLote` | AUSENTE | Verificar condicionalidade/null |
+| Detalles | `dVencMerc` | AUSENTE | Verificar condicionalidade/null |
+| Detalles | `dNSerie` | AUSENTE | Verificar condicionalidade/null |
+| Detalles | `dNumPedi` | AUSENTE | Verificar condicionalidade/null |
+| Detalles | `dNumSegui` | AUSENTE | Verificar condicionalidade/null |
+| Detalles | `dNomImp` | AUSENTE | Verificar condicionalidade/null |
+| Detalles | `dDirImp` | AUSENTE | Verificar condicionalidade/null |
+| Detalles | `dNumFir` | AUSENTE | Verificar condicionalidade/null |
+| Detalles | `dNumReg` | AUSENTE | Verificar condicionalidade/null |
+| Detalles | `dNumRegEntCom` | AUSENTE | Verificar condicionalidade/null |
+| Subtotales | `dSubExe` | GERADO | — |
+| Subtotales | `dSubExo` | GERADO | — |
+| Subtotales | `dSub5` | GERADO | — |
+| Subtotales | `dSub10` | GERADO | — |
+| Subtotales | `dTotOpe` | GERADO | — |
+| Subtotales | `dTotDesc` | GERADO | — |
+| Subtotales | `dTotDescGlotem` | GERADO | — |
+| Subtotales | `dTotAntItem` | GERADO | — |
+| Subtotales | `dTotAnt` | GERADO | — |
+| Subtotales | `dPorcDescTotal` | GERADO | — |
+| Subtotales | `dDescTotal` | GERADO | — |
+| Subtotales | `dAnticipo` | GERADO | — |
+| Subtotales | `dRedon` | GERADO | — |
+| Subtotales | `dComi` | AUSENTE | Verificar condicionalidade/null |
+| Subtotales | `dTotGralOpe` | GERADO | — |
+| Subtotales | `dIVA5` | GERADO | — |
+| Subtotales | `dIVA10` | GERADO | — |
+| Subtotales | `dLiqTotIVA5` | GERADO | VALOR zero incorreto |
+| Subtotales | `dLiqTotIVA10` | GERADO | VALOR zero incorreto |
+| Subtotales | `dIVAComi` | AUSENTE | Verificar condicionalidade/null |
+| Subtotales | `dTotIVA` | GERADO | — |
+| Subtotales | `dBaseGrav5` | GERADO | — |
+| Subtotales | `dBaseGrav10` | GERADO | — |
+| Subtotales | `dTBasGraIVA` | GERADO | — |
+| Subtotales | `dTotalGs` | GERADO | — |
+
+**Ações obrigatórias Claude:** (1) comparar com o JSON literal original disponível na mensagem do responsável e com cada ocorrência de item; (2) conferir tipos (número versus string, null versus ausência), cardinalidade e regras condicionais de cada chave, incluindo `Cuotas[]`; (3) confrontar schema das migrations NEX-047/048 e cadastros `clientes/direcciones_cliente/productos/unidades_medida/impuestos/v_producto_precio_referencia/sucursales/fe_puntos_expedicion` e identificar a origem ou valor fixo aprovado de cada chave; (4) confrontar MT v150 e cada Nota Técnica citada, reportando se o documento integral estiver indisponível, sem afirmar revisão normativa completa; (5) corrigir subtotal `dLiqTotIVA10` e `dLiqTotIVA5` zerados contrariando o exemplo, com teste reverso item a item; (6) mapear as **36 chaves AUSENTES** sem inventar exigência: perguntar só o que o contrato do gateway não resolver; (7) respeitar decisões `001/002/0050000`, IVA incluído, `Efectivo`, casa `0` temporária, cliente incompleto bloqueado, e modal Grabar→Enviar. Não incluir CDC do exemplo, senha, token ou RUC pessoal em fixtures; não efetuar envio real. Commit/push e parar para auditoria.
+
+**Contagem por bloco:** Cabecera: 49; Cuotas: 0; FormaPago: 4; Detalles: 39; Subtotales: 25. AUSENTES = 36: `iCondAnt`, `iTipCont`, `gRespDE`, `gCompPub`, `dModCont`, `dEntCont`, `dAnoCont`, `dSecCont`, `dFeCodCont`, `dParAranc`, `dNCM`, `dGtinPq`, `cPaisOrig`, `dInfItem`, `cRelMerc`, `dCanQuiMer`, `dPorQuiMer`, `dCDCAnticipo`, `dDescItem`, `dPorcDesIt`, `dDescGloItem`, `dAntPreUniIt`, `dAntGloPreUniIt`, `gVehNuevo`, `dNumLote`, `dVencMerc`, `dNSerie`, `dNumPedi`, `dNumSegui`, `dNomImp`, `dDirImp`, `dNumFir`, `dNumReg`, `dNumRegEntCom`, `dComi`, `dIVAComi`.
