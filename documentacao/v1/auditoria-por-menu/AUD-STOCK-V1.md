@@ -32,3 +32,13 @@ Auditoria exaustiva deste menu ainda não executada. Não atribuir percentual de
 ## Regra de migrations
 
 O responsável mostrou NEX-001…051 já aplicadas na VM. Proibido editar scripts aplicados, checksums ou reexecutar SQL histórico como se fosse nova migration. Qualquer nova alteração estrutural exige justificativa, aprovação e migration incremental a partir de NEX-052.
+
+## Dependência crítica de Productos: unidade-base e alcance (12/10/2026)
+
+**STK-X01 / BLOQUEANTE / integridade semântica:** a API de edição `app/api/productos/[id]/route.ts:253-296` atualiza `productos.unidad_medida_id` sem guarda de movimentos/stock; `NEX-009` e `NEX-014` contabilizam `stock_saldos.cantidad`, `inventario_costos` e `movimiento_lineas.cantidad` numericamente por produto, sem congelamento da unidade-base na movimentação. Trocar UNI→CJ sem conversão auditada reinterpreta saldos/histórico/custos. Auditar restrição de alteração da base após primeiro fato de inventário antes de qualquer mudança de schema.
+
+**STK-X02 / ALTA / alcance:** `lib/stock/shared.ts` implementa filtro por `usuario_deposito`/`alcance_depositos` na consulta; `app/api/productos/route.ts` e `[id]/route.ts` não aplicam esse filtro ao saldo nem à lista de depósitos. Exigir consistência com a política de visibilidade de Stock ao recuperar dados via Productos.
+
+**STK-X03 / precisão futura:** apresentação em `producto_unidades.factor_conversion` suporta 6 casas (`NEX-007`), mas movimentos/stock apenas 4 (`NEX-009/014`). Conversão aprovada DEC-PRD-U03 requer rejeitar quantidade não representável, sem arredondamento silencioso. A emissão FE atual não deve ser presumida uma baixa de estoque.
+
+**Fonte:** `AUD-PRODUCTOS-V1.md`, seção XIV; auditoria completa de Stock continua aberta. Sem teste de banco/VM.
