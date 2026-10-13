@@ -182,7 +182,60 @@ export async function verificarCasosInventarioDepositos(): Promise<string[]> {
     igual("R03-01 cerrar/reabrir invalida la respuesta pendiente: no pisa el estado vigente", estado.panel, "C");
   }
 
+  {
+    // INV-R04-01: abrir → cerrar → llegar la respuesta. Réplica del control de la pantalla (mismas piezas: compuerta + cargarPanelAcceso).
+    const compuerta = crearCompuerta();
+    const e: { panel: string | null; error: string } = { panel: null, error: "" };
+    const abrir = async (dep: string, espera: number, usr: Resp = okU([USR({ id: dep })])) => {
+      const sol = compuerta.nueva();
+
+      e.panel = `cargando:${dep}`;
+      const res = await cargarPanelAcceso(rutas(usr, okE([]), espera), dep);
+
+      if (!compuerta.vigente(sol)) return;
+      e.error = res.error;
+      e.panel = res.datos ? `datos:${(res.datos.usuarios[0] as { id: string } | undefined)?.id}` : `fallo:${dep}`;
+    };
+    const cerrar = () => {
+      compuerta.nueva();
+      e.panel = null;
+    };
+
+    const p1 = abrir("A", 30);
+
+    cerrar();
+    await p1;
+    igual("R04-01 abrir → cerrar → llega la respuesta: el panel sigue cerrado", e.panel, null);
+
+    const p2 = abrir("A", 30, okU([null]));
+
+    cerrar();
+    await p2;
+    igual("R04-01 abrir → cerrar → llega una respuesta con error/malformada: sigue cerrado y sin error colgado", [e.panel, e.error], [null, ""]);
+
+    const p3 = abrir("A", 40);
+    const p4 = abrir("B", 5);
+
+    await Promise.all([p3, p4]);
+    igual("R04-01 alternancia A→B: queda B", e.panel, "datos:B");
+
+    const p5 = abrir("A", 30);
+
+    cerrar();
+    const p6 = abrir("B", 5);
+
+    await Promise.all([p5, p6]);
+    igual("R04-01 abrir A → cerrar → reabrir B: la respuesta tardía de A no pisa a B", e.panel, "datos:B");
+
+    await abrir("C", 0, okU([null]));
+    igual("R04-01 error de carga deja el panel en fallo recuperable", e.panel, "fallo:C");
+    await abrir("C", 0);
+    igual("R04-01 reintento válido recupera el panel", [e.panel, e.error], ["datos:C", ""]);
+  }
+
   const panelSrc = pagina;
+
+  cierto("R04-01 pantalla: «Cerrar» invalida la solicitud (cerrarPanel → compuertaPanel.nueva) y el desmontaje también; tras autorizar/revocar no se reabre un panel cerrado", /function cerrarPanel\(\) \{\s*compuertaPanel\.current\.nueva\(\);\s*setPanel\(null\);/.test(panelSrc) && /onClick=\{cerrarPanel\}/.test(panelSrc) && !/onClick=\{\(\) => setPanel\(null\)\}/.test(panelSrc) && /return \(\) => \{\s*compuerta\.nueva\(\);/.test(panelSrc) && /compuertaPanel\.current\.vigente\(sesion\) \? abrirUsuarios\(d\)/.test(panelSrc));
 
   cierto("R03-01 pantalla: abrirUsuarios usa la carga validada con compuertaPanel; fallo → panel sin datos (fallo: true) con «Reintentar» y mensajes de error; operaciones POST/DELETE de acceso y bloqueo por motivoBloqueoGuardar intactos", /cargarPanelAcceso<UsuarioDeposito, EventoAcceso>/.test(panelSrc) && /compuertaPanel\.current\.vigente\(solicitud\)/.test(panelSrc) && /fallo: true/.test(panelSrc) && /abrirUsuarios\(panel\.deposito\)/.test(panelSrc) && /method: autorizar \? "POST" : "DELETE"/.test(panelSrc) && /usuarios\/\$\{u\.id\}/.test(panelSrc) && /motivoBloqueoGuardar\(estadoCarga\)/.test(panelSrc) && !/jh\.eventos \?\? \[\]/.test(panelSrc));
 

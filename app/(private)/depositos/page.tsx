@@ -184,6 +184,20 @@ export default function DepositosPage() {
     }
   }
 
+  // INV-R04-01: cerrar (o desmontar) invalida la consulta pendiente; su respuesta ya no puede reabrir el panel.
+  function cerrarPanel() {
+    compuertaPanel.current.nueva();
+    setPanel(null);
+  }
+
+  useEffect(() => {
+    const compuerta = compuertaPanel.current;
+
+    return () => {
+      compuerta.nueva();
+    };
+  }, []);
+
   async function abrirUsuarios(d: Deposito) {
     const solicitud = compuertaPanel.current.nueva();
 
@@ -218,6 +232,8 @@ export default function DepositosPage() {
       return;
     }
 
+    const sesion = compuertaPanel.current.nueva();
+
     setPanel({ ...panel, error: "", ocupado: u.id });
     try {
       const r = await fetch(autorizar ? `/api/depositos/${d.id}/usuarios` : `/api/depositos/${d.id}/usuarios/${u.id}`, {
@@ -229,8 +245,10 @@ export default function DepositosPage() {
 
       if (!r.ok) throw new Error(j.error ?? "No fue posible cambiar el acceso.");
       setAviso(j.message ?? "Acceso actualizado.");
-      await Promise.all([cargar(), abrirUsuarios(d)]);
+      // Si el panel se cerró (o se abrió otro) durante la operación, solo se recarga la lista: no se reabre el panel.
+      await Promise.all([cargar(), compuertaPanel.current.vigente(sesion) ? abrirUsuarios(d) : Promise.resolve()]);
     } catch (e) {
+      if (!compuertaPanel.current.vigente(sesion)) return;
       setPanel((p) => (p ? { ...p, error: e instanceof Error ? e.message : "No fue posible cambiar el acceso.", ocupado: "" } : p));
     }
   }
@@ -388,7 +406,7 @@ export default function DepositosPage() {
               Usuarios autorizados — {panel.deposito.codigo} · {panel.deposito.nombre}
               {!panel.deposito.activo ? " (inactivo)" : ""}
             </strong>
-            <button type="button" className={ui.secondaryButton} onClick={() => setPanel(null)}>
+            <button type="button" className={ui.secondaryButton} onClick={cerrarPanel}>
               Cerrar
             </button>
           </div>

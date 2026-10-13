@@ -781,3 +781,6 @@ Só código; **sem migration** (NEX-001…053 intactas; 052/053 NÃO aplicadas);
 ### INV-R03-01 — painel Usuarios / Historial de accesos de Depósitos (2026-10-13)
 - `cargarPanelAcceso` valida registro a registro usuários e eventos (reutiliza `validar-carga.ts`); qualquer falha (rede, HTTP, JSON, lista ou registro malformado) deixa o painel sem dados nem ações, com erro e «Reintentar». `compuertaPanel` preservada (A→B rápido, reabertura); autorizar/revogar, bloqueio por carga não confiável, histórico e formulários inalterados. Sem SQL/migration.
 - Local: 2518 verificações, 0 falhas (+29); tsc, ESLint e `next build` OK. Sem PostgreSQL/navegador. Menus NÃO homologados.
+
+### INV-R04-01 — cierre del panel de usuarios de Depósitos (2026-10-13)
+- «Cerrar» (`cerrarPanel`) e desmontagem invalidam a consulta pendente (`compuertaPanel`): a resposta tardia não reabre o painel; após autorizar/revogar com o painel já fechado só se recarrega a lista. Fora de ordem, retry e validação das cargas preservados. Local: 2525 verificações, 0 falhas; tsc/ESLint/build OK. Sem SQL; menus NÃO homologados.
