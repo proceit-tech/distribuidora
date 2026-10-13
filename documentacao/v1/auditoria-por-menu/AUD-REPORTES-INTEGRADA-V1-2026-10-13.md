@@ -94,3 +94,26 @@
 - **Agora:** auditoria/documentação somente. **Não instruir Claude a implementar Reportes em paralelo** com a ordem de Inventario já autorizada (`documentacao/v1/ORDEM-IMPLEMENTACAO-INVENTARIO-INTEGRADA-V1-2026-10-13.md`). Evitar conflitos na branch/clonagem.
 - **Depois:** obter aceite do responsável para prioridade de Valorización, ocultação do índice no sidebar (mantendo a rota) e papel estritamente documental de Stock crítico. Em seguida autorizar Claude a corrigir **primeiro Valorización** (RPT-V01…V04 prioritários), **depois** alinhar Stock crítico à Reposición estabilizada; demais reportes só ajustes que eliminam duplicação real ou falha confirmada.
 - **Não homologado:** nenhuma evidência desta rodada em navegador, PG/VM, PDFs/XLSX gerados ao vivo. Não declarar custo e valor contábil 10/10 com defeitos de semântica/snapshot abertos.
+
+
+## 7. AUD-RPT-R02 — validação pré-implementação de Valorización (13/10/2026)
+
+**Nova autorização do responsável após encerramento estático da rodada Inventario:** implementar **Valorización de inventario PRIMEIRO**, separadamente dos quatro outros relatórios. Contrato executável de entrega: [ORDEM-IMPLEMENTACAO-REPORTES-VALORIZACION-V1-2026-10-13.md](../ORDEM-IMPLEMENTACAO-REPORTES-VALORIZACION-V1-2026-10-13.md). **HEAD de inspeção pré-ordem:** `cece4a37ce1e2a4b26f7e0b7acb885d075680122`. Não implementar simultaneamente Stock crítico, Stock general, Kardex ou Lotes; tarefa posterior tem gates próprios. A aprovação funcional do responsável mantém cinco relatórios obrigatórios.
+
+### Verificação adicional RPT-V06 — depósitos inativos e cobertura financeira (CONDIÇÃO A INVESTIGAR)
+
+**Evidência exata:** `lib/reportes/stock-general.ts:57-64` define `depositosPermitidos` por `d.empresa_id=$1 AND d.activo AND usuario_puede_deposito(...)`. `lib/reportes/valorizacion.ts:66-69` usa **exclusivamente** essa lista para recortar `inventario_costos` e `stock_saldos`, e os totals monetários usam o mesmo recorte. A gestão atual de Depósitos admite histórico inativo segundo NEX-046; inativação bloqueia saldos físicos, mas a auditoria não comprovou que `valor_total` residual em `inventario_costos` seja sempre zero quando o saldo físico é zero.
+
+**Risco:** se existir depósito inativo com registro de valor de custo residual, a totalização financeira pode omitir esse valor. **Não declarar bug financeiro confirmado na VM**: não há inspeção de ledger nem dados reais; risco condicional derivado da consulta e das regras. A função `usuario_puede_deposito` pode ter semântica distinta para leitura histórica e operação — verificar antes de alterar alcance. Também não modificar a função compartilhada `depositosPermitidos` sem avaliar impacto em outros quatro reportes.
+
+**Aceite:** provar pelas regras de schema/SQL e testes que a seleção de depósitos não omite valores patrimoniais ainda legítimos nem concede acesso a dados fora de empresa/sucursal/depósito; valores residuais devem ser sinalizados e conciliados sem inventar custo ou realizar ajustes. Se não houver acesso histórico seguro implementado, relatar explicitamente limitação, sem ampliar permissões para ocultar discrepância. Usar regressões para depósito inativo com valor residual e zero saldo, depósito fora de alcance e multiempresa.
+
+### Refinamentos obrigatórios para a ordem Valorización
+
+- **RPT-V01:** além de custo médio agregado, a **quantidade total heterogênea** é igualmente inválida como KPI: `valorizacion/page.tsx:106-115,219-220,234-236` e `export-valorizacion.ts:38-40,50-52`. Só `PRODUCTO` e `DETALLE` podem ter quantidade e custo médio unitário.
+- **RPT-V02:** garantia transacional requer **uma conexão única**, não `Pool.query` avulso sob `BEGIN`; ordem documenta `READ ONLY REPEATABLE READ` ou equivalente, com liberação em todos os caminhos.
+- **RPT-V03:** classificar cobertura `producto×deposito` **antes da agregação** e expor resíduo de valor sem quantidade, excedente e parciais separadamente. Não assumir custo 0 quando `valor_total` é NULL.
+- **RPT-V04:** carga confiável, sem dados/filtros obsoletos, e exportações só com `REPORTES.EXPORTAR`; a API já guarda o direito do servidor, a UI ainda mostra botões a leitores VER-only.
+- **RPT-V05:** valor financeiro fica `numeric::text`; quantidade fracionária exige precisão coerente; testes XLSX/PDF devem conservar valor e unidade corretos.
+
+**Estado após a ordem:** **Valorización EM IMPLEMENTAÇÃO AUTORIZADA**, sem código alterado pelo ChatGPT. Demais reportes **AUDITADOS ESTATICAMENTE, NÃO AUTORIZADOS PARA MODIFICAÇÃO NESTA RODADA**. Nem Valorización nem os demais reportes foram homologados no único ambiente real; sem SQL, navegador ou PostgreSQL nesta auditoria. O Claude deve implementar e parar no seu commit para nova reauditoria independente.
