@@ -256,3 +256,42 @@ O contrato inicial `REPORTES-V1-ALCANCE-APROBADO.md` previa mínimos globais por
 - Preservar acesso `REPORTES.VER` e `REPORTES.EXPORTAR` em servidor e cliente, isolamento `empresa_id`/depósito, snapshot, 413 com máximo 50.000, decimal textual monetário e compatibilidade dos outros reportes.
 - Verificar suíte local, `tsc`, ESLint dos arquivos alterados e `next build`. A suíte de 2.715 testes e o build relatados por Claude são **evidência indireta**, não substituem inspeção ou teste com PostgreSQL/navegador. Apenas o responsável usa o único ambiente real.
 - **Veredito AUD-RPT-R06:** cálculo principal de Reposición **CONFORME NA REVISÃO ESTÁTICA**, mas **Stock crítico y reposición NÃO recebe aceite técnico final**: um achado **ALTA** na UI, um **MÉDIA** de requisito funcional omitido e um **BAIXA** de contagem/escopo. **Sem prova real de banco/navegador e sem homologação**. Corrigir de forma localizada após autorização; não reabrir inventário, Valorización, outros reportes, SQL/migrations ou tarefas paralelas. Claude lê auditoria e para para nova reauditoria.
+
+
+## 12. AUD-RPT-R07 — reauditoria R06 e falha cruzada em Valorización (13/10/2026)
+
+**SHA entregue/auditado:** `e092047d69cf4ca1c44d1613c851f874c53e604f` na branch oficial `feature/NEXIT-2026-001-banco-demo`. Inspecionados `CLAUDE.md`, `documentacao/PROTOCOLO-IA.md`, progresso pertinente, commit/diff, fontes `app/(private)/reportes/stock-critico/page.tsx`, `lib/reportes/stock-critico-plan.ts`, `lib/reportes/stock-critico.ts`, `lib/reportes/export-stock-critico.ts`, `types/reportes.ts`, `lib/reportes/stock-critico.casos.ts` e interfaces/parser/cliente de Valorización. **Revisão estática GitHub**; houve apenas uma verificação isolada em JS da igualdade/ordem de filtros, **não** a suíte local, React montado, PostgreSQL, VM, Docker, HTTP autenticado, arquivo aberto em aplicativo externo nem deploy. Claude relatou 2735 verificações, 0 falhas (+20), `tsc`, ESLint alterados e `next build` aprovados; não repetidos pelo ChatGPT.
+
+### Revalidação dos três achados R06
+
+| Achado | Prova inspecionada | Parecer |
+|---|---|---|
+| **RPT-R06-01** | `stock-critico-plan.ts:14-17,89-95` implementa `filtrosIguales` campo a campo e `respuestaVigente` com página/erro; `stock-critico/page.tsx:75-79` usa a decisão; `stock-critico.casos.ts:357-409` executa o parser real e resposta real serializada, diferente ordem de chaves, todos os campos, busca A→B e paginação. | **RESOLVIDO — ACEITE ESTÁTICO** |
+| **RPT-R06-02** | `stock-critico-plan.ts:70-82,108-115,140-168` computa alerta separado `sobrestock` do físico próprio (disponible+reservado+cuarentena) contra máximo **do mesmo âmbito**, sem trânsito/terceiros; preserva as decisões do motor sobre necessidade/transferência/compra. Rota/parser, página, filtro `SOBRESTOCK`, KPI, XLSX/PDF, tipos e matriz de testes `stock-critico.casos.ts:412-455` cobrem a distinção. Filtro padrão `ALERTAS` inclui necessidade ou sobrestock. | **RESOLVIDO — ACEITE ESTÁTICO**; manter padrão inclusivo como recomendação, sujeita à decisão do responsável |
+| **RPT-R06-03** | `stock-critico-plan.ts:59-65,118-126` registra IDs de referências, `contarReferencias` filtra por categoria/marca/família/busca e zera quando há filtro de depósito; nota de tela/PDF/XLSX mudou para `del recorte filtrado`; testes `:457-474` cobrem categoria, texto e depósito. | **CORRIGIDO PARA OS FILTROS DE PRODUTO E DEPÓSITO**, com ressalva baixa **RPT-R07-02** sobre filtro de situação |
+
+**Preservado estaticamente:** `calcularPlanReposicion` e `leerEntradasReposicion` permanecem as únicas fontes do plano, sem escrita; snapshots de leitura, alcance da sessão, `REPORTES.VER`/`REPORTES.EXPORTAR`, cálculo monetário decimal e `Valorización` não foram reimplementados pela correção R06. Nenhum problema novo ALTO/MÉDIO foi confirmado **no diff de Stock crítico**. A suíte de 2735 casos é relatada, não validada no PostgreSQL/browser.
+
+### NOVO RPT-R07-01 — ALTA: Valorización não reconhece respostas válidas por ordem dos campos
+
+**Prova determinística no código:** `app/(private)/reportes/valorizacion/page.tsx:15-17` define `FILTROS_VACIOS` e `mismos(a,b)=JSON.stringify(a)===JSON.stringify(b)`, com ordem de propriedades:
+`vista,q,depositoId,categoriaId,familiaId,existencia,costo,cobertura`.
+
+O parser efetivo de `lib/reportes/valorizacion.ts:32-57`, que fornece `filtros` no corpo da API, constrói:
+`vista,depositoId,categoriaId,familiaId,existencia,costo,cobertura,q`.
+
+A página monta `aplicados` por spread `{...filtros,q:qAplicada}` (`page.tsx:41`), portanto mantém `q` como segunda chave; `:76-77` exige `mismos(datos.filtros,aplicados)` para considerar `actual` vigente e mostrar KPI, linhas e exportações. Verificação JS isolada com valores iguais e estas duas ordens deu **`sameValues=true` e `sameJSON=false`**. Consequência no contrato de código: mesmo HTTP 200 e corpo válido são tratados como resposta não atual, impedindo tela e botões; risco de aparência vazia de relatório financeiro sem erro de backend. Não foi confirmado em navegador (sem acesso operacional).
+
+**Correção autorizável separada:** compartilhar **conceito, não tipo** de igualdade por valor e página, idealmente com helper específico de `ValorizacionFiltros`, sem depender de ordem JSON nem modificar negócio financeiro. Teste executável com `parsearFiltrosValorizacion` da API e `FILTROS_VACIOS` da tela, mesmos oito campos/ordem diferente; erro, troca de filtro, digitação debounced, paginação, permissão VER sem EXPORTAR, resultado/ações confiáveis; sem chamar testes de regex de prova funcional. **Não alterar SQL, `inventario_costos`, snapshot, XLSX, PDFs, modelos de custo, opções visuais ou outros relatórios** além do estritamente necessário. O aceite estático anterior de cálculo/exportação da Valorización **permanece**, mas o **aceite da interface financeira está reaberto** até esta correção e reauditoria. NÃO HOMOLOGADO.
+
+### RPT-R07-02 — BAIXA: nota de referências de Stock crítico não contempla filtro `situacion`
+
+`lib/reportes/stock-critico-plan.ts:122-126` implementa `contarReferencias` levando em conta categoria, marca, família, busca e depósito, **mas não `f.situacion`**. `page.tsx:307` e `export-stock-critico.ts:88` declaram `del recorte filtrado`. Se o usuário selecionar `SOBRESTOCK`/outra situação, a nota pode contar referências de produtos que não têm nenhuma linha na situação filtrada, embora o relatório mostre só a situação selecionada. A matriz R06-03 testa `situacion='TODAS'`, não `SOBRESTOCK`/ALERTAS sem linhas.
+
+**Tratamento mínimo sugerido, sem reabrir motor:** contar somente referências de produtos efetivamente presentes nos detalhes do recorte (respeitando a condição especial de depósito), **ou** deixar explicitamente no texto que a contagem usa filtros de atributos do produto e ignora o filtro de situação. Verificar cenário filtro SOBRESTOCK sem resultados, mas com produto que tem consolidado de referência. Por ser BAIXA e não alterar recomendação, não bloqueia o aceite estático do **motor e função principal** de Stock crítico, mas impede declarar revisão sem ressalvas/«10/10» até decisão/documentação do responsável.
+
+### Veredito AUD-RPT-R07
+
+- **Stock crítico y reposición: aceito tecnicamente em inspeção estática nas regras principais, com uma ressalva BAIXA de apresentação (R07-02).** Correções R06-01/R06-02 confirmadas e R06-03 confirmada para categoria/marca/família/busca/depósito. Comportamento padrão `ALERTAS` incluindo falta **ou** excesso faz sentido como relatório de exceções; manter salvo decisão explícita do responsável em contrário.
+- **Valorización de inventario: reabrir somente interface, RPT-R07-01 ALTA; cálculo, acessos do banco e exportações permanecem com aceite estático anterior, não homologação.** A correção é pequena, mas imprescindível antes de validação operacional.
+- **Nenhum relatório HOMOLOGADO no único ambiente real**; não afirmar Postgres/browser testados. Nenhuma alteração de código/SQL/VM nesta auditoria. Apenas após autorização, encaminhar correções pontuais ao Claude; publicar SHAs e parar para reauditoria.
