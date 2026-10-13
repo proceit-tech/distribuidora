@@ -784,3 +784,7 @@ Só código; **sem migration** (NEX-001…053 intactas; 052/053 NÃO aplicadas);
 
 ### INV-R04-01 — cierre del panel de usuarios de Depósitos (2026-10-13)
 - «Cerrar» (`cerrarPanel`) e desmontagem invalidam a consulta pendente (`compuertaPanel`): a resposta tardia não reabre o painel; após autorizar/revogar com o painel já fechado só se recarrega a lista. Fora de ordem, retry e validação das cargas preservados. Local: 2525 verificações, 0 falhas; tsc/ESLint/build OK. Sem SQL; menus NÃO homologados.
+
+
+### Reportes — primeira implementação autorizada: Valorización de inventario (13/10/2026)
+Após o encerramento **estático** de Inventario na `AUD-INV-R05` (sem homologação), o responsável autorizou a **primeira rodada de Reportes exclusivamente para Valorización de inventario**. Ordem de execução: `documentacao/v1/ORDEM-IMPLEMENTACAO-REPORTES-VALORIZACION-V1-2026-10-13.md`; auditoria e achados: `documentacao/v1/auditoria-por-menu/AUD-REPORTES-INTEGRADA-V1-2026-10-13.md` (RPT-V01…V06, RPT-N02). Escopo: custos reais `inventario_costos`, médias válidas só por produto, cobertura sem compensação, snapshot único por requisição, erros/permissões de exportação, precisão numeric e investigação condicional de depósitos inativos. **Só documentação e autorização; código não alterado nesta anotação.** Os outros quatro reportes permanecem obrigatórios, mapeados para rodadas posteriores. Claude não acessa VM/PG/Docker/deploy e para após implementação de Valorización; ChatGPT reaudita.
