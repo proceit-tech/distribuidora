@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import type { PoolClient } from "pg";
 
-import { denyIfNoPermission } from "@/lib/auth/permissions";
+import { denyIfNoPermission, getAccessContext, hasPermission } from "@/lib/auth/permissions";
 import { leerHistorial, movimientoExiste } from "@/lib/movimientos/historial";
 import { prepararMovimiento, registrarMovimiento, respuestaError } from "@/lib/movimientos/shared";
 
@@ -105,7 +105,10 @@ export async function GET(request: Request) {
     const numero = p.get("confirmar");
     const confirmado = numero ? await movimientoExiste(db, empresaId, session.user.id, numero.trim()) : undefined;
 
-    return NextResponse.json({ ...datos, ...(numero ? { confirmado } : {}) });
+    // Solo para mostrar u ocultar «Nuevo movimiento» (INV-02): POST vuelve a verificar MOVIMIENTOS.CREAR.
+    const acceso = await getAccessContext(session.user, session.demo === true);
+
+    return NextResponse.json({ ...datos, ...(numero ? { confirmado } : {}), permisos: { crear: hasPermission(acceso, "MOVIMIENTOS", "CREAR") } });
   } catch (error) {
     console.error("Error al cargar movimientos:", error);
     return NextResponse.json({ error: "No fue posible cargar los movimientos." }, { status: 500 });

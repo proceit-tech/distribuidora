@@ -754,3 +754,7 @@ Só código; **sem migration** (NEX-001…053 intactas; 052/053 NÃO aplicadas);
 - Portada com 4 indicadores (SKU, Disponible, Sin stock, Bajo mínimo); valor a custo e valor de venda saem da portada (ficam na ficha e em Reportes). Ação principal «Ver reposición»; «Movimientos» e «Nuevo movimiento» só com os permisos que as guardas exigem (**INV-02**: VER para o histórico; VER+CREAR para o atalho; a API de lista passou a devolver `permisos`).
 - **INV-03/04:** importes por decimal exato (texto de `numeric`, soma/produto com BigInt em `lib/inventario/decimal.ts`; `valorInventarioTexto`, `valorVentaReferenciaTexto`). O valor de venda de referência mostra a **moeda da própria lista REF-VENTA** (nunca é rotulado nem somado como moeda base); não há total comercial agregado.
 - **INV-01:** «Stock bajo» → «Bajo mínimo» e ajuda que explica que Reposición também considera o ponto de reposição.
+
+### Movimientos (motor único)
+- Os nove tipos técnicos (enums e funções SQL intactos) se apresentam em **quatro operações**: Entrada / Salida, Transferencia, Ajuste e Cambio de estado (`lib/movimientos/grupos.ts`); o formulário escolhe a operação e depois o subtipo; o filtro do histórico agrupa por operação. Regras por tipo, motivo, custo, lote, idempotência, anulação por contramovimento e permissões sem mudança (`inventario_registrar_movimiento` / `inventario_anular_movimiento`).
+- «Nuevo movimiento» do histórico só aparece com `MOVIMIENTOS.CREAR` (a API do histórico devolve `permisos.crear`); POST segue exigindo CREAR.

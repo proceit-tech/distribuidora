@@ -25,6 +25,8 @@ export type RespuestaHistorial = {
   resumen: { movimientos: number; entradas: number; salidas: number; transferencias: number };
   /** Presente solo si se pidió confirmar un número de movimiento. */
   confirmado?: boolean;
+  /** Permisos de la sesión, solo para mostrar atajos (INV-02). */
+  permisos?: { crear: boolean };
 };
 
 export type ConsultaHistorialCliente = { q?: string; tipo?: string; orden?: string; dir?: string; pagina?: number; tamano?: number; confirmar?: string };

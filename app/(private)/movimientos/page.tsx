@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { cargarMovimientos, type RespuestaHistorial } from "@/lib/movimientos/cliente-api";
+import { GRUPOS, ORDEN_GRUPOS } from "@/lib/movimientos/grupos";
 import type { MovimientoStockTipo } from "@/types/movimientos-stock";
 
 import { siguienteOrden, type Orden } from "@/components/ui/lista-padrao/orden";
@@ -181,10 +182,12 @@ export default function MovimientosPage() {
           <h1>Movimientos de stock</h1>
         </div>
 
-        <Link href="/movimientos/nuevo" className={ui.primaryButton}>
-          <span aria-hidden="true">+</span>
-          Nuevo movimiento
-        </Link>
+        {datos?.permisos?.crear === true ? (
+          <Link href="/movimientos/nuevo" className={ui.primaryButton}>
+            <span aria-hidden="true">+</span>
+            Nuevo movimiento
+          </Link>
+        ) : null}
       </header>
 
       <section className={ui.summaryGrid} aria-label="Resumen de movimientos">
@@ -230,15 +233,15 @@ export default function MovimientosPage() {
             <span>Tipo</span>
             <select value={tipo} onChange={(event) => setTipo(event.target.value as TipoFiltro)}>
               <option value="TODOS">Todos</option>
-              <option value="ENTRADA">Entrada</option>
-              <option value="SALIDA">Salida</option>
-              <option value="TRANSFERENCIA">Transferencia</option>
-              <option value="AJUSTE_POSITIVO">Ajuste positivo</option>
-              <option value="AJUSTE_NEGATIVO">Ajuste negativo</option>
-              <option value="RESERVA">Reserva</option>
-              <option value="LIBERACION_RESERVA">Liberación reserva</option>
-              <option value="CUARENTENA">Cuarentena</option>
-              <option value="LIBERACION_CUARENTENA">Liberación cuarentena</option>
+              {ORDEN_GRUPOS.map((g) => (
+                <optgroup key={g} label={GRUPOS[g].etiqueta}>
+                  {GRUPOS[g].tipos.map((t) => (
+                    <option key={t.tipo} value={t.tipo}>
+                      {t.etiqueta}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
             </select>
           </label>
 
@@ -363,7 +366,7 @@ export default function MovimientosPage() {
                               : "No se encontraron movimientos"}
                       </strong>
                       {!cargando && !errorCarga ? <span>{!hayFiltros ? "Registre el primer movimiento para comenzar a operar." : "Modifique los filtros o registre un nuevo movimiento."}</span> : null}
-                      {!cargando && !errorCarga && !hayFiltros ? (
+                      {!cargando && !errorCarga && !hayFiltros && datos?.permisos?.crear === true ? (
                         <Link href="/movimientos/nuevo" className={ui.emptyAction}>
                           + Nuevo movimiento
                         </Link>

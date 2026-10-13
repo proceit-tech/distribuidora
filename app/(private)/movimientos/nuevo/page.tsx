@@ -7,6 +7,7 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import styles from "@/app/(private)/productos/catalogos/page.module.css";
 import { CampoFecha } from "@/components/ui/campo-fecha";
 import ui from "@/components/ui/lista-padrao/lista.module.css";
+import { GRUPOS, ORDEN_GRUPOS, grupoDeTipo, tipoInicialDelGrupo, type GrupoMovimiento } from "@/lib/movimientos/grupos";
 import { motivoObligatorio } from "@/lib/movimientos/reglas";
 import { hoyAsuncion } from "@/lib/listas-precio/calculos";
 import { useProtegerCambios } from "@/lib/ui/proteger-cambios";
@@ -17,7 +18,6 @@ import {
   ETIQUETA_ORIGEN,
   formularioInicial,
   movimientoSucio,
-  ORDEN_TIPOS,
   precargarDesdeConsulta,
   saldoVisible,
   TIPOS_INFO,
@@ -82,6 +82,8 @@ export default function NuevoMovimientoPage() {
   const productos = catalogo?.productos ?? [];
   const depositos = (catalogo?.depositos ?? []).filter((d) => d.permitido);
   const info = TIPOS_INFO[form.tipo];
+  const grupo = grupoDeTipo(form.tipo);
+  const infoGrupo = GRUPOS[grupo];
   const motivoRequerido = motivoObligatorio(form.tipo, form.origen);
   const producto = productos.find((p) => p.id === form.productoId);
   const depositoRef = form.depositoOrigenId || form.depositoDestinoId;
@@ -95,6 +97,11 @@ export default function NuevoMovimientoPage() {
     setForm((f) => ({ ...f, ...parcial }));
     if (campo) setErrores((e) => ({ ...e, [campo]: undefined }));
     setErrorForm("");
+  }
+
+  // Cuatro operaciones visuales sobre los nueve tipos técnicos: al elegir la operación queda seleccionado su primer subtipo.
+  function cambiarGrupo(grupo: GrupoMovimiento) {
+    cambiarTipo(tipoInicialDelGrupo(grupo));
   }
 
   function cambiarTipo(tipo: MovimientoStockTipo) {
@@ -209,17 +216,33 @@ export default function NuevoMovimientoPage() {
 
           <label className={claseCampo("tipo")}>
             <span>
-              Tipo <b>*</b>
+              Operación <b>*</b>
             </span>
-            <select {...ariaCampo("tipo")} value={form.tipo} disabled={cargando} onChange={(e) => cambiarTipo(e.target.value as MovimientoStockTipo)}>
-              {ORDEN_TIPOS.map((t) => (
-                <option key={t} value={t}>
-                  {TIPOS_INFO[t].etiqueta}
+            <select aria-label="Operación" value={grupo} disabled={cargando} onChange={(e) => cambiarGrupo(e.target.value as GrupoMovimiento)}>
+              {ORDEN_GRUPOS.map((g) => (
+                <option key={g} value={g}>
+                  {GRUPOS[g].etiqueta}
                 </option>
               ))}
             </select>
-            {mensaje("tipo")}
+            <span className={styles.ayuda}>{infoGrupo.ayuda}</span>
           </label>
+
+          {infoGrupo.tipos.length > 1 ? (
+            <label className={claseCampo("tipo")}>
+              <span>
+                Tipo de {infoGrupo.etiqueta.toLowerCase()} <b>*</b>
+              </span>
+              <select {...ariaCampo("tipo")} value={form.tipo} disabled={cargando} onChange={(e) => cambiarTipo(e.target.value as MovimientoStockTipo)}>
+                {infoGrupo.tipos.map((t) => (
+                  <option key={t.tipo} value={t.tipo}>
+                    {t.etiqueta}
+                  </option>
+                ))}
+              </select>
+              {mensaje("tipo")}
+            </label>
+          ) : null}
 
           <label className={claseCampo("origen")}>
             <span>

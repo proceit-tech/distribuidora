@@ -35,6 +35,7 @@ Module._resolveFilename = function (request, ...resto) {
   const lco = cargar("lib/listas-precio/listas-comerciales.casos.js");
   const cce = cargar("lib/comercial/estabilizacion.casos.js");
   const ist = cargar("lib/inventario/stock.casos.js");
+  const imv = cargar("lib/inventario/movimientos.casos.js");
   const lpe = cargar("lib/listas-precio/estabilizacion.casos.js");
   const srm = cargar("lib/stock/stock-reposicion.casos.js");
   const fac = cargar("lib/facturacion/facturacion.casos.js");
@@ -67,6 +68,7 @@ Module._resolveFilename = function (request, ...resto) {
     ["Listas de precios: estabilización (hijos incrementales, versión y Productos, escalones, REF-VENTA, moneda/base, unidad, guard, referencias inactivas; AUD-LPR §V)", async () => lpe.verificarCasosListasEstabilizacion(), null],
     ["Catálogos comerciales: estabilización (versión de edición, guard, respuestas fuera de orden, errores de carga, decimal exacto, guarda de reversión, vínculos con clientes; AUD-CC §VI)", async () => cce.verificarCasosComercialEstabilizacion(), null],
     ["Inventario · Stock (INV-01…04: decimales exactos, moneda por línea, indicadores, atajos con VER+CREAR)", async () => ist.verificarCasosInventarioStock(), null],
+    ["Inventario · Movimientos (cuatro operaciones sobre nueve tipos, reglas, motor único, permisos)", async () => imv.verificarCasosInventarioMovimientos(), null],
     ["Stock, Reposición y contrato Movimientos ↔ documentos (Etapas A, B y C)", async () => srm.verificarCasosStockReposicionMovimientos(), null],
     ["Facturación F-01/F-02: documentos electrónicos, gateway, NEX-047, cálculo fiscal, payload FE y NEX-048", async () => fac.verificarCasosFacturacion(), null],
   ];
