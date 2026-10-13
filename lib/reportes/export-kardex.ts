@@ -164,5 +164,7 @@ export function tablaKardex(r: KardexRespuesta): TablaReporte {
     colEtiquetaPdf: detalle ? 6 : 1,
     notas,
     multilinea: true,
+    // Movimiento, Código, Producto, Unidad, Depósito, Lote y Propiedad identifican cada fila en TODOS los bloques del PDF (nunca se recorta una cifra).
+    pdfAnclas: detalle ? [1, 5, 6, 7, 8, 9, 10] : [0, 1, 2, 3, 4, 5],
   };
 }

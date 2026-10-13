@@ -119,7 +119,7 @@ export function respuestaKardexValida(x: unknown): boolean {
 
   const f = x.filtros, p = x.pagina, t = x.totales, c = x.conciliacion, cat = x.catalogos, e = x.empresa, perm = x.permisos;
 
-  return esObj(e) && txt(e.nombre) && txt(e.moneda) && txt(x.generado) && txt(x.sello) && esObj(f) && txt(f.vista) && VISTAS.includes(f.vista) &&
+  return esObj(e) && txt(e.nombre) && txt(e.moneda) && txt(x.generado) && txt(x.sello) && txt(x.fuenteUnidad) && ["HISTORIAL", "CATALOGO"].includes(x.fuenteUnidad) && esObj(f) && txt(f.vista) && VISTAS.includes(f.vista) &&
     esObj(p) && entero(p.numero) && entero(p.tamano) && entero(p.totalFilas) && lista(x.filas, filaValida) && lista(x.resumen, resumenFilaValida) && lista(x.cobertura, txt) &&
     esObj(t) && entero(t.filas) && typeof t.filtrosDeFila === "boolean" && typeof t.cuadra === "boolean" && lista(t.grupos, grupoValido) &&
     esObj(c) && entero(c.combinaciones) && entero(c.divergentes) && typeof c.conciliado === "boolean" &&

@@ -29,6 +29,8 @@ type Dato = Record<string, unknown>;
 type Linea = {
   num: string; tipo: string; origen?: string; estado?: string; freg: string; hreg?: string; fmov?: string; doc?: string; usr?: string; prod: string; cant: string;
   lote?: string; prop?: "PROPIO" | "TERCERO"; propietario?: string | null; o?: string; d?: string; cu?: string | null; ct?: string | null; mon?: string; anulaA?: string;
+  /** Instante de registro del movimiento (creado_at); por defecto freg + hreg. */
+  ts?: string;
 };
 type Stock = { prod: string; dep: string; lote?: string; prop?: "PROPIO" | "TERCERO"; propietario?: string | null; d?: string; r?: string; c?: string };
 type Escenario = {
@@ -36,6 +38,8 @@ type Escenario = {
   lineas: Linea[];
   depositos: Array<{ id: string; nombre: string; activo: boolean }>;
   stock?: Stock[];
+  /** Historial de cambios de unidad-base (NEX-052). undefined = la tabla NO existe (migration sin aplicar). */
+  historialUnidad?: Array<{ id: string; prod: string; de: string; a: string; at: string }>;
 };
 type Consulta = { sql: string; params?: unknown[] };
 type Sal = {
@@ -61,6 +65,14 @@ export async function verificarCasosReportesKardex(): Promise<string[]> {
   let filtroActual: KardexFiltros = FILTROS;
 
   // ── Emulación del libro: efectos por depósito, saldo acumulado (orden de registro) y lecturas agregadas.
+  const instante = (l: Linea) => l.ts ?? `${l.freg}T${l.hreg ?? "10:00:00"}Z`;
+  // Regla de referencia (independiente del SQL): vigente = la última alteración con cambiado_at <= registro (orden cambiado_at, id); antes de la primera, la unidad anterior de la primera; sin historial, la actual.
+  const unidadEn = (e: Escenario, l: Linea, actual: string): string => {
+    const h = (e.historialUnidad ?? []).filter((x) => x.prod === l.prod).sort((a, b) => a.at.localeCompare(b.at) || a.id.localeCompare(b.id));
+    const previas = h.filter((x) => x.at <= instante(l));
+
+    return previas.length ? previas[previas.length - 1].a : h.length ? h[0].de : actual;
+  };
   const efectos = (e: Escenario, deps: string[]): Sal[] => {
     const f = filtroActual;
     const prod = (id: string) => e.productos.find((p) => p.id === id)!;
@@ -70,7 +82,7 @@ export async function verificarCasosReportesKardex(): Promise<string[]> {
       const mk = (dep: string, contra: string | null, lado: number, efecto: Sal["efecto"], dd: string, dr: string, dc: string) => {
         const p = prod(l.prod);
 
-        todos.push({ l, idx, dep, contra, lado, efecto, dd, dr, dc, s_disp: "0", s_res: "0", s_cuar: "0", reg: l.freg, unidad: p.unidad, pcodigo: p.codigo, lote: l.lote ?? "", propiedad: l.prop ?? "PROPIO", propietario: l.propietario ?? null, fis: suma([dd, dr, dc]) });
+        todos.push({ l, idx, dep, contra, lado, efecto, dd, dr, dc, s_disp: "0", s_res: "0", s_cuar: "0", reg: l.freg, unidad: unidadEn(e, l, p.unidad), pcodigo: p.codigo, lote: l.lote ?? "", propiedad: l.prop ?? "PROPIO", propietario: l.propietario ?? null, fis: suma([dd, dr, dc]) });
       };
 
       if (["ENTRADA", "AJUSTE_POSITIVO", "TRANSFERENCIA"].includes(l.tipo)) mk(l.d!, l.o ?? null, 1, "ENTRADA", l.cant, "0", "0");
@@ -91,7 +103,7 @@ export async function verificarCasosReportesKardex(): Promise<string[]> {
     const acum = new Map<string, [string, string, string]>();
 
     for (const s of filtradas) {
-      const k = [s.l.prod, s.dep, s.lote, s.propiedad, s.propietario ?? ""].join("|");
+      const k = [s.l.prod, s.dep, s.lote, s.propiedad, s.propietario ?? "", s.unidad].join("|");
       const [d, r, c] = acum.get(k) ?? ["0", "0", "0"];
       const n: [string, string, string] = [suma([d, s.dd]), suma([r, s.dr]), suma([c, s.dc])];
 
@@ -133,7 +145,7 @@ export async function verificarCasosReportesKardex(): Promise<string[]> {
   const grupos = (rows: Sal[]): G[] => {
     const m = new Map<string, Sal[]>();
 
-    for (const s of rows) m.set([s.l.prod, s.dep, s.lote, s.propiedad, s.propietario ?? ""].join("|"), [...(m.get([s.l.prod, s.dep, s.lote, s.propiedad, s.propietario ?? ""].join("|")) ?? []), s]);
+    for (const s of rows) m.set([s.l.prod, s.dep, s.lote, s.propiedad, s.propietario ?? "", s.unidad].join("|"), [...(m.get([s.l.prod, s.dep, s.lote, s.propiedad, s.propietario ?? "", s.unidad].join("|")) ?? []), s]);
 
     const f = filtroActual;
     const fin = (s: Sal) => !f.hasta || s.reg <= f.hasta;
@@ -160,6 +172,7 @@ export async function verificarCasosReportesKardex(): Promise<string[]> {
 
     if (/^(BEGIN|COMMIT|ROLLBACK)/.test(sql)) return [];
     if (/FROM depositos d JOIN usuarios u/.test(sql)) return e.depositos;
+    if (/to_regclass\(/.test(sql)) return [{ existe: e.historialUnidad !== undefined }];
     if (/FROM empresas/.test(sql)) return [{ nombre: "Empresa SA", moneda: "PYG" }];
     if (/AS t, to_char/.test(sql)) return [{ t: "13/10/2026 10:00", f: "20261013-1000" }];
     if (/FROM usuarios u\s+WHERE u\.empresa_id/.test(sql)) return [{ id: USR, nombre: "ana" }];
@@ -234,7 +247,7 @@ export async function verificarCasosReportesKardex(): Promise<string[]> {
         .sort((a, b) => a.pcodigo.localeCompare(b.pcodigo) || e.depositos.find((d) => d.id === a.dep)!.nombre.localeCompare(e.depositos.find((d) => d.id === b.dep)!.nombre) || a.lote.localeCompare(b.lote) || a.prop.localeCompare(b.prop) || (a.propietario ?? "").localeCompare(b.propietario ?? ""));
 
       return gf.slice(desde, desde + limite).map((g) => ({
-        clave: `${g.prod}:${g.dep}:${g.lote}:${g.prop}:${g.propietario ?? ""}`, pcodigo: g.pcodigo, pdesc: `Producto ${g.pcodigo}`, unidad: g.unidad, deposito: e.depositos.find((d) => d.id === g.dep)!.nombre, inactivo: !e.depositos.find((d) => d.id === g.dep)!.activo,
+        clave: `${g.prod}:${g.dep}:${g.lote}:${g.prop}:${g.propietario ?? ""}:${g.unidad}`, pcodigo: g.pcodigo, pdesc: `Producto ${g.pcodigo}`, unidad: g.unidad, deposito: e.depositos.find((d) => d.id === g.dep)!.nombre, inactivo: !e.depositos.find((d) => d.id === g.dep)!.activo,
         lote: g.lote, propiedad: g.prop, propietario_id: g.propietario, inicial: g.inicial, entradas: g.entradas, salidas: g.salidas, t_ent: g.t_ent, t_sal: g.t_sal, fuera: g.fuera,
         final: suma([g.f_disp, g.f_res, g.f_cuar]), f_disp: g.f_disp, f_res: g.f_res, f_cuar: g.f_cuar,
       }));
@@ -440,8 +453,7 @@ export async function verificarCasosReportesKardex(): Promise<string[]> {
 
   const pdf6 = [...generarPdfTabla(t6).toString("latin1").matchAll(/\(((?:[^()\\]|\\.)*)\) Tj/g)].map((m) => m[1].replace(/\\(.)/g, "$1"));
 
-  const grande = pdf6.find((x) => x.startsWith("12.3"));
-  igual("KDX-T06 PDF: 0,3 y 0,0001 exactos, moneda USD, totales rotulados por unidad/propiedad (SALDO FINAL con Kilo y Litro) y sin NaN; un valor de 20 dígitos nunca se altera en silencio (exacto o recortado con «…»)", [pdf6.includes("0,3"), pdf6.includes("0,0001"), pdf6.includes("USD"), pdf6.filter((x) => x === "SALDO FINAL").length, pdf6.includes("Kilo") && pdf6.includes("Litro"), !pdf6.some((x) => /NaN/.test(x)), grande === "12.345.678.901.234.567,1234" || (grande !== undefined && /[…\u0085]$/.test(grande))], [true, true, true, 3, true, true, true]);
+  igual("KDX-T06 PDF: 0,3, 0,0001, 12.345.678.901.234.567,1234 COMPLETOS (sin «…»), moneda USD, totales con su unidad/propiedad y sin NaN", [pdf6.includes("0,3"), pdf6.includes("0,0001"), pdf6.includes("12.345.678.901.234.567,1234"), pdf6.includes("USD"), pdf6.filter((x) => x === "SALDO FINAL").length >= 3, pdf6.includes("Kilo") && pdf6.includes("Litro"), !pdf6.some((x) => /NaN/.test(x)), pdf6.filter((x) => /^[-+\d.,]+[…\u0085]$/.test(x)).length], [true, true, true, true, true, true, true, 0]);
   cierto("KDX-T06 cada fila de totales lleva su grupo en las columnas Unidad y Propiedad (Kilo, Litro, Unidad · Propio) y no existe una fila de totales sin unidad", t6.totales.length > 0 && t6.totales.every((tt) => ["Kilo", "Litro", "Unidad"].includes(String(tt.celdas[ic("Unidad")])) && tt.celdas[ic("Propiedad")] === "Propio"));
 
   const tRes = tablaKardex(await informe(e6, { vista: "RESUMEN" }));
@@ -576,6 +588,215 @@ export async function verificarCasosReportesKardex(): Promise<string[]> {
   cierto("KDX-T10 independencia: Valorización, Stock crítico, Stock general y Lotes no importan el Kardex", ["valorizacion", "stock-critico", "stock-general", "lotes"].every((m) => !/kardex/.test(leer(`lib/reportes/${m}.ts`))));
   cierto("KDX-T10 la suite del Kardex está registrada en el runner oficial", /reportes\/kardex\.casos/.test(leer("scripts/casos-clientes/run.js")) && /verificarCasosReportesKardex/.test(leer("scripts/casos-clientes/run.js")));
   cierto("KDX-T10 sin migration nueva ni cambios en el motor: el Kardex solo lee tablas del libro, depósitos, usuarios, productos y lotes", !/migraciones/.test(fuenteK));
+
+  // ═══ KDX-R02-01 — PDF sin pérdida de dígitos (DETALLE y RESUMEN, totales, varias páginas y bloques de columnas) ═══
+  const es = (v: string): string => {
+    const [i, d = ""] = v.split(".");
+    const ent = i.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+    const dd = d.replace(/0+$/, "");
+
+    return dd ? `${ent},${dd}` : ent;
+  };
+  const aBig = (v: string): bigint => { const [i, d = ""] = v.split("."); return BigInt(i + d.padEnd(4, "0")); };
+  const deBig = (n: bigint): string => { const s = n.toString().padStart(5, "0"); return `${s.slice(0, -4)}.${s.slice(-4)}`; };
+  const sumaBig = (l: string[]): string => deBig(l.reduce((a, v) => a + aBig(v), BigInt(0)));
+  const tokensPdf = (b: Buffer): string[] => [...b.toString("latin1").matchAll(/\(((?:[^()\\]|\\.)*)\) Tj/g)].map((m) => m[1].replace(/\\(.)/g, "$1"));
+  const paginasPdf = (b: Buffer): number => (b.toString("latin1").match(/\/Type \/Page /g) ?? []).length;
+  const truncado = (tokens: string[]): string[] => tokens.filter((x) => /^[-+\d.,]+[…\u0085]$/.test(x));
+
+  const N = 70;
+  const cants = Array.from({ length: N }, (_, i) => `${"9".repeat(19)}${i % 10}.${String(1000 + i).slice(-4)}`); // 20 dígitos enteros + 4 decimales
+  const costosU = Array.from({ length: N }, (_, i) => `${"8".repeat(18)}${String(10 + (i % 80))}.${String(2000 + i).slice(-4)}`);
+  const costosT = Array.from({ length: N }, (_, i) => `${"7".repeat(25)}${String(i % 10)}.${String(3000 + i).slice(-4)}`);
+  const eBig: Escenario = {
+    productos: prods, depositos: depos,
+    lineas: cants.map((c, i): Linea => ({ num: `MOV-${String(i + 1).padStart(7, "0")}`, tipo: "ENTRADA", freg: "2026-10-01", hreg: `10:${String(i % 60).padStart(2, "0")}:00`, prod: PC, cant: c, lote: `LOTE-${String(i).padStart(3, "0")}`, d: DA, cu: costosU[i], ct: costosT[i], mon: "PYG" })),
+  };
+  const rBigD = await informe(eBig, { vista: "DETALLE" }, { tamano: 200 });
+  const tBigD = tablaKardex(rBigD);
+  const pdfD = generarPdfTabla(tBigD);
+  const tkD = tokensPdf(pdfD);
+  // cada movimiento tiene su propio lote: el saldo acumulado de cada fila es la propia cantidad (canónica)
+  const saldos = cants;
+  const canon = (v: string): string => sumarDecimales([v]);
+  const totalBig = sumaBig(cants);
+
+  igual("KDX-R02-01 el libro de prueba trae 70 movimientos con cantidades de 20 dígitos enteros + 4 decimales, costos y saldos acumulados exactos", [rBigD.filas.length, rBigD.filas[69].entrada, rBigD.filas[69].saldoFisico, rBigD.totales.grupos[0].saldoFinal.fisico], [N, canon(cants[69]), canon(cants[69]), totalBig]);
+  cierto("KDX-R02-01 PDF DETALLE real: TODA entrada, saldo físico, costo unitario y costo total de las 70 filas aparece COMPLETA, con sus 24+ dígitos y decimales (agrupación es-PY)", cants.every((c, i) => tkD.includes(es(c)) && tkD.includes(es(saldos[i])) && tkD.includes(es(costosU[i])) && tkD.includes(es(costosT[i]))));
+  cierto("KDX-R02-01 PDF DETALLE: ninguna cifra queda recortada con «…» ni con el carácter 0x85", truncado(tkD).length === 0);
+  cierto("KDX-R02-01 PDF DETALLE: totales exactos (saldo final del grupo = suma exacta de 70 cantidades de 20 dígitos) y etiquetas SALDO INICIAL / SALDO FINAL", tkD.includes(es(totalBig)) && tkD.includes("SALDO INICIAL") && tkD.includes("SALDO FINAL"));
+  cierto("KDX-R02-01 PDF DETALLE: más de una página y columnas en BLOQUES rotulados que repiten movimiento, producto, unidad, depósito, lote y propiedad", paginasPdf(pdfD) > 3 && tkD.some((x) => /^Bloque 1 de \d+: columnas /.test(x)) && tkD.filter((x) => x === "MOV-0000001").length >= Number((tkD.find((x) => /^Bloque 1 de \d+/.test(x)) ?? "").match(/de (\d+)/)?.[1] ?? 99) && tkD.filter((x) => x === "LOTE-000").length >= 2 && tkD.filter((x) => x === "Litro").length >= 2);
+  cierto("KDX-R02-01 PDF DETALLE: cada bloque conserva cabeceras, y las columnas Entrada, Saldo físico, Costo unit., Costo total y Moneda costo se imprimen completas en algún bloque", ["Entrada", "Saldo físico", "Costo unit.", "Costo total", "Moneda costo", "Vinculado", "Propiedad"].every((h) => h.split(" ").every((w) => tkD.includes(w) || tkD.includes(h))) && tkD.filter((x) => x === "PYG").length >= N);
+
+  const rBigR = await informe(eBig, { vista: "RESUMEN" }, { tamano: 200 });
+  const tBigR = tablaKardex(rBigR);
+  const pdfR = generarPdfTabla(tBigR);
+  const tkR = tokensPdf(pdfR);
+
+  igual("KDX-R02-01 el RESUMEN trae 70 combinaciones (un lote cada una) con los saldos exactos", [rBigR.resumen.length, rBigR.resumen[0].saldoFinal, rBigR.totales.grupos[0].resumen?.saldoFinal], [N, canon(cants[0]), totalBig]);
+  cierto("KDX-R02-01 PDF RESUMEN real: entradas, saldo final y total TOTAL (suma exacta) de 20+ dígitos completos, sin recortes y con varias páginas", cants.every((c) => tkR.includes(es(c))) && tkR.includes(es(totalBig)) && truncado(tkR).length === 0 && paginasPdf(pdfR) >= 2);
+  cierto("KDX-R02-01 PDF RESUMEN: la identificación (código, producto, unidad, depósito, lote, propiedad) se repite en cada bloque y el TOTAL lleva su unidad y propiedad", tkR.filter((x) => x === "LOTE-000").length >= 1 && tkR.filter((x) => x === "TOTAL").length >= 1 && tkR.filter((x) => x === "Litro").length >= 2);
+
+  // filtros de fila: totales «fuera del filtro» y conciliación completa también sin recortes
+  const rBigF = await informe(eBig, { vista: "RESUMEN", tipo: "SALIDA" }, { tamano: 200 });
+  cierto("KDX-R02-01 PDF con filtro de fila: la CONCILIACIÓN COMPLETA y los totales fuera del filtro mantienen todas las cifras", (() => { const tk = tokensPdf(generarPdfTabla(tablaKardex(rBigF))); return tk.includes(es(totalBig)) && truncado(tk).length === 0 && tk.includes("CONCILIACIÓN") && tk.includes("COMPLETA"); })());
+
+  // regresión de los otros cuatro informes: el modo exacto es opt-in (solo el Kardex lo activa); los demás PDF no cambian de comportamiento
+  const fuentesOtros = ["export-valorizacion", "export-stock-critico", "export-stock-general", "export-lotes"].map((m) => leer(`lib/reportes/${m}.ts`));
+  cierto("KDX-R02-01 los otros cuatro informes no activan el modo exacto (sin pdfAnclas) y el generador compartido lo trata como opción: sin la opción, un PDF es idéntico al generador anterior", fuentesOtros.every((x) => !/pdfAnclas/.test(x)) && /exacto\?: boolean/.test(leer("lib/reportes/pdf.ts")) && /t\.exacto/.test(leer("lib/reportes/pdf.ts")) && /\.\.\.\(t\.pdfAnclas \? \{ exacto: true/.test(leer("lib/reportes/export.ts")));
+
+  const plano: Parameters<typeof generarPdfTabla>[0] = {
+    titulo: "Plano", hoja: "H", nombreBase: "P", empresa: "E", generado: "g", sello: "s", filtros: ["f"], totalFilas: 2,
+    columnas: [{ titulo: "Producto", peso: 10, tipo: "texto" }, { titulo: "Cantidad", peso: 4, tipo: "cantidad" }, { titulo: "Total", peso: 6, tipo: "dinero" }],
+    filas: [["Arroz largo fino", "1234.5"], ["Azúcar", "0.0001"]].map((f, i) => [f[0], f[1], i === 0 ? "99.5" : null]), totales: [{ etiqueta: "TOTAL", celdas: ["", "1234.5001", "99.5"] }], colEtiquetaPdf: 0, notas: ["nota"],
+  };
+  const tkPlano = tokensPdf(generarPdfTabla(plano));
+
+  igual("KDX-R02-01 regresión del generador compartido: un informe sin modo exacto sigue saliendo en un solo bloque, sin rótulos de bloque y con los mismos valores", [tkPlano.includes("1.234,5"), tkPlano.includes("0,0001"), tkPlano.includes("TOTAL"), tkPlano.some((x) => /^Bloque/.test(x)), paginasPdf(generarPdfTabla(plano))], [true, true, true, false, 1]);
+
+  // XLSX del mismo libro: números ≤ 15 dígitos como número, más largos como TEXTO exacto (sin perder dígitos) — generación aprobada, no modificada
+  const xlBig = leerHojaXlsx(generarXlsxTabla(tBigD));
+  const baseB = 1 + 1 + 1 + tBigD.filtros.length + 1 + 1;
+  const icB = (t: string) => tBigD.columnas.findIndex((c) => c.titulo === t);
+  const colB = (i: number) => String.fromCharCode(65 + i);
+
+  igual("KDX-R02-01 XLSX del mismo libro: la cantidad de 20 dígitos y el saldo acumulado son TEXTO exacto; el costo total también; la unidad es «Litro» en todas las filas", [
+    xlBig.get(`${colB(icB("Entrada"))}${baseB + 1}`), xlBig.get(`${colB(icB("Saldo físico"))}${baseB + N}`), xlBig.get(`${colB(icB("Costo total"))}${baseB + 1}`), xlBig.get(`${colB(icB("Unidad"))}${baseB + 33}`),
+  ], [{ tipo: "s", valor: canon(cants[0]) }, { tipo: "s", valor: canon(cants[69]) }, { tipo: "s", valor: costosT[0] }, { tipo: "s", valor: "Litro" }]);
+
+  // ═══ KDX-R02-02 — unidad-base HISTÓRICA (NEX-052) ═══
+  const HIST1 = [{ id: "h1", prod: PB, de: "Kilo", a: "Unidad", at: "2026-10-10T12:00:00Z" }];
+  const eU: Escenario = {
+    productos: [{ id: PB, codigo: "B-1", unidad: "Unidad" }], depositos: depos, historialUnidad: HIST1,
+    lineas: [
+      { num: L(1), tipo: "ENTRADA", freg: "2026-10-01", prod: PB, cant: "10", lote: "L1", d: DA, cu: "3", ct: "30", mon: "PYG" },
+      { num: L(2), tipo: "SALIDA", freg: "2026-10-05", prod: PB, cant: "10", lote: "L1", o: DA, cu: "3", ct: "30", mon: "PYG" },
+      { num: L(3), tipo: "ENTRADA", freg: "2026-10-11", prod: PB, cant: "7", lote: "L1", d: DA, cu: "4", ct: "28", mon: "PYG" },
+    ],
+  };
+  const rU = await informe(eU);
+
+  igual("KDX-R02-02 producto en KG con saldo cero que pasa a UNIDAD: los movimientos antiguos siguen en «Kilo» y el nuevo en «Unidad» (no se reetiqueta el pasado)", filas(rU).map((f) => [f.numero, f.unidad, f.saldoFisico]), [[L(1), "Kilo", "10"], [L(2), "Kilo", "0"], [L(3), "Unidad", "7"]]);
+  igual("KDX-R02-02 dos grupos separados (Kilo y Unidad), sin sumar 10+7: Kilo cierra en 0 con 10 entradas y 10 salidas; Unidad en 7", rU.totales.grupos.map((g) => [g.unidad, g.filtrado.entradas, g.filtrado.salidas, g.saldoFinal.fisico, g.cuadra]), [["Kilo", "10", "10", "0", true], ["Unidad", "7", "0", "7", true]]);
+  igual("KDX-R02-02 contrato de respuesta: fuenteUnidad = HISTORIAL y la nota de cobertura explica que las cantidades no se convierten", [rU.fuenteUnidad, rU.cobertura.some((x) => /Unidad de medida histórica/.test(x) && /NO se convierten/.test(x))], ["HISTORIAL", true]);
+  igual("KDX-R02-02 conciliación con Stock coherente (el saldo real 7 pertenece a la unidad vigente) y la respuesta es válida para el cliente", [rU.conciliacion.conciliado, respuestaKardexValida(JSON.parse(JSON.stringify({ ...rU, permisos: { exportar: true } })))], [true, true]);
+
+  const rUd = await informe(eU, { desde: "2026-10-11" });
+
+  igual("KDX-R02-02 período posterior al cambio: el grupo Kilo conserva saldo inicial 0 y final 0 sin filas; el saldo inicial/final de Unidad pertenece a Unidad", [rUd.totales.grupos.map((g) => [g.unidad, g.filas, g.saldoInicial.fisico, g.saldoFinal.fisico]), filas(rUd).map((f) => [f.numero, f.unidad])], [[["Kilo", 0, "0", "0"], ["Unidad", 1, "0", "7"]], [[L(3), "Unidad"]]]);
+
+  const rUr = await informe(eU, { vista: "RESUMEN" });
+
+  igual("KDX-R02-02 vista Resumen: el mismo producto/depósito/lote sale en DOS filas (Kilo y Unidad) con claves distintas y totales por unidad", [rUr.resumen.map((x) => [x.unidad, x.saldoFinal]), new Set(rUr.resumen.map((x) => x.clave)).size, rUr.totales.grupos.map((g) => [g.unidad, g.resumen?.saldoFinal])], [[["Kilo", "0"], ["Unidad", "7"]], 2, [["Kilo", "0"], ["Unidad", "7"]]]);
+
+  const tU = tablaKardex(rU);
+  const xU = leerHojaXlsx(generarXlsxTabla(tU));
+  const bU = 1 + 1 + 1 + tU.filtros.length + 1 + 1;
+  const iU = (t: string) => tU.columnas.findIndex((c) => c.titulo === t);
+
+  igual("KDX-R02-02 XLSX: misma unidad histórica por fila (Kilo, Kilo, Unidad), saldos numéricos y filas de totales por unidad", [
+    xU.get(`${colB(iU("Unidad"))}${bU + 1}`), xU.get(`${colB(iU("Unidad"))}${bU + 2}`), xU.get(`${colB(iU("Unidad"))}${bU + 3}`), xU.get(`${colB(iU("Saldo físico"))}${bU + 3}`),
+    tU.totales.map((x) => x.celdas[iU("Unidad")]).filter((x, i, a) => a.indexOf(x) === i),
+  ], [{ tipo: "s", valor: "Kilo" }, { tipo: "s", valor: "Kilo" }, { tipo: "s", valor: "Unidad" }, { tipo: "n", valor: "7" }, ["Kilo", "Unidad"]]);
+
+  const tkU = tokensPdf(generarPdfTabla(tU));
+
+  cierto("KDX-R02-02 PDF: las filas muestran Kilo y Unidad según la época y hay totales para cada unidad", tkU.filter((x) => x === "Kilo").length >= 5 && tkU.filter((x) => x === "Unidad").length >= 3);
+
+  // Estructura de la consulta con el historial presente
+  const sqlU1 = (await (async () => { await informe(eU); return reg.consultas.find((c) => /FROM sal GROUP BY unidad/.test(c.sql))?.sql ?? ""; })());
+
+  cierto("KDX-R02-02 la consulta usa el instante de registro del movimiento (creado_at) contra cambiado_at con desempate determinista (cambiado_at, id), cae a la unidad anterior de la primera alteración y a la del catálogo sin historial; la ventana del saldo se particiona también por unidad", /h\.cambiado_at <= ef\.creado_at ORDER BY h\.cambiado_at DESC, h\.id DESC LIMIT 1/.test(sqlU1) && /ORDER BY h\.cambiado_at ASC, h\.id ASC LIMIT 1/.test(sqlU1) && /pr\.unidad_medida_id\) AS unidad_id/.test(sqlU1) && /h\.empresa_id = \$1 AND h\.producto_id = ef\.producto_id/.test(sqlU1) && /ef\.propietario_id, uh\.unidad_id/.test(sqlU1));
+  cierto("KDX-R02-02 la existencia de la tabla se verifica con to_regclass dentro de la MISMA transacción, antes de leer el libro", (await (async () => { await informe(eU); const i = reg.consultas.findIndex((c) => /to_regclass\('public\.producto_unidad_base_historial'\)/.test(c.sql)); const j = reg.consultas.findIndex((c) => /FROM sal GROUP BY unidad/.test(c.sql)); return i > 0 && j > i && reg.consultas[0].sql.startsWith("BEGIN") && reg.conexiones === 1; })()));
+
+  // NEX-052 sin aplicar: la tabla no existe → nunca se consulta
+  const eSin: Escenario = { ...eU, historialUnidad: undefined };
+  const rSin = await informe(eSin);
+
+  igual("KDX-R02-02 NEX-052 SIN aplicar: el Kardex funciona, usa la unidad del catálogo, lo informa (fuenteUnidad CATALOGO y nota) y ninguna consulta menciona la tabla ausente", [filas(rSin).map((f) => f.unidad), rSin.fuenteUnidad, rSin.cobertura.some((x) => /no existe en esta base/.test(x)), reg.consultas.filter((c) => /producto_unidad_base_historial/.test(c.sql) && !/to_regclass/.test(c.sql)).length, rSin.totales.grupos.length, "error" in (rSin as object)], [["Unidad", "Unidad", "Unidad"], "CATALOGO", true, 0, 1, false]);
+
+  const rVacioH = await informe({ ...eU, historialUnidad: [] });
+
+  igual("KDX-R02-02 tabla presente pero sin cambios: se mantiene la unidad actual y no se inventan eventos históricos", [filas(rVacioH).map((f) => f.unidad), rVacioH.fuenteUnidad, rVacioH.totales.grupos.length], [["Unidad", "Unidad", "Unidad"], "HISTORIAL", 1]);
+
+  // varias trocas y límites temporales (== cambiado_at pertenece a la unidad NUEVA; un segundo antes, a la anterior)
+  const HIST2 = [
+    { id: "h2", prod: PB, de: "Unidad", a: "Litro", at: "2026-10-20T12:00:00Z" },
+    { id: "h1", prod: PB, de: "Kilo", a: "Unidad", at: "2026-10-10T12:00:00Z" },
+  ];
+  const mov = (n: number, ts: string, cant: string, tipo = "ENTRADA", extra: Partial<Linea> = {}): Linea => ({ num: L(n), tipo, freg: ts.slice(0, 10), hreg: ts.slice(11, 19), ts, prod: PB, cant, lote: "L1", ...(tipo === "ENTRADA" ? { d: DA } : { o: DA }), cu: "1", ct: cant, mon: "PYG", ...extra });
+  const eM: Escenario = {
+    productos: [{ id: PB, codigo: "B-1", unidad: "Litro" }], depositos: depos, historialUnidad: HIST2,
+    lineas: [
+      mov(1, "2026-10-01T09:00:00Z", "5"), mov(2, "2026-10-02T09:00:00Z", "5", "SALIDA"), // antes de la primera troca: Kilo
+      mov(3, "2026-10-10T11:59:59Z", "2"), mov(4, "2026-10-10T11:59:59Z", "2", "SALIDA", {}), // un segundo antes: Kilo
+      mov(5, "2026-10-10T12:00:00Z", "3"), // exactamente en cambiado_at: Unidad
+      mov(6, "2026-10-12T09:00:00Z", "3", "SALIDA"), // entre trocas: Unidad
+      mov(7, "2026-10-20T11:59:59Z", "4"), mov(8, "2026-10-20T11:59:59Z", "4", "SALIDA"), // Unidad
+      mov(9, "2026-10-20T12:00:00Z", "9"), // en la segunda troca: Litro
+      mov(10, "2026-10-25T09:00:00Z", "1", "SALIDA"), // después de la última: Litro
+    ],
+  };
+  const rM = await informe(eM);
+
+  igual("KDX-R02-02 dos trocas: antes de la primera = Kilo, entre ambas = Unidad, después de la última = Litro; límites exactos (== cambiado_at → unidad nueva; 1 s antes → anterior)", filas(rM).map((f) => [f.numero, f.unidad]), [[L(1), "Kilo"], [L(2), "Kilo"], [L(3), "Kilo"], [L(4), "Kilo"], [L(5), "Unidad"], [L(6), "Unidad"], [L(7), "Unidad"], [L(8), "Unidad"], [L(9), "Litro"], [L(10), "Litro"]]);
+  igual("KDX-R02-02 tres grupos independientes con saldos finales Kilo 0, Unidad 0, Litro 8; cantidades de épocas distintas jamás se suman (5+3+9 ≠ un total)", rM.totales.grupos.map((g) => [g.unidad, g.filtrado.entradas, g.filtrado.salidas, g.saldoFinal.fisico, g.cuadra]), [["Kilo", "7", "7", "0", true], ["Litro", "9", "1", "8", true], ["Unidad", "7", "7", "0", true]]);
+  igual("KDX-R02-02 el saldo acumulado por fila se mantiene dentro de cada unidad (la época nueva empieza desde el saldo cero real)", filas(rM).map((f) => f.saldoFisico), ["5", "0", "2", "0", "3", "0", "4", "0", "9", "8"]);
+
+  const rMh = await informe({ ...eM, historialUnidad: [...HIST2].reverse() });
+
+  igual("KDX-R02-02 el resultado no depende del orden en que llega el historial (orden determinista por cambiado_at y id)", filas(rMh).map((f) => f.unidad), filas(rM).map((f) => f.unidad));
+
+  // alteraciones con el MISMO cambiado_at: desempate por id (determinista)
+  const AT = "2026-10-15T12:00:00Z";
+  const eT: Escenario = {
+    productos: [{ id: PB, codigo: "B-1", unidad: "Litro" }], depositos: depos,
+    historialUnidad: [{ id: "b", prod: PB, de: "Unidad", a: "Litro", at: AT }, { id: "a", prod: PB, de: "Kilo", a: "Unidad", at: AT }],
+    lineas: [mov(1, "2026-10-14T09:00:00Z", "1"), mov(2, "2026-10-14T09:30:00Z", "1", "SALIDA"), mov(3, AT, "2"), mov(4, "2026-10-16T09:00:00Z", "2", "SALIDA")],
+  };
+  const rT = await informe(eT);
+  const rT2 = await informe({ ...eT, historialUnidad: [...eT.historialUnidad!].reverse() });
+
+  igual("KDX-R02-02 dos alteraciones con el mismo instante: antes = anterior de la primera por (cambiado_at, id) → Kilo; en/después = nueva de la última → Litro; idéntico con otro orden de entrada", [filas(rT).map((f) => f.unidad), filas(rT2).map((f) => f.unidad)], [["Kilo", "Kilo", "Litro", "Litro"], ["Kilo", "Kilo", "Litro", "Litro"]]);
+
+  // libro completo atravesando la época: depósito, lote, propiedad, propietario, anulación y transferencia
+  const eC: Escenario = {
+    productos: [{ id: PC, codigo: "C-1", unidad: "Unidad" }], depositos: depos, historialUnidad: [{ id: "h1", prod: PC, de: "Kilo", a: "Unidad", at: "2026-10-10T12:00:00Z" }],
+    lineas: [
+      { num: L(1), tipo: "ENTRADA", freg: "2026-10-01", prod: PC, cant: "5", lote: "L1", d: DA, cu: "2", ct: "10", mon: "PYG" },
+      { num: L(2), tipo: "ENTRADA", freg: "2026-10-01", hreg: "11:00:00", prod: PC, cant: "3", lote: "L1", d: DA, prop: "TERCERO", propietario: OX },
+      { num: L(3), tipo: "TRANSFERENCIA", origen: "TRANSFERENCIA", freg: "2026-10-03", prod: PC, cant: "2", lote: "L1", o: DA, d: DB, cu: "2", ct: "4", mon: "PYG" },
+      { num: L(4), tipo: "SALIDA", freg: "2026-10-04", prod: PC, cant: "3", lote: "L1", o: DA, cu: "2", ct: "6", mon: "PYG" },
+      { num: L(5), tipo: "SALIDA", freg: "2026-10-04", hreg: "11:00:00", prod: PC, cant: "2", lote: "L1", o: DB, cu: "2", ct: "4", mon: "PYG" },
+      { num: L(6), tipo: "SALIDA", freg: "2026-10-05", prod: PC, cant: "3", lote: "L1", o: DA, prop: "TERCERO", propietario: OX },
+      { num: L(7), tipo: "ENTRADA", estado: "ANULADO", freg: "2026-10-06", prod: PC, cant: "1", lote: "L1", d: DA, cu: "2", ct: "2", mon: "PYG" },
+      { num: L(8), tipo: "SALIDA", origen: "ANULACION", freg: "2026-10-07", prod: PC, cant: "1", lote: "L1", o: DA, anulaA: L(7), cu: "2", ct: "2", mon: "PYG" },
+      { num: L(9), tipo: "ENTRADA", freg: "2026-10-11", prod: PC, cant: "4", lote: "L2", d: DA, cu: "5", ct: "20", mon: "PYG" },
+      { num: L(10), tipo: "ENTRADA", freg: "2026-10-11", hreg: "11:00:00", prod: PC, cant: "6", lote: "L2", d: DA, prop: "TERCERO", propietario: OX },
+      { num: L(11), tipo: "TRANSFERENCIA", origen: "TRANSFERENCIA", freg: "2026-10-12", prod: PC, cant: "1", lote: "L2", o: DA, d: DB, cu: "5", ct: "5", mon: "PYG" },
+    ],
+  };
+  const rC = await informe(eC);
+
+  igual("KDX-R02-02 libro completo atravesando la época: cuatro grupos (Kilo y Unidad × propio y terceros del propietario X) con saldos propios de cada uno", rC.totales.grupos.map((g) => [g.unidad, g.propiedad, g.filtrado.entradas, g.filtrado.salidas, g.filtrado.transfEntradas, g.filtrado.transfSalidas, g.completo.anulaciones, g.saldoFinal.fisico, g.cuadra]), [
+    ["Kilo", "PROPIO", "6", "6", "2", "2", 1, "0", true], ["Kilo", "TERCERO", "3", "3", "0", "0", 0, "0", true], ["Unidad", "PROPIO", "4", "0", "1", "1", 0, "4", true], ["Unidad", "TERCERO", "6", "0", "0", "0", 0, "6", true],
+  ]);
+  igual("KDX-R02-02 las dos puntas de cada transferencia llevan la misma unidad histórica; el movimiento anulado y su contramovimiento comparten la unidad de su época", [
+    filas(rC).filter((f) => f.numero === L(3) || f.numero === L(11)).map((f) => [f.numero, f.efecto, f.deposito, f.unidad]), filas(rC).filter((f) => f.numero === L(7) || f.numero === L(8)).map((f) => [f.numero, f.estado, f.unidad, f.vinculoTipo]),
+  ], [[[L(3), "SALIDA", "Central", "Kilo"], [L(3), "ENTRADA", "Norte", "Kilo"], [L(11), "SALIDA", "Central", "Unidad"], [L(11), "ENTRADA", "Norte", "Unidad"]], [[L(7), "ANULADO", "Kilo", "ANULADO_POR"], [L(8), "REGISTRADO", "Kilo", "ANULA_A"]]]);
+  igual("KDX-R02-02 conciliación con Stock sobre el libro completo: coherente y sin divergencias (el saldo vivo pertenece a la unidad vigente)", [rC.conciliacion.conciliado, rC.conciliacion.divergentes, rC.totales.cuadra], [true, 0, true]);
+  igual("KDX-R02-02 propiedad y propietario siguen siendo dimensiones independientes de la unidad", rC.totales.grupos.filter((g) => g.propiedad === "TERCERO").map((g) => [g.unidad, g.propietario]), [["Kilo", `Tercero ${OX.slice(0, 8)}`], ["Unidad", `Tercero ${OX.slice(0, 8)}`]]);
+
+  const rCr = await informe(eC, { vista: "RESUMEN" });
+
+  igual("KDX-R02-02 Resumen del mismo libro: filas por unidad histórica y total del resumen por grupo igual a la suma de sus filas", [rCr.resumen.map((x) => [x.unidad, x.propiedad, x.lote, x.saldoFinal]).filter((x) => x[0] === "Unidad"), rCr.totales.grupos.every((g) => g.resumen !== null && g.resumen.saldoFinal === sumarDecimales(rCr.resumen.filter((x) => x.unidad === g.unidad && x.propiedad === g.propiedad && x.propietario === g.propietario).map((x) => x.saldoFinal)))], [[["Unidad", "PROPIO", "L2", "3"], ["Unidad", "TERCERO", "L2", "6"], ["Unidad", "PROPIO", "L2", "1"]], true]);
+
+  // filtros de lote/período con unidad histórica: el período posterior solo ve la unidad vigente de ese período
+  const rCp = await informe(eC, { desde: "2026-10-11", hasta: "2026-10-12" });
+
+  igual("KDX-R02-02 período posterior al cambio: las filas son solo de Unidad; los grupos Kilo conservan saldo inicial = final = 0 (nada se reatribuye a Unidad)", [filas(rCp).map((f) => f.unidad).filter((x, i, a) => a.indexOf(x) === i), rCp.totales.grupos.filter((g) => g.unidad === "Kilo").map((g) => [g.propiedad, g.saldoInicial.fisico, g.saldoFinal.fisico, g.filas])], [["Unidad"], [["PROPIO", "0", "0", 0], ["TERCERO", "0", "0", 0]]]);
+  cierto("KDX-R02-02 la API/validador acepta el contrato nuevo y rechaza una fuenteUnidad inválida", respuestaKardexValida(JSON.parse(JSON.stringify({ ...rC, permisos: { exportar: false } }))) && !respuestaKardexValida(JSON.parse(JSON.stringify({ ...rC, fuenteUnidad: "OTRA", permisos: { exportar: false } }))));
+  cierto("KDX-R02-02 no se tocaron NEX-052 ni el motor: el servicio solo LEE el historial (SELECT), sin escribir ni convertir cantidades", !/\b(INSERT|UPDATE|DELETE)\b/.test(leer("lib/reportes/kardex.ts")) && !/producto_cambiar_unidad_base/.test(leer("lib/reportes/kardex.ts")) && !/convert|factor/i.test(leer("lib/reportes/kardex.ts").replace(/NO se convierten|no se convierten/g, "")));
 
   return fallos;
 }

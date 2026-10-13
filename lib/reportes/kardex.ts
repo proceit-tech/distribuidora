@@ -33,6 +33,11 @@ export const COBERTURA_KARDEX = [
   "El estado En tránsito no tiene flujo en V1. Incluye los depósitos de su alcance, activos e inactivos (rotulados). Foto única (misma transacción) de una solicitud; la exportación genera su propia fotografía.",
 ];
 
+export const COBERTURA_UNIDAD_HISTORIAL =
+  "Unidad de medida histórica: cada movimiento muestra la unidad-base vigente cuando se registró (según el historial de cambios de unidad, NEX-052; un cambio exige stock en cero). Las cantidades NO se convierten entre unidades y cada unidad se totaliza por separado: un producto que pasó de Kilo a Unidad aparece en dos grupos.";
+export const COBERTURA_UNIDAD_CATALOGO =
+  "Unidad de medida: la del catálogo del producto. El historial de cambios de unidad-base (NEX-052) no existe en esta base, por lo que no hay cambios de unidad registrados y la unidad actual es la de todos los movimientos.";
+
 export function parsearFiltrosKardex(sp: URLSearchParams): { filtros: KardexFiltros; pagina: number; tamano: number } | { error: string } {
   const uuid = (k: string) => {
     const v = sp.get(k) ?? "";
@@ -85,6 +90,19 @@ export async function leerKardex(
     if (f.depositoId && !alcance.some((d) => d.id === f.depositoId)) return { error: "Depósito no permitido.", status: 403 };
     const deps = f.depositoId ? [f.depositoId] : alcance.map((d) => d.id);
 
+    // Unidad-base HISTÓRICA (NEX-052): si la tabla de cambios existe, cada línea toma la unidad vigente en el instante de registro del movimiento; si NEX-052 aún no
+    // está aplicada (no se puede haber cambiado la unidad), se usa la del catálogo. La existencia se verifica con to_regclass: nunca se consulta una tabla ausente.
+    const historial = (await c.query("SELECT to_regclass('public.producto_unidad_base_historial') IS NOT NULL AS existe")).rows[0]?.existe === true;
+    const unidadSql = historial
+      ? `LEFT JOIN LATERAL (
+          SELECT coalesce(
+            (SELECT h.unidad_nueva_id FROM producto_unidad_base_historial h
+              WHERE h.empresa_id = $1 AND h.producto_id = ef.producto_id AND h.cambiado_at <= ef.creado_at ORDER BY h.cambiado_at DESC, h.id DESC LIMIT 1),
+            (SELECT h.unidad_anterior_id FROM producto_unidad_base_historial h
+              WHERE h.empresa_id = $1 AND h.producto_id = ef.producto_id ORDER BY h.cambiado_at ASC, h.id ASC LIMIT 1),
+            pr.unidad_medida_id) AS unidad_id) uh ON true`
+      : "LEFT JOIN LATERAL (SELECT pr.unidad_medida_id AS unidad_id) uh ON true";
+
     // $3 = TODO el alcance del usuario (no solo el depósito filtrado): decide si el nombre de la contraparte de una transferencia puede mostrarse.
     const params: unknown[] = [empresaId, deps, alcance.map((d) => d.id)];
     const p = (v: unknown) => { params.push(v); return `$${params.length}`; };
@@ -132,15 +150,16 @@ export async function leerKardex(
         FROM mv WHERE tipo_movimiento IN ('RESERVA','LIBERACION_RESERVA','CUARENTENA','LIBERACION_CUARENTENA')
     ),
     sal AS (
-      SELECT ef.*, pr.codigo AS pcodigo, pr.descripcion AS pdesc, sl.codigo_lote, coalesce(um.nombre, '') AS unidad,
+      SELECT ef.*, pr.codigo AS pcodigo, pr.descripcion AS pdesc, sl.codigo_lote, coalesce(um.nombre, '') AS unidad, uh.unidad_id,
              (ef.creado_at AT TIME ZONE 'America/Asuncion')::date AS reg_fecha,
              sum(ef.dd) OVER w AS s_disp, sum(ef.dr) OVER w AS s_res, sum(ef.dc) OVER w AS s_cuar
         FROM ef
         JOIN productos pr ON pr.empresa_id = $1 AND pr.id = ef.producto_id
-        LEFT JOIN unidades_medida um ON um.id = pr.unidad_medida_id
+        ${unidadSql}
+        LEFT JOIN unidades_medida um ON um.id = uh.unidad_id
         LEFT JOIN stock_lotes sl ON sl.empresa_id = $1 AND sl.producto_id = ef.producto_id AND sl.id = ef.lote_id
        WHERE ef.deposito_id = ANY($2::uuid[])${dim}
-      WINDOW w AS (PARTITION BY ef.producto_id, ef.deposito_id, ef.lote_id, ef.propiedad, ef.propietario_id
+      WINDOW w AS (PARTITION BY ef.producto_id, ef.deposito_id, ef.lote_id, ef.propiedad, ef.propietario_id, uh.unidad_id
                    ORDER BY ef.numero_movimiento, ef.linea_at, ef.linea_id, ef.lado_ord ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
     )`;
 
@@ -242,7 +261,7 @@ export async function leerKardex(
       const fin = f.hasta ? `reg_fecha <= ${ph}::date` : "true";
       const grupo = `
       g AS (
-        SELECT producto_id, deposito_id, lote_id, propiedad, propietario_id, max(pcodigo) AS pcodigo, max(pdesc) AS pdesc, max(codigo_lote) AS codigo_lote, max(unidad) AS unidad,
+        SELECT producto_id, deposito_id, lote_id, propiedad, propietario_id, unidad_id, max(pcodigo) AS pcodigo, max(pdesc) AS pdesc, max(codigo_lote) AS codigo_lote, max(unidad) AS unidad,
                coalesce(sum(${fis}) FILTER (WHERE ${ini}), 0) AS inicial,
                coalesce(sum(${fis}) FILTER (WHERE ${sel} AND tipo_movimiento <> 'TRANSFERENCIA' AND ${fis} > 0), 0) AS entradas,
                coalesce(-sum(${fis}) FILTER (WHERE ${sel} AND tipo_movimiento <> 'TRANSFERENCIA' AND ${fis} < 0), 0) AS salidas,
@@ -252,7 +271,7 @@ export async function leerKardex(
                coalesce(sum(dd) FILTER (WHERE ${fin}), 0) AS f_disp, coalesce(sum(dr) FILTER (WHERE ${fin}), 0) AS f_res,
                coalesce(sum(dc) FILTER (WHERE ${fin}), 0) AS f_cuar,
                count(*) FILTER (WHERE ${sel}) AS en_filtro
-          FROM sal GROUP BY producto_id, deposito_id, lote_id, propiedad, propietario_id
+          FROM sal GROUP BY producto_id, deposito_id, lote_id, propiedad, propietario_id, unidad_id
       ),
       gf AS (SELECT * FROM g WHERE en_filtro > 0${filtrosDeFila ? "" : " OR inicial <> 0"})`;
       // Totales de las filas mostradas (mismo conjunto gf que las filas), por grupo homogéneo: el TOTAL del resumen es la suma exacta de sus filas.
@@ -269,13 +288,13 @@ export async function leerKardex(
       totalFilas = (cnt.rows as { n: number }[]).reduce((a, x) => a + x.n, 0);
       const rows = await c.query(
         `WITH ${cte}, ${grupo}
-         SELECT gf.producto_id::text || ':' || d.id::text || ':' || coalesce(gf.lote_id::text, '') || ':' || gf.propiedad || ':' || coalesce(gf.propietario_id::text, '') AS clave,
+         SELECT gf.producto_id::text || ':' || d.id::text || ':' || coalesce(gf.lote_id::text, '') || ':' || gf.propiedad || ':' || coalesce(gf.propietario_id::text, '') || ':' || coalesce(gf.unidad_id::text, '') AS clave,
                 gf.pcodigo, gf.pdesc, gf.unidad, d.nombre AS deposito, NOT d.activo AS inactivo, coalesce(gf.codigo_lote, '') AS lote, gf.propiedad, gf.propietario_id::text AS propietario_id,
                 gf.inicial::text AS inicial, gf.entradas::text AS entradas, gf.salidas::text AS salidas,
                 gf.t_ent::text AS t_ent, gf.t_sal::text AS t_sal, gf.fuera_filtro::text AS fuera, (gf.f_disp + gf.f_res + gf.f_cuar)::text AS final,
                 gf.f_disp::text AS f_disp, gf.f_res::text AS f_res, gf.f_cuar::text AS f_cuar
            FROM gf JOIN depositos d ON d.empresa_id = $1 AND d.id = gf.deposito_id
-          ORDER BY gf.pcodigo, d.nombre, gf.codigo_lote NULLS FIRST, gf.propiedad, gf.propietario_id NULLS FIRST, gf.producto_id
+          ORDER BY gf.pcodigo, d.nombre, gf.codigo_lote NULLS FIRST, gf.propiedad, gf.propietario_id NULLS FIRST, gf.unidad, gf.producto_id
           LIMIT ${p(limite)} OFFSET ${p(desplazamiento)}`,
         params,
       );
@@ -309,7 +328,8 @@ export async function leerKardex(
       totales,
       conciliacion: { combinaciones: cc.n, divergentes: cc.divergentes, conciliado: cc.divergentes === 0 },
       catalogos: { depositos: alcance, usuarios: usr.rows, tipos: TIPOS_KARDEX },
-      cobertura: COBERTURA_KARDEX,
+      fuenteUnidad: historial ? "HISTORIAL" : "CATALOGO",
+      cobertura: [...COBERTURA_KARDEX, historial ? COBERTURA_UNIDAD_HISTORIAL : COBERTURA_UNIDAD_CATALOGO],
     } satisfies KardexRespuesta;
   });
 }

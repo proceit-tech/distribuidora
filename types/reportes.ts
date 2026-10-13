@@ -359,6 +359,8 @@ export type KardexRespuesta = {
     usuarios: { id: string; nombre: string }[];
     tipos: { id: string; nombre: string }[];
   };
+  /** Origen de la unidad de cada movimiento: HISTORIAL (vigente al registrarse, NEX-052 aplicada) o CATALOGO (NEX-052 ausente: no hay cambios de unidad posibles). */
+  fuenteUnidad: "HISTORIAL" | "CATALOGO";
   cobertura: string[];
 };
 

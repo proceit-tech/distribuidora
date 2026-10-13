@@ -28,6 +28,8 @@ export type TablaReporte = {
   notas: string[];
   /** El PDF continúa en varias líneas los textos largos de las columnas (en vez de recortarlos). */
   multilinea?: boolean;
+  /** PDF EXACTO (Kardex): ninguna cifra se recorta; las columnas que no caben pasan a bloques adicionales que repiten estas columnas ancla. */
+  pdfAnclas?: number[];
 };
 
 const textoCelda = (c: ColRep, v: Celda): string => {
@@ -97,5 +99,6 @@ export function generarPdfTabla(t: TablaReporte): Buffer {
     totalesExtra: filasTot.slice(1),
     notas: t.notas,
     multilinea: t.multilinea,
+    ...(t.pdfAnclas ? { exacto: true, anclas: t.pdfAnclas } : {}),
   });
 }

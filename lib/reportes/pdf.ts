@@ -48,6 +48,13 @@ export type TablaPdf = {
   notas: string[];
   /** Los textos que no caben en la columna continúan en una segunda y tercera línea (en vez de recortarse con "…"). */
   multilinea?: boolean;
+  /**
+   * Modo EXACTO (Kardex): ninguna columna numérica se recorta jamás. Si todas las columnas no caben en la página, se reparten en BLOQUES (páginas adicionales) que
+   * repiten las columnas ancla (identificación de la fila) y las filas se presentan en el mismo orden en cada bloque.
+   */
+  exacto?: boolean;
+  /** Índices de columnas que se repiten en todos los bloques (solo con `exacto`). */
+  anclas?: number[];
 };
 
 /** Parte un texto en hasta `max` líneas que caben en `ancho`; si aún sobra texto, la última línea termina en "…". */
@@ -94,6 +101,36 @@ export function generarPdf(t: TablaPdf): Buffer {
     }
   }
 
+  let cols = t.columnas;
+  const todas = t.columnas.map((_, i) => i);
+  let bloquesR: number[][] = [todas];
+  const natE: number[] = [];
+
+  if (t.exacto) {
+    FS = 6;
+    t.columnas.forEach((c, i) => {
+      let m = Math.max(0, ...c.titulo.split(" ").map((p) => anchoTexto(p, FS, true)));
+      for (const f of t.filas) m = Math.max(m, c.derecha ? anchoTexto(f[i] ?? "", FS) : Math.min(anchoTexto(f[i] ?? "", FS), 70));
+      for (const f of [t.totales, ...(t.totalesExtra ?? [])]) if (f) m = Math.max(m, c.derecha ? anchoTexto(f[i] ?? "", FS, true) : Math.min(anchoTexto(f[i] ?? "", FS, true), 70));
+      natE[i] = Math.min(m, c.derecha ? 1e9 : 70) + 6;
+    });
+
+    const anclas = new Set(t.anclas ?? []);
+    const wAncla = [...anclas].reduce((a, i) => a + natE[i], 0);
+    const grupos: number[][] = [];
+    let actual: number[] = [];
+    let w = wAncla;
+
+    for (let i = 0; i < t.columnas.length; i++) {
+      if (anclas.has(i)) continue;
+      if (actual.length && w + natE[i] > anchoUtil) { grupos.push(actual); actual = []; w = wAncla; }
+      actual.push(i);
+      w += natE[i];
+    }
+    if (actual.length || grupos.length === 0) grupos.push(actual);
+    bloquesR = grupos.map((g) => [...anclas, ...g].sort((a, b) => a - b));
+  }
+
   const paginas: Buffer[][] = [];
   let cur: Buffer[] = [];
   const emit = (s: string | Buffer) => cur.push(typeof s === "string" ? Buffer.from(s, "latin1") : s);
@@ -107,14 +144,19 @@ export function generarPdf(t: TablaPdf): Buffer {
   const fondo = (x: number, y: number, w: number, h: number, g: number) => emit(`${g} g ${x.toFixed(2)} ${y.toFixed(2)} ${w.toFixed(2)} ${h.toFixed(2)} re f 0 g\n`);
 
   const cabeceraTabla = (y: number) => {
-    fondo(M, y - 3, anchoUtil, RH, 0.9);
+    const tit = cols.map((c, i) => (t.exacto ? partirTexto(c.titulo, anchos[i] - 4, FS, 2, true) : [recortar(c.titulo, anchos[i] - 4, FS, true)]));
+    const n = Math.max(1, ...tit.map((p) => p.length));
+    const h = RH + (n - 1) * (FS + 1.8);
+    fondo(M, y - 3 - (h - RH), anchoUtil, h, 0.9);
     let x = M;
-    t.columnas.forEach((c, i) => {
-      texto(x + 2, y, recortar(c.titulo, anchos[i] - 4, FS, true), FS, true, c.derecha ? anchos[i] - 4 : 0);
+    cols.forEach((c, i) => {
+      tit[i].forEach((l, k) => texto(x + 2, y - k * (FS + 1.8), l, FS, true, c.derecha ? anchos[i] - 4 : 0));
       x += anchos[i];
     });
+    return h;
   };
 
+  let bloqueTxt = "";
   const nuevaPagina = (primera: boolean) => {
     cur = [];
     paginas.push(cur);
@@ -130,14 +172,17 @@ export function generarPdf(t: TablaPdf): Buffer {
       }
       y -= 4;
     } else y -= 2;
-    cabeceraTabla(y);
-    return y - RH;
+    if (bloqueTxt) {
+      texto(M, y, bloqueTxt, 7);
+      y -= 10;
+    }
+    return y - cabeceraTabla(y);
   };
 
-  let y = nuevaPagina(true);
+  let y = 0;
   const filaTexto = (cells: string[], negrita: boolean, gris?: number) => {
     const partes = cells.map((v, i) =>
-      t.multilinea && !t.columnas[i].derecha ? partirTexto(v, anchos[i] - 4, FS, 3, negrita) : [recortar(v, anchos[i] - 4, FS, negrita)]);
+      t.multilinea && !cols[i].derecha ? partirTexto(v, anchos[i] - 4, FS, t.exacto ? 6 : 3, negrita) : [recortar(v, anchos[i] - 4, FS, negrita)]);
     const lineas = Math.max(1, ...partes.map((p) => p.length));
     const h = lineas === 1 ? RH : lineas * (FS + 1.8) + 4;
     if (lineas > 1 && y - (h - RH) < M + 28) y = nuevaPagina(false);
@@ -145,25 +190,36 @@ export function generarPdf(t: TablaPdf): Buffer {
     if (gris !== undefined) fondo(M, fondoY, anchoUtil, h, gris);
     let x = M;
     partes.forEach((p, i) => {
-      p.forEach((l, k) => texto(x + 2, y - k * (FS + 1.8), l, FS, negrita, t.columnas[i].derecha ? anchos[i] - 4 : 0));
+      p.forEach((l, k) => texto(x + 2, y - k * (FS + 1.8), l, FS, negrita, cols[i].derecha ? anchos[i] - 4 : 0));
       x += anchos[i];
     });
     linea(M, fondoY, M + anchoUtil, 0.88);
     y -= h;
   };
 
-  t.filas.forEach((f) => {
-    if (y < M + 28) y = nuevaPagina(false);
-    filaTexto(f, false);
-  });
-  if (t.totales) {
-    if (y < M + 28) y = nuevaPagina(false);
-    filaTexto(t.totales, true, 0.93);
-    for (const extra of t.totalesExtra ?? []) {
-      if (y < M + 28) y = nuevaPagina(false);
-      filaTexto(extra, true, 0.93);
+  bloquesR.forEach((idx, k) => {
+    cols = idx.map((i) => t.columnas[i]);
+    if (t.exacto) {
+      const nat = idx.map((i) => natE[i]);
+      const suma = nat.reduce((a, b) => a + b, 0);
+      anchos = nat.map((w) => (w / suma) * anchoUtil);
     }
-  }
+    bloqueTxt = bloquesR.length > 1 ? `Bloque ${k + 1} de ${bloquesR.length}: columnas ${cols.map((c) => c.titulo).join(", ")}` : "";
+    y = nuevaPagina(k === 0);
+    const sub = (f: string[]) => idx.map((i) => f[i] ?? "");
+    t.filas.forEach((f) => {
+      if (y < M + 28) y = nuevaPagina(false);
+      filaTexto(sub(f), false);
+    });
+    if (t.totales) {
+      if (y < M + 28) y = nuevaPagina(false);
+      filaTexto(sub(t.totales), true, 0.93);
+      for (const extra of t.totalesExtra ?? []) {
+        if (y < M + 28) y = nuevaPagina(false);
+        filaTexto(sub(extra), true, 0.93);
+      }
+    }
+  });
   y -= 6;
   for (const n of t.notas) {
     const partes: string[] = [];
