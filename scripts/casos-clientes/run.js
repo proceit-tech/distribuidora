@@ -38,6 +38,7 @@ Module._resolveFilename = function (request, ...resto) {
   const imv = cargar("lib/inventario/movimientos.casos.js");
   const idp = cargar("lib/inventario/depositos.casos.js");
   const irp = cargar("lib/inventario/reposicion.casos.js");
+  const icr = cargar("lib/inventario/cruzados.casos.js");
   const lpe = cargar("lib/listas-precio/estabilizacion.casos.js");
   const srm = cargar("lib/stock/stock-reposicion.casos.js");
   const fac = cargar("lib/facturacion/facturacion.casos.js");
@@ -73,6 +74,7 @@ Module._resolveFilename = function (request, ...resto) {
     ["Inventario · Movimientos (cuatro operaciones sobre nueve tipos, reglas, motor único, permisos)", async () => imv.verificarCasosInventarioMovimientos(), null],
     ["Inventario · Depósitos (INV-05: carga confiable, permisos tras error, respuestas fuera de orden, rascunho, alcance)", async () => idp.verificarCasosInventarioDepositos(), null],
     ["Inventario · Reposición (recomendación compacta, Simular local, VER+CREAR, invariantes del cálculo, origen compartido)", async () => irp.verificarCasosInventarioReposicion(), null],
+    ["Inventario · Pruebas cruzadas (INV-T01/T03/T06/T09: un movimiento, tres lecturas; acceso; responsabilidades exclusivas; Reportes)", async () => icr.verificarCasosInventarioCruzados(), null],
     ["Stock, Reposición y contrato Movimientos ↔ documentos (Etapas A, B y C)", async () => srm.verificarCasosStockReposicionMovimientos(), null],
     ["Facturación F-01/F-02: documentos electrónicos, gateway, NEX-047, cálculo fiscal, payload FE y NEX-048", async () => fac.verificarCasosFacturacion(), null],
   ];
