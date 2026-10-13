@@ -742,3 +742,7 @@ SHA funcional Listas `4845a8c89579ea81258a23875b9e238bb8e25fbf`: **LPR-R02-01 ac
 Só código; sem migration; nada em PostgreSQL/navegador; menu NÃO homologado; CC-A01…A07 e o servidor não tocados.
 - Apresentação, abertura de «Corregir» e ordenação da cotação sem `Number`: `formatearCambio` (es-PY só com texto, 6 decimais exatos, reversível com `normalizarCambio`) e `compararDecimales` (comparação exata) em `cambio-decimal.ts`. «Corregir» abre com o valor exato da API (sem dirty falso).
 - Local: 2327 verificações, 0 falhas (11 novas); tsc/ESLint/build OK; valores-limite `123456789012.000001`, `.000002`, `999999999999.999999`.
+
+
+### Inventario — implementação integrada autorizada (13/10/2026)
+O responsável autorizou, na mesma rodada, a organização funcional e simplificação conjunta de **Stock, Movimientos, Depósitos e Reposición**. Contrato oficial: `documentacao/v1/DEFINICAO-MENUS-INVENTARIO-V1.md`; ordem detalhada, testes, sequência e limites: `documentacao/v1/ORDEM-IMPLEMENTACAO-INVENTARIO-INTEGRADA-V1-2026-10-13.md`; auditoria-base: `documentacao/v1/auditoria-por-menu/AUD-INVENTARIO-INTEGRADA-V1-2026-10-13.md`. **Estado: IMPLEMENTAÇÃO AUTORIZADA, AINDA NÃO EXECUTADA NESTE REGISTRO.** Claude deve preservar e concluir qualquer alteração local pendente de CC-R03-01 antes da nova rodada, não misturar commits, não acessar VM/Docker/PG real nem implantar; entregar commits separados com regressão conjunta e parar para reauditoria ChatGPT. 
