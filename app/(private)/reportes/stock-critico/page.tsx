@@ -1,78 +1,102 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { cargarStockCritico, descargarStockCritico } from "@/lib/reportes/cliente-stock-critico";
-import { NOTA_NO_ADITIVO, TITULO_SUGERIDA, TITULO_VALOR } from "@/lib/reportes/export-stock-critico";
+import { crearCompuerta } from "@/lib/productos/catalogos-carga";
+import { descargarStockCritico, pedirStockCritico } from "@/lib/reportes/cliente-stock-critico";
+import { SITUACIONES_CRITICO } from "@/lib/reportes/export-stock-critico";
 import { fmtDinero, fmtNum } from "@/lib/reportes/formato";
-import type { NivelStock, StockCriticoFiltros, StockCriticoRespuesta } from "@/types/reportes";
+import { ETIQUETA_CRITICIDAD } from "@/lib/reportes/stock-critico-plan";
+import type { StockCriticoFila, StockCriticoFiltros, StockCriticoRespuestaApi } from "@/types/reportes";
 
 import styles from "@/components/ui/lista-padrao/reporte.module.css";
 
-const NIVEL: Record<NivelStock, string> = { SIN_STOCK: "Sin stock", BAJO: "Bajo", NORMAL: "Normal", SOBRESTOCK: "Sobrestock" };
-const FILTROS_VACIOS: StockCriticoFiltros = {
-  vista: "PRODUCTO", q: "", depositoId: "", categoriaId: "", marcaId: "", familiaId: "", situacion: "", objetivo: "MINIMO",
-};
+const FILTROS_VACIOS: StockCriticoFiltros = { vista: "PRODUCTO", q: "", depositoId: "", categoriaId: "", marcaId: "", familiaId: "", situacion: "ALERTAS" };
+const mismos = (a: StockCriticoFiltros, b: StockCriticoFiltros) => JSON.stringify(a) === JSON.stringify(b);
+const opc = (n: number | null) => (n === null ? "—" : fmtNum(n));
 
-const num = fmtNum;
-const opc = (n: number | null) => (n === null ? "—" : num(n));
+/** Meta definida → cantidad; destino que necesita reposición sin meta → «Sin meta definida» (nunca 0 ni una cantidad inventada). */
+const conMeta = (n: number, x: StockCriticoFila) => (x.sinMeta > 0 ? (n === 0 ? "Sin meta definida" : `${fmtNum(n)} + ${fmtNum(x.sinMeta)} sin meta`) : x.necesita ? fmtNum(n) : "—");
+
+type Catalogos = StockCriticoRespuestaApi["catalogos"];
 
 export default function ReporteStockCriticoPage() {
   const [filtros, setFiltros] = useState<StockCriticoFiltros>(FILTROS_VACIOS);
-  const [aplicados, setAplicados] = useState<StockCriticoFiltros>(FILTROS_VACIOS);
+  const [qAplicada, setQAplicada] = useState("");
   const [pagina, setPagina] = useState(1);
-  const [datos, setDatos] = useState<StockCriticoRespuesta | null>(null);
+  const [datos, setDatos] = useState<StockCriticoRespuestaApi | null>(null);
+  // Solo los nombres de los selectores sobreviven a un error (conservan los filtros elegidos); ningún dato del informe se conserva.
+  const [catalogos, setCatalogos] = useState<Catalogos | null>(null);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
+  const [errorExportacion, setErrorExportacion] = useState("");
   const [exportando, setExportando] = useState("");
+  const compuerta = useRef(crearCompuerta());
 
-  // El texto de búsqueda se aplica con una pequeña espera; los selectores, de inmediato.
+  // La búsqueda de texto se aplica con retraso (300 ms); el resto de los filtros, de inmediato.
   useEffect(() => {
-    const t = setTimeout(() => setAplicados((a) => (a.q === filtros.q ? a : { ...a, q: filtros.q })), 300);
+    const t = setTimeout(() => setQAplicada(filtros.q), 300);
+
     return () => clearTimeout(t);
   }, [filtros.q]);
 
-  useEffect(() => {
-    setAplicados((a) => ({ ...filtros, q: a.q }));
-  }, [filtros.vista, filtros.depositoId, filtros.categoriaId, filtros.marcaId, filtros.familiaId, filtros.situacion, filtros.objetivo]); // eslint-disable-line react-hooks/exhaustive-deps
+  const aplicados = useMemo(() => ({ ...filtros, q: qAplicada }), [filtros, qAplicada]);
 
-  useEffect(() => {
-    let activo = true;
+  // La última solicitud iniciada gana; ante cualquier falla se descartan los datos anteriores y se conservan los filtros.
+  const cargar = useCallback(async () => {
+    const sol = compuerta.current.nueva();
+
     setCargando(true);
     setError("");
-    cargarStockCritico(aplicados, pagina)
-      .then((r) => { if (activo) setDatos(r); })
-      .catch((e: unknown) => { if (activo) setError(e instanceof Error ? e.message : "No fue posible generar el reporte."); })
-      .finally(() => { if (activo) setCargando(false); });
-    return () => { activo = false; };
+
+    const r = await pedirStockCritico(aplicados, pagina);
+
+    if (!compuerta.current.vigente(sol)) return;
+    setDatos(r.datos);
+    if (r.datos) setCatalogos(r.datos.catalogos);
+    setError(r.error);
+    setCargando(false);
   }, [aplicados, pagina]);
+
+  useEffect(() => {
+    const actual = compuerta.current;
+    const t = setTimeout(() => void cargar(), 0);
+
+    return () => {
+      clearTimeout(t);
+      actual.nueva();
+    };
+  }, [cargar]);
 
   const cambiar = (parcial: Partial<StockCriticoFiltros>) => {
     setPagina(1);
     setFiltros((f) => ({ ...f, ...parcial }));
   };
 
+  // Solo se muestran y exportan datos que corresponden EXACTAMENTE a los filtros y la página vigentes.
+  const actual = datos && !error && mismos(datos.filtros, aplicados) && datos.pagina.numero === pagina ? datos : null;
+  const puedeExportar = actual?.permisos.exportar === true;
   const exportar = async (formato: "xlsx" | "pdf") => {
+    if (!actual || !puedeExportar) return;
     setExportando(formato);
-    setError("");
+    setErrorExportacion("");
     try {
-      await descargarStockCritico(aplicados, formato);
+      await descargarStockCritico(actual.filtros, formato);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "No fue posible exportar el reporte.");
+      setErrorExportacion(e instanceof Error ? e.message : "No fue posible exportar el reporte.");
     } finally {
       setExportando("");
     }
   };
 
-  const t = datos?.totales;
-  const total = datos?.pagina.totalFilas ?? 0;
-  const tamano = datos?.pagina.tamano ?? 50;
+  const t = actual?.totales;
+  const total = actual?.pagina.totalFilas ?? 0;
+  const tamano = actual?.pagina.tamano ?? 50;
   const paginas = Math.max(1, Math.ceil(total / tamano));
   const porDeposito = aplicados.vista === "DEPOSITO";
-  const colDeposito = porDeposito || !!aplicados.depositoId;
-  const hayFiltros = JSON.stringify({ ...filtros, vista: "", objetivo: "" }) !== JSON.stringify({ ...FILTROS_VACIOS, vista: "", objetivo: "" });
-  const colTotal = 5 + (porDeposito ? 1 : 0) + (colDeposito ? 1 : 0) + 4;
+  const hayFiltros = JSON.stringify({ ...filtros, vista: "" }) !== JSON.stringify({ ...FILTROS_VACIOS, vista: "" });
+  const colsFijas = porDeposito ? 4 : 3;
 
   return (
     <section className={styles.page}>
@@ -85,58 +109,59 @@ export default function ReporteStockCriticoPage() {
           </nav>
           <h1>Stock crítico y reposición</h1>
           <p>
-            Productos sin stock, bajo el mínimo, normales y en sobrestock, con la cantidad sugerida a reponer.
-            {datos ? ` ${datos.empresa.nombre} · generado ${datos.generado}.` : ""}
+            Excepciones de reposición calculadas con la misma regla de Inventario → Reposición.
+            {actual ? ` ${actual.empresa.nombre} · moneda base ${actual.empresa.moneda} · generado ${actual.generado}.` : ""}
           </p>
         </div>
 
         <div className={styles.heroActions}>
           <Link href="/reportes" className={styles.secondaryButton}>Reportes</Link>
-          <button type="button" className={styles.secondaryButton} disabled={!!exportando || cargando} onClick={() => exportar("xlsx")}>
-            {exportando === "xlsx" ? "Generando..." : "Descargar Excel (.xlsx)"}
-          </button>
-          <button type="button" className={styles.primaryButton} disabled={!!exportando || cargando} onClick={() => exportar("pdf")}>
-            {exportando === "pdf" ? "Generando..." : "Exportar PDF"}
-          </button>
+          {puedeExportar ? (
+            <>
+              <button type="button" className={styles.secondaryButton} disabled={!!exportando || cargando} onClick={() => exportar("xlsx")}>
+                {exportando === "xlsx" ? "Generando..." : "Descargar Excel (.xlsx)"}
+              </button>
+              <button type="button" className={styles.primaryButton} disabled={!!exportando || cargando} onClick={() => exportar("pdf")}>
+                {exportando === "pdf" ? "Generando..." : "Exportar PDF"}
+              </button>
+            </>
+          ) : null}
         </div>
       </header>
 
       <section className={styles.summaryGrid}>
         <article className={[styles.summaryCard, styles.summaryTeal].join(" ")}>
-          <span>PRODUCTOS</span>
-          <strong>{t ? num(t.productos) : "—"}</strong>
-          <small>Normal {t ? num(t.normal) : "—"} · Sobrestock {t ? num(t.sobrestock) : "—"}</small>
+          <span>NECESITAN REPOSICIÓN</span>
+          <strong>{t ? fmtNum(t.necesitan) : "—"}</strong>
+          <small>{t ? `${fmtNum(t.destinos)} destino(s) con plan · ${fmtNum(t.productos)} producto(s)` : "—"}</small>
         </article>
         <article className={[styles.summaryCard, styles.summaryRed].join(" ")}>
           <span>SIN STOCK</span>
-          <strong>{t ? num(t.sinStock) : "—"}</strong>
-          <small>Disponible en cero</small>
+          <strong>{t ? fmtNum(t.porCriticidad.SIN_STOCK) : "—"}</strong>
+          <small>Disponible propio en cero</small>
         </article>
         <article className={[styles.summaryCard, styles.summaryAmber].join(" ")}>
           <span>BAJO EL MÍNIMO</span>
-          <strong>{t ? num(t.bajo) : "—"}</strong>
-          <small>En punto de reposición {t ? num(t.enPuntoReposicion) : "—"}</small>
+          <strong>{t ? fmtNum(t.porCriticidad.BAJO_MINIMO) : "—"}</strong>
+          <small>En punto de reposición {t ? fmtNum(t.porCriticidad.EN_PUNTO) : "—"}</small>
         </article>
         <article className={[styles.summaryCard, styles.summaryBlue].join(" ")}>
-          <span>CANTIDAD SUGERIDA</span>
-          <strong>{t ? num(t.cantidadSugerida) : "—"}</strong>
-          <small>{t ? `${num(t.aReponer)} productos a reponer` : "—"}</small>
+          <span>SIN META DEFINIDA</span>
+          <strong>{t ? fmtNum(t.sinMeta) : "—"}</strong>
+          <small>Necesitan reposición sin máximo ni cantidad</small>
         </article>
         <article className={[styles.summaryCard, styles.summaryPurple].join(" ")}>
-          <span>VALOR SUGERIDO ({t?.moneda ?? ""})</span>
-          <strong>{t ? fmtDinero(t.valorSugerido) : "—"}</strong>
-          <small>{t && t.sugeridoSinCosto > 0 ? `${num(t.sugeridoSinCosto)} sin costo registrado (no suman)` : "Con costo promedio real"}</small>
+          <span>VALOR DE REFERENCIA ({t?.moneda ?? ""})</span>
+          <strong>{t ? fmtDinero(t.valorReferencia) : "—"}</strong>
+          <small>{t && t.sinCosto > 0 ? `${fmtNum(t.sinCosto)} sin costo registrado (no se estiman)` : "Estimación a costo real; no es valorización"}</small>
         </article>
       </section>
 
       <section className={styles.contentCard}>
         <div className={styles.policyNote} role="note">
-          <strong>Límites por producto, no por depósito.</strong> En la V1 el mínimo, el máximo y el punto de reposición se definen en el cadastro de Productos
-          y valen para el producto completo. La situación y la cantidad sugerida usan el disponible consolidado de todos los depósitos a los que usted tiene acceso;
-          el filtro de depósito solo muestra los productos con stock allí y cuánto hay en ese depósito.
+          <strong>Informe de solo lectura.</strong> Muestra el resultado del mismo cálculo de Reposición (parámetros por depósito, disponible propio, transferencia primero y compra por el resto). No planifica ni crea
+          compras, pedidos o movimientos: para actuar use Inventario → Reposición. Las cantidades se suman solo dentro de un mismo producto.
         </div>
-
-        {porDeposito ? <div className={styles.policyNote} role="note"><strong>Sugerencia única por producto.</strong> {NOTA_NO_ADITIVO}</div> : null}
 
         <div className={styles.toolbar}>
           <label className={styles.search}>
@@ -154,7 +179,7 @@ export default function ReporteStockCriticoPage() {
             <button type="button" aria-pressed={filtros.vista === "DEPOSITO"} onClick={() => cambiar({ vista: "DEPOSITO" })}>Por producto y depósito</button>
           </div>
 
-          <span className={styles.resultCount}>{cargando ? "Cargando..." : `${num(total)} ${porDeposito ? "filas" : "productos"}`}</span>
+          <span className={styles.resultCount}>{cargando ? "Cargando..." : actual ? `${fmtNum(total)} ${porDeposito ? "filas" : "productos"}` : ""}</span>
         </div>
 
         <div className={styles.filters}>
@@ -162,122 +187,125 @@ export default function ReporteStockCriticoPage() {
             <span>Depósito</span>
             <select value={filtros.depositoId} onChange={(e) => cambiar({ depositoId: e.target.value })}>
               <option value="">Todos</option>
-              {(datos?.catalogos.depositos ?? []).map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
+              {(catalogos?.depositos ?? []).map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
             </select>
           </label>
           <label>
             <span>Categoría</span>
             <select value={filtros.categoriaId} onChange={(e) => cambiar({ categoriaId: e.target.value })}>
               <option value="">Todas</option>
-              {(datos?.catalogos.categorias ?? []).map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
+              {(catalogos?.categorias ?? []).map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
             </select>
           </label>
           <label>
             <span>Marca</span>
             <select value={filtros.marcaId} onChange={(e) => cambiar({ marcaId: e.target.value })}>
               <option value="">Todas</option>
-              {(datos?.catalogos.marcas ?? []).map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
+              {(catalogos?.marcas ?? []).map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
             </select>
           </label>
           <label>
             <span>Familia</span>
             <select value={filtros.familiaId} onChange={(e) => cambiar({ familiaId: e.target.value })}>
               <option value="">Todas</option>
-              {(datos?.catalogos.familias ?? []).map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
+              {(catalogos?.familias ?? []).map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
             </select>
           </label>
           <label>
             <span>Situación</span>
             <select value={filtros.situacion} onChange={(e) => cambiar({ situacion: e.target.value as StockCriticoFiltros["situacion"] })}>
-              <option value="">Todas</option>
-              {(Object.keys(NIVEL) as NivelStock[]).map((n) => <option key={n} value={n}>{NIVEL[n]}</option>)}
-            </select>
-          </label>
-          <label>
-            <span>Reponer hasta</span>
-            <select value={filtros.objetivo} onChange={(e) => cambiar({ objetivo: e.target.value as StockCriticoFiltros["objetivo"] })}>
-              <option value="MINIMO">Stock mínimo (conservador)</option>
-              <option value="MAXIMO">Stock máximo</option>
+              {(Object.keys(SITUACIONES_CRITICO) as StockCriticoFiltros["situacion"][]).map((s) => <option key={s} value={s}>{SITUACIONES_CRITICO[s]}</option>)}
             </select>
           </label>
 
           {hayFiltros ? (
-            <button type="button" className={styles.clearButton} onClick={() => { setPagina(1); setFiltros({ ...FILTROS_VACIOS, vista: filtros.vista, objetivo: filtros.objetivo }); }}>
+            <button type="button" className={styles.clearButton} onClick={() => { setPagina(1); setFiltros({ ...FILTROS_VACIOS, vista: filtros.vista }); }}>
               Limpiar filtros
             </button>
           ) : null}
         </div>
 
-        {error ? <div className={styles.errorBox}>{error}</div> : null}
+        {error ? (
+          <div className={styles.errorBox} role="alert">
+            {error} No se muestran ni se exportan datos anteriores; los filtros se conservan.{" "}
+            <button type="button" className={styles.clearButton} onClick={() => void cargar()}>Reintentar</button>
+          </div>
+        ) : null}
+        {errorExportacion ? <div className={styles.errorBox} role="alert">{errorExportacion}</div> : null}
+        {actual && !puedeExportar ? <div className={styles.alertBox}>Su perfil puede consultar este reporte, pero no exportarlo (requiere el permiso Exportar de Reportes).</div> : null}
 
-        <div className={styles.tableWrap}>
+        <div className={styles.tableWrap} aria-busy={cargando}>
           <table className={styles.table}>
             <thead>
               <tr>
-                <th>Código</th><th>Descripción</th><th>Categoría</th><th>Marca</th><th>Familia</th>
-                {porDeposito ? <th>Depósito</th> : null}
-                {colDeposito ? <th className={styles.num}>Disp. en depósito</th> : null}
-                <th className={styles.num}>Disponible (total)</th><th className={styles.num}>Mínimo</th><th className={styles.num}>Máximo</th>
-                <th className={styles.num}>Punto reposición</th><th>Situación</th><th className={[styles.num, porDeposito ? styles.refCol : ""].join(" ")}>{TITULO_SUGERIDA(aplicados.vista)}</th>
-                <th className={styles.num}>Costo ref.</th><th className={[styles.num, porDeposito ? styles.refCol : ""].join(" ")}>{TITULO_VALOR(aplicados.vista)}</th>
+                <th>Código</th><th>Producto</th><th>Categoría</th>
+                {porDeposito ? <th>Depósito</th> : <th className={styles.num}>Destinos</th>}
+                <th>Un.</th><th className={styles.num}>Disponible</th>
+                {porDeposito ? <><th className={styles.num}>Mín.</th><th className={styles.num}>Punto</th><th className={styles.num}>Máx.</th></> : null}
+                <th>Situación</th><th className={styles.num}>Sugerida</th><th className={styles.num}>Transferencia</th><th className={styles.num}>Compra</th>
+                {porDeposito ? <th>Orígenes</th> : null}
+                <th className={styles.num}>Valor ref.</th>
               </tr>
             </thead>
             <tbody>
-              {(datos?.filas ?? []).map((f, i) => (
-                <tr key={`${f.productoId}-${f.deposito}-${i}`}>
+              {(actual?.filas ?? []).map((f) => (
+                <tr key={f.clave} title={f.advertencias.join(" ")}>
                   <td>{f.codigo}</td>
                   <td className={styles.desc} title={f.descripcion}>{f.descripcion}</td>
-                  <td>{f.categoria || "—"}</td><td>{f.marca || "—"}</td><td>{f.familia || "—"}</td>
-                  {porDeposito ? <td>{f.deposito || "—"}</td> : null}
-                  {colDeposito ? <td className={styles.num}>{opc(f.disponibleDeposito)}</td> : null}
-                  <td className={styles.num}>{num(f.disponible)}</td>
-                  <td className={styles.num}>{num(f.minimo)}</td>
-                  <td className={styles.num}>{opc(f.maximo)}</td>
-                  <td className={styles.num}>{opc(f.puntoReposicion)}</td>
-                  <td>
-                    <span className={[styles.badge, styles[`badge${f.nivel}`]].join(" ")}>{NIVEL[f.nivel]}</span>
-                    {f.enPuntoReposicion && f.nivel !== "SIN_STOCK" && f.nivel !== "BAJO" ? <small> en punto</small> : null}
-                  </td>
-                  <td className={[styles.num, porDeposito ? styles.refCell : ""].join(" ")}>{num(f.cantidadSugerida)}</td>
-                  <td className={styles.num}>{fmtDinero(f.costoReferencia)}</td>
-                  <td className={[styles.num, porDeposito ? styles.refCell : ""].join(" ")}>{fmtDinero(f.valorSugerido)}</td>
+                  <td>{f.categoria || "—"}</td>
+                  {porDeposito ? <td>{f.deposito || "—"}</td> : <td className={styles.num}>{fmtNum(f.destinos)}</td>}
+                  <td>{f.unidad || "—"}</td>
+                  <td className={styles.num}>{fmtNum(f.disponible)}</td>
+                  {porDeposito ? <><td className={styles.num}>{opc(f.minimo)}</td><td className={styles.num}>{opc(f.punto)}</td><td className={styles.num}>{opc(f.maximo)}</td></> : null}
+                  <td><span className={[styles.badge, styles[`badge${f.criticidad}`]].join(" ")}>{ETIQUETA_CRITICIDAD[f.criticidad]}</span></td>
+                  <td className={styles.num}>{conMeta(f.sugerida, f)}</td>
+                  <td className={styles.num}>{f.necesita ? fmtNum(f.transferencia) : "—"}</td>
+                  <td className={styles.num}>{f.necesita ? conMeta(f.compra, f) : "—"}</td>
+                  {porDeposito ? <td className={styles.desc} title={f.origenes}>{f.origenes || "—"}</td> : null}
+                  <td className={styles.num}>{f.valorReferencia === null ? (f.destinosSinCosto > 0 ? "Sin costo" : "—") : fmtDinero(f.valorReferencia)}</td>
                 </tr>
               ))}
             </tbody>
-            {datos && datos.filas.length > 0 ? (
+            {actual && t && actual.filas.length > 0 ? (
               <tfoot>
                 <tr>
-                  <td colSpan={colTotal - 1}>TOTAL GENERAL (productos únicos)</td>
-                  <td className={styles.num}>{num(datos.totales.cantidadSugerida)}</td>
-                  <td />
-                  <td className={styles.num}>{fmtDinero(datos.totales.valorSugerido)}</td>
+                  <td colSpan={colsFijas}>TOTAL GENERAL (alertas; las cantidades no se suman entre productos)</td>
+                  {porDeposito ? <td /> : <><td className={styles.num}>{fmtNum(t.destinos)}</td><td /></>}
+                  <td className={styles.num}>n/a</td>
+                  {porDeposito ? <><td /><td /><td /></> : null}
+                  <td>{fmtNum(t.necesitan)} alerta(s)</td>
+                  <td className={styles.num}>n/a</td><td className={styles.num}>n/a</td><td className={styles.num}>n/a</td>
+                  {porDeposito ? <td /> : null}
+                  <td className={styles.num}>{fmtDinero(t.valorReferencia)}</td>
                 </tr>
               </tfoot>
             ) : null}
           </table>
         </div>
 
-        {datos && datos.filas.length === 0 && !cargando ? (
+        {actual && actual.filas.length === 0 && !cargando ? (
           <div className={styles.empty}>
             <strong>No se encontraron resultados.</strong>
-            <span>{hayFiltros ? "Modifique los filtros aplicados." : "Aún no hay productos que controlen stock."}</span>
+            <span>{hayFiltros || filtros.situacion !== "ALERTAS" ? "Modifique los filtros aplicados." : "No hay productos con necesidad de reposición según los parámetros configurados."}</span>
           </div>
         ) : null}
-        {!datos && cargando ? <div className={styles.empty}><strong>Cargando reporte...</strong></div> : null}
+        {!actual && cargando ? <div className={styles.empty}><strong>Cargando reporte...</strong></div> : null}
+        {!actual && !cargando && error ? <div className={styles.empty}><strong>No se pudo generar el reporte</strong><span>Use «Reintentar» para volver a consultar con los mismos filtros.</span></div> : null}
 
         <footer className={styles.pagination}>
           <span>
-            Mostrando {total === 0 ? 0 : (pagina - 1) * tamano + 1}–{Math.min(pagina * tamano, total)} de {num(total)}
+            Mostrando {total === 0 ? 0 : (pagina - 1) * tamano + 1}–{Math.min(pagina * tamano, total)} de {fmtNum(total)}
           </span>
           <div>
             <button type="button" disabled={pagina === 1 || cargando} onClick={() => setPagina((p) => p - 1)}>‹</button>
             <strong>{pagina} / {paginas}</strong>
-            <button type="button" disabled={pagina >= paginas || cargando} onClick={() => setPagina((p) => p + 1)}>›</button>
+            <button type="button" disabled={pagina >= paginas || cargando || !actual} onClick={() => setPagina((p) => p + 1)}>›</button>
           </div>
         </footer>
 
         <ul className={styles.notes}>
-          {(datos?.cobertura ?? []).map((n) => <li key={n}>{n}</li>)}
+          {t && t.referencias > 0 ? <li>{fmtNum(t.referencias)} total(es) consolidado(s) de productos con parámetros por depósito se omiten: son solo referencia.</li> : null}
+          {(actual?.cobertura ?? []).map((n) => <li key={n}>{n}</li>)}
         </ul>
       </section>
     </section>

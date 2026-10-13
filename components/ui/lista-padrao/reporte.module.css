@@ -462,6 +462,7 @@
 }
 
 .badgeBAJO,
+.badgeBAJO_MINIMO,
 .badgeSIN_COSTO,
 .badgePROXIMO {
   color: #a66d16;
@@ -469,6 +470,7 @@
 }
 
 .badgeNORMAL,
+.badgeOK,
 .badgeCON_COSTO,
 .badgeREGISTRADO,
 .badgeVIGENTE {
@@ -478,11 +480,14 @@
 
 .badgeSOBRESTOCK,
 .badgePARCIAL,
+.badgeEN_PUNTO,
 .badgeEXCEDENTE {
   color: #3269b3;
   background: #edf4ff;
 }
 
+.badgeSIN_GATILLO,
+.badgeSIN_PARAMETROS,
 .badgeSIN_FECHA {
   color: #475569;
   background: #e8edf2;

@@ -318,9 +318,10 @@ export type KardexRespuesta = {
   cobertura: string[];
 };
 
-// Reporte 4 — Stock crítico y reposición
+// Reporte 4 — Stock crítico y reposición: fotografía de las excepciones del MOTOR ÚNICO de Reposición (calcularPlanReposicion); no calcula ni planifica por su cuenta.
 export type VistaStockCritico = "PRODUCTO" | "DEPOSITO";
-export type ObjetivoReposicion = "MINIMO" | "MAXIMO";
+export type CriticidadReporte = "SIN_STOCK" | "BAJO_MINIMO" | "EN_PUNTO" | "OK" | "SIN_GATILLO" | "SIN_PARAMETROS";
+export type SituacionStockCritico = "ALERTAS" | "TODAS" | "SIN_STOCK" | "BAJO_MINIMO" | "EN_PUNTO" | "OK" | "SIN_GATILLO";
 
 export type StockCriticoFiltros = {
   vista: VistaStockCritico;
@@ -329,11 +330,12 @@ export type StockCriticoFiltros = {
   categoriaId: string;
   marcaId: string;
   familiaId: string;
-  situacion: "" | NivelStock;
-  objetivo: ObjetivoReposicion;
+  /** ALERTAS = lo que necesita reposición (sin stock, bajo el mínimo, en punto); TODAS incluye lo que está bien y los avisos de configuración. */
+  situacion: SituacionStockCritico;
 };
 
 export type StockCriticoFila = {
+  clave: string;
   productoId: string;
   codigo: string;
   descripcion: string;
@@ -341,35 +343,45 @@ export type StockCriticoFila = {
   marca: string;
   familia: string;
   unidad: string;
-  // Vista DEPOSITO: depósito de la fila. Vista PRODUCTO: vacío.
+  /** Depósito destino (vista DEPOSITO); «Todos los depósitos» si el plan usa los parámetros globales del producto; vacío en la vista PRODUCTO. */
   deposito: string;
-  // Disponible propio del depósito de la fila (vista DEPOSITO) o del depósito filtrado (vista PRODUCTO con filtro); null si no aplica.
-  disponibleDeposito: number | null;
-  // Valores del PRODUCTO sobre todos los depósitos con alcance del usuario (base de la situación y de la reposición).
+  ambito: "DEPOSITO" | "CONSOLIDADO";
+  /** Depósitos con plan que agrupa la fila (1 en la vista DEPOSITO). */
+  destinos: number;
+  /** Disponible propio (posición del motor; en PRODUCTO, suma de los destinos del MISMO producto). */
   disponible: number;
-  fisico: number;
-  minimo: number;
+  minimo: number | null;
+  punto: number | null;
   maximo: number | null;
-  puntoReposicion: number | null;
-  nivel: NivelStock;
-  enPuntoReposicion: boolean;
-  cantidadSugerida: number;
-  // numeric exacto como texto; null si el producto no tiene costo registrado.
+  cantidadReposicion: number | null;
+  /** Peor criticidad entre los destinos de la fila. */
+  criticidad: CriticidadReporte;
+  necesita: boolean;
+  /** Suma de metas DEFINIDAS del mismo producto/unidad; los destinos con necesidad y sin meta se cuentan en sinMeta (nunca como 0 ni inventados). */
+  sugerida: number;
+  sinMeta: number;
+  transferencia: number;
+  compra: number;
+  origenes: string;
+  advertencias: string[];
+  /** Costo promedio real de inventario_costos (depósito destino; si no hay, el del producto); null = sin costo registrado (no se asume 0). */
   costoReferencia: string | null;
-  valorSugerido: string | null;
+  /** sugerida × costo de referencia: estimación de referencia, no valorización del inventario ni precio de compra. null si no hay necesidad con meta o falta costo. */
+  valorReferencia: string | null;
+  destinosSinCosto: number;
 };
 
 export type StockCriticoTotales = {
+  filas: number;
   productos: number;
-  sinStock: number;
-  bajo: number;
-  normal: number;
-  sobrestock: number;
-  enPuntoReposicion: number;
-  aReponer: number;
-  cantidadSugerida: number;
-  valorSugerido: string;
-  sugeridoSinCosto: number;
+  destinos: number;
+  necesitan: number;
+  porCriticidad: Record<CriticidadReporte, number>;
+  sinMeta: number;
+  valorReferencia: string;
+  sinCosto: number;
+  /** Renglones consolidados que solo son referencia (el producto tiene plan por depósito): no generan alertas ni valor. */
+  referencias: number;
   moneda: string;
 };
 
@@ -389,6 +401,8 @@ export type StockCriticoRespuesta = {
   };
   cobertura: string[];
 };
+
+export type StockCriticoRespuestaApi = StockCriticoRespuesta & { permisos: { exportar: boolean } };
 
 // Reporte 5 — Lotes y vencimientos
 export type ClaseVencimiento = "VENCIDO" | "PROXIMO" | "VIGENTE" | "SIN_FECHA";

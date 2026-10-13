@@ -42,6 +42,7 @@ Module._resolveFilename = function (request, ...resto) {
   const irr = cargar("lib/inventario/residuales.casos.js");
   const rva = cargar("lib/reportes/valorizacion.casos.js");
   const rxl = cargar("lib/reportes/export-xlsx.casos.js");
+  const rsc = cargar("lib/reportes/stock-critico.casos.js");
   const lpe = cargar("lib/listas-precio/estabilizacion.casos.js");
   const srm = cargar("lib/stock/stock-reposicion.casos.js");
   const fac = cargar("lib/facturacion/facturacion.casos.js");
@@ -81,6 +82,7 @@ Module._resolveFilename = function (request, ...resto) {
     ["Inventario · Correcciones residuales AUD-INV-R02 (costo unitario exacto, filtro de depósito por URL, validación de cargas de Depósitos y Reposición)", async () => irr.verificarCasosInventarioResiduales(), null],
     ["Reportes · Valorización de inventario (RPT-V01…V06, N02: unidades, snapshot, cobertura sin compensar, cargas confiables, precisión, depósitos inactivos, exportación)", async () => rva.verificarCasosReportesValorizacion(), null],
     ["Reportes · Exportación XLSX/PDF compartida (RPT-R03-01/02: celdas reales del XLSX, n/a, cantidades exactas, compatibilidad de los cinco relatórios)", async () => rxl.verificarCasosExportacionXlsx(), null],
+    ["Reportes · Stock crítico y reposición (RPT-C03-01…07, matriz T-C01…T-C09: motor único de Reposición, depósitos sin saldo, sin duplicar, sin cantidades heterogéneas, cargas confiables, snapshot, XLSX/PDF)", async () => rsc.verificarCasosReportesStockCritico(), null],
     ["Stock, Reposición y contrato Movimientos ↔ documentos (Etapas A, B y C)", async () => srm.verificarCasosStockReposicionMovimientos(), null],
     ["Facturación F-01/F-02: documentos electrónicos, gateway, NEX-047, cálculo fiscal, payload FE y NEX-048", async () => fac.verificarCasosFacturacion(), null],
   ];

@@ -1,6 +1,7 @@
-import type { Pool, PoolClient } from "pg";
+import type { Pool } from "pg";
 
 import { MAX_FILAS_EXPORTACION } from "@/lib/reportes/stock-general";
+import { conSnapshotLectura, type Cliente } from "@/lib/reportes/snapshot";
 import { SQL_SITUACION } from "@/lib/reportes/valorizacion-cobertura";
 import type {
   ConteoSituaciones,
@@ -59,35 +60,8 @@ export function parsearFiltrosValorizacion(sp: URLSearchParams): { filtros: Valo
 const like = (v: string) => `%${v.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
 const COSTO = (val: string, cant: string) => `CASE WHEN ${cant} > 0 THEN round(${val} / ${cant}, 4)::text END`;
 
-type Cliente = Pick<PoolClient, "query">;
-
-/**
- * Ejecuta `fn` con UNA conexión dedicada dentro de una transacción de solo lectura con snapshot fijo (REPEATABLE READ): todas las consultas de `fn` ven el
- * mismo instante lógico aunque otro proceso modifique inventario_costos o stock_saldos. Siempre libera la conexión (también ante error).
- */
-export async function conSnapshotLectura<T>(db: Db, fn: (c: Cliente) => Promise<T>): Promise<T> {
-  const cliente = await db.connect();
-
-  try {
-    await cliente.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
-
-    const r = await fn(cliente);
-
-    await cliente.query("COMMIT");
-
-    return r;
-  } catch (e) {
-    try {
-      await cliente.query("ROLLBACK");
-    } catch {
-      // la conexión ya falló: se libera igualmente y se propaga el error original
-    }
-
-    throw e;
-  } finally {
-    cliente.release();
-  }
-}
+// El snapshot de lectura vive en snapshot.ts (compartido con Stock crítico); se reexporta para conservar la API de este módulo.
+export { conSnapshotLectura };
 
 /**
  * Depósitos del alcance del usuario (todos si su alcance es TODOS; si no, los asignados en usuario_deposito), ACTIVOS E INACTIVOS: el valor de un depósito
