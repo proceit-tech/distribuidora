@@ -5,7 +5,7 @@
  * Cantidades y dinero son texto `numeric` y se comparan como decimales exactos (nunca float).
  */
 import { compararDecimales } from "@/lib/inventario/decimal";
-import type { ConteoSituaciones, SituacionCosto, ValorizacionRespuestaApi } from "@/types/reportes";
+import type { ConteoSituaciones, SituacionCosto, ValorizacionFiltros, ValorizacionRespuestaApi } from "@/types/reportes";
 
 export const SITUACIONES: SituacionCosto[] = ["CON_COSTO", "PARCIAL", "SIN_COSTO", "EXCEDENTE", "RESIDUO", "SIN_STOCK"];
 
@@ -92,4 +92,14 @@ export function respuestaValorizacionValida(x: unknown): x is ValorizacionRespue
     esObj(c) && listaDe(c.depositos, (d) => esObj(d) && txt(d.id) && txt(d.nombre) && typeof d.activo === "boolean") &&
     listaDe(c.categorias, (d) => esObj(d) && txt(d.id) && txt(d.nombre)) && listaDe(c.familias, (d) => esObj(d) && txt(d.id) && txt(d.nombre)) &&
     esObj(perm) && typeof perm.exportar === "boolean";
+}
+
+/** Igualdad de filtros CAMPO A CAMPO (los ocho): no depende del orden de las propiedades del objeto de la API ni del componente. */
+export function filtrosValorizacionIguales(a: ValorizacionFiltros, b: ValorizacionFiltros): boolean {
+  return a.vista === b.vista && a.q === b.q && a.depositoId === b.depositoId && a.categoriaId === b.categoriaId && a.familiaId === b.familiaId && a.existencia === b.existencia && a.costo === b.costo && a.cobertura === b.cobertura;
+}
+
+/** Una respuesta solo se muestra (y habilita la exportación) sin error y si corresponde exactamente a los filtros y a la página que se piden ahora. */
+export function respuestaValorizacionVigente(datos: { filtros: ValorizacionFiltros; pagina: { numero: number } } | null, error: string, aplicados: ValorizacionFiltros, pagina: number): boolean {
+  return datos !== null && !error && filtrosValorizacionIguales(datos.filtros, aplicados) && datos.pagina.numero === pagina;
 }

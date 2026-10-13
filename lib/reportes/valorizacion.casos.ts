@@ -12,7 +12,7 @@ import { columnasValorizacion, tablaValorizacion } from "@/lib/reportes/export-v
 import { fmtCantidadTexto } from "@/lib/reportes/formato";
 import { pedirValorizacion } from "@/lib/reportes/cliente-valorizacion";
 import { conSnapshotLectura, leerValorizacion, parsearFiltrosValorizacion } from "@/lib/reportes/valorizacion";
-import { clasificarCobertura, conteosVacios, peorSituacion, porcentajeCobertura, respuestaValorizacionValida, SQL_SITUACION, totalDivergencias } from "@/lib/reportes/valorizacion-cobertura";
+import { clasificarCobertura, conteosVacios, filtrosValorizacionIguales, respuestaValorizacionVigente, peorSituacion, porcentajeCobertura, respuestaValorizacionValida, SQL_SITUACION, totalDivergencias } from "@/lib/reportes/valorizacion-cobertura";
 import { crearCompuerta } from "@/lib/productos/catalogos-carga";
 import type { ValorizacionFiltros, ValorizacionRespuesta, ValorizacionRespuestaApi } from "@/types/reportes";
 
@@ -267,12 +267,64 @@ export async function verificarCasosReportesValorizacion(): Promise<string[]> {
 
   cierto("RPT-N02 servidor: consultar exige REPORTES.VER; exportar exige VER y EXPORTAR (siguen en el servidor) y la consulta informa permisos.exportar con hasPermission", /autorizarReporte\(\["VER"\]\)/.test(rutaLeer) && /autorizarReporte\(\["VER", "EXPORTAR"\]\)/.test(rutaExportar) && /hasPermission\(acceso, "REPORTES", "EXPORTAR"\)/.test(rutaLeer) && /leerValorizacion\(db, session\.user\.empresaId, session\.user\.id/.test(rutaExportar));
   cierto("RPT-N02 pantalla: los botones de Excel/PDF solo existen con permisos.exportar y datos vigentes; exportan los filtros CONFIRMADOS de la respuesta (no los que se están editando)", /puedeExportar \? \(/.test(pagina) && /actual\?\.permisos\.exportar === true/.test(pagina) && /descargarValorizacion\(actual\.filtros, formato\)/.test(pagina) && !/descargarValorizacion\(aplicados/.test(pagina));
-  cierto("RPT-V04 pantalla: usa pedirValorizacion con compuerta de última solicitud, descarta datos ante falla, muestra solo datos de los filtros y la página vigentes, y ofrece «Reintentar» conservando filtros", /pedirValorizacion\(aplicados, pagina\)/.test(pagina) && /crearCompuerta\(\)/.test(pagina) && /setDatos\(r\.datos\)/.test(pagina) && /mismos\(datos\.filtros, aplicados\)/.test(pagina) && /datos\.pagina\.numero === pagina/.test(pagina) && /Reintentar/.test(pagina) && !/\.catch\(\(e: unknown\)/.test(pagina));
+  cierto("RPT-V04 pantalla: usa pedirValorizacion con compuerta de última solicitud, descarta datos ante falla, muestra solo datos de los filtros y la página vigentes, y ofrece «Reintentar» conservando filtros", /pedirValorizacion\(aplicados, pagina\)/.test(pagina) && /crearCompuerta\(\)/.test(pagina) && /setDatos\(r\.datos\)/.test(pagina) && /respuestaValorizacionVigente\(datos, error, aplicados, pagina\)/.test(pagina) && !/JSON\.stringify/.test(pagina) && /Reintentar/.test(pagina) && !/\.catch\(\(e: unknown\)/.test(pagina));
   cierto("T05 acceso: sin sesión 401, sin permiso 403 y sin base 503 siguen en el guard común (Valorización no lo reimplementa); no hay acceso de plataforma ni empresa del cliente", /getCurrentSession/.test(leer("lib/reportes/guard.ts")) && !/empresaId\s*=\s*sp\.|searchParams.*empresa/i.test(rutaLeer + rutaExportar + fuente));
   cierto("RPT-V05/costos reales: solo inventario_costos y stock_saldos; sin float8/Number para dinero ni cantidades, sin precios de venta, sin escrituras", !/float8/.test(fuente) && !/precio|margen|lista_precio/i.test(fuente.replace(/\/\/.*$/gm, "").replace(/"[^"\n]*(precios de venta|márgenes)[^"\n]*"/g, "")) && !/(INSERT|UPDATE|DELETE)\s/i.test(fuente.replace(/\/\/.*$/gm, "")) && /FROM inventario_costos/.test(fuente) && /FROM stock_saldos/.test(fuente));
   cierto("RPT-V06 el alcance NO exige d.activo (un depósito inactivo con valor sigue en el total) y respeta empresa y usuario; la función compartida depositosPermitidos de los otros reportes no se modificó", !/d\.activo\s+AND/.test(fuente.replace(/ORDER BY d\.activo DESC/, "")) && /u\.alcance_depositos = 'TODOS'/.test(fuente) && /AND d\.activo\n?\s*AND usuario_puede_deposito/.test(leer("lib/reportes/stock-general.ts")));
   cierto("Integración: Stock general, Kardex, Stock crítico y Lotes siguen con sus rutas y exportadores; Valorización no los modifica ni reimplementa", ["stock-general", "kardex", "stock-critico", "lotes"].every((r) => /export async function GET/.test(leer(`app/api/reportes/${r}/route.ts`)) && !/valorizacion/i.test(leer(`lib/reportes/${r === "kardex" ? "kardex" : r === "lotes" ? "lotes" : r}.ts`))));
   cierto("Reposición y Stock (Inventario) no se tocaron: cálculo de reposición sin dependencias de Reportes", !/reportes/.test(leer("lib/reposicion/calculo.ts")));
+
+  // ═══ RPT-R07-01 — igualdad de filtros por campo (parser real de la API vs filtros que arma la pantalla) ═══
+  const parsed = parsearFiltrosValorizacion(new URLSearchParams("vista=PRODUCTO&q=aceite&cobertura=DIVERGENCIAS&existencia=TODOS&costo=CON&depositoId=" + DA + "&categoriaId=" + U(40) + "&familiaId=" + U(41)));
+  const deParser = "filtros" in parsed ? parsed.filtros : FILTROS;
+  // Lo que devuelve la API: el objeto `filtros` de leerValorizacion serializado como JSON (conserva el orden del parser)
+  reiniciar();
+  const respReal = JSON.parse(JSON.stringify(await leerValorizacion(fakePool(responder([fila({})])), EMP, USR, deParser, 1, 50, false))) as ValorizacionRespuestaApi;
+  // Lo que arma la pantalla: FILTROS_VACIOS (q en segundo lugar) con spread
+  const FILTROS_VACIOS_PANTALLA: ValorizacionFiltros = { vista: "DETALLE", q: "", depositoId: "", categoriaId: "", familiaId: "", existencia: "CON", costo: "TODOS", cobertura: "TODOS" };
+  const aplicadosPantalla: ValorizacionFiltros = { ...FILTROS_VACIOS_PANTALLA, vista: "PRODUCTO", existencia: "TODOS", costo: "CON", cobertura: "DIVERGENCIAS", depositoId: DA, categoriaId: U(40), familiaId: U(41), q: "aceite" };
+
+  igual("R07-01 los objetos reales (parser de la API y pantalla) tienen los MISMOS ocho valores en órdenes distintos: JSON.stringify no los reconoce, la igualdad por campo sí", [
+    Object.keys(respReal.filtros).length, Object.keys(respReal.filtros).join() === Object.keys(aplicadosPantalla).join(), JSON.stringify(respReal.filtros) === JSON.stringify(aplicadosPantalla), filtrosValorizacionIguales(respReal.filtros, aplicadosPantalla),
+  ], [8, false, false, true]);
+  igual("R07-01 cada uno de los ocho campos cuenta: si cambia cualquiera, las filtros ya no son iguales", (["vista", "q", "depositoId", "categoriaId", "familiaId", "existencia", "costo", "cobertura"] as const).map((k) => filtrosValorizacionIguales(aplicadosPantalla, { ...aplicadosPantalla, [k]: k === "vista" ? "DEPOSITO" : k === "existencia" ? "SIN" : k === "costo" ? "SIN" : k === "cobertura" ? "TODOS" : "otro" })), [false, false, false, false, false, false, false, false]);
+  igual("R07-01 resultado vigente / filtros distintos / búsqueda distinta / otra página / error / sin datos", [
+    respuestaValorizacionVigente(respReal, "", aplicadosPantalla, 1), respuestaValorizacionVigente(respReal, "", { ...aplicadosPantalla, cobertura: "TODOS" }, 1), respuestaValorizacionVigente(respReal, "", { ...aplicadosPantalla, q: "arroz" }, 1),
+    respuestaValorizacionVigente(respReal, "", aplicadosPantalla, 2), respuestaValorizacionVigente(respReal, "falló", aplicadosPantalla, 1), respuestaValorizacionVigente(null, "", aplicadosPantalla, 1),
+  ], [true, false, false, false, false, false]);
+  igual("R07-01 permiso de exportación: con respuesta vigente la exportación depende solo de permisos.exportar (VER sin EXPORTAR: datos visibles, sin botones)", [true, false].map((x) => { const d = { ...respReal, permisos: { exportar: x } }; return [respuestaValorizacionVigente(d, "", aplicadosPantalla, 1), d.permisos.exportar]; }), [[true, true], [true, false]]);
+  {
+    // Búsqueda en dos pasos + paginación + falla, con la misma compuerta de la pantalla
+    const compuerta = crearCompuerta();
+    const e: { datos: ValorizacionRespuestaApi | null; error: string } = { datos: null, error: "" };
+    const cargar = async (f: ValorizacionFiltros, pg: number, espera: number, fallar = false) => {
+      const sol = compuerta.nueva();
+      const res = await pedirValorizacion(f, pg, async () => {
+        await new Promise((x) => setTimeout(x, espera));
+        if (fallar) return new Response(JSON.stringify({ error: "x" }), { status: 500 });
+
+        reiniciar();
+
+        const r = JSON.parse(JSON.stringify(await leerValorizacion(fakePool(responder([fila({})])), EMP, USR, { vista: f.vista, depositoId: f.depositoId, categoriaId: f.categoriaId, familiaId: f.familiaId, existencia: f.existencia, costo: f.costo, cobertura: f.cobertura, q: f.q }, pg, 50, false))) as ValorizacionRespuestaApi;
+
+        return new Response(JSON.stringify({ ...r, permisos: { exportar: true } }), { status: 200 });
+      });
+
+      if (!compuerta.vigente(sol)) return;
+      e.datos = res.datos;
+      e.error = res.error;
+    };
+    const A = { ...aplicadosPantalla, q: "ace" }, B = { ...aplicadosPantalla, q: "aceite" };
+
+    await Promise.all([cargar(A, 1, 40), cargar(B, 1, 5)]);
+    igual("R07-01 búsqueda escrita en dos pasos: la respuesta lenta de «ace» no pisa a «aceite»; solo la última es vigente", [e.datos?.filtros.q, respuestaValorizacionVigente(e.datos, e.error, B, 1), respuestaValorizacionVigente(e.datos, e.error, A, 1)], ["aceite", true, false]);
+    await cargar(B, 2, 0);
+    igual("R07-01 paginación: la página 2 solo es vigente para la página 2", [respuestaValorizacionVigente(e.datos, e.error, B, 2), respuestaValorizacionVigente(e.datos, e.error, B, 1)], [true, false]);
+    await cargar(B, 2, 0, true);
+    igual("R07-01 una falla descarta los datos anteriores: no hay resultado vigente ni exportación", [e.datos, e.error !== "", respuestaValorizacionVigente(e.datos, e.error, B, 2)], [null, true, false]);
+    await cargar(B, 1, 0);
+    igual("R07-01 el reintento válido recupera la respuesta vigente", [respuestaValorizacionVigente(e.datos, e.error, B, 1), e.error], [true, ""]);
+  }
 
   return fallos;
 }

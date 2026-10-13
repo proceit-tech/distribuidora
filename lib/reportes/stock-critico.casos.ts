@@ -470,8 +470,34 @@ export async function verificarCasosReportesStockCritico(): Promise<string[]> {
     (await informe(e8, { situacion: "TODAS" })).totales.referencias, (await informe(e8, { situacion: "TODAS", categoriaId: U(41) })).totales.referencias, (await informe(e8, { situacion: "TODAS", q: "sin referencia" })).totales.referencias,
     (await informe(e8, { situacion: "TODAS", depositoId: DA })).totales.referencias,
   ], [2, 1, 0, 0]);
-  igual("R06-03 contarReferencias: un producto se cuenta una vez y los filtros de producto se respetan", contarReferencias([P1, P1, P2], { ...FILTROS, categoriaId: U(40) }, new Map([[P1, { categoriaId: U(40), categoria: "", marcaId: "", familiaId: "", familia: "", busqueda: "" }], [P2, { categoriaId: U(41), categoria: "", marcaId: "", familiaId: "", familia: "", busqueda: "" }]])), 1);
+  igual("R06-03 contarReferencias: un producto se cuenta una vez y los filtros de producto se respetan", contarReferencias([P1, P1, P2], { ...FILTROS, categoriaId: U(40) }, new Map([[P1, { categoriaId: U(40), categoria: "", marcaId: "", familiaId: "", familia: "", busqueda: "" }], [P2, { categoriaId: U(41), categoria: "", marcaId: "", familiaId: "", familia: "", busqueda: "" }]]), new Set([P1, P2])), 1);
   cierto("R06-03 la nota de pantalla y de exportación se refiere al recorte filtrado (no a toda la empresa)", /del recorte filtrado/.test(pagina) && tablaStockCritico(await informe(e8, { situacion: "TODAS" })).notas.some((n) => /del recorte filtrado/.test(n)));
+
+  // ═══ RPT-R07-02 — referencias contadas según el filtro de situación ═══
+  const e9: Escenario = {
+    productos: [
+      prod(P1, "P-1", "Con sobrestock", "Unidad", { minimo: 20, maximo: 60 }), prod(P2, "P-2", "Normal", "Unidad", { minimo: 20, maximo: 60 }), prod(P3, "P-3", "Necesita reposición", "Unidad", { minimo: 20, maximo: 60 }),
+    ],
+    saldos: [saldo(P1, DA, "DISPONIBLE", 80), saldo(P2, DA, "DISPONIBLE", 30), saldo(P3, DA, "DISPONIBLE", 1)],
+    config: [cfg(P1, DA, 5, 6, 50), cfg(P2, DA, 5, 6, 50), cfg(P3, DA, 5, 6, 50)],
+    visibles: [dep(DA, "Central")],
+    costos: [],
+  };
+  const refs = async (f: Partial<StockCriticoFiltros>) => {
+    const r = await informe(e9, f);
+
+    return [r.totales.referencias, r.filas.map((x) => x.productoId).sort()];
+  };
+
+  igual("R07-02 las referencias siguen al filtro de situación: Todas = 3 productos; Alertas (necesita o sobrestock) = 2; Sobrestock = 1; Normal (criticidad OK, incluye P1) = 2; Sin gatillo (sin resultados) = 0", [
+    await refs({ situacion: "TODAS" }), await refs({ situacion: "ALERTAS" }), await refs({ situacion: "SOBRESTOCK" }), await refs({ situacion: "OK" }), await refs({ situacion: "SIN_GATILLO" }),
+  ], [[3, [P1, P2, P3].sort()], [2, [P1, P3].sort()], [1, [P1]], [2, [P1, P2].sort()], [0, []]]);
+  igual("R07-02 la cifra anunciada nunca supera los productos que se ven; sin resultados (texto que no coincide) o con un depósito filtrado = 0", [
+    (await informe(e9, { situacion: "SOBRESTOCK", q: "normal" })).totales.referencias, (await informe(e9, { situacion: "SOBRESTOCK", q: "normal" })).filas.length, (await informe(e9, { situacion: "SOBRESTOCK", depositoId: DA })).totales.referencias,
+  ], [0, 0, 0]);
+  igual("R07-02 la vista Por producto cuenta lo mismo (un producto una vez) y el motor no cambia: el plan de cada producto coincide con calcularPlanReposicion", [(await informe(e9, { situacion: "SOBRESTOCK", vista: "PRODUCTO" })).totales.referencias, (await informe(e9, { situacion: "ALERTAS", vista: "PRODUCTO" })).totales.referencias], [1, 2]);
+  comparar("R07-02", (await informe(e9)).filas, (await motor(e9)).plan);
+  cierto("R07-02 la nota declara que corresponde al recorte filtrado (incluida la situación)", /del recorte filtrado/.test(pagina) && tablaStockCritico(await informe(e9, { situacion: "SOBRESTOCK" })).notas.some((n) => /del recorte filtrado/.test(n)));
 
   // Utilidades puras
   igual("costo unitario exacto: sin cantidad valorizada → null (no 0)", [costoUnitario({ valor: "10", cantidad: "4" }), costoUnitario({ valor: "0", cantidad: "0" }), costoUnitario(undefined)], ["2.5000", null, null]);

@@ -7,14 +7,13 @@ import { crearCompuerta } from "@/lib/productos/catalogos-carga";
 import { descargarValorizacion, pedirValorizacion } from "@/lib/reportes/cliente-valorizacion";
 import { SITUACION_COSTO } from "@/lib/reportes/export-valorizacion";
 import { fmtCantidadTexto, fmtDinero, fmtNum } from "@/lib/reportes/formato";
-import { porcentajeCobertura, totalDivergencias } from "@/lib/reportes/valorizacion-cobertura";
+import { filtrosValorizacionIguales, porcentajeCobertura, respuestaValorizacionVigente, totalDivergencias } from "@/lib/reportes/valorizacion-cobertura";
 import type { ValorizacionFiltros, ValorizacionFila, ValorizacionRespuestaApi } from "@/types/reportes";
 
 import styles from "@/components/ui/lista-padrao/reporte.module.css";
 
 const FILTROS_VACIOS: ValorizacionFiltros = { vista: "DETALLE", q: "", depositoId: "", categoriaId: "", familiaId: "", existencia: "CON", costo: "TODOS", cobertura: "TODOS" };
 const VISTAS: [ValorizacionFiltros["vista"], string][] = [["DETALLE", "Detalle"], ["PRODUCTO", "Por producto"], ["DEPOSITO", "Por depósito"], ["CATEGORIA", "Por categoría"]];
-const mismos = (a: ValorizacionFiltros, b: ValorizacionFiltros) => JSON.stringify(a) === JSON.stringify(b);
 
 type Catalogos = ValorizacionRespuestaApi["catalogos"];
 
@@ -73,7 +72,7 @@ export default function ReporteValorizacionPage() {
   };
 
   // Solo se muestran y exportan datos que corresponden EXACTAMENTE a los filtros y la página vigentes.
-  const actual = datos && !error && mismos(datos.filtros, aplicados) && datos.pagina.numero === pagina ? datos : null;
+  const actual = datos && respuestaValorizacionVigente(datos, error, aplicados, pagina) ? datos : null;
   const puedeExportar = actual?.permisos.exportar === true;
   const exportar = async (formato: "xlsx" | "pdf") => {
     if (!actual || !puedeExportar) return;
@@ -94,7 +93,7 @@ export default function ReporteValorizacionPage() {
   const tamano = actual?.pagina.tamano ?? 50;
   const paginas = Math.max(1, Math.ceil(total / tamano));
   const vista: ValorizacionFiltros["vista"] = aplicados.vista;
-  const hayFiltros = JSON.stringify({ ...filtros, vista: "" }) !== JSON.stringify({ ...FILTROS_VACIOS, vista: "" });
+  const hayFiltros = !filtrosValorizacionIguales({ ...filtros, vista: FILTROS_VACIOS.vista }, FILTROS_VACIOS);
   const conProducto = vista === "DETALLE" || vista === "PRODUCTO";
   const conCantidades = conProducto;
   const etiquetaFilas = vista === "DETALLE" ? "filas" : vista === "PRODUCTO" ? "productos" : vista === "DEPOSITO" ? "depósitos" : "categorías";

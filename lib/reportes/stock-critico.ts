@@ -125,7 +125,7 @@ export async function leerStockCritico(
       filtros,
       pagina: { numero: pagina, tamano, totalFilas: vista.length },
       filas,
-      totales: totalesCritico(filtrados, vista.length, contarReferencias(referencias, filtros, productos), emp.moneda),
+      totales: totalesCritico(filtrados, vista.length, contarReferencias(referencias, filtros, productos, new Set(filtrados.map((x) => x.productoId))), emp.moneda),
       catalogos: { depositos: datos.depositos, categorias: cat.rows, marcas: mar.rows, familias: fam.rows },
       cobertura: COBERTURA_STOCK_CRITICO,
     } satisfies StockCriticoRespuesta;

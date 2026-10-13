@@ -810,3 +810,8 @@ Após o encerramento **estático** de Inventario na `AUD-INV-R05` (sem homologa�
 ### Stock crítico — correções AUD-RPT-R06 (2026-10-13)
 - **R06-01:** `filtrosIguales` (campo a campo) e `respuestaVigente` substituem `JSON.stringify`; teste com o objeto `filtros` real da API (ordem de propriedades distinta do cliente), troca de filtro/página/busca em dois passos e resposta antiga rejeitada. **R06-02:** `Sobrestock` informativo (físico próprio = disponível + reservado + cuarentena, sem trânsito/terceiros, > máximo do mesmo âmbito) fora do motor: filtro, KPI, coluna «Sobrestock (exceso)», Excel/PDF; não gera compra nem transferência; filtro padrão «Alertas» = necesita reposición ou sobrestock. **R06-03:** referências contadas só para produtos do recorte (0 com filtro de depósito) e rotuladas como tal.
 - Local: 2735 verificações, 0 falhas (+20); tsc/ESLint/build OK. Valorización e `calculo.ts` não alterados. Nada homologado.
+
+### AUD-RPT-R07 (2026-10-13)
+- **R07-01 (Valorización, interface):** `filtrosValorizacionIguales` (8 campos) e `respuestaValorizacionVigente` substituem `JSON.stringify`; teste usa o objeto `filtros` real do parser/API (ordem distinta da tela), troca de filtro/busca em dois passos/página, falha e permissão de exportação. Sem mudanças em SQL, custos, snapshot, cálculos nem Excel/PDF.
+- **R07-02 (Stock crítico):** referências contadas só para produtos com planos no recorte (inclui o filtro de situação; 0 com filtro de depósito). Motor, Sobrestock e filtro padrão «Alertas» intactos.
+- Local: 2748 verificações, 0 falhas (+13); tsc/ESLint/build OK. Nada homologado.

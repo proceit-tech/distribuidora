@@ -116,13 +116,13 @@ export function filtrarDetalles(filas: Detalle[], f: StockCriticoFiltros, produc
 }
 
 /**
- * Consolidados de referencia que corresponden al recorte: solo de productos que cumplen los filtros de producto y únicamente sin filtro de depósito
- * (la referencia es global del producto y no se atribuye a ningún depósito). Cada producto se cuenta una vez.
+ * Consolidados de referencia que corresponden al recorte: solo productos que TIENEN planes en el recorte filtrado (`presentes`: ya cumplen situación, producto
+ * y depósito) y únicamente sin filtro de depósito (la referencia es global del producto y no se atribuye a ningún depósito). Cada producto se cuenta una vez.
  */
-export function contarReferencias(productoIds: string[], f: StockCriticoFiltros, productos: Map<string, ProductoInfo>): number {
+export function contarReferencias(productoIds: string[], f: StockCriticoFiltros, productos: Map<string, ProductoInfo>, presentes: Set<string>): number {
   if (f.depositoId) return 0;
 
-  return new Set(productoIds.filter((id) => coincideProducto(productos.get(id), f))).size;
+  return new Set(productoIds.filter((id) => presentes.has(id) && coincideProducto(productos.get(id), f))).size;
 }
 
 export function ordenarDetalles(filas: Detalle[]): Detalle[] {
