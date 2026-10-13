@@ -10,6 +10,7 @@ import { ThOrdenable } from "@/components/ui/lista-padrao/th-ordenable";
 import ui from "@/components/ui/lista-padrao/lista.module.css";
 import { hoyAsuncion, isoAFechaLocal } from "@/lib/listas-precio/calculos";
 import { cargarCatalogoComercial } from "@/lib/comercial/carga";
+import { compararDecimales, formatearCambio } from "@/lib/comercial/cambio-decimal";
 import { textoConfirmarInactivacionComercial } from "@/lib/comercial/vinculos";
 import { cargaConfiable, crearCompuerta, motivoBloqueoGuardar, permisosVigentes } from "@/lib/productos/catalogos-carga";
 import { useProtegerCambios } from "@/lib/ui/proteger-cambios";
@@ -46,7 +47,6 @@ const PAGE_SIZE = 20;
 type CampoOrden = "codigo" | "nombre" | "usos" | "estado" | "fecha" | "moneda" | "cambio";
 
 const idCampo = (c: CampoComercial) => `com-${c}`;
-const formatoCambio = (v: string) => new Intl.NumberFormat("es-PY", { minimumFractionDigits: 0, maximumFractionDigits: 6 }).format(Number(v));
 
 const vacio = (): FormularioComercial => ({ id: null, codigo: "", nombre: "", fecha: hoyAsuncion(), monedaCodigo: "", cambio: "", motivo: "" });
 
@@ -199,7 +199,7 @@ export default function CatalogosComercialesPage() {
           case "moneda":
             return compararTexto(a.monedaCodigo ?? "", b.monedaCodigo ?? "");
           case "cambio":
-            return Number(a.cambio ?? 0) - Number(b.cambio ?? 0);
+            return compararDecimales(a.cambio ?? "0", b.cambio ?? "0");
         }
       }),
     [visibles, orden],
@@ -615,7 +615,7 @@ export default function CatalogosComercialesPage() {
                             <span className={ui.principal}>{f.monedaCodigo}</span>
                           </td>
                           <td className={ui.numeric}>
-                            <span className={ui.mono}>{formatoCambio(f.cambio ?? "0")}</span>
+                            <span className={ui.mono}>{formatearCambio(f.cambio ?? "0")}</span>
                           </td>
                           <td>
                             {f.version}
@@ -659,7 +659,7 @@ export default function CatalogosComercialesPage() {
                                     disabled={!confiable}
                                     onClick={() => {
                                       if (!confirmarDescarte()) return;
-                                      abrir({ ...vacio(), id: f.id, fecha: f.fecha ?? "", monedaCodigo: f.monedaCodigo ?? "", cambio: formatoCambio(f.cambio ?? "") });
+                                      abrir({ ...vacio(), id: f.id, fecha: f.fecha ?? "", monedaCodigo: f.monedaCodigo ?? "", cambio: formatearCambio(f.cambio ?? "") });
                                       enfocar("cambio");
                                     }}
                                   >

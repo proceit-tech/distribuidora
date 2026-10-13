@@ -36,3 +36,33 @@ export function cambioEnAlcance(texto: string): boolean {
 }
 
 export const MENSAJE_ALCANCE_CAMBIO = `La cotización excede el máximo permitido (hasta ${MAX_ENTEROS_CAMBIO} dígitos enteros y ${MAX_DECIMALES_CAMBIO} decimales).`;
+
+/**
+ * CC-R03-01 — presentación y orden SIN Number. Formato es-PY (punto de miles, coma decimal) construido solo con texto: conserva los 6 decimales de numeric(18,6) y es reversible con
+ * `normalizarCambio` (con coma, el punto es siempre separador de miles). Entrada inválida → cadena vacía.
+ */
+export function formatearCambio(texto: string): string {
+  const c = canonicoDecimal(texto);
+
+  if (c === null) return "";
+
+  const [entera, frac] = c.split(".");
+  const miles = entera.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+
+  return frac ? `${miles},${frac}` : miles;
+}
+
+/** Comparación numérica exacta de decimales en texto (−1, 0, 1). Un valor no decimal se trata como 0. */
+export function compararDecimales(a: string, b: string): number {
+  const [ea, fa = ""] = (canonicoDecimal(a) ?? "0").split(".");
+  const [eb, fb = ""] = (canonicoDecimal(b) ?? "0").split(".");
+
+  if (ea.length !== eb.length) return ea.length < eb.length ? -1 : 1;
+  if (ea !== eb) return ea < eb ? -1 : 1;
+
+  const n = Math.max(fa.length, fb.length);
+  const x = fa.padEnd(n, "0");
+  const y = fb.padEnd(n, "0");
+
+  return x === y ? 0 : x < y ? -1 : 1;
+}

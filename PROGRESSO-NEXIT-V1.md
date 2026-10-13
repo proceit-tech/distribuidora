@@ -737,3 +737,8 @@ Decisão documental do responsável: **Stock = consulta**, **Movimientos = execu
 
 ### Reauditoria Listas e Catálogos comerciales — AUD-R03 (13/10/2026)
 SHA funcional Listas `4845a8c89579ea81258a23875b9e238bb8e25fbf`: **LPR-R02-01 aceito estaticamente**, inclusive a proteção dos preços removidos do rascunho. SHA funcional Catálogos `cb66211ffd9f669c96940597af1eb37e19865464`: **CC-A01…A07 aceitos estaticamente com ressalva de uma regressão ALTA** — `CC-R03-01`, `formatCambio(Number(...))` perde seis casas em cotações com até 12 dígitos inteiros na UI `Corregir`; ver `AUD-CATALOGOS-COMERCIALES-V1.md` §VII. **Catálogos comerciales pede correção localizada; ambos ainda sem homologação operacional**. 2316 testes locais relatados pelo Claude, 0 falhas; ChatGPT executou 0 testes de suíte/PG/navegador, só reprodução de formatação decimal em JavaScript puro. NEX-052/053 permanecem não aplicadas segundo o relatório recebido, sem inspeção do ledger na VM.
+
+#### Catálogos comerciales — CC-R03-01 (AUD-CATALOGOS-COMERCIALES-V1 §VII, 2026-10-13)
+Só código; sem migration; nada em PostgreSQL/navegador; menu NÃO homologado; CC-A01…A07 e o servidor não tocados.
+- Apresentação, abertura de «Corregir» e ordenação da cotação sem `Number`: `formatearCambio` (es-PY só com texto, 6 decimais exatos, reversível com `normalizarCambio`) e `compararDecimales` (comparação exata) em `cambio-decimal.ts`. «Corregir» abre com o valor exato da API (sem dirty falso).
+- Local: 2327 verificações, 0 falhas (11 novas); tsc/ESLint/build OK; valores-limite `123456789012.000001`, `.000002`, `999999999999.999999`.

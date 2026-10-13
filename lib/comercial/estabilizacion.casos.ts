@@ -6,7 +6,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { cargarCatalogoComercial } from "@/lib/comercial/carga";
-import { MAX_ENTEROS_CAMBIO, canonicoDecimal, cambioEnAlcance, igualDecimal } from "@/lib/comercial/cambio-decimal";
+import { MAX_ENTEROS_CAMBIO, cambioEnAlcance, canonicoDecimal, compararDecimales, formatearCambio, igualDecimal } from "@/lib/comercial/cambio-decimal";
+import { normalizarCambio } from "@/lib/listas-precio/calculos";
 import { validarFormularioComercial, type FormularioComercial } from "@/lib/comercial/formulario";
 import { ErrorComercial, validarTipoCambio } from "@/lib/comercial/validacion";
 import { textoConfirmarInactivacionComercial } from "@/lib/comercial/vinculos";
@@ -227,6 +228,31 @@ export async function verificarCasosComercialEstabilizacion(): Promise<string[]>
   igual("A07: activar un registro inactivo no pide confirmación; ausencia de conteos = 0", [textoConfirmarInactivacionComercial(fila({ activo: false, clientes: 5 })), textoConfirmarInactivacionComercial({ nombre: "X", activo: true })], [null, null]);
   cierto("A07 servidor: cuenta clientes por la columna que corresponde (canal_venta_id / zona_comercial_id) y SIEMPRE con la empresa del catálogo (empresa_id), junto con listas y reglas, sin tocar los conteos anteriores", /FROM clientes cl WHERE cl\.empresa_id = t\.empresa_id AND cl\.\$\{CFG\[tipo\]\.columnaCliente\} = t\.id\) AS clientes/.test(srv) && /canales: \{[^}]*columnaCliente: "canal_venta_id"/.test(srv) && /zonas: \{[^}]*columnaCliente: "zona_comercial_id"/.test(srv) && /FROM listas_precio l WHERE l\.empresa_id = t\.empresa_id/.test(srv) && /FROM lista_precio_reglas r WHERE r\.empresa_id = t\.empresa_id/.test(srv));
   cierto("A07 pantalla: la inactivación usa el texto con vínculos de listas/reglas Y clientes, muestra la columna «Clientes» y la FK/referencia histórica de Clientes no se toca (solo lectura de conteo)", /textoConfirmarInactivacionComercial\(f\)/.test(pg) && /titulo="Clientes"/.test(pg) && !/UPDATE clientes|DELETE FROM clientes/.test(srv));
+
+  // ── CC-R03-01: presentación, edición y orden sin pérdida de precisión
+  const LIM = ["123456789012.000001", "123456789012.000002", "999999999999.999999"];
+
+  igual("R03 formato es-PY exacto en los límites de numeric(18,6) (el Number+Intl anterior daba «123.456.789.012» y «1.000.000.000.000»)", LIM.map(formatearCambio), ["123.456.789.012,000001", "123.456.789.012,000002", "999.999.999.999,999999"]);
+  igual("R03 el formato anterior con Number perdía la diferencia (control de la regresión)", [new Intl.NumberFormat("es-PY", { maximumFractionDigits: 6 }).format(Number(LIM[0])) === new Intl.NumberFormat("es-PY", { maximumFractionDigits: 6 }).format(Number(LIM[1])), formatearCambio(LIM[0]) === formatearCambio(LIM[1])], [true, false]);
+  igual("R03 valores usuales en formato paraguayo: 7350,5 · 7350.000001 · 7350 · 1,234 (no se confunde con 1.234 miles) · 0,000001 · cero a la izquierda y ceros finales", [
+    formatearCambio("7350.5"), formatearCambio("7350.000001"), formatearCambio("7350.000000"), formatearCambio("1.234"), formatearCambio("0.000001"), formatearCambio("007350.500000"), formatearCambio("1234567"),
+  ], ["7.350,5", "7.350,000001", "7.350", "1,234", "0,000001", "7.350,5", "1.234.567"]);
+  igual("R03 entrada vacía o inválida → vacío (nunca «NaN»)", ["", "abc", "1e5", "-3"].map(formatearCambio), ["", "", "", ""]);
+  igual("R03 ida y vuelta: lo que se pone en «Corregir» (es-PY exacto) vuelve a normalizarse al MISMO decimal almacenado — sin cambio falso y sin dirty", [
+    ...LIM, "7350.5", "7350.000001", "1.234", "0.000001", "7350",
+  ].map((v) => normalizarCambio(formatearCambio(v)) === canonicoDecimal(v) && igualDecimal(normalizarCambio(formatearCambio(v)) ?? "", v)), [true, true, true, true, true, true, true, true]);
+  igual("R03 escribir lo mismo que ya está guardado no cuenta como cambio (el servidor rechaza «la cotización no cambió»); un 0,000001 distinto sí", [igualDecimal(normalizarCambio(formatearCambio(LIM[0])) ?? "", LIM[0]), igualDecimal(normalizarCambio(formatearCambio(LIM[0])) ?? "", LIM[1])], [true, false]);
+  igual("R03 formulario: el valor exacto de «Corregir» pasa la validación (alcance 12+6) incluso en el máximo", [LIM.map((v) => Object.keys(validarFormularioComercial("cambios", { ...f0, id: "x", cambio: formatearCambio(v) }))), cambioEnAlcance(LIM[2])], [[[], [], []], true]);
+  igual("R03 orden exacto: .000001 < .000002 < 999999999999.999999; enteros de distinto largo; fracciones de distinto largo; iguales con ceros", [
+    compararDecimales(LIM[0], LIM[1]), compararDecimales(LIM[1], LIM[0]), compararDecimales(LIM[1], LIM[2]), compararDecimales("999", "1000"), compararDecimales("7350.5", "7350.499999"), compararDecimales("7350.50", "7350.500000"), compararDecimales("", "0"),
+  ], [-1, 1, -1, -1, 1, 0, 0]);
+  igual("R03 ordenar una lista de cotizaciones por cambio conserva el orden decimal exacto (con Number los dos primeros empataban)", [LIM[2], LIM[1], "7350.5", LIM[0], "0.000001"].sort(compararDecimales), ["0.000001", "7350.5", LIM[0], LIM[1], LIM[2]]);
+  {
+    const pgc = leer("app/(private)/catalogos-comerciales/page.tsx");
+
+    cierto("R03 pantalla: ya no hay Number() en la apresentación, la edición ni el orden de la cotización; «Corregir» se abre con formatearCambio del texto de la API, y la tabla y el orden usan los helpers exactos", !/Number\(a\.cambio|Number\(b\.cambio|Number\(f\.cambio|new Intl\.NumberFormat/.test(pgc) && /cambio: formatearCambio\(f\.cambio \?\? ""\)/.test(pgc) && /\{formatearCambio\(f\.cambio \?\? "0"\)\}/.test(pgc) && /return compararDecimales\(a\.cambio \?\? "0", b\.cambio \?\? "0"\)/.test(pgc));
+    cierto("R03 regresión: versión de la cotización, historial, anular y la comparación del servidor siguen como estaban (igualDecimal) y no se tocó el servidor", /igualDecimal\(a\.cambio, nuevo\)/.test(srv) && /UPDATE tipos_cambio SET vigente = false/.test(srv) && /Number\(x\.version \?\? 0\) > Number\(f\.version \?\? 0\)/.test(pgc));
+  }
 
   // ── Preservado: cambio 100 % manual, historial, aislamiento
   cierto("preservado: la cotización sigue 100 % manual (sin fetch/URL externas), sin DELETE (el historial se conserva: corregir retira + inserta, anular retira) y toda consulta lleva empresa_id", !/fetch\(|https?:\/\//.test(srv) && !/DELETE FROM/.test(srv) && /UPDATE tipos_cambio SET vigente = false/.test(srv) && (srv.match(/empresa_id = \$[12]/g) ?? []).length >= 10);
