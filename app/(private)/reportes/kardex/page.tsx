@@ -1,12 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { cargarKardex, descargarKardex } from "@/lib/reportes/cliente-kardex";
-import { neto, textoCambioEstado, textoEstadoMov, textoTipo, textoVinculo } from "@/lib/reportes/export-kardex";
-import { fmtDinero, fmtNum } from "@/lib/reportes/formato";
-import type { KardexFiltros, KardexFila, KardexRespuesta, KardexResumenFila } from "@/types/reportes";
+import { crearCompuerta } from "@/lib/productos/catalogos-carga";
+import { descargarKardex, pedirKardex } from "@/lib/reportes/cliente-kardex";
+import { sgDecimal, textoCambioEstado, textoDeposito, textoEstadoMov, textoPropiedadFila, textoTipo, textoVinculo } from "@/lib/reportes/export-kardex";
+import { fmtCantidadTexto, fmtDinero, fmtNum } from "@/lib/reportes/formato";
+import { esCeroDecimal, etiquetaGrupo, filtrosKardexIguales, netoMovimientos, respuestaKardexVigente } from "@/lib/reportes/kardex-plan";
+import type { KardexFiltros, KardexFila, KardexGrupo, KardexRespuestaApi, KardexResumenFila } from "@/types/reportes";
 
 import styles from "@/components/ui/lista-padrao/reporte.module.css";
 
@@ -14,40 +16,57 @@ const FILTROS_VACIOS: KardexFiltros = {
   vista: "DETALLE", q: "", depositoId: "", tipo: "", usuarioId: "", documento: "", estado: "", estadoStock: "", lote: "", desde: "", hasta: "",
 };
 
-const sgn = (v: number) => (v > 0 ? `+${fmtNum(v)}` : v < 0 ? `−${fmtNum(-v)}` : "0");
+type Catalogos = KardexRespuestaApi["catalogos"];
+const cant = fmtCantidadTexto;
 
 export default function ReporteKardexPage() {
   const [filtros, setFiltros] = useState<KardexFiltros>(FILTROS_VACIOS);
-  const [aplicados, setAplicados] = useState<KardexFiltros>(FILTROS_VACIOS);
+  const [textoAplicado, setTextoAplicado] = useState({ q: "", documento: "", lote: "" });
   const [pagina, setPagina] = useState(1);
-  const [datos, setDatos] = useState<KardexRespuesta | null>(null);
+  const [datos, setDatos] = useState<KardexRespuestaApi | null>(null);
+  // Solo los nombres de los selectores sobreviven a un error (conservan los filtros elegidos); ningún dato del informe se conserva.
+  const [catalogos, setCatalogos] = useState<Catalogos | null>(null);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
+  const [errorExportacion, setErrorExportacion] = useState("");
   const [exportando, setExportando] = useState("");
   const [abierta, setAbierta] = useState("");
+  const compuerta = useRef(crearCompuerta());
 
-  // Texto: se aplica con una pequeña espera; selectores y fechas, de inmediato.
+  // Los campos de texto se aplican con una pequeña espera; selectores y fechas, de inmediato.
   useEffect(() => {
-    const t = setTimeout(() => {
-      setAplicados((a) => (a.q === filtros.q && a.documento === filtros.documento && a.lote === filtros.lote ? a : { ...a, q: filtros.q, documento: filtros.documento, lote: filtros.lote }));
-    }, 300);
+    const t = setTimeout(() => setTextoAplicado({ q: filtros.q, documento: filtros.documento, lote: filtros.lote }), 300);
+
     return () => clearTimeout(t);
   }, [filtros.q, filtros.documento, filtros.lote]);
 
-  useEffect(() => {
-    setAplicados((a) => ({ ...filtros, q: a.q, documento: a.documento, lote: a.lote }));
-  }, [filtros.vista, filtros.depositoId, filtros.tipo, filtros.usuarioId, filtros.estado, filtros.estadoStock, filtros.desde, filtros.hasta]); // eslint-disable-line react-hooks/exhaustive-deps
+  const aplicados = useMemo(() => ({ ...filtros, ...textoAplicado }), [filtros, textoAplicado]);
 
-  useEffect(() => {
-    let activo = true;
+  // La última solicitud iniciada gana; ante cualquier falla se descartan los datos anteriores y se conservan los filtros.
+  const cargar = useCallback(async () => {
+    const sol = compuerta.current.nueva();
+
     setCargando(true);
     setError("");
-    cargarKardex(aplicados, pagina)
-      .then((r) => { if (activo) setDatos(r); })
-      .catch((e: unknown) => { if (activo) setError(e instanceof Error ? e.message : "No fue posible generar el reporte."); })
-      .finally(() => { if (activo) setCargando(false); });
-    return () => { activo = false; };
+
+    const r = await pedirKardex(aplicados, pagina);
+
+    if (!compuerta.current.vigente(sol)) return;
+    setDatos(r.datos);
+    if (r.datos) setCatalogos(r.datos.catalogos);
+    setError(r.error);
+    setCargando(false);
   }, [aplicados, pagina]);
+
+  useEffect(() => {
+    const actual = compuerta.current;
+    const t = setTimeout(() => void cargar(), 0);
+
+    return () => {
+      clearTimeout(t);
+      actual.nueva();
+    };
+  }, [cargar]);
 
   const cambiar = (parcial: Partial<KardexFiltros>) => {
     setPagina(1);
@@ -55,25 +74,33 @@ export default function ReporteKardexPage() {
     setFiltros((f) => ({ ...f, ...parcial }));
   };
 
+  // Solo se muestran y exportan datos que corresponden EXACTAMENTE a los filtros y la página vigentes.
+  const actual = datos && respuestaKardexVigente(datos, error, aplicados, pagina) ? datos : null;
+  const puedeExportar = actual?.permisos.exportar === true;
   const exportar = async (formato: "xlsx" | "pdf") => {
+    if (!actual || !puedeExportar) return;
     setExportando(formato);
-    setError("");
+    setErrorExportacion("");
     try {
-      await descargarKardex(aplicados, formato);
+      await descargarKardex(actual.filtros, formato);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "No fue posible exportar el reporte.");
+      setErrorExportacion(e instanceof Error ? e.message : "No fue posible exportar el reporte.");
     } finally {
       setExportando("");
     }
   };
 
-  const t = datos?.totales;
-  const total = datos?.pagina.totalFilas ?? 0;
-  const tamano = datos?.pagina.tamano ?? 50;
+  const t = actual?.totales;
+  const total = actual?.pagina.totalFilas ?? 0;
+  const tamano = actual?.pagina.tamano ?? 50;
   const paginas = Math.max(1, Math.ceil(total / tamano));
   const detalle = aplicados.vista === "DETALLE";
-  const hayFiltros = JSON.stringify({ ...filtros, vista: "" }) !== JSON.stringify({ ...FILTROS_VACIOS, vista: "" });
-  const cc = datos?.conciliacion;
+  const hayFiltros = !filtrosKardexIguales({ ...filtros, vista: FILTROS_VACIOS.vista }, FILTROS_VACIOS);
+  const cc = actual?.conciliacion;
+  const fl = t?.filtrosDeFila === true;
+  const depositos = catalogos?.depositos ?? [];
+  const costo = (f: KardexFila) => (f.costoUnitario === null ? "—" : `${fmtDinero(f.costoUnitario)} ${f.moneda}`.trim());
+  const costoTotal = (f: KardexFila) => (f.costoTotal === null ? "—" : `${fmtDinero(f.costoTotal)} ${f.moneda}`.trim());
 
   return (
     <section className={styles.page}>
@@ -86,48 +113,41 @@ export default function ReporteKardexPage() {
           </nav>
           <h1>Kardex de movimientos</h1>
           <p>
-            Libro de movimientos con saldo acumulado por producto, depósito y lote.
-            {datos ? ` ${datos.empresa.nombre} · generado ${datos.generado}.` : ""}
+            Libro de movimientos con saldo acumulado por producto, depósito y lote (stock propio y de terceros por separado).
+            {actual ? ` ${actual.empresa.nombre} · generado ${actual.generado}.` : ""}
           </p>
         </div>
 
         <div className={styles.heroActions}>
           <Link href="/reportes" className={styles.secondaryButton}>Reportes</Link>
-          <button type="button" className={styles.secondaryButton} disabled={!!exportando || cargando} onClick={() => exportar("xlsx")}>
-            {exportando === "xlsx" ? "Generando..." : "Descargar Excel (.xlsx)"}
-          </button>
-          <button type="button" className={styles.primaryButton} disabled={!!exportando || cargando} onClick={() => exportar("pdf")}>
-            {exportando === "pdf" ? "Generando..." : "Exportar PDF"}
-          </button>
+          {puedeExportar ? (
+            <>
+              <button type="button" className={styles.secondaryButton} disabled={!!exportando || cargando} onClick={() => exportar("xlsx")}>
+                {exportando === "xlsx" ? "Generando..." : "Descargar Excel (.xlsx)"}
+              </button>
+              <button type="button" className={styles.primaryButton} disabled={!!exportando || cargando} onClick={() => exportar("pdf")}>
+                {exportando === "pdf" ? "Generando..." : "Exportar PDF"}
+              </button>
+            </>
+          ) : null}
         </div>
       </header>
 
       <section className={styles.summaryGrid}>
         <article className={[styles.summaryCard, styles.summaryTeal].join(" ")}>
-          <span>SALDO INICIAL REAL (FÍSICO)</span>
-          <strong>{t ? fmtNum(t.saldoInicial.fisico) : "—"}</strong>
-          <small>Antes del período{filtros.desde ? ` (${filtros.desde})` : ""}</small>
+          <span>MOVIMIENTOS DEL FILTRO</span>
+          <strong>{t ? fmtNum(t.filas) : "—"}</strong>
+          <small>{t ? `${fmtNum(t.grupos.length)} grupo(s) por unidad y propiedad` : "Según los filtros activos"}</small>
         </article>
         <article className={[styles.summaryCard, styles.summaryBlue].join(" ")}>
-          <span>{t?.filtrosDeFila ? "ENTRADAS / SALIDAS (FILTRADAS)" : "ENTRADAS / SALIDAS"}</span>
-          <strong>{t ? `${fmtNum(t.filtrado.entradas)} / ${fmtNum(t.filtrado.salidas)}` : "—"}</strong>
-          <small>
-            {t?.filtrosDeFila
-              ? `Del período completo: ${fmtNum(t.completo.entradas)} / ${fmtNum(t.completo.salidas)}`
-              : `Sin transferencias · ${t ? fmtNum(t.filtrado.anulaciones) : "—"} anulaciones`}
-          </small>
+          <span>UNIDADES Y PROPIEDAD</span>
+          <strong>{t ? fmtNum(t.grupos.length) : "—"}</strong>
+          <small>Las cantidades se suman solo dentro de cada grupo (ver totales)</small>
         </article>
-        <article className={[styles.summaryCard, styles.summaryAmber].join(" ")}>
-          <span>{t?.filtrosDeFila ? "TRANSFERENCIAS (FILTRADAS)" : "TRANSFERENCIAS"}</span>
-          <strong>{t ? `${fmtNum(t.filtrado.transfEntradas)} / ${fmtNum(t.filtrado.transfSalidas)}` : "—"}</strong>
-          <small>
-            {t?.filtrosDeFila ? `Del período completo: ${fmtNum(t.completo.transfEntradas)} / ${fmtNum(t.completo.transfSalidas)}` : "Entrada / salida · se compensan en el consolidado"}
-          </small>
-        </article>
-        <article className={[styles.summaryCard, styles.summaryPurple].join(" ")}>
-          <span>SALDO FINAL REAL (FÍSICO)</span>
-          <strong>{t ? fmtNum(t.saldoFinal.fisico) : "—"}</strong>
-          <small>{t ? `Disp. ${fmtNum(t.saldoFinal.disponible)} · Res. ${fmtNum(t.saldoFinal.reservado)} · Cuar. ${fmtNum(t.saldoFinal.cuarentena)}` : "—"}</small>
+        <article className={[styles.summaryCard, t && !t.cuadra ? styles.summaryRed : styles.summaryPurple].join(" ")}>
+          <span>CUADRE DEL LIBRO</span>
+          <strong>{t ? (t.cuadra ? "Cuadra" : "No cuadra") : "—"}</strong>
+          <small>Saldo inicial + movimientos = saldo final (exacto)</small>
         </article>
         <article className={[styles.summaryCard, cc && !cc.conciliado ? styles.summaryRed : styles.summaryTeal].join(" ")}>
           <span>CONCILIACIÓN CON STOCK</span>
@@ -169,14 +189,14 @@ export default function ReporteKardexPage() {
             <span>Depósito</span>
             <select value={filtros.depositoId} onChange={(e) => cambiar({ depositoId: e.target.value })}>
               <option value="">Todos</option>
-              {(datos?.catalogos.depositos ?? []).map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
+              {depositos.map((d) => <option key={d.id} value={d.id}>{d.nombre}{d.activo ? "" : " (inactivo)"}</option>)}
             </select>
           </label>
           <label>
             <span>Tipo</span>
             <select value={filtros.tipo} onChange={(e) => cambiar({ tipo: e.target.value })}>
               <option value="">Todos</option>
-              {(datos?.catalogos.tipos ?? []).map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
+              {(catalogos?.tipos ?? []).map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
             </select>
           </label>
           <label>
@@ -200,7 +220,7 @@ export default function ReporteKardexPage() {
             <span>Usuario</span>
             <select value={filtros.usuarioId} onChange={(e) => cambiar({ usuarioId: e.target.value })}>
               <option value="">Todos</option>
-              {(datos?.catalogos.usuarios ?? []).map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
+              {(catalogos?.usuarios ?? []).map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
             </select>
           </label>
           <label>
@@ -219,38 +239,87 @@ export default function ReporteKardexPage() {
           ) : null}
         </div>
 
+        {t && t.grupos.length > 0 ? (
+          <details className={styles.policyNote} open>
+            <summary><strong>Totales por unidad de medida y propiedad</strong> (sin mezclar unidades ni propietarios; sin total general)</summary>
+            <div className={styles.tableWrap}>
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    <th>Unidad · propiedad</th><th className={styles.num}>Saldo inicial</th>
+                    <th className={styles.num}>{fl ? "Entradas filtradas" : "Entradas"}</th><th className={styles.num}>{fl ? "Salidas filtradas" : "Salidas"}</th>
+                    <th className={styles.num}>{fl ? "Transf. entrada filtrada" : "Transf. entrada"}</th><th className={styles.num}>{fl ? "Transf. salida filtrada" : "Transf. salida"}</th>
+                    {fl ? <th className={styles.num}>Fuera del filtro (neto)</th> : null}
+                    <th className={styles.num}>Saldo final</th><th className={styles.num}>Disponible</th><th className={styles.num}>Reservado</th><th className={styles.num}>Cuarentena</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {t.grupos.map((g: KardexGrupo) => {
+                    const r = detalle ? null : g.resumen;
+
+                    return (
+                      <tr key={g.clave}>
+                        <td>{etiquetaGrupo(g)}{g.cuadra ? "" : " · NO CUADRA"}</td>
+                        <td className={styles.num}>{cant(r ? r.saldoInicial : g.saldoInicial.fisico)}</td>
+                        <td className={styles.num}>{cant(r ? r.entradas : g.filtrado.entradas)}</td><td className={styles.num}>{cant(r ? r.salidas : g.filtrado.salidas)}</td>
+                        <td className={styles.num}>{cant(r ? r.transfEntradas : g.filtrado.transfEntradas)}</td><td className={styles.num}>{cant(r ? r.transfSalidas : g.filtrado.transfSalidas)}</td>
+                        {fl ? <td className={styles.num}>{sgDecimal(r ? r.fueraDelFiltro : netoMovimientos(g.fueraDelFiltro))}</td> : null}
+                        <td className={styles.num}><strong>{cant(r ? r.saldoFinal : g.saldoFinal.fisico)}</strong></td>
+                        <td className={styles.num}>{cant(r ? r.finalDisponible : g.saldoFinal.disponible)}</td>
+                        <td className={styles.num}>{cant(r ? r.finalReservado : g.saldoFinal.reservado)}</td>
+                        <td className={styles.num}>{cant(r ? r.finalCuarentena : g.saldoFinal.cuarentena)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </details>
+        ) : null}
+
         {cc && !cc.conciliado ? (
           <div className={styles.alertBox}>
-            El libro de movimientos no coincide con los saldos de Stock en {fmtNum(cc.divergentes)} de {fmtNum(cc.combinaciones)} combinaciones producto × depósito × lote
+            El libro de movimientos no coincide con los saldos de Stock en {fmtNum(cc.divergentes)} de {fmtNum(cc.combinaciones)} combinaciones producto × depósito × lote × propiedad
             (stock cargado fuera del libro de movimientos). Los saldos acumulados de esas combinaciones no son confiables.
           </div>
         ) : cc && cc.combinaciones > 0 ? (
-          <div className={styles.okBox}>Libro de movimientos conciliado con Stock en {fmtNum(cc.combinaciones)} combinaciones producto × depósito × lote.</div>
+          <div className={styles.okBox}>Libro de movimientos conciliado con Stock en {fmtNum(cc.combinaciones)} combinaciones producto × depósito × lote × propiedad.</div>
         ) : null}
-        {t?.filtrosDeFila ? (
+        {t && fl ? (
           <div className={styles.okBox}>
             <strong>Totales filtrados ≠ variación del saldo.</strong> Las filas y los totales de movimientos corresponden solo a los filtros de tipo, usuario, documento o estado; los saldos inicial y final son los reales del libro.
-            {" "}Conciliación completa del período: saldo inicial {fmtNum(t.saldoInicial.fisico)} + movimientos filtrados {sgn(neto(t.filtrado))} + movimientos fuera del filtro {sgn(neto(t.fueraDelFiltro))} = saldo final {fmtNum(t.saldoFinal.fisico)}.
+            {t.grupos.map((g) => (
+              <div key={g.clave}>
+                {etiquetaGrupo(g)}: saldo inicial {cant(g.saldoInicial.fisico)} + movimientos filtrados {sgDecimal(netoMovimientos(g.filtrado))} + movimientos fuera del filtro {sgDecimal(netoMovimientos(g.fueraDelFiltro))} = saldo final {cant(g.saldoFinal.fisico)}.
+              </div>
+            ))}
           </div>
         ) : null}
         {t && !t.cuadra ? (
           <div className={styles.alertBox}>Inconsistencia del libro: el saldo inicial más los movimientos del período no coincide con el saldo final. Informe a soporte antes de usar este reporte.</div>
         ) : null}
-        {error ? <div className={styles.errorBox}>{error}</div> : null}
+        {error ? (
+          <div className={styles.errorBox} role="alert">
+            {error} No se muestran ni se exportan datos anteriores; los filtros se conservan.{" "}
+            <button type="button" className={styles.clearButton} onClick={() => void cargar()}>Reintentar</button>
+          </div>
+        ) : null}
+        {errorExportacion ? <div className={styles.errorBox} role="alert">{errorExportacion}</div> : null}
+        {actual && !puedeExportar ? <div className={styles.alertBox}>Su perfil puede consultar este reporte, pero no exportarlo (requiere el permiso Exportar de Reportes).</div> : null}
 
-        <div className={styles.tableWrap}>
+        <div className={styles.tableWrap} aria-busy={cargando}>
           {detalle ? (
             <table className={styles.table}>
               <thead>
                 <tr>
-                  <th>Fecha y hora</th><th>Movimiento</th><th>Tipo · origen</th><th>Estado</th><th>Documento</th><th>Producto</th><th>Depósito</th><th>Lote</th>
+                  <th>Fecha y hora</th><th>Movimiento</th><th>Tipo · origen</th><th>Estado</th><th>Documento</th><th>Producto</th><th>Unidad</th><th>Depósito</th><th>Lote</th><th>Propiedad</th>
                   <th className={styles.num}>Entrada</th><th className={styles.num}>Salida</th><th>Cambio de estado</th>
                   <th className={styles.num}>Saldo físico</th><th className={styles.num}>Disponible</th><th className={styles.num}>Reservado</th><th className={styles.num}>Cuarentena</th>
                   <th className={styles.num}>Costo unit.</th><th className={styles.num}>Costo total</th><th>Usuario</th><th>Vinculado</th><th />
                 </tr>
               </thead>
               <tbody>
-                {(datos?.filas ?? []).map((f: KardexFila) => (
+                {(actual?.filas ?? []).map((f: KardexFila) => (
                   <Fragment key={f.clave}>
                     <tr>
                       <td>{f.fechaRegistro} {f.horaRegistro.slice(0, 5)}{f.retroactivo ? <span className={styles.muted}> · mov. {f.fechaMovimiento}</span> : null}</td>
@@ -259,29 +328,31 @@ export default function ReporteKardexPage() {
                       <td><span className={[styles.badge, styles[`badge${f.estado}`]].join(" ")}>{textoEstadoMov(f.estado)}</span></td>
                       <td>{f.documento || "—"}</td>
                       <td className={styles.desc} title={f.productoDescripcion}>{f.productoCodigo} · {f.productoDescripcion}</td>
-                      <td>{f.deposito}{f.contraparte ? <span className={styles.muted}> ({f.efecto === "ENTRADA" ? "desde" : "hacia"} {f.contraparte})</span> : null}</td>
+                      <td>{f.unidad || "—"}</td>
+                      <td>{textoDeposito(f)}</td>
                       <td>{f.lote || "—"}</td>
-                      <td className={[styles.num, styles.pos].join(" ")}>{f.entrada ? fmtNum(f.entrada) : ""}</td>
-                      <td className={[styles.num, styles.neg].join(" ")}>{f.salida ? fmtNum(f.salida) : ""}</td>
+                      <td>{textoPropiedadFila(f)}</td>
+                      <td className={[styles.num, styles.pos].join(" ")}>{esCeroDecimal(f.entrada) ? "" : cant(f.entrada)}</td>
+                      <td className={[styles.num, styles.neg].join(" ")}>{esCeroDecimal(f.salida) ? "" : cant(f.salida)}</td>
                       <td>{textoCambioEstado(f) || ""}</td>
-                      <td className={styles.num}><strong>{fmtNum(f.saldoFisico)}</strong></td>
-                      <td className={styles.num}>{fmtNum(f.saldoDisponible)}</td>
-                      <td className={styles.num}>{fmtNum(f.saldoReservado)}</td>
-                      <td className={styles.num}>{fmtNum(f.saldoCuarentena)}</td>
-                      <td className={styles.num}>{fmtDinero(f.costoUnitario)}</td>
-                      <td className={styles.num}>{fmtDinero(f.costoTotal)}</td>
+                      <td className={styles.num}><strong>{cant(f.saldoFisico)}</strong></td>
+                      <td className={styles.num}>{cant(f.saldoDisponible)}</td>
+                      <td className={styles.num}>{cant(f.saldoReservado)}</td>
+                      <td className={styles.num}>{cant(f.saldoCuarentena)}</td>
+                      <td className={styles.num}>{costo(f)}</td>
+                      <td className={styles.num}>{costoTotal(f)}</td>
                       <td>{f.usuario || "—"}</td>
                       <td>{textoVinculo(f) || "—"}</td>
                       <td><button type="button" className={styles.rowToggle} aria-expanded={abierta === f.clave} onClick={() => setAbierta(abierta === f.clave ? "" : f.clave)}>{abierta === f.clave ? "Ocultar" : "Ver"}</button></td>
                     </tr>
                     {abierta === f.clave ? (
                       <tr className={styles.detailRow}>
-                        <td colSpan={20}>
+                        <td colSpan={22}>
                           <strong>{f.numero}</strong> · {textoTipo(f)} · registrado {f.fechaRegistro} {f.horaRegistro} (fecha del movimiento {f.fechaMovimiento}) por {f.usuario || "—"}.
-                          {" "}Producto {f.productoCodigo} · {f.productoDescripcion}; depósito {f.deposito}{f.lote ? `; lote ${f.lote}` : ""}.
-                          {" "}Efecto: disponible {sgn(f.dDisponible)}, reservado {sgn(f.dReservado)}, cuarentena {sgn(f.dCuarentena)}.
+                          {" "}Producto {f.productoCodigo} · {f.productoDescripcion} ({f.unidad || "sin unidad"}); depósito {textoDeposito(f)}{f.lote ? `; lote ${f.lote}` : ""}; {textoPropiedadFila(f)}.
+                          {" "}Efecto: disponible {sgDecimal(f.dDisponible)}, reservado {sgDecimal(f.dReservado)}, cuarentena {sgDecimal(f.dCuarentena)}.
                           {" "}Motivo: {f.motivo || "—"}. Observación: {f.observacion || "—"}. Documento: {f.documento || "—"}.
-                          {f.costoTotal !== null ? ` Costo registrado: ${fmtDinero(f.costoUnitario)} por unidad, ${fmtDinero(f.costoTotal)} en total (${f.moneda}).` : " Sin costo registrado en este movimiento."}
+                          {f.costoTotal !== null ? ` Costo registrado: ${fmtDinero(f.costoUnitario)} por unidad, ${fmtDinero(f.costoTotal)} en total (${f.moneda}).` : f.propiedad === "TERCERO" ? " Stock de terceros: sin costo patrimonial." : " Sin costo registrado en esta fila (reservas, entrada de una transferencia o movimiento sin costo)."}
                           {textoVinculo(f) ? ` ${textoVinculo(f)}.` : ""}
                         </td>
                       </tr>
@@ -289,98 +360,45 @@ export default function ReporteKardexPage() {
                   </Fragment>
                 ))}
               </tbody>
-              {datos && t && (datos.filas.length > 0 || t.saldoInicial.fisico !== 0 || t.saldoFinal.fisico !== 0) ? (
-                <tfoot>
-                  <tr>
-                    <td colSpan={8}>SALDO INICIAL REAL (todos los movimientos anteriores al período)</td><td /><td /><td />
-                    <td className={styles.num}>{fmtNum(t.saldoInicial.fisico)}</td><td className={styles.num}>{fmtNum(t.saldoInicial.disponible)}</td>
-                    <td className={styles.num}>{fmtNum(t.saldoInicial.reservado)}</td><td className={styles.num}>{fmtNum(t.saldoInicial.cuarentena)}</td><td colSpan={5} />
-                  </tr>
-                  <tr>
-                    <td colSpan={8}>{t.filtrosDeFila ? "MOVIMIENTOS FILTRADOS (sin transferencias; todo el filtro)" : "TOTAL MOVIMIENTOS (sin transferencias; todo el filtro)"}</td>
-                    <td className={styles.num}>{fmtNum(t.filtrado.entradas)}</td><td className={styles.num}>{fmtNum(t.filtrado.salidas)}</td><td colSpan={9} />
-                  </tr>
-                  <tr>
-                    <td colSpan={8}>{t.filtrosDeFila ? "TRANSFERENCIAS FILTRADAS (entrada / salida)" : "TRANSFERENCIAS (entrada / salida; se compensan en el consolidado)"}</td>
-                    <td className={styles.num}>{fmtNum(t.filtrado.transfEntradas)}</td><td className={styles.num}>{fmtNum(t.filtrado.transfSalidas)}</td><td colSpan={9} />
-                  </tr>
-                  {t.filtrosDeFila ? (
-                    <>
-                      <tr>
-                        <td colSpan={8}>MOVIMIENTOS FUERA DEL FILTRO (sin transferencias; no incluidos en las filas)</td>
-                        <td className={styles.num}>{fmtNum(t.fueraDelFiltro.entradas)}</td><td className={styles.num}>{fmtNum(t.fueraDelFiltro.salidas)}</td><td colSpan={9} />
-                      </tr>
-                      <tr>
-                        <td colSpan={8}>TRANSFERENCIAS FUERA DEL FILTRO (entrada / salida)</td>
-                        <td className={styles.num}>{fmtNum(t.fueraDelFiltro.transfEntradas)}</td><td className={styles.num}>{fmtNum(t.fueraDelFiltro.transfSalidas)}</td><td colSpan={9} />
-                      </tr>
-                    </>
-                  ) : null}
-                  <tr>
-                    <td colSpan={8}>SALDO FINAL REAL</td><td /><td /><td />
-                    <td className={styles.num}>{fmtNum(t.saldoFinal.fisico)}</td><td className={styles.num}>{fmtNum(t.saldoFinal.disponible)}</td>
-                    <td className={styles.num}>{fmtNum(t.saldoFinal.reservado)}</td><td className={styles.num}>{fmtNum(t.saldoFinal.cuarentena)}</td><td colSpan={5} />
-                  </tr>
-                </tfoot>
-              ) : null}
             </table>
           ) : (
             <table className={styles.table}>
               <thead>
                 <tr>
-                  <th>Código</th><th>Producto</th><th>Depósito</th><th>Lote</th>
+                  <th>Código</th><th>Producto</th><th>Unidad</th><th>Depósito</th><th>Lote</th><th>Propiedad</th>
                   <th className={styles.num}>Saldo inicial</th>
-                  <th className={styles.num}>{t?.filtrosDeFila ? "Entradas filtradas" : "Entradas"}</th><th className={styles.num}>{t?.filtrosDeFila ? "Salidas filtradas" : "Salidas"}</th>
-                  <th className={styles.num}>{t?.filtrosDeFila ? "Transf. entrada filtrada" : "Transf. entrada"}</th><th className={styles.num}>{t?.filtrosDeFila ? "Transf. salida filtrada" : "Transf. salida"}</th>
-                  {t?.filtrosDeFila ? <th className={styles.num}>Fuera del filtro (neto)</th> : null}
+                  <th className={styles.num}>{fl ? "Entradas filtradas" : "Entradas"}</th><th className={styles.num}>{fl ? "Salidas filtradas" : "Salidas"}</th>
+                  <th className={styles.num}>{fl ? "Transf. entrada filtrada" : "Transf. entrada"}</th><th className={styles.num}>{fl ? "Transf. salida filtrada" : "Transf. salida"}</th>
+                  {fl ? <th className={styles.num}>Fuera del filtro (neto)</th> : null}
                   <th className={styles.num}>Saldo final</th>
                   <th className={styles.num}>Disponible</th><th className={styles.num}>Reservado</th><th className={styles.num}>Cuarentena</th>
                 </tr>
               </thead>
               <tbody>
-                {(datos?.resumen ?? []).map((f: KardexResumenFila) => (
+                {(actual?.resumen ?? []).map((f: KardexResumenFila) => (
                   <tr key={f.clave}>
-                    <td>{f.productoCodigo}</td><td className={styles.desc} title={f.productoDescripcion}>{f.productoDescripcion}</td><td>{f.deposito}</td><td>{f.lote || "—"}</td>
-                    <td className={styles.num}>{fmtNum(f.saldoInicial)}</td><td className={styles.num}>{fmtNum(f.entradas)}</td><td className={styles.num}>{fmtNum(f.salidas)}</td>
-                    <td className={styles.num}>{fmtNum(f.transfEntradas)}</td><td className={styles.num}>{fmtNum(f.transfSalidas)}</td>
-                    {t?.filtrosDeFila ? <td className={styles.num}>{sgn(f.fueraDelFiltro)}</td> : null}
-                    <td className={styles.num}><strong>{fmtNum(f.saldoFinal)}</strong></td>
-                    <td className={styles.num}>{fmtNum(f.finalDisponible)}</td><td className={styles.num}>{fmtNum(f.finalReservado)}</td><td className={styles.num}>{fmtNum(f.finalCuarentena)}</td>
+                    <td>{f.productoCodigo}</td><td className={styles.desc} title={f.productoDescripcion}>{f.productoDescripcion}</td><td>{f.unidad || "—"}</td>
+                    <td>{f.deposito}{f.depositoInactivo ? " (inactivo)" : ""}</td><td>{f.lote || "—"}</td><td>{textoPropiedadFila(f)}</td>
+                    <td className={styles.num}>{cant(f.saldoInicial)}</td><td className={styles.num}>{cant(f.entradas)}</td><td className={styles.num}>{cant(f.salidas)}</td>
+                    <td className={styles.num}>{cant(f.transfEntradas)}</td><td className={styles.num}>{cant(f.transfSalidas)}</td>
+                    {fl ? <td className={styles.num}>{sgDecimal(f.fueraDelFiltro)}</td> : null}
+                    <td className={styles.num}><strong>{cant(f.saldoFinal)}</strong></td>
+                    <td className={styles.num}>{cant(f.finalDisponible)}</td><td className={styles.num}>{cant(f.finalReservado)}</td><td className={styles.num}>{cant(f.finalCuarentena)}</td>
                   </tr>
                 ))}
               </tbody>
-              {datos && t?.resumen && datos.resumen.length > 0 ? (
-                <tfoot>
-                  <tr>
-                    <td colSpan={4}>{t.filtrosDeFila ? "TOTAL FILAS MOSTRADAS (combinaciones con movimientos filtrados)" : "TOTAL (todo el filtro)"}</td>
-                    <td className={styles.num}>{fmtNum(t.resumen.saldoInicial)}</td><td className={styles.num}>{fmtNum(t.resumen.entradas)}</td><td className={styles.num}>{fmtNum(t.resumen.salidas)}</td>
-                    <td className={styles.num}>{fmtNum(t.resumen.transfEntradas)}</td><td className={styles.num}>{fmtNum(t.resumen.transfSalidas)}</td>
-                    {t.filtrosDeFila ? <td className={styles.num}>{sgn(t.resumen.fueraDelFiltro)}</td> : null}
-                    <td className={styles.num}>{fmtNum(t.resumen.saldoFinal)}</td>
-                    <td className={styles.num}>{fmtNum(t.resumen.finalDisponible)}</td><td className={styles.num}>{fmtNum(t.resumen.finalReservado)}</td><td className={styles.num}>{fmtNum(t.resumen.finalCuarentena)}</td>
-                  </tr>
-                  {t.filtrosDeFila ? (
-                    <tr>
-                      <td colSpan={4}>CONCILIACIÓN COMPLETA (todas las combinaciones y todos los movimientos del período)</td>
-                      <td className={styles.num}>{fmtNum(t.saldoInicial.fisico)}</td><td className={styles.num}>{fmtNum(t.completo.entradas)}</td><td className={styles.num}>{fmtNum(t.completo.salidas)}</td>
-                      <td className={styles.num}>{fmtNum(t.completo.transfEntradas)}</td><td className={styles.num}>{fmtNum(t.completo.transfSalidas)}</td><td />
-                      <td className={styles.num}>{fmtNum(t.saldoFinal.fisico)}</td>
-                      <td className={styles.num}>{fmtNum(t.saldoFinal.disponible)}</td><td className={styles.num}>{fmtNum(t.saldoFinal.reservado)}</td><td className={styles.num}>{fmtNum(t.saldoFinal.cuarentena)}</td>
-                    </tr>
-                  ) : null}
-                </tfoot>
-              ) : null}
             </table>
           )}
         </div>
 
-        {datos && total === 0 && !cargando ? (
+        {actual && total === 0 && !cargando ? (
           <div className={styles.empty}>
             <strong>No se encontraron movimientos.</strong>
             <span>{hayFiltros ? "Modifique los filtros aplicados." : "Aún no hay movimientos de inventario."}</span>
           </div>
         ) : null}
-        {!datos && cargando ? <div className={styles.empty}><strong>Cargando reporte...</strong></div> : null}
+        {!actual && cargando ? <div className={styles.empty}><strong>Cargando reporte...</strong></div> : null}
+        {!actual && !cargando && error ? <div className={styles.empty}><strong>No se pudo generar el reporte</strong><span>Use «Reintentar» para volver a consultar con los mismos filtros.</span></div> : null}
 
         <footer className={styles.pagination}>
           <span>
@@ -394,7 +412,7 @@ export default function ReporteKardexPage() {
         </footer>
 
         <ul className={styles.notes}>
-          {(datos?.cobertura ?? []).map((n) => <li key={n}>{n}</li>)}
+          {(actual?.cobertura ?? []).map((n) => <li key={n}>{n}</li>)}
         </ul>
       </section>
     </section>

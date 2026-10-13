@@ -201,7 +201,10 @@ export type KardexFiltros = {
   hasta: string;
 };
 
-export type KardexSaldos = { disponible: number; reservado: number; cuarentena: number; fisico: number };
+export type PropiedadKardex = "PROPIO" | "TERCERO";
+
+/** Todas las cantidades del Kardex son texto `numeric` exacto de PostgreSQL (nunca float). */
+export type KardexSaldos = { disponible: string; reservado: string; cuarentena: string; fisico: string };
 
 export type KardexFila = {
   clave: string;
@@ -220,24 +223,31 @@ export type KardexFila = {
   usuario: string;
   productoCodigo: string;
   productoDescripcion: string;
+  /** Unidad de medida del producto: las cantidades de unidades distintas nunca se suman. */
+  unidad: string;
   deposito: string;
-  /** Otro depósito de la transferencia ("" si no aplica). */
+  depositoInactivo: boolean;
+  /** Otro depósito de la transferencia: solo su nombre si está en el alcance del usuario; si no, «Otro depósito (sin acceso)». "" si no aplica. */
   contraparte: string;
   lote: string;
-  propiedad: string;
+  propiedad: PropiedadKardex;
+  /** "" para stock propio; para terceros, el propietario identificado (o «propietario no registrado»). */
+  propietario: string;
   /** ENTRADA/SALIDA = cambio de cantidad física; ESTADO = reserva/cuarentena (el físico no cambia). */
   efecto: "ENTRADA" | "SALIDA" | "ESTADO";
-  entrada: number;
-  salida: number;
-  dDisponible: number;
-  dReservado: number;
-  dCuarentena: number;
-  saldoDisponible: number;
-  saldoReservado: number;
-  saldoCuarentena: number;
-  saldoFisico: number;
+  entrada: string;
+  salida: string;
+  dDisponible: string;
+  dReservado: string;
+  dCuarentena: string;
+  saldoDisponible: string;
+  saldoReservado: string;
+  saldoCuarentena: string;
+  saldoFisico: string;
+  /** Costo REGISTRADO en la línea del movimiento (null = no existe; nunca el costo promedio actual). Solo stock propio; en transferencias solo en la fila de salida. */
   costoUnitario: string | null;
   costoTotal: string | null;
+  /** Moneda del costo de la línea ("" si no hay costo). */
   moneda: string;
   /** Número del movimiento vinculado: el que anula a este, o el anulado por este. */
   vinculado: string;
@@ -248,53 +258,59 @@ export type KardexResumenFila = {
   clave: string;
   productoCodigo: string;
   productoDescripcion: string;
+  unidad: string;
   deposito: string;
+  depositoInactivo: boolean;
   lote: string;
-  propiedad: string;
-  saldoInicial: number;
+  propiedad: PropiedadKardex;
+  propietario: string;
+  saldoInicial: string;
   /** Movimientos que cumplen los filtros de fila (sin filtros de fila: todos los del período). */
-  entradas: number;
-  salidas: number;
-  transfEntradas: number;
-  transfSalidas: number;
+  entradas: string;
+  salidas: string;
+  transfEntradas: string;
+  transfSalidas: string;
   /** Variación neta física de los movimientos del período que quedan FUERA de los filtros de fila (0 sin filtros). */
-  fueraDelFiltro: number;
-  saldoFinal: number;
-  finalDisponible: number;
-  finalReservado: number;
-  finalCuarentena: number;
+  fueraDelFiltro: string;
+  saldoFinal: string;
+  finalDisponible: string;
+  finalReservado: string;
+  finalCuarentena: string;
 };
 
 /** Cantidades físicas de un conjunto de movimientos (transferencias aparte; se compensan en el consolidado). */
 export type KardexMovimientos = {
   /** Entradas/salidas físicas SIN transferencias (incluyen reversiones por anulación). */
-  entradas: number;
-  salidas: number;
-  transfEntradas: number;
-  transfSalidas: number;
+  entradas: string;
+  salidas: string;
+  transfEntradas: string;
+  transfSalidas: string;
   cambiosEstado: number;
   anulaciones: number;
 };
 
 export type KardexResumenTotales = {
   filas: number;
-  saldoInicial: number;
-  entradas: number;
-  salidas: number;
-  transfEntradas: number;
-  transfSalidas: number;
-  fueraDelFiltro: number;
-  saldoFinal: number;
-  finalDisponible: number;
-  finalReservado: number;
-  finalCuarentena: number;
+  saldoInicial: string;
+  entradas: string;
+  salidas: string;
+  transfEntradas: string;
+  transfSalidas: string;
+  fueraDelFiltro: string;
+  saldoFinal: string;
+  finalDisponible: string;
+  finalReservado: string;
+  finalCuarentena: string;
 };
 
-export type KardexTotales = {
-  /** Filas que cumplen todos los filtros (movimientos del DETALLE). */
+/** Totales de UN grupo homogéneo: unidad de medida × propiedad × propietario. Nunca se mezclan grupos distintos. */
+export type KardexGrupo = {
+  clave: string;
+  unidad: string;
+  propiedad: PropiedadKardex;
+  propietario: string;
+  /** Movimientos (filas) del grupo que cumplen todos los filtros. */
   filas: number;
-  /** Hay filtros de tipo/usuario/documento/estado/estado de stock (filtros de fila). */
-  filtrosDeFila: boolean;
   /** Saldos REALES del libro (todos los movimientos anteriores al período / hasta el fin del período), sin filtros de fila. */
   saldoInicial: KardexSaldos;
   saldoFinal: KardexSaldos;
@@ -304,14 +320,25 @@ export type KardexTotales = {
   fueraDelFiltro: KardexMovimientos;
   /** Conciliación completa: TODOS los movimientos del período, sin filtros de fila. */
   completo: KardexMovimientos;
-  /** saldoInicial.fisico + completo(entradas − salidas + transf.) === saldoFinal.fisico, y filtrado + fuera del filtro = completo. Independiente de los filtros de fila. */
+  /** saldoInicial.fisico + completo(entradas − salidas + transf.) === saldoFinal.fisico (exacto), y filtrado + fuera del filtro = completo. */
   cuadra: boolean;
-  /** Solo vista RESUMEN: suma de las filas mostradas (mismo criterio que las filas). */
+  /** Solo vista RESUMEN: suma de las filas mostradas del grupo (mismo criterio que las filas). */
   resumen: KardexResumenTotales | null;
 };
 
+export type KardexTotales = {
+  /** Filas que cumplen todos los filtros (movimientos del DETALLE). */
+  filas: number;
+  /** Hay filtros de tipo/usuario/documento/estado/estado de stock (filtros de fila). */
+  filtrosDeFila: boolean;
+  /** Un grupo por unidad × propiedad × propietario. Con más de un grupo no existe un total general de cantidades (n/a). */
+  grupos: KardexGrupo[];
+  /** Todos los grupos cuadran exactamente. */
+  cuadra: boolean;
+};
+
 export type KardexConciliacion = {
-  /** Combinaciones producto × depósito × lote × propiedad comparadas contra stock_saldos (hoy). */
+  /** Combinaciones producto × depósito × lote × propiedad × propietario comparadas contra stock_saldos (hoy, misma fotografía). */
   combinaciones: number;
   divergentes: number;
   conciliado: boolean;
@@ -328,12 +355,15 @@ export type KardexRespuesta = {
   totales: KardexTotales;
   conciliacion: KardexConciliacion;
   catalogos: {
-    depositos: { id: string; nombre: string }[];
+    depositos: { id: string; nombre: string; activo: boolean }[];
     usuarios: { id: string; nombre: string }[];
     tipos: { id: string; nombre: string }[];
   };
   cobertura: string[];
 };
+
+/** Respuesta de la API: agrega lo que la pantalla necesita para mostrar u ocultar la exportación (el servidor vuelve a exigir REPORTES.EXPORTAR). */
+export type KardexRespuestaApi = KardexRespuesta & { permisos: { exportar: boolean } };
 
 // Reporte 4 — Stock crítico y reposición: fotografía de las excepciones del MOTOR ÚNICO de Reposición (calcularPlanReposicion); no calcula ni planifica por su cuenta.
 export type VistaStockCritico = "PRODUCTO" | "DEPOSITO";
