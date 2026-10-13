@@ -13,6 +13,24 @@ BEGIN
   END IF;
 END $$;
 
+-- GUARDA DE SEGURIDAD (CC-A06): este script reinstala el envoltorio de grants con la lista FIJA de NEX-041. Si ya hay migraciones POSTERIORES (p. ej. NEX-052, cuyo envoltorio
+-- descubre dinámicamente TODOS los ayudantes nex_aplicar_grants_*; NEX-053 depende de ella) revertir NEX-045 con este script pisaría esa política y, en el próximo restablecimiento de
+-- privilegios, el rol de la aplicación perdería los grants de otros módulos (Clientes, Productos/Stock…). Por eso ABORTA antes de tocar nada. No se ejecuta nada automáticamente.
+-- Si de verdad hay que revertir NEX-045 con migraciones posteriores aplicadas, hace falta un script de reversión nuevo, revisado y autorizado por el responsable.
+DO $$
+DECLARE v_posterior text;
+BEGIN
+  IF to_regclass('public.schema_migrations') IS NOT NULL THEN
+    SELECT string_agg(version, ', ' ORDER BY version) INTO v_posterior FROM public.schema_migrations WHERE version > 'NEX-045' AND version ~ '^NEX-[0-9]+';
+    IF v_posterior IS NOT NULL THEN
+      RAISE EXCEPTION 'reversión NEX-045 insegura: hay migraciones posteriores registradas (%). No se revierte; prepare una reversión controlada y autorizada.', v_posterior;
+    END IF;
+  END IF;
+  IF to_regprocedure('public.nex_aplicar_grants_productos_stock()') IS NOT NULL OR to_regprocedure('public.nex_aplicar_grants_clientes()') IS NOT NULL THEN
+    RAISE EXCEPTION 'reversión NEX-045 insegura: existen ayudantes de grants de migraciones posteriores (NEX-052/053). No se revierte para no pisar el envoltorio dinámico vigente.';
+  END IF;
+END $$;
+
 -- Restaura el envoltorio de grants de NEX-041 (base + proveedores + fiscal + productos) y retira la función comercial.
 CREATE OR REPLACE FUNCTION public.nex_aplicar_grants_runtime() RETURNS void
 LANGUAGE plpgsql AS $$

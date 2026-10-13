@@ -1,4 +1,5 @@
 /** Formulario de Catálogos comerciales (cliente y pruebas): validación por campo y cambios sin guardar. */
+import { cambioEnAlcance, MENSAJE_ALCANCE_CAMBIO } from "@/lib/comercial/cambio-decimal";
 import { normalizarCambio } from "@/lib/listas-precio/calculos";
 
 export type TabComercial = "cambios" | "canales" | "zonas";
@@ -11,6 +12,8 @@ export type FormularioComercial = {
   monedaCodigo: string;
   cambio: string;
   motivo: string;
+  /** Versión (actualizado_at µs) del canal/zona que se abrió para editar (CC-A01); no cuenta como cambio del operador. */
+  version?: string;
 };
 
 export type CampoComercial = "fecha" | "monedaCodigo" | "cambio" | "motivo" | "codigo" | "nombre";
@@ -25,7 +28,10 @@ export function validarFormularioComercial(tab: TabComercial, f: FormularioComer
       if (!f.fecha) e.fecha = "Ingrese una fecha válida.";
       if (!f.monedaCodigo) e.monedaCodigo = "Seleccione la moneda.";
     }
-    if (normalizarCambio(f.cambio) === null) e.cambio = "Ingrese una cotización mayor que cero (hasta 6 decimales).";
+    const normal = normalizarCambio(f.cambio);
+
+    if (normal === null) e.cambio = "Ingrese una cotización mayor que cero (hasta 6 decimales).";
+    else if (!cambioEnAlcance(normal)) e.cambio = MENSAJE_ALCANCE_CAMBIO;
     if (f.motivo.length > 200) e.motivo = "El motivo no puede superar los 200 caracteres.";
 
     return e;

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import styles from "@/app/(private)/productos/catalogos/page.module.css";
 import { CampoFecha } from "@/components/ui/campo-fecha";
@@ -9,6 +9,10 @@ import { compararTexto, ordenarLista, siguienteOrden, type Orden } from "@/compo
 import { ThOrdenable } from "@/components/ui/lista-padrao/th-ordenable";
 import ui from "@/components/ui/lista-padrao/lista.module.css";
 import { hoyAsuncion, isoAFechaLocal } from "@/lib/listas-precio/calculos";
+import { cargarCatalogoComercial } from "@/lib/comercial/carga";
+import { textoConfirmarInactivacionComercial } from "@/lib/comercial/vinculos";
+import { cargaConfiable, crearCompuerta, motivoBloqueoGuardar, permisosVigentes } from "@/lib/productos/catalogos-carga";
+import { useProtegerCambios } from "@/lib/ui/proteger-cambios";
 import { validarFormularioComercial, formularioComercialSucio, type CampoComercial, type ErroresComercial, type FormularioComercial, type TabComercial } from "@/lib/comercial/formulario";
 
 type Fila = {
@@ -17,10 +21,12 @@ type Fila = {
   nombre?: string;
   activo?: boolean;
   usos?: number;
+  clientes?: number;
   fecha?: string;
   monedaCodigo?: string;
   cambio?: string;
-  version?: number;
+  /** Tipos de cambio: número de versión de la cotización. Canales/zonas: versión de edición (actualizado_at µs). */
+  version?: number | string;
   vigente?: boolean;
   motivo?: string;
   creadoEn?: string;
@@ -48,9 +54,11 @@ export default function CatalogosComercialesPage() {
   const [tab, setTab] = useState<TabComercial>("cambios");
   const [filas, setFilas] = useState<Fila[]>([]);
   const [monedas, setMonedas] = useState<Moneda[]>([]);
-  const [permisos, setPermisos] = useState({ crear: false, editar: false });
+  const [permisosCargados, setPermisos] = useState({ crear: false, editar: false });
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
+  // CC-A04: fallo de la consulta principal; estado propio que guardar/abrir formularios no borran.
+  const [errorCarga, setErrorCarga] = useState("");
   const [aviso, setAviso] = useState("");
   const [busqueda, setBusqueda] = useState("");
   const [estado, setEstado] = useState<"TODOS" | "ACTIVOS" | "INACTIVOS">("TODOS");
@@ -69,43 +77,41 @@ export default function CatalogosComercialesPage() {
   const meta = TABS.find((t) => t.id === tab)!;
   const sucio = formularioComercialSucio(form, base);
   const corrigiendo = tab === "cambios" && form?.id != null;
+  const estadoCarga = { cargando, errorCarga, errorAuxiliar: "" };
+  const confiable = cargaConfiable(estadoCarga);
+  const permisos = permisosVigentes(permisosCargados, estadoCarga);
+  // CC-A03: solo la última solicitud iniciada (pestaña/historial vigentes) puede escribir en pantalla.
+  const compuerta = useRef(crearCompuerta());
 
   const cargar = useCallback(async () => {
+    const solicitud = compuerta.current.nueva();
+
     setCargando(true);
     setError("");
-    try {
-      const url = `/api/catalogos-comerciales/${meta.ruta}${tab === "cambios" && historial ? "?historial=1" : ""}`;
-      const r = await fetch(url, { cache: "no-store" });
-      const j = (await r.json().catch(() => ({}))) as Record<string, unknown> & { error?: string; permisos?: { crear: boolean; editar: boolean }; monedas?: Moneda[] };
+    setErrorCarga("");
 
-      if (!r.ok) throw new Error(j.error ?? "No fue posible cargar el catálogo.");
-      setFilas((j[meta.clave] as Fila[] | undefined) ?? []);
-      setPermisos(j.permisos ?? { crear: false, editar: false });
-      if (j.monedas) setMonedas(j.monedas);
-    } catch (e) {
+    const r = await cargarCatalogoComercial(meta.ruta, meta.clave, tab === "cambios" && historial, (url) => fetch(url, { cache: "no-store" }));
+
+    if (!compuerta.current.vigente(solicitud)) return;
+
+    if (r.error) {
       setFilas([]);
-      setError(e instanceof Error ? e.message : "No fue posible cargar el catálogo.");
-    } finally {
-      setCargando(false);
+      setPermisos({ crear: false, editar: false });
+      setErrorCarga(r.error);
+    } else {
+      setFilas(r.filas as Fila[]);
+      setPermisos(r.permisos);
+      if (r.monedas) setMonedas(r.monedas);
     }
+    setCargando(false);
   }, [meta.ruta, meta.clave, tab, historial]);
 
   useEffect(() => {
     void Promise.resolve().then(cargar);
   }, [cargar]);
 
-  useEffect(() => {
-    if (!sucio) return;
-
-    const alSalir = (e: BeforeUnloadEvent) => {
-      e.preventDefault();
-      e.returnValue = "";
-    };
-
-    window.addEventListener("beforeunload", alSalir);
-
-    return () => window.removeEventListener("beforeunload", alSalir);
-  }, [sucio]);
+  // CC-A02: guard oficial (recarga/cierre y cualquier enlace interno, también el menú lateral); sin aviso si el formulario está intacto.
+  useProtegerCambios(sucio);
 
   const confirmarDescarte = () => !sucio || window.confirm("Hay cambios sin guardar en el formulario. Si continúa, se perderán. ¿Desea continuar?");
 
@@ -131,6 +137,9 @@ export default function CatalogosComercialesPage() {
 
   function cambiarTab(nuevo: TabComercial) {
     if (nuevo === tab || !confirmarDescarte()) return;
+    // CC-A03/A04: los permisos y datos de la pestaña anterior no valen para la nueva mientras no llegue su carga.
+    setCargando(true);
+    setPermisos({ crear: false, editar: false });
     setTab(nuevo);
     setOrden(null);
     cerrar();
@@ -151,7 +160,7 @@ export default function CatalogosComercialesPage() {
 
   // Estado de una cotización: vigente, reemplazada (hay una versión posterior de la misma fecha/moneda) o anulada.
   const estadoCambio = useCallback(
-    (f: Fila) => (f.vigente ? "Vigente" : filas.some((x) => x.fecha === f.fecha && x.monedaCodigo === f.monedaCodigo && (x.version ?? 0) > (f.version ?? 0)) ? "Reemplazada" : "Anulada"),
+    (f: Fila) => (f.vigente ? "Vigente" : filas.some((x) => x.fecha === f.fecha && x.monedaCodigo === f.monedaCodigo && Number(x.version ?? 0) > Number(f.version ?? 0)) ? "Reemplazada" : "Anulada"),
     [filas],
   );
 
@@ -218,6 +227,15 @@ export default function CatalogosComercialesPage() {
     setAviso("");
     setErrorForm("");
 
+    // CC-A04: sin datos confiables (carga en curso o fallida) no se envía nada; el borrador queda intacto.
+    const bloqueo = motivoBloqueoGuardar(estadoCarga);
+
+    if (bloqueo) {
+      setErrorForm(bloqueo);
+
+      return;
+    }
+
     const locales = validarFormularioComercial(tab, form);
     const primero = (Object.keys(locales) as CampoComercial[])[0];
 
@@ -237,7 +255,7 @@ export default function CatalogosComercialesPage() {
           ? form.id
             ? { cambio: form.cambio, motivo: form.motivo }
             : { fecha: form.fecha, monedaCodigo: form.monedaCodigo, cambio: form.cambio }
-          : { codigo: form.codigo, nombre: form.nombre };
+          : { codigo: form.codigo, nombre: form.nombre, ...(form.id ? { version: form.version } : {}) };
       const j = form.id ? await enviar(`${raiz}/${form.id}`, "PUT", tab === "cambios" ? cuerpo : { ...cuerpo, activo: filas.find((f) => f.id === form.id)?.activo }) : await enviar(raiz, "POST", cuerpo);
 
       setAviso(j.message ?? "Guardado correctamente.");
@@ -262,20 +280,42 @@ export default function CatalogosComercialesPage() {
     setError("");
     setAviso("");
 
-    if (f.activo && (f.usos ?? 0) > 0 && !window.confirm(`¿Inactivar «${f.nombre}»? Está vinculado a ${f.usos} lista(s) o regla(s) de precios; esos vínculos se conservan.`)) return;
+    const bloqueo = motivoBloqueoGuardar(estadoCarga);
+
+    if (bloqueo) {
+      setError(bloqueo);
+
+      return;
+    }
+
+    // CC-A07: confirma si hay vínculos con listas/reglas O con clientes.
+    const confirmar = textoConfirmarInactivacionComercial(f);
+
+    if (confirmar && !window.confirm(confirmar)) return;
 
     try {
-      await enviar(`/api/catalogos-comerciales/${meta.ruta}/${f.id}`, "PUT", { codigo: f.codigo, nombre: f.nombre, activo: !f.activo });
+      await enviar(`/api/catalogos-comerciales/${meta.ruta}/${f.id}`, "PUT", { codigo: f.codigo, nombre: f.nombre, activo: !f.activo, version: f.version });
       setAviso(f.activo ? "Registro inactivado. Sus vínculos se conservan." : "Registro activado.");
       await cargar();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "No fue posible cambiar el estado.");
+      const mensaje = e instanceof Error ? e.message : "No fue posible cambiar el estado.";
+
+      await cargar(); // CC-A01: ante un 409 se muestran los datos vigentes (y luego el aviso, que la recarga limpia)
+      setError(mensaje);
     }
   }
 
   async function anular(f: Fila) {
     setError("");
     setAviso("");
+
+    const bloqueo = motivoBloqueoGuardar(estadoCarga);
+
+    if (bloqueo) {
+      setError(bloqueo);
+
+      return;
+    }
 
     if (!window.confirm(`¿Anular la cotización de ${f.monedaCodigo} del ${isoAFechaLocal(f.fecha ?? "")}? Quedará en el historial y podrá registrar una nueva.`)) return;
 
@@ -304,7 +344,7 @@ export default function CatalogosComercialesPage() {
       </span>
     ) : null;
 
-  const columnas = tab === "cambios" ? 7 : 5;
+  const columnas = tab === "cambios" ? 7 : 6;
 
   return (
     <section className={ui.page}>
@@ -322,9 +362,6 @@ export default function CatalogosComercialesPage() {
           <Link
             href="/listas-precio"
             className={ui.secondaryButton}
-            onClick={(e) => {
-              if (!confirmarDescarte()) e.preventDefault();
-            }}
           >
             ← Listas de precios
           </Link>
@@ -356,6 +393,11 @@ export default function CatalogosComercialesPage() {
       {error ? (
         <div className={ui.alertError} role="alert">
           {error}
+        </div>
+      ) : null}
+      {errorCarga ? (
+        <div className={ui.alertError} role="alert">
+          {errorCarga} No se puede crear, editar ni guardar hasta recargar correctamente.{form ? " Lo escrito en el formulario se conserva." : ""}
         </div>
       ) : null}
       {aviso ? (
@@ -442,7 +484,7 @@ export default function CatalogosComercialesPage() {
             >
               Cancelar
             </button>
-            <button type="submit" className={ui.primaryButton} disabled={guardando}>
+            <button type="submit" className={ui.primaryButton} disabled={guardando || !confiable} title={confiable ? undefined : "Hasta que los datos se carguen correctamente no se puede guardar."}>
               {guardando ? "Guardando..." : "Guardar"}
             </button>
           </div>
@@ -532,6 +574,7 @@ export default function CatalogosComercialesPage() {
                     <ThOrdenable titulo="Código" campo="codigo" orden={orden} onOrden={(c) => setOrden((a) => siguienteOrden(a, c))} className={ui.colCodigo} />
                     <ThOrdenable titulo="Nombre" campo="nombre" orden={orden} onOrden={(c) => setOrden((a) => siguienteOrden(a, c))} />
                     <ThOrdenable titulo="Vínculos (listas y reglas)" campo="usos" orden={orden} onOrden={(c) => setOrden((a) => siguienteOrden(a, c))} alinear="derecha" className={ui.colNumero} />
+                    <ThOrdenable titulo="Clientes" alinear="derecha" className={ui.colNumero} />
                   </>
                 )}
                 <ThOrdenable titulo="Estado" campo="estado" orden={orden} onOrden={(c) => setOrden((a) => siguienteOrden(a, c))} className={ui.colEstado} />
@@ -596,6 +639,9 @@ export default function CatalogosComercialesPage() {
                           <td className={ui.numeric}>
                             <span className={ui.mono}>{f.usos}</span>
                           </td>
+                          <td className={ui.numeric}>
+                            <span className={ui.mono}>{f.clientes ?? 0}</span>
+                          </td>
                         </>
                       )}
                       <td>
@@ -610,6 +656,7 @@ export default function CatalogosComercialesPage() {
                                   <button
                                     type="button"
                                     className={ui.rowButton}
+                                    disabled={!confiable}
                                     onClick={() => {
                                       if (!confirmarDescarte()) return;
                                       abrir({ ...vacio(), id: f.id, fecha: f.fecha ?? "", monedaCodigo: f.monedaCodigo ?? "", cambio: formatoCambio(f.cambio ?? "") });
@@ -618,7 +665,7 @@ export default function CatalogosComercialesPage() {
                                   >
                                     Corregir
                                   </button>
-                                  <button type="button" className={ui.rowButton} onClick={() => void anular(f)}>
+                                  <button type="button" className={ui.rowButton} disabled={!confiable} onClick={() => void anular(f)}>
                                     Anular
                                   </button>
                                 </>
@@ -628,14 +675,15 @@ export default function CatalogosComercialesPage() {
                                 <button
                                   type="button"
                                   className={ui.rowButton}
+                                  disabled={!confiable}
                                   onClick={() => {
                                     if (!confirmarDescarte()) return;
-                                    abrir({ ...vacio(), id: f.id, codigo: f.codigo ?? "", nombre: f.nombre ?? "" });
+                                    abrir({ ...vacio(), id: f.id, codigo: f.codigo ?? "", nombre: f.nombre ?? "", version: typeof f.version === "string" ? f.version : undefined });
                                   }}
                                 >
                                   Editar
                                 </button>
-                                <button type="button" className={ui.rowButton} onClick={() => void cambiarEstado(f)}>
+                                <button type="button" className={ui.rowButton} disabled={!confiable} onClick={() => void cambiarEstado(f)}>
                                   {f.activo ? "Inactivar" : "Activar"}
                                 </button>
                               </>

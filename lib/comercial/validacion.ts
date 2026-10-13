@@ -1,4 +1,5 @@
 /** Validación pura de los catálogos comerciales (servidor, cliente y pruebas). */
+import { cambioEnAlcance, MENSAJE_ALCANCE_CAMBIO } from "@/lib/comercial/cambio-decimal";
 import { fechaLocalAIso, normalizarCambio } from "@/lib/listas-precio/calculos";
 
 export class ErrorComercial extends Error {
@@ -34,6 +35,8 @@ export function validarTipoCambio(d: Record<string, unknown>): DatosTipoCambio {
   const cambio = normalizarCambio(bruto);
 
   if (cambio === null) throw new ErrorComercial("Ingrese una cotización mayor que cero (hasta 6 decimales).", "cambio");
+
+  if (!cambioEnAlcance(cambio)) throw new ErrorComercial(MENSAJE_ALCANCE_CAMBIO, "cambio");
 
   return { fecha, monedaCodigo: moneda, cambio };
 }

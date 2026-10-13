@@ -719,3 +719,14 @@ Só código; **sem migration** (NEX-001…053 intactas; 052/053 NÃO aplicadas);
 Só código; sem migration; nada em PostgreSQL/navegador; menu NÃO homologado; LPR-A01…A09 preservadas.
 - A tela envia a «foto» de **todos** os preços carregados (id + versão µs), também os retirados do rascunho. Sob `FOR UPDATE`, antes de qualquer escrita, o servidor exige que coincida exatamente com a base (helper puro `concurrencia.ts`): preço alterado, apagado ou acrescentado por outro canal (p. ex. Productos), mesmo que retirado do rascunho → 409 sem gravar cabeçalho, preços, escalões ou regras. Relação ausente → 409; incompleta/malformada/repetida → 400.
 - Local: 2282 verificações, 0 falhas na rodada (10 novas de Listas); tsc/ESLint OK; conexão simulada, não PostgreSQL.
+
+### Catálogos comerciales — estabilização CC-A01…A05 e CC-A07, guarda CC-A06 (AUD-CATALOGOS-COMERCIALES-V1 §II/§V/§VI, 2026-10-12)
+Só código e guarda de script; **sem migration** (NEX-001…053 intactas; 052/053 NÃO aplicadas); nada em PostgreSQL/navegador; menu NÃO homologado. Câmbio 100 % manual, histórico e isolamento por empresa preservados.
+- **A01:** canais/zonas devolvem `version` (`actualizado_at` µs); o PUT (edição e ativar/inativar) a exige sob `FOR UPDATE`, antes de duplicados e do UPDATE → 409 (ausente ou obsoleta), rascunho preservado (`version.ts`).
+- **A02:** `useProtegerCambios` (menu lateral e links internos); removidos o `beforeunload` próprio e o `confirm` do link a Listas.
+- **A03:** compuerta de respostas (`crearCompuerta`) entre abas e filtro «historial»; respostas lentas não vigentes são descartadas.
+- **A04:** `carga.ts` verifica HTTP e forma (chave do catálogo = arreglo, permisos booleanos, monedas); erro com código; permisos de cargas anteriores/falhas não valem; guardar/anular/inativar não enviam sem carga confiável; Guardar/Editar/Corregir/Anular/Inactivar desabilitados; rascunho preservado.
+- **A05:** cotização comparada como decimal exato em texto (`cambio-decimal.ts`), alcance `numeric(18,6)` (12 inteiros + 6 decimais) validado em alta, correção e formulário; PG 22003 → 400 no campo.
+- **A06 (condicional):** `reversion-NEX-045.sql` aborta antes de mudar qualquer coisa se há migrações posteriores no ledger ou ajudantes de grants de NEX-052/053 (não pisa o wrapper dinâmico). Nada executado.
+- **A07:** canais/zonas contam também clientes (coluna correta, mesma empresa); a inativação confirma se há listas/regras OU clientes; coluna «Clientes»; as referências históricas dos clientes não se tocam.
+- Local: 2316 verificações, 0 falhas na rodada (34 novas de Catálogos comerciales; 1 teste anterior ajustado ao guard oficial); tsc/ESLint/build OK; simulações, não PostgreSQL/navegador.

@@ -3,6 +3,8 @@ import type { PoolClient } from "pg";
 
 import { denyIfNoPermission, getAccessContext, hasPermission } from "@/lib/auth/permissions";
 import { ErrorComercial, esUuid, validarCatalogoSimple, validarTipoCambio } from "@/lib/comercial/validacion";
+import { cambioEnAlcance, igualDecimal, MENSAJE_ALCANCE_CAMBIO } from "@/lib/comercial/cambio-decimal";
+import { SQL_VERSION_COMERCIAL, exigirVersionComercial } from "@/lib/comercial/version";
 import { normalizarCambio } from "@/lib/listas-precio/calculos";
 
 // Catálogos comerciales (Canales de venta, Zonas comerciales y Tipos de cambio). empresa_id SIEMPRE de la sesión. Permisos: LISTAS_PRECIO
@@ -10,9 +12,9 @@ import { normalizarCambio } from "@/lib/listas-precio/calculos";
 // Canales y zonas: sin borrado (se inactivan). Tipos de cambio: solo altas; corregir = nueva versión; anular = retirar (historial intacto).
 
 export type TipoSimple = "canales" | "zonas";
-const CFG: Record<TipoSimple, { tabla: string; columnaLista: string; que: string; femenino: boolean }> = {
-  canales: { tabla: "canales_venta", columnaLista: "canal_venta_id", que: "canal de venta", femenino: false },
-  zonas: { tabla: "zonas_comerciales", columnaLista: "zona_comercial_id", que: "zona comercial", femenino: true },
+const CFG: Record<TipoSimple, { tabla: string; columnaLista: string; columnaCliente: string; que: string; femenino: boolean }> = {
+  canales: { tabla: "canales_venta", columnaLista: "canal_venta_id", columnaCliente: "canal_venta_id", que: "canal de venta", femenino: false },
+  zonas: { tabla: "zonas_comerciales", columnaLista: "zona_comercial_id", columnaCliente: "zona_comercial_id", que: "zona comercial", femenino: true },
 };
 const DEMO_MODE = process.env.DEMO_MODE === "true";
 
@@ -57,6 +59,7 @@ export function fallo(error: unknown, accion: string) {
     const campo = c.includes("codigo") ? "codigo" : "nombre";
     return NextResponse.json({ error: `Ya existe un registro con ese ${campo === "codigo" ? "código" : "nombre"}.`, campo }, { status: 409 });
   }
+  if (pg.code === "22003") return NextResponse.json({ error: MENSAJE_ALCANCE_CAMBIO, campo: "cambio" }, { status: 400 });
   if (pg.code === "23503") return NextResponse.json({ error: "La moneda indicada no existe.", campo: "monedaCodigo" }, { status: 400 });
   if (pg.code === "42501") return NextResponse.json({ error: "No tiene permiso para esta acción." }, { status: 403 });
   if (pg.code === "P0001") return NextResponse.json({ error: pg.message ?? "La operación no cumple las reglas del catálogo." }, { status: 400 });
@@ -92,9 +95,10 @@ async function enTransaccion<T>(b: Extract<Base, { ok: true }>, fn: (c: PoolClie
 // ── Canales de venta y zonas comerciales ─────────────────────────────────────────────────────────────
 
 const proyectar = (tipo: TipoSimple) =>
-  `t.id, t.codigo, t.nombre, t.activo,
+  `t.id, t.codigo, t.nombre, t.activo, ${SQL_VERSION_COMERCIAL("t.actualizado_at")} AS version,
    (SELECT count(*)::int FROM listas_precio l WHERE l.empresa_id = t.empresa_id AND l.${CFG[tipo].columnaLista} = t.id)
-   + (SELECT count(*)::int FROM lista_precio_reglas r WHERE r.empresa_id = t.empresa_id AND r.referencia_id = t.id AND r.tipo_aplicacion = '${tipo === "canales" ? "CANAL_VENTA" : "ZONA"}') AS usos`;
+   + (SELECT count(*)::int FROM lista_precio_reglas r WHERE r.empresa_id = t.empresa_id AND r.referencia_id = t.id AND r.tipo_aplicacion = '${tipo === "canales" ? "CANAL_VENTA" : "ZONA"}') AS usos,
+   (SELECT count(*)::int FROM clientes cl WHERE cl.empresa_id = t.empresa_id AND cl.${CFG[tipo].columnaCliente} = t.id) AS clientes`;
 
 export async function listarSimple(tipo: TipoSimple) {
   const b = await preparar("VER");
@@ -145,10 +149,12 @@ export async function editarSimple(tipo: TipoSimple, request: Request, id: strin
   try {
     const d = validarCatalogoSimple(cuerpo);
     const fila = await enTransaccion(b, async (c) => {
-      const actual = await c.query(`SELECT activo FROM ${CFG[tipo].tabla} WHERE id = $1 AND empresa_id = $2 FOR UPDATE`, [id, empresaId]);
+      const actual = await c.query(`SELECT activo, ${SQL_VERSION_COMERCIAL("actualizado_at")} AS version_actual FROM ${CFG[tipo].tabla} WHERE id = $1 AND empresa_id = $2 FOR UPDATE`, [id, empresaId]);
       if (!actual.rowCount) throw new ErrorComercial("Registro no encontrado.", null, 404);
+      // CC-A01: con la fila bloqueada y ANTES de duplicados y de cualquier escritura.
+      exigirVersionComercial(cuerpo.version, actual.rows[0].version_actual as string);
       await duplicados(c, tipo, empresaId, d, id);
-      await c.query(`UPDATE ${CFG[tipo].tabla} SET codigo = $3, nombre = $4, activo = $5, actualizado_at = now() WHERE id = $1 AND empresa_id = $2`, [id, empresaId, d.codigo, d.nombre, d.activo ?? (actual.rows[0].activo as boolean)]);
+      await c.query(`UPDATE ${CFG[tipo].tabla} SET codigo = $3, nombre = $4, activo = $5, actualizado_at = clock_timestamp() WHERE id = $1 AND empresa_id = $2`, [id, empresaId, d.codigo, d.nombre, d.activo ?? (actual.rows[0].activo as boolean)]);
       return (await c.query(`SELECT ${proyectar(tipo)} FROM ${CFG[tipo].tabla} t WHERE t.id = $1 AND t.empresa_id = $2`, [id, empresaId])).rows[0];
     });
     return NextResponse.json({ message: "Cambios guardados correctamente.", registro: fila });
@@ -232,6 +238,7 @@ export async function corregirCambio(request: Request, id: string) {
   try {
     const nuevo = normalizarCambio(typeof cuerpo.cambio === "string" ? cuerpo.cambio : typeof cuerpo.cambio === "number" ? String(cuerpo.cambio) : "");
     if (nuevo === null) throw new ErrorComercial("Ingrese una cotización mayor que cero (hasta 6 decimales).", "cambio");
+    if (!cambioEnAlcance(nuevo)) throw new ErrorComercial(MENSAJE_ALCANCE_CAMBIO, "cambio");
     const motivo = typeof cuerpo.motivo === "string" && cuerpo.motivo.trim() ? cuerpo.motivo.trim() : null;
     if (motivo && motivo.length > 200) throw new ErrorComercial("El motivo no puede superar los 200 caracteres.", "motivo");
     const fila = await enTransaccion(b, async (c) => {
@@ -239,7 +246,7 @@ export async function corregirCambio(request: Request, id: string) {
       if (!actual.rowCount) throw new ErrorComercial("Registro no encontrado.", null, 404);
       const a = actual.rows[0] as { fecha_iso: string; moneda_codigo: string; cambio: string; version: number; vigente: boolean };
       if (!a.vigente) throw new ErrorComercial("Esa versión ya fue retirada; corrija la cotización vigente de la fecha.", null, 409);
-      if (Number(a.cambio) === Number(nuevo)) throw new ErrorComercial("La cotización no cambió.", "cambio", 409);
+      if (igualDecimal(a.cambio, nuevo)) throw new ErrorComercial("La cotización no cambió.", "cambio", 409);
       await c.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [claveBloqueo(empresaId, a.fecha_iso, a.moneda_codigo)]);
       await c.query(`UPDATE tipos_cambio SET vigente = false, retirado_por = $3, retirado_at = now() WHERE id = $1 AND empresa_id = $2`, [id, empresaId, usuarioId]);
       const r = await c.query(
