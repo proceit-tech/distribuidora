@@ -36,17 +36,20 @@ const textoCelda = (c: ColRep, v: Celda): string => {
   return v === null || v === undefined ? "" : String(v);
 };
 
-// Excel: los importes se escriben como número real cuando caben sin perder precisión (≤ 15 dígitos); si no, como texto exacto.
-// Texto numérico exacto: número real si cabe sin perder precisión (≤ 15 dígitos); si no (o si no es numérico, p. ej. «n/a»), texto exacto.
+// Excel — conversión ÚNICA para dinero y cantidades: un texto numérico ESTRICTO (decimal con signo opcional) se escribe como número real cuando cabe sin perder
+// precisión (≤ 15 dígitos); si no cabe, o si no es numérico (p. ej. «n/a», «—»), se escribe como texto exacto. Nunca NaN, ni celda vacía donde hay dato.
 export const numeroOTexto = (s: string): string | number => (/^-?\d+(\.\d+)?$/.test(s) && s.replace(/[-.]/g, "").length <= 15 ? Number(s) : s);
 
-const celdaXlsx = (c: ColRep, v: Celda): CeldaXlsx => {
+export const celdaXlsx = (c: ColRep, v: Celda): CeldaXlsx => {
   if (c.tipo === "dinero") {
     if (v === null || v === undefined || v === "") return "—";
-    const s = String(v);
-    return s.replace(/[-.]/g, "").length <= 15 ? Number(s) : s;
+    return typeof v === "number" ? (Number.isFinite(v) ? v : String(v)) : numeroOTexto(v);
   }
-  if (c.tipo === "cantidad") return typeof v === "number" ? v : "";
+  if (c.tipo === "cantidad") {
+    if (typeof v === "number") return Number.isFinite(v) ? v : "";
+    if (typeof v === "string") return numeroOTexto(v);
+    return "";
+  }
   return v === null || v === undefined ? "" : String(v);
 };
 
