@@ -1,7 +1,8 @@
 import type { Pool } from "pg";
 
 import { MAX_FILAS_EXPORTACION } from "@/lib/reportes/stock-general";
-import { conSnapshotLectura, type Cliente } from "@/lib/reportes/snapshot";
+import { depositosDelAlcance } from "@/lib/reportes/alcance";
+import { conSnapshotLectura } from "@/lib/reportes/snapshot";
 import { SQL_SITUACION } from "@/lib/reportes/valorizacion-cobertura";
 import type {
   ConteoSituaciones,
@@ -62,23 +63,6 @@ const COSTO = (val: string, cant: string) => `CASE WHEN ${cant} > 0 THEN round($
 
 // El snapshot de lectura vive en snapshot.ts (compartido con Stock crítico); se reexporta para conservar la API de este módulo.
 export { conSnapshotLectura };
-
-/**
- * Depósitos del alcance del usuario (todos si su alcance es TODOS; si no, los asignados en usuario_deposito), ACTIVOS E INACTIVOS: el valor de un depósito
- * inactivo sigue siendo patrimonio y no puede desaparecer del total (RPT-V06). Mismo criterio de alcance que Inventario > Stock; no se otorga acceso a nada
- * fuera de la empresa de la sesión ni de los depósitos asignados.
- */
-async function depositosDelAlcance(c: Cliente, empresaId: string, usuarioId: string) {
-  const r = await c.query(
-    `SELECT d.id, d.nombre, d.activo FROM depositos d JOIN usuarios u ON u.empresa_id = d.empresa_id AND u.id = $2
-      WHERE d.empresa_id = $1 AND (u.alcance_depositos = 'TODOS'
-         OR EXISTS (SELECT 1 FROM usuario_deposito ud WHERE ud.empresa_id = u.empresa_id AND ud.usuario_id = u.id AND ud.deposito_id = d.id))
-      ORDER BY d.activo DESC, d.nombre`,
-    [empresaId, usuarioId],
-  );
-
-  return r.rows as { id: string; nombre: string; activo: boolean }[];
-}
 
 const num = (v: unknown): number => Number(v ?? 0);
 

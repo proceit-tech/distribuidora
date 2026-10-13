@@ -31,3 +31,16 @@ export function fmtDinero(v: string | null | undefined): string {
 
 /** Cantidades exactas (texto numeric): mismo formato que los importes, sin pasar por Number. Ausente = «n/a» (no aplicable, p. ej. cantidades de unidades distintas). */
 export const fmtCantidadTexto = (v: string | null | undefined): string => (v === null || v === undefined ? "n/a" : fmtDinero(v));
+
+/** Desglose del stock de terceros por estado desde textos numeric exactos (solo estados con cantidad). */
+export function textoTercerosEstadosTexto(e: { disponible: string; reservado: string; cuarentena: string; transito: string }): string {
+  const cero = (v: string) => /^-?0+(\.0+)?$/.test(v);
+  const partes: string[] = [];
+
+  if (!cero(e.disponible)) partes.push(`Disp. ${fmtCantidadTexto(e.disponible)}`);
+  if (!cero(e.reservado)) partes.push(`Res. ${fmtCantidadTexto(e.reservado)}`);
+  if (!cero(e.cuarentena)) partes.push(`Cuar. ${fmtCantidadTexto(e.cuarentena)}`);
+  if (!cero(e.transito)) partes.push(`Trán. ${fmtCantidadTexto(e.transito)}`);
+
+  return partes.join(" · ");
+}

@@ -1,11 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { cargarStockGeneral, descargarStockGeneral } from "@/lib/reportes/cliente-stock-general";
-import { fmtNum, TEXTO_PROPIEDAD, textoTercerosEstados } from "@/lib/reportes/formato";
-import type { NivelStock, StockGeneralFiltros, StockGeneralFila, StockGeneralRespuesta } from "@/types/reportes";
+import { crearCompuerta } from "@/lib/productos/catalogos-carga";
+import { descargarStockGeneral, pedirStockGeneral } from "@/lib/reportes/cliente-stock-general";
+import { fmtCantidadTexto, fmtNum, TEXTO_PROPIEDAD, textoTercerosEstadosTexto } from "@/lib/reportes/formato";
+import { filtrosStockGeneralIguales, respuestaStockGeneralVigente } from "@/lib/reportes/stock-general-plan";
+import type { NivelStock, StockGeneralFiltros, StockGeneralFila, StockGeneralRespuestaApi } from "@/types/reportes";
 
 import styles from "@/components/ui/lista-padrao/reporte.module.css";
 
@@ -21,69 +23,83 @@ const CANTIDADES: [string, Cant][] = [
   ["Disponible", "disponible"], ["Reservado", "reservado"], ["Cuarentena", "cuarentena"], ["En tránsito", "transito"], ["Físico", "fisico"], ["Virtual", "virtual"],
 ];
 
-// Fila de totales única en las dos vistas: Disponible…Virtual = propio; Terceros aparte (mismo significado que en las filas).
-function filaTotal(r: StockGeneralRespuesta): Partial<Record<Cant | "terceros", number>> {
-  const t = r.totales;
-  return { disponible: t.disponible, reservado: t.reservado, cuarentena: t.cuarentena, transito: t.transito, fisico: t.fisico, virtual: t.virtual, terceros: t.terceros };
-}
+type Catalogos = StockGeneralRespuestaApi["catalogos"];
 
 export default function ReporteStockGeneralPage() {
   const [filtros, setFiltros] = useState<StockGeneralFiltros>(FILTROS_VACIOS);
-  const [aplicados, setAplicados] = useState<StockGeneralFiltros>(FILTROS_VACIOS);
+  const [qAplicada, setQAplicada] = useState({ q: "", lote: "" });
   const [pagina, setPagina] = useState(1);
-  const [datos, setDatos] = useState<StockGeneralRespuesta | null>(null);
+  const [datos, setDatos] = useState<StockGeneralRespuestaApi | null>(null);
+  // Solo los nombres de los selectores sobreviven a un error (conservan los filtros elegidos); ningún dato del informe se conserva.
+  const [catalogos, setCatalogos] = useState<Catalogos | null>(null);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
+  const [errorExportacion, setErrorExportacion] = useState("");
   const [exportando, setExportando] = useState("");
+  const compuerta = useRef(crearCompuerta());
 
   // Los campos de texto se aplican con una pequeña espera; los selectores, de inmediato.
   useEffect(() => {
-    const t = setTimeout(() => {
-      setAplicados((a) => (a.q === filtros.q && a.lote === filtros.lote ? a : { ...a, q: filtros.q, lote: filtros.lote }));
-    }, 300);
+    const t = setTimeout(() => setQAplicada({ q: filtros.q, lote: filtros.lote }), 300);
+
     return () => clearTimeout(t);
   }, [filtros.q, filtros.lote]);
 
-  useEffect(() => {
-    setAplicados((a) => ({ ...filtros, q: a.q, lote: a.lote }));
-  }, [filtros.vista, filtros.depositoId, filtros.categoriaId, filtros.marcaId, filtros.familiaId, filtros.situacion, filtros.existencia]); // eslint-disable-line react-hooks/exhaustive-deps
+  const aplicados = useMemo(() => ({ ...filtros, q: qAplicada.q, lote: qAplicada.lote }), [filtros, qAplicada]);
 
-  useEffect(() => {
-    let activo = true;
+  // La última solicitud iniciada gana; ante cualquier falla se descartan los datos anteriores y se conservan los filtros.
+  const cargar = useCallback(async () => {
+    const sol = compuerta.current.nueva();
+
     setCargando(true);
     setError("");
-    cargarStockGeneral(aplicados, pagina)
-      .then((r) => { if (activo) setDatos(r); })
-      .catch((e: unknown) => { if (activo) setError(e instanceof Error ? e.message : "No fue posible generar el reporte."); })
-      .finally(() => { if (activo) setCargando(false); });
-    return () => { activo = false; };
+
+    const r = await pedirStockGeneral(aplicados, pagina);
+
+    if (!compuerta.current.vigente(sol)) return;
+    setDatos(r.datos);
+    if (r.datos) setCatalogos(r.datos.catalogos);
+    setError(r.error);
+    setCargando(false);
   }, [aplicados, pagina]);
+
+  useEffect(() => {
+    const actual = compuerta.current;
+    const t = setTimeout(() => void cargar(), 0);
+
+    return () => {
+      clearTimeout(t);
+      actual.nueva();
+    };
+  }, [cargar]);
 
   const cambiar = (parcial: Partial<StockGeneralFiltros>) => {
     setPagina(1);
     setFiltros((f) => ({ ...f, ...parcial }));
   };
 
+  // Solo se muestran y exportan datos que corresponden EXACTAMENTE a los filtros y la página vigentes.
+  const actual = datos && respuestaStockGeneralVigente(datos, error, aplicados, pagina) ? datos : null;
+  const puedeExportar = actual?.permisos.exportar === true;
   const exportar = async (formato: "xlsx" | "pdf") => {
+    if (!actual || !puedeExportar) return;
     setExportando(formato);
-    setError("");
+    setErrorExportacion("");
     try {
-      await descargarStockGeneral(aplicados, formato);
+      await descargarStockGeneral(actual.filtros, formato);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "No fue posible exportar el reporte.");
+      setErrorExportacion(e instanceof Error ? e.message : "No fue posible exportar el reporte.");
     } finally {
       setExportando("");
     }
   };
 
-  const t = datos?.totales;
-  const total = datos?.pagina.totalFilas ?? 0;
-  const tamano = datos?.pagina.tamano ?? 50;
+  const t = actual?.totales;
+  const total = actual?.pagina.totalFilas ?? 0;
+  const tamano = actual?.pagina.tamano ?? 50;
   const paginas = Math.max(1, Math.ceil(total / tamano));
   const detalle = aplicados.vista === "DETALLE";
-  const hayFiltros = JSON.stringify({ ...filtros, vista: "" }) !== JSON.stringify({ ...FILTROS_VACIOS, vista: "" });
-
-  const celdaNum = (f: StockGeneralFila, k: Cant | "terceros") => <td key={k} className={styles.num}>{num(k === "terceros" ? f.terceros : f[k])}</td>;
+  const hayFiltros = !filtrosStockGeneralIguales({ ...filtros, vista: FILTROS_VACIOS.vista }, FILTROS_VACIOS);
 
   return (
     <section className={styles.page}>
@@ -96,19 +112,23 @@ export default function ReporteStockGeneralPage() {
           </nav>
           <h1>Stock general</h1>
           <p>
-            Saldos reales por producto, depósito y lote.
-            {datos ? ` ${datos.empresa.nombre} · generado ${datos.generado}.` : ""}
+            Saldos reales por producto, depósito y lote (informe cuantitativo).
+            {actual ? ` ${actual.empresa.nombre} · generado ${actual.generado}.` : ""}
           </p>
         </div>
 
         <div className={styles.heroActions}>
           <Link href="/reportes" className={styles.secondaryButton}>Reportes</Link>
-          <button type="button" className={styles.secondaryButton} disabled={!!exportando || cargando} onClick={() => exportar("xlsx")}>
-            {exportando === "xlsx" ? "Generando..." : "Descargar Excel (.xlsx)"}
-          </button>
-          <button type="button" className={styles.primaryButton} disabled={!!exportando || cargando} onClick={() => exportar("pdf")}>
-            {exportando === "pdf" ? "Generando..." : "Exportar PDF"}
-          </button>
+          {puedeExportar ? (
+            <>
+              <button type="button" className={styles.secondaryButton} disabled={!!exportando || cargando} onClick={() => exportar("xlsx")}>
+                {exportando === "xlsx" ? "Generando..." : "Descargar Excel (.xlsx)"}
+              </button>
+              <button type="button" className={styles.primaryButton} disabled={!!exportando || cargando} onClick={() => exportar("pdf")}>
+                {exportando === "pdf" ? "Generando..." : "Exportar PDF"}
+              </button>
+            </>
+          ) : null}
         </div>
       </header>
 
@@ -116,31 +136,47 @@ export default function ReporteStockGeneralPage() {
         <article className={[styles.summaryCard, styles.summaryTeal].join(" ")}>
           <span>PRODUCTOS</span>
           <strong>{t ? num(t.productos) : "—"}</strong>
-          <small>Según los filtros activos</small>
-        </article>
-        <article className={[styles.summaryCard, styles.summaryBlue].join(" ")}>
-          <span>DISPONIBLE (PROPIO)</span>
-          <strong>{t ? num(t.disponible) : "—"}</strong>
-          <small>Reservado {t ? num(t.reservado) : "—"} · Cuarentena {t ? num(t.cuarentena) : "—"}</small>
-        </article>
-        <article className={[styles.summaryCard, styles.summaryAmber].join(" ")}>
-          <span>FÍSICO / VIRTUAL (PROPIO)</span>
-          <strong>{t ? `${num(t.fisico)} / ${num(t.virtual)}` : "—"}</strong>
-          <small>En tránsito {t ? num(t.transito) : "—"}</small>
-        </article>
-        <article className={[styles.summaryCard, styles.summaryPurple].join(" ")}>
-          <span>STOCK DE TERCEROS</span>
-          <strong>{t ? num(t.terceros) : "—"}</strong>
-          <small>Separado del stock propio</small>
+          <small>{t ? `Sin saldo en el alcance: ${num(t.sinSaldo)}` : "Según los filtros activos"}</small>
         </article>
         <article className={[styles.summaryCard, styles.summaryRed].join(" ")}>
           <span>SIN STOCK / BAJO</span>
           <strong>{t ? `${num(t.sinStock)} / ${num(t.bajo)}` : "—"}</strong>
-          <small>Sobrestock {t ? num(t.sobrestock) : "—"}</small>
+          <small>Sobrestock {t ? num(t.sobrestock) : "—"} · misma regla que Inventario › Stock</small>
+        </article>
+        <article className={[styles.summaryCard, styles.summaryBlue].join(" ")}>
+          <span>UNIDADES DE MEDIDA</span>
+          <strong>{t ? num(t.porUnidad.length) : "—"}</strong>
+          <small>Las cantidades se suman solo dentro de cada unidad (ver resumen)</small>
         </article>
       </section>
 
       <section className={styles.contentCard}>
+        {t && t.porUnidad.length > 0 ? (
+          <details className={styles.policyNote} open>
+            <summary><strong>Resumen por unidad de medida</strong> (stock propio y de terceros, sin mezclar unidades)</summary>
+            <div className={styles.tableWrap}>
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    <th>Unidad</th><th className={styles.num}>Productos</th>
+                    {CANTIDADES.map(([titulo]) => <th key={titulo} className={styles.num}>{titulo}</th>)}
+                    <th className={styles.num}>Terceros</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {t.porUnidad.map((u) => (
+                    <tr key={u.unidad || "sin"}>
+                      <td>{u.unidad || "Sin unidad"}</td><td className={styles.num}>{num(u.productos)}</td>
+                      {CANTIDADES.map(([, k]) => <td key={k} className={styles.num}>{fmtCantidadTexto(u[k])}</td>)}
+                      <td className={styles.num}>{fmtCantidadTexto(u.terceros)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </details>
+        ) : null}
+
         <div className={styles.toolbar}>
           <label className={styles.search}>
             <input
@@ -157,7 +193,7 @@ export default function ReporteStockGeneralPage() {
             <button type="button" aria-pressed={filtros.vista === "DETALLE"} onClick={() => cambiar({ vista: "DETALLE" })}>Detalle por depósito y lote</button>
           </div>
 
-          <span className={styles.resultCount}>{cargando ? "Cargando..." : `${num(total)} ${detalle ? "filas" : "productos"}`}</span>
+          <span className={styles.resultCount}>{cargando ? "Cargando..." : actual ? `${num(total)} ${detalle ? "filas" : "productos"}` : ""}</span>
         </div>
 
         <div className={styles.filters}>
@@ -165,28 +201,28 @@ export default function ReporteStockGeneralPage() {
             <span>Depósito</span>
             <select value={filtros.depositoId} onChange={(e) => cambiar({ depositoId: e.target.value })}>
               <option value="">Todos</option>
-              {(datos?.catalogos.depositos ?? []).map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
+              {(catalogos?.depositos ?? []).map((d) => <option key={d.id} value={d.id}>{d.activo ? d.nombre : `${d.nombre} (inactivo)`}</option>)}
             </select>
           </label>
           <label>
             <span>Categoría</span>
             <select value={filtros.categoriaId} onChange={(e) => cambiar({ categoriaId: e.target.value })}>
               <option value="">Todas</option>
-              {(datos?.catalogos.categorias ?? []).map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
+              {(catalogos?.categorias ?? []).map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
             </select>
           </label>
           <label>
             <span>Marca</span>
             <select value={filtros.marcaId} onChange={(e) => cambiar({ marcaId: e.target.value })}>
               <option value="">Todas</option>
-              {(datos?.catalogos.marcas ?? []).map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
+              {(catalogos?.marcas ?? []).map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
             </select>
           </label>
           <label>
             <span>Familia</span>
             <select value={filtros.familiaId} onChange={(e) => cambiar({ familiaId: e.target.value })}>
               <option value="">Todas</option>
-              {(datos?.catalogos.familias ?? []).map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
+              {(catalogos?.familias ?? []).map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
             </select>
           </label>
           <label>
@@ -200,8 +236,8 @@ export default function ReporteStockGeneralPage() {
             <span>Existencia</span>
             <select value={filtros.existencia} onChange={(e) => cambiar({ existencia: e.target.value as StockGeneralFiltros["existencia"] })}>
               <option value="TODOS">Todos</option>
-              <option value="CON">Con stock</option>
-              <option value="SIN">Sin stock</option>
+              <option value="CON">Con stock (propio o de terceros)</option>
+              <option value="SIN">Sin stock (nada propio ni de terceros)</option>
             </select>
           </label>
           <label>
@@ -216,9 +252,16 @@ export default function ReporteStockGeneralPage() {
           ) : null}
         </div>
 
-        {error ? <div className={styles.errorBox}>{error}</div> : null}
+        {error ? (
+          <div className={styles.errorBox} role="alert">
+            {error} No se muestran ni se exportan datos anteriores; los filtros se conservan.{" "}
+            <button type="button" className={styles.clearButton} onClick={() => void cargar()}>Reintentar</button>
+          </div>
+        ) : null}
+        {errorExportacion ? <div className={styles.errorBox} role="alert">{errorExportacion}</div> : null}
+        {actual && !puedeExportar ? <div className={styles.alertBox}>Su perfil puede consultar este reporte, pero no exportarlo (requiere el permiso Exportar de Reportes).</div> : null}
 
-        <div className={styles.tableWrap}>
+        <div className={styles.tableWrap} aria-busy={cargando}>
           <table className={styles.table}>
             <thead>
               <tr>
@@ -230,27 +273,32 @@ export default function ReporteStockGeneralPage() {
               </tr>
             </thead>
             <tbody>
-              {(datos?.filas ?? []).map((f: StockGeneralFila, i: number) => (
+              {(actual?.filas ?? []).map((f: StockGeneralFila, i: number) => (
                 <tr key={`${f.productoId}-${f.deposito}-${f.lote}-${f.propiedad}-${i}`}>
                   <td>{f.codigo}</td>
                   <td>{[f.codigoInventario, f.codigoBarras].filter(Boolean).join(" / ") || "—"}</td>
                   <td className={styles.desc} title={f.descripcion}>{f.descripcion}</td>
                   <td>{f.categoria || "—"}</td><td>{f.marca || "—"}</td><td>{f.familia || "—"}</td><td>{f.linea || "—"}</td><td>{f.unidad || "—"}</td>
-                  {detalle ? <><td>{f.deposito}</td><td>{f.lote || "—"}</td><td>{f.fechaVencimiento || "—"}</td><td>{TEXTO_PROPIEDAD[f.propiedad]}</td></> : null}
-                  {CANTIDADES.map(([, k]) => celdaNum(f, k))}
-                  {celdaNum(f, "terceros")}
-                  <td>{textoTercerosEstados(f.tercerosEstados) || "—"}</td>
+                  {detalle ? (
+                    <>
+                      <td>{f.sinSaldo ? <em>Sin saldo en el alcance filtrado</em> : `${f.deposito}${f.depositoInactivo ? " (inactivo)" : ""}`}</td>
+                      <td>{f.lote || "—"}</td><td>{f.fechaVencimiento || "—"}</td><td>{TEXTO_PROPIEDAD[f.propiedad] ?? "—"}</td>
+                    </>
+                  ) : null}
+                  {CANTIDADES.map(([, k]) => <td key={k} className={styles.num}>{fmtCantidadTexto(f[k])}</td>)}
+                  <td className={styles.num}>{fmtCantidadTexto(f.terceros)}</td>
+                  <td>{textoTercerosEstadosTexto(f.tercerosEstados) || "—"}</td>
                   {detalle ? null : <td><span className={[styles.badge, styles[`badge${f.nivel}`]].join(" ")}>{NIVEL[f.nivel]}</span></td>}
                 </tr>
               ))}
             </tbody>
-            {datos && datos.filas.length > 0 ? (
+            {actual && actual.filas.length > 0 ? (
               <tfoot>
                 <tr>
-                  <td colSpan={detalle ? 12 : 8}>TOTAL (todos los resultados del filtro)</td>
-                  {CANTIDADES.map(([, k]) => <td key={k} className={styles.num}>{num(filaTotal(datos)[k] ?? 0)}</td>)}
-                  <td className={styles.num}>{num(datos.totales.terceros)}</td>
-                  <td>{textoTercerosEstados(datos.totales.tercerosPorEstado) || "—"}</td>
+                  <td colSpan={detalle ? 12 : 8}>TOTAL GENERAL (las cantidades no se suman entre unidades; vea el resumen por unidad)</td>
+                  {CANTIDADES.map(([, k]) => <td key={k} className={styles.num}>n/a</td>)}
+                  <td className={styles.num}>n/a</td>
+                  <td />
                   {detalle ? null : <td />}
                 </tr>
               </tfoot>
@@ -258,13 +306,14 @@ export default function ReporteStockGeneralPage() {
           </table>
         </div>
 
-        {datos && datos.filas.length === 0 && !cargando ? (
+        {actual && actual.filas.length === 0 && !cargando ? (
           <div className={styles.empty}>
             <strong>No se encontraron resultados.</strong>
             <span>{hayFiltros ? "Modifique los filtros aplicados." : "Aún no hay productos que controlen stock."}</span>
           </div>
         ) : null}
-        {!datos && cargando ? <div className={styles.empty}><strong>Cargando reporte...</strong></div> : null}
+        {!actual && cargando ? <div className={styles.empty}><strong>Cargando reporte...</strong></div> : null}
+        {!actual && !cargando && error ? <div className={styles.empty}><strong>No se pudo generar el reporte</strong><span>Use «Reintentar» para volver a consultar con los mismos filtros.</span></div> : null}
 
         <footer className={styles.pagination}>
           <span>
@@ -273,12 +322,12 @@ export default function ReporteStockGeneralPage() {
           <div>
             <button type="button" disabled={pagina === 1 || cargando} onClick={() => setPagina((p) => p - 1)}>‹</button>
             <strong>{pagina} / {paginas}</strong>
-            <button type="button" disabled={pagina >= paginas || cargando} onClick={() => setPagina((p) => p + 1)}>›</button>
+            <button type="button" disabled={pagina >= paginas || cargando || !actual} onClick={() => setPagina((p) => p + 1)}>›</button>
           </div>
         </footer>
 
         <ul className={styles.notes}>
-          {(datos?.cobertura ?? []).map((n) => <li key={n}>{n}</li>)}
+          {(actual?.cobertura ?? []).map((n) => <li key={n}>{n}</li>)}
         </ul>
       </section>
     </section>

@@ -26,34 +26,49 @@ export type StockGeneralFila = {
   unidad: string;
   // Vista DETALLE: depósito/lote/vencimiento de la fila y qué stock tiene (PROPIO, TERCERO o AMBOS). Vista PRODUCTO: vacíos (agregado de los depósitos filtrados).
   deposito: string;
+  /** true = depósito inactivo del alcance del usuario (se informa; solo vista DETALLE). */
+  depositoInactivo: boolean;
   lote: string;
   fechaVencimiento: string;
   propiedad: "" | "PROPIO" | "TERCERO" | "AMBOS";
-  disponible: number;
-  reservado: number;
-  cuarentena: number;
-  transito: number;
-  fisico: number;
-  virtual: number;
+  /** Vista DETALLE: el producto no tiene saldo desglosable por depósito/lote en el alcance filtrado (se muestra una sola fila honesta, sin inventar depósito ni lote). */
+  sinSaldo: boolean;
+  // Cantidades EXACTAS como texto numeric (nunca float). Disponible…Virtual = stock PROPIO.
+  disponible: string;
+  reservado: string;
+  cuarentena: string;
+  transito: string;
+  fisico: string;
+  virtual: string;
   // Stock de terceros (todos los estados), SIEMPRE separado de las cantidades propias. Igual significado en las dos vistas.
-  terceros: number;
-  tercerosEstados: { disponible: number; reservado: number; cuarentena: number; transito: number };
+  terceros: string;
+  tercerosEstados: { disponible: string; reservado: string; cuarentena: string; transito: string };
   nivel: NivelStock;
 };
 
-export type StockGeneralTotales = {
+/** Totales cuantitativos POR UNIDAD de medida (kg, unidades, litros… no se suman entre sí). */
+export type StockGeneralUnidad = {
+  unidad: string;
   productos: number;
-  disponible: number;
-  reservado: number;
-  cuarentena: number;
-  transito: number;
-  fisico: number;
-  virtual: number;
-  terceros: number;
-  tercerosPorEstado: { disponible: number; reservado: number; cuarentena: number; transito: number };
+  disponible: string;
+  reservado: string;
+  cuarentena: string;
+  transito: string;
+  fisico: string;
+  virtual: string;
+  terceros: string;
+};
+
+export type StockGeneralTotales = {
+  /** Productos del filtro (en las dos vistas). */
+  productos: number;
+  /** Productos sin ningún saldo (propio ni de terceros) en el alcance filtrado: en la vista DETALLE salen como una fila «sin saldo». */
+  sinSaldo: number;
   sinStock: number;
   bajo: number;
   sobrestock: number;
+  /** Las cantidades solo se suman dentro de una misma unidad: no existe una cantidad total sin unidad. */
+  porUnidad: StockGeneralUnidad[];
 };
 
 export type StockGeneralRespuesta = {
@@ -66,13 +81,15 @@ export type StockGeneralRespuesta = {
   filas: StockGeneralFila[];
   totales: StockGeneralTotales;
   catalogos: {
-    depositos: { id: string; nombre: string }[];
+    depositos: { id: string; nombre: string; activo: boolean }[];
     categorias: { id: string; nombre: string }[];
     marcas: { id: string; nombre: string }[];
     familias: { id: string; nombre: string }[];
   };
   cobertura: string[];
 };
+
+export type StockGeneralRespuestaApi = StockGeneralRespuesta & { permisos: { exportar: boolean } };
 
 // ---- Reporte 2: Valorización de inventario ----
 export type VistaValorizacion = "DETALLE" | "PRODUCTO" | "DEPOSITO" | "CATEGORIA";

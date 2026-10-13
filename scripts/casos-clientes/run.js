@@ -43,6 +43,7 @@ Module._resolveFilename = function (request, ...resto) {
   const rva = cargar("lib/reportes/valorizacion.casos.js");
   const rxl = cargar("lib/reportes/export-xlsx.casos.js");
   const rsc = cargar("lib/reportes/stock-critico.casos.js");
+  const rsg = cargar("lib/reportes/stock-general.casos.js");
   const lpe = cargar("lib/listas-precio/estabilizacion.casos.js");
   const srm = cargar("lib/stock/stock-reposicion.casos.js");
   const fac = cargar("lib/facturacion/facturacion.casos.js");
@@ -83,6 +84,7 @@ Module._resolveFilename = function (request, ...resto) {
     ["Reportes · Valorización de inventario (RPT-V01…V06, N02: unidades, snapshot, cobertura sin compensar, cargas confiables, precisión, depósitos inactivos, exportación)", async () => rva.verificarCasosReportesValorizacion(), null],
     ["Reportes · Exportación XLSX/PDF compartida (RPT-R03-01/02: celdas reales del XLSX, n/a, cantidades exactas, compatibilidad de los cinco relatórios)", async () => rxl.verificarCasosExportacionXlsx(), null],
     ["Reportes · Stock crítico y reposición (RPT-C03-01…07, matriz T-C01…T-C09: motor único de Reposición, depósitos sin saldo, sin duplicar, sin cantidades heterogéneas, cargas confiables, snapshot, XLSX/PDF)", async () => rsc.verificarCasosReportesStockCritico(), null],
+    ["Reportes · Stock general (RPT-SG-01…09, matriz SG-T01…T09: sin saldo en las dos vistas, nivel como Inventario > Stock, totales por unidad, decimales exactos, cargas confiables, snapshot, XLSX/PDF)", async () => rsg.verificarCasosReportesStockGeneral(), null],
     ["Stock, Reposición y contrato Movimientos ↔ documentos (Etapas A, B y C)", async () => srm.verificarCasosStockReposicionMovimientos(), null],
     ["Facturación F-01/F-02: documentos electrónicos, gateway, NEX-047, cálculo fiscal, payload FE y NEX-048", async () => fac.verificarCasosFacturacion(), null],
   ];
