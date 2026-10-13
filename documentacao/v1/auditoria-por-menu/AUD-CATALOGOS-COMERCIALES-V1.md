@@ -23,7 +23,7 @@ Este arquivo é a fonte única da auditoria do menu **Catálogos comerciales**. 
 
 ## Achados confirmados até agora (parciais)
 
-Primeira auditoria estática dirigida **AUD-CC-R01** (seções I–IV abaixo): seis achados com evidência de código/SQL (CC-A01…A06) e pendências de execução explicitamente separadas. Nenhum teste HTTP, navegador, PostgreSQL ou VM foi realizado nesta rodada.
+**AUD-CC-R01** (seções I–IV): seis achados de código/SQL (CC-A01…A06). **AUD-CC-R02** (seção V): mais um achado confirmado por inspeção da integração Clientes (CC-A07). Total: **sete achados abertos**. Nenhum teste HTTP, navegador, PostgreSQL ou VM foi realizado nestas rodadas.
 
 ## Pendências
 
@@ -63,3 +63,17 @@ O responsável mostrou NEX-001…051 já aplicadas na VM. Proibido editar script
 **Casos pendentes de homologação humana:** requests sem e com token de versão, 2 editores em mesma empresa, isolamento entre empresas, 401/403/500, resposta fora de ordem, confirmação de saída, taxa com 6 decimais e valores altos, corretivo x anulação concorrentes, constatação de grants da role runtime e do ledger NEX-045/052/053. Capturas 1440/768/375, tabulação e layout responsivo não foram inspecionados ao vivo.
 
 **Resultado desta sessão:** 0 testes, 0 build/lint, 0 execuções de migrations/SQL, 0 navegador, 0 PostgreSQL e 0 VM. **Catálogos comerciales permanece ABERTO/NÃO HOMOLOGADO**. Este commit de ChatGPT registra auditoria documental, não modifica aplicação.
+
+## V. AUD-CC-R02 — confronto independente com integrações de Clientes (12/10/2026)
+
+**Base inspecionada:** `71cf96f4b1c18fcd0f8cb9f23ab38b52c26f19b4` — `feature/NEXIT-2026-001-banco-demo`. Revisão estática do próprio código após AUD-CC-R01, sem modificação de aplicação nem execução de testes, SQL, PostgreSQL, VM, Docker ou navegador. Os achados **CC-A01…CC-A06** de R01 permanecem abertos: os pontos de evidência foram confrontados novamente e as rotas/telas/services/migrations continuam sem correção desses defeitos. Esta seção acrescenta um achado distinto identificado ao rastrear a integração real com Clientes; não substitui nem altera R01.
+
+| ID | Severidade | Evidência precisa | Impacto e critério de aceite |
+|---|---|---|---|
+| **CC-A07** | **MÉDIA — vínculos com Clientes omitidos ao inativar Canal/Zona** | `documentacao/banco/nexit/v1/migraciones/NEX-005-clientes.sql:47,64,87,90` define `clientes.canal_venta_id` e `clientes.zona_comercial_id` com FK por empresa para os catálogos. `app/api/clientes/route.ts:543-560` lista só canais/zonas ativos nos cadastros; `app/api/clientes/[id]/route.ts:129-135` recupera referências históricas inativas. Apesar disso, `lib/comercial/servidor.ts:94-104` calcula `usos` exclusivamente de `listas_precio` e `lista_precio_reglas`, ignorando os clientes; `app/(private)/catalogos-comerciales/page.tsx:261-269` pede confirmação somente quando `f.usos > 0`, e `:532-535,595-598` mostra apenas vínculos das listas/regras. | Um canal ou zona utilizado por clientes mas não por listas/regras pode ser inativado **sem qualquer aviso de vínculo**, saindo também dos seletores de novos clientes; a FK e a referência histórica continuam, portanto **não há exclusão ou perda de relacionamento** comprovada. Contar separadamente clientes e listas/regras, exibir vínculos reais e confirmar inativação se qualquer categoria tiver uso. Manter referência histórica nos clientes existentes e exigir `empresa_id` em cada consulta. Testar: (a) apenas clientes vinculados; (b) apenas listas/regras; (c) ambos; (d) zero vínculos; (e) referências de outra empresa não entram na contagem. Não ampliar o escopo funcional V1. |
+
+### Estado e regressões ainda pendentes
+
+- **Sete achados de código/documentação neste menu:** CC-A01 a CC-A06 (R01) e CC-A07 (R02). Nenhum resolvido ou homologado nesta rodada.
+- Em especial, a confirmação atual de inativação cobre apenas listas e regras; o relacionamento histórico de Clientes **já é preservado** pelas FKs, e essa proteção não deve ser removida.
+- **Testes executados nesta revisão:** 0 automatizados, 0 HTTP, 0 build/lint, 0 PostgreSQL, 0 VM/Docker, 0 navegador. Apenas confrontação estática dos arquivos GitHub no SHA acima. Veredito: **CORREÇÃO SOLICITADA; NÃO HOMOLOGADO**.
