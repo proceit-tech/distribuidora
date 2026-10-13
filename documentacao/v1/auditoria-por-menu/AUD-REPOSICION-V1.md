@@ -32,3 +32,11 @@ Auditoria exaustiva deste menu ainda não executada. Não atribuir percentual de
 ## Regra de migrations
 
 O responsável mostrou NEX-001…051 já aplicadas na VM. Proibido editar scripts aplicados, checksums ou reexecutar SQL histórico como se fosse nova migration. Qualquer nova alteração estrutural exige justificativa, aprovação e migration incremental a partir de NEX-052.
+
+## Auditoria transversal do Inventario (13/10/2026)
+
+**Revisão estática conjunta de Stock, Movimientos, Depósitos e Reposición.** Fonte canônica transversal: [AUD-INVENTARIO-INTEGRADA-V1-2026-10-13.md](./AUD-INVENTARIO-INTEGRADA-V1-2026-10-13.md). SHA-base: `02d730e6e13ed2b0183563835e27757c18b50259`. **Não homologado; nenhuma implementação, PostgreSQL, VM, Docker ou navegador executados nesta revisão.**
+
+**Reposición** mantém planejamento sem gravação, diferenças conceituais em relação a Stock e transferência pré-preenchida via Movimientos. Propostas UX e limitações em INV-01/02/06/08.
+
+**Estado:** propostas de simplificação pendentes de decisão do responsável; achados técnicos numerados e critérios de aceite no contrato compartilhado. Não interpretar este registro como autorização automática para o Claude alterar o menu.

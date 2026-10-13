@@ -85,3 +85,11 @@ Consultar **`AUD-PRODUCTOS-V1.md` §XVII**: `stock_saldos` deve ser zero em **to
 **Risco operacional:** `NEX-009/014` movimenta `cantidad` em unidade-base, sem FK/versão da apresentação no `movimiento_lineas` atual. `lib/productos/sincronizar.ts` ainda permite UPDATE/DELETE da apresentação; a futura associação ou snapshot de quantidade comercial, base e fator é necessária para auditoria e reversões. Não alterar movimentos e custos anteriores nem inferir novos saldos pela atualização do cadastro.
 
 **Estado:** DEC-PRD-U09 aprovada na fonte canônica `AUD-PRODUCTOS-V1.md` §XIX, Stock ainda em auditoria, sem execução SQL/VM.
+
+## Auditoria transversal do Inventario (13/10/2026)
+
+**Revisão estática conjunta de Stock, Movimientos, Depósitos e Reposición.** Fonte canônica transversal: [AUD-INVENTARIO-INTEGRADA-V1-2026-10-13.md](./AUD-INVENTARIO-INTEGRADA-V1-2026-10-13.md). SHA-base: `02d730e6e13ed2b0183563835e27757c18b50259`. **Não homologado; nenhuma implementação, PostgreSQL, VM, Docker ou navegador executados nesta revisão.**
+
+**Stock** mantém somente consulta, detalhe e atalhos; análise de moeda/valor e permissões de atalhos em INV-01…04. Nenhuma edição direta de saldos.
+
+**Estado:** propostas de simplificação pendentes de decisão do responsável; achados técnicos numerados e critérios de aceite no contrato compartilhado. Não interpretar este registro como autorização automática para o Claude alterar o menu.
