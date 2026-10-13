@@ -125,3 +125,10 @@ Depósito B tem 2 disponíveis e mínimo 5. **Stock** mostra 2; **Reposición** 
 **Não rediscutir decisões já aprovadas**: taxa de câmbio de Catálogos comerciales manual; saldo próprio separado de terceiros; alteração de unidade-base com guarda U07; sem recálculo automático de preços U10; depósito/sucursal/auditoria de acessos; trânsito não presumido; um efeito físico por evento; nenhum deploy/SQL por IA.
 
 **Próximo passo:** obter aceite deste recorte; depois autorizar Claude Code a implementar apenas itens escolhidos (commits por menu, helpers e casos, sem VM/SQL real); ChatGPT reaudita, responsável valida operacionalmente. **Nenhuma implementação autorizada automaticamente por esta auditoria.**
+
+
+## 8. Decisão documental do responsável — responsabilidades oficiais (13/10/2026)
+
+**Aprovada a separação de responsabilidades** dos quatro menus no Inventario, sem eliminar dados históricos nem modificar a implementação automaticamente. A **definição normativa** e única de menus, responsabilidades, limites e critérios de aceite é [DEFINICAO-MENUS-INVENTARIO-V1.md](../../DEFINICAO-MENUS-INVENTARIO-V1.md). Esta auditoria mantém provas e achados (INV-01…INV-09). A simplificação concreta dos KPIs, a aparência e a posição da ação `A planificar/Simular` devem ser validadas visualmente antes de implementar telas. **Não confundir documentação aprovada com código implantado.**
+
+**Próximo gate:** autorizar Claude para a tarefa escolhida após concluir correções ainda abertas de Catálogos comerciales; futuras correções de Inventario devem tratar INV-02/03/04/05 e a separação de responsabilidades, sem migrações/desenvolvimento antecipado por esta decisão.
