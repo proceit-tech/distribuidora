@@ -7,7 +7,7 @@ import styles from "@/app/(private)/productos/catalogos/page.module.css";
 import { compararTexto, ordenarLista, siguienteOrden, type Orden } from "@/components/ui/lista-padrao/orden";
 import { ThOrdenable } from "@/components/ui/lista-padrao/th-ordenable";
 import ui from "@/components/ui/lista-padrao/lista.module.css";
-import { cargarDepositos, enlaceStockDeDeposito } from "@/lib/depositos/carga";
+import { cargarDepositos, cargarPanelAcceso, enlaceStockDeDeposito } from "@/lib/depositos/carga";
 import { cargaConfiable, crearCompuerta, motivoBloqueoGuardar, permisosVigentes } from "@/lib/productos/catalogos-carga";
 import { formularioDepositoSucio, validarDeposito, type CampoDeposito, type ErroresDeposito, type FormularioDeposito } from "@/lib/depositos/validacion";
 import { useProtegerCambios } from "@/lib/ui/proteger-cambios";
@@ -17,7 +17,7 @@ type Sucursal = { id: string; codigo: string; nombre: string; activo: boolean };
 type UsuarioDeposito = { id: string; usuario: string; nombre: string; apellido: string; estado: string; alcanceDepositos: "TODOS" | "ASIGNADOS"; alcanceSucursales: string; asignado: boolean; asignadoAt: string | null; sucursalCompatible: boolean; esUsted: boolean };
 type Datos = { depositos: Deposito[]; sucursales: Sucursal[]; permisos: { crear: boolean; editar: boolean; stock?: boolean }; actor: { alcanceDepositos: "TODOS" | "ASIGNADOS" } | null };
 type EventoAcceso = { id: string; evento: "ATRIBUIR" | "REVOCAR"; origen: "MANUAL" | "CREACION"; creadoAt: string; usuarioNombre: string; usuarioCodigo: string; actorNombre: string; actorCodigo: string };
-type Panel = { deposito: Deposito; usuarios: UsuarioDeposito[] | null; eventos: EventoAcceso[]; error: string; ocupado: string };
+type Panel = { deposito: Deposito; usuarios: UsuarioDeposito[] | null; eventos: EventoAcceso[]; error: string; ocupado: string; fallo?: boolean };
 type CampoOrden = "codigo" | "nombre" | "sucursal" | "estado";
 type FormEstado = FormularioDeposito & { id: string | null; asignarme: boolean };
 
@@ -188,20 +188,11 @@ export default function DepositosPage() {
     const solicitud = compuertaPanel.current.nueva();
 
     setPanel({ deposito: d, usuarios: null, eventos: [], error: "", ocupado: "" });
-    try {
-      const [r, h] = await Promise.all([fetch(`/api/depositos/${d.id}/usuarios`, { cache: "no-store" }), fetch(`/api/depositos/${d.id}/historial-acceso`, { cache: "no-store" })]);
-      const j = (await r.json().catch(() => ({}))) as { usuarios?: UsuarioDeposito[]; error?: string };
-      const jh = (await h.json().catch(() => ({}))) as { eventos?: EventoAcceso[]; error?: string };
+    // INV-R03-01: usuarios e historial se validan registro a registro; con cualquier falla el panel queda sin datos (sin acciones) y con «Reintentar».
+    const res = await cargarPanelAcceso<UsuarioDeposito, EventoAcceso>((url) => fetch(url, { cache: "no-store" }), d.id);
 
-      if (!r.ok) throw new Error(j.error ?? "No fue posible cargar los usuarios.");
-      if (!h.ok) throw new Error(jh.error ?? "No fue posible cargar el historial de accesos.");
-      if (!Array.isArray(j.usuarios)) throw new Error("La respuesta de usuarios no tiene el formato esperado.");
-      if (!compuertaPanel.current.vigente(solicitud)) return;
-      setPanel({ deposito: d, usuarios: j.usuarios, eventos: jh.eventos ?? [], error: "", ocupado: "" });
-    } catch (e) {
-      if (!compuertaPanel.current.vigente(solicitud)) return;
-      setPanel({ deposito: d, usuarios: [], eventos: [], error: e instanceof Error ? e.message : "No fue posible cargar los usuarios.", ocupado: "" });
-    }
+    if (!compuertaPanel.current.vigente(solicitud)) return;
+    setPanel(res.datos ? { deposito: d, usuarios: res.datos.usuarios, eventos: res.datos.eventos, error: "", ocupado: "" } : { deposito: d, usuarios: [], eventos: [], error: res.error, ocupado: "", fallo: true });
   }
 
   async function cambiarAcceso(u: UsuarioDeposito, autorizar: boolean) {
@@ -408,6 +399,11 @@ export default function DepositosPage() {
           {panel.error ? (
             <div className={ui.alertError} role="alert">
               {panel.error}
+              {panel.fallo ? (
+                <button type="button" className={ui.clearButton} onClick={() => void abrirUsuarios(panel.deposito)}>
+                  Reintentar
+                </button>
+              ) : null}
             </div>
           ) : null}
           <div className={ui.tableScroll}>
@@ -433,7 +429,7 @@ export default function DepositosPage() {
                   <tr>
                     <td colSpan={4} className={ui.emptyCell}>
                       <div className={ui.empty}>
-                        <strong>No hay usuarios en la empresa</strong>
+                        <strong>{panel.fallo ? "No se pudieron cargar los usuarios" : "No hay usuarios en la empresa"}</strong>
                       </div>
                     </td>
                   </tr>
@@ -509,8 +505,8 @@ export default function DepositosPage() {
                   <tr>
                     <td colSpan={4} className={ui.emptyCell}>
                       <div className={ui.empty}>
-                        <strong>Sin cambios de acceso registrados</strong>
-                        <span>Solo se registran las autorizaciones y revocaciones efectivas.</span>
+                        <strong>{panel.fallo ? "No se pudo cargar el historial de accesos" : "Sin cambios de acceso registrados"}</strong>
+                        <span>{panel.fallo ? "Use «Reintentar»." : "Solo se registran las autorizaciones y revocaciones efectivas."}</span>
                       </div>
                     </td>
                   </tr>

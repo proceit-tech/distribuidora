@@ -41,3 +41,14 @@ export const depositoSimpleValido = (v: unknown): boolean => esRegistro(v) && te
 
 /** true si es un arreglo (posiblemente vacío) cuyos elementos cumplen todos el validador. */
 export const listaValida = (v: unknown, item: (x: unknown) => boolean): boolean => Array.isArray(v) && v.every(item);
+
+/** INV-R03-01 — usuario del panel «Usuarios» de un depósito (campos que lee la tela y que decide autorizar/revocar). */
+export const usuarioAccesoValido = (v: unknown): boolean =>
+  esRegistro(v) && textoNoVacio(v.id) && texto(v.usuario) && texto(v.nombre) && texto(v.apellido) && texto(v.estado) &&
+  (v.alcanceDepositos === "TODOS" || v.alcanceDepositos === "ASIGNADOS") && texto(v.alcanceSucursales) &&
+  typeof v.asignado === "boolean" && (v.asignadoAt === null || texto(v.asignadoAt)) && typeof v.sucursalCompatible === "boolean" && typeof v.esUsted === "boolean";
+
+/** INV-R03-01 — evento del historial de accesos (fecha parseable, tipo y origen conocidos). */
+export const eventoAccesoValido = (v: unknown): boolean =>
+  esRegistro(v) && textoNoVacio(v.id) && (v.evento === "ATRIBUIR" || v.evento === "REVOCAR") && (v.origen === "MANUAL" || v.origen === "CREACION") &&
+  texto(v.creadoAt) && !Number.isNaN(Date.parse(v.creadoAt)) && texto(v.usuarioNombre) && texto(v.usuarioCodigo) && texto(v.actorNombre) && texto(v.actorCodigo);

@@ -777,3 +777,7 @@ Só código; **sem migration** (NEX-001…053 intactas; 052/053 NÃO aplicadas);
 - **INV-R02-02 (Stock):** `/api/stock` devolve `depositosAutorizados` (alcance do usuário, com ou sem saldo); `?deposito=` é validado contra essa lista (`interpretarDepositoUrl`): autorizado sem saldo → selecionado e «sem saldos»; id inválido/obsoleto/fora do alcance → aviso explícito com «Ver todos» (nunca consolidado em silêncio, sem distinguir «não existe» de «não autorizado»).
 - **INV-R02-03 (Depósitos e Reposición):** `cargarDepositos`/`cargarReposicion` validam cada registro (`lib/inventario/validar-carga.ts`); carga inválida → erro recuperável, sem dados/permisos. Reposición ganha compuerta de última resposta e «Reintentar» (simulação local preservada).
 - Local: 2489 verificações, 0 falhas (+67 novas sobre 2422); tsc, ESLint e `next build` OK. Sem PostgreSQL/navegador; sem migration. Menus NÃO homologados.
+
+### INV-R03-01 — painel Usuarios / Historial de accesos de Depósitos (2026-10-13)
+- `cargarPanelAcceso` valida registro a registro usuários e eventos (reutiliza `validar-carga.ts`); qualquer falha (rede, HTTP, JSON, lista ou registro malformado) deixa o painel sem dados nem ações, com erro e «Reintentar». `compuertaPanel` preservada (A→B rápido, reabertura); autorizar/revogar, bloqueio por carga não confiável, histórico e formulários inalterados. Sem SQL/migration.
+- Local: 2518 verificações, 0 falhas (+29); tsc, ESLint e `next build` OK. Sem PostgreSQL/navegador. Menus NÃO homologados.
