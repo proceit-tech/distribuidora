@@ -26,7 +26,8 @@ export async function GET() {
     const datos = await leerEntradasReposicion(db, session.user.empresaId, session.user.id);
     const acceso = await getAccessContext(session.user, session.demo === true);
 
-    return NextResponse.json({ ...datos, permisos: { movimientos: hasPermission(acceso, "MOVIMIENTOS", "CREAR") } });
+    // Solo para mostrar atajos (INV-02): «Preparar transferencia» abre /movimientos/nuevo, que exige VER y CREAR. Cada API vuelve a verificar al operar.
+    return NextResponse.json({ ...datos, permisos: { movimientosVer: hasPermission(acceso, "MOVIMIENTOS", "VER"), movimientosCrear: hasPermission(acceso, "MOVIMIENTOS", "CREAR") } });
   } catch (error) {
     console.error("Error al calcular la reposición:", error);
 

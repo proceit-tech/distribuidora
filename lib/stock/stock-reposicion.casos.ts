@@ -341,7 +341,7 @@ export async function verificarCasosStockReposicionMovimientos(): Promise<string
   cierto("Reposición: página, layout con STOCK.VER, API de solo lectura con STOCK.VER, ruta en V1_HREFS y menú con STOCK.VER", existsSync(join(raiz, "app/(private)/reposicion/page.tsx")) && /guardPage\("STOCK", "VER"\)/.test(leer("app/(private)/reposicion/layout.tsx")) && /denyIfNoPermission\(session, "STOCK", "VER"\)/.test(leer("app/api/reposicion/route.ts")) && !/export (async )?function (POST|PUT|DELETE|PATCH)|export const (POST|PUT|DELETE|PATCH)/.test(leer("app/api/reposicion/route.ts")) && /"\/reposicion"/.test(menu.slice(menu.indexOf("V1_HREFS"))) && /href: "\/reposicion",\s+icon: "replenishment",\s+permission: "STOCK\.VER"/.test(menu));
   const repPage = leer("app/(private)/reposicion/page.tsx");
 
-  cierto("Reposición: solo planificación (sin POST/PUT, sin botones de compra) y la acción hacia Movimientos solo con permiso y destino real", !/method:\s*"(POST|PUT|DELETE)"/.test(repPage) && !/Comprar ahora|Generar pedido|Crear orden/i.test(repPage) && /datos\?\.permisos\?\.movimientos/.test(repPage) && /enlaceNuevoMovimiento/.test(repPage) && existsSync(join(raiz, "app/(private)/movimientos/nuevo/page.tsx")));
+  cierto("Reposición: solo planificación (sin POST/PUT, sin botones de compra) y la acción hacia Movimientos solo con permiso y destino real", !/method:\s*"(POST|PUT|DELETE)"/.test(repPage) && !/Comprar ahora|Generar pedido|Crear orden/i.test(repPage) && /puedeAbrirNuevoMovimiento\(permisos\)/.test(repPage) && /enlaceNuevoMovimiento/.test(repPage) && existsSync(join(raiz, "app/(private)/movimientos/nuevo/page.tsx")));
   cierto("la API de stock aplica el alcance de depósitos del usuario", /session\.user\.id/.test(leer("app/api/stock/route.ts")) && /session\.user\.id/.test(leer("app/api/stock/[id]/route.ts")));
 
   // ── Revisión visual y funcional: Detalle de Stock, Reposición y Nuevo movimiento (UX-01…UX-24)
@@ -435,7 +435,7 @@ export async function verificarCasosStockReposicionMovimientos(): Promise<string
   cierto("Detalle de Stock: el valor físico no se llama «costo promedio»", !/Valor físico[\s\S]{0,200}Costo promedio<\/small>/.test(detallePage));
   cierto("API del detalle de stock: devuelve permisos solo para mostrar accesos (cada API verifica el suyo)", /movimientosCrear: hasPermission\(acceso, "MOVIMIENTOS", "CREAR"\)/.test(leer("app/api/stock/[id]/route.ts")));
   cierto("Reposición: transferencia precargada solo con permiso, desde el cálculo auditado; sin botones de compra ni escritura", /enlaceNuevoMovimiento\(\{ productoId: f\.productoId, tipo: "TRANSFERENCIA"/.test(repPage) && /Preparar transferencia/.test(repPage) && !/method:\s*"(POST|PUT|DELETE)"/.test(repPage) && !/Comprar ahora|Generar pedido|Crear orden/i.test(repPage));
-  cierto("Reposición: indicadores con el mismo criterio que la tabla (solo planes) y aviso de lo que oculta el filtro por defecto", /f\.necesita && f\.criticidad === "SIN_STOCK"/.test(repPage) && /oculta \{filas\.length - visibles\.length\}/.test(repPage) && /simulación local, no se guarda/.test(repPage));
+  cierto("Reposición: indicadores con el mismo criterio que la tabla (solo planes) y aviso de lo que oculta el filtro por defecto", /f\.necesita && f\.criticidad === "SIN_STOCK"/.test(repPage) && /oculta \{filas\.length - visibles\.length\}/.test(repPage) && /Simulación local\./.test(repPage));
   cierto("Reposición: sigue usando el plan global auditado (AUD-REP-01…04)", /calcularPlanReposicion\(/.test(repPage));
   cierto("Movimientos: la lista acepta ?buscar=<código> (histórico del producto con datos reales)", /get\("buscar"\)/.test(leer("app/(private)/movimientos/page.tsx")));
 
@@ -474,7 +474,7 @@ export async function verificarCasosStockReposicionMovimientos(): Promise<string
   igual("simulación mayor que lo confirmado: el excedente es compra, nunca traslado (no se supera la disponibilidad de los orígenes)", [prep(500), prep(90)], [[[D2, 30], [D6, 20]], [[D2, 30], [D6, 20]]]);
   igual("simulación 0: no se prepara ninguna transferencia", prep(0), []);
   igual("la simulación no altera el cálculo auditado", [dosOrigenes.sugeridaTransferencia, dosOrigenes.sugeridaCompra], [50, 40]);
-  cierto("Reposición: el enlace usa la cantidad planificada (transferenciasPlanificadas) y lo explica", /transferenciasPlanificadas\(f, planEscrita\(f\)\)/.test(repPage) && /según A planificar/.test(repPage));
+  cierto("Reposición: el enlace usa la cantidad planificada (transferenciasPlanificadas) y lo explica", /transferenciasPlanificadas\(f, escrita\)/.test(repPage) && /\(simulada\)/.test(repPage));
 
   // Movimientos: lote nuevo concurrente (ON CONFLICT) y repetición de la misma solicitud
   const consultasLote: string[] = [];
@@ -567,7 +567,7 @@ export async function verificarCasosStockReposicionMovimientos(): Promise<string
   cierto("Movimientos (lista): búsqueda, tipo, orden y página se envían al servidor (sin filtrar un arreglo local)", /cargarMovimientos\(\{/.test(movLista) && /orden: orden\?\.campo/.test(movLista) && !/\.filter\(/.test(movLista) && !/ordenarLista/.test(movLista));
   cierto("Movimientos (lista): el aviso de registro solo aparece si el servidor lo confirma; el error de carga es un aviso aparte", /datos\.confirmado === true/.test(movLista) && /No se pudo confirmar el registro/.test(movLista) && /className=\{ui\.alertError\} role="alert" style=\{\{ margin: "0 0 8px" \}\}/.test(movLista) && !/setFlash\(`Movimiento \$\{ok\}/.test(movLista));
   cierto("Movimientos (lista): distingue líneas de movimientos en los contadores", /línea\(s\)/.test(movLista) && /totalMovimientos/.test(movLista));
-  cierto("Reposición: comunica sugerida, planificada y preparada y no registra nada", /Sugerida<\/strong> es el cálculo del plan/.test(repPage) && /Planificado \{cant\(escrita\)\}: transferir/.test(repPage) && !/method:\s*"(POST|PUT|DELETE)"/.test(repPage));
+  cierto("Reposición: comunica sugerida, planificada y preparada y no registra nada", /Preparar transferencia<\/strong> solo abre Nuevo movimiento/.test(repPage) && /Simulado \{cant\(escrita\)\}: transferir/.test(repPage) && !/method:\s*"(POST|PUT|DELETE)"/.test(repPage));
 
   // ── Auditoría de campo (d0e11ba): detalle de movimiento / anulación, Reposición vacía, Depósitos (bloqueado)
   const detMov = leer("app/(private)/movimientos/[id]/page.tsx");
