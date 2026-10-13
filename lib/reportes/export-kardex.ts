@@ -1,6 +1,6 @@
 import type { Celda, ColRep, TablaReporte } from "@/lib/reportes/export";
 import { fmtCantidadTexto } from "@/lib/reportes/formato";
-import { esCeroDecimal, etiquetaGrupo, netoMovimientos } from "@/lib/reportes/kardex-plan";
+import { esCeroDecimal, etiquetaGrupo, netoMovimientos, unidadGrupo } from "@/lib/reportes/kardex-plan";
 import { ORIGENES_KARDEX, TIPOS_KARDEX } from "@/lib/reportes/kardex-textos";
 import type { KardexFila, KardexFiltros, KardexGrupo, KardexResumenFila, KardexRespuesta } from "@/types/reportes";
 
@@ -102,7 +102,7 @@ export function tablaKardex(r: KardexRespuesta): TablaReporte {
 
   // Un bloque de totales por grupo homogéneo (unidad × propiedad × propietario): jamás se suman grupos distintos.
   for (const g of t.grupos) {
-    const gr: Record<string, Celda> = { Unidad: g.unidad || "Sin unidad", Propiedad: textoPropiedadFila(g), uni: g.unidad || "Sin unidad", prop: textoPropiedadFila(g) };
+    const gr: Record<string, Celda> = { Unidad: unidadGrupo(g), Propiedad: textoPropiedadFila(g), uni: unidadGrupo(g), prop: textoPropiedadFila(g) };
 
     if (detalle) {
       const sal = (x: KardexGrupo["saldoInicial"]) => ({ "Saldo físico": x.fisico, Disponible: x.disponible, Reservado: x.reservado, Cuarentena: x.cuarentena });

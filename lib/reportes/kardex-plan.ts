@@ -23,7 +23,8 @@ export function textoPropietario(propiedad: string, propietarioId: string | null
   return propietarioId ? `Tercero ${propietarioId.slice(0, 8)}` : "Tercero (propietario no registrado)";
 }
 
-export const claveGrupo = (unidad: string, propiedad: string, propietarioId: string | null | undefined): string => `${unidad}|${propiedad}|${propietarioId ?? ""}`;
+/** Identidad física del grupo: unidad_id (UUID) × propiedad × propietario. El nombre/representación de la unidad NO es identidad. */
+export const claveGrupo = (unidadId: string | null | undefined, propiedad: string, propietarioId: string | null | undefined): string => `${unidadId ?? ""}|${propiedad}|${propietarioId ?? ""}`;
 
 const saldos = (d: unknown, r: unknown, c: unknown): KardexSaldos => ({ disponible: str(d), reservado: str(r), cuarentena: str(c), fisico: sumarDecimales([str(d), str(r), str(c)]) });
 const movs = (t: Fila, px: string): KardexMovimientos => ({
@@ -44,15 +45,16 @@ const resumenVacio: KardexResumenTotales = { filas: 0, saldoInicial: "0", entrad
  * `res` (solo vista RESUMEN) trae las sumas de las filas mostradas por grupo.
  */
 export function construirGrupos(tot: Fila[], res: Fila[] | null): KardexGrupo[] {
-  const porClave = new Map((res ?? []).map((x) => [claveGrupo(str(x.unidad, ""), str(x.propiedad, "PROPIO"), x.propietario_id as string | null), x]));
+  const porClave = new Map((res ?? []).map((x) => [claveGrupo(x.unidad_id as string | null, str(x.propiedad, "PROPIO"), x.propietario_id as string | null), x]));
 
-  return tot
+  const grupos = tot
     .map((t): KardexGrupo => {
       const unidad = str(t.unidad, ""), propiedad = str(t.propiedad, "PROPIO") as KardexGrupo["propiedad"];
-      const clave = claveGrupo(unidad, propiedad, t.propietario_id as string | null);
+      const unidadId = str(t.unidad_id, "");
+      const clave = claveGrupo(unidadId, propiedad, t.propietario_id as string | null);
       const r = porClave.get(clave);
       const base = {
-        clave, unidad, propiedad, propietario: textoPropietario(propiedad, t.propietario_id as string | null), filas: Number(t.filas ?? 0),
+        clave, unidad, unidadId, ambigua: false, propiedad, propietario: textoPropietario(propiedad, t.propietario_id as string | null), filas: Number(t.filas ?? 0),
         saldoInicial: saldos(t.i_disp, t.i_res, t.i_cuar), saldoFinal: saldos(t.f_disp, t.f_res, t.f_cuar),
         filtrado: movs(t, "f"), fueraDelFiltro: movs(t, "o"), completo: movs(t, "c"),
       };
@@ -65,12 +67,18 @@ export function construirGrupos(tot: Fila[], res: Fila[] | null): KardexGrupo[] 
           : resumenVacio,
       };
     })
-    .sort((a, b) => a.unidad.localeCompare(b.unidad, "es") || a.propiedad.localeCompare(b.propiedad) || a.propietario.localeCompare(b.propietario));
+    .sort((a, b) => a.unidad.localeCompare(b.unidad, "es") || a.unidadId.localeCompare(b.unidadId) || a.propiedad.localeCompare(b.propiedad) || a.propietario.localeCompare(b.propietario));
+
+  // Dos unidades distintas (UUID) con la misma descripción: grupos separados y rotulados con un sufijo del identificador.
+  for (const g of grupos) g.ambigua = grupos.some((o) => o.unidad === g.unidad && o.unidadId !== g.unidadId);
+
+  return grupos;
 }
 
 /** Etiqueta legible del grupo: «Unidad · Propio» / «Kg · Tercero abcd1234». */
-export const etiquetaGrupo = (g: Pick<KardexGrupo, "unidad" | "propiedad" | "propietario">): string =>
-  `${g.unidad || "Sin unidad"} · ${g.propiedad === "TERCERO" ? g.propietario : "Propio"}`;
+export const unidadGrupo = (g: Pick<KardexGrupo, "unidad" | "unidadId" | "ambigua">): string => `${g.unidad || "Sin unidad"}${g.ambigua ? ` [id ${g.unidadId.slice(-8)}]` : ""}`;
+export const etiquetaGrupo = (g: Pick<KardexGrupo, "unidad" | "unidadId" | "ambigua" | "propiedad" | "propietario">): string =>
+  `${unidadGrupo(g)} · ${g.propiedad === "TERCERO" ? g.propietario : "Propio"}`;
 
 // ── Filtros y validación de la respuesta (cliente)
 export function filtrosKardexIguales(a: KardexFiltros, b: KardexFiltros): boolean {
@@ -93,14 +101,14 @@ const VISTAS = ["DETALLE", "RESUMEN"];
 const PROPIEDADES = ["PROPIO", "TERCERO"];
 
 function filaValida(f: unknown): boolean {
-  return esObj(f) && todos(f, ["clave", "numero", "fechaRegistro", "horaRegistro", "fechaMovimiento", "tipo", "origen", "estado", "documento", "motivo", "observacion", "usuario", "productoCodigo", "productoDescripcion", "unidad", "deposito", "contraparte", "lote", "propietario", "moneda", "vinculado"], txt) &&
+  return esObj(f) && todos(f, ["clave", "numero", "fechaRegistro", "horaRegistro", "fechaMovimiento", "tipo", "origen", "estado", "documento", "motivo", "observacion", "usuario", "productoCodigo", "productoDescripcion", "unidad", "unidadId", "deposito", "contraparte", "lote", "propietario", "moneda", "vinculado"], txt) &&
     typeof f.retroactivo === "boolean" && typeof f.depositoInactivo === "boolean" && txt(f.propiedad) && PROPIEDADES.includes(f.propiedad) && txt(f.efecto) && ["ENTRADA", "SALIDA", "ESTADO"].includes(f.efecto) &&
     todos(f, ["entrada", "salida", "dDisponible", "dReservado", "dCuarentena", "saldoDisponible", "saldoReservado", "saldoCuarentena", "saldoFisico"], dec) &&
     (f.costoUnitario === null || dec(f.costoUnitario)) && (f.costoTotal === null || dec(f.costoTotal)) && txt(f.vinculoTipo) && ["", "ANULADO_POR", "ANULA_A"].includes(f.vinculoTipo);
 }
 
 function resumenFilaValida(f: unknown): boolean {
-  return esObj(f) && todos(f, ["clave", "productoCodigo", "productoDescripcion", "unidad", "deposito", "lote", "propietario"], txt) && typeof f.depositoInactivo === "boolean" && txt(f.propiedad) && PROPIEDADES.includes(f.propiedad) &&
+  return esObj(f) && todos(f, ["clave", "productoCodigo", "productoDescripcion", "unidad", "unidadId", "deposito", "lote", "propietario"], txt) && typeof f.depositoInactivo === "boolean" && txt(f.propiedad) && PROPIEDADES.includes(f.propiedad) &&
     todos(f, ["saldoInicial", "entradas", "salidas", "transfEntradas", "transfSalidas", "fueraDelFiltro", "saldoFinal", "finalDisponible", "finalReservado", "finalCuarentena"], dec);
 }
 
@@ -109,7 +117,7 @@ const movsValidos = (m: unknown): boolean => esObj(m) && todos(m, ["entradas", "
 const resumenTotalesValido = (r: unknown): boolean => r === null || (esObj(r) && entero(r.filas) && todos(r, ["saldoInicial", "entradas", "salidas", "transfEntradas", "transfSalidas", "fueraDelFiltro", "saldoFinal", "finalDisponible", "finalReservado", "finalCuarentena"], dec));
 
 function grupoValido(g: unknown): boolean {
-  return esObj(g) && todos(g, ["clave", "unidad", "propietario"], txt) && txt(g.propiedad) && PROPIEDADES.includes(g.propiedad) && entero(g.filas) && saldosValidos(g.saldoInicial) && saldosValidos(g.saldoFinal) &&
+  return esObj(g) && todos(g, ["clave", "unidad", "unidadId", "propietario"], txt) && typeof g.ambigua === "boolean" && txt(g.propiedad) && PROPIEDADES.includes(g.propiedad) && entero(g.filas) && saldosValidos(g.saldoInicial) && saldosValidos(g.saldoFinal) &&
     movsValidos(g.filtrado) && movsValidos(g.fueraDelFiltro) && movsValidos(g.completo) && typeof g.cuadra === "boolean" && resumenTotalesValido(g.resumen);
 }
 

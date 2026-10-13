@@ -223,8 +223,9 @@ export type KardexFila = {
   usuario: string;
   productoCodigo: string;
   productoDescripcion: string;
-  /** Unidad de medida del producto: las cantidades de unidades distintas nunca se suman. */
+  /** Unidad de medida vigente al registrarse el movimiento (nombre visual) y su identidad física (UUID): las cantidades de unidades distintas nunca se suman. */
   unidad: string;
+  unidadId: string;
   deposito: string;
   depositoInactivo: boolean;
   /** Otro depósito de la transferencia: solo su nombre si está en el alcance del usuario; si no, «Otro depósito (sin acceso)». "" si no aplica. */
@@ -259,6 +260,7 @@ export type KardexResumenFila = {
   productoCodigo: string;
   productoDescripcion: string;
   unidad: string;
+  unidadId: string;
   deposito: string;
   depositoInactivo: boolean;
   lote: string;
@@ -307,6 +309,10 @@ export type KardexResumenTotales = {
 export type KardexGrupo = {
   clave: string;
   unidad: string;
+  /** Identidad física del grupo (UUID de unidades_medida); el nombre es solo visual. */
+  unidadId: string;
+  /** Otra unidad con el mismo nombre y UUID distinto aparece en el informe: se rotula con el final del identificador. */
+  ambigua: boolean;
   propiedad: PropiedadKardex;
   propietario: string;
   /** Movimientos (filas) del grupo que cumplen todos los filtros. */

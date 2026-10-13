@@ -177,14 +177,14 @@ export async function leerKardex(
               count(*) FILTER (WHERE ${cond} AND efecto = 'ESTADO')::int AS ${px}_cam,
               count(DISTINCT movimiento_id) FILTER (WHERE ${cond} AND tipo_origen = 'ANULACION')::int AS ${px}_anu`;
 
-    // Totales por grupo homogéneo (unidad × propiedad × propietario): nunca se suman unidades ni propietarios distintos.
+    // Totales por grupo homogéneo (unidad_id × propiedad × propietario; el NOMBRE de la unidad es solo visual: dos unidades con igual descripción y UUID distinto nunca se suman): nunca se suman unidades ni propietarios distintos.
     const tq = await c.query(
       `WITH ${cte}
-       SELECT unidad, propiedad, propietario_id::text AS propietario_id, count(*) FILTER (WHERE ${sel})::int AS filas,
+       SELECT unidad_id::text AS unidad_id, max(unidad) AS unidad, propiedad, propietario_id::text AS propietario_id, count(*) FILTER (WHERE ${sel})::int AS filas,
               ${sumas("dd")} AS i_disp, ${sumas("dr")} AS i_res, ${sumas("dc")} AS i_cuar,
               ${sumas("dd", true)} AS f_disp, ${sumas("dr", true)} AS f_res, ${sumas("dc", true)} AS f_cuar,
               ${movCols("f", sel)}, ${movCols("o", fuera)}, ${movCols("c", enPer)}
-         FROM sal GROUP BY unidad, propiedad, propietario_id ORDER BY unidad, propiedad, propietario_id NULLS FIRST`,
+         FROM sal GROUP BY unidad_id, propiedad, propietario_id ORDER BY max(unidad), unidad_id NULLS FIRST, propiedad, propietario_id NULLS FIRST`,
       params,
     );
     // Conciliación con Stock (misma fotografía): el libro completo debe dar el mismo saldo por estado que stock_saldos, también para terceros.
@@ -225,7 +225,7 @@ export async function leerKardex(
          SELECT s.movimiento_id::text || ':' || s.linea_id::text || ':' || s.lado_ord AS clave, s.numero_movimiento, to_char(s.reg_fecha, 'YYYY-MM-DD') AS freg,
                 to_char(s.creado_at AT TIME ZONE 'America/Asuncion', 'HH24:MI:SS') AS hreg, to_char(s.fecha_movimiento, 'YYYY-MM-DD') AS fmov,
                 (s.fecha_movimiento <> s.reg_fecha) AS retro, s.tipo_movimiento, s.tipo_origen, s.estado, coalesce(s.documento_referencia, '') AS doc,
-                coalesce(s.motivo, '') AS motivo, coalesce(s.observacion, '') AS obs, coalesce(u.usuario, '') AS usuario, s.pcodigo, s.pdesc, s.unidad,
+                coalesce(s.motivo, '') AS motivo, coalesce(s.observacion, '') AS obs, coalesce(u.usuario, '') AS usuario, s.pcodigo, s.pdesc, s.unidad, s.unidad_id::text AS unidad_id,
                 d.nombre AS deposito, NOT d.activo AS inactivo,
                 CASE WHEN s.contra_id IS NULL THEN '' WHEN dcp.id IS NULL THEN 'Otro depósito (sin acceso)' ELSE dcp.nombre END AS contra,
                 coalesce(s.codigo_lote, '') AS lote, s.propiedad, s.propietario_id::text AS propietario_id, s.efecto,
@@ -249,7 +249,7 @@ export async function leerKardex(
       filasOut = rows.rows.map((x): KardexFila => ({
         clave: x.clave, numero: x.numero_movimiento, fechaRegistro: x.freg, horaRegistro: x.hreg, fechaMovimiento: x.fmov, retroactivo: x.retro,
         tipo: x.tipo_movimiento, origen: x.tipo_origen, estado: x.estado, documento: x.doc, motivo: x.motivo, observacion: x.obs, usuario: x.usuario,
-        productoCodigo: x.pcodigo, productoDescripcion: x.pdesc, unidad: x.unidad, deposito: x.deposito, depositoInactivo: x.inactivo === true, contraparte: x.contra, lote: x.lote,
+        productoCodigo: x.pcodigo, productoDescripcion: x.pdesc, unidad: x.unidad, unidadId: x.unidad_id ?? "", deposito: x.deposito, depositoInactivo: x.inactivo === true, contraparte: x.contra, lote: x.lote,
         propiedad: x.propiedad, propietario: textoPropietario(x.propiedad, x.propietario_id),
         efecto: x.efecto, entrada: x.entrada, salida: x.salida, dDisponible: x.dd, dReservado: x.dr, dCuarentena: x.dc,
         saldoDisponible: x.s_disp, saldoReservado: x.s_res, saldoCuarentena: x.s_cuar, saldoFisico: x.s_fis,
@@ -277,11 +277,11 @@ export async function leerKardex(
       // Totales de las filas mostradas (mismo conjunto gf que las filas), por grupo homogéneo: el TOTAL del resumen es la suma exacta de sus filas.
       const cnt = await c.query(
         `WITH ${cte}, ${grupo}
-         SELECT unidad, propiedad, propietario_id::text AS propietario_id, count(*)::int AS n, coalesce(sum(inicial), 0)::text AS inicial, coalesce(sum(entradas), 0)::text AS entradas,
+         SELECT unidad_id::text AS unidad_id, max(unidad) AS unidad, propiedad, propietario_id::text AS propietario_id, count(*)::int AS n, coalesce(sum(inicial), 0)::text AS inicial, coalesce(sum(entradas), 0)::text AS entradas,
                 coalesce(sum(salidas), 0)::text AS salidas, coalesce(sum(t_ent), 0)::text AS t_ent, coalesce(sum(t_sal), 0)::text AS t_sal, coalesce(sum(fuera_filtro), 0)::text AS fuera,
                 coalesce(sum(f_disp + f_res + f_cuar), 0)::text AS final, coalesce(sum(f_disp), 0)::text AS f_disp,
                 coalesce(sum(f_res), 0)::text AS f_res, coalesce(sum(f_cuar), 0)::text AS f_cuar
-           FROM gf GROUP BY unidad, propiedad, propietario_id`,
+           FROM gf GROUP BY unidad_id, propiedad, propietario_id`,
         params,
       );
       grupoRes = cnt.rows;
@@ -289,18 +289,18 @@ export async function leerKardex(
       const rows = await c.query(
         `WITH ${cte}, ${grupo}
          SELECT gf.producto_id::text || ':' || d.id::text || ':' || coalesce(gf.lote_id::text, '') || ':' || gf.propiedad || ':' || coalesce(gf.propietario_id::text, '') || ':' || coalesce(gf.unidad_id::text, '') AS clave,
-                gf.pcodigo, gf.pdesc, gf.unidad, d.nombre AS deposito, NOT d.activo AS inactivo, coalesce(gf.codigo_lote, '') AS lote, gf.propiedad, gf.propietario_id::text AS propietario_id,
+                gf.pcodigo, gf.pdesc, gf.unidad, gf.unidad_id::text AS unidad_id, d.nombre AS deposito, NOT d.activo AS inactivo, coalesce(gf.codigo_lote, '') AS lote, gf.propiedad, gf.propietario_id::text AS propietario_id,
                 gf.inicial::text AS inicial, gf.entradas::text AS entradas, gf.salidas::text AS salidas,
                 gf.t_ent::text AS t_ent, gf.t_sal::text AS t_sal, gf.fuera_filtro::text AS fuera, (gf.f_disp + gf.f_res + gf.f_cuar)::text AS final,
                 gf.f_disp::text AS f_disp, gf.f_res::text AS f_res, gf.f_cuar::text AS f_cuar
            FROM gf JOIN depositos d ON d.empresa_id = $1 AND d.id = gf.deposito_id
-          ORDER BY gf.pcodigo, d.nombre, gf.codigo_lote NULLS FIRST, gf.propiedad, gf.propietario_id NULLS FIRST, gf.unidad, gf.producto_id
+          ORDER BY gf.pcodigo, d.nombre, gf.codigo_lote NULLS FIRST, gf.propiedad, gf.propietario_id NULLS FIRST, gf.unidad, gf.unidad_id NULLS FIRST, gf.producto_id
           LIMIT ${p(limite)} OFFSET ${p(desplazamiento)}`,
         params,
       );
       if (todas && rows.rows.length > MAX_FILAS_EXPORTACION) return { error: `La exportación supera ${MAX_FILAS_EXPORTACION} filas; reduzca los filtros.`, status: 413 };
       resumen = rows.rows.map((x): KardexResumenFila => ({
-        clave: x.clave, productoCodigo: x.pcodigo, productoDescripcion: x.pdesc, unidad: x.unidad, deposito: x.deposito, depositoInactivo: x.inactivo === true, lote: x.lote,
+        clave: x.clave, productoCodigo: x.pcodigo, productoDescripcion: x.pdesc, unidad: x.unidad, unidadId: x.unidad_id ?? "", deposito: x.deposito, depositoInactivo: x.inactivo === true, lote: x.lote,
         propiedad: x.propiedad, propietario: textoPropietario(x.propiedad, x.propietario_id),
         saldoInicial: x.inicial, entradas: x.entradas, salidas: x.salidas, transfEntradas: x.t_ent, transfSalidas: x.t_sal, fueraDelFiltro: x.fuera,
         saldoFinal: x.final, finalDisponible: x.f_disp, finalReservado: x.f_res, finalCuarentena: x.f_cuar,

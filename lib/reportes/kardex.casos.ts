@@ -14,7 +14,7 @@ import { generarPdfTabla, generarXlsxTabla } from "@/lib/reportes/export";
 import { COLUMNAS_KARDEX, columnasResumen, tablaKardex } from "@/lib/reportes/export-kardex";
 import { leerHojaXlsx } from "@/lib/reportes/export-xlsx.casos";
 import { leerKardex, parsearFiltrosKardex } from "@/lib/reportes/kardex";
-import { filtrosKardexIguales, negarDecimal, respuestaKardexValida, respuestaKardexVigente } from "@/lib/reportes/kardex-plan";
+import { claveGrupo, filtrosKardexIguales, negarDecimal, respuestaKardexValida, respuestaKardexVigente } from "@/lib/reportes/kardex-plan";
 import type { KardexFiltros, KardexRespuesta, KardexRespuestaApi } from "@/types/reportes";
 
 const leer = (r: string) => readFileSync(join(process.cwd(), r), "utf8").replace(/\r\n/g, "\n");
@@ -34,17 +34,17 @@ type Linea = {
 };
 type Stock = { prod: string; dep: string; lote?: string; prop?: "PROPIO" | "TERCERO"; propietario?: string | null; d?: string; r?: string; c?: string };
 type Escenario = {
-  productos: Array<{ id: string; codigo: string; unidad: string }>;
+  productos: Array<{ id: string; codigo: string; unidad: string; unidadId?: string }>;
   lineas: Linea[];
   depositos: Array<{ id: string; nombre: string; activo: boolean }>;
   stock?: Stock[];
   /** Historial de cambios de unidad-base (NEX-052). undefined = la tabla NO existe (migration sin aplicar). */
-  historialUnidad?: Array<{ id: string; prod: string; de: string; a: string; at: string }>;
+  historialUnidad?: Array<{ id: string; prod: string; de: string; a: string; at: string; deId?: string; aId?: string }>;
 };
 type Consulta = { sql: string; params?: unknown[] };
 type Sal = {
   l: Linea; idx: number; dep: string; contra: string | null; lado: number; efecto: "ENTRADA" | "SALIDA" | "ESTADO";
-  dd: string; dr: string; dc: string; s_disp: string; s_res: string; s_cuar: string; reg: string; unidad: string; pcodigo: string; lote: string; propiedad: "PROPIO" | "TERCERO"; propietario: string | null; fis: string;
+  dd: string; dr: string; dc: string; s_disp: string; s_res: string; s_cuar: string; reg: string; unidad: string; unidadId: string; pcodigo: string; lote: string; propiedad: "PROPIO" | "TERCERO"; propietario: string | null; fis: string;
 };
 
 const cero = (v: string) => sumarDecimales([v]) === "0";
@@ -67,11 +67,17 @@ export async function verificarCasosReportesKardex(): Promise<string[]> {
   // ── Emulación del libro: efectos por depósito, saldo acumulado (orden de registro) y lecturas agregadas.
   const instante = (l: Linea) => l.ts ?? `${l.freg}T${l.hreg ?? "10:00:00"}Z`;
   // Regla de referencia (independiente del SQL): vigente = la última alteración con cambiado_at <= registro (orden cambiado_at, id); antes de la primera, la unidad anterior de la primera; sin historial, la actual.
-  const unidadEn = (e: Escenario, l: Linea, actual: string): string => {
+  const idDe = (nombre: string) => `uid-${nombre}`;
+  const unidadEn = (e: Escenario, l: Linea, actual: { unidad: string; unidadId?: string }): { nombre: string; id: string } => {
     const h = (e.historialUnidad ?? []).filter((x) => x.prod === l.prod).sort((a, b) => a.at.localeCompare(b.at) || a.id.localeCompare(b.id));
     const previas = h.filter((x) => x.at <= instante(l));
 
-    return previas.length ? previas[previas.length - 1].a : h.length ? h[0].de : actual;
+    const u = previas.length ? previas[previas.length - 1] : undefined;
+
+    if (u) return { nombre: u.a, id: u.aId ?? idDe(u.a) };
+    if (h.length) return { nombre: h[0].de, id: h[0].deId ?? idDe(h[0].de) };
+
+    return { nombre: actual.unidad, id: actual.unidadId ?? idDe(actual.unidad) };
   };
   const efectos = (e: Escenario, deps: string[]): Sal[] => {
     const f = filtroActual;
@@ -82,7 +88,7 @@ export async function verificarCasosReportesKardex(): Promise<string[]> {
       const mk = (dep: string, contra: string | null, lado: number, efecto: Sal["efecto"], dd: string, dr: string, dc: string) => {
         const p = prod(l.prod);
 
-        todos.push({ l, idx, dep, contra, lado, efecto, dd, dr, dc, s_disp: "0", s_res: "0", s_cuar: "0", reg: l.freg, unidad: unidadEn(e, l, p.unidad), pcodigo: p.codigo, lote: l.lote ?? "", propiedad: l.prop ?? "PROPIO", propietario: l.propietario ?? null, fis: suma([dd, dr, dc]) });
+        todos.push({ l, idx, dep, contra, lado, efecto, dd, dr, dc, s_disp: "0", s_res: "0", s_cuar: "0", reg: l.freg, unidad: unidadEn(e, l, p).nombre, unidadId: unidadEn(e, l, p).id, pcodigo: p.codigo, lote: l.lote ?? "", propiedad: l.prop ?? "PROPIO", propietario: l.propietario ?? null, fis: suma([dd, dr, dc]) });
       };
 
       if (["ENTRADA", "AJUSTE_POSITIVO", "TRANSFERENCIA"].includes(l.tipo)) mk(l.d!, l.o ?? null, 1, "ENTRADA", l.cant, "0", "0");
@@ -103,7 +109,7 @@ export async function verificarCasosReportesKardex(): Promise<string[]> {
     const acum = new Map<string, [string, string, string]>();
 
     for (const s of filtradas) {
-      const k = [s.l.prod, s.dep, s.lote, s.propiedad, s.propietario ?? "", s.unidad].join("|");
+      const k = [s.l.prod, s.dep, s.lote, s.propiedad, s.propietario ?? "", s.unidadId].join("|");
       const [d, r, c] = acum.get(k) ?? ["0", "0", "0"];
       const n: [string, string, string] = [suma([d, s.dd]), suma([r, s.dr]), suma([c, s.dc])];
 
@@ -123,7 +129,7 @@ export async function verificarCasosReportesKardex(): Promise<string[]> {
   };
   const sel = (s: Sal) => enPer(s) && pasa(s);
   const fuera = (s: Sal) => enPer(s) && !pasa(s);
-  const claveG = (s: Sal) => `${s.unidad}|${s.propiedad}|${s.propietario ?? ""}`;
+  const claveG = (s: Sal) => `${s.unidadId}|${s.propiedad}|${s.propietario ?? ""}`;
   const ordenarG = (a: string, b: string) => a.localeCompare(b);
 
   const movs = (rows: Sal[], px: string, cond: (s: Sal) => boolean): Dato => {
@@ -141,11 +147,11 @@ export async function verificarCasosReportesKardex(): Promise<string[]> {
     };
   };
 
-  type G = { prod: string; dep: string; lote: string; prop: "PROPIO" | "TERCERO"; propietario: string | null; unidad: string; pcodigo: string; inicial: string; entradas: string; salidas: string; t_ent: string; t_sal: string; fuera: string; f_disp: string; f_res: string; f_cuar: string; en: number };
+  type G = { prod: string; dep: string; lote: string; prop: "PROPIO" | "TERCERO"; propietario: string | null; unidad: string; unidadId: string; pcodigo: string; inicial: string; entradas: string; salidas: string; t_ent: string; t_sal: string; fuera: string; f_disp: string; f_res: string; f_cuar: string; en: number };
   const grupos = (rows: Sal[]): G[] => {
     const m = new Map<string, Sal[]>();
 
-    for (const s of rows) m.set([s.l.prod, s.dep, s.lote, s.propiedad, s.propietario ?? "", s.unidad].join("|"), [...(m.get([s.l.prod, s.dep, s.lote, s.propiedad, s.propietario ?? "", s.unidad].join("|")) ?? []), s]);
+    for (const s of rows) m.set([s.l.prod, s.dep, s.lote, s.propiedad, s.propietario ?? "", s.unidadId].join("|"), [...(m.get([s.l.prod, s.dep, s.lote, s.propiedad, s.propietario ?? "", s.unidadId].join("|")) ?? []), s]);
 
     const f = filtroActual;
     const fin = (s: Sal) => !f.hasta || s.reg <= f.hasta;
@@ -154,7 +160,7 @@ export async function verificarCasosReportesKardex(): Promise<string[]> {
       const noT = l.filter((s) => sel(s) && s.l.tipo !== "TRANSFERENCIA"), t = l.filter((s) => sel(s) && s.l.tipo === "TRANSFERENCIA");
 
       return {
-        prod: l[0].l.prod, dep: l[0].dep, lote: l[0].lote, prop: l[0].propiedad, propietario: l[0].propietario, unidad: l[0].unidad, pcodigo: l[0].pcodigo,
+        prod: l[0].l.prod, dep: l[0].dep, lote: l[0].lote, prop: l[0].propiedad, propietario: l[0].propietario, unidad: l[0].unidad, unidadId: l[0].unidadId, pcodigo: l[0].pcodigo,
         inicial: f.desde ? suma(l.filter((s) => s.reg < f.desde).map((s) => s.fis)) : "0",
         entradas: suma(noT.filter((s) => pos(s.fis)).map((s) => s.fis)), salidas: negarDecimal(suma(noT.filter((s) => neg(s.fis)).map((s) => s.fis))),
         t_ent: suma(t.filter((s) => pos(s.dd)).map((s) => s.dd)), t_sal: negarDecimal(suma(t.filter((s) => neg(s.dd)).map((s) => s.dd))),
@@ -210,7 +216,7 @@ export async function verificarCasosReportesKardex(): Promise<string[]> {
 
       return [{ n: claves.size, divergentes }];
     }
-    if (/FROM sal GROUP BY unidad, propiedad, propietario_id ORDER BY unidad/.test(sql)) {
+    if (/FROM sal GROUP BY unidad_id, propiedad, propietario_id ORDER BY max\(unidad\)/.test(sql)) {
       const sal = efectos(e, deps);
       const porG = new Map<string, Sal[]>();
 
@@ -222,7 +228,7 @@ export async function verificarCasosReportesKardex(): Promise<string[]> {
         const fin = (s: Sal) => !f.hasta || s.reg <= f.hasta;
 
         return {
-          unidad: l[0].unidad, propiedad: l[0].propiedad, propietario_id: l[0].propietario, filas: l.filter(sel).length,
+          unidad: l[0].unidad, unidad_id: l[0].unidadId, propiedad: l[0].propiedad, propietario_id: l[0].propietario, filas: l.filter(sel).length,
           i_disp: f.desde ? suma(l.filter((s) => s.reg < f.desde).map((s) => s.dd)) : "0", i_res: f.desde ? suma(l.filter((s) => s.reg < f.desde).map((s) => s.dr)) : "0", i_cuar: f.desde ? suma(l.filter((s) => s.reg < f.desde).map((s) => s.dc)) : "0",
           f_disp: suma(l.filter(fin).map((s) => s.dd)), f_res: suma(l.filter(fin).map((s) => s.dr)), f_cuar: suma(l.filter(fin).map((s) => s.dc)),
           ...movs(l, "f", sel), ...movs(l, "o", fuera), ...movs(l, "c", enPer),
@@ -233,10 +239,10 @@ export async function verificarCasosReportesKardex(): Promise<string[]> {
       const gf = grupos(efectos(e, deps)).filter((g) => g.en > 0 || (!filasDeFila() && !cero(g.inicial)));
       const porG = new Map<string, G[]>();
 
-      for (const g of gf) porG.set(`${g.unidad}|${g.prop}|${g.propietario ?? ""}`, [...(porG.get(`${g.unidad}|${g.prop}|${g.propietario ?? ""}`) ?? []), g]);
+      for (const g of gf) porG.set(`${g.unidadId}|${g.prop}|${g.propietario ?? ""}`, [...(porG.get(`${g.unidadId}|${g.prop}|${g.propietario ?? ""}`) ?? []), g]);
 
       return [...porG.values()].map((l) => ({
-        unidad: l[0].unidad, propiedad: l[0].prop, propietario_id: l[0].propietario, n: l.length, inicial: suma(l.map((g) => g.inicial)), entradas: suma(l.map((g) => g.entradas)), salidas: suma(l.map((g) => g.salidas)),
+        unidad: l[0].unidad, unidad_id: l[0].unidadId, propiedad: l[0].prop, propietario_id: l[0].propietario, n: l.length, inicial: suma(l.map((g) => g.inicial)), entradas: suma(l.map((g) => g.entradas)), salidas: suma(l.map((g) => g.salidas)),
         t_ent: suma(l.map((g) => g.t_ent)), t_sal: suma(l.map((g) => g.t_sal)), fuera: suma(l.map((g) => g.fuera)), final: suma(l.flatMap((g) => [g.f_disp, g.f_res, g.f_cuar])),
         f_disp: suma(l.map((g) => g.f_disp)), f_res: suma(l.map((g) => g.f_res)), f_cuar: suma(l.map((g) => g.f_cuar)),
       }));
@@ -247,7 +253,7 @@ export async function verificarCasosReportesKardex(): Promise<string[]> {
         .sort((a, b) => a.pcodigo.localeCompare(b.pcodigo) || e.depositos.find((d) => d.id === a.dep)!.nombre.localeCompare(e.depositos.find((d) => d.id === b.dep)!.nombre) || a.lote.localeCompare(b.lote) || a.prop.localeCompare(b.prop) || (a.propietario ?? "").localeCompare(b.propietario ?? ""));
 
       return gf.slice(desde, desde + limite).map((g) => ({
-        clave: `${g.prod}:${g.dep}:${g.lote}:${g.prop}:${g.propietario ?? ""}:${g.unidad}`, pcodigo: g.pcodigo, pdesc: `Producto ${g.pcodigo}`, unidad: g.unidad, deposito: e.depositos.find((d) => d.id === g.dep)!.nombre, inactivo: !e.depositos.find((d) => d.id === g.dep)!.activo,
+        clave: `${g.prod}:${g.dep}:${g.lote}:${g.prop}:${g.propietario ?? ""}:${g.unidadId}`, pcodigo: g.pcodigo, pdesc: `Producto ${g.pcodigo}`, unidad: g.unidad, unidad_id: g.unidadId, deposito: e.depositos.find((d) => d.id === g.dep)!.nombre, inactivo: !e.depositos.find((d) => d.id === g.dep)!.activo,
         lote: g.lote, propiedad: g.prop, propietario_id: g.propietario, inicial: g.inicial, entradas: g.entradas, salidas: g.salidas, t_ent: g.t_ent, t_sal: g.t_sal, fuera: g.fuera,
         final: suma([g.f_disp, g.f_res, g.f_cuar]), f_disp: g.f_disp, f_res: g.f_res, f_cuar: g.f_cuar,
       }));
@@ -264,7 +270,7 @@ export async function verificarCasosReportesKardex(): Promise<string[]> {
 
         return {
           clave: `${s.l.num}:${s.idx}:${s.lado}`, numero_movimiento: s.l.num, freg: s.reg, hreg: s.l.hreg ?? "10:00:00", fmov: s.l.fmov ?? s.reg, retro: (s.l.fmov ?? s.reg) !== s.reg,
-          tipo_movimiento: s.l.tipo, tipo_origen: s.l.origen ?? "MANUAL", estado: s.l.estado ?? "REGISTRADO", doc: s.l.doc ?? "", motivo: "", obs: "", usuario: "ana", pcodigo: s.pcodigo, pdesc: `Producto ${s.pcodigo}`, unidad: s.unidad,
+          tipo_movimiento: s.l.tipo, tipo_origen: s.l.origen ?? "MANUAL", estado: s.l.estado ?? "REGISTRADO", doc: s.l.doc ?? "", motivo: "", obs: "", usuario: "ana", pcodigo: s.pcodigo, pdesc: `Producto ${s.pcodigo}`, unidad: s.unidad, unidad_id: s.unidadId,
           deposito: dep(s.dep)!.nombre, inactivo: !dep(s.dep)!.activo,
           contra: s.contra === null ? "" : accesibles.includes(s.contra) ? dep(s.contra)!.nombre : "Otro depósito (sin acceso)",
           lote: s.lote, propiedad: s.propiedad, propietario_id: s.propietario, efecto: s.efecto, entrada, salida, dd: s.dd, dr: s.dr, dc: s.dc,
@@ -797,6 +803,83 @@ export async function verificarCasosReportesKardex(): Promise<string[]> {
   igual("KDX-R02-02 período posterior al cambio: las filas son solo de Unidad; los grupos Kilo conservan saldo inicial = final = 0 (nada se reatribuye a Unidad)", [filas(rCp).map((f) => f.unidad).filter((x, i, a) => a.indexOf(x) === i), rCp.totales.grupos.filter((g) => g.unidad === "Kilo").map((g) => [g.propiedad, g.saldoInicial.fisico, g.saldoFinal.fisico, g.filas])], [["Unidad"], [["PROPIO", "0", "0", 0], ["TERCERO", "0", "0", 0]]]);
   cierto("KDX-R02-02 la API/validador acepta el contrato nuevo y rechaza una fuenteUnidad inválida", respuestaKardexValida(JSON.parse(JSON.stringify({ ...rC, permisos: { exportar: false } }))) && !respuestaKardexValida(JSON.parse(JSON.stringify({ ...rC, fuenteUnidad: "OTRA", permisos: { exportar: false } }))));
   cierto("KDX-R02-02 no se tocaron NEX-052 ni el motor: el servicio solo LEE el historial (SELECT), sin escribir ni convertir cantidades", !/\b(INSERT|UPDATE|DELETE)\b/.test(leer("lib/reportes/kardex.ts")) && !/producto_cambiar_unidad_base/.test(leer("lib/reportes/kardex.ts")) && !/convert|factor/i.test(leer("lib/reportes/kardex.ts").replace(/NO se convierten|no se convierten/g, "")));
+
+  // ═══ KDX-R03-01 — la identidad del grupo es unidad_id (UUID), no el nombre de la unidad ═══
+  // Dos unidades DISTINTAS con la misma descripción «Metro» (p. ej. la del catálogo con SIFEN 108/MT y otra con vínculo 87 o sin vínculo fiscal): jamás se suman.
+  const M1 = "5a000000-0000-4000-8000-0000000000a1", M2 = "5a000000-0000-4000-8000-0000000000b2";
+  const eN: Escenario = {
+    productos: [{ id: PA, codigo: "A-1", unidad: "Metro", unidadId: M1 }, { id: PD, codigo: "D-1", unidad: "Metro", unidadId: M2 }, { id: PB, codigo: "B-1", unidad: "Kilo" }], depositos: depos,
+    lineas: [
+      { num: L(1), tipo: "ENTRADA", freg: "2026-10-01", prod: PA, cant: "5", lote: "L1", d: DA, cu: "2", ct: "10", mon: "PYG" },
+      { num: L(2), tipo: "ENTRADA", freg: "2026-10-02", prod: PD, cant: "7", lote: "L1", d: DA, cu: "3", ct: "21", mon: "PYG" },
+      { num: L(3), tipo: "SALIDA", freg: "2026-10-03", prod: PA, cant: "1", lote: "L1", o: DA, cu: "2", ct: "2", mon: "PYG" },
+      { num: L(4), tipo: "ENTRADA", freg: "2026-10-04", prod: PD, cant: "2", lote: "L1", d: DA, prop: "TERCERO", propietario: OX },
+      { num: L(5), tipo: "ENTRADA", freg: "2026-10-05", prod: PB, cant: "9", lote: "L1", d: DA, cu: "1", ct: "9", mon: "PYG" },
+    ],
+  };
+  const rN = await informe(eN);
+  const gN = (id: string, prop = "PROPIO") => rN.totales.grupos.find((g) => g.unidadId === id && g.propiedad === prop)!;
+
+  igual("KDX-R03-01 dos unidades con el MISMO nombre y UUID distinto → grupos separados: Metro(M1) cierra en 4 (5−1) y Metro(M2) en 7; nunca 11", [rN.totales.grupos.length, gN(M1).saldoFinal.fisico, gN(M2).saldoFinal.fisico, gN(M1).filtrado.entradas, gN(M2).filtrado.entradas, gN(M1).filtrado.salidas], [4, "4", "7", "5", "7", "1"]);
+  igual("KDX-R03-01 cada grupo transporta su identificador y el nombre queda como dato visual; los terceros de Metro(M2) son otro grupo y la unidad Kilo sigue aparte", rN.totales.grupos.map((g) => [g.unidad, g.unidadId, g.propiedad, g.saldoFinal.fisico]), [["Kilo", "uid-Kilo", "PROPIO", "9"], ["Metro", M1, "PROPIO", "4"], ["Metro", M2, "PROPIO", "7"], ["Metro", M2, "TERCERO", "2"]]);
+  igual("KDX-R03-01 los grupos de igual nombre se rotulan con el identificador para distinguirlos (tela, Excel y PDF); Kilo no lleva sufijo", rN.totales.grupos.map((g) => g.ambigua), [false, true, true, true]);
+  igual("KDX-R03-01 DETALLE: cada fila lleva su unidadId y su saldo acumulado se mantiene dentro de su unidad", filas(rN).map((f) => [f.numero, f.unidad, f.unidadId, f.saldoFisico]), [[L(1), "Metro", M1, "5"], [L(2), "Metro", M2, "7"], [L(3), "Metro", M1, "4"], [L(4), "Metro", M2, "2"], [L(5), "Kilo", "uid-Kilo", "9"]]);
+
+  const sqlN = reg.consultas.find((c) => /FROM sal GROUP BY unidad/.test(c.sql))?.sql ?? "";
+
+  cierto("KDX-R03-01 la consulta de totales agrupa y ordena por unidad_id (nunca por el nombre), y el nombre solo sale como max(unidad) visual", /GROUP BY unidad_id, propiedad, propietario_id/.test(sqlN) && !/GROUP BY unidad,/.test(sqlN) && /max\(unidad\) AS unidad/.test(sqlN) && /unidad_id::text AS unidad_id/.test(sqlN));
+
+  const rNr = await informe(eN, { vista: "RESUMEN" });
+  const sqlNr = reg.consultas.filter((c) => /FROM gf GROUP BY/.test(c.sql)).map((c) => c.sql).join(" ");
+
+  igual("KDX-R03-01 RESUMEN: filas y totales separados por UUID (Metro M1: 4, Metro M2: 7, terceros M2: 2) y el total del resumen es la suma de SUS filas", [
+    rNr.resumen.map((x) => [x.productoCodigo, x.unidadId, x.saldoFinal]), rNr.totales.grupos.map((g) => [g.unidadId, g.propiedad, g.resumen?.saldoFinal, g.resumen?.filas]),
+  ], [[["A-1", M1, "4"], ["B-1", "uid-Kilo", "9"], ["D-1", M2, "7"], ["D-1", M2, "2"]], [["uid-Kilo", "PROPIO", "9", 1], [M1, "PROPIO", "4", 1], [M2, "PROPIO", "7", 1], [M2, "TERCERO", "2", 1]]]);
+  cierto("KDX-R03-01 el resumen agrupa por unidad_id en SQL y la clave de cada fila incluye el identificador (dos Metro del mismo producto no colisionan)", /GROUP BY unidad_id, propiedad, propietario_id/.test(sqlNr) && !/GROUP BY unidad,/.test(sqlNr) && /coalesce\(gf\.unidad_id::text, ''\) AS clave/.test(leer("lib/reportes/kardex.ts")) && new Set(rNr.resumen.map((x) => x.clave)).size === rNr.resumen.length);
+
+  // XLSX y PDF: mismos resultados que la tela (grupos separados, sufijo de id, valores intactos)
+  const tN = tablaKardex(rN);
+  const xN = leerHojaXlsx(generarXlsxTabla(tN));
+  const bN = 1 + 1 + 1 + tN.filtros.length + 1 + 1;
+  const iN = (t: string) => tN.columnas.findIndex((c) => c.titulo === t);
+  const colN = (i: number) => String.fromCharCode(65 + i);
+  const etiquetasUnidad = tN.totales.map((x) => String(x.celdas[iN("Unidad")])).filter((x, i, a) => a.indexOf(x) === i);
+
+  igual("KDX-R03-01 XLSX: filas con su unidad, saldos numéricos, y totales con un bloque por UUID (los dos «Metro» se distinguen por el sufijo del identificador)", [
+    xN.get(`${colN(iN("Unidad"))}${bN + 1}`), xN.get(`${colN(iN("Saldo físico"))}${bN + 3}`), xN.get(`${colN(iN("Saldo físico"))}${bN + 2}`), etiquetasUnidad,
+  ], [{ tipo: "s", valor: "Metro" }, { tipo: "n", valor: "4" }, { tipo: "n", valor: "7" }, ["Kilo", `Metro [id ${M1.slice(-8)}]`, `Metro [id ${M2.slice(-8)}]`]]);
+
+  const tkN = tokensPdf(generarPdfTabla(tN));
+
+  cierto("KDX-R03-01 PDF: los saldos 4 y 7 por separado, ambos rótulos de Metro con su identificador y ningún total 11", tkN.includes("4") && tkN.includes("7") && tkN.some((x) => x.includes(`[id ${M1.slice(-8)}]`)) && tkN.some((x) => x.includes(`[id ${M2.slice(-8)}]`)) && !tkN.includes("11") && truncado(tkN).length === 0);
+  cierto("KDX-R03-01 Excel/PDF del RESUMEN también separan por UUID", (() => { const t = tablaKardex(rNr); return t.totales.some((x) => String(x.celdas[t.columnas.findIndex((c) => c.titulo === "Unidad")]).includes(`[id ${M1.slice(-8)}]`)) && tokensPdf(generarPdfTabla(t)).some((x) => x.includes(`[id ${M2.slice(-8)}]`)); })());
+
+  // Cambio histórico de unidad con nombres repetidos: Kilo → Metro(M1) sigue funcionando y no se mezcla con el otro Metro
+  const eNh: Escenario = {
+    productos: [{ id: PA, codigo: "A-1", unidad: "Metro", unidadId: M1 }, { id: PD, codigo: "D-1", unidad: "Metro", unidadId: M2 }], depositos: depos,
+    historialUnidad: [{ id: "h1", prod: PA, de: "Kilo", a: "Metro", deId: "uid-K", aId: M1, at: "2026-10-10T12:00:00Z" }],
+    lineas: [
+      { num: L(1), tipo: "ENTRADA", freg: "2026-10-01", prod: PA, cant: "3", lote: "L1", d: DA, cu: "1", ct: "3", mon: "PYG" },
+      { num: L(2), tipo: "SALIDA", freg: "2026-10-02", prod: PA, cant: "3", lote: "L1", o: DA, cu: "1", ct: "3", mon: "PYG" },
+      { num: L(3), tipo: "ENTRADA", freg: "2026-10-11", prod: PA, cant: "6", lote: "L1", d: DA, cu: "1", ct: "6", mon: "PYG" },
+      { num: L(4), tipo: "ENTRADA", freg: "2026-10-11", hreg: "11:00:00", prod: PD, cant: "8", lote: "L1", d: DA, cu: "1", ct: "8", mon: "PYG" },
+    ],
+  };
+  const rNh = await informe(eNh);
+
+  igual("KDX-R03-01 con historial NEX-052: A-1 pasa de Kilo a Metro(M1); el Metro de D-1 (M2) es otro grupo; ninguna cantidad se mezcla", [
+    filas(rNh).map((f) => [f.numero, f.unidad, f.unidadId]), rNh.totales.grupos.map((g) => [g.unidad, g.unidadId, g.saldoFinal.fisico, g.ambigua]),
+  ], [[[L(1), "Kilo", "uid-K"], [L(2), "Kilo", "uid-K"], [L(3), "Metro", M1], [L(4), "Metro", M2]], [["Kilo", "uid-K", "0", false], ["Metro", M1, "6", true], ["Metro", M2, "8", true]]]);
+
+  // Unidad sin vínculo fiscal / códigos SIFEN: el Kardex no usa códigos fiscales como identidad (UUID ≠ código 108 ≠ código 87)
+  const eSv: Escenario = { productos: [{ id: PA, codigo: "A-1", unidad: "", unidadId: "" }], depositos: depos, lineas: [{ num: L(1), tipo: "ENTRADA", freg: "2026-10-01", prod: PA, cant: "2", d: DA }] };
+  const rSv = await informe(eSv);
+  const fuenteKp = leer("lib/reportes/kardex-plan.ts"), fuenteKs = leer("lib/reportes/kardex.ts");
+
+  igual("KDX-R03-01 unidad sin identificador ni vínculo fiscal: grupo propio con unidadId vacío rotulado «Sin unidad» (no se inventa un código SIFEN)", [rSv.totales.grupos.map((g) => [g.unidad, g.unidadId, g.saldoFinal.fisico]), rSv.totales.grupos.map((g) => g.clave)], [[["", "", "2"]], ["|PROPIO|"]]);
+  igual("KDX-R03-01 la identidad es el UUID: igual nombre ≠ igual clave; código fiscal no participa (108 y 87 jamás se usan como clave)", [claveGrupo(M1, "PROPIO", null) === claveGrupo(M2, "PROPIO", null), claveGrupo(M1, "PROPIO", null) === claveGrupo(M1, "PROPIO", null), claveGrupo("108", "PROPIO", null) === claveGrupo("87", "PROPIO", null), claveGrupo(null, "PROPIO", null)], [false, true, false, "|PROPIO|"]);
+  cierto("KDX-R03-01 el Kardex no consulta ni deriva identidad de unidades_medida_sifen / unidad_sifen_codigo; no hay códigos 108/87 en el servicio ni en el plan", !/unidad_sifen_codigo|unidades_medida_sifen|\b108\b|\b87\b/.test(fuenteKs + fuenteKp));
+  cierto("KDX-R03-01 el validador exige unidadId en filas, resumen y grupos (un contrato sin identificador se rechaza)", respuestaKardexValida(JSON.parse(JSON.stringify({ ...rN, permisos: { exportar: true } }))) && !respuestaKardexValida(JSON.parse(JSON.stringify({ ...rN, totales: { ...rN.totales, grupos: rN.totales.grupos.map(({ unidadId: _u, ...g }) => g) }, permisos: { exportar: true } }))) && !respuestaKardexValida(JSON.parse(JSON.stringify({ ...rN, filas: rN.filas.map(({ unidadId: _u, ...f }) => f), permisos: { exportar: true } }))));
 
   return fallos;
 }
