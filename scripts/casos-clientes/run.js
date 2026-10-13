@@ -40,6 +40,7 @@ Module._resolveFilename = function (request, ...resto) {
   const irp = cargar("lib/inventario/reposicion.casos.js");
   const icr = cargar("lib/inventario/cruzados.casos.js");
   const irr = cargar("lib/inventario/residuales.casos.js");
+  const rva = cargar("lib/reportes/valorizacion.casos.js");
   const lpe = cargar("lib/listas-precio/estabilizacion.casos.js");
   const srm = cargar("lib/stock/stock-reposicion.casos.js");
   const fac = cargar("lib/facturacion/facturacion.casos.js");
@@ -77,6 +78,7 @@ Module._resolveFilename = function (request, ...resto) {
     ["Inventario · Reposición (recomendación compacta, Simular local, VER+CREAR, invariantes del cálculo, origen compartido)", async () => irp.verificarCasosInventarioReposicion(), null],
     ["Inventario · Pruebas cruzadas (INV-T01/T03/T06/T09: un movimiento, tres lecturas; acceso; responsabilidades exclusivas; Reportes)", async () => icr.verificarCasosInventarioCruzados(), null],
     ["Inventario · Correcciones residuales AUD-INV-R02 (costo unitario exacto, filtro de depósito por URL, validación de cargas de Depósitos y Reposición)", async () => irr.verificarCasosInventarioResiduales(), null],
+    ["Reportes · Valorización de inventario (RPT-V01…V06, N02: unidades, snapshot, cobertura sin compensar, cargas confiables, precisión, depósitos inactivos, exportación)", async () => rva.verificarCasosReportesValorizacion(), null],
     ["Stock, Reposición y contrato Movimientos ↔ documentos (Etapas A, B y C)", async () => srm.verificarCasosStockReposicionMovimientos(), null],
     ["Facturación F-01/F-02: documentos electrónicos, gateway, NEX-047, cálculo fiscal, payload FE y NEX-048", async () => fac.verificarCasosFacturacion(), null],
   ];

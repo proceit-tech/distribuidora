@@ -28,3 +28,6 @@ export function fmtDinero(v: string | null | undefined): string {
   const dec = (m[3] ?? "").replace(/0+$/, "");
   return `${m[1]}${entero}${dec ? `,${dec}` : ""}`;
 }
+
+/** Cantidades exactas (texto numeric): mismo formato que los importes, sin pasar por Number. Ausente = «n/a» (no aplicable, p. ej. cantidades de unidades distintas). */
+export const fmtCantidadTexto = (v: string | null | undefined): string => (v === null || v === undefined ? "n/a" : fmtDinero(v));

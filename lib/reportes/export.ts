@@ -7,7 +7,7 @@ import { generarXlsxSimple, type CeldaXlsx } from "@/lib/reportes/xlsx";
 
 export type TipoCol = "texto" | "cantidad" | "dinero";
 export type ColRep = { titulo: string; peso: number; tipo: TipoCol };
-/** texto → string; cantidad → number; dinero → string numérico exacto de PostgreSQL (null = sin dato, se muestra "—"). */
+/** texto → string; cantidad → number, o string numérico exacto de PostgreSQL (o «n/a» = no aplicable); dinero → string numérico exacto (null = sin dato, se muestra "—"). */
 export type Celda = string | number | null;
 export type FilaTotal = { etiqueta: string; celdas: Celda[] };
 
@@ -32,11 +32,14 @@ export type TablaReporte = {
 
 const textoCelda = (c: ColRep, v: Celda): string => {
   if (c.tipo === "dinero") return fmtDinero(v as string | null);
-  if (c.tipo === "cantidad") return typeof v === "number" ? fmtNum(v) : "";
+  if (c.tipo === "cantidad") return typeof v === "number" ? fmtNum(v) : typeof v === "string" ? fmtDinero(v) : "";
   return v === null || v === undefined ? "" : String(v);
 };
 
 // Excel: los importes se escriben como número real cuando caben sin perder precisión (≤ 15 dígitos); si no, como texto exacto.
+// Texto numérico exacto: número real si cabe sin perder precisión (≤ 15 dígitos); si no (o si no es numérico, p. ej. «n/a»), texto exacto.
+export const numeroOTexto = (s: string): string | number => (/^-?\d+(\.\d+)?$/.test(s) && s.replace(/[-.]/g, "").length <= 15 ? Number(s) : s);
+
 const celdaXlsx = (c: ColRep, v: Celda): CeldaXlsx => {
   if (c.tipo === "dinero") {
     if (v === null || v === undefined || v === "") return "—";

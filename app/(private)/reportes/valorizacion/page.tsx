@@ -1,74 +1,106 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { cargarValorizacion, descargarValorizacion } from "@/lib/reportes/cliente-valorizacion";
+import { crearCompuerta } from "@/lib/productos/catalogos-carga";
+import { descargarValorizacion, pedirValorizacion } from "@/lib/reportes/cliente-valorizacion";
 import { SITUACION_COSTO } from "@/lib/reportes/export-valorizacion";
-import { fmtDinero, fmtNum } from "@/lib/reportes/formato";
-import type { ValorizacionFiltros, ValorizacionFila, ValorizacionRespuesta } from "@/types/reportes";
+import { fmtCantidadTexto, fmtDinero, fmtNum } from "@/lib/reportes/formato";
+import { porcentajeCobertura, totalDivergencias } from "@/lib/reportes/valorizacion-cobertura";
+import type { ValorizacionFiltros, ValorizacionFila, ValorizacionRespuestaApi } from "@/types/reportes";
 
 import styles from "@/components/ui/lista-padrao/reporte.module.css";
 
-const FILTROS_VACIOS: ValorizacionFiltros = { vista: "DETALLE", q: "", depositoId: "", categoriaId: "", familiaId: "", existencia: "CON", costo: "TODOS" };
+const FILTROS_VACIOS: ValorizacionFiltros = { vista: "DETALLE", q: "", depositoId: "", categoriaId: "", familiaId: "", existencia: "CON", costo: "TODOS", cobertura: "TODOS" };
 const VISTAS: [ValorizacionFiltros["vista"], string][] = [["DETALLE", "Detalle"], ["PRODUCTO", "Por producto"], ["DEPOSITO", "Por depósito"], ["CATEGORIA", "Por categoría"]];
+const mismos = (a: ValorizacionFiltros, b: ValorizacionFiltros) => JSON.stringify(a) === JSON.stringify(b);
+
+type Catalogos = ValorizacionRespuestaApi["catalogos"];
 
 export default function ReporteValorizacionPage() {
   const [filtros, setFiltros] = useState<ValorizacionFiltros>(FILTROS_VACIOS);
-  const [aplicados, setAplicados] = useState<ValorizacionFiltros>(FILTROS_VACIOS);
+  const [qAplicada, setQAplicada] = useState("");
   const [pagina, setPagina] = useState(1);
-  const [datos, setDatos] = useState<ValorizacionRespuesta | null>(null);
+  const [datos, setDatos] = useState<ValorizacionRespuestaApi | null>(null);
+  // Los catálogos (solo nombres para los selectores) sobreviven a un error para no perder los filtros elegidos; ningún dato financiero se conserva.
+  const [catalogos, setCatalogos] = useState<Catalogos | null>(null);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
+  const [errorExportacion, setErrorExportacion] = useState("");
   const [exportando, setExportando] = useState("");
+  const compuerta = useRef(crearCompuerta());
 
+  // La búsqueda de texto se aplica con retraso (300 ms); el resto de los filtros, de inmediato.
   useEffect(() => {
-    const t = setTimeout(() => setAplicados((a) => (a.q === filtros.q ? a : { ...a, q: filtros.q })), 300);
+    const t = setTimeout(() => setQAplicada(filtros.q), 300);
+
     return () => clearTimeout(t);
   }, [filtros.q]);
 
-  useEffect(() => {
-    setAplicados((a) => ({ ...filtros, q: a.q }));
-  }, [filtros.vista, filtros.depositoId, filtros.categoriaId, filtros.familiaId, filtros.existencia, filtros.costo]); // eslint-disable-line react-hooks/exhaustive-deps
+  const aplicados = useMemo(() => ({ ...filtros, q: qAplicada }), [filtros, qAplicada]);
 
-  useEffect(() => {
-    let activo = true;
+  // RPT-V04: la última solicitud iniciada gana; ante cualquier falla se DESCARTAN los datos anteriores (nunca totales viejos como actuales) y se conservan los filtros.
+  const cargar = useCallback(async () => {
+    const sol = compuerta.current.nueva();
+
     setCargando(true);
     setError("");
-    cargarValorizacion(aplicados, pagina)
-      .then((r) => { if (activo) setDatos(r); })
-      .catch((e: unknown) => { if (activo) setError(e instanceof Error ? e.message : "No fue posible generar el reporte."); })
-      .finally(() => { if (activo) setCargando(false); });
-    return () => { activo = false; };
+
+    const r = await pedirValorizacion(aplicados, pagina);
+
+    if (!compuerta.current.vigente(sol)) return;
+    setDatos(r.datos);
+    if (r.datos) setCatalogos(r.datos.catalogos);
+    setError(r.error);
+    setCargando(false);
   }, [aplicados, pagina]);
+
+  useEffect(() => {
+    const actual = compuerta.current;
+
+    const t = setTimeout(() => void cargar(), 0);
+
+    return () => {
+      clearTimeout(t);
+      actual.nueva();
+    };
+  }, [cargar]);
 
   const cambiar = (parcial: Partial<ValorizacionFiltros>) => {
     setPagina(1);
     setFiltros((f) => ({ ...f, ...parcial }));
   };
 
+  // Solo se muestran y exportan datos que corresponden EXACTAMENTE a los filtros y la página vigentes.
+  const actual = datos && !error && mismos(datos.filtros, aplicados) && datos.pagina.numero === pagina ? datos : null;
+  const puedeExportar = actual?.permisos.exportar === true;
   const exportar = async (formato: "xlsx" | "pdf") => {
+    if (!actual || !puedeExportar) return;
     setExportando(formato);
-    setError("");
+    setErrorExportacion("");
     try {
-      await descargarValorizacion(aplicados, formato);
+      await descargarValorizacion(actual.filtros, formato);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "No fue posible exportar el reporte.");
+      setErrorExportacion(e instanceof Error ? e.message : "No fue posible exportar el reporte.");
     } finally {
       setExportando("");
     }
   };
 
-  const t = datos?.totales;
+  const t = actual?.totales;
   const mon = t?.moneda ?? "";
-  const total = datos?.pagina.totalFilas ?? 0;
-  const tamano = datos?.pagina.tamano ?? 50;
+  const total = actual?.pagina.totalFilas ?? 0;
+  const tamano = actual?.pagina.tamano ?? 50;
   const paginas = Math.max(1, Math.ceil(total / tamano));
   const vista: ValorizacionFiltros["vista"] = aplicados.vista;
   const hayFiltros = JSON.stringify({ ...filtros, vista: "" }) !== JSON.stringify({ ...FILTROS_VACIOS, vista: "" });
   const conProducto = vista === "DETALLE" || vista === "PRODUCTO";
-  const colsIdent: number = vista === "DETALLE" ? 5 : vista === "PRODUCTO" ? 4 : 1;
+  const conCantidades = conProducto;
   const etiquetaFilas = vista === "DETALLE" ? "filas" : vista === "PRODUCTO" ? "productos" : vista === "DEPOSITO" ? "depósitos" : "categorías";
+  const cobertura = t ? porcentajeCobertura(t.conteos) : null;
+  const divergencias = t ? totalDivergencias(t.conteos) : 0;
+  const colsIdent = vista === "DETALLE" ? 5 : vista === "PRODUCTO" ? 4 : 1;
 
   return (
     <section className={styles.page}>
@@ -81,19 +113,23 @@ export default function ReporteValorizacionPage() {
           </nav>
           <h1>Valorización de inventario</h1>
           <p>
-            Costo promedio real y valor del inventario a hoy.
-            {datos ? ` ${datos.empresa.nombre} · moneda ${datos.empresa.moneda} · generado ${datos.generado}.` : ""}
+            Valor del inventario a costo real y su cobertura, a hoy.
+            {actual ? ` ${actual.empresa.nombre} · moneda base ${actual.empresa.moneda} · generado ${actual.generado}.` : ""}
           </p>
         </div>
 
         <div className={styles.heroActions}>
           <Link href="/reportes" className={styles.secondaryButton}>Reportes</Link>
-          <button type="button" className={styles.secondaryButton} disabled={!!exportando || cargando} onClick={() => exportar("xlsx")}>
-            {exportando === "xlsx" ? "Generando..." : "Descargar Excel (.xlsx)"}
-          </button>
-          <button type="button" className={styles.primaryButton} disabled={!!exportando || cargando} onClick={() => exportar("pdf")}>
-            {exportando === "pdf" ? "Generando..." : "Exportar PDF"}
-          </button>
+          {puedeExportar ? (
+            <>
+              <button type="button" className={styles.secondaryButton} disabled={!!exportando || cargando} onClick={() => exportar("xlsx")}>
+                {exportando === "xlsx" ? "Generando..." : "Descargar Excel (.xlsx)"}
+              </button>
+              <button type="button" className={styles.primaryButton} disabled={!!exportando || cargando} onClick={() => exportar("pdf")}>
+                {exportando === "pdf" ? "Generando..." : "Exportar PDF"}
+              </button>
+            </>
+          ) : null}
         </div>
       </header>
 
@@ -101,22 +137,26 @@ export default function ReporteValorizacionPage() {
         <article className={[styles.summaryCard, styles.summaryTeal].join(" ")}>
           <span>VALOR TOTAL ({mon || "—"})</span>
           <strong>{t ? fmtDinero(t.valorTotal) : "—"}</strong>
-          <small>Solo stock con costo registrado</small>
+          <small>{t ? `${fmtNum(t.productosConCosto)} producto(s) con costo · solo costo real` : "—"}</small>
         </article>
         <article className={[styles.summaryCard, styles.summaryBlue].join(" ")}>
-          <span>CANTIDAD VALORIZADA</span>
-          <strong>{t ? fmtNum(t.cantidadValorizada) : "—"}</strong>
-          <small>Costo promedio {t ? fmtDinero(t.costoPromedio) : "—"}</small>
-        </article>
-        <article className={[styles.summaryCard, styles.summaryAmber].join(" ")}>
-          <span>STOCK FÍSICO PROPIO</span>
-          <strong>{t ? fmtNum(t.fisico) : "—"}</strong>
-          <small>{t ? `${fmtNum(t.productos)} productos · ${fmtNum(t.depositos)} depósitos` : "—"}</small>
+          <span>COBERTURA DE COSTO</span>
+          <strong>{t ? (cobertura ? `${cobertura} %` : "—") : "—"}</strong>
+          <small>{t ? `${fmtNum(t.conteos.CON_COSTO)} de ${fmtNum(t.conteos.CON_COSTO + divergencias)} pares producto × depósito con costo completo` : "—"}</small>
         </article>
         <article className={[styles.summaryCard, styles.summaryRed].join(" ")}>
-          <span>SIN COSTO REGISTRADO</span>
-          <strong>{t ? fmtNum(t.filasSinCosto) : "—"}</strong>
-          <small>{t ? `${fmtNum(t.fisicoNoValorizado)} u. físicas no valorizadas` : "—"}</small>
+          <span>DIVERGENCIAS</span>
+          <strong>{t ? fmtNum(divergencias) : "—"}</strong>
+          <small>
+            {t ? `Sin costo ${fmtNum(t.conteos.SIN_COSTO)} · Parcial ${fmtNum(t.conteos.PARCIAL)} · Excedente ${fmtNum(t.conteos.EXCEDENTE)} · Valor sin cantidad ${fmtNum(t.conteos.RESIDUO)}` : "—"}
+          </small>
+        </article>
+        <article className={[styles.summaryCard, styles.summaryAmber].join(" ")}>
+          <span>ALCANCE</span>
+          <strong>{t ? `${fmtNum(t.depositos)} depósito(s)` : "—"}</strong>
+          <small>
+            {t ? (t.inactivos.filas > 0 ? `Incluye ${fmtNum(t.inactivos.filas)} par(es) de depósitos inactivos por ${fmtDinero(t.inactivos.valor)} ${mon}` : `${fmtNum(t.productos)} producto(s) · foto de hoy`) : "—"}
+          </small>
         </article>
       </section>
 
@@ -138,7 +178,7 @@ export default function ReporteValorizacionPage() {
             ))}
           </div>
 
-          <span className={styles.resultCount}>{cargando ? "Cargando..." : `${fmtNum(total)} ${etiquetaFilas}`}</span>
+          <span className={styles.resultCount}>{cargando ? "Cargando..." : actual ? `${fmtNum(total)} ${etiquetaFilas}` : ""}</span>
         </div>
 
         <div className={styles.filters}>
@@ -146,21 +186,21 @@ export default function ReporteValorizacionPage() {
             <span>Depósito</span>
             <select value={filtros.depositoId} onChange={(e) => cambiar({ depositoId: e.target.value })}>
               <option value="">Todos</option>
-              {(datos?.catalogos.depositos ?? []).map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
+              {(catalogos?.depositos ?? []).map((d) => <option key={d.id} value={d.id}>{d.activo ? d.nombre : `${d.nombre} (inactivo)`}</option>)}
             </select>
           </label>
           <label>
             <span>Categoría</span>
             <select value={filtros.categoriaId} onChange={(e) => cambiar({ categoriaId: e.target.value })}>
               <option value="">Todas</option>
-              {(datos?.catalogos.categorias ?? []).map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
+              {(catalogos?.categorias ?? []).map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
             </select>
           </label>
           <label>
             <span>Familia</span>
             <select value={filtros.familiaId} onChange={(e) => cambiar({ familiaId: e.target.value })}>
               <option value="">Todas</option>
-              {(datos?.catalogos.familias ?? []).map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
+              {(catalogos?.familias ?? []).map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
             </select>
           </label>
           <label>
@@ -169,6 +209,17 @@ export default function ReporteValorizacionPage() {
               <option value="CON">Con existencia</option>
               <option value="SIN">Sin existencia</option>
               <option value="TODOS">Todos</option>
+            </select>
+          </label>
+          <label>
+            <span>Cobertura</span>
+            <select value={filtros.cobertura} onChange={(e) => cambiar({ cobertura: e.target.value as ValorizacionFiltros["cobertura"] })}>
+              <option value="TODOS">Todas</option>
+              <option value="DIVERGENCIAS">Solo divergencias</option>
+              <option value="SIN_COSTO">Sin costo</option>
+              <option value="PARCIAL">Parcial</option>
+              <option value="EXCEDENTE">Excedente valorizado</option>
+              <option value="RESIDUO">Valor sin cantidad</option>
             </select>
           </label>
           <label>
@@ -187,69 +238,80 @@ export default function ReporteValorizacionPage() {
           ) : null}
         </div>
 
-        {error ? <div className={styles.errorBox}>{error}</div> : null}
+        {error ? (
+          <div className={styles.errorBox} role="alert">
+            {error} No se muestran ni se exportan datos anteriores; los filtros se conservan.{" "}
+            <button type="button" className={styles.clearButton} onClick={() => void cargar()}>Reintentar</button>
+          </div>
+        ) : null}
+        {errorExportacion ? <div className={styles.errorBox} role="alert">{errorExportacion}</div> : null}
+        {actual && !puedeExportar ? <div className={styles.alertBox}>Su perfil puede consultar este reporte, pero no exportarlo (requiere el permiso Exportar de Reportes).</div> : null}
 
-        <div className={styles.tableWrap}>
+        <div className={styles.tableWrap} aria-busy={cargando}>
           <table className={styles.table}>
             <thead>
               <tr>
-                {conProducto ? <><th>Código</th><th>Producto</th><th>Categoría</th><th>Familia</th></> : null}
+                {conProducto ? <><th>Código</th><th>Producto</th><th>Categoría</th>{vista === "PRODUCTO" ? <th>Familia</th> : <th>Depósito</th>}</> : null}
+                {vista === "DETALLE" ? <th>Un.</th> : null}
+                {vista === "PRODUCTO" ? <><th>Un.</th><th className={styles.num}>Depósitos</th></> : null}
                 {vista === "CATEGORIA" ? <th>Categoría</th> : null}
-                {vista === "DETALLE" || vista === "DEPOSITO" ? <th>Depósito</th> : null}
+                {vista === "DEPOSITO" ? <th>Depósito</th> : null}
                 {vista === "DEPOSITO" || vista === "CATEGORIA" ? <th className={styles.num}>Productos</th> : null}
                 {vista === "CATEGORIA" ? <th className={styles.num}>Depósitos</th> : null}
-                {vista === "PRODUCTO" ? <th className={styles.num}>Depósitos</th> : null}
-                <th className={styles.num}>Stock físico propio</th>
-                <th className={styles.num}>Cantidad valorizada</th>
-                <th className={styles.num}>Costo promedio unit.</th>
+                {conCantidades ? <><th className={styles.num}>Físico propio</th><th className={styles.num}>Valorizada</th><th className={styles.num}>Sin valorizar</th><th className={styles.num}>Excedente</th><th className={styles.num}>Costo unit.</th></> : null}
                 <th className={styles.num}>Valor total</th>
-                <th>Moneda</th>
-                <th>Costo</th>
+                {conProducto ? <th>Cobertura</th> : <><th className={styles.num}>Con costo</th><th className={styles.num}>Parcial</th><th className={styles.num}>Sin costo</th><th className={styles.num}>Excedente</th><th className={styles.num}>Valor s/ cant.</th></>}
               </tr>
             </thead>
             <tbody>
-              {(datos?.filas ?? []).map((f: ValorizacionFila) => (
+              {(actual?.filas ?? []).map((f: ValorizacionFila) => (
                 <tr key={f.clave}>
-                  {conProducto ? <><td>{f.codigo}</td><td className={styles.desc} title={f.descripcion}>{f.descripcion}</td><td>{f.categoria || "—"}</td><td>{f.familia || "—"}</td></> : null}
+                  {conProducto ? <><td>{f.codigo}</td><td className={styles.desc} title={f.descripcion}>{f.descripcion}</td><td>{f.categoria || "—"}</td>{vista === "PRODUCTO" ? <td>{f.familia || "—"}</td> : <td>{f.deposito}{f.depositoInactivo ? " (inactivo)" : ""}</td>}</> : null}
+                  {conProducto ? <td>{f.unidad || "—"}</td> : null}
+                  {vista === "PRODUCTO" ? <td className={styles.num}>{fmtNum(f.depositos)}</td> : null}
                   {vista === "CATEGORIA" ? <td className={styles.desc}>{f.categoria}</td> : null}
-                  {vista === "DETALLE" ? <td>{f.deposito}</td> : null}
-                  {vista === "DEPOSITO" ? <td className={styles.desc}>{f.deposito}</td> : null}
+                  {vista === "DEPOSITO" ? <td className={styles.desc}>{f.deposito}{f.depositoInactivo ? " (inactivo)" : ""}</td> : null}
                   {vista === "DEPOSITO" || vista === "CATEGORIA" ? <td className={styles.num}>{fmtNum(f.productos)}</td> : null}
-                  {vista === "CATEGORIA" || vista === "PRODUCTO" ? <td className={styles.num}>{fmtNum(f.depositos)}</td> : null}
-                  <td className={styles.num}>{fmtNum(f.fisico)}</td>
-                  <td className={styles.num}>{fmtNum(f.cantidadValorizada)}</td>
-                  <td className={styles.num}>{fmtDinero(f.costoPromedio)}</td>
+                  {vista === "CATEGORIA" ? <td className={styles.num}>{fmtNum(f.depositos)}</td> : null}
+                  {conCantidades ? <><td className={styles.num}>{fmtCantidadTexto(f.fisico)}</td><td className={styles.num}>{fmtCantidadTexto(f.cantidadValorizada)}</td><td className={styles.num}>{fmtCantidadTexto(f.sinValorizar)}</td><td className={styles.num}>{fmtCantidadTexto(f.excedente)}</td><td className={styles.num}>{fmtDinero(f.costoPromedio)}</td></> : null}
                   <td className={styles.num}>{fmtDinero(f.valorTotal)}</td>
-                  <td>{f.moneda}</td>
-                  <td><span className={[styles.badge, styles[`badge${f.situacionCosto}`]].join(" ")}>{SITUACION_COSTO[f.situacionCosto]}</span></td>
+                  {conProducto ? (
+                    <td>
+                      <span className={[styles.badge, styles[`badge${f.situacionCosto}`]].join(" ")}>{SITUACION_COSTO[f.situacionCosto]}</span>
+                      {vista === "PRODUCTO" && totalDivergencias(f.conteos) > 0 ? <small> · {fmtNum(totalDivergencias(f.conteos))} par(es)</small> : null}
+                    </td>
+                  ) : (
+                    <><td className={styles.num}>{fmtNum(f.conteos.CON_COSTO)}</td><td className={styles.num}>{fmtNum(f.conteos.PARCIAL)}</td><td className={styles.num}>{fmtNum(f.conteos.SIN_COSTO)}</td><td className={styles.num}>{fmtNum(f.conteos.EXCEDENTE)}</td><td className={styles.num}>{fmtNum(f.conteos.RESIDUO)}</td></>
+                  )}
                 </tr>
               ))}
             </tbody>
-            {datos && t && datos.filas.length > 0 ? (
+            {actual && t && actual.filas.length > 0 ? (
               <tfoot>
                 <tr>
                   <td colSpan={colsIdent}>TOTAL GENERAL (todos los resultados del filtro)</td>
+                  {vista === "PRODUCTO" ? <><td /><td className={styles.num}>{fmtNum(t.depositos)}</td></> : null}
                   {vista === "DEPOSITO" || vista === "CATEGORIA" ? <td className={styles.num}>{fmtNum(t.productos)}</td> : null}
-                  {vista === "CATEGORIA" || vista === "PRODUCTO" ? <td className={styles.num}>{fmtNum(t.depositos)}</td> : null}
-                  <td className={styles.num}>{fmtNum(t.fisico)}</td>
-                  <td className={styles.num}>{fmtNum(t.cantidadValorizada)}</td>
-                  <td className={styles.num}>{fmtDinero(t.costoPromedio)}</td>
+                  {vista === "CATEGORIA" ? <td className={styles.num}>{fmtNum(t.depositos)}</td> : null}
+                  {conCantidades ? <><td className={styles.num}>n/a</td><td className={styles.num}>n/a</td><td className={styles.num}>n/a</td><td className={styles.num}>n/a</td><td className={styles.num}>n/a</td></> : null}
                   <td className={styles.num}>{fmtDinero(t.valorTotal)}</td>
-                  <td>{t.moneda}</td>
-                  <td />
+                  {conProducto ? <td>{fmtNum(divergencias)} divergencia(s)</td> : (
+                    <><td className={styles.num}>{fmtNum(t.conteos.CON_COSTO)}</td><td className={styles.num}>{fmtNum(t.conteos.PARCIAL)}</td><td className={styles.num}>{fmtNum(t.conteos.SIN_COSTO)}</td><td className={styles.num}>{fmtNum(t.conteos.EXCEDENTE)}</td><td className={styles.num}>{fmtNum(t.conteos.RESIDUO)}</td></>
+                  )}
                 </tr>
               </tfoot>
             ) : null}
           </table>
         </div>
 
-        {datos && datos.filas.length === 0 && !cargando ? (
+        {actual && actual.filas.length === 0 && !cargando ? (
           <div className={styles.empty}>
             <strong>No se encontraron resultados.</strong>
             <span>{hayFiltros ? "Modifique los filtros aplicados." : "Aún no hay inventario para valorizar."}</span>
           </div>
         ) : null}
-        {!datos && cargando ? <div className={styles.empty}><strong>Cargando reporte...</strong></div> : null}
+        {!actual && cargando ? <div className={styles.empty}><strong>Cargando reporte...</strong></div> : null}
+        {!actual && !cargando && error ? <div className={styles.empty}><strong>No se pudo generar el reporte</strong><span>Use «Reintentar» para volver a consultar con los mismos filtros.</span></div> : null}
 
         <footer className={styles.pagination}>
           <span>
@@ -258,13 +320,13 @@ export default function ReporteValorizacionPage() {
           <div>
             <button type="button" disabled={pagina === 1 || cargando} onClick={() => setPagina((p) => p - 1)}>‹</button>
             <strong>{pagina} / {paginas}</strong>
-            <button type="button" disabled={pagina >= paginas || cargando} onClick={() => setPagina((p) => p + 1)}>›</button>
+            <button type="button" disabled={pagina >= paginas || cargando || !actual} onClick={() => setPagina((p) => p + 1)}>›</button>
           </div>
         </footer>
 
         <ul className={styles.notes}>
-          {t && t.filasSinCosto > 0 ? <li>Stock sin costo registrado (no incluido en el valor): {fmtNum(t.filasSinCosto)} filas producto × depósito, {fmtNum(t.fisicoNoValorizado)} unidades físicas no valorizadas.</li> : null}
-          {(datos?.cobertura ?? []).map((n) => <li key={n}>{n}</li>)}
+          {t && divergencias > 0 ? <li>Divergencias sin compensar: {fmtNum(t.conteos.SIN_COSTO)} sin costo (valor {fmtDinero(t.valorPorSituacion.SIN_COSTO)}), {fmtNum(t.conteos.PARCIAL)} parciales (valor {fmtDinero(t.valorPorSituacion.PARCIAL)}), {fmtNum(t.conteos.EXCEDENTE)} con excedente valorizado (valor {fmtDinero(t.valorPorSituacion.EXCEDENTE)}), {fmtNum(t.conteos.RESIDUO)} con valor sin cantidad (valor {fmtDinero(t.valorPorSituacion.RESIDUO)}). El reporte las detecta; no corrige costos ni saldos.</li> : null}
+          {(actual?.cobertura ?? []).map((n) => <li key={n}>{n}</li>)}
         </ul>
       </section>
     </section>

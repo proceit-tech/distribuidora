@@ -76,8 +76,13 @@ export type StockGeneralRespuesta = {
 
 // ---- Reporte 2: Valorización de inventario ----
 export type VistaValorizacion = "DETALLE" | "PRODUCTO" | "DEPOSITO" | "CATEGORIA";
-/** CON_COSTO: toda la cantidad física está valorizada; PARCIAL: valorizada ≠ física; SIN_COSTO: hay stock físico sin valorizar; SIN_STOCK: sin cantidades. */
-export type SituacionCosto = "CON_COSTO" | "PARCIAL" | "SIN_COSTO" | "SIN_STOCK";
+/**
+ * Cobertura de costo, clasificada por producto × depósito ANTES de agrupar (nunca sobre sumas netas):
+ * CON_COSTO: valorizada = física; PARCIAL: 0 < valorizada < física; SIN_COSTO: física > 0 y sin cantidad valorizada; EXCEDENTE: valorizada > física;
+ * RESIDUO: valor sin cantidad valorizada; SIN_STOCK: sin cantidades ni valor. En filas agrupadas se muestra la peor situación y los conteos exactos.
+ */
+export type SituacionCosto = "CON_COSTO" | "PARCIAL" | "SIN_COSTO" | "EXCEDENTE" | "RESIDUO" | "SIN_STOCK";
+export type ConteoSituaciones = Record<SituacionCosto, number>;
 
 export type ValorizacionFiltros = {
   vista: VistaValorizacion;
@@ -87,6 +92,8 @@ export type ValorizacionFiltros = {
   familiaId: string;
   existencia: "TODOS" | "CON" | "SIN";
   costo: "TODOS" | "CON" | "SIN";
+  /** DIVERGENCIAS = cualquier situación distinta de CON_COSTO / SIN_STOCK. */
+  cobertura: "TODOS" | "DIVERGENCIAS" | "PARCIAL" | "SIN_COSTO" | "EXCEDENTE" | "RESIDUO";
 };
 
 export type ValorizacionFila = {
@@ -96,32 +103,46 @@ export type ValorizacionFila = {
   categoria: string;
   familia: string;
   deposito: string;
+  /** true = depósito inactivo (se informa: su valor residual forma parte del total). Solo vistas DETALLE y DEPOSITO. */
+  depositoInactivo: boolean;
+  /** Unidad de medida del producto (solo DETALLE y PRODUCTO: en agrupaciones heterogéneas no existe una unidad común). */
+  unidad: string;
   /** Cantidad de productos / depósitos que agrupa la fila (1 en la vista DETALLE). */
   productos: number;
   depositos: number;
-  /** Stock físico PROPIO (disponible + reservado + cuarentena), de stock_saldos: solo para conciliar con Stock. */
-  fisico: number;
-  /** Cantidad valorizada de inventario_costos (no es lo mismo que el stock físico). */
-  cantidadValorizada: number;
-  /** Valor / cantidad valorizada (4 decimales); null si no hay cantidad valorizada. Texto numeric exacto. */
+  /**
+   * Cantidades exactas (texto numeric). Solo DETALLE y PRODUCTO (un único producto → una única unidad); null = NO APLICABLE en DEPOSITO y CATEGORIA,
+   * donde sumar cantidades de unidades distintas no tiene sentido.
+   */
+  fisico: string | null;
+  cantidadValorizada: string | null;
+  /** Magnitudes sin compensar (suma de la parte positiva por depósito): física sin valorizar y valorizada que excede la física. Solo DETALLE y PRODUCTO. */
+  sinValorizar: string | null;
+  excedente: string | null;
+  /** Valor / cantidad valorizada (4 decimales) del mismo producto; null = no aplicable (agrupaciones heterogéneas) o sin cantidad valorizada. */
   costoPromedio: string | null;
-  /** valor_total de inventario_costos; null si no existe registro de costo. Texto numeric exacto. */
+  /** Suma de valor_total (dinero exacto, misma moneda base); null si no existe registro de costo (detalle). */
   valorTotal: string | null;
   moneda: string;
+  /** Peor situación entre los pares producto × depósito que agrupa la fila. */
   situacionCosto: SituacionCosto;
+  /** Conteo EXACTO de pares producto × depósito por situación (nada se compensa entre pares). */
+  conteos: ConteoSituaciones;
 };
 
 export type ValorizacionTotales = {
+  /** Pares producto × depósito dentro del filtro. */
   filas: number;
   productos: number;
   depositos: number;
-  fisico: number;
-  cantidadValorizada: number;
+  productosConCosto: number;
+  /** Dinero exacto (texto numeric) en moneda base. */
   valorTotal: string;
-  costoPromedio: string | null;
-  /** Filas (producto × depósito) con stock físico y sin cantidad valorizada, y unidades físicas no valorizadas. */
-  filasSinCosto: number;
-  fisicoNoValorizado: number;
+  /** Conteo y dinero por situación de cobertura, sin compensar. */
+  conteos: ConteoSituaciones;
+  valorPorSituacion: Record<SituacionCosto, string>;
+  /** Depósitos inactivos incluidos con existencia o valor: cantidad de pares y valor (RPT-V06). */
+  inactivos: { filas: number; valor: string };
   moneda: string;
 };
 
@@ -134,12 +155,15 @@ export type ValorizacionRespuesta = {
   filas: ValorizacionFila[];
   totales: ValorizacionTotales;
   catalogos: {
-    depositos: { id: string; nombre: string }[];
+    depositos: { id: string; nombre: string; activo: boolean }[];
     categorias: { id: string; nombre: string }[];
     familias: { id: string; nombre: string }[];
   };
   cobertura: string[];
 };
+
+/** Respuesta de la API: agrega lo que la pantalla necesita para mostrar u ocultar la exportación (el servidor vuelve a exigir REPORTES.EXPORTAR). */
+export type ValorizacionRespuestaApi = ValorizacionRespuesta & { permisos: { exportar: boolean } };
 
 // ---- Reporte 3: Kardex de movimientos ----
 export type VistaKardex = "DETALLE" | "RESUMEN";

@@ -455,7 +455,8 @@
 
 .badgeSIN_STOCK,
 .badgeANULADO,
-.badgeVENCIDO {
+.badgeVENCIDO,
+.badgeRESIDUO {
   color: #b3394a;
   background: #fff0f2;
 }
@@ -476,7 +477,8 @@
 }
 
 .badgeSOBRESTOCK,
-.badgePARCIAL {
+.badgePARCIAL,
+.badgeEXCEDENTE {
   color: #3269b3;
   background: #edf4ff;
 }
