@@ -126,3 +126,12 @@ Implementar somente **PRV-R01-01…04** de `AUD-PROVEEDORES-V1.md` §VI: (01) co
 ### Próxima etapa do Claude
 
 **Handoff conjunto autorizado pelo responsável:** corrigir **somente CAT-R02-01** deste menu **junto** com o pacote `AUD-LISTAS-PRECIOS-V1.md` seção V. Não reimplementar os 5 achados já aceitos, não tocar Proveedores/Clientes/Stock/Facturación fora das integrações mínimas justificadas. Claude Code lê protocolos completos e progresso vigente antes de executar, preserva migrations aplicadas, faz commits separados por menu e para para auditoria. Nenhum acesso VM/PG/Docker/SIFEN/deploy. **Catálogos continuam ABERTOS e NÃO HOMOLOGADOS**, pendente revisão do ajuste e aceite operacional humano.
+
+
+## VIII. AUD-CAT-R03 — revisão dirigida da correção CAT-R02-01 (12/10/2026)
+
+**Commit funcional inspecionado:** `b432cb907f903fcd513a8465117f4cef8de6f96a`; **HEAD de partida:** `96bbe6cc1a1acc056618a5f5c4ae9c9e9155fbf7`. Diff, `app/(private)/productos/catalogos/page.tsx`, `lib/productos/catalogos-carga.ts`, casos de estabilização e protocolos/progresso da branch conferidos por leitura GitHub.
+
+**Parecer:** **CAT-R02-01 — ACEITE ESTÁTICO.** `cargaConfiable` exige ausência de carregamento e de erros principal/auxiliares; `permisosVigentes` invalida permissões durante carga ou falha; `cambiarTab` invalida estado anterior; `guardar` e `cambiarEstado` verificam bloqueio no handler, além dos controles; rascunho permanece aberto e erro de carga não é apagado por iniciar ação. A limpeza de permissões na falha principal está em `cargar`. Testes de comportamento constam na suíte alterada, mas o ChatGPT **não os executou**.
+
+**Limite do aceite:** a correção foi verificada estaticamente; HTTP/browser/PG/VM/Docker e homologação humana não executados. A comprovação de concorrência real de CAT-A06 segue pendente de PostgreSQL; NEX-052/053 ainda não aplicadas segundo o responsável. Não reabrir CAT-R02-01 sem novo sintoma concreto e não atribuir 10/10 operacional. **Nenhuma correção adicional de Catálogos de Productos é encaminhada ao Claude nesta rodada.**
