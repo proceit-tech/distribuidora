@@ -15,7 +15,7 @@ import { leerHojaXlsx } from "@/lib/reportes/export-xlsx.casos";
 import { columnasStockCritico, tablaStockCritico } from "@/lib/reportes/export-stock-critico";
 import { pedirStockCritico } from "@/lib/reportes/cliente-stock-critico";
 import { leerStockCritico, parsearFiltrosStockCritico } from "@/lib/reportes/stock-critico";
-import { agruparPorProducto, costoUnitario, respuestaStockCriticoValida, type Detalle } from "@/lib/reportes/stock-critico-plan";
+import { agruparPorProducto, contarReferencias, costoUnitario, filtrosIguales, respuestaStockCriticoValida, respuestaVigente, type Detalle } from "@/lib/reportes/stock-critico-plan";
 import type { StockCriticoFiltros, StockCriticoRespuesta, StockCriticoRespuestaApi } from "@/types/reportes";
 
 const leer = (r: string) => readFileSync(join(process.cwd(), r), "utf8").replace(/\r\n/g, "\n");
@@ -346,13 +346,132 @@ export async function verificarCasosReportesStockCritico(): Promise<string[]> {
   const plan = leer("lib/reportes/stock-critico-plan.ts");
 
   cierto("T-C06 permisos: consultar exige REPORTES.VER; exportar exige VER y EXPORTAR en el servidor; los botones solo existen con permisos.exportar confirmado y exportan los filtros de la respuesta vigente", /autorizarReporte\(\["VER"\]\)/.test(rutaLeer) && /autorizarReporte\(\["VER", "EXPORTAR"\]\)/.test(rutaExportar) && /hasPermission\(acceso, "REPORTES", "EXPORTAR"\)/.test(rutaLeer) && /puedeExportar \? \(/.test(pagina) && /descargarStockCritico\(actual\.filtros, formato\)/.test(pagina) && !/descargarStockCritico\(aplicados/.test(pagina));
-  cierto("T-C08 pantalla: pedirStockCritico con compuerta de última solicitud, datos descartados ante falla, solo datos de los filtros/página vigentes y «Reintentar»", /pedirStockCritico\(aplicados, pagina\)/.test(pagina) && /crearCompuerta\(\)/.test(pagina) && /setDatos\(r\.datos\)/.test(pagina) && /mismos\(datos\.filtros, aplicados\)/.test(pagina) && /Reintentar/.test(pagina) && !/\.catch\(\(e: unknown\)/.test(pagina));
+  cierto("T-C08 pantalla: pedirStockCritico con compuerta de última solicitud, datos descartados ante falla, solo datos de los filtros/página vigentes y «Reintentar»", /pedirStockCritico\(aplicados, pagina\)/.test(pagina) && /crearCompuerta\(\)/.test(pagina) && /setDatos\(r\.datos\)/.test(pagina) && /respuestaVigente\(datos, error, aplicados, pagina\)/.test(pagina) && !/JSON\.stringify/.test(pagina) && /Reintentar/.test(pagina) && !/\.catch\(\(e: unknown\)/.test(pagina));
 
   // ═══ RPT-T-C09 — un solo motor, solo lectura, regresiones ═══
   cierto("T-C09 un solo motor: el informe usa calcularPlanReposicion y leerEntradasReposicion; no recalcula necesidad, meta ni sugerencia (sin fórmulas propias, sin objetivo MINIMO/MAXIMO, sin float8 ni SQL de saldos propios)", /calcularPlanReposicion\(datos\.entradas, \{ incluirTransito: false \}\)/.test(fuente) && /leerEntradasReposicion\(c, empresaId, usuarioId\)/.test(fuente) && !/objetivo|"MINIMO"|"MAXIMO"|float8|FROM stock_saldos/.test(fuente + plan) && !/Math\.max\(0, maximo/.test(fuente + plan));
   cierto("T-C09 solo lectura: ni la pantalla, ni la API, ni la exportación crean movimientos, compras, transferencias ni simulaciones (sin POST/PUT, sin /movimientos, sin plan editable)", !/method: "(POST|PUT|DELETE)"|\/movimientos|A planificar|Simular/.test(pagina + fuente) && !/export async function (POST|PUT|DELETE)/.test(rutaLeer + rutaExportar) && !/(INSERT|UPDATE|DELETE)\s/i.test(fuente.replace(/\/\/.*$/gm, "")));
   cierto("T-C09 regresiones: el motor y los datos de Reposición, su pantalla y API, y Valorización no dependen del informe ni fueron reimplementados", !/reportes/.test(leer("lib/reposicion/calculo.ts") + leer("lib/reposicion/datos.ts") + leer("app/api/reposicion/route.ts")) && !/stock-critico/.test(leer("lib/reportes/valorizacion.ts") + leer("lib/reportes/valorizacion-cobertura.ts")) && /leerValorizacion/.test(leer("app/api/reportes/valorizacion/route.ts")));
   cierto("T-C09 los otros relatórios siguen con sus rutas: Stock general, Kardex, Lotes y Valorización", ["stock-general", "kardex", "lotes", "valorizacion"].every((r) => /export async function GET/.test(leer(`app/api/reportes/${r}/route.ts`))));
+
+  // ═══ RPT-R06-01 — igualdad de filtros por campo (objetos reales servidor/cliente en órdenes distintos) ═══
+  const sp = new URLSearchParams("vista=PRODUCTO&situacion=ALERTAS&q=aceite&depositoId=" + DB);
+  const deApi = parsearFiltrosStockCritico(sp);
+  const filtrosServidor = "filtros" in deApi ? deApi.filtros : FILTROS;
+  // Lo que realmente devuelve la API: el objeto \`filtros\` de leerStockCritico serializado como JSON
+  reiniciar();
+  const respReal = JSON.parse(JSON.stringify(await leerStockCritico(fakePool(e1), EMP, USR, filtrosServidor, 1, 50, false))) as StockCriticoRespuestaApi;
+  // Lo que arma el componente: { ...filtros, q } con otro orden de propiedades
+  const cliente: StockCriticoFiltros = { vista: "PRODUCTO", q: "aceite", depositoId: DB, categoriaId: "", marcaId: "", familiaId: "", situacion: "ALERTAS" };
+
+  igual("R06-01 los objetos reales servidor/cliente tienen el MISMO contenido y órdenes de propiedades distintos (JSON.stringify no sirve), y filtrosIguales los reconoce", [
+    Object.keys(respReal.filtros).join(",") === Object.keys(cliente).join(","), JSON.stringify(respReal.filtros) === JSON.stringify(cliente), filtrosIguales(respReal.filtros, cliente),
+  ], [false, false, true]);
+  igual("R06-01 filtrosIguales: cada campo cuenta (vista, q, depósito, categoría, marca, familia, situación) y el orden de creación no", [
+    (["vista", "q", "depositoId", "categoriaId", "marcaId", "familiaId", "situacion"] as const).map((k) => filtrosIguales(cliente, { ...cliente, [k]: k === "vista" ? "DEPOSITO" : k === "situacion" ? "TODAS" : "otro" })),
+    filtrosIguales(cliente, { situacion: "ALERTAS", familiaId: "", marcaId: "", categoriaId: "", depositoId: DB, q: "aceite", vista: "PRODUCTO" }),
+  ], [[false, false, false, false, false, false, false], true]);
+
+  const aplicados: StockCriticoFiltros = { ...cliente };
+  const vigente = (d: StockCriticoRespuestaApi | null, error: string, f: StockCriticoFiltros, pg: number) => respuestaVigente(d, error, f, pg);
+
+  igual("R06-01 la pantalla muestra la respuesta real (con la API en otro orden) y habilita la exportación según el permiso; cambia un filtro, cambia la página, hay error o llega una respuesta vieja → se rechaza", [
+    vigente(respReal, "", aplicados, 1), vigente(respReal, "", { ...aplicados, q: "arroz" }, 1), vigente(respReal, "", { ...aplicados, situacion: "TODAS" }, 1), vigente(respReal, "", aplicados, 2), vigente(respReal, "falló", aplicados, 1), vigente(null, "", aplicados, 1),
+  ], [true, false, false, false, false, false]);
+  igual("R06-01 con respuesta vigente: datos visibles y exportación solo si permisos.exportar (el servidor igual lo exige)", [
+    [true, false].map((x) => { const d = { ...respReal, permisos: { exportar: x } }; return respuestaVigente(d, "", aplicados, 1) && d.permisos.exportar; }).join(),
+    "",
+  ], ["true,false", ""]);
+  {
+    // Búsqueda con retraso + paginación + respuesta vieja: réplica de la pantalla (compuerta + respuestaVigente)
+    const compuerta = crearCompuerta();
+    const e: { datos: StockCriticoRespuestaApi | null; error: string } = { datos: null, error: "" };
+    const cargar = async (f: StockCriticoFiltros, pg: number, espera: number) => {
+      const sol = compuerta.nueva();
+      const res = await pedirStockCritico(f, pg, async () => {
+        await new Promise((x) => setTimeout(x, espera));
+        const r = JSON.parse(JSON.stringify(await informe(e1, f, false))) as StockCriticoRespuestaApi;
+
+        r.pagina.numero = pg;
+
+        return new Response(JSON.stringify({ ...r, permisos: { exportar: true } }), { status: 200 });
+      });
+
+      if (!compuerta.vigente(sol)) return;
+      e.datos = res.datos;
+      e.error = res.error;
+    };
+    const A = { ...cliente, q: "ace" }, B = { ...cliente, q: "aceite" };
+
+    await Promise.all([cargar(A, 1, 40), cargar(B, 1, 5)]);
+    igual("R06-01 búsqueda escrita en dos pasos: la respuesta lenta de «ace» no pisa a «aceite»; solo la última es vigente y es visible", [e.datos?.filtros.q, respuestaVigente(e.datos, e.error, B, 1), respuestaVigente(e.datos, e.error, A, 1)], ["aceite", true, false]);
+    await cargar(B, 2, 0);
+    igual("R06-01 paginación: la página 2 solicitada solo es vigente para la página 2", [respuestaVigente(e.datos, e.error, B, 2), respuestaVigente(e.datos, e.error, B, 1)], [true, false]);
+  }
+
+  // ═══ RPT-R06-02 — Sobrestock informativo (físico propio > máximo del mismo ámbito) ═══
+  const e7: Escenario = {
+    productos: [
+      prod(P1, "P-1", "Sobre máximo en un depósito", "Unidad", { minimo: 1, punto: 2, maximo: 500 }), prod(P2, "P-2", "Sin máximo", "Unidad"),
+      prod(P3, "P-3", "Reservas y cuarentena", "Unidad"), prod(P4, "P-4", "Solo global", "Kilo", { minimo: 1, maximo: 10 }),
+    ],
+    saldos: [
+      saldo(P1, DA, "DISPONIBLE", 80), saldo(P1, DB, "DISPONIBLE", 8), // A: 80 > máx 50 (exceso 30); B: 8 ≤ máx 20
+      saldo(P2, DA, "DISPONIBLE", 999), // sin máximo → nunca sobrestock
+      saldo(P3, DA, "DISPONIBLE", 10), saldo(P3, DA, "RESERVADO", 25), saldo(P3, DA, "CUARENTENA", 10), saldo(P3, DA, "TRANSITO", 500), // físico 45 > 40; el tránsito no cuenta
+      saldo(P4, DA, "DISPONIBLE", 30), // plan consolidado real (sin parámetros por depósito): 30 > 10
+    ],
+    config: [cfg(P1, DA, 5, 6, 50), cfg(P1, DB, 5, 6, 20), cfg(P2, DA, 5, 6, null), cfg(P3, DA, 5, 6, 40)],
+    visibles: [dep(DA, "Central"), dep(DB, "Norte")],
+    costos: [],
+  };
+  const r7 = await informe(e7, { situacion: "TODAS" });
+  const f7 = (p: string, d?: string) => r7.filas.find((f) => f.productoId === p && (d === undefined || f.deposito === d))!;
+
+  igual("R06-02 sobrestock por depósito con parámetros propios: Central 80 > 50 (exceso 30) sí; Norte 8 ≤ 20 no (el máximo global 500 del producto NO se usa); el consolidado de referencia no genera sobrestock", [f7(P1, "Central").sobrestock, f7(P1, "Central").exceso, f7(P1, "Norte").sobrestock, r7.filas.filter((f) => f.productoId === P1).length], [true, 30, false, 2]);
+  igual("R06-02 producto sin máximo definido: nunca sobrestock aunque tenga stock enorme", [f7(P2).sobrestock, f7(P2).exceso, f7(P2).fisico], [false, 0, 999]);
+  igual("R06-02 físico propio = disponible + reservado + cuarentena (45 > 40), sin tránsito (500) ni terceros; el disponible (10) no basta para decidir", [f7(P3).fisico, f7(P3).disponible, f7(P3).sobrestock, f7(P3).exceso], [45, 10, true, 5]);
+  igual("R06-02 plan consolidado real (sin parámetros por depósito): se compara con el máximo global del producto (30 > 10)", [f7(P4).ambito, f7(P4).sobrestock, f7(P4).exceso], ["CONSOLIDADO", true, 20]);
+  igual("R06-02 el sobrestock NO altera el plan del motor: criticidad, necesidad, transferencia y compra de cada fila son los de calcularPlanReposicion (y ninguno genera compra por exceso)", [r7.filas.every((f) => !f.sobrestock || f.compra === 0 || f.necesita), f7(P1, "Central").necesita, f7(P1, "Central").compra, f7(P3).transferencia], [true, false, 0, 0]);
+  comparar("R06-02", r7.filas, (await motor(e7)).plan);
+
+  const alertas = (await informe(e7, { situacion: "ALERTAS" })).filas.map((f) => `${f.productoId}|${f.deposito}`).sort();
+  const soloSobre = await informe(e7, { situacion: "SOBRESTOCK" });
+
+  igual("R06-02 filtro: «Sobrestock» aísla los excesos; el filtro por defecto (alertas) los incluye junto con lo que necesita reposición; «Normal» y demás filtros siguen por criticidad", [
+    soloSobre.filas.map((f) => `${f.productoId}|${f.deposito}`).sort(), alertas.includes(`${P1}|Central`), alertas.includes(`${P2}|Central`), (await informe(e7, { situacion: "OK" })).filas.some((f) => f.productoId === P2),
+  ], [[`${P1}|Central`, `${P3}|Central`, `${P4}|Todos los depósitos`].sort(), true, false, true]);
+  igual("R06-02 totales: destinos en sobrestock contados aparte de los que necesitan reposición; Por producto: exceso del MISMO producto sumado una vez", [soloSobre.totales.sobrestock, soloSobre.totales.necesitan, (await informe(e7, { situacion: "SOBRESTOCK", vista: "PRODUCTO" })).filas.map((f) => [f.productoId, f.exceso]).sort()], [3, 0, [[P1, 30], [P3, 5], [P4, 20]].sort()]);
+  igual("R06-02 categoría/marca/familia/texto actúan sobre el sobrestock; un depósito filtrado no recibe el consolidado", [(await informe(e7, { situacion: "SOBRESTOCK", q: "reservas" })).filas.map((f) => f.productoId), (await informe(e7, { situacion: "SOBRESTOCK", depositoId: DB })).filas.length, (await informe(e7, { situacion: "SOBRESTOCK", depositoId: DA })).filas.length], [[P3], 0, 2]);
+
+  const t7 = tablaStockCritico(soloSobre);
+  const h7 = leerHojaXlsx(generarXlsxTabla(t7));
+  const b7 = 1 + 1 + 1 + t7.filtros.length + 1 + 1;
+  const c7 = t7.columnas.findIndex((c) => c.titulo === "Sobrestock (exceso)");
+  const col7 = String.fromCharCode(65 + c7);
+  const i7 = soloSobre.filas.findIndex((f) => f.productoId === P1);
+
+  igual("R06-02 XLSX real: columna «Sobrestock (exceso)» = 30 como número en el depósito con exceso; total «n/a»; PDF generado; las notas informan el conteo", [h7.get(col7 + (b7 + 1 + i7)), h7.get(col7 + (b7 + 1 + soloSobre.filas.length)), generarPdfTabla(t7).subarray(0, 5).toString(), t7.notas.some((n) => /En sobrestock \(informativo\): 3/.test(n))], [{ tipo: "n", valor: "30" }, { tipo: "s", valor: "n/a" }, "%PDF-", true]);
+  cierto("R06-02 pantalla: filtro, KPI y columna de sobrestock; el motor (calculo.ts) no conoce el informe", /SOBRESTOCK/.test(leer("lib/reportes/export-stock-critico.ts")) && /Sobrestock/.test(pagina) && /f\.sobrestock/.test(pagina) && !/sobrestock/i.test(leer("lib/reposicion/calculo.ts")));
+
+  // ═══ RPT-R06-03 — referencias contadas según el recorte ═══
+  const e8: Escenario = {
+    productos: [
+      prod(P1, "P-1", "Con plan por depósito A", "Unidad", { minimo: 20, maximo: 60, catId: U(40) }), prod(P2, "P-2", "Con plan por depósito B", "Unidad", { minimo: 20, maximo: 60, catId: U(41) }),
+      prod(P3, "P-3", "Sin referencia", "Unidad", { catId: U(41) }),
+    ],
+    saldos: [saldo(P1, DA, "DISPONIBLE", 1), saldo(P2, DA, "DISPONIBLE", 1)],
+    config: [cfg(P1, DA, 5, 6, 10), cfg(P2, DA, 5, 6, 10), cfg(P3, DA, 5, 6, 10)],
+    visibles: [dep(DA, "Central")],
+    costos: [],
+  };
+
+  igual("R06-03 las referencias se cuentan sobre los PRODUCTOS del recorte: sin filtros 2; categoría 2 → 1; texto «sin referencia» → 0; con un depósito filtrado no se atribuyen (0)", [
+    (await informe(e8, { situacion: "TODAS" })).totales.referencias, (await informe(e8, { situacion: "TODAS", categoriaId: U(41) })).totales.referencias, (await informe(e8, { situacion: "TODAS", q: "sin referencia" })).totales.referencias,
+    (await informe(e8, { situacion: "TODAS", depositoId: DA })).totales.referencias,
+  ], [2, 1, 0, 0]);
+  igual("R06-03 contarReferencias: un producto se cuenta una vez y los filtros de producto se respetan", contarReferencias([P1, P1, P2], { ...FILTROS, categoriaId: U(40) }, new Map([[P1, { categoriaId: U(40), categoria: "", marcaId: "", familiaId: "", familia: "", busqueda: "" }], [P2, { categoriaId: U(41), categoria: "", marcaId: "", familiaId: "", familia: "", busqueda: "" }]])), 1);
+  cierto("R06-03 la nota de pantalla y de exportación se refiere al recorte filtrado (no a toda la empresa)", /del recorte filtrado/.test(pagina) && tablaStockCritico(await informe(e8, { situacion: "TODAS" })).notas.some((n) => /del recorte filtrado/.test(n)));
 
   // Utilidades puras
   igual("costo unitario exacto: sin cantidad valorizada → null (no 0)", [costoUnitario({ valor: "10", cantidad: "4" }), costoUnitario({ valor: "0", cantidad: "0" }), costoUnitario(undefined)], ["2.5000", null, null]);

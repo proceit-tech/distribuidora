@@ -321,7 +321,7 @@ export type KardexRespuesta = {
 // Reporte 4 — Stock crítico y reposición: fotografía de las excepciones del MOTOR ÚNICO de Reposición (calcularPlanReposicion); no calcula ni planifica por su cuenta.
 export type VistaStockCritico = "PRODUCTO" | "DEPOSITO";
 export type CriticidadReporte = "SIN_STOCK" | "BAJO_MINIMO" | "EN_PUNTO" | "OK" | "SIN_GATILLO" | "SIN_PARAMETROS";
-export type SituacionStockCritico = "ALERTAS" | "TODAS" | "SIN_STOCK" | "BAJO_MINIMO" | "EN_PUNTO" | "OK" | "SIN_GATILLO";
+export type SituacionStockCritico = "ALERTAS" | "TODAS" | "SIN_STOCK" | "BAJO_MINIMO" | "EN_PUNTO" | "SOBRESTOCK" | "OK" | "SIN_GATILLO";
 
 export type StockCriticoFiltros = {
   vista: VistaStockCritico;
@@ -330,7 +330,7 @@ export type StockCriticoFiltros = {
   categoriaId: string;
   marcaId: string;
   familiaId: string;
-  /** ALERTAS = lo que necesita reposición (sin stock, bajo el mínimo, en punto); TODAS incluye lo que está bien y los avisos de configuración. */
+  /** ALERTAS = lo que necesita reposición (sin stock, bajo el mínimo, en punto) o está en sobrestock; SOBRESTOCK aísla el exceso; TODAS incluye lo que está bien y los avisos de configuración. */
   situacion: SituacionStockCritico;
 };
 
@@ -350,6 +350,8 @@ export type StockCriticoFila = {
   destinos: number;
   /** Disponible propio (posición del motor; en PRODUCTO, suma de los destinos del MISMO producto). */
   disponible: number;
+  /** Físico propio = disponible + reservado + cuarentena (sin tránsito ni terceros), el mismo de Stock; base del sobrestock. En PRODUCTO, suma de los destinos del mismo producto. */
+  fisico: number;
   minimo: number | null;
   punto: number | null;
   maximo: number | null;
@@ -357,6 +359,10 @@ export type StockCriticoFila = {
   /** Peor criticidad entre los destinos de la fila. */
   criticidad: CriticidadReporte;
   necesita: boolean;
+  /** Sobrestock = máximo > 0 y físico propio > máximo del MISMO ámbito (depósito con parámetros propios, o plan consolidado real). Aviso informativo: no genera compra ni transferencia ni modifica el plan. */
+  sobrestock: boolean;
+  /** Físico − máximo cuando hay sobrestock (suma de los destinos con exceso en PRODUCTO); 0 si no. */
+  exceso: number;
   /** Suma de metas DEFINIDAS del mismo producto/unidad; los destinos con necesidad y sin meta se cuentan en sinMeta (nunca como 0 ni inventados). */
   sugerida: number;
   sinMeta: number;
@@ -376,11 +382,13 @@ export type StockCriticoTotales = {
   productos: number;
   destinos: number;
   necesitan: number;
+  /** Destinos en sobrestock (exceso informativo, independiente de la criticidad del motor). */
+  sobrestock: number;
   porCriticidad: Record<CriticidadReporte, number>;
   sinMeta: number;
   valorReferencia: string;
   sinCosto: number;
-  /** Renglones consolidados que solo son referencia (el producto tiene plan por depósito): no generan alertas ni valor. */
+  /** Renglones consolidados de referencia que corresponden a los PRODUCTOS del recorte filtrado (sin depósito concreto): no generan alertas ni valor. */
   referencias: number;
   moneda: string;
 };

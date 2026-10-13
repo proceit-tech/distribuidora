@@ -4,7 +4,7 @@ import { calcularPlanReposicion } from "@/lib/reposicion/calculo";
 import { leerEntradasReposicion } from "@/lib/reposicion/datos";
 import { MAX_FILAS_EXPORTACION } from "@/lib/reportes/stock-general";
 import {
-  agruparPorProducto, costoDeProducto, detallesDesdePlan, filtrarDetalles, ordenarDetalles, totalesCritico,
+  agruparPorProducto, contarReferencias, costoDeProducto, detallesDesdePlan, filtrarDetalles, ordenarDetalles, totalesCritico,
   type CostoCrudo, type ProductoInfo,
 } from "@/lib/reportes/stock-critico-plan";
 import { conSnapshotLectura } from "@/lib/reportes/snapshot";
@@ -20,7 +20,7 @@ import type { StockCriticoFiltros, StockCriticoRespuesta } from "@/types/reporte
 type Db = Pick<Pool, "connect">;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const SITUACIONES = ["ALERTAS", "TODAS", "SIN_STOCK", "BAJO_MINIMO", "EN_PUNTO", "OK", "SIN_GATILLO"];
+const SITUACIONES = ["ALERTAS", "TODAS", "SIN_STOCK", "BAJO_MINIMO", "EN_PUNTO", "SOBRESTOCK", "OK", "SIN_GATILLO"];
 
 export const COBERTURA_STOCK_CRITICO = [
   "Informe de excepciones de solo lectura: muestra el resultado del MISMO cálculo de Inventario > Reposición (parámetros por depósito, disponible propio sin tránsito, transferencia primero desde otros depósitos con parámetros y compra por el resto). No planifica, no simula ni crea compras, pedidos o movimientos; para actuar use Reposición y Movimientos.",
@@ -28,6 +28,7 @@ export const COBERTURA_STOCK_CRITICO = [
   "Si un destino necesita reposición pero no tiene máximo ni cantidad de reposición, se informa «sin meta definida»: no se inventa una cantidad. El total consolidado de un producto con parámetros por depósito es solo referencia y no genera alertas.",
   "Las cantidades se suman únicamente dentro de un mismo producto; el informe no tiene una cantidad total de la empresa (unidades distintas). Los totales cuentan destinos y alertas.",
   "El valor de referencia = cantidad sugerida × costo promedio real de inventario_costos (del depósito destino; si falta, el del producto), en moneda base. Es una estimación: no es la valorización del inventario, ni un precio de compra, ni un compromiso. Sin costo registrado no se estima (no se asume 0).",
+  "Sobrestock = máximo definido y stock físico propio (disponible + reservado + cuarentena; sin tránsito ni terceros) por encima del máximo del mismo ámbito (el depósito con parámetros propios, o el plan consolidado cuando es el plan real). Es un aviso informativo: no genera compra ni transferencia ni cambia las recomendaciones de Reposición.",
   "Foto actual de los saldos de la solicitud; no considera consumo, plazos de entrega ni compras en camino.",
 ];
 
@@ -124,7 +125,7 @@ export async function leerStockCritico(
       filtros,
       pagina: { numero: pagina, tamano, totalFilas: vista.length },
       filas,
-      totales: totalesCritico(filtrados, vista.length, referencias, emp.moneda),
+      totales: totalesCritico(filtrados, vista.length, contarReferencias(referencias, filtros, productos), emp.moneda),
       catalogos: { depositos: datos.depositos, categorias: cat.rows, marcas: mar.rows, familias: fam.rows },
       cobertura: COBERTURA_STOCK_CRITICO,
     } satisfies StockCriticoRespuesta;

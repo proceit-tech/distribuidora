@@ -7,13 +7,12 @@ import { crearCompuerta } from "@/lib/productos/catalogos-carga";
 import { descargarStockCritico, pedirStockCritico } from "@/lib/reportes/cliente-stock-critico";
 import { SITUACIONES_CRITICO } from "@/lib/reportes/export-stock-critico";
 import { fmtDinero, fmtNum } from "@/lib/reportes/formato";
-import { ETIQUETA_CRITICIDAD } from "@/lib/reportes/stock-critico-plan";
+import { ETIQUETA_CRITICIDAD, filtrosIguales, respuestaVigente } from "@/lib/reportes/stock-critico-plan";
 import type { StockCriticoFila, StockCriticoFiltros, StockCriticoRespuestaApi } from "@/types/reportes";
 
 import styles from "@/components/ui/lista-padrao/reporte.module.css";
 
 const FILTROS_VACIOS: StockCriticoFiltros = { vista: "PRODUCTO", q: "", depositoId: "", categoriaId: "", marcaId: "", familiaId: "", situacion: "ALERTAS" };
-const mismos = (a: StockCriticoFiltros, b: StockCriticoFiltros) => JSON.stringify(a) === JSON.stringify(b);
 const opc = (n: number | null) => (n === null ? "—" : fmtNum(n));
 
 /** Meta definida → cantidad; destino que necesita reposición sin meta → «Sin meta definida» (nunca 0 ni una cantidad inventada). */
@@ -75,7 +74,7 @@ export default function ReporteStockCriticoPage() {
   };
 
   // Solo se muestran y exportan datos que corresponden EXACTAMENTE a los filtros y la página vigentes.
-  const actual = datos && !error && mismos(datos.filtros, aplicados) && datos.pagina.numero === pagina ? datos : null;
+  const actual = datos && respuestaVigente(datos, error, aplicados, pagina) ? datos : null;
   const puedeExportar = actual?.permisos.exportar === true;
   const exportar = async (formato: "xlsx" | "pdf") => {
     if (!actual || !puedeExportar) return;
@@ -95,7 +94,7 @@ export default function ReporteStockCriticoPage() {
   const tamano = actual?.pagina.tamano ?? 50;
   const paginas = Math.max(1, Math.ceil(total / tamano));
   const porDeposito = aplicados.vista === "DEPOSITO";
-  const hayFiltros = JSON.stringify({ ...filtros, vista: "" }) !== JSON.stringify({ ...FILTROS_VACIOS, vista: "" });
+  const hayFiltros = !filtrosIguales({ ...filtros, vista: FILTROS_VACIOS.vista }, FILTROS_VACIOS);
   const colsFijas = porDeposito ? 4 : 3;
 
   return (
@@ -146,9 +145,9 @@ export default function ReporteStockCriticoPage() {
           <small>En punto de reposición {t ? fmtNum(t.porCriticidad.EN_PUNTO) : "—"}</small>
         </article>
         <article className={[styles.summaryCard, styles.summaryBlue].join(" ")}>
-          <span>SIN META DEFINIDA</span>
-          <strong>{t ? fmtNum(t.sinMeta) : "—"}</strong>
-          <small>Necesitan reposición sin máximo ni cantidad</small>
+          <span>SOBRESTOCK</span>
+          <strong>{t ? fmtNum(t.sobrestock) : "—"}</strong>
+          <small>{t ? `Físico propio sobre el máximo (informativo) · sin meta definida ${fmtNum(t.sinMeta)}` : "—"}</small>
         </article>
         <article className={[styles.summaryCard, styles.summaryPurple].join(" ")}>
           <span>VALOR DE REFERENCIA ({t?.moneda ?? ""})</span>
@@ -242,7 +241,7 @@ export default function ReporteStockCriticoPage() {
                 {porDeposito ? <th>Depósito</th> : <th className={styles.num}>Destinos</th>}
                 <th>Un.</th><th className={styles.num}>Disponible</th>
                 {porDeposito ? <><th className={styles.num}>Mín.</th><th className={styles.num}>Punto</th><th className={styles.num}>Máx.</th></> : null}
-                <th>Situación</th><th className={styles.num}>Sugerida</th><th className={styles.num}>Transferencia</th><th className={styles.num}>Compra</th>
+                <th>Situación</th><th className={styles.num}>Sobrestock</th><th className={styles.num}>Sugerida</th><th className={styles.num}>Transferencia</th><th className={styles.num}>Compra</th>
                 {porDeposito ? <th>Orígenes</th> : null}
                 <th className={styles.num}>Valor ref.</th>
               </tr>
@@ -258,6 +257,7 @@ export default function ReporteStockCriticoPage() {
                   <td className={styles.num}>{fmtNum(f.disponible)}</td>
                   {porDeposito ? <><td className={styles.num}>{opc(f.minimo)}</td><td className={styles.num}>{opc(f.punto)}</td><td className={styles.num}>{opc(f.maximo)}</td></> : null}
                   <td><span className={[styles.badge, styles[`badge${f.criticidad}`]].join(" ")}>{ETIQUETA_CRITICIDAD[f.criticidad]}</span></td>
+                  <td className={styles.num}>{f.sobrestock ? <span className={[styles.badge, styles.badgeSOBRESTOCK].join(" ")}>+{fmtNum(f.exceso)}</span> : "—"}</td>
                   <td className={styles.num}>{conMeta(f.sugerida, f)}</td>
                   <td className={styles.num}>{f.necesita ? fmtNum(f.transferencia) : "—"}</td>
                   <td className={styles.num}>{f.necesita ? conMeta(f.compra, f) : "—"}</td>
@@ -274,7 +274,7 @@ export default function ReporteStockCriticoPage() {
                   <td className={styles.num}>n/a</td>
                   {porDeposito ? <><td /><td /><td /></> : null}
                   <td>{fmtNum(t.necesitan)} alerta(s)</td>
-                  <td className={styles.num}>n/a</td><td className={styles.num}>n/a</td><td className={styles.num}>n/a</td>
+                  <td className={styles.num}>n/a</td><td className={styles.num}>n/a</td><td className={styles.num}>n/a</td><td className={styles.num}>n/a</td>
                   {porDeposito ? <td /> : null}
                   <td className={styles.num}>{fmtDinero(t.valorReferencia)}</td>
                 </tr>
@@ -304,7 +304,7 @@ export default function ReporteStockCriticoPage() {
         </footer>
 
         <ul className={styles.notes}>
-          {t && t.referencias > 0 ? <li>{fmtNum(t.referencias)} total(es) consolidado(s) de productos con parámetros por depósito se omiten: son solo referencia.</li> : null}
+          {t && t.referencias > 0 ? <li>{fmtNum(t.referencias)} producto(s) del recorte filtrado tienen un total consolidado que se omite por ser solo referencia (tienen parámetros por depósito).</li> : null}
           {(actual?.cobertura ?? []).map((n) => <li key={n}>{n}</li>)}
         </ul>
       </section>
