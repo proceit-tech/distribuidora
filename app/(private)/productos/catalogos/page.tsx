@@ -1,11 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { compararTexto, ordenarLista, siguienteOrden, type Orden } from "@/components/ui/lista-padrao/orden";
 import { ThOrdenable } from "@/components/ui/lista-padrao/th-ordenable";
 import ui from "@/components/ui/lista-padrao/lista.module.css";
+import { cargarCatalogoCompleto, crearCompuerta, textoConfirmarInactivacion, type FilaCatalogo } from "@/lib/productos/catalogos-carga";
+import { useProtegerCambios } from "@/lib/ui/proteger-cambios";
 import {
   campoDeErrorServidor,
   formularioSucio,
@@ -20,19 +22,7 @@ import styles from "./page.module.css";
 
 type Tipo = "categorias" | "marcas" | "familias" | "lineas";
 
-type Fila = {
-  id: string;
-  codigo: string;
-  nombre: string;
-  descripcion: string;
-  activo: boolean;
-  productos: number;
-  familiaId?: string;
-  familia?: string;
-  /** Familias: su categoría. Líneas: la categoría de su familia. null = familia histórica pendiente de clasificar. */
-  categoriaId?: string | null;
-  categoria?: string | null;
-};
+type Fila = FilaCatalogo;
 
 const TABS: Array<{ id: Tipo; label: string; singular: string; descripcion: boolean }> = [
   { id: "categorias", label: "Categorías", singular: "categoría", descripcion: false },
@@ -58,6 +48,8 @@ export default function CatalogosProductosPage() {
   const [permisos, setPermisos] = useState({ crear: false, editar: false });
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
+  // CAT-A01: fallo de un catálogo auxiliar (Familias/Categorías): la lista se muestra, pero no se permite crear ni editar asociaciones con opciones insuficientes.
+  const [errorAuxiliar, setErrorAuxiliar] = useState("");
   const [aviso, setAviso] = useState("");
   const [busqueda, setBusqueda] = useState("");
   const [estado, setEstado] = useState<"TODOS" | "ACTIVOS" | "INACTIVOS">("TODOS");
@@ -76,33 +68,31 @@ export default function CatalogosProductosPage() {
   // Familia histórica sin categoría: se puede editar e inactivar sin clasificarla; la categoría se asigna manualmente cuando corresponda.
   const categoriaPendiente = tipo === "familias" && form?.id !== null && base?.categoriaId === "";
 
+  // CAT-A02: solo la última solicitud iniciada (de la pestaña actual) puede escribir en pantalla; una respuesta lenta de otra pestaña se descarta.
+  const compuerta = useRef(crearCompuerta());
+
   const cargar = useCallback(async () => {
+    const solicitud = compuerta.current.nueva();
+
     setCargando(true);
     setError("");
-    try {
-      const [r, rf, rk] = await Promise.all([
-        fetch(`/api/productos/${tipo}`, { cache: "no-store" }),
-        tipo === "lineas" ? fetch("/api/productos/familias", { cache: "no-store" }) : Promise.resolve(null),
-        tipo === "familias" || tipo === "lineas" ? fetch("/api/productos/categorias", { cache: "no-store" }) : Promise.resolve(null),
-      ]);
-      const j = (await r.json()) as Record<string, unknown> & { error?: string; permisos?: { crear: boolean; editar: boolean } };
-      if (!r.ok) throw new Error(j.error ?? "No fue posible cargar el catálogo.");
-      setFilas((j[tipo] as Fila[] | undefined) ?? []);
-      setPermisos(j.permisos ?? { crear: false, editar: false });
-      if (rf) {
-        const jf = (await rf.json()) as { familias?: Fila[] };
-        setFamilias(jf.familias ?? []);
-      }
-      if (rk) {
-        const jk = (await rk.json()) as { categorias?: Fila[] };
-        setCategorias(jk.categorias ?? []);
-      }
-    } catch (e) {
+    setErrorAuxiliar("");
+
+    const r = await cargarCatalogoCompleto(tipo, (url) => fetch(url, { cache: "no-store" }));
+
+    if (!compuerta.current.vigente(solicitud)) return;
+
+    if (r.error) {
       setFilas([]);
-      setError(e instanceof Error ? e.message : "No fue posible cargar el catálogo.");
-    } finally {
-      setCargando(false);
+      setError(r.error);
+    } else {
+      setFilas(r.filas);
+      setPermisos(r.permisos);
+      if (r.familias) setFamilias(r.familias);
+      if (r.categorias) setCategorias(r.categorias);
+      setErrorAuxiliar(r.errorAuxiliar);
     }
+    setCargando(false);
   }, [tipo]);
 
   useEffect(() => {
@@ -110,19 +100,8 @@ export default function CatalogosProductosPage() {
     void Promise.resolve().then(cargar);
   }, [cargar]);
 
-  // Aviso del navegador al cerrar o recargar con cambios sin guardar.
-  useEffect(() => {
-    if (!sucio) return;
-
-    const alSalir = (e: BeforeUnloadEvent) => {
-      e.preventDefault();
-      e.returnValue = "";
-    };
-
-    window.addEventListener("beforeunload", alSalir);
-
-    return () => window.removeEventListener("beforeunload", alSalir);
-  }, [sucio]);
+  // CAT-A03: aviso al recargar/cerrar y al usar CUALQUIER enlace interno (menú lateral, «Productos»), con el mismo guard de Clientes/Productos; sin aviso si el formulario está intacto.
+  useProtegerCambios(sucio);
 
   /** Política única: solo se pide confirmación si hay cambios efectivos sin guardar. */
   function confirmarDescarte(): boolean {
@@ -249,6 +228,7 @@ export default function CatalogosProductosPage() {
       if (meta.descripcion) cuerpo.descripcion = form.descripcion;
       if (tipo === "lineas") cuerpo.familiaId = form.familiaId;
       if (tipo === "familias") cuerpo.categoriaId = form.categoriaId;
+      if (form.id) cuerpo.version = form.version;
       const j = form.id ? await enviar(`/api/productos/${tipo}/${form.id}`, "PUT", cuerpo) : await enviar(`/api/productos/${tipo}`, "POST", cuerpo);
       setAviso(j.message ?? "Guardado correctamente.");
       cerrarFormulario();
@@ -273,19 +253,13 @@ export default function CatalogosProductosPage() {
     setError("");
     setAviso("");
 
-    if (fila.activo && (fila.productos > 0 || tipo === "familias")) {
-      const detalle = [
-        fila.productos > 0 ? `Tiene ${fila.productos} producto(s) asociado(s) (total, activos e inactivos); conservarán el vínculo.` : "",
-        tipo === "familias" ? "Sus líneas no se inactivan automáticamente." : "",
-      ]
-        .filter(Boolean)
-        .join(" ");
+    // CAT-A05: confirmación con los descendientes reales (familias/líneas), sin cascada.
+    const confirmar = textoConfirmarInactivacion(tipo, fila);
 
-      if (!window.confirm(`¿Inactivar «${fila.nombre}»? ${detalle}`)) return;
-    }
+    if (confirmar && !window.confirm(confirmar)) return;
 
     try {
-      const cuerpo: Record<string, unknown> = { codigo: fila.codigo, nombre: fila.nombre, activo: !fila.activo };
+      const cuerpo: Record<string, unknown> = { codigo: fila.codigo, nombre: fila.nombre, activo: !fila.activo, version: fila.version };
       if (meta.descripcion) cuerpo.descripcion = fila.descripcion;
       if (tipo === "lineas") cuerpo.familiaId = fila.familiaId;
       await enviar(`/api/productos/${tipo}/${fila.id}`, "PUT", cuerpo);
@@ -293,6 +267,7 @@ export default function CatalogosProductosPage() {
       await cargar();
     } catch (e) {
       setError(e instanceof Error ? e.message : "No fue posible cambiar el estado.");
+      await cargar(); // CAT-A06: ante un 409 se muestran los datos vigentes
     }
   }
 
@@ -334,13 +309,10 @@ export default function CatalogosProductosPage() {
           <Link
             href="/productos"
             className={ui.secondaryButton}
-            onClick={(e) => {
-              if (!confirmarDescarte()) e.preventDefault();
-            }}
           >
             ← Productos
           </Link>
-          {permisos.crear ? (
+          {permisos.crear && !errorAuxiliar ? (
             <button
               type="button"
               className={ui.primaryButton}
@@ -374,6 +346,11 @@ export default function CatalogosProductosPage() {
       {error ? (
         <div className={ui.alertError} role="alert">
           {error}
+        </div>
+      ) : null}
+      {errorAuxiliar ? (
+        <div className={ui.alertError} role="alert">
+          No se pudieron cargar los catálogos auxiliares: {errorAuxiliar}. Por seguridad no se puede crear ni editar hasta recargar.
         </div>
       ) : null}
       {aviso ? (
@@ -602,10 +579,13 @@ export default function CatalogosProductosPage() {
                           <button
                             type="button"
                             className={ui.rowButton}
+                            disabled={Boolean(errorAuxiliar)}
+                            title={errorAuxiliar ? "No se pueden editar asociaciones mientras falle la carga de los catálogos auxiliares." : undefined}
                             onClick={() => {
                               if (!confirmarDescarte()) return;
                               abrirFormulario({
                                 id: f.id,
+                                version: f.version,
                                 codigo: f.codigo,
                                 nombre: f.nombre,
                                 descripcion: f.descripcion,

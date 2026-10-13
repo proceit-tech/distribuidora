@@ -4,6 +4,8 @@ export type TipoCatalogoForm = "categorias" | "marcas" | "familias" | "lineas";
 
 export type FormularioCatalogo = {
   id: string | null;
+  /** Versión del registro al abrirlo para editar (CAT-A06); no forma parte de los cambios del operador. */
+  version?: string;
   codigo: string;
   nombre: string;
   descripcion: string;

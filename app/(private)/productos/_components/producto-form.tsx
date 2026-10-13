@@ -10,6 +10,7 @@ import { TAMANO_MAXIMO_BYTES } from "@/lib/almacenamiento/archivos-reglas";
 import { formularioAPayload, formularioDesdeDetalle, formularioInicial, type FormularioProducto } from "@/lib/productos/formulario";
 import { UUID, normalizarProducto, type Coleccion } from "@/lib/productos/normalizar";
 import { idCampo, pestanaDeCampo, type PestanaId } from "@/lib/productos/pestanas";
+import { catalogosConHistoricas } from "@/lib/productos/historicas";
 import { useProtegerCambios } from "@/lib/ui/proteger-cambios";
 import type { CatalogoProductos, ProductoDetalle } from "@/types/productos";
 
@@ -76,7 +77,9 @@ const NUEVAS: Record<Coleccion, (form: FormularioProducto, catalogos: CatalogoPr
   componentes: (form) => ({ id: temporal("componente"), productoComponenteId: "", productoComponenteNombre: "", cantidad: "1", esOpcional: false, orden: String(form.componentes.length + 1) }),
 };
 
-export default function ProductoForm({ mode, initial, catalogos, onSave, onRecargar, aviso, accionAviso, pestanaInicial, alCambiarPestana }: Props) {
+export default function ProductoForm({ mode, initial, catalogos: catalogosActivos, onSave, onRecargar, aviso, accionAviso, pestanaInicial, alCambiarPestana }: Props) {
+  // CAT-A04: las referencias históricas inactivas del propio producto se agregan al selector («(inactivo)»); las demás elecciones siguen siendo solo activas.
+  const catalogos = catalogosConHistoricas(catalogosActivos, initial?.referenciasHistoricas);
   const [formularioBase] = useState<FormularioProducto>(() => (initial ? formularioDesdeDetalle(initial) : formularioInicial(catalogos)));
   const [form, setForm] = useState<FormularioProducto>(formularioBase);
   const [tab, setTabInterno] = useState<PestanaId>(pestanaInicial ?? "general");

@@ -203,6 +203,16 @@ export async function GET(_request: Request, contexto: Contexto) {
           )
         ).rows
       : [];
+    // CAT-A04: categoría, marca, familia y línea YA asignadas a ESTE producto (de su empresa) que hoy están inactivas: se informan para mostrarlas «(inactivo)». Solo las del producto.
+    const pr = principal.rows[0] as Record<string, string>;
+    const historicas = await db.query(
+      `SELECT 'categoriaId' AS campo, id::text, coalesce(codigo, '') AS codigo, nombre, NULL::text AS "padreId" FROM categorias_producto WHERE empresa_id = $1 AND id = nullif($2, '')::uuid AND NOT activo
+       UNION ALL SELECT 'marcaId', id::text, coalesce(codigo, ''), nombre, NULL FROM marcas_producto WHERE empresa_id = $1 AND id = nullif($3, '')::uuid AND NOT activo
+       UNION ALL SELECT 'familiaId', id::text, coalesce(codigo, ''), nombre, categoria_id::text FROM familias_producto WHERE empresa_id = $1 AND id = nullif($4, '')::uuid AND NOT activo
+       UNION ALL SELECT 'lineaId', id::text, coalesce(codigo, ''), nombre, familia_id::text FROM lineas_producto WHERE empresa_id = $1 AND id = nullif($5, '')::uuid AND NOT activo`,
+      [empresaId, pr.categoriaId, pr.marcaId, pr.familiaId, pr.lineaId],
+    );
+    const referenciasHistoricas = Object.fromEntries((historicas.rows as Array<{ campo: string; id: string; codigo: string; nombre: string; padreId: string | null }>).map((h) => [h.campo, { id: h.id, codigo: h.codigo, nombre: h.nombre, padreId: h.padreId }]));
     const monedaBase = await db.query(
       `SELECT coalesce((SELECT moneda_codigo FROM listas_precio WHERE empresa_id = e.id AND es_referencia), e.moneda_base_codigo) AS moneda
          FROM empresas e WHERE e.id = $1`,
@@ -234,6 +244,7 @@ export async function GET(_request: Request, contexto: Contexto) {
         costoPromedio: costo.rowCount ? (costo.rows[0] as { costo: string | null }).costo : null,
         aperturaRegistrada: apertura.rowCount ? apertura.rows[0] : null,
         historialUnidadBase,
+        referenciasHistoricas,
         codigos: codigos.rows,
         unidades: unidades.rows,
         proveedores: proveedores.rows,

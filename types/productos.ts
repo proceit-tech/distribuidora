@@ -147,6 +147,8 @@ export type ProductoDetalle = {
   stockPorDeposito: { depositoId: string; depositoNombre: string; cantidad: string }[];
   /** Costo promedio real (inventario_costos). null = sin saldo valorizado. Solo lectura. */
   costoPromedio: string | null;
+  /** Categoría, marca, familia y línea ya asignadas pero hoy inactivas (solo del producto). Se muestran «(inactivo)» sin ofrecerlas como elección nueva. */
+  referenciasHistoricas?: Partial<Record<"categoriaId" | "marcaId" | "familiaId" | "lineaId", { id: string; codigo: string; nombre: string; padreId: string | null }>>;
   /** Cambios de unidad base (NEX-052), del más reciente al más antiguo. Solo lectura. */
   historialUnidadBase: { fecha: string; unidadAnterior: string; unidadNueva: string; responsable: string }[];
   /** Movimiento de apertura ya registrado (solo lectura). */

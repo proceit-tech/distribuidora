@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getAccessContext, hasPermission, denyIfNoPermission } from "@/lib/auth/permissions";
+import { ErrorCatalogo, exigirVersionCatalogo } from "@/lib/productos/catalogos-version";
 import { opcional, texto } from "@/lib/productos/shared";
 
 // Administración de catálogos de Productos: Categorías, Marcas (NEX-004), Familias y Líneas (NEX-017).
@@ -22,13 +23,6 @@ const MOTOR: Record<string, string> = { categorias: "CATEGORIA", marcas: "MARCA"
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DEMO_MODE = process.env.DEMO_MODE === "true";
 
-class ErrorCatalogo extends Error {
-  status: number;
-  constructor(message: string, status = 400) {
-    super(message);
-    this.status = status;
-  }
-}
 
 function leer(tipo: TipoCatalogo, d: Record<string, unknown>) {
   const nombre = texto(d.nombre, 120);
@@ -96,7 +90,15 @@ const proyectar = (tipo: TipoCatalogo, t = "t") => {
         : "";
   return `${t}.id, coalesce(${t}.codigo,'') AS codigo, ${t}.nombre, ${c.descripcion ? `coalesce(${t}.descripcion,'')` : `''`} AS descripcion, ${t}.activo` +
     (tipo === "lineas" ? `, ${t}.familia_id AS "familiaId", (SELECT f.nombre FROM familias_producto f WHERE f.empresa_id = ${t}.empresa_id AND f.id = ${t}.familia_id) AS familia` : "") +
-    jerarquia + `, (SELECT count(*)::int FROM productos p WHERE p.empresa_id = ${t}.empresa_id AND p.${c.columnaProducto} = ${t}.id) AS productos`;
+    jerarquia +
+    // CAT-A06: versión = actualizado_at con microsegundos (UTC); CAT-A05: descendientes reales de la jerarquía Categoría → Familia → Línea.
+    `, to_char(${t}.actualizado_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US') AS version` +
+    (tipo === "categorias"
+      ? `, (SELECT count(*)::int FROM familias_producto f WHERE f.empresa_id = ${t}.empresa_id AND f.categoria_id = ${t}.id) AS "nFamilias", (SELECT count(*)::int FROM lineas_producto l JOIN familias_producto f ON f.empresa_id = l.empresa_id AND f.id = l.familia_id WHERE f.empresa_id = ${t}.empresa_id AND f.categoria_id = ${t}.id) AS "nLineas"`
+      : tipo === "familias"
+        ? `, 0 AS "nFamilias", (SELECT count(*)::int FROM lineas_producto l WHERE l.empresa_id = ${t}.empresa_id AND l.familia_id = ${t}.id) AS "nLineas"`
+        : "") +
+    `, (SELECT count(*)::int FROM productos p WHERE p.empresa_id = ${t}.empresa_id AND p.${c.columnaProducto} = ${t}.id) AS productos`;
 };
 
 export async function listarCatalogo(tipo: TipoCatalogo, request: Request) {
@@ -232,10 +234,14 @@ export async function editarCatalogo(tipo: TipoCatalogo, request: Request, id: s
     const t = CFG[tipo];
     const cred = await exigirCredencial(tipo);
     const fila = await enTransaccion(b.db, async (c) => {
+      // CAT-A06: TODA escritura de esta tabla (alta y edición) toma primero este bloqueo consultivo por empresa+tabla; aquí se toma ANTES de leer, de modo que la lectura
+      // siguiente ve lo último confirmado y la comparación de versión + la escritura ocurren en la misma sección serializada (sin migración ni cambios de grants).
+      await c.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`${empresaId}:${t.tabla}`]);
       // Categorías/Marcas: el rol no tiene UPDATE, así que no puede usar FOR UPDATE; la función bloquea la fila al actualizarla.
       const bloqueo = tipo === "categorias" || tipo === "marcas" ? "" : " FOR UPDATE";
-      const actual = await c.query(`SELECT * FROM ${t.tabla} WHERE id = $1 AND empresa_id = $2${bloqueo}`, [id, empresaId]);
+      const actual = await c.query(`SELECT *, to_char(actualizado_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US') AS version_actual FROM ${t.tabla} WHERE id = $1 AND empresa_id = $2${bloqueo}`, [id, empresaId]);
       if (!actual.rowCount) throw new ErrorCatalogo("Registro no encontrado.", 404);
+      exigirVersionCatalogo(cuerpo.version, actual.rows[0].version_actual);
       const a = actual.rows[0];
       const activo = d.activo ?? (a.activo as boolean);
       let familiaId: string | null = null;
