@@ -1,19 +1,21 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import styles from "@/app/(private)/productos/catalogos/page.module.css";
 import { compararTexto, ordenarLista, siguienteOrden, type Orden } from "@/components/ui/lista-padrao/orden";
 import { ThOrdenable } from "@/components/ui/lista-padrao/th-ordenable";
 import ui from "@/components/ui/lista-padrao/lista.module.css";
+import { cargarDepositos, enlaceStockDeDeposito } from "@/lib/depositos/carga";
+import { cargaConfiable, crearCompuerta, motivoBloqueoGuardar, permisosVigentes } from "@/lib/productos/catalogos-carga";
 import { formularioDepositoSucio, validarDeposito, type CampoDeposito, type ErroresDeposito, type FormularioDeposito } from "@/lib/depositos/validacion";
 import { useProtegerCambios } from "@/lib/ui/proteger-cambios";
 
 type Deposito = { id: string; codigo: string; nombre: string; activo: boolean; sucursalId: string; sucursalNombre: string; sucursalCodigo: string; conMovimientos: boolean; conSaldo: boolean };
 type Sucursal = { id: string; codigo: string; nombre: string; activo: boolean };
 type UsuarioDeposito = { id: string; usuario: string; nombre: string; apellido: string; estado: string; alcanceDepositos: "TODOS" | "ASIGNADOS"; alcanceSucursales: string; asignado: boolean; asignadoAt: string | null; sucursalCompatible: boolean; esUsted: boolean };
-type Datos = { depositos: Deposito[]; sucursales: Sucursal[]; permisos: { crear: boolean; editar: boolean }; actor: { alcanceDepositos: "TODOS" | "ASIGNADOS" } | null };
+type Datos = { depositos: Deposito[]; sucursales: Sucursal[]; permisos: { crear: boolean; editar: boolean; stock?: boolean }; actor: { alcanceDepositos: "TODOS" | "ASIGNADOS" } | null };
 type EventoAcceso = { id: string; evento: "ATRIBUIR" | "REVOCAR"; origen: "MANUAL" | "CREACION"; creadoAt: string; usuarioNombre: string; usuarioCodigo: string; actorNombre: string; actorCodigo: string };
 type Panel = { deposito: Deposito; usuarios: UsuarioDeposito[] | null; eventos: EventoAcceso[]; error: string; ocupado: string };
 type CampoOrden = "codigo" | "nombre" | "sucursal" | "estado";
@@ -25,6 +27,9 @@ const idCampo = (c: CampoDeposito) => `deposito-${c}`;
 export default function DepositosPage() {
   const [datos, setDatos] = useState<Datos | null>(null);
   const [error, setError] = useState("");
+  // INV-05: fallo de la consulta principal y carga en curso; estado propio que guardar/abrir formularios no borran.
+  const [errorCarga, setErrorCarga] = useState("");
+  const [cargando, setCargando] = useState(true);
   const [aviso, setAviso] = useState("");
   const [busqueda, setBusqueda] = useState("");
   const [estado, setEstado] = useState<"TODOS" | "ACTIVOS" | "INACTIVOS">("TODOS");
@@ -35,18 +40,28 @@ export default function DepositosPage() {
   const [errorForm, setErrorForm] = useState("");
   const [guardando, setGuardando] = useState(false);
   const [panel, setPanel] = useState<Panel | null>(null);
+  // Solo la última solicitud iniciada puede escribir en pantalla (recargas tras acciones, respuestas lentas).
+  const compuerta = useRef(crearCompuerta());
+  const compuertaPanel = useRef(crearCompuerta());
 
   const cargar = useCallback(async () => {
-    try {
-      const r = await fetch("/api/depositos", { cache: "no-store" });
-      const j = (await r.json().catch(() => ({}))) as Datos & { error?: string };
+    const solicitud = compuerta.current.nueva();
 
-      if (!r.ok) throw new Error(j.error ?? "No fue posible cargar los depósitos.");
-      setDatos(j);
-      setError("");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "No fue posible cargar los depósitos.");
+    setCargando(true);
+
+    const r = await cargarDepositos<Deposito, Sucursal>((url) => fetch(url, { cache: "no-store" }));
+
+    if (!compuerta.current.vigente(solicitud)) return;
+
+    if (r.datos) {
+      setDatos(r.datos as Datos);
+      setErrorCarga("");
+    } else {
+      // Sin datos confiables: se descartan la lista y los permisos anteriores (nada queda habilitado por una carga previa).
+      setDatos(null);
+      setErrorCarga(r.error);
     }
+    setCargando(false);
   }, []);
 
   useEffect(() => {
@@ -66,8 +81,12 @@ export default function DepositosPage() {
   useProtegerCambios(sucio);
 
   const confirmarDescarte = () => !sucio || window.confirm("Hay cambios sin guardar en el formulario. Si continúa, se perderán. ¿Desea continuar?");
-  const puedeCrear = datos?.permisos.crear === true;
-  const puedeEditar = datos?.permisos.editar === true;
+  const estadoCarga = { cargando, errorCarga, errorAuxiliar: "" };
+  const confiable = cargaConfiable(estadoCarga);
+  const permisos = permisosVigentes({ crear: datos?.permisos.crear === true, editar: datos?.permisos.editar === true }, estadoCarga);
+  const puedeCrear = permisos.crear;
+  const puedeEditar = permisos.editar;
+  const puedeVerStock = confiable && datos?.permisos.stock === true;
   const sucursalesFormulario = useMemo(
     // Al editar se conserva la sucursal actual aunque ya no esté en la lista de las utilizables (la función SQL solo exige alcance si cambia).
     () => (datos?.sucursales ?? []).filter((s) => s.activo || s.id === form?.sucursalId),
@@ -115,6 +134,15 @@ export default function DepositosPage() {
     event.preventDefault();
     if (!form || guardando) return;
 
+    // INV-05: sin carga confiable no se envía nada; el borrador queda intacto.
+    const bloqueo = motivoBloqueoGuardar(estadoCarga);
+
+    if (bloqueo) {
+      setErrorForm(bloqueo);
+
+      return;
+    }
+
     const errs = validarDeposito(form, form.id === null);
 
     setErrores(errs);
@@ -157,6 +185,8 @@ export default function DepositosPage() {
   }
 
   async function abrirUsuarios(d: Deposito) {
+    const solicitud = compuertaPanel.current.nueva();
+
     setPanel({ deposito: d, usuarios: null, eventos: [], error: "", ocupado: "" });
     try {
       const [r, h] = await Promise.all([fetch(`/api/depositos/${d.id}/usuarios`, { cache: "no-store" }), fetch(`/api/depositos/${d.id}/historial-acceso`, { cache: "no-store" })]);
@@ -165,14 +195,25 @@ export default function DepositosPage() {
 
       if (!r.ok) throw new Error(j.error ?? "No fue posible cargar los usuarios.");
       if (!h.ok) throw new Error(jh.error ?? "No fue posible cargar el historial de accesos.");
-      setPanel({ deposito: d, usuarios: j.usuarios ?? [], eventos: jh.eventos ?? [], error: "", ocupado: "" });
+      if (!Array.isArray(j.usuarios)) throw new Error("La respuesta de usuarios no tiene el formato esperado.");
+      if (!compuertaPanel.current.vigente(solicitud)) return;
+      setPanel({ deposito: d, usuarios: j.usuarios, eventos: jh.eventos ?? [], error: "", ocupado: "" });
     } catch (e) {
+      if (!compuertaPanel.current.vigente(solicitud)) return;
       setPanel({ deposito: d, usuarios: [], eventos: [], error: e instanceof Error ? e.message : "No fue posible cargar los usuarios.", ocupado: "" });
     }
   }
 
   async function cambiarAcceso(u: UsuarioDeposito, autorizar: boolean) {
     if (!panel) return;
+
+    const bloqueo = motivoBloqueoGuardar(estadoCarga);
+
+    if (bloqueo) {
+      setPanel({ ...panel, error: bloqueo });
+
+      return;
+    }
 
     const d = panel.deposito;
     const quien = `${u.nombre} ${u.apellido}`.trim();
@@ -205,6 +246,13 @@ export default function DepositosPage() {
 
   async function cambiarEstado(d: Deposito) {
     const activar = !d.activo;
+    const bloqueo = motivoBloqueoGuardar(estadoCarga);
+
+    if (bloqueo) {
+      setError(bloqueo);
+
+      return;
+    }
 
     if (!activar && !window.confirm(`¿Inactivar el depósito «${d.nombre}»? Dejará de poder usarse en nuevas operaciones; su historial y su código se conservan.`)) return;
 
@@ -244,9 +292,11 @@ export default function DepositosPage() {
         </div>
 
         <div className={ui.actionsGroup}>
-          <Link href="/stock" className={ui.secondaryButton}>
-            Stock
-          </Link>
+          {puedeVerStock ? (
+            <Link href="/stock" className={ui.secondaryButton}>
+              Stock
+            </Link>
+          ) : null}
           {puedeCrear ? (
             <button type="button" className={ui.primaryButton} onClick={() => abrir(VACIO)}>
               <span aria-hidden="true">+</span>
@@ -264,6 +314,14 @@ export default function DepositosPage() {
       {error ? (
         <div className={ui.alertError} role="alert">
           {error}
+        </div>
+      ) : null}
+      {errorCarga ? (
+        <div className={ui.alertError} role="alert">
+          {errorCarga} No se puede crear, editar, activar/inactivar ni gestionar usuarios hasta recargar correctamente.{form ? " Lo escrito en el formulario se conserva." : ""}
+          <button type="button" className={ui.clearButton} onClick={() => void cargar()}>
+            Reintentar
+          </button>
         </div>
       ) : null}
 
@@ -325,7 +383,7 @@ export default function DepositosPage() {
             <button type="button" className={ui.secondaryButton} onClick={cerrar}>
               Cancelar
             </button>
-            <button type="submit" className={ui.primaryButton} disabled={guardando}>
+            <button type="submit" className={ui.primaryButton} disabled={guardando || !confiable} title={confiable ? undefined : "Hasta que los datos se carguen correctamente no se puede guardar."}>
               {guardando ? "Guardando..." : form.id ? "Guardar cambios" : "Crear depósito"}
             </button>
           </div>
@@ -412,14 +470,14 @@ export default function DepositosPage() {
                           {todos ? (
                             <small className={ui.muted}>No requiere autorización</small>
                           ) : u.asignado ? (
-                            <button type="button" className={ui.rowButton} disabled={panel.ocupado === u.id} onClick={() => void cambiarAcceso(u, false)}>
+                            <button type="button" className={ui.rowButton} disabled={panel.ocupado === u.id || !confiable} onClick={() => void cambiarAcceso(u, false)}>
                               {panel.ocupado === u.id ? "Revocando..." : "Revocar"}
                             </button>
                           ) : (
                             <button
                               type="button"
                               className={ui.rowButton}
-                              disabled={panel.ocupado === u.id || !u.sucursalCompatible}
+                              disabled={panel.ocupado === u.id || !u.sucursalCompatible || !confiable}
                               title={!u.sucursalCompatible ? "La sucursal del depósito no está en el alcance de sucursales de este usuario." : undefined}
                               onClick={() => void cambiarAcceso(u, true)}
                             >
@@ -528,7 +586,7 @@ export default function DepositosPage() {
               </tr>
             </thead>
             <tbody>
-              {!datos && !error ? (
+              {cargando && !datos ? (
                 <tr>
                   <td colSpan={6} className={ui.emptyCell}>
                     <div className={ui.empty}>
@@ -540,7 +598,7 @@ export default function DepositosPage() {
                 <tr>
                   <td colSpan={6} className={ui.emptyCell}>
                     <div className={ui.empty}>
-                      <strong>{datos && datos.depositos.length === 0 ? "No hay depósitos en su alcance" : "Ningún depósito coincide con los filtros"}</strong>
+                      <strong>{errorCarga ? "No se pudieron cargar los depósitos" : datos && datos.depositos.length === 0 ? "No hay depósitos en su alcance" : "Ningún depósito coincide con los filtros"}</strong>
                       {datos && datos.depositos.length === 0 && puedeCrear ? <span>Cree el primer depósito con «Nuevo depósito».</span> : null}
                     </div>
                   </td>
@@ -567,20 +625,28 @@ export default function DepositosPage() {
                         {d.conMovimientos ? "Con movimientos" : "Sin movimientos"}
                         {d.conSaldo ? " · con saldo" : ""}
                       </small>
+                      {puedeVerStock && d.conSaldo ? (
+                        <>
+                          {" "}
+                          <Link href={enlaceStockDeDeposito(d.id)} className={ui.rowButton}>
+                            Ver stock
+                          </Link>
+                        </>
+                      ) : null}
                     </td>
                     {puedeEditar ? (
                       <td className={ui.actionsCell}>
                         <div className={ui.actionsGroup}>
-                          <button type="button" className={ui.rowButton} onClick={() => abrir({ id: d.id, codigo: d.codigo, nombre: d.nombre, sucursalId: d.sucursalId, asignarme: false })}>
+                          <button type="button" className={ui.rowButton} disabled={!confiable} onClick={() => abrir({ id: d.id, codigo: d.codigo, nombre: d.nombre, sucursalId: d.sucursalId, asignarme: false })}>
                             Editar
                           </button>
-                          <button type="button" className={ui.rowButton} onClick={() => void abrirUsuarios(d)}>
+                          <button type="button" className={ui.rowButton} disabled={!confiable} onClick={() => void abrirUsuarios(d)}>
                             Usuarios
                           </button>
                           <button
                             type="button"
                             className={ui.rowButton}
-                            disabled={d.activo && d.conSaldo}
+                            disabled={!confiable || (d.activo && d.conSaldo)}
                             title={d.activo && d.conSaldo ? "Tiene saldo: trasládelo o regularícelo con Movimientos antes de inactivarlo." : undefined}
                             onClick={() => void cambiarEstado(d)}
                           >

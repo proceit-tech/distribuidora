@@ -758,3 +758,7 @@ Só código; **sem migration** (NEX-001…053 intactas; 052/053 NÃO aplicadas);
 ### Movimientos (motor único)
 - Os nove tipos técnicos (enums e funções SQL intactos) se apresentam em **quatro operações**: Entrada / Salida, Transferencia, Ajuste e Cambio de estado (`lib/movimientos/grupos.ts`); o formulário escolhe a operação e depois o subtipo; o filtro do histórico agrupa por operação. Regras por tipo, motivo, custo, lote, idempotência, anulação por contramovimento e permissões sem mudança (`inventario_registrar_movimiento` / `inventario_anular_movimiento`).
 - «Nuevo movimiento» do histórico só aparece com `MOVIMIENTOS.CREAR` (a API do histórico devolve `permisos.crear`); POST segue exigindo CREAR.
+
+### Depósitos (cadastro, estado e acesso)
+- **INV-05:** a carga verifica HTTP e forma (`lib/depositos/carga.ts`); com erro, resposta malformada ou recarga em curso, lista e permisos anteriores são descartados e Criar/Editar/Ativar-Inativar/Usuários/Autorizar/Revogar ficam bloqueados (sem declarar bypass de servidor: as APIs e funções SQL seguem como barreira real); formulário sujo preservado; compuerta contra respostas fora de ordem (lista e painel de usuários); botão «Reintentar».
+- «Ver stock» por depósito com saldo (exige `STOCK.VER`) agora abre `/stock?deposito=<id>`, filtro que o Stock realmente aplica (somente se o depósito está no alcance). Sem editor de parâmetros de reposição, sem saldos, sem DELETE; SQL de NEX-046 intocado (NEX-046 versionada: não presumir aplicada).

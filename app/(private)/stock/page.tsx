@@ -9,6 +9,7 @@ import {
 
 import { cargarStock } from "@/lib/stock/cliente-api";
 import { puedeAbrirNuevoMovimiento, puedeVerMovimientos, normalizarPermisosMovimientos, SIN_PERMISOS_MOVIMIENTOS } from "@/lib/inventario/acceso";
+import { depositoDesdeConsulta } from "@/lib/depositos/carga";
 import { formatearMontoTexto } from "@/lib/inventario/decimal";
 import { ETIQUETA_NIVEL, indicadoresStock, vistaPorDeposito } from "@/lib/stock/vista";
 
@@ -118,6 +119,10 @@ export default function StockPage() {
         MONEDA_BASE = r.monedaBase;
         if (activo) {
           setStock(r.stock);
+          // Atajo desde Depósitos (?deposito=): se aplica solo si ese depósito existe en el alcance del usuario.
+          const inicial = depositoDesdeConsulta(window.location.search, r.stock.flatMap((i) => i.depositos.map((d) => d.depositoId)));
+
+          if (inicial) setDeposito(inicial);
           setAlcanceParcial(r.alcanceParcial === true);
           setPermisos(normalizarPermisosMovimientos(r.permisos));
         }

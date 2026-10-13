@@ -8,7 +8,7 @@ import { NextResponse } from "next/server";
 const DEMO_MODE = process.env.DEMO_MODE === "true";
 
 export type Base =
-  | { ok: true; empresaId: string; usuarioId: string; db: typeof import("@/lib/db")["db"]; permisos: { crear: boolean; editar: boolean } }
+  | { ok: true; empresaId: string; usuarioId: string; db: typeof import("@/lib/db")["db"]; permisos: { crear: boolean; editar: boolean; stock: boolean } }
   | { ok: false; respuesta: NextResponse };
 
 export async function prepararDepositos(accion: "VER" | "CREAR" | "EDITAR"): Promise<Base> {
@@ -39,7 +39,7 @@ export async function prepararDepositos(accion: "VER" | "CREAR" | "EDITAR"): Pro
     empresaId: session.user.empresaId,
     usuarioId: session.user.id,
     db,
-    permisos: { crear: hasPermission(acceso, "INVENTARIO", "CREAR"), editar: hasPermission(acceso, "INVENTARIO", "EDITAR") },
+    permisos: { crear: hasPermission(acceso, "INVENTARIO", "CREAR"), editar: hasPermission(acceso, "INVENTARIO", "EDITAR"), stock: hasPermission(acceso, "STOCK", "VER") },
   };
 }
 
