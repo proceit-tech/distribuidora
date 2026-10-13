@@ -99,3 +99,30 @@ Implementar somente **PRV-R01-01…04** de `AUD-PROVEEDORES-V1.md` §VI: (01) co
 - Commit + push na branch oficial, relatório econômico somente resultados, números de testes/falhas, bloqueios concretos e SHAs completos. **PARAR para nova auditoria ChatGPT.** Menus não são HOMOLOGADOS sem aprovação operacional e visual do responsável.
 
 **Estado:** handoff conjunto autorizado pelo pedido atual; Catálogos e Proveedores **AINDA NÃO corrigidos/homologados** nesta rodada. Nenhum código, SQL ou VM alterado pelo ChatGPT.
+
+## VII. AUD-CAT-R02 — auditoria independente da implementação CAT-A01…A06 (12/10/2026)
+
+**Implementação revisada:** `f93cf7eb97f259707665e2cb28f73c2be1561e33`; commit anterior Proveedores `f5bf07e02ea7d6ee6b3f39bb4e0c3b8abcb4234c`; merge da branch `5c7773637948fdc317b17eb73206d591b3ce2d85` incorpora somente a auditoria `AUD-LISTAS-PRECIOS-V1.md` além dos dois commits funcionais. Leitura independente dos protocolos `CLAUDE.md` e `documentacao/PROTOCOLO-IA.md`, progresso pertinente, diff do commit, `lib/productos/{catalogos-carga,catalogos-admin,catalogos-version,historicas,catalogos-formulario,catalogos-estabilizacion.casos}.ts`, página de Catálogos, detalhe e formulário de Productos, matrizes contratuais NEX-004/017/020/044. **ChatGPT NÃO executou testes, navegador, PostgreSQL, VM, SQL ou deploy**. Resultado informado pelo Claude para a rodada conjunta: 2199 verificações locais, 0 falhas, tsc/build e ESLint dos alterados OK; sem reexecução independente.
+
+### Parecer dirigido
+
+- **CAT-A02 — ACEITE ESTÁTICO:** `crearCompuerta()` aumenta geração de requisição; `cargar()` só altera tela se a geração ainda é vigente. Testes locais de latências invertidas são simulações, não browser.
+- **CAT-A03 — ACEITE ESTÁTICO:** hook `useProtegerCambios(sucio)` cobre navegação SPA por links e `beforeunload`; confirmações internas da aba e cancelamento separadas. Não se afirma proteção universal contra botão Atrás programático no App Router.
+- **CAT-A04 — ACEITE ESTÁTICO:** GET do próprio produto e da empresa da sessão devolve apenas Categoria/Marca/Família/Línea **atualmente inativas e já vinculadas**, rotuladas `(inactivo)` na UI; nenhum catálogo inativo global é oferecido como nova escolha. UUID e hierarquia existentes permanecem.
+- **CAT-A05 — ACEITE ESTÁTICO:** projeção de `nFamilias`/`nLineas` deriva de consultas reais e `textoConfirmarInactivacion()` avisa sem alterar registros descendentes.
+- **CAT-A06 — ACEITE ESTÁTICO CONDICIONAL:** token `actualizado_at` com microssegundos, PUT obriga versão e, na camada atual, SERIALIZA por `pg_advisory_xact_lock` empresa+tabela antes de ler e comparar; Categories/Marcas escritas por `catalogo_producto_guardar`, Famílias/Líneas com `FOR UPDATE`. Sem evidência de execução paralela real no PostgreSQL e dependente de todos os escritores usarem a mesma disciplina. Não abrir migration sem prova de regressão.
+- **CAT-A01 — IMPLEMENTAÇÃO PRINCIPAL, MAS COM PENDÊNCIA:** helper `cargarCatalogoCompleto()` verifica status/shape da lista e auxiliares, impede abrir NOVO formulário quando `errorAuxiliar` está presente e desabilita botões de editar **na tabela**, porém não protege integralmente os estados já abertos nem falha principal.
+
+### CAT-R02-01 — ALTA / gravação habilitada apesar de erro de carregamento (defeito residual comprovado)
+
+**Evidência 1 — falha principal:** `app/(private)/productos/catalogos/page.tsx:74-97` zera `filas` e exibe `error` quando `r.error`, mas **não limpa `permisos` e não fecha/invalida formulário aberto**; o botão `Nueva` em `:314-333` exige somente `permisos.crear && !errorAuxiliar`, **não consulta `error` nem `cargando`**, logo pode oferecer alta após resposta 500/403 de aba corrente usando permissão antiga.
+
+**Evidência 2 — formulário já aberto e falha auxiliar:** `page.tsx:345-445` continua exibindo formulário aberto quando `errorAuxiliar` é informado; a desabilitação por `errorAuxiliar` existe **apenas** no botão de tabela `Editar` (`:579-590`) e no botão `Nueva`, **não** no botão `Guardar`, e `guardar()` (`:208-238`) não verifica `errorAuxiliar`, `error` ou `cargando` antes do POST/PUT. Assim, uma recarga com erro em Familias/Categorías não impede submit do formulário já aberto, contrariando a promessa de não gravar associações com dados auxiliares indisponíveis. Permissões de API continuam sendo a última barreira, mas a UX/consistência prometida falha.
+
+**Correção mínima:** derivar `cargaConfiavel = !cargando && !error && !errorAuxiliar` e verificar esta condição no handler `guardar` **e** nos controles Nova/Editar/Guardar, com bloqueio visual e erro claro. Limpar `permisos`/opções auxiliares obsoletos ou invalidar seu uso quando falha a consulta principal. **Não descartar silenciosamente formulário alterado**; apenas impedir gravação até recarga bem-sucedida, preservando rascunho. Não fazer refresh automático destrutivo nem introduzir wizard ou estado complexo.
+
+**Regressões:** (a) Categorías carregou com CREAR, depois aba Marcas responde 403/500: não há Nova nem submit com credenciais antigas; (b) editar Familia, falha consulta auxiliar por 500 durante recarga: rascunho permanece, Guardar bloqueado até catálogos carregarem corretamente; (c) sem falha, criar/editar/inativar funciona normalmente e mantém proteção `409` da A06; (d) 401, resposta JSON sem shape e status/loading durante navegação rápida. Teste funcional de estado de tela, não apenas regex de presença de prop.
+
+### Próxima etapa do Claude
+
+**Handoff conjunto autorizado pelo responsável:** corrigir **somente CAT-R02-01** deste menu **junto** com o pacote `AUD-LISTAS-PRECIOS-V1.md` seção V. Não reimplementar os 5 achados já aceitos, não tocar Proveedores/Clientes/Stock/Facturación fora das integrações mínimas justificadas. Claude Code lê protocolos completos e progresso vigente antes de executar, preserva migrations aplicadas, faz commits separados por menu e para para auditoria. Nenhum acesso VM/PG/Docker/SIFEN/deploy. **Catálogos continuam ABERTOS e NÃO HOMOLOGADOS**, pendente revisão do ajuste e aceite operacional humano.
