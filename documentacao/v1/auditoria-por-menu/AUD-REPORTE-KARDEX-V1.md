@@ -146,3 +146,32 @@ Em `kardex.ts:93-104`, `to_regclass('public.producto_unidad_base_historial')` de
 - **RPT-KDX-R02-02:** leitura temporal da unidade e compatibilidade com NEX-052 ausente ACEITAS ESTATICAMENTE; **consolidação ainda incompleta sob colisão de nome**, nova R03-01.
 - **Kardex ainda NÃO recebe ACEITE TÉCNICO FINAL** até resolver `RPT-KDX-R03-01`, risco MÉDIO que prejudica o princípio de não somar unidades incompatíveis. Os 3 relatórios já aceitos permanecem preservados; Lotes ainda não iniciado.
 - **NÃO HOMOLOGADO**: nenhuma transação PostgreSQL, navegação real, implantação ou execução de migrations realizada. Não abrir outra tarefa ao Claude sem autorização do responsável; ele não edita AUD-*, para após commit funcional para reauditoria.
+
+
+## AUD-KDX-R04 — reauditoria da correção UUID a1a3d084 (13/10/2026)
+
+**SHA funcional:** `a1a3d0841ca90a43197eeb676a510a6d82a1a112` (HEAD da branch `feature/NEXIT-2026-001-banco-demo` no início). **Protocolo:** `CLAUDE.md`, `documentacao/PROTOCOLO-IA.md`, progresso pertinente (`DEC-UNM-SIFEN-108`), seção `AUD-KDX-R03`, commit/diff, serviço SQL, helper, tipos, validador, página, exportador e suíte de Kardex lidos do GitHub. **Escopo:** auditoria estática independente, sem alterar aplicação, PostgreSQL real, VM, Docker, browser, deploy, migrations, tsc, ESLint ou build. **Claude relatou** 2.958 verificações com 0 falhas (+15), tsc e build OK e ESLint 0 erros/2 avisos de variáveis não usadas em testes; não reproduzidos por ChatGPT.
+
+### Achado anterior RPT-KDX-R03-01 — NÚCLEO CORRIGIDO, aceite final ainda pendente de robustez
+
+- `lib/reportes/kardex.ts:180-188`: totais do livro selecionam `unidad_id::text` e fazem `GROUP BY unidad_id, propiedad, propietario_id`, mantendo `max(unidad)` somente para exibição. `kardex.ts:259-304`: resumo também agrupa por `unidad_id` e a chave da linha inclui UUID. `kardex.ts:152-163` já separava as janelas por `uh.unidad_id`. `kardex-plan.ts:26-75` utiliza UUID nas chaves internas e transporta `unidadId`; `types/reportes.ts:209-355` e validador em `kardex-plan.ts:103-135` incluem o novo campo. A unidade oficial SIFEN (`108` ou `87`) **não** substitui o UUID de estoque e o commit não modifica normas fiscais/migrations.
+- `lib/reportes/kardex.casos.ts:807-882` acrescenta simulação com duas unidades chamadas «Metro», IDs distintos, propriedade/proprietário, produtos, cenário Kilo→Metro sob NEX-052, comparações de consulta SQL emitida, grupos/resumo/validador e geração XLSX/PDF. Os testes fazem inspeção real das células XLSX e tokens do gerador PDF do projeto; não equivalem a consulta PostgreSQL nem leitor PDF externo.
+- **Veredito sobre a divergência original:** o defeito de soma cruzada pelo `nombre` está **materialmente corrigido em SQL e helper**. Preservado o relatório fiscal SIFEN 108/MT já decidido no `PROGRESSO-NEXIT-V1.md` (sem presumir que o vínculo foi aplicado no banco real).
+
+### NOVO RPT-KDX-R04-01 — MÉDIA — detecção quadrática de ambiguidade em grupos
+
+**Evidência:** `lib/reportes/kardex-plan.ts:72-75`:
+`for (const g of grupos) g.ambigua = grupos.some((o) => o.unidad === g.unidad && o.unidadId !== g.unidadId);`
+Para G grupos sem colidência de `unidadId` com nomes coincidentes — por exemplo, 10.000 proprietários distintos utilizando a mesma unidade — cada `some` percorre G entradas: até G² comparações (~100 milhões quando G=10.000, ~2,5 bilhões quando G=50.000), mesmo que não exista nenhuma unidade homônima de UUID diferente. A paginação ou o limite 50 mil da **exportação de linhas** não limita necessariamente os grupos históricos construídos, pois os totais são consultados sobre todo o livro/dimensões. Isso pode degradar ou impedir relatório/exportação sob volume legítimo. O teste novo contém quatro grupos, não exercita escala.
+
+**Aceite exigido:** substituir por pré-agrupamento linear `Map<nombre, Set<unidadId>>` (ou equivalente O(G)), marcando `ambigua` por cardinalidade de IDs distintos; testar muitos grupos com mesma unidade/nome e proprietário diferente, poucos grupos homônimos com IDs distintos e limite de exportação. Não alterar regras de saldos, migrations nem serviços compartilhados.
+
+### NOVO RPT-KDX-R04-02 — BAIXA/MÉDIA — desambiguação apenas nos totais, não nas linhas do livro
+
+**Evidência:** `kardex-plan.ts:78-81` monta `unidadGrupo(g)` com sufixo dos **últimos 8 caracteres** do ID quando `ambigua`. A página `app/(private)/reportes/kardex/page.tsx:262,293` utiliza `etiquetaGrupo(g)` nos totais; porém `:331,380` desenha somente `f.unidad` nas linhas DETALLE/RESUMEN. As colunas `Unidad` dos dados do Excel/PDF são geradas em `export-kardex.ts:55,81` também somente com `f.unidad`; a desambiguação é aplicada somente às linhas de totais (`:103-105`). Consequentemente dois IDs «Metro» aparecem indistintos nas linhas individuais, ainda que seus saldos estejam separados. Além disso, dois UUIDs diferentes podem compartilhar os mesmos últimos 8 caracteres; o rótulo `[id <8>]` não garante desambiguação em todos os casos. Os testes `kardex.casos.ts:825,848-855` conferem `ambigua` e rótulos dos **totais**, não das linhas.
+
+**Aceite exigido:** propagar rótulo inequívoco para linhas exibidas na tela e linhas Excel/PDF, sem alterar o valor bruto histórico de `unidadId` e sem incluir/forjar códigos fiscais. A identidade visível de unidades homônimas deve permanecer determinística e única **no conjunto do relatório** (por exemplo, código interno existente quando realmente único, ou UUID completo quando necessário; nenhuma nova coluna fiscal). Testar duas unidades com o mesmo nome, incluindo UUIDs diferentes com sufixo idêntico, linhas DETALLE/RESUMEN/totais em ambos os exportadores e a UI. Não introduzir mudança em `cUniMed` ou emissão fiscal.
+
+### Veredito AUD-KDX-R04
+
+**R03-01 CORRIGIDO NO NÚCLEO (UUID nos agregados, saldos e tipos).** **ACEITE ESTÁTICO FINAL DO KARDEX AINDA PENDENTE** de uma otimização localizada R04-01 (risco real em volume) e rastreabilidade R04-02 (linhas homônimas sem distinção inequívoca). Ambos se limitam à camada de leitura/rotulação do Kardex, sem reabrir NEX-014, NEX-052, SIFEN 108/87 ou os três relatórios já aceitos. Nada HOMOLOGADO no PostgreSQL/navegador reais; não pedir implantação ou novo desenvolvimento sem autorização do responsável.
