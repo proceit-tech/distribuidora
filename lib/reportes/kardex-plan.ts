@@ -54,7 +54,7 @@ export function construirGrupos(tot: Fila[], res: Fila[] | null): KardexGrupo[] 
       const clave = claveGrupo(unidadId, propiedad, t.propietario_id as string | null);
       const r = porClave.get(clave);
       const base = {
-        clave, unidad, unidadId, ambigua: false, propiedad, propietario: textoPropietario(propiedad, t.propietario_id as string | null), filas: Number(t.filas ?? 0),
+        clave, unidad, unidadId, propiedad, propietario: textoPropietario(propiedad, t.propietario_id as string | null), filas: Number(t.filas ?? 0),
         saldoInicial: saldos(t.i_disp, t.i_res, t.i_cuar), saldoFinal: saldos(t.f_disp, t.f_res, t.f_cuar),
         filtrado: movs(t, "f"), fueraDelFiltro: movs(t, "o"), completo: movs(t, "c"),
       };
@@ -69,16 +69,56 @@ export function construirGrupos(tot: Fila[], res: Fila[] | null): KardexGrupo[] 
     })
     .sort((a, b) => a.unidad.localeCompare(b.unidad, "es") || a.unidadId.localeCompare(b.unidadId) || a.propiedad.localeCompare(b.propiedad) || a.propietario.localeCompare(b.propietario));
 
-  // Dos unidades distintas (UUID) con la misma descripción: grupos separados y rotulados con un sufijo del identificador.
-  for (const g of grupos) g.ambigua = grupos.some((o) => o.unidad === g.unidad && o.unidadId !== g.unidadId);
 
   return grupos;
 }
 
 /** Etiqueta legible del grupo: «Unidad · Propio» / «Kg · Tercero abcd1234». */
-export const unidadGrupo = (g: Pick<KardexGrupo, "unidad" | "unidadId" | "ambigua">): string => `${g.unidad || "Sin unidad"}${g.ambigua ? ` [id ${g.unidadId.slice(-8)}]` : ""}`;
-export const etiquetaGrupo = (g: Pick<KardexGrupo, "unidad" | "unidadId" | "ambigua" | "propiedad" | "propietario">): string =>
-  `${unidadGrupo(g)} · ${g.propiedad === "TERCERO" ? g.propietario : "Propio"}`;
+/**
+ * Rótulo VISUAL de cada unidad física (clave = unidadId), derivado UNA vez por respuesta a partir de TODOS los grupos del alcance vigente (no solo de las filas visibles):
+ * una unidad con nombre único se muestra con su nombre; dos o más unidades con el MISMO nombre y UUID distinto llevan un sufijo del identificador lo bastante largo
+ * (mínimo 8 caracteres finales, ampliado hasta ser único en el conjunto de homónimas; el UUID completo en el peor caso). Complejidad lineal en la cantidad de grupos
+ * (Map nombre → Set de UUID); varios grupos con el MISMO UUID (propietarios/propiedades distintos) no generan ambigüedad. No altera `unidad` ni `unidadId` de la API.
+ */
+export function etiquetasUnidad(items: Iterable<{ unidad: string; unidadId: string }>): Map<string, string> {
+  const porNombre = new Map<string, Set<string>>();
+
+  for (const { unidad, unidadId } of items) {
+    let ids = porNombre.get(unidad);
+
+    if (!ids) {
+      ids = new Set<string>();
+      porNombre.set(unidad, ids);
+    }
+    ids.add(unidadId);
+  }
+
+  const out = new Map<string, string>();
+
+  for (const [nombre, ids] of porNombre) {
+    const base = nombre || "Sin unidad";
+
+    if (ids.size === 1) {
+      for (const id of ids) out.set(id, base);
+      continue;
+    }
+
+    const lista = [...ids];
+    const max = lista.reduce((a, x) => Math.max(a, x.length), 0);
+    let k = 8;
+
+    while (k < max && new Set(lista.map((x) => x.slice(-k))).size < lista.length) k++;
+    for (const id of lista) out.set(id, `${base} [id ${id ? id.slice(-k) : "sin id"}]`);
+  }
+
+  return out;
+}
+
+/** Nombre a mostrar de la unidad de una fila (rótulo desambiguado si corresponde). */
+export const nombreUnidad = (et: Map<string, string>, f: { unidad: string; unidadId: string }): string => et.get(f.unidadId) ?? (f.unidad || "Sin unidad");
+
+export const etiquetaGrupo = (g: Pick<KardexGrupo, "unidad" | "unidadId" | "propiedad" | "propietario">, et: Map<string, string>): string =>
+  `${nombreUnidad(et, g)} · ${g.propiedad === "TERCERO" ? g.propietario : "Propio"}`;
 
 // ── Filtros y validación de la respuesta (cliente)
 export function filtrosKardexIguales(a: KardexFiltros, b: KardexFiltros): boolean {
@@ -117,7 +157,7 @@ const movsValidos = (m: unknown): boolean => esObj(m) && todos(m, ["entradas", "
 const resumenTotalesValido = (r: unknown): boolean => r === null || (esObj(r) && entero(r.filas) && todos(r, ["saldoInicial", "entradas", "salidas", "transfEntradas", "transfSalidas", "fueraDelFiltro", "saldoFinal", "finalDisponible", "finalReservado", "finalCuarentena"], dec));
 
 function grupoValido(g: unknown): boolean {
-  return esObj(g) && todos(g, ["clave", "unidad", "unidadId", "propietario"], txt) && typeof g.ambigua === "boolean" && txt(g.propiedad) && PROPIEDADES.includes(g.propiedad) && entero(g.filas) && saldosValidos(g.saldoInicial) && saldosValidos(g.saldoFinal) &&
+  return esObj(g) && todos(g, ["clave", "unidad", "unidadId", "propietario"], txt) && txt(g.propiedad) && PROPIEDADES.includes(g.propiedad) && entero(g.filas) && saldosValidos(g.saldoInicial) && saldosValidos(g.saldoFinal) &&
     movsValidos(g.filtrado) && movsValidos(g.fueraDelFiltro) && movsValidos(g.completo) && typeof g.cuadra === "boolean" && resumenTotalesValido(g.resumen);
 }
 

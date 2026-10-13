@@ -7,7 +7,7 @@ import { crearCompuerta } from "@/lib/productos/catalogos-carga";
 import { descargarKardex, pedirKardex } from "@/lib/reportes/cliente-kardex";
 import { sgDecimal, textoCambioEstado, textoDeposito, textoEstadoMov, textoPropiedadFila, textoTipo, textoVinculo } from "@/lib/reportes/export-kardex";
 import { fmtCantidadTexto, fmtDinero, fmtNum } from "@/lib/reportes/formato";
-import { esCeroDecimal, etiquetaGrupo, filtrosKardexIguales, netoMovimientos, respuestaKardexVigente } from "@/lib/reportes/kardex-plan";
+import { esCeroDecimal, etiquetaGrupo, etiquetasUnidad, filtrosKardexIguales, netoMovimientos, nombreUnidad, respuestaKardexVigente } from "@/lib/reportes/kardex-plan";
 import type { KardexFiltros, KardexFila, KardexGrupo, KardexRespuestaApi, KardexResumenFila } from "@/types/reportes";
 
 import styles from "@/components/ui/lista-padrao/reporte.module.css";
@@ -91,6 +91,8 @@ export default function ReporteKardexPage() {
   };
 
   const t = actual?.totales;
+  // Rótulo de cada unidad según TODOS los grupos de la respuesta vigente (no solo las filas de la página).
+  const et = useMemo(() => etiquetasUnidad(actual?.totales.grupos ?? []), [actual]);
   const total = actual?.pagina.totalFilas ?? 0;
   const tamano = actual?.pagina.tamano ?? 50;
   const paginas = Math.max(1, Math.ceil(total / tamano));
@@ -259,7 +261,7 @@ export default function ReporteKardexPage() {
 
                     return (
                       <tr key={g.clave}>
-                        <td>{etiquetaGrupo(g)}{g.cuadra ? "" : " · NO CUADRA"}</td>
+                        <td>{etiquetaGrupo(g, et)}{g.cuadra ? "" : " · NO CUADRA"}</td>
                         <td className={styles.num}>{cant(r ? r.saldoInicial : g.saldoInicial.fisico)}</td>
                         <td className={styles.num}>{cant(r ? r.entradas : g.filtrado.entradas)}</td><td className={styles.num}>{cant(r ? r.salidas : g.filtrado.salidas)}</td>
                         <td className={styles.num}>{cant(r ? r.transfEntradas : g.filtrado.transfEntradas)}</td><td className={styles.num}>{cant(r ? r.transfSalidas : g.filtrado.transfSalidas)}</td>
@@ -290,7 +292,7 @@ export default function ReporteKardexPage() {
             <strong>Totales filtrados ≠ variación del saldo.</strong> Las filas y los totales de movimientos corresponden solo a los filtros de tipo, usuario, documento o estado; los saldos inicial y final son los reales del libro.
             {t.grupos.map((g) => (
               <div key={g.clave}>
-                {etiquetaGrupo(g)}: saldo inicial {cant(g.saldoInicial.fisico)} + movimientos filtrados {sgDecimal(netoMovimientos(g.filtrado))} + movimientos fuera del filtro {sgDecimal(netoMovimientos(g.fueraDelFiltro))} = saldo final {cant(g.saldoFinal.fisico)}.
+                {etiquetaGrupo(g, et)}: saldo inicial {cant(g.saldoInicial.fisico)} + movimientos filtrados {sgDecimal(netoMovimientos(g.filtrado))} + movimientos fuera del filtro {sgDecimal(netoMovimientos(g.fueraDelFiltro))} = saldo final {cant(g.saldoFinal.fisico)}.
               </div>
             ))}
           </div>
@@ -328,7 +330,7 @@ export default function ReporteKardexPage() {
                       <td><span className={[styles.badge, styles[`badge${f.estado}`]].join(" ")}>{textoEstadoMov(f.estado)}</span></td>
                       <td>{f.documento || "—"}</td>
                       <td className={styles.desc} title={f.productoDescripcion}>{f.productoCodigo} · {f.productoDescripcion}</td>
-                      <td>{f.unidad || "—"}</td>
+                      <td>{nombreUnidad(et, f)}</td>
                       <td>{textoDeposito(f)}</td>
                       <td>{f.lote || "—"}</td>
                       <td>{textoPropiedadFila(f)}</td>
@@ -349,7 +351,7 @@ export default function ReporteKardexPage() {
                       <tr className={styles.detailRow}>
                         <td colSpan={22}>
                           <strong>{f.numero}</strong> · {textoTipo(f)} · registrado {f.fechaRegistro} {f.horaRegistro} (fecha del movimiento {f.fechaMovimiento}) por {f.usuario || "—"}.
-                          {" "}Producto {f.productoCodigo} · {f.productoDescripcion} ({f.unidad || "sin unidad"}); depósito {textoDeposito(f)}{f.lote ? `; lote ${f.lote}` : ""}; {textoPropiedadFila(f)}.
+                          {" "}Producto {f.productoCodigo} · {f.productoDescripcion} ({nombreUnidad(et, f)}); depósito {textoDeposito(f)}{f.lote ? `; lote ${f.lote}` : ""}; {textoPropiedadFila(f)}.
                           {" "}Efecto: disponible {sgDecimal(f.dDisponible)}, reservado {sgDecimal(f.dReservado)}, cuarentena {sgDecimal(f.dCuarentena)}.
                           {" "}Motivo: {f.motivo || "—"}. Observación: {f.observacion || "—"}. Documento: {f.documento || "—"}.
                           {f.costoTotal !== null ? ` Costo registrado: ${fmtDinero(f.costoUnitario)} por unidad, ${fmtDinero(f.costoTotal)} en total (${f.moneda}).` : f.propiedad === "TERCERO" ? " Stock de terceros: sin costo patrimonial." : " Sin costo registrado en esta fila (reservas, entrada de una transferencia o movimiento sin costo)."}
@@ -377,7 +379,7 @@ export default function ReporteKardexPage() {
               <tbody>
                 {(actual?.resumen ?? []).map((f: KardexResumenFila) => (
                   <tr key={f.clave}>
-                    <td>{f.productoCodigo}</td><td className={styles.desc} title={f.productoDescripcion}>{f.productoDescripcion}</td><td>{f.unidad || "—"}</td>
+                    <td>{f.productoCodigo}</td><td className={styles.desc} title={f.productoDescripcion}>{f.productoDescripcion}</td><td>{nombreUnidad(et, f)}</td>
                     <td>{f.deposito}{f.depositoInactivo ? " (inactivo)" : ""}</td><td>{f.lote || "—"}</td><td>{textoPropiedadFila(f)}</td>
                     <td className={styles.num}>{cant(f.saldoInicial)}</td><td className={styles.num}>{cant(f.entradas)}</td><td className={styles.num}>{cant(f.salidas)}</td>
                     <td className={styles.num}>{cant(f.transfEntradas)}</td><td className={styles.num}>{cant(f.transfSalidas)}</td>

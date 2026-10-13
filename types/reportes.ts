@@ -311,8 +311,6 @@ export type KardexGrupo = {
   unidad: string;
   /** Identidad física del grupo (UUID de unidades_medida); el nombre es solo visual. */
   unidadId: string;
-  /** Otra unidad con el mismo nombre y UUID distinto aparece en el informe: se rotula con el final del identificador. */
-  ambigua: boolean;
   propiedad: PropiedadKardex;
   propietario: string;
   /** Movimientos (filas) del grupo que cumplen todos los filtros. */

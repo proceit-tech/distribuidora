@@ -1,6 +1,6 @@
 import type { Celda, ColRep, TablaReporte } from "@/lib/reportes/export";
 import { fmtCantidadTexto } from "@/lib/reportes/formato";
-import { esCeroDecimal, etiquetaGrupo, netoMovimientos, unidadGrupo } from "@/lib/reportes/kardex-plan";
+import { esCeroDecimal, etiquetaGrupo, etiquetasUnidad, netoMovimientos, nombreUnidad } from "@/lib/reportes/kardex-plan";
 import { ORIGENES_KARDEX, TIPOS_KARDEX } from "@/lib/reportes/kardex-textos";
 import type { KardexFila, KardexFiltros, KardexGrupo, KardexResumenFila, KardexRespuesta } from "@/types/reportes";
 
@@ -92,6 +92,8 @@ export { netoMovimientos };
 
 export function tablaKardex(r: KardexRespuesta): TablaReporte {
   const t = r.totales;
+  // Rótulo de unidad derivado de TODOS los grupos de la respuesta (no de las filas de la página) y compartido por filas, totales, Excel y PDF.
+  const et = etiquetasUnidad(t.grupos);
   const detalle = r.filtros.vista === "DETALLE";
   const fl = t.filtrosDeFila;
   const colsR = columnasResumen(fl);
@@ -102,7 +104,7 @@ export function tablaKardex(r: KardexRespuesta): TablaReporte {
 
   // Un bloque de totales por grupo homogéneo (unidad × propiedad × propietario): jamás se suman grupos distintos.
   for (const g of t.grupos) {
-    const gr: Record<string, Celda> = { Unidad: unidadGrupo(g), Propiedad: textoPropiedadFila(g), uni: unidadGrupo(g), prop: textoPropiedadFila(g) };
+    const gr: Record<string, Celda> = { Unidad: nombreUnidad(et, g), Propiedad: textoPropiedadFila(g), uni: nombreUnidad(et, g), prop: textoPropiedadFila(g) };
 
     if (detalle) {
       const sal = (x: KardexGrupo["saldoInicial"]) => ({ "Saldo físico": x.fisico, Disponible: x.disponible, Reservado: x.reservado, Cuarentena: x.cuarentena });
@@ -133,7 +135,7 @@ export function tablaKardex(r: KardexRespuesta): TablaReporte {
     }
   }
 
-  const noCuadran = t.grupos.filter((g) => !g.cuadra).map(etiquetaGrupo);
+  const noCuadran = t.grupos.filter((g) => !g.cuadra).map((g) => etiquetaGrupo(g, et));
   const notas = [
     r.conciliacion.conciliado
       ? `Conciliación con Stock (misma fotografía): el libro de movimientos coincide con los saldos de stock en ${r.conciliacion.combinaciones} combinaciones producto × depósito × lote × propiedad.`
@@ -159,7 +161,7 @@ export function tablaKardex(r: KardexRespuesta): TablaReporte {
     filtros: describirFiltrosKardex(r),
     totalFilas: r.pagina.totalFilas,
     columnas: cols.map(({ titulo, peso, tipo }) => ({ titulo, peso, tipo })),
-    filas: detalle ? r.filas.map((f) => COLUMNAS_KARDEX.map((c) => c.valor(f))) : r.resumen.map((f) => colsR.map((c) => c.valor(f))),
+    filas: detalle ? r.filas.map((f) => COLUMNAS_KARDEX.map((c) => c.valor({ ...f, unidad: nombreUnidad(et, f) }))) : r.resumen.map((f) => colsR.map((c) => c.valor({ ...f, unidad: nombreUnidad(et, f) }))),
     totales,
     colEtiquetaPdf: detalle ? 6 : 1,
     notas,

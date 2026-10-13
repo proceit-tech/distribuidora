@@ -14,7 +14,7 @@ import { generarPdfTabla, generarXlsxTabla } from "@/lib/reportes/export";
 import { COLUMNAS_KARDEX, columnasResumen, tablaKardex } from "@/lib/reportes/export-kardex";
 import { leerHojaXlsx } from "@/lib/reportes/export-xlsx.casos";
 import { leerKardex, parsearFiltrosKardex } from "@/lib/reportes/kardex";
-import { claveGrupo, filtrosKardexIguales, negarDecimal, respuestaKardexValida, respuestaKardexVigente } from "@/lib/reportes/kardex-plan";
+import { claveGrupo, construirGrupos, etiquetasUnidad, filtrosKardexIguales, negarDecimal, respuestaKardexValida, respuestaKardexVigente } from "@/lib/reportes/kardex-plan";
 import type { KardexFiltros, KardexRespuesta, KardexRespuestaApi } from "@/types/reportes";
 
 const leer = (r: string) => readFileSync(join(process.cwd(), r), "utf8").replace(/\r\n/g, "\n");
@@ -804,6 +804,7 @@ export async function verificarCasosReportesKardex(): Promise<string[]> {
   cierto("KDX-R02-02 la API/validador acepta el contrato nuevo y rechaza una fuenteUnidad inválida", respuestaKardexValida(JSON.parse(JSON.stringify({ ...rC, permisos: { exportar: false } }))) && !respuestaKardexValida(JSON.parse(JSON.stringify({ ...rC, fuenteUnidad: "OTRA", permisos: { exportar: false } }))));
   cierto("KDX-R02-02 no se tocaron NEX-052 ni el motor: el servicio solo LEE el historial (SELECT), sin escribir ni convertir cantidades", !/\b(INSERT|UPDATE|DELETE)\b/.test(leer("lib/reportes/kardex.ts")) && !/producto_cambiar_unidad_base/.test(leer("lib/reportes/kardex.ts")) && !/convert|factor/i.test(leer("lib/reportes/kardex.ts").replace(/NO se convierten|no se convierten/g, "")));
 
+  const quitar = (o: object, k: string): Record<string, unknown> => { const c = { ...o } as Record<string, unknown>; delete c[k]; return c; };
   // ═══ KDX-R03-01 — la identidad del grupo es unidad_id (UUID), no el nombre de la unidad ═══
   // Dos unidades DISTINTAS con la misma descripción «Metro» (p. ej. la del catálogo con SIFEN 108/MT y otra con vínculo 87 o sin vínculo fiscal): jamás se suman.
   const M1 = "5a000000-0000-4000-8000-0000000000a1", M2 = "5a000000-0000-4000-8000-0000000000b2";
@@ -822,7 +823,7 @@ export async function verificarCasosReportesKardex(): Promise<string[]> {
 
   igual("KDX-R03-01 dos unidades con el MISMO nombre y UUID distinto → grupos separados: Metro(M1) cierra en 4 (5−1) y Metro(M2) en 7; nunca 11", [rN.totales.grupos.length, gN(M1).saldoFinal.fisico, gN(M2).saldoFinal.fisico, gN(M1).filtrado.entradas, gN(M2).filtrado.entradas, gN(M1).filtrado.salidas], [4, "4", "7", "5", "7", "1"]);
   igual("KDX-R03-01 cada grupo transporta su identificador y el nombre queda como dato visual; los terceros de Metro(M2) son otro grupo y la unidad Kilo sigue aparte", rN.totales.grupos.map((g) => [g.unidad, g.unidadId, g.propiedad, g.saldoFinal.fisico]), [["Kilo", "uid-Kilo", "PROPIO", "9"], ["Metro", M1, "PROPIO", "4"], ["Metro", M2, "PROPIO", "7"], ["Metro", M2, "TERCERO", "2"]]);
-  igual("KDX-R03-01 los grupos de igual nombre se rotulan con el identificador para distinguirlos (tela, Excel y PDF); Kilo no lleva sufijo", rN.totales.grupos.map((g) => g.ambigua), [false, true, true, true]);
+  igual("KDX-R03-01 los grupos de igual nombre se rotulan con el identificador para distinguirlos (tela, Excel y PDF); Kilo no lleva sufijo", [...etiquetasUnidad(rN.totales.grupos).entries()].map(([id, e]) => [id, e.includes("[id ")]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))), [["5a000000-0000-4000-8000-0000000000a1", true], ["5a000000-0000-4000-8000-0000000000b2", true], ["uid-Kilo", false]]);
   igual("KDX-R03-01 DETALLE: cada fila lleva su unidadId y su saldo acumulado se mantiene dentro de su unidad", filas(rN).map((f) => [f.numero, f.unidad, f.unidadId, f.saldoFisico]), [[L(1), "Metro", M1, "5"], [L(2), "Metro", M2, "7"], [L(3), "Metro", M1, "4"], [L(4), "Metro", M2, "2"], [L(5), "Kilo", "uid-Kilo", "9"]]);
 
   const sqlN = reg.consultas.find((c) => /FROM sal GROUP BY unidad/.test(c.sql))?.sql ?? "";
@@ -843,11 +844,11 @@ export async function verificarCasosReportesKardex(): Promise<string[]> {
   const bN = 1 + 1 + 1 + tN.filtros.length + 1 + 1;
   const iN = (t: string) => tN.columnas.findIndex((c) => c.titulo === t);
   const colN = (i: number) => String.fromCharCode(65 + i);
-  const etiquetasUnidad = tN.totales.map((x) => String(x.celdas[iN("Unidad")])).filter((x, i, a) => a.indexOf(x) === i);
+  const rotulosUnidad = tN.totales.map((x) => String(x.celdas[iN("Unidad")])).filter((x, i, a) => a.indexOf(x) === i);
 
   igual("KDX-R03-01 XLSX: filas con su unidad, saldos numéricos, y totales con un bloque por UUID (los dos «Metro» se distinguen por el sufijo del identificador)", [
-    xN.get(`${colN(iN("Unidad"))}${bN + 1}`), xN.get(`${colN(iN("Saldo físico"))}${bN + 3}`), xN.get(`${colN(iN("Saldo físico"))}${bN + 2}`), etiquetasUnidad,
-  ], [{ tipo: "s", valor: "Metro" }, { tipo: "n", valor: "4" }, { tipo: "n", valor: "7" }, ["Kilo", `Metro [id ${M1.slice(-8)}]`, `Metro [id ${M2.slice(-8)}]`]]);
+    xN.get(`${colN(iN("Unidad"))}${bN + 1}`), xN.get(`${colN(iN("Saldo físico"))}${bN + 3}`), xN.get(`${colN(iN("Saldo físico"))}${bN + 2}`), rotulosUnidad,
+  ], [{ tipo: "s", valor: `Metro [id ${M1.slice(-8)}]` }, { tipo: "n", valor: "4" }, { tipo: "n", valor: "7" }, ["Kilo", `Metro [id ${M1.slice(-8)}]`, `Metro [id ${M2.slice(-8)}]`]]);
 
   const tkN = tokensPdf(generarPdfTabla(tN));
 
@@ -868,8 +869,8 @@ export async function verificarCasosReportesKardex(): Promise<string[]> {
   const rNh = await informe(eNh);
 
   igual("KDX-R03-01 con historial NEX-052: A-1 pasa de Kilo a Metro(M1); el Metro de D-1 (M2) es otro grupo; ninguna cantidad se mezcla", [
-    filas(rNh).map((f) => [f.numero, f.unidad, f.unidadId]), rNh.totales.grupos.map((g) => [g.unidad, g.unidadId, g.saldoFinal.fisico, g.ambigua]),
-  ], [[[L(1), "Kilo", "uid-K"], [L(2), "Kilo", "uid-K"], [L(3), "Metro", M1], [L(4), "Metro", M2]], [["Kilo", "uid-K", "0", false], ["Metro", M1, "6", true], ["Metro", M2, "8", true]]]);
+    filas(rNh).map((f) => [f.numero, f.unidad, f.unidadId]), rNh.totales.grupos.map((g) => [g.unidad, g.unidadId, g.saldoFinal.fisico]),
+  ], [[[L(1), "Kilo", "uid-K"], [L(2), "Kilo", "uid-K"], [L(3), "Metro", M1], [L(4), "Metro", M2]], [["Kilo", "uid-K", "0"], ["Metro", M1, "6"], ["Metro", M2, "8"]]]);
 
   // Unidad sin vínculo fiscal / códigos SIFEN: el Kardex no usa códigos fiscales como identidad (UUID ≠ código 108 ≠ código 87)
   const eSv: Escenario = { productos: [{ id: PA, codigo: "A-1", unidad: "", unidadId: "" }], depositos: depos, lineas: [{ num: L(1), tipo: "ENTRADA", freg: "2026-10-01", prod: PA, cant: "2", d: DA }] };
@@ -879,7 +880,91 @@ export async function verificarCasosReportesKardex(): Promise<string[]> {
   igual("KDX-R03-01 unidad sin identificador ni vínculo fiscal: grupo propio con unidadId vacío rotulado «Sin unidad» (no se inventa un código SIFEN)", [rSv.totales.grupos.map((g) => [g.unidad, g.unidadId, g.saldoFinal.fisico]), rSv.totales.grupos.map((g) => g.clave)], [[["", "", "2"]], ["|PROPIO|"]]);
   igual("KDX-R03-01 la identidad es el UUID: igual nombre ≠ igual clave; código fiscal no participa (108 y 87 jamás se usan como clave)", [claveGrupo(M1, "PROPIO", null) === claveGrupo(M2, "PROPIO", null), claveGrupo(M1, "PROPIO", null) === claveGrupo(M1, "PROPIO", null), claveGrupo("108", "PROPIO", null) === claveGrupo("87", "PROPIO", null), claveGrupo(null, "PROPIO", null)], [false, true, false, "|PROPIO|"]);
   cierto("KDX-R03-01 el Kardex no consulta ni deriva identidad de unidades_medida_sifen / unidad_sifen_codigo; no hay códigos 108/87 en el servicio ni en el plan", !/unidad_sifen_codigo|unidades_medida_sifen|\b108\b|\b87\b/.test(fuenteKs + fuenteKp));
-  cierto("KDX-R03-01 el validador exige unidadId en filas, resumen y grupos (un contrato sin identificador se rechaza)", respuestaKardexValida(JSON.parse(JSON.stringify({ ...rN, permisos: { exportar: true } }))) && !respuestaKardexValida(JSON.parse(JSON.stringify({ ...rN, totales: { ...rN.totales, grupos: rN.totales.grupos.map(({ unidadId: _u, ...g }) => g) }, permisos: { exportar: true } }))) && !respuestaKardexValida(JSON.parse(JSON.stringify({ ...rN, filas: rN.filas.map(({ unidadId: _u, ...f }) => f), permisos: { exportar: true } }))));
+  cierto("KDX-R03-01 el validador exige unidadId en filas, resumen y grupos (un contrato sin identificador se rechaza)", respuestaKardexValida(JSON.parse(JSON.stringify({ ...rN, permisos: { exportar: true } }))) && !respuestaKardexValida(JSON.parse(JSON.stringify({ ...rN, totales: { ...rN.totales, grupos: rN.totales.grupos.map((g) => quitar(g, "unidadId")) }, permisos: { exportar: true } }))) && !respuestaKardexValida(JSON.parse(JSON.stringify({ ...rN, filas: rN.filas.map((x) => quitar(x, "unidadId")), permisos: { exportar: true } }))));
+
+  // ═══ KDX-R04-01 / R04-02 — rendimiento lineal y rótulos de unidad inequívocos en filas, totales, Excel y PDF ═══
+  const G = 10000;
+  const tot = Array.from({ length: G }, (_, i) => ({ unidad: "Metro", unidad_id: M1, propiedad: "TERCERO", propietario_id: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`, filas: 1, i_disp: "0", i_res: "0", i_cuar: "0", f_disp: "1", f_res: "0", f_cuar: "0" }));
+  const gMuchos = construirGrupos(tot, null);
+
+  igual("KDX-R04-01 10.000 grupos de la MISMA unidad (mismo UUID) con propietarios distintos: 10.000 grupos y ninguna unidad ambigua (rótulo simple «Metro»)", [gMuchos.length, new Set(gMuchos.map((g) => g.unidadId)).size, [...etiquetasUnidad(gMuchos).entries()]], [G, 1, [[M1, "Metro"]]]);
+
+  let lecturas = 0;
+  const contados = gMuchos.map((g) => ({ get unidad() { lecturas += 1; return g.unidad; }, unidadId: g.unidadId }));
+
+  etiquetasUnidad(contados);
+  igual("KDX-R04-01 construcción lineal: cada grupo se lee UNA sola vez (no O(G²): con 10.000 grupos serían ~10⁸ lecturas)", lecturas, G);
+
+  const mezcla = [
+    ...Array.from({ length: 5000 }, (_, i) => ({ unidad: "Metro", unidadId: i % 2 === 0 ? M1 : M2 })), // dos UUID homónimos repartidos en miles de grupos
+    ...Array.from({ length: 5000 }, (_, i) => ({ unidad: `Unidad ${i}`, unidadId: `u-${i}` })), // 5.000 unidades de nombre único
+  ];
+  lecturas = 0;
+
+  const etMezcla = etiquetasUnidad(mezcla.map((g) => ({ get unidad() { lecturas += 1; return g.unidad; }, unidadId: g.unidadId })));
+
+  igual("KDX-R04-01 mezcla de 10.000 grupos: solo las dos Metro (UUID distintos) llevan sufijo, las 5.000 unidades de nombre único no, y sigue siendo una lectura por grupo", [etMezcla.size, etMezcla.get(M1), etMezcla.get(M2), etMezcla.get("u-17"), lecturas], [5002, `Metro [id ${M1.slice(-8)}]`, `Metro [id ${M2.slice(-8)}]`, "Unidad 17", 10000]);
+
+  // UUID distintos con los MISMOS últimos 8 caracteres (y más): el rótulo se amplía hasta ser único; el UUID completo en el peor caso
+  const A8 = "5a000000-0000-4000-8000-0000000000a1", B8 = "6b000000-0000-4000-8000-0000000000a1", C12 = "5a000000-0000-4000-8000-1000000000a1";
+  const etA = etiquetasUnidad([{ unidad: "Metro", unidadId: A8 }, { unidad: "Metro", unidadId: B8 }]);
+  const etC = etiquetasUnidad([{ unidad: "Metro", unidadId: A8 }, { unidad: "Metro", unidadId: C12 }]);
+
+  igual("KDX-R04-02 dos UUID con los mismos últimos 8 caracteres NO se rotulan con el mismo sufijo: se amplía hasta distinguirlos (UUID completo si difieren al inicio; 12 caracteres si difieren en el medio)", [etA.get(A8), etA.get(B8), etA.get(A8) !== etA.get(B8), etC.get(A8), etC.get(C12)], [`Metro [id ${A8.slice(-35)}]`, `Metro [id ${B8.slice(-35)}]`, true, "Metro [id 0000000000a1]", "Metro [id 1000000000a1]"]);
+  igual("KDX-R04-02 sin nombre: «Sin unidad»; dos sin nombre con UUID distinto también se distinguen; una unidad de nombre único conserva su nombre", [
+    [...etiquetasUnidad([{ unidad: "", unidadId: "" }]).values()], [...etiquetasUnidad([{ unidad: "", unidadId: "" }, { unidad: "", unidadId: M1 }]).values()], [...etiquetasUnidad([{ unidad: "Kilo", unidadId: "k" }]).values()],
+  ], [["Sin unidad"], ["Sin unidad [id sin id]", `Sin unidad [id ${M1.slice(-8)}]`], ["Kilo"]]);
+
+  // Filas, totales, Excel y PDF en DETALLE y RESUMEN con homónimas (eN: Metro M1 y M2, propio y terceros, además de Kilo)
+  const etN = etiquetasUnidad(rN.totales.grupos);
+  const l1 = `Metro [id ${M1.slice(-8)}]`, l2 = `Metro [id ${M2.slice(-8)}]`;
+
+  igual("KDX-R04-02 API intacta: unidad y unidadId originales sin sufijo; el rótulo es derivado y común (Metro M1 / Metro M2 / Kilo)", [filas(rN).map((f) => [f.unidad, f.unidadId]).slice(0, 2), [etN.get(M1), etN.get(M2), etN.get("uid-Kilo")]], [[["Metro", M1], ["Metro", M2]], [l1, l2, "Kilo"]]);
+
+  const tD = tablaKardex(rN);
+  const xD = leerHojaXlsx(generarXlsxTabla(tD));
+  const bD = 1 + 1 + 1 + tD.filtros.length + 1 + 1;
+  const iD = (t: string) => tD.columnas.findIndex((c) => c.titulo === t);
+  const cD = (n: number) => String.fromCharCode(65 + iD("Unidad")) + (bD + n);
+
+  igual("KDX-R04-02 DETALLE: cada FILA (Excel) lleva el rótulo desambiguado; también las filas de totales; los valores numéricos no cambian", [
+    [1, 2, 3, 4, 5].map((n) => xD.get(cD(n))?.valor), [...new Set(tD.totales.map((x) => String(x.celdas[iD("Unidad")])))], xD.get(`${String.fromCharCode(65 + iD("Saldo físico"))}${bD + 3}`),
+  ], [[l1, l2, l1, l2, "Kilo"], ["Kilo", l1, l2], { tipo: "n", valor: "4" }]);
+
+  const tkD2 = tokensPdf(generarPdfTabla(tD));
+
+  cierto("KDX-R04-02 DETALLE PDF: los rótulos desambiguados aparecen en filas y totales (junto con las columnas ancla) y ningún valor queda recortado", tkD2.filter((x) => x === l1).length >= 4 && tkD2.filter((x) => x === l2).length >= 4 && tkD2.includes("Kilo") && truncado(tkD2).length === 0);
+
+  const tR = tablaKardex(rNr);
+  const xR = leerHojaXlsx(generarXlsxTabla(tR));
+  const bR = 1 + 1 + 1 + tR.filtros.length + 1 + 1;
+  const iR = (t: string) => tR.columnas.findIndex((c) => c.titulo === t);
+  const tkR2 = tokensPdf(generarPdfTabla(tR));
+
+  igual("KDX-R04-02 RESUMEN: filas (Excel) y totales con el rótulo desambiguado y saldos intactos", [
+    [1, 2, 3, 4].map((n) => xR.get(`${String.fromCharCode(65 + iR("Unidad"))}${bR + n}`)?.valor), [...new Set(tR.totales.map((x) => String(x.celdas[iR("Unidad")])))], xR.get(`${String.fromCharCode(65 + iR("Saldo final"))}${bR + 1}`),
+  ], [[l1, "Kilo", l2, l2], ["Kilo", l1, l2], { tipo: "n", valor: "4" }]);
+  cierto("KDX-R04-02 RESUMEN PDF: rótulos desambiguados en filas y totales", tkR2.filter((x) => x === l1).length >= 2 && tkR2.filter((x) => x === l2).length >= 3);
+
+  // Homónima FUERA de la página visible: la fila visible sigue desambiguada porque la ambigüedad sale de los totales de TODA la respuesta
+  const rPag = await informe(eN, {}, { pagina: 1, tamano: 1 });
+  const tPag = tablaKardex(rPag);
+  const xPag = leerHojaXlsx(generarXlsxTabla(tPag));
+  const bPag = 1 + 1 + 1 + tPag.filtros.length + 1 + 1;
+
+  igual("KDX-R04-02 página 1 de 1 fila (solo Metro M1 visible; Metro M2 está en otra página y en los totales): la fila exportada/visible lleva igualmente el rótulo con identificador", [rPag.filas.map((f) => f.unidad), rPag.pagina.totalFilas, xPag.get(`${String.fromCharCode(65 + tPag.columnas.findIndex((c) => c.titulo === "Unidad"))}${bPag + 1}`)?.valor], [["Metro"], 5, l1]);
+
+  // La fila de tela usa el mismo derivado: la página usa nombreUnidad/etiquetasUnidad sobre totales.grupos y nunca el nombre bruto en celdas
+  const fuentePag = leer("app/(private)/reportes/kardex/page.tsx");
+
+  cierto("KDX-R04-02 pantalla: rótulo derivado de totales.grupos de la respuesta vigente y usado en DETALLE, detalle expandido, RESUMEN y totales (sin f.unidad directo)", /etiquetasUnidad\(actual\?\.totales\.grupos \?\? \[\]\)/.test(fuentePag) && (fuentePag.match(/nombreUnidad\(et, f\)/g) ?? []).length >= 3 && /etiquetaGrupo\(g, et\)/.test(fuentePag) && !/\{f\.unidad/.test(fuentePag));
+  cierto("KDX-R04-01 el cálculo de ambigüedad no depende de las filas visibles ni de búsquedas anidadas: Map nombre → Set de UUID, sin .some/.find/.filter dentro de bucles sobre grupos", /new Map<string, Set<string>>\(\)/.test(leer("lib/reportes/kardex-plan.ts")) && !/grupos\.some\(/.test(leer("lib/reportes/kardex-plan.ts")) && !/\bambigua\b/.test(leer("lib/reportes/kardex-plan.ts") + leer("types/reportes.ts")));
+
+  // Troca histórica NEX-052 con nombres repetidos: filas y totales con el rótulo correcto
+  const rNh2 = await informe(eNh);
+  const tH = tablaKardex(rNh2);
+
+  igual("KDX-R04-02 con historial NEX-052 (A-1: Kilo → Metro M1; D-1: Metro M2): Kilo conserva su nombre, ambos Metro quedan rotulados en filas y totales", [tH.filas.map((f) => f[tH.columnas.findIndex((c) => c.titulo === "Unidad")]), [...new Set(tH.totales.map((x) => String(x.celdas[tH.columnas.findIndex((c) => c.titulo === "Unidad")])))]], [["Kilo", "Kilo", l1, l2], ["Kilo", l1, l2]]);
 
   return fallos;
 }
