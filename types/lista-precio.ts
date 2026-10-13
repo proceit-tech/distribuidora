@@ -168,8 +168,8 @@ export type NuevaListaPrecio = Omit<
   ListaPrecioDetalle,
   "id" | "creadoEn" | "actualizadoEn" | "esReferencia"
 > & {
-  /** Ids de los precios que existían al abrir la lista: los que ya no estén en `productos` se eliminan por decisión explícita (LPR-A01/A02). Solo edición. */
-  itemsCargados?: string[];
+  /** Id y versión de TODOS los precios que existían al abrir la lista (también los que se quiten del borrador): los que ya no estén en `productos` se eliminan por decisión explícita (LPR-A01/A02). Solo edición. */
+  itemsCargados?: Array<{ id: string; version: string }>;
 };
 
 /** Fila de la lista (GET /api/listas-precio): sin los hijos, con sus conteos. */

@@ -367,7 +367,7 @@ export default function ListaPrecioForm({ mode, initial, onSave }: Props) {
       observacion: form.observacion.trim(),
       activo: form.estado === "ACTIVA",
       // LPR-A01/A02: precios que existían al abrir la lista (los que ya no estén se eliminan por decisión explícita; cualquier otro cambio externo da 409).
-      ...(mode === "edit" ? { itemsCargados: (initial?.productos ?? []).map((p) => p.id) } : {}),
+      ...(mode === "edit" ? { itemsCargados: (initial?.productos ?? []).map((p) => ({ id: p.id, version: p.version ?? "" })) } : {}),
     };
 
     try {

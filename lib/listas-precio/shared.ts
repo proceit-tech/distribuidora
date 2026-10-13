@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import type { PoolClient } from "pg";
 
 import { margenBruto, tramosSuperpuestos } from "@/lib/listas-precio/calculos";
+import { MENSAJE_CONFLICTO_ITEMS, conflictoItems, normalizarItemsCargados } from "@/lib/listas-precio/concurrencia";
 
 // Validación y persistencia compartidas de listas de precios (POST y PUT).
 // Consultas parametrizadas; empresa_id siempre llega de la sesión autenticada.
@@ -187,7 +188,10 @@ export function prepararLista(d: Cuerpo) {
   });
 
   // LPR-A01/A02: ids de los precios que la pantalla cargó al abrir (los que falten en `productos` se eliminan por decisión explícita). null = no enviado.
-  const itemsCargados = Array.isArray(d.itemsCargados) ? (d.itemsCargados as unknown[]).map((x) => idExistente(x)).filter((x): x is string => x !== null) : null;
+  // LPR-R02-01: id y versión de TODOS los precios cargados (también los quitados del borrador); incompleto o malformado → 400.
+  const itemsCargados = normalizarItemsCargados(d.itemsCargados);
+
+  if (itemsCargados === "invalido") throw new ErrorLista("La relación de precios cargados al abrir la lista (id y versión) está incompleta o no es válida. Recargue la página.", "productos");
 
   return {
     version: texto(d.version, 40),
@@ -468,7 +472,7 @@ export type PlanHijos = {
 export async function planificarHijos(c: PoolClient, empresaId: string, listaId: string, d: DatosLista): Promise<PlanHijos> {
   if (d.itemsCargados === null) throw conflicto("Falta la relación de precios que se cargaron al abrir la lista. Recargue la página y vuelva a aplicar sus cambios.", "productos");
 
-  const cargados = new Set(d.itemsCargados);
+  const cargados = new Set(d.itemsCargados.map((x) => x.id));
   const dbItems = (
     await c.query(
       `SELECT id::text AS id, producto_id::text AS producto_id, unidad_medida_id::text AS unidad_medida_id, ${SQL_VERSION("actualizado_at")} AS version
@@ -478,8 +482,13 @@ export async function planificarHijos(c: PoolClient, empresaId: string, listaId:
   ).rows as Array<{ id: string; producto_id: string; unidad_medida_id: string; version: string }>;
   const porId = new Map(dbItems.map((x) => [x.id, x]));
 
-  if (dbItems.some((x) => !cargados.has(x.id))) {
-    throw conflicto("Se agregaron precios a esta lista (por ejemplo desde la ficha de Productos) después de abrirla. No se guardó nada: recargue para verlos.", "productos");
+  // LPR-R02-01: la foto completa (ids y versiones, incluidos los precios quitados del borrador) debe coincidir EXACTAMENTE con la base bloqueada; si no, 409 antes de escribir.
+  const dif = conflictoItems(dbItems.map((x) => ({ id: x.id, version: x.version })), d.itemsCargados);
+
+  if (dif) {
+    const enEnvio = d.productos.findIndex((p) => p.id === dif.id);
+
+    throw conflicto(MENSAJE_CONFLICTO_ITEMS[dif.tipo], enEnvio >= 0 ? `productos.${enEnvio}` : "productos");
   }
 
   const plan: PlanHijos = { itemsEliminar: [], itemsActualizar: [], itemsNuevos: [], escalonesEliminar: [], escalonesActualizar: [], escalonesNuevos: [], reglasEliminar: [], reglasActualizar: [], reglasNuevas: [] };

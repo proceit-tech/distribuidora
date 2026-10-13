@@ -214,7 +214,7 @@ function cuerpoDesde(e: Estado, extra: Record<string, unknown> = {}, cambiar?: (
 
   cambiar?.(productos, reglas);
 
-  return { nombre: "Mayorista", vigenteDesde: "2026-10-01", version: "v-cab", itemsCargados: e.bd.items.map((i) => i.id), productos, reglasComerciales: reglas, ...extra };
+  return { nombre: "Mayorista", vigenteDesde: "2026-10-01", version: "v-cab", itemsCargados: e.bd.items.map((i) => ({ id: i.id, version: i.version })), productos, reglasComerciales: reglas, ...extra };
 }
 
 async function guardar(e: Estado, cuerpo: Record<string, unknown>) {
@@ -372,6 +372,65 @@ export async function verificarCasosListasEstabilizacion(): Promise<string[]> {
     igual("A02: una lista sin precios y con la relación vacía guarda normalmente (caso límite)", await codigoError(() => guardar(e, cuerpo)), "ok");
   }
 
+  // ── LPR-R02-01: precios QUITADOS del borrador también se protegen por versión
+  {
+    const quitar = (ps: Array<Record<string, unknown>>) => { ps.splice(1, 1); };
+    const A = escenario();
+    const esc0 = A.e.bd.escrituras;
+
+    await guardar(A.e, cuerpoDesde(A.e, {}, quitar));
+    igual("R02-01 remoción intencional sin intervención externa: se elimina solo el precio quitado", [A.e.bd.items.map((x) => x.id), A.e.bd.escrituras >= esc0], [[A.i1.id], true]);
+
+    const B = escenario();
+    const cuerpoB = cuerpoDesde(B.e, {}, quitar);
+
+    B.e.productosFijaPrecio(P2, 555);
+    const antesB = JSON.stringify([B.e.bd.items, B.e.bd.escalones, B.e.bd.reglas]);
+
+    igual("R02-01 precio quitado del borrador y luego MODIFICADO por Productos: 409, no se elimina y nada se escribe", [await codigoError(() => guardar(B.e, cuerpoB)), JSON.stringify([B.e.bd.items, B.e.bd.escalones, B.e.bd.reglas]) === antesB, B.e.bd.sentencias.filter((s) => /^(DELETE|INSERT|UPDATE)/.test(s)).length], ["409:productos", true, 0]);
+
+    const C = escenario();
+    const cuerpoC = cuerpoDesde(C.e, {}, quitar);
+
+    C.e.bd.items = C.e.bd.items.filter((x) => x.id !== C.i2.id);
+    igual("R02-01 precio quitado del borrador y ya ELIMINADO por Productos: 409 (no se acepta como éxito silencioso)", await codigoError(() => guardar(C.e, cuerpoC)), "409:productos");
+
+    const D = escenario();
+    const cuerpoD = cuerpoDesde(D.e, {}, quitar);
+
+    D.e.sembrarItem(P3);
+    igual("R02-01 inclusión externa posterior a la carga: 409", await codigoError(() => guardar(D.e, cuerpoD)), "409:productos");
+
+    const E = escenario();
+    const cuerpoE = cuerpoDesde(E.e, {}, quitar);
+
+    E.e.productosFijaPrecio(P1, 321);
+    igual("R02-01 alteración de un precio retenido: 409 con el campo del precio", await codigoError(() => guardar(E.e, cuerpoE)), "409:productos.0");
+
+    const F = escenario();
+
+    igual("R02-01 relación incompleta o malformada → 400 (sin versión, id inválido, repetido, no es lista) y ausente → 409", [
+      await codigoError(async () => prepararLista({ nombre: "L", vigenteDesde: "2026-10-12", itemsCargados: [{ id: F.i1.id }] })),
+      await codigoError(async () => prepararLista({ nombre: "L", vigenteDesde: "2026-10-12", itemsCargados: [{ id: "x", version: F.i1.version }] })),
+      await codigoError(async () => prepararLista({ nombre: "L", vigenteDesde: "2026-10-12", itemsCargados: [{ id: F.i1.id, version: F.i1.version }, { id: F.i1.id, version: F.i1.version }] })),
+      await codigoError(async () => prepararLista({ nombre: "L", vigenteDesde: "2026-10-12", itemsCargados: F.i1.id })),
+      await codigoError(() => guardar(F.e, cuerpoDesde(F.e, { itemsCargados: undefined }))),
+    ], ["400:productos", "400:productos", "400:productos", "400:productos", "409:productos"]);
+
+    const G = nuevaBd();
+
+    igual("R02-01 lista vacía con relación vacía: éxito", await codigoError(() => guardar(G, cuerpoDesde(G))), "ok");
+
+    const H = escenario();
+    const cuerpoH = cuerpoDesde(H.e, {}, quitar);
+
+    H.e.productosFijaPrecio(P2, 1);
+    await codigoError(() => guardar(H.e, cuerpoH));
+    igual("R02-01 rollback: tras el 409 no se emitió DELETE/UPDATE/INSERT y los datos de Productos permanecen", [H.e.bd.items.find((x) => x.id === H.i2.id)?.precio, H.e.bd.sentencias.filter((s) => /^(DELETE|INSERT|UPDATE)/.test(s)).length], [1, 0]);
+    igual("R02-01 POST inicial sin relación de edición: se prepara normalmente (no la exige)", await codigoError(async () => prepararLista({ nombre: "L", vigenteDesde: "2026-10-12", productos: [{ productoId: P1, precioLista: 1 }] })), "ok");
+    cierto("R02-01 pantalla: la relación enviada incluye la versión original de todos los precios cargados (no el estado del borrador)", /\(initial\?\.productos \?\? \[\]\)\.map\(\(p\) => \(\{ id: p\.id, version: p\.version \?\? "" \}\)\)/.test(leer("app/(private)/listas-precio/_components/lista-precio-form.tsx")));
+  }
+
   // ── LPR-A03: escalones superpuestos (servidor y pantalla)
   const esc = (...r: Array<[number, number | null]>) => ({ productos: [{ productoId: P1, escalas: r.map(([a, b]) => ({ cantidadMinima: a, cantidadMaxima: b, precio: 1 })) }] });
   const prep = (extra: Record<string, unknown>) => codigoError(async () => prepararLista({ nombre: "L", vigenteDesde: "2026-10-12", ...extra }));
@@ -411,7 +470,7 @@ export async function verificarCasosListasEstabilizacion(): Promise<string[]> {
   cierto("A01 ruta PUT: ya no borra todos los hijos ni los regraba (sin borrarHijos/insertarHijos en el PUT)", !/borrarHijos|insertarHijos/.test(put));
   cierto("A04 pantalla: el código de la lista de referencia es de solo lectura y el precio sigue editable", /readOnly=\{bloqueada\}/.test(form) && !/disabled=\{bloqueada\}[^>]*precioLista/.test(form));
   cierto("A02 GET: devuelve la versión con microsegundos de la cabecera y de cada precio", (ruta.match(/SQL_VERSION\("(l|i)\.actualizado_at"\)/g) ?? []).length === 2);
-  cierto("A02 pantalla: el cuerpo conserva las versiones y envía la relación de precios cargados al abrir", /itemsCargados: \(initial\?\.productos \?\? \[\]\)\.map\(\(p\) => p\.id\)/.test(form) && /const \{ id, creadoEn, actualizadoEn, esReferencia, \.\.\.resto \} = initial/.test(form));
+  cierto("A02 pantalla: el cuerpo conserva las versiones y envía la relación de precios cargados al abrir", /itemsCargados: \(initial\?\.productos \?\? \[\]\)\.map\(\(p\) => \(\{ id: p\.id, version: p\.version \?\? "" \}\)\)/.test(form) && /const \{ id, creadoEn, actualizadoEn, esReferencia, \.\.\.resto \} = initial/.test(form));
 
   // ── LPR-A05 / A08: moneda y tipo
   function conexionMt(opc: { itemsEnLista: number; derivadas: string[] }) {

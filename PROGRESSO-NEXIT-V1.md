@@ -714,3 +714,8 @@ Só código; **sem migration** (NEX-001…053 intactas; 052/053 NÃO aplicadas);
 - **A09:** vínculo inativo só se mantém no mesmo contexto (mesmo campo de cabeça ou mesma regra por `id` com igual tipo e referência); novo vínculo, campo trocado ou regra nova exigem referência ativa; a validação por empresa não se alterou.
 - Limite: a serialização real (duas transações, `FOR UPDATE`) só se prova no PostgreSQL; aqui a conexão é simulada com tabelas em memória. Pedido sem `version` ou `itemsCargados` deixa de ser aceito (só a própria tela envia o PUT).
 - Local: 2272 verificações, 0 falhas no total da rodada (58 novas na suíte «Listas de precios: estabilización»; 1 teste anterior ajustado ao guard oficial e 1 ao A09); tsc/ESLint/build OK.
+
+#### Listas de precios — LPR-R02-01 (AUD-LISTAS-PRECIOS-V1 §VI, 2026-10-12)
+Só código; sem migration; nada em PostgreSQL/navegador; menu NÃO homologado; LPR-A01…A09 preservadas.
+- A tela envia a «foto» de **todos** os preços carregados (id + versão µs), também os retirados do rascunho. Sob `FOR UPDATE`, antes de qualquer escrita, o servidor exige que coincida exatamente com a base (helper puro `concurrencia.ts`): preço alterado, apagado ou acrescentado por outro canal (p. ex. Productos), mesmo que retirado do rascunho → 409 sem gravar cabeçalho, preços, escalões ou regras. Relação ausente → 409; incompleta/malformada/repetida → 400.
+- Local: 2282 verificações, 0 falhas na rodada (10 novas de Listas); tsc/ESLint OK; conexão simulada, não PostgreSQL.
