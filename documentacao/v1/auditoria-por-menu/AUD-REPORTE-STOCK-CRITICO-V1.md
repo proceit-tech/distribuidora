@@ -32,3 +32,9 @@ Auditoria exaustiva deste menu ainda não executada. Não atribuir percentual de
 ## Regra de migrations
 
 O responsável mostrou NEX-001…051 já aplicadas na VM. Proibido editar scripts aplicados, checksums ou reexecutar SQL histórico como se fosse nova migration. Qualquer nova alteração estrutural exige justificativa, aprovação e migration incremental a partir de NEX-052.
+
+## Auditoria transversal de Reportes — 13/10/2026
+
+**Auditoria estática integrada:** [AUD-REPORTES-INTEGRADA-V1-2026-10-13.md](./AUD-REPORTES-INTEGRADA-V1-2026-10-13.md), referência única para achados e critérios cruzados dos cinco relatórios + índice. **SHA-base:** `aee2af3926603fb9c9db4bba1ed72bc874b5c2a2`. **RPT-C01/C02:** o relatório usa política global de produto, diferente da Reposición por depósito, e duplica planejamento. Manter relatório exportável de exceções; alinhar cálculos depois da estabilização de Inventario.
+
+**Status:** achados e propostas registrados, **sem código, SQL, PostgreSQL, browser, VM, Docker ou deploy nesta rodada**. Não representa autorização automática para Claude alterar Reportes enquanto a tarefa conjunta de Inventario estiver ativa; **NÃO HOMOLOGADO**.
