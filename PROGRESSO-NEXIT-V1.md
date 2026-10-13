@@ -746,3 +746,11 @@ Só código; sem migration; nada em PostgreSQL/navegador; menu NÃO homologado; 
 
 ### Inventario — implementação integrada autorizada (13/10/2026)
 O responsável autorizou, na mesma rodada, a organização funcional e simplificação conjunta de **Stock, Movimientos, Depósitos e Reposición**. Contrato oficial: `documentacao/v1/DEFINICAO-MENUS-INVENTARIO-V1.md`; ordem detalhada, testes, sequência e limites: `documentacao/v1/ORDEM-IMPLEMENTACAO-INVENTARIO-INTEGRADA-V1-2026-10-13.md`; auditoria-base: `documentacao/v1/auditoria-por-menu/AUD-INVENTARIO-INTEGRADA-V1-2026-10-13.md`. **Estado: IMPLEMENTAÇÃO AUTORIZADA, AINDA NÃO EXECUTADA NESTE REGISTRO.** Claude deve preservar e concluir qualquer alteração local pendente de CC-R03-01 antes da nova rodada, não misturar commits, não acessar VM/Docker/PG real nem implantar; entregar commits separados com regressão conjunta e parar para reauditoria ChatGPT. 
+
+## Inventario integrado — Stock · Movimientos · Depósitos · Reposición (ORDEM-IMPLEMENTACAO-INVENTARIO-INTEGRADA-V1-2026-10-13, 2026-10-13)
+Só código; **sem migration** (NEX-001…053 intactas; 052/053 NÃO aplicadas); nada em PostgreSQL/navegador; menus NÃO homologados.
+
+### Stock (consulta)
+- Portada com 4 indicadores (SKU, Disponible, Sin stock, Bajo mínimo); valor a custo e valor de venda saem da portada (ficam na ficha e em Reportes). Ação principal «Ver reposición»; «Movimientos» e «Nuevo movimiento» só com os permisos que as guardas exigem (**INV-02**: VER para o histórico; VER+CREAR para o atalho; a API de lista passou a devolver `permisos`).
+- **INV-03/04:** importes por decimal exato (texto de `numeric`, soma/produto com BigInt em `lib/inventario/decimal.ts`; `valorInventarioTexto`, `valorVentaReferenciaTexto`). O valor de venda de referência mostra a **moeda da própria lista REF-VENTA** (nunca é rotulado nem somado como moeda base); não há total comercial agregado.
+- **INV-01:** «Stock bajo» → «Bajo mínimo» e ajuda que explica que Reposición também considera o ponto de reposição.

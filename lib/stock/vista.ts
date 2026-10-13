@@ -5,6 +5,7 @@
  * La vista por depósito recalcula TODO (cantidades, valor a costo, valor de venta de referencia, terceros, parámetros y nivel) con los datos
  * del depósito elegido; nunca mezcla el saldo consolidado con el de un depósito.
  */
+import { multiplicarDecimales } from "@/lib/inventario/decimal";
 import type { StockItem, StockNivel } from "@/types/stock";
 
 export function clasificarNivel(p: { disponible: number; totalFisico: number; minimo: number; maximo: number }): StockNivel {
@@ -46,14 +47,28 @@ export function vistaPorDeposito(item: StockItem, depositoId: string): StockItem
     puntoReposicion: d.puntoReposicion ?? 0,
     nivel: clasificarNivel({ disponible: d.disponible, totalFisico, minimo, maximo }),
     valorInventario: d.costoValor,
+    valorInventarioTexto: d.costoValorTexto,
     costoPromedio: d.costoCantidad > 0 ? Math.round((d.costoValor / d.costoCantidad) * 10000) / 10000 : null,
     valorVentaReferencia: item.precioVentaReferencia === null ? null : item.precioVentaReferencia * d.disponible,
+    valorVentaReferenciaTexto: item.precioVentaReferenciaTexto === null ? null : multiplicarDecimales(item.precioVentaReferenciaTexto, d.disponibleTexto),
     depositos: [d],
     lotes: item.lotes.filter((l) => l.depositoId === depositoId),
   };
 }
 
 export type ResumenStock = { sku: number; disponible: number; stockBajo: number; sinStock: number; valorCosto: number; valorVenta: number; sinPrecio: number };
+
+/** Indicadores de la portada de Stock (D-INV-02): solo SKU, Disponible, Sin stock y Bajo mínimo. Valorización y totales monetarios pertenecen a Reportes y a la ficha. */
+export type IndicadoresStock = Pick<ResumenStock, "sku" | "disponible" | "sinStock" | "stockBajo">;
+
+export const indicadoresStock = (items: StockItem[]): IndicadoresStock => {
+  const { sku, disponible, sinStock, stockBajo } = resumenStock(items);
+
+  return { sku, disponible, sinStock, stockBajo };
+};
+
+/** Etiquetas únicas del nivel de Stock (INV-01): «Bajo mínimo» no es «Necesita reposición» (eso lo decide Reposición con el punto de reposición). */
+export const ETIQUETA_NIVEL: Record<StockNivel, string> = { NORMAL: "Normal", BAJO: "Bajo mínimo", SIN_STOCK: "Sin stock", SOBRESTOCK: "Sobrestock" };
 
 /** Tarjetas de resumen: mismas definiciones que las filas (valor a costo = inventario_costos; venta = referencia × disponible; sin precio no suma). */
 export function resumenStock(items: StockItem[]): ResumenStock {

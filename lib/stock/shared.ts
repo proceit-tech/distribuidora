@@ -1,5 +1,6 @@
 import type { Pool } from "pg";
 
+import { multiplicarDecimales, sumarDecimales } from "@/lib/inventario/decimal";
 import { clasificarNivel } from "@/lib/stock/vista";
 
 // Lectura de saldos reales. Todo filtrado por empresa_id de la sesión.
@@ -49,7 +50,7 @@ export async function leerStock(db: Db, empresaId: string, productoId: string | 
     ),
     db.query(
       `SELECT s.id, s.producto_id AS "productoId", s.deposito_id AS "depositoId", d.codigo AS "depositoCodigo", d.nombre AS "depositoNombre",
-              s.estado_stock AS estado, s.propiedad, s.cantidad::float8 AS cantidad,
+              s.estado_stock AS estado, s.propiedad, s.cantidad::float8 AS cantidad, s.cantidad::text AS "cantidadTexto",
               coalesce(sl.codigo_lote, '') AS lote, coalesce(to_char(sl.fecha_vencimiento, 'YYYY-MM-DD'), '') AS vencimiento
          FROM stock_saldos s
          JOIN depositos d ON d.empresa_id = s.empresa_id AND d.id = s.deposito_id
@@ -59,12 +60,13 @@ export async function leerStock(db: Db, empresaId: string, productoId: string | 
       alcance ? paramsAlcance : params,
     ),
     db.query(
-      `SELECT c.producto_id AS "productoId", c.deposito_id AS "depositoId", c.cantidad_valorizada::float8 AS cantidad, c.valor_total::float8 AS valor
+      `SELECT c.producto_id AS "productoId", c.deposito_id AS "depositoId", c.cantidad_valorizada::float8 AS cantidad, c.valor_total::float8 AS valor,
+              c.valor_total::text AS "valorTexto"
          FROM inventario_costos c WHERE c.empresa_id = $1${filtroC}${filtroAlcanceC}`,
       alcance ? paramsAlcance : params,
     ),
     db.query(
-      `SELECT r.producto_id AS "productoId", r.precio::float8 AS precio, r.moneda
+      `SELECT r.producto_id AS "productoId", r.precio::float8 AS precio, r.precio::text AS "precioTexto", r.moneda
          FROM v_producto_precio_referencia r WHERE r.empresa_id = $1${filtroR}`,
       params,
     ),
@@ -106,10 +108,11 @@ export async function leerStock(db: Db, empresaId: string, productoId: string | 
         id: s.depositoId, depositoId: s.depositoId, depositoCodigo: s.depositoCodigo, depositoNombre: s.depositoNombre,
         // No existe un modelo de ubicaciones físicas en el banco: la ubicación queda vacía (la pantalla rotula «Sin ubicación registrada»).
         ubicacion: "", disponible: 0, reservado: 0, cuarentena: 0, transito: 0, totalFisico: 0, terceros: 0,
-        costoCantidad: 0, costoValor: 0, stockMinimo: null, stockMaximo: null, puntoReposicion: null, cantidadReposicion: null,
+        disponibleTexto: "0", costoCantidad: 0, costoValor: 0, costoValorTexto: "0", stockMinimo: null, stockMaximo: null, puntoReposicion: null, cantidadReposicion: null,
       };
       if (s.propiedad === "TERCERO") d.terceros = (d.terceros as number) + (s.cantidad as number);
       if (s.propiedad === "PROPIO") {
+        if (s.estado === "DISPONIBLE") d.disponibleTexto = sumarDecimales([d.disponibleTexto as string, s.cantidadTexto as string]);
         const k = { DISPONIBLE: "disponible", RESERVADO: "reservado", CUARENTENA: "cuarentena", TRANSITO: "transito" }[s.estado as string] as string;
         d[k] = (d[k] as number) + (s.cantidad as number);
         d.totalFisico = (d.disponible as number) + (d.reservado as number) + (d.cuarentena as number);
@@ -123,6 +126,7 @@ export async function leerStock(db: Db, empresaId: string, productoId: string | 
 
       d.costoCantidad = c ? (c.cantidad as number) : 0;
       d.costoValor = c ? (c.valor as number) : 0;
+      d.costoValorTexto = c ? (c.valorTexto as string) : "0";
       d.stockMinimo = k ? (k.minimo as number | null) : null;
       d.stockMaximo = k ? (k.maximo as number | null) : null;
       d.puntoReposicion = k ? (k.punto as number | null) : null;
@@ -132,9 +136,13 @@ export async function leerStock(db: Db, empresaId: string, productoId: string | 
     const cs = cPor.get(p.id as string) ?? [];
     const cantVal = cs.reduce((a, c) => a + (c.cantidad as number), 0);
     const valor = cs.reduce((a, c) => a + (c.valor as number), 0);
+    // INV-04: los importes se suman y multiplican como decimal exacto (texto de numeric), no como float.
+    const valorTexto = sumarDecimales(cs.map((c) => c.valorTexto as string));
+    const disponibleTexto = sumarDecimales(propios.filter((s) => s.estado === "DISPONIBLE").map((s) => s.cantidadTexto as string));
     const costoPromedio = cantVal > 0 ? Math.round((valor / cantVal) * 10000) / 10000 : null;
     const pr = pPor.get(p.id as string);
     const precio = pr ? (pr.precio as number) : null;
+    const precioTexto = pr ? (pr.precioTexto as string) : null;
 
     const minimo = p.stockMinimo as number, maximo = p.stockMaximo as number;
     const nivel = clasificarNivel({ disponible, totalFisico, minimo, maximo });
@@ -147,8 +155,9 @@ export async function leerStock(db: Db, empresaId: string, productoId: string | 
       disponible, reservado, cuarentena, transito, totalFisico, totalVirtual: totalFisico + transito,
       propiedad: propios.length === 0 && terceros > 0 ? "TERCERO" : "PROPIO",
       propietarioId: "", propietarioNombre: propios.length === 0 && terceros > 0 ? "Tercero (propietario no registrado)" : emp.nombre,
-      nivel, costoPromedio, valorInventario: valor,
+      nivel, costoPromedio, valorInventario: valor, valorInventarioTexto: valorTexto,
       precioVentaReferencia: precio, valorVentaReferencia: precio === null ? null : precio * disponible,
+      precioVentaReferenciaTexto: precioTexto, valorVentaReferenciaTexto: precioTexto === null ? null : multiplicarDecimales(precioTexto, disponibleTexto),
       monedaPrecio: pr ? (pr.moneda as string) : "", terceros,
       depositos: [...depMap.values()],
       lotes: ss.filter((s) => s.lote).map((s) => ({

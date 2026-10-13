@@ -8,7 +8,9 @@ import {
 } from "react";
 
 import { cargarStock } from "@/lib/stock/cliente-api";
-import { resumenStock, vistaPorDeposito } from "@/lib/stock/vista";
+import { puedeAbrirNuevoMovimiento, puedeVerMovimientos, normalizarPermisosMovimientos, SIN_PERMISOS_MOVIMIENTOS } from "@/lib/inventario/acceso";
+import { formatearMontoTexto } from "@/lib/inventario/decimal";
+import { ETIQUETA_NIVEL, indicadoresStock, vistaPorDeposito } from "@/lib/stock/vista";
 
 import {
   StockItem,
@@ -57,18 +59,13 @@ function costoUnitario(item: StockItem) {
   return Number(item.costoPromedio ?? 0);
 }
 
-function valorCosto(item: StockItem) {
-  return Number(item.valorInventario || 0);
-}
-
-function precioVentaReferencia(item: StockItem) {
-  return Number(item.precioVentaReferencia ?? 0);
-}
 
 export default function StockPage() {
   const [stockCompleto, setStock] =
     useState<StockItem[]>([]);
   const [alcanceParcial, setAlcanceParcial] = useState(false);
+  // INV-02: atajos hacia Movimientos solo con los permisos que exigen sus guardas de página.
+  const [permisos, setPermisos] = useState(SIN_PERMISOS_MOVIMIENTOS);
 
   const [busqueda, setBusqueda] =
     useState("");
@@ -122,6 +119,7 @@ export default function StockPage() {
         if (activo) {
           setStock(r.stock);
           setAlcanceParcial(r.alcanceParcial === true);
+          setPermisos(normalizarPermisosMovimientos(r.permisos));
         }
       })
       .catch((e: unknown) => {
@@ -238,7 +236,7 @@ export default function StockPage() {
     );
   }, [stockCompleto]);
 
-  const resumen = useMemo(() => resumenStock(stock), [stock]);
+  const resumen = useMemo(() => indicadoresStock(stock), [stock]);
 
   const filtrados = useMemo(() => {
     const term =
@@ -402,11 +400,18 @@ export default function StockPage() {
         </div>
 
         <div className={ui.actionsGroup}>
-          <Link href="/movimientos" className={ui.secondaryButton}>
-            Movimientos
-          </Link>
+          {puedeVerMovimientos(permisos) ? (
+            <Link href="/movimientos" className={ui.secondaryButton}>
+              Movimientos
+            </Link>
+          ) : null}
+          {puedeAbrirNuevoMovimiento(permisos) ? (
+            <Link href="/movimientos/nuevo" className={ui.secondaryButton}>
+              Nuevo movimiento
+            </Link>
+          ) : null}
           <Link href="/reposicion" className={ui.primaryButton}>
-            Reposición
+            Ver reposición
           </Link>
         </div>
       </header>
@@ -425,15 +430,15 @@ export default function StockPage() {
         </article>
 
         <article className={[ui.summaryCard, ui.summaryBlue].join(" ")}>
-          <span>Unidades disponibles</span>
+          <span>Disponible</span>
           <strong>{formatearCantidad(resumen.disponible)}</strong>
           <small>Stock disponible</small>
         </article>
 
         <article className={[ui.summaryCard, ui.summaryAmber].join(" ")}>
-          <span>Stock bajo</span>
+          <span>Bajo mínimo</span>
           <strong>{resumen.stockBajo}</strong>
-          <small>Debajo del mínimo</small>
+          <small>Disponible menor que el mínimo</small>
         </article>
 
         <article className={[ui.summaryCard, ui.summaryRed].join(" ")}>
@@ -442,17 +447,6 @@ export default function StockPage() {
           <small>Saldo disponible cero</small>
         </article>
 
-        <article className={[ui.summaryCard, ui.summaryViolet].join(" ")}>
-          <span>Valor a costo</span>
-          <strong>{money(resumen.valorCosto)}</strong>
-          <small>Costo promedio de inventario</small>
-        </article>
-
-        <article className={[ui.summaryCard, ui.summaryBlue].join(" ")}>
-          <span>Valor venta referencia</span>
-          <strong>{money(resumen.valorVenta)}</strong>
-          <small>Precio de la lista de referencia</small>
-        </article>
       </section>
 
       <section className={ui.contentCard}>
@@ -473,7 +467,7 @@ export default function StockPage() {
             <select value={nivel} onChange={(event) => setNivel(event.target.value as NivelFiltro)}>
               <option value="TODOS">Todos</option>
               <option value="NORMAL">Normal</option>
-              <option value="BAJO">Stock bajo</option>
+              <option value="BAJO">Bajo mínimo</option>
               <option value="SIN_STOCK">Sin stock</option>
               <option value="SOBRESTOCK">Sobrestock</option>
             </select>
@@ -556,6 +550,8 @@ export default function StockPage() {
             <div className={ui.ayudaPanel} role="note">
               <strong>Columnas R / C / T</strong>
               <p>R = reservado · C = cuarentena · T = en tránsito.</p>
+              <strong>Bajo mínimo y reposición</strong>
+              <p>«Bajo mínimo» compara el disponible con el mínimo. Reposición también considera el punto de reposición: un producto puede estar «Normal» aquí y necesitar reposición allá.</p>
               <strong>Sobrestock</strong>
               <p>
                 Existencia física propia (disponible + reservado + cuarentena) mayor que el stock máximo registrado en la
@@ -652,13 +648,7 @@ export default function StockPage() {
                                   : ui.statusInfo
                           }
                         >
-                          {item.nivel === "NORMAL"
-                            ? "Normal"
-                            : item.nivel === "BAJO"
-                              ? "Stock bajo"
-                              : item.nivel === "SIN_STOCK"
-                                ? "Sin stock"
-                                : "Sobrestock"}
+                          {ETIQUETA_NIVEL[item.nivel]}
                         </span>
                       </span>
                     </div>
@@ -667,10 +657,10 @@ export default function StockPage() {
                   <td className={ui.numeric}>
                     <div className={ui.cell}>
                       <strong className={ui.mono}>{money(costoUnitario(item))}</strong>
-                      <span>Valor costo: {money(valorCosto(item))}</span>
+                      <span>Valor costo: {formatearMontoTexto(item.valorInventarioTexto, MONEDA_BASE)}</span>
                       <span>
                         Venta referencia:{" "}
-                        {item.precioVentaReferencia === null ? "—" : money(precioVentaReferencia(item))}
+                        {item.precioVentaReferenciaTexto === null ? "—" : formatearMontoTexto(item.precioVentaReferenciaTexto, item.monedaPrecio || MONEDA_BASE)}
                       </span>
                     </div>
                   </td>

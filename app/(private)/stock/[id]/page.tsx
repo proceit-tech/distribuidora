@@ -7,8 +7,11 @@ import { useEffect, useState } from "react";
 import ui from "@/components/ui/lista-padrao/lista.module.css";
 import { formatearCantidad, formatearFechaIso, formatearMonto } from "@/lib/formato/listas";
 import { hoyAsuncion } from "@/lib/listas-precio/calculos";
+import { normalizarPermisosMovimientos, puedeAbrirNuevoMovimiento, puedeVerMovimientos } from "@/lib/inventario/acceso";
+import { formatearMontoTexto } from "@/lib/inventario/decimal";
 import { enlaceNuevoMovimiento } from "@/lib/movimientos/formulario";
 import { cargarStockItem } from "@/lib/stock/cliente-api";
+import { ETIQUETA_NIVEL } from "@/lib/stock/vista";
 import type { StockItem } from "@/types/stock";
 
 import styles from "./page.module.css";
@@ -18,7 +21,7 @@ type Permisos = { movimientosCrear: boolean; movimientosVer: boolean };
 const cant = (n: number | null | undefined) => (n === null || n === undefined ? "—" : formatearCantidad(n));
 const NIVEL: Record<StockItem["nivel"], { texto: string; clase: string }> = {
   NORMAL: { texto: "Normal", clase: ui.statusActive },
-  BAJO: { texto: "Stock bajo", clase: ui.statusWarning },
+  BAJO: { texto: ETIQUETA_NIVEL.BAJO, clase: ui.statusWarning },
   SIN_STOCK: { texto: "Sin stock", clase: ui.statusDanger },
   SOBRESTOCK: { texto: "Sobrestock", clase: ui.statusInfo },
 };
@@ -54,7 +57,7 @@ export default function StockDetallePage() {
         setMoneda(r.monedaBase);
         setItem(r.item);
         setAlcanceParcial(r.alcanceParcial === true);
-        if (r.permisos) setPermisos(r.permisos);
+        setPermisos(normalizarPermisosMovimientos(r.permisos));
       })
       .catch((e: unknown) => {
         if (activo) setErrorCarga(e instanceof Error ? e.message : "No fue posible cargar el stock.");
@@ -94,7 +97,8 @@ export default function StockDetallePage() {
 
   const nivel = NIVEL[item.nivel];
   // Las unidades identificadas (serie/etiqueta) aún no se pueden mover desde Movimientos: no se ofrece una acción que la API rechazaría.
-  const puedeMover = permisos.movimientosCrear && item.modoControl !== "UNIDAD_ETIQUETADA";
+  // INV-02: el atajo exige VER y CREAR (las guardas de /movimientos y /movimientos/nuevo).
+  const puedeMover = puedeAbrirNuevoMovimiento(permisos) && item.modoControl !== "UNIDAD_ETIQUETADA";
   const columnasDeposito = puedeMover ? 9 : 8;
 
   return (
@@ -121,7 +125,7 @@ export default function StockDetallePage() {
           <Link href="/reposicion" className={ui.secondaryButton}>
             Reposición
           </Link>
-          {permisos.movimientosVer ? (
+          {puedeVerMovimientos(permisos) ? (
             <Link href={`/movimientos?buscar=${encodeURIComponent(item.productoCodigo)}`} className={ui.secondaryButton}>
               Movimientos del producto
             </Link>
@@ -163,7 +167,7 @@ export default function StockDetallePage() {
         </article>
         <article className={[ui.summaryCard, ui.summaryRed].join(" ")}>
           <span>Valor físico</span>
-          <strong>{item.valorInventario > 0 || item.costoPromedio !== null ? formatearMonto(item.valorInventario, moneda) : "—"}</strong>
+          <strong>{item.valorInventario > 0 || item.costoPromedio !== null ? formatearMontoTexto(item.valorInventarioTexto, moneda) : "—"}</strong>
           <small>Total físico a costo promedio</small>
         </article>
       </section>
@@ -211,6 +215,14 @@ export default function StockDetallePage() {
             <div>
               <dt>Costo promedio</dt>
               <dd>{item.costoPromedio === null ? "Sin costo registrado" : formatearMonto(item.costoPromedio, moneda)}</dd>
+            </div>
+            <div>
+              <dt>Precio de venta de referencia</dt>
+              <dd>{item.precioVentaReferenciaTexto === null ? "Sin precio de referencia" : formatearMontoTexto(item.precioVentaReferenciaTexto, item.monedaPrecio || moneda)}</dd>
+            </div>
+            <div>
+              <dt>Valor de venta del disponible</dt>
+              <dd>{item.valorVentaReferenciaTexto === null ? "—" : formatearMontoTexto(item.valorVentaReferenciaTexto, item.monedaPrecio || moneda)}</dd>
             </div>
             <div>
               <dt>Propiedad</dt>
@@ -268,7 +280,7 @@ export default function StockDetallePage() {
                       <small className={ui.muted}>
                         {d.depositoCodigo}
                         {d.terceros > 0 ? ` · Terceros: ${cant(d.terceros)}` : ""}
-                        {d.costoCantidad > 0 ? ` · Costo: ${formatearMonto(d.costoValor, moneda)}` : ""}
+                        {d.costoCantidad > 0 ? ` · Costo: ${formatearMontoTexto(d.costoValorTexto, moneda)}` : ""}
                       </small>
                     </td>
                     <td>
