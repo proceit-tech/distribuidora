@@ -148,12 +148,13 @@ export async function verificarCasosListasComerciales(): Promise<string[]> {
   igual("base inexistente en la empresa", await campoBase(conexion([]), null), "listaBaseId");
   igual("la lista no puede ser su propia base", await validarListaBase(conexion([]).c, EMPRESA, BASE, BASE).then(() => "ok", (e: ErrorLista) => e.campo), "listaBaseId");
 
-  const datosRef = prepararLista(cuerpo({ zonaId: ZONA, reglasComerciales: [{ tipoAplicacion: "ZONA", referenciaId: ZONA }] }));
+  const REGLA = "77777777-7777-4777-8777-777777777777";
+  const datosRef = prepararLista(cuerpo({ zonaId: ZONA, reglasComerciales: [{ id: REGLA, tipoAplicacion: "ZONA", referenciaId: ZONA }] }));
   const ref = async (x: ReturnType<typeof conexion>, listaId: string | null) => validarReferenciasComerciales(x.c, EMPRESA, listaId, datosRef).then(() => "ok", (e: ErrorLista) => e.campo);
 
   igual("referencia inexistente o de otra empresa: rechazada en su campo", await ref(conexion([]), null), "zonaId");
   igual("zona inactiva y nueva: rechazada", await ref(conexion([[/FROM zonas_comerciales/, [{ activo: false }]]]), null), "zonaId");
-  igual("zona inactiva que la lista YA tenía: se conserva (cabecera y regla)", await ref(conexion([[/FROM listas_precio/, [{ zona_comercial_id: ZONA }]], [/FROM lista_precio_reglas/, [{ referencia_id: ZONA }]], [/FROM zonas_comerciales/, [{ activo: false }]]]), LISTA), "ok");
+  igual("zona inactiva que la lista YA tenía: se conserva (cabecera y regla)", await ref(conexion([[/FROM listas_precio/, [{ zona_comercial_id: ZONA }]], [/FROM lista_precio_reglas/, [{ id: REGLA, tipo_aplicacion: "ZONA", referencia_id: ZONA }]], [/FROM zonas_comerciales/, [{ activo: false }]]]), LISTA), "ok");
   igual("zona activa: válida", await ref(conexion([[/FROM zonas_comerciales/, [{ activo: true }]]]), null), "ok");
   const consulta = conexion([[/FROM zonas_comerciales/, [{ activo: true }]]]);
 
@@ -227,7 +228,7 @@ export async function verificarCasosListasComerciales(): Promise<string[]> {
   cierto("selectores de listas: zonas y canales reales (con inactivos solo si ya estaban seleccionados)", /FROM zonas_comerciales WHERE empresa_id = \$1 ORDER BY nombre/.test(listaApi) && /FROM canales_venta WHERE empresa_id = \$1 ORDER BY nombre/.test(listaApi) && /opcionesConSeleccion\(catalogo\?\.zonas/.test(form) && /opcionesConSeleccion\(catalogo\?\.canales/.test(form));
   cierto("formulario de listas: sin aviso de código automático, sin «Lista activa» duplicada, sin encabezados redundantes", !/Código automático|El código LP-XXX|Lista activa|FICHA DE PRECIOS|NUEVA LISTA|Defina precios, vigencia/.test(form));
   cierto("formulario de listas: fechas locales (no UTC), el costo nunca es precio de venta y el margen sale de la función única", !/toISOString\(\)\.slice/.test(form) && !/precioReferencia \?\? producto\.costoPromedio/.test(form) && !/Math\.round\(\s*precio/.test(form) && /margenBruto\(/.test(form) && /hoyAsuncion\(\)/.test(form) && /CampoFecha/.test(form));
-  cierto("formulario de listas: protección de cambios no guardados (salir, cancelar, beforeunload), errores por campo con pestaña y foco, confirmación del ajuste masivo", /confirmarSalida/.test(form) && /beforeunload/.test(form) && /mostrarErrores/.test(form) && /setTab\(tabDeCampo\(primero\)\)/.test(form) && /window\.confirm\(texto\)/.test(form));
+  cierto("formulario de listas: protección de cambios no guardados (salir, cancelar, beforeunload), errores por campo con pestaña y foco, confirmación del ajuste masivo", /useProtegerCambios\(sucio\)/.test(form) && /mostrarErrores/.test(form) && /setTab\(tabDeCampo\(primero\)\)/.test(form) && /window\.confirm\(texto\)/.test(form));
   cierto("el ajuste masivo no modifica descuentos (sin descuentoPct en la función)", !/aplicarAjuste[\s\S]{0,900}descuentoPct/.test(form.slice(form.indexOf("function aplicarAjuste"), form.indexOf("function cambiarProducto"))));
 
   return fallos;

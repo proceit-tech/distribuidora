@@ -63,6 +63,9 @@ export type ListaPrecioProducto = {
 
   activo: boolean;
 
+  /** Versión del precio (actualizado_at µs) que la pantalla cargó; se devuelve al guardar (LPR-A02). Ausente en precios nuevos. */
+  version?: string;
+
   escalas: ListaPrecioEscala[];
 };
 
@@ -157,12 +160,17 @@ export type ListaPrecioDetalle = {
 
   creadoEn: string;
   actualizadoEn: string;
+  /** Versión de la cabecera (actualizado_at con microsegundos, UTC): precondición obligatoria del PUT (LPR-A02). */
+  version?: string;
 };
 
 export type NuevaListaPrecio = Omit<
   ListaPrecioDetalle,
   "id" | "creadoEn" | "actualizadoEn" | "esReferencia"
->;
+> & {
+  /** Ids de los precios que existían al abrir la lista: los que ya no estén en `productos` se eliminan por decisión explícita (LPR-A01/A02). Solo edición. */
+  itemsCargados?: string[];
+};
 
 /** Fila de la lista (GET /api/listas-precio): sin los hijos, con sus conteos. */
 export type ListaPrecioFila = Omit<

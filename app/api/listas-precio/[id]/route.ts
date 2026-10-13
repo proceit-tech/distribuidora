@@ -3,11 +3,15 @@ import type { PoolClient } from "pg";
 
 import { denyIfNoPermission } from "@/lib/auth/permissions";
 import {
-  borrarHijos,
+  SQL_VERSION,
+  aplicarHijos,
   columnasLista,
-  insertarHijos,
+  exigirVersionLista,
+  planificarHijos,
   prepararLista,
   respuestaError,
+  validarCambioMonedaTipo,
+  validarCodigoReferencia,
   validarListaBase,
   validarReferenciasComerciales,
 } from "@/lib/listas-precio/shared";
@@ -62,7 +66,7 @@ export async function GET(_request: Request, contexto: Contexto) {
               coalesce(l.zona_comercial_id::text, '') AS "zonaId", coalesce(z.nombre, '') AS "zonaNombre",
               coalesce(l.canal_venta_id::text, '') AS "canalVentaId", coalesce(cv.nombre, '') AS "canalVentaNombre",
               l.activo, coalesce(l.observacion, '') AS observacion, l.es_referencia AS "esReferencia",
-              l.creado_at AS "creadoEn", l.actualizado_at AS "actualizadoEn"
+              l.creado_at AS "creadoEn", l.actualizado_at AS "actualizadoEn", ${SQL_VERSION("l.actualizado_at")} AS version
          FROM listas_precio l
          LEFT JOIN listas_precio b ON b.empresa_id = l.empresa_id AND b.id = l.lista_precio_base_id
          LEFT JOIN grupos_cliente g ON g.empresa_id = l.empresa_id AND g.id = l.grupo_cliente_id
@@ -81,7 +85,8 @@ export async function GET(_request: Request, contexto: Contexto) {
                 i.costo_referencia::float8 AS "costoReferencia", i.precio_base::float8 AS "precioBase",
                 i.precio_lista::float8 AS "precioLista", i.margen_pct::float8 AS "margenPct",
                 i.descuento_pct::float8 AS "descuentoPct", i.cantidad_minima::float8 AS "cantidadMinima",
-                ${D("i.vigente_desde")} AS "vigenteDesde", ${D("i.vigente_hasta")} AS "vigenteHasta", i.activo
+                ${D("i.vigente_desde")} AS "vigenteDesde", ${D("i.vigente_hasta")} AS "vigenteHasta", i.activo,
+                ${SQL_VERSION("i.actualizado_at")} AS version
            FROM lista_precio_items i
            JOIN productos p ON p.empresa_id = i.empresa_id AND p.id = i.producto_id
            JOIN unidades_medida u ON u.id = i.unidad_medida_id
@@ -159,20 +164,28 @@ export async function PUT(request: Request, contexto: Contexto) {
     await conexion.query("BEGIN");
 
     const actual = await conexion.query(
-      `SELECT codigo, es_referencia, lista_precio_base_id::text AS base_id, moneda_codigo, tipo_lista FROM listas_precio WHERE empresa_id = $1 AND id = $2 FOR UPDATE`,
+      `SELECT codigo, es_referencia, lista_precio_base_id::text AS base_id, moneda_codigo, tipo_lista, ${SQL_VERSION("actualizado_at")} AS version_actual
+         FROM listas_precio WHERE empresa_id = $1 AND id = $2 FOR UPDATE`,
       [empresaId, id],
     );
     if (!actual.rowCount) {
       await conexion.query("ROLLBACK");
       return noEncontrado();
     }
-    const { codigo: codigoActual, es_referencia: esReferencia, base_id: baseActual, moneda_codigo: monedaActual, tipo_lista: tipoActual } = actual.rows[0] as {
+    const { codigo: codigoActual, es_referencia: esReferencia, base_id: baseActual, moneda_codigo: monedaActual, tipo_lista: tipoActual, version_actual: versionActual } = actual.rows[0] as {
       codigo: string;
       es_referencia: boolean;
       base_id: string | null;
       moneda_codigo: string;
       tipo_lista: string;
+      version_actual: string;
     };
+
+    // LPR-A02: con la fila bloqueada y ANTES de cualquier escritura. Sin versión o con una versión distinta → 409 (el formulario local no se descarta).
+    exigirVersionLista(datos.version, versionActual);
+
+    // LPR-A04: el código de la lista de referencia (REF-VENTA) es inmutable; sus precios sí se editan.
+    validarCodigoReferencia(esReferencia, datos.codigo, codigoActual);
 
     if (esReferencia) {
       // La lista de referencia (precio de venta de Productos) mantiene su definición: venta, precio fijo, sin alcance ni base.
@@ -187,19 +200,22 @@ export async function PUT(request: Request, contexto: Contexto) {
       }
     }
 
+    await validarCambioMonedaTipo(conexion, empresaId, id, { moneda: monedaActual, tipo: tipoActual }, { moneda: datos.moneda, tipo: datos.tipo });
     await validarListaBase(conexion, empresaId, id, datos.listaBaseId, { moneda: datos.moneda, tipo: datos.tipo, previo: { baseId: baseActual, moneda: monedaActual, tipo: tipoActual } });
     await validarReferenciasComerciales(conexion, empresaId, id, datos);
 
-    const columnas = columnasLista(datos, datos.codigo || codigoActual);
+    // LPR-A01/A02/A06: lectura y validación de los hijos bajo bloqueo, ANTES de la primera escritura.
+    const plan = await planificarHijos(conexion, empresaId, id, datos);
+
+    const columnas = columnasLista(datos, esReferencia ? codigoActual : datos.codigo || codigoActual);
     const sets = columnas.map(([n], i) => `${n} = $${i + 3}`);
-    await conexion.query(`UPDATE listas_precio SET ${sets.join(", ")} WHERE id = $1 AND empresa_id = $2`, [
+    await conexion.query(`UPDATE listas_precio SET ${sets.join(", ")}, actualizado_at = clock_timestamp() WHERE id = $1 AND empresa_id = $2`, [
       id,
       empresaId,
       ...columnas.map(([, v]) => v),
     ]);
 
-    await borrarHijos(conexion, empresaId, id);
-    await insertarHijos(conexion, empresaId, id, datos);
+    await aplicarHijos(conexion, empresaId, id, datos, plan);
     await conexion.query("COMMIT");
 
     return NextResponse.json({

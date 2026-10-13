@@ -17,6 +17,7 @@ import {
   type ErroresLista,
   type TabLista,
 } from "@/lib/listas-precio/formulario";
+import { useProtegerCambios } from "@/lib/ui/proteger-cambios";
 import type {
   CatalogoListasPrecio,
   ListaPrecioCatalogoOpcion,
@@ -151,6 +152,8 @@ export default function ListaPrecioForm({ mode, initial, onSave }: Props) {
   const [abiertos, setAbiertos] = useState<Record<string, boolean>>({});
 
   const bloqueada = initial?.esReferencia === true;
+  // LPR-A05: una lista que ya tiene precios guardados no cambia de moneda (la integridad de NEX-018 lo rechazaría y no hay conversión aprobada). En el alta, con precios aún sin guardar, se mantiene la confirmación.
+  const monedaBloqueada = mode === "edit" && (initial?.productos.length ?? 0) > 0;
   const sucio = listaSucia(form, base);
   const moneda = form.monedaCodigo;
   const decimales = decimalesMoneda(moneda);
@@ -173,20 +176,8 @@ export default function ListaPrecioForm({ mode, initial, onSave }: Props) {
     };
   }, []);
 
-  useEffect(() => {
-    if (!sucio) return;
-
-    const alSalir = (e: BeforeUnloadEvent) => {
-      e.preventDefault();
-      e.returnValue = "";
-    };
-
-    window.addEventListener("beforeunload", alSalir);
-
-    return () => window.removeEventListener("beforeunload", alSalir);
-  }, [sucio]);
-
-  const confirmarSalida = () => !sucio || window.confirm("Hay cambios sin guardar en la lista. Si sale, se perderán. ¿Desea salir?");
+  // LPR-A07: guard oficial (recarga/cierre y CUALQUIER enlace interno, también el menú lateral); sin aviso si no hay cambios efectivos. Tras guardar, `base` se alinea y el guard se retira.
+  useProtegerCambios(sucio);
 
   function update<K extends keyof NuevaListaPrecio>(key: K, value: NuevaListaPrecio[K]) {
     setForm((actual) => ({ ...actual, [key]: value }));
@@ -339,7 +330,7 @@ export default function ListaPrecioForm({ mode, initial, onSave }: Props) {
     setTab(tabDeCampo(primero));
     const m = /^productos\.(\d+)\./.exec(primero);
 
-    if (m && !primero.endsWith("precioLista") && !primero.endsWith("costoReferencia") && !primero.endsWith("precioBase") && !primero.endsWith("cantidadMinima")) {
+    if (m && (primero.includes(".escalas.") || (!primero.endsWith("precioLista") && !primero.endsWith("costoReferencia") && !primero.endsWith("precioBase") && !primero.endsWith("cantidadMinima")))) {
       const item = form.productos[Number(m[1])];
 
       if (item) setAbiertos((a) => ({ ...a, [item.id]: true }));
@@ -375,6 +366,8 @@ export default function ListaPrecioForm({ mode, initial, onSave }: Props) {
       descripcion: form.descripcion.trim(),
       observacion: form.observacion.trim(),
       activo: form.estado === "ACTIVA",
+      // LPR-A01/A02: precios que existían al abrir la lista (los que ya no estén se eliminan por decisión explícita; cualquier otro cambio externo da 409).
+      ...(mode === "edit" ? { itemsCargados: (initial?.productos ?? []).map((p) => p.id) } : {}),
     };
 
     try {
@@ -405,7 +398,7 @@ export default function ListaPrecioForm({ mode, initial, onSave }: Props) {
           <nav className={styles.breadcrumb} aria-label="Ruta de navegación">
             <span>Maestros</span>
             <i aria-hidden="true">/</i>
-            <Link href="/listas-precio" onClick={(e) => !confirmarSalida() && e.preventDefault()}>
+            <Link href="/listas-precio">
               Listas de precios
             </Link>
             <i aria-hidden="true">/</i>
@@ -422,7 +415,7 @@ export default function ListaPrecioForm({ mode, initial, onSave }: Props) {
           ) : null}
         </div>
 
-        <Link href="/listas-precio" className={styles.secondaryButton} onClick={(e) => !confirmarSalida() && e.preventDefault()}>
+        <Link href="/listas-precio" className={styles.secondaryButton}>
           ← Volver a listas
         </Link>
       </header>
@@ -452,7 +445,7 @@ export default function ListaPrecioForm({ mode, initial, onSave }: Props) {
             <>
               <div className={styles.gridFour}>
                 <Campo etiqueta="Código" campo="codigo" errores={errores}>
-                  <input {...aria("codigo", errores)} maxLength={50} value={form.codigo} placeholder="Automático" onChange={(e) => update("codigo", e.target.value)} />
+                  <input {...aria("codigo", errores)} maxLength={50} value={form.codigo} placeholder="Automático" readOnly={bloqueada} title={bloqueada ? "El código de la lista de referencia no se puede cambiar." : undefined} onChange={(e) => update("codigo", e.target.value)} />
                 </Campo>
                 <Campo etiqueta="Nombre" requerido campo="nombre" errores={errores} className={styles.span2}>
                   <input {...aria("nombre", errores)} maxLength={200} value={form.nombre} onChange={(e) => update("nombre", e.target.value)} />
@@ -466,10 +459,10 @@ export default function ListaPrecioForm({ mode, initial, onSave }: Props) {
               </div>
 
               <div className={styles.gridFour}>
-                <Campo etiqueta="Moneda" campo="monedaCodigo" errores={errores}>
+                <Campo etiqueta="Moneda" campo="monedaCodigo" errores={errores} ayuda={monedaBloqueada && !bloqueada ? "Con precios guardados no se puede cambiar (no hay conversión de moneda)." : undefined}>
                   <select
                     {...aria("monedaCodigo", errores)}
-                    disabled={bloqueada}
+                    disabled={bloqueada || monedaBloqueada}
                     value={form.monedaCodigo}
                     onChange={(e) => {
                       if (form.productos.length > 0 && !window.confirm(`La lista tiene ${form.productos.length} precio(s) cargado(s). Cambiar la moneda a ${e.target.value} NO convierte los importes (no hay conversión aprobada). ¿Continuar?`)) return;
@@ -915,7 +908,7 @@ export default function ListaPrecioForm({ mode, initial, onSave }: Props) {
           <small>{sucio ? "Hay cambios sin guardar." : "Sin cambios pendientes."}</small>
 
           <div className={styles.footerActions}>
-            <Link href="/listas-precio" className={styles.cancelButton} onClick={(e) => !confirmarSalida() && e.preventDefault()}>
+            <Link href="/listas-precio" className={styles.cancelButton}>
               Cancelar
             </Link>
             <button type="submit" disabled={saving} className={styles.saveButton}>

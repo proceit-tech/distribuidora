@@ -48,6 +48,13 @@ export function validarListaFormulario(f: NuevaListaPrecio): ErroresLista {
       if (!finito(s.precio) || s.precio < 0) e[`${re}.precio`] = "El precio no puede ser negativo.";
       if (!finito(s.descuentoPct) || s.descuentoPct < 0 || s.descuentoPct > 100) e[`${re}.descuentoPct`] = "Debe estar entre 0 y 100.";
     });
+
+    // LPR-A03: el rango (inclusivo) de un escalón no puede solaparse con el de otro del mismo precio; el siguiente empieza por encima del máximo anterior y solo el último puede quedar abierto.
+    for (const k of tramosSuperpuestos(p.escalas)) {
+      const clave = `${r}.escalas.${k}.cantidadMinima`;
+
+      if (!e[clave]) e[clave] = "Este escalón se superpone con otro: debe empezar por encima del máximo del anterior.";
+    }
   });
 
   f.reglasComerciales.forEach((g, i) => {
