@@ -6,7 +6,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "re
 import { compararTexto, ordenarLista, siguienteOrden, type Orden } from "@/components/ui/lista-padrao/orden";
 import { ThOrdenable } from "@/components/ui/lista-padrao/th-ordenable";
 import ui from "@/components/ui/lista-padrao/lista.module.css";
-import { cargarCatalogoCompleto, crearCompuerta, textoConfirmarInactivacion, type FilaCatalogo } from "@/lib/productos/catalogos-carga";
+import { cargaConfiable, cargarCatalogoCompleto, crearCompuerta, motivoBloqueoGuardar, permisosVigentes, textoConfirmarInactivacion, type FilaCatalogo } from "@/lib/productos/catalogos-carga";
 import { useProtegerCambios } from "@/lib/ui/proteger-cambios";
 import {
   campoDeErrorServidor,
@@ -45,9 +45,11 @@ export default function CatalogosProductosPage() {
   const [filas, setFilas] = useState<Fila[]>([]);
   const [familias, setFamilias] = useState<Fila[]>([]);
   const [categorias, setCategorias] = useState<Fila[]>([]);
-  const [permisos, setPermisos] = useState({ crear: false, editar: false });
+  const [permisosCargados, setPermisos] = useState({ crear: false, editar: false });
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
+  // CAT-R02-01: fallo de la consulta principal. Separado de «error» (errores de acciones) para que guardar/abrir formularios no lo borren.
+  const [errorCarga, setErrorCarga] = useState("");
   // CAT-A01: fallo de un catálogo auxiliar (Familias/Categorías): la lista se muestra, pero no se permite crear ni editar asociaciones con opciones insuficientes.
   const [errorAuxiliar, setErrorAuxiliar] = useState("");
   const [aviso, setAviso] = useState("");
@@ -63,6 +65,9 @@ export default function CatalogosProductosPage() {
   const [orden, setOrden] = useState<Orden<CampoOrden>>(null);
   const [paginacion, setPaginacion] = useState({ clave: "", pagina: 1 });
 
+  const estadoCarga = { cargando, errorCarga, errorAuxiliar };
+  const confiable = cargaConfiable(estadoCarga);
+  const permisos = permisosVigentes(permisosCargados, estadoCarga);
   const meta = TABS.find((t) => t.id === tipo)!;
   const sucio = formularioSucio(form, base);
   // Familia histórica sin categoría: se puede editar e inactivar sin clasificarla; la categoría se asigna manualmente cuando corresponda.
@@ -76,6 +81,7 @@ export default function CatalogosProductosPage() {
 
     setCargando(true);
     setError("");
+    setErrorCarga("");
     setErrorAuxiliar("");
 
     const r = await cargarCatalogoCompleto(tipo, (url) => fetch(url, { cache: "no-store" }));
@@ -84,13 +90,21 @@ export default function CatalogosProductosPage() {
 
     if (r.error) {
       setFilas([]);
-      setError(r.error);
+      setPermisos({ crear: false, editar: false });
+      setFamilias([]);
+      setCategorias([]);
+      setErrorCarga(r.error);
     } else {
       setFilas(r.filas);
       setPermisos(r.permisos);
       if (r.familias) setFamilias(r.familias);
       if (r.categorias) setCategorias(r.categorias);
       setErrorAuxiliar(r.errorAuxiliar);
+
+      if (r.errorAuxiliar) {
+        if (!r.familias) setFamilias([]);
+        if (!r.categorias) setCategorias([]);
+      }
     }
     setCargando(false);
   }, [tipo]);
@@ -127,6 +141,9 @@ export default function CatalogosProductosPage() {
   function cambiarTab(nuevo: Tipo) {
     if (nuevo === tipo || !confirmarDescarte()) return;
 
+    // CAT-R02-01: los permisos y datos de la pestaña anterior no valen para la nueva mientras no llegue su carga.
+    setCargando(true);
+    setPermisos({ crear: false, editar: false });
     setTipo(nuevo);
     setOrden(null);
     cerrarFormulario();
@@ -212,6 +229,15 @@ export default function CatalogosProductosPage() {
     setAviso("");
     setErrorForm("");
 
+    // CAT-R02-01: sin datos confiables (carga en curso o fallida) no se envía nada; el borrador queda intacto.
+    const bloqueo = motivoBloqueoGuardar(estadoCarga);
+
+    if (bloqueo) {
+      setErrorForm(bloqueo);
+
+      return;
+    }
+
     const locales = validarFormularioCatalogo(tipo, form, categoriaPendiente);
 
     if (primerCampoConError(locales)) {
@@ -252,6 +278,14 @@ export default function CatalogosProductosPage() {
   async function cambiarEstado(fila: Fila) {
     setError("");
     setAviso("");
+
+    const bloqueo = motivoBloqueoGuardar(estadoCarga);
+
+    if (bloqueo) {
+      setError(bloqueo);
+
+      return;
+    }
 
     // CAT-A05: confirmación con los descendientes reales (familias/líneas), sin cascada.
     const confirmar = textoConfirmarInactivacion(tipo, fila);
@@ -312,7 +346,7 @@ export default function CatalogosProductosPage() {
           >
             ← Productos
           </Link>
-          {permisos.crear && !errorAuxiliar ? (
+          {permisos.crear ? (
             <button
               type="button"
               className={ui.primaryButton}
@@ -346,6 +380,11 @@ export default function CatalogosProductosPage() {
       {error ? (
         <div className={ui.alertError} role="alert">
           {error}
+        </div>
+      ) : null}
+      {errorCarga ? (
+        <div className={ui.alertError} role="alert">
+          {errorCarga} No se puede crear, editar ni guardar hasta recargar correctamente.{form ? " Lo escrito en el formulario se conserva." : ""}
         </div>
       ) : null}
       {errorAuxiliar ? (
@@ -437,7 +476,7 @@ export default function CatalogosProductosPage() {
             >
               Cancelar
             </button>
-            <button type="submit" className={ui.primaryButton} disabled={guardando}>
+            <button type="submit" className={ui.primaryButton} disabled={guardando || !confiable} title={confiable ? undefined : "Hasta que los datos se carguen correctamente no se puede guardar."}>
               {guardando ? "Guardando..." : "Guardar"}
             </button>
           </div>
@@ -579,8 +618,8 @@ export default function CatalogosProductosPage() {
                           <button
                             type="button"
                             className={ui.rowButton}
-                            disabled={Boolean(errorAuxiliar)}
-                            title={errorAuxiliar ? "No se pueden editar asociaciones mientras falle la carga de los catálogos auxiliares." : undefined}
+                            disabled={!confiable}
+                            title={confiable ? undefined : "No se puede editar mientras falle la carga del catálogo o de los catálogos auxiliares."}
                             onClick={() => {
                               if (!confirmarDescarte()) return;
                               abrirFormulario({
@@ -596,7 +635,7 @@ export default function CatalogosProductosPage() {
                           >
                             Editar
                           </button>
-                          <button type="button" className={ui.rowButton} onClick={() => void cambiarEstado(f)}>
+                          <button type="button" className={ui.rowButton} disabled={!confiable} onClick={() => void cambiarEstado(f)}>
                             {f.activo ? "Inactivar" : "Activar"}
                           </button>
                         </div>

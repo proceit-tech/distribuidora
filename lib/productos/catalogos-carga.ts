@@ -115,3 +115,26 @@ export function textoConfirmarInactivacion(tipo: TipoCatalogoCarga, fila: FilaCa
 
   return partes.length > 0 ? `¿Inactivar «${fila.nombre}»? ${partes.join(" ")}` : null;
 }
+
+/** CAT-R02-01: estado de la carga de la pantalla. Solo con carga confiable (sin carga en curso ni errores de la lista principal o de los auxiliares) se permite crear, editar o guardar. */
+export type EstadoCarga = { cargando: boolean; errorCarga: string; errorAuxiliar: string };
+
+export const SIN_PERMISOS: Permisos = { crear: false, editar: false };
+
+export function cargaConfiable(e: EstadoCarga): boolean {
+  return !e.cargando && !e.errorCarga && !e.errorAuxiliar;
+}
+
+/** Los permisos de una carga anterior (otra pestaña, o una carga que ahora falló) nunca habilitan acciones: solo valen con carga confiable. */
+export function permisosVigentes(permisos: Permisos, e: EstadoCarga): Permisos {
+  return cargaConfiable(e) ? permisos : SIN_PERMISOS;
+}
+
+/** Motivo visible cuando Guardar/Nueva/Editar están bloqueados; null si la carga es confiable. El borrador del formulario se conserva. */
+export function motivoBloqueoGuardar(e: EstadoCarga): string | null {
+  if (e.cargando) return "Los datos se están recargando. Espere a que termine; lo escrito en el formulario se conserva.";
+  if (e.errorCarga) return `No se puede guardar porque no se pudo cargar el catálogo: ${e.errorCarga} Lo escrito se conserva; recargue la página cuando se restablezca la conexión.`;
+  if (e.errorAuxiliar) return `No se puede guardar porque no se pudieron cargar los catálogos auxiliares: ${e.errorAuxiliar}. Lo escrito se conserva.`;
+
+  return null;
+}

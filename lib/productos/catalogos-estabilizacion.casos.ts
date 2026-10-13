@@ -7,7 +7,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { contador } from "@/lib/clientes/contador-casos";
-import { cargarCatalogoCompleto, crearCompuerta, textoConfirmarInactivacion, type FilaCatalogo, type TipoCatalogoCarga } from "@/lib/productos/catalogos-carga";
+import { cargaConfiable, cargarCatalogoCompleto, crearCompuerta, motivoBloqueoGuardar, permisosVigentes, textoConfirmarInactivacion, type FilaCatalogo, type TipoCatalogoCarga } from "@/lib/productos/catalogos-carga";
 import { exigirVersionCatalogo } from "@/lib/productos/catalogos-version";
 import { catalogosConHistoricas } from "@/lib/productos/historicas";
 import type { CatalogoProductos } from "@/types/productos";
@@ -72,7 +72,7 @@ export async function verificarCasosCatalogosEstabilizacion(): Promise<string[]>
 
   const pagina = leer("app/(private)/productos/catalogos/page.tsx");
 
-  cierto("A01 pantalla: con un auxiliar fallido se muestra el error y se bloquean «Nueva» y «Editar» (no se guardan asociaciones con opciones insuficientes), sin tocar el estado de Categorías/Marcas", /\{permisos\.crear && !errorAuxiliar \?/.test(pagina) && /disabled=\{Boolean\(errorAuxiliar\)\}/.test(pagina) && /setErrorAuxiliar\(r\.errorAuxiliar\)/.test(pagina) && /Por seguridad no se puede crear ni editar/.test(pagina));
+  cierto("A01 pantalla: con un auxiliar fallido se muestra el error y se bloquean «Nueva» y «Editar» (no se guardan asociaciones con opciones insuficientes), sin tocar el estado de Categorías/Marcas", /\{permisos\.crear \? \(/.test(pagina) && /permisosVigentes\(permisosCargados, estadoCarga\)/.test(pagina) && /disabled=\{!confiable\}/.test(pagina) && /setErrorAuxiliar\(r\.errorAuxiliar\)/.test(pagina) && /Por seguridad no se puede crear ni editar/.test(pagina));
 
   // ── CAT-A02: simulación de respuestas fuera de orden
   type Estado = { tipo: string; permisos: string };
@@ -209,6 +209,67 @@ export async function verificarCasosCatalogosEstabilizacion(): Promise<string[]>
   cierto("A06: la versión es actualizado_at con microsegundos (UTC) tanto en la lista como en la comparación; el PUT nunca la toma de otra fuente; no hay migración nueva (la última sigue siendo la NEX-053)", (admin.match(/to_char\([^,]{0,12}actualizado_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS\.US'\)/g) ?? []).length >= 2 && readdirSync(join(raiz, "documentacao/banco/nexit/v1/migraciones")).filter((n) => /^NEX-\d+/.test(n)).sort().at(-1)!.startsWith("NEX-053"));
   cierto("A06 límite documentado: el serializado depende de que TODA escritura de la tabla tome el bloqueo (alta y edición lo toman; solo esta capa escribe, el rol de ejecución no tiene INSERT/UPDATE directos en Categorías/Marcas)", /await c\.query\(`SELECT pg_advisory_xact_lock\(hashtext\(\$1\)\)`/.test(admin) && (leer("lib/productos/catalogos-admin.ts").match(/catalogo_producto_guardar/g) ?? []).length >= 2 && !/catalogo_producto_guardar/.test(leer("app/api/productos/route.ts")));
   cierto("A06 pantalla: la edición y el cambio de estado envían la versión que la lista cargó; ante 409 el formulario conserva lo escrito y el cambio de estado recarga la lista vigente", /if \(form\.id\) cuerpo\.version = form\.version/.test(pagina) && /version: fila\.version \}/.test(pagina) && /version: f\.version,/.test(pagina) && /await cargar\(\); \/\/ CAT-A06/.test(pagina) && /setErrorForm\(mensaje\)/.test(pagina));
+
+  // ── CAT-R02-01: gravación solo con carga confiable (lista principal + auxiliares), también con el formulario ya abierto
+  const ok0 = { cargando: false, errorCarga: "", errorAuxiliar: "" };
+  const P = { crear: true, editar: true };
+  const SIN = { crear: false, editar: false };
+
+  igual("R02-01 positivo: sin carga en curso ni errores → confiable, permisos vigentes y sin motivo de bloqueo", [cargaConfiable(ok0), permisosVigentes(P, ok0), motivoBloqueoGuardar(ok0)], [true, P, null]);
+  igual("R02-01 negativo: carga en curso → no confiable, permisos anulados, motivo de recarga", [cargaConfiable({ ...ok0, cargando: true }), permisosVigentes(P, { ...ok0, cargando: true }), /recargando/.test(motivoBloqueoGuardar({ ...ok0, cargando: true }) ?? "")], [false, SIN, true]);
+
+  for (const [codigo, cuerpo] of [[401, { error: "Sesión vencida." }], [403, { error: "Sin permiso." }], [500, { error: "Error interno." }]] as const) {
+    const rr = await cargarCatalogoCompleto("marcas", fetchDe({ "/api/productos/marcas": { status: codigo, cuerpo } }).f);
+    const est = { cargando: false, errorCarga: rr.error, errorAuxiliar: rr.errorAuxiliar };
+
+    igual(`R02-01 (a) la pestaña responde ${codigo} tras haber cargado con CREAR: sin permisos vigentes, no confiable y con motivo`, [rr.error !== "", cargaConfiable(est), permisosVigentes(P, est), motivoBloqueoGuardar(est) !== null], [true, false, SIN, true]);
+  }
+
+  const sinForma = await cargarCatalogoCompleto("marcas", fetchDe({ "/api/productos/marcas": { status: 200, cuerpo: { otra: [] } } }).f);
+
+  igual("R02-01 (d) JSON sin la forma esperada en la lista principal → error de carga y bloqueo", [sinForma.error !== "", cargaConfiable({ cargando: false, errorCarga: sinForma.error, errorAuxiliar: "" })], [true, false]);
+
+  const redCaida = await cargarCatalogoCompleto("marcas", fetchDe({ "/api/productos/marcas": "red" }).f);
+
+  igual("R02-01 (d) caída de red en la lista principal → error de carga y bloqueo", [redCaida.error !== "", cargaConfiable({ cargando: false, errorCarga: redCaida.error, errorAuxiliar: "" })], [true, false]);
+
+  const auxCae = await cargarCatalogoCompleto("lineas", fetchDe({ "/api/productos/lineas": lineasOk, "/api/productos/familias": { status: 500, cuerpo: { error: "Fallo." } }, "/api/productos/categorias": categoriasOk }).f);
+  const estAux = { cargando: false, errorCarga: auxCae.error, errorAuxiliar: auxCae.errorAuxiliar };
+
+  igual("R02-01 (b) formulario de edición abierto y la recarga trae un auxiliar con 500: no confiable, sin permisos vigentes y motivo de catálogos auxiliares", [auxCae.error, cargaConfiable(estAux), permisosVigentes(P, estAux), /catálogos auxiliares/.test(motivoBloqueoGuardar(estAux) ?? "")], ["", false, SIN, true]);
+
+  const recuperada = await cargarCatalogoCompleto("lineas", fetchDe({ "/api/productos/lineas": lineasOk, "/api/productos/familias": familiasOk, "/api/productos/categorias": categoriasOk }).f);
+
+  igual("R02-01 (b)/(c) tras una recarga correcta se recupera: Guardar vuelve a estar permitido con los permisos de esa carga", [cargaConfiable({ cargando: false, errorCarga: recuperada.error, errorAuxiliar: recuperada.errorAuxiliar }), permisosVigentes(recuperada.permisos, ok0)], [true, P]);
+
+  // Simulación del handler guardar(): no envía POST/PUT si la carga no es confiable (el borrador no se toca); con carga confiable envía una sola vez.
+  const enviosSim: string[] = [];
+  const guardarSim = (est: { cargando: boolean; errorCarga: string; errorAuxiliar: string }, borrador: { nombre: string }) => {
+    const bloqueo = motivoBloqueoGuardar(est);
+
+    if (bloqueo) return { enviado: false, borrador, errorForm: bloqueo };
+
+    enviosSim.push(borrador.nombre);
+
+    return { enviado: true, borrador, errorForm: "" };
+  };
+  const borrador = { nombre: "Escrito por el usuario" };
+  const r1 = guardarSim({ ...ok0, errorCarga: "No fue posible cargar el catálogo (código 500)." }, borrador);
+  const r2 = guardarSim({ ...ok0, errorAuxiliar: "x (código 500)" }, borrador);
+  const r3 = guardarSim({ ...ok0, cargando: true }, borrador);
+  const r4 = guardarSim(ok0, borrador);
+
+  igual("R02-01 simulación de guardar(): con error principal, auxiliar o carga en curso NO hay POST/PUT y el borrador se conserva; sin errores envía exactamente una vez", [r1.enviado, r2.enviado, r3.enviado, r4.enviado, enviosSim, r1.borrador === borrador && r2.borrador === borrador && r3.borrador === borrador, r1.errorForm !== "" && r2.errorForm !== "" && r3.errorForm !== ""], [false, false, false, true, ["Escrito por el usuario"], true, true]);
+
+  const pg = leer("app/(private)/productos/catalogos/page.tsx");
+  const guardarFn = pg.slice(pg.indexOf("async function guardar(event"), pg.indexOf("async function cambiarEstado"));
+  const cambiarFn = pg.slice(pg.indexOf("async function cambiarEstado"), pg.indexOf("const familiasActivas"));
+
+  cierto("R02-01 pantalla: guardar() y cambiarEstado() consultan motivoBloqueoGuardar ANTES de cualquier envío y retornan sin tocar el formulario", guardarFn.indexOf("motivoBloqueoGuardar(estadoCarga)") > 0 && guardarFn.indexOf("motivoBloqueoGuardar(estadoCarga)") < guardarFn.indexOf("enviar(") && cambiarFn.indexOf("motivoBloqueoGuardar(estadoCarga)") > 0 && cambiarFn.indexOf("motivoBloqueoGuardar(estadoCarga)") < cambiarFn.indexOf("enviar("));
+  cierto("R02-01 pantalla: el error de la consulta principal tiene estado propio (errorCarga) que guardar/abrir/cambiar-pestaña no borran; solo cargar() lo escribe; los permisos se derivan con permisosVigentes", /const \[errorCarga, setErrorCarga\]/.test(pg) && /const permisos = permisosVigentes\(permisosCargados, estadoCarga\)/.test(pg) && (pg.match(/setErrorCarga\(/g) ?? []).length === 2 && !/setErrorCarga/.test(guardarFn + cambiarFn));
+  cierto("R02-01 pantalla: Guardar, Editar e Inactivar/Activar quedan deshabilitados sin carga confiable y Nueva solo aparece con permisos vigentes; ante error principal se vacían permisos y auxiliares", /disabled=\{guardando \|\| !confiable\}/.test(pg) && (pg.match(/disabled=\{!confiable\}/g) ?? []).length === 2 && /\{permisos\.crear \? \(/.test(pg) && /setPermisos\(\{ crear: false, editar: false \}\);\n      setFamilias\(\[\]\);\n      setCategorias\(\[\]\);/.test(pg));
+  cierto("R02-01 pantalla: al cambiar de pestaña se anulan los permisos y se marca «cargando» de inmediato (sin ventana con permisos de la pestaña anterior)", /setCargando\(true\);\n    setPermisos\(\{ crear: false, editar: false \}\);\n    setTipo\(nuevo\)/.test(pg));
+  cierto("R02-01 regresión: la protección 409 de A06 (versión en PUT) y el guard de cambios sin guardar siguen presentes", /cuerpo\.version = form\.version/.test(pg) && /useProtegerCambios\(sucio\)/.test(pg));
 
   return fallos;
 }
