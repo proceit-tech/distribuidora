@@ -131,3 +131,32 @@ Corrigir **LPR-A01…A09**, priorizando integridade e salvamento com recorte enx
 - **PARAR** após commit/push e informar somente resultados, bloqueios demonstrados, testes e SHAs completos. ChatGPT revisará os commits; responsável valida banco e telas. Menus continuam NÃO HOMOLOGADOS até validação humana.
 
 **STATUS:** handoff conjunto de estabilização autorizado; **ainda não implementado pelo Claude**. Nenhum SQL/deploy/teste operacional executado por ChatGPT nesta auditoria.
+
+
+## VI. AUD-LPR-R02 — revisão independente do commit de estabilização (12/10/2026)
+
+**Commit funcional:** `5d965eff8dce7f7f856995b90445e8b94be480f7`. **HEAD de partida consultado:** `96bbe6cc1a1acc056618a5f5c4ae9c9e9155fbf7`; branch `feature/NEXIT-2026-001-banco-demo`. Consultados protocolos atualizados, progresso, diff, formulário e tipos, `app/api/listas-precio/[id]/route.ts`, `lib/listas-precio/{shared,formulario,calculos,estabilizacion.casos}.ts`, estrutura SQL NEX-008/017/018 e integração de Productos. Auditoria de código estática pelo ChatGPT: **0 testes executados de forma independente, 0 PostgreSQL, 0 browser, 0 VM/Docker**. Claude informou **2272 verificações locais, 0 falhas, tsc/ESLint dos editados/build OK**; esses números são **relatados, não reproduzidos por esta auditoria**.
+
+### Matriz de verificação da entrega
+
+| Achado anterior | Parecer estático | Evidência e limite |
+|---|---|---|
+| **LPR-A01** | **IMPLEMENTADO COM RESSALVA** | `planificarHijos` e `aplicarHijos` diferenciam atualizações, inclusões e exclusões; UPDATE por `id` com `IS DISTINCT FROM` preserva `id`/`creado_at` dos filhos retidos. Falta proteger versões dos itens **removidos** (LPR-R02-01 abaixo). |
+| **LPR-A02** | **PARCIAL — ALTA ABERTA** | `GET` entrega versão µs da lista e de cada preço; `PUT` exige versão da lista, bloqueia cabeçalho `FOR UPDATE` e compara preços **enviados/retidos**. Detecta preço alterado, adicionado ou eliminado que continue listado na tela. Porém não compara a versão do preço que o operador excluiu localmente antes de enviar. Não declarar A02 encerrada. |
+| **LPR-A03** | **ACEITE ESTÁTICO** | `tramosSuperpuestos` usado pelo formulário e `prepararLista`, com intervalos inclusivos. Rejeição com campo de erro; testes relatados são simulados. |
+| **LPR-A04** | **ACEITE ESTÁTICO** | `validarCodigoReferencia` impede renomear lista `es_referencia`, e código permanece readOnly no formulário; preços editáveis. |
+| **LPR-A05** | **ACEITE ESTÁTICO** | `validarCambioMonedaTipo` bloqueia moeda se há itens persistidos; formulário desabilita seletor nas listas com itens. Dependente de PG para atestar trigger. |
+| **LPR-A06** | **ACEITE ESTÁTICO** | `validarUnidadesItems` confere unidade-base ou `producto_unidades` da empresa para associação nova ou alterada. Histórica sem alteração é preservada. |
+| **LPR-A07** | **ACEITE ESTÁTICO** | `useProtegerCambios(sucio)` protege links SPA e recarga (limite conhecido do botão Atrás no App Router). |
+| **LPR-A08** | **ACEITE ESTÁTICO** | `validarCambioMonedaTipo` rejeita mudança de tipo ou moeda em lista com derivadas. |
+| **LPR-A09** | **ACEITE ESTÁTICO** | `validarReferenciasComerciales` usa campo de cabeçalho ou mesmo ID de regra com tipo+referência iguais para preservar vínculo histórico inativo. Novo vínculo exige ativo. |
+
+### LPR-R02-01 — ALTA: exclusão obsoleta de preço não verifica sua versão
+
+**Prova em código:** `app/(private)/listas-precio/_components/lista-precio-form.tsx:369-370` envia `itemsCargados` como **somente os IDs inicialmente carregados**; o item removido do formulário já não consta em `productos`. Em `lib/listas-precio/shared.ts:468-516`, a versão do banco (`db.version`) só é comparada dentro do loop de **`d.productos`**, para preços que permanecem no payload (`:502-504`). Em seguida `plan.itemsEliminar = dbItems.filter(x => !retenidos.has(x.id))` (`:516`) elimina todos os não retidos, **sem comparar versão do item excluído**. `aplicarHijos:570-574` efetiva o DELETE.
+
+**Cenário mínimo:** A abre `REF-VENTA` com o item P (versão V1). A remove P da lista local. B altera o preço P em Productos (a função `producto_fijar_precio_referencia` faz UPSERT e atualiza `actualizado_at`, NEX-017:108-112), mas não altera a versão do cabeçalho. A salva qualquer edição com cabeçalho válido e `itemsCargados=[P]`, porém sem P em `productos`. O planejamento constata a presença do ID no banco, mas não compara V1×V2: DELETE do preço **alterado por B**, com commit. Isso viola explicitamente a promessa de LPR-A02 e pode retirar a referência atual de Productos. Analogamente, se B já excluiu P e A também removeu P do rascunho, o desaparecimento de ID originalmente carregado não é acusado pelo código atual.
+
+**Aceite mínimo:** registrar no contrato do formulário a versão original de **todos** os itens carregados (incluindo os removidos localmente); `PUT` deve validar **conjunto completo de IDs e versões** sob lock antes de qualquer escrita. Toda inclusão, alteração ou exclusão externa posterior ao carregamento, inclusive item retirado do rascunho, devolve **409 sem gravar cabeçalho, itens, escalões ou regras**. Rejeitar pedido incompleto/malformado de versões; preservar mensagem por campo e rascunho. Não criar migration nem mudar política de preços. Regressões obrigatórias: remoção intencional sem intervenção externa (sucesso), item removido no rascunho e depois alterado por Productos (409), item removido no rascunho e depois excluído por Productos (409), inclusão externa (409), alteração de item retido (409), lista vazia (sucesso), POST inicial sem token de edição (sucesso). Testar rollback e simular cenários de concorrência; registrar ausência de prova transacional real.
+
+**Veredito R02:** **CORREÇÃO SOLICITADA — 1 defeito ALTA confirmado, LPR-A02 ainda não encerrado.** Demais ajustes com aceite **estático somente**, pendentes de PostgreSQL real e validação operacional humana. Não classificar menu como HOMOLOGADO.
