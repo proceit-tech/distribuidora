@@ -1,8 +1,10 @@
 /**
- * INV-05 — carga de la pantalla de Depósitos, separada de React para probarla sin navegador. Verifica HTTP y FORMA (depositos y sucursales = arreglos; permisos = booleanos): una
+ * INV-05 — carga de la pantalla de Depósitos, separada de React para probarla sin navegador. Verifica HTTP y FORMA de cada registro (depositos y sucursales = arreglos de objetos válidos; permisos = booleanos; INV-R02-03): una
  * respuesta rara NO se convierte en «sin depósitos» ni conserva los permisos de una carga anterior. Los permisos de una carga previa (o de una carga que falló o está en curso)
  * nunca habilitan crear, editar, activar/inactivar ni gestionar usuarios (ver `permisosVigentes`/`cargaConfiable` en catalogos-carga).
  */
+import { actorValido, depositoValido, listaValida, sucursalValida } from "@/lib/inventario/validar-carga";
+
 export type PermisosDepositos = { crear: boolean; editar: boolean; stock?: boolean };
 
 export type ResultadoCargaDepositos<D, S> = {
@@ -30,7 +32,7 @@ export async function cargarDepositos<D = Record<string, unknown>, S = Record<st
   }
 
   if (!r.ok) return { datos: null, error: `${j?.error ?? "No fue posible cargar los depósitos."} (código ${r.status})` };
-  if (!j || !Array.isArray(j.depositos) || !Array.isArray(j.sucursales)) return { datos: null, error: "La respuesta de depósitos no tiene el formato esperado." };
+  if (!j || !listaValida(j.depositos, depositoValido) || !listaValida(j.sucursales, sucursalValida) || !actorValido(j.actor)) return { datos: null, error: "La respuesta de depósitos no tiene el formato esperado." };
 
   const p = j.permisos as Partial<PermisosDepositos> | undefined;
 
@@ -47,12 +49,25 @@ export async function cargarDepositos<D = Record<string, unknown>, S = Record<st
   };
 }
 
-/** Dirección de «Ver stock» de un depósito: Stock aplica de verdad el filtro `?deposito=` (si el depósito no está en su alcance, se ignora). */
+/** Dirección de «Ver stock» de un depósito: Stock valida `?deposito=` contra los depósitos autorizados del usuario (ver `interpretarDepositoUrl`). */
 export const enlaceStockDeDeposito = (depositoId: string): string => `/stock?deposito=${encodeURIComponent(depositoId)}`;
 
-/** Lee `?deposito=` de una consulta y lo acepta solo si coincide con un depósito que el usuario ve (nunca se aplica un id desconocido). */
-export function depositoDesdeConsulta(consulta: string, conocidos: string[]): string | null {
-  const id = new URLSearchParams(consulta).get("deposito");
+/**
+ * INV-R02-02 — resultado de interpretar `?deposito=` contra los depósitos AUTORIZADOS del usuario (tengan o no saldo):
+ *  · SIN_PARAMETRO: la URL no pide depósito → consolidado normal;
+ *  · SELECCIONADO: depósito autorizado (con o sin saldo) → se aplica el filtro y, si no hay saldo, se informa «sin saldos» (no desaparece);
+ *  · NO_DISPONIBLE: id vacío, obsoleto, inexistente o fuera de su alcance → aviso explícito; NUNCA se confunde en silencio con el consolidado
+ *    y el aviso no distingue «no existe» de «no autorizado» (no revela depósitos ajenos).
+ */
+export type DepositoUrl = { tipo: "SIN_PARAMETRO" } | { tipo: "SELECCIONADO"; id: string; nombre: string } | { tipo: "NO_DISPONIBLE" };
 
-  return id && conocidos.includes(id) ? id : null;
+export function interpretarDepositoUrl(consulta: string, autorizados: Array<{ id: string; nombre: string }>): DepositoUrl {
+  const params = new URLSearchParams(consulta);
+
+  if (!params.has("deposito")) return { tipo: "SIN_PARAMETRO" };
+
+  const id = (params.get("deposito") ?? "").trim();
+  const dep = id ? autorizados.find((d) => d.id === id) : undefined;
+
+  return dep ? { tipo: "SELECCIONADO", id: dep.id, nombre: dep.nombre } : { tipo: "NO_DISPONIBLE" };
 }

@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { contador } from "@/lib/clientes/contador-casos";
-import { cargarDepositos, depositoDesdeConsulta, enlaceStockDeDeposito } from "@/lib/depositos/carga";
+import { cargarDepositos, enlaceStockDeDeposito, interpretarDepositoUrl } from "@/lib/depositos/carga";
 import { validarDeposito } from "@/lib/depositos/validacion";
 import { cargaConfiable, crearCompuerta, motivoBloqueoGuardar, permisosVigentes } from "@/lib/productos/catalogos-carga";
 
@@ -28,7 +28,8 @@ export async function verificarCasosInventarioDepositos(): Promise<string[]> {
 
     return new Response(JSON.stringify(r.cuerpo ?? {}), { status: r.status });
   };
-  const OK = (permisos: Record<string, unknown> = { crear: true, editar: true, stock: true }, depositos: unknown[] = [{ id: U(1), codigo: "A", nombre: "Central" }]) => ({
+  const DEP = (id: string, nombre: string) => ({ id, codigo: "A", nombre, activo: true, sucursalId: U(5), sucursalNombre: "Matriz", sucursalCodigo: "S1", conMovimientos: false, conSaldo: true });
+  const OK = (permisos: Record<string, unknown> = { crear: true, editar: true, stock: true }, depositos: unknown[] = [DEP(U(1), "Central")]) => ({
     status: 200,
     cuerpo: { depositos, sucursales: [{ id: U(5), codigo: "S1", nombre: "Matriz", activo: true }], permisos, actor: { alcanceDepositos: "ASIGNADOS" } },
   });
@@ -93,14 +94,14 @@ export async function verificarCasosInventarioDepositos(): Promise<string[]> {
       estado.lista = res.datos?.depositos ?? [];
     };
 
-    await Promise.all([recargar(OK(undefined, [{ id: "vieja" }]), 50), recargar(OK(undefined, [{ id: "nueva" }]), 5)]);
-    igual("INV-T05 respuesta lenta de una recarga anterior no pisa a la más reciente", estado.lista, [{ id: "nueva" }]);
+    await Promise.all([recargar(OK(undefined, [DEP("vieja", "V")]), 50), recargar(OK(undefined, [DEP("nueva", "N")]), 5)]);
+    igual("INV-T05 respuesta lenta de una recarga anterior no pisa a la más reciente", (estado.lista as Array<{ id: string }>).map((d) => d.id), ["nueva"]);
   }
 
   // ── Atajo «Ver stock»: el filtro se aplica de verdad
-  igual("«Ver stock»: la dirección lleva el depósito y Stock solo lo aplica si existe en el alcance; un id desconocido o ausente se ignora", [
-    enlaceStockDeDeposito(U(1)), depositoDesdeConsulta(`?deposito=${U(1)}`, [U(1), U(2)]), depositoDesdeConsulta(`?deposito=${U(9)}`, [U(1)]), depositoDesdeConsulta("", [U(1)]),
-  ], [`/stock?deposito=${U(1)}`, U(1), null, null]);
+  igual("«Ver stock»: la dirección lleva el depósito y Stock lo valida contra los depósitos autorizados (uno desconocido se avisa, nunca se ignora en silencio)", [
+    enlaceStockDeDeposito(U(1)), interpretarDepositoUrl(`?deposito=${U(1)}`, [{ id: U(1), nombre: "A" }, { id: U(2), nombre: "B" }]).tipo, interpretarDepositoUrl(`?deposito=${U(9)}`, [{ id: U(1), nombre: "A" }]).tipo, interpretarDepositoUrl("", [{ id: U(1), nombre: "A" }]).tipo,
+  ], [`/stock?deposito=${U(1)}`, "SELECCIONADO", "NO_DISPONIBLE", "SIN_PARAMETRO"]);
 
   // ── Reglas de formulario preservadas
   igual("formulario: código obligatorio y con formato al crear; al editar solo nombre y sucursal; nombre ≤ 120", [
@@ -119,7 +120,7 @@ export async function verificarCasosInventarioDepositos(): Promise<string[]> {
   cierto("pantalla: respuesta de usuarios fuera de orden descartada (compuertaPanel) y formato verificado", /compuertaPanel\.current\.vigente\(solicitud\)/.test(pagina) && /Array\.isArray\(j\.usuarios\)/.test(pagina));
   cierto("alcance: no hay editor de parámetros de reposición, ni saldos, ni movimientos en Depósitos; sin DELETE físico ni ruta paralela de stock", !/stock_minimo|stockMinimo|punto_reposicion|puntoReposicion|stockMaximo|cantidadReposicion/.test(pagina) && !/stock_saldos|inventario_registrar_movimiento|DELETE FROM depositos/.test(apis + pagina) && !/export async function DELETE/.test(apiLista));
   cierto("SQL/API preservados: creación, edición (sucursal inmutable tras movimientos), cambio de estado con saldo, asignación y revocación con eventos persistentes — siguen siendo funciones SQL SECURITY DEFINER invocadas por las APIs", /deposito_crear/.test(apis) && /deposito_editar/.test(apis) && /deposito_cambiar_estado/.test(apis) && /deposito_usuario_asignar/.test(apis) && /deposito_usuario_revocar/.test(apis) && /deposito_usuario_eventos_inmutable/.test(mig));
-  cierto("«Ver stock» solo aparece con STOCK.VER y saldo, y apunta al filtro real de Stock (?deposito=); permisos de la API incluyen stock", /puedeVerStock && d\.conSaldo/.test(pagina) && /enlaceStockDeDeposito\(d\.id\)/.test(pagina) && /stock: hasPermission\(acceso, "STOCK", "VER"\)/.test(leer("lib/depositos/servidor.ts")) && /depositoDesdeConsulta\(window\.location\.search/.test(leer("app/(private)/stock/page.tsx")));
+  cierto("«Ver stock» solo aparece con STOCK.VER y saldo, y apunta al filtro real de Stock (?deposito=); permisos de la API incluyen stock", /puedeVerStock && d\.conSaldo/.test(pagina) && /enlaceStockDeDeposito\(d\.id\)/.test(pagina) && /stock: hasPermission\(acceso, "STOCK", "VER"\)/.test(leer("lib/depositos/servidor.ts")) && /interpretarDepositoUrl\(window\.location\.search/.test(leer("app/(private)/stock/page.tsx")));
 
   return fallos;
 }

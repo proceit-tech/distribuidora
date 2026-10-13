@@ -1,13 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { compararTexto, ordenarLista, siguienteOrden, type Orden } from "@/components/ui/lista-padrao/orden";
 import { ThOrdenable } from "@/components/ui/lista-padrao/th-ordenable";
 import ui from "@/components/ui/lista-padrao/lista.module.css";
 import { formatearCantidad } from "@/lib/formato/listas";
 import { puedeAbrirNuevoMovimiento, puedeVerMovimientos, SIN_PERMISOS_MOVIMIENTOS } from "@/lib/inventario/acceso";
+import { crearCompuerta } from "@/lib/productos/catalogos-carga";
 import { enlaceNuevoMovimiento } from "@/lib/movimientos/formulario";
 import { calcularPlanReposicion, compararUrgencia, transferenciasPlanificadas, type Criticidad, type FilaReposicion } from "@/lib/reposicion/calculo";
 import { cantidadSimulada, cargarReposicion, incluirTransitoEfectivo, type DatosReposicion } from "@/lib/reposicion/carga";
@@ -53,20 +54,27 @@ export default function ReposicionPage() {
   const [orden, setOrden] = useState<Orden<CampoOrden>>(null);
   const [paginacion, setPaginacion] = useState({ clave: "", pagina: 1 });
 
-  useEffect(() => {
-    let activo = true;
+  // INV-R02-03: la última solicitud iniciada gana (una respuesta lenta anterior no pisa a la nueva) y «Reintentar» recarga sin tocar la simulación local en curso.
+  const compuerta = useRef(crearCompuerta());
+  const cargar = useCallback(async () => {
+    const sol = compuerta.current.nueva();
+    const r = await cargarReposicion((url) => fetch(url, { cache: "no-store" }));
 
-    cargarReposicion((url) => fetch(url, { cache: "no-store" })).then((r) => {
-      if (!activo) return;
-      // Sin datos confiables se descartan la lista y los permisos anteriores.
-      setDatos(r.datos);
-      setError(r.error);
-    });
+    if (!compuerta.current.vigente(sol)) return;
+    // Sin datos confiables se descartan la lista y los permisos anteriores.
+    setDatos(r.datos);
+    setError(r.error);
+  }, []);
+
+  useEffect(() => {
+    const actual = compuerta.current;
+
+    void cargar();
 
     return () => {
-      activo = false;
+      actual.nueva();
     };
-  }, []);
+  }, [cargar]);
 
   const permisos = datos?.permisos ?? SIN_PERMISOS_MOVIMIENTOS;
   const incluirTransito = incluirTransitoEfectivo(simulando, hipotesisTransito);
@@ -182,6 +190,9 @@ export default function ReposicionPage() {
       {error ? (
         <div className={ui.alertError} role="alert">
           {error}
+          <button type="button" className={ui.clearButton} onClick={() => void cargar()}>
+            Reintentar
+          </button>
         </div>
       ) : null}
 
