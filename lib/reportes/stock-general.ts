@@ -22,6 +22,7 @@ export const COBERTURA_STOCK_GENERAL = [
   "Las cantidades no se suman entre unidades distintas (kg, unidades, litros…): el total general muestra «n/a» y el resumen indica los totales POR UNIDAD.",
   "Situación (sin stock / bajo / normal / sobrestock): la misma regla de Inventario > Stock. Sin depósito filtrado usa el mínimo y el máximo del producto sobre los depósitos de su alcance; con un depósito filtrado usa los parámetros de ESE depósito (sin parámetros, no hay bajo ni sobrestock).",
   "Existencia: «Con stock» = hay algo propio (incluido el tránsito) o de terceros; «Sin stock» = no hay nada propio ni de terceros. La situación «Sin stock» (disponible propio en cero) es otro concepto.",
+  "Filtro de lote: selecciona los lotes y las cantidades que se muestran (y los totales por unidad); NO cambia la situación del producto, que se calcula con todo su stock propio del ámbito (todos los depósitos autorizados, o el depósito elegido).",
   "Vista detalle: una fila por producto × depósito × lote con saldo. Un producto sin saldo en el alcance filtrado aparece en UNA fila marcada «Sin saldo» (sin depósito ni lote inventados).",
   "En V1 ningún movimiento genera el estado TRÁNSITO: la columna En tránsito es 0 hasta que exista ese flujo. Incluye los depósitos inactivos de su alcance (rotulados). Foto actual de los saldos de la solicitud; no es un stock histórico.",
 ];
@@ -64,15 +65,15 @@ export async function depositosPermitidos(db: Db, empresaId: string, usuarioId: 
   return r.rows as { id: string; nombre: string }[];
 }
 
-const SUMAS = (alias: string) => `
-  coalesce(sum(${alias}.cantidad) FILTER (WHERE ${alias}.propiedad = 'PROPIO' AND ${alias}.estado_stock = 'DISPONIBLE'), 0)::text AS disponible,
-  coalesce(sum(${alias}.cantidad) FILTER (WHERE ${alias}.propiedad = 'PROPIO' AND ${alias}.estado_stock = 'RESERVADO'), 0)::text AS reservado,
-  coalesce(sum(${alias}.cantidad) FILTER (WHERE ${alias}.propiedad = 'PROPIO' AND ${alias}.estado_stock = 'CUARENTENA'), 0)::text AS cuarentena,
-  coalesce(sum(${alias}.cantidad) FILTER (WHERE ${alias}.propiedad = 'PROPIO' AND ${alias}.estado_stock = 'TRANSITO'), 0)::text AS transito,
-  coalesce(sum(${alias}.cantidad) FILTER (WHERE ${alias}.propiedad = 'TERCERO' AND ${alias}.estado_stock = 'DISPONIBLE'), 0)::text AS t_disponible,
-  coalesce(sum(${alias}.cantidad) FILTER (WHERE ${alias}.propiedad = 'TERCERO' AND ${alias}.estado_stock = 'RESERVADO'), 0)::text AS t_reservado,
-  coalesce(sum(${alias}.cantidad) FILTER (WHERE ${alias}.propiedad = 'TERCERO' AND ${alias}.estado_stock = 'CUARENTENA'), 0)::text AS t_cuarentena,
-  coalesce(sum(${alias}.cantidad) FILTER (WHERE ${alias}.propiedad = 'TERCERO' AND ${alias}.estado_stock = 'TRANSITO'), 0)::text AS t_transito`;
+const SUMAS = (alias: string, extra = "") => `
+  coalesce(sum(${alias}.cantidad) FILTER (WHERE ${alias}.propiedad = 'PROPIO' AND ${alias}.estado_stock = 'DISPONIBLE'${extra}), 0)::text AS disponible,
+  coalesce(sum(${alias}.cantidad) FILTER (WHERE ${alias}.propiedad = 'PROPIO' AND ${alias}.estado_stock = 'RESERVADO'${extra}), 0)::text AS reservado,
+  coalesce(sum(${alias}.cantidad) FILTER (WHERE ${alias}.propiedad = 'PROPIO' AND ${alias}.estado_stock = 'CUARENTENA'${extra}), 0)::text AS cuarentena,
+  coalesce(sum(${alias}.cantidad) FILTER (WHERE ${alias}.propiedad = 'PROPIO' AND ${alias}.estado_stock = 'TRANSITO'${extra}), 0)::text AS transito,
+  coalesce(sum(${alias}.cantidad) FILTER (WHERE ${alias}.propiedad = 'TERCERO' AND ${alias}.estado_stock = 'DISPONIBLE'${extra}), 0)::text AS t_disponible,
+  coalesce(sum(${alias}.cantidad) FILTER (WHERE ${alias}.propiedad = 'TERCERO' AND ${alias}.estado_stock = 'RESERVADO'${extra}), 0)::text AS t_reservado,
+  coalesce(sum(${alias}.cantidad) FILTER (WHERE ${alias}.propiedad = 'TERCERO' AND ${alias}.estado_stock = 'CUARENTENA'${extra}), 0)::text AS t_cuarentena,
+  coalesce(sum(${alias}.cantidad) FILTER (WHERE ${alias}.propiedad = 'TERCERO' AND ${alias}.estado_stock = 'TRANSITO'${extra}), 0)::text AS t_transito`;
 
 export async function leerStockGeneral(
   db: DbConexion,
@@ -96,8 +97,9 @@ export async function leerStockGeneral(
     if (filtros.categoriaId) donde.push(`p.categoria_id = ${p(filtros.categoriaId)}`);
     if (filtros.marcaId) donde.push(`p.marca_id = ${p(filtros.marcaId)}`);
     if (filtros.familiaId) donde.push(`p.familia_id = ${p(filtros.familiaId)}`);
-    let loteN = "";
-    if (filtros.lote) { loteN = p(like(filtros.lote)); donde.push(`l.codigo_lote ILIKE ${loteN}`); }
+    // El filtro de lote NO restringe el stock usado para la situación: selecciona las cantidades mostradas (SUMAS con extra) y los productos que tienen ese lote (HAVING).
+    const loteN = filtros.lote ? p(like(filtros.lote)) : "";
+    const extraLote = loteN ? ` AND l.codigo_lote ILIKE ${loteN}` : "";
     // Con un depósito elegido, los parámetros de mínimo/máximo son los de ESE depósito (cero si no hay), igual que Inventario > Stock.
     const conDeposito = !!filtros.depositoId;
     const dep = conDeposito ? p(filtros.depositoId) : "";
@@ -105,7 +107,10 @@ export async function leerStockGeneral(
       `SELECT p.id, p.codigo, coalesce(p.codigo_inventario, '') AS ci, coalesce(p.codigo_barras, '') AS gtin, p.descripcion,
               coalesce(cat.nombre, '') AS categoria, coalesce(m.nombre, '') AS marca, coalesce(fa.nombre, '') AS familia, coalesce(li.nombre, '') AS linea, coalesce(um.nombre, '') AS unidad,
               ${conDeposito ? "coalesce(k.stock_minimo, 0)" : "coalesce(p.stock_minimo, 0)"}::text AS minimo, ${conDeposito ? "coalesce(k.stock_maximo, 0)" : "coalesce(p.stock_maximo, 0)"}::text AS maximo,
-              ${SUMAS("s")}
+              coalesce(sum(s.cantidad) FILTER (WHERE s.propiedad = 'PROPIO' AND s.estado_stock = 'DISPONIBLE'), 0)::text AS n_disponible,
+              coalesce(sum(s.cantidad) FILTER (WHERE s.propiedad = 'PROPIO' AND s.estado_stock = 'RESERVADO'), 0)::text AS n_reservado,
+              coalesce(sum(s.cantidad) FILTER (WHERE s.propiedad = 'PROPIO' AND s.estado_stock = 'CUARENTENA'), 0)::text AS n_cuarentena,
+              ${SUMAS("s", extraLote)}
          FROM productos p
          LEFT JOIN categorias_producto cat ON cat.empresa_id = p.empresa_id AND cat.id = p.categoria_id
          LEFT JOIN marcas_producto m ON m.empresa_id = p.empresa_id AND m.id = p.marca_id
@@ -117,7 +122,7 @@ export async function leerStockGeneral(
          ${conDeposito ? `LEFT JOIN producto_deposito_configuracion k ON k.empresa_id = p.empresa_id AND k.producto_id = p.id AND k.deposito_id = ${dep}` : ""}
         WHERE p.empresa_id = $1 AND p.controla_stock${donde.length ? " AND " + donde.join(" AND ") : ""}
         GROUP BY p.id, cat.nombre, m.nombre, fa.nombre, li.nombre, um.nombre${conDeposito ? ", k.stock_minimo, k.stock_maximo" : ""}
-       HAVING p.activo OR coalesce(sum(s.cantidad), 0) > 0
+       HAVING (p.activo OR coalesce(sum(s.cantidad), 0) > 0)${loteN ? ` AND coalesce(bool_or(l.codigo_lote ILIKE ${loteN}), false)` : ""}
         ORDER BY p.codigo, p.id`,
       params,
     );

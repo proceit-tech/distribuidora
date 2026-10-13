@@ -22,7 +22,7 @@ const leer = (r: string) => readFileSync(join(process.cwd(), r), "utf8").replace
 const U = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const EMP = U(1), USR = U(2);
 const DA = U(20), DB = U(21), DI = U(22);
-const P1 = U(30), P2 = U(31), P3 = U(32), P4 = U(33);
+const P1 = U(30), P2 = U(31), P3 = U(32), P4 = U(33), P5 = U(34);
 const FILTROS: StockGeneralFiltros = { vista: "PRODUCTO", q: "", depositoId: "", categoriaId: "", marcaId: "", familiaId: "", situacion: "", lote: "", existencia: "TODOS" };
 
 type Dato = Record<string, unknown>;
@@ -55,23 +55,33 @@ export async function verificarCasosReportesStockGeneral(): Promise<string[]> {
     if (/AS t_transito/.test(sql) && /GROUP BY p\.id/.test(sql)) {
       const conDep = /producto_deposito_configuracion/.test(sql);
 
-      return e.productos.map((p) => {
+      const m = /bool_or\(l\.codigo_lote ILIKE \$(\d+)\)/.exec(sql);
+      const patron = m ? String(params[Number(m[1]) - 1]).replace(/%/g, "").toLowerCase() : null;
+      const coincide = (x: Det) => !patron || (x.lote ?? "").toLowerCase().includes(patron);
+
+      return e.productos.flatMap((p): Dato[] => {
         const filas = e.det.filter((x) => x.prod === p.id && deps.includes(x.dep));
-        const suma = (k: CampoDet) => sumarDecimales(filas.map((x) => x[k]));
+        // Con filtro de lote solo salen los productos que TIENEN ese lote (HAVING); las cantidades mostradas son las del lote y las de situación (n_*) las del ámbito completo.
+        if (patron && !filas.some((x) => (x.lote ?? "") !== "" && coincide(x))) return [];
+
+        const mostradas = filas.filter(coincide);
+        const suma = (k: CampoDet, l = mostradas) => sumarDecimales(l.map((x) => x[k]));
         const conf = conDep ? p.conf?.[deps[0]] : undefined;
 
-        return {
+        return [{
           id: p.id, codigo: p.codigo, ci: "", gtin: "", descripcion: `Producto ${p.codigo}`, categoria: "Cat", marca: "Marca", familia: "Fam", linea: "", unidad: p.unidad ?? "Unidad",
           minimo: conDep ? (conf?.minimo ?? "0") : (p.minimo ?? "0"), maximo: conDep ? (conf?.maximo ?? "0") : (p.maximo ?? "0"),
+          n_disponible: suma("d", filas), n_reservado: suma("r", filas), n_cuarentena: suma("c", filas),
           disponible: suma("d"), reservado: suma("r"), cuarentena: suma("c"), transito: suma("t"), t_disponible: suma("td"), t_reservado: suma("tr"), t_cuarentena: suma("tc"), t_transito: suma("tt"),
-        };
+        }];
       });
     }
     if (/FROM lista/.test(sql)) {
       const ids = params[2] as string[];
       const filas: Dato[] = ids.flatMap((id): Dato[] => {
         const p = e.productos.find((x) => x.id === id)!;
-        const ds = e.det.filter((x) => x.prod === id && deps.includes(x.dep) && sumarDecimales([x.d, x.r, x.c, x.t, x.td, x.tr, x.tc, x.tt]) !== "0").sort((a, b) => a.dep.localeCompare(b.dep) || (a.lote ?? "").localeCompare(b.lote ?? ""));
+        const patronDet = /codigo_lote ILIKE \$4/.test(sql) ? String(params[3]).replace(/%/g, "").toLowerCase() : null;
+        const ds = e.det.filter((x) => x.prod === id && deps.includes(x.dep) && (!patronDet || (x.lote ?? "").toLowerCase().includes(patronDet)) && sumarDecimales([x.d, x.r, x.c, x.t, x.td, x.tr, x.tc, x.tt]) !== "0").sort((a, b) => a.dep.localeCompare(b.dep) || (a.lote ?? "").localeCompare(b.lote ?? ""));
 
         return ds.length
           ? ds.map((x) => ({ producto_id: id, codigo: p.codigo, con_saldo: true, deposito: e.depositos.find((d) => d.id === x.dep)!.nombre, inactivo: !e.depositos.find((d) => d.id === x.dep)!.activo, lote: x.lote ?? "", venc: x.venc ?? "", disponible: z(x.d), reservado: z(x.r), cuarentena: z(x.c), transito: z(x.t), t_disponible: z(x.td), t_reservado: z(x.tr), t_cuarentena: z(x.tc), t_transito: z(x.tt) }))
@@ -342,6 +352,107 @@ export async function verificarCasosReportesStockGeneral(): Promise<string[]> {
 
     return [t.filtros.some((l) => /Existencia: Con stock \(propio, en tránsito o de terceros\)/.test(l)), t.filtros.some((l) => /Todos los de su alcance \(3, 1 inactivo\(s\)\)/.test(l)), [...h.values()].some((c) => /NaN|undefined/.test(c.valor)), generarPdfTabla(t).subarray(0, 5).toString()];
   }), [[true, true, false, "%PDF-"], [true, true, false, "%PDF-"]]);
+
+  // ═══ RPT-R10-01 — el filtro de lote selecciona lotes y cantidades, pero NO cambia la situación del producto ═══
+  const e10: Escenario = {
+    productos: [
+      { id: P1, codigo: "M-1", minimo: "50", maximo: "0", conf: { [DA]: { minimo: "50", maximo: "0" }, [DB]: { minimo: "0", maximo: "0" } } }, // L1=5, L2=95 → 100 ≥ 50: NORMAL
+      { id: P2, codigo: "M-2", minimo: "50" }, // realmente BAJO: 10 + 5
+      { id: P3, codigo: "M-3", minimo: "50" }, // L1 solo terceros (200), L2 propio 95 → NORMAL
+      { id: P4, codigo: "M-4", minimo: "50" }, // sin lotes
+      { id: P5, codigo: "M-5", minimo: "50" }, // sin ningún saldo
+    ],
+    det: [
+      { prod: P1, dep: DA, lote: "L1", d: "5" }, { prod: P1, dep: DA, lote: "L2", d: "95" },
+      { prod: P2, dep: DA, lote: "L1", d: "10" }, { prod: P2, dep: DA, lote: "L2", d: "5" },
+      { prod: P3, dep: DA, lote: "L1", td: "200" }, { prod: P3, dep: DA, lote: "L2", d: "95" },
+      { prod: P4, dep: DA, d: "70" },
+    ],
+    depositos: depos,
+  };
+  const f10 = (r: StockGeneralRespuesta, cod: string) => r.filas.find((f) => f.codigo === cod);
+  const sinLote = await informe(e10);
+  const conL1 = await informe(e10, { lote: "L1" });
+
+  igual("R10-01 sin filtro de lote: M-1 disponible 100, situación NORMAL (como Inventario > Stock); M-2 realmente BAJO (15 < 50)", [f10(sinLote, "M-1")?.disponible, f10(sinLote, "M-1")?.nivel, f10(sinLote, "M-2")?.disponible, f10(sinLote, "M-2")?.nivel], ["100", "NORMAL", "15", "BAJO"]);
+  igual("R10-01 con filtro L1: se muestra SOLO el lote L1 (disponible 5) pero la situación sigue NORMAL (el stock propio completo es 100); M-2 sigue BAJO", [f10(conL1, "M-1")?.disponible, f10(conL1, "M-1")?.nivel, f10(conL1, "M-2")?.disponible, f10(conL1, "M-2")?.nivel], ["5", "NORMAL", "10", "BAJO"]);
+  igual("R10-01 filtro L1 + situación Bajo: M-1 NO aparece (no es bajo); M-2 sí (realmente bajo); con Normal ocurre lo contrario", [(await informe(e10, { lote: "L1", situacion: "BAJO" })).filas.map((f) => f.codigo), (await informe(e10, { lote: "L1", situacion: "NORMAL" })).filas.map((f) => f.codigo)], [["M-2"], ["M-1", "M-3"]]);
+  igual("R10-01 los totales del filtro reflejan SOLO el lote seleccionado (L1): M-1 5 + M-2 10 = 15 de disponible propio; terceros 200 de M-3; nada de L2", [conL1.totales.porUnidad[0].disponible, conL1.totales.porUnidad[0].terceros, conL1.totales.productos], ["15", "200", 3]);
+  igual("R10-01 lote solo de terceros (M-3, L1): el producto se muestra con disponible propio 0 y terceros 200, sin alterar la situación del stock propio completo (NORMAL, no SIN_STOCK); su situación 'sin saldo' es falsa porque tiene terceros", [f10(conL1, "M-3")?.disponible, f10(conL1, "M-3")?.terceros, f10(conL1, "M-3")?.nivel, f10(conL1, "M-3")?.fisico], ["0", "200", "NORMAL", "0"]);
+  igual("R10-01 producto sin lotes (M-4), sin ningún saldo (M-5) y lote inexistente: con filtro de lote no se muestran (no se inventan lotes ni saldos); sin filtro M-4 sí y M-5 aparece sin saldo", [
+    conL1.filas.map((f) => f.codigo).filter((c) => c === "M-4" || c === "M-5"), (await informe(e10, { lote: "NOEXISTE" })).filas.length, f10(sinLote, "M-4")?.disponible, f10(sinLote, "M-5")?.nivel, sinLote.totales.sinSaldo,
+  ], [[], 0, "70", "SIN_STOCK", 1]);
+  igual("R10-01 existencia sobre el recorte mostrado: con lote L1, «Con stock» incluye M-3 (terceros) y excluye productos cuyo lote no existe; «Sin stock» queda vacío", [(await informe(e10, { lote: "L1", existencia: "CON" })).filas.map((f) => f.codigo), (await informe(e10, { lote: "L1", existencia: "SIN" })).filas.length], [["M-1", "M-2", "M-3"], 0]);
+
+  // Consolidado vs depósito con políticas distintas (A mínimo 50, B sin parámetros) y con lote
+  const e10b: Escenario = {
+    productos: [{ id: P1, codigo: "N-1", minimo: "50", conf: { [DA]: { minimo: "50", maximo: "0" } } }],
+    det: [{ prod: P1, dep: DA, lote: "L1", d: "5" }, { prod: P1, dep: DA, lote: "L2", d: "95" }, { prod: P1, dep: DB, lote: "L1", d: "1" }],
+    depositos: depos,
+  };
+
+  igual("R10-01 con y sin depósito, mismo lote L1: consolidado (A 5 + B 1 = 6 de L1; stock completo 101 ≥ 50) NORMAL; depósito A (5 de L1; completo 100 ≥ 50) NORMAL; depósito B sin parámetros (completo 1, mínimo 0) NORMAL", [
+    (await informe(e10b, { lote: "L1" })).filas.map((f) => [f.disponible, f.nivel]), (await informe(e10b, { lote: "L1", depositoId: DA })).filas.map((f) => [f.disponible, f.nivel]), (await informe(e10b, { lote: "L1", depositoId: DB })).filas.map((f) => [f.disponible, f.nivel]),
+  ], [[["6", "NORMAL"]], [["5", "NORMAL"]], [["1", "NORMAL"]]]);
+
+  // Estructura REAL de la consulta: el lote no está en el WHERE ni en las sumas de la situación; sí en las sumas mostradas y en el HAVING
+  await informe(e10, { lote: "L1", depositoId: DA });
+  const aggQ = reg.consultas.find((c) => /AS t_transito/.test(c.sql) && /GROUP BY p\.id/.test(c.sql))!;
+  const parteDonde = aggQ.sql.slice(aggQ.sql.indexOf("WHERE p.empresa_id"), aggQ.sql.indexOf("GROUP BY"));
+  const colN = (nombre: string) => aggQ.sql.split("\n").find((l) => l.includes(`AS ${nombre},`) || l.includes(`AS ${nombre}\n`)) ?? "";
+  const colMostrada = (nombre: string) => aggQ.sql.split("\n").find((l) => new RegExp(`::text AS ${nombre},?$`).test(l.trim())) ?? "";
+  const iHaving = aggQ.sql.indexOf("HAVING"), iOrden = aggQ.sql.indexOf("ORDER BY");
+
+  cierto("R10-01 estructura de la consulta: el filtro de lote NO está en el WHERE; las sumas de situación (n_disponible, n_reservado, n_cuarentena) NO lo usan; las cantidades mostradas SÍ; el HAVING exige que el producto tenga ese lote", !/codigo_lote/.test(parteDonde) && ["n_disponible", "n_reservado", "n_cuarentena"].every((n) => colN(n) !== "" && !/codigo_lote/.test(colN(n))) && /codigo_lote ILIKE/.test(colMostrada("disponible")) && /codigo_lote ILIKE/.test(colMostrada("t_disponible")) && iHaving > 0 && iHaving < iOrden && /bool_or\(l\.codigo_lote ILIKE \$\d+\)/.test(aggQ.sql.slice(iHaving, iOrden)));
+  cierto("R10-01 el parámetro del lote y el del depósito viajan como parámetros (no concatenados) y la política del depósito sigue saliendo de producto_deposito_configuracion del depósito elegido", aggQ.params?.includes("%L1%") === true && aggQ.params?.includes(DA) === true && !aggQ.sql.includes("L1") && /LEFT JOIN producto_deposito_configuracion k/.test(aggQ.sql) && /coalesce\(k\.stock_minimo, 0\)/.test(aggQ.sql));
+
+  await informe(e10, {});
+  const sinLoteQ = reg.consultas.find((c) => /AS t_transito/.test(c.sql) && /GROUP BY p\.id/.test(c.sql))!;
+
+  cierto("R10-01 sin filtro de lote la consulta no agrega predicados de lote ni HAVING de lote (comportamiento anterior)", !/ILIKE \$\d+\), 0\)::text AS disponible/.test(sinLoteQ.sql) && !/bool_or/.test(sinLoteQ.sql));
+
+  // Orden de aplicación: 1) agregado con lote → 2) situación sobre el stock completo → 3) filtro de situación → 4) desglose solo de los productos que sobreviven
+  await informe(e10, { lote: "L1", situacion: "BAJO", vista: "DETALLE" });
+  const q = reg.consultas.map((c) => c.sql);
+  const iAgg = q.findIndex((x) => /AS t_transito/.test(x) && /GROUP BY p\.id/.test(x)), iLista = q.findIndex((x) => /FROM lista/.test(x));
+  const listaQ = reg.consultas[iLista];
+
+  cierto("R10-01 orden de lectura: primero el agregado, luego (solo si queda algún producto tras la situación) el desglose; el desglose recibe SOLO los ids que pasaron el filtro de situación y el lote en su WHERE", iAgg >= 0 && iLista > iAgg && JSON.stringify(listaQ.params?.[2]) === JSON.stringify([P2]) && /codigo_lote ILIKE \$4/.test(listaQ.sql) && listaQ.params?.[3] === "%L1%");
+
+  const sinProductos = await informe(e10, { lote: "L1", situacion: "SOBRESTOCK", vista: "DETALLE" });
+
+  igual("R10-01 si ningún producto cumple la situación, no se consulta el desglose y la respuesta es vacía y consistente", [sinProductos.filas.length, sinProductos.pagina.totalFilas, reg.consultas.some((c) => /FROM lista/.test(c.sql)), sinProductos.totales.productos], [0, 0, false, 0]);
+
+  // Vista detalle con lote: las filas y los totales corresponden al lote; la situación sigue siendo la del producto
+  const detL1 = await informe(e10, { lote: "L1", vista: "DETALLE" });
+
+  igual("R10-01 vista Detalle con L1: una fila por producto×depósito×lote L1 (M-1 5, M-2 10, M-3 solo terceros 200), situación NORMAL/BAJO del stock completo, sumas por producto = vista Por producto", [
+    detL1.filas.map((f) => [f.codigo, f.lote, f.disponible, f.terceros, f.nivel]), detL1.pagina.totalFilas,
+  ], [[["M-1", "L1", "5", "0", "NORMAL"], ["M-2", "L1", "10", "0", "BAJO"], ["M-3", "L1", "0", "200", "NORMAL"]], 3]);
+
+  // Empresas y alcance parcial con lote
+  const e10c: Escenario = { ...e10, depositos: [{ id: DA, nombre: "Central", activo: true }] };
+  const parcial = await informe(e10c, { lote: "L1" }, { usuario: U(88) });
+  const alq = reg.consultas.find((c) => /FROM depositos d JOIN usuarios u/.test(c.sql))!;
+
+  igual("R10-01 usuario con alcance parcial: el alcance se calcula con su id y la empresa de la sesión; los saldos leídos son solo de sus depósitos ($2) y el nivel usa solo ese ámbito", [alq.params, reg.consultas.filter((c) => /stock_saldos/.test(c.sql)).every((c) => c.params?.[0] === EMP && JSON.stringify(c.params?.[1]) === JSON.stringify([DA])), parcial.catalogos.depositos.map((d) => d.id)], [[EMP, U(88)], true, [DA]]);
+  igual("R10-01 depósito fuera del alcance parcial o de otra empresa con lote → 403 y sin lectura de saldos", [((await informe(e10c, { lote: "L1", depositoId: DB })) as unknown as { status: number }).status, reg.consultas.some((c) => /stock_saldos/.test(c.sql))], [403, false]);
+
+  // Exportaciones consistentes con el lote
+  const tL1 = tablaStockGeneral(conL1);
+  const xlL1 = leerHojaXlsx(generarXlsxTabla(tL1));
+  const baseL1 = 1 + 1 + 1 + tL1.filtros.length + 1 + 1;
+  const iCol = (t: typeof tL1, titulo: string) => t.columnas.findIndex((c) => c.titulo === titulo);
+  const celdaL1 = (c: number, fila: number) => xlL1.get(`${String.fromCharCode(65 + c)}${fila}`);
+  const filaM1 = conL1.filas.findIndex((f) => f.codigo === "M-1");
+
+  igual("R10-01 XLSX real con lote L1: M-1 disponible 5 (no 100), situación «Normal», filtro de lote en el encabezado y total «n/a»; el resumen por unidad suma solo L1", [
+    celdaL1(iCol(tL1, "Disponible"), baseL1 + 1 + filaM1), celdaL1(iCol(tL1, "Situación"), baseL1 + 1 + filaM1), tL1.filtros.includes("Lote: L1"), celdaL1(iCol(tL1, "Disponible"), baseL1 + 1 + conL1.filas.length), tL1.notas.some((n) => /Unidad \(3 producto\(s\)\): disponible 15 /.test(n)),
+  ], [{ tipo: "n", valor: "5" }, { tipo: "s", valor: "Normal" }, true, { tipo: "s", valor: "n/a" }, true]);
+
+  const pdfL1 = [...generarPdfTabla(tL1).toString("latin1").matchAll(/\(((?:[^()\\]|\\.)*)\) Tj/g)].map((m) => m[1].replace(/\\(.)/g, "$1"));
+
+  cierto("R10-01 PDF con lote L1: contiene el filtro de lote, el disponible del lote y la situación; no contiene el total del producto (100) como cantidad de M-1", pdfL1.some((x) => /Lote: L1/.test(x)) && pdfL1.includes("Normal") && !pdfL1.includes("100"));
 
   // ═══ SG-T09 — regresiones y responsabilidades ═══
   const fuente = leer("lib/reportes/stock-general.ts");

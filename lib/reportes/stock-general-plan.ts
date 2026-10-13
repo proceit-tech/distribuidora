@@ -10,6 +10,11 @@ import type { NivelStock, StockGeneralFila, StockGeneralFiltros, StockGeneralTot
 export type ProductoAgregado = {
   id: string; codigo: string; ci: string; gtin: string; descripcion: string; categoria: string; marca: string; familia: string; linea: string; unidad: string;
   minimo: string; maximo: string;
+  /**
+   * Stock PROPIO COMPLETO del ámbito autorizado (todos los lotes, o todo el depósito elegido): base de la situación. Sin filtro de lote coincide con las
+   * cantidades mostradas. El filtro de lote NO cambia la situación: solo selecciona qué lotes y cantidades se muestran.
+   */
+  n_disponible?: string; n_reservado?: string; n_cuarentena?: string;
   disponible: string; reservado: string; cuarentena: string; transito: string;
   t_disponible: string; t_reservado: string; t_cuarentena: string; t_transito: string;
 };
@@ -32,7 +37,11 @@ export function calcularProducto(p: ProductoAgregado): ProductoCalculado {
   const terceros = sumarDecimales([p.t_disponible, p.t_reservado, p.t_cuarentena, p.t_transito]);
   const virtual = sumarDecimales([fisico, p.transito]);
 
-  return { ...p, fisico, virtual, terceros, nivel: nivelStockTexto({ disponible: p.disponible, fisico, minimo: p.minimo, maximo: p.maximo }), sinSaldo: !positivo(virtual) && !positivo(terceros) };
+  // La situación se determina sobre el stock propio completo del ámbito (n_*), no sobre los lotes seleccionados.
+  const nDisp = p.n_disponible ?? p.disponible;
+  const nFisico = sumarDecimales([nDisp, p.n_reservado ?? p.reservado, p.n_cuarentena ?? p.cuarentena]);
+
+  return { ...p, fisico, virtual, terceros, nivel: nivelStockTexto({ disponible: nDisp, fisico: nFisico, minimo: p.minimo, maximo: p.maximo }), sinSaldo: !positivo(virtual) && !positivo(terceros) };
 }
 
 /**
