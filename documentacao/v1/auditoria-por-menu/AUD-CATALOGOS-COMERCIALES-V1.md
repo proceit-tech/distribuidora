@@ -92,3 +92,41 @@ O responsável mostrou NEX-001…051 já aplicadas na VM. Proibido editar script
 **Obrigatório antes de editar:** no clone local, conferir `git status`, branch oficial, `git fetch` e sincronização segura sem descarte de alterações; ler **integralmente** `CLAUDE.md` e `documentacao/PROTOCOLO-IA.md`, seções pertinentes do `PROGRESSO-NEXIT-V1.md`, as auditorias canônicas de Listas §VI e Catálogos Comerciales §I–VI, e apenas contratos de código/SQL diretamente relacionados. Seguir regras V1 e permissões `LISTAS_PRECIO`. **Claude implementa e faz commit/push; ChatGPT audita; somente o responsável humano aplica/valida no banco real/VM.** Não fazer acesso VM, Docker, PG real, migrations nem deploy. NEX-052/053 constam como não aplicadas; não as reexecutar, não modificar scripts aplicados, não fazer merge em `main`.
 
 **Entrega:** commits separados por menu/escopo, atualizar apenas `PROGRESSO-NEXIT-V1.md` quando necessário, não editar auditorias `AUD-*`, reportar apenas resultado, testes em números, bloqueio real e SHAs completos; **PARAR PARA REAUDITORIA ChatGPT**, sem iniciar menu novo. Ambos Listas e Catálogos comerciales continuam **NÃO HOMOLOGADOS**, ainda que a auditoria estática de uma futura correção seja favorável.
+
+
+## VII. AUD-CC-R03 — revisão independente da estabilização (13/10/2026)
+
+**Commit funcional auditado:** `cb66211ffd9f669c96940597af1eb37e19865464`; **HEAD-base da leitura:** `3442885d0352fbac21e85d3d3ed5462dd86c1e76`, branch oficial. Lidos diff, APIs, páginas, `lib/comercial`, helpers de formulário/carga/versão/vínculos/decimal, testes novos, SQL NEX-045 e reversão NEX-045. **Sem testes automatizados executados pelo ChatGPT**, nenhum PG/VM/Docker/browser. Claude informou 2316 verificações locais, 0 falhas, TypeScript/ESLint/build OK, todos **não reproduzidos** neste ambiente. Para um caso de precisão decimal, ChatGPT executou apenas uma **verificação de JavaScript puro**, sem I/O/ambiente operacional, com `Intl.NumberFormat('es-PY')` e `Number()`.
+
+### Acompanhamento CC-A01…A07
+
+| Achado original | Evidência e resultado nesta leitura | Situação |
+|---|---|---|
+| CC-A01, versão concorrente | `lib/comercial/servidor.ts:142-159` faz `SELECT ... FOR UPDATE` e `exigirVersionComercial(cuerpo.version,...)` antes de UPDATE; `page.tsx:258-259,296-297` envia versão para editar/inativar; helper carimba microssegundos UTC | **ACEITE ESTÁTICO**, PostgreSQL concorrente não verificado |
+| CC-A02, aviso ao sair | `page.tsx:113-116` usa guard oficial `useProtegerCambios(sucio)`; confirma descarte internamente | **ACEITE ESTÁTICO**, navegar pelo sidebar não testado em browser |
+| CC-A03, respostas fora de ordem | `page.tsx:83-111` compuerta de última solicitação, com aplicação somente se vigente; teste com respostas invertidas simulado | **ACEITE ESTÁTICO**, sem browser |
+| CC-A04, carga falha/permissões antigas | `lib/comercial/carga.ts` verifica HTTP/formato e permissões; `page.tsx:80-106,230-237,279-318` bloqueia mutações sem carga confiável; formulário mantém rascunho | **ACEITE ESTÁTICO**, sem HTTP real |
+| CC-A05, decimal exato | `lib/comercial/cambio-decimal.ts:8-38`, `validacion.ts:23-41`, `servidor.ts:239-249` usam texto para a comparação e limite `numeric(18,6)`; `22003` mapeado a 400 | **CORREÇÃO DO SERVIDOR ACEITA ESTATICAMENTE**, mas permanece **regressão de representação cliente CC-R03-01** abaixo |
+| CC-A06, reversão segura | `reversion-NEX-045.sql:16-32` acrescenta guardas de migrations posteriores e existência de helpers de grants **antes** de sobrescrever o wrapper e apagar tabelas | **ACEITE ESTÁTICO CONDICIONAL**, SQL não executado; ledger real não verificado |
+| CC-A07, vínculos com Clientes | `servidor.ts:97-108` conta clientes e listas/regras com filtro empresa; `page.tsx:291-297,574-578,639-644` exibe coluna/solicita confirmação antes da inativação | **ACEITE ESTÁTICO**, consulta real/alcance não testados |
+
+### CC-R03-01 — ALTA: formatação de cotação perde microdecimais no fluxo Corregir
+
+**Prova no código atual:** `app/(private)/catalogos-comerciales/page.tsx:49` define `formatoCambio = new Intl.NumberFormat('es-PY', { maximumFractionDigits: 6 }).format(Number(v))`. Essa função é usada **no valor de entrada do próprio formulário de correção** (`:660-664`, `cambio: formatoCambio(f.cambio ?? '')`) e também na tabela (`:617-619`) e no comparador de ordenação (`:201-203`). Mesmo após o helper decimal exato do servidor, esta conversão por `Number` **perde valores distintos válidos em `numeric(18,6)`**.
+
+**Reprodução JavaScript puro (sem ambiente NEXIT):**
+
+| Decimal exato lido da API (`numeric(18,6)`) | Resultado após formatar com `Number` + `Intl.NumberFormat('es-PY')` |
+|---|---|
+| `123456789012.000001` | `123.456.789.012` |
+| `123456789012.000002` | `123.456.789.012` |
+| `999999999999.999999` | `1.000.000.000.000` (acima do limite original) |
+| `7350.000001` | `7.350,000001` (controle sem perda neste valor menor) |
+
+**Impacto:** abrir «Corregir» prepara um valor **diferente** do armazenado, antes de qualquer edição humana; pode causar recusa indevida de correção, comparar valores erradamente ou enviar taxa alterada pelo formato, além de ordenação incorreta de taxas que diferem em 0,000001. **Não há prova de que esta magnitude tenha sido usada no banco real.**
+
+**Correção esperada:** manter o decimal da API em texto de ponta a ponta, sem Number em formatação, input, normalização e comparador. Utilizar helper puro para formatar `es-PY` sem perda (somente grupos e vírgula), e helper de comparação exata (ou ordenar pares de decimais normalizados pela parte inteira/fração). Não inventar conversões cambiais; conservar comportamento de `normalizarCambio` e contrato 12 inteiros + 6 decimais. Preferível inicializar «Corregir» com o valor textual exato da API e formatar apenas no local de exibição. **Não modificar a versão persistida** ao abrir o formulário, nem permitir que uma taxa alterada apenas por formatação seja salva como correção.
+
+**Regressões obrigatórias:** decimal `123456789012.000001`, `.000002` e `999999999999.999999` em abertura/edição/renderização/ordem; 7350,5 e 7350.000001; vazio/entrada inválida; entrada normal em es-PY; cancelar sem dirty falso; servidor distinguir diferenças de 0,000001; history/version preservadas. Não basta testar `igualDecimal` no backend: testar a **ligação exata com o valor no formulário**. Testes locais podem usar React/strings simuladas, mas UX em navegador e PG são gates do responsável.
+
+**Veredito CC-R03:** **CORREÇÃO SOLICITADA** — CC-A01/A02/A03/A04/A06/A07 aceitos **estaticamente**, CC-A05 no servidor aceito **estaticamente**, porém **CC-R03-01 ALTA** impede o encerramento técnico completo. **CATÁLOGOS COMERCIALES NÃO HOMOLOGADO.** A correção é localizada no fluxo de apresentação/edição/ordenação de câmbio, sem alteração de NEX-045, sem SQL real/VM. Claude poderá implementá-la após tarefa expressa; ChatGPT faz a reauditoria do próximo SHA.
