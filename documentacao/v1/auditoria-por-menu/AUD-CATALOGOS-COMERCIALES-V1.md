@@ -130,3 +130,25 @@ O responsável mostrou NEX-001…051 já aplicadas na VM. Proibido editar script
 **Regressões obrigatórias:** decimal `123456789012.000001`, `.000002` e `999999999999.999999` em abertura/edição/renderização/ordem; 7350,5 e 7350.000001; vazio/entrada inválida; entrada normal em es-PY; cancelar sem dirty falso; servidor distinguir diferenças de 0,000001; history/version preservadas. Não basta testar `igualDecimal` no backend: testar a **ligação exata com o valor no formulário**. Testes locais podem usar React/strings simuladas, mas UX em navegador e PG são gates do responsável.
 
 **Veredito CC-R03:** **CORREÇÃO SOLICITADA** — CC-A01/A02/A03/A04/A06/A07 aceitos **estaticamente**, CC-A05 no servidor aceito **estaticamente**, porém **CC-R03-01 ALTA** impede o encerramento técnico completo. **CATÁLOGOS COMERCIALES NÃO HOMOLOGADO.** A correção é localizada no fluxo de apresentação/edição/ordenação de câmbio, sem alteração de NEX-045, sem SQL real/VM. Claude poderá implementá-la após tarefa expressa; ChatGPT faz a reauditoria do próximo SHA.
+
+
+## VIII. AUD-CC-R04 — reauditoria de CC-R03-01 (13/10/2026)
+
+**Objeto exclusivo:** commit funcional `8f94a29b1566d575655d2b73911d5d477408f426` (CC-R03-01). Confirmação pelo GitHub de que integra a branch `feature/NEXIT-2026-001-banco-demo`; branch consultada posteriormente contém também commits documentais de Inventario, que **não fazem parte desta auditoria**. Releitura dos protocolos `CLAUDE.md`, `documentacao/PROTOCOLO-IA.md`, `PROGRESSO-NEXIT-V1.md`, diff completo e código pós-correção. A revisão não autoriza SQL/VM/deploy nem modifica código.
+
+### Conferência de implementação e evidência
+
+| Critério R03 | Evidência no SHA de correção | Parecer |
+|---|---|---|
+| Exibir taxa com até 6 casas sem `Number` | `lib/comercial/cambio-decimal.ts:44-53` usa `canonicoDecimal`, agrupamento por regex apenas textual e vírgula; `app/(private)/catalogos-comerciales/page.tsx:618` usa `formatearCambio(f.cambio)`. | **ACEITE ESTÁTICO** |
+| `Corregir` deve preservar valor exato | `page.tsx:660-664` inicializa `form.cambio` por `formatearCambio` (sem Number); `lib/comercial/formulario.ts:46-51` inicializa base igual ao formulário, logo só editar faz dirty; `normalizarCambio` reverte os separadores es-PY na validação. | **ACEITE ESTÁTICO** |
+| Ordenar valores que diferem 0,000001 | `cambio-decimal.ts:56-68` compara primeiro tamanho da parte inteira, depois parte inteira e fração alinhada com zeros, todas como strings; `page.tsx:201-203` usa `compararDecimales`. | **ACEITE ESTÁTICO** |
+| Casos-limite e formatos comuns | `lib/comercial/estabilizacion.casos.ts:232-255`: três extremos de `numeric(18,6)`, valores usuais, negativos/vazios inválidos, formatação reversível, ordenação e verificação da ligação no código. | **CASOS REGISTRADOS**; asserções locais informadas pelo Claude, não reproduzidas pela auditoria |
+| Preservar CC-A01…A07 e histórico | O diff do commit altera apenas `page.tsx`, helpers decimais, suíte de casos e `PROGRESSO-NEXIT-V1.md`; **nenhuma alteração** em `lib/comercial/servidor.ts`, rotas, NEX-045, sua reversão, `Listas de Precios` ou `Inventario`. `page.tsx:163` continua usando `Number` apenas para **versões inteiras** do histórico, não para taxa. | **SEM REGRESSÃO IDENTIFICADA NO ESCOPO** |
+
+### Critérios e limites do parecer
+
+- Resultado verificado por inspeção do código: `123456789012.000001` e `123456789012.000002` produzem strings diferentes, `123.456.789.012,000001` e `123.456.789.012,000002`; `999999999999.999999` permanece `999.999.999.999,999999`. `1.234` decimal da API vira `1,234`, mantendo a diferenciação entre separador decimal e de milhares. A canonicalização remove zeros finais não significativos (p. ex. `7350.500000` → `7.350,5`) **sem alterar valor matemático**; isso não é perda de precisão.
+- A suíte do Claude foi **relatada**, não executada por ChatGPT: **2.327 verificações, 0 falhas, 11 novas**, `tsc`, ESLint dos arquivos alterados e `next build` aprovados segundo o executor. Não há prova independente de execução de testes HTTP, PostgreSQL real, browser ou da aplicação na VM.
+- O formulário mantém formato local e a normalização para o servidor; esta auditoria não substitui os testes humanos de abertura, editar/guardar, cancelar sem alteração, ordem asc/desc e permissão no navegador em 1440/768/375, nem gravação/anulação com o banco real. Cautela: o projeto só tem **um ambiente operacional real**, sem staging presumido.
+- **Veredito:** **CC-R03-01 RESOLVIDO NA AUDITORIA ESTÁTICA**; não identificado novo achado alto/médio na mudança pontual. **Catálogos comerciales: PRONTO PARA VALIDAÇÃO FUNCIONAL PELO RESPONSÁVEL NO AMBIENTE REAL; NÃO HOMOLOGADO**. Histórico de CC-A01…A07 permanece com aceite **estático**, incluindo CC-A06 somente como script de reversão inspecionado e **não executado**. **Nenhuma nova correção técnica encaminhada ao Claude neste menu nesta rodada**. A autorização separada de implementação integrada dos quatro menus de Inventario permanece como tarefa distinta.
