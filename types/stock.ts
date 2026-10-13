@@ -119,6 +119,8 @@ export type StockDeposito = StockDepositoDetalleDemo & {
   /** Cantidad disponible propia y valor a costo como decimal exacto (texto de numeric): nunca se suman como float (INV-04). */
   disponibleTexto: string;
   costoValorTexto: string;
+  /** Cantidad valorizada (numeric como texto) para derivar el costo unitario exacto por depósito (INV-R02-01). */
+  costoCantidadTexto: string;
   stockMinimo: number | null;
   stockMaximo: number | null;
   puntoReposicion: number | null;
@@ -138,7 +140,7 @@ export type StockItem = Omit<
   stockMaximo: number;
   puntoReposicion: number;
   /** null = sin costo registrado / sin precio de referencia (nunca se inventan). */
-  costoPromedio: number | null;
+  costoPromedioTexto: string | null;
   precioVentaReferencia: number | null;
   valorVentaReferencia: number | null;
   monedaPrecio: string;
@@ -152,4 +154,4 @@ export type StockItem = Omit<
 };
 
 /** alcanceParcial: el usuario solo ve los depósitos que tiene autorizados (los totales no incluyen los demás). */
-export type StockRespuesta = { stock: StockItem[]; monedaBase: string; alcanceParcial?: boolean; permisos?: { movimientosCrear: boolean; movimientosVer: boolean } };
+export type StockRespuesta = { stock: StockItem[]; monedaBase: string; alcanceParcial?: boolean; depositosAutorizados?: Array<{ id: string; nombre: string }>; permisos?: { movimientosCrear: boolean; movimientosVer: boolean } };

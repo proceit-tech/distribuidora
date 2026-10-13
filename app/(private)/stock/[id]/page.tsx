@@ -5,10 +5,10 @@ import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import ui from "@/components/ui/lista-padrao/lista.module.css";
-import { formatearCantidad, formatearFechaIso, formatearMonto } from "@/lib/formato/listas";
+import { formatearCantidad, formatearFechaIso } from "@/lib/formato/listas";
 import { hoyAsuncion } from "@/lib/listas-precio/calculos";
 import { normalizarPermisosMovimientos, puedeAbrirNuevoMovimiento, puedeVerMovimientos } from "@/lib/inventario/acceso";
-import { formatearMontoTexto } from "@/lib/inventario/decimal";
+import { formatearCostoUnitarioTexto, formatearMontoTexto } from "@/lib/inventario/decimal";
 import { enlaceNuevoMovimiento } from "@/lib/movimientos/formulario";
 import { cargarStockItem } from "@/lib/stock/cliente-api";
 import { ETIQUETA_NIVEL } from "@/lib/stock/vista";
@@ -167,7 +167,7 @@ export default function StockDetallePage() {
         </article>
         <article className={[ui.summaryCard, ui.summaryRed].join(" ")}>
           <span>Valor físico</span>
-          <strong>{item.valorInventario > 0 || item.costoPromedio !== null ? formatearMontoTexto(item.valorInventarioTexto, moneda) : "—"}</strong>
+          <strong>{item.valorInventario > 0 || item.costoPromedioTexto !== null ? formatearMontoTexto(item.valorInventarioTexto, moneda) : "—"}</strong>
           <small>Total físico a costo promedio</small>
         </article>
       </section>
@@ -214,7 +214,7 @@ export default function StockDetallePage() {
             </div>
             <div>
               <dt>Costo promedio</dt>
-              <dd>{item.costoPromedio === null ? "Sin costo registrado" : formatearMonto(item.costoPromedio, moneda)}</dd>
+              <dd>{item.costoPromedioTexto === null ? "Sin costo registrado" : formatearCostoUnitarioTexto(item.costoPromedioTexto, moneda)}</dd>
             </div>
             <div>
               <dt>Precio de venta de referencia</dt>

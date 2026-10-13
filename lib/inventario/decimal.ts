@@ -80,3 +80,55 @@ export function formatearMontoTexto(texto: string | null | undefined, moneda?: s
 
   return pyg ? `Gs. ${cuerpo}` : `${codigo} ${cuerpo}`;
 }
+
+/**
+ * INV-R02-01 — división exacta a `decimales` posiciones, «mitad hacia arriba» (igual que `round(numeric, n)` de PostgreSQL, usado por Valorización).
+ * null si algún operando no es numérico o el divisor es 0.
+ */
+export function dividirDecimales(a: string | null | undefined, b: string | null | undefined, decimales: number): string | null {
+  const x = a == null ? null : parsear(a);
+  const y = b == null ? null : parsear(b);
+
+  if (!x || !y || y.n === BigInt(0)) return null;
+
+  // x/y = (x.n / 10^x.escala) / (y.n / 10^y.escala); se escala el numerador a `decimales` posiciones.
+  const neg = (x.n < BigInt(0)) !== (y.n < BigInt(0));
+  const num = (x.n < BigInt(0) ? -x.n : x.n) * BigInt(10) ** BigInt(decimales + y.escala);
+  const den = (y.n < BigInt(0) ? -y.n : y.n) * BigInt(10) ** BigInt(x.escala);
+  let q = num / den;
+
+  if ((num % den) * BigInt(2) >= den) q += BigInt(1);
+
+  return aTexto({ n: neg ? -q : q, escala: decimales }, true);
+}
+
+/** Comparación exacta (−1, 0, 1). Un texto no numérico se trata como ausente: queda después de todo valor numérico. */
+export function compararDecimales(a: string | null | undefined, b: string | null | undefined): number {
+  const x = a == null ? null : parsear(a);
+  const y = b == null ? null : parsear(b);
+
+  if (!x && !y) return 0;
+  if (!x) return 1;
+  if (!y) return -1;
+
+  const escala = Math.max(x.escala, y.escala);
+  const d = ajustar(x, escala) - ajustar(y, escala);
+
+  return d < BigInt(0) ? -1 : d > BigInt(0) ? 1 : 0;
+}
+
+/** Costo unitario sin pérdida (hasta 4 decimales, como Valorización): «Gs. 1.234,5678»; sin ceros finales. Entrada inválida o ausente → «—». */
+export function formatearCostoUnitarioTexto(texto: string | null | undefined, moneda?: string | null): string {
+  const codigo = (moneda ?? "").trim().toUpperCase();
+  const pyg = codigo === "" || codigo === "PYG" || codigo === "GS" || codigo === "GS.";
+  const r = texto == null ? null : redondearDecimal(texto, 4);
+
+  if (r === null) return "—";
+
+  const neg = r.startsWith("-");
+  const [entera, frac] = (neg ? r.slice(1) : r).split(".");
+  const dec = (frac ?? "").replace(/0+$/, "");
+  const cuerpo = `${neg ? "-" : ""}${entera.replace(/\B(?=(\d{3})+(?!\d))/g, ".")}${dec ? `,${dec}` : ""}`;
+
+  return pyg ? `Gs. ${cuerpo}` : `${codigo} ${cuerpo}`;
+}

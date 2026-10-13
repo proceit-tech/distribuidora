@@ -5,8 +5,15 @@
  * La vista por depósito recalcula TODO (cantidades, valor a costo, valor de venta de referencia, terceros, parámetros y nivel) con los datos
  * del depósito elegido; nunca mezcla el saldo consolidado con el de un depósito.
  */
-import { multiplicarDecimales } from "@/lib/inventario/decimal";
+import { compararDecimales, dividirDecimales, multiplicarDecimales } from "@/lib/inventario/decimal";
 import type { StockItem, StockNivel } from "@/types/stock";
+
+/** Costo unitario = valor / cantidad valorizada, decimal exacto con 4 posiciones (misma regla que Valorización: round half-up). null si no hay cantidad valorizada o los textos no son numéricos. */
+export function costoUnitarioTexto(valor: string | null | undefined, cantidad: string | null | undefined): string | null {
+  if (compararDecimales(cantidad, "0") <= 0 || cantidad == null || valor == null) return null;
+
+  return dividirDecimales(valor, cantidad, 4);
+}
 
 export function clasificarNivel(p: { disponible: number; totalFisico: number; minimo: number; maximo: number }): StockNivel {
   if (p.disponible <= 0) return "SIN_STOCK";
@@ -48,7 +55,7 @@ export function vistaPorDeposito(item: StockItem, depositoId: string): StockItem
     nivel: clasificarNivel({ disponible: d.disponible, totalFisico, minimo, maximo }),
     valorInventario: d.costoValor,
     valorInventarioTexto: d.costoValorTexto,
-    costoPromedio: d.costoCantidad > 0 ? Math.round((d.costoValor / d.costoCantidad) * 10000) / 10000 : null,
+    costoPromedioTexto: costoUnitarioTexto(d.costoValorTexto, d.costoCantidadTexto),
     valorVentaReferencia: item.precioVentaReferencia === null ? null : item.precioVentaReferencia * d.disponible,
     valorVentaReferenciaTexto: item.precioVentaReferenciaTexto === null ? null : multiplicarDecimales(item.precioVentaReferenciaTexto, d.disponibleTexto),
     depositos: [d],
@@ -70,7 +77,7 @@ export const indicadoresStock = (items: StockItem[]): IndicadoresStock => {
 /** Etiquetas únicas del nivel de Stock (INV-01): «Bajo mínimo» no es «Necesita reposición» (eso lo decide Reposición con el punto de reposición). */
 export const ETIQUETA_NIVEL: Record<StockNivel, string> = { NORMAL: "Normal", BAJO: "Bajo mínimo", SIN_STOCK: "Sin stock", SOBRESTOCK: "Sobrestock" };
 
-/** Tarjetas de resumen: mismas definiciones que las filas (valor a costo = inventario_costos; venta = referencia × disponible; sin precio no suma). */
+/** SOLO conteos para los indicadores (indicadoresStock). Los campos monetarios (Number) son legados de prueba: NO son un total financiero oficial; la valorización exacta está en Reportes y los importes exactos en `*Texto`. Tarjetas de resumen: mismas definiciones que las filas (valor a costo = inventario_costos; venta = referencia × disponible; sin precio no suma). */
 export function resumenStock(items: StockItem[]): ResumenStock {
   return items.reduce<ResumenStock>(
     (a, i) => ({

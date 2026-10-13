@@ -47,15 +47,15 @@ export async function verificarCasosStockReposicionMovimientos(): Promise<string
 
   const dep = (id: string, nombre: string, extra: Record<string, unknown>) => ({
     id, depositoId: id, depositoCodigo: nombre.slice(0, 3).toUpperCase(), depositoNombre: nombre, ubicacion: "",
-    disponible: 0, reservado: 0, cuarentena: 0, transito: 0, totalFisico: 0, terceros: 0, costoCantidad: 0, costoValor: 0,
+    disponible: 0, reservado: 0, cuarentena: 0, transito: 0, totalFisico: 0, terceros: 0, costoCantidad: 0, costoValor: 0, costoCantidadTexto: "0", costoValorTexto: "0",
     stockMinimo: null, stockMaximo: null, puntoReposicion: null, cantidadReposicion: null, ...extra,
   });
   const item = {
     id: P1, productoId: P1, productoCodigo: "P-1", productoDescripcion: "Leche", disponible: 150, reservado: 20, cuarentena: 5, transito: 10, totalFisico: 175, totalVirtual: 185,
-    terceros: 7, propiedad: "PROPIO", nivel: "NORMAL", stockMinimo: 100, stockMaximo: 400, puntoReposicion: 120, costoPromedio: 1000, valorInventario: 150000,
+    terceros: 7, propiedad: "PROPIO", nivel: "NORMAL", stockMinimo: 100, stockMaximo: 400, puntoReposicion: 120, costoPromedioTexto: "1000.0000", valorInventario: 150000,
     precioVentaReferencia: 2000, valorVentaReferencia: 300000, depositos: [
-      dep(D1, "Central", { disponible: 100, reservado: 20, cuarentena: 0, transito: 0, totalFisico: 120, costoCantidad: 100, costoValor: 90000, stockMinimo: 150, stockMaximo: 500 }),
-      dep(D2, "Sucursal", { disponible: 50, reservado: 0, cuarentena: 5, transito: 10, totalFisico: 55, terceros: 7, costoCantidad: 50, costoValor: 60000 }),
+      dep(D1, "Central", { disponible: 100, reservado: 20, cuarentena: 0, transito: 0, totalFisico: 120, costoCantidad: 100, costoValor: 90000, costoCantidadTexto: "100", costoValorTexto: "90000", stockMinimo: 150, stockMaximo: 500 }),
+      dep(D2, "Sucursal", { disponible: 50, reservado: 0, cuarentena: 5, transito: 10, totalFisico: 55, terceros: 7, costoCantidad: 50, costoValor: 60000, costoCantidadTexto: "50", costoValorTexto: "60000" }),
     ],
     lotes: [{ id: "l1", lote: "A", fechaVencimiento: "", cantidad: 100, estado: "DISPONIBLE", depositoId: D1, ubicacion: "Central", propietario: "X" }, { id: "l2", lote: "B", fechaVencimiento: "", cantidad: 50, estado: "DISPONIBLE", depositoId: D2, ubicacion: "Sucursal", propietario: "X" }],
   } as unknown as StockItem;
@@ -66,14 +66,14 @@ export async function verificarCasosStockReposicionMovimientos(): Promise<string
 
   igual("depósito 1: cantidades propias de ese depósito (no el consolidado)", [v1.disponible, v1.reservado, v1.cuarentena, v1.transito, v1.totalFisico, v1.totalVirtual], [100, 20, 0, 0, 120, 120]);
   igual("depósito 2: físico = disponible + reservado + cuarentena; virtual suma el tránsito", [v2.totalFisico, v2.totalVirtual, v2.terceros], [55, 65, 7]);
-  igual("valor a costo y costo promedio salen del costo del depósito", [v1.valorInventario, v1.costoPromedio, v2.valorInventario, v2.costoPromedio], [90000, 900, 60000, 1200]);
+  igual("valor a costo y costo promedio salen del costo del depósito", [v1.valorInventario, v1.costoPromedioTexto, v2.valorInventario, v2.costoPromedioTexto], [90000, "900.0000", 60000, "1200.0000"]);
   igual("valor de venta de referencia = precio × disponible DEL depósito", [v1.valorVentaReferencia, v2.valorVentaReferencia], [200000, 100000]);
   igual("mínimo/máximo del depósito (los globales del producto no se comparan con un solo depósito)", [v1.stockMinimo, v1.stockMaximo, v2.stockMinimo, v2.stockMaximo], [150, 500, 0, 0]);
   igual("nivel del depósito 1: bajo (100 < 150 de su mínimo); depósito 2 sin parámetros: normal", [v1.nivel, v2.nivel], ["BAJO", "NORMAL"]);
   igual("solo se listan el depósito y los lotes elegidos", [v1.depositos.length, v1.lotes.map((l) => l.lote)], [1, ["A"]]);
   igual("producto sin saldo en el depósito: no aparece", vistaPorDeposito(item, D3), null);
   igual("sin precio de referencia: valor de venta ausente (null), no 0", vistaPorDeposito({ ...item, precioVentaReferencia: null }, D1)!.valorVentaReferencia, null);
-  igual("sin costo en el depósito: costo promedio ausente", vistaPorDeposito({ ...item, depositos: [dep(D1, "Central", { disponible: 5, totalFisico: 5 })] as never }, D1)!.costoPromedio, null);
+  igual("sin costo en el depósito: costo promedio ausente", vistaPorDeposito({ ...item, depositos: [dep(D1, "Central", { disponible: 5, totalFisico: 5 })] as never }, D1)!.costoPromedioTexto, null);
   igual("solo terceros en el depósito: propiedad TERCERO", vistaPorDeposito({ ...item, depositos: [dep(D1, "Central", { terceros: 4 })] as never }, D1)!.propiedad, "TERCERO");
   const r = resumenStock([v1, v2]);
 

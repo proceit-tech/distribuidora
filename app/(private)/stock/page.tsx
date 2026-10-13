@@ -9,8 +9,8 @@ import {
 
 import { cargarStock } from "@/lib/stock/cliente-api";
 import { puedeAbrirNuevoMovimiento, puedeVerMovimientos, normalizarPermisosMovimientos, SIN_PERMISOS_MOVIMIENTOS } from "@/lib/inventario/acceso";
-import { depositoDesdeConsulta } from "@/lib/depositos/carga";
-import { formatearMontoTexto } from "@/lib/inventario/decimal";
+import { interpretarDepositoUrl } from "@/lib/depositos/carga";
+import { compararDecimales, formatearCostoUnitarioTexto, formatearMontoTexto } from "@/lib/inventario/decimal";
 import { ETIQUETA_NIVEL, indicadoresStock, vistaPorDeposito } from "@/lib/stock/vista";
 
 import {
@@ -22,7 +22,7 @@ import {
 import { compararTexto, ordenarLista, siguienteOrden, type Orden } from "@/components/ui/lista-padrao/orden";
 import { ThOrdenable } from "@/components/ui/lista-padrao/th-ordenable";
 import ui from "@/components/ui/lista-padrao/lista.module.css";
-import { formatearCantidad, formatearMonto } from "@/lib/formato/listas";
+import { formatearCantidad } from "@/lib/formato/listas";
 
 const PAGE_SIZE = 25;
 
@@ -39,10 +39,6 @@ type PropiedadFiltro =
 // Moneda de los costos: moneda base de la empresa (se actualiza al cargar el stock).
 let MONEDA_BASE = "PYG";
 
-function money(value: number) {
-  return formatearMonto(value, MONEDA_BASE);
-}
-
 function normalizar(value: string) {
   return value
     .normalize("NFD")
@@ -56,8 +52,9 @@ function normalizar(value: string) {
 
 // Costos y precios reales: costo promedio de inventario_costos y precio de venta de referencia (lista de referencia).
 // Sin costo o sin precio registrado el valor es 0 en los totales y se muestra "—" en la ficha; nada se inventa.
+// INV-R02-01: costo unitario exacto (texto); sin costo cuenta como 0 para ordenar.
 function costoUnitario(item: StockItem) {
-  return Number(item.costoPromedio ?? 0);
+  return item.costoPromedioTexto ?? "0";
 }
 
 
@@ -111,6 +108,10 @@ export default function StockPage() {
 
   const [orden, setOrden] = useState<Orden<CampoOrden>>(null);
 
+  // INV-R02-02: depósitos autorizados (con o sin saldo) y aviso cuando el enlace pide un depósito que no está disponible.
+  const [autorizados, setAutorizados] = useState<Array<{ id: string; nombre: string }>>([]);
+  const [depositoNoDisponible, setDepositoNoDisponible] = useState(false);
+
   useEffect(() => {
     let activo = true;
 
@@ -119,10 +120,13 @@ export default function StockPage() {
         MONEDA_BASE = r.monedaBase;
         if (activo) {
           setStock(r.stock);
-          // Atajo desde Depósitos (?deposito=): se aplica solo si ese depósito existe en el alcance del usuario.
-          const inicial = depositoDesdeConsulta(window.location.search, r.stock.flatMap((i) => i.depositos.map((d) => d.depositoId)));
+          // Atajo desde Depósitos (?deposito=): se valida contra los depósitos AUTORIZADOS; uno sin saldo se muestra vacío y uno no disponible se avisa (nunca consolidado en silencio).
+          const lista = Array.isArray(r.depositosAutorizados) ? r.depositosAutorizados : [];
+          const pedido = interpretarDepositoUrl(window.location.search, lista);
 
-          if (inicial) setDeposito(inicial);
+          setAutorizados(lista);
+          if (pedido.tipo === "SELECCIONADO") setDeposito(pedido.id);
+          setDepositoNoDisponible(pedido.tipo === "NO_DISPONIBLE");
           setAlcanceParcial(r.alcanceParcial === true);
           setPermisos(normalizarPermisosMovimientos(r.permisos));
         }
@@ -225,6 +229,8 @@ export default function StockPage() {
         string
       >();
 
+    autorizados.forEach((d) => map.set(d.id, d.nombre));
+
     stockCompleto.forEach((item) => {
       item.depositos.forEach(
         (dep) => {
@@ -239,7 +245,7 @@ export default function StockPage() {
     return Array.from(
       map.entries(),
     );
-  }, [stockCompleto]);
+  }, [stockCompleto, autorizados]);
 
   const resumen = useMemo(() => indicadoresStock(stock), [stock]);
 
@@ -346,7 +352,7 @@ export default function StockPage() {
           case "disponible":
             return Number(a.disponible || 0) - Number(b.disponible || 0);
           case "costo":
-            return costoUnitario(a) - costoUnitario(b);
+            return compararDecimales(costoUnitario(a), costoUnitario(b));
         }
       }),
     [filtrados, orden],
@@ -426,6 +432,21 @@ export default function StockPage() {
           ? `Visión consolidada${alcanceParcial ? " de los depósitos que usted tiene autorizados" : " de todos los depósitos"}.`
           : `Visión del depósito ${depositos.find(([id]) => id === deposito)?.[1] ?? ""}: cantidades, costo y valores corresponden solo a este depósito; el mínimo y el máximo son los configurados para él.`}
       </p>
+
+      {depositoNoDisponible ? (
+        <p className={ui.alertError} role="alert" style={{ margin: "0 0 8px" }}>
+          El depósito indicado en el enlace no existe, está desactualizado o no está en su alcance; no se aplicó ningún filtro y se muestra la visión consolidada.{" "}
+          <button type="button" className={ui.secondaryButton} onClick={() => { setDepositoNoDisponible(false); window.history.replaceState(null, "", "/stock"); }}>
+            Ver todos
+          </button>
+        </p>
+      ) : null}
+
+      {deposito !== "TODOS" && stock.length === 0 && !cargando && !errorCarga ? (
+        <p className={ui.resultCount} role="status" style={{ margin: "0 0 8px" }}>
+          El depósito {depositos.find(([id]) => id === deposito)?.[1] ?? ""} está autorizado, pero no tiene saldos de stock (0 productos con existencia).
+        </p>
+      ) : null}
 
       <section className={ui.summaryGrid} aria-label="Resumen de stock">
         <article className={[ui.summaryCard, ui.summaryTeal].join(" ")}>
@@ -537,7 +558,7 @@ export default function StockPage() {
 
           <label className={ui.filterField}>
             <span>Depósito</span>
-            <select value={deposito} onChange={(event) => setDeposito(event.target.value)}>
+            <select value={deposito} onChange={(event) => { setDeposito(event.target.value); setDepositoNoDisponible(false); }}>
               <option value="TODOS">Todos</option>
               {depositos.map(([id, nombre]) => (
                 <option key={id} value={id}>
@@ -661,7 +682,7 @@ export default function StockPage() {
 
                   <td className={ui.numeric}>
                     <div className={ui.cell}>
-                      <strong className={ui.mono}>{money(costoUnitario(item))}</strong>
+                      <strong className={ui.mono}>{formatearCostoUnitarioTexto(item.costoPromedioTexto, MONEDA_BASE)}</strong>
                       <span>Valor costo: {formatearMontoTexto(item.valorInventarioTexto, MONEDA_BASE)}</span>
                       <span>
                         Venta referencia:{" "}

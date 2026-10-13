@@ -1,7 +1,7 @@
 import type { Pool } from "pg";
 
 import { multiplicarDecimales, sumarDecimales } from "@/lib/inventario/decimal";
-import { clasificarNivel } from "@/lib/stock/vista";
+import { clasificarNivel, costoUnitarioTexto } from "@/lib/stock/vista";
 
 // Lectura de saldos reales. Todo filtrado por empresa_id de la sesión.
 
@@ -28,7 +28,7 @@ export async function leerStock(db: Db, empresaId: string, productoId: string | 
   const filtroAlcanceS = alcance ? ` AND s.deposito_id IN (${PERMITIDOS.replace("$3", `$${idx}`)})` : "";
   const filtroAlcanceC = alcance ? ` AND c.deposito_id IN (${PERMITIDOS.replace("$3", `$${idx}`)})` : "";
 
-  const [productos, saldos, costos, precios, empresa, configuraciones, todosDepositos, permitidos] = await Promise.all([
+  const [productos, saldos, costos, precios, empresa, configuraciones, todosDepositos, permitidos, autorizadosRows] = await Promise.all([
     db.query(
       `SELECT p.id, p.codigo, coalesce(p.codigo_inventario, '') AS "codigoInventario", coalesce(p.codigo_barras, '') AS "codigoBarras",
               p.descripcion, coalesce(cat.nombre, '') AS categoria, coalesce(m.nombre, '') AS marca,
@@ -61,7 +61,7 @@ export async function leerStock(db: Db, empresaId: string, productoId: string | 
     ),
     db.query(
       `SELECT c.producto_id AS "productoId", c.deposito_id AS "depositoId", c.cantidad_valorizada::float8 AS cantidad, c.valor_total::float8 AS valor,
-              c.valor_total::text AS "valorTexto"
+              c.valor_total::text AS "valorTexto", c.cantidad_valorizada::text AS "cantidadTexto"
          FROM inventario_costos c WHERE c.empresa_id = $1${filtroC}${filtroAlcanceC}`,
       alcance ? paramsAlcance : params,
     ),
@@ -79,6 +79,11 @@ export async function leerStock(db: Db, empresaId: string, productoId: string | 
     ),
     db.query(`SELECT count(*)::int AS n FROM depositos WHERE empresa_id = $1`, [empresaId]),
     alcance ? db.query(`SELECT count(*)::int AS n FROM (${PERMITIDOS.replace("$3", "$2")}) x`, [empresaId, usuarioId]) : Promise.resolve(null),
+    // INV-R02-02: depósitos que el usuario puede ver (tengan o no saldo, activos o no), para el selector y para validar `?deposito=`; nada fuera de su alcance.
+    db.query(
+      `SELECT d.id, d.nombre FROM depositos d WHERE d.empresa_id = $1${alcance ? ` AND d.id IN (${PERMITIDOS.replace("$3", "$2")})` : ""} ORDER BY d.nombre`,
+      alcance ? [empresaId, usuarioId] : [empresaId],
+    ),
   ]);
 
   const emp = empresa.rows[0] as { nombre: string; moneda: string };
@@ -108,7 +113,7 @@ export async function leerStock(db: Db, empresaId: string, productoId: string | 
         id: s.depositoId, depositoId: s.depositoId, depositoCodigo: s.depositoCodigo, depositoNombre: s.depositoNombre,
         // No existe un modelo de ubicaciones físicas en el banco: la ubicación queda vacía (la pantalla rotula «Sin ubicación registrada»).
         ubicacion: "", disponible: 0, reservado: 0, cuarentena: 0, transito: 0, totalFisico: 0, terceros: 0,
-        disponibleTexto: "0", costoCantidad: 0, costoValor: 0, costoValorTexto: "0", stockMinimo: null, stockMaximo: null, puntoReposicion: null, cantidadReposicion: null,
+        disponibleTexto: "0", costoCantidad: 0, costoValor: 0, costoValorTexto: "0", costoCantidadTexto: "0", stockMinimo: null, stockMaximo: null, puntoReposicion: null, cantidadReposicion: null,
       };
       if (s.propiedad === "TERCERO") d.terceros = (d.terceros as number) + (s.cantidad as number);
       if (s.propiedad === "PROPIO") {
@@ -127,6 +132,7 @@ export async function leerStock(db: Db, empresaId: string, productoId: string | 
       d.costoCantidad = c ? (c.cantidad as number) : 0;
       d.costoValor = c ? (c.valor as number) : 0;
       d.costoValorTexto = c ? (c.valorTexto as string) : "0";
+      d.costoCantidadTexto = c ? (c.cantidadTexto as string) : "0";
       d.stockMinimo = k ? (k.minimo as number | null) : null;
       d.stockMaximo = k ? (k.maximo as number | null) : null;
       d.puntoReposicion = k ? (k.punto as number | null) : null;
@@ -134,12 +140,12 @@ export async function leerStock(db: Db, empresaId: string, productoId: string | 
     }
 
     const cs = cPor.get(p.id as string) ?? [];
-    const cantVal = cs.reduce((a, c) => a + (c.cantidad as number), 0);
     const valor = cs.reduce((a, c) => a + (c.valor as number), 0);
     // INV-04: los importes se suman y multiplican como decimal exacto (texto de numeric), no como float.
     const valorTexto = sumarDecimales(cs.map((c) => c.valorTexto as string));
     const disponibleTexto = sumarDecimales(propios.filter((s) => s.estado === "DISPONIBLE").map((s) => s.cantidadTexto as string));
-    const costoPromedio = cantVal > 0 ? Math.round((valor / cantVal) * 10000) / 10000 : null;
+    // INV-R02-01: costo unitario = valor/cantidad valorizada en decimal exacto (round half-up a 4 posiciones, como Valorización); sin costo → null.
+    const costoPromedioTexto = costoUnitarioTexto(valorTexto, sumarDecimales(cs.map((c) => c.cantidadTexto as string)));
     const pr = pPor.get(p.id as string);
     const precio = pr ? (pr.precio as number) : null;
     const precioTexto = pr ? (pr.precioTexto as string) : null;
@@ -155,7 +161,7 @@ export async function leerStock(db: Db, empresaId: string, productoId: string | 
       disponible, reservado, cuarentena, transito, totalFisico, totalVirtual: totalFisico + transito,
       propiedad: propios.length === 0 && terceros > 0 ? "TERCERO" : "PROPIO",
       propietarioId: "", propietarioNombre: propios.length === 0 && terceros > 0 ? "Tercero (propietario no registrado)" : emp.nombre,
-      nivel, costoPromedio, valorInventario: valor, valorInventarioTexto: valorTexto,
+      nivel, costoPromedioTexto, valorInventario: valor, valorInventarioTexto: valorTexto,
       precioVentaReferencia: precio, valorVentaReferencia: precio === null ? null : precio * disponible,
       precioVentaReferenciaTexto: precioTexto, valorVentaReferenciaTexto: precioTexto === null ? null : multiplicarDecimales(precioTexto, disponibleTexto),
       monedaPrecio: pr ? (pr.moneda as string) : "", terceros,
@@ -168,5 +174,7 @@ export async function leerStock(db: Db, empresaId: string, productoId: string | 
       actualizadoEn: p.actualizadoEn,
     };
   });
-  return { stock: items, monedaBase: emp.moneda, alcanceParcial };
+  const depositosAutorizados = (autorizadosRows.rows as F[]).map((r) => ({ id: String(r.id), nombre: String(r.nombre ?? "") }));
+
+  return { stock: items, monedaBase: emp.moneda, alcanceParcial, depositosAutorizados };
 }
