@@ -21,6 +21,12 @@ SELECT pg_temp.ok((SELECT count(*) FROM schema_migrations WHERE version ~ '^NEX-
 SELECT pg_temp.ok((SELECT count(*) FROM schema_migrations WHERE checksum ~ '^[0-9a-f]{64}$') = (SELECT count(*) FROM schema_migrations), 'cada migración tiene checksum SHA-256');
 
 -- toda tabla con actualizado_at tiene su trigger
+DO $d$ DECLARE v text; BEGIN
+  SELECT string_agg(c.table_name, ', ' ORDER BY c.table_name) INTO v FROM information_schema.columns c
+   WHERE c.table_schema = 'public' AND c.column_name = 'actualizado_at'
+     AND NOT EXISTS (SELECT 1 FROM pg_trigger g WHERE g.tgrelid = ('public.' || c.table_name)::regclass AND g.tgname = c.table_name || '_actualizado_trg');
+  IF v IS NOT NULL THEN RAISE NOTICE 'FALLA (diagnóstico, sin efecto en el criterio): tablas con actualizado_at sin trigger: %', v; END IF;
+END $d$;
 SELECT pg_temp.ok(NOT EXISTS (
   SELECT 1 FROM information_schema.columns c
    WHERE c.table_schema = 'public' AND c.column_name = 'actualizado_at'

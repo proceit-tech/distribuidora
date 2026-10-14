@@ -28,7 +28,7 @@ limpiar() {
 trap limpiar EXIT
 paso() { printf '%-62s' "$1"; }
 fin() { # $1 = código, $2 = archivo de log
-  if [[ $1 -eq 0 ]]; then local n; n=$(grep -c "PASS" "$2" || true); PASS_TOTAL=$((PASS_TOTAL + n)); echo "OK   ($n verificaciones)"; else echo "FALLA"; sed 's/^/      /' "$2" | grep -E "FALLA|ERROR|rechaz|CONTEXT" | head -8; FALLAS=$((FALLAS + 1)); fi
+  if [[ $1 -eq 0 ]]; then local n; n=$(grep -c "PASS" "$2" || true); PASS_TOTAL=$((PASS_TOTAL + n)); echo "OK   ($n verificaciones)"; else echo "FALLA"; sed 's/^/      /' "$2" | grep -v "PASS" | grep -E "FALLA|ERROR|rechaz|CONTEXT|DETAIL" | head -12; FALLAS=$((FALLAS + 1)); fi
 }
 fin0() { if [[ $1 -eq 0 ]]; then echo "OK"; else echo "FALLA"; tail -5 "$2"; FALLAS=$((FALLAS + 1)); fi; }
 psql -X -q -d postgres -c "CREATE DATABASE $DB" || exit 1
