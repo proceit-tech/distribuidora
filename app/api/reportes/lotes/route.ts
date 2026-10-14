@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { getAccessContext, hasPermission } from "@/lib/auth/permissions";
 import { autorizarReporte } from "@/lib/reportes/guard";
 import { leerLotes, parsearFiltrosLotes } from "@/lib/reportes/lotes";
 
@@ -16,7 +17,10 @@ export async function GET(request: Request) {
     const { db } = await import("@/lib/db");
     const r = await leerLotes(db, session.user.empresaId, session.user.id, parsed.filtros, parsed.pagina, parsed.tamano);
     if ("error" in r) return NextResponse.json({ error: r.error }, { status: r.status });
-    return NextResponse.json(r);
+    // Solo para mostrar u ocultar la exportación: /exportar vuelve a exigir REPORTES.EXPORTAR en el servidor.
+    const acceso = await getAccessContext(session.user, session.demo === true);
+
+    return NextResponse.json({ ...r, permisos: { exportar: hasPermission(acceso, "REPORTES", "EXPORTAR") } });
   } catch (error) {
     console.error("Error en reporte Lotes y vencimientos:", error);
     return NextResponse.json({ error: "No fue posible generar el reporte." }, { status: 500 });

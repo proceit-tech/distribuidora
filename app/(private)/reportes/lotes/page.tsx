@@ -1,12 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { cargarLotes, descargarLotes } from "@/lib/reportes/cliente-lotes";
-import { CLASE_LOTE, textoDias } from "@/lib/reportes/export-lotes";
-import { fmtNum, textoTercerosEstados } from "@/lib/reportes/formato";
-import type { ClaseVencimiento, LotesFiltros, LotesRespuesta } from "@/types/reportes";
+import { crearCompuerta } from "@/lib/productos/catalogos-carga";
+import { descargarLotes, pedirLotes } from "@/lib/reportes/cliente-lotes";
+import { CLASE_LOTE, textoAlcanceExistencia, textoDepositoLote, textoDias } from "@/lib/reportes/export-lotes";
+import { fmtCantidadTexto, fmtNum, textoTercerosEstadosTexto } from "@/lib/reportes/formato";
+import { etiquetasUnidad, filtrosLotesIguales, nombreUnidad, respuestaLotesVigente, validarHorizonteTexto } from "@/lib/reportes/lotes-plan";
+import type { ClaseVencimiento, LotesFiltros, LotesRespuestaApi } from "@/types/reportes";
 
 import styles from "@/components/ui/lista-padrao/reporte.module.css";
 
@@ -15,68 +17,94 @@ const FILTROS_VACIOS: LotesFiltros = {
   horizonte: 30, vencDesde: "", vencHasta: "",
 };
 const num = fmtNum;
+const cant = fmtCantidadTexto;
 const CLASES = Object.keys(CLASE_LOTE) as ClaseVencimiento[];
+
+type Catalogos = LotesRespuestaApi["catalogos"];
 
 export default function ReporteLotesPage() {
   const [filtros, setFiltros] = useState<LotesFiltros>(FILTROS_VACIOS);
   const [horizonteTxt, setHorizonteTxt] = useState("30");
-  const [aplicados, setAplicados] = useState<LotesFiltros>(FILTROS_VACIOS);
+  const [textoAplicado, setTextoAplicado] = useState({ q: "", lote: "", horizonte: 30 });
   const [pagina, setPagina] = useState(1);
-  const [datos, setDatos] = useState<LotesRespuesta | null>(null);
+  const [datos, setDatos] = useState<LotesRespuestaApi | null>(null);
+  // Solo los nombres de los selectores sobreviven a un error (conservan los filtros elegidos); ningún dato del informe se conserva.
+  const [catalogos, setCatalogos] = useState<Catalogos | null>(null);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
+  const [errorExportacion, setErrorExportacion] = useState("");
   const [exportando, setExportando] = useState("");
+  const compuerta = useRef(crearCompuerta());
 
-  // Texto y horizonte se aplican con una pequeña espera; los selectores y fechas, de inmediato.
+  const hz = validarHorizonteTexto(horizonteTxt);
+
+  // Texto y horizonte válido se aplican con una pequeña espera; selectores y fechas, de inmediato. Un horizonte inválido nunca se aplica en silencio.
   useEffect(() => {
-    const t = setTimeout(() => {
-      const h = /^\d{1,4}$/.test(horizonteTxt) ? Number(horizonteTxt) : null;
-      setAplicados((a) => (a.q === filtros.q && a.lote === filtros.lote && (h === null || a.horizonte === h) ? a : { ...a, q: filtros.q, lote: filtros.lote, horizonte: h ?? a.horizonte }));
-    }, 300);
+    const t = setTimeout(() => setTextoAplicado((a) => ({ q: filtros.q, lote: filtros.lote, horizonte: hz.valor ?? a.horizonte })), 300);
+
     return () => clearTimeout(t);
-  }, [filtros.q, filtros.lote, horizonteTxt]);
+  }, [filtros.q, filtros.lote, hz.valor]);
 
-  useEffect(() => {
-    setAplicados((a) => ({ ...filtros, q: a.q, lote: a.lote, horizonte: a.horizonte }));
-  }, [filtros.vista, filtros.depositoId, filtros.categoriaId, filtros.marcaId, filtros.familiaId, filtros.clase, filtros.existencia, filtros.vencDesde, filtros.vencHasta]); // eslint-disable-line react-hooks/exhaustive-deps
+  const aplicados = useMemo(() => ({ ...filtros, ...textoAplicado }), [filtros, textoAplicado]);
 
-  useEffect(() => {
-    let activo = true;
+  // La última solicitud iniciada gana; ante cualquier falla se descartan los datos anteriores y se conservan los filtros.
+  const cargar = useCallback(async () => {
+    const sol = compuerta.current.nueva();
+
     setCargando(true);
     setError("");
-    cargarLotes(aplicados, pagina)
-      .then((r) => { if (activo) setDatos(r); })
-      .catch((e: unknown) => { if (activo) setError(e instanceof Error ? e.message : "No fue posible generar el reporte."); })
-      .finally(() => { if (activo) setCargando(false); });
-    return () => { activo = false; };
+
+    const r = await pedirLotes(aplicados, pagina);
+
+    if (!compuerta.current.vigente(sol)) return;
+    setDatos(r.datos);
+    if (r.datos) setCatalogos(r.datos.catalogos);
+    setError(r.error);
+    setCargando(false);
   }, [aplicados, pagina]);
+
+  useEffect(() => {
+    const actual = compuerta.current;
+    const t = setTimeout(() => void cargar(), 0);
+
+    return () => {
+      clearTimeout(t);
+      actual.nueva();
+    };
+  }, [cargar]);
 
   const cambiar = (parcial: Partial<LotesFiltros>) => {
     setPagina(1);
     setFiltros((f) => ({ ...f, ...parcial }));
   };
 
+  // Solo se muestran y exportan datos que corresponden EXACTAMENTE a los filtros y la página vigentes (y con un horizonte escrito válido).
+  const actual = !hz.error && datos && respuestaLotesVigente(datos, error, aplicados, pagina) ? datos : null;
+  const puedeExportar = actual?.permisos.exportar === true;
   const exportar = async (formato: "xlsx" | "pdf") => {
+    if (!actual || !puedeExportar) return;
     setExportando(formato);
-    setError("");
+    setErrorExportacion("");
     try {
-      await descargarLotes(aplicados, formato);
+      await descargarLotes(actual.filtros, formato);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "No fue posible exportar el reporte.");
+      setErrorExportacion(e instanceof Error ? e.message : "No fue posible exportar el reporte.");
     } finally {
       setExportando("");
     }
   };
 
-  const t = datos?.totales;
-  const total = datos?.pagina.totalFilas ?? 0;
-  const tamano = datos?.pagina.tamano ?? 50;
+  const t = actual?.totales;
+  // Rótulo de cada unidad según TODAS las unidades de la respuesta vigente (UUID = identidad; el nombre repetido se rotula con el identificador).
+  const et = useMemo(() => etiquetasUnidad(actual?.totales.porUnidad ?? []), [actual]);
+  const total = actual?.pagina.totalFilas ?? 0;
+  const tamano = actual?.pagina.tamano ?? 50;
   const paginas = Math.max(1, Math.ceil(total / tamano));
   const porDeposito = aplicados.vista === "DEPOSITO";
-  const hayFiltros =
-    JSON.stringify({ ...filtros, vista: "", horizonte: 0 }) !== JSON.stringify({ ...FILTROS_VACIOS, vista: "", horizonte: 0 }) || horizonteTxt !== "30";
+  const hayFiltros = !filtrosLotesIguales({ ...filtros, vista: "LOTE", horizonte: 30 }, { ...FILTROS_VACIOS, horizonte: 30 }) || horizonteTxt !== "30";
   const clase = (c: ClaseVencimiento) => t?.clases.find((x) => x.clase === c);
   const colorCard: Record<ClaseVencimiento, string> = { VENCIDO: styles.summaryRed, PROXIMO: styles.summaryAmber, VIGENTE: styles.summaryTeal, SIN_FECHA: styles.summaryPurple };
+  const depositos = catalogos?.depositos ?? [];
 
   return (
     <section className={styles.page}>
@@ -90,18 +118,22 @@ export default function ReporteLotesPage() {
           <h1>Lotes y vencimientos</h1>
           <p>
             Lotes reales con su vencimiento y su stock por depósito, propio y de terceros por separado.
-            {datos ? ` ${datos.empresa.nombre} · generado ${datos.generado} · fecha de referencia ${t?.hoy ?? ""} (Paraguay).` : ""}
+            {actual ? ` ${actual.empresa.nombre} · generado ${actual.generado} · fecha de referencia ${t?.hoy ?? ""} (Paraguay).` : ""}
           </p>
         </div>
 
         <div className={styles.heroActions}>
           <Link href="/reportes" className={styles.secondaryButton}>Reportes</Link>
-          <button type="button" className={styles.secondaryButton} disabled={!!exportando || cargando} onClick={() => exportar("xlsx")}>
-            {exportando === "xlsx" ? "Generando..." : "Descargar Excel (.xlsx)"}
-          </button>
-          <button type="button" className={styles.primaryButton} disabled={!!exportando || cargando} onClick={() => exportar("pdf")}>
-            {exportando === "pdf" ? "Generando..." : "Exportar PDF"}
-          </button>
+          {puedeExportar ? (
+            <>
+              <button type="button" className={styles.secondaryButton} disabled={!!exportando || cargando} onClick={() => exportar("xlsx")}>
+                {exportando === "xlsx" ? "Generando..." : "Descargar Excel (.xlsx)"}
+              </button>
+              <button type="button" className={styles.primaryButton} disabled={!!exportando || cargando} onClick={() => exportar("pdf")}>
+                {exportando === "pdf" ? "Generando..." : "Exportar PDF"}
+              </button>
+            </>
+          ) : null}
         </div>
       </header>
 
@@ -111,7 +143,9 @@ export default function ReporteLotesPage() {
             <span>{CLASE_LOTE[c].toUpperCase()}</span>
             <strong>{t ? num(clase(c)?.lotes ?? 0) : "—"}</strong>
             <small>
-              {t ? `Físico propio ${num(clase(c)?.fisico ?? 0)} · Terceros ${num(clase(c)?.terceros ?? 0)}` : "—"}
+              {t
+                ? (clase(c)?.unidades ?? []).map((u) => `${nombreUnidad(et, u)}: físico propio ${cant(u.fisico)} · terceros ${cant(u.terceros)}`).join(" | ") || "Sin lotes"
+                : "—"}
             </small>
           </article>
         ))}
@@ -121,7 +155,8 @@ export default function ReporteLotesPage() {
         <div className={styles.policyNote} role="note">
           <strong>Clasificación con la fecha de hoy en Paraguay.</strong> Vencido = vence antes de hoy; Próximo = vence dentro del horizonte
           ({aplicados.horizonte} días); Vigente = vence después; Sin fecha = lote sin vencimiento registrado (no se inventa). La cuarentena no hace vencido a un lote.
-          Cada lote cuenta una sola vez en los indicadores, aunque esté en varios depósitos.
+          Cada lote cuenta una sola vez en los indicadores, aunque esté en varios depósitos. Las cantidades se totalizan por unidad de medida, nunca entre unidades distintas.
+          {actual ? ` Existencia: ${textoAlcanceExistencia(actual)}.` : ""}
         </div>
 
         <div className={styles.toolbar}>
@@ -152,28 +187,28 @@ export default function ReporteLotesPage() {
             <span>Depósito</span>
             <select value={filtros.depositoId} onChange={(e) => cambiar({ depositoId: e.target.value })}>
               <option value="">Todos</option>
-              {(datos?.catalogos.depositos ?? []).map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
+              {depositos.map((d) => <option key={d.id} value={d.id}>{d.nombre}{d.activo ? "" : " (inactivo)"}</option>)}
             </select>
           </label>
           <label>
             <span>Categoría</span>
             <select value={filtros.categoriaId} onChange={(e) => cambiar({ categoriaId: e.target.value })}>
               <option value="">Todas</option>
-              {(datos?.catalogos.categorias ?? []).map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
+              {(catalogos?.categorias ?? []).map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
             </select>
           </label>
           <label>
             <span>Marca</span>
             <select value={filtros.marcaId} onChange={(e) => cambiar({ marcaId: e.target.value })}>
               <option value="">Todas</option>
-              {(datos?.catalogos.marcas ?? []).map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
+              {(catalogos?.marcas ?? []).map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
             </select>
           </label>
           <label>
             <span>Familia</span>
             <select value={filtros.familiaId} onChange={(e) => cambiar({ familiaId: e.target.value })}>
               <option value="">Todas</option>
-              {(datos?.catalogos.familias ?? []).map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
+              {(catalogos?.familias ?? []).map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
             </select>
           </label>
           <label>
@@ -184,7 +219,7 @@ export default function ReporteLotesPage() {
             </select>
           </label>
           <label>
-            <span>Existencia</span>
+            <span>Existencia (saldo total del lote)</span>
             <select value={filtros.existencia} onChange={(e) => cambiar({ existencia: e.target.value as LotesFiltros["existencia"] })}>
               <option value="CON">Solo con saldo</option>
               <option value="SIN">Sin saldo</option>
@@ -193,7 +228,8 @@ export default function ReporteLotesPage() {
           </label>
           <label>
             <span>Horizonte de alerta (días)</span>
-            <input type="number" min={0} max={3650} value={horizonteTxt} onChange={(e) => { setPagina(1); setHorizonteTxt(e.target.value); }} />
+            <input type="text" inputMode="numeric" value={horizonteTxt} aria-invalid={!!hz.error} onChange={(e) => { setPagina(1); setHorizonteTxt(e.target.value); }} />
+            {hz.error ? <small role="alert">{hz.error}</small> : null}
           </label>
           <label>
             <span>Vence desde</span>
@@ -211,13 +247,48 @@ export default function ReporteLotesPage() {
           ) : null}
         </div>
 
-        {error ? <div className={styles.errorBox}>{error}</div> : null}
+        {t && t.porUnidad.length > 0 ? (
+          <details className={styles.policyNote} open>
+            <summary><strong>Totales por unidad de medida</strong> (sin total general de cantidades entre unidades distintas)</summary>
+            <div className={styles.tableWrap}>
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    <th>Unidad</th><th className={styles.num}>Lotes</th><th className={styles.num}>Disponible</th><th className={styles.num}>Reservado</th><th className={styles.num}>Cuarentena</th>
+                    <th className={styles.num}>Físico propio</th><th className={styles.num}>Terceros</th><th>Terceros por estado</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {t.porUnidad.map((u) => (
+                    <tr key={u.unidadId || "sin"}>
+                      <td>{nombreUnidad(et, u)}</td><td className={styles.num}>{num(u.lotes)}</td>
+                      <td className={styles.num}>{cant(u.disponible)}</td><td className={styles.num}>{cant(u.reservado)}</td><td className={styles.num}>{cant(u.cuarentena)}</td>
+                      <td className={styles.num}>{cant(u.fisico)}</td><td className={styles.num}>{cant(u.terceros)}</td>
+                      <td>{textoTercerosEstadosTexto(u.tercerosPorEstado) || "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </details>
+        ) : null}
 
-        <div className={styles.tableWrap}>
+        {actual?.huerfanos ? <div className={styles.okBox}>Incluye lotes sin ningún saldo registrado (visibles solo con alcance a todos los depósitos).</div> : null}
+        {hz.error ? <div className={styles.errorBox} role="alert">{hz.error} El informe no se muestra hasta corregir el campo.</div> : null}
+        {error ? (
+          <div className={styles.errorBox} role="alert">
+            {error} No se muestran ni se exportan datos anteriores; los filtros se conservan.{" "}
+            <button type="button" className={styles.clearButton} onClick={() => void cargar()}>Reintentar</button>
+          </div>
+        ) : null}
+        {errorExportacion ? <div className={styles.errorBox} role="alert">{errorExportacion}</div> : null}
+        {actual && !puedeExportar ? <div className={styles.alertBox}>Su perfil puede consultar este reporte, pero no exportarlo (requiere el permiso Exportar de Reportes).</div> : null}
+
+        <div className={styles.tableWrap} aria-busy={cargando}>
           <table className={styles.table}>
             <thead>
               <tr>
-                <th>Código</th><th>Producto</th><th>Categoría</th><th>Familia</th><th>Lote</th>
+                <th>Código</th><th>Producto</th><th>Unidad</th><th>Categoría</th><th>Familia</th><th>Lote</th>
                 {porDeposito ? <th>Depósito</th> : <th className={styles.num}>Depósitos</th>}
                 <th>Vencimiento</th><th className={styles.num}>Días restantes</th><th>Situación</th>
                 <th className={styles.num}>Disponible</th><th className={styles.num}>Reservado</th><th className={styles.num}>Cuarentena</th>
@@ -225,43 +296,34 @@ export default function ReporteLotesPage() {
               </tr>
             </thead>
             <tbody>
-              {(datos?.filas ?? []).map((f, i) => (
+              {(actual?.filas ?? []).map((f, i) => (
                 <tr key={`${f.loteId}-${f.deposito}-${i}`}>
                   <td>{f.codigo}</td>
                   <td className={styles.desc} title={f.descripcion}>{f.descripcion}</td>
+                  <td>{nombreUnidad(et, f)}</td>
                   <td>{f.categoria || "—"}</td><td>{f.familia || "—"}</td><td>{f.lote}</td>
-                  {porDeposito ? <td>{f.deposito || "—"}</td> : <td className={styles.num}>{num(f.depositos)}</td>}
+                  {porDeposito ? <td>{textoDepositoLote(f)}</td> : <td className={styles.num}>{num(f.depositos)}</td>}
                   <td>{f.vencimiento || "Sin fecha"}</td>
                   <td className={styles.num}>{textoDias(f)}</td>
                   <td><span className={[styles.badge, styles[`badge${f.clase}`]].join(" ")}>{CLASE_LOTE[f.clase]}</span></td>
-                  <td className={styles.num}>{num(f.disponible)}</td><td className={styles.num}>{num(f.reservado)}</td>
-                  <td className={styles.num}>{num(f.cuarentena)}</td><td className={styles.num}>{num(f.fisico)}</td>
-                  <td className={styles.num}>{num(f.terceros)}</td>
-                  <td>{textoTercerosEstados(f.tercerosEstados) || "—"}</td>
+                  <td className={styles.num}>{cant(f.disponible)}</td><td className={styles.num}>{cant(f.reservado)}</td>
+                  <td className={styles.num}>{cant(f.cuarentena)}</td><td className={styles.num}>{cant(f.fisico)}</td>
+                  <td className={styles.num}>{cant(f.terceros)}</td>
+                  <td>{textoTercerosEstadosTexto(f.tercerosEstados) || "—"}</td>
                 </tr>
               ))}
             </tbody>
-            {datos && datos.filas.length > 0 && t ? (
-              <tfoot>
-                <tr>
-                  <td colSpan={9}>TOTAL GENERAL (lotes únicos)</td>
-                  <td className={styles.num}>{num(t.disponible)}</td><td className={styles.num}>{num(t.reservado)}</td>
-                  <td className={styles.num}>{num(t.cuarentena)}</td><td className={styles.num}>{num(t.fisico)}</td>
-                  <td className={styles.num}>{num(t.terceros)}</td>
-                  <td>{textoTercerosEstados(t.tercerosPorEstado) || "—"}</td>
-                </tr>
-              </tfoot>
-            ) : null}
           </table>
         </div>
 
-        {datos && datos.filas.length === 0 && !cargando ? (
+        {actual && actual.filas.length === 0 && !cargando ? (
           <div className={styles.empty}>
             <strong>No se encontraron lotes.</strong>
             <span>{hayFiltros ? "Modifique los filtros aplicados." : "Aún no hay lotes con saldo registrados."}</span>
           </div>
         ) : null}
-        {!datos && cargando ? <div className={styles.empty}><strong>Cargando reporte...</strong></div> : null}
+        {!actual && cargando && !hz.error ? <div className={styles.empty}><strong>Cargando reporte...</strong></div> : null}
+        {!actual && !cargando && error ? <div className={styles.empty}><strong>No se pudo generar el reporte</strong><span>Use «Reintentar» para volver a consultar con los mismos filtros.</span></div> : null}
 
         <footer className={styles.pagination}>
           <span>
@@ -275,7 +337,7 @@ export default function ReporteLotesPage() {
         </footer>
 
         <ul className={styles.notes}>
-          {(datos?.cobertura ?? []).map((n) => <li key={n}>{n}</li>)}
+          {(actual?.cobertura ?? []).map((n) => <li key={n}>{n}</li>)}
         </ul>
       </section>
     </section>

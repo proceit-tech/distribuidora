@@ -45,6 +45,7 @@ Module._resolveFilename = function (request, ...resto) {
   const rsc = cargar("lib/reportes/stock-critico.casos.js");
   const rsg = cargar("lib/reportes/stock-general.casos.js");
   const rkd = cargar("lib/reportes/kardex.casos.js");
+  const rlo = cargar("lib/reportes/lotes.casos.js");
   const lpe = cargar("lib/listas-precio/estabilizacion.casos.js");
   const srm = cargar("lib/stock/stock-reposicion.casos.js");
   const fac = cargar("lib/facturacion/facturacion.casos.js");
@@ -87,6 +88,7 @@ Module._resolveFilename = function (request, ...resto) {
     ["Reportes · Stock crítico y reposición (RPT-C03-01…07, matriz T-C01…T-C09: motor único de Reposición, depósitos sin saldo, sin duplicar, sin cantidades heterogéneas, cargas confiables, snapshot, XLSX/PDF)", async () => rsc.verificarCasosReportesStockCritico(), null],
     ["Reportes · Stock general (RPT-SG-01…09, matriz SG-T01…T09: sin saldo en las dos vistas, nivel como Inventario > Stock, totales por unidad, decimales exactos, cargas confiables, snapshot, XLSX/PDF)", async () => rsg.verificarCasosReportesStockGeneral(), null],
     ["Reportes · Kardex de movimientos (AUD-KDX-R01, RPT-KDX-01…09, matriz KDX-T01…T10: decimales exactos, snapshot, terceros, alcance con inactivos, totales por unidad y propiedad, cargas confiables, permisos, XLSX/PDF)", async () => rkd.verificarCasosReportesKardex(), null],
+    ["Reportes · Lotes y vencimientos (AUD-LOT-R01, LOT-R01-01…09, matriz T01…T10: decimales exactos, snapshot, aislamiento y lotes sin saldo, alcance con inactivos, GTIN, totales por unidad (UUID), filtro Sin saldo, cargas confiables, permisos, XLSX/PDF)", async () => rlo.verificarCasosReportesLotes(), null],
     ["Stock, Reposición y contrato Movimientos ↔ documentos (Etapas A, B y C)", async () => srm.verificarCasosStockReposicionMovimientos(), null],
     ["Facturación F-01/F-02: documentos electrónicos, gateway, NEX-047, cálculo fiscal, payload FE y NEX-048", async () => fac.verificarCasosFacturacion(), null],
   ];

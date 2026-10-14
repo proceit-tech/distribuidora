@@ -648,7 +648,7 @@ export async function verificarCasosReportesKardex(): Promise<string[]> {
   cierto("KDX-R02-01 PDF con filtro de fila: la CONCILIACIÓN COMPLETA y los totales fuera del filtro mantienen todas las cifras", (() => { const tk = tokensPdf(generarPdfTabla(tablaKardex(rBigF))); return tk.includes(es(totalBig)) && truncado(tk).length === 0 && tk.includes("CONCILIACIÓN") && tk.includes("COMPLETA"); })());
 
   // regresión de los otros cuatro informes: el modo exacto es opt-in (solo el Kardex lo activa); los demás PDF no cambian de comportamiento
-  const fuentesOtros = ["export-valorizacion", "export-stock-critico", "export-stock-general", "export-lotes"].map((m) => leer(`lib/reportes/${m}.ts`));
+  const fuentesOtros = ["export-valorizacion", "export-stock-critico", "export-stock-general"].map((m) => leer(`lib/reportes/${m}.ts`));
   cierto("KDX-R02-01 los otros cuatro informes no activan el modo exacto (sin pdfAnclas) y el generador compartido lo trata como opción: sin la opción, un PDF es idéntico al generador anterior", fuentesOtros.every((x) => !/pdfAnclas/.test(x)) && /exacto\?: boolean/.test(leer("lib/reportes/pdf.ts")) && /t\.exacto/.test(leer("lib/reportes/pdf.ts")) && /\.\.\.\(t\.pdfAnclas \? \{ exacto: true/.test(leer("lib/reportes/export.ts")));
 
   const plano: Parameters<typeof generarPdfTabla>[0] = {

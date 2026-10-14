@@ -484,6 +484,7 @@ export type LotesFiltros = {
   vencHasta: string;
 };
 
+/** Todas las cantidades de Lotes son texto `numeric` exacto de PostgreSQL (nunca float). */
 export type LotesFila = {
   productoId: string;
   loteId: string;
@@ -492,36 +493,54 @@ export type LotesFila = {
   categoria: string;
   marca: string;
   familia: string;
+  /** Unidad de medida del producto: nombre visual e identidad física (UUID). Las cantidades de unidades distintas nunca se suman. */
   unidad: string;
+  unidadId: string;
   lote: string;
   // Vista DEPOSITO: depósito de la fila. Vista LOTE: vacío y `depositos` = cuántos depósitos del alcance tienen saldo del lote.
   deposito: string;
+  depositoInactivo: boolean;
   depositos: number;
   vencimiento: string;
   diasRestantes: number | null;
   clase: ClaseVencimiento;
   // Stock PROPIO (nunca incluye terceros)
-  disponible: number;
-  reservado: number;
-  cuarentena: number;
-  fisico: number;
+  disponible: string;
+  reservado: string;
+  cuarentena: string;
+  fisico: string;
   // Stock de TERCEROS en columnas aparte
-  terceros: number;
-  tercerosEstados: { disponible: number; reservado: number; cuarentena: number; transito: number };
+  terceros: string;
+  tercerosEstados: { disponible: string; reservado: string; cuarentena: string; transito: string };
 };
 
-export type LotesTotalClase = { clase: ClaseVencimiento; lotes: number; fisico: number; terceros: number };
+/** Por clase de vencimiento: la cantidad de lotes es aditiva; las cantidades se discriminan por unidad física (unidadId). */
+export type LotesTotalClase = {
+  clase: ClaseVencimiento;
+  lotes: number;
+  unidades: { unidadId: string; unidad: string; lotes: number; fisico: string; terceros: string }[];
+};
+
+/** Totales de UNA unidad física (UUID): jamás se suman cantidades de unidades distintas. */
+export type LotesUnidadTotales = {
+  unidadId: string;
+  unidad: string;
+  lotes: number;
+  disponible: string;
+  reservado: string;
+  cuarentena: string;
+  fisico: string;
+  terceros: string;
+  tercerosPorEstado: { disponible: string; reservado: string; cuarentena: string; transito: string };
+};
 
 export type LotesTotales = {
+  /** Cantidad de lotes (aditiva). */
   lotes: number;
   filas: number;
   clases: LotesTotalClase[];
-  disponible: number;
-  reservado: number;
-  cuarentena: number;
-  fisico: number;
-  terceros: number;
-  tercerosPorEstado: { disponible: number; reservado: number; cuarentena: number; transito: number };
+  /** Un grupo por unidad de medida (UUID). No existe total general de cantidades entre unidades distintas. */
+  porUnidad: LotesUnidadTotales[];
   hoy: string;
 };
 
@@ -533,11 +552,18 @@ export type LotesRespuesta = {
   pagina: { numero: number; tamano: number; totalFilas: number };
   filas: LotesFila[];
   totales: LotesTotales;
+  /** Sobre qué saldo se evalúa «Existencia»: el total del lote en todos los depósitos autorizados, o el del depósito elegido. */
+  alcanceExistencia: { modo: "AUTORIZADOS" | "DEPOSITO"; depositos: number };
+  /** Se incluyeron lotes sin ningún saldo registrado (solo para usuarios con alcance TODOS y sin filtro de depósito). */
+  huerfanos: boolean;
   catalogos: {
-    depositos: { id: string; nombre: string }[];
+    depositos: { id: string; nombre: string; activo: boolean }[];
     categorias: { id: string; nombre: string }[];
     marcas: { id: string; nombre: string }[];
     familias: { id: string; nombre: string }[];
   };
   cobertura: string[];
 };
+
+/** Respuesta de la API: agrega `permisos.exportar` (el servidor vuelve a exigir REPORTES.EXPORTAR en la exportación). */
+export type LotesRespuestaApi = LotesRespuesta & { permisos: { exportar: boolean } };
