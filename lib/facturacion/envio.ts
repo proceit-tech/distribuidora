@@ -52,31 +52,71 @@ export async function configuracionGateway(db: Db, empresaId: string, dep: Depen
 
 const SQL_REGISTRAR_ENVIO = "SELECT fe_documento_registrar_envio($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb)";
 
+const MENSAJE_INDETERMINADO = "No se pudo guardar el resultado del envío: el resultado es indeterminado. Verifique el documento en el gateway antes de reenviar.";
+
+/** Resultado que describe lo que REALMENTE quedó guardado cuando no se pudo registrar el del gateway: indeterminado, sin lote ni CDC ni cuerpo (lo mismo que la base). */
+function comoIndeterminado(r: ResultadoEnvio, mensaje: string = MENSAJE_INDETERMINADO): ResultadoEnvio {
+  return {
+    ...r, resultado: "RESPUESTA_INVALIDA", estadoLocal: "ENVIO_INDETERMINADO", errorTipo: null, mensaje, lote: null, cdc: null, cdcInformado: null, estadoGateway: null, errores: [], respuesta: null,
+    fases: [...r.fases, { fase: "RESPUESTA", ok: false, detalle: mensaje, http: r.http }],
+  };
+}
+
+async function estadoPersistido(db: Db, empresaId: string, documentoId: string): Promise<string | null> {
+  try {
+    const q = await db.query("SELECT estado_local AS estado FROM documentos_electronicos WHERE empresa_id = $1 AND id = $2", [empresaId, documentoId]);
+
+    return (q.rows[0] as F | undefined)?.estado ? String((q.rows[0] as F).estado) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Tras perder la confirmación de un cierre (el documento ya no está «ENVIANDO»): se lee el estado REAL guardado; solo se informa lo que la base confirma. */
+async function resultadoPersistido(db: Db, empresaId: string, documentoId: string, r: ResultadoEnvio): Promise<ResultadoEnvio> {
+  const guardado = await estadoPersistido(db, empresaId, documentoId);
+
+  if (guardado === r.estadoLocal) return r;
+  if (guardado === "ENVIADO") return { ...comoIndeterminado(r), resultado: "OK", estadoLocal: "ENVIADO", mensaje: "El documento figura como enviado (confirmado por otra operación)." };
+  if (guardado === "ENVIO_INDETERMINADO") return comoIndeterminado(r);
+
+  return comoIndeterminado(r, `${MENSAJE_INDETERMINADO} (estado guardado: ${guardado ?? "no confirmado"})`);
+}
+
 /**
- * Persiste el resultado de la transmisión (RN-E2-07). Si la base falla DESPUÉS de haber transmitido: se reintenta una vez con el mismo resultado; si vuelve a fallar se intenta
- * cerrar como ENVIO_INDETERMINADO mínimo (sin cuerpo) para no dejar el documento en ENVIANDO sin evidencia; si ni eso es posible se informa un 502 explícito (el documento queda
- * ENVIANDO y a los 2 minutos pasa a indeterminado: nunca se reenvía a ciegas).
+ * Persiste el resultado de la transmisión (RN-E2-07) y DEVUELVE el resultado efectivo: lo que la API informa es siempre lo que quedó guardado. Si la base falla DESPUÉS de
+ * transmitir: 1 reintento con el mismo resultado; si vuelve a fallar se cierra como ENVIO_INDETERMINADO mínimo y se informa ESE estado (nunca el ENVIADO del gateway); si el
+ * cierre se confirmó pero se perdió la respuesta (ENVIO_NO_INICIADO en el reintento) se lee el estado real guardado; si ni eso es posible, 502 (el documento queda ENVIANDO y a
+ * los 2 minutos pasa a indeterminado: nunca se reenvía a ciegas).
  */
-async function cerrarEnvio(db: Db, empresaId: string, usuarioId: string, documentoId: string, r: ResultadoEnvio) {
+async function cerrarEnvio(db: Db, empresaId: string, usuarioId: string, documentoId: string, r: ResultadoEnvio): Promise<ResultadoEnvio> {
   const completo = [empresaId, usuarioId, documentoId, r.faseFinal, r.resultado, r.estadoLocal, r.errorTipo, r.http, crypto.randomUUID(), r.estadoGateway, r.mensaje, r.lote, r.cdc, r.cdcInformado, r.respuesta ? JSON.stringify(r.respuesta) : null];
+  let fallo = false;
 
   for (let intento = 0; intento < 2; intento++) {
     try {
       await db.query(SQL_REGISTRAR_ENVIO, completo);
 
-      return;
+      return r;
     } catch (error) {
       const pg = error as { code?: string; detail?: string };
 
+      if (fallo && pg.detail === "NEX:ENVIO_NO_INICIADO") return resultadoPersistido(db, empresaId, documentoId, r);
       // Errores de negocio de la función (permiso, documento ajeno, estado) no se arreglan reintentando.
-      // Si el primer intento sí se confirmó pero se perdió la respuesta, el documento ya no está en envío: el resultado quedó guardado.
-      if (intento > 0 && pg.detail === "NEX:ENVIO_NO_INICIADO") return;
       if (pg.code === "42501" || (pg.detail && pg.detail.startsWith("NEX:"))) throw error;
+      fallo = true;
     }
   }
   try {
-    await db.query(SQL_REGISTRAR_ENVIO, [empresaId, usuarioId, documentoId, r.faseFinal, "RESPUESTA_INVALIDA", "ENVIO_INDETERMINADO", null, r.http, crypto.randomUUID(), null, "No se pudo guardar el resultado del envío: el resultado es indeterminado.", null, null, null, null]);
-  } catch {
+    await db.query(SQL_REGISTRAR_ENVIO, [empresaId, usuarioId, documentoId, r.faseFinal, "RESPUESTA_INVALIDA", "ENVIO_INDETERMINADO", null, r.http, crypto.randomUUID(), null, MENSAJE_INDETERMINADO, null, null, null, null]);
+
+    return comoIndeterminado(r);
+  } catch (error) {
+    // Alguno de los intentos anteriores pudo haberse confirmado sin que llegara la respuesta.
+    if ((error as { detail?: string }).detail === "NEX:ENVIO_NO_INICIADO") return resultadoPersistido(db, empresaId, documentoId, r);
+    // El cierre mínimo pudo haberse confirmado aunque falló la respuesta: solo se informa lo que la base confirma.
+    if ((await estadoPersistido(db, empresaId, documentoId)) === "ENVIO_INDETERMINADO") return comoIndeterminado(r);
+
     throw new ErrorFacturacion(502, "El documento pudo haber sido transmitido pero no se pudo guardar el resultado: es indeterminado. Verifique su estado en el gateway antes de reenviar.");
   }
 }
@@ -111,7 +151,7 @@ export async function enviarDocumento(db: Db, empresaId: string, usuarioId: stri
     };
   }
 
-  await cerrarEnvio(db, empresaId, usuarioId, documentoId, r);
+  r = await cerrarEnvio(db, empresaId, usuarioId, documentoId, r);
 
   return { numero, estadoLocal: r.estadoLocal, errorTipo: r.errorTipo, resultado: r.resultado, http: r.http, mensaje: r.mensaje, lote: r.lote, cdc: r.cdc, estadoGateway: r.estadoGateway, errores: r.errores, fases: r.fases };
 }

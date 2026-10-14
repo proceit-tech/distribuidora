@@ -73,19 +73,38 @@ export async function verificarCasosFatE2(): Promise<string[]> {
     configGatewayValida(EMPRESA, { baseUrl: "https://gw.invalid", credencialRef: "X", timeoutMs: "abc" })?.timeoutMs, configGatewayValida("E2", { baseUrl: "https://gw.invalid", credencialRef: "X", timeoutMs: 2500 }),
   ], [null, null, null, null, null, 1000, 60000, 15000, { empresaId: "E2", baseUrl: "https://gw.invalid", credencialRef: "X", timeoutMs: 2500 }]);
 
-  const mkDb = (opciones: { baseUrl?: string; fallosRegistrar?: Array<Record<string, unknown> | Error>; noIniciado?: boolean } = {}) => {
+  /**
+   * Base simulada con ESTADO: el documento nace «ENVIANDO» (lo deja fe_documento_iniciar_envio) y un cierre exitoso lo pasa al estado pedido; si ya no está «ENVIANDO» la función
+   * lanza ENVIO_NO_INICIADO como la real. Fallos programados: `{ aplica: true }` = el cierre SE CONFIRMA pero se pierde la respuesta (commit confirmado, error al cliente).
+   */
+  type FalloBase = { code?: string; detail?: string; aplica?: boolean; luego?: string };
+  const mkDb = (opciones: { baseUrl?: string; fallosRegistrar?: FalloBase[]; lecturaFalla?: boolean; estadoInicial?: string } = {}) => {
     const llamadas: Array<{ sql: string; parametros: unknown[] }> = [];
     const fallos = [...(opciones.fallosRegistrar ?? [])];
+    const guardado = { estado: opciones.estadoInicial ?? "ENVIANDO", lote: null as unknown, mensaje: null as unknown };
+    const aplicar = (p: unknown[]) => { guardado.estado = String(p[5]); guardado.lote = p[11]; guardado.mensaje = p[10]; };
     const db = {
       async query(sql: string, parametros: unknown[] = []) {
         llamadas.push({ sql, parametros });
 
         if (/FROM fe_gateway_config/.test(sql)) return { rows: [{ baseUrl: opciones.baseUrl ?? CONFIG.baseUrl, credencialRef: "PRUEBA", timeoutMs: 1000 }] };
         if (/fe_documento_iniciar_envio/.test(sql)) return { rows: [{ resultado: "INICIADO", payload: PAYLOAD, numero: FE.numero, tipo: "FE", establecimiento: FE.establecimiento, punto: FE.puntoExpedicion }] };
+        if (/FROM documentos_electronicos/.test(sql)) {
+          if (opciones.lecturaFalla) throw Object.assign(new Error("lectura caída"), { code: "08006" });
+
+          return { rows: [{ estado: guardado.estado }] };
+        }
         if (/fe_documento_registrar_envio/.test(sql)) {
           const f = fallos.shift();
 
-          if (f) throw f instanceof Error ? f : Object.assign(new Error("fallo de base"), f);
+          if (guardado.estado !== "ENVIANDO") throw Object.assign(new Error("el documento no está en envío"), { detail: "NEX:ENVIO_NO_INICIADO" });
+          if (f) {
+            if (f.aplica) aplicar(parametros);
+            if (f.luego) guardado.estado = f.luego;
+
+            throw Object.assign(new Error("fallo de base"), f);
+          }
+          aplicar(parametros);
 
           return { rows: [{ fe_documento_registrar_envio: "ok" }] };
         }
@@ -94,7 +113,7 @@ export async function verificarCasosFatE2(): Promise<string[]> {
       },
     };
 
-    return { db: db as never, llamadas, registros: () => llamadas.filter((l) => /fe_documento_registrar_envio/.test(l.sql)) };
+    return { db: db as never, llamadas, guardado, registros: () => llamadas.filter((l) => /fe_documento_registrar_envio/.test(l.sql)) };
   };
   const recepcionOk = { status: 200, cuerpo: { status: "success", message: "Documento recibido", nro_lote: "L-901" } } as const;
 
@@ -151,11 +170,11 @@ export async function verificarCasosFatE2(): Promise<string[]> {
   }
   igual("T-E2-08 429 → ERROR_ENVIO/TRANSITORIO; 408, 409 duplicado, 5xx, timeout y red → ENVIO_INDETERMINADO; en todos exactamente una transmisión (jamás reenvío ciego)", estados8, ["ERROR_ENVIO/TRANSITORIO:1", "ENVIO_INDETERMINADO:1", "ENVIO_INDETERMINADO:1", "ENVIO_INDETERMINADO:1", "ENVIO_INDETERMINADO:1", "ENVIO_INDETERMINADO:1", "ENVIO_INDETERMINADO:1"]);
 
-  // ── T-E2-09: la base falla DESPUÉS de transmitir
-  const falloBase = { code: "08006" };
-  const transmitir = async (opciones: Parameters<typeof mkDb>[0]) => {
+  // ── T-E2-09 / FAT-E2-R01-01: la base falla DESPUÉS de transmitir. La API devuelve SIEMPRE lo que quedó guardado (nunca un ENVIADO que la base no tiene).
+  const falloBase: FalloBase = { code: "08006" };
+  const transmitir = async (opciones: Parameters<typeof mkDb>[0], cuerpo: Resp = recepcionOk) => {
     limpiarCacheTokens();
-    const g = gateway([recepcionOk]);
+    const g = gateway([cuerpo]);
     const m = mkDb(opciones);
     let cod = 0;
     let respuesta: Awaited<ReturnType<typeof enviarDocumento>> | null = null;
@@ -164,16 +183,29 @@ export async function verificarCasosFatE2(): Promise<string[]> {
 
     return { g, m, cod, respuesta };
   };
-  const a = await transmitir({ fallosRegistrar: [falloBase] });
-  const b = await transmitir({ fallosRegistrar: [falloBase, falloBase] });
-  const c = await transmitir({ fallosRegistrar: [falloBase, falloBase, falloBase] });
-  const d = await transmitir({ fallosRegistrar: [{ code: "42501" }] });
-  const e = await transmitir({ fallosRegistrar: [falloBase, { detail: "NEX:ENVIO_NO_INICIADO" }] });
+  const vista = (x: Awaited<ReturnType<typeof transmitir>>) => [x.respuesta?.estadoLocal ?? null, x.m.guardado.estado, x.g.posts(), x.cod];
+  const sinFallo = await transmitir({});
+  const unFallo = await transmitir({ fallosRegistrar: [falloBase] });
+  const dosFallos = await transmitir({ fallosRegistrar: [falloBase, falloBase] });
+  const tresFallos = await transmitir({ fallosRegistrar: [falloBase, falloBase, falloBase] });
+  const permiso = await transmitir({ fallosRegistrar: [{ code: "42501" }] });
+  const commitPerdido = await transmitir({ fallosRegistrar: [{ ...falloBase, aplica: true }] });
+  const commitPerdidoRechazo = await transmitir({ fallosRegistrar: [{ ...falloBase, aplica: true }] }, { status: 400, cuerpo: { status: "error", message: "dRucRec inválido", errors: ["dRucRec: formato"] } });
+  const fallbackConfirmadoSinRespuesta = await transmitir({ fallosRegistrar: [falloBase, falloBase, { ...falloBase, aplica: true }] });
+  const lecturaCaida = await transmitir({ fallosRegistrar: [{ ...falloBase, aplica: true }], lecturaFalla: true });
+  const otroProceso = await transmitir({ fallosRegistrar: [{ ...falloBase, luego: "ENVIADO" }] }, { status: 400, cuerpo: { status: "error", message: "dRucRec inválido", errors: ["dRucRec: formato"] } });
 
-  igual("T-E2-09 crash entre POST y persistencia: un fallo de la base se reintenta una vez con el MISMO resultado (ENVIADO), sin retransmitir", [a.g.posts(), a.m.registros().length, a.cod, a.respuesta?.estadoLocal, a.m.registros()[1].parametros[5]], [1, 2, 0, "ENVIADO", "ENVIADO"]);
-  igual("T-E2-09 si el reintento también falla se cierra como ENVIO_INDETERMINADO mínimo (RESPUESTA_INVALIDA, sin cuerpo ni lote) y se devuelve el resultado real del gateway; una sola transmisión", [b.g.posts(), b.m.registros().length, b.m.registros()[2].parametros[4], b.m.registros()[2].parametros[5], b.m.registros()[2].parametros[11], b.m.registros()[2].parametros[14], b.cod], [1, 3, "RESPUESTA_INVALIDA", "ENVIO_INDETERMINADO", null, null, 0]);
-  igual("T-E2-09 si la base no responde en ningún intento → 502 explícito «indeterminado» (el documento queda ENVIANDO → indeterminado), nunca éxito ni reenvío", [c.g.posts(), c.m.registros().length, c.cod, c.respuesta], [1, 3, 502, null]);
-  igual("T-E2-09 errores de negocio de la función (permiso 42501) no se reintentan; si el primer cierre sí se confirmó pero se perdió la respuesta, el reintento ENVIO_NO_INICIADO se toma como ya guardado", [d.m.registros().length, d.cod === 0, e.m.registros().length, e.cod, e.respuesta?.estadoLocal], [1, false, 2, 0, "ENVIADO"]);
+  igual("R01-01 sin fallos y con un fallo recuperado en el reintento: API y base coinciden en ENVIADO, con una sola transmisión", [vista(sinFallo), vista(unFallo), unFallo.m.registros().length, unFallo.respuesta?.lote], [["ENVIADO", "ENVIADO", 1, 0], ["ENVIADO", "ENVIADO", 1, 0], 2, "L-901"]);
+  igual("R01-01 fallos consecutivos y cierre mínimo: la base queda ENVIO_INDETERMINADO y la API devuelve ENVIO_INDETERMINADO (jamás ENVIADO), sin lote/CDC/cuerpo y con mensaje; 1 sola transmisión", [vista(dosFallos), dosFallos.respuesta?.resultado, dosFallos.respuesta?.lote, dosFallos.respuesta?.cdc, dosFallos.respuesta?.fases.at(-1)?.ok, dosFallos.m.guardado.lote, /indeterminado/i.test(dosFallos.respuesta?.mensaje ?? "")], [["ENVIO_INDETERMINADO", "ENVIO_INDETERMINADO", 1, 0], "RESPUESTA_INVALIDA", null, null, false, null, true]);
+  igual("R01-01 si no hay forma de guardar nada → 502 explícito y la base queda ENVIANDO (a los 2 min pasa a indeterminado); no hay resultado de éxito; 1 sola transmisión", [vista(tresFallos), tresFallos.m.registros().length], [[null, "ENVIANDO", 1, 502], 3]);
+  igual("R01-01 error de negocio de la función (permiso) no se reintenta ni se disfraza de éxito", [permiso.m.registros().length, permiso.cod, permiso.respuesta, permiso.m.guardado.estado], [1, -1, null, "ENVIANDO"]);
+  igual("R01-01 commit confirmado con respuesta perdida: el reintento recibe ENVIO_NO_INICIADO, se lee el estado real y se devuelve exactamente lo guardado (ENVIADO si se guardó ENVIADO; ERROR_ENVIO/RECHAZO con sus errores si eso se guardó)", [
+    vista(commitPerdido), commitPerdido.respuesta?.lote, vista(commitPerdidoRechazo), commitPerdidoRechazo.respuesta?.errorTipo, commitPerdidoRechazo.respuesta?.errores,
+  ], [["ENVIADO", "ENVIADO", 1, 0], "L-901", ["ERROR_ENVIO", "ERROR_ENVIO", 1, 0], "RECHAZO", ["dRucRec: formato"]]);
+  igual("R01-01 el cierre mínimo se confirmó pero falló la respuesta: se detecta el ENVIO_INDETERMINADO guardado y se informa indeterminado; si la lectura de verificación también falla NUNCA se informa ENVIADO; si otra operación ya dejó ENVIADO se informa ENVIADO", [
+    vista(fallbackConfirmadoSinRespuesta), vista(lecturaCaida), lecturaCaida.respuesta?.mensaje?.includes("no confirmado"), vista(otroProceso), otroProceso.respuesta?.mensaje,
+  ], [["ENVIO_INDETERMINADO", "ENVIO_INDETERMINADO", 1, 0], ["ENVIO_INDETERMINADO", "ENVIADO", 1, 0], true, ["ENVIADO", "ENVIADO", 1, 0], "El documento figura como enviado (confirmado por otra operación)."]);
+  cierto("R01-01 enviarDocumento devuelve el resultado efectivo del cierre (r = await cerrarEnvio) y no recompone el estado desde la respuesta del gateway", /r = await cerrarEnvio\(/.test(leer("lib/facturacion/envio.ts")) && /estadoLocal: r\.estadoLocal/.test(leer("lib/facturacion/envio.ts")));
 
   // ── T-E2-10/11/12: consulta y reconciliación del estado fiscal
   const docBase: DocumentoReconciliable = { ...FE, cdc: null, estadoSifen: "SIN_CONSULTA" };
@@ -288,6 +320,100 @@ export async function verificarCasosFatE2(): Promise<string[]> {
     return [s.dTotGralOpe, s.dTotIVA, s.dBaseGrav10, bloqueado];
   })(), [107300, 9754.54545454, 97545.45454546, true]);
   cierto("T-E2-14 FAT-E2 no toca el cálculo: calculo.ts y payload-fe.ts no importan nada de gateway/envío/reconciliación", !/from "@\/lib\/facturacion\/(gateway|envio|reconciliacion|shared)"/.test(leer("lib/facturacion/calculo.ts") + leer("lib/facturacion/payload-fe.ts")));
+
+  // ── FAT-E2-R01-02: transiciones del estado SIFEN final protegidas DENTRO de fe_documento_registrar_consulta (NEX-054), tras el bloqueo FOR UPDATE de la fila
+  const m47 = leer("documentacao/banco/nexit/v1/migraciones/NEX-047-facturacion-documentos-electronicos.sql");
+  const m54 = leer("documentacao/banco/nexit/v1/migraciones/NEX-054-facturacion-consulta-estado-final.sql");
+  const rev54 = leer("documentacao/banco/nexit/v1/scripts/reversion-NEX-054.sql");
+  const funcion = (t: string) => { const i = t.indexOf("CREATE OR REPLACE FUNCTION public.fe_documento_registrar_consulta("); return t.slice(i, t.indexOf("END $$;", i) + 7).replace(/\r/g, ""); };
+  const f54 = funcion(m54);
+
+  cierto("NEX-054 SQL: reemplaza SOLO el cuerpo de fe_documento_registrar_consulta con la misma firma (privilegios intactos), exige NEX-047, no se reaplica y no toca tablas, grants ni migraciones previas", /requiere NEX-047/.test(m54) && /parece aplicada/.test(m54) && funcion(m54).split("\n")[1] === funcion(m47).split("\n")[1] && !/\b(ALTER|DROP|CREATE)\s+TABLE|\bGRANT\b|\bREVOKE\b|\bINSERT INTO public\.(?!documento_electronico_intentos)/i.test(m54.replace(/--.*$/gm, "")) && !/NEX-054/.test(m47));
+  cierto("NEX-054 SQL: la guarda va DESPUÉS del SELECT … FOR UPDATE de la fila y de la comprobación de CDC, y ANTES de insertar el intento y de actualizar el documento; solo admite el mismo estado final o APROBADO → CANCELADO", (() => {
+    const iLock = f54.indexOf("FOR UPDATE"), iCdc = f54.indexOf("CDC_DIVERGENTE"), iGuarda = f54.indexOf("-- NEX-054:"), iIntento = f54.indexOf("INSERT INTO public.documento_electronico_intentos"), iUpdate = f54.indexOf("UPDATE public.documentos_electronicos SET");
+
+    return iLock > 0 && iLock < iCdc && iCdc < iGuarda && iGuarda < iIntento && iIntento < iUpdate
+      && /d\.estado_sifen IN \('APROBADO','RECHAZADO','CANCELADO','INUTILIZADO'\)/.test(f54) && /p_estado_sifen = d\.estado_sifen OR \(d\.estado_sifen = 'APROBADO' AND p_estado_sifen = 'CANCELADO'\)/.test(f54)
+      && /v_resultado := 'RESPUESTA_INVALIDA'/.test(f54) && /CASE WHEN v_resultado = 'OK' THEN p_estado_sifen END/.test(f54);
+  })());
+  cierto("NEX-054 SQL: la contradicción queda como evidencia (intento RESPUESTA_INVALIDA con el estado del gateway y mensaje) y solo anota la última consulta; la reversión restaura exactamente el cuerpo de NEX-047 y exige que NEX-054 esté aplicada", /estado_gateway/.test(f54) && /no se modifica el estado fiscal/.test(f54) && funcion(rev54) === funcion(m47) && /NEX-054 no está aplicada/.test(rev54) && !/-- NEX-054:/.test(funcion(rev54)) && /schema_migrations/.test(rev54));
+
+  // Modelo de la función SQL (serializada por el bloqueo de la fila): permite ejercitar consultas concurrentes y respuestas fuera de orden. NO es PostgreSQL.
+  const FINALES_MODELO = new Set(["APROBADO", "RECHAZADO", "CANCELADO", "INUTILIZADO"]);
+  const modelo = (guarda: boolean) => {
+    const doc = { sifen: "SIN_CONSULTA", cdc: null as string | null, intentos: [] as Array<{ resultado: string; estadoSifen: unknown; estadoGateway: unknown }> };
+    let cola: Promise<unknown> = Promise.resolve();
+    const registrar = (p: unknown[]) => {
+      const turno = cola.then(async () => {
+        await Promise.resolve();
+        let res = String(p[3]);
+
+        if (res === "OK" && p[8] && doc.cdc && p[8] !== doc.cdc) res = "CDC_DIVERGENTE";
+        if (guarda && res === "OK" && FINALES_MODELO.has(doc.sifen) && !(p[7] === doc.sifen || (doc.sifen === "APROBADO" && p[7] === "CANCELADO"))) res = "RESPUESTA_INVALIDA";
+        doc.intentos.push({ resultado: res, estadoSifen: res === "OK" ? p[7] : null, estadoGateway: p[6] });
+        if (res === "OK") { doc.sifen = String(p[7]); doc.cdc ??= (p[8] as string | null); }
+
+        return res;
+      });
+
+      cola = turno.catch(() => undefined);
+
+      return turno;
+    };
+    const db = {
+      async query(sql: string, parametros: unknown[] = []) {
+        if (/FROM fe_gateway_config/.test(sql)) return { rows: [{ baseUrl: CONFIG.baseUrl, credencialRef: "PRUEBA", timeoutMs: 1000 }] };
+        if (/fe_documento_registrar_consulta/.test(sql)) return { rows: [{ resultado: await registrar(parametros) }] };
+
+        return { rows: [{ id: DOC, ...FE, serie: null, cdc: doc.cdc, estadoSifen: doc.sifen }] };
+      },
+    };
+
+    return { db: db as never, doc };
+  };
+  const aprobadoGw = cuerpoConsulta("Aprobado", { cdc: CDC_FE });
+  const pendienteGw = cuerpoConsulta("Pendiente");
+  const rechazadoGw = cuerpoConsulta("Rechazado", { cdc: CDC_FE, cod: "1234", mensaje: "RUC inválido" });
+  const canceladoGw = cuerpoConsulta("Cancelado", { cdc: CDC_FE });
+
+  /** Dos consultas que leen el documento a la vez; `primera` registra antes y `segunda` (respuesta lenta del gateway) después. */
+  async function carrera(m: ReturnType<typeof modelo>, primera: unknown, segunda: unknown) {
+    limpiarCacheTokens();
+    let soltar: () => void = () => undefined;
+    const compuerta = new Promise<void>((r) => { soltar = r; });
+    const gA = gateway([{ status: 200, cuerpo: segunda }]);
+    const gB = gateway([{ status: 200, cuerpo: primera }]);
+    const lenta: FetchLike = async (url, init) => { if (url.endsWith("/api/consulta_de")) await compuerta; return gA.fetch(url, init); };
+    const pLenta = consultarEstado(m.db, EMPRESA, USUARIO, DOC, { fetch: lenta, env: ENV });
+    const pRapida = consultarEstado(m.db, EMPRESA, USUARIO, DOC, { fetch: gB.fetch, env: ENV });
+    const rapida = await pRapida;
+
+    soltar();
+
+    return [rapida.resultado, (await pLenta).resultado];
+  }
+
+  const m1 = modelo(true);
+  const o1 = await carrera(m1, aprobadoGw, pendienteGw);
+  const m2 = modelo(true);
+  const o2 = await carrera(m2, pendienteGw, aprobadoGw);
+  const m3 = modelo(true);
+  const o3 = await carrera(m3, aprobadoGw, rechazadoGw);
+  const m4 = modelo(true);
+  const o4 = await carrera(m4, rechazadoGw, aprobadoGw);
+  const m5 = modelo(true);
+  const o5 = await carrera(m5, aprobadoGw, canceladoGw);
+  const m6 = modelo(true);
+  const o6 = await carrera(m6, aprobadoGw, cuerpoConsulta("Estado raro", { cdc: CDC_FE }));
+  const m7 = modelo(false);
+  const o7 = await carrera(m7, aprobadoGw, pendienteGw);
+
+  igual("R01-02 respuesta lenta y obsoleta: Aprobado se registra primero y una consulta Pendiente que leyó el documento antes llega DESPUÉS → el documento sigue APROBADO y la contradicción queda como intento RESPUESTA_INVALIDA sin estado SIFEN", [o1, m1.doc.sifen, m1.doc.intentos.map((i) => i.resultado), m1.doc.intentos.map((i) => i.estadoSifen), m1.doc.intentos[1].estadoGateway], [["OK", "RESPUESTA_INVALIDA"], "APROBADO", ["OK", "RESPUESTA_INVALIDA"], ["APROBADO", null], "Pendiente"]);
+  igual("R01-02 orden inverso (Pendiente primero y Aprobado después): ambas se aceptan y el estado final es APROBADO; las dos consultas quedan en el historial", [o2, m2.doc.sifen, m2.doc.intentos.map((i) => i.resultado)], [["OK", "OK"], "APROBADO", ["OK", "OK"]]);
+  igual("R01-02 consultas concurrentes con finales distintos: gana la que registra primero y la otra se conserva como evidencia sin modificar el estado (Aprobado/Rechazado y Rechazado/Aprobado)", [o3, m3.doc.sifen, m3.doc.intentos.map((i) => i.resultado), o4, m4.doc.sifen, m4.doc.intentos.map((i) => i.resultado)], [["OK", "RESPUESTA_INVALIDA"], "APROBADO", ["OK", "RESPUESTA_INVALIDA"], ["OK", "RESPUESTA_INVALIDA"], "RECHAZADO", ["OK", "RESPUESTA_INVALIDA"]]);
+  igual("R01-02 evolución legítima APROBADO → CANCELADO se acepta; un estado desconocido sobre un APROBADO no lo degrada", [o5, m5.doc.sifen, o6, m6.doc.sifen, m6.doc.intentos.map((i) => i.resultado)], [["OK", "OK"], "CANCELADO", ["OK", "RESPUESTA_INVALIDA"], "APROBADO", ["OK", "RESPUESTA_INVALIDA"]]);
+  igual("R01-02 sensibilidad: el MISMO escenario sin la guarda del SQL (modelo sin NEX-054) regresa de APROBADO a PENDIENTE — la regresión que la migración evita", [o7, m7.doc.sifen], [["OK", "OK"], "PENDIENTE"]);
+  cierto("R01-02 limitación declarada: el modelo prueba la lógica de la guarda y el orden de bloqueo, NO PostgreSQL real; la ejecución con base descartable (migración, función, concurrencia real) queda pendiente y no se declara aprobada", /NEX-054/.test(leer("PROGRESSO-NEXIT-V1.md")) && /no se declara|NO se declara|no fue ejecutad|NO ejecutad/i.test(leer("PROGRESSO-NEXIT-V1.md")));
 
   // ── Límites de la etapa
   cierto("FAT-E2 sin worker ni agendador: ningún archivo de envío, consulta ni reconciliación crea intervalos o cron", !leer("lib/facturacion/gateway.ts").match(/setInterval|cron/i) && !leer("lib/facturacion/envio.ts").match(/setInterval|cron/i) && !leer("lib/facturacion/reconciliacion.ts").match(/setInterval|cron/i));
