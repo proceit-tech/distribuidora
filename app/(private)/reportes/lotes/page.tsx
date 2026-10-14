@@ -7,7 +7,7 @@ import { crearCompuerta } from "@/lib/productos/catalogos-carga";
 import { descargarLotes, pedirLotes } from "@/lib/reportes/cliente-lotes";
 import { CLASE_LOTE, textoAlcanceExistencia, textoDepositoLote, textoDias } from "@/lib/reportes/export-lotes";
 import { fmtCantidadTexto, fmtNum, textoTercerosEstadosTexto } from "@/lib/reportes/formato";
-import { etiquetasUnidad, filtrosLotesIguales, nombreUnidad, respuestaLotesVigente, validarHorizonteTexto } from "@/lib/reportes/lotes-plan";
+import { etiquetasUnidad, filtrosLotesIguales, nombreUnidad, planificarConsulta, respuestaLotesVigente } from "@/lib/reportes/lotes-plan";
 import type { ClaseVencimiento, LotesFiltros, LotesRespuestaApi } from "@/types/reportes";
 
 import styles from "@/components/ui/lista-padrao/reporte.module.css";
@@ -25,53 +25,70 @@ type Catalogos = LotesRespuestaApi["catalogos"];
 export default function ReporteLotesPage() {
   const [filtros, setFiltros] = useState<LotesFiltros>(FILTROS_VACIOS);
   const [horizonteTxt, setHorizonteTxt] = useState("30");
-  const [textoAplicado, setTextoAplicado] = useState({ q: "", lote: "", horizonte: 30 });
+  // Textos estabilizados (espera de escritura): son cadenas primitivas, de modo que asignar el mismo valor NO provoca un nuevo render ni una nueva consulta.
+  const [qEst, setQEst] = useState("");
+  const [loteEst, setLoteEst] = useState("");
+  const [horizonteEst, setHorizonteEst] = useState("30");
   const [pagina, setPagina] = useState(1);
   const [datos, setDatos] = useState<LotesRespuestaApi | null>(null);
   // Solo los nombres de los selectores sobreviven a un error (conservan los filtros elegidos); ningún dato del informe se conserva.
   const [catalogos, setCatalogos] = useState<Catalogos | null>(null);
-  const [cargando, setCargando] = useState(true);
+  const [cargando, setCargando] = useState(false);
   const [error, setError] = useState("");
   const [errorExportacion, setErrorExportacion] = useState("");
   const [exportando, setExportando] = useState("");
   const compuerta = useRef(crearCompuerta());
 
-  const hz = validarHorizonteTexto(horizonteTxt);
-
-  // Texto y horizonte válido se aplican con una pequeña espera; selectores y fechas, de inmediato. Un horizonte inválido nunca se aplica en silencio.
   useEffect(() => {
-    const t = setTimeout(() => setTextoAplicado((a) => ({ q: filtros.q, lote: filtros.lote, horizonte: hz.valor ?? a.horizonte })), 300);
+    const t = setTimeout(() => {
+      setQEst(filtros.q);
+      setLoteEst(filtros.lote);
+      setHorizonteEst(horizonteTxt);
+    }, 300);
 
     return () => clearTimeout(t);
-  }, [filtros.q, filtros.lote, hz.valor]);
+  }, [filtros.q, filtros.lote, horizonteTxt]);
 
-  const aplicados = useMemo(() => ({ ...filtros, ...textoAplicado }), [filtros, textoAplicado]);
+  // Controlador puro: con el horizonte escrito o el intervalo de fechas inválidos NO hay consulta; con valores válidos se consulta con el valor efectivamente mostrado.
+  const plan = planificarConsulta({ filtros, q: qEst, lote: loteEst, horizonteAplicadoTxt: horizonteEst, horizonteVivoTxt: horizonteTxt, pagina });
+  const hzError = plan.errorHorizonte;
+  const consultaClave = plan.clave;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const consulta = useMemo(() => plan.consulta, [consultaClave]);
 
-  // La última solicitud iniciada gana; ante cualquier falla se descartan los datos anteriores y se conservan los filtros.
+  // La última solicitud iniciada gana; ante cualquier falla se descartan los datos anteriores y se conservan los filtros. Nunca queda «Cargando» permanente.
   const cargar = useCallback(async () => {
+    if (!consulta) return;
+
     const sol = compuerta.current.nueva();
 
     setCargando(true);
     setError("");
 
-    const r = await pedirLotes(aplicados, pagina);
+    let r: { datos: LotesRespuestaApi | null; error: string };
 
+    try {
+      r = await pedirLotes(consulta.filtros, consulta.pagina);
+    } catch {
+      r = { datos: null, error: "No fue posible generar el reporte." };
+    }
     if (!compuerta.current.vigente(sol)) return;
     setDatos(r.datos);
     if (r.datos) setCatalogos(r.datos.catalogos);
     setError(r.error);
     setCargando(false);
-  }, [aplicados, pagina]);
+  }, [consulta]);
 
   useEffect(() => {
     const actual = compuerta.current;
-    const t = setTimeout(() => void cargar(), 0);
+    // Sin consulta válida (horizonte o fechas inválidos) se invalida cualquier solicitud en curso y no se hace ninguna petición.
+    const t = setTimeout(() => (consulta ? void cargar() : (actual.nueva(), setCargando(false))), 0);
 
     return () => {
       clearTimeout(t);
       actual.nueva();
     };
-  }, [cargar]);
+  }, [cargar, consulta]);
 
   const cambiar = (parcial: Partial<LotesFiltros>) => {
     setPagina(1);
@@ -79,7 +96,7 @@ export default function ReporteLotesPage() {
   };
 
   // Solo se muestran y exportan datos que corresponden EXACTAMENTE a los filtros y la página vigentes (y con un horizonte escrito válido).
-  const actual = !hz.error && datos && respuestaLotesVigente(datos, error, aplicados, pagina) ? datos : null;
+  const actual = consulta && datos && respuestaLotesVigente(datos, error, consulta.filtros, consulta.pagina) ? datos : null;
   const puedeExportar = actual?.permisos.exportar === true;
   const exportar = async (formato: "xlsx" | "pdf") => {
     if (!actual || !puedeExportar) return;
@@ -100,7 +117,7 @@ export default function ReporteLotesPage() {
   const total = actual?.pagina.totalFilas ?? 0;
   const tamano = actual?.pagina.tamano ?? 50;
   const paginas = Math.max(1, Math.ceil(total / tamano));
-  const porDeposito = aplicados.vista === "DEPOSITO";
+  const porDeposito = filtros.vista === "DEPOSITO";
   const hayFiltros = !filtrosLotesIguales({ ...filtros, vista: "LOTE", horizonte: 30 }, { ...FILTROS_VACIOS, horizonte: 30 }) || horizonteTxt !== "30";
   const clase = (c: ClaseVencimiento) => t?.clases.find((x) => x.clase === c);
   const colorCard: Record<ClaseVencimiento, string> = { VENCIDO: styles.summaryRed, PROXIMO: styles.summaryAmber, VIGENTE: styles.summaryTeal, SIN_FECHA: styles.summaryPurple };
@@ -154,7 +171,7 @@ export default function ReporteLotesPage() {
       <section className={styles.contentCard}>
         <div className={styles.policyNote} role="note">
           <strong>Clasificación con la fecha de hoy en Paraguay.</strong> Vencido = vence antes de hoy; Próximo = vence dentro del horizonte
-          ({aplicados.horizonte} días); Vigente = vence después; Sin fecha = lote sin vencimiento registrado (no se inventa). La cuarentena no hace vencido a un lote.
+          ({consulta?.filtros.horizonte ?? horizonteTxt} días); Vigente = vence después; Sin fecha = lote sin vencimiento registrado (no se inventa). La cuarentena no hace vencido a un lote.
           Cada lote cuenta una sola vez en los indicadores, aunque esté en varios depósitos. Las cantidades se totalizan por unidad de medida, nunca entre unidades distintas.
           {actual ? ` Existencia: ${textoAlcanceExistencia(actual)}.` : ""}
         </div>
@@ -228,8 +245,8 @@ export default function ReporteLotesPage() {
           </label>
           <label>
             <span>Horizonte de alerta (días)</span>
-            <input type="text" inputMode="numeric" value={horizonteTxt} aria-invalid={!!hz.error} onChange={(e) => { setPagina(1); setHorizonteTxt(e.target.value); }} />
-            {hz.error ? <small role="alert">{hz.error}</small> : null}
+            <input type="text" inputMode="numeric" value={horizonteTxt} aria-invalid={!!hzError} onChange={(e) => { setPagina(1); setHorizonteTxt(e.target.value); }} />
+            {hzError ? <small role="alert">{hzError}</small> : null}
           </label>
           <label>
             <span>Vence desde</span>
@@ -274,7 +291,8 @@ export default function ReporteLotesPage() {
         ) : null}
 
         {actual?.huerfanos ? <div className={styles.okBox}>Incluye lotes sin ningún saldo registrado (visibles solo con alcance a todos los depósitos).</div> : null}
-        {hz.error ? <div className={styles.errorBox} role="alert">{hz.error} El informe no se muestra hasta corregir el campo.</div> : null}
+        {hzError ? <div className={styles.errorBox} role="alert">{hzError} No se consulta ni se muestra el informe hasta corregir el campo.</div> : null}
+        {!hzError && plan.error ? <div className={styles.errorBox} role="alert">{plan.error} No se consulta el informe hasta corregir los filtros.</div> : null}
         {error ? (
           <div className={styles.errorBox} role="alert">
             {error} No se muestran ni se exportan datos anteriores; los filtros se conservan.{" "}
@@ -322,8 +340,8 @@ export default function ReporteLotesPage() {
             <span>{hayFiltros ? "Modifique los filtros aplicados." : "Aún no hay lotes con saldo registrados."}</span>
           </div>
         ) : null}
-        {!actual && cargando && !hz.error ? <div className={styles.empty}><strong>Cargando reporte...</strong></div> : null}
-        {!actual && !cargando && error ? <div className={styles.empty}><strong>No se pudo generar el reporte</strong><span>Use «Reintentar» para volver a consultar con los mismos filtros.</span></div> : null}
+        {!actual && cargando && consulta ? <div className={styles.empty}><strong>Cargando reporte...</strong></div> : null}
+        {!actual && !cargando && error && consulta ? <div className={styles.empty}><strong>No se pudo generar el reporte</strong><span>Use «Reintentar» para volver a consultar con los mismos filtros.</span></div> : null}
 
         <footer className={styles.pagination}>
           <span>

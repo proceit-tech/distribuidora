@@ -20,15 +20,69 @@ export function validarHorizonteTexto(txt: string): { valor: number | null; erro
   return { valor: Number(v), error: "" };
 }
 
-const fechaValida = (v: string): boolean => v === "" || (FECHA.test(v) && new Date(`${v}T00:00:00Z`).toISOString().slice(0, 10) === v);
+/** Fecha AAAA-MM-DD existente o vacía. Total: nunca lanza (una fecha inexistente como 2026-13-01 produce un Date inválido y se rechaza ANTES de toISOString). */
+export function fechaValida(v: unknown): boolean {
+  if (v === "") return true;
+  if (typeof v !== "string" || !FECHA.test(v)) return false;
 
-/** Validación de los filtros ya aplicados antes de pedir el informe ("" = válidos). */
+  const d = new Date(`${v}T00:00:00Z`);
+
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === v;
+}
+
+/** Validación de los filtros ya aplicados antes de pedir el informe ("" = válidos). Total: devuelve un mensaje controlado, nunca lanza. */
 export function validarFiltrosLotes(f: LotesFiltros): string {
+  try {
+    return validarFiltrosLotesInterno(f);
+  } catch {
+    return "Filtros no válidos.";
+  }
+}
+
+function validarFiltrosLotesInterno(f: LotesFiltros): string {
   if (!Number.isInteger(f.horizonte) || f.horizonte < 0 || f.horizonte > MAX_HORIZONTE) return `Horizonte no válido (0 a ${MAX_HORIZONTE} días).`;
   if (!fechaValida(f.vencDesde) || !fechaValida(f.vencHasta)) return "Fecha de vencimiento no válida.";
   if (f.vencDesde && f.vencHasta && f.vencDesde > f.vencHasta) return "El intervalo de vencimiento es inválido: la fecha inicial es posterior a la final.";
 
   return "";
+}
+
+/**
+ * Controlador de la consulta (puro): decide, a partir del estado de la pantalla, SI corresponde consultar y con qué filtros. El horizonte aplicado es SIEMPRE el texto
+ * mostrado (nunca el anterior); con el horizonte escrito inválido o un intervalo de fechas inválido no hay consulta. `clave` identifica la consulta (filtros + página):
+ * la pantalla solo consulta cuando la clave cambia, de modo que estados con valores idénticos no provocan consultas.
+ */
+export type EstadoConsultaLotes = {
+  filtros: LotesFiltros;
+  /** Textos ya estabilizados (con la espera de escritura): búsqueda, lote y horizonte. */
+  q: string;
+  lote: string;
+  horizonteAplicadoTxt: string;
+  /** Texto del horizonte tal como está escrito AHORA en el campo. */
+  horizonteVivoTxt: string;
+  pagina: number;
+};
+export type PlanConsultaLotes = { errorHorizonte: string; error: string; consulta: { filtros: LotesFiltros; pagina: number } | null; clave: string };
+
+export function planificarConsulta(e: EstadoConsultaLotes): PlanConsultaLotes {
+  const vivo = validarHorizonteTexto(e.horizonteVivoTxt);
+
+  if (vivo.error) return { errorHorizonte: vivo.error, error: "", consulta: null, clave: "" };
+
+  const aplicado = validarHorizonteTexto(e.horizonteAplicadoTxt);
+
+  // El campo ya es válido pero la espera de escritura aún no aplicó ese valor: no se consulta con el horizonte anterior.
+  if (aplicado.valor === null || aplicado.valor !== vivo.valor) return { errorHorizonte: "", error: "", consulta: null, clave: "" };
+
+  const filtros: LotesFiltros = { ...e.filtros, q: e.q, lote: e.lote, horizonte: aplicado.valor };
+  const error = validarFiltrosLotes(filtros);
+
+  if (error) return { errorHorizonte: "", error, consulta: null, clave: "" };
+
+  const f = filtros;
+  const clave = [e.pagina, f.vista, f.q, f.lote, f.depositoId, f.categoriaId, f.marcaId, f.familiaId, f.clase, f.existencia, f.horizonte, f.vencDesde, f.vencHasta].join(String.fromCharCode(1));
+
+  return { errorHorizonte: "", error: "", consulta: { filtros, pagina: e.pagina }, clave };
 }
 
 export function filtrosLotesIguales(a: LotesFiltros, b: LotesFiltros): boolean {

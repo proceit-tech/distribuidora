@@ -19,8 +19,13 @@ async function mensaje(r: Response, fallback: string) {
 
 /** Consulta la API y valida filtros, HTTP y FORMA: ante cualquier falla devuelve error SIN datos (la pantalla descarta lo anterior; nunca se muestra ni se exporta una foto vieja como actual). */
 export async function pedirLotes(f: LotesFiltros, pagina: number, buscar: (url: string) => Promise<Response> = (u) => fetch(u, { cache: "no-store" })): Promise<{ datos: LotesRespuestaApi | null; error: string }> {
-  const invalido = validarFiltrosLotes(f);
+  let invalido = "";
 
+  try {
+    invalido = validarFiltrosLotes(f);
+  } catch {
+    invalido = "Filtros no válidos.";
+  }
   if (invalido) return { datos: null, error: invalido };
 
   let r: Response;

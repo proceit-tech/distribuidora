@@ -14,7 +14,7 @@ import { generarPdfTabla, generarXlsxTabla } from "@/lib/reportes/export";
 import { columnasLotes, tablaLotes } from "@/lib/reportes/export-lotes";
 import { leerHojaXlsx } from "@/lib/reportes/export-xlsx.casos";
 import { leerLotes, parsearFiltrosLotes } from "@/lib/reportes/lotes";
-import { filtrosLotesIguales, respuestaLotesValida, respuestaLotesVigente, validarFiltrosLotes, validarHorizonteTexto } from "@/lib/reportes/lotes-plan";
+import { fechaValida, filtrosLotesIguales, planificarConsulta, respuestaLotesValida, respuestaLotesVigente, validarFiltrosLotes, validarHorizonteTexto } from "@/lib/reportes/lotes-plan";
 import type { LotesFiltros, LotesRespuesta, LotesRespuestaApi } from "@/types/reportes";
 
 const leer = (r: string) => readFileSync(join(process.cwd(), r), "utf8").replace(/\r\n/g, "\n");
@@ -458,11 +458,107 @@ export async function verificarCasosReportesLotes(): Promise<string[]> {
 
   const pagina = leer("app/(private)/reportes/lotes/page.tsx");
 
-  cierto("LOT-T10 pantalla: compuerta de última solicitud, datos descartados en error, solo respuesta vigente visible, «Reintentar», exportación solo con permisos.exportar y filtros de la respuesta vigente, sin JSON.stringify ni .catch que conserve datos", /pedirLotes\(aplicados, pagina\)/.test(pagina) && /crearCompuerta\(\)/.test(pagina) && /setDatos\(r\.datos\)/.test(pagina) && /respuestaLotesVigente\(datos, error, aplicados, pagina\)/.test(pagina) && /Reintentar/.test(pagina) && /actual\?\.permisos\.exportar === true/.test(pagina) && /\{puedeExportar \? \(/.test(pagina) && /descargarLotes\(actual\.filtros, formato\)/.test(pagina) && !/JSON\.stringify/.test(pagina) && !/\.catch\(\(e: unknown\)/.test(pagina));
-  cierto("LOT-T10 pantalla: horizonte inválido se informa en el campo y el informe se oculta (nunca datos de otro horizonte); nada de cantidades como Number ni sumas en la pantalla; todo sale de «actual»", /validarHorizonteTexto\(horizonteTxt\)/.test(pagina) && /!hz\.error && datos/.test(pagina) && !/\.reduce\(/.test(pagina) && !/Number\(/.test(pagina) && !/\bdatos\??\.(filas|totales|cobertura)/.test(pagina) && /etiquetasUnidad\(actual\?\.totales\.porUnidad/.test(pagina));
+  cierto("LOT-T10 pantalla: compuerta de última solicitud, datos descartados en error, solo respuesta vigente visible, «Reintentar», exportación solo con permisos.exportar y filtros de la respuesta vigente, sin JSON.stringify ni .catch que conserve datos", /pedirLotes\(consulta\.filtros, consulta\.pagina\)/.test(pagina) && /crearCompuerta\(\)/.test(pagina) && /setDatos\(r\.datos\)/.test(pagina) && /respuestaLotesVigente\(datos, error, consulta\.filtros, consulta\.pagina\)/.test(pagina) && /Reintentar/.test(pagina) && /actual\?\.permisos\.exportar === true/.test(pagina) && /\{puedeExportar \? \(/.test(pagina) && /descargarLotes\(actual\.filtros, formato\)/.test(pagina) && !/JSON\.stringify/.test(pagina) && !/\.catch\(\(e: unknown\)/.test(pagina));
+  cierto("LOT-T10 pantalla: horizonte inválido se informa en el campo y el informe se oculta (nunca datos de otro horizonte); nada de cantidades como Number ni sumas en la pantalla; todo sale de «actual»", /plan\.errorHorizonte/.test(pagina) && /consulta && datos/.test(pagina) && !/\.reduce\(/.test(pagina) && !/Number\(/.test(pagina) && !/\bdatos\??\.(filas|totales|cobertura)/.test(pagina) && /etiquetasUnidad\(actual\?\.totales\.porUnidad/.test(pagina));
   cierto("LOT-T10 la suite de Lotes está registrada en el runner oficial y el servicio es de solo lectura (sin INSERT/UPDATE/DELETE ni motor de Movimientos)", /reportes\/lotes\.casos/.test(leer("scripts/casos-clientes/run.js")) && /verificarCasosReportesLotes/.test(leer("scripts/casos-clientes/run.js")) && !/\b(INSERT|UPDATE|DELETE)\b/.test(leer("lib/reportes/lotes.ts")) && !/inventario_registrar|inventario_anular|inventario_costos/.test(leer("lib/reportes/lotes.ts")));
   cierto("LOT-T10 independencia: Stock general, Valorización, Kardex y Stock crítico no importan el informe de Lotes; Lotes no importa el servicio del Kardex (solo el helper puro de rótulos)", ["stock-general", "valorizacion", "kardex", "stock-critico"].every((m) => !/reportes\/(lotes|export-lotes|lotes-plan)"/.test(leer(`lib/reportes/${m}.ts`))) && !/from "@\/lib\/reportes\/kardex"/.test(leer("lib/reportes/lotes.ts") + leer("lib/reportes/export-lotes.ts")));
   cierto("LOT-T10 columnas de Excel de las dos vistas (compatibilidad con el exportador común)", columnasLotes("LOTE").some((c) => c.titulo === "Depósitos") && columnasLotes("DEPOSITO").some((c) => c.titulo === "Depósito") && columnasLotes("LOTE").some((c) => c.titulo === "Unidad"));
+
+  // ═══ LOT-R02-01 — fechas inexistentes: validación total, sin excepciones ni carga permanente ═══
+  const lanza = (fn: () => unknown): boolean => { try { fn(); return false; } catch { return true; } };
+
+  igual("LOT-R02-01 fechaValida es total: 2026-13-01, 2026-99-99, 2026-02-30, 2026-00-10, 2026-04-31, formatos mal formados, no-texto → false (sin RangeError); fechas reales y vacío → true", [
+    ["2026-13-01", "2026-99-99", "2026-02-30", "2026-00-10", "2026-04-31", "2026-1-1", "abc", " "].map((x) => fechaValida(x)), [null, undefined, 20261001, {}].map((x) => fechaValida(x)),
+    ["2026-10-13", "2024-02-29", "2026-12-31", ""].map((x) => fechaValida(x)), ["2026-13-01", "2026-99-99", "2026-02-30", "2025-02-29"].map((x) => lanza(() => fechaValida(x))),
+  ], [[false, false, false, false, false, false, false, false], [false, false, false, false], [true, true, true, true], [false, false, false, false]]);
+  igual("LOT-R02-01 validarFiltrosLotes devuelve mensajes controlados (nunca lanza): mes 13, día 99, 30 de febrero, intervalo invertido, vacíos válidos, y un objeto incompleto", [
+    validarFiltrosLotes({ ...FILTROS, vencDesde: "2026-13-01" }), validarFiltrosLotes({ ...FILTROS, vencHasta: "2026-99-99" }), validarFiltrosLotes({ ...FILTROS, vencDesde: "2026-02-30" }),
+    validarFiltrosLotes({ ...FILTROS, vencDesde: "2026-10-05", vencHasta: "2026-10-01" }), validarFiltrosLotes({ ...FILTROS, vencDesde: "", vencHasta: "" }), validarFiltrosLotes({ ...FILTROS, vencDesde: "2026-10-01", vencHasta: "2026-10-01" }),
+    lanza(() => validarFiltrosLotes({} as LotesFiltros)), validarFiltrosLotes({} as LotesFiltros) !== "",
+  ], ["Fecha de vencimiento no válida.", "Fecha de vencimiento no válida.", "Fecha de vencimiento no válida.", "El intervalo de vencimiento es inválido: la fecha inicial es posterior a la final.", "", "", false, true]);
+
+  let llamadas = 0;
+  const fetchContado = async () => { llamadas += 1; return new Response(JSON.stringify(ok), { status: 200 }); };
+  const respuestas: Array<[string, LotesFiltros]> = [["mes 13", { ...FILTROS, vencDesde: "2026-13-01" }], ["día 99", { ...FILTROS, vencDesde: "2026-99-99" }], ["30 de febrero", { ...FILTROS, vencHasta: "2026-02-30" }], ["intervalo invertido", { ...FILTROS, vencDesde: "2026-10-05", vencHasta: "2026-10-01" }]];
+
+  for (const [n, f] of respuestas) {
+    llamadas = 0;
+
+    let rechazada = false;
+    const r = await pedirLotes(f, 1, fetchContado).catch(() => { rechazada = true; return null; });
+
+    igual(`LOT-R02-01 pedirLotes con ${n}: NO rechaza la Promise, devuelve {datos:null, error legible} y hace 0 llamadas HTTP`, [rechazada, r?.datos, typeof r?.error === "string" && r.error.length > 10, llamadas], [false, null, true, 0]);
+  }
+  llamadas = 0;
+  igual("LOT-R02-01 campos vacíos y fechas iguales sí consultan (1 llamada HTTP)", [(await pedirLotes({ ...FILTROS, vencDesde: "", vencHasta: "" }, 1, fetchContado)).error, llamadas], ["", 1]);
+
+  // ═══ LOT-R02-02 — controlador de la consulta: ninguna petición con horizonte/intervalo inválido; retomada con el valor mostrado y página 1 ═══
+  type Est = Parameters<typeof planificarConsulta>[0];
+  const inicial: Est = { filtros: FILTROS, q: "", lote: "", horizonteAplicadoTxt: "30", horizonteVivoTxt: "30", pagina: 1 };
+  let claveAnt = "";
+  const consultas: Array<{ horizonte: number; pagina: number; depositoId: string }> = [];
+  let http = 0;
+  // Reproduce el efecto de la pantalla: solo se consulta cuando la clave cambia y no está vacía (consulta válida); cuenta las peticiones HTTP reales de pedirLotes.
+  const paso = async (e: Est) => {
+    const p = planificarConsulta(e);
+
+    if (p.clave !== claveAnt) {
+      claveAnt = p.clave;
+      if (p.consulta) {
+        consultas.push({ horizonte: p.consulta.filtros.horizonte, pagina: p.consulta.pagina, depositoId: p.consulta.filtros.depositoId });
+        await pedirLotes(p.consulta.filtros, p.consulta.pagina, async () => { http += 1; return new Response(JSON.stringify(ok), { status: 200 }); });
+      }
+    }
+
+    return p;
+  };
+
+  await paso(inicial);
+  igual("LOT-R02-02 estado inicial válido: 1 consulta (horizonte 30, página 1)", [http, consultas], [1, [{ horizonte: 30, pagina: 1, depositoId: "" }]]);
+
+  await paso(inicial);
+  await paso({ ...inicial });
+  igual("LOT-R02-02 estados con valores idénticos (re-render, nueva espera de escritura con el mismo texto) NO provocan consultas", http, 1);
+
+  for (const malo of ["abc", "", "-1", "3651", "1.5", "99999"]) {
+    const antes = http;
+    const p = await paso({ ...inicial, horizonteVivoTxt: malo, horizonteAplicadoTxt: malo });
+
+    igual(`LOT-R02-02 horizonte «${malo}»: error de campo, sin consulta (0 HTTP nuevas)`, [p.errorHorizonte !== "", p.consulta, http - antes], [true, null, 0]);
+  }
+
+  // mientras el horizonte está inválido, cambiar otros filtros NO consulta con el horizonte viejo
+  const antesDep = http;
+  const pd = await paso({ ...inicial, filtros: { ...FILTROS, depositoId: DA }, horizonteVivoTxt: "abc", horizonteAplicadoTxt: "30" });
+  const pc = await paso({ ...inicial, filtros: { ...FILTROS, depositoId: DB, clase: "VENCIDO" }, horizonteVivoTxt: "", horizonteAplicadoTxt: "30", pagina: 3 });
+
+  igual("LOT-R02-02 horizonte inválido + cambio de depósito/clase/página: 0 consultas (no se reutiliza silenciosamente el horizonte anterior)", [pd.consulta, pc.consulta, http - antesDep], [null, null, 0]);
+
+  // corrección: el campo ya es válido pero la espera aún no lo aplicó → todavía sin consulta; al aplicarse → UNA consulta con el valor mostrado y página 1
+  const antesFix = http;
+  const pEspera = await paso({ ...inicial, filtros: { ...FILTROS, depositoId: DB }, horizonteVivoTxt: "45", horizonteAplicadoTxt: "abc" });
+  const pFix = await paso({ ...inicial, filtros: { ...FILTROS, depositoId: DB }, horizonteVivoTxt: "45", horizonteAplicadoTxt: "45", pagina: 1 });
+
+  igual("LOT-R02-02 al corregir el horizonte: sin consulta mientras la espera no lo aplicó; luego UNA consulta con el valor mostrado (45), el depósito actual y página 1", [pEspera.consulta, pFix.consulta?.filtros.horizonte, pFix.consulta?.pagina, http - antesFix, consultas.at(-1)], [null, 45, 1, 1, { horizonte: 45, pagina: 1, depositoId: DB }]);
+  igual("LOT-R02-02 el horizonte escrito con espacios (« 15 ») se aplica como 15 (valor mostrado) y no repite la consulta si el valor efectivo es el mismo", [(await paso({ ...inicial, filtros: { ...FILTROS, depositoId: DB }, horizonteVivoTxt: " 45 ", horizonteAplicadoTxt: " 45 " })).clave === pFix.clave, http - antesFix], [true, 1]);
+
+  // intervalos de fechas inválidos: sin consulta y con mensaje; al corregir, consulta
+  const antesF = http;
+
+  for (const f of [{ vencDesde: "2026-13-01" }, { vencDesde: "2026-99-99" }, { vencHasta: "2026-02-30" }, { vencDesde: "2026-10-05", vencHasta: "2026-10-01" }]) {
+    const p = await paso({ ...inicial, filtros: { ...FILTROS, ...f }, horizonteVivoTxt: "45", horizonteAplicadoTxt: "45" });
+
+    igual(`LOT-R02-02 fechas inválidas ${JSON.stringify(f)}: mensaje claro y 0 consultas`, [p.consulta, p.error.length > 10, p.errorHorizonte, http - antesF], [null, true, "", 0]);
+  }
+
+  const pOk = await paso({ ...inicial, filtros: { ...FILTROS, vencDesde: "2026-10-01", vencHasta: "2026-10-31" }, horizonteVivoTxt: "45", horizonteAplicadoTxt: "45" });
+
+  igual("LOT-R02-02 al corregir las fechas se consulta una vez con los filtros efectivos", [pOk.consulta?.filtros.vencDesde, pOk.consulta?.filtros.vencHasta, pOk.consulta?.filtros.horizonte, http - antesF], ["2026-10-01", "2026-10-31", 45, 1]);
+
+  const fuentePag2 = leer("app/(private)/reportes/lotes/page.tsx");
+
+  cierto("LOT-R02-02 la pantalla usa el controlador: la consulta sale de planificarConsulta, el efecto depende de la clave (no de objetos nuevos), los textos estabilizados son cadenas primitivas y no existe setTextoAplicado/aplicados con objetos nuevos", /planificarConsulta\(\{/.test(fuentePag2) && /useMemo\(\(\) => plan\.consulta, \[consultaClave\]\)/.test(fuentePag2) && /setHorizonteEst\(horizonteTxt\)/.test(fuentePag2) && !/setTextoAplicado|setAplicados|horizonte: hz\.valor \?\? a\.horizonte/.test(fuentePag2));
+  cierto("LOT-R02-02 sin consulta válida no se pide nada ni queda «Cargando» permanente: el efecto invalida la solicitud en curso y apaga la carga; cargar atrapa errores inesperados", /consulta \? void cargar\(\) : \(actual\.nueva\(\), setCargando\(false\)\)/.test(fuentePag2) && /try \{\s*r = await pedirLotes\(consulta\.filtros, consulta\.pagina\);\s*\} catch/.test(fuentePag2) && /!actual && cargando && consulta/.test(fuentePag2) && /setPagina\(1\);\s*setHorizonteTxt\(e\.target\.value\)/.test(fuentePag2));
 
   return fallos;
 }
