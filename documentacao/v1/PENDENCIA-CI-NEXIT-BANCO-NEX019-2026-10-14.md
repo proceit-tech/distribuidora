@@ -138,3 +138,27 @@ Focar em `C1-R02-01/02` e na prova/reversão de NEX-055 (apenas se o escopo de C
 - **C1-R03-03 (correções):** `CORRECCIONES` virou apenas **sugestão**: a consulta publicada continua em FALLA mesmo que a versão corrigida passasse no PREPARE; a sugestão é impressa («SUGERENCIA DE CORRECCIÓN … la consulta publicada sigue en FALLA») e não influencia o veredicto.
 - **Linha base (revisada entrada por entrada):** 48 → **57**. As 9 novas são exatamente: 2 `filtro` (aptitud-cliente:78, stock/shared:33) e 7 consultas com `proyectar(…)` que antes estavam classificadas como verificadas sem sê-lo; as ids das 48 anteriores não mudaram (a de `catalogos-admin.ts:112` só teve o motivo reescrito para `proyectar`). Os motivos ficam em `c1-linea-base.json`. Nenhuma das 57 é declarada verificada.
 - **Regressões novas** (`lib/ci/verificador-consultas.casos.ts`): variável homônima de outro arquivo; duas declarações do mesmo nome no mesmo arquivo; import rastreado (com alias) resolvido no contexto do arquivo definidor; função sem import não usada; `proyectar` sem `t.*`; correção hipotética não aprova SQL; código real contra a linha base (exatamente 8 com `proyectar`, os dois `filtro`, nenhum `t.*` sintético). A versão anterior do verificador falha nelas.
+
+
+## AUD-PRO62-R04 — CI verde no commit e7a7aa5 / evidência final (14/10/2026)
+
+**GitHub commit auditado:** [e7a7aa5eb6fb4608f6c8bd1e2040aa538bf8cd8d](https://github.com/proceit-tech/distribuidora/commit/e7a7aa5eb6fb4608f6c8bd1e2040aa538bf8cd8d). **CI auditado diretamente:** [38646587200](https://github.com/proceit-tech/distribuidora/actions/runs/38646587200) **SUCCESS** (job `pruebas` concluído). SHA do commit idêntico ao HEAD da branch `feature/NEXIT-2026-001-banco-demo` no momento da consulta.
+
+### Resultado comprobado
+
+- **55 migrations aplicadas no PostgreSQL 16 descartável** e checks M1/M2/M3/M4/M5; não significa que as 55 estejam aplicadas na única VM operacional.
+- **T01** (8), **T10** (39), **T16** (38), **T17** (42), **R1** (4), **R2** (6), backup/recovery B1 e demais verificações do runner aprovaram. No total, **565 verificações PASS / 0 grupos com falha**. Execução local TypeScript **3186/0** foi informada pelo Claude e não reproduzida independentemente nesta auditoria.
+- **C1 real contra PostgreSQL descartável:** **271 consultas literais PASS**, **44 reconstruídas / 65 variantes PREPARE PASS**, **7 fragmentos cobertos**. **57 ocorrências NO VERIFICABLE**, com justificativa/linha base versionada; **0 entradas novas fora da linha base; 0 obsoletas**. As 57 **não foram verificadas como SQL final**.
+- O diff do verificador confirma: não usa homônimo `filtro` de outro arquivo por busca global sem import; `proyectar(...)` não é mais falsamente reconstruída como `t.*`; correções hipotéticas mantêm `FALLA` até a query efetiva ser corrigida. Foram adicionadas regressões. **Nenhuma query da aplicação nem migration histórica alterada por este commit.**
+
+**Parecer:** correções C1 e CI da PRO-62 **ACEITAS TECNICAMENTE por revisão de código e GitHub Actions**, sem homologação operacional. O bloqueio NEX-019 está corrigido **apenas para a bateria descartável**. A compatibilidade da NEX-019 com instalação limpa real permanece uma **decisão arquitetural separada**, não executada/validada em produção.
+
+### Dívida de cobertura, sem bloquear o CI aprovado
+
+A linha base atual possui **57 ocorrências não verificáveis, mas apenas 53 IDs distintos**, porque o ID utiliza `arquivo + SHA-1 do texto SQL normalizado` e alguns textos idênticos se repetem dentro do mesmo arquivo. Foi conferido: `lib/comercial/servidor.ts:bb50cfb3d373` aparece duas vezes e `lib/productos/catalogos-admin.ts:42ea0d4149df` quatro vezes. Isso **não torna as consultas válidas** e significa que uma nova ocorrência de SQL não verificável com o mesmo texto no mesmo arquivo poderia herdar o ID aprovado sem um novo alerta de baseline. Tratar em trabalho futuro e direcionado do verificador (identidade estável por ocorrência + testes de duplicação, sem invalidar os hashes existentes sem migration de linha base revisada); **não repetir CI apenas por isto**. Os 57 continuam explicitamente não verificados.
+
+### Próxima porta: preflight de leitura da única VM real
+
+**Não aplicar SQL nem fazer deploy nesta etapa.** Verificar primeiro, com o responsável humano: HEAD/branch local, versões da tabela `schema_migrations`, checksums comparáveis, migrações pendentes incluindo NEX-054 e NEX-055, dependências do esquema, inventário de containers `nexit-db`/app, saúde do PostgreSQL, backup válido com plano de restauração, configurações não secretas do gateway e disponibilidade de rollback operacional. A documentação `documentacao/banco/nexit/v1/docs/05-IMPLANTACION-AUTOMATIZADA.md` descreve fluxo **preparado, não implantado**; não iniciar `nexit-banco-deploy.yml` automaticamente. O procedimento da VM será definido após preflight e aprovação humana. NEX-054/055 permanecem **somente versionadas** até prova e decisão da VM.
+
+**Continuam fora do escopo:** FAT-E3/FAT-E4, emissão SIFEN real sem autorização, execução autônoma de migrations em produção, acesso SSH da IA ou uso de credenciais expostas em Git.
