@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 
 import ui from "@/components/ui/lista-padrao/lista.module.css";
+import { elegirPorEnter, MENSAJE_ENTER } from "@/lib/facturacion/busqueda-rapida";
 import { resumenCalculo, type LineaFE } from "@/lib/facturacion/payload-fe";
 import { formatearFechaPy } from "@/lib/formato/listas";
 import { useProtegerCambios } from "@/lib/ui/proteger-cambios";
@@ -95,11 +96,13 @@ function useEscape(alCerrar: () => void) {
 const POR_PAGINA = 10;
 
 /** Lista paginada del servidor para los selectores: carga la primera página al abrir (sin exigir texto) y vuelve a consultar al filtrar o paginar. */
-function useListado<T>(url: string, campo: "clientes" | "productos", q: string, pagina: number) {
+function useListado<T>(url: string, campo: "clientes" | "productos", q: string, pagina: number, habilitado = true) {
   const clave = `${q}|${pagina}`;
   const [datos, setDatos] = useState<{ clave: string; items: T[]; total: number; error: string } | null>(null);
 
   useEffect(() => {
+    if (!habilitado) return;
+
     let activo = true;
     const t = window.setTimeout(() => {
       fetch(`${url}?q=${encodeURIComponent(q)}&pagina=${pagina}&porPagina=${POR_PAGINA}`, { cache: "no-store" })
@@ -112,9 +115,9 @@ function useListado<T>(url: string, campo: "clientes" | "productos", q: string, 
       activo = false;
       window.clearTimeout(t);
     };
-  }, [url, campo, q, pagina, clave]);
+  }, [url, campo, q, pagina, clave, habilitado]);
 
-  return { cargando: datos === null || datos.clave !== clave, items: datos?.items ?? [], total: datos?.total ?? 0, error: datos?.error ?? "" };
+  return { cargando: habilitado && (datos === null || datos.clave !== clave), items: datos?.items ?? [], total: datos?.total ?? 0, error: datos?.error ?? "" };
 }
 
 /** Filtro con pausa: el texto escrito se aplica a la lista a los 300 ms (o con Enter) y reinicia la paginación. */
@@ -252,6 +255,173 @@ function SelectorProducto({ alAgregar, alCerrar, cantidadItems }: { alAgregar: (
         </div>
       </div>
     </div>
+  );
+}
+
+type ItemBusqueda = { titulo: string; detalle: string; derecha?: string; impedimento?: string; enlace?: { href: string; texto: string }; habilitado: boolean };
+
+/**
+ * Búsqueda rápida (combobox) para clientes y productos: escribe, elige con el ratón o con las flechas + Enter. Con Enter y una coincidencia exacta (código, GTIN o documento)
+ * o un único resultado habilitado, lo selecciona directamente (útil con lector de código de barras). El selector avanzado (diálogo paginado) sigue disponible.
+ */
+function BuscadorRapido<T extends { id: string }>({ url, campo, etiqueta, placeholder, describir, exacto, alElegir, mantenerAbierto, autoFocus }: {
+  url: string; campo: "clientes" | "productos"; etiqueta: string; placeholder: string; describir: (t: T) => ItemBusqueda; exacto: (t: T, texto: string) => boolean;
+  alElegir: (t: T) => void; mantenerAbierto?: boolean; autoFocus?: boolean;
+}) {
+  const f = useFiltro();
+  const [abierto, setAbierto] = useState(false);
+  const [activo, setActivo] = useState(-1);
+  const [aviso, setAviso] = useState("");
+  const [buscando, setBuscando] = useState(false);
+  const idBase = useId();
+  const l = useListado<T>(url, campo, f.q, 1, abierto);
+  const items = l.items.slice(0, 8);
+
+  function elegir(t: T) {
+    alElegir(t);
+    setAviso(`«${describir(t).titulo}» añadido.`);
+    f.setTexto("");
+    setActivo(-1);
+    if (!mantenerAbierto) setAbierto(false);
+  }
+
+  // Enter sin opción resaltada: consulta con el texto actual y selecciona solo si hay una coincidencia exacta o un único resultado habilitado.
+  async function elegirConEnter() {
+    const texto = f.texto.trim();
+
+    if (!texto) return;
+
+    setBuscando(true);
+    setAviso("");
+    try {
+      const j = await leer<Record<string, unknown>>(await fetch(`${url}?q=${encodeURIComponent(texto)}&pagina=1&porPagina=${POR_PAGINA}`, { cache: "no-store" }), "No fue posible buscar.");
+      const encontrados = (j[campo] as T[]).filter((t) => describir(t).habilitado);
+      const decision = elegirPorEnter(encontrados, texto, exacto);
+
+      if (decision.elegido) elegir(decision.elegido);
+      else if (decision.motivo) setAviso(MENSAJE_ENTER[decision.motivo]);
+    } catch (e) {
+      setAviso(e instanceof Error ? e.message : "No fue posible buscar.");
+    } finally {
+      setBuscando(false);
+    }
+  }
+
+  function teclas(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setAbierto(true);
+      setActivo((a) => Math.min(a + 1, items.length - 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setActivo((a) => Math.max(a - 1, 0));
+    } else if (e.key === "Escape") {
+      setAbierto(false);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if (activo >= 0 && items[activo] && describir(items[activo]).habilitado) elegir(items[activo]);
+      else void elegirConEnter();
+    }
+  }
+
+  return (
+    <div className={estilos.buscador} onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setAbierto(false); }}>
+      <label className={estilos.field}>
+        <span>{etiqueta}</span>
+        <input
+          role="combobox"
+          aria-expanded={abierto}
+          aria-controls={`${idBase}-lista`}
+          aria-autocomplete="list"
+          aria-activedescendant={activo >= 0 ? `${idBase}-op-${activo}` : undefined}
+          autoComplete="off"
+          autoFocus={autoFocus}
+          value={f.texto}
+          placeholder={placeholder}
+          onChange={(e) => { f.setTexto(e.target.value); setAbierto(true); setActivo(-1); setAviso(""); }}
+          onFocus={() => setAbierto(true)}
+          onKeyDown={teclas}
+        />
+      </label>
+
+      {abierto ? (
+        <ul id={`${idBase}-lista`} role="listbox" aria-label={etiqueta} className={estilos.opciones}>
+          {l.cargando || buscando ? <li className={estilos.opcionVacia} role="status">Buscando…</li> : null}
+          {!l.cargando && l.error ? <li className={estilos.opcionVacia} role="alert">{l.error}</li> : null}
+          {!l.cargando && !l.error && items.length === 0 ? <li className={estilos.opcionVacia}>{f.q ? "Ninguna coincidencia." : "No hay registros habilitados."}</li> : null}
+          {!l.cargando && items.map((t, i) => {
+            const d = describir(t);
+
+            return (
+              <li
+                key={t.id}
+                id={`${idBase}-op-${i}`}
+                role="option"
+                aria-selected={i === activo}
+                aria-disabled={!d.habilitado}
+                className={`${estilos.opcion} ${i === activo ? estilos.opcionActiva : ""} ${d.habilitado ? "" : estilos.opcionBloqueada}`}
+                onMouseDown={(e) => e.preventDefault()}
+                onMouseEnter={() => setActivo(i)}
+                onClick={() => d.habilitado && elegir(t)}
+              >
+                <span className={estilos.opcionTexto}>
+                  <strong>{d.titulo}</strong>
+                  <small>{d.detalle}</small>
+                  {d.impedimento ? <small className={estilos.impedimento}>{d.impedimento}{d.enlace ? <> <Link href={d.enlace.href}>{d.enlace.texto}</Link></> : null}</small> : null}
+                </span>
+                {d.derecha ? <span className={estilos.precio}>{d.derecha}</span> : null}
+              </li>
+            );
+          })}
+          {l.total > items.length ? <li className={estilos.opcionVacia}>Hay {l.total} resultados: afine la búsqueda o use la búsqueda avanzada.</li> : null}
+        </ul>
+      ) : null}
+
+      {aviso ? <p className={estilos.aviso} role="status">{aviso}</p> : null}
+    </div>
+  );
+}
+
+/** Búsqueda rápida de clientes: solo los aptos para facturar son seleccionables. */
+function BuscadorCliente({ alElegir }: { alElegir: (c: Cliente) => void }) {
+  return (
+    <BuscadorRapido<Cliente>
+      url="/api/facturas/clientes"
+      campo="clientes"
+      etiqueta="Buscar cliente por nombre, RUC, CI o código"
+      placeholder="Escriba para buscar…"
+      describir={(c) => ({
+        titulo: c.razonSocial, detalle: `${c.codigo} · ${documentoCliente(c)} · ${tipoContribuyente(c)}`, habilitado: c.apto,
+        derecha: c.apto ? "Apto" : "Con pendientes", impedimento: c.apto ? undefined : `Pendiente: ${c.pendientes.join(" · ")}.`, enlace: c.apto ? undefined : { href: "/clientes", texto: "Corregir en Clientes" },
+      })}
+      exacto={(c, t) => c.numeroDocumento === t || documentoCliente(c) === t || c.codigo.toLowerCase() === t.toLowerCase()}
+      alElegir={alElegir}
+    />
+  );
+}
+
+/** Búsqueda rápida de productos (código, GTIN o descripción): permanece abierta para añadir varios; los que tienen impedimentos no se pueden añadir. */
+function BuscadorProducto({ alElegir }: { alElegir: (p: Producto) => void }) {
+  return (
+    <BuscadorRapido<Producto>
+      url="/api/facturas/productos"
+      campo="productos"
+      etiqueta="Añadir producto por código, GTIN o descripción"
+      placeholder="Escriba o escanee el código y presione Enter"
+      mantenerAbierto
+      describir={(p) => {
+        const pr = problemasProducto(p);
+
+        return {
+          titulo: p.descripcion,
+          detalle: `${p.codigo}${p.gtin ? ` · GTIN ${p.gtin}` : ""} · ${p.unidadSimbolo ?? "sin unidad"} · ${p.afectacion ? `${ETIQUETA_IVA[p.afectacion]}${p.tasa ? ` ${p.tasa}%` : ""}` : "IVA sin clasificar"}`,
+          derecha: p.precio ? `Gs. ${gs(Number(p.precio))}` : "—", habilitado: pr.length === 0,
+          impedimento: pr.length > 0 ? `No se puede facturar: ${pr.join(", ")}.` : undefined, enlace: pr.length > 0 ? { href: "/productos", texto: "Corregir en Productos" } : undefined,
+        };
+      }}
+      exacto={(p, t) => p.codigo.toLowerCase() === t.toLowerCase() || p.gtin === t}
+      alElegir={alElegir}
+    />
   );
 }
 
@@ -422,6 +592,13 @@ export default function NuevaFacturaPage() {
     setClave(crypto.randomUUID());
   }
 
+  const condicionTexto = opciones?.condiciones?.["1"] ?? "Contado";
+  const estadoOperacion = resultado
+    ? resultado.estadoLocal === "ENVIADO" ? "Enviada · SIFEN pendiente de consulta" : "Envío con incidencias"
+    : enviando ? "Enviando…" : revisando ? "Revisando…" : sucio ? "Borrador sin guardar" : "Documento nuevo";
+  const textoOpcion = (grupo: Record<string, string> | undefined, k: string) => grupo?.[k] ?? "—";
+  const pendientes = [...faltan, ...(cliente !== null && !cliente.apto ? ["regularizar el cliente en Clientes"] : [])];
+
   return (
     <section className={ui.page}>
       <header className={ui.topbar}>
@@ -434,237 +611,32 @@ export default function NuevaFacturaPage() {
 
           <h1>Nueva factura electrónica</h1>
         </div>
+
+        <div className={estilos.contexto} aria-label="Contexto de la operación">
+          <span className={estilos.meta}>Fecha: {hoy || "—"} · Moneda: PYG</span>
+          <span className={`${estilos.estado} ${resultado ? (resultado.estadoLocal === "ENVIADO" ? estilos.estadoOk : estilos.estadoWarn) : sucio ? estilos.estadoBorrador : ""}`} role="status">{estadoOperacion}</span>
+        </div>
       </header>
 
       {errorCarga ? <div className={ui.alertError} role="alert">{errorCarga}</div> : null}
 
       {resultado ? (
-        <div className={resultado.estadoLocal === "ENVIADO" ? ui.alertOk : ui.alertError} role="status">
-          <strong>Factura {resultado.numero}: {ETIQUETA_ESTADO_LOCAL[resultado.estadoLocal] ?? resultado.estadoLocal}.</strong> El estado fiscal (SIFEN) se confirma en Documentos electrónicos con la consulta de estado; recibir la factura no equivale a aprobarla.{" "}
-          <Link href="/documentos">Ver documentos electrónicos</Link>
-          {resultado.estadoLocal === "ERROR_ENVIO" && resultado.errorTipo !== "RECHAZO" ? <> · <button type="button" className={ui.clearButton} disabled={enviando} onClick={reintentar}>Reintentar envío</button></> : null}
-          {resultado.estadoLocal === "ERROR_ENVIO" && resultado.errorTipo === "RECHAZO" ? <> · El gateway rechazó el documento; se conserva su número. El reenvío del mismo contenido se confirma desde Documentos electrónicos.</> : null}
-          {" "}· <button type="button" className={ui.clearButton} onClick={nueva}>Nueva factura</button>{" "}
-          <button type="button" className={ui.clearButton} onClick={() => setMostrarEnvio(true)}>Ver detalle técnico</button>
-        </div>
+        <section className={estilos.resultado} aria-labelledby="titulo-resultado">
+          <h2 id="titulo-resultado">
+            {resultado.estadoLocal === "ENVIADO" ? `Factura ${resultado.numero} enviada` : `Factura ${resultado.numero}: el envío no se completó`}
+          </h2>
+          <p className={resultado.estadoLocal === "ENVIADO" ? estilos.resultadoOk : estilos.resultadoError}>{ETIQUETA_ESTADO_LOCAL[resultado.estadoLocal] ?? resultado.estadoLocal}.</p>
+          <p className={estilos.hint}>La aprobación fiscal (SIFEN) se confirma en Documentos electrónicos con la consulta de estado: recibir la factura no equivale a aprobarla.</p>
+          {resultado.estadoLocal === "ERROR_ENVIO" && resultado.errorTipo === "RECHAZO" ? <p className={estilos.hint}>El gateway rechazó el documento; se conserva su número. El reenvío del mismo contenido se confirma desde Documentos electrónicos.</p> : null}
+          <div className={estilos.actions} style={{ justifyContent: "flex-start", marginTop: 12 }}>
+            <button type="button" className={ui.primaryButton} onClick={nueva}>Nueva factura</button>
+            <Link href="/documentos" className={ui.secondaryButton}>Ver en Documentos electrónicos</Link>
+            {resultado.estadoLocal === "ERROR_ENVIO" && resultado.errorTipo !== "RECHAZO" ? <button type="button" className={ui.secondaryButton} disabled={enviando} onClick={reintentar}>Reintentar envío</button> : null}
+            <button type="button" className={ui.clearButton} onClick={() => setMostrarEnvio(true)}>Ver detalle técnico</button>
+          </div>
+        </section>
       ) : (
-        <div className={estilos.form}>
-          <section className={estilos.card} aria-labelledby="sec-cabecera">
-            <div className={estilos.cardHead}>
-              <h2 id="sec-cabecera">Cabecera</h2>
-              <span className={estilos.meta}>Fecha: {hoy || "—"} · Moneda: PYG</span>
-            </div>
-            <div className={estilos.cardBody}>
-              {sucursales.length === 0 && opciones ? (
-                <div className={ui.alertError} role="alert" style={{ marginBottom: 12 }}>
-                  No hay sucursales habilitadas para facturar en su alcance.
-                  {sinEstablecimiento > 0 ? ` ${sinEstablecimiento} sucursal(es) no tienen el establecimiento SIFEN cargado.` : " Verifique la sucursal, su establecimiento SIFEN y su alcance de acceso."}
-                </div>
-              ) : null}
-              <div className={estilos.grid}>
-                <label className={estilos.field}>
-                  <span>Sucursal *</span>
-                  <select value={sucursalId} onChange={(e) => { setSucursalId(e.target.value); setPuntoId(""); }}>
-                    <option value="">Seleccione…</option>
-                    {sucursales.map((s) => <option key={s.id} value={s.id}>{s.nombre} ({s.establecimiento})</option>)}
-                  </select>
-                </label>
-
-                <label className={estilos.field}>
-                  <span>Punto de expedición *</span>
-                  <select value={puntoId} onChange={(e) => setPuntoId(e.target.value)} disabled={!sucursal}>
-                    <option value="">Seleccione…</option>
-                    {(sucursal?.puntos ?? []).map((p) => <option key={p.id} value={p.id}>{p.codigo} · {p.nombre}</option>)}
-                  </select>
-                  {sucursal && sucursal.puntos.length === 0 ? <small className={estilos.fieldError}>Esta sucursal no tiene puntos de expedición activos.</small> : null}
-                </label>
-
-                <label className={estilos.field}>
-                  <span>Condición de la operación</span>
-                  <select value="1" onChange={() => undefined} disabled={Object.keys(opciones?.condiciones ?? { 1: "" }).length < 2}>
-                    {Object.entries(opciones?.condiciones ?? { 1: "Contado" }).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-                  </select>
-                </label>
-
-                <label className={estilos.field}>
-                  <span>Forma de pago</span>
-                  <select value={formaPago} onChange={(e) => setFormaPago(e.target.value)}>
-                    {Object.entries(opciones?.formasPago ?? {}).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-                  </select>
-                </label>
-
-                <label className={estilos.field}>
-                  <span>Tipo de transacción</span>
-                  <select value={tipoTransaccion} onChange={(e) => setTipoTransaccion(e.target.value)}>
-                    {Object.entries(opciones?.tiposTransaccion ?? {}).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-                  </select>
-                </label>
-
-                <label className={estilos.field}>
-                  <span>Indicador de presencia</span>
-                  <select value={presencia} onChange={(e) => setPresencia(e.target.value)}>
-                    {Object.entries(opciones?.presencias ?? {}).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-                  </select>
-                </label>
-              </div>
-            </div>
-          </section>
-
-          <section className={estilos.card} aria-labelledby="sec-cliente">
-            <div className={estilos.cardHead}>
-              <h2 id="sec-cliente">Cliente *</h2>
-              {cliente ? (
-                <div className={estilos.actions}>
-                  <button type="button" className={ui.secondaryButton} onClick={() => setSelector("cliente")}>Cambiar cliente</button>
-                  <button type="button" className={ui.clearButton} onClick={() => setCliente(null)}>Quitar</button>
-                </div>
-              ) : null}
-            </div>
-            <div className={estilos.cardBody}>
-              {cliente ? (
-                <>
-                  <dl className={estilos.ficha} aria-label="Ficha fiscal del cliente">
-                    <div className={estilos.fichaTitulo}><dt>Razón social</dt><dd>{cliente.razonSocial}</dd></div>
-                    <div><dt>Código</dt><dd>{cliente.codigo}</dd></div>
-                    <div><dt>{cliente.naturaleza === 1 ? "RUC - DV" : "Documento"}</dt><dd>{documentoCliente(cliente)}</dd></div>
-                    <div><dt>Tipo de contribuyente</dt><dd>{tipoContribuyente(cliente)}</dd></div>
-                    {cliente.nombreFantasia ? <div><dt>Nombre de fantasía</dt><dd>{cliente.nombreFantasia}</dd></div> : null}
-                    <div>
-                      <dt>Dirección fiscal</dt>
-                      <dd>{cliente.direccion ? `${cliente.direccion} · N.º ${cliente.numeroCasa && /^\d{1,6}$/.test(cliente.numeroCasa.trim()) ? cliente.numeroCasa.trim() : "0 (no cargado; se informa 0)"}` : "No informada"}</dd>
-                    </div>
-                    <div><dt>Teléfono</dt><dd>{cliente.celular || cliente.telefono || "No informado"}</dd></div>
-                    <div><dt>Correo</dt><dd>{cliente.emailFacturacion || cliente.email || "No informado"}</dd></div>
-                    <div>
-                      <dt>Estado fiscal</dt>
-                      <dd><span className={`${estilos.badge} ${cliente.apto ? estilos.badgeOk : estilos.badgeWarn}`}>{cliente.apto ? "Apto para facturar" : "Con pendientes"}</span></dd>
-                    </div>
-                  </dl>
-                  {!cliente.apto ? (
-                    <ul className={estilos.pendientes} role="alert">
-                      {cliente.pendientes.map((p) => <li key={p}>{p}</li>)}
-                      <li><Link href="/clientes">Regularizar en Clientes</Link> (esta pantalla no modifica el cadastro).</li>
-                    </ul>
-                  ) : null}
-                </>
-              ) : (
-                <div className={estilos.empty}>
-                  <span>Aún no seleccionó un cliente.</span>
-                  <button type="button" className={ui.primaryButton} onClick={() => setSelector("cliente")}>Buscar cliente</button>
-                </div>
-              )}
-            </div>
-          </section>
-
-          <section className={estilos.card} aria-labelledby="sec-detalle">
-            <div className={estilos.cardHead}>
-              <div>
-                <h2 id="sec-detalle">Detalle de la factura *</h2>
-              </div>
-              <button type="button" className={ui.primaryButton} onClick={() => setSelector("producto")}>Añadir producto</button>
-            </div>
-            <div className={estilos.tableWrap}>
-              <table className={estilos.items}>
-                <thead>
-                  <tr>
-                    <th>Producto</th>
-                    <th>Afectación IVA</th>
-                    <th className={estilos.num}>% IVA</th>
-                    <th>Unidad</th>
-                    <th className={estilos.num}>Cantidad</th>
-                    <th className={estilos.num}>Precio unitario (IVA incl.)</th>
-                    <th className={estilos.num}>Subtotal</th>
-                    <th><span className="sr-only">Acciones</span></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {lineas.length === 0 ? (
-                    <tr><td colSpan={8} className={estilos.tableEmpty}>Aún no agregó ítems. Use «Añadir producto» para buscar y seleccionar.</td></tr>
-                  ) : lineas.map((l, i) => {
-                    const cantOk = cantidadValida(l);
-                    const precOk = precioValido(l);
-                    const mod = precioModificado(l);
-
-                    return (
-                      <tr key={l.clave}>
-                        <td className={estilos.prod}><strong>{l.producto.descripcion}</strong><small>{l.producto.codigo}</small></td>
-                        <td>{l.producto.afectacion ? ETIQUETA_IVA[l.producto.afectacion] : "Sin clasificar"}</td>
-                        <td className={estilos.num}>{l.producto.afectacion ? `${l.producto.tasa ?? 0}%` : "—"}</td>
-                        <td title={l.producto.unidadNombre ?? undefined}>{l.producto.unidadSimbolo ?? "—"}</td>
-                        <td className={estilos.num}>
-                          <input
-                            className={`${estilos.qty} ${cantOk ? "" : estilos.invalid}`}
-                            inputMode="decimal"
-                            aria-label={`Cantidad de ${l.producto.descripcion}`}
-                            aria-invalid={cantOk ? undefined : true}
-                            value={l.cantidad}
-                            onChange={(e) => editar(l.clave, { cantidad: e.target.value.replace(",", ".") })}
-                          />
-                          {!cantOk ? <small className={estilos.fieldError}>{l.producto.unidadSifen === 77 ? "Entero mayor que 0" : "Mayor que 0, hasta 4 decimales"}</small> : null}
-                        </td>
-                        <td className={estilos.num}>
-                          {puedeEditarPrecio ? (
-                            <>
-                              <input
-                                className={`${estilos.price} ${precOk ? "" : estilos.invalid}`}
-                                inputMode="decimal"
-                                aria-label={`Precio unitario de ${l.producto.descripcion}`}
-                                aria-invalid={precOk ? undefined : true}
-                                value={l.precio}
-                                onChange={(e) => editar(l.clave, { precio: e.target.value.replace(",", ".") })}
-                              />
-                              {!precOk ? <small className={estilos.fieldError}>Mayor que 0</small> : null}
-                              {mod ? (
-                                <span className={estilos.modificado}>
-                                  Lista: {gs(Number(l.producto.precio))} · <button type="button" className={estilos.linkButton} onClick={() => editar(l.clave, { precio: l.producto.precio ?? "" })}>Restaurar</button>
-                                </span>
-                              ) : null}
-                            </>
-                          ) : (
-                            gs(Number(l.producto.precio ?? 0))
-                          )}
-                        </td>
-                        <td className={estilos.num}>{calculo.completo ? gs(calculo.items[i] ?? 0) : "—"}</td>
-                        <td><button type="button" className={estilos.remove} aria-label={`Quitar ${l.producto.descripcion}`} onClick={() => setLineas((ls) => ls.filter((x) => x.clave !== l.clave))}>Quitar</button></td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-            {problemas.length > 0 ? <div className={ui.alertError} role="alert" style={{ margin: 12 }}>{problemas.join(" ")}</div> : null}
-          </section>
-
-          <section className={estilos.card} aria-labelledby="sec-totales">
-            <div className={estilos.cardHead}><h2 id="sec-totales">Totales (guaraníes)</h2></div>
-            <div className={`${estilos.cardBody} ${estilos.totalesWrap}`}>
-              <dl className={estilos.totals}>
-                <div><dt>Exento</dt><dd>{gs(calculo.exento)}</dd></div>
-                <div><dt>Exonerado</dt><dd>{gs(calculo.exonerado)}</dd></div>
-                <div><dt>Gravado 5 % (IVA incl.)</dt><dd>{gs(calculo.gravado5)}</dd></div>
-                <div><dt>Gravado 10 % (IVA incl.)</dt><dd>{gs(calculo.gravado10)}</dd></div>
-                <div><dt>IVA 5 %</dt><dd>{gs(calculo.iva5)}</dd></div>
-                <div><dt>IVA 10 %</dt><dd>{gs(calculo.iva10)}</dd></div>
-                <div><dt>Total IVA</dt><dd>{gs(calculo.totalIva)}</dd></div>
-              </dl>
-              <div className={estilos.totalGeneral}>
-                <span>Total general</span>
-                <strong>Gs. {gs(calculo.total)}</strong>
-                <small>IVA incluido{hayPrecioModificado ? " · con precios modificados" : ""}</small>
-              </div>
-            </div>
-          </section>
-
-          <section className={estilos.card} aria-labelledby="sec-info">
-            <div className={estilos.cardHead}><h2 id="sec-info">Información adicional</h2></div>
-            <div className={estilos.cardBody}>
-              <label className={estilos.field}>
-                <span>Observaciones (opcional)</span>
-                <textarea value={infoAdicional} maxLength={5000} onChange={(e) => setInfoAdicional(e.target.value)} />
-              </label>
-            </div>
-          </section>
-
+        <>
           {errores.length > 0 ? (
             <div className={ui.alertError} role="alert">
               {errores[0]}
@@ -672,16 +644,274 @@ export default function NuevaFacturaPage() {
             </div>
           ) : null}
 
-          <div className={estilos.actionsBar}>
-            <p className={estilos.faltan}>{faltan.length > 0 ? `Falta: ${faltan.join(", ")}.` : "Listo para revisar."}</p>
-            <div className={estilos.actions}>
-              <Link href="/documentos" className={ui.secondaryButton}>Cancelar</Link>
-              <button type="button" className={ui.primaryButton} disabled={!puedeGuardar} onClick={grabar}>
-                {revisando ? "Revisando..." : "Grabar"}
-              </button>
+          <div className={estilos.workspace}>
+            <div className={estilos.principal}>
+              <section className={estilos.card} aria-labelledby="sec-operacion">
+                <div className={estilos.cardHead}>
+                  <h2 id="sec-operacion">Operación</h2>
+                  {sucursal ? <span className={estilos.meta}>Establecimiento {sucursal.establecimiento}{puntoId ? ` · Punto ${sucursal.puntos.find((p) => p.id === puntoId)?.codigo ?? ""}` : ""}</span> : null}
+                </div>
+                <div className={estilos.cardBody}>
+                  {sucursales.length === 0 && opciones ? (
+                    <div className={ui.alertError} role="alert" style={{ marginBottom: 12 }}>
+                      No hay sucursales habilitadas para facturar en su alcance.
+                      {sinEstablecimiento > 0 ? ` ${sinEstablecimiento} sucursal(es) no tienen el establecimiento SIFEN cargado.` : " Verifique la sucursal, su establecimiento SIFEN y su alcance de acceso."}
+                    </div>
+                  ) : null}
+                  <div className={estilos.grid}>
+                    <label className={estilos.field}>
+                      <span>Sucursal *</span>
+                      <select value={sucursalId} onChange={(e) => { setSucursalId(e.target.value); setPuntoId(""); }}>
+                        <option value="">Seleccione…</option>
+                        {sucursales.map((s) => <option key={s.id} value={s.id}>{s.nombre} ({s.establecimiento})</option>)}
+                      </select>
+                    </label>
+
+                    <label className={estilos.field}>
+                      <span>Punto de expedición *</span>
+                      <select value={puntoId} onChange={(e) => setPuntoId(e.target.value)} disabled={!sucursal}>
+                        <option value="">Seleccione…</option>
+                        {(sucursal?.puntos ?? []).map((p) => <option key={p.id} value={p.id}>{p.codigo} · {p.nombre}</option>)}
+                      </select>
+                      {sucursal && sucursal.puntos.length === 0 ? <small className={estilos.fieldError}>Esta sucursal no tiene puntos de expedición activos.</small> : null}
+                    </label>
+
+                    <div className={estilos.field}>
+                      <span>Condición de la operación</span>
+                      <div className={estilos.readonly} aria-readonly="true">{condicionTexto}</div>
+                      <small className={estilos.hint}>Esta versión emite solo al contado; el crédito aún no está disponible.</small>
+                    </div>
+
+                    <label className={estilos.field}>
+                      <span>Forma de pago</span>
+                      <select value={formaPago} onChange={(e) => setFormaPago(e.target.value)}>
+                        {Object.entries(opciones?.formasPago ?? {}).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                      </select>
+                    </label>
+                  </div>
+
+                  <details className={estilos.avanzado}>
+                    <summary>Parámetros fiscales: {textoOpcion(opciones?.tiposTransaccion, tipoTransaccion)} · {textoOpcion(opciones?.presencias, presencia)}</summary>
+                    <div className={estilos.grid}>
+                      <label className={estilos.field}>
+                        <span>Tipo de transacción</span>
+                        <select value={tipoTransaccion} onChange={(e) => setTipoTransaccion(e.target.value)}>
+                          {Object.entries(opciones?.tiposTransaccion ?? {}).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                        </select>
+                      </label>
+
+                      <label className={estilos.field}>
+                        <span>Indicador de presencia</span>
+                        <select value={presencia} onChange={(e) => setPresencia(e.target.value)}>
+                          {Object.entries(opciones?.presencias ?? {}).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                        </select>
+                      </label>
+                    </div>
+                  </details>
+                </div>
+              </section>
+
+              <section className={estilos.card} aria-labelledby="sec-cliente">
+                <div className={estilos.cardHead}>
+                  <h2 id="sec-cliente">Cliente *</h2>
+                  {cliente ? (
+                    <div className={estilos.actions}>
+                      <button type="button" className={ui.secondaryButton} onClick={() => setSelector("cliente")}>Cambiar cliente</button>
+                      <button type="button" className={ui.clearButton} onClick={() => setCliente(null)}>Quitar</button>
+                    </div>
+                  ) : null}
+                </div>
+                <div className={estilos.cardBody}>
+                  {cliente ? (
+                    <>
+                      <div className={estilos.clienteResumen}>
+                        <div className={estilos.clienteNombre}>
+                          <strong>{cliente.razonSocial}</strong>
+                          <span>{documentoCliente(cliente)} · {tipoContribuyente(cliente)} · {cliente.codigo}</span>
+                        </div>
+                        <span className={`${estilos.badge} ${cliente.apto ? estilos.badgeOk : estilos.badgeWarn}`}>{cliente.apto ? "Apto para facturar" : "Con pendientes"}</span>
+                      </div>
+                      {!cliente.apto ? (
+                        <ul className={estilos.pendientes} role="alert">
+                          {cliente.pendientes.map((p) => <li key={p}>{p}</li>)}
+                          <li><Link href="/clientes">Regularizar en Clientes</Link> (esta pantalla no modifica el cadastro).</li>
+                        </ul>
+                      ) : null}
+                      <details className={estilos.avanzado}>
+                        <summary>Ficha fiscal completa</summary>
+                        <dl className={estilos.ficha} aria-label="Ficha fiscal del cliente">
+                          <div className={estilos.fichaTitulo}><dt>Razón social</dt><dd>{cliente.razonSocial}</dd></div>
+                          <div><dt>Código</dt><dd>{cliente.codigo}</dd></div>
+                          <div><dt>{cliente.naturaleza === 1 ? "RUC - DV" : "Documento"}</dt><dd>{documentoCliente(cliente)}</dd></div>
+                          <div><dt>Tipo de contribuyente</dt><dd>{tipoContribuyente(cliente)}</dd></div>
+                          {cliente.nombreFantasia ? <div><dt>Nombre de fantasía</dt><dd>{cliente.nombreFantasia}</dd></div> : null}
+                          <div>
+                            <dt>Dirección fiscal</dt>
+                            <dd>{cliente.direccion ? `${cliente.direccion} · N.º ${cliente.numeroCasa && /^\d{1,6}$/.test(cliente.numeroCasa.trim()) ? cliente.numeroCasa.trim() : "0 (no cargado; se informa 0)"}` : "No informada"}</dd>
+                          </div>
+                          <div><dt>Teléfono</dt><dd>{cliente.celular || cliente.telefono || "No informado"}</dd></div>
+                          <div><dt>Correo</dt><dd>{cliente.emailFacturacion || cliente.email || "No informado"}</dd></div>
+                          <div>
+                            <dt>Estado fiscal</dt>
+                            <dd><span className={`${estilos.badge} ${cliente.apto ? estilos.badgeOk : estilos.badgeWarn}`}>{cliente.apto ? "Apto para facturar" : "Con pendientes"}</span></dd>
+                          </div>
+                        </dl>
+                      </details>
+                    </>
+                  ) : (
+                    <div className={estilos.buscarFila}>
+                      <BuscadorCliente alElegir={setCliente} />
+                      <button type="button" className={ui.secondaryButton} onClick={() => setSelector("cliente")}>Búsqueda avanzada</button>
+                    </div>
+                  )}
+                </div>
+              </section>
+
+              <section className={estilos.card} aria-labelledby="sec-detalle">
+                <div className={estilos.cardHead}>
+                  <h2 id="sec-detalle">Detalle de la factura *</h2>
+                  <span className={estilos.meta}>{lineas.length} ítem{lineas.length === 1 ? "" : "s"}</span>
+                </div>
+                <div className={`${estilos.cardBody} ${estilos.buscarFila}`}>
+                  <BuscadorProducto alElegir={agregar} />
+                  <button type="button" className={ui.secondaryButton} onClick={() => setSelector("producto")}>Búsqueda avanzada</button>
+                </div>
+                <div className={estilos.tableWrap}>
+                  <table className={estilos.items}>
+                    <thead>
+                      <tr>
+                        <th>Producto</th>
+                        <th>Afectación IVA</th>
+                        <th className={estilos.num}>% IVA</th>
+                        <th>Unidad</th>
+                        <th className={estilos.num}>Cantidad</th>
+                        <th className={estilos.num}>Precio unitario (IVA incl.)</th>
+                        <th className={estilos.num}>Subtotal</th>
+                        <th><span className="sr-only">Acciones</span></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {lineas.length === 0 ? (
+                        <tr><td colSpan={8} className={estilos.tableEmpty}>Aún no agregó ítems. Busque arriba por código, GTIN o descripción, o use «Búsqueda avanzada».</td></tr>
+                      ) : lineas.map((l, i) => {
+                        const cantOk = cantidadValida(l);
+                        const precOk = precioValido(l);
+                        const mod = precioModificado(l);
+                        const pr = problemasProducto(l.producto);
+
+                        return (
+                          <tr key={l.clave} className={!cantOk || !precOk || pr.length > 0 ? estilos.filaInvalida : undefined}>
+                            <td className={estilos.prod} data-label="Producto">
+                              <strong>{l.producto.descripcion}</strong>
+                              <small>{l.producto.codigo}{l.producto.gtin ? ` · GTIN ${l.producto.gtin}` : ""}</small>
+                              {pr.length > 0 ? <small className={estilos.fieldError} role="alert">No se puede facturar: {pr.join(", ")}.</small> : null}
+                            </td>
+                            <td data-label="Afectación IVA">{l.producto.afectacion ? ETIQUETA_IVA[l.producto.afectacion] : "Sin clasificar"}</td>
+                            <td className={estilos.num} data-label="% IVA">{l.producto.afectacion ? `${l.producto.tasa ?? 0}%` : "—"}</td>
+                            <td data-label="Unidad" title={l.producto.unidadNombre ?? undefined}>{l.producto.unidadSimbolo ?? "—"}</td>
+                            <td className={estilos.num} data-label="Cantidad">
+                              <input
+                                className={`${estilos.qty} ${cantOk ? "" : estilos.invalid}`}
+                                inputMode="decimal"
+                                aria-label={`Cantidad de ${l.producto.descripcion}`}
+                                aria-invalid={cantOk ? undefined : true}
+                                value={l.cantidad}
+                                onChange={(e) => editar(l.clave, { cantidad: e.target.value.replace(",", ".") })}
+                              />
+                              {!cantOk ? <small className={estilos.fieldError}>{l.producto.unidadSifen === 77 ? "Entero mayor que 0" : "Mayor que 0, hasta 4 decimales"}</small> : null}
+                            </td>
+                            <td className={estilos.num} data-label="Precio unitario (IVA incl.)">
+                              {puedeEditarPrecio ? (
+                                <>
+                                  <input
+                                    className={`${estilos.price} ${precOk ? "" : estilos.invalid}`}
+                                    inputMode="decimal"
+                                    aria-label={`Precio unitario de ${l.producto.descripcion}`}
+                                    aria-invalid={precOk ? undefined : true}
+                                    value={l.precio}
+                                    onChange={(e) => editar(l.clave, { precio: e.target.value.replace(",", ".") })}
+                                  />
+                                  {!precOk ? <small className={estilos.fieldError}>Mayor que 0</small> : null}
+                                  {mod ? (
+                                    <span className={estilos.modificado}>
+                                      Lista: {gs(Number(l.producto.precio))} · <button type="button" className={estilos.linkButton} onClick={() => editar(l.clave, { precio: l.producto.precio ?? "" })}>Restaurar</button>
+                                    </span>
+                                  ) : null}
+                                </>
+                              ) : (
+                                gs(Number(l.producto.precio ?? 0))
+                              )}
+                            </td>
+                            <td className={`${estilos.num} ${estilos.subtotal}`} data-label="Subtotal">{calculo.completo ? gs(calculo.items[i] ?? 0) : "—"}</td>
+                            <td className={estilos.accion}><button type="button" className={estilos.remove} aria-label={`Quitar ${l.producto.descripcion}`} onClick={() => setLineas((ls) => ls.filter((x) => x.clave !== l.clave))}>Quitar</button></td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+
+              <section className={estilos.card} aria-labelledby="sec-info">
+                <div className={estilos.cardHead}><h2 id="sec-info">Información adicional</h2></div>
+                <div className={estilos.cardBody}>
+                  <label className={estilos.field}>
+                    <span>Observaciones (opcional)</span>
+                    <textarea value={infoAdicional} maxLength={5000} onChange={(e) => setInfoAdicional(e.target.value)} />
+                  </label>
+                </div>
+              </section>
             </div>
+
+            <aside className={estilos.resumenPanel} aria-labelledby="sec-totales">
+              <h2 id="sec-totales">Resumen (guaraníes)</h2>
+
+              <dl className={estilos.totals}>
+                <div><dt>Exento</dt><dd>{gs(calculo.exento)}</dd></div>
+                <div><dt>Exonerado</dt><dd>{gs(calculo.exonerado)}</dd></div>
+                <div><dt>Gravado 5 % (IVA incl.)</dt><dd>{gs(calculo.gravado5)}</dd></div>
+                <div><dt>IVA 5 %</dt><dd>{gs(calculo.iva5)}</dd></div>
+                <div><dt>Gravado 10 % (IVA incl.)</dt><dd>{gs(calculo.gravado10)}</dd></div>
+                <div><dt>IVA 10 %</dt><dd>{gs(calculo.iva10)}</dd></div>
+                <div className={estilos.totalIva}><dt>Total IVA</dt><dd>{gs(calculo.totalIva)}</dd></div>
+              </dl>
+
+              <div className={estilos.totalGeneral}>
+                <span>Total general</span>
+                <strong>Gs. {gs(calculo.total)}</strong>
+                <small>IVA incluido{hayPrecioModificado ? " · con precios modificados" : ""}</small>
+              </div>
+
+              <dl className={estilos.pagoResumen}>
+                <div><dt>Cliente</dt><dd>{cliente ? cliente.razonSocial : "Sin seleccionar"}</dd></div>
+                <div><dt>Condición</dt><dd>{condicionTexto}</dd></div>
+                <div><dt>Forma de pago</dt><dd>{textoOpcion(opciones?.formasPago, formaPago)}</dd></div>
+              </dl>
+
+              <div className={estilos.pendientesPanel} aria-live="polite">
+                <h3>Pendientes de validación</h3>
+                {pendientes.length > 0 ? <ul>{pendientes.map((p) => <li key={p}>{p}</li>)}</ul> : <p className={estilos.listo}>Todo listo para revisar.</p>}
+              </div>
+
+              {problemas.length > 0 ? <p className={estilos.fieldError} role="alert">Hay productos con impedimentos: corríjalos en Productos o quítelos de la factura.</p> : null}
+
+              <div className={estilos.accionesPanel}>
+                <button type="button" className={`${ui.primaryButton} ${estilos.accionPrincipal} ${estilos.accionRevisar}`} disabled={!puedeGuardar} onClick={grabar}>
+                  {revisando ? "Revisando..." : "Revisar y confirmar"}
+                </button>
+                <Link href="/dashboard" className={`${ui.secondaryButton} ${estilos.accionPrincipal}`}>Cancelar</Link>
+              </div>
+            </aside>
           </div>
-        </div>
+
+          <div className={estilos.barraMovil}>
+            <div>
+              <strong>Gs. {gs(calculo.total)}</strong>
+              <small>{faltan.length > 0 ? `Falta: ${faltan.join(", ")}.` : "Listo para revisar."}</small>
+            </div>
+            <button type="button" className={ui.primaryButton} disabled={!puedeGuardar} onClick={grabar}>{revisando ? "Revisando..." : "Revisar"}</button>
+          </div>
+        </>
       )}
 
       {selector === "cliente" ? <SelectorCliente alCerrar={() => setSelector(null)} alElegir={(c) => { setCliente(c); setSelector(null); }} /> : null}
@@ -703,7 +933,7 @@ export default function NuevaFacturaPage() {
               <div><dt>Forma de pago</dt><dd>{resumen.formaPago}</dd></div>
             </dl>
             <div className={estilos.tableWrap} style={{ margin: "10px 0" }}>
-              <table className={estilos.items} style={{ minWidth: 560 }}>
+              <table className={`${estilos.items} ${estilos.itemsResumen}`}>
                 <thead><tr><th>Producto</th><th>Unid.</th><th className={estilos.num}>Cant.</th><th className={estilos.num}>Precio (IVA incl.)</th><th>IVA</th><th className={estilos.num}>Total</th></tr></thead>
                 <tbody>
                   {resumen.lineas.map((l, i) => (
@@ -743,9 +973,9 @@ export default function NuevaFacturaPage() {
       {mostrarEnvio ? (
         <div className={estilos.overlay} role="presentation">
           <div className={estilos.modal} role="dialog" aria-modal="true" aria-labelledby="titulo-envio">
-            <h2 id="titulo-envio">Envío al gateway (diagnóstico de prueba)</h2>
+            <h2 id="titulo-envio">Detalle técnico del envío</h2>
             {enviando ? (
-              <p role="status">Autenticando y transmitiendo… no cierre esta ventana.</p>
+              <p role="status">Enviando la factura al gateway… no cierre esta ventana.</p>
             ) : resultado ? (
               <>
                 <dl className={estilos.totals}>
@@ -757,7 +987,7 @@ export default function NuevaFacturaPage() {
                   {resultado.cdc ? <div><dt>CDC (informado por el gateway)</dt><dd style={{ overflowWrap: "anywhere" }}>{resultado.cdc}</dd></div> : null}
                   {resultado.estadoGateway ? <div><dt>Estado informado</dt><dd>{resultado.estadoGateway}</dd></div> : null}
                 </dl>
-                <h3 style={{ fontSize: 13.5, margin: "12px 0 4px" }}>Fases</h3>
+                <h3 style={{ fontSize: 14, margin: "12px 0 4px" }}>Fases</h3>
                 <ol className={estilos.errorList}>
                   {resultado.fases.length === 0 ? <li>Sin transmisión: el documento ya había sido enviado.</li> : null}
                   {resultado.fases.map((f, i) => (
