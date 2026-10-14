@@ -13,6 +13,8 @@ if [[ "$(psql -X -Atc "select count(*) from pg_roles where rolname='nexit_runtim
   echo "ABORTADO: ya existe el rol nexit_runtime en este clúster. Use un clúster descartable." >&2; exit 3
 fi
 LOG="$(mktemp -d)"; FALLAS=0; PASS_TOTAL=0
+# Este script solo corre en clústeres descartables: aquí (y en ningún script de implantación) se habilita el bootstrap sintético de las empresas legadas que NEX-019 exige (ver pruebas/bootstrap-legado-nex019.sql).
+export NEX_BOOTSTRAP_ANTES_DE_019="$AQUI/pruebas/bootstrap-legado-nex019.sql"
 PW="$(head -c 48 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 24)"   # solo para esta corrida; nunca se imprime ni se guarda
 export PGOPTIONS="-c nex.pw_prueba=$PW"
 limpiar() {
@@ -43,6 +45,16 @@ MIGRACIONES_DIR="$LOG/mig" "$AQUI/scripts/aplicar-migraciones.sh" >"$LOG/m3" 2>&
 paso "M4 se niega a operar sobre la base 'nexit'"; PGDATABASE=nexit "$AQUI/scripts/aplicar-migraciones.sh" >"$LOG/m4" 2>&1; rc=$?
 [[ $rc -eq 3 ]] && echo "OK   (abortó con código 3)" || { echo "FALLA (rc=$rc)"; FALLAS=$((FALLAS+1)); }
 
+paso "M1b schema_migrations: una fila por archivo con el SHA-256 de ese archivo (incluye NEX-019 y NEX-054)"
+MM=0; for f in "$AQUI"/migraciones/NEX-0*.sql; do b="$(basename "$f" .sql)"; v="${b%%-*}-$(echo "$b" | cut -d- -f2)"; s="$(sha256sum "$f" | cut -d' ' -f1)"
+  [[ "$(psql -X -Atc "select checksum from schema_migrations where version='$v'")" == "$s" ]] || { MM=$((MM+1)); echo "      checksum distinto o ausente: $v"; }; done
+[[ $MM -eq 0 && "$(psql -X -Atc "select count(*) from schema_migrations")" == "$NMIG" && "$(psql -X -Atc "select count(*) from schema_migrations where version in ('NEX-019','NEX-054')")" == 2 ]] && echo "OK   ($NMIG versiones con su checksum)" || { echo "FALLA"; FALLAS=$((FALLAS+1)); }
+paso "M6 el bootstrap sintético se niega fuera de bases efímeras nexit_test_*"; PGDATABASE=postgres "$AQUI/scripts/aplicar-migraciones.sh" >"$LOG/m6" 2>&1; rc=$?
+[[ $rc -eq 5 ]] && grep -q "solo se admite en bases efímeras" "$LOG/m6" && echo "OK   (abortó con código 5 sin tocar la base)" || { echo "FALLA (rc=$rc)"; FALLAS=$((FALLAS+1)); }
+paso "M7 sin la variable de bootstrap NO hay bootstrap implícito: una base limpia se detiene en NEX-019"; psql -X -q -d postgres -c "CREATE DATABASE ${DB}_m7" >/dev/null 2>&1
+( unset NEX_BOOTSTRAP_ANTES_DE_019; PGDATABASE="${DB}_m7" "$AQUI/scripts/aplicar-migraciones.sh" >"$LOG/m7" 2>&1 ); rc=$?
+if [[ $rc -ne 0 && "$(psql -X -Atc "select count(*) from schema_migrations" -d "${DB}_m7")" == 18 && "$(psql -X -Atc "select count(*) from empresas" -d "${DB}_m7")" == 0 ]] && grep -q "se esperaban exactamente dos empresas" "$LOG/m7"; then echo "OK   (18 migraciones aplicadas, NEX-019 abortó, 0 empresas)"; else echo "FALLA (rc=$rc)"; tail -3 "$LOG/m7"; FALLAS=$((FALLAS+1)); fi
+psql -X -q -d postgres -c "DROP DATABASE IF EXISTS ${DB}_m7 WITH (FORCE)" >/dev/null 2>&1
 paso "M5 dos ejecuciones simultáneas del runner (base nueva)"; psql -X -q -d postgres -c "CREATE DATABASE ${DB}_m5" >/dev/null 2>&1
 ( PGDATABASE="${DB}_m5" "$AQUI/scripts/aplicar-migraciones.sh" >"$LOG/m5a" 2>&1; echo $? >"$LOG/m5a.rc" ) & ( PGDATABASE="${DB}_m5" "$AQUI/scripts/aplicar-migraciones.sh" >"$LOG/m5b" 2>&1; echo $? >"$LOG/m5b.rc" ) & wait
 NM5=$(psql -X -Atc "select count(*)||'/'||count(distinct version) from schema_migrations" -d "${DB}_m5")
@@ -54,7 +66,7 @@ paso "S2 semilla S-002 (empresa-modelo) y re-ejecución"; psql -X -q -v ON_ERROR
 paso "S3 semilla S-003 (prospecto) sin hash => aborta"; psql -X -q -v codigo_demo=demo-sinhash -f "$AQUI/seeds/S-003-empresa-prospecto.sql" >"$LOG/s3" 2>&1; grep -q "FALTA" "$LOG/s3" && ! psql -X -Atc "select 1 from empresas where codigo='demo-sinhash'" | grep -q 1 && echo "OK" || { echo "FALLA"; FALLAS=$((FALLAS+1)); }
 
 cd "$AQUI/pruebas"
-for t in T01 T02 T03 T04 T05 T06 T07 T09 T10 T12 T13 T14 T15; do
+for t in T01 T02 T03 T04 T05 T06 T07 T09 T10 T12 T13 T14 T15 T16; do
   f=$(ls ${t}-*.sql); paso "$t ${f#${t}-}"; psql -X -q -v ON_ERROR_STOP=1 -f "$f" >"$LOG/$t" 2>&1; rc=$?; fin $rc "$LOG/$t"
 done
 # T06b: conexión REAL como nexit_runtime (no SET ROLE): no es superusuario, no puede elevarse ni crear objetos
@@ -72,6 +84,9 @@ else echo "OMITIDA (el clúster no permite login con contraseña de nexit_runtim
 # T11: concurrencia real (varias sesiones simultáneas)
 paso "T11 concurrencia (idempotencia, sobreventa, valor, deadlocks)"
 "$AQUI/pruebas/T11-concurrencia.sh" >"$LOG/T11" 2>&1; fin $? "$LOG/T11"
+# T17: NEX-054 con DOS sesiones reales (barrera por advisory lock; la segunda queda bloqueada por FOR UPDATE antes de que la primera confirme)
+paso "T17 NEX-054 carrera real entre dos sesiones (estado SIFEN final)"
+"$AQUI/pruebas/T17-concurrencia-consulta.sh" >"$LOG/T17" 2>&1; fin $? "$LOG/T17"
 # I1/V1: instalación de una empresa REAL con los scripts de producción (sin contraseña en argumentos ni logs) y validación de la estructura instalada
 PWADM="Adm-$(head -c 24 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 20)"     # contraseña del administrador de prueba (solo en memoria)
 if python3 -c 'import bcrypt' 2>/dev/null; then GENERADOR="real (python3 bcrypt)"; unset NEX_PRUEBAS_GENERADOR_HASH
@@ -80,6 +95,10 @@ else GENERADOR="simulado con pgcrypto (no hay bcrypt local; en CI se usa el real
 fi
 psql -X -q -d postgres -c "CREATE DATABASE ${DB}_prod" >/dev/null 2>&1
 ( export PGDATABASE="${DB}_prod"; "$AQUI/scripts/aplicar-migraciones.sh" >/dev/null 2>&1 && psql -X -q -v ON_ERROR_STOP=1 -f "$AQUI/seeds/S-001-catalogos-globales.sql" >/dev/null 2>&1 )
+# La simulación de producción es una instalación LIMPIA: se retiran las dos empresas sintéticas que solo existen para que NEX-019 pueda ejecutarse (sin datos asociados).
+paso "V0 simulación de producción sin residuos del bootstrap sintético"
+psql -X -q -v ON_ERROR_STOP=1 -d "${DB}_prod" -c "DELETE FROM empresas WHERE codigo IN ('80003314','5469464') AND razon_social LIKE 'Empresa legada sintetica%'" >"$LOG/V0" 2>&1
+[[ "$(psql -X -Atc "select count(*) from empresas" -d "${DB}_prod")" == 0 ]] && echo "OK   (0 empresas antes de inicializar la empresa real)" || { echo "FALLA"; tail -3 "$LOG/V0"; FALLAS=$((FALLAS+1)); }
 paso "I1 inicializar-empresa.sh / restablecer-clave.sh (generador: ${GENERADOR%% *})"
 ( export PGDATABASE="${DB}_prod"
   ID1="$(printf '%s\n' "$PWADM" | "$AQUI/scripts/inicializar-empresa.sh" --codigo emp-real --razon-social "Empresa Real S.A. (prueba)" --ruc 80012345 --dv 6 --usuario admin --nombre Magno --email m@example.invalid 2>&1 | tee "$LOG/I1.a" | sed -n 's/^empresa_id=//p')"
@@ -110,6 +129,25 @@ psql -X -q -d postgres -c "DROP DATABASE IF EXISTS ${DB}_prod WITH (FORCE)" >/de
 # T08: RLS opcional en una COPIA (la base principal no recibe RLS)
 paso "T08 rls-opcional (en copia ${DB}_rls)"
 psql -X -q -d postgres -c "CREATE DATABASE ${DB}_rls TEMPLATE $DB" >"$LOG/T08" 2>&1 && PGDATABASE="${DB}_rls" psql -X -q -v ON_ERROR_STOP=1 -f T08-rls-opcional.sql >>"$LOG/T08" 2>&1; fin $? "$LOG/T08"
+
+# R1: reversión de NEX-054 en una COPIA efímera (jamás parte del runner de aplicación ni de la base principal): restaura el cuerpo de NEX-047 y la regresión vuelve a ser posible
+paso "R1 reversion-NEX-054.sql en copia ${DB}_rev"
+psql -X -q -d postgres -c "CREATE DATABASE ${DB}_rev TEMPLATE $DB" >"$LOG/R1" 2>&1 && PGDATABASE="${DB}_rev" psql -X -q -v ON_ERROR_STOP=1 -1 -f "$AQUI/scripts/reversion-NEX-054.sql" >>"$LOG/R1" 2>&1
+(
+  export PGDATABASE="${DB}_rev"
+  SIG="to_regprocedure('public.fe_documento_registrar_consulta(uuid,uuid,uuid,text,integer,text,text,text,text,text,text,text,text,jsonb)')"
+  FN="select prosrc from pg_proc where oid = $SIG"
+  [[ "$(psql -X -Atc "select position('NEX-054' in ($FN)) = 0 and position('no se modifica el estado fiscal' in ($FN)) = 0")" == t ]] && echo "PASS: la reversión restaura el cuerpo original (sin la guarda de NEX-054)"
+  [[ "$(psql -X -Atc "select has_function_privilege('nexit_runtime', $SIG, 'EXECUTE')")" == t ]] && echo "PASS: la reversión conserva los privilegios del runtime"
+  E="$(psql -X -Atc "select id from empresas where codigo = 'emp-t16a'")"; U="$(psql -X -Atc "select id from usuarios where empresa_id = '$E'")"; S="$(psql -X -Atc "select id from sucursales where empresa_id = '$E' order by creado_at, id limit 1")"
+  C="01800000056001002""0180001""1202610141123456789""0"
+  D="$(psql -X -Atq -c "insert into documentos_electronicos (empresa_id,sucursal_id,tipo,establecimiento,punto_expedicion,numero,cdc,fecha_emision,receptor_nombre,moneda,total,estado_local,estado_sifen,creado_por) values ('$E','$S','FE','001','002','0180001','$C',now(),'Receptor R1','PYG',1000,'ENVIADO','APROBADO','$U') returning id")"
+  psql -X -Atq -c "select fe_documento_registrar_consulta('$E','$U','$D','OK',200,'r1','Pendiente','PENDIENTE',NULL,'0260','m','f','e','{}'::jsonb)" >/dev/null 2>&1
+  [[ "$(psql -X -Atc "select estado_sifen from documentos_electronicos where id = '$D'")" == PENDIENTE ]] && echo "PASS: sin la guarda (versión NEX-047) la regresión APROBADO → PENDIENTE vuelve a ocurrir: T16/T17 distinguen ambas versiones"
+  [[ "$(psql -X -Atc "select count(*) from schema_migrations where version = 'NEX-054'" -d "$DB")" == 1 ]] && echo "PASS: la base principal conserva NEX-054 registrada (la reversión solo se ejecutó en la copia)"
+) >>"$LOG/R1" 2>&1
+psql -X -q -d postgres -c "DROP DATABASE IF EXISTS ${DB}_rev WITH (FORCE)" >/dev/null 2>&1
+[[ $(grep -c PASS "$LOG/R1") -eq 4 ]]; fin $? "$LOG/R1"
 
 # B1: copia de seguridad y restauración (pg_dump -Fc / pg_restore) en otra base, ya con los datos de T01..T11.
 #     Compara el CONTENIDO (md5 por tabla), las migraciones registradas, las invariantes (conciliación, kardex) y que nexit_runtime funcione en la base restaurada.

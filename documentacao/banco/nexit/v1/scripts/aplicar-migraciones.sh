@@ -19,6 +19,14 @@ DB="${PGDATABASE:-$(psql -Atc 'select current_database()')}"
 if [[ "$DB" == "nexit" && $PERMITIR -ne 1 ]]; then
   echo "ABORTADO: la base es 'nexit' (real). Requiere autorización del responsable y --permitir-banco-real." >&2; exit 3
 fi
+# Bootstrap SINTÉTICO opcional, SOLO para simular una base legada en bases efímeras de prueba: NEX-019 es una migración de datos para una base ya inicializada (exige las dos
+# empresas legadas casa_mingo y proceit) y las migraciones NEX-001…018 no las crean. Se habilita únicamente con NEX_BOOTSTRAP_ANTES_DE_019=<archivo.sql> (lo define
+# ejecutar-pruebas.sh; ninguna implantación lo define), se niega fuera de bases nexit_test_* y se aplica en la MISMA transacción que NEX-019. No modifica ninguna migración.
+BOOT="${NEX_BOOTSTRAP_ANTES_DE_019:-}"
+if [[ -n "$BOOT" ]]; then
+  if [[ ! "$DB" =~ ^nexit_test_[0-9]+(_[a-z0-9]+)?$ ]]; then echo "ABORTADO: el bootstrap sintético solo se admite en bases efímeras nexit_test_* (base: $DB)." >&2; exit 5; fi
+  if [[ ! -f "$BOOT" ]]; then echo "ABORTADO: no existe el archivo de bootstrap $BOOT." >&2; exit 5; fi
+fi
 psql() { command psql -X -q -v ON_ERROR_STOP=1 "$@"; }
 tiene_control=$(psql -Atc "select to_regclass('public.schema_migrations') is not null")
 for f in "$DIR"/NEX-0*.sql; do
@@ -34,8 +42,10 @@ for f in "$DIR"/NEX-0*.sql; do
   fi
   if [[ $LISTAR -eq 1 ]]; then echo "pendiente     $version  ($sum)"; continue; fi
   echo "aplicando     $version"
+  extra=()
+  if [[ -n "$BOOT" && "$version" == "NEX-019" ]]; then echo "bootstrap sintético de pruebas (empresas legadas) en la misma transacción de $version"; extra=(-f "$BOOT"); fi
   # El bloqueo consultivo serializa dos ejecuciones simultáneas del runner (la segunda espera y luego falla limpiamente por versión duplicada).
-  psql -1 -c "SELECT pg_advisory_xact_lock(7340001)" -f "$f" -c "INSERT INTO schema_migrations (version, nombre, checksum) VALUES ('$version', '$base', '$sum')" >/dev/null
+  psql -1 -c "SELECT pg_advisory_xact_lock(7340001)" ${extra[@]+"${extra[@]}"} -f "$f" -c "INSERT INTO schema_migrations (version, nombre, checksum) VALUES ('$version', '$base', '$sum')" >/dev/null
   tiene_control=$(psql -Atc "select to_regclass('public.schema_migrations') is not null")
 done
 # Re-aplicar permisos del rol de ejecución (cubre tablas nuevas de migraciones futuras). to_regprocedure recibe la FIRMA completa (to_regproc
