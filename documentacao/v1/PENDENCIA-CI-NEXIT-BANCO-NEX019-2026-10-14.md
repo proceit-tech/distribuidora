@@ -60,3 +60,34 @@
 ### PRO-62 — fecho dos três grupos (um único commit; CI completo executado uma vez)
 - **T10 (causa confirmada, defeito do teste):** a guarda `stock_saldos_deposito_activo` (NEX-046, BEFORE INSERT) dispara antes das FK e rejeita (P0001) o depósito da empresa B usado pela empresa A. T10 passou a provar as duas defesas **separadamente**: saldo positivo ⇒ P0001 (guarda); saldo 0 ⇒ 23503 (FK composta); e que nenhum saldo da empresa A aponta ao depósito de B. O isolamento exigido não foi relaxado.
 - **T01** → NEX-055 (+ filtro de tabelas base); **C1** → classificação auditável de consultas dinâmicas (ver acima). Nenhuma migration histórica alterada; NEX-055 não aplicada fora do CI.
+
+
+## AUD-PRO62-R02 — reauditoria independente do commit 4ee8103 / CI 38627740030 (14/10/2026)
+
+**Versão auditada:** [4ee8103f9b6f114101d35534cc7cac1961d8f822](https://github.com/proceit-tech/distribuidora/commit/4ee8103f9b6f114101d35534cc7cac1961d8f822); branch oficial coincidente com SHA no momento da auditoria. **CI:** [38627740030](https://github.com/proceit-tech/distribuidora/actions/runs/38627740030), conclusão **failure**. Log de job `pruebas` lido diretamente. O commit final altera T10 e este documento; NEX-055/C1/T01 constam de commits imediatamente anteriores na mesma branch e foram auditados como conjunto. **Não se realizou qualquer teste de VM, banco operacional ou gateway.**
+
+### Matriz de resultados efetivamente registrados
+
+| Critério | Resultado no CI | Parecer |
+|---|---|---|
+| M1/M2/M3/M4/M5 e M6/M7 | 55 migrations aplicadas, reaplicação idempotente, checksum, proteção da base real, concorrência do runner e bootstrap descartável aprovados | **PASS** no PostgreSQL temporário |
+| T01 estrutura/triggers | 8 verificações OK | **PASS** com NEX-055 em banco temporário; **NEX-055 NÃO aplicada na VM** |
+| T10 isolamento | 39 verificações OK, incluindo proteção P0001 e FK composta 23503 em cenários distintos | **PASS** em banco temporário |
+| T16 NEX-054 + T17 concorrência | 33 + 42 verificações OK | **PASS** em PostgreSQL real descartável, não produção |
+| I1/V1/V2, backup/restore B1, reversão isolada NEX-054 | PASS | **PASS** em banco temporário |
+| C1 verificador SQL/TypeScript | 369 templates extraídos; 301 variantes consideradas OK (12 dinâmicas apenas após remover interpolações); **10 FALLAS**; **73 dinâmicas NO VERIFICABLE** | **BLOQUEANTE**: CI completo falha; não equiparar NO VERIFICABLE a PASS |
+| Contagem global do runner | **554 PASS**, **1 grupo FALLA** | CI **NÃO** aprovado |
+
+### Achados de auditoria — critério objetivo para a única correção seguinte
+
+**C1-R02-01 (bloqueante para CI): falso diagnóstico causado por retirar a tabela interpolada, mas sem cobertura suficiente.** Nove falhas `relation "t" does not exist` vêm de templates como `SELECT ${proyectar(tipo)} FROM ${CFG[tipo].tabla} t ...`, nos quais o verificador substitui tabela e projeção por texto vazio, deixando `FROM t` como *relação*, e não o alias da tabela real. Ocorrências em `lib/comercial/servidor.ts`, `lib/productos/catalogos-admin.ts` e `lib/proveedores/sincronizar.ts`. A décima (`could not determine data type of parameter $2`) é de `PERMITIDOS`, fragmento `SELECT` isolado de `lib/stock/shared.ts` que contém `$3`, depois remapeado para `$2` quando incorporado na consulta final. **Esses 10 erros do PREPARE do verificador não comprovam SQL inválido em execução**, mas também não provam que os SQL finais estejam certos. Corrigir pela estrutura e variantes reais das queries, não por supressão de erros de relação/parâmetro.
+
+**C1-R02-02 (alta): cobertura incompleta do novo verificador.** `INTERPOLACION.sub("", v)` e o truncamento `re.sub(r"\\$\\{.*", "", flags=re.S)` descartam partes das queries; 73 consultas ficam NO VERIFICABLE e 12 dinâmicas são contadas OK apenas para a forma artificial com expressão vazia. `sys.exit(1 if fallas else 0)` permitiria futuramente CI verde com essas **73 não verificadas**. Não alterar o rótulo para PASS; produzir relatórios separados de consultas verificadas, variantes dinâmicas reconstruídas e não verificáveis, com regra de qualidade explícita. Priorizar representatividade/segurança do fluxo FE e regressões do extrator, sem tentar reescrever indiscriminadamente toda a app.
+
+**NEX055-R02-03 (média, antes de implantação):** NEX-055 instala triggers em **todas** as tabelas base sem `actualizado_trg`, mas `reversion-NEX-055.sql` remove apenas três triggers de Facturación e instrui remoção manual de eventuais outras tabelas. Conferir se o escopo da migration deve limitar-se exatamente às três tabelas fiscalizadas; em qualquer caso, assegurar que a reversão é previsível e **não remove triggers preexistentes**. Verificar comportamento de `actualizado_at` após UPDATE de teste, não só a existência nominal de trigger. **Não aplicar NEX-055 operacionalmente antes dessa verificação**. Não alterar migrations históricas previamente aplicadas; NEX-055 está apenas versionada e aplicada no CI descartável, confirmar estado real antes de qualquer decisão.
+
+**Separar arquitetura de instalação limpa:** NEX-019 continua sendo migration legada de upgrade; runner de testes só se recupera porque injeta dados sintéticos opt-in. O deploy inicial limpo para outra VM continuaria a exigir plano/baseline próprio. **Não alterar arquitetura ou produção dentro do reparo C1**.
+
+### Autorização de escopo para Claude Code
+
+Focar em `C1-R02-01/02` e na prova/reversão de NEX-055 (apenas se o escopo de CI ainda necessitar ajuste); não alterar gateway, IVA, funções SIFEN NEX-054 nem tabelas reais, nem relaxar isolamento. Reproduzir casos determinísticos direcionados (ex.: tabela interpolada, fragmento SQL reaproveitado e condição dinâmica), documentar o que permanece **não verificável** sem alegar aprovação; fazer **uma execução completa do CI apenas depois** da correção agrupada. Ao final: SHA, URL CI, números PASS/FALLA e limitações; **parar para auditoria**. Sem VM, Docker, PostgreSQL operacional, credenciais, deploy ou envio SIFEN.
