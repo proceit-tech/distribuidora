@@ -49,6 +49,7 @@ Module._resolveFilename = function (request, ...resto) {
   const lpe = cargar("lib/listas-precio/estabilizacion.casos.js");
   const srm = cargar("lib/stock/stock-reposicion.casos.js");
   const fac = cargar("lib/facturacion/facturacion.casos.js");
+  const fe2 = cargar("lib/facturacion/fat-e2.casos.js");
   const suites = [
     ["teléfono y día de cobro", async () => tel.verificarCasosTelefonoYCobro(), () => tel.CASOS_TELEFONO.length + 11 + 6 + 2],
     ["catálogo mundial", async () => tel.verificarCatalogoMundial(), null],
@@ -91,6 +92,7 @@ Module._resolveFilename = function (request, ...resto) {
     ["Reportes · Lotes y vencimientos (AUD-LOT-R01, LOT-R01-01…09, matriz T01…T10: decimales exactos, snapshot, aislamiento y lotes sin saldo, alcance con inactivos, GTIN, totales por unidad (UUID), filtro Sin saldo, cargas confiables, permisos, XLSX/PDF)", async () => rlo.verificarCasosReportesLotes(), null],
     ["Stock, Reposición y contrato Movimientos ↔ documentos (Etapas A, B y C)", async () => srm.verificarCasosStockReposicionMovimientos(), null],
     ["Facturación F-01/F-02: documentos electrónicos, gateway, NEX-047, cálculo fiscal, payload FE y NEX-048", async () => fac.verificarCasosFacturacion(), null],
+    ["Facturación FAT-E2 (T-E2-01…15): preflight, recepción ≠ aprobación, rechazos por documento, token, transporte, cierre tras caída de la base, reconciliación por consulta, aislamiento, respuestas maliciosas y vectores fiscales sanitizados", async () => fe2.verificarCasosFatE2(), null],
   ];
   let total = 0;
   let fallosTotal = 0;

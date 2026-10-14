@@ -23,6 +23,19 @@ const TIPO_DOC_CONSULTA: Record<string, string | undefined> = { NCE: "NCE", FE: 
 
 export const tipoDocConsulta = (tipo: string): string | null => TIPO_DOC_CONSULTA[tipo] ?? null;
 
+/**
+ * Configuración del gateway leída de la base, VALIDADA en el servidor (la tabla ya tiene CHECK, pero el envío no confía en ello): URL https sin ruta ni credenciales
+ * embebidas y tiempo de espera acotado a 1–60 s. null = configuración inutilizable (no se transmite nada).
+ */
+export function configGatewayValida(empresaId: string, fila: { baseUrl?: unknown; credencialRef?: unknown; timeoutMs?: unknown } | undefined): ConfigGateway | null {
+  if (!fila || typeof fila.baseUrl !== "string" || typeof fila.credencialRef !== "string") return null;
+  if (!/^https:\/\/[A-Za-z0-9.-]+(:[0-9]{2,5})?$/.test(fila.baseUrl)) return null;
+
+  const t = Number(fila.timeoutMs);
+
+  return { empresaId, baseUrl: fila.baseUrl, credencialRef: fila.credencialRef, timeoutMs: Number.isFinite(t) ? Math.min(60000, Math.max(1000, Math.trunc(t))) : 15000 };
+}
+
 export function leerCredenciales(ref: string, env: Record<string, string | undefined> = process.env) {
   if (!/^[A-Z][A-Z0-9_]{0,39}$/.test(ref)) return null;
 
@@ -36,9 +49,27 @@ export function leerCredenciales(ref: string, env: Record<string, string | undef
 const CLAVE_SECRETA = /token|password|contrase|authorization|secret|bearer|apikey|api_key/i;
 const MAX_JSON = 30_000;
 
+// Un texto libre del gateway (mensajes, errores) nunca debe llevar una credencial de sesión: se omiten «Bearer …» y los JWT aunque la clave que los contiene sea inocua.
+const PATRON_SECRETO = /\bBearer\s+[A-Za-z0-9._~+/=-]{8,}|\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]*/g;
+
+export const limpiarTexto = (t: string): string => t.replace(PATRON_SECRETO, "[omitido]");
+
+/** Quita de un resultado (JSON) cualquier aparición literal de los secretos conocidos (clave y token de esta sesión), aunque el gateway los repita en un mensaje. */
+export function sinSecretos<T>(valor: T, secretos: string[]): T {
+  const utiles = secretos.filter((s) => s.length >= 4);
+
+  if (utiles.length === 0) return valor;
+
+  let texto = JSON.stringify(valor);
+
+  for (const s of utiles) texto = texto.split(JSON.stringify(s).slice(1, -1)).join("[omitido]");
+
+  return JSON.parse(texto) as T;
+}
+
 export function sanearRespuesta(valor: unknown, profundidad = 0): unknown {
   if (valor === null || typeof valor === "number" || typeof valor === "boolean") return valor;
-  if (typeof valor === "string") return valor.length > 1000 ? `${valor.slice(0, 1000)}…` : valor;
+  if (typeof valor === "string") return limpiarTexto(valor.length > 1000 ? `${valor.slice(0, 1000)}…` : valor);
   if (profundidad >= 6) return "…";
   if (Array.isArray(valor)) return valor.slice(0, 50).map((v) => sanearRespuesta(v, profundidad + 1));
   if (typeof valor === "object") {
@@ -78,7 +109,11 @@ const vacio = (resultado: ResultadoConsulta["resultado"], http: number | null, m
   resultado, http, estadoGateway: null, estadoSifen: null, cdc: null, codRespuesta: null, mensaje, fechaFirma: null, fechaEnvio: null, respuesta: null,
 });
 
-const texto = (v: unknown, max = 500): string | null => (typeof v === "string" && v.trim() ? v.trim().slice(0, max) : typeof v === "number" ? String(v) : null);
+const texto = (v: unknown, max = 500): string | null => {
+  const t = typeof v === "string" && v.trim() ? v.trim().slice(0, max) : typeof v === "number" ? String(v) : null;
+
+  return t === null ? null : limpiarTexto(t);
+};
 const registro = (v: unknown): Record<string, unknown> | null => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null);
 
 /** No asume que todas las respuestas tienen la misma forma: lo que no esté presente queda en null y lo no interpretable es RESPUESTA_INVALIDA. */
@@ -246,7 +281,7 @@ export async function consultarDocumentoGateway(config: ConfigGateway, doc: Docu
     // Token vencido o revocado: se renueva UNA vez y se reintenta (la consulta es de solo lectura, no duplica nada).
     if (esTokenInvalido(r.status, r.texto) && !forzar) continue;
 
-    return interpretarConsulta(r.status, r.texto);
+    return sinSecretos(interpretarConsulta(r.status, r.texto), [credenciales.password, token]);
   }
 
   return vacio("ERROR_HTTP", 401, "El gateway rechazó el token tras renovarlo.");
@@ -325,14 +360,18 @@ function buscar(v: unknown, claves: Set<string>, profundidad = 0): unknown {
   return undefined;
 }
 
-const comoTexto = (v: unknown, max = 300): string | null => (typeof v === "string" && v.trim() ? v.trim().slice(0, max) : typeof v === "number" ? String(v) : null);
+const comoTexto = (v: unknown, max = 300): string | null => {
+  const t = typeof v === "string" && v.trim() ? v.trim().slice(0, max) : typeof v === "number" ? String(v) : null;
+
+  return t === null ? null : limpiarTexto(t);
+};
 
 function listaErrores(v: unknown): string[] {
   if (v === undefined || v === null) return [];
 
   const items = Array.isArray(v) ? v : typeof v === "object" ? Object.entries(v as Record<string, unknown>).map(([k, x]) => `${k}: ${typeof x === "string" ? x : JSON.stringify(sanearRespuesta(x))}`) : [v];
 
-  return items.slice(0, 20).map((x) => (typeof x === "string" ? x.slice(0, 300) : JSON.stringify(sanearRespuesta(x)).slice(0, 300)));
+  return items.slice(0, 20).map((x) => limpiarTexto(typeof x === "string" ? x.slice(0, 300) : JSON.stringify(sanearRespuesta(x)).slice(0, 300)));
 }
 
 /** Una entrada de Rechazados/Aceptados: objeto {"EEE-PPP-NNNNNNN": {campo: mensaje}} (o con el número como texto). */
@@ -349,16 +388,47 @@ function entradasPorNumero(lista: unknown): { numero: string; detalle: unknown }
   return out;
 }
 
+/**
+ * La evidencia guardada de un envío no conserva los datos de OTROS documentos que el gateway mencione en Aceptados/Rechazados (mensajes de terceros): solo la entrada del
+ * documento propio y el conteo de las ajenas. Sin número propio se descartan todas las entradas (solo el conteo).
+ */
+function redactarAjenos(cuerpo: unknown, numeroFiscal: string | null): unknown {
+  const raiz = registro(cuerpo);
+  const resp = raiz ? registro(raiz.response) : null;
+
+  if (!raiz || !resp) return cuerpo;
+
+  const nueva: Record<string, unknown> = { ...resp };
+  let ajenos = 0;
+
+  for (const [k, v] of Object.entries(resp)) {
+    if (!["aceptados", "rechazados"].includes(norm(k)) || !Array.isArray(v)) continue;
+
+    const propias: unknown[] = [];
+
+    for (const it of v) {
+      const nombres = typeof it === "string" ? [it.trim()] : it && typeof it === "object" ? Object.keys(it as Record<string, unknown>).map((x) => x.trim()) : [];
+
+      if (numeroFiscal !== null && nombres.length > 0 && nombres.every((n) => n === numeroFiscal)) propias.push(it);
+      else ajenos++;
+    }
+    nueva[k] = propias;
+  }
+  if (ajenos > 0) nueva.OtrosDocumentosOmitidos = ajenos;
+
+  return { ...raiz, response: nueva };
+}
+
 const textoCampo = (v: unknown) => (typeof v === "string" ? v : JSON.stringify(sanearRespuesta(v)));
 
 /** «NNN-NNN-NNNNNNN: campo — mensaje» por cada validación fallida de UN documento. */
 function erroresDeEntrada(e: { numero: string; detalle: unknown }): string[] {
   const d = e.detalle;
 
-  if (d && typeof d === "object" && !Array.isArray(d)) return Object.entries(d as Record<string, unknown>).slice(0, 40).map(([campo, msg]) => `${e.numero} · ${campo}: ${textoCampo(msg)}`.slice(0, 300));
-  if (Array.isArray(d)) return d.slice(0, 40).map((m) => `${e.numero}: ${textoCampo(m)}`.slice(0, 300));
+  if (d && typeof d === "object" && !Array.isArray(d)) return Object.entries(d as Record<string, unknown>).slice(0, 40).map(([campo, msg]) => limpiarTexto(`${e.numero} · ${campo}: ${textoCampo(msg)}`.slice(0, 300)));
+  if (Array.isArray(d)) return d.slice(0, 40).map((m) => limpiarTexto(`${e.numero}: ${textoCampo(m)}`.slice(0, 300)));
 
-  return [d === null || d === undefined ? `${e.numero}: rechazado por el gateway` : `${e.numero}: ${textoCampo(d)}`.slice(0, 300)];
+  return [limpiarTexto(d === null || d === undefined ? `${e.numero}: rechazado por el gateway` : `${e.numero}: ${textoCampo(d)}`.slice(0, 300))];
 }
 
 const resultadoEnvioVacio = (
@@ -395,7 +465,7 @@ export function interpretarRecepcion(http: number, cuerpoTexto: string, fases: F
   const duplicado = DUPLICADO.test([mensaje ?? "", ...errores].join(" "));
   const base = (r: ResultadoEnvio["resultado"], estado: EstadoLocalEnvio, errorTipo: ErrorTipoEnvio | null, texto: string | null): ResultadoEnvio => ({
     ...resultadoEnvioVacio(r, "TRANSMISION", estado, errorTipo, http, texto, fases),
-    respuesta: cuerpo === undefined ? null : respuestaParaGuardar(cuerpo),
+    respuesta: cuerpo === undefined ? null : respuestaParaGuardar(redactarAjenos(cuerpo, numeroFiscal)),
     lote: loteValido,
     cdcInformado,
     estadoGateway: raiz ? comoTexto(buscar(raiz, CLAVES_ESTADO), 120) : null,
@@ -494,7 +564,7 @@ export async function enviarDocumentoGateway(
 
     fases.push({ fase: "RESPUESTA", ok: res.estadoLocal === "ENVIADO", detalle, http: r.status });
 
-    return res;
+    return sinSecretos(res, [credenciales.password, token]);
   }
 
   return resultadoEnvioVacio("ERROR_HTTP", "AUTENTICACION", "ERROR_ENVIO", "AUTENTICACION", 401, "El gateway rechazó el token tras renovarlo.", fases);

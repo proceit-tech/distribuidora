@@ -1,7 +1,7 @@
 import type { Pool } from "pg";
 
 import { crearFacturaElectronica, type CuerpoFactura } from "@/lib/facturacion/emision";
-import { enviarDocumentoGateway, leerCredenciales, type ConfigGateway, type Dependencias, type FaseEnvio, type ResultadoEnvio } from "@/lib/facturacion/gateway";
+import { configGatewayValida, enviarDocumentoGateway, leerCredenciales, type ConfigGateway, type Dependencias, type FaseEnvio, type ResultadoEnvio } from "@/lib/facturacion/gateway";
 import { ErrorFacturacion } from "@/lib/facturacion/shared";
 
 /**
@@ -41,9 +41,44 @@ export async function configuracionGateway(db: Db, empresaId: string, dep: Depen
   const fila = cfg.rows[0] as { baseUrl: string; credencialRef: string; timeoutMs: number } | undefined;
 
   if (!fila) throw new ErrorFacturacion(409, "La empresa no tiene configurado el gateway de facturación electrónica.");
-  if (!leerCredenciales(fila.credencialRef, dep.env)) throw new ErrorFacturacion(409, "Las credenciales del gateway de esta empresa no están configuradas en el servidor.");
 
-  return { ...fila, empresaId };
+  const valida = configGatewayValida(empresaId, fila);
+
+  if (!valida) throw new ErrorFacturacion(409, "La configuración del gateway de esta empresa no es válida (URL https y tiempo de espera).");
+  if (!leerCredenciales(valida.credencialRef, dep.env)) throw new ErrorFacturacion(409, "Las credenciales del gateway de esta empresa no están configuradas en el servidor.");
+
+  return valida;
+}
+
+const SQL_REGISTRAR_ENVIO = "SELECT fe_documento_registrar_envio($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb)";
+
+/**
+ * Persiste el resultado de la transmisión (RN-E2-07). Si la base falla DESPUÉS de haber transmitido: se reintenta una vez con el mismo resultado; si vuelve a fallar se intenta
+ * cerrar como ENVIO_INDETERMINADO mínimo (sin cuerpo) para no dejar el documento en ENVIANDO sin evidencia; si ni eso es posible se informa un 502 explícito (el documento queda
+ * ENVIANDO y a los 2 minutos pasa a indeterminado: nunca se reenvía a ciegas).
+ */
+async function cerrarEnvio(db: Db, empresaId: string, usuarioId: string, documentoId: string, r: ResultadoEnvio) {
+  const completo = [empresaId, usuarioId, documentoId, r.faseFinal, r.resultado, r.estadoLocal, r.errorTipo, r.http, crypto.randomUUID(), r.estadoGateway, r.mensaje, r.lote, r.cdc, r.cdcInformado, r.respuesta ? JSON.stringify(r.respuesta) : null];
+
+  for (let intento = 0; intento < 2; intento++) {
+    try {
+      await db.query(SQL_REGISTRAR_ENVIO, completo);
+
+      return;
+    } catch (error) {
+      const pg = error as { code?: string; detail?: string };
+
+      // Errores de negocio de la función (permiso, documento ajeno, estado) no se arreglan reintentando.
+      // Si el primer intento sí se confirmó pero se perdió la respuesta, el documento ya no está en envío: el resultado quedó guardado.
+      if (intento > 0 && pg.detail === "NEX:ENVIO_NO_INICIADO") return;
+      if (pg.code === "42501" || (pg.detail && pg.detail.startsWith("NEX:"))) throw error;
+    }
+  }
+  try {
+    await db.query(SQL_REGISTRAR_ENVIO, [empresaId, usuarioId, documentoId, r.faseFinal, "RESPUESTA_INVALIDA", "ENVIO_INDETERMINADO", null, r.http, crypto.randomUUID(), null, "No se pudo guardar el resultado del envío: el resultado es indeterminado.", null, null, null, null]);
+  } catch {
+    throw new ErrorFacturacion(502, "El documento pudo haber sido transmitido pero no se pudo guardar el resultado: es indeterminado. Verifique su estado en el gateway antes de reenviar.");
+  }
 }
 
 /** Envía un documento ya creado (PENDIENTE_ENVIO o ERROR_ENVIO). Lanza ErrorFacturacion/errores de la función SQL si no es enviable. */
@@ -76,10 +111,7 @@ export async function enviarDocumento(db: Db, empresaId: string, usuarioId: stri
     };
   }
 
-  await db.query(`SELECT fe_documento_registrar_envio($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb)`, [
-    empresaId, usuarioId, documentoId, r.faseFinal, r.resultado, r.estadoLocal, r.errorTipo, r.http, crypto.randomUUID(), r.estadoGateway, r.mensaje, r.lote, r.cdc, r.cdcInformado,
-    r.respuesta ? JSON.stringify(r.respuesta) : null,
-  ]);
+  await cerrarEnvio(db, empresaId, usuarioId, documentoId, r);
 
   return { numero, estadoLocal: r.estadoLocal, errorTipo: r.errorTipo, resultado: r.resultado, http: r.http, mensaje: r.mensaje, lote: r.lote, cdc: r.cdc, estadoGateway: r.estadoGateway, errores: r.errores, fases: r.fases };
 }

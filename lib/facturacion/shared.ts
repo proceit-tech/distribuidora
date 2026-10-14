@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import type { Pool } from "pg";
 
 import { ESTADOS_EMAIL, ESTADOS_LOCAL, ESTADOS_SIFEN, GRUPOS_INDICADOR, TIPOS_DOCUMENTO, type GrupoIndicador } from "@/lib/facturacion/estados";
-import { consultarDocumentoGateway, type Dependencias } from "@/lib/facturacion/gateway";
+import { configGatewayValida, consultarDocumentoGateway, type Dependencias } from "@/lib/facturacion/gateway";
+import { decidirConsulta } from "@/lib/facturacion/reconciliacion";
 
 /**
  * Documentos electrónicos (NEX-047): lectura paginada en el servidor y consulta de estado al gateway. empresa_id y usuario SIEMPRE de la sesión.
@@ -221,22 +222,28 @@ export async function consultarEstado(db: Db, empresaId: string, usuarioId: stri
 
   const cfg = await db.query(`SELECT base_url AS "baseUrl", credencial_ref AS "credencialRef", timeout_ms AS "timeoutMs" FROM fe_gateway_config WHERE empresa_id = $1 AND activo`, [empresaId]);
   const fila = cfg.rows[0] as { baseUrl: string; credencialRef: string; timeoutMs: number } | undefined;
-  const config = fila ? { ...fila, empresaId } : undefined;
 
-  if (!config) throw new ErrorFacturacion(409, "La empresa no tiene configurado el gateway de facturación electrónica.");
+  if (!fila) throw new ErrorFacturacion(409, "La empresa no tiene configurado el gateway de facturación electrónica.");
 
-  const r = await consultarDocumentoGateway(
+  const config = configGatewayValida(empresaId, fila);
+
+  if (!config) throw new ErrorFacturacion(409, "La configuración del gateway de esta empresa no es válida (URL https y tiempo de espera).");
+
+  const bruto = await consultarDocumentoGateway(
     config,
     { tipo: String(doc.tipo), establecimiento: String(doc.establecimiento), puntoExpedicion: String(doc.puntoExpedicion), numero: String(doc.numero), serie: (doc.serie as string | null) ?? null },
     dep,
   );
 
-  if ("sinContrato" in r) {
+  if ("sinContrato" in bruto) {
     throw new ErrorFacturacion(
       409,
-      r.sinContrato === "TIPO" ? "La consulta de este tipo de documento aún no está confirmada con el proveedor." : "Las credenciales del gateway de esta empresa no están configuradas en el servidor.",
+      bruto.sinContrato === "TIPO" ? "La consulta de este tipo de documento aún no está confirmada con el proveedor." : "Las credenciales del gateway de esta empresa no están configuradas en el servidor.",
     );
   }
+
+  // Solo una respuesta asociada de forma confiable al documento y coherente con su estado previo puede fijar el estado fiscal (RN-E2-08).
+  const r = decidirConsulta({ tipo: String(doc.tipo), establecimiento: String(doc.establecimiento), puntoExpedicion: String(doc.puntoExpedicion), numero: String(doc.numero), cdc: (doc.cdc as string | null) ?? null, estadoSifen: (doc.estadoSifen as string | null) ?? null }, bruto);
 
   const registrado = await db.query(
     `SELECT fe_documento_registrar_consulta($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb) AS resultado`,
