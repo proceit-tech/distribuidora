@@ -8,7 +8,7 @@
 | `seeds/` | S-001 catálogos globais (referência), S-002/003 DEMO (só hash, nunca senha) |
 | `scripts/` | runner, bateria `ejecutar-pruebas.sh`, inicializar empresa real, reset de senha, verificação de instalação, verificação de segredos |
 | `pruebas/` | T01–T11 (SQL e concorrência) |
-| `herramientas/` | compatibilidade das consultas da app (`verificar-consultas-app.py`, `matriz-compatibilidad.py`) |
+| `herramientas/` | compatibilidade das consultas da app (`verificar-consultas-app.js`, `matriz-compatibilidad.py`) |
 | `implantacion/vm/` | `nexit-db-remote.sh` (comando forçado SSH) — **não instalado nem executado** |
 | `docs/` | 01 decisão · 02 legado · 03 APIs · 04 segurança · 05 implantação · 06 Ventas al costo · 07 pendências |
 

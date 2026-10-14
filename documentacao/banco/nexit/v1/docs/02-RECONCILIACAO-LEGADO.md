@@ -8,7 +8,7 @@ Fontes: `fontes-historicas/` (001, 002, 004–017, 022–025; **003 e 018–021 
 | 003 | localizada pelo proprietário, **ainda não incorporada ao GitHub** | Provavelmente (a 022 e as APIs referenciam tabelas de catálogo) | **Pendente**: o proprietário deve enviar o arquivo. A V1 não depende dele (NEX-003/004 cobrem os catálogos). Quando chegar: incorporar em `fontes-historicas/` e rodar a comparação de tabelas abaixo |
 | 018–021 | **ausentes** | Não comprovado. Todas as dependências exigidas pelas APIs (cadastros, geografia, listas, movimentos) foram cobertas pelas NEX | **Não recriadas.** Nenhuma versão histórica ausente foi registrada como executada |
 
-## Comparação tabela a tabela (ferramenta `herramientas/verificar-consultas-app.py`)
+## Comparação tabela a tabela (ferramenta `herramientas/verificar-consultas-app.js`)
 - 22 tabelas consultadas pelas APIs existem nos dois mundos; a V1 satisfaz todas as colunas usadas; a cadeia histórica (com 003/018–021 *simulados*) falha em 7/8 consultas de login e na de sessão (colunas/tabelas de segurança e sessões não existem no legado), 15/20 em clientes, 11/15 em productos, 18/20 em proveedores.
 - `existencias` (legado) **não tem `empresa_id`** → impossível isolar por empresa; substituída por `stock_saldos` com FK composta.
 - Legado mistura módulos fora de escopo (compras, finanças, logística, fiscal): **não portados**.

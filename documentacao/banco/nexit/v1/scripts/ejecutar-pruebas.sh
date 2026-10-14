@@ -149,6 +149,24 @@ psql -X -q -d postgres -c "CREATE DATABASE ${DB}_rev TEMPLATE $DB" >"$LOG/R1" 2>
 psql -X -q -d postgres -c "DROP DATABASE IF EXISTS ${DB}_rev WITH (FORCE)" >/dev/null 2>&1
 [[ $(grep -c PASS "$LOG/R1") -eq 4 ]]; fin $? "$LOG/R1"
 
+# R2: reversión de NEX-055 en una COPIA efímera: elimina EXACTAMENTE tres triggers (ninguno preexistente), no toca datos ni los demás triggers de actualización y es reversible (reaplicar NEX-055 los restituye)
+paso "R2 reversion-NEX-055.sql en copia ${DB}_rev55"
+psql -X -q -d postgres -c "CREATE DATABASE ${DB}_rev55 TEMPLATE $DB" >"$LOG/R2" 2>&1
+(
+  export PGDATABASE="${DB}_rev55"
+  CNT="select count(*) from pg_trigger where tgname like '%\_actualizado\_trg' and not tgisinternal"
+  ANTES="$(psql -X -Atc "$CNT")"; DOCS="$(psql -X -Atc "select count(*) from documentos_electronicos")"
+  psql -X -q -v ON_ERROR_STOP=1 -1 -f "$AQUI/scripts/reversion-NEX-055.sql" 2>&1
+  [[ "$(psql -X -Atc "select count(*) from pg_trigger where tgname in ('fe_gateway_config_actualizado_trg','documentos_electronicos_actualizado_trg','fe_puntos_expedicion_actualizado_trg')")" == 0 ]] && echo "PASS: la reversión eliminó los tres triggers de Facturación"
+  [[ "$(psql -X -Atc "$CNT")" == "$((ANTES - 3))" ]] && echo "PASS: ningún otro trigger de actualización fue eliminado ($ANTES → $((ANTES - 3)))"
+  [[ "$(psql -X -Atc "select count(*) from documentos_electronicos")" == "$DOCS" && "$DOCS" -gt 0 ]] && echo "PASS: la reversión no tocó datos ($DOCS documentos)"
+  psql -X -q -v ON_ERROR_STOP=1 -1 -f "$AQUI/scripts/reversion-NEX-055.sql" >/dev/null 2>&1 || echo "PASS: repetir la reversión se rechaza (ya no está aplicada)"
+  psql -X -q -v ON_ERROR_STOP=1 -1 -f "$AQUI/migraciones/NEX-055-facturacion-triggers-actualizacion.sql" >/dev/null 2>&1 && [[ "$(psql -X -Atc "$CNT")" == "$ANTES" ]] && echo "PASS: reaplicar NEX-055 restituye exactamente los tres triggers (reversible)"
+  psql -X -q -v ON_ERROR_STOP=1 -1 -f "$AQUI/migraciones/NEX-055-facturacion-triggers-actualizacion.sql" >/dev/null 2>&1 || echo "PASS: NEX-055 no se reaplica si los triggers ya existen"
+) >>"$LOG/R2" 2>&1
+psql -X -q -d postgres -c "DROP DATABASE IF EXISTS ${DB}_rev55 WITH (FORCE)" >/dev/null 2>&1
+[[ $(grep -c PASS "$LOG/R2") -eq 6 ]]; fin $? "$LOG/R2"
+
 # B1: copia de seguridad y restauración (pg_dump -Fc / pg_restore) en otra base, ya con los datos de T01..T11.
 #     Compara el CONTENIDO (md5 por tabla), las migraciones registradas, las invariantes (conciliación, kardex) y que nexit_runtime funcione en la base restaurada.
 paso "B1 backup + restauración + contenido idéntico + runtime"
@@ -175,10 +193,10 @@ else echo "OMITIDA (pg_dump/pg_restore no disponibles)"; fi
 paso "G1 verificación estática: sin secretos ni credenciales"; "$AQUI/scripts/verificar-sin-secretos.sh" >"$LOG/G1" 2>&1; fin0 $? "$LOG/G1"
 
 if [[ -n "${APP_REPO:-}" ]]; then
-  paso "C1 consultas literales de la app vs esquema"; python3 "$AQUI/herramientas/verificar-consultas-app.py" "$APP_REPO" >"$LOG/C1" 2>&1; rc=$?
-  if [[ $rc -eq 0 ]]; then echo "OK   ($(head -1 "$LOG/C1" | sed 's/consultas analizadas/analizadas/'))"; else echo "FALLA"; cat "$LOG/C1"; FALLAS=$((FALLAS+1)); fi
+  paso "C1 consultas SQL de la app vs esquema (literales, reconstruidas y no verificables)"; node "$AQUI/herramientas/verificar-consultas-app.js" "$APP_REPO" >"$LOG/C1" 2>&1; rc=$?
+  if [[ $rc -eq 0 ]]; then echo "OK   ($(sed -n '2,5p' "$LOG/C1" | tr -s ' ' | tr '\n' ';' | cut -c1-330))"; else echo "FALLA"; head -60 "$LOG/C1"; FALLAS=$((FALLAS+1)); fi
   grep "CORRECCION" "$LOG/C1" | sed 's/^/      /'
-else echo "C1 consultas literales de la app: OMITIDA (defina APP_REPO)"; fi
+else echo "C1 consultas SQL de la app: OMITIDA (defina APP_REPO)"; fi
 
 echo "------------------------------------------------------------"
 echo "verificaciones PASS contadas: $PASS_TOTAL   pruebas con falla: $FALLAS"

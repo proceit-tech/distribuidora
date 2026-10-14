@@ -117,5 +117,21 @@ BEGIN
   UPDATE usuarios SET alcance_sucursales = 'TODAS' WHERE empresa_id = v_a AND id = v_ua;
   PERFORM pg_temp.ok(pg_temp.reg(v_a, v_ua, d2, 'OK', 'Pendiente', 'PENDIENTE', NULL) = 'OK', 'con alcance TODAS el mismo documento sí se consulta');
   PERFORM pg_temp.ok((SELECT count(*) FROM documento_electronico_intentos WHERE documento_id = d2) = 1, 'la consulta rechazada por alcance no dejó intento (solo la autorizada)');
+
+  -- 8) NEX-055: actualizado_at se ACTUALIZA de verdad en las tres tablas (no basta con que el trigger exista). Se insertan filas con actualizado_at del año 2000 y se comprueba el valor tras un UPDATE.
+  INSERT INTO fe_gateway_config (empresa_id, base_url, credencial_ref, timeout_ms, actualizado_at) VALUES (v_a, 'https://gw.t16.invalid', 'T16REF', 5000, '2000-01-01');
+  UPDATE fe_gateway_config SET timeout_ms = 6000 WHERE empresa_id = v_a;
+  PERFORM pg_temp.ok((SELECT actualizado_at > '2020-01-01' AND timeout_ms = 6000 FROM fe_gateway_config WHERE empresa_id = v_a), 'NEX-055: fe_gateway_config.actualizado_at se actualiza en cada UPDATE');
+
+  INSERT INTO documentos_electronicos (empresa_id, sucursal_id, tipo, establecimiento, punto_expedicion, numero, fecha_emision, receptor_nombre, moneda, total, estado_local, estado_sifen, creado_por, actualizado_at)
+  VALUES (v_a, v_s1, 'FE', '001', '002', '0169999', now(), 'Receptor sintético T16', 'PYG', 1000, 'PENDIENTE_ENVIO', 'SIN_CONSULTA', v_ua, '2000-01-01') RETURNING id INTO d;
+  UPDATE documentos_electronicos SET mensaje_respuesta = 'cambio de prueba' WHERE id = d;
+  PERFORM pg_temp.ok((SELECT actualizado_at > '2020-01-01' AND mensaje_respuesta = 'cambio de prueba' FROM documentos_electronicos WHERE id = d), 'NEX-055: documentos_electronicos.actualizado_at se actualiza y convive con el trigger de inmutabilidad');
+  PERFORM pg_temp.falla(format('UPDATE documentos_electronicos SET total = 1 WHERE id = %L', d), 'P0001', 'NEX-055: la inmutabilidad de importes sigue vigente con el nuevo trigger');
+
+  INSERT INTO fe_puntos_expedicion (empresa_id, sucursal_id, codigo, nombre, actualizado_at) VALUES (v_a, v_s1, '991', 'Punto T16', '2000-01-01');
+  UPDATE fe_puntos_expedicion SET nombre = 'Punto T16 renombrado', ultimo_numero = 5 WHERE empresa_id = v_a AND codigo = '991';
+  PERFORM pg_temp.ok((SELECT actualizado_at > '2020-01-01' AND ultimo_numero = 5 FROM fe_puntos_expedicion WHERE empresa_id = v_a AND codigo = '991'), 'NEX-055: fe_puntos_expedicion.actualizado_at se actualiza');
+  PERFORM pg_temp.falla(format('UPDATE fe_puntos_expedicion SET ultimo_numero = 4 WHERE empresa_id = %L AND codigo = %L', v_a, '991'), 'P0001', 'NEX-055: la numeración sigue sin poder retroceder con el nuevo trigger');
   RAISE NOTICE 'PASS: T16 completa';
 END $t$;

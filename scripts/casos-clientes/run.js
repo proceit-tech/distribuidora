@@ -50,6 +50,7 @@ Module._resolveFilename = function (request, ...resto) {
   const srm = cargar("lib/stock/stock-reposicion.casos.js");
   const fac = cargar("lib/facturacion/facturacion.casos.js");
   const fe2 = cargar("lib/facturacion/fat-e2.casos.js");
+  const c1 = cargar("lib/ci/verificador-consultas.casos.js");
   const suites = [
     ["teléfono y día de cobro", async () => tel.verificarCasosTelefonoYCobro(), () => tel.CASOS_TELEFONO.length + 11 + 6 + 2],
     ["catálogo mundial", async () => tel.verificarCatalogoMundial(), null],
@@ -93,6 +94,7 @@ Module._resolveFilename = function (request, ...resto) {
     ["Stock, Reposición y contrato Movimientos ↔ documentos (Etapas A, B y C)", async () => srm.verificarCasosStockReposicionMovimientos(), null],
     ["Facturación F-01/F-02: documentos electrónicos, gateway, NEX-047, cálculo fiscal, payload FE y NEX-048", async () => fac.verificarCasosFacturacion(), null],
     ["Facturación FAT-E2 (T-E2-01…15): preflight, recepción ≠ aprobación, rechazos por documento, token, transporte, cierre tras caída de la base, reconciliación por consulta, aislamiento, respuestas maliciosas y vectores fiscales sanitizados", async () => fe2.verificarCasosFatE2(), null],
+    ["CI · verificador C1 de consultas SQL de la aplicación (lector de plantillas anidadas, resolución exacta, fragmentos, NO VERIFICABLE con motivo, línea base y política de calidad)", async () => c1.verificarCasosVerificadorC1(), null],
   ];
   let total = 0;
   let fallosTotal = 0;
