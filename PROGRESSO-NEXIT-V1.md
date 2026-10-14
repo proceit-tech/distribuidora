@@ -921,3 +921,6 @@ Após o encerramento **estático** de Inventario na `AUD-INV-R05` (sem homologa�
 
 ### PRO-62 / AUD-PRO62-R02 — C1 e NEX-055
 - C1 reescrito em Node com classificação LITERAL / RECONSTRUÍDA / FRAGMENTO / NO VERIFICABLE, linha base versionada (48 não verificáveis explícitos, **não** declarados verificados) e política de falha; NEX-055 limitada às 3 tabelas de Facturación com reversão exata e provas de `actualizado_at` real (T16) e de reversão (R2). Detalhe e ressalvas em `documentacao/v1/PENDENCIA-CI-NEXIT-BANCO-NEX019-2026-10-14.md`. Verificação local: 3180 casos TS, 0 falhas; PostgreSQL/C1 real só no CI (uma execução). Nada aplicado na VM; nada homologado.
+
+### PRO-62 / AUD-PRO62-R03 — C1
+- Verificador C1: resolução com escopo (constante/função só do próprio arquivo ou importada de forma rastreada), `proyectar(…)` ⇒ NO VERIFICABLE (sem `t.*`), correções hipotéticas só como sugestão; linha base 48 → 57 com cada entrada justificada (2 `filtro` + 7 `proyectar`); regressões novas. Uma única execução completa do CI; resultado a cargo da auditoria. Detalhe: `documentacao/v1/PENDENCIA-CI-NEXIT-BANCO-NEX019-2026-10-14.md`.

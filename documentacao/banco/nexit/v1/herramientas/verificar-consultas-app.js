@@ -174,37 +174,60 @@ function producto(listas) {
   return acc;
 }
 
-/** Contexto de resolución de un archivo: constantes locales y globales, funciones auxiliares de plantilla, tablas de sus CFG. */
+/** Ruta (relativa a la raíz del repo) del módulo que importa `spec` desde `desde`, si está entre los archivos analizados. */
+function resolverModulo(desde, spec, existentes) {
+  const base = spec.startsWith("@/") ? spec.slice(2) : spec.startsWith(".") ? path.posix.join(path.posix.dirname(desde), spec) : null;
+
+  if (base === null) return null;
+
+  for (const c of [base + ".ts", base + "/index.ts"]) if (existentes.has(c)) return c;
+
+  return null;
+}
+
+/**
+ * Contexto de resolución POR ARCHIVO. Una constante o función solo se resuelve si está declarada una única vez en ESE archivo o si el archivo la IMPORTA de forma rastreada
+ * (import { X } from "…"); jamás se toma un homónimo de otro archivo (los nombres como `filtro` se repiten por todo el código con significados distintos).
+ */
 function construirIndice(archivos) {
-  const global = new Map();   // nombre -> [{archivo, plantilla}]
-  const globalFuncs = new Map();   // nombre -> [plantilla de función auxiliar] (importadas entre archivos)
+  const existentes = new Set(archivos.map((a) => a.archivo));
   const porArchivo = new Map();
 
   for (const a of archivos) {
     const consts = new Map(); const funcs = new Map();
-
-    const vistos = new Set();
+    const declaraciones = (n) => (a.src.match(new RegExp("\\b(?:const|let|var)\\s+" + n + "\\b", "g")) ?? []).length;
 
     for (const pl of a.plantillas) {
       if (!pl.nombre) continue;
-      // Un mismo nombre declarado dos veces en el archivo (variables de distintas funciones) NO se resuelve: sería adivinar cuál aplica.
-      if (vistos.has(pl.nombre)) { consts.set(pl.nombre, { ambiguo: true }); funcs.delete(pl.nombre); continue; }
-      vistos.add(pl.nombre);
-      if (pl.params) { funcs.set(pl.nombre, pl); const gl = globalFuncs.get(pl.nombre) ?? []; gl.push(pl); globalFuncs.set(pl.nombre, gl); } else consts.set(pl.nombre, pl);
-      if (!pl.params) { const l = global.get(pl.nombre) ?? []; l.push({ archivo: a.archivo, plantilla: pl }); global.set(pl.nombre, l); }
+      if (declaraciones(pl.nombre) > 1) { consts.set(pl.nombre, { ambiguo: true }); funcs.delete(pl.nombre); continue; }
+      if (pl.params) funcs.set(pl.nombre, pl); else consts.set(pl.nombre, pl);
     }
     for (const m of a.src.matchAll(/(?:const)\s+([A-Za-z_]\w*)\s*(?::[^=;]+)?=\s*("(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*')\s*;/g)) {
-      const v = cadenaSimple(m[2]);
+      consts.set(m[1], declaraciones(m[1]) > 1 ? { ambiguo: true } : { cadena: cadenaSimple(m[2]) });
+    }
+    const importados = new Map();
 
-      consts.set(m[1], { cadena: v });
-      const l = global.get(m[1]) ?? []; l.push({ archivo: a.archivo, plantilla: { cadena: v } }); global.set(m[1], l);
+    for (const m of a.src.matchAll(/import\s*(?:type\s*)?\{([^}]*)\}\s*from\s*["']([^"']+)["']/g)) {
+      const destino = resolverModulo(a.archivo, m[2], existentes);
+
+      if (!destino) continue;
+      for (const parte of m[1].split(",")) {
+        const p = parte.trim().replace(/^type\s+/, "");
+
+        if (!p) continue;
+
+        const [orig, alias] = p.split(/\s+as\s+/);
+
+        importados.set((alias ?? orig).trim(), { archivo: destino, nombre: orig.trim() });
+      }
     }
     const tablas = [...new Set([...a.src.matchAll(/\btabla:\s*"([a-z_0-9]+)"/g)].map((m) => m[1]))];
 
-    porArchivo.set(a.archivo, { consts, funcs, tablas });
+    porArchivo.set(a.archivo, { archivo: a.archivo, consts, funcs, tablas, importados });
   }
+  for (const ctx of porArchivo.values()) ctx.todos = porArchivo;
 
-  return { global, globalFuncs, porArchivo };
+  return { porArchivo };
 }
 
 /** Devuelve {v:[...variantes], tags:Set} o {no: motivo}. */
@@ -262,31 +285,56 @@ function resolverExpr(e, ctx, prof = 0) {
   if (llamada) {
     const nombre = llamada[1];
 
-    if (nombre === "proyectar") return { v: ["t.*"], tags: new Set(["proyeccion"]) };
+    // La proyección de columnas se construye según el tipo con lógica propia (subconsultas, jerarquías): sustituirla por t.* aprobaría una consulta DISTINTA de la ejecutada.
+    if (nombre === "proyectar") return { no: "proyección dinámica proyectar(…): construye las columnas según el tipo; no se sustituye por t.* (sería otra consulta)" };
 
-    const f = ctx.funcs.get(nombre) ?? (() => { const l = ctx.globalFuncs.get(nombre); return l && l.length === 1 ? l[0] : null; })();
+    const f = buscarFuncion(nombre, ctx);
 
-    if (!f) return { no: `función auxiliar no resoluble: ${nombre}(…)` };
+    if (f.no) return { no: f.no };
 
     const args = dividirArgumentos(llamada[2]).map((x) => cadenaSimple(x) ?? sinInterpolar(x));
 
     if (args.some((x) => x === null)) return { no: `argumentos no literales en ${nombre}(…)` };
 
-    const partes = f.partes.map((p) => (p.t === "expr" && f.params.includes(p.v.trim()) ? { t: "txt", v: args[f.params.indexOf(p.v.trim())] ?? "" } : p));
+    const partes = f.def.partes.map((p) => (p.t === "expr" && f.def.params.includes(p.v.trim()) ? { t: "txt", v: args[f.def.params.indexOf(p.v.trim())] ?? "" } : p));
 
-    return resolverPartes(partes, ctx, prof + 1);
+    return resolverPartes(partes, f.ctx, prof + 1);
   }
   if (/^[A-Za-z_]\w*$/.test(e)) {
-    const def = ctx.consts.get(e) ?? (() => { const l = ctx.global.get(e); return l && l.length === 1 ? l[0].plantilla : null; })();
+    let def = ctx.consts.get(e);
+    let dctx = ctx;
 
+    if (!def && ctx.importados.has(e)) {
+      const im = ctx.importados.get(e);
+
+      dctx = ctx.todos.get(im.archivo);
+      def = dctx ? dctx.consts.get(im.nombre) : undefined;
+    }
     if (!def) return { no: `variable de ejecución: ${e}` };
     if (def.ambiguo) return { no: `variable declarada más de una vez en el archivo: ${e}` };
     if (def.cadena !== undefined) return { v: [def.cadena], tags: t };
 
-    return resolverPartes(def.partes, ctx, prof + 1);
+    return resolverPartes(def.partes, dctx, prof + 1);
   }
 
   return { no: `expresión de ejecución: ${e.replace(/\s+/g, " ").slice(0, 80)}` };
+}
+
+/** Función auxiliar de plantilla: local al archivo o importada de forma rastreada. Devuelve {def, ctx} o {no}. */
+function buscarFuncion(nombre, ctx) {
+  const local = ctx.funcs.get(nombre);
+
+  if (local) return { def: local, ctx };
+  if (ctx.consts.get(nombre)?.ambiguo) return { no: `función declarada más de una vez en el archivo: ${nombre}` };
+  if (ctx.importados.has(nombre)) {
+    const im = ctx.importados.get(nombre);
+    const dctx = ctx.todos.get(im.archivo);
+    const def = dctx ? dctx.funcs.get(im.nombre) : undefined;
+
+    if (def) return { def, ctx: dctx };
+  }
+
+  return { no: `función auxiliar no resoluble: ${nombre}(…)` };
 }
 
 function resolverPartes(partes, ctx, prof = 0) {
@@ -325,7 +373,7 @@ function leerArchivos(raiz) {
  */
 function analizar(archivos, preparar) {
   const indice = construirIndice(archivos);
-  const informe = { literales: { ok: 0, fallas: [] }, reconstruidas: { ok: 0, variantes: 0, fallas: [] }, reconstruidasPorArchivo: {}, fragmentos: { cubiertos: 0, sinAnfitrion: [] }, corregidas: [], noVerificables: [], total: 0 };
+  const informe = { literales: { ok: 0, fallas: [] }, reconstruidas: { ok: 0, variantes: 0, fallas: [] }, reconstruidasPorArchivo: {}, fragmentos: { cubiertos: 0, sinAnfitrion: [] }, sugerencias: [], noVerificables: [], total: 0 };
   const usadas = new Set();
 
   for (const a of archivos) for (const pl of a.plantillas) for (const p of pl.partes) if (p.t === "expr") for (const m of p.v.matchAll(/\b([A-Za-z_]\w*)\b/g)) usadas.add(m[1]);
@@ -335,7 +383,7 @@ function analizar(archivos, preparar) {
 
   for (const a of archivos) {
     const loc = indice.porArchivo.get(a.archivo);
-    const ctx = { consts: loc.consts, funcs: loc.funcs, tablas: loc.tablas, global: indice.global, globalFuncs: indice.globalFuncs };
+    const ctx = loc;
 
     for (const pl of a.plantillas) {
       const crudo = esSql(pl.partes);
@@ -365,12 +413,13 @@ function analizar(archivos, preparar) {
         if (dinamica) informe.reconstruidas.variantes++;
         if (res.ok) { if (!dinamica) alvo.ok++; continue; }
 
-        let corregida = false;
+        // Una corrección hipotética (CORRECCIONES) NO convierte el SQL publicado en válido: la consulta sigue siendo FALLA hasta que el código se corrija; la sugerencia solo se informa.
+        let sugerencia = null;
 
         for (const [ant, [nuevo, desc]] of Object.entries(CORRECCIONES)) {
-          if (sql.includes(ant) && preparar(sql.replace(ant, nuevo)).ok) { informe.corregidas.push({ ...ref, desc }); corregida = true; break; }
+          if (sql.includes(ant) && preparar(sql.replace(ant, nuevo)).ok) { sugerencia = desc; informe.sugerencias.push({ ...ref, desc }); break; }
         }
-        if (!corregida) alvo.fallas.push({ ...ref, err: res.err, sql: normal(sql).slice(0, 160) });
+        alvo.fallas.push({ ...ref, err: res.err, sql: normal(sql).slice(0, 160), sugerencia });
       }
       if (dinamica && !informe.reconstruidas.fallas.some((f) => f.id === id)) {
         informe.reconstruidas.ok++;
@@ -429,7 +478,7 @@ function main(argv) {
   console.log(`  RECONSTRUIDAS (interpolaciones resueltas de forma exacta): ${informe.reconstruidas.ok} consultas / ${informe.reconstruidas.variantes} combinaciones PREPARE   fallas: ${informe.reconstruidas.fallas.length}`);
   console.log(`  FRAGMENTOS cubiertos por consultas anfitrionas: ${informe.fragmentos.cubiertos}`);
   console.log(`  NO VERIFICABLES: ${informe.noVerificables.length} (línea base: ${(base.noVerificables ?? []).length}; nuevas fuera de la línea base: ${v.nuevas.length}; obsoletas: ${v.obsoletas.length})${estatico ? "   [modo estático: sin PREPARE]" : ""}`);
-  for (const c of informe.corregidas) console.log(`  CORRECCION REQUERIDA EN EL CÓDIGO  ${c.archivo}:${c.linea}  ${c.desc}`);
+  for (const c of informe.sugerencias) console.log(`  SUGERENCIA DE CORRECCIÓN (la consulta publicada sigue en FALLA)  ${c.archivo}:${c.linea}  ${c.desc}`);
   for (const f of [...informe.literales.fallas, ...informe.reconstruidas.fallas]) console.log(`  FALLA ${f.archivo}:${f.linea}  ${f.err}  [${f.sql}]`);
   for (const n of v.nuevas) console.log(`  NO VERIFICABLE NUEVA (no está en la línea base) ${n.archivo}:${n.linea}  ${n.motivo}`);
   for (const o of v.obsoletas) console.log(`  aviso: la línea base contiene una entrada que ya no existe: ${o}`);
