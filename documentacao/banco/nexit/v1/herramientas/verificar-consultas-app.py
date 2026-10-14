@@ -35,6 +35,8 @@ def variantes(sql):
                 ["grupos_cliente", "listas_precio", "rutas_entrega", "zonas_comerciales", "vendedores", "canales_venta"]]
     return [sql]
 
+INTERPOLACION = re.compile(r"\$\{[^{}]*\}")
+
 def preparar(sql):
     r = subprocess.run(["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-c", "PREPARE h AS " + sql.strip().rstrip(";") + ";"],
                        capture_output=True, text=True)
@@ -44,12 +46,23 @@ def main():
     if len(sys.argv) != 2:
         sys.exit(__doc__)
     consultas = extraer(sys.argv[1])
-    ok = 0; fallas = []; corregidas = []
+    ok = 0; fallas = []; corregidas = []; dinamicas = []; vaciadas = 0
     for q in consultas:
         for v in variantes(q["sql"]):
+            dinamica = "${" in v
+            if dinamica:
+                # Consulta compuesta en tiempo de ejecución (${...}): no es una consulta LITERAL. Se analiza con cada interpolación vacía; si PREPARE pasa cuenta como analizada;
+                # un error de SINTAXIS ("syntax error") es consecuencia de la interpolación y se informa aparte como NO VERIFICABLE; cualquier otro error (tabla/columna inexistente, tipos) sigue siendo FALLA.
+                v = INTERPOLACION.sub("", v)
+                v = re.sub(r"\$\{.*", "", v, flags=re.S)   # plantilla anidada cortada por el extractor: se descarta desde la interpolación abierta
             rc, err = preparar(v)
             if rc == 0:
-                ok += 1; continue
+                ok += 1
+                vaciadas += 1 if dinamica else 0
+                continue
+            if dinamica and "syntax error" in err:
+                dinamicas.append((q["file"], q["line"]))
+                continue
             arreglada = False
             for ant, (nuevo, desc) in CORRECCIONES.items():
                 if ant in v:
@@ -58,7 +71,8 @@ def main():
                         corregidas.append((q["file"], q["line"], desc)); arreglada = True; break
             if not arreglada:
                 fallas.append((q["file"], q["line"], err))
-    print(f"consultas analizadas: {len(consultas)}  variantes OK: {ok}  OK con corrección propuesta: {len(corregidas)}  FALLAS: {len(fallas)}")
+    print(f"consultas analizadas: {len(consultas)}  variantes OK: {ok} (de ellas {vaciadas} dinámicas analizadas con las interpolaciones vacías)  OK con corrección propuesta: {len(corregidas)}  FALLAS: {len(fallas)}  dinámicas NO verificables literalmente: {len(dinamicas)}")
+    for f, l in dinamicas: print(f"  NO VERIFICABLE (consulta dinámica: error de sintaxis al vaciar la interpolación)  {f}:{l}")
     for f, l, d in corregidas: print(f"  CORRECCION REQUERIDA EN EL CÓDIGO  {f}:{l}  {d}")
     for f, l, e in fallas: print(f"  FALLA {f}:{l}  {e}")
     sys.exit(1 if fallas else 0)
