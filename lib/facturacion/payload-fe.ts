@@ -35,10 +35,6 @@ export const CANTIDAD_MAXIMA = B(10000000000) * S;
 /** E608 dMonTiPag (MT v150: 1-15p(0-4)): a lo sumo 4 decimales; en la escala interna de 8 decimales, el monto debe ser múltiplo de 10^4. */
 const PASO_MONTO_PAGO = S / B(10000);
 
-/** Monto del pago al contado que corresponde a un total: el total redondeado (mitad hacia arriba) a los 4 decimales que admite E608. Con totales enteros es el propio total. */
-export function montoPagoDe(total: Dec): Dec {
-  return ((total + PASO_MONTO_PAGO / B(2)) / PASO_MONTO_PAGO) * PASO_MONTO_PAGO;
-}
 /** D209 dDTipIDRec: la descripción de los códigos 1–6 es la del catálogo del Manual (D208); para 9 «Otro» la informa el cadastro (9–41 caracteres). */
 export const DESCRIPCION_TIPO_DOCUMENTO: Record<number, string> = { 1: "Cédula paraguaya", 2: "Pasaporte", 3: "Cédula extranjera", 4: "Carnet de residencia", 5: "Innominado", 6: "Tarjeta Diplomática de exoneración fiscal" };
 /** D211 dNomRec / D210 dNumIDRec de un DE Innominado (MT v150 y NT 023). */
@@ -164,6 +160,12 @@ export function validarEntradaFE(e: EntradaFE): string[] {
 
   if (sub.dTotGralOpe <= B(0)) errores.push("El total de la factura debe ser mayor que cero.");
   if (sub.dTotGralOpe >= TOTAL_MAXIMO) errores.push("El total de la factura supera el máximo admitido.");
+  // Conciliación (FAT-E1-R01-01): el total de la operación (F014) debe ser EXACTAMENTE la suma de los valores de los ítems (EA008) y el pago al contado debe poder igualarlo
+  // con los 4 decimales de E608. Ni el MT ni el contrato del gateway autorizan un ajuste, una tolerancia ni un redondeo (dRedon queda en 0): si no concilia, no se emite.
+  const sumaItems = calculados.reduce((a, c) => a + c.resultado.totOperacion, B(0));
+
+  if (sub.dTotGralOpe !== sumaItems) errores.push(`El total de la operación (${textoDec(sub.dTotGralOpe)}) difiere de la suma de los ítems (${textoDec(sumaItems)}) por el redondeo del IVA de un ítem con gravado parcial (NT 13). No se puede conciliar sin un ajuste no autorizado: use ítems con otra cantidad o precio, o no los combine.`);
+  else if (sub.dTotGralOpe % PASO_MONTO_PAGO !== B(0)) errores.push(`El total de la factura (${textoDec(sub.dTotGralOpe)}) tiene más de 4 decimales y el pago (E608) admite solo 4: no se puede conciliar sin un ajuste no autorizado. Ajuste las cantidades o los precios.`);
   if (!importesRepresentables(items, calculados.map((c) => c.resultado), sub)) errores.push("Algún importe de la factura no puede escribirse en el documento electrónico sin perder precisión. Reduzca las cantidades o los precios.");
 
   // Pagos al contado: al menos uno, formas habilitadas y suma EXACTA igual al total.
@@ -179,7 +181,7 @@ export function validarEntradaFE(e: EntradaFE): string[] {
     else if (m % PASO_MONTO_PAGO !== B(0)) errores.push("El monto de un pago admite hasta 4 decimales (E608).");
     else sumaPagos += m;
   }
-  if (errores.length === 0 && sumaPagos !== montoPagoDe(sub.dTotGralOpe)) errores.push("La suma de los pagos debe ser igual al total de la factura.");
+  if (errores.length === 0 && sumaPagos !== sub.dTotGralOpe) errores.push("La suma de los pagos debe ser igual al total de la factura.");
 
   // Receptor (reglas del MT v150 y NT 010/023/024; la coherencia de la ficha la valida aparte la aptitud SIFEN del cliente).
   const r = e.receptor;

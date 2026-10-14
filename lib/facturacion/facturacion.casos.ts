@@ -13,7 +13,7 @@ import { calcularItem, calcularSubtotales, numeroDec, parseDec, textoDec } from 
 import { buscarClientesFactura, buscarProductosFactura, crearFacturaElectronica, leerCuerpoFactura, leerPagina, permisoPrecio, prepararFactura } from "@/lib/facturacion/emision";
 import { formatearFechaHoraPy, formatearFechaPy } from "@/lib/formato/listas";
 import { emitirFactura, enviarDocumento } from "@/lib/facturacion/envio";
-import { CATALOGO_TIPOS_TRANSACCION, CONDICIONES_OPERACION, INDICADORES_PRESENCIA, TIPOS_TRANSACCION, construirPayloadFE, DESCRIPCION_TIPO_DOCUMENTO, FORMAS_PAGO, montoPagoDe, validarEntradaFE, totalFactura, type EntradaFE, type LineaFE, type ReceptorFE } from "@/lib/facturacion/payload-fe";
+import { CATALOGO_TIPOS_TRANSACCION, CONDICIONES_OPERACION, INDICADORES_PRESENCIA, TIPOS_TRANSACCION, construirPayloadFE, DESCRIPCION_TIPO_DOCUMENTO, FORMAS_PAGO, validarEntradaFE, totalFactura, type EntradaFE, type LineaFE, type ReceptorFE } from "@/lib/facturacion/payload-fe";
 import { construirConsultas, consultarEstado, ErrorFacturacion, ErrorValidacionFiscal, leerDocumentos, normalizarConsulta, respuestaErrorFacturacion } from "@/lib/facturacion/shared";
 
 const raiz = process.cwd();
@@ -945,7 +945,7 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
 
     return e("dTotOpe") === e("dSubExe") + e("dSubExo") + e("dSub5") + e("dSub10") && e("dTotGralOpe") === e("dTotOpe") && e("dTotIVA") === e("dIVA5") + e("dIVA10") && e("dTBasGraIVA") === e("dBaseGrav5") + e("dBaseGrav10") && e("dLiqTotIVA5") === e("dIVA5") && e("dLiqTotIVA10") === e("dIVA10") && e("dTotalGs") === e("dTotGralOpe");
   })());
-  igual("E1 gravado parcial: la proporción debe ser mayor que 0 y menor que 100 (validación 154 del MT); 0, 100 y valores no numéricos se rechazan, 50 se acepta", ["0", "100", "abc", "50"].map((p) => validarEntradaFE(entradaFE({ lineas: [linea({ afectacion: 4, tasa: 10, proporcion: p })], pagos: [{ tipo: 1, monto: "11000" }] })).length > 0), [true, true, true, false]);
+  igual("E1 gravado parcial: la proporción debe ser mayor que 0 y menor que 100 (validación 154 del MT); 0, 100 y valores no numéricos se rechazan, 50 se acepta", ["0", "100", "abc", "50"].map((p) => validarEntradaFE(entradaFE({ lineas: [linea({ precio: "10500", afectacion: 4, tasa: 10, proporcion: p })], pagos: [{ tipo: 1, monto: "10500" }] })).length > 0), [true, true, true, false]);
   igual("E1 IVA: exento y exonerado exigen tasa 0 y gravado 5 o 10 (validaciones 155–156 del MT)", [[3, 5], [2, 10], [1, 0], [1, 7], [4, 0]].map(([a, t]) => validarEntradaFE(entradaFE({ lineas: [linea({ afectacion: a as 1 | 2 | 3 | 4, tasa: t, proporcion: a === 4 ? "50" : null })] })).some((m) => /tasa de IVA/.test(m))), [true, true, true, true, true]);
 
   // Ejemplo de referencia del gateway (Gs. 107.300 / IVA 9754,54545454) y serialización exacta del JSON
@@ -956,20 +956,82 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
   igual("E1 serialización: tipos del JSON funcional — dDVRec y dNumCasRec numéricos, RUC y códigos en texto, cantidades y precios numéricos", (() => { const p = sinFE(); const d = detFE(p)[0]; return [typeof p.dDVRec, typeof p.dNumCasRec, typeof p.dRucRec, typeof p.cPaisRec, typeof d.dCantProSer, typeof d.dPUniProSer, typeof d.dCodInt, typeof d.cUniMed]; })(), ["number", "number", "string", "string", "number", "number", "string", "number"]);
   cierto("E1 serialización: un importe que JavaScript no representa sin perder dígitos (≥ 16 cifras significativas) o que caería en notación exponencial (1e-8) se rechaza antes de emitir; los importes normales y los 8 decimales exactos no", /perder precisión/.test(errorDe(entradaFE({ lineas: [linea({ precio: "0.00000001" })], pagos: [{ tipo: 1, monto: "0.00000001" }] }))) && /perder precisión/.test(errorDe(entradaFE({ lineas: [linea({ precio: "999999999.99999999", afectacion: 3, tasa: 0 })], pagos: [{ tipo: 1, monto: "999999999.9999" }] }))) && validarEntradaFE(entradaFE({ lineas: lineasRef, pagos: [{ tipo: 1, monto: "107300" }] })).length === 0 && validarEntradaFE(entradaFE({ lineas: [linea({ precio: "0.5", afectacion: 3, tasa: 0 })], pagos: [{ tipo: 1, monto: "0.5" }] })).length === 0);
 
-  // Cantidades y precios decimales
-  igual("E1 decimales: cantidad 4 decimales × precio con decimales; el pago es el total redondeado a 4 decimales (E608) y ya no se envía un pago con 8 decimales", (() => {
-    const l = [linea({ cantidad: "0.3333", precio: "100.5555", afectacion: 3, tasa: 0 })];
-    const total = totalFactura(l)!;
-    const pago = montoPagoDe(total);
-    const ok = validarEntradaFE(entradaFE({ lineas: l, pagos: [{ tipo: 1, monto: t(pago) }] }));
-    const largo = validarEntradaFE(entradaFE({ lineas: l, pagos: [{ tipo: 1, monto: t(total) }] })).join("|");
+  // Cantidades y precios decimales + conciliación ítems ↔ total ↔ pago (FAT-E1-R01-01): sin ajuste, tolerancia ni redondeo inventados
+  const valida = (lineas: LineaFE[], monto: string) => validarEntradaFE(entradaFE({ lineas, pagos: [{ tipo: 1, monto }] }));
+  const parcialExacto = linea({ codigoInterno: "PX", precio: "10500", afectacion: 4, tasa: 10, proporcion: "50" });
 
-    return [t(total), t(pago), ok, /4 decimales/.test(largo)];
-  })(), ["33.51514815", "33.5151", [], true]);
-  igual("E1 pago del parcial: el total 40500.00000001 se paga como 40500 y la factura valida; pagar el total de 8 decimales o 40500.0001 se rechaza", [t(montoPagoDe(dec("40500.00000001"))), t(montoPagoDe(dec("107300"))), t(montoPagoDe(dec("0.00005"))), t(montoPagoDe(dec("0.00004999"))),
-    validarEntradaFE(entradaFE({ lineas: mixto, pagos: [{ tipo: 1, monto: "40500" }] })).length, validarEntradaFE(entradaFE({ lineas: mixto, pagos: [{ tipo: 1, monto: "40500.0001" }] })).length > 0, validarEntradaFE(entradaFE({ lineas: mixto, pagos: [{ tipo: 1, monto: "40500.00000001" }] })).length > 0],
-    ["40500", "107300", "0.0001", "0", 0, true, true]);
-  cierto("E1 pago: lo calcula el servidor con la misma regla (emision.ts usa montoPagoDe) y el formulario no envía montos", /montoPagoDe\(total\)/.test(leer("lib/facturacion/emision.ts")) && !/monto:/.test(pagFat.slice(pagFat.indexOf("const cuerpoFactura"), pagFat.indexOf("const cuerpoFactura") + 900)));
+  igual("R01 decimales: cantidades fraccionarias cuyo total cabe en 4 decimales se emiten con pago igual al total; con más de 4 decimales se bloquea con mensaje claro (no se redondea el pago)", [
+    valida([linea({ cantidad: "0.25", precio: "100.5", afectacion: 3, tasa: 0 })], "25.125").length,
+    valida([linea({ cantidad: "0.3333", precio: "100.5555", afectacion: 3, tasa: 0 })], "33.51514815").join("|").includes("más de 4 decimales"),
+    valida([linea({ cantidad: "0.3333", precio: "100.5555", afectacion: 3, tasa: 0 })], "33.5151").join("|").includes("más de 4 decimales"),
+    valida([linea({ cantidad: "0.5", precio: "3333.3333", afectacion: 3, tasa: 0 })], "1666.66665").join("|").includes("más de 4 decimales"),
+    valida([linea({ cantidad: "2.5", precio: "10000", afectacion: 1, tasa: 10 })], "25000").length,
+  ], [0, true, true, true, 0]);
+  igual("R01 gravado parcial: con residuo de redondeo (11.000 al 50 % → total 11000.00000001 frente a la suma de ítems 11000) NO se emite y el mensaje explica la causa; sin residuo (10.500 al 50 %) se emite con total, pago y suma de ítems idénticos", (() => {
+    const sinResiduo = sinFE({ lineas: [parcialExacto], pagos: [{ tipo: 1, monto: "10500" }] });
+    const s = subFE(sinResiduo);
+
+    return [
+      valida([parcialExacto], "10500").length, [s.dTotOpe, s.dTotGralOpe, s.dTotalGs, (sinResiduo.FormaPago as Array<Record<string, number>>)[0].dMonTiPag, detFE(sinResiduo)[0].dTotOpeItem],
+      valida([linea({ precio: "11000", afectacion: 4, tasa: 10, proporcion: "50" })], "11000").join("|").includes("difiere de la suma de los ítems"),
+      valida([linea({ precio: "11000", afectacion: 4, tasa: 10, proporcion: "50" })], "11000.00000001").join("|").includes("difiere de la suma de los ítems"),
+      valida(mixto, "40500").length > 0,
+    ];
+  })(), [0, [10500, 10500, 10500, 10500, 10500], true, true, true]);
+  igual("R01 mezcla: la factura mixta sin el parcial con residuo concilia (suma de ítems = F008 = F014 = pago) con IVA 5 %, 10 %, exento y exonerado; añadir el parcial con residuo la bloquea; con el parcial exacto concilia", (() => {
+    const sin = mixto.slice(0, 4);
+    const con = [...sin, parcialExacto];
+    const p = sinFE({ lineas: con, pagos: [{ tipo: 1, monto: "40000" }] });
+    const s = subFE(p) as Record<string, number>;
+
+    return [valida(sin, "29500").length, valida(con, "40000").length, [s.dTotOpe, s.dTotGralOpe, (p.FormaPago as Array<Record<string, number>>)[0].dMonTiPag], valida([...sin, mixto[4]], "40500").length > 0];
+  })(), [0, 0, [40000, 40000, 40000], true]);
+  cierto("R01 barrido determinista: para precios 1–400 de un ítem parcial (50 % y 33,5 %, tasas 5 y 10) la validación acepta SOLO cuando base + IVA + base exenta = valor del ítem; lo aceptado cumple dTotGralOpe = Σ dTotOpeItem = pago; lo rechazado nunca se emite", (() => {
+    let aceptados = 0;
+    let rechazados = 0;
+
+    for (const [prop, tasa] of [["50", 10], ["50", 5], ["33.5", 10], ["33.5", 5]] as const) {
+      for (let p = 1; p <= 400; p++) {
+        const precio = String(p);
+        const l = linea({ precio, afectacion: 4, tasa, proporcion: prop });
+        const r = calcularItem({ cantidad: dec("1"), precioUnitario: dec(precio), afectacion: 4, tasa, proporcion: dec(prop) });
+        const concilia = r.baseGravada + r.liquidacion + r.baseExenta === r.totOperacion;
+        const errores = valida([l], precio);
+
+        if ((errores.length === 0) !== concilia) return false;
+        if (concilia) {
+          const pl = sinFE({ lineas: [l], pagos: [{ tipo: 1, monto: precio }] });
+          const s = subFE(pl);
+
+          if (s.dTotGralOpe !== p || s.dTotOpe !== p || (pl.FormaPago as Array<Record<string, number>>)[0].dMonTiPag !== p || detFE(pl)[0].dTotOpeItem !== p) return false;
+          aceptados++;
+        } else rechazados++;
+      }
+    }
+
+    return aceptados > 0 && rechazados > 0;
+  })());
+  cierto("R01 invariante sin parcial: con gravado 5 %, 10 %, exento y exonerado el total de la operación es SIEMPRE la suma exacta de los ítems (ningún residuo) para cantidades y precios decimales", (() => {
+    for (const afec of [1, 2, 3] as const) {
+      for (const [cant, precio] of [["1", "1"], ["3", "1"], ["7", "3333"], ["0.5", "3333.3333"], ["1.2345", "100"], ["0.0001", "9999.9999"], ["12.3456", "7.7777"], ["100", "24600"]]) {
+        const tasa = afec === 1 ? 10 : 0;
+        const l = linea({ cantidad: cant, precio, afectacion: afec, tasa });
+        const total = totalFactura([l])!;
+        const r = calcularItem({ cantidad: dec(cant), precioUnitario: dec(precio), afectacion: afec, tasa, proporcion: afec === 1 ? dec("100") : dec("0") });
+
+        if (total !== r.totOperacion) return false;
+      }
+    }
+
+    return true;
+  })());
+  igual("R01 pago: debe ser exactamente el total (ni redondeado ni con tolerancia); con total entero la referencia 107.300 / IVA 9754.54545454 sigue emitiéndose", [
+    valida(lineasRef, "107300").length, valida(lineasRef, "107299.9999").length > 0, valida(lineasRef, "107300.0001").length > 0, valida(lineasRef, "107300.00000001").length > 0,
+    valida([linea({ cantidad: "0.25", precio: "100.5", afectacion: 3, tasa: 0 })], "25.13").length > 0,
+  ], [0, true, true, true, true]);
+  cierto("R01 el servidor y el payload no ajustan el pago: no existe redondeo de pago ni dRedon distinto de 0; el monto de pago de emision.ts es el total calculado", !/montoPagoDe/.test(leer("lib/facturacion/emision.ts") + leer("lib/facturacion/payload-fe.ts")) && /monto: textoDec\(total\)/.test(leer("lib/facturacion/emision.ts")) && subFE(sinFE()).dRedon === 0);
+  cierto("R01 límites: total ≥ 1.000.000.000.000 se rechaza, 999.999.999.999 se emite; total mínimo 0,0001 se emite y 0,00000001 (no representable) se rechaza", valida([linea({ precio: "1000000000000", afectacion: 3, tasa: 0 })], "1000000000000").join("|").includes("máximo") && valida([linea({ precio: "999999999999", afectacion: 3, tasa: 0 })], "999999999999").length === 0 && valida([linea({ cantidad: "0.0001", precio: "1", afectacion: 3, tasa: 0 })], "0.0001").length === 0 && valida([linea({ precio: "0.00000001", afectacion: 3, tasa: 0 })], "0.00000001").length > 0);
+  cierto("R01 idempotencia: la misma entrada produce byte a byte el mismo JSON (orden de claves y valores) en llamadas repetidas, para la referencia y para el parcial exacto", JSON.stringify(sinFE({ lineas: lineasRef, pagos: [{ tipo: 1, monto: "107300" }] })) === JSON.stringify(sinFE({ lineas: lineasRef, pagos: [{ tipo: 1, monto: "107300" }] })) && JSON.stringify(sinFE({ lineas: [parcialExacto], pagos: [{ tipo: 1, monto: "10500" }] })) === JSON.stringify(sinFE({ lineas: [parcialExacto], pagos: [{ tipo: 1, monto: "10500" }] })));
   igual("E1 cantidad: hasta 10 dígitos enteros (NT 023, E711) y mayor que cero; con 11 dígitos se rechaza aunque el total quepa", [
     errorDe(entradaFE({ lineas: [linea({ cantidad: "10000000000", precio: "0.01", afectacion: 3, tasa: 0 })], pagos: [{ tipo: 1, monto: "100000000" }] })).includes("10 dígitos enteros"),
     validarEntradaFE(entradaFE({ lineas: [linea({ cantidad: "9999999999", precio: "1", afectacion: 3, tasa: 0 })], pagos: [{ tipo: 1, monto: "9999999999" }] })).length,

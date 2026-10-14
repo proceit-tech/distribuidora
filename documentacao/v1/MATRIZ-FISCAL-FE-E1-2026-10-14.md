@@ -9,7 +9,7 @@ A NT 021 não está no pacote (lacuna conhecida). O XSD oficial não está no pa
 
 | ID | Campo | Norma | Antes | Correção (`payload-fe.ts` / `emision.ts`) |
 |---|---|---|---|---|
-| E1-01 | `dMonTiPag` (E608) | [MT] `1-15p(0-4)`: no máximo 4 decimais | O pagamento era o total com até 8 decimais (`Number(monto)`); com gravado parcial o total fica p. ex. `40500.00000001` (resíduo de arredondamento da fórmula NT 13) | Pagamento = total arredondado (meio para cima) a 4 decimais (`montoPagoDe`); validação rejeita monto com mais de 4 decimais; servidor usa a mesma regra. Totais inteiros: sem mudança |
+| E1-01 | `dMonTiPag` (E608) | [MT] `1-15p(0-4)`: no máximo 4 decimais; o MT **não** autoriza diferença entre total e pagamento | O pagamento era o total com até 8 decimais (`Number(monto)`) | **Revisado em FAT-E1-R01-01:** o pagamento é exatamente o total (sem arredondar, sem tolerância); se o total tem mais de 4 decimais ou difere da soma dos ítems, a fatura é **bloqueada** (ver §2-bis). Totais inteiros e a referência 107.300: sem mudança |
 | E1-02 | `dDTipIDRec` (D209) | [MT] obrigatório se existe D208; texto do catálogo (1 Cédula paraguaya, 2 Pasaporte, 3 Cédula extranjera, 4 Carnet de residencia, 5 Innominado, 6 Tarjeta Diplomática de exoneración fiscal; 9 informa-se o tipo) | O cadastro (`clientes.descripcion_documento_identidad`) só guarda descrição para `OTRO`; para 1–6 o JSON saía `null` | Códigos 1–6: descrição do catálogo do MT; 9: descrição do cadastro (9–41 caracteres, validada) |
 | E1-03 | `dCodCliente` (D217) | [MT] opcional, `A 3-15`; `clientes.codigo` é `varchar(50)` | Enviava o código interno sem limitar tamanho | Envia só se tem 3–15 caracteres; senão `null` (não corta nem inventa) |
 | E1-04 | `dCantProSer` (E711) | [NT 23] `1-10p(0-8)` (a NT 23 amplia os decimais de 4 para 8) | Aceitava até 15 dígitos inteiros | Rejeita parte inteira > 10 dígitos |
@@ -18,6 +18,11 @@ A NT 021 não está no pacote (lacuna conhecida). O XSD oficial não está no pa
 | E1-07 | `iTiContRec` (D205) | [MT] obrigatório se D201 = 1 | O payload só validava RUC/DV | Contribuinte exige tipo 1 ou 2 |
 | E1-08 | `dNomRec`, `dNumIDRec`, `iTipIDRec`, `dDirRec` | [MT] D211 `4-255`; D210 `1-20` (Innominado: «0», NT 23); D211 Innominado «Sin Nombre»; D208 ∈ {1–6, 9}; D213 `1-255`, obrigatório em B2F | Só o módulo Clientes validava; o payload não repetia as regras | Defesa em profundidade no payload: razão social 4–255, documento ≤ 20, tipo de documento válido, Innominado = «0» + «Sin Nombre», direção ≤ 255 e obrigatória em B2F |
 | E1-09 | `cUniMed` (E709) | [MT] `N 1-5` | Só exigia não nulo | Exige inteiro de 1 a 99999 (a vigência no catálogo oficial continua verificada por `emision.ts` contra `unidades_medida_sifen`) |
+
+## 2-bis. FAT-E1-R01-01 — conciliação ítems ↔ total ↔ pagamento (política de bloqueio)
+
+**Origem dos resíduos (comprovada por teste):** (1) só o **gravado parcial** (E731 = 4) a produz: F004/F005 somam `E735 + E736` e F002 soma `E737` (NT 13), cada um arredondado a 8 decimais, e a soma pode diferir de `EA008` em 10⁻⁸ (11.000 al 50 % → total 11000.00000001 frente a 11000); gravado integral, exento e exonerado somam `EA008` e nunca geram resíduo; (2) totais com mais de 4 decimais (quantidades fracionárias × preço) não cabem em E608.
+**Decisão:** nem o MT, nem as NT, nem o contrato do gateway provam uma regra de ajuste, tolerância ou `dRedon` para estes casos; as fórmulas fiscais (NT 13) não se alteram. Logo, **bloqueia-se só o que não concilia**: `dTotGralOpe` deve ser exatamente Σ `dTotOpeItem` e múltiplo de 0,0001, e o pagamento deve ser exatamente o total. Mensagens claras ao operador. Parciais sem resíduo (p. ex. 10.500 al 50 % al 10 %), a fatura mista sem parcial com resíduo, quantidades fracionárias com total ≤ 4 decimais e a referência 107.300 / 9754.54545454 continuam emitíveis. Consequência de negócio: muitos preços de gravado parcial ficam bloqueados até decisão fiscal sobre o ajuste (pendência P-11).
 
 ## 2. Pendências e decisões que NÃO se puderam provar (não alteradas)
 
@@ -32,6 +37,7 @@ A NT 021 não está no pacote (lacuna conhecida). O XSD oficial não está no pa
 | P-07 | GTIN: só comprimento (8/12/13/14); dígito verificador GS1 não validado | O MT não o exige em E714; não inventado |
 | P-08 | `dNumCasRec = 0` quando o cadastro não traz número utilizável | Parâmetro de prova **[NEX]** (decisão 12/10/2026); a norma prevalece se o gateway rejeitar |
 | P-09 | `iIndPres = 9 «Otro»` e tipos de transação 5–13 | Não oferecidos (E012 / regras fiscais próprias), conforme código e decisões anteriores |
+| P-11 | Ajuste/arredondamento para conciliar gravado parcial e totais com mais de 4 decimais | Sem prova normativa/contratual: **bloqueado**, não ajustado. Requer decisão do responsável e confirmação do gateway |
 | P-10 | NT 021 ausente do pacote; XSD ausente | Lacuna de fonte |
 
 ## 3. Matriz de campos (valores = fixture sintética `entradaFE()` do teste: cliente contribuyente PJ, 1 ítem 11.000 Gs al 10 %, pago 11.000)
