@@ -917,7 +917,9 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
     linea({ codigoInterno: "EXO", precio: "3000", afectacion: 2, tasa: 0 }),
     linea({ codigoInterno: "PAR", precio: "11000", afectacion: 4, tasa: 10, proporcion: "50" }),
   ];
-  const pMixto = sinFE({ lineas: mixto, pagos: [{ tipo: 1, monto: "40500" }] });
+  // Con el parcial de 11.000 (residuo 10⁻⁸) la validación y el constructor se niegan (FAT-E1-R01-01): los valores de referencia usan un parcial sin residuo (10.500 al 50 %).
+  const mixtoExacto: LineaFE[] = [...mixto.slice(0, 4), linea({ codigoInterno: "PAR", precio: "10500", afectacion: 4, tasa: 10, proporcion: "50" })];
+  const pMixto = sinFE({ lineas: mixtoExacto, pagos: [{ tipo: 1, monto: "40000" }] });
   const CLAVES_ITEM = ["dCodInt", "dGtin", "dDesProSer", "cUniMed", "dCantProSer", "dPUniProSer", "dTotBruOpeItem", "dTotOpeItem", "iAfecIVA", "dPropIVA", "dTasaIVA", "dBasGravIVA", "dLiqIVAItem", "dBasExe"];
   const CLAVES_SUB = ["dSubExe", "dSubExo", "dSub5", "dSub10", "dTotOpe", "dTotDesc", "dTotDescGlotem", "dTotAntItem", "dTotAnt", "dPorcDescTotal", "dDescTotal", "dAnticipo", "dRedon", "dTotGralOpe", "dIVA5", "dIVA10", "dLiqTotIVA5", "dLiqTotIVA10", "dTotIVA", "dBaseGrav5", "dBaseGrav10", "dTBasGraIVA", "dTotalGs"];
   const CLAVES_CABECERA = ["iTiDE", "dInfoEmi", "dInfoFisc", "iTipTra", "iTImp", "cMoneOpe", "dCondTiCam", "dTiCam", "iIndPres", "dFecEmNR", "dInfAdic", "iNatRec", "iTiOpe", "cPaisRec", "iTiContRec", "dRucRec", "dDVRec", "iTipIDRec", "dDTipIDRec", "dNumIDRec", "dNomRec", "dNomFanRec", "dDirRec", "dNumCasRec", "dTelRec", "dCelRec", "dEmailRec", "dEmailAdic", "dEmailAdmin", "dCodCliente", "iCondOpe", "iCondCred", "dPlazoCre", "dCuotas", "Cuotas", "FormaPago", "Detalles", "Subtotales"];
@@ -935,10 +937,10 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
   })());
 
   // IVA 5 %, 10 %, exento, exonerado y gravado parcial en una misma factura: valores independientes y coherencia entre ítems y subtotales
-  igual("E1 IVA mixto: subtotales con aritmética independiente (5 %, 10 %, exento, exonerado y parcial al 50 % con la NT 13)", (() => { const s = subFE(pMixto); return [s.dSubExe, s.dSubExo, s.dSub5, s.dSub10, s.dTotOpe, s.dTotGralOpe, s.dIVA5, s.dIVA10, s.dLiqTotIVA5, s.dLiqTotIVA10, s.dTotIVA, s.dBaseGrav5, s.dBaseGrav10, s.dTBasGraIVA, s.dTotalGs]; })(),
-    [10238.0952381, 3000, 10500, 16761.90476191, 40500.00000001, 40500.00000001, 500, 1523.80952381, 500, 1523.80952381, 2023.80952381, 10000, 15238.0952381, 25238.0952381, 40500.00000001]);
+  igual("E1 IVA mixto: subtotales con aritmética independiente (5 %, 10 %, exento, exonerado y parcial exacto al 50 % con la NT 13)", (() => { const s = subFE(pMixto); return [s.dSubExe, s.dSubExo, s.dSub5, s.dSub10, s.dTotOpe, s.dTotGralOpe, s.dIVA5, s.dIVA10, s.dLiqTotIVA5, s.dLiqTotIVA10, s.dTotIVA, s.dBaseGrav5, s.dBaseGrav10, s.dTBasGraIVA, s.dTotalGs]; })(),
+    [10000, 3000, 10500, 16500, 40000, 40000, 500, 1500, 500, 1500, 2000, 10000, 15000, 25000, 40000]);
   igual("E1 IVA mixto: por ítem — exento y exonerado sin base ni IVA y con proporción 0; gravado con proporción 100; parcial con base exenta", detFE(pMixto).map((d) => [d.iAfecIVA, d.dPropIVA, d.dTasaIVA, d.dBasGravIVA, d.dLiqIVAItem, d.dBasExe, d.dTotOpeItem]),
-    [[1, 100, 10, 10000, 1000, 0, 11000], [1, 100, 5, 10000, 500, 0, 10500], [3, 0, 0, 0, 0, 0, 5000], [2, 0, 0, 0, 0, 0, 3000], [4, 50, 10, 5238.0952381, 523.80952381, 5238.0952381, 11000]]);
+    [[1, 100, 10, 10000, 1000, 0, 11000], [1, 100, 5, 10000, 500, 0, 10500], [3, 0, 0, 0, 0, 0, 5000], [2, 0, 0, 0, 0, 0, 3000], [4, 50, 10, 5000, 500, 5000, 10500]]);
   cierto("E1 IVA mixto: identidades del MT (F008 = F002+F003+F004+F005, F014 = F008, F017 = F015+F016, F020 = F018+F019, dLiqTotIVA = IVA del tramo) con enteros escalados", (() => {
     const s = subFE(pMixto) as Record<string, number>;
     const e = (k: string) => dec(String(s[k]));
@@ -1032,6 +1034,19 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
   cierto("R01 el servidor y el payload no ajustan el pago: no existe redondeo de pago ni dRedon distinto de 0; el monto de pago de emision.ts es el total calculado", !/montoPagoDe/.test(leer("lib/facturacion/emision.ts") + leer("lib/facturacion/payload-fe.ts")) && /monto: textoDec\(total\)/.test(leer("lib/facturacion/emision.ts")) && subFE(sinFE()).dRedon === 0);
   cierto("R01 límites: total ≥ 1.000.000.000.000 se rechaza, 999.999.999.999 se emite; total mínimo 0,0001 se emite y 0,00000001 (no representable) se rechaza", valida([linea({ precio: "1000000000000", afectacion: 3, tasa: 0 })], "1000000000000").join("|").includes("máximo") && valida([linea({ precio: "999999999999", afectacion: 3, tasa: 0 })], "999999999999").length === 0 && valida([linea({ cantidad: "0.0001", precio: "1", afectacion: 3, tasa: 0 })], "0.0001").length === 0 && valida([linea({ precio: "0.00000001", afectacion: 3, tasa: 0 })], "0.00000001").length > 0);
   cierto("R01 idempotencia: la misma entrada produce byte a byte el mismo JSON (orden de claves y valores) en llamadas repetidas, para la referencia y para el parcial exacto", JSON.stringify(sinFE({ lineas: lineasRef, pagos: [{ tipo: 1, monto: "107300" }] })) === JSON.stringify(sinFE({ lineas: lineasRef, pagos: [{ tipo: 1, monto: "107300" }] })) && JSON.stringify(sinFE({ lineas: [parcialExacto], pagos: [{ tipo: 1, monto: "10500" }] })) === JSON.stringify(sinFE({ lineas: [parcialExacto], pagos: [{ tipo: 1, monto: "10500" }] })));
+  igual("R01 protección del constructor: construirPayloadFE aplica la validación completa por sí mismo y NO produce JSON con residuo parcial, pago distinto del total, receptor incompleto, precisión no representable ni total de más de 4 decimales; los casos válidos siguen construyéndose", (() => {
+    const cae = (e: EntradaFE) => { try { construirPayloadFE(e); return false; } catch (x) { return x instanceof Error && /no es válida/.test(x.message); } };
+
+    return [
+      cae(entradaFE({ lineas: [linea({ precio: "11000", afectacion: 4, tasa: 10, proporcion: "50" })], pagos: [{ tipo: 1, monto: "11000" }] })),
+      cae(entradaFE({ pagos: [{ tipo: 1, monto: "10999" }] })),
+      cae(entradaFE({ receptor: { ...receptor, dv: "" } })),
+      cae(entradaFE({ lineas: [linea({ precio: "0.00000001", afectacion: 3, tasa: 0 })], pagos: [{ tipo: 1, monto: "0.00000001" }] })),
+      cae(entradaFE({ lineas: [linea({ cantidad: "0.3333", precio: "100.5555", afectacion: 3, tasa: 0 })], pagos: [{ tipo: 1, monto: "33.51514815" }] })),
+      cae(entradaFE({ pagos: [{ tipo: 2, monto: "11000" }] })),
+      cae(entradaFE()), JSON.stringify(construirPayloadFE(entradaFE())) === JSON.stringify(sinFE()),
+    ];
+  })(), [true, true, true, true, true, true, false, true]);
   igual("E1 cantidad: hasta 10 dígitos enteros (NT 023, E711) y mayor que cero; con 11 dígitos se rechaza aunque el total quepa", [
     errorDe(entradaFE({ lineas: [linea({ cantidad: "10000000000", precio: "0.01", afectacion: 3, tasa: 0 })], pagos: [{ tipo: 1, monto: "100000000" }] })).includes("10 dígitos enteros"),
     validarEntradaFE(entradaFE({ lineas: [linea({ cantidad: "9999999999", precio: "1", afectacion: 3, tasa: 0 })], pagos: [{ tipo: 1, monto: "9999999999" }] })).length,
@@ -1082,7 +1097,7 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
   igual("E1 ítem: código interno 1–20, descripción 1–120, GTIN 8/12/13/14 dígitos (opcional); fuera de rango se rechaza", [
     { codigoInterno: "" }, { codigoInterno: "C".repeat(21) }, { codigoInterno: "C".repeat(20) }, { descripcion: "" }, { descripcion: "D".repeat(121) }, { descripcion: "D".repeat(120) }, { gtin: "123456789" }, { gtin: "12345678" }, { gtin: "7791234567890" }, { gtin: "ABC12345" }, { gtin: null },
   ].map((x) => validarEntradaFE(entradaFE({ lineas: [linea(x)] })).length > 0), [true, true, false, true, true, false, true, false, false, true, false]);
-  igual("E1 ítem: el GTIN válido se serializa como texto y sin GTIN como null; la descripción se envía sin espacios sobrantes", (() => { const d = detFE(sinFE({ lineas: [linea({ gtin: "7791234567890", descripcion: "  Agua  " }), linea({ gtin: null })] })); return [d[0].dGtin, d[0].dDesProSer, d[1].dGtin]; })(), ["7791234567890", "Agua", null]);
+  igual("E1 ítem: el GTIN válido se serializa como texto y sin GTIN como null; la descripción se envía sin espacios sobrantes", (() => { const d = detFE(sinFE({ lineas: [linea({ gtin: "7791234567890", descripcion: "  Agua  " }), linea({ gtin: null })], pagos: [{ tipo: 1, monto: "22000" }] })); return [d[0].dGtin, d[0].dDesProSer, d[1].dGtin]; })(), ["7791234567890", "Agua", null]);
   igual("E1 datos fiscales incompletos: producto sin afectación, sin precio, sin unidad o con tasa incoherente, y factura sin ítems, se rechazan sin inventar valores", [
     linea({ afectacion: null }), linea({ precio: "0" }), linea({ precio: "" }), linea({ unidadSifen: null }), linea({ afectacion: 1, tasa: null }),
   ].map((l) => validarEntradaFE(entradaFE({ lineas: [l] })).length > 0).concat([validarEntradaFE(entradaFE({ lineas: [] })).length > 0]), [true, true, true, true, true, true]);

@@ -882,3 +882,10 @@ Após o encerramento **estático** de Inventario na `AUD-INV-R05` (sem homologa�
 - Causa: o gravado parcial (NT 13) soma parcelas arredondadas a 8 decimais e pode dar total ≠ soma dos ítems (11.000 al 50 % → 11000.00000001); além disso totais com >4 decimais não cabem em E608. A E1 tinha arredondado o pagamento a 4 decimais — sem prova normativa — e foi **revertida** (`montoPagoDe` removido).
 - Política: sem tolerância, ajuste, SEDECO nem `dRedon`. A fatura só se emite se `dTotGralOpe` = Σ `dTotOpeItem`, múltiplo de 0,0001, e o pagamento é exatamente o total; caso contrário erro claro. Fórmulas fiscais, referência 107.300/9754.54545454 e demais casos intactos. Pendência P-11 (decisão fiscal de ajuste) na matriz.
 - Testes locais: simulações puras; 3114 verificações (ver resultado final no relatório); sem gateway/PG/VM; nada homologado; E2 não iniciada.
+
+### FAT-E1-R01 — ajustes documentais e proteção do construtor (pós-reauditoria 4e832e8)
+
+- Matriz fiscal corrigida: sem referências ao pagamento arredondado (`FormaPago[0]`, fixtures, E1-01); P-03 reescrita (o MT prevê o mecanismo SEDECO/F013, **não está demonstrado** que resolva resíduos de 10⁻⁸ da NT 13; nada implementado); **P-11 aberta** (restrição comercial: só 385 de 800 preços inteiros 1–400 a 50 % conciliam; desbloquear exige validação fiscal e confirmação do gateway); **P-12 prioritária** registrada: divergência preexistente de `dLiqTotIVA5/10` (F036/F037) × JSON funcional — JSON não alterado.
+- `construirPayloadFE` agora chama `validarEntradaFE` e lança com os motivos: chamadas futuras sem validação prévia não geram JSON inconsistente (regressão com 7 casos). Política de bloqueio e fórmulas NT 13 mantidas; sem arredondamento automático.
+- CI `nexit-banco-ci` execução 38579656906 (falha em NEX-019 sobre base limpa): registrada à parte em `documentacao/v1/PENDENCIA-CI-NEXIT-BANCO-NEX019-2026-10-14.md` (causa estática provável: NEX-019 exige as duas empresas pré-existentes; log não lido; migrations não alteradas).
+- Testes locais (simulações; sem gateway/PG/VM): 3115 verificações, 0 falhas. Nada homologado; E2 não iniciada.

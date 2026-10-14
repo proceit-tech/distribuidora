@@ -205,8 +205,15 @@ export function validarEntradaFE(e: EntradaFE): string[] {
 
 const nulo = (v: string) => (v.trim() === "" ? null : v.trim());
 
-/** Construye el payload FE (sin cdc ni numeración). Llamar solo con una entrada que pasó `validarEntradaFE`. */
+/**
+ * Construye el payload FE (sin cdc ni numeración). Aplica ella misma `validarEntradaFE` (receptor, ítems, conciliación ítems ↔ total ↔ pago, precisión): una llamada futura que no pase
+ * por la validación previa nunca produce un JSON fiscal parcial o inconsistente; lanza con la lista de motivos.
+ */
 export function construirPayloadFE(e: EntradaFE): Record<string, unknown> {
+  const invalidos = validarEntradaFE(e);
+
+  if (invalidos.length > 0) throw new Error(`La entrada no es válida para construir el payload FE: ${invalidos.join(" | ")}`);
+
   const errores: string[] = [];
   const { items } = prepararLineas(e.lineas, errores);
 
