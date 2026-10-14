@@ -889,3 +889,11 @@ Após o encerramento **estático** de Inventario na `AUD-INV-R05` (sem homologa�
 - `construirPayloadFE` agora chama `validarEntradaFE` e lança com os motivos: chamadas futuras sem validação prévia não geram JSON inconsistente (regressão com 7 casos). Política de bloqueio e fórmulas NT 13 mantidas; sem arredondamento automático.
 - CI `nexit-banco-ci` execução 38579656906 (falha em NEX-019 sobre base limpa): registrada à parte em `documentacao/v1/PENDENCIA-CI-NEXIT-BANCO-NEX019-2026-10-14.md` (causa estática provável: NEX-019 exige as duas empresas pré-existentes; log não lido; migrations não alteradas).
 - Testes locais (simulações; sem gateway/PG/VM): 3115 verificações, 0 falhas. Nada homologado; E2 não iniciada.
+
+ 
+### FAT-E2 — ordem de implementação autorizada; evidências fiscais adicionais (14/10/2026)
+
+- O responsável autorizou documentar e encaminhar ao Claude Code a conclusão do fluxo de **transmissão FE PYG/Contado/Efectivo ao gateway e confirmação posterior do estado SIFEN** (sem envio real/deploy/SQL operacional). Especificação e 15 casos de regressão: `documentacao/v1/PLANO-FAT-E2-ENVIO-SIFEN-2026-10-14.md`. Trata-se de **continuação do código já existente** (`gateway.ts`, `envio.ts`, consultas, endpoints e funções SQL), não de reconstrução da integração.
+- 13 XMLs fornecidos analisados com aritmética Decimal: 5 de serviços, 8 da distribuidora; estes somam 47 itens e 27 descontos; base+IVA conciliam em 47/47 com arredondamento metade para cima a 8 casas. Totais e pagamentos PYG inteiros. Evidências e vetores sem dados pessoais: `documentacao/v1/EVIDENCIAS-FISCAIS-FE-13-XML-2026-10-14.md`. P-02 e P-12 têm evidência **XML** adicional mas o contrato **JSON gateway** continua não provado; P-11 gravado parcial permanece aberta.
+- XMLs B sem `dProtAut` e com datas de emissão 15–16/10 posteriores à assinatura 14/10; aprovação dos oito não foi verificada externamente. Não publicar XMLs originais, assinaturas, CDCs ou dados de receptores no Git.
+- **NÃO EXECUTADO:** código FAT-E2 novo, conexão real, PostgreSQL, VM, Docker, envio, consulta SIFEN, CI verde ou homologação. Claude deve ler protocolos/escopo, implementar etapa única, realizar testes locais, commit/push e parar para auditoria ChatGPT. CI NEX-019 continua pendência independente; não alterar migration histórica. FAT-E3/E4 não autorizadas.
