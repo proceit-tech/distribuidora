@@ -13,7 +13,7 @@ import { calcularItem, calcularSubtotales, numeroDec, parseDec, textoDec } from 
 import { buscarClientesFactura, buscarProductosFactura, crearFacturaElectronica, leerCuerpoFactura, leerPagina, permisoPrecio, prepararFactura } from "@/lib/facturacion/emision";
 import { formatearFechaHoraPy, formatearFechaPy } from "@/lib/formato/listas";
 import { emitirFactura, enviarDocumento } from "@/lib/facturacion/envio";
-import { CATALOGO_TIPOS_TRANSACCION, CONDICIONES_OPERACION, INDICADORES_PRESENCIA, TIPOS_TRANSACCION, construirPayloadFE, FORMAS_PAGO, validarEntradaFE, totalFactura, type EntradaFE, type LineaFE, type ReceptorFE } from "@/lib/facturacion/payload-fe";
+import { CATALOGO_TIPOS_TRANSACCION, CONDICIONES_OPERACION, INDICADORES_PRESENCIA, TIPOS_TRANSACCION, construirPayloadFE, DESCRIPCION_TIPO_DOCUMENTO, FORMAS_PAGO, montoPagoDe, validarEntradaFE, totalFactura, type EntradaFE, type LineaFE, type ReceptorFE } from "@/lib/facturacion/payload-fe";
 import { construirConsultas, consultarEstado, ErrorFacturacion, ErrorValidacionFiscal, leerDocumentos, normalizarConsulta, respuestaErrorFacturacion } from "@/lib/facturacion/shared";
 
 const raiz = process.cwd();
@@ -903,6 +903,129 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
   cierto("FAT-UX-R01-07: lenguaje comercial en la experiencia principal (el estado real: borrador sin guardar / enviada con SIFEN pendiente), detalle técnico (fases, HTTP, lote, CDC) solo en un diálogo secundario; sin inventar número, CDC ni aprobación", /Borrador sin guardar/.test(pagFat) && /SIFEN pendiente de consulta/.test(pagFat) && /Ver detalle técnico/.test(pagFat) && /Detalle técnico del envío/.test(pagFat) && !/diagnóstico/i.test(pagFat) && !/Aprobad[oa]/.test(pagFat.replace(/no significan aprobado por SIFEN/g, "").replace(/ni aprobarla/g, "")) && !/<span>Número<\/span>/.test(pagFat));
   cierto("ETAPA A preserva el contrato y las validaciones: Revisar → previa del servidor → Enviar (idempotencia), precio solo con permiso, cantidad entera para unidad 77, mensajes por fila, producto con impedimentos bloqueado y cliente no apto bloqueado", /fetch\("\/api\/facturas\/previa"/.test(pagFat) && pagFat.split('fetch("/api/facturas", { method: "POST"').length === 2 && /puedeEditarPrecio \? \(/.test(pagFat) && /unidadSifen === 77/.test(pagFat) && /filaInvalida/.test(pagFat) && /No se puede facturar: \$\{pr\.join/.test(pagFat) && /habilitado: c\.apto/.test(pagFat) && /disabled=\{!c\.apto\}/.test(pagFat) && /disabled=\{!puedeGuardar\}/.test(pagFat));
   cierto("ETAPA A no toca otros módulos: el redesenho vive solo en la pantalla Nueva factura y en un módulo puro nuevo; ninguna migración, API fiscal, cálculo ni gateway importa la búsqueda rápida", !/busqueda-rapida/.test(leer("lib/facturacion/calculo.ts") + leer("lib/facturacion/emision.ts") + leer("lib/facturacion/envio.ts") + leer("lib/facturacion/gateway.ts") + leer("lib/facturacion/payload-fe.ts")));
+
+
+  // ══ FAT-E1 — matriz fiscal FE (PYG, contado, efectivo): contrato de claves, receptor, ítems, IVA, pago y serialización con fixtures sintéticas ═══════════════
+  const sinFE = (extra: Partial<EntradaFE> = {}) => construirPayloadFE(entradaFE(extra)) as Record<string, unknown>;
+  const subFE = (p: Record<string, unknown>) => (p.Subtotales as Array<Record<string, number | null>>)[0];
+  const detFE = (p: Record<string, unknown>) => p.Detalles as Array<Record<string, unknown>>;
+  const dec = (x: string) => parseDec(x)!;
+  const mixto: LineaFE[] = [
+    linea({ codigoInterno: "G10", precio: "11000", afectacion: 1, tasa: 10 }),
+    linea({ codigoInterno: "G5", precio: "10500", afectacion: 1, tasa: 5 }),
+    linea({ codigoInterno: "EXE", precio: "5000", afectacion: 3, tasa: 0 }),
+    linea({ codigoInterno: "EXO", precio: "3000", afectacion: 2, tasa: 0 }),
+    linea({ codigoInterno: "PAR", precio: "11000", afectacion: 4, tasa: 10, proporcion: "50" }),
+  ];
+  const pMixto = sinFE({ lineas: mixto, pagos: [{ tipo: 1, monto: "40500" }] });
+  const CLAVES_ITEM = ["dCodInt", "dGtin", "dDesProSer", "cUniMed", "dCantProSer", "dPUniProSer", "dTotBruOpeItem", "dTotOpeItem", "iAfecIVA", "dPropIVA", "dTasaIVA", "dBasGravIVA", "dLiqIVAItem", "dBasExe"];
+  const CLAVES_SUB = ["dSubExe", "dSubExo", "dSub5", "dSub10", "dTotOpe", "dTotDesc", "dTotDescGlotem", "dTotAntItem", "dTotAnt", "dPorcDescTotal", "dDescTotal", "dAnticipo", "dRedon", "dTotGralOpe", "dIVA5", "dIVA10", "dLiqTotIVA5", "dLiqTotIVA10", "dTotIVA", "dBaseGrav5", "dBaseGrav10", "dTBasGraIVA", "dTotalGs"];
+  const CLAVES_CABECERA = ["iTiDE", "dInfoEmi", "dInfoFisc", "iTipTra", "iTImp", "cMoneOpe", "dCondTiCam", "dTiCam", "iIndPres", "dFecEmNR", "dInfAdic", "iNatRec", "iTiOpe", "cPaisRec", "iTiContRec", "dRucRec", "dDVRec", "iTipIDRec", "dDTipIDRec", "dNumIDRec", "dNomRec", "dNomFanRec", "dDirRec", "dNumCasRec", "dTelRec", "dCelRec", "dEmailRec", "dEmailAdic", "dEmailAdmin", "dCodCliente", "iCondOpe", "iCondCred", "dPlazoCre", "dCuotas", "Cuotas", "FormaPago", "Detalles", "Subtotales"];
+
+  igual("E1 contrato de claves: cabecera, FormaPago, Detalles y Subtotales producen EXACTAMENTE el conjunto de claves del JSON funcional que Nexit decide enviar (sin localización cDepRec/cDisRec/cCiuRec, sin las 36 claves ausentes); opcionales no aplicables = null", [
+    Object.keys(sinFE()).sort(), Object.keys(detFE(sinFE())[0]).sort(), Object.keys(subFE(sinFE())).sort(), Object.keys((sinFE().FormaPago as Array<Record<string, unknown>>)[0]).sort(),
+    ["dInfoEmi", "dInfoFisc", "dCondTiCam", "dTiCam", "dFecEmNR", "iCondCred", "dPlazoCre", "dCuotas"].map((k) => sinFE()[k]), sinFE().Cuotas,
+  ], [[...CLAVES_CABECERA].sort(), [...CLAVES_ITEM].sort(), [...CLAVES_SUB].sort(), ["cMoneTiPag", "dMonTiPag", "dTiCamTiPag", "iTiPago"], Array(8).fill(null), []]);
+  cierto("E1 contrato de claves: ninguna de las 36 claves AUSENTES del inventario AUD-FE-100 ni de localización ni de identidad/numeración (las completa NEX-048 o el gateway) se emite; la omisión frente a null explícito sigue SIN confirmar por el gateway", (() => {
+    const p = sinFE();
+    const ausentes = ["iCondAnt", "iTipCont", "gRespDE", "gCompPub", "dModCont", "dEntCont", "dAnoCont", "dSecCont", "dFeCodCont", "dComi", "dIVAComi", "cDepRec", "cDisRec", "cCiuRec", "cdc", "dEst", "dPunExp", "dNumDoc", "dSerieNum", "dFeEmiDE"];
+    const itemAus = ["dParAranc", "dNCM", "dGtinPq", "cPaisOrig", "dInfItem", "cRelMerc", "dCanQuiMer", "dPorQuiMer", "dCDCAnticipo", "dDescItem", "dPorcDesIt", "dDescGloItem", "dAntPreUniIt", "dAntGloPreUniIt", "gVehNuevo", "dNumLote", "dVencMerc", "dNSerie", "dNumPedi", "dNumSegui", "dNomImp", "dDirImp", "dNumFir", "dNumReg", "dNumRegEntCom"];
+
+    return ausentes.every((k) => !(k in p) && !(k in subFE(p))) && itemAus.every((k) => !(k in detFE(p)[0]));
+  })());
+
+  // IVA 5 %, 10 %, exento, exonerado y gravado parcial en una misma factura: valores independientes y coherencia entre ítems y subtotales
+  igual("E1 IVA mixto: subtotales con aritmética independiente (5 %, 10 %, exento, exonerado y parcial al 50 % con la NT 13)", (() => { const s = subFE(pMixto); return [s.dSubExe, s.dSubExo, s.dSub5, s.dSub10, s.dTotOpe, s.dTotGralOpe, s.dIVA5, s.dIVA10, s.dLiqTotIVA5, s.dLiqTotIVA10, s.dTotIVA, s.dBaseGrav5, s.dBaseGrav10, s.dTBasGraIVA, s.dTotalGs]; })(),
+    [10238.0952381, 3000, 10500, 16761.90476191, 40500.00000001, 40500.00000001, 500, 1523.80952381, 500, 1523.80952381, 2023.80952381, 10000, 15238.0952381, 25238.0952381, 40500.00000001]);
+  igual("E1 IVA mixto: por ítem — exento y exonerado sin base ni IVA y con proporción 0; gravado con proporción 100; parcial con base exenta", detFE(pMixto).map((d) => [d.iAfecIVA, d.dPropIVA, d.dTasaIVA, d.dBasGravIVA, d.dLiqIVAItem, d.dBasExe, d.dTotOpeItem]),
+    [[1, 100, 10, 10000, 1000, 0, 11000], [1, 100, 5, 10000, 500, 0, 10500], [3, 0, 0, 0, 0, 0, 5000], [2, 0, 0, 0, 0, 0, 3000], [4, 50, 10, 5238.0952381, 523.80952381, 5238.0952381, 11000]]);
+  cierto("E1 IVA mixto: identidades del MT (F008 = F002+F003+F004+F005, F014 = F008, F017 = F015+F016, F020 = F018+F019, dLiqTotIVA = IVA del tramo) con enteros escalados", (() => {
+    const s = subFE(pMixto) as Record<string, number>;
+    const e = (k: string) => dec(String(s[k]));
+
+    return e("dTotOpe") === e("dSubExe") + e("dSubExo") + e("dSub5") + e("dSub10") && e("dTotGralOpe") === e("dTotOpe") && e("dTotIVA") === e("dIVA5") + e("dIVA10") && e("dTBasGraIVA") === e("dBaseGrav5") + e("dBaseGrav10") && e("dLiqTotIVA5") === e("dIVA5") && e("dLiqTotIVA10") === e("dIVA10") && e("dTotalGs") === e("dTotGralOpe");
+  })());
+  igual("E1 gravado parcial: la proporción debe ser mayor que 0 y menor que 100 (validación 154 del MT); 0, 100 y valores no numéricos se rechazan, 50 se acepta", ["0", "100", "abc", "50"].map((p) => validarEntradaFE(entradaFE({ lineas: [linea({ afectacion: 4, tasa: 10, proporcion: p })], pagos: [{ tipo: 1, monto: "11000" }] })).length > 0), [true, true, true, false]);
+  igual("E1 IVA: exento y exonerado exigen tasa 0 y gravado 5 o 10 (validaciones 155–156 del MT)", [[3, 5], [2, 10], [1, 0], [1, 7], [4, 0]].map(([a, t]) => validarEntradaFE(entradaFE({ lineas: [linea({ afectacion: a as 1 | 2 | 3 | 4, tasa: t, proporcion: a === 4 ? "50" : null })] })).some((m) => /tasa de IVA/.test(m))), [true, true, true, true, true]);
+
+  // Ejemplo de referencia del gateway (Gs. 107.300 / IVA 9754,54545454) y serialización exacta del JSON
+  const lineasRef = [linea({ codigoInterno: "R1", precio: "24600" }), linea({ codigoInterno: "R2", precio: "24600" }), linea({ codigoInterno: "R3", precio: "58100" })];
+  const jsonRef = JSON.stringify(sinFE({ lineas: lineasRef, pagos: [{ tipo: 1, monto: "107300" }] }));
+
+  cierto("E1 ejemplo de referencia: el JSON serializado lleva total 107300, IVA 9754.54545454, base 97545.45454546, pago 107300 como números (sin comillas, sin notación exponencial) y los tres ítems", jsonRef.includes('"dTotGralOpe":107300') && jsonRef.includes('"dTotIVA":9754.54545454') && jsonRef.includes('"dLiqTotIVA10":9754.54545454') && jsonRef.includes('"dBaseGrav10":97545.45454546') && jsonRef.includes('"dMonTiPag":107300') && !/[0-9]e[-+]?[0-9]/.test(jsonRef) && (jsonRef.match(/"dCodInt"/g) ?? []).length === 3);
+  igual("E1 serialización: tipos del JSON funcional — dDVRec y dNumCasRec numéricos, RUC y códigos en texto, cantidades y precios numéricos", (() => { const p = sinFE(); const d = detFE(p)[0]; return [typeof p.dDVRec, typeof p.dNumCasRec, typeof p.dRucRec, typeof p.cPaisRec, typeof d.dCantProSer, typeof d.dPUniProSer, typeof d.dCodInt, typeof d.cUniMed]; })(), ["number", "number", "string", "string", "number", "number", "string", "number"]);
+  cierto("E1 serialización: un importe que JavaScript no representa sin perder dígitos (≥ 16 cifras significativas) o que caería en notación exponencial (1e-8) se rechaza antes de emitir; los importes normales y los 8 decimales exactos no", /perder precisión/.test(errorDe(entradaFE({ lineas: [linea({ precio: "0.00000001" })], pagos: [{ tipo: 1, monto: "0.00000001" }] }))) && /perder precisión/.test(errorDe(entradaFE({ lineas: [linea({ precio: "999999999.99999999", afectacion: 3, tasa: 0 })], pagos: [{ tipo: 1, monto: "999999999.9999" }] }))) && validarEntradaFE(entradaFE({ lineas: lineasRef, pagos: [{ tipo: 1, monto: "107300" }] })).length === 0 && validarEntradaFE(entradaFE({ lineas: [linea({ precio: "0.5", afectacion: 3, tasa: 0 })], pagos: [{ tipo: 1, monto: "0.5" }] })).length === 0);
+
+  // Cantidades y precios decimales
+  igual("E1 decimales: cantidad 4 decimales × precio con decimales; el pago es el total redondeado a 4 decimales (E608) y ya no se envía un pago con 8 decimales", (() => {
+    const l = [linea({ cantidad: "0.3333", precio: "100.5555", afectacion: 3, tasa: 0 })];
+    const total = totalFactura(l)!;
+    const pago = montoPagoDe(total);
+    const ok = validarEntradaFE(entradaFE({ lineas: l, pagos: [{ tipo: 1, monto: t(pago) }] }));
+    const largo = validarEntradaFE(entradaFE({ lineas: l, pagos: [{ tipo: 1, monto: t(total) }] })).join("|");
+
+    return [t(total), t(pago), ok, /4 decimales/.test(largo)];
+  })(), ["33.51514815", "33.5151", [], true]);
+  igual("E1 pago del parcial: el total 40500.00000001 se paga como 40500 y la factura valida; pagar el total de 8 decimales o 40500.0001 se rechaza", [t(montoPagoDe(dec("40500.00000001"))), t(montoPagoDe(dec("107300"))), t(montoPagoDe(dec("0.00005"))), t(montoPagoDe(dec("0.00004999"))),
+    validarEntradaFE(entradaFE({ lineas: mixto, pagos: [{ tipo: 1, monto: "40500" }] })).length, validarEntradaFE(entradaFE({ lineas: mixto, pagos: [{ tipo: 1, monto: "40500.0001" }] })).length > 0, validarEntradaFE(entradaFE({ lineas: mixto, pagos: [{ tipo: 1, monto: "40500.00000001" }] })).length > 0],
+    ["40500", "107300", "0.0001", "0", 0, true, true]);
+  cierto("E1 pago: lo calcula el servidor con la misma regla (emision.ts usa montoPagoDe) y el formulario no envía montos", /montoPagoDe\(total\)/.test(leer("lib/facturacion/emision.ts")) && !/monto:/.test(pagFat.slice(pagFat.indexOf("const cuerpoFactura"), pagFat.indexOf("const cuerpoFactura") + 900)));
+  igual("E1 cantidad: hasta 10 dígitos enteros (NT 023, E711) y mayor que cero; con 11 dígitos se rechaza aunque el total quepa", [
+    errorDe(entradaFE({ lineas: [linea({ cantidad: "10000000000", precio: "0.01", afectacion: 3, tasa: 0 })], pagos: [{ tipo: 1, monto: "100000000" }] })).includes("10 dígitos enteros"),
+    validarEntradaFE(entradaFE({ lineas: [linea({ cantidad: "9999999999", precio: "1", afectacion: 3, tasa: 0 })], pagos: [{ tipo: 1, monto: "9999999999" }] })).length,
+    validarEntradaFE(entradaFE({ lineas: [linea({ cantidad: "0.0001", precio: "10000", afectacion: 3, tasa: 0 })], pagos: [{ tipo: 1, monto: "1" }] })).length,
+  ], [true, 0, 0]);
+
+  // Unidad SIFEN
+  igual("E1 unidad SIFEN (E709, N 1-5): null, 0, negativa, no entera o de 6 dígitos se rechazan; 77 y 99999 se aceptan (la vigencia en el catálogo oficial la verifica el servidor contra unidades_medida_sifen)", [null, 0, -1, 7.5, 100000, 77, 99999].map((u) => validarEntradaFE(entradaFE({ lineas: [linea({ unidadSifen: u })] })).some((m) => /unidad de medida/.test(m))), [true, true, true, true, true, false, false]);
+
+  // Receptor: contribuyente / no contribuyente / Innominado / B2F
+  const nc = (extra: Partial<ReceptorFE> = {}): ReceptorFE => ({ ...receptor, naturaleza: 2, tipoOperacion: 2, tipoContribuyente: null, ruc: "", dv: "", tipoDocumentoIdentidad: 1, descripcionTipoDocumento: "", numeroDocumento: "1234567", razonSocial: "JUAN PEREZ", ...extra });
+
+  igual("E1 receptor contribuyente: RUC de 3 a 8 dígitos, DV de exactamente 1 dígito, tipo de contribuyente 1 o 2 (D205) y razón social de 4 a 255", [
+    { ruc: "12", dv: "6" }, { ruc: "123456789", dv: "6" }, { ruc: "80000005", dv: "12" }, { ruc: "80000005", dv: "x" }, { ruc: "80000005", dv: "" }, { tipoContribuyente: null }, { razonSocial: "AB" }, { razonSocial: "A".repeat(256) }, { ruc: "80000005", dv: "0", tipoContribuyente: 1, razonSocial: "ABCD" }, { ruc: "300", dv: "9", tipoContribuyente: 2, razonSocial: "A".repeat(255) },
+  ].map((r) => validarEntradaFE(entradaFE({ receptor: { ...receptor, ...r } as ReceptorFE })).length > 0), [true, true, true, true, true, true, true, true, false, false]);
+  igual("E1 receptor contribuyente: informa RUC, DV numérico y tipo de contribuyente y NO informa documento de identidad (D208/D209/D210)", (() => { const p = sinFE(); return [p.iNatRec, p.iTiContRec, p.dRucRec, p.dDVRec, p.iTipIDRec, p.dDTipIDRec, p.dNumIDRec]; })(), [1, 2, "80000005", 6, null, null, null]);
+  igual("E1 receptor no contribuyente: tipo de documento, descripción del catálogo del MT (D209), número y NO RUC ni tipo de contribuyente; códigos 1–6 con su descripción oficial y 9 con la del cadastro", [1, 2, 3, 4, 6].map((c) => { const p = sinFE({ receptor: nc({ tipoDocumentoIdentidad: c }) }); return [p.iTipIDRec, p.dDTipIDRec, p.dNumIDRec, p.dRucRec, p.dDVRec, p.iTiContRec]; }).concat([(() => { const p = sinFE({ receptor: nc({ tipoDocumentoIdentidad: 9, descripcionTipoDocumento: "Registro especial" }) }); return [p.iTipIDRec, p.dDTipIDRec, p.dNumIDRec, p.dRucRec, p.dDVRec, p.iTiContRec]; })()]), [
+    [1, "Cédula paraguaya", "1234567", null, null, null], [2, "Pasaporte", "1234567", null, null, null], [3, "Cédula extranjera", "1234567", null, null, null], [4, "Carnet de residencia", "1234567", null, null, null],
+    [6, "Tarjeta Diplomática de exoneración fiscal", "1234567", null, null, null], [9, "Registro especial", "1234567", null, null, null],
+  ]);
+  cierto("E1 receptor no contribuyente: D209 cumple la longitud 9–41 del MT en todo el catálogo; «Otro» exige descripción de 9 a 41 caracteres y el tipo debe ser 1–6 o 9; el número, máximo 20", Object.values(DESCRIPCION_TIPO_DOCUMENTO).every((d) => d.length >= 9 && d.length <= 41) && validarEntradaFE(entradaFE({ receptor: nc({ tipoDocumentoIdentidad: 9, descripcionTipoDocumento: "corto" }) })).length > 0 && validarEntradaFE(entradaFE({ receptor: nc({ tipoDocumentoIdentidad: 9, descripcionTipoDocumento: "A".repeat(42) }) })).length > 0 && validarEntradaFE(entradaFE({ receptor: nc({ tipoDocumentoIdentidad: 9, descripcionTipoDocumento: "A".repeat(41) }) })).length === 0 && validarEntradaFE(entradaFE({ receptor: nc({ tipoDocumentoIdentidad: 7 }) })).length > 0 && validarEntradaFE(entradaFE({ receptor: nc({ numeroDocumento: "1".repeat(21) }) })).length > 0 && validarEntradaFE(entradaFE({ receptor: nc({ numeroDocumento: "1".repeat(20) }) })).length === 0);
+  igual("E1 Innominado: B2C con documento «0» y nombre «Sin Nombre» valida y se serializa así (D210/D211, NT 023); otro número o nombre, B2B o tipo distinto se rechazan", (() => {
+    const inn = (extra: Partial<ReceptorFE> = {}) => nc({ tipoDocumentoIdentidad: 5, descripcionTipoDocumento: "", numeroDocumento: "0", razonSocial: "Sin Nombre", direccion: "", numeroCasa: "", departamento: "", distrito: "", ciudad: "", ...extra });
+    const p = sinFE({ receptor: inn() });
+
+    return [validarEntradaFE(entradaFE({ receptor: inn() })).length, [p.iTipIDRec, p.dDTipIDRec, p.dNumIDRec, p.dNomRec, p.dDirRec, p.dNumCasRec], validarEntradaFE(entradaFE({ receptor: inn({ numeroDocumento: "123" }) })).length > 0, validarEntradaFE(entradaFE({ receptor: inn({ razonSocial: "JUAN PEREZ" }) })).length > 0, validarEntradaFE(entradaFE({ receptor: inn({ tipoOperacion: 1 }) })).length > 0];
+  })(), [0, [5, "Innominado", "0", "Sin Nombre", null, null], true, true, true]);
+  igual("E1 Innominado y límite fiscal (NT 024, D208c): total 6.999.999 se emite; exactamente 7.000.000 y más se rechazan (límite inclusivo), con pago igual al total", ["6999999", "7000000", "7000001"].map((m) => validarEntradaFE(entradaFE({ receptor: nc({ tipoDocumentoIdentidad: 5, descripcionTipoDocumento: "", numeroDocumento: "0", razonSocial: "Sin Nombre", direccion: "", numeroCasa: "", departamento: "", distrito: "", ciudad: "" }), lineas: [linea({ precio: m, afectacion: 3, tasa: 0 })], pagos: [{ tipo: 1, monto: m }] })).some((e) => /7\.000\.000/.test(e))), [false, true, true]);
+  igual("E1 B2F (exterior): requiere dirección del receptor (D213), no informa documento y no exige departamento ni ciudad paraguayos", (() => {
+    const b2f = (extra: Partial<ReceptorFE> = {}) => nc({ tipoOperacion: 4, pais: "ARG", tipoDocumentoIdentidad: 2, numeroDocumento: "X1", direccion: "Calle 5", numeroCasa: "", departamento: "", distrito: "", ciudad: "", ...extra });
+    const p = sinFE({ receptor: b2f() });
+
+    return [validarEntradaFE(entradaFE({ receptor: b2f() })).length, validarEntradaFE(entradaFE({ receptor: b2f({ direccion: "" }) })).length > 0, [p.iTipIDRec, p.dNumIDRec, p.cPaisRec, p.dDirRec, p.dNumCasRec]];
+  })(), [0, true, [null, null, "ARG", "Calle 5", 0]]);
+  igual("E1 campos opcionales del receptor: vacío → null; con valor → texto sin espacios sobrantes; número de casa solo de 1 a 6 dígitos (si no, 0, parámetro de prueba aprobado), sin dirección → null", (() => {
+    const lleno = sinFE({ receptor: { ...receptor, nombreFantasia: " FANTASIA SA ", telefono: "021123456", celular: "0981123456", email: "x@y.com", emailCopia: "c@y.com", emailFacturacion: "f@y.com", numeroCasa: "1234567" } });
+    const vacio = sinFE();
+
+    return [[lleno.dNomFanRec, lleno.dTelRec, lleno.dCelRec, lleno.dEmailRec, lleno.dEmailAdic, lleno.dEmailAdmin, lleno.dNumCasRec], [vacio.dNomFanRec, vacio.dTelRec, vacio.dCelRec, vacio.dEmailAdic, vacio.dEmailAdmin]];
+  })(), [["FANTASIA SA", "021123456", "0981123456", "x@y.com", "c@y.com", "f@y.com", 0], [null, null, null, null, null]]);
+  igual("E1 dCodCliente (D217, opcional, A 3-15): un código interno de 3 a 15 caracteres se envía; fuera de ese rango no se envía (null) y no se acorta ni se inventa", ["AB", "ABC", "CLI-000001", "A".repeat(15), "A".repeat(16)].map((c) => sinFE({ receptor: { ...receptor, codigo: c } }).dCodCliente), [null, "ABC", "CLI-000001", "A".repeat(15), null]);
+
+  // Cabecera de la operación
+  igual("E1 cabecera: iTiDE 1, IVA (iTImp 1), PYG sin tipo de cambio, contado (iCondOpe 1) sin crédito ni cuotas, tipo de transacción y presencia del catálogo, información adicional ≤ 5000 (vacía → null)", (() => { const p = sinFE({ tipoTransaccion: 3, presencia: 4, infoAdicional: "  Nota interna  " }); const v = sinFE(); return [p.iTiDE, p.iTImp, p.cMoneOpe, p.dTiCam, p.iCondOpe, p.iCondCred, p.iTipTra, p.iIndPres, p.dInfAdic, v.dInfAdic, validarEntradaFE(entradaFE({ infoAdicional: "x".repeat(5001) })).length > 0, validarEntradaFE(entradaFE({ infoAdicional: "x".repeat(5000) })).length]; })(), [1, 1, "PYG", null, 1, null, 3, 4, "Nota interna", null, true, 0]);
+  igual("E1 cabecera: tipos de transacción no habilitados (5–13), presencia «Otro» (9), condición crédito y moneda extranjera se rechazan en el backend", [5, 8, 13].map((x) => validarEntradaFE(entradaFE({ tipoTransaccion: x })).length > 0).concat([validarEntradaFE(entradaFE({ presencia: 9 })).length > 0, validarEntradaFE(entradaFE({ condicion: 2 })).length > 0, validarEntradaFE(entradaFE({ moneda: "USD" })).length > 0]), [true, true, true, true, true, true]);
+
+  // Ítems: código, GTIN, descripción
+  igual("E1 ítem: código interno 1–20, descripción 1–120, GTIN 8/12/13/14 dígitos (opcional); fuera de rango se rechaza", [
+    { codigoInterno: "" }, { codigoInterno: "C".repeat(21) }, { codigoInterno: "C".repeat(20) }, { descripcion: "" }, { descripcion: "D".repeat(121) }, { descripcion: "D".repeat(120) }, { gtin: "123456789" }, { gtin: "12345678" }, { gtin: "7791234567890" }, { gtin: "ABC12345" }, { gtin: null },
+  ].map((x) => validarEntradaFE(entradaFE({ lineas: [linea(x)] })).length > 0), [true, true, false, true, true, false, true, false, false, true, false]);
+  igual("E1 ítem: el GTIN válido se serializa como texto y sin GTIN como null; la descripción se envía sin espacios sobrantes", (() => { const d = detFE(sinFE({ lineas: [linea({ gtin: "7791234567890", descripcion: "  Agua  " }), linea({ gtin: null })] })); return [d[0].dGtin, d[0].dDesProSer, d[1].dGtin]; })(), ["7791234567890", "Agua", null]);
+  igual("E1 datos fiscales incompletos: producto sin afectación, sin precio, sin unidad o con tasa incoherente, y factura sin ítems, se rechazan sin inventar valores", [
+    linea({ afectacion: null }), linea({ precio: "0" }), linea({ precio: "" }), linea({ unidadSifen: null }), linea({ afectacion: 1, tasa: null }),
+  ].map((l) => validarEntradaFE(entradaFE({ lineas: [l] })).length > 0).concat([validarEntradaFE(entradaFE({ lineas: [] })).length > 0]), [true, true, true, true, true, true]);
+  cierto("E1 la construcción rechaza una entrada inválida en vez de producir un JSON parcial", (() => { try { construirPayloadFE(entradaFE({ lineas: [linea({ unidadSifen: null })] })); return false; } catch (e) { return e instanceof Error && /no es válida/.test(e.message); } })());
+  cierto("E1 pago: solo Efectivo (iTiPago 1) y con monto igual al total; se rechazan otras formas, pagos sin monto, y no se emite ninguna clave de tipo de cambio ni de tarjeta", [2, 3, 5, 99].every((x) => validarEntradaFE(entradaFE({ pagos: [{ tipo: x, monto: "11000" }] })).length > 0) && validarEntradaFE(entradaFE({ pagos: [] })).length > 0 && validarEntradaFE(entradaFE({ pagos: [{ tipo: 1, monto: "0" }] })).length > 0 && validarEntradaFE(entradaFE({ pagos: [{ tipo: 1, monto: "11001" }] })).length > 0 && JSON.stringify((sinFE().FormaPago as unknown[])[0]) === JSON.stringify({ iTiPago: 1, dMonTiPag: 11000, cMoneTiPag: "PYG", dTiCamTiPag: null }));
 
   return fallos;
 }

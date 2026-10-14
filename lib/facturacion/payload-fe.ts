@@ -1,4 +1,4 @@
-import { B, S, calcularItem, calcularSubtotales, numeroDec, parseDec, type AfectacionIva, type Dec, type TasaIva } from "@/lib/facturacion/calculo";
+import { B, S, calcularItem, calcularSubtotales, numeroDec, parseDec, textoDec, type AfectacionIva, type Dec, type Subtotales, type TasaIva } from "@/lib/facturacion/calculo";
 
 /**
  * Validación fiscal y construcción del payload de Factura Electrónica (iTiDE = 1) a partir de datos YA resueltos por el servidor desde los
@@ -30,6 +30,21 @@ export const FORMAS_PAGO = { 1: "Efectivo" } as const;
 /** NT 024: sin nombre (Innominado) no se admite con total general ≥ Gs. 7.000.000 (D208c). */
 export const LIMITE_INNOMINADO = B(7000000) * S;
 export const MAX_LINEAS = 999; // gCamItem 1-999
+/** E711 dCantProSer (NT 023: 1-10p(0-8)): a lo sumo 10 dígitos enteros. Nexit admite además solo 4 decimales (restricción propia, más estricta que la norma). */
+export const CANTIDAD_MAXIMA = B(10000000000) * S;
+/** E608 dMonTiPag (MT v150: 1-15p(0-4)): a lo sumo 4 decimales; en la escala interna de 8 decimales, el monto debe ser múltiplo de 10^4. */
+const PASO_MONTO_PAGO = S / B(10000);
+
+/** Monto del pago al contado que corresponde a un total: el total redondeado (mitad hacia arriba) a los 4 decimales que admite E608. Con totales enteros es el propio total. */
+export function montoPagoDe(total: Dec): Dec {
+  return ((total + PASO_MONTO_PAGO / B(2)) / PASO_MONTO_PAGO) * PASO_MONTO_PAGO;
+}
+/** D209 dDTipIDRec: la descripción de los códigos 1–6 es la del catálogo del Manual (D208); para 9 «Otro» la informa el cadastro (9–41 caracteres). */
+export const DESCRIPCION_TIPO_DOCUMENTO: Record<number, string> = { 1: "Cédula paraguaya", 2: "Pasaporte", 3: "Cédula extranjera", 4: "Carnet de residencia", 5: "Innominado", 6: "Tarjeta Diplomática de exoneración fiscal" };
+/** D211 dNomRec / D210 dNumIDRec de un DE Innominado (MT v150 y NT 023). */
+export const NOMBRE_INNOMINADO_FE = "Sin Nombre";
+/** D217 dCodCliente: A 3-15 (opcional). */
+const CODIGO_CLIENTE = { min: 3, max: 15 } as const;
 export const TOTAL_MAXIMO = B(1000000000000) * S; // acota el número JSON a una precisión segura
 
 export type ReceptorFE = {
@@ -92,7 +107,9 @@ function prepararLineas(lineas: LineaFE[], errores: string[]) {
     if (!l.descripcion.trim() || l.descripcion.length > 120) errores.push(`Ítem ${n}: la descripción de factura del producto debe tener de 1 a 120 caracteres.`);
     if (l.gtin !== null && !/^(\d{8}|\d{12}|\d{13}|\d{14})$/.test(l.gtin)) errores.push(`Ítem ${n}: el GTIN del producto debe tener 8, 12, 13 o 14 dígitos.`);
     if (l.unidadSifen === null) errores.push(`Ítem ${n}: la unidad de medida del producto no tiene equivalencia SIFEN configurada.`);
+    else if (!Number.isInteger(l.unidadSifen) || l.unidadSifen < 1 || l.unidadSifen > 99999) errores.push(`Ítem ${n}: el código SIFEN de la unidad de medida debe ser un entero de 1 a 5 dígitos.`);
     if (cantidad === null || cantidad <= B(0)) errores.push(`Ítem ${n}: la cantidad debe ser mayor que cero, con hasta 4 decimales.`);
+    else if (cantidad >= CANTIDAD_MAXIMA) errores.push(`Ítem ${n}: la cantidad admite hasta 10 dígitos enteros.`);
     if (precio === null || precio <= B(0)) errores.push(`Ítem ${n}: el producto no tiene un precio de venta de referencia válido en guaraníes.`);
     if (l.afectacion === null || ![1, 2, 3, 4].includes(l.afectacion)) {
       errores.push(`Ítem ${n}: el producto no tiene clasificación de IVA (afectación). Clasifíquelo en Productos antes de facturarlo.`);
@@ -111,6 +128,19 @@ function prepararLineas(lineas: LineaFE[], errores: string[]) {
   });
 
   return { items };
+}
+
+/** Un importe se escribe en el JSON como número de JavaScript: debe ir ida y vuelta sin perder dígitos ni caer en notación exponencial (p. ej. 1e-7). */
+const exacto = (d: Dec): boolean => String(numeroDec(d)) === textoDec(d);
+
+function importesRepresentables(items: Array<{ cantidad: Dec; precio: Dec; proporcion: Dec }>, resultados: Array<{ totBruto: Dec; totOperacion: Dec; baseGravada: Dec; liquidacion: Dec; baseExenta: Dec }>, sub: Subtotales): boolean {
+  const valores: Dec[] = [
+    ...items.flatMap((i) => [i.cantidad, i.precio, i.proporcion]),
+    ...resultados.flatMap((x) => [x.totBruto, x.totOperacion, x.baseGravada, x.liquidacion, x.baseExenta]),
+    sub.dSubExe, sub.dSubExo, sub.dSub5, sub.dSub10, sub.dTotOpe, sub.dTotGralOpe, sub.dIVA5, sub.dIVA10, sub.dTotIVA, sub.dBaseGrav5, sub.dBaseGrav10, sub.dTBasGraIVA, sub.dTotalGs,
+  ];
+
+  return valores.every(exacto);
 }
 
 /** Errores de validación fiscal de la entrada (lista vacía = emitible). Mensajes en español para la pantalla y la API. */
@@ -134,6 +164,7 @@ export function validarEntradaFE(e: EntradaFE): string[] {
 
   if (sub.dTotGralOpe <= B(0)) errores.push("El total de la factura debe ser mayor que cero.");
   if (sub.dTotGralOpe >= TOTAL_MAXIMO) errores.push("El total de la factura supera el máximo admitido.");
+  if (!importesRepresentables(items, calculados.map((c) => c.resultado), sub)) errores.push("Algún importe de la factura no puede escribirse en el documento electrónico sin perder precisión. Reduzca las cantidades o los precios.");
 
   // Pagos al contado: al menos uno, formas habilitadas y suma EXACTA igual al total.
   if (e.pagos.length === 0 || e.pagos.length > 999) errores.push("Indique la forma de pago.");
@@ -145,16 +176,25 @@ export function validarEntradaFE(e: EntradaFE): string[] {
 
     if (!(p.tipo in FORMAS_PAGO)) errores.push("Una forma de pago no es válida.");
     if (m === null || m <= B(0)) errores.push("Cada pago debe tener un monto mayor que cero.");
+    else if (m % PASO_MONTO_PAGO !== B(0)) errores.push("El monto de un pago admite hasta 4 decimales (E608).");
     else sumaPagos += m;
   }
-  if (errores.length === 0 && sumaPagos !== sub.dTotGralOpe) errores.push("La suma de los pagos debe ser igual al total de la factura.");
+  if (errores.length === 0 && sumaPagos !== montoPagoDe(sub.dTotGralOpe)) errores.push("La suma de los pagos debe ser igual al total de la factura.");
 
   // Receptor (reglas del MT v150 y NT 010/023/024; la coherencia de la ficha la valida aparte la aptitud SIFEN del cliente).
   const r = e.receptor;
 
   if (r.tipoDocumentoIdentidad === 5 && r.tipoOperacion !== 2) errores.push("El cliente Innominado solo puede usarse en operaciones B2C.");
   if (r.tipoDocumentoIdentidad === 5 && sub.dTotGralOpe >= LIMITE_INNOMINADO) errores.push("No se puede facturar a un cliente Innominado con un total igual o superior a Gs. 7.000.000 (NT 024).");
-  if (r.naturaleza === 1 && (!/^\d{3,8}$/.test(r.ruc) || r.dv === "")) errores.push("El cliente contribuyente requiere RUC y dígito verificador.");
+  if (r.naturaleza === 1 && (!/^\d{3,8}$/.test(r.ruc) || !/^\d$/.test(r.dv))) errores.push("El cliente contribuyente requiere RUC y dígito verificador válidos (RUC de 3 a 8 dígitos y DV de 1 dígito).");
+  if (r.naturaleza === 1 && r.tipoContribuyente !== 1 && r.tipoContribuyente !== 2) errores.push("El cliente contribuyente requiere el tipo de contribuyente (persona física o jurídica).");
+  if (r.razonSocial.trim().length < 4 || r.razonSocial.length > 255) errores.push("El nombre o razón social del cliente debe tener de 4 a 255 caracteres.");
+  if (r.naturaleza === 2 && r.tipoDocumentoIdentidad !== null && ![1, 2, 3, 4, 5, 6, 9].includes(r.tipoDocumentoIdentidad)) errores.push("El tipo de documento de identidad del cliente no es válido.");
+  if (r.naturaleza === 2 && r.tipoDocumentoIdentidad === 9 && (r.descripcionTipoDocumento.trim().length < 9 || r.descripcionTipoDocumento.trim().length > 41)) errores.push("El tipo de documento «Otro» requiere una descripción de 9 a 41 caracteres.");
+  if (r.numeroDocumento.length > 20) errores.push("El número de documento del cliente no puede superar 20 caracteres.");
+  if (r.tipoDocumentoIdentidad === 5 && (r.numeroDocumento !== "0" || r.razonSocial.trim() !== NOMBRE_INNOMINADO_FE)) errores.push(`El cliente Innominado debe tener documento «0» y nombre «${NOMBRE_INNOMINADO_FE}».`);
+  if (r.direccion.length > 255) errores.push("La dirección del cliente no puede superar 255 caracteres.");
+  if (r.tipoOperacion === 4 && r.direccion.trim() === "") errores.push("Una operación B2F requiere la dirección del receptor (D213).");
   if (r.naturaleza === 2 && r.tipoOperacion !== 4 && (r.tipoDocumentoIdentidad === null || r.numeroDocumento === "")) errores.push("El cliente no contribuyente requiere tipo y número de documento.");
   if (r.pais === "PRY" && r.direccion !== "" && (r.departamento === "" || r.ciudad === "") && r.tipoOperacion !== 4) errores.push("La dirección fiscal del cliente en Paraguay requiere departamento y ciudad (NT 003).");
 
@@ -217,7 +257,7 @@ export function construirPayloadFE(e: EntradaFE): Record<string, unknown> {
     // En el JSON funcional el DV viaja como número.
     dDVRec: contribuyente ? Number(r.dv) : null,
     iTipIDRec: contribuyente || sinDocumento ? null : r.tipoDocumentoIdentidad,
-    dDTipIDRec: contribuyente || sinDocumento ? null : nulo(r.descripcionTipoDocumento),
+    dDTipIDRec: contribuyente || sinDocumento ? null : r.tipoDocumentoIdentidad !== null && r.tipoDocumentoIdentidad in DESCRIPCION_TIPO_DOCUMENTO ? DESCRIPCION_TIPO_DOCUMENTO[r.tipoDocumentoIdentidad] : nulo(r.descripcionTipoDocumento),
     dNumIDRec: contribuyente || sinDocumento ? null : nulo(r.numeroDocumento),
     dNomRec: r.razonSocial,
     dNomFanRec: nulo(r.nombreFantasia),
@@ -229,7 +269,8 @@ export function construirPayloadFE(e: EntradaFE): Record<string, unknown> {
     dEmailRec: nulo(r.email),
     dEmailAdic: nulo(r.emailCopia),
     dEmailAdmin: nulo(r.emailFacturacion),
-    dCodCliente: r.codigo,
+    // D217 es opcional y mide 3-15: un código interno fuera de ese rango no se envía (no se acorta ni se inventa otro).
+    dCodCliente: r.codigo.length >= CODIGO_CLIENTE.min && r.codigo.length <= CODIGO_CLIENTE.max ? r.codigo : null,
     iCondOpe: 1,
     iCondCred: null,
     dPlazoCre: null,

@@ -2,7 +2,7 @@ import type { Pool } from "pg";
 
 import { evaluarAptitudCliente } from "@/lib/clientes/aptitud-cliente";
 import { parseDec, textoDec } from "@/lib/facturacion/calculo";
-import { construirPayloadFE, FORMAS_PAGO, INDICADORES_PRESENCIA, resumenCalculo, TIPOS_TRANSACCION, totalFactura, validarEntradaFE, type EntradaFE, type LineaFE, type ReceptorFE } from "@/lib/facturacion/payload-fe";
+import { construirPayloadFE, FORMAS_PAGO, montoPagoDe, INDICADORES_PRESENCIA, resumenCalculo, TIPOS_TRANSACCION, totalFactura, validarEntradaFE, type EntradaFE, type LineaFE, type ReceptorFE } from "@/lib/facturacion/payload-fe";
 import { ErrorFacturacion, ErrorValidacionFiscal } from "@/lib/facturacion/shared";
 
 /**
@@ -254,7 +254,7 @@ export async function prepararFactura(db: Db, empresaId: string, usuarioId: stri
 
   if (total === null) throw detalles(422, "La factura no cumple las reglas fiscales.", validarEntradaFE({ ...base, pagos: [{ tipo: cuerpo.pagos[0].tipo, monto: "1" }] }));
 
-  const final: EntradaFE = { ...base, pagos: [{ tipo: cuerpo.pagos[0].tipo, monto: textoDec(total) }] };
+  const final: EntradaFE = { ...base, pagos: [{ tipo: cuerpo.pagos[0].tipo, monto: textoDec(montoPagoDe(total)) }] };
   const errores = validarEntradaFE(final);
 
   if (errores.length > 0) throw detalles(422, "La factura no cumple las reglas fiscales.", errores);
