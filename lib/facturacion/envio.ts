@@ -41,8 +41,8 @@ export type RespuestaEnvio = {
 
 /**
  * Prontitud del gateway de la empresa para la pantalla (PRO-133): misma comprobación que el preflight de configuracionGateway (fila activa → configuración válida → credenciales presentes en el
- * servidor) pero SIN lanzar 409 y SIN exponer URL, referencia ni credenciales. No hace red: «CONFIGURADO» no prueba que el gateway esté disponible. Un fallo de lectura (p. ej. sin NEX-047)
- * se informa como SIN_CONFIGURAR.
+ * servidor) pero SIN lanzar 409 y SIN exponer URL, referencia ni credenciales. No hace red: «CONFIGURADO» no prueba que el gateway esté disponible. SIN_CONFIGURAR solo cuando la lectura
+ * SE COMPLETÓ y no hay fila activa; cualquier excepción de la consulta (permiso, conexión, tabla inexistente, falla transitoria) es NO_DISPONIBLE, sin detalles del error.
  */
 export async function estadoGateway(db: Db, empresaId: string, dep: Dependencias = {}): Promise<EstadoGatewayUI> {
   const dar = (estado: EstadoGateway): EstadoGatewayUI => ({ estado, mensaje: MENSAJES_GATEWAY[estado] });
@@ -59,7 +59,7 @@ export async function estadoGateway(db: Db, empresaId: string, dep: Dependencias
 
     return leerCredenciales(valida.credencialRef, dep.env) ? dar("CONFIGURADO") : dar("SIN_CREDENCIALES");
   } catch {
-    return dar("SIN_CONFIGURAR");
+    return dar("NO_DISPONIBLE");
   }
 }
 
