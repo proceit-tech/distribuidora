@@ -2,6 +2,17 @@
 
 Este repositório utiliza o GitHub como fonte única de verdade. Claude implementa; ChatGPT audita; o responsável humano aplica e valida as entregas no único ambiente operacional real. Nenhuma aprovação técnica substitui a homologação humana.
 
+
+## Política obrigatória de testes — somente testes da funcionalidade, salvo solicitação expressa
+
+**Decisão do responsável de 14/10/2026. Vale para Claude Code e ChatGPT em todas as tarefas, prevalecendo sobre solicitações anteriores de execução automática da suíte inteira.** O detalhamento normativo está em [CLAUDE.md](../CLAUDE.md), seção *Regra permanente — testes básicos por funcionalidade*.
+
+- **Regra padrão:** executar apenas os **testes básicos/direcionados da funcionalidade alterada** e regressões diretamente pertinentes (inclusive autorização, isolamento multiempresa, integridade fiscal e SQL **quando afetados**). Selecionar o menor conjunto suficiente para o escopo, sem bateria geral.
+- **Sem pedido expresso do responsável na tarefa atual, NÃO executar** suíte completa de TypeScript, testes globais, lint/typecheck de todo o projeto, build geral, bateria completa de PostgreSQL/migrations ou disparo manual de CI integral. Não iniciar, aguardar ou monitorar testes extensos em segundo plano. É permitido um teste pontual de compilação/validação sobre o código tocado se disponível.
+- **GitHub Actions automático:** commits podem disparar CI obrigatório já configurado; não alterar proteção/workflow para evitar isso. Não disparar rerun ou workflow manual nem fazer polling. Não confundir `CI disparado` com `CI passou`.
+- **Transparência:** informar número/resultado dos testes pontuais, o que ficou sem testar e os riscos. Não alegar aprovação global ou homologação com cobertura reduzida. Se um teste mais amplo parecer indispensável, registrar a limitação e aguardar decisão explícita, sem iniciá-lo.
+- Esta política não altera os controles de segurança, a revisão do ChatGPT, o escopo por tarefa, nem a proibição de executar código, migrations ou testes no banco/VM operacional pela IA.
+
 ## Norma operacional permanente — leitura do contexto e separação de ambientes
 
 Este protocolo vincula **Claude Code e ChatGPT**. No início **de toda solicitação de implementação, revisão, retomada, nova conversa ou após compactação**, ambas as IAs devem consultar no GitHub a versão atual de `CLAUDE.md`, deste `documentacao/PROTOCOLO-IA.md` e os trechos relevantes de `PROGRESSO-NEXIT-V1.md`, além de branch, commit e arquivos relacionados. Os documentos versionados prevalecem sobre lembranças imprecisas de chat. Usar leitura seletiva de código e progresso; não realizar auditorias gerais sem pedido.
