@@ -1,10 +1,10 @@
--- T19 — NEX-057 (PRO-129, Etapa A): gestión de puntos de expedición (permiso PUNTOS, funciones SECURITY DEFINER, bitácora inmutable, numeración confirmada y monotónica), en PostgreSQL real descartable.
+-- T19 — NEX-057 y NEX-058 (PRO-129, Etapa A; incluye la protección del establecimiento SIFEN de la sucursal, AUD-PRO129-R02-01): gestión de puntos de expedición (permiso PUNTOS, funciones SECURITY DEFINER, bitácora inmutable, numeración confirmada y monotónica), en PostgreSQL real descartable.
 \i _helpers.sql
 
 DO $t$
 DECLARE
   v_h text := crypt(current_setting('nex.pw_prueba'), gen_salt('bf', 12));
-  v_a uuid; v_b uuid; v_ua uuid; v_ub uuid; v_sa uuid; v_sb uuid; v_p uuid; v_p2 uuid; v_p3 uuid; v_p4 uuid; v_leg uuid; v_s2 uuid; v_s3 uuid; v_s4 uuid; v_detalle text; r record;
+  v_a uuid; v_b uuid; v_ua uuid; v_ub uuid; v_sa uuid; v_sb uuid; v_p uuid; v_p2 uuid; v_p3 uuid; v_p4 uuid; v_leg uuid; v_s2 uuid; v_s3 uuid; v_s4 uuid; v_detalle text; v_s5 uuid; v_s6 uuid; v_s7 uuid; v_s8 uuid; v_p5 uuid; v_p6 uuid; v_doc8 uuid; r record;
   v_payload jsonb := '{"iTiDE": 1, "Subtotales": [{"dTotGralOpe": 1000}]}'::jsonb;
 BEGIN
   v_a := nex_inicializar_empresa('emp-t19a', 'Empresa T19 A SA (prueba)', '8019101', '1', 'admin.t19a', 'Ana', 'A', NULL, v_h);
@@ -119,6 +119,52 @@ BEGIN
   PERFORM pg_temp.ok(r.o_numero = '0000501', 'identidad: la emisión del punto activado (el trigger no la bloquea) continúa desde el número confirmado: 0000501');
   PERFORM pg_temp.falla(format('SELECT fe_punto_activar(%L, %L, %L, 126, true)', v_a, v_ua, v_p), 'P0001', 'identidad: el punto desactivado no se reactiva mientras el legado ocupa la identidad');
   PERFORM pg_temp.ok((SELECT NOT activo AND ultimo_numero = 126 FROM fe_puntos_expedicion WHERE id = v_p) AND NOT EXISTS (SELECT 1 FROM documentos_electronicos WHERE empresa_id = v_a AND establecimiento = '019' AND punto_expedicion = '001' GROUP BY numero HAVING count(*) > 1), 'identidad: sin números duplicados en los documentos del establecimiento 019');
+
+  -- NEX-058 (AUD-PRO129-R02-01): el establecimiento SIFEN de una sucursal con puntos (activos o inactivos) o con documentos NO se puede cambiar; las sucursales sin ellos conservan su comportamiento
+  INSERT INTO sucursales (empresa_id, codigo, nombre, establecimiento_sifen) VALUES (v_a, 'S5-T19', 'Sucursal 5 T19', '030') RETURNING id INTO v_s5;
+  INSERT INTO sucursales (empresa_id, codigo, nombre, establecimiento_sifen) VALUES (v_a, 'S6-T19', 'Sucursal 6 T19', '031') RETURNING id INTO v_s6;
+  INSERT INTO sucursales (empresa_id, codigo, nombre, establecimiento_sifen) VALUES (v_a, 'S7-T19', 'Sucursal 7 T19 (sin puntos)', '040') RETURNING id INTO v_s7;
+  INSERT INTO sucursales (empresa_id, codigo, nombre, establecimiento_sifen) VALUES (v_a, 'S8-T19', 'Sucursal 8 T19 (solo documentos)', '050') RETURNING id INTO v_s8;
+  v_p5 := fe_punto_crear(v_a, v_ua, v_s5, '001', 'Caja S5', 100, true);
+  PERFORM fe_punto_activar(v_a, v_ua, v_p5, 100, true);
+  v_p6 := fe_punto_crear(v_a, v_ua, v_s6, '001', 'Caja S6', 100, true);
+  PERFORM fe_punto_activar(v_a, v_ua, v_p6, 100, true);
+  PERFORM pg_temp.ok((SELECT count(*) = 2 AND bool_and(activo AND ultimo_numero = 100) FROM fe_puntos_expedicion WHERE id IN (v_p5, v_p6)), 'establecimiento: dos sucursales con establecimientos distintos (030 y 031) tienen cada una su punto 001 activo (identidades 030-001 y 031-001)');
+  PERFORM pg_temp.falla(format('UPDATE sucursales SET establecimiento_sifen = %L WHERE id = %L', '030', v_s6), 'P0001', 'establecimiento: convertir 031 en 030 (colisión entre sucursales con puntos ACTIVOS) se rechaza');
+  BEGIN
+    UPDATE sucursales SET establecimiento_sifen = '030' WHERE id = v_s6;
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS v_detalle = PG_EXCEPTION_DETAIL;
+  END;
+  PERFORM pg_temp.ok(v_detalle = 'NEX:ESTABLECIMIENTO_CON_PUNTOS', 'establecimiento: el error es específico (NEX:ESTABLECIMIENTO_CON_PUNTOS)');
+  PERFORM pg_temp.falla(format('UPDATE sucursales SET establecimiento_sifen = NULL WHERE id = %L', v_s5), 'P0001', 'establecimiento: quitarlo (NULL) con puntos activos se rechaza');
+  PERFORM pg_temp.falla(format('UPDATE sucursales SET establecimiento_sifen = %L WHERE id = %L', '099', v_s5), 'P0001', 'establecimiento: cambiarlo a un valor libre tampoco se permite con puntos (rompería la continuidad de los documentos)');
+  PERFORM fe_punto_desactivar(v_a, v_ua, v_p6);
+  PERFORM pg_temp.falla(format('UPDATE sucursales SET establecimiento_sifen = %L WHERE id = %L', '030', v_s6), 'P0001', 'establecimiento: con el punto INACTIVO la colisión se rechaza igual (el punto sigue vinculado)');
+  PERFORM pg_temp.falla(format('UPDATE sucursales SET establecimiento_sifen = NULL WHERE id = %L', v_s6), 'P0001', 'establecimiento: NULL con puntos inactivos se rechaza');
+  PERFORM pg_temp.ok((SELECT establecimiento_sifen = '030' FROM sucursales WHERE id = v_s5) AND (SELECT establecimiento_sifen = '031' FROM sucursales WHERE id = v_s6), 'establecimiento: los rechazos no cambiaron ningún valor');
+  PERFORM pg_temp.ok((SELECT ultimo_numero = 100 AND NOT activo FROM fe_puntos_expedicion WHERE id = v_p6) AND (SELECT ultimo_numero = 100 AND activo FROM fe_puntos_expedicion WHERE id = v_p5), 'establecimiento: ni la numeración ni el estado de los puntos cambiaron');
+  UPDATE sucursales SET establecimiento_sifen = '030', nombre = 'Sucursal 5 T19 renombrada' WHERE id = v_s5;
+  PERFORM pg_temp.ok((SELECT nombre = 'Sucursal 5 T19 renombrada' AND establecimiento_sifen = '030' FROM sucursales WHERE id = v_s5), 'establecimiento: reasignar el MISMO valor (y cambiar otros datos como el nombre) sigue permitido');
+  SELECT * INTO r FROM fe_documento_crear_fe(v_a, v_ua, v_s5, v_p5, 'clave-t19-0006', NULL, '1234567-1', 'Receptor T19', 'PYG', 1000, v_payload);
+  PERFORM pg_temp.ok(r.o_numero = '0000101', 'establecimiento: la emisión del punto protegido continúa sin cambios (0000101): el trigger de la sucursal no afecta a fe_documento_crear_fe');
+  -- Sucursal solo con documentos (sin puntos): también protegida (los documentos ya emitidos conservan su establecimiento)
+  INSERT INTO documentos_electronicos (empresa_id, sucursal_id, tipo, establecimiento, punto_expedicion, numero, fecha_emision, receptor_nombre, moneda, total, estado_local, estado_sifen, creado_por)
+    VALUES (v_a, v_s8, 'FE', '050', '009', '0000001', now(), 'Receptor T19 S8', 'PYG', 1000, 'PENDIENTE_ENVIO', 'SIN_CONSULTA', v_ua) RETURNING id INTO v_doc8;
+  PERFORM pg_temp.falla(format('UPDATE sucursales SET establecimiento_sifen = %L WHERE id = %L', '051', v_s8), 'P0001', 'establecimiento: una sucursal con documentos emitidos (aunque sin puntos) tampoco cambia de establecimiento');
+  -- Sucursal sin puntos ni documentos: comportamiento normal
+  UPDATE sucursales SET establecimiento_sifen = '041' WHERE id = v_s7;
+  UPDATE sucursales SET establecimiento_sifen = NULL WHERE id = v_s7;
+  UPDATE sucursales SET establecimiento_sifen = '040' WHERE id = v_s7;
+  PERFORM pg_temp.ok((SELECT establecimiento_sifen = '040' FROM sucursales WHERE id = v_s7), 'establecimiento: una sucursal SIN puntos ni documentos puede cambiarlo, quitarlo y restablecerlo con normalidad');
+  -- Sin unicidad global: dos sucursales SIN puntos pueden compartir establecimiento
+  UPDATE sucursales SET establecimiento_sifen = '030' WHERE id = v_s7;
+  PERFORM pg_temp.ok((SELECT count(*) = 2 FROM sucursales WHERE empresa_id = v_a AND establecimiento_sifen = '030'), 'establecimiento: NO hay unicidad global (la sucursal sin puntos puede compartir 030; el control está en los puntos)');
+  UPDATE sucursales SET establecimiento_sifen = '040' WHERE id = v_s7;
+  -- La otra empresa no se ve afectada
+  UPDATE sucursales SET nombre = 'Sucursal B renombrada' WHERE id = v_sb;
+  PERFORM pg_temp.ok((SELECT nombre = 'Sucursal B renombrada' FROM sucursales WHERE id = v_sb), 'establecimiento: los cambios que no tocan el establecimiento no se ven afectados');
+  PERFORM pg_temp.ok(to_regprocedure('public.fe_sucursal_establecimiento_protegido()') IS NOT NULL AND to_regprocedure('public.fe_puntos_expedicion_bloquea_sucursal()') IS NOT NULL, 'NEX-058: las funciones de protección existen');
 
   -- Privilegios del runtime: sin escritura directa ni lectura de la bitácora; solo ejecuta las funciones; PUBLIC no ejecuta
   PERFORM pg_temp.ok(NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'nexit_runtime') OR (
