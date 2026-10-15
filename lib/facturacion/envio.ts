@@ -171,9 +171,15 @@ export async function emitirFactura(db: Db, empresaId: string, usuarioId: string
 
   // «Guardar también en Productos» (confirmación explícita por línea): DESPUÉS de reservar el documento y ANTES de transmitir, sentencia atómica con bitácora; es idempotente (si el
   // cadastro ya tiene esos valores no cambia nada) y un fallo NO impide emitir: se informa y el ajuste queda solo en esta factura.
+  // La idempotencia protege TAMBIÉN el cadastro: solo la creación ORIGINAL del documento puede escribir en Productos. Una repetición de la misma operación (doble clic, reintento,
+  // documento ya creado, pendiente, indeterminado o enviado) no toca el producto ni la bitácora, aunque el cadastro haya cambiado entretanto por otra vía.
   const ajustesProducto: ResultadoGuardado[] = [];
 
-  for (const c of salida.guardar) ajustesProducto.push(await guardarClasificacionIva(db, empresaId, usuarioId, documentoId, c));
+  for (const c of salida.guardar) {
+    ajustesProducto.push(reutilizado
+      ? { productoId: c.productoId, codigo: c.codigo, estado: "OMITIDO", mensaje: "Esta factura ya había sido creada: no se vuelve a escribir en Productos." }
+      : await guardarClasificacionIva(db, empresaId, usuarioId, documentoId, c));
+  }
 
   const extra = ajustesProducto.length > 0 ? { ajustesProducto } : {};
 

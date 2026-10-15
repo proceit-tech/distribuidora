@@ -35,7 +35,7 @@ type FaseEnvio = { fase: string; ok: boolean; detalle: string; http?: number | n
 type ResultadoEnvio = {
   documentoId: string; numero: string; reutilizado: boolean; estadoLocal: string; errorTipo: string | null; resultado: string; http: number | null; mensaje: string | null; lote: string | null; cdc: string | null;
   estadoGateway: string | null; errores: string[]; fases: FaseEnvio[];
-  ajustesProducto?: Array<{ productoId: string; codigo: string; estado: "GUARDADO" | "SIN_CAMBIO" | "ERROR"; mensaje: string }>;
+  ajustesProducto?: Array<{ productoId: string; codigo: string; estado: "GUARDADO" | "SIN_CAMBIO" | "OMITIDO" | "ERROR"; mensaje: string }>;
 };
 const ETIQUETA_FASE: Record<string, string> = { AUTENTICACION: "Autenticación", TRANSMISION: "Transmisión", RESPUESTA: "Respuesta" };
 const ETIQUETA_RESULTADO: Record<string, string> = {

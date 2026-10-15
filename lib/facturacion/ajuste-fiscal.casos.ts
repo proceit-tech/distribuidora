@@ -7,6 +7,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { contador } from "@/lib/clientes/contador-casos";
+import { limpiarCacheTokens } from "@/lib/facturacion/gateway";
+import { emitirFactura } from "@/lib/facturacion/envio";
 import { AJUSTE_VACIO, ajusteParaEnvio, leerAjuste, problemasFiscales, productoIncompleto, valoresEfectivos, type ProductoBase } from "@/lib/facturacion/ajuste-item";
 import { guardarClasificacionIva } from "@/lib/facturacion/ajuste-fiscal";
 import { catalogosFactura, crearFacturaElectronica, leerCuerpoFactura, prepararFactura } from "@/lib/facturacion/emision";
@@ -104,7 +106,7 @@ export async function verificarCasosAjusteFiscal(): Promise<string[]> {
   ], [["falta la tasa de IVA"], ["la tasa de IVA debe ser 5 % o 10 %"], ["exonerado/exento lleva tasa 0 %"], ["falta la proporción gravada (mayor que 0 y menor que 100)"], []]);
   igual("envío: solo viaja lo que cambió respecto del cadastro; sin cambios no hay ajuste; «guardar» solo acompaña a un cambio de IVA", [
     ajusteParaEnvio(base(), AJUSTE_VACIO), ajusteParaEnvio(base(), { ...AJUSTE_VACIO, afectacion: "1", tasa: "10", guardar: true }), ajusteParaEnvio(base(), { ...AJUSTE_VACIO, afectacion: "3", tasa: "0", guardar: true }),
-    ajusteParaEnvio(base(incompleto), ajusteCompleto), ajusteParaEnvio(base(), { ...AJUSTE_VACIO, descripcion: "Otra", gtin: "7791234567890" }), valoresEfectivos(base(), { ...AJUSTE_VACIO, unidadSifen: "83" }).unidadSifen,
+    ajusteParaEnvio(base(incompleto), ajusteCompleto), ajusteParaEnvio(base(), { ...AJUSTE_VACIO, descripcion: "Otra", gtinModo: "informar", gtin: "7791234567890" }), valoresEfectivos(base(), { ...AJUSTE_VACIO, unidadSifen: "83" }).unidadSifen,
   ], [undefined, undefined, { afectacion: 3, tasa: 0, proporcion: null, guardarClasificacion: true }, { unidadSifen: 77, afectacion: 1, tasa: 10, proporcion: null }, { descripcion: "Otra", gtin: "7791234567890" }, 83]);
 
   // ── Servidor: permisos, validaciones y payload
@@ -216,6 +218,7 @@ export async function verificarCasosAjusteFiscal(): Promise<string[]> {
 
   // ── Estructura: envío, pantalla, migración y límites de la fase
   const envio = leer("lib/facturacion/envio.ts");
+  const editor0 = leer("app/(private)/facturas/nueva/ajuste-fiscal-item.tsx");
 
   cierto("envío: «guardar en Productos» ocurre después de reservar el documento y antes de transmitir, es idempotente, un fallo no impide emitir y el resultado se devuelve al operador", envio.indexOf("crearFacturaElectronica(db") < envio.indexOf("guardarClasificacionIva(db") && envio.indexOf("guardarClasificacionIva(db") < envio.indexOf("enviarDocumento(db, empresaId, usuarioId, documentoId, dep)") && /ajustesProducto/.test(envio));
 
@@ -243,6 +246,98 @@ export async function verificarCasosAjusteFiscal(): Promise<string[]> {
 
   cierto("T18 (PostgreSQL descartable en el CI): prueba la MISMA sentencia que ejecuta la aplicación (texto idéntico), el permiso, la bitácora inmutable, el aislamiento por empresa y los privilegios; está en la batería", sentenciaApp.length > 200 && sentenciaApp === sentenciaPrueba
     && /T12 T13 T14 T15 T16 T18/.test(leer("documentacao/banco/nexit/v1/scripts/ejecutar-pruebas.sh")) && /FOR UPDATE OF p/.test(t18) && /23503/.test(t18) && /TRUNCATE/.test(t18));
+
+  // ── R01-02: GTIN de tres estados — usar el del producto / informar otro / «Sin GTIN (solo esta factura)»
+  const conGtin = base({ ...completo, gtin: "7791234567890" });
+
+  igual("GTIN: tres estados distintos en el navegador — usar el del producto (nada que enviar), informar otro (viaja el nuevo) y «Sin GTIN» (viaja null EXPLÍCITO solo si el producto tenía GTIN)", [
+    ajusteParaEnvio(conGtin, AJUSTE_VACIO), ajusteParaEnvio(conGtin, { ...AJUSTE_VACIO, gtinModo: "informar", gtin: "7791234567891" }), ajusteParaEnvio(conGtin, { ...AJUSTE_VACIO, gtinModo: "sin" }),
+    ajusteParaEnvio(base(), { ...AJUSTE_VACIO, gtinModo: "sin" }), ajusteParaEnvio(conGtin, { ...AJUSTE_VACIO, gtinModo: "informar", gtin: "7791234567890" }),
+    valoresEfectivos(conGtin, AJUSTE_VACIO).gtin, valoresEfectivos(conGtin, { ...AJUSTE_VACIO, gtinModo: "sin" }).gtin, valoresEfectivos(conGtin, { ...AJUSTE_VACIO, gtinModo: "informar", gtin: "7791234567891" }).gtin,
+  ], [undefined, { gtin: "7791234567891" }, { gtin: null }, undefined, undefined, "7791234567890", null, "7791234567891"]);
+  igual("GTIN: «informar» exige un valor válido (vacío o de largo incorrecto queda pendiente); «Sin GTIN» no deja pendiente ni modifica el cadastro", [
+    problemasFiscales(conGtin, { ...AJUSTE_VACIO, gtinModo: "informar" }, "100"), problemasFiscales(conGtin, { ...AJUSTE_VACIO, gtinModo: "informar", gtin: "123" }, "100"), problemasFiscales(conGtin, { ...AJUSTE_VACIO, gtinModo: "sin" }, "100"),
+  ], [["falta el GTIN (o elija «Sin GTIN»)"], ["GTIN inválido"], []]);
+  igual("GTIN en el servidor: gtin null explícito se acepta (E714 es opcional), requiere el permiso de ajuste, llega como null al payload y NO se confunde con «sin ajuste»; un GTIN de largo inválido sigue rechazado", [
+    leerAjuste({ gtin: null }), (await resultado(preparar({ producto: { ...completo, gtin: "7791234567890" }, permisos: [] }, [linea({ ajuste: { gtin: null } })]).p)).slice(0, 4), typeof leerAjuste({ gtin: "123" }),
+    await (async () => {
+      const b = baseSimulada({ producto: { ...completo, gtin: "7791234567890" }, permisos: [PERMISO_AJUSTE] });
+      const p = await prepararFactura(b.db, EMPRESA, USUARIO, leerCuerpoFactura(cuerpoBase([linea({ ajuste: { gtin: null } })])) as never);
+      const d = (p.payload as unknown as { Detalles: Array<Record<string, unknown>> }).Detalles[0];
+
+      return [d.dGtin, p.resumen.lineas[0].ajustes, b.escrituras().length];
+    })(),
+    (await (async () => { const b = baseSimulada({ producto: { ...completo, gtin: "7791234567890" }, permisos: [] }); const p = await prepararFactura(b.db, EMPRESA, USUARIO, leerCuerpoFactura(cuerpoBase([linea()])) as never); return (p.payload as unknown as { Detalles: Array<Record<string, unknown>> }).Detalles[0].dGtin; })()),
+  ], [{ gtin: null }, "403:", "string", [null, ["GTIN"], 0], "7791234567890"]);
+  cierto("GTIN en la pantalla: selector de tres opciones (Usar el del producto / Informar otro GTIN / Sin GTIN (solo esta factura)); el campo de texto solo aparece al informar", /Sin GTIN \(solo esta factura\)/.test(editor0) && /Usar el del producto/.test(editor0) && /Informar otro GTIN/.test(editor0) && /ajuste\.gtinModo === "informar" \? \(/.test(editor0));
+
+  // ── R01-01: la idempotencia protege también el cadastro (replay de una factura ya creada/enviada)
+  limpiarCacheTokens();
+
+  const mundo = {
+    iva: { afectacion: 1, tasa: 10 }, log: [] as unknown[], sentencias: 0, posts: 0, crear: 0, estadoDoc: "NUEVO" as "NUEVO" | "ENVIADO" | "INDETERMINADO", payload: null as string | null,
+  };
+  const dbReplay = {
+    async query(sql: string, parametros: unknown[] = []) {
+      if (/usuario_tiene_permiso/.test(sql)) { const lit = /'([A-Z_]+)',\s*'([A-Z_]+)'\)/.exec(sql); const c = parametros.length >= 4 ? `${String(parametros[2])}.${String(parametros[3])}` : lit ? `${lit[1]}.${lit[2]}` : ""; return { rows: [{ ok: [PERMISO_AJUSTE, PERMISO_PRODUCTOS].includes(c) }] }; }
+      if (/FROM fe_gateway_config/.test(sql)) return { rows: [{ baseUrl: "https://gw.prueba.invalid", credencialRef: "PRUEBA", timeoutMs: 1000 }] };
+      if (/FROM clientes c\s+LEFT JOIN LATERAL/.test(sql)) return { rows: [filaCliente], rowCount: 1 };
+      if (/SELECT c\.id, c\.naturaleza_receptor/.test(sql)) return { rows: [{ ...filaCliente, id: CLIENTE, tipo_persona: "JURIDICA", tipo_documento: "RUC", pais_codigo: "PRY" }], rowCount: 1 };
+      if (/FROM direcciones_cliente/.test(sql)) return { rows: [{ cliente_id: CLIENTE, direccion: "Calle 1", numero_casa: "123", departamento_codigo: "1", distrito_codigo: "1", ciudad_codigo: "1", pais_codigo: "PRY" }], rowCount: 1 };
+      if (/FROM referencia_geografica_paises/.test(sql)) return { rows: [{ codigo: "PRY" }], rowCount: 1 };
+      if (/FROM sucursales sc JOIN empresas e/.test(sql)) return { rows: [{ empresa: "E", sucursal: "S", establecimiento: "001", punto: "002", puntoNombre: "P" }], rowCount: 1 };
+      if (/FROM impuestos/.test(sql)) return { rows: [{ id: "i-" + String(parametros[0]) }] };
+      if (/WITH ant AS/.test(sql)) {
+        mundo.sentencias += 1;
+        const cambia = mundo.iva.afectacion !== Number(parametros[3]) || mundo.iva.tasa !== Number(parametros[7]);
+
+        if (cambia) { mundo.log.push({ anterior: { ...mundo.iva }, nuevo: { afectacion: parametros[3], tasa: parametros[7] } }); mundo.iva = { afectacion: Number(parametros[3]), tasa: Number(parametros[7]) }; }
+
+        return { rows: [{ existe: 1, cambio: cambia ? 1 : 0, anotado: cambia ? 1 : 0 }] };
+      }
+      if (/FROM productos p/.test(sql)) return { rows: [{ ...completo, afectacion: mundo.iva.afectacion, tasa: mundo.iva.tasa }], rowCount: 1 };
+      if (/fe_documento_crear_fe/.test(sql)) { mundo.crear += 1; mundo.payload = String(parametros[9]); return { rows: [{ documentoId: DOC, numero: "0050000", reutilizado: mundo.crear > 1 }], rowCount: 1 }; }
+      if (/fe_documento_iniciar_envio/.test(sql)) {
+        if (mundo.estadoDoc === "ENVIADO") throw Object.assign(new Error("ya enviado"), { detail: "NEX:YA_ENVIADO" });
+        if (mundo.estadoDoc === "INDETERMINADO") throw Object.assign(new Error("indeterminado"), { detail: "NEX:ENVIO_INDETERMINADO" });
+
+        return { rows: [{ resultado: "INICIADO", payload: JSON.parse(mundo.payload ?? "{}"), numero: "0050000", tipo: "FE", establecimiento: "001", punto: "002" }] };
+      }
+      if (/fe_documento_registrar_envio/.test(sql)) { mundo.estadoDoc = "ENVIADO"; return { rows: [{}] }; }
+
+      return { rows: [], rowCount: 0 };
+    },
+  } as never;
+  const fetchReplay = (async (url: string) => {
+    if (url.endsWith("/api/login")) return { status: 200, text: async () => JSON.stringify({ status: "success", token: "token.sintetico.no-real" }) };
+    mundo.posts += 1;
+
+    return { status: 200, text: async () => JSON.stringify({ status: "success", message: "Documento recibido", nro_lote: "L-1" }) };
+  }) as never;
+  const cuerpoReplay = leerCuerpoFactura(cuerpoBase([linea({ ajuste: { afectacion: 3, tasa: 0, guardarClasificacion: true } })])) as never;
+  const dep = { fetch: fetchReplay, env: { NEXIT_FE_PRUEBA_RUC: "80000005", NEXIT_FE_PRUEBA_PASSWORD: "clave-sintetica-no-real" } };
+
+  const primera = await emitirFactura(dbReplay, EMPRESA, USUARIO, cuerpoReplay, dep);
+
+  igual("replay 1/3 — emisión original: guarda la clasificación en Productos UNA vez (IVA 1/10 → 3/0), anota la bitácora, transmite una sola vez y el aviso al operador es GUARDADO", [
+    primera.estadoLocal, primera.ajustesProducto?.map((a) => a.estado), mundo.iva, mundo.log.length, mundo.sentencias, mundo.posts,
+  ], ["ENVIADO", ["GUARDADO"], { afectacion: 3, tasa: 0 }, 1, 1, 1]);
+
+  mundo.iva = { afectacion: 1, tasa: 10 }; // un tercero reclasifica el producto por otra vía después de la emisión
+
+  const segunda = await emitirFactura(dbReplay, EMPRESA, USUARIO, cuerpoReplay, dep);
+
+  igual("replay 2/3 — repetir la MISMA operación sobre una factura ya ENVIADA: no toca el producto (queda como lo dejó el tercero), no escribe otra bitácora, no ejecuta la sentencia, no consume número ni retransmite; el operador ve OMITIDO", [
+    segunda.resultado, segunda.reutilizado, segunda.ajustesProducto?.map((a) => a.estado), mundo.iva, mundo.log.length, mundo.sentencias, mundo.posts, mundo.crear,
+  ], ["YA_ENVIADO", true, ["OMITIDO"], { afectacion: 1, tasa: 10 }, 1, 1, 1, 2]);
+
+  mundo.estadoDoc = "INDETERMINADO";
+
+  const tercera = await resultado(emitirFactura(dbReplay, EMPRESA, USUARIO, cuerpoReplay, dep));
+
+  igual("replay 3/3 — documento con envío indeterminado: la repetición se rechaza (409) y tampoco escribe en Productos ni en la bitácora", [tercera.slice(0, 4), mundo.iva, mundo.log.length, mundo.sentencias, mundo.posts], ["409:", { afectacion: 1, tasa: 10 }, 1, 1, 1]);
+  cierto("replay: la omisión depende de que el documento ya existiera (reutilizado), no del estado de envío; solo la creación original llama a guardarClasificacionIva", /reutilizado\s*\n?\s*\?\s*\{[^}]*estado: "OMITIDO"/.test(leer("lib/facturacion/envio.ts").replace(/\r/g, "")) || (/estado: "OMITIDO"/.test(leer("lib/facturacion/envio.ts")) && /reutilizado/.test(leer("lib/facturacion/envio.ts"))));
+
   cierto("límites de la fase A: sin crédito, monedas, tipos 5–13 ni competencia; el cálculo, el payload fiscal y el envío FAT-E2 no importan nada del ajuste", !/ajuste-item|ajuste-fiscal/.test(leer("lib/facturacion/calculo.ts") + leer("lib/facturacion/payload-fe.ts") + leer("lib/facturacion/gateway.ts") + leer("lib/facturacion/reconciliacion.ts")) && /TIPOS_TRANSACCION = \{ 1: /.test(leer("lib/facturacion/payload-fe.ts")) && /Esta versión emite solo al contado/.test(pagina) && !/competencia/i.test(pagina + editor));
 
   return fallos;

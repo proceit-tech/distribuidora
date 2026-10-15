@@ -87,9 +87,10 @@ export type ProductoBase = {
 };
 
 /** Estado de los campos de la línea tal como los escribe el operador (texto vacío = «usar el cadastro»). */
-export type AjusteUI = { unidadSifen: string; afectacion: string; tasa: string; proporcion: string; descripcion: string; gtin: string; guardar: boolean };
+export type GtinModo = "cadastro" | "informar" | "sin";
+export type AjusteUI = { unidadSifen: string; afectacion: string; tasa: string; proporcion: string; descripcion: string; gtin: string; gtinModo: GtinModo; guardar: boolean };
 
-export const AJUSTE_VACIO: AjusteUI = { unidadSifen: "", afectacion: "", tasa: "", proporcion: "", descripcion: "", gtin: "", guardar: false };
+export const AJUSTE_VACIO: AjusteUI = { unidadSifen: "", afectacion: "", tasa: "", proporcion: "", descripcion: "", gtin: "", gtinModo: "cadastro", guardar: false };
 
 export type Efectivos = { unidadSifen: number | null; afectacion: number | null; tasa: number | null; proporcion: string | null; descripcion: string; gtin: string | null };
 
@@ -108,7 +109,8 @@ export function valoresEfectivos(p: ProductoBase, a: AjusteUI): Efectivos {
     tasa: iva ? (a.tasa.trim() !== "" ? entero(a.tasa) : null) : p.tasa,
     proporcion: iva ? (entero(a.afectacion) === 4 && a.proporcion.trim() !== "" ? a.proporcion.trim() : null) : p.proporcion,
     descripcion: a.descripcion.trim() !== "" ? a.descripcion.trim() : p.descripcion,
-    gtin: a.gtin.trim() !== "" ? a.gtin.trim() : p.gtin,
+    // Tres estados distintos: usar el GTIN del producto, informar otro, o NO informar GTIN en esta factura (E714 es opcional: el producto no cambia).
+    gtin: a.gtinModo === "sin" ? null : a.gtinModo === "informar" ? (a.gtin.trim() !== "" ? a.gtin.trim() : null) : p.gtin,
   };
 }
 
@@ -124,7 +126,8 @@ export function problemasFiscales(p: ProductoBase, a: AjusteUI, precioLinea: str
   else if (e.afectacion === 4 && (e.proporcion === null || !(Number(e.proporcion) > 0 && Number(e.proporcion) < 100))) m.push("falta la proporción gravada (mayor que 0 y menor que 100)");
   if (e.unidadSifen === null) m.push("sin unidad de medida SIFEN");
   else if (a.unidadSifen.trim() === "" && p.unidadVigente === false) m.push("unidad SIFEN no vigente");
-  if (e.gtin !== null && !/^(\d{8}|\d{12}|\d{13}|\d{14})$/.test(e.gtin)) m.push("GTIN inválido");
+  if (a.gtinModo === "informar" && a.gtin.trim() === "") m.push("falta el GTIN (o elija «Sin GTIN»)");
+  else if (e.gtin !== null && !/^(\d{8}|\d{12}|\d{13}|\d{14})$/.test(e.gtin)) m.push("GTIN inválido");
   if (e.descripcion.trim().length < 1 || e.descripcion.length > 120) m.push("descripción fiscal de 1 a 120 caracteres");
   if (!/^\d{1,12}(\.\d{1,4})?$/.test(precioLinea) || !(Number(precioLinea) > 0)) m.push("sin precio de venta en guaraníes");
 
@@ -147,7 +150,9 @@ export function ajusteParaEnvio(p: ProductoBase, a: AjusteUI): AjusteFiscal | un
     if (a.guardar) o.guardarClasificacion = true;
   }
   if (a.descripcion.trim() !== "" && a.descripcion.trim() !== p.descripcion) o.descripcion = a.descripcion.trim();
-  if (a.gtin.trim() !== "" && a.gtin.trim() !== p.gtin) o.gtin = a.gtin.trim();
+  // «Sin GTIN» viaja como null EXPLÍCITO (distinto de «no ajustar»); solo si el producto tenía GTIN (si no, no hay nada que cambiar).
+  if (a.gtinModo === "sin" && p.gtin !== null) o.gtin = null;
+  else if (a.gtinModo === "informar" && a.gtin.trim() !== "" && a.gtin.trim() !== p.gtin) o.gtin = a.gtin.trim();
 
   return Object.keys(o).length > 0 ? o : undefined;
 }

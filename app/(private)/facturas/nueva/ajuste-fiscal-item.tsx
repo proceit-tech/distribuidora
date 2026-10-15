@@ -1,6 +1,6 @@
 "use client";
 
-import { hayIvaAjustado, problemasFiscales, valoresEfectivos, type AjusteUI, type ProductoBase } from "@/lib/facturacion/ajuste-item";
+import { hayIvaAjustado, problemasFiscales, valoresEfectivos, type AjusteUI, type GtinModo, type ProductoBase } from "@/lib/facturacion/ajuste-item";
 
 import estilos from "./page.module.css";
 
@@ -18,7 +18,7 @@ export function EditorFiscalItem({ producto, precio, ajuste, unidades, puedeEdit
   const e = valoresEfectivos(producto, ajuste);
   const pendientes = problemasFiscales(producto, ajuste, precio).filter((m) => !m.startsWith("sin precio"));
   const iva = hayIvaAjustado(ajuste);
-  const cambiado = iva || ajuste.unidadSifen !== "" || ajuste.descripcion !== "" || ajuste.gtin !== "";
+  const cambiado = iva || ajuste.unidadSifen !== "" || ajuste.descripcion !== "" || ajuste.gtinModo !== "cadastro";
   const base = `${producto.codigo}`;
 
   return (
@@ -83,9 +83,20 @@ export function EditorFiscalItem({ producto, precio, ajuste, unidades, puedeEdit
         </label>
 
         <label className={estilos.field}>
-          <span>GTIN (8, 12, 13 o 14 dígitos)</span>
-          <input aria-label={`GTIN de ${base}`} inputMode="numeric" placeholder={producto.gtin ?? "Sin GTIN"} value={ajuste.gtin} onChange={(ev) => alCambiar({ gtin: ev.target.value.replace(/\D/g, "") })} />
+          <span>GTIN</span>
+          <select aria-label={`Modo de GTIN de ${base}`} value={ajuste.gtinModo} onChange={(ev) => alCambiar({ gtinModo: ev.target.value as GtinModo, ...(ev.target.value === "informar" ? {} : { gtin: "" }) })}>
+            <option value="cadastro">{producto.gtin ? `Usar el del producto (${producto.gtin})` : "Usar el del producto (sin GTIN)"}</option>
+            <option value="informar">Informar otro GTIN (solo esta factura)</option>
+            <option value="sin">Sin GTIN (solo esta factura)</option>
+          </select>
         </label>
+
+        {ajuste.gtinModo === "informar" ? (
+          <label className={estilos.field}>
+            <span>GTIN (8, 12, 13 o 14 dígitos)</span>
+            <input aria-label={`GTIN de ${base}`} inputMode="numeric" value={ajuste.gtin} onChange={(ev) => alCambiar({ gtin: ev.target.value.replace(/\D/g, "") })} />
+          </label>
+        ) : null}
       </div>
 
       {iva ? (

@@ -26,7 +26,7 @@ export const permisoAjusteFiscal = (db: Db, empresaId: string, usuarioId: string
 export const permisoEditarProductos = (db: Db, empresaId: string, usuarioId: string) => tiene(db, empresaId, usuarioId, "PRODUCTOS", "EDITAR");
 
 export type ClasificacionGuardar = { productoId: string; codigo: string; afectacion: number; tasa: number; proporcion: string | null };
-export type ResultadoGuardado = { productoId: string; codigo: string; estado: "GUARDADO" | "SIN_CAMBIO" | "ERROR"; mensaje: string };
+export type ResultadoGuardado = { productoId: string; codigo: string; estado: "GUARDADO" | "SIN_CAMBIO" | "OMITIDO" | "ERROR"; mensaje: string };
 
 /**
  * Guarda UNA clasificación de IVA en el producto y la anota en la bitácora, en UNA sola sentencia (atómica: si la bitácora no está disponible, el producto no cambia). Solo
