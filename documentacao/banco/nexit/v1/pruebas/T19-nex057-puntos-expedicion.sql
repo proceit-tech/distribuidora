@@ -1,6 +1,11 @@
 -- T19 — NEX-057 y NEX-058 (PRO-129, Etapa A; incluye la protección del establecimiento SIFEN de la sucursal, AUD-PRO129-R02-01): gestión de puntos de expedición (permiso PUNTOS, funciones SECURITY DEFINER, bitácora inmutable, numeración confirmada y monotónica), en PostgreSQL real descartable.
 \i _helpers.sql
 
+-- NEX-060: el último número emitido vive en fe_punto_secuencias (tipo FE); el contador legado de fe_puntos_expedicion está congelado. Para los puntos cargados a mano SIN secuencia
+-- (el legado de esta prueba) la vista muestra el valor legado, hasta que la activación cree su secuencia FE.
+CREATE TEMP VIEW pt AS SELECT p.id, p.empresa_id, p.sucursal_id, p.codigo, p.nombre, p.activo, coalesce(s.ultimo_numero, p.ultimo_numero) AS ultimo_numero
+  FROM fe_puntos_expedicion p LEFT JOIN fe_punto_secuencias s ON s.empresa_id = p.empresa_id AND s.punto_id = p.id AND s.tipo_documento = 'FE';
+
 DO $t$
 DECLARE
   v_h text := crypt(current_setting('nex.pw_prueba'), gen_salt('bf', 12));
@@ -36,13 +41,13 @@ BEGIN
   UPDATE sucursales SET establecimiento_sifen = '019' WHERE id = v_sa;
 
   v_p := fe_punto_crear(v_a, v_ua, v_sa, '001', ' Caja 1 ', 120, true);
-  PERFORM pg_temp.ok((SELECT codigo = '001' AND nombre = 'Caja 1' AND ultimo_numero = 120 AND NOT activo AND sucursal_id = v_sa FROM fe_puntos_expedicion WHERE id = v_p), 'alta: el punto nace INACTIVO con el último número informado (120)');
+  PERFORM pg_temp.ok((SELECT codigo = '001' AND nombre = 'Caja 1' AND ultimo_numero = 120 AND NOT activo AND sucursal_id = v_sa FROM pt WHERE id = v_p), 'alta: el punto nace INACTIVO con el último número informado (120)');
   PERFORM pg_temp.falla(format('SELECT fe_punto_crear(%L, %L, %L, %L, %L, 0, true)', v_a, v_ua, v_sa, '001', 'Otra'), 'P0001', 'alta: el código duplicado en la sucursal se rechaza');
   PERFORM pg_temp.ok((SELECT count(*) = 1 AND bool_and(accion = 'CREAR' AND usuario_id = v_ua AND anterior IS NULL AND (nuevo->>'ultimo_numero')::int = 120 AND (nuevo->>'activo')::boolean = false) FROM fe_puntos_expedicion_log WHERE punto_id = v_p), 'bitácora: el alta conserva usuario y valores');
 
   -- Un punto inactivo NO numera
   PERFORM pg_temp.falla(format($f$SELECT * FROM fe_documento_crear_fe(%L, %L, %L, %L, 'clave-t19-0001', NULL, '1234567-1', 'Receptor T19', 'PYG', 1000, %L)$f$, v_a, v_ua, v_sa, v_p, v_payload::text), 'P0001', 'un punto inactivo no emite documentos (numeración intacta)');
-  PERFORM pg_temp.ok((SELECT ultimo_numero = 120 FROM fe_puntos_expedicion WHERE id = v_p), 'el rechazo no consumió número');
+  PERFORM pg_temp.ok((SELECT ultimo_numero = 120 FROM pt WHERE id = v_p), 'el rechazo no consumió número');
 
   -- Activación: confirmación y número monotónico
   PERFORM pg_temp.falla(format('SELECT fe_punto_activar(%L, %L, %L, 120, false)', v_a, v_ua, v_p), 'P0001', 'activar: sin confirmación se rechaza');
@@ -50,22 +55,22 @@ BEGIN
   PERFORM pg_temp.falla(format('SELECT fe_punto_activar(%L, %L, %L, 120, true)', v_a, v_ub, v_p), '42501', 'activar: un usuario de otra empresa se rechaza');
   PERFORM pg_temp.falla(format('SELECT fe_punto_activar(%L, %L, %L, 120, true)', v_b, v_ub, v_p), 'P0001', 'aislamiento: la empresa B no ve el punto de la empresa A');
   PERFORM fe_punto_activar(v_a, v_ua, v_p, 125, true);
-  PERFORM pg_temp.ok((SELECT activo AND ultimo_numero = 125 FROM fe_puntos_expedicion WHERE id = v_p), 'activar: confirma un número MAYOR (se emitió fuera de Nexit) y activa');
+  PERFORM pg_temp.ok((SELECT activo AND ultimo_numero = 125 FROM pt WHERE id = v_p), 'activar: confirma un número MAYOR (se emitió fuera de Nexit) y activa');
   PERFORM pg_temp.falla(format('SELECT fe_punto_activar(%L, %L, %L, 125, true)', v_a, v_ua, v_p), 'P0001', 'activar: un punto ya activo se rechaza');
   PERFORM pg_temp.ok((SELECT count(*) = 2 FROM fe_puntos_expedicion_log WHERE punto_id = v_p) AND (SELECT (anterior->>'ultimo_numero')::int = 120 AND (nuevo->>'ultimo_numero')::int = 125 FROM fe_puntos_expedicion_log WHERE punto_id = v_p AND accion = 'ACTIVAR'), 'bitácora: la activación conserva el número anterior y el nuevo');
 
   -- La emisión continúa desde el número confirmado (la única autoridad que incrementa es fe_documento_crear_fe)
   SELECT * INTO r FROM fe_documento_crear_fe(v_a, v_ua, v_sa, v_p, 'clave-t19-0002', NULL, '1234567-1', 'Receptor T19', 'PYG', 1000, v_payload);
-  PERFORM pg_temp.ok(r.o_numero = '0000126' AND (SELECT ultimo_numero = 126 FROM fe_puntos_expedicion WHERE id = v_p), 'la primera factura toma 0000126 = último número confirmado (125) + 1');
+  PERFORM pg_temp.ok(r.o_numero = '0000126' AND (SELECT ultimo_numero = 126 FROM pt WHERE id = v_p), 'la primera factura toma 0000126 = último número confirmado (125) + 1');
 
   -- Un número menor que el ya emitido por Nexit se rechaza al dar de alta/reactivar
   PERFORM fe_punto_desactivar(v_a, v_ua, v_p);
-  PERFORM pg_temp.ok((SELECT NOT activo AND ultimo_numero = 126 FROM fe_puntos_expedicion WHERE id = v_p), 'desactivar: el punto queda inactivo y la numeración se conserva');
+  PERFORM pg_temp.ok((SELECT NOT activo AND ultimo_numero = 126 FROM pt WHERE id = v_p), 'desactivar: el punto queda inactivo y la numeración se conserva');
   PERFORM pg_temp.falla(format('SELECT fe_punto_desactivar(%L, %L, %L)', v_a, v_ua, v_p), 'P0001', 'desactivar: un punto ya inactivo se rechaza');
   PERFORM pg_temp.falla(format('SELECT fe_punto_activar(%L, %L, %L, 125, true)', v_a, v_ua, v_p), 'P0001', 'reactivar: confirmar un número menor que el emitido se rechaza (126 ya emitido)');
   PERFORM pg_temp.falla(format($f$SELECT * FROM fe_documento_crear_fe(%L, %L, %L, %L, 'clave-t19-0003', NULL, '1234567-1', 'Receptor T19', 'PYG', 1000, %L)$f$, v_a, v_ua, v_sa, v_p, v_payload::text), 'P0001', 'un punto desactivado no emite');
   PERFORM fe_punto_activar(v_a, v_ua, v_p, 126, true);
-  PERFORM pg_temp.ok((SELECT activo AND ultimo_numero = 126 FROM fe_puntos_expedicion WHERE id = v_p), 'reactivar: confirmando el número emitido (126)');
+  PERFORM pg_temp.ok((SELECT activo AND ultimo_numero = 126 FROM pt WHERE id = v_p), 'reactivar: confirmando el número emitido (126)');
 
   -- Un punto nuevo con número menor al ya emitido por Nexit con el mismo establecimiento/código (otra sucursal del mismo establecimiento) se rechaza
   PERFORM pg_temp.falla(format('SELECT fe_punto_crear(%L, %L, %L, %L, %L, 100, true)', v_a, v_ua, v_sa, '001', 'Caja 1 bis'), 'P0001', 'alta duplicada: sigue rechazada');
@@ -81,7 +86,7 @@ BEGIN
 
   -- Otro punto en la misma sucursal y otra empresa con el mismo código (independientes por empresa/sucursal)
   v_p2 := fe_punto_crear(v_a, v_ua, v_sa, '002', 'Caja 2', 0, true);
-  PERFORM pg_temp.ok((SELECT ultimo_numero = 0 AND NOT activo FROM fe_puntos_expedicion WHERE id = v_p2), 'un punto sin emisiones previas se registra con 0 solo porque se informó y confirmó explícitamente');
+  PERFORM pg_temp.ok((SELECT ultimo_numero = 0 AND NOT activo FROM pt WHERE id = v_p2), 'un punto sin emisiones previas se registra con 0 solo porque se informó y confirmó explícitamente');
   PERFORM fe_punto_crear(v_b, v_ub, v_sb, '001', 'Caja B', 7, true);
   PERFORM pg_temp.ok((SELECT count(*) = 1 FROM fe_puntos_expedicion WHERE empresa_id = v_b) AND (SELECT count(*) = 2 FROM fe_puntos_expedicion WHERE empresa_id = v_a), 'cada empresa ve y gestiona solo los suyos');
 
@@ -97,28 +102,28 @@ BEGIN
     GET STACKED DIAGNOSTICS v_detalle = PG_EXCEPTION_DETAIL;
   END;
   PERFORM pg_temp.ok(v_detalle = 'NEX:IDENTIDAD_FISCAL_DUPLICADA', 'identidad: el error es específico (NEX:IDENTIDAD_FISCAL_DUPLICADA)');
-  PERFORM pg_temp.ok((SELECT ultimo_numero = 126 AND activo FROM fe_puntos_expedicion WHERE id = v_p) AND (SELECT count(*) = 0 FROM fe_puntos_expedicion WHERE sucursal_id = v_s2), 'identidad: el rechazo no creó nada ni tocó la numeración del punto existente (126)');
+  PERFORM pg_temp.ok((SELECT ultimo_numero = 126 AND activo FROM pt WHERE id = v_p) AND (SELECT count(*) = 0 FROM pt WHERE sucursal_id = v_s2), 'identidad: el rechazo no creó nada ni tocó la numeración del punto existente (126)');
   v_p3 := fe_punto_crear(v_a, v_ua, v_s2, '003', 'Caja 3', 40, true);
   PERFORM pg_temp.ok(v_p3 IS NOT NULL, 'identidad: otro código en la misma sucursal/establecimiento es válido');
   v_p4 := fe_punto_crear(v_a, v_ua, v_s3, '001', 'Caja 1 est 020', 5, true);
   PERFORM fe_punto_activar(v_a, v_ua, v_p4, 5, true);
   SELECT * INTO r FROM fe_documento_crear_fe(v_a, v_ua, v_s3, v_p4, 'clave-t19-0004', NULL, '1234567-1', 'Receptor T19', 'PYG', 1000, v_payload);
-  PERFORM pg_temp.ok(r.o_numero = '0000006' AND (SELECT ultimo_numero = 126 FROM fe_puntos_expedicion WHERE id = v_p), 'identidad: el MISMO código en un establecimiento DISTINTO (020) es independiente: su numeración (0000006) no afecta al 019');
+  PERFORM pg_temp.ok(r.o_numero = '0000006' AND (SELECT ultimo_numero = 126 FROM pt WHERE id = v_p), 'identidad: el MISMO código en un establecimiento DISTINTO (020) es independiente: su numeración (0000006) no afecta al 019');
 
   -- Legado: un duplicado INACTIVO cargado a mano (otra vía) puede existir, pero no se activa mientras el otro siga activo
   INSERT INTO fe_puntos_expedicion (empresa_id, sucursal_id, codigo, nombre, ultimo_numero, activo) VALUES (v_a, v_s2, '001', 'Legado S2', 500, false) RETURNING id INTO v_leg;
   PERFORM pg_temp.falla(format('SELECT fe_punto_activar(%L, %L, %L, 500, true)', v_a, v_ua, v_leg), 'P0001', 'identidad (activación): el duplicado legado no se activa mientras el otro punto con la misma identidad siga activo');
   PERFORM pg_temp.falla(format('UPDATE fe_puntos_expedicion SET activo = true WHERE id = %L', v_leg), 'P0001', 'identidad (trigger): ni siquiera escribiendo directamente se pueden activar dos puntos con la misma identidad');
   PERFORM pg_temp.falla(format($f$INSERT INTO fe_puntos_expedicion (empresa_id, sucursal_id, codigo, nombre, ultimo_numero, activo) VALUES (%L, %L, '001', 'Directo S4', 0, true)$f$, v_a, v_s4), 'P0001', 'identidad (trigger): un alta directa ACTIVA con la identidad en uso se rechaza');
-  PERFORM pg_temp.ok((SELECT NOT activo AND ultimo_numero = 500 FROM fe_puntos_expedicion WHERE id = v_leg) AND (SELECT activo AND ultimo_numero = 126 FROM fe_puntos_expedicion WHERE id = v_p), 'identidad: los rechazos no cambiaron el estado ni la numeración de ningún punto');
+  PERFORM pg_temp.ok((SELECT NOT activo AND ultimo_numero = 500 FROM pt WHERE id = v_leg) AND (SELECT activo AND ultimo_numero = 126 FROM pt WHERE id = v_p), 'identidad: los rechazos no cambiaron el estado ni la numeración de ningún punto');
   PERFORM pg_temp.ok(true, 'identidad: la emisión de un punto sigue funcionando (UPDATE de ultimo_numero no dispara el trigger de identidad)');
   PERFORM fe_punto_desactivar(v_a, v_ua, v_p);
   PERFORM fe_punto_activar(v_a, v_ua, v_leg, 500, true);
-  PERFORM pg_temp.ok((SELECT activo AND ultimo_numero = 500 FROM fe_puntos_expedicion WHERE id = v_leg), 'identidad: tras desactivar el otro, el legado se activa confirmando su número (500 ≥ 126 ya emitido)');
+  PERFORM pg_temp.ok((SELECT activo AND ultimo_numero = 500 FROM pt WHERE id = v_leg), 'identidad: tras desactivar el otro, el legado se activa confirmando su número (500 ≥ 126 ya emitido)');
   SELECT * INTO r FROM fe_documento_crear_fe(v_a, v_ua, v_s2, v_leg, 'clave-t19-0005', NULL, '1234567-1', 'Receptor T19', 'PYG', 1000, v_payload);
   PERFORM pg_temp.ok(r.o_numero = '0000501', 'identidad: la emisión del punto activado (el trigger no la bloquea) continúa desde el número confirmado: 0000501');
   PERFORM pg_temp.falla(format('SELECT fe_punto_activar(%L, %L, %L, 126, true)', v_a, v_ua, v_p), 'P0001', 'identidad: el punto desactivado no se reactiva mientras el legado ocupa la identidad');
-  PERFORM pg_temp.ok((SELECT NOT activo AND ultimo_numero = 126 FROM fe_puntos_expedicion WHERE id = v_p) AND NOT EXISTS (SELECT 1 FROM documentos_electronicos WHERE empresa_id = v_a AND establecimiento = '019' AND punto_expedicion = '001' GROUP BY numero HAVING count(*) > 1), 'identidad: sin números duplicados en los documentos del establecimiento 019');
+  PERFORM pg_temp.ok((SELECT NOT activo AND ultimo_numero = 126 FROM pt WHERE id = v_p) AND NOT EXISTS (SELECT 1 FROM documentos_electronicos WHERE empresa_id = v_a AND establecimiento = '019' AND punto_expedicion = '001' GROUP BY numero HAVING count(*) > 1), 'identidad: sin números duplicados en los documentos del establecimiento 019');
 
   -- NEX-058 (AUD-PRO129-R02-01): el establecimiento SIFEN de una sucursal con puntos (activos o inactivos) o con documentos NO se puede cambiar; las sucursales sin ellos conservan su comportamiento
   INSERT INTO sucursales (empresa_id, codigo, nombre, establecimiento_sifen) VALUES (v_a, 'S5-T19', 'Sucursal 5 T19', '030') RETURNING id INTO v_s5;
@@ -129,7 +134,7 @@ BEGIN
   PERFORM fe_punto_activar(v_a, v_ua, v_p5, 100, true);
   v_p6 := fe_punto_crear(v_a, v_ua, v_s6, '001', 'Caja S6', 100, true);
   PERFORM fe_punto_activar(v_a, v_ua, v_p6, 100, true);
-  PERFORM pg_temp.ok((SELECT count(*) = 2 AND bool_and(activo AND ultimo_numero = 100) FROM fe_puntos_expedicion WHERE id IN (v_p5, v_p6)), 'establecimiento: dos sucursales con establecimientos distintos (030 y 031) tienen cada una su punto 001 activo (identidades 030-001 y 031-001)');
+  PERFORM pg_temp.ok((SELECT count(*) = 2 AND bool_and(activo AND ultimo_numero = 100) FROM pt WHERE id IN (v_p5, v_p6)), 'establecimiento: dos sucursales con establecimientos distintos (030 y 031) tienen cada una su punto 001 activo (identidades 030-001 y 031-001)');
   PERFORM pg_temp.falla(format('UPDATE sucursales SET establecimiento_sifen = %L WHERE id = %L', '030', v_s6), 'P0001', 'establecimiento: convertir 031 en 030 (colisión entre sucursales con puntos ACTIVOS) se rechaza');
   BEGIN
     UPDATE sucursales SET establecimiento_sifen = '030' WHERE id = v_s6;
@@ -143,7 +148,7 @@ BEGIN
   PERFORM pg_temp.falla(format('UPDATE sucursales SET establecimiento_sifen = %L WHERE id = %L', '030', v_s6), 'P0001', 'establecimiento: con el punto INACTIVO la colisión se rechaza igual (el punto sigue vinculado)');
   PERFORM pg_temp.falla(format('UPDATE sucursales SET establecimiento_sifen = NULL WHERE id = %L', v_s6), 'P0001', 'establecimiento: NULL con puntos inactivos se rechaza');
   PERFORM pg_temp.ok((SELECT establecimiento_sifen = '030' FROM sucursales WHERE id = v_s5) AND (SELECT establecimiento_sifen = '031' FROM sucursales WHERE id = v_s6), 'establecimiento: los rechazos no cambiaron ningún valor');
-  PERFORM pg_temp.ok((SELECT ultimo_numero = 100 AND NOT activo FROM fe_puntos_expedicion WHERE id = v_p6) AND (SELECT ultimo_numero = 100 AND activo FROM fe_puntos_expedicion WHERE id = v_p5), 'establecimiento: ni la numeración ni el estado de los puntos cambiaron');
+  PERFORM pg_temp.ok((SELECT ultimo_numero = 100 AND NOT activo FROM pt WHERE id = v_p6) AND (SELECT ultimo_numero = 100 AND activo FROM pt WHERE id = v_p5), 'establecimiento: ni la numeración ni el estado de los puntos cambiaron');
   UPDATE sucursales SET establecimiento_sifen = '030', nombre = 'Sucursal 5 T19 renombrada' WHERE id = v_s5;
   PERFORM pg_temp.ok((SELECT nombre = 'Sucursal 5 T19 renombrada' AND establecimiento_sifen = '030' FROM sucursales WHERE id = v_s5), 'establecimiento: reasignar el MISMO valor (y cambiar otros datos como el nombre) sigue permitido');
   SELECT * INTO r FROM fe_documento_crear_fe(v_a, v_ua, v_s5, v_p5, 'clave-t19-0006', NULL, '1234567-1', 'Receptor T19', 'PYG', 1000, v_payload);

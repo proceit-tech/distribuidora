@@ -64,7 +64,7 @@ P2="$(Q "insert into fe_puntos_expedicion (empresa_id,sucursal_id,codigo,nombre,
 carrera 2 70570002 "select fe_punto_activar('$E','$U','$P1',0,true)" "select fe_punto_activar('$E','$U','$P2',0,true)"
 chk "$(Q "select count(*) from fe_puntos_expedicion where empresa_id='$E' and codigo='002' and activo")" "1" "activaciones concurrentes: queda UN solo punto activo con la identidad (019, 002)"
 chk "$(Q "select activo from fe_puntos_expedicion where id='$P1'")" "t" "activaciones concurrentes: quedó activo el que confirmó primero"
-chk "$(Q "select ultimo_numero from fe_puntos_expedicion where id='$P2'")" "0" "activaciones concurrentes: el rechazado conserva su numeración"
+chk "$(Q "select coalesce(s.ultimo_numero, p.ultimo_numero) from fe_puntos_expedicion p left join fe_punto_secuencias s on s.empresa_id=p.empresa_id and s.punto_id=p.id and s.tipo_documento='FE' where p.id='$P2'")" "0" "activaciones concurrentes: el rechazado conserva su numeración"
 
 # 3) AUD-PRO129-R03-01, orden A — el ALTA llega primero: crea un punto en la sucursal S4 (establecimiento 200) y retiene la transacción; el UPDATE del establecimiento de S4 (a 100, ya usado por
 #    el punto de S3) queda BLOQUEADO por el FOR SHARE de la fila y, al confirmar el alta, es RECHAZADO por NEX-058 (la sucursal ya tiene un punto).
@@ -76,14 +76,14 @@ Q "select fe_punto_activar('$E','$U','$P3',10,true)" >/dev/null
 carrera 3 70570003 "select fe_punto_crear('$E','$U','$S4','001','Caja S4',7,true)" "update sucursales set establecimiento_sifen='100' where id='$S4'" "ESTABLECIMIENTO_CON_PUNTOS"
 chk "$(Q "select establecimiento_sifen from sucursales where id='$S4'")" "200" "orden A: el establecimiento de S4 NO cambió (la sucursal ya tenía el punto recién creado)"
 chk "$(Q "select count(*) from fe_puntos_expedicion where sucursal_id='$S4'")" "1" "orden A: el punto de S4 quedó creado con su identidad (200, 001)"
-chk "$(Q "select ultimo_numero||'/'||activo from fe_puntos_expedicion where sucursal_id='$S4'")" "7/false" "orden A: el punto creado conserva el número informado (7) e inactivo"
+chk "$(Q "select coalesce(s.ultimo_numero, p.ultimo_numero)||'/'||p.activo from fe_puntos_expedicion p left join fe_punto_secuencias s on s.empresa_id=p.empresa_id and s.punto_id=p.id and s.tipo_documento='FE' where p.sucursal_id='$S4'")" "7/false" "orden A: el punto creado conserva el número informado (7) e inactivo"
 
 # 4) Orden B — el UPDATE llega primero: cambia el establecimiento de S5 (a 100, sin puntos aún) y retiene la transacción; el ALTA en S5 (código 001) queda BLOQUEADA esperando la fila, lee el
 #    establecimiento DEFINITIVO (100) al confirmar el UPDATE y es RECHAZADA porque 100-001 ya lo usa el punto de S3: no queda ningún punto huérfano.
 carrera 4 70570004 "update sucursales set establecimiento_sifen='100' where id='$S5'" "select fe_punto_crear('$E','$U','$S5','001','Caja S5',9,true)" "IDENTIDAD_FISCAL_DUPLICADA"
 chk "$(Q "select establecimiento_sifen from sucursales where id='$S5'")" "100" "orden B: el cambio de establecimiento de S5 (sin puntos) se confirmó"
 chk "$(Q "select count(*) from fe_puntos_expedicion where sucursal_id='$S5'")" "0" "orden B: NO quedó ningún punto huérfano en S5 con la identidad ya ocupada"
-chk "$(Q "select ultimo_numero||'/'||activo from fe_puntos_expedicion where id='$P3'")" "10/true" "órdenes A y B: la numeración y el estado del punto existente de S3 no cambiaron"
+chk "$(Q "select coalesce(s.ultimo_numero, p.ultimo_numero)||'/'||p.activo from fe_puntos_expedicion p left join fe_punto_secuencias s on s.empresa_id=p.empresa_id and s.punto_id=p.id and s.tipo_documento='FE' where p.id='$P3'")" "10/true" "órdenes A y B: la numeración y el estado del punto existente de S3 no cambiaron"
 chk "$(Q "select count(*) from documentos_electronicos where empresa_id='$E'")" "0" "órdenes A y B: no se creó ni modificó ningún documento"
 
 echo "------------------------------------------------------------"

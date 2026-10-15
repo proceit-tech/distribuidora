@@ -66,7 +66,7 @@ paso "S2 semilla S-002 (empresa-modelo) y re-ejecución"; psql -X -q -v ON_ERROR
 paso "S3 semilla S-003 (prospecto) sin hash => aborta"; psql -X -q -v codigo_demo=demo-sinhash -f "$AQUI/seeds/S-003-empresa-prospecto.sql" >"$LOG/s3" 2>&1; grep -q "FALTA" "$LOG/s3" && ! psql -X -Atc "select 1 from empresas where codigo='demo-sinhash'" | grep -q 1 && echo "OK" || { echo "FALLA"; FALLAS=$((FALLAS+1)); }
 
 cd "$AQUI/pruebas"
-for t in T01 T02 T03 T04 T05 T06 T07 T09 T10 T12 T13 T14 T15 T16 T18 T19; do
+for t in T01 T02 T03 T04 T05 T06 T07 T09 T10 T12 T13 T14 T15 T16 T18 T19 T21; do
   f=$(ls ${t}-*.sql); paso "$t ${f#${t}-}"; psql -X -q -v ON_ERROR_STOP=1 -f "$f" >"$LOG/$t" 2>&1; rc=$?; fin $rc "$LOG/$t"
 done
 # T06b: conexión REAL como nexit_runtime (no SET ROLE): no es superusuario, no puede elevarse ni crear objetos
@@ -90,6 +90,9 @@ paso "T17 NEX-054 carrera real entre dos sesiones (estado SIFEN final)"
 # T20: NEX-057 con DOS sesiones reales (alta y activación concurrentes de la misma identidad fiscal en dos sucursales; la segunda queda bloqueada por el lock de identidad y es rechazada)
 paso "T20 NEX-057 carrera real: identidad fiscal de puntos de expedición"
 "$AQUI/pruebas/T20-concurrencia-puntos.sh" >"$LOG/T20" 2>&1; fin $? "$LOG/T20"
+# T22: NEX-060 con sesiones reales (dos FE del mismo punto se serializan por la secuencia FE; la secuencia NCE del mismo punto no espera: tipos independientes)
+paso "T22 NEX-060 carrera real: secuencias por tipo de documento"
+"$AQUI/pruebas/T22-concurrencia-secuencias.sh" >"$LOG/T22" 2>&1; fin $? "$LOG/T22"
 # I1/V1: instalación de una empresa REAL con los scripts de producción (sin contraseña en argumentos ni logs) y validación de la estructura instalada
 PWADM="Adm-$(head -c 24 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 20)"     # contraseña del administrador de prueba (solo en memoria)
 if python3 -c 'import bcrypt' 2>/dev/null; then GENERADOR="real (python3 bcrypt)"; unset NEX_PRUEBAS_GENERADOR_HASH

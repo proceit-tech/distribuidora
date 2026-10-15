@@ -130,8 +130,8 @@ BEGIN
   PERFORM pg_temp.falla(format('UPDATE documentos_electronicos SET total = 1 WHERE id = %L', d), 'P0001', 'NEX-055: la inmutabilidad de importes sigue vigente con el nuevo trigger');
 
   INSERT INTO fe_puntos_expedicion (empresa_id, sucursal_id, codigo, nombre, actualizado_at) VALUES (v_a, v_s1, '991', 'Punto T16', '2000-01-01');
-  UPDATE fe_puntos_expedicion SET nombre = 'Punto T16 renombrado', ultimo_numero = 5 WHERE empresa_id = v_a AND codigo = '991';
-  PERFORM pg_temp.ok((SELECT actualizado_at > '2020-01-01' AND ultimo_numero = 5 FROM fe_puntos_expedicion WHERE empresa_id = v_a AND codigo = '991'), 'NEX-055: fe_puntos_expedicion.actualizado_at se actualiza');
-  PERFORM pg_temp.falla(format('UPDATE fe_puntos_expedicion SET ultimo_numero = 4 WHERE empresa_id = %L AND codigo = %L', v_a, '991'), 'P0001', 'NEX-055: la numeración sigue sin poder retroceder con el nuevo trigger');
+  UPDATE fe_puntos_expedicion SET nombre = 'Punto T16 renombrado' WHERE empresa_id = v_a AND codigo = '991';
+  PERFORM pg_temp.ok((SELECT actualizado_at > '2020-01-01' AND nombre = 'Punto T16 renombrado' FROM fe_puntos_expedicion WHERE empresa_id = v_a AND codigo = '991'), 'NEX-055: fe_puntos_expedicion.actualizado_at se actualiza');
+  PERFORM pg_temp.falla(format('UPDATE fe_puntos_expedicion SET ultimo_numero = 4 WHERE empresa_id = %L AND codigo = %L', v_a, '991'), 'P0001', 'NEX-055/060: el contador legado ni retrocede ni se reescribe (congelado por NEX-060; la numeración vive en fe_punto_secuencias)');
   RAISE NOTICE 'PASS: T16 completa';
 END $t$;

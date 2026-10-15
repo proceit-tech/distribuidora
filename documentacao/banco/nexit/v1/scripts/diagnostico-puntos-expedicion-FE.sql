@@ -19,6 +19,15 @@ SELECT e.codigo AS empresa, s.codigo AS sucursal, s.establecimiento_sifen AS est
   JOIN public.empresas e ON e.id = p.empresa_id
  ORDER BY e.codigo, s.codigo, p.codigo;
 
+-- 2b) SOLO con NEX-060 aplicada: secuencias por tipo de documento (FE, NCE, NDE, NRE, AFE) de cada punto. Desde NEX-060 el contador de la consulta 2 está CONGELADO; la numeración real es esta.
+-- (Sin NEX-060 esta consulta falla porque fe_punto_secuencias no existe: ignórela.)
+SELECT e.codigo AS empresa, s.establecimiento_sifen AS establecimiento, p.codigo AS punto, q.tipo_documento AS tipo, q.ultimo_numero, lpad((q.ultimo_numero + 1)::text, 7, '0') AS proximo_numero, q.origen
+  FROM public.fe_punto_secuencias q
+  JOIN public.fe_puntos_expedicion p ON p.empresa_id = q.empresa_id AND p.id = q.punto_id
+  JOIN public.sucursales s ON s.empresa_id = p.empresa_id AND s.id = p.sucursal_id
+  JOIN public.empresas e ON e.id = p.empresa_id
+ ORDER BY e.codigo, s.establecimiento_sifen, p.codigo, q.tipo_documento;
+
 -- 3) Sucursales activas con establecimiento pero SIN ningún punto activo (el formulario mostrará «sin puntos de expedición»)
 SELECT e.codigo AS empresa, s.codigo AS sucursal, s.establecimiento_sifen AS establecimiento
   FROM public.sucursales s JOIN public.empresas e ON e.id = s.empresa_id

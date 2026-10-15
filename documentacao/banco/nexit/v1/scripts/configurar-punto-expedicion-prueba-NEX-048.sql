@@ -9,6 +9,7 @@ SELECT set_config('nexit.empresa', :'empresa', true), set_config('nexit.sucursal
 DO $$
 DECLARE
   v_suc record;
+  v_punto uuid;
 BEGIN
   SELECT s.id, s.empresa_id, s.establecimiento_sifen INTO v_suc
     FROM public.sucursales s JOIN public.empresas e ON e.id = s.empresa_id
@@ -23,5 +24,10 @@ BEGIN
     RAISE EXCEPTION 'el punto de expedición 002 ya existe: no se reinicia la numeración';
   END IF;
   INSERT INTO public.fe_puntos_expedicion (empresa_id, sucursal_id, codigo, nombre, ultimo_numero)
-  VALUES (v_suc.empresa_id, v_suc.id, '002', 'Punto 002 (prueba)', 49999);
+  VALUES (v_suc.empresa_id, v_suc.id, '002', 'Punto 002 (prueba)', 49999) RETURNING id INTO v_punto;
+  -- NEX-060 (si está aplicada): la numeración vive en la secuencia FE del punto; el contador anterior queda congelado. Sin NEX-060 este paso no existe y se omite.
+  IF to_regclass('public.fe_punto_secuencias') IS NOT NULL THEN
+    INSERT INTO public.fe_punto_secuencias (empresa_id, punto_id, tipo_documento, ultimo_numero, origen)
+    VALUES (v_suc.empresa_id, v_punto, 'FE', 49999, 'CARGA_MANUAL');
+  END IF;
 END $$;

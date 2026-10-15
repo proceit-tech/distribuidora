@@ -265,7 +265,7 @@ export function respuestaErrorFacturacion(error: unknown, accion: string) {
   if (pg.detail && /^NEX:(YA_ENVIADO|ENVIO_INDETERMINADO|ENVIO_EN_CURSO|REENVIO_REQUIERE_CONFIRMACION|TIPO_NO_ENVIABLE|SIN_SOLICITUD|ENVIO_NO_INICIADO)$/.test(pg.detail)) {
     return NextResponse.json({ error: pg.message ?? "El documento no se puede enviar en su estado actual." }, { status: 409 });
   }
-  if (pg.detail && /^NEX:(SUCURSAL_INVALIDA|SIN_ESTABLECIMIENTO|CLIENTE_INVALIDO|PUNTO_INVALIDO|NUMERACION_AGOTADA|PAYLOAD_INVALIDO)$/.test(pg.detail)) {
+  if (pg.detail && /^NEX:(SUCURSAL_INVALIDA|SIN_ESTABLECIMIENTO|CLIENTE_INVALIDO|PUNTO_INVALIDO|SECUENCIA_NO_CONFIGURADA|NUMERACION_AGOTADA|PAYLOAD_INVALIDO)$/.test(pg.detail)) {
     return NextResponse.json({ error: pg.message ?? "La operación no cumple las reglas de facturación." }, { status: 409 });
   }
   if (pg.code === "P0001") return NextResponse.json({ error: pg.message ?? "La operación no cumple las reglas de facturación." }, { status: 400 });
