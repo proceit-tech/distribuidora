@@ -439,6 +439,7 @@ export default function NuevaFacturaPage() {
   const [opciones, setOpciones] = useState<Opciones | null>(null);
   const [puedeEditarPrecio, setPuedeEditarPrecio] = useState(false);
   const [puedeAjustarFiscal, setPuedeAjustarFiscal] = useState(false);
+  const [puedeGestionarPuntos, setPuedeGestionarPuntos] = useState(false);
   const [puedeEditarProductos, setPuedeEditarProductos] = useState(false);
   const [unidadesSifen, setUnidadesSifen] = useState<UnidadSifen[]>([]);
   const [sinEstablecimiento, setSinEstablecimiento] = useState(0);
@@ -476,7 +477,7 @@ export default function NuevaFacturaPage() {
     let activo = true;
 
     fetch("/api/facturas/catalogos", { cache: "no-store" })
-      .then((r) => leer<{ sucursales: Sucursal[]; opciones: Opciones; puedeEditarPrecio?: boolean; puedeAjustarFiscal?: boolean; puedeEditarProductos?: boolean; unidadesSifen?: UnidadSifen[]; cotizaciones?: Record<string, { cambio: string; fecha: string }>; sucursalesSinEstablecimiento?: number }>(r, "No fue posible cargar los datos del formulario."))
+      .then((r) => leer<{ sucursales: Sucursal[]; opciones: Opciones; puedeEditarPrecio?: boolean; puedeAjustarFiscal?: boolean; puedeGestionarPuntos?: boolean; puedeEditarProductos?: boolean; unidadesSifen?: UnidadSifen[]; cotizaciones?: Record<string, { cambio: string; fecha: string }>; sucursalesSinEstablecimiento?: number }>(r, "No fue posible cargar los datos del formulario."))
       .then((j) => {
         if (!activo) return;
 
@@ -487,6 +488,7 @@ export default function NuevaFacturaPage() {
         setOpciones(j.opciones);
         setPuedeEditarPrecio(j.puedeEditarPrecio === true);
         setPuedeAjustarFiscal(j.puedeAjustarFiscal === true);
+        setPuedeGestionarPuntos(j.puedeGestionarPuntos === true);
         setPuedeEditarProductos(j.puedeEditarProductos === true);
         setUnidadesSifen(j.unidadesSifen ?? []);
         setCotizaciones(j.cotizaciones ?? {});
@@ -741,8 +743,8 @@ export default function NuevaFacturaPage() {
                       </select>
                       {sucursal && sucursal.puntos.length === 0 ? (
                         <small className={estilos.fieldError} role="alert">
-                          La sucursal «{sucursal.nombre}» no tiene un punto de expedición activo{(sucursal.puntosInactivos ?? 0) > 0 ? ` (hay ${sucursal.puntosInactivos} inactivo${sucursal.puntosInactivos === 1 ? "" : "s"})` : ""}.
-                          No se puede emitir desde aquí: el punto de expedición y su numeración los configura el administrador fiscal; la factura no crea puntos ni cambia el número.
+                          La sucursal «{sucursal.nombre}» no tiene un punto de expedición activo{(sucursal.puntosInactivos ?? 0) > 0 ? ` (hay ${sucursal.puntosInactivos} inactivo${sucursal.puntosInactivos === 1 ? "" : "s"})` : ""}.{" "}
+                          {puedeGestionarPuntos ? <Link href="/facturacion/puntos">Configurar punto de expedición</Link> : "Solicite al administrador fiscal que lo configure."}
                         </small>
                       ) : null}
                       {sucursal && puntoId && proximoNumero ? <small className={estilos.hint}>Próximo número (referencial): {sucursal.establecimiento}-{proximoNumero}. Se reserva una sola vez al enviar.</small> : null}

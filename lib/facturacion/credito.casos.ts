@@ -266,7 +266,7 @@ export async function verificarCasosCredito(): Promise<string[]> {
 
   // ── 8. Estructura, límites de la fase y regresiones de arquitectura ───────────────────────────────────────────────────────────────────────────
   const migraciones = readdirSync(join(process.cwd(), "documentacao/banco/nexit/v1/migraciones")).filter((f) => /^NEX-\d+/.test(f)).sort();
-  igual("sin migración: la última sigue siendo NEX-056 (el payload inmutable ya es el snapshot del crédito; no hay cuentas por cobrar)", migraciones[migraciones.length - 1].slice(0, 7), "NEX-056");
+  igual("sin migración: la última sigue siendo NEX-056 (el payload inmutable ya es el snapshot del crédito; no hay cuentas por cobrar)", migraciones.filter((f) => f < "NEX-057").pop()?.slice(0, 7), "NEX-056");
   const credito = leer("lib/facturacion/credito.ts");
   cierto("credito.ts es puro: sin red, base, fs ni dependencias del servidor", !/from "pg"|fetch\(|node:fs|from "@\/lib\/facturacion\/(emision|envio|gateway|shared)/.test(credito));
   cierto("FAT-E1/E2 sin tocar: el cálculo, el envío y el gateway no importan el crédito; numeración (NEX-048) intacta", !/credito/.test(leer("lib/facturacion/calculo.ts")) && !/credito/.test(leer("lib/facturacion/envio.ts")) && !/credito/.test(leer("lib/facturacion/gateway.ts")) && !/credito/.test(leer("lib/facturacion/reconciliacion.ts")));

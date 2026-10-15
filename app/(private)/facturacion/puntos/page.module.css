@@ -1,0 +1,136 @@
+.intro {
+  max-width: 880px;
+  margin: 0 0 14px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #3d5252;
+}
+
+.card {
+  margin: 0 0 14px;
+  padding: 14px 16px;
+  border: 1px solid #d5e4e4;
+  border-radius: 10px;
+  background: #ffffff;
+}
+
+.card h2 {
+  margin: 0 0 10px;
+  font-size: 16px;
+}
+
+.card h2 small {
+  margin-left: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #5a7070;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.field > span {
+  font-weight: 600;
+}
+
+.field input,
+.field select {
+  min-height: 38px;
+  padding: 0 10px;
+  border: 1px solid #b7cccc;
+  border-radius: 8px;
+  font-size: 14px;
+  background: #ffffff;
+}
+
+.check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 12px 0 0;
+  font-size: 14px;
+}
+
+.acciones {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.hint {
+  font-size: 13px;
+  color: #5a7070;
+}
+
+.error,
+.errorCampo {
+  color: #a1281f;
+  font-size: 13px;
+}
+
+.error {
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border: 1px solid #e7b7b2;
+  border-radius: 8px;
+  background: #fdf3f2;
+}
+
+.aviso {
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border: 1px solid #b7d9c4;
+  border-radius: 8px;
+  background: #f1faf4;
+  font-size: 13px;
+}
+
+.tabla {
+  overflow-x: auto;
+}
+
+.tabla table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.tabla th,
+.tabla td {
+  padding: 8px 10px;
+  border-bottom: 1px solid #e3eeee;
+  text-align: left;
+  vertical-align: top;
+}
+
+.num {
+  text-align: right !important;
+  font-variant-numeric: tabular-nums;
+}
+
+.activo {
+  color: #1d6b3a;
+  font-weight: 600;
+}
+
+.inactivo {
+  color: #8a5a00;
+  font-weight: 600;
+}
+
+.activacion {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 260px;
+}

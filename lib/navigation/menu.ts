@@ -227,6 +227,13 @@ export const NAVIGATION_GROUPS: ShellNavigationGroup[] = [
         permission: "FACTURACION_ELECTRONICA.CREAR",
       },
       {
+        id: "dispatch-points",
+        label: "Puntos de expedición",
+        href: "/facturacion/puntos",
+        icon: "settings",
+        permission: "FACTURACION_ELECTRONICA.PUNTOS",
+      },
+      {
         id: "credit-notes",
         label: "Notas de crédito",
         href: "/notas-credito",
@@ -353,6 +360,7 @@ const V1_HREFS = new Set([
   "/depositos",
   "/documentos",
   "/facturas",
+  "/facturacion/puntos",
   "/movimientos",
   "/reportes",
   "/reportes/stock-general",

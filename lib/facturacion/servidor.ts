@@ -11,7 +11,7 @@ export type Base =
   | { ok: true; empresaId: string; usuarioId: string; db: typeof import("@/lib/db")["db"]; permisos: { editar: boolean; crear: boolean } }
   | { ok: false; respuesta: NextResponse };
 
-export async function prepararFacturacion(accion: "VER" | "EDITAR" | "CREAR"): Promise<Base> {
+export async function prepararFacturacion(accion: "VER" | "EDITAR" | "CREAR" | "PUNTOS"): Promise<Base> {
   if (!DEMO_MODE && !process.env.DATABASE_URL) {
     return { ok: false, respuesta: NextResponse.json({ error: "Servicio no disponible: base de datos no configurada." }, { status: 503 }) };
   }
