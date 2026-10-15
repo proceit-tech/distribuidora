@@ -96,6 +96,9 @@ paso "T22 NEX-060 carrera real: secuencias por tipo de documento"
 # T23: NEX-060 R01-03 — la conciliación del contador legado espera a una emisión antigua concurrente y copia el valor consolidado
 paso "T23 NEX-060 carrera real: conciliación del legado vs emisión antigua"
 "$AQUI/pruebas/T23-concurrencia-migracion-secuencias.sh" >"$LOG/T23" 2>&1; fin $? "$LOG/T23"
+# T24: NEX-060 R02-01 — la reversión toma sus bloqueos antes de comprobar (copias descartables de la base; una reversión válida es destructiva para el esquema)
+paso "T24 NEX-060 reversión: bloqueos previos, aborto sin pérdida y caso válido"
+"$AQUI/pruebas/T24-reversion-secuencias.sh" >"$LOG/T24" 2>&1; fin $? "$LOG/T24"
 # I1/V1: instalación de una empresa REAL con los scripts de producción (sin contraseña en argumentos ni logs) y validación de la estructura instalada
 PWADM="Adm-$(head -c 24 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 20)"     # contraseña del administrador de prueba (solo en memoria)
 if python3 -c 'import bcrypt' 2>/dev/null; then GENERADOR="real (python3 bcrypt)"; unset NEX_PRUEBAS_GENERADOR_HASH
