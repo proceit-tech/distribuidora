@@ -13,6 +13,46 @@
 
 **Autoridad y proceso:** requisitos/matriz pertenecen al ChatGPT; Claude implementa por fase y hace pruebas dirigidas; el responsable controla las emisiones reales y el único PostgreSQL/VM. La decisión de paridad **no autoriza envíos reales por la IA**, no salta la revisión ChatGPT y no permite cambiar migrations históricas.
 
+## 0-A. DECISIÓN DEL RESPONSABLE MFE-03 — factura principal primero (15/10/2026)
+
+**Decisión más reciente, vinculante:** POSPONER Crédito por Cuotas para fase futura. Prioridad: FACTURA PRINCIPAL con **producto completado antes de emitir, medios de pago, PYG/USD/BRL y Crédito por Plazo**. Esta decisión PREVALECE sobre el orden B1→B2→C→D de las secciones 7 y 10 anteriores; esas secciones conservan el inventario histórico, NO la secuencia vigente.
+
+### Estado real (código HEAD f216700e87e4)
+
+| Capacidad | Ya existe | Brecha o decisión |
+|---|---|---|
+| Contado PYG Efectivo | UI, API, IVA/total, JSON fiscal y NEX-048 | Preservar íntegramente |
+| Crédito Plazo | iCondOpe=2, iCondCred=1, dPlazoCre, previa y entrega en Efectivo | Conservar Plazo de 30/60/90 días y aislar de Cuotas; revisar comportamiento de monto inicial |
+| Crédito Cuotas | Código, editor y JSON ya añadidos; AUD-MFE-B1-R01 detectó 2 fallas ALTAS | **APLAZADO:** ocultar/deshabilitar selector Y bloquear API de creación para Cuotas antes de reservar número, sin borrar código ni impedir consultar documentos ya creados |
+| Medios de pago | FORMAS_PAGO solo Efectivo, un pago en API | Transferencia, cheque, tarjetas crédito/débito, otras modalidades aplicables y mixtos, con grupos condicionales SIFEN y conciliación exacta |
+| Monedas | Solo PYG en UI, API y JSON | USD y BRL, tipo de cambio manual PYG por 1 moneda extranjera, fecha, cálculo y snapshot |
+| Productos incompletos | Fase A: seleccionar con permiso AJUSTE_FISCAL, ajustar unidad SIFEN, afectación/tasa/proporción IVA, descripción fiscal, GTIN; precio con permiso PRECIO | UX de completar datos en la línea antes de emitir; mostrar todos los obligatorios pendientes, no forzar salir a Productos, validar todo al servidor |
+| Guardar en Productos | Solo IVA bajo PRODUCTOS.EDITAR, confirmación y bitácora | Ser transparente: unidad, precio, GTIN y descripción permanecen solo en la factura. No prometer guardar todo; guardar más campos exigiría flujo específico, permisos, auditoría y no alterar unidad base/stock/lista de precio implícitamente |
+| Opcionales avanzados | No todos | dInfItem, GTIN paquete, lotes, anticipos y escenarios especiales quedan después; no transformar opcionales en obligatorios generales |
+
+### Secuencia nueva, una tarea Claude por revisión
+
+| Prioridad | Entrega | Alcance y bloqueo de seguridad |
+|---|---|---|
+| **P0 primero — CORE** | Completar producto dentro de la factura y estabilizar Crédito a Plazo | Editor contextual y resumen de pendientes, permisos, snapshot, mensajes claros, sin crear DE con obligatorios faltantes; mantener Contado. Habilitar SOLO Plazo, deshabilitar Cuotas también en backend y evitar reservar número con POST Cuotas; conservar código para posterior corrección. Entrega inicial en Efectivo y saldo a plazo con conciliación decimal |
+| **P1 — PAGOS / PRO-122** | Formas de pago completas | Efectivo, transferencia, cheque, tarjetas y combinaciones; subcampos fiscales solo cuando corresponda, sumas exactas del Contado y de la entrega del Crédito a Plazo; evitar PAN completo/CVV; conservar baseline |
+| **P2 — MONEDAS / PRO-123** | Moneda de emisión y cambio | PYG, USD y BRL con tipo de cambio manual, valores/totales en moneda original y equivalente PYG, cotización congelada por documento; precio de lista en moneda ajena NO convertirse sin regla explícita; atender riesgos P-02/P-12 sin alterar IVA FAT-E1 por intuición |
+| **P3 — CUOTAS / PRO-121** | Retomar cuotas más adelante | Correcciones AUD-MFE-B1-R01: replay de D0 en D1 no puede bloquearse por vencimiento nuevo; verificar exactitud de Number en dMonCuota y no cambiar valores; comprobación de descripciones E642/E654. Solo al pedirlo expresamente |
+| Posterior | PRO-124/125/126 | Descuentos, complementos opcionales, anticipos y modalidades especiales bajo autorizaciones específicas |
+
+### Criterios dirigidos
+
+- **CORE-01:** agregar producto sin unidad SIFEN, clasificación IVA o precio; marcar exactamente lo pendiente; completar en la misma línea (permisos vigentes), previa válida solo al completar; servidor 422 antes de la secuencia si falta un obligatorio.
+- **CORE-02:** guardar solo en documento no cambia Productos; guardar IVA exige confirmación/permisos y bitácora única; no editar unidad de stock ni lista de precio por detrás; replay no revierte modificaciones de terceros.
+- **CORE-03:** Crédito Plazo 30/60/90 días, entrega 0 o menor que total, forma Efectivo de entrega si aplica; cambiar a Contado limpia datos de crédito; payload idempotente.
+- **CORE-04:** Cuotas no visibles ni aceptadas para nuevas emisiones por POST directo, respuesta dirigida antes de NEX-048, sin romper consulta de documentos históricos.
+- **PAGO-01:** medio único Efectivo idéntico al baseline; transferencia, cheque, tarjeta y combinaciones con datos exigidos por modalidad SIFEN; suma sin residuos y sin reservar número en error.
+- **PAGO-02:** Crédito Plazo con varios medios de entrega: la suma es el anticipo de pago inicial, no el saldo financiado.
+- **MON-01:** PYG no exige cambio; USD/BRL requieren cambio >0 y snapshot de tasa/fecha; total en Gs y moneda original concilian con precisión decimal.
+- **MON-02:** cambiar tasa comercial después de emitir no altera la tasa ni los importes del documento previo; garantizar idempotencia y multiempresa.
+
+**Proceso:** ChatGPT especifica y audita. Claude implementa primero solo P0, test básicos de la funcionalidad y sus invariantes; commit/push y parar. P1/P2 no están simultáneamente autorizadas. No suites completas, build general, CI manual/monitorización, VM/PG operativo ni envíos reales por IA. Fuente funcional sigue Manual SIFEN con paridad nombres/tipos JSON confirmada. NEX-056 sigue sin comprobación de instalación en VM.
+
 ## 1. Fuentes, precedencia y límites verificables
 
 - **MT:** [Manual Técnico DNIT SIFEN v150 oficial](https://www.dnit.gov.py/documents/20123/420592/Manual%2BT%C3%A9cnico%2BVersi%C3%B3n%2B150.pdf/e706f7c7-6d93-21d4-b45b-5d22d07b2d22?t=1687351495907), especialmente D1 D011–D019 (tipo, moneda), D3 D200–224 (receptor), E7 E600–659 (pago/crédito), E8 E700–899 (ítems), EA002–009 (descuentos/anticipos), F001–037 (totales) y reglas de validación asociadas. **NT**: [portal de documentación técnica e-Kuatia](https://ekuatia.set.gov.py/en/web/e-kuatia/documentacion-tecnica), [XSD oficiales](https://ekuatia.set.gov.py/sifen/xsd/). NT 023 afecta precisión de E711; NT 026 cambia obligatoriedad DNCP B2G; comprobar vigencia actual en cada entrega. **NT 021 falta en el ZIP original**: no declararla examinada.
