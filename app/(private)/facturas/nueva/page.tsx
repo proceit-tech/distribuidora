@@ -7,12 +7,15 @@ import ui from "@/components/ui/lista-padrao/lista.module.css";
 import { AJUSTE_VACIO, ajusteParaEnvio, problemasFiscales, valoresEfectivos, type AjusteUI } from "@/lib/facturacion/ajuste-item";
 import { elegirPorEnter, MENSAJE_ENTER } from "@/lib/facturacion/busqueda-rapida";
 import { CREDITO_UI_VACIO, creditoParaEnvio, hoyParaguay, pendientesCredito, type EstadoCreditoUI } from "@/lib/facturacion/credito";
+import { B, parseDec } from "@/lib/facturacion/calculo";
+import { PAGO_UI_VACIO, pagoParaEnvio, pendientesPagos, type PagoUI } from "@/lib/facturacion/pagos";
 import { resumenCalculo, type LineaFE } from "@/lib/facturacion/payload-fe";
 import { formatearFechaPy } from "@/lib/formato/listas";
 import { useProtegerCambios } from "@/lib/ui/proteger-cambios";
 
 import { EditorFiscalItem, type UnidadSifen } from "./ajuste-fiscal-item";
 import { CondicionCredito } from "./condicion-credito";
+import { MediosPago } from "./medios-pago";
 import estilos from "./page.module.css";
 
 type Punto = { id: string; codigo: string; nombre: string; ultimoNumero?: number };
@@ -30,6 +33,7 @@ type Linea = { clave: number; producto: Producto; cantidad: string; precio: stri
 type Resumen = {
   empresa: string; sucursal: string; establecimiento: string; punto: string; numero: string; cliente: { codigo: string; razonSocial: string; documento: string };
   tipoTransaccion: string; presencia: string; condicion: string; formaPago: string; moneda: string;
+  pagos?: Array<{ medio: string; monto: string; detalle: string }>;
   credito?: { tipo: string; plazo: string | null; entrega: string; saldo: string; cuotas: Array<{ numero: number; monto: string; vencimiento: string }> };
   lineas: Array<{ codigo: string; descripcion: string; unidad: string; cantidad: string; precio: string; precioLista: string; precioModificado: boolean; afectacion: number; tasa: number; total: number; ajustes?: string[] }>;
   totales: { exento: number; exonerado: number; gravado5: number; gravado10: number; iva5: number; iva10: number; totalIva: number; total: number };
@@ -451,7 +455,7 @@ export default function NuevaFacturaPage() {
   const [puntoId, setPuntoId] = useState("");
   const [tipoTransaccion, setTipoTransaccion] = useState("1");
   const [presencia, setPresencia] = useState("1");
-  const [formaPago, setFormaPago] = useState("1");
+  const [pagos, setPagos] = useState<PagoUI[]>([PAGO_UI_VACIO]);
   const [condicion, setCondicion] = useState("1");
   const [credito, setCredito] = useState<EstadoCreditoUI>(CREDITO_UI_VACIO);
   const [hoyIso, setHoyIso] = useState("");
@@ -510,6 +514,11 @@ export default function NuevaFacturaPage() {
   const lineasValidas = lineas.every((l) => cantidadValida(l) && precioValido(l));
   const enCredito = condicion === "2";
   const pendientesDeCredito = enCredito ? pendientesCredito(credito, String(calculo.total), hoyIso) : [];
+  // Medios de pago: cubren el total (Contado) o SOLO la entrega inicial (Crédito con entrega); con un único medio no se escribe el monto.
+  const entregaDec = enCredito && credito.entrega.trim() !== "" ? parseDec(credito.entrega.trim(), 4) : null;
+  const hayPagos = !enCredito || (entregaDec !== null && entregaDec > B(0));
+  const objetivoDec = enCredito ? entregaDec : parseDec(String(calculo.total), 8);
+  const pendientesDePagos = hayPagos && objetivoDec !== null && calculo.total > 0 ? pendientesPagos(pagos.map((p) => pagoParaEnvio(p, pagos.length === 1)), objetivoDec, Number(presencia)) : [];
   const faltan = [
     sucursalId === "" ? "sucursal" : "",
     puntoId === "" ? "punto de expedición" : "",
@@ -518,6 +527,7 @@ export default function NuevaFacturaPage() {
     lineas.length > 0 && !lineasValidas ? "corregir cantidades o precios" : "",
     problemas.length > 0 ? "completar los datos fiscales de los ítems marcados" : "",
     pendientesDeCredito.length > 0 ? "corregir las condiciones del crédito" : "",
+    pendientesDePagos.length > 0 ? "corregir los medios de pago" : "",
   ].filter(Boolean);
   const puedeGuardar = !revisando && !enviando && faltan.length === 0 && cliente !== null && cliente.apto && calculo.completo;
   const hayPrecioModificado = lineas.some(precioModificado);
@@ -542,7 +552,7 @@ export default function NuevaFacturaPage() {
   // El precio solo viaja cuando difiere del de lista; el servidor lo contrasta con el catálogo y con el permiso del usuario.
   const cuerpoFactura = () => ({
     claveIdempotencia: clave, sucursalId, puntoId, clienteId: cliente?.id, tipoTransaccion: Number(tipoTransaccion), presencia: Number(presencia),
-    pagos: [{ tipo: Number(formaPago) }], condicion: Number(condicion), ...(enCredito ? { credito: creditoParaEnvio(credito) } : {}), infoAdicional,
+    pagos: hayPagos ? pagos.map((p) => pagoParaEnvio(p, pagos.length === 1)) : [], condicion: Number(condicion), ...(enCredito ? { credito: creditoParaEnvio(credito) } : {}), infoAdicional,
     lineas: lineas.map((l) => {
       const ajuste = ajusteParaEnvio(l.producto, l.ajuste);
 
@@ -620,6 +630,7 @@ export default function NuevaFacturaPage() {
     setInfoAdicional("");
     setCondicion("1");
     setCredito(CREDITO_UI_VACIO);
+    setPagos([PAGO_UI_VACIO]);
     setErrores([]);
     setResultado(null);
     setResumen(null);
@@ -724,22 +735,28 @@ export default function NuevaFacturaPage() {
 
                     <label className={estilos.field}>
                       <span>Condición de la operación</span>
-                      <select aria-label="Condición de la operación" value={condicion} onChange={(e) => { setCondicion(e.target.value); setCredito(CREDITO_UI_VACIO); }}>
+                      <select aria-label="Condición de la operación" value={condicion} onChange={(e) => { setCondicion(e.target.value); setCredito(CREDITO_UI_VACIO); setPagos([PAGO_UI_VACIO]); }}>
                         {Object.entries(opciones?.condiciones ?? { "1": "Contado" }).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                       </select>
                     </label>
 
-                    {!enCredito || credito.entrega.trim() !== "" ? (
-                      <label className={estilos.field}>
-                        <span>{enCredito ? "Forma de pago de la entrega inicial" : "Forma de pago"}</span>
-                        <select value={formaPago} onChange={(e) => setFormaPago(e.target.value)}>
-                          {Object.entries(opciones?.formasPago ?? {}).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-                        </select>
-                      </label>
-                    ) : null}
                   </div>
 
                   {enCredito ? <CondicionCredito estado={credito} total={calculo.total} hoy={hoyIso} pendientes={pendientesDeCredito} alCambiar={(c) => setCredito((x) => ({ ...x, ...c }))} /> : null}
+
+                  {hayPagos ? (
+                    <MediosPago
+                      titulo={enCredito ? "Medios de pago de la entrega inicial" : "Forma de pago"}
+                      objetivo={objetivoDec === null ? 0 : Number(objetivoDec) / 100000000}
+                      presencia={presencia}
+                      formas={opciones?.formasPago ?? {}}
+                      pagos={pagos}
+                      pendientes={pendientesDePagos}
+                      alCambiar={(i, c) => setPagos((ps) => ps.map((x, j) => (j === i ? { ...x, ...c } : x)))}
+                      alAgregar={() => setPagos((ps) => [...ps, { ...PAGO_UI_VACIO, tipo: "5" }])}
+                      alQuitar={(i) => setPagos((ps) => ps.filter((_, j) => j !== i))}
+                    />
+                  ) : null}
 
                   <details className={estilos.avanzado}>
                     <summary>Parámetros fiscales: {textoOpcion(opciones?.tiposTransaccion, tipoTransaccion)} · {textoOpcion(opciones?.presencias, presencia)}</summary>
@@ -948,7 +965,7 @@ export default function NuevaFacturaPage() {
               <dl className={estilos.pagoResumen}>
                 <div><dt>Cliente</dt><dd>{cliente ? cliente.razonSocial : "Sin seleccionar"}</dd></div>
                 <div><dt>Condición</dt><dd>{condicionTexto}</dd></div>
-                {!enCredito || credito.entrega.trim() !== "" ? <div><dt>{enCredito ? "Forma de pago (entrega)" : "Forma de pago"}</dt><dd>{textoOpcion(opciones?.formasPago, formaPago)}</dd></div> : null}
+                {hayPagos ? <div><dt>{enCredito ? "Pago de la entrega" : "Forma de pago"}</dt><dd>{pagos.map((p) => textoOpcion(opciones?.formasPago, p.tipo)).join(" + ")}</dd></div> : null}
                 {enCredito ? <div><dt>Crédito</dt><dd>{credito.tipo === "1" ? `A plazo (${credito.plazoDias || "—"} días)` : `${credito.cuotas.length} cuota${credito.cuotas.length === 1 ? "" : "s"}`}</dd></div> : null}
               </dl>
 
@@ -994,7 +1011,9 @@ export default function NuevaFacturaPage() {
               <div><dt>Cliente</dt><dd>{resumen.cliente.razonSocial} ({resumen.cliente.documento})</dd></div>
               <div><dt>Transacción · presencia</dt><dd>{resumen.tipoTransaccion} · {resumen.presencia}</dd></div>
               <div><dt>Condición de la operación</dt><dd>{resumen.condicion}</dd></div>
-              {resumen.formaPago ? <div><dt>{resumen.credito ? "Forma de pago (entrega inicial)" : "Forma de pago"}</dt><dd>{resumen.formaPago}</dd></div> : null}
+              {resumen.pagos && resumen.pagos.length > 0
+                ? resumen.pagos.map((p, i) => <div key={i}><dt>{resumen.credito ? "Medio de la entrega" : "Pago"} · {p.medio}</dt><dd>Gs. {gs(Number(p.monto))}{p.detalle ? ` · ${p.detalle}` : ""}</dd></div>)
+                : resumen.formaPago ? <div><dt>Forma de pago</dt><dd>{resumen.formaPago}</dd></div> : null}
               {resumen.credito ? (
                 <>
                   <div><dt>Tipo de crédito</dt><dd>{resumen.credito.tipo}{resumen.credito.plazo ? ` · ${resumen.credito.plazo}` : ""}</dd></div>

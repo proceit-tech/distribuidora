@@ -364,10 +364,10 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
     } as never;
   };
 
-  igual("cuerpo: forma inválida (sin clave, ids no UUID, sin ítems, sin pago o con varios) se rechaza antes de tocar la base", [
+  igual("cuerpo: forma inválida (sin clave, ids no UUID, sin ítems, sin pago) se rechaza antes de tocar la base", [
     typeof leerCuerpoFactura({ ...cuerpo(), claveIdempotencia: "corta" }), typeof leerCuerpoFactura({ ...cuerpo(), clienteId: "x" }), typeof leerCuerpoFactura({ ...cuerpo(), lineas: [] }),
-    typeof leerCuerpoFactura({ ...cuerpo(), pagos: [] }), typeof leerCuerpoFactura({ ...cuerpo(), pagos: [{ tipo: 1 }, { tipo: 2 }] }), typeof leerCuerpoFactura(cuerpo()),
-  ], ["string", "string", "string", "string", "string", "object"]);
+    typeof leerCuerpoFactura({ ...cuerpo(), pagos: [] }), typeof leerCuerpoFactura({ ...cuerpo(), pagos: [{ tipo: 1, monto: "5" }, { tipo: 2, monto: "6" }] }), typeof leerCuerpoFactura(cuerpo()),
+  ], ["string", "string", "string", "string", "object", "object"]);
 
   const parseado = leerCuerpoFactura({ ...cuerpo(), lineas: [{ productoId: PRODUCTO, cantidad: "1", precio: "1", afectacion: 3, tasa: 0 }], empresaId: "otra", total: "1" });
 
@@ -616,12 +616,12 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
     (construirPayloadFE(entradaFE({ receptor: { ...receptor, direccion: "", numeroCasa: "" } })) as Record<string, unknown>).dNumCasRec,
   ], [45, 0, 0, null]);
   cierto("AUD-FE-03: no se envían tags de localización no presentes en el JSON funcional (cDepRec/cDisRec/cCiuRec) ni se inventan opcionales", !("cDepRec" in ejemploFE) && !("cDisRec" in ejemploFE) && !("cCiuRec" in ejemploFE));
-  igual("pago: solo Efectivo (iTiPago 1) por el total; cualquier otra forma se rechaza en la validación y en el backend", [
-    (ejemploFE.FormaPago as Array<Record<string, unknown>>), /forma de pago no es válida/.test(errorDe(entradaFE({ pagos: [{ tipo: 2, monto: "11000" }] }))),
-    await rechaza(dbCrear(), cuerpo({ pagos: [{ tipo: 3 }] })),
+  igual("pago: Efectivo (iTiPago 1) por el total con la forma exacta de siempre; una forma fuera del catálogo se rechaza en la validación y en el backend", [
+    (ejemploFE.FormaPago as Array<Record<string, unknown>>), /forma de pago no es válida/.test(errorDe(entradaFE({ pagos: [{ tipo: 77, monto: "11000" }] }))),
+    await rechaza(dbCrear(), cuerpo({ pagos: [{ tipo: 77 }] })),
   ], [[{ iTiPago: 1, dMonTiPag: 107300, cMoneTiPag: "PYG", dTiCamTiPag: null }], true, "422:La forma de pago no es válida."]);
 
-  igual("catálogo del formulario: la lista de formas de pago ofrece únicamente Efectivo", JSON.stringify(FORMAS_PAGO), '{"1":"Efectivo"}');
+  igual("catálogo del formulario (P1): medios habilitados con reglas implementadas; no se ofrecen retención, anticipo, valores, compensación, permuta, donación, promoción ni consumo interno", Object.keys(FORMAS_PAGO).map(Number), [1, 2, 3, 4, 5, 6, 7, 8, 9, 16, 17, 21, 99]);
   cierto("cliente fiscalmente incompleto: la emisión se bloquea con los pendientes de aptitud SIFEN, sin completar valores inventados", /evaluarAptitudCliente/.test(emisionTs) && /datos fiscales pendientes de regularizar/.test(emisionTs));
   // ══ AUD-FE-F02: clasificación segura, control de reenvío, lote/CDC y emisión indeterminada ═══════════════════════════════════════════════════════════
   const regDe = (m: { llamadas: SqlEnvio[] }) => m.llamadas.find((l) => /fe_documento_registrar_envio/.test(l.sql))!.parametros;
@@ -812,7 +812,7 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
 
   // Catálogos SIFEN (MT v150): iTipTra D011 completo; habilitados solo los aplicables; iIndPres 1–6; condición y forma de pago separadas
   igual("catálogo iTipTra (MT v150 D011): los 13 códigos normativos documentados; se habilitan 1–4 (venta de mercadería, servicios, mixto, activo fijo)", [Object.keys(CATALOGO_TIPOS_TRANSACCION).map(Number), Object.keys(TIPOS_TRANSACCION).map(Number), Object.keys(TIPOS_TRANSACCION).every((k) => TIPOS_TRANSACCION[Number(k)] === CATALOGO_TIPOS_TRANSACCION[Number(k)])], [[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13], [1, 2, 3, 4], true]);
-  igual("catálogo iIndPres (MT v150 E011): 1–6 completos; el 9 «Otro» exige texto E012 que el JSON funcional no transporta y no se ofrece. iCondOpe: Contado (1) y Crédito (2, MFE-B1); iTiPago: solo Efectivo (1)", [Object.keys(INDICADORES_PRESENCIA).map(Number), Object.keys(CONDICIONES_OPERACION).map(Number), Object.keys(FORMAS_PAGO).map(Number)], [[1, 2, 3, 4, 5, 6], [1, 2], [1]]);
+  igual("catálogo iIndPres (MT v150 E011): 1–6 completos; el 9 «Otro» exige texto E012 que el JSON funcional no transporta y no se ofrece. iCondOpe: Contado (1) y Crédito (2, MFE-B1); iTiPago: catálogo P1", [Object.keys(INDICADORES_PRESENCIA).map(Number), Object.keys(CONDICIONES_OPERACION).map(Number), Object.keys(FORMAS_PAGO).map(Number)], [[1, 2, 3, 4, 5, 6], [1, 2], [1, 2, 3, 4, 5, 6, 7, 8, 9, 16, 17, 21, 99]]);
   igual("validación: el servidor rechaza un tipo de transacción no habilitado (p. ej. 5 divisas) y la presencia 9", [
     validarEntradaFE({ ...entradaFE(), tipoTransaccion: 5 }).some((m) => /tipo de transacción/.test(m)), validarEntradaFE({ ...entradaFE(), presencia: 9 }).some((m) => /presencia/.test(m)), validarEntradaFE({ ...entradaFE(), tipoTransaccion: 4 }).length,
   ], [true, true, 0]);
@@ -1031,7 +1031,7 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
     valida(lineasRef, "107300").length, valida(lineasRef, "107299.9999").length > 0, valida(lineasRef, "107300.0001").length > 0, valida(lineasRef, "107300.00000001").length > 0,
     valida([linea({ cantidad: "0.25", precio: "100.5", afectacion: 3, tasa: 0 })], "25.13").length > 0,
   ], [0, true, true, true, true]);
-  cierto("R01 el servidor y el payload no ajustan el pago: no existe redondeo de pago ni dRedon distinto de 0; el monto de pago de emision.ts es el total calculado", !/montoPagoDe/.test(leer("lib/facturacion/emision.ts") + leer("lib/facturacion/payload-fe.ts")) && /monto: textoDec\(total\)/.test(leer("lib/facturacion/emision.ts")) && subFE(sinFE()).dRedon === 0);
+  cierto("R01 el servidor y el payload no ajustan el pago: no existe redondeo de pago ni dRedon distinto de 0; el monto de pago de emision.ts es el total calculado", !/montoPagoDe/.test(leer("lib/facturacion/emision.ts") + leer("lib/facturacion/payload-fe.ts")) && /resolverMontos\(cuerpo\.pagos, objetivo\)/.test(leer("lib/facturacion/emision.ts")) && subFE(sinFE()).dRedon === 0);
   cierto("R01 límites: total ≥ 1.000.000.000.000 se rechaza, 999.999.999.999 se emite; total mínimo 0,0001 se emite y 0,00000001 (no representable) se rechaza", valida([linea({ precio: "1000000000000", afectacion: 3, tasa: 0 })], "1000000000000").join("|").includes("máximo") && valida([linea({ precio: "999999999999", afectacion: 3, tasa: 0 })], "999999999999").length === 0 && valida([linea({ cantidad: "0.0001", precio: "1", afectacion: 3, tasa: 0 })], "0.0001").length === 0 && valida([linea({ precio: "0.00000001", afectacion: 3, tasa: 0 })], "0.00000001").length > 0);
   cierto("R01 idempotencia: la misma entrada produce byte a byte el mismo JSON (orden de claves y valores) en llamadas repetidas, para la referencia y para el parcial exacto", JSON.stringify(sinFE({ lineas: lineasRef, pagos: [{ tipo: 1, monto: "107300" }] })) === JSON.stringify(sinFE({ lineas: lineasRef, pagos: [{ tipo: 1, monto: "107300" }] })) && JSON.stringify(sinFE({ lineas: [parcialExacto], pagos: [{ tipo: 1, monto: "10500" }] })) === JSON.stringify(sinFE({ lineas: [parcialExacto], pagos: [{ tipo: 1, monto: "10500" }] })));
   igual("R01 protección del constructor: construirPayloadFE aplica la validación completa por sí mismo y NO produce JSON con residuo parcial, pago distinto del total, receptor incompleto, precisión no representable ni total de más de 4 decimales; los casos válidos siguen construyéndose", (() => {
@@ -1102,7 +1102,7 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
     linea({ afectacion: null }), linea({ precio: "0" }), linea({ precio: "" }), linea({ unidadSifen: null }), linea({ afectacion: 1, tasa: null }),
   ].map((l) => validarEntradaFE(entradaFE({ lineas: [l] })).length > 0).concat([validarEntradaFE(entradaFE({ lineas: [] })).length > 0]), [true, true, true, true, true, true]);
   cierto("E1 la construcción rechaza una entrada inválida en vez de producir un JSON parcial", (() => { try { construirPayloadFE(entradaFE({ lineas: [linea({ unidadSifen: null })] })); return false; } catch (e) { return e instanceof Error && /no es válida/.test(e.message); } })());
-  cierto("E1 pago: solo Efectivo (iTiPago 1) y con monto igual al total; se rechazan otras formas, pagos sin monto, y no se emite ninguna clave de tipo de cambio ni de tarjeta", [2, 3, 5, 99].every((x) => validarEntradaFE(entradaFE({ pagos: [{ tipo: x, monto: "11000" }] })).length > 0) && validarEntradaFE(entradaFE({ pagos: [] })).length > 0 && validarEntradaFE(entradaFE({ pagos: [{ tipo: 1, monto: "0" }] })).length > 0 && validarEntradaFE(entradaFE({ pagos: [{ tipo: 1, monto: "11001" }] })).length > 0 && JSON.stringify((sinFE().FormaPago as unknown[])[0]) === JSON.stringify({ iTiPago: 1, dMonTiPag: 11000, cMoneTiPag: "PYG", dTiCamTiPag: null }));
+  cierto("E1 pago: Efectivo (iTiPago 1) con monto igual al total y forma exacta de cuatro claves; se rechazan formas fuera del catálogo, modalidades sin sus datos, pagos sin monto, y no se emite ninguna clave de tipo de cambio ni de tarjeta", [2, 3, 77, 0].every((x) => validarEntradaFE(entradaFE({ pagos: [{ tipo: x, monto: "11000" }] })).length > 0) && validarEntradaFE(entradaFE({ pagos: [] })).length > 0 && validarEntradaFE(entradaFE({ pagos: [{ tipo: 1, monto: "0" }] })).length > 0 && validarEntradaFE(entradaFE({ pagos: [{ tipo: 1, monto: "11001" }] })).length > 0 && JSON.stringify((sinFE().FormaPago as unknown[])[0]) === JSON.stringify({ iTiPago: 1, dMonTiPag: 11000, cMoneTiPag: "PYG", dTiCamTiPag: null }));
 
   return fallos;
 }

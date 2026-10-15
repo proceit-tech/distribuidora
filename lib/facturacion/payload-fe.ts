@@ -1,4 +1,5 @@
 import { CONDICION_CONTADO, CONDICION_CREDITO, CREDITO_CUOTAS, CREDITO_PLAZO, erroresCredito, hoyParaguay, plazoTexto, type CreditoEntrada } from "@/lib/facturacion/credito";
+import { erroresMedio, FORMAS_PAGO, numeroChequeFiscal, TIPO_CHEQUE, TIPO_OTRO, TIPO_TARJETA_CREDITO, TIPO_TARJETA_DEBITO, type PagoEntrada } from "@/lib/facturacion/pagos";
 import { B, S, calcularItem, calcularSubtotales, numeroDec, parseDec, textoDec, type AfectacionIva, type Dec, type Subtotales, type TasaIva } from "@/lib/facturacion/calculo";
 
 /**
@@ -26,8 +27,8 @@ export const CONDICIONES_OPERACION = { 1: "Contado", 2: "Crédito" } as Record<n
 export const TIPOS_CREDITO = { 1: "Plazo", 2: "Cuotas" } as Record<number, string>;
 /** iIndPres (MT v150, E011): 1–6 completos; el código 9 «Otro» exige además un texto descriptivo (E012) que el JSON funcional no transporta, por eso no se ofrece. */
 export const INDICADORES_PRESENCIA = { 1: "Operación presencial", 2: "Operación electrónica", 3: "Operación telemarketing", 4: "Venta a domicilio", 5: "Operación bancaria", 6: "Operación cíclica" } as const;
-/** E606 (MT v150): en la primera emisión de prueba SOLO se habilita Efectivo (decisión del responsable); otras formas exigen validar sus condicionales fiscales. */
-export const FORMAS_PAGO = { 1: "Efectivo" } as const;
+/** E606 (MT v150): catálogo de medios habilitados con sus condicionales (MFE-03 P1; ver `pagos.ts`). */
+export { FORMAS_PAGO };
 
 /** NT 024: sin nombre (Innominado) no se admite con total general ≥ Gs. 7.000.000 (D208c). */
 export const LIMITE_INNOMINADO = B(7000000) * S;
@@ -88,7 +89,7 @@ export type EntradaFE = {
   presencia: number;
   condicion: number; // 1 contado / 2 crédito
   /** Contado: los pagos suman el total. Crédito: SOLO la entrega inicial (E605), vacío si no hay entrega. */
-  pagos: Array<{ tipo: number; monto: string }>;
+  pagos: Array<PagoEntrada & { monto: string }>;
   /** Solo con condicion 2 (E640): plazo o cuotas. */
   credito?: CreditoEntrada;
   infoAdicional: string;
@@ -186,11 +187,14 @@ export function validarEntradaFE(e: EntradaFE, hoy: string = hoyParaguay()): str
   if (e.condicion === CONDICION_CREDITO ? e.pagos.length > 999 : e.pagos.length === 0 || e.pagos.length > 999) errores.push("Indique la forma de pago.");
 
   let sumaPagos = B(0);
+  let posicion = 0;
 
   for (const p of e.pagos) {
     const m = parseDec(p.monto, 8);
 
+    posicion += 1;
     if (!(p.tipo in FORMAS_PAGO)) errores.push("Una forma de pago no es válida.");
+    else errores.push(...erroresMedio(p, posicion, e.presencia));
     if (m === null || m <= B(0)) errores.push("Cada pago debe tener un monto mayor que cero.");
     else if (m % PASO_MONTO_PAGO !== B(0)) errores.push("El monto de un pago admite hasta 4 decimales (E608).");
     else if (!exacto(m)) errores.push("El monto de un pago no puede escribirse en el documento electrónico sin perder precisión. Reduzca el monto.");
@@ -200,6 +204,10 @@ export function validarEntradaFE(e: EntradaFE, hoy: string = hoyParaguay()): str
   if (errores.length === 0 && !exacto(sumaPagos)) errores.push("La suma de los pagos no puede escribirse en el documento electrónico sin perder precisión. Reduzca los montos.");
   if (e.condicion === CONDICION_CREDITO && e.credito !== undefined) {
     // La suma de pagos es la ENTREGA INICIAL (E645 = Σ E608): entrega + cuotas (o saldo a plazo) = total, sin contarla dos veces.
+    // Los medios de pago cubren EXACTAMENTE la entrega declarada (E645 = Σ E608), nunca el saldo financiado; sin entrega no hay medios.
+    const declarada = e.credito.entrega === null ? B(0) : parseDec(e.credito.entrega, 4) ?? B(0);
+
+    if (errores.length === 0 && sumaPagos !== declarada) errores.push(e.credito.entrega === null ? "Sin entrega inicial no se informan medios de pago." : `Los medios de pago suman ${textoDec(sumaPagos)} y deben sumar exactamente la entrega inicial (${textoDec(declarada)}).`);
     if (errores.length === 0) errores.push(...erroresCredito(e.credito, sub.dTotGralOpe, sumaPagos, hoy));
   } else if (errores.length === 0 && sumaPagos !== sub.dTotGralOpe) errores.push("La suma de los pagos debe ser igual al total de la factura.");
 
@@ -240,6 +248,24 @@ function condicionPago(e: EntradaFE): Record<string, unknown> {
     dCuotas: c.tipo === CREDITO_CUOTAS ? c.cuotas.length : null,
     dMonEnt: entrega > B(0) ? numeroExacto(entrega) : null,
     Cuotas: c.tipo === CREDITO_CUOTAS ? c.cuotas.map((q) => ({ cMoneCuo: "PYG", dMonCuota: Number(q.monto), dVencCuo: q.vencimiento })) : [],
+  };
+}
+
+/**
+ * Un elemento de FormaPago[] (E605) con los nombres y tipos del MT: iTiPago (N), dDesTiPag solo con «Otro» (E607), dMonTiPag (N, exacto), cMoneTiPag (PYG), dTiCamTiPag nulo; grupos
+ * condicionales gPagTarCD (E620, solo tarjeta) y gPagCheq (E630, solo cheque). Efectivo conserva EXACTAMENTE la forma anterior (cuatro claves).
+ */
+function formaPagoJSON(p: PagoEntrada & { monto: string }): Record<string, unknown> {
+  return {
+    iTiPago: p.tipo,
+    ...(p.tipo === TIPO_OTRO ? { dDesTiPag: p.descripcion } : {}),
+    dMonTiPag: numeroExacto(parseDec(p.monto, 8) ?? B(0)),
+    cMoneTiPag: "PYG",
+    dTiCamTiPag: null,
+    ...((p.tipo === TIPO_TARJETA_CREDITO || p.tipo === TIPO_TARJETA_DEBITO) && p.tarjeta
+      ? { gPagTarCD: { iDenTarj: p.tarjeta.denominacion, ...(p.tarjeta.denominacion === 99 ? { dDesDenTarj: p.tarjeta.descripcion } : {}), iForProPa: p.tarjeta.formaProcesamiento } }
+      : {}),
+    ...(p.tipo === TIPO_CHEQUE && p.cheque ? { gPagCheq: { dNumCheq: numeroChequeFiscal(p.cheque.numero), dBcoEmi: p.cheque.banco } } : {}),
   };
 }
 
@@ -322,7 +348,7 @@ export function construirPayloadFE(e: EntradaFE, hoy?: string): Record<string, u
     dCodCliente: r.codigo.length >= CODIGO_CLIENTE.min && r.codigo.length <= CODIGO_CLIENTE.max ? r.codigo : null,
     iCondOpe: e.condicion,
     ...condicionPago(e),
-    FormaPago: e.pagos.map((p) => ({ iTiPago: p.tipo, dMonTiPag: numeroExacto(parseDec(p.monto, 8) ?? B(0)), cMoneTiPag: "PYG", dTiCamTiPag: null })),
+    FormaPago: e.pagos.map(formaPagoJSON),
     Detalles: detalles,
     Subtotales: [
       {

@@ -5,7 +5,8 @@ import { leerAjuste, type AjusteFiscal } from "@/lib/facturacion/ajuste-item";
 import { permisoAjusteFiscal, permisoEditarProductos, type ClasificacionGuardar } from "@/lib/facturacion/ajuste-fiscal";
 import { B, parseDec, textoDec, type Dec } from "@/lib/facturacion/calculo";
 import { CONDICION_CONTADO, CONDICION_CREDITO, CREDITO_CUOTAS, CREDITO_PLAZO, CUOTAS_HABILITADAS, MENSAJE_CUOTAS_SUSPENDIDAS, leerCredito, plazoTexto, type CreditoEntrada } from "@/lib/facturacion/credito";
-import { construirPayloadFE, CONDICIONES_OPERACION, FORMAS_PAGO, INDICADORES_PRESENCIA, resumenCalculo, TIPOS_TRANSACCION, totalFactura, validarEntradaFE, type EntradaFE, type LineaFE, type ReceptorFE } from "@/lib/facturacion/payload-fe";
+import { DENOMINACIONES_TARJETA, FORMAS_PAGO, FORMAS_PROCESAMIENTO, leerPagos, resolverMontos, type PagoEntrada } from "@/lib/facturacion/pagos";
+import { construirPayloadFE, CONDICIONES_OPERACION, INDICADORES_PRESENCIA, resumenCalculo, TIPOS_TRANSACCION, totalFactura, validarEntradaFE, type EntradaFE, type LineaFE, type ReceptorFE } from "@/lib/facturacion/payload-fe";
 import { ErrorFacturacion, ErrorValidacionFiscal } from "@/lib/facturacion/shared";
 
 /**
@@ -116,7 +117,8 @@ export async function buscarProductosFactura(db: Db, empresaId: string, texto: s
 export type CuerpoFactura = {
   claveIdempotencia: string; sucursalId: string; puntoId: string; clienteId: string; tipoTransaccion: number; presencia: number;
   /** Forma de pago: del total (Contado) o de la ENTREGA INICIAL (Crédito con entrega). */
-  pagos: Array<{ tipo: number }>; condicion?: number; credito?: CreditoEntrada; infoAdicional: string; lineas: Array<{ productoId: string; cantidad: string; precio: string | null; ajuste?: AjusteFiscal }>;
+  /** Medios de pago: del total (Contado) o de la ENTREGA INICIAL (Crédito); ver `pagos.ts`. */
+  pagos: PagoEntrada[]; condicion?: number; credito?: CreditoEntrada; infoAdicional: string; lineas: Array<{ productoId: string; cantidad: string; precio: string | null; ajuste?: AjusteFiscal }>;
 };
 
 const entero = (v: unknown) => (typeof v === "number" && Number.isInteger(v) ? v : typeof v === "string" && /^\d{1,3}$/.test(v) ? Number(v) : NaN);
@@ -124,7 +126,6 @@ const entero = (v: unknown) => (typeof v === "number" && Number.isInteger(v) ? v
 /** Valida la FORMA del cuerpo (los valores fiscales se validan después con las reglas de negocio). */
 export function leerCuerpoFactura(c: Record<string, unknown>): CuerpoFactura | string {
   const lineas = Array.isArray(c.lineas) ? c.lineas : [];
-  const pagos = Array.isArray(c.pagos) ? c.pagos : [];
 
   if (typeof c.claveIdempotencia !== "string" || c.claveIdempotencia.length < 8 || c.claveIdempotencia.length > 120) return "Falta la clave de idempotencia de la operación.";
   if (![c.sucursalId, c.puntoId, c.clienteId].every((v) => typeof v === "string" && UUID.test(v))) return "Seleccione sucursal, punto de expedición y cliente.";
@@ -137,7 +138,10 @@ export function leerCuerpoFactura(c: Record<string, unknown>): CuerpoFactura | s
 
     if (typeof a === "string") return a;
   }
-  if (pagos.length === 0 || pagos.length > 1 || !pagos.every((p) => p && typeof p === "object" && Number.isInteger(entero((p as F).tipo)))) return "Seleccione la forma de pago.";
+
+  const pagos = leerPagos(c.pagos);
+
+  if (typeof pagos === "string") return pagos;
 
   // Condición de la operación (E601): sin el campo, Contado (clientes anteriores a MFE-B1). Nunca se asume Contado ante un valor inválido.
   const condicion = c.condicion === undefined || c.condicion === null ? CONDICION_CONTADO : c.condicion;
@@ -147,6 +151,7 @@ export function leerCuerpoFactura(c: Record<string, unknown>): CuerpoFactura | s
   const credito = leerCredito(condicion, c.credito);
 
   if (typeof credito === "string") return credito;
+  if (condicion === CONDICION_CONTADO && pagos.length === 0) return "Seleccione la forma de pago.";
 
   return {
     claveIdempotencia: c.claveIdempotencia,
@@ -155,7 +160,7 @@ export function leerCuerpoFactura(c: Record<string, unknown>): CuerpoFactura | s
     clienteId: c.clienteId as string,
     tipoTransaccion: entero(c.tipoTransaccion),
     presencia: entero(c.presencia),
-    pagos: pagos.map((p) => ({ tipo: entero((p as F).tipo) })),
+    pagos,
     condicion,
     ...(credito ? { credito } : {}),
     infoAdicional: typeof c.infoAdicional === "string" ? c.infoAdicional.trim() : "",
@@ -229,6 +234,14 @@ const ETIQUETA_TRANSACCION = TIPOS_TRANSACCION as Record<number, string>;
 const ETIQUETA_PRESENCIA = INDICADORES_PRESENCIA as Record<number, string>;
 const ETIQUETA_PAGO = FORMAS_PAGO as Record<number, string>;
 
+/** Dato legible del medio para la previa (nunca el número de tarjeta: no se recolecta). */
+function detallePago(p: PagoEntrada): string {
+  if (p.cheque) return `cheque ${p.cheque.numero} · ${p.cheque.banco}`;
+  if (p.tarjeta) return `${DENOMINACIONES_TARJETA[p.tarjeta.denominacion] === "Otro" ? p.tarjeta.descripcion ?? "Otro" : DENOMINACIONES_TARJETA[p.tarjeta.denominacion] ?? ""} · ${FORMAS_PROCESAMIENTO[p.tarjeta.formaProcesamiento] ?? ""}`;
+
+  return p.descripcion ?? "";
+}
+
 /**
  * Valida y calcula la factura SIN escribir nada ni reservar número: es la base de la previa («Grabar») y de la emisión. Todo sale de los cadastros de la
  * empresa de la sesión y se recalcula en el servidor. Lanza ErrorFacturacion / ErrorValidacionFiscal (422) con los motivos.
@@ -238,7 +251,7 @@ export async function prepararFactura(db: Db, empresaId: string, usuarioId: stri
 
   // Cuotas suspendido (MFE-03): también aquí, por si el cuerpo no pasó por leerCuerpoFactura. Antes de cualquier consulta y, por tanto, antes de reservar numeración (NEX-048).
   if (cuerpo.credito?.tipo === CREDITO_CUOTAS && !CUOTAS_HABILITADAS) throw new ErrorFacturacion(422, MENSAJE_CUOTAS_SUSPENDIDAS);
-  if (!Object.keys(FORMAS_PAGO).map(Number).includes(cuerpo.pagos[0].tipo)) throw new ErrorFacturacion(422, "La forma de pago no es válida.");
+  if (cuerpo.pagos.some((p) => !(p.tipo in FORMAS_PAGO))) throw new ErrorFacturacion(422, "La forma de pago no es válida.");
 
   const [receptor, aptitud, productos, punto] = await Promise.all([
     receptorDe(db, empresaId, cuerpo.clienteId),
@@ -352,9 +365,23 @@ export async function prepararFactura(db: Db, empresaId: string, usuarioId: stri
   const enCredito = condicion === CONDICION_CREDITO;
   const entrega = enCredito ? cuerpo.credito?.entrega ?? null : null;
 
-  if (total === null) throw detalles(422, "La factura no cumple las reglas fiscales.", validarEntradaFE({ ...base, pagos: enCredito ? [] : [{ tipo: cuerpo.pagos[0].tipo, monto: "1" }] }));
+  if (total === null) throw detalles(422, "La factura no cumple las reglas fiscales.", validarEntradaFE({ ...base, pagos: cuerpo.pagos.map((p) => ({ ...p, monto: p.monto ?? "1" })) }));
 
-  const pagosFinal = enCredito ? (entrega !== null ? [{ tipo: cuerpo.pagos[0].tipo, monto: entrega }] : []) : [{ tipo: cuerpo.pagos[0].tipo, monto: textoDec(total) }];
+  // Medios de pago. Contado: suman el total. Crédito: SOLO la entrega inicial (E645), nunca el saldo financiado; sin entrega no hay pagos (un único medio sin datos ni monto, forma
+  // anterior de la pantalla, se ignora). Un único medio sin monto cubre todo el objetivo; con varios, cada uno trae el suyo. La suma EXACTA la concilia validarEntradaFE.
+  const objetivo = enCredito ? (entrega !== null ? parseDec(entrega, 4) : null) : total;
+  const soloTipo = cuerpo.pagos.length === 1 && cuerpo.pagos[0].monto === undefined && !cuerpo.pagos[0].cheque && !cuerpo.pagos[0].tarjeta && !cuerpo.pagos[0].descripcion;
+  let pagosFinal: Array<PagoEntrada & { monto: string }> = [];
+
+  if (enCredito && objetivo === null) {
+    if (cuerpo.pagos.length > 0 && !soloTipo) throw new ErrorFacturacion(422, "Sin entrega inicial no se informan medios de pago: el saldo se financia a plazo.");
+  } else if (objetivo !== null) {
+    const r = resolverMontos(cuerpo.pagos, objetivo);
+
+    if ("errores" in r) throw detalles(422, "La factura no cumple las reglas fiscales.", r.errores);
+    pagosFinal = cuerpo.pagos.map((p, i) => ({ ...p, monto: r.montos[i] }));
+  }
+
   const final: EntradaFE = { ...base, pagos: pagosFinal };
   const errores = validarEntradaFE(final);
 
@@ -374,7 +401,8 @@ export async function prepararFactura(db: Db, empresaId: string, usuarioId: stri
     presencia: ETIQUETA_PRESENCIA[cuerpo.presencia] ?? "",
     condicion: CONDICIONES_OPERACION[condicion] ?? "",
     // Contado: medio del total. Crédito: medio de la entrega inicial (vacío sin entrega).
-    formaPago: !enCredito || entrega !== null ? ETIQUETA_PAGO[cuerpo.pagos[0].tipo] ?? "" : "",
+    formaPago: pagosFinal.map((p) => ETIQUETA_PAGO[p.tipo] ?? "").join(" + "),
+    pagos: pagosFinal.map((p) => ({ medio: ETIQUETA_PAGO[p.tipo] ?? "", monto: p.monto, detalle: detallePago(p) })),
     ...(enCredito && cuerpo.credito ? { credito: resumenCredito(cuerpo.credito, total) } : {}),
     moneda: "PYG",
     lineas: lineas.map((l, i) => ({ codigo: l.codigoInterno, descripcion: l.descripcion, unidad: extras[i].unidadSimbolo, ...(extras[i].campos.length > 0 ? { ajustes: extras[i].campos } : {}), cantidad: l.cantidad, precio: l.precio, precioLista: precios[i].referencia, precioModificado: precios[i].modificado, afectacion: l.afectacion, tasa: l.tasa, total: calculo.items[i] })),

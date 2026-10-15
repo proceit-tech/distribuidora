@@ -53,6 +53,7 @@ Module._resolveFilename = function (request, ...resto) {
   const c1 = cargar("lib/ci/verificador-consultas.casos.js");
   const aj = cargar("lib/facturacion/ajuste-fiscal.casos.js");
   const cre = cargar("lib/facturacion/credito.casos.js");
+  const pag = cargar("lib/facturacion/pagos.casos.js");
   const suites = [
     ["teléfono y día de cobro", async () => tel.verificarCasosTelefonoYCobro(), () => tel.CASOS_TELEFONO.length + 11 + 6 + 2],
     ["catálogo mundial", async () => tel.verificarCatalogoMundial(), null],
@@ -99,6 +100,7 @@ Module._resolveFilename = function (request, ...resto) {
     ["CI · verificador C1 de consultas SQL de la aplicación (lector de plantillas anidadas, resolución exacta, fragmentos, NO VERIFICABLE con motivo, línea base y política de calidad)", async () => c1.verificarCasosVerificadorC1(), null],
     ["Facturación Fase A (PRO-93): ajuste fiscal de ítems en la factura, guardar en Productos con permiso y bitácora, diagnóstico del punto de expedición, NEX-056 y límites de la fase", async () => aj.verificarCasosAjusteFiscal(), null],
     ["Facturación MFE-B1: crédito Plazo/Cuotas, entrega inicial, conciliación exacta, payload con nombres y tipos MT, Contado/Efectivo intacto y sin reserva de número ante errores", async () => cre.verificarCasosCredito(), null],
+    ["Facturación MFE-03 P1: medios de pago (efectivo, transferencia, cheque, tarjeta, otros), múltiples medios, entrega de crédito, suma exacta, errores antes de reservar número", async () => pag.verificarCasosPagos(), null],
   ];
   let total = 0;
   let fallosTotal = 0;
