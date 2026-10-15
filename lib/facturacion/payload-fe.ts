@@ -134,6 +134,13 @@ function prepararLineas(lineas: LineaFE[], errores: string[]) {
 /** Un importe se escribe en el JSON como número de JavaScript: debe ir ida y vuelta sin perder dígitos ni caer en notación exponencial (p. ej. 1e-7). */
 const exacto = (d: Dec): boolean => String(numeroDec(d)) === textoDec(d);
 
+/** Número JSON de un importe que ya debe ser exacto: si no lo fuera, FALLA en vez de cambiar el valor en silencio (defensa en profundidad; la validación lo rechaza antes de reservar numeración). */
+function numeroExacto(d: Dec): number {
+  if (!exacto(d)) throw new Error("Un importe del documento no puede escribirse sin perder precisión.");
+
+  return numeroDec(d);
+}
+
 function importesRepresentables(items: Array<{ cantidad: Dec; precio: Dec; proporcion: Dec }>, resultados: Array<{ totBruto: Dec; totOperacion: Dec; baseGravada: Dec; liquidacion: Dec; baseExenta: Dec }>, sub: Subtotales): boolean {
   const valores: Dec[] = [
     ...items.flatMap((i) => [i.cantidad, i.precio, i.proporcion]),
@@ -186,8 +193,11 @@ export function validarEntradaFE(e: EntradaFE, hoy: string = hoyParaguay()): str
     if (!(p.tipo in FORMAS_PAGO)) errores.push("Una forma de pago no es válida.");
     if (m === null || m <= B(0)) errores.push("Cada pago debe tener un monto mayor que cero.");
     else if (m % PASO_MONTO_PAGO !== B(0)) errores.push("El monto de un pago admite hasta 4 decimales (E608).");
+    else if (!exacto(m)) errores.push("El monto de un pago no puede escribirse en el documento electrónico sin perder precisión. Reduzca el monto.");
     else sumaPagos += m;
   }
+  // Σ de pagos (= E645 en crédito): también debe viajar como número exacto; ni una suma de montos exactos puede cambiar de valor al serializarse.
+  if (errores.length === 0 && !exacto(sumaPagos)) errores.push("La suma de los pagos no puede escribirse en el documento electrónico sin perder precisión. Reduzca los montos.");
   if (e.condicion === CONDICION_CREDITO && e.credito !== undefined) {
     // La suma de pagos es la ENTREGA INICIAL (E645 = Σ E608): entrega + cuotas (o saldo a plazo) = total, sin contarla dos veces.
     if (errores.length === 0) errores.push(...erroresCredito(e.credito, sub.dTotGralOpe, sumaPagos, hoy));
@@ -228,7 +238,7 @@ function condicionPago(e: EntradaFE): Record<string, unknown> {
     iCondCred: c.tipo,
     dPlazoCre: c.tipo === CREDITO_PLAZO && c.plazoDias !== null ? plazoTexto(c.plazoDias) : null,
     dCuotas: c.tipo === CREDITO_CUOTAS ? c.cuotas.length : null,
-    dMonEnt: entrega > B(0) ? numeroDec(entrega) : null,
+    dMonEnt: entrega > B(0) ? numeroExacto(entrega) : null,
     Cuotas: c.tipo === CREDITO_CUOTAS ? c.cuotas.map((q) => ({ cMoneCuo: "PYG", dMonCuota: Number(q.monto), dVencCuo: q.vencimiento })) : [],
   };
 }
@@ -312,7 +322,7 @@ export function construirPayloadFE(e: EntradaFE, hoy?: string): Record<string, u
     dCodCliente: r.codigo.length >= CODIGO_CLIENTE.min && r.codigo.length <= CODIGO_CLIENTE.max ? r.codigo : null,
     iCondOpe: e.condicion,
     ...condicionPago(e),
-    FormaPago: e.pagos.map((p) => ({ iTiPago: p.tipo, dMonTiPag: Number(p.monto), cMoneTiPag: "PYG", dTiCamTiPag: null })),
+    FormaPago: e.pagos.map((p) => ({ iTiPago: p.tipo, dMonTiPag: numeroExacto(parseDec(p.monto, 8) ?? B(0)), cMoneTiPag: "PYG", dTiCamTiPag: null })),
     Detalles: detalles,
     Subtotales: [
       {
