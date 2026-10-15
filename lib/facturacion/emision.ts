@@ -4,7 +4,7 @@ import { evaluarAptitudCliente } from "@/lib/clientes/aptitud-cliente";
 import { leerAjuste, type AjusteFiscal } from "@/lib/facturacion/ajuste-item";
 import { permisoAjusteFiscal, permisoEditarProductos, type ClasificacionGuardar } from "@/lib/facturacion/ajuste-fiscal";
 import { B, parseDec, textoDec, type Dec } from "@/lib/facturacion/calculo";
-import { CONDICION_CONTADO, CONDICION_CREDITO, CREDITO_PLAZO, leerCredito, plazoTexto, type CreditoEntrada } from "@/lib/facturacion/credito";
+import { CONDICION_CONTADO, CONDICION_CREDITO, CREDITO_CUOTAS, CREDITO_PLAZO, CUOTAS_HABILITADAS, MENSAJE_CUOTAS_SUSPENDIDAS, leerCredito, plazoTexto, type CreditoEntrada } from "@/lib/facturacion/credito";
 import { construirPayloadFE, CONDICIONES_OPERACION, FORMAS_PAGO, INDICADORES_PRESENCIA, resumenCalculo, TIPOS_TRANSACCION, totalFactura, validarEntradaFE, type EntradaFE, type LineaFE, type ReceptorFE } from "@/lib/facturacion/payload-fe";
 import { ErrorFacturacion, ErrorValidacionFiscal } from "@/lib/facturacion/shared";
 
@@ -235,6 +235,9 @@ const ETIQUETA_PAGO = FORMAS_PAGO as Record<number, string>;
  */
 export async function prepararFactura(db: Db, empresaId: string, usuarioId: string, cuerpo: CuerpoFactura) {
   const condicion = cuerpo.condicion ?? CONDICION_CONTADO;
+
+  // Cuotas suspendido (MFE-03): también aquí, por si el cuerpo no pasó por leerCuerpoFactura. Antes de cualquier consulta y, por tanto, antes de reservar numeración (NEX-048).
+  if (cuerpo.credito?.tipo === CREDITO_CUOTAS && !CUOTAS_HABILITADAS) throw new ErrorFacturacion(422, MENSAJE_CUOTAS_SUSPENDIDAS);
   if (!Object.keys(FORMAS_PAGO).map(Number).includes(cuerpo.pagos[0].tipo)) throw new ErrorFacturacion(422, "La forma de pago no es válida.");
 
   const [receptor, aptitud, productos, punto] = await Promise.all([

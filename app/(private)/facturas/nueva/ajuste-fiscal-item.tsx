@@ -106,7 +106,7 @@ export function EditorFiscalItem({ producto, precio, ajuste, unidades, puedeEdit
             <input type="radio" name={`guardar-${base}`} checked={!ajuste.guardar} onChange={() => alCambiar({ guardar: false })} /> Solo esta factura (recomendado)
           </label>
           <label>
-            <input type="radio" name={`guardar-${base}`} checked={ajuste.guardar} disabled={!puedeEditarProductos} onChange={() => alCambiar({ guardar: true })} /> Guardar también en Productos
+            <input type="radio" name={`guardar-${base}`} checked={ajuste.guardar} disabled={!puedeEditarProductos} onChange={() => alCambiar({ guardar: true })} /> Guardar también en Productos (solo la clasificación de IVA)
           </label>
           {!puedeEditarProductos ? <small className={estilos.hint}>No tiene permiso para editar Productos: el cambio queda solo en esta factura.</small> : null}
           {ajuste.guardar ? <small className={estilos.hint} role="status">Al enviar la factura se actualizará la clasificación de IVA del producto {producto.codigo} y quedará registrada en una bitácora.</small> : null}

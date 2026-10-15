@@ -1,6 +1,6 @@
 "use client";
 
-import { MAX_CUOTAS, MAX_PLAZO_DIAS, plazoTexto, repartirCuotas, sumarDias, type EstadoCreditoUI } from "@/lib/facturacion/credito";
+import { CUOTAS_HABILITADAS, MAX_CUOTAS, MAX_PLAZO_DIAS, plazoTexto, repartirCuotas, sumarDias, type EstadoCreditoUI } from "@/lib/facturacion/credito";
 
 import estilos from "./page.module.css";
 
@@ -32,7 +32,7 @@ export function CondicionCredito({ estado, total, hoy, pendientes, alCambiar }: 
           <span>Tipo de crédito</span>
           <select value={estado.tipo} onChange={(e) => alCambiar({ tipo: e.target.value as "1" | "2", cuotas: [] })}>
             <option value="1">A plazo</option>
-            <option value="2">En cuotas</option>
+            {CUOTAS_HABILITADAS ? <option value="2">En cuotas</option> : null}
           </select>
         </label>
 
@@ -46,7 +46,10 @@ export function CondicionCredito({ estado, total, hoy, pendientes, alCambiar }: 
           <label className={estilos.field}>
             <span>Plazo (días)</span>
             <input inputMode="numeric" aria-label="Plazo en días" maxLength={String(MAX_PLAZO_DIAS).length} value={estado.plazoDias} onChange={(e) => alCambiar({ plazoDias: e.target.value.replace(/\D/g, "") })} />
-            {/^\d{1,5}$/.test(estado.plazoDias) && Number(estado.plazoDias) > 0 ? <small className={estilos.hint}>Se informará: «{plazoTexto(Number(estado.plazoDias))}». Saldo a plazo: Gs. {gs(saldo)}.</small> : null}
+            <span className={estilos.plazos} role="group" aria-label="Plazos frecuentes">
+              {[30, 60, 90].map((d) => <button key={d} type="button" className={estilos.botonCuotas} aria-pressed={estado.plazoDias === String(d)} onClick={() => alCambiar({ plazoDias: String(d) })}>{d} días</button>)}
+            </span>
+            {/^\d{1,5}$/.test(estado.plazoDias) && Number(estado.plazoDias) > 0 && hoy ? <small className={estilos.hint}>Se informará: «{plazoTexto(Number(estado.plazoDias))}» (vence el {sumarDias(hoy, Number(estado.plazoDias))}). Saldo a plazo: Gs. {gs(saldo)}.</small> : null}
           </label>
         ) : (
           <>

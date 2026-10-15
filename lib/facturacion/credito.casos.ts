@@ -30,18 +30,27 @@ const FUTURO = (n: number) => `2099-0${n}-10`;
 
 type Llamada = { sql: string; parametros: unknown[] };
 
+let productoActual: Record<string, unknown> = producto;
+let permisosActuales: string[] = [];
+
 function baseSimulada() {
   const llamadas: Llamada[] = [];
   const db = {
     async query(sql: string, parametros: unknown[] = []) {
       llamadas.push({ sql, parametros });
-      if (/usuario_tiene_permiso/.test(sql)) return { rows: [{ ok: false }], rowCount: 1 };
+      if (/usuario_tiene_permiso/.test(sql)) {
+        const lit = /'([A-Z_]+)',\s*'([A-Z_]+)'\)/.exec(sql);
+        const codigo = parametros.length >= 4 ? `${String(parametros[2])}.${String(parametros[3])}` : lit ? `${lit[1]}.${lit[2]}` : "";
+
+        return { rows: [{ ok: permisosActuales.includes(codigo) }], rowCount: 1 };
+      }
+      if (/FROM unidades_medida_sifen WHERE codigo = ANY/.test(sql)) return { rows: [{ codigo: 83, representacion: "kg", vigente: true }], rowCount: 1 };
       if (/FROM clientes c\s+LEFT JOIN LATERAL/.test(sql)) return { rows: [filaCliente], rowCount: 1 };
       if (/SELECT c\.id, c\.naturaleza_receptor/.test(sql)) return { rows: [{ ...filaCliente, id: CLIENTE, tipo_persona: "JURIDICA", tipo_documento: "RUC", pais_codigo: "PRY" }], rowCount: 1 };
       if (/FROM direcciones_cliente/.test(sql)) return { rows: [{ cliente_id: CLIENTE, direccion: "Calle 1", numero_casa: "123", departamento_codigo: "1", distrito_codigo: "1", ciudad_codigo: "1", pais_codigo: "PRY" }], rowCount: 1 };
       if (/FROM referencia_geografica_paises/.test(sql)) return { rows: [{ codigo: "PRY" }], rowCount: 1 };
       if (/FROM sucursales sc JOIN empresas e/.test(sql)) return { rows: [{ empresa: "EMPRESA SINTETICA", sucursal: "Casa Central", establecimiento: "001", punto: "002", puntoNombre: "Punto 002" }], rowCount: 1 };
-      if (/FROM productos p/.test(sql)) return { rows: [producto], rowCount: 1 };
+      if (/FROM productos p/.test(sql)) return { rows: [productoActual], rowCount: 1 };
       if (/fe_documento_crear_fe/.test(sql)) return { rows: [{ documentoId: DOC, numero: "0050000", reutilizado: false }], rowCount: 1 };
 
       return { rows: [], rowCount: 0 };
@@ -52,6 +61,8 @@ function baseSimulada() {
 }
 
 const cuerpo = (extra: Record<string, unknown> = {}, cantidad = "3") => ({ claveIdempotencia: "clave-de-prueba-0001", sucursalId: SUC, puntoId: PUNTO, clienteId: CLIENTE, tipoTransaccion: 1, presencia: 1, pagos: [{ tipo: 1 }], infoAdicional: "", lineas: [{ productoId: PRODUCTO, cantidad }], ...extra });
+
+const leerCreditoTodo = (c: number, x: unknown) => leerCredito(c, x, true);
 
 export async function verificarCasosCredito(): Promise<string[]> {
   const fallos: string[] = [];
@@ -75,8 +86,8 @@ export async function verificarCasosCredito(): Promise<string[]> {
   igual("Crédito sin datos → error", typeof leerCredito(2, undefined), "string");
   igual("Plazo válido", leerCredito(2, { tipo: 1, plazoDias: 30 }), { tipo: 1, plazoDias: 30, cuotas: [], entrega: null });
   igual("Plazo con cuotas, sin días, 0, fraccionario o enorme → error", [{ tipo: 1, plazoDias: 30, cuotas: [{ monto: "1", vencimiento: "2099-01-01" }] }, { tipo: 1 }, { tipo: 1, plazoDias: 0 }, { tipo: 1, plazoDias: 1.5 }, { tipo: 1, plazoDias: 10000 }, { tipo: 1, plazoDias: "30" }].map((c) => typeof leerCredito(2, c)), ["string", "string", "string", "string", "string", "string"]);
-  igual("Cuotas válidas", leerCredito(2, { tipo: 2, cuotas: cuotas3 }), { tipo: 2, plazoDias: null, cuotas: cuotas3, entrega: null });
-  igual("Cuotas con plazo, vacías, sin fecha o con campo extra → error", [{ tipo: 2, plazoDias: 30, cuotas: cuotas3 }, { tipo: 2, cuotas: [] }, { tipo: 2 }, { tipo: 2, cuotas: [{ monto: "1" }] }, { tipo: 2, cuotas: [{ monto: "1", vencimiento: "2099-01-01", extra: 1 }] }, { tipo: 3, cuotas: cuotas3 }, { tipo: 2, cuotas: cuotas3, otro: 1 }].map((c) => typeof leerCredito(2, c)), ["string", "string", "string", "string", "string", "string", "string"]);
+  igual("Cuotas válidas", leerCreditoTodo(2, { tipo: 2, cuotas: cuotas3 }), { tipo: 2, plazoDias: null, cuotas: cuotas3, entrega: null });
+  igual("Cuotas con plazo, vacías, sin fecha o con campo extra → error", [{ tipo: 2, plazoDias: 30, cuotas: cuotas3 }, { tipo: 2, cuotas: [] }, { tipo: 2 }, { tipo: 2, cuotas: [{ monto: "1" }] }, { tipo: 2, cuotas: [{ monto: "1", vencimiento: "2099-01-01", extra: 1 }] }, { tipo: 3, cuotas: cuotas3 }, { tipo: 2, cuotas: cuotas3, otro: 1 }].map((c) => typeof leerCreditoTodo(2, c)), ["string", "string", "string", "string", "string", "string", "string"]);
   igual("Entrega: texto válido se conserva; cero equivale a sin entrega; inválida → error", [leerCredito(2, { tipo: 1, plazoDias: 30, entrega: "5000" }), leerCredito(2, { tipo: 1, plazoDias: 30, entrega: "0" }), leerCredito(2, { tipo: 1, plazoDias: 30, entrega: "" }), typeof leerCredito(2, { tipo: 1, plazoDias: 30, entrega: "-5" }), typeof leerCredito(2, { tipo: 1, plazoDias: 30, entrega: "1.23456" })], [{ tipo: 1, plazoDias: 30, cuotas: [], entrega: "5000" }, { tipo: 1, plazoDias: 30, cuotas: [], entrega: null }, { tipo: 1, plazoDias: 30, cuotas: [], entrega: null }, "string", "string"]);
   igual("leerCuerpoFactura: sin condición = Contado (compatibilidad); condición inválida o Contado con crédito → error; Crédito válido se conserva", [
     (leerCuerpoFactura(cuerpo()) as { condicion: number }).condicion,
@@ -116,7 +127,7 @@ export async function verificarCasosCredito(): Promise<string[]> {
   igual("CA-07: entrega + cuotas = total; la entrega se descuenta del saldo", erroresCredito({ ...ok, cuotas: [{ monto: "14000", vencimiento: FUTURO(1) }, { monto: "14000", vencimiento: FUTURO(2) }] }, total, dec("5000"), HOY), []);
   igual("CA-07: cuotas por el total completo con entrega → se cuenta dos veces → error", erroresCredito(ok, total, dec("5000"), HOY).some((m) => /saldo a financiar \(28000\)/.test(m)), true);
   igual("entrega igual o mayor al total → error (es Contado)", [erroresCredito(ok, total, total, HOY).length > 0, erroresCredito(ok, total, dec("40000"), HOY).length > 0], [true, true]);
-  igual("1 cuota (mínimo) y 999 cuotas (máximo) son admisibles; 1000 no", [erroresCredito({ tipo: 2, plazoDias: null, cuotas: [{ monto: "33000", vencimiento: FUTURO(1) }] }, total, B(0), HOY), leerCredito(2, { tipo: 2, cuotas: Array.from({ length: 999 }, (_, i) => ({ monto: "1", vencimiento: sumarDias("2099-01-01", i) })) }) !== undefined && typeof leerCredito(2, { tipo: 2, cuotas: Array.from({ length: 999 }, () => ({ monto: "1", vencimiento: "2099-01-01" })) }) !== "string", typeof leerCredito(2, { tipo: 2, cuotas: Array.from({ length: 1000 }, () => ({ monto: "1", vencimiento: "2099-01-01" })) })], [[], true, "string"]);
+  igual("1 cuota (mínimo) y 999 cuotas (máximo) son admisibles; 1000 no", [erroresCredito({ tipo: 2, plazoDias: null, cuotas: [{ monto: "33000", vencimiento: FUTURO(1) }] }, total, B(0), HOY), leerCreditoTodo(2, { tipo: 2, cuotas: Array.from({ length: 999 }, (_, i) => ({ monto: "1", vencimiento: sumarDias("2099-01-01", i) })) }) !== undefined && typeof leerCreditoTodo(2, { tipo: 2, cuotas: Array.from({ length: 999 }, () => ({ monto: "1", vencimiento: "2099-01-01" })) }) !== "string", typeof leerCreditoTodo(2, { tipo: 2, cuotas: Array.from({ length: 1000 }, () => ({ monto: "1", vencimiento: "2099-01-01" })) })], [[], true, "string"]);
 
   // ── 4. Payload FE: nombres y tipos del MT; Contado idéntico al baseline ───────────────────────────────────────────────────────────────────────
   const pc = payload(entrada());
@@ -152,16 +163,20 @@ export async function verificarCasosCredito(): Promise<string[]> {
   const resP = (rPlazo.r as unknown as { resumen: { condicion: string; formaPago: string; credito: { tipo: string; plazo: string; entrega: string; saldo: string; cuotas: unknown[] } }; entrada: EntradaFE; payload: { iCondOpe: number } }).resumen;
   igual("previa Crédito/Plazo: condición Crédito, plazo «30 días», saldo = total, sin entrega ni forma de pago, sin escrituras", [resP.condicion, resP.credito.tipo, resP.credito.plazo, resP.credito.saldo, resP.credito.entrega, resP.formaPago, rPlazo.b.escrituras().length], ["Crédito", "Plazo", "30 días", "33000", "0", "", 0]);
   const rCuotas = await prep({ condicion: 2, credito: { tipo: 2, cuotas: cuotas3 } });
-  igual("previa Crédito/Cuotas: 3 filas con monto y vencimiento", (rCuotas.r as unknown as { resumen: { credito: { cuotas: unknown[] } } }).resumen.credito.cuotas, [{ numero: 1, monto: "11000", vencimiento: FUTURO(1) }, { numero: 2, monto: "11000", vencimiento: FUTURO(2) }, { numero: 3, monto: "11000", vencimiento: FUTURO(3) }]);
-  const rEntrega = await prep({ condicion: 2, credito: { tipo: 2, cuotas: [{ monto: "14000", vencimiento: FUTURO(1) }, { monto: "14000", vencimiento: FUTURO(2) }], entrega: "5000" } });
+  igual("CORE-04 Cuotas suspendido: la lectura del cuerpo lo rechaza con mensaje dirigido y no toca la base", [typeof rCuotas.r === "string" && /suspendido/.test(rCuotas.r), rCuotas.b.llamadas.length], [true, 0]);
+  const rEntrega = await prep({ condicion: 2, credito: { tipo: 1, plazoDias: 60, entrega: "5000" } });
   const resE = (rEntrega.r as unknown as { resumen: { formaPago: string; credito: { entrega: string; saldo: string } }; payload: { dMonEnt: number; FormaPago: unknown[] } });
   igual("previa Crédito con entrega: entrega 5000, saldo 28000, forma de pago de la entrega, payload coherente", [resE.resumen.credito.entrega, resE.resumen.credito.saldo, resE.resumen.formaPago, resE.payload.dMonEnt, resE.payload.FormaPago.length], ["5000", "28000", "Efectivo", 5000, 1]);
 
   // CA-05: errores no reservan número (no llega a fe_documento_crear_fe) y devuelven 422 con el motivo exacto
-  const malSuma = await creaP({ condicion: 2, credito: { tipo: 2, cuotas: [cuotas3[0], cuotas3[1], { ...cuotas3[2], monto: "10999" }] } });
-  igual("CA-05 total discordante: 422 con motivo y SIN reservar número (ninguna llamada a fe_documento_crear_fe)", [/^422:.*suma de las cuotas/.test(malSuma.e), malSuma.b.creaciones().length], [true, 0]);
-  const malFecha = await creaP({ condicion: 2, credito: { tipo: 2, cuotas: [{ ...cuotas3[0], vencimiento: "2020-01-01" }, cuotas3[1], cuotas3[2]] } });
-  igual("CA-05 fecha vencida: 422 y sin número", [/^422:.*anterior a hoy/.test(malFecha.e), malFecha.b.creaciones().length], [true, 0]);
+  const bloqueo = baseSimulada();
+  const cuerpoCuotas = { ...(leerCuerpoFactura(cuerpo()) as object), condicion: 2, credito: { tipo: 2, plazoDias: null, cuotas: cuotas3, entrega: null } } as never;
+  const malSuma = { e: await resultado(prepararFactura(bloqueo.db, EMPRESA, USUARIO, cuerpoCuotas)), b: bloqueo };
+  const creadoCuotas = baseSimulada();
+  const malFecha = { e: await resultado(crearFacturaElectronica(creadoCuotas.db, EMPRESA, USUARIO, cuerpoCuotas)), b: creadoCuotas };
+  igual("CORE-04 POST directo con Cuotas (sin pasar por la lectura): 422 dirigido, sin una sola consulta y SIN reservar número (ninguna llamada a fe_documento_crear_fe)", [/^422:.*suspendido/.test(malSuma.e), malSuma.b.llamadas.length, /^422:.*suspendido/.test(malFecha.e), malFecha.b.creaciones().length, malFecha.b.llamadas.length], [true, 0, true, 0, 0]);
+
+
   const malEntrega = await creaP({ condicion: 2, credito: { tipo: 1, plazoDias: 30, entrega: "33000" } });
   igual("entrega = total: 422 y sin número", [/^422:.*menor que el total/.test(malEntrega.e), malEntrega.b.creaciones().length], [true, 0]);
   igual("crédito malformado en el cuerpo: se rechaza en la lectura (400) antes de tocar la base", [typeof leerCuerpoFactura(cuerpo({ condicion: 2, credito: { tipo: 2, cuotas: [] } })), typeof leerCuerpoFactura(cuerpo({ condicion: 1, credito: { tipo: 2, cuotas: cuotas3 } }))], ["string", "string"]);
@@ -169,14 +184,44 @@ export async function verificarCasosCredito(): Promise<string[]> {
   // Emisión: el payload inmutable lleva el crédito y el total coincide; la huella distingue contado, plazo y cuotas (idempotencia)
   const eContado = await creaP({});
   const ePlazo = await creaP({ condicion: 2, credito: { tipo: 1, plazoDias: 30 } });
-  const eCuotas = await creaP({ condicion: 2, credito: { tipo: 2, cuotas: cuotas3 } });
-  const eCuotas2 = await creaP({ condicion: 2, credito: { tipo: 2, cuotas: cuotas3 } });
+  const eCuotas = await creaP({ condicion: 2, credito: { tipo: 1, plazoDias: 60 } });
+  const eCuotas2 = await creaP({ condicion: 2, credito: { tipo: 1, plazoDias: 60 } });
   const par = (x: { b: ReturnType<typeof baseSimulada> }) => x.b.creaciones()[0].parametros;
-  igual("emisión: Contado, Plazo y Cuotas crean exactamente un documento cada uno", [eContado.e, ePlazo.e, eCuotas.e, [eContado, ePlazo, eCuotas].map((x) => x.b.creaciones().length)], ["OK", "OK", "OK", [1, 1, 1]]);
-  igual("emisión Cuotas: el payload guardado lleva iCondOpe 2, dCuotas 3, 3 Cuotas, y p_total = dTotGralOpe", (() => { const p = JSON.parse(String(par(eCuotas)[9])) as { iCondOpe: number; dCuotas: number; Cuotas: unknown[]; Subtotales: Array<{ dTotGralOpe: number }> }; return [p.iCondOpe, p.dCuotas, p.Cuotas.length, String(p.Subtotales[0].dTotGralOpe) === String(par(eCuotas)[8])]; })(), [2, 3, 3, true]);
-  igual("idempotencia: misma operación → mismo payload (misma huella); Contado, Plazo y Cuotas → payloads distintos (la misma clave con otro contenido conflictúa en SQL)", [par(eCuotas)[9] === par(eCuotas2)[9], new Set([par(eContado)[9], par(ePlazo)[9], par(eCuotas)[9]]).size], [true, 3]);
+  igual("emisión: Contado, Plazo 30 y Plazo 60 crean exactamente un documento cada uno", [eContado.e, ePlazo.e, eCuotas.e, [eContado, ePlazo, eCuotas].map((x) => x.b.creaciones().length)], ["OK", "OK", "OK", [1, 1, 1]]);
+  igual("emisión Plazo 60: el payload guardado lleva iCondOpe 2, iCondCred 1, «60 días», sin cuotas, y p_total = dTotGralOpe", (() => { const p = JSON.parse(String(par(eCuotas)[9])) as { iCondOpe: number; iCondCred: number; dPlazoCre: string; dCuotas: unknown; Cuotas: unknown[]; Subtotales: Array<{ dTotGralOpe: number }> }; return [p.iCondOpe, p.iCondCred, p.dPlazoCre, p.dCuotas, p.Cuotas.length, String(p.Subtotales[0].dTotGralOpe) === String(par(eCuotas)[8])]; })(), [2, 1, "60 días", null, 0, true]);
+  igual("idempotencia: misma operación → mismo payload (misma huella); Contado, Plazo 30 y Plazo 60 → payloads distintos (la misma clave con otro contenido conflictúa en SQL)", [par(eCuotas)[9] === par(eCuotas2)[9], new Set([par(eContado)[9], par(ePlazo)[9], par(eCuotas)[9]]).size], [true, 3]);
   igual("emisión Contado: payload byte a byte el del baseline (sin dMonEnt, mismo FormaPago)", (() => { const p = JSON.parse(String(par(eContado)[9])) as Record<string, unknown>; return [p.iCondOpe, p.iCondCred, p.dPlazoCre, p.dCuotas, p.Cuotas, "dMonEnt" in p, p.FormaPago]; })(), [1, null, null, null, [], false, [{ iTiPago: 1, dMonTiPag: 33000, cMoneTiPag: "PYG", dTiCamTiPag: null }]]);
   igual("aislamiento y permisos intactos: el crédito no agrega consultas ni permisos nuevos (mismas consultas que Contado)", [eContado, ePlazo, eCuotas].map((x) => x.b.llamadas.map((l) => l.sql.replace(/\s+/g, " ").slice(0, 40)).join("|")).every((s, _, a) => s === a[0]), true);
+
+  // ── 6-bis. P0 (MFE-03): producto incompleto completado en la propia factura; Plazo 30/60/90 ───────────────────────────────────────────────────
+  const incompleto = { ...producto, unidadSifen: null, unidadSimbolo: null, unidadVigente: null, afectacion: null, tasa: null, precio: null, monedaPrecio: null };
+  const conProducto = async <T>(p: Record<string, unknown>, permisos: string[], f: () => Promise<T>): Promise<T> => { const a = [productoActual, permisosActuales] as const; productoActual = p; permisosActuales = permisos; try { return await f(); } finally { productoActual = a[0]; permisosActuales = a[1]; } };
+  const emitir = async (extra: Record<string, unknown>, lineaExtra: Record<string, unknown> = {}) => { const b = baseSimulada(); const c = leerCuerpoFactura(cuerpo({ ...extra, lineas: [{ productoId: PRODUCTO, cantidad: "2", ...lineaExtra }] })); return { b, e: typeof c === "string" ? c : await resultado(crearFacturaElectronica(b.db, EMPRESA, USUARIO, c)) }; };
+  const completo = { ajuste: { unidadSifen: 83, afectacion: 1, tasa: 10, proporcion: null }, precio: "5000" };
+  const sinAjuste = await conProducto(incompleto, [], () => emitir({}));
+  igual("CORE-01 producto incompleto SIN completar: 422 antes de la secuencia (ninguna llamada a fe_documento_crear_fe)", [/^422:/.test(sinAjuste.e), sinAjuste.b.creaciones().length], [true, 0]);
+  const sinPermiso = await conProducto(incompleto, [], () => emitir({}, completo));
+  igual("CORE-01 completar en la factura exige AJUSTE_FISCAL: 403 y sin número", [/^403:.*AJUSTE_FISCAL/.test(sinPermiso.e), sinPermiso.b.creaciones().length], [true, 0]);
+  const sinPrecio = await conProducto(incompleto, ["FACTURACION_ELECTRONICA.AJUSTE_FISCAL"], () => emitir({}, completo));
+  igual("CORE-01 el precio de un producto sin precio de lista exige FACTURACION_ELECTRONICA.PRECIO: 403 y sin número", [/^403:.*precio/.test(sinPrecio.e), sinPrecio.b.creaciones().length], [true, 0]);
+  const parcial = await conProducto(incompleto, ["FACTURACION_ELECTRONICA.AJUSTE_FISCAL", "FACTURACION_ELECTRONICA.PRECIO"], () => emitir({}, { ajuste: { unidadSifen: 83 }, precio: "5000" }));
+  igual("CORE-01 completar solo la unidad (falta IVA): sigue bloqueado, sin número", [/^422:.*IVA/.test(parcial.e), parcial.b.creaciones().length], [true, 0]);
+  const completado = await conProducto(incompleto, ["FACTURACION_ELECTRONICA.AJUSTE_FISCAL", "FACTURACION_ELECTRONICA.PRECIO"], () => emitir({}, completo));
+  igual("CORE-01 completado en la misma línea (unidad, IVA, precio) con los permisos vigentes: se crea el documento y el payload lleva lo completado", [completado.e, completado.b.creaciones().length, (() => { const p = JSON.parse(String(completado.b.creaciones()[0].parametros[9])) as { Detalles: Array<Record<string, unknown>> }; return [p.Detalles[0].cUniMed, p.Detalles[0].iAfecIVA, p.Detalles[0].dTasaIVA, p.Detalles[0].dPUniProSer]; })()], ["OK", 1, [83, 1, 10, 5000]]);
+  igual("CORE-02 «Solo esta factura»: Productos NO se modifica (la única escritura es el documento; ni UPDATE ni bitácora)", completado.b.escrituras().map((l) => (/fe_documento_crear_fe/.test(l.sql) ? "documento" : l.sql.slice(0, 30))), ["documento"]);
+  for (const dias of [30, 60, 90]) {
+    const r = await emitir({ condicion: 2, credito: { tipo: 1, plazoDias: dias } });
+    const p = JSON.parse(String(r.b.creaciones()[0]?.parametros[9] ?? "{}")) as Record<string, unknown>;
+    igual(`CORE-03 Crédito a Plazo de ${dias} días: iCondOpe 2, iCondCred 1, dPlazoCre «${dias} días», sin Cuotas ni pago (sin entrega)`, [r.e, p.iCondOpe, p.iCondCred, p.dPlazoCre, p.dCuotas, p.Cuotas, p.FormaPago], ["OK", 2, 1, `${dias} días`, null, [], []]);
+  }
+  const ent = await emitir({ condicion: 2, credito: { tipo: 1, plazoDias: 30, entrega: "6000" } });
+  const pent = JSON.parse(String(ent.b.creaciones()[0]?.parametros[9] ?? "{}")) as { dMonEnt: number; FormaPago: Array<{ iTiPago: number; dMonTiPag: number }> };
+  igual("CORE-03 Crédito con entrega inicial en Efectivo: dMonEnt = pago inicial < total (22000); el saldo financiado no se paga ahora", [ent.e, pent.dMonEnt, pent.FormaPago.map((x) => [x.iTiPago, x.dMonTiPag])], ["OK", 6000, [[1, 6000]]]);
+  const entTotal = await emitir({ condicion: 2, credito: { tipo: 1, plazoDias: 30, entrega: "22000" } });
+  igual("CORE-03 entrega igual al total: 422 (es Contado) y sin número", [/^422:.*menor que el total/.test(entTotal.e), entTotal.b.creaciones().length], [true, 0]);
+  const aContado = await emitir({ condicion: 1 });
+  const pcon = JSON.parse(String(aContado.b.creaciones()[0]?.parametros[9] ?? "{}")) as Record<string, unknown>;
+  igual("CORE-03 volver a Contado: sin rastro de crédito en el payload (un FormaPago por el total)", [aContado.e, pcon.iCondOpe, pcon.iCondCred, pcon.dPlazoCre, "dMonEnt" in pcon, (pcon.FormaPago as Array<{ dMonTiPag: number }>)[0].dMonTiPag], ["OK", 1, null, null, false, 22000]);
 
   // ── 7. Pantalla (estado y cuerpo) ─────────────────────────────────────────────────────────────────────────────────────────────────────────
   igual("creditoParaEnvio Plazo: solo plazo (+ entrega si hay)", [creditoParaEnvio({ ...CREDITO_UI_VACIO, tipo: "1", plazoDias: "45", entrega: " 5000 " }), creditoParaEnvio({ ...CREDITO_UI_VACIO, tipo: "1", plazoDias: "30" })], [{ tipo: 1, plazoDias: 45, entrega: "5000" }, { tipo: 1, plazoDias: 30 }]);

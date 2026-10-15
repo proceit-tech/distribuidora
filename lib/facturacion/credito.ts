@@ -16,6 +16,12 @@ export const CONDICION_CONTADO = 1;
 export const CONDICION_CREDITO = 2;
 export const CREDITO_PLAZO = 1;
 export const CREDITO_CUOTAS = 2;
+/**
+ * Decisión MFE-03: el crédito en CUOTAS queda SUSPENDIDO para nuevas emisiones (se retoma en una fase posterior, con las correcciones de AUD-MFE-B1-R01). El código se conserva; esta
+ * bandera lo cierra en la pantalla Y en el servidor (lectura del cuerpo y preparación), siempre ANTES de reservar numeración. Los documentos ya creados no se tocan.
+ */
+export const CUOTAS_HABILITADAS = false;
+export const MENSAJE_CUOTAS_SUSPENDIDAS = "El crédito en cuotas está suspendido por el momento: emita la factura a plazo (días) o al contado.";
 /** E644 dCuotas: N 1-3. */
 export const MAX_CUOTAS = 999;
 /** Tope operativo del plazo en días (el texto fiscal «N días» debe caber en 2-15 caracteres). */
@@ -63,14 +69,15 @@ export const plazoTexto = (dias: number): string => (dias === 1 ? "1 día" : `${
  * Lee y valida la FORMA del crédito del cuerpo. `condicion` ya es 1 o 2. undefined = sin crédito; string = error para el operador.
  * Contado + datos de crédito es un error (no se ignoran en silencio); Crédito sin datos también.
  */
-export function leerCredito(condicion: number, crudo: unknown): CreditoEntrada | undefined | string {
+export function leerCredito(condicion: number, crudo: unknown, cuotasHabilitadas: boolean = CUOTAS_HABILITADAS): CreditoEntrada | undefined | string {
   if (condicion === CONDICION_CONTADO) return crudo === undefined || crudo === null ? undefined : "Una factura al contado no lleva datos de crédito: quite el crédito o elija la condición Crédito.";
   if (crudo === undefined || crudo === null || typeof crudo !== "object" || Array.isArray(crudo)) return "Indique las condiciones del crédito (plazo o cuotas).";
 
   const o = crudo as Record<string, unknown>;
 
   if (Object.keys(o).some((k) => !["tipo", "plazoDias", "cuotas", "entrega"].includes(k))) return "Las condiciones del crédito contienen un campo no admitido.";
-  if (o.tipo !== CREDITO_PLAZO && o.tipo !== CREDITO_CUOTAS) return "Seleccione el tipo de crédito: Plazo o Cuotas.";
+  if (o.tipo !== CREDITO_PLAZO && o.tipo !== CREDITO_CUOTAS) return cuotasHabilitadas ? "Seleccione el tipo de crédito: Plazo o Cuotas." : "Seleccione el tipo de crédito: Plazo.";
+  if (o.tipo === CREDITO_CUOTAS && !cuotasHabilitadas) return MENSAJE_CUOTAS_SUSPENDIDAS;
 
   let entrega: string | null = null;
 

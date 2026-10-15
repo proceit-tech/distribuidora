@@ -1057,3 +1057,10 @@
   opacity: 0.55;
   cursor: not-allowed;
 }
+
+.plazos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
