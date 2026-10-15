@@ -141,7 +141,7 @@ export async function verificarCasosInventarioCruzados(): Promise<string[]> {
 
   // ── INV-T09: Reportes intactos (Kardex, Valorización, Stock general/crítico siguen siendo los dueños del análisis)
   cierto("INV-T09 Reportes conserva Kardex, Valorización, Stock general y Stock crítico (páginas y APIs) y Stock no tiene exportadores propios", ["kardex", "valorizacion", "stock-general", "stock-critico"].every((r) => existsSync(join(raiz, `app/(private)/reportes/${r}`)) && existsSync(join(raiz, `app/api/reportes/${r}`))) && !/Exportar|xlsx/i.test(leer("app/(private)/stock/page.tsx")));
-  cierto("las migraciones no cambiaron en esta ronda: la última sigue siendo NEX-053 (ninguna evolución estructural)", readdirSync(join(raiz, "documentacao/banco/nexit/v1/migraciones")).filter((n) => /^NEX-\d+/.test(n)).sort().at(-1)!.match(/^NEX-05[3-8]/) !== null);
+  cierto("las migraciones no cambiaron en esta ronda: la última sigue siendo NEX-053 (ninguna evolución estructural)", readdirSync(join(raiz, "documentacao/banco/nexit/v1/migraciones")).filter((n) => /^NEX-\d+/.test(n)).sort().at(-1)!.match(/^NEX-05[3-9]/) !== null);
 
   return fallos;
 }

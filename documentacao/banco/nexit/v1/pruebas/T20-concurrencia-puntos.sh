@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# T20 — NEX-057 (AUD-PRO129-R01-01): CARRERA REAL entre dos sesiones PostgreSQL que intentan dar de alta / activar puntos con la MISMA identidad fiscal (empresa + establecimiento + código)
+# T20 — NEX-057/058/059 (AUD-PRO129-R01-01 y R03-01): CARRERA REAL entre dos sesiones PostgreSQL que intentan dar de alta / activar puntos con la MISMA identidad fiscal (empresa + establecimiento + código)
 # en dos sucursales distintas. Sincronización determinista (sin sleep como única barrera), igual que T17:
 #   1) un controlador toma un advisory lock K;
 #   2) la sesión S1 abre una transacción, ejecuta la función (queda con el lock de identidad tomado) y espera K antes de confirmar;
@@ -23,9 +23,9 @@ S1="$(Q "select id from sucursales where empresa_id='$E' order by creado_at, id 
 Q "update sucursales set establecimiento_sifen='019' where id='$S1'" >/dev/null
 S2="$(Q "insert into sucursales (empresa_id, codigo, nombre, establecimiento_sifen) values ('$E','S2-T20','Sucursal 2 T20','019') returning id" | head -1)"
 
-# carrera N K  "SQL de S1"  "SQL de S2"
+# carrera N K  "SQL de S1"  "SQL de S2"  [patrón del error esperado en S2]
 carrera() {
-  local n="$1" K="$2" sql1="$3" sql2="$4"
+  local n="$1" K="$2" sql1="$3" sql2="$4" patron="${5:-IDENTIDAD_FISCAL_DUPLICADA}"
   mkfifo "$T/c$n.in"
   psql -X -Atq -v ON_ERROR_STOP=1 <"$T/c$n.in" >"$T/c$n.out" 2>&1 &
   local CP=$!
@@ -50,7 +50,7 @@ SQL
   wait "$P1" "$P2"
   echo '\q' >&9; exec 9>&-; wait "$CP" 2>/dev/null
   [[ ! -s "$T/s1.$n.err" ]] && ok "carrera $n: la sesión que llegó primero confirmó sin errores" || falla "carrera $n: error en S1: $(cat "$T/s1.$n.err")"
-  grep -q "IDENTIDAD_FISCAL_DUPLICADA" "$T/s2.$n.err" && ok "carrera $n: la sesión que esperaba fue RECHAZADA con NEX:IDENTIDAD_FISCAL_DUPLICADA" || falla "carrera $n: S2 no fue rechazada por identidad duplicada: $(cat "$T/s2.$n.err")"
+  grep -q "$patron" "$T/s2.$n.err" && ok "carrera $n: la sesión que esperaba fue RECHAZADA con NEX:$patron" || falla "carrera $n: S2 no fue rechazada con $patron: $(cat "$T/s2.$n.err")"
 }
 
 # 1) Altas concurrentes del mismo establecimiento y código en dos sucursales
@@ -65,6 +65,26 @@ carrera 2 70570002 "select fe_punto_activar('$E','$U','$P1',0,true)" "select fe_
 chk "$(Q "select count(*) from fe_puntos_expedicion where empresa_id='$E' and codigo='002' and activo")" "1" "activaciones concurrentes: queda UN solo punto activo con la identidad (019, 002)"
 chk "$(Q "select activo from fe_puntos_expedicion where id='$P1'")" "t" "activaciones concurrentes: quedó activo el que confirmó primero"
 chk "$(Q "select ultimo_numero from fe_puntos_expedicion where id='$P2'")" "0" "activaciones concurrentes: el rechazado conserva su numeración"
+
+# 3) AUD-PRO129-R03-01, orden A — el ALTA llega primero: crea un punto en la sucursal S4 (establecimiento 200) y retiene la transacción; el UPDATE del establecimiento de S4 (a 100, ya usado por
+#    el punto de S3) queda BLOQUEADO por el FOR SHARE de la fila y, al confirmar el alta, es RECHAZADO por NEX-058 (la sucursal ya tiene un punto).
+S3="$(Q "insert into sucursales (empresa_id, codigo, nombre, establecimiento_sifen) values ('$E','S3-T20','Sucursal 3 T20','100') returning id" | head -1)"
+S4="$(Q "insert into sucursales (empresa_id, codigo, nombre, establecimiento_sifen) values ('$E','S4-T20','Sucursal 4 T20','200') returning id" | head -1)"
+S5="$(Q "insert into sucursales (empresa_id, codigo, nombre, establecimiento_sifen) values ('$E','S5-T20','Sucursal 5 T20','300') returning id" | head -1)"
+P3="$(Q "select fe_punto_crear('$E','$U','$S3','001','Caja S3',10,true)")"
+Q "select fe_punto_activar('$E','$U','$P3',10,true)" >/dev/null
+carrera 3 70570003 "select fe_punto_crear('$E','$U','$S4','001','Caja S4',7,true)" "update sucursales set establecimiento_sifen='100' where id='$S4'" "ESTABLECIMIENTO_CON_PUNTOS"
+chk "$(Q "select establecimiento_sifen from sucursales where id='$S4'")" "200" "orden A: el establecimiento de S4 NO cambió (la sucursal ya tenía el punto recién creado)"
+chk "$(Q "select count(*) from fe_puntos_expedicion where sucursal_id='$S4'")" "1" "orden A: el punto de S4 quedó creado con su identidad (200, 001)"
+chk "$(Q "select ultimo_numero||'/'||activo from fe_puntos_expedicion where sucursal_id='$S4'")" "7/f" "orden A: el punto creado conserva el número informado (7) e inactivo"
+
+# 4) Orden B — el UPDATE llega primero: cambia el establecimiento de S5 (a 100, sin puntos aún) y retiene la transacción; el ALTA en S5 (código 001) queda BLOQUEADA esperando la fila, lee el
+#    establecimiento DEFINITIVO (100) al confirmar el UPDATE y es RECHAZADA porque 100-001 ya lo usa el punto de S3: no queda ningún punto huérfano.
+carrera 4 70570004 "update sucursales set establecimiento_sifen='100' where id='$S5'" "select fe_punto_crear('$E','$U','$S5','001','Caja S5',9,true)" "IDENTIDAD_FISCAL_DUPLICADA"
+chk "$(Q "select establecimiento_sifen from sucursales where id='$S5'")" "100" "orden B: el cambio de establecimiento de S5 (sin puntos) se confirmó"
+chk "$(Q "select count(*) from fe_puntos_expedicion where sucursal_id='$S5'")" "0" "orden B: NO quedó ningún punto huérfano en S5 con la identidad ya ocupada"
+chk "$(Q "select ultimo_numero||'/'||activo from fe_puntos_expedicion where id='$P3'")" "10/t" "órdenes A y B: la numeración y el estado del punto existente de S3 no cambiaron"
+chk "$(Q "select count(*) from documentos_electronicos where empresa_id='$E'")" "0" "órdenes A y B: no se creó ni modificó ningún documento"
 
 echo "------------------------------------------------------------"
 [[ $FALLAS -eq 0 ]] && { echo "T20: todo OK"; exit 0; } || { echo "T20: $FALLAS fallas"; exit 1; }
