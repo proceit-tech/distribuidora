@@ -9,8 +9,8 @@ import estilos from "./page.module.css";
  * de procesamiento; «Otro»: descripción). Nunca se pide el número de la tarjeta ni el código de seguridad. Con un solo medio, el monto es el total (o la entrega inicial en
  * Crédito) y no se escribe. El servidor vuelve a validar todo con el mismo código.
  */
-export function MediosPago({ titulo, objetivo, conciliacion, presencia, formas, pagos, pendientes, alCambiar, alAgregar, alQuitar }: {
-  titulo: string; objetivo: string; conciliacion: { suma: string | null; coincide: boolean }; presencia: string; formas: Record<string, string>; pagos: PagoUI[]; pendientes: string[];
+export function MediosPago({ simbolo, titulo, objetivo, conciliacion, presencia, formas, pagos, pendientes, alCambiar, alAgregar, alQuitar }: {
+  simbolo: string; titulo: string; objetivo: string; conciliacion: { suma: string | null; coincide: boolean }; presencia: string; formas: Record<string, string>; pagos: PagoUI[]; pendientes: string[];
   alCambiar: (i: number, c: Partial<PagoUI>) => void; alAgregar: () => void; alQuitar: (i: number) => void;
 }) {
   const varios = pagos.length > 1;
@@ -33,7 +33,7 @@ export function MediosPago({ titulo, objetivo, conciliacion, presencia, formas, 
 
             {varios ? (
               <label className={estilos.field}>
-                <span>Monto (Gs.)</span>
+                <span>Monto ({simbolo})</span>
                 <input aria-label={`Monto del pago ${i + 1}`} inputMode="decimal" value={p.monto} onChange={(e) => alCambiar(i, { monto: e.target.value.replace(",", ".") })} />
               </label>
             ) : null}
@@ -95,7 +95,7 @@ export function MediosPago({ titulo, objetivo, conciliacion, presencia, formas, 
       {tipoTarjeta(pagos) ? <small className={estilos.hint}>No se solicita el número de la tarjeta ni el código de seguridad.</small> : null}
       <small className={estilos.hint}>
         {/* Aritmética Decimal exacta (la misma del servidor): un monto inválido o una diferencia mínima NUNCA se muestran como «coinciden». */}
-        {varios ? (conciliacion.suma === null ? `Revise los montos: hay valores vacíos o inválidos · A cubrir: Gs. ${objetivo}.` : `Suma de los pagos: Gs. ${conciliacion.suma} · A cubrir: Gs. ${objetivo}${conciliacion.coincide ? " · coinciden" : " · NO coinciden"}.`) : `Cubre todo el monto: Gs. ${objetivo}.`}
+        {varios ? (conciliacion.suma === null ? `Revise los montos: hay valores vacíos o inválidos · A cubrir: ${simbolo} ${objetivo}.` : `Suma de los pagos: ${simbolo} ${conciliacion.suma} · A cubrir: ${simbolo} ${objetivo}${conciliacion.coincide ? " · coinciden" : " · NO coinciden"}.`) : `Cubre todo el monto: ${simbolo} ${objetivo}.`}
       </small>
 
       {pendientes.length > 0 ? <p className={estilos.fieldError} role="alert">Pagos: {pendientes.slice(0, 4).join("; ")}{pendientes.length > 4 ? `; y ${pendientes.length - 4} más` : ""}.</p> : null}

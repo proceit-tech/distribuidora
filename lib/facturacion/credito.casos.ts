@@ -270,7 +270,7 @@ export async function verificarCasosCredito(): Promise<string[]> {
   const credito = leer("lib/facturacion/credito.ts");
   cierto("credito.ts es puro: sin red, base, fs ni dependencias del servidor", !/from "pg"|fetch\(|node:fs|from "@\/lib\/facturacion\/(emision|envio|gateway|shared)/.test(credito));
   cierto("FAT-E1/E2 sin tocar: el cálculo, el envío y el gateway no importan el crédito; numeración (NEX-048) intacta", !/credito/.test(leer("lib/facturacion/calculo.ts")) && !/credito/.test(leer("lib/facturacion/envio.ts")) && !/credito/.test(leer("lib/facturacion/gateway.ts")) && !/credito/.test(leer("lib/facturacion/reconciliacion.ts")));
-  cierto("límites de la fase B1: sin descuentos ni monedas nuevas (moneda PYG fija; los medios de pago de P1 no cambian la moneda)",/cMoneOpe: "PYG"/.test(leer("lib/facturacion/payload-fe.ts")) && !existsSync(join(process.cwd(), "documentacao/banco/nexit/v1/migraciones/NEX-057-facturacion-credito.sql")));
+  cierto("límites de la fase B1: sin descuentos (la moneda USD/BRL se habilitó después, en MFE-03 P2)",/cMoneOpe: e\.moneda/.test(leer("lib/facturacion/payload-fe.ts")) && !existsSync(join(process.cwd(), "documentacao/banco/nexit/v1/migraciones/NEX-057-facturacion-credito.sql")));
   cierto("sin cuentas por cobrar ni movimientos financieros automáticos: ni credito.ts ni emision.ts escriben tablas de cobranza", !/cuentas_por_cobrar|cuenta_cobrar|INSERT INTO cuotas/i.test(credito + leer("lib/facturacion/emision.ts")));
   igual("el factor de escala interno sigue siendo 10^8 (reparto exacto en PYG)", S === B(100000000), true);
 

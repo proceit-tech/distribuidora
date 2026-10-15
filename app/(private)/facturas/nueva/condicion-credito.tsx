@@ -10,7 +10,7 @@ const gs = (n: number) => n.toLocaleString("es-PY", { maximumFractionDigits: 4 }
  * Condiciones del crédito (MFE-B1): Plazo (días) o Cuotas (cantidad, monto y vencimiento de cada una) y entrega inicial opcional. Se muestra solo con la condición Crédito; el
  * servidor vuelve a validar todo con el mismo código (`erroresCredito`). `saldo` = total menos la entrega; las cuotas deben sumarlo exactamente.
  */
-export function CondicionCredito({ estado, total, hoy, pendientes, alCambiar }: { estado: EstadoCreditoUI; total: number; hoy: string; pendientes: string[]; alCambiar: (c: Partial<EstadoCreditoUI>) => void }) {
+export function CondicionCredito({ simbolo, estado, total, hoy, pendientes, alCambiar }: { simbolo: string; estado: EstadoCreditoUI; total: number; hoy: string; pendientes: string[]; alCambiar: (c: Partial<EstadoCreditoUI>) => void }) {
   const entrega = Number(estado.entrega.trim() === "" ? "0" : estado.entrega) || 0;
   const saldo = Math.max(0, total - entrega);
   const suma = estado.cuotas.reduce((a, q) => a + (Number(q.monto) || 0), 0);
@@ -37,7 +37,7 @@ export function CondicionCredito({ estado, total, hoy, pendientes, alCambiar }: 
         </label>
 
         <label className={estilos.field}>
-          <span>Entrega inicial (Gs., opcional)</span>
+          <span>Entrega inicial ({simbolo}, opcional)</span>
           <input inputMode="decimal" placeholder="Sin entrega" value={estado.entrega} onChange={(e) => alCambiar({ entrega: e.target.value.replace(",", "."), cuotas: [] })} />
           <small className={estilos.hint}>Se cobra en el acto con la forma de pago elegida; el saldo se financia.</small>
         </label>
@@ -49,7 +49,7 @@ export function CondicionCredito({ estado, total, hoy, pendientes, alCambiar }: 
             <span className={estilos.plazos} role="group" aria-label="Plazos frecuentes">
               {[30, 60, 90].map((d) => <button key={d} type="button" className={estilos.botonCuotas} aria-pressed={estado.plazoDias === String(d)} onClick={() => alCambiar({ plazoDias: String(d) })}>{d} días</button>)}
             </span>
-            {/^\d{1,5}$/.test(estado.plazoDias) && Number(estado.plazoDias) > 0 && hoy ? <small className={estilos.hint}>Se informará: «{plazoTexto(Number(estado.plazoDias))}» (vence el {sumarDias(hoy, Number(estado.plazoDias))}). Saldo a plazo: Gs. {gs(saldo)}.</small> : null}
+            {/^\d{1,5}$/.test(estado.plazoDias) && Number(estado.plazoDias) > 0 && hoy ? <small className={estilos.hint}>Se informará: «{plazoTexto(Number(estado.plazoDias))}» (vence el {sumarDias(hoy, Number(estado.plazoDias))}). Saldo a plazo: {simbolo} {gs(saldo)}.</small> : null}
           </label>
         ) : (
           <>
@@ -81,7 +81,7 @@ export function CondicionCredito({ estado, total, hoy, pendientes, alCambiar }: 
             <>
               <div className={estilos.tableWrap}>
                 <table className={estilos.items}>
-                  <thead><tr><th>Cuota</th><th className={estilos.num}>Monto (Gs.)</th><th>Vencimiento</th></tr></thead>
+                  <thead><tr><th>Cuota</th><th className={estilos.num}>Monto ({simbolo})</th><th>Vencimiento</th></tr></thead>
                   <tbody>
                     {estado.cuotas.map((q, i) => (
                       <tr key={i}>
@@ -98,7 +98,7 @@ export function CondicionCredito({ estado, total, hoy, pendientes, alCambiar }: 
                 </table>
               </div>
 
-              <small className={estilos.hint}>Suma de cuotas: Gs. {gs(suma)} · Saldo a financiar: Gs. {gs(saldo)}{Math.abs(suma - saldo) > 0.00005 ? " · NO coinciden" : " · coinciden"}.</small>
+              <small className={estilos.hint}>Suma de cuotas: {simbolo} {gs(suma)} · Saldo a financiar: {simbolo} {gs(saldo)}{Math.abs(suma - saldo) > 0.00005 ? " · NO coinciden" : " · coinciden"}.</small>
             </>
           ) : null}
         </>

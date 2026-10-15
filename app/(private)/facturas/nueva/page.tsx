@@ -7,7 +7,8 @@ import ui from "@/components/ui/lista-padrao/lista.module.css";
 import { AJUSTE_VACIO, ajusteParaEnvio, problemasFiscales, valoresEfectivos, type AjusteUI } from "@/lib/facturacion/ajuste-item";
 import { elegirPorEnter, MENSAJE_ENTER } from "@/lib/facturacion/busqueda-rapida";
 import { CREDITO_UI_VACIO, creditoParaEnvio, hoyParaguay, pendientesCredito, type EstadoCreditoUI } from "@/lib/facturacion/credito";
-import { B, parseDec } from "@/lib/facturacion/calculo";
+import { B, parseDec, textoDec } from "@/lib/facturacion/calculo";
+import { leerCambio, MONEDAS_FE, simboloMoneda, totalEnGuaranies, type Moneda } from "@/lib/facturacion/monedas";
 import { conciliarPagos, PAGO_UI_VACIO, pagoParaEnvio, pendientesPagos, textoDecimal, type PagoUI } from "@/lib/facturacion/pagos";
 import { resumenCalculo, type LineaFE } from "@/lib/facturacion/payload-fe";
 import { formatearFechaPy } from "@/lib/formato/listas";
@@ -33,6 +34,7 @@ type Linea = { clave: number; producto: Producto; cantidad: string; precio: stri
 type Resumen = {
   empresa: string; sucursal: string; establecimiento: string; punto: string; numero: string; cliente: { codigo: string; razonSocial: string; documento: string };
   tipoTransaccion: string; presencia: string; condicion: string; formaPago: string; moneda: string;
+  cambio?: { valor: string; totalGs: string; catalogo: { cambio: string; fecha: string } | null; modificado: boolean };
   pagos?: Array<{ medio: string; monto: string; detalle: string }>;
   credito?: { tipo: string; plazo: string | null; entrega: string; saldo: string; cuotas: Array<{ numero: number; monto: string; vencimiento: string }> };
   lineas: Array<{ codigo: string; descripcion: string; unidad: string; cantidad: string; precio: string; precioLista: string; precioModificado: boolean; afectacion: number; tasa: number; total: number; ajustes?: string[] }>;
@@ -69,28 +71,29 @@ async function leer<T>(r: Response, porDefecto: string): Promise<T> {
 }
 
 /** Impedimentos visibles por producto (el servidor vuelve a validar todo; esto solo evita enviar lo que se sabe inválido). */
-function problemasProducto(p: Producto): string[] {
+function problemasProducto(p: Producto, moneda: string = "PYG"): string[] {
   const m: string[] = [];
 
   if (p.afectacion === null) m.push("sin clasificación de IVA");
   if (p.unidadSifen === null) m.push("sin unidad de medida SIFEN");
   else if (p.unidadVigente === false) m.push("unidad SIFEN no vigente");
-  if (p.precio === null || p.monedaPrecio !== "PYG") m.push("sin precio de venta en guaraníes");
+  if (p.precio === null || p.monedaPrecio !== moneda) m.push(`sin precio de venta en ${moneda === "PYG" ? "guaraníes" : moneda}`);
 
   return m;
 }
 
 const cantidadValida = (l: Linea) => CANTIDAD_OK.test(l.cantidad) && Number(l.cantidad) > 0 && (valoresEfectivos(l.producto, l.ajuste).unidadSifen !== 77 || /^\d+(\.0+)?$/.test(l.cantidad));
 const precioValido = (l: Linea) => PRECIO_OK.test(l.precio) && Number(l.precio) > 0;
-const referenciaPyg = (p: Producto) => (p.monedaPrecio === "PYG" ? p.precio : null);
-const precioModificado = (l: Linea) => precioValido(l) && (referenciaPyg(l.producto) === null || Number(l.precio) !== Number(referenciaPyg(l.producto)));
+/** Precio de lista SOLO si está en la moneda de la factura: nunca se convierte un precio de otra moneda. */
+const referencia = (p: Producto, moneda: string) => (p.monedaPrecio === moneda ? p.precio : null);
+const precioModificado = (l: Linea, moneda: string) => precioValido(l) && (referencia(l.producto, moneda) === null || Number(l.precio) !== Number(referencia(l.producto, moneda)));
 
-const aLineaFE = (l: Linea): LineaFE => {
+const aLineaFE = (l: Linea, moneda: string): LineaFE => {
   const e = valoresEfectivos(l.producto, l.ajuste);
 
   return {
     codigoInterno: l.producto.codigo, gtin: e.gtin, descripcion: e.descripcion, unidadSifen: e.unidadSifen, cantidad: l.cantidad,
-    precio: precioValido(l) ? l.precio : (referenciaPyg(l.producto) ?? "0"), afectacion: e.afectacion, tasa: e.tasa, proporcion: e.proporcion,
+    precio: precioValido(l) ? l.precio : (referencia(l.producto, moneda) ?? "0"), afectacion: e.afectacion, tasa: e.tasa, proporcion: e.proporcion,
   };
 };
 
@@ -216,7 +219,7 @@ function SelectorCliente({ alElegir, alCerrar }: { alElegir: (c: Cliente) => voi
 }
 
 /** Selector de productos: lista paginada inmediata; filtro opcional (código, descripción, GTIN, código de barras). Permite añadir varios sin cerrar. */
-function SelectorProducto({ alAgregar, alCerrar, cantidadItems, permiteIncompletos }: { alAgregar: (p: Producto) => void; alCerrar: () => void; cantidadItems: number; permiteIncompletos: boolean }) {
+function SelectorProducto({ alAgregar, alCerrar, cantidadItems, permiteIncompletos, moneda }: { alAgregar: (p: Producto) => void; alCerrar: () => void; cantidadItems: number; permiteIncompletos: boolean; moneda: string }) {
   const f = useFiltro();
   const l = useListado<Producto>("/api/facturas/productos", "productos", f.q, f.pagina);
   const [aviso, setAviso] = useState("");
@@ -245,7 +248,7 @@ function SelectorProducto({ alAgregar, alCerrar, cantidadItems, permiteIncomplet
         ) : (
           <ul className={estilos.resultados} aria-label="Productos">
             {l.items.map((p) => {
-              const pr = problemasProducto(p);
+              const pr = problemasProducto(p, moneda);
 
               return (
                 <li key={p.id}>
@@ -255,7 +258,7 @@ function SelectorProducto({ alAgregar, alCerrar, cantidadItems, permiteIncomplet
                     {pr.length > 0 && permiteIncompletos ? <small className={estilos.aviso}>Pendiente de completar: {pr.join(", ")}. Se completa en la línea de la factura.</small> : null}
                     {pr.length > 0 && !permiteIncompletos ? <small className={estilos.impedimento}>No se puede facturar: {pr.join(", ")}. <Link href="/productos">Corregir en Productos</Link> o solicite el permiso de ajuste fiscal.</small> : null}
                   </div>
-                  <span className={estilos.precio}>{p.precio && p.monedaPrecio === "PYG" ? `Gs. ${gs(Number(p.precio))}` : "—"}</span>
+                  <span className={estilos.precio}>{p.precio && p.monedaPrecio === moneda ? `${simboloMoneda(moneda)} ${gs(Number(p.precio))}` : "—"}</span>
                   <button type="button" className={ui.secondaryButton} disabled={pr.length > 0 && !permiteIncompletos} onClick={() => { alAgregar(p); setAviso(`«${p.descripcion}» añadido.`); }}>Añadir</button>
                 </li>
               );
@@ -417,7 +420,7 @@ function BuscadorCliente({ alElegir }: { alElegir: (c: Cliente) => void }) {
 }
 
 /** Búsqueda rápida de productos (código, GTIN o descripción): permanece abierta para añadir varios; los que tienen impedimentos no se pueden añadir. */
-function BuscadorProducto({ alElegir, permiteIncompletos }: { alElegir: (p: Producto) => void; permiteIncompletos: boolean }) {
+function BuscadorProducto({ alElegir, permiteIncompletos, moneda }: { alElegir: (p: Producto) => void; permiteIncompletos: boolean; moneda: string }) {
   return (
     <BuscadorRapido<Producto>
       url="/api/facturas/productos"
@@ -426,12 +429,12 @@ function BuscadorProducto({ alElegir, permiteIncompletos }: { alElegir: (p: Prod
       placeholder="Escriba o escanee el código y presione Enter"
       mantenerAbierto
       describir={(p) => {
-        const pr = problemasProducto(p);
+        const pr = problemasProducto(p, moneda);
 
         return {
           titulo: p.descripcion,
           detalle: `${p.codigo}${p.gtin ? ` · GTIN ${p.gtin}` : ""} · ${p.unidadSimbolo ?? "sin unidad"} · ${p.afectacion ? `${ETIQUETA_IVA[p.afectacion]}${p.tasa ? ` ${p.tasa}%` : ""}` : "IVA sin clasificar"}`,
-          derecha: p.precio && p.monedaPrecio === "PYG" ? `Gs. ${gs(Number(p.precio))}` : "—", habilitado: pr.length === 0 || permiteIncompletos,
+          derecha: p.precio && p.monedaPrecio === moneda ? `${simboloMoneda(moneda)} ${gs(Number(p.precio))}` : "—", habilitado: pr.length === 0 || permiteIncompletos,
           impedimento: pr.length === 0 ? undefined : permiteIncompletos ? `Pendiente de completar: ${pr.join(", ")}. Se completa en la línea de la factura.` : `No se puede facturar: ${pr.join(", ")}.`,
           enlace: pr.length > 0 && !permiteIncompletos ? { href: "/productos", texto: "Corregir en Productos" } : undefined,
         };
@@ -459,6 +462,9 @@ export default function NuevaFacturaPage() {
   const [condicion, setCondicion] = useState("1");
   const [credito, setCredito] = useState<EstadoCreditoUI>(CREDITO_UI_VACIO);
   const [hoyIso, setHoyIso] = useState("");
+  const [moneda, setMoneda] = useState<Moneda>("PYG");
+  const [cambio, setCambio] = useState("");
+  const [cotizaciones, setCotizaciones] = useState<Record<string, { cambio: string; fecha: string }>>({});
   const [infoAdicional, setInfoAdicional] = useState("");
   const [cliente, setCliente] = useState<Cliente | null>(null);
   const [lineas, setLineas] = useState<Linea[]>([]);
@@ -481,7 +487,7 @@ export default function NuevaFacturaPage() {
     let activo = true;
 
     fetch("/api/facturas/catalogos", { cache: "no-store" })
-      .then((r) => leer<{ sucursales: Sucursal[]; opciones: Opciones; puedeEditarPrecio?: boolean; puedeAjustarFiscal?: boolean; puedeEditarProductos?: boolean; unidadesSifen?: UnidadSifen[]; sucursalesSinEstablecimiento?: number }>(r, "No fue posible cargar los datos del formulario."))
+      .then((r) => leer<{ sucursales: Sucursal[]; opciones: Opciones; puedeEditarPrecio?: boolean; puedeAjustarFiscal?: boolean; puedeEditarProductos?: boolean; unidadesSifen?: UnidadSifen[]; cotizaciones?: Record<string, { cambio: string; fecha: string }>; sucursalesSinEstablecimiento?: number }>(r, "No fue posible cargar los datos del formulario."))
       .then((j) => {
         if (!activo) return;
 
@@ -494,6 +500,7 @@ export default function NuevaFacturaPage() {
         setPuedeAjustarFiscal(j.puedeAjustarFiscal === true);
         setPuedeEditarProductos(j.puedeEditarProductos === true);
         setUnidadesSifen(j.unidadesSifen ?? []);
+        setCotizaciones(j.cotizaciones ?? {});
         if (j.sucursales.length === 1) {
           setSucursalId(j.sucursales[0].id);
           if (j.sucursales[0].puntos.length === 1) setPuntoId(j.sucursales[0].puntos[0].id);
@@ -509,8 +516,14 @@ export default function NuevaFacturaPage() {
   const sucursal = sucursales.find((s) => s.id === sucursalId);
   const puntoElegido = sucursal?.puntos.find((p) => p.id === puntoId);
   const proximoNumero = puntoElegido && typeof puntoElegido.ultimoNumero === "number" ? `${puntoElegido.codigo}-${String(puntoElegido.ultimoNumero + 1).padStart(7, "0")}` : "";
-  const calculo = resumenCalculo(lineas.map(aLineaFE));
-  const problemas = lineas.flatMap((l) => problemasFiscales(l.producto, l.ajuste, l.precio).filter((m) => !m.startsWith("sin precio") || !precioValido(l)).map((m) => `${l.producto.codigo}: ${m}.`));
+  const calculo = resumenCalculo(lineas.map((l) => aLineaFE(l, moneda)));
+  const extranjera = moneda !== "PYG";
+  const cambioNormal = extranjera ? leerCambio(cambio) : null;
+  const totalDec = parseDec(String(calculo.total), 8);
+  const equivalenteGs = extranjera && cambioNormal !== null && totalDec !== null ? totalEnGuaranies(totalDec, cambioNormal) : null;
+  const sim = simboloMoneda(moneda);
+  const pendienteCambio = extranjera && cambioNormal === null ? "indicar el tipo de cambio manual (guaraníes por 1 " + moneda + ")" : extranjera && calculo.total > 0 && equivalenteGs === null ? "el equivalente en guaraníes no es exacto: revise el tipo de cambio o los importes" : "";
+  const problemas = lineas.flatMap((l) => problemasFiscales(l.producto, l.ajuste, l.precio, moneda).filter((m) => !m.startsWith("sin precio") || !precioValido(l)).map((m) => `${l.producto.codigo}: ${m}.`));
   const lineasValidas = lineas.every((l) => cantidadValida(l) && precioValido(l));
   const enCredito = condicion === "2";
   const pendientesDeCredito = enCredito ? pendientesCredito(credito, String(calculo.total), hoyIso) : [];
@@ -528,9 +541,10 @@ export default function NuevaFacturaPage() {
     problemas.length > 0 ? "completar los datos fiscales de los ítems marcados" : "",
     pendientesDeCredito.length > 0 ? "corregir las condiciones del crédito" : "",
     pendientesDePagos.length > 0 ? "corregir los medios de pago" : "",
+    pendienteCambio,
   ].filter(Boolean);
   const puedeGuardar = !revisando && !enviando && faltan.length === 0 && cliente !== null && cliente.apto && calculo.completo;
-  const hayPrecioModificado = lineas.some(precioModificado);
+  const hayPrecioModificado = lineas.some((l) => precioModificado(l, moneda));
 
   function agregar(p: Producto) {
     // El mismo producto no se duplica: suma una unidad a su línea.
@@ -542,7 +556,7 @@ export default function NuevaFacturaPage() {
       return;
     }
 
-    setLineas((ls) => [...ls, { clave: siguienteClave, producto: p, cantidad: "1", precio: referenciaPyg(p) ?? "", ajuste: AJUSTE_VACIO }]);
+    setLineas((ls) => [...ls, { clave: siguienteClave, producto: p, cantidad: "1", precio: referencia(p, moneda) ?? "", ajuste: AJUSTE_VACIO }]);
     setSiguienteClave((n) => n + 1);
   }
 
@@ -551,12 +565,12 @@ export default function NuevaFacturaPage() {
 
   // El precio solo viaja cuando difiere del de lista; el servidor lo contrasta con el catálogo y con el permiso del usuario.
   const cuerpoFactura = () => ({
-    claveIdempotencia: clave, sucursalId, puntoId, clienteId: cliente?.id, tipoTransaccion: Number(tipoTransaccion), presencia: Number(presencia),
+    claveIdempotencia: clave, sucursalId, puntoId, clienteId: cliente?.id, tipoTransaccion: Number(tipoTransaccion), presencia: Number(presencia), moneda, ...(extranjera ? { cambio } : {}),
     pagos: hayPagos ? pagos.map((p) => pagoParaEnvio(p, pagos.length === 1)) : [], condicion: Number(condicion), ...(enCredito ? { credito: creditoParaEnvio(credito) } : {}), infoAdicional,
     lineas: lineas.map((l) => {
       const ajuste = ajusteParaEnvio(l.producto, l.ajuste);
 
-      return { productoId: l.producto.id, cantidad: l.cantidad, ...(precioModificado(l) ? { precio: l.precio } : {}), ...(ajuste ? { ajuste } : {}) };
+      return { productoId: l.producto.id, cantidad: l.cantidad, ...(precioModificado(l, moneda) ? { precio: l.precio } : {}), ...(ajuste ? { ajuste } : {}) };
     }),
   });
 
@@ -624,6 +638,16 @@ export default function NuevaFacturaPage() {
     }
   }
 
+  // Cambiar de moneda invalida todo lo expresado en la anterior: precios (solo se conserva el de lista si está en la nueva moneda), pagos y entrega. Nunca se convierte nada.
+  function cambiarMoneda(m: Moneda) {
+    setMoneda(m);
+    setCambio(m === "PYG" ? "" : (cotizaciones[m]?.cambio ?? ""));
+    setLineas((ls) => ls.map((l) => ({ ...l, precio: referencia(l.producto, m) ?? "" })));
+    setPagos([PAGO_UI_VACIO]);
+    setCredito(CREDITO_UI_VACIO);
+    setResumen(null);
+  }
+
   function nueva() {
     setCliente(null);
     setLineas([]);
@@ -631,6 +655,8 @@ export default function NuevaFacturaPage() {
     setCondicion("1");
     setCredito(CREDITO_UI_VACIO);
     setPagos([PAGO_UI_VACIO]);
+    setMoneda("PYG");
+    setCambio("");
     setErrores([]);
     setResultado(null);
     setResumen(null);
@@ -659,7 +685,7 @@ export default function NuevaFacturaPage() {
         </div>
 
         <div className={estilos.contexto} aria-label="Contexto de la operación">
-          <span className={estilos.meta}>Fecha: {hoy || "—"} · Moneda: PYG</span>
+          <span className={estilos.meta}>Fecha: {hoy || "—"} · Moneda: {moneda}{extranjera && cambioNormal ? ` · Cambio: ${cambioNormal}` : ""}</span>
           <span className={`${estilos.estado} ${resultado ? (resultado.estadoLocal === "ENVIADO" ? estilos.estadoOk : estilos.estadoWarn) : sucio ? estilos.estadoBorrador : ""}`} role="status">{estadoOperacion}</span>
         </div>
       </header>
@@ -740,12 +766,28 @@ export default function NuevaFacturaPage() {
                       </select>
                     </label>
 
+                    <label className={estilos.field}>
+                      <span>Moneda de la factura</span>
+                      <select aria-label="Moneda de la factura" value={moneda} onChange={(e) => cambiarMoneda(e.target.value as Moneda)}>
+                        {(Object.keys(MONEDAS_FE) as Moneda[]).map((m) => <option key={m} value={m}>{m} — {MONEDAS_FE[m].nombre}</option>)}
+                      </select>
+                    </label>
+
+                    {extranjera ? (
+                      <label className={estilos.field}>
+                        <span>Tipo de cambio (Gs. por 1 {moneda})</span>
+                        <input aria-label="Tipo de cambio" inputMode="decimal" placeholder="Ej.: 7500" value={cambio} onChange={(e) => setCambio(e.target.value.replace(",", "."))} />
+                        {cambio.trim() !== "" && cambioNormal === null ? <small className={estilos.fieldError} role="alert">Mayor que 0, hasta 5 enteros y 4 decimales.</small> : null}
+                        {cotizaciones[moneda] ? <small className={estilos.hint}>Última cotización registrada: {cotizaciones[moneda].cambio} ({cotizaciones[moneda].fecha}){cambioNormal !== null && cambioNormal !== cotizaciones[moneda].cambio ? " · distinta de la registrada" : ""}.</small> : <small className={estilos.hint}>Cotización manual; no hay una registrada para {moneda}. El cambio usado queda fijo en el documento.</small>}
+                      </label>
+                    ) : null}
                   </div>
 
-                  {enCredito ? <CondicionCredito estado={credito} total={calculo.total} hoy={hoyIso} pendientes={pendientesDeCredito} alCambiar={(c) => setCredito((x) => ({ ...x, ...c }))} /> : null}
+                  {enCredito ? <CondicionCredito simbolo={sim} estado={credito} total={calculo.total} hoy={hoyIso} pendientes={pendientesDeCredito} alCambiar={(c) => setCredito((x) => ({ ...x, ...c }))} /> : null}
 
                   {hayPagos ? (
                     <MediosPago
+                      simbolo={sim}
                       titulo={enCredito ? "Medios de pago de la entrega inicial" : "Forma de pago"}
                       objetivo={objetivoDec === null ? "—" : textoDecimal(objetivoDec)}
                       conciliacion={objetivoDec === null ? { suma: null, coincide: false } : conciliarPagos(pagos.map((p) => pagoParaEnvio(p, pagos.length === 1)), objetivoDec)}
@@ -842,7 +884,7 @@ export default function NuevaFacturaPage() {
                   <span className={estilos.meta}>{lineas.length} ítem{lineas.length === 1 ? "" : "s"}</span>
                 </div>
                 <div className={`${estilos.cardBody} ${estilos.buscarFila}`}>
-                  <BuscadorProducto alElegir={agregar} permiteIncompletos={puedeAjustarFiscal} />
+                  <BuscadorProducto alElegir={agregar} permiteIncompletos={puedeAjustarFiscal} moneda={moneda} />
                   <button type="button" className={ui.secondaryButton} onClick={() => setSelector("producto")}>Búsqueda avanzada</button>
                 </div>
                 <div className={estilos.tableWrap}>
@@ -865,9 +907,9 @@ export default function NuevaFacturaPage() {
                       ) : lineas.map((l, i) => {
                         const cantOk = cantidadValida(l);
                         const precOk = precioValido(l);
-                        const mod = precioModificado(l);
+                        const mod = precioModificado(l, moneda);
                         const e = valoresEfectivos(l.producto, l.ajuste);
-                        const pr = problemasFiscales(l.producto, l.ajuste, l.precio).filter((m) => !m.startsWith("sin precio") || !precOk);
+                        const pr = problemasFiscales(l.producto, l.ajuste, l.precio, moneda).filter((m) => !m.startsWith("sin precio") || !precOk);
 
                         return (
                           <Fragment key={l.clave}>
@@ -905,14 +947,14 @@ export default function NuevaFacturaPage() {
                                   {!precOk ? <small className={estilos.fieldError}>Mayor que 0</small> : null}
                                   {mod ? (
                                     <span className={estilos.modificado}>
-                                      Lista: {referenciaPyg(l.producto) === null ? "sin precio en guaraníes" : gs(Number(referenciaPyg(l.producto)))} · <button type="button" className={estilos.linkButton} onClick={() => editar(l.clave, { precio: referenciaPyg(l.producto) ?? "" })}>Restaurar</button>
+                                      Lista: {referencia(l.producto, moneda) === null ? `sin precio en ${extranjera ? moneda : "guaraníes"}` : gs(Number(referencia(l.producto, moneda)))} · <button type="button" className={estilos.linkButton} onClick={() => editar(l.clave, { precio: referencia(l.producto, moneda) ?? "" })}>Restaurar</button>
                                     </span>
                                   ) : null}
                                 </>
-                              ) : referenciaPyg(l.producto) === null ? (
+                              ) : referencia(l.producto, moneda) === null ? (
                                 <small className={estilos.fieldError}>Sin precio de lista: requiere el permiso de precio</small>
                               ) : (
-                                gs(Number(referenciaPyg(l.producto)))
+                                gs(Number(referencia(l.producto, moneda)))
                               )}
                             </td>
                             <td className={`${estilos.num} ${estilos.subtotal}`} data-label="Subtotal">{calculo.completo ? gs(calculo.items[i] ?? 0) : "—"}</td>
@@ -921,7 +963,7 @@ export default function NuevaFacturaPage() {
                           {puedeAjustarFiscal ? (
                             <tr className={estilos.filaFiscal}>
                               <td colSpan={8}>
-                                <EditorFiscalItem producto={l.producto} precio={l.precio} ajuste={l.ajuste} unidades={unidadesSifen} puedeEditarProductos={puedeEditarProductos} alCambiar={(c) => editarAjuste(l.clave, c)} />
+                                <EditorFiscalItem moneda={moneda} producto={l.producto} precio={l.precio} ajuste={l.ajuste} unidades={unidadesSifen} puedeEditarProductos={puedeEditarProductos} alCambiar={(c) => editarAjuste(l.clave, c)} />
                               </td>
                             </tr>
                           ) : null}
@@ -945,7 +987,7 @@ export default function NuevaFacturaPage() {
             </div>
 
             <aside className={estilos.resumenPanel} aria-labelledby="sec-totales">
-              <h2 id="sec-totales">Resumen (guaraníes)</h2>
+              <h2 id="sec-totales">Resumen ({MONEDAS_FE[moneda].nombre.toLowerCase()})</h2>
 
               <dl className={estilos.totals}>
                 <div><dt>Exento</dt><dd>{gs(calculo.exento)}</dd></div>
@@ -959,7 +1001,8 @@ export default function NuevaFacturaPage() {
 
               <div className={estilos.totalGeneral}>
                 <span>Total general</span>
-                <strong>Gs. {gs(calculo.total)}</strong>
+                <strong>{sim} {gs(calculo.total)}</strong>
+                {extranjera ? <small>Equivalente: Gs. {equivalenteGs === null ? "—" : gs(Number(textoDec(equivalenteGs)))} (cambio {cambioNormal ?? "—"})</small> : null}
                 <small>IVA incluido{hayPrecioModificado ? " · con precios modificados" : ""}</small>
               </div>
 
@@ -988,7 +1031,7 @@ export default function NuevaFacturaPage() {
 
           <div className={estilos.barraMovil}>
             <div>
-              <strong>Gs. {gs(calculo.total)}</strong>
+              <strong>{sim} {gs(calculo.total)}</strong>
               <small>{faltan.length > 0 ? `Falta: ${faltan.join(", ")}.` : "Listo para revisar."}</small>
             </div>
             <button type="button" className={ui.primaryButton} disabled={!puedeGuardar} onClick={grabar}>{revisando ? "Revisando..." : "Revisar"}</button>
@@ -997,7 +1040,7 @@ export default function NuevaFacturaPage() {
       )}
 
       {selector === "cliente" ? <SelectorCliente alCerrar={() => setSelector(null)} alElegir={(c) => { setCliente(c); setSelector(null); }} /> : null}
-      {selector === "producto" ? <SelectorProducto alCerrar={() => setSelector(null)} alAgregar={agregar} cantidadItems={lineas.length} permiteIncompletos={puedeAjustarFiscal} /> : null}
+      {selector === "producto" ? <SelectorProducto alCerrar={() => setSelector(null)} alAgregar={agregar} cantidadItems={lineas.length} permiteIncompletos={puedeAjustarFiscal} moneda={moneda} /> : null}
 
       {resumen ? (
         <div className={estilos.overlay} role="presentation">
@@ -1012,15 +1055,22 @@ export default function NuevaFacturaPage() {
               <div><dt>Cliente</dt><dd>{resumen.cliente.razonSocial} ({resumen.cliente.documento})</dd></div>
               <div><dt>Transacción · presencia</dt><dd>{resumen.tipoTransaccion} · {resumen.presencia}</dd></div>
               <div><dt>Condición de la operación</dt><dd>{resumen.condicion}</dd></div>
+              <div><dt>Moneda</dt><dd>{resumen.moneda}</dd></div>
+              {resumen.cambio ? (
+                <>
+                  <div><dt>Tipo de cambio (manual)</dt><dd>Gs. {gs(Number(resumen.cambio.valor))} por 1 {resumen.moneda}{resumen.cambio.modificado && resumen.cambio.catalogo ? ` · distinto del registrado (${resumen.cambio.catalogo.cambio}, ${resumen.cambio.catalogo.fecha})` : ""}</dd></div>
+                  <div><dt>Equivalente en guaraníes</dt><dd>Gs. {gs(Number(resumen.cambio.totalGs))}</dd></div>
+                </>
+              ) : null}
               {resumen.pagos && resumen.pagos.length > 0
-                ? resumen.pagos.map((p, i) => <div key={i}><dt>{resumen.credito ? "Medio de la entrega" : "Pago"} · {p.medio}</dt><dd>Gs. {gs(Number(p.monto))}{p.detalle ? ` · ${p.detalle}` : ""}</dd></div>)
+                ? resumen.pagos.map((p, i) => <div key={i}><dt>{resumen.credito ? "Medio de la entrega" : "Pago"} · {p.medio}</dt><dd>{simboloMoneda(resumen.moneda)} {gs(Number(p.monto))}{p.detalle ? ` · ${p.detalle}` : ""}</dd></div>)
                 : resumen.formaPago ? <div><dt>Forma de pago</dt><dd>{resumen.formaPago}</dd></div> : null}
               {resumen.credito ? (
                 <>
                   <div><dt>Tipo de crédito</dt><dd>{resumen.credito.tipo}{resumen.credito.plazo ? ` · ${resumen.credito.plazo}` : ""}</dd></div>
-                  <div><dt>Entrega inicial</dt><dd>Gs. {gs(Number(resumen.credito.entrega))}</dd></div>
-                  <div><dt>Saldo financiado</dt><dd>Gs. {gs(Number(resumen.credito.saldo))}</dd></div>
-                  {resumen.credito.cuotas.map((q) => <div key={q.numero}><dt>Cuota {q.numero}/{resumen.credito?.cuotas.length}</dt><dd>Gs. {gs(Number(q.monto))} · vence {q.vencimiento}</dd></div>)}
+                  <div><dt>Entrega inicial</dt><dd>{simboloMoneda(resumen.moneda)} {gs(Number(resumen.credito.entrega))}</dd></div>
+                  <div><dt>Saldo financiado</dt><dd>{simboloMoneda(resumen.moneda)} {gs(Number(resumen.credito.saldo))}</dd></div>
+                  {resumen.credito.cuotas.map((q) => <div key={q.numero}><dt>Cuota {q.numero}/{resumen.credito?.cuotas.length}</dt><dd>{simboloMoneda(resumen.moneda)} {gs(Number(q.monto))} · vence {q.vencimiento}</dd></div>)}
                 </>
               ) : null}
             </dl>

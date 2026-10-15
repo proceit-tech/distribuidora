@@ -115,7 +115,7 @@ export function valoresEfectivos(p: ProductoBase, a: AjusteUI): Efectivos {
 }
 
 /** Pendientes fiscales de una línea con sus valores efectivos (el precio de la línea se valida aparte). */
-export function problemasFiscales(p: ProductoBase, a: AjusteUI, precioLinea: string): string[] {
+export function problemasFiscales(p: ProductoBase, a: AjusteUI, precioLinea: string, moneda: string = "PYG"): string[] {
   const e = valoresEfectivos(p, a);
   const m: string[] = [];
 
@@ -129,14 +129,14 @@ export function problemasFiscales(p: ProductoBase, a: AjusteUI, precioLinea: str
   if (a.gtinModo === "informar" && a.gtin.trim() === "") m.push("falta el GTIN (o elija «Sin GTIN»)");
   else if (e.gtin !== null && !/^(\d{8}|\d{12}|\d{13}|\d{14})$/.test(e.gtin)) m.push("GTIN inválido");
   if (e.descripcion.trim().length < 1 || e.descripcion.length > 120) m.push("descripción fiscal de 1 a 120 caracteres");
-  if (!/^\d{1,12}(\.\d{1,4})?$/.test(precioLinea) || !(Number(precioLinea) > 0)) m.push("sin precio de venta en guaraníes");
+  if (!/^\d{1,12}(\.\d{1,4})?$/.test(precioLinea) || !(Number(precioLinea) > 0)) m.push(`sin precio de venta en ${moneda === "PYG" ? "guaraníes" : moneda}`);
 
   return m;
 }
 
 /** ¿El producto del cadastro, tal cual, se puede facturar? (si no, necesita ajuste en la línea o corrección en Productos). */
-export function productoIncompleto(p: ProductoBase): boolean {
-  return problemasFiscales(p, AJUSTE_VACIO, p.monedaPrecio === "PYG" && p.precio !== null ? p.precio : "").length > 0;
+export function productoIncompleto(p: ProductoBase, moneda: string = "PYG"): boolean {
+  return problemasFiscales(p, AJUSTE_VACIO, p.monedaPrecio === moneda && p.precio !== null ? p.precio : "", moneda).length > 0;
 }
 
 /** Cuerpo `ajuste` que viaja al servidor: solo lo que el operador cambió respecto del cadastro. undefined = nada que ajustar. */

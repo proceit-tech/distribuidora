@@ -12,11 +12,11 @@ const ETIQUETA_IVA: Record<string, string> = { "1": "Gravado", "2": "Exonerado",
  * Datos fiscales de UN ítem dentro de la propia factura (PRO-93 Fase A, FE-UX-07/08/09). Solo corrige este documento: el servidor valida de nuevo todo y exige el permiso
  * FACTURACION_ELECTRONICA.AJUSTE_FISCAL. «Guardar también en Productos» es una elección explícita por línea (solo la clasificación de IVA) y requiere PRODUCTOS.EDITAR.
  */
-export function EditorFiscalItem({ producto, precio, ajuste, unidades, puedeEditarProductos, alCambiar }: {
-  producto: ProductoBase & { unidadSimbolo: string | null; codigo: string }; precio: string; ajuste: AjusteUI; unidades: UnidadSifen[]; puedeEditarProductos: boolean; alCambiar: (c: Partial<AjusteUI>) => void;
+export function EditorFiscalItem({ producto, precio, moneda, ajuste, unidades, puedeEditarProductos, alCambiar }: {
+  producto: ProductoBase & { unidadSimbolo: string | null; codigo: string }; precio: string; moneda: string; ajuste: AjusteUI; unidades: UnidadSifen[]; puedeEditarProductos: boolean; alCambiar: (c: Partial<AjusteUI>) => void;
 }) {
   const e = valoresEfectivos(producto, ajuste);
-  const pendientes = problemasFiscales(producto, ajuste, precio).filter((m) => !m.startsWith("sin precio"));
+  const pendientes = problemasFiscales(producto, ajuste, precio, moneda).filter((m) => !m.startsWith("sin precio"));
   const iva = hayIvaAjustado(ajuste);
   const cambiado = iva || ajuste.unidadSifen !== "" || ajuste.descripcion !== "" || ajuste.gtinModo !== "cadastro";
   const base = `${producto.codigo}`;

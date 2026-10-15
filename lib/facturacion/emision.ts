@@ -5,6 +5,7 @@ import { leerAjuste, type AjusteFiscal } from "@/lib/facturacion/ajuste-item";
 import { permisoAjusteFiscal, permisoEditarProductos, type ClasificacionGuardar } from "@/lib/facturacion/ajuste-fiscal";
 import { B, parseDec, textoDec, type Dec } from "@/lib/facturacion/calculo";
 import { CONDICION_CONTADO, CONDICION_CREDITO, CREDITO_CUOTAS, CREDITO_PLAZO, CUOTAS_HABILITADAS, MENSAJE_CUOTAS_SUSPENDIDAS, leerCredito, plazoTexto, type CreditoEntrada } from "@/lib/facturacion/credito";
+import { leerMonedaYCambio, leerCambio, precioEnMoneda, totalEnGuaranies, type Moneda } from "@/lib/facturacion/monedas";
 import { DENOMINACIONES_TARJETA, FORMAS_PAGO, FORMAS_PROCESAMIENTO, leerPagos, resolverMontos, type PagoEntrada } from "@/lib/facturacion/pagos";
 import { construirPayloadFE, CONDICIONES_OPERACION, INDICADORES_PRESENCIA, resumenCalculo, TIPOS_TRANSACCION, totalFactura, validarEntradaFE, type EntradaFE, type LineaFE, type ReceptorFE } from "@/lib/facturacion/payload-fe";
 import { ErrorFacturacion, ErrorValidacionFiscal } from "@/lib/facturacion/shared";
@@ -42,7 +43,39 @@ export async function catalogosFactura(db: Db, empresaId: string, usuarioId: str
   // Unidades de medida SIFEN vigentes (Tabla 5 del MT): opciones para completar la unidad de un ítem en la propia factura.
   const unidades = await db.query(`SELECT codigo, representacion, descripcion FROM unidades_medida_sifen WHERE vigente ORDER BY descripcion, codigo`);
 
-  return { sucursales: r.rows as F[], sucursalesSinEstablecimiento: Number((falta.rows[0] as F | undefined)?.n ?? 0), unidadesSifen: unidades.rows as F[] };
+  // Última cotización manual vigente de cada moneda extranjera (catálogo «Tipos de cambio»): SOLO una sugerencia; el operador escribe el cambio y el documento guarda el que se usó.
+  const cotizaciones: Record<string, { cambio: string; fecha: string }> = {};
+
+  for (const m of ["USD", "BRL"]) {
+    const c = await cotizacionVigente(db, empresaId, m);
+
+    if (c) cotizaciones[m] = c;
+  }
+
+  return { sucursales: r.rows as F[], sucursalesSinEstablecimiento: Number((falta.rows[0] as F | undefined)?.n ?? 0), unidadesSifen: unidades.rows as F[], cotizaciones };
+}
+
+/**
+ * Cotización manual más reciente (vigente) de la empresa para una moneda, o null. El catálogo guarda 6 decimales; D018 admite 4: si la cotización no cabe SIN redondear, no se sugiere
+ * (nunca se recorta en silencio). Sin la migración NEX-045 devuelve null.
+ */
+export async function cotizacionVigente(db: Db, empresaId: string, moneda: string): Promise<{ cambio: string; fecha: string } | null> {
+  try {
+    const r = await db.query(
+      "SELECT cambio::text AS cambio, fecha::text AS fecha FROM tipos_cambio WHERE empresa_id = $1 AND moneda_codigo = $2 AND vigente ORDER BY fecha DESC, version DESC LIMIT 1",
+      [empresaId, moneda],
+    );
+    const f = r.rows[0] as F | undefined;
+
+    if (!f) return null;
+
+    const t = s(f.cambio).includes(".") ? s(f.cambio).replace(/0+$/, "").replace(/\.$/, "") : s(f.cambio);
+    const cambio = leerCambio(t);
+
+    return cambio === null ? null : { cambio, fecha: s(f.fecha) };
+  } catch {
+    return null;
+  }
 }
 
 const sinTotal = (fila: F): F => Object.fromEntries(Object.entries(fila).filter(([k]) => k !== "total"));
@@ -118,7 +151,9 @@ export type CuerpoFactura = {
   claveIdempotencia: string; sucursalId: string; puntoId: string; clienteId: string; tipoTransaccion: number; presencia: number;
   /** Forma de pago: del total (Contado) o de la ENTREGA INICIAL (Crédito con entrega). */
   /** Medios de pago: del total (Contado) o de la ENTREGA INICIAL (Crédito); ver `pagos.ts`. */
-  pagos: PagoEntrada[]; condicion?: number; credito?: CreditoEntrada; infoAdicional: string; lineas: Array<{ productoId: string; cantidad: string; precio: string | null; ajuste?: AjusteFiscal }>;
+  pagos: PagoEntrada[]; condicion?: number;
+  /** D015 (PYG por omisión) y D018 (manual, guaraníes por 1 unidad; solo moneda extranjera). */
+  moneda?: Moneda; cambio?: string; credito?: CreditoEntrada; infoAdicional: string; lineas: Array<{ productoId: string; cantidad: string; precio: string | null; ajuste?: AjusteFiscal }>;
 };
 
 const entero = (v: unknown) => (typeof v === "number" && Number.isInteger(v) ? v : typeof v === "string" && /^\d{1,3}$/.test(v) ? Number(v) : NaN);
@@ -148,6 +183,10 @@ export function leerCuerpoFactura(c: Record<string, unknown>): CuerpoFactura | s
 
   if (condicion !== CONDICION_CONTADO && condicion !== CONDICION_CREDITO) return "La condición de la operación no es válida (Contado o Crédito).";
 
+  const monedaYCambio = leerMonedaYCambio(c.moneda, c.cambio);
+
+  if (typeof monedaYCambio === "string") return monedaYCambio;
+
   const credito = leerCredito(condicion, c.credito);
 
   if (typeof credito === "string") return credito;
@@ -162,6 +201,7 @@ export function leerCuerpoFactura(c: Record<string, unknown>): CuerpoFactura | s
     presencia: entero(c.presencia),
     pagos,
     condicion,
+    ...(monedaYCambio.moneda !== "PYG" ? { moneda: monedaYCambio.moneda, cambio: monedaYCambio.cambio as string } : {}),
     ...(credito ? { credito } : {}),
     infoAdicional: typeof c.infoAdicional === "string" ? c.infoAdicional.trim() : "",
     lineas: lineas.map((l) => {
@@ -217,6 +257,18 @@ async function receptorDe(db: Db, empresaId: string, clienteId: string): Promise
   };
 }
 
+/** Cotización usada, equivalente en guaraníes (F023, exacto) y si difiere de la última del catálogo (solo informativo: la cotización es manual). */
+async function resumenCambio(db: Db, empresaId: string, moneda: string, cambio: string, total: Dec | null) {
+  const catalogo = await cotizacionVigente(db, empresaId, moneda);
+
+  return {
+    valor: cambio,
+    totalGs: total === null ? "" : textoDec(totalEnGuaranies(total, cambio) ?? B(0)),
+    catalogo,
+    modificado: catalogo !== null && catalogo.cambio !== cambio,
+  };
+}
+
 /** Lectura de las condiciones de crédito para la previa y el modal de confirmación (los valores ya fueron validados). */
 function resumenCredito(c: CreditoEntrada, total: Dec | null) {
   const entrega = c.entrega !== null ? parseDec(c.entrega, 4) ?? B(0) : B(0);
@@ -248,6 +300,8 @@ function detallePago(p: PagoEntrada): string {
  */
 export async function prepararFactura(db: Db, empresaId: string, usuarioId: string, cuerpo: CuerpoFactura) {
   const condicion = cuerpo.condicion ?? CONDICION_CONTADO;
+  const moneda: Moneda = cuerpo.moneda ?? "PYG";
+  const cambio = moneda === "PYG" ? undefined : cuerpo.cambio;
 
   // Cuotas suspendido (MFE-03): también aquí, por si el cuerpo no pasó por leerCuerpoFactura. Antes de cualquier consulta y, por tanto, antes de reservar numeración (NEX-048).
   if (cuerpo.credito?.tipo === CREDITO_CUOTAS && !CUOTAS_HABILITADAS) throw new ErrorFacturacion(422, MENSAJE_CUOTAS_SUSPENDIDAS);
@@ -333,11 +387,12 @@ export async function prepararFactura(db: Db, empresaId: string, usuarioId: stri
     if (a?.descripcion !== undefined) campos.push("descripción fiscal");
     if (a?.gtin !== undefined) campos.push("GTIN");
 
-    // El precio de referencia del catálogo manda. Un precio distinto del navegador (o el precio de un producto SIN precio de lista en guaraníes) solo se acepta con el permiso
-    // FACTURACION_ELECTRONICA.PRECIO (consultado en el servidor); es siempre positivo, con a lo sumo 4 decimales, IVA incluido, y queda en el payload inmutable.
-    const referencia = p.precio !== null && p.monedaPrecio === "PYG" ? parseDec(s(p.precio), 8) : null;
+    // El precio de referencia del catálogo manda SOLO si está en la MISMA moneda de la factura (jamás se convierte en silencio un precio de lista). Un precio distinto del navegador (o el de
+    // un producto SIN precio de lista en esa moneda) solo se acepta con el permiso FACTURACION_ELECTRONICA.PRECIO (consultado en el servidor); es siempre positivo, con a lo sumo 4
+    // decimales, IVA incluido, y queda en el payload inmutable.
+    const referencia = p.precio !== null && precioEnMoneda(s(p.monedaPrecio), moneda) ? parseDec(s(p.precio), 8) : null;
 
-    if (referencia === null && l.precio === null) throw new ErrorFacturacion(422, `El producto ${s(p.codigo)} no tiene precio de venta de referencia en guaraníes.`);
+    if (referencia === null && l.precio === null) throw new ErrorFacturacion(422, `El producto ${s(p.codigo)} no tiene precio de venta de referencia en ${moneda === "PYG" ? "guaraníes" : moneda}${moneda === "PYG" ? "" : " (no se convierte el precio de otra moneda): escriba el precio en esa moneda"}.`);
 
     const propuesto = l.precio === null ? null : parseDec(l.precio, 4);
     const modificado = propuesto !== null && (referencia === null || propuesto !== referencia);
@@ -358,7 +413,7 @@ export async function prepararFactura(db: Db, empresaId: string, usuarioId: stri
     });
   }
 
-  const base = { moneda: "PYG", tipoTransaccion: cuerpo.tipoTransaccion, presencia: cuerpo.presencia, condicion, ...(cuerpo.credito ? { credito: cuerpo.credito } : {}), infoAdicional: cuerpo.infoAdicional, receptor, lineas };
+  const base = { moneda, ...(cambio !== undefined ? { cambio } : {}), tipoTransaccion: cuerpo.tipoTransaccion, presencia: cuerpo.presencia, condicion, ...(cuerpo.credito ? { credito: cuerpo.credito } : {}), infoAdicional: cuerpo.infoAdicional, receptor, lineas };
   // Contado: el pago único cubre el total que calcula el servidor (nunca un monto del navegador). Crédito: el único pago es la entrega inicial (si la hay); el resto se valida
   // contra el total del servidor (entrega + cuotas = total) y nunca se cuenta dos veces.
   const total = totalFactura(lineas);
@@ -404,7 +459,8 @@ export async function prepararFactura(db: Db, empresaId: string, usuarioId: stri
     formaPago: pagosFinal.map((p) => ETIQUETA_PAGO[p.tipo] ?? "").join(" + "),
     pagos: pagosFinal.map((p) => ({ medio: ETIQUETA_PAGO[p.tipo] ?? "", monto: p.monto, detalle: detallePago(p) })),
     ...(enCredito && cuerpo.credito ? { credito: resumenCredito(cuerpo.credito, total) } : {}),
-    moneda: "PYG",
+    moneda,
+    ...(cambio !== undefined ? { cambio: await resumenCambio(db, empresaId, moneda, cambio, total) } : {}),
     lineas: lineas.map((l, i) => ({ codigo: l.codigoInterno, descripcion: l.descripcion, unidad: extras[i].unidadSimbolo, ...(extras[i].campos.length > 0 ? { ajustes: extras[i].campos } : {}), cantidad: l.cantidad, precio: l.precio, precioLista: precios[i].referencia, precioModificado: precios[i].modificado, afectacion: l.afectacion, tasa: l.tasa, total: calculo.items[i] })),
     totales: { exento: calculo.exento, exonerado: calculo.exonerado, gravado5: calculo.gravado5, gravado10: calculo.gravado10, iva5: calculo.iva5, iva10: calculo.iva10, totalIva: calculo.totalIva, total: calculo.total },
   };
@@ -423,8 +479,8 @@ export async function crearFacturaElectronica(db: Db, empresaId: string, usuario
 
   const documento = receptor.naturaleza === 1 ? `${receptor.ruc}-${receptor.dv}` : receptor.numeroDocumento;
   const llamar = () =>
-    db.query(`SELECT o_documento_id AS "documentoId", o_numero AS numero, o_reutilizado AS reutilizado FROM fe_documento_crear_fe($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5, $6::uuid, $7, $8, 'PYG', $9::numeric, $10::jsonb)`,
-      [empresaId, usuarioId, cuerpo.sucursalId, cuerpo.puntoId, cuerpo.claveIdempotencia, cuerpo.clienteId, documento, receptor.razonSocial, totalTexto, JSON.stringify(payload)]);
+    db.query(`SELECT o_documento_id AS "documentoId", o_numero AS numero, o_reutilizado AS reutilizado FROM fe_documento_crear_fe($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5, $6::uuid, $7, $8, $11, $9::numeric, $10::jsonb)`,
+      [empresaId, usuarioId, cuerpo.sucursalId, cuerpo.puntoId, cuerpo.claveIdempotencia, cuerpo.clienteId, documento, receptor.razonSocial, totalTexto, JSON.stringify(payload), cuerpo.moneda ?? "PYG"]);
 
   try {
     return (await llamar()).rows[0] as F;

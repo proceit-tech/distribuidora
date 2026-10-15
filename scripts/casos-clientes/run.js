@@ -54,6 +54,7 @@ Module._resolveFilename = function (request, ...resto) {
   const aj = cargar("lib/facturacion/ajuste-fiscal.casos.js");
   const cre = cargar("lib/facturacion/credito.casos.js");
   const pag = cargar("lib/facturacion/pagos.casos.js");
+  const mon = cargar("lib/facturacion/monedas.casos.js");
   const suites = [
     ["teléfono y día de cobro", async () => tel.verificarCasosTelefonoYCobro(), () => tel.CASOS_TELEFONO.length + 11 + 6 + 2],
     ["catálogo mundial", async () => tel.verificarCatalogoMundial(), null],
@@ -101,6 +102,7 @@ Module._resolveFilename = function (request, ...resto) {
     ["Facturación Fase A (PRO-93): ajuste fiscal de ítems en la factura, guardar en Productos con permiso y bitácora, diagnóstico del punto de expedición, NEX-056 y límites de la fase", async () => aj.verificarCasosAjusteFiscal(), null],
     ["Facturación MFE-B1: crédito Plazo/Cuotas, entrega inicial, conciliación exacta, payload con nombres y tipos MT, Contado/Efectivo intacto y sin reserva de número ante errores", async () => cre.verificarCasosCredito(), null],
     ["Facturación MFE-03 P1: medios de pago (efectivo, transferencia, cheque, tarjeta, otros), múltiples medios, entrega de crédito, suma exacta, errores antes de reservar número", async () => pag.verificarCasosPagos(), null],
+    ["Facturación MFE-03 P2: monedas PYG/USD/BRL, tipo de cambio manual, F023 exacto, pagos y crédito en moneda extranjera, sin conversión de precios, snapshot inmutable y errores antes de reservar número", async () => mon.verificarCasosMonedas(), null],
   ];
   let total = 0;
   let fallosTotal = 0;

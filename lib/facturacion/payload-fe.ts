@@ -1,4 +1,5 @@
 import { CONDICION_CONTADO, CONDICION_CREDITO, CREDITO_CUOTAS, CREDITO_PLAZO, erroresCredito, hoyParaguay, plazoTexto, type CreditoEntrada } from "@/lib/facturacion/credito";
+import { esMonedaFE, leerCambio, totalEnGuaranies } from "@/lib/facturacion/monedas";
 import { DESCRIPCION_FISCAL_DENOMINACION, DESCRIPCION_FISCAL_MONEDA, DESCRIPCION_FISCAL_PAGO, erroresMedio, FORMAS_PAGO, TIPO_EFECTIVO, numeroChequeFiscal, TIPO_CHEQUE, TIPO_OTRO, TIPO_TARJETA_CREDITO, TIPO_TARJETA_DEBITO, type PagoEntrada } from "@/lib/facturacion/pagos";
 import { B, S, calcularItem, calcularSubtotales, numeroDec, parseDec, textoDec, type AfectacionIva, type Dec, type Subtotales, type TasaIva } from "@/lib/facturacion/calculo";
 
@@ -84,7 +85,10 @@ export type LineaFE = {
 };
 
 export type EntradaFE = {
+  /** D015: PYG, USD o BRL. */
   moneda: string;
+  /** D018: guaraníes por 1 unidad de la moneda extranjera (texto Decimal, ≤ 5 enteros y 4 decimales). Obligatorio con USD/BRL y prohibido con PYG. */
+  cambio?: string;
   tipoTransaccion: number;
   presencia: number;
   condicion: number; // 1 contado / 2 crédito
@@ -156,7 +160,9 @@ function importesRepresentables(items: Array<{ cantidad: Dec; precio: Dec; propo
 export function validarEntradaFE(e: EntradaFE, hoy: string = hoyParaguay()): string[] {
   const errores: string[] = [];
 
-  if (e.moneda !== "PYG") errores.push("En esta etapa solo se emiten facturas en guaraníes (PYG).");
+  if (!esMonedaFE(e.moneda)) errores.push("La moneda de la factura no es válida (PYG, USD o BRL).");
+  else if (e.moneda === "PYG" && e.cambio !== undefined) errores.push("Una factura en guaraníes no lleva tipo de cambio.");
+  else if (e.moneda !== "PYG" && (e.cambio === undefined || leerCambio(e.cambio) === null)) errores.push(`Indique el tipo de cambio manual: guaraníes por 1 ${e.moneda} (mayor que cero, hasta 5 enteros y 4 decimales).`);
   if (!(e.tipoTransaccion in TIPOS_TRANSACCION)) errores.push("Seleccione un tipo de transacción válido.");
   if (!(e.presencia in INDICADORES_PRESENCIA)) errores.push("Seleccione un indicador de presencia válido.");
   if (e.condicion !== CONDICION_CONTADO && e.condicion !== CONDICION_CREDITO) errores.push("Seleccione la condición de la operación: Contado o Crédito.");
@@ -182,6 +188,14 @@ export function validarEntradaFE(e: EntradaFE, hoy: string = hoyParaguay()): str
   if (sub.dTotGralOpe !== sumaItems) errores.push(`El total de la operación (${textoDec(sub.dTotGralOpe)}) difiere de la suma de los ítems (${textoDec(sumaItems)}) por el redondeo del IVA de un ítem con gravado parcial (NT 13). No se puede conciliar sin un ajuste no autorizado: use ítems con otra cantidad o precio, o no los combine.`);
   else if (sub.dTotGralOpe % PASO_MONTO_PAGO !== B(0)) errores.push(`El total de la factura (${textoDec(sub.dTotGralOpe)}) tiene más de 4 decimales y el pago (E608) admite solo 4: no se puede conciliar sin un ajuste no autorizado. Ajuste las cantidades o los precios.`);
   if (!importesRepresentables(items, calculados.map((c) => c.resultado), sub)) errores.push("Algún importe de la factura no puede escribirse en el documento electrónico sin perder precisión. Reduzca las cantidades o los precios.");
+
+  // Moneda extranjera: F023 dTotalGs = F014 × D018 EXACTO (regla 2385). Con total y cambio de ≤ 4 decimales el producto es exacto; si no cupiera como número del JSON, se bloquea la modalidad (nunca se redondea).
+  const totalGs = totalEnGuaranies0(e, sub.dTotGralOpe);
+
+  if (e.moneda !== "PYG" && esMonedaFE(e.moneda) && leerCambio(e.cambio) !== null) {
+    if (totalGs === null) errores.push("El equivalente en guaraníes (F023 = total × tipo de cambio) no es exacto: ajuste el tipo de cambio o los importes; no se redondea.");
+    else if (!exacto(totalGs)) errores.push("El equivalente en guaraníes (F023) no puede escribirse en el documento electrónico sin perder precisión. Reduzca los importes o el tipo de cambio.");
+  }
 
   // Contado: al menos un pago. Crédito: sin entrega no hay grupo de pago (E605 no se informa); con entrega, los pagos iniciales.
   if (e.condicion === CONDICION_CREDITO ? e.pagos.length > 999 : e.pagos.length === 0 || e.pagos.length > 999) errores.push("Indique la forma de pago.");
@@ -215,7 +229,8 @@ export function validarEntradaFE(e: EntradaFE, hoy: string = hoyParaguay()): str
   const r = e.receptor;
 
   if (r.tipoDocumentoIdentidad === 5 && r.tipoOperacion !== 2) errores.push("El cliente Innominado solo puede usarse en operaciones B2C.");
-  if (r.tipoDocumentoIdentidad === 5 && sub.dTotGralOpe >= LIMITE_INNOMINADO) errores.push("No se puede facturar a un cliente Innominado con un total igual o superior a Gs. 7.000.000 (NT 024).");
+  // NT 024: el límite es en guaraníes; con moneda extranjera se compara el equivalente F023.
+  if (r.tipoDocumentoIdentidad === 5 && (totalGs ?? sub.dTotGralOpe) >= LIMITE_INNOMINADO) errores.push("No se puede facturar a un cliente Innominado con un total igual o superior a Gs. 7.000.000 (NT 024).");
   if (r.naturaleza === 1 && (!/^\d{3,8}$/.test(r.ruc) || !/^\d$/.test(r.dv))) errores.push("El cliente contribuyente requiere RUC y dígito verificador válidos (RUC de 3 a 8 dígitos y DV de 1 dígito).");
   if (r.naturaleza === 1 && r.tipoContribuyente !== 1 && r.tipoContribuyente !== 2) errores.push("El cliente contribuyente requiere el tipo de contribuyente (persona física o jurídica).");
   if (r.razonSocial.trim().length < 4 || r.razonSocial.length > 255) errores.push("El nombre o razón social del cliente debe tener de 4 a 255 caracteres.");
@@ -247,7 +262,7 @@ function condicionPago(e: EntradaFE): Record<string, unknown> {
     dPlazoCre: c.tipo === CREDITO_PLAZO && c.plazoDias !== null ? plazoTexto(c.plazoDias) : null,
     dCuotas: c.tipo === CREDITO_CUOTAS ? c.cuotas.length : null,
     dMonEnt: entrega > B(0) ? numeroExacto(entrega) : null,
-    Cuotas: c.tipo === CREDITO_CUOTAS ? c.cuotas.map((q) => ({ cMoneCuo: "PYG", dMonCuota: Number(q.monto), dVencCuo: q.vencimiento })) : [],
+    Cuotas: c.tipo === CREDITO_CUOTAS ? c.cuotas.map((q) => ({ cMoneCuo: e.moneda, dMonCuota: Number(q.monto), dVencCuo: q.vencimiento })) : [],
   };
 }
 
@@ -255,25 +270,35 @@ function condicionPago(e: EntradaFE): Record<string, unknown> {
  * Un elemento de FormaPago[] (E605) con los nombres y tipos del MT: iTiPago (N), dDesTiPag (E607, oficial; con «Otro» la del operador), dMonTiPag (N, exacto), cMoneTiPag (PYG),
  * dDMoneTiPag (E610), dTiCamTiPag nulo; grupos condicionales gPagTarCD (E620, solo tarjeta; con dDesDenTarj E622) y gPagCheq (E630, solo cheque).
  */
-function formaPagoJSON(p: PagoEntrada & { monto: string }): Record<string, unknown> {
+function formaPagoJSON(p: PagoEntrada & { monto: string }, moneda: string = "PYG", cambio?: string): Record<string, unknown> {
   const monto = numeroExacto(parseDec(p.monto, 8) ?? B(0));
+  const extranjera = moneda !== "PYG";
 
   // Efectivo/PYG conserva EXACTAMENTE la forma del JSON de referencia del gateway (cuatro claves): ese contrato real no trae E607/E610, luego el gateway las genera para ese caso.
   // Para los demás medios no hay esa evidencia: se envían las descripciones fiscales del MT (E607 dDesTiPag, E610 dDMoneTiPag) para no depender de una derivación no comprobada.
-  if (p.tipo === TIPO_EFECTIVO) return { iTiPago: p.tipo, dMonTiPag: monto, cMoneTiPag: "PYG", dTiCamTiPag: null };
+  if (p.tipo === TIPO_EFECTIVO && !extranjera) return { iTiPago: p.tipo, dMonTiPag: monto, cMoneTiPag: "PYG", dTiCamTiPag: null };
+
+  // Moneda extranjera (E609–E611): el pago va en la moneda de la factura y E611 dTiCamTiPag lleva el MISMO cambio manual (obligatorio si E609 ≠ PYG, regla 1556). La descripción de la
+  // moneda (E610) solo se envía donde el texto oficial está comprobado (PYG); para USD/BRL la deriva el gateway, como D016 (ver PROGRESSO, MFE-03 P2).
+  const descMoneda = DESCRIPCION_FISCAL_MONEDA[moneda];
 
   return {
     iTiPago: p.tipo,
     dDesTiPag: p.tipo === TIPO_OTRO ? p.descripcion : DESCRIPCION_FISCAL_PAGO[p.tipo],
     dMonTiPag: monto,
-    cMoneTiPag: "PYG",
-    dDMoneTiPag: DESCRIPCION_FISCAL_MONEDA.PYG,
-    dTiCamTiPag: null,
+    cMoneTiPag: moneda,
+    ...(descMoneda !== undefined ? { dDMoneTiPag: descMoneda } : {}),
+    dTiCamTiPag: extranjera && cambio !== undefined ? Number(cambio) : null,
     ...((p.tipo === TIPO_TARJETA_CREDITO || p.tipo === TIPO_TARJETA_DEBITO) && p.tarjeta
       ? { gPagTarCD: { iDenTarj: p.tarjeta.denominacion, dDesDenTarj: p.tarjeta.denominacion === 99 ? p.tarjeta.descripcion : DESCRIPCION_FISCAL_DENOMINACION[p.tarjeta.denominacion], iForProPa: p.tarjeta.formaProcesamiento } }
       : {}),
     ...(p.tipo === TIPO_CHEQUE && p.cheque ? { gPagCheq: { dNumCheq: numeroChequeFiscal(p.cheque.numero), dBcoEmi: p.cheque.banco } } : {}),
   };
+}
+
+/** F023 de la entrada: null en PYG (se conserva el valor del baseline) o si el cambio no es válido/exacto. */
+function totalEnGuaranies0(e: EntradaFE, total: Dec): Dec | null {
+  return e.moneda === "PYG" || e.cambio === undefined || leerCambio(e.cambio) === null ? null : totalEnGuaranies(total, e.cambio);
 }
 
 const nulo = (v: string) => (v.trim() === "" ? null : v.trim());
@@ -325,9 +350,9 @@ export function construirPayloadFE(e: EntradaFE, hoy?: string): Record<string, u
     dInfoFisc: null,
     iTipTra: e.tipoTransaccion,
     iTImp: 1,
-    cMoneOpe: "PYG",
-    dCondTiCam: null,
-    dTiCam: null,
+    cMoneOpe: e.moneda,
+    dCondTiCam: e.moneda !== "PYG" ? 1 : null,
+    dTiCam: e.moneda !== "PYG" && e.cambio !== undefined ? Number(e.cambio) : null,
     iIndPres: e.presencia,
     dFecEmNR: null,
     dInfAdic: nulo(e.infoAdicional),
@@ -355,14 +380,14 @@ export function construirPayloadFE(e: EntradaFE, hoy?: string): Record<string, u
     dCodCliente: r.codigo.length >= CODIGO_CLIENTE.min && r.codigo.length <= CODIGO_CLIENTE.max ? r.codigo : null,
     iCondOpe: e.condicion,
     ...condicionPago(e),
-    FormaPago: e.pagos.map(formaPagoJSON),
+    FormaPago: e.pagos.map((p) => formaPagoJSON(p, e.moneda, e.cambio)),
     Detalles: detalles,
     Subtotales: [
       {
         dSubExe: num(sub.dSubExe), dSubExo: num(sub.dSubExo), dSub5: num(sub.dSub5), dSub10: num(sub.dSub10), dTotOpe: num(sub.dTotOpe),
         dTotDesc: 0, dTotDescGlotem: 0, dTotAntItem: 0, dTotAnt: 0, dPorcDescTotal: 0, dDescTotal: 0, dAnticipo: 0, dRedon: 0,
         dTotGralOpe: num(sub.dTotGralOpe), dIVA5: num(sub.dIVA5), dIVA10: num(sub.dIVA10), dLiqTotIVA5: num(sub.dIVA5), dLiqTotIVA10: num(sub.dIVA10), dTotIVA: num(sub.dTotIVA),
-        dBaseGrav5: num(sub.dBaseGrav5), dBaseGrav10: num(sub.dBaseGrav10), dTBasGraIVA: num(sub.dTBasGraIVA), dTotalGs: num(sub.dTotalGs),
+        dBaseGrav5: num(sub.dBaseGrav5), dBaseGrav10: num(sub.dBaseGrav10), dTBasGraIVA: num(sub.dTBasGraIVA), dTotalGs: e.moneda === "PYG" ? num(sub.dTotalGs) : numeroExacto(totalEnGuaranies0(e, sub.dTotGralOpe) ?? B(0)),
       },
     ],
   };
