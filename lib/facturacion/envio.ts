@@ -1,5 +1,6 @@
 import type { Pool } from "pg";
 
+import { guardarClasificacionIva, type ClasificacionGuardar, type ResultadoGuardado } from "@/lib/facturacion/ajuste-fiscal";
 import { crearFacturaElectronica, type CuerpoFactura } from "@/lib/facturacion/emision";
 import { configGatewayValida, enviarDocumentoGateway, leerCredenciales, type ConfigGateway, type Dependencias, type FaseEnvio, type ResultadoEnvio } from "@/lib/facturacion/gateway";
 import { ErrorFacturacion } from "@/lib/facturacion/shared";
@@ -33,6 +34,8 @@ export type RespuestaEnvio = {
   estadoGateway: string | null;
   errores: string[];
   fases: FaseEnvio[];
+  /** Resultado de «Guardar también en Productos» por producto (solo si el operador lo pidió). */
+  ajustesProducto?: ResultadoGuardado[];
 };
 
 /** Configuración del gateway de la empresa y presencia de credenciales (sin leerlas hacia afuera). 409 si falta algo. */
@@ -160,19 +163,28 @@ export async function enviarDocumento(db: Db, empresaId: string, usuarioId: stri
 export async function emitirFactura(db: Db, empresaId: string, usuarioId: string, cuerpo: CuerpoFactura, dep: Dependencias = {}): Promise<RespuestaEnvio> {
   await configuracionGateway(db, empresaId, dep);
 
-  const creado = await crearFacturaElectronica(db, empresaId, usuarioId, cuerpo);
+  const salida: { guardar: ClasificacionGuardar[] } = { guardar: [] };
+  const creado = await crearFacturaElectronica(db, empresaId, usuarioId, cuerpo, salida);
   const documentoId = String(creado.documentoId);
   const numero = String(creado.numero);
   const reutilizado = creado.reutilizado === true;
 
+  // «Guardar también en Productos» (confirmación explícita por línea): DESPUÉS de reservar el documento y ANTES de transmitir, sentencia atómica con bitácora; es idempotente (si el
+  // cadastro ya tiene esos valores no cambia nada) y un fallo NO impide emitir: se informa y el ajuste queda solo en esta factura.
+  const ajustesProducto: ResultadoGuardado[] = [];
+
+  for (const c of salida.guardar) ajustesProducto.push(await guardarClasificacionIva(db, empresaId, usuarioId, documentoId, c));
+
+  const extra = ajustesProducto.length > 0 ? { ajustesProducto } : {};
+
   try {
-    return { documentoId, reutilizado, ...(await enviarDocumento(db, empresaId, usuarioId, documentoId, dep)), numero };
+    return { documentoId, reutilizado, ...(await enviarDocumento(db, empresaId, usuarioId, documentoId, dep)), numero, ...extra };
   } catch (error) {
     const pg = error as { detail?: string };
 
     // Ya enviado (doble clic, reintento tras perder la respuesta): se informa sin reenviar.
     if (pg.detail === "NEX:YA_ENVIADO") {
-      return { documentoId, numero, reutilizado, estadoLocal: "ENVIADO", errorTipo: null, resultado: "YA_ENVIADO", http: null, mensaje: "Este documento ya fue enviado al gateway; no se reenvía.", lote: null, cdc: null, estadoGateway: null, errores: [], fases: [] };
+      return { documentoId, numero, reutilizado, estadoLocal: "ENVIADO", errorTipo: null, resultado: "YA_ENVIADO", http: null, mensaje: "Este documento ya fue enviado al gateway; no se reenvía.", lote: null, cdc: null, estadoGateway: null, errores: [], fases: [], ...extra };
     }
     if (error instanceof ErrorFacturacion) throw new ErrorFacturacion(error.estado, `${error.message} (Documento ${numero})`);
     if (pg.detail && /^NEX:(ENVIO_EN_CURSO|ENVIO_INDETERMINADO|REENVIO_REQUIERE_CONFIRMACION)$/.test(pg.detail)) {

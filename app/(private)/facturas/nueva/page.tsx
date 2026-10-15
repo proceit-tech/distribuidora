@@ -1,18 +1,20 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useId, useState } from "react";
+import { Fragment, useEffect, useId, useState } from "react";
 
 import ui from "@/components/ui/lista-padrao/lista.module.css";
+import { AJUSTE_VACIO, ajusteParaEnvio, problemasFiscales, valoresEfectivos, type AjusteUI } from "@/lib/facturacion/ajuste-item";
 import { elegirPorEnter, MENSAJE_ENTER } from "@/lib/facturacion/busqueda-rapida";
 import { resumenCalculo, type LineaFE } from "@/lib/facturacion/payload-fe";
 import { formatearFechaPy } from "@/lib/formato/listas";
 import { useProtegerCambios } from "@/lib/ui/proteger-cambios";
 
+import { EditorFiscalItem, type UnidadSifen } from "./ajuste-fiscal-item";
 import estilos from "./page.module.css";
 
-type Punto = { id: string; codigo: string; nombre: string };
-type Sucursal = { id: string; nombre: string; establecimiento: string; puntos: Punto[] };
+type Punto = { id: string; codigo: string; nombre: string; ultimoNumero?: number };
+type Sucursal = { id: string; nombre: string; establecimiento: string; puntos: Punto[]; puntosInactivos?: number };
 type Opciones = { condiciones: Record<string, string>; tiposTransaccion: Record<string, string>; presencias: Record<string, string>; formasPago: Record<string, string> };
 type Cliente = {
   id: string; codigo: string; razonSocial: string; nombreFantasia: string | null; numeroDocumento: string; dv: string | null; naturaleza: number; tipoContribuyente: number | null;
@@ -22,17 +24,18 @@ type Producto = {
   id: string; codigo: string; descripcion: string; unidadSifen: number | null; unidadSimbolo: string | null; unidadNombre: string | null; unidadVigente?: boolean | null; afectacion: number | null; proporcion: string | null;
   tasa: number | null; precio: string | null; monedaPrecio: string | null; gtin: string | null;
 };
-type Linea = { clave: number; producto: Producto; cantidad: string; precio: string };
+type Linea = { clave: number; producto: Producto; cantidad: string; precio: string; ajuste: AjusteUI };
 type Resumen = {
   empresa: string; sucursal: string; establecimiento: string; punto: string; numero: string; cliente: { codigo: string; razonSocial: string; documento: string };
   tipoTransaccion: string; presencia: string; condicion: string; formaPago: string; moneda: string;
-  lineas: Array<{ codigo: string; descripcion: string; unidad: string; cantidad: string; precio: string; precioLista: string; precioModificado: boolean; afectacion: number; tasa: number; total: number }>;
+  lineas: Array<{ codigo: string; descripcion: string; unidad: string; cantidad: string; precio: string; precioLista: string; precioModificado: boolean; afectacion: number; tasa: number; total: number; ajustes?: string[] }>;
   totales: { exento: number; exonerado: number; gravado5: number; gravado10: number; iva5: number; iva10: number; totalIva: number; total: number };
 };
 type FaseEnvio = { fase: string; ok: boolean; detalle: string; http?: number | null };
 type ResultadoEnvio = {
   documentoId: string; numero: string; reutilizado: boolean; estadoLocal: string; errorTipo: string | null; resultado: string; http: number | null; mensaje: string | null; lote: string | null; cdc: string | null;
   estadoGateway: string | null; errores: string[]; fases: FaseEnvio[];
+  ajustesProducto?: Array<{ productoId: string; codigo: string; estado: "GUARDADO" | "SIN_CAMBIO" | "ERROR"; mensaje: string }>;
 };
 const ETIQUETA_FASE: Record<string, string> = { AUTENTICACION: "Autenticación", TRANSMISION: "Transmisión", RESPUESTA: "Respuesta" };
 const ETIQUETA_RESULTADO: Record<string, string> = {
@@ -70,14 +73,19 @@ function problemasProducto(p: Producto): string[] {
   return m;
 }
 
-const cantidadValida = (l: Linea) => CANTIDAD_OK.test(l.cantidad) && Number(l.cantidad) > 0 && (l.producto.unidadSifen !== 77 || /^\d+(\.0+)?$/.test(l.cantidad));
+const cantidadValida = (l: Linea) => CANTIDAD_OK.test(l.cantidad) && Number(l.cantidad) > 0 && (valoresEfectivos(l.producto, l.ajuste).unidadSifen !== 77 || /^\d+(\.0+)?$/.test(l.cantidad));
 const precioValido = (l: Linea) => PRECIO_OK.test(l.precio) && Number(l.precio) > 0;
-const precioModificado = (l: Linea) => precioValido(l) && Number(l.precio) !== Number(l.producto.precio);
+const referenciaPyg = (p: Producto) => (p.monedaPrecio === "PYG" ? p.precio : null);
+const precioModificado = (l: Linea) => precioValido(l) && (referenciaPyg(l.producto) === null || Number(l.precio) !== Number(referenciaPyg(l.producto)));
 
-const aLineaFE = (l: Linea): LineaFE => ({
-  codigoInterno: l.producto.codigo, gtin: l.producto.gtin, descripcion: l.producto.descripcion, unidadSifen: l.producto.unidadSifen, cantidad: l.cantidad,
-  precio: precioValido(l) ? l.precio : (l.producto.precio ?? "0"), afectacion: l.producto.afectacion, tasa: l.producto.tasa, proporcion: l.producto.proporcion,
-});
+const aLineaFE = (l: Linea): LineaFE => {
+  const e = valoresEfectivos(l.producto, l.ajuste);
+
+  return {
+    codigoInterno: l.producto.codigo, gtin: e.gtin, descripcion: e.descripcion, unidadSifen: e.unidadSifen, cantidad: l.cantidad,
+    precio: precioValido(l) ? l.precio : (referenciaPyg(l.producto) ?? "0"), afectacion: e.afectacion, tasa: e.tasa, proporcion: e.proporcion,
+  };
+};
 
 const tipoContribuyente = (c: Cliente) => (c.naturaleza === 2 ? "No contribuyente" : (ETIQUETA_CONTRIBUYENTE[c.tipoContribuyente ?? 0] ?? "Contribuyente"));
 const documentoCliente = (c: Cliente) => `${c.numeroDocumento}${c.dv ? `-${c.dv}` : ""}`;
@@ -201,7 +209,7 @@ function SelectorCliente({ alElegir, alCerrar }: { alElegir: (c: Cliente) => voi
 }
 
 /** Selector de productos: lista paginada inmediata; filtro opcional (código, descripción, GTIN, código de barras). Permite añadir varios sin cerrar. */
-function SelectorProducto({ alAgregar, alCerrar, cantidadItems }: { alAgregar: (p: Producto) => void; alCerrar: () => void; cantidadItems: number }) {
+function SelectorProducto({ alAgregar, alCerrar, cantidadItems, permiteIncompletos }: { alAgregar: (p: Producto) => void; alCerrar: () => void; cantidadItems: number; permiteIncompletos: boolean }) {
   const f = useFiltro();
   const l = useListado<Producto>("/api/facturas/productos", "productos", f.q, f.pagina);
   const [aviso, setAviso] = useState("");
@@ -237,10 +245,11 @@ function SelectorProducto({ alAgregar, alCerrar, cantidadItems }: { alAgregar: (
                   <div className={estilos.info}>
                     <strong>{p.descripcion}</strong>
                     <small>{p.codigo}{p.gtin ? ` · GTIN ${p.gtin}` : ""} · {p.unidadSimbolo ?? "sin unidad"} · {p.afectacion ? `${ETIQUETA_IVA[p.afectacion]}${p.tasa ? ` ${p.tasa}%` : ""}` : "IVA sin clasificar"}</small>
-                    {pr.length > 0 ? <small className={estilos.impedimento}>No se puede facturar: {pr.join(", ")}. <Link href="/productos">Corregir en Productos</Link></small> : null}
+                    {pr.length > 0 && permiteIncompletos ? <small className={estilos.aviso}>Pendiente de completar: {pr.join(", ")}. Se completa en la línea de la factura.</small> : null}
+                    {pr.length > 0 && !permiteIncompletos ? <small className={estilos.impedimento}>No se puede facturar: {pr.join(", ")}. <Link href="/productos">Corregir en Productos</Link> o solicite el permiso de ajuste fiscal.</small> : null}
                   </div>
-                  <span className={estilos.precio}>{p.precio ? `Gs. ${gs(Number(p.precio))}` : "—"}</span>
-                  <button type="button" className={ui.secondaryButton} disabled={pr.length > 0} onClick={() => { alAgregar(p); setAviso(`«${p.descripcion}» añadido.`); }}>Añadir</button>
+                  <span className={estilos.precio}>{p.precio && p.monedaPrecio === "PYG" ? `Gs. ${gs(Number(p.precio))}` : "—"}</span>
+                  <button type="button" className={ui.secondaryButton} disabled={pr.length > 0 && !permiteIncompletos} onClick={() => { alAgregar(p); setAviso(`«${p.descripcion}» añadido.`); }}>Añadir</button>
                 </li>
               );
             })}
@@ -401,7 +410,7 @@ function BuscadorCliente({ alElegir }: { alElegir: (c: Cliente) => void }) {
 }
 
 /** Búsqueda rápida de productos (código, GTIN o descripción): permanece abierta para añadir varios; los que tienen impedimentos no se pueden añadir. */
-function BuscadorProducto({ alElegir }: { alElegir: (p: Producto) => void }) {
+function BuscadorProducto({ alElegir, permiteIncompletos }: { alElegir: (p: Producto) => void; permiteIncompletos: boolean }) {
   return (
     <BuscadorRapido<Producto>
       url="/api/facturas/productos"
@@ -415,8 +424,9 @@ function BuscadorProducto({ alElegir }: { alElegir: (p: Producto) => void }) {
         return {
           titulo: p.descripcion,
           detalle: `${p.codigo}${p.gtin ? ` · GTIN ${p.gtin}` : ""} · ${p.unidadSimbolo ?? "sin unidad"} · ${p.afectacion ? `${ETIQUETA_IVA[p.afectacion]}${p.tasa ? ` ${p.tasa}%` : ""}` : "IVA sin clasificar"}`,
-          derecha: p.precio ? `Gs. ${gs(Number(p.precio))}` : "—", habilitado: pr.length === 0,
-          impedimento: pr.length > 0 ? `No se puede facturar: ${pr.join(", ")}.` : undefined, enlace: pr.length > 0 ? { href: "/productos", texto: "Corregir en Productos" } : undefined,
+          derecha: p.precio && p.monedaPrecio === "PYG" ? `Gs. ${gs(Number(p.precio))}` : "—", habilitado: pr.length === 0 || permiteIncompletos,
+          impedimento: pr.length === 0 ? undefined : permiteIncompletos ? `Pendiente de completar: ${pr.join(", ")}. Se completa en la línea de la factura.` : `No se puede facturar: ${pr.join(", ")}.`,
+          enlace: pr.length > 0 && !permiteIncompletos ? { href: "/productos", texto: "Corregir en Productos" } : undefined,
         };
       }}
       exacto={(p, t) => p.codigo.toLowerCase() === t.toLowerCase() || p.gtin === t}
@@ -429,6 +439,9 @@ export default function NuevaFacturaPage() {
   const [sucursales, setSucursales] = useState<Sucursal[]>([]);
   const [opciones, setOpciones] = useState<Opciones | null>(null);
   const [puedeEditarPrecio, setPuedeEditarPrecio] = useState(false);
+  const [puedeAjustarFiscal, setPuedeAjustarFiscal] = useState(false);
+  const [puedeEditarProductos, setPuedeEditarProductos] = useState(false);
+  const [unidadesSifen, setUnidadesSifen] = useState<UnidadSifen[]>([]);
   const [sinEstablecimiento, setSinEstablecimiento] = useState(0);
   const [errorCarga, setErrorCarga] = useState("");
   const [sucursalId, setSucursalId] = useState("");
@@ -458,7 +471,7 @@ export default function NuevaFacturaPage() {
     let activo = true;
 
     fetch("/api/facturas/catalogos", { cache: "no-store" })
-      .then((r) => leer<{ sucursales: Sucursal[]; opciones: Opciones; puedeEditarPrecio?: boolean; sucursalesSinEstablecimiento?: number }>(r, "No fue posible cargar los datos del formulario."))
+      .then((r) => leer<{ sucursales: Sucursal[]; opciones: Opciones; puedeEditarPrecio?: boolean; puedeAjustarFiscal?: boolean; puedeEditarProductos?: boolean; unidadesSifen?: UnidadSifen[]; sucursalesSinEstablecimiento?: number }>(r, "No fue posible cargar los datos del formulario."))
       .then((j) => {
         if (!activo) return;
 
@@ -467,6 +480,9 @@ export default function NuevaFacturaPage() {
         setSinEstablecimiento(j.sucursalesSinEstablecimiento ?? 0);
         setOpciones(j.opciones);
         setPuedeEditarPrecio(j.puedeEditarPrecio === true);
+        setPuedeAjustarFiscal(j.puedeAjustarFiscal === true);
+        setPuedeEditarProductos(j.puedeEditarProductos === true);
+        setUnidadesSifen(j.unidadesSifen ?? []);
         if (j.sucursales.length === 1) {
           setSucursalId(j.sucursales[0].id);
           if (j.sucursales[0].puntos.length === 1) setPuntoId(j.sucursales[0].puntos[0].id);
@@ -480,8 +496,10 @@ export default function NuevaFacturaPage() {
   }, []);
 
   const sucursal = sucursales.find((s) => s.id === sucursalId);
+  const puntoElegido = sucursal?.puntos.find((p) => p.id === puntoId);
+  const proximoNumero = puntoElegido && typeof puntoElegido.ultimoNumero === "number" ? `${puntoElegido.codigo}-${String(puntoElegido.ultimoNumero + 1).padStart(7, "0")}` : "";
   const calculo = resumenCalculo(lineas.map(aLineaFE));
-  const problemas = lineas.flatMap((l) => problemasProducto(l.producto).map((p) => `${l.producto.codigo}: ${p}.`));
+  const problemas = lineas.flatMap((l) => problemasFiscales(l.producto, l.ajuste, l.precio).filter((m) => !m.startsWith("sin precio") || !precioValido(l)).map((m) => `${l.producto.codigo}: ${m}.`));
   const lineasValidas = lineas.every((l) => cantidadValida(l) && precioValido(l));
   const faltan = [
     sucursalId === "" ? "sucursal" : "",
@@ -489,7 +507,7 @@ export default function NuevaFacturaPage() {
     cliente === null ? "cliente" : "",
     lineas.length === 0 ? "al menos un ítem" : "",
     lineas.length > 0 && !lineasValidas ? "corregir cantidades o precios" : "",
-    problemas.length > 0 ? "corregir productos con impedimentos" : "",
+    problemas.length > 0 ? "completar los datos fiscales de los ítems marcados" : "",
   ].filter(Boolean);
   const puedeGuardar = !revisando && !enviando && faltan.length === 0 && cliente !== null && cliente.apto && calculo.completo;
   const hayPrecioModificado = lineas.some(precioModificado);
@@ -504,17 +522,22 @@ export default function NuevaFacturaPage() {
       return;
     }
 
-    setLineas((ls) => [...ls, { clave: siguienteClave, producto: p, cantidad: "1", precio: p.precio ?? "" }]);
+    setLineas((ls) => [...ls, { clave: siguienteClave, producto: p, cantidad: "1", precio: referenciaPyg(p) ?? "", ajuste: AJUSTE_VACIO }]);
     setSiguienteClave((n) => n + 1);
   }
 
   const editar = (k: number, cambio: Partial<Pick<Linea, "cantidad" | "precio">>) => setLineas((ls) => ls.map((x) => (x.clave === k ? { ...x, ...cambio } : x)));
+  const editarAjuste = (k: number, cambio: Partial<AjusteUI>) => setLineas((ls) => ls.map((x) => (x.clave === k ? { ...x, ajuste: { ...x.ajuste, ...cambio } } : x)));
 
   // El precio solo viaja cuando difiere del de lista; el servidor lo contrasta con el catálogo y con el permiso del usuario.
   const cuerpoFactura = () => ({
     claveIdempotencia: clave, sucursalId, puntoId, clienteId: cliente?.id, tipoTransaccion: Number(tipoTransaccion), presencia: Number(presencia),
     pagos: [{ tipo: Number(formaPago) }], infoAdicional,
-    lineas: lineas.map((l) => ({ productoId: l.producto.id, cantidad: l.cantidad, ...(precioModificado(l) ? { precio: l.precio } : {}) })),
+    lineas: lineas.map((l) => {
+      const ajuste = ajusteParaEnvio(l.producto, l.ajuste);
+
+      return { productoId: l.producto.id, cantidad: l.cantidad, ...(precioModificado(l) ? { precio: l.precio } : {}), ...(ajuste ? { ajuste } : {}) };
+    }),
   });
 
   // «Grabar»: solo revisión. El servidor valida y calcula; NO se reserva número ni se transmite nada.
@@ -626,6 +649,11 @@ export default function NuevaFacturaPage() {
             {resultado.estadoLocal === "ENVIADO" ? `Factura ${resultado.numero} enviada` : `Factura ${resultado.numero}: el envío no se completó`}
           </h2>
           <p className={resultado.estadoLocal === "ENVIADO" ? estilos.resultadoOk : estilos.resultadoError}>{ETIQUETA_ESTADO_LOCAL[resultado.estadoLocal] ?? resultado.estadoLocal}.</p>
+          {resultado.ajustesProducto && resultado.ajustesProducto.length > 0 ? (
+            <ul className={estilos.errorList} aria-label="Guardado en Productos">
+              {resultado.ajustesProducto.map((a) => <li key={a.productoId}><strong>{a.codigo}</strong>: {a.mensaje}</li>)}
+            </ul>
+          ) : null}
           <p className={estilos.hint}>La aprobación fiscal (SIFEN) se confirma en Documentos electrónicos con la consulta de estado: recibir la factura no equivale a aprobarla.</p>
           {resultado.estadoLocal === "ERROR_ENVIO" && resultado.errorTipo === "RECHAZO" ? <p className={estilos.hint}>El gateway rechazó el documento; se conserva su número. El reenvío del mismo contenido se confirma desde Documentos electrónicos.</p> : null}
           <div className={estilos.actions} style={{ justifyContent: "flex-start", marginTop: 12 }}>
@@ -673,7 +701,13 @@ export default function NuevaFacturaPage() {
                         <option value="">Seleccione…</option>
                         {(sucursal?.puntos ?? []).map((p) => <option key={p.id} value={p.id}>{p.codigo} · {p.nombre}</option>)}
                       </select>
-                      {sucursal && sucursal.puntos.length === 0 ? <small className={estilos.fieldError}>Esta sucursal no tiene puntos de expedición activos.</small> : null}
+                      {sucursal && sucursal.puntos.length === 0 ? (
+                        <small className={estilos.fieldError} role="alert">
+                          La sucursal «{sucursal.nombre}» no tiene un punto de expedición activo{(sucursal.puntosInactivos ?? 0) > 0 ? ` (hay ${sucursal.puntosInactivos} inactivo${sucursal.puntosInactivos === 1 ? "" : "s"})` : ""}.
+                          No se puede emitir desde aquí: el punto de expedición y su numeración los configura el administrador fiscal; la factura no crea puntos ni cambia el número.
+                        </small>
+                      ) : null}
+                      {sucursal && puntoId && proximoNumero ? <small className={estilos.hint}>Próximo número (referencial): {sucursal.establecimiento}-{proximoNumero}. Se reserva una sola vez al enviar.</small> : null}
                     </label>
 
                     <div className={estilos.field}>
@@ -773,7 +807,7 @@ export default function NuevaFacturaPage() {
                   <span className={estilos.meta}>{lineas.length} ítem{lineas.length === 1 ? "" : "s"}</span>
                 </div>
                 <div className={`${estilos.cardBody} ${estilos.buscarFila}`}>
-                  <BuscadorProducto alElegir={agregar} />
+                  <BuscadorProducto alElegir={agregar} permiteIncompletos={puedeAjustarFiscal} />
                   <button type="button" className={ui.secondaryButton} onClick={() => setSelector("producto")}>Búsqueda avanzada</button>
                 </div>
                 <div className={estilos.tableWrap}>
@@ -797,18 +831,20 @@ export default function NuevaFacturaPage() {
                         const cantOk = cantidadValida(l);
                         const precOk = precioValido(l);
                         const mod = precioModificado(l);
-                        const pr = problemasProducto(l.producto);
+                        const e = valoresEfectivos(l.producto, l.ajuste);
+                        const pr = problemasFiscales(l.producto, l.ajuste, l.precio).filter((m) => !m.startsWith("sin precio") || !precOk);
 
                         return (
-                          <tr key={l.clave} className={!cantOk || !precOk || pr.length > 0 ? estilos.filaInvalida : undefined}>
+                          <Fragment key={l.clave}>
+                          <tr className={!cantOk || !precOk || pr.length > 0 ? estilos.filaInvalida : undefined}>
                             <td className={estilos.prod} data-label="Producto">
                               <strong>{l.producto.descripcion}</strong>
                               <small>{l.producto.codigo}{l.producto.gtin ? ` · GTIN ${l.producto.gtin}` : ""}</small>
-                              {pr.length > 0 ? <small className={estilos.fieldError} role="alert">No se puede facturar: {pr.join(", ")}.</small> : null}
+                              {pr.length > 0 ? <small className={estilos.fieldError} role="alert">{puedeAjustarFiscal ? "Pendiente de completar" : "No se puede facturar"}: {pr.join(", ")}.</small> : null}
                             </td>
-                            <td data-label="Afectación IVA">{l.producto.afectacion ? ETIQUETA_IVA[l.producto.afectacion] : "Sin clasificar"}</td>
-                            <td className={estilos.num} data-label="% IVA">{l.producto.afectacion ? `${l.producto.tasa ?? 0}%` : "—"}</td>
-                            <td data-label="Unidad" title={l.producto.unidadNombre ?? undefined}>{l.producto.unidadSimbolo ?? "—"}</td>
+                            <td data-label="Afectación IVA">{e.afectacion ? ETIQUETA_IVA[e.afectacion] : "Sin clasificar"}</td>
+                            <td className={estilos.num} data-label="% IVA">{e.afectacion ? `${e.tasa ?? "—"}${e.tasa !== null ? "%" : ""}` : "—"}</td>
+                            <td data-label="Unidad" title={l.producto.unidadNombre ?? undefined}>{l.ajuste.unidadSifen !== "" ? (unidadesSifen.find((u) => String(u.codigo) === l.ajuste.unidadSifen)?.representacion ?? l.ajuste.unidadSifen) : (l.producto.unidadSimbolo ?? "—")}</td>
                             <td className={estilos.num} data-label="Cantidad">
                               <input
                                 className={`${estilos.qty} ${cantOk ? "" : estilos.invalid}`}
@@ -818,7 +854,7 @@ export default function NuevaFacturaPage() {
                                 value={l.cantidad}
                                 onChange={(e) => editar(l.clave, { cantidad: e.target.value.replace(",", ".") })}
                               />
-                              {!cantOk ? <small className={estilos.fieldError}>{l.producto.unidadSifen === 77 ? "Entero mayor que 0" : "Mayor que 0, hasta 4 decimales"}</small> : null}
+                              {!cantOk ? <small className={estilos.fieldError}>{e.unidadSifen === 77 ? "Entero mayor que 0" : "Mayor que 0, hasta 4 decimales"}</small> : null}
                             </td>
                             <td className={estilos.num} data-label="Precio unitario (IVA incl.)">
                               {puedeEditarPrecio ? (
@@ -834,17 +870,27 @@ export default function NuevaFacturaPage() {
                                   {!precOk ? <small className={estilos.fieldError}>Mayor que 0</small> : null}
                                   {mod ? (
                                     <span className={estilos.modificado}>
-                                      Lista: {gs(Number(l.producto.precio))} · <button type="button" className={estilos.linkButton} onClick={() => editar(l.clave, { precio: l.producto.precio ?? "" })}>Restaurar</button>
+                                      Lista: {referenciaPyg(l.producto) === null ? "sin precio en guaraníes" : gs(Number(referenciaPyg(l.producto)))} · <button type="button" className={estilos.linkButton} onClick={() => editar(l.clave, { precio: referenciaPyg(l.producto) ?? "" })}>Restaurar</button>
                                     </span>
                                   ) : null}
                                 </>
+                              ) : referenciaPyg(l.producto) === null ? (
+                                <small className={estilos.fieldError}>Sin precio de lista: requiere el permiso de precio</small>
                               ) : (
-                                gs(Number(l.producto.precio ?? 0))
+                                gs(Number(referenciaPyg(l.producto)))
                               )}
                             </td>
                             <td className={`${estilos.num} ${estilos.subtotal}`} data-label="Subtotal">{calculo.completo ? gs(calculo.items[i] ?? 0) : "—"}</td>
                             <td className={estilos.accion}><button type="button" className={estilos.remove} aria-label={`Quitar ${l.producto.descripcion}`} onClick={() => setLineas((ls) => ls.filter((x) => x.clave !== l.clave))}>Quitar</button></td>
                           </tr>
+                          {puedeAjustarFiscal ? (
+                            <tr className={estilos.filaFiscal}>
+                              <td colSpan={8}>
+                                <EditorFiscalItem producto={l.producto} precio={l.precio} ajuste={l.ajuste} unidades={unidadesSifen} puedeEditarProductos={puedeEditarProductos} alCambiar={(c) => editarAjuste(l.clave, c)} />
+                              </td>
+                            </tr>
+                          ) : null}
+                          </Fragment>
                         );
                       })}
                     </tbody>
@@ -893,7 +939,7 @@ export default function NuevaFacturaPage() {
                 {pendientes.length > 0 ? <ul>{pendientes.map((p) => <li key={p}>{p}</li>)}</ul> : <p className={estilos.listo}>Todo listo para revisar.</p>}
               </div>
 
-              {problemas.length > 0 ? <p className={estilos.fieldError} role="alert">Hay productos con impedimentos: corríjalos en Productos o quítelos de la factura.</p> : null}
+              {problemas.length > 0 ? <p className={estilos.fieldError} role="alert">{puedeAjustarFiscal ? "Hay ítems con datos fiscales pendientes: complételos en su línea («Datos fiscales del ítem») o quítelos de la factura." : "Hay productos con impedimentos: corríjalos en Productos o quítelos de la factura."}</p> : null}
 
               <div className={estilos.accionesPanel}>
                 <button type="button" className={`${ui.primaryButton} ${estilos.accionPrincipal} ${estilos.accionRevisar}`} disabled={!puedeGuardar} onClick={grabar}>
@@ -915,7 +961,7 @@ export default function NuevaFacturaPage() {
       )}
 
       {selector === "cliente" ? <SelectorCliente alCerrar={() => setSelector(null)} alElegir={(c) => { setCliente(c); setSelector(null); }} /> : null}
-      {selector === "producto" ? <SelectorProducto alCerrar={() => setSelector(null)} alAgregar={agregar} cantidadItems={lineas.length} /> : null}
+      {selector === "producto" ? <SelectorProducto alCerrar={() => setSelector(null)} alAgregar={agregar} cantidadItems={lineas.length} permiteIncompletos={puedeAjustarFiscal} /> : null}
 
       {resumen ? (
         <div className={estilos.overlay} role="presentation">
@@ -938,7 +984,11 @@ export default function NuevaFacturaPage() {
                 <tbody>
                   {resumen.lineas.map((l, i) => (
                     <tr key={i}>
-                      <td className={estilos.prod}><strong>{l.descripcion}</strong><small>{l.codigo}</small></td>
+                      <td className={estilos.prod}>
+                        <strong>{l.descripcion}</strong>
+                        <small>{l.codigo}</small>
+                        {l.ajustes && l.ajustes.length > 0 ? <small className={estilos.modificado}>Ajustado en esta factura: {l.ajustes.join(", ")}</small> : null}
+                      </td>
                       <td>{l.unidad || "—"}</td>
                       <td className={estilos.num}>{l.cantidad}</td>
                       <td className={estilos.num}>

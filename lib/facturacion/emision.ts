@@ -1,6 +1,8 @@
 import type { Pool } from "pg";
 
 import { evaluarAptitudCliente } from "@/lib/clientes/aptitud-cliente";
+import { leerAjuste, type AjusteFiscal } from "@/lib/facturacion/ajuste-item";
+import { permisoAjusteFiscal, permisoEditarProductos, type ClasificacionGuardar } from "@/lib/facturacion/ajuste-fiscal";
 import { parseDec, textoDec } from "@/lib/facturacion/calculo";
 import { construirPayloadFE, FORMAS_PAGO, INDICADORES_PRESENCIA, resumenCalculo, TIPOS_TRANSACCION, totalFactura, validarEntradaFE, type EntradaFE, type LineaFE, type ReceptorFE } from "@/lib/facturacion/payload-fe";
 import { ErrorFacturacion, ErrorValidacionFiscal } from "@/lib/facturacion/shared";
@@ -23,7 +25,8 @@ const comodin = (t: string) => t.replace(/[!%_]/g, (c) => `!${c}`);
 export async function catalogosFactura(db: Db, empresaId: string, usuarioId: string) {
   const r = await db.query(
     `SELECT sc.id, sc.nombre, sc.establecimiento_sifen AS establecimiento,
-            coalesce(json_agg(json_build_object('id', p.id, 'codigo', p.codigo, 'nombre', p.nombre) ORDER BY p.codigo) FILTER (WHERE p.id IS NOT NULL), '[]'::json) AS puntos
+            coalesce(json_agg(json_build_object('id', p.id, 'codigo', p.codigo, 'nombre', p.nombre, 'ultimoNumero', p.ultimo_numero) ORDER BY p.codigo) FILTER (WHERE p.id IS NOT NULL), '[]'::json) AS puntos,
+            (SELECT count(*)::int FROM fe_puntos_expedicion x WHERE x.empresa_id = sc.empresa_id AND x.sucursal_id = sc.id AND NOT x.activo) AS "puntosInactivos"
        FROM sucursales sc
        LEFT JOIN fe_puntos_expedicion p ON p.empresa_id = sc.empresa_id AND p.sucursal_id = sc.id AND p.activo
       WHERE sc.empresa_id = $1 AND sc.activo AND sc.establecimiento_sifen IS NOT NULL AND sucursal_en_alcance($1::uuid, $2::uuid, sc.id)
@@ -34,7 +37,10 @@ export async function catalogosFactura(db: Db, empresaId: string, usuarioId: str
   // Diagnóstico para el operador: sucursales activas del alcance a las que les falta el establecimiento SIFEN (no se ofrecen en el formulario).
   const falta = await db.query("SELECT count(*)::int AS n FROM sucursales sc WHERE sc.empresa_id = $1 AND sc.activo AND sc.establecimiento_sifen IS NULL AND sucursal_en_alcance($1::uuid, $2::uuid, sc.id)", [empresaId, usuarioId]);
 
-  return { sucursales: r.rows as F[], sucursalesSinEstablecimiento: Number((falta.rows[0] as F | undefined)?.n ?? 0) };
+  // Unidades de medida SIFEN vigentes (Tabla 5 del MT): opciones para completar la unidad de un ítem en la propia factura.
+  const unidades = await db.query(`SELECT codigo, representacion, descripcion FROM unidades_medida_sifen WHERE vigente ORDER BY descripcion, codigo`);
+
+  return { sucursales: r.rows as F[], sucursalesSinEstablecimiento: Number((falta.rows[0] as F | undefined)?.n ?? 0), unidadesSifen: unidades.rows as F[] };
 }
 
 const sinTotal = (fila: F): F => Object.fromEntries(Object.entries(fila).filter(([k]) => k !== "total"));
@@ -108,7 +114,7 @@ export async function buscarProductosFactura(db: Db, empresaId: string, texto: s
 
 export type CuerpoFactura = {
   claveIdempotencia: string; sucursalId: string; puntoId: string; clienteId: string; tipoTransaccion: number; presencia: number;
-  pagos: Array<{ tipo: number }>; infoAdicional: string; lineas: Array<{ productoId: string; cantidad: string; precio: string | null }>;
+  pagos: Array<{ tipo: number }>; infoAdicional: string; lineas: Array<{ productoId: string; cantidad: string; precio: string | null; ajuste?: AjusteFiscal }>;
 };
 
 const entero = (v: unknown) => (typeof v === "number" && Number.isInteger(v) ? v : typeof v === "string" && /^\d{1,3}$/.test(v) ? Number(v) : NaN);
@@ -124,6 +130,11 @@ export function leerCuerpoFactura(c: Record<string, unknown>): CuerpoFactura | s
   if (!lineas.every((l) => l && typeof l === "object" && typeof (l as F).productoId === "string" && UUID.test(s((l as F).productoId)) && typeof (l as F).cantidad === "string")) return "Los ítems no son válidos.";
   // Precio unitario IVA incluido propuesto por el operador (opcional). Solo su FORMA se valida aquí; el servidor lo contrasta con el precio de referencia y el permiso.
   if (!lineas.every((l) => (l as F).precio === undefined || (l as F).precio === null || (l as F).precio === "" || (typeof (l as F).precio === "string" && /^\d{1,12}(\.\d{1,4})?$/.test(s((l as F).precio).trim())))) return "El precio unitario de un ítem no es válido.";
+  for (const l of lineas) {
+    const a = leerAjuste((l as F | null)?.ajuste);
+
+    if (typeof a === "string") return a;
+  }
   if (pagos.length === 0 || pagos.length > 1 || !pagos.every((p) => p && typeof p === "object" && Number.isInteger(entero((p as F).tipo)))) return "Seleccione la forma de pago.";
 
   return {
@@ -135,7 +146,11 @@ export function leerCuerpoFactura(c: Record<string, unknown>): CuerpoFactura | s
     presencia: entero(c.presencia),
     pagos: pagos.map((p) => ({ tipo: entero((p as F).tipo) })),
     infoAdicional: typeof c.infoAdicional === "string" ? c.infoAdicional.trim() : "",
-    lineas: lineas.map((l) => ({ productoId: s((l as F).productoId), cantidad: s((l as F).cantidad).trim(), precio: s((l as F).precio).trim() === "" ? null : s((l as F).precio).trim() })),
+    lineas: lineas.map((l) => {
+      const ajuste = leerAjuste((l as F).ajuste);
+
+      return { productoId: s((l as F).productoId), cantidad: s((l as F).cantidad).trim(), precio: s((l as F).precio).trim() === "" ? null : s((l as F).precio).trim(), ...(ajuste && typeof ajuste !== "string" ? { ajuste } : {}) };
+    }),
   };
 }
 
@@ -215,22 +230,74 @@ export async function prepararFactura(db: Db, empresaId: string, usuarioId: stri
   const porId = new Map((productos.rows as F[]).map((p) => [s(p.id), p]));
   const lineas: LineaFE[] = [];
   const precios: Array<{ referencia: string; modificado: boolean }> = [];
+  const extras: Array<{ campos: string[]; unidadSimbolo: string }> = [];
+  const guardar: ClasificacionGuardar[] = [];
   let puedePrecio: boolean | null = null;
+
+  // Ajuste fiscal por ítem (PRO-93 Fase A): exige su propio permiso; «guardar en Productos» exige además PRODUCTOS.EDITAR. Se verifica ANTES de tocar nada.
+  const conAjuste = cuerpo.lineas.some((l) => l.ajuste !== undefined);
+
+  if (conAjuste && !(await permisoAjusteFiscal(db, empresaId, usuarioId))) {
+    throw new ErrorFacturacion(403, "No tiene permiso para ajustar los datos fiscales de los ítems en la factura (FACTURACION_ELECTRONICA.AJUSTE_FISCAL). Corrija el producto en Productos.");
+  }
+  if (cuerpo.lineas.some((l) => l.ajuste?.guardarClasificacion) && !(await permisoEditarProductos(db, empresaId, usuarioId))) {
+    throw new ErrorFacturacion(403, "No tiene permiso para guardar en Productos (PRODUCTOS.EDITAR): use «Solo esta factura».");
+  }
+
+  const unidadesPedidas = [...new Set(cuerpo.lineas.flatMap((l) => (l.ajuste?.unidadSifen !== undefined ? [l.ajuste.unidadSifen] : [])))];
+  const catalogoUnidades = new Map<number, { vigente: boolean; simbolo: string }>();
+
+  if (unidadesPedidas.length > 0) {
+    const u = await db.query("SELECT codigo, representacion, vigente FROM unidades_medida_sifen WHERE codigo = ANY($1::int[])", [unidadesPedidas]);
+
+    for (const fila of u.rows as F[]) catalogoUnidades.set(Number(fila.codigo), { vigente: fila.vigente === true, simbolo: s(fila.representacion) });
+  }
 
   for (const l of cuerpo.lineas) {
     const p = porId.get(l.productoId);
 
     if (!p) throw new ErrorFacturacion(422, "Uno de los productos no existe, está inactivo, no está marcado como vendible o no es facturable (solo mercadería y servicios).");
-    if (p.unidadSifen === null) throw new ErrorFacturacion(422, `El producto ${s(p.codigo)} no tiene unidad de medida con equivalencia SIFEN: no se puede facturar hasta vincularla en Catálogos.`);
-    if (p.unidadVigente === null) throw new ErrorFacturacion(422, `El código SIFEN ${s(p.unidadSifen)} de la unidad del producto ${s(p.codigo)} no existe en el catálogo oficial.`);
-    if (p.unidadVigente === false) throw new ErrorFacturacion(422, `El código SIFEN ${s(p.unidadSifen)} de la unidad del producto ${s(p.codigo)} no está vigente en el catálogo oficial.`);
-    if (p.precio === null || p.monedaPrecio !== "PYG") throw new ErrorFacturacion(422, `El producto ${s(p.codigo)} no tiene precio de venta de referencia en guaraníes.`);
 
-    // El precio de referencia del catálogo manda. Un precio distinto del navegador solo se acepta con el permiso FACTURACION_ELECTRONICA.PRECIO (consultado
-    // en el servidor); es siempre positivo, con a lo sumo 4 decimales (ya validado en la lectura), IVA incluido, y queda en el payload inmutable.
-    const referencia = parseDec(s(p.precio), 8);
+    const a = l.ajuste;
+    const campos: string[] = [];
+    let unidadSifen = p.unidadSifen === null ? null : Number(p.unidadSifen);
+    let unidadSimbolo = s(p.unidadSimbolo);
+
+    if (a?.unidadSifen !== undefined) {
+      const u = catalogoUnidades.get(a.unidadSifen);
+
+      if (!u) throw new ErrorFacturacion(422, `El código SIFEN ${a.unidadSifen} de la unidad elegida para el producto ${s(p.codigo)} no existe en el catálogo oficial.`);
+      if (!u.vigente) throw new ErrorFacturacion(422, `El código SIFEN ${a.unidadSifen} de la unidad elegida para el producto ${s(p.codigo)} no está vigente en el catálogo oficial.`);
+      unidadSifen = a.unidadSifen; unidadSimbolo = u.simbolo; campos.push("unidad SIFEN");
+    } else {
+      if (p.unidadSifen === null) throw new ErrorFacturacion(422, `El producto ${s(p.codigo)} no tiene unidad de medida con equivalencia SIFEN: no se puede facturar hasta vincularla en Catálogos.`);
+      if (p.unidadVigente === null) throw new ErrorFacturacion(422, `El código SIFEN ${s(p.unidadSifen)} de la unidad del producto ${s(p.codigo)} no existe en el catálogo oficial.`);
+      if (p.unidadVigente === false) throw new ErrorFacturacion(422, `El código SIFEN ${s(p.unidadSifen)} de la unidad del producto ${s(p.codigo)} no está vigente en el catálogo oficial.`);
+    }
+
+    let afectacion = p.afectacion === null ? null : Number(p.afectacion);
+    let tasa = p.tasa === null ? null : Number(p.tasa);
+    let proporcion = p.proporcion === null ? null : s(p.proporcion);
+
+    if (a?.afectacion !== undefined) {
+      afectacion = a.afectacion; tasa = a.tasa ?? null; proporcion = a.afectacion === 4 ? (a.proporcion ?? null) : null; campos.push("IVA");
+      if (a.guardarClasificacion && tasa !== null) guardar.push({ productoId: s(p.id), codigo: s(p.codigo), afectacion, tasa, proporcion });
+    }
+
+    const descripcion = a?.descripcion !== undefined ? a.descripcion : s(p.descripcion);
+    const gtin = a?.gtin !== undefined ? a.gtin : p.gtin === null ? null : s(p.gtin);
+
+    if (a?.descripcion !== undefined) campos.push("descripción fiscal");
+    if (a?.gtin !== undefined) campos.push("GTIN");
+
+    // El precio de referencia del catálogo manda. Un precio distinto del navegador (o el precio de un producto SIN precio de lista en guaraníes) solo se acepta con el permiso
+    // FACTURACION_ELECTRONICA.PRECIO (consultado en el servidor); es siempre positivo, con a lo sumo 4 decimales, IVA incluido, y queda en el payload inmutable.
+    const referencia = p.precio !== null && p.monedaPrecio === "PYG" ? parseDec(s(p.precio), 8) : null;
+
+    if (referencia === null && l.precio === null) throw new ErrorFacturacion(422, `El producto ${s(p.codigo)} no tiene precio de venta de referencia en guaraníes.`);
+
     const propuesto = l.precio === null ? null : parseDec(l.precio, 4);
-    const modificado = propuesto !== null && referencia !== null && propuesto !== referencia;
+    const modificado = propuesto !== null && (referencia === null || propuesto !== referencia);
 
     if (l.precio !== null && (propuesto === null || propuesto <= parseDec("0", 0)!)) throw new ErrorFacturacion(422, `El precio del producto ${s(p.codigo)} debe ser mayor que cero.`);
     if (modificado) {
@@ -239,12 +306,12 @@ export async function prepararFactura(db: Db, empresaId: string, usuarioId: stri
       if (!puedePrecio) throw new ErrorFacturacion(403, `No tiene permiso para modificar el precio del producto ${s(p.codigo)}. Se factura con el precio de lista.`);
     }
     // Cantidad coherente con la unidad: la unidad SIFEN «Unidad» (77) no admite fracciones.
-    if (Number(p.unidadSifen) === 77 && !/^\d+$/.test(l.cantidad.replace(/\.0+$/, ""))) throw new ErrorFacturacion(422, `El producto ${s(p.codigo)} se vende por unidad: la cantidad debe ser un número entero.`);
-    precios.push({ referencia: s(p.precio), modificado });
+    if (unidadSifen === 77 && !/^\d+$/.test(l.cantidad.replace(/\.0+$/, ""))) throw new ErrorFacturacion(422, `El producto ${s(p.codigo)} se vende por unidad: la cantidad debe ser un número entero.`);
+    precios.push({ referencia: referencia === null ? "" : s(p.precio), modificado });
+    extras.push({ campos, unidadSimbolo });
 
     lineas.push({
-      codigoInterno: s(p.codigo), gtin: p.gtin === null ? null : s(p.gtin), descripcion: s(p.descripcion), unidadSifen: p.unidadSifen === null ? null : Number(p.unidadSifen),
-      cantidad: l.cantidad, precio: modificado ? (l.precio as string) : s(p.precio), afectacion: p.afectacion === null ? null : Number(p.afectacion), tasa: p.tasa === null ? null : Number(p.tasa), proporcion: p.proporcion === null ? null : s(p.proporcion),
+      codigoInterno: s(p.codigo), gtin, descripcion, unidadSifen, cantidad: l.cantidad, precio: modificado ? (l.precio as string) : s(p.precio), afectacion, tasa, proporcion,
     });
   }
 
@@ -274,19 +341,22 @@ export async function prepararFactura(db: Db, empresaId: string, usuarioId: stri
     condicion: "Contado",
     formaPago: ETIQUETA_PAGO[cuerpo.pagos[0].tipo] ?? "",
     moneda: "PYG",
-    lineas: lineas.map((l, i) => ({ codigo: l.codigoInterno, descripcion: l.descripcion, unidad: s(porId.get(cuerpo.lineas[i].productoId)?.unidadSimbolo), cantidad: l.cantidad, precio: l.precio, precioLista: precios[i].referencia, precioModificado: precios[i].modificado, afectacion: l.afectacion, tasa: l.tasa, total: calculo.items[i] })),
+    lineas: lineas.map((l, i) => ({ codigo: l.codigoInterno, descripcion: l.descripcion, unidad: extras[i].unidadSimbolo, ...(extras[i].campos.length > 0 ? { ajustes: extras[i].campos } : {}), cantidad: l.cantidad, precio: l.precio, precioLista: precios[i].referencia, precioModificado: precios[i].modificado, afectacion: l.afectacion, tasa: l.tasa, total: calculo.items[i] })),
     totales: { exento: calculo.exento, exonerado: calculo.exonerado, gravado5: calculo.gravado5, gravado10: calculo.gravado10, iva5: calculo.iva5, iva10: calculo.iva10, totalIva: calculo.totalIva, total: calculo.total },
   };
 
-  return { entrada: final, payload, totalTexto: String(payload.Subtotales[0].dTotGralOpe), receptor, resumen };
+  return { entrada: final, payload, totalTexto: String(payload.Subtotales[0].dTotGralOpe), receptor, resumen, guardar };
 }
 
 /**
  * Crea la Factura Electrónica (documento + payload inmutable, número reservado UNA vez) de forma idempotente. La clave de idempotencia evita duplicados
  * ante doble clic, reintento o pérdida de respuesta. Solo se llama al CONFIRMAR el envío: revisar o volver a editar no consume numeración.
  */
-export async function crearFacturaElectronica(db: Db, empresaId: string, usuarioId: string, cuerpo: CuerpoFactura) {
-  const { payload, totalTexto, receptor } = await prepararFactura(db, empresaId, usuarioId, cuerpo);
+export async function crearFacturaElectronica(db: Db, empresaId: string, usuarioId: string, cuerpo: CuerpoFactura, salida?: { guardar: ClasificacionGuardar[] }) {
+  const { payload, totalTexto, receptor, guardar } = await prepararFactura(db, empresaId, usuarioId, cuerpo);
+
+  if (salida) salida.guardar = guardar;
+
   const documento = receptor.naturaleza === 1 ? `${receptor.ruc}-${receptor.dv}` : receptor.numeroDocumento;
   const llamar = () =>
     db.query(`SELECT o_documento_id AS "documentoId", o_numero AS numero, o_reutilizado AS reutilizado FROM fe_documento_crear_fe($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5, $6::uuid, $7, $8, 'PYG', $9::numeric, $10::jsonb)`,

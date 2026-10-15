@@ -967,3 +967,54 @@
     font-size: 24px;
   }
 }
+
+/* Fase A (PRO-93): datos fiscales del ítem dentro de la propia factura. Misma jerarquía de tarjetas; el editor es un bloque plegable bajo la fila del ítem. */
+.filaFiscal > td {
+  padding: 0 12px 12px;
+  background: #fafcfc;
+  border-top: 0;
+}
+
+.fiscal {
+  border: 1px solid #d5e4e4;
+  border-radius: 8px;
+  padding: 8px 12px;
+  background: #ffffff;
+}
+
+.fiscal > summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 32px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.fiscal .grid {
+  margin-top: 10px;
+}
+
+.radios {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 12px 0 4px;
+  padding: 8px 12px;
+  border: 1px solid #d5e4e4;
+  border-radius: 8px;
+  font-size: 14px;
+}
+
+.radios legend {
+  padding: 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.radios label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
