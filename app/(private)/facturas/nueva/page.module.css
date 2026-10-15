@@ -1338,3 +1338,22 @@
     align-items: stretch;
   }
 }
+
+/* AUD-PRO128-R01-02: el panel fiscal es una fila contextual JUSTO bajo el producto elegido (uno a la vez). */
+.filaPanel > td {
+  padding: 0 10px 10px;
+  border-bottom: 1px solid #dce6ed;
+  background: #fafcfc;
+}
+
+@media (max-width: 900px) {
+  .items:not(.itemsResumen) tr.filaPanel {
+    display: block;
+    padding: 0 10px 12px;
+  }
+
+  .items:not(.itemsResumen) tr.filaPanel > td {
+    grid-column: 1 / -1;
+    padding: 0;
+  }
+}

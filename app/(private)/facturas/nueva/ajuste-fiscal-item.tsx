@@ -1,9 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { problemasFiscales, valoresEfectivos, type AjusteUI, type GtinModo, type ProductoBase } from "@/lib/facturacion/ajuste-item";
-import { cambiosPorOpcionIva, esParcial, OPCIONES_IVA, opcionIvaDe } from "@/lib/facturacion/iva-opciones";
+import { cambiosPorOpcionIva, esParcial, OPCIONES_IVA, opcionIvaDe, RESTAURAR_IVA } from "@/lib/facturacion/iva-opciones";
 import { etiquetaUnidad, filtrarUnidades } from "@/lib/facturacion/unidades";
 
 import estilos from "./page.module.css";
@@ -20,6 +20,7 @@ export function EditorFiscalItem({ producto, precio, moneda, ajuste, unidades, p
   alCambiar: (c: Partial<AjusteUI>) => void; alCerrar: () => void;
 }) {
   const [busqueda, setBusqueda] = useState("");
+  const raiz = useRef<HTMLElement>(null);
   const e = valoresEfectivos(producto, ajuste);
   const pendientes = problemasFiscales(producto, ajuste, precio, moneda).filter((m) => !m.startsWith("sin precio"));
   const ivaCambiado = ajuste.afectacion !== "";
@@ -30,8 +31,17 @@ export function EditorFiscalItem({ producto, precio, moneda, ajuste, unidades, p
   const lista = elegida && !filtradas.includes(elegida) ? [elegida, ...filtradas] : filtradas;
   const base = producto.codigo;
 
+  // Al abrirse (AUD-PRO128-R01-02) el panel se hace visible aunque la fila esté arriba en una factura larga y el foco pasa a su primer control; Escape lo cierra. La búsqueda de unidades es estado
+  // LOCAL del panel (el padre lo remonta por producto con key), así que no se arrastra de un producto a otro.
+  useEffect(() => {
+    const el = raiz.current;
+
+    el?.scrollIntoView({ block: "nearest" });
+    el?.querySelector<HTMLElement>("select, input")?.focus({ preventScroll: true });
+  }, []);
+
   return (
-    <section className={estilos.panelFiscal} aria-label={`Datos fiscales de ${base}`}>
+    <section ref={raiz} className={estilos.panelFiscal} aria-label={`Datos fiscales de ${base}`} onKeyDown={(ev) => { if (ev.key === "Escape") { ev.stopPropagation(); alCerrar(); } }}>
       <div className={estilos.panelFiscalCabecera}>
         <strong>Datos fiscales · {base}</strong>
         <button type="button" className={estilos.linkButton} onClick={alCerrar}>Cerrar</button>
@@ -44,6 +54,7 @@ export function EditorFiscalItem({ producto, precio, moneda, ajuste, unidades, p
             {opcion === "" ? <option value="">Seleccione…</option> : null}
             {OPCIONES_IVA.map((o) => <option key={o.valor} value={o.valor}>{o.etiqueta}</option>)}
           </select>
+          {ivaCambiado ? <button type="button" className={estilos.linkButton} onClick={() => alCambiar(RESTAURAR_IVA)}>Usar IVA del producto</button> : null}
         </label>
 
         {esParcial(opcion) ? (

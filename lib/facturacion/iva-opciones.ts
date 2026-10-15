@@ -1,4 +1,5 @@
 import type { AjusteUI } from "@/lib/facturacion/ajuste-item";
+import { formatearDecimalTexto } from "@/lib/formato/decimal-texto";
 
 /**
  * Selector DIRECTO de IVA por ítem (PRO-128, UX-15). Cada opción fija JUNTAS afectación (E731), tasa (E734) y, en los parciales, la proporción gravada (E733): cambiar solo la tasa deja de ser un paso
@@ -44,6 +45,12 @@ export function cambiosPorOpcionIva(valor: string, producto: { afectacion: numbe
   return { afectacion: String(o.afectacion), tasa: String(o.tasa), proporcion };
 }
 
+/**
+ * «Usar IVA del producto» (AUD-PRO128-R01-04): restaura afectación, tasa y proporción ORIGINALES del producto limpiando el ajuste de IVA y la opción de guardar en Productos. Es un parche de SOLO esos campos:
+ * no toca GTIN, descripción, unidad, cantidad ni precio.
+ */
+export const RESTAURAR_IVA: Pick<AjusteUI, "afectacion" | "tasa" | "proporcion" | "guardar"> = { afectacion: "", tasa: "", proporcion: "", guardar: false };
+
 /** Texto corto de la clasificación efectiva para la tabla y el resumen (p. ej. «Gravado IVA 10 %» o «Gravado parcial IVA 5 % · 50 %»). */
 export function etiquetaIva(afectacion: number | null, tasa: number | null, proporcion: string | null): string {
   if (afectacion === null) return "Sin clasificar";
@@ -52,5 +59,6 @@ export function etiquetaIva(afectacion: number | null, tasa: number | null, prop
 
   if (!o) return tasa === null ? "IVA incompleto" : `IVA ${afectacion}/${tasa} %`;
 
-  return o.parcial && proporcion ? `${o.etiqueta} · ${proporcion} %` : o.etiqueta;
+  // La proporción se muestra en es-PY desde su texto exacto (37.5 → «37,5 %»), sin pasar por Number.
+  return o.parcial && proporcion ? `${o.etiqueta} · ${formatearDecimalTexto(proporcion)} %` : o.etiqueta;
 }

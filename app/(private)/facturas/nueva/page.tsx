@@ -1,14 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useId, useState } from "react";
+import { Fragment, useEffect, useId, useRef, useState } from "react";
 
 import ui from "@/components/ui/lista-padrao/lista.module.css";
 import { AJUSTE_VACIO, ajusteParaEnvio, decidirProducto, problemasFiscales, valoresEfectivos, type AjusteUI, type PermisosProducto } from "@/lib/facturacion/ajuste-item";
 import { elegirPorEnter, MENSAJE_ENTER } from "@/lib/facturacion/busqueda-rapida";
-import { formularioModificado } from "@/lib/facturacion/cambios-formulario";
+import { formularioModificado, perdidasAlCambiarCondicion, perdidasAlCambiarMoneda } from "@/lib/facturacion/cambios-formulario";
 import { CREDITO_UI_VACIO, creditoParaEnvio, hoyParaguay, pendientesCredito, type EstadoCreditoUI } from "@/lib/facturacion/credito";
-import { cambiosPorOpcionIva, esParcial, etiquetaIva, OPCIONES_IVA, opcionIvaDe } from "@/lib/facturacion/iva-opciones";
+import { cambiosPorOpcionIva, esParcial, etiquetaIva, OPCIONES_IVA, opcionIvaDe, RESTAURAR_IVA } from "@/lib/facturacion/iva-opciones";
 import { B, parseDec, textoDec } from "@/lib/facturacion/calculo";
 import { cabeEnF023, leerCambio, mismoPrecio, MONEDAS_FE, simboloMoneda, totalEnGuaranies, type Moneda } from "@/lib/facturacion/monedas";
 import { conciliarPagos, PAGO_UI_VACIO, pagoParaEnvio, pendientesPagos, textoDecimal, type PagoUI } from "@/lib/facturacion/pagos";
@@ -40,7 +40,7 @@ type Resumen = {
   cambio?: { valor: string; totalGs: string; catalogo: { cambio: string; fecha: string } | null; modificado: boolean };
   pagos?: Array<{ medio: string; monto: string; detalle: string }>;
   credito?: { tipo: string; plazo: string | null; entrega: string; saldo: string; cuotas: Array<{ numero: number; monto: string; vencimiento: string }> };
-  lineas: Array<{ codigo: string; descripcion: string; unidad: string; cantidad: string; precio: string; precioLista: string; precioModificado: boolean; afectacion: number; tasa: number; total: number; totalTexto?: string; ajustes?: string[] }>;
+  lineas: Array<{ codigo: string; descripcion: string; unidad: string; cantidad: string; precio: string; precioLista: string; precioModificado: boolean; afectacion: number; tasa: number; proporcion?: string | null; total: number; totalTexto?: string; ajustes?: string[] }>;
   totales: { exento: number; exonerado: number; gravado5: number; gravado10: number; iva5: number; iva10: number; totalIva: number; total: number };
   totalesTexto?: { exento: string; exonerado: string; gravado5: string; gravado10: string; iva5: string; iva10: string; totalIva: string; total: string };
 };
@@ -474,12 +474,24 @@ export default function NuevaFacturaPage() {
   const [resultado, setResultado] = useState<ResultadoEnvio | null>(null);
   const [mostrarEnvio, setMostrarEnvio] = useState(false);
   const [editando, setEditando] = useState<number | null>(null);
+  const [confirmacion, setConfirmacion] = useState<{ tipo: "moneda" | "condicion"; valor: string; perdidas: string[] } | null>(null);
+  const botonesFiscales = useRef(new Map<number, HTMLButtonElement>());
   const [ubicacionElegida, setUbicacionElegida] = useState(false);
 
   // Cualquier decisión del operador cuenta como cambio sin enviar (no solo cliente/ítems/observaciones); los valores por defecto y la sucursal/punto preseleccionados solos, no.
   const sucio = resultado === null && formularioModificado({ cliente: cliente !== null, lineas: lineas.length, infoAdicional, ubicacionElegidaPorElOperador: ubicacionElegida, tipoTransaccion, presencia, condicion, moneda, cambio, pagos, credito });
 
   useProtegerCambios(sucio);
+
+  useEffect(() => {
+    if (!confirmacion) return;
+
+    const f = (e: KeyboardEvent) => e.key === "Escape" && setConfirmacion(null);
+
+    window.addEventListener("keydown", f);
+
+    return () => window.removeEventListener("keydown", f);
+  }, [confirmacion]);
 
   useEffect(() => {
     let activo = true;
@@ -649,6 +661,41 @@ export default function NuevaFacturaPage() {
     setResumen(null);
   }
 
+  function aplicarCondicion(valor: string) {
+    setCondicion(valor);
+    setCredito(CREDITO_UI_VACIO);
+    setPagos([PAGO_UI_VACIO]);
+  }
+
+  // Cambiar Condición o Moneda reinicia lo digitado (reglas sin cambio, nada se convierte); si hay algo que perder se pide confirmación ANTES; cancelar conserva la selección y los valores.
+  function pedirCondicion(valor: string) {
+    const perdidas = perdidasAlCambiarCondicion({ pagos, credito });
+
+    if (perdidas.length === 0) aplicarCondicion(valor);
+    else setConfirmacion({ tipo: "condicion", valor, perdidas });
+  }
+
+  function pedirMoneda(m: Moneda) {
+    const perdidas = perdidasAlCambiarMoneda({ precios: lineas.map((l) => ({ actual: l.precio, nuevo: referencia(l.producto, m) ?? "" })), pagos, credito, cambio, aMoneda: m });
+
+    if (perdidas.length === 0) cambiarMoneda(m);
+    else setConfirmacion({ tipo: "moneda", valor: m, perdidas });
+  }
+
+  function confirmarCambio() {
+    if (!confirmacion) return;
+
+    if (confirmacion.tipo === "moneda") cambiarMoneda(confirmacion.valor as Moneda);
+    else aplicarCondicion(confirmacion.valor);
+    setConfirmacion(null);
+  }
+
+  // Cierra el panel fiscal y devuelve el foco al botón «Fiscal/Completar» de la misma fila (si todavía existe).
+  function cerrarPanel(clave: number) {
+    setEditando(null);
+    window.requestAnimationFrame(() => botonesFiscales.current.get(clave)?.focus());
+  }
+
   function nueva() {
     setCliente(null);
     setLineas([]);
@@ -766,14 +813,14 @@ export default function NuevaFacturaPage() {
 
                     <label className={estilos.field}>
                       <span>Condición</span>
-                      <select aria-label="Condición de la operación" value={condicion} onChange={(e) => { setCondicion(e.target.value); setCredito(CREDITO_UI_VACIO); setPagos([PAGO_UI_VACIO]); }}>
+                      <select aria-label="Condición de la operación" value={condicion} onChange={(e) => pedirCondicion(e.target.value)}>
                         {Object.entries(opciones?.condiciones ?? { "1": "Contado" }).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                       </select>
                     </label>
 
                     <label className={estilos.field}>
                       <span>Moneda</span>
-                      <select aria-label="Moneda de la factura" value={moneda} onChange={(e) => cambiarMoneda(e.target.value as Moneda)}>
+                      <select aria-label="Moneda de la factura" value={moneda} onChange={(e) => pedirMoneda(e.target.value as Moneda)}>
                         {(Object.keys(MONEDAS_FE) as Moneda[]).map((m) => <option key={m} value={m}>{m} — {MONEDAS_FE[m].nombre}</option>)}
                       </select>
                     </label>
@@ -914,7 +961,8 @@ export default function NuevaFacturaPage() {
                         const seleccionada = editando === l.clave;
 
                         return (
-                          <tr key={l.clave} className={[!cantOk || !precOk || pr.length > 0 ? estilos.filaInvalida : "", seleccionada ? estilos.filaSeleccionada : ""].filter(Boolean).join(" ") || undefined}>
+                          <Fragment key={l.clave}>
+                          <tr className={[!cantOk || !precOk || pr.length > 0 ? estilos.filaInvalida : "", seleccionada ? estilos.filaSeleccionada : ""].filter(Boolean).join(" ") || undefined}>
                             <td className={estilos.prod} data-label="Producto">
                               <strong>{l.producto.descripcion}</strong>
                               <small>{l.producto.codigo}{l.producto.gtin ? ` · GTIN ${l.producto.gtin}` : ""}</small>
@@ -945,6 +993,7 @@ export default function NuevaFacturaPage() {
                               ) : (
                                 etiquetaIva(e.afectacion, e.tasa, e.proporcion)
                               )}
+                              {puedeAjustarFiscal && l.ajuste.afectacion !== "" ? <button type="button" className={estilos.linkButton} onClick={() => editarAjuste(l.clave, RESTAURAR_IVA)}>Usar IVA del producto</button> : null}
                             </td>
                             <td data-label="Unidad" title={l.producto.unidadNombre ?? undefined}>{unidad}</td>
                             <td className={estilos.num} data-label="Cantidad">
@@ -985,26 +1034,33 @@ export default function NuevaFacturaPage() {
                             <td className={`${estilos.num} ${estilos.subtotal}`} data-label="Subtotal">{calculo.completo ? fd(calculo.texto.items[i]) : "—"}</td>
                             <td className={estilos.accion}>
                               {puedeAjustarFiscal ? (
-                                <button type="button" className={estilos.linkButton} aria-expanded={seleccionada} aria-label={`Datos fiscales de ${l.producto.descripcion}`} onClick={() => setEditando(seleccionada ? null : l.clave)}>{pr.length > 0 ? "Completar" : "Fiscal"}</button>
+                                <button
+                                  type="button"
+                                  className={estilos.linkButton}
+                                  ref={(el) => { if (el) botonesFiscales.current.set(l.clave, el); else botonesFiscales.current.delete(l.clave); }}
+                                  aria-expanded={seleccionada}
+                                  aria-label={`Datos fiscales de ${l.producto.descripcion}`}
+                                  onClick={() => (seleccionada ? cerrarPanel(l.clave) : setEditando(l.clave))}
+                                >
+                                  {pr.length > 0 ? "Completar" : "Fiscal"}
+                                </button>
                               ) : null}
                               <button type="button" className={estilos.remove} aria-label={`Quitar ${l.producto.descripcion}`} onClick={() => { setLineas((ls) => ls.filter((x) => x.clave !== l.clave)); if (editando === l.clave) setEditando(null); }}>Quitar</button>
                             </td>
                           </tr>
+                          {puedeAjustarFiscal && seleccionada ? (
+                            <tr className={estilos.filaPanel}>
+                              <td colSpan={7}>
+                                <EditorFiscalItem key={l.clave} moneda={moneda} producto={l.producto} precio={l.precio} ajuste={l.ajuste} unidades={unidadesSifen} puedeEditarProductos={puedeEditarProductos} alCambiar={(c) => editarAjuste(l.clave, c)} alCerrar={() => cerrarPanel(l.clave)} />
+                              </td>
+                            </tr>
+                          ) : null}
+                          </Fragment>
                         );
                       })}
                     </tbody>
                   </table>
                 </div>
-
-                {puedeAjustarFiscal && editando !== null && lineas.some((l) => l.clave === editando) ? (() => {
-                  const l = lineas.find((x) => x.clave === editando)!;
-
-                  return (
-                    <div className={estilos.cardBody}>
-                      <EditorFiscalItem moneda={moneda} producto={l.producto} precio={l.precio} ajuste={l.ajuste} unidades={unidadesSifen} puedeEditarProductos={puedeEditarProductos} alCambiar={(c) => editarAjuste(l.clave, c)} alCerrar={() => setEditando(null)} />
-                    </div>
-                  );
-                })() : null}
               </section>
 
               <section className={estilos.card} aria-labelledby="sec-info">
@@ -1072,6 +1128,20 @@ export default function NuevaFacturaPage() {
       {selector === "cliente" ? <SelectorCliente alCerrar={() => setSelector(null)} alElegir={(c) => { setCliente(c); setSelector(null); }} /> : null}
       {selector === "producto" ? <SelectorProducto alCerrar={() => setSelector(null)} alAgregar={agregar} cantidadItems={lineas.length} permisos={{ puedeAjustarFiscal, puedeEditarPrecio }} moneda={moneda} /> : null}
 
+      {confirmacion ? (
+        <div className={estilos.overlay} role="presentation">
+          <div className={estilos.modal} role="alertdialog" aria-modal="true" aria-labelledby="titulo-confirmar" aria-describedby="desc-confirmar">
+            <h2 id="titulo-confirmar">{confirmacion.tipo === "moneda" ? `Cambiar la moneda a ${confirmacion.valor}` : "Cambiar la condición de la operación"}</h2>
+            <p id="desc-confirmar">Este cambio vuelve a empezar lo ya digitado; nada se convierte automáticamente. Se perderán:</p>
+            <ul className={estilos.errorList}>{confirmacion.perdidas.map((p) => <li key={p}>{p}</li>)}</ul>
+            <div className={estilos.actions} style={{ marginTop: 14 }}>
+              <button type="button" className={ui.secondaryButton} autoFocus onClick={() => setConfirmacion(null)}>Cancelar (mantener lo actual)</button>
+              <button type="button" className={ui.primaryButton} onClick={confirmarCambio}>Confirmar cambio</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {resumen ? (
         <div className={estilos.overlay} role="presentation">
           <div className={estilos.modal} role="dialog" aria-modal="true" aria-labelledby="titulo-resumen">
@@ -1121,7 +1191,7 @@ export default function NuevaFacturaPage() {
                         {fd(l.precio)}
                         {l.precioModificado ? <span className={estilos.modificado}>Precio modificado (lista {fd(l.precioLista)})</span> : null}
                       </td>
-                      <td>{etiquetaIva(l.afectacion, l.tasa, null)}</td>
+                      <td>{etiquetaIva(l.afectacion, l.tasa, l.proporcion ?? null)}</td>
                       <td className={estilos.num}>{fd(l.totalTexto ?? String(l.total))}</td>
                     </tr>
                   ))}
