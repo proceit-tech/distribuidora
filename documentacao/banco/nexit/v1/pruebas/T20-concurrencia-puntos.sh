@@ -76,14 +76,14 @@ Q "select fe_punto_activar('$E','$U','$P3',10,true)" >/dev/null
 carrera 3 70570003 "select fe_punto_crear('$E','$U','$S4','001','Caja S4',7,true)" "update sucursales set establecimiento_sifen='100' where id='$S4'" "ESTABLECIMIENTO_CON_PUNTOS"
 chk "$(Q "select establecimiento_sifen from sucursales where id='$S4'")" "200" "orden A: el establecimiento de S4 NO cambió (la sucursal ya tenía el punto recién creado)"
 chk "$(Q "select count(*) from fe_puntos_expedicion where sucursal_id='$S4'")" "1" "orden A: el punto de S4 quedó creado con su identidad (200, 001)"
-chk "$(Q "select ultimo_numero||'/'||activo from fe_puntos_expedicion where sucursal_id='$S4'")" "7/f" "orden A: el punto creado conserva el número informado (7) e inactivo"
+chk "$(Q "select ultimo_numero||'/'||activo from fe_puntos_expedicion where sucursal_id='$S4'")" "7/false" "orden A: el punto creado conserva el número informado (7) e inactivo"
 
 # 4) Orden B — el UPDATE llega primero: cambia el establecimiento de S5 (a 100, sin puntos aún) y retiene la transacción; el ALTA en S5 (código 001) queda BLOQUEADA esperando la fila, lee el
 #    establecimiento DEFINITIVO (100) al confirmar el UPDATE y es RECHAZADA porque 100-001 ya lo usa el punto de S3: no queda ningún punto huérfano.
 carrera 4 70570004 "update sucursales set establecimiento_sifen='100' where id='$S5'" "select fe_punto_crear('$E','$U','$S5','001','Caja S5',9,true)" "IDENTIDAD_FISCAL_DUPLICADA"
 chk "$(Q "select establecimiento_sifen from sucursales where id='$S5'")" "100" "orden B: el cambio de establecimiento de S5 (sin puntos) se confirmó"
 chk "$(Q "select count(*) from fe_puntos_expedicion where sucursal_id='$S5'")" "0" "orden B: NO quedó ningún punto huérfano en S5 con la identidad ya ocupada"
-chk "$(Q "select ultimo_numero||'/'||activo from fe_puntos_expedicion where id='$P3'")" "10/t" "órdenes A y B: la numeración y el estado del punto existente de S3 no cambiaron"
+chk "$(Q "select ultimo_numero||'/'||activo from fe_puntos_expedicion where id='$P3'")" "10/true" "órdenes A y B: la numeración y el estado del punto existente de S3 no cambiaron"
 chk "$(Q "select count(*) from documentos_electronicos where empresa_id='$E'")" "0" "órdenes A y B: no se creó ni modificó ningún documento"
 
 echo "------------------------------------------------------------"
