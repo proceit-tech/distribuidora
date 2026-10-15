@@ -3,8 +3,9 @@ import type { Pool } from "pg";
 import { evaluarAptitudCliente } from "@/lib/clientes/aptitud-cliente";
 import { leerAjuste, type AjusteFiscal } from "@/lib/facturacion/ajuste-item";
 import { permisoAjusteFiscal, permisoEditarProductos, type ClasificacionGuardar } from "@/lib/facturacion/ajuste-fiscal";
-import { parseDec, textoDec } from "@/lib/facturacion/calculo";
-import { construirPayloadFE, FORMAS_PAGO, INDICADORES_PRESENCIA, resumenCalculo, TIPOS_TRANSACCION, totalFactura, validarEntradaFE, type EntradaFE, type LineaFE, type ReceptorFE } from "@/lib/facturacion/payload-fe";
+import { B, parseDec, textoDec, type Dec } from "@/lib/facturacion/calculo";
+import { CONDICION_CONTADO, CONDICION_CREDITO, CREDITO_PLAZO, leerCredito, plazoTexto, type CreditoEntrada } from "@/lib/facturacion/credito";
+import { construirPayloadFE, CONDICIONES_OPERACION, FORMAS_PAGO, INDICADORES_PRESENCIA, resumenCalculo, TIPOS_TRANSACCION, totalFactura, validarEntradaFE, type EntradaFE, type LineaFE, type ReceptorFE } from "@/lib/facturacion/payload-fe";
 import { ErrorFacturacion, ErrorValidacionFiscal } from "@/lib/facturacion/shared";
 
 /**
@@ -114,7 +115,8 @@ export async function buscarProductosFactura(db: Db, empresaId: string, texto: s
 
 export type CuerpoFactura = {
   claveIdempotencia: string; sucursalId: string; puntoId: string; clienteId: string; tipoTransaccion: number; presencia: number;
-  pagos: Array<{ tipo: number }>; infoAdicional: string; lineas: Array<{ productoId: string; cantidad: string; precio: string | null; ajuste?: AjusteFiscal }>;
+  /** Forma de pago: del total (Contado) o de la ENTREGA INICIAL (Crédito con entrega). */
+  pagos: Array<{ tipo: number }>; condicion?: number; credito?: CreditoEntrada; infoAdicional: string; lineas: Array<{ productoId: string; cantidad: string; precio: string | null; ajuste?: AjusteFiscal }>;
 };
 
 const entero = (v: unknown) => (typeof v === "number" && Number.isInteger(v) ? v : typeof v === "string" && /^\d{1,3}$/.test(v) ? Number(v) : NaN);
@@ -137,6 +139,15 @@ export function leerCuerpoFactura(c: Record<string, unknown>): CuerpoFactura | s
   }
   if (pagos.length === 0 || pagos.length > 1 || !pagos.every((p) => p && typeof p === "object" && Number.isInteger(entero((p as F).tipo)))) return "Seleccione la forma de pago.";
 
+  // Condición de la operación (E601): sin el campo, Contado (clientes anteriores a MFE-B1). Nunca se asume Contado ante un valor inválido.
+  const condicion = c.condicion === undefined || c.condicion === null ? CONDICION_CONTADO : c.condicion;
+
+  if (condicion !== CONDICION_CONTADO && condicion !== CONDICION_CREDITO) return "La condición de la operación no es válida (Contado o Crédito).";
+
+  const credito = leerCredito(condicion, c.credito);
+
+  if (typeof credito === "string") return credito;
+
   return {
     claveIdempotencia: c.claveIdempotencia,
     sucursalId: c.sucursalId as string,
@@ -145,6 +156,8 @@ export function leerCuerpoFactura(c: Record<string, unknown>): CuerpoFactura | s
     tipoTransaccion: entero(c.tipoTransaccion),
     presencia: entero(c.presencia),
     pagos: pagos.map((p) => ({ tipo: entero((p as F).tipo) })),
+    condicion,
+    ...(credito ? { credito } : {}),
     infoAdicional: typeof c.infoAdicional === "string" ? c.infoAdicional.trim() : "",
     lineas: lineas.map((l) => {
       const ajuste = leerAjuste((l as F).ajuste);
@@ -199,6 +212,19 @@ async function receptorDe(db: Db, empresaId: string, clienteId: string): Promise
   };
 }
 
+/** Lectura de las condiciones de crédito para la previa y el modal de confirmación (los valores ya fueron validados). */
+function resumenCredito(c: CreditoEntrada, total: Dec | null) {
+  const entrega = c.entrega !== null ? parseDec(c.entrega, 4) ?? B(0) : B(0);
+
+  return {
+    tipo: c.tipo === CREDITO_PLAZO ? "Plazo" : "Cuotas",
+    plazo: c.tipo === CREDITO_PLAZO && c.plazoDias !== null ? plazoTexto(c.plazoDias) : null,
+    entrega: textoDec(entrega),
+    saldo: total === null ? "" : textoDec(total - entrega),
+    cuotas: c.cuotas.map((q, i) => ({ numero: i + 1, monto: q.monto, vencimiento: q.vencimiento })),
+  };
+}
+
 const ETIQUETA_TRANSACCION = TIPOS_TRANSACCION as Record<number, string>;
 const ETIQUETA_PRESENCIA = INDICADORES_PRESENCIA as Record<number, string>;
 const ETIQUETA_PAGO = FORMAS_PAGO as Record<number, string>;
@@ -208,6 +234,7 @@ const ETIQUETA_PAGO = FORMAS_PAGO as Record<number, string>;
  * empresa de la sesión y se recalcula en el servidor. Lanza ErrorFacturacion / ErrorValidacionFiscal (422) con los motivos.
  */
 export async function prepararFactura(db: Db, empresaId: string, usuarioId: string, cuerpo: CuerpoFactura) {
+  const condicion = cuerpo.condicion ?? CONDICION_CONTADO;
   if (!Object.keys(FORMAS_PAGO).map(Number).includes(cuerpo.pagos[0].tipo)) throw new ErrorFacturacion(422, "La forma de pago no es válida.");
 
   const [receptor, aptitud, productos, punto] = await Promise.all([
@@ -315,13 +342,17 @@ export async function prepararFactura(db: Db, empresaId: string, usuarioId: stri
     });
   }
 
-  const base = { moneda: "PYG", tipoTransaccion: cuerpo.tipoTransaccion, presencia: cuerpo.presencia, condicion: 1, infoAdicional: cuerpo.infoAdicional, receptor, lineas };
-  // El pago único cubre el total que calcula el servidor (nunca un monto del navegador).
+  const base = { moneda: "PYG", tipoTransaccion: cuerpo.tipoTransaccion, presencia: cuerpo.presencia, condicion, ...(cuerpo.credito ? { credito: cuerpo.credito } : {}), infoAdicional: cuerpo.infoAdicional, receptor, lineas };
+  // Contado: el pago único cubre el total que calcula el servidor (nunca un monto del navegador). Crédito: el único pago es la entrega inicial (si la hay); el resto se valida
+  // contra el total del servidor (entrega + cuotas = total) y nunca se cuenta dos veces.
   const total = totalFactura(lineas);
+  const enCredito = condicion === CONDICION_CREDITO;
+  const entrega = enCredito ? cuerpo.credito?.entrega ?? null : null;
 
-  if (total === null) throw detalles(422, "La factura no cumple las reglas fiscales.", validarEntradaFE({ ...base, pagos: [{ tipo: cuerpo.pagos[0].tipo, monto: "1" }] }));
+  if (total === null) throw detalles(422, "La factura no cumple las reglas fiscales.", validarEntradaFE({ ...base, pagos: enCredito ? [] : [{ tipo: cuerpo.pagos[0].tipo, monto: "1" }] }));
 
-  const final: EntradaFE = { ...base, pagos: [{ tipo: cuerpo.pagos[0].tipo, monto: textoDec(total) }] };
+  const pagosFinal = enCredito ? (entrega !== null ? [{ tipo: cuerpo.pagos[0].tipo, monto: entrega }] : []) : [{ tipo: cuerpo.pagos[0].tipo, monto: textoDec(total) }];
+  const final: EntradaFE = { ...base, pagos: pagosFinal };
   const errores = validarEntradaFE(final);
 
   if (errores.length > 0) throw detalles(422, "La factura no cumple las reglas fiscales.", errores);
@@ -338,8 +369,10 @@ export async function prepararFactura(db: Db, empresaId: string, usuarioId: stri
     cliente: { codigo: receptor.codigo, razonSocial: receptor.razonSocial, documento: receptor.naturaleza === 1 ? `${receptor.ruc}-${receptor.dv}` : receptor.numeroDocumento },
     tipoTransaccion: ETIQUETA_TRANSACCION[cuerpo.tipoTransaccion] ?? "",
     presencia: ETIQUETA_PRESENCIA[cuerpo.presencia] ?? "",
-    condicion: "Contado",
-    formaPago: ETIQUETA_PAGO[cuerpo.pagos[0].tipo] ?? "",
+    condicion: CONDICIONES_OPERACION[condicion] ?? "",
+    // Contado: medio del total. Crédito: medio de la entrega inicial (vacío sin entrega).
+    formaPago: !enCredito || entrega !== null ? ETIQUETA_PAGO[cuerpo.pagos[0].tipo] ?? "" : "",
+    ...(enCredito && cuerpo.credito ? { credito: resumenCredito(cuerpo.credito, total) } : {}),
     moneda: "PYG",
     lineas: lineas.map((l, i) => ({ codigo: l.codigoInterno, descripcion: l.descripcion, unidad: extras[i].unidadSimbolo, ...(extras[i].campos.length > 0 ? { ajustes: extras[i].campos } : {}), cantidad: l.cantidad, precio: l.precio, precioLista: precios[i].referencia, precioModificado: precios[i].modificado, afectacion: l.afectacion, tasa: l.tasa, total: calculo.items[i] })),
     totales: { exento: calculo.exento, exonerado: calculo.exonerado, gravado5: calculo.gravado5, gravado10: calculo.gravado10, iva5: calculo.iva5, iva10: calculo.iva10, totalIva: calculo.totalIva, total: calculo.total },

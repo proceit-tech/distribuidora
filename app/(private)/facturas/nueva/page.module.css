@@ -1018,3 +1018,42 @@
   align-items: center;
   gap: 8px;
 }
+
+/* MFE-B1: condiciones de crédito dentro de la tarjeta Operación (solo con la condición Crédito). */
+.credito {
+  margin: 12px 0 0;
+  padding: 8px 12px 12px;
+  border: 1px solid #d5e4e4;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.credito legend {
+  padding: 0 6px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.credito .tableWrap {
+  margin-top: 10px;
+}
+
+.credito .items input {
+  width: 100%;
+  min-height: 34px;
+}
+
+.botonCuotas {
+  min-height: 34px;
+  padding: 0 14px;
+  border: 1px solid #b7cccc;
+  border-radius: 8px;
+  background: #ffffff;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.botonCuotas:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}

@@ -1,3 +1,4 @@
+import { CONDICION_CONTADO, CONDICION_CREDITO, CREDITO_CUOTAS, CREDITO_PLAZO, erroresCredito, hoyParaguay, plazoTexto, type CreditoEntrada } from "@/lib/facturacion/credito";
 import { B, S, calcularItem, calcularSubtotales, numeroDec, parseDec, textoDec, type AfectacionIva, type Dec, type Subtotales, type TasaIva } from "@/lib/facturacion/calculo";
 
 /**
@@ -6,8 +7,8 @@ import { B, S, calcularItem, calcularSubtotales, numeroDec, parseDec, textoDec, 
  * REQUISITOS-FACTURACION-ELECTRONICA, §4) y los del MT v150.
  *
  * NO se incluyen aquí: cdc, dEst, dPunExp, dNumDoc, dSerieNum y dFeEmiDE (los completa la función SQL fe_documento_crear_fe al reservar el número
- * y fijar la fecha), ni datos del emisor/timbrado (los resuelve el gateway). Alcance F-02: guaraníes, condición contado, sin descuentos, anticipos,
- * exportación, contratación pública ni crédito.
+ * y fijar la fecha), ni datos del emisor/timbrado (los resuelve el gateway). Alcance: guaraníes, condición Contado o Crédito (plazo/cuotas, MFE-B1), sin descuentos, anticipos,
+ * exportación ni contratación pública.
  */
 
 /**
@@ -20,8 +21,9 @@ export const CATALOGO_TIPOS_TRANSACCION: Record<number, string> = {
   7: "Promoción o entrega de muestras", 8: "Donación", 9: "Anticipo", 10: "Compra de productos", 11: "Compra de servicios", 12: "Venta de crédito fiscal", 13: "Muestras médicas (Art. 3 RG 24/2014)",
 };
 export const TIPOS_TRANSACCION = { 1: CATALOGO_TIPOS_TRANSACCION[1], 2: CATALOGO_TIPOS_TRANSACCION[2], 3: CATALOGO_TIPOS_TRANSACCION[3], 4: CATALOGO_TIPOS_TRANSACCION[4] } as Record<number, string>;
-/** iCondOpe (D031): por ahora solo Contado (decisión del responsable); el crédito exige cuotas/plazo. */
-export const CONDICIONES_OPERACION = { 1: "Contado" } as Record<number, string>;
+/** iCondOpe (E601): 1 Contado / 2 Crédito (plazo o cuotas, MFE-B1). */
+export const CONDICIONES_OPERACION = { 1: "Contado", 2: "Crédito" } as Record<number, string>;
+export const TIPOS_CREDITO = { 1: "Plazo", 2: "Cuotas" } as Record<number, string>;
 /** iIndPres (MT v150, E011): 1–6 completos; el código 9 «Otro» exige además un texto descriptivo (E012) que el JSON funcional no transporta, por eso no se ofrece. */
 export const INDICADORES_PRESENCIA = { 1: "Operación presencial", 2: "Operación electrónica", 3: "Operación telemarketing", 4: "Venta a domicilio", 5: "Operación bancaria", 6: "Operación cíclica" } as const;
 /** E606 (MT v150): en la primera emisión de prueba SOLO se habilita Efectivo (decisión del responsable); otras formas exigen validar sus condicionales fiscales. */
@@ -84,8 +86,11 @@ export type EntradaFE = {
   moneda: string;
   tipoTransaccion: number;
   presencia: number;
-  condicion: number; // 1 contado
+  condicion: number; // 1 contado / 2 crédito
+  /** Contado: los pagos suman el total. Crédito: SOLO la entrega inicial (E605), vacío si no hay entrega. */
   pagos: Array<{ tipo: number; monto: string }>;
+  /** Solo con condicion 2 (E640): plazo o cuotas. */
+  credito?: CreditoEntrada;
   infoAdicional: string;
   receptor: ReceptorFE;
   lineas: LineaFE[];
@@ -140,13 +145,15 @@ function importesRepresentables(items: Array<{ cantidad: Dec; precio: Dec; propo
 }
 
 /** Errores de validación fiscal de la entrada (lista vacía = emitible). Mensajes en español para la pantalla y la API. */
-export function validarEntradaFE(e: EntradaFE): string[] {
+export function validarEntradaFE(e: EntradaFE, hoy: string = hoyParaguay()): string[] {
   const errores: string[] = [];
 
   if (e.moneda !== "PYG") errores.push("En esta etapa solo se emiten facturas en guaraníes (PYG).");
   if (!(e.tipoTransaccion in TIPOS_TRANSACCION)) errores.push("Seleccione un tipo de transacción válido.");
   if (!(e.presencia in INDICADORES_PRESENCIA)) errores.push("Seleccione un indicador de presencia válido.");
-  if (e.condicion !== 1) errores.push("En esta etapa solo se emiten facturas al contado.");
+  if (e.condicion !== CONDICION_CONTADO && e.condicion !== CONDICION_CREDITO) errores.push("Seleccione la condición de la operación: Contado o Crédito.");
+  if (e.condicion === CONDICION_CONTADO && e.credito !== undefined) errores.push("Una factura al contado no lleva datos de crédito.");
+  if (e.condicion === CONDICION_CREDITO && e.credito === undefined) errores.push("Indique las condiciones del crédito (plazo o cuotas).");
   if (e.infoAdicional.length > 5000) errores.push("La información adicional supera 5000 caracteres.");
   if (e.lineas.length === 0) errores.push("Agregue al menos un ítem.");
   if (e.lineas.length > MAX_LINEAS) errores.push(`Una factura admite hasta ${MAX_LINEAS} ítems.`);
@@ -168,8 +175,8 @@ export function validarEntradaFE(e: EntradaFE): string[] {
   else if (sub.dTotGralOpe % PASO_MONTO_PAGO !== B(0)) errores.push(`El total de la factura (${textoDec(sub.dTotGralOpe)}) tiene más de 4 decimales y el pago (E608) admite solo 4: no se puede conciliar sin un ajuste no autorizado. Ajuste las cantidades o los precios.`);
   if (!importesRepresentables(items, calculados.map((c) => c.resultado), sub)) errores.push("Algún importe de la factura no puede escribirse en el documento electrónico sin perder precisión. Reduzca las cantidades o los precios.");
 
-  // Pagos al contado: al menos uno, formas habilitadas y suma EXACTA igual al total.
-  if (e.pagos.length === 0 || e.pagos.length > 999) errores.push("Indique la forma de pago.");
+  // Contado: al menos un pago. Crédito: sin entrega no hay grupo de pago (E605 no se informa); con entrega, los pagos iniciales.
+  if (e.condicion === CONDICION_CREDITO ? e.pagos.length > 999 : e.pagos.length === 0 || e.pagos.length > 999) errores.push("Indique la forma de pago.");
 
   let sumaPagos = B(0);
 
@@ -181,7 +188,10 @@ export function validarEntradaFE(e: EntradaFE): string[] {
     else if (m % PASO_MONTO_PAGO !== B(0)) errores.push("El monto de un pago admite hasta 4 decimales (E608).");
     else sumaPagos += m;
   }
-  if (errores.length === 0 && sumaPagos !== sub.dTotGralOpe) errores.push("La suma de los pagos debe ser igual al total de la factura.");
+  if (e.condicion === CONDICION_CREDITO && e.credito !== undefined) {
+    // La suma de pagos es la ENTREGA INICIAL (E645 = Σ E608): entrega + cuotas (o saldo a plazo) = total, sin contarla dos veces.
+    if (errores.length === 0) errores.push(...erroresCredito(e.credito, sub.dTotGralOpe, sumaPagos, hoy));
+  } else if (errores.length === 0 && sumaPagos !== sub.dTotGralOpe) errores.push("La suma de los pagos debe ser igual al total de la factura.");
 
   // Receptor (reglas del MT v150 y NT 010/023/024; la coherencia de la ficha la valida aparte la aptitud SIFEN del cliente).
   const r = e.receptor;
@@ -203,14 +213,34 @@ export function validarEntradaFE(e: EntradaFE): string[] {
   return errores;
 }
 
+/**
+ * Grupo de condición de pago con los nombres y tipos del MT v150 (E641–E654). Contado conserva EXACTAMENTE la forma anterior (iCondCred/dPlazoCre/dCuotas nulos y Cuotas vacío, sin dMonEnt).
+ * Crédito: Plazo → iCondCred 1 + dPlazoCre «N días»; Cuotas → iCondCred 2 + dCuotas = filas de Cuotas[]; dMonEnt = Σ de la entrega inicial (nulo sin entrega). Las descripciones
+ * (E602/E642/E654/E607/E610) las deriva el gateway del código, igual que en el baseline.
+ */
+function condicionPago(e: EntradaFE): Record<string, unknown> {
+  if (e.condicion !== CONDICION_CREDITO || e.credito === undefined) return { iCondCred: null, dPlazoCre: null, dCuotas: null, Cuotas: [] };
+
+  const c = e.credito;
+  const entrega = e.pagos.reduce((a, p) => a + (parseDec(p.monto, 8) ?? B(0)), B(0));
+
+  return {
+    iCondCred: c.tipo,
+    dPlazoCre: c.tipo === CREDITO_PLAZO && c.plazoDias !== null ? plazoTexto(c.plazoDias) : null,
+    dCuotas: c.tipo === CREDITO_CUOTAS ? c.cuotas.length : null,
+    dMonEnt: entrega > B(0) ? numeroDec(entrega) : null,
+    Cuotas: c.tipo === CREDITO_CUOTAS ? c.cuotas.map((q) => ({ cMoneCuo: "PYG", dMonCuota: Number(q.monto), dVencCuo: q.vencimiento })) : [],
+  };
+}
+
 const nulo = (v: string) => (v.trim() === "" ? null : v.trim());
 
 /**
  * Construye el payload FE (sin cdc ni numeración). Aplica ella misma `validarEntradaFE` (receptor, ítems, conciliación ítems ↔ total ↔ pago, precisión): una llamada futura que no pase
  * por la validación previa nunca produce un JSON fiscal parcial o inconsistente; lanza con la lista de motivos.
  */
-export function construirPayloadFE(e: EntradaFE): Record<string, unknown> {
-  const invalidos = validarEntradaFE(e);
+export function construirPayloadFE(e: EntradaFE, hoy?: string): Record<string, unknown> {
+  const invalidos = validarEntradaFE(e, hoy);
 
   if (invalidos.length > 0) throw new Error(`La entrada no es válida para construir el payload FE: ${invalidos.join(" | ")}`);
 
@@ -280,11 +310,8 @@ export function construirPayloadFE(e: EntradaFE): Record<string, unknown> {
     dEmailAdmin: nulo(r.emailFacturacion),
     // D217 es opcional y mide 3-15: un código interno fuera de ese rango no se envía (no se acorta ni se inventa otro).
     dCodCliente: r.codigo.length >= CODIGO_CLIENTE.min && r.codigo.length <= CODIGO_CLIENTE.max ? r.codigo : null,
-    iCondOpe: 1,
-    iCondCred: null,
-    dPlazoCre: null,
-    dCuotas: null,
-    Cuotas: [],
+    iCondOpe: e.condicion,
+    ...condicionPago(e),
     FormaPago: e.pagos.map((p) => ({ iTiPago: p.tipo, dMonTiPag: Number(p.monto), cMoneTiPag: "PYG", dTiCamTiPag: null })),
     Detalles: detalles,
     Subtotales: [
