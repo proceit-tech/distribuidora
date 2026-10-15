@@ -6,7 +6,7 @@ DO $t$
 DECLARE
   v_h text := crypt(current_setting('nex.pw_prueba'), gen_salt('bf', 12));
   v_a uuid; v_b uuid; v_m uuid; v_ua uuid; v_ub uuid; v_um uuid; v_sa uuid; v_sb uuid; v_sm uuid; v_sm2 uuid;
-  v_p1 uuid; v_p2 uuid; v_p3 uuid; v_pm1 uuid; v_pm2 uuid; v_n int; v_antes text; v_det text; v_doc uuid; v_ult text;
+  v_p1 uuid; v_p2 uuid; v_p3 uuid; v_pm1 uuid; v_pm2 uuid; v_n int; v_antes text; v_det text; v_sx uuid; v_px uuid; v_pm3 uuid; v_pm4 uuid; v_doc uuid; v_ult text;
   v_payload jsonb := '{"iTiDE": 1, "Subtotales": [{"dTotGralOpe": 1000}]}'::jsonb;
   r record;
 BEGIN
@@ -126,6 +126,35 @@ BEGIN
   PERFORM fe_punto_activar(v_m, v_um, v_pm1, 120, true);
   SELECT * INTO r FROM fe_documento_crear_fe(v_m, v_um, v_sm, v_pm1, 'clave-t21-0007', NULL, '1234567-1', 'Receptor T21', 'PYG', 1000, v_payload);
   PERFORM pg_temp.ok(r.o_numero = '0000121', 'tras migrar, el punto legado continúa en 0000121 (120 + 1) sin saltos ni colisiones');
+
+  -- R01-02: sin secuencia FE el piso es el contador legado del punto (no 0 ni solo el máximo FE registrado)
+  INSERT INTO fe_puntos_expedicion (empresa_id, sucursal_id, codigo, nombre, ultimo_numero, activo) VALUES (v_m, v_sm, '003', 'Legado M3', 300, false) RETURNING id INTO v_pm3;
+  INSERT INTO documentos_electronicos (empresa_id, sucursal_id, tipo, establecimiento, punto_expedicion, numero, fecha_emision, receptor_nombre, moneda, total, estado_local, estado_sifen, creado_por)
+  VALUES (v_m, v_sm, 'FE', '040', '003', '0000200', now(), 'Receptor legado', 'PYG', 1000, 'PENDIENTE_ENVIO', 'SIN_CONSULTA', v_um);
+  PERFORM pg_temp.falla(format('SELECT fe_punto_activar(%L, %L, %L, 250, true)', v_m, v_um, v_pm3), 'P0001', 'R01-02: contador legado 300, FE registrado 200: confirmar 250 (>= 200) se rechaza por retroceder respecto del legado');
+  PERFORM pg_temp.falla(format('SELECT fe_punto_activar(%L, %L, %L, 0, true)', v_m, v_um, v_pm3), 'P0001', 'R01-02: confirmar 0 se rechaza');
+  PERFORM pg_temp.ok(NOT EXISTS (SELECT 1 FROM fe_punto_secuencias WHERE punto_id = v_pm3) AND (SELECT NOT activo FROM fe_puntos_expedicion WHERE id = v_pm3), 'R01-02: los rechazos no crearon secuencia ni activaron el punto');
+  PERFORM fe_punto_activar(v_m, v_um, v_pm3, 300, true);
+  PERFORM pg_temp.ok((SELECT ultimo_numero = 300 AND origen = 'ACTIVACION_PUNTO' FROM fe_punto_secuencias WHERE punto_id = v_pm3 AND tipo_documento = 'FE'), 'R01-02: confirmando 300 (= legado) se crea la secuencia FE en 300');
+  -- R01-01: el cero solo existe si alguien lo informa y confirma; la ausencia de secuencia no es 0
+  INSERT INTO fe_puntos_expedicion (empresa_id, sucursal_id, codigo, nombre, activo) VALUES (v_m, v_sm, '004', 'Manual M4', false) RETURNING id INTO v_pm4;
+  PERFORM pg_temp.ok(NOT EXISTS (SELECT 1 FROM fe_punto_secuencias WHERE punto_id = v_pm4), 'R01-01: un punto sin secuencia FE no tiene fila (no hay 0 presumido ni confirmado)');
+  PERFORM pg_temp.falla(format('SELECT fe_punto_activar(%L, %L, %L, 0, false)', v_m, v_um, v_pm4), 'P0001', 'R01-01: activar sin confirmación expresa se rechaza aunque el número sea 0');
+  PERFORM fe_punto_activar(v_m, v_um, v_pm4, 0, true);
+  SELECT * INTO r FROM fe_documento_crear_fe(v_m, v_um, v_sm, v_pm4, 'clave-t21-0009', NULL, '1234567-1', 'Receptor T21', 'PYG', 1000, v_payload);
+  PERFORM pg_temp.ok(r.o_numero = '0000001' AND (SELECT origen = 'ACTIVACION_PUNTO' FROM fe_punto_secuencias WHERE punto_id = v_pm4 AND tipo_documento = 'FE'), 'R01-01: informando y confirmando 0 expresamente el primer FE es 0000001');
+
+  -- R01-05: FE 0000001 y NCE 0000001 en la MISMA empresa, establecimiento y punto (identidad completa), ambos persistidos sin conflicto de unicidad
+  INSERT INTO sucursales (empresa_id, codigo, nombre, establecimiento_sifen) VALUES (v_a, 'S50-T21', 'Sucursal 50 T21', '050') RETURNING id INTO v_sx;
+  v_px := fe_punto_crear(v_a, v_ua, v_sx, '001', 'Caja 50', 0, true);
+  PERFORM fe_punto_activar(v_a, v_ua, v_px, 0, true);
+  SELECT * INTO r FROM fe_documento_crear_fe(v_a, v_ua, v_sx, v_px, 'clave-t21-0008', NULL, '1234567-1', 'Receptor T21', 'PYG', 1000, v_payload);
+  INSERT INTO fe_punto_secuencias (empresa_id, punto_id, tipo_documento, ultimo_numero, origen) VALUES (v_a, v_px, 'NCE', 0, 'CARGA_MANUAL');
+  UPDATE fe_punto_secuencias SET ultimo_numero = 1 WHERE punto_id = v_px AND tipo_documento = 'NCE';
+  INSERT INTO documentos_electronicos (empresa_id, sucursal_id, tipo, establecimiento, punto_expedicion, numero, fecha_emision, receptor_nombre, moneda, total, estado_local, estado_sifen, creado_por)
+  VALUES (v_a, v_sx, 'NCE', '050', '001', '0000001', now(), 'Receptor NCE T21', 'PYG', 1000, 'PENDIENTE_ENVIO', 'SIN_CONSULTA', v_ua);
+  PERFORM pg_temp.ok(r.o_numero = '0000001' AND (SELECT count(*) = 2 AND count(DISTINCT tipo) = 2 FROM documentos_electronicos WHERE empresa_id = v_a AND establecimiento = '050' AND punto_expedicion = '001' AND numero = '0000001')
+    AND (SELECT string_agg(tipo_documento || '=' || ultimo_numero, ',' ORDER BY tipo_documento) = 'FE=1,NCE=1' FROM fe_punto_secuencias WHERE punto_id = v_px), 'R01-05: FE 0000001 y NCE 0000001 coexisten en la misma empresa + establecimiento 050 + punto 001, con sus secuencias FE=1 y NCE=1');
 
   RAISE NOTICE 'PASS: T21 completa';
 END $t$;

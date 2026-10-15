@@ -86,17 +86,18 @@ export function traducirErrorPunto(error: unknown): never {
   }
 }
 
-export type PuntoFila = { id: string; codigo: string; nombre: string; ultimoNumero: number; activo: boolean; proximo: string };
+/** ultimoNumero / proximo = null cuando el punto NO tiene secuencia FE configurada («Sin configurar»): nunca se representa como 0 confirmado. */
+export type PuntoFila = { id: string; codigo: string; nombre: string; ultimoNumero: number | null; activo: boolean; proximo: string | null };
 export type SucursalPuntos = { id: string; nombre: string; establecimiento: string | null; puntos: PuntoFila[] };
 
 /**
  * Sucursales activas del alcance del usuario con TODOS sus puntos (también inactivos) y la numeración de la secuencia FE (NEX-060: fe_punto_secuencias, tipo 'FE'; la secuencia de cada
- * tipo es independiente), solo de la empresa de la sesión. Un punto sin secuencia FE muestra 0 solo como valor de pantalla: no puede numerar hasta que se active confirmando su número.
+ * tipo es independiente), solo de la empresa de la sesión. Un punto sin secuencia FE se devuelve con ultimoNumero/proximo = null («Sin configurar»): no puede numerar hasta que se active informando y confirmando su número.
  */
 export async function listarPuntos(db: Db, empresaId: string, usuarioId: string): Promise<SucursalPuntos[]> {
   const r = await db.query(
     `SELECT sc.id, sc.nombre, sc.establecimiento_sifen AS establecimiento,
-            coalesce(json_agg(json_build_object('id', p.id, 'codigo', p.codigo, 'nombre', p.nombre, 'ultimoNumero', coalesce(s.ultimo_numero, 0), 'activo', p.activo) ORDER BY p.codigo) FILTER (WHERE p.id IS NOT NULL), '[]'::json) AS puntos
+            coalesce(json_agg(json_build_object('id', p.id, 'codigo', p.codigo, 'nombre', p.nombre, 'ultimoNumero', s.ultimo_numero, 'activo', p.activo) ORDER BY p.codigo) FILTER (WHERE p.id IS NOT NULL), '[]'::json) AS puntos
        FROM sucursales sc
        LEFT JOIN fe_puntos_expedicion p ON p.empresa_id = sc.empresa_id AND p.sucursal_id = sc.id
        LEFT JOIN fe_punto_secuencias s ON s.empresa_id = p.empresa_id AND s.punto_id = p.id AND s.tipo_documento = 'FE'
@@ -110,7 +111,8 @@ export async function listarPuntos(db: Db, empresaId: string, usuarioId: string)
     nombre: String(s.nombre),
     establecimiento: s.establecimiento === null ? null : String(s.establecimiento),
     puntos: ((s.puntos as Array<Record<string, unknown>>) ?? []).map((p) => ({
-      id: String(p.id), codigo: String(p.codigo), nombre: String(p.nombre), ultimoNumero: Number(p.ultimoNumero), activo: p.activo === true, proximo: String(Number(p.ultimoNumero) + 1).padStart(7, "0"),
+      id: String(p.id), codigo: String(p.codigo), nombre: String(p.nombre), ultimoNumero: p.ultimoNumero === null || p.ultimoNumero === undefined ? null : Number(p.ultimoNumero), activo: p.activo === true,
+      proximo: p.ultimoNumero === null || p.ultimoNumero === undefined ? null : String(Number(p.ultimoNumero) + 1).padStart(7, "0"),
     })),
   }));
 }

@@ -7,7 +7,7 @@ import ui from "@/components/ui/lista-padrao/lista.module.css";
 
 import estilos from "./page.module.css";
 
-type Punto = { id: string; codigo: string; nombre: string; ultimoNumero: number; activo: boolean; proximo: string };
+type Punto = { id: string; codigo: string; nombre: string; ultimoNumero: number | null; activo: boolean; proximo: string | null };
 type Sucursal = { id: string; nombre: string; establecimiento: string | null; puntos: Punto[] };
 
 const NUMERO_OK = /^\d{1,7}$/;
@@ -183,8 +183,8 @@ export default function PuntosExpedicionPage() {
                     <tr key={p.id}>
                       <td>{p.codigo}</td>
                       <td>{p.nombre}</td>
-                      <td className={estilos.num}>{p.ultimoNumero}</td>
-                      <td>{p.proximo}</td>
+                      <td className={estilos.num}>{p.ultimoNumero ?? "Sin configurar"}</td>
+                      <td>{p.proximo ?? "—"}</td>
                       <td><span className={p.activo ? estilos.activo : estilos.inactivo}>{p.activo ? "Activo" : "Inactivo"}</span></td>
                       <td>
                         {p.activo ? (
@@ -194,18 +194,18 @@ export default function PuntosExpedicionPage() {
                             <label className={estilos.field}>
                               <span>Último número emitido</span>
                               <input inputMode="numeric" maxLength={7} value={activando.numero} onChange={(e) => setActivando({ ...activando, numero: e.target.value.replace(/\D/g, "") })} />
-                              <small className={estilos.hint}>Registrado: {p.ultimoNumero}. Si se emitió más afuera, informe el mayor; no puede ser menor.</small>
+                              <small className={estilos.hint}>{p.ultimoNumero === null ? "Sin secuencia FE configurada: escriba el último número realmente emitido (0 solo si nunca se emitió) y confírmelo." : `Registrado: ${p.ultimoNumero}. Si se emitió más afuera, informe el mayor; no puede ser menor.`}</small>
                             </label>
                             <label className={estilos.check}>
                               <input type="checkbox" checked={activando.confirma} onChange={(e) => setActivando({ ...activando, confirma: e.target.checked })} /> Confirmo que es el último número realmente emitido.
                             </label>
                             <span className={estilos.acciones}>
-                              <button type="button" className={ui.primaryButton} disabled={ocupado || !activando.confirma || !NUMERO_OK.test(activando.numero) || Number(activando.numero) < p.ultimoNumero} onClick={activar}>Activar</button>
+                              <button type="button" className={ui.primaryButton} disabled={ocupado || !activando.confirma || !NUMERO_OK.test(activando.numero) || (p.ultimoNumero !== null && Number(activando.numero) < p.ultimoNumero)} onClick={activar}>Activar</button>
                               <button type="button" className={ui.secondaryButton} onClick={() => setActivando(null)}>Cancelar</button>
                             </span>
                           </div>
                         ) : (
-                          <button type="button" className={ui.secondaryButton} disabled={ocupado} onClick={() => setActivando({ id: p.id, numero: String(p.ultimoNumero), confirma: false })}>Activar…</button>
+                          <button type="button" className={ui.secondaryButton} disabled={ocupado} onClick={() => setActivando({ id: p.id, numero: p.ultimoNumero === null ? "" : String(p.ultimoNumero), confirma: false })}>Activar…</button>
                         )}
                       </td>
                     </tr>

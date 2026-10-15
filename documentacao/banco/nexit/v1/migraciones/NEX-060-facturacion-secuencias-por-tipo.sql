@@ -84,6 +84,10 @@ DECLARE
   v_incoherentes text := '';
   v_n integer;
 BEGIN
+  -- AUD-PRO131-R01-03: bloqueo EXCLUSIVE de la tabla de puntos (se mantiene hasta el fin de la transacción de la migración, que el runner ejecuta con psql -1): espera a que terminen las emisiones
+  -- antiguas con el contador ya modificado o con la fila bloqueada (FOR UPDATE) y excluye nuevas lecturas FOR UPDATE / escrituras hasta que el trigger de congelamiento esté instalado. Así el contador que se
+  -- copia es el CONSOLIDADO; cualquier emisión del código antiguo que llegue después queda detrás del bloqueo y, al confirmarse la migración, el trigger la rechaza (no reutiliza número).
+  LOCK TABLE public.fe_puntos_expedicion IN EXCLUSIVE MODE;
   FOR r IN
     SELECT p.empresa_id, p.codigo, p.ultimo_numero, sc.establecimiento_sifen AS est,
            public.fe_punto_maximo_emitido(p.empresa_id, sc.establecimiento_sifen, p.codigo, 'FE') AS maximo_fe
@@ -270,6 +274,7 @@ DECLARE
   v_s public.fe_punto_secuencias%ROWTYPE;
   v_est text;
   v_actual integer;
+  v_piso integer;
 BEGIN
   IF NOT public.usuario_tiene_permiso(p_empresa, p_usuario, 'FACTURACION_ELECTRONICA', 'PUNTOS') THEN
     RAISE EXCEPTION 'el usuario no tiene permiso FACTURACION_ELECTRONICA.PUNTOS en esta empresa' USING ERRCODE = '42501';
@@ -304,7 +309,9 @@ BEGIN
   SELECT * INTO v_s FROM public.fe_punto_secuencias WHERE empresa_id = p_empresa AND punto_id = p_punto AND tipo_documento = 'FE' FOR UPDATE;
   v_actual := CASE WHEN FOUND THEN v_s.ultimo_numero ELSE NULL END;
   -- La numeración solo crece: se confirma el valor guardado o se informa uno MAYOR (se emitió fuera de Nexit); uno menor repetiría números ya usados.
-  IF p_ultimo_numero < coalesce(v_actual, 0) OR p_ultimo_numero < public.fe_punto_maximo_emitido(p_empresa, v_est, v_p.codigo, 'FE') THEN
+  -- AUD-PRO131-R01-02: sin secuencia FE el piso es el contador legado del punto (cargado a mano o anterior a NEX-060), nunca 0: confirmar un número menor retrocedería respecto de un último número ya conocido.
+  v_piso := coalesce(v_actual, v_p.ultimo_numero);
+  IF p_ultimo_numero < v_piso OR p_ultimo_numero < public.fe_punto_maximo_emitido(p_empresa, v_est, v_p.codigo, 'FE') THEN
     RAISE EXCEPTION 'el último número informado es menor que el registrado o que el ya emitido por Nexit: la numeración no retrocede' USING ERRCODE = 'P0001', DETAIL = 'NEX:NUMERO_MENOR_QUE_EMITIDOS';
   END IF;
 

@@ -12,6 +12,19 @@ BEGIN
   IF EXISTS (SELECT 1 FROM public.fe_punto_secuencias WHERE tipo_documento <> 'FE') THEN
     RAISE EXCEPTION 'REVERSIÓN ABORTADA: existen secuencias de otros tipos (NCE/NDE/NRE/AFE); el modelo anterior no las representa. Concilie y retírelas manualmente con autorización expresa.';
   END IF;
+  -- AUD-PRO131-R01-04: sin bloqueo de la emisión no hay reversión segura; la tabla de puntos se bloquea hasta el fin de la transacción (psql -1).
+  LOCK TABLE public.fe_puntos_expedicion IN EXCLUSIVE MODE;
+  -- Un punto ACTIVO sin secuencia FE hoy NO numera; tras revertir numeraría con su contador legado (posiblemente 0 o antiguo) y podría repetir números ya emitidos.
+  IF EXISTS (SELECT 1 FROM public.fe_puntos_expedicion p WHERE p.activo AND NOT EXISTS (SELECT 1 FROM public.fe_punto_secuencias s WHERE s.empresa_id = p.empresa_id AND s.punto_id = p.id AND s.tipo_documento = 'FE')) THEN
+    RAISE EXCEPTION 'REVERSIÓN ABORTADA: hay puntos ACTIVOS sin secuencia FE; el modelo anterior los habilitaría a numerar desde su contador legado. Desactívelos o configure su secuencia FE antes.';
+  END IF;
+  -- El contador resultante (el mayor entre el legado y la secuencia FE) nunca puede quedar por debajo del mayor FE ya registrado para esa identidad.
+  IF EXISTS (
+    SELECT 1 FROM public.fe_puntos_expedicion p JOIN public.sucursales sc ON sc.empresa_id = p.empresa_id AND sc.id = p.sucursal_id
+      LEFT JOIN public.fe_punto_secuencias s ON s.empresa_id = p.empresa_id AND s.punto_id = p.id AND s.tipo_documento = 'FE'
+     WHERE greatest(p.ultimo_numero, coalesce(s.ultimo_numero, 0)) < public.fe_punto_maximo_emitido(p.empresa_id, sc.establecimiento_sifen, p.codigo, 'FE')) THEN
+    RAISE EXCEPTION 'REVERSIÓN ABORTADA: algún punto quedaría con un contador MENOR que el mayor FE registrado; concilie manualmente.';
+  END IF;
 END $$;
 
 DROP TRIGGER fe_puntos_expedicion_contador_congelado_trg ON public.fe_puntos_expedicion;

@@ -93,6 +93,9 @@ paso "T20 NEX-057 carrera real: identidad fiscal de puntos de expedición"
 # T22: NEX-060 con sesiones reales (dos FE del mismo punto se serializan por la secuencia FE; la secuencia NCE del mismo punto no espera: tipos independientes)
 paso "T22 NEX-060 carrera real: secuencias por tipo de documento"
 "$AQUI/pruebas/T22-concurrencia-secuencias.sh" >"$LOG/T22" 2>&1; fin $? "$LOG/T22"
+# T23: NEX-060 R01-03 — la conciliación del contador legado espera a una emisión antigua concurrente y copia el valor consolidado
+paso "T23 NEX-060 carrera real: conciliación del legado vs emisión antigua"
+"$AQUI/pruebas/T23-concurrencia-migracion-secuencias.sh" >"$LOG/T23" 2>&1; fin $? "$LOG/T23"
 # I1/V1: instalación de una empresa REAL con los scripts de producción (sin contraseña en argumentos ni logs) y validación de la estructura instalada
 PWADM="Adm-$(head -c 24 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 20)"     # contraseña del administrador de prueba (solo en memoria)
 if python3 -c 'import bcrypt' 2>/dev/null; then GENERADOR="real (python3 bcrypt)"; unset NEX_PRUEBAS_GENERADOR_HASH

@@ -118,6 +118,7 @@ BEGIN
   PERFORM pg_temp.ok((SELECT NOT activo AND ultimo_numero = 500 FROM pt WHERE id = v_leg) AND (SELECT activo AND ultimo_numero = 126 FROM pt WHERE id = v_p), 'identidad: los rechazos no cambiaron el estado ni la numeración de ningún punto');
   PERFORM pg_temp.ok(true, 'identidad: la emisión de un punto sigue funcionando (UPDATE de ultimo_numero no dispara el trigger de identidad)');
   PERFORM fe_punto_desactivar(v_a, v_ua, v_p);
+  PERFORM pg_temp.falla(format('SELECT fe_punto_activar(%L, %L, %L, 126, true)', v_a, v_ua, v_leg), 'P0001', 'NEX-060 R01-02: un punto legado con contador 500 y SIN secuencia FE no se activa confirmando 126 (retrocedería respecto de lo ya conocido)');
   PERFORM fe_punto_activar(v_a, v_ua, v_leg, 500, true);
   PERFORM pg_temp.ok((SELECT activo AND ultimo_numero = 500 FROM pt WHERE id = v_leg), 'identidad: tras desactivar el otro, el legado se activa confirmando su número (500 ≥ 126 ya emitido)');
   SELECT * INTO r FROM fe_documento_crear_fe(v_a, v_ua, v_s2, v_leg, 'clave-t19-0005', NULL, '1234567-1', 'Receptor T19', 'PYG', 1000, v_payload);
