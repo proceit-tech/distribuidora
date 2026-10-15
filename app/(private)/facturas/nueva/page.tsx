@@ -5,6 +5,7 @@ import { Fragment, useCallback, useEffect, useId, useRef, useState } from "react
 
 import ui from "@/components/ui/lista-padrao/lista.module.css";
 import { AJUSTE_VACIO, ajusteParaEnvio, decidirProducto, problemasFiscales, valoresEfectivos, type AjusteUI, type PermisosProducto } from "@/lib/facturacion/ajuste-item";
+import { puedeEnviarPorGateway, type EstadoGatewayUI } from "@/lib/facturacion/gateway-estado";
 import { elegirPorEnter, MENSAJE_ENTER } from "@/lib/facturacion/busqueda-rapida";
 import { formularioModificado, perdidasAlCambiarCondicion, perdidasAlCambiarMoneda } from "@/lib/facturacion/cambios-formulario";
 import { CREDITO_UI_VACIO, creditoParaEnvio, hoyParaguay, pendientesCredito, type EstadoCreditoUI } from "@/lib/facturacion/credito";
@@ -448,6 +449,8 @@ export default function NuevaFacturaPage() {
   const [puedeEditarProductos, setPuedeEditarProductos] = useState(false);
   const [unidadesSifen, setUnidadesSifen] = useState<UnidadSifen[]>([]);
   const [sinEstablecimiento, setSinEstablecimiento] = useState(0);
+  // Prontitud del gateway de la empresa (PRO-133): null = aún no cargado. Solo «CONFIGURADO» habilita el envío; no prueba que el gateway responda.
+  const [gateway, setGateway] = useState<EstadoGatewayUI | null>(null);
   const [errorCarga, setErrorCarga] = useState("");
   const [sucursalId, setSucursalId] = useState("");
   const [puntoId, setPuntoId] = useState("");
@@ -508,7 +511,7 @@ export default function NuevaFacturaPage() {
     let activo = true;
 
     fetch("/api/facturas/catalogos", { cache: "no-store" })
-      .then((r) => leer<{ sucursales: Sucursal[]; opciones: Opciones; puedeEditarPrecio?: boolean; puedeAjustarFiscal?: boolean; puedeGestionarPuntos?: boolean; puedeEditarProductos?: boolean; unidadesSifen?: UnidadSifen[]; cotizaciones?: Record<string, { cambio: string; fecha: string }>; sucursalesSinEstablecimiento?: number }>(r, "No fue posible cargar los datos del formulario."))
+      .then((r) => leer<{ gateway?: EstadoGatewayUI; sucursales: Sucursal[]; opciones: Opciones; puedeEditarPrecio?: boolean; puedeAjustarFiscal?: boolean; puedeGestionarPuntos?: boolean; puedeEditarProductos?: boolean; unidadesSifen?: UnidadSifen[]; cotizaciones?: Record<string, { cambio: string; fecha: string }>; sucursalesSinEstablecimiento?: number }>(r, "No fue posible cargar los datos del formulario."))
       .then((j) => {
         if (!activo) return;
 
@@ -516,6 +519,7 @@ export default function NuevaFacturaPage() {
         setHoyIso(hoyParaguay());
         setSucursales(j.sucursales);
         setSinEstablecimiento(j.sucursalesSinEstablecimiento ?? 0);
+        setGateway(j.gateway ?? null);
         setOpciones(j.opciones);
         setPuedeEditarPrecio(j.puedeEditarPrecio === true);
         setPuedeAjustarFiscal(j.puedeAjustarFiscal === true);
@@ -800,6 +804,9 @@ export default function NuevaFacturaPage() {
                   {sucursal ? <span className={estilos.meta}>Establecimiento {sucursal.establecimiento}{puntoId ? ` · Punto ${sucursal.puntos.find((p) => p.id === puntoId)?.codigo ?? ""}` : ""}</span> : null}
                 </div>
                 <div className={estilos.cardBody}>
+                  {gateway !== null && !puedeEnviarPorGateway(gateway) ? (
+                    <div className={ui.alertError} role="alert" style={{ marginBottom: 12 }}>{gateway.mensaje} Puede revisar la factura, pero «Enviar factura» permanece deshabilitado.</div>
+                  ) : null}
                   {sucursales.length === 0 && opciones ? (
                     <div className={ui.alertError} role="alert" style={{ marginBottom: 12 }}>
                       No hay sucursales habilitadas para facturar en su alcance.
@@ -1245,7 +1252,7 @@ export default function NuevaFacturaPage() {
             </dl>
             <div className={estilos.actions} style={{ marginTop: 14 }}>
               <button type="button" className={ui.secondaryButton} onClick={() => setResumen(null)}>Volver a editar</button>
-              <button type="button" className={ui.primaryButton} disabled={enviando} onClick={enviar}>Enviar factura</button>
+              <button type="button" className={ui.primaryButton} disabled={enviando || !puedeEnviarPorGateway(gateway)} title={puedeEnviarPorGateway(gateway) ? undefined : gateway?.mensaje ?? "Verificando la configuración del gateway…"} onClick={enviar}>Enviar factura</button>
             </div>
           </div>
         </div>

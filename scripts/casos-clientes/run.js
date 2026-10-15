@@ -57,6 +57,7 @@ Module._resolveFilename = function (request, ...resto) {
   const mon = cargar("lib/facturacion/monedas.casos.js");
   const pun = cargar("lib/facturacion/puntos.casos.js");
   const sec = cargar("lib/facturacion/secuencias.casos.js");
+  const gwc = cargar("lib/facturacion/gateway-config.casos.js");
   const red = cargar("lib/facturacion/rediseno.casos.js");
   const suites = [
     ["teléfono y día de cobro", async () => tel.verificarCasosTelefonoYCobro(), () => tel.CASOS_TELEFONO.length + 11 + 6 + 2],
@@ -109,6 +110,7 @@ Module._resolveFilename = function (request, ...resto) {
     ["Facturación PRO-129 (Etapa A): gestión de puntos de expedición — permiso PUNTOS, alta con último número confirmado, activación sin retroceso, funciones SQL, NEX-057, T19 y pantallas", async () => pun.verificarCasosPuntos(), null],
     ["Facturación PRO-128: rediseño compacto — Operación a la vista, IVA directo (E731/E733/E734), unidades de medida buscables, importes decimales exactos, detección de cambios y estructura/responsive de la pantalla", async () => red.verificarCasosRediseno(), null],
     ["Facturación PRO-131 (AUD-FISC P0): secuencia fiscal independiente por tipo de documento — NEX-060, conciliación del legado, reserva FE, reversión, T21/T22 y lectura en la aplicación", async () => sec.verificarCasosSecuencias(), null],
+    ["Facturación PRO-133: prontitud del gateway por empresa (SIN_CONFIGURAR/INVALIDA/SIN_CREDENCIALES/CONFIGURADO), envío bloqueado en la pantalla y aprovisionamiento de prueba sin secretos", async () => gwc.verificarCasosGatewayConfig(), null],
   ];
   let total = 0;
   let fallosTotal = 0;

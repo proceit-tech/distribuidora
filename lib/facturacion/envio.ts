@@ -3,6 +3,7 @@ import type { Pool } from "pg";
 import { guardarClasificacionIva, type ClasificacionGuardar, type ResultadoGuardado } from "@/lib/facturacion/ajuste-fiscal";
 import { crearFacturaElectronica, type CuerpoFactura } from "@/lib/facturacion/emision";
 import { configGatewayValida, enviarDocumentoGateway, leerCredenciales, type ConfigGateway, type Dependencias, type FaseEnvio, type ResultadoEnvio } from "@/lib/facturacion/gateway";
+import { MENSAJES_GATEWAY, type EstadoGateway, type EstadoGatewayUI } from "@/lib/facturacion/gateway-estado";
 import { ErrorFacturacion } from "@/lib/facturacion/shared";
 
 /**
@@ -37,6 +38,30 @@ export type RespuestaEnvio = {
   /** Resultado de «Guardar también en Productos» por producto (solo si el operador lo pidió). */
   ajustesProducto?: ResultadoGuardado[];
 };
+
+/**
+ * Prontitud del gateway de la empresa para la pantalla (PRO-133): misma comprobación que el preflight de configuracionGateway (fila activa → configuración válida → credenciales presentes en el
+ * servidor) pero SIN lanzar 409 y SIN exponer URL, referencia ni credenciales. No hace red: «CONFIGURADO» no prueba que el gateway esté disponible. Un fallo de lectura (p. ej. sin NEX-047)
+ * se informa como SIN_CONFIGURAR.
+ */
+export async function estadoGateway(db: Db, empresaId: string, dep: Dependencias = {}): Promise<EstadoGatewayUI> {
+  const dar = (estado: EstadoGateway): EstadoGatewayUI => ({ estado, mensaje: MENSAJES_GATEWAY[estado] });
+
+  try {
+    const cfg = await db.query(`SELECT base_url AS "baseUrl", credencial_ref AS "credencialRef", timeout_ms AS "timeoutMs" FROM fe_gateway_config WHERE empresa_id = $1 AND activo`, [empresaId]);
+    const fila = cfg.rows[0] as { baseUrl: string; credencialRef: string; timeoutMs: number } | undefined;
+
+    if (!fila) return dar("SIN_CONFIGURAR");
+
+    const valida = configGatewayValida(empresaId, fila);
+
+    if (!valida) return dar("INVALIDA");
+
+    return leerCredenciales(valida.credencialRef, dep.env) ? dar("CONFIGURADO") : dar("SIN_CREDENCIALES");
+  } catch {
+    return dar("SIN_CONFIGURAR");
+  }
+}
 
 /** Configuración del gateway de la empresa y presencia de credenciales (sin leerlas hacia afuera). 409 si falta algo. */
 export async function configuracionGateway(db: Db, empresaId: string, dep: Dependencias = {}): Promise<ConfigGateway> {
