@@ -5,7 +5,7 @@ import { leerAjuste, type AjusteFiscal } from "@/lib/facturacion/ajuste-item";
 import { permisoAjusteFiscal, permisoEditarProductos, type ClasificacionGuardar } from "@/lib/facturacion/ajuste-fiscal";
 import { B, parseDec, textoDec, type Dec } from "@/lib/facturacion/calculo";
 import { CONDICION_CONTADO, CONDICION_CREDITO, CREDITO_CUOTAS, CREDITO_PLAZO, CUOTAS_HABILITADAS, MENSAJE_CUOTAS_SUSPENDIDAS, leerCredito, plazoTexto, type CreditoEntrada } from "@/lib/facturacion/credito";
-import { leerMonedaYCambio, leerCambio, precioEnMoneda, totalEnGuaranies, type Moneda } from "@/lib/facturacion/monedas";
+import { leerMonedaYCambio, leerCambio, precioEnMoneda, precioSerializable, totalEnGuaranies, type Moneda } from "@/lib/facturacion/monedas";
 import { DENOMINACIONES_TARJETA, FORMAS_PAGO, FORMAS_PROCESAMIENTO, leerPagos, resolverMontos, type PagoEntrada } from "@/lib/facturacion/pagos";
 import { construirPayloadFE, CONDICIONES_OPERACION, INDICADORES_PRESENCIA, resumenCalculo, TIPOS_TRANSACCION, totalFactura, validarEntradaFE, type EntradaFE, type LineaFE, type ReceptorFE } from "@/lib/facturacion/payload-fe";
 import { ErrorFacturacion, ErrorValidacionFiscal } from "@/lib/facturacion/shared";
@@ -395,6 +395,11 @@ export async function prepararFactura(db: Db, empresaId: string, usuarioId: stri
     if (referencia === null && l.precio === null) throw new ErrorFacturacion(422, `El producto ${s(p.codigo)} no tiene precio de venta de referencia en ${moneda === "PYG" ? "guaraníes" : moneda}${moneda === "PYG" ? "" : " (no se convierte el precio de otra moneda): escriba el precio en esa moneda"}.`);
 
     const propuesto = l.precio === null ? null : parseDec(l.precio, 4);
+
+    // Un precio escrito jamás se sustituye por el de lista: si no se puede escribir en el documento electrónico sin cambiar su valor, se RECHAZA con el motivo (antes de reservar numeración).
+    if (l.precio !== null && propuesto !== null && !precioSerializable(l.precio)) {
+      throw new ErrorFacturacion(422, `El precio escrito para el producto ${s(p.codigo)} (${l.precio}) no puede escribirse en el documento electrónico sin perder precisión. Reduzca el precio; no se usa el precio de lista en su lugar.`);
+    }
     const modificado = propuesto !== null && (referencia === null || propuesto !== referencia);
 
     if (l.precio !== null && (propuesto === null || propuesto <= parseDec("0", 0)!)) throw new ErrorFacturacion(422, `El precio del producto ${s(p.codigo)} debe ser mayor que cero.`);

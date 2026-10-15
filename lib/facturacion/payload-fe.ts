@@ -1,5 +1,5 @@
 import { CONDICION_CONTADO, CONDICION_CREDITO, CREDITO_CUOTAS, CREDITO_PLAZO, erroresCredito, hoyParaguay, plazoTexto, type CreditoEntrada } from "@/lib/facturacion/credito";
-import { esMonedaFE, leerCambio, totalEnGuaranies } from "@/lib/facturacion/monedas";
+import { cabeEnF023, esMonedaFE, leerCambio, MAX_ENTEROS_F023, totalEnGuaranies } from "@/lib/facturacion/monedas";
 import { DESCRIPCION_FISCAL_DENOMINACION, DESCRIPCION_FISCAL_MONEDA, DESCRIPCION_FISCAL_PAGO, erroresMedio, FORMAS_PAGO, TIPO_EFECTIVO, numeroChequeFiscal, TIPO_CHEQUE, TIPO_OTRO, TIPO_TARJETA_CREDITO, TIPO_TARJETA_DEBITO, type PagoEntrada } from "@/lib/facturacion/pagos";
 import { B, S, calcularItem, calcularSubtotales, numeroDec, parseDec, textoDec, type AfectacionIva, type Dec, type Subtotales, type TasaIva } from "@/lib/facturacion/calculo";
 
@@ -194,6 +194,7 @@ export function validarEntradaFE(e: EntradaFE, hoy: string = hoyParaguay()): str
 
   if (e.moneda !== "PYG" && esMonedaFE(e.moneda) && leerCambio(e.cambio) !== null) {
     if (totalGs === null) errores.push("El equivalente en guaraníes (F023 = total × tipo de cambio) no es exacto: ajuste el tipo de cambio o los importes; no se redondea.");
+    else if (!cabeEnF023(totalGs)) errores.push(`El equivalente en guaraníes (F023 = total × tipo de cambio = ${textoDec(totalGs)}) supera los ${MAX_ENTEROS_F023} dígitos enteros que admite el Manual (1-15p(0-8)). Reduzca los importes o el tipo de cambio; no se trunca ni se redondea.`);
     else if (!exacto(totalGs)) errores.push("El equivalente en guaraníes (F023) no puede escribirse en el documento electrónico sin perder precisión. Reduzca los importes o el tipo de cambio.");
   }
 
@@ -296,6 +297,13 @@ function formaPagoJSON(p: PagoEntrada & { monto: string }, moneda: string = "PYG
   };
 }
 
+/** F023 como número JSON: EXACTO y dentro de 1-15p(0-8); si no, lanza (defensa en profundidad; la validación lo rechaza antes de reservar numeración). */
+function numeroF023(d: Dec | null): number {
+  if (d === null || !cabeEnF023(d)) throw new Error("El equivalente en guaraníes (F023) no cabe en 15 dígitos enteros.");
+
+  return numeroExacto(d);
+}
+
 /** F023 de la entrada: null en PYG (se conserva el valor del baseline) o si el cambio no es válido/exacto. */
 function totalEnGuaranies0(e: EntradaFE, total: Dec): Dec | null {
   return e.moneda === "PYG" || e.cambio === undefined || leerCambio(e.cambio) === null ? null : totalEnGuaranies(total, e.cambio);
@@ -387,7 +395,7 @@ export function construirPayloadFE(e: EntradaFE, hoy?: string): Record<string, u
         dSubExe: num(sub.dSubExe), dSubExo: num(sub.dSubExo), dSub5: num(sub.dSub5), dSub10: num(sub.dSub10), dTotOpe: num(sub.dTotOpe),
         dTotDesc: 0, dTotDescGlotem: 0, dTotAntItem: 0, dTotAnt: 0, dPorcDescTotal: 0, dDescTotal: 0, dAnticipo: 0, dRedon: 0,
         dTotGralOpe: num(sub.dTotGralOpe), dIVA5: num(sub.dIVA5), dIVA10: num(sub.dIVA10), dLiqTotIVA5: num(sub.dIVA5), dLiqTotIVA10: num(sub.dIVA10), dTotIVA: num(sub.dTotIVA),
-        dBaseGrav5: num(sub.dBaseGrav5), dBaseGrav10: num(sub.dBaseGrav10), dTBasGraIVA: num(sub.dTBasGraIVA), dTotalGs: e.moneda === "PYG" ? num(sub.dTotalGs) : numeroExacto(totalEnGuaranies0(e, sub.dTotGralOpe) ?? B(0)),
+        dBaseGrav5: num(sub.dBaseGrav5), dBaseGrav10: num(sub.dBaseGrav10), dTBasGraIVA: num(sub.dTBasGraIVA), dTotalGs: e.moneda === "PYG" ? num(sub.dTotalGs) : numeroF023(totalEnGuaranies0(e, sub.dTotGralOpe)),
       },
     ],
   };

@@ -156,3 +156,40 @@ export function ajusteParaEnvio(p: ProductoBase, a: AjusteUI): AjusteFiscal | un
 
   return Object.keys(o).length > 0 ? o : undefined;
 }
+
+// ── Selección de productos: pendientes fiscales y de precio SEPARADOS, cada uno con su permiso (AUD-MFE-P2-R01-02) ─────────────────────────────────
+
+export type PermisosProducto = { puedeAjustarFiscal: boolean; puedeEditarPrecio: boolean };
+
+/** Pendientes del producto tal como está en el cadastro: fiscales (IVA, unidad SIFEN) y de precio (sin precio de lista en la MONEDA de la factura). */
+export function pendientesProducto(p: Pick<ProductoBase, "afectacion" | "unidadSifen" | "unidadVigente" | "precio" | "monedaPrecio">, moneda: string): { fiscales: string[]; precio: string[] } {
+  const fiscales: string[] = [];
+
+  if (p.afectacion === null) fiscales.push("sin clasificación de IVA");
+  if (p.unidadSifen === null) fiscales.push("sin unidad de medida SIFEN");
+  else if (p.unidadVigente === false) fiscales.push("unidad SIFEN no vigente");
+
+  return { fiscales, precio: p.precio === null || p.monedaPrecio !== moneda ? [`sin precio de venta en ${moneda === "PYG" ? "guaraníes" : moneda}`] : [] };
+}
+
+/**
+ * ¿Se puede AÑADIR el producto a la factura? Los pendientes fiscales se completan en la línea solo con FACTURACION_ELECTRONICA.AJUSTE_FISCAL; la falta de precio en la moneda solo con
+ * FACTURACION_ELECTRONICA.PRECIO. Cada permiso cubre únicamente lo suyo: quien tiene PRECIO y no AJUSTE_FISCAL puede añadir un producto fiscalmente válido con lista en otra moneda y
+ * escribir el precio, pero NO se le abre la edición de IVA, unidad, descripción ni GTIN. El servidor vuelve a verificar todo.
+ */
+export function decidirProducto(p: Parameters<typeof pendientesProducto>[0], moneda: string, permisos: PermisosProducto): { habilitado: boolean; fiscales: string[]; precio: string[]; mensaje: string | undefined; corregirEnProductos: boolean } {
+  const { fiscales, precio } = pendientesProducto(p, moneda);
+  const bloqueoFiscal = fiscales.length > 0 && !permisos.puedeAjustarFiscal;
+  const bloqueoPrecio = precio.length > 0 && !permisos.puedeEditarPrecio;
+  const habilitado = !bloqueoFiscal && !bloqueoPrecio;
+  const completables = [...(fiscales.length > 0 && permisos.puedeAjustarFiscal ? fiscales : []), ...(precio.length > 0 && permisos.puedeEditarPrecio ? precio : [])];
+  const bloqueos = [...(bloqueoFiscal ? fiscales : []), ...(bloqueoPrecio ? precio : [])];
+
+  return {
+    habilitado, fiscales, precio,
+    mensaje: bloqueos.length > 0
+      ? `No se puede facturar: ${bloqueos.join(", ")}.${bloqueoPrecio ? " Escribir el precio requiere el permiso de precio." : ""}${bloqueoFiscal ? " Completar datos fiscales requiere el permiso de ajuste fiscal." : ""}`
+      : completables.length > 0 ? `Pendiente de completar: ${completables.join(", ")}. Se completa en la línea de la factura.` : undefined,
+    corregirEnProductos: bloqueoFiscal,
+  };
+}

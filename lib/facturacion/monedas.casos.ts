@@ -7,9 +7,10 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 import { contador } from "@/lib/clientes/contador-casos";
-import { B, parseDec, textoDec } from "@/lib/facturacion/calculo";
+import { B, parseDec, S, textoDec } from "@/lib/facturacion/calculo";
 import { cotizacionVigente, crearFacturaElectronica, leerCuerpoFactura, prepararFactura } from "@/lib/facturacion/emision";
-import { esMonedaFE, leerCambio, leerMonedaYCambio, precioEnMoneda, simboloMoneda, totalEnGuaranies } from "@/lib/facturacion/monedas";
+import { decidirProducto } from "@/lib/facturacion/ajuste-item";
+import { cabeEnF023, esMonedaFE, leerCambio, leerMonedaYCambio, mismoPrecio, precioEnMoneda, precioSerializable, simboloMoneda, totalEnGuaranies } from "@/lib/facturacion/monedas";
 import { construirPayloadFE, validarEntradaFE, type EntradaFE, type ReceptorFE } from "@/lib/facturacion/payload-fe";
 import { ErrorFacturacion, ErrorValidacionFiscal } from "@/lib/facturacion/shared";
 
@@ -177,7 +178,7 @@ export async function verificarCasosMonedas(): Promise<string[]> {
   const rep = await emitir({ moneda: "USD", cambio: "7500" }, { producto: productoUsd });
   const otroCambio = await emitir({ moneda: "USD", cambio: "7501" }, { producto: productoUsd });
   igual("idempotencia: misma operación → mismo payload; otro cambio o otra moneda → payload distinto (misma clave con otro contenido conflictúa en SQL)", [JSON.stringify(json(rep)) === JSON.stringify(json(usd)), JSON.stringify(json(otroCambio)) === JSON.stringify(json(usd)), JSON.stringify(json(base)) === JSON.stringify(json(usd))], [true, false, false]);
-  igual("regresión R01-01: un pago en USD que Number alteraría se rechaza (también con E611)", tiene(entrada({ lineas: linea("999999999999.9999", "1"), cambio: "1", pagos: [{ tipo: 1, monto: "782284262408.5882" }] }), /perder precisión|suma de los pagos/), true);
+  igual("regresión R01-01: un pago en USD que Number alteraría se rechaza (también con E611)", tiene(entrada({ lineas: linea("847688702356.7569", "1"), cambio: "1", pagos: [{ tipo: 1, monto: "782284262408.5882" }] }), /perder precisión|suma de los pagos/), true);
   const consultas = (x: { b: ReturnType<typeof baseSimulada> }) => x.b.llamadas.map((l) => l.sql.replace(/\s+/g, " ").slice(0, 40)).filter((q) => !/FROM tipos_cambio|SELECT cambio/.test(q)).join("|");
   igual("permisos y aislamiento intactos: USD solo agrega la lectura de cotizaciones; el resto de consultas es el de PYG", consultas(rep) === consultas(base), true);
 
@@ -185,12 +186,59 @@ export async function verificarCasosMonedas(): Promise<string[]> {
   const cot = async (fila: Record<string, unknown> | null, lanza = false) => cotizacionVigente({ query: async () => { if (lanza) throw Object.assign(new Error("x"), { code: "42P01" }); return { rows: fila ? [fila] : [], rowCount: fila ? 1 : 0 }; } } as never, EMPRESA, "USD");
   igual("cotizacionVigente: 7500.500000 → 7500.5; 7500.123456 (no cabe en 4 decimales) → null (no se recorta); sin fila o sin tabla → null", [await cot({ cambio: "7500.500000", fecha: "2026-10-15" }), await cot({ cambio: "7500.123456", fecha: "2026-10-15" }), await cot({ cambio: "7500.120000", fecha: "2026-10-15" }), await cot(null), await cot(null, true)], [{ cambio: "7500.5", fecha: "2026-10-15" }, null, { cambio: "7500.12", fecha: "2026-10-15" }, null, null]);
 
+  // ── 4-bis. AUD-MFE-P2-R01-01: F023 `1-15p(0-8)` — hasta 15 dígitos enteros, sin redondear ni truncar ───────────────────────────────────────────────────
+  const exento = (precio: string, cantidad = "1") => [{ ...linea(precio, cantidad)[0], afectacion: 3 as const, tasa: 0 as const }];
+  const grande = (precio: string, cambio: string) => entrada({ lineas: exento(precio), cambio, pagos: [{ tipo: 1, monto: precio }] });
+  igual("ejemplo de la auditoría: 100000000000 USD × 99999 = 9999900000000000 Gs (16 dígitos enteros) → bloqueado con el motivo y sin truncar", [totalEnGuaranies(dec("100000000000"), "99999") === BigInt("9999900000000000") * S, cabeEnF023(BigInt("9999900000000000") * S), tiene(grande("100000000000", "99999"), /F023.*supera los 15 dígitos enteros.*1-15p\(0-8\)/)], [true, false, true]);
+  igual("el generador JSON también se niega (defensa en profundidad): construirPayloadFE lanza y no emite un F023 fuera de rango", (() => { try { construirPayloadFE(grande("100000000000", "99999"), HOY); return "OK"; } catch { return "bloqueado"; } })(), "bloqueado");
+  igual("límites de F023: 15 dígitos enteros caben (999999999999999), 16 no; con decimales (≤ 8) también", [cabeEnF023(dec("999999999999999")), cabeEnF023(dec("999847688702356.75699999")), cabeEnF023(BigInt("1000000000000000") * S), cabeEnF023(dec("0"))], [true, true, false, true]);
+  igual("valor válido grande SIGUE emitiéndose sin cambios: 99999999999 USD × 9999 = 999899999990001 Gs (15 dígitos) → F023 exacto, sin redondeo", [errores(grande("99999999999", "9999")), payload(grande("99999999999", "9999")).Subtotales[0].dTotalGs], [[], 999899999990001]);
+  const pBorde = payload(grande("100000000000", "9999.9999"));
+  igual("justo bajo el límite (1e11 × 9999,9999 = 999999990000000 < 1e15): válido y exacto", [pBorde.Subtotales[0].dTotalGs, pBorde.dTiCam], [999999990000000, 9999.9999]);
+  const f023 = await emitir({ moneda: "USD", cambio: "99999", lineas: [{ productoId: PRODUCTO, cantidad: "1" }] }, { producto: { ...productoUsd, precio: "100000000000", afectacion: 3, tasa: 0, proporcion: null } });
+  igual("servidor: F023 fuera de rango → 422 dirigido ANTES de reservar numeración (ninguna llamada a fe_documento_crear_fe)", [/^422:.*F023.*15 dígitos enteros/.test(f023.e), f023.b.creaciones().length, f023.b.escrituras().length], [true, 0, 0]);
+  const f023ok = await emitir({ moneda: "USD", cambio: "9999", lineas: [{ productoId: PRODUCTO, cantidad: "1" }] }, { producto: { ...productoUsd, precio: "99999999999", afectacion: 3, tasa: 0, proporcion: null } });
+  igual("servidor: el caso con cambio que cabe se emite y el payload lleva F023 exacto", [f023ok.e, json(f023ok).Subtotales[0].dTotalGs], ["OK", 999899999990001]);
+  igual("PYG y USD de importes normales no cambian (regresión)", [errores(pyg()), errores(entrada()), payload(entrada()).Subtotales[0].dTotalGs], [[], [], 236250]);
+
+  // ── 4-ter. AUD-MFE-P2-R01-02: pendientes fiscales y de precio separados, cada uno con su permiso ───────────────────────────────────────────────────
+  const prod = (extra: Record<string, unknown> = {}) => ({ afectacion: 1, unidadSifen: 77, unidadVigente: true, precio: "11000", monedaPrecio: "PYG", ...extra }) as Parameters<typeof decidirProducto>[0];
+  const solo = (a: boolean, p: boolean) => ({ puedeAjustarFiscal: a, puedeEditarPrecio: p });
+  const dec3 = (p: Parameters<typeof decidirProducto>[0], m: string, a: boolean, pr: boolean) => { const d = decidirProducto(p, m, solo(a, pr)); return [d.habilitado, d.fiscales.length, d.precio.length]; };
+  igual("PRECIO sin AJUSTE_FISCAL: producto fiscalmente válido con lista en PYG se AÑADE a una factura USD (el precio se escribe a mano)", [dec3(prod(), "USD", false, true), decidirProducto(prod(), "USD", solo(false, true)).mensaje], [[true, 0, 1], "Pendiente de completar: sin precio de venta en USD. Se completa en la línea de la factura."]);
+  igual("AJUSTE_FISCAL sin PRECIO: el mismo producto en USD NO se añade (no podría escribir el precio) y el mensaje explica el permiso", [dec3(prod(), "USD", true, false), /permiso de precio/.test(decidirProducto(prod(), "USD", solo(true, false)).mensaje ?? "")], [[false, 0, 1], true]);
+  igual("sin ningún permiso: bloqueado; con ambos: habilitado", [dec3(prod(), "USD", false, false)[0], dec3(prod(), "USD", true, true)[0]], [false, true]);
+  igual("producto fiscalmente incompleto (sin IVA ni unidad) con PRECIO y sin AJUSTE_FISCAL: bloqueado, remite a Productos y NO se abre la edición fiscal", [dec3(prod({ afectacion: null, unidadSifen: null }), "PYG", false, true), decidirProducto(prod({ afectacion: null, unidadSifen: null }), "PYG", solo(false, true)).corregirEnProductos], [[false, 2, 0], true]);
+  igual("producto fiscalmente incompleto con AJUSTE_FISCAL y precio en la moneda: habilitado (se completa en la línea)", dec3(prod({ afectacion: null, unidadVigente: false }), "PYG", true, false), [true, 2, 0]);
+  igual("producto completo con precio en la moneda de la factura: habilitado sin pendientes ni permisos especiales", [dec3(prod({ monedaPrecio: "USD", precio: "10.5" }), "USD", false, false), decidirProducto(prod({ monedaPrecio: "USD", precio: "10.5" }), "USD", solo(false, false)).mensaje], [[true, 0, 0], undefined]);
+  igual("PYG intacto: producto sin precio PYG pide guaraníes y el permiso de precio", [decidirProducto(prod({ precio: null }), "PYG", solo(false, false)).mensaje?.includes("guaraníes"), dec3(prod({ precio: null }), "PYG", false, true)[0]], [true, true]);
+  const soloPrecio = await emitir({ moneda: "USD", cambio: "7500", lineas: [{ productoId: PRODUCTO, cantidad: "3", precio: "10.5", ajuste: { descripcion: "Otra descripción" } }] }, { producto: productoPyg, permisos: ["FACTURACION_ELECTRONICA.PRECIO"] });
+  igual("servidor: con PRECIO pero sin AJUSTE_FISCAL no se altera descripción/IVA/unidad/GTIN (403 AJUSTE_FISCAL) y no se reserva número", [/^403:.*AJUSTE_FISCAL/.test(soloPrecio.e), soloPrecio.b.creaciones().length], [true, 0]);
+  const soloPrecioOk = await emitir({ moneda: "USD", cambio: "7500", lineas: [{ productoId: PRODUCTO, cantidad: "3", precio: "10.5" }] }, { producto: productoPyg, permisos: ["FACTURACION_ELECTRONICA.PRECIO"] });
+  igual("servidor: con PRECIO y sin AJUSTE_FISCAL el precio manual en USD se acepta y el resto del producto no cambia", [soloPrecioOk.e, json(soloPrecioOk).Detalles[0].dPUniProSer, json(soloPrecioOk).Detalles[0].cUniMed, json(soloPrecioOk).Detalles[0].iAfecIVA], ["OK", 10.5, 77, 1]);
+
+  // ── 4-quater. AUD-MFE-P2-R01-03: comparación exacta de precios ─────────────────────────────────────────────────────────────────────────────────
+  igual("Number no distingue 847688702356.7569 de 847688702356.7570 pero la comparación exacta sí", [Number("847688702356.7569") === Number("847688702356.7570"), mismoPrecio("847688702356.7569", "847688702356.7570"), mismoPrecio("847688702356.7569", "847688702356.7569")], [true, false, true]);
+  igual("mismoPrecio: ceros finales equivalen; inválidos y lista nula nunca son iguales", [mismoPrecio("10", "10.0000"), mismoPrecio("10.5", "10.50"), mismoPrecio("abc", "10"), mismoPrecio("10", null), mismoPrecio("", "")], [true, true, false, false, false]);
+  igual("precioSerializable: 782284262408.5882 no sobrevive a Number; 10.5 y 999999999999.9999 sí", [precioSerializable("782284262408.5882"), precioSerializable("10.5"), precioSerializable("999999999999.9999")], [false, true, true]);
+  const noSerial = await emitir({ moneda: "USD", cambio: "7500", lineas: [{ productoId: PRODUCTO, cantidad: "1", precio: "782284262408.5882" }] }, { producto: { ...productoUsd, precio: "782284262408.5881" }, permisos: ["FACTURACION_ELECTRONICA.PRECIO"] });
+  igual("servidor: un precio escrito que no se puede serializar sin perder precisión se RECHAZA con el motivo (422) en vez de usar el precio de lista, y sin reservar número", [/^422:.*782284262408\.5882.*no puede escribirse.*no se usa el precio de lista/.test(noSerial.e), noSerial.b.creaciones().length], [true, 0]);
+  const sinPermisoDif = await emitir({ moneda: "USD", cambio: "7500", lineas: [{ productoId: PRODUCTO, cantidad: "1", precio: "10.5001" }] }, { producto: productoUsd });
+  igual("servidor: diferencia mínima de 0,0001 sin FACTURACION_ELECTRONICA.PRECIO → 403 (no se descarta ni se acepta) y sin reservar número", [/^403:.*permiso para modificar el precio/.test(sinPermisoDif.e), sinPermisoDif.b.creaciones().length], [true, 0]);
+  const conPermisoDif = await emitir({ moneda: "USD", cambio: "7500", lineas: [{ productoId: PRODUCTO, cantidad: "1", precio: "10.5001" }] }, { producto: productoUsd, permisos: ["FACTURACION_ELECTRONICA.PRECIO"] });
+  igual("servidor: con el permiso, la diferencia mínima se factura con el precio ESCRITO (10.5001), no con el de lista", [conPermisoDif.e, json(conPermisoDif).Detalles[0].dPUniProSer], ["OK", 10.5001]);
+
+  // ── D016 / E610 en USD/BRL: lo comprobable ────────────────────────────────────────────────────────────────────────────────────────────────────
+  igual("D016 dDesMoneOpe y E610 dDMoneTiPag NO se envían en USD/BRL (sin texto oficial comprobable) y el baseline PYG no cambia: Efectivo PYG de 4 chaves, sin D016", [pu.dDesMoneOpe === undefined, "dDMoneTiPag" in pu.FormaPago[0], "dDMoneTiPag" in pb.FormaPago[0], Object.keys(pp.FormaPago[0]).join(","), "dDesMoneOpe" in pp], [true, false, false, "iTiPago,dMonTiPag,cMoneTiPag,dTiCamTiPag", false]);
+
   // ── 5. Pantalla y límites ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   const pagina = leer("app/(private)/facturas/nueva/page.tsx");
   const cuerpoUI = pagina.slice(pagina.indexOf("const cuerpoFactura"), pagina.indexOf("const cuerpoFactura") + 1100);
   cierto("pantalla: selector de moneda (PYG/USD/BRL) y campo «Tipo de cambio (Gs. por 1 …)» solo con moneda extranjera, dentro de la tarjeta Operación", /aria-label="Moneda de la factura"/.test(pagina) && /aria-label="Tipo de cambio"/.test(pagina) && /extranjera \? \(/.test(pagina) && pagina.indexOf('aria-label="Moneda de la factura"') > pagina.indexOf('aria-labelledby="sec-operacion"') && pagina.indexOf('aria-label="Moneda de la factura"') < pagina.indexOf('aria-labelledby="sec-cliente"'));
   cierto("pantalla: el cuerpo envía moneda y cambio (este solo si es extranjera); cambiar de moneda reinicia precios, pagos y entrega SIN convertir nada", /moneda, \.\.\.\(extranjera \? \{ cambio \} : \{\}\)/.test(cuerpoUI) && /function cambiarMoneda\(m: Moneda\)/.test(pagina) && /referencia\(l\.producto, m\) \?\? ""/.test(pagina) && !/\* *Number\(cambio\)|Number\(cambio\) *\*|precio.*\*.*cambio/.test(pagina));
   cierto("pantalla: totales con el símbolo de la moneda, equivalente en guaraníes con aritmética exacta, pendiente si falta el cambio y cambio fijo en el modal de confirmación", /\{sim\} \{gs\(calculo\.total\)\}/.test(pagina) && /Equivalente: Gs\./.test(pagina) && /totalEnGuaranies\(totalDec, cambioNormal\)/.test(pagina) && /indicar el tipo de cambio manual/.test(pagina) && /Tipo de cambio \(manual\)/.test(pagina) && /Equivalente en guaraníes/.test(pagina));
+  cierto("R01-02 pantalla: BuscadorProducto y SelectorProducto usan decidirProducto con los permisos de precio y de ajuste fiscal por separado (el editor fiscal sigue condicionado a AJUSTE_FISCAL)", /function SelectorProducto\([\s\S]{0,400}?permisos: PermisosProducto/.test(pagina) && /function BuscadorProducto\([\s\S]{0,400}?permisos: PermisosProducto/.test(pagina) && (pagina.match(/decidirProducto\(p, moneda, permisos\)/g) ?? []).length === 2 && !/permiteIncompletos/.test(pagina) && /puedeAjustarFiscal \? \(/.test(pagina));
+  cierto("R01-03 pantalla: los precios se comparan en Decimal exacto (mismoPrecio / parseDec), sin Number(l.precio)", /mismoPrecio\(l\.precio, referencia\(l\.producto, moneda\)\)/.test(pagina) && !/Number\(l\.precio\) *[!=>]/.test(pagina));
   cierto("pantalla: el precio de lista solo se usa si está en la moneda de la factura (no hay conversión en el navegador)", /const referencia = \(p: Producto, moneda: string\) => \(p\.monedaPrecio === moneda \? p\.precio : null\)/.test(pagina));
   const migraciones = readdirSync(join(process.cwd(), "documentacao/banco/nexit/v1/migraciones")).filter((f) => /^NEX-\d+/.test(f)).sort();
   igual("sin migración: documentos.moneda/total y el payload inmutable ya guardan la moneda, la cotización y los importes (última NEX-056)", migraciones[migraciones.length - 1].slice(0, 7), "NEX-056");

@@ -60,3 +60,23 @@ export function totalEnGuaranies(total: Dec, cambio: string): Dec | null {
 
 /** ¿El producto de la lista de precios puede usarse como precio de referencia en esta factura? Solo si su moneda ES la de la factura (sin conversión silenciosa). */
 export const precioEnMoneda = (monedaPrecio: string | null, moneda: string): boolean => monedaPrecio === moneda;
+
+/** Comparación EXACTA de precios (Decimal, nunca Number): ¿el texto escrito es el mismo precio que el de lista? Un texto inválido jamás es «igual». */
+export function mismoPrecio(escrito: string, lista: string | null): boolean {
+  const a = parseDec(escrito, 8);
+  const b = lista === null ? null : parseDec(lista, 8);
+
+  return a !== null && b !== null && a === b;
+}
+
+/** ¿El precio se puede escribir en el JSON como número SIN cambiar su valor? (ida y vuelta exacta; si no, el servidor lo rechaza en vez de usar otro precio). */
+export function precioSerializable(texto: string): boolean {
+  const d = parseDec(texto, 8);
+
+  return d !== null && String(Number(textoDec(d))) === textoDec(d);
+}
+
+/** F023 dTotalGs es `1-15p(0-8)`: hasta 15 dígitos ENTEROS y 8 decimales. Más allá no es un valor fiscal válido (no se trunca ni se redondea: la modalidad se bloquea). */
+export const MAX_ENTEROS_F023 = 15;
+const LIMITE_F023 = B(Math.pow(10, MAX_ENTEROS_F023)) * S;
+export const cabeEnF023 = (d: Dec): boolean => d >= B(0) && d < LIMITE_F023;

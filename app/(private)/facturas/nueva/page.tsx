@@ -4,11 +4,11 @@ import Link from "next/link";
 import { Fragment, useEffect, useId, useState } from "react";
 
 import ui from "@/components/ui/lista-padrao/lista.module.css";
-import { AJUSTE_VACIO, ajusteParaEnvio, problemasFiscales, valoresEfectivos, type AjusteUI } from "@/lib/facturacion/ajuste-item";
+import { AJUSTE_VACIO, ajusteParaEnvio, decidirProducto, problemasFiscales, valoresEfectivos, type AjusteUI, type PermisosProducto } from "@/lib/facturacion/ajuste-item";
 import { elegirPorEnter, MENSAJE_ENTER } from "@/lib/facturacion/busqueda-rapida";
 import { CREDITO_UI_VACIO, creditoParaEnvio, hoyParaguay, pendientesCredito, type EstadoCreditoUI } from "@/lib/facturacion/credito";
 import { B, parseDec, textoDec } from "@/lib/facturacion/calculo";
-import { leerCambio, MONEDAS_FE, simboloMoneda, totalEnGuaranies, type Moneda } from "@/lib/facturacion/monedas";
+import { cabeEnF023, leerCambio, mismoPrecio, MONEDAS_FE, simboloMoneda, totalEnGuaranies, type Moneda } from "@/lib/facturacion/monedas";
 import { conciliarPagos, PAGO_UI_VACIO, pagoParaEnvio, pendientesPagos, textoDecimal, type PagoUI } from "@/lib/facturacion/pagos";
 import { resumenCalculo, type LineaFE } from "@/lib/facturacion/payload-fe";
 import { formatearFechaPy } from "@/lib/formato/listas";
@@ -70,23 +70,12 @@ async function leer<T>(r: Response, porDefecto: string): Promise<T> {
   return j;
 }
 
-/** Impedimentos visibles por producto (el servidor vuelve a validar todo; esto solo evita enviar lo que se sabe inválido). */
-function problemasProducto(p: Producto, moneda: string = "PYG"): string[] {
-  const m: string[] = [];
-
-  if (p.afectacion === null) m.push("sin clasificación de IVA");
-  if (p.unidadSifen === null) m.push("sin unidad de medida SIFEN");
-  else if (p.unidadVigente === false) m.push("unidad SIFEN no vigente");
-  if (p.precio === null || p.monedaPrecio !== moneda) m.push(`sin precio de venta en ${moneda === "PYG" ? "guaraníes" : moneda}`);
-
-  return m;
-}
-
 const cantidadValida = (l: Linea) => CANTIDAD_OK.test(l.cantidad) && Number(l.cantidad) > 0 && (valoresEfectivos(l.producto, l.ajuste).unidadSifen !== 77 || /^\d+(\.0+)?$/.test(l.cantidad));
-const precioValido = (l: Linea) => PRECIO_OK.test(l.precio) && Number(l.precio) > 0;
+// Comparaciones de precio en Decimal EXACTO (nunca Number): una diferencia mínima o un valor enorme no se descartan en silencio.
+const precioValido = (l: Linea) => PRECIO_OK.test(l.precio) && (parseDec(l.precio, 4) ?? B(0)) > B(0);
 /** Precio de lista SOLO si está en la moneda de la factura: nunca se convierte un precio de otra moneda. */
 const referencia = (p: Producto, moneda: string) => (p.monedaPrecio === moneda ? p.precio : null);
-const precioModificado = (l: Linea, moneda: string) => precioValido(l) && (referencia(l.producto, moneda) === null || Number(l.precio) !== Number(referencia(l.producto, moneda)));
+const precioModificado = (l: Linea, moneda: string) => precioValido(l) && (referencia(l.producto, moneda) === null || !mismoPrecio(l.precio, referencia(l.producto, moneda)));
 
 const aLineaFE = (l: Linea, moneda: string): LineaFE => {
   const e = valoresEfectivos(l.producto, l.ajuste);
@@ -219,7 +208,7 @@ function SelectorCliente({ alElegir, alCerrar }: { alElegir: (c: Cliente) => voi
 }
 
 /** Selector de productos: lista paginada inmediata; filtro opcional (código, descripción, GTIN, código de barras). Permite añadir varios sin cerrar. */
-function SelectorProducto({ alAgregar, alCerrar, cantidadItems, permiteIncompletos, moneda }: { alAgregar: (p: Producto) => void; alCerrar: () => void; cantidadItems: number; permiteIncompletos: boolean; moneda: string }) {
+function SelectorProducto({ alAgregar, alCerrar, cantidadItems, permisos, moneda }: { alAgregar: (p: Producto) => void; alCerrar: () => void; cantidadItems: number; permisos: PermisosProducto; moneda: string }) {
   const f = useFiltro();
   const l = useListado<Producto>("/api/facturas/productos", "productos", f.q, f.pagina);
   const [aviso, setAviso] = useState("");
@@ -248,18 +237,18 @@ function SelectorProducto({ alAgregar, alCerrar, cantidadItems, permiteIncomplet
         ) : (
           <ul className={estilos.resultados} aria-label="Productos">
             {l.items.map((p) => {
-              const pr = problemasProducto(p, moneda);
+              const d = decidirProducto(p, moneda, permisos);
 
               return (
                 <li key={p.id}>
                   <div className={estilos.info}>
                     <strong>{p.descripcion}</strong>
                     <small>{p.codigo}{p.gtin ? ` · GTIN ${p.gtin}` : ""} · {p.unidadSimbolo ?? "sin unidad"} · {p.afectacion ? `${ETIQUETA_IVA[p.afectacion]}${p.tasa ? ` ${p.tasa}%` : ""}` : "IVA sin clasificar"}</small>
-                    {pr.length > 0 && permiteIncompletos ? <small className={estilos.aviso}>Pendiente de completar: {pr.join(", ")}. Se completa en la línea de la factura.</small> : null}
-                    {pr.length > 0 && !permiteIncompletos ? <small className={estilos.impedimento}>No se puede facturar: {pr.join(", ")}. <Link href="/productos">Corregir en Productos</Link> o solicite el permiso de ajuste fiscal.</small> : null}
+                    {d.mensaje && d.habilitado ? <small className={estilos.aviso}>{d.mensaje}</small> : null}
+                    {d.mensaje && !d.habilitado ? <small className={estilos.impedimento}>{d.mensaje}{d.corregirEnProductos ? <> <Link href="/productos">Corregir en Productos</Link></> : null}</small> : null}
                   </div>
                   <span className={estilos.precio}>{p.precio && p.monedaPrecio === moneda ? `${simboloMoneda(moneda)} ${gs(Number(p.precio))}` : "—"}</span>
-                  <button type="button" className={ui.secondaryButton} disabled={pr.length > 0 && !permiteIncompletos} onClick={() => { alAgregar(p); setAviso(`«${p.descripcion}» añadido.`); }}>Añadir</button>
+                  <button type="button" className={ui.secondaryButton} disabled={!d.habilitado} onClick={() => { alAgregar(p); setAviso(`«${p.descripcion}» añadido.`); }}>Añadir</button>
                 </li>
               );
             })}
@@ -420,7 +409,7 @@ function BuscadorCliente({ alElegir }: { alElegir: (c: Cliente) => void }) {
 }
 
 /** Búsqueda rápida de productos (código, GTIN o descripción): permanece abierta para añadir varios; los que tienen impedimentos no se pueden añadir. */
-function BuscadorProducto({ alElegir, permiteIncompletos, moneda }: { alElegir: (p: Producto) => void; permiteIncompletos: boolean; moneda: string }) {
+function BuscadorProducto({ alElegir, permisos, moneda }: { alElegir: (p: Producto) => void; permisos: PermisosProducto; moneda: string }) {
   return (
     <BuscadorRapido<Producto>
       url="/api/facturas/productos"
@@ -429,14 +418,14 @@ function BuscadorProducto({ alElegir, permiteIncompletos, moneda }: { alElegir: 
       placeholder="Escriba o escanee el código y presione Enter"
       mantenerAbierto
       describir={(p) => {
-        const pr = problemasProducto(p, moneda);
+        const d = decidirProducto(p, moneda, permisos);
 
         return {
           titulo: p.descripcion,
           detalle: `${p.codigo}${p.gtin ? ` · GTIN ${p.gtin}` : ""} · ${p.unidadSimbolo ?? "sin unidad"} · ${p.afectacion ? `${ETIQUETA_IVA[p.afectacion]}${p.tasa ? ` ${p.tasa}%` : ""}` : "IVA sin clasificar"}`,
-          derecha: p.precio && p.monedaPrecio === moneda ? `${simboloMoneda(moneda)} ${gs(Number(p.precio))}` : "—", habilitado: pr.length === 0 || permiteIncompletos,
-          impedimento: pr.length === 0 ? undefined : permiteIncompletos ? `Pendiente de completar: ${pr.join(", ")}. Se completa en la línea de la factura.` : `No se puede facturar: ${pr.join(", ")}.`,
-          enlace: pr.length > 0 && !permiteIncompletos ? { href: "/productos", texto: "Corregir en Productos" } : undefined,
+          derecha: p.precio && p.monedaPrecio === moneda ? `${simboloMoneda(moneda)} ${gs(Number(p.precio))}` : "—", habilitado: d.habilitado,
+          impedimento: d.mensaje,
+          enlace: d.corregirEnProductos ? { href: "/productos", texto: "Corregir en Productos" } : undefined,
         };
       }}
       exacto={(p, t) => p.codigo.toLowerCase() === t.toLowerCase() || p.gtin === t}
@@ -522,7 +511,7 @@ export default function NuevaFacturaPage() {
   const totalDec = parseDec(String(calculo.total), 8);
   const equivalenteGs = extranjera && cambioNormal !== null && totalDec !== null ? totalEnGuaranies(totalDec, cambioNormal) : null;
   const sim = simboloMoneda(moneda);
-  const pendienteCambio = extranjera && cambioNormal === null ? "indicar el tipo de cambio manual (guaraníes por 1 " + moneda + ")" : extranjera && calculo.total > 0 && equivalenteGs === null ? "el equivalente en guaraníes no es exacto: revise el tipo de cambio o los importes" : "";
+  const pendienteCambio = extranjera && cambioNormal === null ? "indicar el tipo de cambio manual (guaraníes por 1 " + moneda + ")" : extranjera && calculo.total > 0 && (equivalenteGs === null || !cabeEnF023(equivalenteGs)) ? "el equivalente en guaraníes no es exacto o supera 15 dígitos enteros: revise el tipo de cambio o los importes" : "";
   const problemas = lineas.flatMap((l) => problemasFiscales(l.producto, l.ajuste, l.precio, moneda).filter((m) => !m.startsWith("sin precio") || !precioValido(l)).map((m) => `${l.producto.codigo}: ${m}.`));
   const lineasValidas = lineas.every((l) => cantidadValida(l) && precioValido(l));
   const enCredito = condicion === "2";
@@ -884,7 +873,7 @@ export default function NuevaFacturaPage() {
                   <span className={estilos.meta}>{lineas.length} ítem{lineas.length === 1 ? "" : "s"}</span>
                 </div>
                 <div className={`${estilos.cardBody} ${estilos.buscarFila}`}>
-                  <BuscadorProducto alElegir={agregar} permiteIncompletos={puedeAjustarFiscal} moneda={moneda} />
+                  <BuscadorProducto alElegir={agregar} permisos={{ puedeAjustarFiscal, puedeEditarPrecio }} moneda={moneda} />
                   <button type="button" className={ui.secondaryButton} onClick={() => setSelector("producto")}>Búsqueda avanzada</button>
                 </div>
                 <div className={estilos.tableWrap}>
@@ -1040,7 +1029,7 @@ export default function NuevaFacturaPage() {
       )}
 
       {selector === "cliente" ? <SelectorCliente alCerrar={() => setSelector(null)} alElegir={(c) => { setCliente(c); setSelector(null); }} /> : null}
-      {selector === "producto" ? <SelectorProducto alCerrar={() => setSelector(null)} alAgregar={agregar} cantidadItems={lineas.length} permiteIncompletos={puedeAjustarFiscal} moneda={moneda} /> : null}
+      {selector === "producto" ? <SelectorProducto alCerrar={() => setSelector(null)} alAgregar={agregar} cantidadItems={lineas.length} permisos={{ puedeAjustarFiscal, puedeEditarPrecio }} moneda={moneda} /> : null}
 
       {resumen ? (
         <div className={estilos.overlay} role="presentation">

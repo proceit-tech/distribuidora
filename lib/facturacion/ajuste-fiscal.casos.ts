@@ -225,7 +225,7 @@ export async function verificarCasosAjusteFiscal(): Promise<string[]> {
   const pagina = leer("app/(private)/facturas/nueva/page.tsx");
 
   cierto("pantalla: layout conservado (mismos cartones y resumen), editor fiscal por línea solo con permiso, producto incompleto añadible con permiso y bloqueado con el mensaje original sin él, diagnóstico del punto y próximo número referencial", ["sec-operacion", "sec-cliente", "sec-detalle", "sec-info", "sec-totales"].every((id) => pagina.includes(id))
-    && /<EditorFiscalItem/.test(pagina) && /puedeAjustarFiscal \? \(/.test(pagina) && /permiteIncompletos=\{puedeAjustarFiscal\}/.test(pagina) && /No se puede facturar/.test(pagina) && /no tiene un punto de expedición activo/.test(pagina) && /Próximo número \(referencial\)/.test(pagina)
+    && /<EditorFiscalItem/.test(pagina) && /puedeAjustarFiscal \? \(/.test(pagina) && /permisos=\{{ puedeAjustarFiscal, puedeEditarPrecio }\}/.test(pagina) && /No se puede facturar/.test(leer("lib/facturacion/ajuste-item.ts")) && /no tiene un punto de expedición activo/.test(pagina) && /Próximo número \(referencial\)/.test(pagina)
     && !/fetch\("\/api\/productos/.test(pagina) && !/<input[^>]*(codigo|ultimo)/i.test(pagina.slice(pagina.indexOf("sec-operacion"), pagina.indexOf("sec-cliente"))));
 
   const editor = leer("app/(private)/facturas/nueva/ajuste-fiscal-item.tsx");
