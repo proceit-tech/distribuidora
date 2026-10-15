@@ -225,12 +225,12 @@ export async function verificarCasosAjusteFiscal(): Promise<string[]> {
   const pagina = leer("app/(private)/facturas/nueva/page.tsx");
 
   cierto("pantalla: layout conservado (mismos cartones y resumen), editor fiscal por línea solo con permiso, producto incompleto añadible con permiso y bloqueado con el mensaje original sin él, diagnóstico del punto y próximo número referencial", ["sec-operacion", "sec-cliente", "sec-detalle", "sec-info", "sec-totales"].every((id) => pagina.includes(id))
-    && /<EditorFiscalItem/.test(pagina) && /puedeAjustarFiscal \? \(/.test(pagina) && /permisos=\{{ puedeAjustarFiscal, puedeEditarPrecio }\}/.test(pagina) && /No se puede facturar/.test(leer("lib/facturacion/ajuste-item.ts")) && /no tiene un punto de expedición activo/.test(pagina) && /Próximo número \(referencial\)/.test(pagina)
+    && /<EditorFiscalItem/.test(pagina) && /puedeAjustarFiscal \? \(/.test(pagina) && /permisos=\{{ puedeAjustarFiscal, puedeEditarPrecio }\}/.test(pagina) && /No se puede facturar/.test(leer("lib/facturacion/ajuste-item.ts")) && /Sin punto de expedición activo/.test(pagina) && /Próximo N\.º \(referencial\)/.test(pagina)
     && !/fetch\("\/api\/productos/.test(pagina) && !/<input[^>]*(codigo|ultimo)/i.test(pagina.slice(pagina.indexOf("sec-operacion"), pagina.indexOf("sec-cliente"))));
 
   const editor = leer("app/(private)/facturas/nueva/ajuste-fiscal-item.tsx");
 
-  cierto("editor: elección explícita «Solo esta factura» (predeterminada) o «Guardar también en Productos» (deshabilitada sin PRODUCTOS.EDITAR); unidad, descripción y GTIN declarados como solo-documento; sin opción de crear punto ni de editar numeración", /Solo esta factura \(recomendado\)/.test(editor) && /Guardar también en Productos/.test(editor) && /disabled=\{!puedeEditarProductos\}/.test(editor) && /checked=\{!ajuste\.guardar\}/.test(editor) && /no se guardan en Productos/.test(editor) && !/punto|numeraci/i.test(editor.replace(/punto de expedici[oó]n/gi, "")));
+  cierto("editor: elección explícita «Solo esta factura» (predeterminada) o «Guardar también en Productos» (deshabilitada sin PRODUCTOS.EDITAR); unidad, descripción y GTIN declarados como solo-documento; sin opción de crear punto ni de editar numeración", /Solo esta factura \(recomendado\)/.test(editor) && /Guardar también en Productos/.test(editor) && /disabled=\{!puedeEditarProductos\}/.test(editor) && /checked=\{!ajuste\.guardar\}/.test(editor) && /valen solo para esta factura: no cambian el producto ni su unidad de stock/.test(editor) && !/punto|numeraci/i.test(editor.replace(/punto de expedici[oó]n/gi, "")));
 
   const mig = leer("documentacao/banco/nexit/v1/migraciones/NEX-056-facturacion-ajuste-fiscal.sql");
   const rev = leer("documentacao/banco/nexit/v1/scripts/reversion-NEX-056.sql");

@@ -1,81 +1,73 @@
 "use client";
 
-import { hayIvaAjustado, problemasFiscales, valoresEfectivos, type AjusteUI, type GtinModo, type ProductoBase } from "@/lib/facturacion/ajuste-item";
+import { useState } from "react";
+
+import { problemasFiscales, valoresEfectivos, type AjusteUI, type GtinModo, type ProductoBase } from "@/lib/facturacion/ajuste-item";
+import { cambiosPorOpcionIva, esParcial, OPCIONES_IVA, opcionIvaDe } from "@/lib/facturacion/iva-opciones";
+import { etiquetaUnidad, filtrarUnidades } from "@/lib/facturacion/unidades";
 
 import estilos from "./page.module.css";
 
 export type UnidadSifen = { codigo: number; representacion: string; descripcion: string };
 
-const ETIQUETA_IVA: Record<string, string> = { "1": "Gravado", "2": "Exonerado", "3": "Exento", "4": "Gravado parcial" };
-
 /**
- * Datos fiscales de UN ítem dentro de la propia factura (PRO-93 Fase A, FE-UX-07/08/09). Solo corrige este documento: el servidor valida de nuevo todo y exige el permiso
- * FACTURACION_ELECTRONICA.AJUSTE_FISCAL. «Guardar también en Productos» es una elección explícita por línea (solo la clasificación de IVA) y requiere PRODUCTOS.EDITAR.
+ * Panel CONTEXTUAL de los datos fiscales de UN ítem (PRO-128): se abre solo para el producto elegido en la tabla y conserva su estado al cerrarse. Corrige este documento (IVA, unidad de medida,
+ * descripción fiscal, GTIN); el servidor valida de nuevo todo y exige FACTURACION_ELECTRONICA.AJUSTE_FISCAL. «Guardar también en Productos» persiste SOLO la clasificación de IVA (PRODUCTOS.EDITAR + bitácora);
+ * la unidad, la descripción, el GTIN y el precio nunca se guardan en el producto ni cambian su unidad física/de stock.
  */
-export function EditorFiscalItem({ producto, precio, moneda, ajuste, unidades, puedeEditarProductos, alCambiar }: {
-  producto: ProductoBase & { unidadSimbolo: string | null; codigo: string }; precio: string; moneda: string; ajuste: AjusteUI; unidades: UnidadSifen[]; puedeEditarProductos: boolean; alCambiar: (c: Partial<AjusteUI>) => void;
+export function EditorFiscalItem({ producto, precio, moneda, ajuste, unidades, puedeEditarProductos, alCambiar, alCerrar }: {
+  producto: ProductoBase & { unidadSimbolo: string | null; codigo: string }; precio: string; moneda: string; ajuste: AjusteUI; unidades: UnidadSifen[]; puedeEditarProductos: boolean;
+  alCambiar: (c: Partial<AjusteUI>) => void; alCerrar: () => void;
 }) {
+  const [busqueda, setBusqueda] = useState("");
   const e = valoresEfectivos(producto, ajuste);
   const pendientes = problemasFiscales(producto, ajuste, precio, moneda).filter((m) => !m.startsWith("sin precio"));
-  const iva = hayIvaAjustado(ajuste);
-  const cambiado = iva || ajuste.unidadSifen !== "" || ajuste.descripcion !== "" || ajuste.gtinModo !== "cadastro";
-  const base = `${producto.codigo}`;
+  const ivaCambiado = ajuste.afectacion !== "";
+  const opcion = opcionIvaDe(e.afectacion, e.tasa);
+  const filtradas = filtrarUnidades(unidades, busqueda);
+  // La unidad ya elegida siempre debe seguir presente en la lista aunque el filtro no la incluya (el select no puede quedar sin su valor).
+  const elegida = ajuste.unidadSifen !== "" ? unidades.find((u) => String(u.codigo) === ajuste.unidadSifen) : undefined;
+  const lista = elegida && !filtradas.includes(elegida) ? [elegida, ...filtradas] : filtradas;
+  const base = producto.codigo;
 
   return (
-    <details className={estilos.fiscal} open={pendientes.length > 0 || undefined}>
-      <summary>
-        Datos fiscales del ítem
-        {pendientes.length > 0 ? <span className={`${estilos.badge} ${estilos.badgeWarn}`}>Pendiente de completar</span> : cambiado ? <span className={`${estilos.badge} ${estilos.badgeOk}`}>Ajustado en esta factura</span> : null}
-      </summary>
+    <section className={estilos.panelFiscal} aria-label={`Datos fiscales de ${base}`}>
+      <div className={estilos.panelFiscalCabecera}>
+        <strong>Datos fiscales · {base}</strong>
+        <button type="button" className={estilos.linkButton} onClick={alCerrar}>Cerrar</button>
+      </div>
 
-      {pendientes.length > 0 ? <p className={estilos.fieldError} role="alert">Falta: {pendientes.join(", ")}.</p> : null}
-
-      <div className={estilos.grid}>
+      <div className={estilos.gridFiscal}>
         <label className={estilos.field}>
-          <span>Unidad SIFEN</span>
-          <select aria-label={`Unidad SIFEN de ${base}`} value={ajuste.unidadSifen} onChange={(ev) => alCambiar({ unidadSifen: ev.target.value })}>
-            <option value="">{producto.unidadSifen !== null ? `Del producto (${producto.unidadSimbolo ?? producto.unidadSifen})` : "Seleccione…"}</option>
-            {unidades.map((u) => <option key={u.codigo} value={String(u.codigo)}>{u.representacion} · {u.descripcion}</option>)}
+          <span>IVA</span>
+          <select aria-label={`IVA de ${base}`} value={opcion} onChange={(ev) => alCambiar(cambiosPorOpcionIva(ev.target.value, producto, ajuste))}>
+            {opcion === "" ? <option value="">Seleccione…</option> : null}
+            {OPCIONES_IVA.map((o) => <option key={o.valor} value={o.valor}>{o.etiqueta}</option>)}
           </select>
         </label>
 
-        <label className={estilos.field}>
-          <span>Afectación de IVA</span>
-          <select
-            aria-label={`Afectación de IVA de ${base}`}
-            value={ajuste.afectacion}
-            onChange={(ev) => {
-              const v = ev.target.value;
-
-              alCambiar({ afectacion: v, tasa: v === "2" || v === "3" ? "0" : v === "" ? "" : ajuste.tasa === "0" ? "" : ajuste.tasa, proporcion: v === "4" ? ajuste.proporcion : "", guardar: v === "" ? false : ajuste.guardar });
-            }}
-          >
-            <option value="">{producto.afectacion !== null ? `Del producto (${ETIQUETA_IVA[String(producto.afectacion)]}${producto.tasa ? ` ${producto.tasa} %` : ""})` : "Seleccione…"}</option>
-            {Object.entries(ETIQUETA_IVA).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-          </select>
-        </label>
-
-        {iva ? (
-          <label className={estilos.field}>
-            <span>Tasa de IVA</span>
-            <select aria-label={`Tasa de IVA de ${base}`} value={ajuste.tasa} disabled={ajuste.afectacion === "2" || ajuste.afectacion === "3"} onChange={(ev) => alCambiar({ tasa: ev.target.value })}>
-              {ajuste.afectacion === "2" || ajuste.afectacion === "3" ? <option value="0">0 %</option> : (
-                <>
-                  <option value="">Seleccione…</option>
-                  <option value="5">5 %</option>
-                  <option value="10">10 %</option>
-                </>
-              )}
-            </select>
-          </label>
-        ) : null}
-
-        {ajuste.afectacion === "4" ? (
+        {esParcial(opcion) ? (
           <label className={estilos.field}>
             <span>Proporción gravada (%)</span>
-            <input aria-label={`Proporción gravada de ${base}`} inputMode="decimal" placeholder="Mayor que 0 y menor que 100" value={ajuste.proporcion} onChange={(ev) => alCambiar({ proporcion: ev.target.value.replace(",", ".") })} />
+            <input
+              aria-label={`Proporción gravada de ${base}`}
+              inputMode="decimal"
+              placeholder="Mayor que 0 y menor que 100"
+              value={ivaCambiado ? ajuste.proporcion : (producto.proporcion ?? "")}
+              onChange={(ev) => alCambiar({ afectacion: String(e.afectacion ?? 4), tasa: String(e.tasa ?? ""), proporcion: ev.target.value.replace(",", ".") })}
+            />
           </label>
         ) : null}
+
+        <div className={`${estilos.field} ${estilos.campoUnidad}`}>
+          <label htmlFor={`unidad-buscar-${base}`}>Unidad de medida</label>
+          <input id={`unidad-buscar-${base}`} type="search" placeholder="Buscar por nombre, símbolo o código" aria-label={`Buscar unidad de medida de ${base}`} value={busqueda} onChange={(ev) => setBusqueda(ev.target.value)} />
+          <select aria-label={`Unidad de medida de ${base}`} value={ajuste.unidadSifen} onChange={(ev) => alCambiar({ unidadSifen: ev.target.value })}>
+            <option value="">{producto.unidadSifen !== null ? `Del producto (${producto.unidadSimbolo ?? producto.unidadSifen})` : "Seleccione…"}</option>
+            {lista.map((u) => <option key={u.codigo} value={String(u.codigo)}>{etiquetaUnidad(u)}</option>)}
+          </select>
+          <small className={estilos.hint}>{filtradas.length} de {unidades.length} unidades vigentes{busqueda.trim() !== "" && filtradas.length === 0 ? " · sin coincidencias" : ""}.</small>
+        </div>
 
         <label className={estilos.field}>
           <span>Descripción fiscal (máx. 120)</span>
@@ -99,8 +91,8 @@ export function EditorFiscalItem({ producto, precio, moneda, ajuste, unidades, p
         ) : null}
       </div>
 
-      {iva ? (
-        <fieldset className={estilos.radios}>
+      {ivaCambiado ? (
+        <fieldset className={estilos.radiosCompactos}>
           <legend>Clasificación de IVA</legend>
           <label>
             <input type="radio" name={`guardar-${base}`} checked={!ajuste.guardar} onChange={() => alCambiar({ guardar: false })} /> Solo esta factura (recomendado)
@@ -108,14 +100,14 @@ export function EditorFiscalItem({ producto, precio, moneda, ajuste, unidades, p
           <label>
             <input type="radio" name={`guardar-${base}`} checked={ajuste.guardar} disabled={!puedeEditarProductos} onChange={() => alCambiar({ guardar: true })} /> Guardar también en Productos (solo la clasificación de IVA)
           </label>
-          {!puedeEditarProductos ? <small className={estilos.hint}>No tiene permiso para editar Productos: el cambio queda solo en esta factura.</small> : null}
-          {ajuste.guardar ? <small className={estilos.hint} role="status">Al enviar la factura se actualizará la clasificación de IVA del producto {producto.codigo} y quedará registrada en una bitácora.</small> : null}
+          {!puedeEditarProductos ? <small className={estilos.hint}>Sin permiso para editar Productos: el cambio queda solo en esta factura.</small> : null}
+          {ajuste.guardar ? <small className={estilos.hint} role="status">Al enviar se actualizará la clasificación de IVA del producto {base} y quedará en una bitácora.</small> : null}
         </fieldset>
       ) : null}
 
-      <small className={estilos.hint}>
-        Unidad, descripción y GTIN valen solo para esta factura (no se guardan en Productos). El precio se modifica con su propio permiso. Se factura con: {e.unidadSifen ?? "sin unidad"} · {e.afectacion ? ETIQUETA_IVA[String(e.afectacion)] : "IVA sin clasificar"}{e.tasa !== null ? ` ${e.tasa} %` : ""}.
-      </small>
-    </details>
+      {pendientes.length > 0 ? <p className={estilos.pendienteLinea} role="status">Falta: {pendientes.join(", ")}.</p> : null}
+
+      <small className={estilos.hint}>Unidad, descripción y GTIN valen solo para esta factura: no cambian el producto ni su unidad de stock. El precio se modifica con su propio permiso.</small>
+    </section>
   );
 }

@@ -1064,3 +1064,277 @@
   gap: 6px;
   margin-top: 6px;
 }
+
+/* =====================================================================================================================================================
+   PRO-128 — rediseño compacto: Operación a la vista, pago y crédito en una línea, tabla de ítems compacta y panel fiscal contextual.
+   ===================================================================================================================================================== */
+.gridOperacion {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 10px 14px;
+}
+
+.gridOperacion .field select,
+.gridOperacion .field input {
+  min-height: 36px;
+  padding: 5px 10px;
+}
+
+.pendienteLinea {
+  margin: 4px 0 0;
+  color: #8a5a00;
+  font-size: 12.5px;
+  line-height: 1.35;
+}
+
+.pagos,
+.creditoFila {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-top: 12px;
+  padding: 8px 12px;
+  border: 1px solid #e0e9ef;
+  border-radius: 9px;
+  background: #fafcfd;
+}
+
+.pagos {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.pagosTitulo {
+  color: #35506a;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.pagoFila {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+
+.pagoFila select,
+.pagoFila input,
+.creditoFila input,
+.creditoFila select {
+  min-height: 34px;
+  padding: 4px 8px;
+  border: 1px solid #d3dfe8;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #112f4a;
+  font: inherit;
+  font-size: 14px;
+}
+
+.pagoFila select {
+  min-width: 190px;
+}
+
+.pagoMonto {
+  color: #4d6579;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.pagoMontoInput {
+  width: 150px;
+  text-align: right;
+}
+
+.pagoDato {
+  min-width: 140px;
+}
+
+.pagoPie {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+}
+
+.chips {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.chip {
+  min-height: 30px;
+  padding: 0 11px;
+  border: 1px solid #b7cccc;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #112f4a;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.chip[aria-pressed="true"] {
+  border-color: #0f6f68;
+  background: #e5f4f2;
+  font-weight: 650;
+}
+
+.inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #35506a;
+  font-size: 13px;
+}
+
+.corto {
+  width: 64px;
+  text-align: right;
+}
+
+.medio {
+  width: 130px;
+  text-align: right;
+}
+
+/* Tabla de ítems compacta: celdas bajas y controles pequeños; el editor fiscal es UN panel bajo la tabla, no una fila por ítem. */
+.itemsCompacta th {
+  padding: 7px 10px;
+}
+
+.itemsCompacta td {
+  padding: 6px 10px;
+}
+
+.itemsCompacta .qty {
+  width: 84px;
+}
+
+.itemsCompacta .price {
+  width: 120px;
+}
+
+.itemsCompacta .accion {
+  white-space: nowrap;
+  text-align: right;
+}
+
+.itemsCompacta .accion > * + * {
+  margin-left: 10px;
+}
+
+.ivaSelect {
+  min-height: 32px;
+  max-width: 190px;
+  padding: 3px 8px;
+  border: 1px solid #d3dfe8;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #112f4a;
+  font: inherit;
+  font-size: 13.5px;
+}
+
+.proporcion {
+  display: block;
+  width: 110px;
+  min-height: 30px;
+  margin-top: 4px;
+  padding: 3px 8px;
+  border: 1px solid #d3dfe8;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 13px;
+}
+
+.filaSeleccionada {
+  background: #f1f8f7;
+  box-shadow: inset 3px 0 0 #0f6f68;
+}
+
+.panelFiscal {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid #cfe1e0;
+  border-radius: 10px;
+  background: #f8fcfc;
+}
+
+.panelFiscalCabecera {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 14px;
+}
+
+.gridFiscal {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 10px 14px;
+}
+
+.gridFiscal .field select,
+.gridFiscal .field input {
+  min-height: 36px;
+  padding: 5px 10px;
+}
+
+.campoUnidad {
+  grid-column: span 2;
+}
+
+.campoUnidad label {
+  color: #35506a;
+  font-weight: 600;
+}
+
+.radiosCompactos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+  margin: 0;
+  padding: 6px 10px;
+  border: 1px solid #d5e4e4;
+  border-radius: 8px;
+  font-size: 13.5px;
+}
+
+.radiosCompactos legend {
+  padding: 0 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+@media (max-width: 760px) {
+  .campoUnidad {
+    grid-column: auto;
+  }
+
+  .pagoFila select,
+  .pagoMontoInput,
+  .pagoDato {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .itemsCompacta .qty,
+  .itemsCompacta .price {
+    width: 100%;
+  }
+
+  .ivaSelect {
+    max-width: none;
+    width: 100%;
+  }
+
+  .creditoFila {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}

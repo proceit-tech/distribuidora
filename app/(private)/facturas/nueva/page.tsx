@@ -1,16 +1,19 @@
 "use client";
 
 import Link from "next/link";
-import { Fragment, useEffect, useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 
 import ui from "@/components/ui/lista-padrao/lista.module.css";
 import { AJUSTE_VACIO, ajusteParaEnvio, decidirProducto, problemasFiscales, valoresEfectivos, type AjusteUI, type PermisosProducto } from "@/lib/facturacion/ajuste-item";
 import { elegirPorEnter, MENSAJE_ENTER } from "@/lib/facturacion/busqueda-rapida";
+import { formularioModificado } from "@/lib/facturacion/cambios-formulario";
 import { CREDITO_UI_VACIO, creditoParaEnvio, hoyParaguay, pendientesCredito, type EstadoCreditoUI } from "@/lib/facturacion/credito";
+import { cambiosPorOpcionIva, esParcial, etiquetaIva, OPCIONES_IVA, opcionIvaDe } from "@/lib/facturacion/iva-opciones";
 import { B, parseDec, textoDec } from "@/lib/facturacion/calculo";
 import { cabeEnF023, leerCambio, mismoPrecio, MONEDAS_FE, simboloMoneda, totalEnGuaranies, type Moneda } from "@/lib/facturacion/monedas";
 import { conciliarPagos, PAGO_UI_VACIO, pagoParaEnvio, pendientesPagos, textoDecimal, type PagoUI } from "@/lib/facturacion/pagos";
 import { resumenCalculo, type LineaFE } from "@/lib/facturacion/payload-fe";
+import { formatearDecimalTexto } from "@/lib/formato/decimal-texto";
 import { formatearFechaPy } from "@/lib/formato/listas";
 import { useProtegerCambios } from "@/lib/ui/proteger-cambios";
 
@@ -37,8 +40,9 @@ type Resumen = {
   cambio?: { valor: string; totalGs: string; catalogo: { cambio: string; fecha: string } | null; modificado: boolean };
   pagos?: Array<{ medio: string; monto: string; detalle: string }>;
   credito?: { tipo: string; plazo: string | null; entrega: string; saldo: string; cuotas: Array<{ numero: number; monto: string; vencimiento: string }> };
-  lineas: Array<{ codigo: string; descripcion: string; unidad: string; cantidad: string; precio: string; precioLista: string; precioModificado: boolean; afectacion: number; tasa: number; total: number; ajustes?: string[] }>;
+  lineas: Array<{ codigo: string; descripcion: string; unidad: string; cantidad: string; precio: string; precioLista: string; precioModificado: boolean; afectacion: number; tasa: number; total: number; totalTexto?: string; ajustes?: string[] }>;
   totales: { exento: number; exonerado: number; gravado5: number; gravado10: number; iva5: number; iva10: number; totalIva: number; total: number };
+  totalesTexto?: { exento: string; exonerado: string; gravado5: string; gravado10: string; iva5: string; iva10: string; totalIva: string; total: string };
 };
 type FaseEnvio = { fase: string; ok: boolean; detalle: string; http?: number | null };
 type ResultadoEnvio = {
@@ -58,7 +62,8 @@ const ETIQUETA_ESTADO_LOCAL: Record<string, string> = {
 
 const ETIQUETA_IVA: Record<number, string> = { 1: "Gravado", 2: "Exonerado", 3: "Exento", 4: "Gravado parcial" };
 const ETIQUETA_CONTRIBUYENTE: Record<number, string> = { 1: "Persona física", 2: "Persona jurídica" };
-const gs = (n: number) => n.toLocaleString("es-PY", { maximumFractionDigits: 8 });
+// Importes como TEXTO decimal exacto (nunca Number): lo que se ve es lo que valida el servidor.
+const fd = (t: string | null | undefined) => formatearDecimalTexto(t);
 const CANTIDAD_OK = /^\d{1,10}(\.\d{1,4})?$/;
 const PRECIO_OK = /^\d{1,12}(\.\d{1,4})?$/;
 
@@ -247,7 +252,7 @@ function SelectorProducto({ alAgregar, alCerrar, cantidadItems, permisos, moneda
                     {d.mensaje && d.habilitado ? <small className={estilos.aviso}>{d.mensaje}</small> : null}
                     {d.mensaje && !d.habilitado ? <small className={estilos.impedimento}>{d.mensaje}{d.corregirEnProductos ? <> <Link href="/productos">Corregir en Productos</Link></> : null}</small> : null}
                   </div>
-                  <span className={estilos.precio}>{p.precio && p.monedaPrecio === moneda ? `${simboloMoneda(moneda)} ${gs(Number(p.precio))}` : "—"}</span>
+                  <span className={estilos.precio}>{p.precio && p.monedaPrecio === moneda ? `${simboloMoneda(moneda)} ${fd(p.precio)}` : "—"}</span>
                   <button type="button" className={ui.secondaryButton} disabled={!d.habilitado} onClick={() => { alAgregar(p); setAviso(`«${p.descripcion}» añadido.`); }}>Añadir</button>
                 </li>
               );
@@ -423,7 +428,7 @@ function BuscadorProducto({ alElegir, permisos, moneda }: { alElegir: (p: Produc
         return {
           titulo: p.descripcion,
           detalle: `${p.codigo}${p.gtin ? ` · GTIN ${p.gtin}` : ""} · ${p.unidadSimbolo ?? "sin unidad"} · ${p.afectacion ? `${ETIQUETA_IVA[p.afectacion]}${p.tasa ? ` ${p.tasa}%` : ""}` : "IVA sin clasificar"}`,
-          derecha: p.precio && p.monedaPrecio === moneda ? `${simboloMoneda(moneda)} ${gs(Number(p.precio))}` : "—", habilitado: d.habilitado,
+          derecha: p.precio && p.monedaPrecio === moneda ? `${simboloMoneda(moneda)} ${fd(p.precio)}` : "—", habilitado: d.habilitado,
           impedimento: d.mensaje,
           enlace: d.corregirEnProductos ? { href: "/productos", texto: "Corregir en Productos" } : undefined,
         };
@@ -468,8 +473,11 @@ export default function NuevaFacturaPage() {
   const [enviando, setEnviando] = useState(false);
   const [resultado, setResultado] = useState<ResultadoEnvio | null>(null);
   const [mostrarEnvio, setMostrarEnvio] = useState(false);
+  const [editando, setEditando] = useState<number | null>(null);
+  const [ubicacionElegida, setUbicacionElegida] = useState(false);
 
-  const sucio = resultado === null && (cliente !== null || lineas.length > 0 || infoAdicional !== "");
+  // Cualquier decisión del operador cuenta como cambio sin enviar (no solo cliente/ítems/observaciones); los valores por defecto y la sucursal/punto preseleccionados solos, no.
+  const sucio = resultado === null && formularioModificado({ cliente: cliente !== null, lineas: lineas.length, infoAdicional, ubicacionElegidaPorElOperador: ubicacionElegida, tipoTransaccion, presencia, condicion, moneda, cambio, pagos, credito });
 
   useProtegerCambios(sucio);
 
@@ -510,18 +518,18 @@ export default function NuevaFacturaPage() {
   const calculo = resumenCalculo(lineas.map((l) => aLineaFE(l, moneda)));
   const extranjera = moneda !== "PYG";
   const cambioNormal = extranjera ? leerCambio(cambio) : null;
-  const totalDec = parseDec(String(calculo.total), 8);
+  const totalDec = parseDec(calculo.texto.total, 8);
   const equivalenteGs = extranjera && cambioNormal !== null && totalDec !== null ? totalEnGuaranies(totalDec, cambioNormal) : null;
   const sim = simboloMoneda(moneda);
   const pendienteCambio = extranjera && cambioNormal === null ? "indicar el tipo de cambio manual (guaraníes por 1 " + moneda + ")" : extranjera && calculo.total > 0 && (equivalenteGs === null || !cabeEnF023(equivalenteGs)) ? "el equivalente en guaraníes no es exacto o supera 15 dígitos enteros: revise el tipo de cambio o los importes" : "";
   const problemas = lineas.flatMap((l) => problemasFiscales(l.producto, l.ajuste, l.precio, moneda).filter((m) => !m.startsWith("sin precio") || !precioValido(l)).map((m) => `${l.producto.codigo}: ${m}.`));
   const lineasValidas = lineas.every((l) => cantidadValida(l) && precioValido(l));
   const enCredito = condicion === "2";
-  const pendientesDeCredito = enCredito ? pendientesCredito(credito, String(calculo.total), hoyIso) : [];
+  const pendientesDeCredito = enCredito ? pendientesCredito(credito, calculo.texto.total, hoyIso) : [];
   // Medios de pago: cubren el total (Contado) o SOLO la entrega inicial (Crédito con entrega); con un único medio no se escribe el monto.
   const entregaDec = enCredito && credito.entrega.trim() !== "" ? parseDec(credito.entrega.trim(), 4) : null;
   const hayPagos = !enCredito || (entregaDec !== null && entregaDec > B(0));
-  const objetivoDec = enCredito ? entregaDec : parseDec(String(calculo.total), 8);
+  const objetivoDec = enCredito ? entregaDec : parseDec(calculo.texto.total, 8);
   const pendientesDePagos = hayPagos && objetivoDec !== null && calculo.total > 0 ? pendientesPagos(pagos.map((p) => pagoParaEnvio(p, pagos.length === 1)), objetivoDec, Number(presencia)) : [];
   const faltan = [
     sucursalId === "" ? "sucursal" : "",
@@ -548,6 +556,8 @@ export default function NuevaFacturaPage() {
     }
 
     setLineas((ls) => [...ls, { clave: siguienteClave, producto: p, cantidad: "1", precio: referencia(p, moneda) ?? "", ajuste: AJUSTE_VACIO }]);
+    // Un producto fiscalmente incompleto abre su panel contextual (solo con el permiso de ajuste fiscal) para completarlo sin salir de la factura.
+    if (puedeAjustarFiscal && problemasFiscales(p, AJUSTE_VACIO, "1", moneda).filter((m) => !m.startsWith("sin precio")).length > 0) setEditando(siguienteClave);
     setSiguienteClave((n) => n + 1);
   }
 
@@ -648,6 +658,10 @@ export default function NuevaFacturaPage() {
     setPagos([PAGO_UI_VACIO]);
     setMoneda("PYG");
     setCambio("");
+    setTipoTransaccion("1");
+    setPresencia("1");
+    setEditando(null);
+    setUbicacionElegida(false);
     setErrores([]);
     setResultado(null);
     setResumen(null);
@@ -726,10 +740,10 @@ export default function NuevaFacturaPage() {
                       {sinEstablecimiento > 0 ? ` ${sinEstablecimiento} sucursal(es) no tienen el establecimiento SIFEN cargado.` : " Verifique la sucursal, su establecimiento SIFEN y su alcance de acceso."}
                     </div>
                   ) : null}
-                  <div className={estilos.grid}>
+                  <div className={estilos.gridOperacion}>
                     <label className={estilos.field}>
                       <span>Sucursal *</span>
-                      <select value={sucursalId} onChange={(e) => { setSucursalId(e.target.value); setPuntoId(""); }}>
+                      <select value={sucursalId} onChange={(e) => { setSucursalId(e.target.value); setPuntoId(""); setUbicacionElegida(true); }}>
                         <option value="">Seleccione…</option>
                         {sucursales.map((s) => <option key={s.id} value={s.id}>{s.nombre} ({s.establecimiento})</option>)}
                       </select>
@@ -737,28 +751,28 @@ export default function NuevaFacturaPage() {
 
                     <label className={estilos.field}>
                       <span>Punto de expedición *</span>
-                      <select value={puntoId} onChange={(e) => setPuntoId(e.target.value)} disabled={!sucursal}>
+                      <select value={puntoId} onChange={(e) => { setPuntoId(e.target.value); setUbicacionElegida(true); }} disabled={!sucursal}>
                         <option value="">Seleccione…</option>
                         {(sucursal?.puntos ?? []).map((p) => <option key={p.id} value={p.id}>{p.codigo} · {p.nombre}</option>)}
                       </select>
                       {sucursal && sucursal.puntos.length === 0 ? (
                         <small className={estilos.fieldError} role="alert">
-                          La sucursal «{sucursal.nombre}» no tiene un punto de expedición activo{(sucursal.puntosInactivos ?? 0) > 0 ? ` (hay ${sucursal.puntosInactivos} inactivo${sucursal.puntosInactivos === 1 ? "" : "s"})` : ""}.{" "}
+                          Sin punto de expedición activo{(sucursal.puntosInactivos ?? 0) > 0 ? ` (hay ${sucursal.puntosInactivos} inactivo${sucursal.puntosInactivos === 1 ? "" : "s"})` : ""}.{" "}
                           {puedeGestionarPuntos ? <Link href="/facturacion/puntos">Configurar punto de expedición</Link> : "Solicite al administrador fiscal que lo configure."}
                         </small>
                       ) : null}
-                      {sucursal && puntoId && proximoNumero ? <small className={estilos.hint}>Próximo número (referencial): {sucursal.establecimiento}-{proximoNumero}. Se reserva una sola vez al enviar.</small> : null}
+                      {sucursal && puntoId && proximoNumero ? <small className={estilos.hint}>Próximo N.º (referencial): {sucursal.establecimiento}-{proximoNumero}</small> : null}
                     </label>
 
                     <label className={estilos.field}>
-                      <span>Condición de la operación</span>
+                      <span>Condición</span>
                       <select aria-label="Condición de la operación" value={condicion} onChange={(e) => { setCondicion(e.target.value); setCredito(CREDITO_UI_VACIO); setPagos([PAGO_UI_VACIO]); }}>
                         {Object.entries(opciones?.condiciones ?? { "1": "Contado" }).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                       </select>
                     </label>
 
                     <label className={estilos.field}>
-                      <span>Moneda de la factura</span>
+                      <span>Moneda</span>
                       <select aria-label="Moneda de la factura" value={moneda} onChange={(e) => cambiarMoneda(e.target.value as Moneda)}>
                         {(Object.keys(MONEDAS_FE) as Moneda[]).map((m) => <option key={m} value={m}>{m} — {MONEDAS_FE[m].nombre}</option>)}
                       </select>
@@ -769,12 +783,26 @@ export default function NuevaFacturaPage() {
                         <span>Tipo de cambio (Gs. por 1 {moneda})</span>
                         <input aria-label="Tipo de cambio" inputMode="decimal" placeholder="Ej.: 7500" value={cambio} onChange={(e) => setCambio(e.target.value.replace(",", "."))} />
                         {cambio.trim() !== "" && cambioNormal === null ? <small className={estilos.fieldError} role="alert">Mayor que 0, hasta 5 enteros y 4 decimales.</small> : null}
-                        {cotizaciones[moneda] ? <small className={estilos.hint}>Última cotización registrada: {cotizaciones[moneda].cambio} ({cotizaciones[moneda].fecha}){cambioNormal !== null && cambioNormal !== cotizaciones[moneda].cambio ? " · distinta de la registrada" : ""}.</small> : <small className={estilos.hint}>Cotización manual; no hay una registrada para {moneda}. El cambio usado queda fijo en el documento.</small>}
+                        {cotizaciones[moneda] ? <small className={estilos.hint}>Última registrada: {cotizaciones[moneda].cambio} ({cotizaciones[moneda].fecha}){cambioNormal !== null && cambioNormal !== cotizaciones[moneda].cambio ? " · distinta" : ""}</small> : <small className={estilos.hint}>Manual; sin cotización registrada para {moneda}. Queda fijo en el documento.</small>}
                       </label>
                     ) : null}
+
+                    <label className={estilos.field}>
+                      <span>Tipo de transacción</span>
+                      <select aria-label="Tipo de transacción" value={tipoTransaccion} onChange={(e) => setTipoTransaccion(e.target.value)}>
+                        {Object.entries(opciones?.tiposTransaccion ?? {}).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                      </select>
+                    </label>
+
+                    <label className={estilos.field}>
+                      <span>Indicador de presencia</span>
+                      <select aria-label="Indicador de presencia" value={presencia} onChange={(e) => setPresencia(e.target.value)}>
+                        {Object.entries(opciones?.presencias ?? {}).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                      </select>
+                    </label>
                   </div>
 
-                  {enCredito ? <CondicionCredito simbolo={sim} estado={credito} total={calculo.total} hoy={hoyIso} pendientes={pendientesDeCredito} alCambiar={(c) => setCredito((x) => ({ ...x, ...c }))} /> : null}
+                  {enCredito ? <CondicionCredito simbolo={sim} estado={credito} total={calculo.texto.total} hoy={hoyIso} pendientes={pendientesDeCredito} alCambiar={(c) => setCredito((x) => ({ ...x, ...c }))} /> : null}
 
                   {hayPagos ? (
                     <MediosPago
@@ -791,25 +819,6 @@ export default function NuevaFacturaPage() {
                       alQuitar={(i) => setPagos((ps) => ps.filter((_, j) => j !== i))}
                     />
                   ) : null}
-
-                  <details className={estilos.avanzado}>
-                    <summary>Parámetros fiscales: {textoOpcion(opciones?.tiposTransaccion, tipoTransaccion)} · {textoOpcion(opciones?.presencias, presencia)}</summary>
-                    <div className={estilos.grid}>
-                      <label className={estilos.field}>
-                        <span>Tipo de transacción</span>
-                        <select value={tipoTransaccion} onChange={(e) => setTipoTransaccion(e.target.value)}>
-                          {Object.entries(opciones?.tiposTransaccion ?? {}).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-                        </select>
-                      </label>
-
-                      <label className={estilos.field}>
-                        <span>Indicador de presencia</span>
-                        <select value={presencia} onChange={(e) => setPresencia(e.target.value)}>
-                          {Object.entries(opciones?.presencias ?? {}).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-                        </select>
-                      </label>
-                    </div>
-                  </details>
                 </div>
               </section>
 
@@ -879,40 +888,65 @@ export default function NuevaFacturaPage() {
                   <button type="button" className={ui.secondaryButton} onClick={() => setSelector("producto")}>Búsqueda avanzada</button>
                 </div>
                 <div className={estilos.tableWrap}>
-                  <table className={estilos.items}>
+                  <table className={`${estilos.items} ${estilos.itemsCompacta}`}>
                     <thead>
                       <tr>
                         <th>Producto</th>
-                        <th>Afectación IVA</th>
-                        <th className={estilos.num}>% IVA</th>
+                        <th>IVA</th>
                         <th>Unidad</th>
                         <th className={estilos.num}>Cantidad</th>
-                        <th className={estilos.num}>Precio unitario (IVA incl.)</th>
+                        <th className={estilos.num}>Precio ({sim}, IVA incl.)</th>
                         <th className={estilos.num}>Subtotal</th>
                         <th><span className="sr-only">Acciones</span></th>
                       </tr>
                     </thead>
                     <tbody>
                       {lineas.length === 0 ? (
-                        <tr><td colSpan={8} className={estilos.tableEmpty}>Aún no agregó ítems. Busque arriba por código, GTIN o descripción, o use «Búsqueda avanzada».</td></tr>
+                        <tr><td colSpan={7} className={estilos.tableEmpty}>Aún no agregó ítems. Busque arriba por código, GTIN o descripción, o use «Búsqueda avanzada».</td></tr>
                       ) : lineas.map((l, i) => {
                         const cantOk = cantidadValida(l);
                         const precOk = precioValido(l);
                         const mod = precioModificado(l, moneda);
                         const e = valoresEfectivos(l.producto, l.ajuste);
                         const pr = problemasFiscales(l.producto, l.ajuste, l.precio, moneda).filter((m) => !m.startsWith("sin precio") || !precOk);
+                        const opcionIva = opcionIvaDe(e.afectacion, e.tasa);
+                        const unidad = l.ajuste.unidadSifen !== "" ? (unidadesSifen.find((u) => String(u.codigo) === l.ajuste.unidadSifen)?.representacion ?? l.ajuste.unidadSifen) : (l.producto.unidadSimbolo ?? "—");
+                        const seleccionada = editando === l.clave;
 
                         return (
-                          <Fragment key={l.clave}>
-                          <tr className={!cantOk || !precOk || pr.length > 0 ? estilos.filaInvalida : undefined}>
+                          <tr key={l.clave} className={[!cantOk || !precOk || pr.length > 0 ? estilos.filaInvalida : "", seleccionada ? estilos.filaSeleccionada : ""].filter(Boolean).join(" ") || undefined}>
                             <td className={estilos.prod} data-label="Producto">
                               <strong>{l.producto.descripcion}</strong>
                               <small>{l.producto.codigo}{l.producto.gtin ? ` · GTIN ${l.producto.gtin}` : ""}</small>
-                              {pr.length > 0 ? <small className={estilos.fieldError} role="alert">{puedeAjustarFiscal ? "Pendiente de completar" : "No se puede facturar"}: {pr.join(", ")}.</small> : null}
+                              {pr.length > 0 ? (
+                                <small className={estilos.pendienteLinea}>
+                                  {puedeAjustarFiscal ? "Completar: " : "No facturable: "}{pr.join(", ")}
+                                </small>
+                              ) : null}
                             </td>
-                            <td data-label="Afectación IVA">{e.afectacion ? ETIQUETA_IVA[e.afectacion] : "Sin clasificar"}</td>
-                            <td className={estilos.num} data-label="% IVA">{e.afectacion ? `${e.tasa ?? "—"}${e.tasa !== null ? "%" : ""}` : "—"}</td>
-                            <td data-label="Unidad" title={l.producto.unidadNombre ?? undefined}>{l.ajuste.unidadSifen !== "" ? (unidadesSifen.find((u) => String(u.codigo) === l.ajuste.unidadSifen)?.representacion ?? l.ajuste.unidadSifen) : (l.producto.unidadSimbolo ?? "—")}</td>
+                            <td data-label="IVA">
+                              {puedeAjustarFiscal ? (
+                                <>
+                                  <select className={estilos.ivaSelect} aria-label={`IVA de ${l.producto.codigo}`} value={opcionIva} onChange={(ev) => editarAjuste(l.clave, cambiosPorOpcionIva(ev.target.value, l.producto, l.ajuste))}>
+                                    {opcionIva === "" ? <option value="">Seleccione…</option> : null}
+                                    {OPCIONES_IVA.map((o) => <option key={o.valor} value={o.valor}>{o.etiqueta}</option>)}
+                                  </select>
+                                  {esParcial(opcionIva) ? (
+                                    <input
+                                      className={estilos.proporcion}
+                                      inputMode="decimal"
+                                      placeholder="% gravado"
+                                      aria-label={`Proporción gravada de ${l.producto.codigo}`}
+                                      value={l.ajuste.afectacion !== "" ? l.ajuste.proporcion : (l.producto.proporcion ?? "")}
+                                      onChange={(ev) => editarAjuste(l.clave, { afectacion: String(e.afectacion ?? 4), tasa: String(e.tasa ?? ""), proporcion: ev.target.value.replace(",", ".") })}
+                                    />
+                                  ) : null}
+                                </>
+                              ) : (
+                                etiquetaIva(e.afectacion, e.tasa, e.proporcion)
+                              )}
+                            </td>
+                            <td data-label="Unidad" title={l.producto.unidadNombre ?? undefined}>{unidad}</td>
                             <td className={estilos.num} data-label="Cantidad">
                               <input
                                 className={`${estilos.qty} ${cantOk ? "" : estilos.invalid}`}
@@ -924,7 +958,7 @@ export default function NuevaFacturaPage() {
                               />
                               {!cantOk ? <small className={estilos.fieldError}>{e.unidadSifen === 77 ? "Entero mayor que 0" : "Mayor que 0, hasta 4 decimales"}</small> : null}
                             </td>
-                            <td className={estilos.num} data-label="Precio unitario (IVA incl.)">
+                            <td className={estilos.num} data-label="Precio">
                               {puedeEditarPrecio ? (
                                 <>
                                   <input
@@ -938,32 +972,39 @@ export default function NuevaFacturaPage() {
                                   {!precOk ? <small className={estilos.fieldError}>Mayor que 0</small> : null}
                                   {mod ? (
                                     <span className={estilos.modificado}>
-                                      Lista: {referencia(l.producto, moneda) === null ? `sin precio en ${extranjera ? moneda : "guaraníes"}` : gs(Number(referencia(l.producto, moneda)))} · <button type="button" className={estilos.linkButton} onClick={() => editar(l.clave, { precio: referencia(l.producto, moneda) ?? "" })}>Restaurar</button>
+                                      Lista: {referencia(l.producto, moneda) === null ? `sin precio en ${extranjera ? moneda : "guaraníes"}` : fd(referencia(l.producto, moneda))} · <button type="button" className={estilos.linkButton} onClick={() => editar(l.clave, { precio: referencia(l.producto, moneda) ?? "" })}>Restaurar</button>
                                     </span>
                                   ) : null}
                                 </>
                               ) : referencia(l.producto, moneda) === null ? (
                                 <small className={estilos.fieldError}>Sin precio de lista: requiere el permiso de precio</small>
                               ) : (
-                                gs(Number(referencia(l.producto, moneda)))
+                                fd(referencia(l.producto, moneda))
                               )}
                             </td>
-                            <td className={`${estilos.num} ${estilos.subtotal}`} data-label="Subtotal">{calculo.completo ? gs(calculo.items[i] ?? 0) : "—"}</td>
-                            <td className={estilos.accion}><button type="button" className={estilos.remove} aria-label={`Quitar ${l.producto.descripcion}`} onClick={() => setLineas((ls) => ls.filter((x) => x.clave !== l.clave))}>Quitar</button></td>
+                            <td className={`${estilos.num} ${estilos.subtotal}`} data-label="Subtotal">{calculo.completo ? fd(calculo.texto.items[i]) : "—"}</td>
+                            <td className={estilos.accion}>
+                              {puedeAjustarFiscal ? (
+                                <button type="button" className={estilos.linkButton} aria-expanded={seleccionada} aria-label={`Datos fiscales de ${l.producto.descripcion}`} onClick={() => setEditando(seleccionada ? null : l.clave)}>{pr.length > 0 ? "Completar" : "Fiscal"}</button>
+                              ) : null}
+                              <button type="button" className={estilos.remove} aria-label={`Quitar ${l.producto.descripcion}`} onClick={() => { setLineas((ls) => ls.filter((x) => x.clave !== l.clave)); if (editando === l.clave) setEditando(null); }}>Quitar</button>
+                            </td>
                           </tr>
-                          {puedeAjustarFiscal ? (
-                            <tr className={estilos.filaFiscal}>
-                              <td colSpan={8}>
-                                <EditorFiscalItem moneda={moneda} producto={l.producto} precio={l.precio} ajuste={l.ajuste} unidades={unidadesSifen} puedeEditarProductos={puedeEditarProductos} alCambiar={(c) => editarAjuste(l.clave, c)} />
-                              </td>
-                            </tr>
-                          ) : null}
-                          </Fragment>
                         );
                       })}
                     </tbody>
                   </table>
                 </div>
+
+                {puedeAjustarFiscal && editando !== null && lineas.some((l) => l.clave === editando) ? (() => {
+                  const l = lineas.find((x) => x.clave === editando)!;
+
+                  return (
+                    <div className={estilos.cardBody}>
+                      <EditorFiscalItem moneda={moneda} producto={l.producto} precio={l.precio} ajuste={l.ajuste} unidades={unidadesSifen} puedeEditarProductos={puedeEditarProductos} alCambiar={(c) => editarAjuste(l.clave, c)} alCerrar={() => setEditando(null)} />
+                    </div>
+                  );
+                })() : null}
               </section>
 
               <section className={estilos.card} aria-labelledby="sec-info">
@@ -981,19 +1022,19 @@ export default function NuevaFacturaPage() {
               <h2 id="sec-totales">Resumen ({MONEDAS_FE[moneda].nombre.toLowerCase()})</h2>
 
               <dl className={estilos.totals}>
-                <div><dt>Exento</dt><dd>{gs(calculo.exento)}</dd></div>
-                <div><dt>Exonerado</dt><dd>{gs(calculo.exonerado)}</dd></div>
-                <div><dt>Gravado 5 % (IVA incl.)</dt><dd>{gs(calculo.gravado5)}</dd></div>
-                <div><dt>IVA 5 %</dt><dd>{gs(calculo.iva5)}</dd></div>
-                <div><dt>Gravado 10 % (IVA incl.)</dt><dd>{gs(calculo.gravado10)}</dd></div>
-                <div><dt>IVA 10 %</dt><dd>{gs(calculo.iva10)}</dd></div>
-                <div className={estilos.totalIva}><dt>Total IVA</dt><dd>{gs(calculo.totalIva)}</dd></div>
+                <div><dt>Exento</dt><dd>{fd(calculo.texto.exento)}</dd></div>
+                <div><dt>Exonerado</dt><dd>{fd(calculo.texto.exonerado)}</dd></div>
+                <div><dt>Gravado 5 % (IVA incl.)</dt><dd>{fd(calculo.texto.gravado5)}</dd></div>
+                <div><dt>IVA 5 %</dt><dd>{fd(calculo.texto.iva5)}</dd></div>
+                <div><dt>Gravado 10 % (IVA incl.)</dt><dd>{fd(calculo.texto.gravado10)}</dd></div>
+                <div><dt>IVA 10 %</dt><dd>{fd(calculo.texto.iva10)}</dd></div>
+                <div className={estilos.totalIva}><dt>Total IVA</dt><dd>{fd(calculo.texto.totalIva)}</dd></div>
               </dl>
 
               <div className={estilos.totalGeneral}>
                 <span>Total general</span>
-                <strong>{sim} {gs(calculo.total)}</strong>
-                {extranjera ? <small>Equivalente: Gs. {equivalenteGs === null ? "—" : gs(Number(textoDec(equivalenteGs)))} (cambio {cambioNormal ?? "—"})</small> : null}
+                <strong>{sim} {fd(calculo.texto.total)}</strong>
+                {extranjera ? <small>Equivalente: Gs. {equivalenteGs === null ? "—" : fd(textoDec(equivalenteGs))} (cambio {cambioNormal ?? "—"})</small> : null}
                 <small>IVA incluido{hayPrecioModificado ? " · con precios modificados" : ""}</small>
               </div>
 
@@ -1009,8 +1050,6 @@ export default function NuevaFacturaPage() {
                 {pendientes.length > 0 ? <ul>{pendientes.map((p) => <li key={p}>{p}</li>)}</ul> : <p className={estilos.listo}>Todo listo para revisar.</p>}
               </div>
 
-              {problemas.length > 0 ? <p className={estilos.fieldError} role="alert">{puedeAjustarFiscal ? "Hay ítems con datos fiscales pendientes: complételos en su línea («Datos fiscales del ítem») o quítelos de la factura." : "Hay productos con impedimentos: corríjalos en Productos o quítelos de la factura."}</p> : null}
-
               <div className={estilos.accionesPanel}>
                 <button type="button" className={`${ui.primaryButton} ${estilos.accionPrincipal} ${estilos.accionRevisar}`} disabled={!puedeGuardar} onClick={grabar}>
                   {revisando ? "Revisando..." : "Revisar y confirmar"}
@@ -1022,7 +1061,7 @@ export default function NuevaFacturaPage() {
 
           <div className={estilos.barraMovil}>
             <div>
-              <strong>{sim} {gs(calculo.total)}</strong>
+              <strong>{sim} {fd(calculo.texto.total)}</strong>
               <small>{faltan.length > 0 ? `Falta: ${faltan.join(", ")}.` : "Listo para revisar."}</small>
             </div>
             <button type="button" className={ui.primaryButton} disabled={!puedeGuardar} onClick={grabar}>{revisando ? "Revisando..." : "Revisar"}</button>
@@ -1049,19 +1088,19 @@ export default function NuevaFacturaPage() {
               <div><dt>Moneda</dt><dd>{resumen.moneda}</dd></div>
               {resumen.cambio ? (
                 <>
-                  <div><dt>Tipo de cambio (manual)</dt><dd>Gs. {gs(Number(resumen.cambio.valor))} por 1 {resumen.moneda}{resumen.cambio.modificado && resumen.cambio.catalogo ? ` · distinto del registrado (${resumen.cambio.catalogo.cambio}, ${resumen.cambio.catalogo.fecha})` : ""}</dd></div>
-                  <div><dt>Equivalente en guaraníes</dt><dd>Gs. {gs(Number(resumen.cambio.totalGs))}</dd></div>
+                  <div><dt>Tipo de cambio (manual)</dt><dd>Gs. {fd(resumen.cambio.valor)} por 1 {resumen.moneda}{resumen.cambio.modificado && resumen.cambio.catalogo ? ` · distinto del registrado (${resumen.cambio.catalogo.cambio}, ${resumen.cambio.catalogo.fecha})` : ""}</dd></div>
+                  <div><dt>Equivalente en guaraníes</dt><dd>Gs. {fd(resumen.cambio.totalGs)}</dd></div>
                 </>
               ) : null}
               {resumen.pagos && resumen.pagos.length > 0
-                ? resumen.pagos.map((p, i) => <div key={i}><dt>{resumen.credito ? "Medio de la entrega" : "Pago"} · {p.medio}</dt><dd>{simboloMoneda(resumen.moneda)} {gs(Number(p.monto))}{p.detalle ? ` · ${p.detalle}` : ""}</dd></div>)
+                ? resumen.pagos.map((p, i) => <div key={i}><dt>{resumen.credito ? "Medio de la entrega" : "Pago"} · {p.medio}</dt><dd>{simboloMoneda(resumen.moneda)} {fd(p.monto)}{p.detalle ? ` · ${p.detalle}` : ""}</dd></div>)
                 : resumen.formaPago ? <div><dt>Forma de pago</dt><dd>{resumen.formaPago}</dd></div> : null}
               {resumen.credito ? (
                 <>
                   <div><dt>Tipo de crédito</dt><dd>{resumen.credito.tipo}{resumen.credito.plazo ? ` · ${resumen.credito.plazo}` : ""}</dd></div>
-                  <div><dt>Entrega inicial</dt><dd>{simboloMoneda(resumen.moneda)} {gs(Number(resumen.credito.entrega))}</dd></div>
-                  <div><dt>Saldo financiado</dt><dd>{simboloMoneda(resumen.moneda)} {gs(Number(resumen.credito.saldo))}</dd></div>
-                  {resumen.credito.cuotas.map((q) => <div key={q.numero}><dt>Cuota {q.numero}/{resumen.credito?.cuotas.length}</dt><dd>{simboloMoneda(resumen.moneda)} {gs(Number(q.monto))} · vence {q.vencimiento}</dd></div>)}
+                  <div><dt>Entrega inicial</dt><dd>{simboloMoneda(resumen.moneda)} {fd(resumen.credito.entrega)}</dd></div>
+                  <div><dt>Saldo financiado</dt><dd>{simboloMoneda(resumen.moneda)} {fd(resumen.credito.saldo)}</dd></div>
+                  {resumen.credito.cuotas.map((q) => <div key={q.numero}><dt>Cuota {q.numero}/{resumen.credito?.cuotas.length}</dt><dd>{simboloMoneda(resumen.moneda)} {fd(q.monto)} · vence {q.vencimiento}</dd></div>)}
                 </>
               ) : null}
             </dl>
@@ -1079,25 +1118,25 @@ export default function NuevaFacturaPage() {
                       <td>{l.unidad || "—"}</td>
                       <td className={estilos.num}>{l.cantidad}</td>
                       <td className={estilos.num}>
-                        {gs(Number(l.precio))}
-                        {l.precioModificado ? <span className={estilos.modificado}>Precio modificado (lista {gs(Number(l.precioLista))})</span> : null}
+                        {fd(l.precio)}
+                        {l.precioModificado ? <span className={estilos.modificado}>Precio modificado (lista {fd(l.precioLista)})</span> : null}
                       </td>
-                      <td>{ETIQUETA_IVA[l.afectacion]}{l.tasa ? ` ${l.tasa}%` : ""}</td>
-                      <td className={estilos.num}>{gs(l.total)}</td>
+                      <td>{etiquetaIva(l.afectacion, l.tasa, null)}</td>
+                      <td className={estilos.num}>{fd(l.totalTexto ?? String(l.total))}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
             <dl className={estilos.totals}>
-              <div><dt>Exento</dt><dd>{gs(resumen.totales.exento)}</dd></div>
-              <div><dt>Exonerado</dt><dd>{gs(resumen.totales.exonerado)}</dd></div>
-              <div><dt>Gravado 5 %</dt><dd>{gs(resumen.totales.gravado5)}</dd></div>
-              <div><dt>Gravado 10 %</dt><dd>{gs(resumen.totales.gravado10)}</dd></div>
-              <div><dt>IVA 5 %</dt><dd>{gs(resumen.totales.iva5)}</dd></div>
-              <div><dt>IVA 10 %</dt><dd>{gs(resumen.totales.iva10)}</dd></div>
-              <div><dt>Total IVA</dt><dd>{gs(resumen.totales.totalIva)}</dd></div>
-              <div><dt>Total general</dt><dd>{gs(resumen.totales.total)}</dd></div>
+              <div><dt>Exento</dt><dd>{fd(resumen.totalesTexto?.exento ?? String(resumen.totales.exento))}</dd></div>
+              <div><dt>Exonerado</dt><dd>{fd(resumen.totalesTexto?.exonerado ?? String(resumen.totales.exonerado))}</dd></div>
+              <div><dt>Gravado 5 %</dt><dd>{fd(resumen.totalesTexto?.gravado5 ?? String(resumen.totales.gravado5))}</dd></div>
+              <div><dt>Gravado 10 %</dt><dd>{fd(resumen.totalesTexto?.gravado10 ?? String(resumen.totales.gravado10))}</dd></div>
+              <div><dt>IVA 5 %</dt><dd>{fd(resumen.totalesTexto?.iva5 ?? String(resumen.totales.iva5))}</dd></div>
+              <div><dt>IVA 10 %</dt><dd>{fd(resumen.totalesTexto?.iva10 ?? String(resumen.totales.iva10))}</dd></div>
+              <div><dt>Total IVA</dt><dd>{fd(resumen.totalesTexto?.totalIva ?? String(resumen.totales.totalIva))}</dd></div>
+              <div><dt>Total general</dt><dd>{fd(resumen.totalesTexto?.total ?? String(resumen.totales.total))}</dd></div>
             </dl>
             <div className={estilos.actions} style={{ marginTop: 14 }}>
               <button type="button" className={ui.secondaryButton} onClick={() => setResumen(null)}>Volver a editar</button>

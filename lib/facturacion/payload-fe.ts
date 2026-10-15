@@ -433,5 +433,11 @@ export function resumenCalculo(lineas: LineaFE[]) {
     items: calculados.map((c) => numeroDec(c.resultado.totOperacion)),
     exento: numeroDec(s.dSubExe), exonerado: numeroDec(s.dSubExo), gravado5: numeroDec(s.dSub5), gravado10: numeroDec(s.dSub10),
     iva5: numeroDec(s.dIVA5), iva10: numeroDec(s.dIVA10), totalIva: numeroDec(s.dTotIVA), total: numeroDec(s.dTotGralOpe),
+    // Solo PRESENTACIÓN (PRO-128, UX-30): los mismos importes como texto Decimal exacto, para mostrar sin pasar por Number. Los campos numéricos de arriba y el cálculo no cambian.
+    texto: {
+      items: calculados.map((c) => textoDec(c.resultado.totOperacion)),
+      exento: textoDec(s.dSubExe), exonerado: textoDec(s.dSubExo), gravado5: textoDec(s.dSub5), gravado10: textoDec(s.dSub10),
+      iva5: textoDec(s.dIVA5), iva10: textoDec(s.dIVA10), totalIva: textoDec(s.dTotIVA), total: textoDec(s.dTotGralOpe),
+    },
   };
 }

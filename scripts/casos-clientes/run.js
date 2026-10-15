@@ -56,6 +56,7 @@ Module._resolveFilename = function (request, ...resto) {
   const pag = cargar("lib/facturacion/pagos.casos.js");
   const mon = cargar("lib/facturacion/monedas.casos.js");
   const pun = cargar("lib/facturacion/puntos.casos.js");
+  const red = cargar("lib/facturacion/rediseno.casos.js");
   const suites = [
     ["teléfono y día de cobro", async () => tel.verificarCasosTelefonoYCobro(), () => tel.CASOS_TELEFONO.length + 11 + 6 + 2],
     ["catálogo mundial", async () => tel.verificarCatalogoMundial(), null],
@@ -105,6 +106,7 @@ Module._resolveFilename = function (request, ...resto) {
     ["Facturación MFE-03 P1: medios de pago (efectivo, transferencia, cheque, tarjeta, otros), múltiples medios, entrega de crédito, suma exacta, errores antes de reservar número", async () => pag.verificarCasosPagos(), null],
     ["Facturación MFE-03 P2: monedas PYG/USD/BRL, tipo de cambio manual, F023 exacto, pagos y crédito en moneda extranjera, sin conversión de precios, snapshot inmutable y errores antes de reservar número", async () => mon.verificarCasosMonedas(), null],
     ["Facturación PRO-129 (Etapa A): gestión de puntos de expedición — permiso PUNTOS, alta con último número confirmado, activación sin retroceso, funciones SQL, NEX-057, T19 y pantallas", async () => pun.verificarCasosPuntos(), null],
+    ["Facturación PRO-128: rediseño compacto — Operación a la vista, IVA directo (E731/E733/E734), unidades de medida buscables, importes decimales exactos, detección de cambios y estructura/responsive de la pantalla", async () => red.verificarCasosRediseno(), null],
   ];
   let total = 0;
   let fallosTotal = 0;

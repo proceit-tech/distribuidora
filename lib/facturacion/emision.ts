@@ -466,8 +466,9 @@ export async function prepararFactura(db: Db, empresaId: string, usuarioId: stri
     ...(enCredito && cuerpo.credito ? { credito: resumenCredito(cuerpo.credito, total) } : {}),
     moneda,
     ...(cambio !== undefined ? { cambio: await resumenCambio(db, empresaId, moneda, cambio, total) } : {}),
-    lineas: lineas.map((l, i) => ({ codigo: l.codigoInterno, descripcion: l.descripcion, unidad: extras[i].unidadSimbolo, ...(extras[i].campos.length > 0 ? { ajustes: extras[i].campos } : {}), cantidad: l.cantidad, precio: l.precio, precioLista: precios[i].referencia, precioModificado: precios[i].modificado, afectacion: l.afectacion, tasa: l.tasa, total: calculo.items[i] })),
+    lineas: lineas.map((l, i) => ({ codigo: l.codigoInterno, descripcion: l.descripcion, unidad: extras[i].unidadSimbolo, ...(extras[i].campos.length > 0 ? { ajustes: extras[i].campos } : {}), cantidad: l.cantidad, precio: l.precio, precioLista: precios[i].referencia, precioModificado: precios[i].modificado, afectacion: l.afectacion, tasa: l.tasa, total: calculo.items[i], totalTexto: calculo.texto.items[i] })),
     totales: { exento: calculo.exento, exonerado: calculo.exonerado, gravado5: calculo.gravado5, gravado10: calculo.gravado10, iva5: calculo.iva5, iva10: calculo.iva10, totalIva: calculo.totalIva, total: calculo.total },
+    totalesTexto: calculo.texto,
   };
 
   return { entrada: final, payload, totalTexto: String(payload.Subtotales[0].dTotGralOpe), receptor, resumen, guardar };

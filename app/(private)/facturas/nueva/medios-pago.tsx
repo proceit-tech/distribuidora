@@ -1,13 +1,14 @@
 "use client";
 
+import { formatearDecimalTexto } from "@/lib/formato/decimal-texto";
 import { DENOMINACIONES_TARJETA, FORMAS_PROCESAMIENTO, MAX_PAGOS, PRESENCIA_BANCARIA, TIPO_CHEQUE, TIPO_OTRO, TIPO_TARJETA_CREDITO, TIPO_TARJETA_DEBITO, type PagoUI } from "@/lib/facturacion/pagos";
 
 import estilos from "./page.module.css";
 
 /**
- * Medios de pago (MFE-03 P1): uno o varios, cada uno con su monto y SOLO los datos que el Manual SIFEN exige para esa modalidad (cheque: número y banco; tarjeta: marca y forma
- * de procesamiento; «Otro»: descripción). Nunca se pide el número de la tarjeta ni el código de seguridad. Con un solo medio, el monto es el total (o la entrega inicial en
- * Crédito) y no se escribe. El servidor vuelve a validar todo con el mismo código.
+ * Medios de pago COMPACTOS (PRO-128): un solo medio es UNA línea («Efectivo · cubre el total»); con varios, una línea pequeña por medio (medio · monto · quitar). Solo cheque, tarjeta y «Otro» abren una
+ * sublínea con los datos que el Manual SIFEN exige para esa modalidad. Nunca se pide el número de la tarjeta ni el código de seguridad. Con un solo medio el monto es el total (o la entrega inicial en
+ * Crédito) y no se escribe. La conciliación es DECIMAL exacta (módulo compartido con el servidor) y los importes se muestran como texto, sin pasar por Number. El servidor vuelve a validar todo.
  */
 export function MediosPago({ simbolo, titulo, objetivo, conciliacion, presencia, formas, pagos, pendientes, alCambiar, alAgregar, alQuitar }: {
   simbolo: string; titulo: string; objetivo: string; conciliacion: { suma: string | null; coincide: boolean }; presencia: string; formas: Record<string, string>; pagos: PagoUI[]; pendientes: string[];
@@ -16,91 +17,67 @@ export function MediosPago({ simbolo, titulo, objetivo, conciliacion, presencia,
   const varios = pagos.length > 1;
 
   return (
-    <fieldset className={estilos.credito} aria-label={titulo}>
-      <legend>{titulo}</legend>
+    <div className={estilos.pagos} role="group" aria-label={titulo}>
+      <span className={estilos.pagosTitulo}>{titulo}</span>
 
       {pagos.map((p, i) => {
         const tipo = Number(p.tipo);
 
         return (
-          <div key={i} className={estilos.grid} role="group" aria-label={`Medio de pago ${i + 1}`}>
-            <label className={estilos.field}>
-              <span>Medio de pago{varios ? ` ${i + 1}` : ""}</span>
-              <select aria-label={`Forma de pago ${i + 1}`} value={p.tipo} onChange={(e) => alCambiar(i, { tipo: e.target.value, descripcion: "", chequeNumero: "", chequeBanco: "", tarjetaDenominacion: "", tarjetaDescripcion: "", tarjetaForma: "" })}>
-                {Object.entries(formas).filter(([k]) => k !== "16" || presencia === String(PRESENCIA_BANCARIA) || p.tipo === "16").map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-              </select>
-            </label>
+          <div key={i} className={estilos.pagoFila} role="group" aria-label={`Medio de pago ${i + 1}`}>
+            <select aria-label={`Forma de pago ${i + 1}`} value={p.tipo} onChange={(e) => alCambiar(i, { tipo: e.target.value, descripcion: "", chequeNumero: "", chequeBanco: "", tarjetaDenominacion: "", tarjetaDescripcion: "", tarjetaForma: "" })}>
+              {Object.entries(formas).filter(([k]) => k !== "16" || presencia === String(PRESENCIA_BANCARIA) || p.tipo === "16").map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </select>
 
             {varios ? (
-              <label className={estilos.field}>
-                <span>Monto ({simbolo})</span>
-                <input aria-label={`Monto del pago ${i + 1}`} inputMode="decimal" value={p.monto} onChange={(e) => alCambiar(i, { monto: e.target.value.replace(",", ".") })} />
-              </label>
-            ) : null}
+              <input className={estilos.pagoMontoInput} aria-label={`Monto del pago ${i + 1}`} placeholder={`Monto (${simbolo})`} inputMode="decimal" value={p.monto} onChange={(e) => alCambiar(i, { monto: e.target.value.replace(",", ".") })} />
+            ) : (
+              <span className={estilos.pagoMonto}>cubre {simbolo} {formatearDecimalTexto(objetivo)}</span>
+            )}
 
             {tipo === TIPO_CHEQUE ? (
               <>
-                <label className={estilos.field}>
-                  <span>N° de cheque</span>
-                  <input aria-label={`Número de cheque ${i + 1}`} inputMode="numeric" maxLength={8} value={p.chequeNumero} onChange={(e) => alCambiar(i, { chequeNumero: e.target.value.replace(/\D/g, "") })} />
-                </label>
-                <label className={estilos.field}>
-                  <span>Banco emisor</span>
-                  <input aria-label={`Banco emisor ${i + 1}`} maxLength={20} value={p.chequeBanco} onChange={(e) => alCambiar(i, { chequeBanco: e.target.value })} />
-                </label>
+                <input className={estilos.pagoDato} aria-label={`Número de cheque ${i + 1}`} placeholder="N° de cheque" inputMode="numeric" maxLength={8} value={p.chequeNumero} onChange={(e) => alCambiar(i, { chequeNumero: e.target.value.replace(/\D/g, "") })} />
+                <input className={estilos.pagoDato} aria-label={`Banco emisor ${i + 1}`} placeholder="Banco emisor" maxLength={20} value={p.chequeBanco} onChange={(e) => alCambiar(i, { chequeBanco: e.target.value })} />
               </>
             ) : null}
 
             {tipo === TIPO_TARJETA_CREDITO || tipo === TIPO_TARJETA_DEBITO ? (
               <>
-                <label className={estilos.field}>
-                  <span>Marca de la tarjeta</span>
-                  <select aria-label={`Marca de tarjeta ${i + 1}`} value={p.tarjetaDenominacion} onChange={(e) => alCambiar(i, { tarjetaDenominacion: e.target.value, tarjetaDescripcion: "" })}>
-                    <option value="">Seleccione…</option>
-                    {Object.entries(DENOMINACIONES_TARJETA).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-                  </select>
-                </label>
+                <select className={estilos.pagoDato} aria-label={`Marca de tarjeta ${i + 1}`} value={p.tarjetaDenominacion} onChange={(e) => alCambiar(i, { tarjetaDenominacion: e.target.value, tarjetaDescripcion: "" })}>
+                  <option value="">Marca de la tarjeta…</option>
+                  {Object.entries(DENOMINACIONES_TARJETA).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                </select>
                 {p.tarjetaDenominacion === "99" ? (
-                  <label className={estilos.field}>
-                    <span>Descripción de la marca</span>
-                    <input aria-label={`Descripción de marca ${i + 1}`} maxLength={20} value={p.tarjetaDescripcion} onChange={(e) => alCambiar(i, { tarjetaDescripcion: e.target.value })} />
-                  </label>
+                  <input className={estilos.pagoDato} aria-label={`Descripción de marca ${i + 1}`} placeholder="Describa la marca" maxLength={20} value={p.tarjetaDescripcion} onChange={(e) => alCambiar(i, { tarjetaDescripcion: e.target.value })} />
                 ) : null}
-                <label className={estilos.field}>
-                  <span>Forma de procesamiento</span>
-                  <select aria-label={`Procesamiento de tarjeta ${i + 1}`} value={p.tarjetaForma} onChange={(e) => alCambiar(i, { tarjetaForma: e.target.value })}>
-                    <option value="">Seleccione…</option>
-                    {Object.entries(FORMAS_PROCESAMIENTO).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-                  </select>
-                </label>
+                <select className={estilos.pagoDato} aria-label={`Procesamiento de tarjeta ${i + 1}`} value={p.tarjetaForma} onChange={(e) => alCambiar(i, { tarjetaForma: e.target.value })}>
+                  <option value="">Forma de procesamiento…</option>
+                  {Object.entries(FORMAS_PROCESAMIENTO).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                </select>
               </>
             ) : null}
 
             {tipo === TIPO_OTRO ? (
-              <label className={estilos.field}>
-                <span>Descripción del medio de pago</span>
-                <input aria-label={`Descripción del medio ${i + 1}`} maxLength={30} value={p.descripcion} onChange={(e) => alCambiar(i, { descripcion: e.target.value })} />
-              </label>
+              <input className={estilos.pagoDato} aria-label={`Descripción del medio ${i + 1}`} placeholder="Descripción del medio de pago" maxLength={30} value={p.descripcion} onChange={(e) => alCambiar(i, { descripcion: e.target.value })} />
             ) : null}
 
-            {varios ? <button type="button" className={estilos.botonCuotas} onClick={() => alQuitar(i)} aria-label={`Quitar el medio de pago ${i + 1}`}>Quitar</button> : null}
+            {varios ? <button type="button" className={estilos.remove} onClick={() => alQuitar(i)} aria-label={`Quitar el medio de pago ${i + 1}`}>Quitar</button> : null}
           </div>
         );
       })}
 
-      <div className={estilos.actions}>
-        <button type="button" className={estilos.botonCuotas} disabled={pagos.length >= MAX_PAGOS} onClick={alAgregar}>Agregar otro medio de pago</button>
+      <div className={estilos.pagoPie}>
+        <button type="button" className={estilos.linkButton} disabled={pagos.length >= MAX_PAGOS} onClick={alAgregar}>+ Agregar otro medio de pago</button>
+        {varios ? (
+          <small className={conciliacion.coincide ? estilos.hint : estilos.pendienteLinea}>
+            {conciliacion.suma === null ? `Revise los montos · a cubrir ${simbolo} ${formatearDecimalTexto(objetivo)}` : `Suma de los pagos ${simbolo} ${formatearDecimalTexto(conciliacion.suma)} de ${formatearDecimalTexto(objetivo)}${conciliacion.coincide ? " · coinciden" : " · NO coinciden"}`}
+          </small>
+        ) : null}
+        {pagos.some((p) => p.tipo === String(TIPO_TARJETA_CREDITO) || p.tipo === String(TIPO_TARJETA_DEBITO)) ? <small className={estilos.hint}>No se solicita el número de la tarjeta ni el código de seguridad.</small> : null}
       </div>
 
-      {tipoTarjeta(pagos) ? <small className={estilos.hint}>No se solicita el número de la tarjeta ni el código de seguridad.</small> : null}
-      <small className={estilos.hint}>
-        {/* Aritmética Decimal exacta (la misma del servidor): un monto inválido o una diferencia mínima NUNCA se muestran como «coinciden». */}
-        {varios ? (conciliacion.suma === null ? `Revise los montos: hay valores vacíos o inválidos · A cubrir: ${simbolo} ${objetivo}.` : `Suma de los pagos: ${simbolo} ${conciliacion.suma} · A cubrir: ${simbolo} ${objetivo}${conciliacion.coincide ? " · coinciden" : " · NO coinciden"}.`) : `Cubre todo el monto: ${simbolo} ${objetivo}.`}
-      </small>
-
-      {pendientes.length > 0 ? <p className={estilos.fieldError} role="alert">Pagos: {pendientes.slice(0, 4).join("; ")}{pendientes.length > 4 ? `; y ${pendientes.length - 4} más` : ""}.</p> : null}
-    </fieldset>
+      {pendientes.length > 0 ? <p className={estilos.pendienteLinea} role="status">{pendientes.slice(0, 3).join(" · ")}{pendientes.length > 3 ? ` · y ${pendientes.length - 3} más` : ""}</p> : null}
+    </div>
   );
 }
-
-const tipoTarjeta = (pagos: PagoUI[]) => pagos.some((p) => p.tipo === String(TIPO_TARJETA_CREDITO) || p.tipo === String(TIPO_TARJETA_DEBITO));
