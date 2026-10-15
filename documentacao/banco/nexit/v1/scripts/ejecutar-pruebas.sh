@@ -87,6 +87,9 @@ paso "T11 concurrencia (idempotencia, sobreventa, valor, deadlocks)"
 # T17: NEX-054 con DOS sesiones reales (barrera por advisory lock; la segunda queda bloqueada por FOR UPDATE antes de que la primera confirme)
 paso "T17 NEX-054 carrera real entre dos sesiones (estado SIFEN final)"
 "$AQUI/pruebas/T17-concurrencia-consulta.sh" >"$LOG/T17" 2>&1; fin $? "$LOG/T17"
+# T20: NEX-057 con DOS sesiones reales (alta y activación concurrentes de la misma identidad fiscal en dos sucursales; la segunda queda bloqueada por el lock de identidad y es rechazada)
+paso "T20 NEX-057 carrera real: identidad fiscal de puntos de expedición"
+"$AQUI/pruebas/T20-concurrencia-puntos.sh" >"$LOG/T20" 2>&1; fin $? "$LOG/T20"
 # I1/V1: instalación de una empresa REAL con los scripts de producción (sin contraseña en argumentos ni logs) y validación de la estructura instalada
 PWADM="Adm-$(head -c 24 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 20)"     # contraseña del administrador de prueba (solo en memoria)
 if python3 -c 'import bcrypt' 2>/dev/null; then GENERADOR="real (python3 bcrypt)"; unset NEX_PRUEBAS_GENERADOR_HASH

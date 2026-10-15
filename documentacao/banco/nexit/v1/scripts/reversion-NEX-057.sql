@@ -16,6 +16,10 @@ BEGIN
   END IF;
 END $$;
 
+DROP TRIGGER fe_puntos_expedicion_identidad_trg ON public.fe_puntos_expedicion;
+DROP FUNCTION public.fe_puntos_expedicion_identidad();
+DROP FUNCTION public.fe_punto_bloquear_identidad(uuid, text, text);
+DROP FUNCTION public.fe_punto_identidad_en_uso(uuid, text, text, uuid, uuid, boolean);
 DROP FUNCTION public.nex_aplicar_grants_facturacion_puntos();
 DROP FUNCTION public.fe_punto_crear(uuid, uuid, uuid, text, text, integer, boolean);
 DROP FUNCTION public.fe_punto_activar(uuid, uuid, uuid, integer, boolean);

@@ -79,6 +79,7 @@ export function traducirErrorPunto(error: unknown): never {
     case "NEX:PUNTO_INVALIDO": throw m(404, "El punto de expedición no existe.");
     case "NEX:PUNTO_YA_ACTIVO": throw m(409, "El punto ya está activo.");
     case "NEX:PUNTO_YA_INACTIVO": throw m(409, "El punto ya está inactivo.");
+    case "NEX:IDENTIDAD_FISCAL_DUPLICADA": throw m(409, "Ese establecimiento y código de punto ya están en uso en otra sucursal de la empresa: dos puntos con la misma identidad fiscal colisionarían en la numeración. Use otro código o desactive el otro punto.");
     case "NEX:NUMERO_MENOR_QUE_EMITIDOS": throw m(409, "El último número informado es menor que el registrado o que el ya emitido por Nexit: la numeración nunca retrocede.");
     default: throw error;
   }

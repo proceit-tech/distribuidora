@@ -4,7 +4,7 @@
 DO $t$
 DECLARE
   v_h text := crypt(current_setting('nex.pw_prueba'), gen_salt('bf', 12));
-  v_a uuid; v_b uuid; v_ua uuid; v_ub uuid; v_sa uuid; v_sb uuid; v_p uuid; v_p2 uuid; r record;
+  v_a uuid; v_b uuid; v_ua uuid; v_ub uuid; v_sa uuid; v_sb uuid; v_p uuid; v_p2 uuid; v_p3 uuid; v_p4 uuid; v_leg uuid; v_s2 uuid; v_s3 uuid; v_s4 uuid; v_detalle text; r record;
   v_payload jsonb := '{"iTiDE": 1, "Subtotales": [{"dTotGralOpe": 1000}]}'::jsonb;
 BEGIN
   v_a := nex_inicializar_empresa('emp-t19a', 'Empresa T19 A SA (prueba)', '8019101', '1', 'admin.t19a', 'Ana', 'A', NULL, v_h);
@@ -85,16 +85,51 @@ BEGIN
   PERFORM fe_punto_crear(v_b, v_ub, v_sb, '001', 'Caja B', 7, true);
   PERFORM pg_temp.ok((SELECT count(*) = 1 FROM fe_puntos_expedicion WHERE empresa_id = v_b) AND (SELECT count(*) = 2 FROM fe_puntos_expedicion WHERE empresa_id = v_a), 'cada empresa ve y gestiona solo los suyos');
 
-  -- Privilegios del runtime: sin escritura directa, solo ejecuta las funciones y lee la bitácora; PUBLIC no ejecuta
+  -- IDENTIDAD FISCAL ÚNICA (AUD-PRO129-R01-01): dos sucursales de la misma empresa con el MISMO establecimiento no pueden tener el mismo código de punto (cada punto tiene su propia secuencia)
+  INSERT INTO sucursales (empresa_id, codigo, nombre, establecimiento_sifen) VALUES (v_a, 'S2-T19', 'Sucursal 2 T19', '019') RETURNING id INTO v_s2;
+  INSERT INTO sucursales (empresa_id, codigo, nombre, establecimiento_sifen) VALUES (v_a, 'S3-T19', 'Sucursal 3 T19', '020') RETURNING id INTO v_s3;
+  INSERT INTO sucursales (empresa_id, codigo, nombre, establecimiento_sifen) VALUES (v_a, 'S4-T19', 'Sucursal 4 T19', '019') RETURNING id INTO v_s4;
+  PERFORM pg_temp.falla(format('SELECT fe_punto_crear(%L, %L, %L, %L, %L, 0, true)', v_a, v_ua, v_s2, '001', 'Duplicado de 001'), 'P0001', 'identidad: el código 001 del establecimiento 019 ya está ACTIVO en otra sucursal → el alta se rechaza');
+  PERFORM pg_temp.falla(format('SELECT fe_punto_crear(%L, %L, %L, %L, %L, 0, true)', v_a, v_ua, v_s2, '002', 'Duplicado de 002'), 'P0001', 'identidad: el código 002 del establecimiento 019 ya existe (INACTIVO) en otra sucursal → el alta se rechaza también');
+  BEGIN
+    PERFORM fe_punto_crear(v_a, v_ua, v_s2, '001', 'Duplicado de 001', 0, true);
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS v_detalle = PG_EXCEPTION_DETAIL;
+  END;
+  PERFORM pg_temp.ok(v_detalle = 'NEX:IDENTIDAD_FISCAL_DUPLICADA', 'identidad: el error es específico (NEX:IDENTIDAD_FISCAL_DUPLICADA)');
+  PERFORM pg_temp.ok((SELECT ultimo_numero = 126 AND activo FROM fe_puntos_expedicion WHERE id = v_p) AND (SELECT count(*) = 0 FROM fe_puntos_expedicion WHERE sucursal_id = v_s2), 'identidad: el rechazo no creó nada ni tocó la numeración del punto existente (126)');
+  v_p3 := fe_punto_crear(v_a, v_ua, v_s2, '003', 'Caja 3', 40, true);
+  PERFORM pg_temp.ok(v_p3 IS NOT NULL, 'identidad: otro código en la misma sucursal/establecimiento es válido');
+  v_p4 := fe_punto_crear(v_a, v_ua, v_s3, '001', 'Caja 1 est 020', 5, true);
+  PERFORM fe_punto_activar(v_a, v_ua, v_p4, 5, true);
+  SELECT * INTO r FROM fe_documento_crear_fe(v_a, v_ua, v_s3, v_p4, 'clave-t19-0004', NULL, '1234567-1', 'Receptor T19', 'PYG', 1000, v_payload);
+  PERFORM pg_temp.ok(r.o_numero = '0000006' AND (SELECT ultimo_numero = 126 FROM fe_puntos_expedicion WHERE id = v_p), 'identidad: el MISMO código en un establecimiento DISTINTO (020) es independiente: su numeración (0000006) no afecta al 019');
+
+  -- Legado: un duplicado INACTIVO cargado a mano (otra vía) puede existir, pero no se activa mientras el otro siga activo
+  INSERT INTO fe_puntos_expedicion (empresa_id, sucursal_id, codigo, nombre, ultimo_numero, activo) VALUES (v_a, v_s2, '001', 'Legado S2', 500, false) RETURNING id INTO v_leg;
+  PERFORM pg_temp.falla(format('SELECT fe_punto_activar(%L, %L, %L, 500, true)', v_a, v_ua, v_leg), 'P0001', 'identidad (activación): el duplicado legado no se activa mientras el otro punto con la misma identidad siga activo');
+  PERFORM pg_temp.falla(format('UPDATE fe_puntos_expedicion SET activo = true WHERE id = %L', v_leg), 'P0001', 'identidad (trigger): ni siquiera escribiendo directamente se pueden activar dos puntos con la misma identidad');
+  PERFORM pg_temp.falla(format($f$INSERT INTO fe_puntos_expedicion (empresa_id, sucursal_id, codigo, nombre, ultimo_numero, activo) VALUES (%L, %L, '001', 'Directo S4', 0, true)$f$, v_a, v_s4), 'P0001', 'identidad (trigger): un alta directa ACTIVA con la identidad en uso se rechaza');
+  PERFORM pg_temp.ok((SELECT NOT activo AND ultimo_numero = 500 FROM fe_puntos_expedicion WHERE id = v_leg) AND (SELECT activo AND ultimo_numero = 126 FROM fe_puntos_expedicion WHERE id = v_p), 'identidad: los rechazos no cambiaron el estado ni la numeración de ningún punto');
+  PERFORM pg_temp.ok(true, 'identidad: la emisión de un punto sigue funcionando (UPDATE de ultimo_numero no dispara el trigger de identidad)');
+  PERFORM fe_punto_desactivar(v_a, v_ua, v_p);
+  PERFORM fe_punto_activar(v_a, v_ua, v_leg, 500, true);
+  PERFORM pg_temp.ok((SELECT activo AND ultimo_numero = 500 FROM fe_puntos_expedicion WHERE id = v_leg), 'identidad: tras desactivar el otro, el legado se activa confirmando su número (500 ≥ 126 ya emitido)');
+  SELECT * INTO r FROM fe_documento_crear_fe(v_a, v_ua, v_s2, v_leg, 'clave-t19-0005', NULL, '1234567-1', 'Receptor T19', 'PYG', 1000, v_payload);
+  PERFORM pg_temp.ok(r.o_numero = '0000501', 'identidad: la emisión del punto activado (el trigger no la bloquea) continúa desde el número confirmado: 0000501');
+  PERFORM pg_temp.falla(format('SELECT fe_punto_activar(%L, %L, %L, 126, true)', v_a, v_ua, v_p), 'P0001', 'identidad: el punto desactivado no se reactiva mientras el legado ocupa la identidad');
+  PERFORM pg_temp.ok((SELECT NOT activo AND ultimo_numero = 126 FROM fe_puntos_expedicion WHERE id = v_p) AND NOT EXISTS (SELECT 1 FROM documentos_electronicos WHERE empresa_id = v_a AND establecimiento = '019' AND punto_expedicion = '001' GROUP BY numero HAVING count(*) > 1), 'identidad: sin números duplicados en los documentos del establecimiento 019');
+
+  -- Privilegios del runtime: sin escritura directa ni lectura de la bitácora; solo ejecuta las funciones; PUBLIC no ejecuta
   PERFORM pg_temp.ok(NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'nexit_runtime') OR (
         NOT has_table_privilege('nexit_runtime', 'public.fe_puntos_expedicion', 'INSERT') AND NOT has_table_privilege('nexit_runtime', 'public.fe_puntos_expedicion', 'UPDATE')
         AND NOT has_table_privilege('nexit_runtime', 'public.fe_puntos_expedicion', 'DELETE')
-        AND has_table_privilege('nexit_runtime', 'public.fe_puntos_expedicion_log', 'SELECT') AND NOT has_table_privilege('nexit_runtime', 'public.fe_puntos_expedicion_log', 'INSERT')
+        AND NOT has_table_privilege('nexit_runtime', 'public.fe_puntos_expedicion_log', 'SELECT') AND NOT has_table_privilege('nexit_runtime', 'public.fe_puntos_expedicion_log', 'INSERT')
         AND NOT has_table_privilege('nexit_runtime', 'public.fe_puntos_expedicion_log', 'UPDATE') AND NOT has_table_privilege('nexit_runtime', 'public.fe_puntos_expedicion_log', 'DELETE')
         AND has_function_privilege('nexit_runtime', 'public.fe_punto_crear(uuid,uuid,uuid,text,text,integer,boolean)', 'EXECUTE')
         AND has_function_privilege('nexit_runtime', 'public.fe_punto_activar(uuid,uuid,uuid,integer,boolean)', 'EXECUTE')
         AND has_function_privilege('nexit_runtime', 'public.fe_punto_desactivar(uuid,uuid,uuid)', 'EXECUTE')),
-     'privilegios: nexit_runtime no escribe los puntos directamente; ejecuta las funciones y lee la bitácora');
+     'privilegios: nexit_runtime no escribe los puntos, NO lee ni escribe la bitácora (sin RLS por empresa) y solo ejecuta las funciones de gestión');
   PERFORM pg_temp.ok(NOT has_function_privilege('public', 'public.fe_punto_crear(uuid,uuid,uuid,text,text,integer,boolean)', 'EXECUTE'), 'PUBLIC no ejecuta fe_punto_crear');
   PERFORM pg_temp.ok((SELECT bool_and(prosecdef AND 'search_path=public, pg_temp' = ANY (proconfig)) FROM pg_proc WHERE proname IN ('fe_punto_crear', 'fe_punto_activar', 'fe_punto_desactivar')), 'las funciones son SECURITY DEFINER con search_path fijo');
   PERFORM pg_temp.ok(to_regprocedure('public.nex_aplicar_grants_facturacion_puntos()') IS NOT NULL, 'el ayudante de grants existe y el envoltorio de NEX-052 lo reaplica');

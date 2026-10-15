@@ -13,8 +13,16 @@
 --    Solo un punto activo puede numerar (fe_documento_crear_fe). Un número menor que el ya emitido por Nexit para ese establecimiento y punto se rechaza.
 --  · fe_punto_desactivar(): desactiva (no elimina; la identidad y la numeración monotónica se conservan).
 --  · fe_puntos_expedicion_log: bitácora inmutable (solo altas) de cada alta/activación/desactivación con valor anterior, nuevo y usuario.
+--  · IDENTIDAD FISCAL ÚNICA (AUD-PRO129-R01-01): NEX-002 no impide que dos sucursales de la misma empresa compartan el establecimiento SIFEN, y cada punto lleva su PROPIA secuencia: dos puntos con
+--    el mismo (empresa, establecimiento, código) colisionarían en la numeración. Se protege la identidad fiscal (empresa + establecimiento + código), no solo la sucursal: (a) fe_punto_crear rechaza
+--    el alta si CUALQUIER otro punto (activo o no) de otra sucursal tiene esa identidad; (b) fe_punto_activar rechaza la activación si otro punto ACTIVO de otra sucursal la tiene; (c) un trigger
+--    BEFORE INSERT/UPDATE OF activo, sucursal_id impide que DOS puntos activos compartan la identidad aunque se escriban por otra vía (carga manual); (d) un advisory lock transaccional por
+--    identidad serializa altas/activaciones concurrentes. El trigger NO se dispara cuando fe_documento_crear_fe actualiza ultimo_numero (no toca activo ni sucursal_id): la emisión no cambia.
+--    NO se impone una restricción global sobre sucursales.establecimiento_sifen (decisión funcional no autorizada), no se tocan documentos, contadores ni NEX-048.
+--    LIMITACIÓN: cambiar después sucursales.establecimiento_sifen de una sucursal con puntos no se vigila aquí (fuera del alcance de la gestión de puntos).
 --  La emisión (fe_documento_crear_fe) sigue siendo la ÚNICA autoridad que incrementa ultimo_numero; el trigger de NEX-048 sigue impidiendo cambiar la identidad, retroceder o eliminar.
---  El rol nexit_runtime solo ejecuta estas funciones y lee la bitácora; no escribe la tabla de puntos directamente.
+--  El rol nexit_runtime solo ejecuta estas funciones: NO lee la bitácora (AUD-PRO129-R01-02: la tabla no tiene RLS por empresa y ninguna API actual la consume; si se necesita verla, se
+--  añadirá una función de consulta filtrada por empresa) y no escribe la tabla de puntos directamente.
 -- Qué NO hace: no inserta puntos, no toca el timbrado (lo gestiona el gateway) ni credenciales, no edita ultimo_numero hacia abajo.
 -- =====================================================================
 DO $$
@@ -65,6 +73,41 @@ CREATE TRIGGER fe_puntos_expedicion_log_inmutable_fila_trg BEFORE UPDATE OR DELE
 CREATE TRIGGER fe_puntos_expedicion_log_inmutable_truncate_trg BEFORE TRUNCATE ON public.fe_puntos_expedicion_log
   FOR EACH STATEMENT EXECUTE FUNCTION public.fe_puntos_expedicion_log_inmutable();
 
+-- Identidad fiscal (empresa + establecimiento + código) ya usada por OTRO punto de OTRA sucursal. p_solo_activos = true: solo cuenta puntos activos (activación y trigger); false: cualquiera (alta).
+CREATE OR REPLACE FUNCTION public.fe_punto_identidad_en_uso(p_empresa uuid, p_establecimiento text, p_codigo text, p_sucursal uuid, p_excluir_punto uuid, p_solo_activos boolean) RETURNS boolean
+LANGUAGE sql STABLE SET search_path = public, pg_temp AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.fe_puntos_expedicion x JOIN public.sucursales sx ON sx.empresa_id = x.empresa_id AND sx.id = x.sucursal_id
+     WHERE x.empresa_id = p_empresa AND x.codigo = p_codigo AND sx.establecimiento_sifen = p_establecimiento AND x.sucursal_id <> p_sucursal
+       AND (p_excluir_punto IS NULL OR x.id <> p_excluir_punto) AND (NOT p_solo_activos OR x.activo));
+$$;
+
+-- Serializa, dentro de la transacción, toda alta/activación de la misma identidad fiscal (empresa + establecimiento + código): sin esto, dos sesiones concurrentes podrían pasar ambas la comprobación.
+CREATE OR REPLACE FUNCTION public.fe_punto_bloquear_identidad(p_empresa uuid, p_establecimiento text, p_codigo text) RETURNS void
+LANGUAGE sql SET search_path = public, pg_temp AS $$
+  SELECT pg_advisory_xact_lock(hashtextextended('fe_punto|' || p_empresa::text || '|' || p_establecimiento || '|' || p_codigo, 57));
+$$;
+
+-- Defensa en profundidad: aunque un punto se escriba por otra vía (carga manual del responsable), DOS puntos ACTIVOS no pueden compartir la identidad fiscal. Solo se dispara al insertar o al
+-- cambiar activo / sucursal_id: la emisión (que solo actualiza ultimo_numero y actualizado_at) no lo activa.
+CREATE OR REPLACE FUNCTION public.fe_puntos_expedicion_identidad() RETURNS trigger
+LANGUAGE plpgsql SET search_path = public, pg_temp AS $$
+DECLARE
+  v_est text;
+BEGIN
+  IF NOT NEW.activo THEN RETURN NEW; END IF;
+  SELECT establecimiento_sifen INTO v_est FROM public.sucursales WHERE empresa_id = NEW.empresa_id AND id = NEW.sucursal_id;
+  IF v_est IS NULL THEN RETURN NEW; END IF;
+  PERFORM public.fe_punto_bloquear_identidad(NEW.empresa_id, v_est, NEW.codigo);
+  IF public.fe_punto_identidad_en_uso(NEW.empresa_id, v_est, NEW.codigo, NEW.sucursal_id, NEW.id, true) THEN
+    RAISE EXCEPTION 'otro punto activo de otra sucursal ya usa el establecimiento % y el código %: la numeración colisionaría', v_est, NEW.codigo USING ERRCODE = 'P0001', DETAIL = 'NEX:IDENTIDAD_FISCAL_DUPLICADA';
+  END IF;
+  RETURN NEW;
+END $$;
+
+CREATE TRIGGER fe_puntos_expedicion_identidad_trg BEFORE INSERT OR UPDATE OF activo, sucursal_id ON public.fe_puntos_expedicion
+  FOR EACH ROW EXECUTE FUNCTION public.fe_puntos_expedicion_identidad();
+
 -- Último número que Nexit ya emitió para ese establecimiento y punto (0 si ninguno): el «último número emitido» confirmado nunca puede ser menor.
 CREATE OR REPLACE FUNCTION public.fe_punto_maximo_emitido(p_empresa uuid, p_establecimiento text, p_codigo text) RETURNS integer
 LANGUAGE sql STABLE SET search_path = public, pg_temp AS $$
@@ -101,6 +144,10 @@ BEGIN
   IF v_est IS NULL THEN
     RAISE EXCEPTION 'la sucursal no tiene establecimiento SIFEN configurado' USING ERRCODE = 'P0001', DETAIL = 'NEX:SIN_ESTABLECIMIENTO';
   END IF;
+  PERFORM public.fe_punto_bloquear_identidad(p_empresa, v_est, p_codigo);
+  IF public.fe_punto_identidad_en_uso(p_empresa, v_est, p_codigo, p_sucursal, NULL, false) THEN
+    RAISE EXCEPTION 'el establecimiento % con el código % ya está configurado en otra sucursal: dos puntos con la misma identidad fiscal colisionarían en la numeración', v_est, p_codigo USING ERRCODE = 'P0001', DETAIL = 'NEX:IDENTIDAD_FISCAL_DUPLICADA';
+  END IF;
   IF p_ultimo_numero < public.fe_punto_maximo_emitido(p_empresa, v_est, p_codigo) THEN
     RAISE EXCEPTION 'el último número informado es menor que el ya emitido por Nexit para ese establecimiento y punto' USING ERRCODE = 'P0001', DETAIL = 'NEX:NUMERO_MENOR_QUE_EMITIDOS';
   END IF;
@@ -135,7 +182,8 @@ BEGIN
     RAISE EXCEPTION 'informe el último número realmente emitido (0 a 9999998)' USING ERRCODE = 'P0001', DETAIL = 'NEX:NUMERO_INVALIDO';
   END IF;
 
-  SELECT * INTO v_p FROM public.fe_puntos_expedicion WHERE empresa_id = p_empresa AND id = p_punto FOR UPDATE;
+  -- Primero se lee SIN bloquear para conocer la identidad; se serializa por identidad (advisory lock) y recién entonces se bloquea la fila y se re-lee con el estado confirmado.
+  SELECT * INTO v_p FROM public.fe_puntos_expedicion WHERE empresa_id = p_empresa AND id = p_punto;
   IF NOT FOUND THEN
     RAISE EXCEPTION 'el punto de expedición no existe' USING ERRCODE = 'P0001', DETAIL = 'NEX:PUNTO_INVALIDO';
   END IF;
@@ -146,8 +194,13 @@ BEGIN
   IF v_est IS NULL THEN
     RAISE EXCEPTION 'la sucursal no tiene establecimiento SIFEN configurado' USING ERRCODE = 'P0001', DETAIL = 'NEX:SIN_ESTABLECIMIENTO';
   END IF;
+  PERFORM public.fe_punto_bloquear_identidad(p_empresa, v_est, v_p.codigo);
+  SELECT * INTO v_p FROM public.fe_puntos_expedicion WHERE empresa_id = p_empresa AND id = p_punto FOR UPDATE;
   IF v_p.activo THEN
     RAISE EXCEPTION 'el punto ya está activo' USING ERRCODE = 'P0001', DETAIL = 'NEX:PUNTO_YA_ACTIVO';
+  END IF;
+  IF public.fe_punto_identidad_en_uso(p_empresa, v_est, v_p.codigo, v_p.sucursal_id, v_p.id, true) THEN
+    RAISE EXCEPTION 'otro punto activo de otra sucursal ya usa el establecimiento % y el código %: desactívelo antes o use otro código', v_est, v_p.codigo USING ERRCODE = 'P0001', DETAIL = 'NEX:IDENTIDAD_FISCAL_DUPLICADA';
   END IF;
   -- La numeración solo crece: se confirma el valor guardado o se informa uno MAYOR (se emitió fuera de Nexit); uno menor repetiría números ya usados.
   IF p_ultimo_numero < v_p.ultimo_numero OR p_ultimo_numero < public.fe_punto_maximo_emitido(p_empresa, v_est, v_p.codigo) THEN
@@ -194,8 +247,10 @@ BEGIN
     RETURN;
   END IF;
 
-  GRANT SELECT ON public.fe_puntos_expedicion_log TO nexit_runtime;
-  REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON public.fe_puntos_expedicion_log FROM nexit_runtime;
+  -- La bitácora NO se lee con el rol de la aplicación (sin RLS por empresa y sin consumidor): solo la escriben las funciones SECURITY DEFINER.
+  REVOKE ALL ON public.fe_puntos_expedicion_log FROM nexit_runtime;
+  REVOKE ALL ON FUNCTION public.fe_punto_identidad_en_uso(uuid, text, text, uuid, uuid, boolean) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION public.fe_punto_bloquear_identidad(uuid, text, text) FROM PUBLIC;
   REVOKE ALL ON FUNCTION public.fe_punto_crear(uuid, uuid, uuid, text, text, integer, boolean) FROM PUBLIC;
   REVOKE ALL ON FUNCTION public.fe_punto_activar(uuid, uuid, uuid, integer, boolean) FROM PUBLIC;
   REVOKE ALL ON FUNCTION public.fe_punto_desactivar(uuid, uuid, uuid) FROM PUBLIC;
