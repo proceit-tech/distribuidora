@@ -1357,3 +1357,16 @@
     padding: 0;
   }
 }
+
+/* AUD-PRO128-R02-02: el botón «Usar IVA del producto» es hermano del label del selector de IVA. */
+.campoIva {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.campoIva > label {
+  width: 100%;
+}

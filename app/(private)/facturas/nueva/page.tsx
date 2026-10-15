@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Fragment, useEffect, useId, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useId, useRef, useState } from "react";
 
 import ui from "@/components/ui/lista-padrao/lista.module.css";
 import { AJUSTE_VACIO, ajusteParaEnvio, decidirProducto, problemasFiscales, valoresEfectivos, type AjusteUI, type PermisosProducto } from "@/lib/facturacion/ajuste-item";
@@ -459,6 +459,8 @@ export default function NuevaFacturaPage() {
   const [hoyIso, setHoyIso] = useState("");
   const [moneda, setMoneda] = useState<Moneda>("PYG");
   const [cambio, setCambio] = useState("");
+  // true solo cuando el OPERADOR escribió el cambio; false si lo precargó la pantalla con la cotización sugerida (no cuenta como dato a perder).
+  const [cambioManual, setCambioManual] = useState(false);
   const [cotizaciones, setCotizaciones] = useState<Record<string, { cambio: string; fecha: string }>>({});
   const [infoAdicional, setInfoAdicional] = useState("");
   const [cliente, setCliente] = useState<Cliente | null>(null);
@@ -476,6 +478,14 @@ export default function NuevaFacturaPage() {
   const [editando, setEditando] = useState<number | null>(null);
   const [confirmacion, setConfirmacion] = useState<{ tipo: "moneda" | "condicion"; valor: string; perdidas: string[] } | null>(null);
   const botonesFiscales = useRef(new Map<number, HTMLButtonElement>());
+  // Diálogo de confirmación (AUD-PRO128-R02-02): control que lo inició (el foco vuelve a él en TODO cierre) y botones para atrapar Tab dentro del diálogo.
+  const iniciadorDialogo = useRef<HTMLElement | null>(null);
+  const botonCancelar = useRef<HTMLButtonElement>(null);
+  const botonConfirmar = useRef<HTMLButtonElement>(null);
+  const cerrarConfirmacion = useCallback(() => {
+    setConfirmacion(null);
+    window.requestAnimationFrame(() => iniciadorDialogo.current?.focus());
+  }, []);
   const [ubicacionElegida, setUbicacionElegida] = useState(false);
 
   // Cualquier decisión del operador cuenta como cambio sin enviar (no solo cliente/ítems/observaciones); los valores por defecto y la sucursal/punto preseleccionados solos, no.
@@ -486,12 +496,13 @@ export default function NuevaFacturaPage() {
   useEffect(() => {
     if (!confirmacion) return;
 
-    const f = (e: KeyboardEvent) => e.key === "Escape" && setConfirmacion(null);
+    const f = (e: KeyboardEvent) => e.key === "Escape" && cerrarConfirmacion();
 
     window.addEventListener("keydown", f);
+    botonCancelar.current?.focus();
 
     return () => window.removeEventListener("keydown", f);
-  }, [confirmacion]);
+  }, [confirmacion, cerrarConfirmacion]);
 
   useEffect(() => {
     let activo = true;
@@ -655,6 +666,7 @@ export default function NuevaFacturaPage() {
   function cambiarMoneda(m: Moneda) {
     setMoneda(m);
     setCambio(m === "PYG" ? "" : (cotizaciones[m]?.cambio ?? ""));
+    setCambioManual(false);
     setLineas((ls) => ls.map((l) => ({ ...l, precio: referencia(l.producto, m) ?? "" })));
     setPagos([PAGO_UI_VACIO]);
     setCredito(CREDITO_UI_VACIO);
@@ -668,15 +680,21 @@ export default function NuevaFacturaPage() {
   }
 
   // Cambiar Condición o Moneda reinicia lo digitado (reglas sin cambio, nada se convierte); si hay algo que perder se pide confirmación ANTES; cancelar conserva la selección y los valores.
-  function pedirCondicion(valor: string) {
+  function pedirCondicion(valor: string, iniciador: HTMLElement) {
     const perdidas = perdidasAlCambiarCondicion({ pagos, credito });
+
+    iniciadorDialogo.current = iniciador;
 
     if (perdidas.length === 0) aplicarCondicion(valor);
     else setConfirmacion({ tipo: "condicion", valor, perdidas });
   }
 
-  function pedirMoneda(m: Moneda) {
-    const perdidas = perdidasAlCambiarMoneda({ precios: lineas.map((l) => ({ actual: l.precio, nuevo: referencia(l.producto, m) ?? "" })), pagos, credito, cambio, aMoneda: m });
+  function pedirMoneda(m: Moneda, iniciador: HTMLElement) {
+    const perdidas = perdidasAlCambiarMoneda({
+      precios: lineas.map((l) => ({ actual: l.precio, nuevo: referencia(l.producto, m) ?? "" })), pagos, credito, cambio, cambioManual, cambioNuevo: m === "PYG" ? "" : (cotizaciones[m]?.cambio ?? ""),
+    });
+
+    iniciadorDialogo.current = iniciador;
 
     if (perdidas.length === 0) cambiarMoneda(m);
     else setConfirmacion({ tipo: "moneda", valor: m, perdidas });
@@ -687,7 +705,7 @@ export default function NuevaFacturaPage() {
 
     if (confirmacion.tipo === "moneda") cambiarMoneda(confirmacion.valor as Moneda);
     else aplicarCondicion(confirmacion.valor);
-    setConfirmacion(null);
+    cerrarConfirmacion();
   }
 
   // Cierra el panel fiscal y devuelve el foco al botón «Fiscal/Completar» de la misma fila (si todavía existe).
@@ -705,6 +723,7 @@ export default function NuevaFacturaPage() {
     setPagos([PAGO_UI_VACIO]);
     setMoneda("PYG");
     setCambio("");
+    setCambioManual(false);
     setTipoTransaccion("1");
     setPresencia("1");
     setEditando(null);
@@ -725,7 +744,7 @@ export default function NuevaFacturaPage() {
 
   return (
     <section className={ui.page}>
-      <header className={ui.topbar}>
+      <header className={ui.topbar} inert={confirmacion !== null}>
         <div className={ui.titleBlock}>
           <nav className={ui.breadcrumb} aria-label="Ruta de navegación">
             <span>Facturación</span>
@@ -773,7 +792,7 @@ export default function NuevaFacturaPage() {
             </div>
           ) : null}
 
-          <div className={estilos.workspace}>
+          <div className={estilos.workspace} inert={confirmacion !== null}>
             <div className={estilos.principal}>
               <section className={estilos.card} aria-labelledby="sec-operacion">
                 <div className={estilos.cardHead}>
@@ -813,14 +832,14 @@ export default function NuevaFacturaPage() {
 
                     <label className={estilos.field}>
                       <span>Condición</span>
-                      <select aria-label="Condición de la operación" value={condicion} onChange={(e) => pedirCondicion(e.target.value)}>
+                      <select aria-label="Condición de la operación" value={condicion} onChange={(e) => pedirCondicion(e.target.value, e.currentTarget)}>
                         {Object.entries(opciones?.condiciones ?? { "1": "Contado" }).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                       </select>
                     </label>
 
                     <label className={estilos.field}>
                       <span>Moneda</span>
-                      <select aria-label="Moneda de la factura" value={moneda} onChange={(e) => pedirMoneda(e.target.value as Moneda)}>
+                      <select aria-label="Moneda de la factura" value={moneda} onChange={(e) => pedirMoneda(e.target.value as Moneda, e.currentTarget)}>
                         {(Object.keys(MONEDAS_FE) as Moneda[]).map((m) => <option key={m} value={m}>{m} — {MONEDAS_FE[m].nombre}</option>)}
                       </select>
                     </label>
@@ -828,7 +847,7 @@ export default function NuevaFacturaPage() {
                     {extranjera ? (
                       <label className={estilos.field}>
                         <span>Tipo de cambio (Gs. por 1 {moneda})</span>
-                        <input aria-label="Tipo de cambio" inputMode="decimal" placeholder="Ej.: 7500" value={cambio} onChange={(e) => setCambio(e.target.value.replace(",", "."))} />
+                        <input aria-label="Tipo de cambio" inputMode="decimal" placeholder="Ej.: 7500" value={cambio} onChange={(e) => { const v = e.target.value.replace(",", "."); setCambio(v); setCambioManual(v.trim() !== ""); }} />
                         {cambio.trim() !== "" && cambioNormal === null ? <small className={estilos.fieldError} role="alert">Mayor que 0, hasta 5 enteros y 4 decimales.</small> : null}
                         {cotizaciones[moneda] ? <small className={estilos.hint}>Última registrada: {cotizaciones[moneda].cambio} ({cotizaciones[moneda].fecha}){cambioNormal !== null && cambioNormal !== cotizaciones[moneda].cambio ? " · distinta" : ""}</small> : <small className={estilos.hint}>Manual; sin cotización registrada para {moneda}. Queda fijo en el documento.</small>}
                       </label>
@@ -1115,7 +1134,7 @@ export default function NuevaFacturaPage() {
             </aside>
           </div>
 
-          <div className={estilos.barraMovil}>
+          <div className={estilos.barraMovil} inert={confirmacion !== null}>
             <div>
               <strong>{sim} {fd(calculo.texto.total)}</strong>
               <small>{faltan.length > 0 ? `Falta: ${faltan.join(", ")}.` : "Listo para revisar."}</small>
@@ -1130,13 +1149,29 @@ export default function NuevaFacturaPage() {
 
       {confirmacion ? (
         <div className={estilos.overlay} role="presentation">
-          <div className={estilos.modal} role="alertdialog" aria-modal="true" aria-labelledby="titulo-confirmar" aria-describedby="desc-confirmar">
+          <div
+            className={estilos.modal}
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="titulo-confirmar"
+            aria-describedby="desc-confirmar"
+            onKeyDown={(ev) => {
+              // El fondo está inerte; además el Tab se atrapa entre los dos botones del diálogo.
+              if (ev.key !== "Tab") return;
+
+              const primero = botonCancelar.current;
+              const ultimo = botonConfirmar.current;
+
+              if (ev.shiftKey && document.activeElement === primero) { ev.preventDefault(); ultimo?.focus(); }
+              else if (!ev.shiftKey && document.activeElement === ultimo) { ev.preventDefault(); primero?.focus(); }
+            }}
+          >
             <h2 id="titulo-confirmar">{confirmacion.tipo === "moneda" ? `Cambiar la moneda a ${confirmacion.valor}` : "Cambiar la condición de la operación"}</h2>
             <p id="desc-confirmar">Este cambio vuelve a empezar lo ya digitado; nada se convierte automáticamente. Se perderán:</p>
             <ul className={estilos.errorList}>{confirmacion.perdidas.map((p) => <li key={p}>{p}</li>)}</ul>
             <div className={estilos.actions} style={{ marginTop: 14 }}>
-              <button type="button" className={ui.secondaryButton} autoFocus onClick={() => setConfirmacion(null)}>Cancelar (mantener lo actual)</button>
-              <button type="button" className={ui.primaryButton} onClick={confirmarCambio}>Confirmar cambio</button>
+              <button type="button" ref={botonCancelar} className={ui.secondaryButton} onClick={cerrarConfirmacion}>Cancelar (mantener lo actual)</button>
+              <button type="button" ref={botonConfirmar} className={ui.primaryButton} onClick={confirmarCambio}>Confirmar cambio</button>
             </div>
           </div>
         </div>

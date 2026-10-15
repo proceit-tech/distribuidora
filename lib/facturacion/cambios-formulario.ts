@@ -17,14 +17,22 @@ const creditoModificado = (c: EstadoCreditoUI): boolean => (Object.keys(CREDITO_
  * Qué se PERDERÍA al cambiar la Moneda o la Condición (AUD-PRO128-R01-01): las reglas de limpieza no cambian (precios no convertidos, pagos y entrega reiniciados), pero ya no ocurren en silencio. Lista
  * vacía = no hay nada digitado que perder y el cambio se aplica sin confirmación.
  */
-export function perdidasAlCambiarMoneda(e: { precios: Array<{ actual: string; nuevo: string }>; pagos: PagoUI[]; credito: EstadoCreditoUI; cambio: string; aMoneda: string }): string[] {
+export function perdidasAlCambiarMoneda(e: {
+  precios: Array<{ actual: string; nuevo: string }>; pagos: PagoUI[]; credito: EstadoCreditoUI;
+  /** Tipo de cambio actual, si el OPERADOR lo escribió (true) o si lo precargó la pantalla con la cotización sugerida del catálogo (false). */
+  cambio: string; cambioManual: boolean;
+  /** Lo que quedaría en el campo de cambio tras el cambio de moneda: la cotización sugerida de la nueva moneda o "" (PYG / sin cotización). */
+  cambioNuevo: string;
+}): string[] {
   const p: string[] = [];
   const preciosCambian = e.precios.filter((x) => x.actual !== x.nuevo && x.actual.trim() !== "").length;
 
   if (preciosCambian > 0) p.push(`el precio de ${preciosCambian} ítem${preciosCambian === 1 ? "" : "s"} (no se convierten: quedan solo los precios de lista en la nueva moneda)`);
   if (e.pagos.length !== 1 || e.pagos.some(pagoModificado)) p.push("los medios de pago ya cargados");
   if (creditoModificado(e.credito)) p.push("el plazo y la entrega inicial del crédito");
-  if (e.cambio.trim() !== "" && e.aMoneda === "PYG") p.push("el tipo de cambio");
+  // AUD-PRO128-R02-01: solo se pierde un cambio ESCRITO por el operador (USD → BRL, BRL → USD o extranjera → PYG) y que no coincida con lo que quedaría; una cotización que la pantalla
+  // precargó sola no es un dato del operador y no pide confirmación.
+  if (e.cambioManual && e.cambio.trim() !== "" && e.cambio.trim() !== e.cambioNuevo.trim()) p.push(`el tipo de cambio digitado (${e.cambio.trim()})`);
 
   return p;
 }

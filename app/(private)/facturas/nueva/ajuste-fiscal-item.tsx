@@ -48,14 +48,17 @@ export function EditorFiscalItem({ producto, precio, moneda, ajuste, unidades, p
       </div>
 
       <div className={estilos.gridFiscal}>
-        <label className={estilos.field}>
-          <span>IVA</span>
-          <select aria-label={`IVA de ${base}`} value={opcion} onChange={(ev) => alCambiar(cambiosPorOpcionIva(ev.target.value, producto, ajuste))}>
-            {opcion === "" ? <option value="">Seleccione…</option> : null}
-            {OPCIONES_IVA.map((o) => <option key={o.valor} value={o.valor}>{o.etiqueta}</option>)}
-          </select>
+        <div className={estilos.campoIva}>
+          <label className={estilos.field}>
+            <span>IVA</span>
+            <select aria-label={`IVA de ${base}`} value={opcion} onChange={(ev) => alCambiar(cambiosPorOpcionIva(ev.target.value, producto, ajuste))}>
+              {opcion === "" ? <option value="">Seleccione…</option> : null}
+              {OPCIONES_IVA.map((o) => <option key={o.valor} value={o.valor}>{o.etiqueta}</option>)}
+            </select>
+          </label>
+          {/* Hermano del label (no dentro): un label no debe contener un segundo control. */}
           {ivaCambiado ? <button type="button" className={estilos.linkButton} onClick={() => alCambiar(RESTAURAR_IVA)}>Usar IVA del producto</button> : null}
-        </label>
+        </div>
 
         {esParcial(opcion) ? (
           <label className={estilos.field}>
