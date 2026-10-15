@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { contador } from "@/lib/clientes/contador-casos";
 import { B, parseDec } from "@/lib/facturacion/calculo";
 import { crearFacturaElectronica, leerCuerpoFactura, prepararFactura } from "@/lib/facturacion/emision";
-import { FORMAS_PAGO, leerPagos, numeroChequeFiscal, pagoParaEnvio, PAGO_UI_VACIO, pendientesPagos, type PagoEntrada } from "@/lib/facturacion/pagos";
+import { conciliarPagos, DESCRIPCION_FISCAL_DENOMINACION, DESCRIPCION_FISCAL_MONEDA, DESCRIPCION_FISCAL_PAGO, FORMAS_PAGO, leerPagos, numeroChequeFiscal, pagoParaEnvio, PAGO_UI_VACIO, pendientesPagos, type PagoEntrada } from "@/lib/facturacion/pagos";
 import { construirPayloadFE, validarEntradaFE, type EntradaFE, type ReceptorFE } from "@/lib/facturacion/payload-fe";
 import { ErrorFacturacion, ErrorValidacionFiscal } from "@/lib/facturacion/shared";
 
@@ -74,15 +74,22 @@ export async function verificarCasosPagos(): Promise<string[]> {
   // ── 1. Efectivo: baseline idéntico ────────────────────────────────────────────────────────────────────────────────────────────────────────────
   igual("CA-01 Efectivo único: FormaPago con exactamente las cuatro claves de siempre y sin grupos condicionales", [errores(entrada()), payload(entrada()).FormaPago], [[], [{ iTiPago: 1, dMonTiPag: 33000, cMoneTiPag: "PYG", dTiCamTiPag: null }]]);
 
+  // ── 1-bis. AUD-MFE-P1-R01-01: descripciones fiscales E607 / E610 / E622 con los textos oficiales del MT ───────────────────────────────────────────
+  igual("E607 oficial por código (textos del MT, distintos de la etiqueta de pantalla): 5 «Transferencia», 17 «Pago Móvil», 21 «Pago Electrónico»", [DESCRIPCION_FISCAL_PAGO[5], DESCRIPCION_FISCAL_PAGO[17], DESCRIPCION_FISCAL_PAGO[21], FORMAS_PAGO[5]], ["Transferencia", "Pago Móvil", "Pago Electrónico", "Transferencia bancaria"]);
+  igual("E607 cumple 4–30 caracteres y E622 4–20 para TODOS los códigos habilitados con descripción oficial", [Object.values(DESCRIPCION_FISCAL_PAGO).every((d) => d.length >= 4 && d.length <= 30), Object.values(DESCRIPCION_FISCAL_DENOMINACION).every((d) => d.length >= 4 && d.length <= 20), DESCRIPCION_FISCAL_MONEDA.PYG.length >= 3 && DESCRIPCION_FISCAL_MONEDA.PYG.length <= 20], [true, true, true]);
+  igual("todo código habilitado distinto de «Otro» tiene descripción fiscal oficial", Object.keys(FORMAS_PAGO).map(Number).filter((k) => k !== 99).every((k) => typeof DESCRIPCION_FISCAL_PAGO[k] === "string"), true);
+  igual("las seis marcas con descripción oficial E622 (1 Visa … 6 Cabal), «Otro» usa la del operador", [1, 2, 3, 4, 5, 6].map((k) => payload(unico({ tipo: 3, tarjeta: { denominacion: k, formaProcesamiento: 1 } })).FormaPago[0].gPagTarCD), [1, 2, 3, 4, 5, 6].map((k) => ({ iDenTarj: k, dDesDenTarj: DESCRIPCION_FISCAL_DENOMINACION[k], iForProPa: 1 })));
+  igual("Efectivo/PYG conserva la forma del JSON de referencia del gateway (sin E607/E610: ese contrato real las genera); el resto de medios las lleva explícitas", [Object.keys(payload(entrada()).FormaPago[0]).join(","), Object.keys(payload(unico({ tipo: 5 })).FormaPago[0]).join(",")], ["iTiPago,dMonTiPag,cMoneTiPag,dTiCamTiPag", "iTiPago,dDesTiPag,dMonTiPag,cMoneTiPag,dDMoneTiPag,dTiCamTiPag"]);
+
   // ── 2. Transferencia y medios sin datos adicionales ────────────────────────────────────────────────────────────────────────────────────────────
-  for (const t of [5, 6, 7, 8, 9, 17, 21]) igual(`medio ${t} (${FORMAS_PAGO[t]}) sin grupos adicionales: cuatro claves y el código oficial`, [errores(unico({ tipo: t })), payload(unico({ tipo: t })).FormaPago], [[], [{ iTiPago: t, dMonTiPag: 33000, cMoneTiPag: "PYG", dTiCamTiPag: null }]]);
+  for (const t of [5, 6, 7, 8, 9, 17, 21]) igual(`medio ${t} (${FORMAS_PAGO[t]}) sin grupos adicionales: código oficial con sus descripciones fiscales E607/E610`, [errores(unico({ tipo: t })), payload(unico({ tipo: t })).FormaPago], [[], [{ iTiPago: t, dDesTiPag: DESCRIPCION_FISCAL_PAGO[t], dMonTiPag: 33000, cMoneTiPag: "PYG", dDMoneTiPag: "Guarani", dTiCamTiPag: null }]]);
   igual("catálogo oficial E606: códigos 1 Efectivo, 2 Cheque, 3 Tarjeta de crédito, 4 Tarjeta de débito, 5 Transferencia", [1, 2, 3, 4, 5].map((k) => FORMAS_PAGO[k]), ["Efectivo", "Cheque", "Tarjeta de crédito", "Tarjeta de débito", "Transferencia bancaria"]);
   igual("medios que exigen grupos propios NO se ofrecen (10 retención, 11 anticipo, 12–15, 18–20)", [10, 11, 12, 13, 14, 15, 18, 19, 20].map((k) => k in FORMAS_PAGO), [false, false, false, false, false, false, false, false, false]);
 
   // ── 3. Tarjeta ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   const visa = { denominacion: 1, formaProcesamiento: 1 };
   for (const t of [3, 4]) {
-    igual(`tarjeta ${FORMAS_PAGO[t]}: gPagTarCD con iDenTarj e iForProPa (números), sin dDesDenTarj, sin número de tarjeta`, payload(unico({ tipo: t, tarjeta: visa })).FormaPago[0], { iTiPago: t, dMonTiPag: 33000, cMoneTiPag: "PYG", dTiCamTiPag: null, gPagTarCD: { iDenTarj: 1, iForProPa: 1 } });
+    igual(`tarjeta ${FORMAS_PAGO[t]}: gPagTarCD con iDenTarj, dDesDenTarj oficial (E622) e iForProPa, sin número de tarjeta`, payload(unico({ tipo: t, tarjeta: visa })).FormaPago[0], { iTiPago: t, dDesTiPag: DESCRIPCION_FISCAL_PAGO[t], dMonTiPag: 33000, cMoneTiPag: "PYG", dDMoneTiPag: "Guarani", dTiCamTiPag: null, gPagTarCD: { iDenTarj: 1, dDesDenTarj: "Visa", iForProPa: 1 } });
   }
   igual("tarjeta marca «Otro» (99): dDesDenTarj obligatoria de 4 a 20 caracteres", [
     payload(unico({ tipo: 3, tarjeta: { denominacion: 99, descripcion: "Unica", formaProcesamiento: 2 } })).FormaPago[0].gPagTarCD,
@@ -96,7 +103,7 @@ export async function verificarCasosPagos(): Promise<string[]> {
   cierto("el payload de tarjeta no contiene claves de PAN, CVV, titular, autorización ni últimos dígitos", !/dNumTarj|dNomTit|dCodAuOpe|cvv|pan/i.test(JSON.stringify(payload(unico({ tipo: 3, tarjeta: visa })))));
 
   // ── 4. Cheque ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  igual("cheque: gPagCheq con dNumCheq de 8 caracteres (ceros a la izquierda) y dBcoEmi", payload(unico({ tipo: 2, cheque: { numero: "1234", banco: "Banco Continental" } })).FormaPago[0], { iTiPago: 2, dMonTiPag: 33000, cMoneTiPag: "PYG", dTiCamTiPag: null, gPagCheq: { dNumCheq: "00001234", dBcoEmi: "Banco Continental" } });
+  igual("cheque: gPagCheq con dNumCheq de 8 caracteres (ceros a la izquierda) y dBcoEmi", payload(unico({ tipo: 2, cheque: { numero: "1234", banco: "Banco Continental" } })).FormaPago[0], { iTiPago: 2, dDesTiPag: "Cheque", dMonTiPag: 33000, cMoneTiPag: "PYG", dDMoneTiPag: "Guarani", dTiCamTiPag: null, gPagCheq: { dNumCheq: "00001234", dBcoEmi: "Banco Continental" } });
   igual("numeroChequeFiscal conserva 8 dígitos y completa a la izquierda", [numeroChequeFiscal("1"), numeroChequeFiscal("12345678")], ["00000001", "12345678"]);
   igual("CA-09 cheque sin número, sin banco, banco corto, número de 9 dígitos o con letras → error por campo", [
     tiene(unico({ tipo: 2 }), /número de cheque/), tiene(unico({ tipo: 2, cheque: { numero: "", banco: "Banco Continental" } }), /número de cheque/),
@@ -112,7 +119,7 @@ export async function verificarCasosPagos(): Promise<string[]> {
   // ── 6. Múltiples medios en Contado ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
   const mixto = entrada({ pagos: [pago({ tipo: 1, monto: "20000" }), pago({ tipo: 5, monto: "13000" })] });
   igual("CA-08 Contado Efectivo + Transferencia: dos registros, suma exacta", [errores(mixto), payload(mixto).FormaPago.map((p) => [p.iTiPago, p.dMonTiPag])], [[], [[1, 20000], [5, 13000]]]);
-  igual("Contado combinado con cheque y tarjeta: cada grupo en SU medio y nada más", (() => { const p = payload(entrada({ pagos: [pago({ tipo: 2, monto: "10000", cheque: { numero: "55", banco: "Banco Atlas" } }), pago({ tipo: 3, monto: "13000", tarjeta: visa }), pago({ tipo: 1, monto: "10000" })] })).FormaPago; return p.map((x) => Object.keys(x).join(",")); })(), ["iTiPago,dMonTiPag,cMoneTiPag,dTiCamTiPag,gPagCheq", "iTiPago,dMonTiPag,cMoneTiPag,dTiCamTiPag,gPagTarCD", "iTiPago,dMonTiPag,cMoneTiPag,dTiCamTiPag"]);
+  igual("Contado combinado con cheque y tarjeta: cada grupo en SU medio y nada más", (() => { const p = payload(entrada({ pagos: [pago({ tipo: 2, monto: "10000", cheque: { numero: "55", banco: "Banco Atlas" } }), pago({ tipo: 3, monto: "13000", tarjeta: visa }), pago({ tipo: 1, monto: "10000" })] })).FormaPago; return p.map((x) => Object.keys(x).join(",")); })(), ["iTiPago,dDesTiPag,dMonTiPag,cMoneTiPag,dDMoneTiPag,dTiCamTiPag,gPagCheq", "iTiPago,dDesTiPag,dMonTiPag,cMoneTiPag,dDMoneTiPag,dTiCamTiPag,gPagTarCD", "iTiPago,dMonTiPag,cMoneTiPag,dTiCamTiPag"]);
   igual("la suma debe ser EXACTA: 1 guaraní de más o de menos se rechaza", [tiene(entrada({ pagos: [pago({ monto: "20000" }), pago({ tipo: 5, monto: "13001" })] }), /suma de los pagos/), tiene(entrada({ pagos: [pago({ monto: "20000" }), pago({ tipo: 5, monto: "12999" })] }), /suma de los pagos/)], [true, true]);
   igual("monto cero, negativo o con 5 decimales en cualquier medio → error", [tiene(entrada({ pagos: [pago({ monto: "33000" }), pago({ tipo: 5, monto: "0" })] }), /mayor que cero/), tiene(entrada({ pagos: [pago({ monto: "32999.99999" }), pago({ tipo: 5, monto: "0.00001" })] }), /4 decimales/)], [true, true]);
   igual("sin ningún pago en Contado → error", tiene(entrada({ pagos: [] }), /Indique la forma de pago/), true);
@@ -124,7 +131,7 @@ export async function verificarCasosPagos(): Promise<string[]> {
   igual("Crédito: medios que NO suman la entrega declarada → error con ambas cifras", tiene(aCredito("10000", [pago({ tipo: 1, monto: "4000" }), pago({ tipo: 5, monto: "5000" })]), /suman 9000.*entrega inicial \(10000\)/), true);
   igual("Crédito: pagar el saldo financiado como si fuera entrega (medios = total) → error", errores(aCredito("33000", [pago({ tipo: 1, monto: "33000" })])).length > 0, true);
   igual("Crédito sin entrega: sin medios de pago (FormaPago vacío y dMonEnt nulo); con medios → error", [payload(aCredito(null, [])).FormaPago, payload(aCredito(null, [])).dMonEnt, tiene(aCredito(null, [pago({ monto: "100" })]), /Sin entrega inicial/)], [[], null, true]);
-  igual("Crédito con entrega y tarjeta: gPagTarCD viaja en el medio de la entrega", payload(aCredito("5000", [pago({ tipo: 3, monto: "5000", tarjeta: visa })])).FormaPago[0].gPagTarCD, { iDenTarj: 1, iForProPa: 1 });
+  igual("Crédito con entrega y tarjeta: gPagTarCD viaja en el medio de la entrega", payload(aCredito("5000", [pago({ tipo: 3, monto: "5000", tarjeta: visa })])).FormaPago[0].gPagTarCD, { iDenTarj: 1, dDesDenTarj: "Visa", iForProPa: 1 });
 
   // ── 8. Precisión decimal de dMonTiPag / dMonEnt se conserva ────────────────────────────────────────────────────────────────────────────────────
   igual("regresión R01-01: un pago que Number alteraría se rechaza también en varios medios", tiene(entrada({ lineas: [{ ...lineas[0], cantidad: "72727272.7273" }], pagos: [pago({ monto: "782284262408.5882" }), pago({ tipo: 5, monto: "17715737591.7118" })] }), /perder precisión/), true);
@@ -181,6 +188,19 @@ export async function verificarCasosPagos(): Promise<string[]> {
   const previa = (await prepararFactura(previaB.db, EMPRESA, USUARIO, leerCuerpoFactura(cuerpo({ pagos: [{ tipo: 1, monto: "13000" }, { tipo: 3, monto: "20000", tarjeta: { denominacion: 99, descripcion: "Unica", formaProcesamiento: 9 } }] })) as never)).resumen as { formaPago: string; pagos: Array<{ medio: string; monto: string; detalle: string }> };
   igual("previa: lista cada medio con monto y dato legible (sin número de tarjeta) y no escribe nada", [previa.formaPago, previa.pagos, previaB.escrituras().length], ["Efectivo + Tarjeta de crédito", [{ medio: "Efectivo", monto: "13000", detalle: "" }, { medio: "Tarjeta de crédito", monto: "20000", detalle: "Unica · Otro" }], 0]);
 
+  // ── 9-bis. AUD-MFE-P1-R01-02: la suma de la pantalla usa la MISMA aritmética Decimal exacta que el servidor ────────────────────────────────────────
+  const obj = parseDec("33000", 8)!;
+  const conc = (...m: string[]) => conciliarPagos(m.map((x, i) => ({ tipo: i === 0 ? 1 : 5, monto: x })), obj);
+  igual("conciliación exacta: suma justa coincide; ±0,0001 NO coincide (diferencia mínima de 4 decimales)", [conc("20000", "13000"), conc("20000", "13000.0001"), conc("20000", "12999.9999"), conc("20000.5000", "12999.5000")], [{ suma: "33000", coincide: true }, { suma: "33000.0001", coincide: false }, { suma: "32999.9999", coincide: false }, { suma: "33000", coincide: true }]);
+  igual("una diferencia que Number con tolerancia 0,00005 daría por buena (0,0001) ya no se muestra como coincidente", Math.abs(33000.0001 - 33000) > 0.00005, true);
+  igual("valores inválidos JAMÁS coinciden: vacío, cero, letras, más de 4 decimales, negativo", [conc("20000", ""), conc("20000", "0"), conc("20000", "13000abc"), conc("20000", "13000.00001"), conc("33000", "-0")].map((x) => [x.suma, x.coincide]), [[null, false], [null, false], [null, false], [null, false], [null, false]]);
+  igual("conciliación en el borde de precisión: montos grandes con 4 decimales suman exacto (sin pérdida de Number)", conciliarPagos([{ tipo: 1, monto: "500000000000.0001" }, { tipo: 5, monto: "282284262408.5881" }], parseDec("782284262408.5882", 8)!), { suma: "782284262408.5882", coincide: true });
+  igual("conciliación en el borde: un solo medio sin monto cubre el objetivo; varios sin monto no coinciden", [conciliarPagos([{ tipo: 1 }], obj), conciliarPagos([{ tipo: 1 }, { tipo: 5 }], obj)], [{ suma: "33000", coincide: true }, { suma: null, coincide: false }]);
+  igual("la pantalla y el servidor coinciden en el veredicto: lo que la pantalla marca «NO coinciden» el servidor lo rechaza con la misma suma, y lo que coincide se crea", [
+    conc("20000", "13000.0001").coincide === false && tiene(entrada({ pagos: [pago({ monto: "20000" }), pago({ tipo: 5, monto: "13000.0001" })] }), /suma de los pagos/),
+    conc("20000", "13000").coincide === true && errores(mixto).length === 0,
+  ], [true, true]);
+
   // ── 10. Pantalla ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   const ui = (o: Partial<typeof PAGO_UI_VACIO>) => ({ ...PAGO_UI_VACIO, ...o });
   igual("pagoParaEnvio: un solo medio no escribe monto; con varios viaja el monto; los datos de otra modalidad no se arrastran al cambiar de medio", [
@@ -194,6 +214,7 @@ export async function verificarCasosPagos(): Promise<string[]> {
 
   const pagina = leer("app/(private)/facturas/nueva/page.tsx");
   const medios = leer("app/(private)/facturas/nueva/medios-pago.tsx");
+  cierto("R01-02: el panel no usa Number ni tolerancia para «coinciden»: muestra la conciliación exacta del módulo compartido", !/Number\(p\.monto\)|Math\.abs|0\.00005|reduce\(/.test(medios) && /conciliacion\.coincide/.test(medios) && /conciliarPagos\(/.test(pagina));
   cierto("pantalla: selector de medios con monto por medio, campos condicionales (cheque, tarjeta, otro), agregar/quitar y suma visible; sin campos de número de tarjeta ni CVV", /Agregar otro medio de pago/.test(medios) && /N° de cheque/.test(medios) && /Marca de la tarjeta/.test(medios) && /Forma de procesamiento/.test(medios) && /Suma de los pagos/.test(medios) && !/cvv|código de seguridad<\/span>|N° de tarjeta|Número de la tarjeta<\/span>/i.test(medios.replace("ni el código de seguridad", "")));
   cierto("pantalla: el cuerpo envía pagoParaEnvio por medio (y vacío en Crédito sin entrega); los pendientes de pago bloquean «Revisar»; todo dentro de la tarjeta Operación (layout aprobado)", /pagos: hayPagos \? pagos\.map\(\(p\) => pagoParaEnvio\(p, pagos\.length === 1\)\) : \[\]/.test(pagina) && /pendientesDePagos\.length > 0 \? "corregir los medios de pago"/.test(pagina) && pagina.indexOf("<MediosPago") > pagina.indexOf('aria-labelledby="sec-operacion"') && pagina.indexOf("<MediosPago") < pagina.indexOf('aria-labelledby="sec-cliente"'));
   cierto("límites de la etapa: moneda PYG fija en el payload, Cuotas suspendido, FAT-E1/FAT-E2 y gateway sin dependencia de los medios de pago", /cMoneTiPag: "PYG"/.test(leer("lib/facturacion/payload-fe.ts")) && !/pagos/.test(leer("lib/facturacion/calculo.ts")) && !/from "@\/lib\/facturacion\/pagos"/.test(leer("lib/facturacion/envio.ts") + leer("lib/facturacion/gateway.ts") + leer("lib/facturacion/reconciliacion.ts")) && !/from "pg"|fetch\(|node:fs/.test(leer("lib/facturacion/pagos.ts")));

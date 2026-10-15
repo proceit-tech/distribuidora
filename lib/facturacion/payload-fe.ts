@@ -1,5 +1,5 @@
 import { CONDICION_CONTADO, CONDICION_CREDITO, CREDITO_CUOTAS, CREDITO_PLAZO, erroresCredito, hoyParaguay, plazoTexto, type CreditoEntrada } from "@/lib/facturacion/credito";
-import { erroresMedio, FORMAS_PAGO, numeroChequeFiscal, TIPO_CHEQUE, TIPO_OTRO, TIPO_TARJETA_CREDITO, TIPO_TARJETA_DEBITO, type PagoEntrada } from "@/lib/facturacion/pagos";
+import { DESCRIPCION_FISCAL_DENOMINACION, DESCRIPCION_FISCAL_MONEDA, DESCRIPCION_FISCAL_PAGO, erroresMedio, FORMAS_PAGO, TIPO_EFECTIVO, numeroChequeFiscal, TIPO_CHEQUE, TIPO_OTRO, TIPO_TARJETA_CREDITO, TIPO_TARJETA_DEBITO, type PagoEntrada } from "@/lib/facturacion/pagos";
 import { B, S, calcularItem, calcularSubtotales, numeroDec, parseDec, textoDec, type AfectacionIva, type Dec, type Subtotales, type TasaIva } from "@/lib/facturacion/calculo";
 
 /**
@@ -252,18 +252,25 @@ function condicionPago(e: EntradaFE): Record<string, unknown> {
 }
 
 /**
- * Un elemento de FormaPago[] (E605) con los nombres y tipos del MT: iTiPago (N), dDesTiPag solo con «Otro» (E607), dMonTiPag (N, exacto), cMoneTiPag (PYG), dTiCamTiPag nulo; grupos
- * condicionales gPagTarCD (E620, solo tarjeta) y gPagCheq (E630, solo cheque). Efectivo conserva EXACTAMENTE la forma anterior (cuatro claves).
+ * Un elemento de FormaPago[] (E605) con los nombres y tipos del MT: iTiPago (N), dDesTiPag (E607, oficial; con «Otro» la del operador), dMonTiPag (N, exacto), cMoneTiPag (PYG),
+ * dDMoneTiPag (E610), dTiCamTiPag nulo; grupos condicionales gPagTarCD (E620, solo tarjeta; con dDesDenTarj E622) y gPagCheq (E630, solo cheque).
  */
 function formaPagoJSON(p: PagoEntrada & { monto: string }): Record<string, unknown> {
+  const monto = numeroExacto(parseDec(p.monto, 8) ?? B(0));
+
+  // Efectivo/PYG conserva EXACTAMENTE la forma del JSON de referencia del gateway (cuatro claves): ese contrato real no trae E607/E610, luego el gateway las genera para ese caso.
+  // Para los demás medios no hay esa evidencia: se envían las descripciones fiscales del MT (E607 dDesTiPag, E610 dDMoneTiPag) para no depender de una derivación no comprobada.
+  if (p.tipo === TIPO_EFECTIVO) return { iTiPago: p.tipo, dMonTiPag: monto, cMoneTiPag: "PYG", dTiCamTiPag: null };
+
   return {
     iTiPago: p.tipo,
-    ...(p.tipo === TIPO_OTRO ? { dDesTiPag: p.descripcion } : {}),
-    dMonTiPag: numeroExacto(parseDec(p.monto, 8) ?? B(0)),
+    dDesTiPag: p.tipo === TIPO_OTRO ? p.descripcion : DESCRIPCION_FISCAL_PAGO[p.tipo],
+    dMonTiPag: monto,
     cMoneTiPag: "PYG",
+    dDMoneTiPag: DESCRIPCION_FISCAL_MONEDA.PYG,
     dTiCamTiPag: null,
     ...((p.tipo === TIPO_TARJETA_CREDITO || p.tipo === TIPO_TARJETA_DEBITO) && p.tarjeta
-      ? { gPagTarCD: { iDenTarj: p.tarjeta.denominacion, ...(p.tarjeta.denominacion === 99 ? { dDesDenTarj: p.tarjeta.descripcion } : {}), iForProPa: p.tarjeta.formaProcesamiento } }
+      ? { gPagTarCD: { iDenTarj: p.tarjeta.denominacion, dDesDenTarj: p.tarjeta.denominacion === 99 ? p.tarjeta.descripcion : DESCRIPCION_FISCAL_DENOMINACION[p.tarjeta.denominacion], iForProPa: p.tarjeta.formaProcesamiento } }
       : {}),
     ...(p.tipo === TIPO_CHEQUE && p.cheque ? { gPagCheq: { dNumCheq: numeroChequeFiscal(p.cheque.numero), dBcoEmi: p.cheque.banco } } : {}),
   };

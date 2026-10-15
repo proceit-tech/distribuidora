@@ -4,19 +4,16 @@ import { DENOMINACIONES_TARJETA, FORMAS_PROCESAMIENTO, MAX_PAGOS, PRESENCIA_BANC
 
 import estilos from "./page.module.css";
 
-const gs = (n: number) => n.toLocaleString("es-PY", { maximumFractionDigits: 4 });
-
 /**
  * Medios de pago (MFE-03 P1): uno o varios, cada uno con su monto y SOLO los datos que el Manual SIFEN exige para esa modalidad (cheque: número y banco; tarjeta: marca y forma
  * de procesamiento; «Otro»: descripción). Nunca se pide el número de la tarjeta ni el código de seguridad. Con un solo medio, el monto es el total (o la entrega inicial en
  * Crédito) y no se escribe. El servidor vuelve a validar todo con el mismo código.
  */
-export function MediosPago({ titulo, objetivo, presencia, formas, pagos, pendientes, alCambiar, alAgregar, alQuitar }: {
-  titulo: string; objetivo: number; presencia: string; formas: Record<string, string>; pagos: PagoUI[]; pendientes: string[];
+export function MediosPago({ titulo, objetivo, conciliacion, presencia, formas, pagos, pendientes, alCambiar, alAgregar, alQuitar }: {
+  titulo: string; objetivo: string; conciliacion: { suma: string | null; coincide: boolean }; presencia: string; formas: Record<string, string>; pagos: PagoUI[]; pendientes: string[];
   alCambiar: (i: number, c: Partial<PagoUI>) => void; alAgregar: () => void; alQuitar: (i: number) => void;
 }) {
   const varios = pagos.length > 1;
-  const suma = pagos.reduce((a, p) => a + (Number(p.monto) || 0), 0);
 
   return (
     <fieldset className={estilos.credito} aria-label={titulo}>
@@ -97,7 +94,8 @@ export function MediosPago({ titulo, objetivo, presencia, formas, pagos, pendien
 
       {tipoTarjeta(pagos) ? <small className={estilos.hint}>No se solicita el número de la tarjeta ni el código de seguridad.</small> : null}
       <small className={estilos.hint}>
-        {varios ? `Suma de los pagos: Gs. ${gs(suma)} · A cubrir: Gs. ${gs(objetivo)}${Math.abs(suma - objetivo) > 0.00005 ? " · NO coinciden" : " · coinciden"}.` : `Cubre todo el monto: Gs. ${gs(objetivo)}.`}
+        {/* Aritmética Decimal exacta (la misma del servidor): un monto inválido o una diferencia mínima NUNCA se muestran como «coinciden». */}
+        {varios ? (conciliacion.suma === null ? `Revise los montos: hay valores vacíos o inválidos · A cubrir: Gs. ${objetivo}.` : `Suma de los pagos: Gs. ${conciliacion.suma} · A cubrir: Gs. ${objetivo}${conciliacion.coincide ? " · coinciden" : " · NO coinciden"}.`) : `Cubre todo el monto: Gs. ${objetivo}.`}
       </small>
 
       {pendientes.length > 0 ? <p className={estilos.fieldError} role="alert">Pagos: {pendientes.slice(0, 4).join("; ")}{pendientes.length > 4 ? `; y ${pendientes.length - 4} más` : ""}.</p> : null}

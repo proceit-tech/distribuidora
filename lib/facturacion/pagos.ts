@@ -17,6 +17,17 @@ export const FORMAS_PAGO: Record<number, string> = {
   1: "Efectivo", 2: "Cheque", 3: "Tarjeta de crédito", 4: "Tarjeta de débito", 5: "Transferencia bancaria", 6: "Giro", 7: "Billetera electrónica", 8: "Tarjeta empresarial",
   9: "Vale", 16: "Pago bancario", 17: "Pago móvil", 21: "Pago electrónico", 99: "Otro",
 };
+/**
+ * Descripciones FISCALES (distintas de la etiqueta de la pantalla), tal como las define el MT v150: E607 dDesTiPag (1-1, 4–30), E622 dDesDenTarj (1-1, 4–20) y E610 dDMoneTiPag (1-1, 3–20).
+ * Las reglas 1554/1555 rechazan una descripción que no coincida con el código; con «Otro» (99) la descripción la escribe el operador. Se envían SIEMPRE (E607/E610/E622 son 1-1).
+ */
+export const DESCRIPCION_FISCAL_PAGO: Record<number, string> = {
+  1: "Efectivo", 2: "Cheque", 3: "Tarjeta de crédito", 4: "Tarjeta de débito", 5: "Transferencia", 6: "Giro", 7: "Billetera electrónica", 8: "Tarjeta empresarial", 9: "Vale",
+  16: "Pago bancario", 17: "Pago Móvil", 21: "Pago Electrónico",
+};
+export const DESCRIPCION_FISCAL_DENOMINACION: Record<number, string> = { 1: "Visa", 2: "Mastercard", 3: "American Express", 4: "Maestro", 5: "Panal", 6: "Cabal" };
+/** E610: descripción de la moneda del pago (tabla ISO 4217 de SIFEN; el texto NO figura en el MT/NT archivados en el repositorio — ver PROGRESSO, MFE-03 P1-R01). Solo PYG hasta P2. */
+export const DESCRIPCION_FISCAL_MONEDA: Record<string, string> = { PYG: "Guarani" };
 export const TIPO_EFECTIVO = 1;
 export const TIPO_CHEQUE = 2;
 export const TIPO_TARJETA_CREDITO = 3;
@@ -134,6 +145,29 @@ export function resolverMontos(pagos: PagoEntrada[], objetivo: Dec): { montos: s
   if (pagos.some((p) => p.monto === undefined)) return { errores: ["Indique el monto de cada medio de pago."] };
 
   return { montos: pagos.map((p) => p.monto as string) };
+}
+
+export const textoDecimal = (d: Dec): string => textoDec(d);
+
+/**
+ * Conciliación EXACTA para la pantalla (la misma aritmética Decimal que el servidor; nunca Number ni tolerancia): suma de los medios y si coincide con el objetivo. `suma` es null cuando
+ * algún monto es inválido (vacío, cero, con letras, más de 4 decimales): entonces JAMÁS coincide.
+ */
+export function conciliarPagos(pagos: PagoEntrada[], objetivo: Dec): { suma: string | null; coincide: boolean } {
+  const r = resolverMontos(pagos, objetivo);
+
+  if ("errores" in r) return { suma: null, coincide: false };
+
+  let suma = B(0);
+
+  for (const t of r.montos) {
+    const d = MONTO.test(t) ? parseDec(t, 4) : null;
+
+    if (d === null || d <= B(0)) return { suma: null, coincide: false };
+    suma += d;
+  }
+
+  return { suma: textoDec(suma), coincide: suma === objetivo };
 }
 
 /** Pendientes de pago para la pantalla (mismas reglas que el servidor): errores por medio + conciliación exacta con el monto a pagar. */

@@ -8,7 +8,7 @@ import { AJUSTE_VACIO, ajusteParaEnvio, problemasFiscales, valoresEfectivos, typ
 import { elegirPorEnter, MENSAJE_ENTER } from "@/lib/facturacion/busqueda-rapida";
 import { CREDITO_UI_VACIO, creditoParaEnvio, hoyParaguay, pendientesCredito, type EstadoCreditoUI } from "@/lib/facturacion/credito";
 import { B, parseDec } from "@/lib/facturacion/calculo";
-import { PAGO_UI_VACIO, pagoParaEnvio, pendientesPagos, type PagoUI } from "@/lib/facturacion/pagos";
+import { conciliarPagos, PAGO_UI_VACIO, pagoParaEnvio, pendientesPagos, textoDecimal, type PagoUI } from "@/lib/facturacion/pagos";
 import { resumenCalculo, type LineaFE } from "@/lib/facturacion/payload-fe";
 import { formatearFechaPy } from "@/lib/formato/listas";
 import { useProtegerCambios } from "@/lib/ui/proteger-cambios";
@@ -747,7 +747,8 @@ export default function NuevaFacturaPage() {
                   {hayPagos ? (
                     <MediosPago
                       titulo={enCredito ? "Medios de pago de la entrega inicial" : "Forma de pago"}
-                      objetivo={objetivoDec === null ? 0 : Number(objetivoDec) / 100000000}
+                      objetivo={objetivoDec === null ? "—" : textoDecimal(objetivoDec)}
+                      conciliacion={objetivoDec === null ? { suma: null, coincide: false } : conciliarPagos(pagos.map((p) => pagoParaEnvio(p, pagos.length === 1)), objetivoDec)}
                       presencia={presencia}
                       formas={opciones?.formasPago ?? {}}
                       pagos={pagos}
