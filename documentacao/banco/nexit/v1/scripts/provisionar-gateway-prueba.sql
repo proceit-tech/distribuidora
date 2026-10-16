@@ -1,13 +1,15 @@
 -- Parte SQL del provisionamiento del gateway FE de PRUEBA (PRO-133, AUD-PRO133-R01/R02). La invoca scripts/provisionar-gateway-prueba.sh; no se ejecuta a mano ni por el runner de migraciones.
--- Parámetros psql: -v modo=verificar|aplicar|revertir  -v razon='CASA MINGO'  -v ref=CASAMINGO  -v url=https://…  -v timeout=30000  -v propio=si|no
+-- Parámetros psql: -v modo=verificar|aplicar|revertir  -v razon='CASA MINGO'  -v ref=CASAMINGO  -v url=https://…  -v timeout=30000  -v propio=si|no  -v empresa_id=<uuid|vacío>
 -- IDEMPOTENTE y SIN credenciales: solo lee/escribe fe_gateway_config (URL + referencia lógica). La empresa se identifica por RAZÓN SOCIAL (no se presume su código) y debe ser ÚNICA.
--- Salida: «RESULTADO=<código>» y «COMPARTIDA=<n>» (cuántas OTRAS empresas usan la misma credencial_ref). Nunca toca migraciones, numeración, documentos ni otras tablas.
+-- R03-01: la reversión exige que la empresa identificada por razón social tenga EXACTAMENTE el UUID registrado por el provisionador (empresa_id); si no, no toca nada.
+-- R03-04: el shell invoca este archivo con psql -1 (una sola transacción); la salida incluye «EMPRESA_ID=<uuid>».
+-- Salida: «RESULTADO=<código>», «EMPRESA_ID=<uuid>» y «COMPARTIDA=<n>» (cuántas OTRAS empresas usan la misma credencial_ref). Nunca toca migraciones, numeración, documentos ni otras tablas.
 -- R02-05: la existencia de fe_gateway_config se comprueba FUERA del bloque DO (\if): sin NEX-047 el bloque con el tipo de la tabla ni siquiera se compila y se devuelve SIN_NEX047.
 -- R02-01: la reversión solo desactiva la fila si (a) el propio provisionador la creó/reactivó (propio=si, según su archivo de estado) y (b) la fila coincide EXACTAMENTE con la URL y la referencia gestionadas;
 --         en cualquier otro caso no cambia nada.
 SELECT to_regclass('public.fe_gateway_config') IS NOT NULL AS tiene_tabla \gset
 SELECT set_config('nexit.modo', :'modo', false) AS a, set_config('nexit.razon', :'razon', false) AS b, set_config('nexit.ref', :'ref', false) AS c,
-       set_config('nexit.url', :'url', false) AS d, set_config('nexit.timeout', :'timeout', false) AS e, set_config('nexit.propio', :'propio', false) AS g,
+       set_config('nexit.url', :'url', false) AS d, set_config('nexit.timeout', :'timeout', false) AS e, set_config('nexit.propio', :'propio', false) AS g, set_config('nexit.empresa_id', :'empresa_id', false) AS i, set_config('nexit.empresa_out', '', false) AS j,
        set_config('nexit.resultado', 'SIN_RESULTADO', false) AS f, set_config('nexit.compartida', '0', false) AS h \gset
 
 \if :tiene_tabla
@@ -30,6 +32,7 @@ BEGIN
   IF v_n <> 1 THEN
     PERFORM set_config('nexit.resultado', 'EMPRESA_NO_UNICA:' || v_n, false); RETURN;
   END IF;
+  PERFORM set_config('nexit.empresa_out', v_empresa::text, false);
   SELECT * INTO v_cfg FROM public.fe_gateway_config WHERE empresa_id = v_empresa;
   v_existe := FOUND;
   v_igual := v_existe AND v_cfg.base_url = current_setting('nexit.url') AND v_cfg.credencial_ref = current_setting('nexit.ref');
@@ -62,7 +65,8 @@ BEGIN
   END IF;
 
   IF v_modo = 'revertir' THEN
-    IF NOT v_existe THEN v_res := 'SIN_FILA';
+    IF current_setting('nexit.empresa_id') IS DISTINCT FROM v_empresa::text THEN v_res := 'EMPRESA_DISTINTA_NO_SE_TOCA';
+    ELSIF NOT v_existe THEN v_res := 'SIN_FILA';
     ELSIF NOT v_igual THEN v_res := 'CONFIG_DISTINTA_NO_SE_TOCA';
     ELSIF current_setting('nexit.propio') <> 'si' THEN v_res := 'NO_PROPIA_NO_SE_TOCA';
     ELSIF NOT v_cfg.activo THEN v_res := 'YA_INACTIVA';
@@ -76,4 +80,5 @@ SELECT set_config('nexit.resultado', 'SIN_NEX047', false) AS sin_tabla \gset
 \endif
 
 SELECT 'RESULTADO=' || current_setting('nexit.resultado');
+SELECT 'EMPRESA_ID=' || current_setting('nexit.empresa_out');
 SELECT 'COMPARTIDA=' || current_setting('nexit.compartida');
