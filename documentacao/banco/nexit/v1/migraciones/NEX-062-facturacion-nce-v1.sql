@@ -442,6 +442,14 @@ BEGIN
     v_resultado := 'CDC_DIVERGENTE';
   END IF;
 
+  -- NCE-R03-01: un estado fiscal DEFINITIVO solo se registra con un CDC válido y coherente con el documento (el informado o el ya guardado). Sin CDC se conserva la evidencia del intento como
+  -- RESPUESTA_INVALIDA y NO se toca el estado fiscal, el CDC ni el saldo (la base no depende de que el servidor ya lo haya filtrado).
+  IF v_resultado = 'OK' AND p_estado_sifen IN ('APROBADO', 'RECHAZADO', 'CANCELADO', 'INUTILIZADO')
+     AND (coalesce(p_cdc, d.cdc) IS NULL OR NOT public.fe_cdc_coherente(d.tipo, d.establecimiento, d.punto_expedicion, d.numero, coalesce(p_cdc, d.cdc))) THEN
+    v_resultado := 'RESPUESTA_INVALIDA';
+    v_mensaje := left('La consulta informa «' || p_estado_sifen || '» sin un CDC válido y coherente con el documento: no se modifica el estado fiscal.', 500);
+  END IF;
+
   INSERT INTO public.documento_electronico_intentos (empresa_id, documento_id, tipo, resultado, http_status, request_id, estado_gateway, estado_sifen, cod_respuesta, mensaje, respuesta, actor_id)
   VALUES (p_empresa, p_documento, 'CONSULTA', v_resultado, p_http, left(p_request_id, 80), p_estado_gateway,
           CASE WHEN v_resultado = 'OK' THEN p_estado_sifen END, p_cod_respuesta, v_mensaje, p_respuesta, p_usuario);

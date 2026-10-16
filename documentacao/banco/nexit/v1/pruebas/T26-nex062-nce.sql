@@ -86,7 +86,7 @@ BEGIN
 
   -- R02-02 (flujo_nce): un operador con SOLO CREAR registra la consulta de una FE/NCE pendiente con su identidad real; no puede usar la función EDITAR original; el estado final y otro tenant se rechazan
   DECLARE
-    v_op uuid; v_perfil uuid; v_pend uuid; v_res text;
+    v_op uuid; v_perfil uuid; v_pend uuid; v_pend2 uuid; v_res text; v_cdc_pend text := '01' || '80000005' || '6' || '001' || '001' || '0000002' || '1' || '20261016' || '1' || '123456789' || '0';
   BEGIN
     INSERT INTO usuarios (empresa_id, usuario, nombre, password_hash) VALUES (v_a, 'op.t26.crear', 'Operador solo CREAR', v_h) RETURNING id INTO v_op;
     INSERT INTO perfiles (empresa_id, codigo, nombre) VALUES (v_a, 'solo-crear-t26', 'Solo CREAR (T26)') RETURNING id INTO v_perfil;
@@ -98,9 +98,22 @@ BEGIN
     INSERT INTO documentos_electronicos (empresa_id, sucursal_id, tipo, establecimiento, punto_expedicion, numero, fecha_emision, receptor_nombre, moneda, total, estado_local, estado_sifen, creado_por)
     VALUES (v_a, v_sa, 'FE', '001', '001', '0000002', now(), 'Cliente T26', 'PYG', 1000, 'ENVIADO', 'SIN_CONSULTA', v_ua) RETURNING id INTO v_pend;
 
+    -- R03-01: respuesta DEFINITIVA sin CDC (documento sin CDC guardado) → RESPUESTA_INVALIDA, evidencia conservada y estado/CDC intactos
+    INSERT INTO documentos_electronicos (empresa_id, sucursal_id, tipo, establecimiento, punto_expedicion, numero, fecha_emision, receptor_nombre, moneda, total, estado_local, estado_sifen, creado_por)
+    VALUES (v_a, v_sa, 'FE', '001', '001', '0000003', now(), 'Cliente T26', 'PYG', 1000, 'ENVIADO', 'SIN_CONSULTA', v_ua) RETURNING id INTO v_pend2;
+    v_res := fe_documento_registrar_consulta_flujo_nce(v_a, v_op, v_pend2, 'OK', 200, 'req-t26-sc', 'Aprobado', 'APROBADO', NULL, '0260', 'ok', NULL, NULL, '{}'::jsonb);
+    PERFORM pg_temp.ok(v_res = 'RESPUESTA_INVALIDA' AND (SELECT estado_sifen = 'SIN_CONSULTA' AND cdc IS NULL FROM documentos_electronicos WHERE id = v_pend2)
+      AND (SELECT count(*) = 1 AND bool_and(resultado = 'RESPUESTA_INVALIDA' AND estado_sifen IS NULL AND actor_id = v_op) FROM documento_electronico_intentos WHERE documento_id = v_pend2 AND tipo = 'CONSULTA'), 'R03-01: APROBADO sin CDC no cambia el estado ni el CDC y deja la tentativa como RESPUESTA_INVALIDA con el actor real');
+    v_res := fe_documento_registrar_consulta_flujo_nce(v_a, v_op, v_pend2, 'OK', 200, 'req-t26-rc', 'Rechazado', 'RECHAZADO', NULL, '0260', 'x', NULL, NULL, '{}'::jsonb);
+    PERFORM pg_temp.ok(v_res = 'RESPUESTA_INVALIDA' AND (SELECT estado_sifen = 'SIN_CONSULTA' FROM documentos_electronicos WHERE id = v_pend2), 'R03-01: RECHAZADO sin CDC tampoco cambia el estado fiscal');
+    v_res := fe_documento_registrar_consulta_flujo_nce(v_a, v_op, v_pend2, 'OK', 200, 'req-t26-pe', 'Pendiente', 'PENDIENTE', NULL, '0260', 'x', NULL, NULL, '{}'::jsonb);
+    PERFORM pg_temp.ok(v_res = 'OK' AND (SELECT estado_sifen = 'PENDIENTE' FROM documentos_electronicos WHERE id = v_pend2), 'R03-01: un estado NO definitivo (PENDIENTE) sin CDC sí se registra');
+    v_res := fe_documento_registrar_consulta_flujo_nce(v_a, v_op, v_pend2, 'OK', 200, 'req-t26-dv', 'Aprobado', 'APROBADO', '01' || '80000005' || '6' || '001' || '001' || '0000009' || '1' || '20261016' || '1' || '123456789' || '0', '0260', 'x', NULL, NULL, '{}'::jsonb);
+    PERFORM pg_temp.ok(v_res = 'CDC_DIVERGENTE' AND (SELECT estado_sifen = 'PENDIENTE' AND cdc IS NULL FROM documentos_electronicos WHERE id = v_pend2), 'R03-01: un CDC que no corresponde al número del documento sigue siendo CDC_DIVERGENTE y no cambia nada');
+
     PERFORM pg_temp.falla(format($f$SELECT fe_documento_registrar_consulta(%L, %L, %L, 'OK', 200, 'req-t26', 'Aprobado', 'APROBADO', NULL, '0260', 'ok', NULL, NULL, '{}'::jsonb)$f$, v_a, v_op, v_pend), '42501', 'la función original (EDITAR) sigue rechazando al operador solo CREAR');
-    v_res := fe_documento_registrar_consulta_flujo_nce(v_a, v_op, v_pend, 'OK', 200, 'req-t26', 'Aprobado', 'APROBADO', NULL, '0260', 'ok', NULL, NULL, '{}'::jsonb);
-    PERFORM pg_temp.ok(v_res = 'OK' AND (SELECT estado_sifen = 'APROBADO' FROM documentos_electronicos WHERE id = v_pend)
+    v_res := fe_documento_registrar_consulta_flujo_nce(v_a, v_op, v_pend, 'OK', 200, 'req-t26', 'Aprobado', 'APROBADO', v_cdc_pend, '0260', 'ok', NULL, NULL, '{}'::jsonb);
+    PERFORM pg_temp.ok(v_res = 'OK' AND (SELECT estado_sifen = 'APROBADO' AND cdc = v_cdc_pend FROM documentos_electronicos WHERE id = v_pend)
       AND (SELECT count(*) = 1 AND bool_and(actor_id = v_op) FROM documento_electronico_intentos WHERE documento_id = v_pend AND tipo = 'CONSULTA'), 'flujo_nce: el operador solo CREAR registra la consulta y la auditoría lleva SU identidad (actor_id)');
     PERFORM pg_temp.falla(format($f$SELECT fe_documento_registrar_consulta_flujo_nce(%L, %L, %L, 'OK', 200, 'req-t26', 'x', 'RECHAZADO', NULL, '0260', 'x', NULL, NULL, '{}'::jsonb)$f$, v_a, v_op, v_pend), 'P0001', 'flujo_nce: un documento ya final no se reconsulta: NEX:DOCUMENTO_NO_PENDIENTE');
     PERFORM pg_temp.falla(format($f$SELECT fe_documento_registrar_consulta_flujo_nce(%L, %L, %L, 'OK', 200, 'req-t26', 'x', 'APROBADO', NULL, '0260', 'x', NULL, NULL, '{}'::jsonb)$f$, v_b, v_ub, v_pend), 'P0001', 'flujo_nce: otro tenant no ve el documento');
