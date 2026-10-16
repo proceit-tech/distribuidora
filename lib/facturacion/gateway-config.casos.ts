@@ -28,6 +28,7 @@ valor() { local l v; while IFS= read -r l || [[ -n "$l" ]]; do if [[ "$l" == "$1
 case "$1" in
   ps) exit 0;;
   exec)
+    if [[ -f "$F/docker_exec_app_falla" && "$*" == *nexit-app* ]]; then exit 1; fi
     if [[ "$*" == *printenv\\ POSTGRES_USER* ]]; then echo usuario_real; exit 0; fi
     if [[ "$*" == *printenv\\ POSTGRES_DB* ]]; then echo base_real; exit 0; fi
     if [[ "$*" == *psql* ]]; then
@@ -38,8 +39,8 @@ case "$1" in
       if [[ "$(cat "$F/tabla")" == no ]]; then echo "RESULTADO=SIN_NEX047"; echo "EMPRESA_ID="; echo "COMPARTIDA=0"; exit 0; fi
       if [[ "$n" != 1 ]]; then echo "RESULTADO=EMPRESA_NO_UNICA:$n"; echo "EMPRESA_ID="; echo "COMPARTIDA=0"; exit 0; fi
       case "$modo" in
-        verificar) echo "RESULTADO=VERIFICADO:$fila";;
-        aplicar) if [[ "$(cat "$F/priv")" == no ]]; then echo "RESULTADO=SIN_PRIVILEGIO"; elif [[ "$fila" == sin_fila ]]; then echo activa_igual >"$F/fila"; echo "RESULTADO=CONFIGURADA"; elif [[ "$fila" == inactiva ]]; then echo activa_igual >"$F/fila"; echo "RESULTADO=REACTIVADA"; elif [[ "$fila" == activa_igual ]]; then echo "RESULTADO=YA_CONFIGURADA"; else echo "RESULTADO=CONFLICTO_CONFIG_DISTINTA"; fi;;
+        verificar) echo "RESULTADO=VERIFICADO:$fila"; [[ -f "$F/cambiar_uuid_tras_verificar" ]] && echo bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb >"$F/empresa_uuid";;
+        aplicar) if [[ "$eid" != "$uuid" ]]; then echo "RESULTADO=EMPRESA_DISTINTA_NO_SE_TOCA"; elif [[ "$(cat "$F/priv")" == no ]]; then echo "RESULTADO=SIN_PRIVILEGIO"; elif [[ "$fila" == sin_fila ]]; then echo activa_igual >"$F/fila"; echo "RESULTADO=CONFIGURADA"; elif [[ "$fila" == inactiva ]]; then echo activa_igual >"$F/fila"; echo "RESULTADO=REACTIVADA"; elif [[ "$fila" == activa_igual ]]; then echo "RESULTADO=YA_CONFIGURADA"; else echo "RESULTADO=CONFLICTO_CONFIG_DISTINTA"; fi;;
         revertir) if [[ "$eid" != "$uuid" ]]; then echo "RESULTADO=EMPRESA_DISTINTA_NO_SE_TOCA"; elif [[ "$fila" == sin_fila ]]; then echo "RESULTADO=SIN_FILA"; elif [[ "$fila" == activa_distinta ]]; then echo "RESULTADO=CONFIG_DISTINTA_NO_SE_TOCA"; elif [[ "$propio" != si ]]; then echo "RESULTADO=NO_PROPIA_NO_SE_TOCA"; elif [[ "$fila" == activa_igual ]]; then echo inactiva >"$F/fila"; echo "RESULTADO=DESACTIVADA"; else echo "RESULTADO=YA_INACTIVA"; fi;;
       esac; echo "EMPRESA_ID=$uuid"; echo "COMPARTIDA=$comp"
       )"
@@ -337,6 +338,27 @@ export async function verificarCasosGatewayConfig(): Promise<string[]> {
     const lr = nuevo(); lr.correr(["--aplicar"], cred); lr.poner("perder_respuesta", "revertir");
     const lrr = lr.correr(["--revertir"]);
     cierto("T-R03-05 se pierde la respuesta de la REVERSIÓN: se reconsulta (DESACTIVADA comprobada) y se completa la retirada de las variables propias", lrr.codigo === 0 && /se comprobó por reconsulta: DESACTIVADA/.test(lrr.salida) && lr.archivo("fila") === "inactiva" && !/NEXIT_FE_CASAMINGO/.test(lineasEnv(lr)));
+
+    // ── R04-01: el UUID del preflight se verifica en la misma transacción que ESCRIBE (aplicar) ────────────
+    const ci = nuevo({ fila: "sin_fila" }); ci.marca("cambiar_uuid_tras_verificar");
+    const cir = ci.correr(["--aplicar"], cred);
+    cierto("T-R04-01 la razón social pasa a identificar a la empresa B DESPUÉS del preflight (UUID de A): --aplicar aborta (11) sin modificar la fila fiscal, app.env, copias ni la app; ningún registro atribuye propiedad (ni a A ni a B)", cir.codigo === 11 && /pasó a identificar a OTRA empresa/.test(cir.salida) && ci.archivo("fila") === "sin_fila" && lineasEnv(ci) === BASE && copias(ci).length === 0 && recreaciones(ci) === 0 && !/^db_propio=si$/m.test(readFileSync(estadoDe(ci.stack, UUID_A), "utf8")) && !existsSync(estadoDe(ci.stack, UUID_B)));
+    const sqlTxt = sql.replace(/--.*$/gm, "");
+    cierto("T-R04-01 (texto SQL) la comprobación del UUID esperado ocurre ANTES del chequeo de privilegios y de cualquier escritura, para aplicar y revertir", sqlTxt.indexOf("EMPRESA_DISTINTA_NO_SE_TOCA") > 0 && sqlTxt.indexOf("EMPRESA_DISTINTA_NO_SE_TOCA") < sqlTxt.indexOf("has_table_privilege") && sqlTxt.indexOf("has_table_privilege") < sqlTxt.indexOf("INSERT INTO public.fe_gateway_config"));
+
+    // ── R04-02: no retirar credenciales mientras la fila preexistente siga activa ─────────────────────────
+    const pf = nuevo({ fila: "activa_igual" });
+    const pa = pf.correr(["--aplicar"], cred);
+    const estadoPf = readFileSync(estadoDe(pf.stack), "utf8");
+    cierto("T-R04-02 fila ACTIVA preexistente sin credenciales: --aplicar agrega las variables (fila no propia: db_propio=no, env_escrito=si) y deja el contenedor listo", pa.codigo === 0 && /^db_propio=no$/m.test(estadoPf) && /^env_escrito=si$/m.test(estadoPf) && lineasEnv(pf).includes("NEXIT_FE_CASAMINGO_RUC='" + RUC + "'") && pf.archivo("fila") === "activa_igual");
+    const prv = pf.correr(["--revertir"]);
+    cierto("T-R04-02 --revertir: la fila preexistente SIGUE activa, por eso las credenciales NO se retiran (no queda SIN_CREDENCIALES con el gateway activo): fila, app.env y contenedor intactos, sin recreación nueva", prv.codigo === 0 && pf.archivo("fila") === "activa_igual" && lineasEnv(pf).includes("NEXIT_FE_CASAMINGO_PASSWORD='" + CLAVE + "'") && recreaciones(pf) === 1 && /retirarlas dejaría el gateway activo sin credenciales/.test(prv.salida) && pf.correr(["--verificar"]).codigo === 0);
+
+    // ── R04-03: fallo de docker exec ≠ variables ausentes ──────────────────────────────────────────────────
+    const de = nuevo(); de.marca("docker_exec_app_falla");
+    const der = de.correr(["--aplicar"], cred);
+    cierto("T-R04-03 docker exec sobre la app falla en TODAS las lecturas: tras compensar BD y app.env, la ausencia de las variables NO está comprobada → PARCIAL (12), jamás COMPENSADO; sin secretos", der.codigo === 12 && /PARCIAL \/ INTERVENCIÓN NECESARIA/.test(der.salida) && !/COMPENSADO tras/.test(der.salida) && /contenedor NO comprobado sin las variables nuevas/.test(der.salida) && lineasEnv(de) === BASE && de.archivo("fila") === "inactiva" && !der.salida.includes(CLAVE) && !de.archivo("log").includes(CLAVE));
+    cierto("T-R04-03 (texto) la ausencia solo se acepta si el contenedor es inspeccionable antes Y después de leer (docker exec … true), porque printenv sale con 1 tanto si la variable no existe como si docker falla", /contenedor_inspeccionable\(\) \{ "\$DOCKER" exec "\$APPC" true/.test(sh) && /ausentes_en_contenedor\(\) \{ local a b; contenedor_inspeccionable \|\| return 1;.*contenedor_inspeccionable \|\| return 1;/.test(sh));
 
     // ── T-R03-06: copias exclusivas, 600 y sin sobrescribir ──────────────────────────────────────────
     const bk = nuevo();

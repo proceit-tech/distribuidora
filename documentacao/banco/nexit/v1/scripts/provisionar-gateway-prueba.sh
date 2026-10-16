@@ -62,8 +62,11 @@ escribir_env() { # $1 = ruc|- ; $2 = password|- ("-" quita las variables) ; reem
   chmod 600 "$tmp" && mv "$tmp" "$ENV_FILE" || { rm -f "$tmp"; return 1; }
 }
 valor_contenedor() { "$DOCKER" exec "$APPC" printenv "$1" </dev/null 2>/dev/null; }
-presentes_en_contenedor() { local a b; a="$(valor_contenedor "$K_RUC")"; b="$(valor_contenedor "$K_PWD")"; [[ -n "$a" && -n "$b" ]]; }
-ausentes_en_contenedor() { local a b; a="$(valor_contenedor "$K_RUC")"; b="$(valor_contenedor "$K_PWD")"; [[ -z "$a" && -z "$b" ]]; }
+# R04-03: printenv sale con 1 también cuando la variable NO existe, así que el código de salida de printenv no distingue «ausente» de «docker exec falló». Se comprueba por separado que el contenedor
+# sea inspeccionable (docker exec … true) ANTES y DESPUÉS de leer; si no lo es, «ausente» NO está comprobado (devuelve fallo).
+contenedor_inspeccionable() { "$DOCKER" exec "$APPC" true </dev/null >/dev/null 2>&1; }
+presentes_en_contenedor() { local a b; contenedor_inspeccionable || return 1; a="$(valor_contenedor "$K_RUC")"; b="$(valor_contenedor "$K_PWD")"; [[ -n "$a" && -n "$b" ]]; }
+ausentes_en_contenedor() { local a b; contenedor_inspeccionable || return 1; a="$(valor_contenedor "$K_RUC")"; b="$(valor_contenedor "$K_PWD")"; contenedor_inspeccionable || return 1; [[ -z "$a" && -z "$b" ]]; }
 
 # ── 0. Prerrequisitos (sin cambiar nada) ───────────────────────────────────────────────────────────
 "$DOCKER" ps >/dev/null 2>&1 || fallo "no hay acceso a Docker con este usuario (se requiere el agente autorizado en la VM)." 3
@@ -146,7 +149,7 @@ compensar() { # $1 = motivo
     if [[ "$fx" == "inactiva" ]]; then det="$det; fila desactivada y verificada"; else ok=no; det="$det; fila NO verificada como desactivada (resultado ${RES:-?}, estado leído $fx)"; fi
   fi
   if [[ "$RECREACION_INTENTADA" == "si" ]]; then
-    if [[ "$ok" == "si" ]] && dc up -d --no-deps --force-recreate app >/dev/null 2>&1 && ausentes_en_contenedor; then det="$det; contenedor recreado sin las variables nuevas y verificado"; else ok=no; det="$det; contenedor NO comprobado sin las variables nuevas"; fi
+    if [[ "$ok" == "si" ]] && dc up -d --no-deps --force-recreate app >/dev/null 2>&1 && ausentes_en_contenedor; then det="$det; contenedor recreado sin las variables nuevas y verificado (inspeccionable, ambas ausentes)"; else ok=no; det="$det; contenedor NO comprobado sin las variables nuevas (recreación o inspección con docker exec fallida)"; fi
   fi
   if [[ "$ok" == "si" ]]; then
     est_set etapa compensado >/dev/null 2>&1 || true
@@ -194,6 +197,7 @@ if [[ "$MODO" == "aplicar" ]]; then
     INDETERMINADO) reg db_indeterminado si; echo "ESTADO INDETERMINADO: no se pudo confirmar si la fila de fe_gateway_config de la empresa $EMPRESA_ID cambió (la respuesta se perdió y la reconsulta falló). NO se tocó app.env ni la app. Verifique el estado de la base y use --verificar antes de reintentar." >&2; exit 12;;
     SIN_PRIVILEGIO) est_set etapa compensado >/dev/null 2>&1; fallo "el usuario de base «$PGU» no puede escribir en fe_gateway_config; no se cambió nada." 7;;
     CONFLICTO_CONFIG_DISTINTA) est_set etapa compensado >/dev/null 2>&1; fallo "la empresa ya tiene otra configuración de gateway; no se sustituye sin decisión humana." 7;;
+    EMPRESA_DISTINTA_NO_SE_TOCA) est_set etapa compensado >/dev/null 2>&1; fallo "la razón social «$RAZON» pasó a identificar a OTRA empresa entre el preflight (UUID $EMPRESA_ID) y la escritura; la base no cambió nada. Reintente tras verificar la identidad." 11;;
     *) est_set etapa compensado >/dev/null 2>&1; fallo "resultado inesperado de la base: ${R:-vacío}." 7;;
   esac
   reg etapa db_ok; tras_cambio
@@ -234,7 +238,9 @@ case "$R" in
   SIN_PRIVILEGIO) fallo "el usuario de base «$PGU» no puede escribir en fe_gateway_config; no se cambió nada." 7;;
   *) fallo "resultado inesperado de la base: ${R:-vacío}." 7;;
 esac
-if [[ "$ENV_ESCRITO" == "si" && "${COMP:-0}" == "0" && "$R" != "CONFIG_DISTINTA_NO_SE_TOCA" ]] && { tiene_env "$K_RUC" || tiene_env "$K_PWD"; }; then
+# R04-02: las variables solo se retiran si la fila quedó INACTIVA/ausente (desactivada ahora o ya inactiva). Si la fila preexistente sigue ACTIVA (no fue propia), quitarlas dejaría la empresa en
+# SIN_CREDENCIALES con el gateway activo: se conservan y se informa (retirarlas exige un plan de desligamiento explícito).
+if [[ "$ENV_ESCRITO" == "si" && "${COMP:-0}" == "0" && ( "$R" == "DESACTIVADA" || "$R" == "YA_INACTIVA" || "$R" == "SIN_FILA" ) ]] && { tiene_env "$K_RUC" || tiene_env "$K_PWD"; }; then
   BAK="$(copia_exclusiva)" || fallo "no se pudo crear la copia de app.env con modo 600; las variables NO se retiraron." 4
   escribir_env - - || fallo "no se pudo actualizar app.env (copia: $(basename "$BAK"))." 4
   est_set env_escrito no || echo "ATENCIÓN: no se pudo actualizar el archivo de estado; datos: empresa_id=$EMPRESA_ID env_escrito=no." >&2
@@ -242,7 +248,7 @@ if [[ "$ENV_ESCRITO" == "si" && "${COMP:-0}" == "0" && "$R" != "CONFIG_DISTINTA_
   ausentes_en_contenedor || { echo "ESTADO FINAL: PARCIAL / INTERVENCIÓN NECESARIA — la app se recreó pero el contenedor aún tiene las variables. empresa_id=$EMPRESA_ID" >&2; exit 12; }
   info "variables de credenciales retiradas (las había escrito este provisionador) y app recreada."
 else
-  info "app.env NO se modifica (credenciales preexistentes, compartidas con otra empresa [COMPARTIDA=${COMP:-0}] o no escritas por este provisionador)."
+  info "app.env NO se modifica (la fila sigue activa o no fue propia, credenciales preexistentes o compartidas con otra empresa [COMPARTIDA=${COMP:-0}]): retirarlas dejaría el gateway activo sin credenciales."
 fi
 est_set etapa revertido || echo "ATENCIÓN: no se pudo actualizar el archivo de estado (etapa revertido)." >&2
 info "REVERTIDO (solo lo propio). Si la fila se desactivó, el envío vuelve a responder 409 antes de reservar número."

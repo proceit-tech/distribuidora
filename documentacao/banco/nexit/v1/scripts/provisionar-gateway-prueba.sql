@@ -1,7 +1,8 @@
 -- Parte SQL del provisionamiento del gateway FE de PRUEBA (PRO-133, AUD-PRO133-R01/R02). La invoca scripts/provisionar-gateway-prueba.sh; no se ejecuta a mano ni por el runner de migraciones.
 -- Parámetros psql: -v modo=verificar|aplicar|revertir  -v razon='CASA MINGO'  -v ref=CASAMINGO  -v url=https://…  -v timeout=30000  -v propio=si|no  -v empresa_id=<uuid|vacío>
 -- IDEMPOTENTE y SIN credenciales: solo lee/escribe fe_gateway_config (URL + referencia lógica). La empresa se identifica por RAZÓN SOCIAL (no se presume su código) y debe ser ÚNICA.
--- R03-01: la reversión exige que la empresa identificada por razón social tenga EXACTAMENTE el UUID registrado por el provisionador (empresa_id); si no, no toca nada.
+-- R03-01/R04-01: tanto APLICAR como REVERTIR exigen, dentro de la MISMA transacción que escribe, que la empresa identificada por razón social tenga EXACTAMENTE el UUID esperado (empresa_id: el
+--   obtenido en el preflight al aplicar, el registrado por el provisionador al revertir); si la identificación cambió, no se toca nada (EMPRESA_DISTINTA_NO_SE_TOCA).
 -- R03-04: el shell invoca este archivo con psql -1 (una sola transacción); la salida incluye «EMPRESA_ID=<uuid>».
 -- Salida: «RESULTADO=<código>», «EMPRESA_ID=<uuid>» y «COMPARTIDA=<n>» (cuántas OTRAS empresas usan la misma credencial_ref). Nunca toca migraciones, numeración, documentos ni otras tablas.
 -- R02-05: la existencia de fe_gateway_config se comprueba FUERA del bloque DO (\if): sin NEX-047 el bloque con el tipo de la tabla ni siquiera se compila y se devuelve SIN_NEX047.
@@ -46,6 +47,11 @@ BEGIN
     PERFORM set_config('nexit.resultado', v_res, false); RETURN;
   END IF;
 
+  -- R04-01: verificación de identidad ANTES de cualquier escritura (aplicar y revertir)
+  IF current_setting('nexit.empresa_id') IS DISTINCT FROM v_empresa::text THEN
+    PERFORM set_config('nexit.resultado', 'EMPRESA_DISTINTA_NO_SE_TOCA', false); RETURN;
+  END IF;
+
   IF NOT (has_table_privilege(current_user, 'public.fe_gateway_config', 'INSERT') AND has_table_privilege(current_user, 'public.fe_gateway_config', 'UPDATE')) THEN
     PERFORM set_config('nexit.resultado', 'SIN_PRIVILEGIO', false); RETURN;
   END IF;
@@ -65,8 +71,7 @@ BEGIN
   END IF;
 
   IF v_modo = 'revertir' THEN
-    IF current_setting('nexit.empresa_id') IS DISTINCT FROM v_empresa::text THEN v_res := 'EMPRESA_DISTINTA_NO_SE_TOCA';
-    ELSIF NOT v_existe THEN v_res := 'SIN_FILA';
+    IF NOT v_existe THEN v_res := 'SIN_FILA';
     ELSIF NOT v_igual THEN v_res := 'CONFIG_DISTINTA_NO_SE_TOCA';
     ELSIF current_setting('nexit.propio') <> 'si' THEN v_res := 'NO_PROPIA_NO_SE_TOCA';
     ELSIF NOT v_cfg.activo THEN v_res := 'YA_INACTIVA';
