@@ -131,6 +131,37 @@ export default function DocumentosPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [claveConsulta]);
 
+  // Actualización automática (PRO-94, RN-19): mientras haya documentos pendientes de resultado fiscal se RELEE el listado (solo lectura: no consulta ni reenvía nada desde el navegador; el servidor
+  // los consulta). Cada 30 s, solo con la pestaña visible, máximo 120 lecturas por pendiente-visible y sin parpadeo de carga; el intervalo se limpia al desmontar o al no quedar pendientes.
+  const hayPendientes = (resultado?.datos?.documentos ?? []).some((d) => (d.estadoLocal === "ENVIADO" || d.estadoLocal === "ENVIO_INDETERMINADO") && (d.estadoSifen === "SIN_CONSULTA" || d.estadoSifen === "PENDIENTE" || d.estadoSifen === "NO_RECONOCIDO"));
+
+  useEffect(() => {
+    if (!hayPendientes || resultado?.clave !== claveConsulta) return;
+
+    let activo = true;
+    let lecturas = 0;
+    const p = new URLSearchParams({ pagina: String(pagina), tamano: String(PAGE_SIZE) });
+
+    for (const [k, v] of Object.entries({ q: busquedaAplicada, tipo, sucursal, estadoSifen, grupo, desde, hasta, orden: orden?.campo ?? "", dir: orden?.dir ?? "" })) if (v) p.set(k, v);
+
+    const t = window.setInterval(() => {
+      if (document.visibilityState !== "visible" || lecturas >= 120) return;
+
+      lecturas += 1;
+      fetch(`/api/documentos?${p.toString()}`, { cache: "no-store" })
+        .then((r) => leerJson<Respuesta>(r, "No fue posible actualizar los documentos electrónicos."))
+        .then((datos) => { if (activo) setResultado({ clave: claveConsulta, datos, error: "" }); })
+        .catch(() => undefined);
+    }, 30000);
+
+    return () => {
+      activo = false;
+      window.clearInterval(t);
+    };
+    // claveConsulta resume los filtros; hayPendientes decide si hace falta el intervalo.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hayPendientes, claveConsulta]);
+
   const cargando = resultado?.clave !== claveConsulta;
   const datos = resultado?.datos ?? null;
   const errorCarga = resultado?.error ?? "";

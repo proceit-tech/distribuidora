@@ -6,6 +6,7 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { useSearchParams } from "next/navigation";
 
 import ui from "@/components/ui/lista-padrao/lista.module.css";
+import { entradasIniciales } from "@/lib/facturacion/nce-entradas";
 import { formatearDecimalTexto } from "@/lib/formato/decimal-texto";
 import { formatearFechaPy } from "@/lib/formato/listas";
 
@@ -102,9 +103,9 @@ function Formulario() {
     try {
       const r = await pedir<{ factura: Factura; sucursales: Sucursal[] }>(`/api/notas-credito/facturas/${id}`);
       const f = r.factura;
-      const nuevas: Record<number, Entrada> = {};
+      const nuevas: Record<number, Entrada> = precarga ? {} : entradasIniciales(f.lineas, f.motivoFijado ?? "");
 
-      for (const l of f.lineas) {
+      if (precarga) for (const l of f.lineas) {
         const p = precarga?.lineas.find((x) => x.linea === l.linea);
 
         nuevas[l.linea] = { incluida: !!p, valor: p ? (precarga!.motivo === 2 ? p.cantidad : p.monto) : "" };
@@ -314,7 +315,7 @@ function Formulario() {
             <div className={estilos.grid}>
               <label className={estilos.field}>
                 <span>Motivo</span>
-                <select value={motivo} onChange={(e) => setMotivo(e.target.value === "" ? "" : Number(e.target.value))} disabled={factura.motivoFijado !== null}>
+                <select value={motivo} onChange={(e) => { const m = e.target.value === "" ? "" : Number(e.target.value); setMotivo(m); setEntradas(entradasIniciales(factura.lineas, m)); }} disabled={factura.motivoFijado !== null}>
                   <option value="">Seleccione…</option>
                   {factura.motivosPermitidos.map((m) => <option key={m} value={m}>{MOTIVOS[m]}</option>)}
                 </select>

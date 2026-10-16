@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { prepararFacturacion } from "@/lib/facturacion/servidor";
 import { leerFacturaOriginal, puntosParaNce } from "@/lib/facturacion/nce";
+import { reconciliarNcePendientes } from "@/lib/facturacion/nce-emision";
 import { respuestaErrorFacturacion } from "@/lib/facturacion/shared";
 
 type Contexto = { params: Promise<{ id: string }> };
@@ -15,6 +16,8 @@ export async function GET(_request: Request, contexto: Contexto) {
   const { id } = await contexto.params;
 
   try {
+    await reconciliarNcePendientes(b.db, b.empresaId, b.usuarioId, id);
+
     const fe = await leerFacturaOriginal(b.db, b.empresaId, b.usuarioId, id);
     const { receptor: _receptor, ...visible } = fe;
 

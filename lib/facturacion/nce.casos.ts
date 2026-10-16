@@ -11,6 +11,9 @@ import { leerCuerpoNce } from "@/lib/facturacion/nce";
 import { calcularNce, construirPayloadNCE, esMotivoNce, lineasParaSql, saldoDe, validarEntradaNce, type EntradaNce, type LineaOriginal } from "@/lib/facturacion/payload-nce";
 import { CADENCIA_SEGUNDOS, ejecutarLote, segundosHastaProxima } from "@/lib/facturacion/consulta-automatica";
 import { textoDec } from "@/lib/facturacion/calculo";
+import { entradasIniciales } from "@/lib/facturacion/nce-entradas";
+import { reconciliarNcePendientes, repeticion } from "@/lib/facturacion/nce-emision";
+import { ErrorFacturacion } from "@/lib/facturacion/shared";
 
 const raiz = process.cwd();
 const leer = (r: string) => readFileSync(join(raiz, r), "utf8");
@@ -151,6 +154,69 @@ export async function verificarCasosNce(): Promise<string[]> {
   const lote = await ejecutarLote(dbFalsa as never, { dormir: async () => undefined });
 
   igual("lote sin usuario autorizado: no consulta, reprograma y cuenta sinActor", [lote.reservados, lote.consultados, lote.sinActor, llamadas], [1, 0, 1, ["reservar", "programar"]]);
+
+  // ── 9. Corrección AUD-PRO94-NCE-R01 ───────────────────────────────────────────────────────────────
+  // R01-01: el cliente con facturas enviadas sin resultado se localiza; solo las APROBADAS con CDC son elegibles.
+  const fuente = leer("lib/facturacion/nce.ts");
+  const clientesSql = fuente.slice(fuente.indexOf("export async function buscarClientesConFacturas"), fuente.indexOf("export type FacturaElegible"));
+  const elegiblesSql = fuente.slice(fuente.indexOf("export async function listarFacturasElegibles"), fuente.indexOf("export async function puntosParaNce"));
+
+  cierto("R01-01: la búsqueda de clientes incluye FE aprobadas O enviadas con SIN_CONSULTA/PENDIENTE, siempre por empresa y alcance", /estado_sifen = 'APROBADO' OR \(d\.estado_local = 'ENVIADO' AND d\.estado_sifen IN \('SIN_CONSULTA', 'PENDIENTE'\)\)/.test(clientesSql) && /c\.empresa_id = \$1/.test(clientesSql) && /sucursal_en_alcance/.test(clientesSql));
+  cierto("R01-01: las facturas elegibles para emitir siguen siendo SOLO APROBADAS con CDC y saldo", /d\.estado_sifen = 'APROBADO' AND d\.cdc IS NOT NULL/.test(elegiblesSql) && !/SIN_CONSULTA/.test(elegiblesSql) && /original - acreditado > 0/.test(elegiblesSql));
+  cierto("R01-01: al seleccionar el cliente se consulta (actualizar=1) antes de listar", /actualizar=1/.test(leer("app/(private)/notas-credito/page.tsx")) && /reconciliarFacturasPendientes/.test(leer("app/api/notas-credito/facturas/route.ts")));
+
+  // R01-02: Devolución precarga las líneas con saldo y su cantidad disponible; las agotadas quedan fuera; 3/4/8 vacíos.
+  const cinco = [1, 2, 3, 4, 5].map((n) => ({ linea: n, agotada: n === 2 || n === 4, cantidadDisponible: String(n * 10) }));
+  const devI = entradasIniciales(cinco, 2);
+
+  igual("R01-02: Devolución incluye las 3 líneas con saldo con su cantidad disponible; las 2 agotadas fuera", [devI[1], devI[2], devI[3], devI[4], devI[5]], [{ incluida: true, valor: "10" }, { incluida: false, valor: "" }, { incluida: true, valor: "30" }, { incluida: false, valor: "" }, { incluida: true, valor: "50" }]);
+  igual("R01-02: motivos 3/4/8 y sin motivo arrancan vacíos (cambiar de motivo reinicializa)", [3, 4, 8, ""].every((m) => Object.values(entradasIniciales(cinco, m as number | "")).every((e) => !e.incluida && e.valor === "")), true);
+  {
+    // quitar una línea y reducir otra: el cuerpo y la validación reflejan exactamente eso
+    const quitada: Record<number, { incluida: boolean; valor: string }> = { ...devI, 3: { incluida: false, valor: "30" }, 5: { incluida: true, valor: "20" } };
+    const sel = cinco.filter((l) => quitada[l.linea].incluida).map((l) => l.linea);
+
+    igual("R01-02: tras quitar el ítem 3 y reducir el 5, solo viajan las líneas 1 y 5 con sus cantidades", [sel, quitada[1].valor, quitada[5].valor], [[1, 5], "10", "20"]);
+    cierto("R01-02: la validación acepta la cantidad precargada completa y la reducida", validarEntradaNce(entrada(2, [{ original: L1, acreditado: SIN, cantidad: "2" }])).length === 0 && validarEntradaNce(entrada(2, [{ original: L1, acreditado: SIN, cantidad: "1" }])).length === 0);
+  }
+  const pagNce = leer("app/(private)/notas-credito/page.tsx");
+
+  cierto("R01-02: la pantalla usa el estado inicial al abrir la factura y al cambiar de motivo, y respeta la precarga de corrección", /entradasIniciales\(f\.lineas, f\.motivoFijado \?\? ""\)/.test(pagNce) && /setEntradas\(entradasIniciales\(factura\.lineas, m\)\)/.test(pagNce) && /if \(precarga\) for/.test(pagNce));
+
+  // R01-03: idempotencia por identidad completa (FE, motivo, líneas, sucursal, punto, observación)
+  const SUC = "22222222-2222-4222-8222-222222222222";
+  const PTO = "33333333-3333-4333-8333-333333333333";
+  const cuerpoBase = { facturaId: uuid, motivo: 3, sucursalId: SUC, puntoId: PTO, observacion: "Nota", claveIdempotencia: "nce-clave-xyz", lineas: [{ linea: 1, monto: "33000" }] };
+  const dbIdem = (cod: string) => ({
+    query: async (texto: string, _p?: unknown[]) => {
+      void _p;
+
+      if (texto.includes("FROM documentos_electronicos d LEFT JOIN nce_origen")) return { rows: [{ id: "doc-1", numero: "0000001", tipo: "NCE", sucursalId: SUC, puntoCodigo: "001", feId: uuid, motivo: 3, observacion: "Nota" }] };
+      if (texto.includes("FROM nce_lineas")) return { rows: [{ linea: 1, cantidad: "0", monto: "33000" }] };
+      if (texto.includes("FROM fe_puntos_expedicion")) return { rows: [{ codigo: cod }] };
+
+      return { rows: [] };
+    },
+  });
+  const conflicto = async (c: unknown, db: unknown) => { try { await repeticion(db as never, uuid, uuid, c as never); return "sin conflicto"; } catch (e) { return e instanceof ErrorFacturacion ? e.estado : "otro"; } };
+
+  igual("R01-03: contenido idéntico reutiliza el mismo documento (sin reservar)", await repeticion(dbIdem("001") as never, uuid, uuid, cuerpoBase as never), { documentoId: "doc-1", numero: "0000001" });
+  igual("R01-03: misma clave con OTRA sucursal → 409", await conflicto({ ...cuerpoBase, sucursalId: "44444444-4444-4444-8444-444444444444" }, dbIdem("001")), 409);
+  igual("R01-03: misma clave con OTRO punto (código distinto) → 409", await conflicto(cuerpoBase, dbIdem("002")), 409);
+  igual("R01-03: misma clave con OTRA observación → 409", await conflicto({ ...cuerpoBase, observacion: "Otra" }, dbIdem("001")), 409);
+  igual("R01-03: observación vacía vs guardada → 409; solo espacios alrededor NO cambia la identidad", [await conflicto({ ...cuerpoBase, observacion: "" }, dbIdem("001")), await conflicto({ ...cuerpoBase, observacion: "  Nota " }, dbIdem("001"))], [409, "sin conflicto"]);
+  igual("R01-03: otra factura, otro motivo u otro monto → 409", [await conflicto({ ...cuerpoBase, facturaId: "55555555-5555-4555-8555-555555555555" }, dbIdem("001")), await conflicto({ ...cuerpoBase, motivo: 4 }, dbIdem("001")), await conflicto({ ...cuerpoBase, lineas: [{ linea: 1, monto: "1" }] }, dbIdem("001"))], [409, 409, 409]);
+
+  // R01-04: Documentos releen el listado de forma controlada y la factura reconcilia sus NCE pendientes con límites
+  const docs = leer("app/(private)/documentos/page.tsx");
+
+  cierto("R01-04: Documentos releen en silencio cada 30 s solo con pendientes y pestaña visible, con tope y limpieza del intervalo", /setInterval\(/.test(docs) && /30000/.test(docs) && /visibilityState !== "visible"/.test(docs) && /lecturas >= 120/.test(docs) && /clearInterval\(t\)/.test(docs) && /if \(!hayPendientes/.test(docs));
+  cierto("R01-04: la relectura es solo GET del listado (no consulta ni reenvía desde el navegador)", !/consultar-estado|enviar/.test(docs.slice(docs.indexOf("Actualización automática"), docs.indexOf("const cargando"))));
+  const consultasNce: string[] = [];
+  const nProc = await reconciliarNcePendientes({ query: async (t: string) => { consultasNce.push(t); return { rows: [] }; } } as never, uuid, uuid, uuid);
+
+  igual("R01-04: reconciliar NCE de una factura consulta como máximo 3, solo ENVIADO pendientes no consultadas hace <60 s, por empresa y alcance", [nProc, /LIMIT 3/.test(consultasNce[0]), /interval '60 seconds'/.test(consultasNce[0]), /n\.estado_sifen IN \('SIN_CONSULTA', 'PENDIENTE'\)/.test(consultasNce[0]), /sucursal_en_alcance/.test(consultasNce[0])], [0, true, true, true, true]);
+  cierto("R01-04: el detalle de la factura reconcilia antes de leer, y no existe otro scheduler (un solo setInterval de servidor)", /reconciliarNcePendientes\(b\.db/.test(leer("app/api/notas-credito/facturas/[id]/route.ts")) && (leer("lib/facturacion/consulta-automatica.ts").match(/setInterval\(/g) ?? []).length === 1 && !/setInterval/.test(leer("lib/facturacion/nce-emision.ts")));
 
   return fallos;
 }

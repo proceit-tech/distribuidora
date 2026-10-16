@@ -192,7 +192,7 @@ export async function leerFacturaOriginal(db: Db, empresaId: string, usuarioId: 
 
 // ── Catálogos de la pantalla ────────────────────────────────────────────────────────────────────────────────────────
 
-/** Clientes de la empresa que tienen facturas aprobadas en el alcance del usuario (aunque hoy estén inactivos): paginado. */
+/** Clientes de la empresa con facturas aprobadas O ya enviadas y aún sin resultado (se consultarán al seleccionarlos, RN-01) en el alcance del usuario (aunque hoy estén inactivos): paginado. Solo las APROBADAS con CDC son elegibles para la NCE (listarFacturasElegibles). */
 export async function buscarClientesConFacturas(db: Db, empresaId: string, usuarioId: string, texto: string, pagina: unknown, porPagina: unknown) {
   const q = texto.trim().slice(0, 80);
   const n = entero(porPagina, 10, 1, 25);
@@ -203,7 +203,7 @@ export async function buscarClientesConFacturas(db: Db, empresaId: string, usuar
       `SELECT c.id, c.codigo, c.razon_social AS "razonSocial", c.numero_documento AS "numeroDocumento", c.dv, count(*) OVER() AS total
          FROM clientes c
         WHERE c.empresa_id = $1
-          AND EXISTS (SELECT 1 FROM documentos_electronicos d WHERE d.empresa_id = c.empresa_id AND d.cliente_id = c.id AND d.tipo = 'FE' AND d.estado_sifen = 'APROBADO' AND sucursal_en_alcance($1::uuid, $2::uuid, d.sucursal_id))
+          AND EXISTS (SELECT 1 FROM documentos_electronicos d WHERE d.empresa_id = c.empresa_id AND d.cliente_id = c.id AND d.tipo = 'FE' AND (d.estado_sifen = 'APROBADO' OR (d.estado_local = 'ENVIADO' AND d.estado_sifen IN ('SIN_CONSULTA', 'PENDIENTE'))) AND sucursal_en_alcance($1::uuid, $2::uuid, d.sucursal_id))
           AND ($3 = '' OR concat_ws(' ', c.codigo, c.razon_social, c.nombre_fantasia, c.numero_documento, c.numero_documento || '-' || c.dv) ILIKE $4 ESCAPE '!')
         ORDER BY c.razon_social, c.id LIMIT $5 OFFSET $6`,
       [empresaId, usuarioId, q, `%${comodin(q)}%`, n, (p - 1) * n],

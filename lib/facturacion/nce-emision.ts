@@ -18,9 +18,9 @@ type F = Record<string, unknown>;
  * Repetición de la misma operación (doble clic, reintento tras perder la respuesta): si ya existe una NCE con esa clave de idempotencia se reutiliza SIN revalidar saldos (la propia NCE ya
  * consumió/bloquea el saldo y la validación fallaría contra sí misma). Se comprueba que la FE, el motivo y las líneas sean los mismos; si no, conflicto (la clave no se reutiliza con otro contenido).
  */
-async function repeticion(db: Db, empresaId: string, usuarioId: string, cuerpo: CuerpoNce): Promise<{ documentoId: string; numero: string } | null> {
+export async function repeticion(db: Db, empresaId: string, usuarioId: string, cuerpo: CuerpoNce): Promise<{ documentoId: string; numero: string } | null> {
   const r = await db.query(
-    `SELECT d.id, d.numero, d.tipo, o.fe_id AS "feId", o.motivo FROM documentos_electronicos d LEFT JOIN nce_origen o ON o.empresa_id = d.empresa_id AND o.nce_id = d.id
+    `SELECT d.id, d.numero, d.tipo, d.sucursal_id AS "sucursalId", d.punto_expedicion AS "puntoCodigo", o.fe_id AS "feId", o.motivo, o.observacion FROM documentos_electronicos d LEFT JOIN nce_origen o ON o.empresa_id = d.empresa_id AND o.nce_id = d.id
       WHERE d.empresa_id = $1 AND d.clave_idempotencia = $2 AND sucursal_en_alcance($1::uuid, $3::uuid, d.sucursal_id)`,
     [empresaId, cuerpo.claveIdempotencia, usuarioId],
   );
@@ -31,6 +31,12 @@ async function repeticion(db: Db, empresaId: string, usuarioId: string, cuerpo: 
   const conflicto = () => new ErrorFacturacion(409, "La clave de la operación ya se usó con otro contenido. Recargue el formulario e intente de nuevo.");
 
   if (d.tipo !== "NCE" || d.feId !== cuerpo.facturaId || Number(d.motivo) !== cuerpo.motivo) throw conflicto();
+
+  // Identidad completa (NCE-R01-03): sucursal, punto de expedición y observación también deben coincidir.
+  const punto = await db.query("SELECT codigo FROM fe_puntos_expedicion WHERE empresa_id = $1 AND id = $2 AND sucursal_id = $3", [empresaId, cuerpo.puntoId, cuerpo.sucursalId]);
+  const observacion = cuerpo.observacion.trim() === "" ? null : cuerpo.observacion.trim();
+
+  if (d.sucursalId !== cuerpo.sucursalId || (punto.rows[0] as F | undefined)?.codigo !== d.puntoCodigo || (d.observacion ?? null) !== observacion) throw conflicto();
 
   const lineas = (await db.query("SELECT linea, cantidad::text AS cantidad, monto::text AS monto FROM nce_lineas WHERE empresa_id = $1 AND nce_id = $2", [empresaId, String(d.id)])).rows as F[];
 
@@ -98,6 +104,32 @@ export async function emitirNce(db: Db, empresaId: string, usuarioId: string, cu
  * Antes de listar las facturas de un cliente (RN-01): consulta, con límites, las FE ya enviadas que aún no figuran como aprobadas (máx. 5 y no consultadas hace menos de 60 s), para que una factura
  * recién aprobada por SIFEN pueda seleccionarse. Un fallo de una consulta no interrumpe la búsqueda: esa factura simplemente no aparece como aprobada.
  */
+/**
+ * Al abrir una factura original (NCE-R01-04): consulta, con límites (máx. 3 y no consultadas hace menos de 60 s), sus NCE enviadas aún sin resultado, para mostrar saldo/bloqueo al día. Es la MISMA
+ * consulta del worker (consultarEstado con sus guardas); no reenvía nada y un fallo no interrumpe la lectura.
+ */
+export async function reconciliarNcePendientes(db: Db, empresaId: string, usuarioId: string, feId: string, dep: Dependencias = {}): Promise<number> {
+  const r = await db.query(
+    `SELECT n.id FROM nce_origen o JOIN documentos_electronicos n ON n.empresa_id = o.empresa_id AND n.id = o.nce_id
+      WHERE o.empresa_id = $1 AND o.fe_id = $3 AND n.estado_local = 'ENVIADO' AND n.estado_sifen IN ('SIN_CONSULTA', 'PENDIENTE') AND sucursal_en_alcance($1::uuid, $2::uuid, n.sucursal_id)
+        AND (n.ultima_consulta_at IS NULL OR n.ultima_consulta_at < now() - interval '60 seconds')
+      ORDER BY n.creado_at DESC LIMIT 3`,
+    [empresaId, usuarioId, feId],
+  );
+  let n = 0;
+
+  for (const f of r.rows as F[]) {
+    try {
+      await consultarEstado(db, empresaId, usuarioId, String(f.id), dep);
+      n += 1;
+    } catch (error) {
+      console.error("No se pudo consultar una nota de crédito pendiente:", error instanceof Error ? error.message : "desconocido");
+    }
+  }
+
+  return n;
+}
+
 export async function reconciliarFacturasPendientes(db: Db, empresaId: string, usuarioId: string, clienteId: string, dep: Dependencias = {}): Promise<number> {
   const r = await db.query(
     `SELECT d.id FROM documentos_electronicos d
