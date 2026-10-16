@@ -66,6 +66,7 @@ END $$;
 DROP FUNCTION public.fe_documento_crear_nce(uuid, uuid, uuid, uuid, text, uuid, integer, jsonb, text, numeric, jsonb);
 DROP FUNCTION public.fe_consulta_reservar(integer, integer, text[]);
 DROP FUNCTION public.fe_consulta_programar(uuid, uuid, timestamptz, boolean);
+DROP FUNCTION public.fe_documento_registrar_consulta_flujo_nce(uuid, uuid, uuid, text, integer, text, text, text, text, text, text, text, text, jsonb);
 DROP FUNCTION public.fe_punto_secuencia_configurar(uuid, uuid, uuid, text, integer, boolean);
 DROP FUNCTION public.nex_aplicar_grants_facturacion_nce();
 DROP INDEX public.documentos_electronicos_consulta_auto_idx;

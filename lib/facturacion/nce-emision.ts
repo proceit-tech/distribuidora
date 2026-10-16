@@ -120,7 +120,7 @@ export async function reconciliarNcePendientes(db: Db, empresaId: string, usuari
 
   for (const f of r.rows as F[]) {
     try {
-      await consultarEstado(db, empresaId, usuarioId, String(f.id), dep);
+      await consultarEstado(db, empresaId, usuarioId, String(f.id), dep, { flujoNce: true });
       n += 1;
     } catch (error) {
       console.error("No se pudo consultar una nota de crédito pendiente:", error instanceof Error ? error.message : "desconocido");
@@ -142,7 +142,7 @@ export async function reconciliarFacturasPendientes(db: Db, empresaId: string, u
 
   for (const f of r.rows as F[]) {
     try {
-      await consultarEstado(db, empresaId, usuarioId, String(f.id), dep);
+      await consultarEstado(db, empresaId, usuarioId, String(f.id), dep, { flujoNce: true });
       n += 1;
     } catch (error) {
       console.error("No se pudo consultar una factura pendiente:", error instanceof Error ? error.message : "desconocido");

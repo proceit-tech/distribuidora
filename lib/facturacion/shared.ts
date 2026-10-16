@@ -253,7 +253,7 @@ export class ErrorValidacionFiscal extends ErrorFacturacion {
  * (fe_documento_registrar_consulta) guarda el intento y actualiza los estados con la fila bloqueada. Un fallo del gateway queda como evidencia y no
  * cambia el estado fiscal. Sin configuración/credenciales/tipo confirmado no se llama a nadie ni se registra un intento ficticio.
  */
-export async function consultarEstado(db: Db, empresaId: string, usuarioId: string, id: string, dep: Dependencias = {}) {
+export async function consultarEstado(db: Db, empresaId: string, usuarioId: string, id: string, dep: Dependencias = {}, opciones: { flujoNce?: boolean } = {}) {
   const doc = await leerDocumento(db, empresaId, usuarioId, id);
 
   if (!doc) throw new ErrorFacturacion(404, "Documento no encontrado.");
@@ -284,7 +284,7 @@ export async function consultarEstado(db: Db, empresaId: string, usuarioId: stri
   const r = decidirConsulta({ tipo: String(doc.tipo), establecimiento: String(doc.establecimiento), puntoExpedicion: String(doc.puntoExpedicion), numero: String(doc.numero), cdc: (doc.cdc as string | null) ?? null, estadoSifen: (doc.estadoSifen as string | null) ?? null }, bruto);
 
   const registrado = await db.query(
-    `SELECT fe_documento_registrar_consulta($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb) AS resultado`,
+    `SELECT ${opciones.flujoNce ? "fe_documento_registrar_consulta_flujo_nce" : "fe_documento_registrar_consulta"}($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb) AS resultado`,
     [empresaId, usuarioId, id, r.resultado, r.http, crypto.randomUUID(), r.estadoGateway, r.estadoSifen, r.cdc, r.codRespuesta, r.mensaje, r.fechaFirma, r.fechaEnvio, r.respuesta ? JSON.stringify(r.respuesta) : null],
   );
 

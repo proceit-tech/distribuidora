@@ -11,6 +11,7 @@ import { leerCuerpoNce } from "@/lib/facturacion/nce";
 import { calcularNce, construirPayloadNCE, esMotivoNce, lineasParaSql, saldoDe, validarEntradaNce, type EntradaNce, type LineaOriginal } from "@/lib/facturacion/payload-nce";
 import { CADENCIA_SEGUNDOS, ejecutarLote, segundosHastaProxima } from "@/lib/facturacion/consulta-automatica";
 import { textoDec } from "@/lib/facturacion/calculo";
+import { iniciarRefresco, retardoRefresco } from "@/lib/facturacion/refresco-documentos";
 import { entradasIniciales } from "@/lib/facturacion/nce-entradas";
 import { reconciliarNcePendientes, repeticion } from "@/lib/facturacion/nce-emision";
 import { ErrorFacturacion } from "@/lib/facturacion/shared";
@@ -210,13 +211,74 @@ export async function verificarCasosNce(): Promise<string[]> {
   // R01-04: Documentos releen el listado de forma controlada y la factura reconcilia sus NCE pendientes con límites
   const docs = leer("app/(private)/documentos/page.tsx");
 
-  cierto("R01-04: Documentos releen en silencio cada 30 s solo con pendientes y pestaña visible, con tope y limpieza del intervalo", /setInterval\(/.test(docs) && /30000/.test(docs) && /visibilityState !== "visible"/.test(docs) && /lecturas >= 120/.test(docs) && /clearInterval\(t\)/.test(docs) && /if \(!hayPendientes/.test(docs));
+  cierto("R01-04/R02-01: Documentos usa el refresco controlado (temporizador desde lib), solo con pendientes, y lo limpia al desmontar", /iniciarRefresco\(\{/.test(docs) && /if \(!hayPendientes\) return;/.test(docs) && /detener\(\);/.test(docs) && !/lecturas >= 120|setInterval/.test(docs));
   cierto("R01-04: la relectura es solo GET del listado (no consulta ni reenvía desde el navegador)", !/consultar-estado|enviar/.test(docs.slice(docs.indexOf("Actualización automática"), docs.indexOf("const cargando"))));
+
+  // R02-01: el refresco NO se detiene tras 120 lecturas; frecuencia con tope; oculta no lee; al volver lee; detener limpia (reloj falso)
+  {
+    let ahora = 0;
+    let visible = true;
+    let lecturasHechas = 0;
+    let avisoVisible: (() => void) | null = null;
+    const tareas = new Map<number, { en: number; f: () => void }>();
+    let idT = 0;
+    const entorno = {
+      leer: () => { lecturasHechas += 1; },
+      visible: () => visible,
+      programar: (fn: () => void, ms: number) => { idT += 1; tareas.set(idT, { en: ahora + ms, f: fn }); return idT; },
+      cancelar: (t: unknown) => { tareas.delete(t as number); },
+      alVolverVisible: (fn: () => void) => { avisoVisible = fn; return () => { avisoVisible = null; }; },
+    };
+    const avanzar = (ms: number) => {
+      const fin = ahora + ms;
+
+      for (;;) {
+        const prox = [...tareas.entries()].sort((x, y) => x[1].en - y[1].en)[0];
+
+        if (!prox || prox[1].en > fin) break;
+
+        ahora = prox[1].en;
+        tareas.delete(prox[0]);
+        prox[1].f();
+      }
+      ahora = fin;
+    };
+    const detener = iniciarRefresco(entorno);
+
+    avanzar(30_000 * 20);
+    igual("R02-01: 20 lecturas a 30 s en los primeros 10 minutos", lecturasHechas, 20);
+    avanzar(60_000 * 40);
+    igual("R02-01: luego 40 lecturas a 60 s", lecturasHechas, 60);
+    avanzar(120_000 * 100);
+    igual("R02-01: pasado el ciclo 120 (más de 3 horas) sigue leyendo cada 120 s, sin tope total", lecturasHechas, 160);
+    igual("R02-01: retardos 30/60/120 s con tope", [retardoRefresco(0), retardoRefresco(19), retardoRefresco(20), retardoRefresco(59), retardoRefresco(60), retardoRefresco(100000)], [30_000, 30_000, 60_000, 60_000, 120_000, 120_000]);
+    visible = false;
+    avanzar(120_000 * 5);
+    igual("R02-01: con la pestaña oculta no lee", lecturasHechas, 160);
+    visible = true;
+    (avisoVisible as (() => void) | null)?.();
+    igual("R02-01: al volver a ser visible lee de inmediato", lecturasHechas, 161);
+    detener();
+    avanzar(120_000 * 10);
+    igual("R02-01: detener (desmontaje/cambio de filtros/sin pendientes) no deja temporizadores ni avisos", [lecturasHechas, tareas.size, avisoVisible], [161, 0, null]);
+  }
   const consultasNce: string[] = [];
   const nProc = await reconciliarNcePendientes({ query: async (t: string) => { consultasNce.push(t); return { rows: [] }; } } as never, uuid, uuid, uuid);
 
   igual("R01-04: reconciliar NCE de una factura consulta como máximo 3, solo ENVIADO pendientes no consultadas hace <60 s, por empresa y alcance", [nProc, /LIMIT 3/.test(consultasNce[0]), /interval '60 seconds'/.test(consultasNce[0]), /n\.estado_sifen IN \('SIN_CONSULTA', 'PENDIENTE'\)/.test(consultasNce[0]), /sucursal_en_alcance/.test(consultasNce[0])], [0, true, true, true, true]);
   cierto("R01-04: el detalle de la factura reconcilia antes de leer, y no existe otro scheduler (un solo setInterval de servidor)", /reconciliarNcePendientes\(b\.db/.test(leer("app/api/notas-credito/facturas/[id]/route.ts")) && (leer("lib/facturacion/consulta-automatica.ts").match(/setInterval\(/g) ?? []).length === 1 && !/setInterval/.test(leer("lib/facturacion/nce-emision.ts")));
 
+
+  // ── 10. R02-02: la consulta iniciada desde el flujo de NCE funciona con CREAR, con identidad real y alcance ─────────────
+  const sqlFlujo = sql.slice(sql.indexOf("FUNCTION public.fe_documento_registrar_consulta_flujo_nce"), sql.indexOf("nex_aplicar_grants_facturacion_nce() RETURNS"));
+  const nce054 = sinComentarios(leer("documentacao/banco/nexit/v1/migraciones/NEX-054-facturacion-consulta-estado-final.sql"));
+
+  cierto("R02-02: función SQL nueva (NEX-062) exige CREAR o EDITAR, sucursal en alcance y por empresa; NEX-054 no se toca", /'CREAR'\) OR public\.usuario_tiene_permiso\(p_empresa, p_usuario, 'FACTURACION_ELECTRONICA', 'EDITAR'\)/.test(sqlFlujo) && /sucursal_en_alcance\(p_empresa, p_usuario, d\.sucursal_id\)/.test(sqlFlujo) && /empresa_id = p_empresa AND id = p_documento FOR UPDATE/.test(sqlFlujo) && /'EDITAR'\) THEN/.test(nce054));
+  cierto("R02-02: identidad real del operador en la auditoría (actor_id = p_usuario); sin suplantar a otro usuario", /actor_id\)\s+VALUES \(p_empresa, p_documento, 'CONSULTA'[\s\S]*p_usuario\);/.test(sqlFlujo) && !/EDITAR'\)[\s\S]{0,80}creado_por/.test(sqlFlujo));
+  cierto("R02-02: solo FE/NCE ya enviadas y sin resultado definitivo (un CREAR no reconsulta finales ni otros tipos); NEX:DOCUMENTO_NO_PENDIENTE", /d\.tipo NOT IN \('FE', 'NCE'\)/.test(sqlFlujo) && /d\.estado_local NOT IN \('ENVIADO', 'ENVIO_INDETERMINADO'\)/.test(sqlFlujo) && /d\.estado_sifen NOT IN \('SIN_CONSULTA', 'PENDIENTE', 'NO_RECONOCIDO'\)/.test(sqlFlujo) && /NEX:DOCUMENTO_NO_PENDIENTE/.test(sqlFlujo));
+  cierto("R02-02: conserva la guarda de CDC coherente; un resultado no OK solo anota la consulta (no cambia el estado fiscal ni libera saldo)", /CDC_DIVERGENTE/.test(sqlFlujo) && /ELSE\s+UPDATE public\.documentos_electronicos SET ultima_consulta_at = now\(\), ultima_consulta_resultado = v_resultado/.test(sqlFlujo));
+  cierto("R02-02: grants y reversión de la función nueva (REVOKE PUBLIC, GRANT runtime, DROP)", /REVOKE ALL ON FUNCTION public\.fe_documento_registrar_consulta_flujo_nce/.test(sql) && /GRANT EXECUTE ON FUNCTION public\.fe_documento_registrar_consulta_flujo_nce/.test(sql) && /DROP FUNCTION public\.fe_documento_registrar_consulta_flujo_nce/.test(rev));
+  cierto("R02-02: las reconciliaciones del flujo (facturas y NCE) usan la función del flujo; la consulta manual y el worker siguen con la original", (leer("lib/facturacion/nce-emision.ts").match(/flujoNce: true/g) ?? []).length === 2 && /opciones\.flujoNce \? "fe_documento_registrar_consulta_flujo_nce" : "fe_documento_registrar_consulta"/.test(leer("lib/facturacion/shared.ts")) && !/flujoNce/.test(leer("lib/facturacion/consulta-automatica.ts")) && !/flujoNce/.test(leer("app/api/documentos/[id]/consultar/route.ts")));
+  cierto("R02-02: T26 cubre el operador solo CREAR, el estado final y otro tenant", /flujo_nce/.test(t26) && /sin permiso|solo CREAR/.test(t26));
   return fallos;
 }

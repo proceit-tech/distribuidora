@@ -404,6 +404,68 @@ BEGIN
   VALUES (p_empresa, p_punto, p_usuario, 'SECUENCIA', jsonb_build_object('tipo_documento', 'NCE', 'ultimo_numero', v_anterior), jsonb_build_object('tipo_documento', 'NCE', 'ultimo_numero', p_ultimo_numero));
 END $$;
 
+-- ── 6b) Consulta iniciada desde el flujo de NCE por un operador con CREAR (NCE-R02-02) ───────────────────────────────────
+-- fe_documento_registrar_consulta (NEX-054, ya aplicada) exige EDITAR. El operador que solo tiene CREAR abre la pantalla de NCE y dispara la reconciliación de la FE/NCE pendiente; esta función registra
+-- ESA consulta con su identidad real (actor_id = el operador; nunca se suplanta a otro usuario), exigiendo CREAR (o EDITAR), sucursal en alcance y limitándose a FE/NCE ya ENVIADAS y aún sin resultado
+-- fiscal definitivo. Reutiliza las mismas guardas de NEX-054 (CDC coherente, el estado final no retrocede). No amplía EDITAR ni cambia NEX-054.
+CREATE OR REPLACE FUNCTION public.fe_documento_registrar_consulta_flujo_nce(
+  p_empresa uuid, p_usuario uuid, p_documento uuid, p_resultado text, p_http integer, p_request_id text, p_estado_gateway text, p_estado_sifen text,
+  p_cdc text, p_cod_respuesta text, p_mensaje text, p_fecha_firma text, p_fecha_envio text, p_respuesta jsonb)
+RETURNS text
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE
+  d public.documentos_electronicos%ROWTYPE;
+  v_resultado text := p_resultado;
+  v_mensaje text := left(nullif(btrim(coalesce(p_mensaje, '')), ''), 500);
+BEGIN
+  IF NOT (public.usuario_tiene_permiso(p_empresa, p_usuario, 'FACTURACION_ELECTRONICA', 'CREAR') OR public.usuario_tiene_permiso(p_empresa, p_usuario, 'FACTURACION_ELECTRONICA', 'EDITAR')) THEN
+    RAISE EXCEPTION 'el usuario no tiene permiso FACTURACION_ELECTRONICA.CREAR en esta empresa' USING ERRCODE = '42501';
+  END IF;
+  IF p_resultado IS NULL OR p_resultado NOT IN ('OK','NO_ENCONTRADO','ERROR_HTTP','TIMEOUT','RED','RESPUESTA_INVALIDA') THEN
+    RAISE EXCEPTION 'resultado de consulta no válido' USING ERRCODE = 'P0001';
+  END IF;
+  IF p_resultado = 'OK' AND (p_estado_sifen IS NULL OR p_estado_sifen NOT IN ('PENDIENTE','APROBADO','RECHAZADO','CANCELADO','INUTILIZADO','NO_RECONOCIDO')) THEN
+    RAISE EXCEPTION 'estado SIFEN no válido para una consulta satisfactoria' USING ERRCODE = 'P0001';
+  END IF;
+
+  SELECT * INTO d FROM public.documentos_electronicos WHERE empresa_id = p_empresa AND id = p_documento FOR UPDATE;
+  IF NOT FOUND OR NOT public.sucursal_en_alcance(p_empresa, p_usuario, d.sucursal_id) THEN
+    RAISE EXCEPTION 'documento no encontrado' USING ERRCODE = 'P0001', DETAIL = 'NEX:DOCUMENTO_NO_ENCONTRADO';
+  END IF;
+  -- Solo FE/NCE ya enviadas y todavía sin resultado definitivo: un operador CREAR no reconsulta documentos en estado final ni de otros tipos.
+  IF d.tipo NOT IN ('FE', 'NCE') OR d.estado_local NOT IN ('ENVIADO', 'ENVIO_INDETERMINADO') OR d.estado_sifen NOT IN ('SIN_CONSULTA', 'PENDIENTE', 'NO_RECONOCIDO') THEN
+    RAISE EXCEPTION 'el documento no está pendiente de resultado fiscal' USING ERRCODE = 'P0001', DETAIL = 'NEX:DOCUMENTO_NO_PENDIENTE';
+  END IF;
+
+  IF p_resultado = 'OK' AND p_cdc IS NOT NULL
+     AND ((d.cdc IS NOT NULL AND p_cdc <> d.cdc) OR NOT public.fe_cdc_coherente(d.tipo, d.establecimiento, d.punto_expedicion, d.numero, p_cdc)) THEN
+    v_resultado := 'CDC_DIVERGENTE';
+  END IF;
+
+  INSERT INTO public.documento_electronico_intentos (empresa_id, documento_id, tipo, resultado, http_status, request_id, estado_gateway, estado_sifen, cod_respuesta, mensaje, respuesta, actor_id)
+  VALUES (p_empresa, p_documento, 'CONSULTA', v_resultado, p_http, left(p_request_id, 80), p_estado_gateway,
+          CASE WHEN v_resultado = 'OK' THEN p_estado_sifen END, p_cod_respuesta, v_mensaje, p_respuesta, p_usuario);
+
+  IF v_resultado = 'OK' THEN
+    UPDATE public.documentos_electronicos SET
+      estado_sifen = p_estado_sifen,
+      estado_gateway_texto = left(p_estado_gateway, 120),
+      cdc = coalesce(d.cdc, p_cdc),
+      cod_respuesta = p_cod_respuesta,
+      mensaje_respuesta = v_mensaje,
+      fecha_firma_gateway = coalesce(left(p_fecha_firma, 60), d.fecha_firma_gateway),
+      fecha_envio_gateway = coalesce(left(p_fecha_envio, 60), d.fecha_envio_gateway),
+      estado_local = 'ENVIADO',
+      ultima_consulta_at = now(), ultima_consulta_resultado = 'OK', actualizado_at = now()
+     WHERE empresa_id = p_empresa AND id = p_documento;
+  ELSE
+    UPDATE public.documentos_electronicos SET ultima_consulta_at = now(), ultima_consulta_resultado = v_resultado, actualizado_at = now()
+     WHERE empresa_id = p_empresa AND id = p_documento;
+  END IF;
+
+  RETURN v_resultado;
+END $$;
+
 -- ── 7) Privilegios ───────────────────────────────────────────────────────────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION public.nex_aplicar_grants_facturacion_nce() RETURNS void
 LANGUAGE plpgsql AS $$
@@ -420,12 +482,14 @@ BEGIN
   REVOKE ALL ON FUNCTION public.fe_consulta_reservar(integer, integer, text[]) FROM PUBLIC;
   REVOKE ALL ON FUNCTION public.fe_consulta_programar(uuid, uuid, timestamptz, boolean) FROM PUBLIC;
   REVOKE ALL ON FUNCTION public.fe_punto_secuencia_configurar(uuid, uuid, uuid, text, integer, boolean) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION public.fe_documento_registrar_consulta_flujo_nce(uuid, uuid, uuid, text, integer, text, text, text, text, text, text, text, text, jsonb) FROM PUBLIC;
   REVOKE ALL ON FUNCTION public.nce_solo_altas() FROM PUBLIC;
   REVOKE ALL ON FUNCTION public.nce_origen_valida() FROM PUBLIC;
   GRANT EXECUTE ON FUNCTION public.fe_documento_crear_nce(uuid, uuid, uuid, uuid, text, uuid, integer, jsonb, text, numeric, jsonb) TO nexit_runtime;
   GRANT EXECUTE ON FUNCTION public.fe_documento_iniciar_envio(uuid, uuid, uuid, boolean) TO nexit_runtime;
   GRANT EXECUTE ON FUNCTION public.fe_consulta_reservar(integer, integer, text[]) TO nexit_runtime;
   GRANT EXECUTE ON FUNCTION public.fe_consulta_programar(uuid, uuid, timestamptz, boolean) TO nexit_runtime;
+  GRANT EXECUTE ON FUNCTION public.fe_documento_registrar_consulta_flujo_nce(uuid, uuid, uuid, text, integer, text, text, text, text, text, text, text, text, jsonb) TO nexit_runtime;
   GRANT EXECUTE ON FUNCTION public.fe_punto_secuencia_configurar(uuid, uuid, uuid, text, integer, boolean) TO nexit_runtime;
 END $$;
 
