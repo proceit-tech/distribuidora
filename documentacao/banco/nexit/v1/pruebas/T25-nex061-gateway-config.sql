@@ -49,12 +49,21 @@ BEGIN
   PERFORM pg_temp.falla(format('SELECT * FROM fe_gateway_config_ver(%L, %L)', v_a, v_ub), '42501', 'ver: otra empresa se rechaza');
 
   -- Editar: clave en blanco conserva; cambio sube versión y borra la prueba
-  PERFORM fe_gateway_prueba_registrar(v_a, v_ua, 'OK', true);
+  PERFORM pg_temp.ok(fe_gateway_prueba_registrar(v_a, v_ua, 'OK', true, 1), 'registrar con la versión vigente (1) devuelve «aplicada»');
   PERFORM pg_temp.ok((SELECT ultima_prueba_estado = 'OK' FROM fe_gateway_config WHERE empresa_id = v_a), 'una prueba con las credenciales guardadas actualiza el estado visible');
+  PERFORM pg_temp.falla(format($f$SELECT fe_gateway_prueba_registrar(%L, %L, 'OK', true, NULL)$f$, v_a, v_ua), 'P0001', 'registrar una prueba de credenciales guardadas SIN la versión se rechaza');
   PERFORM fe_gateway_config_guardar(v_a, v_ua, v_url, '80099999-9', NULL, 30000);
   PERFORM pg_temp.ok((SELECT api_password = v_clave FROM fe_gateway_credenciales WHERE empresa_id = v_a) AND (SELECT credenciales_version = 1 AND ultima_prueba_estado = 'OK' FROM fe_gateway_config WHERE empresa_id = v_a), 'clave en blanco: conserva la anterior; sin cambio no sube la versión ni borra la prueba');
   PERFORM fe_gateway_config_guardar(v_a, v_ua, v_url, '80099999-9', 'otra-clave-T25', 30000);
   PERFORM pg_temp.ok((SELECT api_password = 'otra-clave-T25' FROM fe_gateway_credenciales WHERE empresa_id = v_a) AND (SELECT credenciales_version = 2 AND ultima_prueba_estado IS NULL AND ultima_prueba_at IS NULL FROM fe_gateway_config WHERE empresa_id = v_a), 'cambiar la clave: nueva versión y se borra el resultado de la última prueba');
+
+  -- UI-R01-02: una prueba de la versión 1 que termina DESPUÉS de guardar la versión 2 NO marca la configuración nueva
+  PERFORM pg_temp.ok(fe_gateway_prueba_registrar(v_a, v_ua, 'OK', true, 1) = false, 'resultado de la versión anterior (1) con la vigente 2: no se aplica (devuelve false)');
+  PERFORM pg_temp.ok((SELECT ultima_prueba_estado IS NULL AND ultima_prueba_at IS NULL FROM fe_gateway_config WHERE empresa_id = v_a), 'la configuración nueva NO queda marcada como probada ni aprobada');
+  PERFORM pg_temp.ok(fe_gateway_prueba_registrar(v_a, v_ua, 'OK', true, 2), 'una prueba de la versión vigente (2) sí se aplica');
+  PERFORM pg_temp.ok((SELECT ultima_prueba_estado = 'OK' FROM fe_gateway_config WHERE empresa_id = v_a), 'y deja el estado visible en OK');
+  PERFORM pg_temp.ok(EXISTS (SELECT 1 FROM fe_gateway_config_log WHERE empresa_id = v_a AND accion = 'PROBAR' AND detalle->>'aplicada' = 'false' AND (detalle->>'version_probada')::int = 1), 'la bitácora registra la versión probada y que NO se aplicó');
+  PERFORM fe_gateway_config_guardar(v_a, v_ua, v_url, '80099999-9', NULL, 30000);
 
   -- Leer credenciales (emisión): pertenencia a la empresa
   PERFORM pg_temp.ok((SELECT o_api_password = 'otra-clave-T25' AND o_version = 2 FROM fe_gateway_credenciales_leer(v_a, v_ua)), 'la emisión lee las credenciales de SU empresa');
@@ -80,8 +89,8 @@ BEGIN
   PERFORM pg_temp.falla(format('SELECT fe_gateway_prueba_iniciar(%L, %L)', v_a, v_ub), '42501', 'iniciar prueba: otra empresa se rechaza');
 
   -- Resultado de la prueba
-  PERFORM pg_temp.falla(format($f$SELECT fe_gateway_prueba_registrar(%L, %L, 'INVENTADO', true)$f$, v_a, v_ua), 'P0001', 'registrar: estado inválido');
-  PERFORM fe_gateway_prueba_registrar(v_a, v_ua, 'CREDENCIALES_INVALIDAS', false);
+  PERFORM pg_temp.falla(format($f$SELECT fe_gateway_prueba_registrar(%L, %L, 'INVENTADO', true, 2)$f$, v_a, v_ua), 'P0001', 'registrar: estado inválido');
+  PERFORM fe_gateway_prueba_registrar(v_a, v_ua, 'CREDENCIALES_INVALIDAS', false, NULL);
   PERFORM pg_temp.ok((SELECT ultima_prueba_estado IS NULL FROM fe_gateway_config WHERE empresa_id = v_a), 'una prueba con credenciales NO guardadas no cambia el estado visible');
 
   -- Bitácora: solo altas y sin secretos

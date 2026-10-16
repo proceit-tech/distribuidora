@@ -1,6 +1,6 @@
 import type { Pool } from "pg";
 
-import type { ConfigGateway } from "@/lib/facturacion/gateway";
+import { REF_CREDENCIALES_BASE, type ConfigGateway } from "@/lib/facturacion/gateway";
 
 /**
  * Credenciales de la API del gateway guardadas en PostgreSQL por empresa (PRO-133, NEX-061). El rol de la aplicación NO tiene ningún privilegio sobre la tabla de credenciales: solo las funciones SQL
@@ -8,8 +8,8 @@ import type { ConfigGateway } from "@/lib/facturacion/gateway";
  */
 type Db = Pick<Pool, "query">;
 
-/** Referencia lógica que marca «las credenciales están en la base» (fe_gateway_config.credencial_ref). Cualquier otra referencia sigue usando variables de entorno (respaldo). */
-export const REF_CREDENCIALES_BASE = "NEXIT_DB";
+// REF_CREDENCIALES_BASE (NEXIT_DB) vive en gateway.ts: con esa referencia el modo es EXCLUSIVO de la base. Cualquier otra referencia sigue usando variables de entorno (configuración anterior).
+export { REF_CREDENCIALES_BASE };
 
 /** Gateway de PRUEBA documentado (REQUISITOS-FACTURACION-ELECTRONICA-API-EXTERNA): la pantalla no pide URL ni endpoints. */
 export const URL_GATEWAY_PRUEBA = "https://gateway-bebidas-py.e-factura-hub.com";

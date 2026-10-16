@@ -17,7 +17,7 @@ type Configuracion = {
   ultimaPruebaAt: string | null;
   ultimaPruebaEstado: Estado | null;
 };
-type Prueba = { estado: Estado; mensaje: string; credenciales: "GUARDADAS" | "INFORMADAS" };
+type Prueba = { estado: Estado; mensaje: string; credenciales: "GUARDADAS" | "INFORMADAS" | "ANTERIORES" };
 
 const TEXTO_PRUEBA: Record<Estado, string> = {
   OK: "Conexión correcta",
@@ -107,7 +107,7 @@ export default function ConfiguracionFacturacionPage() {
       const j = await pedir<Prueba>("/api/facturacion/configuracion/probar", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ apiUsuario: usuario, password }) }, "No fue posible probar la conexión.");
 
       setPrueba(j);
-      if (j.credenciales === "GUARDADAS") setVersion((v) => v + 1);
+      if (j.credenciales !== "INFORMADAS") setVersion((v) => v + 1);
     } catch (e) {
       setError(e instanceof Error ? e.message : "No fue posible probar la conexión.");
     } finally {
@@ -222,6 +222,7 @@ export default function ConfiguracionFacturacionPage() {
             <p className={prueba.estado === "OK" ? estilos.aviso : estilos.error} role={prueba.estado === "OK" ? "status" : "alert"}>
               <strong>{TEXTO_PRUEBA[prueba.estado]}.</strong> {prueba.mensaje}
               {prueba.credenciales === "INFORMADAS" ? " (Se probaron las credenciales escritas en pantalla; aún no están guardadas.)" : ""}
+              {prueba.credenciales === "ANTERIORES" ? " Las credenciales guardadas cambiaron mientras se probaba: este resultado corresponde a las anteriores y NO se aplicó a la configuración actual. Pruebe de nuevo." : ""}
             </p>
           ) : null}
         </>

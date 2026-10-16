@@ -87,7 +87,7 @@ function baseFalsa() {
         const c = cfg.get(e);
         const k = cred.get(e);
 
-        return { rows: c?.activo && k ? [{ ruc: k.usuario, password: k.password, o_version: c.version }] : [] };
+        return { rows: c?.activo && k ? [{ ruc: k.usuario, password: k.password, version: c.version }] : [] };
       }
       if (/fe_gateway_credenciales_existe/.test(sql)) return { rows: [{ ok: cred.has(e) }] };
       if (/fe_gateway_prueba_iniciar/.test(sql)) {
@@ -103,12 +103,17 @@ function baseFalsa() {
       if (/fe_gateway_prueba_registrar/.test(sql)) {
         if (!tiene(e, u, "CONFIGURAR")) throw prohibido();
 
-        const [, , estado, guardada] = p as [string, string, string, boolean];
+        const [, , estado, guardada, version] = p as [string, string, string, boolean, number | null];
 
-        if (guardada && cfg.has(e)) { const c = cfg.get(e)!; c.pruebaAt = new Date("2026-10-16T12:00:00Z"); c.pruebaEstado = estado; }
-        log.push({ empresa: e, usuario: u, accion: "PROBAR", detalle: { estado, credenciales_guardadas: guardada } });
+        if (guardada && version === null) throw pg("NEX:VERSION_REQUERIDA");
 
-        return { rows: [] };
+        // Igual que la función SQL: el resultado solo se aplica si la versión probada sigue siendo la vigente.
+        const aplicada = guardada && cfg.get(e)?.version === version;
+
+        if (aplicada) { const c = cfg.get(e)!; c.pruebaAt = new Date("2026-10-16T12:00:00Z"); c.pruebaEstado = estado; }
+        log.push({ empresa: e, usuario: u, accion: "PROBAR", detalle: { estado, credenciales_guardadas: guardada, version_probada: version, aplicada } });
+
+        return { rows: [{ aplicada }] };
       }
       if (/FROM fe_gateway_config WHERE empresa_id = \$1 AND activo/.test(sql)) {
         const c = cfg.get(e);
@@ -250,6 +255,54 @@ export async function verificarCasosConfiguracionGateway(): Promise<string[]> {
   const antiguo = baseFalsa();
   antiguo.cfg.set(EMP_A, { baseUrl: URL_GATEWAY_PRUEBA, activo: true, timeoutMs: 15000, ref: "CASAMINGO", version: 0, pruebaAt: null, pruebaEstado: null });
   igual("compatibilidad: una configuración antigua (referencia de variables de entorno) usa el entorno y no consulta las credenciales de la base", [(await estadoGateway(antiguo.db, EMP_A, { env: { NEXIT_FE_CASAMINGO_RUC: "x", NEXIT_FE_CASAMINGO_PASSWORD: "y" } })).estado, (await estadoGateway(antiguo.db, EMP_A, { env: {} })).estado, antiguo.llamadas.some((l) => /fe_gateway_credenciales_leer/.test(l.sql))], ["CONFIGURADO", "SIN_CREDENCIALES", false]);
+
+  // ── 4b. UI-R01-01: NEXIT_DB es EXCLUSIVO de la base (jamás variables globales) ──────────────────────
+  const envGlobal = { NEXIT_FE_NEXIT_DB_RUC: "ruc-global-compartido", NEXIT_FE_NEXIT_DB_PASSWORD: "clave-global-compartida" };
+  const ex = baseFalsa();
+  ex.cfg.set(EMP_A, { baseUrl: URL_GATEWAY_PRUEBA, activo: true, timeoutMs: 30000, ref: "NEXIT_DB", version: 1, pruebaAt: null, pruebaEstado: null });   // configuración de A sin credenciales en la base
+  const exA = await estadoGateway(ex.db, EMP_A, { env: envGlobal });
+  igual("UI-R01-01 NEXIT_DB sin credenciales en la base y con variables NEXIT_FE_NEXIT_DB_* presentes en el entorno → SIN_CREDENCIALES (el entorno global NO cuenta) y envío bloqueado", [exA.estado, puedeEnviarPorGateway(exA)], ["SIN_CREDENCIALES", false]);
+  igual("UI-R01-01 el preflight del envío responde 409 (antes de reservar numeración) aunque exista el entorno global", await rechaza(configuracionGateway(ex.db, EMP_A, { env: envGlobal }, ADM_A)), 409);
+  const gx = gatewayFalso();
+  const sinCred = { empresaId: EMP_A, baseUrl: URL_GATEWAY_PRUEBA, credencialRef: "NEXIT_DB", timeoutMs: 30000 };
+  const rEnvio = await enviarDocumentoGateway(sinCred, { iTiDE: 1 }, { tipo: "FE", establecimiento: "001", puntoExpedicion: "001", numero: "0000001", serie: null } as never, { fetch: gx.f, env: envGlobal });
+  const rCons = await consultarDocumentoGateway(sinCred, { tipo: "FE", establecimiento: "001", puntoExpedicion: "001", numero: "0000001", serie: null }, { fetch: gx.f, env: envGlobal });
+  cierto("UI-R01-01 aun si se llegara al cliente del gateway, envío y consulta con NEXIT_DB sin credenciales de la base devuelven «sin credenciales» y NO hacen ninguna llamada de red (el entorno global no se usa)", "sinContrato" in rEnvio && rEnvio.sinContrato === "CREDENCIALES" && "sinContrato" in rCons && rCons.sinContrato === "CREDENCIALES" && gx.pedidos.length === 0);
+  await guardarConfiguracion(ex.db, EMP_B, ADM_B, { apiUsuario: "ruc-de-b", password: "clave-de-b" });
+  const exB = await estadoGateway(ex.db, EMP_B, { env: envGlobal });
+  const cfgExB = await configuracionGateway(ex.db, EMP_B, { env: envGlobal }, ADM_B);
+  cierto("UI-R01-01 la empresa B (con SUS credenciales en la base) queda CONFIGURADA y usa las suyas; A sigue bloqueada: no se comparte ninguna credencial entre empresas ni con el entorno", exB.estado === "CONFIGURADO" && cfgExB.credenciales?.ruc === "ruc-de-b" && (await estadoGateway(ex.db, EMP_A, { env: envGlobal })).estado === "SIN_CREDENCIALES");
+  igual("UI-R01-01 compatibilidad: una referencia ANTIGUA distinta de NEXIT_DB sigue usando sus variables de entorno (CASAMINGO)", [
+    (await consultarDocumentoGateway({ empresaId: EMP_A, baseUrl: URL_GATEWAY_PRUEBA, credencialRef: "CASAMINGO", timeoutMs: 30000 }, { tipo: "FE", establecimiento: "001", puntoExpedicion: "001", numero: "0000001", serie: null }, { fetch: gx.f, env: { NEXIT_FE_CASAMINGO_RUC: "r", NEXIT_FE_CASAMINGO_PASSWORD: "p" } })) !== undefined,
+    gx.pedidos.some((p) => p.url.endsWith("/api/login") && p.cuerpo.ruc === "r"),
+  ], [true, true]);
+  const emision = leer("lib/facturacion/envio.ts");
+  cierto("UI-R01-01 el preflight de credenciales precede a la creación del documento y a la reserva de numeración en emitirFactura", emision.indexOf("await configuracionGateway(db, empresaId, dep, usuarioId);\n\n  const salida") > 0 && emision.indexOf("await configuracionGateway(db, empresaId, dep, usuarioId);\n\n  const salida") < emision.indexOf("await crearFacturaElectronica(db, empresaId, usuarioId, cuerpo, salida)"));
+
+  // ── 4c. UI-R01-02: la prueba se vincula a la VERSIÓN de las credenciales ───────────────────────────────
+  const rc = baseFalsa();
+  await guardarConfiguracion(rc.db, EMP_A, ADM_A, { apiUsuario: SECRETOS.ruc, password: SECRETOS.password });
+  const gr = gatewayFalso();
+  // El usuario guarda una contraseña NUEVA mientras la autenticación de la anterior sigue en curso (la respuesta del gateway llega DESPUÉS).
+  const fetchCarrera: FetchLike = async (url, init) => {
+    await guardarConfiguracion(rc.db, EMP_A, ADM_A, { apiUsuario: SECRETOS.ruc, password: "clave-nueva-durante-la-prueba" });
+
+    return gr.f(url, init);
+  };
+  const enCurso = await probarConexion(rc.db, EMP_A, ADM_A, { apiUsuario: null, password: null }, { fetch: fetchCarrera });
+  const registro = rc.llamadas.filter((l) => /fe_gateway_prueba_registrar/.test(l.sql)).pop();
+  cierto("UI-R01-02 la prueba (versión 1) termina DESPUÉS de guardar la contraseña nueva (versión 2): el resultado NO se aplica a la configuración nueva (sigue sin probar) y se informa como credenciales ANTERIORES", enCurso.estado === "OK" && enCurso.credenciales === "ANTERIORES" && rc.cfg.get(EMP_A)?.version === 2 && rc.cfg.get(EMP_A)?.pruebaEstado === null && rc.cfg.get(EMP_A)?.pruebaAt === null);
+  cierto("UI-R01-02 la versión probada viaja a la base (se leyó ANTES de la llamada externa): registrar recibe la versión 1, no la vigente al terminar", registro !== undefined && registro.parametros[4] === 1 && registro.parametros[3] === true);
+  const normal = await probarConexion(rc.db, EMP_A, ADM_A, { apiUsuario: null, password: null }, { fetch: async (u, i) => gr.f(u, i) });
+  cierto("UI-R01-02 una prueba normal de la misma versión (aunque use la clave nueva) se aplica: GUARDADAS y el estado visible queda registrado; la clave nueva fue rechazada por el gateway simulado y así consta", normal.credenciales === "GUARDADAS" && normal.estado === "CREDENCIALES_INVALIDAS" && rc.cfg.get(EMP_A)?.pruebaEstado === "CREDENCIALES_INVALIDAS");
+  await new Promise<void>((r) => { setTimeout(r, 0); });
+  const lento = baseFalsa();
+  await guardarConfiguracion(lento.db, EMP_A, ADM_A, { apiUsuario: "lento", password: "x" });
+  const tOut = await probarConexion(lento.db, EMP_A, ADM_A, { apiUsuario: null, password: null }, { fetch: gr.f });
+  cierto("UI-R01-02 timeout y error de la MISMA versión siguen registrándose (TIMEOUT aplicado a la versión vigente)", tOut.estado === "TIMEOUT" && tOut.credenciales === "GUARDADAS" && lento.cfg.get(EMP_A)?.pruebaEstado === "TIMEOUT");
+  const sqlUi = leer("documentacao/banco/nexit/v1/migraciones/NEX-061-facturacion-gateway-credenciales-empresa.sql").replace(/--.*$/gm, "");
+  cierto("UI-R01-02 (SQL) fe_gateway_prueba_registrar exige la versión probada y solo actualiza WHERE credenciales_version = p_version en la misma operación; devuelve si se aplicó y la bitácora guarda la versión", /fe_gateway_prueba_registrar\(p_empresa uuid, p_usuario uuid, p_estado text, p_guardada boolean, p_version integer\) RETURNS boolean/.test(sqlUi) && /WHERE empresa_id = p_empresa AND credenciales_version = p_version/.test(sqlUi) && /NEX:VERSION_REQUERIDA/.test(sqlUi) && /'version_probada', p_version/.test(sqlUi) && /fe_gateway_prueba_registrar\(uuid, uuid, text, boolean, integer\)/.test(sqlUi));
+  cierto("UI-R01-02 (pantalla) avisa cuando el resultado corresponde a credenciales anteriores y vuelve a cargar el estado", /ANTERIORES/.test(leer("app/(private)/configuracion/facturacion-electronica/page.tsx")) && /NO se aplicó a la configuración actual/.test(leer("app/(private)/configuracion/facturacion-electronica/page.tsx")));
 
   // ── 5. Pantalla ──────────────────────────────────────────────────────────────────────────────────
   const pagina = leer("app/(private)/configuracion/facturacion-electronica/page.tsx");

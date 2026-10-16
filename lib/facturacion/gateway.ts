@@ -14,6 +14,9 @@ import { estadoSifenDesdeGateway, type EstadoSifen } from "@/lib/facturacion/est
  */
 
 /** empresaId forma parte de la clave del token en caché: dos empresas nunca comparten sesión del gateway, ni siquiera con la misma referencia. */
+/** Referencia lógica que marca «las credenciales están en la base» (fe_gateway_config.credencial_ref). Con ella el modo es EXCLUSIVO: jamás se usan variables de entorno globales como respaldo. */
+export const REF_CREDENCIALES_BASE = "NEXIT_DB";
+
 /** `credenciales`: usuario/clave de la API guardados en la base para la empresa (PRO-133, NEX-061); si faltan se usan las variables de entorno NEXIT_FE_<REF>_*. Nunca se serializan ni se devuelven. */
 export type ConfigGateway = { empresaId: string; baseUrl: string; credencialRef: string; timeoutMs: number; credenciales?: { ruc: string; password: string } };
 export type FetchLike = (url: string, init: { method: string; headers: Record<string, string>; body: string; signal: AbortSignal }) => Promise<{ status: number; text(): Promise<string> }>;
@@ -37,13 +40,18 @@ export function configGatewayValida(empresaId: string, fila: { baseUrl?: unknown
   return { empresaId, baseUrl: fila.baseUrl, credencialRef: fila.credencialRef, timeoutMs: Number.isFinite(t) ? Math.min(60000, Math.max(1000, Math.trunc(t))) : 15000 };
 }
 
-/** Credenciales efectivas de la empresa: las de la base (si se cargaron en la configuración) o, en su defecto, las variables de entorno de la referencia. */
+/**
+ * Credenciales efectivas de la empresa. Con la referencia NEXIT_DB (UI-R01-01) SOLO valen las guardadas en la base para ESA empresa: si faltan, no hay credenciales (nunca se cae a variables de entorno
+ * globales, que serían compartidas por todas las empresas). Con cualquier otra referencia (configuración anterior) se usan las variables de entorno de esa referencia.
+ */
 export function credencialesDe(config: ConfigGateway, env: Record<string, string | undefined> = process.env) {
+  if (config.credencialRef === REF_CREDENCIALES_BASE) return config.credenciales && config.credenciales.ruc && config.credenciales.password ? config.credenciales : null;
+
   return config.credenciales && config.credenciales.ruc && config.credenciales.password ? config.credenciales : leerCredenciales(config.credencialRef, env);
 }
 
 export function leerCredenciales(ref: string, env: Record<string, string | undefined> = process.env) {
-  if (!/^[A-Z][A-Z0-9_]{0,39}$/.test(ref)) return null;
+  if (!/^[A-Z][A-Z0-9_]{0,39}$/.test(ref) || ref === REF_CREDENCIALES_BASE) return null;
 
   const ruc = env[`NEXIT_FE_${ref}_RUC`]?.trim();
   const password = env[`NEXIT_FE_${ref}_PASSWORD`];

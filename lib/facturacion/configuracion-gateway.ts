@@ -132,7 +132,8 @@ export async function guardarConfiguracion(db: Db, empresaId: string, usuarioId:
   }
 }
 
-export type ResultadoPrueba = { estado: EstadoPrueba; mensaje: string; credenciales: "GUARDADAS" | "INFORMADAS" };
+/** GUARDADAS = prueba de las credenciales vigentes (queda registrada); INFORMADAS = escritas en pantalla, aún no guardadas; ANTERIORES = las guardadas CAMBIARON durante la prueba (el resultado no se aplica a la configuración vigente). */
+export type ResultadoPrueba = { estado: EstadoPrueba; mensaje: string; credenciales: "GUARDADAS" | "INFORMADAS" | "ANTERIORES" };
 
 /**
  * «Probar conexión»: SOLO POST /api/login con las credenciales informadas en la pantalla o, en su defecto, las guardadas. No crea facturas, no reserva numeración, no llama a recepcion_de ni toca
@@ -144,7 +145,8 @@ export async function probarConexion(db: Db, empresaId: string, usuarioId: strin
 
     if (espera > 0) throw new ErrorFacturacion(429, `Demasiados intentos de prueba. Espere ${espera} segundo${espera === 1 ? "" : "s"} antes de volver a probar.`);
 
-    const guardado = (await db.query("SELECT o_api_usuario AS ruc, o_api_password AS password FROM fe_gateway_credenciales_leer($1::uuid, $2::uuid)", [empresaId, usuarioId])).rows[0] as { ruc?: string; password?: string } | undefined;
+    // La VERSIÓN de las credenciales se lee junto con ellas, ANTES de la llamada externa: el resultado solo vale para esa versión.
+    const guardado = (await db.query("SELECT o_api_usuario AS ruc, o_api_password AS password, o_version AS version FROM fe_gateway_credenciales_leer($1::uuid, $2::uuid)", [empresaId, usuarioId])).rows[0] as { ruc?: string; password?: string; version?: number } | undefined;
     const ruc = p.apiUsuario ?? guardado?.ruc ?? null;
     const password = p.password ?? guardado?.password ?? null;
 
@@ -154,9 +156,10 @@ export async function probarConexion(db: Db, empresaId: string, usuarioId: strin
     const guardadas = guardado !== undefined && ruc === guardado.ruc && password === guardado.password;
     const r = await probarLoginGateway({ baseUrl: URL_GATEWAY_PRUEBA, timeoutMs: TIMEOUT_GATEWAY_MS }, ruc, password, dep);
 
-    await db.query("SELECT fe_gateway_prueba_registrar($1::uuid, $2::uuid, $3, $4)", [empresaId, usuarioId, r.estado, guardadas]);
+    // La base solo aplica el resultado si la versión de las credenciales sigue siendo la probada (en la misma operación); si cambiaron mientras tanto, devuelve false.
+    const aplicada = (await db.query("SELECT fe_gateway_prueba_registrar($1::uuid, $2::uuid, $3, $4, $5::integer) AS aplicada", [empresaId, usuarioId, r.estado, guardadas, guardadas ? Number(guardado?.version) : null])).rows[0] as { aplicada?: unknown };
 
-    return { estado: r.estado, mensaje: MENSAJES_PRUEBA[r.estado], credenciales: guardadas ? "GUARDADAS" : "INFORMADAS" };
+    return { estado: r.estado, mensaje: MENSAJES_PRUEBA[r.estado], credenciales: !guardadas ? "INFORMADAS" : aplicada.aplicada === true ? "GUARDADAS" : "ANTERIORES" };
   } catch (error) {
     return traducirErrorConfiguracion(error);
   }

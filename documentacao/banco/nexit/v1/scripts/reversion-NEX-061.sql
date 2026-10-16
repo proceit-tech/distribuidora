@@ -26,7 +26,7 @@ SELECT to_regclass('public.fe_gateway_credenciales') IS NOT NULL AS aplicada \gs
   DROP FUNCTION public.fe_gateway_credenciales_leer(uuid, uuid);
   DROP FUNCTION public.fe_gateway_credenciales_existe(uuid);
   DROP FUNCTION public.fe_gateway_prueba_iniciar(uuid, uuid);
-  DROP FUNCTION public.fe_gateway_prueba_registrar(uuid, uuid, text, boolean);
+  DROP FUNCTION public.fe_gateway_prueba_registrar(uuid, uuid, text, boolean, integer);
   DROP FUNCTION public.nex_aplicar_grants_facturacion_gateway();
   DROP TABLE public.fe_gateway_credenciales;
   DROP TABLE public.fe_gateway_prueba_limite;

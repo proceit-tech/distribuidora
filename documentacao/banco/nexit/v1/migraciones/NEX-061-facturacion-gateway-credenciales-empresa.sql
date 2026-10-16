@@ -196,9 +196,12 @@ BEGIN
   RETURN 0;
 END $$;
 
--- Resultado de la prueba (sin secretos). p_guardada = la prueba usó las credenciales GUARDADAS (solo entonces se actualiza el estado visible de la configuración).
-CREATE OR REPLACE FUNCTION public.fe_gateway_prueba_registrar(p_empresa uuid, p_usuario uuid, p_estado text, p_guardada boolean) RETURNS void
+-- Resultado de la prueba (sin secretos). p_guardada = la prueba usó las credenciales GUARDADAS; solo entonces se actualiza el estado visible, y SOLO si p_version (la credenciales_version leída ANTES de la
+-- llamada externa) sigue siendo la vigente: el UPDATE condiciona por la versión en la misma operación (con el bloqueo de fila, un guardar concurrente se serializa). Devuelve si se aplicó. UI-R01-02.
+CREATE OR REPLACE FUNCTION public.fe_gateway_prueba_registrar(p_empresa uuid, p_usuario uuid, p_estado text, p_guardada boolean, p_version integer) RETURNS boolean
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE
+  v_n integer := 0;
 BEGIN
   IF NOT public.usuario_tiene_permiso(p_empresa, p_usuario, 'FACTURACION_ELECTRONICA', 'CONFIGURAR') THEN
     RAISE EXCEPTION 'el usuario no tiene permiso FACTURACION_ELECTRONICA.CONFIGURAR en esta empresa' USING ERRCODE = '42501';
@@ -207,9 +210,15 @@ BEGIN
     RAISE EXCEPTION 'estado de prueba inválido' USING ERRCODE = 'P0001', DETAIL = 'NEX:ESTADO_INVALIDO';
   END IF;
   IF p_guardada THEN
-    UPDATE public.fe_gateway_config SET ultima_prueba_at = now(), ultima_prueba_estado = p_estado WHERE empresa_id = p_empresa;
+    IF p_version IS NULL THEN
+      RAISE EXCEPTION 'falta la versión de las credenciales probadas' USING ERRCODE = 'P0001', DETAIL = 'NEX:VERSION_REQUERIDA';
+    END IF;
+    UPDATE public.fe_gateway_config SET ultima_prueba_at = now(), ultima_prueba_estado = p_estado WHERE empresa_id = p_empresa AND credenciales_version = p_version;
+    GET DIAGNOSTICS v_n = ROW_COUNT;
   END IF;
-  INSERT INTO public.fe_gateway_config_log (empresa_id, usuario_id, accion, detalle) VALUES (p_empresa, p_usuario, 'PROBAR', jsonb_build_object('estado', p_estado, 'credenciales_guardadas', p_guardada));
+  INSERT INTO public.fe_gateway_config_log (empresa_id, usuario_id, accion, detalle)
+  VALUES (p_empresa, p_usuario, 'PROBAR', jsonb_build_object('estado', p_estado, 'credenciales_guardadas', p_guardada, 'version_probada', p_version, 'aplicada', v_n > 0));
+  RETURN v_n > 0;
 END $$;
 
 CREATE OR REPLACE FUNCTION public.nex_aplicar_grants_facturacion_gateway() RETURNS void
@@ -226,14 +235,14 @@ BEGIN
   REVOKE ALL ON FUNCTION public.fe_gateway_credenciales_leer(uuid, uuid) FROM PUBLIC;
   REVOKE ALL ON FUNCTION public.fe_gateway_credenciales_existe(uuid) FROM PUBLIC;
   REVOKE ALL ON FUNCTION public.fe_gateway_prueba_iniciar(uuid, uuid) FROM PUBLIC;
-  REVOKE ALL ON FUNCTION public.fe_gateway_prueba_registrar(uuid, uuid, text, boolean) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION public.fe_gateway_prueba_registrar(uuid, uuid, text, boolean, integer) FROM PUBLIC;
   REVOKE ALL ON FUNCTION public.fe_gateway_config_log_inmutable() FROM PUBLIC;
   GRANT EXECUTE ON FUNCTION public.fe_gateway_config_ver(uuid, uuid) TO nexit_runtime;
   GRANT EXECUTE ON FUNCTION public.fe_gateway_config_guardar(uuid, uuid, text, text, text, integer) TO nexit_runtime;
   GRANT EXECUTE ON FUNCTION public.fe_gateway_credenciales_leer(uuid, uuid) TO nexit_runtime;
   GRANT EXECUTE ON FUNCTION public.fe_gateway_credenciales_existe(uuid) TO nexit_runtime;
   GRANT EXECUTE ON FUNCTION public.fe_gateway_prueba_iniciar(uuid, uuid) TO nexit_runtime;
-  GRANT EXECUTE ON FUNCTION public.fe_gateway_prueba_registrar(uuid, uuid, text, boolean) TO nexit_runtime;
+  GRANT EXECUTE ON FUNCTION public.fe_gateway_prueba_registrar(uuid, uuid, text, boolean, integer) TO nexit_runtime;
 END $$;
 
 SELECT public.nex_aplicar_grants_facturacion_gateway();
