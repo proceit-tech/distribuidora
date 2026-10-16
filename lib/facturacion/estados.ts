@@ -14,6 +14,9 @@ export const ETIQUETA_TIPO: Record<TipoDocumento, string> = {
   AFE: "Autofactura",
 };
 
+/** Horas sin resultado fiscal definitivo a partir de las cuales una NCE muestra «Requiere revisión» (provisional; la cadencia y el horizonte comunes a todos los documentos se definirán aparte). Solo etiqueta. */
+export const UMBRAL_REVISION_HORAS = 24;
+
 export const ESTADOS_LOCAL = ["PENDIENTE_ENVIO", "ENVIANDO", "ENVIO_INDETERMINADO", "ENVIADO", "ERROR_ENVIO"] as const;
 export const ESTADOS_SIFEN = ["SIN_CONSULTA", "PENDIENTE", "APROBADO", "RECHAZADO", "CANCELADO", "INUTILIZADO", "NO_RECONOCIDO"] as const;
 export const ESTADOS_EMAIL = ["NO_INFORMADO", "SIN_EMAIL", "PENDIENTE", "ENVIADO", "ERROR"] as const;

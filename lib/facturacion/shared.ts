@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import type { Pool } from "pg";
 
-import { ESTADOS_EMAIL, ESTADOS_LOCAL, ESTADOS_SIFEN, GRUPOS_INDICADOR, TIPOS_DOCUMENTO, type GrupoIndicador } from "@/lib/facturacion/estados";
+import { ESTADOS_EMAIL, ESTADOS_LOCAL, ESTADOS_SIFEN, GRUPOS_INDICADOR, TIPOS_DOCUMENTO, UMBRAL_REVISION_HORAS, type GrupoIndicador } from "@/lib/facturacion/estados";
 import { configGatewayValida, consultarDocumentoGateway, type Dependencias } from "@/lib/facturacion/gateway";
 import { adjuntarCredencialesDeBase } from "@/lib/facturacion/gateway-credenciales";
 import { decidirConsulta } from "@/lib/facturacion/reconciliacion";
@@ -65,13 +65,32 @@ export const SQL_GRUPO: Record<GrupoIndicador, string> = {
 /** $1 = empresa, $2 = usuario. */
 const ALCANCE = "d.empresa_id = $1 AND sucursal_en_alcance($1::uuid, $2::uuid, d.sucursal_id)";
 
-const SELECT = `SELECT d.id, d.tipo, d.establecimiento, d.punto_expedicion AS "puntoExpedicion", d.numero, d.serie, d.cdc, d.fecha_emision AS "fechaEmision",
+const COLUMNAS_BASE = `SELECT d.id, d.tipo, d.establecimiento, d.punto_expedicion AS "puntoExpedicion", d.numero, d.serie, d.cdc, d.fecha_emision AS "fechaEmision",
        d.sucursal_id AS "sucursalId", s.nombre AS "sucursalNombre", d.receptor_nombre AS "receptorNombre", d.receptor_documento AS "receptorDocumento",
        d.moneda, d.total::text AS total, d.estado_local AS "estadoLocal", d.estado_sifen AS "estadoSifen", d.estado_email AS "estadoEmail",
        d.estado_gateway_texto AS "estadoGatewayTexto", d.cod_respuesta AS "codRespuesta", d.mensaje_respuesta AS "mensajeRespuesta",
        d.fecha_firma_gateway AS "fechaFirma", d.fecha_envio_gateway AS "fechaEnvio", d.ultima_consulta_at AS "ultimaConsultaAt",
-       d.ultima_consulta_resultado AS "ultimaConsultaResultado", d.lote, d.envio_error_tipo AS "envioErrorTipo"
+       d.ultima_consulta_resultado AS "ultimaConsultaResultado", d.lote, d.envio_error_tipo AS "envioErrorTipo"`;
+
+const DESDE_BASE = `
   FROM documentos_electronicos d JOIN sucursales s ON s.empresa_id = d.empresa_id AND s.id = d.sucursal_id`;
+
+/**
+ * NCE (PRO-94, NEX-062): relación con la factura original y motivo, acción «Corregir y emitir nueva» (rechazo DEFINITIVO) y «Requiere revisión» (pendiente de resultado fiscal más de UMBRAL_REVISION_HORAS,
+ * valor provisional común: solo etiqueta, no cambia ni libera nada). Si la migración NEX-062 aún no está aplicada se usa la consulta básica (la lista de facturas sigue funcionando).
+ */
+const COLUMNAS_NCE = `, o.motivo AS "nceMotivo", o.fe_id AS "feId", fe.establecimiento || '-' || fe.punto_expedicion || '-' || fe.numero AS "feNumero",
+       (d.tipo = 'NCE' AND (d.estado_sifen = 'RECHAZADO' OR (d.estado_local = 'ERROR_ENVIO' AND d.envio_error_tipo = 'RECHAZO'))) AS corregible,
+       (d.tipo = 'NCE' AND d.estado_local IN ('ENVIADO','ENVIO_INDETERMINADO') AND d.estado_sifen IN ('SIN_CONSULTA','PENDIENTE','NO_RECONOCIDO') AND d.creado_at < now() - interval '${UMBRAL_REVISION_HORAS} hours') AS "requiereRevision"`;
+const DESDE_NCE = `${DESDE_BASE}
+  LEFT JOIN nce_origen o ON o.empresa_id = d.empresa_id AND o.nce_id = d.id
+  LEFT JOIN documentos_electronicos fe ON fe.empresa_id = o.empresa_id AND fe.id = o.fe_id`;
+
+const SELECT = `${COLUMNAS_BASE}${DESDE_BASE}`;
+const SELECT_NCE = `${COLUMNAS_BASE}${COLUMNAS_NCE}${DESDE_NCE}`;
+
+/** Falta la migración NEX-062 (tabla o columna inexistente): se reintenta sin la información de NCE. */
+const faltaNce = (e: unknown) => ['42P01', '42703'].includes((e as { code?: string })?.code ?? '');
 
 /** Normaliza y valida la consulta: los valores desconocidos se descartan y nunca llegan a SQL como texto libre. */
 export function normalizarConsulta(c: ConsultaDocumentos) {
@@ -120,7 +139,7 @@ function filtros(c: ReturnType<typeof normalizarConsulta>) {
 }
 
 /** Construye las consultas (puro; probado sin base de datos). La ordenación siempre termina en un desempate estable. */
-export function construirConsultas(empresaId: string, usuarioId: string, entrada: ConsultaDocumentos, pagina: number) {
+export function construirConsultas(empresaId: string, usuarioId: string, entrada: ConsultaDocumentos, pagina: number, conNce = true) {
   const c = normalizarConsulta(entrada);
   const f = filtros(c);
   const base = `WHERE ${ALCANCE}${f.sql}`;
@@ -132,13 +151,23 @@ export function construirConsultas(empresaId: string, usuarioId: string, entrada
     normalizada: c,
     conteo: { sql: `SELECT count(*)::int AS total FROM documentos_electronicos d ${base}`, params },
     lista: {
-      sql: `${SELECT} ${base} ORDER BY ${principal}d.id DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      sql: `${conNce ? SELECT_NCE : SELECT} ${base} ORDER BY ${principal}d.id DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
       params: [...params, c.tamano, (pagina - 1) * c.tamano],
     },
   };
 }
 
-export async function leerDocumentos(db: Db, empresaId: string, usuarioId: string, entrada: ConsultaDocumentos) {
+export async function leerDocumentos(db: Db, empresaId: string, usuarioId: string, entrada: ConsultaDocumentos, conNce = true): Promise<ReturnType<typeof leerDocumentosCon>> {
+  try {
+    return await leerDocumentosCon(db, empresaId, usuarioId, entrada, conNce);
+  } catch (error) {
+    if (conNce && faltaNce(error)) return leerDocumentosCon(db, empresaId, usuarioId, entrada, false);
+
+    throw error;
+  }
+}
+
+async function leerDocumentosCon(db: Db, empresaId: string, usuarioId: string, entrada: ConsultaDocumentos, conNce: boolean) {
   const pedida = construirConsultas(empresaId, usuarioId, entrada, 1);
   const c = pedida.normalizada;
   const columnasResumen = GRUPOS_INDICADOR.map((g) => `count(*) FILTER (WHERE ${SQL_GRUPO[g]})::int AS "${g}"`).join(", ");
@@ -154,7 +183,7 @@ export async function leerDocumentos(db: Db, empresaId: string, usuarioId: strin
   const total = Number((conteo.rows[0] as F).total);
   const totalPaginas = Math.max(1, Math.ceil(total / c.tamano));
   const pagina = Math.min(c.pagina, totalPaginas);
-  const consulta = construirConsultas(empresaId, usuarioId, entrada, pagina).lista;
+  const consulta = construirConsultas(empresaId, usuarioId, entrada, pagina, conNce).lista;
   const filas = total === 0 ? { rows: [] } : await db.query(consulta.sql, consulta.params);
 
   return {
@@ -172,9 +201,17 @@ export async function leerDocumentos(db: Db, empresaId: string, usuarioId: strin
 export async function leerDocumento(db: Db, empresaId: string, usuarioId: string, id: string) {
   if (!UUID.test(id)) return null;
 
-  const r = await db.query(`${SELECT} WHERE ${ALCANCE} AND d.id = $3`, [empresaId, usuarioId, id]);
+  try {
+    const r = await db.query(`${SELECT_NCE} WHERE ${ALCANCE} AND d.id = $3`, [empresaId, usuarioId, id]);
 
-  return (r.rows[0] as F | undefined) ?? null;
+    return (r.rows[0] as F | undefined) ?? null;
+  } catch (error) {
+    if (!faltaNce(error)) throw error;
+
+    const r = await db.query(`${SELECT} WHERE ${ALCANCE} AND d.id = $3`, [empresaId, usuarioId, id]);
+
+    return (r.rows[0] as F | undefined) ?? null;
+  }
 }
 
 /** Intentos (evidencia) del documento, del más reciente al más antiguo, máx. 100. Solo se llama tras comprobar que el documento está en el alcance. */
@@ -266,7 +303,7 @@ export function respuestaErrorFacturacion(error: unknown, accion: string) {
   if (pg.detail && /^NEX:(YA_ENVIADO|ENVIO_INDETERMINADO|ENVIO_EN_CURSO|REENVIO_REQUIERE_CONFIRMACION|TIPO_NO_ENVIABLE|SIN_SOLICITUD|ENVIO_NO_INICIADO)$/.test(pg.detail)) {
     return NextResponse.json({ error: pg.message ?? "El documento no se puede enviar en su estado actual." }, { status: 409 });
   }
-  if (pg.detail && /^NEX:(SUCURSAL_INVALIDA|SIN_ESTABLECIMIENTO|CLIENTE_INVALIDO|PUNTO_INVALIDO|SECUENCIA_NO_CONFIGURADA|NUMERACION_AGOTADA|PAYLOAD_INVALIDO)$/.test(pg.detail)) {
+  if (pg.detail && /^NEX:(SUCURSAL_INVALIDA|SIN_ESTABLECIMIENTO|CLIENTE_INVALIDO|PUNTO_INVALIDO|SECUENCIA_NO_CONFIGURADA|NUMERACION_AGOTADA|PAYLOAD_INVALIDO|FE_NO_ENCONTRADA|FE_NO_APROBADA|MONEDA_DISTINTA|ASOCIACION_INVALIDA|NCE_PENDIENTE|MOTIVO_FIJADO|MOTIVO_INVALIDO|LINEA_INVALIDA|SALDO_MONTO|SALDO_CANTIDAD|TOTAL_NO_CONCILIA|NCE_RECHAZADA)$/.test(pg.detail)) {
     return NextResponse.json({ error: pg.message ?? "La operación no cumple las reglas de facturación." }, { status: 409 });
   }
   if (pg.code === "P0001") return NextResponse.json({ error: pg.message ?? "La operación no cumple las reglas de facturación." }, { status: 400 });

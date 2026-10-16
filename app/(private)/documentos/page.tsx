@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { Fragment, useEffect, useState } from "react";
 
 import { CampoFecha } from "@/components/ui/campo-fecha";
@@ -34,7 +35,11 @@ type Documento = {
   sucursalNombre: string; receptorNombre: string; receptorDocumento: string | null; moneda: string; total: string; estadoLocal: EstadoLocal; estadoSifen: EstadoSifen;
   estadoEmail: EstadoEmail; estadoGatewayTexto: string | null; codRespuesta: string | null; mensajeRespuesta: string | null; fechaFirma: string | null; fechaEnvio: string | null;
   ultimaConsultaAt: string | null; ultimaConsultaResultado: string | null; lote: string | null; envioErrorTipo: "AUTENTICACION" | "RECHAZO" | "TRANSITORIO" | null;
+  /** NCE (PRO-94): factura original y motivo; `corregible` = rechazo definitivo (acción «Corregir y emitir nueva»); `requiereRevision` = mucho tiempo pendiente (solo etiqueta). */
+  feNumero?: string | null; feId?: string | null; nceMotivo?: number | null; corregible?: boolean; requiereRevision?: boolean;
 };
+
+const MOTIVO_NCE: Record<number, string> = { 2: "Devolución", 3: "Descuento", 4: "Bonificación", 8: "Ajuste de precio" };
 type Intento = { id: string; tipo: string; fase: string | null; lote: string | null; cdcInformado: string | null; resultado: string; httpStatus: number | null; estadoGateway: string | null; estadoSifen: string | null; codRespuesta: string | null; mensaje: string | null; creadoAt: string; actorNombre: string };
 type Respuesta = {
   documentos: Documento[]; total: number; pagina: number; totalPaginas: number; resumen: Record<string, number>; sucursales: Array<{ id: string; nombre: string }>; permisos: { editar: boolean; crear: boolean };
@@ -88,6 +93,15 @@ export default function DocumentosPage() {
   const [recarga, setRecarga] = useState(0);
   const [resultado, setResultado] = useState<{ clave: string; datos: Respuesta | null; error: string } | null>(null);
   const [abiertos, setAbiertos] = useState<Record<string, Detalle>>({});
+
+  useEffect(() => {
+    // Llegada desde «Emitir nota de crédito»: precarga el número emitido en la búsqueda.
+    const q = new URLSearchParams(window.location.search).get("q");
+
+    const t = q ? window.setTimeout(() => setBusqueda(q.slice(0, 80)), 0) : undefined;
+
+    return () => { if (t !== undefined) window.clearTimeout(t); };
+  }, []);
 
   useEffect(() => {
     const t = window.setTimeout(() => setBusquedaAplicada(busqueda.trim()), 300);
@@ -322,6 +336,7 @@ export default function DocumentosPage() {
                         <div className={ui.cell}>
                           <strong className={ui.mono}>{numeroDocumento(d)}</strong>
                           <span>{ETIQUETA_TIPO[d.tipo]} · {d.sucursalNombre}</span>
+                          {d.tipo === "NCE" && d.feNumero ? <span>Factura {d.feNumero}{d.nceMotivo ? ` · ${MOTIVO_NCE[d.nceMotivo] ?? ""}` : ""}</span> : null}
                         </div>
                       </td>
                       <td>{fechaHora(d.fechaEmision)}</td>
@@ -339,6 +354,7 @@ export default function DocumentosPage() {
                           <span className={claseSifen(d.estadoSifen)} title="Estado informado por SIFEN/gateway">SIFEN: {ETIQUETA_SIFEN[d.estadoSifen]}</span>
                           <span className={claseLocal(d.estadoLocal)} title="Estado del envío al gateway">Envío: {ETIQUETA_LOCAL[d.estadoLocal]}</span>
                           <span className={claseEmail(d.estadoEmail)} title="Estado del e-mail al cliente">{ETIQUETA_EMAIL[d.estadoEmail]}</span>
+                          {d.requiereRevision ? <span className={ui.statusDanger} title="Lleva mucho tiempo sin resultado definitivo. Se sigue consultando automáticamente; no se reenvía ni se libera el saldo.">Requiere revisión</span> : null}
                         </div>
                       </td>
                       <td className={ui.actionsCell}>
@@ -353,6 +369,7 @@ export default function DocumentosPage() {
                       <tr>
                         <td colSpan={6} style={{ background: "var(--surface-muted, #f6f8f8)" }}>
                           <dl style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "6px 16px", margin: "6px 0" }}>
+                            {d.tipo === "NCE" ? <div><dt className={ui.muted}>Factura original</dt><dd style={{ margin: 0 }}>{d.feNumero ?? "—"}{d.nceMotivo ? ` · Motivo: ${MOTIVO_NCE[d.nceMotivo] ?? d.nceMotivo}` : ""}</dd></div> : null}
                             <div><dt className={ui.muted}>CDC</dt><dd className={ui.mono} style={{ overflowWrap: "anywhere", margin: 0 }}>{d.cdc ?? "Aún no informado"}</dd></div>
                             <div><dt className={ui.muted}>Estado informado</dt><dd style={{ margin: 0 }}>{d.estadoGatewayTexto ?? "—"}</dd></div>
                             <div><dt className={ui.muted}>Último mensaje SIFEN</dt><dd style={{ margin: 0 }}>{d.codRespuesta ? `${d.codRespuesta} · ` : ""}{d.mensajeRespuesta ?? "—"}</dd></div>
@@ -369,14 +386,17 @@ export default function DocumentosPage() {
                               {det.consultando ? "Enviando..." : "Enviar al gateway"}
                             </button>
                           ) : null}
-                          {crear && d.estadoLocal === "ERROR_ENVIO" && d.envioErrorTipo === "RECHAZO" ? (
+                          {crear && d.tipo !== "NCE" && d.estadoLocal === "ERROR_ENVIO" && d.envioErrorTipo === "RECHAZO" ? (
                             <button type="button" className={ui.secondaryButton} disabled={det.consultando} onClick={() => enviarAlGateway(d, true)}>
                               {det.consultando ? "Enviando..." : "Reenviar el mismo documento (confirmar)"}
                             </button>
                           ) : null}
                           {d.estadoLocal === "ERROR_ENVIO" && d.envioErrorTipo === "RECHAZO" ? (
-                            <p className={ui.alertError} role="alert">El gateway rechazó este documento por validación. Se conserva su número y el historial; no se genera otro número ni se reenvía automáticamente.</p>
+                            <p className={ui.alertError} role="alert">{d.tipo === "NCE" ? "El gateway rechazó esta nota de crédito por validación. Se conserva su número y el historial; no se reenvía: emita una nueva con «Corregir y emitir nueva»." : "El gateway rechazó este documento por validación. Se conserva su número y el historial; no se genera otro número ni se reenvía automáticamente."}</p>
                           ) : null}
+                          {crear && d.tipo === "NCE" && d.corregible ? (
+                            <Link className={ui.primaryButton} href={`/notas-credito?corregir=${d.id}`}>Corregir y emitir nueva</Link>
+                          ) : null}{" "}
                           {d.estadoLocal === "ENVIO_INDETERMINADO" ? (
                             <p className={ui.alertError} role="alert">El resultado del envío no está confirmado. Verifique el documento en el gateway antes de cualquier reenvío: Nexit no reenvía automáticamente un envío indeterminado.</p>
                           ) : null}{" "}

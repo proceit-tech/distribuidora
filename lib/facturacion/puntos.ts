@@ -77,6 +77,7 @@ export function traducirErrorPunto(error: unknown): never {
     case "NEX:SIN_ESTABLECIMIENTO": throw m(409, "La sucursal no tiene establecimiento SIFEN configurado: configúrelo antes de crear puntos.");
     case "NEX:PUNTO_DUPLICADO": throw m(409, "Ya existe un punto con ese código en la sucursal.");
     case "NEX:PUNTO_INVALIDO": throw m(404, "El punto de expedición no existe.");
+    case "NEX:TIPO_NO_CONFIGURABLE": throw m(422, "Por ahora solo se configura la secuencia de la Nota de Crédito (NCE) en el punto.");
     case "NEX:SECUENCIA_NO_CONFIGURADA": throw m(409, "El punto no tiene secuencia FE configurada: active el punto confirmando el último número emitido.");
     case "NEX:PUNTO_YA_ACTIVO": throw m(409, "El punto ya está activo.");
     case "NEX:PUNTO_YA_INACTIVO": throw m(409, "El punto ya está inactivo.");
@@ -87,7 +88,9 @@ export function traducirErrorPunto(error: unknown): never {
 }
 
 /** ultimoNumero / proximo = null cuando el punto NO tiene secuencia FE configurada («Sin configurar»): nunca se representa como 0 confirmado. */
-export type PuntoFila = { id: string; codigo: string; nombre: string; ultimoNumero: number | null; activo: boolean; proximo: string | null };
+/** Secuencias de los DEMÁS tipos de documento del MISMO punto (p. ej. NCE): un punto se crea una sola vez y cada tipo lleva su numeración independiente. */
+export type SecuenciaTipo = { tipo: string; ultimoNumero: number; proximo: string };
+export type PuntoFila = { id: string; codigo: string; nombre: string; ultimoNumero: number | null; activo: boolean; proximo: string | null; secuencias: SecuenciaTipo[] };
 export type SucursalPuntos = { id: string; nombre: string; establecimiento: string | null; puntos: PuntoFila[] };
 
 /**
@@ -97,7 +100,8 @@ export type SucursalPuntos = { id: string; nombre: string; establecimiento: stri
 export async function listarPuntos(db: Db, empresaId: string, usuarioId: string): Promise<SucursalPuntos[]> {
   const r = await db.query(
     `SELECT sc.id, sc.nombre, sc.establecimiento_sifen AS establecimiento,
-            coalesce(json_agg(json_build_object('id', p.id, 'codigo', p.codigo, 'nombre', p.nombre, 'ultimoNumero', s.ultimo_numero, 'activo', p.activo) ORDER BY p.codigo) FILTER (WHERE p.id IS NOT NULL), '[]'::json) AS puntos
+            coalesce(json_agg(json_build_object('id', p.id, 'codigo', p.codigo, 'nombre', p.nombre, 'ultimoNumero', s.ultimo_numero, 'activo', p.activo,
+              'secuencias', coalesce((SELECT json_agg(json_build_object('tipo', q.tipo_documento, 'ultimoNumero', q.ultimo_numero) ORDER BY q.tipo_documento) FROM fe_punto_secuencias q WHERE q.empresa_id = p.empresa_id AND q.punto_id = p.id AND q.tipo_documento <> 'FE'), '[]'::json)) ORDER BY p.codigo) FILTER (WHERE p.id IS NOT NULL), '[]'::json) AS puntos
        FROM sucursales sc
        LEFT JOIN fe_puntos_expedicion p ON p.empresa_id = sc.empresa_id AND p.sucursal_id = sc.id
        LEFT JOIN fe_punto_secuencias s ON s.empresa_id = p.empresa_id AND s.punto_id = p.id AND s.tipo_documento = 'FE'
@@ -113,6 +117,7 @@ export async function listarPuntos(db: Db, empresaId: string, usuarioId: string)
     puntos: ((s.puntos as Array<Record<string, unknown>>) ?? []).map((p) => ({
       id: String(p.id), codigo: String(p.codigo), nombre: String(p.nombre), ultimoNumero: p.ultimoNumero === null || p.ultimoNumero === undefined ? null : Number(p.ultimoNumero), activo: p.activo === true,
       proximo: p.ultimoNumero === null || p.ultimoNumero === undefined ? null : String(Number(p.ultimoNumero) + 1).padStart(7, "0"),
+      secuencias: ((p.secuencias as Array<Record<string, unknown>> | undefined) ?? []).map((q) => ({ tipo: String(q.tipo), ultimoNumero: Number(q.ultimoNumero), proximo: String(Number(q.ultimoNumero) + 1).padStart(7, "0") })),
     })),
   }));
 }
@@ -130,6 +135,15 @@ export async function crearPunto(db: Db, empresaId: string, usuarioId: string, a
 export async function activarPunto(db: Db, empresaId: string, usuarioId: string, puntoId: string, a: ActivacionPunto): Promise<void> {
   try {
     await db.query("SELECT fe_punto_activar($1::uuid, $2::uuid, $3::uuid, $4::integer, true)", [empresaId, usuarioId, puntoId, a.ultimoNumero]);
+  } catch (error) {
+    traducirErrorPunto(error);
+  }
+}
+
+/** Informa y confirma el ÚLTIMO número realmente emitido de la secuencia NCE de un punto existente (nunca presume 0, nunca retrocede). La FE no se toca. */
+export async function configurarSecuenciaNce(db: Db, empresaId: string, usuarioId: string, puntoId: string, a: ActivacionPunto): Promise<void> {
+  try {
+    await db.query("SELECT fe_punto_secuencia_configurar($1::uuid, $2::uuid, $3::uuid, 'NCE', $4::integer, true)", [empresaId, usuarioId, puntoId, a.ultimoNumero]);
   } catch (error) {
     traducirErrorPunto(error);
   }

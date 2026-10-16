@@ -7,7 +7,8 @@ import ui from "@/components/ui/lista-padrao/lista.module.css";
 
 import estilos from "./page.module.css";
 
-type Punto = { id: string; codigo: string; nombre: string; ultimoNumero: number | null; activo: boolean; proximo: string | null };
+type Secuencia = { tipo: string; ultimoNumero: number; proximo: string };
+type Punto = { id: string; codigo: string; nombre: string; ultimoNumero: number | null; activo: boolean; proximo: string | null; secuencias?: Secuencia[] };
 type Sucursal = { id: string; nombre: string; establecimiento: string | null; puntos: Punto[] };
 
 const NUMERO_OK = /^\d{1,7}$/;
@@ -39,6 +40,8 @@ export default function PuntosExpedicionPage() {
   const [confirmaAlta, setConfirmaAlta] = useState(false);
 
   const [activando, setActivando] = useState<{ id: string; numero: string; confirma: boolean } | null>(null);
+  // Secuencia NCE del MISMO punto (PRO-94): se informa y confirma el último número realmente emitido de las notas de crédito; no duplica el punto ni toca la secuencia de facturas.
+  const [nceEdit, setNceEdit] = useState<{ id: string; numero: string; confirma: boolean } | null>(null);
 
   const [version, setVersion] = useState(0);
 
@@ -102,6 +105,14 @@ export default function PuntosExpedicionPage() {
       await pedir(`/api/facturacion/puntos/${activando.id}/activar`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ultimoNumero: activando.numero, confirmado: activando.confirma }) }, "No fue posible activar el punto.");
       setActivando(null);
     }, "Punto activado: la próxima factura continúa desde el número confirmado.");
+
+  const configurarNce = () =>
+    ejecutar(async () => {
+      if (!nceEdit) return;
+
+      await pedir(`/api/facturacion/puntos/${nceEdit.id}/secuencia-nce`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ultimoNumero: nceEdit.numero, confirmado: nceEdit.confirma }) }, "No fue posible configurar la secuencia NCE.");
+      setNceEdit(null);
+    }, "Secuencia de Nota de Crédito guardada: la próxima NCE continúa desde el número confirmado. La secuencia de facturas no cambió.");
 
   const desactivar = (id: string) => ejecutar(async () => { await pedir(`/api/facturacion/puntos/${id}/desactivar`, { method: "POST" }, "No fue posible desactivar el punto."); }, "Punto desactivado. La numeración se conserva.");
 
@@ -177,7 +188,7 @@ export default function PuntosExpedicionPage() {
           {s.puntos.length === 0 ? <p className={estilos.hint}>Sin puntos de expedición: no se puede facturar desde esta sucursal.</p> : (
             <div className={estilos.tabla}>
               <table>
-                <thead><tr><th>Punto</th><th>Nombre</th><th className={estilos.num}>Último emitido</th><th>Próximo</th><th>Estado</th><th>Acciones</th></tr></thead>
+                <thead><tr><th>Punto</th><th>Nombre</th><th className={estilos.num}>Último emitido</th><th>Próximo</th><th>Estado</th><th>Nota de crédito (NCE)</th><th>Acciones</th></tr></thead>
                 <tbody>
                   {s.puntos.map((p) => (
                     <tr key={p.id}>
@@ -186,6 +197,33 @@ export default function PuntosExpedicionPage() {
                       <td className={estilos.num}>{p.ultimoNumero ?? "Sin configurar"}</td>
                       <td>{p.proximo ?? "—"}</td>
                       <td><span className={p.activo ? estilos.activo : estilos.inactivo}>{p.activo ? "Activo" : "Inactivo"}</span></td>
+                      <td>
+                        {nceEdit?.id === p.id ? (
+                          <div className={estilos.activacion}>
+                            <label className={estilos.field}>
+                              <span>Último número NCE emitido</span>
+                              <input inputMode="numeric" maxLength={7} value={nceEdit.numero} onChange={(e) => setNceEdit({ ...nceEdit, numero: e.target.value.replace(/\D/g, "") })} />
+                              <small className={estilos.hint}>Sin valor por defecto: escriba el último número realmente emitido de las notas de crédito (0 solo si nunca se emitió). No puede ser menor que el registrado.</small>
+                            </label>
+                            <label className={estilos.check}>
+                              <input type="checkbox" checked={nceEdit.confirma} onChange={(e) => setNceEdit({ ...nceEdit, confirma: e.target.checked })} /> Confirmo que es el último número NCE realmente emitido con este establecimiento y punto.
+                            </label>
+                            <span className={estilos.acciones}>
+                              <button type="button" className={ui.primaryButton} disabled={ocupado || !nceEdit.confirma || !NUMERO_OK.test(nceEdit.numero) || Number(nceEdit.numero) > 9999998} onClick={configurarNce}>Guardar NCE</button>
+                              <button type="button" className={ui.secondaryButton} onClick={() => setNceEdit(null)}>Cancelar</button>
+                            </span>
+                          </div>
+                        ) : (
+                          <>
+                            {(() => {
+                              const nce = (p.secuencias ?? []).find((q) => q.tipo === "NCE");
+
+                              return nce ? <span>Último {nce.ultimoNumero} · próximo {nce.proximo}</span> : <span className={estilos.hint}>Sin configurar</span>;
+                            })()}
+                            <button type="button" className={ui.secondaryButton} disabled={ocupado} onClick={() => setNceEdit({ id: p.id, numero: (p.secuencias ?? []).find((q) => q.tipo === "NCE")?.ultimoNumero.toString() ?? "", confirma: false })}>{(p.secuencias ?? []).some((q) => q.tipo === "NCE") ? "Actualizar…" : "Configurar…"}</button>
+                          </>
+                        )}
+                      </td>
                       <td>
                         {p.activo ? (
                           <button type="button" className={ui.secondaryButton} disabled={ocupado} onClick={() => desactivar(p.id)}>Desactivar</button>
@@ -217,6 +255,7 @@ export default function PuntosExpedicionPage() {
         </div>
       ))}
 
+      <p className={estilos.hint}>Cada punto se crea una sola vez y lleva una numeración independiente por tipo de documento. Hoy se emiten facturas y notas de crédito (NCE); los demás tipos (NDE, NRE, AFE) aún no están disponibles.</p>
       <p className={estilos.hint}><Link href="/facturas/nueva">Volver a Nueva factura electrónica</Link></p>
     </section>
   );
