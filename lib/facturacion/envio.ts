@@ -2,7 +2,8 @@ import type { Pool } from "pg";
 
 import { guardarClasificacionIva, type ClasificacionGuardar, type ResultadoGuardado } from "@/lib/facturacion/ajuste-fiscal";
 import { crearFacturaElectronica, type CuerpoFactura } from "@/lib/facturacion/emision";
-import { configGatewayValida, enviarDocumentoGateway, leerCredenciales, type ConfigGateway, type Dependencias, type FaseEnvio, type ResultadoEnvio } from "@/lib/facturacion/gateway";
+import { adjuntarCredencialesDeBase, hayCredencialesEnBase, REF_CREDENCIALES_BASE } from "@/lib/facturacion/gateway-credenciales";
+import { configGatewayValida, credencialesDe, enviarDocumentoGateway, leerCredenciales, type ConfigGateway, type Dependencias, type FaseEnvio, type ResultadoEnvio } from "@/lib/facturacion/gateway";
 import { MENSAJES_GATEWAY, type EstadoGateway, type EstadoGatewayUI } from "@/lib/facturacion/gateway-estado";
 import { ErrorFacturacion } from "@/lib/facturacion/shared";
 
@@ -57,14 +58,17 @@ export async function estadoGateway(db: Db, empresaId: string, dep: Dependencias
 
     if (!valida) return dar("INVALIDA");
 
-    return leerCredenciales(valida.credencialRef, dep.env) ? dar("CONFIGURADO") : dar("SIN_CREDENCIALES");
+    // PRO-133: con credenciales en la base (referencia NEXIT_DB) la prontitud la dan ellas; con otra referencia, las variables de entorno (respaldo).
+    const hay = valida.credencialRef === REF_CREDENCIALES_BASE ? await hayCredencialesEnBase(db, empresaId) : leerCredenciales(valida.credencialRef, dep.env) !== null;
+
+    return hay ? dar("CONFIGURADO") : dar("SIN_CREDENCIALES");
   } catch {
     return dar("NO_DISPONIBLE");
   }
 }
 
 /** Configuración del gateway de la empresa y presencia de credenciales (sin leerlas hacia afuera). 409 si falta algo. */
-export async function configuracionGateway(db: Db, empresaId: string, dep: Dependencias = {}): Promise<ConfigGateway> {
+export async function configuracionGateway(db: Db, empresaId: string, dep: Dependencias = {}, usuarioId?: string): Promise<ConfigGateway> {
   const cfg = await db.query(`SELECT base_url AS "baseUrl", credencial_ref AS "credencialRef", timeout_ms AS "timeoutMs" FROM fe_gateway_config WHERE empresa_id = $1 AND activo`, [empresaId]);
   const fila = cfg.rows[0] as { baseUrl: string; credencialRef: string; timeoutMs: number } | undefined;
 
@@ -73,9 +77,12 @@ export async function configuracionGateway(db: Db, empresaId: string, dep: Depen
   const valida = configGatewayValida(empresaId, fila);
 
   if (!valida) throw new ErrorFacturacion(409, "La configuración del gateway de esta empresa no es válida (URL https y tiempo de espera).");
-  if (!leerCredenciales(valida.credencialRef, dep.env)) throw new ErrorFacturacion(409, "Las credenciales del gateway de esta empresa no están configuradas en el servidor.");
+  // PRO-133: las credenciales de la empresa guardadas en la base (con el usuario de la sesión); si no hay, las variables de entorno de la referencia.
+  const conCredenciales = usuarioId ? await adjuntarCredencialesDeBase(db, valida, usuarioId) : valida;
 
-  return valida;
+  if (!credencialesDe(conCredenciales, dep.env)) throw new ErrorFacturacion(409, "Las credenciales del gateway de esta empresa no están configuradas.");
+
+  return conCredenciales;
 }
 
 const SQL_REGISTRAR_ENVIO = "SELECT fe_documento_registrar_envio($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb)";
@@ -151,7 +158,7 @@ async function cerrarEnvio(db: Db, empresaId: string, usuarioId: string, documen
 
 /** Envía un documento ya creado (PENDIENTE_ENVIO o ERROR_ENVIO). Lanza ErrorFacturacion/errores de la función SQL si no es enviable. */
 export async function enviarDocumento(db: Db, empresaId: string, usuarioId: string, documentoId: string, dep: Dependencias = {}, opciones: { confirmaRechazo?: boolean } = {}): Promise<Omit<RespuestaEnvio, "reutilizado" | "numero" | "documentoId"> & { numero: string }> {
-  const config = await configuracionGateway(db, empresaId, dep);
+  const config = await configuracionGateway(db, empresaId, dep, usuarioId);
   const inicio = await db.query(
     `SELECT o_resultado AS resultado, o_payload AS payload, o_numero AS numero, o_tipo AS tipo, o_establecimiento AS establecimiento, o_punto AS punto FROM fe_documento_iniciar_envio($1::uuid, $2::uuid, $3::uuid, $4::boolean)`,
     [empresaId, usuarioId, documentoId, opciones.confirmaRechazo === true],
@@ -186,7 +193,7 @@ export async function enviarDocumento(db: Db, empresaId: string, usuarioId: stri
 
 /** «Enviar factura»: valida, crea (idempotente) y transmite. Repetir con la misma clave no duplica documento ni numeración ni envío. */
 export async function emitirFactura(db: Db, empresaId: string, usuarioId: string, cuerpo: CuerpoFactura, dep: Dependencias = {}): Promise<RespuestaEnvio> {
-  await configuracionGateway(db, empresaId, dep);
+  await configuracionGateway(db, empresaId, dep, usuarioId);
 
   const salida: { guardar: ClasificacionGuardar[] } = { guardar: [] };
   const creado = await crearFacturaElectronica(db, empresaId, usuarioId, cuerpo, salida);

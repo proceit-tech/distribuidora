@@ -1,4 +1,19 @@
-# Provisionamiento del gateway de facturación electrónica de PRUEBA (PRO-133)
+# Gateway de facturación electrónica de PRUEBA (PRO-133)
+
+## VIGENTE — Configuración por la interfaz: Configuración → Facturación electrónica (NEX-061)
+**Decisión del responsable (16/10/2026):** la configuración se hace desde la interfaz administrativa del NEXIT, sin scripts por empresa. El instalador/provisionador por scripts (secciones siguientes) queda **superado** y se conserva solo como histórico.
+
+- **Pantalla:** menú *Administración → Facturación electrónica* (`/configuracion/facturacion-electronica`), en español (PY). Muestra la empresa de la sesión, la URL del gateway de prueba (fija, solo lectura), **Usuario API (RUC)**, **Contraseña API** (enmascarada, con «Mostrar»), el estado de la configuración y de la última conexión probada, y los botones **Probar conexión** y **Guardar**. No se pide URL, endpoints, referencia técnica ni token.
+- **Guardar:** usuario y clave se guardan en PostgreSQL, vinculados únicamente a la empresa de la sesión. Por decisión expresa del responsable la clave se guarda **sin cifrado en reposo**; el acceso se restringe: tabla aparte `fe_gateway_credenciales` **sin ningún privilegio** para el rol de la aplicación (solo funciones SECURITY DEFINER), la clave **nunca** se devuelve (GET/listados/errores/bitácora), en edición solo se indica que hay una configurada y puede reemplazarse (en blanco = conservar). Cambiar usuario o clave invalida los tokens en caché de la empresa y borra el resultado de la última prueba.
+- **Probar conexión:** el backend ejecuta solo `POST /api/login` con las credenciales escritas en la pantalla o las guardadas; muestra *autenticación correcta*, *credenciales rechazadas*, *gateway no disponible* o *tiempo agotado*. No devuelve token ni clave, no crea facturas, no reserva numeración, no llama a `recepcion_de` ni toca documentos. Límite: 5 pruebas por ventana de 5 minutos y 3 segundos entre intentos, por empresa.
+- **Emisión y consulta:** el gateway usa las credenciales de la empresa guardadas en la base (con el usuario de la sesión); las empresas con configuración anterior por variables de entorno (`NEXIT_FE_<REF>_*`) siguen funcionando como respaldo. La prontitud de *Nueva factura* se actualiza sola al guardar; `CONFIGURADO` = configuración activa + credenciales guardadas (no prueba que el gateway responda: eso lo muestra *Probar conexión*). El envío sigue bloqueado mientras no esté `CONFIGURADO`.
+- **Permiso:** `FACTURACION_ELECTRONICA.CONFIGURAR` (administrativo, sin asignar a perfiles; el administrador de la empresa lo tiene por definición). Se verifica en el servidor (rutas y página) y dentro de las funciones SQL.
+- **Puesta en marcha (responsable):** aplicar la migration **NEX-061** (procedimiento en `PROCEDIMENTO-ATUALIZACAO-AMBIENTE-NEXIT-VM.md`, sección «NEX-061»), desplegar la aplicación y, con el administrador de CASA MINGO, abrir la pantalla, escribir usuario/clave, *Probar conexión* y *Guardar*. Reversión: `scripts/reversion-NEX-061.sql`.
+- **No hecho / pendiente:** la migration no está aplicada ni la pantalla validada en el ambiente operacional; la autenticación real contra el gateway no se probó. No se declara homologación.
+
+---
+
+## HISTÓRICO (superado) — Provisionamiento por scripts
 
 **Estado:** automatizado y versionado; **NO aplicado en la VM**. Impedimentos reales (AUD-PRO133-R01/R02): Claude Code no tiene acceso SSH/Docker/PostgreSQL autorizado (`CLAUDE.md`) ni acceso al cofre privado con el RUC y la clave del emisor de prueba. No se simuló ninguna instalación. Mientras no se ejecute, la factura responde HTTP 409 antes de reservar número y la pantalla muestra «Sin configurar» con el envío bloqueado.
 

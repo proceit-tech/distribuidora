@@ -41,6 +41,9 @@ git log -1 --oneline
 
 **Não executar `git pull` em `/srv/stacks/distribuidora`:** não é um repositório Git; o terminal já devolveu `fatal: not a git repository`.
 
+## NEX-061 — Configuración del gateway FE por empresa (PRO-133 UI)
+Migration incremental **NEX-061** (`migraciones/NEX-061-facturacion-gateway-credenciales-empresa.sql`; reversión `scripts/reversion-NEX-061.sql`). Se aplica con el MISMO runner documentado en la ETAPA 2 (copiar `v1/.` al contenedor, `--solo-listar`, luego aplicar), con backup previo y solo con autorización del responsable. Verificación posterior (solo lectura): `docker exec nexit-db psql -U nexit_app -d nexit -c "SELECT version FROM public.schema_migrations WHERE version = 'NEX-061';"` y `... -c "SELECT codigo FROM public.permisos WHERE codigo = 'FACTURACION_ELECTRONICA.CONFIGURAR';"`. Después se despliega la aplicación (build + recreate de `app`, ver abajo). Ningún secreto en `app.env` es necesario: las credenciales se cargan desde la pantalla.
+
 ## ETAPA 2 — Migraciones automáticas (SOMENTE se a atualização inclui migrations e há autorização)
 
 O procedimento abaixo é o que **funcionou no terminal real**. Copiar o DIRETÓRIO `v1/.`, não cinco SQLs escolhidos manualmente: o runner verifica **todas** as migrations versionadas, checksums e `schema_migrations`, pulando as já aplicadas.

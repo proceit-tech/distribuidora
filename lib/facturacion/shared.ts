@@ -3,6 +3,7 @@ import type { Pool } from "pg";
 
 import { ESTADOS_EMAIL, ESTADOS_LOCAL, ESTADOS_SIFEN, GRUPOS_INDICADOR, TIPOS_DOCUMENTO, type GrupoIndicador } from "@/lib/facturacion/estados";
 import { configGatewayValida, consultarDocumentoGateway, type Dependencias } from "@/lib/facturacion/gateway";
+import { adjuntarCredencialesDeBase } from "@/lib/facturacion/gateway-credenciales";
 import { decidirConsulta } from "@/lib/facturacion/reconciliacion";
 
 /**
@@ -230,7 +231,7 @@ export async function consultarEstado(db: Db, empresaId: string, usuarioId: stri
   if (!config) throw new ErrorFacturacion(409, "La configuración del gateway de esta empresa no es válida (URL https y tiempo de espera).");
 
   const bruto = await consultarDocumentoGateway(
-    config,
+    await adjuntarCredencialesDeBase(db, config, usuarioId),
     { tipo: String(doc.tipo), establecimiento: String(doc.establecimiento), puntoExpedicion: String(doc.puntoExpedicion), numero: String(doc.numero), serie: (doc.serie as string | null) ?? null },
     dep,
   );
@@ -238,7 +239,7 @@ export async function consultarEstado(db: Db, empresaId: string, usuarioId: stri
   if ("sinContrato" in bruto) {
     throw new ErrorFacturacion(
       409,
-      bruto.sinContrato === "TIPO" ? "La consulta de este tipo de documento aún no está confirmada con el proveedor." : "Las credenciales del gateway de esta empresa no están configuradas en el servidor.",
+      bruto.sinContrato === "TIPO" ? "La consulta de este tipo de documento aún no está confirmada con el proveedor." : "Las credenciales del gateway de esta empresa no están configuradas.",
     );
   }
 

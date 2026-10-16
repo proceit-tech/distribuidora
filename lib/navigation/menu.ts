@@ -332,6 +332,13 @@ export const NAVIGATION_GROUPS: ShellNavigationGroup[] = [
         permission: "CONFIGURACION.VER",
       },
       {
+        id: "settings-electronic-billing",
+        label: "Facturación electrónica",
+        href: "/configuracion/facturacion-electronica",
+        icon: "settings",
+        permission: "FACTURACION_ELECTRONICA.CONFIGURAR",
+      },
+      {
         id: "audit",
         label: "Auditoría",
         href: "/administracion/auditoria",
@@ -361,6 +368,7 @@ const V1_HREFS = new Set([
   "/documentos",
   "/facturas",
   "/facturacion/puntos",
+  "/configuracion/facturacion-electronica",
   "/movimientos",
   "/reportes",
   "/reportes/stock-general",

@@ -14,7 +14,8 @@ import { estadoSifenDesdeGateway, type EstadoSifen } from "@/lib/facturacion/est
  */
 
 /** empresaId forma parte de la clave del token en caché: dos empresas nunca comparten sesión del gateway, ni siquiera con la misma referencia. */
-export type ConfigGateway = { empresaId: string; baseUrl: string; credencialRef: string; timeoutMs: number };
+/** `credenciales`: usuario/clave de la API guardados en la base para la empresa (PRO-133, NEX-061); si faltan se usan las variables de entorno NEXIT_FE_<REF>_*. Nunca se serializan ni se devuelven. */
+export type ConfigGateway = { empresaId: string; baseUrl: string; credencialRef: string; timeoutMs: number; credenciales?: { ruc: string; password: string } };
 export type FetchLike = (url: string, init: { method: string; headers: Record<string, string>; body: string; signal: AbortSignal }) => Promise<{ status: number; text(): Promise<string> }>;
 export type Dependencias = { fetch?: FetchLike; env?: Record<string, string | undefined>; ahora?: () => number };
 
@@ -34,6 +35,11 @@ export function configGatewayValida(empresaId: string, fila: { baseUrl?: unknown
   const t = Number(fila.timeoutMs);
 
   return { empresaId, baseUrl: fila.baseUrl, credencialRef: fila.credencialRef, timeoutMs: Number.isFinite(t) ? Math.min(60000, Math.max(1000, Math.trunc(t))) : 15000 };
+}
+
+/** Credenciales efectivas de la empresa: las de la base (si se cargaron en la configuración) o, en su defecto, las variables de entorno de la referencia. */
+export function credencialesDe(config: ConfigGateway, env: Record<string, string | undefined> = process.env) {
+  return config.credenciales && config.credenciales.ruc && config.credenciales.password ? config.credenciales : leerCredenciales(config.credencialRef, env);
 }
 
 export function leerCredenciales(ref: string, env: Record<string, string | undefined> = process.env) {
@@ -201,6 +207,20 @@ export const tamanoCacheTokens = () => cacheTokens.size;
 
 export const limpiarCacheTokens = () => cacheTokens.clear();
 
+/** Descarta los tokens en caché de UNA empresa (al cambiar sus credenciales). La clave de caché incluye además la huella de las credenciales, así que otra instancia tampoco reutiliza un token viejo. */
+export function invalidarTokensEmpresa(empresaId: string): number {
+  let n = 0;
+
+  for (const k of [...cacheTokens.keys()]) {
+    if (k.startsWith(`${empresaId}|`)) {
+      cacheTokens.delete(k);
+      n += 1;
+    }
+  }
+
+  return n;
+}
+
 function venceToken(token: string, ahora: number) {
   try {
     const exp = Number((JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString("utf8")) as { exp?: unknown }).exp);
@@ -241,6 +261,28 @@ async function obtenerToken(config: ConfigGateway, ruc: string, password: string
   return token;
 }
 
+export type EstadoPrueba = "OK" | "CREDENCIALES_INVALIDAS" | "NO_DISPONIBLE" | "TIMEOUT";
+
+/**
+ * «Probar conexión» (PRO-133): UNA autenticación POST /api/login con las credenciales dadas y NADA más (no consulta ni recibe documentos, no reserva numeración). Devuelve solo una categoría:
+ * el token y la clave jamás salen de aquí (ni se guardan en la caché: es una prueba). 200 + {status:"success", token} = OK; 4xx = credenciales rechazadas; red/5xx/otros = no disponible; tiempo agotado = timeout.
+ */
+export async function probarLoginGateway(config: { baseUrl: string; timeoutMs: number }, ruc: string, password: string, dep: Pick<Dependencias, "fetch"> = {}): Promise<{ estado: EstadoPrueba; http: number | null }> {
+  const r = await enviar(`${config.baseUrl}/api/login`, {}, { ruc, password }, config.timeoutMs, dep.fetch ?? (globalThis.fetch as unknown as FetchLike));
+
+  if (!r.ok) return { estado: r.motivo === "TIMEOUT" ? "TIMEOUT" : "NO_DISPONIBLE", http: null };
+
+  try {
+    const j = JSON.parse(r.texto) as { status?: unknown; token?: unknown };
+
+    if (r.status === 200 && j.status === "success" && typeof j.token === "string" && j.token) return { estado: "OK", http: r.status };
+  } catch {
+    // respuesta no JSON
+  }
+
+  return { estado: r.status >= 400 && r.status < 500 && r.status !== 404 && r.status !== 408 && r.status !== 429 ? "CREDENCIALES_INVALIDAS" : "NO_DISPONIBLE", http: r.status };
+}
+
 /** «Token inválido/vencido» informado por el gateway aunque venga con HTTP 400: es un error de AUTORIZACIÓN (nada se procesó), no un rechazo del documento. */
 export function esTokenInvalido(http: number, cuerpoTexto: string): boolean {
   if (http === 401) return true;
@@ -263,7 +305,7 @@ export async function consultarDocumentoGateway(config: ConfigGateway, doc: Docu
 
   if (!tipoDoc) return { sinContrato: "TIPO" };
 
-  const credenciales = leerCredenciales(config.credencialRef, dep.env);
+  const credenciales = credencialesDe(config, dep.env);
 
   if (!credenciales) return { sinContrato: "CREDENCIALES" };
 
@@ -523,7 +565,7 @@ export function interpretarRecepcion(http: number, cuerpoTexto: string, fases: F
 export async function enviarDocumentoGateway(
   config: ConfigGateway, payload: Record<string, unknown>, doc: DocumentoRecepcion, dep: Dependencias = {},
 ): Promise<ResultadoEnvio | { sinContrato: "CREDENCIALES" }> {
-  const credenciales = leerCredenciales(config.credencialRef, dep.env);
+  const credenciales = credencialesDe(config, dep.env);
 
   if (!credenciales) return { sinContrato: "CREDENCIALES" };
 
