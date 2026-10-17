@@ -1,807 +1,471 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { FormEvent, useEffect, useRef, useState } from "react";
+
+import styles from "@/app/(private)/productos/catalogos/page.module.css";
+import { CampoFecha } from "@/components/ui/campo-fecha";
+import ui from "@/components/ui/lista-padrao/lista.module.css";
+import { GRUPOS, ORDEN_GRUPOS, grupoDeTipo, tipoInicialDelGrupo, type GrupoMovimiento } from "@/lib/movimientos/grupos";
+import { motivoObligatorio } from "@/lib/movimientos/reglas";
+import { hoyAsuncion } from "@/lib/listas-precio/calculos";
+import { useProtegerCambios } from "@/lib/ui/proteger-cambios";
+import { cargarCatalogosMovimientos, registrarMovimientoApi } from "@/lib/movimientos/cliente-api";
 import {
-  FormEvent,
-  useMemo,
-  useState,
-} from "react";
-import {
-  useRouter,
-} from "next/navigation";
+  advertenciaSaldo,
+  aplicarTipo,
+  ETIQUETA_ORIGEN,
+  formularioInicial,
+  movimientoSucio,
+  precargarDesdeConsulta,
+  saldoVisible,
+  TIPOS_INFO,
+  validarMovimiento,
+  type CampoMovimiento,
+  type ErroresMovimiento,
+} from "@/lib/movimientos/formulario";
+import type { CatalogoMovimientos, MovimientoStockOrigen, MovimientoStockTipo, NuevoMovimientoStock } from "@/types/movimientos-stock";
 
-import {
-  crearMovimientoStockDemo,
-} from "@/lib/mocks/movimientos-stock-storage";
+import local from "./page.module.css";
 
-import {
-  obtenerStockDemo,
-} from "@/lib/mocks/stock-storage";
-
-import {
-  MovimientoStockOrigen,
-  MovimientoStockTipo,
-  NuevoMovimientoStockDemo,
-} from "@/types/movimientos-stock";
-
-import styles from "./page.module.css";
-
-const DEPOSITOS = [
-  {
-    id: "dep-central",
-    codigo: "DEP-CEN",
-    nombre: "Depósito Central",
-  },
-  {
-    id: "dep-norte",
-    codigo: "DEP-NOR",
-    nombre: "Depósito Norte",
-  },
-  {
-    id: "dep-sur",
-    codigo: "DEP-SUR",
-    nombre: "Depósito Sur",
-  },
-];
-
-function today() {
-  return new Date()
-    .toISOString()
-    .slice(0, 10);
-}
-
-function timeNow() {
-  return new Date()
-    .toTimeString()
-    .slice(0, 5);
-}
+const idCampo = (campo: CampoMovimiento) => `mov-${campo}`;
 
 export default function NuevoMovimientoPage() {
   const router = useRouter();
+  const hoy = hoyAsuncion();
 
-  const productos =
-    useMemo(
-      () => obtenerStockDemo(),
-      [],
-    );
+  const [catalogo, setCatalogo] = useState<CatalogoMovimientos | null>(null);
+  const [form, setForm] = useState<NuevoMovimientoStock>(() => formularioInicial(hoy));
+  const [base, setBase] = useState<NuevoMovimientoStock>(() => formularioInicial(hoy));
+  const [cantidadTxt, setCantidadTxt] = useState("");
+  const [costoTxt, setCostoTxt] = useState("");
+  const [errores, setErrores] = useState<ErroresMovimiento>({});
+  const [errorForm, setErrorForm] = useState("");
+  const [avisoCarga, setAvisoCarga] = useState("");
+  const [precargado, setPrecargado] = useState(false);
+  const [saving, setSaving] = useState(false);
+  // Clave de idempotencia: se renueva con cada cambio del formulario; un reenvío idéntico (doble clic, reintento) usa la misma y no duplica el movimiento.
+  const clave = useRef("");
+  const [registrado, setRegistrado] = useState(false);
 
-  const [form, setForm] =
-    useState<NuevoMovimientoStockDemo>({
-      tipo: "ENTRADA",
-      origen: "MANUAL",
-      fecha: today(),
-      hora: timeNow(),
-      productoId: "",
-      productoCodigo: "",
-      productoDescripcion: "",
-      unidadMedidaNombre: "",
-      depositoOrigenId: "",
-      depositoOrigenCodigo: "",
-      depositoOrigenNombre: "",
-      depositoDestinoId: "dep-central",
-      depositoDestinoCodigo: "DEP-CEN",
-      depositoDestinoNombre: "Depósito Central",
-      cantidad: 1,
-      lote: "",
-      fechaVencimiento: "",
-      propiedad: "PROPIO",
-      propietarioId: "",
-      propietarioNombre: "CASA MINGO S.A.",
-      documentoReferencia: "",
-      motivo: "",
-      observacion: "",
-      usuario: "admin",
-    });
+  useEffect(() => {
+    let activo = true;
 
-  const [error, setError] =
-    useState("");
+    cargarCatalogosMovimientos()
+      .then((c) => {
+        if (!activo) return;
 
-  const [saving, setSaving] =
-    useState(false);
+        const inicial = formularioInicial(hoy);
+        const p = precargarDesdeConsulta(new URLSearchParams(window.location.search), c, inicial);
 
-  function set<K extends keyof NuevoMovimientoStockDemo>(
-    key: K,
-    value: NuevoMovimientoStockDemo[K],
-  ) {
-    setForm((current) => ({
-      ...current,
-      [key]: value,
-    }));
+        setCatalogo(c);
+        setForm(p.formulario);
+        setBase(p.formulario);
+        setCantidadTxt(p.formulario.cantidad > 0 ? String(p.formulario.cantidad) : "");
+        setPrecargado(p.precargado);
+        if (p.descartados.length) setAvisoCarga(`Se ignoró ${p.descartados.join(", ")} de la dirección: no corresponde a los datos que usted puede operar.`);
+      })
+      .catch((e: unknown) => {
+        if (activo) setErrorForm(e instanceof Error ? e.message : "No fue posible cargar los catálogos.");
+      });
+
+    return () => {
+      activo = false;
+    };
+  }, [hoy]);
+
+  const sucio = !registrado && movimientoSucio(form, base);
+
+  useProtegerCambios(sucio);
+
+  const productos = catalogo?.productos ?? [];
+  const depositos = (catalogo?.depositos ?? []).filter((d) => d.permitido);
+  const info = TIPOS_INFO[form.tipo];
+  const grupo = grupoDeTipo(form.tipo);
+  const infoGrupo = GRUPOS[grupo];
+  const motivoRequerido = motivoObligatorio(form.tipo, form.origen);
+  const producto = productos.find((p) => p.id === form.productoId);
+  const depositoRef = form.depositoOrigenId || form.depositoDestinoId;
+  const saldos = saldoVisible(producto, depositoRef);
+  const lotesSugeridos = (producto?.lotes ?? []).filter((x) => !depositoRef || x.depositoId === depositoRef);
+  const aviso = advertenciaSaldo(form, producto);
+  const nombreDeposito = (id: string) => depositos.find((d) => d.id === id)?.nombre ?? "";
+
+  function cambiar(parcial: Partial<NuevoMovimientoStock>, campo?: CampoMovimiento) {
+    clave.current = "";
+    setForm((f) => ({ ...f, ...parcial }));
+    if (campo) setErrores((e) => ({ ...e, [campo]: undefined }));
+    setErrorForm("");
   }
 
-  const requiereOrigen =
-    [
-      "SALIDA",
-      "TRANSFERENCIA",
-      "RESERVA",
-      "LIBERACION_RESERVA",
-      "CUARENTENA",
-      "LIBERACION_CUARENTENA",
-      "AJUSTE_NEGATIVO",
-    ].includes(form.tipo);
-
-  const requiereDestino =
-    [
-      "ENTRADA",
-      "TRANSFERENCIA",
-      "AJUSTE_POSITIVO",
-    ].includes(form.tipo);
-
-  const productoSeleccionado =
-    productos.find(
-      (item) =>
-        item.productoId ===
-        form.productoId,
-    );
-
-  function elegirDeposito(
-    kind: "origen" | "destino",
-    id: string,
-  ) {
-    const dep =
-      DEPOSITOS.find(
-        (item) =>
-          item.id === id,
-      );
-
-    if (kind === "origen") {
-      set(
-        "depositoOrigenId",
-        id,
-      );
-      set(
-        "depositoOrigenCodigo",
-        dep?.codigo ?? "",
-      );
-      set(
-        "depositoOrigenNombre",
-        dep?.nombre ?? "",
-      );
-    } else {
-      set(
-        "depositoDestinoId",
-        id,
-      );
-      set(
-        "depositoDestinoCodigo",
-        dep?.codigo ?? "",
-      );
-      set(
-        "depositoDestinoNombre",
-        dep?.nombre ?? "",
-      );
-    }
+  // Cuatro operaciones visuales sobre los nueve tipos técnicos: al elegir la operación queda seleccionado su primer subtipo.
+  function cambiarGrupo(grupo: GrupoMovimiento) {
+    cambiarTipo(tipoInicialDelGrupo(grupo));
   }
 
-  async function submit(
-    event: FormEvent<HTMLFormElement>,
-  ) {
+  function cambiarTipo(tipo: MovimientoStockTipo) {
+    clave.current = "";
+    setForm((f) => aplicarTipo(f, tipo));
+    if (!TIPOS_INFO[tipo].costo) setCostoTxt("");
+    setErrores({});
+    setErrorForm("");
+  }
+
+  function enfocar(campo: CampoMovimiento | undefined) {
+    if (campo) window.setTimeout(() => document.getElementById(idCampo(campo))?.focus(), 0);
+  }
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setError("");
+    if (saving) return;
+    setErrorForm("");
 
-    if (!form.productoId) {
-      setError(
-        "Seleccione un producto.",
-      );
-      return;
-    }
+    const datos: NuevoMovimientoStock = { ...form, costoUnitario: info.costo && costoTxt !== "" ? Number(costoTxt) : null };
+    const errs = validarMovimiento(datos, catalogo, hoy);
 
-    if (
-      !form.cantidad ||
-      form.cantidad <= 0
-    ) {
-      setError(
-        "La cantidad debe ser mayor que cero.",
-      );
-      return;
-    }
+    setErrores(errs);
 
-    if (
-      requiereOrigen &&
-      !form.depositoOrigenId
-    ) {
-      setError(
-        "Seleccione el depósito origen.",
-      );
-      return;
-    }
+    const primero = (Object.keys(errs) as CampoMovimiento[])[0];
 
-    if (
-      requiereDestino &&
-      !form.depositoDestinoId
-    ) {
-      setError(
-        "Seleccione el depósito destino.",
-      );
-      return;
-    }
+    if (primero) {
+      setErrorForm("Revise los campos marcados.");
+      enfocar(primero);
 
-    if (
-      form.tipo ===
-        "TRANSFERENCIA" &&
-      form.depositoOrigenId ===
-        form.depositoDestinoId
-    ) {
-      setError(
-        "El depósito origen y destino deben ser diferentes.",
-      );
       return;
     }
 
     setSaving(true);
 
     try {
-      crearMovimientoStockDemo(
-        form,
-      );
+      if (!clave.current) clave.current = crypto.randomUUID();
 
-      await new Promise(
-        (resolve) =>
-          window.setTimeout(
-            resolve,
-            350,
-          ),
-      );
+      const numero = await registrarMovimientoApi({ ...datos, claveIdempotencia: clave.current });
 
-      router.push(
-        "/movimientos",
-      );
+      setRegistrado(true);
+      router.push(`/movimientos?ok=${encodeURIComponent(numero)}`);
       router.refresh();
     } catch (e) {
-      setError(
-        e instanceof Error
-          ? e.message
-          : "No fue posible registrar el movimiento.",
-      );
-    } finally {
+      setErrorForm(e instanceof Error ? e.message : "No fue posible registrar el movimiento.");
       setSaving(false);
     }
   }
 
+  const claseCampo = (campo: CampoMovimiento, extra = "") => [styles.field, errores[campo] ? styles.conError : "", extra].filter(Boolean).join(" ");
+  const ariaCampo = (campo: CampoMovimiento) => ({ id: idCampo(campo), "aria-invalid": errores[campo] ? true : undefined, "aria-describedby": errores[campo] ? `${idCampo(campo)}-error` : undefined });
+  const mensaje = (campo: CampoMovimiento) =>
+    errores[campo] ? (
+      <span id={`${idCampo(campo)}-error`} className={styles.campoError} role="alert">
+        {errores[campo]}
+      </span>
+    ) : null;
+
+  const cargando = !catalogo && !errorForm;
+  const puedeSeleccionarDeposito = (id: string, otro: string) => id !== otro || form.tipo !== "TRANSFERENCIA";
+
   return (
-    <section className={styles.page}>
-      <header className={styles.hero}>
-        <div>
-          <div className={styles.heroMeta}>
-            <span className={styles.modulePill}>
-              INVENTARIO
-            </span>
-            <span className={styles.demoPill}>
-              DEMO
-            </span>
-          </div>
-
-          <h1>
-            Nuevo movimiento de stock
-          </h1>
-
-          <p>
-            Registre entradas, salidas,
-            transferencias, ajustes,
-            reservas y cuarentenas.
-          </p>
+    <section className={ui.page}>
+      <header className={ui.topbar}>
+        <div className={ui.titleBlock}>
+          <nav className={ui.breadcrumb} aria-label="Ruta de navegación">
+            <span>Inventario</span>
+            <i aria-hidden="true">/</i>
+            <Link href="/movimientos">
+              Movimientos
+            </Link>
+            <i aria-hidden="true">/</i>
+            <span aria-current="page">Nuevo movimiento</span>
+          </nav>
+          <h1>Nuevo movimiento de stock</h1>
         </div>
 
-        <Link
-          href="/movimientos"
-          className={styles.secondaryButton}
-        >
-          ← Volver a movimientos
-        </Link>
+        <div className={ui.actionsGroup}>
+          <span className={local.estado} title="El movimiento solo existe después de registrarlo; el número MOV-XXXXXX lo asigna el servidor.">
+            Sin registrar
+          </span>
+          <Link href="/movimientos" className={ui.secondaryButton}>
+            ← Movimientos
+          </Link>
+        </div>
       </header>
 
-      <form
-        className={styles.card}
-        onSubmit={submit}
-      >
-        <div className={styles.cardHeader}>
-          <div>
-            <span>
-              NUEVO MOVIMIENTO
-            </span>
-            <h2>
-              Datos del movimiento
-            </h2>
-            <p>
-              El número MOV-XXXXXX se
-              genera automáticamente.
-            </p>
-          </div>
-
-          <div className={styles.statusBadge}>
-            Registrado
-          </div>
+      {errorForm && !catalogo ? (
+        <div className={ui.alertError} role="alert">
+          {errorForm}
         </div>
+      ) : null}
+      {avisoCarga ? (
+        <div className={ui.alertError} role="status">
+          {avisoCarga}
+        </div>
+      ) : null}
 
-        {error ? (
-          <div className={styles.error}>
-            {error}
-          </div>
-        ) : null}
-
-        <div className={styles.content}>
-          <div className={styles.gridFour}>
-            <label>
-              <span>Tipo *</span>
-              <select
-                value={form.tipo}
-                onChange={(event) => {
-                  const value =
-                    event.target
-                      .value as MovimientoStockTipo;
-
-                  set("tipo", value);
-
-                  if (
-                    value === "ENTRADA"
-                  ) {
-                    set(
-                      "origen",
-                      "COMPRA",
-                    );
-                  } else if (
-                    value ===
-                    "SALIDA"
-                  ) {
-                    set(
-                      "origen",
-                      "VENTA",
-                    );
-                  } else if (
-                    value ===
-                    "TRANSFERENCIA"
-                  ) {
-                    set(
-                      "origen",
-                      "TRANSFERENCIA",
-                    );
-                  } else {
-                    set(
-                      "origen",
-                      "AJUSTE",
-                    );
-                  }
-                }}
-              >
-                <option value="ENTRADA">
-                  Entrada
-                </option>
-                <option value="SALIDA">
-                  Salida
-                </option>
-                <option value="TRANSFERENCIA">
-                  Transferencia
-                </option>
-                <option value="AJUSTE_POSITIVO">
-                  Ajuste positivo
-                </option>
-                <option value="AJUSTE_NEGATIVO">
-                  Ajuste negativo
-                </option>
-                <option value="RESERVA">
-                  Reserva
-                </option>
-                <option value="LIBERACION_RESERVA">
-                  Liberación de reserva
-                </option>
-                <option value="CUARENTENA">
-                  Cuarentena
-                </option>
-                <option value="LIBERACION_CUARENTENA">
-                  Liberación de cuarentena
-                </option>
-              </select>
-            </label>
-
-            <label>
-              <span>Origen *</span>
-              <select
-                value={form.origen}
-                onChange={(event) =>
-                  set(
-                    "origen",
-                    event.target
-                      .value as MovimientoStockOrigen,
-                  )
-                }
-              >
-                <option value="MANUAL">
-                  Manual
-                </option>
-                <option value="COMPRA">
-                  Compra
-                </option>
-                <option value="VENTA">
-                  Venta
-                </option>
-                <option value="DEVOLUCION">
-                  Devolución
-                </option>
-                <option value="TRANSFERENCIA">
-                  Transferencia
-                </option>
-                <option value="AJUSTE">
-                  Ajuste
-                </option>
-                <option value="INVENTARIO">
-                  Inventario
-                </option>
-              </select>
-            </label>
-
-            <label>
-              <span>Fecha *</span>
-              <input
-                type="date"
-                value={form.fecha}
-                onChange={(event) =>
-                  set(
-                    "fecha",
-                    event.target.value,
-                  )
-                }
-              />
-            </label>
-
-            <label>
-              <span>Hora *</span>
-              <input
-                type="time"
-                value={form.hora}
-                onChange={(event) =>
-                  set(
-                    "hora",
-                    event.target.value,
-                  )
-                }
-              />
-            </label>
-          </div>
-
-          <div className={styles.sectionTitle}>
-            Producto y cantidad
-          </div>
-
-          <div className={styles.gridFour}>
-            <label className={styles.wideField}>
-              <span>Producto *</span>
-              <select
-                value={form.productoId}
-                onChange={(event) => {
-                  const id =
-                    event.target.value;
-
-                  const producto =
-                    productos.find(
-                      (item) =>
-                        item.productoId ===
-                        id,
-                    );
-
-                  set(
-                    "productoId",
-                    id,
-                  );
-                  set(
-                    "productoCodigo",
-                    producto?.productoCodigo ??
-                      "",
-                  );
-                  set(
-                    "productoDescripcion",
-                    producto?.productoDescripcion ??
-                      "",
-                  );
-                  set(
-                    "unidadMedidaNombre",
-                    producto?.unidadMedidaNombre ??
-                      "",
-                  );
-                  set(
-                    "propiedad",
-                    producto?.propiedad ??
-                      "PROPIO",
-                  );
-                  set(
-                    "propietarioId",
-                    producto?.propietarioId ??
-                      "",
-                  );
-                  set(
-                    "propietarioNombre",
-                    producto?.propietarioNombre ??
-                      "CASA MINGO S.A.",
-                  );
-                }}
-              >
-                <option value="">
-                  Seleccione producto
-                </option>
-
-                {productos.map(
-                  (item) => (
-                    <option
-                      key={item.id}
-                      value={item.productoId}
-                    >
-                      {item.productoCodigo} ·{" "}
-                      {item.productoDescripcion}
-                    </option>
-                  ),
-                )}
-              </select>
-            </label>
-
-            <label>
-              <span>Cantidad *</span>
-              <input
-                type="number"
-                min="0.001"
-                step="0.001"
-                value={form.cantidad}
-                onChange={(event) =>
-                  set(
-                    "cantidad",
-                    Number(
-                      event.target.value ||
-                        0,
-                    ),
-                  )
-                }
-              />
-            </label>
-
-            <label>
-              <span>Unidad</span>
-              <input
-                value={
-                  form.unidadMedidaNombre
-                }
-                readOnly
-              />
-            </label>
-          </div>
-
-          {productoSeleccionado ? (
-            <div className={styles.stockSnapshot}>
-              <div>
-                <span>Disponible</span>
-                <strong>
-                  {
-                    productoSeleccionado.disponible
-                  }
-                </strong>
-              </div>
-
-              <div>
-                <span>Reservado</span>
-                <strong>
-                  {
-                    productoSeleccionado.reservado
-                  }
-                </strong>
-              </div>
-
-              <div>
-                <span>Cuarentena</span>
-                <strong>
-                  {
-                    productoSeleccionado.cuarentena
-                  }
-                </strong>
-              </div>
-
-              <div>
-                <span>Tránsito</span>
-                <strong>
-                  {
-                    productoSeleccionado.transito
-                  }
-                </strong>
-              </div>
+      <section className={ui.contentCard} style={{ padding: 14 }}>
+        <form className={styles.form} onSubmit={submit} noValidate aria-label="Nuevo movimiento de stock" aria-busy={cargando || saving}>
+          <h3>Datos del movimiento</h3>
+          {errorForm && catalogo ? (
+            <div className={styles.alertaForm} role="alert">
+              {errorForm}
+            </div>
+          ) : null}
+          {precargado ? (
+            <div className={local.info} role="status">
+              Datos precargados desde la pantalla anterior. Revíselos: el sistema volverá a validar el producto, los depósitos, los permisos y el saldo al registrar.
             </div>
           ) : null}
 
-          <div className={styles.sectionTitle}>
-            Depósitos
-          </div>
-
-          <div className={styles.gridTwo}>
-            <label>
-              <span>
-                Depósito origen
-                {requiereOrigen
-                  ? " *"
-                  : ""}
-              </span>
-              <select
-                value={
-                  form.depositoOrigenId
-                }
-                onChange={(event) =>
-                  elegirDeposito(
-                    "origen",
-                    event.target.value,
-                  )
-                }
-              >
-                <option value="">
-                  Sin depósito origen
+          <label className={claseCampo("tipo")}>
+            <span>
+              Operación <b>*</b>
+            </span>
+            <select aria-label="Operación" value={grupo} disabled={cargando} onChange={(e) => cambiarGrupo(e.target.value as GrupoMovimiento)}>
+              {ORDEN_GRUPOS.map((g) => (
+                <option key={g} value={g}>
+                  {GRUPOS[g].etiqueta}
                 </option>
+              ))}
+            </select>
+            <span className={styles.ayuda}>{infoGrupo.ayuda}</span>
+          </label>
 
-                {DEPOSITOS.map(
-                  (dep) => (
-                    <option
-                      key={dep.id}
-                      value={dep.id}
-                    >
-                      {dep.codigo} ·{" "}
-                      {dep.nombre}
-                    </option>
-                  ),
-                )}
-              </select>
-            </label>
-
-            <label>
+          {infoGrupo.tipos.length > 1 ? (
+            <label className={claseCampo("tipo")}>
               <span>
-                Depósito destino
-                {requiereDestino
-                  ? " *"
-                  : ""}
+                Tipo de {infoGrupo.etiqueta.toLowerCase()} <b>*</b>
               </span>
-              <select
-                value={
-                  form.depositoDestinoId
-                }
-                onChange={(event) =>
-                  elegirDeposito(
-                    "destino",
-                    event.target.value,
-                  )
-                }
-              >
-                <option value="">
-                  Sin depósito destino
-                </option>
-
-                {DEPOSITOS.map(
-                  (dep) => (
-                    <option
-                      key={dep.id}
-                      value={dep.id}
-                    >
-                      {dep.codigo} ·{" "}
-                      {dep.nombre}
-                    </option>
-                  ),
-                )}
+              <select {...ariaCampo("tipo")} value={form.tipo} disabled={cargando} onChange={(e) => cambiarTipo(e.target.value as MovimientoStockTipo)}>
+                {infoGrupo.tipos.map((t) => (
+                  <option key={t.tipo} value={t.tipo}>
+                    {t.etiqueta}
+                  </option>
+                ))}
               </select>
+              {mensaje("tipo")}
             </label>
-          </div>
+          ) : null}
 
-          {productoSeleccionado?.modoControl ===
-          "LOTE" ? (
+          <label className={claseCampo("origen")}>
+            <span>
+              Origen <b>*</b>
+            </span>
+            <select {...ariaCampo("origen")} value={form.origen} disabled={cargando || info.origenes.length === 1} onChange={(e) => cambiar({ origen: e.target.value as MovimientoStockOrigen }, "origen")}>
+              {info.origenes.map((o) => (
+                <option key={o} value={o}>
+                  {ETIQUETA_ORIGEN[o]}
+                </option>
+              ))}
+            </select>
+            <span className={styles.ayuda}>Clasificación operativa; no vincula ninguna factura ni documento.</span>
+          </label>
+
+          <p className={local.descripcionTipo}>{info.descripcion}</p>
+
+          <label className={claseCampo("fecha")}>
+            <span>
+              Fecha <b>*</b>
+            </span>
+            <CampoFecha id={idCampo("fecha")} valor={form.fecha} alCambiar={(iso) => cambiar({ fecha: iso }, "fecha")} disabled={cargando} aria-invalid={errores.fecha ? true : undefined} aria-describedby={errores.fecha ? "mov-fecha-error" : undefined} />
+            {errores.fecha ? mensaje("fecha") : <span className={styles.ayuda}>No puede ser futura. La hora la registra el servidor.</span>}
+          </label>
+
+          <div className={local.seccion}>Producto y cantidad</div>
+
+          <label className={claseCampo("productoId", styles.wide)}>
+            <span>
+              Producto <b>*</b>
+            </span>
+            <select
+              {...ariaCampo("productoId")}
+              value={form.productoId}
+              disabled={cargando}
+              onChange={(e) => {
+                cambiar({ productoId: e.target.value, lote: "", fechaVencimiento: "" }, "productoId");
+                setErrores((x) => ({ ...x, lote: undefined, fechaVencimiento: undefined }));
+              }}
+            >
+              <option value="">Seleccione un producto</option>
+              {productos.map((p) => (
+                <option key={p.id} value={p.id} disabled={p.modoControl === "UNIDAD_ETIQUETADA"}>
+                  {p.codigo} · {p.descripcion}
+                  {p.modoControl === "UNIDAD_ETIQUETADA" ? " (unidad identificada: no disponible)" : ""}
+                </option>
+              ))}
+            </select>
+            {mensaje("productoId")}
+          </label>
+
+          <label className={claseCampo("cantidad")}>
+            <span>
+              Cantidad <b>*</b>
+              {producto ? ` (${producto.unidadMedidaNombre || "unidad base"})` : ""}
+            </span>
+            <input
+              {...ariaCampo("cantidad")}
+              type="number"
+              inputMode="decimal"
+              min="0.0001"
+              step="0.0001"
+              value={cantidadTxt}
+              disabled={cargando}
+              onChange={(e) => {
+                setCantidadTxt(e.target.value);
+                cambiar({ cantidad: e.target.value === "" ? 0 : Number(e.target.value) }, "cantidad");
+              }}
+            />
+            {errores.cantidad ? mensaje("cantidad") : <span className={styles.ayuda}>Unidad base del producto, hasta 4 decimales.</span>}
+          </label>
+
+          {info.costo ? (
+            <label className={claseCampo("costoUnitario")}>
+              <span>
+                Costo unitario ({catalogo?.monedaBase ?? ""}) <b>*</b>
+              </span>
+              <input
+                {...ariaCampo("costoUnitario")}
+                type="number"
+                inputMode="decimal"
+                min="0"
+                step="0.0001"
+                value={costoTxt}
+                disabled={cargando}
+                onChange={(e) => {
+                  setCostoTxt(e.target.value);
+                  clave.current = "";
+                  setForm((f) => ({ ...f, costoUnitario: e.target.value === "" ? null : Number(e.target.value) }));
+                  setErrores((x) => ({ ...x, costoUnitario: undefined }));
+                }}
+              />
+              {errores.costoUnitario ? mensaje("costoUnitario") : <span className={styles.ayuda}>El costo no se inventa: ingréselo explícitamente.</span>}
+            </label>
+          ) : null}
+
+          {producto ? (
             <>
-              <div className={styles.sectionTitle}>
-                Lote y vencimiento
+              <div className={local.saldos} aria-label="Saldo visible del producto">
+                <div>
+                  <span>Disponible</span>
+                  <strong>{saldos.disponible}</strong>
+                </div>
+                <div>
+                  <span>Reservado</span>
+                  <strong>{saldos.reservado}</strong>
+                </div>
+                <div>
+                  <span>Cuarentena</span>
+                  <strong>{saldos.cuarentena}</strong>
+                </div>
+                <div>
+                  <span>Tránsito</span>
+                  <strong>{saldos.transito}</strong>
+                </div>
               </div>
+              <p className={local.saldosNota}>{depositoRef ? `Saldo propio en ${nombreDeposito(depositoRef)}.` : "Saldo propio total de los depósitos que usted puede operar."}</p>
+            </>
+          ) : null}
+          {aviso ? (
+            <div className={local.aviso} role="status">
+              {aviso}
+            </div>
+          ) : null}
 
-              <div className={styles.gridTwo}>
-                <label>
-                  <span>Lote</span>
-                  <input
-                    value={form.lote}
-                    onChange={(event) =>
-                      set(
-                        "lote",
-                        event.target.value,
-                      )
-                    }
-                  />
-                </label>
+          {info.origen || info.destino ? <div className={local.seccion}>Depósitos</div> : null}
 
-                <label>
-                  <span>
-                    Fecha de vencimiento
-                  </span>
-                  <input
-                    type="date"
-                    value={
-                      form.fechaVencimiento
-                    }
-                    onChange={(event) =>
-                      set(
-                        "fechaVencimiento",
-                        event.target.value,
-                      )
-                    }
-                  />
+          {info.origen ? (
+            <label className={claseCampo("depositoOrigenId", styles.wide)}>
+              <span>
+                Depósito origen <b>*</b>
+              </span>
+              <select {...ariaCampo("depositoOrigenId")} value={form.depositoOrigenId} disabled={cargando} onChange={(e) => cambiar({ depositoOrigenId: e.target.value }, "depositoOrigenId")}>
+                <option value="">Seleccione el depósito origen</option>
+                {depositos.map((d) => (
+                  <option key={d.id} value={d.id} disabled={!puedeSeleccionarDeposito(d.id, form.depositoDestinoId)}>
+                    {d.codigo} · {d.nombre}
+                  </option>
+                ))}
+              </select>
+              {mensaje("depositoOrigenId")}
+            </label>
+          ) : null}
+
+          {info.destino ? (
+            <label className={claseCampo("depositoDestinoId", styles.wide)}>
+              <span>
+                Depósito destino <b>*</b>
+              </span>
+              <select {...ariaCampo("depositoDestinoId")} value={form.depositoDestinoId} disabled={cargando} onChange={(e) => cambiar({ depositoDestinoId: e.target.value }, "depositoDestinoId")}>
+                <option value="">Seleccione el depósito destino</option>
+                {depositos.map((d) => (
+                  <option key={d.id} value={d.id} disabled={!puedeSeleccionarDeposito(d.id, form.depositoOrigenId)}>
+                    {d.codigo} · {d.nombre}
+                  </option>
+                ))}
+              </select>
+              {mensaje("depositoDestinoId")}
+            </label>
+          ) : null}
+
+          {producto?.modoControl === "LOTE" ? (
+            <>
+              <div className={local.seccion}>Lote y vencimiento</div>
+
+              <label className={claseCampo("lote", styles.wide)}>
+                <span>
+                  Lote <b>*</b>
+                </span>
+                <input {...ariaCampo("lote")} value={form.lote} list="lotes-sugeridos" maxLength={80} autoComplete="off" onChange={(e) => cambiar({ lote: e.target.value }, "lote")} />
+                <datalist id="lotes-sugeridos">
+                  {lotesSugeridos.map((x, i) => (
+                    <option key={`${x.codigo}-${x.estado}-${i}`} value={x.codigo}>
+                      {x.estado} · {x.cantidad}
+                    </option>
+                  ))}
+                </datalist>
+                {errores.lote ? mensaje("lote") : <span className={styles.ayuda}>{form.tipo === "ENTRADA" || form.tipo === "AJUSTE_POSITIVO" ? "Puede crear un lote nuevo." : "Debe ser un lote existente con saldo."}</span>}
+              </label>
+
+              {info.destino && form.tipo !== "TRANSFERENCIA" ? (
+                <label className={claseCampo("fechaVencimiento")}>
+                  <span>Fecha de vencimiento</span>
+                  <CampoFecha id={idCampo("fechaVencimiento")} valor={form.fechaVencimiento} alCambiar={(iso) => cambiar({ fechaVencimiento: iso }, "fechaVencimiento")} aria-invalid={errores.fechaVencimiento ? true : undefined} aria-describedby={errores.fechaVencimiento ? "mov-fechaVencimiento-error" : undefined} />
+                  {mensaje("fechaVencimiento")}
                 </label>
-              </div>
+              ) : null}
             </>
           ) : null}
 
-          <div className={styles.sectionTitle}>
-            Referencia
-          </div>
+          <div className={local.seccion}>Referencia</div>
 
-          <div className={styles.gridTwo}>
-            <label>
-              <span>
-                Documento de referencia
-              </span>
-              <input
-                value={
-                  form.documentoReferencia
-                }
-                placeholder="OC-000123 / ENT-000845"
-                onChange={(event) =>
-                  set(
-                    "documentoReferencia",
-                    event.target.value,
-                  )
-                }
-              />
-            </label>
-
-            <label>
-              <span>Motivo</span>
-              <input
-                value={form.motivo}
-                onChange={(event) =>
-                  set(
-                    "motivo",
-                    event.target.value,
-                  )
-                }
-              />
-            </label>
-          </div>
-
-          <label className={styles.textareaField}>
-            <span>Observación</span>
-            <textarea
-              value={form.observacion}
-              onChange={(event) =>
-                set(
-                  "observacion",
-                  event.target.value,
-                )
-              }
-            />
+          <label className={claseCampo("documentoReferencia", styles.wide)}>
+            <span>Documento de referencia</span>
+            <input {...ariaCampo("documentoReferencia")} value={form.documentoReferencia} maxLength={120} placeholder="OC-000123 / ENT-000845" onChange={(e) => cambiar({ documentoReferencia: e.target.value }, "documentoReferencia")} />
+            {errores.documentoReferencia ? mensaje("documentoReferencia") : <span className={styles.ayuda}>Texto libre: no se vincula ni se valida contra facturas, remisiones ni notas de crédito.</span>}
           </label>
-        </div>
 
-        <footer className={styles.footer}>
-          <div>
-            <span>Modo demostración</span>
-            <small>
-              Al guardar, el stock se
-              actualiza en localStorage.
-            </small>
-          </div>
+          <label className={claseCampo("motivo", styles.wide)}>
+            <span>
+              Motivo {motivoRequerido ? <b>*</b> : null}
+            </span>
+            <input {...ariaCampo("motivo")} value={form.motivo} maxLength={300} onChange={(e) => cambiar({ motivo: e.target.value }, "motivo")} />
+            {errores.motivo ? mensaje("motivo") : <span className={styles.ayuda}>{motivoRequerido ? "Obligatorio para este tipo y origen (mínimo 5 caracteres)." : "Opcional para este tipo y origen."}</span>}
+          </label>
 
-          <div className={styles.footerActions}>
-            <Link
-              href="/movimientos"
-              className={styles.cancelButton}
-            >
+          <label className={claseCampo("observacion", styles.full)}>
+            <span>Observación</span>
+            <textarea {...ariaCampo("observacion")} rows={3} value={form.observacion} maxLength={1000} onChange={(e) => cambiar({ observacion: e.target.value }, "observacion")} />
+            {mensaje("observacion")}
+          </label>
+
+          <div className={styles.formActions}>
+            <Link href="/movimientos" className={ui.secondaryButton}>
               Cancelar
             </Link>
-
-            <button
-              type="submit"
-              disabled={saving}
-              className={styles.saveButton}
-            >
-              {saving
-                ? "Registrando..."
-                : "Registrar movimiento"}
+            <button type="submit" className={ui.primaryButton} disabled={saving || cargando}>
+              {saving ? "Registrando..." : "Registrar movimiento"}
             </button>
           </div>
-        </footer>
-      </form>
+          <p className={styles.nota}>Al registrar, los saldos y el costo se actualizan en la base de datos mediante el procedimiento oficial de inventario; el movimiento no se puede editar ni borrar, solo anular con un movimiento inverso.</p>
+        </form>
+      </section>
     </section>
   );
 }

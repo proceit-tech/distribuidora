@@ -7,19 +7,26 @@ import {
   useState,
 } from "react";
 
-import {
-  obtenerStockDemo,
-} from "@/lib/mocks/stock-storage";
+import { cargarStock } from "@/lib/stock/cliente-api";
+import { puedeAbrirNuevoMovimiento, puedeVerMovimientos, normalizarPermisosMovimientos, SIN_PERMISOS_MOVIMIENTOS } from "@/lib/inventario/acceso";
+import { interpretarDepositoUrl } from "@/lib/depositos/carga";
+import { compararDecimales, formatearCostoUnitarioTexto, formatearMontoTexto } from "@/lib/inventario/decimal";
+import { ETIQUETA_NIVEL, indicadoresStock, vistaPorDeposito } from "@/lib/stock/vista";
 
 import {
-  StockDemo,
+  StockItem,
   StockNivel,
   StockPropiedad,
 } from "@/types/stock";
 
-import styles from "./page.module.css";
+import { compararTexto, ordenarLista, siguienteOrden, type Orden } from "@/components/ui/lista-padrao/orden";
+import { ThOrdenable } from "@/components/ui/lista-padrao/th-ordenable";
+import ui from "@/components/ui/lista-padrao/lista.module.css";
+import { formatearCantidad } from "@/lib/formato/listas";
 
 const PAGE_SIZE = 25;
+
+type CampoOrden = "producto" | "clasificacion" | "disponible" | "costo";
 
 type NivelFiltro =
   | "TODOS"
@@ -29,14 +36,8 @@ type PropiedadFiltro =
   | "TODOS"
   | StockPropiedad;
 
-function money(value: number) {
-  return `Gs. ${new Intl.NumberFormat(
-    "es-PY",
-    {
-      maximumFractionDigits: 0,
-    },
-  ).format(value)}`;
-}
+// Moneda de los costos: moneda base de la empresa (se actualiza al cargar el stock).
+let MONEDA_BASE = "PYG";
 
 function normalizar(value: string) {
   return value
@@ -49,91 +50,20 @@ function normalizar(value: string) {
 }
 
 
-const MARKUP_DEMO = 0.2;
-
-function costoUnitario(item: StockDemo) {
-  return Number(
-    item.precioVentaReferencia || 0,
-  );
+// Costos y precios reales: costo promedio de inventario_costos y precio de venta de referencia (lista de referencia).
+// Sin costo o sin precio registrado el valor es 0 en los totales y se muestra "—" en la ficha; nada se inventa.
+// INV-R02-01: costo unitario exacto (texto); sin costo cuenta como 0 para ordenar.
+function costoUnitario(item: StockItem) {
+  return item.costoPromedioTexto ?? "0";
 }
 
-function valorCosto(item: StockDemo) {
-  return (
-    costoUnitario(item) *
-    Number(item.disponible || 0)
-  );
-}
-
-function precioVentaDemo(item: StockDemo) {
-  return costoUnitario(item) *
-    (1 + MARKUP_DEMO);
-}
-
-function valorVentaDemo(item: StockDemo) {
-  return (
-    precioVentaDemo(item) *
-    Number(item.disponible || 0)
-  );
-}
-
-function gananciaPotencial(
-  item: StockDemo,
-) {
-  return (
-    valorVentaDemo(item) -
-    valorCosto(item)
-  );
-}
-
-function fechaArchivo() {
-  const now = new Date();
-
-  return [
-    now.getFullYear(),
-    String(now.getMonth() + 1).padStart(
-      2,
-      "0",
-    ),
-    String(now.getDate()).padStart(
-      2,
-      "0",
-    ),
-  ].join("-");
-}
-
-function ajustarColumnas(
-  sheet: {
-    ["!cols"]?: Array<{
-      wch?: number;
-    }>;
-  },
-  widths: number[],
-) {
-  sheet["!cols"] = widths.map(
-    (width) => ({
-      wch: width,
-    }),
-  );
-}
-
-function descargarWorkbook(
-  XLSX: typeof import("xlsx"),
-  workbook: import("xlsx").WorkBook,
-  nombreArchivo: string,
-) {
-  XLSX.writeFile(
-    workbook,
-    nombreArchivo,
-    {
-      bookType: "xlsx",
-      compression: true,
-    },
-  );
-}
 
 export default function StockPage() {
-  const [stock, setStock] =
-    useState<StockDemo[]>([]);
+  const [stockCompleto, setStock] =
+    useState<StockItem[]>([]);
+  const [alcanceParcial, setAlcanceParcial] = useState(false);
+  // INV-02: atajos hacia Movimientos solo con los permisos que exigen sus guardas de página.
+  const [permisos, setPermisos] = useState(SIN_PERMISOS_MOVIMIENTOS);
 
   const [busqueda, setBusqueda] =
     useState("");
@@ -168,27 +98,61 @@ export default function StockPage() {
     setDeposito,
   ] = useState("TODOS");
 
-  const [pagina, setPagina] =
-    useState(1);
+  const [paginacion, setPaginacion] = useState({ clave: "", pagina: 1 });
+
+  const [cargando, setCargando] =
+    useState(true);
+
+  const [errorCarga, setErrorCarga] =
+    useState("");
+
+  const [orden, setOrden] = useState<Orden<CampoOrden>>(null);
+
+  // INV-R02-02: depósitos autorizados (con o sin saldo) y aviso cuando el enlace pide un depósito que no está disponible.
+  const [autorizados, setAutorizados] = useState<Array<{ id: string; nombre: string }>>([]);
+  const [depositoNoDisponible, setDepositoNoDisponible] = useState(false);
 
   useEffect(() => {
-    setStock(
-      obtenerStockDemo(),
-    );
+    let activo = true;
+
+    cargarStock()
+      .then((r) => {
+        MONEDA_BASE = r.monedaBase;
+        if (activo) {
+          setStock(r.stock);
+          // Atajo desde Depósitos (?deposito=): se valida contra los depósitos AUTORIZADOS; uno sin saldo se muestra vacío y uno no disponible se avisa (nunca consolidado en silencio).
+          const lista = Array.isArray(r.depositosAutorizados) ? r.depositosAutorizados : [];
+          const pedido = interpretarDepositoUrl(window.location.search, lista);
+
+          setAutorizados(lista);
+          if (pedido.tipo === "SELECCIONADO") setDeposito(pedido.id);
+          setDepositoNoDisponible(pedido.tipo === "NO_DISPONIBLE");
+          setAlcanceParcial(r.alcanceParcial === true);
+          setPermisos(normalizarPermisosMovimientos(r.permisos));
+        }
+      })
+      .catch((e: unknown) => {
+        if (activo)
+          setErrorCarga(
+            e instanceof Error
+              ? e.message
+              : "No fue posible cargar el stock.",
+          );
+      })
+      .finally(() => {
+        if (activo) setCargando(false);
+      });
+
+    return () => {
+      activo = false;
+    };
   }, []);
 
-  useEffect(() => {
-    setPagina(1);
-  }, [
-    busqueda,
-    nivel,
-    propiedad,
-    marca,
-    familia,
-    linea,
-    procedencia,
-    deposito,
-  ]);
+  // Con un depósito elegido TODO (filas, tarjetas, filtros, orden) usa los saldos y el costo de ese depósito; sin él, la visión consolidada.
+  const stock = useMemo(
+    () => (deposito === "TODOS" ? stockCompleto : stockCompleto.flatMap((item) => vistaPorDeposito(item, deposito) ?? [])),
+    [stockCompleto, deposito],
+  );
 
   const marcas = useMemo(
     () =>
@@ -265,7 +229,9 @@ export default function StockPage() {
         string
       >();
 
-    stock.forEach((item) => {
+    autorizados.forEach((d) => map.set(d.id, d.nombre));
+
+    stockCompleto.forEach((item) => {
       item.depositos.forEach(
         (dep) => {
           map.set(
@@ -279,49 +245,9 @@ export default function StockPage() {
     return Array.from(
       map.entries(),
     );
-  }, [stock]);
+  }, [stockCompleto, autorizados]);
 
-  const resumen = useMemo(() => {
-    return stock.reduce(
-      (acc, item) => {
-        acc.sku += 1;
-
-        acc.disponible +=
-          Number(
-            item.disponible || 0,
-          );
-
-        acc.valorCosto +=
-          valorCosto(item);
-
-        acc.valorVenta +=
-          valorVentaDemo(item);
-
-        if (
-          item.nivel === "BAJO"
-        ) {
-          acc.stockBajo += 1;
-        }
-
-        if (
-          item.nivel ===
-          "SIN_STOCK"
-        ) {
-          acc.sinStock += 1;
-        }
-
-        return acc;
-      },
-      {
-        sku: 0,
-        disponible: 0,
-        stockBajo: 0,
-        sinStock: 0,
-        valorCosto: 0,
-        valorVenta: 0,
-      },
-    );
-  }, [stock]);
+  const resumen = useMemo(() => indicadoresStock(stock), [stock]);
 
   const filtrados = useMemo(() => {
     const term =
@@ -378,17 +304,6 @@ export default function StockPage() {
           return false;
         }
 
-        if (
-          deposito !== "TODOS" &&
-          !item.depositos.some(
-            (dep) =>
-              dep.depositoId ===
-              deposito,
-          )
-        ) {
-          return false;
-        }
-
         if (!term) {
           return true;
         }
@@ -423,8 +338,29 @@ export default function StockPage() {
     familia,
     linea,
     procedencia,
-    deposito,
   ]);
+
+  // Ordenación sobre el conjunto filtrado COMPLETO (toda la lista está cargada), antes de paginar.
+  const ordenados = useMemo(
+    () =>
+      ordenarLista(filtrados, orden, (campo, a, b) => {
+        switch (campo) {
+          case "producto":
+            return compararTexto(a.productoDescripcion, b.productoDescripcion);
+          case "clasificacion":
+            return compararTexto(`${a.familia} ${a.linea}`, `${b.familia} ${b.linea}`);
+          case "disponible":
+            return Number(a.disponible || 0) - Number(b.disponible || 0);
+          case "costo":
+            return compararDecimales(costoUnitario(a), costoUnitario(b));
+        }
+      }),
+    [filtrados, orden],
+  );
+
+  function cambiarOrden(campo: CampoOrden) {
+    setOrden((actual) => siguienteOrden(actual, campo));
+  }
 
   const totalPaginas = Math.max(
     1,
@@ -434,13 +370,19 @@ export default function StockPage() {
     ),
   );
 
+  // La página vuelve a 1 cuando cambian los filtros o el orden y nunca excede el total: se deriva en el render (sin efecto).
+  const claveFiltros = JSON.stringify([busqueda, nivel, propiedad, marca, familia, linea, procedencia, deposito, orden]);
+  const pagina = paginacion.clave === claveFiltros ? Math.min(paginacion.pagina, totalPaginas) : 1;
+  const setPagina = (valor: number | ((actual: number) => number)) =>
+    setPaginacion({ clave: claveFiltros, pagina: typeof valor === "function" ? valor(pagina) : valor });
+
   const paginaActual = useMemo(
     () =>
-      filtrados.slice(
+      ordenados.slice(
         (pagina - 1) * PAGE_SIZE,
         pagina * PAGE_SIZE,
       ),
-    [filtrados, pagina],
+    [ordenados, pagina],
   );
 
   function limpiar() {
@@ -455,1054 +397,363 @@ export default function StockPage() {
   }
 
 
-  async function exportarListadoExcel() {
-    const XLSX = await import("xlsx");
-
-    const detalle = filtrados.map(
-      (item) => ({
-        Código: item.productoCodigo,
-        "Código inventario":
-          item.productoCodigoInventario ||
-          "",
-        Producto:
-          item.productoDescripcion,
-        Marca: item.marca || "",
-        Familia: item.familia || "",
-        Línea: item.linea || "",
-        Procedencia:
-          item.procedencia || "",
-        Propiedad:
-          item.propiedad === "TERCERO"
-            ? `Tercero - ${
-                item.propietarioNombre ||
-                ""
-              }`
-            : "Propio",
-        "Stock disponible": Number(
-          item.disponible || 0,
-        ),
-        "Costo unitario":
-          costoUnitario(item),
-        "Valor a costo":
-          valorCosto(item),
-        "Markup %":
-          MARKUP_DEMO,
-        "Precio venta demo":
-          precioVentaDemo(item),
-        "Valor venta demo":
-          valorVentaDemo(item),
-        "Ganancia potencial":
-          gananciaPotencial(item),
-        Estado:
-          item.nivel === "SIN_STOCK"
-            ? "SIN STOCK"
-            : item.nivel === "BAJO"
-              ? "STOCK BAJO"
-              : item.nivel ===
-                  "SOBRESTOCK"
-                ? "SOBRESTOCK"
-                : "NORMAL",
-      }),
-    );
-
-    const resumenExportacion = [
-      {
-        Indicador: "Productos",
-        Valor: filtrados.length,
-      },
-      {
-        Indicador:
-          "Unidades disponibles",
-        Valor: filtrados.reduce(
-          (acc, item) =>
-            acc +
-            Number(
-              item.disponible || 0,
-            ),
-          0,
-        ),
-      },
-      {
-        Indicador:
-          "Valor total a costo",
-        Valor: filtrados.reduce(
-          (acc, item) =>
-            acc + valorCosto(item),
-          0,
-        ),
-      },
-      {
-        Indicador:
-          "Valor venta demo",
-        Valor: filtrados.reduce(
-          (acc, item) =>
-            acc +
-            valorVentaDemo(item),
-          0,
-        ),
-      },
-      {
-        Indicador:
-          "Ganancia potencial",
-        Valor: filtrados.reduce(
-          (acc, item) =>
-            acc +
-            gananciaPotencial(item),
-          0,
-        ),
-      },
-      {
-        Indicador:
-          "Markup aplicado",
-        Valor: MARKUP_DEMO,
-      },
-    ];
-
-    const workbook =
-      XLSX.utils.book_new();
-
-    const resumenSheet =
-      XLSX.utils.json_to_sheet(
-        resumenExportacion,
-      );
-
-    const detalleSheet =
-      XLSX.utils.json_to_sheet(
-        detalle,
-      );
-
-    ajustarColumnas(
-      resumenSheet,
-      [28, 22],
-    );
-
-    ajustarColumnas(
-      detalleSheet,
-      [
-        16,
-        18,
-        45,
-        22,
-        24,
-        18,
-        16,
-        20,
-        16,
-        16,
-        18,
-        12,
-        18,
-        18,
-        18,
-        14,
-      ],
-    );
-
-    resumenSheet["!autofilter"] = {
-      ref: "A1:B7",
-    };
-
-    if (detalle.length > 0) {
-      detalleSheet["!autofilter"] = {
-        ref: `A1:P${
-          detalle.length + 1
-        }`,
-      };
-    }
-
-    XLSX.utils.book_append_sheet(
-      workbook,
-      resumenSheet,
-      "Resumen",
-    );
-
-    XLSX.utils.book_append_sheet(
-      workbook,
-      detalleSheet,
-      "Stock valorizado",
-    );
-
-    descargarWorkbook(
-      XLSX,
-      workbook,
-      `Stock_Valorizado_Casa_Mingo_${fechaArchivo()}.xlsx`,
-    );
-  }
-
-  async function exportarValorizadoMarca() {
-    const XLSX = await import("xlsx");
-
-    const agrupado = new Map<
-      string,
-      {
-        skus: number;
-        unidades: number;
-        costo: number;
-        venta: number;
-        ganancia: number;
-      }
-    >();
-
-    filtrados.forEach((item) => {
-      const nombreMarca =
-        item.marca?.trim() ||
-        "SIN MARCA";
-
-      const actual =
-        agrupado.get(nombreMarca) || {
-          skus: 0,
-          unidades: 0,
-          costo: 0,
-          venta: 0,
-          ganancia: 0,
-        };
-
-      actual.skus += 1;
-      actual.unidades += Number(
-        item.disponible || 0,
-      );
-      actual.costo += valorCosto(item);
-      actual.venta +=
-        valorVentaDemo(item);
-      actual.ganancia +=
-        gananciaPotencial(item);
-
-      agrupado.set(
-        nombreMarca,
-        actual,
-      );
-    });
-
-    const totalCosto =
-      Array.from(
-        agrupado.values(),
-      ).reduce(
-        (acc, item) =>
-          acc + item.costo,
-        0,
-      );
-
-    const resumenMarca =
-      Array.from(
-        agrupado.entries(),
-      )
-        .sort(
-          (a, b) =>
-            b[1].costo -
-            a[1].costo,
-        )
-        .map(
-          ([nombreMarca, item]) => ({
-            Marca: nombreMarca,
-            SKUs: item.skus,
-            Unidades: item.unidades,
-            "Valor a costo":
-              item.costo,
-            "Valor venta demo":
-              item.venta,
-            "Ganancia potencial":
-              item.ganancia,
-            "Participación costo %":
-              totalCosto > 0
-                ? item.costo /
-                  totalCosto
-                : 0,
-          }),
-        );
-
-    const workbook =
-      XLSX.utils.book_new();
-
-    const sheet =
-      XLSX.utils.json_to_sheet(
-        resumenMarca,
-      );
-
-    ajustarColumnas(
-      sheet,
-      [
-        24,
-        12,
-        14,
-        20,
-        20,
-        20,
-        20,
-      ],
-    );
-
-    if (resumenMarca.length > 0) {
-      sheet["!autofilter"] = {
-        ref: `A1:G${
-          resumenMarca.length + 1
-        }`,
-      };
-    }
-
-    XLSX.utils.book_append_sheet(
-      workbook,
-      sheet,
-      "Resumen por marca",
-    );
-
-    descargarWorkbook(
-      XLSX,
-      workbook,
-      `Stock_Costo_por_Marca_Casa_Mingo_${fechaArchivo()}.xlsx`,
-    );
-  }
-
   return (
-    <section className={styles.page}>
-      <header className={styles.hero}>
-        <div>
-          <div className={styles.heroMeta}>
-            <span
-              className={
-                styles.modulePill
-              }
-            >
-              INVENTARIO
-            </span>
-
-            <span
-              className={
-                styles.demoPill
-              }
-            >
-              MINGO 2026
-            </span>
-          </div>
+    <section className={ui.page}>
+      <header className={ui.topbar}>
+        <div className={ui.titleBlock}>
+          <nav className={ui.breadcrumb} aria-label="Ruta de navegación">
+            <span>Inventario</span>
+            <i aria-hidden="true">/</i>
+            <span aria-current="page">Stock</span>
+          </nav>
 
           <h1>Stock</h1>
-
-          <p>
-            Inventario consolidado por
-            producto, clasificación y
-            procedencia.
-          </p>
         </div>
 
-        <div
-          className={
-            styles.heroActions
-          }
-        >
-          <button
-            type="button"
-            className={
-              styles.secondaryButton
-            }
-            onClick={
-              exportarListadoExcel
-            }
-          >
-            Exportar Excel
-          </button>
-
-          <button
-            type="button"
-            className={
-              styles.secondaryButton
-            }
-            onClick={
-              exportarValorizadoMarca
-            }
-          >
-            Valorizado por marca
-          </button>
-
-          <Link
-            href="/movimientos"
-            className={
-              styles.secondaryButton
-            }
-          >
-            Movimientos
-          </Link>
-
-          <Link
-            href="/reposicion"
-            className={
-              styles.primaryButton
-            }
-          >
-            Reposición
+        <div className={ui.actionsGroup}>
+          {puedeVerMovimientos(permisos) ? (
+            <Link href="/movimientos" className={ui.secondaryButton}>
+              Movimientos
+            </Link>
+          ) : null}
+          {puedeAbrirNuevoMovimiento(permisos) ? (
+            <Link href="/movimientos/nuevo" className={ui.secondaryButton}>
+              Nuevo movimiento
+            </Link>
+          ) : null}
+          <Link href="/reposicion" className={ui.primaryButton}>
+            Ver reposición
           </Link>
         </div>
       </header>
 
-      <section
-        className={
-          styles.summaryGrid
-        }
-      >
-        <article
-          className={`${styles.summaryCard} ${styles.summaryTeal}`}
-        >
+      <p className={ui.resultCount} role="status" style={{ margin: "0 0 8px" }}>
+        {deposito === "TODOS"
+          ? `Visión consolidada${alcanceParcial ? " de los depósitos que usted tiene autorizados" : " de todos los depósitos"}.`
+          : `Visión del depósito ${depositos.find(([id]) => id === deposito)?.[1] ?? ""}: cantidades, costo y valores corresponden solo a este depósito; el mínimo y el máximo son los configurados para él.`}
+      </p>
+
+      {depositoNoDisponible ? (
+        <p className={ui.alertError} role="alert" style={{ margin: "0 0 8px" }}>
+          El depósito indicado en el enlace no existe, está desactualizado o no está en su alcance; no se aplicó ningún filtro y se muestra la visión consolidada.{" "}
+          <button type="button" className={ui.secondaryButton} onClick={() => { setDepositoNoDisponible(false); window.history.replaceState(null, "", "/stock"); }}>
+            Ver todos
+          </button>
+        </p>
+      ) : null}
+
+      {deposito !== "TODOS" && stock.length === 0 && !cargando && !errorCarga ? (
+        <p className={ui.resultCount} role="status" style={{ margin: "0 0 8px" }}>
+          El depósito {depositos.find(([id]) => id === deposito)?.[1] ?? ""} está autorizado, pero no tiene saldos de stock (0 productos con existencia).
+        </p>
+      ) : null}
+
+      <section className={ui.summaryGrid} aria-label="Resumen de stock">
+        <article className={[ui.summaryCard, ui.summaryTeal].join(" ")}>
           <span>SKU</span>
-
-          <strong>
-            {resumen.sku}
-          </strong>
-
-          <small>
-            Productos inventariados
-          </small>
+          <strong>{resumen.sku}</strong>
+          <small>Productos inventariados</small>
         </article>
 
-        <article
-          className={`${styles.summaryCard} ${styles.summaryBlue}`}
-        >
-          <span>
-            UNIDADES DISPONIBLES
-          </span>
-
-          <strong>
-            {new Intl.NumberFormat(
-              "es-PY",
-              {
-                maximumFractionDigits: 2,
-              },
-            ).format(
-              resumen.disponible,
-            )}
-          </strong>
-
-          <small>
-            Stock disponible
-          </small>
+        <article className={[ui.summaryCard, ui.summaryBlue].join(" ")}>
+          <span>Disponible</span>
+          <strong>{formatearCantidad(resumen.disponible)}</strong>
+          <small>Stock disponible</small>
         </article>
 
-        <article
-          className={`${styles.summaryCard} ${styles.summaryAmber}`}
-        >
-          <span>
-            STOCK BAJO
-          </span>
-
-          <strong>
-            {resumen.stockBajo}
-          </strong>
-
-          <small>
-            Debajo del mínimo
-          </small>
+        <article className={[ui.summaryCard, ui.summaryAmber].join(" ")}>
+          <span>Bajo mínimo</span>
+          <strong>{resumen.stockBajo}</strong>
+          <small>Disponible menor que el mínimo</small>
         </article>
 
-        <article
-          className={`${styles.summaryCard} ${styles.summaryRed}`}
-        >
-          <span>
-            SIN STOCK
-          </span>
-
-          <strong>
-            {resumen.sinStock}
-          </strong>
-
-          <small>
-            Saldo disponible cero
-          </small>
+        <article className={[ui.summaryCard, ui.summaryRed].join(" ")}>
+          <span>Sin stock</span>
+          <strong>{resumen.sinStock}</strong>
+          <small>Saldo disponible cero</small>
         </article>
 
-        <article
-          className={`${styles.summaryCard} ${styles.summaryPurple}`}
-        >
-          <span>
-            VALOR A COSTO
-          </span>
-
-          <strong>
-            {money(
-              resumen.valorCosto,
-            )}
-          </strong>
-
-          <small>
-            Costo según archivo original
-          </small>
-        </article>
-
-        <article
-          className={`${styles.summaryCard} ${styles.summaryBlue}`}
-        >
-          <span>
-            VALOR VENTA DEMO
-          </span>
-
-          <strong>
-            {money(
-              resumen.valorVenta,
-            )}
-          </strong>
-
-          <small>
-            Costo + 20%
-          </small>
-        </article>
       </section>
 
-      <section
-        className={
-          styles.contentCard
-        }
-      >
-        <div
-          className={
-            styles.toolbar
-          }
-        >
-          <label
-            className={
-              styles.search
-            }
-          >
-            <span>⌕</span>
+      <section className={ui.contentCard}>
+        <div className={[ui.toolbar, ui.toolbarDensa].join(" ")}>
+          <label className={ui.search}>
+            <span aria-hidden="true">⌕</span>
 
             <input
               value={busqueda}
-              onChange={(event) =>
-                setBusqueda(
-                  event.target.value,
-                )
-              }
+              onChange={(event) => setBusqueda(event.target.value)}
               placeholder="Buscar por código, código inventario, producto, marca, familia, línea..."
+              aria-label="Buscar en el stock"
             />
           </label>
 
-          <span
-            className={
-              styles.resultCount
-            }
-          >
+          <label className={ui.filterField}>
+            <span>Nivel</span>
+            <select value={nivel} onChange={(event) => setNivel(event.target.value as NivelFiltro)}>
+              <option value="TODOS">Todos</option>
+              <option value="NORMAL">Normal</option>
+              <option value="BAJO">Bajo mínimo</option>
+              <option value="SIN_STOCK">Sin stock</option>
+              <option value="SOBRESTOCK">Sobrestock</option>
+            </select>
+          </label>
+
+          <label className={ui.filterField}>
+            <span>Marca</span>
+            <select value={marca} onChange={(event) => setMarca(event.target.value)}>
+              <option value="TODAS">Todas</option>
+              {marcas.map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className={ui.filterField}>
+            <span>Familia</span>
+            <select value={familia} onChange={(event) => setFamilia(event.target.value)}>
+              <option value="TODAS">Todas</option>
+              {familias.map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className={ui.filterField}>
+            <span>Línea</span>
+            <select value={linea} onChange={(event) => setLinea(event.target.value)}>
+              <option value="TODAS">Todas</option>
+              {lineas.map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className={ui.filterField}>
+            <span>Procedencia</span>
+            <select value={procedencia} onChange={(event) => setProcedencia(event.target.value)}>
+              <option value="TODAS">Todas</option>
+              {procedencias.map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className={ui.filterField}>
+            <span>Propiedad</span>
+            <select value={propiedad} onChange={(event) => setPropiedad(event.target.value as PropiedadFiltro)}>
+              <option value="TODOS">Todos</option>
+              <option value="PROPIO">Propio</option>
+              <option value="TERCERO">Tercero</option>
+            </select>
+          </label>
+
+          <label className={ui.filterField}>
+            <span>Depósito</span>
+            <select value={deposito} onChange={(event) => { setDeposito(event.target.value); setDepositoNoDisponible(false); }}>
+              <option value="TODOS">Todos</option>
+              {depositos.map(([id, nombre]) => (
+                <option key={id} value={id}>
+                  {nombre}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <div className={ui.toolbarEnd}>
+          <details className={ui.ayuda}>
+            <summary aria-label="Ayuda: significado de R, C, T y Sobrestock" title="Ayuda: R, C, T y Sobrestock">
+              ?
+            </summary>
+            <div className={ui.ayudaPanel} role="note">
+              <strong>Columnas R / C / T</strong>
+              <p>R = reservado · C = cuarentena · T = en tránsito.</p>
+              <strong>Bajo mínimo y reposición</strong>
+              <p>«Bajo mínimo» compara el disponible con el mínimo. Reposición también considera el punto de reposición: un producto puede estar «Normal» aquí y necesitar reposición allá.</p>
+              <strong>Sobrestock</strong>
+              <p>
+                Existencia física propia (disponible + reservado + cuarentena) mayor que el stock máximo registrado en la
+                ficha del producto.
+              </p>
+            </div>
+          </details>
+
+            <button type="button" className={ui.clearButton} onClick={limpiar}>
+              Limpiar filtros
+            </button>
+
+            <span className={ui.resultCount} aria-live="polite">
             {filtrados.length} productos
           </span>
+          </div>
         </div>
 
-        <div
-          className={
-            styles.filters
-          }
-        >
-          <label>
-            <span>Nivel</span>
+        <div className={ui.tableScroll}>
+          <table className={ui.table}>
+            <thead>
+              <tr>
+                <ThOrdenable titulo="Producto" campo="producto" orden={orden} onOrden={cambiarOrden} />
+                <ThOrdenable titulo="Clasificación" campo="clasificacion" orden={orden} onOrden={cambiarOrden} />
+                <ThOrdenable titulo="Disponibilidad" campo="disponible" orden={orden} onOrden={cambiarOrden} alinear="derecha" />
+                <ThOrdenable titulo="Costo / valor" campo="costo" orden={orden} onOrden={cambiarOrden} alinear="derecha" />
+                <ThOrdenable titulo="Acciones" alinear="derecha" />
+              </tr>
+            </thead>
 
-            <select
-              value={nivel}
-              onChange={(event) =>
-                setNivel(
-                  event.target
-                    .value as NivelFiltro,
-                )
-              }
-            >
-              <option value="TODOS">
-                Todos
-              </option>
+            <tbody>
+              {paginaActual.map((item) => (
+                <tr key={item.id} className={ui.row}>
+                  <td>
+                    <div className={ui.clientMain}>
+                      <div className={ui.avatar} aria-hidden="true">
+                        {item.productoDescripcion
+                          .split(" ")
+                          .slice(0, 2)
+                          .map((word) => word.charAt(0))
+                          .join("")}
+                      </div>
 
-              <option value="NORMAL">
-                Normal
-              </option>
+                      <div className={ui.clientIdentity}>
+                        <Link href={`/stock/${item.id}`} className={ui.clientName}>
+                          {item.productoDescripcion}
+                        </Link>
+                        <span className={ui.code}>
+                          {item.productoCodigo} · Cód. inventario: {item.productoCodigoInventario || "—"}
+                        </span>
+                        <span className={ui.code}>
+                          {item.propiedad === "TERCERO" ? `Propietario: ${item.propietarioNombre}` : "Stock propio"}
+                        </span>
+                      </div>
+                    </div>
+                  </td>
 
-              <option value="BAJO">
-                Stock bajo
-              </option>
-
-              <option value="SIN_STOCK">
-                Sin stock
-              </option>
-
-              <option value="SOBRESTOCK">
-                Sobrestock
-              </option>
-            </select>
-          </label>
-
-          <label>
-            <span>Marca</span>
-
-            <select
-              value={marca}
-              onChange={(event) =>
-                setMarca(
-                  event.target.value,
-                )
-              }
-            >
-              <option value="TODAS">
-                Todas
-              </option>
-
-              {marcas.map(
-                (value) => (
-                  <option
-                    key={value}
-                    value={value}
-                  >
-                    {value}
-                  </option>
-                ),
-              )}
-            </select>
-          </label>
-
-          <label>
-            <span>Familia</span>
-
-            <select
-              value={familia}
-              onChange={(event) =>
-                setFamilia(
-                  event.target.value,
-                )
-              }
-            >
-              <option value="TODAS">
-                Todas
-              </option>
-
-              {familias.map(
-                (value) => (
-                  <option
-                    key={value}
-                    value={value}
-                  >
-                    {value}
-                  </option>
-                ),
-              )}
-            </select>
-          </label>
-
-          <label>
-            <span>Línea</span>
-
-            <select
-              value={linea}
-              onChange={(event) =>
-                setLinea(
-                  event.target.value,
-                )
-              }
-            >
-              <option value="TODAS">
-                Todas
-              </option>
-
-              {lineas.map(
-                (value) => (
-                  <option
-                    key={value}
-                    value={value}
-                  >
-                    {value}
-                  </option>
-                ),
-              )}
-            </select>
-          </label>
-
-          <label>
-            <span>
-              Procedencia
-            </span>
-
-            <select
-              value={procedencia}
-              onChange={(event) =>
-                setProcedencia(
-                  event.target.value,
-                )
-              }
-            >
-              <option value="TODAS">
-                Todas
-              </option>
-
-              {procedencias.map(
-                (value) => (
-                  <option
-                    key={value}
-                    value={value}
-                  >
-                    {value}
-                  </option>
-                ),
-              )}
-            </select>
-          </label>
-
-          <label>
-            <span>Propiedad</span>
-
-            <select
-              value={propiedad}
-              onChange={(event) =>
-                setPropiedad(
-                  event.target
-                    .value as PropiedadFiltro,
-                )
-              }
-            >
-              <option value="TODOS">
-                Todos
-              </option>
-
-              <option value="PROPIO">
-                Propio
-              </option>
-
-              <option value="TERCERO">
-                Tercero
-              </option>
-            </select>
-          </label>
-
-          <label>
-            <span>Depósito</span>
-
-            <select
-              value={deposito}
-              onChange={(event) =>
-                setDeposito(
-                  event.target.value,
-                )
-              }
-            >
-              <option value="TODOS">
-                Todos
-              </option>
-
-              {depositos.map(
-                ([id, nombre]) => (
-                  <option
-                    key={id}
-                    value={id}
-                  >
-                    {nombre}
-                  </option>
-                ),
-              )}
-            </select>
-          </label>
-
-          <button
-            type="button"
-            className={
-              styles.clearButton
-            }
-            onClick={limpiar}
-          >
-            Limpiar
-          </button>
-        </div>
-
-        <div
-          className={
-            styles.listHeader
-          }
-        >
-          <span>Producto</span>
-          <span>
-            Clasificación
-          </span>
-          <span>
-            Disponibilidad
-          </span>
-          <span>
-            Costo / valor
-          </span>
-          <span />
-        </div>
-
-        <div className={styles.list}>
-          {paginaActual.map(
-            (item) => (
-              <article
-                key={item.id}
-                className={
-                  styles.stockRow
-                }
-              >
-                <div
-                  className={
-                    styles.productBlock
-                  }
-                >
-                  <div
-                    className={
-                      styles.avatar
-                    }
-                  >
-                    {item.productoDescripcion
-                      .split(" ")
-                      .slice(0, 2)
-                      .map((word) =>
-                        word.charAt(0),
-                      )
-                      .join("")}
-                  </div>
-
-                  <div
-                    className={
-                      styles.productIdentity
-                    }
-                  >
-                    <div
-                      className={
-                        styles.identityTop
-                      }
-                    >
-                      <strong>
-                        {
-                          item.productoDescripcion
-                        }
-                      </strong>
-
-                      <span
-                        className={
-                          styles.code
-                        }
-                      >
-                        {
-                          item.productoCodigo
-                        }
+                  <td>
+                    <div className={ui.cell}>
+                      <strong>{item.familia || "Sin familia"}</strong>
+                      <span>{item.linea || "Sin línea"}</span>
+                      <span>
+                        {item.marca || "Sin marca"} · {item.procedencia || "Sin procedencia"}
                       </span>
                     </div>
+                  </td>
 
-                    <span
-                      className={
-                        styles.inventoryCode
-                      }
+                  <td className={ui.numeric}>
+                    <div className={ui.cell}>
+                      <strong className={ui.mono}>
+                        {formatearCantidad(Number(item.disponible || 0))}{" "}
+                        {item.unidadMedidaNombre}
+                      </strong>
+                      <span>
+                        <span className={ui.statusInfo} title="Reservado" aria-label={`Reservado ${item.reservado}`}>
+                          R {item.reservado}
+                        </span>{" "}
+                        <span className={ui.statusWarning} title="Cuarentena" aria-label={`Cuarentena ${item.cuarentena}`}>
+                          C {item.cuarentena}
+                        </span>{" "}
+                        <span className={ui.statusPurple} title="En tránsito" aria-label={`En tránsito ${item.transito}`}>
+                          T {item.transito}
+                        </span>
+                      </span>
+                      <span>
+                        <span
+                          className={
+                            item.nivel === "NORMAL"
+                              ? ui.statusActive
+                              : item.nivel === "BAJO"
+                                ? ui.statusWarning
+                                : item.nivel === "SIN_STOCK"
+                                  ? ui.statusDanger
+                                  : ui.statusInfo
+                          }
+                        >
+                          {ETIQUETA_NIVEL[item.nivel]}
+                        </span>
+                      </span>
+                    </div>
+                  </td>
+
+                  <td className={ui.numeric}>
+                    <div className={ui.cell}>
+                      <strong className={ui.mono}>{formatearCostoUnitarioTexto(item.costoPromedioTexto, MONEDA_BASE)}</strong>
+                      <span>Valor costo: {formatearMontoTexto(item.valorInventarioTexto, MONEDA_BASE)}</span>
+                      <span>
+                        Venta referencia:{" "}
+                        {item.precioVentaReferenciaTexto === null ? "—" : formatearMontoTexto(item.precioVentaReferenciaTexto, item.monedaPrecio || MONEDA_BASE)}
+                      </span>
+                    </div>
+                  </td>
+
+                  <td className={ui.actionsCell}>
+                    <Link
+                      href={`/stock/${item.id}`}
+                      className={ui.detailButton}
+                      aria-label={`Ver detalle de ${item.productoDescripcion}`}
                     >
-                      Código inventario:{" "}
-                      {item.productoCodigoInventario ||
-                        "—"}
-                    </span>
+                      Ver detalle
+                      <span aria-hidden="true">›</span>
+                    </Link>
+                  </td>
+                </tr>
+              ))}
 
-                    <small>
-                      {item.propiedad ===
-                      "TERCERO"
-                        ? `Propietario: ${item.propietarioNombre}`
-                        : "Stock propio"}
-                    </small>
-                  </div>
-                </div>
-
-                <div
-                  className={
-                    styles.classification
-                  }
-                >
-                  <strong>
-                    {item.familia ||
-                      "Sin familia"}
-                  </strong>
-
-                  <span>
-                    {item.linea ||
-                      "Sin línea"}
-                  </span>
-
-                  <small>
-                    {item.marca ||
-                      "Sin marca"}
-                    {" · "}
-                    {item.procedencia ||
-                      "Sin procedencia"}
-                  </small>
-                </div>
-
-                <div
-                  className={
-                    styles.availability
-                  }
-                >
-                  <strong>
-                    {new Intl.NumberFormat(
-                      "es-PY",
-                      {
-                        maximumFractionDigits: 2,
-                      },
-                    ).format(
-                      Number(
-                        item.disponible ||
-                          0,
-                      ),
-                    )}{" "}
-                    {
-                      item.unidadMedidaNombre
-                    }
-                  </strong>
-
-                  <div
-                    className={
-                      styles.stockPills
-                    }
-                  >
-                    <span
-                      className={
-                        styles.reserved
-                      }
-                    >
-                      R {item.reservado}
-                    </span>
-
-                    <span
-                      className={
-                        styles.quarantine
-                      }
-                    >
-                      C {item.cuarentena}
-                    </span>
-
-                    <span
-                      className={
-                        styles.transit
-                      }
-                    >
-                      T {item.transito}
-                    </span>
-                  </div>
-
-                  <span
-                    className={
-                      item.nivel ===
-                      "NORMAL"
-                        ? styles.statusNormal
-                        : item.nivel ===
-                            "BAJO"
-                          ? styles.statusWarning
-                          : item.nivel ===
-                              "SIN_STOCK"
-                            ? styles.statusDanger
-                            : styles.statusOver
-                    }
-                  >
-                    {item.nivel ===
-                    "NORMAL"
-                      ? "Normal"
-                      : item.nivel ===
-                          "BAJO"
-                        ? "Stock bajo"
-                        : item.nivel ===
-                            "SIN_STOCK"
-                          ? "Sin stock"
-                          : "Sobrestock"}
-                  </span>
-                </div>
-
-                <div
-                  className={
-                    styles.valueBlock
-                  }
-                >
-                  <strong>
-                    {money(
-                      costoUnitario(item),
-                    )}
-                  </strong>
-
-                  <span>
-                    Valor costo:{" "}
-                    {money(
-                      valorCosto(item),
-                    )}
-                  </span>
-
-                  <small>
-                    Venta demo (+20%):{" "}
-                    {money(
-                      precioVentaDemo(item),
-                    )}
-                  </small>
-                </div>
-
-                <Link
-                  href={`/stock/${item.id}`}
-                  className={
-                    styles.detailButton
-                  }
-                >
-                  Ver detalle
-                  <span>›</span>
-                </Link>
-              </article>
-            ),
-          )}
-
-          {paginaActual.length ===
-          0 ? (
-            <div
-              className={
-                styles.empty
-              }
-            >
-              <strong>
-                No se encontraron
-                productos.
-              </strong>
-
-              <span>
-                Modifique los filtros
-                aplicados.
-              </span>
-            </div>
-          ) : null}
+              {paginaActual.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className={ui.emptyCell}>
+                    <div className={ui.empty} role={errorCarga ? "alert" : undefined}>
+                      <strong>
+                        {cargando
+                          ? "Cargando stock..."
+                          : errorCarga ||
+                            (stock.length === 0 ? "Aún no hay productos en el inventario" : "No se encontraron productos")}
+                      </strong>
+                      {!cargando && !errorCarga ? (
+                        <span>
+                          {stock.length === 0
+                            ? "Registre un movimiento de entrada para comenzar a operar."
+                            : "Modifique los filtros aplicados."}
+                        </span>
+                      ) : null}
+                    </div>
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
         </div>
 
-        <footer
-          className={
-            styles.pagination
-          }
-        >
+        <footer className={ui.pagination}>
           <span>
-            Mostrando{" "}
-            {filtrados.length === 0
-              ? 0
-              : (pagina - 1) *
-                  PAGE_SIZE +
-                1}
-            –
-            {Math.min(
-              pagina * PAGE_SIZE,
-              filtrados.length,
-            )}{" "}
-            de {filtrados.length}
+            Mostrando {filtrados.length === 0 ? 0 : (pagina - 1) * PAGE_SIZE + 1}–
+            {Math.min(pagina * PAGE_SIZE, filtrados.length)} de {filtrados.length}
           </span>
 
           <div>
             <button
               type="button"
+              aria-label="Página anterior"
               disabled={pagina === 1}
-              onClick={() =>
-                setPagina(
-                  (actual) =>
-                    actual - 1,
-                )
-              }
+              onClick={() => setPagina((actual) => actual - 1)}
             >
               ‹
             </button>
 
             <strong>
-              {pagina} /{" "}
-              {totalPaginas}
+              {pagina} / {totalPaginas}
             </strong>
 
             <button
               type="button"
-              disabled={
-                pagina ===
-                totalPaginas
-              }
-              onClick={() =>
-                setPagina(
-                  (actual) =>
-                    actual + 1,
-                )
-              }
+              aria-label="Página siguiente"
+              disabled={pagina === totalPaginas}
+              onClick={() => setPagina((actual) => actual + 1)}
             >
               ›
             </button>

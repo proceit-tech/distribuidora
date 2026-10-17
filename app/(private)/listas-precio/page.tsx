@@ -7,21 +7,22 @@ import {
   useState,
 } from "react";
 
-import {
-  consumirListaPrecioFlash,
-  obtenerListasPrecioDemo,
-} from "@/lib/mocks/listas-precio-storage";
+import { cargarListas } from "@/lib/listas-precio/cliente-api";
 
 import {
-  ListaPrecioDemo,
+  ListaPrecioFila,
   ListaPrecioEstado,
   ListaPrecioMoneda,
   ListaPrecioTipo,
 } from "@/types/lista-precio";
 
-import styles from "./page.module.css";
+import { compararTexto, ordenarLista, siguienteOrden, type Orden } from "@/components/ui/lista-padrao/orden";
+import { ThOrdenable } from "@/components/ui/lista-padrao/th-ordenable";
+import ui from "@/components/ui/lista-padrao/lista.module.css";
 
 const PAGE_SIZE = 8;
+
+type CampoOrden = "lista" | "aplicacion" | "vigencia" | "tipo" | "estado";
 
 type EstadoFiltro =
   | "TODOS"
@@ -36,7 +37,7 @@ type MonedaFiltro =
   | ListaPrecioMoneda;
 
 function getEstadoReal(
-  lista: ListaPrecioDemo,
+  lista: ListaPrecioFila,
 ): ListaPrecioEstado {
   if (
     lista.vigenteHasta &&
@@ -72,6 +73,21 @@ function formatearFecha(
   );
 }
 
+function textoVigencia(lista: ListaPrecioFila) {
+  const desde = lista.vigenteDesde ? formatearFecha(lista.vigenteDesde) : "";
+  const hasta = lista.vigenteHasta ? formatearFecha(lista.vigenteHasta) : "";
+
+  if (desde && hasta) {
+    return `${desde} → ${hasta}`;
+  }
+
+  if (desde) {
+    return `Desde ${desde} · sin vencimiento`;
+  }
+
+  return hasta ? `Hasta ${hasta}` : "Sin vigencia definida";
+}
+
 function formatMoneda(
   moneda: ListaPrecioMoneda,
 ) {
@@ -79,7 +95,7 @@ function formatMoneda(
 }
 
 function getAplicacion(
-  lista: ListaPrecioDemo,
+  lista: ListaPrecioFila,
 ) {
   if (lista.clienteNombre) {
     return `Cliente · ${lista.clienteNombre}`;
@@ -101,7 +117,7 @@ function getAplicacion(
 }
 
 function getModoLabel(
-  lista: ListaPrecioDemo,
+  lista: ListaPrecioFila,
 ) {
   if (
     lista.modoPrecio ===
@@ -136,7 +152,7 @@ function getModoLabel(
 
 export default function ListasPrecioPage() {
   const [listas, setListas] =
-    useState<ListaPrecioDemo[]>([]);
+    useState<ListaPrecioFila[]>([]);
 
   const [busqueda, setBusqueda] =
     useState("");
@@ -150,30 +166,62 @@ export default function ListasPrecioPage() {
   const [filtroMoneda, setFiltroMoneda] =
     useState<MonedaFiltro>("TODOS");
 
-  const [pagina, setPagina] =
-    useState(1);
+  const [paginacion, setPaginacion] = useState({ clave: "", pagina: 1 });
 
   const [flash, setFlash] =
     useState("");
 
-  useEffect(() => {
-    setListas(
-      obtenerListasPrecioDemo(),
-    );
+  const [cargando, setCargando] =
+    useState(true);
 
-    setFlash(
-      consumirListaPrecioFlash(),
-    );
+  const [errorCarga, setErrorCarga] =
+    useState("");
+
+  const [orden, setOrden] = useState<Orden<CampoOrden>>(null);
+
+  useEffect(() => {
+    let activo = true;
+
+    cargarListas()
+      .then((datos) => {
+        if (activo) setListas(datos);
+      })
+      .catch((e: unknown) => {
+        if (activo)
+          setErrorCarga(
+            e instanceof Error
+              ? e.message
+              : "No fue posible cargar las listas de precios.",
+          );
+      })
+      .finally(() => {
+        if (activo) setCargando(false);
+      });
+
+    // Aviso tras crear/editar (?ok=creado|actualizado).
+    const ok = new URLSearchParams(
+      window.location.search,
+    ).get("ok");
+
+    // Diferido para no actualizar el estado de forma síncrona dentro del efecto.
+    if (ok === "creado") {
+      void Promise.resolve().then(() => setFlash("Lista de precios registrada correctamente."));
+    } else if (ok === "actualizado") {
+      void Promise.resolve().then(() => setFlash("Lista de precios actualizada correctamente."));
+    }
+
+    if (ok) {
+      window.history.replaceState(
+        null,
+        "",
+        window.location.pathname,
+      );
+    }
+
+    return () => {
+      activo = false;
+    };
   }, []);
-
-  useEffect(() => {
-    setPagina(1);
-  }, [
-    busqueda,
-    filtroEstado,
-    filtroTipo,
-    filtroMoneda,
-  ]);
 
   useEffect(() => {
     if (!flash) {
@@ -317,6 +365,30 @@ export default function ListasPrecioPage() {
     filtroMoneda,
   ]);
 
+  // Ordenación sobre el conjunto filtrado COMPLETO (toda la lista está cargada), antes de paginar.
+  const ordenados = useMemo(
+    () =>
+      ordenarLista(filtradas, orden, (campo, a, b) => {
+        switch (campo) {
+          case "lista":
+            return compararTexto(a.nombre, b.nombre);
+          case "aplicacion":
+            return compararTexto(getAplicacion(a), getAplicacion(b));
+          case "vigencia":
+            return compararTexto(a.vigenteHasta || "9999-12-31", b.vigenteHasta || "9999-12-31");
+          case "tipo":
+            return compararTexto(a.tipo, b.tipo);
+          case "estado":
+            return compararTexto(getEstadoReal(a), getEstadoReal(b));
+        }
+      }),
+    [filtradas, orden],
+  );
+
+  function cambiarOrden(campo: CampoOrden) {
+    setOrden((actual) => siguienteOrden(actual, campo));
+  }
+
   const totalPaginas =
     Math.max(
       1,
@@ -326,587 +398,305 @@ export default function ListasPrecioPage() {
       ),
     );
 
+  // La página vuelve a 1 cuando cambian los filtros o el orden y nunca excede el total: se deriva en el render (sin efecto).
+  const claveFiltros = JSON.stringify([busqueda, filtroEstado, filtroTipo, filtroMoneda, orden]);
+  const pagina = paginacion.clave === claveFiltros ? Math.min(paginacion.pagina, totalPaginas) : 1;
+  const setPagina = (valor: number | ((actual: number) => number)) =>
+    setPaginacion({ clave: claveFiltros, pagina: typeof valor === "function" ? valor(pagina) : valor });
+
   const paginaActual =
     useMemo(
       () =>
-        filtradas.slice(
+        ordenados.slice(
           (pagina - 1) *
             PAGE_SIZE,
           pagina * PAGE_SIZE,
         ),
-      [filtradas, pagina],
+    [ordenados, pagina],
     );
 
   return (
-    <section className={styles.page}>
+    <section className={ui.page}>
       {flash ? (
-        <div
-          className={styles.toast}
-          role="status"
-        >
+        <div className={ui.toast} role="status">
           <span>✓</span>
-
           <div>
-            <strong>
-              Operación realizada
-            </strong>
-            <small>
-              {flash}
-            </small>
+            <strong>Operación realizada</strong>
+            <small>{flash}</small>
           </div>
 
-          <button
-            type="button"
-            onClick={() =>
-              setFlash("")
-            }
-          >
+          <button type="button" aria-label="Cerrar mensaje" onClick={() => setFlash("")}>
             ×
           </button>
         </div>
       ) : null}
 
-      <header className={styles.hero}>
-        <div>
-          <div
-            className={
-              styles.heroMeta
-            }
-          >
-            <span
-              className={
-                styles.modulePill
-              }
-            >
-              MAESTROS
-            </span>
+      <header className={ui.topbar}>
+        <div className={ui.titleBlock}>
+          <nav className={ui.breadcrumb} aria-label="Ruta de navegación">
+            <span>Maestros</span>
+            <i aria-hidden="true">/</i>
+            <span aria-current="page">Listas de precios</span>
+          </nav>
 
-            <span
-              className={
-                styles.demoPill
-              }
-            >
-              DEMO
-            </span>
-          </div>
-
-          <h1>
-            Listas de precios
-          </h1>
-
-          <p>
-            Precios por mercado,
-            cliente, grupo comercial,
-            moneda y vigencia.
-          </p>
+          <h1>Listas de precios</h1>
         </div>
 
-        <Link
-          href="/listas-precio/nuevo"
-          className={
-            styles.primaryButton
-          }
-        >
-          <span>＋</span>
+        <Link href="/listas-precio/nuevo" className={ui.primaryButton}>
+          <span aria-hidden="true">+</span>
           Nueva lista
         </Link>
       </header>
 
-      <section
-        className={
-          styles.summaryGrid
-        }
-      >
-        <article
-          className={`${styles.summaryCard} ${styles.summaryTeal}`}
-        >
-          <span>
-            LISTAS ACTIVAS
-          </span>
-          <strong>
-            {resumen.activas}
-          </strong>
-          <small>
-            Disponibles para operar
-          </small>
+      <section className={ui.summaryGrid} aria-label="Resumen de listas de precios">
+        <article className={[ui.summaryCard, ui.summaryTeal].join(" ")}>
+          <span>Listas activas</span>
+          <strong>{resumen.activas}</strong>
+          <small>Disponibles para operar</small>
         </article>
 
-        <article
-          className={`${styles.summaryCard} ${styles.summaryBlue}`}
-        >
-          <span>
-            LISTAS DE VENTA
-          </span>
-          <strong>
-            {resumen.venta}
-          </strong>
-          <small>
-            Precios comerciales
-          </small>
+        <article className={[ui.summaryCard, ui.summaryBlue].join(" ")}>
+          <span>Listas de venta</span>
+          <strong>{resumen.venta}</strong>
+          <small>Precios comerciales</small>
         </article>
 
-        <article
-          className={`${styles.summaryCard} ${styles.summaryPurple}`}
-        >
-          <span>
-            LISTAS DE COMPRA
-          </span>
-          <strong>
-            {resumen.compra}
-          </strong>
-          <small>
-            Referencias de costo
-          </small>
+        <article className={[ui.summaryCard, ui.summaryViolet].join(" ")}>
+          <span>Listas de compra</span>
+          <strong>{resumen.compra}</strong>
+          <small>Referencias de costo</small>
         </article>
 
-        <article
-          className={`${styles.summaryCard} ${styles.summaryAmber}`}
-        >
-          <span>
-            PRÓXIMAS A VENCER
-          </span>
-          <strong>
-            {
-              resumen.proximasAVencer
-            }
-          </strong>
-          <small>
-            Dentro de 30 días
-          </small>
+        <article className={[ui.summaryCard, ui.summaryAmber].join(" ")}>
+          <span>Próximas a vencer</span>
+          <strong>{resumen.proximasAVencer}</strong>
+          <small>Dentro de 30 días</small>
         </article>
       </section>
 
-      <section
-        className={
-          styles.contentCard
-        }
-      >
-        <div
-          className={
-            styles.toolbar
-          }
-        >
-          <label
-            className={
-              styles.search
-            }
-          >
-            <span>⌕</span>
+      <section className={ui.contentCard}>
+        <div className={ui.toolbar}>
+          <label className={ui.search}>
+            <span aria-hidden="true">⌕</span>
 
             <input
               value={busqueda}
-              onChange={(event) =>
-                setBusqueda(
-                  event.target.value,
-                )
-              }
+              onChange={(event) => setBusqueda(event.target.value)}
               placeholder="Buscar por código, nombre, grupo, cliente, canal..."
+              aria-label="Buscar listas de precios"
             />
           </label>
 
-          <span
-            className={
-              styles.resultCount
-            }
-          >
-            {filtradas.length} de{" "}
-            {resumen.total}
-          </span>
-        </div>
-
-        <div
-          className={
-            styles.filters
-          }
-        >
-          <label>
+          <label className={ui.filterField}>
             <span>Estado</span>
-
-            <select
-              value={filtroEstado}
-              onChange={(event) =>
-                setFiltroEstado(
-                  event.target
-                    .value as EstadoFiltro,
-                )
-              }
-            >
-              <option value="TODOS">
-                Todos
-              </option>
-              <option value="ACTIVA">
-                Activas
-              </option>
-              <option value="BORRADOR">
-                Borrador
-              </option>
-              <option value="INACTIVA">
-                Inactivas
-              </option>
-              <option value="VENCIDA">
-                Vencidas
-              </option>
+            <select value={filtroEstado} onChange={(event) => setFiltroEstado(event.target.value as EstadoFiltro)}>
+              <option value="TODOS">Todos</option>
+              <option value="ACTIVA">Activas</option>
+              <option value="BORRADOR">Borrador</option>
+              <option value="INACTIVA">Inactivas</option>
+              <option value="VENCIDA">Vencidas</option>
             </select>
           </label>
 
-          <label>
+          <label className={ui.filterField}>
             <span>Tipo</span>
-
-            <select
-              value={filtroTipo}
-              onChange={(event) =>
-                setFiltroTipo(
-                  event.target
-                    .value as TipoFiltro,
-                )
-              }
-            >
-              <option value="TODOS">
-                Todos
-              </option>
-              <option value="VENTA">
-                Venta
-              </option>
-              <option value="COMPRA">
-                Compra
-              </option>
+            <select value={filtroTipo} onChange={(event) => setFiltroTipo(event.target.value as TipoFiltro)}>
+              <option value="TODOS">Todos</option>
+              <option value="VENTA">Venta</option>
+              <option value="COMPRA">Compra</option>
             </select>
           </label>
 
-          <label>
+          <label className={ui.filterField}>
             <span>Moneda</span>
-
-            <select
-              value={filtroMoneda}
-              onChange={(event) =>
-                setFiltroMoneda(
-                  event.target
-                    .value as MonedaFiltro,
-                )
-              }
-            >
-              <option value="TODOS">
-                Todas
-              </option>
-              <option value="PYG">
-                PYG
-              </option>
-              <option value="USD">
-                USD
-              </option>
-              <option value="BRL">
-                BRL
-              </option>
-              <option value="EUR">
-                EUR
-              </option>
+            <select value={filtroMoneda} onChange={(event) => setFiltroMoneda(event.target.value as MonedaFiltro)}>
+              <option value="TODOS">Todas</option>
+              {Array.from(new Set(listas.map((l) => l.monedaCodigo)))
+                .sort()
+                .map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
             </select>
           </label>
 
           <button
             type="button"
-            className={
-              styles.clearButton
-            }
+            className={ui.clearButton}
             onClick={() => {
               setBusqueda("");
-              setFiltroEstado(
-                "TODOS",
-              );
-              setFiltroTipo(
-                "TODOS",
-              );
-              setFiltroMoneda(
-                "TODOS",
-              );
+              setFiltroEstado("TODOS");
+              setFiltroTipo("TODOS");
+              setFiltroMoneda("TODOS");
             }}
           >
             Limpiar filtros
           </button>
+
+          <span className={ui.resultCount} aria-live="polite">
+            {filtradas.length} de {resumen.total}
+          </span>
         </div>
 
-        <div
-          className={
-            styles.listHeader
-          }
-        >
-          <span>
-            Lista de precios
-          </span>
-          <span>
-            Aplicación
-          </span>
-          <span>
-            Condiciones
-          </span>
-          <span />
-        </div>
+        <div className={ui.tableScroll}>
+          <table className={ui.table}>
+            <thead>
+              <tr>
+                <ThOrdenable titulo="Lista de precios" campo="lista" orden={orden} onOrden={cambiarOrden} />
+                <ThOrdenable titulo="Aplicación" campo="aplicacion" orden={orden} onOrden={cambiarOrden} />
+                <ThOrdenable titulo="Condiciones" campo="vigencia" orden={orden} onOrden={cambiarOrden} />
+                <ThOrdenable titulo="Tipo" campo="tipo" orden={orden} onOrden={cambiarOrden} />
+                <ThOrdenable titulo="Estado" campo="estado" orden={orden} onOrden={cambiarOrden} />
+                <ThOrdenable titulo="Acciones" alinear="derecha" />
+              </tr>
+            </thead>
 
-        <div className={styles.list}>
-          {paginaActual.map(
-            (lista) => {
-              const estado =
-                getEstadoReal(
-                  lista,
-                );
+            <tbody>
+              {paginaActual.map((lista) => {
+                const estado = getEstadoReal(lista);
 
-              return (
-                <article
-                  key={lista.id}
-                  className={
-                    styles.priceRow
-                  }
-                >
-                  <div
-                    className={
-                      styles.priceMain
-                    }
-                  >
-                    <div
-                      className={
-                        styles.avatar
-                      }
-                    >
-                      {lista.tipo ===
-                      "VENTA"
-                        ? "$"
-                        : "C"}
-                    </div>
+                return (
+                  <tr key={lista.id} className={ui.row}>
+                    <td>
+                      <div className={ui.clientMain}>
+                        <div className={ui.avatar} aria-hidden="true">
+                          {lista.tipo === "VENTA" ? "$" : "C"}
+                        </div>
 
-                    <div
-                      className={
-                        styles.priceIdentity
-                      }
-                    >
-                      <div
-                        className={
-                          styles.identityTop
-                        }
-                      >
-                        <strong>
-                          {lista.nombre}
-                        </strong>
-
-                        <span
-                          className={
-                            styles.code
-                          }
-                        >
-                          {lista.codigo}
-                        </span>
+                        <div className={ui.clientIdentity}>
+                          <Link href={`/listas-precio/${lista.id}`} className={ui.clientName}>
+                            {lista.nombre}
+                          </Link>
+                          <span className={ui.code}>
+                            {lista.codigo} · {lista.productosCount} productos · {formatMoneda(lista.monedaCodigo)} ·{" "}
+                            {lista.incluyeIva ? "IVA incluido" : "IVA no incluido"}
+                          </span>
+                          <span className={[ui.descr, ui.clamp2].join(" ")} title={lista.descripcion || undefined}>
+                            {lista.descripcion || "Sin descripción"}
+                          </span>
+                        </div>
                       </div>
+                    </td>
 
-                      <span
-                        className={
-                          styles.description
-                        }
-                      >
-                        {lista.descripcion ||
-                          "Sin descripción"}
-                      </span>
-
-                      <div
-                        className={
-                          styles.metaLine
-                        }
-                      >
+                    <td>
+                      <div className={ui.cell}>
+                        <strong>{getAplicacion(lista)}</strong>
                         <span>
-                          {lista.productos
-                            .length}{" "}
-                          productos
+                          {lista.listaBaseNombre
+                            ? `Base: ${lista.listaBaseCodigo} · ${lista.listaBaseNombre}`
+                            : "Sin lista base"}
                         </span>
-
-                        <span>
-                          {formatMoneda(
-                            lista.monedaCodigo,
-                          )}
-                        </span>
-
-                        <span>
-                          {lista.incluyeIva
-                            ? "IVA incluido"
-                            : "IVA no incluido"}
-                        </span>
+                        <span>Prioridad {lista.prioridad}</span>
                       </div>
-                    </div>
-                  </div>
+                    </td>
 
-                  <div
-                    className={
-                      styles.application
-                    }
-                  >
-                    <strong>
-                      {getAplicacion(
-                        lista,
-                      )}
-                    </strong>
+                    <td>
+                      <div className={ui.cell}>
+                        <strong>{getModoLabel(lista)}</strong>
+                        <span>{textoVigencia(lista)}</span>
+                      </div>
+                    </td>
 
-                    <span>
-                      {lista.listaBaseNombre
-                        ? `Base: ${lista.listaBaseCodigo} · ${lista.listaBaseNombre}`
-                        : "Sin lista base"}
-                    </span>
-
-                    <small>
-                      Prioridad{" "}
-                      {lista.prioridad}
-                    </small>
-                  </div>
-
-                  <div
-                    className={
-                      styles.conditions
-                    }
-                  >
-                    <strong>
-                      {getModoLabel(
-                        lista,
-                      )}
-                    </strong>
-
-                    <span>
-                      {formatearFecha(
-                        lista.vigenteDesde,
-                      )}{" "}
-                      →{" "}
-                      {formatearFecha(
-                        lista.vigenteHasta,
-                      )}
-                    </span>
-
-                    <div
-                      className={
-                        styles.statuses
-                      }
-                    >
-                      <span
-                        className={
-                          lista.tipo ===
-                          "VENTA"
-                            ? styles.statusSale
-                            : styles.statusPurchase
-                        }
-                      >
-                        {lista.tipo ===
-                        "VENTA"
-                          ? "Venta"
-                          : "Compra"}
+                    <td>
+                      <span className={lista.tipo === "VENTA" ? ui.statusInfo : ui.statusPurple}>
+                        {lista.tipo === "VENTA" ? "Venta" : "Compra"}
                       </span>
+                    </td>
 
+                    <td>
                       <span
                         className={
-                          estado ===
-                          "ACTIVA"
-                            ? styles.statusActive
-                            : estado ===
-                                "VENCIDA"
-                              ? styles.statusExpired
-                              : estado ===
-                                  "BORRADOR"
-                                ? styles.statusDraft
-                                : styles.statusInactive
+                          estado === "ACTIVA"
+                            ? ui.statusActive
+                            : estado === "VENCIDA"
+                              ? ui.statusDanger
+                              : estado === "BORRADOR"
+                                ? ui.statusWarning
+                                : ui.statusInactive
                         }
                       >
-                        {estado ===
-                        "ACTIVA"
+                        {estado === "ACTIVA"
                           ? "Activa"
-                          : estado ===
-                              "VENCIDA"
+                          : estado === "VENCIDA"
                             ? "Vencida"
-                            : estado ===
-                                "BORRADOR"
+                            : estado === "BORRADOR"
                               ? "Borrador"
                               : "Inactiva"}
                       </span>
+                    </td>
+
+                    <td className={ui.actionsCell}>
+                      <Link
+                        href={`/listas-precio/${lista.id}`}
+                        className={ui.detailButton}
+                        aria-label={`Ver lista ${lista.nombre}`}
+                      >
+                        Ver lista
+                        <span aria-hidden="true">›</span>
+                      </Link>
+                    </td>
+                  </tr>
+                );
+              })}
+
+              {paginaActual.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className={ui.emptyCell}>
+                    <div className={ui.empty} role={errorCarga ? "alert" : undefined}>
+                      <strong>
+                        {cargando
+                          ? "Cargando listas de precios..."
+                          : errorCarga ||
+                            (listas.length === 0
+                              ? "Aún no hay listas de precios registradas"
+                              : "No se encontraron listas de precios")}
+                      </strong>
+                      {!cargando && !errorCarga ? (
+                        <span>
+                          {listas.length === 0
+                            ? "Cree su primera lista para comenzar a operar."
+                            : "Modifique los filtros o cree una nueva lista."}
+                        </span>
+                      ) : null}
+                      {!cargando && !errorCarga && listas.length === 0 ? (
+                        <Link href="/listas-precio/nuevo" className={ui.emptyAction}>
+                          + Nueva lista
+                        </Link>
+                      ) : null}
                     </div>
-                  </div>
-
-                  <Link
-                    href={`/listas-precio/${lista.id}`}
-                    className={
-                      styles.detailButton
-                    }
-                  >
-                    Ver lista
-                    <span>›</span>
-                  </Link>
-                </article>
-              );
-            },
-          )}
-
-          {paginaActual.length ===
-          0 ? (
-            <div
-              className={
-                styles.empty
-              }
-            >
-              <strong>
-                No se encontraron
-                listas de precios.
-              </strong>
-
-              <span>
-                Modifique los filtros
-                o cree una nueva lista.
-              </span>
-            </div>
-          ) : null}
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
         </div>
 
-        <footer
-          className={
-            styles.pagination
-          }
-        >
+        <footer className={ui.pagination}>
           <span>
-            Mostrando{" "}
-            {filtradas.length === 0
-              ? 0
-              : (pagina - 1) *
-                  PAGE_SIZE +
-                1}
-            –
-            {Math.min(
-              pagina * PAGE_SIZE,
-              filtradas.length,
-            )}{" "}
-            de {filtradas.length}
+            Mostrando {filtradas.length === 0 ? 0 : (pagina - 1) * PAGE_SIZE + 1}–
+            {Math.min(pagina * PAGE_SIZE, filtradas.length)} de {filtradas.length}
           </span>
 
           <div>
             <button
               type="button"
+              aria-label="Página anterior"
               disabled={pagina === 1}
-              onClick={() =>
-                setPagina(
-                  (actual) =>
-                    actual - 1,
-                )
-              }
+              onClick={() => setPagina((actual) => actual - 1)}
             >
               ‹
             </button>
 
             <strong>
-              {pagina} /{" "}
-              {totalPaginas}
+              {pagina} / {totalPaginas}
             </strong>
 
             <button
               type="button"
-              disabled={
-                pagina ===
-                totalPaginas
-              }
-              onClick={() =>
-                setPagina(
-                  (actual) =>
-                    actual + 1,
-                )
-              }
+              aria-label="Página siguiente"
+              disabled={pagina === totalPaginas}
+              onClick={() => setPagina((actual) => actual + 1)}
             >
               ›
             </button>

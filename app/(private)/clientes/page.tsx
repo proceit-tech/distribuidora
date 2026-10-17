@@ -7,15 +7,13 @@ import {
   useState,
 } from "react";
 
-import {
-  consumirClienteFlash,
-  obtenerClientesDemo,
-} from "@/lib/mocks/clientes-storage";
 import type {
-  ClienteDemo,
+  ClienteLista,
   ClienteNaturaleza,
   ClienteOperacion,
 } from "@/types/clientes";
+
+import { filtrarClientes } from "@/lib/clientes/filtros-listado";
 
 import styles from "./page.module.css";
 
@@ -24,8 +22,17 @@ const PAGE_SIZE = 8;
 type EstadoFiltro =
   | "TODOS"
   | "ACTIVOS"
-  | "INACTIVOS"
-  | "BLOQUEADOS";
+  | "INACTIVOS";
+
+type BloqueoFiltro =
+  | "TODOS"
+  | "BLOQUEADOS"
+  | "SIN_BLOQUEO";
+
+type AptitudFiltro =
+  | "TODAS"
+  | "APTOS"
+  | "NO_APTOS";
 
 type NaturalezaFiltro =
   | "TODAS"
@@ -35,16 +42,122 @@ type OperacionFiltro =
   | "TODAS"
   | ClienteOperacion;
 
+type CampoOrden = "cliente" | "identificacion" | "comercial" | "credito" | "estado";
+
+type Orden = { campo: CampoOrden; dir: "asc" | "desc" } | null;
+
+const COLUMNAS: {
+  clave: string;
+  titulo: string;
+  orden?: CampoOrden;
+  clase?: string;
+}[] = [
+  { clave: "cliente", titulo: "Cliente", orden: "cliente" },
+  { clave: "identificacion", titulo: "Identificación", orden: "identificacion" },
+  { clave: "comercial", titulo: "Comercial", orden: "comercial" },
+  { clave: "contacto", titulo: "Contacto principal" },
+  { clave: "credito", titulo: "Crédito", orden: "credito", clase: "numericHead" },
+  { clave: "estado", titulo: "Estado", orden: "estado" },
+  { clave: "acciones", titulo: "Acciones", clase: "actionsHead" },
+];
+
 function dinero(value: number) {
   return new Intl.NumberFormat(
     "es-PY",
     {
-      maximumFractionDigits: 0,
+      maximumFractionDigits: 4,
     },
   ).format(value);
 }
 
-function documento(cliente: ClienteDemo) {
+const OPERACIONES: Record<number, ClienteOperacion> = {
+  1: "B2B",
+  2: "B2C",
+  3: "B2G",
+  4: "B2F",
+};
+
+/** Teléfono para mostrar: "+DDI número" si se conoce el DDI (sin país guardado = registro anterior, solo el número). */
+function telefonoVisible(ddi: string, numero: string) {
+  return numero ? (ddi ? `+${ddi} ${numero}` : numero) : "";
+}
+
+function texto(valor: unknown) {
+  return typeof valor === "string"
+    ? valor
+    : "";
+}
+
+function desdeApi(
+  fila: Record<string, unknown>,
+): ClienteLista {
+  return {
+    id: texto(fila.id),
+    codigo: texto(fila.codigo),
+    // Un código desconocido nunca se sustituye por un valor válido (ni B2C ni "no contribuyente"): se marca para revisión.
+    naturaleza:
+      Number(fila.naturaleza_receptor) === 1
+        ? "CONTRIBUYENTE"
+        : Number(fila.naturaleza_receptor) === 2
+          ? "NO_CONTRIBUYENTE"
+          : "DESCONOCIDA",
+    tipoOperacion:
+      OPERACIONES[Number(fila.tipo_operacion)] ?? "DESCONOCIDA",
+    tipoDocumento: texto(
+      fila.tipo_documento,
+    ),
+    numeroDocumento: texto(
+      fila.numero_documento,
+    ),
+    dv: texto(fila.dv),
+    razonSocial: texto(
+      fila.razon_social,
+    ),
+    nombreFantasia: texto(
+      fila.nombre_fantasia,
+    ),
+    paisNombre: texto(fila.pais_nombre),
+    email: texto(fila.email),
+    telefono: texto(fila.telefono),
+    celular: texto(fila.celular),
+    gln: texto(fila.gln),
+    telefonoDdi: texto(fila.telefono_ddi),
+    celularDdi: texto(fila.celular_ddi),
+    contactoPrincipal: {
+      nombre: [texto(fila.contacto_nombre), texto(fila.contacto_apellido)].filter(Boolean).join(" "),
+      telefono: texto(fila.contacto_telefono),
+      celular: texto(fila.contacto_celular),
+      telefonoDdi: texto(fila.contacto_telefono_ddi),
+      celularDdi: texto(fila.contacto_celular_ddi),
+    },
+    moneda: texto(fila.moneda_codigo_predeterminada),
+    grupoClienteId: texto(fila.grupo_cliente_id),
+    aptitudApto: fila.aptitud_apto === true,
+    aptitudPendientes: Array.isArray(fila.aptitud_pendientes) ? (fila.aptitud_pendientes as unknown[]).map(String) : [],
+    limiteCredito:
+      Number(fila.limite_credito) || 0,
+    grupoCliente: texto(
+      fila.grupo_cliente_nombre,
+    ),
+    condicionPago: texto(
+      fila.condicion_pago_nombre,
+    ),
+    vendedor: texto(
+      fila.vendedor_nombre,
+    ),
+    rutaEntrega: texto(
+      fila.ruta_entrega_nombre,
+    ),
+    zonaComercial: texto(
+      fila.zona_comercial_nombre,
+    ),
+    bloqueadoVentas:
+      fila.bloqueado_ventas === true,
+    activo: fila.activo !== false,
+  };
+}
+
+function documento(cliente: ClienteLista) {
   if (
     cliente.naturaleza ===
     "CONTRIBUYENTE"
@@ -69,19 +182,24 @@ function documento(cliente: ClienteDemo) {
   )} ${cliente.numeroDocumento}`;
 }
 
-function contactoPrincipal(
-  cliente: ClienteDemo,
-) {
-  return (
-    cliente.telefono ||
-    cliente.celular ||
-    "Sin teléfono"
-  );
+/** Columna "Contacto principal": el contacto marcado como principal; si no hay, los datos fiscales del cliente. */
+function contactoPrincipal(cliente: ClienteLista) {
+  const c = cliente.contactoPrincipal;
+  const telefonoContacto = telefonoVisible(c.telefonoDdi, c.telefono) || telefonoVisible(c.celularDdi, c.celular);
+
+  if (c.nombre) {
+    return { titulo: c.nombre, detalle: telefonoContacto || "Sin teléfono" };
+  }
+
+  return {
+    titulo: telefonoVisible(cliente.telefonoDdi, cliente.telefono) || telefonoVisible(cliente.celularDdi, cliente.celular) || "Sin teléfono",
+    detalle: "",
+  };
 }
 
 export default function ClientesPage() {
   const [clientes, setClientes] =
-    useState<ClienteDemo[]>([]);
+    useState<ClienteLista[]>([]);
 
   const [busqueda, setBusqueda] =
     useState("");
@@ -91,6 +209,19 @@ export default function ClientesPage() {
     setFiltroEstado,
   ] =
     useState<EstadoFiltro>("TODOS");
+
+  const [filtroBloqueo, setFiltroBloqueo] =
+    useState<BloqueoFiltro>("TODOS");
+
+  const [filtroAptitud, setFiltroAptitud] =
+    useState<AptitudFiltro>("TODAS");
+
+  // "" = todos; el grupo se filtra por id y la moneda por código (opciones tomadas de los clientes de la empresa)
+  const [filtroGrupo, setFiltroGrupo] =
+    useState("");
+
+  const [filtroMoneda, setFiltroMoneda] =
+    useState("");
 
   const [
     filtroNaturaleza,
@@ -110,24 +241,99 @@ export default function ClientesPage() {
   const [flash, setFlash] =
     useState("");
 
-  useEffect(() => {
-    setClientes(
-      obtenerClientesDemo(),
-    );
+  const [cargando, setCargando] =
+    useState(true);
 
-    setFlash(
-      consumirClienteFlash(),
-    );
+  const [errorCarga, setErrorCarga] =
+    useState("");
+
+  const [orden, setOrden] = useState<Orden>(null);
+
+  useEffect(() => {
+    let activo = true;
+
+    async function cargar() {
+      try {
+        const respuesta = await fetch(
+          "/api/clientes?modo=lista",
+          { cache: "no-store" },
+        );
+        const datos =
+          (await respuesta.json()) as {
+            clientes?: Record<
+              string,
+              unknown
+            >[];
+            error?: string;
+          };
+
+        if (!respuesta.ok) {
+          throw new Error(
+            datos.error ??
+              "No fue posible cargar los clientes.",
+          );
+        }
+
+        if (activo) {
+          setClientes(
+            (datos.clientes ?? []).map(
+              desdeApi,
+            ),
+          );
+        }
+      } catch (error) {
+        if (activo) {
+          setClientes([]);
+          setErrorCarga(
+            error instanceof Error
+              ? error.message
+              : "No fue posible cargar los clientes.",
+          );
+        }
+      } finally {
+        if (activo) {
+          setCargando(false);
+        }
+      }
+    }
+
+    void cargar();
+
+    const ok = new URLSearchParams(
+      window.location.search,
+    ).get("ok");
+
+    if (ok) {
+      // Aviso diferido: el mensaje se fija en un callback (no de forma síncrona en el cuerpo del efecto).
+      window.setTimeout(
+        () =>
+          setFlash(
+            ok === "creado"
+              ? "Cliente registrado correctamente."
+              : "Cliente actualizado correctamente.",
+          ),
+        0,
+      );
+      window.history.replaceState(
+        null,
+        "",
+        "/clientes",
+      );
+    }
+
+    return () => {
+      activo = false;
+    };
   }, []);
 
-  useEffect(() => {
+  // Al cambiar búsqueda, filtros u orden se vuelve a la primera página (ajuste de estado durante el render, sin efecto).
+  const firmaConsulta = JSON.stringify([busqueda, filtroEstado, filtroBloqueo, filtroAptitud, filtroGrupo, filtroMoneda, filtroNaturaleza, filtroOperacion, orden]);
+  const [firmaPrevia, setFirmaPrevia] = useState(firmaConsulta);
+
+  if (firmaConsulta !== firmaPrevia) {
+    setFirmaPrevia(firmaConsulta);
     setPagina(1);
-  }, [
-    busqueda,
-    filtroEstado,
-    filtroNaturaleza,
-    filtroOperacion,
-  ]);
+  }
 
   useEffect(() => {
     if (!flash) {
@@ -161,8 +367,7 @@ export default function ClientesPage() {
           acc.bloqueados += 1;
         }
 
-        acc.credito +=
-          cliente.limiteCredito;
+        acc.credito[cliente.moneda || "sin moneda"] =          (acc.credito[cliente.moneda || "sin moneda"] ?? 0) + cliente.limiteCredito;
 
         return acc;
       },
@@ -171,92 +376,81 @@ export default function ClientesPage() {
         activos: 0,
         inactivos: 0,
         bloqueados: 0,
-        credito: 0,
+        credito: {} as Record<string, number>,
       },
     );
   }, [clientes]);
 
-  const filtrados = useMemo(() => {
-    const term =
-      busqueda
-        .trim()
-        .toLocaleLowerCase("es");
+  // Búsqueda y filtros: lógica pura compartida y probada en lib/clientes/filtros-listado.ts
+  const filtrados = useMemo(
+    () =>
+      filtrarClientes(clientes, {
+        busqueda,
+        estado: filtroEstado,
+        bloqueo: filtroBloqueo,
+        aptitud: filtroAptitud,
+        grupo: filtroGrupo,
+        moneda: filtroMoneda,
+        naturaleza: filtroNaturaleza,
+        operacion: filtroOperacion,
+      }),
+    [clientes, busqueda, filtroEstado, filtroBloqueo, filtroAptitud, filtroGrupo, filtroMoneda, filtroNaturaleza, filtroOperacion],
+  );
 
-    return clientes.filter(
-      (cliente) => {
-        if (
-          filtroEstado ===
-            "ACTIVOS" &&
-          !cliente.activo
-        ) {
-          return false;
-        }
+  // Opciones de los filtros: solo grupos y monedas que existen en los clientes de la empresa de la sesión.
+  const opcionesGrupo = useMemo(() => {
+    const mapa = new Map<string, string>();
 
-        if (
-          filtroEstado ===
-            "INACTIVOS" &&
-          cliente.activo
-        ) {
-          return false;
-        }
+    for (const cliente of clientes) {
+      if (cliente.grupoClienteId) mapa.set(cliente.grupoClienteId, cliente.grupoCliente || "Grupo sin nombre");
+    }
 
-        if (
-          filtroEstado ===
-            "BLOQUEADOS" &&
-          !cliente.bloqueadoVentas
-        ) {
-          return false;
-        }
+    return [...mapa.entries()].sort((a, b) => a[1].localeCompare(b[1], "es"));
+  }, [clientes]);
 
-        if (
-          filtroNaturaleza !==
-            "TODAS" &&
-          cliente.naturaleza !==
-            filtroNaturaleza
-        ) {
-          return false;
-        }
+  const opcionesMoneda = useMemo(
+    () => [...new Set(clientes.map((cliente) => cliente.moneda).filter(Boolean))].sort(),
+    [clientes],
+  );
+  const hayClientesSinMoneda = useMemo(() => clientes.some((cliente) => cliente.moneda === ""), [clientes]);
 
-        if (
-          filtroOperacion !==
-            "TODAS" &&
-          cliente.tipoOperacion !==
-            filtroOperacion
-        ) {
-          return false;
-        }
+  // Ordenación sobre el conjunto filtrado COMPLETO (todos los clientes están cargados en el cliente), antes de paginar.
+  const ordenados = useMemo(() => {
+    if (!orden) {
+      return filtrados;
+    }
 
-        if (!term) {
-          return true;
-        }
+    const factor = orden.dir === "asc" ? 1 : -1;
+    const texto = (a: string, b: string) =>
+      a.localeCompare(b, "es", { numeric: true, sensitivity: "base" });
+    const rango = (c: ClienteLista) => (!c.activo ? 2 : c.bloqueadoVentas ? 1 : 0);
 
-        return [
-          cliente.codigo,
-          cliente.razonSocial,
-          cliente.nombreFantasia,
-          cliente.numeroDocumento,
-          cliente.dv,
-          cliente.email,
-          cliente.telefono,
-          cliente.celular,
-          cliente.gln,
-          cliente.grupoCliente,
-          cliente.vendedor,
-          cliente.rutaEntrega,
-          cliente.zonaComercial,
-        ]
-          .join(" ")
-          .toLocaleLowerCase("es")
-          .includes(term);
-      },
-    );
-  }, [
-    clientes,
-    busqueda,
-    filtroEstado,
-    filtroNaturaleza,
-    filtroOperacion,
-  ]);
+    return [...filtrados].sort((a, b) => {
+      switch (orden.campo) {
+        case "cliente":
+          return factor * texto(a.razonSocial, b.razonSocial);
+        case "identificacion":
+          return factor * texto(documento(a), documento(b));
+        case "comercial":
+          return factor * texto(a.grupoCliente, b.grupoCliente);
+        case "credito":
+          return factor * (a.limiteCredito - b.limiteCredito);
+        case "estado":
+          return factor * (rango(a) - rango(b));
+      }
+    });
+  }, [filtrados, orden]);
+
+  // Ciclo: sin orden (el de la API) → ascendente → descendente → sin orden.
+  function cambiarOrden(campo: CampoOrden) {
+    setOrden((actual) => {
+      if (!actual || actual.campo !== campo) {
+        return { campo, dir: "asc" };
+      }
+
+      return actual.dir === "asc" ? { campo, dir: "desc" } : null;
+    });
+  }
 
   const totalPaginas = Math.max(
     1,
@@ -266,24 +460,25 @@ export default function ClientesPage() {
     ),
   );
 
-  useEffect(() => {
-    if (pagina > totalPaginas) {
-      setPagina(totalPaginas);
-    }
-  }, [pagina, totalPaginas]);
+  // Página vigente: nunca excede el total (p. ej. al filtrar), sin efecto de corrección.
+  const paginaVigente = Math.min(pagina, totalPaginas);
 
   const paginaActual = useMemo(
     () =>
-      filtrados.slice(
-        (pagina - 1) * PAGE_SIZE,
-        pagina * PAGE_SIZE,
+      ordenados.slice(
+        (paginaVigente - 1) * PAGE_SIZE,
+        paginaVigente * PAGE_SIZE,
       ),
-    [filtrados, pagina],
+    [ordenados, paginaVigente],
   );
 
   function limpiarFiltros() {
     setBusqueda("");
     setFiltroEstado("TODOS");
+    setFiltroBloqueo("TODOS");
+    setFiltroAptitud("TODAS");
+    setFiltroGrupo("");
+    setFiltroMoneda("");
     setFiltroNaturaleza("TODAS");
     setFiltroOperacion("TODAS");
   }
@@ -291,531 +486,365 @@ export default function ClientesPage() {
   return (
     <section className={styles.page}>
       {flash ? (
-        <div
-          className={styles.toast}
-          role="status"
-        >
+        <div className={styles.toast} role="status">
           <span>✓</span>
           <div>
-            <strong>
-              Operación realizada
-            </strong>
+            <strong>Operación realizada</strong>
             <small>{flash}</small>
           </div>
 
-          <button
-            type="button"
-            aria-label="Cerrar mensaje"
-            onClick={() =>
-              setFlash("")
-            }
-          >
+          <button type="button" aria-label="Cerrar mensaje" onClick={() => setFlash("")}>
             ×
           </button>
         </div>
       ) : null}
 
-      <header className={styles.hero}>
-        <div>
-          <div
-            className={styles.heroMeta}
-          >
-            <span
-              className={
-                styles.modulePill
-              }
-            >
-              MAESTROS
-            </span>
-
-            <span
-              className={styles.demoPill}
-            >
-              DEMO
-            </span>
-          </div>
+      <header className={styles.topbar}>
+        <div className={styles.titleBlock}>
+          <nav className={styles.breadcrumb} aria-label="Ruta de navegación">
+            <span>Maestros</span>
+            <i aria-hidden="true">/</i>
+            <span aria-current="page">Clientes</span>
+          </nav>
 
           <h1>Clientes</h1>
-
-          <p>
-            Gestión fiscal, comercial,
-            crédito, contactos y
-            logística de clientes.
-          </p>
         </div>
 
-        <Link
-          href="/clientes/nuevo"
-          className={
-            styles.primaryButton
-          }
-        >
-          <span>＋</span>
+        <Link href="/clientes/nuevo" className={styles.primaryButton}>
+          <span aria-hidden="true">+</span>
           Nuevo cliente
         </Link>
       </header>
 
-      <section
-        className={styles.summaryGrid}
-      >
-        <article
-          className={[
-            styles.summaryCard,
-            styles.summaryTeal,
-          ].join(" ")}
-        >
-          <span>
-            CLIENTES ACTIVOS
-          </span>
-          <strong>
-            {resumo.activos}
-          </strong>
-          <small>
-            Disponibles para operar
-          </small>
+      <section className={styles.summaryGrid} aria-label="Resumen de clientes">
+        <article className={[styles.summaryCard, styles.summaryTeal].join(" ")}>
+          <span>Clientes activos</span>
+          <strong>{resumo.activos}</strong>
+          <small>Disponibles para operar</small>
         </article>
 
-        <article
-          className={[
-            styles.summaryCard,
-            styles.summaryBlue,
-          ].join(" ")}
-        >
-          <span>
-            CRÉDITO AUTORIZADO
-          </span>
-          <strong>
-            Gs.{" "}
-            {dinero(
-              resumo.credito,
-            )}
-          </strong>
-          <small>
-            Límite comercial total
-          </small>
+        <article className={[styles.summaryCard, styles.summaryBlue].join(" ")}>
+          <span>Suma de límites de crédito</span>
+          <strong>{Object.entries(resumo.credito).map(([moneda, valor]) => `${moneda} ${dinero(valor)}`).join(" · ") || "0"}</strong>
+          <small>Una suma por moneda del cliente</small>
         </article>
 
-        <article
-          className={[
-            styles.summaryCard,
-            styles.summaryRed,
-          ].join(" ")}
-        >
-          <span>
-            VENTAS BLOQUEADAS
-          </span>
-          <strong>
-            {resumo.bloqueados}
-          </strong>
-          <small>
-            Requieren revisión
-          </small>
+        <article className={[styles.summaryCard, styles.summaryRed].join(" ")}>
+          <span>Ventas bloqueadas</span>
+          <strong>{resumo.bloqueados}</strong>
+          <small>Requieren revisión</small>
         </article>
 
-        <article
-          className={[
-            styles.summaryCard,
-            styles.summaryViolet,
-          ].join(" ")}
-        >
-          <span>
-            INACTIVOS
-          </span>
-          <strong>
-            {resumo.inactivos}
-          </strong>
-          <small>
-            Sin operación habilitada
-          </small>
+        <article className={[styles.summaryCard, styles.summaryViolet].join(" ")}>
+          <span>Inactivos</span>
+          <strong>{resumo.inactivos}</strong>
+          <small>Sin operación habilitada</small>
         </article>
       </section>
 
-      <section
-        className={styles.contentCard}
-      >
-        <div
-          className={styles.toolbar}
-        >
-          <label
-            className={styles.search}
-          >
-            <span>⌕</span>
+      <section className={styles.contentCard}>
+        <div className={styles.toolbar}>
+          <label className={styles.search}>
+            <span aria-hidden="true">⌕</span>
 
             <input
               value={busqueda}
-              onChange={(event) =>
-                setBusqueda(
-                  event.target.value,
-                )
-              }
-              placeholder="Buscar por nombre, código, RUC, GLN, vendedor..."
+              onChange={(event) => setBusqueda(event.target.value)}
+              placeholder="Buscar por nombre, código, RUC, teléfono, contacto, GLN, vendedor..."
+              aria-label="Buscar clientes"
             />
           </label>
 
-          <div
-            className={
-              styles.toolbarRight
-            }
-          >
-            <span
-              className={
-                styles.resultCount
-              }
-            >
-              {filtrados.length} de{" "}
-              {resumo.total}
-            </span>
-          </div>
-        </div>
-
-        <div
-          className={styles.filters}
-        >
-          <label>
+          <label className={styles.filterField}>
             <span>Estado</span>
             <select
               value={filtroEstado}
-              onChange={(event) =>
-                setFiltroEstado(
-                  event.target
-                    .value as EstadoFiltro,
-                )
-              }
+              onChange={(event) => setFiltroEstado(event.target.value as EstadoFiltro)}
             >
-              <option value="TODOS">
-                Todos
-              </option>
-              <option value="ACTIVOS">
-                Activos
-              </option>
-              <option value="INACTIVOS">
-                Inactivos
-              </option>
-              <option value="BLOQUEADOS">
-                Ventas bloqueadas
-              </option>
+              <option value="TODOS">Todos</option>
+              <option value="ACTIVOS">Activos</option>
+              <option value="INACTIVOS">Inactivos</option>
             </select>
           </label>
 
-          <label>
+          <label className={styles.filterField}>
+            <span>Bloqueo</span>
+            <select
+              value={filtroBloqueo}
+              onChange={(event) => setFiltroBloqueo(event.target.value as BloqueoFiltro)}
+            >
+              <option value="TODOS">Todos</option>
+              <option value="BLOQUEADOS">Ventas bloqueadas</option>
+              <option value="SIN_BLOQUEO">Sin bloqueo</option>
+            </select>
+          </label>
+
+          <label className={styles.filterField}>
+            <span>Aptitud SIFEN</span>
+            <select
+              value={filtroAptitud}
+              onChange={(event) => setFiltroAptitud(event.target.value as AptitudFiltro)}
+            >
+              <option value="TODAS">Todas</option>
+              <option value="APTOS">Aptos</option>
+              <option value="NO_APTOS">Fiscal incompleto</option>
+            </select>
+          </label>
+
+          <label className={styles.filterField}>
+            <span>Grupo</span>
+            <select value={filtroGrupo} onChange={(event) => setFiltroGrupo(event.target.value)}>
+              <option value="">Todos</option>
+              {opcionesGrupo.map(([id, nombre]) => (
+                <option key={id} value={id}>
+                  {nombre}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className={styles.filterField}>
+            <span>Moneda</span>
+            <select value={filtroMoneda} onChange={(event) => setFiltroMoneda(event.target.value)}>
+              <option value="">Todas</option>
+              {opcionesMoneda.map((codigo) => (
+                <option key={codigo} value={codigo}>
+                  {codigo}
+                </option>
+              ))}
+              {hayClientesSinMoneda ? <option value="SIN_MONEDA">Sin moneda</option> : null}
+            </select>
+          </label>
+
+          <label className={styles.filterField}>
             <span>Naturaleza</span>
             <select
-              value={
-                filtroNaturaleza
-              }
-              onChange={(event) =>
-                setFiltroNaturaleza(
-                  event.target
-                    .value as NaturalezaFiltro,
-                )
-              }
+              value={filtroNaturaleza}
+              onChange={(event) => setFiltroNaturaleza(event.target.value as NaturalezaFiltro)}
             >
-              <option value="TODAS">
-                Todas
-              </option>
-              <option value="CONTRIBUYENTE">
-                Contribuyente
-              </option>
-              <option value="NO_CONTRIBUYENTE">
-                No contribuyente
-              </option>
+              <option value="TODAS">Todas</option>
+              <option value="CONTRIBUYENTE">Contribuyente</option>
+              <option value="NO_CONTRIBUYENTE">No contribuyente</option>
             </select>
           </label>
 
-          <label>
+          <label className={styles.filterField}>
             <span>Operación</span>
             <select
-              value={
-                filtroOperacion
-              }
-              onChange={(event) =>
-                setFiltroOperacion(
-                  event.target
-                    .value as OperacionFiltro,
-                )
-              }
+              value={filtroOperacion}
+              onChange={(event) => setFiltroOperacion(event.target.value as OperacionFiltro)}
             >
-              <option value="TODAS">
-                Todas
-              </option>
-              <option value="B2B">
-                B2B
-              </option>
-              <option value="B2C">
-                B2C
-              </option>
-              <option value="B2G">
-                B2G
-              </option>
-              <option value="B2F">
-                B2F
-              </option>
+              <option value="TODAS">Todas</option>
+              <option value="B2B">B2B</option>
+              <option value="B2C">B2C</option>
+              <option value="B2G">B2G</option>
+              <option value="B2F">B2F</option>
             </select>
           </label>
 
-          <button
-            type="button"
-            className={
-              styles.clearButton
-            }
-            onClick={limpiarFiltros}
-          >
+          <button type="button" className={styles.clearButton} onClick={limpiarFiltros}>
             Limpiar filtros
           </button>
+
+          <span className={styles.resultCount} aria-live="polite">
+            {filtrados.length} de {resumo.total}
+          </span>
         </div>
 
-        <div
-          className={styles.listHeader}
-        >
-          <span>Cliente</span>
-          <span>
-            Comercial / logística
-          </span>
-          <span>
-            Crédito / estado
-          </span>
-          <span />
-        </div>
-
-        <div className={styles.list}>
-          {paginaActual.length ===
-          0 ? (
-            <div
-              className={styles.empty}
-            >
-              <strong>
-                No encontramos clientes
-              </strong>
-              <span>
-                Cambie los filtros o
-                registre un nuevo
-                cliente.
-              </span>
-            </div>
-          ) : (
-            paginaActual.map(
-              (cliente) => (
-                <article
-                  key={cliente.id}
-                  className={
-                    styles.clientRow
-                  }
-                >
-                  <div
-                    className={
-                      styles.clientMain
+        <div className={styles.tableScroll}>
+          <table className={styles.table}>
+            <thead>
+              <tr>
+                {COLUMNAS.map((columna) => (
+                  <th
+                    key={columna.clave}
+                    scope="col"
+                    className={columna.clase ? styles[columna.clase] : undefined}
+                    aria-sort={
+                      !columna.orden
+                        ? undefined
+                        : orden?.campo === columna.orden
+                          ? orden.dir === "asc"
+                            ? "ascending"
+                            : "descending"
+                          : "none"
                     }
                   >
-                    <div
-                      className={
-                        styles.avatar
-                      }
-                    >
-                      {cliente.razonSocial
-                        .split(/\s+/)
-                        .slice(0, 2)
-                        .map((part) =>
-                          part
-                            .charAt(0)
-                            .toUpperCase(),
-                        )
-                        .join("")}
+                    {columna.orden ? (
+                      <button
+                        type="button"
+                        className={styles.sortButton}
+                        onClick={() => cambiarOrden(columna.orden as CampoOrden)}
+                        title={`Ordenar por ${columna.titulo.toLowerCase()}`}
+                      >
+                        {columna.titulo}
+                        <i aria-hidden="true">
+                          {orden?.campo === columna.orden ? (orden.dir === "asc" ? "▲" : "▼") : "⇅"}
+                        </i>
+                      </button>
+                    ) : (
+                      columna.titulo
+                    )}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+
+            <tbody>
+              {cargando ? (
+                <tr>
+                  <td colSpan={COLUMNAS.length} className={styles.emptyCell}>
+                    <div className={styles.empty}>
+                      <strong>Cargando clientes...</strong>
                     </div>
-
-                    <div
-                      className={
-                        styles.clientIdentity
-                      }
-                    >
-                      <div
-                        className={
-                          styles.identityTop
-                        }
-                      >
-                        <strong>
-                          {
-                            cliente.razonSocial
-                          }
-                        </strong>
-
-                        <span
-                          className={
-                            styles.code
-                          }
-                        >
-                          {cliente.codigo}
-                        </span>
-                      </div>
-
-                      <span
-                        className={
-                          styles.document
-                        }
-                      >
-                        {documento(
-                          cliente,
-                        )}
-                        <i>·</i>
-                        {
-                          cliente.tipoOperacion
-                        }
-                        <i>·</i>
-                        {
-                          cliente.paisNombre
-                        }
-                      </span>
-
-                      <div
-                        className={
-                          styles.contactLine
-                        }
-                      >
-                        <span>
-                          {contactoPrincipal(
-                            cliente,
-                          )}
-                        </span>
-
-                        <span>
-                          {cliente.email ||
-                            "Sin correo"}
-                        </span>
-                      </div>
+                  </td>
+                </tr>
+              ) : errorCarga ? (
+                <tr>
+                  <td colSpan={COLUMNAS.length} className={styles.emptyCell}>
+                    <div className={styles.empty} role="alert">
+                      <strong>No fue posible cargar los clientes</strong>
+                      <span>{errorCarga}</span>
                     </div>
-                  </div>
-
-                  <div
-                    className={
-                      styles.commercial
-                    }
-                  >
-                    <strong>
-                      {cliente.grupoCliente ||
-                        "Sin grupo"}
-                    </strong>
-
-                    <span>
-                      {cliente.vendedor ||
-                        "Sin vendedor"}
-                    </span>
-
-                    <small>
-                      {cliente.rutaEntrega ||
-                        cliente.zonaComercial ||
-                        "Sin ruta o zona"}
-                    </small>
-                  </div>
-
-                  <div
-                    className={
-                      styles.creditBlock
-                    }
-                  >
-                    <strong>
-                      Gs.{" "}
-                      {dinero(
-                        cliente.limiteCredito,
-                      )}
-                    </strong>
-
-                    <span>
-                      {
-                        cliente.condicionPago
-                      }
-                    </span>
-
-                    <div
-                      className={
-                        styles.statuses
-                      }
-                    >
-                      <span
-                        className={
-                          cliente.activo
-                            ? styles.statusActive
-                            : styles.statusInactive
-                        }
-                      >
-                        {cliente.activo
-                          ? "Activo"
-                          : "Inactivo"}
+                  </td>
+                </tr>
+              ) : paginaActual.length === 0 ? (
+                <tr>
+                  <td colSpan={COLUMNAS.length} className={styles.emptyCell}>
+                    <div className={styles.empty}>
+                      <strong>
+                        {clientes.length === 0 ? "Aún no hay clientes registrados" : "No encontramos clientes"}
+                      </strong>
+                      <span>
+                        {clientes.length === 0
+                          ? "Cree su primer cliente para comenzar a operar."
+                          : "Cambie los filtros o registre un nuevo cliente."}
                       </span>
-
-                      {cliente.bloqueadoVentas ? (
-                        <span
-                          className={
-                            styles.statusBlocked
-                          }
-                        >
-                          Bloqueado
-                        </span>
+                      {clientes.length === 0 ? (
+                        <Link href="/clientes/nuevo" className={styles.emptyAction}>
+                          + Nuevo cliente
+                        </Link>
                       ) : null}
                     </div>
-                  </div>
+                  </td>
+                </tr>
+              ) : (
+                paginaActual.map((cliente) => (
+                  <tr key={cliente.id} className={styles.row}>
+                    <td>
+                      <div className={styles.clientMain}>
+                        <div className={styles.avatar} aria-hidden="true">
+                          {cliente.razonSocial
+                            .split(/\s+/)
+                            .slice(0, 2)
+                            .map((part) => part.charAt(0).toUpperCase())
+                            .join("")}
+                        </div>
 
-                  <Link
-                    href={`/clientes/${cliente.id}`}
-                    className={
-                      styles.detailButton
-                    }
-                  >
-                    Ver ficha
-                    <span>›</span>
-                  </Link>
-                </article>
-              ),
-            )
-          )}
+                        <div className={styles.clientIdentity}>
+                          <Link href={`/clientes/${cliente.id}`} className={styles.clientName}>
+                            {cliente.razonSocial}
+                          </Link>
+                          <span className={styles.code}>{cliente.codigo}</span>
+                        </div>
+                      </div>
+                    </td>
+
+                    <td>
+                      <div className={styles.cell}>
+                        <strong>{documento(cliente)}</strong>
+                        <span>
+                          {cliente.tipoOperacion === "DESCONOCIDA" ? "Operación a revisar" : cliente.tipoOperacion}
+                          <i>·</i>
+                          {cliente.paisNombre}
+                        </span>
+                      </div>
+                    </td>
+
+                    <td>
+                      <div className={styles.cell}>
+                        <strong>{cliente.grupoCliente || "Sin grupo"}</strong>
+                        <span>{cliente.vendedor || "Sin vendedor"}</span>
+                        <span>{cliente.rutaEntrega || cliente.zonaComercial || "Sin ruta o zona"}</span>
+                      </div>
+                    </td>
+
+                    <td>
+                      <div className={styles.cell}>
+                        <strong>{contactoPrincipal(cliente).titulo}</strong>
+                        {contactoPrincipal(cliente).detalle ? <span>{contactoPrincipal(cliente).detalle}</span> : null}
+                        <span className={styles.breakable}>{cliente.email || "Sin correo"}</span>
+                      </div>
+                    </td>
+
+                    <td className={styles.numeric}>
+                      <div className={styles.cell}>
+                        <strong>{cliente.moneda ? `${cliente.moneda} ` : ""}{dinero(cliente.limiteCredito)}</strong>
+                        <span>{cliente.condicionPago}</span>
+                      </div>
+                    </td>
+
+                    <td>
+                      <div className={styles.statuses}>
+                        <span className={cliente.activo ? styles.statusActive : styles.statusInactive}>
+                          {cliente.activo ? "Activo" : "Inactivo"}
+                        </span>
+
+                        {cliente.bloqueadoVentas ? (
+                          <span className={styles.statusBlocked}>Bloqueado</span>
+                        ) : null}
+
+                        <span
+                          className={cliente.aptitudApto ? styles.statusActive : styles.statusBlocked}
+                          title={cliente.aptitudApto ? "Datos fiscales completos para SIFEN" : cliente.aptitudPendientes.join(" · ")}
+                        >
+                          {cliente.aptitudApto ? "Apto SIFEN" : "Fiscal incompleto"}
+                        </span>
+                      </div>
+                    </td>
+
+                    <td className={styles.actionsCell}>
+                      <Link
+                        href={`/clientes/${cliente.id}`}
+                        className={styles.detailButton}
+                        aria-label={`Ver ficha de ${cliente.razonSocial}`}
+                      >
+                        Ver ficha
+                        <span aria-hidden="true">›</span>
+                      </Link>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
         </div>
 
-        <footer
-          className={styles.pagination}
-        >
+        <footer className={styles.pagination}>
           <span>
-            Mostrando{" "}
-            {filtrados.length === 0
-              ? 0
-              : (pagina - 1) *
-                  PAGE_SIZE +
-                1}
-            –
-            {Math.min(
-              pagina * PAGE_SIZE,
-              filtrados.length,
-            )}{" "}
-            de {filtrados.length}
+            Mostrando {filtrados.length === 0 ? 0 : (paginaVigente - 1) * PAGE_SIZE + 1}–
+            {Math.min(paginaVigente * PAGE_SIZE, filtrados.length)} de {filtrados.length}
           </span>
 
           <div>
             <button
               type="button"
-              disabled={pagina === 1}
-              onClick={() =>
-                setPagina(
-                  (actual) =>
-                    actual - 1,
-                )
-              }
+              aria-label="Página anterior"
+              disabled={paginaVigente === 1}
+              onClick={() => setPagina(paginaVigente - 1)}
             >
               ‹
             </button>
 
             <strong>
-              {pagina} /{" "}
-              {totalPaginas}
+              {paginaVigente} / {totalPaginas}
             </strong>
 
             <button
               type="button"
-              disabled={
-                pagina === totalPaginas
-              }
-              onClick={() =>
-                setPagina(
-                  (actual) =>
-                    actual + 1,
-                )
-              }
+              aria-label="Página siguiente"
+              disabled={paginaVigente === totalPaginas}
+              onClick={() => setPagina(paginaVigente + 1)}
             >
               ›
             </button>

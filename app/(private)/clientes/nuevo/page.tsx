@@ -4,6 +4,25 @@ import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import { calcularDvRuc, validarRucDv } from "@/lib/fiscal/calcular-dv-ruc";
+import { TelefonoPais } from "@/components/clientes/telefono-pais";
+import { validarTelefono } from "@/lib/fiscal/telefono";
+import { DESCUENTO_COMERCIAL, LIMITE_CREDITO, decimalAcotado } from "@/lib/clientes/comercial";
+import { pestanaDeErrorApi } from "@/lib/clientes/pestanas";
+import { useProtegerCambios } from "@/lib/ui/proteger-cambios";
+import { ACCEPT_ARCHIVOS, EXTENSIONES_TEXTO, TAMANO_MAXIMO_BYTES, tamanoLegible, validarNombreYTamano } from "@/lib/almacenamiento/archivos-reglas";
+import { validarFrecuenciaYDias } from "@/lib/clientes/logistica";
+import { validarDireccionFiscalRequerida } from "@/lib/clientes/obligatoriedad-fiscal";
+import {
+  NOMBRE_INNOMINADO,
+  validarCamposReceptor,
+  validarDireccionFiscal,
+  validarGln,
+  validarInnominado,
+  validarLongitudes,
+  validarNaturalezaOperacion,
+} from "@/lib/fiscal/campos-receptor";
+
 type Opcion = {
   id?: string;
   codigo?: string | number;
@@ -30,7 +49,13 @@ type Contacto = {
   cargo: string;
   departamento: string;
   telefono: string;
+  telefonoPais: string;
+  telefonoDdi: string;
+  telefonoArea: string;
   celular: string;
+  celularPais: string;
+  celularDdi: string;
+  celularArea: string;
   email: string;
   esPrincipal: boolean;
   recibePedidos: boolean;
@@ -65,9 +90,11 @@ type Direccion = {
 };
 
 type Documento = {
+  /** Identificador estable de la fila (los índices cambian al eliminar filas): permite saber cuáles ya se cargaron. */
+  uid: string;
   tipo: string;
-  nombreArchivo: string;
-  urlArchivo: string;
+  /** Archivo real elegido por el usuario; se sube a almacenamiento privado una vez creado el cliente. */
+  archivo: File | null;
   fechaEmision: string;
   fechaVencimiento: string;
   observacion: string;
@@ -87,7 +114,13 @@ type Formulario = {
   email: string;
   emailCopia: string;
   telefono: string;
+  telefonoPais: string;
+  telefonoDdi: string;
+  telefonoArea: string;
   celular: string;
+  celularPais: string;
+  celularDdi: string;
+  celularArea: string;
   limiteCredito: string;
   grupoClienteId: string;
   condicionPagoId: string;
@@ -110,6 +143,7 @@ type Formulario = {
   zonaComercialId: string;
   vendedorId: string;
   frecuenciaEntrega: string;
+  diaMesEntrega: string;
   diasEntrega: number[];
   observacionComercial: string;
   observacionLogistica: string;
@@ -131,7 +165,7 @@ const catalogosVacios: Catalogos = {
 const formularioInicial: Formulario = {
   naturaleza: "CONTRIBUYENTE",
   tipoOperacion: "B2B",
-  tipoPersona: "JURIDICA",
+  tipoPersona: "",
   paisCodigo: "PRY",
   tipoDocumento: "RUC",
   descripcionDocumentoIdentidad: "",
@@ -142,7 +176,13 @@ const formularioInicial: Formulario = {
   email: "",
   emailCopia: "",
   telefono: "",
+  telefonoPais: "PRY",
+  telefonoDdi: "595",
+  telefonoArea: "",
   celular: "",
+  celularPais: "PRY",
+  celularDdi: "595",
+  celularArea: "",
   limiteCredito: "0",
   grupoClienteId: "",
   condicionPagoId: "",
@@ -165,6 +205,7 @@ const formularioInicial: Formulario = {
   zonaComercialId: "",
   vendedorId: "",
   frecuenciaEntrega: "",
+  diaMesEntrega: "",
   diasEntrega: [],
   observacionComercial: "",
   observacionLogistica: "",
@@ -177,7 +218,13 @@ function crearContacto(): Contacto {
     cargo: "",
     departamento: "",
     telefono: "",
+    telefonoPais: "PRY",
+    telefonoDdi: "595",
+    telefonoArea: "",
     celular: "",
+    celularPais: "PRY",
+    celularDdi: "595",
+    celularArea: "",
     email: "",
     esPrincipal: false,
     recibePedidos: false,
@@ -214,16 +261,51 @@ function crearDireccion(): Direccion {
   };
 }
 
+let contadorDocumentos = 0;
+
 function crearDocumento(): Documento {
   return {
+    uid: `d${++contadorDocumentos}`,
     tipo: "OTRO",
-    nombreArchivo: "",
-    urlArchivo: "",
+    archivo: null,
     fechaEmision: "",
     fechaVencimiento: "",
     observacion: "",
   };
 }
+
+const FORMATO_FECHA = /^(\d{2})\/(\d{2})\/(\d{4})$/;
+const FORMATO_CORREO = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// Misma regla que el POST: dd/mm/yyyy y fecha real del calendario.
+function fechaValida(valor: string) {
+  const partes = FORMATO_FECHA.exec(valor.trim());
+  if (!partes) return false;
+  const [, dia, mes, anio] = partes.map(Number);
+  const fecha = new Date(Date.UTC(anio, mes - 1, dia));
+  return (
+    fecha.getUTCFullYear() === anio &&
+    fecha.getUTCMonth() === mes - 1 &&
+    fecha.getUTCDate() === dia
+  );
+}
+
+function fechaComparable(valor: string) {
+  const [dia, mes, anio] = valor.trim().split("/");
+  return `${anio}${mes}${dia}`;
+}
+
+const PESTANAS: Record<string, string> = {
+  fiscal: "Información fiscal",
+  comercial: "Comercial y crédito",
+  contactos: "Contactos",
+  direcciones: "Direcciones",
+  logistica: "Entrega y ventas",
+  documentos: "Documentos",
+};
+
+type Incidencia = { pestana: string; mensaje: string; campo?: string };
+
 
 function valorOpcion(opcion: Opcion) {
   return opcion.id ?? String(opcion.codigo ?? "");
@@ -256,11 +338,20 @@ export default function NuevoClientePage() {
     Record<number, Opcion[]>
   >({});
   const [error, setError] = useState("");
+  const [pestanaConError, setPestanaConError] = useState("");
+  const [aviso, setAviso] = useState("");
   const [guardando, setGuardando] = useState(false);
+  // Cliente ya creado (identidad conservada): a partir de aquí el formulario nunca vuelve a crear otro; solo reintenta documentos pendientes y el cierre.
+  const [altaCreada, setAltaCreada] = useState<{ id: string } | null>(null);
+  const [docsSubidos, setDocsSubidos] = useState<string[]>([]);
+  const [erroresDocs, setErroresDocs] = useState<Record<string, string>>({});
 
-  useEffect(() => {
-    void cargarCatalogos();
-  }, []);
+  // CLI-A02: avisa antes de perder datos escritos (ficha, contactos, direcciones, documentos con archivo). Tras crear el cliente solo protege los archivos que faltan por subir.
+  const sucio = altaCreada
+    ? documentos.some((d) => d.archivo && !docsSubidos.includes(d.uid))
+    : JSON.stringify(formulario) !== JSON.stringify(formularioInicial) || contactos.length > 0 || direcciones.length > 0 || documentos.length > 0;
+
+  useProtegerCambios(sucio && !guardando);
 
   async function cargarCatalogos() {
     try {
@@ -298,6 +389,11 @@ export default function NuevoClientePage() {
       );
     }
   }
+
+  useEffect(() => {
+    // Carga diferida (no síncrona en el cuerpo del efecto)
+    void Promise.resolve().then(cargarCatalogos);
+  }, []);
 
   function actualizarFormulario<K extends keyof Formulario>(
     campo: K,
@@ -339,13 +435,29 @@ export default function NuevoClientePage() {
     );
   }
 
+  // Un solo domicilio fiscal: `tipo` y `esFiscal` se mantienen coherentes en todos los ítems
+  // (el POST fuerza es_fiscal cuando tipo = FISCAL y el índice único rechaza dos fiscales).
   function establecerDireccionFiscal(indice: number, marcado: boolean) {
     setDirecciones((actuales) =>
-      actuales.map((direccion, posicion) => ({
-        ...direccion,
-        esFiscal: posicion === indice ? marcado : marcado ? false : direccion.esFiscal,
-      })),
+      actuales.map((direccion, posicion) => {
+        if (posicion === indice) {
+          return {
+            ...direccion,
+            esFiscal: marcado,
+            tipo: !marcado && direccion.tipo === "FISCAL" ? "COMERCIAL" : direccion.tipo,
+          };
+        }
+        if (!marcado) return direccion;
+        return {
+          ...direccion,
+          esFiscal: false,
+          tipo: direccion.tipo === "FISCAL" ? "COMERCIAL" : direccion.tipo,
+        };
+      }),
     );
+    if (marcado) {
+      setAviso("Solo puede haber una dirección fiscal: las demás pasaron a tipo Comercial si eran Fiscal.");
+    }
   }
 
   function establecerEntregaDefault(indice: number, marcado: boolean) {
@@ -362,16 +474,29 @@ export default function NuevoClientePage() {
     setDirecciones((actuales) =>
       actuales.map((direccion, posicion) => {
         if (posicion !== indice) {
-          return tipo === "FISCAL" ? { ...direccion, esFiscal: false } : direccion;
+          if (tipo !== "FISCAL") return direccion;
+          return {
+            ...direccion,
+            esFiscal: false,
+            tipo: direccion.tipo === "FISCAL" ? "COMERCIAL" : direccion.tipo,
+          };
         }
 
         return {
           ...direccion,
           tipo,
-          esFiscal: tipo === "FISCAL" ? true : direccion.esFiscal,
+          esFiscal:
+            tipo === "FISCAL"
+              ? true
+              : direccion.tipo === "FISCAL"
+                ? false
+                : direccion.esFiscal,
         };
       }),
     );
+    if (tipo === "FISCAL") {
+      setAviso("Solo puede haber una dirección fiscal: las demás pasaron a tipo Comercial si eran Fiscal.");
+    }
   }
 
   function actualizarDocumento<K extends keyof Documento>(
@@ -481,44 +606,393 @@ export default function NuevoClientePage() {
     actualizarDireccion(indice, "ciudad", ciudad?.nombre ?? "");
   }
 
+  // Valida los seis conjuntos antes del POST con las mismas reglas que hoy aplica la API
+  // (sin reglas nuevas): nada se descarta en silencio y el error apunta a pestaña y campo.
+  function validar(): Incidencia | null {
+    const f = formulario;
+    const contribuyente = f.naturaleza === "CONTRIBUYENTE";
+    const fiscal = (mensaje: string, campo?: string): Incidencia => ({
+      pestana: "fiscal",
+      mensaje,
+      campo,
+    });
+
+    if (!f.tipoPersona) {
+      return fiscal("Seleccione si el cliente es persona física o persona jurídica.", "cli-tipo-persona");
+    }
+    if (!f.paisCodigo) return fiscal("Seleccione el país del cliente.", "cli-pais");
+    if (contribuyente) {
+      if (!f.numeroDocumento.trim()) return fiscal("Informe el RUC del cliente.", "cli-numero");
+      const rucDv = validarRucDv(f.numeroDocumento, f.dv);
+      if (!rucDv.ok) return fiscal(rucDv.error, "cli-numero");
+    } else {
+      if (!f.tipoDocumento) return fiscal("Seleccione el tipo de documento del cliente.", "cli-tipo-documento");
+      if (!f.numeroDocumento.trim()) return fiscal("Informe el número de documento del cliente.", "cli-numero");
+      if (f.tipoDocumento === "OTRO" && !f.descripcionDocumentoIdentidad.trim()) {
+        return fiscal("Describa el tipo de documento seleccionado como Otro.", "cli-descripcion-documento");
+      }
+    }
+    if (!f.razonSocial.trim()) return fiscal("Informe el nombre o razón social del cliente.", "cli-razon-social");
+    const errorReceptor = validarCamposReceptor({
+      naturaleza: f.naturaleza,
+      tipoDocumento: f.tipoDocumento,
+      numeroDocumento: f.numeroDocumento.trim(),
+      descripcionDocumento: f.descripcionDocumentoIdentidad.trim(),
+      razonSocial: f.razonSocial.trim(),
+      nombreFantasia: f.nombreFantasia.trim(),
+      email: f.email.trim(),
+      telefono: f.telefono.trim(),
+      celular: f.celular.trim(),
+    });
+    if (errorReceptor) {
+      const campo = /documento|descripci/i.test(errorReceptor)
+        ? /descripci/i.test(errorReceptor)
+          ? "cli-descripcion-documento"
+          : "cli-numero"
+        : /fantas/i.test(errorReceptor)
+          ? "cli-nombre-fantasia"
+          : /razón/i.test(errorReceptor)
+            ? "cli-razon-social"
+            : /correo/i.test(errorReceptor)
+              ? "cli-email"
+              : /celular/i.test(errorReceptor)
+                ? "cli-celular"
+                : "cli-telefono";
+      return fiscal(errorReceptor, campo);
+    }
+    const errorReglas =
+      validarNaturalezaOperacion(f.naturaleza, f.tipoOperacion) ??
+      validarInnominado({
+        tipoDocumento: f.tipoDocumento,
+        naturaleza: f.naturaleza,
+        tipoOperacion: f.tipoOperacion,
+        numeroDocumento: f.numeroDocumento.trim(),
+        razonSocial: f.razonSocial.trim(),
+      });
+    if (errorReglas) return fiscal(errorReglas, "cli-tipo-documento");
+    const telefonoFiscal = validarTelefono("telefono", { pais: f.telefonoPais, ddi: f.telefonoDdi, area: f.telefonoArea, numero: f.telefono });
+    if (!telefonoFiscal.ok) return fiscal(telefonoFiscal.error, "cli-telefono");
+    const celularFiscal = validarTelefono("celular", { pais: f.celularPais, ddi: f.celularDdi, area: f.celularArea, numero: f.celular });
+    if (!celularFiscal.ok) return fiscal(celularFiscal.error, "cli-celular");
+    if (f.email.trim() && !FORMATO_CORREO.test(f.email.trim())) {
+      return fiscal("El correo electrónico no tiene un formato válido.", "cli-email");
+    }
+    if (f.emailCopia.trim() && !FORMATO_CORREO.test(f.emailCopia.trim())) {
+      return fiscal("El correo en copia no tiene un formato válido.", "cli-email-copia");
+    }
+
+    const comercial = (mensaje: string, campo?: string): Incidencia => ({
+      pestana: "comercial",
+      mensaje,
+      campo,
+    });
+    const errorGln = validarGln(f.gln.trim());
+    if (errorGln) return comercial(errorGln, "cli-gln");
+    const errorLargoComercial = validarLongitudes([
+      [f.codigoExterno.trim(), 100, "El código externo"],
+      [f.observacionComercial.trim(), 1000, "Las observaciones comerciales"],
+      [f.motivoBloqueoVentas.trim(), 500, "El motivo del bloqueo"],
+      [f.emailCopia.trim(), 150, "El correo en copia"],
+      [f.emailFacturacion.trim(), 150, "El correo de facturación"],
+      [f.emailCobranzas.trim(), 150, "El correo de cobranzas"],
+    ]);
+    if (errorLargoComercial) return comercial(errorLargoComercial);
+    const errorLargoLogistica = validarLongitudes([[f.observacionLogistica.trim(), 1000, "Las observaciones logísticas"]]);
+    if (errorLargoLogistica) return { pestana: "logistica", mensaje: errorLargoLogistica };
+    if (f.limiteCreditoTemporal.trim() === "" && f.fechaVencimientoCredito.trim()) {
+      return comercial("Para informar el vencimiento del límite temporal, indique también el límite temporal.", "cli-limite-temporal");
+    }
+    if (f.fechaVencimientoCredito.trim() && !fechaValida(f.fechaVencimientoCredito)) {
+      return comercial("El vencimiento del límite temporal debe ser una fecha válida con formato dd/mm/yyyy.", "cli-vencimiento");
+    }
+    if (f.diaPreferidoCobro.trim()) {
+      const dia = Number(f.diaPreferidoCobro);
+      if (!Number.isInteger(dia) || dia < 1 || dia > 31) {
+        return comercial("El día preferido de cobro debe ser un número entero entre 1 y 31.", "cli-dia-cobro");
+      }
+    }
+    try {
+      decimalAcotado(f.limiteCredito, "El límite de crédito", LIMITE_CREDITO);
+    } catch (errorNumerico) {
+      return comercial((errorNumerico as Error).message, "cli-limite-credito");
+    }
+    try {
+      decimalAcotado(f.limiteCreditoTemporal, "El límite de crédito temporal", LIMITE_CREDITO);
+    } catch (errorNumerico) {
+      return comercial((errorNumerico as Error).message, "cli-limite-temporal");
+    }
+    try {
+      decimalAcotado(f.descuentoComercialPct, "El descuento comercial", DESCUENTO_COMERCIAL);
+    } catch (errorNumerico) {
+      return comercial((errorNumerico as Error).message, "cli-descuento");
+    }
+    if (f.emailFacturacion.trim() && !FORMATO_CORREO.test(f.emailFacturacion.trim())) {
+      return comercial("El correo de facturación no tiene un formato válido.", "cli-email-facturacion");
+    }
+    if (f.emailCobranzas.trim() && !FORMATO_CORREO.test(f.emailCobranzas.trim())) {
+      return comercial("El correo de cobranzas no tiene un formato válido.", "cli-email-cobranzas");
+    }
+    if (f.bloqueadoVentas && !f.motivoBloqueoVentas.trim()) {
+      return comercial("Informe el motivo del bloqueo de ventas.", "cli-motivo-bloqueo");
+    }
+
+    const errorLogistica = validarFrecuenciaYDias(f.frecuenciaEntrega, f.diasEntrega, f.diaMesEntrega);
+    if (errorLogistica) return { pestana: "logistica", mensaje: errorLogistica, campo: "cli-frecuencia" };
+
+    for (let i = 0; i < contactos.length; i += 1) {
+      const c = contactos[i];
+      const n = i + 1;
+      const vacio = ![c.nombre, c.apellido, c.cargo, c.departamento, c.telefono, c.celular, c.email].some((v) => v.trim());
+      if (vacio) {
+        return { pestana: "contactos", mensaje: `El contacto ${n} está vacío: complételo o elimínelo.`, campo: `cli-contacto-${i}-nombre` };
+      }
+      if (!c.nombre.trim()) {
+        return { pestana: "contactos", mensaje: `El contacto ${n} necesita nombre.`, campo: `cli-contacto-${i}-nombre` };
+      }
+      const telContacto = validarTelefono("telefono", { pais: c.telefonoPais, ddi: c.telefonoDdi, area: c.telefonoArea, numero: c.telefono }, `el teléfono del contacto ${n}`);
+      if (!telContacto.ok) return { pestana: "contactos", mensaje: telContacto.error, campo: `cli-contacto-${i}-telefono` };
+      const celContacto = validarTelefono("celular", { pais: c.celularPais, ddi: c.celularDdi, area: c.celularArea, numero: c.celular }, `el celular del contacto ${n}`);
+      if (!celContacto.ok) return { pestana: "contactos", mensaje: celContacto.error, campo: `cli-contacto-${i}-celular` };
+      const largoContacto = validarLongitudes([
+        [c.nombre.trim(), 100, `El nombre del contacto ${n}`],
+        [c.apellido.trim(), 100, `El apellido del contacto ${n}`],
+        [c.cargo.trim(), 100, `El cargo del contacto ${n}`],
+        [c.departamento.trim(), 100, `El departamento del contacto ${n}`],
+        [c.telefono.trim(), 30, `El teléfono del contacto ${n}`],
+        [c.celular.trim(), 30, `El celular del contacto ${n}`],
+        [c.email.trim(), 150, `El correo del contacto ${n}`],
+      ]);
+      if (largoContacto) return { pestana: "contactos", mensaje: largoContacto, campo: `cli-contacto-${i}-nombre` };
+      if (c.email.trim() && !FORMATO_CORREO.test(c.email.trim())) {
+        return { pestana: "contactos", mensaje: `El correo del contacto ${n} no tiene un formato válido.`, campo: `cli-contacto-${i}-email` };
+      }
+    }
+
+    for (let i = 0; i < direcciones.length; i += 1) {
+      const d = direcciones[i];
+      const n = i + 1;
+      if (!d.direccion.trim()) {
+        return { pestana: "direcciones", mensaje: `La dirección ${n} necesita el campo Dirección; si no la necesita, elimínela.`, campo: `cli-direccion-${i}-direccion` };
+      }
+      if (!d.paisCodigo) {
+        return { pestana: "direcciones", mensaje: `Seleccione el país de la dirección ${n}.`, campo: `cli-direccion-${i}-pais` };
+      }
+      const largoDireccion = validarLongitudes([
+        [d.etiqueta.trim(), 100, `La etiqueta de la dirección ${n}`],
+        [d.direccion.trim(), 300, `La dirección ${n}`],
+        [d.numeroCasa.trim(), 20, `El número de casa de la dirección ${n}`],
+        [d.complemento.trim(), 200, `El complemento de la dirección ${n}`],
+        [d.codigoPostal.trim(), 15, `El código postal de la dirección ${n}`],
+        [d.contactoNombre.trim(), 200, `El contacto de recepción de la dirección ${n}`],
+        [d.contactoTelefono.trim(), 30, `El teléfono de recepción de la dirección ${n}`],
+        [d.horarioRecepcion.trim(), 200, `El horario de recepción de la dirección ${n}`],
+        [d.observacion.trim(), 500, `La observación de la dirección ${n}`],
+      ]);
+      if (largoDireccion) return { pestana: "direcciones", mensaje: largoDireccion, campo: `cli-direccion-${i}-direccion` };
+      if (d.esFiscal || d.tipo === "FISCAL") {
+        const errorFiscal = validarDireccionFiscal(d.direccion.trim(), d.numeroCasa.trim(), {
+          exigir: f.tipoOperacion !== "B2F",
+          departamento: d.departamentoCodigo,
+          distrito: d.distritoCodigo,
+          ciudad: d.ciudadCodigo,
+        });
+        if (errorFiscal) {
+          return {
+            pestana: "direcciones",
+            mensaje: `Dirección ${n}: ${errorFiscal}`,
+            campo: `cli-direccion-${i}-${/número/i.test(errorFiscal) ? "numero" : "direccion"}`,
+          };
+        }
+      }
+    }
+    const errorB2F = validarDireccionFiscalRequerida(f.tipoOperacion, direcciones.some((d) => d.esFiscal || d.tipo === "FISCAL"));
+    if (errorB2F) return { pestana: "direcciones", mensaje: errorB2F };
+    if (direcciones.filter((d) => d.esFiscal || d.tipo === "FISCAL").length > 1) {
+      return { pestana: "direcciones", mensaje: "Solo puede haber una dirección fiscal." };
+    }
+    if (direcciones.filter((d) => d.esEntregaDefault).length > 1) {
+      return { pestana: "direcciones", mensaje: "Solo puede haber una dirección de entrega predeterminada." };
+    }
+
+    for (let i = 0; i < documentos.length; i += 1) {
+      const d = documentos[i];
+      const n = i + 1;
+      if (!d.archivo) {
+        return { pestana: "documentos", mensaje: `El documento ${n} necesita el archivo; si no lo necesita, elimínelo.`, campo: `cli-documento-${i}-archivo` };
+      }
+      const errorArchivo = validarNombreYTamano(d.archivo.name, d.archivo.size);
+      if (errorArchivo) {
+        return { pestana: "documentos", mensaje: `Documento ${n}: ${errorArchivo}`, campo: `cli-documento-${i}-archivo` };
+      }
+      const largoDocumento = validarLongitudes([[d.observacion.trim(), 500, `La observación del documento ${n}`]]);
+      if (largoDocumento) return { pestana: "documentos", mensaje: largoDocumento, campo: `cli-documento-${i}-observacion` };
+      if (d.fechaEmision.trim() && !fechaValida(d.fechaEmision)) {
+        return { pestana: "documentos", mensaje: `La fecha de emisión del documento ${n} debe tener formato dd/mm/yyyy y ser válida.`, campo: `cli-documento-${i}-emision` };
+      }
+      if (d.fechaVencimiento.trim() && !fechaValida(d.fechaVencimiento)) {
+        return { pestana: "documentos", mensaje: `La fecha de vencimiento del documento ${n} debe tener formato dd/mm/yyyy y ser válida.`, campo: `cli-documento-${i}-vencimiento` };
+      }
+      if (
+        d.fechaEmision.trim() &&
+        d.fechaVencimiento.trim() &&
+        fechaComparable(d.fechaVencimiento) < fechaComparable(d.fechaEmision)
+      ) {
+        return { pestana: "documentos", mensaje: `El vencimiento del documento ${n} no puede ser anterior a su emisión.`, campo: `cli-documento-${i}-vencimiento` };
+      }
+    }
+
+    return null;
+  }
+
+  function mostrarIncidencia(incidencia: Incidencia) {
+    setPestanaConError(incidencia.pestana);
+    setTab(incidencia.pestana);
+    setError(`${PESTANAS[incidencia.pestana] ?? ""}: ${incidencia.mensaje}`);
+    if (incidencia.campo) {
+      const id = incidencia.campo;
+      window.setTimeout(() => document.getElementById(id)?.focus(), 60);
+    }
+  }
+
+  // ---- Alta con documentos (F-CLI-09-05 / F-CLI-09-06) ------------------------------------------------------------------
+  // El cliente se crea UNA sola vez. Después se suben los archivos pendientes; los que fallan se reintentan solos (los ya
+  // cargados no se reenvían y `POST /api/clientes` no se repite). La carga inicial se cierra al terminar los uploads o por
+  // acción explícita del usuario. Todo el flujo corre con la autorización del creador (CLIENTES.CREAR), sin exigir EDITAR.
+
+  // Cierra la carga inicial verificando la RESPUESTA; si falla, el alta no se presenta como concluida.
+  async function cerrarCargaInicial(clienteId: string): Promise<boolean> {
+    try {
+      const respuesta = await fetch(`/api/clientes/${clienteId}/documentos/finalizar`, { method: "POST" });
+
+      if (respuesta.ok) return true;
+
+      const detalle = (await respuesta.json().catch(() => ({}))) as { error?: string };
+
+      setError(`El cliente ya se creó, pero no se pudo cerrar la carga inicial de sus documentos (${detalle.error ?? `error ${respuesta.status}`}). Pulse «Reintentar» para volver a intentarlo; no se creará otro cliente.`);
+    } catch {
+      setError("El cliente ya se creó, pero no se pudo cerrar la carga inicial de sus documentos por un error de conexión. Pulse «Reintentar» para volver a intentarlo; no se creará otro cliente.");
+    }
+
+    return false;
+  }
+
+  // Sube SOLO los documentos con archivo que aún no se cargaron. Devuelve true si no queda ninguno pendiente.
+  async function subirPendientes(clienteId: string): Promise<boolean> {
+    const subidos = [...docsSubidos];
+    const errores: Record<string, string> = {};
+
+    for (const documento of documentos) {
+      if (!documento.archivo || subidos.includes(documento.uid)) continue;
+
+      const formularioArchivo = new FormData();
+      formularioArchivo.set("archivo", documento.archivo);
+      formularioArchivo.set("tipo", documento.tipo);
+      formularioArchivo.set("fechaEmision", documento.fechaEmision.trim());
+      formularioArchivo.set("fechaVencimiento", documento.fechaVencimiento.trim());
+      formularioArchivo.set("observacion", documento.observacion.trim());
+
+      try {
+        const subida = await fetch(`/api/clientes/${clienteId}/documentos`, { method: "POST", body: formularioArchivo });
+
+        if (subida.ok) {
+          subidos.push(documento.uid);
+        } else {
+          const detalle = (await subida.json().catch(() => ({}))) as { error?: string };
+          errores[documento.uid] = detalle.error ?? `no se pudo cargar (error ${subida.status})`;
+        }
+      } catch {
+        errores[documento.uid] = "error de conexión";
+      }
+    }
+
+    setDocsSubidos(subidos);
+    setErroresDocs(errores);
+
+    return Object.keys(errores).length === 0;
+  }
+
+  function terminarAlta() {
+    router.push("/clientes?ok=creado");
+    router.refresh();
+  }
+
   async function guardar(evento: FormEvent<HTMLFormElement>) {
     evento.preventDefault();
+    setError("");
+    setPestanaConError("");
+
+    let clienteId = altaCreada?.id ?? null;
+
+    if (!clienteId) {
+      const incidencia = validar();
+      if (incidencia) {
+        mostrarIncidencia(incidencia);
+        return;
+      }
+    }
+
+    setGuardando(true);
+
+    try {
+      if (!clienteId) {
+        const respuesta = await fetch("/api/clientes", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          // Los documentos son archivos reales: se suben a almacenamiento privado DESPUÉS de crear el cliente.
+          body: JSON.stringify({ ...formulario, contactos, direcciones, documentos: [] }),
+        });
+        const datos = (await respuesta.json()) as { error?: string; cliente?: { id?: string } };
+
+        if (!respuesta.ok) {
+          throw new Error(datos.error ?? "No fue posible guardar el cliente.");
+        }
+
+        clienteId = datos.cliente?.id ?? null;
+
+        // Identidad del cliente creado: de aquí en adelante este formulario nunca vuelve a crear otro.
+        if (clienteId) {
+          setAltaCreada({ id: clienteId });
+          setTab("documentos");
+        }
+      }
+
+      if (clienteId) {
+        if (!(await subirPendientes(clienteId))) {
+          setTab("documentos");
+          setError("El cliente ya se creó, pero algunos documentos no se cargaron. Corrija lo indicado y pulse «Reintentar documentos pendientes» (solo se reenvían los pendientes), o finalice sin ellos.");
+          return;
+        }
+
+        // Alta completa: se cierra la carga inicial (quien solo puede crear deja de poder agregar documentos a este cliente).
+        if (!(await cerrarCargaInicial(clienteId))) return;
+      }
+
+      terminarAlta();
+    } catch (errorGuardado) {
+      const mensaje =
+        errorGuardado instanceof Error
+          ? errorGuardado.message
+          : "No fue posible guardar el cliente.";
+      const pestana = pestanaDeErrorApi(mensaje);
+      setPestanaConError(pestana);
+      setTab(pestana);
+      setError(`${PESTANAS[pestana]}: ${mensaje}`);
+    } finally {
+      setGuardando(false);
+    }
+  }
+
+  // Acción explícita del usuario: cerrar la carga inicial SIN los documentos pendientes (deberá agregarlos alguien con permiso de edición).
+  async function finalizarSinPendientes() {
+    if (!altaCreada) return;
+
+    if (!window.confirm("Se cerrará la carga inicial de documentos de este cliente. Los documentos pendientes no se cargarán y, para agregarlos después, se necesitará permiso de edición. ¿Desea continuar?")) return;
+
     setError("");
     setGuardando(true);
 
     try {
-      const respuesta = await fetch("/api/clientes", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...formulario,
-          contactos: contactos.filter(
-            (contacto) =>
-              contacto.nombre ||
-              contacto.email ||
-              contacto.telefono ||
-              contacto.celular,
-          ),
-          direcciones: direcciones.filter((direccion) => direccion.direccion),
-          documentos: documentos.filter(
-            (documento) => documento.nombreArchivo || documento.urlArchivo,
-          ),
-        }),
-      });
-      const datos = (await respuesta.json()) as { error?: string };
-
-      if (!respuesta.ok) {
-        throw new Error(datos.error ?? "No fue posible guardar el cliente.");
-      }
-
-      router.push("/clientes");
-      router.refresh();
-    } catch (errorGuardado) {
-      setError(
-        errorGuardado instanceof Error
-          ? errorGuardado.message
-          : "No fue posible guardar el cliente.",
-      );
+      if (await cerrarCargaInicial(altaCreada.id)) terminarAlta();
     } finally {
       setGuardando(false);
     }
@@ -526,6 +1000,8 @@ export default function NuevoClientePage() {
 
   const esContribuyente = formulario.naturaleza === "CONTRIBUYENTE";
   const esB2F = formulario.tipoOperacion === "B2F";
+  // Moneda de los límites (D-10: una moneda por cliente para el límite normal y el temporal); nunca se presume PYG.
+  const monedaEtiqueta = formulario.monedaCodigoPredeterminada || "sin moneda";
   const esInnominado =
     !esContribuyente && formulario.tipoDocumento === "INNOMINADO";
 
@@ -574,15 +1050,15 @@ export default function NuevoClientePage() {
     <main className="clienteNuevo">
       <header className="clienteNuevo__header">
         <div>
-          <p className="clienteNuevo__miga">
-            Distribuidora Central <span>/</span> Clientes <span>/</span> Nuevo
-            cliente
-          </p>
+          <nav className="clienteNuevo__miga" aria-label="Ruta de navegación">
+            <span>Maestros</span>
+            <i aria-hidden="true">/</i>
+            <Link href="/clientes">Clientes</Link>
+            <i aria-hidden="true">/</i>
+            <span aria-current="page">Nuevo cliente</span>
+          </nav>
+
           <h1>Nuevo cliente</h1>
-          <p className="clienteNuevo__subtitulo">
-            Registro comercial, logístico y fiscal para ventas y facturación
-            electrónica.
-          </p>
         </div>
 
         <Link href="/clientes" className="clienteNuevo__secundario">
@@ -591,23 +1067,17 @@ export default function NuevoClientePage() {
       </header>
 
       <form onSubmit={guardar} className="clienteNuevo__card">
-        <div className="clienteNuevo__cardHeader">
-          <div>
-            <span>NUEVO CLIENTE</span>
-            <h2>Datos del cliente</h2>
-            <p>El código interno se genera automáticamente al guardar.</p>
+        {error ? (
+          <div className="clienteNuevo__error" role="alert">
+            {error}
+            {altaCreada ? (
+              <>
+                {" "}
+                <Link href={`/clientes/${altaCreada.id}`}>Ir a la ficha del cliente creado</Link>
+              </>
+            ) : null}
           </div>
-
-          <div className="clienteNuevo__codigoAuto">
-            <b>✓</b>
-            <span>
-              <strong>Código automático</strong>
-              <small>No se utiliza código cliente SIFEN.</small>
-            </span>
-          </div>
-        </div>
-
-        {error ? <div className="clienteNuevo__error">{error}</div> : null}
+        ) : null}
 
         <nav className="clienteNuevo__tabs" aria-label="Secciones del cliente">
           {[
@@ -617,18 +1087,45 @@ export default function NuevoClientePage() {
             ["direcciones", "Direcciones"],
             ["logistica", "Entrega y ventas"],
             ["documentos", "Documentos"],
-          ].map(([identificador, etiqueta]) => (
+          ].filter(([identificador]) => !altaCreada || identificador === "documentos").map(([identificador, etiqueta]) => (
             <button
-              className={tab === identificador ? "activo" : ""}
+              aria-current={tab === identificador ? "true" : undefined}
+              className={[
+                tab === identificador ? "activo" : "",
+                pestanaConError === identificador ? "conError" : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
               key={identificador}
               onClick={() => setTab(identificador)}
               type="button"
             >
               {etiqueta}
+              {pestanaConError === identificador ? (
+                <span className="clienteNuevo__sr">(contiene un error)</span>
+              ) : null}
             </button>
           ))}
         </nav>
-
+        {aviso ? (
+          <div className="clienteNuevo__aviso" role="status">
+            {aviso}
+            <button onClick={() => setAviso("")} type="button">
+              Entendido
+            </button>
+          </div>
+        ) : null}
+        {tab === "fiscal" ||
+        (tab === "contactos" && contactos.length > 0) ||
+        (tab === "direcciones" && direcciones.length > 0) ||
+        (tab === "documentos" && documentos.length > 0) ? (
+          <p className="clienteNuevo__nota">
+            {tab === "fiscal" ? "Los campos con * son obligatorios." : "* Obligatorio en cada registro agregado."}
+          </p>
+        ) : null}
+        {tab === "direcciones" && esB2F ? (
+          <p className="clienteNuevo__nota">Operación B2F: la dirección fiscal es obligatoria (agregue una y márquela como fiscal).</p>
+        ) : null}
         {tab === "fiscal" ? (
           <section className="clienteNuevo__contenido">
             <Titulo
@@ -639,7 +1136,22 @@ export default function NuevoClientePage() {
             <div className="clienteNuevo__grid clienteNuevo__grid--cuatro">
               <Select
                 label="Naturaleza *"
+                id="cli-naturaleza"
                 onChange={(valor) => {
+                  const hayDatos =
+                    formulario.numeroDocumento.trim() !== "" ||
+                    formulario.dv.trim() !== "" ||
+                    formulario.descripcionDocumentoIdentidad.trim() !== "";
+
+                  if (
+                    hayDatos &&
+                    !window.confirm(
+                      "Al cambiar la naturaleza se borrarán el documento, el número y el DV ya escritos, porque corresponden a otra identificación. ¿Desea continuar?",
+                    )
+                  ) {
+                    return;
+                  }
+
                   setFormulario((actual) => ({
                     ...actual,
                     naturaleza: valor,
@@ -659,8 +1171,31 @@ export default function NuevoClientePage() {
                 value={formulario.naturaleza}
               />
               <Select
+                id="cli-tipo-persona"
+                label="Tipo de persona *"
+                onChange={(valor) => actualizarFormulario("tipoPersona", valor)}
+                opciones={[
+                  { value: "", label: "Seleccione" },
+                  { value: "FISICA", label: "Persona física" },
+                  { value: "JURIDICA", label: "Persona jurídica" },
+                ]}
+                value={formulario.tipoPersona}
+              />
+              <Select
                 label="Tipo de operación *"
                 onChange={(valor) => {
+                  if (
+                    valor !== "B2F" &&
+                    formulario.tipoOperacion === "B2F" &&
+                    formulario.paisCodigo &&
+                    formulario.paisCodigo !== "PRY" &&
+                    !window.confirm(
+                      "Al salir de B2F el país vuelve a Paraguay y se pierde el país seleccionado. ¿Desea continuar?",
+                    )
+                  ) {
+                    return;
+                  }
+
                   setFormulario((actual) => ({
                     ...actual,
                     tipoOperacion: valor,
@@ -679,20 +1214,12 @@ export default function NuevoClientePage() {
                 value={formulario.tipoOperacion}
               />
               <Select
+                id="cli-pais"
                 label="País *"
                 disabled={!esB2F}
                 onChange={(valor) => actualizarFormulario("paisCodigo", valor)}
                 opciones={opcionesPaisCliente}
                 value={formulario.paisCodigo}
-              />
-              <Select
-                label="Tipo de persona *"
-                onChange={(valor) => actualizarFormulario("tipoPersona", valor)}
-                opciones={[
-                  { value: "JURIDICA", label: "Persona jurídica" },
-                  { value: "FISICA", label: "Persona física" },
-                ]}
-                value={formulario.tipoPersona}
               />
             </div>
 
@@ -700,28 +1227,47 @@ export default function NuevoClientePage() {
               {esContribuyente ? (
                 <>
                   <Input
+                    id="cli-numero"
                     inputMode="numeric"
                     label="RUC *"
                     maxLength={8}
-                    onChange={(valor) =>
-                      actualizarFormulario(
-                        "numeroDocumento",
-                        valor.replace(/\D/g, "").slice(0, 8),
-                      )
-                    }
+                    onChange={(valor) => {
+                      const ruc = valor.replace(/\D/g, "").slice(0, 8);
+
+                      setFormulario((actual) => ({
+                        ...actual,
+                        numeroDocumento: ruc,
+                        dv: calcularDvRuc(ruc) ?? "",
+                      }));
+                    }}
                     value={formulario.numeroDocumento}
                   />
                   <Input
-                    label="DV *"
-                    onChange={(valor) => actualizarFormulario("dv", valor)}
+                    id="cli-dv"
+                    label="DV (automático) *"
+                    onChange={() => undefined}
+                    readOnly
+                    tabIndex={-1}
                     value={formulario.dv}
                   />
                 </>
               ) : (
                 <>
                   <Select
+                    id="cli-tipo-documento"
                     label="Tipo de documento *"
                     onChange={(valor) => {
+                      if (
+                        formulario.tipoDocumento === "OTRO" &&
+                        valor !== "OTRO" &&
+                        formulario.descripcionDocumentoIdentidad.trim() &&
+                        !window.confirm(
+                          "Al cambiar el tipo de documento se borrará la descripción ya escrita. ¿Desea continuar?",
+                        )
+                      ) {
+                        return;
+                      }
+
                       setFormulario((actual) => ({
                         ...actual,
                         tipoDocumento: valor,
@@ -731,6 +1277,12 @@ export default function NuevoClientePage() {
                             : "",
                         numeroDocumento:
                           valor === "INNOMINADO" ? "0" : actual.numeroDocumento === "0" ? "" : actual.numeroDocumento,
+                        razonSocial:
+                          valor === "INNOMINADO"
+                            ? NOMBRE_INNOMINADO
+                            : actual.razonSocial === NOMBRE_INNOMINADO
+                              ? ""
+                              : actual.razonSocial,
                       }));
                     }}
                     opciones={opcionesDocumentoIdentidad}
@@ -738,8 +1290,8 @@ export default function NuevoClientePage() {
                   />
                   <Input
                     disabled={esInnominado}
-                    label={`Número de documento${esB2F ? " (opcional)" : " *"}`}
-                    maxLength={20}
+                    id="cli-numero"
+                    label="Número de documento * (1 a 20)"
                     onChange={(valor) =>
                       actualizarFormulario("numeroDocumento", valor)
                     }
@@ -747,6 +1299,7 @@ export default function NuevoClientePage() {
                   />
                   {formulario.tipoDocumento === "OTRO" ? (
                     <Input
+                      id="cli-descripcion-documento"
                       label="Descripción del documento *"
                       onChange={(valor) =>
                         actualizarFormulario(
@@ -763,11 +1316,13 @@ export default function NuevoClientePage() {
 
             <div className="clienteNuevo__grid clienteNuevo__grid--dos">
               <Input
+                id="cli-razon-social"
                 label="Nombre o razón social *"
                 onChange={(valor) => actualizarFormulario("razonSocial", valor)}
                 value={formulario.razonSocial}
               />
               <Input
+                id="cli-nombre-fantasia"
                 label="Nombre de fantasía"
                 onChange={(valor) =>
                   actualizarFormulario("nombreFantasia", valor)
@@ -777,32 +1332,59 @@ export default function NuevoClientePage() {
             </div>
 
             <Titulo
-              titulo="Contacto principal"
-              texto="Datos generales del cliente. Puede agregar personas específicas en la pestaña Contactos."
+              titulo="Datos de contacto del cliente"
+              texto="Correo y teléfonos generales del cliente. Las personas de contacto se registran en la pestaña Contactos."
             />
 
-            <div className="clienteNuevo__grid clienteNuevo__grid--cuatro">
+            <div className="clienteNuevo__grid clienteNuevo__grid--dos">
               <Input
+                id="cli-email"
                 label="Correo electrónico"
                 onChange={(valor) => actualizarFormulario("email", valor)}
                 type="email"
                 value={formulario.email}
               />
               <Input
+                id="cli-email-copia"
                 label="Correo en copia"
                 onChange={(valor) => actualizarFormulario("emailCopia", valor)}
                 type="email"
                 value={formulario.emailCopia}
               />
-              <Input
-                label="Teléfono"
-                onChange={(valor) => actualizarFormulario("telefono", valor)}
-                value={formulario.telefono}
+            </div>
+
+            <div className="clienteNuevo__grid clienteNuevo__grid--dos">
+              <TelefonoPais
+                campo="telefono"
+                clases={{ campo: "clienteNuevo__campo" }}
+                etiqueta="Teléfono"
+                id="cli-telefono"
+                onChange={(nuevo) =>
+                  setFormulario((actual) => ({
+                    ...actual,
+                    telefonoPais: nuevo.pais,
+                    telefonoDdi: nuevo.ddi,
+                    telefonoArea: nuevo.area,
+                    telefono: nuevo.numero,
+                  }))
+                }
+                valor={{ pais: formulario.telefonoPais, ddi: formulario.telefonoDdi, area: formulario.telefonoArea, numero: formulario.telefono }}
               />
-              <Input
-                label="Celular"
-                onChange={(valor) => actualizarFormulario("celular", valor)}
-                value={formulario.celular}
+              <TelefonoPais
+                campo="celular"
+                clases={{ campo: "clienteNuevo__campo" }}
+                etiqueta="Celular"
+                id="cli-celular"
+                onChange={(nuevo) =>
+                  setFormulario((actual) => ({
+                    ...actual,
+                    celularPais: nuevo.pais,
+                    celularDdi: nuevo.ddi,
+                    celularArea: nuevo.area,
+                    celular: nuevo.numero,
+                  }))
+                }
+                valor={{ pais: formulario.celularPais, ddi: formulario.celularDdi, area: formulario.celularArea, numero: formulario.celular }}
               />
             </div>
           </section>
@@ -852,7 +1434,9 @@ export default function NuevoClientePage() {
 
             <div className="clienteNuevo__grid clienteNuevo__grid--cuatro">
               <Input
-                label="Límite de crédito (Gs.)"
+                id="cli-limite-credito"
+                label={`Límite de crédito (${monedaEtiqueta})`}
+                step="any"
                 min="0"
                 onChange={(valor) =>
                   actualizarFormulario("limiteCredito", valor)
@@ -861,7 +1445,9 @@ export default function NuevoClientePage() {
                 value={formulario.limiteCredito}
               />
               <Input
+                id="cli-descuento"
                 label="Descuento comercial (%)"
+                step="any"
                 max="100"
                 min="0"
                 onChange={(valor) =>
@@ -871,7 +1457,9 @@ export default function NuevoClientePage() {
                 value={formulario.descuentoComercialPct}
               />
               <Input
-                label="Límite temporal (Gs.)"
+                id="cli-limite-temporal"
+                label={`Límite temporal (${monedaEtiqueta})`}
+                step="any"
                 min="0"
                 onChange={(valor) =>
                   actualizarFormulario("limiteCreditoTemporal", valor)
@@ -880,7 +1468,8 @@ export default function NuevoClientePage() {
                 value={formulario.limiteCreditoTemporal}
               />
               <Input
-                label="Vencimiento del crédito"
+                id="cli-vencimiento"
+                label="Vencimiento del límite temporal (dd/mm/yyyy)"
                 onChange={(valor) =>
                   actualizarFormulario("fechaVencimientoCredito", valor)
                 }
@@ -891,9 +1480,11 @@ export default function NuevoClientePage() {
 
             <div className="clienteNuevo__grid clienteNuevo__grid--tres">
               <Input
+                id="cli-dia-cobro"
                 label="Día preferido de cobro"
                 max="31"
                 min="1"
+                step="1"
                 onChange={(valor) =>
                   actualizarFormulario("diaPreferidoCobro", valor)
                 }
@@ -901,6 +1492,7 @@ export default function NuevoClientePage() {
                 value={formulario.diaPreferidoCobro}
               />
               <Input
+                id="cli-email-facturacion"
                 label="Correo de facturación"
                 onChange={(valor) =>
                   actualizarFormulario("emailFacturacion", valor)
@@ -909,6 +1501,7 @@ export default function NuevoClientePage() {
                 value={formulario.emailFacturacion}
               />
               <Input
+                id="cli-email-cobranzas"
                 label="Correo de cobranzas"
                 onChange={(valor) =>
                   actualizarFormulario("emailCobranzas", valor)
@@ -943,6 +1536,7 @@ export default function NuevoClientePage() {
 
             {formulario.bloqueadoVentas ? (
               <Input
+                id="cli-motivo-bloqueo"
                 label="Motivo del bloqueo *"
                 onChange={(valor) =>
                   actualizarFormulario("motivoBloqueoVentas", valor)
@@ -981,8 +1575,8 @@ export default function NuevoClientePage() {
                 value={formulario.codigoExterno}
               />
               <Input
-                label="GLN"
-                maxLength={13}
+                id="cli-gln"
+                label="GLN (13 dígitos)"
                 onChange={(valor) => actualizarFormulario("gln", valor)}
                 value={formulario.gln}
               />
@@ -1012,6 +1606,7 @@ export default function NuevoClientePage() {
 
                 <div className="clienteNuevo__grid clienteNuevo__grid--cuatro">
                   <Input
+                    id={`cli-contacto-${indice}-nombre`}
                     label="Nombre *"
                     onChange={(valor) =>
                       actualizarContacto(indice, "nombre", valor)
@@ -1041,22 +1636,46 @@ export default function NuevoClientePage() {
                   />
                 </div>
 
+                <div className="clienteNuevo__grid clienteNuevo__grid--dos">
+                  <TelefonoPais
+                    campo="telefono"
+                    clases={{ campo: "clienteNuevo__campo" }}
+                    etiqueta="Teléfono"
+                    etiquetaError={`el teléfono del contacto ${indice + 1}`}
+                    id={`cli-contacto-${indice}-telefono`}
+                    onChange={(nuevo) =>
+                      setContactos((actuales) =>
+                        actuales.map((c, i) =>
+                          i === indice
+                            ? { ...c, telefonoPais: nuevo.pais, telefonoDdi: nuevo.ddi, telefonoArea: nuevo.area, telefono: nuevo.numero }
+                            : c,
+                        ),
+                      )
+                    }
+                    valor={{ pais: contacto.telefonoPais, ddi: contacto.telefonoDdi, area: contacto.telefonoArea, numero: contacto.telefono }}
+                  />
+                  <TelefonoPais
+                    campo="celular"
+                    clases={{ campo: "clienteNuevo__campo" }}
+                    etiqueta="Celular"
+                    etiquetaError={`el celular del contacto ${indice + 1}`}
+                    id={`cli-contacto-${indice}-celular`}
+                    onChange={(nuevo) =>
+                      setContactos((actuales) =>
+                        actuales.map((c, i) =>
+                          i === indice
+                            ? { ...c, celularPais: nuevo.pais, celularDdi: nuevo.ddi, celularArea: nuevo.area, celular: nuevo.numero }
+                            : c,
+                        ),
+                      )
+                    }
+                    valor={{ pais: contacto.celularPais, ddi: contacto.celularDdi, area: contacto.celularArea, numero: contacto.celular }}
+                  />
+                </div>
+
                 <div className="clienteNuevo__grid clienteNuevo__grid--tres">
                   <Input
-                    label="Teléfono"
-                    onChange={(valor) =>
-                      actualizarContacto(indice, "telefono", valor)
-                    }
-                    value={contacto.telefono}
-                  />
-                  <Input
-                    label="Celular"
-                    onChange={(valor) =>
-                      actualizarContacto(indice, "celular", valor)
-                    }
-                    value={contacto.celular}
-                  />
-                  <Input
+                    id={`cli-contacto-${indice}-email`}
                     label="Correo electrónico"
                     onChange={(valor) =>
                       actualizarContacto(indice, "email", valor)
@@ -1091,6 +1710,12 @@ export default function NuevoClientePage() {
                       marcado: contacto.recibeCobranzas,
                       cambiar: (valor) =>
                         actualizarContacto(indice, "recibeCobranzas", valor),
+                    },
+                    {
+                      etiqueta: "Recibe notificaciones",
+                      marcado: contacto.recibeNotificaciones,
+                      cambiar: (valor) =>
+                        actualizarContacto(indice, "recibeNotificaciones", valor),
                     },
                     {
                       etiqueta: "Recibe documentos electrónicos",
@@ -1153,6 +1778,7 @@ export default function NuevoClientePage() {
                       value={direccion.etiqueta}
                     />
                     <Input
+                      id={`cli-direccion-${indice}-direccion`}
                       label="Dirección *"
                       onChange={(valor) =>
                         actualizarDireccion(indice, "direccion", valor)
@@ -1160,6 +1786,8 @@ export default function NuevoClientePage() {
                       value={direccion.direccion}
                     />
                     <Input
+                      id={`cli-direccion-${indice}-numero`}
+                      inputMode="numeric"
                       label={direccion.esFiscal || direccion.tipo === "FISCAL" ? "Nro. de casa *" : "Nro. de casa"}
                       onChange={(valor) =>
                         actualizarDireccion(indice, "numeroCasa", valor)
@@ -1170,6 +1798,7 @@ export default function NuevoClientePage() {
 
                   <div className="clienteNuevo__grid clienteNuevo__grid--cuatro">
                     <Select
+                      id={`cli-direccion-${indice}-pais`}
                       label="País *"
                       onChange={(valor) => {
                         actualizarDireccion(indice, "paisCodigo", valor);
@@ -1213,7 +1842,7 @@ export default function NuevoClientePage() {
                   {esParaguay ? (
                     <div className="clienteNuevo__grid clienteNuevo__grid--tres">
                       <Select
-                        label="Departamento *"
+                        label="Departamento"
                         onChange={(valor) =>
                           void seleccionarDepartamento(indice, valor)
                         }
@@ -1225,7 +1854,7 @@ export default function NuevoClientePage() {
                       />
                       <Select
                         disabled={!direccion.departamentoCodigo}
-                        label="Distrito *"
+                        label="Distrito"
                         onChange={(valor) =>
                           void seleccionarDistrito(indice, valor)
                         }
@@ -1237,7 +1866,7 @@ export default function NuevoClientePage() {
                       />
                       <Select
                         disabled={!direccion.distritoCodigo}
-                        label="Ciudad *"
+                        label="Ciudad"
                         onChange={(valor) => seleccionarCiudad(indice, valor)}
                         opciones={opcionesCatalogo(
                           ciudadesPorDireccion[indice] ?? [],
@@ -1333,10 +1962,13 @@ export default function NuevoClientePage() {
                 value={formulario.vendedorId}
               />
               <Select
+                id="cli-frecuencia"
                 label="Frecuencia de entrega"
-                onChange={(valor) =>
-                  actualizarFormulario("frecuenciaEntrega", valor)
-                }
+                onChange={(valor) => {
+                  actualizarFormulario("frecuenciaEntrega", valor);
+                  // El día del mes solo aplica a la frecuencia mensual: se limpia al cambiar de frecuencia.
+                  if (valor !== "MENSUAL") actualizarFormulario("diaMesEntrega", "");
+                }}
                 opciones={[
                   { value: "", label: "A definir" },
                   { value: "DIARIA", label: "Diaria" },
@@ -1347,10 +1979,20 @@ export default function NuevoClientePage() {
                 ]}
                 value={formulario.frecuenciaEntrega}
               />
+              {formulario.frecuenciaEntrega === "MENSUAL" ? (
+                <Input
+                  id="cli-dia-mes-entrega"
+                  inputMode="numeric"
+                  label="Día del mes de entrega * (1 a 31)"
+                  maxLength={2}
+                  onChange={(valor) => actualizarFormulario("diaMesEntrega", valor)}
+                  value={formulario.diaMesEntrega}
+                />
+              ) : null}
             </div>
 
             <p className="clienteNuevo__textoAuxiliar">
-              Días habituales de entrega
+              {["SEMANAL", "QUINCENAL"].includes(formulario.frecuenciaEntrega) ? "Días de entrega * (obligatorios con esta frecuencia)" : "Días habituales de entrega"}
             </p>
             <Checks
               valores={[
@@ -1471,19 +2113,30 @@ export default function NuevoClientePage() {
             onAgregar={() =>
               setDocumentos((actuales) => [...actuales, crearDocumento()])
             }
-            texto="Registre el enlace seguro a documentos comerciales vigentes."
+            texto={`Formatos ${EXTENSIONES_TEXTO} · máximo ${TAMANO_MAXIMO_BYTES / 1024 / 1024} MB por archivo.`}
             titulo="Documentos comerciales"
           >
-            {documentos.map((documento, indice) => (
-              <article className="clienteNuevo__repetido" key={indice}>
+            {documentos.map((documento, indice) => {
+              const yaCargado = docsSubidos.includes(documento.uid);
+
+              return (
+              <article className="clienteNuevo__repetido" key={documento.uid}>
                 <CabeceraRepetido
-                  etiqueta={`Documento ${indice + 1}`}
-                  onEliminar={() =>
-                    setDocumentos((actuales) =>
-                      actuales.filter((_, posicion) => posicion !== indice),
-                    )
-                  }
+                  etiqueta={`Documento ${indice + 1}${yaCargado ? " · cargado ✓" : ""}`}
+                  onEliminar={() => {
+                    if (yaCargado) {
+                      window.alert("Este documento ya se cargó al cliente creado; para quitarlo se necesita permiso de edición desde la ficha del cliente.");
+                      return;
+                    }
+                    setDocumentos((actuales) => actuales.filter((d) => d.uid !== documento.uid));
+                  }}
                 />
+                {erroresDocs[documento.uid] ? (
+                  <p className="clienteNuevo__error" role="alert">
+                    No se cargó: {erroresDocs[documento.uid]}. Corrija el archivo o los datos y reintente.
+                  </p>
+                ) : null}
+                <fieldset disabled={yaCargado} style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
 
                 <div className="clienteNuevo__grid clienteNuevo__grid--cuatro">
                   <Select
@@ -1500,429 +2153,500 @@ export default function NuevoClientePage() {
                     ]}
                     value={documento.tipo}
                   />
+                  <label className="clienteNuevo__campo">
+                    <EtiquetaCampo label="Archivo *" />
+                    <input
+                      accept={ACCEPT_ARCHIVOS}
+                      aria-required="true"
+                      id={`cli-documento-${indice}-archivo`}
+                      onChange={(evento) =>
+                        actualizarDocumento(indice, "archivo", evento.target.files?.[0] ?? null)
+                      }
+                      type="file"
+                    />
+                    <small>
+                      {documento.archivo
+                        ? `${documento.archivo.name} · ${tamanoLegible(documento.archivo.size)}`
+                        : `${EXTENSIONES_TEXTO} · máx. ${TAMANO_MAXIMO_BYTES / 1024 / 1024} MB`}
+                    </small>
+                  </label>
                   <Input
-                    label="Nombre del archivo *"
-                    onChange={(valor) =>
-                      actualizarDocumento(indice, "nombreArchivo", valor)
-                    }
-                    value={documento.nombreArchivo}
-                  />
-                  <Input
-                    label="URL segura *"
-                    onChange={(valor) =>
-                      actualizarDocumento(indice, "urlArchivo", valor)
-                    }
-                    value={documento.urlArchivo}
-                  />
-                  <Input
-                    label="Fecha de emisión"
+                    id={`cli-documento-${indice}-emision`}
+                    label="Fecha de emisión (dd/mm/yyyy)"
                     onChange={(valor) =>
                       actualizarDocumento(indice, "fechaEmision", valor)
                     }
                     placeholder="dd/mm/yyyy"
                     value={documento.fechaEmision}
                   />
-                </div>
-
-                <div className="clienteNuevo__grid clienteNuevo__grid--dos">
                   <Input
-                    label="Fecha de vencimiento"
+                    id={`cli-documento-${indice}-vencimiento`}
+                    label="Fecha de vencimiento (dd/mm/yyyy)"
                     onChange={(valor) =>
                       actualizarDocumento(indice, "fechaVencimiento", valor)
                     }
                     placeholder="dd/mm/yyyy"
                     value={documento.fechaVencimiento}
                   />
-                  <Area
-                    label="Observación"
-                    onChange={(valor) =>
-                      actualizarDocumento(indice, "observacion", valor)
-                    }
-                    value={documento.observacion}
-                  />
                 </div>
+
+                <Area
+                  label="Observación"
+                  onChange={(valor) =>
+                    actualizarDocumento(indice, "observacion", valor)
+                  }
+                  value={documento.observacion}
+                />
+                </fieldset>
               </article>
-            ))}
+              );
+            })}
           </Repeater>
         ) : null}
 
         <footer className="clienteNuevo__footer">
-          <Link href="/clientes" className="clienteNuevo__secundario">
-            Cancelar
-          </Link>
+          {altaCreada ? null : (
+            <Link href="/clientes" className="clienteNuevo__secundario">
+              Cancelar
+            </Link>
+          )}
+          {altaCreada ? (
+            <button className="clienteNuevo__secundario" disabled={guardando} onClick={() => void finalizarSinPendientes()} type="button">
+              Finalizar sin los documentos pendientes
+            </button>
+          ) : null}
           <button
             className="clienteNuevo__primario"
             disabled={guardando}
             type="submit"
           >
-            {guardando ? "Guardando..." : "Guardar cliente →"}
+            {guardando
+              ? "Guardando..."
+              : altaCreada
+                ? documentos.some((d) => d.archivo && !docsSubidos.includes(d.uid))
+                  ? "Reintentar documentos pendientes"
+                  : "Reintentar cierre de la carga inicial"
+                : "Guardar cliente"}
           </button>
         </footer>
       </form>
 
       <style jsx global>{`
+        /* Padrón de formularios V1 (referencia: Nuevo cliente). Etiquetas fijas sobre el campo, 40px de alto,
+           título 24px, pestañas 13.5px, botones 38px. */
         .clienteNuevo {
-          max-width: 1180px;
+          max-width: 1240px;
           margin: 0 auto;
-          color: #082d58;
+          padding: 16px 20px 24px;
+          color: #173b59;
         }
-
         .clienteNuevo__header,
-        .clienteNuevo__cardHeader,
         .clienteNuevo__titulo,
         .clienteNuevo__repetidoHeader,
         .clienteNuevo__footer {
           display: flex;
-          align-items: flex-start;
+          align-items: center;
           justify-content: space-between;
-          gap: 20px;
+          gap: 16px;
         }
-
         .clienteNuevo__header {
-          margin-bottom: 28px;
+          align-items: flex-end;
+          margin-bottom: 12px;
         }
-
         .clienteNuevo__miga {
-          margin: 0;
-          color: #7190b2;
-          font-size: 13px;
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          margin: 0 0 4px;
+          color: #7c8ea0;
+          font-size: 12px;
+          font-weight: 450;
         }
-
-        .clienteNuevo__miga span {
-          margin: 0 8px;
+        .clienteNuevo__miga a {
+          color: inherit;
+          text-decoration: none;
         }
-
+        .clienteNuevo__miga a:hover {
+          color: #0a7f88;
+          text-decoration: underline;
+        }
+        .clienteNuevo__miga i {
+          color: #a6b4c1;
+          font-style: normal;
+        }
+        .clienteNuevo__miga span[aria-current] {
+          color: #4f6a82;
+          font-weight: 600;
+        }
         .clienteNuevo__header h1 {
-          margin: 16px 0 8px;
-          font-size: 34px;
-        }
-
-        .clienteNuevo__subtitulo,
-        .clienteNuevo__cardHeader p,
-        .clienteNuevo__titulo p {
           margin: 0;
-          color: #6686aa;
-          font-size: 14px;
+          color: #112f4a;
+          font-size: 24px;
+          font-weight: 700;
+          line-height: 1.2;
+          letter-spacing: -0.4px;
         }
-
         .clienteNuevo__secundario,
         .clienteNuevo__primario,
         .clienteNuevo__agregar {
           display: inline-flex;
           align-items: center;
           justify-content: center;
-          min-height: 42px;
+          gap: 6px;
+          height: 38px;
           border-radius: 9px;
-          padding: 10px 16px;
+          padding: 0 16px;
+          font: inherit;
           font-size: 13px;
-          font-weight: 800;
+          font-weight: 600;
           text-decoration: none;
+          white-space: nowrap;
           cursor: pointer;
         }
-
         .clienteNuevo__secundario {
-          border: 1px solid #cadced;
+          border: 1px solid #d3dfe8;
           background: #fff;
-          color: #16436d;
+          color: #41647d;
         }
-
+        .clienteNuevo__secundario:hover {
+          border-color: #aadadd;
+          background: #f3fbfb;
+          color: #0a7f88;
+        }
         .clienteNuevo__primario {
           border: 0;
-          background: #16aab3;
+          background: linear-gradient(135deg, #13a9af, #0c919b);
           color: #fff;
-          box-shadow: 0 9px 18px rgba(22, 170, 179, 0.18);
+          box-shadow: 0 6px 14px rgba(11, 145, 155, 0.16);
         }
-
         .clienteNuevo__primario:disabled {
           cursor: progress;
-          opacity: 0.68;
+          opacity: 0.65;
         }
-
+        .clienteNuevo__secundario:focus-visible,
+        .clienteNuevo__primario:focus-visible,
+        .clienteNuevo__agregar:focus-visible,
+        .clienteNuevo__eliminar:focus-visible,
+        .clienteNuevo__tabs button:focus-visible {
+          outline: 3px solid rgba(15, 156, 165, 0.4);
+          outline-offset: 2px;
+        }
         .clienteNuevo__card {
-          overflow: hidden;
-          border: 1px solid #d8e5f0;
-          border-radius: 14px;
+          border: 1px solid #dce6ed;
+          border-radius: 12px;
           background: #fff;
-          box-shadow: 0 12px 30px rgba(22, 59, 90, 0.05);
+          box-shadow: 0 5px 14px rgba(20, 50, 77, 0.035);
         }
-
-        .clienteNuevo__cardHeader {
-          padding: 30px 36px;
-          border-bottom: 1px solid #e2ecf4;
-        }
-
-        .clienteNuevo__cardHeader > div > span {
-          color: #6584a7;
-          font-size: 11px;
-          font-weight: 800;
-          letter-spacing: 1px;
-        }
-
-        .clienteNuevo__cardHeader h2 {
-          margin: 8px 0;
-          font-size: 27px;
-        }
-
-        .clienteNuevo__codigoAuto {
-          display: flex;
-          align-items: center;
-          gap: 9px;
-          border: 1px solid #b7e9e7;
-          border-radius: 9px;
-          background: #effcfb;
-          padding: 11px;
-          color: #087d8b;
-        }
-
-        .clienteNuevo__codigoAuto > b {
-          display: grid;
-          width: 22px;
-          height: 22px;
-          place-items: center;
-          border-radius: 50%;
-          background: #16aab3;
-          color: #fff;
-        }
-
-        .clienteNuevo__codigoAuto span {
-          display: grid;
-          gap: 3px;
-          font-size: 12px;
-        }
-
-        .clienteNuevo__codigoAuto small {
-          font-size: 10px;
-        }
-
         .clienteNuevo__error {
-          margin: 20px 36px;
-          border: 1px solid #ffc5cc;
-          border-radius: 8px;
-          background: #fff5f6;
-          padding: 12px;
-          color: #b62d40;
-          font-size: 13px;
+          margin: 14px 20px 0;
+          border: 1px solid #f0c5cb;
+          border-radius: 9px;
+          background: #fff4f5;
+          padding: 10px 12px;
+          color: #b3263b;
+          font-size: 13.5px;
+          line-height: 1.45;
         }
-
         .clienteNuevo__tabs {
           display: flex;
+          gap: 2px;
           overflow-x: auto;
-          border-bottom: 1px solid #dfe9f1;
-          padding: 12px 36px 0;
+          border-bottom: 1px solid #e3ebf1;
+          padding: 0 14px;
+          scrollbar-width: thin;
         }
-
         .clienteNuevo__tabs button {
           flex: 0 0 auto;
+          height: 44px;
           border: 0;
           border-bottom: 3px solid transparent;
           background: transparent;
-          padding: 11px 13px;
-          color: #6887a8;
-          font-size: 12px;
-          font-weight: 800;
+          padding: 0 14px;
+          color: #5c7388;
+          font: inherit;
+          font-size: 13.5px;
+          font-weight: 600;
           white-space: nowrap;
           cursor: pointer;
         }
-
+        .clienteNuevo__tabs button:hover {
+          background: #f6f9fb;
+          color: #234560;
+        }
         .clienteNuevo__tabs button.activo {
-          border-color: #14adb5;
-          color: #063d68;
+          border-bottom-color: #0f9ca5;
+          background: #f3fbfb;
+          color: #0a7880;
         }
-
-        .clienteNuevo__contenido,
-        .clienteNuevo__repetidor {
-          padding: 30px 36px;
+        .clienteNuevo__tabs button.conError::after {
+          content: "";
+          display: inline-block;
+          width: 8px;
+          height: 8px;
+          margin-left: 7px;
+          border-radius: 50%;
+          background: #c0394d;
         }
-
-        .clienteNuevo__titulo {
-          margin: 0 0 21px;
-        }
-
-        .clienteNuevo__titulo h3 {
-          margin: 0 0 5px;
-          font-size: 19px;
-        }
-
-        .clienteNuevo__titulo small {
-          color: #7190b2;
-          font-size: 11px;
+        .clienteNuevo__sr {
+          position: absolute;
+          width: 1px;
+          height: 1px;
+          overflow: hidden;
+          clip: rect(0 0 0 0);
           white-space: nowrap;
         }
-
+        .clienteNuevo__aviso {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          margin: 12px 20px 0;
+          border: 1px solid #bfe3e6;
+          border-radius: 9px;
+          background: #f1fbfc;
+          padding: 8px 12px;
+          color: #1f5d66;
+          font-size: 13px;
+        }
+        .clienteNuevo__aviso button {
+          border: 0;
+          background: transparent;
+          color: #0a7f88;
+          font: inherit;
+          font-weight: 600;
+          cursor: pointer;
+        }
+        .clienteNuevo__nota {
+          margin: 12px 20px 0;
+          color: #6f8498;
+          font-size: 12px;
+        }
+        .clienteNuevo__contenido,
+        .clienteNuevo__repetidor {
+          padding: 16px 20px 8px;
+        }
+        .clienteNuevo__titulo {
+          margin: 0 0 12px;
+        }
+        .clienteNuevo__titulo h3 {
+          margin: 0;
+          color: #173b59;
+          font-size: 16px;
+          font-weight: 650;
+        }
         .clienteNuevo__grid {
           display: grid;
-          gap: 15px;
-          margin-bottom: 15px;
+          gap: 12px 14px;
+          margin-bottom: 12px;
         }
-
         .clienteNuevo__grid--cuatro {
           grid-template-columns: repeat(4, minmax(0, 1fr));
         }
-
         .clienteNuevo__grid--tres {
           grid-template-columns: repeat(3, minmax(0, 1fr));
         }
-
         .clienteNuevo__grid--dos {
           grid-template-columns: repeat(2, minmax(0, 1fr));
         }
-
         .clienteNuevo__campo {
-          position: relative;
+          display: grid;
+          gap: 4px;
+          min-width: 0;
+          align-content: start;
         }
-
+        .clienteNuevo__campo > span {
+          color: #526e83;
+          font-size: 12.5px;
+          font-weight: 600;
+          line-height: 1.3;
+        }
+        .clienteNuevo__campo > span b {
+          color: #c0394d;
+          font-weight: 600;
+        }
         .clienteNuevo__campo input,
         .clienteNuevo__campo select,
         .clienteNuevo__campo textarea {
           box-sizing: border-box;
           width: 100%;
-          height: 52px;
-          border: 1px solid #cadced;
+          height: 40px;
+          border: 1px solid #cfdde9;
           border-radius: 8px;
           outline: 0;
           background: #fff;
-          padding: 20px 12px 7px;
-          color: #173d63;
+          padding: 0 11px;
+          color: #173b59;
           font: inherit;
-          font-size: 13px;
+          font-size: 14px;
+          font-weight: 450;
         }
-
+        .clienteNuevo__campo input,
+        .clienteNuevo__campo select,
+        .clienteNuevo__campo textarea,
+        .clienteNuevo__checks input,
+        .clienteNuevo__agregar,
+        .clienteNuevo__eliminar {
+          scroll-margin-bottom: 88px;
+        }
         .clienteNuevo__campo textarea {
-          min-height: 86px;
-          height: 86px;
+          min-height: 76px;
+          height: 76px;
+          padding: 9px 11px;
+          line-height: 1.4;
           resize: vertical;
         }
-
+        .clienteNuevo__campo input::placeholder,
+        .clienteNuevo__campo textarea::placeholder {
+          color: #8b9dae;
+        }
+        .clienteNuevo__campo input:hover,
+        .clienteNuevo__campo select:hover,
+        .clienteNuevo__campo textarea:hover {
+          border-color: #9fbdd0;
+        }
         .clienteNuevo__campo input:focus,
         .clienteNuevo__campo select:focus,
         .clienteNuevo__campo textarea:focus {
-          border-color: #16aab3;
-          box-shadow: 0 0 0 3px rgba(22, 170, 179, 0.12);
+          border-color: #0f9ca5;
+          box-shadow: 0 0 0 3px rgba(15, 156, 165, 0.16);
         }
-
         .clienteNuevo__campo input:disabled,
-        .clienteNuevo__campo select:disabled {
+        .clienteNuevo__campo select:disabled,
+        .clienteNuevo__campo textarea:disabled {
           cursor: not-allowed;
-          background: #f4f7fa;
-          color: #8097ac;
+          background: #f3f6f9;
+          color: #7f93a6;
         }
-
-        .clienteNuevo__campo label {
-          position: absolute;
-          top: 8px;
-          left: 12px;
-          color: #6685a6;
-          font-size: 10px;
-          font-weight: 700;
-          pointer-events: none;
-        }
-
         .clienteNuevo__checks {
           display: flex;
           flex-wrap: wrap;
-          gap: 14px 18px;
-          margin: 14px 0;
+          gap: 10px 20px;
+          margin: 4px 0 12px;
         }
-
         .clienteNuevo__checks label {
           display: flex;
           align-items: center;
           gap: 7px;
           color: #315575;
-          font-size: 12px;
-          font-weight: 700;
+          font-size: 13.5px;
+          font-weight: 500;
+          cursor: pointer;
         }
-
         .clienteNuevo__checks input {
-          accent-color: #16aab3;
+          width: 16px;
+          height: 16px;
+          accent-color: #0f9ca5;
         }
-
         .clienteNuevo__repetido {
-          margin-top: 14px;
+          margin-bottom: 12px;
           border: 1px solid #dbe7f0;
           border-radius: 10px;
-          background: #fcfeff;
-          padding: 19px;
+          background: #fbfdfe;
+          padding: 14px 16px 4px;
         }
-
         .clienteNuevo__repetidoHeader {
-          align-items: center;
-          margin-bottom: 15px;
+          margin-bottom: 12px;
           color: #315575;
-          font-size: 13px;
+          font-size: 13.5px;
         }
-
+        .clienteNuevo__repetidoHeader strong {
+          font-weight: 650;
+        }
         .clienteNuevo__agregar {
           border: 1px solid #a5e0de;
           background: #effcfb;
           color: #087d8b;
         }
-
+        .clienteNuevo__agregar:hover {
+          background: #e0f8f6;
+        }
         .clienteNuevo__eliminar {
           border: 0;
+          border-radius: 6px;
           background: transparent;
+          padding: 4px 6px;
           color: #bf4050;
-          font-weight: 800;
+          font: inherit;
+          font-size: 13px;
+          font-weight: 600;
           cursor: pointer;
         }
-
+        .clienteNuevo__eliminar:hover {
+          background: #fff0f2;
+        }
         .clienteNuevo__sinRegistros {
-          border: 1px dashed #cadced;
+          margin-bottom: 12px;
+          border: 1px dashed #cfdde9;
           border-radius: 9px;
-          padding: 24px;
-          color: #7190b2;
+          padding: 14px;
+          color: #6f8498;
           text-align: center;
-          font-size: 13px;
+          font-size: 13.5px;
         }
-
         .clienteNuevo__textoAuxiliar {
-          margin: 0;
+          margin: 0 0 10px;
           color: #315575;
-          font-size: 13px;
-          font-weight: 800;
+          font-size: 13.5px;
+          font-weight: 600;
         }
-
         .clienteNuevo__footer {
-          align-items: center;
+          position: sticky;
+          bottom: 0;
+          z-index: 5;
           justify-content: flex-end;
-          border-top: 1px solid #dfe9f1;
-          padding: 20px 36px;
+          border-top: 1px solid #e3ebf1;
+          border-radius: 0 0 12px 12px;
+          background: rgba(255, 255, 255, 0.97);
+          padding: 12px 20px;
         }
-
-        @media (max-width: 900px) {
+        @media (max-width: 1100px) {
           .clienteNuevo__grid--cuatro,
           .clienteNuevo__grid--tres {
             grid-template-columns: repeat(2, minmax(0, 1fr));
           }
         }
-
-        @media (max-width: 650px) {
+        @media (max-width: 640px) {
+          .clienteNuevo {
+            padding: 12px;
+          }
           .clienteNuevo__header,
-          .clienteNuevo__cardHeader,
           .clienteNuevo__titulo {
+            align-items: stretch;
             flex-direction: column;
           }
-
           .clienteNuevo__contenido,
-          .clienteNuevo__repetidor,
-          .clienteNuevo__cardHeader,
-          .clienteNuevo__footer {
-            padding-right: 20px;
-            padding-left: 20px;
+          .clienteNuevo__repetidor {
+            padding-right: 14px;
+            padding-left: 14px;
           }
-
           .clienteNuevo__grid--cuatro,
           .clienteNuevo__grid--tres,
           .clienteNuevo__grid--dos {
             grid-template-columns: 1fr;
           }
-
-          .clienteNuevo__header h1 {
-            font-size: 28px;
+          .clienteNuevo__campo input,
+          .clienteNuevo__campo select,
+          .clienteNuevo__campo textarea {
+            font-size: 16px;
+          }
+          .clienteNuevo__footer {
+            padding: 10px 14px;
           }
         }
       `}</style>
     </main>
+  );
+}
+
+function EtiquetaCampo({ label }: { label: string }) {
+  const obligatorio = label.trimEnd().endsWith("*");
+  const base = obligatorio ? label.trimEnd().slice(0, -1).trimEnd() : label;
+
+  return (
+    <span>
+      {base}
+      {obligatorio ? <b aria-hidden="true"> *</b> : null}
+    </span>
   );
 }
 
@@ -1935,14 +2659,14 @@ function Input({
   onChange: (valor: string) => void;
 } & Omit<React.InputHTMLAttributes<HTMLInputElement>, "onChange">) {
   return (
-    <div className="clienteNuevo__campo">
+    <label className="clienteNuevo__campo">
+      <EtiquetaCampo label={label} />
       <input
         {...propiedades}
+        aria-required={label.trimEnd().endsWith("*") ? true : undefined}
         onChange={(evento) => onChange(evento.target.value)}
-        placeholder={propiedades.placeholder ?? " "}
       />
-      <label>{label}</label>
-    </div>
+    </label>
   );
 }
 
@@ -1957,9 +2681,11 @@ function Select({
   onChange: (valor: string) => void;
 } & Omit<React.SelectHTMLAttributes<HTMLSelectElement>, "onChange">) {
   return (
-    <div className="clienteNuevo__campo">
+    <label className="clienteNuevo__campo">
+      <EtiquetaCampo label={label} />
       <select
         {...propiedades}
+        aria-required={label.trimEnd().endsWith("*") ? true : undefined}
         onChange={(evento) => onChange(evento.target.value)}
       >
         {opciones.map((opcion) => (
@@ -1968,8 +2694,7 @@ function Select({
           </option>
         ))}
       </select>
-      <label>{label}</label>
-    </div>
+    </label>
   );
 }
 
@@ -1982,25 +2707,20 @@ function Area({
   onChange: (valor: string) => void;
 } & Omit<React.TextareaHTMLAttributes<HTMLTextAreaElement>, "onChange">) {
   return (
-    <div className="clienteNuevo__campo">
+    <label className="clienteNuevo__campo">
+      <EtiquetaCampo label={label} />
       <textarea
         {...propiedades}
         onChange={(evento) => onChange(evento.target.value)}
-        placeholder=" "
       />
-      <label>{label}</label>
-    </div>
+    </label>
   );
 }
 
-function Titulo({ titulo, texto }: { titulo: string; texto: string }) {
+function Titulo({ titulo }: { titulo: string; texto?: string }) {
   return (
     <div className="clienteNuevo__titulo">
-      <div>
-        <h3>{titulo}</h3>
-        <p>{texto}</p>
-      </div>
-      <small>Los campos con * son obligatorios.</small>
+      <h3>{titulo}</h3>
     </div>
   );
 }
@@ -2053,13 +2773,12 @@ function CabeceraRepetido({
 
 function Repeater({
   titulo,
-  texto,
   agregar,
   onAgregar,
   children,
 }: {
   titulo: string;
-  texto: string;
+  texto?: string;
   agregar: string;
   onAgregar: () => void;
   children: React.ReactNode;
@@ -2071,10 +2790,7 @@ function Repeater({
   return (
     <section className="clienteNuevo__repetidor">
       <div className="clienteNuevo__titulo">
-        <div>
-          <h3>{titulo}</h3>
-          <p>{texto}</p>
-        </div>
+        <h3>{titulo}</h3>
         <button
           className="clienteNuevo__agregar"
           onClick={onAgregar}
@@ -2083,6 +2799,7 @@ function Repeater({
           + {agregar}
         </button>
       </div>
+
       {hayRegistros ? (
         children
       ) : (

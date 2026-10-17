@@ -1,0 +1,593 @@
+import { REFERENCIAS_CLIENTE, leerVersionEsperada, validarReferenciasCliente } from "@/lib/clientes/referencias-version";
+import { NextResponse } from "next/server";
+
+import { denyIfNoPermission } from "@/lib/auth/permissions";
+import { validarRucDv } from "@/lib/fiscal/calcular-dv-ruc";
+import {
+  textoCrudo,
+  validarCamposReceptor,
+  validarGln,
+  validarInnominado,
+  validarNaturalezaOperacion,
+} from "@/lib/fiscal/campos-receptor";
+import { mensajeRestriccionCliente } from "@/lib/clientes/errores-bd";
+import { evaluarAptitudCliente, mensajeRegularizacionFiscal } from "@/lib/clientes/aptitud-cliente";
+import { validarDiaPreferidoCobro } from "@/lib/clientes/dia-cobro";
+import { DESCUENTO_COMERCIAL, LIMITE_CREDITO, decimalAcotado, numericoCanonico, validarCondicionYMoneda } from "@/lib/clientes/comercial";
+import { leerTelefonoEntrada, validarTelefono } from "@/lib/fiscal/telefono";
+import { REDONDEO_CONVERSION, convertirLimites, requiereConversion, type ConversionLimites } from "@/lib/clientes/cambio";
+import { leerDiaMes, validarFrecuenciaYDias } from "@/lib/clientes/logistica";
+import { validarDireccionFiscalRequerida } from "@/lib/clientes/obligatoriedad-fiscal";
+import { resolverPais, validarPaisPorOperacion } from "@/lib/geografia/referencia";
+import { ErrorValidacion, leerEntrada, leerHijos, sincronizarHijos } from "@/lib/clientes/relacionados";
+
+type Contexto = { params: Promise<{ id: string }> };
+type Json = Record<string, unknown>;
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const NATURALEZA = { CONTRIBUYENTE: 1, NO_CONTRIBUYENTE: 2 } as const;
+const OPERACION = { B2B: 1, B2C: 2, B2G: 3, B2F: 4 } as const;
+const CONTRIBUYENTE = { FISICA: 1, JURIDICA: 2 } as const;
+const DOC_SIFEN = {
+  CEDULA_PARAGUAYA: 1,
+  PASAPORTE: 2,
+  CEDULA_EXTRANJERA: 3,
+  CARNET_RESIDENCIA: 4,
+  INNOMINADO: 5,
+  TARJETA_DIPLOMATICA: 6,
+  OTRO: 9,
+} as const;
+const FRECUENCIAS = new Set(["DIARIA", "SEMANAL", "QUINCENAL", "MENSUAL", "A_DEMANDA"]);
+
+// Solo DEMO explícito usa respuestas simuladas; sin DATABASE_URL se responde 503.
+const DEMO_MODE = process.env.DEMO_MODE === "true";
+
+function texto(v: unknown, max?: number) {
+  if (typeof v !== "string") return "";
+  const r = v.trim();
+  // Nunca se trunca en silencio: un valor más largo que la columna se rechaza.
+  if (max && r.length > max) throw new Error(`Un valor supera el máximo permitido de ${max} caracteres.`);
+  return r;
+}
+const opcional = (v: unknown, max?: number) => texto(v, max) || null;
+function correo(v: string | null, etiqueta: string) {
+  if (v && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) throw new Error(`${etiqueta} no tiene un formato válido.`);
+}
+function fechaIso(v: unknown) {
+  const f = texto(v);
+  if (!f) return null;
+  const m = f.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!m) throw new Error("La fecha de vencimiento del crédito debe tener el formato dd/mm/yyyy.");
+  const d = new Date(Date.UTC(+m[3], +m[2] - 1, +m[1]));
+  if (d.getUTCFullYear() !== +m[3] || d.getUTCMonth() !== +m[2] - 1 || d.getUTCDate() !== +m[1]) {
+    throw new Error("La fecha de vencimiento del crédito no es válida.");
+  }
+  return `${m[3]}-${m[2]}-${m[1]}`;
+}
+function dias(v: unknown) {
+  if (!Array.isArray(v) || v.length === 0) return null;
+  const d = [...new Set(v.map(Number))].sort((a, b) => a - b);
+  if (d.some((x) => !Number.isInteger(x) || x < 1 || x > 7)) throw new Error("Los días de entrega deben estar entre 1 y 7.");
+  return d;
+}
+
+function sinBase() {
+  return NextResponse.json(
+    { error: "Servicio no disponible: base de datos no configurada." },
+    { status: 503 },
+  );
+}
+
+async function sesion() {
+  const { getCurrentSession } = await import("@/lib/auth/session");
+  return getCurrentSession();
+}
+
+const NO_SESION = () => NextResponse.json({ error: "Sesión no válida." }, { status: 401 });
+
+export async function GET(_request: Request, contexto: Contexto) {
+  if (!DEMO_MODE && !process.env.DATABASE_URL) return sinBase();
+  if (DEMO_MODE) return NextResponse.json({ error: "Cliente no encontrado." }, { status: 404 });
+
+  const { id } = await contexto.params;
+  if (!UUID.test(id)) return NextResponse.json({ error: "Cliente no encontrado." }, { status: 404 });
+
+  const session = await sesion();
+  if (!session) return NO_SESION();
+  const denegado = await denyIfNoPermission(session, "CLIENTES", "VER");
+  if (denegado) return denegado;
+
+  try {
+    const { db } = await import("@/lib/db");
+    const r = await db.query(
+      `SELECT c.id, c.codigo, c.naturaleza_receptor, c.tipo_operacion, c.tipo_persona,
+              c.pais_codigo, c.pais_nombre, c.tipo_documento, c.descripcion_documento_identidad,
+              c.numero_documento, c.dv, c.razon_social, c.nombre_fantasia,
+              c.email, c.email_copia, c.telefono, c.celular, c.telefono_ddi, c.celular_ddi, c.telefono_pais, c.telefono_area, c.celular_pais, c.celular_area,
+              c.limite_credito, c.limite_credito_temporal,
+              to_char(c.fecha_vencimiento_credito, 'DD/MM/YYYY') AS fecha_vencimiento_credito,
+              c.grupo_cliente_id, c.condicion_pago_id, c.moneda_codigo_predeterminada,
+              c.lista_precio_id, c.canal_venta_id, c.vendedor_id,
+              c.codigo_externo, c.gln, c.descuento_comercial_pct,
+              c.bloqueado_ventas, c.motivo_bloqueo_ventas, c.dia_preferido_cobro,
+              c.requiere_orden_compra, c.email_facturacion, c.email_cobranzas,
+              c.recibe_documento_electronico, c.ruta_entrega_id, c.zona_comercial_id,
+              c.frecuencia_entrega, c.dias_entrega, c.dia_mes_entrega, c.observacion_comercial, c.observacion_logistica,
+              c.activo, c.creado_at, c.actualizado_at
+         FROM clientes c
+        WHERE c.id = $1 AND c.empresa_id = $2`,
+      [id, session.user.empresaId],
+    );
+    const c = r.rows[0];
+    if (!c) return NextResponse.json({ error: "Cliente no encontrado." }, { status: 404 });
+    const hijos = await leerHijos(db, session.user.empresaId, id);
+    // CLI-A01: referencias comerciales que el cliente YA tiene pero que hoy están inactivas (no aparecen en los catálogos activos). Se informan para mostrarlas y
+    // conservarlas; no se agregan a los catálogos de elección.
+    const historicas = await db.query(
+      `SELECT 'grupoClienteId' AS campo, id::text, codigo, nombre FROM grupos_cliente WHERE empresa_id = $1 AND id = $2::uuid AND NOT activo
+       UNION ALL SELECT 'listaPrecioId', id::text, codigo, nombre FROM listas_precio WHERE empresa_id = $1 AND id = $3::uuid AND NOT activo
+       UNION ALL SELECT 'rutaEntregaId', id::text, codigo, nombre FROM rutas_entrega WHERE empresa_id = $1 AND id = $4::uuid AND NOT activo
+       UNION ALL SELECT 'zonaComercialId', id::text, codigo, nombre FROM zonas_comerciales WHERE empresa_id = $1 AND id = $5::uuid AND NOT activo
+       UNION ALL SELECT 'vendedorId', id::text, codigo, nombre FROM vendedores WHERE empresa_id = $1 AND id = $6::uuid AND NOT activo
+       UNION ALL SELECT 'canalVentaId', id::text, codigo, nombre FROM canales_venta WHERE empresa_id = $1 AND id = $7::uuid AND NOT activo`,
+      [session.user.empresaId, c.grupo_cliente_id, c.lista_precio_id, c.ruta_entrega_id, c.zona_comercial_id, c.vendedor_id, c.canal_venta_id],
+    );
+    const referenciasHistoricas = Object.fromEntries((historicas.rows as Array<{ campo: string; id: string; codigo: string | null; nombre: string }>).map((h) => [h.campo, { id: h.id, codigo: h.codigo ?? "", nombre: h.nombre }]));
+    // Códigos de la base -> texto de la API. Un código desconocido NUNCA se sustituye por un valor válido:
+    // se devuelve marcado para que la aptitud SIFEN lo informe como pendiente.
+    const naturalezaTxt = ({ 1: "CONTRIBUYENTE", 2: "NO_CONTRIBUYENTE" } as Record<number, string>)[Number(c.naturaleza_receptor)] ?? `DESCONOCIDA_${c.naturaleza_receptor}`;
+    const operacionTxt = ({ 1: "B2B", 2: "B2C", 3: "B2G", 4: "B2F" } as Record<number, string>)[Number(c.tipo_operacion)] ?? `DESCONOCIDA_${c.tipo_operacion}`;
+    // Aptitud SIFEN con el estado real de la base (misma implementación que el listado y la compuerta de guardado).
+    const aptitudSifen = await evaluarAptitudCliente(db, session.user.empresaId, id);
+
+    return NextResponse.json({
+      aptitudSifen,
+      cliente: {
+        id: c.id,
+        codigo: c.codigo,
+        naturaleza: naturalezaTxt,
+        tipoOperacion: operacionTxt,
+        tipoPersona: c.tipo_persona,
+        paisCodigo: c.pais_codigo,
+        paisNombre: c.pais_nombre ?? "",
+        tipoDocumento: c.tipo_documento,
+        descripcionDocumentoIdentidad: c.descripcion_documento_identidad ?? "",
+        numeroDocumento: c.numero_documento,
+        dv: c.dv ?? "",
+        razonSocial: c.razon_social,
+        nombreFantasia: c.nombre_fantasia ?? "",
+        email: c.email ?? "",
+        emailCopia: c.email_copia ?? "",
+        telefono: c.telefono ?? "",
+        celular: c.celular ?? "",
+        telefonoDdi: c.telefono_ddi ?? "",
+        telefonoPais: c.telefono_pais ?? "",
+        telefonoArea: c.telefono_area ?? "",
+        celularPais: c.celular_pais ?? "",
+        celularArea: c.celular_area ?? "",
+        celularDdi: c.celular_ddi ?? "",
+        limiteCredito: numericoCanonico(c.limite_credito),
+        limiteCreditoTemporal: c.limite_credito_temporal === null ? "" : numericoCanonico(c.limite_credito_temporal),
+        fechaVencimientoCredito: c.fecha_vencimiento_credito ?? "",
+        grupoClienteId: c.grupo_cliente_id ?? "",
+        condicionPagoId: c.condicion_pago_id ?? "",
+        monedaCodigoPredeterminada: c.moneda_codigo_predeterminada ?? "",
+        listaPrecioId: c.lista_precio_id ?? "",
+        canalVentaId: c.canal_venta_id ?? "",
+        vendedorId: c.vendedor_id ?? "",
+        codigoExterno: c.codigo_externo ?? "",
+        gln: c.gln ?? "",
+        descuentoComercialPct: numericoCanonico(c.descuento_comercial_pct),
+        bloqueadoVentas: c.bloqueado_ventas,
+        motivoBloqueoVentas: c.motivo_bloqueo_ventas ?? "",
+        diaPreferidoCobro: c.dia_preferido_cobro,
+        requiereOrdenCompra: c.requiere_orden_compra,
+        emailFacturacion: c.email_facturacion ?? "",
+        emailCobranzas: c.email_cobranzas ?? "",
+        recibeDocumentoElectronico: c.recibe_documento_electronico,
+        rutaEntregaId: c.ruta_entrega_id ?? "",
+        zonaComercialId: c.zona_comercial_id ?? "",
+        frecuenciaEntrega: c.frecuencia_entrega ?? "",
+        diasEntrega: (c.dias_entrega ?? []).map(Number),
+        diaMesEntrega: c.dia_mes_entrega === null || c.dia_mes_entrega === undefined ? "" : String(c.dia_mes_entrega),
+        observacionComercial: c.observacion_comercial ?? "",
+        observacionLogistica: c.observacion_logistica ?? "",
+        activo: c.activo,
+        creadoEn: c.creado_at,
+        actualizadoEn: c.actualizado_at instanceof Date ? c.actualizado_at.toISOString() : c.actualizado_at,
+      },
+      referenciasHistoricas,
+      ...hijos,
+    });
+  } catch (error) {
+    console.error("Error al cargar el cliente:", error);
+    return NextResponse.json({ error: "No fue posible cargar el cliente." }, { status: 500 });
+  }
+}
+
+export async function PUT(request: Request, contexto: Contexto) {
+  if (!DEMO_MODE && !process.env.DATABASE_URL) return sinBase();
+  if (DEMO_MODE) return NextResponse.json({ error: "Edición no disponible en modo DEMO." }, { status: 405 });
+
+  const { id } = await contexto.params;
+  if (!UUID.test(id)) return NextResponse.json({ error: "Cliente no encontrado." }, { status: 404 });
+
+  const session = await sesion();
+  if (!session) return NO_SESION();
+  const denegado = await denyIfNoPermission(session, "CLIENTES", "EDITAR");
+  if (denegado) return denegado;
+
+  let cuerpo: Json;
+  try {
+    cuerpo = (await request.json()) as Json;
+  } catch {
+    return NextResponse.json({ error: "Solicitud inválida." }, { status: 400 });
+  }
+
+  const empresaId = session.user.empresaId; // SIEMPRE de la sesión; nunca del cuerpo
+  const { db } = await import("@/lib/db");
+  const conexion = await db.connect();
+
+  try {
+    const naturaleza = texto(cuerpo.naturaleza).toUpperCase();
+    const tipoOperacion = texto(cuerpo.tipoOperacion).toUpperCase();
+    const tipoPersona = texto(cuerpo.tipoPersona).toUpperCase();
+    const tipoDocumento = texto(cuerpo.tipoDocumento).toUpperCase();
+    const numeroDocumento = texto(cuerpo.numeroDocumento, 30);
+    const dv = texto(cuerpo.dv, 5);
+    const razonSocial = texto(cuerpo.razonSocial, 255);
+    const paisCodigo = texto(cuerpo.paisCodigo, 3).toUpperCase();
+    const descDoc = opcional(cuerpo.descripcionDocumentoIdentidad, 100);
+    const limiteTemporal = decimalAcotado(cuerpo.limiteCreditoTemporal, "El límite de crédito temporal", LIMITE_CREDITO);
+    const vencimiento = fechaIso(cuerpo.fechaVencimientoCredito);
+    const frecuencia = opcional(cuerpo.frecuenciaEntrega)?.toUpperCase() ?? null;
+    const email = opcional(cuerpo.email, 150);
+    const emailCopia = opcional(cuerpo.emailCopia, 150);
+    const emailFacturacion = opcional(cuerpo.emailFacturacion, 150);
+    const emailCobranzas = opcional(cuerpo.emailCobranzas, 150);
+    const bloqueado = cuerpo.bloqueadoVentas === true;
+    const motivo = opcional(cuerpo.motivoBloqueoVentas, 500);
+
+    if (!(naturaleza in NATURALEZA)) throw new Error("Seleccione la naturaleza del cliente.");
+    if (!(tipoOperacion in OPERACION)) throw new Error("Seleccione un tipo de operación válido.");
+    if (!(tipoPersona in CONTRIBUYENTE)) throw new Error("Seleccione el tipo de contribuyente.");
+    if (!paisCodigo) throw new Error("Informe el país del cliente.");
+    validarPaisPorOperacion(tipoOperacion, paisCodigo);
+    if (!razonSocial) throw new Error("Informe el nombre o razón social del cliente.");
+    if (naturaleza === "CONTRIBUYENTE") {
+      if (!numeroDocumento || !dv) throw new Error("Para un contribuyente informe RUC y DV.");
+    } else {
+      if (!(tipoDocumento in DOC_SIFEN)) throw new Error("Seleccione el tipo de documento del cliente.");
+      if (!numeroDocumento) throw new Error("Informe el número de documento del cliente.");
+      if (tipoDocumento === "OTRO" && !descDoc) throw new Error("Describa el tipo de documento seleccionado como Otro.");
+    }
+    if (vencimiento && limiteTemporal === null) {
+      throw new Error("Para informar el vencimiento del límite temporal, indique también el límite temporal.");
+    }
+    if (frecuencia && !FRECUENCIAS.has(frecuencia)) throw new Error("La frecuencia de entrega no es válida.");
+    if (bloqueado && !motivo) throw new Error("Informe el motivo del bloqueo de ventas.");
+    correo(email, "El correo electrónico principal");
+    correo(emailCopia, "El correo electrónico de copia");
+    correo(emailFacturacion, "El correo de facturación");
+    correo(emailCobranzas, "El correo de cobranzas");
+
+    // Referencias: formato aquí; la pertenencia a la empresa y la actividad se verifican tras bloquear la fila (una referencia que el cliente YA tiene y no cambia
+    // se tolera aunque se haya inactivado; solo lo nuevo o modificado debe ser de la empresa y estar activo).
+    const refs: Record<string, string | null> = {};
+    for (const [campo, [, etiqueta]] of Object.entries(REFERENCIAS_CLIENTE)) {
+      const valor = opcional(cuerpo[campo]);
+      refs[campo] = valor;
+      if (valor && !UUID.test(valor)) throw new Error(`El valor seleccionado para ${etiqueta} no está disponible.`);
+    }
+    // CLI-A03: versión de la ficha que el operador tenía en pantalla (ISO con milisegundos). Sin versión válida no se guarda.
+    const versionEsperada = leerVersionEsperada(cuerpo.actualizadoEn);
+    const condicionPagoId = opcional(cuerpo.condicionPagoId);
+    if (condicionPagoId && !UUID.test(condicionPagoId)) throw new Error("La condición de pago no es válida.");
+
+    // Nombre oficial del país: siempre del catálogo, nunca del cuerpo de la solicitud.
+    const pais = await resolverPais(conexion, paisCodigo, "El país del cliente");
+    const entradaHijos = leerEntrada(cuerpo);
+    await conexion.query("BEGIN");
+
+    const actual = await conexion.query(
+      "SELECT (date_trunc('milliseconds', actualizado_at) = $3::timestamptz) AS version_vigente, grupo_cliente_id::text, lista_precio_id::text, ruta_entrega_id::text, zona_comercial_id::text, vendedor_id::text, canal_venta_id::text, bloqueado_ventas, naturaleza_receptor, numero_documento, dv, descripcion_documento_identidad, razon_social, nombre_fantasia, email, telefono, celular, telefono_ddi, celular_ddi, telefono_pais, telefono_area, celular_pais, celular_area, tipo_operacion, tipo_documento, gln, condicion_pago_id, moneda_codigo_predeterminada, limite_credito, limite_credito_temporal, frecuencia_entrega, dias_entrega, dia_mes_entrega FROM clientes WHERE id = $1 AND empresa_id = $2 FOR UPDATE",
+      [id, empresaId, versionEsperada],
+    );
+    if (actual.rowCount !== 1) {
+      await conexion.query("ROLLBACK");
+      return NextResponse.json({ error: "Cliente no encontrado." }, { status: 404 });
+    }
+    // CLI-A03: pre-condición de versión, verificada DESPUÉS de bloquear la fila y ANTES de cualquier escritura. Si otro operador guardó entretanto, no se pisa su edición.
+    if (actual.rows[0].version_vigente !== true) {
+      await conexion.query("ROLLBACK");
+      return NextResponse.json(
+        { error: "Otro usuario modificó este cliente después de que usted abrió la ficha (o la ficha está desactualizada). Sus cambios NO se guardaron y siguen en pantalla: copie lo necesario, recargue la ficha y repita la edición." },
+        { status: 409 },
+      );
+    }
+    // CLI-A01: lo nuevo o modificado debe ser de la empresa y estar activo; lo que el cliente ya tenía se conserva tal cual (lib/clientes/referencias-version.ts).
+    await validarReferenciasCliente(conexion, empresaId, refs, actual.rows[0]);
+    const estabaBloqueado = actual.rows[0].bloqueado_ventas === true;
+    // Un valor de catálogo que no cambia se tolera (puede haberse inactivado después); solo se verifica lo nuevo o modificado.
+    const monedaNueva = opcional(cuerpo.monedaCodigoPredeterminada, 3)?.toUpperCase() ?? null;
+    await validarCondicionYMoneda(
+      conexion,
+      condicionPagoId === (actual.rows[0].condicion_pago_id ?? null) ? null : condicionPagoId,
+      monedaNueva === (actual.rows[0].moneda_codigo_predeterminada ?? null) ? null : monedaNueva,
+    );
+
+    // Entrega y ventas (decisiones 10 y 9): días obligatorios con frecuencia semanal/quincenal; MENSUAL pide el día del mes (1–31);
+    // A_DEMANDA sin calendario. Se valida al crear o cambiar la combinación; un cliente anterior que no la cambia se tolera.
+    const diasNuevos = dias(cuerpo.diasEntrega) ?? [];
+    const diasPrevios = ((actual.rows[0].dias_entrega as unknown[] | null) ?? []).map(Number);
+    const diaMesNuevo = leerDiaMes(cuerpo.diaMesEntrega);
+    const diaMesPrevio = actual.rows[0].dia_mes_entrega === null || actual.rows[0].dia_mes_entrega === undefined ? null : Number(actual.rows[0].dia_mes_entrega);
+    const logisticaCambio =
+      (frecuencia ?? "") !== (actual.rows[0].frecuencia_entrega ?? "") ||
+      diasNuevos.join(",") !== [...diasPrevios].sort((a, b) => a - b).join(",") ||
+      (Number.isNaN(diaMesNuevo) ? true : diaMesNuevo !== diaMesPrevio);
+    const errorLogistica = logisticaCambio ? validarFrecuenciaYDias(frecuencia, diasNuevos, cuerpo.diaMesEntrega) : null;
+    if (errorLogistica) throw new Error(errorLogistica);
+
+    // Límites de crédito y cambio de moneda (CLI-VIS-05/06, D-10). Los límites del cuerpo están expresados en la moneda
+    // ACTUAL (la que tiene guardada); si la moneda cambia y hay algo que convertir, se exige tasa informada y confirmación
+    // expresa y el servidor RECALCULA (aritmética decimal exacta, half-up a 4 decimales): no confía en el cliente.
+    let limiteGuardar = decimalAcotado(cuerpo.limiteCredito, "El límite de crédito", LIMITE_CREDITO) ?? "0";
+    let temporalGuardar = limiteTemporal;
+    let conversion: ConversionLimites | null = null;
+    const monedaPrevia = (actual.rows[0].moneda_codigo_predeterminada as string | null) ?? null;
+    const previo0 = actual.rows[0];
+
+    // Auditoría exacta: al cambiar la moneda los límites enviados deben ser los GUARDADOS (no se editan importes en el mismo guardado
+    // que cambia la moneda); así «valores anteriores» de la auditoría son siempre los realmente almacenados.
+    if (monedaPrevia && monedaNueva && monedaPrevia !== monedaNueva && requiereConversion(numericoCanonico(previo0.limite_credito), previo0.limite_credito_temporal === null ? null : numericoCanonico(previo0.limite_credito_temporal))) {
+      if (
+        limiteGuardar !== numericoCanonico(previo0.limite_credito) ||
+        (temporalGuardar ?? "") !== (previo0.limite_credito_temporal === null ? "" : numericoCanonico(previo0.limite_credito_temporal))
+      ) {
+        throw new Error("Para cambiar la moneda no modifique los importes de los límites en el mismo guardado: guarde primero los importes y luego cambie la moneda.");
+      }
+    }
+
+    if (monedaPrevia && monedaNueva && monedaPrevia !== monedaNueva && requiereConversion(limiteGuardar, temporalGuardar)) {
+      const c = (typeof cuerpo.conversionMoneda === "object" && cuerpo.conversionMoneda !== null ? cuerpo.conversionMoneda : null) as Json | null;
+
+      if (!c || c.confirmada !== true) {
+        throw new Error(`Al cambiar la moneda de ${monedaPrevia} a ${monedaNueva} con límites de crédito debe informar la tasa de cambio y confirmar expresamente la conversión.`);
+      }
+      if (c.monedaOrigen !== monedaPrevia || c.monedaDestino !== monedaNueva) {
+        throw new Error("La conversión confirmada no corresponde a las monedas actuales del cliente: vuelva a abrir la edición.");
+      }
+
+      conversion = convertirLimites(limiteGuardar, temporalGuardar, c.tasa);
+
+      if (numericoCanonico(c.limiteDestino) !== conversion.limiteDestino || numericoCanonico(c.temporalDestino) !== (conversion.temporalDestino ?? "")) {
+        throw new Error("Los valores convertidos que confirmó no coinciden con el cálculo del servidor: revise la tasa y confirme nuevamente.");
+      }
+
+      limiteGuardar = conversion.limiteDestino;
+      temporalGuardar = conversion.temporalDestino;
+    }
+
+    // Campos D3 del SIFEN (tamaños y formatos oficiales, sin truncar); un campo sin cambios respecto de lo
+    // guardado se tolera (datos anteriores a la regla) hasta que se modifique.
+    const previo = actual.rows[0];
+    const s = (v: unknown) => (typeof v === "string" ? v : "");
+    const errorReceptor = validarCamposReceptor(
+      {
+        naturaleza,
+        tipoDocumento,
+        numeroDocumento: textoCrudo(cuerpo.numeroDocumento),
+        descripcionDocumento: textoCrudo(cuerpo.descripcionDocumentoIdentidad),
+        razonSocial: textoCrudo(cuerpo.razonSocial),
+        nombreFantasia: textoCrudo(cuerpo.nombreFantasia),
+        email: textoCrudo(cuerpo.email),
+        telefono: textoCrudo(cuerpo.telefono),
+        celular: textoCrudo(cuerpo.celular),
+      },
+      {
+        numeroDocumento: s(previo.numero_documento),
+        descripcionDocumento: s(previo.descripcion_documento_identidad),
+        razonSocial: s(previo.razon_social),
+        nombreFantasia: s(previo.nombre_fantasia),
+        email: s(previo.email),
+        telefono: s(previo.telefono),
+        celular: s(previo.celular),
+      },
+    );
+
+    if (errorReceptor) {
+      throw new Error(errorReceptor);
+    }
+
+    // Teléfono/celular fiscales: país del número + DDI asociado + código de área (si el plan lo usa) + número nacional
+    // normalizado (retificación 2026-10-11). Un valor anterior que no cambia (aunque no tenga país) se conserva tal cual;
+    // si cambia cualquiera de los cuatro datos se valida completo. No hay restricción de números repetidos.
+    const resolverTelefono = (campo: "telefono" | "celular") => {
+      const entrada = leerTelefonoEntrada(cuerpo, campo);
+      const sinCambio =
+        entrada.numero === s(previo[campo]) &&
+        entrada.pais === s(previo[`${campo}_pais`]) &&
+        entrada.ddi === s(previo[`${campo}_ddi`]) &&
+        entrada.area === s(previo[`${campo}_area`]);
+      if (sinCambio) {
+        return { numero: entrada.numero || null, pais: entrada.pais || null, ddi: entrada.ddi || null, area: entrada.area || null };
+      }
+      const r = validarTelefono(campo, entrada);
+      if (!r.ok) throw new Error(r.error);
+      return r.valor;
+    };
+    const telefonoGuardar = resolverTelefono("telefono");
+    const celularGuardar = resolverTelefono("celular");
+
+    // Día preferido de cobro: entero 1–31 (DEC-CLI-COB-06); se guarda la preferencia original.
+    const diaCobro = validarDiaPreferidoCobro(cuerpo.diaPreferidoCobro);
+    if (!diaCobro.ok) throw new Error(diaCobro.error);
+
+    // RUC/DV: misma regla que el alta (cálculo compartido). Un contribuyente ya grabado cuyo RUC y DV
+    // no cambian se tolera (datos anteriores a la regla) hasta que se modifique alguno de los dos.
+    if (naturaleza === "CONTRIBUYENTE") {
+      const sinCambio =
+        actual.rows[0].naturaleza_receptor === NATURALEZA.CONTRIBUYENTE &&
+        actual.rows[0].numero_documento === numeroDocumento &&
+        (actual.rows[0].dv ?? "") === dv;
+      const rucDv = validarRucDv(numeroDocumento, dv);
+
+      if (!sinCambio && !rucDv.ok) {
+        throw new Error(rucDv.error);
+      }
+    }
+
+    // Natureza × operación, Innominado y GLN: se validan al crear o cambiar; lo ya guardado sin cambios se tolera.
+    const naturalezaCambio = previo.naturaleza_receptor !== NATURALEZA[naturaleza as keyof typeof NATURALEZA];
+    const operacionCambio = previo.tipo_operacion !== OPERACION[tipoOperacion as keyof typeof OPERACION];
+    const errorMatriz = naturalezaCambio || operacionCambio ? validarNaturalezaOperacion(naturaleza, tipoOperacion) : null;
+    const innominadoCambio =
+      tipoDocumento === "INNOMINADO" &&
+      (previo.tipo_documento !== "INNOMINADO" || previo.numero_documento !== numeroDocumento || previo.razon_social !== razonSocial);
+    const errorInnominado = innominadoCambio
+      ? validarInnominado({ tipoDocumento, naturaleza, tipoOperacion, numeroDocumento, razonSocial })
+      : null;
+    const glnTexto = textoCrudo(cuerpo.gln);
+    const errorGln = validarGln(glnTexto); // decisión 7: si se informa, siempre 13 dígitos + dígito GS1 (también en registros anteriores)
+    const errorReglas = errorMatriz ?? errorInnominado ?? errorGln;
+    if (errorReglas) throw new Error(errorReglas);
+
+    const esInnominado = tipoDocumento === "INNOMINADO" && naturaleza !== "CONTRIBUYENTE";
+    const duplicado = esInnominado
+      ? await conexion.query(
+          `SELECT 1 FROM clientes WHERE empresa_id = $1 AND id <> $2 AND tipo_documento = 'INNOMINADO'`,
+          [empresaId, id],
+        )
+      : await conexion.query(
+          `SELECT 1 FROM clientes
+        WHERE empresa_id = $1 AND id <> $2 AND tipo_documento = $3
+          AND numero_documento = $4 AND COALESCE(dv, '') = COALESCE($5, '')`,
+          [empresaId, id, naturaleza === "CONTRIBUYENTE" ? "RUC" : tipoDocumento, numeroDocumento,
+            naturaleza === "CONTRIBUYENTE" ? dv : null],
+        );
+    if (duplicado.rowCount) {
+      throw new Error(
+        esInnominado
+          ? mensajeRestriccionCliente({ code: "23505", constraint: "clientes_empresa_innominado_key" }) ?? ""
+          : "Ya existe otro cliente con esa identificación.",
+      );
+    }
+
+    await conexion.query(
+      `UPDATE clientes SET
+         naturaleza_receptor = $3, tipo_operacion = $4, pais_codigo = $5, pais_nombre = $6,
+         tipo_persona = $7, tipo_contribuyente_sifen = $8, tipo_documento = $9,
+         tipo_documento_identidad_sifen = $10, descripcion_documento_identidad = $11,
+         numero_documento = $12, dv = $13, razon_social = $14, nombre_fantasia = $15,
+         email = $16, email_copia = $17, telefono = $18, celular = $19,
+         limite_credito = $20, condicion_pago_id = $21, lista_precio_id = $22, grupo_cliente_id = $23,
+         moneda_codigo_predeterminada = $24, canal_venta_id = $25, codigo_externo = $26, gln = $27,
+         descuento_comercial_pct = $28, limite_credito_temporal = $29, fecha_vencimiento_credito = $30,
+         bloqueado_ventas = $31::boolean, motivo_bloqueo_ventas = $32,
+         bloqueado_ventas_at = CASE WHEN NOT $31::boolean THEN NULL
+                                    WHEN $33::boolean THEN bloqueado_ventas_at ELSE now() END,
+         bloqueado_ventas_por = CASE WHEN NOT $31::boolean THEN NULL
+                                     WHEN $33::boolean THEN bloqueado_ventas_por ELSE $34::uuid END,
+         dia_preferido_cobro = $35, ruta_entrega_id = $36, zona_comercial_id = $37, vendedor_id = $38,
+         frecuencia_entrega = $39, dias_entrega = $40, requiere_orden_compra = $41,
+         email_facturacion = $42, email_cobranzas = $43, recibe_documento_electronico = $44,
+         observacion_comercial = $45, observacion_logistica = $46, activo = $47, telefono_ddi = $48, celular_ddi = $49, telefono_pais = $50, telefono_area = $51, celular_pais = $52, celular_area = $53, carga_documentos_inicial_abierta = false, dia_mes_entrega = $54
+       WHERE id = $1 AND empresa_id = $2`,
+      [
+        id, empresaId,
+        NATURALEZA[naturaleza as keyof typeof NATURALEZA],
+        OPERACION[tipoOperacion as keyof typeof OPERACION],
+        pais.codigo, pais.nombre,
+        tipoPersona, CONTRIBUYENTE[tipoPersona as keyof typeof CONTRIBUYENTE],
+        naturaleza === "CONTRIBUYENTE" ? "RUC" : tipoDocumento,
+        naturaleza === "CONTRIBUYENTE" ? null : DOC_SIFEN[tipoDocumento as keyof typeof DOC_SIFEN],
+        naturaleza === "CONTRIBUYENTE" || tipoDocumento !== "OTRO" ? null : descDoc,
+        numeroDocumento, naturaleza === "CONTRIBUYENTE" ? dv : null,
+        razonSocial, opcional(cuerpo.nombreFantasia, 255),
+        email, emailCopia, telefonoGuardar.numero, celularGuardar.numero,
+        limiteGuardar,
+        condicionPagoId, refs.listaPrecioId, refs.grupoClienteId,
+        opcional(cuerpo.monedaCodigoPredeterminada, 3)?.toUpperCase() ?? null,
+        refs.canalVentaId, opcional(cuerpo.codigoExterno, 100), opcional(cuerpo.gln, 13),
+        decimalAcotado(cuerpo.descuentoComercialPct, "El descuento comercial", DESCUENTO_COMERCIAL) ?? "0",
+        temporalGuardar, vencimiento,
+        bloqueado, motivo, estabaBloqueado, session.user.id,
+        diaCobro.dia,
+        refs.rutaEntregaId, refs.zonaComercialId, refs.vendedorId,
+        frecuencia, dias(cuerpo.diasEntrega), cuerpo.requiereOrdenCompra === true,
+        emailFacturacion, emailCobranzas, cuerpo.recibeDocumentoElectronico !== false,
+        opcional(cuerpo.observacionComercial, 1000), opcional(cuerpo.observacionLogistica, 1000),
+        cuerpo.activo !== false,
+        telefonoGuardar.ddi,
+        celularGuardar.ddi,
+        telefonoGuardar.pais,
+        telefonoGuardar.area,
+        celularGuardar.pais,
+        celularGuardar.area,
+        frecuencia === "MENSUAL" && diaMesNuevo !== null && !Number.isNaN(diaMesNuevo) ? diaMesNuevo : null,
+      ],
+    );
+
+    // Auditoría de la conversión de moneda: misma transacción que el UPDATE de los límites.
+    if (conversion) {
+      await conexion.query(
+        `INSERT INTO cliente_conversiones_moneda
+           (empresa_id, cliente_id, moneda_origen, moneda_destino, tasa, limite_origen, limite_destino,
+            limite_temporal_origen, limite_temporal_destino, redondeo, confirmado_por)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+        [empresaId, id, monedaPrevia, monedaNueva, conversion.tasa, conversion.limiteOrigen, conversion.limiteDestino,
+          conversion.temporalOrigen, conversion.temporalDestino, REDONDEO_CONVERSION, session.user.id],
+      );
+    }
+
+    // Contactos, direcciones y documentos: misma transacción, mismo empresa_id.
+    const resumen = await sincronizarHijos(conexion, empresaId, id, session.user.id, entradaHijos);
+
+    // Cadastro fiscal completo (decisión 01): B2F exige dirección fiscal. Se verifica sobre el estado FINAL de la
+    // transacción cuando se pasa a B2F o se tocan las direcciones (un cliente B2F anterior sin tocar direcciones se tolera).
+    const operacionCambioAB2F = tipoOperacion === "B2F" && previo.tipo_operacion !== OPERACION.B2F;
+    const direccionesTocadas = resumen.direcciones.nuevos + resumen.direcciones.actualizados + resumen.direcciones.eliminados > 0;
+
+    if (tipoOperacion === "B2F" && (operacionCambioAB2F || direccionesTocadas)) {
+      const fiscal = await conexion.query(
+        "SELECT 1 FROM direcciones_cliente WHERE empresa_id = $1 AND cliente_id = $2 AND (es_fiscal OR tipo = 'FISCAL') LIMIT 1",
+        [empresaId, id],
+      );
+      const mensajeB2F = validarDireccionFiscalRequerida(tipoOperacion, fiscal.rowCount === 1);
+
+      if (mensajeB2F) throw new Error(mensajeB2F);
+    }
+
+    // Compuerta fiscal (decisión 10): el estado FINAL del cliente (con sus contactos, direcciones y documentos ya sincronizados en
+    // esta transacción) debe estar fiscalmente completo conforme a natureza/operación/SIFEN; los registros anteriores incompletos
+    // exigen regularización ANTES de guardar cualquier edición. Nada se modifica en silencio: se rechaza y se lista lo pendiente.
+    const mensajeFiscal = mensajeRegularizacionFiscal(await evaluarAptitudCliente(conexion as never, empresaId, id));
+
+    if (mensajeFiscal) throw new Error(mensajeFiscal);
+
+    const nueva = await conexion.query("SELECT actualizado_at FROM clientes WHERE id = $1 AND empresa_id = $2", [id, empresaId]);
+
+    await conexion.query("COMMIT");
+    const actualizadoAt = (nueva.rows[0] as { actualizado_at?: Date } | undefined)?.actualizado_at;
+
+    return NextResponse.json({ ok: true, id, hijos: resumen, actualizadoEn: actualizadoAt instanceof Date ? actualizadoAt.toISOString() : null });
+  } catch (error) {
+    await conexion.query("ROLLBACK").catch(() => undefined);
+    const pg = error as { code?: string };
+    const mensajeBd = mensajeRestriccionCliente(error as { code?: string; constraint?: string });
+    if (mensajeBd) {
+      return NextResponse.json({ error: mensajeBd }, { status: pg.code === "23505" ? 409 : 400 });
+    }
+    if (pg.code && /^(22|23)/.test(pg.code)) {
+      return NextResponse.json({ error: "Los datos informados no cumplen las reglas del cliente." }, { status: 400 });
+    }
+    if (error instanceof ErrorValidacion || (error instanceof Error && !pg.code)) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+    console.error("Error al actualizar el cliente:", error);
+    return NextResponse.json({ error: "No fue posible actualizar el cliente." }, { status: 500 });
+  } finally {
+    conexion.release();
+  }
+}

@@ -31,9 +31,23 @@ export const NAVIGATION_GROUPS: ShellNavigationGroup[] = [
         permission: "PRODUCTOS.VER",
       },
       {
+        id: "product-catalogs",
+        label: "Catálogos de productos",
+        href: "/productos/catalogos",
+        icon: "products",
+        permission: "PRODUCTOS.VER",
+      },
+      {
         id: "price-lists",
         label: "Listas de precios",
         href: "/listas-precio",
+        icon: "prices",
+        permission: "LISTAS_PRECIO.VER",
+      },
+      {
+        id: "commercial-catalogs",
+        label: "Catálogos comerciales",
+        href: "/catalogos-comerciales",
         icon: "prices",
         permission: "LISTAS_PRECIO.VER",
       },
@@ -98,14 +112,14 @@ export const NAVIGATION_GROUPS: ShellNavigationGroup[] = [
         label: "Stock",
         href: "/stock",
         icon: "stock",
-        permission: "INVENTARIO.VER",
+        permission: "STOCK.VER",
       },
       {
         id: "stock-movements",
         label: "Movimientos",
         href: "/movimientos",
         icon: "movements",
-        permission: "INVENTARIO.VER",
+        permission: "MOVIMIENTOS.VER",
       },
       {
         id: "warehouses",
@@ -119,7 +133,7 @@ export const NAVIGATION_GROUPS: ShellNavigationGroup[] = [
         label: "Reposición",
         href: "/reposicion",
         icon: "replenishment",
-        permission: "INVENTARIO.VER",
+        permission: "STOCK.VER",
       },
     ],
   },
@@ -199,31 +213,38 @@ export const NAVIGATION_GROUPS: ShellNavigationGroup[] = [
     icon: "billing",
     items: [
       {
+        id: "electronic-documents",
+        label: "Documentos electrónicos",
+        href: "/documentos",
+        icon: "documents",
+        permission: "FACTURACION_ELECTRONICA.VER",
+      },
+      {
         id: "invoices",
         label: "Facturas",
         href: "/facturas",
         icon: "invoice",
-        permission: "FACTURACION_ELECTRONICA.VER",
+        permission: "FACTURACION_ELECTRONICA.CREAR",
+      },
+      {
+        id: "dispatch-points",
+        label: "Puntos de expedición",
+        href: "/facturacion/puntos",
+        icon: "settings",
+        permission: "FACTURACION_ELECTRONICA.PUNTOS",
       },
       {
         id: "credit-notes",
         label: "Notas de crédito",
         href: "/notas-credito",
         icon: "creditNote",
-        permission: "FACTURACION_ELECTRONICA.VER",
+        permission: "FACTURACION_ELECTRONICA.CREAR",
       },
       {
         id: "remission-notes",
         label: "Notas de remisión",
         href: "/notas-remision",
         icon: "remission",
-        permission: "FACTURACION_ELECTRONICA.VER",
-      },
-      {
-        id: "electronic-documents",
-        label: "Todos los documentos",
-        href: "/documentos",
-        icon: "documents",
         permission: "FACTURACION_ELECTRONICA.VER",
       },
       {
@@ -244,6 +265,41 @@ export const NAVIGATION_GROUPS: ShellNavigationGroup[] = [
         id: "reports",
         label: "Reportes operativos",
         href: "/reportes",
+        icon: "reports",
+        permission: "REPORTES.VER",
+      },
+      {
+        id: "report-stock-general",
+        label: "Stock general",
+        href: "/reportes/stock-general",
+        icon: "reports",
+        permission: "REPORTES.VER",
+      },
+      {
+        id: "report-valorizacion",
+        label: "Valorización de inventario",
+        href: "/reportes/valorizacion",
+        icon: "reports",
+        permission: "REPORTES.VER",
+      },
+      {
+        id: "report-kardex",
+        label: "Kardex de movimientos",
+        href: "/reportes/kardex",
+        icon: "reports",
+        permission: "REPORTES.VER",
+      },
+      {
+        id: "report-stock-critico",
+        label: "Stock crítico y reposición",
+        href: "/reportes/stock-critico",
+        icon: "reports",
+        permission: "REPORTES.VER",
+      },
+      {
+        id: "report-lotes",
+        label: "Lotes y vencimientos",
+        href: "/reportes/lotes",
         icon: "reports",
         permission: "REPORTES.VER",
       },
@@ -276,6 +332,13 @@ export const NAVIGATION_GROUPS: ShellNavigationGroup[] = [
         permission: "CONFIGURACION.VER",
       },
       {
+        id: "settings-electronic-billing",
+        label: "Facturación electrónica",
+        href: "/configuracion/facturacion-electronica",
+        icon: "settings",
+        permission: "FACTURACION_ELECTRONICA.CONFIGURAR",
+      },
+      {
         id: "audit",
         label: "Auditoría",
         href: "/administracion/auditoria",
@@ -286,53 +349,73 @@ export const NAVIGATION_GROUPS: ShellNavigationGroup[] = [
   },
 ];
 
-function canShowItem(
-  item: ShellNavigationItem,
-  permissions: Set<string>,
-  enforcePermissions: boolean,
-) {
-  if (!enforcePermissions || !item.permission) {
-    return true;
-  }
+/**
+ * Rutas con página y API reales dentro del alcance de la V1. El resto del menú
+ * (compras, ventas, finanzas, facturación, etc.) queda oculto hasta existir.
+ * Las páginas todavía con datos de prueba se retiran de aquí al conectarse a PostgreSQL
+ * solo cuando el módulo esté listo; ver PROGRESSO-NEXIT-V1.md.
+ */
+const V1_HREFS = new Set([
+  "/clientes",
+  "/proveedores",
+  "/productos",
+  "/productos/catalogos",
+  "/listas-precio",
+  "/catalogos-comerciales",
+  "/stock",
+  "/reposicion",
+  "/depositos",
+  "/documentos",
+  "/facturas",
+  "/notas-credito",
+  "/facturacion/puntos",
+  "/configuracion/facturacion-electronica",
+  "/movimientos",
+  "/reportes",
+  "/reportes/stock-general",
+  "/reportes/valorizacion",
+  "/reportes/kardex",
+  "/reportes/stock-critico",
+  "/reportes/lotes",
+]);
 
-  return permissions.has(
-    item.permission.trim().toUpperCase(),
-  );
+export const PLATFORM_GROUP: ShellNavigationGroup = {
+  id: "platform",
+  label: "Plataforma",
+  icon: "admin",
+  items: [
+    {
+      id: "platform-companies",
+      label: "Empresas",
+      href: "/administracion/empresas",
+      icon: "admin",
+    },
+  ],
+};
+
+export type NavigationAccess = {
+  permissions: string[];
+  isCompanyAdmin: boolean;
+  isPlatformAdmin: boolean;
+};
+
+function canShowItem(item: ShellNavigationItem, access: NavigationAccess) {
+  if (!V1_HREFS.has(item.href)) return false;
+  if (access.isCompanyAdmin) return true;
+  if (!item.permission) return false;
+  return access.permissions.includes(item.permission.trim().toUpperCase());
 }
 
-export function resolveNavigation(
-  permissionCodes: string[] = [],
-): ShellNavigationGroup[] {
-  const permissions = new Set(
-    permissionCodes
-      .map((permission) =>
-        permission.trim().toUpperCase(),
-      )
-      .filter(Boolean),
-  );
+/**
+ * Menú por perfil. Administrador global de plataforma (PROCEIT): solo el menú de plataforma.
+ * Usuarios de empresa: únicamente los módulos que sus perfiles permiten. Sin permisos => sin módulos.
+ * El menú es solo comodidad visual: el control real está en el servidor (guardApi/guardPage).
+ */
+export function resolveNavigation(access: NavigationAccess): ShellNavigationGroup[] {
+  if (access.isPlatformAdmin) return [PLATFORM_GROUP];
 
-  /*
-   * Para el mockup:
-   * si no recibimos permisos, mostramos todo el menú.
-   *
-   * Más adelante, cuando la sesión real entregue permisos,
-   * el mismo método filtrará automáticamente los módulos.
-   */
-  const enforcePermissions =
-    permissions.size > 0;
-
-  return NAVIGATION_GROUPS.map(
-    (group) => ({
-      ...group,
-      items: group.items.filter((item) =>
-        canShowItem(
-          item,
-          permissions,
-          enforcePermissions,
-        ),
-      ),
-    }),
-  ).filter(
-    (group) => group.items.length > 0,
-  );
+  return NAVIGATION_GROUPS.map((group) => ({
+    ...group,
+    items: group.items.filter((item) => canShowItem(item, access)),
+  })).filter((group) => group.items.length > 0);
 }
