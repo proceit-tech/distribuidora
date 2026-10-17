@@ -173,16 +173,26 @@ BEGIN
 
   -- NCE-DB-01 (PYG sin centavos): Devolución con cantidad fraccionaria cuyo TOTAL no es entero se rechaza sin consumir número; la cantidad entera sigue válida
   DECLARE
-    v_f11 uuid; v_n_antes integer; rp record; v_nce uuid;
+    v_f11 uuid; v_n_antes integer; rp record; v_nce uuid; v_pay11 jsonb; v_msg text;
   BEGIN
     INSERT INTO documentos_electronicos (empresa_id, sucursal_id, tipo, establecimiento, punto_expedicion, numero, cdc, fecha_emision, receptor_nombre, moneda, total, estado_local, estado_sifen, creado_por)
     VALUES (v_a, v_sa, 'FE', '001', '001', '0000011', '01' || '80000005' || '6' || '001' || '001' || '0000011' || '1' || '20261016' || '1' || '123456789' || '0', now(), 'Cliente T26', 'PYG', 150000, 'ENVIADO', 'APROBADO', v_ua) RETURNING id INTO v_f11;
     INSERT INTO documento_electronico_solicitudes (empresa_id, documento_id, version, payload, payload_hash, entrada_hash, creado_por)
     VALUES (v_a, v_f11, 1, v_sol, encode(sha256(convert_to(v_sol::text, 'UTF8')), 'hex'), encode(sha256(convert_to('fe-t26-11', 'UTF8')), 'hex'), v_ua);
+    -- La NCE de v_f11 debe asociar el CDC de v_f11 (no el de la primera factura): sin esto el rechazo sería por NEX:ASOCIACION_INVALIDA y no por el total
+    v_pay11 := jsonb_set(v_pay, '{DocumentosAsociados,0,dCdCDERef}', to_jsonb((SELECT cdc FROM documentos_electronicos WHERE id = v_f11)));
+    PERFORM pg_temp.ok((v_pay11->'DocumentosAsociados'->0->>'dCdCDERef') = (SELECT cdc FROM documentos_electronicos WHERE id = v_f11) AND (v_pay11->'DocumentosAsociados'->0->>'dCdCDERef') <> v_cdc, 'PYG: el payload de la segunda factura asocia el CDC de v_f11 y no el de la primera');
     SELECT ultimo_numero INTO v_n_antes FROM fe_punto_secuencias WHERE punto_id = v_p AND tipo_documento = 'NCE';
-    PERFORM pg_temp.falla(format($f$SELECT * FROM fe_documento_crear_nce(%L, %L, %L, %L, 'clave-t26-py01', %L, 2, '[{"linea":2,"cantidad":0.0001,"monto":0.5}]'::jsonb, 'PYG', 0.5, %L)$f$, v_a, v_ua, v_sa, v_p, v_f11, pg_temp.pay(v_pay, v_sol, 2, 2, 0.0001, 0.5)), 'P0001', 'PYG-01: devolución 0.0001 × Gs. 5.000 = Gs. 0,5 → NEX:PAYLOAD_INVALIDO (total PYG con centavos)');
+    BEGIN
+      PERFORM * FROM fe_documento_crear_nce(v_a, v_ua, v_sa, v_p, 'clave-t26-py01', v_f11, 2, '[{"linea":2,"cantidad":0.0001,"monto":0.5}]'::jsonb, 'PYG', 0.5, pg_temp.pay(v_pay11, v_sol, 2, 2, 0.0001, 0.5));
+      RAISE EXCEPTION 'FALLA: PYG-01 — la devolución con total fraccionario debió ser rechazada';
+    EXCEPTION WHEN SQLSTATE 'P0001' THEN
+      GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT;
+      IF v_msg LIKE 'FALLA:%' THEN RAISE; END IF;
+      PERFORM pg_temp.ok(v_msg LIKE 'el total de la nota de crédito debe poder guardarse exacto%', 'PYG-01: devolución 0.0001 × Gs. 5.000 = Gs. 0,5 rechazada POR EL TOTAL (no por asociación, ítems ni saldo): ' || v_msg);
+    END;
     PERFORM pg_temp.ok((SELECT ultimo_numero = v_n_antes FROM fe_punto_secuencias WHERE punto_id = v_p AND tipo_documento = 'NCE') AND NOT EXISTS (SELECT 1 FROM nce_origen WHERE fe_id = v_f11), 'PYG-03: el rechazo no consumió número ni dejó NCE ni créditos');
-    SELECT * INTO rp FROM fe_documento_crear_nce(v_a, v_ua, v_sa, v_p, 'clave-t26-py02', v_f11, 2, '[{"linea":2,"cantidad":1,"monto":5000}]'::jsonb, 'PYG', 5000, pg_temp.pay(v_pay, v_sol, 2, 2, 1, 5000));
+    SELECT * INTO rp FROM fe_documento_crear_nce(v_a, v_ua, v_sa, v_p, 'clave-t26-py02', v_f11, 2, '[{"linea":2,"cantidad":1,"monto":5000}]'::jsonb, 'PYG', 5000, pg_temp.pay(v_pay11, v_sol, 2, 2, 1, 5000));
     PERFORM pg_temp.ok(NOT rp.o_reutilizado, 'PYG-02: devolución de 1 unidad × Gs. 5.000 (total entero) válida');
 
     -- NCE-DB-04: una línea acreditada no puede declarar otra FE que la de su NCE (FK compuesta empresa, NCE, FE); UPDATE y DELETE siguen prohibidos
