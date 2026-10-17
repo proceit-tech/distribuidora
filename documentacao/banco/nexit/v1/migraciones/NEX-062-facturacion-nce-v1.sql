@@ -127,6 +127,10 @@ DECLARE
   v_usado_cant numeric;
   v_usado_monto numeric;
   v_k text;
+  v_afec integer; v_tasa numeric; v_prop numeric; v_cant_p numeric; v_prec_p numeric;
+  v_tb numeric; v_den numeric; v_base numeric; v_liq numeric; v_bexe numeric;
+  v_exe numeric := 0; v_exo numeric := 0; v_s5 numeric := 0; v_s10 numeric := 0; v_i5 numeric := 0; v_i10 numeric := 0; v_b5 numeric := 0; v_b10 numeric := 0;
+  v_sub jsonb;
   v_det jsonb;
   v_orig jsonb;
 BEGIN
@@ -231,6 +235,30 @@ BEGIN
        OR (p_motivo <> 2 AND ((v_det->>'dCantProSer')::numeric IS DISTINCT FROM 1 OR (v_det->>'dPUniProSer')::numeric IS DISTINCT FROM l.monto)) THEN
       RAISE EXCEPTION 'el ítem % del payload no corresponde a la línea original acreditada', l.ord USING ERRCODE = 'P0001', DETAIL = 'NEX:PAYLOAD_INVALIDO';
     END IF;
+    -- R05-01: valores fiscales DERIVADOS por ítem, recalculados con la misma fórmula y el mismo redondeo (mitad hacia arriba a 8 decimales) del motor TypeScript (lib/facturacion/calculo.ts, MT v150 / NT 13).
+    v_afec := (v_det->>'iAfecIVA')::integer; v_tasa := (v_det->>'dTasaIVA')::numeric; v_prop := (v_det->>'dPropIVA')::numeric;
+    v_cant_p := (v_det->>'dCantProSer')::numeric; v_prec_p := (v_det->>'dPUniProSer')::numeric;
+    v_tb := round(v_cant_p * v_prec_p, 8);
+    v_den := 10000 + v_tasa * v_prop;
+    v_base := CASE WHEN v_afec IN (1, 4) THEN round(100 * v_tb * v_prop / v_den, 8) ELSE 0 END;
+    v_liq := CASE WHEN v_afec IN (1, 4) THEN round(v_base * v_tasa / 100, 8) ELSE 0 END;
+    v_bexe := CASE WHEN v_afec = 4 THEN round(100 * v_tb * (100 - v_prop) / v_den, 8) ELSE 0 END;
+    IF v_afec NOT IN (1, 2, 3, 4) OR v_tasa NOT IN (0, 5, 10)
+       OR (v_det->>'dTotBruOpeItem')::numeric IS DISTINCT FROM v_tb OR (v_det->>'dTotOpeItem')::numeric IS DISTINCT FROM v_tb
+       OR (v_det->>'dBasGravIVA')::numeric IS DISTINCT FROM v_base OR (v_det->>'dLiqIVAItem')::numeric IS DISTINCT FROM v_liq OR (v_det->>'dBasExe')::numeric IS DISTINCT FROM v_bexe THEN
+      RAISE EXCEPTION 'los importes fiscales derivados del ítem % (bruto, base gravada, liquidación de IVA, base exenta) no son coherentes con su cantidad, precio, afectación, proporción y tasa', l.ord USING ERRCODE = 'P0001', DETAIL = 'NEX:PAYLOAD_INVALIDO';
+    END IF;
+    IF v_afec = 3 THEN v_exe := v_exe + v_tb;
+    ELSIF v_afec = 2 THEN v_exo := v_exo + v_tb;
+    ELSIF v_afec = 1 THEN
+      IF v_tasa = 5 THEN v_s5 := v_s5 + v_tb; ELSE v_s10 := v_s10 + v_tb; END IF;
+    ELSE
+      v_exe := v_exe + v_bexe;
+      IF v_tasa = 5 THEN v_s5 := v_s5 + v_base + v_liq; ELSE v_s10 := v_s10 + v_base + v_liq; END IF;
+    END IF;
+    IF v_afec IN (1, 4) THEN
+      IF v_tasa = 5 THEN v_i5 := v_i5 + v_liq; v_b5 := v_b5 + v_base; ELSE v_i10 := v_i10 + v_liq; v_b10 := v_b10 + v_base; END IF;
+    END IF;
     SELECT coalesce(sum(nl.cantidad), 0), coalesce(sum(nl.monto), 0) INTO v_usado_cant, v_usado_monto
       FROM public.nce_lineas nl JOIN public.documentos_electronicos n ON n.empresa_id = nl.empresa_id AND n.id = nl.nce_id
      WHERE nl.empresa_id = p_empresa AND nl.fe_id = p_fe AND nl.linea = l.linea AND n.estado_sifen = 'APROBADO';
@@ -242,6 +270,21 @@ BEGIN
     END IF;
     v_suma := v_suma + l.monto;
   END LOOP;
+  -- R05-01: los subtotales del payload son exactamente la suma de los ítems recalculados (una sola fila de Subtotales; descuentos/anticipos/redondeo en cero).
+  v_sub := p_payload->'Subtotales'->0;
+  IF jsonb_array_length(p_payload->'Subtotales') <> 1
+     OR (v_sub->>'dSubExe')::numeric IS DISTINCT FROM v_exe OR (v_sub->>'dSubExo')::numeric IS DISTINCT FROM v_exo
+     OR (v_sub->>'dSub5')::numeric IS DISTINCT FROM v_s5 OR (v_sub->>'dSub10')::numeric IS DISTINCT FROM v_s10
+     OR (v_sub->>'dTotOpe')::numeric IS DISTINCT FROM (v_exe + v_exo + v_s5 + v_s10) OR (v_sub->>'dTotGralOpe')::numeric IS DISTINCT FROM (v_exe + v_exo + v_s5 + v_s10)
+     OR (v_sub->>'dIVA5')::numeric IS DISTINCT FROM v_i5 OR (v_sub->>'dIVA10')::numeric IS DISTINCT FROM v_i10
+     OR (v_sub->>'dLiqTotIVA5')::numeric IS DISTINCT FROM v_i5 OR (v_sub->>'dLiqTotIVA10')::numeric IS DISTINCT FROM v_i10 OR (v_sub->>'dTotIVA')::numeric IS DISTINCT FROM (v_i5 + v_i10)
+     OR (v_sub->>'dBaseGrav5')::numeric IS DISTINCT FROM v_b5 OR (v_sub->>'dBaseGrav10')::numeric IS DISTINCT FROM v_b10 OR (v_sub->>'dTBasGraIVA')::numeric IS DISTINCT FROM (v_b5 + v_b10)
+     OR coalesce((v_sub->>'dTotDesc')::numeric, 0) <> 0 OR coalesce((v_sub->>'dTotDescGlotem')::numeric, 0) <> 0 OR coalesce((v_sub->>'dTotAntItem')::numeric, 0) <> 0
+     OR coalesce((v_sub->>'dTotAnt')::numeric, 0) <> 0 OR coalesce((v_sub->>'dPorcDescTotal')::numeric, 0) <> 0 OR coalesce((v_sub->>'dDescTotal')::numeric, 0) <> 0
+     OR coalesce((v_sub->>'dAnticipo')::numeric, 0) <> 0 OR coalesce((v_sub->>'dRedon')::numeric, 0) <> 0
+     OR (p_moneda = 'PYG' AND (v_sub->>'dTotalGs')::numeric IS DISTINCT FROM (v_exe + v_exo + v_s5 + v_s10)) THEN
+    RAISE EXCEPTION 'los subtotales de la nota de crédito no coinciden con la suma de sus ítems (exento, exonerado, gravado, bases e IVA)' USING ERRCODE = 'P0001', DETAIL = 'NEX:PAYLOAD_INVALIDO';
+  END IF;
   IF v_suma <> p_total THEN
     RAISE EXCEPTION 'el total de la nota de crédito no concilia con la suma de sus líneas' USING ERRCODE = 'P0001', DETAIL = 'NEX:TOTAL_NO_CONCILIA';
   END IF;

@@ -6,7 +6,7 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { useSearchParams } from "next/navigation";
 
 import ui from "@/components/ui/lista-padrao/lista.module.css";
-import { entradasIniciales, etiquetaIvaLinea } from "@/lib/facturacion/nce-entradas";
+import { crearControlListado, entradasIniciales, etiquetaIvaLinea } from "@/lib/facturacion/nce-entradas";
 import { iniciarRefresco } from "@/lib/facturacion/refresco-documentos";
 import { formatearDecimalTexto } from "@/lib/formato/decimal-texto";
 import { formatearFechaPy } from "@/lib/formato/listas";
@@ -29,7 +29,7 @@ type Punto = { id: string; codigo: string; nombre: string; ultimoNumero: number 
 type Sucursal = { id: string; nombre: string; establecimiento: string; puntos: Punto[]; sinSecuencia: number };
 type Resumen = {
   factura: { numero: string; cdc: string; fechaEmision: string }; motivo: { codigo: number; nombre: string }; punto: string; moneda: string; cambio: string | null; observacion: string; numero: string;
-  lineas: Array<{ linea: number; codigo: string; descripcion: string; unidad: string; cantidad: string; precioUnitario: string; monto: string; afectacion: number; tasa: number }>;
+  lineas: Array<{ linea: number; codigo: string; descripcion: string; unidad: string; cantidad: string; precioUnitario: string; monto: string; afectacion: number; tasa: number; proporcion: string }>;
   totales: { exento: string; exonerado: string; gravado5: string; gravado10: string; iva5: string; iva10: string; totalIva: string; total: string };
 };
 type Entrada = { incluida: boolean; valor: string };
@@ -84,18 +84,24 @@ function Formulario() {
     }
   }, []);
 
+  const control = useRef(crearControlListado({ clienteId: "", q: "", pagina: 1 }));
+
   const cargarFacturas = useCallback(async (clienteId: string, q: string, pagina: number, actualizar: boolean) => {
+    const token = control.current.aplicar({ clienteId, q, pagina });
+
     setCargando(true);
     try {
       const r = await pedir<{ facturas: FacturaE[]; pagina: number; totalPaginas: number }>(`/api/notas-credito/facturas?clienteId=${clienteId}&q=${encodeURIComponent(q)}&pagina=${pagina}&porPagina=10${actualizar ? "&actualizar=1" : ""}`);
+
+      if (!control.current.vigente(token)) return;
 
       setFacturas(r.facturas);
       setPagFac({ pagina: r.pagina, totalPaginas: r.totalPaginas });
       setError(null);
     } catch (e) {
-      setError((e as Error).message);
+      if (control.current.vigente(token)) setError((e as Error).message);
     } finally {
-      setCargando(false);
+      if (control.current.vigente(token)) setCargando(false);
     }
   }, []);
 
@@ -109,9 +115,14 @@ function Formulario() {
     let activo = true;
     const detener = iniciarRefresco({
       leer: () => {
-        fetch(`/api/notas-credito/facturas?clienteId=${clienteId}&q=${encodeURIComponent(textoFactura)}&pagina=${pagFac.pagina}&porPagina=10`, { cache: "no-store" })
+        // Filtro APLICADO en este momento (no el capturado al crear el ciclo) y token para descartar respuestas de una búsqueda anterior (R05-02).
+        const { filtro, token } = control.current.leer();
+
+        if (filtro.clienteId !== clienteId) return;
+
+        fetch(`/api/notas-credito/facturas?clienteId=${filtro.clienteId}&q=${encodeURIComponent(filtro.q)}&pagina=${filtro.pagina}&porPagina=10`, { cache: "no-store" })
           .then((r) => (r.ok ? r.json() : null))
-          .then((j: { facturas: FacturaE[]; pagina: number; totalPaginas: number } | null) => { if (activo && j) { setFacturas(j.facturas); setPagFac({ pagina: j.pagina, totalPaginas: j.totalPaginas }); } })
+          .then((j: { facturas: FacturaE[]; pagina: number; totalPaginas: number } | null) => { if (activo && j && control.current.vigente(token)) { setFacturas(j.facturas); setPagFac({ pagina: j.pagina, totalPaginas: j.totalPaginas }); } })
           .catch(() => undefined);
       },
       visible: () => document.visibilityState === "visible",
@@ -121,9 +132,7 @@ function Formulario() {
     });
 
     return () => { activo = false; detener(); };
-    // textoFactura y la página se leen al arrancar el ciclo; cambiar de búsqueda recarga la lista y reinicia el ciclo.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hayNcePendiente, clienteId, pagFac.pagina]);
+  }, [hayNcePendiente, clienteId]);
 
   const abrirFactura = useCallback(async (id: string, precarga?: { motivo: number; sucursalId: string; puntoId: string | null; observacion: string; lineas: Array<{ linea: number; cantidad: string; monto: string }> }) => {
     setCargando(true);
@@ -270,7 +279,7 @@ function Formulario() {
             {cliente ? (
               <p>
                 <strong>{cliente.razonSocial}</strong> <small>{cliente.documento}</small>{" "}
-                <button type="button" className={ui.secondaryButton} onClick={() => { setCliente(null); setFacturas([]); }}>Cambiar cliente</button>
+                <button type="button" className={ui.secondaryButton} onClick={() => { control.current.aplicar({ clienteId: "", q: "", pagina: 1 }); setCliente(null); setFacturas([]); }}>Cambiar cliente</button>
               </p>
             ) : (
               <>
@@ -431,7 +440,7 @@ function Formulario() {
               <table>
                 <thead><tr><th>Ítem</th><th>Código</th><th>Descripción</th><th>IVA</th><th className={estilos.num}>Cantidad</th><th className={estilos.num}>Precio</th><th className={estilos.num}>Monto</th></tr></thead>
                 <tbody>
-                  {resumen.lineas.map((l) => <tr key={l.linea}><td>{l.linea}</td><td>{l.codigo}</td><td>{l.descripcion}</td><td>{etiquetaIvaLinea(l.afectacion, l.tasa, null)}</td><td className={estilos.num}>{fm(l.cantidad)}</td><td className={estilos.num}>{fm(l.precioUnitario)}</td><td className={estilos.num}>{fm(l.monto)}</td></tr>)}
+                  {resumen.lineas.map((l) => <tr key={l.linea}><td>{l.linea}</td><td>{l.codigo}</td><td>{l.descripcion}</td><td>{etiquetaIvaLinea(l.afectacion, l.tasa, l.proporcion)}</td><td className={estilos.num}>{fm(l.cantidad)}</td><td className={estilos.num}>{fm(l.precioUnitario)}</td><td className={estilos.num}>{fm(l.monto)}</td></tr>)}
                 </tbody>
               </table>
             </div>

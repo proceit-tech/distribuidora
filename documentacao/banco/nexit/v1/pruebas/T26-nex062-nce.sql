@@ -4,17 +4,32 @@
 
 -- Payload NCE coherente con la FE original (GAP-04: la función SQL confronta receptor e ítems): ítem de la línea p_linea con el importe/cantidad del crédito.
 CREATE OR REPLACE FUNCTION pg_temp.pay(p_base jsonb, p_sol jsonb, p_motivo int, p_linea int, p_cant numeric, p_monto numeric) RETURNS jsonb LANGUAGE plpgsql AS $$
-DECLARE d jsonb := p_sol->'Detalles'->(p_linea - 1); det jsonb;
+DECLARE
+  d jsonb := p_sol->'Detalles'->(p_linea - 1); det jsonb; v_cant numeric; v_prec numeric; v_afec int := (d->>'iAfecIVA')::int; v_tasa numeric := (d->>'dTasaIVA')::numeric; v_prop numeric := (d->>'dPropIVA')::numeric;
+  v_tb numeric; v_den numeric; v_base numeric; v_liq numeric; v_bexe numeric; v_exe numeric := 0; v_exo numeric := 0; v_s5 numeric := 0; v_s10 numeric := 0; v_i5 numeric := 0; v_i10 numeric := 0; v_b5 numeric := 0; v_b10 numeric := 0; v_sub jsonb;
 BEGIN
-  det := d || jsonb_build_object('dCantProSer', CASE WHEN p_motivo = 2 THEN p_cant ELSE 1 END, 'dPUniProSer', CASE WHEN p_motivo = 2 THEN d->'dPUniProSer' ELSE to_jsonb(p_monto) END, 'dTotOpeItem', p_monto);
-  RETURN jsonb_set(jsonb_set(jsonb_set(p_base, '{iMotEmi}', to_jsonb(p_motivo)), '{Subtotales,0,dTotGralOpe}', to_jsonb(p_monto)), '{Detalles}', jsonb_build_array(det));
+  v_cant := CASE WHEN p_motivo = 2 THEN p_cant ELSE 1 END;
+  v_prec := CASE WHEN p_motivo = 2 THEN (d->>'dPUniProSer')::numeric ELSE p_monto END;
+  v_tb := round(v_cant * v_prec, 8); v_den := 10000 + v_tasa * v_prop;
+  v_base := CASE WHEN v_afec IN (1, 4) THEN round(100 * v_tb * v_prop / v_den, 8) ELSE 0 END;
+  v_liq := CASE WHEN v_afec IN (1, 4) THEN round(v_base * v_tasa / 100, 8) ELSE 0 END;
+  v_bexe := CASE WHEN v_afec = 4 THEN round(100 * v_tb * (100 - v_prop) / v_den, 8) ELSE 0 END;
+  IF v_afec = 3 THEN v_exe := v_tb; ELSIF v_afec = 2 THEN v_exo := v_tb;
+  ELSIF v_afec = 1 THEN IF v_tasa = 5 THEN v_s5 := v_tb; ELSE v_s10 := v_tb; END IF;
+  ELSE v_exe := v_bexe; IF v_tasa = 5 THEN v_s5 := v_base + v_liq; ELSE v_s10 := v_base + v_liq; END IF; END IF;
+  IF v_afec IN (1, 4) THEN IF v_tasa = 5 THEN v_i5 := v_liq; v_b5 := v_base; ELSE v_i10 := v_liq; v_b10 := v_base; END IF; END IF;
+  det := d || jsonb_build_object('dCantProSer', v_cant, 'dPUniProSer', v_prec, 'dTotBruOpeItem', v_tb, 'dTotOpeItem', v_tb, 'dBasGravIVA', v_base, 'dLiqIVAItem', v_liq, 'dBasExe', v_bexe);
+  v_sub := jsonb_build_object('dSubExe', v_exe, 'dSubExo', v_exo, 'dSub5', v_s5, 'dSub10', v_s10, 'dTotOpe', v_exe + v_exo + v_s5 + v_s10, 'dTotDesc', 0, 'dTotDescGlotem', 0, 'dTotAntItem', 0, 'dTotAnt', 0,
+    'dPorcDescTotal', 0, 'dDescTotal', 0, 'dAnticipo', 0, 'dRedon', 0, 'dTotGralOpe', v_exe + v_exo + v_s5 + v_s10, 'dIVA5', v_i5, 'dIVA10', v_i10, 'dLiqTotIVA5', v_i5, 'dLiqTotIVA10', v_i10,
+    'dTotIVA', v_i5 + v_i10, 'dBaseGrav5', v_b5, 'dBaseGrav10', v_b10, 'dTBasGraIVA', v_b5 + v_b10, 'dTotalGs', v_exe + v_exo + v_s5 + v_s10);
+  RETURN jsonb_set(jsonb_set(jsonb_set(p_base, '{iMotEmi}', to_jsonb(p_motivo)), '{Subtotales}', jsonb_build_array(v_sub)), '{Detalles}', jsonb_build_array(det));
 END $$;
 
 DO $t$
 DECLARE
   v_h text := crypt(current_setting('nex.pw_prueba'), gen_salt('bf', 12));
   v_a uuid; v_b uuid; v_ua uuid; v_ub uuid; v_sa uuid; v_p uuid; v_fe uuid; v_n1 uuid; v_n2 uuid; v_n3 uuid; v_cdc text; v_cdc_nce text;
-  v_sol jsonb := '{"iTiDE":1,"dNomRec":"Cliente T26","dRucRec":"80000009","iNatRec":1,"cMoneOpe":"PYG","dTiCam":null,"Detalles":[{"dCodInt":"P1","dGtin":null,"dDesProSer":"Gaseosa 2L","cUniMed":77,"dCantProSer":2,"dPUniProSer":50000,"dTotOpeItem":100000,"iAfecIVA":1,"dPropIVA":100,"dTasaIVA":10},{"dCodInt":"P2","dGtin":null,"dDesProSer":"Agua","cUniMed":77,"dCantProSer":10,"dPUniProSer":5000,"dTotOpeItem":50000,"iAfecIVA":3,"dPropIVA":0,"dTasaIVA":0}]}'::jsonb;
+  v_sol jsonb := '{"iTiDE":1,"dNomRec":"Cliente T26","dRucRec":"80000009","iNatRec":1,"cMoneOpe":"PYG","dTiCam":null,"Detalles":[{"dCodInt":"P1","dGtin":null,"dDesProSer":"Gaseosa 2L","cUniMed":77,"dCantProSer":2,"dPUniProSer":50000,"dTotOpeItem":100000,"iAfecIVA":1,"dPropIVA":100,"dTasaIVA":10},{"dCodInt":"P2","dGtin":null,"dDesProSer":"Agua","cUniMed":77,"dCantProSer":10,"dPUniProSer":5000,"dTotOpeItem":50000,"iAfecIVA":3,"dPropIVA":0,"dTasaIVA":0},{"dCodInt":"P3","dGtin":null,"dDesProSer":"Mixto","cUniMed":77,"dCantProSer":3,"dPUniProSer":11000,"dTotOpeItem":33000,"iAfecIVA":4,"dPropIVA":50,"dTasaIVA":10}]}'::jsonb;
   r record;
   v_cant int;
   -- payload NCE mínimo coherente con la FE (el servidor TypeScript construye el real; aquí solo lo que valida la función SQL)
@@ -105,6 +120,20 @@ BEGIN
   PERFORM pg_temp.falla(format($f$SELECT * FROM fe_documento_crear_nce(%L, %L, %L, %L, 'clave-t26-g404', %L, 3, '[{"linea":1,"cantidad":0,"monto":1000}]'::jsonb, 'PYG', 1000, %L)$f$, v_a, v_ua, v_sa, v_p, v_fe, jsonb_set(pg_temp.pay(v_pay, v_sol, 3, 1, 0, 1000), '{Detalles}', '[]')), 'P0001', 'GAP-04: ítems del payload que no corresponden a las líneas → NEX:PAYLOAD_INVALIDO');
   PERFORM pg_temp.falla(format($f$SELECT * FROM fe_documento_crear_nce(%L, %L, %L, %L, 'clave-t26-g405', %L, 3, '[{"linea":1,"cantidad":0,"monto":1000}]'::jsonb, 'PYG', 1000, %L)$f$, v_a, v_ua, v_sa, v_p, v_fe, jsonb_set(pg_temp.pay(v_pay, v_sol, 3, 1, 0, 1000), '{Detalles,0,dCantProSer}', '5')), 'P0001', 'GAP-04: motivo monetario con cantidad distinta de 1 → NEX:PAYLOAD_INVALIDO');
   PERFORM pg_temp.ok((SELECT ultimo_numero = 3 FROM fe_punto_secuencias WHERE punto_id = v_p AND tipo_documento = 'NCE'), 'GAP-04: ningún payload adulterado consumió número de la secuencia NCE');
+
+  -- R05-01: valores fiscales derivados y subtotales incoherentes (con identidad, cantidad, importe y total correctos) → NEX:PAYLOAD_INVALIDO, sin consumir número
+  PERFORM pg_temp.falla(format($f$SELECT * FROM fe_documento_crear_nce(%L, %L, %L, %L, 'clave-t26-h501', %L, 3, '[{"linea":1,"cantidad":0,"monto":1000}]'::jsonb, 'PYG', 1000, %L)$f$, v_a, v_ua, v_sa, v_p, v_fe, jsonb_set(pg_temp.pay(v_pay, v_sol, 3, 1, 0, 1000), '{Detalles,0,dLiqIVAItem}', '1')), 'P0001', 'R05-01: liquidación de IVA del ítem alterada');
+  PERFORM pg_temp.falla(format($f$SELECT * FROM fe_documento_crear_nce(%L, %L, %L, %L, 'clave-t26-h502', %L, 3, '[{"linea":1,"cantidad":0,"monto":1000}]'::jsonb, 'PYG', 1000, %L)$f$, v_a, v_ua, v_sa, v_p, v_fe, jsonb_set(pg_temp.pay(v_pay, v_sol, 3, 1, 0, 1000), '{Detalles,0,dBasGravIVA}', '1')), 'P0001', 'R05-01: base gravada del ítem alterada');
+  PERFORM pg_temp.falla(format($f$SELECT * FROM fe_documento_crear_nce(%L, %L, %L, %L, 'clave-t26-h503', %L, 3, '[{"linea":1,"cantidad":0,"monto":1000}]'::jsonb, 'PYG', 1000, %L)$f$, v_a, v_ua, v_sa, v_p, v_fe, jsonb_set(pg_temp.pay(v_pay, v_sol, 3, 1, 0, 1000), '{Detalles,0,dTotBruOpeItem}', '999')), 'P0001', 'R05-01: total bruto del ítem alterado');
+  PERFORM pg_temp.falla(format($f$SELECT * FROM fe_documento_crear_nce(%L, %L, %L, %L, 'clave-t26-h504', %L, 3, '[{"linea":1,"cantidad":0,"monto":1000}]'::jsonb, 'PYG', 1000, %L)$f$, v_a, v_ua, v_sa, v_p, v_fe, jsonb_set(pg_temp.pay(v_pay, v_sol, 3, 1, 0, 1000), '{Subtotales,0,dIVA10}', '1')), 'P0001', 'R05-01: subtotal IVA 10 % alterado');
+  PERFORM pg_temp.falla(format($f$SELECT * FROM fe_documento_crear_nce(%L, %L, %L, %L, 'clave-t26-h505', %L, 3, '[{"linea":1,"cantidad":0,"monto":1000}]'::jsonb, 'PYG', 1000, %L)$f$, v_a, v_ua, v_sa, v_p, v_fe, jsonb_set(pg_temp.pay(v_pay, v_sol, 3, 1, 0, 1000), '{Subtotales,0,dTotIVA}', '1')), 'P0001', 'R05-01: total de IVA alterado');
+  PERFORM pg_temp.falla(format($f$SELECT * FROM fe_documento_crear_nce(%L, %L, %L, %L, 'clave-t26-h506', %L, 3, '[{"linea":1,"cantidad":0,"monto":1000}]'::jsonb, 'PYG', 1000, %L)$f$, v_a, v_ua, v_sa, v_p, v_fe, jsonb_set(pg_temp.pay(v_pay, v_sol, 3, 1, 0, 1000), '{Subtotales,0,dSub10}', '1')), 'P0001', 'R05-01: subtotal gravado 10 % alterado');
+  PERFORM pg_temp.falla(format($f$SELECT * FROM fe_documento_crear_nce(%L, %L, %L, %L, 'clave-t26-h507', %L, 3, '[{"linea":1,"cantidad":0,"monto":1000}]'::jsonb, 'PYG', 1000, %L)$f$, v_a, v_ua, v_sa, v_p, v_fe, jsonb_set(pg_temp.pay(v_pay, v_sol, 3, 1, 0, 1000), '{Subtotales,0,dTotDesc}', '5')), 'P0001', 'R05-01: descuento global no permitido');
+  PERFORM pg_temp.ok((SELECT ultimo_numero = 3 FROM fe_punto_secuencias WHERE punto_id = v_p AND tipo_documento = 'NCE'), 'R05-01: ningún payload con derivados incoherentes consumió número');
+  -- Positivo fiscal: línea de IVA parcial (10 %, proporción 50 %): los derivados correctos se aceptan
+  SELECT * INTO r FROM fe_documento_crear_nce(v_a, v_ua, v_sa, v_p, 'clave-t26-h508', v_fe, 3, '[{"linea":3,"cantidad":0,"monto":10500}]'::jsonb, 'PYG', 10500, pg_temp.pay(v_pay, v_sol, 3, 3, 0, 10500));
+  PERFORM pg_temp.ok(r.o_numero = '0000004' AND NOT r.o_reutilizado, 'R05-01: con derivados y subtotales correctos (IVA parcial 50 %) la NCE se crea y toma 0000004');
+  UPDATE documentos_electronicos SET estado_sifen = 'RECHAZADO' WHERE id = r.o_documento_id;
 
   -- R02-02 (flujo_nce): un operador con SOLO CREAR registra la consulta de una FE/NCE pendiente con su identidad real; no puede usar la función EDITAR original; el estado final y otro tenant se rechazan
   DECLARE

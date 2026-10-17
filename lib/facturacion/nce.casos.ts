@@ -8,11 +8,11 @@ import { join } from "node:path";
 import { contador } from "@/lib/clientes/contador-casos";
 import { UMBRAL_REVISION_HORAS } from "@/lib/facturacion/estados";
 import { leerCuerpoNce } from "@/lib/facturacion/nce";
-import { CAMPOS_RECEPTOR, calcularNce, construirPayloadNCE, esMotivoNce, lineasParaSql, saldoDe, validarEntradaNce, type EntradaNce, type LineaOriginal } from "@/lib/facturacion/payload-nce";
+import { CAMPOS_RECEPTOR, type LineaNceEntrada as LineaNceEntradaT, calcularNce, construirPayloadNCE, esMotivoNce, lineasParaSql, saldoDe, validarEntradaNce, type EntradaNce, type LineaOriginal } from "@/lib/facturacion/payload-nce";
 import { CADENCIA_SEGUNDOS, ejecutarLote, segundosHastaProxima } from "@/lib/facturacion/consulta-automatica";
 import { textoDec } from "@/lib/facturacion/calculo";
 import { iniciarRefresco, retardoRefresco } from "@/lib/facturacion/refresco-documentos";
-import { entradasIniciales, etiquetaIvaLinea } from "@/lib/facturacion/nce-entradas";
+import { crearControlListado, entradasIniciales, etiquetaIvaLinea } from "@/lib/facturacion/nce-entradas";
 import { listarFacturasElegibles } from "@/lib/facturacion/nce";
 import { reconciliarNcePendientes, repeticion } from "@/lib/facturacion/nce-emision";
 import { ErrorFacturacion } from "@/lib/facturacion/shared";
@@ -291,7 +291,7 @@ export async function verificarCasosNce(): Promise<string[]> {
   // ── 12. GAP-01…04 (checklist integral) ─────────────────────────────────────────────────────────────
   // GAP-01: código, tributación (IVA) y monto ya acreditado visibles en la tabla y en la revisión
   igual("GAP-01: etiqueta de IVA por línea", [etiquetaIvaLinea(1, 10, "100"), etiquetaIvaLinea(1, 5, null), etiquetaIvaLinea(2, 0, null), etiquetaIvaLinea(3, 0, null), etiquetaIvaLinea(4, 10, "50")], ["Gravado 10%", "Gravado 5%", "Exonerado", "Exento", "Gravado parcial 10% (prop. 50%)"]);
-  cierto("GAP-01: la tabla muestra Código, IVA y Monto acreditado con sus celdas; el modal muestra Código e IVA por línea", ["<th>Código</th>", "<th>IVA</th>", "Monto acreditado</th>", "{l.codigoInterno}", "{fm(l.montoAcreditado)}", "etiquetaIvaLinea(l.afectacion, l.tasa, l.proporcion)", "<td>{l.codigo}</td>", "etiquetaIvaLinea(l.afectacion, l.tasa, null)"].every((k) => pagNce.includes(k)));
+  cierto("GAP-01: la tabla muestra Código, IVA y Monto acreditado con sus celdas; el modal muestra Código e IVA por línea", ["<th>Código</th>", "<th>IVA</th>", "Monto acreditado</th>", "{l.codigoInterno}", "{fm(l.montoAcreditado)}", "etiquetaIvaLinea(l.afectacion, l.tasa, l.proporcion)", "<td>{l.codigo}</td>"].every((k) => pagNce.includes(k)));
 
   // GAP-02: el campo admite CDC completo y el servidor lo busca exacto aunque se pegue con espacios o guiones
   cierto("GAP-02: el campo de búsqueda admite 44 dígitos y declara número, CDC y fecha", /maxLength=\{80\}/.test(pagNce) && /CDC \(44 dígitos\)/.test(pagNce) && !/maxLength=\{40\}/.test(pagNce));
@@ -321,5 +321,59 @@ export async function verificarCasosNce(): Promise<string[]> {
   cierto("GAP-04: importe del ítem = crédito; Devolución conserva precio original y cantidad devuelta; 3/4/8 llevan cantidad 1 y precio = monto", /dTotOpeItem'\)::numeric IS DISTINCT FROM l\.monto/.test(crearFn) && /p_motivo = 2 AND \(\(v_det->>'dCantProSer'\)::numeric IS DISTINCT FROM l\.cantidad OR \(v_det->>'dPUniProSer'\)::numeric IS DISTINCT FROM \(v_orig->>'dPUniProSer'\)::numeric\)/.test(crearFn) && /p_motivo <> 2 AND \(\(v_det->>'dCantProSer'\)::numeric IS DISTINCT FROM 1 OR \(v_det->>'dPUniProSer'\)::numeric IS DISTINCT FROM l\.monto\)/.test(crearFn));
   cierto("GAP-04: las validaciones ocurren antes de reservar la secuencia (sin consumir número) y se conservan motivos, saldos, bloqueo e idempotencia", crearFn.indexOf("NEX:PAYLOAD_INVALIDO', 'x'") < 0 && crearFn.lastIndexOf("NEX:PAYLOAD_INVALIDO") < crearFn.indexOf("tipo_documento = 'NCE' FOR UPDATE") && /NEX:SALDO_MONTO/.test(crearFn) && /NEX:NCE_PENDIENTE/.test(crearFn) && /NEX:MOTIVO_FIJADO/.test(crearFn) && /IDEMPOTENCIA_CONFLICTO/.test(crearFn));
   cierto("GAP-04: T26 ejercita receptor, afectación, importe, ítems y cantidad adulterados y que no se consume número", ["dDirRec", "iAfecIVA", "Detalles,0,dTotOpeItem", "'{Detalles}', '[]'", "dCantProSer", "ningún payload adulterado consumió número"].every((k) => t26.includes(k)) && /FUNCTION pg_temp\.pay/.test(t26));
+  // ── 13. R05-01/02/03 ─────────────────────────────────────────────────────────────────────────────
+  // R05-01: SQL recalcula bruto/base/liquidación/base exenta por ítem y los subtotales con la misma fórmula y redondeo que el motor TypeScript, antes de reservar numeración
+  cierto("R05-01: la función SQL recalcula los derivados por ítem y compara bruto, total, base gravada, liquidación y base exenta", ["v_tb := round(v_cant_p * v_prec_p, 8)", "round(100 * v_tb * v_prop / v_den, 8)", "round(v_base * v_tasa / 100, 8)", "round(100 * v_tb * (100 - v_prop) / v_den, 8)", "dTotBruOpeItem", "dBasGravIVA", "dLiqIVAItem", "dBasExe"].every((k) => crearFn.includes(k)));
+  cierto("R05-01: SQL compara los subtotales (exento, exonerado, 5 %, 10 %, IVA, bases, total IVA, total) y exige una sola fila con descuentos/anticipos/redondeo en cero", ["dSubExe", "dSubExo", "dSub5", "dSub10", "dTotOpe", "dIVA5", "dIVA10", "dLiqTotIVA5", "dLiqTotIVA10", "dTotIVA", "dBaseGrav5", "dBaseGrav10", "dTBasGraIVA", "dTotDesc", "dAnticipo", "dRedon"].every((k) => crearFn.includes(k)) && /jsonb_array_length\(p_payload->'Subtotales'\) <> 1/.test(crearFn));
+  cierto("R05-01: las comprobaciones derivadas ocurren antes de reservar la secuencia NCE", crearFn.indexOf("los subtotales de la nota de crédito no coinciden") < crearFn.indexOf("tipo_documento = 'NCE' FOR UPDATE") && crearFn.indexOf("importes fiscales derivados") < crearFn.indexOf("tipo_documento = 'NCE' FOR UPDATE"));
+  {
+    // Paridad: lo que genera el serializador cumple la fórmula que SQL recalcula (redondeo mitad hacia arriba a 8 decimales sobre racionales exactos, independiente del motor)
+    const E8 = BigInt(100000000);
+    const div = (num: bigint, den: bigint) => (BigInt(2) * num + den) / (BigInt(2) * den);   // cociente entero con redondeo mitad hacia arriba
+    const txt8 = (v: bigint) => { const e = v / E8; const fr = (v % E8).toString().padStart(8, "0").replace(/0+$/, ""); return fr ? `${e}.${fr}` : `${e}`; };
+    const L4: LineaOriginal = { linea: 3, codigoInterno: "P3", gtin: null, descripcion: "Mixto", unidadSifen: 77, cantidad: "3", precio: "11000", total: "33000", afectacion: 4, tasa: 10, proporcion: "50" };
+    const casos: Array<[number, LineaNceEntradaT]> = [
+      [3, { original: L1, acreditado: SIN, monto: "10000" }], [3, { original: L4, acreditado: SIN, monto: "10500" }], [3, { original: L2, acreditado: SIN, monto: "5000" }],
+      [2, { original: L1, acreditado: SIN, cantidad: "1.5" }], [2, { original: L1, acreditado: SIN, cantidad: "1" }],
+    ];
+    const resultados = casos.map(([motivo, lin]) => {
+      const pl = construirPayloadNCE(entrada(motivo, [lin]), rec, CDC) as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+      const d = pl.Detalles[0];
+      const cant = BigInt(Math.round(Number(d.dCantProSer) * 1e8));
+      const prec = BigInt(Math.round(Number(d.dPUniProSer) * 1e8));
+      const tb = div(cant * prec, E8);
+      const prop = BigInt(Math.round(Number(d.dPropIVA) * 1e8));
+      const tasa = BigInt(d.dTasaIVA);
+      const den = BigInt(10000) * E8 + tasa * prop;       // (10000 + tasa·prop) en escala 1e-8
+      const grav = d.iAfecIVA === 1 || d.iAfecIVA === 4;
+      const base = grav ? div(BigInt(100) * tb * prop, den) : BigInt(0);
+      return [d.dTotBruOpeItem === Number(txt8(tb)), grav ? d.dBasGravIVA === Number(txt8(base)) : d.dBasGravIVA === 0, grav ? d.dLiqIVAItem === Number(txt8(div(base * tasa, BigInt(100)))) : d.dLiqIVAItem === 0];
+    });
+
+    igual("R05-01: paridad TypeScript ↔ fórmula SQL (bruto, base gravada, liquidación) en IVA 10 %, parcial 50 %, exento y devolución con decimales", resultados, casos.map(() => [true, true, true]));
+  }
+  const t26b = t26;
+
+  cierto("R05-01: T26 prueba derivados y subtotales alterados (liquidación, base, bruto, IVA 10 %, total IVA, subtotal gravado, descuento) y un caso positivo con IVA parcial", ["dLiqIVAItem", "dBasGravIVA", "dTotBruOpeItem", "{Subtotales,0,dIVA10}", "{Subtotales,0,dTotIVA}", "{Subtotales,0,dSub10}", "{Subtotales,0,dTotDesc}", "\"dPropIVA\":50", "0000004"].every((k) => t26b.includes(k)));
+
+  // R05-02: el refresco usa el filtro aplicado y descarta respuestas de un filtro anterior
+  {
+    const c = crearControlListado({ clienteId: "A", q: "", pagina: 1 });
+    const t1 = c.aplicar({ clienteId: "A", q: "uno", pagina: 1 });
+    const lectura = c.leer();
+
+    igual("R05-02: el refresco lee el filtro APLICADO (búsqueda uno)", [lectura.filtro.q, c.vigente(lectura.token)], ["uno", true]);
+
+    const t2 = c.aplicar({ clienteId: "A", q: "dos", pagina: 1 });
+
+    igual("R05-02: tras la búsqueda nueva, las respuestas de la anterior (manual o refresco) quedan descartadas y el refresco lee el filtro nuevo", [c.vigente(t1), c.vigente(lectura.token), c.vigente(t2), c.leer().filtro.q], [false, false, true, "dos"]);
+    c.aplicar({ clienteId: "", q: "", pagina: 1 });
+    igual("R05-02: al cambiar de cliente se invalida cualquier petición en vuelo", [c.vigente(t2), c.leer().filtro.clienteId], [false, ""]);
+  }
+  cierto("R05-02: la pantalla registra cada filtro aplicado, el refresco no usa el texto capturado y solo aplica respuestas vigentes", /control\.current\.aplicar\(\{ clienteId, q, pagina \}\)/.test(pagNce) && /control\.current\.leer\(\)/.test(pagNce) && /control\.current\.vigente\(token\)/.test(pagNce) && !/encodeURIComponent\(textoFactura\)&pagina=\$\{pagFac/.test(pagNce) && /\}, \[hayNcePendiente, clienteId\]\);/.test(pagNce) && !/actualizar=1/.test(pagNce.slice(pagNce.indexOf("GAP-03"), pagNce.indexOf("const abrirFactura"))));
+
+  // R05-03: la revisión final conserva la proporción del IVA parcial
+  cierto("R05-03: el resumen del servidor incluye la proporción de IVA y el modal la usa", /afectacion: i\.original\.afectacion, tasa: i\.original\.tasa, proporcion: i\.original\.proporcion/.test(fuente) && /proporcion: string \}>;/.test(fuente) && /etiquetaIvaLinea\(l\.afectacion, l\.tasa, l\.proporcion\)/.test(pagNce.slice(pagNce.indexOf("Revisar y emitir"))) && !/etiquetaIvaLinea\(l\.afectacion, l\.tasa, null\)/.test(pagNce));
+  igual("R05-03: etiqueta del IVA parcial con proporción", etiquetaIvaLinea(4, 10, "50"), "Gravado parcial 10% (prop. 50%)");
   return fallos;
 }

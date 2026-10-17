@@ -290,7 +290,7 @@ export type PreparacionNce = {
     moneda: string;
     cambio: string | null;
     observacion: string;
-    lineas: Array<{ linea: number; codigo: string; descripcion: string; unidad: string; cantidad: string; precioUnitario: string; monto: string; afectacion: number; tasa: number }>;
+    lineas: Array<{ linea: number; codigo: string; descripcion: string; unidad: string; cantidad: string; precioUnitario: string; monto: string; afectacion: number; tasa: number; proporcion: string }>;
     totales: { exento: string; exonerado: string; gravado5: string; gravado10: string; iva5: string; iva10: string; totalIva: string; total: string };
     numero: string;
   };
@@ -361,7 +361,7 @@ export async function prepararNce(db: Db, empresaId: string, usuarioId: string, 
       observacion: cuerpo.observacion.trim(),
       lineas: calculo.items.map((i) => ({
         linea: i.linea, codigo: i.original.codigoInterno, descripcion: i.original.descripcion, unidad: (porLinea.get(i.linea) as LineaDetalle).unidad, cantidad: textoDec(i.cantidad), precioUnitario: textoDec(i.precio), monto: i.montoTexto,
-        afectacion: i.original.afectacion, tasa: i.original.tasa,
+        afectacion: i.original.afectacion, tasa: i.original.tasa, proporcion: i.original.proporcion,
       })),
       totales: calculo.totales,
       numero: "Se asigna al emitir la nota de crédito",
