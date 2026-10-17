@@ -14,7 +14,7 @@ import { textoDec } from "@/lib/facturacion/calculo";
 import { iniciarRefresco, retardoRefresco } from "@/lib/facturacion/refresco-documentos";
 import { MAX_ENTEROS_F023 } from "@/lib/facturacion/monedas";
 import { crearControlListado, entradasIniciales, etiquetaIvaLinea } from "@/lib/facturacion/nce-entradas";
-import { listarFacturasElegibles } from "@/lib/facturacion/nce";
+import { LIMITE_BYTES_PAYLOAD_NCE, listarFacturasElegibles } from "@/lib/facturacion/nce";
 import { reconciliarNcePendientes, repeticion } from "@/lib/facturacion/nce-emision";
 import { ErrorFacturacion } from "@/lib/facturacion/shared";
 
@@ -420,5 +420,55 @@ export async function verificarCasosNce(): Promise<string[]> {
 
     igual("ZERO-03: v1=120 → 120; v1=100 y v2=120 → 120 (no 220)", [total([120]), total([100, 120])], [120, 120]);
   }
+  // ── 15. NCE-DB-01/02/04 y NCE-UI-03 (auditoría estructural) ────────────────────────────────────────
+  const L1000: LineaOriginal = { ...L2, precio: "1000", total: "1000", cantidad: "1" };
+
+  // DB-01: PYG sin centavos en el TOTAL
+  cierto("PYG-01: devolución de 0.0001 × Gs. 1.000 (total 0,1) se rechaza con mensaje útil", validarEntradaNce(entrada(2, [{ original: L1000, acreditado: SIN, cantidad: "0.0001" }])).some((m) => /guaraníes debe ser un número entero/.test(m)));
+  cierto("PYG-02: devolución de 1 × Gs. 1.000 y de 0.5 × Gs. 50.000 (total entero) válidas; descuento monetario PYG entero sigue válido", validarEntradaNce(entrada(2, [{ original: L1000, acreditado: SIN, cantidad: "1" }])).length === 0 && validarEntradaNce(entrada(2, [{ original: L1, acreditado: SIN, cantidad: "0.5" }])).length === 0 && validarEntradaNce(entrada(3, [{ original: L1, acreditado: SIN, monto: "33000" }])).length === 0);
+  cierto("PYG-03: bases e IVA siguen con 8 decimales (devolución 1.5 × 50.000 al 10 %)", calcularNce(entrada(2, [{ original: L1, acreditado: SIN, cantidad: "1.5" }])).totales.iva10 === "6818.18181818" && calcularNce(entrada(2, [{ original: L1, acreditado: SIN, cantidad: "1.5" }])).totales.total === "75000");
+  cierto("PYG-03: el rechazo no construye payload ni líneas (nada que enviar a SQL)", (() => { try { construirPayloadNCE(entrada(2, [{ original: L1000, acreditado: SIN, cantidad: "0.0001" }]), rec, CDC); return false; } catch { return true; } })());
+
+  // DB-02: total exacto en numeric(20,4)
+  const L05: LineaOriginal = { ...L1000, precio: "0.5", total: "0.5" };
+  const usdE = (lineas: EntradaNce["lineas"], motivo = 3) => entrada(motivo, lineas, { moneda: "USD", cambio: "7300" });
+
+  cierto("PREC-01: total USD 0,001 (3 decimales) y 0,0001 (4) representables; 0,00005 (5 decimales) no, sin tocar la validación de moneda y cambio", validarEntradaNce(usdE([{ original: L1, acreditado: SIN, monto: "0.001" }])).length === 0
+    && validarEntradaNce(usdE([{ original: L2, acreditado: SIN, monto: "0.0001" }])).length === 0
+    && validarEntradaNce(usdE([{ original: { ...L05, cantidad: "1" }, acreditado: SIN, cantidad: "0.0001" }], 2)).some((m) => /4 decimales/.test(m)));
+  cierto("PREC-02: total 0,0001 (mínimo positivo) válido; total cero sigue inválido", calcularNce(usdE([{ original: L2, acreditado: SIN, monto: "0.0001" }])).totales.total === "0.0001" && validarEntradaNce(usdE([{ original: L2, acreditado: SIN, monto: "0" }])).length > 0);
+  {
+    const p = construirPayloadNCE(usdE([{ original: L2, acreditado: SIN, monto: "0.0001" }]), rec, CDC) as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+    const li = lineasParaSql(usdE([{ original: L2, acreditado: SIN, monto: "0.0001" }]));
+
+    igual("PREC-03: total del JSON, suma de líneas y monto de crédito coinciden exactamente (0.0001)", [p.Subtotales[0].dTotGralOpe, p.Detalles[0].dTotOpeItem, li[0].monto], [0.0001, 0.0001, "0.0001"]);
+  }
+  cierto("PREC-03: SQL exige p_total = dTotGralOpe recalculado, ≤ 4 decimales, < 10^16 y entero en PYG, antes de reservar numeración", /p_total <> v_total_det OR scale\(v_total_n4\) > 4 OR p_total >= 10000000000000000 OR \(p_moneda = 'PYG' AND scale\(v_total_n4\) > 0\)/.test(crearFx) && crearFx.indexOf("v_total_n4 := trim_scale(p_total)") < crearFx.indexOf("tipo_documento = 'NCE' FOR UPDATE") && /v_suma <> p_total/.test(crearFx));
+  cierto("PREC-04: NEX-047/048/049/050/054 sin tocar (sin ALTER de documentos_electronicos.total) y límites FE intactos", !/ALTER TABLE public\.documentos_electronicos\s+ALTER COLUMN total/i.test(sql) && !/numeric\(20,\s*8\)[^;]*total/i.test(sql.slice(sql.indexOf("documentos_electronicos"), sql.indexOf("documentos_electronicos") + 50)));
+  cierto("PYG/PREC en T26: devolución fraccionaria rechazada sin consumir número y entera válida", ["clave-t26-py01", "clave-t26-py02", "PYG-01", "PYG-02", "PYG-03"].every((k) => t26.includes(k)));
+
+  // UI-03: CDC original distinto del CDC propio
+  const compartido = leer("lib/facturacion/shared.ts");
+  const colNce = compartido.slice(compartido.indexOf("const COLUMNAS_NCE"), compartido.indexOf("const DESDE_NCE"));
+
+  cierto("UI-01: el SELECT de NCE devuelve el CDC de la factura original desde nce_origen (feCdc), solo en la consulta con alcance de empresa/sucursal, y la consulta básica sin NEX-062 queda como respaldo", /o\.fe_cdc AS "feCdc"/.test(colNce) && /LEFT JOIN nce_origen o ON o\.empresa_id = d\.empresa_id AND o\.nce_id = d\.id/.test(compartido) && /\${ALCANCE\}/.test(compartido) && /conNce \? SELECT_NCE : SELECT/.test(compartido));
+  cierto("UI-01/02: el detalle muestra «CDC de la factura original» y «CDC de la nota de crédito» (Aún no informado si falta) y las FE conservan «CDC»", /CDC de la factura original<\/dt><dd[^>]*>\{d\.feCdc \?\? "—"\}/.test(docs) && /\{d\.tipo === "NCE" \? "CDC de la nota de crédito" : "CDC"\}/.test(docs) && /\{d\.cdc \?\? "Aún no informado"\}/.test(docs) && /feCdc\?: string \| null/.test(docs));
+
+  // Tamaño del payload (contrato de límites): 999 líneas excederían el CHECK de NEX-048; se detecta antes de crear
+  cierto("LIM-01: el payload se mide antes de crear la NCE (tope conservador de 240000 bytes frente al CHECK de 262144 de NEX-048) con mensaje claro y 422", /LIMITE_BYTES_PAYLOAD_NCE = 240000/.test(fuente) && /Buffer\.byteLength\(JSON\.stringify\(payload\), "utf8"\) > LIMITE_BYTES_PAYLOAD_NCE/.test(fuente) && fuente.indexOf("LIMITE_BYTES_PAYLOAD_NCE)") < fuente.indexOf("const calculo = calcularNce(entrada)") && /pg_column_size\(payload\) < 262144/.test(leer("documentacao/banco/nexit/v1/migraciones/NEX-048-facturacion-emision-fe.sql")));
+  {
+    const muchas: LineaOriginal[] = Array.from({ length: 999 }, (_, i) => ({ ...L2, linea: i + 1, descripcion: "Producto de prueba con descripcion tipica de cuarenta" }));
+    const big = construirPayloadNCE(entrada(3, muchas.map((o) => ({ original: o, acreditado: SIN, monto: "500" }))), rec, CDC);
+    const chico = construirPayloadNCE(entrada(3, muchas.slice(0, 10).map((o) => ({ original: o, acreditado: SIN, monto: "500" }))), rec, CDC);
+
+    cierto("LIM-01: 999 líneas superan el tope y 10 líneas no (medición real del JSON)", Buffer.byteLength(JSON.stringify(big), "utf8") > LIMITE_BYTES_PAYLOAD_NCE && Buffer.byteLength(JSON.stringify(chico), "utf8") < LIMITE_BYTES_PAYLOAD_NCE);
+  }
+
+  // DB-04: FK compuesta
+  const tablas = sql.slice(sql.indexOf("CREATE TABLE public.nce_origen"), sql.indexOf("CREATE OR REPLACE FUNCTION public.nce_solo_altas"));
+
+  cierto("DB-04-01: nce_origen expone UNIQUE (empresa, nce, fe) y nce_lineas referencia (empresa, nce, fe) con esa clave; sin FK duplicada de 2 columnas", /CONSTRAINT nce_origen_identidad_uk UNIQUE \(empresa_id, nce_id, fe_id\)/.test(tablas) && /FOREIGN KEY \(empresa_id, nce_id, fe_id\) REFERENCES public\.nce_origen \(empresa_id, nce_id, fe_id\) ON DELETE CASCADE/.test(tablas) && !/FOREIGN KEY \(empresa_id, nce_id\) REFERENCES public\.nce_origen/.test(tablas));
+  cierto("DB-04-01: la imutabilidad (solo altas), el índice por FE/ordinal y el borrado en cascada (reinicio DEMO) se conservan", /nce_lineas_inmutable_fila_trg/.test(sql) && /nce_lineas_inmutable_truncate_trg/.test(sql) && /nce_lineas_fe_idx ON public\.nce_lineas \(empresa_id, fe_id, linea\)/.test(tablas));
+  cierto("DB-04-02: T26 prueba el fe_id incorrecto (23503), el correcto, y UPDATE/DELETE prohibidos", ["23503", "FK compuesta", "solo altas (UPDATE)", "solo altas (DELETE)"].every((k) => t26.includes(k)));
   return fallos;
 }

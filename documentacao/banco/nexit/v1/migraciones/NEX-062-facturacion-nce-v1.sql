@@ -43,7 +43,9 @@ CREATE TABLE public.nce_origen (
   PRIMARY KEY (empresa_id, nce_id),
   CONSTRAINT nce_origen_nce_fk FOREIGN KEY (empresa_id, nce_id) REFERENCES public.documentos_electronicos (empresa_id, id) ON DELETE CASCADE,
   CONSTRAINT nce_origen_fe_fk  FOREIGN KEY (empresa_id, fe_id)  REFERENCES public.documentos_electronicos (empresa_id, id) ON DELETE CASCADE,
-  CONSTRAINT nce_origen_distintos_chk CHECK (nce_id <> fe_id)
+  CONSTRAINT nce_origen_distintos_chk CHECK (nce_id <> fe_id),
+  -- NCE-DB-04: clave de identidad (empresa, NCE, FE) que anclan las líneas acreditadas: una línea no puede declarar otra FE que la de su NCE.
+  CONSTRAINT nce_origen_identidad_uk UNIQUE (empresa_id, nce_id, fe_id)
 );
 CREATE INDEX nce_origen_fe_idx ON public.nce_origen (empresa_id, fe_id);
 
@@ -55,7 +57,7 @@ CREATE TABLE public.nce_lineas (
   cantidad   numeric(20,8) NOT NULL DEFAULT 0 CHECK (cantidad >= 0),
   monto      numeric(24,8) NOT NULL CHECK (monto > 0),
   PRIMARY KEY (empresa_id, nce_id, linea),
-  CONSTRAINT nce_lineas_origen_fk FOREIGN KEY (empresa_id, nce_id) REFERENCES public.nce_origen (empresa_id, nce_id) ON DELETE CASCADE
+  CONSTRAINT nce_lineas_origen_fk FOREIGN KEY (empresa_id, nce_id, fe_id) REFERENCES public.nce_origen (empresa_id, nce_id, fe_id) ON DELETE CASCADE
 );
 CREATE INDEX nce_lineas_fe_idx ON public.nce_lineas (empresa_id, fe_id, linea);
 
@@ -132,6 +134,7 @@ DECLARE
   v_exe numeric := 0; v_exo numeric := 0; v_s5 numeric := 0; v_s10 numeric := 0; v_i5 numeric := 0; v_i10 numeric := 0; v_b5 numeric := 0; v_b10 numeric := 0;
   v_sub jsonb;
   v_cambio numeric; v_gs numeric; v_total_det numeric;
+  v_total_n4 numeric;
   v_det jsonb;
   v_orig jsonb;
 BEGIN
@@ -276,6 +279,12 @@ BEGIN
   -- ZERO-02: moneda del catálogo; en PYG sin cambio ni condición de cambio; en USD/BRL el cambio ORIGINAL de la FE (no el cadastral), dCondTiCam = 1 y F023 dTotalGs = dTotGralOpe × dTiCam EXACTO
   -- (≤ 8 decimales y ≤ 15 dígitos enteros, sin redondeo ni truncamiento; ausente, inexacto o fuera de límite → no se reserva número).
   v_total_det := v_exe + v_exo + v_s5 + v_s10;
+  -- NCE-DB-01/02: el total (p_total, dTotGralOpe y la suma de los ítems) debe caber EXACTO en documentos_electronicos.total numeric(20,4) (≤ 4 decimales, < 10^16) y, en PYG, ser entero. Sin redondeo ni
+  -- truncamiento; si no cumple, no se reserva número. (La coerción numeric(20,4) del INSERT redondearía en silencio y dejaría total ≠ líneas/JSON.)
+  v_total_n4 := trim_scale(p_total);
+  IF p_total <> v_total_det OR scale(v_total_n4) > 4 OR p_total >= 10000000000000000 OR (p_moneda = 'PYG' AND scale(v_total_n4) > 0) THEN
+    RAISE EXCEPTION 'el total de la nota de crédito debe poder guardarse exacto (hasta 4 decimales; entero en guaraníes) y coincidir con la suma de sus ítems' USING ERRCODE = 'P0001', DETAIL = 'NEX:PAYLOAD_INVALIDO';
+  END IF;
   IF p_moneda NOT IN ('PYG', 'USD', 'BRL') THEN
     RAISE EXCEPTION 'la moneda de la nota de crédito no es válida' USING ERRCODE = 'P0001', DETAIL = 'NEX:PAYLOAD_INVALIDO';
   END IF;

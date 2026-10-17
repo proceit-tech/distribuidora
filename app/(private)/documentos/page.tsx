@@ -37,7 +37,7 @@ type Documento = {
   estadoEmail: EstadoEmail; estadoGatewayTexto: string | null; codRespuesta: string | null; mensajeRespuesta: string | null; fechaFirma: string | null; fechaEnvio: string | null;
   ultimaConsultaAt: string | null; ultimaConsultaResultado: string | null; lote: string | null; envioErrorTipo: "AUTENTICACION" | "RECHAZO" | "TRANSITORIO" | null;
   /** NCE (PRO-94): factura original y motivo; `corregible` = rechazo definitivo (acción «Corregir y emitir nueva»); `requiereRevision` = mucho tiempo pendiente (solo etiqueta). */
-  feNumero?: string | null; feId?: string | null; nceMotivo?: number | null; corregible?: boolean; requiereRevision?: boolean;
+  feNumero?: string | null; feId?: string | null; feCdc?: string | null; nceMotivo?: number | null; corregible?: boolean; requiereRevision?: boolean;
 };
 
 const MOTIVO_NCE: Record<number, string> = { 2: "Devolución", 3: "Descuento", 4: "Bonificación", 8: "Ajuste de precio" };
@@ -404,7 +404,8 @@ export default function DocumentosPage() {
                         <td colSpan={6} style={{ background: "var(--surface-muted, #f6f8f8)" }}>
                           <dl style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "6px 16px", margin: "6px 0" }}>
                             {d.tipo === "NCE" ? <div><dt className={ui.muted}>Factura original</dt><dd style={{ margin: 0 }}>{d.feNumero ?? "—"}{d.nceMotivo ? ` · Motivo: ${MOTIVO_NCE[d.nceMotivo] ?? d.nceMotivo}` : ""}</dd></div> : null}
-                            <div><dt className={ui.muted}>CDC</dt><dd className={ui.mono} style={{ overflowWrap: "anywhere", margin: 0 }}>{d.cdc ?? "Aún no informado"}</dd></div>
+                            {d.tipo === "NCE" ? <div><dt className={ui.muted}>CDC de la factura original</dt><dd className={ui.mono} style={{ overflowWrap: "anywhere", margin: 0 }}>{d.feCdc ?? "—"}</dd></div> : null}
+                            <div><dt className={ui.muted}>{d.tipo === "NCE" ? "CDC de la nota de crédito" : "CDC"}</dt><dd className={ui.mono} style={{ overflowWrap: "anywhere", margin: 0 }}>{d.cdc ?? "Aún no informado"}</dd></div>
                             <div><dt className={ui.muted}>Estado informado</dt><dd style={{ margin: 0 }}>{d.estadoGatewayTexto ?? "—"}</dd></div>
                             <div><dt className={ui.muted}>Último mensaje SIFEN</dt><dd style={{ margin: 0 }}>{d.codRespuesta ? `${d.codRespuesta} · ` : ""}{d.mensajeRespuesta ?? "—"}</dd></div>
                             <div><dt className={ui.muted}>Lote</dt><dd style={{ margin: 0 }}>{d.lote ?? "No informado"}</dd></div>

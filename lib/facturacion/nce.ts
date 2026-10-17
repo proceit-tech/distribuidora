@@ -44,6 +44,9 @@ export type CuerpoNce = {
   lineas: Array<{ linea: number; cantidad?: string; monto?: string }>;
 };
 
+/** Tope conservador (bytes del JSON) frente al CHECK de 262144 bytes de la solicitud persistida (NEX-048). */
+export const LIMITE_BYTES_PAYLOAD_NCE = 240000;
+
 export function leerCuerpoNce(c: Record<string, unknown>): CuerpoNce | string {
   if (typeof c.facturaId !== "string" || !UUID.test(c.facturaId)) return "Seleccione la factura original.";
   if (!esMotivoNce(c.motivo)) return "Seleccione el motivo de la nota de crédito.";
@@ -346,6 +349,10 @@ export async function prepararNce(db: Db, empresaId: string, usuarioId: string, 
   if (errores.length > 0) throw new ErrorValidacionFiscal(422, "La nota de crédito no cumple las reglas fiscales.", errores);
 
   const payload = construirPayloadNCE(entrada, fe.receptor, fe.cdc);
+
+  // La solicitud se guarda en documento_electronico_solicitudes.payload con CHECK pg_column_size(payload) < 262144 (NEX-048). Con muchas líneas el JSON puede excederlo: se avisa ANTES (mensaje claro,
+  // sin intentar crear) en vez de fallar dentro de la función SQL. Umbral conservador sobre el JSON UTF-8.
+  if (Buffer.byteLength(JSON.stringify(payload), "utf8") > LIMITE_BYTES_PAYLOAD_NCE) throw new ErrorFacturacion(422, "La nota de crédito tiene demasiadas líneas para un solo documento electrónico. Divídala en dos notas de crédito (cada una sobre líneas distintas).");
   const calculo = calcularNce(entrada);
 
   return {

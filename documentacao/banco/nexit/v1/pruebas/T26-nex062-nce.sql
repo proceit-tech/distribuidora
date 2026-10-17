@@ -171,6 +171,28 @@ BEGIN
     PERFORM pg_temp.falla(format($f$SELECT fe_documento_registrar_consulta_flujo_nce(%L, %L, %L, 'OK', 200, 'req-t26', 'x', 'APROBADO', NULL, '0260', 'x', NULL, NULL, '{}'::jsonb)$f$, v_a, gen_random_uuid(), v_n3), '42501', 'flujo_nce: usuario inexistente/sin permiso (sin permiso CREAR ni EDITAR) rechazado');
   END;
 
+  -- NCE-DB-01 (PYG sin centavos): Devolución con cantidad fraccionaria cuyo TOTAL no es entero se rechaza sin consumir número; la cantidad entera sigue válida
+  DECLARE
+    v_f11 uuid; v_n_antes integer; rp record; v_nce uuid;
+  BEGIN
+    INSERT INTO documentos_electronicos (empresa_id, sucursal_id, tipo, establecimiento, punto_expedicion, numero, cdc, fecha_emision, receptor_nombre, moneda, total, estado_local, estado_sifen, creado_por)
+    VALUES (v_a, v_sa, 'FE', '001', '001', '0000011', '01' || '80000005' || '6' || '001' || '001' || '0000011' || '1' || '20261016' || '1' || '123456789' || '0', now(), 'Cliente T26', 'PYG', 150000, 'ENVIADO', 'APROBADO', v_ua) RETURNING id INTO v_f11;
+    INSERT INTO documento_electronico_solicitudes (empresa_id, documento_id, version, payload, payload_hash, entrada_hash, creado_por)
+    VALUES (v_a, v_f11, 1, v_sol, encode(sha256(convert_to(v_sol::text, 'UTF8')), 'hex'), encode(sha256(convert_to('fe-t26-11', 'UTF8')), 'hex'), v_ua);
+    SELECT ultimo_numero INTO v_n_antes FROM fe_punto_secuencias WHERE punto_id = v_p AND tipo_documento = 'NCE';
+    PERFORM pg_temp.falla(format($f$SELECT * FROM fe_documento_crear_nce(%L, %L, %L, %L, 'clave-t26-py01', %L, 2, '[{"linea":2,"cantidad":0.0001,"monto":0.5}]'::jsonb, 'PYG', 0.5, %L)$f$, v_a, v_ua, v_sa, v_p, v_f11, pg_temp.pay(v_pay, v_sol, 2, 2, 0.0001, 0.5)), 'P0001', 'PYG-01: devolución 0.0001 × Gs. 5.000 = Gs. 0,5 → NEX:PAYLOAD_INVALIDO (total PYG con centavos)');
+    PERFORM pg_temp.ok((SELECT ultimo_numero = v_n_antes FROM fe_punto_secuencias WHERE punto_id = v_p AND tipo_documento = 'NCE') AND NOT EXISTS (SELECT 1 FROM nce_origen WHERE fe_id = v_f11), 'PYG-03: el rechazo no consumió número ni dejó NCE ni créditos');
+    SELECT * INTO rp FROM fe_documento_crear_nce(v_a, v_ua, v_sa, v_p, 'clave-t26-py02', v_f11, 2, '[{"linea":2,"cantidad":1,"monto":5000}]'::jsonb, 'PYG', 5000, pg_temp.pay(v_pay, v_sol, 2, 2, 1, 5000));
+    PERFORM pg_temp.ok(NOT rp.o_reutilizado, 'PYG-02: devolución de 1 unidad × Gs. 5.000 (total entero) válida');
+
+    -- NCE-DB-04: una línea acreditada no puede declarar otra FE que la de su NCE (FK compuesta empresa, NCE, FE); UPDATE y DELETE siguen prohibidos
+    SELECT nce_id INTO v_nce FROM nce_origen WHERE empresa_id = v_a AND fe_id = v_f11;
+    PERFORM pg_temp.falla(format($f$INSERT INTO nce_lineas (empresa_id, nce_id, fe_id, linea, cantidad, monto) VALUES (%L, %L, %L, 1, 0, 1)$f$, v_a, v_nce, v_fe), '23503', 'DB-04: fe_id distinto del vínculo de la NCE → violación de la FK compuesta');
+    PERFORM pg_temp.ok(EXISTS (SELECT 1 FROM nce_lineas WHERE nce_id = v_nce AND fe_id = v_f11), 'DB-04: la línea creada por la función conserva el fe_id de su NCE');
+    PERFORM pg_temp.falla(format($f$UPDATE nce_lineas SET monto = monto + 1 WHERE nce_id = %L$f$, v_nce), 'P0001', 'DB-04: las líneas siguen siendo de solo altas (UPDATE)');
+    PERFORM pg_temp.falla(format($f$DELETE FROM nce_lineas WHERE nce_id = %L$f$, v_nce), 'P0001', 'DB-04: las líneas siguen siendo de solo altas (DELETE)');
+  END;
+
   -- ZERO-01 (worker): el actor de la consulta automática es un usuario REAL, ACTIVO y autorizado (CREAR o EDITAR) con alcance; el creador solo-CREAR sirve; si queda inactivo, el más antiguo autorizado
   DECLARE
     v_opw uuid; v_d1 uuid; v_d2 uuid; v_actor uuid;

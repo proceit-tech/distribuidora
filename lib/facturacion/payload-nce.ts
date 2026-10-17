@@ -20,6 +20,8 @@ export const esMotivoNce = (m: unknown): m is MotivoNce => m === 2 || m === 3 ||
 export const MAX_LINEAS_NCE = 999;
 export const TOTAL_MAXIMO_NCE = B(1000000000000) * S;
 export const OBSERVACION_MAXIMA = 5000;
+/** Unidad de 10^-4 en la escala interna (10^-8): el total debe ser múltiplo de ella para caber exacto en numeric(20,4). */
+const TOTAL_ESCALA_4 = S / B(10000);
 
 /** Una línea de la FE original tal como se envió (Detalles[] de la solicitud persistida). `linea` es el ordinal 1..n: identificador estable, las líneas repetidas NO se fusionan. */
 export type LineaOriginal = {
@@ -187,6 +189,9 @@ export function validarEntradaNce(e: EntradaNce): string[] {
 
   if (sub.dTotGralOpe <= B(0)) errores.push("El total de la nota de crédito debe ser mayor que cero.");
   if (sub.dTotGralOpe >= TOTAL_MAXIMO_NCE) errores.push("El total de la nota de crédito supera el máximo admitido.");
+  // NCE-DB-01/02: el total principal se guarda en documentos_electronicos.total numeric(20,4) y debe coincidir EXACTAMENTE con las líneas y el JSON: nunca se redondea ni se trunca en silencio.
+  if (sub.dTotGralOpe % TOTAL_ESCALA_4 !== B(0)) errores.push("El total de la nota de crédito no se puede representar con hasta 4 decimales: ajuste la cantidad o el monto.");
+  else if (e.moneda === "PYG" && sub.dTotGralOpe % S !== B(0)) errores.push("El total de una nota de crédito en guaraníes debe ser un número entero (sin centavos): ajuste la cantidad a devolver o el monto.");
   if (sub.dTotGralOpe !== suma) errores.push(`El total (${textoDec(sub.dTotGralOpe)}) difiere de la suma de las líneas (${textoDec(suma)}) por el redondeo del IVA de un ítem: no se puede emitir sin ajustar los importes.`);
 
   const valores: Dec[] = [
