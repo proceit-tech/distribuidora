@@ -61,6 +61,9 @@ export const CAMPOS_RECEPTOR = [
   "dTelRec", "dCelRec", "dEmailRec", "dEmailAdic", "dEmailAdmin", "dCodCliente",
 ] as const;
 
+/** ¿El receptor fiscal del snapshot de la FE es Innominado? Solo por el tipo de documento estructurado iTipIDRec = 5 (nunca por el nombre). Para la interfaz (R04-01). */
+export const receptorEsInnominado = (receptor: Record<string, unknown> | null | undefined): boolean => receptor !== null && receptor !== undefined && Number(receptor.iTipIDRec) === 5;
+
 const texto = (v: unknown): string | null => (typeof v === "number" && Number.isFinite(v) ? String(v) : typeof v === "string" && v.trim() !== "" ? v.trim() : null);
 
 /** Ítems de la FE original → líneas con su ordinal. null si el payload no tiene la forma esperada (la NCE no se emite). */

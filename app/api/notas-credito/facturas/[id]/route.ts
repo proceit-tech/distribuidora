@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { prepararFacturacion } from "@/lib/facturacion/servidor";
 import { leerFacturaOriginal, puntosParaNce } from "@/lib/facturacion/nce";
+import { receptorEsInnominado } from "@/lib/facturacion/payload-nce";
 import { reconciliarNcePendientes } from "@/lib/facturacion/nce-emision";
 import { respuestaErrorFacturacion } from "@/lib/facturacion/shared";
 
@@ -19,11 +20,11 @@ export async function GET(_request: Request, contexto: Contexto) {
     await reconciliarNcePendientes(b.db, b.empresaId, b.usuarioId, id);
 
     const fe = await leerFacturaOriginal(b.db, b.empresaId, b.usuarioId, id);
-    const { receptor: _receptor, ...visible } = fe;
+    const { receptor, ...visible } = fe;
+    // Solo un indicador booleano derivado del dato fiscal estructurado del snapshot (iTipIDRec = 5, Innominado); el receptor completo nunca sale del servidor.
+    const receptorInnominado = receptorEsInnominado(receptor);
 
-    void _receptor;
-
-    return NextResponse.json({ factura: visible, sucursales: await puntosParaNce(b.db, b.empresaId, b.usuarioId) }, { headers: { "Cache-Control": "no-store" } });
+    return NextResponse.json({ factura: { ...visible, receptorInnominado }, sucursales: await puntosParaNce(b.db, b.empresaId, b.usuarioId) }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     return respuestaErrorFacturacion(error, "cargar");
   }
