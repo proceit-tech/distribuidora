@@ -15,6 +15,8 @@ import { iniciarRefresco, retardoRefresco } from "@/lib/facturacion/refresco-doc
 import { MAX_ENTEROS_F023 } from "@/lib/facturacion/monedas";
 import { crearControlListado, entradasIniciales, etiquetaIvaLinea } from "@/lib/facturacion/nce-entradas";
 import { LIMITE_BYTES_PAYLOAD_NCE, listarFacturasElegibles } from "@/lib/facturacion/nce";
+import { interpretarRecepcion, type DocumentoRecepcion } from "@/lib/facturacion/gateway";
+import { reconciliarFacturasPendientes } from "@/lib/facturacion/nce-emision";
 import { reconciliarNcePendientes, repeticion } from "@/lib/facturacion/nce-emision";
 import { ErrorFacturacion } from "@/lib/facturacion/shared";
 
@@ -164,7 +166,7 @@ export async function verificarCasosNce(): Promise<string[]> {
   const clientesSql = fuente.slice(fuente.indexOf("export async function buscarClientesConFacturas"), fuente.indexOf("export type FacturaElegible"));
   const elegiblesSql = fuente.slice(fuente.indexOf("export async function listarFacturasElegibles"), fuente.indexOf("export async function puntosParaNce"));
 
-  cierto("R01-01: la búsqueda de clientes incluye FE aprobadas O enviadas con SIN_CONSULTA/PENDIENTE, siempre por empresa y alcance", /estado_sifen = 'APROBADO' OR \(d\.estado_local = 'ENVIADO' AND d\.estado_sifen IN \('SIN_CONSULTA', 'PENDIENTE'\)\)/.test(clientesSql) && /c\.empresa_id = \$1/.test(clientesSql) && /sucursal_en_alcance/.test(clientesSql));
+  cierto("R01-01: la búsqueda de clientes incluye FE aprobadas O enviadas con SIN_CONSULTA/PENDIENTE, siempre por empresa y alcance", /estado_sifen = 'APROBADO' OR \(d\.estado_local IN \('ENVIADO', 'ENVIO_INDETERMINADO'\) AND d\.estado_sifen IN \('SIN_CONSULTA', 'PENDIENTE', 'NO_RECONOCIDO'\)\)/.test(clientesSql) && /c\.empresa_id = \$1/.test(clientesSql) && /sucursal_en_alcance/.test(clientesSql));
   cierto("R01-01: las facturas elegibles para emitir siguen siendo SOLO APROBADAS con CDC y saldo", /d\.estado_sifen = 'APROBADO' AND d\.cdc IS NOT NULL/.test(elegiblesSql) && !/SIN_CONSULTA/.test(elegiblesSql) && /original - acreditado > 0/.test(elegiblesSql));
   cierto("R01-01: al seleccionar el cliente se consulta (actualizar=1) antes de listar", /actualizar=1/.test(leer("app/(private)/notas-credito/page.tsx")) && /reconciliarFacturasPendientes/.test(leer("app/api/notas-credito/facturas/route.ts")));
 
@@ -470,5 +472,69 @@ export async function verificarCasosNce(): Promise<string[]> {
   cierto("DB-04-01: nce_origen expone UNIQUE (empresa, nce, fe) y nce_lineas referencia (empresa, nce, fe) con esa clave; sin FK duplicada de 2 columnas", /CONSTRAINT nce_origen_identidad_uk UNIQUE \(empresa_id, nce_id, fe_id\)/.test(tablas) && /FOREIGN KEY \(empresa_id, nce_id, fe_id\) REFERENCES public\.nce_origen \(empresa_id, nce_id, fe_id\) ON DELETE CASCADE/.test(tablas) && !/FOREIGN KEY \(empresa_id, nce_id\) REFERENCES public\.nce_origen/.test(tablas));
   cierto("DB-04-01: la imutabilidad (solo altas), el índice por FE/ordinal y el borrado en cascada (reinicio DEMO) se conservan", /nce_lineas_inmutable_fila_trg/.test(sql) && /nce_lineas_inmutable_truncate_trg/.test(sql) && /nce_lineas_fe_idx ON public\.nce_lineas \(empresa_id, fe_id, linea\)/.test(tablas));
   cierto("DB-04-02: T26 prueba el fe_id incorrecto (23503), el correcto, y UPDATE/DELETE prohibidos", ["23503", "FK compuesta", "solo altas (UPDATE)", "solo altas (DELETE)"].every((k) => t26.includes(k)));
+  // ── 16. INT-01/02/03 (revisión integral) ─────────────────────────────────────────────────────────────
+  // INT-01: una NCE solo se rechaza (libera saldo) si Rechazados la identifica por su número; lo ambiguo queda indeterminado y bloquea
+  const docN: DocumentoRecepcion = { tipo: "NCE", establecimiento: "001", puntoExpedicion: "001", numero: "0000005" };
+  const docF: DocumentoRecepcion = { tipo: "FE", establecimiento: "001", puntoExpedicion: "001", numero: "0000005" };
+  const resumen = (x: ReturnType<typeof interpretarRecepcion>) => [x.estadoLocal, x.errorTipo];
+  const IND = ["ENVIO_INDETERMINADO", null];
+  const jr = (o: unknown) => JSON.stringify(o);
+  const CDC_N = "05" + "80000005" + "6" + "001" + "001" + "0000005" + "1" + "20261016" + "1" + "123456789" + "0";
+
+  igual("A01: HTTP 422 genérico «Error de validación» → indeterminado (bloquea)", resumen(interpretarRecepcion(422, jr({ status: "error", message: "Error de validación" }), [], docN)), IND);
+  igual("A02: HTTP 200 status:error genérico → indeterminado (bloquea)", resumen(interpretarRecepcion(200, jr({ status: "error", message: "Error general" }), [], docN)), IND);
+  igual("A03: Rechazados con el número exacto de la NCE, sin Aceptados contradictorios ni duplicidad → RECHAZO definitivo", resumen(interpretarRecepcion(422, jr({ status: "error", message: "Se detectaron valores inválidos", rechazados: 1, response: { Aceptados: [], Rechazados: [{ "001-001-0000005": { iMotEmi: "Campo obligatorio requerido." } }] } }), [], docN)), ["ERROR_ENVIO", "RECHAZO"]);
+  igual("A03b: Rechazados propio pero también Aceptado, o con texto de duplicidad → indeterminado", [
+    resumen(interpretarRecepcion(422, jr({ status: "error", rechazados: 1, response: { Aceptados: [{ "001-001-0000005": {} }], Rechazados: [{ "001-001-0000005": { x: "y" } }] } }), [], docN)),
+    resumen(interpretarRecepcion(422, jr({ status: "error", message: "Documento ya existe", rechazados: 1, response: { Aceptados: [], Rechazados: [{ "001-001-0000005": { x: "y" } }] } }), [], docN)),
+  ], [IND, IND]);
+  igual("A04: Rechazados de OTRO número → indeterminado", resumen(interpretarRecepcion(422, jr({ status: "error", rechazados: 1, response: { Aceptados: [], Rechazados: [{ "001-001-0000009": { x: "y" } }] } }), [], docN)), IND);
+  igual("A05: 409 y mensaje de duplicidad → indeterminado", [resumen(interpretarRecepcion(409, jr({ status: "error", message: "Conflicto" }), [], docN)), resumen(interpretarRecepcion(400, jr({ status: "error", message: "El documento ya existe" }), [], docN))], [IND, IND]);
+  igual("A06: 5xx, respuesta indescifrable → indeterminado", [resumen(interpretarRecepcion(503, "<html>", [], docN)), resumen(interpretarRecepcion(500, jr({ message: "boom" }), [], docN)), resumen(interpretarRecepcion(200, "no json", [], docN))], [IND, IND, IND]);
+  igual("A07: success con lote, o con CDC coherente → ENVIADO (nunca APROBADO)", [resumen(interpretarRecepcion(200, jr({ status: "success", nro_lote: "12345" }), [], docN)), resumen(interpretarRecepcion(200, jr({ status: "success", cdc: CDC_N }), [], docN))], [["ENVIADO", null], ["ENVIADO", null]]);
+  igual("A08: 401/403 siguen siendo AUTENTICACION y 429 TRANSITORIO (fallas anteriores a la transmisión, no bloquean el saldo)", [resumen(interpretarRecepcion(401, jr({ message: "Unauthorized" }), [], docN)), resumen(interpretarRecepcion(403, jr({ message: "Forbidden" }), [], docN)), resumen(interpretarRecepcion(429, jr({ message: "Too many" }), [], docN))], [["ERROR_ENVIO", "AUTENTICACION"], ["ERROR_ENVIO", "AUTENTICACION"], ["ERROR_ENVIO", "TRANSITORIO"]]);
+  igual("A09: la factura conserva su política (4xx genérico y status:error siguen siendo RECHAZO) y el contrato de Rechazados propio", [resumen(interpretarRecepcion(422, jr({ status: "error", message: "Error de validación" }), [], docF)), resumen(interpretarRecepcion(200, jr({ status: "error", message: "Error general" }), [], docF)), resumen(interpretarRecepcion(422, jr({ status: "error", rechazados: 1, response: { Aceptados: [], Rechazados: [{ "001-001-0000005": { x: "y" } }] } }), [], docF))], [["ERROR_ENVIO", "RECHAZO"], ["ERROR_ENVIO", "RECHAZO"], ["ERROR_ENVIO", "RECHAZO"]]);
+  cierto("INT-01: lo indeterminado BLOQUEA el saldo (clase SQL BLOQUEA), solo el RECHAZO inequívoco libera; no se ofrece «Corregir» para lo indeterminado", /WHEN p_estado_local = 'ERROR_ENVIO' AND p_envio_error_tipo = 'RECHAZO' THEN 'LIBRE'[\s\S]*ELSE 'BLOQUEA'/.test(sql) && /\(d\.tipo = 'NCE' AND \(d\.estado_sifen = 'RECHAZADO' OR \(d\.estado_local = 'ERROR_ENVIO' AND d\.envio_error_tipo = 'RECHAZO'\)\)\) AS corregible/.test(compartido));
+
+  // INT-02: idempotencia biyectiva por ordinal
+  const SUC2 = "22222222-2222-4222-8222-222222222222";
+  const base2 = { facturaId: uuid, motivo: 3, sucursalId: SUC2, puntoId: "33333333-3333-4333-8333-333333333333", observacion: "", claveIdempotencia: "nce-clave-int02" };
+  const dbI2 = (guardadas: Array<{ linea: number; cantidad: string; monto: string }>, motivo = 3) => ({
+    query: async (texto: string) => {
+      if (texto.includes("FROM documentos_electronicos d LEFT JOIN nce_origen")) return { rows: [{ id: "doc-2", numero: "0000002", tipo: "NCE", sucursalId: SUC2, puntoCodigo: "001", feId: uuid, motivo, observacion: null }] };
+      if (texto.includes("FROM nce_lineas")) return { rows: guardadas };
+      if (texto.includes("FROM fe_puntos_expedicion")) return { rows: [{ codigo: "001" }] };
+
+      return { rows: [] };
+    },
+  });
+  const G12 = [{ linea: 1, cantidad: "0", monto: "100" }, { linea: 2, cantidad: "0", monto: "200" }];
+  const res = async (lineas: Array<{ linea: number; cantidad?: string; monto?: string }>, guardadas = G12, extra: Record<string, unknown> = {}, motivoGuardado = 3) => {
+    try { await repeticion(dbI2(guardadas, motivoGuardado) as never, uuid, uuid, { ...base2, lineas, ...extra } as never); return "reutiliza"; } catch (e) { return e instanceof ErrorFacturacion ? e.estado : "otro"; }
+  };
+
+  igual("I01: cuerpo idéntico reutiliza la misma NCE", await res([{ linea: 1, monto: "100" }, { linea: 2, monto: "200" }]), "reutiliza");
+  igual("I02: mismo contenido con las líneas reordenadas también reutiliza (sin duplicar)", await res([{ linea: 2, monto: "200" }, { linea: 1, monto: "100" }]), "reutiliza");
+  igual("I03: persistida [1,2] vs cuerpo [1,1] con la misma clave → 409", await res([{ linea: 1, monto: "100" }, { linea: 1, monto: "100" }]), 409);
+  igual("I04: línea ausente o distinta → 409", [await res([{ linea: 1, monto: "100" }]), await res([{ linea: 1, monto: "100" }, { linea: 3, monto: "200" }]), await res([{ linea: 1, monto: "100" }, { linea: 2, monto: "200" }, { linea: 3, monto: "1" }])], [409, 409, 409]);
+  igual("I05: mismo ordinal con otro monto → 409 (y con otra cantidad en Devolución)", [await res([{ linea: 1, monto: "100" }, { linea: 2, monto: "201" }]), await res([{ linea: 1, cantidad: "3" }, { linea: 2, cantidad: "1" }], [{ linea: 1, cantidad: "2", monto: "10" }, { linea: 2, cantidad: "1", monto: "20" }], { motivo: 2 }, 2)], [409, 409]);
+  igual("I06: el mismo valor en ordinales distintos no se confunde (100/100 vs 1/2 guardado con 100/200 → 409; 100/100 guardado idéntico → reutiliza)", [await res([{ linea: 1, monto: "100" }, { linea: 2, monto: "100" }]), await res([{ linea: 1, monto: "100" }, { linea: 2, monto: "100" }], [{ linea: 1, cantidad: "0", monto: "100" }, { linea: 2, cantidad: "0", monto: "100" }])], [409, "reutiliza"]);
+  igual("I07: motivo, factura, punto, sucursal u observación distintos → 409", [await res([{ linea: 1, monto: "100" }, { linea: 2, monto: "200" }], G12, { motivo: 4 }), await res([{ linea: 1, monto: "100" }, { linea: 2, monto: "200" }], G12, { facturaId: "55555555-5555-4555-8555-555555555555" }), await res([{ linea: 1, monto: "100" }, { linea: 2, monto: "200" }], G12, { sucursalId: "44444444-4444-4444-8444-444444444444" }), await res([{ linea: 1, monto: "100" }, { linea: 2, monto: "200" }], G12, { observacion: "otra" })], [409, 409, 409, 409]);
+  igual("I03b: el parser de la API rechaza ordinales repetidos antes de llegar a la idempotencia (400)", typeof leerCuerpoNce({ facturaId: uuid, motivo: 3, sucursalId: uuid, puntoId: uuid, observacion: "", claveIdempotencia: "nce-clave-123", lineas: [{ linea: 1, monto: "1" }, { linea: 1, monto: "1" }] }), "string");
+
+  // INT-03: reconciliar FE sin decisión fiscal (ENVIADO/ENVIO_INDETERMINADO × SIN_CONSULTA/PENDIENTE/NO_RECONOCIDO), máx. 5 y 60 s, sin ampliar la elegibilidad
+  {
+    const consultas: Array<{ sql: string; params: unknown[] }> = [];
+    const dbF = { query: async (texto: string, p?: unknown[]) => { consultas.push({ sql: texto, params: p ?? [] }); return { rows: [{ id: uuid }, { id: uuid }] }; } };
+    const n = await reconciliarFacturasPendientes(dbF as never, "emp-1", "usr-1", "cli-1", {});
+    const q = consultas[0].sql;
+
+    igual("F01-F04: se consultan las FE ENVIADO/ENVIO_INDETERMINADO con SIN_CONSULTA/PENDIENTE/NO_RECONOCIDO", /d\.estado_local IN \('ENVIADO', 'ENVIO_INDETERMINADO'\) AND d\.estado_sifen IN \('SIN_CONSULTA', 'PENDIENTE', 'NO_RECONOCIDO'\)/.test(q), true);
+    igual("F05: PENDIENTE_ENVIO, ENVIANDO y los estados fiscales definitivos no se consultan por este camino", [/PENDIENTE_ENVIO|ENVIANDO|'RECHAZADO'|'CANCELADO'|'APROBADO'|'INUTILIZADO'|'ERROR_ENVIO'/.test(q)], [false]);
+    igual("F07: solo FE del cliente y de la empresa/alcance de la sesión, máximo 5 y no consultadas en los últimos 60 s", [/d\.tipo = 'FE'/.test(q), /d\.cliente_id = \$3/.test(q), /d\.empresa_id = \$1/.test(q), /sucursal_en_alcance\(\$1::uuid, \$2::uuid, d\.sucursal_id\)/.test(q), /LIMIT 5/.test(q), /interval '60 seconds'/.test(q), consultas[0].params], [true, true, true, true, true, true, ["emp-1", "usr-1", "cli-1"]]);
+    igual("F07b: una falla de consulta (sin gateway configurado) no libera ni interrumpe: devuelve 0 consultas exitosas sin lanzar", n, 0);
+  }
+  cierto("F01-F04: se usa la consulta del flujo NCE (CREAR/EDITAR) y la SQL del flujo admite exactamente esos estados; el worker global no cambia", /flujoNce: true/.test(leer("lib/facturacion/nce-emision.ts")) && /d\.estado_local NOT IN \('ENVIADO', 'ENVIO_INDETERMINADO'\) OR d\.estado_sifen NOT IN \('SIN_CONSULTA', 'PENDIENTE', 'NO_RECONOCIDO'\)/.test(sqlFlujo) && /TIPOS_CONSULTA_AUTOMATICA: readonly string\[\] = \["NCE"\]/.test(auto));
+  cierto("F06: ninguna FE no aprobada es elegible para emitir (APROBADO + CDC + saldo) y el cliente descubierto sin FE elegible recibe mensaje", /d\.estado_sifen = 'APROBADO' AND d\.cdc IS NOT NULL/.test(elegiblesSql) && /no tiene facturas aprobadas con saldo por acreditar/.test(pagNce));
   return fallos;
 }

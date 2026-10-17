@@ -522,6 +522,10 @@ export function interpretarRecepcion(http: number, cuerpoTexto: string, fases: F
     errores,
   });
   const indeterminado = (texto: string, r: ResultadoEnvio["resultado"] = "RESPUESTA_INVALIDA") => base(r, "ENVIO_INDETERMINADO", null, texto);
+  // INT-01: una NCE solo se da por RECHAZADA (y libera su saldo) cuando Rechazados la identifica por su propio número fiscal (línea de arriba). Un 4xx genérico o un status:error sin esa identidad
+  // NO prueba que el gateway rechazó ESTA nota: queda indeterminada (bloquea el saldo y no se reenvía). La factura conserva su política anterior.
+  const esNce = doc?.tipo === "NCE";
+  const textoSinIdentidad = (t: string) => `${t} No identifica de forma inequívoca esta nota de crédito: verifique en el gateway antes de reemitir.`;
 
   // Token inválido/vencido (incluso con HTTP 400): error de AUTORIZACIÓN; el gateway no procesó nada, no es un rechazo del documento.
   if (esTokenInvalido(http, cuerpoTexto)) return base("ERROR_HTTP", "ERROR_ENVIO", "AUTENTICACION", mensaje ?? "El gateway rechazó la autorización (token inválido).");
@@ -538,10 +542,14 @@ export function interpretarRecepcion(http: number, cuerpoTexto: string, fases: F
     if (http === 401 || http === 403) return base("ERROR_HTTP", "ERROR_ENVIO", "AUTENTICACION", mensaje ?? `El gateway rechazó la autorización (HTTP ${http}).`);
     if (http === 429) return base("ERROR_HTTP", "ERROR_ENVIO", "TRANSITORIO", mensaje ?? "El gateway limitó la frecuencia de solicitudes (HTTP 429).");
 
+    if (esNce) return indeterminado(textoSinIdentidad(mensaje ?? `El gateway respondió HTTP ${http}.`), "ERROR_HTTP");
+
     return base("ERROR_HTTP", "ERROR_ENVIO", "RECHAZO", mensaje ?? `El gateway rechazó la solicitud (HTTP ${http}).`);
   }
   if (http >= 200 && http < 300 && raiz) {
     if (raiz.status === "error") {
+      if (esNce && !duplicado) return indeterminado(textoSinIdentidad(mensaje ?? "El gateway informó un error."), "ERROR_HTTP");
+
       return duplicado ? indeterminado(mensaje ?? "El gateway informó un error de duplicidad.", "ERROR_HTTP") : base("ERROR_HTTP", "ERROR_ENVIO", "RECHAZO", mensaje ?? "El gateway informó un error.");
     }
     if (raiz.status === "success") {

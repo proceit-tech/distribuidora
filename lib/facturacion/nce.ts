@@ -64,6 +64,8 @@ export function leerCuerpoNce(c: Record<string, unknown>): CuerpoNce | string {
     if (!l || typeof l !== "object" || !Number.isInteger(l.linea) || (l.linea as number) < 1 || (l.linea as number) > MAX_LINEAS_NCE) return "Una línea de la nota de crédito no es válida.";
     if ((l.cantidad !== undefined && l.cantidad !== null && typeof l.cantidad !== "string") || (l.monto !== undefined && l.monto !== null && typeof l.monto !== "string")) return "Una cantidad o monto no es válido.";
 
+    if (lineas.some((x) => x.linea === l.linea)) return "Una línea de la factura no puede repetirse en la nota de crédito.";
+
     lineas.push({ linea: l.linea as number, ...(typeof l.cantidad === "string" ? { cantidad: l.cantidad.trim() } : {}), ...(typeof l.monto === "string" ? { monto: l.monto.trim() } : {}) });
   }
 
@@ -206,7 +208,7 @@ export async function buscarClientesConFacturas(db: Db, empresaId: string, usuar
       `SELECT c.id, c.codigo, c.razon_social AS "razonSocial", c.numero_documento AS "numeroDocumento", c.dv, count(*) OVER() AS total
          FROM clientes c
         WHERE c.empresa_id = $1
-          AND EXISTS (SELECT 1 FROM documentos_electronicos d WHERE d.empresa_id = c.empresa_id AND d.cliente_id = c.id AND d.tipo = 'FE' AND (d.estado_sifen = 'APROBADO' OR (d.estado_local = 'ENVIADO' AND d.estado_sifen IN ('SIN_CONSULTA', 'PENDIENTE'))) AND sucursal_en_alcance($1::uuid, $2::uuid, d.sucursal_id))
+          AND EXISTS (SELECT 1 FROM documentos_electronicos d WHERE d.empresa_id = c.empresa_id AND d.cliente_id = c.id AND d.tipo = 'FE' AND (d.estado_sifen = 'APROBADO' OR (d.estado_local IN ('ENVIADO', 'ENVIO_INDETERMINADO') AND d.estado_sifen IN ('SIN_CONSULTA', 'PENDIENTE', 'NO_RECONOCIDO'))) AND sucursal_en_alcance($1::uuid, $2::uuid, d.sucursal_id))
           AND ($3 = '' OR concat_ws(' ', c.codigo, c.razon_social, c.nombre_fantasia, c.numero_documento, c.numero_documento || '-' || c.dv) ILIKE $4 ESCAPE '!')
         ORDER BY c.razon_social, c.id LIMIT $5 OFFSET $6`,
       [empresaId, usuarioId, q, `%${comodin(q)}%`, n, (p - 1) * n],

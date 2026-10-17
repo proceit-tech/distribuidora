@@ -40,17 +40,26 @@ export async function repeticion(db: Db, empresaId: string, usuarioId: string, c
 
   const lineas = (await db.query("SELECT linea, cantidad::text AS cantidad, monto::text AS monto FROM nce_lineas WHERE empresa_id = $1 AND nce_id = $2", [empresaId, String(d.id)])).rows as F[];
 
-  if (lineas.length !== cuerpo.lineas.length) throw conflicto();
+  // INT-02: correspondencia BIYECTIVA por ordinal. Un ordinal repetido en el cuerpo nunca puede coincidir con dos líneas guardadas (ni una línea guardada con dos pedidas), y cada ordinal guardado
+  // debe estar pedido exactamente una vez con el mismo valor (cantidad en Devolución; monto en 3/4/8), en precisión decimal. El orden de las líneas no importa; el ordinal distingue las líneas.
+  const pedidas = new Map<number, { cantidad?: string; monto?: string }>();
 
-  const iguales = cuerpo.lineas.every((l) => {
-    const g = lineas.find((x) => Number(x.linea) === l.linea);
-    const pedido = cuerpo.motivo === 2 ? parseDec(l.cantidad, 8) : parseDec(l.monto, 8);
-    const guardado = g ? parseDec(String(cuerpo.motivo === 2 ? g.cantidad : g.monto), 8) : null;
+  for (const l of cuerpo.lineas) {
+    if (pedidas.has(l.linea)) throw conflicto();
 
-    return g !== undefined && pedido !== null && guardado !== null && pedido === guardado;
-  });
+    pedidas.set(l.linea, l);
+  }
+  if (lineas.length !== pedidas.size) throw conflicto();
 
-  if (!iguales) throw conflicto();
+  const campo = cuerpo.motivo === 2 ? "cantidad" : "monto";
+
+  for (const g of lineas) {
+    const p = pedidas.get(Number(g.linea));
+    const pedido = p ? parseDec(p[campo], 8) : null;
+    const guardado = parseDec(String(g[campo]), 8);
+
+    if (p === undefined || pedido === null || guardado === null || pedido !== guardado) throw conflicto();
+  }
 
   return { documentoId: String(d.id), numero: String(d.numero) };
 }
@@ -133,7 +142,7 @@ export async function reconciliarNcePendientes(db: Db, empresaId: string, usuari
 export async function reconciliarFacturasPendientes(db: Db, empresaId: string, usuarioId: string, clienteId: string, dep: Dependencias = {}): Promise<number> {
   const r = await db.query(
     `SELECT d.id FROM documentos_electronicos d
-      WHERE d.empresa_id = $1 AND d.tipo = 'FE' AND d.cliente_id = $3 AND d.estado_local = 'ENVIADO' AND d.estado_sifen IN ('SIN_CONSULTA', 'PENDIENTE') AND sucursal_en_alcance($1::uuid, $2::uuid, d.sucursal_id)
+      WHERE d.empresa_id = $1 AND d.tipo = 'FE' AND d.cliente_id = $3 AND d.estado_local IN ('ENVIADO', 'ENVIO_INDETERMINADO') AND d.estado_sifen IN ('SIN_CONSULTA', 'PENDIENTE', 'NO_RECONOCIDO') AND sucursal_en_alcance($1::uuid, $2::uuid, d.sucursal_id)
         AND (d.ultima_consulta_at IS NULL OR d.ultima_consulta_at < now() - interval '60 seconds')
       ORDER BY d.fecha_emision DESC, d.id DESC LIMIT 5`,
     [empresaId, usuarioId, clienteId],
