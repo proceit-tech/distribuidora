@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
 import ui from "@/components/ui/lista-padrao/lista.module.css";
@@ -75,16 +75,28 @@ function Formulario() {
   const [revisado, setRevisado] = useState<{ cuerpo: CuerpoRevisado; resumen: Resumen } | null>(null);
   const resumen = revisado?.resumen ?? null;
   const [enviando, setEnviando] = useState(false);
+  const [buscandoCli, setBuscandoCli] = useState(false);
+  const [abiertas, setAbiertas] = useState<Set<number>>(new Set());
+  const seqCli = useRef(0);
+  const temporizadorFac = useRef<number | null>(null);
 
   const cargarClientes = useCallback(async (q: string, pagina: number) => {
+    // Guarda contra respuestas obsoletas: solo la última búsqueda actualiza la lista.
+    const n = ++seqCli.current;
+
+    setBuscandoCli(true);
     try {
       const r = await pedir<{ clientes: ClienteB[]; pagina: number; totalPaginas: number }>(`/api/notas-credito/clientes?q=${encodeURIComponent(q)}&pagina=${pagina}&porPagina=10`);
+
+      if (n !== seqCli.current) return;
 
       setClientes(r.clientes);
       setPagCli({ pagina: r.pagina, totalPaginas: r.totalPaginas });
       setError(null);
     } catch (e) {
-      setError((e as Error).message);
+      if (n === seqCli.current) setError((e as Error).message);
+    } finally {
+      if (n === seqCli.current) setBuscandoCli(false);
     }
   }, []);
 
@@ -166,13 +178,26 @@ function Formulario() {
     }
   }, []);
 
+  // Búsqueda de cliente: solo con 2+ caracteres, con espera corta (300 ms); con el campo vacío NO se muestra ningún cliente.
   useEffect(() => {
-    if (corregir) return;
+    if (corregir || cliente) return;
 
-    const t = window.setTimeout(() => { void cargarClientes("", 1); }, 0);
+    const q = textoCliente.trim();
+
+    if (q.length < 2) {
+      seqCli.current += 1;
+
+      const t = window.setTimeout(() => { setClientes([]); setPagCli({ pagina: 1, totalPaginas: 1 }); setBuscandoCli(false); }, 0);
+
+      return () => window.clearTimeout(t);
+    }
+
+    const t = window.setTimeout(() => { void cargarClientes(q, 1); }, 300);
 
     return () => window.clearTimeout(t);
-  }, [corregir, cargarClientes]);
+  }, [textoCliente, cliente, corregir, cargarClientes]);
+
+  useEffect(() => () => { if (temporizadorFac.current !== null) window.clearTimeout(temporizadorFac.current); }, []);
 
   useEffect(() => {
     if (!corregir) return;
@@ -262,6 +287,27 @@ function Formulario() {
 
   const seleccionadas = factura ? factura.lineas.filter((l) => entradas[l.linea]?.incluida).length : 0;
   const listoParaRevisar = !!factura && !factura.bloqueada && motivo !== "" && !!punto && seleccionadas > 0;
+  const faltantes: string[] = [];
+
+  if (factura) {
+    if (factura.bloqueada) faltantes.push("Hay una nota de crédito pendiente de resultado para esta factura.");
+    if (motivo === "") faltantes.push("Seleccione el motivo.");
+    if (!punto) faltantes.push("Seleccione el establecimiento y el punto de expedición.");
+    if (seleccionadas === 0) faltantes.push("Incluya al menos una línea.");
+  }
+
+  const paso = !cliente && !factura ? 1 : !factura ? 2 : 3;
+  const lupa = (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
+  );
+  const elegirCliente = (c: ClienteB) => {
+    if (c.innominado) return;
+
+    setCliente(c);
+    setTextoCliente("");
+    setClientes([]);
+    void cargarFacturas(c.id, "", 1, true);
+  };
 
   return (
     <main className={ui.page}>
@@ -270,71 +316,100 @@ function Formulario() {
       <header className={ui.topbar}>
         <div className={ui.titleBlock}>
           <nav className={ui.breadcrumb} aria-label="Ruta"><Link href="/documentos">Documentos electrónicos</Link> / Nota de crédito</nav>
-          <h1>Nota de crédito electrónica</h1>
+          <h1>Nueva nota de crédito</h1>
         </div>
-        <Link className={ui.secondaryButton} href="/documentos">Documentos electrónicos</Link>
+        <Link className={ui.secondaryButton} href="/documentos">Volver a documentos</Link>
       </header>
 
-      <p className={estilos.intro}>Acredite total o parcialmente una factura electrónica aprobada. La nota se emite con numeración propia y queda asociada al CDC de la factura. No modifica inventario ni cuentas por cobrar.</p>
+      <ol className={estilos.pasos} aria-label="Avance">
+        <li className={paso > 1 ? estilos.hecho : undefined} aria-current={paso === 1 ? "step" : undefined}>Cliente</li>
+        <li className={paso > 2 ? estilos.hecho : undefined} aria-current={paso === 2 ? "step" : undefined}>Factura original</li>
+        <li aria-current={paso === 3 ? "step" : undefined}>Nota de crédito</li>
+      </ol>
 
       {error ? <div className={estilos.error} role="alert">{error}</div> : null}
       {aviso ? <div className={estilos.aviso} role="status">{aviso}</div> : null}
 
       {!factura ? (
-        <>
-          <section className={estilos.card}>
-            <h2>1. Cliente</h2>
-            {cliente ? (
-              <p>
-                <strong>{cliente.razonSocial}</strong> <small>{cliente.documento}</small>{" "}
-                <button type="button" className={ui.secondaryButton} onClick={() => { control.current.aplicar({ clienteId: "", q: "", pagina: 1 }); setCliente(null); setFacturas([]); }}>Cambiar cliente</button>
-              </p>
-            ) : (
-              <>
-                <form className={estilos.grid} onSubmit={(e) => { e.preventDefault(); void cargarClientes(textoCliente, 1); }}>
-                  <label className={estilos.field}><span>Buscar cliente (nombre, código o RUC)</span><input value={textoCliente} onChange={(e) => setTextoCliente(e.target.value)} maxLength={80} autoFocus /></label>
-                  <div className={estilos.acciones}><button type="submit" className={ui.primaryButton}>Buscar</button></div>
-                </form>
-                <ul className={estilos.lista}>
-                  {clientes.map((c) => (
-                    <li key={c.id}>
-                      <span>{c.razonSocial} <small>{c.codigo} · {c.documento}</small>{c.innominado ? <><span className={estilos.chip}>Innominado</span><br /><small>{MENSAJE_INNOMINADO}</small></> : null}</span>
-                      <button type="button" className={ui.secondaryButton} disabled={c.innominado} title={c.innominado ? MENSAJE_INNOMINADO : undefined} onClick={() => { if (c.innominado) return; setCliente(c); void cargarFacturas(c.id, "", 1, true); }}>Seleccionar</button>
-                    </li>
-                  ))}
-                  {clientes.length === 0 ? <li><small>No hay clientes con facturas aprobadas para esta búsqueda.</small></li> : null}
-                </ul>
-                {pagCli.totalPaginas > 1 ? (
+        <div className={estilos.region}>
+          {cliente ? (
+            <div className={estilos.banda}>
+              <span>Cliente: <strong>{cliente.razonSocial}</strong> · {cliente.documento}</span>
+              <button type="button" className={ui.secondaryButton} onClick={() => { control.current.aplicar({ clienteId: "", q: "", pagina: 1 }); setCliente(null); setFacturas([]); setTextoFactura(""); }}>Cambiar</button>
+            </div>
+          ) : (
+            <section className={estilos.card} aria-label="Cliente">
+              <div className={estilos.busca}>
+                <label htmlFor="nce-cliente">Cliente</label>
+                <div className={estilos.entradaBusca}>
+                  {lupa}
+                  <input id="nce-cliente" type="search" role="combobox" aria-expanded={clientes.length > 0} aria-controls="nce-clientes" aria-autocomplete="list" autoComplete="off" autoFocus maxLength={80}
+                    placeholder="Buscar por nombre, código o RUC" value={textoCliente} onChange={(e) => setTextoCliente(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape") { setClientes([]); }
+                      if (e.key === "Enter") { e.preventDefault(); const primero = clientes.find((c) => !c.innominado); if (primero) elegirCliente(primero); }
+                    }} />
+                </div>
+                {textoCliente.trim().length < 2 ? <p className={estilos.vacio}>Escriba al menos 2 caracteres para buscar un cliente con facturas aprobadas.</p> : null}
+                {textoCliente.trim().length >= 2 ? (
+                  <ul className={estilos.resultados} id="nce-clientes" aria-live="polite">
+                    {clientes.map((c) => (
+                      <li key={c.id}>
+                        <span>{c.razonSocial}{c.innominado ? <span className={estilos.chip}>Innominado</span> : null}<small>{c.codigo} · {c.documento}{c.innominado ? ` · ${MENSAJE_INNOMINADO}` : ""}</small></span>
+                        <button type="button" className={ui.secondaryButton} disabled={c.innominado} title={c.innominado ? MENSAJE_INNOMINADO : undefined} onClick={() => elegirCliente(c)}>Seleccionar</button>
+                      </li>
+                    ))}
+                    {clientes.length === 0 ? <li><small>{buscandoCli ? "Buscando…" : "No hay clientes con facturas aprobadas para esta búsqueda."}</small></li> : null}
+                  </ul>
+                ) : null}
+                {pagCli.totalPaginas > 1 && textoCliente.trim().length >= 2 ? (
                   <div className={estilos.acciones}>
-                    <button type="button" className={ui.secondaryButton} disabled={pagCli.pagina <= 1} onClick={() => void cargarClientes(textoCliente, pagCli.pagina - 1)}>Anterior</button>
+                    <button type="button" className={ui.secondaryButton} disabled={pagCli.pagina <= 1} onClick={() => void cargarClientes(textoCliente.trim(), pagCli.pagina - 1)}>Anterior</button>
                     <span className={estilos.hint}>Página {pagCli.pagina} de {pagCli.totalPaginas}</span>
-                    <button type="button" className={ui.secondaryButton} disabled={pagCli.pagina >= pagCli.totalPaginas} onClick={() => void cargarClientes(textoCliente, pagCli.pagina + 1)}>Siguiente</button>
+                    <button type="button" className={ui.secondaryButton} disabled={pagCli.pagina >= pagCli.totalPaginas} onClick={() => void cargarClientes(textoCliente.trim(), pagCli.pagina + 1)}>Siguiente</button>
                   </div>
                 ) : null}
-              </>
-            )}
-          </section>
+              </div>
+            </section>
+          )}
 
           {cliente ? (
-            <section className={estilos.card}>
-              <h2>2. Factura aprobada <small>solo facturas con saldo por acreditar</small></h2>
-              <form className={estilos.grid} onSubmit={(e) => { e.preventDefault(); void cargarFacturas(cliente.id, textoFactura, 1, false); }}>
-                <label className={estilos.field}><span>Buscar por número, CDC (44 dígitos) o fecha (dd/mm/aaaa o aaaa-mm-dd)</span><input value={textoFactura} onChange={(e) => setTextoFactura(e.target.value)} maxLength={80} inputMode="search" /></label>
-                <div className={estilos.acciones}><button type="submit" className={ui.primaryButton}>Buscar</button></div>
-              </form>
-              <ul className={estilos.lista}>
-                {facturas.map((f) => (
-                  <li key={f.id}>
-                    <span>
-                      <strong>{f.numero}</strong> <small>{formatearFechaPy(f.fechaEmision)} · {f.moneda}</small>
-                      {f.ncePendiente ? <span className={estilos.chip}>NCE pendiente</span> : null}
-                      <br /><small className={estilos.mono}>Total {fm(f.total)} · Saldo por acreditar {fm(f.saldo)}</small>
-                    </span>
-                    <button type="button" className={ui.secondaryButton} disabled={f.ncePendiente || cargando} title={f.ncePendiente ? "Hay una nota de crédito pendiente de resultado para esta factura." : undefined} onClick={() => void abrirFactura(f.id)}>Seleccionar</button>
-                  </li>
-                ))}
-                {facturas.length === 0 && !cargando ? <li><small>Este cliente no tiene facturas aprobadas con saldo por acreditar.</small></li> : null}
-              </ul>
+            <section className={estilos.card} aria-label="Facturas aprobadas">
+              <h2>Facturas aprobadas <small>solo con saldo por acreditar</small></h2>
+              <div className={estilos.busca}>
+                <div className={estilos.entradaBusca}>
+                  {lupa}
+                  <input type="search" aria-label="Buscar factura por número, fecha o CDC" placeholder="Número, fecha (dd/mm/aaaa) o CDC" maxLength={80} inputMode="search" autoComplete="off" value={textoFactura}
+                    onChange={(e) => {
+                      const v = e.target.value;
+
+                      setTextoFactura(v);
+                      if (temporizadorFac.current !== null) window.clearTimeout(temporizadorFac.current);
+
+                      temporizadorFac.current = window.setTimeout(() => { void cargarFacturas(cliente.id, v, 1, false); }, 300);
+                    }} />
+                </div>
+              </div>
+              <div className={estilos.tabla}>
+                <table>
+                  <thead><tr><th>Nº</th><th>Fecha</th><th>Moneda</th><th className={estilos.num}>Total</th><th className={estilos.num}>Saldo por acreditar</th><th /></tr></thead>
+                  <tbody>
+                    {facturas.map((f) => (
+                      <tr key={f.id}>
+                        <td><strong>{f.numero}</strong>{f.ncePendiente ? <span className={estilos.chip}>NCE pendiente</span> : null}</td>
+                        <td>{formatearFechaPy(f.fechaEmision)}</td>
+                        <td>{f.moneda}</td>
+                        <td className={estilos.num}>{fm(f.total)}</td>
+                        <td className={estilos.num}>{fm(f.saldo)}</td>
+                        <td className={estilos.num}>
+                          <button type="button" className={ui.secondaryButton} disabled={f.ncePendiente || cargando} title={f.ncePendiente ? "Hay una nota de crédito pendiente de resultado para esta factura." : undefined} onClick={() => void abrirFactura(f.id)}>Seleccionar factura</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {facturas.length === 0 ? <p className={estilos.vacio}>{cargando ? "Cargando facturas…" : textoFactura.trim() === "" ? "Este cliente no tiene facturas aprobadas con saldo por acreditar." : "Ninguna factura coincide con la búsqueda."}</p> : null}
               {pagFac.totalPaginas > 1 ? (
                 <div className={estilos.acciones}>
                   <button type="button" className={ui.secondaryButton} disabled={pagFac.pagina <= 1} onClick={() => void cargarFacturas(cliente.id, textoFactura, pagFac.pagina - 1, false)}>Anterior</button>
@@ -344,90 +419,119 @@ function Formulario() {
               ) : null}
             </section>
           ) : null}
-        </>
+        </div>
       ) : (
         <>
-          <section className={estilos.card}>
-            <h2>Factura {factura.numero} <small>{factura.receptorNombre} · {formatearFechaPy(factura.fechaEmision)} · {factura.moneda}{factura.cambio ? ` (cambio ${fm(factura.cambio)})` : ""}</small></h2>
-            <p className={estilos.hint}>CDC <span className={estilos.mono}>{factura.cdc}</span></p>
-            {factura.bloqueada ? <div className={estilos.error} role="alert">Esta factura tiene una nota de crédito pendiente de resultado. Espere su resultado definitivo antes de emitir otra.</div> : null}
-            {!corregir ? <button type="button" className={ui.secondaryButton} onClick={volverAFacturas}>Elegir otra factura</button> : null}
-          </section>
-
-          <section className={estilos.card}>
-            <h2>Datos de la nota</h2>
-            <div className={estilos.grid}>
-              <label className={estilos.field}>
-                <span>Motivo</span>
-                <select value={motivo} onChange={(e) => { const m = e.target.value === "" ? "" : Number(e.target.value); setMotivo(m); setEntradas(entradasIniciales(factura.lineas, m)); }} disabled={factura.motivoFijado !== null}>
-                  <option value="">Seleccione…</option>
-                  {factura.motivosPermitidos.map((m) => <option key={m} value={m}>{MOTIVOS[m]}</option>)}
-                </select>
-                {factura.motivoFijado !== null ? <small className={estilos.hint}>El motivo quedó fijado por la primera nota de crédito aprobada de esta factura.</small> : null}
-              </label>
-              <label className={estilos.field}>
-                <span>Sucursal</span>
-                <select value={sucursalId} onChange={(e) => { setSucursalId(e.target.value); setPuntoId(""); }}>
-                  <option value="">Seleccione…</option>
-                  {sucursales.map((s) => <option key={s.id} value={s.id}>{s.nombre} ({s.establecimiento})</option>)}
-                </select>
-              </label>
-              <label className={estilos.field}>
-                <span>Punto de expedición</span>
-                <select value={puntoId} onChange={(e) => setPuntoId(e.target.value)} disabled={!sucursal}>
-                  <option value="">Seleccione…</option>
-                  {sucursal?.puntos.map((p) => <option key={p.id} value={p.id}>{p.codigo} · {p.nombre}</option>)}
-                </select>
-                {sucursal && sucursal.puntos.length === 0 ? <small className={estilos.hint}>Esta sucursal no tiene puntos con numeración NCE confirmada. Configúrela en Facturación → Puntos de expedición.</small> : null}
-                {sucursal && sucursal.sinSecuencia > 0 && sucursal.puntos.length > 0 ? <small className={estilos.hint}>{sucursal.sinSecuencia} punto(s) activo(s) sin numeración NCE confirmada no se listan.</small> : null}
-              </label>
+          <div className={estilos.banda} style={{ display: "block" }}>
+            <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", gap: "6px 12px", alignItems: "center" }}>
+              <span>Factura <strong>{factura.numero}</strong> · {factura.receptorNombre} · {formatearFechaPy(factura.fechaEmision)} · {factura.moneda}{factura.cambio ? ` (cambio ${fm(factura.cambio)})` : ""} <span className={`${estilos.chip} ${estilos.chipOk}`}>APROBADA</span></span>
+              {!corregir ? <button type="button" className={ui.secondaryButton} onClick={volverAFacturas}>Cambiar factura</button> : null}
             </div>
-            <label className={estilos.field} style={{ marginTop: 12 }}>
-              <span>Observación (opcional)</span>
-              <textarea rows={2} value={observacion} onChange={(e) => setObservacion(e.target.value)} maxLength={5000} />
-            </label>
-          </section>
+            <div className={estilos.cdc}>CDC <code>{factura.cdc}</code> <button type="button" className={estilos.linkBtn} onClick={() => { void navigator.clipboard?.writeText(factura.cdc).catch(() => undefined); }}>Copiar</button></div>
+            {factura.bloqueada ? <div className={estilos.error} role="alert" style={{ marginTop: 8 }}>Esta factura tiene una nota de crédito pendiente de resultado. Espere su resultado definitivo antes de emitir otra.</div> : null}
+          </div>
 
-          <section className={estilos.card}>
-            <h2>Líneas a acreditar <small>{esDevolucion ? "indique la cantidad a devolver" : "indique el monto a acreditar (IVA incluido)"}</small></h2>
-            <div className={estilos.tabla}>
-              <table>
-                <thead>
-                  <tr><th /><th>Ítem</th><th>Código</th><th>Descripción</th><th>IVA</th><th className={estilos.num}>Cant.</th><th className={estilos.num}>Precio</th><th className={estilos.num}>Total</th><th className={estilos.num}>Cant. acreditada</th><th className={estilos.num}>Monto acreditado</th><th className={estilos.num}>Saldo cant.</th><th className={estilos.num}>Saldo monto</th><th className={estilos.num}>{esDevolucion ? "Cantidad a devolver" : "Monto a acreditar"}</th></tr>
-                </thead>
-                <tbody>
-                  {factura.lineas.map((l) => {
-                    const e = entradas[l.linea] ?? { incluida: false, valor: "" };
+          <div className={estilos.layout}>
+            <div className={estilos.principal}>
+              <section className={estilos.card} aria-label="Datos de la nota">
+                <h2>Datos de la nota</h2>
+                <div className={estilos.grid}>
+                  <label className={estilos.campo}>
+                    <span>Motivo</span>
+                    <select value={motivo} onChange={(e) => { const m = e.target.value === "" ? "" : Number(e.target.value); setMotivo(m); setEntradas(entradasIniciales(factura.lineas, m)); }} disabled={factura.motivoFijado !== null}>
+                      <option value="">Seleccione…</option>
+                      {factura.motivosPermitidos.map((m) => <option key={m} value={m}>{MOTIVOS[m]}</option>)}
+                    </select>
+                    {factura.motivoFijado !== null ? <small className={estilos.hint}>Fijado por la primera nota de crédito aprobada de esta factura.</small> : null}
+                  </label>
+                  <label className={estilos.campo}>
+                    <span>Establecimiento</span>
+                    <select value={sucursalId} onChange={(e) => { setSucursalId(e.target.value); setPuntoId(""); }}>
+                      <option value="">Seleccione…</option>
+                      {sucursales.map((s) => <option key={s.id} value={s.id}>{s.establecimiento} · {s.nombre}</option>)}
+                    </select>
+                  </label>
+                  <label className={estilos.campo}>
+                    <span>Punto de expedición NCE</span>
+                    <select value={puntoId} onChange={(e) => setPuntoId(e.target.value)} disabled={!sucursal}>
+                      <option value="">Seleccione…</option>
+                      {sucursal?.puntos.map((p) => <option key={p.id} value={p.id}>{p.codigo} · {p.nombre}</option>)}
+                    </select>
+                    {sucursal && sucursal.puntos.length === 0 ? <small className={estilos.hint}>Esta sucursal no tiene puntos con numeración NCE confirmada. Configúrela en Facturación → Puntos de expedición.</small> : null}
+                    {sucursal && sucursal.sinSecuencia > 0 && sucursal.puntos.length > 0 ? <small className={estilos.hint}>{sucursal.sinSecuencia} punto(s) activo(s) sin numeración NCE confirmada no se listan.</small> : null}
+                  </label>
+                </div>
+                <label className={estilos.campo} style={{ marginTop: 10 }}>
+                  <span>Observación (opcional)</span>
+                  <textarea rows={2} value={observacion} onChange={(e) => setObservacion(e.target.value)} maxLength={5000} />
+                </label>
+              </section>
 
-                    return (
-                      <tr key={l.linea} className={l.agotada ? estilos.agotada : undefined}>
-                        <td><input type="checkbox" aria-label={`Incluir ítem ${l.linea}`} checked={e.incluida} disabled={l.agotada} onChange={(ev) => setEntradas((p) => ({ ...p, [l.linea]: { ...e, incluida: ev.target.checked } }))} /></td>
-                        <td>{l.linea}</td>
-                        <td>{l.codigoInterno}</td>
-                        <td>{l.descripcion}{l.agotada ? <span className={estilos.chip}>Sin saldo</span> : null}</td>
-                        <td>{etiquetaIvaLinea(l.afectacion, l.tasa, l.proporcion)}</td>
-                        <td className={estilos.num}>{fm(l.cantidad)} {l.unidad}</td>
-                        <td className={estilos.num}>{fm(l.precio)}</td>
-                        <td className={estilos.num}>{fm(l.total)}</td>
-                        <td className={estilos.num}>{fm(l.cantidadAcreditada)}</td>
-                        <td className={estilos.num}>{fm(l.montoAcreditado)}</td>
-                        <td className={estilos.num}>{fm(l.cantidadDisponible)}</td>
-                        <td className={estilos.num}>{fm(l.saldoMonto)}</td>
-                        <td className={estilos.num}>
-                          <input className={estilos.entrada} inputMode="decimal" aria-label={`${esDevolucion ? "Cantidad" : "Monto"} del ítem ${l.linea}`} disabled={!e.incluida || l.agotada} value={e.valor} placeholder={esDevolucion ? l.cantidadDisponible : l.saldoMonto}
-                            onChange={(ev) => setEntradas((p) => ({ ...p, [l.linea]: { ...e, valor: ev.target.value } }))} />
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+              <section className={estilos.card} aria-label="Líneas a acreditar">
+                <h2>Líneas a acreditar <small>{esDevolucion ? "indique la cantidad a devolver" : "indique el monto a acreditar (IVA incluido)"}</small></h2>
+                <div className={estilos.tabla}>
+                  <table>
+                    <thead>
+                      <tr><th><span className={estilos.soloLector}>Incluir</span></th><th>Producto</th><th>IVA</th><th className={estilos.num}>Factura original</th><th className={estilos.num}>Disponible</th><th className={estilos.num}>{esDevolucion ? "Cantidad a devolver" : "Monto a acreditar"}</th></tr>
+                    </thead>
+                    <tbody>
+                      {factura.lineas.map((l) => {
+                        const e = entradas[l.linea] ?? { incluida: false, valor: "" };
+                        const abierta = abiertas.has(l.linea);
+
+                        return (
+                          <Fragment key={l.linea}>
+                            <tr className={l.agotada ? estilos.agotada : undefined}>
+                              <td><input type="checkbox" aria-label={`Incluir ítem ${l.linea}`} checked={e.incluida} disabled={l.agotada} onChange={(ev) => setEntradas((p) => ({ ...p, [l.linea]: { ...e, incluida: ev.target.checked } }))} /></td>
+                              <td>
+                                {l.descripcion}{l.agotada ? <span className={estilos.chip}>Sin saldo</span> : null}
+                                <div className={estilos.sub}>{l.codigoInterno} · ítem {l.linea} · <button type="button" className={estilos.linkBtn} aria-expanded={abierta} onClick={() => setAbiertas((p) => { const n = new Set(p); if (n.has(l.linea)) n.delete(l.linea); else n.add(l.linea); return n; })}>{abierta ? "Ocultar acreditado" : "Ver acreditado"}</button></div>
+                              </td>
+                              <td>{etiquetaIvaLinea(l.afectacion, l.tasa, l.proporcion)}</td>
+                              <td className={estilos.num}>{fm(l.cantidad)} {l.unidad} × {fm(l.precio)}<div className={estilos.sub}>= {fm(l.total)}</div></td>
+                              <td className={estilos.num}>{esDevolucion ? `${fm(l.cantidadDisponible)} ${l.unidad}` : fm(l.saldoMonto)}</td>
+                              <td className={estilos.num}>
+                                <input className={estilos.entrada} inputMode="decimal" aria-label={`${esDevolucion ? "Cantidad" : "Monto"} del ítem ${l.linea}`} disabled={!e.incluida || l.agotada} value={e.valor} placeholder={esDevolucion ? l.cantidadDisponible : l.saldoMonto}
+                                  onChange={(ev) => setEntradas((p) => ({ ...p, [l.linea]: { ...e, valor: ev.target.value } }))} />
+                              </td>
+                            </tr>
+                            {abierta ? (
+                              <tr className={estilos.detalleFila}>
+                                <td />
+                                <td colSpan={5}>
+                                  <div className={estilos.detalleGrid}>
+                                    <span>Cantidad acreditada: <b>{fm(l.cantidadAcreditada)}</b></span>
+                                    <span>Monto acreditado: <b>{fm(l.montoAcreditado)}</b></span>
+                                    <span>Saldo cantidad: <b>{fm(l.cantidadDisponible)}</b></span>
+                                    <span>Saldo monto: <b>{fm(l.saldoMonto)}</b></span>
+                                  </div>
+                                </td>
+                              </tr>
+                            ) : null}
+                          </Fragment>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
             </div>
-            <div className={estilos.acciones}>
-              <button type="button" className={ui.primaryButton} disabled={!listoParaRevisar || cargando} onClick={() => void revisar()}>Revisar nota de crédito</button>
-              <span className={estilos.hint}>{seleccionadas} línea(s) seleccionada(s). El total y el IVA se calculan en el servidor al revisar.</span>
-            </div>
-          </section>
+
+            <aside className={`${estilos.card} ${estilos.lateral} ${estilos.resumen}`} aria-label="Resumen de la nota">
+              <h2>Resumen de la nota</h2>
+              <dl>
+                <div><dt>Tipo</dt><dd>NCE</dd></div>
+                <div><dt>Factura original</dt><dd>{factura.numero}</dd></div>
+                <div><dt>Motivo</dt><dd>{motivo === "" ? "—" : MOTIVOS[motivo]}</dd></div>
+                <div><dt>Establecimiento / punto</dt><dd>{sucursal && punto ? `${sucursal.establecimiento}-${punto.codigo}` : "—"}</dd></div>
+                <div><dt>Moneda</dt><dd>{factura.moneda}</dd></div>
+                <div><dt>Líneas incluidas</dt><dd>{seleccionadas}</dd></div>
+              </dl>
+              <p className={estilos.pendiente}>Importes calculados al revisar: subtotal, IVA y total los determina el servidor.</p>
+              <button type="button" className={ui.primaryButton} disabled={!listoParaRevisar || cargando} onClick={() => void revisar()}>{cargando ? "Revisando…" : "Revisar nota de crédito"}</button>
+              {!listoParaRevisar && faltantes.length > 0 ? <ul className={estilos.faltan}>{faltantes.map((f) => <li key={f}>{f}</li>)}</ul> : null}
+            </aside>
+          </div>
         </>
       )}
 
@@ -436,37 +540,41 @@ function Formulario() {
       {resumen ? (
         <div className={estilos.fondo} role="dialog" aria-modal="true" aria-label="Revisión de la nota de crédito">
           <div className={estilos.modal}>
-            <h2>Revisar y emitir</h2>
-            <dl>
-              <div><dt>Factura original</dt><dd>{resumen.factura.numero}</dd></div>
-              <div><dt>CDC</dt><dd className={estilos.mono}>{resumen.factura.cdc}</dd></div>
-              <div><dt>Motivo</dt><dd>{resumen.motivo.nombre}</dd></div>
-              <div><dt>Nota de crédito Nº</dt><dd>{resumen.numero}</dd></div>
-              <div><dt>Moneda</dt><dd>{resumen.moneda}{resumen.cambio ? ` · cambio ${fm(resumen.cambio)}` : ""}</dd></div>
-              <div><dt>Punto</dt><dd>{resumen.punto}</dd></div>
-              {resumen.observacion ? <div><dt>Observación</dt><dd>{resumen.observacion}</dd></div> : null}
-            </dl>
-            <div className={estilos.tabla}>
-              <table>
-                <thead><tr><th>Ítem</th><th>Código</th><th>Descripción</th><th>IVA</th><th className={estilos.num}>Cantidad</th><th className={estilos.num}>Precio</th><th className={estilos.num}>Monto</th></tr></thead>
-                <tbody>
-                  {resumen.lineas.map((l) => <tr key={l.linea}><td>{l.linea}</td><td>{l.codigo}</td><td>{l.descripcion}</td><td>{etiquetaIvaLinea(l.afectacion, l.tasa, l.proporcion)}</td><td className={estilos.num}>{fm(l.cantidad)}</td><td className={estilos.num}>{fm(l.precioUnitario)}</td><td className={estilos.num}>{fm(l.monto)}</td></tr>)}
-                </tbody>
-              </table>
+            <header><h2>Revisar y emitir</h2></header>
+            <div className={estilos.modalCuerpo}>
+              <dl className={estilos.modalDatos}>
+                <div><dt>Factura original</dt><dd>{resumen.factura.numero}</dd></div>
+                <div><dt>Motivo</dt><dd>{resumen.motivo.nombre}</dd></div>
+                <div><dt>Nota de crédito Nº</dt><dd>{resumen.numero}</dd></div>
+                <div><dt>Punto</dt><dd>{resumen.punto}</dd></div>
+                <div><dt>Moneda</dt><dd>{resumen.moneda}{resumen.cambio ? ` · cambio ${fm(resumen.cambio)}` : ""}</dd></div>
+                <div style={{ gridColumn: "1 / -1" }}><dt>CDC de la factura</dt><dd className={estilos.mono}>{resumen.factura.cdc}</dd></div>
+                {resumen.observacion ? <div style={{ gridColumn: "1 / -1" }}><dt>Observación</dt><dd>{resumen.observacion}</dd></div> : null}
+              </dl>
+              <div className={estilos.tabla}>
+                <table>
+                  <thead><tr><th>Ítem</th><th>Descripción</th><th>IVA</th><th className={estilos.num}>Cantidad</th><th className={estilos.num}>Precio</th><th className={estilos.num}>Monto</th></tr></thead>
+                  <tbody>
+                    {resumen.lineas.map((l) => <tr key={l.linea}><td>{l.linea}</td><td>{l.descripcion}<div className={estilos.sub}>{l.codigo}</div></td><td>{etiquetaIvaLinea(l.afectacion, l.tasa, l.proporcion)}</td><td className={estilos.num}>{fm(l.cantidad)}</td><td className={estilos.num}>{fm(l.precioUnitario)}</td><td className={estilos.num}>{fm(l.monto)}</td></tr>)}
+                  </tbody>
+                </table>
+              </div>
+              <dl className={estilos.totales}>
+                <div><dt>Exento</dt><dd>{fm(resumen.totales.exento)}</dd></div>
+                <div><dt>Gravado 5%</dt><dd>{fm(resumen.totales.gravado5)}</dd></div>
+                <div><dt>Gravado 10%</dt><dd>{fm(resumen.totales.gravado10)}</dd></div>
+                <div><dt>IVA 5%</dt><dd>{fm(resumen.totales.iva5)}</dd></div>
+                <div><dt>IVA 10%</dt><dd>{fm(resumen.totales.iva10)}</dd></div>
+                <div><dt>Total IVA</dt><dd>{fm(resumen.totales.totalIva)}</dd></div>
+                <div className={estilos.totalNce}><dt>Total NCE</dt><dd>{fm(resumen.totales.total)}</dd></div>
+              </dl>
             </div>
-            <dl className={estilos.totales}>
-              <div><dt>Exento</dt><dd>{fm(resumen.totales.exento)}</dd></div>
-              <div><dt>Gravado 5%</dt><dd>{fm(resumen.totales.gravado5)}</dd></div>
-              <div><dt>Gravado 10%</dt><dd>{fm(resumen.totales.gravado10)}</dd></div>
-              <div><dt>IVA 5%</dt><dd>{fm(resumen.totales.iva5)}</dd></div>
-              <div><dt>IVA 10%</dt><dd>{fm(resumen.totales.iva10)}</dd></div>
-              <div><dt>Total IVA</dt><dd>{fm(resumen.totales.totalIva)}</dd></div>
-              <div><dt>Total NCE</dt><dd>{fm(resumen.totales.total)}</dd></div>
-            </dl>
-            <p className={estilos.hint}>Al emitir se reserva el número y se envía al gateway. El resultado fiscal se consulta automáticamente y se ve en Documentos electrónicos.</p>
-            <div className={estilos.acciones}>
-              <button type="button" className={ui.secondaryButton} disabled={enviando} onClick={() => setRevisado(null)}>Volver y editar</button>
-              <button type="button" className={ui.primaryButton} disabled={enviando} onClick={() => void emitir()}>{enviando ? "Emitiendo…" : "Emitir nota de crédito"}</button>
+            <div className={estilos.modalPie}>
+              <p>Al emitir se reserva el número y se envía al gateway. El resultado fiscal se consulta automáticamente y se ve en Documentos electrónicos.</p>
+              <div>
+                <button type="button" className={ui.secondaryButton} disabled={enviando} onClick={() => setRevisado(null)}>Volver y editar</button>
+                <button type="button" className={ui.primaryButton} disabled={enviando} onClick={() => void emitir()}>{enviando ? "Emitiendo…" : "Emitir nota de crédito"}</button>
+              </div>
             </div>
           </div>
         </div>
