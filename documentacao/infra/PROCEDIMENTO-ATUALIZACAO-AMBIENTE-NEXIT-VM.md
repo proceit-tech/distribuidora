@@ -47,6 +47,15 @@ Migration incremental **NEX-061** (`migraciones/NEX-061-facturacion-gateway-cred
 ## NEX-062 — Nota de Crédito Electrónica V1 (PRO-94)
 Migration incremental **NEX-062** (`migraciones/NEX-062-facturacion-nce-v1.sql`; reversión `scripts/reversion-NEX-062.sql`, que aborta si ya existen NCE). Requiere NEX-060 y NEX-061 aplicadas. Mismo runner de la ETAPA 2, con backup previo y solo con autorización del responsable. Antes de emitir la primera NCE: en **Facturación → Puntos de expedición** informar y confirmar el último número NCE de cada punto (no se presume 0). La consulta automática corre dentro de la aplicación (`instrumentation.ts`); se desactiva con `NEXIT_CONSULTA_AUTOMATICA=0` en `app.env` y requiere reiniciar `app`. Verificación posterior (solo lectura): `docker exec nexit-db psql -U nexit_app -d nexit -c "SELECT version FROM public.schema_migrations WHERE version = 'NEX-062';"`. La prueba SQL T26 corre con el runner de pruebas sobre una base descartable, nunca sobre `nexit`.
 
+## NEX-063 — Puntos por tipo documental, series SIFEN y paso entre series
+Migration incremental **NEX-063** (`migraciones/NEX-063-facturacion-puntos-tipos-series.sql`). Requiere NEX-060, NEX-061 y NEX-062 aplicadas. **Orden: primero la migración y después el código de la aplicación** (la aplicación lee `fe_punto_secuencias.serie/activo`). Pasos, todos por el responsable, con backup previo y sin aplicar por IA:
+1. **Pre-verificación (solo lectura):** `docker exec -i nexit-db psql -U nexit_app -d nexit -v ON_ERROR_STOP=1 < documentacao/banco/nexit/v1/scripts/preflight-NEX-063.sql`. Cualquier fila en las secciones 3, 4 o 5 (con «bloquea = true») significa NO aplicar hasta conciliar.
+2. **Backup** de la base y **aplicación** con el MISMO runner de la ETAPA 2 (`--solo-listar` y luego aplicar).
+3. **Verificación posterior (solo lectura):** `... psql ... < documentacao/banco/nexit/v1/scripts/verificar-NEX-063.sql`; todas las filas deben dar `ok = true`.
+4. **Deploy** de la aplicación (build + recreate de `app`, ver abajo). Las secuencias existentes (FE/NCE) quedan **activas y sin serie**; nada se renumera.
+5. Primera numeración de una identidad nueva: **sin serie**; solo tras 9999999 el sistema pasa a la serie AA, AB… ZZ. NRE/NDE/AFE se pueden configurar pero su emisión sigue bloqueada.
+**Recuperación:** `scripts/reversion-NEX-063.sql` (aborta si ya existen series, documentos con serie o tipos desactivados), después borrar la fila `NEX-063` de `schema_migrations` y volver al código anterior. Las pruebas T27/T28 corren SOLO sobre una base descartable, nunca sobre `nexit`.
+
 ## ETAPA 2 — Migraciones automáticas (SOMENTE se a atualização inclui migrations e há autorização)
 
 O procedimento abaixo é o que **funcionou no terminal real**. Copiar o DIRETÓRIO `v1/.`, não cinco SQLs escolhidos manualmente: o runner verifica **todas** as migrations versionadas, checksums e `schema_migrations`, pulando as já aplicadas.

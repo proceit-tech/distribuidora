@@ -118,7 +118,7 @@ export async function verificarCasosNce(): Promise<string[]> {
 
   const t26 = leer("documentacao/banco/nexit/v1/pruebas/T26-nex062-nce.sql");
 
-  cierto("T26 (SQL) versionada y registrada en el runner: secuencia NCE propia, idempotencia, NCE pendiente, motivo fijado, saldo exacto, rechazo libera, aislamiento y lease (NO ejecutada por la IA)", /T25( T26)?; do|T26/.test(leer("documentacao/banco/nexit/v1/scripts/ejecutar-pruebas.sh")) && /T21 T25 T26; do/.test(leer("documentacao/banco/nexit/v1/scripts/ejecutar-pruebas.sh"))
+  cierto("T26 (SQL) versionada y registrada en el runner: secuencia NCE propia, idempotencia, NCE pendiente, motivo fijado, saldo exacto, rechazo libera, aislamiento y lease (NO ejecutada por la IA)", /T25( T26)?( T27)?; do|T26/.test(leer("documentacao/banco/nexit/v1/scripts/ejecutar-pruebas.sh")) && /T21 T25 T26( T27)?; do/.test(leer("documentacao/banco/nexit/v1/scripts/ejecutar-pruebas.sh"))
     && ["NEX:SECUENCIA_NO_CONFIGURADA", "NEX:IDEMPOTENCIA_CONFLICTO", "NEX:NCE_PENDIENTE", "NEX:MOTIVO_FIJADO", "NEX:SALDO_MONTO", "fe_consulta_reservar"].every((k) => t26.includes(k)));
 
   // ── 7. Rutas, pantalla y menú ───────────────────────────────────────────────────────────────────
@@ -126,7 +126,7 @@ export async function verificarCasosNce(): Promise<string[]> {
 
   cierto("todas las rutas NCE exigen FACTURACION_ELECTRONICA.CREAR y toman empresa/usuario de la sesión", rutas.every((r) => /prepararFacturacion\("CREAR"\)/.test(leer(r)) && /b\.empresaId/.test(leer(r)) && !/searchParams\.get\("empresa/.test(leer(r))));
   cierto("el detalle de factura nunca devuelve el receptor completo (se descarta)", /receptor: _receptor/.test(leer("app/api/notas-credito/facturas/[id]/route.ts")));
-  cierto("la configuración de secuencia NCE exige PUNTOS", /prepararFacturacion\("PUNTOS"\)/.test(leer("app/api/facturacion/puntos/[id]/secuencia-nce/route.ts")));
+  cierto("la configuración de tipos por punto (NEX-063) exige PUNTOS", /prepararFacturacion\("PUNTOS"\)/.test(leer("app/api/facturacion/puntos/[id]/tipos/route.ts")) && /prepararFacturacion\("PUNTOS"\)/.test(leer("app/api/facturacion/puntos/[id]/tipos/[tipo]/estado/route.ts")));
   cierto("layout de /notas-credito protegido con CREAR", /guardPage\("FACTURACION_ELECTRONICA", "CREAR"\)/.test(leer("app/(private)/notas-credito/layout.tsx")));
   const menu = leer("lib/navigation/menu.ts");
 

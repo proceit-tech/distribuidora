@@ -14,6 +14,7 @@ import { B, parseDec, textoDec } from "@/lib/facturacion/calculo";
 import { cabeEnF023, leerCambio, mismoPrecio, MONEDAS_FE, simboloMoneda, totalEnGuaranies, type Moneda } from "@/lib/facturacion/monedas";
 import { conciliarPagos, PAGO_UI_VACIO, pagoParaEnvio, pendientesPagos, textoDecimal, type PagoUI } from "@/lib/facturacion/pagos";
 import { resumenCalculo, type LineaFE } from "@/lib/facturacion/payload-fe";
+import { numeracionSiguiente, textoNumeracion } from "@/lib/facturacion/series";
 import { formatearDecimalTexto } from "@/lib/formato/decimal-texto";
 import { formatearFechaPy } from "@/lib/formato/listas";
 import { useProtegerCambios } from "@/lib/ui/proteger-cambios";
@@ -23,7 +24,7 @@ import { CondicionCredito } from "./condicion-credito";
 import { MediosPago } from "./medios-pago";
 import estilos from "./page.module.css";
 
-type Punto = { id: string; codigo: string; nombre: string; ultimoNumero?: number };
+type Punto = { id: string; codigo: string; nombre: string; ultimoNumero?: number; serie?: string | null };
 type Sucursal = { id: string; nombre: string; establecimiento: string; puntos: Punto[]; puntosInactivos?: number };
 type Opciones = { condiciones: Record<string, string>; tiposTransaccion: Record<string, string>; presencias: Record<string, string>; formasPago: Record<string, string> };
 type Cliente = {
@@ -541,7 +542,9 @@ export default function NuevaFacturaPage() {
 
   const sucursal = sucursales.find((s) => s.id === sucursalId);
   const puntoElegido = sucursal?.puntos.find((p) => p.id === puntoId);
-  const proximoNumero = puntoElegido && typeof puntoElegido.ultimoNumero === "number" ? `${puntoElegido.codigo}-${String(puntoElegido.ultimoNumero + 1).padStart(7, "0")}` : "";
+  // Referencial: el número definitivo se reserva de forma atómica al emitir (con el paso a la serie siguiente tras 9999999).
+  const siguiente = puntoElegido && typeof puntoElegido.ultimoNumero === "number" ? numeracionSiguiente(puntoElegido.serie ?? null, puntoElegido.ultimoNumero) : null;
+  const proximoNumero = puntoElegido && siguiente ? `${puntoElegido.codigo}-${textoNumeracion(siguiente.serie, siguiente.numero)}` : "";
   const calculo = resumenCalculo(lineas.map((l) => aLineaFE(l, moneda)));
   const extranjera = moneda !== "PYG";
   const cambioNormal = extranjera ? leerCambio(cambio) : null;

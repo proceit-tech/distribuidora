@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { crearPunto, leerAltaPunto, listarPuntos, respuestaErrorPunto } from "@/lib/facturacion/puntos";
+import { leerRegistroPunto, listarPuntos, registrarPunto, respuestaErrorPunto } from "@/lib/facturacion/puntos";
 import { prepararFacturacion } from "@/lib/facturacion/servidor";
 
 // Gestión de puntos de expedición (PRO-129): solo con FACTURACION_ELECTRONICA.PUNTOS; la empresa y el usuario salen de la sesión y la función SQL vuelve a verificar todo.
@@ -16,7 +16,7 @@ export async function GET() {
   }
 }
 
-// Alta: el punto nace INACTIVO con el último número emitido informado y confirmado; se activa en un segundo paso.
+// Alta del punto ADMINISTRATIVO (NEX-063): nace INACTIVO y sin ningún tipo de documento; cada tipo se configura después (serie + último número, una sola confirmación).
 export async function POST(request: Request) {
   const b = await prepararFacturacion("PUNTOS");
 
@@ -31,12 +31,12 @@ export async function POST(request: Request) {
   }
   if (!cuerpo || typeof cuerpo !== "object" || Array.isArray(cuerpo)) return NextResponse.json({ error: "Los datos enviados no son válidos." }, { status: 400 });
 
-  const datos = leerAltaPunto(cuerpo as Record<string, unknown>);
+  const datos = leerRegistroPunto(cuerpo as Record<string, unknown>);
 
   if (typeof datos === "string") return NextResponse.json({ error: datos }, { status: 400 });
 
   try {
-    return NextResponse.json({ id: await crearPunto(b.db, b.empresaId, b.usuarioId, datos) }, { status: 201 });
+    return NextResponse.json({ id: await registrarPunto(b.db, b.empresaId, b.usuarioId, datos) }, { status: 201 });
   } catch (error) {
     return respuestaErrorPunto(error);
   }

@@ -26,7 +26,7 @@ type Factura = {
   id: string; sucursalId: string; numero: string; cdc: string; fechaEmision: string; moneda: string; cambio: string | null; total: string; receptorNombre: string; receptorDocumento: string | null;
   lineas: Linea[]; motivoFijado: number | null; bloqueada: boolean; motivosPermitidos: number[];
 };
-type Punto = { id: string; codigo: string; nombre: string; ultimoNumero: number };
+type Punto = { id: string; codigo: string; nombre: string; ultimoNumero: number; serie?: string | null };
 type Sucursal = { id: string; nombre: string; establecimiento: string; puntos: Punto[]; sinSecuencia: number };
 type Resumen = {
   factura: { numero: string; cdc: string; fechaEmision: string }; motivo: { codigo: number; nombre: string }; punto: string; moneda: string; cambio: string | null; observacion: string; numero: string;

@@ -1,0 +1,11 @@
+const fs=require("fs");process.chdir("C:/PROJETOS/PROCEIT/distribuidora");
+let s=fs.readFileSync("lib/facturacion/series.ts","utf8");
+const a='  if (!Number.isInteger(ultimo) || ultimo < 0 || ultimo > NUMERO_MAXIMO) throw new Error("El último número debe ser un entero de 0 a 9999999.");\n';
+if(!s.includes(a))throw new Error("a");
+s=s.replace(a,()=>a+"  ordenSerie(serie); // valida la serie (dos letras A–Z o null) también cuando solo avanza el número\n");
+fs.writeFileSync("lib/facturacion/series.ts",s);
+let c=fs.readFileSync("lib/facturacion/series.casos.ts","utf8");
+const b='!/\b(INSERT|UPDATE|DELETE|ALTER|DROP|CREATE)\b/.test(sinComentarios(ver)));';
+if(!c.includes(b))throw new Error("b");
+c=c.replace(b,()=>"!/\b(INSERT|UPDATE|DELETE|ALTER|DROP|CREATE)\b/.test(sinComentarios(ver).replace(/'[^']*'/g, \"''\")));");
+fs.writeFileSync("lib/facturacion/series.casos.ts",c);

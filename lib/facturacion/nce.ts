@@ -269,8 +269,8 @@ export async function listarFacturasElegibles(db: Db, empresaId: string, usuario
 export async function puntosParaNce(db: Db, empresaId: string, usuarioId: string) {
   const r = await db.query(
     `SELECT sc.id, sc.nombre, sc.establecimiento_sifen AS establecimiento,
-            coalesce(json_agg(json_build_object('id', p.id, 'codigo', p.codigo, 'nombre', p.nombre, 'ultimoNumero', q.ultimo_numero) ORDER BY p.codigo) FILTER (WHERE q.ultimo_numero IS NOT NULL), '[]'::json) AS puntos,
-            count(p.id) FILTER (WHERE q.ultimo_numero IS NULL)::int AS "sinSecuencia"
+            coalesce(json_agg(json_build_object('id', p.id, 'codigo', p.codigo, 'nombre', p.nombre, 'ultimoNumero', q.ultimo_numero, 'serie', q.serie) ORDER BY p.codigo) FILTER (WHERE q.ultimo_numero IS NOT NULL AND q.activo), '[]'::json) AS puntos,
+            count(p.id) FILTER (WHERE q.ultimo_numero IS NULL OR NOT q.activo)::int AS "sinSecuencia"
        FROM sucursales sc
        LEFT JOIN fe_puntos_expedicion p ON p.empresa_id = sc.empresa_id AND p.sucursal_id = sc.id AND p.activo
        LEFT JOIN fe_punto_secuencias q ON q.empresa_id = p.empresa_id AND q.punto_id = p.id AND q.tipo_documento = 'NCE'
@@ -279,7 +279,7 @@ export async function puntosParaNce(db: Db, empresaId: string, usuarioId: string
     [empresaId, usuarioId],
   );
 
-  return (r.rows as F[]).map((x) => ({ id: s(x.id), nombre: s(x.nombre), establecimiento: s(x.establecimiento), puntos: x.puntos as Array<{ id: string; codigo: string; nombre: string; ultimoNumero: number }>, sinSecuencia: Number(x.sinSecuencia) }));
+  return (r.rows as F[]).map((x) => ({ id: s(x.id), nombre: s(x.nombre), establecimiento: s(x.establecimiento), puntos: x.puntos as Array<{ id: string; codigo: string; nombre: string; ultimoNumero: number; serie: string | null }>, sinSecuencia: Number(x.sinSecuencia) }));
 }
 
 // ── Preparación (validación + payload) y emisión ──────────────────────────────────────────────────────────────────
@@ -319,7 +319,7 @@ export async function prepararNce(db: Db, empresaId: string, usuarioId: string, 
   if (fe.motivoFijado !== null && fe.motivoFijado !== cuerpo.motivo) throw new ErrorFacturacion(409, `Esta factura ya tiene una nota de crédito aprobada con el motivo «${MOTIVOS_NCE[fe.motivoFijado]}»: no se mezclan motivos.`);
 
   const punto = await db.query(
-    `SELECT p.codigo, q.ultimo_numero AS ultimo, sc.establecimiento_sifen AS establecimiento
+    `SELECT p.codigo, q.ultimo_numero AS ultimo, q.activo AS "tipoActivo", sc.establecimiento_sifen AS establecimiento
        FROM fe_puntos_expedicion p JOIN sucursales sc ON sc.empresa_id = p.empresa_id AND sc.id = p.sucursal_id
        LEFT JOIN fe_punto_secuencias q ON q.empresa_id = p.empresa_id AND q.punto_id = p.id AND q.tipo_documento = 'NCE'
       WHERE p.empresa_id = $1 AND p.id = $2 AND p.sucursal_id = $3 AND p.activo AND sc.activo AND sc.establecimiento_sifen IS NOT NULL AND sucursal_en_alcance($1::uuid, $4::uuid, sc.id)`,
@@ -329,6 +329,7 @@ export async function prepararNce(db: Db, empresaId: string, usuarioId: string, 
 
   if (!pf) throw new ErrorFacturacion(422, "La sucursal o el punto de expedición no son válidos (inactivos, sin establecimiento SIFEN o fuera de su alcance).");
   if (pf.ultimo === null) throw new ErrorFacturacion(422, "El punto de expedición no tiene la secuencia de Nota de Crédito confirmada: configúrela en Puntos de expedición antes de emitir.");
+  if (pf.tipoActivo !== true) throw new ErrorFacturacion(422, "El tipo «Nota de crédito» no está activo en este punto de expedición: actívelo en Puntos de expedición antes de emitir.");
 
   const porLinea = new Map(fe.lineas.map((l) => [l.linea, l]));
   const desconocidas = cuerpo.lineas.filter((l) => !porLinea.has(l.linea));
