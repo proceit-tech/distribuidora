@@ -234,12 +234,14 @@ export async function listarFacturasElegibles(db: Db, empresaId: string, usuario
     const r = await db.query(
       `WITH base AS (
          SELECT d.id, d.establecimiento || '-' || d.punto_expedicion || '-' || d.numero AS numero, d.cdc, d.fecha_emision, d.moneda, d.total::text AS total, d.receptor_nombre,
-                (SELECT coalesce(sum((x.v->>'dTotOpeItem')::numeric), 0) FROM documento_electronico_solicitudes so, jsonb_array_elements(so.payload->'Detalles') x(v) WHERE so.empresa_id = d.empresa_id AND so.documento_id = d.id) AS original,
+                (SELECT coalesce(sum((x.v->>'dTotOpeItem')::numeric), 0) FROM jsonb_array_elements(sv.payload->'Detalles') x(v)) AS original,
                 (SELECT coalesce(sum(nl.monto), 0) FROM nce_lineas nl JOIN documentos_electronicos nn ON nn.empresa_id = nl.empresa_id AND nn.id = nl.nce_id
                   WHERE nl.empresa_id = d.empresa_id AND nl.fe_id = d.id AND nn.estado_sifen = 'APROBADO') AS acreditado,
                 EXISTS (SELECT 1 FROM nce_origen o JOIN documentos_electronicos nn ON nn.empresa_id = o.empresa_id AND nn.id = o.nce_id
                          WHERE o.empresa_id = d.empresa_id AND o.fe_id = d.id AND fe_nce_clasificar(nn.estado_local, nn.estado_sifen, nn.envio_error_tipo) = 'BLOQUEA') AS pendiente
            FROM documentos_electronicos d
+           -- ZERO-03: UNA sola versión fiscal (la última, igual que leerFacturaOriginal y fe_documento_crear_nce) antes de sumar sus Detalles; nunca la suma de todas las versiones.
+           CROSS JOIN LATERAL (SELECT so.payload FROM documento_electronico_solicitudes so WHERE so.empresa_id = d.empresa_id AND so.documento_id = d.id ORDER BY so.version DESC LIMIT 1) sv
           WHERE d.empresa_id = $1 AND d.tipo = 'FE' AND d.estado_sifen = 'APROBADO' AND d.cdc IS NOT NULL AND d.cliente_id = $3 AND sucursal_en_alcance($1::uuid, $2::uuid, d.sucursal_id)
             AND ($4 = '' OR concat_ws(' ', d.establecimiento || '-' || d.punto_expedicion || '-' || d.numero, d.cdc, to_char(d.fecha_emision AT TIME ZONE 'America/Asuncion', 'DD/MM/YYYY'), to_char(d.fecha_emision AT TIME ZONE 'America/Asuncion', 'YYYY-MM-DD')) ILIKE $5 ESCAPE '!'))
        SELECT *, (original - acreditado)::text AS saldo, count(*) OVER() AS total_filas FROM base WHERE original - acreditado > 0 ORDER BY fecha_emision DESC, id DESC LIMIT $6 OFFSET $7`,

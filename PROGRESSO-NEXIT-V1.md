@@ -1144,3 +1144,9 @@ Após o encerramento **estático** de Inventario na `AUD-INV-R05` (sem homologa�
 - **R05-02:** o refresco da lista de facturas lê o filtro **aplicado** (`crearControlListado`: filtro vigente + token por petição); respostas de um filtro anterior (manual ou automáticas) e a troca de cliente são descartadas; só GET, sem `actualizar=1`.
 - **R05-03:** o resumo do servidor inclui `proporcion` e o modal usa `etiquetaIvaLinea` com ela («Gravado parcial 10% (prop. 50%)»).
 - **Verificações pontuais executadas:** `nce.casos` 0 falhas (inclui paridade TS↔fórmula SQL, A→B do filtro, texto SQL/T26) e `facturacion.casos` 0 falhas; ESLint e `tsc` limpos. Não executado: SQL/T26 em PostgreSQL, navegador, gateway/SIFEN. Não homologado.
+
+### PRO-94 — Ordem ZERO (ZERO-01/02/03; ZERO-04 fora do escopo; NEX-062 ainda não aplicada)
+- **ZERO-01:** `fe_consulta_reservar` escolhe como ator um usuário real, ATIVO, da empresa, com alcance da sucursal e CREAR ou EDITAR (criador primeiro; senão o mais antigo autorizado; senão NULL → `sinActor`). O worker (só NCE) consulta com `consultarEstado(..., {flujoNce:true})`: a auditoria grava o ator real. Lease, SKIP LOCKED, backoff e consulta manual (EDITAR) intactos.
+- **ZERO-02:** `fe_documento_crear_nce` valida moeda PYG/USD/BRL; PYG sem câmbio; USD/BRL com o câmbio ORIGINAL da FE, `dCondTiCam = 1` e F023 `dTotalGs = dTotGralOpe × dTiCam` exato (≤ 8 decimais, < 10^15, sem arredondar; ausente/inexato/fora de limite bloqueia antes de reservar número).
+- **ZERO-03:** a lista de facturas soma os Detalles de UMA só versão da solicitação (LATERAL, última), igual a `leerFacturaOriginal` e à reserva SQL.
+- **T26** ampliada (ator CREAR-only/inativo, cenários USD) — **não executada**. **Verificações:** `nce.casos` 0 falhas (inclui worker sem ator com DB falsa, textos SQL, serializador USD); FAT-E2 0 falhas; ESLint limpo. Não executado: SQL/T26 em PostgreSQL, gateway/SIFEN, navegador. Não homologado.

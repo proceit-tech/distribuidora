@@ -171,5 +171,45 @@ BEGIN
     PERFORM pg_temp.falla(format($f$SELECT fe_documento_registrar_consulta_flujo_nce(%L, %L, %L, 'OK', 200, 'req-t26', 'x', 'APROBADO', NULL, '0260', 'x', NULL, NULL, '{}'::jsonb)$f$, v_a, gen_random_uuid(), v_n3), '42501', 'flujo_nce: usuario inexistente/sin permiso (sin permiso CREAR ni EDITAR) rechazado');
   END;
 
+  -- ZERO-01 (worker): el actor de la consulta automática es un usuario REAL, ACTIVO y autorizado (CREAR o EDITAR) con alcance; el creador solo-CREAR sirve; si queda inactivo, el más antiguo autorizado
+  DECLARE
+    v_opw uuid; v_d1 uuid; v_d2 uuid; v_actor uuid;
+  BEGIN
+    SELECT id INTO v_opw FROM usuarios WHERE empresa_id = v_a AND usuario = 'op.t26.crear';
+    INSERT INTO documentos_electronicos (empresa_id, sucursal_id, tipo, establecimiento, punto_expedicion, numero, fecha_emision, receptor_nombre, moneda, total, estado_local, estado_sifen, creado_por)
+    VALUES (v_a, v_sa, 'NCE', '001', '001', '0000091', now(), 'Cliente T26', 'PYG', 1000, 'ENVIADO', 'SIN_CONSULTA', v_opw) RETURNING id INTO v_d1;
+    INSERT INTO documentos_electronicos (empresa_id, sucursal_id, tipo, establecimiento, punto_expedicion, numero, fecha_emision, receptor_nombre, moneda, total, estado_local, estado_sifen, creado_por)
+    VALUES (v_a, v_sa, 'NCE', '001', '001', '0000092', now(), 'Cliente T26', 'PYG', 1000, 'ENVIO_INDETERMINADO', 'PENDIENTE', v_opw) RETURNING id INTO v_d2;
+    SELECT o_actor INTO v_actor FROM fe_consulta_reservar(100, 120, ARRAY['NCE']) WHERE o_documento = v_d1;
+    PERFORM pg_temp.ok(v_actor = v_opw, 'ZERO-01 W01: NCE ENVIADO/SIN_CONSULTA creada por un operador solo CREAR activo: el actor de la consulta automática es ese operador');
+    SELECT o_actor INTO v_actor FROM fe_consulta_reservar(100, 120, ARRAY['NCE']) WHERE o_documento = v_d2;
+    PERFORM pg_temp.ok(v_actor IS NULL, 'la segunda reserva no entrega documentos con lease vigente (NCE ENVIO_INDETERMINADO ya reservada en la primera llamada)');
+    UPDATE documentos_electronicos SET consulta_lease_hasta = NULL WHERE id = v_d2;
+    UPDATE usuarios SET estado = 'BLOQUEADO' WHERE id = v_opw;
+    SELECT o_actor INTO v_actor FROM fe_consulta_reservar(100, 120, ARRAY['NCE']) WHERE o_documento = v_d2;
+    PERFORM pg_temp.ok(v_actor IS NOT NULL AND v_actor <> v_opw AND (SELECT estado = 'ACTIVO' FROM usuarios WHERE id = v_actor) AND usuario_tiene_permiso(v_a, v_actor, 'FACTURACION_ELECTRONICA', 'CREAR'), 'ZERO-01 W03: creador BLOQUEADO → se usa otro usuario ACTIVO autorizado de la empresa (nunca el inactivo)');
+    PERFORM pg_temp.ok(NOT EXISTS (SELECT 1 FROM documentos_electronicos WHERE id = v_d2 AND estado_sifen = 'APROBADO'), 'el reservar no cambia el estado fiscal');
+    UPDATE usuarios SET estado = 'ACTIVO' WHERE id = v_opw;
+  END;
+
+  -- ZERO-02 (F023): NCE en USD con el cambio ORIGINAL de la FE; dTotalGs = dTotGralOpe × dTiCam exacto
+  DECLARE
+    v_fx uuid; v_solx jsonb := v_sol || '{"cMoneOpe":"USD","dTiCam":7300}'::jsonb; v_pfx jsonb; r2 record;
+  BEGIN
+    INSERT INTO documentos_electronicos (empresa_id, sucursal_id, tipo, establecimiento, punto_expedicion, numero, cdc, fecha_emision, receptor_nombre, moneda, total, estado_local, estado_sifen, creado_por)
+    VALUES (v_a, v_sa, 'FE', '001', '001', '0000010', '01' || '80000005' || '6' || '001' || '001' || '0000010' || '1' || '20261016' || '1' || '123456789' || '0', now(), 'Cliente T26', 'USD', 150, 'ENVIADO', 'APROBADO', v_ua) RETURNING id INTO v_fx;
+    INSERT INTO documento_electronico_solicitudes (empresa_id, documento_id, version, payload, payload_hash, entrada_hash, creado_por)
+    VALUES (v_a, v_fx, 1, v_solx, encode(sha256(convert_to(v_solx::text, 'UTF8')), 'hex'), encode(sha256(convert_to('fe-t26-usd', 'UTF8')), 'hex'), v_ua);
+    v_pfx := jsonb_set(jsonb_set(jsonb_set(jsonb_set(pg_temp.pay(v_pay, v_solx, 3, 1, 0, 11), '{cMoneOpe}', '"USD"'), '{dTiCam}', '7300'), '{dCondTiCam}', '1'), '{DocumentosAsociados,0,dCdCDERef}', to_jsonb((SELECT cdc FROM documentos_electronicos WHERE id = v_fx)));
+    v_pfx := jsonb_set(v_pfx, '{Subtotales,0,dTotalGs}', '80300');
+    PERFORM pg_temp.falla(format($f$SELECT * FROM fe_documento_crear_nce(%L, %L, %L, %L, 'clave-t26-fx01', %L, 3, '[{"linea":1,"cantidad":0,"monto":11}]'::jsonb, 'USD', 11, %L)$f$, v_a, v_ua, v_sa, v_p, v_fx, jsonb_set(v_pfx, '{Subtotales,0,dTotalGs}', '80301')), 'P0001', 'ZERO-02 FX02: dTotalGs falsificado (+1) → NEX:PAYLOAD_INVALIDO');
+    PERFORM pg_temp.falla(format($f$SELECT * FROM fe_documento_crear_nce(%L, %L, %L, %L, 'clave-t26-fx02', %L, 3, '[{"linea":1,"cantidad":0,"monto":11}]'::jsonb, 'USD', 11, %L)$f$, v_a, v_ua, v_sa, v_p, v_fx, v_pfx #- '{Subtotales,0,dTotalGs}'), 'P0001', 'ZERO-02 FX02: dTotalGs ausente → NEX:PAYLOAD_INVALIDO');
+    PERFORM pg_temp.falla(format($f$SELECT * FROM fe_documento_crear_nce(%L, %L, %L, %L, 'clave-t26-fx03', %L, 3, '[{"linea":1,"cantidad":0,"monto":11}]'::jsonb, 'USD', 11, %L)$f$, v_a, v_ua, v_sa, v_p, v_fx, jsonb_set(v_pfx, '{dCondTiCam}', '2')), 'P0001', 'ZERO-02 FX03: dCondTiCam incompatible → NEX:PAYLOAD_INVALIDO');
+    PERFORM pg_temp.falla(format($f$SELECT * FROM fe_documento_crear_nce(%L, %L, %L, %L, 'clave-t26-fx04', %L, 3, '[{"linea":1,"cantidad":0,"monto":11}]'::jsonb, 'USD', 11, %L)$f$, v_a, v_ua, v_sa, v_p, v_fx, jsonb_set(v_pfx, '{dTiCam}', '7301')), 'P0001', 'ZERO-02 FX03: cambio distinto del original de la FE → NEX:ASOCIACION_INVALIDA');
+    PERFORM pg_temp.falla(format($f$SELECT * FROM fe_documento_crear_nce(%L, %L, %L, %L, 'clave-t26-fx05', %L, 3, '[{"linea":1,"cantidad":0,"monto":11}]'::jsonb, 'BRL', 11, %L)$f$, v_a, v_ua, v_sa, v_p, v_fx, v_pfx), 'P0001', 'ZERO-02: moneda distinta de la FE original → NEX:MONEDA_DISTINTA');
+    SELECT * INTO r2 FROM fe_documento_crear_nce(v_a, v_ua, v_sa, v_p, 'clave-t26-fx06', v_fx, 3, '[{"linea":1,"cantidad":0,"monto":11}]'::jsonb, 'USD', 11, v_pfx);
+    PERFORM pg_temp.ok(NOT r2.o_reutilizado AND (SELECT payload->'Subtotales'->0->>'dTotalGs' = '80300' AND payload->>'dTiCam' = '7300' FROM documento_electronico_solicitudes WHERE documento_id = r2.o_documento_id), 'ZERO-02 FX01: USD coherente (11 × 7300 = 80300) admitido y persistido con el cambio original');
+  END;
+
   RAISE NOTICE 'T26 completada';
 END $t$;

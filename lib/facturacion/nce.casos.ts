@@ -12,6 +12,7 @@ import { CAMPOS_RECEPTOR, type LineaNceEntrada as LineaNceEntradaT, calcularNce,
 import { CADENCIA_SEGUNDOS, ejecutarLote, segundosHastaProxima } from "@/lib/facturacion/consulta-automatica";
 import { textoDec } from "@/lib/facturacion/calculo";
 import { iniciarRefresco, retardoRefresco } from "@/lib/facturacion/refresco-documentos";
+import { MAX_ENTEROS_F023 } from "@/lib/facturacion/monedas";
 import { crearControlListado, entradasIniciales, etiquetaIvaLinea } from "@/lib/facturacion/nce-entradas";
 import { listarFacturasElegibles } from "@/lib/facturacion/nce";
 import { reconciliarNcePendientes, repeticion } from "@/lib/facturacion/nce-emision";
@@ -279,7 +280,7 @@ export async function verificarCasosNce(): Promise<string[]> {
   cierto("R02-02: solo FE/NCE ya enviadas y sin resultado definitivo (un CREAR no reconsulta finales ni otros tipos); NEX:DOCUMENTO_NO_PENDIENTE", /d\.tipo NOT IN \('FE', 'NCE'\)/.test(sqlFlujo) && /d\.estado_local NOT IN \('ENVIADO', 'ENVIO_INDETERMINADO'\)/.test(sqlFlujo) && /d\.estado_sifen NOT IN \('SIN_CONSULTA', 'PENDIENTE', 'NO_RECONOCIDO'\)/.test(sqlFlujo) && /NEX:DOCUMENTO_NO_PENDIENTE/.test(sqlFlujo));
   cierto("R02-02: conserva la guarda de CDC coherente; un resultado no OK solo anota la consulta (no cambia el estado fiscal ni libera saldo)", /CDC_DIVERGENTE/.test(sqlFlujo) && /ELSE\s+UPDATE public\.documentos_electronicos SET ultima_consulta_at = now\(\), ultima_consulta_resultado = v_resultado/.test(sqlFlujo));
   cierto("R02-02: grants y reversión de la función nueva (REVOKE PUBLIC, GRANT runtime, DROP)", /REVOKE ALL ON FUNCTION public\.fe_documento_registrar_consulta_flujo_nce/.test(sql) && /GRANT EXECUTE ON FUNCTION public\.fe_documento_registrar_consulta_flujo_nce/.test(sql) && /DROP FUNCTION public\.fe_documento_registrar_consulta_flujo_nce/.test(rev));
-  cierto("R02-02: las reconciliaciones del flujo (facturas y NCE) usan la función del flujo; la consulta manual y el worker siguen con la original", (leer("lib/facturacion/nce-emision.ts").match(/flujoNce: true/g) ?? []).length === 2 && /opciones\.flujoNce \? "fe_documento_registrar_consulta_flujo_nce" : "fe_documento_registrar_consulta"/.test(leer("lib/facturacion/shared.ts")) && !/flujoNce/.test(leer("lib/facturacion/consulta-automatica.ts")) && !/flujoNce/.test(leer("app/api/documentos/[id]/consultar/route.ts")));
+  cierto("R02-02: las reconciliaciones del flujo (facturas y NCE) usan la función del flujo; la consulta manual sigue con la original (el worker de NCE también usa la del flujo, ZERO-01)", (leer("lib/facturacion/nce-emision.ts").match(/flujoNce: true/g) ?? []).length === 2 && /opciones\.flujoNce \? "fe_documento_registrar_consulta_flujo_nce" : "fe_documento_registrar_consulta"/.test(leer("lib/facturacion/shared.ts")) && !/flujoNce/.test(leer("app/api/documentos/[id]/consultar/route.ts")));
   cierto("R02-02: T26 cubre el operador solo CREAR, el estado final y otro tenant", /flujo_nce/.test(t26) && /sin permiso|solo CREAR/.test(t26));
   // ── 11. R03-01: la función del flujo no registra un estado definitivo sin CDC válido ─────────────────────────────────
   const iFin = sqlFlujo.indexOf("INSERT INTO public.documento_electronico_intentos");
@@ -375,5 +376,49 @@ export async function verificarCasosNce(): Promise<string[]> {
   // R05-03: la revisión final conserva la proporción del IVA parcial
   cierto("R05-03: el resumen del servidor incluye la proporción de IVA y el modal la usa", /afectacion: i\.original\.afectacion, tasa: i\.original\.tasa, proporcion: i\.original\.proporcion/.test(fuente) && /proporcion: string \}>;/.test(fuente) && /etiquetaIvaLinea\(l\.afectacion, l\.tasa, l\.proporcion\)/.test(pagNce.slice(pagNce.indexOf("Revisar y emitir"))) && !/etiquetaIvaLinea\(l\.afectacion, l\.tasa, null\)/.test(pagNce));
   igual("R05-03: etiqueta del IVA parcial con proporción", etiquetaIvaLinea(4, 10, "50"), "Gravado parcial 10% (prop. 50%)");
+  // ── 14. ZERO-01/02/03 ────────────────────────────────────────────────────────────────────────────
+  const reservar = sql.slice(sql.indexOf("FUNCTION public.fe_consulta_reservar"), sql.indexOf("FUNCTION public.fe_consulta_programar"));
+  const crearFx = sql.slice(sql.indexOf("FUNCTION public.fe_documento_crear_nce"), sql.indexOf("FUNCTION public.fe_documento_iniciar_envio"));
+  const auto = leer("lib/facturacion/consulta-automatica.ts");
+
+  // ZERO-01
+  cierto("ZERO-01: el actor del worker es un usuario ACTIVO con CREAR o EDITAR y alcance (creador primero; si no, el más antiguo autorizado; si no, NULL → sinActor)", (reservar.match(/u\.estado = 'ACTIVO'/g) ?? []).length === 2 && (reservar.match(/'CREAR'\) OR public\.usuario_tiene_permiso\(e\.empresa_id, u\.id, 'FACTURACION_ELECTRONICA', 'EDITAR'\)/g) ?? []).length === 2 && (reservar.match(/sucursal_en_alcance\(e\.empresa_id, u\.id, e\.sucursal_id\)/g) ?? []).length === 2 && /u\.id = e\.creado_por/.test(reservar) && /ORDER BY u\.creado_at, u\.id LIMIT 1/.test(reservar) && /empresa_id = e\.empresa_id/.test(reservar));
+  cierto("ZERO-01: conserva lease, SKIP LOCKED, solo los tipos pedidos y estados pendientes; no amplía el alcance a documentos finales", /FOR UPDATE SKIP LOCKED/.test(reservar) && /consulta_lease_hasta/.test(reservar) && /d\.tipo = ANY \(p_tipos\)/.test(reservar) && /estado_sifen IN \('SIN_CONSULTA', 'PENDIENTE', 'NO_RECONOCIDO'\)/.test(reservar) && /TIPOS_CONSULTA_AUTOMATICA: readonly string\[\] = \["NCE"\]/.test(auto));
+  cierto("ZERO-01: el worker consulta las NCE con la función del flujo NCE (flujoNce) y mantiene sinActor cuando no hay usuario autorizado; la consulta manual no cambia", /flujoNce: String\(f\.o_tipo\) === "NCE"/.test(auto) && /f\.o_actor === null \|\| f\.o_actor === undefined/.test(auto) && !/flujoNce/.test(leer("app/api/documentos/[id]/consultar/route.ts")));
+  {
+    // El worker llama a consultarEstado con el actor reservado (identidad real) y flujoNce para NCE; sin actor no consulta y reprograma
+    const llamadasSql: string[] = [];
+    const dbW = { query: async (t: string, p?: unknown[]) => {
+      llamadasSql.push(t.includes("fe_consulta_reservar") ? "reservar" : t.includes("fe_consulta_programar") ? "programar:" + String((p ?? [])[3]) : "otra");
+
+      if (t.includes("fe_consulta_reservar")) return { rows: [{ o_empresa: uuid, o_documento: uuid, o_actor: null, o_tipo: "NCE", o_intentos: 2 }] };
+
+      return { rows: [] };
+    } };
+    const rw = await ejecutarLote(dbW as never, { dormir: async () => undefined });
+
+    igual("ZERO-01: sin usuario autorizado el worker no consulta, reprograma sin contar intento y no toca el documento", [rw.sinActor, rw.consultados, llamadasSql], [1, 0, ["reservar", "programar:false"]]);
+  }
+
+  // ZERO-02
+  const usdPl = construirPayloadNCE(entrada(3, [{ original: { ...L1, precio: "50000", total: "100000" }, acreditado: SIN, monto: "11" }], { moneda: "USD", cambio: "7300" }), rec, CDC) as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+
+  igual("ZERO-02: el serializador USD genera dCondTiCam 1, dTiCam original y dTotalGs = total × cambio exacto", [usdPl.dCondTiCam, usdPl.dTiCam, usdPl.Subtotales[0].dTotGralOpe, usdPl.Subtotales[0].dTotalGs], [1, 7300, 11, 80300]);
+  cierto("ZERO-02: SQL exige moneda del catálogo, PYG sin cambio, USD/BRL con el cambio ORIGINAL de la FE y dCondTiCam = 1", /p_moneda NOT IN \('PYG', 'USD', 'BRL'\)/.test(crearFx) && /v_cambio := \(v_sol->>'dTiCam'\)::numeric/.test(crearFx) && /\(v_sol->>'dTiCam'\) IS DISTINCT FROM \(p_payload->>'dTiCam'\)/.test(crearFx) && /\(p_payload->>'dCondTiCam'\)::numeric IS DISTINCT FROM 1/.test(crearFx) && /scale\(trim_scale\(v_cambio\)\) > 4/.test(crearFx));
+  cierto("ZERO-02: SQL exige dTotalGs = dTotGralOpe × cambio EXACTO (≤ 8 decimales y < 10^15, sin redondeo, no nulo) antes de reservar numeración", /v_gs := v_total_det \* v_cambio/.test(crearFx) && /scale\(trim_scale\(v_gs\)\) > 8/.test(crearFx) && /v_gs >= 1000000000000000/.test(crearFx) && /\(v_sub->>'dTotalGs'\)::numeric IS DISTINCT FROM v_gs/.test(crearFx) && !/round\(v_gs/.test(crearFx) && crearFx.indexOf("v_gs := v_total_det") < crearFx.indexOf("tipo_documento = 'NCE' FOR UPDATE"));
+  cierto("ZERO-02: el límite SQL coincide con la norma TypeScript (15 enteros, 8 decimales, cambio de 4 decimales)", MAX_ENTEROS_F023 === 15 && /scale\(trim_scale\(v_cambio\)\) > 4/.test(crearFx));
+  cierto("ZERO-02: T26 cubre USD válido, dTotalGs +1, ausente, dCondTiCam y cambio alterados, moneda distinta", ["clave-t26-fx01", "clave-t26-fx02", "clave-t26-fx03", "clave-t26-fx04", "clave-t26-fx05", "clave-t26-fx06", "80300", "80301"].every((k) => t26.includes(k)));
+
+  // ZERO-03
+  const lista = elegiblesSql;
+
+  cierto("ZERO-03: el saldo de la lista suma los Detalles de UNA sola versión (la última, LATERAL ORDER BY version DESC LIMIT 1), no de todas", /CROSS JOIN LATERAL \(SELECT so\.payload FROM documento_electronico_solicitudes so WHERE so\.empresa_id = d\.empresa_id AND so\.documento_id = d\.id ORDER BY so\.version DESC LIMIT 1\) sv/.test(lista) && /jsonb_array_elements\(sv\.payload->'Detalles'\)/.test(lista) && !/FROM documento_electronico_solicitudes so, jsonb_array_elements/.test(lista));
+  cierto("ZERO-03: coincide con la versión que usan el detalle y la reserva SQL; conserva crédito aprobado, pendiente, CDC, empresa/alcance, búsqueda, paginación y orden", /ORDER BY version DESC LIMIT 1/.test(fuente.slice(fuente.indexOf("export async function leerFacturaOriginal"), fuente.indexOf("export async function buscarClientesConFacturas"))) && /ORDER BY s\.version DESC LIMIT 1/.test(crearFx) && /nn\.estado_sifen = 'APROBADO'/.test(lista) && /fe_nce_clasificar/.test(lista) && /d\.cdc IS NOT NULL/.test(lista) && /sucursal_en_alcance/.test(lista) && /original - acreditado > 0/.test(lista) && /ORDER BY fecha_emision DESC, id DESC LIMIT \$6 OFFSET \$7/.test(lista));
+  {
+    // Simulación pura de las dos versiones sintéticas: con una sola versión se suma esa; con dos, solo la última (120, no 220)
+    const total = (versiones: number[]) => versiones[versiones.length - 1];
+
+    igual("ZERO-03: v1=120 → 120; v1=100 y v2=120 → 120 (no 220)", [total([120]), total([100, 120])], [120, 120]);
+  }
   return fallos;
 }

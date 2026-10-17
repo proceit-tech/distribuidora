@@ -131,6 +131,7 @@ DECLARE
   v_tb numeric; v_den numeric; v_base numeric; v_liq numeric; v_bexe numeric;
   v_exe numeric := 0; v_exo numeric := 0; v_s5 numeric := 0; v_s10 numeric := 0; v_i5 numeric := 0; v_i10 numeric := 0; v_b5 numeric := 0; v_b10 numeric := 0;
   v_sub jsonb;
+  v_cambio numeric; v_gs numeric; v_total_det numeric;
   v_det jsonb;
   v_orig jsonb;
 BEGIN
@@ -272,6 +273,27 @@ BEGIN
   END LOOP;
   -- R05-01: los subtotales del payload son exactamente la suma de los ítems recalculados (una sola fila de Subtotales; descuentos/anticipos/redondeo en cero).
   v_sub := p_payload->'Subtotales'->0;
+  -- ZERO-02: moneda del catálogo; en PYG sin cambio ni condición de cambio; en USD/BRL el cambio ORIGINAL de la FE (no el cadastral), dCondTiCam = 1 y F023 dTotalGs = dTotGralOpe × dTiCam EXACTO
+  -- (≤ 8 decimales y ≤ 15 dígitos enteros, sin redondeo ni truncamiento; ausente, inexacto o fuera de límite → no se reserva número).
+  v_total_det := v_exe + v_exo + v_s5 + v_s10;
+  IF p_moneda NOT IN ('PYG', 'USD', 'BRL') THEN
+    RAISE EXCEPTION 'la moneda de la nota de crédito no es válida' USING ERRCODE = 'P0001', DETAIL = 'NEX:PAYLOAD_INVALIDO';
+  END IF;
+  IF p_moneda = 'PYG' THEN
+    IF nullif(p_payload->'dTiCam', 'null'::jsonb) IS NOT NULL OR nullif(p_payload->'dCondTiCam', 'null'::jsonb) IS NOT NULL OR (v_sub->>'dTotalGs')::numeric IS DISTINCT FROM v_total_det THEN
+      RAISE EXCEPTION 'una nota de crédito en guaraníes no lleva tipo de cambio y su dTotalGs es el total' USING ERRCODE = 'P0001', DETAIL = 'NEX:PAYLOAD_INVALIDO';
+    END IF;
+  ELSE
+    v_cambio := (v_sol->>'dTiCam')::numeric;
+    IF v_cambio IS NULL OR v_cambio <= 0 OR scale(trim_scale(v_cambio)) > 4 OR (v_sol->>'dTiCam') IS DISTINCT FROM (p_payload->>'dTiCam')
+       OR (p_payload->>'dCondTiCam')::numeric IS DISTINCT FROM 1 THEN
+      RAISE EXCEPTION 'la nota de crédito en moneda extranjera debe conservar el tipo de cambio original de la factura (dTiCam) y dCondTiCam = 1' USING ERRCODE = 'P0001', DETAIL = 'NEX:PAYLOAD_INVALIDO';
+    END IF;
+    v_gs := v_total_det * v_cambio;
+    IF (v_sub->>'dTotalGs') IS NULL OR scale(trim_scale(v_gs)) > 8 OR v_gs < 0 OR v_gs >= 1000000000000000 OR (v_sub->>'dTotalGs')::numeric IS DISTINCT FROM v_gs THEN
+      RAISE EXCEPTION 'el equivalente en guaraníes (dTotalGs) debe ser exactamente dTotGralOpe × tipo de cambio original, con hasta 8 decimales y 15 dígitos enteros' USING ERRCODE = 'P0001', DETAIL = 'NEX:PAYLOAD_INVALIDO';
+    END IF;
+  END IF;
   IF jsonb_array_length(p_payload->'Subtotales') <> 1
      OR (v_sub->>'dSubExe')::numeric IS DISTINCT FROM v_exe OR (v_sub->>'dSubExo')::numeric IS DISTINCT FROM v_exo
      OR (v_sub->>'dSub5')::numeric IS DISTINCT FROM v_s5 OR (v_sub->>'dSub10')::numeric IS DISTINCT FROM v_s10
@@ -282,7 +304,7 @@ BEGIN
      OR coalesce((v_sub->>'dTotDesc')::numeric, 0) <> 0 OR coalesce((v_sub->>'dTotDescGlotem')::numeric, 0) <> 0 OR coalesce((v_sub->>'dTotAntItem')::numeric, 0) <> 0
      OR coalesce((v_sub->>'dTotAnt')::numeric, 0) <> 0 OR coalesce((v_sub->>'dPorcDescTotal')::numeric, 0) <> 0 OR coalesce((v_sub->>'dDescTotal')::numeric, 0) <> 0
      OR coalesce((v_sub->>'dAnticipo')::numeric, 0) <> 0 OR coalesce((v_sub->>'dRedon')::numeric, 0) <> 0
-     OR (p_moneda = 'PYG' AND (v_sub->>'dTotalGs')::numeric IS DISTINCT FROM (v_exe + v_exo + v_s5 + v_s10)) THEN
+     THEN
     RAISE EXCEPTION 'los subtotales de la nota de crédito no coinciden con la suma de sus ítems (exento, exonerado, gravado, bases e IVA)' USING ERRCODE = 'P0001', DETAIL = 'NEX:PAYLOAD_INVALIDO';
   END IF;
   IF v_suma <> p_total THEN
@@ -400,9 +422,14 @@ BEGIN
     UPDATE public.documentos_electronicos d SET consulta_lease_hasta = now() + make_interval(secs => p_lease_segundos)
       FROM elegidos e WHERE d.empresa_id = e.empresa_id AND d.id = e.id RETURNING d.empresa_id, d.id)
   SELECT e.empresa_id, e.id,
+         -- ZERO-01: quien consulta es un usuario REAL, ACTIVO, de la empresa, con alcance de la sucursal y permiso CREAR o EDITAR (la consulta de NCE usa fe_documento_registrar_consulta_flujo_nce):
+         -- primero el creador de la NCE; si no sirve (inactivo, sin permiso o sin alcance), el usuario más antiguo realmente autorizado; si no hay ninguno, NULL (el worker no consulta y reprograma).
          coalesce(
-           CASE WHEN public.usuario_tiene_permiso(e.empresa_id, e.creado_por, 'FACTURACION_ELECTRONICA', 'EDITAR') AND public.sucursal_en_alcance(e.empresa_id, e.creado_por, e.sucursal_id) THEN e.creado_por END,
-           (SELECT u.id FROM public.usuarios u WHERE u.empresa_id = e.empresa_id AND u.estado = 'ACTIVO' AND public.usuario_tiene_permiso(e.empresa_id, u.id, 'FACTURACION_ELECTRONICA', 'EDITAR')
+           (SELECT u.id FROM public.usuarios u WHERE u.empresa_id = e.empresa_id AND u.id = e.creado_por AND u.estado = 'ACTIVO'
+               AND (public.usuario_tiene_permiso(e.empresa_id, u.id, 'FACTURACION_ELECTRONICA', 'CREAR') OR public.usuario_tiene_permiso(e.empresa_id, u.id, 'FACTURACION_ELECTRONICA', 'EDITAR'))
+               AND public.sucursal_en_alcance(e.empresa_id, u.id, e.sucursal_id)),
+           (SELECT u.id FROM public.usuarios u WHERE u.empresa_id = e.empresa_id AND u.estado = 'ACTIVO'
+               AND (public.usuario_tiene_permiso(e.empresa_id, u.id, 'FACTURACION_ELECTRONICA', 'CREAR') OR public.usuario_tiene_permiso(e.empresa_id, u.id, 'FACTURACION_ELECTRONICA', 'EDITAR'))
                AND public.sucursal_en_alcance(e.empresa_id, u.id, e.sucursal_id) ORDER BY u.creado_at, u.id LIMIT 1)),
          e.tipo, e.consultas_auto
     FROM elegidos e JOIN marcados m ON m.empresa_id = e.empresa_id AND m.id = e.id;

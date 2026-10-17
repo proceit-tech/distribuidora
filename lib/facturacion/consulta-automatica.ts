@@ -58,7 +58,8 @@ export async function ejecutarLote(db: Db, o: OpcionesLote = {}): Promise<Result
     } else {
       try {
         intentado = true;
-        await consultarEstado(db, empresa, String(f.o_actor), documento, o.dep ?? {});
+        // ZERO-01: las NCE se consultan con la función del flujo NCE (CREAR o EDITAR, alcance, actor real); el worker solo trata NCE.
+        await consultarEstado(db, empresa, String(f.o_actor), documento, o.dep ?? {}, { flujoNce: String(f.o_tipo) === "NCE" });
         res.consultados += 1;
       } catch (error) {
         res.fallidos += 1;
