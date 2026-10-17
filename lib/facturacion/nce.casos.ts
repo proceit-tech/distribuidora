@@ -118,7 +118,7 @@ export async function verificarCasosNce(): Promise<string[]> {
 
   const t26 = leer("documentacao/banco/nexit/v1/pruebas/T26-nex062-nce.sql");
 
-  cierto("T26 (SQL) versionada y registrada en el runner: secuencia NCE propia, idempotencia, NCE pendiente, motivo fijado, saldo exacto, rechazo libera, aislamiento y lease (NO ejecutada por la IA)", /T25( T26)?( T27)?; do|T26/.test(leer("documentacao/banco/nexit/v1/scripts/ejecutar-pruebas.sh")) && /T21 T25 T26( T27)?; do/.test(leer("documentacao/banco/nexit/v1/scripts/ejecutar-pruebas.sh"))
+  cierto("T26 (SQL) versionada y registrada en el runner: secuencia NCE propia, idempotencia, NCE pendiente, motivo fijado, saldo exacto, rechazo libera, aislamiento y lease (NO ejecutada por la IA)", /T25( T26)?( T27)?( T30)?; do|T26/.test(leer("documentacao/banco/nexit/v1/scripts/ejecutar-pruebas.sh")) && /T21 T25 T26( T27)?( T30)?; do/.test(leer("documentacao/banco/nexit/v1/scripts/ejecutar-pruebas.sh"))
     && ["NEX:SECUENCIA_NO_CONFIGURADA", "NEX:IDEMPOTENCIA_CONFLICTO", "NEX:NCE_PENDIENTE", "NEX:MOTIVO_FIJADO", "NEX:SALDO_MONTO", "fe_consulta_reservar"].every((k) => t26.includes(k)));
 
   // ── 7. Rutas, pantalla y menú ───────────────────────────────────────────────────────────────────

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { leerRegistroPunto, listarPuntos, registrarPunto, respuestaErrorPunto } from "@/lib/facturacion/puntos";
+import { altaPuntoConTipo, leerAltaPuntoTipo, listarPuntos, respuestaErrorPunto } from "@/lib/facturacion/puntos";
 import { prepararFacturacion } from "@/lib/facturacion/servidor";
 
 // Gestión de puntos de expedición (PRO-129): solo con FACTURACION_ELECTRONICA.PUNTOS; la empresa y el usuario salen de la sesión y la función SQL vuelve a verificar todo.
@@ -16,7 +16,7 @@ export async function GET() {
   }
 }
 
-// Alta del punto ADMINISTRATIVO (NEX-063): nace INACTIVO y sin ningún tipo de documento; cada tipo se configura después (serie + último número, una sola confirmación).
+// Alta fiscal ÚNICA (NEX-064): punto (nuevo o existente) + un tipo documental con serie, último número y confirmación, en UNA transacción. No se crea nunca un punto sin tipo.
 export async function POST(request: Request) {
   const b = await prepararFacturacion("PUNTOS");
 
@@ -31,12 +31,14 @@ export async function POST(request: Request) {
   }
   if (!cuerpo || typeof cuerpo !== "object" || Array.isArray(cuerpo)) return NextResponse.json({ error: "Los datos enviados no son válidos." }, { status: 400 });
 
-  const datos = leerRegistroPunto(cuerpo as Record<string, unknown>);
+  const datos = leerAltaPuntoTipo(cuerpo as Record<string, unknown>);
 
   if (typeof datos === "string") return NextResponse.json({ error: datos }, { status: 400 });
 
   try {
-    return NextResponse.json({ id: await registrarPunto(b.db, b.empresaId, b.usuarioId, datos) }, { status: 201 });
+    const r = await altaPuntoConTipo(b.db, b.empresaId, b.usuarioId, datos);
+
+    return NextResponse.json(r, { status: r.creado ? 201 : 200 });
   } catch (error) {
     return respuestaErrorPunto(error);
   }

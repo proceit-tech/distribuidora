@@ -50,7 +50,8 @@ function proximoDeEntrada(serie: string, ultimo: string): string {
   return s === null ? "Agotada" : textoNumeracion(s.serie, s.numero);
 }
 
-type DialogoPunto = { sucursalId: string; codigo: string; nombre: string };
+/** Alta fiscal ÚNICA (NEX-064): sucursal + código de punto + tipo + serie + último número + una confirmación; el punto se crea o se reutiliza en la misma operación. */
+type DialogoAlta = { sucursalId: string; codigo: string; nombre: string; tipo: Tipo | ""; serie: string; ultimo: string; confirma: boolean; activar: boolean };
 type DialogoTipo = { puntoId: string; titulo: string; tipo: Tipo | ""; bloqueaTipo: boolean; serie: string; ultimo: string; confirma: boolean; activar: boolean; existente: boolean };
 
 /**
@@ -71,7 +72,7 @@ export default function PuntosExpedicionPage() {
   const [filtroTipo, setFiltroTipo] = useState("");
   const [filtroEstado, setFiltroEstado] = useState("");
 
-  const [dPunto, setDPunto] = useState<DialogoPunto | null>(null);
+  const [dAlta, setDAlta] = useState<DialogoAlta | null>(null);
   const [dTipo, setDTipo] = useState<DialogoTipo | null>(null);
   const [errorDialogo, setErrorDialogo] = useState("");
   const [intento, setIntento] = useState(false);
@@ -156,35 +157,44 @@ export default function PuntosExpedicionPage() {
     }
   }
 
-  // ── Nuevo punto ──
+  // ── Nuevo punto / tipo (formulario ÚNICO) ──
   const codigoOk = (c: string) => /^\d{3}$/.test(c) && c !== "000";
-  const errCodigo = dPunto && intento && !codigoOk(dPunto.codigo) ? "Código de 3 dígitos (001 a 999)." : "";
-  const errNombre = dPunto && intento && (dPunto.nombre.trim().length < 1 || dPunto.nombre.trim().length > 60) ? "Nombre de 1 a 60 caracteres." : "";
-  const errSucursal = dPunto && intento && dPunto.sucursalId === "" ? "Seleccione la sucursal." : "";
-  const sucursalDelDialogo = dPunto ? sucursales.find((s) => s.id === dPunto.sucursalId) : undefined;
+  const sucursalDelDialogo = dAlta ? sucursales.find((x) => x.id === dAlta.sucursalId) : undefined;
+  // Punto administrativo existente (misma sucursal y código): se reutiliza; su nombre no se modifica y el tipo nuevo se añade a él.
+  const puntoExistente = dAlta && sucursalDelDialogo ? sucursalDelDialogo.puntos.find((p) => p.codigo === dAlta.codigo) : undefined;
+  const tipoYaConfigurado = dAlta && puntoExistente && dAlta.tipo !== "" ? puntoExistente.tipos.find((t) => t.tipo === dAlta.tipo) : undefined;
+  const aSerie = dAlta ? dAlta.serie.trim().toUpperCase() : "";
+  const nombreEfectivo = dAlta ? (puntoExistente ? puntoExistente.nombre : dAlta.nombre) : "";
+  const errSucursal = dAlta && intento && dAlta.sucursalId === "" ? "Seleccione la sucursal." : "";
+  const errCodigo = dAlta && intento && !codigoOk(dAlta.codigo) ? "Código de 3 dígitos (001 a 999)." : "";
+  const errNombre = dAlta && intento && !puntoExistente && (nombreEfectivo.trim().length < 1 || nombreEfectivo.trim().length > 60) ? "Nombre de 1 a 60 caracteres." : "";
+  const errATipo = dAlta && intento && dAlta.tipo === "" ? "Seleccione el tipo de documento." : "";
+  const errASerie = dAlta && intento && aSerie !== "" && !/^[A-Z]{2}$/.test(aSerie) ? "Dos letras (AA a ZZ) o vacío para «Sin serie»." : "";
+  const errAUltimo = dAlta && intento && !(/^\d{1,7}$/.test(dAlta.ultimo) && Number(dAlta.ultimo) <= 9999999) ? "Número entero de 0 a 9999999 (obligatorio; no se asume cero)." : "";
+  const errAConfirma = dAlta && intento && !dAlta.confirma ? "Confirme que la serie y el último número son correctos." : "";
 
-  async function guardarPunto() {
-    if (!dPunto) return;
+  async function guardarAlta() {
+    if (!dAlta) return;
 
     setIntento(true);
 
-    if (!codigoOk(dPunto.codigo) || dPunto.nombre.trim().length < 1 || dPunto.sucursalId === "") return;
+    if (dAlta.sucursalId === "" || !codigoOk(dAlta.codigo) || dAlta.tipo === "" || tipoYaConfigurado || (!puntoExistente && (dAlta.nombre.trim().length < 1 || dAlta.nombre.trim().length > 60)) || (aSerie !== "" && !/^[A-Z]{2}$/.test(aSerie)) || !/^\d{1,7}$/.test(dAlta.ultimo) || Number(dAlta.ultimo) > 9999999 || !dAlta.confirma) return;
 
-    let nuevoId = "";
+    let creado = false;
 
     try {
       await ejecutar(async () => {
-        const r = await pedir<{ id: string }>("/api/facturacion/puntos", JSON_POST({ sucursalId: dPunto.sucursalId, codigo: dPunto.codigo, nombre: dPunto.nombre }), "No fue posible crear el punto.");
+        const res = await pedir<{ id: string; creado: boolean }>("/api/facturacion/puntos", JSON_POST({ sucursalId: dAlta.sucursalId, codigo: dAlta.codigo, nombre: nombreEfectivo, tipo: dAlta.tipo, serie: aSerie, ultimoNumero: dAlta.ultimo, confirmado: dAlta.confirma, activar: dAlta.activar }), "No fue posible registrar el punto y su tipo.");
 
-        nuevoId = r.id;
-      }, "Punto registrado (inactivo y sin tipos). Configure ahora su primer tipo de documento.", true);
+        creado = res.creado;
+      }, "", true);
     } catch {
       return;
     }
 
-    setDPunto(null);
+    setAviso(creado ? "Punto de expedición y tipo de documento registrados en una sola operación." : "Tipo de documento añadido al punto existente (su nombre y los demás tipos no cambiaron).");
+    setDAlta(null);
     setIntento(false);
-    setDTipo({ puntoId: nuevoId, titulo: `Configurar tipo · punto ${dPunto.codigo}`, tipo: "", bloqueaTipo: false, serie: "", ultimo: "", confirma: false, activar: false, existente: false });
   }
 
   // ── Configurar un tipo ──
@@ -245,7 +255,7 @@ export default function PuntosExpedicionPage() {
     void ejecutar(async () => { await pedir(`/api/facturacion/puntos/${f.punto.id}/estado`, JSON_POST({ activo: destino }), "No fue posible cambiar el estado del punto."); }, destino ? "Punto activado." : "Punto desactivado: no emite ningún tipo, pero conserva sus configuraciones.").catch(() => undefined);
   };
 
-  const dialogoAbierto = dPunto !== null || dTipo !== null;
+  const dialogoAbierto = dAlta !== null || dTipo !== null;
   const sucursalesConEstablecimiento = sucursales.filter((s) => s.establecimiento !== null);
 
   return (
@@ -260,7 +270,7 @@ export default function PuntosExpedicionPage() {
             </nav>
             <h1>Puntos de expedición</h1>
           </div>
-          <button type="button" className={ui.primaryButton} onClick={() => { setError(""); setAviso(""); setErrorDialogo(""); setIntento(false); setDPunto({ sucursalId: "", codigo: "", nombre: "" }); }}>
+          <button type="button" className={ui.primaryButton} onClick={() => { setError(""); setAviso(""); setErrorDialogo(""); setIntento(false); setDAlta({ sucursalId: "", codigo: "", nombre: "", tipo: "", serie: "", ultimo: "", confirma: false, activar: true }); }}>
             <span aria-hidden="true">+</span>
             Nuevo punto
           </button>
@@ -367,37 +377,74 @@ export default function PuntosExpedicionPage() {
         </section>
       </div>
 
-      {dPunto ? (
-        <div className={estilos.fondo} role="dialog" aria-modal="true" aria-label="Nuevo punto de expedición" onKeyDown={(e) => { if (e.key === "Escape" && !ocupado) setDPunto(null); }}>
-          <form className={estilos.dialogo} noValidate onSubmit={(e) => { e.preventDefault(); void guardarPunto(); }}>
+      {dAlta ? (
+        <div className={estilos.fondo} role="dialog" aria-modal="true" aria-label="Nuevo punto de expedición" onKeyDown={(e) => { if (e.key === "Escape" && !ocupado) setDAlta(null); }}>
+          <form className={estilos.dialogo} noValidate onSubmit={(e) => { e.preventDefault(); void guardarAlta(); }}>
             <h2>Nuevo punto de expedición</h2>
-            <p className={estilos.ayuda}>El punto se crea inactivo y sin tipos de documento. Después se configura cada tipo (factura, nota de crédito, etc.) con su serie y su último número.</p>
+            <p className={estilos.ayuda}>Un solo formulario: si el punto (establecimiento + código) ya existe se reutiliza y solo se añade este tipo de documento; si no existe, se crea junto con el tipo. Cada tipo lleva su propia numeración.</p>
             {errorDialogo ? <p className={estilos.errorDialogo} role="alert">{errorDialogo}</p> : null}
             <label className={estilos.campo}>
               <span>Sucursal (establecimiento)</span>
-              <select value={dPunto.sucursalId} onChange={(e) => setDPunto({ ...dPunto, sucursalId: e.target.value })} aria-invalid={errSucursal !== ""} autoFocus>
+              <select value={dAlta.sucursalId} onChange={(e) => setDAlta({ ...dAlta, sucursalId: e.target.value })} aria-invalid={errSucursal !== ""} autoFocus>
                 <option value="">Seleccione…</option>
-                {sucursalesConEstablecimiento.map((s) => <option key={s.id} value={s.id}>{s.nombre} ({s.establecimiento})</option>)}
+                {sucursalesConEstablecimiento.map((x) => <option key={x.id} value={x.id}>{x.nombre} ({x.establecimiento})</option>)}
               </select>
               {errSucursal ? <small className={estilos.errorCampo}>{errSucursal}</small> : null}
-              {sucursales.some((s) => s.establecimiento === null) ? <small className={estilos.ayuda}>Las sucursales sin establecimiento SIFEN no se listan: configure su establecimiento primero.</small> : null}
+              {sucursales.some((x) => x.establecimiento === null) ? <small className={estilos.ayuda}>Las sucursales sin establecimiento SIFEN no se listan: configure su establecimiento primero.</small> : null}
             </label>
             <div className={estilos.dosColumnas}>
               <label className={estilos.campo}>
                 <span>Código del punto</span>
-                <input value={dPunto.codigo} onChange={(e) => setDPunto({ ...dPunto, codigo: e.target.value.replace(/\D/g, "").slice(0, 3) })} inputMode="numeric" maxLength={3} placeholder="001" aria-invalid={errCodigo !== ""} />
+                <input value={dAlta.codigo} onChange={(e) => setDAlta({ ...dAlta, codigo: e.target.value.replace(/\D/g, "").slice(0, 3) })} inputMode="numeric" maxLength={3} placeholder="001" aria-invalid={errCodigo !== ""} />
                 {errCodigo ? <small className={estilos.errorCampo}>{errCodigo}</small> : null}
               </label>
               <label className={estilos.campo}>
-                <span>Nombre</span>
-                <input value={dPunto.nombre} onChange={(e) => setDPunto({ ...dPunto, nombre: e.target.value })} maxLength={60} placeholder="Caja 1" aria-invalid={errNombre !== ""} />
-                {errNombre ? <small className={estilos.errorCampo}>{errNombre}</small> : null}
+                <span>Nombre del punto</span>
+                <input value={puntoExistente ? puntoExistente.nombre : dAlta.nombre} onChange={(e) => setDAlta({ ...dAlta, nombre: e.target.value })} maxLength={60} placeholder="Caja 1" readOnly={puntoExistente !== undefined} aria-invalid={errNombre !== ""} />
+                {errNombre ? <small className={estilos.errorCampo}>{errNombre}</small> : puntoExistente ? <small className={estilos.ayuda}>Punto existente: se reutiliza y su nombre no se modifica.</small> : null}
               </label>
             </div>
-            {sucursalDelDialogo ? <p className={estilos.ayuda}>Identidad fiscal: establecimiento {sucursalDelDialogo.establecimiento} · punto {dPunto.codigo || "—"}.</p> : null}
+            {sucursalDelDialogo && codigoOk(dAlta.codigo) ? <p className={estilos.ayuda}>Identidad fiscal: establecimiento {sucursalDelDialogo.establecimiento} · punto {dAlta.codigo} — {puntoExistente ? `ya existe (${puntoExistente.activo ? "activo" : "inactivo"}; tipos: ${puntoExistente.tipos.length === 0 ? "ninguno" : puntoExistente.tipos.map((t) => t.tipo).join(", ")})` : "punto nuevo"}.</p> : null}
+            <label className={estilos.campo}>
+              <span>Tipo de documento</span>
+              <select value={dAlta.tipo} onChange={(e) => setDAlta({ ...dAlta, tipo: e.target.value as Tipo | "" })} aria-invalid={errATipo !== "" || tipoYaConfigurado !== undefined}>
+                <option value="">Seleccione…</option>
+                {TIPOS.map((t) => <option key={t.valor} value={t.valor}>{t.etiqueta}</option>)}
+              </select>
+              {errATipo ? <small className={estilos.errorCampo}>{errATipo}</small> : null}
+              {tipoYaConfigurado && puntoExistente && sucursalDelDialogo ? (
+                <small className={estilos.errorCampo} role="alert">
+                  El tipo {dAlta.tipo} ya está configurado en el punto {sucursalDelDialogo.establecimiento}-{puntoExistente.codigo} (serie {tipoYaConfigurado.serie ?? "sin serie"}, último número {textoNumeracion(tipoYaConfigurado.serie, tipoYaConfigurado.ultimoNumero)}). No se duplica ni se reinicia: use «Configurar» en su fila.
+                </small>
+              ) : null}
+              {dAlta.tipo !== "" && dAlta.tipo !== "FE" && dAlta.tipo !== "NCE" ? <small className={estilos.ayuda}>Solo se configura el contador: la emisión de este tipo todavía no está habilitada.</small> : null}
+            </label>
+            <div className={estilos.dosColumnas}>
+              <label className={estilos.campo}>
+                <span>Serie actual</span>
+                <input value={dAlta.serie} onChange={(e) => setDAlta({ ...dAlta, serie: e.target.value.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 2) })} maxLength={2} placeholder="Sin serie" aria-invalid={errASerie !== ""} />
+                {errASerie ? <small className={estilos.errorCampo}>{errASerie}</small> : <small className={estilos.ayuda}>Vacío = «Sin serie» (primera numeración). La serie AA empieza solo al agotar 9999999.</small>}
+              </label>
+              <label className={estilos.campo}>
+                <span>Último número emitido</span>
+                <input value={dAlta.ultimo} onChange={(e) => setDAlta({ ...dAlta, ultimo: e.target.value.replace(/\D/g, "").slice(0, 7) })} inputMode="numeric" maxLength={7} placeholder="0000000" aria-invalid={errAUltimo !== ""} />
+                {errAUltimo ? <small className={estilos.errorCampo}>{errAUltimo}</small> : <small className={estilos.ayuda}>0 solo si todavía no existe ningún documento de este tipo en este punto.</small>}
+              </label>
+            </div>
+            <p className={estilos.referencia}>Próximo referencial: <strong>{proximoDeEntrada(aSerie, dAlta.ultimo)}</strong> <small>(el número definitivo se reserva al emitir)</small></p>
+            <label className={estilos.casilla}>
+              <input type="checkbox" checked={dAlta.confirma} onChange={(e) => setDAlta({ ...dAlta, confirma: e.target.checked })} />
+              <span>Confirmo que la serie y el último número son los realmente emitidos.</span>
+            </label>
+            {errAConfirma ? <small className={estilos.errorCampo}>{errAConfirma}</small> : null}
+            <label className={estilos.casilla}>
+              <input type="checkbox" checked={dAlta.activar} onChange={(e) => setDAlta({ ...dAlta, activar: e.target.checked })} />
+              <span>Dejar disponible para emitir ahora (activa este tipo y, si el punto estaba inactivo o es nuevo, también el punto). Los demás tipos no cambian.</span>
+            </label>
+            {dAlta.activar && puntoExistente && !puntoExistente.activo ? <small className={estilos.ayuda}>El punto está inactivo: al activarlo, sus otros tipos activos volverán a poder emitir.</small> : null}
             <div className={estilos.acciones}>
-              <button type="button" className={ui.secondaryButton} onClick={() => { setDPunto(null); setIntento(false); setErrorDialogo(""); }} disabled={ocupado}>Cancelar</button>
-              <button type="submit" className={ui.primaryButton} disabled={ocupado}>{ocupado ? "Guardando…" : "Registrar punto"}</button>
+              <button type="button" className={ui.secondaryButton} onClick={() => { setDAlta(null); setIntento(false); setErrorDialogo(""); }} disabled={ocupado}>Cancelar</button>
+              <button type="submit" className={ui.primaryButton} disabled={ocupado || tipoYaConfigurado !== undefined}>{ocupado ? "Guardando…" : "Guardar punto y tipo"}</button>
             </div>
           </form>
         </div>

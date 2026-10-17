@@ -38,6 +38,8 @@ export async function permisoPuntos(db: Db, empresaId: string, usuarioId: string
 
 export type RegistroPunto = { sucursalId: string; codigo: string; nombre: string };
 export type ConfiguracionTipo = { tipo: TipoDocumentoPunto; serie: string | null; ultimoNumero: number; activar: boolean };
+/** Alta fiscal ÚNICA (NEX-064): punto (nuevo o existente) + un tipo documental. `nombre` solo se usa si el punto es nuevo. */
+export type AltaPuntoTipo = ConfiguracionTipo & { sucursalId: string; codigo: string; nombre: string | null };
 
 /** «Último número emitido»: entero 0…9999999 escrito explícitamente (número o texto de dígitos). Sin valor por defecto. */
 export function leerUltimoNumero(v: unknown): number | string {
@@ -85,6 +87,22 @@ export function leerConfiguracionTipo(c: Record<string, unknown>): Configuracion
   return { tipo: c.tipo, serie, ultimoNumero: n, activar: c.activar === true };
 }
 
+export function leerAltaPuntoTipo(c: Record<string, unknown>): AltaPuntoTipo | string {
+  if (typeof c.sucursalId !== "string" || !UUID.test(c.sucursalId)) return "Seleccione la sucursal.";
+  if (typeof c.codigo !== "string" || !/^\d{3}$/.test(c.codigo.trim()) || c.codigo.trim() === "000") return "El código del punto debe tener 3 dígitos (001 a 999).";
+  if (c.nombre !== undefined && c.nombre !== null && typeof c.nombre !== "string") return "El nombre del punto no es válido.";
+
+  const nombre = typeof c.nombre === "string" && c.nombre.trim() !== "" ? c.nombre.trim() : null;
+
+  if (nombre !== null && nombre.length > 60) return "El nombre del punto debe tener de 1 a 60 caracteres.";
+
+  const cfg = leerConfiguracionTipo(c);
+
+  if (typeof cfg === "string") return cfg;
+
+  return { ...cfg, sucursalId: c.sucursalId, codigo: c.codigo.trim(), nombre };
+}
+
 export function leerEstado(c: Record<string, unknown>): boolean | string {
   return typeof c.activo === "boolean" ? c.activo : "Indique el estado deseado (activo o inactivo).";
 }
@@ -109,6 +127,7 @@ export function traducirErrorPunto(error: unknown): never {
     case "NEX:SIN_ESTABLECIMIENTO": throw m(409, "La sucursal no tiene establecimiento SIFEN configurado: configúrelo antes de crear puntos.");
     case "NEX:PUNTO_DUPLICADO": throw m(409, "Ya existe un punto con ese código en la sucursal.");
     case "NEX:PUNTO_INVALIDO": throw m(404, "El punto de expedición no existe.");
+    case "NEX:TIPO_DUPLICADO": throw m(409, "Ese tipo de documento ya está configurado en el punto (el punto existe y no se duplica): use «Configurar» en su fila para reconciliar la serie o el último número. No se modificó nada.");
     case "NEX:SECUENCIA_NO_CONFIGURADA": throw m(409, "Ese tipo de documento no está configurado en el punto: configure primero la serie y el último número emitido.");
     case "NEX:PUNTO_YA_ACTIVO": throw m(409, "El punto ya está activo.");
     case "NEX:PUNTO_YA_INACTIVO": throw m(409, "El punto ya está inactivo.");
@@ -186,6 +205,21 @@ export async function registrarPunto(db: Db, empresaId: string, usuarioId: strin
 }
 
 /** Informa y confirma (UNA vez) la serie y el último número realmente emitido de UN tipo de un punto existente. Nunca presume 0 ni retrocede. Los demás tipos no se tocan. */
+/**
+ * Alta fiscal ÚNICA (NEX-064): UNA llamada SQL = UNA transacción. Punto nuevo: lo crea y configura el primer tipo (si algo falla no queda punto vacío). Punto existente: lo reutiliza (nombre y demás
+ * tipos intactos) y añade solo el tipo nuevo; tipo ya configurado → NEX:TIPO_DUPLICADO. `activar` deja el tipo disponible y activa también el punto si estaba inactivo.
+ */
+export async function altaPuntoConTipo(db: Db, empresaId: string, usuarioId: string, a: AltaPuntoTipo): Promise<{ id: string; creado: boolean }> {
+  try {
+    const r = await db.query("SELECT o_punto, o_punto_creado FROM fe_punto_alta_tipo($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8::integer, true, $9::boolean)", [empresaId, usuarioId, a.sucursalId, a.codigo, a.nombre, a.tipo, a.serie, a.ultimoNumero, a.activar]);
+    const fila = r.rows[0] as F;
+
+    return { id: String(fila.o_punto), creado: fila.o_punto_creado === true };
+  } catch (error) {
+    return traducirErrorPunto(error);
+  }
+}
+
 export async function configurarTipoPunto(db: Db, empresaId: string, usuarioId: string, puntoId: string, a: ConfiguracionTipo): Promise<void> {
   try {
     await db.query("SELECT fe_secuencia_configurar($1::uuid, $2::uuid, $3::uuid, $4, $5, $6::integer, true, $7::boolean)", [empresaId, usuarioId, puntoId, a.tipo, a.serie, a.ultimoNumero, a.activar]);

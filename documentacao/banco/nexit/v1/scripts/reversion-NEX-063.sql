@@ -16,6 +16,9 @@ BEGIN
   LOCK TABLE public.fe_punto_secuencias IN EXCLUSIVE MODE;
   LOCK TABLE public.documentos_electronicos IN SHARE MODE;
 
+  IF to_regprocedure('public.fe_punto_alta_tipo(uuid,uuid,uuid,text,text,text,text,integer,boolean,boolean)') IS NOT NULL THEN
+    RAISE EXCEPTION 'REVERSIÓN ABORTADA: NEX-064 sigue aplicada y depende de NEX-063. Revierta primero scripts/reversion-NEX-064.sql (orden inverso al de aplicación).';
+  END IF;
   IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'fe_punto_secuencias' AND column_name = 'serie') THEN
     RAISE EXCEPTION 'NEX-063 no está aplicada (fe_punto_secuencias.serie no existe): nada que revertir.';
   END IF;

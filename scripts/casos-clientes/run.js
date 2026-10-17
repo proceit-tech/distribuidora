@@ -59,6 +59,7 @@ Module._resolveFilename = function (request, ...resto) {
   const sec = cargar("lib/facturacion/secuencias.casos.js");
   const nce = cargar("lib/facturacion/nce.casos.js");
   const ser = cargar("lib/facturacion/series.casos.js");
+  const alt = cargar("lib/facturacion/alta-punto.casos.js");
   const cgw = cargar("lib/facturacion/configuracion-gateway.casos.js");
   const gwc = cargar("lib/facturacion/gateway-config.casos.js");
   const red = cargar("lib/facturacion/rediseno.casos.js");
@@ -116,6 +117,7 @@ Module._resolveFilename = function (request, ...resto) {
     ["Facturación PRO-131 (AUD-FISC P0): secuencia fiscal independiente por tipo de documento — NEX-060, conciliación del legado, reserva FE, reversión, T21/T22 y lectura en la aplicación", async () => sec.verificarCasosSecuencias(), null],
     ["Facturación PRO-94: Nota de Crédito Electrónica V1 — motivos 2/3/4/8, saldos por línea, cálculo exacto, payload con asociación al CDC, cuerpo de la API, NEX-062, rutas y permisos, pantalla, Documentos y consulta automática", async () => nce.verificarCasosNce(), null],
     ["Facturación NEX-063: puntos por tipo documental, series SIFEN (sin serie → AA…ZZ), paso atómico entre series, estados separados, selección estricta FE/NCE, reversión y scripts de ejecución humana", async () => ser.verificarCasosSeries(), null],
+    ["Facturación NEX-064: alta fiscal única punto + tipo en una transacción (reutiliza el punto existente, duplicidad del TIPO, rollback sin punto huérfano, concurrencia, formulario único)", async () => alt.verificarCasosAltaPunto(), null],
     ["Facturación PRO-133: prontitud del gateway por empresa (SIN_CONFIGURAR/INVALIDA/SIN_CREDENCIALES/CONFIGURADO), envío bloqueado en la pantalla y aprovisionamiento de prueba sin secretos", async () => gwc.verificarCasosGatewayConfig(), null],
   ];
   let total = 0;
