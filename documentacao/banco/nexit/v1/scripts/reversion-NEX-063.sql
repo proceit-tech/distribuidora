@@ -1,11 +1,21 @@
 -- =====================================================================
--- REVERSIÓN de NEX-063 (puntos por tipo documental, series y paso atómico entre series). Ejecutar SOLO con autorización del responsable, con backup previo, en una transacción (psql -1).
+-- REVERSIÓN de NEX-063 (puntos por tipo documental, series y paso atómico entre series). Ejecutar SOLO con autorización del responsable, con backup previo, en UNA transacción: psql -v ON_ERROR_STOP=1 -1 -f reversion-NEX-063.sql.
 -- ABORTA sin cambios si existen datos que solo tienen sentido con NEX-063: secuencias con serie, tipos desactivados o documentos emitidos con serie (volver atrás reutilizaría o ignoraría su
 -- numeración). Restaura fe_documento_crear_fe (NEX-060), fe_documento_crear_nce (NEX-062) y el trigger de NEX-060; elimina las funciones y columnas nuevas. NO toca documentos, CDC ni numeración.
 -- Después hay que borrar la fila 'NEX-063' de schema_migrations (como en las demás reversiones).
 -- =====================================================================
-DO $
+DO $$
 BEGIN
+  -- NEX063-R01-02: PRIMERO los bloqueos, DESPUÉS todas las comprobaciones (ninguna lectura previa al bloqueo decide nada). Orden: puntos → secuencias → documentos, igual que la emisión
+  -- (punto FOR SHARE → secuencia FOR UPDATE → INSERT del documento) y que la configuración (punto FOR UPDATE → secuencia FOR UPDATE). EXCLUSIVE en puntos y secuencias excluye FOR SHARE/FOR UPDATE,
+  -- INSERT, UPDATE y DELETE concurrentes (emisión FE/NCE, configuración y estados) hasta el fin de la transacción (psql -1), que cubre también los DROP finales; SHARE en documentos impide altas con serie
+  -- mientras se comprueba. LOCK TABLE solo existe dentro de una transacción: sin psql -1 la reversión falla sin cambiar nada. Si no obtiene los bloqueos en 60 s se interrumpe (atómica, sin cambios);
+  -- ante un deadlock con una sesión en orden contrario PostgreSQL aborta una de las dos. Nunca continúa con una comprobación obsoleta.
+  PERFORM set_config('lock_timeout', '60s', true);
+  LOCK TABLE public.fe_puntos_expedicion IN EXCLUSIVE MODE;
+  LOCK TABLE public.fe_punto_secuencias IN EXCLUSIVE MODE;
+  LOCK TABLE public.documentos_electronicos IN SHARE MODE;
+
   IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'fe_punto_secuencias' AND column_name = 'serie') THEN
     RAISE EXCEPTION 'NEX-063 no está aplicada (fe_punto_secuencias.serie no existe): nada que revertir.';
   END IF;
@@ -19,8 +29,6 @@ BEGIN
     RAISE EXCEPTION 'REVERSIÓN ABORTADA: hay tipos desactivados por punto; NEX-062 no distingue su estado y los dejaría emitiendo. Actívelos o decida su baja antes de revertir.';
   END IF;
 END $$;
-
-LOCK TABLE public.fe_punto_secuencias IN EXCLUSIVE MODE;
 
 DROP TRIGGER IF EXISTS fe_punto_secuencias_inmutable_trg ON public.fe_punto_secuencias;
 DROP FUNCTION IF EXISTS public.nex_aplicar_grants_facturacion_series();

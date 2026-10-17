@@ -7,6 +7,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { contador } from "@/lib/clientes/contador-casos";
+import { numeroDocumento } from "@/lib/facturacion/estados";
 import { compararNumeracion, esSerieValida, numeracionSiguiente, NUMERO_MAXIMO, ordenSerie, serieSiguiente, textoNumeracion } from "@/lib/facturacion/series";
 
 const raiz = process.cwd();
@@ -104,6 +105,39 @@ export async function verificarCasosSeries(): Promise<string[]> {
   cierto("el próximo referencial de la factura se calcula con el paso de serie (series.ts) y la serie viaja en el catálogo; el definitivo se reserva en SQL", /numeracionSiguiente\(puntoElegido\.serie \?\? null, puntoElegido\.ultimoNumero\)/.test(leer("app/(private)/facturas/nueva/page.tsx")) && /'serie', s\.serie/.test(emision) && /'serie', q\.serie/.test(nce));
   cierto("no se habilita NRE/NDE/AFE: ninguna ruta ni función SQL de emisión para esos tipos (solo FE y NCE) y la pantalla avisa que su emisión no está habilitada", !existsSync(join(raiz, "app/api/notas-remision")) && !/crear_nre|crear_nde|crear_afe/.test(sql) && /TIPOS_EMITIBLES: readonly TipoDocumentoPunto\[\] = \["FE", "NCE"\]/.test(leer("lib/facturacion/puntos.ts")) && /todavía no está habilitada/.test(leer("app/(private)/facturacion/puntos/page.tsx")));
   cierto("MT-01/UI-01 y la corrección de NCE rechazadas no se tocaron en esta etapa (sin R04-01 reintroducido; emitir con el cuerpo revisado; disabled del Innominado)", /disabled=\{c\.innominado\}/.test(leer("app/(private)/notas-credito/page.tsx")) && /const c = revisado\?\.cuerpo;/.test(leer("app/(private)/notas-credito/page.tsx")) && !/receptorInnominado|bloqueoInnominado/.test(leer("app/(private)/notas-credito/page.tsx")));
+
+  // ── 5. AUD-NEX063-R01 ───────────────────────────────────────────────────────────────────────────────
+  // R01-01: delimitadores dollar-quote balanceados en la reversión (DO $$ … END $$;) y en la migración
+  const delim = (t: string) => ({ abre: (t.match(/\bDO \$\$/g) ?? []).length, cierra: (t.match(/\bEND \$\$;/g) ?? []).length, suelto: /(\bDO|\bAS) \$(?!\$)/.test(t) });
+  const dRev = delim(rev);
+
+  igual("R01-01: la reversión abre su bloque DO con $$ (sin delimitador suelto de un solo $)", [dRev.abre >= 1, dRev.suelto], [true, false]);
+  igual("R01-01: cada $$ de apertura tiene su cierre (número par de $$ en la reversión y en la migración)", [(rev.match(/\$\$/g) ?? []).length % 2, (mig.match(/\$\$/g) ?? []).length % 2, delim(mig).suelto], [0, 0, false]);
+  // R01-02: bloqueos ANTES de las comprobaciones y en el mismo orden que la emisión
+  const bloque = rev.slice(rev.indexOf("DO $$"), rev.indexOf("END $$;") + 7);
+  const posLock = (t: string) => bloque.indexOf(t);
+
+  cierto("R01-02: la reversión toma los bloqueos (puntos → secuencias → documentos) y el lock_timeout ANTES de cualquier comprobación, y no vuelve a bloquear después", posLock("set_config('lock_timeout'") >= 0 && posLock("LOCK TABLE public.fe_puntos_expedicion IN EXCLUSIVE MODE") > posLock("set_config('lock_timeout'") && posLock("LOCK TABLE public.fe_punto_secuencias IN EXCLUSIVE MODE") > posLock("LOCK TABLE public.fe_puntos_expedicion") && posLock("LOCK TABLE public.documentos_electronicos IN SHARE MODE") > posLock("LOCK TABLE public.fe_punto_secuencias")
+    && ["information_schema.columns", "serie IS NOT NULL", "NOT activo", "documentos_electronicos WHERE serie IS NOT NULL"].every((k) => posLock(k) > posLock("LOCK TABLE public.documentos_electronicos")) && (rev.match(/^\s*LOCK TABLE/gm) ?? []).length === 3);
+  cierto("R01-02: el orden de bloqueos coincide con la emisión (punto FOR SHARE → secuencia FOR UPDATE) y con la configuración (punto FOR UPDATE → secuencia FOR UPDATE), sin inversión que provoque deadlock con la reversión", crearFe.indexOf("fe_puntos_expedicion") < crearFe.indexOf("fe_secuencia_reservar") && /FOR SHARE/.test(crearFe) && cfg.indexOf("p_punto FOR UPDATE") < cfg.indexOf("tipo_documento = p_tipo FOR UPDATE"));
+  const t29 = leer("documentacao/banco/nexit/v1/pruebas/T29-reversion-series.sh");
+
+  cierto("R01-02: T29 (copias descartables de la base) prueba la reversión en tres escenarios: A) corrida real con una emisión en la frontera AA que retiene su transacción (la reversión queda BLOQUEADA, revalida y aborta sin perder serie/número/documento), B) válida (aplica, restaura FE/NCE, documentos idénticos), C) tipo desactivado", /wait_event_type='Lock'/.test(t29) && /crear_fe\(/.test(t29) && /9999999/.test(t29) && /REVERSIÓN ABORTADA/.test(t29) && /AA\/1/.test(t29) && /AA\/0000001/.test(t29) && /sintaxis del script es correcta/.test(t29) && /tipos desactivados/.test(t29) && /CREATE DATABASE/.test(t29) && /T29-reversion-series\.sh/.test(leer("documentacao/banco/nexit/v1/scripts/ejecutar-pruebas.sh")));
+  // R01-03: la serie forma parte del número fiscal que ve el operador
+  igual("R01-03: dos facturas iguales salvo la serie se presentan distinto (001-001-0000001 vs 001-001-0000001 (AA))", [numeroDocumento({ establecimiento: "001", puntoExpedicion: "001", numero: "0000001", serie: null }), numeroDocumento({ establecimiento: "001", puntoExpedicion: "001", numero: "0000001", serie: "AA" })], ["001-001-0000001", "001-001-0000001 (AA)"]);
+  const nceTs = leer("lib/facturacion/nce.ts");
+  const sharedTs = leer("lib/facturacion/shared.ts");
+  const SER = "CASE WHEN d\\.serie IS NULL THEN '' ELSE ' \\(' \\|\\| d\\.serie \\|\\| '\\)' END";
+
+  cierto("R01-03: la lista de facturas para la NCE y su búsqueda incluyen la serie (también AA-0000001 por texto), el detalle y la NCE rechazada usan el formato fiscal con serie", new RegExp("d\\.numero \\|\\| " + SER + " AS numero").test(nceTs) && /coalesce\(d\.serie \|\| '-' \|\| d\.numero, ''\)/.test(nceTs) && /numero: numeroDocumento\(\{ establecimiento: s\(f\.establecimiento\)/.test(nceTs) && /d\.numero, d\.serie, d\.cdc/.test(nceTs) && /numeroRechazado: numeroDocumento\(/.test(nceTs) && /n\.numero, n\.serie,/.test(nceTs));
+  cierto("R01-03: Documentos electrónicos muestra la FE original con serie (feNumero) y su búsqueda reconoce el número con y sin serie; sin cambiar motivos, saldos, MT-01 ni UI-01", /fe\.numero \|\| CASE WHEN fe\.serie IS NULL THEN '' ELSE ' \(' \|\| fe\.serie \|\| '\)' END AS "feNumero"/.test(sharedTs) && new RegExp("d\\.numero \\|\\| " + SER + ", d\\.establecimiento").test(sharedTs) && /disabled=\{c\.innominado\}/.test(leer("app/(private)/notas-credito/page.tsx")) && /const c = revisado\?\.cuerpo;/.test(leer("app/(private)/notas-credito/page.tsx")));
+  // R01-04: T27/T28 ejercitan la NCE por fe_documento_crear_nce
+  const h = leer("documentacao/banco/nexit/v1/pruebas/_helpers_nce.sql");
+
+  cierto("R01-04: T27 emite NCE por fe_documento_crear_nce con una FE APROBADA y su CDC (secuencia propia 0000001, FE agotada en ZZ intacta), tipo inactivo, sin configurar, rollover 9999999 → AA-0000001, límite ZZ e idempotencia", /fe_documento_crear_nce\(/.test(t27) && /_helpers_nce\.sql/.test(t27) && ["R01-04", "NEX:TIPO_INACTIVO", "NEX:SECUENCIA_NO_CONFIGURADA", "NEX:NUMERACION_AGOTADA", "AA-0000001", "ZZ-9999999", "reutilizado"].every((k) => t27.includes(k)) && /FUNCTION pg_temp\.fe_aprobada/.test(h) && /FUNCTION pg_temp\.nce_payload/.test(h) && /FUNCTION pg_temp\.pay/.test(h) && /'APROBADO'/.test(h));
+  cierto("R01-04: T28 fase 2 prueba la NCE bajo concurrencia real (segunda NCE BLOQUEADA y con AA-0000002; una FE del mismo punto NO espera) y mantiene la fase de FE", /fe_documento_crear_nce\(/.test(t28) && /t28n2/.test(t28) && /FE=AA\/2,NCE=AA\/2/.test(t28) && /0000002\/AA/.test(t28) && /tipos independientes/.test(t28) && /9999999\/-/.test(t28));
+  // Pendiente: contrato dSerieNum con el gateway
+  cierto("GATEWAY-SERIE-01 sigue PENDIENTE: el JSON conserva dSerieNum null sin serie y la serie con ella; la ausencia frente a null no se asume y queda documentada como no comprobada", /'dSerieNum', v_serie/.test(crearFe) && /dSerieNum.*(no comprobad|a confirmar|pendiente)/i.test(leer("PROGRESSO-NEXIT-V1.md")));
 
   return fallos;
 }

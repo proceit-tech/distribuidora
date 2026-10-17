@@ -3,6 +3,7 @@ import type { Pool } from "pg";
 import { B, parseDec, textoDec } from "@/lib/facturacion/calculo";
 import { leerCambio } from "@/lib/facturacion/monedas";
 import { CAMPOS_RECEPTOR, construirPayloadNCE, esMotivoNce, lineasOriginalesDe, lineasParaSql, MAX_LINEAS_NCE, MOTIVOS_NCE, saldoDe, validarEntradaNce, calcularNce, type EntradaNce, type LineaOriginal, type MotivoNce } from "@/lib/facturacion/payload-nce";
+import { numeroDocumento } from "@/lib/facturacion/estados";
 import { ErrorFacturacion, ErrorValidacionFiscal } from "@/lib/facturacion/shared";
 
 /**
@@ -125,7 +126,7 @@ export async function leerFacturaOriginal(db: Db, empresaId: string, usuarioId: 
   if (!UUID.test(feId)) throw new ErrorFacturacion(404, "Factura original no encontrada.");
 
   const r = await db.query(
-    `SELECT d.id, d.sucursal_id AS "sucursalId", d.establecimiento, d.punto_expedicion AS "puntoExpedicion", d.numero, d.cdc, d.fecha_emision AS "fechaEmision", d.moneda, d.total::text AS total,
+    `SELECT d.id, d.sucursal_id AS "sucursalId", d.establecimiento, d.punto_expedicion AS "puntoExpedicion", d.numero, d.serie, d.cdc, d.fecha_emision AS "fechaEmision", d.moneda, d.total::text AS total,
             d.cliente_id AS "clienteId", d.receptor_nombre AS "receptorNombre", d.receptor_documento AS "receptorDocumento", d.estado_sifen AS "estadoSifen", sol.payload
        FROM documentos_electronicos d
        JOIN LATERAL (SELECT payload FROM documento_electronico_solicitudes WHERE empresa_id = d.empresa_id AND documento_id = d.id ORDER BY version DESC LIMIT 1) sol ON true
@@ -178,7 +179,8 @@ export async function leerFacturaOriginal(db: Db, empresaId: string, usuarioId: 
   return {
     id: s(f.id),
     sucursalId: s(f.sucursalId),
-    numero: `${s(f.establecimiento)}-${s(f.puntoExpedicion)}-${s(f.numero)}`,
+    // R01-03: la serie forma parte del número fiscal (001-001-0000001 y 001-001-0000001 (AA) son facturas distintas).
+    numero: numeroDocumento({ establecimiento: s(f.establecimiento), puntoExpedicion: s(f.puntoExpedicion), numero: s(f.numero), serie: f.serie === null || f.serie === undefined ? null : s(f.serie) }),
     cdc: s(f.cdc),
     fechaEmision: iso(f.fechaEmision),
     moneda,
@@ -238,7 +240,7 @@ export async function listarFacturasElegibles(db: Db, empresaId: string, usuario
   try {
     const r = await db.query(
       `WITH base AS (
-         SELECT d.id, d.establecimiento || '-' || d.punto_expedicion || '-' || d.numero AS numero, d.cdc, d.fecha_emision, d.moneda, d.total::text AS total, d.receptor_nombre,
+         SELECT d.id, d.establecimiento || '-' || d.punto_expedicion || '-' || d.numero || CASE WHEN d.serie IS NULL THEN '' ELSE ' (' || d.serie || ')' END AS numero, d.cdc, d.fecha_emision, d.moneda, d.total::text AS total, d.receptor_nombre,
                 (SELECT coalesce(sum((x.v->>'dTotOpeItem')::numeric), 0) FROM jsonb_array_elements(sv.payload->'Detalles') x(v)) AS original,
                 (SELECT coalesce(sum(nl.monto), 0) FROM nce_lineas nl JOIN documentos_electronicos nn ON nn.empresa_id = nl.empresa_id AND nn.id = nl.nce_id
                   WHERE nl.empresa_id = d.empresa_id AND nl.fe_id = d.id AND nn.estado_sifen = 'APROBADO') AS acreditado,
@@ -248,7 +250,7 @@ export async function listarFacturasElegibles(db: Db, empresaId: string, usuario
            -- ZERO-03: UNA sola versión fiscal (la última, igual que leerFacturaOriginal y fe_documento_crear_nce) antes de sumar sus Detalles; nunca la suma de todas las versiones.
            CROSS JOIN LATERAL (SELECT so.payload FROM documento_electronico_solicitudes so WHERE so.empresa_id = d.empresa_id AND so.documento_id = d.id ORDER BY so.version DESC LIMIT 1) sv
           WHERE d.empresa_id = $1 AND d.tipo = 'FE' AND d.estado_sifen = 'APROBADO' AND d.cdc IS NOT NULL AND d.cliente_id = $3 AND sucursal_en_alcance($1::uuid, $2::uuid, d.sucursal_id)
-            AND ($4 = '' OR concat_ws(' ', d.establecimiento || '-' || d.punto_expedicion || '-' || d.numero, d.cdc, to_char(d.fecha_emision AT TIME ZONE 'America/Asuncion', 'DD/MM/YYYY'), to_char(d.fecha_emision AT TIME ZONE 'America/Asuncion', 'YYYY-MM-DD')) ILIKE $5 ESCAPE '!'))
+            AND ($4 = '' OR concat_ws(' ', d.establecimiento || '-' || d.punto_expedicion || '-' || d.numero || CASE WHEN d.serie IS NULL THEN '' ELSE ' (' || d.serie || ')' END, d.establecimiento || '-' || d.punto_expedicion || '-' || d.numero, coalesce(d.serie || '-' || d.numero, ''), d.cdc, to_char(d.fecha_emision AT TIME ZONE 'America/Asuncion', 'DD/MM/YYYY'), to_char(d.fecha_emision AT TIME ZONE 'America/Asuncion', 'YYYY-MM-DD')) ILIKE $5 ESCAPE '!'))
        SELECT *, (original - acreditado)::text AS saldo, count(*) OVER() AS total_filas FROM base WHERE original - acreditado > 0 ORDER BY fecha_emision DESC, id DESC LIMIT $6 OFFSET $7`,
       [empresaId, usuarioId, e.clienteId, q, `%${comodin(q)}%`, n, (p - 1) * n],
     );
@@ -405,7 +407,7 @@ export async function propuestaCorreccion(db: Db, empresaId: string, usuarioId: 
 
   try {
     const r = await db.query(
-      `SELECT n.id, n.sucursal_id AS "sucursalId", n.establecimiento, n.punto_expedicion AS "puntoExpedicion", n.numero, n.estado_local AS "estadoLocal", n.estado_sifen AS "estadoSifen", n.envio_error_tipo AS "envioErrorTipo",
+      `SELECT n.id, n.sucursal_id AS "sucursalId", n.establecimiento, n.punto_expedicion AS "puntoExpedicion", n.numero, n.serie, n.estado_local AS "estadoLocal", n.estado_sifen AS "estadoSifen", n.envio_error_tipo AS "envioErrorTipo",
               o.fe_id AS "feId", o.motivo, o.observacion,
               (SELECT p.id FROM fe_puntos_expedicion p WHERE p.empresa_id = n.empresa_id AND p.sucursal_id = n.sucursal_id AND p.codigo = n.punto_expedicion AND p.activo) AS "puntoId"
          FROM documentos_electronicos n JOIN nce_origen o ON o.empresa_id = n.empresa_id AND o.nce_id = n.id
@@ -428,7 +430,7 @@ export async function propuestaCorreccion(db: Db, empresaId: string, usuarioId: 
       sucursalId: s(n.sucursalId),
       puntoId: n.puntoId === null ? null : s(n.puntoId),
       observacion: n.observacion === null ? "" : s(n.observacion),
-      numeroRechazado: `${s(n.establecimiento)}-${s(n.puntoExpedicion)}-${s(n.numero)}`,
+      numeroRechazado: numeroDocumento({ establecimiento: s(n.establecimiento), puntoExpedicion: s(n.puntoExpedicion), numero: s(n.numero), serie: n.serie === null || n.serie === undefined ? null : s(n.serie) }),
       lineas: (lineas.rows as F[]).map((l) => ({ linea: Number(l.linea), cantidad: textoDec(parseDec(s(l.cantidad), 8) ?? B(0)), monto: textoDec(parseDec(s(l.monto), 8) ?? B(0)) })),
     };
   } catch (error) {

@@ -79,7 +79,7 @@ const DESDE_BASE = `
  * NCE (PRO-94, NEX-062): relación con la factura original y motivo, acción «Corregir y emitir nueva» (rechazo DEFINITIVO) y «Requiere revisión» (pendiente de resultado fiscal más de UMBRAL_REVISION_HORAS,
  * valor provisional común: solo etiqueta, no cambia ni libera nada). Si la migración NEX-062 aún no está aplicada se usa la consulta básica (la lista de facturas sigue funcionando).
  */
-const COLUMNAS_NCE = `, o.motivo AS "nceMotivo", o.fe_id AS "feId", o.fe_cdc AS "feCdc", fe.establecimiento || '-' || fe.punto_expedicion || '-' || fe.numero AS "feNumero",
+const COLUMNAS_NCE = `, o.motivo AS "nceMotivo", o.fe_id AS "feId", o.fe_cdc AS "feCdc", fe.establecimiento || '-' || fe.punto_expedicion || '-' || fe.numero || CASE WHEN fe.serie IS NULL THEN '' ELSE ' (' || fe.serie || ')' END AS "feNumero",
        (d.tipo = 'NCE' AND (d.estado_sifen = 'RECHAZADO' OR (d.estado_local = 'ERROR_ENVIO' AND d.envio_error_tipo = 'RECHAZO'))) AS corregible,
        (d.tipo = 'NCE' AND d.estado_local IN ('ENVIADO','ENVIO_INDETERMINADO') AND d.estado_sifen IN ('SIN_CONSULTA','PENDIENTE','NO_RECONOCIDO') AND d.creado_at < now() - interval '${UMBRAL_REVISION_HORAS} hours') AS "requiereRevision"`;
 const DESDE_NCE = `${DESDE_BASE}
@@ -132,7 +132,7 @@ function filtros(c: ReturnType<typeof normalizarConsulta>) {
   if (c.desde) cond.push(`d.fecha_emision >= (${p(c.desde)}::date)::timestamp AT TIME ZONE 'America/Asuncion'`);
   if (c.hasta) cond.push(`d.fecha_emision < ((${p(c.hasta)}::date) + 1)::timestamp AT TIME ZONE 'America/Asuncion'`);
   if (c.q) {
-    cond.push(`concat_ws(' ', d.establecimiento || '-' || d.punto_expedicion || '-' || d.numero, d.cdc, d.receptor_documento, d.receptor_nombre) ILIKE ${p(`%${comodin(c.q)}%`)} ESCAPE '!'`);
+    cond.push(`concat_ws(' ', d.establecimiento || '-' || d.punto_expedicion || '-' || d.numero || CASE WHEN d.serie IS NULL THEN '' ELSE ' (' || d.serie || ')' END, d.establecimiento || '-' || d.punto_expedicion || '-' || d.numero, coalesce(d.serie || '-' || d.numero, ''), d.cdc, d.receptor_documento, d.receptor_nombre) ILIKE ${p(`%${comodin(c.q)}%`)} ESCAPE '!'`);
   }
 
   return { params, sql: cond.length ? ` AND ${cond.join(" AND ")}` : "" };

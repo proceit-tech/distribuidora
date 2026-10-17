@@ -2,6 +2,7 @@
 -- Secuencial (una sola sesión); la carrera con dos sesiones está en T28. Base descartable; datos sintéticos. NO es una prueba ejecutada por la IA: la corre el runner del responsable sobre una
 -- base descartable con NEX-001…063 aplicadas, NUNCA sobre el PostgreSQL operativo.
 \i _helpers.sql
+\i _helpers_nce.sql
 
 DO $t$
 DECLARE
@@ -141,6 +142,67 @@ BEGIN
   -- Bitácora: la configuración y los estados quedan registrados con serie, número y usuario
   SELECT count(*) INTO v_n FROM fe_puntos_expedicion_log WHERE empresa_id = v_a AND accion = 'SECUENCIA' AND (nuevo->>'tipo_documento') IS NOT NULL;
   PERFORM pg_temp.ok(v_n >= 8 AND EXISTS (SELECT 1 FROM fe_puntos_expedicion_log WHERE empresa_id = v_a AND accion = 'SECUENCIA' AND nuevo->>'serie' = 'ZZ'), 'la bitácora registra cada configuración (tipo, serie, número, estado)');
+
+  -- R01-04: la NCE usa SU secuencia por su flujo fiscal (fe_documento_crear_nce) sin tocar la de FE: aquí la FE de 001/001 ya está AGOTADA (ZZ-9999999) y la NCE igualmente emite
+  DECLARE
+    v_fe1 record; v_fe2 record; v_n1 record; v_n2 record; v_n3 record;
+  BEGIN
+    SELECT * INTO v_fe1 FROM pg_temp.fe_aprobada(v_a, v_ua, v_sa, '0000090');
+    SELECT * INTO v_fe2 FROM pg_temp.fe_aprobada(v_a, v_ua, v_sa, '0000091');
+    PERFORM pg_temp.ok((SELECT serie = 'ZZ' AND ultimo_numero = 9999999 AND activo FROM fe_punto_secuencias WHERE punto_id = v_p1 AND tipo_documento = 'FE'), 'precondición: la secuencia FE de 001/001 está agotada (ZZ-9999999)');
+
+    SELECT * INTO v_n1 FROM fe_documento_crear_nce(v_a, v_ua, v_sa, v_p1, 'clave-t27-nce-1', v_fe1.o_id, 3, '[{"linea":1,"cantidad":0,"monto":30000}]'::jsonb, 'PYG', 30000, pg_temp.nce_payload(v_fe1.o_cdc, 30000));
+    PERFORM pg_temp.ok(v_n1.o_numero = '0000001' AND (SELECT tipo = 'NCE' AND serie IS NULL AND numero = '0000001' FROM documentos_electronicos WHERE id = v_n1.o_documento_id)
+      AND (SELECT payload->>'dNumDoc' = '0000001' AND payload->>'dSerieNum' IS NULL FROM documento_electronico_solicitudes WHERE documento_id = v_n1.o_documento_id), 'R01-04: la NCE toma 0000001 sin serie de SU secuencia (documento y payload)');
+    PERFORM pg_temp.ok((SELECT serie = 'ZZ' AND ultimo_numero = 9999999 FROM fe_punto_secuencias WHERE punto_id = v_p1 AND tipo_documento = 'FE') AND (SELECT ultimo_numero = 1 AND serie IS NULL FROM fe_punto_secuencias WHERE punto_id = v_p1 AND tipo_documento = 'NCE'),
+      'R01-04: la NCE no alteró la secuencia FE (sigue ZZ-9999999) y avanzó solo la NCE (1)');
+    PERFORM pg_temp.ok((SELECT count(*) = 1 FROM documentos_electronicos WHERE empresa_id = v_a AND tipo = 'NCE'), 'solo se creó la NCE (la FE no consumió nada)');
+
+    -- tipo NCE inactivo: no emite, no consume
+    UPDATE documentos_electronicos SET estado_sifen = 'RECHAZADO' WHERE id = v_n1.o_documento_id;
+    PERFORM fe_secuencia_estado(v_a, v_ua, v_p1, 'NCE', false);
+    v_det := NULL;
+    BEGIN
+      PERFORM * FROM fe_documento_crear_nce(v_a, v_ua, v_sa, v_p1, 'clave-t27-nce-2', v_fe1.o_id, 3, '[{"linea":1,"cantidad":0,"monto":30000}]'::jsonb, 'PYG', 30000, pg_temp.nce_payload(v_fe1.o_cdc, 30000));
+    EXCEPTION WHEN OTHERS THEN
+      GET STACKED DIAGNOSTICS v_det = PG_EXCEPTION_DETAIL;
+    END;
+    PERFORM pg_temp.ok(v_det = 'NEX:TIPO_INACTIVO' AND (SELECT ultimo_numero = 1 FROM fe_punto_secuencias WHERE punto_id = v_p1 AND tipo_documento = 'NCE') AND NOT EXISTS (SELECT 1 FROM documentos_electronicos WHERE clave_idempotencia = 'clave-t27-nce-2'),
+      'R01-04: la NCE con el tipo inactivo falla con NEX:TIPO_INACTIVO sin consumir número');
+    PERFORM fe_secuencia_estado(v_a, v_ua, v_p1, 'NCE', true);
+
+    -- NCE sin configurar en el punto (v_p2 solo tiene NRE): no emite
+    PERFORM fe_punto_estado(v_a, v_ua, v_p2, true);
+    v_det := NULL;
+    BEGIN
+      PERFORM * FROM fe_documento_crear_nce(v_a, v_ua, v_sa, v_p2, 'clave-t27-nce-3', v_fe1.o_id, 3, '[{"linea":1,"cantidad":0,"monto":30000}]'::jsonb, 'PYG', 30000, pg_temp.nce_payload(v_fe1.o_cdc, 30000));
+    EXCEPTION WHEN OTHERS THEN
+      GET STACKED DIAGNOSTICS v_det = PG_EXCEPTION_DETAIL;
+    END;
+    PERFORM pg_temp.ok(v_det = 'NEX:SECUENCIA_NO_CONFIGURADA' AND (SELECT ultimo_numero = 0 FROM fe_punto_secuencias WHERE punto_id = v_p2 AND tipo_documento = 'NRE'), 'R01-04: la NCE sin configuración NCE en el punto falla (la NRE del punto no se usa ni se toca)');
+
+    -- rollover NCE: sin serie 9999999 → AA-0000001 y la FE sigue intacta
+    PERFORM fe_secuencia_configurar(v_a, v_ua, v_p1, 'NCE', NULL, 9999999, true, false);
+    SELECT * INTO v_n2 FROM fe_documento_crear_nce(v_a, v_ua, v_sa, v_p1, 'clave-t27-nce-4', v_fe1.o_id, 3, '[{"linea":1,"cantidad":0,"monto":30000}]'::jsonb, 'PYG', 30000, pg_temp.nce_payload(v_fe1.o_cdc, 30000));
+    PERFORM pg_temp.ok((SELECT serie = 'AA' AND numero = '0000001' FROM documentos_electronicos WHERE id = v_n2.o_documento_id) AND (SELECT payload->>'dSerieNum' = 'AA' FROM documento_electronico_solicitudes WHERE documento_id = v_n2.o_documento_id)
+      AND (SELECT serie = 'ZZ' AND ultimo_numero = 9999999 FROM fe_punto_secuencias WHERE punto_id = v_p1 AND tipo_documento = 'FE'), 'R01-04: la NCE pasa de 9999999 sin serie a AA-0000001 (documento y payload) y la FE no cambia');
+    PERFORM pg_temp.ok((SELECT count(*) = 2 FROM documentos_electronicos WHERE empresa_id = v_a AND tipo = 'NCE' AND numero = '0000001'), 'la NCE 0000001 sin serie y la AA-0000001 coexisten (sin colisión)');
+
+    -- límite NCE: ZZ-9999999 detiene sin reiniciar
+    UPDATE documentos_electronicos SET estado_sifen = 'RECHAZADO' WHERE id = v_n2.o_documento_id;
+    PERFORM fe_secuencia_configurar(v_a, v_ua, v_p1, 'NCE', 'ZZ', 9999999, true, false);
+    v_det := NULL;
+    BEGIN
+      PERFORM * FROM fe_documento_crear_nce(v_a, v_ua, v_sa, v_p1, 'clave-t27-nce-5', v_fe2.o_id, 3, '[{"linea":1,"cantidad":0,"monto":30000}]'::jsonb, 'PYG', 30000, pg_temp.nce_payload(v_fe2.o_cdc, 30000));
+    EXCEPTION WHEN OTHERS THEN
+      GET STACKED DIAGNOSTICS v_det = PG_EXCEPTION_DETAIL;
+    END;
+    PERFORM pg_temp.ok(v_det = 'NEX:NUMERACION_AGOTADA' AND (SELECT serie = 'ZZ' AND ultimo_numero = 9999999 FROM fe_punto_secuencias WHERE punto_id = v_p1 AND tipo_documento = 'NCE') AND NOT EXISTS (SELECT 1 FROM documentos_electronicos WHERE clave_idempotencia = 'clave-t27-nce-5'),
+      'R01-04: NCE en ZZ-9999999 se detiene con NEX:NUMERACION_AGOTADA sin consumir ni reiniciar');
+    -- idempotencia NCE: la repetición devuelve la NCE existente sin consumir
+    SELECT * INTO v_n3 FROM fe_documento_crear_nce(v_a, v_ua, v_sa, v_p1, 'clave-t27-nce-4', v_fe1.o_id, 3, '[{"linea":1,"cantidad":0,"monto":30000}]'::jsonb, 'PYG', 30000, pg_temp.nce_payload(v_fe1.o_cdc, 30000));
+    PERFORM pg_temp.ok(v_n3.o_reutilizado AND v_n3.o_documento_id = v_n2.o_documento_id, 'R01-04: la repetición idempotente de la NCE devuelve la misma sin consumir número');
+  END;
 
   RAISE NOTICE 'T27 completada';
 END $t$;

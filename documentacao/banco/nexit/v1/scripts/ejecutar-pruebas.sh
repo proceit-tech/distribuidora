@@ -102,6 +102,9 @@ paso "T24 NEX-060 reversión: bloqueos previos, aborto sin pérdida y caso váli
 # T28: NEX-063 — carrera real en el paso de serie 9999999 → AA-0000001 y tipos independientes
 paso "T28 NEX-063 carrera real: paso de serie y tipos independientes"
 "$AQUI/pruebas/T28-concurrencia-series.sh" >"$LOG/T28" 2>&1; fin $? "$LOG/T28"
+# T29: NEX-063 — la reversión tiene sintaxis válida y toma sus bloqueos antes de comprobar (copias descartables de la base)
+paso "T29 NEX-063 reversión: sintaxis, bloqueos previos y aborto sin pérdida"
+"$AQUI/pruebas/T29-reversion-series.sh" >"$LOG/T29" 2>&1; fin $? "$LOG/T29"
 # I1/V1: instalación de una empresa REAL con los scripts de producción (sin contraseña en argumentos ni logs) y validación de la estructura instalada
 PWADM="Adm-$(head -c 24 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 20)"     # contraseña del administrador de prueba (solo en memoria)
 if python3 -c 'import bcrypt' 2>/dev/null; then GENERADOR="real (python3 bcrypt)"; unset NEX_PRUEBAS_GENERADOR_HASH
