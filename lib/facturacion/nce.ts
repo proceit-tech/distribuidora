@@ -205,7 +205,7 @@ export async function buscarClientesConFacturas(db: Db, empresaId: string, usuar
 
   try {
     const r = await db.query(
-      `SELECT c.id, c.codigo, c.razon_social AS "razonSocial", c.numero_documento AS "numeroDocumento", c.dv, count(*) OVER() AS total
+      `SELECT c.id, c.codigo, c.razon_social AS "razonSocial", c.numero_documento AS "numeroDocumento", c.dv, (c.tipo_documento_identidad_sifen = 5) AS innominado, count(*) OVER() AS total
          FROM clientes c
         WHERE c.empresa_id = $1
           AND EXISTS (SELECT 1 FROM documentos_electronicos d WHERE d.empresa_id = c.empresa_id AND d.cliente_id = c.id AND d.tipo = 'FE' AND (d.estado_sifen = 'APROBADO' OR (d.estado_local IN ('ENVIADO', 'ENVIO_INDETERMINADO') AND d.estado_sifen IN ('SIN_CONSULTA', 'PENDIENTE', 'NO_RECONOCIDO'))) AND sucursal_en_alcance($1::uuid, $2::uuid, d.sucursal_id))
@@ -216,7 +216,7 @@ export async function buscarClientesConFacturas(db: Db, empresaId: string, usuar
     const filas = r.rows as F[];
     const total = filas.length > 0 ? Number(filas[0].total) : 0;
 
-    return { clientes: filas.map((c) => ({ id: s(c.id), codigo: s(c.codigo), razonSocial: s(c.razonSocial), documento: `${s(c.numeroDocumento)}${c.dv ? `-${s(c.dv)}` : ""}` })), total, pagina: p, totalPaginas: Math.max(1, Math.ceil(total / n)) };
+    return { clientes: filas.map((c) => ({ id: s(c.id), codigo: s(c.codigo), razonSocial: s(c.razonSocial), documento: `${s(c.numeroDocumento)}${c.dv ? `-${s(c.dv)}` : ""}`, innominado: c.innominado === true })), total, pagina: p, totalPaginas: Math.max(1, Math.ceil(total / n)) };
   } catch (error) {
     return traducirErrorNce(error);
   }

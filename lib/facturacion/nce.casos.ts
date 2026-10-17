@@ -14,7 +14,7 @@ import { textoDec } from "@/lib/facturacion/calculo";
 import { iniciarRefresco, retardoRefresco } from "@/lib/facturacion/refresco-documentos";
 import { MAX_ENTEROS_F023 } from "@/lib/facturacion/monedas";
 import { crearControlListado, entradasIniciales, etiquetaIvaLinea } from "@/lib/facturacion/nce-entradas";
-import { LIMITE_BYTES_PAYLOAD_NCE, listarFacturasElegibles } from "@/lib/facturacion/nce";
+import { buscarClientesConFacturas, LIMITE_BYTES_PAYLOAD_NCE, listarFacturasElegibles } from "@/lib/facturacion/nce";
 import { interpretarRecepcion, type DocumentoRecepcion } from "@/lib/facturacion/gateway";
 import { reconciliarFacturasPendientes } from "@/lib/facturacion/nce-emision";
 import { reconciliarNcePendientes, repeticion } from "@/lib/facturacion/nce-emision";
@@ -536,5 +536,37 @@ export async function verificarCasosNce(): Promise<string[]> {
   }
   cierto("F01-F04: se usa la consulta del flujo NCE (CREAR/EDITAR) y la SQL del flujo admite exactamente esos estados; el worker global no cambia", /flujoNce: true/.test(leer("lib/facturacion/nce-emision.ts")) && /d\.estado_local NOT IN \('ENVIADO', 'ENVIO_INDETERMINADO'\) OR d\.estado_sifen NOT IN \('SIN_CONSULTA', 'PENDIENTE', 'NO_RECONOCIDO'\)/.test(sqlFlujo) && /TIPOS_CONSULTA_AUTOMATICA: readonly string\[\] = \["NCE"\]/.test(auto));
   cierto("F06: ninguna FE no aprobada es elegible para emitir (APROBADO + CDC + saldo) y el cliente descubierto sin FE elegible recibe mensaje", /d\.estado_sifen = 'APROBADO' AND d\.cdc IS NOT NULL/.test(elegiblesSql) && /no tiene facturas aprobadas con saldo por acreditar/.test(pagNce));
+  // ── 17. MT-01 (Innominado, solo interfaz) y UI-01 (integridad de la confirmación) ─────────────────────
+  {
+    const parametros: unknown[][] = [];
+    const dbC = { query: async (_t: string, p?: unknown[]) => { parametros.push(p ?? []); return { rows: [
+      { id: "c1", codigo: "C-1", razonSocial: "Cliente Normal", numeroDocumento: "80000001", dv: "1", innominado: false, total: "2" },
+      { id: "c2", codigo: "C-2", razonSocial: "Sin Nombre", numeroDocumento: "44444401", dv: null, innominado: true, total: "2" },
+    ] }; } };
+    const r = await buscarClientesConFacturas(dbC as never, uuid, uuid, "", 1, 10);
+
+    igual("MT-01: el DTO de clientes marca innominado solo donde el tipo fiscal estructurado es 5 (el resto igual); paginación y total intactos", [r.clientes.map((c) => [c.id, c.innominado]), r.total, r.pagina, r.totalPaginas], [[["c1", false], ["c2", true]], 2, 1, 1]);
+    igual("MT-01: filtros, empresa y usuario de la sesión se pasan como antes", parametros[0].slice(0, 2), [uuid, uuid]);
+  }
+  const consultaClientes = fuente.slice(fuente.indexOf("export async function buscarClientesConFacturas"), fuente.indexOf("export type FacturaElegible"));
+
+  cierto("MT-01: el indicador sale de tipo_documento_identidad_sifen = 5 (nunca del nombre) y la búsqueda sigue acotada por empresa y alcance", /\(c\.tipo_documento_identidad_sifen = 5\) AS innominado/.test(consultaClientes) && !/razon_social\s*(ILIKE|=|~)[^$]*innominado/i.test(consultaClientes) && /c\.empresa_id = \$1/.test(consultaClientes) && /sucursal_en_alcance/.test(consultaClientes));
+  cierto("MT-01: la pantalla muestra al Innominado con «Seleccionar» deshabilitado, mensaje en español y sin llamar a las facturas; los demás clientes no cambian", /disabled=\{c\.innominado\}/.test(pagNce) && /if \(c\.innominado\) return;/.test(pagNce) && /no puede recibir una nota de crédito electrónica/.test(pagNce) && /innominado: boolean/.test(pagNce) && /onClick=\{\(\) => \{ if \(c\.innominado\) return; setCliente\(c\); void cargarFacturas\(c\.id, "", 1, true\); \}\}/.test(pagNce));
+  cierto("MT-01: sin validación nueva de Innominado en el servicio de emisión, el JSON ni NEX-062 (decisión de alcance del responsable)", !/innominado|tipo_documento_identidad/i.test(leer("lib/facturacion/nce-emision.ts")) && !/innominado|tipo_documento_identidad/i.test(leer("lib/facturacion/payload-nce.ts")) && !/innominado|tipo_documento_identidad/i.test(sql));
+
+  // UI-01
+  const emitirFn = pagNce.slice(pagNce.indexOf("async function emitir()"), pagNce.indexOf("function volverAFacturas"));
+  const revisarFn = pagNce.slice(pagNce.indexOf("async function revisar()"), pagNce.indexOf("async function emitir()"));
+
+  cierto("UI-01: la revisión guarda el cuerpo exacto enviado a la previa junto con el resumen aprobado por el servidor", /setRevisado\(\{ cuerpo: c as CuerpoRevisado, resumen: r\.resumen \}\)/.test(revisarFn) && /JSON\.stringify\(c\)/.test(revisarFn));
+  cierto("UI-01: «Emitir» envía exactamente revisado.cuerpo (misma clave de idempotencia) y nunca reconstruye el cuerpo desde los campos", /const c = revisado\?\.cuerpo;/.test(emitirFn) && /body: JSON\.stringify\(c\)/.test(emitirFn) && !/const c = cuerpo\(\)/.test(emitirFn));
+  cierto("UI-01: si el formulario ya no coincide con lo revisado no se emite y se exige una nueva revisión; el servidor revalida igual", /JSON\.stringify\(cuerpo\(\)\) !== JSON\.stringify\(c\)/.test(emitirFn) && /revise la nota de crédito de nuevo/.test(emitirFn) && /prepararNce/.test(leer("lib/facturacion/nce-emision.ts")));
+  cierto("UI-01: con el modal abierto el fondo queda inerte y se conservan volver a editar, errores y la protección contra doble clic", /<div inert=\{revisado !== null\} style=\{\{ display: "contents" \}\}>/.test(pagNce) && /onClick=\{\(\) => setRevisado\(null\)\}>Volver y editar/.test(pagNce) && /if \(!c \|\| enviando\) return;/.test(emitirFn) && /disabled=\{enviando\}/.test(pagNce) && /setEnviando\(true\)/.test(emitirFn) && /catch \(e\) \{[\s\S]*setRevisado\(null\);[\s\S]*setEnviando\(false\)/.test(emitirFn));
+  {
+    // Simulación pura del contrato: si algo cambia tras la revisión, la comparación detecta la diferencia
+    const rev = JSON.stringify({ facturaId: uuid, motivo: 3, lineas: [{ linea: 1, monto: "100" }], claveIdempotencia: "k1" });
+
+    igual("UI-01: cuerpo idéntico → emite; observación, línea, monto o motivo cambiados → exige nueva revisión", [rev === JSON.stringify({ facturaId: uuid, motivo: 3, lineas: [{ linea: 1, monto: "100" }], claveIdempotencia: "k1" }), rev === JSON.stringify({ facturaId: uuid, motivo: 3, lineas: [{ linea: 1, monto: "101" }], claveIdempotencia: "k1" }), rev === JSON.stringify({ facturaId: uuid, motivo: 4, lineas: [{ linea: 1, monto: "100" }], claveIdempotencia: "k1" })], [true, false, false]);
+  }
   return fallos;
 }

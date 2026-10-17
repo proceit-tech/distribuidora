@@ -13,9 +13,10 @@ import { formatearFechaPy } from "@/lib/formato/listas";
 
 import estilos from "./page.module.css";
 
+const MENSAJE_INNOMINADO = "Un cliente Innominado no puede recibir una nota de crédito electrónica (el documento del receptor no puede ser «Innominado»).";
 const MOTIVOS: Record<number, string> = { 2: "Devolución", 3: "Descuento", 4: "Bonificación", 8: "Ajuste de precio" };
 
-type ClienteB = { id: string; codigo: string; razonSocial: string; documento: string };
+type ClienteB = { id: string; codigo: string; razonSocial: string; documento: string; innominado: boolean };
 type FacturaE = { id: string; numero: string; cdc: string; fechaEmision: string; moneda: string; total: string; saldo: string; receptorNombre: string; ncePendiente: boolean };
 type Linea = {
   linea: number; codigoInterno: string; descripcion: string; unidad: string; cantidad: string; precio: string; total: string; cantidadAcreditada: string; cantidadDisponible: string;
@@ -32,6 +33,7 @@ type Resumen = {
   lineas: Array<{ linea: number; codigo: string; descripcion: string; unidad: string; cantidad: string; precioUnitario: string; monto: string; afectacion: number; tasa: number; proporcion: string }>;
   totales: { exento: string; exonerado: string; gravado5: string; gravado10: string; iva5: string; iva10: string; totalIva: string; total: string };
 };
+type CuerpoRevisado = { facturaId: string; motivo: number; sucursalId: string; puntoId: string; observacion: string; lineas: Array<{ linea: number; cantidad?: string; monto?: string }>; claveIdempotencia: string };
 type Entrada = { incluida: boolean; valor: string };
 
 const fm = (t: string) => formatearDecimalTexto(t);
@@ -69,7 +71,9 @@ function Formulario() {
   const [error, setError] = useState<string | null>(null);
   const [aviso, setAviso] = useState<string | null>(null);
   const [cargando, setCargando] = useState(false);
-  const [resumen, setResumen] = useState<Resumen | null>(null);
+  // UI-01: la revisión guarda el cuerpo EXACTO que el servidor validó y resumió; «Emitir» envía ese mismo cuerpo (misma clave de idempotencia), nunca uno reconstruido desde los campos.
+  const [revisado, setRevisado] = useState<{ cuerpo: CuerpoRevisado; resumen: Resumen } | null>(null);
+  const resumen = revisado?.resumen ?? null;
   const [enviando, setEnviando] = useState(false);
 
   const cargarClientes = useCallback(async (q: string, pagina: number) => {
@@ -221,7 +225,7 @@ function Formulario() {
     try {
       const r = await pedir<{ resumen: Resumen }>("/api/notas-credito/previa", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(c) });
 
-      setResumen(r.resumen);
+      setRevisado({ cuerpo: c as CuerpoRevisado, resumen: r.resumen });
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -230,9 +234,11 @@ function Formulario() {
   }
 
   async function emitir() {
-    const c = cuerpo();
+    // Se envía EXACTAMENTE el cuerpo revisado. Si los datos del formulario ya no coinciden con él, no se emite: hay que revisar de nuevo.
+    const c = revisado?.cuerpo;
 
     if (!c || enviando) return;
+    if (JSON.stringify(cuerpo()) !== JSON.stringify(c)) { setRevisado(null); setError("Los datos cambiaron después de la revisión: revise la nota de crédito de nuevo antes de emitirla."); return; }
 
     setEnviando(true);
     setError(null);
@@ -242,14 +248,14 @@ function Formulario() {
       router.push(`/documentos?q=${encodeURIComponent(r.numero)}`);
     } catch (e) {
       setError((e as Error).message);
-      setResumen(null);
+      setRevisado(null);
       setEnviando(false);
     }
   }
 
   function volverAFacturas() {
     setFactura(null);
-    setResumen(null);
+    setRevisado(null);
     setAviso(null);
     setError(null);
   }
@@ -259,6 +265,8 @@ function Formulario() {
 
   return (
     <main className={ui.page}>
+      {/* UI-01: con el modal abierto el fondo queda inerte (sin foco, teclado ni clics): no se puede editar lo revisado. */}
+      <div inert={revisado !== null} style={{ display: "contents" }}>
       <header className={ui.topbar}>
         <div className={ui.titleBlock}>
           <nav className={ui.breadcrumb} aria-label="Ruta"><Link href="/documentos">Documentos electrónicos</Link> / Nota de crédito</nav>
@@ -290,8 +298,8 @@ function Formulario() {
                 <ul className={estilos.lista}>
                   {clientes.map((c) => (
                     <li key={c.id}>
-                      <span>{c.razonSocial} <small>{c.codigo} · {c.documento}</small></span>
-                      <button type="button" className={ui.secondaryButton} onClick={() => { setCliente(c); void cargarFacturas(c.id, "", 1, true); }}>Seleccionar</button>
+                      <span>{c.razonSocial} <small>{c.codigo} · {c.documento}</small>{c.innominado ? <><span className={estilos.chip}>Innominado</span><br /><small>{MENSAJE_INNOMINADO}</small></> : null}</span>
+                      <button type="button" className={ui.secondaryButton} disabled={c.innominado} title={c.innominado ? MENSAJE_INNOMINADO : undefined} onClick={() => { if (c.innominado) return; setCliente(c); void cargarFacturas(c.id, "", 1, true); }}>Seleccionar</button>
                     </li>
                   ))}
                   {clientes.length === 0 ? <li><small>No hay clientes con facturas aprobadas para esta búsqueda.</small></li> : null}
@@ -423,6 +431,8 @@ function Formulario() {
         </>
       )}
 
+      </div>
+
       {resumen ? (
         <div className={estilos.fondo} role="dialog" aria-modal="true" aria-label="Revisión de la nota de crédito">
           <div className={estilos.modal}>
@@ -455,7 +465,7 @@ function Formulario() {
             </dl>
             <p className={estilos.hint}>Al emitir se reserva el número y se envía al gateway. El resultado fiscal se consulta automáticamente y se ve en Documentos electrónicos.</p>
             <div className={estilos.acciones}>
-              <button type="button" className={ui.secondaryButton} disabled={enviando} onClick={() => setResumen(null)}>Volver y editar</button>
+              <button type="button" className={ui.secondaryButton} disabled={enviando} onClick={() => setRevisado(null)}>Volver y editar</button>
               <button type="button" className={ui.primaryButton} disabled={enviando} onClick={() => void emitir()}>{enviando ? "Emitiendo…" : "Emitir nota de crédito"}</button>
             </div>
           </div>
