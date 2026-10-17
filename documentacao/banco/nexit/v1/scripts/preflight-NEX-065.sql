@@ -10,8 +10,7 @@ UNION ALL SELECT 'NEX-065 ausente (no se reaplica)', to_regclass('public.fe_esta
 
 \echo '== 2. Índice único fiscal real (debe existir y tratar la serie NULL como valor: COALESCE(serie, '''')) =='
 SELECT indexname, indexdef FROM pg_indexes WHERE schemaname = 'public' AND tablename = 'documentos_electronicos' AND indexname = 'documentos_electronicos_numero_key';
-SELECT 'índice con COALESCE(serie, '''')' AS control, EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = 'public' AND tablename = 'documentos_electronicos' AND indexname = 'documentos_electronicos_numero_key'
-         AND indexdef LIKE 'CREATE UNIQUE INDEX%' AND indexdef LIKE '%empresa_id, tipo, establecimiento, punto_expedicion, numero, COALESCE(serie, ''::text)%') AS ok;
+SELECT 'índice con COALESCE(serie, '''')' AS control, EXISTS (SELECT 1 FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid JOIN pg_class t ON t.oid = i.indrelid JOIN pg_namespace n ON n.oid = t.relnamespace WHERE n.nspname = 'public' AND t.relname = 'documentos_electronicos' AND c.relname = 'documentos_electronicos_numero_key' AND i.indisunique AND i.indisvalid AND i.indisready AND i.indpred IS NULL AND i.indnkeyatts = 6 AND i.indnatts = 6 AND i.indkey[5] = 0 AND ARRAY(SELECT pg_get_indexdef(i.indexrelid, k, true) FROM generate_series(1, 5) k) = ARRAY['empresa_id', 'tipo', 'establecimiento', 'punto_expedicion', 'numero'] AND lower(replace(pg_get_indexdef(i.indexrelid, 6, true), ' ', '')) = 'coalesce(serie,' || repeat(chr(39), 2) || '::text)') AS ok;
 
 \echo '== 3. BLOQUEOS: identidades fiscales duplicadas hoy (empresa, tipo, establecimiento, punto, serie-o-vacío, número); debe dar 0 filas =='
 SELECT empresa_id, tipo, establecimiento, punto_expedicion, coalesce(serie, '') AS serie, numero, count(*) AS veces, true AS bloquea

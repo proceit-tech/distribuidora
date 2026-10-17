@@ -114,6 +114,9 @@ paso "T33 NEX-065 migración: estados bloqueados se conservan, snapshot y revers
 # T34: NEX-065 — carrera real: el cambio de estado de un tipo no bloquea la emisión de otro tipo del mismo punto
 paso "T34 NEX-065 carrera real: estado por tipo independiente"
 "$AQUI/pruebas/T34-concurrencia-estado-tipo.sh" >"$LOG/T34" 2>&1; fin $? "$LOG/T34"
+# T35: NEX-065 — verificación del índice fiscal único por catálogos (reproduce el índice real de NEX-047 y el falso negativo de la comparación textual) en un esquema descartable
+paso "T35 NEX-065 índice fiscal: verificación por catálogos"
+( cd "$AQUI/pruebas" && psql -X -q -v ON_ERROR_STOP=1 -f T35-nex065-indice-fiscal.sql ) >"$LOG/T35" 2>&1; fin $? "$LOG/T35"
 # I1/V1: instalación de una empresa REAL con los scripts de producción (sin contraseña en argumentos ni logs) y validación de la estructura instalada
 PWADM="Adm-$(head -c 24 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 20)"     # contraseña del administrador de prueba (solo en memoria)
 if python3 -c 'import bcrypt' 2>/dev/null; then GENERADOR="real (python3 bcrypt)"; unset NEX_PRUEBAS_GENERADOR_HASH

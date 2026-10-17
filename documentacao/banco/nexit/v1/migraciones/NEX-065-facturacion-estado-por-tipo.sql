@@ -28,8 +28,8 @@ BEGIN
     RAISE EXCEPTION 'fe_estado_previo_nex065 ya existe: NEX-065 parece aplicada; no se reaplica por suposición.';
   END IF;
   -- Unicidad fiscal completa con serie NULL: debe existir el índice único real (un UNIQUE ordinario no distingue NULL).
-  IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = 'public' AND tablename = 'documentos_electronicos' AND indexname = 'documentos_electronicos_numero_key'
-                    AND indexdef LIKE 'CREATE UNIQUE INDEX%' AND indexdef LIKE '%empresa_id, tipo, establecimiento, punto_expedicion, numero, COALESCE(serie, ''::text)%') THEN
+  -- Verificación por CATÁLOGOS (no por texto de pg_indexes.indexdef): único, válido, sin filtro parcial, columnas empresa_id, tipo, establecimiento, punto_expedicion, numero y expresión coalesce(serie, '').
+  IF NOT EXISTS (SELECT 1 FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid JOIN pg_class t ON t.oid = i.indrelid JOIN pg_namespace n ON n.oid = t.relnamespace WHERE n.nspname = 'public' AND t.relname = 'documentos_electronicos' AND c.relname = 'documentos_electronicos_numero_key' AND i.indisunique AND i.indisvalid AND i.indisready AND i.indpred IS NULL AND i.indnkeyatts = 6 AND i.indnatts = 6 AND i.indkey[5] = 0 AND ARRAY(SELECT pg_get_indexdef(i.indexrelid, k, true) FROM generate_series(1, 5) k) = ARRAY['empresa_id', 'tipo', 'establecimiento', 'punto_expedicion', 'numero'] AND lower(replace(pg_get_indexdef(i.indexrelid, 6, true), ' ', '')) = 'coalesce(serie,' || repeat(chr(39), 2) || '::text)') THEN
     RAISE EXCEPTION 'NEX-065 ABORTADA: falta el índice único documentos_electronicos_numero_key (empresa, tipo, establecimiento, punto, número, COALESCE(serie, '''')) o no tiene esa definición: no se puede garantizar la unicidad fiscal con serie NULL.';
   END IF;
 END $$;

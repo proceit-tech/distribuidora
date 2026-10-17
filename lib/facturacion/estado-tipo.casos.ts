@@ -53,7 +53,7 @@ export async function verificarCasosEstadoTipo(): Promise<string[]> {
   const upd = iUpd >= 0 ? migSql.slice(iUpd, migSql.indexOf(";", iUpd)) : "";
   cierto("NEX-065: la conversión solo DESACTIVA (los tipos cuyo punto estaba inactivo): jamás escribe activo = true sobre las secuencias", /AND s\.activo AND NOT p\.activo/.test(upd) && /NOT p\.activo/.test(upd) && !/SET\s+activo\s*=\s*true/i.test(migSql));
   cierto("NEX-065: no modifica numeración, series, documentos ni CDC (ningún INSERT/UPDATE/DELETE sobre documentos_electronicos; la conversión no toca ultimo_numero ni serie)", !/(UPDATE|DELETE FROM|INSERT INTO) public\.documentos_electronicos/.test(migSql.slice(0, migSql.indexOf("CREATE OR REPLACE FUNCTION"))) && !/ultimo_numero\s*=/.test(upd) && !/\bserie\s*=/.test(upd));
-  cierto("NEX-065: exige NEX-063/064, aborta si ya está aplicada y verifica el índice único real con COALESCE(serie,'') (la serie NULL cuenta como valor)", /NEX-065 requiere NEX-063 y NEX-064/.test(mig) && /ya existe: NEX-065 parece aplicada/.test(mig) && /documentos_electronicos_numero_key/.test(mig) && /COALESCE\(serie, ''::text\)/.test(mig) && /ABORTADA: falta el índice único/.test(mig));
+  cierto("NEX-065: exige NEX-063/064, aborta si ya está aplicada y verifica el índice único real con COALESCE(serie,'') (la serie NULL cuenta como valor)", /NEX-065 requiere NEX-063 y NEX-064/.test(mig) && /ya existe: NEX-065 parece aplicada/.test(mig) && /documentos_electronicos_numero_key/.test(mig) && /coalesce\(serie,' \|\| repeat\(chr\(39\), 2\)/.test(mig) && /ABORTADA: falta el índice único/.test(mig));
   cierto("NEX-065 es incremental: NEX-063 y NEX-064 conservan sus textos históricos (compuerta del punto en NEX-063; alta única en NEX-064)", /AND activo FOR SHARE/.test(leer(BASE + "migraciones/NEX-063-facturacion-puntos-tipos-series.sql")) && /fe_punto_alta_tipo/.test(leer(BASE + "migraciones/NEX-064-facturacion-punto-alta-con-tipo.sql")));
 
   // 3. API antigua retirada
@@ -86,6 +86,16 @@ export async function verificarCasosEstadoTipo(): Promise<string[]> {
   // 7. Scripts de solo lectura
   cierto("preflight-NEX-065 y verificar-NEX-065 son de SOLO LECTURA (BEGIN READ ONLY … ROLLBACK, sin INSERT/UPDATE/DELETE/DROP/CREATE)", [pre, ver].every((t) => /BEGIN READ ONLY;/.test(t) && /ROLLBACK;/.test(t) && !/\b(INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|TRUNCATE)\b/i.test(t.replace(/'[^']*'/g, "''"))));
   cierto("preflight-NEX-065 revisa tipos, documentos e identidades fiscales duplicadas; verificar-NEX-065 compara con la foto (nada quedó habilitado de más)", /fe_punto_secuencias/.test(pre) && /documentos_electronicos/.test(pre) && /HAVING count\(\*\) > 1/i.test(pre) && /fe_estado_previo_nex065/.test(ver) && /efectivo_previo/.test(ver));
+
+  // 7b. Índice fiscal: verificación por catálogos, idéntica en migración, preflight y verificar (falla real de aplicación: LIKE con comillas mal escapadas)
+  const defReal = "CREATE UNIQUE INDEX documentos_electronicos_numero_key ON public.documentos_electronicos USING btree (empresa_id, tipo, establecimiento, punto_expedicion, numero, COALESCE(serie, ''::text))";
+  const patronAntiguo = "%empresa_id, tipo, establecimiento, punto_expedicion, numero, COALESCE(serie, ''::text)%".replace(/''/g, "'"); // lo que PostgreSQL entendía del literal antiguo
+  const patronCorrecto = "COALESCE(serie, ''::text)";
+  cierto("índice fiscal: la comparación textual ANTIGUA (comilla simple escapada una vez) no reconoce la definición real de PostgreSQL (falso negativo reproducido) y la definición real sí contiene las dos comillas", !defReal.includes(patronAntiguo.replace(/^%|%$/g, "")) && defReal.includes(patronCorrecto));
+  const critNorm = (t: string) => { const m = /EXISTS \(SELECT 1 FROM pg_index i JOIN pg_class c[\s\S]*?repeat\(chr\(39\), 2\) \|\| '::text\)'\)/.exec(t); return m ? m[0].replace(/\s+/g, " ") : ""; };
+  const cMig = critNorm(migSql), cPre = critNorm(pre), cVer = critNorm(ver);
+  cierto("índice fiscal: migración, preflight y verificar usan el MISMO criterio por catálogos (único, válido, listo, sin filtro parcial, 6 columnas, columnas exactas y coalesce(serie, ''))", cMig.length > 400 && cMig === cPre && cMig === cVer && /indisunique AND i\.indisvalid AND i\.indisready AND i\.indpred IS NULL/.test(cMig) && /indkey\[5\] = 0/.test(cMig) && /'empresa_id', 'tipo', 'establecimiento', 'punto_expedicion', 'numero'/.test(cMig) && /nspname = 'public'/.test(cMig));
+  cierto("índice fiscal: ya no se compara pg_indexes.indexdef con LIKE en ninguno de los tres; T35 (esquema descartable) reproduce el índice real, el falso negativo y rechaza variantes (no único, ordinario, parcial, expresión distinta, otro orden, ausente)", ![migSql, pre, ver].some((t) => /indexdef\s+LIKE/.test(t)) && /ABORTADA: falta el índice único/.test(mig) && /T35-nex065-indice-fiscal\.sql/.test(leer(BASE + "scripts/ejecutar-pruebas.sh")) && /rechaza el índice NO único/.test(leer(BASE + "pruebas/T35-nex065-indice-fiscal.sql")) && /falso negativo/.test(leer(BASE + "pruebas/T35-nex065-indice-fiscal.sql")));
 
   // 8. Pruebas registradas
   const runner = leer(BASE + "scripts/ejecutar-pruebas.sh");
