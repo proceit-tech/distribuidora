@@ -2,11 +2,19 @@
 -- NOTA: preparado por la IA SIN ejecutar (sin acceso a PostgreSQL); lo corre el runner (ejecutar-pruebas.sh) del responsable sobre una base descartable con NEX-001…062 aplicadas.
 \i _helpers.sql
 
+-- Payload NCE coherente con la FE original (GAP-04: la función SQL confronta receptor e ítems): ítem de la línea p_linea con el importe/cantidad del crédito.
+CREATE OR REPLACE FUNCTION pg_temp.pay(p_base jsonb, p_sol jsonb, p_motivo int, p_linea int, p_cant numeric, p_monto numeric) RETURNS jsonb LANGUAGE plpgsql AS $$
+DECLARE d jsonb := p_sol->'Detalles'->(p_linea - 1); det jsonb;
+BEGIN
+  det := d || jsonb_build_object('dCantProSer', CASE WHEN p_motivo = 2 THEN p_cant ELSE 1 END, 'dPUniProSer', CASE WHEN p_motivo = 2 THEN d->'dPUniProSer' ELSE to_jsonb(p_monto) END, 'dTotOpeItem', p_monto);
+  RETURN jsonb_set(jsonb_set(jsonb_set(p_base, '{iMotEmi}', to_jsonb(p_motivo)), '{Subtotales,0,dTotGralOpe}', to_jsonb(p_monto)), '{Detalles}', jsonb_build_array(det));
+END $$;
+
 DO $t$
 DECLARE
   v_h text := crypt(current_setting('nex.pw_prueba'), gen_salt('bf', 12));
   v_a uuid; v_b uuid; v_ua uuid; v_ub uuid; v_sa uuid; v_p uuid; v_fe uuid; v_n1 uuid; v_n2 uuid; v_n3 uuid; v_cdc text; v_cdc_nce text;
-  v_sol jsonb := '{"iTiDE":1,"dNomRec":"Cliente T26","dRucRec":"80000009","iNatRec":1,"cMoneOpe":"PYG","dTiCam":null,"Detalles":[{"dCantProSer":2,"dTotOpeItem":100000},{"dCantProSer":10,"dTotOpeItem":50000}]}'::jsonb;
+  v_sol jsonb := '{"iTiDE":1,"dNomRec":"Cliente T26","dRucRec":"80000009","iNatRec":1,"cMoneOpe":"PYG","dTiCam":null,"Detalles":[{"dCodInt":"P1","dGtin":null,"dDesProSer":"Gaseosa 2L","cUniMed":77,"dCantProSer":2,"dPUniProSer":50000,"dTotOpeItem":100000,"iAfecIVA":1,"dPropIVA":100,"dTasaIVA":10},{"dCodInt":"P2","dGtin":null,"dDesProSer":"Agua","cUniMed":77,"dCantProSer":10,"dPUniProSer":5000,"dTotOpeItem":50000,"iAfecIVA":3,"dPropIVA":0,"dTasaIVA":0}]}'::jsonb;
   r record;
   v_cant int;
   -- payload NCE mínimo coherente con la FE (el servidor TypeScript construye el real; aquí solo lo que valida la función SQL)
@@ -35,10 +43,12 @@ BEGIN
   INSERT INTO documento_electronico_solicitudes (empresa_id, documento_id, version, payload, payload_hash, entrada_hash, creado_por)
   VALUES (v_a, v_fe, 1, v_sol, encode(sha256(convert_to(v_sol::text, 'UTF8')), 'hex'), encode(sha256(convert_to('fe-t26', 'UTF8')), 'hex'), v_ua);
 
-  v_pay := jsonb_build_object('iTiDE', 5, 'iMotEmi', 3, 'dNomRec', 'Cliente T26', 'dRucRec', '80000009', 'iNatRec', 1, 'cMoneOpe', 'PYG', 'dTiCam', NULL,
+  v_pay := jsonb_build_object('Detalles', '[]'::jsonb, 'iTiDE', 5, 'iMotEmi', 3, 'dNomRec', 'Cliente T26', 'dRucRec', '80000009', 'iNatRec', 1, 'cMoneOpe', 'PYG', 'dTiCam', NULL,
                               'DocumentosAsociados', jsonb_build_array(jsonb_build_object('iTipDocAso', 1, 'dCdCDERef', v_cdc)), 'Subtotales', jsonb_build_array(jsonb_build_object('dTotGralOpe', 30000)));
 
   -- Sin secuencia NCE confirmada no se emite (ni se reserva número)
+  v_pay := pg_temp.pay(v_pay, v_sol, 3, 1, 0, 30000);
+
   PERFORM pg_temp.falla(format($f$SELECT * FROM fe_documento_crear_nce(%L, %L, %L, %L, 'clave-t26-0001', %L, 3, '[{"linea":1,"cantidad":0,"monto":30000}]'::jsonb, 'PYG', 30000, %L)$f$, v_a, v_ua, v_sa, v_p, v_fe, v_pay), 'P0001', 'sin secuencia NCE confirmada: NEX:SECUENCIA_NO_CONFIGURADA');
   PERFORM fe_punto_secuencia_configurar(v_a, v_ua, v_p, 'NCE', 0, true);
 
@@ -53,29 +63,31 @@ BEGIN
   -- Idempotencia: misma clave y contenido no consume número; mismo clave con otro contenido se rechaza
   SELECT * INTO r FROM fe_documento_crear_nce(v_a, v_ua, v_sa, v_p, 'clave-t26-0001', v_fe, 3, '[{"linea":1,"cantidad":0,"monto":30000}]'::jsonb, 'PYG', 30000, v_pay);
   PERFORM pg_temp.ok(r.o_reutilizado AND r.o_documento_id = v_n1 AND (SELECT ultimo_numero = 1 FROM fe_punto_secuencias WHERE punto_id = v_p AND tipo_documento = 'NCE'), 'idempotencia: la repetición devuelve la misma NCE sin consumir número');
-  PERFORM pg_temp.falla(format($f$SELECT * FROM fe_documento_crear_nce(%L, %L, %L, %L, 'clave-t26-0001', %L, 3, '[{"linea":1,"cantidad":0,"monto":31000}]'::jsonb, 'PYG', 31000, %L)$f$, v_a, v_ua, v_sa, v_p, v_fe, jsonb_set(v_pay, '{Subtotales,0,dTotGralOpe}', '31000')), 'P0001', 'misma clave con otro contenido: NEX:IDEMPOTENCIA_CONFLICTO');
+  v_pay := pg_temp.pay(v_pay, v_sol, 3, 1, 0, 30000);
+
+  PERFORM pg_temp.falla(format($f$SELECT * FROM fe_documento_crear_nce(%L, %L, %L, %L, 'clave-t26-0001', %L, 3, '[{"linea":1,"cantidad":0,"monto":31000}]'::jsonb, 'PYG', 31000, %L)$f$, v_a, v_ua, v_sa, v_p, v_fe, pg_temp.pay(v_pay, v_sol, 3, 1, 0, 31000)), 'P0001', 'misma clave con otro contenido: NEX:IDEMPOTENCIA_CONFLICTO');
 
   -- Una NCE pendiente bloquea otra de la misma factura (sin consumir número)
-  PERFORM pg_temp.falla(format($f$SELECT * FROM fe_documento_crear_nce(%L, %L, %L, %L, 'clave-t26-0002', %L, 3, '[{"linea":2,"cantidad":0,"monto":1000}]'::jsonb, 'PYG', 1000, %L)$f$, v_a, v_ua, v_sa, v_p, v_fe, jsonb_set(v_pay, '{Subtotales,0,dTotGralOpe}', '1000')), 'P0001', 'NCE pendiente bloquea otra: NEX:NCE_PENDIENTE');
+  PERFORM pg_temp.falla(format($f$SELECT * FROM fe_documento_crear_nce(%L, %L, %L, %L, 'clave-t26-0002', %L, 3, '[{"linea":2,"cantidad":0,"monto":1000}]'::jsonb, 'PYG', 1000, %L)$f$, v_a, v_ua, v_sa, v_p, v_fe, pg_temp.pay(v_pay, v_sol, 3, 2, 0, 1000)), 'P0001', 'NCE pendiente bloquea otra: NEX:NCE_PENDIENTE');
   PERFORM pg_temp.ok((SELECT ultimo_numero = 1 FROM fe_punto_secuencias WHERE punto_id = v_p AND tipo_documento = 'NCE'), 'el rechazo previo a la reserva no consume número');
 
   -- Aprobar la NCE 1: consume saldo y fija el motivo
   v_cdc_nce := '05' || '80000005' || '6' || '001' || '001' || '0000001' || '1' || '20261016' || '1' || '123456789' || '0';
   UPDATE documentos_electronicos SET estado_local = 'ENVIADO', estado_sifen = 'APROBADO', cdc = v_cdc_nce WHERE id = v_n1;
-  PERFORM pg_temp.falla(format($f$SELECT * FROM fe_documento_crear_nce(%L, %L, %L, %L, 'clave-t26-0003', %L, 2, '[{"linea":1,"cantidad":1,"monto":10000}]'::jsonb, 'PYG', 10000, %L)$f$, v_a, v_ua, v_sa, v_p, v_fe, jsonb_set(jsonb_set(v_pay, '{iMotEmi}', '2'), '{Subtotales,0,dTotGralOpe}', '10000')), 'P0001', 'motivo fijado por la primera NCE aprobada: NEX:MOTIVO_FIJADO');
-  PERFORM pg_temp.falla(format($f$SELECT * FROM fe_documento_crear_nce(%L, %L, %L, %L, 'clave-t26-0004', %L, 3, '[{"linea":1,"cantidad":0,"monto":70001}]'::jsonb, 'PYG', 70001, %L)$f$, v_a, v_ua, v_sa, v_p, v_fe, jsonb_set(v_pay, '{Subtotales,0,dTotGralOpe}', '70001')), 'P0001', 'el crédito supera el saldo (100.000 − 30.000 aprobados): NEX:SALDO_MONTO');
-  SELECT * INTO r FROM fe_documento_crear_nce(v_a, v_ua, v_sa, v_p, 'clave-t26-0005', v_fe, 3, '[{"linea":1,"cantidad":0,"monto":70000}]'::jsonb, 'PYG', 70000, jsonb_set(v_pay, '{Subtotales,0,dTotGralOpe}', '70000'));
+  PERFORM pg_temp.falla(format($f$SELECT * FROM fe_documento_crear_nce(%L, %L, %L, %L, 'clave-t26-0003', %L, 2, '[{"linea":1,"cantidad":1,"monto":10000}]'::jsonb, 'PYG', 10000, %L)$f$, v_a, v_ua, v_sa, v_p, v_fe, pg_temp.pay(v_pay, v_sol, 2, 1, 1, 10000)), 'P0001', 'motivo fijado por la primera NCE aprobada: NEX:MOTIVO_FIJADO');
+  PERFORM pg_temp.falla(format($f$SELECT * FROM fe_documento_crear_nce(%L, %L, %L, %L, 'clave-t26-0004', %L, 3, '[{"linea":1,"cantidad":0,"monto":70001}]'::jsonb, 'PYG', 70001, %L)$f$, v_a, v_ua, v_sa, v_p, v_fe, pg_temp.pay(v_pay, v_sol, 3, 1, 0, 70001)), 'P0001', 'el crédito supera el saldo (100.000 − 30.000 aprobados): NEX:SALDO_MONTO');
+  SELECT * INTO r FROM fe_documento_crear_nce(v_a, v_ua, v_sa, v_p, 'clave-t26-0005', v_fe, 3, '[{"linea":1,"cantidad":0,"monto":70000}]'::jsonb, 'PYG', 70000, pg_temp.pay(v_pay, v_sol, 3, 1, 0, 70000));
   v_n2 := r.o_documento_id;
   PERFORM pg_temp.ok(r.o_numero = '0000002', 'el saldo restante exacto (70.000) se puede acreditar y la numeración continúa en 0000002');
 
   -- Rechazada: libera el saldo; la nueva NCE usa un número nuevo (el rechazado no se reutiliza)
   UPDATE documentos_electronicos SET estado_local = 'ENVIADO', estado_sifen = 'RECHAZADO' WHERE id = v_n2;
-  SELECT * INTO r FROM fe_documento_crear_nce(v_a, v_ua, v_sa, v_p, 'clave-t26-0006', v_fe, 3, '[{"linea":1,"cantidad":0,"monto":70000}]'::jsonb, 'PYG', 70000, jsonb_set(v_pay, '{Subtotales,0,dTotGralOpe}', '70000'));
+  SELECT * INTO r FROM fe_documento_crear_nce(v_a, v_ua, v_sa, v_p, 'clave-t26-0006', v_fe, 3, '[{"linea":1,"cantidad":0,"monto":70000}]'::jsonb, 'PYG', 70000, pg_temp.pay(v_pay, v_sol, 3, 1, 0, 70000));
   v_n3 := r.o_documento_id;
   PERFORM pg_temp.ok(r.o_numero = '0000003', 'tras un rechazo definitivo el saldo queda libre y se emite una NCE NUEVA con otro número');
 
   -- Aislamiento por empresa: otra empresa no ve la FE (rechazo sin consumir número)
-  PERFORM pg_temp.falla(format($f$SELECT * FROM fe_documento_crear_nce(%L, %L, %L, %L, 'clave-t26-0007', %L, 3, '[{"linea":1,"cantidad":0,"monto":1000}]'::jsonb, 'PYG', 1000, %L)$f$, v_b, v_ub, v_sa, v_p, v_fe, jsonb_set(v_pay, '{Subtotales,0,dTotGralOpe}', '1000')), NULL, 'otra empresa no puede acreditar la factura');
+  PERFORM pg_temp.falla(format($f$SELECT * FROM fe_documento_crear_nce(%L, %L, %L, %L, 'clave-t26-0007', %L, 3, '[{"linea":1,"cantidad":0,"monto":1000}]'::jsonb, 'PYG', 1000, %L)$f$, v_b, v_ub, v_sa, v_p, v_fe, pg_temp.pay(v_pay, v_sol, 3, 2, 0, 1000)), NULL, 'otra empresa no puede acreditar la factura');
 
   -- Consulta automática: la NCE enviada y sin resultado se reserva con lease una sola vez
   UPDATE documentos_electronicos SET estado_local = 'ENVIADO', estado_sifen = 'PENDIENTE' WHERE id = v_n3;
@@ -83,6 +95,16 @@ BEGIN
   PERFORM pg_temp.ok(v_cant >= 1, 'fe_consulta_reservar toma la NCE pendiente');
   SELECT count(*) INTO v_cant FROM fe_consulta_reservar(10, 120, ARRAY['NCE']) x WHERE x.o_documento = v_n3;
   PERFORM pg_temp.ok(v_cant = 0, 'con el lease vigente la misma NCE no se entrega a una segunda reserva');
+
+  -- (sin NCE pendiente en la factura: el rechazo de los casos siguientes se debe a la validación del payload, no al bloqueo por pendiente)
+  UPDATE documentos_electronicos SET estado_sifen = 'RECHAZADO' WHERE id = v_n3;
+  -- GAP-04: payload adulterado (receptor, ítem fiscal, importe o cantidad) rechazado por la función SQL sin consumir número
+  PERFORM pg_temp.falla(format($f$SELECT * FROM fe_documento_crear_nce(%L, %L, %L, %L, 'clave-t26-g401', %L, 3, '[{"linea":1,"cantidad":0,"monto":1000}]'::jsonb, 'PYG', 1000, %L)$f$, v_a, v_ua, v_sa, v_p, v_fe, jsonb_set(pg_temp.pay(v_pay, v_sol, 3, 1, 0, 1000), '{dDirRec}', '"Otra direccion"')), 'P0001', 'GAP-04: receptor con otro campo (dirección) → NEX:ASOCIACION_INVALIDA');
+  PERFORM pg_temp.falla(format($f$SELECT * FROM fe_documento_crear_nce(%L, %L, %L, %L, 'clave-t26-g402', %L, 3, '[{"linea":1,"cantidad":0,"monto":1000}]'::jsonb, 'PYG', 1000, %L)$f$, v_a, v_ua, v_sa, v_p, v_fe, jsonb_set(pg_temp.pay(v_pay, v_sol, 3, 1, 0, 1000), '{Detalles,0,iAfecIVA}', '3')), 'P0001', 'GAP-04: ítem con otra afectación de IVA → NEX:PAYLOAD_INVALIDO');
+  PERFORM pg_temp.falla(format($f$SELECT * FROM fe_documento_crear_nce(%L, %L, %L, %L, 'clave-t26-g403', %L, 3, '[{"linea":1,"cantidad":0,"monto":1000}]'::jsonb, 'PYG', 1000, %L)$f$, v_a, v_ua, v_sa, v_p, v_fe, jsonb_set(pg_temp.pay(v_pay, v_sol, 3, 1, 0, 1000), '{Detalles,0,dTotOpeItem}', '999')), 'P0001', 'GAP-04: importe del ítem distinto del crédito → NEX:PAYLOAD_INVALIDO');
+  PERFORM pg_temp.falla(format($f$SELECT * FROM fe_documento_crear_nce(%L, %L, %L, %L, 'clave-t26-g404', %L, 3, '[{"linea":1,"cantidad":0,"monto":1000}]'::jsonb, 'PYG', 1000, %L)$f$, v_a, v_ua, v_sa, v_p, v_fe, jsonb_set(pg_temp.pay(v_pay, v_sol, 3, 1, 0, 1000), '{Detalles}', '[]')), 'P0001', 'GAP-04: ítems del payload que no corresponden a las líneas → NEX:PAYLOAD_INVALIDO');
+  PERFORM pg_temp.falla(format($f$SELECT * FROM fe_documento_crear_nce(%L, %L, %L, %L, 'clave-t26-g405', %L, 3, '[{"linea":1,"cantidad":0,"monto":1000}]'::jsonb, 'PYG', 1000, %L)$f$, v_a, v_ua, v_sa, v_p, v_fe, jsonb_set(pg_temp.pay(v_pay, v_sol, 3, 1, 0, 1000), '{Detalles,0,dCantProSer}', '5')), 'P0001', 'GAP-04: motivo monetario con cantidad distinta de 1 → NEX:PAYLOAD_INVALIDO');
+  PERFORM pg_temp.ok((SELECT ultimo_numero = 3 FROM fe_punto_secuencias WHERE punto_id = v_p AND tipo_documento = 'NCE'), 'GAP-04: ningún payload adulterado consumió número de la secuencia NCE');
 
   -- R02-02 (flujo_nce): un operador con SOLO CREAR registra la consulta de una FE/NCE pendiente con su identidad real; no puede usar la función EDITAR original; el estado final y otro tenant se rechazan
   DECLARE

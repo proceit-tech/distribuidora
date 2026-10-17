@@ -6,7 +6,8 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { useSearchParams } from "next/navigation";
 
 import ui from "@/components/ui/lista-padrao/lista.module.css";
-import { entradasIniciales } from "@/lib/facturacion/nce-entradas";
+import { entradasIniciales, etiquetaIvaLinea } from "@/lib/facturacion/nce-entradas";
+import { iniciarRefresco } from "@/lib/facturacion/refresco-documentos";
 import { formatearDecimalTexto } from "@/lib/formato/decimal-texto";
 import { formatearFechaPy } from "@/lib/formato/listas";
 
@@ -18,7 +19,7 @@ type ClienteB = { id: string; codigo: string; razonSocial: string; documento: st
 type FacturaE = { id: string; numero: string; cdc: string; fechaEmision: string; moneda: string; total: string; saldo: string; receptorNombre: string; ncePendiente: boolean };
 type Linea = {
   linea: number; codigoInterno: string; descripcion: string; unidad: string; cantidad: string; precio: string; total: string; cantidadAcreditada: string; cantidadDisponible: string;
-  montoAcreditado: string; saldoMonto: string; agotada: boolean;
+  montoAcreditado: string; saldoMonto: string; agotada: boolean; afectacion: number; tasa: number; proporcion: string;
 };
 type Factura = {
   id: string; sucursalId: string; numero: string; cdc: string; fechaEmision: string; moneda: string; cambio: string | null; total: string; receptorNombre: string; receptorDocumento: string | null;
@@ -28,7 +29,7 @@ type Punto = { id: string; codigo: string; nombre: string; ultimoNumero: number 
 type Sucursal = { id: string; nombre: string; establecimiento: string; puntos: Punto[]; sinSecuencia: number };
 type Resumen = {
   factura: { numero: string; cdc: string; fechaEmision: string }; motivo: { codigo: number; nombre: string }; punto: string; moneda: string; cambio: string | null; observacion: string; numero: string;
-  lineas: Array<{ linea: number; codigo: string; descripcion: string; unidad: string; cantidad: string; precioUnitario: string; monto: string }>;
+  lineas: Array<{ linea: number; codigo: string; descripcion: string; unidad: string; cantidad: string; precioUnitario: string; monto: string; afectacion: number; tasa: number }>;
   totales: { exento: string; exonerado: string; gravado5: string; gravado10: string; iva5: string; iva10: string; totalIva: string; total: string };
 };
 type Entrada = { incluida: boolean; valor: string };
@@ -97,6 +98,32 @@ function Formulario() {
       setCargando(false);
     }
   }, []);
+
+  // GAP-03: mientras la lista muestra alguna factura con «NCE pendiente» se relee en silencio (solo GET; el worker del servidor consulta). Mismo control que Documentos: frecuencia decreciente, aba visible.
+  const hayNcePendiente = !factura && cliente !== null && facturas.some((f) => f.ncePendiente);
+  const clienteId = cliente?.id ?? "";
+
+  useEffect(() => {
+    if (!hayNcePendiente || clienteId === "") return;
+
+    let activo = true;
+    const detener = iniciarRefresco({
+      leer: () => {
+        fetch(`/api/notas-credito/facturas?clienteId=${clienteId}&q=${encodeURIComponent(textoFactura)}&pagina=${pagFac.pagina}&porPagina=10`, { cache: "no-store" })
+          .then((r) => (r.ok ? r.json() : null))
+          .then((j: { facturas: FacturaE[]; pagina: number; totalPaginas: number } | null) => { if (activo && j) { setFacturas(j.facturas); setPagFac({ pagina: j.pagina, totalPaginas: j.totalPaginas }); } })
+          .catch(() => undefined);
+      },
+      visible: () => document.visibilityState === "visible",
+      programar: (fn, ms) => window.setTimeout(fn, ms),
+      cancelar: (t) => window.clearTimeout(t as number),
+      alVolverVisible: (fn) => { document.addEventListener("visibilitychange", fn); return () => document.removeEventListener("visibilitychange", fn); },
+    });
+
+    return () => { activo = false; detener(); };
+    // textoFactura y la página se leen al arrancar el ciclo; cambiar de búsqueda recarga la lista y reinicia el ciclo.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hayNcePendiente, clienteId, pagFac.pagina]);
 
   const abrirFactura = useCallback(async (id: string, precarga?: { motivo: number; sucursalId: string; puntoId: string | null; observacion: string; lineas: Array<{ linea: number; cantidad: string; monto: string }> }) => {
     setCargando(true);
@@ -275,7 +302,7 @@ function Formulario() {
             <section className={estilos.card}>
               <h2>2. Factura aprobada <small>solo facturas con saldo por acreditar</small></h2>
               <form className={estilos.grid} onSubmit={(e) => { e.preventDefault(); void cargarFacturas(cliente.id, textoFactura, 1, false); }}>
-                <label className={estilos.field}><span>Buscar por número</span><input value={textoFactura} onChange={(e) => setTextoFactura(e.target.value)} maxLength={40} /></label>
+                <label className={estilos.field}><span>Buscar por número, CDC (44 dígitos) o fecha (dd/mm/aaaa o aaaa-mm-dd)</span><input value={textoFactura} onChange={(e) => setTextoFactura(e.target.value)} maxLength={80} inputMode="search" /></label>
                 <div className={estilos.acciones}><button type="submit" className={ui.primaryButton}>Buscar</button></div>
               </form>
               <ul className={estilos.lista}>
@@ -349,7 +376,7 @@ function Formulario() {
             <div className={estilos.tabla}>
               <table>
                 <thead>
-                  <tr><th /><th>Ítem</th><th>Descripción</th><th className={estilos.num}>Cant.</th><th className={estilos.num}>Precio</th><th className={estilos.num}>Total</th><th className={estilos.num}>Cant. acreditada</th><th className={estilos.num}>Saldo cant.</th><th className={estilos.num}>Saldo monto</th><th className={estilos.num}>{esDevolucion ? "Cantidad a devolver" : "Monto a acreditar"}</th></tr>
+                  <tr><th /><th>Ítem</th><th>Código</th><th>Descripción</th><th>IVA</th><th className={estilos.num}>Cant.</th><th className={estilos.num}>Precio</th><th className={estilos.num}>Total</th><th className={estilos.num}>Cant. acreditada</th><th className={estilos.num}>Monto acreditado</th><th className={estilos.num}>Saldo cant.</th><th className={estilos.num}>Saldo monto</th><th className={estilos.num}>{esDevolucion ? "Cantidad a devolver" : "Monto a acreditar"}</th></tr>
                 </thead>
                 <tbody>
                   {factura.lineas.map((l) => {
@@ -359,11 +386,14 @@ function Formulario() {
                       <tr key={l.linea} className={l.agotada ? estilos.agotada : undefined}>
                         <td><input type="checkbox" aria-label={`Incluir ítem ${l.linea}`} checked={e.incluida} disabled={l.agotada} onChange={(ev) => setEntradas((p) => ({ ...p, [l.linea]: { ...e, incluida: ev.target.checked } }))} /></td>
                         <td>{l.linea}</td>
+                        <td>{l.codigoInterno}</td>
                         <td>{l.descripcion}{l.agotada ? <span className={estilos.chip}>Sin saldo</span> : null}</td>
+                        <td>{etiquetaIvaLinea(l.afectacion, l.tasa, l.proporcion)}</td>
                         <td className={estilos.num}>{fm(l.cantidad)} {l.unidad}</td>
                         <td className={estilos.num}>{fm(l.precio)}</td>
                         <td className={estilos.num}>{fm(l.total)}</td>
                         <td className={estilos.num}>{fm(l.cantidadAcreditada)}</td>
+                        <td className={estilos.num}>{fm(l.montoAcreditado)}</td>
                         <td className={estilos.num}>{fm(l.cantidadDisponible)}</td>
                         <td className={estilos.num}>{fm(l.saldoMonto)}</td>
                         <td className={estilos.num}>
@@ -399,9 +429,9 @@ function Formulario() {
             </dl>
             <div className={estilos.tabla}>
               <table>
-                <thead><tr><th>Ítem</th><th>Descripción</th><th className={estilos.num}>Cantidad</th><th className={estilos.num}>Precio</th><th className={estilos.num}>Monto</th></tr></thead>
+                <thead><tr><th>Ítem</th><th>Código</th><th>Descripción</th><th>IVA</th><th className={estilos.num}>Cantidad</th><th className={estilos.num}>Precio</th><th className={estilos.num}>Monto</th></tr></thead>
                 <tbody>
-                  {resumen.lineas.map((l) => <tr key={l.linea}><td>{l.linea}</td><td>{l.descripcion}</td><td className={estilos.num}>{fm(l.cantidad)}</td><td className={estilos.num}>{fm(l.precioUnitario)}</td><td className={estilos.num}>{fm(l.monto)}</td></tr>)}
+                  {resumen.lineas.map((l) => <tr key={l.linea}><td>{l.linea}</td><td>{l.codigo}</td><td>{l.descripcion}</td><td>{etiquetaIvaLinea(l.afectacion, l.tasa, null)}</td><td className={estilos.num}>{fm(l.cantidad)}</td><td className={estilos.num}>{fm(l.precioUnitario)}</td><td className={estilos.num}>{fm(l.monto)}</td></tr>)}
                 </tbody>
               </table>
             </div>

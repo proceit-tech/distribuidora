@@ -8,11 +8,12 @@ import { join } from "node:path";
 import { contador } from "@/lib/clientes/contador-casos";
 import { UMBRAL_REVISION_HORAS } from "@/lib/facturacion/estados";
 import { leerCuerpoNce } from "@/lib/facturacion/nce";
-import { calcularNce, construirPayloadNCE, esMotivoNce, lineasParaSql, saldoDe, validarEntradaNce, type EntradaNce, type LineaOriginal } from "@/lib/facturacion/payload-nce";
+import { CAMPOS_RECEPTOR, calcularNce, construirPayloadNCE, esMotivoNce, lineasParaSql, saldoDe, validarEntradaNce, type EntradaNce, type LineaOriginal } from "@/lib/facturacion/payload-nce";
 import { CADENCIA_SEGUNDOS, ejecutarLote, segundosHastaProxima } from "@/lib/facturacion/consulta-automatica";
 import { textoDec } from "@/lib/facturacion/calculo";
 import { iniciarRefresco, retardoRefresco } from "@/lib/facturacion/refresco-documentos";
-import { entradasIniciales } from "@/lib/facturacion/nce-entradas";
+import { entradasIniciales, etiquetaIvaLinea } from "@/lib/facturacion/nce-entradas";
+import { listarFacturasElegibles } from "@/lib/facturacion/nce";
 import { reconciliarNcePendientes, repeticion } from "@/lib/facturacion/nce-emision";
 import { ErrorFacturacion } from "@/lib/facturacion/shared";
 
@@ -287,5 +288,38 @@ export async function verificarCasosNce(): Promise<string[]> {
   cierto("R03-01: estado definitivo (APROBADO/RECHAZADO/CANCELADO/INUTILIZADO) exige coalesce(p_cdc, d.cdc) no nulo y coherente; si no, RESPUESTA_INVALIDA antes de auditar y de actualizar", iFin > 0 && /p_estado_sifen IN \('APROBADO', 'RECHAZADO', 'CANCELADO', 'INUTILIZADO'\)/.test(guardaCdc) && /coalesce\(p_cdc, d\.cdc\) IS NULL OR NOT public\.fe_cdc_coherente\(d\.tipo, d\.establecimiento, d\.punto_expedicion, d\.numero, coalesce\(p_cdc, d\.cdc\)\)/.test(guardaCdc) && /v_resultado := 'RESPUESTA_INVALIDA'/.test(guardaCdc));
   cierto("R03-01: tras la degradación a RESPUESTA_INVALIDA solo se anota la consulta (el UPDATE de estado/CDC está condicionado a v_resultado = 'OK') y la evidencia no guarda el estado informado", /IF v_resultado = 'OK' THEN\s+UPDATE public\.documentos_electronicos SET\s+estado_sifen = p_estado_sifen/.test(sqlFlujo) && /CASE WHEN v_resultado = 'OK' THEN p_estado_sifen END/.test(sqlFlujo));
   cierto("R03-01: T26 comprueba aprobación con CDC válido (CDC guardado) y respuesta definitiva sin CDC (RESPUESTA_INVALIDA, estado/CDC intactos, actor real); NEX-054 sigue sin tocarse", /v_cdc_pend/.test(t26) && /APROBADO sin CDC no cambia el estado ni el CDC/.test(t26) && /RECHAZADO sin CDC tampoco/.test(t26) && /\(PENDIENTE\) sin CDC sí se registra/.test(t26) && /CDC_DIVERGENTE/.test(t26) && !/flujo_nce/.test(nce054));
+  // ── 12. GAP-01…04 (checklist integral) ─────────────────────────────────────────────────────────────
+  // GAP-01: código, tributación (IVA) y monto ya acreditado visibles en la tabla y en la revisión
+  igual("GAP-01: etiqueta de IVA por línea", [etiquetaIvaLinea(1, 10, "100"), etiquetaIvaLinea(1, 5, null), etiquetaIvaLinea(2, 0, null), etiquetaIvaLinea(3, 0, null), etiquetaIvaLinea(4, 10, "50")], ["Gravado 10%", "Gravado 5%", "Exonerado", "Exento", "Gravado parcial 10% (prop. 50%)"]);
+  cierto("GAP-01: la tabla muestra Código, IVA y Monto acreditado con sus celdas; el modal muestra Código e IVA por línea", ["<th>Código</th>", "<th>IVA</th>", "Monto acreditado</th>", "{l.codigoInterno}", "{fm(l.montoAcreditado)}", "etiquetaIvaLinea(l.afectacion, l.tasa, l.proporcion)", "<td>{l.codigo}</td>", "etiquetaIvaLinea(l.afectacion, l.tasa, null)"].every((k) => pagNce.includes(k)));
+
+  // GAP-02: el campo admite CDC completo y el servidor lo busca exacto aunque se pegue con espacios o guiones
+  cierto("GAP-02: el campo de búsqueda admite 44 dígitos y declara número, CDC y fecha", /maxLength=\{80\}/.test(pagNce) && /CDC \(44 dígitos\)/.test(pagNce) && !/maxLength=\{40\}/.test(pagNce));
+  {
+    const CDC44 = "01800000056001001000000112026101612345678901";
+    const params: unknown[][] = [];
+    const dbBusq = { query: async (_t: string, p?: unknown[]) => { params.push(p ?? []); return { rows: [] }; } };
+
+    await listarFacturasElegibles(dbBusq as never, uuid, uuid, { clienteId: uuid, q: CDC44.replace(/(\d{4})/g, "$1 ").trim() });
+    await listarFacturasElegibles(dbBusq as never, uuid, uuid, { clienteId: uuid, q: "001-001-0000001" });
+    await listarFacturasElegibles(dbBusq as never, uuid, uuid, { clienteId: uuid, q: "16/10/2026" });
+    igual("GAP-02: un CDC pegado con espacios se busca como los 44 dígitos; número y fecha se conservan", [params[0][3], params[1][3], params[2][3]], [CDC44, "001-001-0000001", "16/10/2026"]);
+    cierto("GAP-02: la consulta busca CDC, número y fecha (sin tocar la elegibilidad: aprobada con CDC y saldo)", /d\.cdc/.test(elegiblesSql) && /DD\/MM\/YYYY/.test(elegiblesSql) && /YYYY-MM-DD/.test(elegiblesSql) && /d\.estado_sifen = 'APROBADO' AND d\.cdc IS NOT NULL/.test(elegiblesSql));
+  }
+
+  // GAP-03: la lista de facturas se relee sola mientras haya «NCE pendiente» (mismo control que Documentos; sin worker nuevo ni consultas desde el navegador)
+  cierto("GAP-03: refresco solo con facturas «NCE pendiente», sin factura abierta, con el temporizador común y limpieza", /const hayNcePendiente = !factura && cliente !== null && facturas\.some\(\(f\) => f\.ncePendiente\)/.test(pagNce) && /iniciarRefresco\(\{/.test(pagNce) && /if \(!hayNcePendiente \|\| clienteId === ""\) return;/.test(pagNce) && /detener\(\);/.test(pagNce) && !/setInterval/.test(pagNce));
+  cierto("GAP-03: la relectura es un GET de la lista (sin actualizar=1, sin consultar ni reenviar) y no crea otro scheduler", (() => { const t = pagNce.slice(pagNce.indexOf("GAP-03"), pagNce.indexOf("const abrirFactura")); return /\/api\/notas-credito\/facturas\?clienteId=/.test(t) && !/actualizar=1|method: "POST"/.test(t); })() && (leer("lib/facturacion/consulta-automatica.ts").match(/setInterval\(/g) ?? []).length === 1);
+
+  // GAP-04: la función SQL confronta receptor completo e ítems con la FE original
+  const crearFn = sql.slice(sql.indexOf("FUNCTION public.fe_documento_crear_nce"), sql.indexOf("FUNCTION public.fe_documento_iniciar_envio"));
+  const camposRec = ["iNatRec", "iTiOpe", "cPaisRec", "iTiContRec", "dRucRec", "dDVRec", "iTipIDRec", "dDTipIDRec", "dNumIDRec", "dNomRec", "dNomFanRec", "dDirRec", "dNumCasRec", "dTelRec", "dCelRec", "dEmailRec", "dEmailAdic", "dEmailAdmin", "dCodCliente"];
+
+  cierto("GAP-04: la lista de campos del receptor en SQL es EXACTAMENTE la que copia el payload de TypeScript", camposRec.every((k) => crearFn.includes("'" + k + "'")) && camposRec.length === CAMPOS_RECEPTOR.length && CAMPOS_RECEPTOR.every((k) => camposRec.includes(k)));
+  cierto("GAP-04: receptor adulterado → NEX:ASOCIACION_INVALIDA (comparación null-segura con la FE original)", /nullif\(p_payload->v_k, 'null'::jsonb\) IS DISTINCT FROM nullif\(v_sol->v_k, 'null'::jsonb\)/.test(crearFn) && /el receptor de la nota de crédito/.test(crearFn));
+  cierto("GAP-04: los ítems del payload coinciden en número y posición con las líneas acreditadas y conservan código, GTIN, descripción, unidad, afectación, tasa y proporción de la línea original", /jsonb_array_length\(p_payload->'Detalles'\) <> jsonb_array_length\(p_lineas\)/.test(crearFn) && /WITH ORDINALITY t\(x, ord\)/.test(crearFn) && /p_payload->'Detalles'->\(l\.ord - 1\)::int/.test(crearFn) && ["dCodInt", "dGtin", "dDesProSer", "cUniMed", "iAfecIVA", "dTasaIVA", "dPropIVA"].every((k) => crearFn.includes("'" + k + "'")));
+  cierto("GAP-04: importe del ítem = crédito; Devolución conserva precio original y cantidad devuelta; 3/4/8 llevan cantidad 1 y precio = monto", /dTotOpeItem'\)::numeric IS DISTINCT FROM l\.monto/.test(crearFn) && /p_motivo = 2 AND \(\(v_det->>'dCantProSer'\)::numeric IS DISTINCT FROM l\.cantidad OR \(v_det->>'dPUniProSer'\)::numeric IS DISTINCT FROM \(v_orig->>'dPUniProSer'\)::numeric\)/.test(crearFn) && /p_motivo <> 2 AND \(\(v_det->>'dCantProSer'\)::numeric IS DISTINCT FROM 1 OR \(v_det->>'dPUniProSer'\)::numeric IS DISTINCT FROM l\.monto\)/.test(crearFn));
+  cierto("GAP-04: las validaciones ocurren antes de reservar la secuencia (sin consumir número) y se conservan motivos, saldos, bloqueo e idempotencia", crearFn.indexOf("NEX:PAYLOAD_INVALIDO', 'x'") < 0 && crearFn.lastIndexOf("NEX:PAYLOAD_INVALIDO") < crearFn.indexOf("tipo_documento = 'NCE' FOR UPDATE") && /NEX:SALDO_MONTO/.test(crearFn) && /NEX:NCE_PENDIENTE/.test(crearFn) && /NEX:MOTIVO_FIJADO/.test(crearFn) && /IDEMPOTENCIA_CONFLICTO/.test(crearFn));
+  cierto("GAP-04: T26 ejercita receptor, afectación, importe, ítems y cantidad adulterados y que no se consume número", ["dDirRec", "iAfecIVA", "Detalles,0,dTotOpeItem", "'{Detalles}', '[]'", "dCantProSer", "ningún payload adulterado consumió número"].every((k) => t26.includes(k)) && /FUNCTION pg_temp\.pay/.test(t26));
   return fallos;
 }

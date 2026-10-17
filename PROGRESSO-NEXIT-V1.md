@@ -1131,3 +1131,10 @@ Após o encerramento **estático** de Inventario na `AUD-INV-R05` (sem homologa�
 - `fe_documento_registrar_consulta_flujo_nce` (NEX-062, não aplicada): um estado definitivo (APROBADO/RECHAZADO/CANCELADO/INUTILIZADO) só é registrado com CDC válido e coerente (informado ou já guardado); sem isso a tentativa fica como `RESPUESTA_INVALIDA` (evidência com o ator real) e estado/CDC não mudam. Estados não definitivos e `CDC_DIVERGENTE` mantidos. NEX-054, envio FE, worker e numeração intactos.
 - T26 atualizado: aprovação com CDC válido (CDC gravado), APROBADO/RECHAZADO sem CDC rejeitados com segurança, PENDIENTE sem CDC aceito, CDC divergente — **não executado em PostgreSQL**.
 - Testes: `nce.casos` 0 falhas; Facturación, FAT-E2 e secuencias 0 falhas; ESLint limpo. Não homologado.
+
+### PRO-94 — GAPs do checklist integral (GAP-01…04; NEX-062 ainda não aplicada)
+- **GAP-01:** a tabela de linhas da NCE mostra Código, tributação IVA (Gravado 5/10 %, Exonerado, Exento, Parcial) e Monto acreditado; a revisão mostra Código e IVA por linha.
+- **GAP-02:** o campo de busca admite 44 dígitos (CDC), número e data; um CDC colado com espaços/hífens é buscado como os 44 dígitos. Elegibilidade inalterada (aprovada, CDC, saldo).
+- **GAP-03:** a lista de facturas relê em silêncio (GET, mesmo controlador de Documentos: 30/60/120 s, aba visível) enquanto houver «NCE pendiente»; sem novo worker nem consulta desde o navegador.
+- **GAP-04:** `fe_documento_crear_nce` agora confronta TODO o receptor herdado (19 campos) e os ítems do payload com a FE original (mesma posição/quantidade, código, GTIN, descrição, unidade, afectación, tasa, proporción; importe = crédito; Devolución: cantidad devuelta e preço original; 3/4/8: cantidad 1 e preço = monto), antes de reservar numeração. T26 ajustada (payloads coerentes via `pg_temp.pay`) e ampliada com 5 payloads adulterados — **não executada em PostgreSQL**.
+- **Testes executados:** `nce.casos` 0 falhas (inclui GAP-01…04); Facturación, FAT-E2 e secuencias 0 falhas; ESLint e `tsc` limpos. Não executado: SQL/T26, navegador, gateway/SIFEN. Não homologado.

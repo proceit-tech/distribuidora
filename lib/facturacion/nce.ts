@@ -223,7 +223,10 @@ export type FacturaElegible = { id: string; numero: string; cdc: string; fechaEm
 export async function listarFacturasElegibles(db: Db, empresaId: string, usuarioId: string, e: { clienteId: string; q?: string; pagina?: unknown; porPagina?: unknown }) {
   if (!UUID.test(e.clienteId)) throw new ErrorFacturacion(400, "Seleccione un cliente.");
 
-  const q = (e.q ?? "").trim().slice(0, 80);
+  const bruto = (e.q ?? "").trim().slice(0, 80);
+  // GAP-02: un CDC pegado con espacios o guiones (44 dígitos) se busca como CDC completo.
+  const soloDigitos = bruto.replace(/[\s-]/g, "");
+  const q = /^\d{44}$/.test(soloDigitos) ? soloDigitos : bruto;
   const n = entero(e.porPagina, 10, 1, 25);
   const p = entero(e.pagina, 1, 1, 100000);
 
