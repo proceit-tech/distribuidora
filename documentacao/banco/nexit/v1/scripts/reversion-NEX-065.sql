@@ -494,5 +494,29 @@ BEGIN
   END IF;
 END $$;
 
+-- Restaura el ayudante de series de NEX-063 tal como estaba (con las concesiones de registrar y estado del punto) y las vuelve a conceder.
+CREATE OR REPLACE FUNCTION public.nex_aplicar_grants_facturacion_series() RETURNS void
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'nexit_runtime') THEN
+    RETURN;
+  END IF;
+
+  REVOKE ALL ON FUNCTION public.fe_serie_orden(text) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION public.fe_secuencia_siguiente(text, integer) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION public.fe_punto_maximo_emitido_serie(uuid, text, text, text) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION public.fe_secuencia_reservar(uuid, uuid, text) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION public.fe_punto_registrar(uuid, uuid, uuid, text, text) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION public.fe_secuencia_configurar(uuid, uuid, uuid, text, text, integer, boolean, boolean) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION public.fe_secuencia_estado(uuid, uuid, uuid, text, boolean) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION public.fe_punto_estado(uuid, uuid, uuid, boolean) FROM PUBLIC;
+  -- La aplicación solo ejecuta la administración y las emisiones (SECURITY DEFINER); las auxiliares de reserva/cálculo quedan internas.
+  GRANT EXECUTE ON FUNCTION public.fe_punto_registrar(uuid, uuid, uuid, text, text) TO nexit_runtime;
+  GRANT EXECUTE ON FUNCTION public.fe_secuencia_configurar(uuid, uuid, uuid, text, text, integer, boolean, boolean) TO nexit_runtime;
+  GRANT EXECUTE ON FUNCTION public.fe_secuencia_estado(uuid, uuid, uuid, text, boolean) TO nexit_runtime;
+  GRANT EXECUTE ON FUNCTION public.fe_punto_estado(uuid, uuid, uuid, boolean) TO nexit_runtime;
+END $$;
+SELECT public.nex_aplicar_grants_facturacion_series();
+
 DROP FUNCTION public.nex_aplicar_grants_facturacion_estado_tipo();
 DROP TABLE public.fe_estado_previo_nex065;

@@ -43,7 +43,12 @@ mkpunto() { # $1 código → id del punto con FE y NCE configuradas y activas ba
   echo "$p"
 }
 P1="$(mkpunto 001 10 20)"; P2="$(mkpunto 002 30 40)"; P3="$(mkpunto 003 9999999 60)"; P4="$(mkpunto 004 70 80)"
-Q "select fe_punto_estado('$E','$U','$P1',false)" >/dev/null                 # 001: punto inactivo (tipos activos)
+# fe_punto_registrar (NEX-063) crea cada punto INACTIVO y configurar un tipo activa solo la SECUENCIA: P1 queda inactivo (no se desactiva de nuevo) y P2, P3, P4 se activan EXPLÍCITAMENTE con la función heredada.
+for p in "$P2" "$P3" "$P4"; do Q "select fe_punto_estado('$E','$U','$p',true)" >/dev/null || { falla "no se pudo activar un punto en la preparación"; exit 1; }; done
+# Precondiciones de la preparación (abortan antes de cualquier escenario)
+chk "$(Q "select string_agg(codigo||'='||activo::text, ',' order by codigo) from fe_puntos_expedicion where empresa_id='$E'")" "001=false,002=true,003=true,004=true" "precondición: 001 inactivo y 002/003/004 activos (modelo anterior a NEX-065)"
+chk "$(Q "select count(*) from fe_punto_secuencias where empresa_id='$E' and activo")" "8" "precondición: las 8 secuencias (4 puntos × FE/NCE) están activas antes de bloquear tipos"
+[[ $FALLAS -eq 0 ]] || { echo "T33: precondiciones fallidas, preparación abortada"; exit 1; }
 Q "select fe_secuencia_estado('$E','$U','$P2','NCE',false)" >/dev/null        # 002: NCE inactiva
 Q "select fe_secuencia_estado('$E','$U','$P4','FE',false)" >/dev/null         # 004: FE inactiva
 emitir() { # $1 punto → imprime «número/serie» o «BLOQUEADA:<código>»

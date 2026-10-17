@@ -76,6 +76,14 @@ BEGIN
   PERFORM pg_temp.ok((SELECT jsonb_agg(to_jsonb(q) - 'actualizado_at' ORDER BY tipo_documento) FROM fe_punto_secuencias q WHERE punto_id = v_p) = v_antes AND NOT (SELECT activo FROM fe_puntos_expedicion WHERE id = v_p), 'la llamada directa no cambió ningún tipo ni el punto');
   PERFORM pg_temp.ok(NOT has_function_privilege('nexit_runtime', 'public.fe_punto_estado(uuid,uuid,uuid,boolean)', 'EXECUTE') AND NOT has_function_privilege('nexit_runtime', 'public.fe_punto_activar(uuid,uuid,uuid,integer,boolean)', 'EXECUTE') AND NOT has_function_privilege('nexit_runtime', 'public.fe_punto_desactivar(uuid,uuid,uuid)', 'EXECUTE'),
     'el rol de la aplicación no puede ejecutar las funciones que mueven el estado físico del punto');
+  -- AUD-PRO129-UX-R05-01: el envoltorio global (el que el runner ejecuta tras CADA migración) reejecuta TODOS los ayudantes nex_aplicar_grants_*; no debe reabrir las funciones retiradas
+  PERFORM nex_aplicar_grants_runtime();
+  PERFORM pg_temp.ok(NOT has_function_privilege('nexit_runtime', 'public.fe_punto_registrar(uuid,uuid,uuid,text,text)', 'EXECUTE') AND NOT has_function_privilege('nexit_runtime', 'public.fe_punto_estado(uuid,uuid,uuid,boolean)', 'EXECUTE')
+    AND NOT has_function_privilege('nexit_runtime', 'public.fe_punto_crear(uuid,uuid,uuid,text,text,integer,boolean)', 'EXECUTE') AND NOT has_function_privilege('nexit_runtime', 'public.fe_punto_activar(uuid,uuid,uuid,integer,boolean)', 'EXECUTE')
+    AND NOT has_function_privilege('nexit_runtime', 'public.fe_punto_desactivar(uuid,uuid,uuid)', 'EXECUTE'), 'tras nex_aplicar_grants_runtime() siguen SIN acceso para la aplicación: registrar, estado, crear, activar y desactivar del punto físico');
+  PERFORM pg_temp.ok(has_function_privilege('nexit_runtime', 'public.fe_punto_alta_tipo(uuid,uuid,uuid,text,text,text,text,integer,boolean,boolean)', 'EXECUTE') AND has_function_privilege('nexit_runtime', 'public.fe_secuencia_configurar(uuid,uuid,uuid,text,text,integer,boolean,boolean)', 'EXECUTE')
+    AND has_function_privilege('nexit_runtime', 'public.fe_secuencia_estado(uuid,uuid,uuid,text,boolean)', 'EXECUTE') AND has_function_privilege('nexit_runtime', 'public.fe_documento_crear_fe(uuid,uuid,uuid,uuid,text,uuid,text,text,text,numeric,jsonb)', 'EXECUTE')
+    AND has_function_privilege('nexit_runtime', 'public.fe_documento_crear_nce(uuid,uuid,uuid,uuid,text,uuid,integer,jsonb,text,numeric,jsonb)', 'EXECUTE'), 'tras el envoltorio global se conservan alta única, configuración y estado por tipo, y emisión FE/NCE');
 
   -- T03: misma empresa/establecimiento/punto con series y números distintos; unicidad fiscal COMPLETA con serie NULL
   PERFORM fe_secuencia_estado(v_a, v_ua, v_p, 'FE', true);

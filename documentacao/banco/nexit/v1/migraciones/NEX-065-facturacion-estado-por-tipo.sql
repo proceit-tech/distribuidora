@@ -478,6 +478,29 @@ BEGIN
 END $$;
 COMMENT ON FUNCTION public.fe_punto_estado(uuid, uuid, uuid, boolean) IS 'NEX-065: RETIRADA. El estado de emisión es por tipo (fe_secuencia_estado).';
 
+CREATE OR REPLACE FUNCTION public.nex_aplicar_grants_facturacion_series() RETURNS void
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'nexit_runtime') THEN
+    RETURN;
+  END IF;
+
+  REVOKE ALL ON FUNCTION public.fe_serie_orden(text) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION public.fe_secuencia_siguiente(text, integer) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION public.fe_punto_maximo_emitido_serie(uuid, text, text, text) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION public.fe_secuencia_reservar(uuid, uuid, text) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION public.fe_punto_registrar(uuid, uuid, uuid, text, text) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION public.fe_secuencia_configurar(uuid, uuid, uuid, text, text, integer, boolean, boolean) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION public.fe_secuencia_estado(uuid, uuid, uuid, text, boolean) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION public.fe_punto_estado(uuid, uuid, uuid, boolean) FROM PUBLIC;
+  -- NEX-065 (AUD-PRO129-UX-R05-01): este ayudante lo reejecuta el envoltorio global nex_aplicar_grants_runtime() (orden alfabético, después de ..._estado_tipo). Ya NO concede las funciones retiradas
+  -- (fe_punto_registrar, fe_punto_estado): las revoca también al rol de la aplicación. Se conservan la configuración y el estado POR TIPO; la emisión FE/NCE y el alta única tienen sus propios ayudantes.
+  REVOKE ALL ON FUNCTION public.fe_punto_registrar(uuid, uuid, uuid, text, text) FROM nexit_runtime;
+  REVOKE ALL ON FUNCTION public.fe_punto_estado(uuid, uuid, uuid, boolean) FROM nexit_runtime;
+  GRANT EXECUTE ON FUNCTION public.fe_secuencia_configurar(uuid, uuid, uuid, text, text, integer, boolean, boolean) TO nexit_runtime;
+  GRANT EXECUTE ON FUNCTION public.fe_secuencia_estado(uuid, uuid, uuid, text, boolean) TO nexit_runtime;
+END $$;
+
 CREATE OR REPLACE FUNCTION public.nex_aplicar_grants_facturacion_estado_tipo() RETURNS void
 LANGUAGE plpgsql AS $$
 BEGIN

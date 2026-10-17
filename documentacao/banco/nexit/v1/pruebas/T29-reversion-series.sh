@@ -50,6 +50,9 @@ crear_copia() { # $1 sufijo, $2 dígito de RUC → deja PGDATABASE apuntando a l
   P="$(Q "select fe_punto_registrar('$E','$U','$S','001','Caja T29$1')")"
   Q "select fe_secuencia_configurar('$E','$U','$P','FE',NULL,${3:-10},true,true)" >/dev/null
   Q "select fe_secuencia_configurar('$E','$U','$P','NCE',NULL,0,true,true)" >/dev/null
+  # Setup LEGADO (solo estas copias, ya revertidas a NEX-063): fe_punto_registrar crea el punto inactivo y la emisión restaurada de NEX-063 exige el punto activo. No existe en el modelo nuevo.
+  Q "select fe_punto_estado('$E','$U','$P',true)" >/dev/null || { falla "no se pudo activar el punto físico en el setup legado"; return 1; }
+  chk "$(Q "select activo::text from fe_puntos_expedicion where id='$P'")" "true" "setup legado: punto físico activo (requisito de la emisión NEX-063 restaurada)"
 }
 
 # ── A) corrida real en la frontera de serie ───────────────────────────────────────────────────
