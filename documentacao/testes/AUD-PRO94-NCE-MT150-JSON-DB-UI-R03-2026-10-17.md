@@ -7,7 +7,7 @@
 
 ## Fontes oficiais verificadas
 
-- [Manual Técnico v150 DNIT, 217 páginas](https://www.dnit.gov.py/documents/20123/420592/Manual%2BT%C3%A9cnico%2BVersi%C3%B3n%2B150.pdf/e706f7c7-6d93-21d4-b45b-5d22d07b2d22?t=1687351495907): **página 78 (índice PDF 77)** E400 grupo obrigatório NCE, E401 iMotEmi, E402 dDesMotEmi 6–30 (obrigatório); **página 109 (índice PDF 108)** H001 obrigatório NCE, H002 iTipDocAso, H003 dDesTipDocAso 7–11 (obrigatório), H004 dCdCDERef 44 se eletrônico; **página 171 (índice PDF 170)** validação 1450 e 1452 da NCE.
+- [Manual Técnico v150 DNIT, 217 páginas](https://www.dnit.gov.py/documents/20123/420592/Manual%2BT%C3%A9cnico%2BVersi%C3%B3n%2B150.pdf/e706f7c7-6d93-21d4-b45b-5d22d07b2d22?t=1687351495907): **página 78 (índice PDF 77)** E400 grupo do **XML SIFEN gerado pelo gateway**, E401 iMotEmi, E402 dDesMotEmi 6–30 na estrutura XML; **página 109 (índice PDF 108)** H001 grupo de documento associado **do XML gerado pelo gateway**, H002 iTipDocAso, H003 dDesTipDocAso 7–11 na estrutura XML, H004 dCdCDERef 44 se eletrônico; **nenhum desses grupos/descrições é uma tarefa de construção de payload JSON pelo NEXIT**; **página 171 (índice PDF 170)** validação 1450 e 1452 da NCE.
 - [NT 013/MT150](https://www.dnit.gov.py/documents/20123/420595/NT_E_KUATIA_013_MT_V150.pdf/ba73ec3b-5901-ae28-5d8c-9bed5632ab89?t=1687364547529): fórmulas de base gravada IVA E735, exenta E737, subtotais F002/F004/F005 e precisão 8 decimais.
 - [NT 021/MT150](https://www.dnit.gov.py/documents/20123/420595/NT_E_KUATIA_021_MT_V150%2B30.12.24.pdf/ab12f22b-42a2-9bd4-e3a0-7141d9e4b8d0?t=1735592286335): limite histórico de Innominado (Gs 35 milhões), **alterado pela NT 024**.
 - [NT 023/MT150](https://www.dnit.gov.py/documents/20123/420595/NT_E_KUATIA_023_MT_V150.pdf/9580922b-5dd5-60f9-4857-ae66a757898f?t=1724967650006): **validação D208e código 1331**: para NCE/NDE/NRE o tipo de documento do receptor **não pode ser Innominado (D208 ≠5)**, independentemente do valor; H001 documento associado obrigatório; H004g valida vínculo com emissor/RUC fusionado; E711 quantidade 1–10p(0–8).
@@ -56,11 +56,19 @@
 
 **Homologação futura (não bloqueio por descrições):** na operação humana, comprovar as NCE reais dos motivos 3/4/8 e moedas admitidas, resposta SIFEN, impostos, CDC próprio e da FE, mantendo o JSON conforme o exemplo já aprovado e o contrato do gateway. A inspeção de XML/XSD pode ser útil para rastreabilidade fiscal, **não é justificativa para inserir `dDesMotEmi` ou `dDesTipDocAso` no JSON nem para criar trabalho novo ao Claude**.
 
+## Fronteira de responsabilidade do contrato NEXIT → gateway (retificação explícita)
+
+**Responsável: NEXIT** — produzir o JSON com as **propriedades básicas do exemplo aprovado** (`iTiDE=5`, `iMotEmi`, `DocumentosAsociados` com `iTipDocAso` e `dCdCDERef`, `Detalles`, `Subtotales`, receptor fiscal, moeda, valores), persistir, enviar e consultar o retorno. Não gerar grupos XML nem descrições não exigidas na entrada do gateway.
+
+**Responsável: gateway** — montar os grupos XML normativos do SIFEN, inclusive `gCamNCDE` (E400), `gCamDEAsoc` e outros grupos equivalentes no XML. Derivar/montar descrições normativas do XML, quando aplicáveis, é processo interno do gateway; nenhuma chave `gCamNCDE`, `gCamDEAsoc`, `dDesMotEmi`, `dDesTipDocAso` pode ser acrescida ao JSON NEXIT por suposição.
+
+**Correção de auditoria:** a ausência de grupos XML no JSON **não é falha, tarefa de desenvolvimento nem bloqueio do NEXIT**. A homologação futura dos demais motivos e moedas continua pertinente pelo resultado do gateway/SIFEN, não por falta de grupos no payload. Nenhuma alteração de código é autorizada nesta retificação.
+
 ## Quadro de auditoria cruzada por camada
 
 | Camada | O que foi efetivamente encontrado em código | Limitação |
 |---|---|---|
-| **JSON NCE** | `iTiDE=5`, códigos de motivo 2/3/4/8, `DocumentosAsociados[0].dCdCDERef` (44), `iTipDocAso=1`, detalhes de unidade/qty/preço/IVA, subtotais, moeda e câmbio, observação, receptor FE | XML E402/H003 não explícitos; receptor Innominado inválido para NCE não é barrado |
+| **JSON NCE** | `iTiDE=5`, códigos de motivo 2/3/4/8, `DocumentosAsociados[0].dCdCDERef` (44), `iTipDocAso=1`, detalhes de unidade/qty/preço/IVA, subtotais, moeda e câmbio, observação, receptor FE | Grupos XML E400/H001 e descrições E402/H003 pertencem **exclusivamente à conversão do gateway**, fora do escopo NEXIT; receptor Innominado inválido para NCE não é barrado |
 | **IVA/NT13** | Fórmula do motor TS e SQL para base gravada, IVA e base exenta (inclusive parcial), até 8 decimais, totais e F023 estrangeiro, confirmado por inspeção contra NT013 | Paridade de PostgreSQL e validação SIFEN reais **não executadas** |
 | **Gateway** | Configuração por empresa, autenticação em servidor, `/api/recepcion_de` e `/api/consulta_de` (`tipoDoc:"NCE"`), distinção do lote/HTTP versus APROBADO, timeout bloqueado, RECHAZO genérico corrigido em INT-01 | contrato XML interno real não confirmado; sucesso para motivos 3/4/8 não comprovado |
 | **PostgreSQL lógico** | `documentos_electronicos` por FE/NCE e CDC próprio; `nce_origen` por NCE/FE/CDC original; `nce_lineas` por ordinal, FK composta; `solicitudes` JSON e `intentos`; lock FE/seq, saldos e motivo histórico | sem D208e na função SQL; NEX-062 não executada |
