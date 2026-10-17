@@ -579,5 +579,29 @@ export async function verificarCasosNce(): Promise<string[]> {
     cierto("R04-01: para receptores identificados la corrección se precarga como antes y la búsqueda/selección de clientes (MT-01) y la revisión/emisión (UI-01) no cambian", /if \(precarga\) for \(const l of f\.lineas\)/.test(abrir) && /setMotivo\(precarga \? precarga\.motivo : f\.motivoFijado \?\? ""\)/.test(abrir) && /disabled=\{c\.innominado\}/.test(pagNce) && /const c = revisado\?\.cuerpo;/.test(pagNce));
     cierto("R04-01: sin validación nueva de Innominado en la API POST, el servicio de emisión, el JSON ni el SQL (solo interfaz)", !/innominado|iTipIDRec/i.test(leer("app/api/notas-credito/route.ts")) && !/innominado|iTipIDRec/i.test(leer("lib/facturacion/nce-emision.ts")) && !/receptorEsInnominado|innominado/i.test(sql) && !/receptorEsInnominado/.test(leer("lib/facturacion/nce.ts")));
   }
+  // ── 19. MT-01 — alcance de los tests: búsqueda y selección de clientes en la tela de emisión ─────────────
+  {
+    const llamadas: Array<{ sql: string; p: unknown[] }> = [];
+    const filas = [
+      { id: "c1", codigo: "C-1", razonSocial: "Alfa SA", numeroDocumento: "80000001", dv: "1", innominado: false, total: "25" },
+      { id: "c2", codigo: "C-2", razonSocial: "Sin Nombre", numeroDocumento: "44444401", dv: null, innominado: true, total: "25" },
+    ];
+    const dbP = { query: async (t: string, p?: unknown[]) => { llamadas.push({ sql: t, p: p ?? [] }); return { rows: filas }; } };
+    const pag2 = await buscarClientesConFacturas(dbP as never, "empresa-A", "usuario-A", "  alfa  ", 2, 10);
+
+    igual("MT-01 (1): el Innominado aparece en la búsqueda (no se excluye del resultado) marcado como tal, junto al cliente identificado", pag2.clientes.map((c) => [c.id, c.innominado]), [["c1", false], ["c2", true]]);
+    igual("MT-01 (3): paginación (página 2 de 10 → OFFSET 10, total 25 → 3 páginas), filtro (texto recortado) y empresa/usuario de la sesión", [llamadas[0].p[0], llamadas[0].p[1], llamadas[0].p[2], llamadas[0].p[4], llamadas[0].p[5], pag2.pagina, pag2.total, pag2.totalPaginas], ["empresa-A", "usuario-A", "alfa", 10, 10, 2, 25, 3]);
+    cierto("MT-01 (3): la consulta sigue acotada por empresa y alcance de sucursal, y filtra por código, razón social, nombre y documento", /c\.empresa_id = \$1/.test(llamadas[0].sql) && /sucursal_en_alcance\(\$1::uuid, \$2::uuid, d\.sucursal_id\)/.test(llamadas[0].sql) && /concat_ws\(' ', c\.codigo, c\.razon_social, c\.nombre_fantasia, c\.numero_documento/.test(llamadas[0].sql) && /LIMIT \$5 OFFSET \$6/.test(llamadas[0].sql));
+    llamadas.length = 0;
+    await buscarClientesConFacturas({ query: async (t: string, p?: unknown[]) => { llamadas.push({ sql: t, p: p ?? [] }); return { rows: [] }; } } as never, "empresa-B", "usuario-B", "", 1, 10);
+    igual("MT-01 (3): otra empresa consulta con su propio empresa_id (aislamiento)", [llamadas[0].p[0], llamadas[0].p[1]], ["empresa-B", "usuario-B"]);
+  }
+  {
+    const lista = pagNce.slice(pagNce.indexOf("{clientes.map((c) => ("), pagNce.indexOf("{clientes.length === 0"));
+
+    cierto("MT-01 (1): la fila del Innominado muestra la etiqueta, el mensaje explicativo y «Seleccionar» deshabilitado con el mismo mensaje como ayuda", /\{c\.innominado \? <>[\s\S]*Innominado[\s\S]*MENSAJE_INNOMINADO[\s\S]*: null\}/.test(lista) && /disabled=\{c\.innominado\}/.test(lista) && /title=\{c\.innominado \? MENSAJE_INNOMINADO : undefined\}/.test(lista));
+    cierto("MT-01 (2): para un cliente identificado «Seleccionar» queda habilitado y selecciona y carga sus facturas (con consulta de pendientes) igual que antes", /onClick=\{\(\) => \{ if \(c\.innominado\) return; setCliente\(c\); void cargarFacturas\(c\.id, "", 1, true\); \}\}/.test(lista) && !/disabled=\{[^}]*(?!c\.innominado)[a-z]/.test(lista.replace("disabled={c.innominado}", "")));
+    cierto("MT-01: la paginación y el filtro de la pantalla de clientes no se modificaron (misma carga con búsqueda y página)", /cargarClientes\(textoCliente, 1\)/.test(pagNce) && /cargarClientes\(textoCliente, pagCli\.pagina - 1\)/.test(pagNce) && /cargarClientes\(textoCliente, pagCli\.pagina \+ 1\)/.test(pagNce));
+  }
   return fallos;
 }
