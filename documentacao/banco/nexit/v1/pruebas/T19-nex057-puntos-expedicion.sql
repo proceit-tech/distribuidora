@@ -46,8 +46,10 @@ BEGIN
   PERFORM pg_temp.ok((SELECT count(*) = 1 AND bool_and(accion = 'CREAR' AND usuario_id = v_ua AND anterior IS NULL AND (nuevo->>'ultimo_numero')::int = 120 AND (nuevo->>'activo')::boolean = false) FROM fe_puntos_expedicion_log WHERE punto_id = v_p), 'bitácora: el alta conserva usuario y valores');
 
   -- Un punto inactivo NO numera
+  PERFORM fe_secuencia_estado(v_a, v_ua, v_p, 'FE', false);   -- NEX-065: el bloqueo de emisión es el del TIPO FE
   PERFORM pg_temp.falla(format($f$SELECT * FROM fe_documento_crear_fe(%L, %L, %L, %L, 'clave-t19-0001', NULL, '1234567-1', 'Receptor T19', 'PYG', 1000, %L)$f$, v_a, v_ua, v_sa, v_p, v_payload::text), 'P0001', 'un punto inactivo no emite documentos (numeración intacta)');
   PERFORM pg_temp.ok((SELECT ultimo_numero = 120 FROM pt WHERE id = v_p), 'el rechazo no consumió número');
+  PERFORM fe_secuencia_estado(v_a, v_ua, v_p, 'FE', true);   -- NEX-065: lo anterior se expresa en el TIPO (el estado físico ya no gobierna la emisión)
 
   -- Activación: confirmación y número monotónico
   PERFORM pg_temp.falla(format('SELECT fe_punto_activar(%L, %L, %L, 120, false)', v_a, v_ua, v_p), 'P0001', 'activar: sin confirmación se rechaza');
@@ -68,7 +70,9 @@ BEGIN
   PERFORM pg_temp.ok((SELECT NOT activo AND ultimo_numero = 126 FROM pt WHERE id = v_p), 'desactivar: el punto queda inactivo y la numeración se conserva');
   PERFORM pg_temp.falla(format('SELECT fe_punto_desactivar(%L, %L, %L)', v_a, v_ua, v_p), 'P0001', 'desactivar: un punto ya inactivo se rechaza');
   PERFORM pg_temp.falla(format('SELECT fe_punto_activar(%L, %L, %L, 125, true)', v_a, v_ua, v_p), 'P0001', 'reactivar: confirmar un número menor que el emitido se rechaza (126 ya emitido)');
+  PERFORM fe_secuencia_estado(v_a, v_ua, v_p, 'FE', false);   -- NEX-065: tipo FE bloqueado (equivale al punto legado desactivado)
   PERFORM pg_temp.falla(format($f$SELECT * FROM fe_documento_crear_fe(%L, %L, %L, %L, 'clave-t19-0003', NULL, '1234567-1', 'Receptor T19', 'PYG', 1000, %L)$f$, v_a, v_ua, v_sa, v_p, v_payload::text), 'P0001', 'un punto desactivado no emite');
+  PERFORM fe_secuencia_estado(v_a, v_ua, v_p, 'FE', true);
   PERFORM fe_punto_activar(v_a, v_ua, v_p, 126, true);
   PERFORM pg_temp.ok((SELECT activo AND ultimo_numero = 126 FROM pt WHERE id = v_p), 'reactivar: confirmando el número emitido (126)');
 
@@ -178,10 +182,10 @@ BEGIN
         AND NOT has_table_privilege('nexit_runtime', 'public.fe_puntos_expedicion', 'DELETE')
         AND NOT has_table_privilege('nexit_runtime', 'public.fe_puntos_expedicion_log', 'SELECT') AND NOT has_table_privilege('nexit_runtime', 'public.fe_puntos_expedicion_log', 'INSERT')
         AND NOT has_table_privilege('nexit_runtime', 'public.fe_puntos_expedicion_log', 'UPDATE') AND NOT has_table_privilege('nexit_runtime', 'public.fe_puntos_expedicion_log', 'DELETE')
-        AND has_function_privilege('nexit_runtime', 'public.fe_punto_crear(uuid,uuid,uuid,text,text,integer,boolean)', 'EXECUTE')
-        AND has_function_privilege('nexit_runtime', 'public.fe_punto_activar(uuid,uuid,uuid,integer,boolean)', 'EXECUTE')
-        AND has_function_privilege('nexit_runtime', 'public.fe_punto_desactivar(uuid,uuid,uuid)', 'EXECUTE')),
-     'privilegios: nexit_runtime no escribe los puntos, NO lee ni escribe la bitácora (sin RLS por empresa) y solo ejecuta las funciones de gestión');
+        AND NOT has_function_privilege('nexit_runtime', 'public.fe_punto_crear(uuid,uuid,uuid,text,text,integer,boolean)', 'EXECUTE')
+        AND NOT has_function_privilege('nexit_runtime', 'public.fe_punto_activar(uuid,uuid,uuid,integer,boolean)', 'EXECUTE')
+        AND NOT has_function_privilege('nexit_runtime', 'public.fe_punto_desactivar(uuid,uuid,uuid)', 'EXECUTE')),
+     'privilegios: nexit_runtime no escribe los puntos, NO lee ni escribe la bitácora (sin RLS por empresa) y NEX-065 retiró del rol de la aplicación las funciones heredadas de gestión del punto físico (la administración pasa por el alta única y por el estado de cada tipo)');
   PERFORM pg_temp.ok(NOT has_function_privilege('public', 'public.fe_punto_crear(uuid,uuid,uuid,text,text,integer,boolean)', 'EXECUTE'), 'PUBLIC no ejecuta fe_punto_crear');
   PERFORM pg_temp.ok((SELECT bool_and(prosecdef AND 'search_path=public, pg_temp' = ANY (proconfig)) FROM pg_proc WHERE proname IN ('fe_punto_crear', 'fe_punto_activar', 'fe_punto_desactivar')), 'las funciones son SECURITY DEFINER con search_path fijo');
   PERFORM pg_temp.ok(to_regprocedure('public.nex_aplicar_grants_facturacion_puntos()') IS NOT NULL, 'el ayudante de grants existe y el envoltorio de NEX-052 lo reaplica');

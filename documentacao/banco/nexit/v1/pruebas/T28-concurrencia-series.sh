@@ -23,7 +23,6 @@ S="$(Q "select id from sucursales where empresa_id='$E' order by creado_at, id l
 Q "update sucursales set establecimiento_sifen='001' where id='$S'" >/dev/null
 P="$(Q "select fe_punto_registrar('$E','$U','$S','001','Caja T28')")"
 Q "select fe_secuencia_configurar('$E','$U','$P','FE',NULL,9999998,true,true)" >/dev/null
-Q "select fe_punto_estado('$E','$U','$P',true)" >/dev/null
 Q "select fe_secuencia_configurar('$E','$U','$P','NCE',NULL,0,true,true)" >/dev/null
 EMITIR="select o_numero from fe_documento_crear_fe('$E','$U','$S','$P'"
 

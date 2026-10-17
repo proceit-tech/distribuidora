@@ -40,7 +40,8 @@ precondicion_global_base
 crear_copia() { # $1 sufijo, $2 dígito de RUC → deja PGDATABASE apuntando a la copia; define E, U, S, P (punto 001 con FE y NCE activos)
   psql -X -q -d postgres -c "CREATE DATABASE ${ORIG}_t29$1 TEMPLATE $BASE" >/dev/null || { falla "no se pudo copiar la base limpia"; return 1; }
   export PGDATABASE="${ORIG}_t29$1"
-  # NEX-064 depende de NEX-063: la reversión se hace en orden inverso (la de NEX-063 aborta mientras NEX-064 siga aplicada).
+  # NEX-065 y NEX-064 dependen de NEX-063: la reversión se hace en orden inverso (la de NEX-063 aborta mientras NEX-064/065 sigan aplicadas).
+  psql -X -q -v ON_ERROR_STOP=1 -1 -f "$AQUI/scripts/reversion-NEX-065.sql" >"$T/r65$1.out" 2>&1 || falla "no se pudo revertir NEX-065 en la copia: $(cat "$T/r65$1.out")"
   psql -X -q -v ON_ERROR_STOP=1 -1 -f "$AQUI/scripts/reversion-NEX-064.sql" >"$T/r64$1.out" 2>&1 || falla "no se pudo revertir NEX-064 en la copia: $(cat "$T/r64$1.out")"
   E="$(Q "select nex_inicializar_empresa('emp-t29$1','Empresa T29$1 SA (prueba)','802910$2','1','admin.t29$1','Ana','T29',NULL,'$H')")"
   U="$(Q "select id from usuarios where empresa_id='$E'")"
@@ -49,7 +50,6 @@ crear_copia() { # $1 sufijo, $2 dígito de RUC → deja PGDATABASE apuntando a l
   P="$(Q "select fe_punto_registrar('$E','$U','$S','001','Caja T29$1')")"
   Q "select fe_secuencia_configurar('$E','$U','$P','FE',NULL,${3:-10},true,true)" >/dev/null
   Q "select fe_secuencia_configurar('$E','$U','$P','NCE',NULL,0,true,true)" >/dev/null
-  Q "select fe_punto_estado('$E','$U','$P',true)" >/dev/null
 }
 
 # ── A) corrida real en la frontera de serie ───────────────────────────────────────────────────

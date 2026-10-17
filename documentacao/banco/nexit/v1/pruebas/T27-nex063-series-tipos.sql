@@ -23,7 +23,7 @@ BEGIN
 
   -- Estructura y privilegios
   PERFORM pg_temp.ok(EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'fe_punto_secuencias' AND column_name = 'serie') AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'fe_punto_secuencias' AND column_name = 'activo'), 'NEX-063: fe_punto_secuencias.serie y .activo existen');
-  PERFORM pg_temp.ok(has_function_privilege('nexit_runtime', 'public.fe_secuencia_configurar(uuid,uuid,uuid,text,text,integer,boolean,boolean)', 'EXECUTE') AND has_function_privilege('nexit_runtime', 'public.fe_punto_registrar(uuid,uuid,uuid,text,text)', 'EXECUTE')
+  PERFORM pg_temp.ok(has_function_privilege('nexit_runtime', 'public.fe_secuencia_configurar(uuid,uuid,uuid,text,text,integer,boolean,boolean)', 'EXECUTE') AND NOT has_function_privilege('nexit_runtime', 'public.fe_punto_registrar(uuid,uuid,uuid,text,text)', 'EXECUTE')
     AND NOT has_function_privilege('nexit_runtime', 'public.fe_secuencia_reservar(uuid,uuid,text)', 'EXECUTE'), 'grants: la aplicación ejecuta la administración y NO la reserva interna');
 
   -- CA-02: tabla de paso entre series (espejo de lib/facturacion/series.ts)
@@ -46,19 +46,15 @@ BEGIN
   PERFORM fe_secuencia_configurar(v_a, v_ua, v_p1, 'NRE', NULL, 0, true, false);
   PERFORM pg_temp.ok((SELECT count(*) = 3 FROM fe_punto_secuencias WHERE punto_id = v_p1 AND serie IS NULL AND ultimo_numero = 0), 'CA-01: FE, NCE y NRE del mismo punto 001/001, cada uno sin serie y en 0 (independientes)');
   PERFORM pg_temp.ok((SELECT activo FROM fe_punto_secuencias WHERE punto_id = v_p1 AND tipo_documento = 'FE') AND (SELECT activo FROM fe_punto_secuencias WHERE punto_id = v_p1 AND tipo_documento = 'NCE') AND NOT (SELECT activo FROM fe_punto_secuencias WHERE punto_id = v_p1 AND tipo_documento = 'NRE'), 'activar un tipo no activa los demás (NRE quedó inactivo)');
-  PERFORM fe_punto_estado(v_a, v_ua, v_p1, true);
-  PERFORM pg_temp.ok((SELECT activo FROM fe_puntos_expedicion WHERE id = v_p1), 'el punto se activa sin volver a pedir números');
   -- otro punto del mismo establecimiento, y otro establecimiento: contadores independientes
   v_p2 := fe_punto_registrar(v_a, v_ua, v_sa, '002', 'Caja 2');
   PERFORM fe_secuencia_configurar(v_a, v_ua, v_p2, 'NRE', NULL, 0, true, true);
   v_p3 := fe_punto_registrar(v_a, v_ua, v_sa2, '001', 'Caja Suc 2');
   PERFORM fe_secuencia_configurar(v_a, v_ua, v_p3, 'FE', NULL, 0, true, true);
   PERFORM fe_secuencia_configurar(v_a, v_ua, v_p3, 'NCE', NULL, 0, true, true);
-  PERFORM fe_punto_estado(v_a, v_ua, v_p3, true);
   -- empresa B: mismas identidades sin compartir numeración
   v_pb := fe_punto_registrar(v_b, v_ub, v_sb, '001', 'Caja B');
   PERFORM fe_secuencia_configurar(v_b, v_ub, v_pb, 'FE', NULL, 7, true, true);
-  PERFORM fe_punto_estado(v_b, v_ub, v_pb, true);
   PERFORM pg_temp.ok((SELECT ultimo_numero = 7 FROM fe_punto_secuencias WHERE punto_id = v_pb AND tipo_documento = 'FE') AND (SELECT ultimo_numero = 0 FROM fe_punto_secuencias WHERE punto_id = v_p1 AND tipo_documento = 'FE'), 'CA-01: la empresa B usa 001/001 con su propia numeración (7) sin tocar la de A (0)');
 
   -- Emisión FE: primera numeración sin serie; la FE no consume NCE ni NRE
@@ -117,10 +113,7 @@ BEGIN
   PERFORM fe_secuencia_estado(v_a, v_ua, v_p3, 'FE', true);
   SELECT * INTO r FROM fe_documento_crear_fe(v_a, v_ua, v_sa2, v_p3, 'clave-t27-0009', NULL, '1234567-1', 'Receptor T27', 'PYG', 1000, v_payload);
   PERFORM pg_temp.ok(r.o_numero = '0000001', 'CA-01: est.002/punto001 FE inicia independiente en 0000001 (la FE de est.001 ya iba en la serie ZZ)');
-  PERFORM fe_punto_estado(v_a, v_ua, v_p3, false);
-  PERFORM pg_temp.falla(format($f$SELECT * FROM fe_documento_crear_fe(%L, %L, %L, %L, 'clave-t27-0010', NULL, '1234567-1', 'Receptor T27', 'PYG', 1000, %L)$f$, v_a, v_ua, v_sa2, v_p3, v_payload::text), 'P0001', 'un punto inactivo no emite ningún tipo');
-  PERFORM pg_temp.ok((SELECT count(*) = 2 FROM fe_punto_secuencias WHERE punto_id = v_p3), 'desactivar el punto conserva todas sus configuraciones');
-  PERFORM fe_punto_estado(v_a, v_ua, v_p3, true);
+  PERFORM pg_temp.ok(NOT (SELECT activo FROM fe_puntos_expedicion WHERE id = v_p3) AND (SELECT count(*) = 2 FROM fe_punto_secuencias WHERE punto_id = v_p3), 'NEX-065: el punto físico conserva su marca heredada (inactivo) y aun así el tipo activo emite: la compuerta es el TIPO; todas las configuraciones se conservan');
 
   -- CA-08: NRE/NDE/AFE se configuran pero no existe función de emisión que los consuma
   PERFORM pg_temp.ok((SELECT ultimo_numero = 0 FROM fe_punto_secuencias WHERE punto_id = v_p2 AND tipo_documento = 'NRE') AND to_regprocedure('public.fe_documento_crear_nre()') IS NULL, 'CA-08: la NRE está configurable pero sin flujo de emisión');
@@ -134,9 +127,9 @@ BEGIN
   PERFORM pg_temp.falla(format('SELECT fe_punto_registrar(%L, %L, %L, ''009'', ''X'')', v_a, v_op, v_sa), '42501', 'sin FACTURACION_ELECTRONICA.PUNTOS no se registra un punto');
   PERFORM pg_temp.falla(format('SELECT fe_secuencia_configurar(%L, %L, %L, ''FE'', NULL, 0, true)', v_a, v_op, v_p1), '42501', 'sin PUNTOS no se configura un tipo');
   PERFORM pg_temp.falla(format('SELECT fe_secuencia_estado(%L, %L, %L, ''FE'', false)', v_a, v_op, v_p1), '42501', 'sin PUNTOS no se cambia el estado de un tipo');
-  PERFORM pg_temp.falla(format('SELECT fe_punto_estado(%L, %L, %L, false)', v_a, v_op, v_p1), '42501', 'sin PUNTOS no se cambia el estado del punto');
+  PERFORM pg_temp.falla(format('SELECT fe_punto_estado(%L, %L, %L, false)', v_a, v_op, v_p1), 'P0001', 'NEX-065: fe_punto_estado está RETIRADA (rechaza siempre, también sin permiso)');
   PERFORM pg_temp.falla(format('SELECT fe_secuencia_configurar(%L, %L, %L, ''FE'', NULL, 0, true)', v_b, v_ub, v_p1), 'P0001', 'aislamiento: la empresa B no configura un punto de A');
-  PERFORM pg_temp.falla(format('SELECT fe_punto_estado(%L, %L, %L, false)', v_b, v_ub, v_p1), 'P0001', 'aislamiento: la empresa B no cambia el estado de un punto de A');
+  PERFORM pg_temp.falla(format('SELECT fe_punto_estado(%L, %L, %L, true)', v_a, v_ua, v_p1), 'P0001', 'NEX-065: fe_punto_estado está RETIRADA incluso para el administrador de la empresa (no hay interruptor del punto físico)');
   PERFORM pg_temp.falla(format($f$SELECT * FROM fe_documento_crear_fe(%L, %L, %L, %L, 'clave-t27-0011', NULL, '1234567-1', 'Receptor T27', 'PYG', 1000, %L)$f$, v_b, v_ub, v_sb, v_p1, v_payload::text), 'P0001', 'aislamiento: B no emite con el punto de A');
 
   -- Bitácora: la configuración y los estados quedan registrados con serie, número y usuario
@@ -172,7 +165,6 @@ BEGIN
     PERFORM fe_secuencia_estado(v_a, v_ua, v_p1, 'NCE', true);
 
     -- NCE sin configurar en el punto (v_p2 solo tiene NRE): no emite
-    PERFORM fe_punto_estado(v_a, v_ua, v_p2, true);
     v_det := NULL;
     BEGIN
       PERFORM * FROM fe_documento_crear_nce(v_a, v_ua, v_sa, v_p2, 'clave-t27-nce-3', v_fe1.o_id, 3, '[{"linea":1,"cantidad":0,"monto":30000}]'::jsonb, 'PYG', 30000, pg_temp.nce_payload(v_fe1.o_cdc, 30000));

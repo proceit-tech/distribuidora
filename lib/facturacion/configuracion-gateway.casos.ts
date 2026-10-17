@@ -324,7 +324,7 @@ export async function verificarCasosConfiguracionGateway(): Promise<string[]> {
   cierto("reversión NEX-061: aborta si el permiso está asignado o si hay credenciales sin confirmación expresa; no toca documentos ni numeración", /confirmo_perder_credenciales/.test(rev) && /perfil_permiso/.test(rev) && /REVERSIÓN ABORTADA/.test(rev) && !/documentos_electronicos|fe_puntos|fe_punto_secuencias/.test(rev));
   const t25 = leer("documentacao/banco/nexit/v1/pruebas/T25-nex061-gateway-config.sql");
   const runner = leer("documentacao/banco/nexit/v1/scripts/ejecutar-pruebas.sh");
-  cierto("T25 (SQL) versionada y registrada en el runner: permiso, aislamiento entre empresas, la clave no se devuelve, el rol de la aplicación no lee la tabla de credenciales, versión/limite/bitácora", /T19 T21 T25( T26)?( T27)?( T30)?; do/.test(runner) && /has_table_privilege\('nexit_runtime', 'public\.fe_gateway_credenciales'/.test(t25) && /42501/.test(t25) && /fe_gateway_config_ver/.test(t25) && /fe_gateway_prueba_iniciar/.test(t25));
+  cierto("T25 (SQL) versionada y registrada en el runner: permiso, aislamiento entre empresas, la clave no se devuelve, el rol de la aplicación no lee la tabla de credenciales, versión/limite/bitácora", /T19 T21 T25( T26)?( T27)?( T30)?( T32)?; do/.test(runner) && /has_table_privilege\('nexit_runtime', 'public\.fe_gateway_credenciales'/.test(t25) && /42501/.test(t25) && /fe_gateway_config_ver/.test(t25) && /fe_gateway_prueba_iniciar/.test(t25));
 
   // ── 7. Alcance: nada fiscal ni de numeración cambió ───────────────────────────────────────────────
   const gw = leer("lib/facturacion/gateway.ts");

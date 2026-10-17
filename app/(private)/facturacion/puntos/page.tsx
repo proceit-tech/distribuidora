@@ -124,8 +124,8 @@ export default function PuntosExpedicionPage() {
       if (filtroSucursal && f.sucursal.id !== filtroSucursal) return false;
       if (filtroTipo === "SIN_TIPO" ? f.tipo !== null : filtroTipo && f.tipo?.tipo !== filtroTipo) return false;
 
-      // «Activos» = disponibles de verdad para emitir (FE/NCE con punto y tipo activos); NRE/NDE/AFE configurados no emiten todavía y cuentan como «no disponibles».
-      const activa = f.tipo !== null && f.tipo.emitible && f.punto.activo && f.tipo.activo;
+      // «Activos» = disponibles de verdad para emitir (FE/NCE con SU tipo activo; el estado se gobierna por tipo, no por punto); NRE/NDE/AFE configurados no emiten todavía y cuentan como «no disponibles».
+      const activa = f.tipo !== null && f.tipo.emitible && f.tipo.activo;
 
       if (filtroEstado === "ACTIVOS" && !activa) return false;
       if (filtroEstado === "INACTIVOS" && activa) return false;
@@ -254,12 +254,6 @@ export default function PuntosExpedicionPage() {
     void ejecutar(async () => { await pedir(`/api/facturacion/puntos/${f.punto.id}/tipos/${f.tipo!.tipo}/estado`, JSON_POST({ activo: destino }), "No fue posible cambiar el estado del tipo."); }, destino ? "Tipo activado en el punto." : "Tipo desactivado: se conservan su serie y su último número.").catch(() => undefined);
   };
 
-  const alternarPunto = (f: Fila) => {
-    const destino = !f.punto.activo;
-
-    void ejecutar(async () => { await pedir(`/api/facturacion/puntos/${f.punto.id}/estado`, JSON_POST({ activo: destino }), "No fue posible cambiar el estado del punto."); }, destino ? "Punto activado." : "Punto desactivado: no emite ningún tipo, pero conserva sus configuraciones.").catch(() => undefined);
-  };
-
   const dialogoAbierto = dAlta !== null || dTipo !== null;
   const sucursalesConEstablecimiento = sucursales.filter((s) => s.establecimiento !== null);
 
@@ -348,7 +342,7 @@ export default function PuntosExpedicionPage() {
                 ) : (
                   filtradas.map((f) => {
                     const t = f.tipo;
-                    const operativo = f.punto.activo && (t?.activo ?? false);
+                    const operativo = t?.activo ?? false;
 
                     return (
                       <tr key={f.clave} className={ui.row}>
@@ -363,14 +357,12 @@ export default function PuntosExpedicionPage() {
                           {t === null ? <span className={ui.statusWarning}>Sin configurar</span>
                             : !t.emitible ? <span className={ui.statusInfo} title="El tipo está configurado (serie y contador guardados), pero la emisión de este tipo todavía no está habilitada en NEXIT.">Configurado · emisión no disponible</span>
                             : operativo ? <span className={ui.statusActive}>Activo · disponible para emitir</span>
-                              : !f.punto.activo ? <span className={ui.statusInactive}>Punto inactivo</span>
-                                : <span className={ui.statusInactive}>Tipo inactivo</span>}
+                              : <span className={ui.statusInactive}>Inactivo</span>}
                         </td>
                         <td className={ui.actionsCell}>
                           <div className={ui.actionsGroup}>
                             <button type="button" className={ui.rowButton} disabled={ocupado} onClick={() => abrirConfiguracion(f)}>{t ? "Configurar" : "Configurar tipo"}</button>
-                            {t && t.emitible ? <button type="button" className={ui.rowButton} disabled={ocupado} onClick={() => alternarTipo(f)}>{t.activo ? "Desactivar tipo" : "Activar tipo"}</button> : null}
-                            <button type="button" className={ui.rowButton} disabled={ocupado} onClick={() => alternarPunto(f)}>{f.punto.activo ? "Desactivar punto" : "Activar punto"}</button>
+                            {t && t.emitible ? <button type="button" className={ui.rowButton} disabled={ocupado} onClick={() => alternarTipo(f)} aria-label={`${t.activo ? "Desactivar" : "Activar"} ${t.tipo} en el punto ${f.sucursal.establecimiento ?? ""}-${f.punto.codigo}`}>{t.activo ? `Desactivar ${t.tipo}` : `Activar ${t.tipo}`}</button> : null}
                           </div>
                         </td>
                       </tr>
@@ -410,7 +402,7 @@ export default function PuntosExpedicionPage() {
                 {errNombre ? <small className={estilos.errorCampo}>{errNombre}</small> : puntoExistente ? <small className={estilos.ayuda}>Punto existente: se reutiliza y su nombre no se modifica.</small> : null}
               </label>
             </div>
-            {sucursalDelDialogo && codigoOk(dAlta.codigo) ? <p className={estilos.ayuda}>Identidad fiscal: establecimiento {sucursalDelDialogo.establecimiento} · punto {dAlta.codigo} — {puntoExistente ? `ya existe (${puntoExistente.activo ? "activo" : "inactivo"}; tipos: ${puntoExistente.tipos.length === 0 ? "ninguno" : puntoExistente.tipos.map((t) => t.tipo).join(", ")})` : "punto nuevo"}.</p> : null}
+            {sucursalDelDialogo && codigoOk(dAlta.codigo) ? <p className={estilos.ayuda}>Identidad fiscal: establecimiento {sucursalDelDialogo.establecimiento} · punto {dAlta.codigo} — {puntoExistente ? `ya existe (tipos configurados: ${puntoExistente.tipos.length === 0 ? "ninguno" : puntoExistente.tipos.map((t) => `${t.tipo}${t.activo ? "" : " (inactivo)"}`).join(", ")})` : "punto nuevo"}.</p> : null}
             <label className={estilos.campo}>
               <span>Tipo de documento</span>
               <select value={dAlta.tipo} onChange={(e) => setDAlta({ ...dAlta, tipo: e.target.value as Tipo | "" })} aria-invalid={errATipo !== "" || tipoYaConfigurado !== undefined}>
@@ -446,10 +438,9 @@ export default function PuntosExpedicionPage() {
             {altaEmitible ? (
               <label className={estilos.casilla}>
                 <input type="checkbox" checked={dAlta.activar} onChange={(e) => setDAlta({ ...dAlta, activar: e.target.checked })} />
-                <span>Dejar disponible para emitir ahora (activa este tipo y, si el punto estaba inactivo o es nuevo, también el punto). Los demás tipos no cambian.</span>
+                <span>Dejar este tipo disponible para emitir ahora. Los demás tipos del punto no cambian.</span>
               </label>
             ) : dAlta.tipo !== "" ? <small className={estilos.ayuda}>Solo se registra la configuración (serie y contador). Este tipo no queda disponible para emitir: su emisión todavía no está habilitada.</small> : null}
-            {altaEmitible && dAlta.activar && puntoExistente && !puntoExistente.activo ? <small className={estilos.ayuda}>El punto está inactivo: al activarlo, sus otros tipos activos volverán a poder emitir.</small> : null}
             <div className={estilos.acciones}>
               <button type="button" className={ui.secondaryButton} onClick={() => { setDAlta(null); setIntento(false); setErrorDialogo(""); }} disabled={ocupado}>Cancelar</button>
               <button type="submit" className={ui.primaryButton} disabled={ocupado || tipoYaConfigurado !== undefined}>{ocupado ? "Guardando…" : "Guardar punto y tipo"}</button>

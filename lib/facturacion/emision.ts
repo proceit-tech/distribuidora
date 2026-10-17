@@ -29,9 +29,9 @@ export async function catalogosFactura(db: Db, empresaId: string, usuarioId: str
   const r = await db.query(
     `SELECT sc.id, sc.nombre, sc.establecimiento_sifen AS establecimiento,
             coalesce(json_agg(json_build_object('id', p.id, 'codigo', p.codigo, 'nombre', p.nombre, 'ultimoNumero', s.ultimo_numero, 'serie', s.serie) ORDER BY p.codigo) FILTER (WHERE p.id IS NOT NULL AND s.ultimo_numero IS NOT NULL AND s.activo), '[]'::json) AS puntos,
-            (SELECT count(*)::int FROM fe_puntos_expedicion x WHERE x.empresa_id = sc.empresa_id AND x.sucursal_id = sc.id AND NOT x.activo) AS "puntosInactivos"
+            (SELECT count(*)::int FROM fe_punto_secuencias x JOIN fe_puntos_expedicion xp ON xp.empresa_id = x.empresa_id AND xp.id = x.punto_id WHERE xp.empresa_id = sc.empresa_id AND xp.sucursal_id = sc.id AND x.tipo_documento = 'FE' AND NOT x.activo) AS "puntosInactivos"
        FROM sucursales sc
-       LEFT JOIN fe_puntos_expedicion p ON p.empresa_id = sc.empresa_id AND p.sucursal_id = sc.id AND p.activo
+       LEFT JOIN fe_puntos_expedicion p ON p.empresa_id = sc.empresa_id AND p.sucursal_id = sc.id
        LEFT JOIN fe_punto_secuencias s ON s.empresa_id = p.empresa_id AND s.punto_id = p.id AND s.tipo_documento = 'FE'
       WHERE sc.empresa_id = $1 AND sc.activo AND sc.establecimiento_sifen IS NOT NULL AND sucursal_en_alcance($1::uuid, $2::uuid, sc.id)
       GROUP BY sc.id ORDER BY sc.nombre`,
@@ -316,7 +316,7 @@ export async function prepararFactura(db: Db, empresaId: string, usuarioId: stri
     db.query(
       `SELECT e.razon_social AS empresa, sc.nombre AS sucursal, sc.establecimiento_sifen AS establecimiento, p.codigo AS punto, p.nombre AS "puntoNombre"
          FROM sucursales sc JOIN empresas e ON e.id = sc.empresa_id
-         JOIN fe_puntos_expedicion p ON p.empresa_id = sc.empresa_id AND p.sucursal_id = sc.id AND p.id = $3 AND p.activo
+         JOIN fe_puntos_expedicion p ON p.empresa_id = sc.empresa_id AND p.sucursal_id = sc.id AND p.id = $3
          JOIN fe_punto_secuencias fs ON fs.empresa_id = p.empresa_id AND fs.punto_id = p.id AND fs.tipo_documento = 'FE' AND fs.activo
         WHERE sc.empresa_id = $1 AND sc.id = $2 AND sc.activo AND sc.establecimiento_sifen IS NOT NULL AND sucursal_en_alcance($1::uuid, $4::uuid, sc.id)`,
       [empresaId, cuerpo.sucursalId, cuerpo.puntoId, usuarioId],

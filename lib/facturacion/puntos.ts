@@ -129,8 +129,7 @@ export function traducirErrorPunto(error: unknown): never {
     case "NEX:PUNTO_INVALIDO": throw m(404, "El punto de expedición no existe.");
     case "NEX:TIPO_DUPLICADO": throw m(409, "Ese tipo de documento ya está configurado en el punto (el punto existe y no se duplica): use «Configurar» en su fila para reconciliar la serie o el último número. No se modificó nada.");
     case "NEX:SECUENCIA_NO_CONFIGURADA": throw m(409, "Ese tipo de documento no está configurado en el punto: configure primero la serie y el último número emitido.");
-    case "NEX:PUNTO_YA_ACTIVO": throw m(409, "El punto ya está activo.");
-    case "NEX:PUNTO_YA_INACTIVO": throw m(409, "El punto ya está inactivo.");
+    case "NEX:ESTADO_PUNTO_RETIRADO": throw m(409, "El estado del punto físico ya no se administra: active o desactive cada tipo de documento en su fila.");
     case "NEX:TIPO_YA_ACTIVO": throw m(409, "El tipo de documento ya está activo en el punto.");
     case "NEX:TIPO_YA_INACTIVO": throw m(409, "El tipo de documento ya está inactivo en el punto.");
     case "NEX:IDENTIDAD_FISCAL_DUPLICADA": throw m(409, "Ese establecimiento y código de punto ya están en uso en otra sucursal de la empresa: dos puntos con la misma identidad fiscal colisionarían en la numeración. Use otro código o desactive el otro punto.");
@@ -239,14 +238,6 @@ export async function configurarTipoPunto(db: Db, empresaId: string, usuarioId: 
 export async function cambiarEstadoTipo(db: Db, empresaId: string, usuarioId: string, puntoId: string, tipo: TipoDocumentoPunto, activo: boolean): Promise<void> {
   try {
     await db.query("SELECT fe_secuencia_estado($1::uuid, $2::uuid, $3::uuid, $4, $5::boolean)", [empresaId, usuarioId, puntoId, tipo, activo]);
-  } catch (error) {
-    traducirErrorPunto(error);
-  }
-}
-
-export async function cambiarEstadoPunto(db: Db, empresaId: string, usuarioId: string, puntoId: string, activo: boolean): Promise<void> {
-  try {
-    await db.query("SELECT fe_punto_estado($1::uuid, $2::uuid, $3::uuid, $4::boolean)", [empresaId, usuarioId, puntoId, activo]);
   } catch (error) {
     traducirErrorPunto(error);
   }

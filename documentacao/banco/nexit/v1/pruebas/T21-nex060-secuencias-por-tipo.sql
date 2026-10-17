@@ -64,7 +64,9 @@ BEGIN
   PERFORM fe_punto_desactivar(v_a, v_ua, v_p1);
   PERFORM pg_temp.falla(format('SELECT fe_punto_activar(%L, %L, %L, 121, true)', v_a, v_ua, v_p1), 'P0001', 'T-F04: reactivar FE con 121 (< 122 ya emitido) se rechaza');
   PERFORM pg_temp.ok((SELECT ultimo_numero = 122 FROM fe_punto_secuencias WHERE punto_id = v_p1 AND tipo_documento = 'FE') AND (SELECT NOT activo FROM fe_puntos_expedicion WHERE id = v_p1), 'T-F04: el rechazo no alteró secuencia ni estado');
+  PERFORM fe_secuencia_estado(v_a, v_ua, v_p1, 'FE', false);   -- NEX-065: el bloqueo de emisión es el del TIPO FE
   PERFORM pg_temp.falla(format($f$SELECT * FROM fe_documento_crear_fe(%L, %L, %L, %L, 'clave-t21-0003', NULL, '1234567-1', 'Receptor T21', 'PYG', 1000, %L)$f$, v_a, v_ua, v_sa, v_p1, v_payload::text), 'P0001', 'un punto inactivo no numera');
+  PERFORM fe_secuencia_estado(v_a, v_ua, v_p1, 'FE', true);
   PERFORM fe_punto_activar(v_a, v_ua, v_p1, 122, true);
   PERFORM pg_temp.ok((SELECT activo FROM fe_puntos_expedicion WHERE id = v_p1) AND (SELECT ultimo_numero = 122 FROM fe_punto_secuencias WHERE punto_id = v_p1 AND tipo_documento = 'FE'), 'reactivar confirmando 122 mantiene FE en 122');
   SELECT (anterior->>'ultimo_numero') || '>' || (nuevo->>'ultimo_numero') INTO v_ult FROM fe_puntos_expedicion_log WHERE punto_id = v_p1 AND accion = 'ACTIVAR' ORDER BY creado_at DESC, id LIMIT 1;

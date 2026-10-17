@@ -274,7 +274,7 @@ export async function puntosParaNce(db: Db, empresaId: string, usuarioId: string
             coalesce(json_agg(json_build_object('id', p.id, 'codigo', p.codigo, 'nombre', p.nombre, 'ultimoNumero', q.ultimo_numero, 'serie', q.serie) ORDER BY p.codigo) FILTER (WHERE q.ultimo_numero IS NOT NULL AND q.activo), '[]'::json) AS puntos,
             count(p.id) FILTER (WHERE q.ultimo_numero IS NULL OR NOT q.activo)::int AS "sinSecuencia"
        FROM sucursales sc
-       LEFT JOIN fe_puntos_expedicion p ON p.empresa_id = sc.empresa_id AND p.sucursal_id = sc.id AND p.activo
+       LEFT JOIN fe_puntos_expedicion p ON p.empresa_id = sc.empresa_id AND p.sucursal_id = sc.id
        LEFT JOIN fe_punto_secuencias q ON q.empresa_id = p.empresa_id AND q.punto_id = p.id AND q.tipo_documento = 'NCE'
       WHERE sc.empresa_id = $1 AND sc.activo AND sc.establecimiento_sifen IS NOT NULL AND sucursal_en_alcance($1::uuid, $2::uuid, sc.id)
       GROUP BY sc.id ORDER BY sc.nombre`,
@@ -324,7 +324,7 @@ export async function prepararNce(db: Db, empresaId: string, usuarioId: string, 
     `SELECT p.codigo, q.ultimo_numero AS ultimo, q.activo AS "tipoActivo", sc.establecimiento_sifen AS establecimiento
        FROM fe_puntos_expedicion p JOIN sucursales sc ON sc.empresa_id = p.empresa_id AND sc.id = p.sucursal_id
        LEFT JOIN fe_punto_secuencias q ON q.empresa_id = p.empresa_id AND q.punto_id = p.id AND q.tipo_documento = 'NCE'
-      WHERE p.empresa_id = $1 AND p.id = $2 AND p.sucursal_id = $3 AND p.activo AND sc.activo AND sc.establecimiento_sifen IS NOT NULL AND sucursal_en_alcance($1::uuid, $4::uuid, sc.id)`,
+      WHERE p.empresa_id = $1 AND p.id = $2 AND p.sucursal_id = $3 AND sc.activo AND sc.establecimiento_sifen IS NOT NULL AND sucursal_en_alcance($1::uuid, $4::uuid, sc.id)`,
     [empresaId, cuerpo.puntoId, cuerpo.sucursalId, usuarioId],
   );
   const pf = punto.rows[0] as F | undefined;
@@ -409,7 +409,7 @@ export async function propuestaCorreccion(db: Db, empresaId: string, usuarioId: 
     const r = await db.query(
       `SELECT n.id, n.sucursal_id AS "sucursalId", n.establecimiento, n.punto_expedicion AS "puntoExpedicion", n.numero, n.serie, n.estado_local AS "estadoLocal", n.estado_sifen AS "estadoSifen", n.envio_error_tipo AS "envioErrorTipo",
               o.fe_id AS "feId", o.motivo, o.observacion,
-              (SELECT p.id FROM fe_puntos_expedicion p WHERE p.empresa_id = n.empresa_id AND p.sucursal_id = n.sucursal_id AND p.codigo = n.punto_expedicion AND p.activo) AS "puntoId"
+              (SELECT p.id FROM fe_puntos_expedicion p WHERE p.empresa_id = n.empresa_id AND p.sucursal_id = n.sucursal_id AND p.codigo = n.punto_expedicion) AS "puntoId"
          FROM documentos_electronicos n JOIN nce_origen o ON o.empresa_id = n.empresa_id AND o.nce_id = n.id
         WHERE n.empresa_id = $1 AND n.id = $2 AND n.tipo = 'NCE' AND sucursal_en_alcance($1::uuid, $3::uuid, n.sucursal_id)`,
       [empresaId, nceId, usuarioId],

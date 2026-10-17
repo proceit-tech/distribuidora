@@ -66,7 +66,7 @@ paso "S2 semilla S-002 (empresa-modelo) y re-ejecución"; psql -X -q -v ON_ERROR
 paso "S3 semilla S-003 (prospecto) sin hash => aborta"; psql -X -q -v codigo_demo=demo-sinhash -f "$AQUI/seeds/S-003-empresa-prospecto.sql" >"$LOG/s3" 2>&1; grep -q "FALTA" "$LOG/s3" && ! psql -X -Atc "select 1 from empresas where codigo='demo-sinhash'" | grep -q 1 && echo "OK" || { echo "FALLA"; FALLAS=$((FALLAS+1)); }
 
 cd "$AQUI/pruebas"
-for t in T01 T02 T03 T04 T05 T06 T07 T09 T10 T12 T13 T14 T15 T16 T18 T19 T21 T25 T26 T27 T30; do
+for t in T01 T02 T03 T04 T05 T06 T07 T09 T10 T12 T13 T14 T15 T16 T18 T19 T21 T25 T26 T27 T30 T32; do
   f=$(ls ${t}-*.sql); paso "$t ${f#${t}-}"; psql -X -q -v ON_ERROR_STOP=1 -f "$f" >"$LOG/$t" 2>&1; rc=$?; fin $rc "$LOG/$t"
 done
 # T06b: conexión REAL como nexit_runtime (no SET ROLE): no es superusuario, no puede elevarse ni crear objetos
@@ -108,6 +108,12 @@ paso "T29 NEX-063 reversión: sintaxis, bloqueos previos y aborto sin pérdida"
 # T31: NEX-064 — carrera real en el alta fiscal única punto + tipo (un solo punto físico, tipos independientes, duplicidad del tipo)
 paso "T31 NEX-064 carrera real: alta única punto + tipo"
 "$AQUI/pruebas/T31-concurrencia-alta-punto-tipo.sh" >"$LOG/T31" 2>&1; fin $? "$LOG/T31"
+# T33: NEX-065 — la migración convierte el estado compartido en estado por tipo sin reactivar nada (base propia NEX-001…064 → 065) y la reversión no reactiva
+paso "T33 NEX-065 migración: estados bloqueados se conservan, snapshot y reversión"
+"$AQUI/pruebas/T33-migracion-estado-por-tipo.sh" >"$LOG/T33" 2>&1; fin $? "$LOG/T33"
+# T34: NEX-065 — carrera real: el cambio de estado de un tipo no bloquea la emisión de otro tipo del mismo punto
+paso "T34 NEX-065 carrera real: estado por tipo independiente"
+"$AQUI/pruebas/T34-concurrencia-estado-tipo.sh" >"$LOG/T34" 2>&1; fin $? "$LOG/T34"
 # I1/V1: instalación de una empresa REAL con los scripts de producción (sin contraseña en argumentos ni logs) y validación de la estructura instalada
 PWADM="Adm-$(head -c 24 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 20)"     # contraseña del administrador de prueba (solo en memoria)
 if python3 -c 'import bcrypt' 2>/dev/null; then GENERADOR="real (python3 bcrypt)"; unset NEX_PRUEBAS_GENERADOR_HASH

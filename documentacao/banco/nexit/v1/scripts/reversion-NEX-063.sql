@@ -16,6 +16,9 @@ BEGIN
   LOCK TABLE public.fe_punto_secuencias IN EXCLUSIVE MODE;
   LOCK TABLE public.documentos_electronicos IN SHARE MODE;
 
+  IF to_regclass('public.fe_estado_previo_nex065') IS NOT NULL THEN
+    RAISE EXCEPTION 'REVERSIÓN ABORTADA: NEX-065 sigue aplicada. Revierta en orden inverso: reversion-NEX-065.sql, reversion-NEX-064.sql y después esta.';
+  END IF;
   IF to_regprocedure('public.fe_punto_alta_tipo(uuid,uuid,uuid,text,text,text,text,integer,boolean,boolean)') IS NOT NULL THEN
     RAISE EXCEPTION 'REVERSIÓN ABORTADA: NEX-064 sigue aplicada y depende de NEX-063. Revierta primero scripts/reversion-NEX-064.sql (orden inverso al de aplicación).';
   END IF;

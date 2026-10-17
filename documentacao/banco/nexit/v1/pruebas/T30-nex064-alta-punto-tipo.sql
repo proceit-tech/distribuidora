@@ -22,7 +22,7 @@ BEGIN
   -- P2: punto NUEVO + primer tipo en una llamada: queda el punto (con su nombre) y UNA configuración; activar deja punto y tipo activos
   SELECT * INTO r FROM fe_punto_alta_tipo(v_a, v_ua, v_sa, '001', 'Caja 1', 'FE', NULL, 0, true, true);
   v_p := r.o_punto;
-  PERFORM pg_temp.ok(r.o_punto_creado AND (SELECT nombre = 'Caja 1' AND activo FROM fe_puntos_expedicion WHERE id = v_p) AND (SELECT count(*) = 1 AND bool_and(tipo_documento = 'FE' AND serie IS NULL AND ultimo_numero = 0 AND activo) FROM fe_punto_secuencias WHERE punto_id = v_p), 'P2: punto nuevo + FE en una sola operación, activos y sin serie (sin etapa intermedia)');
+  PERFORM pg_temp.ok(r.o_punto_creado AND (SELECT nombre = 'Caja 1' FROM fe_puntos_expedicion WHERE id = v_p) AND (SELECT count(*) = 1 AND bool_and(tipo_documento = 'FE' AND serie IS NULL AND ultimo_numero = 0 AND activo) FROM fe_punto_secuencias WHERE punto_id = v_p), 'P2: punto nuevo + FE en una sola operación, con su tipo activo y sin serie (sin etapa intermedia)');
 
   -- P1: 001-001 con FE existente: alta de NCE reutiliza el punto administrativo, conserva el nombre y NO toca la secuencia FE
   UPDATE fe_punto_secuencias SET ultimo_numero = 120 WHERE punto_id = v_p AND tipo_documento = 'FE';
@@ -50,7 +50,7 @@ BEGIN
   -- P2b: nuevo 001-002-NRE: alta transaccional punto + NRE; configurable pero sin función de emisión
   SELECT * INTO r FROM fe_punto_alta_tipo(v_a, v_ua, v_sa, '002', 'Remisiones', 'NRE', NULL, 0, true, false);
   v_p2 := r.o_punto;
-  PERFORM pg_temp.ok(r.o_punto_creado AND (SELECT NOT activo FROM fe_puntos_expedicion WHERE id = v_p2) AND (SELECT NOT activo AND tipo_documento = 'NRE' FROM fe_punto_secuencias WHERE punto_id = v_p2) AND to_regprocedure('public.fe_documento_crear_nre()') IS NULL,
+  PERFORM pg_temp.ok(r.o_punto_creado AND (SELECT NOT activo AND tipo_documento = 'NRE' FROM fe_punto_secuencias WHERE punto_id = v_p2) AND to_regprocedure('public.fe_documento_crear_nre()') IS NULL,
     'P2: 001-002-NRE se crea punto + tipo en una operación, inactivo (activar es opcional) y sin flujo de emisión NRE');
 
   -- Mismo tipo en otra empresa / otro establecimiento: independientes

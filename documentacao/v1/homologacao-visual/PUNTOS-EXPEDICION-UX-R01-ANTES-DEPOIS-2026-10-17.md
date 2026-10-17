@@ -14,3 +14,7 @@
 | Ativação | ponto e tipo em etapas confusas | uma só decisão: «Dejar disponible para emitir ahora» (ativa o tipo e, se necessário, o ponto; aviso do efeito sobre os outros tipos) |
 
 Avaliação visual, defeitos e status: **pendentes** (responsável). Nenhum agente de IA marca esta tela como APROVADA.
+
+## UX-R04-01 — ativação por tipo (NEX-065)
+- **ANTES (reprovado):** cada linha ofereceria «Activar/Desactivar punto» (estado compartilhado) além do tipo; screenshot `image(20261017-160313).png` do responsável, **NÃO versionado no Git** (referência pendente).
+- **DEPOIS (código):** apenas «Activar/Desactivar FE|NCE» por linha; status «Activo · disponible para emitir» / «Inactivo» dependem só do tipo; NRE/NDE/AFE «Configurado · emisión no disponible». Captura nova: **pendente** (não existe imagem no Git); aceite humano: **pendente**. Status: **não aprovado**.
