@@ -24,7 +24,7 @@ type Linea = {
 };
 type Factura = {
   id: string; sucursalId: string; numero: string; cdc: string; fechaEmision: string; moneda: string; cambio: string | null; total: string; receptorNombre: string; receptorDocumento: string | null;
-  lineas: Linea[]; motivoFijado: number | null; bloqueada: boolean; motivosPermitidos: number[]; receptorInnominado?: boolean;
+  lineas: Linea[]; motivoFijado: number | null; bloqueada: boolean; motivosPermitidos: number[];
 };
 type Punto = { id: string; codigo: string; nombre: string; ultimoNumero: number };
 type Sucursal = { id: string; nombre: string; establecimiento: string; puntos: Punto[]; sinSecuencia: number };
@@ -74,7 +74,6 @@ function Formulario() {
   // UI-01: la revisión guarda el cuerpo EXACTO que el servidor validó y resumió; «Emitir» envía ese mismo cuerpo (misma clave de idempotencia), nunca uno reconstruido desde los campos.
   const [revisado, setRevisado] = useState<{ cuerpo: CuerpoRevisado; resumen: Resumen } | null>(null);
   const resumen = revisado?.resumen ?? null;
-  const [bloqueoInnominado, setBloqueoInnominado] = useState(false);
   const [enviando, setEnviando] = useState(false);
 
   const cargarClientes = useCallback(async (q: string, pagina: number) => {
@@ -144,16 +143,6 @@ function Formulario() {
     try {
       const r = await pedir<{ factura: Factura; sucursales: Sucursal[] }>(`/api/notas-credito/facturas/${id}`);
       const f = r.factura;
-
-      // R04-01: el receptor fiscal del snapshot de la FE original es Innominado (iTipIDRec = 5): no se abre ni se rellena el formulario (tampoco desde «Corregir y emitir nueva»).
-      if (f.receptorInnominado === true) {
-        setFactura(null);
-        setError(MENSAJE_INNOMINADO);
-        if (precarga) setBloqueoInnominado(true);
-
-        return;
-      }
-
       const nuevas: Record<number, Entrada> = precarga ? {} : entradasIniciales(f.lineas, f.motivoFijado ?? "");
 
       if (precarga) for (const l of f.lineas) {
@@ -291,12 +280,7 @@ function Formulario() {
       {error ? <div className={estilos.error} role="alert">{error}</div> : null}
       {aviso ? <div className={estilos.aviso} role="status">{aviso}</div> : null}
 
-      {bloqueoInnominado ? (
-        <section className={estilos.card}>
-          <p>La nota de crédito rechazada se conserva en el historial sin cambios.</p>
-          <div className={estilos.acciones}><Link className={ui.secondaryButton} href="/documentos">Volver a Documentos electrónicos</Link></div>
-        </section>
-      ) : !factura ? (
+      {!factura ? (
         <>
           <section className={estilos.card}>
             <h2>1. Cliente</h2>

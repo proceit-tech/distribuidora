@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { contador } from "@/lib/clientes/contador-casos";
 import { UMBRAL_REVISION_HORAS } from "@/lib/facturacion/estados";
 import { leerCuerpoNce } from "@/lib/facturacion/nce";
-import { CAMPOS_RECEPTOR, receptorEsInnominado, type LineaNceEntrada as LineaNceEntradaT, calcularNce, construirPayloadNCE, esMotivoNce, lineasParaSql, saldoDe, validarEntradaNce, type EntradaNce, type LineaOriginal } from "@/lib/facturacion/payload-nce";
+import { CAMPOS_RECEPTOR, type LineaNceEntrada as LineaNceEntradaT, calcularNce, construirPayloadNCE, esMotivoNce, lineasParaSql, saldoDe, validarEntradaNce, type EntradaNce, type LineaOriginal } from "@/lib/facturacion/payload-nce";
 import { CADENCIA_SEGUNDOS, ejecutarLote, segundosHastaProxima } from "@/lib/facturacion/consulta-automatica";
 import { textoDec } from "@/lib/facturacion/calculo";
 import { iniciarRefresco, retardoRefresco } from "@/lib/facturacion/refresco-documentos";
@@ -125,7 +125,7 @@ export async function verificarCasosNce(): Promise<string[]> {
   const rutas = ["app/api/notas-credito/route.ts", "app/api/notas-credito/previa/route.ts", "app/api/notas-credito/clientes/route.ts", "app/api/notas-credito/facturas/route.ts", "app/api/notas-credito/facturas/[id]/route.ts", "app/api/notas-credito/correccion/[id]/route.ts"];
 
   cierto("todas las rutas NCE exigen FACTURACION_ELECTRONICA.CREAR y toman empresa/usuario de la sesión", rutas.every((r) => /prepararFacturacion\("CREAR"\)/.test(leer(r)) && /b\.empresaId/.test(leer(r)) && !/searchParams\.get\("empresa/.test(leer(r))));
-  cierto("el detalle de factura nunca devuelve el receptor completo (se descarta; solo un indicador booleano de Innominado)", /const \{ receptor, \.\.\.visible \} = fe;/.test(leer("app/api/notas-credito/facturas/[id]/route.ts")) && /factura: \{ \.\.\.visible, receptorInnominado \}/.test(leer("app/api/notas-credito/facturas/[id]/route.ts")) && !/receptor,|receptor:/.test(leer("app/api/notas-credito/facturas/[id]/route.ts").slice(leer("app/api/notas-credito/facturas/[id]/route.ts").indexOf("return NextResponse.json"))));
+  cierto("el detalle de factura nunca devuelve el receptor completo (se descarta)", /receptor: _receptor/.test(leer("app/api/notas-credito/facturas/[id]/route.ts")));
   cierto("la configuración de secuencia NCE exige PUNTOS", /prepararFacturacion\("PUNTOS"\)/.test(leer("app/api/facturacion/puntos/[id]/secuencia-nce/route.ts")));
   cierto("layout de /notas-credito protegido con CREAR", /guardPage\("FACTURACION_ELECTRONICA", "CREAR"\)/.test(leer("app/(private)/notas-credito/layout.tsx")));
   const menu = leer("lib/navigation/menu.ts");
@@ -552,7 +552,7 @@ export async function verificarCasosNce(): Promise<string[]> {
 
   cierto("MT-01: el indicador sale de tipo_documento_identidad_sifen = 5 (nunca del nombre) y la búsqueda sigue acotada por empresa y alcance", /\(c\.tipo_documento_identidad_sifen = 5\) AS innominado/.test(consultaClientes) && !/razon_social\s*(ILIKE|=|~)[^$]*innominado/i.test(consultaClientes) && /c\.empresa_id = \$1/.test(consultaClientes) && /sucursal_en_alcance/.test(consultaClientes));
   cierto("MT-01: la pantalla muestra al Innominado con «Seleccionar» deshabilitado, mensaje en español y sin llamar a las facturas; los demás clientes no cambian", /disabled=\{c\.innominado\}/.test(pagNce) && /if \(c\.innominado\) return;/.test(pagNce) && /no puede recibir una nota de crédito electrónica/.test(pagNce) && /innominado: boolean/.test(pagNce) && /onClick=\{\(\) => \{ if \(c\.innominado\) return; setCliente\(c\); void cargarFacturas\(c\.id, "", 1, true\); \}\}/.test(pagNce));
-  cierto("MT-01: sin validación nueva de Innominado en el servicio de emisión, el JSON ni NEX-062 (decisión de alcance del responsable)", !/innominado|tipo_documento_identidad/i.test(leer("lib/facturacion/nce-emision.ts")) && (leer("lib/facturacion/payload-nce.ts").match(/receptorEsInnominado/g) ?? []).length === 1 /* solo la definición del indicador para la interfaz; el JSON y la validación no lo usan */ && !/innominado|tipo_documento_identidad/i.test(sql));
+  cierto("MT-01: sin validación nueva de Innominado en el servicio de emisión, el JSON ni NEX-062 (decisión de alcance del responsable)", !/innominado|tipo_documento_identidad/i.test(leer("lib/facturacion/nce-emision.ts")) && !/innominado|tipo_documento_identidad/i.test(leer("lib/facturacion/payload-nce.ts")) && !/innominado|tipo_documento_identidad/i.test(sql));
 
   // UI-01
   const emitirFn = pagNce.slice(pagNce.indexOf("async function emitir()"), pagNce.indexOf("function volverAFacturas"));
@@ -567,17 +567,6 @@ export async function verificarCasosNce(): Promise<string[]> {
     const rev = JSON.stringify({ facturaId: uuid, motivo: 3, lineas: [{ linea: 1, monto: "100" }], claveIdempotencia: "k1" });
 
     igual("UI-01: cuerpo idéntico → emite; observación, línea, monto o motivo cambiados → exige nueva revisión", [rev === JSON.stringify({ facturaId: uuid, motivo: 3, lineas: [{ linea: 1, monto: "100" }], claveIdempotencia: "k1" }), rev === JSON.stringify({ facturaId: uuid, motivo: 3, lineas: [{ linea: 1, monto: "101" }], claveIdempotencia: "k1" }), rev === JSON.stringify({ facturaId: uuid, motivo: 4, lineas: [{ linea: 1, monto: "100" }], claveIdempotencia: "k1" })], [true, false, false]);
-  }
-  // ── 18. R04-01: «Corregir y emitir nueva» no abre el formulario para un receptor Innominado ───────────────
-  igual("R04-01: el indicador sale de iTipIDRec = 5 (número o texto); identificados, vacíos o con nombre «Innominado» pero otro tipo → no", [receptorEsInnominado({ iTipIDRec: 5 }), receptorEsInnominado({ iTipIDRec: "5" }), receptorEsInnominado({ iTipIDRec: 1, dNomRec: "Innominado" }), receptorEsInnominado({ iTipIDRec: null }), receptorEsInnominado({}), receptorEsInnominado(null), receptorEsInnominado(undefined)], [true, true, false, false, false, false, false]);
-  {
-    const rutaDetalle = leer("app/api/notas-credito/facturas/[id]/route.ts");
-    const abrir = pagNce.slice(pagNce.indexOf("const abrirFactura = useCallback"), pagNce.indexOf("useEffect(() => {\n    if (corregir) return;"));
-
-    cierto("R04-01: el detalle expone solo el booleano (calculado por el tipo estructurado), tras la misma sesión, permiso CREAR y alcance de siempre", /receptorEsInnominado\(receptor\)/.test(rutaDetalle) && /prepararFacturacion\("CREAR"\)/.test(rutaDetalle) && /leerFacturaOriginal\(b\.db, b\.empresaId, b\.usuarioId, id\)/.test(rutaDetalle));
-    cierto("R04-01: al cargar la factura (también desde «Corregir y emitir nueva») un receptor Innominado no abre ni rellena el formulario, muestra el mensaje y conserva el historial", /if \(f\.receptorInnominado === true\) \{[\s\S]*setFactura\(null\);[\s\S]*setError\(MENSAJE_INNOMINADO\);[\s\S]*if \(precarga\) setBloqueoInnominado\(true\);[\s\S]*return;/.test(abrir) && abrir.indexOf("receptorInnominado") < abrir.indexOf("setEntradas(") && abrir.indexOf("receptorInnominado") < abrir.indexOf("setSucursalId(") && /bloqueoInnominado \? \(/.test(pagNce) && /se conserva en el historial sin cambios/.test(pagNce) && /href="\/documentos"/.test(pagNce));
-    cierto("R04-01: para receptores identificados la corrección se precarga como antes y la búsqueda/selección de clientes (MT-01) y la revisión/emisión (UI-01) no cambian", /if \(precarga\) for \(const l of f\.lineas\)/.test(abrir) && /setMotivo\(precarga \? precarga\.motivo : f\.motivoFijado \?\? ""\)/.test(abrir) && /disabled=\{c\.innominado\}/.test(pagNce) && /const c = revisado\?\.cuerpo;/.test(pagNce));
-    cierto("R04-01: sin validación nueva de Innominado en la API POST, el servicio de emisión, el JSON ni el SQL (solo interfaz)", !/innominado|iTipIDRec/i.test(leer("app/api/notas-credito/route.ts")) && !/innominado|iTipIDRec/i.test(leer("lib/facturacion/nce-emision.ts")) && !/receptorEsInnominado|innominado/i.test(sql) && !/receptorEsInnominado/.test(leer("lib/facturacion/nce.ts")));
   }
   // ── 19. MT-01 — alcance de los tests: búsqueda y selección de clientes en la tela de emisión ─────────────
   {
