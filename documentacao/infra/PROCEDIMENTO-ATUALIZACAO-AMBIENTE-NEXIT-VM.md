@@ -54,7 +54,7 @@ Migration incremental **NEX-063** (`migraciones/NEX-063-facturacion-puntos-tipos
 3. **Verificación posterior (solo lectura):** `... psql ... < documentacao/banco/nexit/v1/scripts/verificar-NEX-063.sql`; todas las filas deben dar `ok = true`.
 4. **Deploy** de la aplicación (build + recreate de `app`, ver abajo). Las secuencias existentes (FE/NCE) quedan **activas y sin serie**; nada se renumera.
 5. Primera numeración de una identidad nueva: **sin serie**; solo tras 9999999 el sistema pasa a la serie AA, AB… ZZ. NRE/NDE/AFE se pueden configurar pero su emisión sigue bloqueada.
-**Recuperación:** `scripts/reversion-NEX-063.sql` (aborta si ya existen series, documentos con serie o tipos desactivados), después borrar la fila `NEX-063` de `schema_migrations` y volver al código anterior. Las pruebas T27/T28 corren SOLO sobre una base descartable, nunca sobre `nexit`.
+**Recuperación:** `scripts/reversion-NEX-063.sql` (aborta si ya existen series, documentos con serie o tipos desactivados). Se ejecuta SIEMPRE en UNA sola transacción y deteniéndose ante cualquier error: `docker exec -i nexit-db psql -U nexit_app -d nexit -v ON_ERROR_STOP=1 -1 < documentacao/banco/nexit/v1/scripts/reversion-NEX-063.sql` (con `-1` los bloqueos que toma al inicio abarcan todo el script; sin `-1` falla sin cambiar nada porque `LOCK TABLE` exige una transacción; sin `ON_ERROR_STOP=1` NO ejecutarla). Después borrar la fila `NEX-063` de `schema_migrations` y volver al código anterior. Las pruebas T27/T28 corren SOLO sobre una base descartable, nunca sobre `nexit`.
 
 ## ETAPA 2 — Migraciones automáticas (SOMENTE se a atualização inclui migrations e há autorização)
 
