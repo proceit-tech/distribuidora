@@ -18,14 +18,14 @@
 
 ## Resumo executivo
 
-**NCE V1 NÃO APROVADA PARA HOMOLOGAÇÃO/IMPLANTAÇÃO.** Esta revisão encontrou **1 lacuna fiscal ALTA demonstrada no código** e **1 falha de garantia de confirmação da UI (MÉDIA)**, além de **2 campos XML mandatórios sem comprovação da transformação pelo gateway**. As correções anteriores INT-01/02/03 permanecem visíveis no código, mas **não substituem essa revisão normativa**.
+**NCE V1 NÃO APROVADA PARA HOMOLOGAÇÃO/IMPLANTAÇÃO.** Esta revisão encontrou **1 lacuna fiscal ALTA demonstrada no código** e **1 falha de garantia de confirmação da UI (MÉDIA)**. **RETIFICAÇÃO DO CONTRATO (17/10/2026): os antigos apontamentos XML-01/XML-02 foram retirados do rol de bloqueios.** O JSON original de NCE motivo 2, fornecido pelo responsável e aprovado por SIFEN via **o mesmo gateway**, envia somente os **códigos** `iMotEmi=2` e `DocumentosAsociados[0].iTipDocAso=1` junto a `dCdCDERef`: **não contém** `dDesMotEmi` ou `dDesTipDocAso`. **Essas descrições NÃO são exigências do contrato de entrada JSON do gateway e NÃO devem ser incluídas no payload por dedução do Manual SIFEN.** Os grupos/campos normativos referem-se ao XML final produzido pelo provedor. As correções INT-01/02/03 permanecem visíveis no código, mas não substituem validação operacional futura.
 
 | ID | Severidade | Estado | Resultado |
 |---|---|---|---|
 | **MT-01** | **ALTA** | Falha comprovada de pré-validação fiscal | NCE herda `iTipIDRec=5` de uma FE Innominado válida, embora NCE proíba essa identidade (NT023 D208e) |
 | **UI-01** | **MÉDIA** | Garantia ausente no código; requer cenário de UI real para demonstrar acionamento | O corpo usado em **Emitir** é recalculado e pode diferir do corpo revisado sem confirmação renovada |
-| **XML-01** | **BLOQUEIO DE PROVA**, não bug comprovado | Contrato gateway não verificado | Campo **E402 dDesMotEmi** obrigatório no XML NCE; JSON NEXIT só fornece iMotEmi |
-| **XML-02** | **BLOQUEIO DE PROVA**, não bug comprovado | Contrato gateway não verificado | Campo **H003 dDesTipDocAso** obrigatório no XML do documento associado; JSON NEXIT fornece iTipDocAso + dCdCDERef sem descrição |
+| **XML-01 — RETIFICADO** | **NÃO É FALHA NEM BLOQUEIO DO JSON** | JSON real aprovado confirmado | `dDesMotEmi` **não se envia** no contrato JSON; usar somente `iMotEmi` |
+| **XML-02 — RETIFICADO** | **NÃO É FALHA NEM BLOQUEIO DO JSON** | JSON real aprovado confirmado | `dDesTipDocAso` **não se envia**; usar `iTipDocAso` e `dCdCDERef` |
 | **EXT-01** | Dependência | Sem execução real | Motivos 3/4/8, USD/BRL, XML/XSD/KuDE/resultado SIFEN real não demonstrados |
 | **DB-01** | Dependência | Sem execução real | NEX-062, T26 e funções SQL somente versionados; banco real não verificado |
 
@@ -48,13 +48,13 @@
 
 **Correção esperada após autorização:** guardar corpo canônico da prévia para enviar **exatamente ele** após o aceite, invalidar/fechar prévia em qualquer mudança ou exigir nova revisão se o corpo divergente, impedir que campos do fundo recebam foco/interação quando modal aberto; manter idempotência, segurança servidor e prioridade dos erros. Casos pontuais: prévia A→mudar valor B→não permitir emitir B sem nova prévia; confirmar A emite A; erro do servidor não duplica número; fechamento/retorno a editar funciona. Validação visual/navegador ficará humana.
 
-### XML-01/XML-02 — Campos mandatórios do XML NCE não visíveis no JSON de entrada
+### XML-01/XML-02 — RETIFICAÇÃO: distinção entre contrato JSON aprovado e XML interno SIFEN
 
-**Constatação:** o builder de [`lib/facturacion/payload-nce.ts:243`](https://github.com/proceit-tech/distribuidora/blob/feature/NEXIT-2026-001-banco-demo/lib/facturacion/payload-nce.ts#L243)–294 serializa `iTiDE=5`, `iMotEmi`, `DocumentosAsociados:[{iTipDocAso:1,dCdCDERef}]`, `Detalles`, `Subtotales`, receptor original e `dInfAdic` opcional. Não inclui `dDesMotEmi` nem `dDesTipDocAso`. O Manual v150 exige os campos **E402 e H003** no XML final, com descrições que correspondem aos códigos.
+**Contrato comprovado pelo usuário:** o arquivo original enviado em 16/10/2026 (`Texto colado(20261016-140959).txt`, NCE tipo 5 / motivo 2, 20 linhas) apresenta `iMotEmi:2` e `DocumentosAsociados[0]` com `iTipDocAso:1` e `dCdCDERef`, **sem** as propriedades `dDesMotEmi` nem `dDesTipDocAso`, e foi informado pelo responsável como aprovado através do mesmo gateway do NEXIT. O construtor [`lib/facturacion/payload-nce.ts:243`](https://github.com/proceit-tech/distribuidora/blob/feature/NEXIT-2026-001-banco-demo/lib/facturacion/payload-nce.ts#L243)–294 reproduz essa convenção básica. **Não adicionar descrições ao JSON, nem classificá-las como falhas, dependências de desenvolvimento ou impedimentos de homologação do contrato JSON.** O Manual v150 normatiza o XML final de SIFEN, cuja transformação pertence ao gateway; não exige que as mesmas propriedades sejam transmitidas pelo NEXIT no JSON.
 
-**Limite da conclusão:** isto NÃO prova que o JSON está errado **para o gateway proprietário**. O gateway pode gerar automaticamente `gCamNCDE.E402` e `gCamDEAsoc.H003` ao construir o XML. A especificação arquivada confirma que houve um JSON NCE motivo 2 aprovado mas o XML **efetivamente gerado por aquela amostra** não foi apresentado nem verificado nesta sessão. Não adicionar chaves planas ou grupos XML na API por suposição.
+**Limite da conclusão:** a aprovação informada da NCE motivo 2 comprova a convenção de integração básica com o gateway, mas não substitui homologação dos demais motivos 3/4/8 e moedas USD/BRL. A ausência dessas propriedades descritivas no JSON é **correta segundo o exemplo aprovado**, não um ponto a corrigir. Não acrescentar chaves planas nem grupos XML por suposição.
 
-**Prova indispensável:** obter, por procedimento humano autorizado, **exemplo sanitizado do XML assinado gerado pelo mesmo gateway** a partir do JSON da NCE, verificar E400/E401/E402 e H001/H002/H003/H004 em seu lugar certo e com textos coerentes, comparar com XSD/NT relevantes, conferir CDC próprio e da FE original, impostos/cálculos para quatro motivos e moedas. Se o gateway NÃO produz E402/H003, então será necessário adaptar exatamente o contrato do fornecedor (mediante documentação oficial dele), nunca inventar endpoint ou nome de propriedade. Guardar evidência de aceitação/rejeição SIFEN em homologação humana.
+**Homologação futura (não bloqueio por descrições):** na operação humana, comprovar as NCE reais dos motivos 3/4/8 e moedas admitidas, resposta SIFEN, impostos, CDC próprio e da FE, mantendo o JSON conforme o exemplo já aprovado e o contrato do gateway. A inspeção de XML/XSD pode ser útil para rastreabilidade fiscal, **não é justificativa para inserir `dDesMotEmi` ou `dDesTipDocAso` no JSON nem para criar trabalho novo ao Claude**.
 
 ## Quadro de auditoria cruzada por camada
 
@@ -82,6 +82,6 @@
 
 **Bloqueio:** não aplicar `NEX-062`, não declarar NCE 100% concluída, não habilitar emissão fiscal real neste parecer.
 
-**Recomendação técnica (não é autorização):** corrigir **MT-01** e **UI-01** em um único ciclo Claude após autorização do responsável; ChatGPT audita o SHA; após isso, homologar **XML-01/XML-02** e motivos/multimoeda pelo provedor real, com plano humano seguro de migration, backup e operações. **Não executar T26 em PostgreSQL operacional**, pois gera fixtures artificiais e existe uma única base operacional. Sem nova suíte global automática nem novos subprojetos.
+**Recomendação técnica (não é autorização):** corrigir **MT-01** e **UI-01** em um único ciclo Claude após autorização do responsável; ChatGPT audita o SHA. **XML-01/XML-02 deixam de existir como itens de correção ou bloqueio do JSON**. Em etapa humana posterior, homologar os motivos 3/4/8 e moedas conforme o contrato de entrada já aprovado, com plano seguro de migration, backup e operações. **Não executar T26 em PostgreSQL operacional**, pois gera fixtures artificiais e existe uma única base operacional. Sem nova suíte global automática nem novos subprojetos.
 
-**Resultado:** `AUD-PRO94-NCE-MT150-JSON-DB-UI-R03 = CORRECOES_NECESSARIAS + CONTRATO_GATEWAY_NAO_COMPROVADO`; `PRO-94 = In Progress`; `NEX-062 = NÃO APLICADA`; `NCE = NÃO HOMOLOGADA`.
+**Resultado retificado:** `AUD-PRO94-NCE-MT150-JSON-DB-UI-R03 = MT-01_UI-01_PENDENTES; XML-01_XML-02_RETIRADOS`; contrato JSON de descrições **comprovado pelo exemplo aprovado**; os motivos 3/4/8 e USD/BRL ainda dependem de homologação; `PRO-94 = In Progress`; `NEX-062 = NÃO APLICADA`; `NCE = NÃO HOMOLOGADA`.
