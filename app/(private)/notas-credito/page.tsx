@@ -6,7 +6,8 @@ import { Fragment, Suspense, useCallback, useEffect, useMemo, useRef, useState }
 import { useSearchParams } from "next/navigation";
 
 import ui from "@/components/ui/lista-padrao/lista.module.css";
-import { crearControlListado, entradasIniciales, etiquetaIvaLinea } from "@/lib/facturacion/nce-entradas";
+import { crearBusquedaClientes, crearBusquedaFacturas, type EstadoClientes } from "@/lib/facturacion/nce-busqueda";
+import { entradasIniciales, etiquetaIvaLinea } from "@/lib/facturacion/nce-entradas";
 import { iniciarRefresco } from "@/lib/facturacion/refresco-documentos";
 import { formatearDecimalTexto } from "@/lib/formato/decimal-texto";
 import { formatearFechaPy } from "@/lib/formato/listas";
@@ -54,9 +55,7 @@ function Formulario() {
   const corregir = parametros.get("corregir");
   const nonce = useRef(aleatorio());
 
-  const [textoCliente, setTextoCliente] = useState("");
-  const [clientes, setClientes] = useState<ClienteB[]>([]);
-  const [pagCli, setPagCli] = useState({ pagina: 1, totalPaginas: 1 });
+  const [estCli, setEstCli] = useState<EstadoClientes<ClienteB>>({ texto: "", consulta: null, items: [], pagina: 1, totalPaginas: 1, abierto: false, buscando: false });
   const [cliente, setCliente] = useState<ClienteB | null>(null);
   const [facturas, setFacturas] = useState<FacturaE[]>([]);
   const [pagFac, setPagFac] = useState({ pagina: 1, totalPaginas: 1 });
@@ -75,51 +74,28 @@ function Formulario() {
   const [revisado, setRevisado] = useState<{ cuerpo: CuerpoRevisado; resumen: Resumen } | null>(null);
   const resumen = revisado?.resumen ?? null;
   const [enviando, setEnviando] = useState(false);
-  const [buscandoCli, setBuscandoCli] = useState(false);
   const [abiertas, setAbiertas] = useState<Set<number>>(new Set());
-  const seqCli = useRef(0);
-  const temporizadorFac = useRef<number | null>(null);
 
-  const cargarClientes = useCallback(async (q: string, pagina: number) => {
-    // Guarda contra respuestas obsoletas: solo la última búsqueda actualiza la lista.
-    const n = ++seqCli.current;
-
-    setBuscandoCli(true);
-    try {
-      const r = await pedir<{ clientes: ClienteB[]; pagina: number; totalPaginas: number }>(`/api/notas-credito/clientes?q=${encodeURIComponent(q)}&pagina=${pagina}&porPagina=10`);
-
-      if (n !== seqCli.current) return;
-
-      setClientes(r.clientes);
-      setPagCli({ pagina: r.pagina, totalPaginas: r.totalPaginas });
-      setError(null);
-    } catch (e) {
-      if (n === seqCli.current) setError((e as Error).message);
-    } finally {
-      if (n === seqCli.current) setBuscandoCli(false);
-    }
-  }, []);
-
-  const control = useRef(crearControlListado({ clienteId: "", q: "", pagina: 1 }));
-
-  const cargarFacturas = useCallback(async (clienteId: string, q: string, pagina: number, actualizar: boolean) => {
-    const token = control.current.aplicar({ clienteId, q, pagina });
-
-    setCargando(true);
-    try {
-      const r = await pedir<{ facturas: FacturaE[]; pagina: number; totalPaginas: number }>(`/api/notas-credito/facturas?clienteId=${clienteId}&q=${encodeURIComponent(q)}&pagina=${pagina}&porPagina=10${actualizar ? "&actualizar=1" : ""}`);
-
-      if (!control.current.vigente(token)) return;
-
-      setFacturas(r.facturas);
-      setPagFac({ pagina: r.pagina, totalPaginas: r.totalPaginas });
-      setError(null);
-    } catch (e) {
-      if (control.current.vigente(token)) setError((e as Error).message);
-    } finally {
-      if (control.current.vigente(token)) setCargando(false);
-    }
-  }, []);
+  // R01-01/02/03: los controladores puros invalidan peticiones, resultados y temporizadores al instante (ver lib/facturacion/nce-busqueda.ts).
+  const [busCli] = useState(() => crearBusquedaClientes<ClienteB>({
+    buscar: (q, pagina) => pedir(`/api/notas-credito/clientes?q=${encodeURIComponent(q)}&pagina=${pagina}&porPagina=10`),
+    programar: (fn, ms) => window.setTimeout(fn, ms),
+    cancelar: (t) => window.clearTimeout(t as number),
+    alCambiar: setEstCli,
+    alError: setError,
+  }));
+  const [busFac] = useState(() => crearBusquedaFacturas<FacturaE>({
+    pedir: (clienteId, q, pagina, actualizar) => pedir(`/api/notas-credito/facturas?clienteId=${clienteId}&q=${encodeURIComponent(q)}&pagina=${pagina}&porPagina=10${actualizar ? "&actualizar=1" : ""}`),
+    programar: (fn, ms) => window.setTimeout(fn, ms),
+    cancelar: (t) => window.clearTimeout(t as number),
+    alLimpiar: () => { setFacturas([]); setPagFac({ pagina: 1, totalPaginas: 1 }); },
+    alResultado: (x) => { setFacturas(x.facturas); setPagFac({ pagina: x.pagina, totalPaginas: x.totalPaginas }); },
+    alCargando: setCargando,
+    alError: setError,
+  }));
+  const control = busFac.control;
+  const textoCliente = estCli.texto;
+  const textoCortoCli = textoCliente.trim().length < 2;
 
   // GAP-03: mientras la lista muestra alguna factura con «NCE pendiente» se relee en silencio (solo GET; el worker del servidor consulta). Mismo control que Documentos: frecuencia decreciente, aba visible.
   const hayNcePendiente = !factura && cliente !== null && facturas.some((f) => f.ncePendiente);
@@ -132,13 +108,13 @@ function Formulario() {
     const detener = iniciarRefresco({
       leer: () => {
         // Filtro APLICADO en este momento (no el capturado al crear el ciclo) y token para descartar respuestas de una búsqueda anterior (R05-02).
-        const { filtro, token } = control.current.leer();
+        const { filtro, token } = control.leer();
 
         if (filtro.clienteId !== clienteId) return;
 
         fetch(`/api/notas-credito/facturas?clienteId=${filtro.clienteId}&q=${encodeURIComponent(filtro.q)}&pagina=${filtro.pagina}&porPagina=10`, { cache: "no-store" })
           .then((r) => (r.ok ? r.json() : null))
-          .then((j: { facturas: FacturaE[]; pagina: number; totalPaginas: number } | null) => { if (activo && j && control.current.vigente(token)) { setFacturas(j.facturas); setPagFac({ pagina: j.pagina, totalPaginas: j.totalPaginas }); } })
+          .then((j: { facturas: FacturaE[]; pagina: number; totalPaginas: number } | null) => { if (activo && j && control.vigente(token)) { setFacturas(j.facturas); setPagFac({ pagina: j.pagina, totalPaginas: j.totalPaginas }); } })
           .catch(() => undefined);
       },
       visible: () => document.visibilityState === "visible",
@@ -148,9 +124,10 @@ function Formulario() {
     });
 
     return () => { activo = false; detener(); };
-  }, [hayNcePendiente, clienteId]);
+  }, [hayNcePendiente, clienteId, control]);
 
   const abrirFactura = useCallback(async (id: string, precarga?: { motivo: number; sucursalId: string; puntoId: string | null; observacion: string; lineas: Array<{ linea: number; cantidad: string; monto: string }> }) => {
+    busFac.detener();
     setCargando(true);
     try {
       const r = await pedir<{ factura: Factura; sucursales: Sucursal[] }>(`/api/notas-credito/facturas/${id}`);
@@ -176,28 +153,10 @@ function Formulario() {
     } finally {
       setCargando(false);
     }
-  }, []);
+  }, [busFac]);
 
-  // Búsqueda de cliente: solo con 2+ caracteres, con espera corta (300 ms); con el campo vacío NO se muestra ningún cliente.
-  useEffect(() => {
-    if (corregir || cliente) return;
-
-    const q = textoCliente.trim();
-
-    if (q.length < 2) {
-      seqCli.current += 1;
-
-      const t = window.setTimeout(() => { setClientes([]); setPagCli({ pagina: 1, totalPaginas: 1 }); setBuscandoCli(false); }, 0);
-
-      return () => window.clearTimeout(t);
-    }
-
-    const t = window.setTimeout(() => { void cargarClientes(q, 1); }, 300);
-
-    return () => window.clearTimeout(t);
-  }, [textoCliente, cliente, corregir, cargarClientes]);
-
-  useEffect(() => () => { if (temporizadorFac.current !== null) window.clearTimeout(temporizadorFac.current); }, []);
+  // Al desmontar se cancelan los temporizadores y se invalidan las peticiones pendientes.
+  useEffect(() => () => { busCli.reiniciar(); busFac.cancelar(); }, [busCli, busFac]);
 
   useEffect(() => {
     if (!corregir) return;
@@ -279,6 +238,7 @@ function Formulario() {
   }
 
   function volverAFacturas() {
+    busFac.cambiarCliente(cliente?.id ?? null);
     setFactura(null);
     setRevisado(null);
     setAviso(null);
@@ -303,10 +263,10 @@ function Formulario() {
   const elegirCliente = (c: ClienteB) => {
     if (c.innominado) return;
 
+    busCli.reiniciar();
     setCliente(c);
-    setTextoCliente("");
-    setClientes([]);
-    void cargarFacturas(c.id, "", 1, true);
+    setTextoFactura("");
+    busFac.cambiarCliente(c.id);
   };
 
   return (
@@ -335,7 +295,7 @@ function Formulario() {
           {cliente ? (
             <div className={estilos.banda}>
               <span>Cliente: <strong>{cliente.razonSocial}</strong> · {cliente.documento}</span>
-              <button type="button" className={ui.secondaryButton} onClick={() => { control.current.aplicar({ clienteId: "", q: "", pagina: 1 }); setCliente(null); setFacturas([]); setTextoFactura(""); }}>Cambiar</button>
+              <button type="button" className={ui.secondaryButton} onClick={() => { busFac.cambiarCliente(null); setCliente(null); setTextoFactura(""); }}>Cambiar</button>
             </div>
           ) : (
             <section className={estilos.card} aria-label="Cliente">
@@ -343,30 +303,32 @@ function Formulario() {
                 <label htmlFor="nce-cliente">Cliente</label>
                 <div className={estilos.entradaBusca}>
                   {lupa}
-                  <input id="nce-cliente" type="search" role="combobox" aria-expanded={clientes.length > 0} aria-controls="nce-clientes" aria-autocomplete="list" autoComplete="off" autoFocus maxLength={80}
-                    placeholder="Buscar por nombre, código o RUC" value={textoCliente} onChange={(e) => setTextoCliente(e.target.value)}
+                  <input id="nce-cliente" type="search" role="combobox" aria-expanded={estCli.abierto} aria-controls={estCli.abierto ? "nce-clientes" : undefined} aria-autocomplete="list" aria-haspopup="listbox" autoComplete="off" autoFocus maxLength={80}
+                    placeholder="Buscar por nombre, código o RUC" value={textoCliente} onChange={(e) => busCli.escribir(e.target.value)}
                     onKeyDown={(e) => {
-                      if (e.key === "Escape") { setClientes([]); }
-                      if (e.key === "Enter") { e.preventDefault(); const primero = clientes.find((c) => !c.innominado); if (primero) elegirCliente(primero); }
+                      if (e.key === "Escape") { busCli.cerrar(); }
+                      if (e.key === "ArrowDown" && !estCli.abierto) { e.preventDefault(); busCli.reabrir(); }
+                      if (e.key === "Enter") { e.preventDefault(); const primero = busCli.primeroElegible(); if (primero) elegirCliente(primero); }
                     }} />
                 </div>
-                {textoCliente.trim().length < 2 ? <p className={estilos.vacio}>Escriba al menos 2 caracteres para buscar un cliente con facturas aprobadas.</p> : null}
-                {textoCliente.trim().length >= 2 ? (
+                {textoCortoCli ? <p className={estilos.vacio}>Escriba al menos 2 caracteres para buscar un cliente con facturas aprobadas.</p> : null}
+                {!textoCortoCli && !estCli.abierto ? <p className={estilos.vacio}>Resultados cerrados. Presione la flecha abajo o modifique el texto para buscar de nuevo.</p> : null}
+                {!textoCortoCli && estCli.abierto ? (
                   <ul className={estilos.resultados} id="nce-clientes" aria-live="polite">
-                    {clientes.map((c) => (
+                    {estCli.items.map((c) => (
                       <li key={c.id}>
                         <span>{c.razonSocial}{c.innominado ? <span className={estilos.chip}>Innominado</span> : null}<small>{c.codigo} · {c.documento}{c.innominado ? ` · ${MENSAJE_INNOMINADO}` : ""}</small></span>
                         <button type="button" className={ui.secondaryButton} disabled={c.innominado} title={c.innominado ? MENSAJE_INNOMINADO : undefined} onClick={() => elegirCliente(c)}>Seleccionar</button>
                       </li>
                     ))}
-                    {clientes.length === 0 ? <li><small>{buscandoCli ? "Buscando…" : "No hay clientes con facturas aprobadas para esta búsqueda."}</small></li> : null}
+                    {estCli.items.length === 0 ? <li><small>{estCli.buscando || estCli.consulta === null ? "Buscando…" : "No hay clientes con facturas aprobadas para esta búsqueda."}</small></li> : null}
                   </ul>
                 ) : null}
-                {pagCli.totalPaginas > 1 && textoCliente.trim().length >= 2 ? (
+                {estCli.totalPaginas > 1 && estCli.abierto && estCli.consulta !== null ? (
                   <div className={estilos.acciones}>
-                    <button type="button" className={ui.secondaryButton} disabled={pagCli.pagina <= 1} onClick={() => void cargarClientes(textoCliente.trim(), pagCli.pagina - 1)}>Anterior</button>
-                    <span className={estilos.hint}>Página {pagCli.pagina} de {pagCli.totalPaginas}</span>
-                    <button type="button" className={ui.secondaryButton} disabled={pagCli.pagina >= pagCli.totalPaginas} onClick={() => void cargarClientes(textoCliente.trim(), pagCli.pagina + 1)}>Siguiente</button>
+                    <button type="button" className={ui.secondaryButton} disabled={estCli.pagina <= 1} onClick={() => busCli.pagina(estCli.pagina - 1)}>Anterior</button>
+                    <span className={estilos.hint}>Página {estCli.pagina} de {estCli.totalPaginas}</span>
+                    <button type="button" className={ui.secondaryButton} disabled={estCli.pagina >= estCli.totalPaginas} onClick={() => busCli.pagina(estCli.pagina + 1)}>Siguiente</button>
                   </div>
                 ) : null}
               </div>
@@ -380,14 +342,7 @@ function Formulario() {
                 <div className={estilos.entradaBusca}>
                   {lupa}
                   <input type="search" aria-label="Buscar factura por número, fecha o CDC" placeholder="Número, fecha (dd/mm/aaaa) o CDC" maxLength={80} inputMode="search" autoComplete="off" value={textoFactura}
-                    onChange={(e) => {
-                      const v = e.target.value;
-
-                      setTextoFactura(v);
-                      if (temporizadorFac.current !== null) window.clearTimeout(temporizadorFac.current);
-
-                      temporizadorFac.current = window.setTimeout(() => { void cargarFacturas(cliente.id, v, 1, false); }, 300);
-                    }} />
+                    onChange={(e) => { setTextoFactura(e.target.value); busFac.filtrar(e.target.value); }} />
                 </div>
               </div>
               <div className={estilos.tabla}>
@@ -412,9 +367,9 @@ function Formulario() {
               {facturas.length === 0 ? <p className={estilos.vacio}>{cargando ? "Cargando facturas…" : textoFactura.trim() === "" ? "Este cliente no tiene facturas aprobadas con saldo por acreditar." : "Ninguna factura coincide con la búsqueda."}</p> : null}
               {pagFac.totalPaginas > 1 ? (
                 <div className={estilos.acciones}>
-                  <button type="button" className={ui.secondaryButton} disabled={pagFac.pagina <= 1} onClick={() => void cargarFacturas(cliente.id, textoFactura, pagFac.pagina - 1, false)}>Anterior</button>
+                  <button type="button" className={ui.secondaryButton} disabled={pagFac.pagina <= 1} onClick={() => busFac.pagina(textoFactura, pagFac.pagina - 1)}>Anterior</button>
                   <span className={estilos.hint}>Página {pagFac.pagina} de {pagFac.totalPaginas}</span>
-                  <button type="button" className={ui.secondaryButton} disabled={pagFac.pagina >= pagFac.totalPaginas} onClick={() => void cargarFacturas(cliente.id, textoFactura, pagFac.pagina + 1, false)}>Siguiente</button>
+                  <button type="button" className={ui.secondaryButton} disabled={pagFac.pagina >= pagFac.totalPaginas} onClick={() => busFac.pagina(textoFactura, pagFac.pagina + 1)}>Siguiente</button>
                 </div>
               ) : null}
             </section>
