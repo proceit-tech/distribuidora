@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { contador } from "@/lib/clientes/contador-casos";
-import { altaPuntoConTipo, leerAltaPuntoTipo, traducirErrorPunto } from "@/lib/facturacion/puntos";
+import { altaPuntoConTipo, cambiarEstadoPunto, configurarTipoPunto, leerAltaPuntoTipo, registrarPunto, traducirErrorPunto } from "@/lib/facturacion/puntos";
 import { ErrorFacturacion } from "@/lib/facturacion/shared";
 
 const raiz = process.cwd();
@@ -86,6 +86,42 @@ export async function verificarCasosAltaPunto(): Promise<string[]> {
   cierto("formulario único: reutiliza el punto existente (nombre de solo lectura, «Punto existente: se reutiliza y su nombre no se modifica»), muestra los tipos ya configurados y avisa duplicidad DEL TIPO con serie y último número, sin permitir enviar", /puntoExistente/.test(pagina) && /readOnly=\{puntoExistente !== undefined\}/.test(pagina) && /Punto existente: se reutiliza y su nombre no se modifica/.test(pagina) && /tipoYaConfigurado/.test(pagina) && /ya está configurado en el punto/.test(pagina) && /No se duplica ni se reinicia: use «Configurar» en su fila/.test(pagina) && /disabled=\{ocupado \|\| tipoYaConfigurado !== undefined\}/.test(pagina));
   cierto("formulario único: tipo obligatorio sin valor por defecto, serie «Sin serie» vacía por defecto, último número sin valor por defecto, UNA confirmación, activación única que explica el efecto sobre el punto y los demás tipos, próximo referencial y avisos de NRE/NDE/AFE; la pantalla sigue con una fila por tipo", /tipo: "", serie: "", ultimo: "", confirma: false, activar: true/.test(pagina) && /placeholder="Sin serie"/.test(pagina) && /Dejar disponible para emitir ahora/.test(pagina) && /sus otros tipos activos volverán a poder emitir/.test(pagina) && /proximoDeEntrada\(aSerie, dAlta\.ultimo\)/.test(pagina) && /todavía no está habilitada/.test(pagina) && />Tipo de documento</.test(pagina));
   cierto("el flujo de dos pasos desapareció (no hay diálogo posterior de «Configure ahora»), el diálogo «Configurar» queda solo para reconciliar un tipo existente de una fila, y MT-01/UI-01/R04-01 no se tocaron", !/Configure ahora/.test(pagina) && /abrirConfiguracion\(f\)/.test(pagina) && /bloqueaTipo: f\.tipo !== null/.test(pagina) && /disabled=\{c\.innominado\}/.test(leer("app/(private)/notas-credito/page.tsx")) && !/receptorInnominado|bloqueoInnominado/.test(leer("app/(private)/notas-credito/page.tsx")));
+
+  // ── 6. AUD-PRO129-UX-R02 ──────────────────────────────────────────────────────────────────────────
+  // R02-02: el diagnóstico de la migración que falta depende de QUÉ función no existe
+  const estado = async (p: Promise<unknown>) => { try { await p; return "OK"; } catch (x) { return x instanceof ErrorFacturacion ? x.estado + ":" + x.message : "otro:" + String(x); } };
+  const sin = (message: string, code = "42883") => ({ query: async () => { throw errorPg(code, undefined, message); } }) as never;
+  const alta = datos;
+
+  igual("R02-02: sin la función del alta único (fe_punto_alta_tipo) el diagnóstico nombra NEX-064 (y su requisito NEX-063), con 409 y sin asumir nada aplicado", [
+    /^409:.*NEX-064.*requiere NEX-063/.test(await estado(altaPuntoConTipo(sin("function public.fe_punto_alta_tipo(uuid, uuid, uuid, text, text, text, text, integer, boolean, boolean) does not exist"), EMPRESA, USUARIO, alta))),
+    /NEX-063\b(?!\))/.test((await estado(altaPuntoConTipo(sin("function public.fe_punto_alta_tipo(uuid) does not exist"), EMPRESA, USUARIO, alta))).replace(/requiere NEX-063/, "")),
+  ], [true, false]);
+  igual("R02-02: si falta una función o columna de NEX-063 durante el alta (fe_punto_registrar, fe_secuencia_configurar, serie/activo) se conserva el diagnóstico NEX-063", [
+    /^409:.*NEX-063/.test(await estado(altaPuntoConTipo(sin("function public.fe_punto_registrar(uuid, uuid, uuid, text, text) does not exist"), EMPRESA, USUARIO, alta))),
+    /^409:.*NEX-063/.test(await estado(altaPuntoConTipo(sin("function public.fe_secuencia_configurar(uuid) does not exist"), EMPRESA, USUARIO, alta))),
+    /^409:.*NEX-063/.test(await estado(altaPuntoConTipo(sin('column "serie" does not exist', "42703"), EMPRESA, USUARIO, alta))),
+  ], [true, true, true]);
+  igual("R02-02: las operaciones vinculadas a NEX-063 (registrar, configurar, estado del punto) siguen diciendo NEX-063 cuando falta su función y nunca NEX-064", [
+    await estado(configurarTipoPunto(sin("function public.fe_secuencia_configurar(...) does not exist"), EMPRESA, USUARIO, PUNTO, { tipo: "FE", serie: null, ultimoNumero: 0, activar: false })),
+    await estado(registrarPunto(sin("function public.fe_punto_registrar(...) does not exist"), EMPRESA, USUARIO, { sucursalId: SUC, codigo: "001", nombre: "x" })),
+    await estado(cambiarEstadoPunto(sin("function public.fe_punto_estado(...) does not exist"), EMPRESA, USUARIO, PUNTO, true)),
+  ].map((m) => /^409:.*NEX-063/.test(m) && !/NEX-064/.test(m)), [true, true, true]);
+  igual("R02-02: un error distinto (permiso, duplicidad del tipo) no se confunde con una migración que falta", [
+    (await estado(altaPuntoConTipo({ query: async () => { throw errorPg("42501"); } } as never, EMPRESA, USUARIO, alta))).split(":")[0],
+    /ya está configurado/.test(await estado(altaPuntoConTipo({ query: async () => { throw errorPg("P0001", "NEX:TIPO_DUPLICADO"); } } as never, EMPRESA, USUARIO, alta))),
+  ], ["403", true]);
+
+  // R02-01: configurado ≠ disponible para emitir
+  const pag = leer("app/(private)/facturacion/puntos/page.tsx");
+  const posInfo = pag.indexOf("Configurado · emisión no disponible");
+  const posActivo = pag.indexOf("Activo · disponible para emitir");
+
+  cierto("R02-01: la fila de NRE/NDE/AFE muestra «Configurado · emisión no disponible» (con explicación) ANTES de cualquier «Activo», y solo FE/NCE con punto y tipo activos muestran «Activo · disponible para emitir»", posInfo > 0 && posActivo > posInfo && /!t\.emitible \? <span className=\{ui\.statusInfo\}/.test(pag) && /operativo \? <span className=\{ui\.statusActive\}>Activo · disponible para emitir/.test(pag) && !/>Activo<\/span>/.test(pag));
+  cierto("R02-01: el filtro «Activos» cuenta solo lo que emite de verdad (tipo emitible, punto y tipo activos); el interruptor Activar/Desactivar tipo solo se ofrece a los tipos con emisión", /t !== null && f\.tipo\.emitible && f\.punto\.activo && f\.tipo\.activo|f\.tipo !== null && f\.tipo\.emitible && f\.punto\.activo && f\.tipo\.activo/.test(pag) && /\{t && t\.emitible \? <button[\s\S]{0,120}alternarTipo\(f\)/.test(pag));
+  cierto("R02-01: en el alta única la casilla «Dejar disponible para emitir ahora» solo aparece para FE/NCE; para NRE/NDE/AFE se avisa que solo se registra la configuración y se envía activar=false", /const altaEmitible = dAlta !== null && \(dAlta\.tipo === "FE" \|\| dAlta\.tipo === "NCE"\)/.test(pag) && /\{altaEmitible \? \(\s+<label className=\{estilos\.casilla\}>/.test(pag) && /Solo se registra la configuración \(serie y contador\)\. Este tipo no queda disponible para emitir/.test(pag) && /activar: altaEmitible && dAlta\.activar/.test(pag));
+  cierto("R02-01: también el diálogo «Configurar» oculta «Dejar este tipo activo» y envía activar=false para NRE/NDE/AFE, y el aviso de éxito aclara que la emisión no está habilitada", /dTipo\.tipo === "FE" \|\| dTipo\.tipo === "NCE" \? \(\s+<label/.test(pag) && /activar: \(dTipo\.tipo === "FE" \|\| dTipo\.tipo === "NCE"\) && dTipo\.activar/.test(pag) && /Queda configurado; la emisión de este tipo todavía no está habilitada/.test(pag));
+  cierto("R02-01: se conserva el cadastro anticipado de NRE/NDE/AFE (siguen en el catálogo del formulario) sin implementar su emisión (ninguna función ni ruta de emisión para esos tipos)", ["NRE", "NDE", "AFE"].every((t) => new RegExp('valor: "' + t + '"').test(pag)) && !/crear_nre|crear_nde|crear_afe/.test(sql));
 
   return fallos;
 }

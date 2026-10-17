@@ -216,6 +216,14 @@ export async function altaPuntoConTipo(db: Db, empresaId: string, usuarioId: str
 
     return { id: String(fila.o_punto), creado: fila.o_punto_creado === true };
   } catch (error) {
+    // R02-02: si lo que falta es la propia función del alta única (PostgreSQL 42883 «function … fe_punto_alta_tipo … does not exist»), el diagnóstico es NEX-064; si falta una función o columna
+    // de NEX-063 (fe_punto_registrar, fe_secuencia_configurar, serie/activo…) se conserva el diagnóstico de NEX-063 de traducirErrorPunto.
+    const pg = error as { code?: string; message?: string };
+
+    if (pg.code === "42883" && typeof pg.message === "string" && pg.message.includes("fe_punto_alta_tipo")) {
+      throw new ErrorFacturacion(409, "El alta única de punto y tipo no está disponible: falta aplicar la migración NEX-064 (requiere NEX-063). No se modificó nada.");
+    }
+
     return traducirErrorPunto(error);
   }
 }

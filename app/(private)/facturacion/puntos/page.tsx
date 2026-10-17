@@ -124,10 +124,11 @@ export default function PuntosExpedicionPage() {
       if (filtroSucursal && f.sucursal.id !== filtroSucursal) return false;
       if (filtroTipo === "SIN_TIPO" ? f.tipo !== null : filtroTipo && f.tipo?.tipo !== filtroTipo) return false;
 
-      const activa = f.punto.activo && (f.tipo?.activo ?? true);
+      // «Activos» = disponibles de verdad para emitir (FE/NCE con punto y tipo activos); NRE/NDE/AFE configurados no emiten todavía y cuentan como «no disponibles».
+      const activa = f.tipo !== null && f.tipo.emitible && f.punto.activo && f.tipo.activo;
 
-      if (filtroEstado === "ACTIVOS" && !(f.tipo && activa)) return false;
-      if (filtroEstado === "INACTIVOS" && f.tipo && activa) return false;
+      if (filtroEstado === "ACTIVOS" && !activa) return false;
+      if (filtroEstado === "INACTIVOS" && activa) return false;
       if (q && !`${f.sucursal.establecimiento ?? ""} ${f.punto.codigo} ${f.punto.nombre} ${f.sucursal.nombre}`.toLowerCase().includes(q)) return false;
 
       return true;
@@ -164,6 +165,8 @@ export default function PuntosExpedicionPage() {
   const puntoExistente = dAlta && sucursalDelDialogo ? sucursalDelDialogo.puntos.find((p) => p.codigo === dAlta.codigo) : undefined;
   const tipoYaConfigurado = dAlta && puntoExistente && dAlta.tipo !== "" ? puntoExistente.tipos.find((t) => t.tipo === dAlta.tipo) : undefined;
   const aSerie = dAlta ? dAlta.serie.trim().toUpperCase() : "";
+  // Solo FE y NCE tienen flujo de emisión: para los demás tipos el alta es SOLO configuración (nunca «disponible para emitir»).
+  const altaEmitible = dAlta !== null && (dAlta.tipo === "FE" || dAlta.tipo === "NCE");
   const nombreEfectivo = dAlta ? (puntoExistente ? puntoExistente.nombre : dAlta.nombre) : "";
   const errSucursal = dAlta && intento && dAlta.sucursalId === "" ? "Seleccione la sucursal." : "";
   const errCodigo = dAlta && intento && !codigoOk(dAlta.codigo) ? "Código de 3 dígitos (001 a 999)." : "";
@@ -184,7 +187,7 @@ export default function PuntosExpedicionPage() {
 
     try {
       await ejecutar(async () => {
-        const res = await pedir<{ id: string; creado: boolean }>("/api/facturacion/puntos", JSON_POST({ sucursalId: dAlta.sucursalId, codigo: dAlta.codigo, nombre: nombreEfectivo, tipo: dAlta.tipo, serie: aSerie, ultimoNumero: dAlta.ultimo, confirmado: dAlta.confirma, activar: dAlta.activar }), "No fue posible registrar el punto y su tipo.");
+        const res = await pedir<{ id: string; creado: boolean }>("/api/facturacion/puntos", JSON_POST({ sucursalId: dAlta.sucursalId, codigo: dAlta.codigo, nombre: nombreEfectivo, tipo: dAlta.tipo, serie: aSerie, ultimoNumero: dAlta.ultimo, confirmado: dAlta.confirma, activar: altaEmitible && dAlta.activar }), "No fue posible registrar el punto y su tipo.");
 
         creado = res.creado;
       }, "", true);
@@ -192,7 +195,9 @@ export default function PuntosExpedicionPage() {
       return;
     }
 
-    setAviso(creado ? "Punto de expedición y tipo de documento registrados en una sola operación." : "Tipo de documento añadido al punto existente (su nombre y los demás tipos no cambiaron).");
+    const soloConfig = !(dAlta.tipo === "FE" || dAlta.tipo === "NCE");
+
+    setAviso((creado ? "Punto de expedición y tipo de documento registrados en una sola operación." : "Tipo de documento añadido al punto existente (su nombre y los demás tipos no cambiaron).") + (soloConfig ? " Queda configurado; la emisión de este tipo todavía no está habilitada." : ""));
     setDAlta(null);
     setIntento(false);
   }
@@ -213,7 +218,7 @@ export default function PuntosExpedicionPage() {
 
     try {
       await ejecutar(async () => {
-        await pedir(`/api/facturacion/puntos/${dTipo.puntoId}/tipos`, JSON_POST({ tipo: dTipo.tipo, serie: serieTxt, ultimoNumero: dTipo.ultimo, confirmado: dTipo.confirma, activar: dTipo.activar }), "No fue posible guardar la configuración.");
+        await pedir(`/api/facturacion/puntos/${dTipo.puntoId}/tipos`, JSON_POST({ tipo: dTipo.tipo, serie: serieTxt, ultimoNumero: dTipo.ultimo, confirmado: dTipo.confirma, activar: (dTipo.tipo === "FE" || dTipo.tipo === "NCE") && dTipo.activar }), "No fue posible guardar la configuración.");
       }, "Configuración guardada. La numeración continúa desde el último número confirmado; el definitivo se reserva al emitir.", true);
     } catch {
       return;
@@ -356,14 +361,15 @@ export default function PuntosExpedicionPage() {
                         <td>{t ? (t.proximo ?? "—") : "—"}</td>
                         <td>
                           {t === null ? <span className={ui.statusWarning}>Sin configurar</span>
-                            : operativo ? <span className={ui.statusActive}>Activo</span>
+                            : !t.emitible ? <span className={ui.statusInfo} title="El tipo está configurado (serie y contador guardados), pero la emisión de este tipo todavía no está habilitada en NEXIT.">Configurado · emisión no disponible</span>
+                            : operativo ? <span className={ui.statusActive}>Activo · disponible para emitir</span>
                               : !f.punto.activo ? <span className={ui.statusInactive}>Punto inactivo</span>
                                 : <span className={ui.statusInactive}>Tipo inactivo</span>}
                         </td>
                         <td className={ui.actionsCell}>
                           <div className={ui.actionsGroup}>
                             <button type="button" className={ui.rowButton} disabled={ocupado} onClick={() => abrirConfiguracion(f)}>{t ? "Configurar" : "Configurar tipo"}</button>
-                            {t ? <button type="button" className={ui.rowButton} disabled={ocupado} onClick={() => alternarTipo(f)}>{t.activo ? "Desactivar tipo" : "Activar tipo"}</button> : null}
+                            {t && t.emitible ? <button type="button" className={ui.rowButton} disabled={ocupado} onClick={() => alternarTipo(f)}>{t.activo ? "Desactivar tipo" : "Activar tipo"}</button> : null}
                             <button type="button" className={ui.rowButton} disabled={ocupado} onClick={() => alternarPunto(f)}>{f.punto.activo ? "Desactivar punto" : "Activar punto"}</button>
                           </div>
                         </td>
@@ -437,11 +443,13 @@ export default function PuntosExpedicionPage() {
               <span>Confirmo que la serie y el último número son los realmente emitidos.</span>
             </label>
             {errAConfirma ? <small className={estilos.errorCampo}>{errAConfirma}</small> : null}
-            <label className={estilos.casilla}>
-              <input type="checkbox" checked={dAlta.activar} onChange={(e) => setDAlta({ ...dAlta, activar: e.target.checked })} />
-              <span>Dejar disponible para emitir ahora (activa este tipo y, si el punto estaba inactivo o es nuevo, también el punto). Los demás tipos no cambian.</span>
-            </label>
-            {dAlta.activar && puntoExistente && !puntoExistente.activo ? <small className={estilos.ayuda}>El punto está inactivo: al activarlo, sus otros tipos activos volverán a poder emitir.</small> : null}
+            {altaEmitible ? (
+              <label className={estilos.casilla}>
+                <input type="checkbox" checked={dAlta.activar} onChange={(e) => setDAlta({ ...dAlta, activar: e.target.checked })} />
+                <span>Dejar disponible para emitir ahora (activa este tipo y, si el punto estaba inactivo o es nuevo, también el punto). Los demás tipos no cambian.</span>
+              </label>
+            ) : dAlta.tipo !== "" ? <small className={estilos.ayuda}>Solo se registra la configuración (serie y contador). Este tipo no queda disponible para emitir: su emisión todavía no está habilitada.</small> : null}
+            {altaEmitible && dAlta.activar && puntoExistente && !puntoExistente.activo ? <small className={estilos.ayuda}>El punto está inactivo: al activarlo, sus otros tipos activos volverán a poder emitir.</small> : null}
             <div className={estilos.acciones}>
               <button type="button" className={ui.secondaryButton} onClick={() => { setDAlta(null); setIntento(false); setErrorDialogo(""); }} disabled={ocupado}>Cancelar</button>
               <button type="submit" className={ui.primaryButton} disabled={ocupado || tipoYaConfigurado !== undefined}>{ocupado ? "Guardando…" : "Guardar punto y tipo"}</button>
@@ -483,10 +491,12 @@ export default function PuntosExpedicionPage() {
               <span>Confirmo que la serie y el último número son los realmente emitidos.</span>
             </label>
             {errConfirma ? <small className={estilos.errorCampo}>{errConfirma}</small> : null}
-            <label className={estilos.casilla}>
-              <input type="checkbox" checked={dTipo.activar} onChange={(e) => setDTipo({ ...dTipo, activar: e.target.checked })} />
-              <span>Dejar este tipo activo. Los demás tipos del punto no cambian.</span>
-            </label>
+            {dTipo.tipo === "FE" || dTipo.tipo === "NCE" ? (
+              <label className={estilos.casilla}>
+                <input type="checkbox" checked={dTipo.activar} onChange={(e) => setDTipo({ ...dTipo, activar: e.target.checked })} />
+                <span>Dejar este tipo activo. Los demás tipos del punto no cambian.</span>
+              </label>
+            ) : null}
             <div className={estilos.acciones}>
               <button type="button" className={ui.secondaryButton} onClick={() => { setDTipo(null); setIntento(false); setErrorDialogo(""); }} disabled={ocupado}>Cancelar</button>
               <button type="submit" className={ui.primaryButton} disabled={ocupado}>{ocupado ? "Guardando…" : "Guardar configuración"}</button>
