@@ -238,3 +238,9 @@ Informe técnico detallado: [AUD-NEXIT-FACTURAS-DESKTOP-R01](../../testes/AUD-NE
 **Brecha ALTA HEREDADA, no contar de nuevo:** FAT-G01/FAT-X03/DEC-PRD-U03/U09 — sin selección de presentación comercial/factor versionado ni conversión fiscal cantidad/precio (ejemplo Bandeja de 6 UNI), snapshot comercial pendiente. Integración automática con Stock NO está implementada ni se aprueba por esta auditoría. **Corregido y preservado:** filtro p.vendible backend (FAT-X01), unidad fiscal oficial, FAT-E1-R02 (cálculos/pagos conciliados), emisión FE idempotente y estado gateway distinto de aprobación SIFEN. El workspace desktop vigente reemplaza el antiguo diseño vertical; no reabrir hallazgos de código viejo.
 
 **Restan auditar individualmente:** Puntos de expedición, Notas de crédito; Empresas de plataforma por separado. No homologar ni iniciar correcciones sin decisión del responsable.
+
+## Reauditoría C01/FAT-D02 R02 — 18/10/2026
+
+**Commit de implementación inspeccionado:** `aeaec74baa70d789ab966e51d643f4d64a3da1b5`. **Parecer técnico:** [AUD-NEXIT-C01-FAT-D02-R02](../../testes/AUD-NEXIT-C01-FAT-D02-R02-2026-10-18.md).
+
+El problema **FAT-D02 ALTA** sobre enviar un cuerpo B diferente del revisado A está **CORREGIDO ESTÁTICAMENTE**: nuevo controlador y estado revisado fijan cuerpo/huella, modal valida el cuerpo de render y EMITIR utiliza exactamente el mismo objeto. **C01 NO se cierra aún** debido a **C01-R02-01 MEDIA**: el catch de PREVIA usa solo el número de versión, que no cambia al invalidar o cancelar sin iniciar otra previa; errores tardíos de A siguen pudiendo reemplazar AVISO_CAMBIO o aparecer tras cancelar. Se requiere una corrección mínima en el controlador, 2–4 casos focales, commit/push y reauditoría R03. **C02 y otras tareas no autorizadas**. Tests reportados por Claude: 35 nuevos + 651 regresiones seleccionadas, 0 fallos, **no ejecutados por ChatGPT**. Ningún browser, PostgreSQL, gateway/VM, migration ni homologación por IA.
