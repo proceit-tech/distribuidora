@@ -157,3 +157,42 @@ export function crearBusquedaFacturas<F>(deps: {
     cancelar() { cancelarTimer(); control.aplicar({ clienteId: "", q: "", pagina: 1 }); cliente = ""; },
   };
 }
+
+/**
+ * C03 / NCE-D01 — carga del DETALLE de la factura. Cada apertura invalida la anterior; cambiar de cliente, volver a la lista, cambiar el contexto de corrección o desmontar la pantalla la invalida
+ * también. Solo la petición vigente aplica su resultado, informa su error o apaga «Cargando…» (el `finally` de una consulta antigua no toca el estado de la vigente).
+ */
+export function crearCargaDetalle<R, C>(deps: {
+  pedir: (id: string) => Promise<R>;
+  alCargando: (b: boolean) => void;
+  alResultado: (r: R, contexto: C) => void;
+  alError: (mensaje: string) => void;
+}) {
+  let token = 0;
+  let enVuelo = false;
+
+  return {
+    async abrir(id: string, contexto: C) {
+      const mio = ++token;
+
+      enVuelo = true;
+      deps.alCargando(true);
+      try {
+        const r = await deps.pedir(id);
+
+        if (mio !== token) return;
+
+        deps.alResultado(r, contexto);
+      } catch (e) {
+        if (mio === token) deps.alError((e as Error).message);
+      } finally {
+        if (mio === token) { enVuelo = false; deps.alCargando(false); }
+      }
+    },
+    /** Descarta lo pendiente. Solo apaga «Cargando…» si había un detalle en vuelo (no pisa la carga de otras listas). */
+    invalidar() {
+      token += 1;
+      if (enVuelo) { enVuelo = false; deps.alCargando(false); }
+    },
+  };
+}

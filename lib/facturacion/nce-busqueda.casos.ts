@@ -3,7 +3,7 @@
  * R01-01 (texto nuevo invalida resultados y Enter), R01-02 (cambio de cliente cancela el filtro agendado y nunca mezcla facturas), R01-03 (Escape cierra de forma estable).
  */
 import { contador } from "@/lib/clientes/contador-casos";
-import { crearBusquedaClientes, crearBusquedaFacturas, type EstadoClientes } from "@/lib/facturacion/nce-busqueda";
+import { crearBusquedaClientes, crearBusquedaFacturas, crearCargaDetalle, type EstadoClientes } from "@/lib/facturacion/nce-busqueda";
 
 type Cli = { id: string; innominado: boolean };
 type Fac = { id: string };
@@ -274,6 +274,98 @@ export async function verificarCasosBusquedaNce(): Promise<string[]> {
     igual("OBS-R02-03: la respuesta tardía de la página 2 se descarta si ya se pidió la 3", [c.b.estado().items.length, c.b.estado().pagina], [0, 1]);
     c.pedidos[2].d.ok({ clientes: [{ id: "INN9", innominado: true }, { id: "C1", innominado: false }], pagina: 3, totalPaginas: 3 }); await tick();
     igual("OBS-R02-03: la página 3 vigente se puede elegir por teclado y el Innominado sigue bloqueado", [c.b.estado().pagina, c.b.primeroElegible()?.id], [3, "C1"]);
+  }
+
+  // ── C03 / NCE-D01: detalle de la factura ──────────────────────────────────────────────────────────────────────────────────────────────────────
+  type Det = { factura: string };
+  function detalle() {
+    const pedidos: Array<{ id: string; d: ReturnType<typeof diferida<Det>> }> = [];
+    const e = { cargando: false, aplicado: [] as Array<{ factura: string; ctx: string }>, errores: [] as string[], historial: [] as boolean[] };
+    const c = crearCargaDetalle<Det, string>({
+      pedir: (id) => { const d = diferida<Det>(); pedidos.push({ id, d }); return d.p; },
+      alCargando: (b) => { e.cargando = b; e.historial.push(b); }, alResultado: (r, ctx) => e.aplicado.push({ factura: r.factura, ctx }), alError: (m) => e.errores.push(m),
+    });
+
+    return { c, pedidos, e };
+  }
+
+  {
+    // 1. Abrir A → cambiar de cliente (invalidar) → llega A tarde
+    const x = detalle();
+
+    void x.c.abrir("FA", "ctxA");
+    igual("detalle: «Cargando…» durante la apertura", x.e.cargando, true);
+    x.c.invalidar();                                  // se elige el cliente B
+    igual("cambiar de cliente: se apaga «Cargando…» del detalle invalidado", x.e.cargando, false);
+    x.pedidos[0].d.ok({ factura: "FA" }); await tick();
+    igual("la respuesta tardía de la factura A NO llena el formulario del cliente B", x.e.aplicado, []);
+
+    // 2. Error tardío de A
+    const y = detalle();
+
+    void y.c.abrir("FA", "ctxA"); y.c.invalidar(); y.pedidos[0].d.ko(new Error("error de A")); await tick();
+    igual("el error tardío de A después de cambiar de cliente no se muestra", [y.e.errores, y.e.cargando], [[], false]);
+  }
+  {
+    // 3. Respuestas fuera de orden: A y B
+    const x = detalle();
+
+    void x.c.abrir("FA", "A");
+    void x.c.abrir("FB", "B");
+    x.pedidos[1].d.ok({ factura: "FB" }); await tick();
+    igual("fuera de orden: B (vigente) se aplica y apaga «Cargando…»", [x.e.aplicado, x.e.cargando], [[{ factura: "FB", ctx: "B" }], false]);
+    x.pedidos[0].d.ok({ factura: "FA" }); await tick();
+    igual("fuera de orden: la respuesta tardía de A no sobrescribe a B", x.e.aplicado, [{ factura: "FB", ctx: "B" }]);
+
+    const y = detalle();
+
+    void y.c.abrir("FA", "A"); void y.c.abrir("FB", "B");
+    y.pedidos[0].d.ok({ factura: "FA" }); await tick();
+    igual("fuera de orden: A llega primero (obsoleta) y NO se aplica ni apaga «Cargando…» de B", [y.e.aplicado, y.e.cargando], [[], true]);
+    y.pedidos[1].d.ok({ factura: "FB" }); await tick();
+    igual("fuera de orden: luego B se aplica", [y.e.aplicado, y.e.cargando], [[{ factura: "FB", ctx: "B" }], false]);
+
+    // el finally de una consulta antigua no modifica el estado de la vigente (error de A después de abrir B)
+    const z = detalle();
+
+    void z.c.abrir("FA", "A"); void z.c.abrir("FB", "B");
+    z.pedidos[0].d.ko(new Error("A falla")); await tick();
+    igual("el finally/error de A no apaga «Cargando…» de B ni informa error", [z.e.cargando, z.e.errores], [true, []]);
+  }
+  {
+    // 4. Cancelar / volver mientras carga
+    const x = detalle();
+
+    void x.c.abrir("FA", "A"); x.c.invalidar(); x.pedidos[0].d.ok({ factura: "FA" }); await tick();
+    igual("volver a la lista con el detalle cargando: la respuesta tardía no abre la factura", [x.e.aplicado, x.e.cargando], [[], false]);
+
+    // invalidar sin detalle en vuelo no apaga la carga de otras listas
+    const y = detalle();
+
+    y.c.invalidar();
+    igual("invalidar sin detalle en vuelo no toca «Cargando…» (no pisa la carga de la lista de facturas)", y.e.historial, []);
+  }
+  {
+    // 5. Corrección de otra NCE rechazada con consulta pendiente
+    const x = detalle();
+
+    void x.c.abrir("FA", "corrección-1");
+    x.c.invalidar();                                   // cambia el parámetro «corregir»
+    void x.c.abrir("FB", "corrección-2");
+    x.pedidos[0].d.ok({ factura: "FA" }); x.pedidos[1].d.ok({ factura: "FB" }); await tick();
+    igual("cambiar a otra corrección con consulta pendiente: solo se aplica la factura y la precarga de la corrección vigente", x.e.aplicado, [{ factura: "FB", ctx: "corrección-2" }]);
+  }
+  {
+    // 6. Petición vigente con éxito y con error
+    const x = detalle();
+
+    void x.c.abrir("FA", "A"); x.pedidos[0].d.ok({ factura: "FA" }); await tick();
+    igual("vigente con éxito: se aplica con su contexto y se apaga «Cargando…»", [x.e.aplicado, x.e.cargando, x.e.historial], [[{ factura: "FA", ctx: "A" }], false, [true, false]]);
+
+    const y = detalle();
+
+    void y.c.abrir("FA", "A"); y.pedidos[0].d.ko(new Error("No se pudo cargar")); await tick();
+    igual("vigente con error: el error legítimo se informa y se apaga «Cargando…»", [y.e.errores, y.e.aplicado, y.e.cargando], [["No se pudo cargar"], [], false]);
   }
 
   return fallos;

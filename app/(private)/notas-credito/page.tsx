@@ -6,7 +6,7 @@ import { Fragment, Suspense, useCallback, useEffect, useMemo, useRef, useState }
 import { useSearchParams } from "next/navigation";
 
 import ui from "@/components/ui/lista-padrao/lista.module.css";
-import { crearBusquedaClientes, crearBusquedaFacturas, type EstadoClientes } from "@/lib/facturacion/nce-busqueda";
+import { crearBusquedaClientes, crearBusquedaFacturas, crearCargaDetalle, type EstadoClientes } from "@/lib/facturacion/nce-busqueda";
 import { entradasIniciales, etiquetaIvaLinea } from "@/lib/facturacion/nce-entradas";
 import { iniciarRefresco } from "@/lib/facturacion/refresco-documentos";
 import { formatearDecimalTexto } from "@/lib/formato/decimal-texto";
@@ -126,11 +126,13 @@ function Formulario() {
     return () => { activo = false; detener(); };
   }, [hayNcePendiente, clienteId, control]);
 
-  const abrirFactura = useCallback(async (id: string, precarga?: { motivo: number; sucursalId: string; puntoId: string | null; observacion: string; lineas: Array<{ linea: number; cantidad: string; monto: string }> }) => {
-    busFac.detener();
-    setCargando(true);
-    try {
-      const r = await pedir<{ factura: Factura; sucursales: Sucursal[] }>(`/api/notas-credito/facturas/${id}`);
+  // C03 / NCE-D01: solo la apertura de factura VIGENTE aplica su resultado, su error y su estado «Cargando…»; cambiar de cliente, volver a la lista, cambiar la corrección o desmontar la invalidan.
+  type Precarga = { motivo: number; sucursalId: string; puntoId: string | null; observacion: string; lineas: Array<{ linea: number; cantidad: string; monto: string }> };
+  const [detalle] = useState(() => crearCargaDetalle<{ factura: Factura; sucursales: Sucursal[] }, Precarga | undefined>({
+    pedir: (id) => pedir<{ factura: Factura; sucursales: Sucursal[] }>(`/api/notas-credito/facturas/${id}`),
+    alCargando: setCargando,
+    alError: setError,
+    alResultado: (r, precarga) => {
       const f = r.factura;
       const nuevas: Record<number, Entrada> = precarga ? {} : entradasIniciales(f.lineas, f.motivoFijado ?? "");
 
@@ -148,15 +150,16 @@ function Formulario() {
       setPuntoId(precarga?.puntoId ?? "");
       setObservacion(precarga?.observacion ?? "");
       setError(null);
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setCargando(false);
-    }
-  }, [busFac]);
+    },
+  }));
+  const abrirFactura = useCallback((id: string, precarga?: Precarga) => {
+    busFac.detener();
+
+    return detalle.abrir(id, precarga);
+  }, [busFac, detalle]);
 
   // Al desmontar se cancelan los temporizadores y se invalidan las peticiones pendientes.
-  useEffect(() => () => { busCli.reiniciar(); busFac.cancelar(); }, [busCli, busFac]);
+  useEffect(() => () => { busCli.reiniciar(); busFac.cancelar(); detalle.invalidar(); }, [busCli, busFac, detalle]);
 
   useEffect(() => {
     if (!corregir) return;
@@ -176,8 +179,9 @@ function Formulario() {
       }
     })();
 
-    return () => { vivo = false; };
-  }, [corregir, abrirFactura]);
+    // Cambiar de corrección (o salir) descarta la propuesta y la factura que aún se esté cargando.
+    return () => { vivo = false; detalle.invalidar(); };
+  }, [corregir, abrirFactura, detalle]);
 
   const punto = useMemo(() => sucursales.find((s) => s.id === sucursalId)?.puntos.find((p) => p.id === puntoId) ?? null, [sucursales, sucursalId, puntoId]);
   const sucursal = sucursales.find((s) => s.id === sucursalId) ?? null;
@@ -238,6 +242,7 @@ function Formulario() {
   }
 
   function volverAFacturas() {
+    detalle.invalidar();
     busFac.cambiarCliente(cliente?.id ?? null);
     setFactura(null);
     setRevisado(null);
@@ -263,6 +268,7 @@ function Formulario() {
   const elegirCliente = (c: ClienteB) => {
     if (c.innominado) return;
 
+    detalle.invalidar();
     busCli.reiniciar();
     setCliente(c);
     setTextoFactura("");
@@ -295,7 +301,7 @@ function Formulario() {
           {cliente ? (
             <div className={estilos.banda}>
               <span>Cliente: <strong>{cliente.razonSocial}</strong> · {cliente.documento}</span>
-              <button type="button" className={ui.secondaryButton} onClick={() => { busFac.cambiarCliente(null); setCliente(null); setTextoFactura(""); }}>Cambiar</button>
+              <button type="button" className={ui.secondaryButton} onClick={() => { detalle.invalidar(); busFac.cambiarCliente(null); setCliente(null); setTextoFactura(""); }}>Cambiar</button>
             </div>
           ) : (
             <section className={estilos.card} aria-label="Cliente">
