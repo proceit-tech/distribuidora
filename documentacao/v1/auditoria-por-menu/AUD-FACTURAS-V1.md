@@ -252,3 +252,13 @@ El problema **FAT-D02 ALTA** sobre enviar un cuerpo B diferente del revisado A e
 **FAT-D02 ALTA: CORREGIDA Y APROBADA TÉCNICAMENTE EN REVISIÓN ESTÁTICA**. El cuerpo enviado es exactamente el fijado por la PREVIA; no se reconstruye en el envío, su clave idempotente se conserva y se rechazan envíos simultáneos. **C01-R02-01 MEDIA: RESUELTA**: `vigente(v)` exige una previa realmente pendiente para informar su error, aun si fue invalidada o cancelada sin empezar otra; cancelar también libera «Revisando…». Los resultados antiguos también se descartan. Sin errores nuevos bloqueantes en C01.
 
 Claude reportó **42 tests dirigidos / 0 fallas**, más ESLint focal de 2 archivos; ChatGPT sólo verificó la fuente y los tests por GitHub, sin ejecutar la suite. **NO HOMOLOGADO**: navegador/VM/PG/gateway e instalación real pendientes del responsable. **No significa Facturas como menú completo homologado**: FAT-D01, FAT-D03/04/05 y GAP de presentación comercial siguen abiertos en tareas propias. C02 necesita autorización expresa antes de Claude.
+
+## AUD-C02-R02 — reauditoría búsqueda rápida (18/10/2026)
+
+**SHA implementación Claude:** `c1d1ee47ee341223ef0a3742444ae4d80e19ae21`. Informe independiente [AUD-NEXIT-C02-FAT-D01-R02](../../testes/AUD-NEXIT-C02-FAT-D01-R02-2026-10-18.md).
+
+**FAT-D01 ALTA:** la implementación corrige estáticamente el defecto central de elegir filas de búsqueda anterior tras cambio de texto, durante 300ms o con respuestas HTTP fuera de orden. `crearBuscadorRapido` invalida tokens, lista y selección al escribir; Enter del lector GTIN/código conserva selección única/exacta y bloqueos fiscales; lista avanzada se oculta durante debounce.
+
+**C02 AÚN ABIERTA por C02-R02-01 MEDIA:** si se inició Enter con HTTP pendiente y el usuario cierra lista mediante Escape o blur, `page.tsx:326–335` sólo modifica `abierto`, sin invalidar el GET directo del controlador. La respuesta posterior puede seleccionar cliente o añadir producto aunque la búsqueda esté cerrada, siempre que el texto no cambie. Solicitar cierre explícito que invalide token y respuestas/errores antiguos, con tests focales y nueva reauditoría R03. No implica bypass de autorización ni FE errónea probada.
+
+Claude reportó 29 tests nuevos + 693 relacionados (total 722) sin fallas, no ejecutados por ChatGPT. **NO HOMOLOGADO**; no hubo browser/VM/PG/gateway; C01 aprobada técnicamente no fue modificada; **C03 no autorizada**.
