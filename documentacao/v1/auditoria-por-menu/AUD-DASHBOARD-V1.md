@@ -1,34 +1,24 @@
-# Auditoria por menu — Dashboard
+# Auditoría por menú — Dashboard (Panel general)
 
-**Rota principal:** `/dashboard`  
-**Branch:** `feature/NEXIT-2026-001-banco-demo`  
-**Estado:** ABERTA — NÃO AUDITADA INTEGRALMENTE — NÃO HOMOLOGADA  
-**Responsável pela auditoria estática:** ChatGPT. **Implementação:** Claude Code somente mediante tarefa autorizada. **Homologação operacional/visual:** responsável na VM.
+**Sistema:** NEXIT ERP exclusivamente para desktop. **Rota:** `/dashboard`. **Estado:** AUDITORÍA ESTÁTICA DEL MENÚ CONCLUIDA CON HALLAZGOS ABIERTOS — CORRECCIÓN SOLICITADA; **NO HOMOLOGADA** en navegador.
+**Auditoría completa de esta rodada:** [AUD-NEXIT-DASHBOARD-DESKTOP-R01](../../testes/AUD-NEXIT-DASHBOARD-DESKTOP-R01-2026-10-18.md), snapshot de código `6a649403f12c52dcdb7fc92f9afd765655c92468`.
 
-## Escopo e rastreabilidade
+## Resultado por menú (18/10/2026)
 
-Este arquivo é a fonte única da auditoria do menu **Dashboard**. Registrar, com caminho e linha, cada página/subtela, componente, API, serviço, permissão de menu/servidor, tabela, trigger, migration, testes e dependências com outros módulos. Não confundir inventário com execução ou homologação. Ver `CLAUDE.md`, `documentacao/PROTOCOLO-IA.md`, `PROGRESSO-NEXIT-V1.md` e `documentacao/v1/AUDITORIA-GERAL-NEXIT-V1-2026-10-12.md`.
+| ID | Severidad | Hallazgo confirmado | Situación |
+|---|---|---|---|
+| F-DASH-01 | ALTA | Alertas de «Sin stock» incluyen productos fuera de depósitos accesibles al actor | Abierto |
+| F-DASH-02 | MEDIA | Filtros actualizados muestran KPIs/gráfico antiguos tras error | Abierto |
+| F-DASH-03 | MEDIA | «Últimos movimientos» no identifica ANULADO e inversos como tales | Abierto |
+| F-DASH-04 | MEDIA | Sidebar ofrece Dashboard a perfiles sin DASHBOARD.VER y marca de plataforma apunta vía redirect | Abierto |
+| F-DASH-05 | MEDIA | CTAs a Stock/Movimientos pese a carecer del permiso del módulo | Abierto |
 
-## Itens obrigatórios da auditoria completa
+**Auditoría técnica:** trazado de página, servidor, tipos, filtros, permisos, servicio, SQL, migrations y casos T07 en el corte citado. Sin ejecución de código/queries reales ni aprobación visual. No cambiar módulos ajenos para corregir este menú.
 
-- [ ] Todas as rotas e subtelas: navegação, abas, ações, modais, estados de erro e vazio.
-- [ ] Campos: origem, exigência, máscara, validação client/server, persistência e retorno.
-- [ ] APIs: métodos, status HTTP, consultas, filtros, paginação, transação, concorrência e tratamento de exceções.
-- [ ] Autenticação, permissões de ação, isolamento multiempresa e alcance de sucursal.
-- [ ] SQL: relações, constraints, índices, FK, trigger, integridade e scripts vinculados.
-- [ ] Integrações e dependências entre menus; compatibilidade de dados.
-- [ ] Casos de teste: positivos, negativos, limites e regressões; evidências de execução.
-- [ ] UX: responsividade 1440/768/375, foco, acessibilidade, textos, confirmação de ações, screenshots reais.
-- [ ] Conclusão com todos os achados numerados, severidade, evidência e critério de aceite.
+## Alcance obligatorio
 
-## Achados confirmados até agora (parciais)
+El producto **NO es para celular**. No exigir UI móvil ni capturas 375/768 ni «hamburger» para resolver esta auditoría. Priorizar desktop, legibilidad, sidebar expandida 236px/reducida 72px, funcionalidades reales y control por empresa/depósito. El antiguo hallazgo `NGM-R01-01` de falta de botón móvil es **FUERA DE ALCANCE**, no defecto pendiente. Los informes AUD históricos permanecen inmutables; rige la aclaración del dueño en la auditoría nueva.
 
-Nenhum defeito deste menu documentado ainda nesta ficha. Isso NÃO significa ausência de defeitos.
+## Criterio de cierre
 
-## Pendências
-
-Auditoria exaustiva deste menu ainda não executada. Não atribuir percentual de cobertura sem inventário de arquivos e linhas revisadas.
-
-## Regra de migrations
-
-O responsável mostrou NEX-001…051 já aplicadas na VM. Proibido editar scripts aplicados, checksums ou reexecutar SQL histórico como se fosse nova migration. Qualquer nova alteração estrutural exige justificativa, aprovação e migration incremental a partir de NEX-052.
+Claude no debe implementar nada sin orden del responsable. Corregir exclusivamente hallazgos del Dashboard con tests locales focais (no suites globales, build o tsc global, no SQL/VM), commit/push y ChatGPT reaudita; luego el responsable homologa en desktop. El siguiente menú previsto es **Clientes**, pero no se considera empezado ni auditado a fondo en esta ronda.
