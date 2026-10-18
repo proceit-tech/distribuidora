@@ -193,3 +193,7 @@ Informe detallado: [AUD-NEXIT-NOTAS-CREDITO-DESKTOP-R01](../../testes/AUD-NEXIT-
 **NUEVOS:** 1 ALTA NCE-D01 (GET detalle FE antiguo se aplica tras cambiar cliente); 3 MEDIAS NCE-D02 (modal PREVIA antiguo, aunque EMITIR valida igualdad), NCE-D03 (preflight gateway antes de recuperar NCE idempotente), NCE-D04 (navegación a Documentos por 7 cifras no únicas). 10 observaciones y 24 pruebas dirigidas pendientes, 0 ejecutadas. Preservar selección Innominado bloqueada solo en UI por decisión, body revisado exacto, FE original/CDC y motivo/saldo del SQL. NO HOMOLOGADO, sin código/migrations/VM/Claude.
 
 **Control V1:** ahora 22 entradas activas auditadas estáticamente; ninguna restante de la lista anterior. No concluir auditoría general: Plataforma/Empresas separada y menús ocultos pendientes de decisión.
+
+## Plano de correções autorizado — C01 primeiro (18/10/2026)
+
+Fonte única para a execução sequencial dos achados das 22 entradas V1: [PLANO-EXECUCAO-CORRECOES-AUDITORIAS-DESKTOP-V1-2026-10-18](../PLANO-EXECUCAO-CORRECOES-AUDITORIAS-DESKTOP-V1-2026-10-18.md). Contém C01…C55 por risco/dependência e X01…X08 funções futuras condicionadas por contrato/decisão. Achados transversais Reportes e Dashboard não são contados várias vezes. **Claude autorizado agora SOMENTE a C01 (FAT-D02: revisão de Facturas vinculada ao corpo enviado)**, testes básicos focados, commit/push e parada para reauditoria R02 do ChatGPT. Nenhuma outra tarefa autorizada automaticamente. Sem suíte, build, lint global, PostgreSQL/VM/CI manual, migração aplicada ou homologação pela IA.
