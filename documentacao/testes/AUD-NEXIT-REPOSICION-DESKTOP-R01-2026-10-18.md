@@ -62,7 +62,7 @@
 
 - **Motor único:** solo GET en Reposición, ningún `POST/PATCH/DELETE` de stock; ni compra ni transferencia automáticas.
 - **Empresa/permiso:** `STOCK.VER` en layout/API, session.user.empresaId/usuarioId, `MOVIMIENTOS.VER+CREAR` para `Preparar transferencia`, revalidación en destino.
-- **Saldo correcto para plan:** solo PROPIO disponible, reservado/cuaren­t­ena no se cuentan dos veces; tránsito es hipótesis desactivada por defecto.
+- **Saldo correcto para plan:** solo PROPIO disponible, reservado/cuarentena no se cuentan dos veces; tránsito es hipótesis desactivada por defecto.
 - **Políticas:** por depósito prevalecen; consolidado es referencia cuando existe plan por depósito, no duplicar compra; «Cantidad sin gatillo» y «Sin meta» informadas.
 - **Origen compartido:** AUD-REP-04 protegido por asignación global de excedente por prioridad, sin duplicación en **plan base**.
 - **Cargas:** INV-R02-03 solucionado: validación registro a registro, listas vacías aceptadas, GET inválido no se convierte en éxito, respuestas anteriores descartadas.
@@ -76,7 +76,7 @@
 | REP-T01 simulación de 5 ante base transferir 10/comprar 10 | Etiquetas, enlace y detalle coherentes o identificados como base vs simulado |
 | REP-T02 A/B comparten origen 50; simular A=0 | Política individual/global explícita, y ningún origen asignado dos veces |
 | REP-T03 recarga GET lenta con datos anteriores | Indicación de resultados anteriores y bloqueo/rotulación de CTA hasta verificar |
-| REP-T04 GET fuera de orden, error 401/403/500 y reintento | Comp uerta permanece correcta; no render de datos/permisos tras fallo |
+| REP-T04 GET fuera de orden, error 401/403/500 y reintento | Compuerta permanece correcta; no render de datos/permisos tras fallo |
 | REP-T05 SELECT concurrentes con movimiento/edición de parámetros | Snapshot/consistencia probada en PostgreSQL autorizado o riesgo documentado |
 | REP-T06 LOTE y UNIDAD_ETIQUETADA en atajo | Lote obligatorio y aviso; unidad identificada nunca produce enlace |
 | REP-T07 dos empresas y alcance parcial | Saldos y costos ajenos nunca visibles; políticas reales sin alcance ampliado |
