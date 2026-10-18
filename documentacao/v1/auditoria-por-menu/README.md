@@ -197,3 +197,8 @@ Informe detallado: [AUD-NEXIT-NOTAS-CREDITO-DESKTOP-R01](../../testes/AUD-NEXIT-
 ## Plano de correções autorizado — C01 primeiro (18/10/2026)
 
 Fonte única para a execução sequencial dos achados das 22 entradas V1: [PLANO-EXECUCAO-CORRECOES-AUDITORIAS-DESKTOP-V1-2026-10-18](../PLANO-EXECUCAO-CORRECOES-AUDITORIAS-DESKTOP-V1-2026-10-18.md). Contém C01…C55 por risco/dependência e X01…X08 funções futuras condicionadas por contrato/decisão. Achados transversais Reportes e Dashboard não são contados várias vezes. **Claude autorizado agora SOMENTE a C01 (FAT-D02: revisão de Facturas vinculada ao corpo enviado)**, testes básicos focados, commit/push e parada para reauditoria R02 do ChatGPT. Nenhuma outra tarefa autorizada automaticamente. Sem suíte, build, lint global, PostgreSQL/VM/CI manual, migração aplicada ou homologação pela IA.
+
+## Atualização — C01/FAT-D02 aprovada tecnicamente R03 (18/10/2026)
+
+- Auditoria de implementação [AUD-NEXIT-C01-FAT-D02-R03](../../testes/AUD-NEXIT-C01-FAT-D02-R03-2026-10-18.md), SHA Claude `ab4cb5d8e30664be07acc519702cdbc6a8ce7f86`: **FAT-D02 corrigida estaticamente**, residual C01-R02-01 resolvido. Envio utiliza exatamente body revisado; erro antigo após invalidar/cancelar é descartado; 42 assertivas direcionadas/0 falhas reportadas por Claude, NÃO reexecutadas por ChatGPT.
+- **Não é homologação** da FE nem do menu Facturas: banco/VM/browser/gateway reais não verificados, outros achados continuam. **C02 FAT-D01 é a próxima tarefa planejada e aguarda autorização do responsável**; Claude não deve começar automaticamente.
