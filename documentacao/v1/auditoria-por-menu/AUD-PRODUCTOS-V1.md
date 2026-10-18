@@ -516,3 +516,25 @@ Este arquivo é a fonte única da auditoria do menu **Productos**. Registrar, co
 **Pendências exclusivamente OPERACIONAIS:** responsável humano deverá verificar status/migrations NEX-052/053, fazer backup e validações de segurança antes de aplicação; executar verificadores autorizados, teste de duas transações, grants e alcance restrito no banco real, depois fazer revisão visual das telas. Até isso, a mudança da unidade-base fica bloqueada por 409 sem NEX-052. **PROVEEDORES é a próxima tarefa de implementação; não reabrir Productos por padrão.**
 
 **Estado:** AUD-R03 aprovada **somente estaticamente**; Productos ABERTO para homologação humana, nenhum SQL/deploy autorizado ou executado.
+
+
+## XXV. Auditoría actual de Productos DESKTOP — 18/10/2026
+
+**Snapshot del código:** `32b86e4e600ca7a942f910e4cd80f75263cdba54`. **Informe inmutable:** [AUD-NEXIT-PRODUCTOS-DESKTOP-R01](../../testes/AUD-NEXIT-PRODUCTOS-DESKTOP-R01-2026-10-18.md). Esta sección es la lectura actual del menú; las secciones I–XXIV anteriores contienen decisiones e historial de implementaciones, NO son un listado de defectos actuales pendientes sin revalidación.
+
+**Política actual:** sistema ERP solo **desktop**, sin obligación móvil. Auditar un menú por vez, sin implementaciones al Claude salvo orden expresamente autorizada; no tsc/build/lint global ni acceso VM/PostgreSQL por IA.
+
+| ID | Prioridad | Desviación constatada actualmente | Estado |
+|---|---|---|---|
+| **PRD-D01** | **ALTA** | `/productos/nuevo` hereda `guardPage(PRODUCTOS,VER)` y catálogo GET exige VER aunque POST exige CREAR; CREAR-only no puede dar alta | ABIERTO |
+| **PRD-D02** | **ALTA** | Fallo parcial foto/documentos después del POST redirige a ficha `/productos/[id]` con VER; CREAR-only no logra retomar, ni se conserva ID en URL de alta/archivos fallidos para retry seguro | ABIERTO |
+| **PRD-D03** | **ALTA** | PUT no exige ni contrasta versión de `actualizado_at` bajo row lock; un formulario antiguo puede sobrescribir columnas/hijos de otra edición, aun con `FOR UPDATE` | ABIERTO |
+| **PRD-D04** | **MEDIA** | `FINALIZAR_CARGA` de CREAR-only no es idempotente después de cierre 200 exitoso cuya respuesta HTTP se perdió; retry 403 | ABIERTO |
+| **PRD-D05** | **MEDIA** | CTA Nuevo y formulário editar/salvar disponibles al perfil VER-only sem CREAR/EDITAR; API denega 403 | ABIERTO |
+| **PRD-D06** | **MEDIA** | `DocumentosFicha` guarda `nuevo/editando` local; componente desmonta al cambiar pestaña y `useProtegerCambios` no cubre esos borradores | ABIERTO |
+
+**Observaciones no bloqueantes:** PRD-O01 retorno de catálogo completo con paginación local por 20 (desempeño no medido); PRD-O02 estados de error avulsos y confirmations browser nativas; PRD-O03 aplicación real NEX-038…043/052 y privilegios sin nueva verificación en esta auditoría. No afirmar ausencia de migrations por comentarios históricos.
+
+**Correcto en el código actual:** reglas de IVA/SIFEN y unidad MT→108 con 87 distinto; nuevo vendible exige clasificación y unidad válida, producto no vendible no es emitible; protección por alcance de depósitos; NEX-052 documenta control histórico de unidad base si efectivamente aplicada; sincronización selectiva, código inmutable, archivos privados y versionados. Mantener estas reglas. El menú **Catálogos de productos** (ruta `/productos/catalogos`) se auditará en ficha propia, no se considera cubierto integralmente por esta revisión.
+
+**Estado:** revisión estática por menú con **6 hallazgos abiertos, NO HOMOLOGADA**. Ninguna corrección funcional ni deploy autorizados por este informe. Próximo menú secuencial: Catálogos de productos, separado.
