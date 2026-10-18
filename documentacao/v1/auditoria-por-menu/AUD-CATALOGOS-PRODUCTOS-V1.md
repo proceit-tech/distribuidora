@@ -135,3 +135,19 @@ Implementar somente **PRV-R01-01…04** de `AUD-PROVEEDORES-V1.md` §VI: (01) co
 **Parecer:** **CAT-R02-01 — ACEITE ESTÁTICO.** `cargaConfiable` exige ausência de carregamento e de erros principal/auxiliares; `permisosVigentes` invalida permissões durante carga ou falha; `cambiarTab` invalida estado anterior; `guardar` e `cambiarEstado` verificam bloqueio no handler, além dos controles; rascunho permanece aberto e erro de carga não é apagado por iniciar ação. A limpeza de permissões na falha principal está em `cargar`. Testes de comportamento constam na suíte alterada, mas o ChatGPT **não os executou**.
 
 **Limite do aceite:** a correção foi verificada estaticamente; HTTP/browser/PG/VM/Docker e homologação humana não executados. A comprovação de concorrência real de CAT-A06 segue pendente de PostgreSQL; NEX-052/053 ainda não aplicadas segundo o responsável. Não reabrir CAT-R02-01 sem novo sintoma concreto e não atribuir 10/10 operacional. **Nenhuma correção adicional de Catálogos de Productos é encaminhada ao Claude nesta rodada.**
+
+
+## IX. Auditoría actual — Catálogos de productos DESKTOP (18/10/2026)
+
+**Snapshot:** `cb35cb35bda7179e09db683e48fdf104867f5f2a`; [informe de auditoría actual R01](../../testes/AUD-NEXIT-CATALOGOS-PRODUCTOS-DESKTOP-R01-2026-10-18.md). **Alcance**: solo desktop, cuatro pestañas Categorías/Marcas/Familias/Líneas, permisos, UI, ocho handlers API, SQL NEX-004/017/020/044, tests ya versionados. **NO HOMOLOGADO** — diagnóstico estático sin browser/PostgreSQL real, scripts ni suites.
+
+**Los seis CAT-A01…CAT-A06 de 12/10 y CAT-R02-01 están CORREGIDOS EN CÓDIGO y no se reabren**: carga/error principal y auxiliares con permisos fall-closed; generación de GET de pestañas; dirty guard; referencias inactivas históricas; avisos de descendientes; CAS de versión mediante `actualizado_at` + bloqueo consultivo. Se mantienen los límites del AUD-CAT-R03 anterior: no hay homologación visual ni prueba de locks en PG real.
+
+| ID | Severidad | Hallazgo NUEVO vigente | Estado |
+|---|---|---|---|
+| **CAT-D01** | **ALTA** | Mientras `guardar` espera PUT/POST, tabs/Nueva/Cancelar/Editar siguen operables. Al finalizar, callback capturado cierra formulario actual y `cargar()` del catálogo anterior gana el token y puede mezclar filas con el tab visible. | **ABIERTO** |
+| **CAT-D02** | **MEDIA** | `cambiarEstado` guarda error HTTP 409/403/500 en `error`, llama `cargar()` y este borra `error` al iniciar; se pierde feedback de activación/inactivación fallida. | **ABIERTO** |
+
+**Observaciones, no problemas bloqueantes confirmados:** concurrencia padre activo→hijo con select sin lock explícito requiere prueba PG controlada; recarga para recuperar error de catálogo con formulario sucio puede perder borrador (falta reintento interno); confirmaciones nativas existen y sirven; catálogo entero pagina localmente, sin medición de latencia real.
+
+**Política:** no enviar Claude tareas de corrección ni afectar otros menús sin orden del responsable; si se autoriza, tests básicos solo del guard de guardado/contexto y errores de PUT, sin build/tsc/lint global/CI manual ni VM/DB. Próximo menú en Maestros: **Listas de precios** por separado. **Estado:** AUDITORÍA DOCUMENTADA CON HALLAZGOS PENDIENTES / NO HOMOLOGADA.
