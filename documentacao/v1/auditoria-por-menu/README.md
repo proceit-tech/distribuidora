@@ -50,3 +50,10 @@ Auditar integralmente cada menu na ordem: regras oficiais e requisitos → códi
 - [AUD-NEXIT-MENUS-GERAL-R01](../../testes/AUD-NEXIT-MENUS-GERAL-R01-2026-10-18.md): inventário de 38 páginas/94 rotas e achados transversais.
 - [AUD-NEXIT-MENUS-GERAL-R02](../../testes/AUD-NEXIT-MENUS-GERAL-R02-2026-10-18.md): correção explícita da interpretação do Dashboard para administrador de plataforma e novo achado de CTA sem permissão.
 - **NÃO encerrada:** cada ficha de menu continua ABERTA até ser auditada em profundidade (UI, rotas, serviços, SQL, permissões, testes, comportamento real); R01/R02 são apenas a fase inicial e a revisão do shell/Dashboard ainda não equivale a homologação. Não marcar as fichas como concluídas por possuir esta lista.
+
+
+## Criterio vigente — ERP desktop, auditoría secuencial (18/10/2026)
+
+**Decisión del responsable:** NEXIT es exclusivamente desktop. El hallazgo histórico `NGM-R01-01` (sidebar móvil) fue **DESCARTADO POR FUERA DE ALCANCE**; no se exige ninguna implementación para celular ni pruebas viewport móvil. Las auditorías de menús se realizan secuencialmente, **uno por vez**, con interfaz desktop → API → servicio → SQL → permisos → pruebas ligeras; no llamar «auditado» al inventario general. Revisiones históricas R01/R02 de la auditoría general no se modifican, pero su interpretación anterior de «mobile ALTA» queda sustituida por la decisión actual.
+
+**Primer menú en revisión:** [Dashboard desktop — auditoría R01](../../testes/AUD-NEXIT-DASHBOARD-DESKTOP-R01-2026-10-18.md), 1 hallazgo ALTA y 4 MEDIA abiertos; estatus CORRECCIÓN SOLICITADA / SIN HOMOLOGACIÓN. Próximo (sin iniciar todavía): Clientes.
