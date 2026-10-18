@@ -2,7 +2,7 @@
 
 **Rota principal:** `/reportes/kardex`  
 **Branch:** `feature/NEXIT-2026-001-banco-demo`  
-**Estado:** ABERTA — NÃO AUDITADA INTEGRALMENTE — NÃO HOMOLOGADA  
+**Estado atual (18/10/2026): AUDITORIA ESTÁTICA R01 REGISTRADA — ACHADOS TRANSVERSAIS ABERTOS — NÃO HOMOLOGADA** (os registros históricos abaixo são preservados).  
 **Responsável pela auditoria estática:** ChatGPT. **Implementação:** Claude Code somente mediante tarefa autorizada. **Homologação operacional/visual:** responsável na VM.
 
 ## Escopo e rastreabilidade
@@ -221,3 +221,9 @@ Para G grupos sem colidência de `unidadId` com nomes coincidentes — por exemp
 ### VEREDITO FINAL DA AUDITORIA ESTÁTICA DO KARDEX
 
 **ACEITE TÉCNICO ESTÁTICO CONCEDIDO ao relatório 3/5 — Kardex de movimientos.** Os nove achados R01 e as correções residuais R02, R03 e R04 estão encerrados no âmbito do exame de código e da suíte publicada, sem pendências estáticas bloqueantes identificadas neste escopo. **NÃO HOMOLOGADO / NÃO IMPLANTADO por esta auditoria:** não foram realizados PostgreSQL, VM, browser ou deploy. Relatórios Stock general, Valorización de inventario, Stock crítico y reposición e Kardex têm aceite técnico estático (4/5); Lotes y vencimientos aguarda auditoria própria. **Claude não deve iniciar nova implementação sem ordem do responsável; o próximo passo recomendado é auditar Lotes**, com nova autorização.
+
+## Revisão desktop Reportes R01 (18/10/2026)
+
+**Informe transversal completo:** [AUD-NEXIT-REPORTES-DESKTOP-R01](../../testes/AUD-NEXIT-REPORTES-DESKTOP-R01-2026-10-18.md).
+**Escopo deste menu: Kardex de movimientos.** **RPT-D01 ALTA TRANSVERSAL:** `q/documento/lote` API trim/longitud vs cliente crudo hace ocultar respuesta válida; **RPT-D02 MEDIA TRANSVERSAL:** búsquedas escritas, aún no estabilizadas, conservan resultado/exportación antiguos. Algoritmo histórico, UUID, conciliación y export PDF aceptados históricamente preservados.
+**Método/limite:** inspeção de arquivos atuais da branch, não execução. Relatos de aceites estáticos históricos RPT-R19/R20 preservados, mas esta revisão encontrou novas lacunas de filtro de UI que impedem marcar o conjunto como livre de achados. **0 testes/HTTP/PG/VM/Docker/browser, sem mudanças funcionais nem migrations, NÃO HOMOLOGADO.** Nenhuma tarefa Claude autorizada.
