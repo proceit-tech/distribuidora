@@ -22,3 +22,11 @@ Acceso FACTURACION_ELECTRONICA.CREAR y alcance empresa/sucursal. Innominado SOLO
 ## Estado general
 
 **1 ALTA, 3 MEDIAS, 0 BAJAS nuevas; 10 observaciones y 24 pruebas futuras. 0 tests ejecutados por ChatGPT.** Sin navegador/VM/PG/SIFEN/gateway/CI, código ni migrations alterados. No homologado, Claude no autorizado. Se registraron estáticamente 22 entradas de menús V1 activos en la secuencia acordada; la auditoría general NO está cerrada, Plataforma → Empresas se mantiene separada y los menús ocultos requieren definición del responsable.
+
+## Reauditoría C03/NCE-D01 R02 — propuesta de rechazada antigua (18/10/2026)
+
+**SHA inspeccionado:** `d9f8595be8ef2d5d8f607fe3f120c2b527d6ab35`. Informe técnico: [AUD-NEXIT-C03-NCE-D01-R02](../../testes/AUD-NEXIT-C03-NCE-D01-R02-2026-10-18.md).
+
+**NCE-D01 ALTA corregida estáticamente en la carga DIRECTA de FE:** `crearCargaDetalle` rechaza respuestas, errores y finally atrasados; conserva precarga y estado de lista cuando corresponde. **C03 todavía ABIERTA por C03-R02-01 ALTA:** el GET anterior de PROPUESTA de NCE rechazada `/api/notas-credito/correccion/[id]` solo se cancela por cambio de `corregir`/unmount, no al seleccionar cliente B o pulsar Cambiar. Si la propuesta de A termina luego, `vivo` sigue true y puede empezar un NUEVO GET de FE A tras invalidar el controlador de detalle, mostrando FE A bajo cliente B. El error de la propuesta también puede quedar desfasado. Solución focal: identidad/contexto de las dos fases (propuesta y detalle), descartar propuesta antigua antes de presentar aviso o abrir FE; sin modificar endpoint, política Innominado UI, saldo, motivo, IVA o envío NCE. Reauditoría R03 obligatoria.
+
+Claude reportó 58 + 205 + 47 = **310 comprobaciones, 0 fallas**; ChatGPT NO las ejecutó, ni browser/PG/VM/gateway. **NO HOMOLOGADO; C04 no autorizada.**
