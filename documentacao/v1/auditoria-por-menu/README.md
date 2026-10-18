@@ -202,3 +202,8 @@ Fonte única para a execução sequencial dos achados das 22 entradas V1: [PLANO
 
 - Auditoria de implementação [AUD-NEXIT-C01-FAT-D02-R03](../../testes/AUD-NEXIT-C01-FAT-D02-R03-2026-10-18.md), SHA Claude `ab4cb5d8e30664be07acc519702cdbc6a8ce7f86`: **FAT-D02 corrigida estaticamente**, residual C01-R02-01 resolvido. Envio utiliza exatamente body revisado; erro antigo após invalidar/cancelar é descartado; 42 assertivas direcionadas/0 falhas reportadas por Claude, NÃO reexecutadas por ChatGPT.
 - **Não é homologação** da FE nem do menu Facturas: banco/VM/browser/gateway reais não verificados, outros achados continuam. **C02 FAT-D01 é a próxima tarefa planejada e aguarda autorização do responsável**; Claude não deve começar automaticamente.
+
+## Atualização — C02/FAT-D01 aprovada tecnicamente R03 (18/10/2026)
+
+- [AUD-NEXIT-C02-FAT-D01-R03](../../testes/AUD-NEXIT-C02-FAT-D01-R03-2026-10-18.md), SHA Claude `f2c9d27314a1052387ae0d18a7dfdde8d048a67e`. **FAT-D01 ALTA e residual C02-R02-01 MÉDIA corrigidos e aprovados tecnicamente por leitura estática:** busca rápida de clientes/produtos invalida resultados ao digitar ou fechar por Escape/blur, não aceita HTTP/Enter antigo, reabre com consulta vigente e preserva scanner e bloqueios. Claude reportou 40 asserts focais/0 falhas e ESLint; ChatGPT não os reexecutou.
+- **Não homologado**, sem validação de navegador/VM/PG/gateway/deploy; os demais achados fiscais seguem no plano. **Próxima C03 = NCE-D01** planejada, aguardando autorização específica; Claude não a inicia sozinho.
