@@ -93,3 +93,20 @@ Consultar **`AUD-PRODUCTOS-V1.md` §XVII**: `stock_saldos` deve ser zero em **to
 **Stock** mantém somente consulta, detalhe e atalhos; análise de moeda/valor e permissões de atalhos em INV-01…04. Nenhuma edição direta de saldos.
 
 **Estado:** propostas de simplificação pendentes de decisão do responsável; achados técnicos numerados e critérios de aceite no contrato compartilhado. Não interpretar este registro como autorização automática para o Claude alterar o menu.
+
+
+## Auditoria atual — Stock DESKTOP (18/10/2026)
+
+**Snapshot de código:** `ee57f3a681d3d33aa71e0428b0cbb59efac20c6c`. **Relatório imutável de revisão por menu:** [AUD-NEXIT-STOCK-DESKTOP-R01](../../testes/AUD-NEXIT-STOCK-DESKTOP-R01-2026-10-18.md). A auditoria transversal de 13/10 continua fonte histórica, e INV-01…04/INV-R02-01/02 estão **corrigidos estaticamente em código**; não reabrir sem nova regressão. **Software exclusivamente desktop**; ignorar tarefas/casos históricos para celulares. Nenhum PostgreSQL, VM, browser, endpoints reais ou testes executados neste parecer; **não homologado**.
+
+| ID | Prioridade | Achado atual verificado em código | Estado |
+|---|---|---|---|
+| **STK-D01** | **ALTA (semântica/alcance)** | `lib/stock/shared.ts:31–49` mantém produtos ativos da empresa, e inativos com saldo em QUALQUER depósito, enquanto `:51–66` filtra somente saldos e custos por depósito autorizado. Produto sem linha em depósito autorizado vira «Sin stock» e infla SKU/KPI; risco de inferência de existência de saldo fora de alcance no caso inativo. **O catálogo global é intencional no comentário `:11–13`; resolver política explícita antes de mudar consulta**. | **ABERTO** |
+| **STK-D02** | **MÉDIA** | `stock/page.tsx:39–40,115–123,685–689`: moeda-base é variável de escopo do módulo; promessa de instância desmontada ainda escreve em `MONEDA_BASE` e pode rotular valores do usuário/contexto seguinte com moeda antiga | **ABERTO** |
+| **STK-D03** | **MÉDIA (concorrência de leitura)** | `lib/stock/shared.ts:31–87`: 9 consultas independentes ao Pool com `Promise.all`, sem snapshot único; movimento concorrente pode mostrar saldo de instante distinto de custo/valor. `lib/reportes/snapshot.ts` já fornece padrão de leitura REPEATABLE READ | **ABERTO**, risco de arquitetura sem repro PG real |
+
+**Observações separadas de bugs:** STK-O01 produto configurado em depósito sem saldo zero não entra em `vistaPorDeposito` por decisão/teste anterior; STK-O02 KPI soma unidades de medida diferentes (semântica a confirmar); STK-O03 listagem paginada localmente 25, latência não medida; STK-O04 ação de movimento para depósito histórico inativo é só risco condicional; STK-O05 custos e preços visíveis sob STOCK.VER é contrato anterior (política de sigilo pode exigir revisão); STK-O06 404 genérico de detalhe não é erro de autorização comprovado.
+
+**Confirmado preservado:** Stock só GET e atalhos; Movimientos única escrita física; STOCK.VER no layout/API; empresa e depósitos do ator para saldo/custos; propriedade PROPIO/TERCERO; níveis SIN_STOCK/BAJO/SOBRESTOCK; tipo de controle por lote e vencimento; `depositosAutorizados` e `?deposito=` corretos; cálculo do custo unitário com decimal em texto; moeda de venda diferente da moeda de custo não somada no KPI; autorização Movimientos.VER+CREAR por atalhos; Reposición também requer STOCK.VER, logo não é link bloqueado por permissão.
+
+**Estado:** auditoria estática do MENU 8 concluída com 1 ALTA + 2 MÉDIAS abertas e observações; **NÃO HOMOLOGADO**. Nenhuma ordem de correção ao Claude, SQL, migração, build/tsc/lint global ou execução de testes. **Próximo menu: Inventario → Movimientos**, quando solicitado.
