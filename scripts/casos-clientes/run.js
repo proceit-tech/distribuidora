@@ -62,6 +62,7 @@ Module._resolveFilename = function (request, ...resto) {
   const alt = cargar("lib/facturacion/alta-punto.casos.js");
   const est65 = cargar("lib/facturacion/estado-tipo.casos.js");
   const bnc = cargar("lib/facturacion/nce-busqueda.casos.js");
+  const rvf = cargar("lib/facturacion/revision-factura.casos.js");
   const cgw = cargar("lib/facturacion/configuracion-gateway.casos.js");
   const gwc = cargar("lib/facturacion/gateway-config.casos.js");
   const red = cargar("lib/facturacion/rediseno.casos.js");
@@ -122,6 +123,7 @@ Module._resolveFilename = function (request, ...resto) {
     ["Facturación NEX-064: alta fiscal única punto + tipo en una transacción (reutiliza el punto existente, duplicidad del TIPO, rollback sin punto huérfano, concurrencia, formulario único)", async () => alt.verificarCasosAltaPunto(), null],
     ["Facturación NEX-065: estado de emisión POR TIPO (sin compuerta del punto físico, migración que no reactiva, API antigua retirada, una acción por fila, reversión, T32/T33/T34)", async () => est65.verificarCasosEstadoTipo(), null],
     ["Facturación PRO-94 NCE ETAPA 2 (AUD-R01): búsqueda de cliente y de facturas — invalidación inmediata, Enter vigente, Escape estable, cambio de cliente sin mezcla (secuencias con planificador y promesas simuladas)", async () => bnc.verificarCasosBusquedaNce(), null],
+    ["Facturación C01 / FAT-D02: la factura enviada es exactamente la revisada (cambios durante/después de la previa, respuesta obsoleta, cancelar, envío duplicado)", async () => rvf.verificarCasosRevisionFactura(), null],
     ["Facturación PRO-133: prontitud del gateway por empresa (SIN_CONFIGURAR/INVALIDA/SIN_CREDENCIALES/CONFIGURADO), envío bloqueado en la pantalla y aprovisionamiento de prueba sin secretos", async () => gwc.verificarCasosGatewayConfig(), null],
   ];
   let total = 0;

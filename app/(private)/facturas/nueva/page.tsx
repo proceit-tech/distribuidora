@@ -14,6 +14,7 @@ import { B, parseDec, textoDec } from "@/lib/facturacion/calculo";
 import { cabeEnF023, leerCambio, mismoPrecio, MONEDAS_FE, simboloMoneda, totalEnGuaranies, type Moneda } from "@/lib/facturacion/monedas";
 import { conciliarPagos, PAGO_UI_VACIO, pagoParaEnvio, pendientesPagos, textoDecimal, type PagoUI } from "@/lib/facturacion/pagos";
 import { resumenCalculo, type LineaFE } from "@/lib/facturacion/payload-fe";
+import { crearFlujoRevision, type Revision } from "@/lib/facturacion/revision-factura";
 import { numeracionSiguiente, textoNumeracion } from "@/lib/facturacion/series";
 import { formatearDecimalTexto } from "@/lib/formato/decimal-texto";
 import { formatearFechaPy } from "@/lib/formato/listas";
@@ -475,10 +476,33 @@ export default function NuevaFacturaPage() {
   const [hoy, setHoy] = useState("");
   const [revisando, setRevisando] = useState(false);
   const [errores, setErrores] = useState<string[]>([]);
-  const [resumen, setResumen] = useState<Resumen | null>(null);
+  // FAT-D02: la revisión fija el cuerpo validado por el servidor; «Enviar» usa ese mismo cuerpo y se invalida ante cualquier cambio.
+  const [revision, setRevision] = useState<Revision<Resumen> | null>(null);
   const [enviando, setEnviando] = useState(false);
   const [resultado, setResultado] = useState<ResultadoEnvio | null>(null);
   const [mostrarEnvio, setMostrarEnvio] = useState(false);
+  const [flujo] = useState(() => crearFlujoRevision<Resumen, ResultadoEnvio>({
+    previa: async (cuerpo) => (await leer<{ resumen: Resumen }>(
+      await fetch("/api/facturas/previa", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(cuerpo) }),
+      "No fue posible revisar la factura.",
+    )).resumen,
+    enviar: async (cuerpo) => leer<ResultadoEnvio>(
+      await fetch("/api/facturas", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(cuerpo) }),
+      "No fue posible enviar la factura.",
+    ),
+    alRevisando: setRevisando,
+    alRevision: setRevision,
+    alEnviando: (b) => { setEnviando(b); if (b) { setMostrarEnvio(true); setErrores([]); } },
+    alResultado: setResultado,
+    alAviso: (m) => setErrores([m]),
+    alError: (e, fase) => {
+      const d = (e as { detalles?: string[] }).detalles ?? [];
+
+      if (fase === "envio") setMostrarEnvio(false);
+
+      setErrores([e instanceof Error ? e.message : fase === "envio" ? "No fue posible enviar la factura." : "No fue posible revisar la factura.", ...d]);
+    },
+  }));
   const [editando, setEditando] = useState<number | null>(null);
   const [confirmacion, setConfirmacion] = useState<{ tipo: "moneda" | "condicion"; valor: string; perdidas: string[] } | null>(null);
   const botonesFiscales = useRef(new Map<number, HTMLButtonElement>());
@@ -605,50 +629,32 @@ export default function NuevaFacturaPage() {
     }),
   });
 
-  // «Grabar»: solo revisión. El servidor valida y calcula; NO se reserva número ni se transmite nada.
-  async function grabar() {
-    if (!cliente) return;
+  // FAT-D02: huella canónica del formulario actual; la revisión solo vale mientras coincide con ella.
+  const huellaActual = JSON.stringify(cuerpoFactura());
+  const resumen = revision && revision.huella === huellaActual ? revision.resumen : null;
 
-    setRevisando(true);
-    setErrores([]);
-    try {
-      const r = await leer<{ resumen: Resumen }>(
-        await fetch("/api/facturas/previa", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(cuerpoFactura()) }),
-        "No fue posible revisar la factura.",
-      );
-
-      setResumen(r.resumen);
-    } catch (e) {
-      const d = (e as { detalles?: string[] }).detalles ?? [];
-
-      setErrores([e instanceof Error ? e.message : "No fue posible revisar la factura.", ...d]);
-    } finally {
-      setRevisando(false);
-    }
+  function limpiarRevision() {
+    flujo.cancelar();
   }
 
-  // «Enviar factura»: confirma. La clave de idempotencia es la misma en cada reintento, así que no se duplica documento, número ni envío.
-  async function enviar() {
-    setEnviando(true);
-    setMostrarEnvio(true);
+  // El flujo conoce siempre la huella actual: cualquier cambio durante la previa o después de ella invalida la revisión (y descarta el resultado tardío de la previa anterior).
+  useEffect(() => {
+    const t = window.setTimeout(() => flujo.cambio(huellaActual), 0);
+
+    return () => window.clearTimeout(t);
+  }, [huellaActual, flujo]);
+
+  // «Grabar»: solo revisión. El servidor valida y calcula; NO se reserva número ni se transmite nada. Se fija el cuerpo que se revisa y su versión.
+  function grabar() {
+    if (!cliente) return;
+
     setErrores([]);
-    try {
-      const r = await leer<ResultadoEnvio>(
-        await fetch("/api/facturas", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(cuerpoFactura()) }),
-        "No fue posible enviar la factura.",
-      );
+    void flujo.revisar(cuerpoFactura());
+  }
 
-      setResultado(r);
-      setResumen(null);
-    } catch (e) {
-      const d = (e as { detalles?: string[] }).detalles ?? [];
-
-      setMostrarEnvio(false);
-      setResumen(null);
-      setErrores([e instanceof Error ? e.message : "No fue posible enviar la factura.", ...d]);
-    } finally {
-      setEnviando(false);
-    }
+  // «Enviar factura»: confirma EXACTAMENTE el cuerpo revisado (nunca se reconstruye desde la pantalla). La clave de idempotencia es la misma en cada reintento, así que no se duplica documento, número ni envío.
+  function enviar() {
+    void flujo.enviar();
   }
 
   // Reintento de un documento que ya existe con error de envío: usa el endpoint del documento (sin crear ni consumir numeración).
@@ -677,7 +683,7 @@ export default function NuevaFacturaPage() {
     setLineas((ls) => ls.map((l) => ({ ...l, precio: referencia(l.producto, m) ?? "" })));
     setPagos([PAGO_UI_VACIO]);
     setCredito(CREDITO_UI_VACIO);
-    setResumen(null);
+    limpiarRevision();
   }
 
   function aplicarCondicion(valor: string) {
@@ -737,7 +743,7 @@ export default function NuevaFacturaPage() {
     setUbicacionElegida(false);
     setErrores([]);
     setResultado(null);
-    setResumen(null);
+    limpiarRevision();
     setMostrarEnvio(false);
     setClave(crypto.randomUUID());
   }
@@ -799,7 +805,7 @@ export default function NuevaFacturaPage() {
             </div>
           ) : null}
 
-          <div className={estilos.workspace} inert={confirmacion !== null}>
+          <div className={estilos.workspace} inert={confirmacion !== null || revisando || resumen !== null}>
             <div className={estilos.principal}>
               <section className={estilos.card} aria-labelledby="sec-operacion">
                 <div className={estilos.cardHead}>
@@ -1254,7 +1260,7 @@ export default function NuevaFacturaPage() {
               <div><dt>Total general</dt><dd>{fd(resumen.totalesTexto?.total ?? String(resumen.totales.total))}</dd></div>
             </dl>
             <div className={estilos.actions} style={{ marginTop: 14 }}>
-              <button type="button" className={ui.secondaryButton} onClick={() => setResumen(null)}>Volver a editar</button>
+              <button type="button" className={ui.secondaryButton} onClick={() => limpiarRevision()}>Volver a editar</button>
               <button type="button" className={ui.primaryButton} disabled={enviando || !puedeEnviarPorGateway(gateway)} title={puedeEnviarPorGateway(gateway) ? undefined : gateway?.mensaje ?? "Verificando la configuración del gateway…"} onClick={enviar}>Enviar factura</button>
             </div>
           </div>
