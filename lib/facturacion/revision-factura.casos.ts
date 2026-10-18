@@ -154,5 +154,59 @@ export async function verificarCasosRevisionFactura(): Promise<string[]> {
     igual("error de envío: tras revisar de nuevo se puede reintentar (misma clave de idempotencia)", [n.envios.length, n.envios[1].cuerpo.claveIdempotencia], [2, "k"]);
   }
 
+  {
+    // C01-R02-01: errores tardíos de una previa invalidada (sin que empiece otra) o cancelada se descartan
+    const m = montar();
+
+    m.f.cambio(huella(A));
+    void m.f.revisar(A);
+    m.f.cambio(huella(BCliente));                       // los datos cambian: la previa A queda invalidada y NO empieza otra
+    m.previas[0].d.ko(new Error("error tardío de A")); await tick();
+    igual("R02-01: error tardío de una previa invalidada por cambio de datos (sin nueva previa) NO se informa", [m.e.errores, m.e.revisando, m.e.avisos], [[], false, [AVISO_CAMBIO]]);
+
+    const n = montar();
+
+    n.f.cambio(huella(A));
+    void n.f.revisar(A);
+    n.f.cancelar();                                     // Volver a editar con la previa en vuelo
+    n.previas[0].d.ko(new Error("error tras cancelar")); await tick();
+    igual("R02-01: error de una previa cancelada NO se informa y la pantalla no queda 'revisando'", [n.e.errores, n.e.revisando, n.e.revision], [[], false, null]);
+
+    const o = montar();
+
+    o.f.cambio(huella(A));
+    void o.f.revisar(A);
+    o.f.cancelar();
+    o.previas[0].d.ok({ total: "tarde" }); await tick();
+    igual("R02-01: el resultado exitoso tardío tras cancelar tampoco abre una revisión", [o.e.revision, o.e.errores, o.envios.length], [null, [], 0]);
+
+    const p = montar();
+
+    p.f.cambio(huella(A));
+    void p.f.revisar(A);
+    p.previas[0].d.ko(new Error("falla vigente")); await tick();
+    igual("R02-01: el error de la previa VIGENTE sí se informa y libera la pantalla", [p.e.errores, p.e.revisando], [[{ m: "falla vigente", fase: "previa" }], false]);
+
+    // respuestas fuera de orden: A (v1) y B (v2); A falla tarde, B resuelve
+    const q = montar();
+
+    q.f.cambio(huella(A)); void q.f.revisar(A);
+    q.f.cambio(huella(BItem)); void q.f.revisar(BItem);
+    q.previas[1].d.ok({ total: "B" }); await tick();
+    q.previas[0].d.ko(new Error("A tarde")); await tick();
+    igual("R02-01: respuestas fuera de orden — el error tardío de A no afecta la revisión vigente de B", [q.e.errores, q.e.revision?.resumen.total, q.e.revisando], [[], "B", false]);
+    void q.f.enviar();
+    igual("R02-01: y se envía exactamente B", [q.envios.length, huella(q.envios[0].cuerpo)], [1, huella(BItem)]);
+
+    // A tarde con éxito después de que B falló: no crea revisión de A
+    const r = montar();
+
+    r.f.cambio(huella(A)); void r.f.revisar(A);
+    r.f.cambio(huella(BItem)); void r.f.revisar(BItem);
+    r.previas[1].d.ko(new Error("B falla")); await tick();
+    r.previas[0].d.ok({ total: "A tarde" }); await tick();
+    igual("R02-01: fuera de orden — B falla (se informa) y la respuesta tardía de A no crea revisión", [r.e.errores, r.e.revision], [[{ m: "B falla", fase: "previa" }], null]);
+  }
+
   return fallos;
 }

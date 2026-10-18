@@ -21,6 +21,8 @@ export function crearControlRevision<R>() {
 
       return { ...pendiente };
     },
+    /** La previa v sigue siendo la pendiente: no fue invalidada por un cambio de datos, por cancelar ni reemplazada por otra. */
+    vigente: (v: number) => pendiente !== null && pendiente.version === v,
     /** Versión de la última previa iniciada (para saber si una respuesta pertenece a la previa más reciente). */
     version: () => version,
     /** Respuesta de la previa: solo se acepta si es la previa pendiente y el formulario NO cambió desde que se fijó el cuerpo. */
@@ -108,13 +110,14 @@ export function crearFlujoRevision<R, Res>(deps: DepsFlujo<R, Res>) {
         // Respuesta de una previa anterior o con el formulario ya modificado: se descarta (no hay revisión vigente).
         if (control.resolver(previa.version, cuerpo, huella, r)) deps.alRevision(control.revisada());
       } catch (e) {
-        if (control.version() === previa.version) deps.alError(e, "previa");
+        // C01-R02-01: el error de una previa invalidada (cambio de datos o cancelación) o reemplazada se descarta aunque no haya empezado otra previa.
+        if (control.vigente(previa.version)) deps.alError(e, "previa");
       } finally {
         if (control.version() === previa.version) deps.alRevisando(false);
       }
     },
     /** «Volver a editar»: olvida la revisión; no emite ni consume número. */
-    cancelar() { control.cancelar(); deps.alRevision(null); },
+    cancelar() { control.cancelar(); deps.alRevision(null); deps.alRevisando(false); },
     async enviar() {
       const toma = control.tomarParaEnviar(huella);
 
