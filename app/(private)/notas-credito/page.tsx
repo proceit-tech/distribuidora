@@ -6,7 +6,7 @@ import { Fragment, Suspense, useCallback, useEffect, useMemo, useRef, useState }
 import { useSearchParams } from "next/navigation";
 
 import ui from "@/components/ui/lista-padrao/lista.module.css";
-import { crearBusquedaClientes, crearBusquedaFacturas, crearCargaDetalle, type EstadoClientes } from "@/lib/facturacion/nce-busqueda";
+import { crearBusquedaClientes, crearBusquedaFacturas, crearCargaCorreccion, crearCargaDetalle, type EstadoClientes } from "@/lib/facturacion/nce-busqueda";
 import { entradasIniciales, etiquetaIvaLinea } from "@/lib/facturacion/nce-entradas";
 import { iniciarRefresco } from "@/lib/facturacion/refresco-documentos";
 import { formatearDecimalTexto } from "@/lib/formato/decimal-texto";
@@ -158,30 +158,28 @@ function Formulario() {
     return detalle.abrir(id, precarga);
   }, [busFac, detalle]);
 
-  // Al desmontar se cancelan los temporizadores y se invalidan las peticiones pendientes.
-  useEffect(() => () => { busCli.reiniciar(); busFac.cancelar(); detalle.invalidar(); }, [busCli, busFac, detalle]);
+
+  // C03-R02-01: la propuesta de corrección y la apertura de su factura comparten el contexto vigente; cualquier cambio de contexto invalida ambas etapas.
+  type PropuestaCorreccion = Precarga & { facturaId: string; numeroRechazado: string };
+  const [correccion] = useState(() => crearCargaCorreccion<PropuestaCorreccion>({
+    pedir: (id) => pedir<PropuestaCorreccion>(`/api/notas-credito/correccion/${id}`),
+    alPropuesta: (p) => setAviso(`Propuesta de corrección de la nota de crédito rechazada ${p.numeroRechazado}. Revise todos los datos: se vuelven a validar y se emitirá una NUEVA nota con su propio número.`),
+    abrir: (facturaId, p) => abrirFactura(facturaId, p),
+    alError: setError,
+  }));
+  const invalidarContexto = useCallback(() => { correccion.invalidar(); detalle.invalidar(); }, [correccion, detalle]);
+
+  // Al desmontar se cancelan los temporizadores y se invalidan las peticiones pendientes (listas, propuesta de corrección y detalle).
+  useEffect(() => () => { busCli.reiniciar(); busFac.cancelar(); correccion.invalidar(); detalle.invalidar(); }, [busCli, busFac, correccion, detalle]);
 
   useEffect(() => {
     if (!corregir) return;
 
-    let vivo = true;
+    void correccion.cargar(corregir);
 
-    (async () => {
-      try {
-        const p = await pedir<{ facturaId: string; motivo: number; sucursalId: string; puntoId: string | null; observacion: string; numeroRechazado: string; lineas: Array<{ linea: number; cantidad: string; monto: string }> }>(`/api/notas-credito/correccion/${corregir}`);
-
-        if (!vivo) return;
-
-        setAviso(`Propuesta de corrección de la nota de crédito rechazada ${p.numeroRechazado}. Revise todos los datos: se vuelven a validar y se emitirá una NUEVA nota con su propio número.`);
-        await abrirFactura(p.facturaId, p);
-      } catch (e) {
-        if (vivo) setError((e as Error).message);
-      }
-    })();
-
-    // Cambiar de corrección (o salir) descarta la propuesta y la factura que aún se esté cargando.
-    return () => { vivo = false; detalle.invalidar(); };
-  }, [corregir, abrirFactura, detalle]);
+    // Cambiar de corrección (o salir) descarta la propuesta y la factura que aún se estén cargando.
+    return () => invalidarContexto();
+  }, [corregir, correccion, invalidarContexto]);
 
   const punto = useMemo(() => sucursales.find((s) => s.id === sucursalId)?.puntos.find((p) => p.id === puntoId) ?? null, [sucursales, sucursalId, puntoId]);
   const sucursal = sucursales.find((s) => s.id === sucursalId) ?? null;
@@ -242,7 +240,7 @@ function Formulario() {
   }
 
   function volverAFacturas() {
-    detalle.invalidar();
+    invalidarContexto();
     busFac.cambiarCliente(cliente?.id ?? null);
     setFactura(null);
     setRevisado(null);
@@ -268,7 +266,7 @@ function Formulario() {
   const elegirCliente = (c: ClienteB) => {
     if (c.innominado) return;
 
-    detalle.invalidar();
+    invalidarContexto();
     busCli.reiniciar();
     setCliente(c);
     setTextoFactura("");
@@ -301,7 +299,7 @@ function Formulario() {
           {cliente ? (
             <div className={estilos.banda}>
               <span>Cliente: <strong>{cliente.razonSocial}</strong> · {cliente.documento}</span>
-              <button type="button" className={ui.secondaryButton} onClick={() => { detalle.invalidar(); busFac.cambiarCliente(null); setCliente(null); setTextoFactura(""); }}>Cambiar</button>
+              <button type="button" className={ui.secondaryButton} onClick={() => { invalidarContexto(); busFac.cambiarCliente(null); setCliente(null); setTextoFactura(""); }}>Cambiar</button>
             </div>
           ) : (
             <section className={estilos.card} aria-label="Cliente">

@@ -196,3 +196,35 @@ export function crearCargaDetalle<R, C>(deps: {
     },
   };
 }
+
+/**
+ * C03-R02-01 — la propuesta de CORRECCIÓN de una NCE rechazada (primera etapa) comparte identidad de contexto con la apertura de la factura (segunda etapa, `crearCargaDetalle`). Cambiar de cliente,
+ * «Cambiar», volver, salir o corregir otra NCE invalida también la propuesta pendiente: su éxito o error tardíos se descartan ANTES de mostrar el aviso o de abrir la factura.
+ */
+export function crearCargaCorreccion<P extends { facturaId: string }>(deps: {
+  pedir: (corregirId: string) => Promise<P>;
+  alPropuesta: (p: P) => void;
+  /** Segunda etapa: abre la factura de la propuesta (normalmente `crearCargaDetalle.abrir`). */
+  abrir: (facturaId: string, propuesta: P) => Promise<void> | void;
+  alError: (mensaje: string) => void;
+}) {
+  let token = 0;
+
+  return {
+    async cargar(corregirId: string) {
+      const mio = ++token;
+
+      try {
+        const p = await deps.pedir(corregirId);
+
+        if (mio !== token) return;
+
+        deps.alPropuesta(p);
+        await deps.abrir(p.facturaId, p);
+      } catch (e) {
+        if (mio === token) deps.alError((e as Error).message);
+      }
+    },
+    invalidar() { token += 1; },
+  };
+}

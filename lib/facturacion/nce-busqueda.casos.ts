@@ -3,7 +3,7 @@
  * R01-01 (texto nuevo invalida resultados y Enter), R01-02 (cambio de cliente cancela el filtro agendado y nunca mezcla facturas), R01-03 (Escape cierra de forma estable).
  */
 import { contador } from "@/lib/clientes/contador-casos";
-import { crearBusquedaClientes, crearBusquedaFacturas, crearCargaDetalle, type EstadoClientes } from "@/lib/facturacion/nce-busqueda";
+import { crearBusquedaClientes, crearBusquedaFacturas, crearCargaCorreccion, crearCargaDetalle, type EstadoClientes } from "@/lib/facturacion/nce-busqueda";
 
 type Cli = { id: string; innominado: boolean };
 type Fac = { id: string };
@@ -366,6 +366,89 @@ export async function verificarCasosBusquedaNce(): Promise<string[]> {
 
     void y.c.abrir("FA", "A"); y.pedidos[0].d.ko(new Error("No se pudo cargar")); await tick();
     igual("vigente con error: el error legítimo se informa y se apaga «Cargando…»", [y.e.errores, y.e.aplicado, y.e.cargando], [["No se pudo cargar"], [], false]);
+  }
+
+  // ── C03-R02-01: propuesta de corrección + apertura de la factura comparten contexto ───────────────────────────────────────────────────────────
+  type Prop = { facturaId: string; numeroRechazado: string };
+  function correccion() {
+    const props: Array<{ id: string; d: ReturnType<typeof diferida<Prop>> }> = [];
+    const dets: Array<{ id: string; d: ReturnType<typeof diferida<Det>> }> = [];
+    const e = { avisos: [] as string[], errores: [] as string[], aplicado: [] as Array<{ factura: string; ctx: string }>, cargando: false };
+    const det = crearCargaDetalle<Det, string>({
+      pedir: (id) => { const d = diferida<Det>(); dets.push({ id, d }); return d.p; },
+      alCargando: (b) => { e.cargando = b; }, alResultado: (r, ctx) => e.aplicado.push({ factura: r.factura, ctx }), alError: (m) => e.errores.push(m),
+    });
+    const cor = crearCargaCorreccion<Prop>({
+      pedir: (id) => { const d = diferida<Prop>(); props.push({ id, d }); return d.p; },
+      alPropuesta: (p) => e.avisos.push(p.numeroRechazado),
+      abrir: (facturaId, p) => det.abrir(facturaId, p.numeroRechazado),
+      alError: (m) => e.errores.push(m),
+    });
+    const invalidar = () => { cor.invalidar(); det.invalidar(); };
+
+    return { cor, det, props, dets, e, invalidar };
+  }
+
+  {
+    // 1. Propuesta A pendiente → se elige el cliente B → la respuesta de A se ignora (no hay aviso ni apertura)
+    const x = correccion();
+
+    void x.cor.cargar("NCE-A");
+    x.invalidar();
+    x.props[0].d.ok({ facturaId: "FA", numeroRechazado: "NCE-A" }); await tick();
+    igual("propuesta A pendiente + cambio de cliente: la respuesta tardía se descarta (sin aviso y sin abrir la factura A)", [x.e.avisos, x.dets.length, x.e.aplicado], [[], 0, []]);
+
+    // 2. Error de A ignorado
+    const y = correccion();
+
+    void y.cor.cargar("NCE-A"); y.invalidar(); y.props[0].d.ko(new Error("error de la propuesta A")); await tick();
+    igual("propuesta A pendiente + cambio de cliente: el error tardío no se muestra", y.e.errores, []);
+  }
+  {
+    // 3. Cambiar de la corrección A a la B: solo B
+    const x = correccion();
+
+    void x.cor.cargar("NCE-A");
+    x.invalidar();                                       // cambia el parámetro «corregir»
+    void x.cor.cargar("NCE-B");
+    x.props[0].d.ok({ facturaId: "FA", numeroRechazado: "NCE-A" }); await tick();
+    x.props[1].d.ok({ facturaId: "FB", numeroRechazado: "NCE-B" }); await tick();
+    igual("de la corrección A a la B: solo se abre la factura de B", [x.dets.map((d) => d.id), x.e.avisos], [["FB"], ["NCE-B"]]);
+    x.dets[0].d.ok({ factura: "FB" }); await tick();
+    igual("de la corrección A a la B: solo se aplica la factura y la precarga de B", x.e.aplicado, [{ factura: "FB", ctx: "NCE-B" }]);
+  }
+  {
+    // 4. Propuesta vigente → abre su factura con su contexto
+    const x = correccion();
+
+    void x.cor.cargar("NCE-A");
+    x.props[0].d.ok({ facturaId: "FA", numeroRechazado: "NCE-A" }); await tick();
+    igual("propuesta vigente: aviso con su referencia y apertura de SU factura", [x.e.avisos, x.dets.map((d) => d.id), x.e.cargando], [["NCE-A"], ["FA"], true]);
+    x.dets[0].d.ok({ factura: "FA" }); await tick();
+    igual("propuesta vigente: la factura se aplica con la precarga de la propuesta", [x.e.aplicado, x.e.cargando], [[{ factura: "FA", ctx: "NCE-A" }], false]);
+
+    const y = correccion();
+
+    void y.cor.cargar("NCE-A"); y.props[0].d.ko(new Error("propuesta inexistente")); await tick();
+    igual("propuesta vigente con error legítimo: se informa y no se abre ninguna factura", [y.e.errores, y.dets.length], [["propuesta inexistente"], 0]);
+  }
+  {
+    // 5. La propuesta A ya cargó y el detalle A está pendiente → cambio de cliente
+    const x = correccion();
+
+    void x.cor.cargar("NCE-A");
+    x.props[0].d.ok({ facturaId: "FA", numeroRechazado: "NCE-A" }); await tick();
+    x.invalidar();
+    x.dets[0].d.ok({ factura: "FA" }); await tick();
+    igual("propuesta A cargada + detalle pendiente + cambio de cliente: el detalle tardío no llena el formulario y se apaga «Cargando…»", [x.e.aplicado, x.e.cargando], [[], false]);
+  }
+  {
+    // 6. Flujo normal sin corrección: el detalle funciona solo y el contexto no afecta a una apertura posterior
+    const x = correccion();
+
+    x.invalidar();                                        // elegir cliente sin corrección en curso
+    void x.det.abrir("FN", "normal"); x.dets[0].d.ok({ factura: "FN" }); await tick();
+    igual("flujo normal cliente/factura (sin corrección): la apertura vigente se aplica con su contexto", [x.e.aplicado, x.e.cargando, x.props.length], [[{ factura: "FN", ctx: "normal" }], false, 0]);
   }
 
   return fallos;
