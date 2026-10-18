@@ -114,3 +114,22 @@ O responsável mostrou NEX-001…051 já aplicadas na VM. Proibido editar script
 ### Estado e próxima autorização
 
 **Concluído estaticamente:** PRV-M01/M02/M03 e lógica principal M04. **NÃO encerrado:** recuperação da carga para CREAR-only, refresh e resposta HTTP ambígua; verificar PRV-R01-01…04 em tarefa pequena, sem mexer nos módulos bancários, homologação, retenções, NEX-001…053 ou grants. A próxima tarefa para o Claude deve **unir estas correções residuais com Catálogos de Productos** no escopo autorizado pelo responsável, com commits separados e sem execução real de SQL. `PRV-M05` paginação e `PRV-M06` visibilidade bancária continuam fora do escopo, não reabrir perguntas. **PROVEEDORES NÃO HOMOLOGADO; migraciones/deploy não autorizados**.
+
+
+## VII. Auditoría actual de Proveedores DESKTOP — 18/10/2026
+
+**Corte actual:** `542b11696a01daf6e831d339486fdcf4cbe429f0`. **Informe detallado:** [AUD-NEXIT-PROVEEDORES-DESKTOP-R01](../../testes/AUD-NEXIT-PROVEEDORES-DESKTOP-R01-2026-10-18.md). La presente sección rectifica el estado antiguo «pendiente de implementación» de las secciones iniciales: las reparaciones PRV-M01…M04, PRV-R01-01…05 están **presentes en el código**; no revivir hallazgos antiguos sin nueva evidencia. No implica homologación de VM.
+
+**Instrucción vigente:** NEXIT es ERP exclusivamente de escritorio; no exigir móvil. Revisión secuencial, un menú por vez, documentar defectos y solo Claude implementa bajo orden del responsable. No ejecutar suites, VM ni SQL por IA.
+
+| ID | Severidad | Evidencia de la revisión de código actual | Estado |
+|---|---|---|---|
+| **PRV-D01** | **ALTA** | `proveedores/layout.tsx:6` exige `VER` también para `/proveedores/nuevo`, pese a que POST requiere `CREAR` y API catálogos de alta admite CREAR-only. Al terminar se redirige a lista inaccesible para CREAR-only | ABIERTO |
+| **PRV-D02** | **MEDIA** | Formulario de edición y botón Actualizar habilitados a VER-only, aunque PUT exige EDITAR; botón Nuevo proveedor visible sin CREAR | ABIERTO |
+| **PRV-D03** | **MEDIA** | `pestanas/direcciones.tsx` oculta error HTTP/red del catálogo de distrito/ciudad convirtiéndolo en `[]` | ABIERTO |
+
+**Observaciones:** PRV-O01 banco/auditoría legibles bajo VER requiere política de privacidad explícita (anterior PRV-M06; no declarar vulnerabilidad automáticamente), PRV-O02 lista completa sin paginação backend (anterior PRV-M05, medir), PRV-O03 `window.confirm` existe y cumple confirmación, pendiente padronización UX; PRV-O04 grants/DDL NEX-034…037 sin evidencia reciente del ledger operacional en esta revisión. **No confundir falta de prueba SQL con migration pendiente.**
+
+**Correcciones históricas confirmadas por lectura del corte:** versiones PUT obligatorias (409), históricos inactivos tolerados si inalterados, rascunhos protegidos, documentos de alta retomados por URL, reenvío solo fallidos, cierre idempotente incluso con respuesta 200 perdida, API catálogos compatible con CREAR-only, operación bancaria auditada y elegibilidad de pagos. Geografía actual correctamente ata resultados a su clave y cancela respuestas de fetch obsoletas (no inventar race).
+
+**Estado:** hallazgos documentados, **NO HOMOLOGADO**. Próximo menú a auditar: **Productos**, en tarea independiente, sin mezclar correcciones de Proveedores.
