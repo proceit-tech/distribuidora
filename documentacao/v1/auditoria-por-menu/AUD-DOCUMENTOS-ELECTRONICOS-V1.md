@@ -2,7 +2,7 @@
 
 **Rota principal:** `/documentos`  
 **Branch:** `feature/NEXIT-2026-001-banco-demo`  
-**Estado:** ABERTA — NÃO AUDITADA INTEGRALMENTE — NÃO HOMOLOGADA  
+**Estado atual 18/10/2026: AUDITORIA ESTÁTICA INDIVIDUAL R01 DOCUMENTADA — 1 ALTA, 6 MÉDIAS, 1 BAIXA ABERTAS — NÃO HOMOLOGADA**  
 **Responsável pela auditoria estática:** ChatGPT. **Implementação:** Claude Code somente mediante tarefa autorizada. **Homologação operacional/visual:** responsável na VM.
 
 ## Escopo e rastreabilidade
@@ -23,12 +23,39 @@ Este arquivo é a fonte única da auditoria do menu **Documentos electrónicos**
 
 ## Achados confirmados até agora (parciais)
 
-Nenhum defeito deste menu documentado ainda nesta ficha. Isso NÃO significa ausência de defeitos.
+A lista de achados ativos DOC-D01…DOC-D08 e a matriz de requisitos de concorrência estão na seção AUD-DOC-DESKTOP-R01 e no informe técnico específico ao final; este parágrafo era o estado inicial.
 
 ## Pendências
 
-Auditoria exaustiva deste menu ainda não executada. Não atribuir percentual de cobertura sem inventário de arquivos e linhas revisadas.
+Auditoria estática específica de código/menu e matriz de competência documentadas em AUD-DOC-DESKTOP-R01. PostgreSQL/gateway/VM/browser e arquivos fiscais reais seguem sem verificação; não declarar homologação.
 
 ## Regra de migrations
 
 O responsável mostrou NEX-001…051 já aplicadas na VM. Proibido editar scripts aplicados, checksums ou reexecutar SQL histórico como se fosse nova migration. Qualquer nova alteração estrutural exige justificativa, aprovação e migration incremental a partir de NEX-052.
+
+
+## AUD-DOC-DESKTOP-R01 — confronto com concorrência e função operacional (18/10/2026)
+
+**Relatório técnico e matriz funcional completa:** [AUD-NEXIT-DOCUMENTOS-ELECTRONICOS-DESKTOP-R01-2026-10-18.md](../../testes/AUD-NEXIT-DOCUMENTOS-ELECTRONICOS-DESKTOP-R01-2026-10-18.md). Duas capturas fornecidas pelo responsável como **referência funcional da concorrência**, não prova de capacidades/API/arquivos do fornecedor. ERP **somente desktop**, não auditar mobile.
+
+**Função aprovada para diagnóstico:** central de consulta e operação de documentos emitidos, com estado do gateway, status SIFEN e e-mail INDEPENDENTES, CDC, lote, histórico, anexos fiscalmente válidos, permissões por empresa/sucursal. Emissão FE/NCE permanece nos formulários próprios, não criar planejador fiscal duplicado.
+
+**Arquivos efetivamente lidos nesta rodada:** navegação/layout, `app/(private)/documentos/page.tsx` 514 linhas e CSS, APIs GET lista, GET [id] e POST [id]/enviar/consultar, `lib/facturacion/{shared,estados,refresco-documentos,servidor,envio,gateway,reconciliacion}.ts`, componente CampoFecha, suites de Facturación/FAT-E2 versionadas e progresso pertinente. Não foram executados tests, SQL nem navegador.
+
+**Achados NOVOS exclusivos do menu:**
+- **DOC-D01 ALTA:** `page.tsx:168–178` detecta `resultado.clave !== claveConsulta` para loading, porém renderiza `resultado.datos` antigo para tabela, KPIs, botões e permissões enquanto troca sucursal/tipo/datas/ordem/página ou digita texto. Não alegar bypass: o servidor revalida autorização.
+- **DOC-D02 MEDIA:** `shared.ts:55–62` define `PEND_ENVIO` incluindo `ERROR_ENVIO/ENVIO_INDETERMINADO`, `PEND_RESPUESTA` exclui `NO_RECONOCIDO`; painel mistura/omite exceções em KPIs de pendências.
+- **DOC-D03 MEDIA:** KPI `resumen` é GLOBAL ao alcance, não segue filtros, e não é identificado claramente na UI (`shared.ts:170–198`). Decisão original explícita, divergência de UX/contrato, não erro aritmético.
+- **DOC-D04 MEDIA:** `page.tsx:85` usa `Number(d.total)` apesar do `::text` no SQL, risco real de perda de precisão monetária para valores grandes.
+- **DOC-D05 MEDIA (risco sem reprodução):** `shared.ts:174–187` consulta conteo/resumen/sucursales em `Promise.all` e depois linhas sem mesma foto `REPEATABLE READ`. Divergências em concorrência possíveis, não observadas em PG.
+- **DOC-D06 MEDIA:** datas API apenas regex e filtros inválidos silenciosamente removidos / datas impossível ou intervalo inverso sem 400 correto (`shared.ts:96–113,132–133`), apesar do CampoFecha mitigar input comum.
+- **DOC-D07 MEDIA:** `SIN_EMAIL` KPI soma `NO_INFORMADO` e `SIN_EMAIL`, conceitos distintos (`shared.ts:62`).
+- **DOC-D08 BAIXA:** detalhe/histórico cacheado em `abiertos` por id não revalida automaticamente ao mudar consulta/refrescar, podendo mostrar tentativas antigas.
+
+**Saldo do diagnóstico estático:** **1 ALTA, 6 MÉDIAS, 1 BAIXA** no código; 28 itens C01–C28 comparados à referência e 15 recursos extras E01–E15 propostos, registrados como requisitos/GAPs e não como bugs; 7 blocos de dependência produto/provider; 20 testes futuros dirigidos (DOC-T01…20).
+
+**Lacunas funcionais prioritárias (não são defeitos de SQL comprovados):** filtros por lote e data assinatura; multi-seleção de tipos/estados e ocultações; e-mail pendente/blacklist quando fonte real existir; seleção, exportação XLSX/CSV e agrupamento desktop; históricos de reprocesso/eventos; linha do tempo, CDC e diagnóstico; **KuDE/PDF/XML indisponíveis por contrato não confirmado**, sem inventar endpoint; ações fiscais cancelación/inutilización somente com contrato e elegibilidade legal. `gateway.ts:25–28` permite consulta FE/NCE, não NDE/NRE/AFE apesar de constarem no catálogo.
+
+**Segurança e regras que NÃO podem regredir:** empresa+alcance sucursal via sessão em cada GET/POST, `VER` para lista/detalhe, `CREAR` para envio, `EDITAR` para reconsulta; gateway recebido não é SIFEN aprovado; estado fiscal final precisa CDC coerente; timeout/indeterminado não pode autorizar reenvio cego; NCE rejeitada definitiva reemitida com novo número, preservando FE/CDC/saldo; tokens e respostas devem ser saneados.
+
+**Ordem proposta apenas para decisão:** A corrigir DOC-D01…08 e testar somente escopo direcionado, B filtros/KPIs/UX desktop, C KuDE/XML dependente de contrato, D eventos/e-mail dependentes de contrato/normativa, E exportações/seleção/masivas, F NDE/NRE/AFE por compatibilidade de gateway. **Nenhum desenvolvimento ou migration autorizado a Claude, nenhuma homologação; 0 testes executados, não acessar VM/PostgreSQL/gateway real.**
