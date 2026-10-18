@@ -262,3 +262,11 @@ Claude reportó **42 tests dirigidos / 0 fallas**, más ESLint focal de 2 archiv
 **C02 AÚN ABIERTA por C02-R02-01 MEDIA:** si se inició Enter con HTTP pendiente y el usuario cierra lista mediante Escape o blur, `page.tsx:326–335` sólo modifica `abierto`, sin invalidar el GET directo del controlador. La respuesta posterior puede seleccionar cliente o añadir producto aunque la búsqueda esté cerrada, siempre que el texto no cambie. Solicitar cierre explícito que invalide token y respuestas/errores antiguos, con tests focales y nueva reauditoría R03. No implica bypass de autorización ni FE errónea probada.
 
 Claude reportó 29 tests nuevos + 693 relacionados (total 722) sin fallas, no ejecutados por ChatGPT. **NO HOMOLOGADO**; no hubo browser/VM/PG/gateway; C01 aprobada técnicamente no fue modificada; **C03 no autorizada**.
+
+## AUD-C02-R03 — búsqueda rápida técnicamente aprobada (18/10/2026)
+
+**Implementación revisada SHA:** `f2c9d27314a1052387ae0d18a7dfdde8d048a67e`. [Informe técnico AUD-NEXIT-C02-FAT-D01-R03](../../testes/AUD-NEXIT-C02-FAT-D01-R03-2026-10-18.md).
+
+**FAT-D01 ALTA y C02-R02-01 MEDIA: RESUELTAS Y APROBADAS TÉCNICAMENTE EN REVISIÓN ESTÁTICA.** Cambiar texto invalida inmediatamente selección/lista y HTTP antiguas; Escape y blur ahora hacen `ctl.cerrar()`, cancelan timers e invalidan búsqueda normal y Enter directo pendiente; errores/resultados tardíos se descartan sin seleccionar nada. El texto se conserva, reabrir consulta otra vez y el lector GTIN con exacto/único y prohibiciones fiscales permanece vigente. La C01 de envío exacto del cuerpo revisado no fue modificada.
+
+Claude reportó `buscador-rapido.casos.ts` **40 comprobaciones/0 fallas**, ESLint focal conforme; ChatGPT inspeccionó el commit y casos pero **no ejecutó** pruebas ni browser, VM, SQL o gateway. **NO HOMOLOGADO.** Se mantiene la decisión de permisos e integridad fiscal, y quedan otras tareas de Facturas. C03 (Notas de crédito NCE-D01) no autorizada automáticamente.
