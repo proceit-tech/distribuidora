@@ -177,3 +177,23 @@ Corrigir **LPR-A01…A09**, priorizando integridade e salvamento com recorte enx
 | Regressões de preço removido, alterado e apagado por Productos, inserção externa, solicitação malformada, lista vazia | `lib/listas-precio/estabilizacion.casos.ts:375-430` contém casos com tabela simulada e asserções de 409/400 e ausência de escrita | **COBERTURA ESTÁTICA IDENTIFICADA**; não é teste real de bloqueios PostgreSQL |
 
 **Resultado:** **LPR-R02-01 RESOLVIDO NA AUDITORIA ESTÁTICA; nenhum achado novo confirmado no escopo da correção.** Os achados de estabilização LPR-A01…A09 permanecem com aceite estático condicionado às provas operacionais; não foi detectada regressão da presente correção. **LISTAS DE PRECIOS NÃO HOMOLOGADO.** Para encerrar o menu operacionalmente, o responsável ainda deve conferir na aplicação publicada e no PostgreSQL real autorizado casos de duas sessões concorrentes, atualização de preço em Productos, versão 409, rollback e preservação de preços/histórico, com precauções de dados/backup. Não orientar Claude a reimplementar R02-01 sem falha demonstrada.
+
+
+## VIII. Auditoría actual — Listas de precios DESKTOP (18/10/2026)
+
+**Corte Git actual:** `25f2844d1a18171c2520850ca7379c879d937438`. Informe de la nueva secuencia por menús: [AUD-NEXIT-LISTAS-PRECIOS-DESKTOP-R01](../../testes/AUD-NEXIT-LISTAS-PRECIOS-DESKTOP-R01-2026-10-18.md). Las secciones anteriores I–VII constituyen historial: en particular **LPR-A01…A09 y LPR-R02-01 se corrigieron en código y recibieron aceite estático R03**; NO son defectos actuales pendientes sin nueva evidencia. No se declararon homologaciones PostgreSQL o navegador.
+
+**Regla actual:** producto **solo desktop**; no exigir UI móvil. Documentar un menú por vez; no emitir tarea para Claude ni modificar módulos ajenos sin orden expresa. No ejecutar VM, PostgreSQL, build/tsc/lint global o suites por defecto.
+
+| ID | Prioridad | Hallazgo vigente 18/10/2026 | Estado |
+|---|---|---|---|
+| **LPR-D01** | **ALTA** | `/listas-precio/nuevo` hereda `guardPage(LISTAS_PRECIO, VER)` y `GET ?modo=catalogos` exige VER aunque `POST` usa CREAR; CREAR-only no puede realizar alta | ABIERTO |
+| **LPR-D02** | **MEDIA** | Listagem ofrece «Nueva lista» sin CREAR y ficha editable/salvable sin EDITAR, aunque las APIs guardan autorizaciones | ABIERTO |
+| **LPR-D03** | **MEDIA** | Estado visual `getEstadoReal` marca BORRADOR/INACTIVA con fin pasado como VENCIDA; resumen «disponibles para operar» cuenta ACTIVA con inicio futuro y fecha local del navegador | ABIERTO |
+| **LPR-D04** | **MEDIA** | Si fallan catálogos de moneda/productos/referencias, formulario mantiene Guardar habilitado y presupone moneda-base PYG antes de conocer la real | ABIERTO |
+
+**Observaciones no clasificadas como defectos comprobados:** confidencialidad de `costoPromedio` bajo permiso LISTAS_PRECIO.VER requiere política explícita de roles; `numeric(18,4)::float8` y `Number` merecen pruebas límite de precisión monetaria antes de declarar pérdida real; listado entero sin paginación SQL aún sin medir; confirmaciones nativas ya existen; GET cabecera/hijos no ofrece snapshot transaccional explícito (validar caso concurrente si hay síntoma, sin alegar corrupción confirmada).
+
+**Preservar:** ID+versión de todos los precios originalmente cargados, incluso eliminados en borrador; comparar bajo locks y rechazar 409 sin escrituras, retener IDs de hijos, guardas NEX-018 moneda/cotas/tenant, `REF-VENTA` inmutable excepto precios, refs comerciales inactivas históricas, unidad-base/presentaciones, no convertir moneda silenciosamente, sin nueva política de U09/U10 ni cambio fiscal. El registro de migraciones real no fue consultado por esta auditoría.
+
+**Resultado:** auditoría estática independiente de este menú DOCUMENTADA CON **1 ALTA + 3 MÉDIAS ABIERTAS**, NO HOMOLOGADA; ningún cambio de código, SQL, tests, VM ni deploy. **Próximo menú:** Catálogos comerciales, separado.
