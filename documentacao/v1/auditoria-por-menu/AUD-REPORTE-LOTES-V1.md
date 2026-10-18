@@ -2,7 +2,7 @@
 
 **Rota principal:** `/reportes/lotes`  
 **Branch:** `feature/NEXIT-2026-001-banco-demo`  
-**Estado:** ABERTA — NÃO AUDITADA INTEGRALMENTE — NÃO HOMOLOGADA  
+**Estado atual (18/10/2026): AUDITORIA ESTÁTICA R01 REGISTRADA — ACHADOS TRANSVERSAIS ABERTOS — NÃO HOMOLOGADA** (os registros históricos abaixo são preservados).  
 **Responsável pela auditoria estática:** ChatGPT. **Implementação:** Claude Code somente mediante tarefa autorizada. **Homologação operacional/visual:** responsável na VM.
 
 ## Escopo e rastreabilidade
@@ -170,3 +170,9 @@ O responsável mostrou NEX-001…051 já aplicadas na VM. Proibido editar script
 - O commit funcional R03 altera somente `lotes-plan.ts`, `cliente-lotes.ts`, `page.tsx`, `lotes.casos.ts` e `PROGRESSO-NEXIT-V1.md`. **Não** modifica SQL de `lotes.ts`, `stock_saldos`, `stock_lotes`, migrations, gerador PDF compartilhado, unidades fiscais SIFEN, Stock general, Valorización, Kardex, Stock crítico ou motor operacional de Movimientos.
 - Os nove achados `LOT-R01-01…09` estavam materialmente corrigidos na R02; as duas pendências `LOT-R02-01/02` agora estão **encerradas em auditoria estática**. Os testes LOT-T01…T10 e regressões antigas permanecem versionados; a alegação de passagem da suíte é do Claude, não uma nova execução independente.
 - **VEREDITO: ACEITE TÉCNICO ESTÁTICO DO REPORT Lotes y vencimientos CONCEDIDO.** Com os aceites anteriores, **5/5 relatórios obrigatórios da V1 possuem aceite técnico estático**, sem pendências bloqueantes identificadas nestas auditorias. **NÃO HOMOLOGADO OPERACIONALMENTE:** nenhuma consulta PostgreSQL real, navegador, VM, Docker, deploy ou migration foi realizada nesta auditoria; ainda cabe ao responsável aplicar versões sob sua decisão no único ambiente real e conferir permissões, saldos, filtros, exportações e conciliação com os demais menus. Não criar novos desenvolvimentos para Claude sem ordem específica.
+
+## Revisão desktop Reportes R01 (18/10/2026)
+
+**Informe transversal completo:** [AUD-NEXIT-REPORTES-DESKTOP-R01](../../testes/AUD-NEXIT-REPORTES-DESKTOP-R01-2026-10-18.md).
+**Escopo deste menu: Lotes y vencimientos.** **RPT-D01 ALTA TRANSVERSAL:** `q/lote` normalizados por API divergen de la consulta cliente, ocultando resultado válido; **RPT-D02 MEDIA TRANSVERSAL:** durante debounce `qEst/loteEst` anteriores siguen vigentes aun con texto vivo distinto (aunque horizonte inválido sí bloquee). Fecha, unidad UUID, huérfanos y LOT-R02-01/02 preservados.
+**Método/limite:** inspeção de arquivos atuais da branch, não execução. Relatos de aceites estáticos históricos RPT-R19/R20 preservados, mas esta revisão encontrou novas lacunas de filtro de UI que impedem marcar o conjunto como livre de achados. **0 testes/HTTP/PG/VM/Docker/browser, sem mudanças funcionais nem migrations, NÃO HOMOLOGADO.** Nenhuma tarefa Claude autorizada.
