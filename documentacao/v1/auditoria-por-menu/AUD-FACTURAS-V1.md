@@ -2,7 +2,7 @@
 
 **Rota principal:** `/facturas`  
 **Branch:** `feature/NEXIT-2026-001-banco-demo`  
-**Estado:** ABERTA — NÃO AUDITADA INTEGRALMENTE — NÃO HOMOLOGADA  
+**Estado atual (18/10/2026): AUDITORIA INDIVIDUAL R01 REGISTRADA — 2 ALTAS, 2 MÉDIAS, 1 BAIXA NOVAS; BRECHA HERDADA DE APRESENTAÇÕES — NÃO HOMOLOGADA**  
 **Responsável pela auditoria estática:** ChatGPT. **Implementação:** Claude Code somente mediante tarefa autorizada. **Homologação operacional/visual:** responsável na VM.
 
 ## Escopo e rastreabilidade
@@ -228,3 +228,13 @@ Apesar da atualização do quadro E1-01 e da seção `2-bis`, a tabela detalhada
 ### Veredito e próxima etapa
 
 **`FAT-E1-R01-01` ACEITO ESTATICAMENTE; FAT-E1 (Etapa 1/4) ENCERRADA EM AUDITORIA ESTÁTICA**, ressalvadas pendências do contrato gateway que dependem de evidência operacional (`null` vs omissão, `dTotalGs` em PYG, `dLiqTotIVA5/10`, tipos/precisão e política P-11) e a correção editorial não bloqueante acima. **NÃO HOMOLOGADO:** sem envio real, aceitação SIFEN/gateway, browser ou banco operacional. **FAT-E2 (Etapa 2/4) pode ser autorizada em comando separado pelo responsável**, com escopo exclusivo de autenticação, transmissão, resposta e estados, sem retomar JSON fiscal e sem iniciar worker de 2 min × 5 (FAT-E3) nem UI/sync manual (FAT-E4). Claude permanece parado até essa autorização.
+
+## AUD-FAT-DESKTOP-R01 — auditoría independiente (18/10/2026)
+
+Informe técnico detallado: [AUD-NEXIT-FACTURAS-DESKTOP-R01](../../testes/AUD-NEXIT-FACTURAS-DESKTOP-R01-2026-10-18.md). Estado: auditoría estática registrada, NO HOMOLOGADA. 0 pruebas ejecutadas; ningún cambio funcional ni autorización para Claude.
+
+**Nuevos hallazgos:** FAT-D01 ALTA — resultados obsoletos de búsqueda rápida pueden seleccionarse con Enter; FAT-D02 ALTA — la previa revisada no fija el cuerpo que se manda al emitir; FAT-D03 MEDIA — reintento con misma clave relee catálogo mutable antes de recuperar documento existente; FAT-D04 MEDIA/riesgo no reproducido — consultas de datos fiscales sin snapshot único; FAT-D05 BAJA — fecha Paraguay congelada durante la sesión. Balance NUEVO: 2 ALTAS, 2 MEDIAS y 1 BAJA. Fuente, líneas, criterios y 24 pruebas futuras figuran en el informe.
+
+**Brecha ALTA HEREDADA, no contar de nuevo:** FAT-G01/FAT-X03/DEC-PRD-U03/U09 — sin selección de presentación comercial/factor versionado ni conversión fiscal cantidad/precio (ejemplo Bandeja de 6 UNI), snapshot comercial pendiente. Integración automática con Stock NO está implementada ni se aprueba por esta auditoría. **Corregido y preservado:** filtro p.vendible backend (FAT-X01), unidad fiscal oficial, FAT-E1-R02 (cálculos/pagos conciliados), emisión FE idempotente y estado gateway distinto de aprobación SIFEN. El workspace desktop vigente reemplaza el antiguo diseño vertical; no reabrir hallazgos de código viejo.
+
+**Restan auditar individualmente:** Puntos de expedición, Notas de crédito; Empresas de plataforma por separado. No homologar ni iniciar correcciones sin decisión del responsable.
