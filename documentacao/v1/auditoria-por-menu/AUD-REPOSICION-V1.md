@@ -40,3 +40,14 @@ O responsável mostrou NEX-001…051 já aplicadas na VM. Proibido editar script
 **Reposición** mantém planejamento sem gravação, diferenças conceituais em relação a Stock e transferência pré-preenchida via Movimientos. Propostas UX e limitações em INV-01/02/06/08.
 
 **Estado:** propostas de simplificação pendentes de decisão do responsável; achados técnicos numerados e critérios de aceite no contrato compartilhado. Não interpretar este registro como autorização automática para o Claude alterar o menu.
+
+
+## Auditoría actual — Reposición DESKTOP R01 (18/10/2026)
+
+**Informe técnico detallado:** [AUD-NEXIT-REPOSICION-DESKTOP-R01](../../testes/AUD-NEXIT-REPOSICION-DESKTOP-R01-2026-10-18.md). Corte de código: pantalla blob `489fc532e4612c72f5d6dac69c61fda946ffe824`, datos `1f1bcccc2236f0a94cd63d1849afc17933ad095f`, cálculo `2f08843b569eeb3a2113d715c00354829a858e0a`, API `7cc999769c6859cdc9a5e2c03b9206f16f0afd2c`.
+
+**4 MEDIAS documentadas:** `REP-D01` etiquetas de transferencia/compra del plan base divergen de cantidad simulada usada en CTA/detalle; `REP-D02` simulación individual no redistribuye cupo de origen común entre otros destinos (limitación semántica que exige decisión; no volver a abrir el algoritmo AUD-REP-04); `REP-D03` recarga del GET conserva los resultados/atajos anteriores mientras llega la respuesta; `REP-D04` cinco SELECT de cálculo sin snapshot compartido (riesgo de lectura concurrente, no reproducido).
+
+**7 observaciones no confirmadas:** REP-O01 lote agregado sin lote en precarga; O02 cruce entre alcance de sucursales y depósitos; O03 consolidado bajo alcance parcial (contrato intencional); O04 decimal/float8; O05 simulación preservada tras nueva carga; O06 escala no medida; O07 parámetros inconsistentes.
+
+**Preservado / NO reabrir sin regresión:** INV-R02-03 cargas malformadas; INV-01 diferenciar Stock y reposición; INV-02 acceso VER+CREAR a Movimientos; INV-06/08 simulación local y tránsito opcional; AUD-REP-03 cantidad sin gatillo; AUD-REP-04 origen compartido una sola vez en plan base; tenant/stock PROPIO/depósitos activos autorizados; Reposición solo GET. Tests locales históricos leídos, **0 ejecutados por ChatGPT**, 0 PostgreSQL/VM/Browser. Sin cambios funcionales ni migrations. **AUDITORÍA ESTÁTICA DOCUMENTADA — NO HOMOLOGADA**. Próximo menú: Facturación → Documentos electrónicos, previa solicitud.
