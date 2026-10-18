@@ -2,7 +2,7 @@
 
 **Rota principal:** `/reportes/kardex`  
 **Branch:** `feature/NEXIT-2026-001-banco-demo`  
-**Estado atual (18/10/2026): AUDITORIA ESTÁTICA R01 REGISTRADA — ACHADOS TRANSVERSAIS ABERTOS — NÃO HOMOLOGADA** (os registros históricos abaixo são preservados).  
+**Estado atual (18/10/2026): AUDITORIA INDIVIDUAL R01 DOCUMENTADA — 1 ALTA, 3 MÉDIAS, 1 BAIXA ABERTAS — NÃO HOMOLOGADA** (os registros históricos abaixo são preservados).  
 **Responsável pela auditoria estática:** ChatGPT. **Implementação:** Claude Code somente mediante tarefa autorizada. **Homologação operacional/visual:** responsável na VM.
 
 ## Escopo e rastreabilidade
@@ -227,3 +227,18 @@ Para G grupos sem colidência de `unidadId` com nomes coincidentes — por exemp
 **Informe transversal completo:** [AUD-NEXIT-REPORTES-DESKTOP-R01](../../testes/AUD-NEXIT-REPORTES-DESKTOP-R01-2026-10-18.md).
 **Escopo deste menu: Kardex de movimientos.** **RPT-D01 ALTA TRANSVERSAL:** `q/documento/lote` API trim/longitud vs cliente crudo hace ocultar respuesta válida; **RPT-D02 MEDIA TRANSVERSAL:** búsquedas escritas, aún no estabilizadas, conservan resultado/exportación antiguos. Algoritmo histórico, UUID, conciliación y export PDF aceptados históricamente preservados.
 **Método/limite:** inspeção de arquivos atuais da branch, não execução. Relatos de aceites estáticos históricos RPT-R19/R20 preservados, mas esta revisão encontrou novas lacunas de filtro de UI que impedem marcar o conjunto como livre de achados. **0 testes/HTTP/PG/VM/Docker/browser, sem mudanças funcionais nem migrations, NÃO HOMOLOGADO.** Nenhuma tarefa Claude autorizada.
+
+## Auditoría independiente por función — Kardex DESKTOP R01 (18/10/2026)
+
+**Informe técnico completo de este menú:** [AUD-NEXIT-KARDEX-DESKTOP-R01](../../testes/AUD-NEXIT-KARDEX-DESKTOP-R01-2026-10-18.md). Se inspeccionaron directamente pantalla completa (423 líneas), SQL del libro/conciliación (336), helpers de agrupación (177), Excel/PDF (173), 2 APIs GET, cliente HTTP, filtros/guard/alcance/snapshot, NEX-052/contrato y 971 líneas de casos existentes. **Función exclusiva:** libro de movimientos y trazabilidad por producto×depósito×lote×propiedad×propietario×unidad física histórica (UUID), saldos por orden de registro, fechas retroactivas, anulaciones/contraasientos, transferencias, cambios de estado, costo registrado de la línea y conciliación con Stock. **No valoriza patrimonio histórico ni modifica saldo.**
+
+**Hallazgos actuales:**
+- **KDX-D01 ALTA — heredado RPT-D01:** API normaliza `q/documento/lote` y React compara texto crudo tras debounce: una respuesta válida HTTP 200 puede desaparecer con espacios iniciales/finales. NO recontar en global.
+- **KDX-D02 MEDIA — heredado RPT-D02:** durante 300ms de debounce, datos/indicadores/exportación anteriores pueden permanecer disponibles cuando el texto ya cambió. NO recontar en global.
+- **KDX-D03 MEDIA NUEVA:** el rótulo de propietario TERCERO es `propietarioId.slice(0,8)` (`kardex-plan.ts:19–24`), aunque las claves SQL y de grupos utilizan UUID completo. Dos propietarios con los mismos ocho primeros caracteres aparecen visualmente indistinguibles en líneas, totales y XLSX/PDF pese a saldos internos separados.
+- **KDX-D04 MEDIA NUEVA:** la consulta para `catalogos.usuarios` (`kardex.ts:310–314`) devuelve autores con movimiento en **cualquier depósito de la empresa**, sin limitar por depósitos autorizados (`deps`), a diferencia de los efectos/filas del Kardex. Metadatos intratenant fuera del contexto del usuario; no demuestra fuga entre empresas o saldos.
+- **KDX-D05 BAJA NUEVA:** la alerta UI de `page.tsx:282–286` atribuye `conciliacion.divergentes` automáticamente a «stock cargado fuera del libro de movimientos», causa NO determinada por el FULL JOIN de `kardex.ts:190–211`; texto debe informar diferencia sin diagnóstico inventado.
+
+**Conteo del menú:** 1 ALTA + 3 MEDIAS + 1 BAJA (incluidos 2 transversales). **Incremento global exclusivo: +2 MEDIAS +1 BAJA**. Acumulado Reportes tras Stock general, Valorización, Kardex = **2 ALTAS + 5 MEDIAS + 2 BAJAS** sin multiplicar RPT-D01/D02. Nueve observaciones/condiciones no probadas y 14 pruebas dirigidas en informe (KDX-IND-T01…T14).
+
+**Preservar histórico aceptado:** AUD-KDX-R01…R05, agrupación unidad_id/UUID, etiquetas homónimas de unidad, decimales exactos, NEX-052 condicional, saldo histórico por secuencia, no mezclar terceros/propietarios, transferencia sin doble costo, anulaciones, snapshot REPEATABLE READ y PDF en bloques. Los nuevos achados **NO prueban regresión** en el motor de saldo ni reapertura de R04-01/02. **0 pruebas ejecutadas por ChatGPT, sin PostgreSQL/VM/browser/Excel-PDF externos, NO HOMOLOGADO, sin correcciones de código/SQL/migrations y Claude no autorizado.** Próximo reporte individual: Stock crítico y reposición.
