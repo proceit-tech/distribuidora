@@ -303,7 +303,7 @@ function Formulario() {
                 <label htmlFor="nce-cliente">Cliente</label>
                 <div className={estilos.entradaBusca}>
                   {lupa}
-                  <input id="nce-cliente" type="search" role="combobox" aria-expanded={estCli.abierto} aria-controls={estCli.abierto ? "nce-clientes" : undefined} aria-autocomplete="list" aria-haspopup="listbox" autoComplete="off" autoFocus maxLength={80}
+                  <input id="nce-cliente" type="search" aria-describedby="nce-cliente-ayuda" autoComplete="off" autoFocus maxLength={80}
                     placeholder="Buscar por nombre, código o RUC" value={textoCliente} onChange={(e) => busCli.escribir(e.target.value)}
                     onKeyDown={(e) => {
                       if (e.key === "Escape") { busCli.cerrar(); }
@@ -311,7 +311,7 @@ function Formulario() {
                       if (e.key === "Enter") { e.preventDefault(); const primero = busCli.primeroElegible(); if (primero) elegirCliente(primero); }
                     }} />
                 </div>
-                {textoCortoCli ? <p className={estilos.vacio}>Escriba al menos 2 caracteres para buscar un cliente con facturas aprobadas.</p> : null}
+                <p className={estilos.vacio} id="nce-cliente-ayuda">{textoCortoCli ? "Escriba al menos 2 caracteres para buscar un cliente con facturas aprobadas." : "Enter elige el primer cliente de la lista; Esc cierra los resultados; flecha abajo los reabre. También puede usar Tab y el botón Seleccionar."}</p>
                 {!textoCortoCli && !estCli.abierto ? <p className={estilos.vacio}>Resultados cerrados. Presione la flecha abajo o modifique el texto para buscar de nuevo.</p> : null}
                 {!textoCortoCli && estCli.abierto ? (
                   <ul className={estilos.resultados} id="nce-clientes" aria-live="polite">
@@ -324,11 +324,11 @@ function Formulario() {
                     {estCli.items.length === 0 ? <li><small>{estCli.buscando || estCli.consulta === null ? "Buscando…" : "No hay clientes con facturas aprobadas para esta búsqueda."}</small></li> : null}
                   </ul>
                 ) : null}
-                {estCli.totalPaginas > 1 && estCli.abierto && estCli.consulta !== null ? (
+                {estCli.totalPaginas > 1 && estCli.abierto ? (
                   <div className={estilos.acciones}>
-                    <button type="button" className={ui.secondaryButton} disabled={estCli.pagina <= 1} onClick={() => busCli.pagina(estCli.pagina - 1)}>Anterior</button>
+                    <button type="button" className={ui.secondaryButton} disabled={estCli.buscando || estCli.pagina <= 1} onClick={() => busCli.pagina(estCli.pagina - 1)}>Anterior</button>
                     <span className={estilos.hint}>Página {estCli.pagina} de {estCli.totalPaginas}</span>
-                    <button type="button" className={ui.secondaryButton} disabled={estCli.pagina >= estCli.totalPaginas} onClick={() => busCli.pagina(estCli.pagina + 1)}>Siguiente</button>
+                    <button type="button" className={ui.secondaryButton} disabled={estCli.buscando || estCli.pagina >= estCli.totalPaginas} onClick={() => busCli.pagina(estCli.pagina + 1)}>Siguiente</button>
                   </div>
                 ) : null}
               </div>

@@ -186,7 +186,94 @@ export async function verificarCasosBusquedaNce(): Promise<string[]> {
     igual("filtro vigente: tras el debounce se pide con el texto y sin actualización forzada", [f.pedidos[1].cliente, f.pedidos[1].q, f.pedidos[1].actualizar], ["A", "12", false]);
     f.b.filtrar("123"); f.b.detener();
     f.t.avanzar(); f.pedidos[1].d.ok(fl("FX")); await tick();
-    igual("abrir una factura detiene el filtro agendado y descarta la respuesta pendiente (la lista visible no cambia)", [f.pedidos.length, f.lista().map((x) => x.id)], [2, ["FA1"]]);
+    igual("abrir una factura detiene el filtro agendado y descarta la respuesta pendiente (la lista del filtro anterior ya no se ofrece; al volver se recarga)", [f.pedidos.length, f.lista().map((x) => x.id)], [2, []]);
+  }
+
+  // ── R02-01: filtro de facturas q1 → q2 ────────────────────────────────────────────────────────────────────────────────────────────────────────
+  function facturas2() {
+    const t = reloj();
+    const pedidos: Array<{ q: string; pagina: number; d: ReturnType<typeof diferida<{ facturas: Fac[]; pagina: number; totalPaginas: number }>> }> = [];
+    const e = { lista: [] as Fac[], cargando: false, errores: [] as Array<string | null> };
+    const b = crearBusquedaFacturas<Fac>({
+      pedir: (_c, q, pagina) => { const d = diferida<{ facturas: Fac[]; pagina: number; totalPaginas: number }>(); pedidos.push({ q, pagina, d }); return d.p; },
+      programar: t.programar, cancelar: t.cancelar, alLimpiar: () => { e.lista = []; }, alResultado: (r) => { e.lista = r.facturas; }, alCargando: (v) => { e.cargando = v; }, alError: (m) => e.errores.push(m),
+    });
+
+    return { b, t, pedidos, e };
+  }
+
+  {
+    // q1 ya cargado y visible; se escribe q2: la lista de q1 desaparece y no es seleccionable ANTES de los 300 ms
+    const f = facturas2();
+
+    f.b.cambiarCliente("A"); f.pedidos[0].d.ok(fl("FA0")); await tick();
+    f.b.filtrar("123"); f.t.avanzar(); f.pedidos[1].d.ok(fl("FA-123")); await tick();
+    igual("R02-01: con el filtro 123 la tabla ofrece FA-123", f.e.lista.map((x) => x.id), ["FA-123"]);
+    f.b.filtrar("999");
+    igual("R02-01: al escribir 999 la lista de 123 se vacía al instante y se marca cargando (sin factura seleccionable del filtro anterior)", [f.e.lista.length, f.e.cargando, f.t.pendientes()], [0, true, 1]);
+    igual("R02-01: el filtro vigente para el refresco automático ya es 999 y el token anterior quedó inválido", [f.b.control.leer().filtro.q, f.b.control.vigente(2)], ["999", false]);
+  }
+  {
+    // q1 aún pendiente: su respuesta tardía (también un error) no repuebla ni ensucia el estado de q2
+    const f = facturas2();
+
+    f.b.cambiarCliente("A"); f.pedidos[0].d.ok(fl("FA0")); await tick();
+    f.b.filtrar("123"); f.t.avanzar();            // petición de 123 en vuelo
+    f.b.filtrar("999");                            // antes de 300 ms
+    f.pedidos[1].d.ok(fl("FA-123")); await tick(); // llega tarde
+    igual("R02-01: la respuesta tardía de 123 se descarta durante el debounce de 999", [f.e.lista.length, f.e.cargando], [0, true]);
+    f.t.avanzar();                               // se ejecuta 999 (pedidos[2])
+    f.b.filtrar("9999"); f.pedidos[2].d.ko(new Error("tarde")); await tick();
+    igual("R02-01: un error tardío del filtro anterior no se informa ni apaga el estado cargando de la consulta vigente", [f.e.errores.filter((m) => m !== null), f.e.cargando], [[], true]);
+    f.t.avanzar(); f.pedidos[3].d.ok(fl("FA-9999")); await tick();
+    igual("R02-01: solo la consulta vigente (9999) llena la tabla", [f.e.lista.map((x) => x.id), f.e.cargando, f.pedidos[3].q], [["FA-9999"], false, "9999"]);
+  }
+  {
+    // refresco automático: usa el filtro vigente (q2) y su respuesta solo vale con el token actual
+    const f = facturas2();
+
+    f.b.cambiarCliente("A"); f.pedidos[0].d.ok(fl("FA0")); await tick();
+    f.b.filtrar("777");
+    const { filtro, token } = f.b.control.leer();
+    igual("R02-01: el refresco automático lee el filtro digitado (777), no el anterior", [filtro.q, filtro.clienteId], ["777", "A"]);
+    f.b.filtrar("888");
+    igual("R02-01: una respuesta del refresco obtenida con el token de 777 ya no es vigente tras escribir 888", f.b.control.vigente(token), false);
+  }
+  {
+    // paginación con respuesta pendiente (facturas): la página anterior ya no se acepta y la selección queda bloqueada hasta que llega la pedida
+    const f = facturas2();
+
+    f.b.cambiarCliente("A"); f.pedidos[0].d.ok({ facturas: [{ id: "P1" }], pagina: 1, totalPaginas: 3 }); await tick();
+    f.b.pagina("", 2);
+    igual("R02-01: al pedir la página 2 se bloquea la selección (cargando) y se envía la página 2", [f.e.cargando, f.pedidos[1].pagina], [true, 2]);
+    f.b.pagina("", 3);
+    f.pedidos[1].d.ok({ facturas: [{ id: "P2" }], pagina: 2, totalPaginas: 3 }); await tick();
+    igual("R02-01: la respuesta tardía de la página 2 se descarta cuando ya se pidió la 3", [f.e.lista.map((x) => x.id), f.e.cargando], [["P1"], true]);
+    f.pedidos[2].d.ok({ facturas: [{ id: "P3" }], pagina: 3, totalPaginas: 3 }); await tick();
+    igual("R02-01: llega la página 3 y se habilita", [f.e.lista.map((x) => x.id), f.e.cargando], [["P3"], false]);
+  }
+  {
+    // filtro A → cambio a cliente B durante el debounce: el filtro de A no se ejecuta y B carga limpio
+    const f = facturas2();
+
+    f.b.cambiarCliente("A"); f.pedidos[0].d.ok(fl("FA0")); await tick();
+    f.b.filtrar("123"); f.b.cambiarCliente("B"); f.t.avanzar(); await tick();
+    igual("R02-01: A → B durante el debounce del filtro: solo se pide la carga inicial de B y la lista está vacía", [f.pedidos.length, f.e.lista.length], [2, 0]);
+  }
+
+  // ── OBS-R02-03: paginación de clientes ───────────────────────────────────────────────────────────────────────────────────────────────────────
+  {
+    const c = clientes();
+
+    c.b.escribir("al"); c.t.avanzar(); c.pedidos[0].d.ok({ clientes: [{ id: "A1", innominado: false }], pagina: 1, totalPaginas: 3 }); await tick();
+    igual("OBS-R02-03: con la página 1 vigente Enter elige A1", c.b.primeroElegible()?.id, "A1");
+    c.b.pagina(2);
+    igual("OBS-R02-03: al pedir la página 2 los clientes de la página 1 dejan de ser elegibles (lista vacía, Enter inerte)", [c.b.estado().items.length, c.b.vigentes().length, c.b.primeroElegible(), c.b.estado().buscando], [0, 0, null, true]);
+    c.b.pagina(3);
+    c.pedidos[1].d.ok({ clientes: [{ id: "B1", innominado: false }], pagina: 2, totalPaginas: 3 }); await tick();
+    igual("OBS-R02-03: la respuesta tardía de la página 2 se descarta si ya se pidió la 3", [c.b.estado().items.length, c.b.estado().pagina], [0, 1]);
+    c.pedidos[2].d.ok({ clientes: [{ id: "INN9", innominado: true }, { id: "C1", innominado: false }], pagina: 3, totalPaginas: 3 }); await tick();
+    igual("OBS-R02-03: la página 3 vigente se puede elegir por teclado y el Innominado sigue bloqueado", [c.b.estado().pagina, c.b.primeroElegible()?.id], [3, "C1"]);
   }
 
   return fallos;

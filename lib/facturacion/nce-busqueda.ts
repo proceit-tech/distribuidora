@@ -77,7 +77,8 @@ export function crearBusquedaClientes<C extends { innominado: boolean }>(deps: {
       emitir({ abierto: true, items: [], consulta: null });
       void ejecutar(q, 1);
     },
-    pagina(p: number) { const q = e.texto.trim(); if (q.length >= MIN_CARACTERES && e.abierto) { parar(); void ejecutar(q, p); } },
+    /** Cambio de página: los resultados de la página anterior dejan de ser elegibles al instante (OBS-R02-03). */
+    pagina(p: number) { const q = e.texto.trim(); if (q.length >= MIN_CARACTERES && e.abierto) { parar(); emitir({ items: [], consulta: null }); void ejecutar(q, p); } },
     /** Resultados que corresponden exactamente al texto actual (nunca los de una consulta anterior). */
     vigentes(): C[] { return e.abierto && !e.buscando && e.consulta !== null && e.consulta === e.texto.trim() ? e.items : []; },
     /** Enter: el primer cliente SELECCIONABLE de la consulta vigente; null si aún no hay consulta vigente. Innominado nunca. */
@@ -133,14 +134,23 @@ export function crearBusquedaFacturas<F>(deps: {
       deps.alLimpiar();
       if (id) void cargar(id, "", 1, true);
     },
+    /**
+     * R02-01: escribir en el filtro INVALIDA al instante (antes de los 300 ms) el token/filtro aplicado y vacía la lista: ninguna factura de la consulta anterior queda visible ni seleccionable, y
+     * una respuesta o un error tardío de ella se descartan. El refresco automático lee el filtro nuevo (control.leer) y la carga queda marcada hasta que llegue la consulta vigente.
+     */
     filtrar(q: string) {
       cancelarTimer();
       if (!cliente) return;
+
+      control.aplicar({ clienteId: cliente, q, pagina: 1 });
+      deps.alLimpiar();
+      deps.alCargando(true);
 
       const id = cliente;
 
       timer = deps.programar(() => { timer = null; if (cliente === id) void cargar(id, q, 1, false); }, ESPERA_BUSQUEDA_MS);
     },
+    /** Paginación: invalida lo pendiente y bloquea la selección (alCargando) hasta que llegue la página pedida. */
     pagina(q: string, p: number) { cancelarTimer(); if (cliente) void cargar(cliente, q, p, false); },
     /** Pausa (se abre una factura): cancela el filtro agendado e invalida lo pendiente, conservando el cliente y la lista visible. */
     detener() { cancelarTimer(); control.aplicar({ clienteId: cliente, q: "", pagina: 1 }); deps.alCargando(false); },
