@@ -175,3 +175,7 @@ Auditar integralmente cada menu na ordem: regras oficiais e requisitos → códi
 - **3 MEDIAS:** CFG-D01 carrera al crear primer registro de límite de pruebas de login; CFG-D02 RUC editado combinado con contraseña guardada anterior; CFG-D03 campos habilitados mientras guardar/probar que permiten perder ediciones. **1 BAJA:** CFG-D04 mantiene configuración antigua tras fallo de refresco. 9 observaciones y 16 pruebas focalizadas previstas. Sin reproducción concurrente real en PG.
 - **Preservar:** empresa de sesión, permiso CONFIGURAR, tabla aislada, password y token nunca retornados, NEXIT_DB sin fallback de entorno, prueba limitada a login y vinculada a versión; CONFIGURADO no equivale a login OK ni aprobación SIFEN.
 - **NO HOMOLOGADO**, 0 pruebas ejecutadas por ChatGPT, sin SQL/VM/PG/gateway/browser, código funcional ni migration; Claude no autorizado. Siguen pendientes Facturas, Puntos de expedición, Notas de crédito, y Empresas de plataforma por separado.
+
+## Facturación / Facturas — revisión individual R01 (18/10/2026)
+
+Informe: [Auditoría Facturas R01](../../testes/AUD-NEXIT-FACTURAS-DESKTOP-R01-2026-10-18.md). Ficha: [AUD-FACTURAS-V1](AUD-FACTURAS-V1.md). Resultado: dos hallazgos altos (FAT-D01, FAT-D02), dos medios (FAT-D03, FAT-D04), uno bajo (FAT-D05); 24 escenarios de prueba futuros. Brecha funcional previa: venta por presentaciones y conversión fiscal pendiente, contabilizada separadamente. Auditoría estática únicamente, no homologada ni liberada para desarrollo. Próximos menús: Puntos de expedición y Notas de crédito.
