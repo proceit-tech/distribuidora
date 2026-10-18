@@ -148,3 +148,26 @@ Examinar próxima rodada por prioridade: integridade de GET/POST/PUT dos filhos 
 **Reporte do Claude:** 2132 verificações locais, zero falhas, TypeScript/ESLint/build aprovados; ChatGPT não reexecutou. As guardas de dependência não tornam NEX-052/053 aplicadas nem dispensam backup/verificação da ordem de aplicação (052 → 053) e reversão (053 → 052).
 
 **Orientação:** não encaminhar retrabalho de Clientes ao Claude sem nova regressão demonstrada. Priorizar Proveedores na próxima execução. Clientes mantém **homologação operacional humana PENDENTE** (grants, transações, UI, VM), sem declarar o menu encerrado/implantado. Nenhum PostgreSQL, SQL ou deploy executado pelo ChatGPT.
+
+
+## X. Auditoría actual — Clientes DESKTOP (18/10/2026)
+
+**Snapshot de código:** `fe9e64123c70053b83f3d34b66cee779f184fe62`. **Reporte nuevo y específico:** [AUD-NEXIT-CLIENTES-DESKTOP-R01](../../testes/AUD-NEXIT-CLIENTES-DESKTOP-R01-2026-10-18.md). Esta sección prevalece en el diagnóstico actual; las secciones I–IX son históricas y no deben interpretarse como pendientes sin revalidación.
+
+**Regla de producto confirmada:** ERP para escritorio, sin obligación de interfaz móvil; no exigir rutas ni pruebas de celular. Auditoría por menú, sin mezclar código de otros módulos ni autorizar correcciones masivas.
+
+**Nuevos hallazgos comprobados estáticamente:**
+
+| ID | Prioridad | Diagnóstico | Estado |
+|---|---|---|---|
+| CLI-D01 | **ALTA** | `/clientes/nuevo` hereda `guardPage(CLIENTES,VER)`; `GET /api/clientes?modo=catalogos` también exige VER, pero POST exige CREAR. Perfil CREAR-only no consigue completar alta via UI | ABIERTO |
+| CLI-D02 | **MEDIA** | Vista VER-only muestra «Nuevo cliente», ficha editable y «Actualizar cliente» sin comprobar CREAR/EDITAR; API rechaza a posteriori | ABIERTO |
+| CLI-D03 | **MEDIA** | Carrera de consultas de departamento/distrito sin invalidación (nuevo y editor); alta usa índice de array para opciones, índice reutilizado tras eliminar una dirección | ABIERTO |
+
+**Observaciones sin defecto operacional demostrado:** CLI-D04 = antigua CLI-A05, listagem completa/aptitud global sin paginación SQL (riesgo de escala por medir); CLI-D05 = `window.confirm/alert` nativos, UX a padronizar después de la integridad/permiso. 
+
+**Hallazgos históricos CLI-A01–A04:** implementaciones de referencia inactiva, actualización por versión 409, error de catálogo y protección de salida **ya están en código**; no reabrir sin regresión nueva. **CLI-A06:** helper SQL NEX-053 existe y su estado efectivo en PostgreSQL sigue sin comprobarse por esta auditoría; no presumir migrations en VM.
+
+**Cobertura:** rutas list/detalle/alta, 6 endpoints de documentos y su política, `lib/clientes` relevante, migrations y pruebas consultadas; **sin ejecución DB, navegador o todos los flujos de extremo a extremo**. Se anotaron las zonas de riesgo verificables; no se declara que cualquier archivo del repo haya sido ejecutado o validado operacionalmente.
+
+**Estado:** CORRECCIÓN SOLICITADA — NO HOMOLOGADO. No alterar código sin orden del responsable. Próximo menú previsto: **Proveedores**, por separado.
