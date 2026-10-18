@@ -2,7 +2,7 @@
 
 **Rota principal:** `/reportes/lotes`  
 **Branch:** `feature/NEXIT-2026-001-banco-demo`  
-**Estado atual (18/10/2026): AUDITORIA ESTÁTICA R01 REGISTRADA — ACHADOS TRANSVERSAIS ABERTOS — NÃO HOMOLOGADA** (os registros históricos abaixo são preservados).  
+**Estado atual (18/10/2026): AUDITORIA INDIVIDUAL R01 DOCUMENTADA — 1 ALTA, 1 MÉDIA, 1 BAIXA ABERTAS — NÃO HOMOLOGADA** (os registros históricos abaixo são preservados).  
 **Responsável pela auditoria estática:** ChatGPT. **Implementação:** Claude Code somente mediante tarefa autorizada. **Homologação operacional/visual:** responsável na VM.
 
 ## Escopo e rastreabilidade
@@ -23,11 +23,11 @@ Este arquivo é a fonte única da auditoria do menu **Reporte Lotes y vencimient
 
 ## Achados confirmados até agora (parciais)
 
-Nenhum defeito deste menu documentado ainda nesta ficha. Isso NÃO significa ausência de defeitos.
+Achados ativos em 18/10/2026 documentados na seção «Auditoría independiente por función» e no novo informe completo, preservando a história da ficha.
 
 ## Pendências
 
-Auditoria exaustiva deste menu ainda não executada. Não atribuir percentual de cobertura sem inventário de arquivos e linhas revisadas.
+Auditoria estática individual por função concluída em 18/10/2026, sem teste real no banco/VM/navegador e sem homologação operacional.
 
 ## Regra de migrations
 
@@ -176,3 +176,19 @@ O responsável mostrou NEX-001…051 já aplicadas na VM. Proibido editar script
 **Informe transversal completo:** [AUD-NEXIT-REPORTES-DESKTOP-R01](../../testes/AUD-NEXIT-REPORTES-DESKTOP-R01-2026-10-18.md).
 **Escopo deste menu: Lotes y vencimientos.** **RPT-D01 ALTA TRANSVERSAL:** `q/lote` normalizados por API divergen de la consulta cliente, ocultando resultado válido; **RPT-D02 MEDIA TRANSVERSAL:** durante debounce `qEst/loteEst` anteriores siguen vigentes aun con texto vivo distinto (aunque horizonte inválido sí bloquee). Fecha, unidad UUID, huérfanos y LOT-R02-01/02 preservados.
 **Método/limite:** inspeção de arquivos atuais da branch, não execução. Relatos de aceites estáticos históricos RPT-R19/R20 preservados, mas esta revisão encontrou novas lacunas de filtro de UI que impedem marcar o conjunto como livre de achados. **0 testes/HTTP/PG/VM/Docker/browser, sem mudanças funcionais nem migrations, NÃO HOMOLOGADO.** Nenhuma tarefa Claude autorizada.
+
+
+## Auditoría independiente por función — Lotes y vencimientos DESKTOP R01 (18/10/2026)
+
+**Informe técnico específico y completo:** [AUD-NEXIT-LOTES-DESKTOP-R01](../../testes/AUD-NEXIT-LOTES-DESKTOP-R01-2026-10-18.md). **Función propia:** visualizar caducidad y saldos de lotes físicos registrados, fecha opcional de vencimiento, días restantes con hora Paraguay, stock propio/tercero, cuatro clases VENCIDO/PROXIMO/VIGENTE/SIN_FECHA, dos vistas LOTE/DEPOSITO, sin escribir movimientos ni inventar fechas. Alcance por empresa y depósitos activos/inactivos autorizados; lotes huérfanos solo con `TODOS`. Existencia sin saldo a nivel lote dentro del alcance y totales físicos por UUID de unidad, sin sumar medidas diferentes.
+
+**Archivos examinados:** página 364 líneas, `lotes.ts` 264, `lotes-plan.ts` 134, GET y GET exportar, `cliente-lotes.ts` 60, exportador 98, `types/reportes.ts`, permisos/alcance/snapshot y pruebas `lotes.casos.ts` 565 (leídas, no ejecutadas). Histórico R01/R02/R03 cotejado; fechas inválidas y horizonte sin solicitud corregidos estáticamente; no reabrirlos como si hubieran retrocedido.
+
+**Hallazgos abiertos:**
+- **LOT-D01 ALTA — HEREDADA RPT-D01:** parser API aplica trim/limite a `q/lote`; cliente compara `qEst/loteEst` crudos con respuesta y oculta 200 legítimo con espacios.
+- **LOT-D02 MEDIA — HEREDADA RPT-D02:** durante 300ms de texto estabilizado, puede continuar visible/exportable foto de filtro anterior. Bloqueo de horizonte inválido sigue conforme, no reabrir LOT-R02-02.
+- **LOT-D03 BAJA NUEVA:** `page.tsx:114–119,195` usa total 0 y rótulo «0 lotes» con `actual=null` y `cargando=false` en carga inicial previa al GET, horizonte/fechas inválidos o error HTTP; no existe foto que autorice afirmar cero. Presentar "—"/"Sin consultar" hasta respuesta 200 válida; 0 solo en resultado vacío genuino.
+
+**Observación LOT-O01 condicionada:** `lotes.ts:170–179` hace JOIN `productos` pero no predicado `modo_control_stock='LOTE'`, aun cuando el contrato de este reporte dice que incluye solo productos por lote. **No se comprobó** que las constraints/triggers/productos permitan lotes con un modo distinto en el estado real; revisar NEX-009/función de cambio de modo antes de clasificar bug o excluir histórico. Ocho observaciones adicionales (corte de medianoche, sucursal, cantidad negativa no confirmada, volumen, export independiente, filtros de fecha, catálogo, VM) y quince pruebas focales en informe.
+
+**Conteo del reporte:** 1 ALTA y 1 MEDIA ya contadas transversalmente, **1 BAJA nueva exclusiva**. Total de hallazgos abiertos después de auditar los cinco reportes y el índice **2 ALTAS + 7 MEDIAS + 4 BAJAS = 13** sin repetir os mesmos dois defeitos em todos os cinco reportes. Se conservan los históricos de aceptación estática R03/R20, pero NO constituyen homologación operacional ni eliminan fallas nuevas de UI. **0 pruebas ejecutadas, sin PostgreSQL/VM/Docker/browser, no migration/código editado, Claude sin autorización.** Serie por función de los cinco reportes concluida documentalmente.
