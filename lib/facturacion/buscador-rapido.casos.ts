@@ -177,5 +177,54 @@ export async function verificarCasosBuscadorRapido(): Promise<string[]> {
     igual("debounce: al vencer se pide solo el texto final", m.pedidos.map((p) => p.q), ["abc"]);
   }
 
+  {
+    // C02-R02-01: Enter pendiente y cierre (Escape / pérdida de foco)
+    const m = montar();
+
+    m.b.escribir("7790001"); void m.b.enter();
+    igual("Enter pendiente: «Buscando…» activo", m.b.estado().buscando, true);
+    m.b.cerrar();                                                          // Escape
+    igual("Escape: se limpia «Buscando…» y la selección resaltada", [m.b.estado().buscando, m.b.estado().activo, m.b.estado().cargando], [false, -1, false]);
+    m.pedidos[0].d.ok(lote(["PA", true, "7790001"])); await tick();
+    igual("Enter pendiente → Escape → la respuesta tardía NO selecciona ni añade", [m.elegidos, m.b.estado().aviso], [[], ""]);
+
+    const n = montar();
+
+    n.b.escribir("7790001"); void n.b.enter();
+    n.b.cerrar();                                                          // pérdida de foco
+    n.pedidos[0].d.ko(new Error("error tardío tras cerrar")); await tick();
+    igual("Enter pendiente → pérdida de foco → el error tardío no aparece", [n.elegidos, n.b.estado().aviso, n.b.estado().error, n.b.estado().buscando], [[], "", "", false]);
+
+    const o = montar();
+
+    o.b.escribir("7790001"); void o.b.enter(); o.b.cerrar(); o.pedidos[0].d.ok(lote(["PA"])); await tick();
+    o.b.abrir();                                                           // reabrir
+    igual("cerrar y reabrir: se hace una consulta NUEVA del texto conservado", [o.pedidos.length, o.pedidos[1].q, o.b.estado().texto], [2, "7790001", "7790001"]);
+    o.pedidos[1].d.ok(lote(["PB", true, "7790001"])); await tick();
+    void o.b.enter();
+    o.pedidos[2].d.ok(lote(["PB", true, "7790001"])); await tick();
+    igual("tras reabrir, Enter vigente selecciona correctamente (GTIN exacto)", o.elegidos, ["PB"]);
+
+    const p = montar();
+
+    p.b.escribir("ar"); p.avanzar();                                       // lista pendiente al cerrar
+    p.b.cerrar();
+    p.pedidos[0].d.ok(lote(["PX"], ["PY"])); await tick();
+    igual("lista pendiente al cerrar: su respuesta tardía se descarta (sin resultados ni selección reaprovechables)", [p.b.visibles().length, p.b.estado().items.length, p.b.estado().consulta], [0, 0, null]);
+    p.b.mover(1); p.b.elegir({ id: "PX", ok: true });
+    igual("lista pendiente al cerrar: flechas y clic con lo antiguo no seleccionan", [p.b.estado().activo, p.elegidos], [-1, []]);
+    p.b.abrir(); p.pedidos[1].d.ok(lote(["PZ"])); await tick();
+    igual("lista pendiente al cerrar: al reabrir se carga una lista nueva elegible", p.b.visibles().map((x) => x.id), ["PZ"]);
+
+    const q = montar();
+
+    q.b.escribir("123"); q.avanzar(); q.pedidos[0].d.ok(lote(["P1"], ["P2"])); await tick(); q.b.mover(1);
+    q.b.cerrar();
+    igual("cierre con resultados y selección: se limpian lista y opción resaltada", [q.b.estado().items.length, q.b.estado().activo], [0, -1]);
+    void q.b.enter();
+    q.pedidos[1].d.ok(lote(["P1"])); await tick();
+    igual("Enter vigente tras cerrar y sin reabrir lista: consulta directa y selección correcta (sin reutilizar la opción antigua)", [q.pedidos[1].q, q.elegidos], ["123", ["P1"]]);
+  }
+
   return fallos;
 }

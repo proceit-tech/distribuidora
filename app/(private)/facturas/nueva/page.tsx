@@ -324,6 +324,7 @@ function BuscadorRapido<T extends { id: string }>({ url, campo, etiqueta, placeh
       e.preventDefault();
       ctl.mover(-1);
     } else if (e.key === "Escape") {
+      ctl.cerrar();
       setAbierto(false);
     } else if (e.key === "Enter") {
       e.preventDefault();
@@ -332,7 +333,7 @@ function BuscadorRapido<T extends { id: string }>({ url, campo, etiqueta, placeh
   }
 
   return (
-    <div className={estilos.buscador} onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setAbierto(false); }}>
+    <div className={estilos.buscador} onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) { ctl.cerrar(); setAbierto(false); } }}>
       <label className={estilos.field}>
         <span>{etiqueta}</span>
         <input

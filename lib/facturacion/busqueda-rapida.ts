@@ -156,6 +156,11 @@ export function crearBuscadorRapido<T>(deps0: {
         emitir({ buscando: false, aviso: mensaje(err) });
       }
     },
+    /**
+     * C02-R02-01: Escape o pérdida de foco. Invalida la lista pendiente, el temporizador y la consulta directa de Enter: ningún resultado ni error posterior al cierre selecciona, añade o se informa;
+     * se limpian la opción resaltada y «Buscando…». El texto se conserva; al reabrir se hace una consulta nueva.
+     */
+    cerrar() { parar(); emitir({ consulta: null, items: [], total: 0, cargando: false, error: "", activo: -1, buscando: false }); },
     reiniciar() { parar(); emitir({ texto: "", consulta: null, items: [], total: 0, cargando: false, error: "", activo: -1, aviso: "", buscando: false }); },
   };
 
