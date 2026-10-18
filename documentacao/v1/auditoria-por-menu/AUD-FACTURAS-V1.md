@@ -244,3 +244,11 @@ Informe técnico detallado: [AUD-NEXIT-FACTURAS-DESKTOP-R01](../../testes/AUD-NE
 **Commit de implementación inspeccionado:** `aeaec74baa70d789ab966e51d643f4d64a3da1b5`. **Parecer técnico:** [AUD-NEXIT-C01-FAT-D02-R02](../../testes/AUD-NEXIT-C01-FAT-D02-R02-2026-10-18.md).
 
 El problema **FAT-D02 ALTA** sobre enviar un cuerpo B diferente del revisado A está **CORREGIDO ESTÁTICAMENTE**: nuevo controlador y estado revisado fijan cuerpo/huella, modal valida el cuerpo de render y EMITIR utiliza exactamente el mismo objeto. **C01 NO se cierra aún** debido a **C01-R02-01 MEDIA**: el catch de PREVIA usa solo el número de versión, que no cambia al invalidar o cancelar sin iniciar otra previa; errores tardíos de A siguen pudiendo reemplazar AVISO_CAMBIO o aparecer tras cancelar. Se requiere una corrección mínima en el controlador, 2–4 casos focales, commit/push y reauditoría R03. **C02 y otras tareas no autorizadas**. Tests reportados por Claude: 35 nuevos + 651 regresiones seleccionadas, 0 fallos, **no ejecutados por ChatGPT**. Ningún browser, PostgreSQL, gateway/VM, migration ni homologación por IA.
+
+## AUD-C01-R03 — reauditoría técnica C01 aprobada (18/10/2026)
+
+**SHA:** `ab4cb5d8e30664be07acc519702cdbc6a8ce7f86`. Informe: [AUD-NEXIT-C01-FAT-D02-R03](../../testes/AUD-NEXIT-C01-FAT-D02-R03-2026-10-18.md).
+
+**FAT-D02 ALTA: CORREGIDA Y APROBADA TÉCNICAMENTE EN REVISIÓN ESTÁTICA**. El cuerpo enviado es exactamente el fijado por la PREVIA; no se reconstruye en el envío, su clave idempotente se conserva y se rechazan envíos simultáneos. **C01-R02-01 MEDIA: RESUELTA**: `vigente(v)` exige una previa realmente pendiente para informar su error, aun si fue invalidada o cancelada sin empezar otra; cancelar también libera «Revisando…». Los resultados antiguos también se descartan. Sin errores nuevos bloqueantes en C01.
+
+Claude reportó **42 tests dirigidos / 0 fallas**, más ESLint focal de 2 archivos; ChatGPT sólo verificó la fuente y los tests por GitHub, sin ejecutar la suite. **NO HOMOLOGADO**: navegador/VM/PG/gateway e instalación real pendientes del responsable. **No significa Facturas como menú completo homologado**: FAT-D01, FAT-D03/04/05 y GAP de presentación comercial siguen abiertos en tareas propias. C02 necesita autorización expresa antes de Claude.
