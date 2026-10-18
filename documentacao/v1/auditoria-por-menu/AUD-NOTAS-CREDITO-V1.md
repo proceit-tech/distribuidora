@@ -30,3 +30,11 @@ Acceso FACTURACION_ELECTRONICA.CREAR y alcance empresa/sucursal. Innominado SOLO
 **NCE-D01 ALTA corregida estáticamente en la carga DIRECTA de FE:** `crearCargaDetalle` rechaza respuestas, errores y finally atrasados; conserva precarga y estado de lista cuando corresponde. **C03 todavía ABIERTA por C03-R02-01 ALTA:** el GET anterior de PROPUESTA de NCE rechazada `/api/notas-credito/correccion/[id]` solo se cancela por cambio de `corregir`/unmount, no al seleccionar cliente B o pulsar Cambiar. Si la propuesta de A termina luego, `vivo` sigue true y puede empezar un NUEVO GET de FE A tras invalidar el controlador de detalle, mostrando FE A bajo cliente B. El error de la propuesta también puede quedar desfasado. Solución focal: identidad/contexto de las dos fases (propuesta y detalle), descartar propuesta antigua antes de presentar aviso o abrir FE; sin modificar endpoint, política Innominado UI, saldo, motivo, IVA o envío NCE. Reauditoría R03 obligatoria.
 
 Claude reportó 58 + 205 + 47 = **310 comprobaciones, 0 fallas**; ChatGPT NO las ejecutó, ni browser/PG/VM/gateway. **NO HOMOLOGADO; C04 no autorizada.**
+
+## AUD-C03-R03 — cierre del GET antiguo y aviso pendiente (18/10/2026)
+
+**SHA Claude:** `6f70d0eea48978dfbd39413f3d2483b2aeff9d80`. Informe de reauditoría: [AUD-NEXIT-C03-NCE-D01-R03](../../testes/AUD-NEXIT-C03-NCE-D01-R03-2026-10-18.md).
+
+**C03-R02-01 ALTA RESUELTA ESTÁTICAMENTE:** `crearCargaCorreccion` verifica el contexto antes de mostrar una propuesta recibida o abrir su FE, rechaza errores tardíos y `invalidarContexto` cancela propuesta+detalle al cambiar cliente, volver, salir o cambiar corrección. `crearCargaDetalle` sigue intacto. **C03 no se cierra por C03-R03-01 MEDIA:** si aviso NCE-A ya fue publicado y detalle FE-A está pendiente, cambiar a cliente B invalida el detalle pero **no limpia aviso A** (`page.tsx:164–170,265–273,299–303`). Riesgo visual de corrección fiscal anterior bajo receptor B, sin factura errónea emitida probada. Corregir únicamente la asociación/limpieza de aviso al abandonar contexto A, conservar aviso legítimo B, agregar tests dirigidos y realizar reauditoría R04.
+
+Claude reportó 67 + 205 = **272 comprobaciones sin fallos**, no reejecutadas por ChatGPT; ESLint y tipos focales declarados conformes. **NO HOMOLOGADO; C04 aún no autorizado.**
