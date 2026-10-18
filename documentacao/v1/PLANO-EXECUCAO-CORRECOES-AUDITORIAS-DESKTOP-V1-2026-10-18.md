@@ -1,6 +1,6 @@
 # NEXIT V1 — Plano mestre de correções após auditorias por menu
 
-**Data e corte:** 18/10/2026. **Repositório:** proceit-tech/distribuidora. **Branch exclusiva:** feature/NEXIT-2026-001-banco-demo. **Status:** PLANO APROVADO PARA ORGANIZAÇÃO, EXECUÇÃO SEQUENCIAL. **Somente C01 está liberada como primeira tarefa nesta rodada.** Cada tarefa posterior depende de nova reauditoria ChatGPT e autorização específica do responsável.
+**Data e corte:** 18/10/2026. **Repositório:** proceit-tech/distribuidora. **Branch exclusiva:** feature/NEXIT-2026-001-banco-demo. **Status atual (AUD-C01-R03): C01 APROVADA TECNICAMENTE EM REVISÃO ESTÁTICA; C02 AINDA NÃO AUTORIZADA.** Estado histórico: C01 foi a primeira tarefa liberada e já foi reauditorada. Cada tarefa posterior depende de nova reauditoria ChatGPT e autorização específica do responsável.
 **Fonte de verdade:** documentacao/v1/auditoria-por-menu/README.md, controle de pendências na mesma pasta, os relatórios R01 dos 22 menus ativos e as fichas canônicas. O número 22 é quantidade de entradas de menu auditadas estaticamente (inclui índice de Reportes), NÃO homologações; Plataforma → Empresas não passou ainda por auditoria integral. A data de um R01 não prova deploy ou versão instalada.
 
 ## 0. Protocolo obrigatório e fronteiras
@@ -142,3 +142,9 @@ O responsável pediu em Documentos electrónicos “tudo isso e mais um pouco”
 ## 6. Estado C01 tras reauditoría R02 (18/10/2026)
 
 Implementación de Claude commit `aeaec74baa70d789ab966e51d643f4d64a3da1b5` auditada por ChatGPT: [AUD-C01-FAT-D02-R02](../testes/AUD-NEXIT-C01-FAT-D02-R02-2026-10-18.md). **El núcleo FAT-D02 ALTA (body enviado === body revisado) pasó confrontación estática; no se cierra C01 por hallazgo MEDIA C01-R02-01:** una PREVIA invalidada/cancelada sin iniciar otra mantiene versión y su error HTTP tardío aún se publica al usuario. **Autorización de continuación estrictamente C01-R02-01**, tests mínimos y reauditoría R03. Todo C02…C55/X01…X08 continúa pendiente de autorización específica; el equipo no debe saltar a C02. **NO HOMOLOGADO**, sin pruebas operacionales/VM/banco por IAs.
+
+## 7. Estado C01 após AUD-C01-R03 (18/10/2026)
+
+**Esta seção substitui como estado vigente o «C01 em correção» das seções históricas 5 e 6; elas permanecem como cronologia imutável.** A implementação Claude `ab4cb5d8e30664be07acc519702cdbc6a8ce7f86` passou reauditoria do ChatGPT: [AUD-NEXIT-C01-FAT-D02-R03](../testes/AUD-NEXIT-C01-FAT-D02-R03-2026-10-18.md). **C01 FAT-D02 e seu residual C01-R02-01 resolvidos tecnicamente em leitura estática**, sem achados médios/altos bloqueantes na tarefa. 42 asserts focais e ESLint reportados por Claude sem falhas, não reexecutados por ChatGPT.
+
+**Próxima da fila C02 = FAT-D01, busca rápida de clientes/produtos, ainda NÃO AUTORIZADA**. Claude permanece parado até autorização do responsável; enviar uma tarefa por vez, teste mínimo e reauditoria após commit. C01 não está homologada nem aplicada no único ambiente real, o que exige verificação humana futura. Os outros achados do menu Facturas permanecem abertos.
