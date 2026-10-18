@@ -65,3 +65,11 @@ O `V1_HREFS` atual em `lib/navigation/menu.ts:358–380` libera 21 rotas de iten
 5. Fechamento da fase de auditoria somente após o responsável confirmar que o conjunto de menus está completo. **Não** interpretar conclusão de Reportes (5/5) ou de Documentos como conclusão de NEXIT.
 
 **Próximo menu sugerido para auditoria, SOMENTE quando solicitado:** Facturación → Facturas.
+
+## 5. Atualização — Administración → Facturación electrónica auditado (18/10/2026)
+
+**Atualização da tabela original:** o item /configuracion/facturacion-electronica indicado como PENDENTE na seção 2 agora está **AUDITADO ESTATICAMENTE**, conforme [ficha canônica](AUD-CONFIGURACION-FACTURACION-ELECTRONICA-V1.md) e [relatório R01](../../testes/AUD-NEXIT-CONFIGURACION-FACTURACION-ELECTRONICA-DESKTOP-R01-2026-10-18.md). **3 MÉDIAS + 1 BAIXA**, 9 observações, 16 testes futuros, não homologado.
+
+**Contagem de entradas já auditadas estaticamente:** 19 (eram 18). Restam **3 menus V1** a auditar por função: Facturación → Facturas, Puntos de expedición e Notas de crédito. **Plataforma → Empresas** é fluxo separado. Menus ocultos não contam como ativos/homologados. O responsável define a ordem.
+
+**Regra em vigor:** registrar/auditar sem implementar nem instruir Claude antes de autorização expressa; nenhum teste real/VM/PostgreSQL/gateway/migration ou deploy executado por ChatGPT; fechamento da auditoria geral segue pendente.
