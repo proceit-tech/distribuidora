@@ -64,3 +64,11 @@ Auditar integralmente cada menu na ordem: regras oficiais e requisitos → códi
 - **Menu 1 — Panel general/Dashboard**: [AUD-NEXIT-DASHBOARD-DESKTOP-R01](../../testes/AUD-NEXIT-DASHBOARD-DESKTOP-R01-2026-10-18.md), 1 ALTA + 4 MÉDIAS documentadas, **sem correção ou homologação**. Não corrigir mobile: produto somente desktop.
 - **Menu 2 — Clientes**: [AUD-NEXIT-CLIENTES-DESKTOP-R01](../../testes/AUD-NEXIT-CLIENTES-DESKTOP-R01-2026-10-18.md), 1 ALTA + 2 MÉDIAS de permissões e concorrência de geografia; observações de escala/dialogos. Incorporação à [ficha canônica de Clientes](AUD-CLIENTES-V1.md). **Não homologado.**
 - **Próximo menu previsto:** Proveedores, ainda não auditado nesta sequência. Um menu por revisão, separando implementação e auditoria. Sem testes globais, DB ou VM pelas IAs.
+
+
+## Terceiro menu — Proveedores desktop (18/10/2026)
+
+- **Menu 1** Panel general: [Dashboard desktop R01](../../testes/AUD-NEXIT-DASHBOARD-DESKTOP-R01-2026-10-18.md), 1 ALTA + 4 MÉDIAS, pendentes.
+- **Menu 2** Clientes: [Clientes desktop R01](../../testes/AUD-NEXIT-CLIENTES-DESKTOP-R01-2026-10-18.md), 1 ALTA + 2 MÉDIAS, pendentes.
+- **Menu 3** Proveedores: [Proveedores desktop R01](../../testes/AUD-NEXIT-PROVEEDORES-DESKTOP-R01-2026-10-18.md), **1 ALTA + 2 MÉDIAS**, pendentes. [Ficha histórica/canónica consolidada](AUD-PROVEEDORES-V1.md): não reabrir correções anteriores PRV-M01…M04/R01…05 já em código. CREAR-only bloqueado por layout VER e redirecionamento, VER-only recebe controles de edição, falha de catálogos geográficos é escondida como lista vazia. Observações: banco visível com VER depende de política, risco de escala de lista e grants reais sem nova evidência.
+- **Próximo menu** Productos — não auditado nesta sequência. Software exclusivamente desktop, sem objetivo móvel; cada menu tem auditoria independente e homologação humana separada. Nenhuns testes, SQL/VM/deploy pelas IAs.
