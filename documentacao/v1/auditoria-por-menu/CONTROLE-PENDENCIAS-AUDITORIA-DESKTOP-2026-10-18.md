@@ -73,3 +73,9 @@ O `V1_HREFS` atual em `lib/navigation/menu.ts:358–380` libera 21 rotas de iten
 **Contagem de entradas já auditadas estaticamente:** 19 (eram 18). Restam **3 menus V1** a auditar por função: Facturación → Facturas, Puntos de expedición e Notas de crédito. **Plataforma → Empresas** é fluxo separado. Menus ocultos não contam como ativos/homologados. O responsável define a ordem.
 
 **Regra em vigor:** registrar/auditar sem implementar nem instruir Claude antes de autorização expressa; nenhum teste real/VM/PostgreSQL/gateway/migration ou deploy executado por ChatGPT; fechamento da auditoria geral segue pendente.
+
+## 6. Estado actualizado — Facturación / Facturas auditado (18/10/2026)
+
+La fila antigua que marcaba Facturas como pendiente queda sustituida por esta actualización. Informe individual: [Facturas R01](../../testes/AUD-NEXIT-FACTURAS-DESKTOP-R01-2026-10-18.md); ficha [AUD-FACTURAS-V1](AUD-FACTURAS-V1.md). Auditoría estática terminada: FAT-D01 y FAT-D02 ALTAS, FAT-D03 y FAT-D04 MEDIAS, FAT-D05 BAJA. Brecha alta histórica de presentaciones de venta y conversión fiscal conservada sin recontarla. No homologado, 0 tests ejecutados, sin cambios funcionales ni autorización a Claude.
+
+**20 entradas V1 auditadas estáticamente** (antes 19). Restan **2 menús V1 para auditoría individual**: Facturación → Puntos de expedición y Facturación → Notas de crédito. Plataforma → Empresas sigue en flujo exclusivo del administrador global. Los menús ocultos requieren decisión posterior; auditoría general no se cierra sin aprobación del responsable.
