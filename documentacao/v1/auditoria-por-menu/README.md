@@ -117,3 +117,8 @@ Auditar integralmente cada menu na ordem: regras oficiais e requisitos → códi
 ## Décimo menu — Depósitos desktop (18/10/2026)
 
 - **Menu 10 — Inventario → Depósitos:** [informe R01](../../testes/AUD-NEXIT-DEPOSITOS-DESKTOP-R01-2026-10-18.md) y [ficha canónica](AUD-DEPOSITOS-V1.md). **2 ALTAS DEP-D01/D02; 5 MEDIAS DEP-D03…D07; 1 BAJA DEP-D08**. Revisada pantalla de 681 líneas, APIs, helpers, permisos, contrato Inventario y migration NEX-046 (versionada; aplicación efectiva no confirmada). Sin nuevas implementaciones, pruebas ni homologación. **Próximo menú: Inventario → Reposición**, exclusivamente cuando el responsable lo solicite. ERP desktop; no se exigen casos mobile.
+
+
+## Undécimo menu — Reposición desktop (18/10/2026)
+
+- **Menu 11 — Inventario → Reposición:** [informe técnico R01](../../testes/AUD-NEXIT-REPOSICION-DESKTOP-R01-2026-10-18.md) y [ficha canónica](AUD-REPOSICION-V1.md). **0 ALTAS, 4 MEDIAS REP-D01…D04**, 7 observaciones condicionadas. Auditoría de pantalla desktop 531 líneas, API solo GET, cálculo, SQL de lectura, carga, autorización, pruebas existentes y contratos Inventario/Movimientos/Stock/Productos/Reportes. La simulación individual y el reparto conjunto necesitan decisión semántica, y las cinco consultas independientes tienen riesgo de consistencia sin prueba PostgreSQL real. Correcciones históricas del Inventario permanecen presentes; no reabrir. **SIN HOMOLOGACIÓN, sin tests ejecutados, sin implementación ni Claude**. **Siguiente menú: Facturación → Documentos electrónicos**, únicamente cuando lo solicite el responsable.
