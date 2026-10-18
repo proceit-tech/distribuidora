@@ -6,7 +6,7 @@ import { Fragment, useCallback, useEffect, useId, useRef, useState } from "react
 import ui from "@/components/ui/lista-padrao/lista.module.css";
 import { AJUSTE_VACIO, ajusteParaEnvio, decidirProducto, problemasFiscales, valoresEfectivos, type AjusteUI, type PermisosProducto } from "@/lib/facturacion/ajuste-item";
 import { puedeEnviarPorGateway, type EstadoGatewayUI } from "@/lib/facturacion/gateway-estado";
-import { elegirPorEnter, MENSAJE_ENTER } from "@/lib/facturacion/busqueda-rapida";
+import { crearBuscadorRapido, type EstadoBuscador, MAX_VISIBLES } from "@/lib/facturacion/busqueda-rapida";
 import { formularioModificado, perdidasAlCambiarCondicion, perdidasAlCambiarMoneda } from "@/lib/facturacion/cambios-formulario";
 import { CREDITO_UI_VACIO, creditoParaEnvio, hoyParaguay, pendientesCredito, type EstadoCreditoUI } from "@/lib/facturacion/credito";
 import { cambiosPorOpcionIva, esParcial, etiquetaIva, OPCIONES_IVA, opcionIvaDe, RESTAURAR_IVA } from "@/lib/facturacion/iva-opciones";
@@ -150,7 +150,8 @@ function useFiltro() {
     return () => window.clearTimeout(t);
   }, [texto]);
 
-  return { texto, setTexto, q, pagina, setPagina, aplicar: () => { setQ(texto.trim()); setPagina(1); } };
+  // C02: mientras el texto escrito aún no se aplicó (debounce), la lista mostrada pertenece al filtro anterior y no debe ser elegible.
+  return { texto, setTexto, q, pagina, setPagina, vigente: texto.trim() === q, aplicar: () => { setQ(texto.trim()); setPagina(1); } };
 }
 
 function Paginacion({ pagina, total, alCambiar }: { pagina: number; total: number; alCambiar: (p: number) => void }) {
@@ -189,7 +190,7 @@ function SelectorCliente({ alElegir, alCerrar }: { alElegir: (c: Cliente) => voi
 
         {l.error ? <p className={estilos.fieldError} role="alert">{l.error}</p> : null}
 
-        {l.cargando ? (
+        {l.cargando || !f.vigente ? (
           <div className={estilos.mensajeVacio} role="status">Cargando clientes…</div>
         ) : l.items.length === 0 && !l.error ? (
           <div className={estilos.mensajeVacio}>{f.q ? "Ningún cliente coincide con el filtro." : "La empresa no tiene clientes habilitados para facturar."} <Link href="/clientes">Ir a Clientes</Link></div>
@@ -238,7 +239,7 @@ function SelectorProducto({ alAgregar, alCerrar, cantidadItems, permisos, moneda
         {l.error ? <p className={estilos.fieldError} role="alert">{l.error}</p> : null}
         {aviso ? <p className={estilos.aviso} role="status">{aviso}</p> : null}
 
-        {l.cargando ? (
+        {l.cargando || !f.vigente ? (
           <div className={estilos.mensajeVacio} role="status">Cargando productos…</div>
         ) : l.items.length === 0 && !l.error ? (
           <div className={estilos.mensajeVacio}>{f.q ? "Ningún producto coincide con el filtro." : "La empresa no tiene productos activos para facturar."} <Link href="/productos">Ir a Productos</Link></div>
@@ -284,59 +285,49 @@ function BuscadorRapido<T extends { id: string }>({ url, campo, etiqueta, placeh
   url: string; campo: "clientes" | "productos"; etiqueta: string; placeholder: string; describir: (t: T) => ItemBusqueda; exacto: (t: T, texto: string) => boolean;
   alElegir: (t: T) => void; mantenerAbierto?: boolean; autoFocus?: boolean;
 }) {
-  const f = useFiltro();
   const [abierto, setAbierto] = useState(false);
-  const [activo, setActivo] = useState(-1);
-  const [aviso, setAviso] = useState("");
-  const [buscando, setBuscando] = useState(false);
+  const [b, setB] = useState<EstadoBuscador<T>>({ texto: "", consulta: null, items: [], total: 0, cargando: false, error: "", activo: -1, aviso: "", buscando: false });
   const idBase = useId();
-  const l = useListado<T>(url, campo, f.q, 1, abierto);
-  const items = l.items.slice(0, 8);
+  // C02 / FAT-D01: el controlador invalida lista, selección y consultas directas en cada cambio de texto y descarta respuestas/errores tardíos (ver lib/facturacion/busqueda-rapida.ts).
+  const [ctl] = useState(() => crearBuscadorRapido<T>({
+    buscar: async (q) => {
+      const j = await leer<Record<string, unknown> & { total: number }>(await fetch(`${url}?q=${encodeURIComponent(q)}&pagina=1&porPagina=${POR_PAGINA}`, { cache: "no-store" }), "No fue posible buscar.");
 
-  function elegir(t: T) {
-    alElegir(t);
-    setAviso(`«${describir(t).titulo}» añadido.`);
-    f.setTexto("");
-    setActivo(-1);
-    if (!mantenerAbierto) setAbierto(false);
-  }
+      return { items: j[campo] as T[], total: j.total };
+    },
+    programar: (fn, ms) => window.setTimeout(fn, ms),
+    cancelar: (t) => window.clearTimeout(t as number),
+    habilitado: (t) => describir(t).habilitado,
+    exacto,
+    titulo: (t) => describir(t).titulo,
+    alCambiar: setB,
+    alElegir: (t) => { alElegir(t); if (!mantenerAbierto) setAbierto(false); },
+  }));
 
-  // Enter sin opción resaltada: consulta con el texto actual y selecciona solo si hay una coincidencia exacta o un único resultado habilitado.
-  async function elegirConEnter() {
-    const texto = f.texto.trim();
+  // Moneda, permisos y callbacks pueden cambiar: el controlador usa siempre los vigentes.
+  useEffect(() => {
+    ctl.configurar({ habilitado: (t) => describir(t).habilitado, exacto, titulo: (t) => describir(t).titulo, alElegir: (t) => { alElegir(t); if (!mantenerAbierto) setAbierto(false); } });
+  });
 
-    if (!texto) return;
+  useEffect(() => { if (abierto) ctl.abrir(); }, [abierto, ctl]);
+  useEffect(() => () => ctl.reiniciar(), [ctl]);
 
-    setBuscando(true);
-    setAviso("");
-    try {
-      const j = await leer<Record<string, unknown>>(await fetch(`${url}?q=${encodeURIComponent(texto)}&pagina=1&porPagina=${POR_PAGINA}`, { cache: "no-store" }), "No fue posible buscar.");
-      const encontrados = (j[campo] as T[]).filter((t) => describir(t).habilitado);
-      const decision = elegirPorEnter(encontrados, texto, exacto);
-
-      if (decision.elegido) elegir(decision.elegido);
-      else if (decision.motivo) setAviso(MENSAJE_ENTER[decision.motivo]);
-    } catch (e) {
-      setAviso(e instanceof Error ? e.message : "No fue posible buscar.");
-    } finally {
-      setBuscando(false);
-    }
-  }
+  const items = b.items.slice(0, MAX_VISIBLES);
+  const activo = b.activo;
 
   function teclas(e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key === "ArrowDown") {
       e.preventDefault();
       setAbierto(true);
-      setActivo((a) => Math.min(a + 1, items.length - 1));
+      ctl.mover(1);
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
-      setActivo((a) => Math.max(a - 1, 0));
+      ctl.mover(-1);
     } else if (e.key === "Escape") {
       setAbierto(false);
     } else if (e.key === "Enter") {
       e.preventDefault();
-      if (activo >= 0 && items[activo] && describir(items[activo]).habilitado) elegir(items[activo]);
-      else void elegirConEnter();
+      void ctl.enter();
     }
   }
 
@@ -352,9 +343,9 @@ function BuscadorRapido<T extends { id: string }>({ url, campo, etiqueta, placeh
           aria-activedescendant={activo >= 0 ? `${idBase}-op-${activo}` : undefined}
           autoComplete="off"
           autoFocus={autoFocus}
-          value={f.texto}
+          value={b.texto}
           placeholder={placeholder}
-          onChange={(e) => { f.setTexto(e.target.value); setAbierto(true); setActivo(-1); setAviso(""); }}
+          onChange={(e) => { ctl.escribir(e.target.value); setAbierto(true); }}
           onFocus={() => setAbierto(true)}
           onKeyDown={teclas}
         />
@@ -362,10 +353,10 @@ function BuscadorRapido<T extends { id: string }>({ url, campo, etiqueta, placeh
 
       {abierto ? (
         <ul id={`${idBase}-lista`} role="listbox" aria-label={etiqueta} className={estilos.opciones}>
-          {l.cargando || buscando ? <li className={estilos.opcionVacia} role="status">Buscando…</li> : null}
-          {!l.cargando && l.error ? <li className={estilos.opcionVacia} role="alert">{l.error}</li> : null}
-          {!l.cargando && !l.error && items.length === 0 ? <li className={estilos.opcionVacia}>{f.q ? "Ninguna coincidencia." : "No hay registros habilitados."}</li> : null}
-          {!l.cargando && items.map((t, i) => {
+          {b.cargando || b.buscando ? <li className={estilos.opcionVacia} role="status">Buscando…</li> : null}
+          {!b.cargando && b.error ? <li className={estilos.opcionVacia} role="alert">{b.error}</li> : null}
+          {!b.cargando && !b.error && items.length === 0 ? <li className={estilos.opcionVacia}>{b.texto.trim() ? "Ninguna coincidencia." : "No hay registros habilitados."}</li> : null}
+          {!b.cargando && items.map((t, i) => {
             const d = describir(t);
 
             return (
@@ -377,8 +368,8 @@ function BuscadorRapido<T extends { id: string }>({ url, campo, etiqueta, placeh
                 aria-disabled={!d.habilitado}
                 className={`${estilos.opcion} ${i === activo ? estilos.opcionActiva : ""} ${d.habilitado ? "" : estilos.opcionBloqueada}`}
                 onMouseDown={(e) => e.preventDefault()}
-                onMouseEnter={() => setActivo(i)}
-                onClick={() => d.habilitado && elegir(t)}
+                onMouseEnter={() => ctl.resaltar(i)}
+                onClick={() => ctl.elegir(t)}
               >
                 <span className={estilos.opcionTexto}>
                   <strong>{d.titulo}</strong>
@@ -389,11 +380,11 @@ function BuscadorRapido<T extends { id: string }>({ url, campo, etiqueta, placeh
               </li>
             );
           })}
-          {l.total > items.length ? <li className={estilos.opcionVacia}>Hay {l.total} resultados: afine la búsqueda o use la búsqueda avanzada.</li> : null}
+          {!b.cargando && b.total > items.length ? <li className={estilos.opcionVacia}>Hay {b.total} resultados: afine la búsqueda o use la búsqueda avanzada.</li> : null}
         </ul>
       ) : null}
 
-      {aviso ? <p className={estilos.aviso} role="status">{aviso}</p> : null}
+      {b.aviso ? <p className={estilos.aviso} role="status">{b.aviso}</p> : null}
     </div>
   );
 }
