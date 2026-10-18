@@ -73,7 +73,7 @@
 **Impacto:** lector interpreta stock disponible total del producto cuando visualiza exclusivamente destinos del filtro/situación o del plan. No es error aritmético ni exposición indebida; el rótulo no describe el denominador.
 **Criterio:** vista PRODUCTO usa «Disponible (destinos)» y ayuda contextual breve; DEPOSITO conserva «Disponible». Probar 3 depósitos, solo 1 destino en estado ALERTAS; contrastar suma del producto en Stock general; archivo/tabla consistentes.
 
-**Recuento de este reporte:** **1 ALTA heredada + 2 MEDIAS (1 heredada + 2 nuevas = 3 MEDIAS) + 1 BAJA nueva**. Al global del módulo solo se agregan **+2 MEDIAS y +1 BAJA**; después de Stock general, Valorización, Kardex y Stock crítico, el acumulado es **2 ALTAS + 7 MEDIAS + 3 BAJAS**, sin multiplicar los hallazgos transversales RPT-D01/D02.
+**Recuento de este reporte:** **1 ALTA heredada + 3 MEDIAS (1 heredada + 2 nuevas) + 1 BAJA nueva**. Al global del módulo solo se agregan **+2 MEDIAS y +1 BAJA**; después de Stock general, Valorización, Kardex y Stock crítico, el acumulado es **2 ALTAS + 7 MEDIAS + 3 BAJAS**, sin multiplicar los hallazgos transversales RPT-D01/D02.
 
 ## 4. Decisiones/observaciones no probadas (no mezclar con defectos)
 
