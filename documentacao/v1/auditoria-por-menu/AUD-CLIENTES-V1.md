@@ -203,3 +203,14 @@ Examinar próxima rodada por prioridade: integridade de GET/POST/PUT dos filhos 
 - O commit alterou 20 arquivos, nenhum esquema/migration aplicado; NEX-053 permanece em estado operacional não comprovado. Testes **reportados pelo Claude, não executados pelo ChatGPT:** 48/0 no foco, 26/0, 151/0, 76/0, 61/0, 53/0, 271/0 e 46/0 em regressões; sem PG/HTTP/browser. Não autorizar nova implementação automaticamente.
 
 **Estado:** Clientes NÃO HOMOLOGADO/NÃO ENCERRADO; sem avançar a Proveedores ou Cnn seguinte.
+
+
+## XIII. AUD-R04 — reauditoria independente CLI-R03-01 (19/10/2026)
+
+**Relatório:** [AUD-NEXIT-CLIENTES-DESKTOP-R04](../../testes/AUD-NEXIT-CLIENTES-DESKTOP-R04-2026-10-19.md). **Commit funcional auditado:** `3d88dd3844ce5f8c28b11d9ced46b0f898fb9b6e`. **PARECER: CLI-R03-01 RESOLVIDO ESTATICAMENTE; nenhuma nova falha funcional comprovada no diff desta rodada.**
+
+- `lib/clientes/cierre-alta.ts` define `altaSucia` e `finalizarSinPendientes`: após confirmação positiva do servidor `terminarAlta` marca `cerrada=true` e a proteção `useProtegerCambios` é desativada mesmo com arquivos explicitamente abandonados. Cancelar e erro de HTTP/rede deixam `cerrada=false`, mantendo retry e proteção. POST de cliente continua no ramo sem `clienteId`, e arquivo já enviado não é retransmitido.
+- Perfis somente CREAR exibem página de conclusão e novo cadastro; perfil com VER mantém retorno à lista; nenhuma alteração backend/ACL, SQL, migrations, documentos ou outros menus no commit de quatro arquivos.
+- `clientes-r02.casos.ts` ganhou 12 novas comprovações; **Claude reportou 60/0** e regressões de Clientes/Faturación/Dashboard sem falhas. **ChatGPT não executou testes** e não reproduziu browser, React `useEffect`/`beforeunload`, HTTP real nem PostgreSQL.
+- **CLI-D01/D02/D03/D06/D07** mantêm aceite estático da R03, sem nova pendência corretiva identificada nesta R04. **CLI-D04/D05** continuam observações, não autorização de implementação. **NEX-053** não foi validada na VM.
+- **STATUS GLOBAL: revisão estática da entrega Clientes encerrada sem bloqueio corretivo conhecido, NÃO HOMOLOGADO OPERACIONALMENTE.** Resta comprovação em navegador e ambiente pelo responsável. Não passar automaticamente para Proveedores.
