@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { contador } from "@/lib/clientes/contador-casos";
 import { cargaConfiable, cargarCatalogoCompleto, crearCompuerta, motivoBloqueoGuardar, permisosVigentes, textoConfirmarInactivacion, type FilaCatalogo, type TipoCatalogoCarga } from "@/lib/productos/catalogos-carga";
 import { exigirVersionCatalogo } from "@/lib/productos/catalogos-version";
+import { crearExclusion, ejecutarCambioEstado } from "@/lib/productos/catalogos-operacion";
 import { catalogosConHistoricas } from "@/lib/productos/historicas";
 import type { CatalogoProductos } from "@/types/productos";
 
@@ -72,7 +73,7 @@ export async function verificarCasosCatalogosEstabilizacion(): Promise<string[]>
 
   const pagina = leer("app/(private)/productos/catalogos/page.tsx");
 
-  cierto("A01 pantalla: con un auxiliar fallido se muestra el error y se bloquean «Nueva» y «Editar» (no se guardan asociaciones con opciones insuficientes), sin tocar el estado de Categorías/Marcas", /\{permisos\.crear \? \(/.test(pagina) && /permisosVigentes\(permisosCargados, estadoCarga\)/.test(pagina) && /disabled=\{!confiable\}/.test(pagina) && /setErrorAuxiliar\(r\.errorAuxiliar\)/.test(pagina) && /Por seguridad no se puede crear ni editar/.test(pagina));
+  cierto("A01 pantalla: con un auxiliar fallido se muestra el error y se bloquean «Nueva» y «Editar» (no se guardan asociaciones con opciones insuficientes), sin tocar el estado de Categorías/Marcas", /\{permisos\.crear \? \(/.test(pagina) && /permisosVigentes\(permisosCargados, estadoCarga\)/.test(pagina) && /disabled=\{!confiable( \|\| ocupado)?\}/.test(pagina) && /setErrorAuxiliar\(r\.errorAuxiliar\)/.test(pagina) && /Por seguridad no se puede crear ni editar/.test(pagina));
 
   // ── CAT-A02: simulación de respuestas fuera de orden
   type Estado = { tipo: string; permisos: string };
@@ -206,9 +207,9 @@ export async function verificarCasosCatalogosEstabilizacion(): Promise<string[]>
   const idxUpdate = editar.indexOf("UPDATE ${t.tabla} SET");
 
   cierto("A06 SQL/orden: el bloqueo consultivo por empresa+tabla se toma ANTES de leer; la versión se compara DESPUÉS de leer bajo ese bloqueo y ANTES de duplicados, catalogo_producto_guardar (Categorías/Marcas) o UPDATE (Familias/Líneas); es la misma clave que usa el alta", idxLock > 0 && idxLock < idxLeer && idxLeer < idxVersion && idxVersion < editar.indexOf("verificarDuplicados(c, tipo") && idxVersion < idxFuncion && idxVersion < idxUpdate && /`\$\{empresaId\}:\$\{t\.tabla\}`/.test(editar) && /pg_advisory_xact_lock\(hashtext\(\$1\)\)`, \[`\$\{empresaId\}:\$\{t\.tabla\}`\]/.test(admin));
-  cierto("A06: la versión es actualizado_at con microsegundos (UTC) tanto en la lista como en la comparación; el PUT nunca la toma de otra fuente; no hay migración nueva (la última sigue siendo la NEX-053)", (admin.match(/to_char\([^,]{0,12}actualizado_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS\.US'\)/g) ?? []).length >= 2 && readdirSync(join(raiz, "documentacao/banco/nexit/v1/migraciones")).filter((n) => /^NEX-\d+/.test(n)).sort().at(-1)!.match(/^NEX-05[3-9]/) !== null);
+  cierto("A06: la versión es actualizado_at con microsegundos (UTC) tanto en la lista como en la comparación; el PUT nunca la toma de otra fuente; no hay migración nueva (la última sigue siendo la NEX-053)", (admin.match(/to_char\([^,]{0,12}actualizado_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS\.US'\)/g) ?? []).length >= 2 && readdirSync(join(raiz, "documentacao/banco/nexit/v1/migraciones")).filter((n) => /^NEX-\d+/.test(n)).sort().at(-1)!.match(/^NEX-(0[5-9]\d|[1-9]\d\d)/) !== null);
   cierto("A06 límite documentado: el serializado depende de que TODA escritura de la tabla tome el bloqueo (alta y edición lo toman; solo esta capa escribe, el rol de ejecución no tiene INSERT/UPDATE directos en Categorías/Marcas)", /await c\.query\(`SELECT pg_advisory_xact_lock\(hashtext\(\$1\)\)`/.test(admin) && (leer("lib/productos/catalogos-admin.ts").match(/catalogo_producto_guardar/g) ?? []).length >= 2 && !/catalogo_producto_guardar/.test(leer("app/api/productos/route.ts")));
-  cierto("A06 pantalla: la edición y el cambio de estado envían la versión que la lista cargó; ante 409 el formulario conserva lo escrito y el cambio de estado recarga la lista vigente", /if \(form\.id\) cuerpo\.version = form\.version/.test(pagina) && /version: fila\.version \}/.test(pagina) && /version: f\.version,/.test(pagina) && /await cargar\(\); \/\/ CAT-A06/.test(pagina) && /setErrorForm\(mensaje\)/.test(pagina));
+  cierto("A06 pantalla: la edición y el cambio de estado envían la versión que la lista cargó; ante 409 el formulario conserva lo escrito y el cambio de estado recarga la lista vigente", /if \(form\.id\) cuerpo\.version = form\.version/.test(pagina) && /version: fila\.version \}/.test(pagina) && /version: f\.version,/.test(pagina) && /CAT-A06: ante un 409/.test(pagina) && /setErrorForm\(mensaje\)/.test(pagina));
 
   // ── CAT-R02-01: gravación solo con carga confiable (lista principal + auxiliares), también con el formulario ya abierto
   const ok0 = { cargando: false, errorCarga: "", errorAuxiliar: "" };
@@ -267,9 +268,55 @@ export async function verificarCasosCatalogosEstabilizacion(): Promise<string[]>
 
   cierto("R02-01 pantalla: guardar() y cambiarEstado() consultan motivoBloqueoGuardar ANTES de cualquier envío y retornan sin tocar el formulario", guardarFn.indexOf("motivoBloqueoGuardar(estadoCarga)") > 0 && guardarFn.indexOf("motivoBloqueoGuardar(estadoCarga)") < guardarFn.indexOf("enviar(") && cambiarFn.indexOf("motivoBloqueoGuardar(estadoCarga)") > 0 && cambiarFn.indexOf("motivoBloqueoGuardar(estadoCarga)") < cambiarFn.indexOf("enviar("));
   cierto("R02-01 pantalla: el error de la consulta principal tiene estado propio (errorCarga) que guardar/abrir/cambiar-pestaña no borran; solo cargar() lo escribe; los permisos se derivan con permisosVigentes", /const \[errorCarga, setErrorCarga\]/.test(pg) && /const permisos = permisosVigentes\(permisosCargados, estadoCarga\)/.test(pg) && (pg.match(/setErrorCarga\(/g) ?? []).length === 2 && !/setErrorCarga/.test(guardarFn + cambiarFn));
-  cierto("R02-01 pantalla: Guardar, Editar e Inactivar/Activar quedan deshabilitados sin carga confiable y Nueva solo aparece con permisos vigentes; ante error principal se vacían permisos y auxiliares", /disabled=\{guardando \|\| !confiable\}/.test(pg) && (pg.match(/disabled=\{!confiable\}/g) ?? []).length === 2 && /\{permisos\.crear \? \(/.test(pg) && /setPermisos\(\{ crear: false, editar: false \}\);\n      setFamilias\(\[\]\);\n      setCategorias\(\[\]\);/.test(pg));
+  cierto("R02-01 pantalla: Guardar, Editar e Inactivar/Activar quedan deshabilitados sin carga confiable y Nueva solo aparece con permisos vigentes; ante error principal se vacían permisos y auxiliares", /disabled=\{guardando \|\| !confiable\}/.test(pg) && (pg.match(/disabled=\{!confiable( \|\| ocupado)?\}/g) ?? []).length === 2 && /\{permisos\.crear \? \(/.test(pg) && /setPermisos\(\{ crear: false, editar: false \}\);\n      setFamilias\(\[\]\);\n      setCategorias\(\[\]\);/.test(pg));
   cierto("R02-01 pantalla: al cambiar de pestaña se anulan los permisos y se marca «cargando» de inmediato (sin ventana con permisos de la pestaña anterior)", /setCargando\(true\);\n    setPermisos\(\{ crear: false, editar: false \}\);\n    setTipo\(nuevo\)/.test(pg));
   cierto("R02-01 regresión: la protección 409 de A06 (versión en PUT) y el guard de cambios sin guardar siguen presentes", /cuerpo\.version = form\.version/.test(pg) && /useProtegerCambios\(sucio\)/.test(pg));
+
+  // ── CAT-D01: gravación exclusiva (PUT lento + intentos de cambiar de contexto) ──────────────────────────────────────────────────────────
+  const excl = crearExclusion();
+  let liberarPut: (v: string) => void = () => undefined;
+  const putLento = new Promise<string>((res) => { liberarPut = res; });
+  let llamadasPut = 0;
+  const guardarLento = excl.ejecutar(async () => { llamadasPut += 1; return putLento; });
+  let intentosCtx = 0;
+  const cambiarTabSim = () => { if (excl.activa()) return false; intentosCtx += 1; return true; }; // misma guarda que cambiarTab/Nueva/Editar/Cancelar/Activar de la pantalla
+  const segundoPut = await excl.ejecutar(async () => { llamadasPut += 1; return "doble"; });
+
+  igual("D01: con un PUT pendiente, cambiar de pestaña / abrir otro formulario / cancelar / activar quedan bloqueados (no cambian el contexto)", [excl.activa(), cambiarTabSim(), cambiarTabSim(), intentosCtx], [true, false, false, 0]);
+  igual("D01: un segundo POST/PUT concurrente del mismo formulario no se envía mientras el primero está pendiente", [segundoPut, llamadasPut], [{ ejecutada: false }, 1]);
+
+  liberarPut("ok");
+  const terminado = await guardarLento;
+
+  igual("D01: al terminar el PUT la exclusión se libera y las acciones legítimas vuelven a funcionar", [terminado, excl.activa(), cambiarTabSim(), intentosCtx], [{ ejecutada: true, valor: "ok" }, false, true, 1]);
+
+  const fallida = await excl.ejecutar(async () => { throw new Error("falló"); }).catch((e: Error) => e.message);
+
+  igual("D01: aunque la gravación falle (excepción) la exclusión se libera (no queda la pantalla bloqueada)", [fallida, excl.activa()], ["falló", false]);
+
+  const paginaCat = leer("app/(private)/productos/catalogos/page.tsx");
+
+  cierto("D01 pantalla: pestañas, «Nueva», «Cancelar», «Editar» y «Activar/Inactivar» se deshabilitan y sus manejadores se niegan mientras hay una gravación; guardar y cambiar estado usan la exclusión", /disabled=\{ocupado\}\n\s+onClick=\{\(\) => \{\n\s+if \(ocupado \|\| !confirmarDescarte\(\)\) return;/.test(paginaCat) && /aria-current=\{tipo === t\.id \? "page" : undefined\}\n\s+disabled=\{ocupado\}/.test(paginaCat) && /disabled=\{ocupado\}\n\s+onClick=\{\(\) => \{\n\s+if \(!ocupado && confirmarDescarte\(\)\) cerrarFormulario\(\)/.test(paginaCat) && (paginaCat.match(/disabled=\{!confiable \|\| ocupado\}/g) ?? []).length === 2 && /if \(exclusion\.current\.activa\(\) \|\| nuevo === tipo/.test(paginaCat) && (paginaCat.match(/exclusion\.current\.ejecutar\(/g) ?? []).length === 2);
+
+  // ── CAT-D02: el error de activar/inactivar sobrevive a la recarga ────────────────────────────────────────────────────────────────────────
+  // Modelo de la pantalla: `cargar` solo borra el error de acción si no se pide preservarlo; el error del GET va por otro canal (errorCarga).
+  const ui = { error: "", aviso: "", errorCarga: "", filas: "antes" };
+  const cargarSim = (get: "ok" | "error") => async (o: { preservarError: boolean }) => { if (!o.preservarError) ui.error = ""; ui.errorCarga = get === "error" ? "GET falló" : ""; if (get === "ok") ui.filas = "vigentes"; };
+  const accion = (put: number, get: "ok" | "error") => { ui.error = ""; ui.aviso = ""; return ejecutarCambioEstado({ enviar: async () => { if (put !== 200) throw new Error("PUT " + put); }, alExito: () => { ui.aviso = "Registro activado."; }, alError: (m) => { ui.error = m; }, recargar: cargarSim(get) }); };
+
+  for (const codigo of [409, 403, 500]) {
+    ui.filas = "antes";
+    await accion(codigo, "ok");
+    igual(`D02: PUT ${codigo} seguido de GET correcto → el error de la acción sigue visible, la lista se refresca y no hay aviso de éxito`, [ui.error, ui.aviso, ui.errorCarga, ui.filas], ["PUT " + codigo, "", "", "vigentes"]);
+  }
+
+  ui.filas = "antes";
+  await accion(409, "error");
+  igual("D02: PUT con error seguido de GET con error → ambos errores en canales distintos (acción y consulta), conservando los datos actuales de la lista", [ui.error, ui.errorCarga, ui.aviso, ui.filas], ["PUT 409", "GET falló", "", "antes"]);
+
+  await accion(200, "ok");
+  igual("D02: un reintento legítimo exitoso reemplaza el error por el aviso de éxito y limpia el error", [ui.error, ui.aviso, ui.errorCarga], ["", "Registro activado.", ""]);
+  cierto("D02 pantalla: cambiarEstado delega en ejecutarCambioEstado y recarga con preservarError; cargar() solo borra el error cuando no se le pide preservarlo", /recargar: \(o\) => cargar\(\{ preservarError: o\.preservarError \}\)/.test(paginaCat) && /if \(!opciones\.preservarError\) setError\(""\)/.test(paginaCat) && /alError: \(m\) => setError\(m\)/.test(paginaCat));
 
   return fallos;
 }

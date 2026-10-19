@@ -7,6 +7,7 @@ import { compararTexto, ordenarLista, siguienteOrden, type Orden } from "@/compo
 import { ThOrdenable } from "@/components/ui/lista-padrao/th-ordenable";
 import ui from "@/components/ui/lista-padrao/lista.module.css";
 import { cargaConfiable, cargarCatalogoCompleto, crearCompuerta, motivoBloqueoGuardar, permisosVigentes, textoConfirmarInactivacion, type FilaCatalogo } from "@/lib/productos/catalogos-carga";
+import { crearExclusion, ejecutarCambioEstado } from "@/lib/productos/catalogos-operacion";
 import { useProtegerCambios } from "@/lib/ui/proteger-cambios";
 import {
   campoDeErrorServidor,
@@ -62,6 +63,9 @@ export default function CatalogosProductosPage() {
   const [errores, setErrores] = useState<ErroresCatalogo>({});
   const [errorForm, setErrorForm] = useState("");
   const [guardando, setGuardando] = useState(false);
+  // CAT-D01: una gravación (guardar o cambiar estado) en curso es exclusiva: mientras dura no se cambia de pestaña, no se abre/cancela otro formulario ni se lanza otra escritura.
+  const [ocupado, setOcupado] = useState(false);
+  const exclusion = useRef(crearExclusion());
   const [orden, setOrden] = useState<Orden<CampoOrden>>(null);
   const [paginacion, setPaginacion] = useState({ clave: "", pagina: 1 });
 
@@ -76,11 +80,12 @@ export default function CatalogosProductosPage() {
   // CAT-A02: solo la última solicitud iniciada (de la pestaña actual) puede escribir en pantalla; una respuesta lenta de otra pestaña se descarta.
   const compuerta = useRef(crearCompuerta());
 
-  const cargar = useCallback(async () => {
+  // CAT-D02: `preservarError` conserva el error de una acción (409/403/500) durante la recarga que la sigue.
+  const cargar = useCallback(async (opciones: { preservarError?: boolean } = {}) => {
     const solicitud = compuerta.current.nueva();
 
     setCargando(true);
-    setError("");
+    if (!opciones.preservarError) setError("");
     setErrorCarga("");
     setErrorAuxiliar("");
 
@@ -111,7 +116,7 @@ export default function CatalogosProductosPage() {
 
   useEffect(() => {
     // Carga inicial y al cambiar de pestaña (diferida para no actualizar el estado de forma síncrona dentro del efecto).
-    void Promise.resolve().then(cargar);
+    void Promise.resolve().then(() => cargar());
   }, [cargar]);
 
   // CAT-A03: aviso al recargar/cerrar y al usar CUALQUIER enlace interno (menú lateral, «Productos»), con el mismo guard de Clientes/Productos; sin aviso si el formulario está intacto.
@@ -139,7 +144,7 @@ export default function CatalogosProductosPage() {
   }
 
   function cambiarTab(nuevo: Tipo) {
-    if (nuevo === tipo || !confirmarDescarte()) return;
+    if (exclusion.current.activa() || nuevo === tipo || !confirmarDescarte()) return;
 
     // CAT-R02-01: los permisos y datos de la pestaña anterior no valen para la nueva mientras no llegue su carga.
     setCargando(true);
@@ -224,7 +229,7 @@ export default function CatalogosProductosPage() {
 
   async function guardar(event: FormEvent) {
     event.preventDefault();
-    if (!form) return;
+    if (!form || exclusion.current.activa()) return;
     setError("");
     setAviso("");
     setErrorForm("");
@@ -249,6 +254,8 @@ export default function CatalogosProductosPage() {
 
     setErrores({});
     setGuardando(true);
+    setOcupado(true);
+    await exclusion.current.ejecutar(async () => {
     try {
       const cuerpo: Record<string, unknown> = { codigo: form.codigo, nombre: form.nombre };
       if (meta.descripcion) cuerpo.descripcion = form.descripcion;
@@ -272,10 +279,13 @@ export default function CatalogosProductosPage() {
       }
     } finally {
       setGuardando(false);
+      setOcupado(false);
     }
+    });
   }
 
   async function cambiarEstado(fila: Fila) {
+    if (exclusion.current.activa()) return;
     setError("");
     setAviso("");
 
@@ -292,17 +302,25 @@ export default function CatalogosProductosPage() {
 
     if (confirmar && !window.confirm(confirmar)) return;
 
-    try {
-      const cuerpo: Record<string, unknown> = { codigo: fila.codigo, nombre: fila.nombre, activo: !fila.activo, version: fila.version };
-      if (meta.descripcion) cuerpo.descripcion = fila.descripcion;
-      if (tipo === "lineas") cuerpo.familiaId = fila.familiaId;
-      await enviar(`/api/productos/${tipo}/${fila.id}`, "PUT", cuerpo);
-      setAviso(fila.activo ? "Registro inactivado. Sus productos conservan el vínculo." : "Registro activado.");
-      await cargar();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "No fue posible cambiar el estado.");
-      await cargar(); // CAT-A06: ante un 409 se muestran los datos vigentes
-    }
+    setOcupado(true);
+    await exclusion.current.ejecutar(async () => {
+      try {
+        await ejecutarCambioEstado({
+          enviar: () => {
+            const cuerpo: Record<string, unknown> = { codigo: fila.codigo, nombre: fila.nombre, activo: !fila.activo, version: fila.version };
+            if (meta.descripcion) cuerpo.descripcion = fila.descripcion;
+            if (tipo === "lineas") cuerpo.familiaId = fila.familiaId;
+
+            return enviar(`/api/productos/${tipo}/${fila.id}`, "PUT", cuerpo);
+          },
+          alExito: () => setAviso(fila.activo ? "Registro inactivado. Sus productos conservan el vínculo." : "Registro activado."),
+          alError: (m) => setError(m),
+          recargar: (o) => cargar({ preservarError: o.preservarError }), // CAT-A06: ante un 409 se muestran los datos vigentes sin perder el error de la acción
+        });
+      } finally {
+        setOcupado(false);
+      }
+    });
   }
 
   const familiasActivas = familias.filter((f) => f.activo || f.id === form?.familiaId);
@@ -350,8 +368,9 @@ export default function CatalogosProductosPage() {
             <button
               type="button"
               className={ui.primaryButton}
+              disabled={ocupado}
               onClick={() => {
-                if (!confirmarDescarte()) return;
+                if (ocupado || !confirmarDescarte()) return;
                 abrirFormulario({ ...VACIO });
                 enfocar(tipo === "familias" ? "categoriaId" : tipo === "lineas" ? "familiaId" : "codigo");
               }}
@@ -370,6 +389,7 @@ export default function CatalogosProductosPage() {
             type="button"
             className={[ui.tab, tipo === t.id ? ui.tabActive : ""].join(" ")}
             aria-current={tipo === t.id ? "page" : undefined}
+            disabled={ocupado}
             onClick={() => cambiarTab(t.id)}
           >
             {t.label}
@@ -470,8 +490,9 @@ export default function CatalogosProductosPage() {
             <button
               type="button"
               className={ui.secondaryButton}
+              disabled={ocupado}
               onClick={() => {
-                if (confirmarDescarte()) cerrarFormulario();
+                if (!ocupado && confirmarDescarte()) cerrarFormulario();
               }}
             >
               Cancelar
@@ -618,10 +639,10 @@ export default function CatalogosProductosPage() {
                           <button
                             type="button"
                             className={ui.rowButton}
-                            disabled={!confiable}
+                            disabled={!confiable || ocupado}
                             title={confiable ? undefined : "No se puede editar mientras falle la carga del catálogo o de los catálogos auxiliares."}
                             onClick={() => {
-                              if (!confirmarDescarte()) return;
+                              if (ocupado || !confirmarDescarte()) return;
                               abrirFormulario({
                                 id: f.id,
                                 version: f.version,
@@ -635,7 +656,7 @@ export default function CatalogosProductosPage() {
                           >
                             Editar
                           </button>
-                          <button type="button" className={ui.rowButton} disabled={!confiable} onClick={() => void cambiarEstado(f)}>
+                          <button type="button" className={ui.rowButton} disabled={!confiable || ocupado} onClick={() => void cambiarEstado(f)}>
                             {f.activo ? "Inactivar" : "Activar"}
                           </button>
                         </div>
