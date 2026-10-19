@@ -373,7 +373,7 @@ export default function ProveedorForm({ mode, initial, catalogos: catalogosActiv
           {tab === "compras" ? <Bloque bloqueado={soloLectura}><PestanaCompras ctx={ctx} /></Bloque> : null}
           {tab === "homologacion" ? <PestanaHomologacion ctx={ctx} /> : null}
           {tab === "contactos" ? <Bloque bloqueado={soloLectura}><PestanaContactos ctx={ctx} /></Bloque> : null}
-          {tab === "direcciones" ? <Bloque bloqueado={soloLectura}><PestanaDirecciones ctx={ctx} /></Bloque> : null}
+          {tab === "direcciones" ? <PestanaDirecciones ctx={ctx} /> : null}
           {tab === "bancos" ? <PestanaBancos ctx={ctx} /> : null}
           {tab === "retenciones" ? <Bloque bloqueado={soloLectura}><PestanaRetenciones ctx={ctx} /></Bloque> : null}
           {tab === "documentos" ? <PestanaDocumentos ctx={ctx} /> : null}

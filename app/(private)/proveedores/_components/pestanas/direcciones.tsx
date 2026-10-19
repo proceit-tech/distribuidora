@@ -1,15 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { crearCargaCatalogo, leerCatalogo, type EstadoCatalogo } from "@/lib/proveedores/geografia-catalogo";
 import type { ProveedorDireccion } from "@/types/proveedores";
 
-import { Casilla, Selector, SinRegistros, Texto } from "../campos";
+import { Bloque, Casilla, Selector, SinRegistros, Texto } from "../campos";
 import type { ContextoFormulario } from "../contexto";
 import styles from "../proveedor-form.module.css";
 
 type Opcion = { codigo: number; nombre: string };
+type ErroresGeoDireccion = { distritos: string; ciudades: string; reintentarDistritos: () => void; reintentarCiudades: () => void };
 
 /** Catálogo geográfico con identidad por clave: estado de la consulta vigente, error clasificado y reintento. */
 function useCatalogoGeo(clave: string, url: string) {
@@ -26,13 +27,14 @@ function useCatalogoGeo(clave: string, url: string) {
   }, [clave, url, intento, carga]);
 
   const vigente = clave !== "" && estado.clave === clave;
+  const reintentar = useCallback(() => setIntento((n) => n + 1), []);
 
-  return { lista: vigente ? estado.lista : [], error: vigente ? estado.error : "", reintentar: () => setIntento((n) => n + 1) };
+  return { lista: vigente ? estado.lista : [], error: vigente ? estado.error : "", reintentar };
 }
 
 function ErrorGeo({ mensaje, reintentar }: { mensaje: string; reintentar: () => void }) {
   return (
-    <div role="alert" style={{ gridColumn: "1 / -1", display: "flex", gap: 8, alignItems: "center", color: "#a1281f", fontSize: 13 }}>
+    <div role="alert" style={{ display: "flex", gap: 8, alignItems: "center", color: "#a1281f", fontSize: 13, margin: "0 0 8px" }}>
       <span>{mensaje}</span>
       <button type="button" className={styles.addButton} onClick={reintentar}>
         Reintentar
@@ -48,12 +50,15 @@ function Geografia({
   departamentos,
   errores,
   onChange,
+  alErrorGeo,
 }: {
   direccion: ProveedorDireccion;
   prefijo: string;
   departamentos: Opcion[];
   errores: Record<string, string>;
   onChange: (parche: Partial<ProveedorDireccion>) => void;
+  /** PRV-R03-02: los errores del catálogo y su «Reintentar» se muestran fuera del bloque deshabilitado de solo lectura; aquí solo se informan (null = sin error / desmontada). */
+  alErrorGeo: (id: string, errores: ErroresGeoDireccion | null) => void;
 }) {
   const esPy = direccion.paisCodigo === "PRY";
   const dep = direccion.departamentoCodigo;
@@ -65,6 +70,15 @@ function Geografia({
   const cargaCiudades = useCatalogoGeo(claveCiudades, `/api/proveedores?catalogo=ciudades&departamento=${encodeURIComponent(dep)}&distrito=${encodeURIComponent(dis)}`);
   const distritos = cargaDistritos.lista;
   const ciudades = cargaCiudades.lista;
+  const { error: errorDistritos, reintentar: reintentarDistritos } = cargaDistritos;
+  const { error: errorCiudades, reintentar: reintentarCiudades } = cargaCiudades;
+  const idDireccion = direccion.id;
+
+  useEffect(() => {
+    alErrorGeo(idDireccion, errorDistritos || errorCiudades ? { distritos: errorDistritos, ciudades: errorCiudades, reintentarDistritos, reintentarCiudades } : null);
+
+    return () => alErrorGeo(idDireccion, null);
+  }, [idDireccion, errorDistritos, errorCiudades, reintentarDistritos, reintentarCiudades, alErrorGeo]);
 
   if (!esPy) {
     return (
@@ -83,17 +97,44 @@ function Geografia({
       <Selector etiqueta="Departamento *" campo={`${prefijo}.departamentoCodigo`} errores={errores} valor={dep} alCambiar={(v) => onChange({ departamentoCodigo: v, distritoCodigo: "", ciudadCodigo: "" })} opciones={opciones(departamentos)} />
       <Selector etiqueta="Distrito *" campo={`${prefijo}.distritoCodigo`} errores={errores} valor={dis} disabled={!dep} alCambiar={(v) => onChange({ distritoCodigo: v, ciudadCodigo: "" })} opciones={opciones(distritos)} />
       <Selector etiqueta="Ciudad *" campo={`${prefijo}.ciudadCodigo`} errores={errores} valor={direccion.ciudadCodigo} disabled={!dis} alCambiar={(v) => onChange({ ciudadCodigo: v })} opciones={opciones(ciudades)} />
-      {cargaDistritos.error ? <ErrorGeo mensaje={`Distritos: ${cargaDistritos.error}`} reintentar={cargaDistritos.reintentar} /> : null}
-      {cargaCiudades.error ? <ErrorGeo mensaje={`Ciudades: ${cargaCiudades.error}`} reintentar={cargaCiudades.reintentar} /> : null}
     </>
   );
 }
 
 export function PestanaDirecciones({ ctx }: { ctx: ContextoFormulario }) {
   const { form, errores, catalogos } = ctx;
+  const [erroresGeo, setErroresGeo] = useState<Record<string, ErroresGeoDireccion>>({});
+  const alErrorGeo = useCallback((id: string, e: ErroresGeoDireccion | null) => {
+    setErroresGeo((actual) => {
+      if (e === null) {
+        if (!(id in actual)) return actual;
+
+        const resto = { ...actual };
+
+        delete resto[id];
+
+        return resto;
+      }
+
+      return { ...actual, [id]: e };
+    });
+  }, []);
 
   return (
     <>
+      {/* PRV-R03-02: los errores del catálogo con «Reintentar» van FUERA del bloque de solo lectura: repetir la consulta GET no edita ni guarda nada. */}
+      {form.direcciones.map((d, i) => {
+        const e = erroresGeo[d.id];
+
+        return e ? (
+          <div key={`geo-${d.id}`}>
+            {e.distritos ? <ErrorGeo mensaje={`Dirección ${i + 1} · Distritos: ${e.distritos}`} reintentar={e.reintentarDistritos} /> : null}
+            {e.ciudades ? <ErrorGeo mensaje={`Dirección ${i + 1} · Ciudades: ${e.ciudades}`} reintentar={e.reintentarCiudades} /> : null}
+          </div>
+        ) : null;
+      })}
+
+      <Bloque bloqueado={ctx.soloLectura}>
       <div className={styles.sectionTitle}>
         <h3>Direcciones</h3>
         <button type="button" className={styles.addButton} onClick={() => ctx.agregar("direcciones")}>
@@ -157,7 +198,7 @@ export function PestanaDirecciones({ ctx }: { ctx: ContextoFormulario }) {
                   }
                   opciones={catalogos.paises.map((x): [string, string] => [x.codigo, x.nombre])}
                 />
-                <Geografia direccion={d} prefijo={p} departamentos={catalogos.departamentos} errores={errores} onChange={cambiar} />
+                <Geografia direccion={d} prefijo={p} departamentos={catalogos.departamentos} errores={errores} onChange={cambiar} alErrorGeo={alErrorGeo} />
               </div>
 
               <div className={styles.gridFour}>
@@ -171,6 +212,7 @@ export function PestanaDirecciones({ ctx }: { ctx: ContextoFormulario }) {
           );
         })}
       </div>
+      </Bloque>
     </>
   );
 }

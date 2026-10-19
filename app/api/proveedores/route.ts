@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { decidirGet } from "@/lib/proveedores/acceso-get";
 import { denyIfNoPermission } from "@/lib/auth/permissions";
 import type { PoolClient } from "pg";
 
@@ -153,20 +154,22 @@ export async function GET(request: Request) {
     );
   }
 
-  // PRV-R01-04: la lista y el detalle exigen PROVEEDORES.VER; los catálogos MÍNIMOS de la alta (modo=catalogos y los catálogos geográficos) también los puede leer quien
-  // tiene PROVEEDORES.CREAR, para poder abrir el formulario de alta. Esa excepción no devuelve ningún proveedor.
+  // PRV-R01-04 / PRV-R03-01: la autorización se decide por la FINALIDAD de la consulta (lib/proveedores/acceso-get.ts) antes de conceder cualquier excepción. Los catálogos mínimos de la alta
+  // (modo=catalogos) y la geografía válida admiten VER o CREAR; la lista y cualquier consulta inconsistente (catalogo vacío o desconocido, catalogo + modo) NUNCA se atienden con solo CREAR.
   const denegadoVer = await denyIfNoPermission(session, "PROVEEDORES", "VER");
-  if (denegadoVer) {
-    const soloAlta = url.searchParams.get("modo") === "catalogos" || url.searchParams.has("catalogo");
+  const tieneCrear = (await denyIfNoPermission(session, "PROVEEDORES", "CREAR")) === null;
+  const decision = decidirGet(url, { ver: !denegadoVer, crear: tieneCrear });
 
-    if (!soloAlta || (await denyIfNoPermission(session, "PROVEEDORES", "CREAR"))) return denegadoVer;
-  }
+  if (decision.tipo === "invalida") return NextResponse.json({ error: "Consulta no válida." }, { status: 400 });
+  if (decision.tipo === "denegada") return denegadoVer ?? NextResponse.json({ error: "No tiene permiso para esta acción." }, { status: 403 });
 
   const db = await obtenerDb();
 
   try {
     const respuestaGeografica = await catalogoGeografico(url, db);
     if (respuestaGeografica) return respuestaGeografica;
+    // Defensa: una consulta de geografía nunca continúa hacia la lista.
+    if (decision.finalidad === "GEOGRAFIA") return NextResponse.json({ error: "Consulta no válida." }, { status: 400 });
 
     const soloCatalogos = url.searchParams.get("modo") === "catalogos";
     const empresaId = session.user.empresaId;

@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { contador } from "@/lib/clientes/contador-casos";
+import { decidirGet, finalidadGet, puedeDevolverProveedores } from "@/lib/proveedores/acceso-get";
 import { crearCargaCatalogo, leerCatalogo, MENSAJES_GEO, type EstadoCatalogo, type ResultadoCatalogo } from "@/lib/proveedores/geografia-catalogo";
 import { resolveNavigation, resolverInicio, RUTA_SIN_ACCESO } from "@/lib/navigation/menu";
 
@@ -41,7 +42,7 @@ export async function verificarCasosProveedoresR02(): Promise<string[]> {
 
   const ruta = leer("app/api/proveedores/route.ts");
 
-  cierto("D01: GET lista/catálogos — VER para la lista y los datos de proveedores; los catálogos mínimos y la geografía admiten VER o CREAR; POST exige CREAR; permiso VER informado desde la sesión del servidor", /denyIfNoPermission\(session, "PROVEEDORES", "VER"\)/.test(ruta) && /modo"\) === "catalogos" \|\| url\.searchParams\.has\("catalogo"\)/.test(ruta) && /denyIfNoPermission\(session, "PROVEEDORES", "CREAR"\)/.test(ruta) && /permisos: \{ ver: !denegadoVer \}/.test(ruta) && /const empresaId = session\.user\.empresaId/.test(ruta) && /WHERE p\.empresa_id = \$1/.test(ruta));
+  cierto("D01: GET lista/catálogos — VER para la lista y los datos de proveedores; los catálogos mínimos y la geografía admiten VER o CREAR; POST exige CREAR; permiso VER informado desde la sesión del servidor", /denyIfNoPermission\(session, "PROVEEDORES", "VER"\)/.test(ruta) && /decidirGet\(url, \{ ver: !denegadoVer, crear: tieneCrear \}\)/.test(ruta) && !/searchParams\.has\("catalogo"\)/.test(ruta) && /decision\.tipo === "invalida"\) return NextResponse\.json/.test(ruta) && /denyIfNoPermission\(session, "PROVEEDORES", "CREAR"\)/.test(ruta) && /permisos: \{ ver: !denegadoVer \}/.test(ruta) && /const empresaId = session\.user\.empresaId/.test(ruta) && /WHERE p\.empresa_id = \$1/.test(ruta));
   cierto("D01: la ficha (GET) sigue exigiendo VER y el PUT EDITAR; ninguna empresa lee o modifica otra (empresa_id de la sesión)", /"PROVEEDORES", "VER"|VER/.test(leer("app/api/proveedores/[id]/route.ts")) && /empresa_id = \$1|empresa_id = \$2/.test(leer("app/api/proveedores/[id]/route.ts")));
   cierto("D01: layouts — módulo VER o CREAR; /proveedores/nuevo solo CREAR (sin exigir VER); /proveedores/[id] y la lista VER", /hasPermission\(access, "PROVEEDORES", "VER"\) && !hasPermission\(access, "PROVEEDORES", "CREAR"\)\) notFound\(\)/.test(leer("app/(private)/proveedores/layout.tsx")) && /guardPage\("PROVEEDORES", "CREAR"\)/.test(leer("app/(private)/proveedores/nuevo/layout.tsx")) && !/"VER"/.test(leer("app/(private)/proveedores/nuevo/layout.tsx").replace(/\/\/.*/g, "")) && /guardPage\("PROVEEDORES", "VER"\)/.test(leer("app/(private)/proveedores/[id]/layout.tsx")) && /guardPage\("PROVEEDORES", "VER"\)/.test(leer("app/(private)/proveedores/page.tsx")));
 
@@ -57,7 +58,7 @@ export async function verificarCasosProveedoresR02(): Promise<string[]> {
   const form = leer("app/(private)/proveedores/_components/proveedor-form.tsx");
 
   cierto("D02: «Nuevo proveedor» (cabecera y estado vacío) solo con PROVEEDORES.CREAR del servidor; búsqueda, filtros y paginación intactos", /puedeCrear \? \(\s+<Link href="\/proveedores\/nuevo"/.test(lista) && /proveedores\.length === 0 && puedeCrear \? \(/.test(lista) && /hasPermission\(access, "PROVEEDORES", "CREAR"\)/.test(leer("app/(private)/proveedores/page.tsx")) && /busqueda/.test(lista));
-  cierto("D02: sin EDITAR la edición común (información, compras, contactos, direcciones, retenciones) va en un bloque deshabilitado, sin «Actualizar proveedor» y con guardado inerte (el PUT del servidor sigue exigiendo EDITAR)", /initial\?\.permisos\.editar !== true/.test(form) && /if \(soloLectura\) return;/.test(form) && ["PestanaInformacion", "PestanaCompras", "PestanaContactos", "PestanaDirecciones", "PestanaRetenciones"].every((p) => new RegExp(`<Bloque bloqueado=\\{soloLectura\\}><${p} ctx=\\{ctx\\} /></Bloque>`).test(form)) && /soloLectura \? \(\s+<span[^>]*>Solo lectura/.test(form));
+  cierto("D02: sin EDITAR la edición común (información, compras, contactos, direcciones, retenciones) va en un bloque deshabilitado, sin «Actualizar proveedor» y con guardado inerte (el PUT del servidor sigue exigiendo EDITAR)", /initial\?\.permisos\.editar !== true/.test(form) && /if \(soloLectura\) return;/.test(form) && ["PestanaInformacion", "PestanaCompras", "PestanaContactos", "PestanaRetenciones"].every((p) => new RegExp(`<Bloque bloqueado=\\{soloLectura\\}><${p} ctx=\\{ctx\\} /></Bloque>`).test(form)) && /soloLectura \? \(\s+<span[^>]*>Solo lectura/.test(form));
 
   const homologacion = leer("app/(private)/proveedores/_components/pestanas/homologacion.tsx");
   const bancos = leer("app/(private)/proveedores/_components/pestanas/bancos.tsx");
@@ -128,6 +129,41 @@ export async function verificarCasosProveedoresR02(): Promise<string[]> {
   const dirs = leer("app/(private)/proveedores/_components/pestanas/direcciones.tsx");
 
   cierto("D03: la pestaña ya no convierte errores en lista vacía; muestra el error junto al campo (role=alert) con «Reintentar», usa el controlador con token y mantiene la clave vigente", !/r\.ok \? r\.json\(\) : \{ datos: \[\] \}/.test(dirs) && !/\.catch\(\(\) => activo/.test(dirs) && /role="alert"/.test(dirs) && />\s*Reintentar\s*</.test(dirs) && /crearCargaCatalogo\(/.test(dirs) && /return \(\) => carga\.invalidar\(\)/.test(dirs) && /estado\.clave === clave/.test(dirs));
+
+  // ── PRV-R03-01: finalidad de GET /api/proveedores antes de la excepción CREAR ──────────────────────────────────────────────────────────────────
+  const u = (q: string) => new URL("http://x/api/proveedores" + q);
+  const crearSolo = { ver: false, crear: true };
+  const verSolo = { ver: true, crear: false };
+  const ninguno = { ver: false, crear: false };
+  const atender = (q: string, p: { ver: boolean; crear: boolean }) => {
+    const d = decidirGet(u(q), p);
+
+    return d.tipo === "permitida" ? { tipo: d.tipo, devuelveProveedores: puedeDevolverProveedores(d.finalidad) } : { tipo: d.tipo, devuelveProveedores: false };
+  };
+
+  igual("R03-01: «catalogo=» y «catalogo» sin valor con CREAR-only → consulta inválida (400), nunca la lista", [atender("?catalogo=", crearSolo), atender("?catalogo", crearSolo)], [{ tipo: "invalida", devuelveProveedores: false }, { tipo: "invalida", devuelveProveedores: false }]);
+  igual("R03-01: «catalogo=&modo=lista», catálogo desconocido y catálogo + modo=catalogos con CREAR-only → inválidas", [atender("?catalogo=&modo=lista", crearSolo).tipo, atender("?catalogo=xyz", crearSolo).tipo, atender("?catalogo=departamentos&modo=catalogos", crearSolo).tipo, atender("?catalogo=departamentos&modo=lista", crearSolo).tipo], ["invalida", "invalida", "invalida", "invalida"]);
+  igual("R03-01: modo=catalogos válido y geografía válida con CREAR-only → permitidas y SIN filas de proveedores", [atender("?modo=catalogos", crearSolo), atender("?catalogo=departamentos", crearSolo), atender("?catalogo=distritos&departamento=1", crearSolo), atender("?catalogo=ciudades&departamento=1&distrito=2", crearSolo), atender("?catalogo=paises", crearSolo)], Array.from({ length: 5 }, () => ({ tipo: "permitida", devuelveProveedores: false })));
+  igual("R03-01: la lista (con o sin modo) con CREAR-only → denegada, sin filas", [atender("", crearSolo), atender("?modo=lista", crearSolo), atender("?modo=otro", crearSolo)], Array.from({ length: 3 }, () => ({ tipo: "denegada", devuelveProveedores: false })));
+  igual("R03-01: listado legítimo con VER → permitido y devuelve proveedores; VER también lee catálogos y geografía", [atender("", verSolo), atender("?modo=lista", verSolo), atender("?modo=catalogos", verSolo), atender("?catalogo=departamentos", verSolo)], [{ tipo: "permitida", devuelveProveedores: true }, { tipo: "permitida", devuelveProveedores: true }, { tipo: "permitida", devuelveProveedores: false }, { tipo: "permitida", devuelveProveedores: false }]);
+  igual("R03-01: sin permisos nada se atiende; una consulta inválida es inválida para todos (VER incluido)", [atender("?modo=catalogos", ninguno).tipo, atender("?catalogo=departamentos", ninguno).tipo, atender("", ninguno).tipo, atender("?catalogo=", verSolo).tipo], ["denegada", "denegada", "denegada", "invalida"]);
+  igual("R03-01: ninguna combinación de consulta con CREAR-only devuelve proveedores", ["", "?modo=lista", "?catalogo=", "?catalogo", "?catalogo=&modo=lista", "?catalogo=zzz", "?modo=catalogos", "?catalogo=departamentos", "?catalogo=distritos&departamento=1", "?modo=catalogos&catalogo=", "?foo=bar"].map((q) => atender(q, crearSolo).devuelveProveedores), Array.from({ length: 11 }, () => false));
+  igual("R03-01: finalidad de la consulta", [finalidadGet(u("?modo=catalogos")), finalidadGet(u("?catalogo=ciudades")), finalidadGet(u("")), finalidadGet(u("?catalogo="))], ["CATALOGOS", "GEOGRAFIA", "LISTA", "INVALIDA"]);
+  cierto("R03-01: la ruta atiende la geografía sin continuar a la lista (defensa) y mantiene POST con CREAR e isolation por empresa", /decision\.finalidad === "GEOGRAFIA"\) return NextResponse\.json\(\{ error: "Consulta no válida\." \}, \{ status: 400 \}\)/.test(ruta) && /denyIfNoPermission\(session, "PROVEEDORES", "CREAR"\)/.test(ruta) && /WHERE p\.empresa_id = \$1/.test(ruta));
+
+  // ── PRV-R03-02: «Reintentar» fuera del bloque de solo lectura ──────────────────────────────────────────────────────────────────────────────────
+  {
+    const dirs2 = leer("app/(private)/proveedores/_components/pestanas/direcciones.tsx");
+    const form2 = leer("app/(private)/proveedores/_components/proveedor-form.tsx");
+    const iBloque = dirs2.indexOf("<Bloque bloqueado={ctx.soloLectura}>");
+    const iCierre = dirs2.lastIndexOf("</Bloque>");
+    const dentro = dirs2.slice(iBloque, iCierre);
+
+    cierto("R03-02: el botón «Reintentar» y los mensajes de error de la geografía NO están dentro del bloque deshabilitado (VER-only puede repetir la consulta GET)", iBloque > 0 && iCierre > iBloque && !dentro.includes("<ErrorGeo") && !dentro.includes("Reintentar") && dirs2.indexOf("<ErrorGeo") < iBloque && dirs2.indexOf("<ErrorGeo") > 0);
+    cierto("R03-02: todos los campos de edición de las direcciones siguen dentro del bloque de solo lectura (agregar, eliminar, campos, geografía) y la pestaña ya no se envuelve dos veces desde el formulario", ["+ Agregar dirección", "Eliminar", "<Geografia", "<Texto etiqueta=\"Descripción *\"", "<Casilla etiqueta=\"Dirección principal"].every((x) => dentro.includes(x)) && /\{tab === "direcciones" \? <PestanaDirecciones ctx=\{ctx\} \/> : null\}/.test(form2));
+    cierto("R03-02: el reintento solo repite el GET del catálogo (setIntento, estable) — no actualiza direcciones ni guarda el proveedor; el descarte de resultados tardíos sigue vigente", /const reintentar = useCallback\(\(\) => setIntento\(\(n\) => n \+ 1\), \[\]\)/.test(dirs2) && /return \(\) => carga\.invalidar\(\)/.test(dirs2) && /alErrorGeo\(idDireccion, null\)/.test(dirs2) && !/ctx\.(actualizar|set)\(/.test(dirs2.slice(dirs2.indexOf("function ErrorGeo"), dirs2.indexOf("/** Paraguay:"))));
+    cierto("R03-02: las acciones con permiso propio (gobernanza, banco, reactivación, documentos) no se tocaron", /<PanelGobernanza ctx=\{ctx\} \/>/.test(leer("app/(private)/proveedores/_components/pestanas/homologacion.tsx")) && /<ResolucionCuenta ctx=\{ctx\}/.test(leer("app/(private)/proveedores/_components/pestanas/bancos.tsx")) && !/Bloque/.test(leer("app/(private)/proveedores/_components/pestanas/documentos.tsx")));
+  }
 
   return fallos;
 }
