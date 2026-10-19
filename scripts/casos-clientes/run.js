@@ -48,6 +48,7 @@ Module._resolveFilename = function (request, ...resto) {
   const rlo = cargar("lib/reportes/lotes.casos.js");
   const lpe = cargar("lib/listas-precio/estabilizacion.casos.js");
   const srm = cargar("lib/stock/stock-reposicion.casos.js");
+  const sci = cargar("lib/stock/carga-instancia.casos.js");
   const fac = cargar("lib/facturacion/facturacion.casos.js");
   const fe2 = cargar("lib/facturacion/fat-e2.casos.js");
   const c1 = cargar("lib/ci/verificador-consultas.casos.js");
@@ -135,6 +136,7 @@ Module._resolveFilename = function (request, ...resto) {
     ["Clientes (AUD-R02): alta con solo CREAR, interfaz por permisos, carreras geográficas, domicilio fiscal único y límites de crédito exactos", async () => cr2.verificarCasosClientesR02(), null],
     ["Proveedores (AUD-R02): alta con solo CREAR, acciones por permisos y errores de la geografía", async () => pr2.verificarCasosProveedoresR02(), null],
     ["Listas de precios (AUD-R02): alta con solo CREAR, interfaz por permisos, vigencia en America/Asuncion y carga verificada de catálogos", async () => lp2.verificarCasosListasR02(), null],
+    ["Stock (AUD-R02 STK-D02): moneda base por instancia, respuestas tardías de instancias desmontadas, sin PYG ficticio y moneda propia de la referencia de venta", async () => sci.verificarCasosStockCargaInstancia(), null],
     ["Productos (AUD-R02): concurrencia, alta con solo CREAR, retomada, cierre idempotente, interfaz por permisos y borradores de documentos", async () => pd2.verificarCasosProductosR02(), null],
     ["Facturación PRO-133: prontitud del gateway por empresa (SIN_CONFIGURAR/INVALIDA/SIN_CREDENCIALES/CONFIGURADO), envío bloqueado en la pantalla y aprovisionamiento de prueba sin secretos", async () => gwc.verificarCasosGatewayConfig(), null],
   ];

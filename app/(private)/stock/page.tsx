@@ -8,6 +8,7 @@ import {
 } from "react";
 
 import { cargarStock } from "@/lib/stock/cliente-api";
+import { iniciarCargaStock } from "@/lib/stock/carga-instancia";
 import { puedeAbrirNuevoMovimiento, puedeVerMovimientos, normalizarPermisosMovimientos, SIN_PERMISOS_MOVIMIENTOS } from "@/lib/inventario/acceso";
 import { interpretarDepositoUrl } from "@/lib/depositos/carga";
 import { compararDecimales, formatearCostoUnitarioTexto, formatearMontoTexto } from "@/lib/inventario/decimal";
@@ -35,9 +36,6 @@ type NivelFiltro =
 type PropiedadFiltro =
   | "TODOS"
   | StockPropiedad;
-
-// Moneda de los costos: moneda base de la empresa (se actualiza al cargar el stock).
-let MONEDA_BASE = "PYG";
 
 function normalizar(value: string) {
   return value
@@ -103,6 +101,9 @@ export default function StockPage() {
   const [cargando, setCargando] =
     useState(true);
 
+  // STK-D02: moneda de los costos = moneda base de la empresa de ESTA instancia, confirmada por su propia respuesta (null mientras no llegue: no se muestra ninguna moneda inventada).
+  const [monedaBase, setMonedaBase] = useState<string | null>(null);
+
   const [errorCarga, setErrorCarga] =
     useState("");
 
@@ -113,39 +114,23 @@ export default function StockPage() {
   const [depositoNoDisponible, setDepositoNoDisponible] = useState(false);
 
   useEffect(() => {
-    let activo = true;
+    return iniciarCargaStock(cargarStock, {
+      alCompletar: (r, moneda) => {
+        setMonedaBase(moneda);
+        setStock(r.stock);
+        // Atajo desde Depósitos (?deposito=): se valida contra los depósitos AUTORIZADOS; uno sin saldo se muestra vacío y uno no disponible se avisa (nunca consolidado en silencio).
+        const lista = Array.isArray(r.depositosAutorizados) ? r.depositosAutorizados : [];
+        const pedido = interpretarDepositoUrl(window.location.search, lista);
 
-    cargarStock()
-      .then((r) => {
-        MONEDA_BASE = r.monedaBase;
-        if (activo) {
-          setStock(r.stock);
-          // Atajo desde Depósitos (?deposito=): se valida contra los depósitos AUTORIZADOS; uno sin saldo se muestra vacío y uno no disponible se avisa (nunca consolidado en silencio).
-          const lista = Array.isArray(r.depositosAutorizados) ? r.depositosAutorizados : [];
-          const pedido = interpretarDepositoUrl(window.location.search, lista);
-
-          setAutorizados(lista);
-          if (pedido.tipo === "SELECCIONADO") setDeposito(pedido.id);
-          setDepositoNoDisponible(pedido.tipo === "NO_DISPONIBLE");
-          setAlcanceParcial(r.alcanceParcial === true);
-          setPermisos(normalizarPermisosMovimientos(r.permisos));
-        }
-      })
-      .catch((e: unknown) => {
-        if (activo)
-          setErrorCarga(
-            e instanceof Error
-              ? e.message
-              : "No fue posible cargar el stock.",
-          );
-      })
-      .finally(() => {
-        if (activo) setCargando(false);
-      });
-
-    return () => {
-      activo = false;
-    };
+        setAutorizados(lista);
+        if (pedido.tipo === "SELECCIONADO") setDeposito(pedido.id);
+        setDepositoNoDisponible(pedido.tipo === "NO_DISPONIBLE");
+        setAlcanceParcial(r.alcanceParcial === true);
+        setPermisos(normalizarPermisosMovimientos(r.permisos));
+      },
+      alFallar: (mensaje) => setErrorCarga(mensaje),
+      alFinalizar: () => setCargando(false),
+    });
   }, []);
 
   // Con un depósito elegido TODO (filas, tarjetas, filtros, orden) usa los saldos y el costo de ese depósito; sin él, la visión consolidada.
@@ -682,11 +667,11 @@ export default function StockPage() {
 
                   <td className={ui.numeric}>
                     <div className={ui.cell}>
-                      <strong className={ui.mono}>{formatearCostoUnitarioTexto(item.costoPromedioTexto, MONEDA_BASE)}</strong>
-                      <span>Valor costo: {formatearMontoTexto(item.valorInventarioTexto, MONEDA_BASE)}</span>
+                      <strong className={ui.mono}>{monedaBase ? formatearCostoUnitarioTexto(item.costoPromedioTexto, monedaBase) : "—"}</strong>
+                      <span>Valor costo: {monedaBase ? formatearMontoTexto(item.valorInventarioTexto, monedaBase) : "—"}</span>
                       <span>
                         Venta referencia:{" "}
-                        {item.precioVentaReferenciaTexto === null ? "—" : formatearMontoTexto(item.precioVentaReferenciaTexto, item.monedaPrecio || MONEDA_BASE)}
+                        {item.precioVentaReferenciaTexto === null || !(item.monedaPrecio || monedaBase) ? "—" : formatearMontoTexto(item.precioVentaReferenciaTexto, item.monedaPrecio || monedaBase)}
                       </span>
                     </div>
                   </td>
