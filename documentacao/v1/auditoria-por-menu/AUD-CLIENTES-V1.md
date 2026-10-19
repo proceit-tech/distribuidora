@@ -188,3 +188,18 @@ Examinar próxima rodada por prioridade: integridade de GET/POST/PUT dos filhos 
 - **D04/D05:** desempenho dependente de volume e diálogos nativos são observações, não correções automáticas. **CLI-A01…A04:** correções históricas preservadas. **CLI-A06/NEX-053:** migration versionada; estado PostgreSQL não verificado.
 
 **Validação:** 0 testes executados pelo ChatGPT, sem PostgreSQL/browser/VM, sem prints; levantamento dirigido de rotas/serviços/SQL. Nenhuma implementação autorizada nem nova tarefa ao Claude. Próxima correção a considerar, após decisão humana: CLI-D06, seguida de CLI-D03, sem mexer em fiscais antigos ou no motor SIFEN.
+
+
+## XII. AUD-R03 — reauditoria independente do SHA 4966ad9 (19/10/2026)
+
+**Relatório:** [AUD-NEXIT-CLIENTES-DESKTOP-R03](../../testes/AUD-NEXIT-CLIENTES-DESKTOP-R03-2026-10-19.md). **Parecer: CORREÇÃO LOCALIZADA REQUERIDA (CLI-R03-01 MÉDIA).** As cinco entregas CLI-D01, D02, D03, D06 e D07 estão substancialmente **conformes em revisão estática**; mas o fluxo CREATE-only não está encerrado devido ao aviso indevido de rascunho depois de finalizar sem todos os documentos.
+
+- **CLI-D01:** layout e menu tratam CREAR-only sem herdar VER, catálogo/geografia só finalidades autorizadas, lista/ficha seguem VER; tela final sem lista ou ficha. Risco novo na navegação de fim de alta descrito em CLI-R03-01.
+- **CLI-D02:** lista e ficha respeitam CREAR/EDITAR via sessão; fieldset bloqueia edição, downloads são âncoras; navegador não testado.
+- **CLI-D03:** controller tokens por `uid`/`k` com invalidação de requests obsoletos, inclusive precarga; não validar via PostgreSQL/browser nesta auditoria.
+- **CLI-D06:** coerência `tipo` ↔ `esFiscal` nas escolhas da ficha; constraint intacta.
+- **CLI-D07:** decimal textual e aritmética BigInt por moeda, sem Number na coluna/soma/ordem de limite.
+- **CLI-R03-01 MÉDIA (NOVA):** em `clientes/nuevo/page.tsx`, ao confirmar `Finalizar sin los documentos pendientes` e fechar a carga inicial com sucesso, `altaFinalizada` é `true` mas `sucio` permanece `true` por arquivos descartados ainda pendentes; `useProtegerCambios` mantém `beforeunload`. Clicar `Registrar otro cliente` via `window.location.assign` pode exibir aviso de alterações não salvas depois da confirmação explícita. Bloquear proteção somente após fechamento realmente concluído, não antes; preservar retry, erro de fechamento, upload sem duplicação e perfil com VER. R04 após correção autorizada.
+- O commit alterou 20 arquivos, nenhum esquema/migration aplicado; NEX-053 permanece em estado operacional não comprovado. Testes **reportados pelo Claude, não executados pelo ChatGPT:** 48/0 no foco, 26/0, 151/0, 76/0, 61/0, 53/0, 271/0 e 46/0 em regressões; sem PG/HTTP/browser. Não autorizar nova implementação automaticamente.
+
+**Estado:** Clientes NÃO HOMOLOGADO/NÃO ENCERRADO; sem avançar a Proveedores ou Cnn seguinte.
