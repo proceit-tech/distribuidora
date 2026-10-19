@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
-import { cargarMovimientos, type RespuestaHistorial } from "@/lib/movimientos/cliente-api";
+import { cargarMovimientos } from "@/lib/movimientos/cliente-api";
+import { derivarVista, lanzarConsulta, type ResultadoHistorial } from "@/lib/movimientos/vista-historial";
 import { GRUPOS, ORDEN_GRUPOS } from "@/lib/movimientos/grupos";
 import type { MovimientoStockTipo } from "@/types/movimientos-stock";
 
@@ -38,7 +39,7 @@ export default function MovimientosPage() {
   const [paginacion, setPaginacion] = useState({ clave: "", pagina: 1 });
   const [listo, setListo] = useState(false);
   const [recarga, setRecarga] = useState(0);
-  const [resultado, setResultado] = useState<{ clave: string; datos: RespuestaHistorial | null; error: string } | null>(null);
+  const [resultado, setResultado] = useState<ResultadoHistorial | null>(null);
   // Aviso de registro: solo se muestra si el servidor confirma que el movimiento existe y es visible para el usuario.
   const [flash, setFlash] = useState("");
   const [avisoSinConfirmar, setAvisoSinConfirmar] = useState("");
@@ -83,41 +84,31 @@ export default function MovimientosPage() {
   useEffect(() => {
     if (!listo) return;
 
-    let activo = true;
+    // MOV-D02: la respuesta (datos o error) solo se aplica si sigue siendo la consulta vigente (lanzarConsulta la invalida al cambiar la clave o desmontar).
+    return lanzarConsulta(
+      () =>
+        cargarMovimientos({
+          q: busquedaAplicada,
+          tipo: tipo === "TODOS" ? undefined : tipo,
+          orden: orden?.campo,
+          dir: orden?.dir,
+          pagina,
+          tamano: PAGE_SIZE,
+          confirmar: pendienteConfirmar || undefined,
+        }),
+      claveConsulta,
+      (r) => {
+        setResultado(r);
 
-    cargarMovimientos({
-      q: busquedaAplicada,
-      tipo: tipo === "TODOS" ? undefined : tipo,
-      orden: orden?.campo,
-      dir: orden?.dir,
-      pagina,
-      tamano: PAGE_SIZE,
-      confirmar: pendienteConfirmar || undefined,
-    })
-      .then((datos) => {
-        if (!activo) return;
-
-        setResultado({ clave: claveConsulta, datos, error: "" });
         if (pendienteConfirmar) {
-          if (datos.confirmado === true) setFlash(`Movimiento ${pendienteConfirmar} registrado correctamente.`);
+          // Un error de carga nunca se presenta como éxito: el aviso pendiente queda sin confirmar.
+          if (r.error) setAvisoSinConfirmar(`No se pudo confirmar el registro del movimiento ${pendienteConfirmar} porque el historial no se pudo cargar. Verifique antes de repetir la operación.`);
+          else if (r.datos?.confirmado === true) setFlash(`Movimiento ${pendienteConfirmar} registrado correctamente.`);
           else setAvisoSinConfirmar(`No se pudo confirmar el registro del movimiento ${pendienteConfirmar}. Verifique en el historial antes de repetir la operación.`);
           setPendienteConfirmar("");
         }
-      })
-      .catch((e: unknown) => {
-        // Un error de carga nunca se presenta como éxito: el aviso pendiente queda sin confirmar.
-        if (!activo) return;
-
-        setResultado({ clave: claveConsulta, datos: null, error: e instanceof Error ? e.message : "No fue posible cargar los movimientos." });
-        if (pendienteConfirmar) {
-          setAvisoSinConfirmar(`No se pudo confirmar el registro del movimiento ${pendienteConfirmar} porque el historial no se pudo cargar. Verifique antes de repetir la operación.`);
-          setPendienteConfirmar("");
-        }
-      });
-
-    return () => {
-      activo = false;
-    };
+      },
+    );
     // pendienteConfirmar solo se consume en la primera carga; limpiarlo no debe provocar otra consulta.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [listo, claveConsulta]);
@@ -130,11 +121,10 @@ export default function MovimientosPage() {
     return () => window.clearTimeout(timer);
   }, [flash]);
 
-  const cargando = !listo || resultado?.clave !== claveConsulta;
-  const datos = resultado?.datos ?? null;
-  const errorCarga = resultado?.error ?? "";
+  // MOV-D02: todo lo que se muestra (filas, resumen, totales, paginación, permisos) sale de la respuesta de la consulta VIGENTE; con otra pendiente no hay datos y se ve un estado neutro (sin ceros inventados).
+  const { cargando, datos, error: errorCarga } = derivarVista(resultado, claveConsulta, listo);
   const filas = datos?.movimientos ?? [];
-  const resumen = datos?.resumen ?? { movimientos: 0, entradas: 0, salidas: 0, transferencias: 0 };
+  const resumen = datos?.resumen ?? null;
   const totalLineas = datos?.total ?? 0;
   const totalPaginas = datos?.totalPaginas ?? 1;
   const paginaMostrada = datos?.pagina ?? pagina;
@@ -193,25 +183,25 @@ export default function MovimientosPage() {
       <section className={ui.summaryGrid} aria-label="Resumen de movimientos">
         <article className={[ui.summaryCard, ui.summaryTeal].join(" ")}>
           <span>Movimientos</span>
-          <strong>{resumen.movimientos}</strong>
+          <strong>{resumen ? resumen.movimientos : "—"}</strong>
           <small>En sus depósitos autorizados</small>
         </article>
 
         <article className={[ui.summaryCard, ui.summaryBlue].join(" ")}>
           <span>Entradas</span>
-          <strong>{resumen.entradas}</strong>
+          <strong>{resumen ? resumen.entradas : "—"}</strong>
           <small>Ingresos de stock</small>
         </article>
 
         <article className={[ui.summaryCard, ui.summaryAmber].join(" ")}>
           <span>Salidas</span>
-          <strong>{resumen.salidas}</strong>
+          <strong>{resumen ? resumen.salidas : "—"}</strong>
           <small>Egresos de stock</small>
         </article>
 
         <article className={[ui.summaryCard, ui.summaryViolet].join(" ")}>
           <span>Transferencias</span>
-          <strong>{resumen.transferencias}</strong>
+          <strong>{resumen ? resumen.transferencias : "—"}</strong>
           <small>Entre depósitos</small>
         </article>
       </section>
@@ -260,7 +250,7 @@ export default function MovimientosPage() {
           <span className={ui.resultCount} aria-live="polite">
             {datos
               ? hayFiltros
-                ? `${totalLineas} línea(s) · ${datos.totalMovimientos} de ${resumen.movimientos} movimiento(s)`
+                ? `${totalLineas} línea(s) · ${datos.totalMovimientos} de ${datos.resumen.movimientos} movimiento(s)`
                 : `${totalLineas} línea(s) · ${datos.totalMovimientos} movimiento(s)`
               : ""}
           </span>
@@ -381,19 +371,19 @@ export default function MovimientosPage() {
 
         <footer className={ui.pagination}>
           <span>
-            Mostrando {totalLineas === 0 ? 0 : (paginaMostrada - 1) * PAGE_SIZE + 1}–{Math.min(paginaMostrada * PAGE_SIZE, totalLineas)} de {totalLineas} línea(s)
+            {datos ? `Mostrando ${totalLineas === 0 ? 0 : (paginaMostrada - 1) * PAGE_SIZE + 1}–${Math.min(paginaMostrada * PAGE_SIZE, totalLineas)} de ${totalLineas} línea(s)` : "Mostrando —"}
           </span>
 
           <div>
-            <button type="button" aria-label="Página anterior" disabled={paginaMostrada <= 1 || cargando} onClick={() => setPagina(paginaMostrada - 1)}>
+            <button type="button" aria-label="Página anterior" disabled={!datos || paginaMostrada <= 1 || cargando} onClick={() => setPagina(paginaMostrada - 1)}>
               ‹
             </button>
 
             <strong>
-              {paginaMostrada} / {totalPaginas}
+              {datos ? `${paginaMostrada} / ${totalPaginas}` : "—"}
             </strong>
 
-            <button type="button" aria-label="Página siguiente" disabled={paginaMostrada >= totalPaginas || cargando} onClick={() => setPagina(paginaMostrada + 1)}>
+            <button type="button" aria-label="Página siguiente" disabled={!datos || paginaMostrada >= totalPaginas || cargando} onClick={() => setPagina(paginaMostrada + 1)}>
               ›
             </button>
           </div>
