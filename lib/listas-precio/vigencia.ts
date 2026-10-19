@@ -40,3 +40,68 @@ export function sumarDias(hoy: string, dias: number): string {
 
   return new Date(Date.UTC(a, m - 1, d + dias)).toISOString().slice(0, 10);
 }
+
+/** Milisegundos hasta el comienzo del PRÓXIMO día en America/Asuncion (no la medianoche del dispositivo): se busca el primer instante en que cambia la fecha de Asunción. */
+export function msHastaProximoDia(ahora: Date): number {
+  const hoy = hoyParaVigencia(ahora);
+  let bajo = ahora.getTime();
+  let alto = bajo + 26 * 3_600_000; // en cualquier huso real el día siguiente comienza antes de 26 h
+
+  while (alto - bajo > 1000) {
+    const medio = Math.floor((bajo + alto) / 2);
+
+    if (hoyParaVigencia(new Date(medio)) === hoy) bajo = medio;
+    else alto = medio;
+  }
+
+  return alto - ahora.getTime();
+}
+
+type DepsVigilante = {
+  ahora: () => Date;
+  programar: (fn: () => void, ms: number) => unknown;
+  cancelar: (handle: unknown) => void;
+  /** Suscribe `fn` a los eventos de retorno (foco, visibilidad) y devuelve la función que los retira. */
+  suscribir: (fn: () => void) => () => void;
+  alCambiar: (hoy: string) => void;
+};
+
+/**
+ * LPR-R03-01: mantiene la fecha de Asunción al día con la pantalla abierta. Un único temporizador hacia la próxima medianoche de Asunción (reprogramado tras cada revisión) y revisión inmediata al volver
+ * el foco/la visibilidad (el navegador puede suspender el temporizador). `alCambiar` solo se invoca cuando la fecha REALMENTE cambió. Un único conjunto de recursos: `detener` los libera.
+ */
+export function crearVigilanteDia(d: DepsVigilante) {
+  let actual = hoyParaVigencia(d.ahora());
+  let timer: unknown = null;
+  let retirar: (() => void) | null = null;
+
+  const reprogramar = () => {
+    if (timer !== null) d.cancelar(timer);
+    timer = d.programar(revisar, msHastaProximoDia(d.ahora()) + 500);
+  };
+
+  function revisar() {
+    const hoy = hoyParaVigencia(d.ahora());
+
+    if (hoy !== actual) {
+      actual = hoy;
+      d.alCambiar(hoy);
+    }
+    reprogramar();
+  }
+
+  return {
+    iniciar() {
+      if (retirar !== null) return; // sin recursos duplicados
+      retirar = d.suscribir(revisar);
+      revisar();
+    },
+    detener() {
+      if (timer !== null) d.cancelar(timer);
+      timer = null;
+      retirar?.();
+      retirar = null;
+    },
+    fechaActual: () => actual,
+  };
+}

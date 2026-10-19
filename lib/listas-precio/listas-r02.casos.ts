@@ -9,7 +9,7 @@ import { contador } from "@/lib/clientes/contador-casos";
 import { decidirGetListas } from "@/lib/listas-precio/acceso-get";
 import { cargarCatalogosVerificados, motivoBloqueoGuardarLista } from "@/lib/listas-precio/carga-catalogos";
 import { cargarListaConPermisos, cargarListasConPermisos } from "@/lib/listas-precio/cliente-api";
-import { clasificarVigencia, hoyParaVigencia, sumarDias } from "@/lib/listas-precio/vigencia";
+import { clasificarVigencia, crearVigilanteDia, hoyParaVigencia, msHastaProximoDia, sumarDias } from "@/lib/listas-precio/vigencia";
 import { resolveNavigation, resolverInicio } from "@/lib/navigation/menu";
 
 const raiz = process.cwd();
@@ -119,6 +119,95 @@ export async function verificarCasosListasR02(): Promise<string[]> {
 
   igual("D04: reintento legítimo: ERROR y luego CONFIGURADO", secuencia, ["ERROR", "CONFIGURADO"]);
   cierto("D04 pantalla: la carga usa estados explícitos y «Reintentar» solo relanza la carga (no toca el borrador `form`); el submit se bloquea en el handler y en el botón; la moneda base ya no cae a PYG; sin catálogos válidos no hay opciones vacías en el servidor ni fallback", /cargarCatalogosVerificados\(/.test(form) && /onClick=\{\(\) => setIntento\(\(n\) => n \+ 1\)\}/.test(form) && /if \(bloqueoCarga\) \{\s+setError\(bloqueoCarga\);\s+return;/.test(form) && /disabled=\{saving \|\| bloqueoCarga !== null\}/.test(form) && /catalogo\?\.monedaBase \?\? ""/.test(form) && !/\?\? "PYG"/.test(form) && !/\?\? "PYG"/.test(rutaLista) && !/setForm\([^)]*setIntento|setIntento[^;]*setForm/.test(form));
+
+  // ── LPR-R03-01: la fecha sigue el día de Asunción con la pantalla abierta (reloj controlado) ───────────────────────────────────────────────
+  const entorno = (inicio: string) => {
+    let t = new Date(inicio).getTime();
+    const timers = new Map<number, { en: number; fn: () => void }>();
+    const oyentes = new Set<() => void>();
+    let seq = 0;
+    const cambios: string[] = [];
+    let altas = 0;
+    let bajas = 0;
+    const vig = crearVigilanteDia({
+      ahora: () => new Date(t),
+      programar: (fn, ms) => { seq += 1; timers.set(seq, { en: t + ms, fn }); return seq; },
+      cancelar: (h) => { timers.delete(h as number); },
+      suscribir: (fn) => { oyentes.add(fn); altas += 1; return () => { oyentes.delete(fn); bajas += 1; }; },
+      alCambiar: (h) => cambios.push(h),
+    });
+    /** Avanza el reloj; `suspendido` = el navegador no dispara los temporizadores vencidos (equipo suspendido/pestaña dormida). */
+    const avanzar = (ms: number, suspendido = false) => {
+      const destino = t + ms;
+
+      while (!suspendido) {
+        const prox = [...timers.entries()].filter(([, x]) => x.en <= destino).sort((a, b) => a[1].en - b[1].en)[0];
+
+        if (!prox) break;
+        t = prox[1].en; timers.delete(prox[0]); prox[1].fn();
+      }
+      t = destino;
+    };
+
+    return { vig, avanzar, cambios, oyentes, timers, altas: () => altas, bajas: () => bajas, evento: () => [...oyentes].forEach((f) => f()) };
+  };
+
+  // 19/10/2026 23:58 en Asunción (UTC-3) = 20/10/2026 02:58 UTC
+  const e1 = entorno("2026-10-20T02:58:00Z");
+
+  e1.vig.iniciar();
+
+  const vence = { estado: "ACTIVA", activo: true, vigenteDesde: "", vigenteHasta: "2026-10-19" };
+  const empieza = { estado: "ACTIVA", activo: true, vigenteDesde: "2026-10-20", vigenteHasta: "" };
+  const disponibles = (h: string) => [vence, empieza].filter((l) => clasificarVigencia(l, h).disponible).length;
+  const antes = e1.vig.fechaActual();
+
+  igual("R03-01: abierta a las 23:58 de Asunción del 19/10: la lista que vence hoy está disponible y la que empieza mañana «Aún no vigente» (1 disponible)", [antes, clasificarVigencia(vence, antes).estadoVisual, clasificarVigencia(empieza, antes).estadoVisual, disponibles(antes)], ["2026-10-19", "ACTIVA", "AUN_NO_VIGENTE", 1]);
+
+  e1.avanzar(3 * 60_000); // 00:01 del 20/10 sin remontar ni recargar
+  const despues = e1.vig.fechaActual();
+
+  igual("R03-01: a las 00:01 del 20/10 el temporizador de la medianoche de Asunción actualiza la fecha UNA vez; vence → VENCIDA, empieza → ACTIVA y el KPI se recalcula (sigue en 1, pero con la otra lista)", [e1.cambios, despues, clasificarVigencia(vence, despues).estadoVisual, clasificarVigencia(empieza, despues).estadoVisual, disponibles(despues), clasificarVigencia(vence, despues).disponible], [["2026-10-20"], "2026-10-20", "VENCIDA", "ACTIVA", 1, false]);
+
+  const programados = e1.timers.size;
+
+  e1.avanzar(60 * 60_000);
+
+  igual("R03-01: tras la virada queda UN solo temporizador hacia la próxima medianoche (sin duplicados) y una hora después no hay cambios espurios", [programados, e1.timers.size, e1.cambios.length], [1, 1, 1]);
+
+  // Equipo suspendido toda la noche: el temporizador no se dispara; al volver el foco/visibilidad se revisa la fecha.
+  const e2 = entorno("2026-10-20T02:58:00Z");
+
+  e2.vig.iniciar();
+  e2.avanzar(8 * 3_600_000, true);
+
+  igual("R03-01: con el navegador suspendido la fecha no cambia sola; al volver a la pestaña (foco/visibilidad) se actualiza", [e2.cambios.length, (e2.evento(), e2.cambios), e2.vig.fechaActual()], [0, ["2026-10-20"], "2026-10-20"]);
+
+  const antesEv = e2.cambios.length;
+
+  e2.evento();
+  e2.evento();
+
+  igual("R03-01: foco/visibilidad repetidos el mismo día no generan actualizaciones ni recursos nuevos", [e2.cambios.length - antesEv, e2.timers.size, e2.oyentes.size], [0, 1, 1]);
+
+  // Un único suscriptor aunque se inicie dos veces; todo se libera al desmontar.
+  const e3 = entorno("2026-10-20T12:00:00Z");
+
+  e3.vig.iniciar();
+  e3.vig.iniciar();
+  e3.vig.detener();
+
+  igual("R03-01: iniciar dos veces no duplica listeners/timers y al desmontar se retiran los listeners y se cancela el temporizador", [e3.altas(), e3.bajas(), e3.oyentes.size, e3.timers.size], [1, 1, 0, 0]);
+
+  // La medianoche es la de Asunción aunque el dispositivo esté en otro huso.
+  const msEn = (tz: string) => { process.env.TZ = tz; try { return msHastaProximoDia(new Date("2026-10-20T02:58:00Z")); } finally { if (tzOriginal === undefined) delete process.env.TZ; else process.env.TZ = tzOriginal; } };
+
+  igual("R03-01: faltan 2 minutos para la medianoche de Asunción con el dispositivo en Tokio, Los Ángeles o UTC (no la del huso local)", [msEn("Asia/Tokyo"), msEn("America/Los_Angeles"), msEn("UTC")].map((ms) => Math.round(ms / 60_000)), [2, 2, 2]);
+
+  const lista = leer("app/(private)/listas-precio/_components/listado-listas.tsx");
+  const vigSrc = leer("lib/listas-precio/vigencia.ts");
+
+  cierto("R03-01 pantalla: `hoy` es estado actualizado por el vigilante (focus + visibilitychange con limpieza al desmontar); no se recarga la lista por el cambio de fecha ni se reinician filtros/paginación", /const \[hoy, setHoy\] = useState\(\(\) => hoyParaVigencia\(\)\)/.test(lista) && /crearVigilanteDia\(\{/.test(lista) && /window\.addEventListener\("focus", fn\)/.test(lista) && /document\.addEventListener\("visibilitychange", alVolver\)/.test(lista) && /removeEventListener\("focus", fn\)/.test(lista) && /return \(\) => vigilante\.detener\(\)/.test(lista) && /alCambiar: setHoy/.test(lista) && !/useMemo\(\(\) => hoyParaVigencia\(\), \[\]\)/.test(lista) && (lista.match(/cargarListasConPermisos\(\)/g) ?? []).length === 1 && !/fetch\(/.test(vigSrc));
 
   return fallos;
 }

@@ -8,7 +8,7 @@ import {
 } from "react";
 
 import { cargarListasConPermisos } from "@/lib/listas-precio/cliente-api";
-import { clasificarVigencia, ETIQUETA_ESTADO_VISUAL, hoyParaVigencia, sumarDias, type EstadoVisualLista } from "@/lib/listas-precio/vigencia";
+import { clasificarVigencia, crearVigilanteDia, ETIQUETA_ESTADO_VISUAL, hoyParaVigencia, sumarDias, type EstadoVisualLista } from "@/lib/listas-precio/vigencia";
 
 import {
   ListaPrecioFila,
@@ -170,7 +170,34 @@ export default function ListadoListas() {
   // LPR-D02: LISTAS_PRECIO.CREAR de la sesión del servidor; sin él no se ofrece «Nueva lista».
   const [puedeCrear, setPuedeCrear] = useState(false);
   // LPR-D03: fecha de hoy en America/Asuncion (no el huso del dispositivo).
-  const hoy = useMemo(() => hoyParaVigencia(), []);
+  // LPR-R03-01: la fecha se actualiza sola al cambiar el día de Asunción con la pantalla abierta (temporizador hasta esa medianoche + revisión al recuperar foco/visibilidad), sin recargar listas ni remontar.
+  const [hoy, setHoy] = useState(() => hoyParaVigencia());
+
+  useEffect(() => {
+    const vigilante = crearVigilanteDia({
+      ahora: () => new Date(),
+      programar: (fn, ms) => window.setTimeout(fn, ms),
+      cancelar: (h) => window.clearTimeout(h as number),
+      suscribir: (fn) => {
+        const alVolver = () => {
+          if (document.visibilityState === "visible") fn();
+        };
+
+        window.addEventListener("focus", fn);
+        document.addEventListener("visibilitychange", alVolver);
+
+        return () => {
+          window.removeEventListener("focus", fn);
+          document.removeEventListener("visibilitychange", alVolver);
+        };
+      },
+      alCambiar: setHoy,
+    });
+
+    vigilante.iniciar();
+
+    return () => vigilante.detener();
+  }, []);
 
   useEffect(() => {
     let activo = true;
