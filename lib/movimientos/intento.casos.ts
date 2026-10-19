@@ -7,7 +7,7 @@ import { join } from "node:path";
 
 import { contador } from "@/lib/clientes/contador-casos";
 import { registrarMovimientoResultado } from "@/lib/movimientos/cliente-api";
-import { crearControlRegistro, MENSAJE_INDETERMINADO, MENSAJE_SALIDA, type ResultadoRegistro } from "@/lib/movimientos/intento";
+import { crearControlRegistro, MENSAJE_INDETERMINADO, MENSAJE_SALIDA } from "@/lib/movimientos/intento";
 import { formularioInicial } from "@/lib/movimientos/formulario";
 import type { NuevoMovimientoStock } from "@/types/movimientos-stock";
 
