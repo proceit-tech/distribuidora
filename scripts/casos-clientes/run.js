@@ -50,6 +50,7 @@ Module._resolveFilename = function (request, ...resto) {
   const srm = cargar("lib/stock/stock-reposicion.casos.js");
   const sci = cargar("lib/stock/carga-instancia.casos.js");
   const sc24 = cargar("lib/stock/alcance-c24.casos.js");
+  const mvi = cargar("lib/movimientos/intento.casos.js");
   const fac = cargar("lib/facturacion/facturacion.casos.js");
   const fe2 = cargar("lib/facturacion/fat-e2.casos.js");
   const c1 = cargar("lib/ci/verificador-consultas.casos.js");
@@ -139,6 +140,7 @@ Module._resolveFilename = function (request, ...resto) {
     ["Listas de precios (AUD-R02): alta con solo CREAR, interfaz por permisos, vigencia en America/Asuncion y carga verificada de catálogos", async () => lp2.verificarCasosListasR02(), null],
     ["Stock (AUD-R02 STK-D02): moneda base por instancia, respuestas tardías de instancias desmontadas, sin PYG ficticio y moneda propia de la referencia de venta", async () => sci.verificarCasosStockCargaInstancia(), null],
     ["Stock C24 / STK-D01: universo de productos por alcance de depósitos, inactivos con saldo autorizado, sin acceso a depósitos, otra empresa, indicadores y etiquetas «Sin stock»", async () => sc24.verificarCasosStockAlcanceC24(), null],
+    ["Movimientos MOV-D01: idempotencia del registro — clave y payload inmutables, formulario bloqueado, resultado indeterminado, reintento con K1 y repetido", async () => mvi.verificarCasosMovimientosIntento(), null],
     ["Productos (AUD-R02): concurrencia, alta con solo CREAR, retomada, cierre idempotente, interfaz por permisos y borradores de documentos", async () => pd2.verificarCasosProductosR02(), null],
     ["Facturación PRO-133: prontitud del gateway por empresa (SIN_CONFIGURAR/INVALIDA/SIN_CREDENCIALES/CONFIGURADO), envío bloqueado en la pantalla y aprovisionamiento de prueba sin secretos", async () => gwc.verificarCasosGatewayConfig(), null],
   ];

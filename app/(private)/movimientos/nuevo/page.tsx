@@ -11,7 +11,8 @@ import { GRUPOS, ORDEN_GRUPOS, grupoDeTipo, tipoInicialDelGrupo, type GrupoMovim
 import { motivoObligatorio } from "@/lib/movimientos/reglas";
 import { hoyAsuncion } from "@/lib/listas-precio/calculos";
 import { useProtegerCambios } from "@/lib/ui/proteger-cambios";
-import { cargarCatalogosMovimientos, registrarMovimientoApi } from "@/lib/movimientos/cliente-api";
+import { cargarCatalogosMovimientos, registrarMovimientoResultado } from "@/lib/movimientos/cliente-api";
+import { crearControlRegistro, MENSAJE_SALIDA, type EstadoIntento } from "@/lib/movimientos/intento";
 import {
   advertenciaSaldo,
   aplicarTipo,
@@ -44,9 +45,11 @@ export default function NuevoMovimientoPage() {
   const [errorForm, setErrorForm] = useState("");
   const [avisoCarga, setAvisoCarga] = useState("");
   const [precargado, setPrecargado] = useState(false);
-  const [saving, setSaving] = useState(false);
-  // Clave de idempotencia: se renueva con cada cambio del formulario; un reenvío idéntico (doble clic, reintento) usa la misma y no duplica el movimiento.
-  const clave = useRef("");
+  // MOV-D01: la intención de registro (clave de idempotencia + snapshot del payload) vive en el control, NO se renueva por editar el formulario; mientras exista, el formulario está bloqueado.
+  const control = useRef(crearControlRegistro({ generarClave: () => crypto.randomUUID(), enviar: (d) => registrarMovimientoResultado(d) }));
+  const [estadoRegistro, setEstadoRegistro] = useState<EstadoIntento>("LIBRE");
+  const saving = estadoRegistro === "ENVIANDO";
+  const bloqueado = estadoRegistro !== "LIBRE";
   const [registrado, setRegistrado] = useState(false);
 
   useEffect(() => {
@@ -77,7 +80,8 @@ export default function NuevoMovimientoPage() {
 
   const sucio = !registrado && movimientoSucio(form, base);
 
-  useProtegerCambios(sucio);
+  // Con un registro en curso o indeterminado se advierte al salir sin afirmar que se canceló o revirtió nada.
+  useProtegerCambios(sucio || bloqueado, bloqueado ? MENSAJE_SALIDA[estadoRegistro as "ENVIANDO" | "INDETERMINADO"] : undefined);
 
   const productos = catalogo?.productos ?? [];
   const depositos = (catalogo?.depositos ?? []).filter((d) => d.permitido);
@@ -93,7 +97,7 @@ export default function NuevoMovimientoPage() {
   const nombreDeposito = (id: string) => depositos.find((d) => d.id === id)?.nombre ?? "";
 
   function cambiar(parcial: Partial<NuevoMovimientoStock>, campo?: CampoMovimiento) {
-    clave.current = "";
+    if (control.current.bloqueado()) return;
     setForm((f) => ({ ...f, ...parcial }));
     if (campo) setErrores((e) => ({ ...e, [campo]: undefined }));
     setErrorForm("");
@@ -105,7 +109,7 @@ export default function NuevoMovimientoPage() {
   }
 
   function cambiarTipo(tipo: MovimientoStockTipo) {
-    clave.current = "";
+    if (control.current.bloqueado()) return;
     setForm((f) => aplicarTipo(f, tipo));
     if (!TIPOS_INFO[tipo].costo) setCostoTxt("");
     setErrores({});
@@ -118,36 +122,52 @@ export default function NuevoMovimientoPage() {
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (saving) return;
+    // Un submit consecutivo antes de que React actualice la pantalla no inicia otra intención: el control la reserva de forma síncrona.
+    if (control.current.estado() === "ENVIANDO") return;
     setErrorForm("");
 
+    // Con un resultado indeterminado el reintento reenvía el snapshot original (no se revalida ni se recalcula con lo que haya en pantalla).
+    const reintento = control.current.estado() === "INDETERMINADO";
     const datos: NuevoMovimientoStock = { ...form, costoUnitario: info.costo && costoTxt !== "" ? Number(costoTxt) : null };
-    const errs = validarMovimiento(datos, catalogo, hoy);
 
-    setErrores(errs);
+    if (!reintento) {
+      const errs = validarMovimiento(datos, catalogo, hoy);
 
-    const primero = (Object.keys(errs) as CampoMovimiento[])[0];
+      setErrores(errs);
 
-    if (primero) {
-      setErrorForm("Revise los campos marcados.");
-      enfocar(primero);
+      const primero = (Object.keys(errs) as CampoMovimiento[])[0];
 
-      return;
+      if (primero) {
+        setErrorForm("Revise los campos marcados.");
+        enfocar(primero);
+
+        return;
+      }
     }
 
-    setSaving(true);
+    const pendiente = control.current.registrar(datos);
 
-    try {
-      if (!clave.current) clave.current = crypto.randomUUID();
+    setEstadoRegistro(control.current.estado());
 
-      const numero = await registrarMovimientoApi({ ...datos, claveIdempotencia: clave.current });
+    const r = await pendiente;
 
+    setEstadoRegistro(control.current.estado());
+
+    if (r.tipo === "OK") {
       setRegistrado(true);
-      router.push(`/movimientos?ok=${encodeURIComponent(numero)}`);
+      router.push(`/movimientos?ok=${encodeURIComponent(r.numero)}`);
       router.refresh();
-    } catch (e) {
-      setErrorForm(e instanceof Error ? e.message : "No fue posible registrar el movimiento.");
-      setSaving(false);
+    } else if (r.tipo === "RECHAZADO" || r.tipo === "INDETERMINADO") {
+      setErrorForm(r.mensaje);
+    }
+  }
+
+  /** Decisión explícita: dejar la tentativa de resultado desconocido y empezar otra operación (con otra clave). */
+  function descartarTentativa() {
+    if (!window.confirm("El registro anterior puede haberse efectuado. Si continúa con una operación nueva y esa ya estaba registrada, el movimiento podría duplicarse. Verifique antes en Movimientos. ¿Desea empezar una operación nueva?")) return;
+    if (control.current.descartarIndeterminado()) {
+      setEstadoRegistro("LIBRE");
+      setErrorForm("");
     }
   }
 
@@ -203,6 +223,12 @@ export default function NuevoMovimientoPage() {
       <section className={ui.contentCard} style={{ padding: 14 }}>
         <form className={styles.form} onSubmit={submit} noValidate aria-label="Nuevo movimiento de stock" aria-busy={cargando || saving}>
           <h3>Datos del movimiento</h3>
+          {estadoRegistro === "INDETERMINADO" ? (
+            <div className={local.info} role="status">
+              Los datos están bloqueados porque el resultado del último intento es desconocido. Use «Reintentar el mismo registro» (misma operación, no se duplica) o, si prefiere empezar otra operación, «Descartar este intento».
+            </div>
+          ) : null}
+          <fieldset disabled={bloqueado} style={{ display: "contents", border: 0, padding: 0, margin: 0 }}>
           {errorForm && catalogo ? (
             <div className={styles.alertaForm} role="alert">
               {errorForm}
@@ -308,6 +334,7 @@ export default function NuevoMovimientoPage() {
               value={cantidadTxt}
               disabled={cargando}
               onChange={(e) => {
+                if (control.current.bloqueado()) return;
                 setCantidadTxt(e.target.value);
                 cambiar({ cantidad: e.target.value === "" ? 0 : Number(e.target.value) }, "cantidad");
               }}
@@ -329,8 +356,8 @@ export default function NuevoMovimientoPage() {
                 value={costoTxt}
                 disabled={cargando}
                 onChange={(e) => {
+                  if (control.current.bloqueado()) return;
                   setCostoTxt(e.target.value);
-                  clave.current = "";
                   setForm((f) => ({ ...f, costoUnitario: e.target.value === "" ? null : Number(e.target.value) }));
                   setErrores((x) => ({ ...x, costoUnitario: undefined }));
                 }}
@@ -455,12 +482,19 @@ export default function NuevoMovimientoPage() {
             {mensaje("observacion")}
           </label>
 
+          </fieldset>
+
           <div className={styles.formActions}>
             <Link href="/movimientos" className={ui.secondaryButton}>
               Cancelar
             </Link>
+            {estadoRegistro === "INDETERMINADO" ? (
+              <button type="button" className={ui.secondaryButton} onClick={descartarTentativa}>
+                Descartar este intento
+              </button>
+            ) : null}
             <button type="submit" className={ui.primaryButton} disabled={saving || cargando}>
-              {saving ? "Registrando..." : "Registrar movimiento"}
+              {saving ? "Registrando..." : estadoRegistro === "INDETERMINADO" ? "Reintentar el mismo registro" : "Registrar movimiento"}
             </button>
           </div>
           <p className={styles.nota}>Al registrar, los saldos y el costo se actualizan en la base de datos mediante el procedimiento oficial de inventario; el movimiento no se puede editar ni borrar, solo anular con un movimiento inverso.</p>
