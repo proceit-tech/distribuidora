@@ -216,7 +216,7 @@ export async function verificarCasosEstabilizacionProductos(): Promise<string[]>
   // ── PRD-A04/A05: protección de borrador
   const form = leer("app/(private)/productos/_components/producto-form.tsx");
 
-  cierto("A04/A05: el formulario protege cambios de ficha, documentos pendientes y foto pendiente (aviso al recargar/cerrar y al usar enlaces Volver/Cancelar/menú) y se desactiva al guardar", /useProtegerCambios\(\(sucio \|\| pendientes\.length > 0 \|\| fotoPendiente !== null\) && !guardado\)/.test(form) && /setGuardado\(true\)/.test(form) && /from "@\/lib\/ui\/proteger-cambios"/.test(form));
+  cierto("A04/A05: el formulario protege cambios de ficha, documentos pendientes y foto pendiente (aviso al recargar/cerrar y al usar enlaces Volver/Cancelar/menú) y se desactiva al guardar", /useProtegerCambios\(\(sucio \|\| pendientes\.length > 0 \|\| fotoPendiente !== null \|\| borradorDocumento\) && !guardado\)/.test(form) && /setGuardado\(true\)/.test(form) && /from "@\/lib\/ui\/proteger-cambios"/.test(form));
   cierto("A04/A05: formulario intacto no avisa (sucio compara con el estado inicial)", /const sucio = form !== formularioBase && JSON\.stringify\(form\) !== JSON\.stringify\(formularioBase\)/.test(form));
 
   return fallos;

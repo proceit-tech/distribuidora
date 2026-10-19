@@ -4,21 +4,54 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import ProductoForm from "@/app/(private)/productos/_components/producto-form";
-import { cargarCatalogos, errorDeRespuesta } from "@/lib/productos/cliente-api";
+import RetomarAlta from "@/app/(private)/productos/_components/retomar-alta";
+import { leerRetomada, subirDocumentosPendientes, subirFoto, urlRetomada } from "@/lib/productos/alta";
+import { cargarCatalogosConPermisos, errorDeRespuesta } from "@/lib/productos/cliente-api";
 import { cerrarCargaInicial } from "@/lib/productos/cierre-carga";
-import { formDataDeDocumento, type DocumentoPendiente } from "@/lib/productos/documento-pendiente";
+import type { DocumentoPendiente } from "@/lib/productos/documento-pendiente";
 import type { CatalogoProductos } from "@/types/productos";
+
+type Retomada = { id: string; codigo: string; foto: File | null; pendientes: DocumentoPendiente[]; mensaje: string };
 
 export default function NuevoProductoPage() {
   const router = useRouter();
   const [catalogos, setCatalogos] = useState<CatalogoProductos | null>(null);
   const [error, setError] = useState("");
+  // Producto YA creado cuya carga de archivos quedó incompleta: se conserva su id (también en la URL, para sobrevivir a una recarga) y NUNCA se vuelve a crear.
+  const [retomada, setRetomada] = useState<Retomada | null>(null);
+  const [verificado, setVerificado] = useState(false);
+  // PRD-D01: permiso VER informado por la API desde la sesión del servidor. Sin VER no hay lista ni fichas: la alta termina en una pantalla propia y no ofrece enlaces a ellas.
+  const [puedeVer, setPuedeVer] = useState(false);
+  const [altaFinalizada, setAltaFinalizada] = useState(false);
 
   useEffect(() => {
-    cargarCatalogos()
-      .then(setCatalogos)
+    // Tras una recarga, la URL conserva el producto ya creado: se retoma en lugar de mostrar el formulario de alta.
+    void Promise.resolve().then(() => {
+      const r = leerRetomada(window.location.search);
+
+      if (r) setRetomada({ id: r.id, codigo: r.codigo, foto: null, pendientes: [], mensaje: "" });
+      setVerificado(true);
+    });
+
+    cargarCatalogosConPermisos()
+      .then((r) => {
+        setCatalogos(r.catalogos);
+        setPuedeVer(r.puedeVer);
+      })
       .catch((e: Error) => setError(e.message));
   }, []);
+
+  // El servidor ya confirmó el cierre de la carga inicial. Con VER se vuelve a la lista; sin VER (solo CREAR) se muestra una conclusión propia que permite iniciar otra alta.
+  function terminar() {
+    if (!puedeVer) {
+      setAltaFinalizada(true);
+
+      return;
+    }
+
+    router.push("/productos");
+    router.refresh();
+  }
 
   async function guardar(data: Record<string, unknown>, documentos: DocumentoPendiente[], foto: File | null) {
     const respuesta = await fetch("/api/productos", {
@@ -31,61 +64,84 @@ export default function NuevoProductoPage() {
       throw await errorDeRespuesta(respuesta, "No fue posible registrar el producto.");
     }
 
-    // El producto ya existe: a partir de aquí NUNCA se vuelve a crear. Se cargan la foto y los documentos y se cierra la carga inicial.
-    const id = ((await respuesta.json()) as { producto: { id: string } }).producto.id;
-    let fallidos = 0;
+    // El producto ya existe: a partir de aquí NUNCA se vuelve a crear. La foto y cada documento se rastrean por separado; solo lo no confirmado por el servidor queda pendiente.
+    const creado = ((await respuesta.json()) as { producto: { id: string; codigo?: string } }).producto;
+    const id = creado.id;
+    const codigo = creado.codigo ?? "";
+    const fallas: string[] = [];
+    let fotoPendiente: File | null = null;
 
     if (foto) {
-      try {
-        const datos = new FormData();
+      const r = await subirFoto(id, foto);
 
-        datos.set("archivo", foto);
-
-        const subida = await fetch(`/api/productos/${id}/imagen`, { method: "POST", body: datos });
-
-        if (!subida.ok) fallidos += 1;
-      } catch {
-        fallidos += 1;
+      if (!r.ok) {
+        fotoPendiente = foto;
+        fallas.push(`foto: ${r.mensaje}${r.estado ? ` (código ${r.estado})` : ""}`);
       }
     }
 
-    for (const [indice, documento] of documentos.entries()) {
-      try {
-        const subida = await fetch(`/api/productos/${id}/documentos`, { method: "POST", body: formDataDeDocumento(documento, indice) });
+    const subida = await subirDocumentosPendientes(id, documentos);
+    const fallidos = documentos.filter((d) => !subida.subidos.includes(d.uid));
 
-        if (!subida.ok) fallidos += 1;
-      } catch {
-        fallidos += 1;
-      }
-    }
+    fallas.push(...subida.fallidos.map((f) => f.mensaje));
 
-    if (fallidos === 0) {
-      // Se verifica la respuesta HTTP: si el cierre falla NO se presenta el alta como terminada ni se crea otro producto; la ficha ofrece reintentar.
+    if (fotoPendiente === null && fallidos.length === 0) {
+      // Se verifica la respuesta HTTP y la red: sin cierre confirmado NO se muestra el alta como terminada ni se permite crear otro producto.
       const cierre = await cerrarCargaInicial(id);
 
       if (cierre.cerrada) {
-        router.push("/productos");
-        router.refresh();
+        terminar();
 
         return;
       }
 
-      router.push(`/productos/${id}?aviso=cierre&estado=${cierre.estado ?? "red"}`);
+      window.history.replaceState(null, "", urlRetomada(id, codigo));
+      setRetomada({ id, codigo, foto: null, pendientes: [], mensaje: `${cierre.mensaje}${cierre.estado ? ` (código ${cierre.estado})` : ""}` });
 
       return;
     }
 
-    // Quedan archivos sin cargar: la ficha se abre en la pestaña de documentos (la carga inicial sigue abierta para su creador).
-    router.push(`/productos/${id}?aviso=documentos`);
+    // Quedan archivos sin cargar: se retoma en esta misma pantalla (la ficha exige PRODUCTOS.VER, que el creador con solo CREAR no tiene). Lo ya cargado no se repite.
+    window.history.replaceState(null, "", urlRetomada(id, codigo));
+    setRetomada({ id, codigo, foto: fotoPendiente, pendientes: fallidos, mensaje: `Algunos archivos no se pudieron cargar: ${[...new Set(fallas)].join(" · ")}` });
+  }
+
+  if (altaFinalizada) {
+    return (
+      <main style={{ maxWidth: 640, margin: "48px auto", padding: "0 16px" }}>
+        <h1 style={{ fontSize: 22, margin: "0 0 8px" }}>Producto registrado</h1>
+        <p role="status" style={{ margin: "0 0 16px", lineHeight: 1.5 }}>
+          El producto se registró correctamente y su carga inicial de archivos quedó cerrada. Su perfil puede registrar productos, pero no consultar la lista ni las fichas.
+        </p>
+        <button type="button" onClick={() => window.location.assign("/productos/nuevo")} style={{ height: 38, padding: "0 16px", borderRadius: 9, border: 0, background: "#0c919b", color: "#fff", fontWeight: 600, cursor: "pointer" }}>
+          Registrar otro producto
+        </button>
+      </main>
+    );
+  }
+
+  if (retomada) {
+    return (
+      <RetomarAlta
+        key={retomada.id}
+        id={retomada.id}
+        codigo={retomada.codigo}
+        fotoInicial={retomada.foto}
+        pendientesIniciales={retomada.pendientes}
+        mensajeInicial={retomada.mensaje}
+        alTerminar={terminar}
+        puedeVerLista={puedeVer}
+      />
+    );
   }
 
   if (error) {
     return <main style={{ padding: 24 }}>{error}</main>;
   }
 
-  if (!catalogos) {
+  if (!catalogos || !verificado) {
     return <main style={{ padding: 24 }}>Cargando catálogos...</main>;
   }
 
-  return <ProductoForm mode="create" catalogos={catalogos} onSave={guardar} />;
+  return <ProductoForm mode="create" catalogos={catalogos} onSave={guardar} puedeVerLista={puedeVer} />;
 }

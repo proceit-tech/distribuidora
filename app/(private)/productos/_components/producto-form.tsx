@@ -10,11 +10,12 @@ import { TAMANO_MAXIMO_BYTES } from "@/lib/almacenamiento/archivos-reglas";
 import { formularioAPayload, formularioDesdeDetalle, formularioInicial, type FormularioProducto } from "@/lib/productos/formulario";
 import { UUID, normalizarProducto, type Coleccion } from "@/lib/productos/normalizar";
 import { idCampo, pestanaDeCampo, type PestanaId } from "@/lib/productos/pestanas";
+import { puedeCambiarPestana } from "@/lib/productos/borrador-documento";
 import { catalogosConHistoricas } from "@/lib/productos/historicas";
 import { useProtegerCambios } from "@/lib/ui/proteger-cambios";
 import type { CatalogoProductos, ProductoDetalle } from "@/types/productos";
 
-import type { Errores } from "./campos";
+import { Bloque, type Errores } from "./campos";
 import type { ContextoFormulario } from "./contexto";
 import { PestanaCompras } from "./pestanas/compras";
 import { PestanaDocumentos } from "./pestanas/documentos";
@@ -39,6 +40,8 @@ type Props = {
   accionAviso?: { etiqueta: string; onClick: () => void; ocupado?: boolean };
   pestanaInicial?: PestanaId;
   alCambiarPestana?: (pestana: PestanaId) => void;
+  /** PRD-D01: false cuando el usuario solo puede CREAR (la lista y las fichas exigen VER): no se ofrecen enlaces a ellas. */
+  puedeVerLista?: boolean;
 };
 
 const PESTANAS: Array<{ id: PestanaId; etiqueta: string }> = [
@@ -77,7 +80,7 @@ const NUEVAS: Record<Coleccion, (form: FormularioProducto, catalogos: CatalogoPr
   componentes: (form) => ({ id: temporal("componente"), productoComponenteId: "", productoComponenteNombre: "", cantidad: "1", esOpcional: false, orden: String(form.componentes.length + 1) }),
 };
 
-export default function ProductoForm({ mode, initial, catalogos: catalogosActivos, onSave, onRecargar, aviso, accionAviso, pestanaInicial, alCambiarPestana }: Props) {
+export default function ProductoForm({ mode, initial, catalogos: catalogosActivos, onSave, onRecargar, aviso, accionAviso, pestanaInicial, alCambiarPestana, puedeVerLista = true }: Props) {
   // CAT-A04: las referencias históricas inactivas del propio producto se agregan al selector («(inactivo)»); las demás elecciones siguen siendo solo activas.
   const catalogos = catalogosConHistoricas(catalogosActivos, initial?.referenciasHistoricas);
   const [formularioBase] = useState<FormularioProducto>(() => (initial ? formularioDesdeDetalle(initial) : formularioInicial(catalogos)));
@@ -87,11 +90,18 @@ export default function ProductoForm({ mode, initial, catalogos: catalogosActivo
   const [fotoPendiente, setFotoPendiente] = useState<File | null>(null);
   const sucio = form !== formularioBase && JSON.stringify(form) !== JSON.stringify(formularioBase);
   const [guardado, setGuardado] = useState(false);
+  // PRD-D05: en edición, sin PRODUCTOS.EDITAR la ficha es de consulta para los datos maestros (el servidor lo exige igualmente).
+  const soloLectura = mode === "edit" && initial?.permisos.editar !== true;
+  // PRD-D06: borrador de documento (alta o edición) sin enviar en la pestaña Documentos.
+  const [borradorDocumento, setBorradorDocumento] = useState(false);
 
-  // Cambios efectivos en la ficha o archivos pendientes (documentos, foto): avisa al recargar/cerrar y al abandonar con enlaces (Volver, Cancelar, menú).
-  useProtegerCambios((sucio || pendientes.length > 0 || fotoPendiente !== null) && !guardado);
+  // Cambios efectivos en la ficha, archivos pendientes (documentos, foto) o un documento en preparación: avisa al recargar/cerrar y al abandonar con enlaces (Volver, Cancelar, menú).
+  useProtegerCambios((sucio || pendientes.length > 0 || fotoPendiente !== null || borradorDocumento) && !guardado);
 
   function setTab(pestana: PestanaId) {
+    // PRD-D06: salir de la pestaña de documentos con un documento en preparación lo descartaría; se pide confirmación específica (cancelar conserva la pestaña y el borrador).
+    if (!puedeCambiarPestana(tab, pestana, borradorDocumento, (m) => window.confirm(m))) return;
+
     setTabInterno(pestana);
     alCambiarPestana?.(pestana);
   }
@@ -163,6 +173,7 @@ export default function ProductoForm({ mode, initial, catalogos: catalogosActivo
 
   async function submit(evento: FormEvent<HTMLFormElement>) {
     evento.preventDefault();
+    if (soloLectura) return;
     setError("");
     setConflicto(false);
     setErrores({});
@@ -211,6 +222,8 @@ export default function ProductoForm({ mode, initial, catalogos: catalogosActivo
 
   const ctx: ContextoFormulario = {
     modo: mode === "create" ? "crear" : "editar",
+    soloLectura,
+    marcarBorradorDocumento: setBorradorDocumento,
     form,
     detalle: initial,
     catalogos,
@@ -230,7 +243,7 @@ export default function ProductoForm({ mode, initial, catalogos: catalogosActivo
           <nav className={styles.miga} aria-label="Ruta de navegación">
             <span>Maestros</span>
             <i aria-hidden="true">/</i>
-            <Link href="/productos">Productos</Link>
+            {puedeVerLista ? <Link href="/productos">Productos</Link> : <span>Productos</span>}
             <i aria-hidden="true">/</i>
             <span aria-current="page">{titulo}</span>
           </nav>
@@ -248,9 +261,11 @@ export default function ProductoForm({ mode, initial, catalogos: catalogosActivo
           </div>
         </div>
 
-        <Link href="/productos" className={styles.secondaryButton}>
-          ← Volver a productos
-        </Link>
+        {puedeVerLista ? (
+          <Link href="/productos" className={styles.secondaryButton}>
+            ← Volver a productos
+          </Link>
+        ) : null}
       </header>
 
       <form className={styles.card} onSubmit={submit} noValidate>
@@ -307,23 +322,29 @@ export default function ProductoForm({ mode, initial, catalogos: catalogosActivo
 
         <div className={styles.content}>
           {tab === "general" ? <PestanaInformacion ctx={ctx} /> : null}
-          {tab === "sifen" ? <PestanaSifen ctx={ctx} /> : null}
-          {tab === "stock" ? <PestanaInventario ctx={ctx} /> : null}
-          {tab === "compras" ? <PestanaCompras ctx={ctx} /> : null}
-          {tab === "logistica" ? <PestanaLogistica ctx={ctx} /> : null}
-          {tab === "kit" ? <PestanaKit ctx={ctx} /> : null}
+          {tab === "sifen" ? <Bloque bloqueado={soloLectura}><PestanaSifen ctx={ctx} /></Bloque> : null}
+          {tab === "stock" ? <Bloque bloqueado={soloLectura}><PestanaInventario ctx={ctx} /></Bloque> : null}
+          {tab === "compras" ? <Bloque bloqueado={soloLectura}><PestanaCompras ctx={ctx} /></Bloque> : null}
+          {tab === "logistica" ? <Bloque bloqueado={soloLectura}><PestanaLogistica ctx={ctx} /></Bloque> : null}
+          {tab === "kit" ? <Bloque bloqueado={soloLectura}><PestanaKit ctx={ctx} /></Bloque> : null}
           {tab === "documentos" ? <PestanaDocumentos ctx={ctx} /> : null}
         </div>
 
         <footer className={styles.footer}>
           <div className={styles.footerActions}>
-            <Link href="/productos" className={styles.cancelButton}>
-              Cancelar
-            </Link>
+            {puedeVerLista ? (
+              <Link href="/productos" className={styles.cancelButton}>
+                Cancelar
+              </Link>
+            ) : null}
 
-            <button type="submit" disabled={guardando} className={styles.saveButton}>
-              {guardando ? (mode === "create" ? "Guardando..." : "Actualizando...") : mode === "create" ? "Guardar producto" : "Actualizar producto"}
-            </button>
+            {soloLectura ? (
+              <span className={styles.textoSecundario} role="status">Solo lectura: su perfil puede consultar este producto, pero no modificar sus datos maestros.</span>
+            ) : (
+              <button type="submit" disabled={guardando} className={styles.saveButton}>
+                {guardando ? (mode === "create" ? "Guardando..." : "Actualizando...") : mode === "create" ? "Guardar producto" : "Actualizar producto"}
+              </button>
+            )}
           </div>
         </footer>
       </form>

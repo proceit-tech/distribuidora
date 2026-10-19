@@ -8,6 +8,10 @@ import type { Errores } from "./campos";
 /** Todo lo que necesitan las pestañas: datos, errores por campo, catálogos y operaciones sobre las filas relacionadas. */
 export type ContextoFormulario = {
   modo: "crear" | "editar";
+  /** PRD-D05: sin PRODUCTOS.EDITAR la edición común de datos maestros queda bloqueada (foto y documentos tienen permisos propios). */
+  soloLectura: boolean;
+  /** PRD-D06: la pestaña de documentos informa si tiene un borrador (alta o edición de un documento) sin enviar. */
+  marcarBorradorDocumento: (hay: boolean) => void;
   form: FormularioProducto;
   detalle?: ProductoDetalle;
   catalogos: CatalogoProductos;

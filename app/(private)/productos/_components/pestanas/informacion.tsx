@@ -5,7 +5,7 @@ import { productoRedondeado } from "@/lib/productos/decimales";
 import { textoAfectacion } from "@/lib/productos/fiscal";
 import type { ProductoTipo } from "@/types/productos";
 
-import { Casilla, Dato, Selector, SubTitulo, Texto } from "../campos";
+import { Bloque, Casilla, Dato, Selector, SubTitulo, Texto } from "../campos";
 import type { ContextoFormulario } from "../contexto";
 import styles from "../producto-form.module.css";
 import { FotoProducto } from "./foto";
@@ -43,6 +43,7 @@ export function PestanaInformacion({ ctx }: { ctx: ContextoFormulario }) {
 
   return (
     <>
+      <Bloque bloqueado={ctx.soloLectura}>
       <div className={styles.sectionTitle}>
         <h3>Información comercial</h3>
       </div>
@@ -114,8 +115,11 @@ export function PestanaInformacion({ ctx }: { ctx: ContextoFormulario }) {
         <Dato etiqueta="País de origen" valor={pais ? `${pais.codigo} · ${pais.nombre}` : form.paisOrigenCodigo} ayuda="Se edita en SIFEN y códigos." />
       </div>
 
+      </Bloque>
+
       <SubTitulo>Foto del producto</SubTitulo>
       <FotoProducto ctx={ctx} />
+      <Bloque bloqueado={ctx.soloLectura}>
       {form.imagenUrl ? (
         <div className={styles.gridTwo}>
           <Texto etiqueta="Enlace de imagen anterior" campo="imagenUrl" errores={errores} valor={form.imagenUrl} alCambiar={(v) => ctx.set("imagenUrl", v)} maxLength={2000} tipo="url" ayuda="Se conserva el enlace cargado antes; la foto nueva se carga como archivo." />
@@ -129,6 +133,7 @@ export function PestanaInformacion({ ctx }: { ctx: ContextoFormulario }) {
         <Casilla etiqueta="Permite stock de terceros" campo="permiteTerceros" valor={form.permiteTerceros} alCambiar={(v) => ctx.set("permiteTerceros", v)} />
         {ctx.modo === "editar" ? <Casilla etiqueta="Producto activo" campo="activo" valor={form.activo} alCambiar={(v) => ctx.set("activo", v)} /> : null}
       </div>
+      </Bloque>
     </>
   );
 }

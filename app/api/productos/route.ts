@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import type { PoolClient } from "pg";
 
 import { denyIfNoPermission } from "@/lib/auth/permissions";
+import { decidirGet } from "@/lib/productos/acceso-get";
 import {
   columnasProducto,
   fijarPrecioReferencia,
@@ -65,11 +66,17 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Sesión no válida." }, { status: 401 });
   }
 
+  // PRD-D01: la autorización se decide por la FINALIDAD de la consulta (lib/productos/acceso-get.ts) antes de conceder cualquier excepción. Solo `modo=catalogos` (único parámetro) admite VER o CREAR y, para
+  // CREAR-only, sin la lista de productos existentes (política C24 pendiente); la lista y cualquier otra consulta exigen VER.
   const denegadoVer = await denyIfNoPermission(session, "PRODUCTOS", "VER");
-  if (denegadoVer) return denegadoVer;
+  const tieneCrear = (await denyIfNoPermission(session, "PRODUCTOS", "CREAR")) === null;
+  const decision = decidirGet(new URL(request.url), { ver: !denegadoVer, crear: tieneCrear });
+
+  if (decision.tipo === "invalida") return NextResponse.json({ error: "Consulta no válida." }, { status: 400 });
+  if (decision.tipo === "denegada") return denegadoVer ?? NextResponse.json({ error: "No tiene permiso para esta acción." }, { status: 403 });
 
   const db = await obtenerDb();
-  const soloCatalogos = new URL(request.url).searchParams.get("modo") === "catalogos";
+  const soloCatalogos = decision.finalidad === "CATALOGOS";
 
   try {
     const empresaId = session.user.empresaId;
@@ -141,12 +148,14 @@ export async function GET(request: Request) {
         db.query(`SELECT id, codigo, nombre FROM depositos WHERE empresa_id = $1 AND activo = true AND usuario_puede_deposito($1::uuid, $2::uuid, id) ORDER BY nombre`, [empresaId, session.user.id]),
         db.query(`SELECT codigo, nombre FROM referencia_geografica_paises WHERE activo = true ORDER BY nombre`),
         db.query(`SELECT codigo, nombre FROM monedas WHERE activo = true ORDER BY codigo`),
-        soloCatalogos
+        soloCatalogos && decision.incluirProductos
           ? db.query(`SELECT id, codigo, descripcion FROM productos WHERE empresa_id = $1 AND activo = true ORDER BY descripcion`, [empresaId])
           : Promise.resolve({ rows: [] as unknown[] }),
       ]);
 
     return NextResponse.json({
+      // PRD-D01: permiso VER del usuario autenticado (sesión del servidor) para que la alta decida sus enlaces de retorno.
+      permisos: { ver: !denegadoVer },
       productos: productos.rows,
       catalogos: {
         categorias: categorias.rows,

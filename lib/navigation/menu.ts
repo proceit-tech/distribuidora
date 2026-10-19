@@ -47,6 +47,14 @@ export const NAVIGATION_GROUPS: ShellNavigationGroup[] = [
         permission: "PRODUCTOS.VER",
       },
       {
+        // PRD-D01: destino real del perfil que solo puede CREAR productos (alta sin acceso a la lista ni a las fichas). Se oculta si el usuario también puede VER.
+        id: "products-new",
+        label: "Nuevo producto",
+        href: "/productos/nuevo",
+        icon: "products",
+        permission: "PRODUCTOS.CREAR",
+      },
+      {
         id: "product-catalogs",
         label: "Catálogos de productos",
         href: "/productos/catalogos",
@@ -377,6 +385,7 @@ const V1_HREFS = new Set([
   "/proveedores",
   "/proveedores/nuevo",
   "/productos",
+  "/productos/nuevo",
   "/productos/catalogos",
   "/listas-precio",
   "/catalogos-comerciales",
@@ -421,6 +430,7 @@ function canShowItem(item: ShellNavigationItem, access: NavigationAccess) {
   if (!V1_HREFS.has(item.href)) return false;
   // CLI-D01: «Nuevo cliente» solo para quien crea sin poder consultar (el administrador y quien tiene VER usan «Clientes»).
   if (item.id === "clients-new") return !access.isCompanyAdmin && access.permissions.includes("CLIENTES.CREAR") && !access.permissions.includes("CLIENTES.VER");
+  if (item.id === "products-new") return !access.isCompanyAdmin && access.permissions.includes("PRODUCTOS.CREAR") && !access.permissions.includes("PRODUCTOS.VER");
   if (item.id === "suppliers-new") return !access.isCompanyAdmin && access.permissions.includes("PROVEEDORES.CREAR") && !access.permissions.includes("PROVEEDORES.VER");
   if (access.isCompanyAdmin) return true;
   if (!item.permission) return false;

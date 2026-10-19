@@ -209,6 +209,8 @@ export type ProductoDetalle = {
   actualizadoEn: string;
   /** PRD-D03: versión de edición (actualizado_at con microsegundos, texto UTC); el PUT la exige. */
   version: string;
+  /** PRD-D05: permisos del usuario autenticado sobre los datos maestros (informados por el servidor). */
+  permisos: { editar: boolean };
 };
 
 /** Fila de la lista (GET /api/productos) ya mapeada a camelCase. */

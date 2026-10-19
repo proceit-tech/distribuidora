@@ -323,7 +323,7 @@ export async function verificarCasosProductos(): Promise<string[]> {
     paisOrigenCodigo: "PRY", paisOrigenNombre: "Paraguay", informacionFactura: "", relacionMercaderia: "", porcentajeMerma: "", cantidadMerma: "", vendible: true, comprable: true,
     requiereInspeccionCalidad: false, vidaUtilDias: "", pesoNetoKg: "0.0001", pesoBrutoKg: "", largoCm: "", anchoCm: "", altoCm: "", volumenM3: "", imagenUrl: "", observacion: "", activo: true,
     codigos: [{ id: U1, tipo: "SKU_PROVEEDOR", codigo: "A1", descripcion: "", esPrincipal: true }], unidades: [], proveedores: [], depositos: [], alternativos: [], componentes: [],
-    documentos: [], imagenPrivada: null, esCreador: true, cargaDocumentosInicialAbierta: false, permisosDocumentos: { cargar: true, gestionar: true, historial: true, finalizar: true }, creadoEn: "", actualizadoEn: "", version: "2026-10-19T14:03:22.123456",
+    documentos: [], imagenPrivada: null, esCreador: true, cargaDocumentosInicialAbierta: false, permisos: { editar: true }, permisosDocumentos: { cargar: true, gestionar: true, historial: true, finalizar: true }, creadoEn: "", actualizadoEn: "", version: "2026-10-19T14:03:22.123456",
   } as ProductoDetalle;
   const f = formularioDesdeDetalle(detalle);
 

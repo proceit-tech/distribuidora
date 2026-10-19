@@ -6,6 +6,12 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { contador } from "@/lib/clientes/contador-casos";
+import { decidirGet } from "@/lib/productos/acceso-get";
+import { leerRetomada, subirDocumentosPendientes, subirFoto, urlRetomada } from "@/lib/productos/alta";
+import { puedeCambiarPestana } from "@/lib/productos/borrador-documento";
+import { documentoPendienteVacio } from "@/lib/productos/documento-pendiente";
+import { decidirAccesoDocumento } from "@/lib/productos/permisos-documentos";
+import { resolveNavigation, resolverInicio, RUTA_SIN_ACCESO } from "@/lib/navigation/menu";
 import { ErrorValidacion } from "@/lib/productos/errores";
 import { eliminacionesVacias, formularioAPayload, type FormularioProducto } from "@/lib/productos/formulario";
 import { respuestaError } from "@/lib/productos/shared";
@@ -80,6 +86,98 @@ export async function verificarCasosProductosR02(): Promise<string[]> {
   const form = leer("app/(private)/productos/_components/producto-form.tsx");
 
   cierto("D03: ante un 409 la pantalla ofrece recargar la ficha de forma deliberada (con confirmación) y nunca sobrescribe en silencio", /setConflicto\(mode === "edit" && e\.estado === 409\)/.test(form) && /Recargar la ficha actual/.test(form) && /window\.confirm\("Se descartarán sus cambios sin guardar/.test(form));
+
+  // ── PRD-D01: alta con solo PRODUCTOS.CREAR ─────────────────────────────────────────────────────────────────────────────────────────────────────
+  const u = (q: string) => new URL("http://x/api/productos" + q);
+  const crearSolo = { ver: false, crear: true };
+  const verSolo = { ver: true, crear: false };
+  const ninguno = { ver: false, crear: false };
+  const atender = (q: string, p: { ver: boolean; crear: boolean }) => {
+    const d = decidirGet(u(q), p);
+
+    return d.tipo === "permitida" ? { tipo: d.tipo, lista: d.finalidad === "LISTA", productosExistentes: d.incluirProductos } : { tipo: d.tipo, lista: false, productosExistentes: false };
+  };
+
+  igual("D01: CREAR-only lee los catálogos mínimos de la alta SIN la lista de productos existentes (C24 pendiente) y sin listado", atender("?modo=catalogos", crearSolo), { tipo: "permitida", lista: false, productosExistentes: false });
+  igual("D01: CREAR-only NO obtiene la lista (sin modo, modo=lista, modo vacío o desconocido, parámetros ajenos)", ["", "?modo=lista", "?modo=", "?modo=otro", "?catalogo=x", "?foo=bar", "?q=a"].map((q) => atender(q, crearSolo).tipo), Array.from({ length: 7 }, () => "denegada"));
+  igual("D01: modo=catalogos combinado con otros parámetros es inconsistente (400) para todos", [atender("?modo=catalogos&x=1", crearSolo).tipo, atender("?modo=catalogos&modo=lista&q=1", verSolo).tipo, atender("?modo=catalogos&catalogo=", crearSolo).tipo], ["invalida", "invalida", "invalida"]);
+  igual("D01: VER conserva lista y catálogos completos (incluida la lista de productos para la composición de KIT)", [atender("", verSolo), atender("?modo=catalogos", verSolo)], [{ tipo: "permitida", lista: true, productosExistentes: true }, { tipo: "permitida", lista: false, productosExistentes: true }]);
+  igual("D01: sin permisos nada se atiende; ninguna consulta de CREAR-only devuelve la lista ni productos existentes", [atender("?modo=catalogos", ninguno).tipo, atender("", ninguno).tipo, ["", "?modo=lista", "?modo=catalogos", "?modo=", "?modo=catalogos&x=1"].some((q) => atender(q, crearSolo).lista || atender(q, crearSolo).productosExistentes)], ["denegada", "denegada", false]);
+
+  const rutaLista = leer("app/api/productos/route.ts");
+
+  cierto("D01: la ruta decide por finalidad antes de la excepción, devuelve productos existentes solo con VER, informa permisos.ver desde la sesión y mantiene POST con CREAR y el aislamiento por empresa", /decidirGet\(new URL\(request\.url\), \{ ver: !denegadoVer, crear: tieneCrear \}\)/.test(rutaLista) && /decision\.tipo === "invalida"/.test(rutaLista) && /soloCatalogos && decision\.incluirProductos/.test(rutaLista) && /permisos: \{ ver: !denegadoVer \}/.test(rutaLista) && /denyIfNoPermission\(session, "PRODUCTOS", "CREAR"\)/.test(rutaLista) && /WHERE p\.empresa_id = \$1/.test(rutaLista));
+  cierto("D01: layouts — módulo VER o CREAR; /productos/nuevo solo CREAR; /productos, /productos/[id] y /productos/catalogos conservan VER", /hasPermission\(access, "PRODUCTOS", "VER"\) && !hasPermission\(access, "PRODUCTOS", "CREAR"\)\) notFound\(\)/.test(leer("app/(private)/productos/layout.tsx")) && /guardPage\("PRODUCTOS", "CREAR"\)/.test(leer("app/(private)/productos/nuevo/layout.tsx")) && !/"VER"/.test(leer("app/(private)/productos/nuevo/layout.tsx").replace(/\/\/.*/g, "")) && ["page.tsx", "[id]/layout.tsx", "catalogos/layout.tsx"].every((x) => /guardPage\("PRODUCTOS", "VER"\)/.test(leer("app/(private)/productos/" + x))));
+
+  const acc = (permissions: string[], extra: Partial<{ isCompanyAdmin: boolean; isPlatformAdmin: boolean }> = {}) => ({ permissions, isCompanyAdmin: false, isPlatformAdmin: false, ...extra });
+  const etiquetas = (a: ReturnType<typeof acc>) => resolveNavigation(a).flatMap((g) => g.items.map((i) => i.label));
+
+  igual("D01: CREAR-only recibe «Nuevo producto» y entra directo a /productos/nuevo; VER ve «Productos» (y los catálogos de productos); EDITAR sin VER/CREAR no gana acceso", [etiquetas(acc(["PRODUCTOS.CREAR"])), resolverInicio(acc(["PRODUCTOS.CREAR"])), etiquetas(acc(["PRODUCTOS.VER"])), etiquetas(acc(["PRODUCTOS.EDITAR"])), resolverInicio(acc(["PRODUCTOS.EDITAR"]))], [["Nuevo producto"], "/productos/nuevo", ["Productos", "Catálogos de productos"], [], RUTA_SIN_ACCESO]);
+  igual("D01: administrador de empresa conserva «Productos» sin duplicar «Nuevo producto»; administrador global solo Empresas", [etiquetas(acc([], { isCompanyAdmin: true })).includes("Productos"), etiquetas(acc([], { isCompanyAdmin: true })).includes("Nuevo producto"), etiquetas(acc(["PRODUCTOS.CREAR"], { isPlatformAdmin: true }))], [true, false, ["Empresas"]]);
+
+  // ── PRD-D02: foto y documentos rastreados por separado; retomada sin duplicar ──────────────────────────────────────────────────────────────────
+  const PROD = "11111111-1111-4111-8111-111111111111";
+  const doc = (nombre: string) => ({ ...documentoPendienteVacio(), uid: "u-" + nombre, archivo: new File(["x"], nombre, { type: "application/pdf" }) });
+  const llamadas: string[] = [];
+  const falla = (...fallan: string[]) => (async (url: string, init?: RequestInit) => {
+    const nombre = init?.body instanceof FormData ? ((init.body.get("archivo") as File | null)?.name ?? "") : "";
+
+    llamadas.push(init?.method + " " + url + (nombre ? " " + nombre : ""));
+    if (fallan.includes(nombre)) return { ok: false, status: 500, json: async () => ({ error: "falla " + nombre }) } as unknown as Response;
+    if (fallan.includes("red")) throw new TypeError("fetch failed");
+
+    return { ok: true, status: 201, json: async () => ({}) } as unknown as Response;
+  }) as never;
+  const a = doc("a.pdf");
+  const b = doc("b.pdf");
+  const primero = await subirDocumentosPendientes(PROD, [a, b], falla("b.pdf"));
+
+  igual("D02: un documento falla tras el POST: el otro queda confirmado y solo el fallido queda pendiente (con su causa); todo va al mismo producto", [primero.subidos, primero.fallidos.map((x) => [x.uid, x.estado, x.mensaje]), llamadas.every((l) => l.includes(PROD + "/documentos"))], [["u-a.pdf"], [["u-b.pdf", 500, "falla b.pdf"]], true]);
+  llamadas.length = 0;
+  const reintento = await subirDocumentosPendientes(PROD, [b], falla());
+
+  igual("D02: el reintento reenvía SOLO el fallido (lo confirmado no se repite) y nunca llama a POST /api/productos", [reintento.subidos, llamadas, llamadas.some((l) => l.endsWith("/api/productos"))], [["u-b.pdf"], ["POST /api/productos/" + PROD + "/documentos b.pdf"], false]);
+  llamadas.length = 0;
+  igual("D02: la foto se rastrea aparte — fallo conserva la foto, éxito la libera; caída de red es fallo de la foto", [(await subirFoto(PROD, new File(["f"], "f.png", { type: "image/png" }), falla("f.png"))).ok, (await subirFoto(PROD, new File(["f"], "g.png", { type: "image/png" }), falla())).ok, (await subirFoto(PROD, new File(["f"], "h.png"), falla("red"))).ok], [false, true, false]);
+  igual("D02: la retomada se conserva en la URL (id y código) y sobrevive a una recarga; ids inválidos o inyectados se ignoran", [urlRetomada(PROD, "PRD-000012"), leerRetomada("?retomar=" + PROD + "&codigo=PRD-000012"), leerRetomada("?retomar=no-es-uuid"), leerRetomada("?retomar=" + PROD + "&codigo=<script>"), leerRetomada("")], ["/productos/nuevo?retomar=" + PROD + "&codigo=PRD-000012", { id: PROD, codigo: "PRD-000012" }, null, { id: PROD, codigo: "" }, null]);
+
+  const nuevaPagina = leer("app/(private)/productos/nuevo/page.tsx");
+  const retomar = leer("app/(private)/productos/_components/retomar-alta.tsx");
+  const terminar = nuevaPagina.slice(nuevaPagina.indexOf("function terminar()"), nuevaPagina.indexOf("async function guardar"));
+  const guardarFn = nuevaPagina.slice(nuevaPagina.indexOf("async function guardar"), nuevaPagina.indexOf("if (altaFinalizada)"));
+
+  cierto("D02: un único POST de creación; los fallos de foto/documentos llevan a la retomada con el MISMO id (replaceState) en vez de abrir la ficha; el cierre se confirma antes de concluir", (nuevaPagina.match(/fetch\("\/api\/productos"/g) ?? []).length === 1 && /window\.history\.replaceState\(null, "", urlRetomada\(id, codigo\)\)/.test(guardarFn) && !/router\.push\(.\/productos\/\$\{id\}/.test(nuevaPagina) && /if \(cierre\.cerrada\) \{\s+terminar\(\);/.test(guardarFn) && /fotoPendiente === null && fallidos\.length === 0/.test(guardarFn));
+  cierto("D02: con VER vuelve a la lista; sin VER «Producto registrado» + «Registrar otro producto» sin enlaces prohibidos (miga, volver, cancelar, salir) y la retomada usa solo las rutas del alta", /if \(!puedeVer\) \{\s+setAltaFinalizada\(true\);\s+return;\s+\}\s+router\.push\("\/productos"\)/.test(terminar) && /Registrar otro producto/.test(nuevaPagina) && /window\.location\.assign\("\/productos\/nuevo"\)/.test(nuevaPagina) && /puedeVerLista=\{puedeVer\}/.test(nuevaPagina) && /puedeVerLista \? \(\s+<Link href="\/productos" className=\{styles\.cancelButton\}>\s+Salir sin cerrar/.test(retomar) && !/fetch\("\/api\/productos"/.test(retomar) && /subirFoto\(id, foto\)/.test(retomar) && /setFoto\(null\)/.test(retomar) && /pendientes\.filter\(\(p\) => !r\.subidos\.includes\(p\.uid\)\)/.test(retomar));
+
+  // ── PRD-D04: cierre idempotente solo para el creador ──────────────────────────────────────────────────────────────────────────────────────────
+  const crear = { ver: false, editar: false, crear: true };
+  const fin = (p: { ver: boolean; editar: boolean; crear: boolean }, ctx: { esCreador: boolean; cargaInicialAbierta: boolean } | null) => decidirAccesoDocumento("FINALIZAR_CARGA", p, ctx).permitido;
+
+  igual("D04: el creador con CREAR cierra con la carga abierta y puede REPETIR el cierre ya cerrado (respuesta HTTP perdida)", [fin(crear, { esCreador: true, cargaInicialAbierta: true }), fin(crear, { esCreador: true, cargaInicialAbierta: false })], [true, true]);
+  igual("D04: otro usuario (no creador), otra empresa/producto inexistente (contexto null), VER-only y sin permisos NO pueden usar el retry", [fin(crear, { esCreador: false, cargaInicialAbierta: false }), fin(crear, { esCreador: false, cargaInicialAbierta: true }), fin(crear, null), fin({ ver: true, editar: false, crear: false }, { esCreador: true, cargaInicialAbierta: false }), fin({ ver: false, editar: false, crear: false }, { esCreador: true, cargaInicialAbierta: false })], [false, false, false, false, false]);
+  igual("D04: no se reabre ni se amplía la carga — tras el cierre el creador NO puede cargar documentos ni editar datos/versiones; EDITAR conserva todo", [decidirAccesoDocumento("CARGAR", crear, { esCreador: true, cargaInicialAbierta: false }).permitido, decidirAccesoDocumento("EDITAR_DATOS", crear, { esCreador: true, cargaInicialAbierta: true }).permitido, decidirAccesoDocumento("VER_HISTORIAL", crear, { esCreador: true, cargaInicialAbierta: false }).permitido, decidirAccesoDocumento("CARGAR", crear, { esCreador: true, cargaInicialAbierta: true }).permitido, fin({ ver: true, editar: true, crear: false }, { esCreador: false, cargaInicialAbierta: false })], [false, false, false, true, true]);
+  cierto("D04: la ruta de cierre solo marca cerrada (nunca reabre) y toma empresa y usuario de la sesión", /carga_documentos_inicial_abierta = false WHERE id = \$1 AND empresa_id = \$2/.test(leer("app/api/productos/[id]/documentos/finalizar/route.ts")) && !/= true/.test(leer("app/api/productos/[id]/documentos/finalizar/route.ts")) && /auth\.sesion\.user\.id/.test(leer("app/api/productos/[id]/documentos/finalizar/route.ts")));
+
+  // ── PRD-D05: interfaz según permisos ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+  const listado = leer("app/(private)/productos/_components/listado-productos.tsx");
+  const formulario = leer("app/(private)/productos/_components/producto-form.tsx");
+  const informacion = leer("app/(private)/productos/_components/pestanas/informacion.tsx");
+
+  cierto("D05: «Nuevo producto» (cabecera y estado vacío) solo con PRODUCTOS.CREAR del servidor", /puedeCrear \? \(\s+<Link href="\/productos\/nuevo"/.test(listado) && /productos\.length === 0 && puedeCrear \? \(/.test(listado) && /hasPermission\(access, "PRODUCTOS", "CREAR"\)/.test(leer("app/(private)/productos/page.tsx")));
+  cierto("D05: sin EDITAR la ficha es de consulta — datos maestros en bloque deshabilitado, sin «Actualizar producto» y guardado inerte; el permiso viene de la respuesta del servidor", /initial\?\.permisos\.editar !== true/.test(formulario) && /if \(soloLectura\) return;/.test(formulario) && ["PestanaSifen", "PestanaInventario", "PestanaCompras", "PestanaLogistica", "PestanaKit"].every((p) => new RegExp("<Bloque bloqueado=\\{soloLectura\\}><" + p + " ctx=\\{ctx\\} /></Bloque>").test(formulario)) && /soloLectura \? \(\s+<span[^>]*>Solo lectura/.test(formulario) && /permisos: \{ editar: permisosDoc\.editar \}/.test(leer("app/api/productos/[id]/route.ts")));
+  cierto("D05: la foto (permiso propio) y los documentos NO quedan dentro del bloqueo", informacion.indexOf("<FotoProducto") > informacion.indexOf("</Bloque>") && informacion.indexOf("<FotoProducto") < informacion.lastIndexOf("<Bloque") && /\{tab === "documentos" \? <PestanaDocumentos ctx=\{ctx\} \/> : null\}/.test(formulario) && !/<Bloque/.test(leer("app/(private)/productos/_components/pestanas/documentos.tsx")) && !/<Bloque/.test(leer("app/(private)/productos/_components/pestanas/foto.tsx")));
+
+  // ── PRD-D06: borrador de documento ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  const preguntas: string[] = [];
+  const cancelar = (m: string) => { preguntas.push(m); return false; };
+  const aceptar = (m: string) => { preguntas.push(m); return true; };
+
+  igual("D06: con borrador, salir de Documentos pide confirmación; CANCELAR mantiene la pestaña (no cambia) y el borrador", [puedeCambiarPestana("documentos", "general", true, cancelar), preguntas.length], [false, 1]);
+  igual("D06: CONFIRMAR permite cambiar (descarta solo el borrador); sin borrador, o desde otra pestaña, o dentro de Documentos no se pregunta", [puedeCambiarPestana("documentos", "general", true, aceptar), puedeCambiarPestana("documentos", "general", false, cancelar), puedeCambiarPestana("general", "stock", true, cancelar), puedeCambiarPestana("documentos", "documentos", true, cancelar), preguntas.length], [true, true, true, true, 2]);
+
+  const docs = leer("app/(private)/productos/_components/pestanas/documentos.tsx");
+
+  cierto("D06: la pestaña informa el borrador (nuevo o edición) al formulario, que lo protege al cambiar de pestaña y al salir de la página (useProtegerCambios); el borrador se limpia al desmontar", /const hayBorrador = nuevo !== null \|\| editando !== null/.test(docs) && /marcarBorrador\(hayBorrador\);\s+return \(\) => marcarBorrador\(false\)/.test(docs) && /puedeCambiarPestana\(tab, pestana, borradorDocumento, \(m\) => window\.confirm\(m\)\)/.test(formulario) && /useProtegerCambios\(\(sucio \|\| pendientes\.length > 0 \|\| fotoPendiente !== null \|\| borradorDocumento\) && !guardado\)/.test(formulario));
 
   return fallos;
 }

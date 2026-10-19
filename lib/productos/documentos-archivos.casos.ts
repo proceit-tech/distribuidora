@@ -260,7 +260,7 @@ export async function verificarCasosDocumentosProductos(): Promise<string[]> {
   const fichaPagina = leer("app/(private)/productos/[id]/page.tsx");
   const finalizarRuta = leer("app/api/productos/[id]/documentos/finalizar/route.ts");
 
-  cierto("alta: ya no se ignora la respuesta del cierre; usa cerrarCargaInicial y, si falla, abre la ficha del producto creado", /await cerrarCargaInicial\(id\)/.test(nuevaPagina) && /cierre\.cerrada/.test(nuevaPagina) && /aviso=cierre/.test(nuevaPagina) && !/documentos\/finalizar/.test(nuevaPagina));
+  cierto("alta: ya no se ignora la respuesta del cierre; usa cerrarCargaInicial y, si falla, queda en la retomada del alta del producto creado (PRD-D02; la ficha exige VER)", /await cerrarCargaInicial\(id\)/.test(nuevaPagina) && /cierre\.cerrada/.test(nuevaPagina) && /urlRetomada\(id, codigo\)/.test(nuevaPagina) && !/documentos\/finalizar/.test(nuevaPagina));
   cierto("alta: el producto se crea una sola vez (un único POST /api/productos) y el id se conserva", (nuevaPagina.match(/fetch\("\/api\/productos"/g) ?? []).length === 1);
   cierto("ficha: ofrece «Reintentar cierre» solo mientras la carga siga abierta y no vuelve a crear el producto", /reintentarCierre/.test(fichaPagina) && /producto\.cargaDocumentosInicialAbierta/.test(fichaPagina) && !/fetch\("\/api\/productos"/.test(fichaPagina));
   cierto("el servidor mantiene la política: FINALIZAR_CARGA (creador con CREAR solo con la carga abierta) y nunca reabre la ventana", /FINALIZAR_CARGA/.test(finalizarRuta) && !/carga_documentos_inicial_abierta = true/.test(finalizarRuta));

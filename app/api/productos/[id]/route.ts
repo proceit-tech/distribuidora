@@ -254,6 +254,8 @@ export async function GET(_request: Request, contexto: Contexto) {
         alternativos: alternativos.rows,
         componentes: componentes.rows,
         documentos: documentosLista,
+        // PRD-D05: permiso EDITAR del usuario autenticado (sesión del servidor); sin él la ficha es de consulta para los datos maestros (el PUT lo exige igualmente).
+        permisos: { editar: permisosDoc.editar },
         permisosDocumentos: { cargar: puede("CARGAR"), gestionar: puede("EDITAR_DATOS"), historial: puede("VER_HISTORIAL"), finalizar: puede("FINALIZAR_CARGA") },
       },
     });
