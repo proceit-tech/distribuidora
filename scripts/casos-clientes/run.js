@@ -67,6 +67,7 @@ Module._resolveFilename = function (request, ...resto) {
   const dsh = cargar("lib/dashboard/dashboard.casos.js");
   const cr2 = cargar("lib/clientes/clientes-r02.casos.js");
   const pr2 = cargar("lib/proveedores/proveedores-r02.casos.js");
+  const pd2 = cargar("lib/productos/productos-r02.casos.js");
   const cgw = cargar("lib/facturacion/configuracion-gateway.casos.js");
   const gwc = cargar("lib/facturacion/gateway-config.casos.js");
   const red = cargar("lib/facturacion/rediseno.casos.js");
@@ -132,6 +133,7 @@ Module._resolveFilename = function (request, ...resto) {
     ["Dashboard (AUD-R02): alcance integral de movimientos, contexto período/depósito, anulados e inversos, permisos y enlaces, navegación, precisión monetaria y períodos válidos (F-DASH-01 pendiente de decisión)", async () => dsh.verificarCasosDashboard(), null],
     ["Clientes (AUD-R02): alta con solo CREAR, interfaz por permisos, carreras geográficas, domicilio fiscal único y límites de crédito exactos", async () => cr2.verificarCasosClientesR02(), null],
     ["Proveedores (AUD-R02): alta con solo CREAR, acciones por permisos y errores de la geografía", async () => pr2.verificarCasosProveedoresR02(), null],
+    ["Productos (AUD-R02): concurrencia, alta con solo CREAR, retomada, cierre idempotente, interfaz por permisos y borradores de documentos", async () => pd2.verificarCasosProductosR02(), null],
     ["Facturación PRO-133: prontitud del gateway por empresa (SIN_CONFIGURAR/INVALIDA/SIN_CREDENCIALES/CONFIGURADO), envío bloqueado en la pantalla y aprovisionamiento de prueba sin secretos", async () => gwc.verificarCasosGatewayConfig(), null],
   ];
   let total = 0;

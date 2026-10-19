@@ -131,6 +131,9 @@ export function respuestaError(error: unknown, accion: string) {
   console.error(`Error al ${accion} producto:`, error);
   const pg = error as { code?: string; constraint?: string; message?: string };
 
+  // PRD-D03: un error de validación conserva su estado HTTP (409 por versión obsoleta) y el campo afectado; antes siempre salía 400.
+  if (error instanceof ErrorValidacion) return NextResponse.json({ error: error.message, campo: error.campo }, { status: error.estado });
+
   if (pg.code === "23505") {
     const c = pg.constraint ?? "";
     let mensaje = "Ya existe un registro con ese valor.";

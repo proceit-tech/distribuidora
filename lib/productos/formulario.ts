@@ -74,6 +74,8 @@ export type FormularioProducto = {
   componentes: ProductoComponente[];
   /** Ids persistidos que el usuario pidió eliminar de cada colección (una fila ausente nunca se borra). */
   eliminaciones: Record<Coleccion, string[]>;
+  /** PRD-D03: versión de la ficha cargada (solo edición). */
+  version: string;
 };
 
 export const eliminacionesVacias = (): Record<Coleccion, string[]> => Object.fromEntries(COLECCIONES.map((c) => [c, []])) as unknown as Record<Coleccion, string[]>;
@@ -135,6 +137,7 @@ export function formularioInicial(catalogos: CatalogoProductos): FormularioProdu
     alternativos: [],
     componentes: [],
     eliminaciones: eliminacionesVacias(),
+    version: "",
   };
 }
 
@@ -195,15 +198,17 @@ export function formularioDesdeDetalle(d: ProductoDetalle): FormularioProducto {
     alternativos: structuredClone(d.alternativos),
     componentes: structuredClone(d.componentes),
     eliminaciones: eliminacionesVacias(),
+    version: d.version,
   };
 }
 
 /** Contrato de la API. Las filas nuevas llevan id temporal (no UUID): el servidor las trata como altas. */
 export function formularioAPayload(f: FormularioProducto, modo: "crear" | "editar"): Record<string, unknown> {
-  const { eliminaciones, inventarioInicial, ...resto } = f;
+  const { eliminaciones, inventarioInicial, version, ...resto } = f;
 
   return {
     ...resto,
+    ...(modo === "editar" ? { version } : {}),
     codigo: modo === "crear" ? "" : f.codigo,
     descripcion: f.descripcion.trim().toUpperCase(),
     inventarioInicial: modo === "crear" ? inventarioInicial : { cantidad: "", costoUnitario: "", depositoId: "" },

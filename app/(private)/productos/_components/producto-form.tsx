@@ -99,6 +99,8 @@ export default function ProductoForm({ mode, initial, catalogos: catalogosActivo
   const [pestanaConError, setPestanaConError] = useState<PestanaId | "">("");
   const [error, setError] = useState("");
   const [guardando, setGuardando] = useState(false);
+  // PRD-D03: el servidor respondió 409 (otro usuario modificó el producto): se ofrece releer la ficha de forma deliberada; nunca se sobrescribe en silencio.
+  const [conflicto, setConflicto] = useState(false);
   const enfocar = useRef<string | null>(null);
 
   // Tras mostrar la pestaña del error se enfoca el campo exacto.
@@ -142,6 +144,7 @@ export default function ProductoForm({ mode, initial, catalogos: catalogosActivo
   }
 
   function mostrarError(e: ErrorValidacion) {
+    setConflicto(mode === "edit" && e.estado === 409);
     setError(e.message);
     setErrores(e.campo ? { [e.campo]: e.message } : {});
 
@@ -161,6 +164,7 @@ export default function ProductoForm({ mode, initial, catalogos: catalogosActivo
   async function submit(evento: FormEvent<HTMLFormElement>) {
     evento.preventDefault();
     setError("");
+    setConflicto(false);
     setErrores({});
     setPestanaConError("");
 
@@ -267,6 +271,20 @@ export default function ProductoForm({ mode, initial, catalogos: catalogosActivo
         {error ? (
           <div className={styles.error} role="alert">
             {error}
+            {conflicto && onRecargar ? (
+              <>
+                {" "}
+                <button
+                  type="button"
+                  className={styles.cancelButton}
+                  onClick={() => {
+                    if (window.confirm("Se descartarán sus cambios sin guardar y se cargará la versión actual del producto. ¿Desea continuar?")) onRecargar();
+                  }}
+                >
+                  Recargar la ficha actual
+                </button>
+              </>
+            ) : null}
           </div>
         ) : null}
 

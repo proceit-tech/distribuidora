@@ -7,6 +7,7 @@ import { autorizarProductos } from "@/lib/productos/http";
 import { ErrorValidacion } from "@/lib/productos/errores";
 import { alcanceConsultaDeposito, validarAlcanceConfiguraciones } from "@/lib/productos/alcance";
 import { normalizarProducto } from "@/lib/productos/normalizar";
+import { SQL_VERSION, exigirVersion, exigirVersionPresente } from "@/lib/productos/version";
 import { componentesRestantes, eliminarHijos, guardarHijos } from "@/lib/productos/sincronizar";
 import {
   columnasProducto,
@@ -83,6 +84,7 @@ export async function GET(_request: Request, contexto: Contexto) {
               coalesce(p.alto_cm::text,'') AS "altoCm", coalesce(p.volumen_m3::text,'') AS "volumenM3",
               coalesce(p.imagen_url,'') AS "imagenUrl", coalesce(p.observacion,'') AS observacion,
               p.activo, p.creado_at AS "creadoEn", p.actualizado_at AS "actualizadoEn",
+              to_char(p.actualizado_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US') AS version,
               (p.creado_por IS NOT DISTINCT FROM $3::uuid AND p.creado_por IS NOT NULL) AS "esCreador",
               p.carga_documentos_inicial_abierta AS "cargaDocumentosInicialAbierta",
               CASE WHEN p.imagen_clave IS NULL THEN NULL
@@ -286,13 +288,16 @@ export async function PUT(request: Request, contexto: Contexto) {
   let conexion: PoolClient | undefined;
 
   try {
+    // PRD-D03: la ausencia de versión se informa (409) antes que cualquier error de validación del cuerpo; la comparación exacta sigue después del bloqueo de la fila.
+    exigirVersionPresente(cuerpo.version);
+
     const datos = normalizarProducto(cuerpo, { modo: "editar", productoId: id });
 
     conexion = await db.connect();
     await conexion.query("BEGIN");
 
     const existente = await conexion.query(
-      `SELECT codigo, categoria_id::text, marca_id::text, familia_id::text, linea_id::text, unidad_medida_id::text, impuesto_id::text
+      `SELECT codigo, categoria_id::text, marca_id::text, familia_id::text, linea_id::text, unidad_medida_id::text, impuesto_id::text, ${SQL_VERSION} AS version
          FROM productos WHERE id = $1 AND empresa_id = $2 FOR UPDATE`,
       [id, empresaId],
     );
@@ -300,6 +305,9 @@ export async function PUT(request: Request, contexto: Contexto) {
       await conexion.query("ROLLBACK");
       return noEncontrado();
     }
+
+    // PRD-D03: versión comparada tras bloquear la fila y ANTES de validar o escribir nada (cabecera, hijos, precio, unidad): una versión vieja no persiste ningún cambio.
+    exigirVersion(cuerpo.version, (existente.rows[0] as { version: string }).version);
 
     const actual = existente.rows[0] as { codigo: string; categoria_id: string | null; marca_id: string | null; familia_id: string | null; linea_id: string | null; unidad_medida_id: string | null; impuesto_id: string | null };
 

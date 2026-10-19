@@ -207,6 +207,8 @@ export type ProductoDetalle = {
 
   creadoEn: string;
   actualizadoEn: string;
+  /** PRD-D03: versión de edición (actualizado_at con microsegundos, texto UTC); el PUT la exige. */
+  version: string;
 };
 
 /** Fila de la lista (GET /api/productos) ya mapeada a camelCase. */
