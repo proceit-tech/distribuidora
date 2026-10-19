@@ -30,7 +30,7 @@ export async function GET(_request: Request, contexto: { params: Promise<{ id: s
     const acceso = await getAccessContext(session.user, session.demo === true);
     const permisos = { movimientosCrear: hasPermission(acceso, "MOVIMIENTOS", "CREAR"), movimientosVer: hasPermission(acceso, "MOVIMIENTOS", "VER") };
 
-    return NextResponse.json({ item: r.stock[0], monedaBase: r.monedaBase, alcanceParcial: r.alcanceParcial, permisos });
+    return NextResponse.json({ item: r.stock[0], monedaBase: r.monedaBase, alcanceParcial: r.alcanceParcial, alcance: r.alcance, permisos });
   } catch (error) {
     console.error("Error al cargar stock:", error);
     return NextResponse.json({ error: "No fue posible cargar el stock." }, { status: 500 });

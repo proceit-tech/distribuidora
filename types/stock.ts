@@ -154,4 +154,4 @@ export type StockItem = Omit<
 };
 
 /** alcanceParcial: el usuario solo ve los depósitos que tiene autorizados (los totales no incluyen los demás). */
-export type StockRespuesta = { stock: StockItem[]; monedaBase: string; alcanceParcial?: boolean; depositosAutorizados?: Array<{ id: string; nombre: string }>; permisos?: { movimientosCrear: boolean; movimientosVer: boolean } };
+export type StockRespuesta = { stock: StockItem[]; monedaBase: string; alcanceParcial?: boolean; /** C24: COMPLETO | PARCIAL | SIN_DEPOSITOS (ver lib/stock/vista.ts). */ alcance?: "COMPLETO" | "PARCIAL" | "SIN_DEPOSITOS"; depositosAutorizados?: Array<{ id: string; nombre: string }>; permisos?: { movimientosCrear: boolean; movimientosVer: boolean } };

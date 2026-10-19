@@ -63,6 +63,37 @@ export function vistaPorDeposito(item: StockItem, depositoId: string): StockItem
   };
 }
 
+/**
+ * C24 / STK-D01 — alcance del usuario sobre los depósitos. Define cómo se lee «Sin stock»: con alcance COMPLETO es ausencia de disponibilidad en los depósitos de la empresa; con PARCIAL solo en los depósitos
+ * autorizados (nunca se presenta como total empresarial); SIN_DEPOSITOS = la persona no tiene ningún depósito autorizado (no hay saldos que informar: los indicadores no son «cero» real).
+ */
+export type AlcanceStock = "COMPLETO" | "PARCIAL" | "SIN_DEPOSITOS";
+
+/** `restringido`: el usuario se evalúa por usuario_deposito; `permitidos`/`total`: depósitos autorizados y depósitos de la empresa. */
+export function alcanceDeStock(restringido: boolean, permitidos: number, total: number): AlcanceStock {
+  if (!restringido) return "COMPLETO";
+  if (permitidos === 0 && total > 0) return "SIN_DEPOSITOS";
+
+  return permitidos < total ? "PARCIAL" : "COMPLETO";
+}
+
+/** Etiqueta del nivel según el alcance: «Sin stock» solo es literal con alcance completo. */
+export function etiquetaNivel(nivel: StockNivel, alcance: AlcanceStock): string {
+  if (nivel !== "SIN_STOCK") return ETIQUETA_NIVEL[nivel];
+  if (alcance === "SIN_DEPOSITOS") return "Sin acceso a depósitos";
+  if (alcance === "PARCIAL") return "Sin disponible en depósitos autorizados";
+
+  return ETIQUETA_NIVEL.SIN_STOCK;
+}
+
+/** Texto de apoyo del indicador «Sin stock» (la cifra cuenta exactamente los productos mostrados). */
+export function descripcionSinStock(alcance: AlcanceStock): string {
+  if (alcance === "SIN_DEPOSITOS") return "Sin depósitos autorizados: no hay saldos que informar";
+  if (alcance === "PARCIAL") return "Sin disponible en sus depósitos autorizados";
+
+  return "Saldo disponible cero";
+}
+
 export type ResumenStock = { sku: number; disponible: number; stockBajo: number; sinStock: number; valorCosto: number; valorVenta: number; sinPrecio: number };
 
 /** Indicadores de la portada de Stock (D-INV-02): solo SKU, Disponible, Sin stock y Bajo mínimo. Valorización y totales monetarios pertenecen a Reportes y a la ficha. */

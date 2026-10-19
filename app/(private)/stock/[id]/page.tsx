@@ -11,7 +11,7 @@ import { normalizarPermisosMovimientos, puedeAbrirNuevoMovimiento, puedeVerMovim
 import { formatearCostoUnitarioTexto, formatearMontoTexto } from "@/lib/inventario/decimal";
 import { enlaceNuevoMovimiento } from "@/lib/movimientos/formulario";
 import { cargarStockItem } from "@/lib/stock/cliente-api";
-import { ETIQUETA_NIVEL } from "@/lib/stock/vista";
+import { ETIQUETA_NIVEL, etiquetaNivel, type AlcanceStock } from "@/lib/stock/vista";
 import type { StockItem } from "@/types/stock";
 
 import styles from "./page.module.css";
@@ -43,6 +43,7 @@ export default function StockDetallePage() {
   const [moneda, setMoneda] = useState("PYG");
   const [permisos, setPermisos] = useState<Permisos>({ movimientosCrear: false, movimientosVer: false });
   const [alcanceParcial, setAlcanceParcial] = useState(false);
+  const [alcance, setAlcance] = useState<AlcanceStock>("COMPLETO");
   const [loading, setLoading] = useState(true);
   const [errorCarga, setErrorCarga] = useState("");
   const hoy = hoyAsuncion();
@@ -57,6 +58,7 @@ export default function StockDetallePage() {
         setMoneda(r.monedaBase);
         setItem(r.item);
         setAlcanceParcial(r.alcanceParcial === true);
+        setAlcance(r.alcance ?? (r.alcanceParcial === true ? "PARCIAL" : "COMPLETO"));
         setPermisos(normalizarPermisosMovimientos(r.permisos));
       })
       .catch((e: unknown) => {
@@ -176,7 +178,7 @@ export default function StockDetallePage() {
         <section className={styles.bloque} aria-label="Política del producto">
           <div className={styles.bloqueCabecera}>
             <h2>Producto y política</h2>
-            <span className={nivel.clase}>{nivel.texto}</span>
+            <span className={nivel.clase}>{item.nivel === "SIN_STOCK" ? etiquetaNivel(item.nivel, alcance) : nivel.texto}</span>
           </div>
           <dl className={styles.datos}>
             <div>

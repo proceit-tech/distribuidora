@@ -1,7 +1,7 @@
 import type { Pool } from "pg";
 
 import { multiplicarDecimales, sumarDecimales } from "@/lib/inventario/decimal";
-import { clasificarNivel, costoUnitarioTexto } from "@/lib/stock/vista";
+import { alcanceDeStock, clasificarNivel, costoUnitarioTexto } from "@/lib/stock/vista";
 
 // Lectura de saldos reales. Todo filtrado por empresa_id de la sesión.
 
@@ -10,7 +10,8 @@ type F = Record<string, unknown>;
 
 /**
  * Depósitos que el usuario puede ver: todos si su alcance es TODOS o los asignados en usuario_deposito (activos o no: el saldo de un depósito
- * inactivo no desaparece del stock). Los productos sin saldo visible no cambian; solo se filtran saldos y costos.
+ * inactivo no desaparece del stock). C24/STK-D01: los productos ACTIVOS de la empresa se consultan aunque no tengan saldo en el alcance (se informan como «sin disponible»); un producto INACTIVO
+ * solo es visible si tiene saldo efectivo (cantidad > 0) en un depósito AUTORIZADO al usuario: un saldo solo en otro depósito no decide su visibilidad. Saldos, lotes y costos siempre se filtran al alcance.
  */
 const PERMITIDOS = `SELECT d.id FROM depositos d JOIN usuarios u ON u.empresa_id = d.empresa_id AND u.id = $3
     WHERE d.empresa_id = $1 AND (u.alcance_depositos = 'TODOS'
@@ -44,9 +45,9 @@ export async function leerStock(db: Db, empresaId: string, productoId: string | 
          LEFT JOIN lineas_producto l ON l.empresa_id = p.empresa_id AND l.id = p.linea_id
          LEFT JOIN unidades_medida um ON um.id = p.unidad_medida_id
         WHERE p.empresa_id = $1 AND p.controla_stock${filtro}
-          AND (p.activo OR EXISTS (SELECT 1 FROM stock_saldos s WHERE s.empresa_id = p.empresa_id AND s.producto_id = p.id AND s.cantidad > 0))
+          AND (p.activo OR EXISTS (SELECT 1 FROM stock_saldos s WHERE s.empresa_id = p.empresa_id AND s.producto_id = p.id AND s.cantidad > 0${filtroAlcanceS}))
         ORDER BY p.descripcion`,
-      params,
+      alcance ? paramsAlcance : params,
     ),
     db.query(
       `SELECT s.id, s.producto_id AS "productoId", s.deposito_id AS "depositoId", d.codigo AS "depositoCodigo", d.nombre AS "depositoNombre",
@@ -97,7 +98,10 @@ export async function leerStock(db: Db, empresaId: string, productoId: string | 
   const pPor = new Map((precios.rows as F[]).map((r) => [r.productoId as string, r]));
   const kPor = new Map((configuraciones.rows as F[]).map((r) => [`${r.productoId}|${r.depositoId}`, r]));
   const costoPorDeposito = new Map((costos.rows as F[]).map((r) => [`${r.productoId}|${r.depositoId}`, r]));
-  const alcanceParcial = alcance && permitidos !== null && Number((permitidos.rows[0] as F).n) < Number((todosDepositos.rows[0] as F).n);
+  const nPermitidos = permitidos !== null ? Number((permitidos.rows[0] as F).n) : 0;
+  const nTodos = Number((todosDepositos.rows[0] as F).n);
+  const alcanceStock = alcanceDeStock(alcance, nPermitidos, nTodos);
+  const alcanceParcial = alcance && permitidos !== null && nPermitidos < nTodos;
 
   const items = (productos.rows as F[]).map((p) => {
     const ss = sPor.get(p.id as string) ?? [];
@@ -176,5 +180,5 @@ export async function leerStock(db: Db, empresaId: string, productoId: string | 
   });
   const depositosAutorizados = (autorizadosRows.rows as F[]).map((r) => ({ id: String(r.id), nombre: String(r.nombre ?? "") }));
 
-  return { stock: items, monedaBase: emp.moneda, alcanceParcial, depositosAutorizados };
+  return { stock: items, monedaBase: emp.moneda, alcanceParcial, alcance: alcanceStock, depositosAutorizados };
 }

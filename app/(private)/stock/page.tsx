@@ -12,7 +12,7 @@ import { iniciarCargaStock } from "@/lib/stock/carga-instancia";
 import { puedeAbrirNuevoMovimiento, puedeVerMovimientos, normalizarPermisosMovimientos, SIN_PERMISOS_MOVIMIENTOS } from "@/lib/inventario/acceso";
 import { interpretarDepositoUrl } from "@/lib/depositos/carga";
 import { compararDecimales, formatearCostoUnitarioTexto, formatearMontoTexto } from "@/lib/inventario/decimal";
-import { ETIQUETA_NIVEL, indicadoresStock, vistaPorDeposito } from "@/lib/stock/vista";
+import { descripcionSinStock, etiquetaNivel, indicadoresStock, vistaPorDeposito, type AlcanceStock } from "@/lib/stock/vista";
 
 import {
   StockItem,
@@ -60,6 +60,8 @@ export default function StockPage() {
   const [stockCompleto, setStock] =
     useState<StockItem[]>([]);
   const [alcanceParcial, setAlcanceParcial] = useState(false);
+  // C24: alcance real del usuario sobre los depósitos (define cómo se lee «Sin stock» y si los indicadores tienen sentido).
+  const [alcance, setAlcance] = useState<AlcanceStock>("COMPLETO");
   // INV-02: atajos hacia Movimientos solo con los permisos que exigen sus guardas de página.
   const [permisos, setPermisos] = useState(SIN_PERMISOS_MOVIMIENTOS);
 
@@ -126,6 +128,7 @@ export default function StockPage() {
         if (pedido.tipo === "SELECCIONADO") setDeposito(pedido.id);
         setDepositoNoDisponible(pedido.tipo === "NO_DISPONIBLE");
         setAlcanceParcial(r.alcanceParcial === true);
+        setAlcance(r.alcance ?? (r.alcanceParcial === true ? "PARCIAL" : "COMPLETO"));
         setPermisos(normalizarPermisosMovimientos(r.permisos));
       },
       alFallar: (mensaje) => setErrorCarga(mensaje),
@@ -414,7 +417,9 @@ export default function StockPage() {
 
       <p className={ui.resultCount} role="status" style={{ margin: "0 0 8px" }}>
         {deposito === "TODOS"
-          ? `Visión consolidada${alcanceParcial ? " de los depósitos que usted tiene autorizados" : " de todos los depósitos"}.`
+          ? alcance === "SIN_DEPOSITOS"
+            ? "Usted no tiene depósitos autorizados: se muestra el catálogo de productos, pero no hay saldos, costos ni indicadores de stock que informar."
+            : `Visión consolidada${alcanceParcial ? " de los depósitos que usted tiene autorizados" : " de todos los depósitos"}.`
           : `Visión del depósito ${depositos.find(([id]) => id === deposito)?.[1] ?? ""}: cantidades, costo y valores corresponden solo a este depósito; el mínimo y el máximo son los configurados para él.`}
       </p>
 
@@ -437,25 +442,25 @@ export default function StockPage() {
         <article className={[ui.summaryCard, ui.summaryTeal].join(" ")}>
           <span>SKU</span>
           <strong>{resumen.sku}</strong>
-          <small>Productos inventariados</small>
+          <small>{alcance === "SIN_DEPOSITOS" ? "Productos del catálogo" : "Productos inventariados"}</small>
         </article>
 
         <article className={[ui.summaryCard, ui.summaryBlue].join(" ")}>
           <span>Disponible</span>
-          <strong>{formatearCantidad(resumen.disponible)}</strong>
-          <small>Stock disponible</small>
+          <strong>{alcance === "SIN_DEPOSITOS" ? "—" : formatearCantidad(resumen.disponible)}</strong>
+          <small>{alcance === "SIN_DEPOSITOS" ? "Sin depósitos autorizados" : "Stock disponible"}</small>
         </article>
 
         <article className={[ui.summaryCard, ui.summaryAmber].join(" ")}>
           <span>Bajo mínimo</span>
-          <strong>{resumen.stockBajo}</strong>
+          <strong>{alcance === "SIN_DEPOSITOS" ? "—" : resumen.stockBajo}</strong>
           <small>Disponible menor que el mínimo</small>
         </article>
 
         <article className={[ui.summaryCard, ui.summaryRed].join(" ")}>
           <span>Sin stock</span>
-          <strong>{resumen.sinStock}</strong>
-          <small>Saldo disponible cero</small>
+          <strong>{alcance === "SIN_DEPOSITOS" ? "—" : resumen.sinStock}</strong>
+          <small>{descripcionSinStock(alcance)}</small>
         </article>
 
       </section>
@@ -659,7 +664,7 @@ export default function StockPage() {
                                   : ui.statusInfo
                           }
                         >
-                          {ETIQUETA_NIVEL[item.nivel]}
+                          {etiquetaNivel(item.nivel, alcance)}
                         </span>
                       </span>
                     </div>
