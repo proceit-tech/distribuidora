@@ -35,7 +35,7 @@ function cliente(parcial: Partial<ClienteLista>): ClienteLista {
     telefonoDdi: "",
     celularDdi: "",
     contactoPrincipal: { nombre: "", telefono: "", celular: "", telefonoDdi: "", celularDdi: "" },
-    limiteCredito: 0,
+    limiteCredito: "0",
     moneda: "PYG",
     grupoClienteId: "",
     aptitudApto: true,

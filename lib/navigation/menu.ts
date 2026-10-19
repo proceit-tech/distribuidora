@@ -17,6 +17,14 @@ export const NAVIGATION_GROUPS: ShellNavigationGroup[] = [
         permission: "CLIENTES.VER",
       },
       {
+        // CLI-D01: destino real del perfil que solo puede CREAR clientes (alta guiada sin acceso a la lista ni a las fichas). Se oculta si el usuario también puede VER.
+        id: "clients-new",
+        label: "Nuevo cliente",
+        href: "/clientes/nuevo",
+        icon: "clients",
+        permission: "CLIENTES.CREAR",
+      },
+      {
         id: "suppliers",
         label: "Proveedores",
         href: "/proveedores",
@@ -357,6 +365,7 @@ export const NAVIGATION_GROUPS: ShellNavigationGroup[] = [
  */
 const V1_HREFS = new Set([
   "/clientes",
+  "/clientes/nuevo",
   "/proveedores",
   "/productos",
   "/productos/catalogos",
@@ -401,6 +410,8 @@ export type NavigationAccess = {
 
 function canShowItem(item: ShellNavigationItem, access: NavigationAccess) {
   if (!V1_HREFS.has(item.href)) return false;
+  // CLI-D01: «Nuevo cliente» solo para quien crea sin poder consultar (el administrador y quien tiene VER usan «Clientes»).
+  if (item.id === "clients-new") return !access.isCompanyAdmin && access.permissions.includes("CLIENTES.CREAR") && !access.permissions.includes("CLIENTES.VER");
   if (access.isCompanyAdmin) return true;
   if (!item.permission) return false;
   return access.permissions.includes(item.permission.trim().toUpperCase());

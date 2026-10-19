@@ -65,6 +65,7 @@ Module._resolveFilename = function (request, ...resto) {
   const rvf = cargar("lib/facturacion/revision-factura.casos.js");
   const bur = cargar("lib/facturacion/buscador-rapido.casos.js");
   const dsh = cargar("lib/dashboard/dashboard.casos.js");
+  const cr2 = cargar("lib/clientes/clientes-r02.casos.js");
   const cgw = cargar("lib/facturacion/configuracion-gateway.casos.js");
   const gwc = cargar("lib/facturacion/gateway-config.casos.js");
   const red = cargar("lib/facturacion/rediseno.casos.js");
@@ -128,6 +129,7 @@ Module._resolveFilename = function (request, ...resto) {
     ["Facturación C01 / FAT-D02: la factura enviada es exactamente la revisada (cambios durante/después de la previa, respuesta obsoleta, cancelar, envío duplicado)", async () => rvf.verificarCasosRevisionFactura(), null],
     ["Facturación C02 / FAT-D01: búsqueda rápida de clientes y productos — invalidación inmediata, flechas/Enter/clic vigentes, respuestas y errores tardíos, GTIN exacto, bloqueados y adición consecutiva", async () => bur.verificarCasosBuscadorRapido(), null],
     ["Dashboard (AUD-R02): alcance integral de movimientos, contexto período/depósito, anulados e inversos, permisos y enlaces, navegación, precisión monetaria y períodos válidos (F-DASH-01 pendiente de decisión)", async () => dsh.verificarCasosDashboard(), null],
+    ["Clientes (AUD-R02): alta con solo CREAR, interfaz por permisos, carreras geográficas, domicilio fiscal único y límites de crédito exactos", async () => cr2.verificarCasosClientesR02(), null],
     ["Facturación PRO-133: prontitud del gateway por empresa (SIN_CONFIGURAR/INVALIDA/SIN_CREDENCIALES/CONFIGURADO), envío bloqueado en la pantalla y aprovisionamiento de prueba sin secretos", async () => gwc.verificarCasosGatewayConfig(), null],
   ];
   let total = 0;

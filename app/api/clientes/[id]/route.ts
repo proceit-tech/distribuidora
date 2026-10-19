@@ -140,7 +140,11 @@ export async function GET(_request: Request, contexto: Contexto) {
     // Aptitud SIFEN con el estado real de la base (misma implementación que el listado y la compuerta de guardado).
     const aptitudSifen = await evaluarAptitudCliente(db, session.user.empresaId, id);
 
+    // CLI-D02: permiso real del usuario autenticado; la ficha se muestra de solo lectura sin EDITAR (la API de PUT lo exige igualmente).
+    const puedeEditar = (await denyIfNoPermission(session, "CLIENTES", "EDITAR")) === null;
+
     return NextResponse.json({
+      permisos: { editar: puedeEditar },
       aptitudSifen,
       cliente: {
         id: c.id,

@@ -8,6 +8,7 @@ import { calcularDvRuc, validarRucDv } from "@/lib/fiscal/calcular-dv-ruc";
 import { TelefonoPais } from "@/components/clientes/telefono-pais";
 import { validarTelefono } from "@/lib/fiscal/telefono";
 import { DESCUENTO_COMERCIAL, LIMITE_CREDITO, decimalAcotado } from "@/lib/clientes/comercial";
+import { crearCargasGeograficas } from "@/lib/clientes/geografia-cargas";
 import { pestanaDeErrorApi } from "@/lib/clientes/pestanas";
 import { useProtegerCambios } from "@/lib/ui/proteger-cambios";
 import { ACCEPT_ARCHIVOS, EXTENSIONES_TEXTO, TAMANO_MAXIMO_BYTES, tamanoLegible, validarNombreYTamano } from "@/lib/almacenamiento/archivos-reglas";
@@ -66,6 +67,8 @@ type Contacto = {
 };
 
 type Direccion = {
+  /** CLI-D03: identidad estable de la dirección (no es el índice del arreglo); no se envía al servidor. */
+  uid: string;
   tipo: string;
   etiqueta: string;
   direccion: string;
@@ -235,8 +238,11 @@ function crearContacto(): Contacto {
   };
 }
 
+let secuenciaDireccion = 0;
+
 function crearDireccion(): Direccion {
   return {
+    uid: `d${++secuenciaDireccion}`,
     tipo: "COMERCIAL",
     etiqueta: "",
     direccion: "",
@@ -332,19 +338,42 @@ export default function NuevoClientePage() {
   const [direcciones, setDirecciones] = useState<Direccion[]>([]);
   const [documentos, setDocumentos] = useState<Documento[]>([]);
   const [distritosPorDireccion, setDistritosPorDireccion] = useState<
-    Record<number, Opcion[]>
+    Record<string, Opcion[]>
   >({});
   const [ciudadesPorDireccion, setCiudadesPorDireccion] = useState<
-    Record<number, Opcion[]>
+    Record<string, Opcion[]>
   >({});
   const [error, setError] = useState("");
   const [pestanaConError, setPestanaConError] = useState("");
   const [aviso, setAviso] = useState("");
   const [guardando, setGuardando] = useState(false);
+  // CLI-D01: permiso VER informado por la API desde la sesión del servidor. Sin VER no hay lista ni fichas: la alta termina en una pantalla propia y no ofrece enlaces a ellas.
+  const [puedeVer, setPuedeVer] = useState(false);
+  const [altaFinalizada, setAltaFinalizada] = useState(false);
   // Cliente ya creado (identidad conservada): a partir de aquí el formulario nunca vuelve a crear otro; solo reintenta documentos pendientes y el cierre.
   const [altaCreada, setAltaCreada] = useState<{ id: string } | null>(null);
   const [docsSubidos, setDocsSubidos] = useState<string[]>([]);
   const [erroresDocs, setErroresDocs] = useState<Record<string, string>>({});
+
+  // CLI-D03: cargas por dirección con identidad estable y tokens; cambiar departamento/distrito/país o quitar la dirección invalida lo pendiente (ver lib/clientes/geografia-cargas.ts).
+  const [geo] = useState(() => {
+    async function pedirGeo(url: string): Promise<Opcion[]> {
+      const respuesta = await fetch(url, { cache: "no-store" });
+      const datos = (await respuesta.json()) as { datos?: Opcion[]; error?: string };
+
+      if (!respuesta.ok) throw new Error(datos.error ?? "No fue posible cargar la ubicación.");
+
+      return datos.datos ?? [];
+    }
+
+    return crearCargasGeograficas({
+      pedirDistritos: (dep) => pedirGeo(`/api/clientes?catalogo=distritos&departamento=${encodeURIComponent(dep)}`),
+      pedirCiudades: (dep, dis) => pedirGeo(`/api/clientes?catalogo=ciudades&departamento=${encodeURIComponent(dep)}&distrito=${encodeURIComponent(dis)}`),
+      alDistritos: (uid, o) => setDistritosPorDireccion((actual) => ({ ...actual, [uid]: o as Opcion[] })),
+      alCiudades: (uid, o) => setCiudadesPorDireccion((actual) => ({ ...actual, [uid]: o as Opcion[] })),
+      alError: setError,
+    });
+  });
 
   // CLI-A02: avisa antes de perder datos escritos (ficha, contactos, direcciones, documentos con archivo). Tras crear el cliente solo protege los archivos que faltan por subir.
   const sucio = altaCreada
@@ -360,12 +389,15 @@ export default function NuevoClientePage() {
       });
       const datos = (await respuesta.json()) as {
         catalogos?: Partial<Catalogos>;
+        permisos?: { ver?: boolean };
         error?: string;
       };
 
       if (!respuesta.ok) {
         throw new Error(datos.error ?? "No fue posible cargar los catálogos.");
       }
+
+      setPuedeVer(datos.permisos?.ver === true);
 
       const respuestaCatalogos = datos.catalogos ?? {};
 
@@ -511,10 +543,11 @@ export default function NuevoClientePage() {
     );
   }
 
-  async function seleccionarDepartamento(indice: number, codigo: string) {
+  function seleccionarDepartamento(indice: number, codigo: string) {
     const departamento = catalogos.departamentosParaguay.find(
       (opcion) => String(opcion.codigo) === codigo,
     );
+    const uid = direcciones[indice]?.uid;
 
     actualizarDireccion(indice, "departamentoCodigo", codigo);
     actualizarDireccion(indice, "departamento", departamento?.nombre ?? "");
@@ -522,90 +555,32 @@ export default function NuevoClientePage() {
     actualizarDireccion(indice, "distrito", "");
     actualizarDireccion(indice, "ciudadCodigo", "");
     actualizarDireccion(indice, "ciudad", "");
-    setCiudadesPorDireccion((actual) => ({ ...actual, [indice]: [] }));
 
-    if (!codigo) {
-      setDistritosPorDireccion((actual) => ({ ...actual, [indice]: [] }));
-      return;
-    }
-
-    try {
-      const respuesta = await fetch(
-        `/api/clientes?catalogo=distritos&departamento=${encodeURIComponent(codigo)}`,
-        { cache: "no-store" },
-      );
-      const datos = (await respuesta.json()) as {
-        datos?: Opcion[];
-        error?: string;
-      };
-
-      if (!respuesta.ok) throw new Error(datos.error);
-
-      setDistritosPorDireccion((actual) => ({
-        ...actual,
-        [indice]: datos.datos ?? [],
-      }));
-    } catch (errorCarga) {
-      setError(
-        errorCarga instanceof Error
-          ? errorCarga.message
-          : "No fue posible cargar los distritos.",
-      );
-    }
+    return uid ? geo.elegirDepartamento(uid, codigo) : Promise.resolve();
   }
 
-  async function seleccionarDistrito(indice: number, codigo: string) {
-    const distrito = (distritosPorDireccion[indice] ?? []).find(
+  function seleccionarDistrito(indice: number, codigo: string) {
+    const direccion = direcciones[indice];
+    const distrito = (distritosPorDireccion[direccion?.uid ?? ""] ?? []).find(
       (opcion) => String(opcion.codigo) === codigo,
     );
-    const departamentoCodigo = direcciones[indice]?.departamentoCodigo ?? "";
 
     actualizarDireccion(indice, "distritoCodigo", codigo);
     actualizarDireccion(indice, "distrito", distrito?.nombre ?? "");
     actualizarDireccion(indice, "ciudadCodigo", "");
     actualizarDireccion(indice, "ciudad", "");
 
-    if (!codigo || !departamentoCodigo) {
-      setCiudadesPorDireccion((actual) => ({ ...actual, [indice]: [] }));
-      return;
-    }
-
-    try {
-      const respuesta = await fetch(
-        `/api/clientes?catalogo=ciudades&departamento=${encodeURIComponent(
-          departamentoCodigo,
-        )}&distrito=${encodeURIComponent(codigo)}`,
-        { cache: "no-store" },
-      );
-      const datos = (await respuesta.json()) as {
-        datos?: Opcion[];
-        error?: string;
-      };
-
-      if (!respuesta.ok) throw new Error(datos.error);
-
-      setCiudadesPorDireccion((actual) => ({
-        ...actual,
-        [indice]: datos.datos ?? [],
-      }));
-    } catch (errorCarga) {
-      setError(
-        errorCarga instanceof Error
-          ? errorCarga.message
-          : "No fue posible cargar las ciudades.",
-      );
-    }
+    return direccion ? geo.elegirDistrito(direccion.uid, direccion.departamentoCodigo, codigo) : Promise.resolve();
   }
 
   function seleccionarCiudad(indice: number, codigo: string) {
-    const ciudad = (ciudadesPorDireccion[indice] ?? []).find(
+    const ciudad = (ciudadesPorDireccion[direcciones[indice]?.uid ?? ""] ?? []).find(
       (opcion) => String(opcion.codigo) === codigo,
     );
 
     actualizarDireccion(indice, "ciudadCodigo", codigo);
     actualizarDireccion(indice, "ciudad", ciudad?.nombre ?? "");
   }
-
   // Valida los seis conjuntos antes del POST con las mismas reglas que hoy aplica la API
   // (sin reglas nuevas): nada se descarta en silencio y el error apunta a pestaña y campo.
   function validar(): Incidencia | null {
@@ -912,6 +887,13 @@ export default function NuevoClientePage() {
   }
 
   function terminarAlta() {
+    // CLI-D01: quien solo puede CREAR no tiene acceso a la lista ni a las fichas; termina en una pantalla propia que permite iniciar otro alta.
+    if (!puedeVer) {
+      setAltaFinalizada(true);
+
+      return;
+    }
+
     router.push("/clientes?ok=creado");
     router.refresh();
   }
@@ -939,7 +921,7 @@ export default function NuevoClientePage() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           // Los documentos son archivos reales: se suben a almacenamiento privado DESPUÉS de crear el cliente.
-          body: JSON.stringify({ ...formulario, contactos, direcciones, documentos: [] }),
+          body: JSON.stringify({ ...formulario, contactos, direcciones: direcciones.map(({ uid, ...resto }) => { void uid; return resto; }), documentos: [] }),
         });
         const datos = (await respuesta.json()) as { error?: string; cliente?: { id?: string } };
 
@@ -1046,6 +1028,26 @@ export default function NuevoClientePage() {
     { value: "OTRO", label: "Otro" },
   ];
 
+  if (altaFinalizada) {
+    return (
+      <main className="clienteNuevo">
+        <header className="clienteNuevo__header">
+          <div>
+            <h1>Cliente registrado</h1>
+          </div>
+        </header>
+        <div className="clienteNuevo__card" role="status">
+          <p>El cliente se registró correctamente y su carga inicial de documentos quedó cerrada. Su perfil puede registrar clientes, pero no consultar la lista ni las fichas.</p>
+          <div className="clienteNuevo__footer">
+            <button className="clienteNuevo__primario" onClick={() => window.location.assign("/clientes/nuevo")} type="button">
+              Registrar otro cliente
+            </button>
+          </div>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main className="clienteNuevo">
       <header className="clienteNuevo__header">
@@ -1053,7 +1055,7 @@ export default function NuevoClientePage() {
           <nav className="clienteNuevo__miga" aria-label="Ruta de navegación">
             <span>Maestros</span>
             <i aria-hidden="true">/</i>
-            <Link href="/clientes">Clientes</Link>
+            {puedeVer ? <Link href="/clientes">Clientes</Link> : <span>Clientes</span>}
             <i aria-hidden="true">/</i>
             <span aria-current="page">Nuevo cliente</span>
           </nav>
@@ -1061,9 +1063,11 @@ export default function NuevoClientePage() {
           <h1>Nuevo cliente</h1>
         </div>
 
-        <Link href="/clientes" className="clienteNuevo__secundario">
-          ← Volver a clientes
-        </Link>
+        {puedeVer ? (
+          <Link href="/clientes" className="clienteNuevo__secundario">
+            ← Volver a clientes
+          </Link>
+        ) : null}
       </header>
 
       <form onSubmit={guardar} className="clienteNuevo__card">
@@ -1072,8 +1076,12 @@ export default function NuevoClientePage() {
             {error}
             {altaCreada ? (
               <>
-                {" "}
-                <Link href={`/clientes/${altaCreada.id}`}>Ir a la ficha del cliente creado</Link>
+                {puedeVer ? (
+                  <>
+                    {" "}
+                    <Link href={`/clientes/${altaCreada.id}`}>Ir a la ficha del cliente creado</Link>
+                  </>
+                ) : null}
               </>
             ) : null}
           </div>
@@ -1747,14 +1755,15 @@ export default function NuevoClientePage() {
               const esParaguay = direccion.paisCodigo === "PRY";
 
               return (
-                <article className="clienteNuevo__repetido" key={indice}>
+                <article className="clienteNuevo__repetido" key={direccion.uid}>
                   <CabeceraRepetido
                     etiqueta={`Dirección ${indice + 1}`}
-                    onEliminar={() =>
+                    onEliminar={() => {
+                      geo.quitar(direccion.uid);
                       setDirecciones((actuales) =>
-                        actuales.filter((_, posicion) => posicion !== indice),
-                      )
-                    }
+                        actuales.filter((x) => x.uid !== direccion.uid),
+                      );
+                    }}
                   />
 
                   <div className="clienteNuevo__grid clienteNuevo__grid--cuatro">
@@ -1808,14 +1817,7 @@ export default function NuevoClientePage() {
                         actualizarDireccion(indice, "distrito", "");
                         actualizarDireccion(indice, "ciudadCodigo", "");
                         actualizarDireccion(indice, "ciudad", "");
-                        setDistritosPorDireccion((actual) => ({
-                          ...actual,
-                          [indice]: [],
-                        }));
-                        setCiudadesPorDireccion((actual) => ({
-                          ...actual,
-                          [indice]: [],
-                        }));
+                        geo.cambiarPais(direccion.uid);
                       }}
                       opciones={catalogos.paises.map((pais) => ({
                         value: String(pais.codigo ?? ""),
@@ -1859,7 +1861,7 @@ export default function NuevoClientePage() {
                           void seleccionarDistrito(indice, valor)
                         }
                         opciones={opcionesCatalogo(
-                          distritosPorDireccion[indice] ?? [],
+                          distritosPorDireccion[direccion.uid] ?? [],
                           "Seleccione un distrito",
                         )}
                         value={direccion.distritoCodigo}
@@ -1869,7 +1871,7 @@ export default function NuevoClientePage() {
                         label="Ciudad"
                         onChange={(valor) => seleccionarCiudad(indice, valor)}
                         opciones={opcionesCatalogo(
-                          ciudadesPorDireccion[indice] ?? [],
+                          ciudadesPorDireccion[direccion.uid] ?? [],
                           "Seleccione una ciudad",
                         )}
                         value={direccion.ciudadCodigo}
@@ -2205,7 +2207,7 @@ export default function NuevoClientePage() {
         ) : null}
 
         <footer className="clienteNuevo__footer">
-          {altaCreada ? null : (
+          {altaCreada || !puedeVer ? null : (
             <Link href="/clientes" className="clienteNuevo__secundario">
               Cancelar
             </Link>

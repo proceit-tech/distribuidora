@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import styles from "../page.module.css";
 import { TelefonoPais } from "@/components/clientes/telefono-pais";
+import { cambiarTipoDireccion, marcarDireccionFiscal } from "@/lib/clientes/direccion-fiscal";
+import { crearCargasGeograficas } from "@/lib/clientes/geografia-cargas";
 import { validarTelefono } from "@/lib/fiscal/telefono";
 
 // Edición de contactos y direcciones del cliente (mismas tablas y campos que el alta). Los documentos son archivos y se gestionan
@@ -154,7 +156,6 @@ export function HijosEditor({ tab, valor, onChange, paises, departamentos, onErr
   const [distritos, setDistritos] = useState<Record<string, OpcionGeo[]>>({});
   const [ciudades, setCiudades] = useState<Record<string, OpcionGeo[]>>({});
   const cargados = useRef(new Set<string>());
-
   async function pedir(url: string): Promise<OpcionGeo[]> {
     const r = await fetch(url, { cache: "no-store" });
     const j = (await r.json()) as { datos?: OpcionGeo[]; error?: string };
@@ -162,46 +163,38 @@ export function HijosEditor({ tab, valor, onChange, paises, departamentos, onErr
     return j.datos ?? [];
   }
 
-  // Direcciones ya guardadas: precarga distritos y ciudades para mostrar la selección actual.
+  // CLI-D03: cada dirección se identifica por su clave estable `k`; cambiar departamento/distrito/país o quitarla invalida sus respuestas pendientes (incluida la precarga inicial).
+  const [geo] = useState(() => crearCargasGeograficas({
+    pedirDistritos: (dep) => pedir(`/api/clientes?catalogo=distritos&departamento=${encodeURIComponent(dep)}`),
+    pedirCiudades: (dep, dis) => pedir(`/api/clientes?catalogo=ciudades&departamento=${encodeURIComponent(dep)}&distrito=${encodeURIComponent(dis)}`),
+    alDistritos: (k, o) => setDistritos((a) => ({ ...a, [k]: o })),
+    alCiudades: (k, o) => setCiudades((a) => ({ ...a, [k]: o })),
+    alError: onError,
+  }));
+
+  // Direcciones ya guardadas: precarga distritos y ciudades para mostrar la selección actual (una precarga antigua no pisa la elección posterior del operador).
   useEffect(() => {
     for (const d of valor.direcciones) {
       if (d.paisCodigo !== "PRY" || !d.departamentoCodigo || cargados.current.has(d.k)) continue;
       cargados.current.add(d.k);
-      void (async () => {
-        try {
-          const dis = await pedir(`/api/clientes?catalogo=distritos&departamento=${encodeURIComponent(d.departamentoCodigo)}`);
-          setDistritos((a) => ({ ...a, [d.k]: dis }));
-          if (d.distritoCodigo) {
-            const ciu = await pedir(`/api/clientes?catalogo=ciudades&departamento=${encodeURIComponent(d.departamentoCodigo)}&distrito=${encodeURIComponent(d.distritoCodigo)}`);
-            setCiudades((a) => ({ ...a, [d.k]: ciu }));
-          }
-        } catch (e) {
-          onError(e instanceof Error ? e.message : "No fue posible cargar la ubicación.");
-        }
-      })();
+      void geo.precargar(d.k, d.departamentoCodigo, d.distritoCodigo);
     }
-  }, [valor.direcciones]); // eslint-disable-line react-hooks/exhaustive-deps
-
+  }, [valor.direcciones, geo]);
   const setC = (k: string, p: Partial<ContactoForm>) => onChange({ ...valor, contactos: valor.contactos.map((x) => (x.k === k ? { ...x, ...p } : x)) });
   const setD = (k: string, p: Partial<DireccionForm>) => onChange({ ...valor, direcciones: valor.direcciones.map((x) => (x.k === k ? { ...x, ...p } : x)) });
 
   const unico = <T extends { k: string }>(lista: T[], k: string, campo: keyof T, marcado: boolean): T[] =>
     lista.map((x) => (x.k === k ? { ...x, [campo]: marcado } : marcado ? { ...x, [campo]: false } : x));
 
-  async function elegirDepartamento(d: DireccionForm, codigo: string) {
+  function elegirDepartamento(d: DireccionForm, codigo: string) {
     const dep = departamentos.find((o) => String(o.codigo) === codigo);
     setD(d.k, { departamentoCodigo: codigo, departamento: dep?.nombre ?? "", distritoCodigo: "", distrito: "", ciudadCodigo: "", ciudad: "" });
-    setCiudades((a) => ({ ...a, [d.k]: [] }));
-    if (!codigo) return setDistritos((a) => ({ ...a, [d.k]: [] }));
-    try { setDistritos((a) => ({ ...a, [d.k]: [] })); const r = await pedir(`/api/clientes?catalogo=distritos&departamento=${encodeURIComponent(codigo)}`); setDistritos((a) => ({ ...a, [d.k]: r })); }
-    catch (e) { onError(e instanceof Error ? e.message : "No fue posible cargar los distritos."); }
+    return geo.elegirDepartamento(d.k, codigo);
   }
-  async function elegirDistrito(d: DireccionForm, codigo: string) {
+  function elegirDistrito(d: DireccionForm, codigo: string) {
     const dis = (distritos[d.k] ?? []).find((o) => String(o.codigo) === codigo);
     setD(d.k, { distritoCodigo: codigo, distrito: dis?.nombre ?? "", ciudadCodigo: "", ciudad: "" });
-    if (!codigo) return setCiudades((a) => ({ ...a, [d.k]: [] }));
-    try { const r = await pedir(`/api/clientes?catalogo=ciudades&departamento=${encodeURIComponent(d.departamentoCodigo)}&distrito=${encodeURIComponent(codigo)}`); setCiudades((a) => ({ ...a, [d.k]: r })); }
-    catch (e) { onError(e instanceof Error ? e.message : "No fue posible cargar las ciudades."); }
+    return geo.elegirDistrito(d.k, d.departamentoCodigo, codigo);
   }
 
   if (tab === "contactos") {
@@ -250,10 +243,10 @@ export function HijosEditor({ tab, valor, onChange, paises, departamentos, onErr
         {valor.direcciones.length === 0 ? <p className={styles.emptyHint}>Este cliente no tiene direcciones registradas.</p> : null}
         {valor.direcciones.map((d, i) => (
           <Fila key={d.k} titulo={`Dirección ${i + 1}`} existente={!!d.id}
-            onQuitar={() => onChange({ ...valor, direcciones: valor.direcciones.filter((x) => x.k !== d.k), direccionesEliminar: d.id ? [...valor.direccionesEliminar, d.id] : valor.direccionesEliminar })}>
+            onQuitar={() => { geo.quitar(d.k); onChange({ ...valor, direcciones: valor.direcciones.filter((x) => x.k !== d.k), direccionesEliminar: d.id ? [...valor.direccionesEliminar, d.id] : valor.direccionesEliminar }); }}>
             <div className={styles.gridFour}>
               <Campo label="Tipo *">
-                <Lista value={d.tipo} onChange={(v) => onChange({ ...valor, direcciones: valor.direcciones.map((x) => (x.k === d.k ? { ...x, tipo: v, esFiscal: v === "FISCAL" ? true : x.esFiscal } : v === "FISCAL" ? { ...x, esFiscal: false } : x)) })}>
+                <Lista value={d.tipo} onChange={(v) => onChange({ ...valor, direcciones: cambiarTipoDireccion(valor.direcciones, (x) => x.k === d.k, v) })}>
                   <option value="FISCAL">Fiscal</option><option value="COMERCIAL">Comercial</option><option value="ENTREGA">Entrega</option><option value="SUCURSAL">Sucursal</option><option value="OTRA">Otra</option>
                 </Lista>
               </Campo>
@@ -263,7 +256,7 @@ export function HijosEditor({ tab, valor, onChange, paises, departamentos, onErr
               <Campo label="País *">
                 <Lista value={d.paisCodigo} onChange={(v) => {
                   setD(d.k, { paisCodigo: v, paisNombre: paises.find((p) => p.codigo === v)?.nombre ?? "", departamentoCodigo: "", departamento: "", distritoCodigo: "", distrito: "", ciudadCodigo: "", ciudad: "" });
-                  setDistritos((a) => ({ ...a, [d.k]: [] })); setCiudades((a) => ({ ...a, [d.k]: [] }));
+                  geo.cambiarPais(d.k);
                 }}>
                   {!paises.some((p) => p.codigo === d.paisCodigo) ? <option value={d.paisCodigo}>{d.paisNombre || d.paisCodigo}</option> : null}
                   {paises.map((p) => <option key={p.codigo} value={p.codigo}>{p.nombre}</option>)}
@@ -287,7 +280,7 @@ export function HijosEditor({ tab, valor, onChange, paises, departamentos, onErr
               <Campo label="Longitud"><Texto inputMode="decimal" value={d.longitud} onChange={(v) => setD(d.k, { longitud: v })} /></Campo>
             </div>
             <div className={styles.checkRow}>
-              <Marca etiqueta="Dirección fiscal" marcado={d.esFiscal} cambiar={(m) => onChange({ ...valor, direcciones: unico(valor.direcciones, d.k, "esFiscal", m) })} />
+              <Marca etiqueta="Dirección fiscal" marcado={d.esFiscal} cambiar={(m) => onChange({ ...valor, direcciones: marcarDireccionFiscal(valor.direcciones, (x) => x.k === d.k, m) })} />
               <Marca etiqueta="Dirección de entrega predeterminada" marcado={d.esEntregaDefault} cambiar={(m) => onChange({ ...valor, direcciones: unico(valor.direcciones, d.k, "esEntregaDefault", m) })} />
             </div>
             <Campo label="Observación de la dirección"><textarea className={styles.textarea} maxLength={500} value={d.observacion} onChange={(e) => setD(d.k, { observacion: e.target.value })} /></Campo>

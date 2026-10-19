@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { resolverPais, resolverUbicacionParaguay, validarPaisPorOperacion } from "@/lib/geografia/referencia";
 
 import { denyIfNoPermission } from "@/lib/auth/permissions";
+import { finalidadGet, puedeLeer } from "@/lib/clientes/permisos-acceso";
 import { validarRucDv } from "@/lib/fiscal/calcular-dv-ruc";
 import {
   textoCrudo,
@@ -409,8 +410,13 @@ export async function GET(request: Request) {
       );
     }
 
-  const denegadoVer = await denyIfNoPermission(session, "CLIENTES", "VER");
-  if (denegadoVer) return denegadoVer;
+    // CLI-D01: la autorización depende de la FINALIDAD. Catálogos mínimos y geografía: VER o CREAR (alta); lista y demás datos de clientes: solo VER. Nada se concede por otro permiso.
+    const tieneVer = (await denyIfNoPermission(session, "CLIENTES", "VER")) === null;
+    const tieneCrear = (await denyIfNoPermission(session, "CLIENTES", "CREAR")) === null;
+
+    if (!puedeLeer(finalidadGet(url), { ver: tieneVer, crear: tieneCrear })) {
+      return NextResponse.json({ error: "No tiene permiso para esta acción." }, { status: 403 });
+    }
 
     const db = await obtenerDb();
     const respuestaGeografica = await catalogoGeografico(url, db);
@@ -575,6 +581,8 @@ export async function GET(request: Request) {
     ]);
 
     return NextResponse.json({
+      // CLI-D01: permisos del usuario autenticado (nunca del navegador) para que la alta decida sus enlaces de retorno.
+      permisos: { ver: tieneVer },
       clientes: clientesResultado.rows,
       catalogos: {
         grupos: gruposResultado.rows,

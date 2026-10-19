@@ -459,6 +459,10 @@ export default function ClienteDetallePage() {
   const [saving, setSaving] =
     useState(false);
 
+  // CLI-D02: permiso EDITAR del usuario autenticado (lo informa la API desde la sesión del servidor). Sin él la ficha es solo de lectura; el PUT lo sigue exigiendo.
+  const [puedeEditar, setPuedeEditar] =
+    useState(false);
+
   const [error, setError] =
     useState("");
 
@@ -528,6 +532,7 @@ export default function ClienteDetallePage() {
             direcciones?: Parameters<typeof hijosDesdeApi>[0]["direcciones"];
             documentos?: DocumentoCliente[];
             aptitudSifen?: { apto: boolean; pendientes: string[] };
+            permisos?: { editar?: boolean };
             referenciasHistoricas?: Record<string, { id: string; codigo: string; nombre: string }>;
             error?: string;
           };
@@ -582,6 +587,7 @@ export default function ClienteDetallePage() {
           setHijos(hijosIniciales);
           setDocumentos(datos.documentos ?? []);
           setAptitud(datos.aptitudSifen ?? null);
+          setPuedeEditar(datos.permisos?.editar === true);
           setCliente(datos.cliente);
           setForm(formularioInicial);
           setHuellaBase(JSON.stringify({ form: formularioInicial, hijos: hijosIniciales }));
@@ -719,7 +725,7 @@ export default function ClienteDetallePage() {
   ) {
     event.preventDefault();
 
-    if (!cliente || !form) {
+    if (!cliente || !form || !puedeEditar) {
       return;
     }
 
@@ -1091,8 +1097,7 @@ export default function ClienteDetallePage() {
           </h1>
 
           <p>
-            Ficha del cliente y edición de
-            datos maestros.
+            {puedeEditar ? "Ficha del cliente y edición de datos maestros." : "Ficha del cliente (solo lectura)."}
           </p>
         </div>
 
@@ -1253,7 +1258,10 @@ export default function ClienteDetallePage() {
           ))}
         </nav>
 
-        <div
+        {/* CLI-D02: con CLIENTES.VER y sin EDITAR todos los campos, contactos, direcciones y acciones de documentos quedan deshabilitados (las descargas y la lectura siguen disponibles). */}
+        <fieldset
+          disabled={!puedeEditar}
+          style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}
           className={styles.content}
         >
           {tab === "fiscal" ? (
@@ -2436,7 +2444,7 @@ export default function ClienteDetallePage() {
               </div>
             </section>
           ) : null}
-        </div>
+        </fieldset>
 
         <footer
           className={styles.footer}
@@ -2447,13 +2455,13 @@ export default function ClienteDetallePage() {
                 styles.footerHint
               }
             >
-              Registro local
+              {puedeEditar ? "Registro local" : "Solo lectura"}
             </span>
 
             <small>
-              Los cambios se reflejarán
-              inmediatamente en la lista de
-              clientes.
+              {puedeEditar
+                ? "Los cambios se reflejarán inmediatamente en la lista de clientes."
+                : "Su perfil puede consultar este cliente, pero no modificarlo."}
             </small>
           </div>
 
@@ -2471,17 +2479,19 @@ export default function ClienteDetallePage() {
               Cancelar
             </Link>
 
-            <button
-              type="submit"
-              className={
-                styles.saveButton
-              }
-              disabled={saving}
-            >
-              {saving
-                ? "Actualizando..."
-                : "Actualizar cliente"}
-            </button>
+            {puedeEditar ? (
+              <button
+                type="submit"
+                className={
+                  styles.saveButton
+                }
+                disabled={saving}
+              >
+                {saving
+                  ? "Actualizando..."
+                  : "Actualizar cliente"}
+              </button>
+            ) : null}
           </div>
         </footer>
       </form>

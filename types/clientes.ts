@@ -33,7 +33,8 @@ export type ClienteLista = {
   celularDdi: string;
   /** Contacto marcado como principal en la pestaña Contactos (campos vacíos si no hay). */
   contactoPrincipal: { nombre: string; telefono: string; celular: string; telefonoDdi: string; celularDdi: string };
-  limiteCredito: number;
+  /** Decimal exacto en texto (numeric(18,4)); nunca Number. */
+  limiteCredito: string;
   /** Moneda de los límites (moneda predeterminada del cliente); vacía si no está definida. */
   moneda: string;
   grupoClienteId: string;
