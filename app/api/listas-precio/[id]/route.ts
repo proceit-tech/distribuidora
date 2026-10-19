@@ -45,6 +45,9 @@ export async function GET(_request: Request, contexto: Contexto) {
   const denegado = await denyIfNoPermission(session, "LISTAS_PRECIO", "VER");
   if (denegado) return denegado;
 
+  // LPR-D02: permiso EDITAR de la sesión del servidor; sin él la ficha es de consulta (el PUT lo exige igualmente).
+  const puedeEditar = (await denyIfNoPermission(session, "LISTAS_PRECIO", "EDITAR")) === null;
+
   const { id } = await contexto.params;
   if (!UUID.test(id)) return noEncontrado();
 
@@ -128,7 +131,7 @@ export async function GET(_request: Request, contexto: Contexto) {
     }
     const productos = (items.rows as Array<{ id: string }>).map((i) => ({ ...i, escalas: escalasPorItem.get(i.id) ?? [] }));
 
-    return NextResponse.json({ lista: { ...principal.rows[0], productos, reglasComerciales: reglas.rows } });
+    return NextResponse.json({ lista: { ...principal.rows[0], productos, reglasComerciales: reglas.rows }, permisos: { editar: puedeEditar } });
   } catch (error) {
     console.error("Error al cargar lista de precios:", error);
     return NextResponse.json({ error: "No fue posible cargar la lista de precios." }, { status: 500 });

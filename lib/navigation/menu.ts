@@ -69,6 +69,14 @@ export const NAVIGATION_GROUPS: ShellNavigationGroup[] = [
         permission: "LISTAS_PRECIO.VER",
       },
       {
+        // LPR-D01: destino real del perfil que solo puede CREAR listas (alta sin acceso al listado ni a las fichas). Se oculta si el usuario también puede VER.
+        id: "price-lists-new",
+        label: "Nueva lista de precios",
+        href: "/listas-precio/nuevo",
+        icon: "prices",
+        permission: "LISTAS_PRECIO.CREAR",
+      },
+      {
         id: "commercial-catalogs",
         label: "Catálogos comerciales",
         href: "/catalogos-comerciales",
@@ -388,6 +396,7 @@ const V1_HREFS = new Set([
   "/productos/nuevo",
   "/productos/catalogos",
   "/listas-precio",
+  "/listas-precio/nuevo",
   "/catalogos-comerciales",
   "/stock",
   "/reposicion",
@@ -431,6 +440,7 @@ function canShowItem(item: ShellNavigationItem, access: NavigationAccess) {
   // CLI-D01: «Nuevo cliente» solo para quien crea sin poder consultar (el administrador y quien tiene VER usan «Clientes»).
   if (item.id === "clients-new") return !access.isCompanyAdmin && access.permissions.includes("CLIENTES.CREAR") && !access.permissions.includes("CLIENTES.VER");
   if (item.id === "products-new") return !access.isCompanyAdmin && access.permissions.includes("PRODUCTOS.CREAR") && !access.permissions.includes("PRODUCTOS.VER");
+  if (item.id === "price-lists-new") return !access.isCompanyAdmin && access.permissions.includes("LISTAS_PRECIO.CREAR") && !access.permissions.includes("LISTAS_PRECIO.VER");
   if (item.id === "suppliers-new") return !access.isCompanyAdmin && access.permissions.includes("PROVEEDORES.CREAR") && !access.permissions.includes("PROVEEDORES.VER");
   if (access.isCompanyAdmin) return true;
   if (!item.permission) return false;

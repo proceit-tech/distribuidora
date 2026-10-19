@@ -16,17 +16,31 @@ export async function cargarCatalogosListas(): Promise<CatalogoListasPrecio> {
   return ((await r.json()) as { catalogos: CatalogoListasPrecio }).catalogos;
 }
 
-export async function cargarListas(): Promise<ListaPrecioFila[]> {
+/** LPR-D02: las listas y los permisos de la sesión del servidor (la pantalla solo ofrece «Nueva lista» con CREAR). */
+export async function cargarListasConPermisos(): Promise<{ listas: ListaPrecioFila[]; puedeCrear: boolean }> {
   const r = await fetch("/api/listas-precio", { cache: "no-store" });
   if (!r.ok) throw new Error(await mensajeError(r, "No fue posible cargar las listas de precios."));
-  return ((await r.json()) as { listas: ListaPrecioFila[] }).listas;
+  const j = (await r.json()) as { listas: ListaPrecioFila[]; permisos?: { crear?: boolean } };
+
+  return { listas: j.listas, puedeCrear: j.permisos?.crear === true };
 }
 
-export async function cargarLista(id: string): Promise<ListaPrecioDetalle | null> {
+export async function cargarListas(): Promise<ListaPrecioFila[]> {
+  return (await cargarListasConPermisos()).listas;
+}
+
+/** LPR-D02: la ficha y el permiso EDITAR de la sesión del servidor (sin él, consulta). */
+export async function cargarListaConPermisos(id: string): Promise<{ lista: ListaPrecioDetalle; puedeEditar: boolean } | null> {
   const r = await fetch(`/api/listas-precio/${id}`, { cache: "no-store" });
   if (r.status === 404) return null;
   if (!r.ok) throw new Error(await mensajeError(r, "No fue posible cargar la lista de precios."));
-  return ((await r.json()) as { lista: ListaPrecioDetalle }).lista;
+  const j = (await r.json()) as { lista: ListaPrecioDetalle; permisos?: { editar?: boolean } };
+
+  return { lista: j.lista, puedeEditar: j.permisos?.editar === true };
+}
+
+export async function cargarLista(id: string): Promise<ListaPrecioDetalle | null> {
+  return (await cargarListaConPermisos(id))?.lista ?? null;
 }
 
 export async function guardarLista(datos: NuevaListaPrecio, id?: string): Promise<void> {

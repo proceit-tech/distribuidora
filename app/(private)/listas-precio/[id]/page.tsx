@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 
 import ListaPrecioForm from "@/app/(private)/listas-precio/_components/lista-precio-form";
-import { cargarLista, guardarLista } from "@/lib/listas-precio/cliente-api";
+import { cargarListaConPermisos, guardarLista } from "@/lib/listas-precio/cliente-api";
 import type { ListaPrecioDetalle, NuevaListaPrecio } from "@/types/lista-precio";
 
 import styles from "./page.module.css";
@@ -15,14 +15,18 @@ export default function EditarListaPrecioPage() {
   const router = useRouter();
 
   const [lista, setLista] = useState<ListaPrecioDetalle | null>(null);
+  // LPR-D02: permiso EDITAR de la sesión del servidor; sin él la ficha es de consulta.
+  const [puedeEditar, setPuedeEditar] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   useEffect(() => {
     let activo = true;
-    cargarLista(params.id)
-      .then((l) => {
-        if (activo) setLista(l);
+    cargarListaConPermisos(params.id)
+      .then((r) => {
+        if (!activo) return;
+        setLista(r?.lista ?? null);
+        setPuedeEditar(r?.puedeEditar === true);
       })
       .catch((e: unknown) => {
         if (activo) setError(e instanceof Error ? e.message : "No fue posible cargar la lista de precios.");
@@ -53,5 +57,5 @@ export default function EditarListaPrecioPage() {
     );
   }
 
-  return <ListaPrecioForm mode="edit" initial={lista} onSave={guardar} />;
+  return <ListaPrecioForm mode="edit" initial={lista} onSave={guardar} soloLectura={!puedeEditar} />;
 }

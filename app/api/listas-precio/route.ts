@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import type { PoolClient } from "pg";
 
 import { denyIfNoPermission } from "@/lib/auth/permissions";
+import { decidirGetListas } from "@/lib/listas-precio/acceso-get";
 import {
   columnasLista,
   insertarHijos,
@@ -36,12 +37,21 @@ export async function GET(request: Request) {
   const session = await sesionActual();
   if (!session) return NextResponse.json({ error: "Sesión no válida." }, { status: 401 });
 
-  const denegado = await denyIfNoPermission(session, "LISTAS_PRECIO", "VER");
-  if (denegado) return denegado;
+  // LPR-D01: la autorización se decide por la FINALIDAD de la consulta (lib/listas-precio/acceso-get.ts). Solo `modo=catalogos` admite CREAR además de VER y, para CREAR-only, con respuesta MÍNIMA (sin clientes,
+  // productos con costos/precios ni listas existentes: política de visibilidad pendiente). La lista y cualquier otra consulta exigen VER.
+  const denegadoVer = await denyIfNoPermission(session, "LISTAS_PRECIO", "VER");
+  const tieneCrear = (await denyIfNoPermission(session, "LISTAS_PRECIO", "CREAR")) === null;
+  const tieneEditar = (await denyIfNoPermission(session, "LISTAS_PRECIO", "EDITAR")) === null;
+  const decision = decidirGetListas(new URL(request.url), { ver: !denegadoVer, crear: tieneCrear });
+
+  if (decision.tipo === "invalida") return NextResponse.json({ error: "Consulta no válida." }, { status: 400 });
+  if (decision.tipo === "denegada") return denegadoVer ?? NextResponse.json({ error: "No tiene permiso para esta acción." }, { status: 403 });
 
   const db = await obtenerDb();
   const empresaId = session.user.empresaId;
-  const soloCatalogos = new URL(request.url).searchParams.get("modo") === "catalogos";
+  const soloCatalogos = decision.finalidad === "CATALOGOS";
+  // LPR-D02: permisos de la SESIÓN del servidor para que la pantalla condicione sus acciones (las rutas POST/PUT siguen exigiéndolos).
+  const permisos = { ver: !denegadoVer, crear: tieneCrear, editar: tieneEditar };
 
   try {
     if (soloCatalogos) {
@@ -50,8 +60,8 @@ export async function GET(request: Request) {
         db.query(`SELECT id, codigo, nombre, activo FROM grupos_cliente WHERE empresa_id = $1 ORDER BY nombre`, [empresaId]),
         db.query(`SELECT id, codigo, nombre, activo FROM zonas_comerciales WHERE empresa_id = $1 ORDER BY nombre`, [empresaId]),
         db.query(`SELECT id, codigo, nombre, activo FROM canales_venta WHERE empresa_id = $1 ORDER BY nombre`, [empresaId]),
-        db.query(`SELECT id, codigo, razon_social AS nombre, activo FROM clientes WHERE empresa_id = $1 ORDER BY razon_social`, [empresaId]),
-        db.query(
+        decision.completo ? db.query(`SELECT id, codigo, razon_social AS nombre, activo FROM clientes WHERE empresa_id = $1 ORDER BY razon_social`, [empresaId]) : Promise.resolve({ rows: [] as unknown[] }),
+        !decision.completo ? Promise.resolve({ rows: [] as unknown[] }) : db.query(
           `SELECT p.id, p.codigo, p.descripcion, p.unidad_medida_id AS "unidadMedidaId", u.nombre AS "unidadMedidaNombre",
                   coalesce(cp.costo_promedio, 0)::float8 AS "costoPromedio", pr.precio::float8 AS "precioReferencia"
              FROM productos p
@@ -62,13 +72,19 @@ export async function GET(request: Request) {
             ORDER BY p.descripcion`,
           [empresaId],
         ),
-        db.query(
+        !decision.completo ? Promise.resolve({ rows: [] as unknown[] }) : db.query(
           `SELECT id, codigo, nombre, moneda_codigo AS "monedaCodigo", tipo_lista AS tipo, activo FROM listas_precio WHERE empresa_id = $1 ORDER BY nombre`,
           [empresaId],
         ),
         db.query(`SELECT moneda_base_codigo AS moneda FROM empresas WHERE id = $1`, [empresaId]),
       ]);
+      // LPR-D04: la moneda base REAL de la empresa; sin ella no se asume PYG.
+      const monedaBase = (base.rows[0] as { moneda?: string } | undefined)?.moneda;
+
+      if (!monedaBase) return NextResponse.json({ error: "No fue posible determinar la moneda base de la empresa." }, { status: 500 });
+
       return NextResponse.json({
+        permisos,
         catalogos: {
           monedas: monedas.rows,
           gruposCliente: grupos.rows,
@@ -77,7 +93,7 @@ export async function GET(request: Request) {
           clientes: clientes.rows,
           productos: productos.rows,
           listasBase: bases.rows,
-          monedaBase: (base.rows[0] as { moneda?: string } | undefined)?.moneda ?? "PYG",
+          monedaBase,
         },
       });
     }
@@ -109,7 +125,7 @@ export async function GET(request: Request) {
         ORDER BY l.activo DESC, l.es_referencia DESC, l.nombre`,
       [empresaId],
     );
-    return NextResponse.json({ listas: r.rows });
+    return NextResponse.json({ listas: r.rows, permisos });
   } catch (error) {
     console.error("Error al cargar listas de precios:", error);
     return NextResponse.json({ error: "No fue posible cargar las listas de precios." }, { status: 500 });

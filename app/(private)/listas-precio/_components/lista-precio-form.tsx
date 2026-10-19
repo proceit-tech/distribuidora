@@ -5,7 +5,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 
 import { CampoFecha } from "@/components/ui/campo-fecha";
 import { ajusteMasivo, decimalesMoneda, formatoMoneda, hoyAsuncion, margenBruto, redondearMoneda, tramosSuperpuestos } from "@/lib/listas-precio/calculos";
-import { cargarCatalogosListas } from "@/lib/listas-precio/cliente-api";
+import { cargarCatalogosVerificados, motivoBloqueoGuardarLista, type EstadoCatalogos } from "@/lib/listas-precio/carga-catalogos";
 import {
   advertenciasLista,
   idDeCampo,
@@ -36,7 +36,10 @@ import styles from "./lista-precio-form.module.css";
 type Props = {
   mode: "create" | "edit";
   initial?: ListaPrecioDetalle;
-  onSave: (data: NuevaListaPrecio) => Promise<void> | void;
+  /** LPR-D01: `puedeVer` (LISTAS_PRECIO.VER de la sesión) permite decidir el destino tras guardar. */
+  onSave: (data: NuevaListaPrecio, ctx: { puedeVer: boolean }) => Promise<void> | void;
+  /** LPR-D02: sin LISTAS_PRECIO.EDITAR la ficha es de consulta (datos no editables, sin guardar). */
+  soloLectura?: boolean;
 };
 
 const TABS: Array<{ id: TabLista; label: string }> = [
@@ -138,11 +141,14 @@ function Check({ etiqueta, checked, alCambiar, disabled }: { etiqueta: string; c
   );
 }
 
-export default function ListaPrecioForm({ mode, initial, onSave }: Props) {
+export default function ListaPrecioForm({ mode, initial, onSave, soloLectura = false }: Props) {
   const [tab, setTab] = useState<TabLista>("informacion");
   const [form, setForm] = useState<NuevaListaPrecio>(() => formularioInicial(initial));
   const [base, setBase] = useState(() => JSON.stringify(formularioInicial(initial)));
-  const [catalogo, setCatalogo] = useState<CatalogoListasPrecio | null>(null);
+  // LPR-D04: carga explícita CARGANDO / ERROR / CONFIGURADO; `intento` permite «Reintentar» sin perder el borrador.
+  const [cat, setCat] = useState<EstadoCatalogos>({ estado: "CARGANDO" });
+  const [intento, setIntento] = useState(0);
+  const catalogo: CatalogoListasPrecio | null = cat.estado === "CONFIGURADO" ? cat.catalogo : null;
   const [errores, setErrores] = useState<ErroresLista>({});
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -157,24 +163,31 @@ export default function ListaPrecioForm({ mode, initial, onSave }: Props) {
   const sucio = listaSucia(form, base);
   const moneda = form.monedaCodigo;
   const decimales = decimalesMoneda(moneda);
-  const monedaBase = catalogo?.monedaBase ?? "PYG";
-  const referenciaUtil = moneda === monedaBase;
+  // LPR-D04: la moneda base es la REAL de la empresa; mientras no se conozca no se asume ninguna (vacía).
+  const monedaBase = catalogo?.monedaBase ?? "";
+  const referenciaUtil = monedaBase !== "" && moneda === monedaBase;
+  // LPR-D01: sin LISTAS_PRECIO.VER no se ofrecen enlaces a la lista ni a las fichas (en edición el usuario ya tiene VER).
+  const puedeVerLista = mode === "edit" || (cat.estado === "CONFIGURADO" && cat.puedeVer);
+  const bloqueoCarga = motivoBloqueoGuardarLista(cat);
 
   useEffect(() => {
     let activo = true;
 
-    cargarCatalogosListas()
-      .then((c) => {
-        if (activo) setCatalogo(c);
+    // Diferido para no actualizar el estado de forma síncrona dentro del efecto. El borrador (`form`) no se toca al cargar ni al reintentar.
+    void Promise.resolve()
+      .then(() => {
+        if (activo) setCat({ estado: "CARGANDO" });
+
+        return cargarCatalogosVerificados((url) => fetch(url, { cache: "no-store" }));
       })
-      .catch((e: unknown) => {
-        if (activo) setError(e instanceof Error ? e.message : "No fue posible cargar los catálogos.");
+      .then((r) => {
+        if (activo) setCat(r);
       });
 
     return () => {
       activo = false;
     };
-  }, []);
+  }, [intento]);
 
   // LPR-A07: guard oficial (recarga/cierre y CUALQUIER enlace interno, también el menú lateral); sin aviso si no hay cambios efectivos. Tras guardar, `base` se alinea y el guard se retira.
   useProtegerCambios(sucio);
@@ -342,6 +355,15 @@ export default function ListaPrecioForm({ mode, initial, onSave }: Props) {
     event.preventDefault();
     setError("");
 
+    // Sin permiso de edición o sin catálogos confiables NO se envía nada (el borrador queda intacto).
+    if (soloLectura) return;
+
+    if (bloqueoCarga) {
+      setError(bloqueoCarga);
+
+      return;
+    }
+
     const locales = validarListaFormulario(form);
 
     if (Object.keys(locales).length > 0) {
@@ -371,7 +393,7 @@ export default function ListaPrecioForm({ mode, initial, onSave }: Props) {
     };
 
     try {
-      await onSave(datos);
+      await onSave(datos, { puedeVer: puedeVerLista });
       setBase(JSON.stringify(form)); // guardado: ya no hay cambios pendientes antes de salir de la pantalla
     } catch (e) {
       const campo = (e as { campo?: string | null }).campo ?? null;
@@ -398,9 +420,7 @@ export default function ListaPrecioForm({ mode, initial, onSave }: Props) {
           <nav className={styles.breadcrumb} aria-label="Ruta de navegación">
             <span>Maestros</span>
             <i aria-hidden="true">/</i>
-            <Link href="/listas-precio">
-              Listas de precios
-            </Link>
+            {puedeVerLista ? <Link href="/listas-precio">Listas de precios</Link> : <span>Listas de precios</span>}
             <i aria-hidden="true">/</i>
             <span aria-current="page">{mode === "create" ? "Nueva" : "Editar"}</span>
           </nav>
@@ -415,14 +435,25 @@ export default function ListaPrecioForm({ mode, initial, onSave }: Props) {
           ) : null}
         </div>
 
-        <Link href="/listas-precio" className={styles.secondaryButton}>
-          ← Volver a listas
-        </Link>
+        {puedeVerLista ? (
+          <Link href="/listas-precio" className={styles.secondaryButton}>
+            ← Volver a listas
+          </Link>
+        ) : null}
       </header>
 
       <form className={styles.card} onSubmit={submit} noValidate>
         {bloqueada ? (
           <div className={styles.aviso}>Lista de referencia de la empresa: venta, precio fijo, sin lista base ni alcance comercial. Sus precios son el precio de venta de referencia de Productos.</div>
+        ) : null}
+
+        {cat.estado === "ERROR" ? (
+          <div className={styles.error} role="alert">
+            No se pudieron cargar los catálogos: {cat.mensaje} No se puede guardar hasta que se carguen; lo escrito se conserva.{" "}
+            <button type="button" className={styles.secondaryButton} onClick={() => setIntento((n) => n + 1)}>
+              Reintentar
+            </button>
+          </div>
         ) : null}
 
         {error ? (
@@ -440,7 +471,7 @@ export default function ListaPrecioForm({ mode, initial, onSave }: Props) {
           ))}
         </nav>
 
-        <div className={styles.content}>
+        <fieldset className={styles.content} disabled={soloLectura} style={{ border: 0, margin: 0, minWidth: 0 }}>
           {tab === "informacion" ? (
             <>
               <div className={styles.gridFour}>
@@ -902,18 +933,24 @@ export default function ListaPrecioForm({ mode, initial, onSave }: Props) {
               </div>
             </>
           ) : null}
-        </div>
+        </fieldset>
 
         <footer className={styles.footer}>
           <small>{sucio ? "Hay cambios sin guardar." : "Sin cambios pendientes."}</small>
 
           <div className={styles.footerActions}>
-            <Link href="/listas-precio" className={styles.cancelButton}>
-              Cancelar
-            </Link>
-            <button type="submit" disabled={saving} className={styles.saveButton}>
-              {saving ? "Guardando..." : mode === "create" ? "Guardar lista" : "Actualizar lista"}
-            </button>
+            {puedeVerLista ? (
+              <Link href="/listas-precio" className={styles.cancelButton}>
+                Cancelar
+              </Link>
+            ) : null}
+            {soloLectura ? (
+              <span className={styles.meta}>Solo lectura: no tiene permiso para editar listas de precios.</span>
+            ) : (
+              <button type="submit" disabled={saving || bloqueoCarga !== null} title={bloqueoCarga ?? undefined} className={styles.saveButton}>
+                {saving ? "Guardando..." : mode === "create" ? "Guardar lista" : "Actualizar lista"}
+              </button>
+            )}
           </div>
         </footer>
       </form>
