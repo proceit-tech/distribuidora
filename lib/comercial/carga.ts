@@ -41,7 +41,42 @@ export async function cargarCatalogoComercial(ruta: string, clave: string, histo
   const p = j.permisos as Partial<PermisosComercial> | undefined;
 
   if (!p || typeof p.crear !== "boolean" || typeof p.editar !== "boolean") return { ...vacio, error: "La respuesta del catálogo no incluye los permisos esperados." };
-  if (j.monedas !== undefined && !Array.isArray(j.monedas)) return { ...vacio, error: "La respuesta del catálogo trae las monedas con un formato inesperado." };
+  // CC-D03: en Tipos de cambio las monedas son OBLIGATORIAS (un arreglo, aunque esté vacío): sin ellas no se puede registrar. Canales y zonas no las necesitan.
+  if (clave === "tiposCambio") {
+    if (!monedasValidas(j.monedas)) return { ...vacio, error: "La respuesta de los tipos de cambio no incluye las monedas o las trae con un formato inesperado." };
+  } else if (j.monedas !== undefined && !Array.isArray(j.monedas)) {
+    return { ...vacio, error: "La respuesta del catálogo trae las monedas con un formato inesperado." };
+  }
 
   return { filas: j[clave] as Array<Record<string, unknown>>, permisos: { crear: p.crear, editar: p.editar }, monedas: (j.monedas as MonedaComercial[] | undefined) ?? null, error: "" };
+}
+
+/** Un arreglo (posiblemente vacío) cuyos elementos son objetos con `codigo` de texto. */
+export function monedasValidas(m: unknown): m is MonedaComercial[] {
+  return Array.isArray(m) && m.every((x) => x !== null && typeof x === "object" && typeof (x as { codigo?: unknown }).codigo === "string");
+}
+
+/** CC-D01: monedas del alta (consulta mínima `modo=monedas`) y si la sesión puede ver el listado. Un fallo o una forma inválida NO se convierte en un selector vacío. */
+export async function cargarMonedasAlta(f: Fetch): Promise<{ ok: true; monedas: MonedaComercial[]; puedeVer: boolean } | { ok: false; mensaje: string }> {
+  let r: Response;
+
+  try {
+    r = await f("/api/catalogos-comerciales/tipos-cambio?modo=monedas");
+  } catch {
+    return { ok: false, mensaje: "No hubo conexión para cargar las monedas." };
+  }
+
+  type CuerpoMonedas = { error?: unknown; monedas?: unknown; permisos?: { ver?: unknown } };
+  let j: CuerpoMonedas | null = null;
+
+  try {
+    j = (await r.json()) as CuerpoMonedas;
+  } catch {
+    j = null;
+  }
+
+  if (!r.ok) return { ok: false, mensaje: `${typeof j?.error === "string" && j.error.trim() ? j.error : "No fue posible cargar las monedas."} (código ${r.status})` };
+  if (!j || !monedasValidas(j.monedas)) return { ok: false, mensaje: "La respuesta de las monedas no tiene el formato esperado." };
+
+  return { ok: true, monedas: j.monedas, puedeVer: j.permisos?.ver === true };
 }

@@ -3,6 +3,7 @@ import type { PoolClient } from "pg";
 
 import { denyIfNoPermission, getAccessContext, hasPermission } from "@/lib/auth/permissions";
 import { ErrorComercial, esUuid, validarCatalogoSimple, validarTipoCambio } from "@/lib/comercial/validacion";
+import { finalidadComercial } from "@/lib/comercial/acceso-get";
 import { cambioEnAlcance, igualDecimal, MENSAJE_ALCANCE_CAMBIO } from "@/lib/comercial/cambio-decimal";
 import { SQL_VERSION_COMERCIAL, exigirVersionComercial } from "@/lib/comercial/version";
 import { normalizarCambio } from "@/lib/listas-precio/calculos";
@@ -28,18 +29,27 @@ async function sesion() {
   return getCurrentSession();
 }
 
-export async function preparar(accion: "VER" | "CREAR" | "EDITAR"): Promise<Base> {
+export async function preparar(accion: "VER" | "CREAR" | "EDITAR" | "VER_O_CREAR"): Promise<Base> {
   if (!DEMO_MODE && !process.env.DATABASE_URL) {
     return { ok: false, respuesta: NextResponse.json({ error: "Servicio no disponible: base de datos no configurada." }, { status: 503 }) };
   }
   if (DEMO_MODE) {
-    return accion === "VER"
+    return accion === "VER" || accion === "VER_O_CREAR"
       ? { ok: false, respuesta: NextResponse.json({ demo: true }) }
       : { ok: false, respuesta: NextResponse.json({ error: "Operación no disponible en modo demo." }, { status: 400 }) };
   }
   const session = await sesion();
   if (!session) return { ok: false, respuesta: NextResponse.json({ error: "Sesión no válida." }, { status: 401 }) };
-  const denegado = await denyIfNoPermission(session, "LISTAS_PRECIO", accion);
+  // CC-D01: «VER_O_CREAR» solo para la consulta mínima de monedas del alta; se deniega con el rechazo de VER si no tiene ninguno de los dos.
+  let denegado: NextResponse | null;
+
+  if (accion === "VER_O_CREAR") {
+    const sinVer = await denyIfNoPermission(session, "LISTAS_PRECIO", "VER");
+
+    denegado = sinVer && (await denyIfNoPermission(session, "LISTAS_PRECIO", "CREAR")) ? sinVer : null;
+  } else {
+    denegado = await denyIfNoPermission(session, "LISTAS_PRECIO", accion);
+  }
   if (denegado) return { ok: false, respuesta: denegado };
   const { db } = await import("@/lib/db");
   return { ok: true, session, db };
@@ -170,10 +180,28 @@ const COLUMNAS_CAMBIO = `c.id, to_char(c.fecha, 'YYYY-MM-DD') AS fecha, c.moneda
   trim(coalesce(u.nombre, '') || ' ' || coalesce(u.apellido, '')) AS "creadoPor",
   coalesce(to_char(c.retirado_at AT TIME ZONE 'America/Asuncion', 'DD/MM/YYYY HH24:MI'), '') AS "retiradoEn"`;
 
+const SQL_MONEDAS_COTIZABLES = `SELECT codigo, nombre, coalesce(simbolo, '') AS simbolo FROM monedas WHERE activo = true AND codigo <> 'PYG' ORDER BY codigo`;
+
 export async function listarCambios(request: Request) {
-  const b = await preparar("VER");
+  const url = new URL(request.url);
+  // CC-D01: la finalidad decide la autorización ANTES de cualquier excepción (ver lib/comercial/acceso-get.ts).
+  const finalidad = finalidadComercial(url);
+  const b = await preparar(finalidad === "MONEDAS" ? "VER_O_CREAR" : "VER");
   if (!b.ok) return b.respuesta;
-  const historial = new URL(request.url).searchParams.get("historial") === "1";
+  if (finalidad === "INVALIDA") return NextResponse.json({ error: "Consulta no válida." }, { status: 400 });
+  const historial = url.searchParams.get("historial") === "1";
+
+  if (finalidad === "MONEDAS") {
+    try {
+      const acceso = await getAccessContext(b.session.user, b.session.demo === true);
+
+      // Respuesta MÍNIMA: solo las monedas; `permisos.ver` informa a la pantalla si puede ofrecer enlaces a la consulta.
+      return NextResponse.json({ monedas: (await b.db.query(SQL_MONEDAS_COTIZABLES)).rows, permisos: { ver: hasPermission(acceso, "LISTAS_PRECIO", "VER") } });
+    } catch (e) {
+      return fallo(e, "cargar");
+    }
+  }
+
   try {
     const empresaId = b.session.user.empresaId;
     const [filas, monedas] = await Promise.all([
@@ -182,7 +210,7 @@ export async function listarCambios(request: Request) {
           WHERE c.empresa_id = $1 ${historial ? "" : "AND c.vigente"} ORDER BY c.fecha DESC, c.moneda_codigo, c.version DESC`,
         [empresaId],
       ),
-      b.db.query(`SELECT codigo, nombre, coalesce(simbolo, '') AS simbolo FROM monedas WHERE activo = true AND codigo <> 'PYG' ORDER BY codigo`),
+      b.db.query(SQL_MONEDAS_COTIZABLES),
     ]);
     return NextResponse.json({ tiposCambio: filas.rows, monedas: monedas.rows, permisos: await permisosDe(b) });
   } catch (e) {

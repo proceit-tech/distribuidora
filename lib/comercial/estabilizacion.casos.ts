@@ -5,7 +5,10 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { cargarCatalogoComercial } from "@/lib/comercial/carga";
+import { decidirGetComercial } from "@/lib/comercial/acceso-get";
+import { cargarCatalogoComercial, cargarMonedasAlta } from "@/lib/comercial/carga";
+import { resolveNavigation } from "@/lib/navigation/menu";
+import { crearExclusion } from "@/lib/productos/catalogos-operacion";
 import { MAX_ENTEROS_CAMBIO, cambioEnAlcance, canonicoDecimal, compararDecimales, formatearCambio, igualDecimal } from "@/lib/comercial/cambio-decimal";
 import { normalizarCambio } from "@/lib/listas-precio/calculos";
 import { validarFormularioComercial, type FormularioComercial } from "@/lib/comercial/formulario";
@@ -105,7 +108,7 @@ export async function verificarCasosComercialEstabilizacion(): Promise<string[]>
   cierto("A01 aislamiento: la ruta toma la empresa de la sesión (nunca del cuerpo) y la versión viaja en el listado (SQL_VERSION con microsegundos)", /const empresaId = b\.session\.user\.empresaId/.test(editarSrv) && !/cuerpo\.empresa/.test(srv) && /to_char\(\$\{columna\} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS\.US'\)/.test(leer("lib/comercial/version.ts")) && /SQL_VERSION_COMERCIAL\("t\.actualizado_at"\)\} AS version/.test(srv));
 
   // ── CC-A02: guard oficial
-  const pg = leer("app/(private)/catalogos-comerciales/page.tsx");
+  const pg = leer("app/(private)/catalogos-comerciales/_components/catalogos-comerciales.tsx");
 
   cierto("A02 pantalla: useProtegerCambios(sucio) (menú lateral y enlaces internos), sin beforeunload propio y sin confirmación manual en el enlace a Listas (sin doble aviso)", /useProtegerCambios\(sucio\)/.test(pg) && !/beforeunload/.test(pg) && !/<Link[^>]*onClick/.test(pg.replace(/\n/g, " ")));
   cierto("A02: se conservan las confirmaciones internas por cambio de pestaña, Nuevo/Editar y Cancelar con cambios efectivos", (pg.match(/confirmarDescarte\(\)/g) ?? []).length >= 5);
@@ -138,7 +141,7 @@ export async function verificarCasosComercialEstabilizacion(): Promise<string[]>
     const e2 = { filas: [] as unknown[] };
     const cargar2 = async (historial: boolean) => {
       const sol = compuerta2.nueva();
-      const r = await cargarCatalogoComercial("tipos-cambio", "tiposCambio", historial, fetchDe({ [U("tipos-cambio")]: { status: 200, cuerpo: { tiposCambio: [{ id: "vigentes" }], permisos: P } }, [U("tipos-cambio", true)]: { status: 200, cuerpo: { tiposCambio: [{ id: "historial" }], permisos: P } } }, { [U("tipos-cambio", true)]: 40 }));
+      const r = await cargarCatalogoComercial("tipos-cambio", "tiposCambio", historial, fetchDe({ [U("tipos-cambio")]: { status: 200, cuerpo: { tiposCambio: [{ id: "vigentes" }], monedas: [], permisos: P } }, [U("tipos-cambio", true)]: { status: 200, cuerpo: { tiposCambio: [{ id: "historial" }], monedas: [], permisos: P } } }, { [U("tipos-cambio", true)]: 40 }));
 
       if (compuerta2.vigente(sol)) e2.filas = r.filas;
     };
@@ -189,8 +192,8 @@ export async function verificarCasosComercialEstabilizacion(): Promise<string[]>
   const guardarFn = pg.slice(pg.indexOf("async function guardar(event"), pg.indexOf("async function cambiarEstado"));
   const anularFn = pg.slice(pg.indexOf("async function anular"), pg.indexOf("const claseCampo"));
 
-  cierto("A04 pantalla: guardar, cambiarEstado y anular consultan motivoBloqueoGuardar antes de cualquier envío; Guardar/Editar/Corregir/Anular/Inactivar deshabilitados sin carga confiable; permisos vigentes derivados; errorCarga con estado propio", guardarFn.indexOf("motivoBloqueoGuardar(estadoCarga)") > 0 && guardarFn.indexOf("motivoBloqueoGuardar(estadoCarga)") < guardarFn.indexOf("enviar(") && pg.slice(pg.indexOf("async function cambiarEstado")).indexOf("motivoBloqueoGuardar(estadoCarga)") > 0 && anularFn.indexOf("motivoBloqueoGuardar(estadoCarga)") > 0 && anularFn.indexOf("motivoBloqueoGuardar(estadoCarga)") < anularFn.indexOf("fetch(") && (pg.match(/disabled=\{!confiable\}/g) ?? []).length === 4 && /disabled=\{guardando \|\| !confiable\}/.test(pg) && /const permisos = permisosVigentes\(permisosCargados, estadoCarga\)/.test(pg) && /const \[errorCarga, setErrorCarga\]/.test(pg));
-  cierto("A04: al cambiar de pestaña los permisos se anulan y se marca «cargando» de inmediato; ante error principal se vacían filas y permisos", /setCargando\(true\);\n    setPermisos\(\{ crear: false, editar: false \}\);\n    setTab\(nuevo\)/.test(pg) && /setFilas\(\[\]\);\n      setPermisos\(\{ crear: false, editar: false \}\);\n      setErrorCarga\(r\.error\)/.test(pg));
+  cierto("A04 pantalla: guardar, cambiarEstado y anular consultan motivoBloqueoGuardar antes de cualquier envío; Guardar/Editar/Corregir/Anular/Inactivar deshabilitados sin carga confiable; permisos vigentes derivados; errorCarga con estado propio", guardarFn.indexOf("motivoBloqueoGuardar(estadoCarga)") > 0 && guardarFn.indexOf("motivoBloqueoGuardar(estadoCarga)") < guardarFn.indexOf("enviar(") && pg.slice(pg.indexOf("async function cambiarEstado")).indexOf("motivoBloqueoGuardar(estadoCarga)") > 0 && anularFn.indexOf("motivoBloqueoGuardar(estadoCarga)") > 0 && anularFn.indexOf("motivoBloqueoGuardar(estadoCarga)") < anularFn.indexOf("fetch(") && (pg.match(/disabled=\{!confiable( \|\| ocupado)?\}/g) ?? []).length === 4 && /disabled=\{guardando \|\| !confiable\}/.test(pg) && /const permisos = permisosVigentes\(permisosCargados, estadoCarga\)/.test(pg) && /const \[errorCarga, setErrorCarga\]/.test(pg));
+  cierto("A04: al cambiar de pestaña los permisos se anulan y se marca «cargando» de inmediato; ante error principal se vacían filas y permisos", /setCargando\(true\);\n    setPermisos\(\{ crear: false, editar: false \}\);\n    setTab\(nuevo\)/.test(pg) && /setFilas\(\[\]\);\n      setPermisos\(\{ crear: false, editar: false \}\);\n      setMonedas\(\[\]\);[^\n]*\n      setErrorCarga\(r\.error\)/.test(pg));
 
   // ── CC-A05: cotización como decimal exacto y alcance numeric(18,6)
   igual("A05 canónico: ceros finales/iniciales no cambian el valor", [canonicoDecimal("7350.500000"), canonicoDecimal("007"), canonicoDecimal("0.100"), canonicoDecimal("12."), canonicoDecimal("abc")], ["7350.5", "7", "0.1", "12", null]);
@@ -248,7 +251,7 @@ export async function verificarCasosComercialEstabilizacion(): Promise<string[]>
   ], [-1, 1, -1, -1, 1, 0, 0]);
   igual("R03 ordenar una lista de cotizaciones por cambio conserva el orden decimal exacto (con Number los dos primeros empataban)", [LIM[2], LIM[1], "7350.5", LIM[0], "0.000001"].sort(compararDecimales), ["0.000001", "7350.5", LIM[0], LIM[1], LIM[2]]);
   {
-    const pgc = leer("app/(private)/catalogos-comerciales/page.tsx");
+    const pgc = leer("app/(private)/catalogos-comerciales/_components/catalogos-comerciales.tsx");
 
     cierto("R03 pantalla: ya no hay Number() en la apresentación, la edición ni el orden de la cotización; «Corregir» se abre con formatearCambio del texto de la API, y la tabla y el orden usan los helpers exactos", !/Number\(a\.cambio|Number\(b\.cambio|Number\(f\.cambio|new Intl\.NumberFormat/.test(pgc) && /cambio: formatearCambio\(f\.cambio \?\? ""\)/.test(pgc) && /\{formatearCambio\(f\.cambio \?\? "0"\)\}/.test(pgc) && /return compararDecimales\(a\.cambio \?\? "0", b\.cambio \?\? "0"\)/.test(pgc));
     cierto("R03 regresión: versión de la cotización, historial, anular y la comparación del servidor siguen como estaban (igualDecimal) y no se tocó el servidor", /igualDecimal\(a\.cambio, nuevo\)/.test(srv) && /UPDATE tipos_cambio SET vigente = false/.test(srv) && /Number\(x\.version \?\? 0\) > Number\(f\.version \?\? 0\)/.test(pgc));
@@ -256,6 +259,120 @@ export async function verificarCasosComercialEstabilizacion(): Promise<string[]>
 
   // ── Preservado: cambio 100 % manual, historial, aislamiento
   cierto("preservado: la cotización sigue 100 % manual (sin fetch/URL externas), sin DELETE (el historial se conserva: corregir retira + inserta, anular retira) y toda consulta lleva empresa_id", !/fetch\(|https?:\/\//.test(srv) && !/DELETE FROM/.test(srv) && /UPDATE tipos_cambio SET vigente = false/.test(srv) && (srv.match(/empresa_id = \$[12]/g) ?? []).length >= 10);
+
+  // ── CC-D01 (PRO-173): alta con solo CREAR ───────────────────────────────────────────────────────────────────────────────────────────────────
+  const G = (q: string) => new URL("http://x/api/catalogos-comerciales/tipos-cambio" + q);
+  const soloVer = { ver: true, crear: false };
+  const soloCrear = { ver: false, crear: true };
+  const ambos = { ver: true, crear: true };
+  const nada = { ver: false, crear: false };
+  const res = (q: string, p: { ver: boolean; crear: boolean }) => { const d = decidirGetComercial(G(q), p); return d.tipo === "permitida" ? d.finalidad : d.tipo; };
+
+  igual("D01: modo=monedas lo atienden CREAR-only, VER y ambos; sin permisos (incluido EDITAR-only, que no gana VER ni CREAR) se deniega", [res("?modo=monedas", soloCrear), res("?modo=monedas", soloVer), res("?modo=monedas", ambos), res("?modo=monedas", nada)], ["MONEDAS", "MONEDAS", "MONEDAS", "denegada"]);
+  igual("D01: CREAR-only NO obtiene la lista ni el historial (sin modo, historial=1, modo vacío o desconocido, parámetros ajenos): nada contornea VER", ["", "?historial=1", "?modo=", "?modo=lista", "?modo=otro", "?q=a"].map((q) => res(q, soloCrear)), Array.from({ length: 6 }, () => "denegada"));
+  igual("D01: modo=monedas repetido o combinado con otros parámetros es inconsistente (400) para todos; VER conserva la lista y el historial", [res("?modo=monedas&modo=lista", soloCrear), res("?modo=monedas&historial=1", soloVer), res("?modo=monedas&x=1", ambos), res("", soloVer), res("?historial=1", soloVer)], ["invalida", "invalida", "invalida", "LISTA", "LISTA"]);
+
+  const monedasOk = { monedas: [{ codigo: "USD", nombre: "Dólar", simbolo: "$" }], permisos: { ver: false } };
+  const alta = (r: Resp) => cargarMonedasAlta(fetchDe({ "/api/catalogos-comerciales/tipos-cambio?modo=monedas": r }));
+
+  igual("D01: la consulta mínima del alta usa solo `modo=monedas`; devuelve monedas y el permiso VER de la sesión (para no ofrecer enlaces prohibidos); 403/500/red/forma inválida son error, no selector vacío", [await alta({ status: 200, cuerpo: monedasOk }), (await alta({ status: 403, cuerpo: { error: "No tiene permiso." } })), await alta("red"), await alta({ status: 200, cuerpo: { monedas: "USD" } }), await alta({ status: 200, cuerpo: {} }), await alta({ status: 200, cuerpo: { monedas: [] } })], [{ ok: true, monedas: monedasOk.monedas, puedeVer: false }, { ok: false, mensaje: "No tiene permiso. (código 403)" }, { ok: false, mensaje: "No hubo conexión para cargar las monedas." }, { ok: false, mensaje: "La respuesta de las monedas no tiene el formato esperado." }, { ok: false, mensaje: "La respuesta de las monedas no tiene el formato esperado." }, { ok: true, monedas: [], puedeVer: false }]);
+
+  const srvC = leer("lib/comercial/servidor.ts");
+  const acc = (permissions: string[], extra: Partial<{ isCompanyAdmin: boolean; isPlatformAdmin: boolean }> = {}) => ({ permissions, isCompanyAdmin: false, isPlatformAdmin: false, ...extra });
+  const etiquetas = (a: ReturnType<typeof acc>) => resolveNavigation(a).flatMap((g) => g.items.map((i) => i.label)).filter((e) => /comercial/i.test(e));
+
+  igual("D01: CREAR-only ve «Nuevo catálogo comercial» (y no el listado); VER ve «Catálogos comerciales» (y no el atajo); EDITAR-only no gana acceso", [etiquetas(acc(["LISTAS_PRECIO.CREAR"])), etiquetas(acc(["LISTAS_PRECIO.VER"])), etiquetas(acc(["LISTAS_PRECIO.EDITAR"]))], [["Nuevo catálogo comercial"], ["Catálogos comerciales"], []]);
+  cierto("D01 servidor y pantallas: la consulta de monedas solo devuelve monedas y el permiso VER, la empresa sale de la sesión, POST sigue con CREAR; layouts VER-o-CREAR, /nuevo solo CREAR y listado con VER; la conclusión no ofrece enlaces sin VER", /finalidad === "MONEDAS" \? "VER_O_CREAR" : "VER"/.test(srvC) && /NextResponse\.json\(\{ monedas: \(await b\.db\.query\(SQL_MONEDAS_COTIZABLES\)\)\.rows, permisos: \{ ver: hasPermission/.test(srvC) && /const empresaId = b\.session\.user\.empresaId; \/\/ nunca del cuerpo/.test(srvC) && /preparar\("CREAR"\)/.test(srvC) && /hasPermission\(access, "LISTAS_PRECIO", "VER"\) && !hasPermission\(access, "LISTAS_PRECIO", "CREAR"\)\) notFound\(\)/.test(leer("app/(private)/catalogos-comerciales/layout.tsx")) && /guardPage\("LISTAS_PRECIO", "CREAR"\)/.test(leer("app/(private)/catalogos-comerciales/nuevo/layout.tsx")) && /guardPage\("LISTAS_PRECIO", "VER"\)/.test(leer("app/(private)/catalogos-comerciales/page.tsx")) && /Registrar otro/.test(leer("app/(private)/catalogos-comerciales/nuevo/page.tsx")) && /\{puedeVer \? \(\s+<Link href="\/catalogos-comerciales"/.test(leer("app/(private)/catalogos-comerciales/nuevo/page.tsx")));
+
+  // ── CC-D02 (PRO-174): gravación exclusiva y respuestas atrasadas ──────────────────────────────────────────────────────────────────────────────
+  // Modelo de la pantalla con las MISMAS piezas reales (crearExclusion y crearCompuerta) y las mismas guardas que los manejadores.
+  const pantalla = () => {
+    const excl = crearExclusion();
+    const comp = crearCompuerta();
+    const st = { tab: "cambios", form: null as string | null, filas: ["cambios-0"] as string[], aperturas: 0, errorForm: "", exito: 0, cargasEscritas: [] as string[] };
+    const abrirF = (nombre: string) => { if (excl.activa()) return false; st.form = nombre; st.aperturas += 1; return true; };
+    const cancelar = () => { if (excl.activa()) return false; st.form = null; return true; };
+    const cambiarTab = (t: string) => { if (excl.activa() || t === st.tab) return false; st.tab = t; st.form = null; return true; };
+    const cargar = async (tab: string, respuesta: Promise<string[]>) => { const s = comp.nueva(); const filas = await respuesta; if (!comp.vigente(s)) return; st.filas = filas; st.cargasEscritas.push(tab); };
+    /** guardar: exclusión síncrona; éxito → cierra el formulario y recarga; error → el formulario y el borrador se conservan. */
+    const guardar = (enviar: Promise<void>, recarga: Promise<string[]>) => excl.ejecutar(async () => {
+      try { await enviar; st.form = null; st.exito += 1; await cargar(st.tab, recarga); } catch (e) { st.errorForm = (e as Error).message; }
+    });
+    const mutar = (operacion: Promise<void>) => excl.ejecutar(async () => { await operacion; });
+
+    return { excl, st, abrirF, cancelar, cambiarTab, cargar, guardar, mutar };
+  };
+
+  const p1 = pantalla();
+  let liberar1: () => void = () => undefined;
+  const put1 = new Promise<void>((res) => { liberar1 = res; });
+
+  p1.abrirF("A");
+  const g1 = p1.guardar(put1, Promise.resolve(["cambios-1"]));
+
+  igual("D02: con un PUT pendiente no se cambia de pestaña ni se abre otro formulario (Nuevo/Editar/Corregir) ni se cancela el actual", [p1.excl.activa(), p1.cambiarTab("canales"), p1.abrirF("B"), p1.cancelar(), p1.st.tab, p1.st.form, p1.st.aperturas], [true, false, false, false, "cambios", "A", 1]);
+
+  const segundo = await p1.guardar(Promise.resolve(), Promise.resolve([]));
+  const estadoMut = await p1.mutar(Promise.resolve());
+
+  igual("D02: un segundo POST/PUT y las mutaciones de inactivar/anular no se ejecutan mientras la gravación está pendiente", [segundo, estadoMut, p1.excl.activa()], [{ ejecutada: false }, { ejecutada: false }, true]);
+
+  liberar1();
+  await g1;
+
+  igual("D02: al terminar con éxito se cierra SOLO el formulario de esa operación, se recargan las filas y las operaciones legítimas vuelven (cambiar de pestaña, abrir otro formulario)", [p1.st.form, p1.st.exito, p1.st.filas, p1.excl.activa(), p1.cambiarTab("canales"), p1.abrirF("C"), p1.st.form], [null, 1, ["cambios-1"], false, true, true, "C"]);
+
+  const p2 = pantalla();
+
+  p2.abrirF("conflicto");
+  await p2.guardar(Promise.reject(new Error("La versión del registro cambió. Recargue.")), Promise.resolve(["no se usa"]));
+
+  igual("D02: error 409 → el formulario y su borrador se conservan, no hay éxito falso y la exclusión se libera para reintentar", [p2.st.form, p2.st.errorForm, p2.st.exito, p2.excl.activa(), p2.abrirF("otro")], ["conflicto", "La versión del registro cambió. Recargue.", 0, false, true]);
+
+  const p3 = pantalla();
+  let liberarAnular: () => void = () => undefined;
+  const anulando = p3.mutar(new Promise<void>((res) => { liberarAnular = res; }));
+
+  igual("D02: anular/inactivar pendiente bloquea el guardado y el cambio de pestaña; se libera al terminar y también si la mutación falla", [p3.excl.activa(), p3.cambiarTab("zonas"), (await p3.guardar(Promise.resolve(), Promise.resolve([]))).ejecutada, (liberarAnular(), (await anulando).ejecutada), p3.excl.activa(), await p3.mutar(Promise.reject(new Error("falló"))).catch((e: Error) => e.message), p3.excl.activa()], [true, false, false, true, false, "falló", false]);
+
+  // GET atrasado: la carga de la pestaña anterior no pisa las filas de la pestaña actual (compuerta).
+  const p4 = pantalla();
+  let liberarVieja: (v: string[]) => void = () => undefined;
+  const vieja = p4.cargar("cambios", new Promise<string[]>((res) => { liberarVieja = res; }));
+
+  p4.cambiarTab("canales");
+  await p4.cargar("canales", Promise.resolve(["canal-1"]));
+  liberarVieja(["cambio-viejo"]);
+  await vieja;
+
+  igual("D02: una carga atrasada de la pestaña anterior no sustituye las filas de la pestaña actual", [p4.st.filas, p4.st.cargasEscritas], [["canal-1"], ["canales"]]);
+
+  const compSrc = leer("app/(private)/catalogos-comerciales/_components/catalogos-comerciales.tsx");
+
+  cierto("D02 pantalla real: guardar, cambiarEstado y anular adquieren la exclusión de forma síncrona (crearExclusion) y la liberan en finally; pestañas, Nuevo, Cancelar, Editar/Corregir/Anular/Inactivar y el historial se deshabilitan y sus manejadores se niegan con la exclusión activa; se mantiene la compuerta GET", (compSrc.match(/exclusion\.current\.ejecutar\(/g) ?? []).length === 3 && (compSrc.match(/if \(exclusion\.current\.activa\(\)\) return;/g) ?? []).length === 2 && /event\.preventDefault\(\);\n\s+if \(!form \|\| exclusion\.current\.activa\(\)\) return;/.test(compSrc) && /if \(exclusion\.current\.activa\(\) \|\| nuevo === tab/.test(compSrc) && (compSrc.match(/setOcupado\(false\)/g) ?? []).length === 3 && (compSrc.match(/disabled=\{!confiable \|\| ocupado\}/g) ?? []).length === 4 && /aria-current=\{tab === t\.id \? "page" : undefined\} disabled=\{ocupado\}/.test(compSrc) && /disabled=\{ocupado\}\n\s+onClick=\{\(\) => \{\n\s+if \(!ocupado && confirmarDescarte\(\)\) cerrar\(\)/.test(compSrc) && /compuerta\.current\.vigente\(solicitud\)/.test(compSrc) && /useProtegerCambios\(sucio\)/.test(compSrc));
+
+  // ── CC-D03 (PRO-175): monedas obligatorias en Tipos de cambio ─────────────────────────────────────────────────────────────────────────────
+  const tc = (cuerpo: unknown, status = 200) => cargarCatalogoComercial("tipos-cambio", "tiposCambio", false, fetchDe({ [U("tipos-cambio")]: { status, cuerpo } }));
+  const sinMonedas = { tiposCambio: [], permisos: P };
+
+  const rA = await tc(sinMonedas);
+  const rB = await tc({ ...sinMonedas, monedas: null });
+  const rC = await tc({ ...sinMonedas, monedas: "USD" });
+  const rD = await tc({ ...sinMonedas, monedas: {} });
+  const rE = await tc({ ...sinMonedas, monedas: [{ nombre: "sin código" }] });
+
+  igual("D03: HTTP 200 SIN monedas, con null, texto, objeto o elementos sin código → error, filas vacías y permisos neutralizados (no se habilita crear con selector vacío)", [rA, rB, rC, rD, rE].map((r) => [r.error !== "", r.filas, r.permisos, r.monedas]), Array.from({ length: 5 }, () => [true, [], { crear: false, editar: false }, null]));
+  igual("D03: `monedas: []` es válida (no hay monedas disponibles) y una respuesta completa pasa con sus monedas", [(await tc({ ...sinMonedas, monedas: [] })).error, (await tc({ ...sinMonedas, monedas: [] })).monedas, (await tc({ tiposCambio: [{ id: "c1" }], monedas: [{ codigo: "USD", nombre: "Dólar", simbolo: "$" }], permisos: P })).monedas], ["", [], [{ codigo: "USD", nombre: "Dólar", simbolo: "$" }]]);
+  igual("D03: Canales y Zonas no necesitan `monedas` (siguen siendo válidos sin ellas) pero si vienen deben ser un arreglo", [(await cargarCatalogoComercial("canales-venta", "canales", false, fetchDe({ [U("canales-venta")]: { status: 200, cuerpo: { canales: [], permisos: P } } }))).error, (await cargarCatalogoComercial("zonas", "zonas", false, fetchDe({ [U("zonas")]: { status: 200, cuerpo: { zonas: [], permisos: P } } }))).error, (await cargarCatalogoComercial("zonas", "zonas", false, fetchDe({ [U("zonas")]: { status: 200, cuerpo: { zonas: [], monedas: "x", permisos: P } } }))).error !== ""], ["", "", true]);
+
+  // 403/500 y reintento: tras un fallo los datos y permisos anteriores no son utilizables; el reintento válido restablece la carga.
+  const f403 = await tc({ error: "Sin permiso." }, 403);
+  const f500 = await tc({ error: "Falló." }, 500);
+  const reintento = await tc({ tiposCambio: [{ id: "c1" }], monedas: [{ codigo: "USD", nombre: "", simbolo: "" }], permisos: P });
+  const estadoFallo = { cargando: false, errorCarga: f403.error, errorAuxiliar: "" };
+
+  igual("D03: 403 y 500 → error con código y permisos neutralizados (la pantalla vacía monedas, filas y permisos y bloquea crear/editar/guardar con el borrador intacto); el reintento válido restablece una carga confiable", [f403.error, f500.error, f403.monedas, permisosVigentes(P, estadoFallo), cargaConfiable(estadoFallo), motivoBloqueoGuardar(estadoFallo)?.includes("Lo escrito se conserva"), reintento.error, cargaConfiable({ cargando: false, errorCarga: reintento.error, errorAuxiliar: "" })], ["Sin permiso. (código 403)", "Falló. (código 500)", null, { crear: false, editar: false }, false, true, "", true]);
+  cierto("D03 pantalla: tras un error de carga se vacían las monedas obsoletas y el aviso ofrece «Reintentar» (relanza la carga sin tocar el borrador)", /setMonedas\(\[\]\); \/\/ CC-D03/.test(compSrc) && /disabled=\{ocupado \|\| cargando\} onClick=\{\(\) => void cargar\(\)\}>\s+Reintentar/.test(compSrc) && /clave === "tiposCambio"/.test(leer("lib/comercial/carga.ts")));
 
   return fallos;
 }
