@@ -36,3 +36,12 @@ Claude no debe implementar nada sin orden del responsable. Corregir exclusivamen
 - Estados de lote/quantidades heterogêneas/timezone/snapshot são observações, não correções automáticas. Não exigir interface móvel nem fazer redesign. Teste/dados reais/print exigem aceite operacional do responsável.
 
 **Próxima decisão:** responsável autoriza tarefa mínima (recomendação: F-DASH-06), ChatGPT especifica; Claude apenas desenvolve, commit/push e para; ChatGPT reaudita. Não iniciar Clientes nem C04 automaticamente.
+
+
+## AUD-R03 — reauditoria independente do commit b1242a5 (18/10/2026)
+
+**Relatório imutável:** [AUD-NEXIT-DASHBOARD-DESKTOP-R03](../../testes/AUD-NEXIT-DASHBOARD-DESKTOP-R03-2026-10-18.md). Commit implementado `b1242a53777e99708171218f3970ed79dad3ccf8`; 19 arquivos no diff.
+
+**F-DASH-02/03/04/05/06/07/08 APROVADOS ESTATICAMENTE** em código, sem defeito funcional novo alto/médio constatado na inspeção. F-DASH-06 aplica o predicado de alcance integral do histórico de Movimientos com usuário da sessão, mantendo filtro de depósito separado. **F-DASH-01 ALTA permanece pendente de decisão C24**, catálogo/«Sin stock» deliberadamente inalterado. **Dashboard inteiro ainda NÃO HOMOLOGADO ou encerrado.**
+
+**Observação R03-LINT:** `app-shell.tsx` e `sidebar.tsx` constam como modificados no commit, embora o relatório do Claude tenha chamado os arquivos «não tocados» ao explicar avisos antigos de ESLint `setState` em effects. Os trechos de alerta podem ser preexistentes; não afirmar lint integral dos arquivos tocados limpo. **Verificações Claude reportadas:** dashboard 46/0; Facturación 271/0. ChatGPT não executou testes. Falta SQL/PG/browser/VM; não delegar auditoria ao Claude. Não iniciar Clientes ou C04 automaticamente.
