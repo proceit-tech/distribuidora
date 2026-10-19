@@ -21,13 +21,15 @@ type Props = {
   /** Mensaje del último intento de cierre fallido, si lo hubo. */
   mensajeInicial?: string;
   alTerminar: () => void;
+  /** PRV-D01: sin PROVEEDORES.VER no se ofrece el enlace a la lista. */
+  puedeVerLista?: boolean;
 };
 
 /**
  * Pantalla de retomada del alta (PRV-R01-01/02/03): el proveedor YA existe. Desde aquí solo se cargan los documentos que faltan y se cierra la carga inicial;
  * no hay forma de volver a crear el proveedor. No requiere PROVEEDORES.VER (la ficha sí): usa únicamente las rutas y permisos del alta.
  */
-export default function RetomarAlta({ id, codigo, pendientesIniciales, mensajeInicial = "", alTerminar }: Props) {
+export default function RetomarAlta({ id, codigo, pendientesIniciales, mensajeInicial = "", alTerminar, puedeVerLista = true }: Props) {
   const [pendientes, setPendientes] = useState<DocumentoPendiente[]>(pendientesIniciales);
   const [errores, setErrores] = useState<Errores>({});
   const [mensaje, setMensaje] = useState(mensajeInicial);
@@ -134,9 +136,11 @@ export default function RetomarAlta({ id, codigo, pendientesIniciales, mensajeIn
 
         <footer className={styles.footer}>
           <div className={styles.footerActions}>
-            <Link href="/proveedores" className={styles.cancelButton}>
-              Salir sin cerrar la carga
-            </Link>
+            {puedeVerLista ? (
+              <Link href="/proveedores" className={styles.cancelButton}>
+                Salir sin cerrar la carga
+              </Link>
+            ) : null}
             <button type="button" className={styles.secondaryButton} disabled={ocupado || pendientes.length === 0} onClick={subir}>
               {ocupado ? "Procesando..." : "Cargar documentos"}
             </button>

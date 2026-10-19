@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 
+import { crearCargaCatalogo, leerCatalogo, type EstadoCatalogo } from "@/lib/proveedores/geografia-catalogo";
 import type { ProveedorDireccion } from "@/types/proveedores";
 
 import { Casilla, Selector, SinRegistros, Texto } from "../campos";
@@ -9,6 +10,36 @@ import type { ContextoFormulario } from "../contexto";
 import styles from "../proveedor-form.module.css";
 
 type Opcion = { codigo: number; nombre: string };
+
+/** Catálogo geográfico con identidad por clave: estado de la consulta vigente, error clasificado y reintento. */
+function useCatalogoGeo(clave: string, url: string) {
+  const [estado, setEstado] = useState<EstadoCatalogo>({ clave: "", lista: [], error: "", cargando: false });
+  const [intento, setIntento] = useState(0);
+  const [carga] = useState(() => crearCargaCatalogo({ pedir: (u) => leerCatalogo(u), alEstado: setEstado }));
+
+  useEffect(() => {
+    if (!clave) return;
+
+    void carga.solicitar(clave, url);
+
+    return () => carga.invalidar();
+  }, [clave, url, intento, carga]);
+
+  const vigente = clave !== "" && estado.clave === clave;
+
+  return { lista: vigente ? estado.lista : [], error: vigente ? estado.error : "", reintentar: () => setIntento((n) => n + 1) };
+}
+
+function ErrorGeo({ mensaje, reintentar }: { mensaje: string; reintentar: () => void }) {
+  return (
+    <div role="alert" style={{ gridColumn: "1 / -1", display: "flex", gap: 8, alignItems: "center", color: "#a1281f", fontSize: 13 }}>
+      <span>{mensaje}</span>
+      <button type="button" className={styles.addButton} onClick={reintentar}>
+        Reintentar
+      </button>
+    </div>
+  );
+}
 
 /** Paraguay: departamento / distrito / ciudad desde el catálogo oficial; otros países: texto libre. */
 function Geografia({
@@ -24,40 +55,16 @@ function Geografia({
   errores: Record<string, string>;
   onChange: (parche: Partial<ProveedorDireccion>) => void;
 }) {
-  // Cada lista guarda la clave (departamento / distrito) para la que se cargó; con otra clave se considera vacía.
-  const [cargaDistritos, setCargaDistritos] = useState<{ clave: string; lista: Opcion[] }>({ clave: "", lista: [] });
-  const [cargaCiudades, setCargaCiudades] = useState<{ clave: string; lista: Opcion[] }>({ clave: "", lista: [] });
   const esPy = direccion.paisCodigo === "PRY";
   const dep = direccion.departamentoCodigo;
   const dis = direccion.distritoCodigo;
   const claveDistritos = esPy && dep ? dep : "";
   const claveCiudades = esPy && dep && dis ? `${dep}/${dis}` : "";
-  const distritos = cargaDistritos.clave === claveDistritos ? cargaDistritos.lista : [];
-  const ciudades = cargaCiudades.clave === claveCiudades ? cargaCiudades.lista : [];
-
-  useEffect(() => {
-    if (!claveDistritos) return;
-    let activo = true;
-    fetch(`/api/proveedores?catalogo=distritos&departamento=${encodeURIComponent(claveDistritos)}`)
-      .then((r) => (r.ok ? r.json() : { datos: [] }))
-      .then((j) => activo && setCargaDistritos({ clave: claveDistritos, lista: j.datos ?? [] }))
-      .catch(() => activo && setCargaDistritos({ clave: claveDistritos, lista: [] }));
-    return () => {
-      activo = false;
-    };
-  }, [claveDistritos]);
-
-  useEffect(() => {
-    if (!claveCiudades) return;
-    let activo = true;
-    fetch(`/api/proveedores?catalogo=ciudades&departamento=${encodeURIComponent(dep)}&distrito=${encodeURIComponent(dis)}`)
-      .then((r) => (r.ok ? r.json() : { datos: [] }))
-      .then((j) => activo && setCargaCiudades({ clave: claveCiudades, lista: j.datos ?? [] }))
-      .catch(() => activo && setCargaCiudades({ clave: claveCiudades, lista: [] }));
-    return () => {
-      activo = false;
-    };
-  }, [claveCiudades, dep, dis]);
+  // PRV-D03: cada catálogo distingue vacío legítimo, acceso (401/403), servicio y conexión; solo la consulta vigente aplica resultado o error, y «Reintentar» repite la consulta actual.
+  const cargaDistritos = useCatalogoGeo(claveDistritos, `/api/proveedores?catalogo=distritos&departamento=${encodeURIComponent(dep)}`);
+  const cargaCiudades = useCatalogoGeo(claveCiudades, `/api/proveedores?catalogo=ciudades&departamento=${encodeURIComponent(dep)}&distrito=${encodeURIComponent(dis)}`);
+  const distritos = cargaDistritos.lista;
+  const ciudades = cargaCiudades.lista;
 
   if (!esPy) {
     return (
@@ -76,6 +83,8 @@ function Geografia({
       <Selector etiqueta="Departamento *" campo={`${prefijo}.departamentoCodigo`} errores={errores} valor={dep} alCambiar={(v) => onChange({ departamentoCodigo: v, distritoCodigo: "", ciudadCodigo: "" })} opciones={opciones(departamentos)} />
       <Selector etiqueta="Distrito *" campo={`${prefijo}.distritoCodigo`} errores={errores} valor={dis} disabled={!dep} alCambiar={(v) => onChange({ distritoCodigo: v, ciudadCodigo: "" })} opciones={opciones(distritos)} />
       <Selector etiqueta="Ciudad *" campo={`${prefijo}.ciudadCodigo`} errores={errores} valor={direccion.ciudadCodigo} disabled={!dis} alCambiar={(v) => onChange({ ciudadCodigo: v })} opciones={opciones(ciudades)} />
+      {cargaDistritos.error ? <ErrorGeo mensaje={`Distritos: ${cargaDistritos.error}`} reintentar={cargaDistritos.reintentar} /> : null}
+      {cargaCiudades.error ? <ErrorGeo mensaje={`Ciudades: ${cargaCiudades.error}`} reintentar={cargaCiudades.reintentar} /> : null}
     </>
   );
 }

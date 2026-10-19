@@ -2,7 +2,7 @@
 
 import type { ProveedorCuentaBancaria } from "@/types/proveedores";
 
-import { Casilla, Selector, SinRegistros, Texto } from "../campos";
+import { Bloque, Casilla, Selector, SinRegistros, Texto } from "../campos";
 import type { ContextoFormulario } from "../contexto";
 import styles from "../proveedor-form.module.css";
 import { ReactivarCuenta } from "./reactivar-cuenta";
@@ -15,9 +15,11 @@ export function PestanaBancos({ ctx }: { ctx: ContextoFormulario }) {
     <>
       <div className={styles.sectionTitle}>
         <h3>Cuentas bancarias</h3>
-        <button type="button" className={styles.addButton} onClick={() => ctx.agregar("cuentasBancarias")}>
-          + Agregar cuenta
-        </button>
+        <Bloque bloqueado={ctx.soloLectura}>
+          <button type="button" className={styles.addButton} onClick={() => ctx.agregar("cuentasBancarias")}>
+            + Agregar cuenta
+          </button>
+        </Bloque>
       </div>
 
       {form.cuentasBancarias.length === 0 ? <SinRegistros texto="Aún no hay cuentas bancarias cargadas." /> : <p className={styles.nota} style={{ margin: "0 0 10px" }}>* Obligatorio en cada cuenta agregada.</p>}
@@ -47,6 +49,8 @@ export function PestanaBancos({ ctx }: { ctx: ContextoFormulario }) {
 
           return (
             <article key={c.id} className={styles.repeaterCard}>
+              {/* Edición común de la cuenta: bloqueada sin EDITAR. La aprobación bancaria (ResolucionCuenta) y la reactivación tienen permisos propios y quedan fuera. */}
+              <Bloque bloqueado={ctx.soloLectura}>
               <header>
                 <strong>Cuenta {i + 1}</strong>
                 <button
@@ -102,6 +106,7 @@ export function PestanaBancos({ ctx }: { ctx: ContextoFormulario }) {
               <div className={styles.checkGrid}>
                 <Casilla etiqueta="Cuenta principal de esta moneda" campo={`${p}.esPrincipal`} valor={c.esPrincipal} alCambiar={(v) => ctx.marcarPrincipal("cuentasBancarias", c.id, v)} />
               </div>
+              </Bloque>
 
               <ResolucionCuenta ctx={ctx} cuenta={c} />
             </article>

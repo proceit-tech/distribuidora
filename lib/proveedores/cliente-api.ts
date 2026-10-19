@@ -22,11 +22,15 @@ export async function errorDeRespuesta(respuesta: Response, porDefecto: string):
   }
 }
 
-export async function cargarCatalogos(): Promise<CatalogoProveedores> {
+export async function cargarCatalogosConPermisos(): Promise<{ catalogos: CatalogoProveedores; puedeVer: boolean }> {
   const respuesta = await fetch("/api/proveedores?modo=catalogos", { cache: "no-store" });
   if (!respuesta.ok) {
     throw new Error(await mensajeError(respuesta, "No fue posible cargar los catálogos."));
   }
-  const json = (await respuesta.json()) as { catalogos: CatalogoProveedores };
-  return json.catalogos;
+  const json = (await respuesta.json()) as { catalogos: CatalogoProveedores; permisos?: { ver?: boolean } };
+  return { catalogos: json.catalogos, puedeVer: json.permisos?.ver === true };
+}
+
+export async function cargarCatalogos(): Promise<CatalogoProveedores> {
+  return (await cargarCatalogosConPermisos()).catalogos;
 }

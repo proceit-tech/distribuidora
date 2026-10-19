@@ -16,6 +16,8 @@ export type ItemDe = {
 /** Todo lo que necesitan las pestañas: datos, errores por campo, catálogos y operaciones sobre las filas relacionadas. */
 export type ContextoFormulario = {
   modo: "crear" | "editar";
+  /** PRV-D02: sin PROVEEDORES.EDITAR la edición común de datos maestros queda bloqueada (las acciones con permiso propio no dependen de esto). */
+  soloLectura: boolean;
   form: FormularioProveedor;
   detalle?: ProveedorDetalle;
   catalogos: CatalogoProveedores;

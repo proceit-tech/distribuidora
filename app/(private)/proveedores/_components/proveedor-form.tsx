@@ -13,7 +13,7 @@ import { HOMOLOGACION_TEXTO } from "@/lib/proveedores/textos";
 import { useProtegerCambios } from "@/lib/ui/proteger-cambios";
 import type { CatalogoProveedores, ProveedorContacto, ProveedorCuentaBancaria, ProveedorDetalle, ProveedorDireccion } from "@/types/proveedores";
 
-import type { Errores } from "./campos";
+import { Bloque, type Errores } from "./campos";
 import type { ColeccionClave, ContextoFormulario } from "./contexto";
 import { PestanaBancos } from "./pestanas/bancos";
 import { PestanaCompras } from "./pestanas/compras";
@@ -37,6 +37,8 @@ type Props = {
   aviso?: string;
   pestanaInicial?: PestanaId;
   alCambiarPestana?: (pestana: PestanaId) => void;
+  /** PRV-D01: false cuando el usuario solo puede CREAR (la lista y las fichas exigen VER): no se ofrecen enlaces a ellas. */
+  puedeVerLista?: boolean;
 };
 
 const PESTANAS: Array<{ id: PestanaId; etiqueta: string }> = [
@@ -123,11 +125,13 @@ export function catalogosConHistoricas(catalogos: CatalogoProveedores, historica
   return { ...catalogos, grupos: agregar(catalogos.grupos, "grupoProveedorId"), mediosPago: agregar(catalogos.mediosPago, "medioPagoPreferidoId") };
 }
 
-export default function ProveedorForm({ mode, initial, catalogos: catalogosActivos, onSave, onRecargar, aviso, pestanaInicial, alCambiarPestana }: Props) {
+export default function ProveedorForm({ mode, initial, catalogos: catalogosActivos, onSave, onRecargar, aviso, pestanaInicial, alCambiarPestana, puedeVerLista = true }: Props) {
   const catalogos = catalogosConHistoricas(catalogosActivos, initial?.referenciasHistoricas);
   const [formularioBase] = useState<FormularioProveedor>(() => (initial ? formularioDesdeDetalle(initial) : formularioInicial()));
   const [form, setForm] = useState<FormularioProveedor>(formularioBase);
   const [tab, setTabInterno] = useState<PestanaId>(pestanaInicial ?? "general");
+  // PRV-D02: en edición, sin PROVEEDORES.EDITAR la ficha es de consulta para los datos maestros (el servidor lo exige igualmente).
+  const soloLectura = mode === "edit" && initial?.permisos.editar !== true;
   const sucio = form !== formularioBase && JSON.stringify(form) !== JSON.stringify(formularioBase);
 
   const [borradorDocumento, setBorradorDocumento] = useState(false);
@@ -250,6 +254,7 @@ export default function ProveedorForm({ mode, initial, catalogos: catalogosActiv
 
   async function submit(evento: FormEvent<HTMLFormElement>) {
     evento.preventDefault();
+    if (soloLectura) return;
     setError("");
     setErrores({});
     setPestanaConError("");
@@ -283,6 +288,7 @@ export default function ProveedorForm({ mode, initial, catalogos: catalogosActiv
 
   const ctx: ContextoFormulario = {
     modo: mode === "create" ? "crear" : "editar",
+    soloLectura,
     form,
     detalle: initial,
     catalogos,
@@ -307,7 +313,7 @@ export default function ProveedorForm({ mode, initial, catalogos: catalogosActiv
           <nav className={styles.miga} aria-label="Ruta de navegación">
             <span>Maestros</span>
             <i aria-hidden="true">/</i>
-            <Link href="/proveedores">Proveedores</Link>
+            {puedeVerLista ? <Link href="/proveedores">Proveedores</Link> : <span>Proveedores</span>}
             <i aria-hidden="true">/</i>
             <span aria-current="page">{titulo}</span>
           </nav>
@@ -325,9 +331,11 @@ export default function ProveedorForm({ mode, initial, catalogos: catalogosActiv
           </div>
         </div>
 
-        <Link href="/proveedores" className={styles.secondaryButton}>
-          ← Volver a proveedores
-        </Link>
+        {puedeVerLista ? (
+          <Link href="/proveedores" className={styles.secondaryButton}>
+            ← Volver a proveedores
+          </Link>
+        ) : null}
       </header>
 
       <form className={styles.card} onSubmit={submit} noValidate>
@@ -361,25 +369,31 @@ export default function ProveedorForm({ mode, initial, catalogos: catalogosActiv
         {tab === "general" ? <p className={styles.nota}>Los campos con * son obligatorios.</p> : null}
 
         <div className={styles.content}>
-          {tab === "general" ? <PestanaInformacion ctx={ctx} /> : null}
-          {tab === "compras" ? <PestanaCompras ctx={ctx} /> : null}
+          {tab === "general" ? <Bloque bloqueado={soloLectura}><PestanaInformacion ctx={ctx} /></Bloque> : null}
+          {tab === "compras" ? <Bloque bloqueado={soloLectura}><PestanaCompras ctx={ctx} /></Bloque> : null}
           {tab === "homologacion" ? <PestanaHomologacion ctx={ctx} /> : null}
-          {tab === "contactos" ? <PestanaContactos ctx={ctx} /> : null}
-          {tab === "direcciones" ? <PestanaDirecciones ctx={ctx} /> : null}
+          {tab === "contactos" ? <Bloque bloqueado={soloLectura}><PestanaContactos ctx={ctx} /></Bloque> : null}
+          {tab === "direcciones" ? <Bloque bloqueado={soloLectura}><PestanaDirecciones ctx={ctx} /></Bloque> : null}
           {tab === "bancos" ? <PestanaBancos ctx={ctx} /> : null}
-          {tab === "retenciones" ? <PestanaRetenciones ctx={ctx} /> : null}
+          {tab === "retenciones" ? <Bloque bloqueado={soloLectura}><PestanaRetenciones ctx={ctx} /></Bloque> : null}
           {tab === "documentos" ? <PestanaDocumentos ctx={ctx} /> : null}
         </div>
 
         <footer className={styles.footer}>
           <div className={styles.footerActions}>
-            <Link href="/proveedores" className={styles.cancelButton}>
-              Cancelar
-            </Link>
+            {puedeVerLista ? (
+              <Link href="/proveedores" className={styles.cancelButton}>
+                Cancelar
+              </Link>
+            ) : null}
 
-            <button type="submit" disabled={guardando} className={styles.saveButton}>
-              {guardando ? (mode === "create" ? "Guardando..." : "Actualizando...") : mode === "create" ? "Guardar proveedor" : "Actualizar proveedor"}
-            </button>
+            {soloLectura ? (
+              <span className={styles.textoSecundario} role="status">Solo lectura: su perfil puede consultar este proveedor, pero no modificar sus datos maestros.</span>
+            ) : (
+              <button type="submit" disabled={guardando} className={styles.saveButton}>
+                {guardando ? (mode === "create" ? "Guardando..." : "Actualizando...") : mode === "create" ? "Guardar proveedor" : "Actualizar proveedor"}
+              </button>
+            )}
           </div>
         </footer>
       </form>

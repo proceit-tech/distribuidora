@@ -1,6 +1,6 @@
 "use client";
 
-import { Area, Casilla, Selector, Texto } from "../campos";
+import { Area, Bloque, Casilla, Selector, Texto } from "../campos";
 import type { ContextoFormulario } from "../contexto";
 import styles from "../proveedor-form.module.css";
 import { PanelGobernanza } from "./panel-gobernanza";
@@ -14,8 +14,10 @@ export function PestanaHomologacion({ ctx }: { ctx: ContextoFormulario }) {
         <h3>Homologación y logística</h3>
       </div>
 
+      {/* Las acciones de gobernanza (homologar, riesgo, bloqueo) tienen permisos propios: quedan FUERA del bloqueo de edición común. */}
       <PanelGobernanza ctx={ctx} />
 
+      <Bloque bloqueado={ctx.soloLectura}>
       <div className={styles.gridFour}>
         <Selector
           etiqueta="Incoterm"
@@ -49,6 +51,7 @@ export function PestanaHomologacion({ ctx }: { ctx: ContextoFormulario }) {
       <div className={styles.checkGrid}>
         <Casilla etiqueta="Permite entrega parcial" campo="permiteEntregaParcial" valor={form.permiteEntregaParcial} alCambiar={(v) => ctx.set("permiteEntregaParcial", v)} />
       </div>
+      </Bloque>
     </>
   );
 }

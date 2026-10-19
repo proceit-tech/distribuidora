@@ -283,6 +283,8 @@ export async function GET(request: Request) {
       ]);
 
     return NextResponse.json({
+      // PRV-D01: permiso VER del usuario autenticado (sesión del servidor) para que la alta decida sus enlaces de retorno.
+      permisos: { ver: !denegadoVer },
       proveedores: proveedores.rows,
       catalogos: {
         grupos: grupos.rows,

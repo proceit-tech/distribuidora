@@ -157,3 +157,12 @@ export function Casilla({ etiqueta, campo, valor, alCambiar, disabled }: { etiqu
 export function SinRegistros({ texto }: { texto: string }) {
   return <div className={styles.empty}>{texto}</div>;
 }
+
+/** PRV-D02: agrupa SOLO los controles de edición común de datos maestros; con `bloqueado` quedan deshabilitados. Las acciones con permiso propio (documentos, aprobación bancaria, reactivación, gobernanza) se dejan fuera. */
+export function Bloque({ bloqueado, children }: { bloqueado: boolean; children: React.ReactNode }) {
+  return (
+    <fieldset disabled={bloqueado} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
+      {children}
+    </fieldset>
+  );
+}
