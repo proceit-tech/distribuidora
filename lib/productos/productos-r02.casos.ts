@@ -7,7 +7,7 @@ import { join } from "node:path";
 
 import { contador } from "@/lib/clientes/contador-casos";
 import { decidirGet } from "@/lib/productos/acceso-get";
-import { cerrarRetomada, esAbandono, estadoTrasEnvio, leerEstadoRetomada, MENSAJE_ABANDONO, leerRetomada, subirDocumentosPendientes, subirFoto, urlRetomada } from "@/lib/productos/alta";
+import { cerrarRetomada, estadoTrasEnvio, ID_FOTO, quitarArchivo, registrarEnvio, leerEstadoRetomada, MENSAJE_ABANDONO, leerRetomada, subirDocumentosPendientes, subirFoto, urlRetomada } from "@/lib/productos/alta";
 import { puedeCambiarPestana } from "@/lib/productos/borrador-documento";
 import { documentoPendienteVacio } from "@/lib/productos/documento-pendiente";
 import { decidirAccesoDocumento } from "@/lib/productos/permisos-documentos";
@@ -201,7 +201,7 @@ export async function verificarCasosProductosR02(): Promise<string[]> {
   const dA = doc("A.pdf");
   const dB = doc("B.pdf");
   const originalesR04 = [dA.uid, dB.uid];
-  const abandonoR04 = originalesR04.some((u) => esAbandono(u, originalesR04));
+  const abandonoR04 = quitarArchivo(originalesR04, dA.uid).abandono;
   const envioB = await subirDocumentosPendientes(PROD, [dB], falla());
   const estadoQuitandoA = estadoTrasEnvio(envioB.fallidos.length, true, abandonoR04);
 
@@ -215,7 +215,7 @@ export async function verificarCasosProductosR02(): Promise<string[]> {
   igual("R04-01: CANCELAR la confirmación mantiene la retomada sin llamar al servidor ni cambiar el estado", [cancelaAbandono, confirmaciones, llamadasCierre.length], [{ cerrada: false, cancelada: true, mensaje: "" }, 1, 0]);
   igual("R04-01: CONFIRMAR el abandono de A permite la conclusión consciente (una sola pregunta, un cierre)", [await cerrarRetomada(true, () => true, cerrarR04), llamadasCierre.length], [{ cerrada: true }, 1]);
 
-  igual("R04-01: la foto pendiente original quitada y el último pendiente quitado (lista vacía, sin envío) tampoco habilitan el cierre directo; lo agregado y quitado en la retomada no cuenta como abandono", [estadoTrasEnvio(0, true, true), esAbandono("u-nuevo", originalesR04), esAbandono(dA.uid, originalesR04), estadoTrasEnvio(0, false, false)], [null, false, true, null]);
+  igual("R04-01: la foto pendiente original quitada y el último pendiente quitado (lista vacía, sin envío) tampoco habilitan el cierre directo; lo agregado y quitado en la retomada no cuenta como abandono", [estadoTrasEnvio(0, true, true), quitarArchivo(originalesR04, "u-nuevo").abandono, quitarArchivo(originalesR04, dA.uid).abandono, estadoTrasEnvio(0, false, false)], [null, false, true, null]);
 
   llamadas.length = 0;
   const todos = await subirDocumentosPendientes(PROD, [dA, dB], falla());
@@ -226,7 +226,87 @@ export async function verificarCasosProductosR02(): Promise<string[]> {
 
   const retomarR04 = leer("app/(private)/productos/_components/retomar-alta.tsx");
 
-  cierto("R04-01: «Quitar» (documento y foto) registra el abandono y el estado tras el envío sale de estadoTrasEnvio con ese abandono, no de fallas === 0", /esAbandono\(p\.uid, originales\)\) setAbandono\(true\)/.test(retomarR04) && /fotoInicial !== null\) setAbandono\(true\)/.test(retomarR04) && /estadoTrasEnvio\(fallas\.length, pendientesExactas, abandono\)/.test(retomarR04) && !/fallas\.length === 0 && pendientesExactas/.test(retomarR04));
+  cierto("R04-01: «Quitar» (documento y foto) registra el abandono y el estado tras el envío sale de estadoTrasEnvio con ese abandono, no de fallas === 0", /quitar\(p\.uid\)/.test(retomarR04) && /quitar\(ID_FOTO\)/.test(retomarR04) && /estadoTrasEnvio\(fallas\.length, pendientesExactas, abandono\)/.test(retomarR04) && !/fallas\.length === 0 && pendientesExactas/.test(retomarR04));
+
+  // ── PRD-R05-01: los archivos NUEVOS cuyo envío falló también cuentan como abandono al quitarlos ─────────────────────────────────────────────
+  // Simulación de la retomada con las MISMAS funciones que usa la pantalla (subirFoto/subirDocumentosPendientes + registrarEnvio/quitarArchivo/estadoTrasEnvio/cerrarRetomada).
+  type Sim = { docs: ReturnType<typeof doc>[]; foto: File | null; fallidos: string[]; abandono: boolean; exactas: boolean; estado: "archivos" | "cierre" };
+  const sim = (docs: ReturnType<typeof doc>[], foto: File | null = null, exactas = true): Sim => ({ docs, foto, fallidos: [...(foto ? [ID_FOTO] : []), ...docs.map((d) => d.uid)], abandono: false, exactas, estado: "archivos" });
+  const quitarSim = (st: Sim, id: string) => { const q = quitarArchivo(st.fallidos, id); st.fallidos = q.fallidos; if (q.abandono) st.abandono = true; if (id === ID_FOTO) st.foto = null; else st.docs = st.docs.filter((d) => d.uid !== id); };
+  const agregarSim = (st: Sim, d: ReturnType<typeof doc>) => { st.docs = [...st.docs, d]; };
+  const enviarSim = async (st: Sim, enviar: never) => {
+    const confirmados: string[] = [];
+    const fallos: string[] = [];
+
+    if (st.foto) { const r = await subirFoto(PROD, st.foto, enviar); if (r.ok) { confirmados.push(ID_FOTO); st.foto = null; } else fallos.push(ID_FOTO); }
+
+    const r = await subirDocumentosPendientes(PROD, st.docs, enviar);
+
+    confirmados.push(...r.subidos);
+    fallos.push(...r.fallidos.map((f) => f.uid));
+    st.docs = st.docs.filter((d) => !r.subidos.includes(d.uid));
+    st.fallidos = registrarEnvio(st.fallidos, confirmados, fallos);
+    st.estado = estadoTrasEnvio(fallos.length, st.exactas, st.abandono) ?? st.estado;
+  };
+  const cierresR05: number[] = [];
+  const cerrarR05 = async () => { cierresR05.push(1); return { cerrada: true } as const; };
+  const cerrarSim = async (st: Sim, responde: boolean) => cerrarRetomada(st.estado === "archivos", () => responde, cerrarR05);
+
+  llamadas.length = 0;
+  const A5 = doc("A5.pdf");
+  const C5 = doc("C5.pdf");
+  const s1 = sim([A5]);
+
+  agregarSim(s1, C5);
+  await enviarSim(s1, falla("A5.pdf", "C5.pdf"));
+  quitarSim(s1, C5.uid);
+  await enviarSim(s1, falla());
+
+  igual("R05-01: A original y C nuevo fallan; se quita C y A se confirma → NO pasa a «cierre» (C falló y se abandonó): mantiene «archivos» y exige confirmación", [s1.abandono, s1.estado, s1.fallidos, s1.docs.length], [true, "archivos", [], 0]);
+
+  cierresR05.length = 0;
+
+  igual("R05-01: CANCELAR el abandono de C no llama al cierre; CONFIRMAR lo solicita y solo concluye con la respuesta OK del servidor", [await cerrarSim(s1, false), cierresR05.length, await cerrarSim(s1, true), cierresR05.length], [{ cerrada: false, cancelada: true, mensaje: "" }, 0, { cerrada: true }, 1]);
+
+  const F5 = new File(["f"], "F5.png", { type: "image/png" });
+  const s2 = sim([A5]);
+
+  s2.foto = F5;
+  s2.fallidos = [A5.uid];
+  await enviarSim(s2, falla("A5.pdf", "F5.png"));
+  quitarSim(s2, ID_FOTO);
+  await enviarSim(s2, falla());
+
+  igual("R05-01: foto NUEVA que falló y se quitó, con A confirmado después → también exige confirmación (abandono de la foto)", [s2.abandono, s2.estado, await cerrarSim(s2, false)], [true, "archivos", { cerrada: false, cancelada: true, mensaje: "" }]);
+
+  const D5 = doc("D5.pdf");
+  const s3 = sim([A5]);
+
+  agregarSim(s3, D5);
+  quitarSim(s3, D5.uid); // nunca se intentó enviar: no es abandono
+  await enviarSim(s3, falla());
+  cierresR05.length = 0;
+
+  igual("R05-01: documento nuevo quitado ANTES de cualquier intento no genera falso abandono → «cierre» directo, sin pregunta", [s3.abandono, s3.estado, await cerrarRetomada(s3.estado === "archivos", () => { throw new Error("no debe preguntar"); }, cerrarR05)], [false, "cierre", { cerrada: true }]);
+
+  const E5 = doc("E5.pdf");
+  const s4 = sim([]);
+
+  agregarSim(s4, E5);
+  await enviarSim(s4, falla("E5.pdf"));
+  s4.exactas = true;
+  await enviarSim(s4, falla());
+
+  igual("R05-01: documento nuevo que falla y luego se envía con éxito: ya no es pendiente, no hay abandono y el cierre es directo", [s4.fallidos, s4.abandono, s4.estado], [[], false, "cierre"]);
+
+  llamadas.length = 0;
+  const s5 = sim([A5, C5]);
+
+  await enviarSim(s5, falla());
+
+  igual("R05-01: todos confirmados → «cierre» directo; un reintento posterior no reenvía lo confirmado; ningún POST de creación", [s5.estado, s5.docs.length, llamadas.length, llamadas.some((l) => l.endsWith("/api/productos"))], ["cierre", 0, 2, false]);
+  igual("R05-01: recarga con pend=archivos sigue protegida (confirma aunque no haya fallas) y pend=cierre reintenta directo", [estadoTrasEnvio(0, false, false), leerEstadoRetomada("?pend=archivos"), leerEstadoRetomada("?pend=cierre")], [null, "archivos", "cierre"]);
+  cierto("R05-01: la pantalla usa registrarEnvio/quitarArchivo con la foto y los uid, y el estado sale de estadoTrasEnvio", /registrarEnvio\(fallidos, confirmados, fallos\)/.test(retomarR04) && /quitarArchivo\(fallidos, id\)/.test(retomarR04) && /quitar\(ID_FOTO\)/.test(retomarR04) && /fallos\.push\(ID_FOTO\)/.test(retomarR04));
 
   const fin = (p: { ver: boolean; editar: boolean; crear: boolean }, ctx: { esCreador: boolean; cargaInicialAbierta: boolean } | null) => decidirAccesoDocumento("FINALIZAR_CARGA", p, ctx).permitido;
 

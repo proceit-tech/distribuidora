@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 
-import { cerrarRetomada, subirDocumentosPendientes, subirFoto, urlRetomada, esAbandono, estadoTrasEnvio, type EstadoRetomada } from "@/lib/productos/alta";
+import { cerrarRetomada, subirDocumentosPendientes, subirFoto, urlRetomada, estadoTrasEnvio, ID_FOTO, quitarArchivo, registrarEnvio, type EstadoRetomada } from "@/lib/productos/alta";
 import { cerrarCargaInicial } from "@/lib/productos/cierre-carga";
 import { documentoPendienteVacio, validarPendientes, type DocumentoPendiente } from "@/lib/productos/documento-pendiente";
 import { ErrorValidacion } from "@/lib/productos/errores";
@@ -43,9 +43,17 @@ export default function RetomarAlta({ id, codigo, fotoInicial, pendientesInicial
   const [mensaje, setMensaje] = useState(mensajeInicial);
   const [ocupado, setOcupado] = useState(false);
   const [estado, setEstado] = useState<EstadoRetomada>(estadoInicial);
-  // PRD-R04-01: se quitó (sin enviar) un pendiente original; el estado no puede pasar a «cierre» y el cierre exigirá la confirmación de abandono.
+  // PRD-R04-01/R05-01: se quitó un archivo cuyo envío había fallado (original o nuevo); el estado no puede pasar a «cierre» y el cierre exigirá la confirmación de abandono.
   const [abandono, setAbandono] = useState(false);
-  const [originales] = useState(() => pendientesIniciales.map((p) => p.uid));
+  // Archivos con un envío fallido (la foto como ID_FOTO, los documentos por uid). Los nunca enviados no cuentan.
+  const [fallidos, setFallidos] = useState<string[]>(() => [...(fotoInicial !== null ? [ID_FOTO] : []), ...pendientesIniciales.map((p) => p.uid)]);
+
+  function quitar(id: string) {
+    const q = quitarArchivo(fallidos, id);
+
+    setFallidos(q.fallidos);
+    if (q.abandono) setAbandono(true);
+  }
 
   function marcarEstado(nuevo: EstadoRetomada) {
     setEstado(nuevo);
@@ -78,6 +86,8 @@ export default function RetomarAlta({ id, codigo, fotoInicial, pendientesInicial
     setOcupado(true);
 
     const fallas: string[] = [];
+    const confirmados: string[] = [];
+    const fallos: string[] = [];
     let subidas = 0;
 
     if (foto) {
@@ -85,13 +95,20 @@ export default function RetomarAlta({ id, codigo, fotoInicial, pendientesInicial
 
       if (r.ok) {
         subidas += 1;
+        confirmados.push(ID_FOTO);
         setFoto(null); // confirmada por el servidor: no se vuelve a enviar
-      } else fallas.push(`foto: ${r.mensaje}${r.estado ? ` (código ${r.estado})` : ""}`);
+      } else {
+        fallos.push(ID_FOTO);
+        fallas.push(`foto: ${r.mensaje}${r.estado ? ` (código ${r.estado})` : ""}`);
+      }
     }
 
     const r = await subirDocumentosPendientes(id, pendientes);
 
     subidas += r.subidos.length;
+    confirmados.push(...r.subidos);
+    fallos.push(...r.fallidos.map((f) => f.uid));
+    setFallidos(registrarEnvio(fallidos, confirmados, fallos));
     setPendientes(pendientes.filter((p) => !r.subidos.includes(p.uid))); // los subidos salen de la lista: reintentar nunca los vuelve a enviar
     fallas.push(...r.fallidos.map((f) => `${f.mensaje}${f.estado ? ` (código ${f.estado})` : ""}`));
     setOcupado(false);
@@ -160,7 +177,7 @@ export default function RetomarAlta({ id, codigo, fotoInicial, pendientesInicial
               <p className={styles.textoSecundario}>
                 {foto.name}{" "}
                 <button type="button" className={styles.cancelButton} disabled={ocupado} onClick={() => {
-                    if (fotoInicial !== null) setAbandono(true);
+                    quitar(ID_FOTO);
                     setFoto(null);
                   }}>
                   Quitar foto
@@ -182,7 +199,7 @@ export default function RetomarAlta({ id, codigo, fotoInicial, pendientesInicial
                 <header>
                   <strong>Documento {i + 1}</strong>
                   <button type="button" disabled={ocupado} onClick={() => {
-                    if (esAbandono(p.uid, originales)) setAbandono(true);
+                    quitar(p.uid);
                     setPendientes(pendientes.filter((x) => x.uid !== p.uid));
                   }}>
                     Quitar

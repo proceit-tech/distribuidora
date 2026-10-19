@@ -107,9 +107,6 @@ export async function cerrarRetomada(
   return cierre.cerrada ? { cerrada: true } : { cerrada: false, cancelada: false, mensaje: `${cierre.mensaje}${cierre.estado ? ` (código ${cierre.estado})` : ""}` };
 }
 
-/** PRD-R04-01: ¿quitar este archivo de la lista equivale a abandonar uno que falló? Solo los pendientes ORIGINALES cuentan (un documento agregado en la retomada y quitado no es un abandono). */
-export const esAbandono = (uid: string, originales: readonly string[]) => originales.includes(uid);
-
 /**
  * Estado tras un envío. Solo se pasa a «cierre» (cierre directo, sin confirmación) si no quedó ninguna falla, los pendientes son exactos (misma sesión) Y no se quitó ningún pendiente original sin enviarlo;
  * `fallas === 0` por sí solo NO prueba que todo se resolvió. Con un abandono sin decidir se mantiene «archivos»: el cierre pedirá la confirmación explícita.
@@ -118,4 +115,20 @@ export function estadoTrasEnvio(fallas: number, exactas: boolean, abandonoSinDec
   if (fallas > 0) return "archivos";
 
   return exactas && !abandonoSinDecidir ? "cierre" : null;
+}
+
+/** Identificador de la foto en el seguimiento de archivos con intento de envío fallido (los documentos usan su uid). */
+export const ID_FOTO = "foto";
+
+/**
+ * PRD-R05-01 — seguimiento de archivos cuyo envío FALLÓ (originales de la alta o nuevos con un intento fallido). Tras un envío: se agregan los que fallaron y se retiran los confirmados por el servidor.
+ * Un archivo nuevo nunca enviado no entra aquí; uno confirmado sale (no es pendiente ni genera abandono).
+ */
+export function registrarEnvio(fallidos: readonly string[], confirmados: readonly string[], nuevosFallos: readonly string[]): string[] {
+  return [...new Set([...fallidos, ...nuevosFallos])].filter((x) => !confirmados.includes(x));
+}
+
+/** Quitar un archivo de la lista: si había fallado es un ABANDONO (el cierre exigirá confirmarlo); si nunca falló, se quita sin más. */
+export function quitarArchivo(fallidos: readonly string[], id: string): { fallidos: string[]; abandono: boolean } {
+  return { fallidos: fallidos.filter((x) => x !== id), abandono: fallidos.includes(id) };
 }
