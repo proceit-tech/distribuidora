@@ -5,13 +5,14 @@ import { useRouter } from "next/navigation";
 
 import ProductoForm from "@/app/(private)/productos/_components/producto-form";
 import RetomarAlta from "@/app/(private)/productos/_components/retomar-alta";
-import { leerRetomada, subirDocumentosPendientes, subirFoto, urlRetomada } from "@/lib/productos/alta";
+import { leerEstadoRetomada, leerRetomada, subirDocumentosPendientes, subirFoto, urlRetomada } from "@/lib/productos/alta";
 import { cargarCatalogosConPermisos, errorDeRespuesta } from "@/lib/productos/cliente-api";
 import { cerrarCargaInicial } from "@/lib/productos/cierre-carga";
+import type { EstadoRetomada } from "@/lib/productos/alta";
 import type { DocumentoPendiente } from "@/lib/productos/documento-pendiente";
 import type { CatalogoProductos } from "@/types/productos";
 
-type Retomada = { id: string; codigo: string; foto: File | null; pendientes: DocumentoPendiente[]; mensaje: string };
+type Retomada = { id: string; codigo: string; foto: File | null; pendientes: DocumentoPendiente[]; mensaje: string; estado: EstadoRetomada; /** true = los pendientes de esta sesión son exactos; false = tras recargar no se sabe qué falta */ exacta: boolean };
 
 export default function NuevoProductoPage() {
   const router = useRouter();
@@ -29,7 +30,7 @@ export default function NuevoProductoPage() {
     void Promise.resolve().then(() => {
       const r = leerRetomada(window.location.search);
 
-      if (r) setRetomada({ id: r.id, codigo: r.codigo, foto: null, pendientes: [], mensaje: "" });
+      if (r) setRetomada({ id: r.id, codigo: r.codigo, foto: null, pendientes: [], mensaje: "", estado: leerEstadoRetomada(window.location.search), exacta: false });
       setVerificado(true);
     });
 
@@ -95,15 +96,15 @@ export default function NuevoProductoPage() {
         return;
       }
 
-      window.history.replaceState(null, "", urlRetomada(id, codigo));
-      setRetomada({ id, codigo, foto: null, pendientes: [], mensaje: `${cierre.mensaje}${cierre.estado ? ` (código ${cierre.estado})` : ""}` });
+      window.history.replaceState(null, "", urlRetomada(id, codigo, "cierre"));
+      setRetomada({ id, codigo, foto: null, pendientes: [], mensaje: `${cierre.mensaje}${cierre.estado ? ` (código ${cierre.estado})` : ""}`, estado: "cierre", exacta: true });
 
       return;
     }
 
     // Quedan archivos sin cargar: se retoma en esta misma pantalla (la ficha exige PRODUCTOS.VER, que el creador con solo CREAR no tiene). Lo ya cargado no se repite.
-    window.history.replaceState(null, "", urlRetomada(id, codigo));
-    setRetomada({ id, codigo, foto: fotoPendiente, pendientes: fallidos, mensaje: `Algunos archivos no se pudieron cargar: ${[...new Set(fallas)].join(" · ")}` });
+    window.history.replaceState(null, "", urlRetomada(id, codigo, "archivos"));
+    setRetomada({ id, codigo, foto: fotoPendiente, pendientes: fallidos, mensaje: `Algunos archivos no se pudieron cargar: ${[...new Set(fallas)].join(" · ")}`, estado: "archivos", exacta: true });
   }
 
   if (altaFinalizada) {
@@ -129,6 +130,8 @@ export default function NuevoProductoPage() {
         fotoInicial={retomada.foto}
         pendientesIniciales={retomada.pendientes}
         mensajeInicial={retomada.mensaje}
+        estadoInicial={retomada.estado}
+        pendientesExactas={retomada.exacta}
         alTerminar={terminar}
         puedeVerLista={puedeVer}
       />

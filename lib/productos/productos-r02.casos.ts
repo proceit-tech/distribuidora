@@ -7,7 +7,7 @@ import { join } from "node:path";
 
 import { contador } from "@/lib/clientes/contador-casos";
 import { decidirGet } from "@/lib/productos/acceso-get";
-import { leerRetomada, subirDocumentosPendientes, subirFoto, urlRetomada } from "@/lib/productos/alta";
+import { cerrarRetomada, leerEstadoRetomada, MENSAJE_ABANDONO, leerRetomada, subirDocumentosPendientes, subirFoto, urlRetomada } from "@/lib/productos/alta";
 import { puedeCambiarPestana } from "@/lib/productos/borrador-documento";
 import { documentoPendienteVacio } from "@/lib/productos/documento-pendiente";
 import { decidirAccesoDocumento } from "@/lib/productos/permisos-documentos";
@@ -146,11 +146,55 @@ export async function verificarCasosProductosR02(): Promise<string[]> {
   const terminar = nuevaPagina.slice(nuevaPagina.indexOf("function terminar()"), nuevaPagina.indexOf("async function guardar"));
   const guardarFn = nuevaPagina.slice(nuevaPagina.indexOf("async function guardar"), nuevaPagina.indexOf("if (altaFinalizada)"));
 
-  cierto("D02: un único POST de creación; los fallos de foto/documentos llevan a la retomada con el MISMO id (replaceState) en vez de abrir la ficha; el cierre se confirma antes de concluir", (nuevaPagina.match(/fetch\("\/api\/productos"/g) ?? []).length === 1 && /window\.history\.replaceState\(null, "", urlRetomada\(id, codigo\)\)/.test(guardarFn) && !/router\.push\(.\/productos\/\$\{id\}/.test(nuevaPagina) && /if \(cierre\.cerrada\) \{\s+terminar\(\);/.test(guardarFn) && /fotoPendiente === null && fallidos\.length === 0/.test(guardarFn));
+  cierto("D02: un único POST de creación; los fallos de foto/documentos llevan a la retomada con el MISMO id (replaceState) en vez de abrir la ficha; el cierre se confirma antes de concluir", (nuevaPagina.match(/fetch\("\/api\/productos"/g) ?? []).length === 1 && /window\.history\.replaceState\(null, "", urlRetomada\(id, codigo, "(?:archivos|cierre)"\)\)/.test(guardarFn) && !/router\.push\(.\/productos\/\$\{id\}/.test(nuevaPagina) && /if \(cierre\.cerrada\) \{\s+terminar\(\);/.test(guardarFn) && /fotoPendiente === null && fallidos\.length === 0/.test(guardarFn));
   cierto("D02: con VER vuelve a la lista; sin VER «Producto registrado» + «Registrar otro producto» sin enlaces prohibidos (miga, volver, cancelar, salir) y la retomada usa solo las rutas del alta", /if \(!puedeVer\) \{\s+setAltaFinalizada\(true\);\s+return;\s+\}\s+router\.push\("\/productos"\)/.test(terminar) && /Registrar otro producto/.test(nuevaPagina) && /window\.location\.assign\("\/productos\/nuevo"\)/.test(nuevaPagina) && /puedeVerLista=\{puedeVer\}/.test(nuevaPagina) && /puedeVerLista \? \(\s+<Link href="\/productos" className=\{styles\.cancelButton\}>\s+Salir sin cerrar/.test(retomar) && !/fetch\("\/api\/productos"/.test(retomar) && /subirFoto\(id, foto\)/.test(retomar) && /setFoto\(null\)/.test(retomar) && /pendientes\.filter\(\(p\) => !r\.subidos\.includes\(p\.uid\)\)/.test(retomar));
 
   // ── PRD-D04: cierre idempotente solo para el creador ──────────────────────────────────────────────────────────────────────────────────────────
   const crear = { ver: false, editar: false, crear: true };
+  // ── PRD-R03-01: la retomada tras recargar no permite cerrar en silencio ───────────────────────────────────────────────────────────────
+  llamadas.length = 0;
+  const urlTrasFalla = urlRetomada(PROD, "PRD-000012", "archivos");
+  const urlSoloCierre = urlRetomada(PROD, "PRD-000012", "cierre");
+
+  igual("R03-01: un documento falla → la URL de retomada conserva el indicador «archivos» (solo id, código e indicador; nada de archivos ni credenciales) y la recarga lo lee", [urlTrasFalla, leerEstadoRetomada(new URL("http://x" + urlTrasFalla).search), leerRetomada(new URL("http://x" + urlTrasFalla).search)], ["/productos/nuevo?retomar=" + PROD + "&codigo=PRD-000012&pend=archivos", "archivos", { id: PROD, codigo: "PRD-000012" }]);
+  igual("R03-01: solo falló el cierre → indicador «cierre»; URL antigua, vacía o manipulada se trata como «archivos» (nunca se presume que todo se envió)", [leerEstadoRetomada("?pend=cierre"), leerEstadoRetomada("?retomar=" + PROD), leerEstadoRetomada("?pend="), leerEstadoRetomada("?pend=nada"), leerEstadoRetomada(new URL("http://x" + urlSoloCierre).search)], ["cierre", "archivos", "archivos", "archivos", "cierre"]);
+
+  let preguntas1 = 0;
+  let cierres = 0;
+  const cierreOk = async () => { cierres += 1; return { cerrada: true } as const; };
+  const cierreFalla = async () => { cierres += 1; return { cerrada: false, estado: 500, mensaje: "falló el cierre" } as const; };
+  const rCancelada = await cerrarRetomada(true, () => { preguntas1 += 1; return false; }, cierreOk);
+
+  igual("R03-01: tras recargar con pendencia, «Cerrar» pregunta; CANCELAR no llama al servidor, no concluye y mantiene la retomada", [rCancelada, preguntas1, cierres], [{ cerrada: false, cancelada: true, mensaje: "" }, 1, 0]);
+  igual("R03-01: el texto de confirmación es el definido", MENSAJE_ABANDONO, "Hay archivos que no pudieron cargarse. Si finaliza ahora, esos archivos no se adjuntarán al producto. ¿Desea finalizar sin los archivos pendientes?");
+
+  const rFallaCierre = await cerrarRetomada(true, () => true, cierreFalla);
+  const rReintento = await cerrarRetomada(true, () => true, cierreOk);
+
+  igual("R03-01: CONFIRMAR solicita el cierre; un error HTTP del cierre NO concluye (queda en retomada con su causa) y el reintento concluye solo con respuesta OK", [rFallaCierre, rReintento, cierres], [{ cerrada: false, cancelada: false, mensaje: "falló el cierre (código 500)" }, { cerrada: true }, 2]);
+
+  cierres = 0;
+  preguntas1 = 0;
+  const rSoloCierre = await cerrarRetomada(false, () => { preguntas1 += 1; return false; }, cierreOk);
+
+  igual("R03-01: si solo falló el cierre (todos los archivos confirmados) se reintenta directo, sin falsa advertencia de archivos pendientes", [rSoloCierre, preguntas1, cierres], [{ cerrada: true }, 0, 1]);
+
+  llamadas.length = 0;
+  const trasRecarga = await subirDocumentosPendientes(PROD, [b], falla());
+  const tras = await cerrarRetomada(true, () => true, cierreOk);
+
+  igual("R03-01: tras recargar se reenvía SOLO lo que el operador vuelve a elegir (el documento A ya confirmado no se reenvía), siempre al mismo producto, sin crear otro", [trasRecarga.subidos, llamadas, llamadas.some((l) => l.endsWith("/api/productos")), tras], [["u-b.pdf"], ["POST /api/productos/" + PROD + "/documentos b.pdf"], false, { cerrada: true }]);
+
+  const inciertoRed = await subirDocumentosPendientes(PROD, [b], falla("red"));
+
+  igual("R03-01: caída de red con resultado incierto conserva el documento como pendiente y avisa que se verifique antes de reenviar", [inciertoRed.subidos, inciertoRed.fallidos.map((x) => x.estado), /resultado incierto/.test(inciertoRed.fallidos[0]?.mensaje ?? "")], [[], [null], true]);
+
+  const retomarSrc = leer("app/(private)/productos/_components/retomar-alta.tsx");
+  const paginaNueva = leer("app/(private)/productos/nuevo/page.tsx");
+
+  cierto("R03-01: la pantalla usa cerrarRetomada con window.confirm y el estado de la URL; solo marca «cierre» con pendientes exactos de la misma sesión; la página lee el indicador al recargar y escribe el correcto en cada replaceState; un único POST de creación y sin almacenamiento del navegador", /cerrarRetomada\(estado === "archivos", \(m\) => window\.confirm\(m\), \(\) => cerrarCargaInicial\(id\)\)/.test(retomarSrc) && /fallas\.length === 0 && pendientesExactas\) marcarEstado\("cierre"\)/.test(retomarSrc) && /estado: leerEstadoRetomada\(window\.location\.search\), exacta: false/.test(paginaNueva) && /urlRetomada\(id, codigo, "cierre"\)/.test(paginaNueva) && /urlRetomada\(id, codigo, "archivos"\)/.test(paginaNueva) && (paginaNueva.match(/fetch\("\/api\/productos"/g) ?? []).length === 1 && !/localStorage|sessionStorage/.test(retomarSrc + paginaNueva));
+  igual("R03-01: CREAR-only sigue sin ficha ni lista (el indicador de la URL no concede nada): consulta ajena denegada, catálogos mínimos permitidos y la ficha exige VER", [decidirGet(new URL("http://x/api/productos?retomar=" + PROD + "&pend=cierre"), { ver: false, crear: true }).tipo, decidirGet(new URL("http://x/api/productos?modo=catalogos"), { ver: false, crear: true }).tipo, /guardPage\("PRODUCTOS", "VER"\)/.test(leer("app/(private)/productos/[id]/layout.tsx"))], ["denegada", "permitida", true]);
+
   const fin = (p: { ver: boolean; editar: boolean; crear: boolean }, ctx: { esCreador: boolean; cargaInicialAbierta: boolean } | null) => decidirAccesoDocumento("FINALIZAR_CARGA", p, ctx).permitido;
 
   igual("D04: el creador con CREAR cierra con la carga abierta y puede REPETIR el cierre ya cerrado (respuesta HTTP perdida)", [fin(crear, { esCreador: true, cargaInicialAbierta: true }), fin(crear, { esCreador: true, cargaInicialAbierta: false })], [true, true]);

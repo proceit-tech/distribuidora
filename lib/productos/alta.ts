@@ -34,7 +34,7 @@ export async function subirFoto(productoId: string, foto: File, enviar: Fetch = 
 
     return respuesta.ok ? { ok: true } : { ok: false, estado: respuesta.status, mensaje: await mensajeDe(respuesta, "No fue posible cargar la foto.") };
   } catch (e) {
-    return { ok: false, estado: null, mensaje: fallaRed(e, "No hubo conexión con el servidor al cargar la foto.") };
+    return { ok: false, estado: null, mensaje: fallaRed(e, "No hubo conexión con el servidor al cargar la foto (resultado incierto: verifique si ya se adjuntó antes de reenviarla).") };
   }
 }
 
@@ -50,7 +50,7 @@ export async function subirDocumentosPendientes(productoId: string, pendientes: 
       if (respuesta.ok) subidos.push(documento.uid);
       else fallidos.push({ uid: documento.uid, estado: respuesta.status, mensaje: await mensajeDe(respuesta, "No fue posible cargar el documento.") });
     } catch (e) {
-      fallidos.push({ uid: documento.uid, estado: null, mensaje: fallaRed(e, "No hubo conexión con el servidor al cargar el documento.") });
+      fallidos.push({ uid: documento.uid, estado: null, mensaje: fallaRed(e, "No hubo conexión con el servidor al cargar el documento (resultado incierto: verifique si ya se adjuntó antes de reenviarlo).") });
     }
   }
 
@@ -71,7 +71,38 @@ export function leerRetomada(search: string): Retomada | null {
   return { id, codigo: /^[A-Za-z0-9-]{1,40}$/.test(codigo) ? codigo : "" };
 }
 
-/** Dirección que se deja en la barra del navegador para retomar tras recargar. Solo contiene identificador y código del producto. */
-export function urlRetomada(id: string, codigo: string) {
-  return `/productos/nuevo?retomar=${encodeURIComponent(id)}${codigo ? `&codigo=${encodeURIComponent(codigo)}` : ""}`;
+/**
+ * Qué falta tras el alta, conservado como indicador NO sensible en la URL (PRD-R03-01): "archivos" = hubo foto/documentos sin confirmar; "cierre" = todos los archivos se confirmaron y solo falta cerrar la
+ * carga inicial. Sin indicador o con un valor desconocido (URL antigua) se asume "archivos" (seguro: nunca se presume que todo se envió). No concede ninguna autorización: el servidor decide por sesión, empresa y creador.
+ */
+export type EstadoRetomada = "archivos" | "cierre";
+
+export function leerEstadoRetomada(search: string): EstadoRetomada {
+  return new URLSearchParams(search).get("pend") === "cierre" ? "cierre" : "archivos";
+}
+
+/** Dirección que se deja en la barra del navegador para retomar tras recargar. Solo contiene identificador, código y el indicador de pendencia (sin archivos ni datos del documento). */
+export function urlRetomada(id: string, codigo: string, estado?: EstadoRetomada) {
+  return `/productos/nuevo?retomar=${encodeURIComponent(id)}${codigo ? `&codigo=${encodeURIComponent(codigo)}` : ""}${estado ? `&pend=${estado}` : ""}`;
+}
+
+export const MENSAJE_ABANDONO =
+  "Hay archivos que no pudieron cargarse. Si finaliza ahora, esos archivos no se adjuntarán al producto. ¿Desea finalizar sin los archivos pendientes?";
+
+export type ResultadoCierreRetomada = { cerrada: true } | { cerrada: false; cancelada: boolean; mensaje: string };
+
+/**
+ * Cierre de la retomada. Si pueden faltar archivos (los de esta sesión sin confirmar, o los de una sesión anterior perdida al recargar) el cierre exige una decisión EXPLÍCITA de abandonarlos; cancelar no llama
+ * al servidor. Solo un cierre confirmado por el servidor (`cerrar` ya verifica el HTTP) concluye el alta; un error la deja en retomada para reintentar. Con "cierre" (todo confirmado) se cierra directamente.
+ */
+export async function cerrarRetomada(
+  puedenFaltarArchivos: boolean,
+  confirmar: (mensaje: string) => boolean,
+  cerrar: () => Promise<{ cerrada: true } | { cerrada: false; estado: number | null; mensaje: string }>,
+): Promise<ResultadoCierreRetomada> {
+  if (puedenFaltarArchivos && !confirmar(MENSAJE_ABANDONO)) return { cerrada: false, cancelada: true, mensaje: "" };
+
+  const cierre = await cerrar();
+
+  return cierre.cerrada ? { cerrada: true } : { cerrada: false, cancelada: false, mensaje: `${cierre.mensaje}${cierre.estado ? ` (código ${cierre.estado})` : ""}` };
 }
