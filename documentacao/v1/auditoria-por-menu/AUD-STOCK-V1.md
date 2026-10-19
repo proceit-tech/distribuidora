@@ -119,3 +119,10 @@ Consultar **`AUD-PRODUCTOS-V1.md` §XVII**: `stock_saldos` deve ser zero em **to
 - **STK-D03 MÉDIA — risco condicional:** `leerStock` executa 9 SELECT no Pool sem snapshot comum; não reproduzido em PG. Testar concorrência autorizada antes de mexer em isolamento; `conSnapshotLectura` de Reportes é só referência.
 - **Preservar:** INV-01…04/INV-R02-01/02, STOCK.VER, alcance de depósitos, valor decimal exato, propriedade PROPIO/TERCERO, vínculos Movimientos/Reposición, contratos NEX-009/014/046/052. STK-O01…O06 são observações. Apenas auditoria estática: zero testes/banco/browser/CI/SQL/deploy, sem alterações funcionais.
 - **Linear:** pai `PRO-78` (não PRO-72, que é Vendedores planejado). STK-D01 vinculado ao gate existente PRO-137; STK-D02 tarefa corretiva e STK-D03 investigação condicionada. Próximo menu documentado: Inventario → Movimientos, mediante pedido.
+
+
+## AUD-R03 Stock DESKTOP — PRO-178 / STK-D02 (19/10/2026)
+- **Auditoria independente:** [AUD-NEXIT-STOCK-DESKTOP-R03](../../testes/AUD-NEXIT-STOCK-DESKTOP-R03-2026-10-19.md). Commit funcional `8ceed1c3876ff489611034ab95dca417c9473d36`. **PRO-178 / STK-D02 CONFORME ESTATICAMENTE**, sem novo bloqueio identificado no diff autorizado; não homologado.
+- `MONEDA_BASE` global removida; moeda `useState<string | null>(null)` pertence à instância, segue a própria resposta de `cargarStock` e o helper `iniciarCargaStock` ignora callbacks tardios após cleanup. Sem moeda válida mostra «—» em custo/valor; preço de venda usa sua `monedaPrecio`.
+- **Testes reportados pelo Claude, não executados pelo ChatGPT:** helper 7/0; Stock 19/0; residuais 67/0; Stock–Reposición 275/0. Cobertura de promessas controladas e wiring estrutural; sem React/HTTP real, PostgreSQL/VM, CI ou deploy. Dois asserts históricos foram adaptados sem relaxar autorização nem regra de estoque.
+- **Continuam separados:** STK-D01 ALTA = C24/PRO-137, exige decisão funcional; STK-D03 MÉDIA = PRO-179, investigação concorrente condicionada sem repro em PG. STK-O01…O06 observações preservadas. **PRO-78 In Review; nenhum Done, sem HOMOLOGAÇÃO.**
