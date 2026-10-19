@@ -11,7 +11,7 @@ import { resolveNavigation } from "@/lib/navigation/menu";
 import { crearExclusion } from "@/lib/productos/catalogos-operacion";
 import { MAX_ENTEROS_CAMBIO, cambioEnAlcance, canonicoDecimal, compararDecimales, formatearCambio, igualDecimal } from "@/lib/comercial/cambio-decimal";
 import { normalizarCambio } from "@/lib/listas-precio/calculos";
-import { validarFormularioComercial, type FormularioComercial } from "@/lib/comercial/formulario";
+import { aplicarCambioCampo, validarFormularioComercial, type FormularioComercial } from "@/lib/comercial/formulario";
 import { ErrorComercial, validarTipoCambio } from "@/lib/comercial/validacion";
 import { textoConfirmarInactivacionComercial } from "@/lib/comercial/vinculos";
 import { exigirVersionComercial } from "@/lib/comercial/version";
@@ -349,7 +349,7 @@ export async function verificarCasosComercialEstabilizacion(): Promise<string[]>
 
   const compSrc = leer("app/(private)/catalogos-comerciales/_components/catalogos-comerciales.tsx");
 
-  cierto("D02 pantalla real: guardar, cambiarEstado y anular adquieren la exclusión de forma síncrona (crearExclusion) y la liberan en finally; pestañas, Nuevo, Cancelar, Editar/Corregir/Anular/Inactivar y el historial se deshabilitan y sus manejadores se niegan con la exclusión activa; se mantiene la compuerta GET", (compSrc.match(/exclusion\.current\.ejecutar\(/g) ?? []).length === 3 && (compSrc.match(/if \(exclusion\.current\.activa\(\)\) return;/g) ?? []).length === 2 && /event\.preventDefault\(\);\n\s+if \(!form \|\| exclusion\.current\.activa\(\)\) return;/.test(compSrc) && /if \(exclusion\.current\.activa\(\) \|\| nuevo === tab/.test(compSrc) && (compSrc.match(/setOcupado\(false\)/g) ?? []).length === 3 && (compSrc.match(/disabled=\{!confiable \|\| ocupado\}/g) ?? []).length === 4 && /aria-current=\{tab === t\.id \? "page" : undefined\} disabled=\{ocupado\}/.test(compSrc) && /disabled=\{ocupado\}\n\s+onClick=\{\(\) => \{\n\s+if \(!ocupado && confirmarDescarte\(\)\) cerrar\(\)/.test(compSrc) && /compuerta\.current\.vigente\(solicitud\)/.test(compSrc) && /useProtegerCambios\(sucio\)/.test(compSrc));
+  cierto("D02 pantalla real: guardar, cambiarEstado y anular adquieren la exclusión de forma síncrona (crearExclusion) y la liberan en finally; pestañas, Nuevo, Cancelar, Editar/Corregir/Anular/Inactivar y el historial se deshabilitan y sus manejadores se niegan con la exclusión activa; se mantiene la compuerta GET", (compSrc.match(/exclusion\.current\.ejecutar\(/g) ?? []).length === 3 && (compSrc.match(/if \(exclusion\.current\.activa\(\)\) return;/g) ?? []).length === 3 && /event\.preventDefault\(\);\n\s+if \(!form \|\| exclusion\.current\.activa\(\)\) return;/.test(compSrc) && /if \(exclusion\.current\.activa\(\) \|\| nuevo === tab/.test(compSrc) && (compSrc.match(/setOcupado\(false\)/g) ?? []).length === 3 && (compSrc.match(/disabled=\{!confiable \|\| ocupado\}/g) ?? []).length === 4 && /aria-current=\{tab === t\.id \? "page" : undefined\} disabled=\{ocupado\}/.test(compSrc) && /disabled=\{ocupado\}\n\s+onClick=\{\(\) => \{\n\s+if \(!ocupado && confirmarDescarte\(\)\) cerrar\(\)/.test(compSrc) && /compuerta\.current\.vigente\(solicitud\)/.test(compSrc) && /useProtegerCambios\(sucio\)/.test(compSrc));
 
   // ── CC-D03 (PRO-175): monedas obligatorias en Tipos de cambio ─────────────────────────────────────────────────────────────────────────────
   const tc = (cuerpo: unknown, status = 200) => cargarCatalogoComercial("tipos-cambio", "tiposCambio", false, fetchDe({ [U("tipos-cambio")]: { status, cuerpo } }));
@@ -373,6 +373,126 @@ export async function verificarCasosComercialEstabilizacion(): Promise<string[]>
 
   igual("D03: 403 y 500 → error con código y permisos neutralizados (la pantalla vacía monedas, filas y permisos y bloquea crear/editar/guardar con el borrador intacto); el reintento válido restablece una carga confiable", [f403.error, f500.error, f403.monedas, permisosVigentes(P, estadoFallo), cargaConfiable(estadoFallo), motivoBloqueoGuardar(estadoFallo)?.includes("Lo escrito se conserva"), reintento.error, cargaConfiable({ cargando: false, errorCarga: reintento.error, errorAuxiliar: "" })], ["Sin permiso. (código 403)", "Falló. (código 500)", null, { crear: false, editar: false }, false, true, "", true]);
   cierto("D03 pantalla: tras un error de carga se vacían las monedas obsoletas y el aviso ofrece «Reintentar» (relanza la carga sin tocar el borrador)", /setMonedas\(\[\]\); \/\/ CC-D03/.test(compSrc) && /disabled=\{ocupado \|\| cargando\} onClick=\{\(\) => void cargar\(\)\}>\s+Reintentar/.test(compSrc) && /clave === "tiposCambio"/.test(leer("lib/comercial/carga.ts")));
+
+  // ── CC-R03-01 (PRO-176): los campos no se editan durante la gravación ─────────────────────────────────────────────────────────────────────────
+  const borrador = (nombre: string): FormularioComercial => ({ id: null, codigo: "C1", nombre, fecha: "2026-10-19", monedaCodigo: "USD", cambio: "7350,50", motivo: "m" });
+  /** Simula un envío: el servidor recibe lo que había al pulsar Guardar; el operador intenta editar mientras está pendiente. */
+  const envio = async (resultado: "ok" | "409" | "red", abierto: FormularioComercial) => {
+    const excl = crearExclusion();
+    let borr = abierto;
+    let enviado = "";
+    let liberar: () => void = () => undefined;
+    const respuesta = new Promise<void>((res) => { liberar = res; });
+    const op = excl.ejecutar(async () => {
+      enviado = borr.nombre;
+      await respuesta;
+      if (resultado === "409") throw new Error("La versión del registro cambió.");
+      if (resultado === "red") throw new TypeError("fetch failed");
+    });
+    // handler `actualizar` del componente: evalúa la exclusión al momento del cambio
+    const editar = (campo: Parameters<typeof aplicarCambioCampo>[1], valor: string) => { borr = aplicarCambioCampo(borr, campo, valor, excl.activa()); };
+
+    editar("nombre", "Canal B");
+    const durante = borr.nombre;
+
+    liberar();
+    const fin = await op.catch((e: Error) => ({ ejecutada: false as const, error: e.message }));
+
+    return { enviado, durante, fin, tras: (editar("nombre", "Canal C"), borr.nombre), activa: excl.activa(), borr, editar };
+  };
+
+  const rOk = await envio("ok", borrador("Canal A"));
+  const r409 = await envio("409", borrador("Canal A"));
+  const rRed = await envio("red", borrador("Canal A"));
+
+  igual("R03-01: con el POST/PUT pendiente el borrador NO cambia (se envió «Canal A» y sigue siendo «Canal A»), también en la edición de un registro (PUT)", [rOk.enviado, rOk.durante, r409.durante, rRed.durante], ["Canal A", "Canal A", "Canal A", "Canal A"]);
+  igual("R03-01: HTTP 200 concluye sin perder ni mezclar datos (lo guardado es lo revisado); tras terminar la exclusión se libera y se puede volver a editar", [rOk.fin, rOk.activa, rOk.tras], [{ ejecutada: true, valor: undefined }, false, "Canal C"]);
+  igual("R03-01: HTTP 409 y error de red mantienen el formulario con los valores enviados y liberan la edición para corregir y reintentar", [r409.fin, r409.borr.codigo, r409.borr.cambio, r409.activa, r409.tras, rRed.fin, rRed.activa, rRed.tras], [{ ejecutada: false, error: "La versión del registro cambió." }, "C1", "7350,50", false, "Canal C", { ejecutada: false, error: "fetch failed" }, false, "Canal C"]);
+
+  const camposTodos = ["fecha", "monedaCodigo", "cambio", "motivo", "codigo", "nombre"] as const;
+  const bloqueadoTodo = camposTodos.map((c) => aplicarCambioCampo(borrador("Canal A"), c, "X", true));
+  const libreTodo = camposTodos.map((c) => aplicarCambioCampo(borrador("Canal A"), c, "X", false)[c]);
+
+  igual("R03-01: los seis campos (Fecha, Moneda, Cambio, Motivo, Código, Nombre) quedan intactos con la exclusión activa (mismo objeto) y vuelven a editarse al liberarse", [bloqueadoTodo.every((b) => b.nombre === "Canal A" && b.codigo === "C1" && b.cambio === "7350,50" && b.motivo === "m" && b.fecha === "2026-10-19" && b.monedaCodigo === "USD"), libreTodo], [true, ["X", "X", "X", "X", "X", "X"]]);
+
+  const compR = leer("app/(private)/catalogos-comerciales/_components/catalogos-comerciales.tsx");
+  const nuevaR = leer("app/(private)/catalogos-comerciales/nuevo/page.tsx");
+
+  cierto("R03-01 pantallas (listado y /nuevo): `actualizar` se niega con la exclusión activa y usa el helper real; Fecha (CampoFecha), Moneda, Cambio, Motivo, Código y Nombre se deshabilitan con la gravación; la lógica de exclusión de PRO-174 sigue igual", /if \(exclusion\.current\.activa\(\)\) return;\n\s+setForm\(\(a\) => \(a \? aplicarCambioCampo\(a, campo, valor, false\) : a\)\)/.test(compR) && /if \(exclusion\.current\.activa\(\)\) return;\n\s+setForm\(\(a\) => aplicarCambioCampo\(a, campo, valor, false\)\)/.test(nuevaR) && /<CampoFecha id=\{idCampo\("fecha"\)\} valor=\{form\.fecha\} disabled=\{corrigiendo \|\| ocupado\}/.test(compR) && /<select \{\.\.\.ariaCampo\("monedaCodigo"\)\} value=\{form\.monedaCodigo\} disabled=\{corrigiendo \|\| ocupado\}/.test(compR) && ["cambio", "motivo", "codigo", "nombre"].every((c) => new RegExp(`disabled=\\{ocupado\\} (value|onChange)?[^\\n]*form\\.${c}|form\\.${c}[^\\n]*`).test(compR)) && (compR.match(/disabled=\{ocupado\} value=\{form\./g) ?? []).length + (compR.match(/disabled=\{ocupado\} value=\{form\.cambio\}/g) ?? []).length >= 4 && /<CampoFecha valor=\{form\.fecha\} disabled=\{ocupado\}/.test(nuevaR) && /<select value=\{form\.monedaCodigo\} disabled=\{ocupado\}/.test(nuevaR) && (nuevaR.match(/disabled=\{ocupado\} value=\{form\./g) ?? []).length === 3 && (compR.match(/exclusion\.current\.ejecutar\(/g) ?? []).length === 3);
+
+  // ── CC-R03-02 (PRO-177): 400 para consulta inválida, ejercitando la cadena real de listarCambios ───────────────────────────────────────────
+  const rutaSrv = leer("lib/comercial/servidor.ts");
+
+  cierto("R03-02 estructura: la finalidad INVALIDA solo exige sesión (acción SESION); MONEDAS exige VER o CREAR; el resto, VER", /preparar\(finalidad === "INVALIDA" \? "SESION" : finalidad === "MONEDAS" \? "VER_O_CREAR" : "VER"\)/.test(rutaSrv));
+
+  type Permisos = Set<string>;
+  /** Ejecuta la cadena REAL de `listarCambios` (sesión → finalidad → autorización → consultas) con sesión, permisos y base simulados; cada llamada instala y retira sus simulacros. */
+  const ruta = async (sesion: boolean, permisos: Permisos, q: string) => {
+    const consultas: Array<{ sql: string; params: unknown[] }> = [];
+    const { NextResponse: NR } = await import("next/server");
+    const falsos: Record<string, unknown> = {
+      "@/lib/auth/session": { getCurrentSession: async () => (sesion ? { user: { id: "u1", empresaId: "EMP-1" }, demo: false } : null) },
+      "@/lib/auth/permissions": {
+        denyIfNoPermission: async (_s: unknown, _r: string, accion: string) => (permisos.has(accion) ? null : NR.json({ error: "No tiene permiso para esta acción." }, { status: 403 })),
+        getAccessContext: async () => ({}),
+        hasPermission: (_a: unknown, _r: string, accion: string) => permisos.has(accion),
+      },
+      "@/lib/db": { db: { query: async (sql: string, params: unknown[] = []) => { consultas.push({ sql: sql.replace(/\s+/g, " "), params }); return { rows: [] }; } } },
+    };
+    const previos: Array<[string, NodeJS.Module | undefined]> = [];
+    const rutaSrvJs = require.resolve("@/lib/comercial/servidor");
+    const envPrevio = [process.env.DATABASE_URL, process.env.DEMO_MODE];
+
+    for (const [m, exports] of Object.entries(falsos)) {
+      const r = require.resolve(m);
+
+      previos.push([r, require.cache[r]]);
+      require.cache[r] = { id: r, filename: r, loaded: true, exports, children: [], paths: [] } as unknown as NodeJS.Module;
+    }
+    delete require.cache[rutaSrvJs];
+    process.env.DATABASE_URL = "postgres://prueba";
+    delete process.env.DEMO_MODE;
+
+    try {
+      const { listarCambios } = (await import("@/lib/comercial/servidor")) as typeof import("@/lib/comercial/servidor");
+      const r = await listarCambios(new Request("http://x/api/catalogos-comerciales/tipos-cambio" + q));
+      const cuerpo = (await r.json()) as Record<string, unknown>;
+
+      return { status: r.status, claves: Object.keys(cuerpo).sort(), consultas: consultas.map((c) => c.sql), params: consultas.map((c) => c.params[0]) };
+    } finally {
+      for (const [r, previo] of previos) { if (previo) require.cache[r] = previo; else delete require.cache[r]; }
+      delete require.cache[rutaSrvJs];
+      if (envPrevio[0] === undefined) delete process.env.DATABASE_URL; else process.env.DATABASE_URL = envPrevio[0];
+      if (envPrevio[1] !== undefined) process.env.DEMO_MODE = envPrevio[1];
+    }
+  };
+  const CREAR = new Set(["CREAR"]);
+  const VER = new Set(["VER"]);
+
+  {
+    igual("R03-02: sin sesión → 401 en toda consulta (incluidas las inválidas) y sin tocar la base", [(await ruta(false, new Set(), "?modo=monedas")).status, (await ruta(false, new Set(), "?modo=monedas&historial=1")).status, (await ruta(false, new Set(), "")).status, (await ruta(false, new Set(), "?modo=monedas")).consultas.length], [401, 401, 401, 0]);
+
+    const monedasCrear = await ruta(true, CREAR, "?modo=monedas");
+
+    igual("R03-02: CREAR-only con `modo=monedas` válido → 200 con respuesta MÍNIMA (solo monedas y permisos); la única consulta SQL es la de monedas (sin historial, clientes, listas ni costos)", [monedasCrear.status, monedasCrear.claves, monedasCrear.consultas.length, /FROM monedas/.test(monedasCrear.consultas[0] ?? ""), monedasCrear.consultas.some((s) => /tipos_cambio|clientes|listas_precio|costo/i.test(s))], [200, ["monedas", "permisos"], 1, true, false]);
+
+    const invalidas = [await ruta(true, CREAR, "?modo=monedas&historial=1"), await ruta(true, CREAR, "?modo=monedas&modo=monedas"), await ruta(true, CREAR, "?modo=monedas&x=1")];
+
+    igual("R03-02: CREAR-only con consulta inválida (`modo=monedas&historial=1`, `modo=monedas` duplicado, parámetro extra) → 400 (no 403) y sin datos ni consultas a la base", invalidas.map((r) => [r.status, r.claves, r.consultas.length]), Array.from({ length: 3 }, () => [400, ["error"], 0]));
+
+    const prohibidas = [await ruta(true, CREAR, ""), await ruta(true, CREAR, "?historial=1"), await ruta(true, CREAR, "?modo=otro"), await ruta(true, CREAR, "?modo=")];
+
+    igual("R03-02: CREAR-only que pide el listado, el historial o un modo desconocido/vacío → 403 y nada se consulta (lo desconocido no concede la finalidad mínima)", prohibidas.map((r) => [r.status, r.consultas.length]), Array.from({ length: 4 }, () => [403, 0]));
+
+    const verMonedas = await ruta(true, VER, "?modo=monedas");
+    const verLista = await ruta(true, VER, "?historial=1");
+
+    igual("R03-02: VER-only con la consulta mínima → 200 mínima; con la lista/historial → 200 completa, siempre con la empresa de la sesión (EMP-1), y una consulta inválida también recibe 400", [verMonedas.status, verMonedas.claves, verLista.status, verLista.claves, verLista.params[0], (await ruta(true, VER, "?modo=monedas&historial=1")).status], [200, ["monedas", "permisos"], 200, ["monedas", "permisos", "tiposCambio"], "EMP-1", 400]);
+
+    const nada = await ruta(true, new Set(), "?modo=monedas&historial=1");
+
+    igual("R03-02: una sesión válida sin permisos recibe 400 en una consulta inválida (sin datos) y 403 en la mínima válida o en el listado", [nada.status, nada.claves, nada.consultas.length, (await ruta(true, new Set(), "?modo=monedas")).status, (await ruta(true, new Set(), "")).status], [400, ["error"], 0, 403, 403]);
+  }
 
   return fallos;
 }

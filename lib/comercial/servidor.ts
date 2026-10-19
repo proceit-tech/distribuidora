@@ -29,12 +29,12 @@ async function sesion() {
   return getCurrentSession();
 }
 
-export async function preparar(accion: "VER" | "CREAR" | "EDITAR" | "VER_O_CREAR"): Promise<Base> {
+export async function preparar(accion: "VER" | "CREAR" | "EDITAR" | "VER_O_CREAR" | "SESION"): Promise<Base> {
   if (!DEMO_MODE && !process.env.DATABASE_URL) {
     return { ok: false, respuesta: NextResponse.json({ error: "Servicio no disponible: base de datos no configurada." }, { status: 503 }) };
   }
   if (DEMO_MODE) {
-    return accion === "VER" || accion === "VER_O_CREAR"
+    return accion === "VER" || accion === "VER_O_CREAR" || accion === "SESION"
       ? { ok: false, respuesta: NextResponse.json({ demo: true }) }
       : { ok: false, respuesta: NextResponse.json({ error: "Operación no disponible en modo demo." }, { status: 400 }) };
   }
@@ -43,7 +43,9 @@ export async function preparar(accion: "VER" | "CREAR" | "EDITAR" | "VER_O_CREAR
   // CC-D01: «VER_O_CREAR» solo para la consulta mínima de monedas del alta; se deniega con el rechazo de VER si no tiene ninguno de los dos.
   let denegado: NextResponse | null;
 
-  if (accion === "VER_O_CREAR") {
+  if (accion === "SESION") {
+    denegado = null; // CC-R03-02: solo se exige sesión válida (para distinguir una consulta inválida, 400, de una no autorizada, 403)
+  } else if (accion === "VER_O_CREAR") {
     const sinVer = await denyIfNoPermission(session, "LISTAS_PRECIO", "VER");
 
     denegado = sinVer && (await denyIfNoPermission(session, "LISTAS_PRECIO", "CREAR")) ? sinVer : null;
@@ -186,7 +188,8 @@ export async function listarCambios(request: Request) {
   const url = new URL(request.url);
   // CC-D01: la finalidad decide la autorización ANTES de cualquier excepción (ver lib/comercial/acceso-get.ts).
   const finalidad = finalidadComercial(url);
-  const b = await preparar(finalidad === "MONEDAS" ? "VER_O_CREAR" : "VER");
+  // CC-R03-02: sin sesión → 401; una consulta inválida de una sesión válida → 400 (sin exigir VER ni devolver datos); el resto se autoriza por finalidad.
+  const b = await preparar(finalidad === "INVALIDA" ? "SESION" : finalidad === "MONEDAS" ? "VER_O_CREAR" : "VER");
   if (!b.ok) return b.respuesta;
   if (finalidad === "INVALIDA") return NextResponse.json({ error: "Consulta no válida." }, { status: 400 });
   const historial = url.searchParams.get("historial") === "1";

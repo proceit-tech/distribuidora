@@ -43,6 +43,14 @@ export function validarFormularioComercial(tab: TabComercial, f: FormularioComer
   return e;
 }
 
+/**
+ * CC-R03-01: aplica el cambio de un campo al borrador SALVO que haya una gravación en curso (`bloqueado`): lo enviado al servidor es exactamente lo que el operador revisó y nada se edita (ni programáticamente)
+ * hasta que termine. Devuelve el mismo objeto si está bloqueado.
+ */
+export function aplicarCambioCampo(actual: FormularioComercial, campo: CampoComercial, valor: string, bloqueado: boolean): FormularioComercial {
+  return bloqueado ? actual : { ...actual, [campo]: valor };
+}
+
 export function formularioComercialSucio(actual: FormularioComercial | null, base: FormularioComercial | null): boolean {
   if (!actual || !base) return false;
 

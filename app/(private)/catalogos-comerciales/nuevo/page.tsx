@@ -8,7 +8,7 @@ import { CampoFecha } from "@/components/ui/campo-fecha";
 import ui from "@/components/ui/lista-padrao/lista.module.css";
 import { cargarMonedasAlta, type MonedaComercial } from "@/lib/comercial/carga";
 import { crearExclusion } from "@/lib/productos/catalogos-operacion";
-import { formularioComercialSucio, validarFormularioComercial, type CampoComercial, type ErroresComercial, type FormularioComercial, type TabComercial } from "@/lib/comercial/formulario";
+import { aplicarCambioCampo, formularioComercialSucio, validarFormularioComercial, type CampoComercial, type ErroresComercial, type FormularioComercial, type TabComercial } from "@/lib/comercial/formulario";
 import { hoyAsuncion } from "@/lib/listas-precio/calculos";
 import { useProtegerCambios } from "@/lib/ui/proteger-cambios";
 
@@ -77,7 +77,9 @@ export default function NuevoCatalogoComercialPage() {
   }
 
   function actualizar(campo: CampoComercial, valor: string) {
-    setForm((a) => ({ ...a, [campo]: valor }));
+    // CC-R03-01: con una gravación en curso el borrador no se modifica (los campos también están deshabilitados).
+    if (exclusion.current.activa()) return;
+    setForm((a) => aplicarCambioCampo(a, campo, valor, false));
     setErrores((a) => (a[campo] ? { ...a, [campo]: undefined } : a));
   }
 
@@ -203,14 +205,14 @@ export default function NuevoCatalogoComercialPage() {
               <span>
                 Fecha <b>*</b>
               </span>
-              <CampoFecha valor={form.fecha} alCambiar={(v) => actualizar("fecha", v)} claseError={styles.campoError} />
+              <CampoFecha valor={form.fecha} disabled={ocupado} alCambiar={(v) => actualizar("fecha", v)} claseError={styles.campoError} />
               {mensajeCampo("fecha")}
             </label>
             <label className={claseCampo("monedaCodigo")}>
               <span>
                 Moneda <b>*</b>
               </span>
-              <select value={form.monedaCodigo} onChange={(e) => actualizar("monedaCodigo", e.target.value)}>
+              <select value={form.monedaCodigo} disabled={ocupado} onChange={(e) => actualizar("monedaCodigo", e.target.value)}>
                 <option value="">Seleccione la moneda</option>
                 {(monedas ?? []).map((m) => (
                   <option key={m.codigo} value={m.codigo}>
@@ -225,7 +227,7 @@ export default function NuevoCatalogoComercialPage() {
               <span>
                 Cambio <b>*</b>
               </span>
-              <input inputMode="decimal" autoComplete="off" value={form.cambio} onChange={(e) => actualizar("cambio", e.target.value)} />
+              <input inputMode="decimal" autoComplete="off" disabled={ocupado} value={form.cambio} onChange={(e) => actualizar("cambio", e.target.value)} />
               {errores.cambio ? mensajeCampo("cambio") : <span className={styles.ayuda}>Guaraníes (PYG) por 1 unidad de la moneda. Ej.: 7.350,50</span>}
             </label>
           </>
@@ -235,14 +237,14 @@ export default function NuevoCatalogoComercialPage() {
               <span>
                 Código <b>*</b>
               </span>
-              <input maxLength={40} value={form.codigo} onChange={(e) => actualizar("codigo", e.target.value)} />
+              <input maxLength={40} disabled={ocupado} value={form.codigo} onChange={(e) => actualizar("codigo", e.target.value)} />
               {mensajeCampo("codigo")}
             </label>
             <label className={[claseCampo("nombre"), styles.wide].join(" ")}>
               <span>
                 Nombre <b>*</b>
               </span>
-              <input maxLength={120} value={form.nombre} onChange={(e) => actualizar("nombre", e.target.value)} />
+              <input maxLength={120} disabled={ocupado} value={form.nombre} onChange={(e) => actualizar("nombre", e.target.value)} />
               {mensajeCampo("nombre")}
             </label>
           </>

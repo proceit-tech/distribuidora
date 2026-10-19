@@ -15,7 +15,7 @@ import { textoConfirmarInactivacionComercial } from "@/lib/comercial/vinculos";
 import { crearExclusion } from "@/lib/productos/catalogos-operacion";
 import { cargaConfiable, crearCompuerta, motivoBloqueoGuardar, permisosVigentes } from "@/lib/productos/catalogos-carga";
 import { useProtegerCambios } from "@/lib/ui/proteger-cambios";
-import { validarFormularioComercial, formularioComercialSucio, type CampoComercial, type ErroresComercial, type FormularioComercial, type TabComercial } from "@/lib/comercial/formulario";
+import { aplicarCambioCampo, validarFormularioComercial, formularioComercialSucio, type CampoComercial, type ErroresComercial, type FormularioComercial, type TabComercial } from "@/lib/comercial/formulario";
 
 type Fila = {
   id: string;
@@ -159,7 +159,9 @@ export default function ListadoCatalogosComerciales() {
   }
 
   function actualizar(campo: CampoComercial, valor: string) {
-    setForm((a) => (a ? { ...a, [campo]: valor } : a));
+    // CC-R03-01: con una gravación en curso el borrador no se modifica (los campos también están deshabilitados).
+    if (exclusion.current.activa()) return;
+    setForm((a) => (a ? aplicarCambioCampo(a, campo, valor, false) : a));
     setErrores((a) => (a[campo] ? { ...a, [campo]: undefined } : a));
   }
 
@@ -446,14 +448,14 @@ export default function ListadoCatalogosComerciales() {
                 <span>
                   Fecha <b>*</b>
                 </span>
-                <CampoFecha id={idCampo("fecha")} valor={form.fecha} disabled={corrigiendo} alCambiar={(v) => actualizar("fecha", v)} aria-invalid={!!errores.fecha} aria-describedby={errores.fecha ? `${idCampo("fecha")}-error` : undefined} claseError={styles.campoError} />
+                <CampoFecha id={idCampo("fecha")} valor={form.fecha} disabled={corrigiendo || ocupado} alCambiar={(v) => actualizar("fecha", v)} aria-invalid={!!errores.fecha} aria-describedby={errores.fecha ? `${idCampo("fecha")}-error` : undefined} claseError={styles.campoError} />
                 {mensajeCampo("fecha")}
               </label>
               <label className={claseCampo("monedaCodigo")}>
                 <span>
                   Moneda <b>*</b>
                 </span>
-                <select {...ariaCampo("monedaCodigo")} value={form.monedaCodigo} disabled={corrigiendo} onChange={(e) => actualizar("monedaCodigo", e.target.value)}>
+                <select {...ariaCampo("monedaCodigo")} value={form.monedaCodigo} disabled={corrigiendo || ocupado} onChange={(e) => actualizar("monedaCodigo", e.target.value)}>
                   <option value="">Seleccione la moneda</option>
                   {monedas.map((m) => (
                     <option key={m.codigo} value={m.codigo}>
@@ -468,13 +470,13 @@ export default function ListadoCatalogosComerciales() {
                 <span>
                   Cambio <b>*</b>
                 </span>
-                <input {...ariaCampo("cambio")} inputMode="decimal" autoComplete="off" value={form.cambio} onChange={(e) => actualizar("cambio", e.target.value)} />
+                <input {...ariaCampo("cambio")} inputMode="decimal" autoComplete="off" disabled={ocupado} value={form.cambio} onChange={(e) => actualizar("cambio", e.target.value)} />
                 {errores.cambio ? mensajeCampo("cambio") : <span className={styles.ayuda}>Guaraníes (PYG) por 1 unidad de la moneda. Ej.: 7.350,50</span>}
               </label>
               {corrigiendo ? (
                 <label className={claseCampo("motivo")}>
                   <span>Motivo de la corrección</span>
-                  <input {...ariaCampo("motivo")} maxLength={200} value={form.motivo} onChange={(e) => actualizar("motivo", e.target.value)} />
+                  <input {...ariaCampo("motivo")} maxLength={200} disabled={ocupado} value={form.motivo} onChange={(e) => actualizar("motivo", e.target.value)} />
                   {mensajeCampo("motivo")}
                 </label>
               ) : null}
@@ -486,14 +488,14 @@ export default function ListadoCatalogosComerciales() {
                 <span>
                   Código <b>*</b>
                 </span>
-                <input {...ariaCampo("codigo")} maxLength={40} value={form.codigo} onChange={(e) => actualizar("codigo", e.target.value)} />
+                <input {...ariaCampo("codigo")} maxLength={40} disabled={ocupado} value={form.codigo} onChange={(e) => actualizar("codigo", e.target.value)} />
                 {mensajeCampo("codigo")}
               </label>
               <label className={claseCampo("nombre", styles.wide)}>
                 <span>
                   Nombre <b>*</b>
                 </span>
-                <input {...ariaCampo("nombre")} maxLength={120} value={form.nombre} onChange={(e) => actualizar("nombre", e.target.value)} />
+                <input {...ariaCampo("nombre")} maxLength={120} disabled={ocupado} value={form.nombre} onChange={(e) => actualizar("nombre", e.target.value)} />
                 {mensajeCampo("nombre")}
               </label>
             </>
