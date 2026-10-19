@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 
-import { cerrarRetomada, subirDocumentosPendientes, subirFoto, urlRetomada, type EstadoRetomada } from "@/lib/productos/alta";
+import { cerrarRetomada, subirDocumentosPendientes, subirFoto, urlRetomada, esAbandono, estadoTrasEnvio, type EstadoRetomada } from "@/lib/productos/alta";
 import { cerrarCargaInicial } from "@/lib/productos/cierre-carga";
 import { documentoPendienteVacio, validarPendientes, type DocumentoPendiente } from "@/lib/productos/documento-pendiente";
 import { ErrorValidacion } from "@/lib/productos/errores";
@@ -43,6 +43,9 @@ export default function RetomarAlta({ id, codigo, fotoInicial, pendientesInicial
   const [mensaje, setMensaje] = useState(mensajeInicial);
   const [ocupado, setOcupado] = useState(false);
   const [estado, setEstado] = useState<EstadoRetomada>(estadoInicial);
+  // PRD-R04-01: se quitó (sin enviar) un pendiente original; el estado no puede pasar a «cierre» y el cierre exigirá la confirmación de abandono.
+  const [abandono, setAbandono] = useState(false);
+  const [originales] = useState(() => pendientesIniciales.map((p) => p.uid));
 
   function marcarEstado(nuevo: EstadoRetomada) {
     setEstado(nuevo);
@@ -94,8 +97,9 @@ export default function RetomarAlta({ id, codigo, fotoInicial, pendientesInicial
     setOcupado(false);
 
     // Solo con pendientes exactos (misma sesión) se sabe que ya no falta nada; tras recargar se sigue exigiendo la decisión explícita al cerrar.
-    if (fallas.length === 0 && pendientesExactas) marcarEstado("cierre");
-    else if (fallas.length > 0 && estado !== "archivos") marcarEstado("archivos");
+    const siguiente = estadoTrasEnvio(fallas.length, pendientesExactas, abandono);
+
+    if (siguiente !== null && siguiente !== estado) marcarEstado(siguiente);
 
     setMensaje(fallas.length > 0 ? `${subidas} archivo(s) cargado(s); no se pudieron cargar: ${[...new Set(fallas)].join(" · ")}` : `${subidas} archivo(s) cargado(s). Ya puede cerrar la carga inicial.`);
   }
@@ -155,7 +159,10 @@ export default function RetomarAlta({ id, codigo, fotoInicial, pendientesInicial
             {foto ? (
               <p className={styles.textoSecundario}>
                 {foto.name}{" "}
-                <button type="button" className={styles.cancelButton} disabled={ocupado} onClick={() => setFoto(null)}>
+                <button type="button" className={styles.cancelButton} disabled={ocupado} onClick={() => {
+                    if (fotoInicial !== null) setAbandono(true);
+                    setFoto(null);
+                  }}>
                   Quitar foto
                 </button>
               </p>
@@ -174,7 +181,10 @@ export default function RetomarAlta({ id, codigo, fotoInicial, pendientesInicial
               <article key={p.uid} className={styles.repeaterCard}>
                 <header>
                   <strong>Documento {i + 1}</strong>
-                  <button type="button" disabled={ocupado} onClick={() => setPendientes(pendientes.filter((x) => x.uid !== p.uid))}>
+                  <button type="button" disabled={ocupado} onClick={() => {
+                    if (esAbandono(p.uid, originales)) setAbandono(true);
+                    setPendientes(pendientes.filter((x) => x.uid !== p.uid));
+                  }}>
                     Quitar
                   </button>
                 </header>

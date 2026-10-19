@@ -7,7 +7,7 @@ import { join } from "node:path";
 
 import { contador } from "@/lib/clientes/contador-casos";
 import { decidirGet } from "@/lib/productos/acceso-get";
-import { cerrarRetomada, leerEstadoRetomada, MENSAJE_ABANDONO, leerRetomada, subirDocumentosPendientes, subirFoto, urlRetomada } from "@/lib/productos/alta";
+import { cerrarRetomada, esAbandono, estadoTrasEnvio, leerEstadoRetomada, MENSAJE_ABANDONO, leerRetomada, subirDocumentosPendientes, subirFoto, urlRetomada } from "@/lib/productos/alta";
 import { puedeCambiarPestana } from "@/lib/productos/borrador-documento";
 import { documentoPendienteVacio } from "@/lib/productos/documento-pendiente";
 import { decidirAccesoDocumento } from "@/lib/productos/permisos-documentos";
@@ -192,8 +192,41 @@ export async function verificarCasosProductosR02(): Promise<string[]> {
   const retomarSrc = leer("app/(private)/productos/_components/retomar-alta.tsx");
   const paginaNueva = leer("app/(private)/productos/nuevo/page.tsx");
 
-  cierto("R03-01: la pantalla usa cerrarRetomada con window.confirm y el estado de la URL; solo marca «cierre» con pendientes exactos de la misma sesión; la página lee el indicador al recargar y escribe el correcto en cada replaceState; un único POST de creación y sin almacenamiento del navegador", /cerrarRetomada\(estado === "archivos", \(m\) => window\.confirm\(m\), \(\) => cerrarCargaInicial\(id\)\)/.test(retomarSrc) && /fallas\.length === 0 && pendientesExactas\) marcarEstado\("cierre"\)/.test(retomarSrc) && /estado: leerEstadoRetomada\(window\.location\.search\), exacta: false/.test(paginaNueva) && /urlRetomada\(id, codigo, "cierre"\)/.test(paginaNueva) && /urlRetomada\(id, codigo, "archivos"\)/.test(paginaNueva) && (paginaNueva.match(/fetch\("\/api\/productos"/g) ?? []).length === 1 && !/localStorage|sessionStorage/.test(retomarSrc + paginaNueva));
+  cierto("R03-01: la pantalla usa cerrarRetomada con window.confirm y el estado de la URL; solo marca «cierre» con pendientes exactos de la misma sesión; la página lee el indicador al recargar y escribe el correcto en cada replaceState; un único POST de creación y sin almacenamiento del navegador", /cerrarRetomada\(estado === "archivos", \(m\) => window\.confirm\(m\), \(\) => cerrarCargaInicial\(id\)\)/.test(retomarSrc) && /estadoTrasEnvio\(fallas\.length, pendientesExactas, abandono\)/.test(retomarSrc) && /estado: leerEstadoRetomada\(window\.location\.search\), exacta: false/.test(paginaNueva) && /urlRetomada\(id, codigo, "cierre"\)/.test(paginaNueva) && /urlRetomada\(id, codigo, "archivos"\)/.test(paginaNueva) && (paginaNueva.match(/fetch\("\/api\/productos"/g) ?? []).length === 1 && !/localStorage|sessionStorage/.test(retomarSrc + paginaNueva));
   igual("R03-01: CREAR-only sigue sin ficha ni lista (el indicador de la URL no concede nada): consulta ajena denegada, catálogos mínimos permitidos y la ficha exige VER", [decidirGet(new URL("http://x/api/productos?retomar=" + PROD + "&pend=cierre"), { ver: false, crear: true }).tipo, decidirGet(new URL("http://x/api/productos?modo=catalogos"), { ver: false, crear: true }).tipo, /guardPage\("PRODUCTOS", "VER"\)/.test(leer("app/(private)/productos/[id]/layout.tsx"))], ["denegada", "permitida", true]);
+
+  // ── PRD-R04-01: quitar un pendiente no equivale a haberlo enviado ─────────────────────────────────────────────────────────────────────────
+  // Modelo de la retomada con la misma lógica que usa el componente: originales A y B fallidos; «quitar» marca abandono si es original; tras enviar se decide el estado.
+  llamadas.length = 0;
+  const dA = doc("A.pdf");
+  const dB = doc("B.pdf");
+  const originalesR04 = [dA.uid, dB.uid];
+  const abandonoR04 = originalesR04.some((u) => esAbandono(u, originalesR04));
+  const envioB = await subirDocumentosPendientes(PROD, [dB], falla());
+  const estadoQuitandoA = estadoTrasEnvio(envioB.fallidos.length, true, abandonoR04);
+
+  igual("R04-01: dos documentos fallan; se quita A y se envía B con éxito → NO pasa a «cierre» (A no se envió): el cierre sigue exigiendo la decisión explícita", [envioB.subidos, estadoQuitandoA, llamadas], [["u-B.pdf"], null, ["POST /api/productos/" + PROD + "/documentos B.pdf"]]);
+
+  let confirmaciones = 0;
+  const llamadasCierre: number[] = [];
+  const cerrarR04 = async () => { llamadasCierre.push(1); return { cerrada: true } as const; };
+  const cancelaAbandono = await cerrarRetomada(estadoQuitandoA !== "cierre", () => { confirmaciones += 1; return false; }, cerrarR04);
+
+  igual("R04-01: CANCELAR la confirmación mantiene la retomada sin llamar al servidor ni cambiar el estado", [cancelaAbandono, confirmaciones, llamadasCierre.length], [{ cerrada: false, cancelada: true, mensaje: "" }, 1, 0]);
+  igual("R04-01: CONFIRMAR el abandono de A permite la conclusión consciente (una sola pregunta, un cierre)", [await cerrarRetomada(true, () => true, cerrarR04), llamadasCierre.length], [{ cerrada: true }, 1]);
+
+  igual("R04-01: la foto pendiente original quitada y el último pendiente quitado (lista vacía, sin envío) tampoco habilitan el cierre directo; lo agregado y quitado en la retomada no cuenta como abandono", [estadoTrasEnvio(0, true, true), esAbandono("u-nuevo", originalesR04), esAbandono(dA.uid, originalesR04), estadoTrasEnvio(0, false, false)], [null, false, true, null]);
+
+  llamadas.length = 0;
+  const todos = await subirDocumentosPendientes(PROD, [dA, dB], falla());
+  const directo = await cerrarRetomada(estadoTrasEnvio(todos.fallidos.length, true, false) !== "cierre", () => { throw new Error("no debe preguntar"); }, cerrarR04);
+
+  igual("R04-01: A y B confirmados por el servidor y sin abandono → «cierre» y cierre directo sin falsa confirmación; nada se reenvía ni se crea otro producto", [todos.subidos, estadoTrasEnvio(todos.fallidos.length, true, false), directo, llamadas.length, llamadas.some((l) => l.endsWith("/api/productos"))], [["u-A.pdf", "u-B.pdf"], "cierre", { cerrada: true }, 2, false]);
+  igual("R04-01: tras recargar (pend=archivos) sigue exigiendo confirmación aunque no haya fallas; pend=cierre permite el retry directo", [estadoTrasEnvio(0, false, false), leerEstadoRetomada("?pend=archivos"), leerEstadoRetomada("?pend=cierre")], [null, "archivos", "cierre"]);
+
+  const retomarR04 = leer("app/(private)/productos/_components/retomar-alta.tsx");
+
+  cierto("R04-01: «Quitar» (documento y foto) registra el abandono y el estado tras el envío sale de estadoTrasEnvio con ese abandono, no de fallas === 0", /esAbandono\(p\.uid, originales\)\) setAbandono\(true\)/.test(retomarR04) && /fotoInicial !== null\) setAbandono\(true\)/.test(retomarR04) && /estadoTrasEnvio\(fallas\.length, pendientesExactas, abandono\)/.test(retomarR04) && !/fallas\.length === 0 && pendientesExactas/.test(retomarR04));
 
   const fin = (p: { ver: boolean; editar: boolean; crear: boolean }, ctx: { esCreador: boolean; cargaInicialAbierta: boolean } | null) => decidirAccesoDocumento("FINALIZAR_CARGA", p, ctx).permitido;
 

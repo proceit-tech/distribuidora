@@ -106,3 +106,16 @@ export async function cerrarRetomada(
 
   return cierre.cerrada ? { cerrada: true } : { cerrada: false, cancelada: false, mensaje: `${cierre.mensaje}${cierre.estado ? ` (código ${cierre.estado})` : ""}` };
 }
+
+/** PRD-R04-01: ¿quitar este archivo de la lista equivale a abandonar uno que falló? Solo los pendientes ORIGINALES cuentan (un documento agregado en la retomada y quitado no es un abandono). */
+export const esAbandono = (uid: string, originales: readonly string[]) => originales.includes(uid);
+
+/**
+ * Estado tras un envío. Solo se pasa a «cierre» (cierre directo, sin confirmación) si no quedó ninguna falla, los pendientes son exactos (misma sesión) Y no se quitó ningún pendiente original sin enviarlo;
+ * `fallas === 0` por sí solo NO prueba que todo se resolvió. Con un abandono sin decidir se mantiene «archivos»: el cierre pedirá la confirmación explícita.
+ */
+export function estadoTrasEnvio(fallas: number, exactas: boolean, abandonoSinDecidir: boolean): EstadoRetomada | null {
+  if (fallas > 0) return "archivos";
+
+  return exactas && !abandonoSinDecidir ? "cierre" : null;
+}
