@@ -171,3 +171,20 @@ Examinar próxima rodada por prioridade: integridade de GET/POST/PUT dos filhos 
 **Cobertura:** rutas list/detalle/alta, 6 endpoints de documentos y su política, `lib/clientes` relevante, migrations y pruebas consultadas; **sin ejecución DB, navegador o todos los flujos de extremo a extremo**. Se anotaron las zonas de riesgo verificables; no se declara que cualquier archivo del repo haya sido ejecutado o validado operacionalmente.
 
 **Estado:** CORRECCIÓN SOLICITADA — NO HOMOLOGADO. No alterar código sin orden del responsable. Próximo menú previsto: **Proveedores**, por separado.
+
+
+## XI. AUD-R02 — reauditoria independente de Clientes desktop, 18/10/2026
+
+**Parecer atual:** [AUD-NEXIT-CLIENTES-DESKTOP-R02](../../testes/AUD-NEXIT-CLIENTES-DESKTOP-R02-2026-10-18.md). Auditoria estática, 1 ALTA **dependente de definição de RBAC** (CLI-D01), 4 MÉDIAS (CLI-D02/D03 e **novos CLI-D06/D07**); observações D04/D05. NÃO HOMOLOGADO.
+
+**Integridade contra retrabalho:** blobs SHA de `clientes/page.tsx`, `clientes/nuevo/page.tsx`, `clientes/[id]/page.tsx`, `hijos.tsx`, `app/api/clientes/route.ts`, `app/api/clientes/[id]/route.ts`, `lib/clientes/relacionados.ts` e layout da área são idênticos ao corte R01 `fe9e64123`. Não reverter código de Clientes por confusão de repositório ou por commits documentais posteriores. `resolverInicio` do Dashboard agora reforça que papel só CLIENTES.CREAR sem outros privilégios iria a `/sin-acceso`; política de CREATE-only requer decisão do responsável antes de alterar ACL.
+
+**Achados:**
+- **CLI-D01 ALTA condicional:** POST admite CREAR, mas layout/GET catálogos exigem VER, e menu/landing não oferecem acesso à alta. Decisão explícita sobre perfis CREATE-only é pré-requisito; não conceder VER nem liberar lista por suposição.
+- **CLI-D02 MÉDIA:** botões Nuevo/Actualizar e ficha editável para VER-only, servidor exige CREAR/EDITAR.
+- **CLI-D03 MÉDIA:** consultas geográficas antigas em alta e editor podem sobrescrever opções atuais; alta indexa linhas por índice que muda na remoção.
+- **CLI-D06 MÉDIA NOVA:** marcar outra direção como tipo Fiscal deixa a antiga com `tipo='FISCAL'` e `esFiscal=false`; serviço conta ambas como fiscais e rejeita gravação. Checkbox desmarcado com tipo fiscal é inefetivo.
+- **CLI-D07 MÉDIA NOVA:** limite de crédito `numeric(18,4)` é convertido para `Number` e somado em JS na listagem; risco de apresentação monetária inexata.
+- **D04/D05:** desempenho dependente de volume e diálogos nativos são observações, não correções automáticas. **CLI-A01…A04:** correções históricas preservadas. **CLI-A06/NEX-053:** migration versionada; estado PostgreSQL não verificado.
+
+**Validação:** 0 testes executados pelo ChatGPT, sem PostgreSQL/browser/VM, sem prints; levantamento dirigido de rotas/serviços/SQL. Nenhuma implementação autorizada nem nova tarefa ao Claude. Próxima correção a considerar, após decisão humana: CLI-D06, seguida de CLI-D03, sem mexer em fiscais antigos ou no motor SIFEN.
