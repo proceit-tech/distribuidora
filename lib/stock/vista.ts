@@ -94,6 +94,32 @@ export function descripcionSinStock(alcance: AlcanceStock): string {
   return "Saldo disponible cero";
 }
 
+/**
+ * PRO-180: con un depósito elegido la indisponibilidad se refiere SOLO a ese depósito («Sin disponible en este depósito»); con la visión consolidada (TODOS) rige la semántica de alcance (etiquetaNivel).
+ */
+export function etiquetaNivelVista(nivel: StockNivel, alcance: AlcanceStock, depositoElegido: boolean): string {
+  return depositoElegido && nivel === "SIN_STOCK" ? "Sin disponible en este depósito" : etiquetaNivel(nivel, alcance);
+}
+
+export function descripcionSinStockVista(alcance: AlcanceStock, depositoElegido: boolean): string {
+  return depositoElegido ? "Sin disponible en este depósito" : descripcionSinStock(alcance);
+}
+
+/**
+ * PRO-181: sin ningún depósito autorizado no hay consulta real de saldos; cantidades y valores derivados del stock se presentan como «—», nunca como un cero que parezca real. Con depósitos autorizados un saldo
+ * cero SÍ se muestra como 0. Solo presentación: los datos no se tocan. El precio de referencia cadastral NO depende de esto (no es un valor calculado sobre el stock).
+ */
+export const sinAccesoADepositos = (alcance: AlcanceStock) => alcance === "SIN_DEPOSITOS";
+
+export function textoCantidad(valor: number | null | undefined, alcance: AlcanceStock, formatear: (n: number) => string): string {
+  return sinAccesoADepositos(alcance) || valor === null || valor === undefined ? "—" : formatear(valor);
+}
+
+/** Importe derivado del saldo (costo, valor a costo, valor de venta del disponible): «—» sin acceso a depósitos o sin dato. */
+export function textoImporteDeStock(texto: string | null | undefined, alcance: AlcanceStock, formatear: (t: string) => string): string {
+  return sinAccesoADepositos(alcance) || texto === null || texto === undefined ? "—" : formatear(texto);
+}
+
 export type ResumenStock = { sku: number; disponible: number; stockBajo: number; sinStock: number; valorCosto: number; valorVenta: number; sinPrecio: number };
 
 /** Indicadores de la portada de Stock (D-INV-02): solo SKU, Disponible, Sin stock y Bajo mínimo. Valorización y totales monetarios pertenecen a Reportes y a la ficha. */

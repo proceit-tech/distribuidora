@@ -11,7 +11,7 @@ import { normalizarPermisosMovimientos, puedeAbrirNuevoMovimiento, puedeVerMovim
 import { formatearCostoUnitarioTexto, formatearMontoTexto } from "@/lib/inventario/decimal";
 import { enlaceNuevoMovimiento } from "@/lib/movimientos/formulario";
 import { cargarStockItem } from "@/lib/stock/cliente-api";
-import { ETIQUETA_NIVEL, etiquetaNivel, type AlcanceStock } from "@/lib/stock/vista";
+import { ETIQUETA_NIVEL, etiquetaNivel, textoCantidad, textoImporteDeStock, type AlcanceStock } from "@/lib/stock/vista";
 import type { StockItem } from "@/types/stock";
 
 import styles from "./page.module.css";
@@ -140,7 +140,11 @@ export default function StockDetallePage() {
         </div>
       </header>
 
-      {alcanceParcial ? (
+      {alcance === "SIN_DEPOSITOS" ? (
+        <p className={ui.alertError} role="alert" style={{ margin: "0 0 8px" }}>
+          Usted no tiene depósitos autorizados: se muestra la identificación del producto, pero no hay saldos, costos ni valores de stock que informar.
+        </p>
+      ) : alcanceParcial ? (
         <p className={ui.resultCount} role="status" style={{ margin: "0 0 8px" }}>
           Se muestran solo los depósitos que usted tiene autorizados; los totales no incluyen los demás.
         </p>
@@ -149,27 +153,27 @@ export default function StockDetallePage() {
       <section className={ui.summaryGrid} aria-label="Saldos del producto">
         <article className={[ui.summaryCard, ui.summaryTeal].join(" ")}>
           <span>Disponible</span>
-          <strong>{cant(item.disponible)}</strong>
+          <strong>{textoCantidad(item.disponible, alcance, formatearCantidad)}</strong>
           <small>{item.unidadMedidaNombre || "Unidad base"}</small>
         </article>
         <article className={[ui.summaryCard, ui.summaryBlue].join(" ")}>
           <span>Reservado</span>
-          <strong>{cant(item.reservado)}</strong>
+          <strong>{textoCantidad(item.reservado, alcance, formatearCantidad)}</strong>
           <small>Apartado, no disponible</small>
         </article>
         <article className={[ui.summaryCard, ui.summaryAmber].join(" ")}>
           <span>Cuarentena</span>
-          <strong>{cant(item.cuarentena)}</strong>
+          <strong>{textoCantidad(item.cuarentena, alcance, formatearCantidad)}</strong>
           <small>No vendible</small>
         </article>
         <article className={[ui.summaryCard, ui.summaryViolet].join(" ")}>
           <span>Tránsito</span>
-          <strong>{cant(item.transito)}</strong>
+          <strong>{textoCantidad(item.transito, alcance, formatearCantidad)}</strong>
           <small>Aún no confirmado en depósito</small>
         </article>
         <article className={[ui.summaryCard, ui.summaryRed].join(" ")}>
           <span>Valor físico</span>
-          <strong>{item.valorInventario > 0 || item.costoPromedioTexto !== null ? formatearMontoTexto(item.valorInventarioTexto, moneda) : "—"}</strong>
+          <strong>{item.valorInventario > 0 || item.costoPromedioTexto !== null ? textoImporteDeStock(item.valorInventarioTexto, alcance, (t) => formatearMontoTexto(t, moneda)) : "—"}</strong>
           <small>Total físico a costo promedio</small>
         </article>
       </section>
@@ -208,15 +212,15 @@ export default function StockDetallePage() {
           <dl className={styles.datos}>
             <div>
               <dt>Total físico</dt>
-              <dd>{cant(item.totalFisico)}</dd>
+              <dd>{textoCantidad(item.totalFisico, alcance, formatearCantidad)}</dd>
             </div>
             <div>
               <dt>Total virtual</dt>
-              <dd>{cant(item.totalVirtual)}</dd>
+              <dd>{textoCantidad(item.totalVirtual, alcance, formatearCantidad)}</dd>
             </div>
             <div>
               <dt>Costo promedio</dt>
-              <dd>{item.costoPromedioTexto === null ? "Sin costo registrado" : formatearCostoUnitarioTexto(item.costoPromedioTexto, moneda)}</dd>
+              <dd>{alcance === "SIN_DEPOSITOS" ? "—" : item.costoPromedioTexto === null ? "Sin costo registrado" : formatearCostoUnitarioTexto(item.costoPromedioTexto, moneda)}</dd>
             </div>
             <div>
               <dt>Precio de venta de referencia</dt>
@@ -224,7 +228,7 @@ export default function StockDetallePage() {
             </div>
             <div>
               <dt>Valor de venta del disponible</dt>
-              <dd>{item.valorVentaReferenciaTexto === null ? "—" : formatearMontoTexto(item.valorVentaReferenciaTexto, item.monedaPrecio || moneda)}</dd>
+              <dd>{textoImporteDeStock(item.valorVentaReferenciaTexto, alcance, (t) => formatearMontoTexto(t, item.monedaPrecio || moneda))}</dd>
             </div>
             <div>
               <dt>Propiedad</dt>
@@ -236,7 +240,7 @@ export default function StockDetallePage() {
             </div>
             <div>
               <dt>Stock de terceros</dt>
-              <dd>{cant(item.terceros)}</dd>
+              <dd>{textoCantidad(item.terceros, alcance, formatearCantidad)}</dd>
             </div>
           </dl>
           <p className={styles.nota}>Las cantidades y el valor corresponden al stock propio; el de terceros no se suma.</p>

@@ -12,7 +12,7 @@ import { iniciarCargaStock } from "@/lib/stock/carga-instancia";
 import { puedeAbrirNuevoMovimiento, puedeVerMovimientos, normalizarPermisosMovimientos, SIN_PERMISOS_MOVIMIENTOS } from "@/lib/inventario/acceso";
 import { interpretarDepositoUrl } from "@/lib/depositos/carga";
 import { compararDecimales, formatearCostoUnitarioTexto, formatearMontoTexto } from "@/lib/inventario/decimal";
-import { descripcionSinStock, etiquetaNivel, indicadoresStock, vistaPorDeposito, type AlcanceStock } from "@/lib/stock/vista";
+import { descripcionSinStockVista, etiquetaNivelVista, indicadoresStock, sinAccesoADepositos, textoCantidad, vistaPorDeposito, type AlcanceStock } from "@/lib/stock/vista";
 
 import {
   StockItem,
@@ -460,7 +460,7 @@ export default function StockPage() {
         <article className={[ui.summaryCard, ui.summaryRed].join(" ")}>
           <span>Sin stock</span>
           <strong>{alcance === "SIN_DEPOSITOS" ? "—" : resumen.sinStock}</strong>
-          <small>{descripcionSinStock(alcance)}</small>
+          <small>{descripcionSinStockVista(alcance, deposito !== "TODOS")}</small>
         </article>
 
       </section>
@@ -484,7 +484,7 @@ export default function StockPage() {
               <option value="TODOS">Todos</option>
               <option value="NORMAL">Normal</option>
               <option value="BAJO">Bajo mínimo</option>
-              <option value="SIN_STOCK">Sin stock</option>
+              <option value="SIN_STOCK">{etiquetaNivelVista("SIN_STOCK", alcance, deposito !== "TODOS")}</option>
               <option value="SOBRESTOCK">Sobrestock</option>
             </select>
           </label>
@@ -638,18 +638,18 @@ export default function StockPage() {
                   <td className={ui.numeric}>
                     <div className={ui.cell}>
                       <strong className={ui.mono}>
-                        {formatearCantidad(Number(item.disponible || 0))}{" "}
-                        {item.unidadMedidaNombre}
+                        {textoCantidad(Number(item.disponible || 0), alcance, formatearCantidad)}
+                        {sinAccesoADepositos(alcance) ? "" : ` ${item.unidadMedidaNombre}`}
                       </strong>
                       <span>
-                        <span className={ui.statusInfo} title="Reservado" aria-label={`Reservado ${item.reservado}`}>
-                          R {item.reservado}
+                        <span className={ui.statusInfo} title="Reservado" aria-label={`Reservado ${textoCantidad(item.reservado, alcance, String)}`}>
+                          R {textoCantidad(item.reservado, alcance, String)}
                         </span>{" "}
-                        <span className={ui.statusWarning} title="Cuarentena" aria-label={`Cuarentena ${item.cuarentena}`}>
-                          C {item.cuarentena}
+                        <span className={ui.statusWarning} title="Cuarentena" aria-label={`Cuarentena ${textoCantidad(item.cuarentena, alcance, String)}`}>
+                          C {textoCantidad(item.cuarentena, alcance, String)}
                         </span>{" "}
-                        <span className={ui.statusPurple} title="En tránsito" aria-label={`En tránsito ${item.transito}`}>
-                          T {item.transito}
+                        <span className={ui.statusPurple} title="En tránsito" aria-label={`En tránsito ${textoCantidad(item.transito, alcance, String)}`}>
+                          T {textoCantidad(item.transito, alcance, String)}
                         </span>
                       </span>
                       <span>
@@ -664,7 +664,7 @@ export default function StockPage() {
                                   : ui.statusInfo
                           }
                         >
-                          {etiquetaNivel(item.nivel, alcance)}
+                          {etiquetaNivelVista(item.nivel, alcance, deposito !== "TODOS")}
                         </span>
                       </span>
                     </div>
@@ -672,8 +672,8 @@ export default function StockPage() {
 
                   <td className={ui.numeric}>
                     <div className={ui.cell}>
-                      <strong className={ui.mono}>{monedaBase ? formatearCostoUnitarioTexto(item.costoPromedioTexto, monedaBase) : "—"}</strong>
-                      <span>Valor costo: {monedaBase ? formatearMontoTexto(item.valorInventarioTexto, monedaBase) : "—"}</span>
+                      <strong className={ui.mono}>{monedaBase && !sinAccesoADepositos(alcance) ? formatearCostoUnitarioTexto(item.costoPromedioTexto, monedaBase) : "—"}</strong>
+                      <span>Valor costo: {monedaBase && !sinAccesoADepositos(alcance) ? formatearMontoTexto(item.valorInventarioTexto, monedaBase) : "—"}</span>
                       <span>
                         Venta referencia:{" "}
                         {item.precioVentaReferenciaTexto === null || !(item.monedaPrecio || monedaBase) ? "—" : formatearMontoTexto(item.precioVentaReferenciaTexto, item.monedaPrecio || monedaBase)}

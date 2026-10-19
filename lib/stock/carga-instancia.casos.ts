@@ -109,7 +109,7 @@ export async function verificarCasosStockCargaInstancia(): Promise<string[]> {
 
   const pagina = leer("app/(private)/stock/page.tsx");
 
-  cierto("D02 pantalla: sin variable de módulo mutable (`MONEDA_BASE`); la moneda es estado de la instancia que sale de su propia respuesta vía iniciarCargaStock; costo, valor y referencia usan monedaBase/monedaPrecio sin fallback a PYG", !/MONEDA_BASE/.test(pagina) && !/\blet [A-Z_]+ = "PYG"/.test(pagina) && /const \[monedaBase, setMonedaBase\] = useState<string \| null>\(null\)/.test(pagina) && /return iniciarCargaStock\(cargarStock, \{/.test(pagina) && /monedaBase \? formatearCostoUnitarioTexto\(item\.costoPromedioTexto, monedaBase\) : "—"/.test(pagina) && /item\.monedaPrecio \|\| monedaBase/.test(pagina) && !/"PYG"/.test(pagina));
+  cierto("D02 pantalla: sin variable de módulo mutable (`MONEDA_BASE`); la moneda es estado de la instancia que sale de su propia respuesta vía iniciarCargaStock; costo, valor y referencia usan monedaBase/monedaPrecio sin fallback a PYG", !/MONEDA_BASE/.test(pagina) && !/\blet [A-Z_]+ = "PYG"/.test(pagina) && /const \[monedaBase, setMonedaBase\] = useState<string \| null>\(null\)/.test(pagina) && /return iniciarCargaStock\(cargarStock, \{/.test(pagina) && /monedaBase && !sinAccesoADepositos\(alcance\) \? formatearCostoUnitarioTexto\(item\.costoPromedioTexto, monedaBase\) : "—"/.test(pagina) && /item\.monedaPrecio \|\| monedaBase/.test(pagina) && !/"PYG"/.test(pagina));
 
   return fallos;
 }
