@@ -110,3 +110,12 @@ Consultar **`AUD-PRODUCTOS-V1.md` §XVII**: `stock_saldos` deve ser zero em **to
 **Confirmado preservado:** Stock só GET e atalhos; Movimientos única escrita física; STOCK.VER no layout/API; empresa e depósitos do ator para saldo/custos; propriedade PROPIO/TERCERO; níveis SIN_STOCK/BAJO/SOBRESTOCK; tipo de controle por lote e vencimento; `depositosAutorizados` e `?deposito=` corretos; cálculo do custo unitário com decimal em texto; moeda de venda diferente da moeda de custo não somada no KPI; autorização Movimientos.VER+CREAR por atalhos; Reposición também requer STOCK.VER, logo não é link bloqueado por permissão.
 
 **Estado:** auditoria estática do MENU 8 concluída com 1 ALTA + 2 MÉDIAS abertas e observações; **NÃO HOMOLOGADO**. Nenhuma ordem de correção ao Claude, SQL, migração, build/tsc/lint global ou execução de testes. **Próximo menu: Inventario → Movimientos**, quando solicitado.
+
+
+## AUD-R02 Stock DESKTOP — 19/10/2026
+- **Relatório:** `documentacao/testes/AUD-NEXIT-STOCK-DESKTOP-R02-2026-10-19.md`. HEAD funcional de referência `dc109a7d2028fe8c20e09f25b080a5c4e175dff1`; 13 arquivos de Stock idênticos à R01 de `ee57f3a681d3d33aa71e0428b0cbb59efac20c6c`. **NÃO HOMOLOGADO.**
+- **STK-D01 ALTA — gate C24/PRO-137:** catálogo de produtos empresa-wide com estoque/custo filtrados por depósito; decide-se em negócio o universo de SKU visível e o significado de SIN_STOCK antes de mudar joins, filtros ou KPIs. Não duplicar execução de C24.
+- **STK-D02 MÉDIA — bug confirmado:** `MONEDA_BASE` está global em `stock/page.tsx` e é modificada por GET tardio mesmo após unmount. Estado de moeda deve pertencer à instância/resultado vigente. Testes focais de duas respostas fora de ordem.
+- **STK-D03 MÉDIA — risco condicional:** `leerStock` executa 9 SELECT no Pool sem snapshot comum; não reproduzido em PG. Testar concorrência autorizada antes de mexer em isolamento; `conSnapshotLectura` de Reportes é só referência.
+- **Preservar:** INV-01…04/INV-R02-01/02, STOCK.VER, alcance de depósitos, valor decimal exato, propriedade PROPIO/TERCERO, vínculos Movimientos/Reposición, contratos NEX-009/014/046/052. STK-O01…O06 são observações. Apenas auditoria estática: zero testes/banco/browser/CI/SQL/deploy, sem alterações funcionais.
+- **Linear:** pai `PRO-78` (não PRO-72, que é Vendedores planejado). STK-D01 vinculado ao gate existente PRO-137; STK-D02 tarefa corretiva e STK-D03 investigação condicionada. Próximo menu documentado: Inventario → Movimientos, mediante pedido.
