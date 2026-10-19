@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getAccessContext, hasPermission } from "@/lib/auth/permissions";
-import { PERIODOS, leerDashboard } from "@/lib/dashboard/shared";
+import { esPeriodo, leerDashboard } from "@/lib/dashboard/shared";
 import type { DashboardPeriodo } from "@/types/dashboard";
 
 const DEMO_MODE = process.env.DEMO_MODE === "true";
@@ -23,8 +23,9 @@ export async function GET(request: Request) {
   }
 
   const url = new URL(request.url);
-  const periodo = (url.searchParams.get("periodo") ?? "7d") as DashboardPeriodo;
-  if (!(periodo in PERIODOS)) return NextResponse.json({ error: "Período no válido." }, { status: 400 });
+  const periodoTexto = url.searchParams.get("periodo") ?? "7d";
+  if (!esPeriodo(periodoTexto)) return NextResponse.json({ error: "Período no válido." }, { status: 400 });
+  const periodo: DashboardPeriodo = periodoTexto;
   const depositoId = url.searchParams.get("depositoId") ?? "";
   if (depositoId && !UUID.test(depositoId)) return NextResponse.json({ error: "Depósito no válido." }, { status: 400 });
 

@@ -4,7 +4,7 @@ import { getCurrentSession } from "@/lib/auth/session";
 import styles from "./login.module.css";
 
 export default async function LoginPage() {
-  if (await getCurrentSession()) redirect("/dashboard");
+  if (await getCurrentSession()) redirect("/");
 
   return (
     <main className={styles.screen}>

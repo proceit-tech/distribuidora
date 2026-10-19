@@ -1,5 +1,6 @@
 import type { Pool } from "pg";
 
+import { ALCANCE_MOVIMIENTO } from "@/lib/movimientos/historial";
 import type { DashboardPeriodo, DashboardRespuesta } from "@/types/dashboard";
 
 // Lectura agregada para el panel. Todo filtrado por empresa_id de la sesión y por los depósitos
@@ -13,6 +14,15 @@ export const PERIODOS: Record<DashboardPeriodo, { dias: number; semanal: boolean
   "30d": { dias: 30, semanal: false },
   "90d": { dias: 90, semanal: true },
 };
+
+/** F-DASH-08: solo los períodos oficiales (propiedades propias; `constructor`, `__proto__` y similares NO son períodos). */
+export const esPeriodo = (v: string): v is DashboardPeriodo => Object.prototype.hasOwnProperty.call(PERIODOS, v);
+
+/**
+ * F-DASH-06: un movimiento solo es visible si TODOS los depósitos que referencia están en el alcance del usuario (mismo predicado que el historial de Movimientos), dato independiente del depósito
+ * seleccionado en el filtro del panel. `usuario` = marcador de posición del usuario de la sesión; la empresa es siempre $1.
+ */
+export const alcanceIntegral = (usuario: number) => ALCANCE_MOVIMIENTO.split("$2").join(`$${usuario}`);
 
 export type PermisosPanel = { productos: boolean; clientes: boolean; stock: boolean; movimientos: boolean };
 
@@ -42,6 +52,8 @@ export async function leerDashboard(
   periodo: DashboardPeriodo,
   depositoId: string,
 ): Promise<DashboardRespuesta | { error: string; status: number }> {
+  if (!esPeriodo(periodo)) return { error: "Período no válido.", status: 400 };
+
   const depositos = await depositosPermitidos(db, empresaId, usuarioId);
   if (depositoId && !depositos.some((d) => d.id === depositoId)) {
     return { error: "Depósito no permitido.", status: 403 };
@@ -57,7 +69,7 @@ export async function leerDashboard(
 
   // Movimientos efectivos: registrados y que no sean la contrapartida de una anulación.
   const MOV_OK = `m.empresa_id = $1 AND m.estado = 'REGISTRADO' AND m.anula_a_id IS NULL`;
-  const mp = [empresaId, deps, desde, hasta];
+  const mp = [empresaId, deps, desde, hasta, usuarioId];
 
   const [productos, clientes, saldos, valor, lotes, movs, ultimos] = await Promise.all([
     permisos.productos
@@ -77,7 +89,7 @@ export async function leerDashboard(
         )
       : null,
     permisos.stock
-      ? db.query(`SELECT coalesce(sum(valor_total), 0)::float8 AS valor, count(DISTINCT producto_id) FILTER (WHERE cantidad_valorizada > 0)::int AS productos FROM inventario_costos WHERE empresa_id = $1 AND deposito_id = ANY($2::uuid[])`, [empresaId, deps])
+      ? db.query(`SELECT coalesce(sum(valor_total), 0)::text AS valor, count(DISTINCT producto_id) FILTER (WHERE cantidad_valorizada > 0)::int AS productos FROM inventario_costos WHERE empresa_id = $1 AND deposito_id = ANY($2::uuid[])`, [empresaId, deps])
       : null,
     permisos.stock
       ? db.query(
@@ -97,6 +109,7 @@ export async function leerDashboard(
              FROM movimientos_inventario m JOIN movimiento_lineas l ON l.empresa_id = m.empresa_id AND l.movimiento_id = m.id
             WHERE ${MOV_OK} AND m.fecha_movimiento BETWEEN $3::date AND $4::date
               AND (m.deposito_origen_id = ANY($2::uuid[]) OR m.deposito_destino_id = ANY($2::uuid[]))
+              AND ${alcanceIntegral(5)}
             GROUP BY m.fecha_movimiento`,
           mp,
         )
@@ -106,17 +119,21 @@ export async function leerDashboard(
           `SELECT m.id, m.numero_movimiento AS numero, m.tipo_movimiento AS tipo, m.fecha_movimiento::text AS fecha,
                   to_char(m.hora_movimiento, 'HH24:MI') AS hora, min(p.descripcion) AS producto, count(*)::int AS lineas,
                   sum(l.cantidad)::float8 AS cantidad,
-                  concat_ws(' → ', dor.nombre, dde.nombre) AS depositos, coalesce(u.usuario, '') AS usuario, m.creado_at
+                  concat_ws(' → ', dor.nombre, dde.nombre) AS depositos, coalesce(u.usuario, '') AS usuario, m.creado_at,
+                  CASE WHEN m.anula_a_id IS NOT NULL THEN 'INVERSO' WHEN m.estado = 'ANULADO' THEN 'ANULADO' ELSE 'REGISTRADO' END AS situacion,
+                  ma.numero_movimiento AS anula_numero
              FROM movimientos_inventario m
              JOIN movimiento_lineas l ON l.empresa_id = m.empresa_id AND l.movimiento_id = m.id
              JOIN productos p ON p.empresa_id = l.empresa_id AND p.id = l.producto_id
              LEFT JOIN depositos dor ON dor.empresa_id = m.empresa_id AND dor.id = m.deposito_origen_id
              LEFT JOIN depositos dde ON dde.empresa_id = m.empresa_id AND dde.id = m.deposito_destino_id
              LEFT JOIN usuarios u ON u.empresa_id = m.empresa_id AND u.id = m.creado_por
+             LEFT JOIN movimientos_inventario ma ON ma.empresa_id = m.empresa_id AND ma.id = m.anula_a_id
             WHERE m.empresa_id = $1 AND (m.deposito_origen_id = ANY($2::uuid[]) OR m.deposito_destino_id = ANY($2::uuid[]))
-            GROUP BY m.id, m.numero_movimiento, m.tipo_movimiento, m.fecha_movimiento, m.hora_movimiento, dor.nombre, dde.nombre, u.usuario, m.creado_at
+              AND ${alcanceIntegral(3)}
+            GROUP BY m.id, m.numero_movimiento, m.tipo_movimiento, m.fecha_movimiento, m.hora_movimiento, dor.nombre, dde.nombre, u.usuario, m.creado_at, m.estado, m.anula_a_id, ma.numero_movimiento
             ORDER BY m.creado_at DESC, m.numero_movimiento DESC LIMIT 6`,
-          [empresaId, deps],
+          [empresaId, deps, usuarioId],
         )
       : null,
   ]);
@@ -165,6 +182,7 @@ export async function leerDashboard(
     empresa: { nombre: emp.nombre as string, moneda: emp.moneda as string },
     periodo: { clave: periodo, desde, hasta, agrupacion: semanal ? "SEMANA" : "DIA" },
     filtros: { depositos, depositoId },
+    acceso: { ...permisos },
     kpis: {
       productos: productos ? { activos: productos.rows[0].activos, controlanStock: productos.rows[0].controlan } : null,
       clientes: clientes ? { activos: clientes.rows[0].activos } : null,
@@ -180,6 +198,7 @@ export async function leerDashboard(
           id: r.id, numero: r.numero, tipo: r.tipo, fecha: r.fecha, hora: r.hora,
           producto: r.lineas > 1 ? `${r.producto} (+${r.lineas - 1})` : r.producto,
           cantidad: r.cantidad, depositos: r.depositos, usuario: r.usuario,
+          situacion: r.situacion as "REGISTRADO" | "ANULADO" | "INVERSO", anulaNumero: (r.anula_numero as string | null) ?? null,
         }))
       : null,
   };

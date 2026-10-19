@@ -3,7 +3,9 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
+import { claveContexto, crearCargaDashboard } from "@/lib/dashboard/carga";
 import { cargarDashboard } from "@/lib/dashboard/cliente-api";
+import { montoTexto } from "@/lib/dashboard/formato";
 import type { DashboardPeriodo, DashboardRespuesta } from "@/types/dashboard";
 
 import styles from "./page.module.css";
@@ -29,10 +31,6 @@ const TIPOS: Record<string, { texto: string; clase: "statusSuccess" | "statusInf
 
 const num = (v: number) => new Intl.NumberFormat("es-PY", { maximumFractionDigits: 2 }).format(v);
 const compacto = (v: number) => new Intl.NumberFormat("es-PY", { notation: "compact", maximumFractionDigits: 1 }).format(v);
-
-function money(v: number, moneda: string) {
-  return `${moneda === "PYG" ? "Gs." : moneda} ${new Intl.NumberFormat("es-PY", { maximumFractionDigits: moneda === "PYG" ? 0 : 2 }).format(v)}`;
-}
 
 // Escala "redonda" para el eje del gráfico (1, 2, 5 × 10^n).
 function escala(max: number) {
@@ -67,7 +65,7 @@ function armarTarjetas(d: DashboardRespuesta | null): Tarjeta[] {
     },
     {
       label: "Valor de inventario", tone: "amber", href: "/stock", habilitada: !!k?.inventario,
-      value: k?.inventario ? money(k.inventario.valor, d!.empresa.moneda) : "—",
+      value: k?.inventario ? montoTexto(k.inventario.valor, d!.empresa.moneda) : "—",
       detail: k?.inventario ? `Costo promedio · ${num(k.inventario.productosValorizados)} productos valorizados` : d ? sin : "Cargando...",
     },
     {
@@ -104,31 +102,27 @@ function ArrowIcon() {
 export default function DashboardPage() {
   const [periodo, setPeriodo] = useState<DashboardPeriodo>("7d");
   const [depositoId, setDepositoId] = useState("");
-  const [datos, setDatos] = useState<DashboardRespuesta | null>(null);
+  // F-DASH-02: cada resultado/error queda ligado al contexto (período + depósito) con el que se pidió; solo se muestra si coincide con el contexto seleccionado.
+  const [resultado, setResultado] = useState<{ clave: string; datos: DashboardRespuesta } | null>(null);
+  const [falla, setFalla] = useState<{ clave: string; mensaje: string } | null>(null);
+  const [opcionesDeposito, setOpcionesDeposito] = useState<{ id: string; nombre: string }[]>([]);
   const [cargando, setCargando] = useState(true);
-  const [error, setError] = useState("");
   const [recarga, setRecarga] = useState(0);
+  const [carga] = useState(() => crearCargaDashboard<DashboardRespuesta>({
+    cargar: (p, d) => cargarDashboard(p as DashboardPeriodo, d),
+    alResultado: (clave, datos) => { setResultado({ clave, datos }); setFalla(null); setOpcionesDeposito(datos.filtros.depositos); },
+    alError: (clave, mensaje) => setFalla({ clave, mensaje }),
+    alCargando: setCargando,
+  }));
+  const clave = claveContexto(periodo, depositoId);
+  const datos = resultado?.clave === clave ? resultado.datos : null;
+  const error = falla?.clave === clave ? falla.mensaje : "";
 
   useEffect(() => {
-    let activo = true;
-    setCargando(true);
-    setError("");
+    void carga.solicitar(periodo, depositoId);
 
-    cargarDashboard(periodo, depositoId)
-      .then((r) => {
-        if (activo) setDatos(r);
-      })
-      .catch((e: unknown) => {
-        if (activo) setError(e instanceof Error ? e.message : "No fue posible cargar el panel.");
-      })
-      .finally(() => {
-        if (activo) setCargando(false);
-      });
-
-    return () => {
-      activo = false;
-    };
-  }, [periodo, depositoId, recarga]);
+    return () => carga.invalidar();
+  }, [carga, periodo, depositoId, recarga]);
 
   const tarjetas = armarTarjetas(datos);
   const periodoInfo = PERIODOS.find((p) => p.clave === periodo)!;
@@ -166,7 +160,7 @@ export default function DashboardPage() {
               onChange={(e) => setDepositoId(e.target.value)}
             >
               <option value="">Todos los depósitos</option>
-              {(datos?.filtros.depositos ?? []).map((d) => (
+              {opcionesDeposito.map((d) => (
                 <option key={d.id} value={d.id}>
                   {d.nombre}
                 </option>
@@ -231,10 +225,12 @@ export default function DashboardPage() {
               <h2>Entradas y salidas de {periodoInfo.titulo}</h2>
             </div>
 
-            <Link href="/movimientos">
-              Ver movimientos
-              <ArrowIcon />
-            </Link>
+            {datos?.acceso.movimientos ? (
+              <Link href="/movimientos">
+                Ver movimientos
+                <ArrowIcon />
+              </Link>
+            ) : null}
           </div>
 
           {serie && hayMovimientos ? (
@@ -357,10 +353,12 @@ export default function DashboardPage() {
               <h2>Últimos movimientos</h2>
             </div>
 
-            <Link href="/movimientos">
-              Ver todos
-              <ArrowIcon />
-            </Link>
+            {datos?.acceso.movimientos ? (
+              <Link href="/movimientos">
+                Ver todos
+                <ArrowIcon />
+              </Link>
+            ) : null}
           </div>
 
           <div className={styles.ordersList}>
@@ -379,8 +377,9 @@ export default function DashboardPage() {
 
                     <strong className={styles.orderAmount}>{num(m.cantidad)} u.</strong>
 
-                    <span className={[styles.status, styles[tipo.clase]].join(" ")}>
+                    <span className={[styles.status, styles[m.situacion === "REGISTRADO" ? tipo.clase : "statusWarning"]].join(" ")}>
                       {tipo.texto}
+                      {m.situacion === "ANULADO" ? " · anulado" : m.situacion === "INVERSO" ? " · inverso de " + (m.anulaNumero ?? "anulación") : ""}
                     </span>
                   </Link>
                 );
@@ -410,10 +409,12 @@ export default function DashboardPage() {
               <h2>Disponibilidad de stock</h2>
             </div>
 
-            <Link href="/stock">
-              Ver inventario
-              <ArrowIcon />
-            </Link>
+            {datos?.acceso.stock ? (
+              <Link href="/stock">
+                Ver inventario
+                <ArrowIcon />
+              </Link>
+            ) : null}
           </div>
 
           {datos?.stock && datos.stock.controlados > 0 ? (

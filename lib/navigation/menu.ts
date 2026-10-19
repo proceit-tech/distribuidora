@@ -406,6 +406,26 @@ function canShowItem(item: ShellNavigationItem, access: NavigationAccess) {
   return access.permissions.includes(item.permission.trim().toUpperCase());
 }
 
+/** Destino explícito (sin redirecciones) para quien no tiene ninguna página operativa autorizada. */
+export const RUTA_SIN_ACCESO = "/sin-acceso";
+
+/** F-DASH-04: el Panel general solo para quien tiene DASHBOARD.VER (o administra la empresa); la plataforma nunca opera una empresa. */
+export function puedeVerDashboard(access: NavigationAccess) {
+  if (access.isPlatformAdmin) return false;
+  return access.isCompanyAdmin || access.permissions.includes("DASHBOARD.VER");
+}
+
+/**
+ * F-DASH-04: página de inicio real del usuario. Plataforma → Empresas; con DASHBOARD.VER → Panel general; si no, la primera página operativa autorizada de su menú;
+ * sin ninguna → página explícita de «sin acceso» (que no redirige: no hay bucle). No concede permisos: solo elige entre destinos ya autorizados.
+ */
+export function resolverInicio(access: NavigationAccess): string {
+  if (access.isPlatformAdmin) return PLATFORM_GROUP.items[0].href;
+  if (puedeVerDashboard(access)) return "/dashboard";
+
+  return resolveNavigation(access)[0]?.items[0]?.href ?? RUTA_SIN_ACCESO;
+}
+
 /**
  * Menú por perfil. Administrador global de plataforma (PROCEIT): solo el menú de plataforma.
  * Usuarios de empresa: únicamente los módulos que sus perfiles permiten. Sin permisos => sin módulos.

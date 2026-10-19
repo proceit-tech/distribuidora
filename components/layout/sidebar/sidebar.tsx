@@ -21,6 +21,8 @@ type SidebarProps = {
   user: ShellUser;
   company: ShellCompany;
   navigation: ShellNavigationGroup[];
+  inicioHref: string;
+  puedeDashboard: boolean;
   collapsed: boolean;
   mobileOpen: boolean;
   onCollapsedChange: (value: boolean) => void;
@@ -53,6 +55,8 @@ export default function Sidebar({
   user,
   company,
   navigation,
+  inicioHref,
+  puedeDashboard,
   collapsed,
   mobileOpen,
   onCollapsedChange,
@@ -126,7 +130,7 @@ export default function Sidebar({
       >
         <header className={styles.brandArea}>
           <Link
-            href="/dashboard"
+            href={inicioHref}
             className={styles.brand}
             aria-label="Nexit"
           >
@@ -170,31 +174,33 @@ export default function Sidebar({
         </header>
 
         <nav className={styles.navigation}>
-          <Link
-            href="/dashboard"
-            className={[
-              styles.dashboardLink,
-              isActivePath(pathname, "/dashboard")
-                ? styles.dashboardLinkActive
-                : "",
-            ].join(" ")}
-            title={collapsed ? "Panel general" : undefined}
-          >
-            <span className={styles.primaryIcon}>
-              <NavigationIcon name="dashboard" size={16} />
-            </span>
+          {puedeDashboard ? (
+            <Link
+              href="/dashboard"
+              className={[
+                styles.dashboardLink,
+                isActivePath(pathname, "/dashboard")
+                  ? styles.dashboardLinkActive
+                  : "",
+              ].join(" ")}
+              title={collapsed ? "Panel general" : undefined}
+            >
+              <span className={styles.primaryIcon}>
+                <NavigationIcon name="dashboard" size={16} />
+              </span>
 
-            {!collapsed ? (
-              <>
-                <span className={styles.primaryText}>
-                  <strong>Panel general</strong>
-                  <small>Resumen ejecutivo</small>
-                </span>
+              {!collapsed ? (
+                <>
+                  <span className={styles.primaryText}>
+                    <strong>Panel general</strong>
+                    <small>Resumen ejecutivo</small>
+                  </span>
 
-                <span className={styles.activeIndicator} />
-              </>
-            ) : null}
-          </Link>
+                  <span className={styles.activeIndicator} />
+                </>
+              ) : null}
+            </Link>
+          ) : null}
 
           {!collapsed ? (
             <p className={styles.menuCaption}>

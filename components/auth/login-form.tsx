@@ -67,7 +67,7 @@ export function LoginForm() {
         return;
       }
 
-      router.replace("/dashboard");
+      router.replace("/"); // la raíz resuelve el inicio según los permisos reales (F-DASH-04)
       router.refresh();
     } catch {
       setError("No fue posible conectarse al servidor.");

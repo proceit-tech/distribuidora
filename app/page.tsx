@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { getAccessContext } from "@/lib/auth/permissions";
+import { resolverInicio } from "@/lib/navigation/menu";
 import { getCurrentSession } from "@/lib/auth/session";
 
 export default async function HomePage() {
@@ -11,5 +12,5 @@ export default async function HomePage() {
   }
 
   const access = await getAccessContext(session.user, session.demo === true);
-  redirect(access.isPlatformAdmin ? "/administracion/empresas" : "/dashboard");
+  redirect(resolverInicio(access));
 }

@@ -2,7 +2,7 @@ import "server-only";
 
 import { getAccessContext } from "@/lib/auth/permissions";
 import { getCurrentSession } from "@/lib/auth/session";
-import { resolveNavigation } from "@/lib/navigation/menu";
+import { puedeVerDashboard, resolveNavigation, resolverInicio } from "@/lib/navigation/menu";
 import type { ShellContext } from "@/types/shell";
 
 type CompanyRow = {
@@ -60,5 +60,7 @@ export async function getShellContext(): Promise<ShellContext | null> {
     },
     permissions: access.permissions,
     navigation: resolveNavigation(access),
+    inicioHref: resolverInicio(access),
+    puedeDashboard: puedeVerDashboard(access),
   };
 }
