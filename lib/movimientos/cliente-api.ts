@@ -81,7 +81,18 @@ export async function registrarMovimientoResultado(datos: NuevoMovimientoStock, 
     }
   }
 
-  if (r.status >= 400 && r.status < 500 && r.status !== 408) return { tipo: "RECHAZADO", estado: r.status, mensaje: await mensajeError(r, "No fue posible registrar el movimiento.") };
+  if (r.status >= 400 && r.status < 500 && r.status !== 408) {
+    // Un rechazo solo es conclusivo si el cuerpo es el error JSON de la API; una respuesta ilegible (p. ej. de un intermediario) se trata de forma conservadora como indeterminada.
+    try {
+      const j = (await r.json()) as { error?: unknown };
+
+      if (typeof j.error === "string" && j.error.trim()) return { tipo: "RECHAZADO", estado: r.status, mensaje: j.error };
+    } catch {
+      // cuerpo ilegible
+    }
+
+    return { tipo: "INDETERMINADO", mensaje: MENSAJE_INDETERMINADO };
+  }
 
   return { tipo: "INDETERMINADO", mensaje: MENSAJE_INDETERMINADO };
 }

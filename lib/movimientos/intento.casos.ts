@@ -7,13 +7,14 @@ import { join } from "node:path";
 
 import { contador } from "@/lib/clientes/contador-casos";
 import { registrarMovimientoResultado } from "@/lib/movimientos/cliente-api";
-import { crearControlRegistro, MENSAJE_INDETERMINADO, MENSAJE_SALIDA } from "@/lib/movimientos/intento";
+import { aplicarResultadoSiVigente, crearControlRegistro, MENSAJE_INDETERMINADO, MENSAJE_SALIDA } from "@/lib/movimientos/intento";
 import { formularioInicial } from "@/lib/movimientos/formulario";
 import type { NuevoMovimientoStock } from "@/types/movimientos-stock";
 
 const leer = (r: string) => readFileSync(join(process.cwd(), r), "utf8").replace(/\r\n/g, "\n");
 const base = (extra: Partial<NuevoMovimientoStock> = {}): NuevoMovimientoStock => ({ ...formularioInicial("2026-10-19"), productoId: "prod-1", cantidad: 5, depositoDestinoId: "dep-A", motivo: "conteo", ...extra });
 const tick = () => new Promise((r) => setTimeout(r, 0));
+type ResultadoRegistroLocal = import("@/lib/movimientos/intento").SalidaRegistro;
 
 type Falla = "ninguna" | "perder-respuesta" | "5xx";
 
@@ -24,6 +25,7 @@ function servidor() {
   let siguiente = 1;
   let falla: Falla = "ninguna";
   let esperar: Promise<void> | null = null;
+  let rechazo: { status: number; cuerpo: string } | null = null;
   const fetchSim = async (_u: string, init: RequestInit) => {
     const cuerpo = JSON.parse(String(init.body)) as NuevoMovimientoStock & { claveIdempotencia: string };
     const { claveIdempotencia: clave, ...solicitud } = cuerpo;
@@ -31,6 +33,8 @@ function servidor() {
 
     posts.push({ clave, cantidad: cuerpo.cantidad, huella });
     if (esperar) await esperar;
+    // Rechazo HTTP ANTES de consultar la clave (p. ej. 401/403/400/409 de un intermediario o de la validación): el servidor no mira el registro previo.
+    if (rechazo) return new Response(rechazo.cuerpo, { status: rechazo.status });
 
     if (!solicitud.productoId) return new Response(JSON.stringify({ error: "Seleccione el producto." }), { status: 400 });
 
@@ -54,6 +58,7 @@ function servidor() {
   return {
     guardados, posts, fetchSim,
     fallar: (f: Falla) => { falla = f; },
+    rechazar: (r: { status: number; cuerpo: string } | null) => { rechazo = r; },
     retener: () => { let liberar: () => void = () => undefined; esperar = new Promise<void>((r) => { liberar = r; }); return () => { esperar = null; liberar(); }; },
   };
 }
@@ -163,6 +168,131 @@ export async function verificarCasosMovimientosIntento(): Promise<string[]> {
   const textos = Object.values(MENSAJE_SALIDA).join(" ").toLowerCase();
 
   igual("10: salir/Cancelar/Volver con un registro en curso o indeterminado advierte que el movimiento PUEDE haberse registrado y remite a Movimientos; nunca dice que se canceló o revirtió", [/puede/.test(textos), /movimientos/.test(textos), /cancel|revert|deshech|anulad/.test(textos)], [true, true, false]);
+
+
+  // ── PRO-185: el historial indeterminado de la intención sobrevive a un rechazo HTTP posterior ───────────────────────────────────────────────
+  const detalle = (r: ResultadoRegistroLocal) => (r.tipo === "INDETERMINADO" || r.tipo === "RECHAZADO" ? r.mensaje : "");
+  const casos185: Array<[number, string]> = [[401, JSON.stringify({ error: "Sesión no válida." })], [403, JSON.stringify({ error: "No tiene permiso para esta acción." })], [400, JSON.stringify({ error: "Los datos enviados no son válidos." })], [409, JSON.stringify({ error: "la clave de idempotencia ya fue usada con una solicitud distinta" })]];
+  const mensajes185: string[] = [];
+
+  for (const [status, cuerpo] of casos185) {
+    const sx = servidor();
+    const cx = nuevoControl(sx);
+
+    sx.fallar("perder-respuesta");
+    await cx.registrar(base());
+    sx.fallar("ninguna");
+    sx.rechazar({ status, cuerpo });
+    const rx = await cx.registrar(base({ cantidad: 77 }));
+    const huellasIguales = new Set(sx.posts.map((p) => p.huella)).size === 1;
+
+    mensajes185.push(detalle(rx));
+    igual(`185-${status}: K1 → COMMIT → respuesta perdida → reintento con HTTP ${status} antes de consultar la clave: la intención NO se cierra (sigue indeterminada, K1 y snapshot intactos, formulario bloqueado, sin K2) y no se interpreta como éxito`, [rx.tipo, cx.estado(), cx.bloqueado(), cx.clave(), huellasIguales, [...new Set(sx.posts.map((p) => p.clave))], sx.guardados.size], ["INDETERMINADO", "INDETERMINADO", true, "clave-K1-00000000", true, ["clave-K1-00000000"], 1]);
+
+    sx.rechazar(null);
+    const rec = await cx.registrar(base({ cantidad: 1 }));
+
+    igual(`185-${status}b: regularizada la condición, el reintento con K1 y el payload original responde «repetido» y confirma un único movimiento`, [rec, sx.guardados.size, cx.estado(), [...new Set(sx.posts.map((p) => p.clave))]], [{ tipo: "OK", numero: "MOV-000001", repetido: true }, 1, "LIBRE", ["clave-K1-00000000"]]);
+  }
+
+  // Cuerpo ilegible en un 4xx: conservador en la primera tentativa y también tras un resultado indeterminado.
+  const sI = servidor();
+  const cI = nuevoControl(sI);
+
+  sI.rechazar({ status: 400, cuerpo: "<html>Bad Request</html>" });
+  const primeraIlegible = await cI.registrar(base());
+
+  sI.rechazar({ status: 403, cuerpo: "" });
+  const segundaIlegible = await cI.registrar(base());
+
+  igual("185-ilegible: un 4xx con cuerpo ilegible NO afirma que no se grabó ni siquiera en la primera tentativa: queda indeterminado, conserva K1 y sigue bloqueado; el segundo también", [primeraIlegible.tipo, segundaIlegible.tipo, cI.estado(), cI.clave(), sI.guardados.size], ["INDETERMINADO", "INDETERMINADO", "INDETERMINADO", "clave-K1-00000000", 0]);
+
+  // Primera tentativa con rechazo JSON comprobado y sin efecto: sigue permitiendo corregir.
+  const sP = servidor();
+  const cP = nuevoControl(sP);
+
+  sP.rechazar({ status: 400, cuerpo: JSON.stringify({ error: "Seleccione el producto." }) });
+  const primero = await cP.registrar(base());
+
+  igual("185-primera: el rechazo JSON de la PRIMERA tentativa (sin historial indeterminado) libera el formulario y no deja K1 pendiente", [primero.tipo, cP.bloqueado(), cP.clave()], ["RECHAZADO", false, null]);
+
+  // Fallas indeterminadas sucesivas + rechazo en medio conservan siempre la misma clave y el mismo snapshot.
+  const sS = servidor();
+  const cS = nuevoControl(sS);
+
+  sS.fallar("5xx");
+  await cS.registrar(base());
+  sS.fallar("ninguna");
+  sS.rechazar({ status: 401, cuerpo: JSON.stringify({ error: "Sesión no válida." }) });
+  await cS.registrar(base({ cantidad: 9 }));
+  sS.rechazar(null);
+  sS.fallar("perder-respuesta");
+  await cS.registrar(base({ cantidad: 10 }));
+  sS.fallar("ninguna");
+  const finS = await cS.registrar(base({ cantidad: 11 }));
+
+  igual("185-sucesivas: 5xx → 401 → respuesta perdida → éxito: siempre K1 y el mismo snapshot (cantidad 5), un único movimiento", [[...new Set(sS.posts.map((p) => p.clave))], [...new Set(sS.posts.map((p) => p.cantidad))], finS, sS.guardados.size], [["clave-K1-00000000"], [5], { tipo: "OK", numero: "MOV-000001", repetido: true }, 1]);
+  igual("185-mensajes: ningún mensaje del flujo afirma que el movimiento no se registró; todos los de rechazo tras indeterminado dicen que PUEDE haberse registrado", [mensajes185.every((m) => /PUEDE haberse registrado/.test(m)), mensajes185.some((m) => /no se registr|no fue registrad|no se grab/i.test(m)), /no se registr|no se grab/i.test(MENSAJE_INDETERMINADO)], [true, false, false]);
+
+  // ── PRO-186: efectos tardíos tras abandonar la pantalla ──────────────────────────────────────────────────────────────────────────────────────
+  const efectos = (vigente: { v: boolean }) => {
+    const log: string[] = [];
+    const aplicar = (r: Parameters<typeof aplicarResultadoSiVigente>[0]) => aplicarResultadoSiVigente(r, () => vigente.v, { alEstado: () => log.push("estado"), alRegistrar: (n) => log.push("navegar:" + n), alMensaje: (m) => log.push("mensaje") });
+
+    return { log, aplicar };
+  };
+  const ok = { tipo: "OK", numero: "MOV-000009", repetido: false } as const;
+
+  const v1 = { v: true };
+  const e1 = efectos(v1);
+
+  igual("186-1: el usuario permanece en la pantalla → el OK navega con el número y actualiza el estado", [e1.aplicar(ok), e1.log], [true, ["estado", "navegar:MOV-000009"]]);
+
+  const v2 = { v: true };
+  const e2 = efectos(v2);
+  const sPend = servidor();
+  const cPend = nuevoControl(sPend);
+  const soltarPend = sPend.retener();
+  const enCurso = cPend.registrar(base());
+
+  await tick();
+  v2.v = false; // salida confirmada: la pantalla se desmonta
+  soltarPend();
+  const rTardio = await enCurso;
+
+  igual("186-2: salida confirmada con el POST pendiente y OK tardío → ninguna navegación ni efecto; el POST NO se cancela ni se desmiente: el movimiento quedó registrado en el servidor", [e2.aplicar(rTardio), e2.log, sPend.guardados.size], [false, [], 1]);
+
+  const v3 = { v: false };
+  const e3 = efectos(v3);
+
+  igual("186-3/4: tras abandonar, ni un error tardío (rechazo) ni un resultado indeterminado tardío muestran mensajes ni cambian el estado", [e3.aplicar({ tipo: "RECHAZADO", mensaje: "x", estado: 400 }), e3.aplicar({ tipo: "INDETERMINADO", mensaje: "y" }), e3.log], [false, false, []]);
+
+  // 5) El usuario cancela la salida: sigue vigente y el resultado se trata con normalidad.
+  const v5 = { v: true };
+  const e5 = efectos(v5);
+  const salir = (confirma: boolean) => { if (confirma) v5.v = false; };
+
+  salir(false);
+  e5.aplicar({ tipo: "INDETERMINADO", mensaje: MENSAJE_INDETERMINADO });
+
+  igual("186-5: si el operador cancela la salida (permanece) el resultado tardío se procesa: se muestra el aviso de resultado indeterminado", [e5.log], [["estado", "mensaje"]]);
+
+  // 6) Reintento tras indeterminado con la pantalla vigente usa K1 y navega con el número original.
+  const sR = servidor();
+  const cR = nuevoControl(sR);
+  const v6 = { v: true };
+  const e6 = efectos(v6);
+
+  sR.fallar("perder-respuesta");
+  e6.aplicar(await cR.registrar(base()));
+  sR.fallar("ninguna");
+  e6.aplicar(await cR.registrar(base()));
+
+  igual("186-6: con la pantalla vigente, el reintento tras resultado indeterminado reenvía K1, devuelve «repetido» y navega al número original", [e6.log, [...new Set(sR.posts.map((p) => p.clave))], sR.guardados.size], [["estado", "mensaje", "estado", "navegar:MOV-000001"], ["clave-K1-00000000"], 1]);
+
+  const paginaB = leer("app/(private)/movimientos/nuevo/page.tsx");
+
+  cierto("186 pantalla (estructura): la instancia marca su validez en un efecto con limpieza al desmontar y TODO efecto del resultado pasa por aplicarResultadoSiVigente (router.push solo dentro); el mecanismo global de proteger-cambios no se tocó", /vigente\.current = true;\n\s+return \(\) => \{\n\s+vigente\.current = false;/.test(paginaB) && /aplicarResultadoSiVigente\(r, \(\) => vigente\.current,/.test(paginaB) && (paginaB.match(/router\.push\(/g) ?? []).length === 1 && /alRegistrar: \(numero\) => \{\n\s+setRegistrado\(true\);\n\s+router\.push\(/.test(paginaB));
 
   // Estructura de la pantalla (complemento).
   const pagina = leer("app/(private)/movimientos/nuevo/page.tsx");

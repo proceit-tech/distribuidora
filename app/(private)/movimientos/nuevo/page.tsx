@@ -12,7 +12,7 @@ import { motivoObligatorio } from "@/lib/movimientos/reglas";
 import { hoyAsuncion } from "@/lib/listas-precio/calculos";
 import { useProtegerCambios } from "@/lib/ui/proteger-cambios";
 import { cargarCatalogosMovimientos, registrarMovimientoResultado } from "@/lib/movimientos/cliente-api";
-import { crearControlRegistro, MENSAJE_SALIDA, type EstadoIntento } from "@/lib/movimientos/intento";
+import { aplicarResultadoSiVigente, crearControlRegistro, MENSAJE_SALIDA, type EstadoIntento } from "@/lib/movimientos/intento";
 import {
   advertenciaSaldo,
   aplicarTipo,
@@ -48,9 +48,19 @@ export default function NuevoMovimientoPage() {
   // MOV-D01: la intención de registro (clave de idempotencia + snapshot del payload) vive en el control, NO se renueva por editar el formulario; mientras exista, el formulario está bloqueado.
   const control = useRef(crearControlRegistro({ generarClave: () => crypto.randomUUID(), enviar: (d) => registrarMovimientoResultado(d) }));
   const [estadoRegistro, setEstadoRegistro] = useState<EstadoIntento>("LIBRE");
+  // PRO-186: validez de ESTA instancia de la pantalla; abandonada (desmontada) no se navega ni se muestra nada con una respuesta tardía.
+  const vigente = useRef(true);
   const saving = estadoRegistro === "ENVIANDO";
   const bloqueado = estadoRegistro !== "LIBRE";
   const [registrado, setRegistrado] = useState(false);
+
+  useEffect(() => {
+    vigente.current = true;
+
+    return () => {
+      vigente.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     let activo = true;
@@ -151,15 +161,15 @@ export default function NuevoMovimientoPage() {
 
     const r = await pendiente;
 
-    setEstadoRegistro(control.current.estado());
-
-    if (r.tipo === "OK") {
-      setRegistrado(true);
-      router.push(`/movimientos?ok=${encodeURIComponent(r.numero)}`);
-      router.refresh();
-    } else if (r.tipo === "RECHAZADO" || r.tipo === "INDETERMINADO") {
-      setErrorForm(r.mensaje);
-    }
+    aplicarResultadoSiVigente(r, () => vigente.current, {
+      alEstado: () => setEstadoRegistro(control.current.estado()),
+      alRegistrar: (numero) => {
+        setRegistrado(true);
+        router.push(`/movimientos?ok=${encodeURIComponent(numero)}`);
+        router.refresh();
+      },
+      alMensaje: (mensaje) => setErrorForm(mensaje),
+    });
   }
 
   /** Decisión explícita: dejar la tentativa de resultado desconocido y empezar otra operación (con otra clave). */
