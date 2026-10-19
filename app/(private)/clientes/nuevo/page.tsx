@@ -8,6 +8,7 @@ import { calcularDvRuc, validarRucDv } from "@/lib/fiscal/calcular-dv-ruc";
 import { TelefonoPais } from "@/components/clientes/telefono-pais";
 import { validarTelefono } from "@/lib/fiscal/telefono";
 import { DESCUENTO_COMERCIAL, LIMITE_CREDITO, decimalAcotado } from "@/lib/clientes/comercial";
+import { altaSucia, finalizarSinPendientes as finalizarCarga } from "@/lib/clientes/cierre-alta";
 import { crearCargasGeograficas } from "@/lib/clientes/geografia-cargas";
 import { pestanaDeErrorApi } from "@/lib/clientes/pestanas";
 import { useProtegerCambios } from "@/lib/ui/proteger-cambios";
@@ -350,6 +351,8 @@ export default function NuevoClientePage() {
   // CLI-D01: permiso VER informado por la API desde la sesión del servidor. Sin VER no hay lista ni fichas: la alta termina en una pantalla propia y no ofrece enlaces a ellas.
   const [puedeVer, setPuedeVer] = useState(false);
   const [altaFinalizada, setAltaFinalizada] = useState(false);
+  // CLI-R03-01: el servidor confirmó el cierre de la carga inicial; recién entonces se libera la protección de cambios sin guardar.
+  const [cerrada, setCerrada] = useState(false);
   // Cliente ya creado (identidad conservada): a partir de aquí el formulario nunca vuelve a crear otro; solo reintenta documentos pendientes y el cierre.
   const [altaCreada, setAltaCreada] = useState<{ id: string } | null>(null);
   const [docsSubidos, setDocsSubidos] = useState<string[]>([]);
@@ -376,9 +379,12 @@ export default function NuevoClientePage() {
   });
 
   // CLI-A02: avisa antes de perder datos escritos (ficha, contactos, direcciones, documentos con archivo). Tras crear el cliente solo protege los archivos que faltan por subir.
-  const sucio = altaCreada
-    ? documentos.some((d) => d.archivo && !docsSubidos.includes(d.uid))
-    : JSON.stringify(formulario) !== JSON.stringify(formularioInicial) || contactos.length > 0 || direcciones.length > 0 || documentos.length > 0;
+  const sucio = altaSucia({
+    altaCreada: altaCreada !== null,
+    cerrada,
+    formularioSucio: JSON.stringify(formulario) !== JSON.stringify(formularioInicial) || contactos.length > 0 || direcciones.length > 0 || documentos.length > 0,
+    hayArchivosPendientes: documentos.some((d) => d.archivo && !docsSubidos.includes(d.uid)),
+  });
 
   useProtegerCambios(sucio && !guardando);
 
@@ -887,6 +893,8 @@ export default function NuevoClientePage() {
   }
 
   function terminarAlta() {
+    setCerrada(true);
+
     // CLI-D01: quien solo puede CREAR no tiene acceso a la lista ni a las fichas; termina en una pantalla propia que permite iniciar otro alta.
     if (!puedeVer) {
       setAltaFinalizada(true);
@@ -968,13 +976,18 @@ export default function NuevoClientePage() {
   async function finalizarSinPendientes() {
     if (!altaCreada) return;
 
-    if (!window.confirm("Se cerrará la carga inicial de documentos de este cliente. Los documentos pendientes no se cargarán y, para agregarlos después, se necesitará permiso de edición. ¿Desea continuar?")) return;
-
-    setError("");
-    setGuardando(true);
-
+    // Cancelar la confirmación no cambia nada (formulario, archivos pendientes, mensajes y protección intactos); un error del servidor tampoco libera la protección y permite reintentar.
     try {
-      if (await cerrarCargaInicial(altaCreada.id)) terminarAlta();
+      await finalizarCarga({
+        confirmar: () => window.confirm("Se cerrará la carga inicial de documentos de este cliente. Los documentos pendientes no se cargarán y, para agregarlos después, se necesitará permiso de edición. ¿Desea continuar?"),
+        cerrarCarga: async () => {
+          setError("");
+          setGuardando(true);
+
+          return cerrarCargaInicial(altaCreada.id);
+        },
+        alTerminar: terminarAlta,
+      });
     } finally {
       setGuardando(false);
     }

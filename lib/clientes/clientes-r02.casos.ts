@@ -6,6 +6,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { contador } from "@/lib/clientes/contador-casos";
+import { altaSucia, finalizarSinPendientes } from "@/lib/clientes/cierre-alta";
 import { cambiarTipoDireccion, contarFiscales, marcarDireccionFiscal } from "@/lib/clientes/direccion-fiscal";
 import { crearCargasGeograficas, type OpcionGeografica } from "@/lib/clientes/geografia-cargas";
 import { compararLimites, formatearLimite, limiteTexto, sumarLimitesPorMoneda } from "@/lib/clientes/limite-credito";
@@ -247,6 +248,57 @@ export async function verificarCasosClientesR02(): Promise<string[]> {
     igual("D07: orden descendente exacto", desc, [...asc].reverse());
   }
   cierto("D07: la lista no usa Number para el límite: texto desde la API, suma por moneda, orden decimal y formato exacto; el esquema y los límites gravados no se tocan", /limiteCredito: limiteTexto\(fila\.limite_credito\)/.test(lista) && !/Number\(fila\.limite_credito\)/.test(lista) && /sumarLimitesPorMoneda\(clientes\)/.test(lista) && /compararLimites\(a\.limiteCredito, b\.limiteCredito\)/.test(lista) && /limiteCredito: string/.test(leer("types/clientes.ts")));
+
+  // ── CLI-R03-01: cierre de la alta y protección de cambios sin guardar ───────────────────────────────────────────────────────────────────────────
+  type Doc = { uid: string; archivo: boolean; subido: boolean };
+  function alta(docs: Doc[], respuestasCierre: Array<boolean | "lanza">) {
+    const e = { cerrada: false, terminada: 0, confirmaciones: 0, cierres: 0, creaciones: 0, docs };
+    const sucia = () => altaSucia({ altaCreada: true, cerrada: e.cerrada, formularioSucio: true, hayArchivosPendientes: e.docs.some((d) => d.archivo && !d.subido) });
+    const finalizar = (confirmar: boolean) => finalizarSinPendientes({
+      confirmar: () => { e.confirmaciones += 1; return confirmar; },
+      cerrarCarga: async () => { e.cierres += 1; const r = respuestasCierre.shift() ?? true; if (r === "lanza") throw new Error("conexión"); return r; },
+      alTerminar: () => { e.cerrada = true; e.terminada += 1; },
+    });
+
+    return { e, sucia, finalizar };
+  }
+
+  {
+    const dosDocs = (): Doc[] => [{ uid: "a", archivo: true, subido: true }, { uid: "b", archivo: true, subido: false }];
+    const x = alta(dosDocs(), [false, "lanza", true]);
+
+    igual("R03-01: CREAR-only con un documento enviado y otro pendiente: antes de finalizar la protección está activa", x.sucia(), true);
+    igual("R03-01: cancelar la confirmación mantiene la protección, no cierra nada y conserva los archivos pendientes", [await x.finalizar(false), x.sucia(), x.e.cierres, x.e.terminada, x.e.docs.filter((d) => d.archivo && !d.subido).length], ["cancelado", true, 0, 0, 1]);
+    igual("R03-01: error HTTP al cerrar: la protección sigue activa y no se terminó el alta", [await x.finalizar(true), x.sucia(), x.e.terminada], ["error", true, 0]);
+    igual("R03-01: error de conexión al cerrar: igual, y queda disponible el reintento", [await x.finalizar(true), x.sucia(), x.e.terminada, x.e.cierres], ["error", true, 0, 2]);
+    igual("R03-01: el reintento exitoso termina el alta, marca cerrada y LIBERA la protección", [await x.finalizar(true), x.e.terminada, x.e.cerrada, x.sucia()], ["finalizado", 1, true, false]);
+    igual("R03-01: «Registrar otro cliente» tras la conclusión no encuentra protección activa (sin aviso indebido) y no hubo ninguna creación de cliente en los reintentos", [x.sucia(), x.e.creaciones], [false, 0]);
+    igual("R03-01: el documento ya enviado no se reenvía y el pendiente aceptado como abandonado no reactiva la protección", x.e.docs.map((d) => [d.uid, d.subido]), [["a", true], ["b", false]]);
+  }
+  {
+    // reenvío exitoso de todos los pendientes: la protección se libera sola (nada pendiente) y el cierre normal termina sin duplicar
+    const docs: Doc[] = [{ uid: "a", archivo: true, subido: true }, { uid: "b", archivo: true, subido: false }];
+    const x = alta(docs, [true]);
+
+    docs[1].subido = true;
+    igual("R03-01: tras reenviar con éxito los pendientes ya no hay archivos por subir (sin protección) y el cierre normal concluye", [x.sucia(), await x.finalizar(true), x.e.terminada, x.e.creaciones], [false, "finalizado", 1, 0]);
+  }
+  igual("R03-01: matriz de la protección (antes del alta: formulario; después: archivos pendientes; cerrada: nunca)", [
+    altaSucia({ altaCreada: false, cerrada: false, formularioSucio: true, hayArchivosPendientes: false }), altaSucia({ altaCreada: false, cerrada: false, formularioSucio: false, hayArchivosPendientes: false }),
+    altaSucia({ altaCreada: true, cerrada: false, formularioSucio: true, hayArchivosPendientes: true }), altaSucia({ altaCreada: true, cerrada: false, formularioSucio: true, hayArchivosPendientes: false }),
+    altaSucia({ altaCreada: true, cerrada: true, formularioSucio: true, hayArchivosPendientes: true }),
+  ], [true, false, true, false, false]);
+
+  {
+    const pagina = leer("app/(private)/clientes/nuevo/page.tsx");
+    const fin = pagina.slice(pagina.indexOf("async function finalizarSinPendientes"), pagina.indexOf("const esContribuyente"));
+    const terminar = pagina.slice(pagina.indexOf("function terminarAlta()"), pagina.indexOf("async function guardar"));
+
+    cierto("R03-01: la pantalla usa la misma lógica (altaSucia + finalizarSinPendientes) y marca «cerrada» solo desde terminarAlta, que solo se invoca tras el OK del servidor", /altaSucia\(\{/.test(pagina) && /useProtegerCambios\(sucio && !guardando\)/.test(pagina) && /setCerrada\(true\)/.test(terminar) && (pagina.match(/setCerrada\(true\)/g) ?? []).length === 1 && /alTerminar: terminarAlta/.test(fin) && /cerrarCarga: async \(\) => \{[\s\S]*cerrarCargaInicial\(altaCreada\.id\)/.test(fin));
+    cierto("R03-01: con VER se conserva la redirección a la lista y sin VER la pantalla de conclusión; «Registrar otro cliente» abre un alta nueva con estado limpio", /if \(!puedeVer\) \{\s+setAltaFinalizada\(true\);\s+return;\s+\}\s+router\.push\("\/clientes\?ok=creado"\);\s+router\.refresh\(\)/.test(terminar) && /window\.location\.assign\("\/clientes\/nuevo"\)/.test(pagina));
+    cierto("R03-01: finalizar/reintentar nunca crea otro cliente: solo guardar() hace POST /api/clientes y únicamente si aún no hay clienteId", !/method: "POST"/.test(fin.replace(/cerrarCargaInicial/g, "")) && /if \(!clienteId\) \{\s+const respuesta = await fetch\("\/api\/clientes", \{\s+method: "POST"/.test(pagina) && (pagina.match(/fetch\("\/api\/clientes", \{/g) ?? []).length === 1);
+  }
+  // Limitación: el hook useProtegerCambios (listeners beforeunload/clic) no se ejecuta aquí sin navegador; se prueba la decisión que lo activa y desactiva.
 
   return fallos;
 }
