@@ -133,3 +133,12 @@ O responsável mostrou NEX-001…051 já aplicadas na VM. Proibido editar script
 **Correcciones históricas confirmadas por lectura del corte:** versiones PUT obligatorias (409), históricos inactivos tolerados si inalterados, rascunhos protegidos, documentos de alta retomados por URL, reenvío solo fallidos, cierre idempotente incluso con respuesta 200 perdida, API catálogos compatible con CREAR-only, operación bancaria auditada y elegibilidad de pagos. Geografía actual correctamente ata resultados a su clave y cancela respuestas de fetch obsoletas (no inventar race).
 
 **Estado:** hallazgos documentados, **NO HOMOLOGADO**. Próximo menú a auditar: **Productos**, en tarea independiente, sin mezclar correcciones de Proveedores.
+
+
+## VIII. AUD-R02 — revalidação independente antes de correção autorizada (19/10/2026)
+
+**Relatório vigente:** [AUD-NEXIT-PROVEEDORES-DESKTOP-R02](../../testes/AUD-NEXIT-PROVEEDORES-DESKTOP-R02-2026-10-19.md). **HEAD funcional de corte:** `3173e5cc0b2f386932558b16665f1a15f075ab2a`. Conferidos SHA de blobs do layout, lista, alta, ficha, formulário, geografia, APIs lista/detalhe e cliente-api: todos **iguais** à R01 `542b11696a01daf6e831d339486fdcf4cbe429f0`. Mudança posterior de `lib/navigation/menu.ts` atende Clientes, não Proveedores. Nada do menu precisa ser revertido por commits novos.
+
+**Em aberto e agora autorizados para implementação exclusiva por Claude:** **PRV-D01 ALTA** (CREATE-only precisa alta e resultado próprios, sem VER no catálogo de fornecedores), **PRV-D02 MÉDIA** (CTAs criar/editar segundo permissão, preservando ações bancárias/documentais autônomas por ACL específica), **PRV-D03 MÉDIA** (falha HTTP/rede ≠ catálogo geográfico vazio, com alerta e retry, sem descartar proteção assíncrona).
+
+**Excluídos:** PRV-M01–04 e R01-01…05 já corrigidos, PRV-M05/M06 e O01–O04 observacionais/gates, migrations e PostgreSQL. **Testes estritamente focais, nenhum build/tsc/lint global ou regressão de outros menus; nenhuma homologação alegada.** Após o commit Claude faz push e para; ChatGPT audita R03. Não avançar Productos.
