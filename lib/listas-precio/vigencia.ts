@@ -64,6 +64,8 @@ type DepsVigilante = {
   /** Suscribe `fn` a los eventos de retorno (foco, visibilidad) y devuelve la función que los retira. */
   suscribir: (fn: () => void) => () => void;
   alCambiar: (hoy: string) => void;
+  /** Fecha que la pantalla ya tiene (la del render). Si al instalar el vigilante el día ya cambió, `iniciar` lo notifica (LPR-R04-01). Sin ella se parte de la fecha actual. */
+  fechaInicial?: string;
 };
 
 /**
@@ -71,7 +73,8 @@ type DepsVigilante = {
  * el foco/la visibilidad (el navegador puede suspender el temporizador). `alCambiar` solo se invoca cuando la fecha REALMENTE cambió. Un único conjunto de recursos: `detener` los libera.
  */
 export function crearVigilanteDia(d: DepsVigilante) {
-  let actual = hoyParaVigencia(d.ahora());
+  // Se parte de la fecha que la PANTALLA conoce, no de «ahora»: así una virada ocurrida entre el render y la instalación del efecto se detecta en `iniciar`.
+  let actual = d.fechaInicial ?? hoyParaVigencia(d.ahora());
   let timer: unknown = null;
   let retirar: (() => void) | null = null;
 

@@ -121,7 +121,7 @@ export async function verificarCasosListasR02(): Promise<string[]> {
   cierto("D04 pantalla: la carga usa estados explícitos y «Reintentar» solo relanza la carga (no toca el borrador `form`); el submit se bloquea en el handler y en el botón; la moneda base ya no cae a PYG; sin catálogos válidos no hay opciones vacías en el servidor ni fallback", /cargarCatalogosVerificados\(/.test(form) && /onClick=\{\(\) => setIntento\(\(n\) => n \+ 1\)\}/.test(form) && /if \(bloqueoCarga\) \{\s+setError\(bloqueoCarga\);\s+return;/.test(form) && /disabled=\{saving \|\| bloqueoCarga !== null\}/.test(form) && /catalogo\?\.monedaBase \?\? ""/.test(form) && !/\?\? "PYG"/.test(form) && !/\?\? "PYG"/.test(rutaLista) && !/setForm\([^)]*setIntento|setIntento[^;]*setForm/.test(form));
 
   // ── LPR-R03-01: la fecha sigue el día de Asunción con la pantalla abierta (reloj controlado) ───────────────────────────────────────────────
-  const entorno = (inicio: string) => {
+  const entorno = (inicio: string, fechaInicial?: string) => {
     let t = new Date(inicio).getTime();
     const timers = new Map<number, { en: number; fn: () => void }>();
     const oyentes = new Set<() => void>();
@@ -135,6 +135,7 @@ export async function verificarCasosListasR02(): Promise<string[]> {
       cancelar: (h) => { timers.delete(h as number); },
       suscribir: (fn) => { oyentes.add(fn); altas += 1; return () => { oyentes.delete(fn); bajas += 1; }; },
       alCambiar: (h) => cambios.push(h),
+      fechaInicial,
     });
     /** Avanza el reloj; `suspendido` = el navegador no dispara los temporizadores vencidos (equipo suspendido/pestaña dormida). */
     const avanzar = (ms: number, suspendido = false) => {
@@ -207,7 +208,53 @@ export async function verificarCasosListasR02(): Promise<string[]> {
   const lista = leer("app/(private)/listas-precio/_components/listado-listas.tsx");
   const vigSrc = leer("lib/listas-precio/vigencia.ts");
 
-  cierto("R03-01 pantalla: `hoy` es estado actualizado por el vigilante (focus + visibilitychange con limpieza al desmontar); no se recarga la lista por el cambio de fecha ni se reinician filtros/paginación", /const \[hoy, setHoy\] = useState\(\(\) => hoyParaVigencia\(\)\)/.test(lista) && /crearVigilanteDia\(\{/.test(lista) && /window\.addEventListener\("focus", fn\)/.test(lista) && /document\.addEventListener\("visibilitychange", alVolver\)/.test(lista) && /removeEventListener\("focus", fn\)/.test(lista) && /return \(\) => vigilante\.detener\(\)/.test(lista) && /alCambiar: setHoy/.test(lista) && !/useMemo\(\(\) => hoyParaVigencia\(\), \[\]\)/.test(lista) && (lista.match(/cargarListasConPermisos\(\)/g) ?? []).length === 1 && !/fetch\(/.test(vigSrc));
+  cierto("R03-01 pantalla: `hoy` es estado actualizado por el vigilante (focus + visibilitychange con limpieza al desmontar); no se recarga la lista por el cambio de fecha ni se reinician filtros/paginación", /const \[hoy, setHoy\] = useState\(hoyMontaje\)/.test(lista) && /crearVigilanteDia\(\{/.test(lista) && /window\.addEventListener\("focus", fn\)/.test(lista) && /document\.addEventListener\("visibilitychange", alVolver\)/.test(lista) && /removeEventListener\("focus", fn\)/.test(lista) && /return \(\) => vigilante\.detener\(\)/.test(lista) && /alCambiar: setHoy/.test(lista) && !/useMemo\(\(\) => hoyParaVigencia\(\), \[\]\)/.test(lista) && (lista.match(/cargarListasConPermisos\(\)/g) ?? []).length === 1 && !/fetch\(/.test(vigSrc));
+
+  // ── LPR-R04-01: sincronización inicial entre la fecha del render y el vigilante ─────────────────────────────────────────────────────────────
+  // El render (useState) ocurrió a las 23:59:59.999 del 19/10 en Asunción (02:59:59.999Z); el efecto instala el vigilante a las 00:00:00.001 del 20/10 (03:00:00.001Z).
+  const renderViejo = hoyParaVigencia(new Date("2026-10-20T02:59:59.999Z"));
+  const r1 = entorno("2026-10-20T03:00:00.001Z", renderViejo);
+
+  r1.vig.iniciar();
+
+  igual("R04-01: el estado React quedó en el 19/10 y el efecto se instala ya en el 20/10 → `iniciar` notifica el 20/10 exactamente UNA vez (antes quedaba en el 19 hasta la próxima medianoche) y deja un solo temporizador", [renderViejo, r1.cambios, r1.vig.fechaActual(), r1.timers.size, r1.oyentes.size], ["2026-10-19", ["2026-10-20"], "2026-10-20", 1, 1]);
+  igual("R04-01: con esa fecha la lista que vencía el 19 ya es VENCIDA y la que empieza el 20 es ACTIVA (KPI coherente con el día actual)", [clasificarVigencia(vence, r1.cambios[0]).estadoVisual, clasificarVigencia(empieza, r1.cambios[0]).estadoVisual, disponibles(r1.cambios[0])], ["VENCIDA", "ACTIVA", 1]);
+
+  const mismoDia = hoyParaVigencia(new Date("2026-10-20T12:00:00Z"));
+  const r2 = entorno("2026-10-20T12:00:00.500Z", mismoDia);
+
+  r2.vig.iniciar();
+
+  igual("R04-01: render e instalación en el mismo día → ninguna actualización de estado, un solo temporizador y un solo conjunto de listeners (sin bucles)", [r2.cambios, r2.timers.size, r2.oyentes.size, r2.altas()], [[], 1, 1, 1]);
+
+  r1.evento();
+  r1.evento();
+  r2.evento();
+  r2.evento();
+
+  igual("R04-01: foco/visibilidad repetidos en el mismo día no generan notificaciones espurias ni temporizadores nuevos", [r1.cambios, r2.cambios, r1.timers.size, r2.timers.size], [["2026-10-20"], [], 1, 1]);
+
+  r1.avanzar(24 * 3_600_000 + 1000);
+
+  igual("R04-01: tras la sincronización inicial se sigue la medianoche siguiente (21/10) con un único temporizador reprogramado", [r1.cambios, r1.timers.size], [["2026-10-20", "2026-10-21"], 1]);
+
+  r2.avanzar(30 * 3_600_000, true); // equipo suspendido: el temporizador no se dispara
+  const sinCambioDormido = r2.cambios.length;
+
+  r2.evento(); // vuelve el foco
+
+  igual("R04-01: suspensión con cambio de fecha: sin eventos no cambia; al volver foco/visibilidad se notifica el día correcto una sola vez", [sinCambioDormido, r2.cambios, r2.vig.fechaActual()], [0, ["2026-10-21"], "2026-10-21"]);
+
+  r1.vig.detener();
+  r2.vig.detener();
+  const notificadas = r1.cambios.length + r2.cambios.length;
+
+  r1.avanzar(48 * 3_600_000);
+  r1.evento();
+  r2.evento();
+
+  igual("R04-01: al desmontar se cancela el temporizador y se retiran los listeners; no hay notificaciones posteriores", [r1.timers.size, r2.timers.size, r1.oyentes.size, r2.oyentes.size, r1.bajas(), r1.cambios.length + r2.cambios.length], [0, 0, 0, 0, 1, notificadas]);
+  cierto("R04-01 pantalla: el vigilante parte de la fecha del render (`fechaInicial: hoyMontaje`), `setHoy` es el único efecto de la notificación y sigue sin haber recarga de listas ni polling", /const \[hoyMontaje\] = useState\(\(\) => hoyParaVigencia\(\)\)/.test(lista) && /const \[hoy, setHoy\] = useState\(hoyMontaje\)/.test(lista) && /fechaInicial: hoyMontaje/.test(lista) && /alCambiar: setHoy/.test(lista) && /\}, \[hoyMontaje\]\)/.test(lista) && /d\.fechaInicial \?\? hoyParaVigencia\(d\.ahora\(\)\)/.test(vigSrc) && !/setInterval/.test(lista + vigSrc) && (lista.match(/cargarListasConPermisos\(\)/g) ?? []).length === 1);
 
   return fallos;
 }

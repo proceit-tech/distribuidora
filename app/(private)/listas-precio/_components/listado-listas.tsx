@@ -171,7 +171,9 @@ export default function ListadoListas() {
   const [puedeCrear, setPuedeCrear] = useState(false);
   // LPR-D03: fecha de hoy en America/Asuncion (no el huso del dispositivo).
   // LPR-R03-01: la fecha se actualiza sola al cambiar el día de Asunción con la pantalla abierta (temporizador hasta esa medianoche + revisión al recuperar foco/visibilidad), sin recargar listas ni remontar.
-  const [hoy, setHoy] = useState(() => hoyParaVigencia());
+  // `hoyMontaje` es la fecha del render; el vigilante parte de ella, de modo que si el día cambió antes de instalarse el efecto, `setHoy` se invoca de inmediato (una sola vez).
+  const [hoyMontaje] = useState(() => hoyParaVigencia());
+  const [hoy, setHoy] = useState(hoyMontaje);
 
   useEffect(() => {
     const vigilante = crearVigilanteDia({
@@ -192,12 +194,13 @@ export default function ListadoListas() {
         };
       },
       alCambiar: setHoy,
+      fechaInicial: hoyMontaje,
     });
 
     vigilante.iniciar();
 
     return () => vigilante.detener();
-  }, []);
+  }, [hoyMontaje]);
 
   useEffect(() => {
     let activo = true;
