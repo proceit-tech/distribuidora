@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { contador } from "@/lib/clientes/contador-casos";
 import { crearControladorVisor, kudeDisponible } from "@/lib/facturacion/kude-visor";
 import { formatearMontoVisual } from "@/lib/formato/monto-visual";
+import { precioParaEdicion } from "@/lib/formato/precio-campo";
 
 const raiz = process.cwd();
 const leer = (r: string) => readFileSync(join(raiz, r), "utf8");
@@ -35,6 +36,31 @@ export async function verificarCasosVisualV1(): Promise<string[]> {
     igual("VIS-07 el formateador no altera el valor original (solo devuelve texto para mostrar)", entrada, antes);
   }
 
+
+  // La factura principal (no solo la modal) debe quitar los .0000 de los inputs,
+  // y todos los importes del lateral se expresan en la moneda del documento.
+  igual("VIS-08 precios con ceros finales: entrada editable sin .0000", [
+    precioParaEdicion("82500.0000"),
+    precioParaEdicion("125500.0000"),
+    precioParaEdicion("0.0500"),
+    precioParaEdicion("100.2500"),
+    precioParaEdicion(null),
+  ], ["82500", "125500", "0.05", "100.25", ""]);
+  igual("VIS-09 escribir precio: no destruir fracciones ni estados incompletos", [
+    precioParaEdicion("12.0001"),
+    precioParaEdicion("12."),
+    precioParaEdicion(""),
+    precioParaEdicion("12.00100"),
+    precioParaEdicion("abc"),
+  ], ["12.0001", "12.", "", "12.001", "abc"]);
+  igual("VIS-09b factura principal PYG IVA visible vs valor fiscal", [
+    formatearMontoVisual("18909.09090909", "PYG"),
+    formatearMontoVisual("82500.0000", "PYG"),
+    formatearMontoVisual("125500.0000", "PYG"),
+    formatearMontoVisual("208000.00000000", "PYG"),
+    formatearMontoVisual("12.5", "USD"),
+  ], ["18.909", "82.500", "125.500", "208.000", "12,50"]);
+
   // ── B. Cableado en Factura y Nota de crédito; el JSON/payload no cambia ────────────────────────────────
   const factura = leer("app/(private)/facturas/nueva/page.tsx");
   const nce = leer("app/(private)/notas-credito/page.tsx");
@@ -42,6 +68,18 @@ export async function verificarCasosVisualV1(): Promise<string[]> {
   const modalFactura = factura.slice(ini, factura.indexOf("      {mostrarEnvio ? (", ini));
 
   cierto("VIS-10 Factura: en el resumen previo al envío todos los importes (líneas, pagos, crédito, totales, IVA y gravados, equivalente en guaraníes) pasan por el formateador visual", ini > 0 && !/\bfd\((?!resumen\.cambio\.valor\))/.test(modalFactura) && (modalFactura.match(/fmv\(/g) ?? []).length >= 15 && /formatearMontoVisual\(resumen\.cambio\.totalGs, "PYG"\)/.test(modalFactura) && /fd\(resumen\.cambio\.valor\)/.test(modalFactura) && /const fmv = \(t: string \| number \| null \| undefined\) => formatearMontoVisual\(t, resumen\?\.moneda\)/.test(factura));
+  cierto("VIS-10b Factura principal: resumen lateral, subtotales y barra usan formato monetario según moneda", 
+    ["exento", "exonerado", "gravado5", "gravado10", "iva5", "iva10", "totalIva", "total"].every((key) => factura.includes(`fmCampo(calculo.texto.${key})`)) &&
+    factura.includes("fmCampo(calculo.texto.items[i])") &&
+    factura.includes('formatearMontoVisual(textoDec(equivalenteGs), "PYG")') &&
+    !/fd\\(calculo\\.texto\\./.test(factura));
+  cierto("VIS-10c precio editable PYG se muestra visual sin decimales cuando está fuera de foco; valor original se edita al enfocarlo",
+    factura.includes("const [precioEnFoco, setPrecioEnFoco] = useState<number | null>(null)") &&
+    factura.includes("value={precioEnFoco === l.clave ? l.precio : fmCampo(l.precio)}") &&
+    factura.includes("onFocus={() => setPrecioEnFoco(l.clave)}") &&
+    factura.includes("onBlur={() => setPrecioEnFoco((actual) => (actual === l.clave ? null : actual))}") &&
+    factura.includes('precio: precioParaEdicion(referencia(p, moneda))') &&
+    factura.includes('precio: precioParaEdicion(referencia(l.producto, m))'));
   cierto("VIS-11 Factura: el tipo de cambio y las cantidades NO se redondean (no son importes); lo que se envía sale de revision.cuerpo / cuerpoFactura, nunca del texto formateado", /fd\(resumen\.cambio\.valor\)/.test(modalFactura) && /<td className=\{estilos\.num\}>\{l\.cantidad\}<\/td>/.test(modalFactura) && !/fmv\(/.test(factura.slice(factura.indexOf("const cuerpoFactura = () =>"), factura.indexOf("const cuerpoFactura = () =>") + 1200)));
   cierto("VIS-12 Nota de crédito: totales (exento, gravados, IVA, total) y líneas del resumen, y los importes de la lista de facturas y de las líneas, usan el formateador visual; cantidades y tipo de cambio se mantienen", /fmv\(resumen\.totales\.total, resumen\.moneda\)/.test(nce) && ["exento", "gravado5", "gravado10", "iva5", "iva10", "totalIva"].every((k) => new RegExp("fmv\\(resumen\\.totales\\." + k + ", resumen\\.moneda\\)").test(nce)) && /fmv\(l\.precioUnitario, resumen\.moneda\)/.test(nce) && /fmv\(l\.monto, resumen\.moneda\)/.test(nce) && /fmv\(f\.total, f\.moneda\)/.test(nce) && /fmv\(f\.saldo, f\.moneda\)/.test(nce) && /\{fm\(l\.cantidad\)\}/.test(nce) && /cambio \$\{fm\(resumen\.cambio\)\}/.test(nce));
   {
