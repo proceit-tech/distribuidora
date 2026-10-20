@@ -1,6 +1,6 @@
 # Procedimiento NEX-066 — Intenciones durables de movimientos (PRO-188 / MOV-O07)
 
-**Estado:** versionada y **NO aplicada**. Ningún agente de IA la aplica. Lo ejecuta **solo el responsable humano** en la VM, con backup previo. Definición: `documentacao/definicoes/REQ-MOV-O07-RECUPERACAO-INTENCAO.md`.
+**Estado actualizado 20/10/2026:** el responsable confirmó que **NEX-066 YA FUE APLICADA** en la base de datos de la VM. Confirmación declarada por el responsable, sin comprobación independiente de `schema_migrations`, checksum, funciones, grants o pruebas operativas desde ChatGPT. **NO volver a ejecutar la migración**; no editar su SQL/versionado ni reescribir su checksum aplicado. El menú Movimientos sigue **NO HOMOLOGADO** hasta aprobación humana del comportamiento real. La secuencia de ejecución de abajo es **histórica/de referencia para diagnóstico**, no una instrucción de reaplicación. Fuente: `documentacao/definicoes/REQ-MOV-O07-RECUPERACAO-INTENCAO.md`.
 
 ## Qué agrega
 `movimientos_intenciones` (K1 + snapshot por empresa y usuario), seis funciones `SECURITY DEFINER` (`movimiento_intencion_reservar | pendiente | tomar | confirmar | reconocer | rechazar`) y el ayudante de grants `nex_aplicar_grants_movimientos_intenciones()`. No modifica NEX-014 ni el motor `inventario_registrar_movimiento`. El rol `nexit_runtime` solo **ejecuta** las funciones; no accede a la tabla.
