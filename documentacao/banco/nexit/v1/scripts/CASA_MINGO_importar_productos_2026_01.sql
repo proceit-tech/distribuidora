@@ -632,7 +632,7 @@ FROM casa_mingo_final WHERE codigo<>codigo_original ORDER BY fila_excel;
 -- Validaciones bloqueantes: ejecutadas antes de cualquier INSERT comercial.
 DO $preflight$
 DECLARE v_empresa uuid;
-DECLARE v_cant integer;
+        v_cant integer;
 BEGIN
  SELECT id INTO STRICT v_empresa FROM empresas
   WHERE codigo='casa_mingo' AND es_demo = false AND estado = 'ACTIVA';
