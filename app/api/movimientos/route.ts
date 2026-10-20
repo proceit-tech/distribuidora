@@ -1,9 +1,8 @@
 import { NextResponse } from "next/server";
-import type { PoolClient } from "pg";
 
 import { denyIfNoPermission, getAccessContext, hasPermission } from "@/lib/auth/permissions";
 import { leerHistorial, movimientoExiste } from "@/lib/movimientos/historial";
-import { prepararMovimiento, registrarMovimiento, respuestaError } from "@/lib/movimientos/shared";
+import { respuestaPostLegado } from "@/lib/movimientos/intenciones";
 
 // Solo DEMO explícito usa respuestas simuladas. La falta de DATABASE_URL NUNCA activa datos ficticios.
 const DEMO_MODE = process.env.DEMO_MODE === "true";
@@ -115,54 +114,11 @@ export async function GET(request: Request) {
   }
 }
 
-export async function POST(request: Request) {
-  let cuerpo: Record<string, unknown>;
-  try {
-    cuerpo = (await request.json()) as Record<string, unknown>;
-  } catch {
-    return NextResponse.json({ error: "Los datos enviados no son válidos." }, { status: 400 });
-  }
+// MOV-O07 / PRO-190 (AUD-R08): el registro directo QUEDA RETIRADO. Ningún camino puede modificar stock sin que K1 y el snapshot estén confirmados antes en PostgreSQL (NEX-066): el único flujo es
+// POST /api/movimientos/intencion (reservar) → POST /api/movimientos/intencion/ejecutar → POST /api/movimientos/intencion/reconocer. Esta ruta responde 410 SIEMPRE, sin leer el cuerpo, sin sesión, sin
+// abrir conexión y sin tocar datos (nunca puede registrar, ni siquiera con una clave "reservada": la ejecución exige la intención durable).
+export async function POST() {
+  const r = respuestaPostLegado();
 
-  if (!DEMO_MODE && !process.env.DATABASE_URL) return sinBase();
-  if (DEMO_MODE) return NextResponse.json({ error: "Operación no disponible en modo demo." }, { status: 400 });
-
-  const session = await sesionActual();
-  if (!session) return NextResponse.json({ error: "Sesión no válida." }, { status: 401 });
-  const denegado = await denyIfNoPermission(session, "MOVIMIENTOS", "CREAR");
-  if (denegado) return denegado;
-
-  const db = await obtenerDb();
-  let conexion: PoolClient | undefined;
-
-  try {
-    const datos = prepararMovimiento(cuerpo);
-    conexion = await db.connect();
-
-    // MOV-O07: este camino directo no puede eludir la protección durable. Con una intención PENDIENTE del operador solo se admite repetir ESA misma clave; cualquier otra (K2) se rechaza.
-    // Sin la migración NEX-066 el registro falla cerrado (503) en lugar de permitir una duplicación silenciosa.
-    let pendiente: { clave?: string } | undefined;
-
-    try {
-      pendiente = (await conexion.query(`SELECT o_clave AS clave FROM movimiento_intencion_pendiente($1::uuid, $2::uuid)`, [session.user.empresaId, session.user.id])).rows[0] as { clave?: string } | undefined;
-    } catch (e) {
-      if ((e as { code?: string }).code === "42883") return NextResponse.json({ error: "Servicio no disponible: falta la migración NEX-066 (intenciones de movimientos)." }, { status: 503 });
-      throw e;
-    }
-    if (pendiente && (!datos.clave || datos.clave !== pendiente.clave)) {
-      return NextResponse.json({ error: "Hay un registro anterior sin resolver. Recupérelo en «Nuevo movimiento» antes de iniciar otro.", pendiente: true }, { status: 409 });
-    }
-
-    await conexion.query("BEGIN");
-    const mov = await registrarMovimiento(conexion, session.user.empresaId, session.user.id, datos);
-    await conexion.query("COMMIT");
-    return NextResponse.json(
-      { message: mov.repetido ? `El movimiento ${mov.numero} ya estaba registrado.` : `Movimiento ${mov.numero} registrado correctamente.`, movimiento: { id: mov.id, numero: mov.numero }, repetido: mov.repetido },
-      { status: mov.repetido ? 200 : 201 },
-    );
-  } catch (error) {
-    if (conexion) await conexion.query("ROLLBACK").catch(() => undefined);
-    return respuestaError(error, "registrar");
-  } finally {
-    conexion?.release();
-  }
+  return NextResponse.json(r.body, { status: r.status });
 }

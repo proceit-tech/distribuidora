@@ -3,7 +3,7 @@
 **Estado:** versionada y **NO aplicada**. Ningún agente de IA la aplica. Lo ejecuta **solo el responsable humano** en la VM, con backup previo. Definición: `documentacao/definicoes/REQ-MOV-O07-RECUPERACAO-INTENCAO.md`.
 
 ## Qué agrega
-`movimientos_intenciones` (K1 + snapshot por empresa y usuario), cinco funciones `SECURITY DEFINER` (`movimiento_intencion_reservar | pendiente | tomar | confirmar | rechazar`) y el ayudante de grants `nex_aplicar_grants_movimientos_intenciones()`. No modifica NEX-014 ni el motor `inventario_registrar_movimiento`. El rol `nexit_runtime` solo **ejecuta** las funciones; no accede a la tabla.
+`movimientos_intenciones` (K1 + snapshot por empresa y usuario), seis funciones `SECURITY DEFINER` (`movimiento_intencion_reservar | pendiente | tomar | confirmar | reconocer | rechazar`) y el ayudante de grants `nex_aplicar_grants_movimientos_intenciones()`. No modifica NEX-014 ni el motor `inventario_registrar_movimiento`. El rol `nexit_runtime` solo **ejecuta** las funciones; no accede a la tabla.
 
 ## Orden obligatorio
 1. **Backup** de la base `nexit` (procedimiento vigente en `documentacao/infra/PROCEDIMENTO-ATUALIZACAO-AMBIENTE-NEXIT-VM.md`).
@@ -13,7 +13,10 @@
 5. Prueba funcional mínima de un operador con `MOVIMIENTOS.CREAR`: registrar un movimiento y comprobar que aparece su número; recargar la pantalla de «Nuevo movimiento» (debe abrir libre).
 
 ## Reversión segura
-`scripts/reversion-NEX-066.sql` (una transacción, con backup): **se niega** si hay alguna intención `RESERVADA` (incierta). Resuelva antes cada pendiente: consulte el movimiento original (por la clave) o el rechazo comprobado. Despliegue primero la versión anterior de la aplicación. Conserva una copia de las intenciones resueltas en `movimientos_intenciones_respaldo_nex066`. Después, borrar la fila `NEX-066` de `schema_migrations`.
+`scripts/reversion-NEX-066.sql` (una transacción, con backup): **se niega** si hay alguna intención `RESERVADA` (incierta) **o `CONFIRMADA` todavía no reconocida** por el operador (su resultado aún no fue recibido), y si ya existe un respaldo previo. Resuelva antes cada pendiente: consulte el movimiento original (por la clave), pida al operador reconocer el resultado o verifique el rechazo comprobado. Despliegue primero la versión anterior de la aplicación. Conserva una copia de las intenciones resueltas en `movimientos_intenciones_respaldo_nex066`. Después, borrar la fila `NEX-066` de `schema_migrations`.
+
+## Reconocimiento (ACK) — MOV-R08-01
+Una intención **CONFIRMADA** cuyo resultado no llegó al operador (respuesta HTTP perdida tras el COMMIT) sigue siendo **pendiente**: al reabrir «Nuevo movimiento» el sistema muestra `El movimiento MOV-XXXXXX fue registrado correctamente.` y exige «Confirmar recepción» (ACK, `movimiento_intencion_reconocer`) **antes** de permitir otra operación. El ACK es autenticado (empresa y usuario de la sesión), idempotente, no toca stock ni movimientos y se serializa con la reserva de la siguiente intención. El índice único parcial cubre RESERVADA y CONFIRMADA sin reconocer.
 
 ## Operación y soporte
 - Una intención `RESERVADA` de **más de 7 días** se muestra como «requiere revisión»; **nunca se elimina ni libera sola** (no hay tareas programadas). Para resolver una, el responsable consulta el movimiento por la clave: si existe, la pantalla de «Nuevo movimiento» del propio operador confirmará el original con «Reintentar el mismo registro» (idempotente). Si no existe y la operación no debe repetirse, la reconciliación administrativa justificada es una decisión del responsable (fuera de este alcance; no hay descarte desde la interfaz).

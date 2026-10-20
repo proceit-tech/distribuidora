@@ -10,7 +10,9 @@
  *
  * MOV-O07 (modo DURABLE, con `reservar`): ANTES de cualquier envío que pueda alterar stock, K1 + snapshot se reservan en el servidor (PostgreSQL). Si la reserva falla NO se envía nada a stock y no queda intención local;
  * si el servidor ya tiene una intención pendiente de este operador (otra pestaña / sesión / visita anterior) esa se ADOPTA (RECUPERADA): se bloquea el formulario con su snapshot y solo se admite su reintento con SU K1.
- * No existe descarte de una intención incierta: solo una confirmación, o un rechazo DEFINITIVO comprobado por el servidor (`definitivo`), la cierran. Mientras se recupera (o si la recuperación falla) el registro
+ * No existe descarte de una intención incierta: solo una confirmación, o un rechazo DEFINITIVO comprobado por el servidor (`definitivo`), la cierran.
+ * AUD-R08 / MOV-R08-01: una confirmación (OK) NO libera por sí sola: la intención queda CONFIRMADA hasta que el operador la RECONOZCA (ACK autenticado en el servidor, `reconocer`); mientras tanto no se admite
+ * ninguna operación nueva (aunque la respuesta se haya perdido y la pantalla se reabra: la CONFIRMADA se recupera con K1 y el número original). Mientras se recupera (o si la recuperación falla) el registro
  * nuevo está bloqueado: falla cerrado.
  */
 import type { NuevoMovimientoStock } from "@/types/movimientos-stock";
@@ -22,18 +24,24 @@ export type ResultadoRegistro =
 
 export type ResultadoReserva =
   | { tipo: "RESERVADA" }
-  | { tipo: "PENDIENTE_EXISTENTE"; clave: string; payload: NuevoMovimientoStock; requiereRevision: boolean; evidenciaNumero: string | null }
+  | { tipo: "PENDIENTE_EXISTENTE"; clave: string; payload: NuevoMovimientoStock; requiereRevision: boolean; evidenciaNumero: string | null; /** la pendiente ya está CONFIRMADA en el servidor (resultado aún no reconocido) */ confirmada?: boolean }
   | { tipo: "FALLO"; mensaje: string };
 
-export type EstadoIntento = "LIBRE" | "ENVIANDO" | "INDETERMINADO" | "RECUPERANDO" | "RECUPERACION_ERROR";
+export type EstadoIntento = "LIBRE" | "ENVIANDO" | "INDETERMINADO" | "CONFIRMADA" | "RECUPERANDO" | "RECUPERACION_ERROR";
 
-type Intento = { clave: string; payload: NuevoMovimientoStock; estado: "ENVIANDO" | "INDETERMINADO"; huboIndeterminado: boolean; reservada: boolean };
+export type ResultadoReconocimiento = { ok: true } | { ok: false; mensaje: string };
+
+type Intento = { clave: string; payload: NuevoMovimientoStock; estado: "ENVIANDO" | "INDETERMINADO" | "CONFIRMADA"; huboIndeterminado: boolean; reservada: boolean; numero?: string };
 
 export type SalidaRegistro = ResultadoRegistro | { tipo: "OCUPADO" } | { tipo: "RECUPERADA"; mensaje: string } | { tipo: "NO_RESERVADA"; mensaje: string };
 
 export const MENSAJE_INDETERMINADO = "No se pudo confirmar el resultado: el movimiento PUEDE haberse registrado. No cambie los datos: reintente con «Reintentar el mismo registro» (no se duplica) o verifique en Movimientos.";
 
 export const MENSAJE_RECUPERADA = "Hay un registro anterior sin resolver: el movimiento PUEDE haberse registrado. Se recuperó la operación original (sus datos están bloqueados). Use «Consultar resultado» o «Reintentar el mismo registro» (no se duplica).";
+
+export const mensajeConfirmada = (numero: string) => `El movimiento ${numero} fue registrado correctamente.`;
+
+export const MENSAJE_SIN_ACK = (numero: string) => `${mensajeConfirmada(numero)} Falta confirmar la recepción del resultado: pulse «Confirmar recepción» para poder registrar otro movimiento.`;
 
 export const MENSAJE_NO_RESERVADA = "No se pudo preparar el registro: no se envió ningún movimiento al stock. Puede intentarlo nuevamente.";
 
@@ -60,6 +68,7 @@ export function aplicarResultadoSiVigente(
 export const MENSAJE_SALIDA: Record<Exclude<EstadoIntento, "LIBRE">, string> = {
   ENVIANDO: "Hay un registro en curso y todavía no se conoce su resultado: el movimiento puede quedar registrado aunque salga de esta pantalla. Podrá recuperarlo al volver a «Nuevo movimiento» y verificarlo en Movimientos. ¿Desea salir?",
   INDETERMINADO: "El resultado del registro anterior es desconocido: el movimiento puede haberse registrado. La operación queda guardada y podrá recuperarla al volver a «Nuevo movimiento» y verificarla en Movimientos. ¿Desea salir?",
+  CONFIRMADA: "El movimiento ya fue registrado, pero falta confirmar la recepción del resultado. Podrá confirmarla al volver a «Nuevo movimiento» y verificarlo en Movimientos. ¿Desea salir?",
   RECUPERANDO: "Se está comprobando si hay un registro anterior sin resolver. ¿Desea salir?",
   RECUPERACION_ERROR: "No se pudo comprobar si hay un registro anterior sin resolver. ¿Desea salir?",
 };
@@ -71,15 +80,19 @@ export function crearControlRegistro(deps: {
   reservar?: (datos: NuevoMovimientoStock & { claveIdempotencia: string }) => Promise<ResultadoReserva>;
   /** Modo durable: el control nace bloqueado hasta que la recuperación de la apertura termina. */
   iniciarRecuperando?: boolean;
+  /** Modo durable (AUD-R08): reconocimiento (ACK) autenticado del resultado confirmado; sin él una OK libera directamente (comportamiento de MOV-D01). */
+  reconocer?: (clave: string) => Promise<ResultadoReconocimiento>;
 }) {
   let intento: Intento | null = null;
   let recuperacion: "RECUPERANDO" | "RECUPERACION_ERROR" | null = deps.iniciarRecuperando ? "RECUPERANDO" : null;
+  let ackEnCurso: Promise<ResultadoReconocimiento> | null = null;
 
   return {
     estado: (): EstadoIntento => (recuperacion !== null ? recuperacion : intento === null ? "LIBRE" : intento.estado),
     /** Hay una intención abierta (o se está recuperando): ningún campo puede modificarse y no puede iniciarse otra. */
     bloqueado: () => intento !== null || recuperacion !== null,
     clave: () => intento?.clave ?? null,
+    numero: () => intento?.numero ?? null,
     payload: () => (intento === null ? null : intento.payload),
     /** Marca la recuperación de la apertura: en curso, fallida (cerrado) o terminada sin pendiente (null). */
     fijarRecuperacion(r: "RECUPERANDO" | "RECUPERACION_ERROR" | null) {
@@ -90,9 +103,36 @@ export function crearControlRegistro(deps: {
       intento = null;
     },
     /** Adopta una intención ya reservada en el servidor (recuperada): queda INDETERMINADA, bloqueada y reintentable solo con SU K1. */
-    adoptar(clave: string, payload: NuevoMovimientoStock) {
-      intento = { clave, payload: structuredClone(payload), estado: "INDETERMINADO", huboIndeterminado: true, reservada: true };
+    adoptar(clave: string, payload: NuevoMovimientoStock, confirmada?: { numero: string }) {
+      intento = { clave, payload: structuredClone(payload), estado: confirmada ? "CONFIRMADA" : "INDETERMINADO", huboIndeterminado: true, reservada: true, ...(confirmada ? { numero: confirmada.numero } : {}) };
       recuperacion = null;
+    },
+    /**
+     * Reconocimiento (ACK) de una intención CONFIRMADA: solo con la confirmación inequívoca del servidor se libera la intención (y con ella una operación nueva). Es idempotente y seguro ante respuestas perdidas:
+     * ante un fallo la intención sigue CONFIRMADA y puede repetirse; llamadas simultáneas comparten la misma solicitud. No registra nada.
+     */
+    async reconocer(): Promise<ResultadoReconocimiento> {
+      if (intento === null || intento.estado !== "CONFIRMADA" || !deps.reconocer) return { ok: false, mensaje: "No hay un resultado confirmado que reconocer." };
+      if (ackEnCurso) return ackEnCurso;
+
+      const clave = intento.clave;
+
+      ackEnCurso = (async (): Promise<ResultadoReconocimiento> => {
+        let r: ResultadoReconocimiento;
+
+        try {
+          r = await deps.reconocer!(clave);
+        } catch {
+          r = { ok: false, mensaje: "No se pudo confirmar la recepción del resultado." };
+        }
+        if (r.ok) intento = null;
+
+        return r;
+      })().finally(() => {
+        ackEnCurso = null;
+      });
+
+      return ackEnCurso;
     },
     /**
      * Inicia (o reintenta) el registro. La reserva de la intención ocurre de forma SÍNCRONA antes de cualquier await: un segundo submit consecutivo recibe OCUPADO. Con un resultado indeterminado previo
@@ -100,7 +140,7 @@ export function crearControlRegistro(deps: {
      */
     async registrar(datos: NuevoMovimientoStock): Promise<SalidaRegistro> {
       if (recuperacion !== null) return { tipo: "OCUPADO" };
-      if (intento !== null && intento.estado === "ENVIANDO") return { tipo: "OCUPADO" };
+      if (intento !== null && (intento.estado === "ENVIANDO" || intento.estado === "CONFIRMADA")) return { tipo: "OCUPADO" };
 
       const actual: Intento = intento ?? { clave: deps.generarClave(), payload: structuredClone(datos), estado: "ENVIANDO", huboIndeterminado: false, reservada: false };
 
@@ -121,9 +161,11 @@ export function crearControlRegistro(deps: {
           return { tipo: "NO_RESERVADA", mensaje: rs.mensaje || MENSAJE_NO_RESERVADA };
         }
         if (rs.tipo === "PENDIENTE_EXISTENTE") {
-          intento = { clave: rs.clave, payload: structuredClone(rs.payload), estado: "INDETERMINADO", huboIndeterminado: true, reservada: true };
+          const conf = rs.confirmada === true && rs.evidenciaNumero;
 
-          return { tipo: "RECUPERADA", mensaje: MENSAJE_RECUPERADA };
+          intento = { clave: rs.clave, payload: structuredClone(rs.payload), estado: conf ? "CONFIRMADA" : "INDETERMINADO", huboIndeterminado: true, reservada: true, ...(conf ? { numero: rs.evidenciaNumero! } : {}) };
+
+          return { tipo: "RECUPERADA", mensaje: conf ? MENSAJE_SIN_ACK(rs.evidenciaNumero!) : MENSAJE_RECUPERADA };
         }
         actual.reservada = true;
       }
@@ -146,8 +188,12 @@ export function crearControlRegistro(deps: {
       if (r.tipo === "INDETERMINADO") {
         actual.estado = "INDETERMINADO";
         actual.huboIndeterminado = true;
+      } else if (r.tipo === "OK" && deps.reconocer) {
+        // AUD-R08: confirmada en el servidor, pero NO libre hasta el reconocimiento (ACK) del operador.
+        actual.estado = "CONFIRMADA";
+        actual.numero = r.numero;
       } else {
-        intento = null; // conclusivo: confirmado, o rechazado sin grabar (probado)
+        intento = null; // conclusivo: confirmado (sin ACK), o rechazado sin grabar (probado)
       }
 
       return r;

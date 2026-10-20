@@ -5,7 +5,7 @@
  *  · la consulta falla (API caída, sesión inválida, tiempo) → el registro nuevo permanece BLOQUEADO con error y «Reintentar»; nunca vuelve a modo libre por un fallo.
  * El payload recuperado es el snapshot guardado en el servidor, no lo que haya en pantalla; K1 jamás autentica (la titularidad la decide el servidor por sesión).
  */
-import type { EstadoIntento } from "@/lib/movimientos/intento";
+import { MENSAJE_SIN_ACK, type EstadoIntento } from "@/lib/movimientos/intento";
 import type { NuevoMovimientoStock } from "@/types/movimientos-stock";
 
 export type IntencionRecuperada = { clave: string; estado: string; snapshot: Record<string, unknown>; creadoEn: string; requiereRevision: boolean; evidenciaNumero: string | null };
@@ -13,7 +13,7 @@ export type ConsultaIntencion = { ok: true; intencion: IntencionRecuperada | nul
 
 type ControlRecuperable = {
   fijarRecuperacion: (r: "RECUPERANDO" | "RECUPERACION_ERROR" | null) => void;
-  adoptar: (clave: string, payload: NuevoMovimientoStock) => void;
+  adoptar: (clave: string, payload: NuevoMovimientoStock, confirmada?: { numero: string }) => void;
   liberarResuelta: () => void;
   clave: () => string | null;
   estado: () => EstadoIntento;
@@ -42,7 +42,7 @@ export function mensajeRecuperada(i: IntencionRecuperada): string {
 export async function recuperarIntencion(
   control: ControlRecuperable,
   consultar: () => Promise<ConsultaIntencion>,
-): Promise<{ estado: "LIBRE" } | { estado: "INDETERMINADO"; formulario: NuevoMovimientoStock; mensaje: string } | { estado: "ERROR"; mensaje: string }> {
+): Promise<{ estado: "LIBRE" } | { estado: "INDETERMINADO" | "CONFIRMADA"; formulario: NuevoMovimientoStock; mensaje: string } | { estado: "ERROR"; mensaje: string }> {
   control.fijarRecuperacion("RECUPERANDO");
 
   let r: ConsultaIntencion;
@@ -66,6 +66,13 @@ export async function recuperarIntencion(
 
   const formulario = formularioDesdeSnapshot(r.intencion.snapshot);
 
+  // CONFIRMADA en el servidor y aún no reconocida: se muestra el número ORIGINAL (jamás como indeterminada ni como libre) y se exige el reconocimiento antes de una operación nueva.
+  if (r.intencion.estado === "CONFIRMADA" && r.intencion.evidenciaNumero) {
+    control.adoptar(r.intencion.clave, formulario, { numero: r.intencion.evidenciaNumero });
+
+    return { estado: "CONFIRMADA", formulario, mensaje: MENSAJE_SIN_ACK(r.intencion.evidenciaNumero) };
+  }
+
   control.adoptar(r.intencion.clave, formulario);
 
   return { estado: "INDETERMINADO", formulario, mensaje: mensajeRecuperada(r.intencion) };
@@ -85,6 +92,12 @@ export async function consultarResultado(control: ControlRecuperable, consultar:
     control.liberarResuelta();
 
     return { liberada: true, mensaje: "La operación original ya fue resuelta. Verifique el resultado en Movimientos antes de continuar." };
+  }
+
+  if (r.intencion.estado === "CONFIRMADA" && r.intencion.evidenciaNumero) {
+    if (control.estado() !== "CONFIRMADA") control.adoptar(r.intencion.clave, formularioDesdeSnapshot(r.intencion.snapshot), { numero: r.intencion.evidenciaNumero });
+
+    return { liberada: false, mensaje: MENSAJE_SIN_ACK(r.intencion.evidenciaNumero) };
   }
 
   return { liberada: false, mensaje: mensajeRecuperada(r.intencion) };

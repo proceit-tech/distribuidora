@@ -4,7 +4,7 @@ import type {
   MovimientoStockFila,
   NuevoMovimientoStock,
 } from "@/types/movimientos-stock";
-import { MENSAJE_INDETERMINADO, MENSAJE_NO_RESERVADA, mensajeRechazoTrasIndeterminado, type ResultadoRegistro, type ResultadoReserva } from "@/lib/movimientos/intento";
+import { MENSAJE_INDETERMINADO, MENSAJE_NO_RESERVADA, mensajeRechazoTrasIndeterminado, type ResultadoReconocimiento, type ResultadoRegistro, type ResultadoReserva } from "@/lib/movimientos/intento";
 import { formularioDesdeSnapshot, type ConsultaIntencion, type IntencionRecuperada } from "@/lib/movimientos/recuperacion";
 
 async function mensajeError(r: Response, porDefecto: string) {
@@ -161,7 +161,7 @@ export async function reservarIntencionApi(datos: NuevoMovimientoStock, enviar: 
   if (r.status === 409 && j?.pendiente === true && j.intencion && typeof j.intencion === "object") {
     const i = j.intencion as IntencionRecuperada;
 
-    return { tipo: "PENDIENTE_EXISTENTE", clave: i.clave, payload: formularioDesdeSnapshot(i.snapshot), requiereRevision: i.requiereRevision === true, evidenciaNumero: i.evidenciaNumero ?? null };
+    return { tipo: "PENDIENTE_EXISTENTE", clave: i.clave, payload: formularioDesdeSnapshot(i.snapshot), requiereRevision: i.requiereRevision === true, evidenciaNumero: i.evidenciaNumero ?? null, confirmada: i.estado === "CONFIRMADA" };
   }
 
   return { tipo: "FALLO", mensaje: typeof j?.error === "string" && j.error ? `${j.error} No se envió ningún movimiento al stock.` : MENSAJE_NO_RESERVADA };
@@ -191,4 +191,21 @@ export async function ejecutarIntencionApi(clave: string, enviar: Enviar = envia
   }
 
   return { tipo: "INDETERMINADO", mensaje: MENSAJE_INDETERMINADO };
+}
+
+/** ACK (AUD-R08 / MOV-R08-01): el operador reconoce haber recibido el resultado de su intención CONFIRMADA. Idempotente; no registra nada. Solo la confirmación inequívoca (200 + reconocida) libera. */
+export async function reconocerIntencionApi(clave: string, enviar: Enviar = enviarPorDefecto): Promise<ResultadoReconocimiento> {
+  let r: Response;
+
+  try {
+    r = await enviar("/api/movimientos/intencion/reconocer", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clave }) });
+  } catch {
+    return { ok: false, mensaje: "No hubo conexión con el servidor para confirmar la recepción del resultado." };
+  }
+
+  const j = await jsonDe(r);
+
+  if (r.ok && j?.reconocida === true) return { ok: true };
+
+  return { ok: false, mensaje: `${typeof j?.error === "string" && j.error ? j.error : "No se pudo confirmar la recepción del resultado."} (código ${r.status})` };
 }

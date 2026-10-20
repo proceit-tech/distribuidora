@@ -11,10 +11,10 @@ import { GRUPOS, ORDEN_GRUPOS, grupoDeTipo, tipoInicialDelGrupo, type GrupoMovim
 import { motivoObligatorio } from "@/lib/movimientos/reglas";
 import { hoyAsuncion } from "@/lib/listas-precio/calculos";
 import { useProtegerCambios } from "@/lib/ui/proteger-cambios";
-import { cargarCatalogosMovimientos, consultarIntencionApi, ejecutarIntencionApi, reservarIntencionApi } from "@/lib/movimientos/cliente-api";
+import { cargarCatalogosMovimientos, consultarIntencionApi, ejecutarIntencionApi, reconocerIntencionApi, reservarIntencionApi } from "@/lib/movimientos/cliente-api";
 import { consultarResultado, recuperarIntencion } from "@/lib/movimientos/recuperacion";
 import { iniciarCargaCatalogos, procesarCargaCatalogos } from "@/lib/movimientos/inicializacion";
-import { aplicarResultadoSiVigente, crearControlRegistro, MENSAJE_SALIDA, type EstadoIntento } from "@/lib/movimientos/intento";
+import { aplicarResultadoSiVigente, crearControlRegistro, MENSAJE_SALIDA, MENSAJE_SIN_ACK, type EstadoIntento } from "@/lib/movimientos/intento";
 import {
   advertenciaSaldo,
   aplicarTipo,
@@ -54,7 +54,7 @@ export default function NuevoMovimientoPage() {
   // MOV-D01: la intención de registro (clave de idempotencia + snapshot del payload) vive en el control, NO se renueva por editar el formulario; mientras exista, el formulario está bloqueado.
   // MOV-O07: modo DURABLE — K1 + snapshot se reservan en el servidor (PostgreSQL) antes de enviar nada a stock; al abrir se recupera la intención pendiente del operador (falla cerrado) y no existe descarte.
   const control = useRef(
-    crearControlRegistro({ generarClave: () => crypto.randomUUID(), reservar: (d) => reservarIntencionApi(d), enviar: (d) => ejecutarIntencionApi(d.claveIdempotencia), iniciarRecuperando: true }),
+    crearControlRegistro({ generarClave: () => crypto.randomUUID(), reservar: (d) => reservarIntencionApi(d), enviar: (d) => ejecutarIntencionApi(d.claveIdempotencia), reconocer: (clave) => reconocerIntencionApi(clave), iniciarRecuperando: true }),
   );
   const [estadoRegistro, setEstadoRegistro] = useState<EstadoIntento>("RECUPERANDO");
   const [avisoRecuperacion, setAvisoRecuperacion] = useState("");
@@ -93,7 +93,7 @@ export default function NuevoMovimientoPage() {
         setCantidadTxt(r.formulario.cantidad > 0 ? String(r.formulario.cantidad) : "");
         setCostoTxt(r.formulario.costoUnitario === null ? "" : String(r.formulario.costoUnitario));
         setPrecargado(false);
-        setEstadoRegistro("INDETERMINADO");
+        setEstadoRegistro(r.estado);
         setAvisoRecuperacion(r.mensaje);
       }
     });
@@ -206,13 +206,48 @@ export default function NuevoMovimientoPage() {
 
     aplicarResultadoSiVigente(r, () => vigente.current, {
       alEstado: () => setEstadoRegistro(control.current.estado()),
+      // AUD-R08: confirmado en el servidor → se RECONOCE el resultado (ACK autenticado, no toca stock) y solo entonces se navega y queda libre una operación nueva. Si el ACK falla, la pantalla sigue CONFIRMADA
+      // (bloqueada) con el número original y el botón «Confirmar recepción».
       alRegistrar: (numero) => {
-        setRegistrado(true);
-        router.push(`/movimientos?ok=${encodeURIComponent(numero)}`);
-        router.refresh();
+        void (async () => {
+          const a = await control.current.reconocer();
+
+          if (!vigente.current) return;
+          setEstadoRegistro(control.current.estado());
+          if (a.ok) {
+            setRegistrado(true);
+            router.push(`/movimientos?ok=${encodeURIComponent(numero)}`);
+            router.refresh();
+          } else {
+            setAvisoRecuperacion(`${MENSAJE_SIN_ACK(numero)} ${a.mensaje}`);
+          }
+        })();
       },
       alMensaje: (mensaje) => setErrorForm(mensaje),
     });
+  }
+
+  /** «Confirmar recepción» (ACK): el operador reconoce el resultado de la operación confirmada; solo tras la confirmación inequívoca del servidor se libera el formulario para una operación nueva. */
+  async function confirmarRecepcion() {
+    const a = await control.current.reconocer();
+
+    if (!vigente.current) return;
+    if (!a.ok) {
+      setAvisoRecuperacion(a.mensaje);
+
+      return;
+    }
+
+    const limpio = formularioInicial(hoyAsuncion());
+
+    tocado.current = false;
+    setForm(limpio);
+    setBase(limpio);
+    setCantidadTxt("");
+    setCostoTxt("");
+    setAvisoRecuperacion("");
+    setErrorForm("");
+    setEstadoRegistro(control.current.estado());
   }
 
   /** «Consultar resultado» (solo lectura): informa la evidencia del movimiento original; si el servidor ya resolvió la intención, libera la pantalla. NO existe descarte de una intención incierta. */
@@ -221,6 +256,7 @@ export default function NuevoMovimientoPage() {
 
     if (!vigente.current) return;
     setAvisoRecuperacion(r.mensaje);
+    setEstadoRegistro(control.current.estado());
     if (r.liberada) {
       const limpio = formularioInicial(hoyAsuncion());
 
@@ -565,12 +601,17 @@ export default function NuevoMovimientoPage() {
             <Link href="/movimientos" className={ui.secondaryButton}>
               Cancelar
             </Link>
+            {estadoRegistro === "CONFIRMADA" ? (
+              <button type="button" className={ui.primaryButton} onClick={() => void confirmarRecepcion()}>
+                Confirmar recepción
+              </button>
+            ) : null}
             {estadoRegistro === "INDETERMINADO" ? (
               <button type="button" className={ui.secondaryButton} onClick={() => void consultar()}>
                 Consultar resultado
               </button>
             ) : null}
-            <button type="submit" className={ui.primaryButton} disabled={saving || cargando || estadoRegistro === "RECUPERANDO" || estadoRegistro === "RECUPERACION_ERROR"}>
+            <button type="submit" className={ui.primaryButton} disabled={saving || cargando || estadoRegistro === "RECUPERANDO" || estadoRegistro === "RECUPERACION_ERROR" || estadoRegistro === "CONFIRMADA"}>
               {saving ? "Registrando..." : estadoRegistro === "INDETERMINADO" ? "Reintentar el mismo registro" : "Registrar movimiento"}
             </button>
           </div>

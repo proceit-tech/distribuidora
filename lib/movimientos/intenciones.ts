@@ -2,6 +2,7 @@
  * MOV-O07 / PRO-188 — orquestación de servidor de la intención DURABLE de registro (NEX-066). Identidad y empresa llegan SIEMPRE de la sesión (parámetros), nunca del cliente; K1 no autentica nada.
  *  · reservarIntencion: valida el movimiento, y reserva K1 + snapshot con COMMIT independiente ANTES de cualquier operación que pueda alterar stock.
  *  · consultarIntencion: solo lectura de la pendiente del operador (con la evidencia del movimiento original, si existe).
+ *  · reconocerIntencion (ACK, MOV-R08-01): el operador confirma haber recibido el resultado de una intención CONFIRMADA; solo entonces queda libre una intención nueva. No toca stock.
  *  · ejecutarIntencion: usa SIEMPRE el snapshot persistido y K1; ejecuta el motor `inventario_registrar_movimiento` y marca CONFIRMADA en la MISMA transacción. Rechazo definitivo solo si el servidor ejecutó,
  *    revirtió con éxito y la base confirma que no existe movimiento; cualquier otra falla deja la intención pendiente (K1 retenida, sin K2).
  */
@@ -18,6 +19,7 @@ export class ErrorIntencion extends Error {
 }
 
 export type IntencionDto = { clave: string; estado: string; snapshot: Record<string, unknown>; creadoEn: string; requiereRevision: boolean; evidenciaNumero: string | null };
+export type ResultadoReconocimiento = { numero: string };
 export type ResultadoEjecucion = { tipo: "OK"; numero: string; repetido: boolean } | { tipo: "RECHAZADA"; mensaje: string };
 
 /** Snapshot canónico de lo YA validado (sin la clave, sin credenciales ni contexto de usuario). */
@@ -110,6 +112,31 @@ export async function reservarIntencion(db: Db, empresaId: string, usuarioId: st
 }
 
 /** ¿Es una falla DETERMINISTA del motor (la transacción se revirtió y el movimiento NO existe)? Los errores de conexión, tiempo y permiso NO lo son. */
+/** ACK idempotente de una intención CONFIRMADA (empresa y usuario de la SESIÓN). No registra, anula ni altera stock; repetirlo o perder su respuesta es seguro. */
+export async function reconocerIntencion(db: Db, empresaId: string, usuarioId: string, clave: string): Promise<ResultadoReconocimiento> {
+  const c = await db.connect();
+
+  try {
+    await c.query("BEGIN");
+    const r = await c.query(`SELECT o_numero AS numero FROM movimiento_intencion_reconocer($1::uuid, $2::uuid, $3)`, [empresaId, usuarioId, clave]);
+
+    await c.query("COMMIT");
+
+    return { numero: String((r.rows[0] as Fila).numero) };
+  } catch (e) {
+    await c.query("ROLLBACK").catch(() => undefined);
+
+    const x = pg(e);
+
+    if (x.code === "42501") throw new ErrorIntencion("No tiene permiso para registrar movimientos.", 403);
+    if (x.code === "P0002") throw new ErrorIntencion("Registro no encontrado.", 404);
+    if (x.code === "P0001" && x.detail?.startsWith("NEX:INTENCION_NO_CONFIRMADA")) throw new ErrorIntencion("El registro todavía no está confirmado; no puede reconocerse.", 409);
+    throw e;
+  } finally {
+    await liberar(c);
+  }
+}
+
 export function esRechazoDeterminista(e: unknown): boolean {
   const x = pg(e);
 
@@ -193,9 +220,22 @@ export function respuestaEjecucion(r: ResultadoEjecucion): { status: number; bod
   return { status: 200, body: { resuelta: "CONFIRMADA", movimiento: { numero: r.numero }, repetido: r.repetido } };
 }
 
+/** Cuerpo del ACK: 200 con el número original. */
+export function respuestaReconocimiento(r: ResultadoReconocimiento): { status: number; body: Record<string, unknown> } {
+  return { status: 200, body: { reconocida: true, movimiento: { numero: r.numero } } };
+}
+
 /** Un error de la intención conserva su estado HTTP; cualquier otro es un 500 genérico sin datos del movimiento ni del SQL. Una respuesta no conclusiva NUNCA libera la intención. */
 export function respuestaDeError(error: unknown): { status: number; body: Record<string, unknown> } {
   if (error instanceof ErrorIntencion) return { status: error.estado, body: { error: error.message, ...error.extra } };
 
   return { status: 500, body: { error: "No fue posible completar la operación. El movimiento puede haberse registrado." } };
+}
+
+/** Política del POST directo antiguo /api/movimientos (PRO-190): retirado, 410 en TODOS los casos; indica el flujo durable. No depende de sesión, permisos, base ni del cuerpo. */
+export function respuestaPostLegado(): { status: number; body: Record<string, unknown> } {
+  return {
+    status: 410,
+    body: { error: "El registro directo de movimientos fue retirado. Use «Nuevo movimiento»: el registro ahora exige una reserva durable previa.", flujo: "/api/movimientos/intencion" },
+  };
 }
