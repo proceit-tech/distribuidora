@@ -12,7 +12,7 @@ import { motivoObligatorio } from "@/lib/movimientos/reglas";
 import { hoyAsuncion } from "@/lib/listas-precio/calculos";
 import { useProtegerCambios } from "@/lib/ui/proteger-cambios";
 import { cargarCatalogosMovimientos, consultarIntencionApi, ejecutarIntencionApi, reconocerIntencionApi, reservarIntencionApi } from "@/lib/movimientos/cliente-api";
-import { consultarResultado, recuperarIntencion } from "@/lib/movimientos/recuperacion";
+import { confirmarRecepcionOperador, consultarResultado, recuperarIntencion } from "@/lib/movimientos/recuperacion";
 import { iniciarCargaCatalogos, procesarCargaCatalogos } from "@/lib/movimientos/inicializacion";
 import { aplicarResultadoSiVigente, crearControlRegistro, MENSAJE_SALIDA, MENSAJE_SIN_ACK, type EstadoIntento } from "@/lib/movimientos/intento";
 import {
@@ -206,48 +206,30 @@ export default function NuevoMovimientoPage() {
 
     aplicarResultadoSiVigente(r, () => vigente.current, {
       alEstado: () => setEstadoRegistro(control.current.estado()),
-      // AUD-R08: confirmado en el servidor → se RECONOCE el resultado (ACK autenticado, no toca stock) y solo entonces se navega y queda libre una operación nueva. Si el ACK falla, la pantalla sigue CONFIRMADA
-      // (bloqueada) con el número original y el botón «Confirmar recepción».
-      alRegistrar: (numero) => {
-        void (async () => {
-          const a = await control.current.reconocer();
-
-          if (!vigente.current) return;
-          setEstadoRegistro(control.current.estado());
-          if (a.ok) {
-            setRegistrado(true);
-            router.push(`/movimientos?ok=${encodeURIComponent(numero)}`);
-            router.refresh();
-          } else {
-            setAvisoRecuperacion(`${MENSAJE_SIN_ACK(numero)} ${a.mensaje}`);
-          }
-        })();
+      // AUD-R09 / MOV-R09-01: el éxito NO reconoce nada. La intención queda CONFIRMADA (bloqueada), se muestra el número original y el operador debe pulsar «Confirmar recepción»; ni ACK ni navegación automáticos.
+      alRegistrar: (numero) => setAvisoRecuperacion(MENSAJE_SIN_ACK(numero)),
+      alMensaje: (mensaje) => {
+        setErrorForm(mensaje);
+        if (control.current.estado() === "RECUPERACION_ERROR") setAvisoRecuperacion(mensaje); // pendiente no visible: bloqueada con «Reintentar» (sin descarte)
       },
-      alMensaje: (mensaje) => setErrorForm(mensaje),
     });
   }
 
   /** «Confirmar recepción» (ACK): el operador reconoce el resultado de la operación confirmada; solo tras la confirmación inequívoca del servidor se libera el formulario para una operación nueva. */
   async function confirmarRecepcion() {
-    const a = await control.current.reconocer();
-
-    if (!vigente.current) return;
-    if (!a.ok) {
-      setAvisoRecuperacion(a.mensaje);
-
-      return;
-    }
-
-    const limpio = formularioInicial(hoyAsuncion());
-
-    tocado.current = false;
-    setForm(limpio);
-    setBase(limpio);
-    setCantidadTxt("");
-    setCostoTxt("");
-    setAvisoRecuperacion("");
-    setErrorForm("");
-    setEstadoRegistro(control.current.estado());
+    await confirmarRecepcionOperador(control.current, () => vigente.current, {
+      alExito: (numero) => {
+        // ACK confirmado por el servidor: la intención quedó reconocida y la siguiente operación es legítima; se navega al historial con el número original.
+        setEstadoRegistro(control.current.estado());
+        setRegistrado(true);
+        router.push(`/movimientos?ok=${encodeURIComponent(numero)}`);
+        router.refresh();
+      },
+      alFallo: (mensaje) => {
+        setEstadoRegistro(control.current.estado()); // sigue CONFIRMADA y bloqueada
+        setAvisoRecuperacion(`${mensaje} El movimiento sigue registrado; puede repetir «Confirmar recepción».`);
+      },
+    });
   }
 
   /** «Consultar resultado» (solo lectura): informa la evidencia del movimiento original; si el servidor ya resolvió la intención, libera la pantalla. NO existe descarte de una intención incierta. */

@@ -62,6 +62,17 @@ CREATE UNIQUE INDEX movimientos_intenciones_pendiente_uk ON public.movimientos_i
 
 REVOKE ALL ON public.movimientos_intenciones FROM PUBLIC;
 
+-- 0) Visibilidad (AUD-R09 / MOV-R09-02): ¿puede el operador VER hoy los detalles de una intención? Reutiliza las funciones oficiales de permiso y alcance (usuario_tiene_permiso, usuario_puede_deposito: depósito activo
+--    y dentro del alcance vigente). Interna: no se concede a nadie; la usan las funciones SECURITY DEFINER antes de devolver snapshot, número o detalles. Sin visibilidad NUNCA se responde «no hay pendiente»:
+--    se rechaza (42501 + NEX:INTENCION_SIN_VISIBILIDAD) y la intención se conserva intacta (K1 retenida, K2 sigue bloqueada) hasta que se restablezca el acceso.
+CREATE OR REPLACE FUNCTION public.movimiento_intencion_visible(p_empresa uuid, p_usuario uuid, p_snapshot jsonb)
+RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+  SELECT public.usuario_tiene_permiso(p_empresa, p_usuario, 'MOVIMIENTOS', 'VER')
+     AND (NULLIF(p_snapshot->>'origenId', '') IS NULL OR public.usuario_puede_deposito(p_empresa, p_usuario, (p_snapshot->>'origenId')::uuid))
+     AND (NULLIF(p_snapshot->>'destinoId', '') IS NULL OR public.usuario_puede_deposito(p_empresa, p_usuario, (p_snapshot->>'destinoId')::uuid))
+$$;
+
 -- 1) Reservar (se hace COMMIT ANTES de cualquier operación que pueda alterar stock). Idempotente para la misma K1 del mismo usuario y la misma solicitud.
 CREATE OR REPLACE FUNCTION public.movimiento_intencion_reservar(p_empresa uuid, p_usuario uuid, p_clave text, p_snapshot jsonb)
 RETURNS TABLE (o_clave text, o_estado text, o_snapshot jsonb, o_creado_at timestamptz, o_nueva boolean)
@@ -112,17 +123,24 @@ END $$;
 CREATE OR REPLACE FUNCTION public.movimiento_intencion_pendiente(p_empresa uuid, p_usuario uuid)
 RETURNS TABLE (o_clave text, o_estado text, o_snapshot jsonb, o_creado_at timestamptz, o_requiere_revision boolean, o_evidencia_numero text)
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE i public.movimientos_intenciones%ROWTYPE;
 BEGIN
   IF NOT public.usuario_tiene_permiso(p_empresa, p_usuario, 'MOVIMIENTOS', 'CREAR') THEN
     RAISE EXCEPTION 'el usuario no tiene permiso MOVIMIENTOS.CREAR en esta empresa' USING ERRCODE = '42501';
   END IF;
-  RETURN QUERY
-    SELECT i.clave, i.estado, i.snapshot, i.creado_at, (i.estado = 'RESERVADA' AND i.creado_at < now() - interval '7 days'),
+  SELECT * INTO i FROM public.movimientos_intenciones
+   WHERE empresa_id = p_empresa AND usuario_id = p_usuario AND reconocida_at IS NULL AND estado IN ('RESERVADA', 'CONFIRMADA');
+  IF NOT FOUND THEN
+    RETURN;
+  END IF;
+  -- Hay pendiente: sin visibilidad vigente (VER + alcance de los depósitos) NO se devuelve snapshot, número ni custo, ni se responde «sin pendiente».
+  IF NOT public.movimiento_intencion_visible(p_empresa, p_usuario, i.snapshot) THEN
+    RAISE EXCEPTION 'la operación anterior no puede recuperarse con los permisos actuales' USING ERRCODE = '42501', DETAIL = 'NEX:INTENCION_SIN_VISIBILIDAD';
+  END IF;
+  RETURN QUERY SELECT i.clave, i.estado, i.snapshot, i.creado_at, (i.estado = 'RESERVADA' AND i.creado_at < now() - interval '7 days'),
            CASE WHEN i.estado = 'CONFIRMADA' THEN i.numero_movimiento ELSE
              (SELECT m.numero_movimiento FROM public.movimientos_inventario m
-               WHERE m.empresa_id = i.empresa_id AND m.clave_idempotencia = i.clave AND m.creado_por = i.usuario_id LIMIT 1) END
-      FROM public.movimientos_intenciones i
-     WHERE i.empresa_id = p_empresa AND i.usuario_id = p_usuario AND i.reconocida_at IS NULL AND i.estado IN ('RESERVADA', 'CONFIRMADA');
+               WHERE m.empresa_id = i.empresa_id AND m.clave_idempotencia = i.clave AND m.creado_por = i.usuario_id LIMIT 1) END;
 END $$;
 
 -- 3) Tomar la intención para ejecutarla: bloquea la fila (serializa dos ejecuciones simultáneas de la misma K1). Solo el titular de la empresa.
@@ -137,6 +155,9 @@ BEGIN
   SELECT * INTO v FROM public.movimientos_intenciones WHERE empresa_id = p_empresa AND usuario_id = p_usuario AND clave = p_clave FOR UPDATE;
   IF NOT FOUND THEN
     RAISE EXCEPTION 'registro no encontrado' USING ERRCODE = 'P0002';
+  END IF;
+  IF NOT public.movimiento_intencion_visible(p_empresa, p_usuario, v.snapshot) THEN
+    RAISE EXCEPTION 'la operación anterior no puede recuperarse con los permisos actuales' USING ERRCODE = '42501', DETAIL = 'NEX:INTENCION_SIN_VISIBILIDAD';
   END IF;
   RETURN QUERY SELECT v.estado, v.snapshot, v.numero_movimiento, v.movimiento_id;
 END $$;
@@ -172,6 +193,9 @@ BEGIN
   SELECT * INTO v FROM public.movimientos_intenciones WHERE empresa_id = p_empresa AND usuario_id = p_usuario AND clave = p_clave FOR UPDATE;
   IF NOT FOUND THEN
     RAISE EXCEPTION 'registro no encontrado' USING ERRCODE = 'P0002';
+  END IF;
+  IF NOT public.movimiento_intencion_visible(p_empresa, p_usuario, v.snapshot) THEN
+    RAISE EXCEPTION 'la operación anterior no puede recuperarse con los permisos actuales' USING ERRCODE = '42501', DETAIL = 'NEX:INTENCION_SIN_VISIBILIDAD';
   END IF;
   IF v.estado <> 'CONFIRMADA' THEN
     RAISE EXCEPTION 'solo se reconoce un registro confirmado' USING ERRCODE = 'P0001', DETAIL = 'NEX:INTENCION_NO_CONFIRMADA';
@@ -219,6 +243,8 @@ BEGIN
   END IF;
   REVOKE ALL ON public.movimientos_intenciones FROM PUBLIC;
   REVOKE ALL ON public.movimientos_intenciones FROM nexit_runtime;
+  REVOKE ALL ON FUNCTION public.movimiento_intencion_visible(uuid, uuid, jsonb) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION public.movimiento_intencion_visible(uuid, uuid, jsonb) FROM nexit_runtime;
   REVOKE ALL ON FUNCTION public.movimiento_intencion_reservar(uuid, uuid, text, jsonb) FROM PUBLIC;
   REVOKE ALL ON FUNCTION public.movimiento_intencion_pendiente(uuid, uuid) FROM PUBLIC;
   REVOKE ALL ON FUNCTION public.movimiento_intencion_tomar(uuid, uuid, text) FROM PUBLIC;
@@ -233,6 +259,7 @@ BEGIN
   GRANT EXECUTE ON FUNCTION public.movimiento_intencion_reconocer(uuid, uuid, text) TO nexit_runtime;
 END $$;
 
+REVOKE ALL ON FUNCTION public.movimiento_intencion_visible(uuid, uuid, jsonb) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.movimiento_intencion_reservar(uuid, uuid, text, jsonb) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.movimiento_intencion_pendiente(uuid, uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.movimiento_intencion_tomar(uuid, uuid, text) FROM PUBLIC;

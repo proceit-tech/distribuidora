@@ -26,6 +26,7 @@ CREATE TABLE public.movimientos_intenciones_respaldo_nex066 AS SELECT * FROM pub
 REVOKE ALL ON public.movimientos_intenciones_respaldo_nex066 FROM PUBLIC;
 
 DROP FUNCTION IF EXISTS public.movimiento_intencion_reservar(uuid, uuid, text, jsonb);
+DROP FUNCTION IF EXISTS public.movimiento_intencion_visible(uuid, uuid, jsonb);
 DROP FUNCTION IF EXISTS public.movimiento_intencion_pendiente(uuid, uuid);
 DROP FUNCTION IF EXISTS public.movimiento_intencion_tomar(uuid, uuid, text);
 DROP FUNCTION IF EXISTS public.movimiento_intencion_confirmar(uuid, uuid, text, uuid, text);

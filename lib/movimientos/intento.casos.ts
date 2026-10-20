@@ -292,7 +292,7 @@ export async function verificarCasosMovimientosIntento(): Promise<string[]> {
 
   const paginaB = leer("app/(private)/movimientos/nuevo/page.tsx");
 
-  cierto("186 pantalla (estructura): la instancia marca su validez en un efecto con limpieza al desmontar y TODO efecto del resultado pasa por aplicarResultadoSiVigente (router.push solo dentro); el mecanismo global de proteger-cambios no se tocó", /vigente\.current = true;\n\s+return \(\) => \{\n\s+vigente\.current = false;/.test(paginaB) && /aplicarResultadoSiVigente\(r, \(\) => vigente\.current,/.test(paginaB) && (paginaB.match(/router\.push\(/g) ?? []).length === 1 && /alRegistrar: \(numero\) => \{\n\s+void \(async \(\) => \{\n\s+const a = await control\.current\.reconocer\(\);[\s\S]*?router\.push\(/.test(paginaB));
+  cierto("186 pantalla (estructura): la instancia marca su validez en un efecto con limpieza al desmontar y TODO efecto del resultado pasa por aplicarResultadoSiVigente (router.push solo dentro); el mecanismo global de proteger-cambios no se tocó", /vigente\.current = true;\n\s+return \(\) => \{\n\s+vigente\.current = false;/.test(paginaB) && /aplicarResultadoSiVigente\(r, \(\) => vigente\.current,/.test(paginaB) && (paginaB.match(/router\.push\(/g) ?? []).length === 1 && /alRegistrar: \(numero\) => setAvisoRecuperacion\(MENSAJE_SIN_ACK\(numero\)\)/.test(paginaB));
 
   // Estructura de la pantalla (complemento).
   const pagina = leer("app/(private)/movimientos/nuevo/page.tsx");

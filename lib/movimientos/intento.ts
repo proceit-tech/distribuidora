@@ -25,6 +25,7 @@ export type ResultadoRegistro =
 export type ResultadoReserva =
   | { tipo: "RESERVADA" }
   | { tipo: "PENDIENTE_EXISTENTE"; clave: string; payload: NuevoMovimientoStock; requiereRevision: boolean; evidenciaNumero: string | null; /** la pendiente ya está CONFIRMADA en el servidor (resultado aún no reconocido) */ confirmada?: boolean }
+  | { tipo: "PENDIENTE_NO_VISIBLE"; mensaje: string }
   | { tipo: "FALLO"; mensaje: string };
 
 export type EstadoIntento = "LIBRE" | "ENVIANDO" | "INDETERMINADO" | "CONFIRMADA" | "RECUPERANDO" | "RECUPERACION_ERROR";
@@ -159,6 +160,13 @@ export function crearControlRegistro(deps: {
           intento = null; // nada se envió a stock: sin intención local (si el servidor llegó a reservarla, la próxima reserva la recupera)
 
           return { tipo: "NO_RESERVADA", mensaje: rs.mensaje || MENSAJE_NO_RESERVADA };
+        }
+        if (rs.tipo === "PENDIENTE_NO_VISIBLE") {
+          // Existe una intención pendiente que ya no se puede ver (permiso/alcance revocados): nada se envió, no hay intención local y el registro nuevo queda BLOQUEADO (falla cerrado) hasta recuperarla.
+          intento = null;
+          recuperacion = "RECUPERACION_ERROR";
+
+          return { tipo: "NO_RESERVADA", mensaje: rs.mensaje };
         }
         if (rs.tipo === "PENDIENTE_EXISTENTE") {
           const conf = rs.confirmada === true && rs.evidenciaNumero;

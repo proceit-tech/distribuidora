@@ -12,8 +12,8 @@ import { join } from "node:path";
 import { contador } from "@/lib/clientes/contador-casos";
 import { consultarIntencionApi, ejecutarIntencionApi, reconocerIntencionApi, reservarIntencionApi } from "@/lib/movimientos/cliente-api";
 import { consultarIntencion, ejecutarIntencion, ErrorIntencion, esRechazoDeterminista, reconocerIntencion, reservarIntencion, respuestaDeError, respuestaEjecucion, respuestaPostLegado, respuestaReconocimiento } from "@/lib/movimientos/intenciones";
-import { crearControlRegistro, MENSAJE_SALIDA } from "@/lib/movimientos/intento";
-import { consultarResultado, recuperarIntencion } from "@/lib/movimientos/recuperacion";
+import { aplicarResultadoSiVigente, crearControlRegistro, MENSAJE_SALIDA, MENSAJE_SIN_ACK } from "@/lib/movimientos/intento";
+import { confirmarRecepcionOperador, consultarResultado, recuperarIntencion } from "@/lib/movimientos/recuperacion";
 import type { NuevoMovimientoStock } from "@/types/movimientos-stock";
 
 const leer = (r: string) => readFileSync(join(process.cwd(), r), "utf8").replace(/\r\n/g, "\n");
@@ -34,7 +34,7 @@ class ErrorPg extends Error {
 /** Base simulada: contrato de NEX-066 + NEX-014. Las mutaciones se deshacen en ROLLBACK; los bloqueos duran hasta COMMIT/ROLLBACK. */
 function bdSimulada() {
   const st = { intenciones: [] as Fila[], movimientos: new Map<string, { id: string; numero: string; creadoPor: string; huella: string }>(), efectosStock: 0, stock: 0, siguiente: 1 };
-  const cfg = { permisos: new Set([`${EMP}|${USR}`, `${EMP}|${USR_B}`, `${EMP2}|${USR_C}`]), depositos: new Set([DEP_A, DEP_B]), fallaMotor: null as null | (() => Error), fallarCommit: 0, antesDeCommit: null as null | (() => Promise<void>), ahora: () => new Date() };
+  const cfg = { permisos: new Set([`${EMP}|${USR}`, `${EMP}|${USR_B}`, `${EMP2}|${USR_C}`]), ver: new Set([`${EMP}|${USR}`, `${EMP}|${USR_B}`, `${EMP2}|${USR_C}`]), depositos: new Set([DEP_A, DEP_B]), fallaMotor: null as null | (() => Error), fallarCommit: 0, antesDeCommit: null as null | (() => Promise<void>), ahora: () => new Date() };
   const bloqueos = new Map<string, Promise<void>>();
   const consultas: string[] = [];
 
@@ -46,6 +46,9 @@ function bdSimulada() {
     tx.liberar.push(() => { bloqueos.delete(clave); libre(); });
   };
   const permiso = (e: string, u: string) => cfg.permisos.has(`${e}|${u}`);
+  /** Contrato de movimiento_intencion_visible: MOVIMIENTOS.VER + alcance ACTIVO sobre el depósito de origen y el de destino (usuario_puede_deposito). */
+  const visible = (e: string, u: string, snapshot: Record<string, unknown>) => cfg.ver.has(`${e}|${u}`) && [snapshot.origenId, snapshot.destinoId].every((d) => !d || cfg.depositos.has(String(d)));
+  const sinVisibilidad = () => new ErrorPg("la operación anterior no puede recuperarse con los permisos actuales", "42501", "NEX:INTENCION_SIN_VISIBILIDAD");
   const hoyLimite = "2026-12-31";
 
   function conectar() {
@@ -107,6 +110,7 @@ function bdSimulada() {
           const i = st.intenciones.find((x) => x.empresa === empresa && x.usuario === usuario && !x.reconocida && (x.estado === "RESERVADA" || x.estado === "CONFIRMADA"));
 
           if (!i) return { rows: [] };
+          if (!visible(empresa, usuario, i.snapshot)) throw sinVisibilidad();
           const evidencia = st.movimientos.get(`${empresa}|${i.clave}`);
 
           return { rows: [{ clave: i.clave, estado: i.estado, snapshot: i.snapshot, creado_at: i.creadoAt, requiere_revision: i.estado === "RESERVADA" && cfg.ahora().getTime() - i.creadoAt.getTime() > 7 * 86_400_000, evidencia_numero: i.estado === "CONFIRMADA" ? i.numero : evidencia && evidencia.creadoPor === usuario ? evidencia.numero : null }] };
@@ -116,6 +120,7 @@ function bdSimulada() {
           const i = st.intenciones.find((x) => x.empresa === empresa && x.usuario === usuario && x.clave === clave);
 
           if (!i) throw new ErrorPg("registro no encontrado", "P0002");
+          if (!visible(empresa, usuario, i.snapshot)) throw sinVisibilidad();
           await adquirir(`k:${empresa}:${clave}`, tx);
 
           return { rows: [{ estado: i.estado, snapshot: i.snapshot, numero: i.numero }] };
@@ -154,6 +159,7 @@ function bdSimulada() {
           const i = st.intenciones.find((x) => x.empresa === empresa && x.usuario === usuario && x.clave === clave);
 
           if (!i) throw new ErrorPg("registro no encontrado", "P0002");
+          if (!visible(empresa, usuario, i.snapshot)) throw sinVisibilidad();
           if (i.estado !== "CONFIRMADA") throw new ErrorPg("solo se reconoce un registro confirmado", "P0001", "NEX:INTENCION_NO_CONFIRMADA");
           const evidencia = st.movimientos.get(`${empresa}|${clave}`);
 
@@ -205,7 +211,7 @@ function bdSimulada() {
 type Sesion = { empresa: string; usuario: string } | null;
 
 /** Adaptador HTTP simulado: mismas respuestas que las rutas (sesión → permiso → función); `perderRespuesta` descarta la respuesta tras ejecutar (el servidor ya terminó). */
-function http(bd: ReturnType<typeof bdSimulada>, sesion: () => Sesion, opciones: { perderRespuestaReconocer?: () => boolean; estadoReconocer?: () => number | null; perderRespuestaEjecutar?: () => boolean; perderRespuestaReservar?: () => boolean; estadoEjecutar?: () => number | null; sinApi?: () => boolean } = {}) {
+function http(bd: ReturnType<typeof bdSimulada>, sesion: () => Sesion, opciones: { esperarReconocer?: () => Promise<void>; perderRespuestaReconocer?: () => boolean; estadoReconocer?: () => number | null; perderRespuestaEjecutar?: () => boolean; perderRespuestaReservar?: () => boolean; estadoEjecutar?: () => number | null; sinApi?: () => boolean } = {}) {
   const peticiones: string[] = [];
   const f = async (url: string, init?: RequestInit): Promise<Response> => {
     const metodo = init?.method ?? "GET";
@@ -224,6 +230,8 @@ function http(bd: ReturnType<typeof bdSimulada>, sesion: () => Sesion, opciones:
 
         if (forzado) return respuesta(forzado, forzado === 401 || forzado === 403 ? { error: "Rechazado." } : "<html>");
         const clave = String((JSON.parse(String(init?.body)) as { clave?: string }).clave);
+
+        if (opciones.esperarReconocer) await opciones.esperarReconocer();
         const h = respuestaReconocimiento(await reconocerIntencion(bd.db, s.empresa, s.usuario, clave));
 
         if (opciones.perderRespuestaReconocer?.()) throw new TypeError("fetch failed");
@@ -634,7 +642,7 @@ export async function verificarCasosMovimientosIntenciones(): Promise<string[]> 
   // T15: la recuperación sustituye el formulario por el snapshot; no se aplica sobre datos editados por el operador (lógica de la pantalla: tocado/inicializado) — ver pruebas de inicialización.
   const pagina = leer("app/(private)/movimientos/nuevo/page.tsx");
 
-  cierto("AUD-R08 pantalla (estructura): el control recibe `reconocer`; una CONFIRMADA recuperada muestra «Confirmar recepción» y bloquea el envío; tras el OK del servidor se reconoce (ACK) ANTES de navegar y, si el ACK falla, la pantalla sigue CONFIRMADA con el número original; ya no hay descarte", /reconocer: \(clave\) => reconocerIntencionApi\(clave\)/.test(pagina) && /setEstadoRegistro\(r\.estado\)/.test(pagina) && /Confirmar recepción/.test(pagina) && /estadoRegistro === "CONFIRMADA"/.test(pagina) && /const a = await control\.current\.reconocer\(\);/.test(pagina) && /MENSAJE_SIN_ACK\(numero\)/.test(pagina) && !/Descartar este intento/.test(pagina));
+  cierto("AUD-R08 pantalla (estructura): el control recibe `reconocer`; una CONFIRMADA recuperada muestra «Confirmar recepción» y bloquea el envío; tras el OK del servidor se reconoce (ACK) ANTES de navegar y, si el ACK falla, la pantalla sigue CONFIRMADA con el número original; ya no hay descarte", /reconocer: \(clave\) => reconocerIntencionApi\(clave\)/.test(pagina) && /setEstadoRegistro\(r\.estado\)/.test(pagina) && /Confirmar recepción/.test(pagina) && /estadoRegistro === "CONFIRMADA"/.test(pagina) && /confirmarRecepcionOperador\(control\.current/.test(pagina) && /MENSAJE_SIN_ACK\(numero\)/.test(pagina) && !/Descartar este intento/.test(pagina));
   cierto("T15 (estructura): la recuperación marca inicializado/tocado para que catálogos / precarga / respuestas tardías no restauren ni sobrescriban; usa el snapshot del servidor", /inicializado\.current = true;\n\s+tocado\.current = true;\n\s+setForm\(r\.formulario\)/.test(pagina) && /recuperarIntencion\(control\.current, consultarIntencionApi\)/.test(pagina) && /iniciarRecuperando: true/.test(pagina));
 
   // T16: permisos / depósitos revocados → niega, preserva K1, sin efecto de stock.
@@ -706,6 +714,196 @@ export async function verificarCasosMovimientosIntenciones(): Promise<string[]> 
   ], [true, true, true, false, false, false, false, false, false, false]);
   igual("los mensajes de salida con una intención incierta dicen que PUEDE haberse registrado y que se recupera al volver; nunca «cancelado», «revertido» ni «no registrado»", [/puede/.test(Object.values(MENSAJE_SALIDA).slice(1, 3).join(" ")), /recuper/.test(MENSAJE_SALIDA.ENVIANDO + MENSAJE_SALIDA.INDETERMINADO), /cancel|revert|deshech|no se registr/i.test(Object.values(MENSAJE_SALIDA).join(" "))], [true, true, false]);
   cierto("ErrorIntencion conserva su estado HTTP (409 pendiente / 403 / 404); un error desconocido es un 500 genérico que no revela datos y dice que el movimiento puede haberse registrado", respuestaDeError(new ErrorIntencion("x", 409)).status === 409 && respuestaDeError(new Error("secreto SQL")).status === 500 && !JSON.stringify(respuestaDeError(new Error("secreto SQL")).body).includes("secreto") && /puede haberse registrado/.test(JSON.stringify(respuestaDeError(new Error("x")).body)));
+
+  // ── PRO-191 (AUD-R09 / MOV-R09-01): sin ACK automático — el operador debe ver el número y pulsar «Confirmar recepción» ───────────────────────────
+  // Pantalla simulada con el MISMO cableado que el componente: control real → aplicarResultadoSiVigente (aviso con el número, sin ACK ni navegación) → confirmarRecepcionOperador (único camino al ACK).
+  const paginaSim = (h: ReturnType<typeof http>, prefijo = "") => {
+    const p = pantalla(h, prefijo);
+    const log: string[] = [];
+    let montada = true;
+    const vigente = () => montada;
+    const registrar = async (datos: NuevoMovimientoStock) => {
+      const r = await p.control.registrar(datos);
+
+      aplicarResultadoSiVigente(r, vigente, { alEstado: () => log.push(`estado:${p.control.estado()}`), alRegistrar: (n) => log.push(`aviso:${MENSAJE_SIN_ACK(n)}`), alMensaje: (m) => log.push(`mensaje:${m}`) });
+
+      return r;
+    };
+    const confirmar = () => confirmarRecepcionOperador(p.control, vigente, { alExito: (n) => log.push(`navegar:${n}`), alFallo: (m) => log.push(`fallo:${m}`) });
+
+    return { ...p, log, registrar, confirmar, desmontar: () => { montada = false; } };
+  };
+  const nAcks = (h: ReturnType<typeof http>) => h.peticiones.filter((x) => x.includes("/reconocer")).length;
+
+  {
+    const bd = bdSimulada();
+    const h = http(bd, () => sesion.actual);
+    const pg1 = paginaSim(h);
+
+    await pg1.abrir();
+    const ok = await pg1.registrar(base({ cantidad: 5 }));
+
+    igual("PRO-191 pasos 1-3: POST de K1 confirmado (M1); la pantalla muestra el número original M1 con «Confirmar recepción»; NO se llamó al ACK ni se navegó; la intención sigue CONFIRMADA sin reconocer", [ok.tipo, pg1.log, nAcks(h), bd.st.intenciones[0].estado, bd.st.intenciones[0].reconocida, pg1.control.estado()], ["OK", ["estado:CONFIRMADA", "aviso:El movimiento MOV-000001 fue registrado correctamente. Falta confirmar la recepción del resultado: pulse «Confirmar recepción» para poder registrar otro movimiento."], 0, "CONFIRMADA", false, "CONFIRMADA"]);
+
+    const k2Local = await pg1.registrar(base({ cantidad: 2 }));
+    const pestanaB = pantalla(h, "tabB-");
+
+    pestanaB.control.fijarRecuperacion(null);
+    const k2Remota = await pestanaB.control.registrar(base({ cantidad: 2 }));
+
+    igual("PRO-191 paso 4: K2 bloqueada antes del clic — en la pantalla (OCUPADO) y en el servidor/otra pestaña (RECUPERADA con K1 y M1); sin segundo movimiento ni ACK", [k2Local.tipo, k2Remota.tipo, pestanaB.control.numero(), bd.st.stock, bd.st.efectosStock, bd.st.intenciones.length, nAcks(h)], ["OCUPADO", "RECUPERADA", "MOV-000001", 5, 1, 1, 0]);
+
+    // paso 5-6: se cierra la pestaña antes del clic; al reabrir se recupera K1 y M1 (sigue sin reconocer)
+    pg1.desmontar();
+    const pg2 = paginaSim(http(bd, () => sesion.actual), "s2-");
+    const rec = await pg2.abrir();
+
+    igual("PRO-191 pasos 5-6: cerrar la pestaña antes del clic deja la intención CONFIRMADA sin reconocer; al reabrir (o tras logout/login) se recuperan K1 y el número M1 y sigue bloqueada", [rec.estado, pg2.control.clave(), pg2.control.numero(), bd.st.intenciones[0].reconocida, pg2.control.bloqueado()], ["CONFIRMADA", "clave-K1-00000000", "MOV-000001", false, true]);
+
+    // pasos 7-9: clic explícito → ACK, sin tocar stock; K2 autorizada solo después
+    const hAck = http(bd, () => sesion.actual);
+    const pg3 = paginaSim(hAck, "s3-");
+
+    await pg3.abrir();
+    const stockAntes = bd.st.stock;
+
+    await pg3.confirmar();
+    const stockTrasAck = bd.st.stock;
+    const k2 = await pg3.registrar(base({ cantidad: 3 }));
+
+    igual("PRO-191 pasos 7-9: el clic explícito ejecuta el ACK (1 llamada), navega al número original, no altera el stock y solo entonces una K2 es legítima (5 + 3 = 8)", [pg3.log.filter((x) => x.startsWith("navegar")), nAcks(hAck), stockTrasAck === stockAntes, bd.st.intenciones[0].reconocida, k2.tipo, bd.st.stock, bd.st.efectosStock], [["navegar:MOV-000001"], 1, true, true, "OK", 8, 2]);
+  }
+
+  // Paso 10: ACK perdido y repetido; paso 11: doble clic y dos pestañas; paso 12: respuesta tardía tras desmontar.
+  {
+    const bd = bdSimulada();
+    let perder = true;
+    const h = http(bd, () => sesion.actual, { perderRespuestaReconocer: () => perder });
+    const pg = paginaSim(h);
+
+    await pg.abrir();
+    await pg.registrar(base({ cantidad: 4 }));
+    await pg.confirmar();
+    const trasPerdido = [...pg.log];
+    const k2 = await pg.registrar(base({ cantidad: 1 }));
+
+    perder = false;
+    await pg.confirmar();
+
+    igual("PRO-191 paso 10: ACK con respuesta perdida → la pantalla sigue CONFIRMADA (aviso de fallo, sin navegar, K2 bloqueada); repetirlo es seguro y entonces navega", [trasPerdido.filter((x) => x.startsWith("fallo")).length, trasPerdido.some((x) => x.startsWith("navegar")), k2.tipo, pg.log.filter((x) => x.startsWith("navegar")), pg.control.estado(), bd.st.stock], [1, false, "OCUPADO", ["navegar:MOV-000001"], "LIBRE", 4]);
+  }
+  {
+    const bd = bdSimulada();
+    const h = http(bd, () => sesion.actual);
+    const pgA = paginaSim(h);
+
+    await pgA.abrir();
+    await pgA.registrar(base({ cantidad: 6 }));
+    const pgB = paginaSim(h, "tabB-");
+
+    await pgB.abrir();
+    await Promise.all([pgA.confirmar(), pgA.confirmar(), pgB.confirmar()]);
+
+    igual("PRO-191 paso 11: doble clic (misma solicitud, un solo efecto) y dos pestañas confirmando a la vez: ambas terminan coherentes, la intención queda reconocida una vez y el stock no cambia", [pgA.log.filter((x) => x.startsWith("navegar")).length, pgB.log.filter((x) => x.startsWith("navegar")).length, nAcks(h), bd.st.intenciones.filter((i) => i.reconocida).length, bd.st.stock], [1, 1, 2, 1, 6]);
+  }
+  {
+    const bd = bdSimulada();
+    let liberar: () => void = () => undefined;
+    const espera = new Promise<void>((r) => { liberar = r; });
+    const h = http(bd, () => sesion.actual, { esperarReconocer: () => espera });
+    const pg = paginaSim(h);
+
+    await pg.abrir();
+    await pg.registrar(base({ cantidad: 3 }));
+    const pendiente = pg.confirmar();
+
+    pg.desmontar();
+    liberar();
+    await pendiente;
+
+    igual("PRO-191 paso 12: la respuesta del ACK que llega tras desmontar la pantalla no navega ni cambia estado (el servidor sí lo aplicó); el stock no cambia", [pg.log.some((x) => x.startsWith("navegar") || x.startsWith("fallo")), bd.st.intenciones[0].reconocida, bd.st.stock], [false, true, 3]);
+
+    const pagina2 = leer("app/(private)/movimientos/nuevo/page.tsx");
+
+    cierto("PRO-191 pantalla (estructura): el éxito solo muestra el aviso con el número (sin ACK ni navegación automáticos); `reconocer` solo se invoca desde el botón «Confirmar recepción» vía confirmarRecepcionOperador; router.push solo dentro del reconocimiento explícito", /alRegistrar: \(numero\) => setAvisoRecuperacion\(MENSAJE_SIN_ACK\(numero\)\)/.test(pagina2) && !/control\.current\.reconocer\(\)/.test(pagina2) && /confirmarRecepcionOperador\(control\.current, \(\) => vigente\.current/.test(pagina2) && /onClick=\{\(\) => void confirmarRecepcion\(\)\}/.test(pagina2) && (pagina2.match(/router\.push\(/g) ?? []).length === 1 && /alExito: \(numero\) => \{[\s\S]*?router\.push\(/.test(pagina2));
+  }
+
+  // ── PRO-192 (AUD-R09 / MOV-R09-02): sin visibilidad vigente, la recuperación se rechaza; nunca «sin pendiente» ni K2 ─────────────────────────────
+  const transferencia = () => base({ tipo: "TRANSFERENCIA", origen: "TRANSFERENCIA", depositoOrigenId: DEP_B, depositoDestinoId: DEP_A, costoUnitario: null, motivo: "reubicación entre depósitos", cantidad: 9 });
+  const claveUsuario = `${EMP}|${USR}`;
+  const mutaciones: Array<[string, (bd: ReturnType<typeof bdSimulada>) => void, (bd: ReturnType<typeof bdSimulada>) => void, boolean]> = [
+    ["CREAR sin VER", (bd) => { bd.cfg.ver.delete(claveUsuario); }, (bd) => { bd.cfg.ver.add(claveUsuario); }, true],
+    ["VER sin CREAR", (bd) => { bd.cfg.permisos.delete(claveUsuario); }, (bd) => { bd.cfg.permisos.add(claveUsuario); }, false],
+    ["depósito ORIGEN revocado", (bd) => { bd.cfg.depositos.delete(DEP_B); }, (bd) => { bd.cfg.depositos.add(DEP_B); }, true],
+    ["depósito DESTINO revocado", (bd) => { bd.cfg.depositos.delete(DEP_A); }, (bd) => { bd.cfg.depositos.add(DEP_A); }, true],
+    ["depósito inactivo / fuera de alcance", (bd) => { bd.cfg.depositos.clear(); }, (bd) => { bd.cfg.depositos.add(DEP_A); bd.cfg.depositos.add(DEP_B); }, true],
+  ];
+
+  for (const [nombre, quitar, restaurar, esVisibilidad] of mutaciones) {
+    for (const estadoInicial of ["RESERVADA", "CONFIRMADA"] as const) {
+      const bd = bdSimulada();
+      const hSetup = http(bd, () => sesion.actual, estadoInicial === "RESERVADA" ? { estadoEjecutar: () => 503 } : { perderRespuestaEjecutar: () => true });
+      const pSetup = pantalla(hSetup);
+
+      await pSetup.abrir();
+      await pSetup.control.registrar(transferencia());
+      const stockBase = bd.st.stock;
+
+      quitar(bd);
+      const h = http(bd, () => sesion.actual);
+      const crudo = async (url: string, init?: RequestInit) => { const r = await h.f(url, init); const t = await r.text(); return { status: r.status, texto: t }; };
+      const consulta = await crudo("/api/movimientos/intencion");
+      const ejecutar = await crudo("/api/movimientos/intencion/ejecutar", { method: "POST", body: JSON.stringify({ clave: "clave-K1-00000000" }) });
+      const ack = await crudo("/api/movimientos/intencion/reconocer", { method: "POST", body: JSON.stringify({ clave: "clave-K1-00000000" }) });
+      const filtra = (t: string) => /MOV-\d|"snapshot"|productoId|"cantidad"|reubicaci/.test(t);
+      const pNueva = pantalla(h, "n-");
+      const rec = await pNueva.abrir();
+      const otra = pantalla(h, "k2-");
+
+      otra.control.fijarRecuperacion(null);
+      const k2 = await otra.control.registrar(base({ cantidad: 1 }));
+
+      igual(`PRO-192 [${nombre} · ${estadoInicial}]: consulta, ejecución y ACK se rechazan (403) SIN snapshot ni número ni detalles y SIN responder «sin pendiente»; la pantalla falla cerrado; K2 sigue bloqueada; la intención y el stock quedan intactos`, [consulta.status, ejecutar.status, ack.status, [consulta, ejecutar, ack].some((x) => filtra(x.texto)), /"intencion":null/.test(consulta.texto), rec.estado, pNueva.control.bloqueado(), k2.tipo, bd.st.intenciones.length, bd.st.intenciones[0].estado, bd.st.intenciones[0].reconocida, bd.st.stock === stockBase], [403, 403, 403, false, false, "ERROR", true, "NO_RESERVADA", 1, estadoInicial, false, true]);
+      if (esVisibilidad) igual(`PRO-192 [${nombre} · ${estadoInicial}]: el mensaje es neutro y pide la intervención de un administrador autorizado (sin datos de la operación)`, [/administrador autorizado/.test(consulta.texto), /administrador autorizado/.test(rec.estado === "ERROR" ? rec.mensaje : "")], [true, true]);
+
+      // Permiso / alcance restablecido: se recupera la MISMA operación y se resuelve normalmente; no se creó otra intención.
+      restaurar(bd);
+      const pOk = paginaSim(http(bd, () => sesion.actual), "ok-");
+      const rec2 = await pOk.abrir();
+
+      if (estadoInicial === "CONFIRMADA") await pOk.confirmar();
+      else await pOk.registrar(base());
+      const final = estadoInicial === "CONFIRMADA" ? bd.st.intenciones[0].reconocida : bd.st.intenciones[0].estado === "CONFIRMADA";
+
+      igual(`PRO-192 [${nombre} · ${estadoInicial}]: restablecido el acceso se recupera la misma K1 y su snapshot autorizado y se resuelve (${estadoInicial === "CONFIRMADA" ? "ACK explícito" : "retry con K1"}) sin crear otra intención ni duplicar stock`, [rec2.estado, pOk.control.clave() ?? "libre", bd.st.intenciones.length, final, bd.st.stock], [estadoInicial === "CONFIRMADA" ? "CONFIRMADA" : "INDETERMINADO", estadoInicial === "RESERVADA" ? "clave-K1-00000000" : "libre", 1, true, stockBase + (estadoInicial === "RESERVADA" ? 9 : 0)]);
+    }
+  }
+
+  // Otro usuario de la misma empresa / otra empresa / sesión expirada: respuestas sin ningún dato de la operación ajena.
+  {
+    const bd = bdSimulada();
+    const hSetup = http(bd, () => sesion.actual, { perderRespuestaEjecutar: () => true });
+    const pSetup = pantalla(hSetup);
+
+    await pSetup.abrir();
+    await pSetup.control.registrar(transferencia());
+    const h = http(bd, () => sesion.actual);
+    const crudo = async (url: string, init?: RequestInit) => { const r = await h.f(url, init); return { status: r.status, texto: await r.text() }; };
+
+    sesion.actual = { empresa: EMP, usuario: USR_B };
+    const otroUsuario = [await crudo("/api/movimientos/intencion"), await crudo("/api/movimientos/intencion/reconocer", { method: "POST", body: JSON.stringify({ clave: "clave-K1-00000000" }) })];
+
+    sesion.actual = { empresa: EMP2, usuario: USR_C };
+    const otraEmpresa = [await crudo("/api/movimientos/intencion"), await crudo("/api/movimientos/intencion/reconocer", { method: "POST", body: JSON.stringify({ clave: "clave-K1-00000000" }) })];
+
+    sesion.actual = null;
+    const expirada = [await crudo("/api/movimientos/intencion"), await crudo("/api/movimientos/intencion/reconocer", { method: "POST", body: JSON.stringify({ clave: "clave-K1-00000000" }) })];
+
+    sesion.actual = { empresa: EMP, usuario: USR };
+    const todo = [...otroUsuario, ...otraEmpresa, ...expirada];
+
+    igual("PRO-192: otro usuario de la misma empresa, usuario de otra empresa y sesión expirada no reciben ningún dato de la operación (ni snapshot, ni número, ni claves); el ACK ajeno es 404 neutro o 401 y no reconoce nada; la intención del titular sigue pendiente", [otroUsuario.map((x) => x.status), otraEmpresa.map((x) => x.status), expirada.map((x) => x.status), todo.some((x) => /MOV-\d|"snapshot"|productoId|reubicaci|clave-K1/.test(x.texto)), bd.st.intenciones[0].reconocida], [[200, 404], [200, 404], [401, 401], false, false]);
+  }
 
   // ── PRO-190 (AUD-R08 / MOV-R08-02): el POST directo antiguo ya no registra en NINGÚN caso ───────────────────────────────────────────────────────
   // Se importa el manejador REAL de la ruta con sesión / permisos / base simulados que cuentan cualquier uso; en todos los escenarios responde 410 sin leer cuerpo, sin sesión, sin conexión y sin tocar stock.
@@ -798,7 +996,7 @@ export async function verificarCasosMovimientosIntenciones(): Promise<string[]> 
   const doc = leer("documentacao/banco/nexit/v1/docs/PROCEDIMIENTO-NEX-066.md");
 
   cierto("T18a SQL: tabla por empresa+usuario con unicidad (empresa, clave), índice único PARCIAL de UNA sola intención sin resolver o sin reconocer (RESERVADA o CONFIRMADA con reconocida_at NULL), reconocida_at solo en CONFIRMADA, FK a usuarios y CHECK de coherencia", /CREATE TABLE public\.movimientos_intenciones/.test(mig) && /CONSTRAINT movimientos_intenciones_clave_uk\s+UNIQUE \(empresa_id, clave\)/.test(mig) && /CREATE UNIQUE INDEX movimientos_intenciones_pendiente_uk ON public\.movimientos_intenciones \(empresa_id, usuario_id\) WHERE reconocida_at IS NULL AND estado IN \('RESERVADA', 'CONFIRMADA'\)/.test(mig) && /estado IN \('RESERVADA', 'CONFIRMADA', 'RECHAZADA_DEFINITIVA'\)/.test(mig) && /reconocida_at     timestamptz/.test(mig) && /CHECK \(reconocida_at IS NULL OR estado = 'CONFIRMADA'\)/.test(mig) && /FOREIGN KEY \(empresa_id, usuario_id\) REFERENCES public\.usuarios/.test(mig) && /\(estado = 'CONFIRMADA'\) = \(movimiento_id IS NOT NULL AND numero_movimiento IS NOT NULL\)/.test(mig));
-  cierto("T18b SQL: seis funciones SECURITY DEFINER con search_path fijo y permiso MOVIMIENTOS.CREAR; reservar con bloqueo advisory por empresa+usuario y pendiente = RESERVADA o CONFIRMADA sin reconocer; pendiente devuelve el número de la CONFIRMADA; reconocer con el MISMO bloqueo advisory, FOR UPDATE, idempotente, exige la evidencia del movimiento y no toca movimientos_inventario; tomar con FOR UPDATE; rechazar solo sin movimiento; sin cron ni expiración", ["reservar", "pendiente", "tomar", "confirmar", "reconocer", "rechazar"].every((fn) => new RegExp(`FUNCTION public\\.movimiento_intencion_${fn}\\(`).test(mig)) && (mig.match(/SECURITY DEFINER SET search_path = public, pg_temp/g) ?? []).length === 6 && (mig.match(/pg_advisory_xact_lock\(hashtextextended\('movimientos\.int:'/g) ?? []).length === 2 && /NEX:INTENCION_PENDIENTE/.test(mig) && /reconocida_at IS NULL AND estado IN \('RESERVADA', 'CONFIRMADA'\)\) THEN\n\s+RAISE EXCEPTION 'hay un registro anterior sin resolver'/.test(mig) && /CASE WHEN i\.estado = 'CONFIRMADA' THEN i\.numero_movimiento/.test(mig) && /NEX:INTENCION_NO_CONFIRMADA/.test(mig) && !/UPDATE public\.movimientos_inventario|INSERT INTO public\.movimientos_inventario|inventario_registrar_movimiento\(/.test(mig.slice(mig.indexOf("movimiento_intencion_reconocer(p_empresa"), mig.indexOf("-- 5) Rechazo"))) && /clave = p_clave FOR UPDATE/.test(mig) && /NEX:INTENCION_NO_RECHAZABLE/.test(mig) && /m\.clave_idempotencia = p_clave AND m\.creado_por = p_usuario/.test(mig) && !/cron|pg_cron|DELETE FROM public\.movimientos_intenciones|estado = 'EXPIRADA'/i.test(mig) && /interval '7 days'/.test(mig));
+  cierto("T18b SQL: seis funciones SECURITY DEFINER con search_path fijo y permiso MOVIMIENTOS.CREAR; reservar con bloqueo advisory por empresa+usuario y pendiente = RESERVADA o CONFIRMADA sin reconocer; pendiente devuelve el número de la CONFIRMADA; reconocer con el MISMO bloqueo advisory, FOR UPDATE, idempotente, exige la evidencia del movimiento y no toca movimientos_inventario; tomar con FOR UPDATE; rechazar solo sin movimiento; sin cron ni expiración", ["reservar", "pendiente", "tomar", "confirmar", "reconocer", "rechazar"].every((fn) => new RegExp(`FUNCTION public\\.movimiento_intencion_${fn}\\(`).test(mig)) && (mig.match(/SECURITY DEFINER SET search_path = public, pg_temp/g) ?? []).length === 7 && /FUNCTION public\.movimiento_intencion_visible\(/.test(mig) && (mig.match(/movimiento_intencion_visible\(p_empresa, p_usuario, (i|v)\.snapshot\)/g) ?? []).length === 3 && /NEX:INTENCION_SIN_VISIBILIDAD/.test(mig) && /usuario_tiene_permiso\(p_empresa, p_usuario, 'MOVIMIENTOS', 'VER'\)/.test(mig) && /usuario_puede_deposito\(p_empresa, p_usuario, \(p_snapshot->>'origenId'\)::uuid\)/.test(mig) && /usuario_puede_deposito\(p_empresa, p_usuario, \(p_snapshot->>'destinoId'\)::uuid\)/.test(mig) && !/GRANT EXECUTE ON FUNCTION public\.movimiento_intencion_visible/.test(mig) && (mig.match(/pg_advisory_xact_lock\(hashtextextended\('movimientos\.int:'/g) ?? []).length === 2 && /NEX:INTENCION_PENDIENTE/.test(mig) && /reconocida_at IS NULL AND estado IN \('RESERVADA', 'CONFIRMADA'\)\) THEN\n\s+RAISE EXCEPTION 'hay un registro anterior sin resolver'/.test(mig) && /CASE WHEN i\.estado = 'CONFIRMADA' THEN i\.numero_movimiento/.test(mig) && /NEX:INTENCION_NO_CONFIRMADA/.test(mig) && !/UPDATE public\.movimientos_inventario|INSERT INTO public\.movimientos_inventario|inventario_registrar_movimiento\(/.test(mig.slice(mig.indexOf("movimiento_intencion_reconocer(p_empresa"), mig.indexOf("-- 5) Rechazo"))) && /clave = p_clave FOR UPDATE/.test(mig) && /NEX:INTENCION_NO_RECHAZABLE/.test(mig) && /m\.clave_idempotencia = p_clave AND m\.creado_por = p_usuario/.test(mig) && !/cron|pg_cron|DELETE FROM public\.movimientos_intenciones|estado = 'EXPIRADA'/i.test(mig) && /interval '7 days'/.test(mig));
   cierto("T18c SQL: el rol de la aplicación solo EJECUTA las seis funciones (sin acceso a la tabla), ayudante nex_aplicar_grants_* descubierto por el envoltorio, NEX-014 no se modifica y no se ejecuta nada en la VM", /REVOKE ALL ON public\.movimientos_intenciones FROM nexit_runtime/.test(mig) && /GRANT EXECUTE ON FUNCTION public\.movimiento_intencion_reservar\(uuid, uuid, text, jsonb\) TO nexit_runtime/.test(mig) && /GRANT EXECUTE ON FUNCTION public\.movimiento_intencion_reconocer\(uuid, uuid, text\) TO nexit_runtime/.test(mig) && /nex_aplicar_grants_movimientos_intenciones/.test(mig) && !/CREATE OR REPLACE FUNCTION (public\.)?inventario_registrar_movimiento/.test(mig) && /NO aplicada|NO se reaplica|no se reaplica/.test(mig));
   cierto("T18d scripts: preflight de solo lectura, verificación posterior, reversión que se NIEGA con intenciones inciertas y conserva respaldo, y procedimiento del responsable (backup, orden migración→código, reversión segura, sin descarte)", /BEGIN READ ONLY/.test(pre) && /ROLLBACK;/.test(pre) && /NEX-014 aplicada/.test(pre) && /BEGIN READ ONLY/.test(ver) && /nexit_runtime/.test(ver) && /REVERSIÓN ABORTADA: hay intenciones RESERVADAS \(inciertas\) o CONFIRMADAS sin reconocer/.test(rev) && /reconocida_at IS NULL AND estado IN \('RESERVADA', 'CONFIRMADA'\)/.test(rev) && /DROP FUNCTION IF EXISTS public\.movimiento_intencion_reconocer/.test(rev) && /movimientos_intenciones_respaldo_nex066/.test(rev) && /docker exec -i nexit-db psql/.test(pre) && /Reversión segura/.test(doc) && /Primero la migración, después el código/.test(doc) && /nunca se elimina ni libera sola/.test(doc) && /Reconocimiento \(ACK\)/.test(doc) && /CONFIRMADA. todavía no reconocida|CONFIRMADA\*\* todavía no reconocida|`CONFIRMADA` todavía no reconocida/.test(doc));
 

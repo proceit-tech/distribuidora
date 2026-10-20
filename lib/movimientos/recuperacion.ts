@@ -78,6 +78,34 @@ export async function recuperarIntencion(
   return { estado: "INDETERMINADO", formulario, mensaje: mensajeRecuperada(r.intencion) };
 }
 
+type ControlReconocible = { reconocer: () => Promise<{ ok: true } | { ok: false; mensaje: string }>; numero: () => string | null };
+const confirmandoRecepcion = new WeakMap<object, Promise<void>>();
+
+/**
+ * MOV-R09-01 — «Confirmar recepción»: ÚNICO camino que reconoce (ACK) una intención CONFIRMADA y solo por una acción EXPLÍCITA del operador, después de mostrarle el número original. Reutiliza `control.reconocer()`.
+ * Un doble clic comparte la misma solicitud y el resultado se aplica UNA vez; una respuesta posterior al desmontaje no navega ni cambia estado; un fallo deja la intención CONFIRMADA (reintentable).
+ */
+export function confirmarRecepcionOperador(control: ControlReconocible, vigente: () => boolean, ev: { alExito: (numero: string) => void; alFallo: (mensaje: string) => void }): Promise<void> {
+  const previo = confirmandoRecepcion.get(control);
+
+  if (previo) return previo;
+
+  const numero = control.numero();
+  const p = (async () => {
+    const a = await control.reconocer();
+
+    if (!vigente()) return;
+    if (a.ok && numero) ev.alExito(numero);
+    else if (!a.ok) ev.alFallo(a.mensaje);
+  })().finally(() => {
+    confirmandoRecepcion.delete(control);
+  });
+
+  confirmandoRecepcion.set(control, p);
+
+  return p;
+}
+
 /** «Consultar resultado» (solo lectura): informa la evidencia; si el servidor ya no tiene la intención pendiente, fue resuelta (otra pestaña/sesión) y se libera la local. */
 export async function consultarResultado(control: ControlRecuperable, consultar: () => Promise<ConsultaIntencion>): Promise<{ liberada: boolean; mensaje: string }> {
   let r: ConsultaIntencion;

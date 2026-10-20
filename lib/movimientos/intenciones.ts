@@ -49,6 +49,15 @@ const SQL_PENDIENTE = `SELECT o_clave AS clave, o_estado AS estado, o_snapshot A
 
 const pg = (e: unknown) => e as { code?: string; message?: string; detail?: string };
 
+/**
+ * MOV-R09-02: mensaje NEUTRO cuando el operador ya no puede ver la operación (perdió MOVIMIENTOS.VER o el alcance de un depósito). No incluye datos de la operación. La intención se conserva en el servidor.
+ */
+export const MENSAJE_SIN_VISIBILIDAD =
+  "La operación anterior no puede recuperarse con los permisos actuales. Se requiere la intervención de un administrador autorizado; la operación sigue guardada y no se habilitó ninguna operación nueva.";
+
+const sinVisibilidad = (e: unknown) => pg(e).code === "42501" && pg(e).detail?.startsWith("NEX:INTENCION_SIN_VISIBILIDAD") === true;
+const errorSinVisibilidad = () => new ErrorIntencion(MENSAJE_SIN_VISIBILIDAD, 403, { sinVisibilidad: true });
+
 async function liberar(c: PoolClient) {
   c.release();
 }
@@ -61,6 +70,7 @@ export async function consultarIntencion(db: Db, empresaId: string, usuarioId: s
 
     return r.rows[0] ? dto(r.rows[0] as Fila) : null;
   } catch (e) {
+    if (sinVisibilidad(e)) throw errorSinVisibilidad();
     if (pg(e).code === "42501") throw new ErrorIntencion("No tiene permiso para registrar movimientos.", 403);
     throw e;
   } finally {
@@ -99,9 +109,18 @@ export async function reservarIntencion(db: Db, empresaId: string, usuarioId: st
 
     if (x.code === "42501") throw new ErrorIntencion("No tiene permiso para registrar movimientos.", 403);
     if (x.code === "P0001" && x.detail?.startsWith("NEX:INTENCION_PENDIENTE")) {
-      const existente = await c.query(SQL_PENDIENTE, [empresaId, usuarioId]).then((r) => (r.rows[0] ? dto(r.rows[0] as Fila) : null), () => null);
+      let invisible = false;
+      const existente = await c.query(SQL_PENDIENTE, [empresaId, usuarioId]).then(
+        (r) => (r.rows[0] ? dto(r.rows[0] as Fila) : null),
+        (e2) => {
+          invisible = sinVisibilidad(e2);
 
-      throw new ErrorIntencion("Hay un registro anterior sin resolver. Recupérelo antes de iniciar otro movimiento.", 409, { pendiente: true, intencion: existente });
+          return null;
+        },
+      );
+
+      // Con una pendiente que el operador ya no puede ver NO se devuelve nada de ella; se informa el bloqueo de forma neutra (K2 sigue bloqueada por la base).
+      throw new ErrorIntencion(invisible ? MENSAJE_SIN_VISIBILIDAD : "Hay un registro anterior sin resolver. Recupérelo antes de iniciar otro movimiento.", 409, { pendiente: true, intencion: existente, ...(invisible ? { sinVisibilidad: true } : {}) });
     }
     if (x.code === "P0001" && x.detail?.startsWith("NEX:INTENCION_CONFLICTO")) throw new ErrorIntencion("La clave del registro no está disponible.", 409);
     if (x.code === "23505") throw new ErrorIntencion("Hay un registro anterior sin resolver. Recupérelo antes de iniciar otro movimiento.", 409, { pendiente: true, intencion: null });
@@ -128,6 +147,7 @@ export async function reconocerIntencion(db: Db, empresaId: string, usuarioId: s
 
     const x = pg(e);
 
+    if (sinVisibilidad(e)) throw errorSinVisibilidad();
     if (x.code === "42501") throw new ErrorIntencion("No tiene permiso para registrar movimientos.", 403);
     if (x.code === "P0002") throw new ErrorIntencion("Registro no encontrado.", 404);
     if (x.code === "P0001" && x.detail?.startsWith("NEX:INTENCION_NO_CONFIRMADA")) throw new ErrorIntencion("El registro todavía no está confirmado; no puede reconocerse.", 409);
@@ -193,6 +213,7 @@ export async function ejecutarIntencion(db: Db, empresaId: string, usuarioId: st
     const x = pg(e);
 
     if (x.code === "P0002") throw new ErrorIntencion("Registro no encontrado.", 404);
+    if (revertida && sinVisibilidad(e)) throw errorSinVisibilidad();
     if (revertida && x.code === "42501") throw new ErrorIntencion("No tiene permiso o alcance sobre el depósito para esta operación. El registro sigue pendiente.", 403);
     if (revertida && esRechazoDeterminista(e)) {
       try {

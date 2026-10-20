@@ -164,6 +164,9 @@ export async function reservarIntencionApi(datos: NuevoMovimientoStock, enviar: 
     return { tipo: "PENDIENTE_EXISTENTE", clave: i.clave, payload: formularioDesdeSnapshot(i.snapshot), requiereRevision: i.requiereRevision === true, evidenciaNumero: i.evidenciaNumero ?? null, confirmada: i.estado === "CONFIRMADA" };
   }
 
+  // Hay una pendiente que el operador ya no puede ver: no se envió nada, la base mantiene K2 bloqueada y la pantalla queda bloqueada hasta restablecer el acceso.
+  if (r.status === 409 && j?.pendiente === true && j.sinVisibilidad === true) return { tipo: "PENDIENTE_NO_VISIBLE", mensaje: typeof j.error === "string" ? j.error : MENSAJE_NO_RESERVADA };
+
   return { tipo: "FALLO", mensaje: typeof j?.error === "string" && j.error ? `${j.error} No se envió ningún movimiento al stock.` : MENSAJE_NO_RESERVADA };
 }
 
