@@ -8,7 +8,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { contador } from "@/lib/clientes/contador-casos";
-import { decodificarBase64Estricto, esPdfValido, limpiarCacheTokens, MAX_KUDE_BYTES, type FetchLike, type KudeFetch } from "@/lib/facturacion/gateway";
+import { decodificarBase64Estricto, esPdfValido, leerCuerpoLimitado, limpiarCacheTokens, MAX_KUDE_BYTES, type FetchLike, type KudeFetch } from "@/lib/facturacion/gateway";
 import { crearControladorVisor, pedirKudeAlServidor } from "@/lib/facturacion/kude-visor";
 import { nombreArchivoKude, obtenerKude, tipOpeDePayload } from "@/lib/facturacion/shared";
 
@@ -27,7 +27,31 @@ const CDC = "0".repeat(44);
 const CDC_B = "1".repeat(44);
 
 type Doc = { id: string; empresa: string; sucursal: string; tipo: string; establecimiento: string; puntoExpedicion: string; numero: string; serie: string | null; cdc: string | null; estadoSifen: string };
-type Resp = { status: number; tipo?: string; bytes?: Buffer; json?: unknown; largo?: string; lanza?: "TIMEOUT" | "RED" };
+type Resp = { status: number; tipo?: string; bytes?: Buffer; json?: unknown; largo?: string; lanza?: "TIMEOUT" | "RED"; flujo?: "infinito"; trozo?: number };
+type RegistroFlujo = { cancelado: boolean; leidos: number };
+
+function flujoDe(r: Resp, registro: RegistroFlujo): ReadableStream<Uint8Array> {
+  const trozo = r.trozo ?? 65536;
+
+  if (r.flujo === "infinito") {
+    return new ReadableStream<Uint8Array>({ pull(c) { registro.leidos += trozo; c.enqueue(new Uint8Array(trozo).fill(97)); }, cancel() { registro.cancelado = true; } });
+  }
+
+  const b = r.bytes ?? Buffer.from(JSON.stringify(r.json ?? {}));
+  let pos = 0;
+
+  return new ReadableStream<Uint8Array>({
+    pull(c) {
+      if (pos >= b.length) { c.close(); return; }
+      const fin = Math.min(pos + trozo, b.length);
+
+      registro.leidos += fin - pos;
+      c.enqueue(new Uint8Array(b.subarray(pos, fin)));
+      pos = fin;
+    },
+    cancel() { registro.cancelado = true; },
+  });
+}
 type Comportamiento = Array<(n: number) => Resp> | ((n: number) => Resp);
 
 const ok = (extra: Record<string, unknown> = {}, pdf: Buffer = PDF, cdc: string = CDC): Resp => ({ status: 200, json: { status: "success", CDC: cdc, kude: pdf.toString("base64"), ...extra } });
@@ -72,6 +96,7 @@ export async function verificarCasosKude(): Promise<string[]> {
   function gateway(comportamiento: Comportamiento) {
     const logins: string[] = [];
     const kudes: Llamada[] = [];
+    const flujos: RegistroFlujo[] = [];
     let n = 0;
     const fetch: FetchLike = async (url, init) => {
       if (url.endsWith("/api/login")) {
@@ -96,10 +121,14 @@ export async function verificarCasosKude(): Promise<string[]> {
 
       if (r.largo) cab["content-length"] = r.largo;
 
-      return { status: r.status, headers: { get: (k: string) => cab[k.toLowerCase()] ?? null }, arrayBuffer: async () => { const b = r.bytes ?? Buffer.from(JSON.stringify(r.json ?? {})); return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) as ArrayBuffer; } };
+      const registro: RegistroFlujo = { cancelado: false, leidos: 0 };
+
+      flujos.push(registro);
+
+      return { status: r.status, headers: { get: (k: string) => cab[k.toLowerCase()] ?? null }, body: flujoDe(r, registro) };
     };
 
-    return { dep: { fetch, fetchKude }, logins, kudes };
+    return { dep: { fetch, fetchKude }, logins, kudes, flujos };
   }
   const pdfOk = (): Resp => ok();
   const falla = async (m: ReturnType<typeof mundo>, g: ReturnType<typeof gateway>, empresa: string, usuario: string, id: string) => {
@@ -251,6 +280,7 @@ export async function verificarCasosKude(): Promise<string[]> {
     const urls = new Map<string, Blob>();
     const revocadas: string[] = [];
     const acciones: string[] = [];
+    const diferidas: Array<() => void> = [];
     let contadorUrl = 0;
     const visor = crearControladorVisor({
       obtener: (id, signal) => {
@@ -263,11 +293,13 @@ export async function verificarCasosKude(): Promise<string[]> {
       revocarUrl: (u) => { revocadas.push(u); urls.delete(u); },
       descargar: (u, n) => { acciones.push("descargar:" + u + ":" + n); },
       imprimir: () => { acciones.push("imprimir"); },
+      diferir: (fn) => { diferidas.push(fn); },
     });
 
-    return { visor, pendientes, llamadas, urls, revocadas, acciones };
+    return { visor, pendientes, llamadas, urls, revocadas, acciones, diferidas };
   }
   const docVisor = (id: string, num = "0010004") => ({ id, titulo: "KuDE · Factura 001-001-" + num, nombre: "KuDE-FE-001-001-" + num + ".pdf" });
+  const descargaDe = (e: ReturnType<ReturnType<typeof crearControladorVisor>["estado"]>) => (e.fase === "LISTO" ? e.descarga : null);
   const bytesDe = async (b: Blob | undefined) => (b ? Buffer.from(await b.arrayBuffer()) : Buffer.alloc(0));
 
   {
@@ -282,21 +314,28 @@ export async function verificarCasosKude(): Promise<string[]> {
 
     igual("KUDE-20 visor: abrir recorre CARGANDO → LISTO con el título de la factura y el PDF íntegro llega al visor como Blob", [fases, e.fase === "LISTO" ? e.titulo : null, e.fase === "LISTO" ? (await bytesDe(v.urls.get(e.url))).equals(PDF) : null], [["CARGANDO", "LISTO"], "KuDE · Factura 001-001-0010004", true]);
 
-    v.visor.descargar();
+    // PRO-197: «Descargar PDF» hace una consulta NUEVA al backend/gateway (distinta de la usada para mostrar). Una apertura + dos descargas = TRES llamadas a /api/kude.
+    await v.visor.descargar();
+    await v.visor.descargar();
     v.visor.imprimir();
-    igual("KUDE-21 visor: descargar e imprimir actúan sobre la URL temporal y no persisten nada (solo hay acciones del navegador; ninguna escritura en la base)", [v.acciones, v.urls.size, g.kudes.length], [["descargar:blob:nexit/1:KuDE-FE-001-001-0010004.pdf", "imprimir"], 1, 1]);
+    igual("KUDE-21 visor: una apertura y dos descargas = TRES solicitudes a /api/kude; cada descarga usa su propia URL temporal y su PDF íntegro; Imprimir usa el PDF mostrado (sin nueva solicitud)", [g.kudes.length, v.llamadas.length, v.acciones, descargaDe(v.visor.estado())], [3, 3, ["descargar:blob:nexit/2:KuDE-FE-001-001-0010004.pdf", "descargar:blob:nexit/3:KuDE-FE-001-001-0010004.pdf", "imprimir"], "INACTIVA"]);
+    igual("KUDE-21b visor: los PDF descargados son los bytes del gateway y las URL temporales de descarga se liberan después (sin persistir nada)", [(await bytesDe(v.urls.get("blob:nexit/2"))).equals(PDF), v.diferidas.length], [true, 2]);
+    v.diferidas.forEach((fn) => fn());
+    igual("KUDE-21c visor: ejecutadas las liberaciones diferidas solo queda la URL del PDF mostrado", [v.revocadas, [...v.urls.keys()]], [["blob:nexit/2", "blob:nexit/3"], ["blob:nexit/1"]]);
 
     v.visor.cerrar();
-    igual("KUDE-22 visor: cerrar revoca la URL, libera el Blob y deja el estado CERRADO sin datos", [v.visor.estado().fase, v.revocadas, v.urls.size], ["CERRADO", ["blob:nexit/1"], 0]);
-    v.visor.descargar();
+    igual("KUDE-22 visor: cerrar revoca la URL, libera el Blob y deja el estado CERRADO sin datos", [v.visor.estado().fase, v.revocadas.includes("blob:nexit/1"), v.urls.size], ["CERRADO", true, 0]);
+    await v.visor.descargar();
     v.visor.imprimir();
-    igual("KUDE-22b visor: con el visor cerrado, descargar e imprimir no hacen nada", v.acciones.length, 2);
+    igual("KUDE-22b visor: con el visor cerrado, descargar e imprimir no hacen nada (ni solicitudes)", [v.acciones.length, g.kudes.length], [3, 3]);
 
     // Abrir y cerrar DOS veces el mismo documento = DOS llamadas externas distintas (sin caché ni reutilización).
+    const antes = g.kudes.length;
+
     await v.visor.abrir(docVisor(D(1)));
     v.visor.cerrar();
     await v.visor.abrir(docVisor(D(1)));
-    igual("KUDE-23 visor: cada apertura del mismo documento hace una consulta NUEVA al gateway (3 aperturas = 3 solicitudes a /api/kude; ninguna URL anterior se reutiliza)", [g.kudes.length, v.llamadas.length, g.kudes.every((k) => k.url === "https://gw.example.test/api/kude"), v.urls.size], [3, 3, true, 1]);
+    igual("KUDE-23 visor: cada apertura del mismo documento hace una consulta NUEVA al gateway (2 aperturas más = 2 solicitudes a /api/kude; ninguna URL anterior se reutiliza)", [g.kudes.length - antes, g.kudes.every((k) => k.url === "https://gw.example.test/api/kude"), v.urls.size], [2, true, 1]);
     v.visor.cerrar();
   }
 
@@ -409,6 +448,179 @@ export async function verificarCasosKude(): Promise<string[]> {
     }
   }
 
+  // ── 7b. PRO-196: el límite del cuerpo se aplica DURANTE la recepción (flujo), con o sin Content-Length ─────────────────────────────────────
+  {
+    const LIM = Math.ceil((MAX_KUDE_BYTES * 4) / 3) + 8192;
+    const TROZO = 256 * 1024;
+    const flujoLeer = (r: Resp) => { const reg: RegistroFlujo = { cancelado: false, leidos: 0 }; return { reg, cuerpo: flujoDe(r, reg) }; };
+
+    const n = flujoLeer({ status: 200, bytes: Buffer.from("x".repeat(500_000)), trozo: 4096 });
+    const t1 = await leerCuerpoLimitado(n.cuerpo, LIM);
+
+    igual("KUDE-40 flujo normal (varios trozos): se lee completo y no se cancela", [t1?.length, n.reg.cancelado], [500_000, false]);
+
+    const ex = flujoLeer({ status: 200, flujo: "infinito", trozo: TROZO });
+    const t2 = await leerCuerpoLimitado(ex.cuerpo, LIM);
+
+    igual("KUDE-41 flujo excesivo (infinito): se CANCELA la lectura al superar el límite y se leyó como máximo el límite más unos pocos trozos (no el cuerpo completo)", [t2, ex.reg.cancelado, ex.reg.leidos <= LIM + 4 * TROZO], [null, true, true]);
+
+    const fin = flujoLeer({ status: 200, bytes: Buffer.alloc(LIM + 1, 98), trozo: TROZO });
+
+    igual("KUDE-42 flujo finito apenas por encima del límite: null y cancelado; justo en el límite: se acepta", [await leerCuerpoLimitado(fin.cuerpo, LIM), fin.reg.cancelado, (await leerCuerpoLimitado(flujoLeer({ status: 200, bytes: Buffer.alloc(LIM, 99), trozo: TROZO }).cuerpo, LIM))?.length], [null, true, LIM]);
+    igual("KUDE-42b sin cuerpo (null) se interpreta como vacío", await leerCuerpoLimitado(null, 10), "");
+
+    // A través de obtenerKude (transporte real): sin Content-Length, con Content-Length FALSO, con Content-Length excesivo y flujo normal grande.
+    const casos: Array<[string, Resp]> = [
+      ["sin Content-Length, flujo sin fin", { status: 200, flujo: "infinito", trozo: TROZO }],
+      ["Content-Length FALSO (declara poco, envía sin fin)", { status: 200, flujo: "infinito", trozo: TROZO, largo: "100" }],
+      ["Content-Length excesivo declarado", { status: 200, flujo: "infinito", trozo: TROZO, largo: String(LIM + 1) }],
+      ["cuerpo finito excesivo sin Content-Length", { status: 200, bytes: Buffer.alloc(LIM + 5, 97), trozo: TROZO }],
+    ];
+
+    for (const [nombre, resp] of casos) {
+      limpiarCacheTokens();
+      const g = gateway(() => resp);
+      const x = await falla(mundo([fe(D(1), E1)]), g, E1, U1, D(1));
+      const reg = g.flujos[0];
+
+      igual("KUDE-43 [" + nombre + "]: 502 «excede el tamaño», lectura cancelada, memoria acotada y sin PDF", [x.estado, x.mensaje.includes("excede"), reg.cancelado || nombre.startsWith("cuerpo finito"), reg.leidos <= LIM + 4 * TROZO], [502, true, true, true]);
+    }
+
+
+    // PDF grande legítimo (varios MB, sin Content-Length, en trozos) sigue funcionando y llega intacto.
+    limpiarCacheTokens();
+    const grande = Buffer.concat([Buffer.from("%PDF-1.4\n"), Buffer.alloc(6 * 1024 * 1024, 32), Buffer.from("\n%%EOF\n")]);
+    const gGrande = gateway(() => ok({}, grande, CDC));
+    const rGrande = await obtenerKude(mundo([fe(D(1), E1)]).db, E1, U1, D(1), gGrande.dep);
+
+    igual("KUDE-44 un PDF legítimo de 6 MB recibido por trozos y sin Content-Length llega intacto y sin cancelar", [rGrande.pdf.equals(grande), gGrande.flujos[0].cancelado], [true, false]);
+
+    // Un error del flujo en mitad de la lectura es un fallo controlado (no una excepción) y el timeout sigue vigente.
+    limpiarCacheTokens();
+    const gErr: ReturnType<typeof gateway> = gateway(() => ({ status: 0, lanza: "RED" }));
+    const xErr = await falla(mundo([fe(D(1), E1)]), gErr, E1, U1, D(1));
+
+    igual("KUDE-45 un corte de red durante la solicitud es un error controlado", [xErr.estado, /comunicarse/.test(xErr.mensaje)], [503, true]);
+  }
+
+  // ── 7c. PRO-197: «Descargar PDF» = consulta nueva, con carga, error, cancelación y cambio de documento ────────────────────────────────────
+  {
+    limpiarCacheTokens();
+    const g = gateway([pdfOk, () => ({ status: 503, tipo: "text/html", bytes: Buffer.from("x") }), pdfOk]);
+    const v = visorSimulado("directo", g, mundo([fe(D(1), E1)]));
+
+    await v.visor.abrir(docVisor(D(1)));
+    const fasesDescarga: string[] = [];
+
+    v.visor.suscribir(() => { const e = v.visor.estado(); if (e.fase === "LISTO") fasesDescarga.push(e.descarga); });
+    await v.visor.descargar(); // 503
+    const e1 = v.visor.estado();
+
+    igual("KUDE-50 descarga con error: el visor SIGUE mostrando el PDF, informa el error en español y no descarga nada", [fasesDescarga, e1.fase === "LISTO" ? e1.descarga : null, e1.fase === "LISTO" && /no está disponible/.test(e1.mensajeDescarga), v.acciones, e1.fase === "LISTO" && SECRETOS.test(e1.mensajeDescarga)], [["CARGANDO", "ERROR"], "ERROR", true, [], false]);
+    await v.visor.descargar(); // reintento → nueva solicitud, éxito
+    igual("KUDE-51 reintentar la descarga hace otra solicitud al gateway y completa", [g.kudes.length, v.acciones.length, descargaDe(v.visor.estado())], [3, 1, "INACTIVA"]);
+    v.visor.cerrar();
+
+    // Doble clic en «Descargar PDF» mientras prepara: una sola solicitud.
+    const m = visorSimulado("manual");
+    const pa = m.visor.abrir(docVisor(D(1)));
+
+    m.pendientes[0].resolver(new Blob([new Uint8Array(PDF)]));
+    await pa;
+    const d1 = m.visor.descargar();
+    const d2 = m.visor.descargar();
+
+    igual("KUDE-52 doble clic en «Descargar PDF»: una sola solicitud nueva y el botón queda en CARGANDO", [m.llamadas.length, descargaDe(m.visor.estado())], [2, "CARGANDO"]);
+    m.pendientes[1].resolver(new Blob([new Uint8Array(PDF)]));
+    await Promise.all([d1, d2]);
+    igual("KUDE-52b completa una sola descarga", m.acciones, ["descargar:blob:nexit/2:KuDE-FE-001-001-0010004.pdf"]);
+    m.visor.cerrar();
+
+    // Cerrar durante la descarga: se aborta y NO se completa en la interfaz.
+    const c = visorSimulado("manual");
+    const pc = c.visor.abrir(docVisor(D(1)));
+
+    c.pendientes[0].resolver(new Blob([new Uint8Array(PDF)]));
+    await pc;
+    const dc = c.visor.descargar();
+
+    c.visor.cerrar();
+    c.pendientes[1].resolver(new Blob([new Uint8Array(PDF)])); // llega tarde
+    await dc;
+    igual("KUDE-53 cerrar durante la descarga: la solicitud se aborta, no se descarga nada, no se crea ninguna URL nueva y el visor queda CERRADO", [c.pendientes[1].signal.aborted, c.acciones, c.visor.estado().fase, c.urls.size, c.diferidas.length], [true, [], "CERRADO", 0, 0]);
+
+    // Error tardío tras cerrar: tampoco cambia nada.
+    const c2 = visorSimulado("manual");
+    const pc2 = c2.visor.abrir(docVisor(D(1)));
+
+    c2.pendientes[0].resolver(new Blob([new Uint8Array(PDF)]));
+    await pc2;
+    const dc2 = c2.visor.descargar();
+
+    c2.visor.cerrar();
+    c2.pendientes[1].rechazar(new Error("tarde"));
+    await dc2;
+    igual("KUDE-53b un error tardío de la descarga tras cerrar no reabre ni cambia el estado", c2.visor.estado().fase, "CERRADO");
+
+    // Cambio de factura A → B durante la descarga de A: el PDF de A jamás se descarga ni aparece en B.
+    const t = visorSimulado("manual");
+    const pa1 = t.visor.abrir(docVisor(D(1), "0010004"));
+
+    t.pendientes[0].resolver(new Blob([new Uint8Array(PDF)]));
+    await pa1;
+    const dA = t.visor.descargar();
+    const pb = t.visor.abrir(docVisor(D(2), "0010005"));
+
+    t.pendientes[1].resolver(new Blob([new Uint8Array(PDF)])); // descarga de A llega tarde
+    await dA;
+    t.pendientes[2].resolver(new Blob([new Uint8Array(PDF_B)]));
+    await pb;
+    const eb = t.visor.estado();
+
+    igual("KUDE-54 cambiar de factura durante la descarga de A: la solicitud de A se aborta, no se descarga nada y la modal B muestra SOLO el PDF de B sin rastro de descarga", [t.pendientes[1].signal.aborted, t.acciones, eb.fase === "LISTO" ? [eb.titulo, eb.descarga, (await bytesDe(t.urls.get(eb.url))).equals(PDF_B)] : eb.fase, t.diferidas.length], [true, [], ["KuDE · Factura 001-001-0010005", "INACTIVA", true], 0]);
+    // Una descarga posterior en B usa el documento B.
+    const dB = t.visor.descargar();
+
+    t.pendientes[3].resolver(new Blob([new Uint8Array(PDF_B)]));
+    await dB;
+    igual("KUDE-54b la descarga siguiente pertenece al documento B (id y nombre)", [t.llamadas[3], t.acciones.map((a) => a.split(":").slice(3).join(":"))], [D(2), ["KuDE-FE-001-001-0010005.pdf"]]);
+    t.visor.cerrar();
+  }
+
+  {
+    // De extremo a extremo con la orquestación real: otra empresa / sucursal sin alcance no obtienen descarga; CDC ajeno se descarta; nada se persiste.
+    limpiarCacheTokens();
+    const docs = [fe(D(1), E1), fe(D(2), E2), fe(D(3), E1, { sucursal: SUC_B })];
+    const g = gateway(pdfOk);
+    const mm = mundo(docs);
+    const v = visorSimulado("directo", g, mm);
+
+    await v.visor.abrir(docVisor(D(1)));
+    await v.visor.descargar();
+    igual("KUDE-55 descarga autorizada: dos solicitudes con el token y la identidad de LA empresa del usuario; CDC verificado en cada una; sin escrituras en la base", [g.kudes.length, g.kudes.every((k) => /^Bearer TOKEN-RUC-E1-/.test(k.auth ?? "")), mm.consultas.some((q) => /\b(INSERT|UPDATE|DELETE)\b|fe_documento_registrar/i.test(q))], [2, true, false]);
+    v.visor.cerrar();
+
+    const gAjeno = gateway([pdfOk, () => ok({}, PDF_B, CDC_B)]);
+    const vA = visorSimulado("directo", gAjeno, mundo(docs));
+
+    await vA.visor.abrir(docVisor(D(1)));
+    await vA.visor.descargar(); // el gateway devuelve el KuDE de OTRO documento
+    const eA = vA.visor.estado();
+
+    igual("KUDE-56 si en la descarga el gateway devuelve un CDC ajeno se descarta: error en la modal, nada se descarga", [eA.fase === "LISTO" ? eA.descarga : null, eA.fase === "LISTO" && /no corresponde/.test(eA.mensajeDescarga), vA.acciones], ["ERROR", true, []]);
+    vA.visor.cerrar();
+
+    for (const [nombre, id] of [["otra empresa", D(2)], ["sucursal sin alcance", D(3)]] as Array<[string, string]>) {
+      const gx = gateway(pdfOk);
+      const vx = visorSimulado("directo", gx, mundo(docs));
+
+      await vx.visor.abrir(docVisor(id));
+      igual("KUDE-57 [" + nombre + "]: ni se muestra ni se descarga y no hay llamadas al gateway", [vx.visor.estado().fase, gx.kudes.length, vx.acciones.length], ["ERROR", 0, 0]);
+      await vx.visor.descargar();
+      igual("KUDE-57b [" + nombre + "]: «Descargar» sin PDF mostrado no hace nada", [gx.kudes.length, vx.acciones.length], [0, 0]);
+    }
+  }
+
   // ── 8. Ruta HTTP y pantalla/modal (estructural; React/navegador no se renderizaron) ───────────────────────────────────────────────────────
   const ruta = leer("app/api/documentos/[id]/kude/route.ts");
   const pagina = leer("app/(private)/documentos/page.tsx");
@@ -429,7 +641,7 @@ export async function verificarCasosKude(): Promise<string[]> {
     igual("KUDE-17 ruta real: sin base de datos configurada responde 503 sin PDF", [res.status, res.headers.get("content-type")?.includes("application/json")], [503, true]);
   }
   cierto("KUDE-18 pantalla: «Ver KuDE (PDF)» solo para FE APROBADA con CDC, abre la modal por el controlador (sin window.open), usa el cliente del servidor por ID y libera al desmontar", /d\.tipo === "FE" && d\.estadoSifen === "APROBADO" && d\.cdc/.test(pagina) && /Ver KuDE \(PDF\)/.test(pagina) && !/window\.open/.test(pagina) && /crearControladorVisor\(/.test(pagina) && /pedirKudeAlServidor\(id, signal\)/.test(pagina) && /URL\.createObjectURL/.test(pagina) && /URL\.revokeObjectURL/.test(pagina) && /<KudeModal controlador=\{visor\}/.test(pagina) && /XML: descarga no disponible/.test(pagina) && !/endpoint del proveedor sin confirmar/.test(pagina));
-  cierto("KUDE-18b modal: diálogo accesible (role=dialog, aria-modal, título «KuDE · Factura …»), Descargar PDF / Imprimir / Cerrar, Reintentar en error, Escape cierra, foco atrapado y devuelto, visor desmontado al cerrar, iframe solo con la URL temporal", /role="dialog"/.test(modal) && /aria-modal="true"/.test(modal) && /Descargar PDF/.test(modal) && />Imprimir</.test(modal) && />Cerrar</.test(modal) && /Reintentar/.test(modal) && /e\.key === "Escape"/.test(modal) && /e\.key !== "Tab"/.test(modal) && /previo\?\.focus/.test(modal) && /estado\.fase === "CERRADO"\) return null/.test(modal) && /src=\{estado\.url\}/.test(modal) && /controlador\.cerrar\(\)/.test(modal) && !/localStorage|sessionStorage|indexedDB/.test(modal + pagina + leer("lib/facturacion/kude-visor.ts")));
+  cierto("KUDE-18b modal: diálogo accesible (role=dialog, aria-modal, título «KuDE · Factura …»), Descargar PDF (con estado de preparación y error) / Imprimir / Cerrar, Reintentar en error, Escape cierra, foco atrapado y devuelto, visor desmontado al cerrar, iframe solo con la URL temporal", /role="dialog"/.test(modal) && /aria-modal="true"/.test(modal) && /Descargar PDF/.test(modal) && />Imprimir</.test(modal) && />Cerrar</.test(modal) && /Reintentar/.test(modal) && /Preparando descarga/.test(modal) && /controlador\.descargar\(\)/.test(modal) && /e\.key === "Escape"/.test(modal) && /e\.key !== "Tab"/.test(modal) && /previo\?\.focus/.test(modal) && /estado\.fase === "CERRADO"\) return null/.test(modal) && /src=\{estado\.url\}/.test(modal) && /controlador\.cerrar\(\)/.test(modal) && !/localStorage|sessionStorage|indexedDB/.test(modal + pagina + leer("lib/facturacion/kude-visor.ts")));
   {
     const ini = shared.indexOf("export async function obtenerKude");
     const fin = shared.indexOf("export function respuestaErrorFacturacion");

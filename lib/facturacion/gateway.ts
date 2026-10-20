@@ -634,7 +634,8 @@ export async function enviarDocumentoGateway(
 // Nada se guarda (ni Base64 ni PDF) y los errores no incluyen el CDC ni el contenido. `tipOpe` = iTiOpe del payload persistido: HIPÓTESIS pendiente de confirmación del proveedor. No se sigue ninguna URL.
 export const MAX_KUDE_BYTES = 10 * 1024 * 1024;
 const MAX_KUDE_JSON = Math.ceil((MAX_KUDE_BYTES * 4) / 3) + 8192;
-export type KudeFetch = (url: string, init: { method: string; headers: Record<string, string>; body: string; signal: AbortSignal }) => Promise<{ status: number; headers: { get(nombre: string): string | null }; arrayBuffer(): Promise<ArrayBuffer> }>;
+export type CuerpoLegible = { getReader(): { read(): Promise<{ done: boolean; value?: Uint8Array }>; cancel(motivo?: unknown): Promise<void> } };
+export type KudeFetch = (url: string, init: { method: string; headers: Record<string, string>; body: string; signal: AbortSignal }) => Promise<{ status: number; headers: { get(nombre: string): string | null }; body: CuerpoLegible | null }>;
 export type DependenciasKude = { fetch?: FetchLike; fetchKude?: KudeFetch; env?: Record<string, string | undefined>; ahora?: () => number };
 export type DocumentoKude = { tipOpe: string; establecimiento: string; puntoExpedicion: string; numero: string; serie: string | null; cdc: string };
 export type CodigoErrorKude = "SIN_CREDENCIALES" | "AUTENTICACION" | "TIMEOUT" | "NO_DISPONIBLE" | "NO_ENCONTRADO" | "FORMATO_NO_CONFIRMADO" | "CDC_NO_COINCIDE" | "PDF_INVALIDO" | "DEMASIADO_GRANDE";
@@ -688,6 +689,33 @@ export function interpretarKude(http: number, cuerpoTexto: string, cdcPersistido
 
 type RespuestaKude = { ok: true; status: number; texto: string | null } | { ok: false; motivo: "TIMEOUT" | "RED" };
 
+/** Lee el cuerpo por trozos y lo CANCELA en cuanto supera `max` bytes (devuelve null). Nunca acumula más de `max` + un trozo. */
+export async function leerCuerpoLimitado(cuerpo: CuerpoLegible | null, max: number): Promise<string | null> {
+  if (!cuerpo) return "";
+
+  const lector = cuerpo.getReader();
+  const trozos: Buffer[] = [];
+  let total = 0;
+
+  for (;;) {
+    const { done, value } = await lector.read();
+
+    if (done) break;
+    if (!value) continue;
+
+    total += value.byteLength;
+    if (total > max) {
+      trozos.length = 0;
+      await lector.cancel().catch(() => undefined);
+
+      return null;
+    }
+    trozos.push(Buffer.from(value.buffer, value.byteOffset, value.byteLength));
+  }
+
+  return Buffer.concat(trozos).toString("utf8");
+}
+
 async function enviarKude(url: string, token: string, body: unknown, timeoutMs: number, fetchFn: KudeFetch): Promise<RespuestaKude> {
   const control = new AbortController();
   const timer = setTimeout(() => control.abort(), timeoutMs);
@@ -696,12 +724,15 @@ async function enviarKude(url: string, token: string, body: unknown, timeoutMs: 
     const r = await fetchFn(url, { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify(body), signal: control.signal });
     const declarado = Number(r.headers.get("content-length"));
 
-    // Una respuesta que declara más de lo permitido ni siquiera se lee.
-    if (Number.isFinite(declarado) && declarado > MAX_KUDE_JSON) return { ok: true, status: r.status, texto: null };
+    // Una respuesta que declara más de lo permitido ni siquiera se lee (se cancela el flujo).
+    if (Number.isFinite(declarado) && declarado > MAX_KUDE_JSON) {
+      await r.body?.getReader().cancel().catch(() => undefined);
 
-    const bytes = Buffer.from(await r.arrayBuffer());
+      return { ok: true, status: r.status, texto: null };
+    }
 
-    return { ok: true, status: r.status, texto: bytes.length > MAX_KUDE_JSON ? null : bytes.toString("utf8") };
+    // El límite se aplica DURANTE la recepción: Content-Length ausente o falso no sirve de excusa para cargar todo el cuerpo en memoria.
+    return { ok: true, status: r.status, texto: await leerCuerpoLimitado(r.body, MAX_KUDE_JSON) };
   } catch (error) {
     return { ok: false, motivo: control.signal.aborted || (error instanceof Error && error.name === "AbortError") ? "TIMEOUT" : "RED" };
   } finally {

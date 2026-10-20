@@ -8,7 +8,7 @@ export type DocumentoKudeVisor = { id: string; titulo: string; nombre: string };
 export type EstadoKudeVisor =
   | { fase: "CERRADO" }
   | { fase: "CARGANDO"; docId: string; titulo: string }
-  | { fase: "LISTO"; docId: string; titulo: string; nombre: string; url: string }
+  | { fase: "LISTO"; docId: string; titulo: string; nombre: string; url: string; descarga: "INACTIVA" | "CARGANDO" | "ERROR"; mensajeDescarga: string }
   | { fase: "ERROR"; docId: string; titulo: string; mensaje: string };
 
 export type DependenciasVisor = {
@@ -18,6 +18,8 @@ export type DependenciasVisor = {
   revocarUrl: (url: string) => void;
   descargar: (url: string, nombre: string) => void;
   imprimir: () => void;
+  /** Programa la liberación de la URL temporal usada para la descarga (por defecto, 60 s después). */
+  diferir?: (f: () => void) => void;
 };
 
 export const MENSAJE_KUDE_GENERICO = "No fue posible obtener el KuDE.";
@@ -26,6 +28,8 @@ export function crearControladorVisor(dep: DependenciasVisor) {
   let estado: EstadoKudeVisor = { fase: "CERRADO" };
   let secuencia = 0;
   let aborto: AbortController | null = null;
+  let abortoDescarga: AbortController | null = null;
+  let secuenciaDescarga = 0;
   let doc: DocumentoKudeVisor | null = null;
   const oyentes = new Set<() => void>();
   const poner = (e: EstadoKudeVisor) => {
@@ -36,6 +40,9 @@ export function crearControladorVisor(dep: DependenciasVisor) {
   function liberar() {
     aborto?.abort();
     aborto = null;
+    secuenciaDescarga += 1; // cualquier descarga pendiente queda invalidada: no se completará en la interfaz
+    abortoDescarga?.abort();
+    abortoDescarga = null;
     if (estado.fase === "LISTO") dep.revocarUrl(estado.url);
   }
 
@@ -53,7 +60,7 @@ export function crearControladorVisor(dep: DependenciasVisor) {
 
       if (mia !== secuencia || control.signal.aborted) return; // respuesta tardía: se descarta sin presentarla
 
-      poner({ fase: "LISTO", docId: d.id, titulo: d.titulo, nombre: d.nombre, url: dep.crearUrl(blob) });
+      poner({ fase: "LISTO", docId: d.id, titulo: d.titulo, nombre: d.nombre, url: dep.crearUrl(blob), descarga: "INACTIVA", mensajeDescarga: "" });
     } catch (e) {
       if (mia !== secuencia || control.signal.aborted) return;
       poner({ fase: "ERROR", docId: d.id, titulo: d.titulo, mensaje: e instanceof Error && e.message ? e.message : MENSAJE_KUDE_GENERICO });
@@ -90,8 +97,38 @@ export function crearControladorVisor(dep: DependenciasVisor) {
       doc = null;
       poner({ fase: "CERRADO" });
     },
-    descargar() {
-      if (estado.fase === "LISTO") dep.descargar(estado.url, estado.nombre);
+    /**
+     * «Descargar PDF»: hace una consulta NUEVA al servidor (y por tanto al gateway), distinta de la usada para mostrar. Con un error el visor sigue mostrando el PDF y permite reintentar.
+     * Si el visor se cierra o cambia de documento antes de terminar, la solicitud se aborta y nada se descarga.
+     */
+    async descargar(): Promise<void> {
+      if (estado.fase !== "LISTO" || estado.descarga === "CARGANDO") return;
+
+      const { docId, titulo, nombre, url } = estado;
+      const mia = (secuenciaDescarga += 1);
+      const control = new AbortController();
+
+      abortoDescarga = control;
+      poner({ fase: "LISTO", docId, titulo, nombre, url, descarga: "CARGANDO", mensajeDescarga: "" });
+      try {
+        const blob = await dep.obtener(docId, control.signal);
+
+        if (mia !== secuenciaDescarga || control.signal.aborted) return;
+
+        const temporal = dep.crearUrl(blob);
+
+        try {
+          dep.descargar(temporal, nombre);
+        } finally {
+          (dep.diferir ?? ((f) => void setTimeout(f, 60_000)))(() => dep.revocarUrl(temporal));
+        }
+        abortoDescarga = null;
+        poner({ fase: "LISTO", docId, titulo, nombre, url, descarga: "INACTIVA", mensajeDescarga: "" });
+      } catch (e) {
+        if (mia !== secuenciaDescarga || control.signal.aborted) return;
+        abortoDescarga = null;
+        poner({ fase: "LISTO", docId, titulo, nombre, url, descarga: "ERROR", mensajeDescarga: e instanceof Error && e.message ? e.message : MENSAJE_KUDE_GENERICO });
+      }
     },
     imprimir() {
       if (estado.fase === "LISTO") dep.imprimir();

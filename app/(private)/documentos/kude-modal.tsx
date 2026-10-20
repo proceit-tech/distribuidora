@@ -66,11 +66,12 @@ export function KudeModal({ controlador }: { controlador: Controlador }) {
         <header style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "12px 16px", borderBottom: "1px solid var(--border, #d6dcdc)" }}>
           <h2 id="kude-titulo" style={{ margin: 0, fontSize: "1.05rem" }}>{estado.titulo}</h2>
           <div style={{ display: "flex", gap: 8 }}>
-            <button type="button" className={ui.secondaryButton} disabled={estado.fase !== "LISTO"} onClick={() => controlador.descargar()}>Descargar PDF</button>
+            <button type="button" className={ui.secondaryButton} disabled={estado.fase !== "LISTO" || estado.descarga === "CARGANDO"} onClick={() => void controlador.descargar()}>{estado.fase === "LISTO" && estado.descarga === "CARGANDO" ? "Preparando descarga…" : "Descargar PDF"}</button>
             <button type="button" className={ui.secondaryButton} disabled={estado.fase !== "LISTO"} onClick={() => controlador.imprimir()}>Imprimir</button>
             <button ref={cierre} type="button" className={ui.primaryButton} onClick={() => controlador.cerrar()}>Cerrar</button>
           </div>
         </header>
+        {estado.fase === "LISTO" && estado.descarga === "ERROR" ? <p className={ui.alertError} role="alert" style={{ margin: "8px 16px 0" }}>{estado.mensajeDescarga} Puede intentar «Descargar PDF» nuevamente.</p> : null}
         <div style={{ flex: 1, minHeight: 0, display: "flex", alignItems: "stretch", justifyContent: "center" }}>
           {estado.fase === "CARGANDO" ? <p role="status" style={{ margin: "auto" }}>Obteniendo el KuDE del gateway…</p> : null}
           {estado.fase === "ERROR" ? (
