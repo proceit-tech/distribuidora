@@ -72,7 +72,7 @@ export async function verificarCasosVisualV1(): Promise<string[]> {
     ["exento", "exonerado", "gravado5", "gravado10", "iva5", "iva10", "totalIva", "total"].every((key) => factura.includes(`fmCampo(calculo.texto.${key})`)) &&
     factura.includes("fmCampo(calculo.texto.items[i])") &&
     factura.includes('formatearMontoVisual(textoDec(equivalenteGs), "PYG")') &&
-    !/fd\\(calculo\\.texto\\./.test(factura));
+    !/fd\(calculo\.texto\./.test(factura));
   cierto("VIS-10c precio editable PYG se muestra visual sin decimales cuando está fuera de foco; valor original se edita al enfocarlo",
     factura.includes("const [precioEnFoco, setPrecioEnFoco] = useState<number | null>(null)") &&
     factura.includes("value={precioEnFoco === l.clave ? l.precio : fmCampo(l.precio)}") &&
