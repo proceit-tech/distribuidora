@@ -19,6 +19,14 @@ export function resolverInicializacion(a: { inicializado: boolean; tocado: boole
   return { aplicar: true, formulario: p.formulario, cantidadTxt: p.formulario.cantidad > 0 ? String(p.formulario.cantidad) : "", precargado: p.precargado, descartados: p.descartados };
 }
 
+/**
+ * MOV-R06-01 — qué hacer con una respuesta VÁLIDA de catálogos. Son dos responsabilidades separadas: (1) los catálogos SIEMPRE se disponibilizan (termina la carga, se limpia el error de carga y se liberan los controles que
+ * dependen de ellos), aunque el operador ya haya escrito algo; (2) el formulario solo se inicializa si `resolverInicializacion` lo permite (sin inicialización previa ni edición): el rascunho nunca se sobrescribe.
+ */
+export function procesarCargaCatalogos(a: { inicializado: boolean; tocado: boolean; catalogos: CatalogoMovimientos; consulta: URLSearchParams; hoyInicial: string }): { catalogo: CatalogoMovimientos; limpiarErrorCarga: true; inicializacion: Inicializacion } {
+  return { catalogo: a.catalogos, limpiarErrorCarga: true, inicializacion: resolverInicializacion(a) };
+}
+
 /** Lanza la carga de catálogos y entrega su resultado solo mientras la instancia siga vigente; devuelve la función que la invalida (desmontaje). */
 export function iniciarCargaCatalogos(cargar: () => Promise<CatalogoMovimientos>, ev: { alCargar: (c: CatalogoMovimientos) => void; alFallar: (mensaje: string) => void }): () => void {
   let activo = true;

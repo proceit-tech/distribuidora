@@ -12,7 +12,7 @@ import { motivoObligatorio } from "@/lib/movimientos/reglas";
 import { hoyAsuncion } from "@/lib/listas-precio/calculos";
 import { useProtegerCambios } from "@/lib/ui/proteger-cambios";
 import { cargarCatalogosMovimientos, registrarMovimientoResultado } from "@/lib/movimientos/cliente-api";
-import { iniciarCargaCatalogos, resolverInicializacion } from "@/lib/movimientos/inicializacion";
+import { iniciarCargaCatalogos, procesarCargaCatalogos } from "@/lib/movimientos/inicializacion";
 import { aplicarResultadoSiVigente, crearControlRegistro, MENSAJE_SALIDA, type EstadoIntento } from "@/lib/movimientos/intento";
 import {
   advertenciaSaldo,
@@ -70,12 +70,14 @@ export default function NuevoMovimientoPage() {
   useEffect(() => {
     return iniciarCargaCatalogos(cargarCatalogosMovimientos, {
       alCargar: (c) => {
-        const ini = resolverInicializacion({ inicializado: inicializado.current, tocado: tocado.current, catalogos: c, consulta: new URLSearchParams(window.location.search), hoyInicial });
+        const r = procesarCargaCatalogos({ inicializado: inicializado.current, tocado: tocado.current, catalogos: c, consulta: new URLSearchParams(window.location.search), hoyInicial });
+        const ini = r.inicializacion;
 
+        // Los catálogos válidos SIEMPRE se disponibilizan (aunque el operador ya haya escrito algo); solo la inicialización del formulario depende de resolverInicializacion.
+        setCatalogo(r.catalogo);
+        setErrorForm("");
         if (!ini.aplicar) return;
         inicializado.current = true;
-        setCatalogo(c);
-        setErrorForm("");
         setForm(ini.formulario);
         setBase(ini.formulario);
         setCantidadTxt(ini.cantidadTxt);

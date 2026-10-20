@@ -7,8 +7,8 @@ import { join } from "node:path";
 
 import { contador } from "@/lib/clientes/contador-casos";
 import { hoyAsuncion } from "@/lib/listas-precio/calculos";
-import { aplicarTipo, movimientoSucio, validarMovimiento } from "@/lib/movimientos/formulario";
-import { iniciarCargaCatalogos, resolverInicializacion } from "@/lib/movimientos/inicializacion";
+import { aplicarTipo, formularioInicial, movimientoSucio, validarMovimiento } from "@/lib/movimientos/formulario";
+import { iniciarCargaCatalogos, procesarCargaCatalogos, resolverInicializacion } from "@/lib/movimientos/inicializacion";
 import { crearControlRegistro, type ResultadoRegistro } from "@/lib/movimientos/intento";
 import type { CatalogoMovimientos, NuevoMovimientoStock } from "@/types/movimientos-stock";
 
@@ -42,13 +42,15 @@ function pantalla(hoyInicial: string, consulta = "") {
   const cargar = (c: () => Promise<CatalogoMovimientos>) =>
     iniciarCargaCatalogos(c, {
       alCargar: (cat) => {
-        const ini = resolverInicializacion({ ...refs, catalogos: cat, consulta: new URLSearchParams(consulta), hoyInicial });
+        const r = procesarCargaCatalogos({ ...refs, catalogos: cat, consulta: new URLSearchParams(consulta), hoyInicial });
+        const ini = r.inicializacion;
 
+        // Mismo cableado que la pantalla: los catálogos válidos siempre se disponibilizan; el formulario solo se inicializa si corresponde.
+        st.catalogo = r.catalogo;
+        st.error = "";
         if (!ini.aplicar) return;
         refs.inicializado = true;
         st.inicializaciones += 1;
-        st.catalogo = cat;
-        st.error = "";
         st.form = ini.formulario;
         st.base = ini.formulario;
         st.cantidadTxt = ini.cantidadTxt;
@@ -56,9 +58,11 @@ function pantalla(hoyInicial: string, consulta = "") {
       },
       alFallar: (m) => { st.error = m; },
     });
-  const editar = (parcial: Partial<NuevoMovimientoStock>) => { refs.tocado = true; st.form = { ...st.form!, ...parcial }; };
+  const editar = (parcial: Partial<NuevoMovimientoStock>) => { refs.tocado = true; st.form = { ...(st.form ?? formularioInicial(hoyInicial)), ...parcial }; };
+  /** Los controles que dependen de los catálogos (producto, depósitos…) se habilitan cuando hay catálogos o un error de carga (como `cargando` de la pantalla). */
+  const cargando = () => st.catalogo === null && st.error === "";
 
-  return { st, cargar, editar, refs };
+  return { st, cargar, editar, refs, cargando };
 }
 
 export async function verificarCasosMovimientosInicializacion(): Promise<string[]> {
@@ -106,6 +110,24 @@ export async function verificarCasosMovimientosInicializacion(): Promise<string[
 
   igual("7: al registrar se valida con la fecha VIGENTE de Asunción: un movimiento fechado D sigue siendo válido en D+1; una fecha D+2 sigue siendo futura; D+1 era futura el día D y es válida el día D+1", [errFecha(D, D1), errFecha("2026-10-21", D1), errFecha(D1, D), errFecha(D1, D1)], ["", "La fecha del movimiento no puede ser futura.", "La fecha del movimiento no puede ser futura.", ""]);
 
+  // R06-01: edición ANTES de que lleguen los catálogos → catálogos disponibles Y rascunho intacto (observación, motivo, documento).
+  for (const [campo, valor] of [["observacion", "obs escrita durante la carga"], ["motivo", "motivo escrito durante la carga"], ["documentoReferencia", "OC-77"]] as const) {
+    const pr = pantalla(D);
+    const dr = diferida();
+
+    pr.cargar(() => dr.p);
+    const cargandoAntes = pr.cargando();
+
+    pr.editar({ [campo]: valor });
+    dr.ok(catalogo);
+    await tick();
+    const antesSel = pr.st.form?.[campo];
+
+    pr.editar({ productoId: PROD, depositoDestinoId: DEP_B });
+
+    igual(`R06-01(${campo}): con ${campo} escrito mientras la carga está pendiente, al llegar los catálogos: quedan disponibles, la carga termina, el valor escrito permanece, el formulario NO se reinicializa y ya se puede elegir producto y depósito`, [cargandoAntes, pr.st.catalogo === catalogo, pr.cargando(), antesSel, pr.st.inicializaciones, pr.st.form?.productoId, pr.st.form?.depositoDestinoId, pr.st.form?.[campo], pr.st.form?.cantidad, pr.st.form?.fecha, movimientoSucio(pr.st.form!, formularioInicial(D))], [true, true, false, valor, 0, PROD, DEP_B, valor, 0, D, true]);
+  }
+
   // 8) Respuesta tardía no sustituye un formulario ya editado.
   const p8 = pantalla(D);
   const d8 = diferida();
@@ -115,7 +137,7 @@ export async function verificarCasosMovimientosInicializacion(): Promise<string[
   d8.ok(catalogo);
   await tick();
 
-  igual("8: una respuesta de catálogos posterior a una edición NO sustituye el formulario ya editado", [p8.st.form?.productoId, p8.st.form?.cantidad, p8.st.inicializaciones], ["x", 9, 0]);
+  igual("8: una respuesta de catálogos posterior a una edición NO sustituye el formulario ya editado (y los catálogos sí quedan disponibles)", [p8.st.form?.productoId, p8.st.form?.cantidad, p8.st.inicializaciones, p8.st.catalogo === catalogo], ["x", 9, 0, true]);
 
   // 9) Precarga válida en la inicialización legítima, con descartes informados.
   const p9 = pantalla(D, `producto=${PROD}&tipo=TRANSFERENCIA&depositoOrigen=${DEP_A}&depositoDestino=${DEP_X}&cantidad=3`);
@@ -198,7 +220,7 @@ export async function verificarCasosMovimientosInicializacion(): Promise<string[
 
   igual("15: tras desmontar, la respuesta tardía de catálogos no inicializa ni modifica nada", [p15.st.form, p15.st.catalogo, p15.st.inicializaciones], [null, null, 0]);
 
-  cierto("pantalla (estructura): la carga de catálogos depende solo de `intentoCarga` (ya no de la fecha), la fecha inicial se fija una vez, el registro valida con hoyAsuncion() del momento, los manejadores marcan `tocado`, y «Reintentar» relanza la carga sin tocar el borrador", /\}, \[intentoCarga\]\);/.test(pagina) && !/\[hoy\]/.test(pagina) && /const \[hoyInicial\] = useState\(\(\) => hoyAsuncion\(\)\)/.test(pagina) && /validarMovimiento\(datos, catalogo, hoyAsuncion\(\)\)/.test(pagina) && (pagina.match(/tocado\.current = true;/g) ?? []).length === 4 && /resolverInicializacion\(\{ inicializado: inicializado\.current, tocado: tocado\.current/.test(pagina) && /setIntentoCarga\(\(n\) => n \+ 1\)/.test(pagina) && !/setInterval|setTimeout\(.*hoy/.test(pagina));
+  cierto("pantalla (estructura): la carga de catálogos depende solo de `intentoCarga` (ya no de la fecha), la fecha inicial se fija una vez, el registro valida con hoyAsuncion() del momento, los manejadores marcan `tocado`, y «Reintentar» relanza la carga sin tocar el borrador", /\}, \[intentoCarga\]\);/.test(pagina) && !/\[hoy\]/.test(pagina) && /const \[hoyInicial\] = useState\(\(\) => hoyAsuncion\(\)\)/.test(pagina) && /validarMovimiento\(datos, catalogo, hoyAsuncion\(\)\)/.test(pagina) && (pagina.match(/tocado\.current = true;/g) ?? []).length === 4 && /procesarCargaCatalogos\(\{ inicializado: inicializado\.current, tocado: tocado\.current/.test(pagina) && /setCatalogo\(r\.catalogo\);\n\s+setErrorForm\(""\);\n\s+if \(!ini\.aplicar\) return;/.test(pagina) && /setIntentoCarga\(\(n\) => n \+ 1\)/.test(pagina) && !/setInterval|setTimeout\(.*hoy/.test(pagina));
 
   return fallos;
 }
