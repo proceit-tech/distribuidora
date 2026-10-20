@@ -19,6 +19,7 @@ import { numeracionSiguiente, textoNumeracion } from "@/lib/facturacion/series";
 import { formatearDecimalTexto } from "@/lib/formato/decimal-texto";
 import { formatearFechaPy } from "@/lib/formato/listas";
 import { formatearMontoVisual } from "@/lib/formato/monto-visual";
+import { precioParaEdicion } from "@/lib/formato/precio-campo";
 import { useProtegerCambios } from "@/lib/ui/proteger-cambios";
 
 import { EditorFiscalItem, type UnidadSifen } from "./ajuste-fiscal-item";
@@ -257,7 +258,7 @@ function SelectorProducto({ alAgregar, alCerrar, cantidadItems, permisos, moneda
                     {d.mensaje && d.habilitado ? <small className={estilos.aviso}>{d.mensaje}</small> : null}
                     {d.mensaje && !d.habilitado ? <small className={estilos.impedimento}>{d.mensaje}{d.corregirEnProductos ? <> <Link href="/productos">Corregir en Productos</Link></> : null}</small> : null}
                   </div>
-                  <span className={estilos.precio}>{p.precio && p.monedaPrecio === moneda ? `${simboloMoneda(moneda)} ${fd(p.precio)}` : "—"}</span>
+                  <span className={estilos.precio}>{p.precio && p.monedaPrecio === moneda ? `${simboloMoneda(moneda)} ${formatearMontoVisual(p.precio, moneda)}` : "—"}</span>
                   <button type="button" className={ui.secondaryButton} disabled={!d.habilitado} onClick={() => { alAgregar(p); setAviso(`«${p.descripcion}» añadido.`); }}>Añadir</button>
                 </li>
               );
@@ -424,7 +425,7 @@ function BuscadorProducto({ alElegir, permisos, moneda }: { alElegir: (p: Produc
         return {
           titulo: p.descripcion,
           detalle: `${p.codigo}${p.gtin ? ` · GTIN ${p.gtin}` : ""} · ${p.unidadSimbolo ?? "sin unidad"} · ${p.afectacion ? `${ETIQUETA_IVA[p.afectacion]}${p.tasa ? ` ${p.tasa}%` : ""}` : "IVA sin clasificar"}`,
-          derecha: p.precio && p.monedaPrecio === moneda ? `${simboloMoneda(moneda)} ${fd(p.precio)}` : "—", habilitado: d.habilitado,
+          derecha: p.precio && p.monedaPrecio === moneda ? `${simboloMoneda(moneda)} ${formatearMontoVisual(p.precio, moneda)}` : "—", habilitado: d.habilitado,
           impedimento: d.mensaje,
           enlace: d.corregirEnProductos ? { href: "/productos", texto: "Corregir en Productos" } : undefined,
         };
@@ -463,6 +464,7 @@ export default function NuevaFacturaPage() {
   const [infoAdicional, setInfoAdicional] = useState("");
   const [cliente, setCliente] = useState<Cliente | null>(null);
   const [lineas, setLineas] = useState<Linea[]>([]);
+  const [precioEnFoco, setPrecioEnFoco] = useState<number | null>(null);
   const [siguienteClave, setSiguienteClave] = useState(1);
   const [clave, setClave] = useState(() => crypto.randomUUID());
   const [selector, setSelector] = useState<"cliente" | "producto" | null>(null);
@@ -602,7 +604,7 @@ export default function NuevaFacturaPage() {
       return;
     }
 
-    setLineas((ls) => [...ls, { clave: siguienteClave, producto: p, cantidad: "1", precio: referencia(p, moneda) ?? "", ajuste: AJUSTE_VACIO }]);
+    setLineas((ls) => [...ls, { clave: siguienteClave, producto: p, cantidad: "1", precio: precioParaEdicion(referencia(p, moneda)), ajuste: AJUSTE_VACIO }]);
     // Un producto fiscalmente incompleto abre su panel contextual (solo con el permiso de ajuste fiscal) para completarlo sin salir de la factura.
     if (puedeAjustarFiscal && problemasFiscales(p, AJUSTE_VACIO, "1", moneda).filter((m) => !m.startsWith("sin precio")).length > 0) setEditando(siguienteClave);
     setSiguienteClave((n) => n + 1);
@@ -627,6 +629,8 @@ export default function NuevaFacturaPage() {
   const resumen = revision && revision.huella === huellaActual ? revision.resumen : null;
   // Solo presentación: los importes del resumen se muestran sin decimales largos (PYG sin decimales); el cálculo y el payload no cambian.
   const fmv = (t: string | number | null | undefined) => formatearMontoVisual(t, resumen?.moneda);
+  // Solo presentación del formulario; lo enviado nunca proviene de esta representación.
+  const fmCampo = (t: string | number | null | undefined) => formatearMontoVisual(t, moneda);
 
   function limpiarRevision() {
     flujo.cancelar();
@@ -675,7 +679,7 @@ export default function NuevaFacturaPage() {
     setMoneda(m);
     setCambio(m === "PYG" ? "" : (cotizaciones[m]?.cambio ?? ""));
     setCambioManual(false);
-    setLineas((ls) => ls.map((l) => ({ ...l, precio: referencia(l.producto, m) ?? "" })));
+    setLineas((ls) => ls.map((l) => ({ ...l, precio: precioParaEdicion(referencia(l.producto, m)) })));
     setPagos([PAGO_UI_VACIO]);
     setCredito(CREDITO_UI_VACIO);
     limpiarRevision();
@@ -1045,23 +1049,25 @@ export default function NuevaFacturaPage() {
                                     inputMode="decimal"
                                     aria-label={`Precio unitario de ${l.producto.descripcion}`}
                                     aria-invalid={precOk ? undefined : true}
-                                    value={l.precio}
+                                    value={precioEnFoco === l.clave ? l.precio : fmCampo(l.precio)}
+                                    onFocus={() => setPrecioEnFoco(l.clave)}
+                                    onBlur={() => setPrecioEnFoco((actual) => (actual === l.clave ? null : actual))}
                                     onChange={(e) => editar(l.clave, { precio: e.target.value.replace(",", ".") })}
                                   />
                                   {!precOk ? <small className={estilos.fieldError}>Mayor que 0</small> : null}
                                   {mod ? (
                                     <span className={estilos.modificado}>
-                                      Lista: {referencia(l.producto, moneda) === null ? `sin precio en ${extranjera ? moneda : "guaraníes"}` : fd(referencia(l.producto, moneda))} · <button type="button" className={estilos.linkButton} onClick={() => editar(l.clave, { precio: referencia(l.producto, moneda) ?? "" })}>Restaurar</button>
+                                      Lista: {referencia(l.producto, moneda) === null ? `sin precio en ${extranjera ? moneda : "guaraníes"}` : fmCampo(referencia(l.producto, moneda))} · <button type="button" className={estilos.linkButton} onClick={() => editar(l.clave, { precio: precioParaEdicion(referencia(l.producto, moneda)) })}>Restaurar</button>
                                     </span>
                                   ) : null}
                                 </>
                               ) : referencia(l.producto, moneda) === null ? (
                                 <small className={estilos.fieldError}>Sin precio de lista: requiere el permiso de precio</small>
                               ) : (
-                                fd(referencia(l.producto, moneda))
+                                fmCampo(referencia(l.producto, moneda))
                               )}
                             </td>
-                            <td className={`${estilos.num} ${estilos.subtotal}`} data-label="Subtotal">{calculo.completo ? fd(calculo.texto.items[i]) : "—"}</td>
+                            <td className={`${estilos.num} ${estilos.subtotal}`} data-label="Subtotal">{calculo.completo ? fmCampo(calculo.texto.items[i]) : "—"}</td>
                             <td className={estilos.accion}>
                               {puedeAjustarFiscal ? (
                                 <button
@@ -1108,19 +1114,19 @@ export default function NuevaFacturaPage() {
               <h2 id="sec-totales">Resumen ({MONEDAS_FE[moneda].nombre.toLowerCase()})</h2>
 
               <dl className={estilos.totals}>
-                <div><dt>Exento</dt><dd>{fd(calculo.texto.exento)}</dd></div>
-                <div><dt>Exonerado</dt><dd>{fd(calculo.texto.exonerado)}</dd></div>
-                <div><dt>Gravado 5 % (IVA incl.)</dt><dd>{fd(calculo.texto.gravado5)}</dd></div>
-                <div><dt>IVA 5 %</dt><dd>{fd(calculo.texto.iva5)}</dd></div>
-                <div><dt>Gravado 10 % (IVA incl.)</dt><dd>{fd(calculo.texto.gravado10)}</dd></div>
-                <div><dt>IVA 10 %</dt><dd>{fd(calculo.texto.iva10)}</dd></div>
-                <div className={estilos.totalIva}><dt>Total IVA</dt><dd>{fd(calculo.texto.totalIva)}</dd></div>
+                <div><dt>Exento</dt><dd>{fmCampo(calculo.texto.exento)}</dd></div>
+                <div><dt>Exonerado</dt><dd>{fmCampo(calculo.texto.exonerado)}</dd></div>
+                <div><dt>Gravado 5 % (IVA incl.)</dt><dd>{fmCampo(calculo.texto.gravado5)}</dd></div>
+                <div><dt>IVA 5 %</dt><dd>{fmCampo(calculo.texto.iva5)}</dd></div>
+                <div><dt>Gravado 10 % (IVA incl.)</dt><dd>{fmCampo(calculo.texto.gravado10)}</dd></div>
+                <div><dt>IVA 10 %</dt><dd>{fmCampo(calculo.texto.iva10)}</dd></div>
+                <div className={estilos.totalIva}><dt>Total IVA</dt><dd>{fmCampo(calculo.texto.totalIva)}</dd></div>
               </dl>
 
               <div className={estilos.totalGeneral}>
                 <span>Total general</span>
-                <strong>{sim} {fd(calculo.texto.total)}</strong>
-                {extranjera ? <small>Equivalente: Gs. {equivalenteGs === null ? "—" : fd(textoDec(equivalenteGs))} (cambio {cambioNormal ?? "—"})</small> : null}
+                <strong>{sim} {fmCampo(calculo.texto.total)}</strong>
+                {extranjera ? <small>Equivalente: Gs. {equivalenteGs === null ? "—" : formatearMontoVisual(textoDec(equivalenteGs), "PYG")} (cambio {cambioNormal ?? "—"})</small> : null}
                 <small>IVA incluido{hayPrecioModificado ? " · con precios modificados" : ""}</small>
               </div>
 
@@ -1147,7 +1153,7 @@ export default function NuevaFacturaPage() {
 
           <div className={estilos.barraMovil} inert={confirmacion !== null}>
             <div>
-              <strong>{sim} {fd(calculo.texto.total)}</strong>
+              <strong>{sim} {fmCampo(calculo.texto.total)}</strong>
               <small>{faltan.length > 0 ? `Falta: ${faltan.join(", ")}.` : "Listo para revisar."}</small>
             </div>
             <button type="button" className={ui.primaryButton} disabled={!puedeGuardar} onClick={grabar}>{revisando ? "Revisando..." : "Revisar"}</button>
