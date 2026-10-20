@@ -63,6 +63,6 @@ O responsável mostrou NEX-001…051 já aplicadas na VM. Proibido editar script
 ## Nova evidência KuDE/PDF P0 — 20/10/2026
 
 **Prioridade de apresentação:** o responsável forneceu captura do REQUEST Postman `POST https://gateway-bebidas-py.e-factura-hub.com/api/kude` com `{"tipOpe":"4","dEst":"001","dPunExp":"001","dNumDoc":"0010004","dSerieNum":null,"tipoDoc":"FE"}`. Isso substitui apenas o diagnóstico de que **o endpoint do KuDE era desconhecido** em GAP-01; **não** confirma retorno de PDF, schema response, autorização Bearer compatível ou significado geral de `tipOpe`. Resposta HTTP/Content-Type e mapping são pendências obrigatórias, sem presumir PDF/Base64/URL.
-- **Requisito:** [REQ-DOC-KUDE-PDF-GATEWAY-2026-10-20](../definicoes/REQ-DOC-KUDE-PDF-GATEWAY-2026-10-20.md).
+- **Requisito:** [REQ-DOC-KUDE-PDF-GATEWAY-2026-10-20](../../definicoes/REQ-DOC-KUDE-PDF-GATEWAY-2026-10-20.md).
 - **Linear:** [PRO-194](https://linear.app/proceit/issue/PRO-194), filha de PRO-91, P0 urgente.
 - **Escopo autorizado para Claude:** integrar backend por ID documento e isolamento empresa/sucursal/VER; fonte fiscal imutável; reutilizar gateway autenticação; botão KuDE FE elegível, parse/bytes somente conforme resposta real; testes dirigidos e parada para AUD-DOC-KUDE-R01 independente. **Não** habilitar NCE, XML, emails, exportações ou eventos. Não aplicar SQL/VM/deploy nem declarar homologação por request isolado. R01 DOC-D01..D08 não são implicitamente resolvidos por esta especificação.
