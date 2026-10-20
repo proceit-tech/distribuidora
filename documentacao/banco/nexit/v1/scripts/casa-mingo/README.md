@@ -85,3 +85,15 @@ docker exec -i nexit-db psql -X -U nexit_app -d nexit -v ON_ERROR_STOP=1 < CASA_
 ```
 
 **No ejecutar todavía el borrador** `CASA_MINGO_APERTURA_10_UNIDADES_PENDIENTE_AUTORIZACION.sql`.
+
+
+## CAMBIO DE REGLA DEL 20/10/2026 — IMPORTANTE
+El responsable aclaró que **las cantidades y precios existentes deben respetarse tal cual el Excel**. La propuesta de 10 unidades a TODOS queda **revocada** y su script fue reemplazado por un bloqueo (`\\quit 2`).
+- 465 registros con cantidad positiva Excel: mantener exactamente, suma 91.794 unidades.
+- 89 con cantidad explícita 0: mantienen cero, no disponibles para facturar sin un nuevo movimiento.
+- 7 sin cantidad en el Excel: **10 unidades por defecto** = 70 adicionales.
+- Total a registrar en DEP-PRINCIPAL: **91.864 unidades** en **472 productos**; los otros 89 quedan con cero.
+- **Precios de venta** ya cargados: los 561 se preservan tal como están, 2 sin precio fueron completados a Gs. 1.000.
+- Archivo nuevo: `CASA_MINGO_APERTURA_STOCK_EXCEL_PENDIENTE_AUTORIZACION.sql`, con 561 cantidades auditables y dos movimientos de apertura (300+172).
+- **No ejecutar todavía** sin autorización expresa del costo de inventario y preflight. `PRECIO_EXCEL` usa precio de VENTA como costo provisional: contablemente distinto del costo de adquisición real; solo autorizado expresamente. `COSTO_FIJO` requiere `-v costo_unitario=...` y también aprobación.
+- Si se necesita que los 89 con cero se facturen, se requiere una decisión nueva sobre ese stock; no cambiar cero por diez arbitrariamente.
