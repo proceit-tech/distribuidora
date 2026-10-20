@@ -60,7 +60,7 @@ El conteo simple de empresa se filtra por UUID real y puede incluir productos ex
 
 ## Preparación de apertura de stock: 10 unidades por producto (PENDIENTE)
 
-Se agregó `CASA_MINGO_preflight_stock_10_SOLO_LECTURA.sql` y un **borrador bloqueado por autorización**:
+Se agregó `CASA_MINGO_preflight_stock_excel_SOLO_LECTURA.sql` y un **borrador bloqueado por autorización**:
 `CASA_MINGO_APERTURA_10_UNIDADES_PENDIENTE_AUTORIZACION.sql`.
 
 ### Evidencia del banco (20/10/2026)
@@ -81,7 +81,7 @@ Se agregó `CASA_MINGO_preflight_stock_10_SOLO_LECTURA.sql` y un **borrador bloq
 cd /tmp/nexit-instalacao
 git pull --ff-only
 cd documentacao/banco/nexit/v1/scripts/casa-mingo
-docker exec -i nexit-db psql -X -U nexit_app -d nexit -v ON_ERROR_STOP=1 < CASA_MINGO_preflight_stock_10_SOLO_LECTURA.sql
+docker exec -i nexit-db psql -X -U nexit_app -d nexit -v ON_ERROR_STOP=1 < CASA_MINGO_preflight_stock_excel_SOLO_LECTURA.sql
 ```
 
 **No ejecutar todavía el borrador** `CASA_MINGO_APERTURA_10_UNIDADES_PENDIENTE_AUTORIZACION.sql`.
@@ -97,3 +97,5 @@ El responsable aclaró que **las cantidades y precios existentes deben respetars
 - Archivo nuevo: `CASA_MINGO_APERTURA_STOCK_EXCEL_PENDIENTE_AUTORIZACION.sql`, con 561 cantidades auditables y dos movimientos de apertura (300+172).
 - **No ejecutar todavía** sin autorización expresa del costo de inventario y preflight. `PRECIO_EXCEL` usa precio de VENTA como costo provisional: contablemente distinto del costo de adquisición real; solo autorizado expresamente. `COSTO_FIJO` requiere `-v costo_unitario=...` y también aprobación.
 - Si se necesita que los 89 con cero se facturen, se requiere una decisión nueva sobre ese stock; no cambiar cero por diez arbitrariamente.
+
+- La validacion final del 20/10/2026 corrige el preflight anterior; `CASA_MINGO_preflight_stock_10_SOLO_LECTURA.sql` fue bloqueado, no ejecutarlo.
