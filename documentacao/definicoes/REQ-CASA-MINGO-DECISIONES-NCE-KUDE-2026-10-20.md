@@ -24,16 +24,38 @@
   2. `lib/facturacion/shared.ts`: `obtenerKude` rejeita todo `doc.tipo !== "FE"`, e `nombreArchivoKude` força `KuDE-FE-`.
   3. `lib/facturacion/gateway.ts`: body de `POST /api/kude` envia `tipoDoc: "FE"` fixo.
   4. `app/(private)/documentos/page.tsx`: título `KuDE · Factura`, arquivo `KuDE-FE`, rótulos e mensagem de indisponibilidade codificados para FE.
-  5. O campo `tipOpe` é lido de `iTiOpe` da solicitação FE persistida, enquanto o payload de NCE (`construirPayloadNCE`) não inclui `iTiOpe`. Portanto, não basta liberar a checkbox: resolver a origem do valor **sem inventar** default de `tipOpe`, conforme contrato efetivo do gateway.
+  5. **ERRO ENCONTRADO:** o código atual exige `tipOpe` no gateway e o extrai de `iTiOpe`. **O contrato corrigido pelo responsável não inclui `tipOpe` nem para FE nem para NCE**. Remover essa dependência da solicitação do KuDE, sem alterar o payload de emissão fiscal.
 - Escopo funcional: no listado `Documentos electrónicos`, oferecer o mesmo botão/visor de KuDE para documentos **NCE APROBADA com CDC próprio válido**, exclusivamente dentro de empresa/sucursal/permissões da sessão. Usar **identidade fiscal da NCE**, nunca número/CDC da FE associada. Retornar `KuDE-NCE-EEE-PPP-NNNNNNN[-SERIE].pdf`; título `KuDE · Nota de crédito`.
-- `POST /api/kude`: enviar o tipo NCE **conforme contrato do fornecedor** (tipoDoc/tipOpe). NÃO presumir que o request FE serve sem ajuste. O contrato NCE não foi demonstrado por captura/Postman no histórico: aceitar somente após mock de request/response NCE com especificação e teste real do responsável. Caso falte dado obrigatório, mostrar erro claro e **não liberar PDF falso**.
+- **Contrato de requisição CONFIRMADO diretamente pelo responsável (20/10/2026):** `POST /api/kude` usa os MESMOS cinco campos para FE e NCE: `dEst`, `dPunExp`, `dNumDoc`, `dSerieNum`, `tipoDoc`. **Não enviar `tipOpe`**. O único campo que muda por tipo é `tipoDoc`, com `"FE"` ou `"NCE"`. Os números devem vir do documento persistido, mantendo zeros à esquerda. Não inventar parâmetros extras.
+
+```json
+{
+  "dEst": "001",
+  "dPunExp": "003",
+  "dNumDoc": "0009001",
+  "dSerieNum": null,
+  "tipoDoc": "FE"
+}
+```
+
+```json
+{
+  "dEst": "001",
+  "dPunExp": "003",
+  "dNumDoc": "0009001",
+  "dSerieNum": null,
+  "tipoDoc": "NCE"
+}
+```
+
+- A resposta de sucesso segue o contrato já implementado para FE (`status:"success"`, `CDC` próprio do documento e `kude` Base64). Confirmar operacionalmente o KuDE NCE no gateway antes de declarar homologação; sem PDF falso.
 - Reutilizar os limites, checagem de `CDC` retornado igual ao CDC próprio da NCE, decodificação Base64 segura, PDF íntegro, token/credenciais da empresa, uma renovação 401, no-store, solicitação nova ao abrir e baixar, isolamento de sessão e ausência de persistência de KuDE.
 - NÃO mudar comportamento da FE, layout, colunas, logo, série, gateways configurados, numeração, banco, estoque nem SIFEN. O cliente verá o KuDE tal como o gateway de teste gerar.
 
 ## 4. ACEITE
-1. FE APROBADA + CDC: KuDE e comportamento atual **inalterados**, incluindo request `tipoDoc:"FE"`.
+1. FE APROBADA + CDC: KuDE e comportamento funcional existentes **preservados**, enviando apenas os cinco campos do contrato corrigido (`tipoDoc:"FE"`, sem `tipOpe`).
 2. NCE APROBADA + CDC: botão KuDE disponível e visor com PDF da própria NCE; impressão/download, nome `KuDE-NCE`; nenhuma troca de documento na UI.
 3. NCE PENDIENTE/RECHAZADA/sem CDC, outra empresa/sucursal ou sem permissão: não oferecer ou negar seguro, sem chamada insegura ao gateway.
-4. Mock do gateway valida o `tipoDoc`/parâmetros próprios NCE, autenticação, CDC da NCE, Base64/PDF, erro, timeout e isolamento. **Homologação real somente pelo responsável**, se gateway oferecer KuDE NCE.
+4. Mock do gateway valida **exatamente os cinco campos** (sem `tipOpe`), `tipoDoc` FE/NCE, autenticação, CDC próprio, Base64/PDF, erro, timeout e isolamento. **Homologação real somente pelo responsável**, se gateway oferecer KuDE NCE.
 5. DESCUENTO: operador informa valor e quantidade 1; resultado fiscal correto, sem alteração de estoque, sem exceder saldo; não alterar a FE original, respeitar IVA original (inclusive cenários mistos), motivos e bloqueios.
 6. Não abrir PR/issue para alterar identidade do ambiente de testes, logotipo nem layout de KuDE FE.
