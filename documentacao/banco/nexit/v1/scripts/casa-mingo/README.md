@@ -1,6 +1,6 @@
 # CASA MINGO — importación inicial de 561 productos (enero 2026)
 
-**Alcance:** catálogo de CASA MINGO exclusivamente. No ejecutar en otra empresa.
+**Alcance:** catálogo de CASA MINGO exclusivamente. No ejecutar en otra empresa. **El UUID real se determina por consulta a `empresas` y se pasa explícitamente con `-v empresa_uuid=...`.** Nunca suponer que `codigo='casa_mingo'` existe.
 **Estado:** publicado para revisión/ejecución en VM. NO se ejecutó en PostgreSQL.
 
 ## Archivos
@@ -20,21 +20,28 @@
 - **No se inicializa el stock**: para registrar existencias reales hace falta escoger depósito, costo de apertura y hacer un movimiento oficial de inventario; nunca escribir directamente en `stock_saldos`.
 
 ## Ejecución en la VM (por responsable técnico, después de respaldo)
-En la VM donde está montado el repositorio actualizado, desde su raíz:
+En la VM donde está montado el repositorio actualizado, desde su raíz. Primero identificar el UUID real (solo lectura):
+
+```bash
+docker exec -i nexit-db psql -X -U nexit_app -d nexit -c "SELECT id AS empresa_uuid, codigo, razon_social, estado, es_demo FROM empresas ORDER BY razon_social;"
+```
+
+Comprobar que el UUID elegido pertenece a CASA MINGO activa y no demo. Si la empresa no existe, **NO EJECUTAR LA IMPORTACIÓN**: crear el tenant por el flujo oficial y volver a identificarlo. Luego definir manualmente `EMPRESA_UUID` y efectuar respaldo antes de la importación:
 
 ```bash
 git checkout feature/NEXIT-2026-001-banco-demo
 git pull --ff-only
 cd documentacao/banco/nexit/v1/scripts/casa-mingo
+EMPRESA_UUID='REEMPLAZAR_POR_UUID_REAL_VERIFICADO'
 
 # Solo lectura: no modifica datos.
-docker exec -i nexit-db psql -X -U nexit_app -d nexit -v ON_ERROR_STOP=1 < CASA_MINGO_preflight_SOLO_LECTURA.sql
+docker exec -i nexit-db psql -X -U nexit_app -d nexit -v ON_ERROR_STOP=1 -v empresa_uuid="$EMPRESA_UUID" < CASA_MINGO_preflight_SOLO_LECTURA.sql
 
 # SOLO tras validar el preflight y generar respaldo de PostgreSQL:
-docker exec -i nexit-db psql -X -U nexit_app -d nexit -v ON_ERROR_STOP=1 -v autorizar_carga=true < CASA_MINGO_importar_productos.sql
+docker exec -i nexit-db psql -X -U nexit_app -d nexit -v ON_ERROR_STOP=1 -v empresa_uuid="$EMPRESA_UUID" -v autorizar_carga=true < CASA_MINGO_importar_productos.sql
 
 # Revisión de cobertura (561 o menos solo si script falló/rollback):
-docker exec -i nexit-db psql -X -U nexit_app -d nexit -v ON_ERROR_STOP=1 -c "SELECT count(*) AS total FROM productos WHERE empresa_id=(SELECT id FROM empresas WHERE codigo='casa_mingo');"
+docker exec -i nexit-db psql -X -U nexit_app -d nexit -v ON_ERROR_STOP=1 -c "SELECT count(*) AS total FROM productos WHERE empresa_id=(SELECT id FROM empresas WHERE id='$EMPRESA_UUID'::uuid);"
 ```
 
-El conteo simple de empresa puede incluir productos existentes y no sustituye la verificación transaccional de 561 líneas hecha por el SQL. Guardar salida completa y logs de ejecución; no considerar homologado sin consulta funcional en NEXIT y pruebas de FE/GTIN.
+El conteo simple de empresa se filtra por UUID real y puede incluir productos existentes y no sustituye la verificación transaccional de 561 líneas hecha por el SQL. Guardar salida completa y logs de ejecución; no considerar homologado sin consulta funcional en NEXIT y pruebas de FE/GTIN.
