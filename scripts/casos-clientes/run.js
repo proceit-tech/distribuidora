@@ -77,6 +77,7 @@ Module._resolveFilename = function (request, ...resto) {
   const lp2 = cargar("lib/listas-precio/listas-r02.casos.js");
   const cgw = cargar("lib/facturacion/configuracion-gateway.casos.js");
   const gwc = cargar("lib/facturacion/gateway-config.casos.js");
+  const kud = cargar("lib/facturacion/kude.casos.js");
   const red = cargar("lib/facturacion/rediseno.casos.js");
   const suites = [
     ["teléfono y día de cobro", async () => tel.verificarCasosTelefonoYCobro(), () => tel.CASOS_TELEFONO.length + 11 + 6 + 2],
@@ -149,6 +150,7 @@ Module._resolveFilename = function (request, ...resto) {
     ["Movimientos MOV-O07 / PRO-188: intención durable (reserva previa, recuperación, K1 única, titularidad, concurrencia, 7 días, rechazo definitivo, SQL NEX-066 estructural)", async () => mvt.verificarCasosMovimientosIntenciones(), null],
     ["Productos (AUD-R02): concurrencia, alta con solo CREAR, retomada, cierre idempotente, interfaz por permisos y borradores de documentos", async () => pd2.verificarCasosProductosR02(), null],
     ["Facturación PRO-133: prontitud del gateway por empresa (SIN_CONFIGURAR/INVALIDA/SIN_CREDENCIALES/CONFIGURADO), envío bloqueado en la pantalla y aprovisionamiento de prueba sin secretos", async () => gwc.verificarCasosGatewayConfig(), null],
+    ["Facturación PRO-194: KuDE (PDF) de la FE — solicitud al gateway por empresa, PDF validado, errores controlados, alcance y pantalla (contrato de respuesta NO confirmado: solo se acepta application/pdf)", async () => kud.verificarCasosKude(), null],
   ];
   let total = 0;
   let fallosTotal = 0;

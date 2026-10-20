@@ -45,9 +45,9 @@ type Intento = { id: string; tipo: string; fase: string | null; lote: string | n
 type Respuesta = {
   documentos: Documento[]; total: number; pagina: number; totalPaginas: number; resumen: Record<string, number>; sucursales: Array<{ id: string; nombre: string }>; permisos: { editar: boolean; crear: boolean };
 };
-type Detalle = { cargando: boolean; error: string; intentos: Intento[]; aviso: string; consultando: boolean };
+type Detalle = { cargando: boolean; error: string; intentos: Intento[]; aviso: string; consultando: boolean; kudeCargando: boolean };
 
-const DETALLE_VACIO: Detalle = { cargando: false, error: "", intentos: [], aviso: "", consultando: false };
+const DETALLE_VACIO: Detalle = { cargando: false, error: "", intentos: [], aviso: "", consultando: false, kudeCargando: false };
 
 const INDICADORES: Array<{ grupo: GrupoIndicador | ""; titulo: string; ayuda: string; clase: string }> = [
   { grupo: "", titulo: "Total", ayuda: "Documentos visibles", clase: ui.summaryTeal },
@@ -210,6 +210,45 @@ export default function DocumentosPage() {
       actualizarDetalle(d.id, { cargando: false, intentos: j.intentos });
     } catch (e) {
       actualizarDetalle(d.id, { cargando: false, error: e instanceof Error ? e.message : "No fue posible cargar el detalle." });
+    }
+  }
+
+  // KuDE (PRO-194): el navegador solo envía el ID; el PDF llega del servidor ya validado. Un clic a la vez por documento; el archivo es el de ESTE documento (blob propio, liberado tras usarlo).
+  async function abrirKude(d: Documento, descargar: boolean) {
+    if (abiertos[d.id]?.kudeCargando) return;
+
+    // Ventana abierta en el mismo gesto del clic (evita el bloqueo de ventanas emergentes); se cierra si no hay PDF.
+    const ventana = descargar ? null : window.open("", "_blank");
+
+    actualizarDetalle(d.id, { kudeCargando: true, aviso: "", error: "" });
+    try {
+      const r = await fetch(`/api/documentos/${d.id}/kude${descargar ? "?descargar=1" : ""}`, { cache: "no-store" });
+
+      if (!r.ok) {
+        const j = (await r.json().catch(() => null)) as { error?: string } | null;
+
+        throw new Error(j?.error ?? "No fue posible obtener el KuDE.");
+      }
+      if (!(r.headers.get("content-type") ?? "").toLowerCase().includes("application/pdf")) throw new Error("El servidor no devolvió un PDF válido.");
+
+      const url = URL.createObjectURL(await r.blob());
+
+      if (descargar) {
+        const a = document.createElement("a");
+
+        a.href = url;
+        a.download = `KuDE-FE-${d.establecimiento}-${d.puntoExpedicion}-${d.numero}${d.serie ? `-${d.serie}` : ""}.pdf`.replace(/[^0-9A-Za-z.-]/g, "");
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      } else if (ventana) {
+        ventana.location.href = url;
+      }
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      actualizarDetalle(d.id, { kudeCargando: false });
+    } catch (e) {
+      ventana?.close();
+      actualizarDetalle(d.id, { kudeCargando: false, error: e instanceof Error ? e.message : "No fue posible obtener el KuDE." });
     }
   }
 
@@ -414,7 +453,17 @@ export default function DocumentosPage() {
                             <div><dt className={ui.muted}>Última consulta</dt><dd style={{ margin: 0 }}>{d.ultimaConsultaAt ? `${fechaHora(d.ultimaConsultaAt)} · ${ETIQUETA_RESULTADO_INTENTO[d.ultimaConsultaResultado ?? ""] ?? d.ultimaConsultaResultado}` : "Nunca consultado"}</dd></div>
                           </dl>
 
-                          <p className={ui.muted} style={{ margin: "4px 0" }}>PDF/KuDE y XML: descarga no disponible (endpoint del proveedor sin confirmar).</p>
+                          {d.tipo === "FE" && d.estadoSifen === "APROBADO" && d.cdc ? (
+                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", margin: "6px 0" }}>
+                              <button type="button" className={ui.secondaryButton} disabled={det.kudeCargando} onClick={() => abrirKude(d, false)}>
+                                {det.kudeCargando ? "Obteniendo KuDE..." : "Ver KuDE (PDF)"}
+                              </button>
+                              <button type="button" className={ui.secondaryButton} disabled={det.kudeCargando} onClick={() => abrirKude(d, true)}>
+                                {det.kudeCargando ? "Obteniendo KuDE..." : "Descargar KuDE"}
+                              </button>
+                            </div>
+                          ) : null}
+                          <p className={ui.muted} style={{ margin: "4px 0" }}>{d.tipo === "FE" ? "XML: descarga no disponible." : "KuDE y XML: descarga no disponible para este tipo de documento."}</p>
 
                           {crear && (d.estadoLocal === "PENDIENTE_ENVIO" || (d.estadoLocal === "ERROR_ENVIO" && d.envioErrorTipo !== "RECHAZO")) ? (
                             <button type="button" className={ui.primaryButton} disabled={det.consultando} onClick={() => enviarAlGateway(d)}>

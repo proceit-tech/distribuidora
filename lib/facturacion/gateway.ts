@@ -627,3 +627,85 @@ export async function enviarDocumentoGateway(
 
   return resultadoEnvioVacio("ERROR_HTTP", "AUTENTICACION", "ERROR_ENVIO", "AUTENTICACION", 401, "El gateway rechazó el token tras renovarlo.", fases);
 }
+
+// ── KuDE (PDF) ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+// Contrato PARCIAL (REQ-DOC-KUDE-PDF-GATEWAY, PRO-194): se conoce la SOLICITUD (POST {base}/api/kude con Bearer y {tipOpe, dEst, dPunExp, dNumDoc, dSerieNum, tipoDoc}); la RESPUESTA
+// del proveedor NO se ha entregado. Por eso solo se acepta lo verificable: HTTP 200 + Content-Type application/pdf + bytes que empiezan por «%PDF-» y terminan con «%%EOF». JSON/base64/URL
+// u otro formato → FORMATO_NO_CONFIRMADO (nunca se interpreta ni se descarga). No se sigue ninguna URL devuelta por el proveedor (SSRF).
+export const MAX_KUDE_BYTES = 10 * 1024 * 1024;
+export type KudeFetch = (url: string, init: { method: string; headers: Record<string, string>; body: string; signal: AbortSignal }) => Promise<{ status: number; headers: { get(nombre: string): string | null }; arrayBuffer(): Promise<ArrayBuffer> }>;
+export type DependenciasKude = { fetch?: FetchLike; fetchKude?: KudeFetch; env?: Record<string, string | undefined>; ahora?: () => number };
+export type DocumentoKude = { tipOpe: string; establecimiento: string; puntoExpedicion: string; numero: string; serie: string | null };
+export type CodigoErrorKude = "SIN_CREDENCIALES" | "AUTENTICACION" | "TIMEOUT" | "NO_DISPONIBLE" | "NO_ENCONTRADO" | "FORMATO_NO_CONFIRMADO" | "PDF_INVALIDO" | "DEMASIADO_GRANDE";
+export type ResultadoKude = { ok: true; pdf: Buffer } | { ok: false; codigo: CodigoErrorKude; http: number | null; mensaje: string };
+
+const falloKude = (codigo: CodigoErrorKude, http: number | null, mensaje: string): ResultadoKude => ({ ok: false, codigo, http, mensaje });
+
+/** ¿Son bytes de un PDF completo? Cabecera «%PDF-» y marca «%%EOF» en el último kilobyte. */
+export function esPdfValido(b: Buffer): boolean {
+  return b.length > 8 && b.subarray(0, 5).toString("latin1") === "%PDF-" && b.subarray(Math.max(0, b.length - 1024)).toString("latin1").includes("%%EOF");
+}
+
+type RespuestaBinaria = { ok: true; status: number; tipo: string; bytes: Buffer | null; largo: number | null } | { ok: false; motivo: "TIMEOUT" | "RED" };
+
+async function enviarBinario(url: string, token: string, body: unknown, timeoutMs: number, fetchFn: KudeFetch): Promise<RespuestaBinaria> {
+  const control = new AbortController();
+  const timer = setTimeout(() => control.abort(), timeoutMs);
+
+  try {
+    const r = await fetchFn(url, { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/pdf, application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify(body), signal: control.signal });
+    const declarado = Number(r.headers.get("content-length"));
+    const tipo = (r.headers.get("content-type") ?? "").toLowerCase();
+
+    // Una respuesta que declara más de lo permitido ni siquiera se lee.
+    if (Number.isFinite(declarado) && declarado > MAX_KUDE_BYTES) return { ok: true, status: r.status, tipo, bytes: null, largo: declarado };
+
+    const bytes = Buffer.from(await r.arrayBuffer());
+
+    return { ok: true, status: r.status, tipo, bytes: bytes.length > MAX_KUDE_BYTES ? null : bytes, largo: bytes.length };
+  } catch (error) {
+    return { ok: false, motivo: control.signal.aborted || (error instanceof Error && error.name === "AbortError") ? "TIMEOUT" : "RED" };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Solicita el KuDE de UN documento. Solo lectura en el gateway (repetirlo no duplica nada). No lanza por fallos del gateway; nunca devuelve tokens ni el cuerpo del proveedor. */
+export async function obtenerKudeGateway(config: ConfigGateway, doc: DocumentoKude, dep: DependenciasKude = {}): Promise<ResultadoKude> {
+  const credenciales = credencialesDe(config, dep.env);
+
+  if (!credenciales) return falloKude("SIN_CREDENCIALES", null, "Las credenciales del gateway de esta empresa no están configuradas.");
+
+  const d = { fetch: dep.fetch ?? (globalThis.fetch as unknown as FetchLike), ahora: dep.ahora ?? Date.now };
+  const fetchKude = dep.fetchKude ?? (globalThis.fetch as unknown as KudeFetch);
+  const cuerpo = { tipOpe: doc.tipOpe, dEst: doc.establecimiento, dPunExp: doc.puntoExpedicion, dNumDoc: doc.numero, dSerieNum: doc.serie, tipoDoc: "FE" };
+
+  for (const forzar of [false, true]) {
+    const token = await obtenerToken(config, credenciales.ruc, credenciales.password, d, forzar);
+
+    if (typeof token !== "string") {
+      return token.resultado === "TIMEOUT" || token.resultado === "RED"
+        ? falloKude(token.resultado === "TIMEOUT" ? "TIMEOUT" : "NO_DISPONIBLE", null, token.resultado === "TIMEOUT" ? "Tiempo de espera agotado al autenticar con el gateway." : "No fue posible comunicarse con el gateway.")
+        : falloKude("AUTENTICACION", token.http, "El gateway rechazó la autenticación (credenciales de la empresa).");
+    }
+
+    const r = await enviarBinario(`${config.baseUrl}/api/kude`, token, cuerpo, config.timeoutMs, fetchKude);
+
+    if (!r.ok) return r.motivo === "TIMEOUT" ? falloKude("TIMEOUT", null, "Tiempo de espera agotado al solicitar el KuDE al gateway.") : falloKude("NO_DISPONIBLE", null, "No fue posible comunicarse con el gateway.");
+
+    const textoCorto = r.bytes && !r.tipo.includes("pdf") ? r.bytes.subarray(0, 2000).toString("utf8") : "";
+
+    if (esTokenInvalido(r.status, textoCorto) && !forzar) continue; // token vencido: se renueva UNA vez (solicitud de solo lectura)
+    if (r.status === 401 || esTokenInvalido(r.status, textoCorto)) return falloKude("AUTENTICACION", r.status, "El gateway rechazó la sesión de la empresa tras renovarla.");
+    if (r.status === 404) return falloKude("NO_ENCONTRADO", 404, "El gateway no encontró el KuDE de este documento.");
+    if (r.status >= 500 || r.status === 408 || r.status === 429) return falloKude("NO_DISPONIBLE", r.status, "El gateway no está disponible en este momento. Intente nuevamente en unos minutos.");
+    if (r.status !== 200) return falloKude("FORMATO_NO_CONFIRMADO", r.status, "El gateway no entregó el KuDE de este documento.");
+    if (r.bytes === null) return falloKude("DEMASIADO_GRANDE", r.status, "El archivo recibido del gateway excede el tamaño permitido y fue descartado.");
+    if (!r.tipo.includes("application/pdf")) return falloKude("FORMATO_NO_CONFIRMADO", r.status, "El gateway respondió en un formato de KuDE que aún no está confirmado; no se descargó ningún archivo.");
+    if (!esPdfValido(r.bytes)) return falloKude("PDF_INVALIDO", r.status, "El archivo recibido del gateway no es un PDF válido y fue descartado.");
+
+    return { ok: true, pdf: r.bytes };
+  }
+
+  return falloKude("AUTENTICACION", 401, "El gateway rechazó el token tras renovarlo.");
+}
