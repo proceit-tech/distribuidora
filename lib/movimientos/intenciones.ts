@@ -107,6 +107,8 @@ export async function reservarIntencion(db: Db, empresaId: string, usuarioId: st
 
     const x = pg(e);
 
+    // MOV-R10-01: repetir una K1 existente sin visibilidad vigente → bloqueo neutro (sin snapshot, número ni DTO); la intención y K2 quedan como estaban.
+    if (sinVisibilidad(e)) throw new ErrorIntencion(MENSAJE_SIN_VISIBILIDAD, 409, { pendiente: true, intencion: null, sinVisibilidad: true });
     if (x.code === "42501") throw new ErrorIntencion("No tiene permiso para registrar movimientos.", 403);
     if (x.code === "P0001" && x.detail?.startsWith("NEX:INTENCION_PENDIENTE")) {
       let invisible = false;

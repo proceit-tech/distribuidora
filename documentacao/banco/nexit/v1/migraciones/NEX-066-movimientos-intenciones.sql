@@ -104,6 +104,10 @@ BEGIN
     IF v_prev.usuario_id <> p_usuario OR v_prev.huella <> v_huella THEN
       RAISE EXCEPTION 'la clave del registro no está disponible' USING ERRCODE = 'P0001', DETAIL = 'NEX:INTENCION_CONFLICTO';
     END IF;
+    -- MOV-R10-01: repetir una K1 existente NO devuelve el snapshot si el operador ya no tiene visibilidad vigente (VER + alcance de depósitos). K1, snapshot y estado quedan intactos.
+    IF NOT public.movimiento_intencion_visible(p_empresa, p_usuario, v_prev.snapshot) THEN
+      RAISE EXCEPTION 'la operación anterior no puede recuperarse con los permisos actuales' USING ERRCODE = '42501', DETAIL = 'NEX:INTENCION_SIN_VISIBILIDAD';
+    END IF;
     RETURN QUERY SELECT v_prev.clave, v_prev.estado, v_prev.snapshot, v_prev.creado_at, false;
     RETURN;
   END IF;
