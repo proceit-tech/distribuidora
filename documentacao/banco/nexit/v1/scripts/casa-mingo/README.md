@@ -12,7 +12,7 @@
 
 ## Reglas
 - 561 filas = 561 códigos internos distintos. 5 códigos duplicados asignados consecutivamente desde el máximo numérico de la fuente +1.
-- El código interno SIFEN E701 `dCodInt` acepta **1–20 caracteres**. Códigos de 11 dígitos se conservan íntegros, incluidos ceros a izquierda.
+- El campo fiscal SIFEN E701 `dCodInt` acepta hasta **50 caracteres**; el campo interno de NEXIT `productos.codigo_sifen` tiene un limite propio de **20**. Los codigos de 11 digitos se conservan integros, incluidos ceros a izquierda.
 - GTIN es otro campo: su formato permitido es 8, 12, 13 o 14 dígitos. Los 5 productos reasignados no reciben el GTIN repetido, para evitar un código de barras ambiguo.
 - 17 filas sin marca = `SIN MARCA`; 80 sin línea = `SIN LINEA` (línea por familia).
 - 2 precios sin dato = 1000 PYG (IVA incluido); 7 cantidades sin dato = 1. Cero explícito se mantiene.
