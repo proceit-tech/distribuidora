@@ -46,6 +46,7 @@ CREATE TEMP TABLE casa_mingo_stage (
 ) ON COMMIT DROP;
 
 COPY casa_mingo_stage (fila_excel,codigo,descripcion,marca,familia,linea,procedencia,pais_iso3,pais_nombre,precio_pyg,cantidad_excel,total_excel,gtin_validado)
+  FROM STDIN WITH (FORMAT csv, HEADER true, ENCODING 'UTF8');
 fila_excel,codigo,descripcion,marca,familia,linea,procedencia,pais_iso3,pais_nombre,precio_pyg,cantidad_excel,total_excel,gtin_validado
 4,26102469668,EST.6 COPAS TULIPE 47CL CHEFF&SOMMELIER,CHEFF&SOMMELIER,COPAS EN ESTUCHES,TULIPE,FRANCIA,FRA,Francia,280000,271,75880000,
 5,26102469514,EST.6 COPAS TULIPE 58CL CHEFF&SOMMELIER,CHEFF&SOMMELIER,COPAS EN ESTUCHES,TULIPE,FRANCIA,FRA,Francia,310000,84,26040000,
@@ -631,7 +632,7 @@ BEGIN
  IF EXISTS(SELECT codigo FROM casa_mingo_stage GROUP BY codigo HAVING count(*)>1) THEN
     RAISE EXCEPTION 'IMPORTACION BLOQUEADA: codigos no unicos tras normalizacion.' USING ERRCODE='P0001';
  END IF;
- IF EXISTS (SELECT 1 FROM casa_mingo_stage WHERE codigo !~ '^[0-9]{1,20} OR btrim(descripcion)='' OR char_length(descripcion)>120 OR btrim(familia)='') THEN
+ IF EXISTS (SELECT 1 FROM casa_mingo_stage WHERE codigo !~ '^[0-9]{1,20}$' OR btrim(descripcion)='' OR char_length(descripcion)>120 OR btrim(familia)='') THEN
     RAISE EXCEPTION 'Codigo, descripcion fiscal o familia invalidos en Excel.';
  END IF;
  IF EXISTS (SELECT 1 FROM casa_mingo_stage WHERE precio_pyg<0 OR cantidad_excel<0 OR total_excel<0) THEN
@@ -772,131 +773,4 @@ END $auditoria_final$;
 
 COMMIT;
 -- CANTIDADES: quedan preparadas para movimiento oficial de apertura; no se altera stock directo.
--- FIN. Prohibido UPDATE directo de stock_saldos o inventario_costos. OR btrim(descripcion)='' OR char_length(descripcion)>120 OR btrim(familia)='') THEN
-    RAISE EXCEPTION 'Codigo, descripcion fiscal o familia invalidos en Excel.';
- END IF;
- IF EXISTS (SELECT 1 FROM casa_mingo_stage WHERE precio_pyg<0 OR cantidad_excel<0 OR total_excel<0) THEN
-    RAISE EXCEPTION 'Precio, stock o total negativos en Excel.';
- END IF;
- IF (SELECT moneda_base_codigo FROM empresas WHERE id=v_empresa) <> 'PYG' THEN
-    RAISE EXCEPTION 'La empresa CASA MINGO no tiene moneda base PYG; no cargar precios convertidos por suposicion.';
- END IF;
- IF (SELECT count(*) FROM unidades_medida WHERE codigo='UN' AND unidad_sifen_codigo=77 AND activo) <> 1 THEN
-    RAISE EXCEPTION 'No existe EXACTAMENTE una unidad UN activa vinculada al SIFEN 77 (UNI). Revisar NEX-039 y seed global.';
- END IF;
- IF (SELECT count(*) FROM impuestos WHERE codigo='IVA10' AND porcentaje=10 AND activo) <> 1 THEN
-    RAISE EXCEPTION 'No existe EXACTAMENTE un impuesto IVA10 activo con tasa 10.';
- END IF;
- IF EXISTS (
-   SELECT 1 FROM casa_mingo_stage s JOIN productos p ON p.empresa_id=v_empresa AND p.codigo=s.codigo
-   WHERE lower(btrim(p.descripcion)) <> lower(btrim(s.descripcion))
- ) THEN
-    RAISE EXCEPTION 'Codigos ya existentes en CASA MINGO tienen diferente descripcion. No reemplazar fichas historicas.';
- END IF;
- IF EXISTS (
-   SELECT 1 FROM listas_precio l WHERE l.empresa_id=v_empresa AND l.es_referencia
-    AND (l.moneda_codigo <> 'PYG' OR NOT l.incluye_impuesto OR l.tipo_lista<>'VENTA')
- ) THEN
-    RAISE EXCEPTION 'Lista de precio de referencia incompatible con PYG, IVA incluido y VENTA.';
- END IF;
-END $preflight$;
-
--- Se conservan taxonomias existentes y se agregan SOLO las faltantes para CASA MINGO.
--- Categoria no viene en Excel: NO inventarla; se hereda de familia.categoria_id si está configurada.
-INSERT INTO familias_producto (empresa_id,nombre)
- SELECT DISTINCT current_setting('import_casa_mingo.empresa_id')::uuid,btrim(familia)
- FROM casa_mingo_stage
- ON CONFLICT DO NOTHING;
-
-INSERT INTO marcas_producto (empresa_id,nombre)
- SELECT DISTINCT current_setting('import_casa_mingo.empresa_id')::uuid,btrim(marca)
- FROM casa_mingo_stage WHERE NULLIF(btrim(marca),'') IS NOT NULL
- ON CONFLICT DO NOTHING;
-
-INSERT INTO lineas_producto (empresa_id,familia_id,nombre)
- SELECT DISTINCT current_setting('import_casa_mingo.empresa_id')::uuid,f.id,btrim(s.linea)
- FROM casa_mingo_stage s
- JOIN familias_producto f ON f.empresa_id=current_setting('import_casa_mingo.empresa_id')::uuid
-                         AND lower(btrim(f.nombre))=lower(btrim(s.familia))
- WHERE NULLIF(btrim(s.linea),'') IS NOT NULL
- ON CONFLICT DO NOTHING;
-
--- Guardas de consistencia catalogos: no se acepta clasificacion desconocida/inactiva.
-DO $catalogos$
-DECLARE v_empresa uuid := current_setting('import_casa_mingo.empresa_id')::uuid;
-BEGIN
- IF EXISTS (
-  SELECT 1 FROM casa_mingo_stage s LEFT JOIN familias_producto f
-    ON f.empresa_id=v_empresa AND lower(btrim(f.nombre))=lower(btrim(s.familia)) AND f.activo
-  WHERE f.id IS NULL
- ) THEN RAISE EXCEPTION 'Hay familias de CASA MINGO no resueltas/INACTIVAS'; END IF;
- IF EXISTS (
-  SELECT 1 FROM casa_mingo_stage s JOIN familias_producto f
-   ON f.empresa_id=v_empresa AND lower(btrim(f.nombre))=lower(btrim(s.familia))
-   LEFT JOIN lineas_producto l ON l.empresa_id=v_empresa AND l.familia_id=f.id
-                   AND lower(btrim(l.nombre))=lower(btrim(s.linea)) AND l.activo
-   WHERE NULLIF(btrim(s.linea),'') IS NOT NULL AND l.id IS NULL
- ) THEN RAISE EXCEPTION 'Hay lineas no resueltas/INACTIVAS'; END IF;
- IF EXISTS (
-  SELECT 1 FROM casa_mingo_stage s LEFT JOIN marcas_producto m
-  ON m.empresa_id=v_empresa AND lower(btrim(m.nombre))=lower(btrim(s.marca)) AND m.activo
-  WHERE NULLIF(btrim(s.marca),'') IS NOT NULL AND m.id IS NULL
- ) THEN RAISE EXCEPTION 'Hay marcas no resueltas/INACTIVAS'; END IF;
-END $catalogos$;
-
--- Los productos existentes por mismo codigo se CONSERVAN (sin UPDATE ni alterar precio).
--- Se registran SOLO nuevos productos. SIFEN 77 = Unidad; IVA10: afectacion_iva=1.
-CREATE TEMP TABLE casa_mingo_nuevos ON COMMIT DROP AS
-WITH inserted AS (
- INSERT INTO productos(
-  empresa_id,codigo,codigo_inventario,codigo_sifen,codigo_barras,
-  descripcion,descripcion_factura,tipo_producto,categoria_id,
-  marca_id,familia_id,linea_id,origen_etiqueta,
-  unidad_medida_id,impuesto_id,afectacion_iva,
-  controla_stock,modo_control_stock,pais_origen_codigo,pais_origen_nombre
- )
- SELECT
-  current_setting('import_casa_mingo.empresa_id')::uuid,
-  s.codigo,s.codigo,s.codigo,NULLIF(s.gtin_validado,''),
-  s.descripcion,s.descripcion,'MERCADERIA',f.categoria_id,
-  m.id,f.id,l.id,NULLIF(btrim(s.procedencia),''),
-  u.id,i.id,1,true,'CANTIDAD',NULLIF(s.pais_iso3,''),NULLIF(s.pais_nombre,'')
- FROM casa_mingo_stage s
- JOIN familias_producto f ON f.empresa_id=current_setting('import_casa_mingo.empresa_id')::uuid AND lower(btrim(f.nombre))=lower(btrim(s.familia))
- LEFT JOIN lineas_producto l ON l.empresa_id=f.empresa_id AND l.familia_id=f.id AND lower(btrim(l.nombre))=lower(btrim(s.linea))
- LEFT JOIN marcas_producto m ON m.empresa_id=f.empresa_id AND lower(btrim(m.nombre))=lower(btrim(s.marca))
- CROSS JOIN (SELECT id FROM unidades_medida WHERE codigo='UN' AND unidad_sifen_codigo=77 AND activo) u
- CROSS JOIN (SELECT id FROM impuestos WHERE codigo='IVA10' AND porcentaje=10 AND activo) i
- ON CONFLICT (empresa_id,codigo) DO NOTHING
- RETURNING id,codigo
-)
-SELECT id,codigo FROM inserted;
-
-INSERT INTO producto_unidades(
- empresa_id,producto_id,unidad_medida_id,nombre_presentacion,factor_conversion,
- es_unidad_base,es_unidad_compra,es_unidad_venta,codigo_barras
-)
-SELECT current_setting('import_casa_mingo.empresa_id')::uuid,n.id,u.id,'Unidad',1,true,true,true,NULLIF(s.gtin_validado,'')
-FROM casa_mingo_nuevos n
-JOIN casa_mingo_stage s ON s.codigo=n.codigo
-CROSS JOIN (SELECT id FROM unidades_medida WHERE codigo='UN' AND unidad_sifen_codigo=77 AND activo) u;
-
-INSERT INTO producto_codigos(empresa_id,producto_id,tipo,codigo,descripcion,es_principal)
-SELECT current_setting('import_casa_mingo.empresa_id')::uuid,n.id,'GTIN',s.gtin_validado,'Codigo GTIN validado por digito de control',true
-FROM casa_mingo_nuevos n JOIN casa_mingo_stage s ON s.codigo=n.codigo
-WHERE NULLIF(s.gtin_validado,'') IS NOT NULL
-ON CONFLICT DO NOTHING;
-
--- Precio venta de referencia: solo los NUEVOS con valor presente; IVA incluido, moneda PYG.
--- No usar el precio de VENTA como costo del stock.
-SELECT producto_fijar_precio_referencia(current_setting('import_casa_mingo.empresa_id')::uuid,n.id,s.precio_pyg)
-FROM casa_mingo_nuevos n JOIN casa_mingo_stage s ON s.codigo=n.codigo
-WHERE s.precio_pyg IS NOT NULL;
-
-SELECT (SELECT count(*) FROM casa_mingo_nuevos) AS productos_creados,
-       (SELECT count(*) FROM casa_mingo_stage s JOIN productos p ON p.empresa_id=current_setting('import_casa_mingo.empresa_id')::uuid AND p.codigo=s.codigo) AS codigos_presentes_empresa,
-       (SELECT count(*) FROM casa_mingo_stage WHERE precio_pyg IS NULL) AS precios_no_informados,
-       (SELECT count(*) FROM casa_mingo_stage WHERE cantidad_excel IS NOT NULL) AS cantidades_solo_informativas;
-
-COMMIT;
 -- FIN. Prohibido UPDATE directo de stock_saldos o inventario_costos.
