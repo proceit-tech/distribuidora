@@ -7,7 +7,7 @@ import { CampoFecha } from "@/components/ui/campo-fecha";
 import ui from "@/components/ui/lista-padrao/lista.module.css";
 import { siguienteOrden, type Orden } from "@/components/ui/lista-padrao/orden";
 import { ThOrdenable } from "@/components/ui/lista-padrao/th-ordenable";
-import { crearControladorVisor, pedirKudeAlServidor } from "@/lib/facturacion/kude-visor";
+import { crearControladorVisor, kudeDisponible, pedirKudeAlServidor } from "@/lib/facturacion/kude-visor";
 import { iniciarRefresco } from "@/lib/facturacion/refresco-documentos";
 import {
   ESTADOS_SIFEN,
@@ -427,10 +427,16 @@ export default function DocumentosPage() {
                         </div>
                       </td>
                       <td className={ui.actionsCell}>
-                        <button type="button" className={ui.detailButton} aria-expanded={Boolean(det)} onClick={() => alternar(d)}>
-                          {det ? "Ocultar detalle" : "Ver detalle"}
-                          <span aria-hidden="true">{det ? "˄" : "˅"}</span>
-                        </button>
+                        <div className={estilos.accionesLinea}>
+                          {kudeDisponible(d) ? (
+                            <button type="button" className={estilos.iconBtn} title="Ver KuDE (PDF)" aria-label={`Ver KuDE (PDF) de la factura ${d.establecimiento}-${d.puntoExpedicion}-${d.numero}`} onClick={() => abrirKude(d)}>
+                              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /><path d="M9 13h6M9 17h4" /></svg>
+                            </button>
+                          ) : null}
+                          <button type="button" className={estilos.iconBtn} aria-expanded={Boolean(det)} title={det ? "Ocultar detalle" : "Ver detalle"} aria-label={det ? "Ocultar detalle" : "Ver detalle"} onClick={() => alternar(d)}>
+                            <svg viewBox="0 0 24 24" aria-hidden="true">{det ? <path d="m6 15 6-6 6 6" /> : <path d="m6 9 6 6 6-6" />}</svg>
+                          </button>
+                        </div>
                       </td>
                     </tr>
 
@@ -449,11 +455,6 @@ export default function DocumentosPage() {
                             <div><dt className={ui.muted}>Última consulta</dt><dd style={{ margin: 0 }}>{d.ultimaConsultaAt ? `${fechaHora(d.ultimaConsultaAt)} · ${ETIQUETA_RESULTADO_INTENTO[d.ultimaConsultaResultado ?? ""] ?? d.ultimaConsultaResultado}` : "Nunca consultado"}</dd></div>
                           </dl>
 
-                          {d.tipo === "FE" && d.estadoSifen === "APROBADO" && d.cdc ? (
-                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", margin: "6px 0" }}>
-                              <button type="button" className={ui.secondaryButton} onClick={() => abrirKude(d)}>Ver KuDE (PDF)</button>
-                            </div>
-                          ) : null}
                           <p className={ui.muted} style={{ margin: "4px 0" }}>{d.tipo === "FE" ? "XML: descarga no disponible." : "KuDE y XML: descarga no disponible para este tipo de documento."}</p>
 
                           {crear && (d.estadoLocal === "PENDIENTE_ENVIO" || (d.estadoLocal === "ERROR_ENVIO" && d.envioErrorTipo !== "RECHAZO")) ? (

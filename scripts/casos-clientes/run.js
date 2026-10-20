@@ -78,6 +78,7 @@ Module._resolveFilename = function (request, ...resto) {
   const cgw = cargar("lib/facturacion/configuracion-gateway.casos.js");
   const gwc = cargar("lib/facturacion/gateway-config.casos.js");
   const kud = cargar("lib/facturacion/kude.casos.js");
+  const vis = cargar("lib/facturacion/visual-v1.casos.js");
   const red = cargar("lib/facturacion/rediseno.casos.js");
   const suites = [
     ["teléfono y día de cobro", async () => tel.verificarCasosTelefonoYCobro(), () => tel.CASOS_TELEFONO.length + 11 + 6 + 2],
@@ -151,6 +152,7 @@ Module._resolveFilename = function (request, ...resto) {
     ["Productos (AUD-R02): concurrencia, alta con solo CREAR, retomada, cierre idempotente, interfaz por permisos y borradores de documentos", async () => pd2.verificarCasosProductosR02(), null],
     ["Facturación PRO-133: prontitud del gateway por empresa (SIN_CONFIGURAR/INVALIDA/SIN_CREDENCIALES/CONFIGURADO), envío bloqueado en la pantalla y aprovisionamiento de prueba sin secretos", async () => gwc.verificarCasosGatewayConfig(), null],
     ["Facturación PRO-194: KuDE (PDF) de la FE — solicitud al gateway por empresa, PDF validado, errores controlados, alcance y pantalla (contrato de respuesta NO confirmado: solo se acepta application/pdf)", async () => kud.verificarCasosKude(), null],
+    ["Facturación — primera versión visual: acciones con iconos en Documentos (KuDE en la fila) e importes sin decimales largos en el resumen de Factura y Nota de crédito (solo presentación)", async () => vis.verificarCasosVisualV1(), null],
   ];
   let total = 0;
   let fallosTotal = 0;

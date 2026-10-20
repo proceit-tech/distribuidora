@@ -11,6 +11,7 @@ import { entradasIniciales, etiquetaIvaLinea } from "@/lib/facturacion/nce-entra
 import { iniciarRefresco } from "@/lib/facturacion/refresco-documentos";
 import { formatearDecimalTexto } from "@/lib/formato/decimal-texto";
 import { formatearFechaPy } from "@/lib/formato/listas";
+import { formatearMontoVisual } from "@/lib/formato/monto-visual";
 
 import estilos from "./page.module.css";
 
@@ -38,6 +39,8 @@ type CuerpoRevisado = { facturaId: string; motivo: number; sucursalId: string; p
 type Entrada = { incluida: boolean; valor: string };
 
 const fm = (t: string) => formatearDecimalTexto(t);
+/** Solo presentación: importes sin decimales largos (PYG sin decimales). No afecta cálculos ni lo enviado. */
+const fmv = (t: string | number | null | undefined, moneda?: string | null) => formatearMontoVisual(t, moneda);
 const aleatorio = () => (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
 
 async function pedir<T>(url: string, init?: RequestInit): Promise<T> {
@@ -358,8 +361,8 @@ function Formulario() {
                         <td><strong>{f.numero}</strong>{f.ncePendiente ? <span className={estilos.chip}>NCE pendiente</span> : null}</td>
                         <td>{formatearFechaPy(f.fechaEmision)}</td>
                         <td>{f.moneda}</td>
-                        <td className={estilos.num}>{fm(f.total)}</td>
-                        <td className={estilos.num}>{fm(f.saldo)}</td>
+                        <td className={estilos.num}>{fmv(f.total, f.moneda)}</td>
+                        <td className={estilos.num}>{fmv(f.saldo, f.moneda)}</td>
                         <td className={estilos.num}>
                           <button type="button" className={ui.secondaryButton} disabled={f.ncePendiente || cargando} title={f.ncePendiente ? "Hay una nota de crédito pendiente de resultado para esta factura." : undefined} onClick={() => void abrirFactura(f.id)}>Seleccionar factura</button>
                         </td>
@@ -447,8 +450,8 @@ function Formulario() {
                                 <div className={estilos.sub}>{l.codigoInterno} · ítem {l.linea} · <button type="button" className={estilos.linkBtn} aria-expanded={abierta} onClick={() => setAbiertas((p) => { const n = new Set(p); if (n.has(l.linea)) n.delete(l.linea); else n.add(l.linea); return n; })}>{abierta ? "Ocultar acreditado" : "Ver acreditado"}</button></div>
                               </td>
                               <td>{etiquetaIvaLinea(l.afectacion, l.tasa, l.proporcion)}</td>
-                              <td className={estilos.num}>{fm(l.cantidad)} {l.unidad} × {fm(l.precio)}<div className={estilos.sub}>= {fm(l.total)}</div></td>
-                              <td className={estilos.num}>{esDevolucion ? `${fm(l.cantidadDisponible)} ${l.unidad}` : fm(l.saldoMonto)}</td>
+                              <td className={estilos.num}>{fm(l.cantidad)} {l.unidad} × {fmv(l.precio, factura.moneda)}<div className={estilos.sub}>= {fmv(l.total, factura.moneda)}</div></td>
+                              <td className={estilos.num}>{esDevolucion ? `${fm(l.cantidadDisponible)} ${l.unidad}` : fmv(l.saldoMonto, factura.moneda)}</td>
                               <td className={estilos.num}>
                                 <input className={estilos.entrada} inputMode="decimal" aria-label={`${esDevolucion ? "Cantidad" : "Monto"} del ítem ${l.linea}`} disabled={!e.incluida || l.agotada} value={e.valor} placeholder={esDevolucion ? l.cantidadDisponible : l.saldoMonto}
                                   onChange={(ev) => setEntradas((p) => ({ ...p, [l.linea]: { ...e, valor: ev.target.value } }))} />
@@ -460,9 +463,9 @@ function Formulario() {
                                 <td colSpan={5}>
                                   <div className={estilos.detalleGrid}>
                                     <span>Cantidad acreditada: <b>{fm(l.cantidadAcreditada)}</b></span>
-                                    <span>Monto acreditado: <b>{fm(l.montoAcreditado)}</b></span>
+                                    <span>Monto acreditado: <b>{fmv(l.montoAcreditado, factura.moneda)}</b></span>
                                     <span>Saldo cantidad: <b>{fm(l.cantidadDisponible)}</b></span>
-                                    <span>Saldo monto: <b>{fm(l.saldoMonto)}</b></span>
+                                    <span>Saldo monto: <b>{fmv(l.saldoMonto, factura.moneda)}</b></span>
                                   </div>
                                 </td>
                               </tr>
@@ -514,18 +517,18 @@ function Formulario() {
                 <table>
                   <thead><tr><th>Ítem</th><th>Descripción</th><th>IVA</th><th className={estilos.num}>Cantidad</th><th className={estilos.num}>Precio</th><th className={estilos.num}>Monto</th></tr></thead>
                   <tbody>
-                    {resumen.lineas.map((l) => <tr key={l.linea}><td>{l.linea}</td><td>{l.descripcion}<div className={estilos.sub}>{l.codigo}</div></td><td>{etiquetaIvaLinea(l.afectacion, l.tasa, l.proporcion)}</td><td className={estilos.num}>{fm(l.cantidad)}</td><td className={estilos.num}>{fm(l.precioUnitario)}</td><td className={estilos.num}>{fm(l.monto)}</td></tr>)}
+                    {resumen.lineas.map((l) => <tr key={l.linea}><td>{l.linea}</td><td>{l.descripcion}<div className={estilos.sub}>{l.codigo}</div></td><td>{etiquetaIvaLinea(l.afectacion, l.tasa, l.proporcion)}</td><td className={estilos.num}>{fm(l.cantidad)}</td><td className={estilos.num}>{fmv(l.precioUnitario, resumen.moneda)}</td><td className={estilos.num}>{fmv(l.monto, resumen.moneda)}</td></tr>)}
                   </tbody>
                 </table>
               </div>
               <dl className={estilos.totales}>
-                <div><dt>Exento</dt><dd>{fm(resumen.totales.exento)}</dd></div>
-                <div><dt>Gravado 5%</dt><dd>{fm(resumen.totales.gravado5)}</dd></div>
-                <div><dt>Gravado 10%</dt><dd>{fm(resumen.totales.gravado10)}</dd></div>
-                <div><dt>IVA 5%</dt><dd>{fm(resumen.totales.iva5)}</dd></div>
-                <div><dt>IVA 10%</dt><dd>{fm(resumen.totales.iva10)}</dd></div>
-                <div><dt>Total IVA</dt><dd>{fm(resumen.totales.totalIva)}</dd></div>
-                <div className={estilos.totalNce}><dt>Total NCE</dt><dd>{fm(resumen.totales.total)}</dd></div>
+                <div><dt>Exento</dt><dd>{fmv(resumen.totales.exento, resumen.moneda)}</dd></div>
+                <div><dt>Gravado 5%</dt><dd>{fmv(resumen.totales.gravado5, resumen.moneda)}</dd></div>
+                <div><dt>Gravado 10%</dt><dd>{fmv(resumen.totales.gravado10, resumen.moneda)}</dd></div>
+                <div><dt>IVA 5%</dt><dd>{fmv(resumen.totales.iva5, resumen.moneda)}</dd></div>
+                <div><dt>IVA 10%</dt><dd>{fmv(resumen.totales.iva10, resumen.moneda)}</dd></div>
+                <div><dt>Total IVA</dt><dd>{fmv(resumen.totales.totalIva, resumen.moneda)}</dd></div>
+                <div className={estilos.totalNce}><dt>Total NCE</dt><dd>{fmv(resumen.totales.total, resumen.moneda)}</dd></div>
               </dl>
             </div>
             <div className={estilos.modalPie}>

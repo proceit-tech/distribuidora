@@ -18,6 +18,7 @@ import { crearFlujoRevision, type Revision } from "@/lib/facturacion/revision-fa
 import { numeracionSiguiente, textoNumeracion } from "@/lib/facturacion/series";
 import { formatearDecimalTexto } from "@/lib/formato/decimal-texto";
 import { formatearFechaPy } from "@/lib/formato/listas";
+import { formatearMontoVisual } from "@/lib/formato/monto-visual";
 import { useProtegerCambios } from "@/lib/ui/proteger-cambios";
 
 import { EditorFiscalItem, type UnidadSifen } from "./ajuste-fiscal-item";
@@ -624,6 +625,8 @@ export default function NuevaFacturaPage() {
   // FAT-D02: huella canónica del formulario actual; la revisión solo vale mientras coincide con ella.
   const huellaActual = JSON.stringify(cuerpoFactura());
   const resumen = revision && revision.huella === huellaActual ? revision.resumen : null;
+  // Solo presentación: los importes del resumen se muestran sin decimales largos (PYG sin decimales); el cálculo y el payload no cambian.
+  const fmv = (t: string | number | null | undefined) => formatearMontoVisual(t, resumen?.moneda);
 
   function limpiarRevision() {
     flujo.cancelar();
@@ -1202,18 +1205,18 @@ export default function NuevaFacturaPage() {
               {resumen.cambio ? (
                 <>
                   <div><dt>Tipo de cambio (manual)</dt><dd>Gs. {fd(resumen.cambio.valor)} por 1 {resumen.moneda}{resumen.cambio.modificado && resumen.cambio.catalogo ? ` · distinto del registrado (${resumen.cambio.catalogo.cambio}, ${resumen.cambio.catalogo.fecha})` : ""}</dd></div>
-                  <div><dt>Equivalente en guaraníes</dt><dd>Gs. {fd(resumen.cambio.totalGs)}</dd></div>
+                  <div><dt>Equivalente en guaraníes</dt><dd>Gs. {formatearMontoVisual(resumen.cambio.totalGs, "PYG")}</dd></div>
                 </>
               ) : null}
               {resumen.pagos && resumen.pagos.length > 0
-                ? resumen.pagos.map((p, i) => <div key={i}><dt>{resumen.credito ? "Medio de la entrega" : "Pago"} · {p.medio}</dt><dd>{simboloMoneda(resumen.moneda)} {fd(p.monto)}{p.detalle ? ` · ${p.detalle}` : ""}</dd></div>)
+                ? resumen.pagos.map((p, i) => <div key={i}><dt>{resumen.credito ? "Medio de la entrega" : "Pago"} · {p.medio}</dt><dd>{simboloMoneda(resumen.moneda)} {fmv(p.monto)}{p.detalle ? ` · ${p.detalle}` : ""}</dd></div>)
                 : resumen.formaPago ? <div><dt>Forma de pago</dt><dd>{resumen.formaPago}</dd></div> : null}
               {resumen.credito ? (
                 <>
                   <div><dt>Tipo de crédito</dt><dd>{resumen.credito.tipo}{resumen.credito.plazo ? ` · ${resumen.credito.plazo}` : ""}</dd></div>
-                  <div><dt>Entrega inicial</dt><dd>{simboloMoneda(resumen.moneda)} {fd(resumen.credito.entrega)}</dd></div>
-                  <div><dt>Saldo financiado</dt><dd>{simboloMoneda(resumen.moneda)} {fd(resumen.credito.saldo)}</dd></div>
-                  {resumen.credito.cuotas.map((q) => <div key={q.numero}><dt>Cuota {q.numero}/{resumen.credito?.cuotas.length}</dt><dd>{simboloMoneda(resumen.moneda)} {fd(q.monto)} · vence {q.vencimiento}</dd></div>)}
+                  <div><dt>Entrega inicial</dt><dd>{simboloMoneda(resumen.moneda)} {fmv(resumen.credito.entrega)}</dd></div>
+                  <div><dt>Saldo financiado</dt><dd>{simboloMoneda(resumen.moneda)} {fmv(resumen.credito.saldo)}</dd></div>
+                  {resumen.credito.cuotas.map((q) => <div key={q.numero}><dt>Cuota {q.numero}/{resumen.credito?.cuotas.length}</dt><dd>{simboloMoneda(resumen.moneda)} {fmv(q.monto)} · vence {q.vencimiento}</dd></div>)}
                 </>
               ) : null}
             </dl>
@@ -1231,25 +1234,25 @@ export default function NuevaFacturaPage() {
                       <td>{l.unidad || "—"}</td>
                       <td className={estilos.num}>{l.cantidad}</td>
                       <td className={estilos.num}>
-                        {fd(l.precio)}
-                        {l.precioModificado ? <span className={estilos.modificado}>Precio modificado (lista {fd(l.precioLista)})</span> : null}
+                        {fmv(l.precio)}
+                        {l.precioModificado ? <span className={estilos.modificado}>Precio modificado (lista {fmv(l.precioLista)})</span> : null}
                       </td>
                       <td>{etiquetaIva(l.afectacion, l.tasa, l.proporcion ?? null)}</td>
-                      <td className={estilos.num}>{fd(l.totalTexto ?? String(l.total))}</td>
+                      <td className={estilos.num}>{fmv(l.totalTexto ?? String(l.total))}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
             <dl className={estilos.totals}>
-              <div><dt>Exento</dt><dd>{fd(resumen.totalesTexto?.exento ?? String(resumen.totales.exento))}</dd></div>
-              <div><dt>Exonerado</dt><dd>{fd(resumen.totalesTexto?.exonerado ?? String(resumen.totales.exonerado))}</dd></div>
-              <div><dt>Gravado 5 %</dt><dd>{fd(resumen.totalesTexto?.gravado5 ?? String(resumen.totales.gravado5))}</dd></div>
-              <div><dt>Gravado 10 %</dt><dd>{fd(resumen.totalesTexto?.gravado10 ?? String(resumen.totales.gravado10))}</dd></div>
-              <div><dt>IVA 5 %</dt><dd>{fd(resumen.totalesTexto?.iva5 ?? String(resumen.totales.iva5))}</dd></div>
-              <div><dt>IVA 10 %</dt><dd>{fd(resumen.totalesTexto?.iva10 ?? String(resumen.totales.iva10))}</dd></div>
-              <div><dt>Total IVA</dt><dd>{fd(resumen.totalesTexto?.totalIva ?? String(resumen.totales.totalIva))}</dd></div>
-              <div><dt>Total general</dt><dd>{fd(resumen.totalesTexto?.total ?? String(resumen.totales.total))}</dd></div>
+              <div><dt>Exento</dt><dd>{fmv(resumen.totalesTexto?.exento ?? String(resumen.totales.exento))}</dd></div>
+              <div><dt>Exonerado</dt><dd>{fmv(resumen.totalesTexto?.exonerado ?? String(resumen.totales.exonerado))}</dd></div>
+              <div><dt>Gravado 5 %</dt><dd>{fmv(resumen.totalesTexto?.gravado5 ?? String(resumen.totales.gravado5))}</dd></div>
+              <div><dt>Gravado 10 %</dt><dd>{fmv(resumen.totalesTexto?.gravado10 ?? String(resumen.totales.gravado10))}</dd></div>
+              <div><dt>IVA 5 %</dt><dd>{fmv(resumen.totalesTexto?.iva5 ?? String(resumen.totales.iva5))}</dd></div>
+              <div><dt>IVA 10 %</dt><dd>{fmv(resumen.totalesTexto?.iva10 ?? String(resumen.totales.iva10))}</dd></div>
+              <div><dt>Total IVA</dt><dd>{fmv(resumen.totalesTexto?.totalIva ?? String(resumen.totales.totalIva))}</dd></div>
+              <div><dt>Total general</dt><dd>{fmv(resumen.totalesTexto?.total ?? String(resumen.totales.total))}</dd></div>
             </dl>
             <div className={estilos.actions} style={{ marginTop: 14 }}>
               <button type="button" className={ui.secondaryButton} onClick={() => limpiarRevision()}>Volver a editar</button>
