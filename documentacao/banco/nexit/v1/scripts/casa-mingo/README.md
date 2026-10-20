@@ -57,3 +57,31 @@ docker exec -i nexit-db psql -X -U nexit_app -d nexit -v ON_ERROR_STOP=1 -c "SEL
 Los 2 productos previos usan codigos PRD-000001 y PRD-000002; los codigos de los 561 registros son numericos y no colisionan con estos codigos previos. La descripcion del primero es semejante a una de origen, pero **no se deduplica automaticamente por descripcion**, porque la identidad comercial no ha sido confirmada: si todo se importa, el recuento de la empresa podra ser 563. Los codigos nuevos preservan los de origen. Auditar duplicados funcionales en UI sin borrar, renombrar o sobrescribir los historicos.
 
 El conteo simple de empresa se filtra por UUID real y puede incluir productos existentes y no sustituye la verificación transaccional de 561 líneas hecha por el SQL. Guardar salida completa y logs de ejecución; no considerar homologado sin consulta funcional en NEXIT y pruebas de FE/GTIN.
+
+## Preparación de apertura de stock: 10 unidades por producto (PENDIENTE)
+
+Se agregó `CASA_MINGO_preflight_stock_10_SOLO_LECTURA.sql` y un **borrador bloqueado por autorización**:
+`CASA_MINGO_APERTURA_10_UNIDADES_PENDIENTE_AUTORIZACION.sql`.
+
+### Evidencia del banco (20/10/2026)
+- La importación anterior terminó `COMMIT`: 561/561 productos nuevos, IVA, unidad SIFEN y clasificaciones correctos; 563 productos contando dos fichas antiguas.
+- Al abrir Stock, estos productos muestran stock inicial 0; el preflight especializado debe confirmar si existe algún saldo en otro depósito.
+- Depósito elegido: `DEP-PRINCIPAL` (`a207eebb-aca7-42d3-bdab-373f4f08523b`).
+- Alcance temporal del borrador: los **561 códigos numéricos** importados, NO los dos `PRD-000001/2`.
+- Objetivo: **10 disponibles** por producto, no incremento indiscriminado: si existe saldo o costo previo, se aborta.
+- Motor estándar de BD: `inventario_registrar_movimiento`, NEX-014, `ENTRADA/ABERTURA`, con 2 movimientos (300+261 líneas); salida y valorización verificadas en la misma transacción.
+- La UI regular usa intenciones durables NEX-066, pero este archivo es un proceso puntual administrativo de implantación, no una ruta HTTP nueva.
+- Falta la decisión del **costo de adquisición unitario**: la planilla contiene precios de VENTA, no costos. El borrador exige `-v costo_unitario=<NUMERO>` sin valor por defecto. Costo cero es técnicamente válido pero causa stock contabilizado a Gs. 0 y solo puede usarse mediante autorización expresa.
+- Falta identificar operador autorizado: exige `-v usuario_uuid=<UUID>`. No usar usuario inventado.
+- No ejecutar hasta recibir preflight, confirmar costo, validar backup y autorizar el alta; la primera ejecución debe ser supervisada. Evitar ventas sobre existencias ficticias.
+
+### Próximo comando SEGURO: solo lectura
+
+```bash
+cd /tmp/nexit-instalacao
+git pull --ff-only
+cd documentacao/banco/nexit/v1/scripts/casa-mingo
+docker exec -i nexit-db psql -X -U nexit_app -d nexit -v ON_ERROR_STOP=1 < CASA_MINGO_preflight_stock_10_SOLO_LECTURA.sql
+```
+
+**No ejecutar todavía el borrador** `CASA_MINGO_APERTURA_10_UNIDADES_PENDIENTE_AUTORIZACION.sql`.
