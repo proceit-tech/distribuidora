@@ -7,6 +7,7 @@ import { CampoFecha } from "@/components/ui/campo-fecha";
 import ui from "@/components/ui/lista-padrao/lista.module.css";
 import { siguienteOrden, type Orden } from "@/components/ui/lista-padrao/orden";
 import { ThOrdenable } from "@/components/ui/lista-padrao/th-ordenable";
+import { crearControladorVisor, pedirKudeAlServidor } from "@/lib/facturacion/kude-visor";
 import { iniciarRefresco } from "@/lib/facturacion/refresco-documentos";
 import {
   ESTADOS_SIFEN,
@@ -26,6 +27,7 @@ import {
 } from "@/lib/facturacion/estados";
 import { formatearFechaHoraPy } from "@/lib/formato/listas";
 
+import { KudeModal } from "./kude-modal";
 import estilos from "./page.module.css";
 
 const PAGE_SIZE = 20;
@@ -45,9 +47,9 @@ type Intento = { id: string; tipo: string; fase: string | null; lote: string | n
 type Respuesta = {
   documentos: Documento[]; total: number; pagina: number; totalPaginas: number; resumen: Record<string, number>; sucursales: Array<{ id: string; nombre: string }>; permisos: { editar: boolean; crear: boolean };
 };
-type Detalle = { cargando: boolean; error: string; intentos: Intento[]; aviso: string; consultando: boolean; kudeCargando: boolean };
+type Detalle = { cargando: boolean; error: string; intentos: Intento[]; aviso: string; consultando: boolean };
 
-const DETALLE_VACIO: Detalle = { cargando: false, error: "", intentos: [], aviso: "", consultando: false, kudeCargando: false };
+const DETALLE_VACIO: Detalle = { cargando: false, error: "", intentos: [], aviso: "", consultando: false };
 
 const INDICADORES: Array<{ grupo: GrupoIndicador | ""; titulo: string; ayuda: string; clase: string }> = [
   { grupo: "", titulo: "Total", ayuda: "Documentos visibles", clase: ui.summaryTeal },
@@ -81,6 +83,29 @@ async function leerJson<T>(r: Response, porDefecto: string): Promise<T> {
 }
 
 export default function DocumentosPage() {
+  const [visor] = useState(() =>
+    crearControladorVisor({
+      obtener: (id, signal) => pedirKudeAlServidor(id, signal),
+      crearUrl: (blob) => URL.createObjectURL(blob),
+      revocarUrl: (url) => URL.revokeObjectURL(url),
+      descargar: (url, nombre) => {
+        const a = document.createElement("a");
+
+        a.href = url;
+        a.download = nombre;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      },
+      imprimir: () => {
+        const w = (document.getElementById("kude-visor") as HTMLIFrameElement | null)?.contentWindow;
+
+        w?.focus();
+        w?.print();
+      },
+    }),
+  );
+
   const [busqueda, setBusqueda] = useState("");
   const [busquedaAplicada, setBusquedaAplicada] = useState("");
   const [tipo, setTipo] = useState("");
@@ -213,43 +238,13 @@ export default function DocumentosPage() {
     }
   }
 
-  // KuDE (PRO-194): el navegador solo envía el ID; el PDF llega del servidor ya validado. Un clic a la vez por documento; el archivo es el de ESTE documento (blob propio, liberado tras usarlo).
-  async function abrirKude(d: Documento, descargar: boolean) {
-    if (abiertos[d.id]?.kudeCargando) return;
-
-    // Ventana abierta en el mismo gesto del clic (evita el bloqueo de ventanas emergentes); se cierra si no hay PDF.
-    const ventana = descargar ? null : window.open("", "_blank");
-
-    actualizarDetalle(d.id, { kudeCargando: true, aviso: "", error: "" });
-    try {
-      const r = await fetch(`/api/documentos/${d.id}/kude${descargar ? "?descargar=1" : ""}`, { cache: "no-store" });
-
-      if (!r.ok) {
-        const j = (await r.json().catch(() => null)) as { error?: string } | null;
-
-        throw new Error(j?.error ?? "No fue posible obtener el KuDE.");
-      }
-      if (!(r.headers.get("content-type") ?? "").toLowerCase().includes("application/pdf")) throw new Error("El servidor no devolvió un PDF válido.");
-
-      const url = URL.createObjectURL(await r.blob());
-
-      if (descargar) {
-        const a = document.createElement("a");
-
-        a.href = url;
-        a.download = `KuDE-FE-${d.establecimiento}-${d.puntoExpedicion}-${d.numero}${d.serie ? `-${d.serie}` : ""}.pdf`.replace(/[^0-9A-Za-z.-]/g, "");
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-      } else if (ventana) {
-        ventana.location.href = url;
-      }
-      setTimeout(() => URL.revokeObjectURL(url), 60_000);
-      actualizarDetalle(d.id, { kudeCargando: false });
-    } catch (e) {
-      ventana?.close();
-      actualizarDetalle(d.id, { kudeCargando: false, error: e instanceof Error ? e.message : "No fue posible obtener el KuDE." });
-    }
+  // KuDE (PRO-194): cada apertura consulta de nuevo al servidor (sin caché); el visor libera todo al cerrar.
+  function abrirKude(d: Documento) {
+    void visor.abrir({
+      id: d.id,
+      titulo: `KuDE · Factura ${d.establecimiento}-${d.puntoExpedicion}-${d.numero}${d.serie ? ` (${d.serie})` : ""}`,
+      nombre: `KuDE-FE-${d.establecimiento}-${d.puntoExpedicion}-${d.numero}${d.serie ? `-${d.serie}` : ""}.pdf`.replace(/[^0-9A-Za-z.-]/g, ""),
+    });
   }
 
   async function reconsultar(d: Documento) {
@@ -286,6 +281,7 @@ export default function DocumentosPage() {
 
   return (
     <section className={ui.page}>
+      <KudeModal controlador={visor} />
       <header className={ui.topbar}>
         <div className={ui.titleBlock}>
           <nav className={ui.breadcrumb} aria-label="Ruta de navegación">
@@ -455,12 +451,7 @@ export default function DocumentosPage() {
 
                           {d.tipo === "FE" && d.estadoSifen === "APROBADO" && d.cdc ? (
                             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", margin: "6px 0" }}>
-                              <button type="button" className={ui.secondaryButton} disabled={det.kudeCargando} onClick={() => abrirKude(d, false)}>
-                                {det.kudeCargando ? "Obteniendo KuDE..." : "Ver KuDE (PDF)"}
-                              </button>
-                              <button type="button" className={ui.secondaryButton} disabled={det.kudeCargando} onClick={() => abrirKude(d, true)}>
-                                {det.kudeCargando ? "Obteniendo KuDE..." : "Descargar KuDE"}
-                              </button>
+                              <button type="button" className={ui.secondaryButton} onClick={() => abrirKude(d)}>Ver KuDE (PDF)</button>
                             </div>
                           ) : null}
                           <p className={ui.muted} style={{ margin: "4px 0" }}>{d.tipo === "FE" ? "XML: descarga no disponible." : "KuDE y XML: descarga no disponible para este tipo de documento."}</p>

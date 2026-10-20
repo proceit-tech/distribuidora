@@ -333,7 +333,7 @@ export async function obtenerKude(db: Db, empresaId: string, usuarioId: string, 
 
   const r = await obtenerKudeGateway(
     await adjuntarCredencialesDeBase(db, config, usuarioId),
-    { tipOpe, establecimiento: String(doc.establecimiento), puntoExpedicion: String(doc.puntoExpedicion), numero: String(doc.numero), serie: (doc.serie as string | null) ?? null },
+    { tipOpe, establecimiento: String(doc.establecimiento), puntoExpedicion: String(doc.puntoExpedicion), numero: String(doc.numero), serie: (doc.serie as string | null) ?? null, cdc: String(doc.cdc) },
     dep,
   );
 
