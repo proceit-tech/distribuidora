@@ -1,5 +1,8 @@
 # CASA MINGO — importación inicial de 561 productos (enero 2026)
 
+> **ESTADO ATUAL CONFIRMADO POR SAÍDA DA VM — 20/10/2026:** Catálogo de 561 produtos e abertura de estoque foram executados com `COMMIT`. **NÃO executar novamente os scripts de importação ou abertura.** Os 561 produtos importados foram classificados sem inconsistências; o estoque de referência foi registrado no depósito principal por `MOV-000003` (300 linhas, 73.647 unidades) e `MOV-000004` (172 linhas, 18.217 unidades). Total: **91.864 unidades**, **472 produtos com saldo positivo**, **89 com zero**, e **7 vazios completados com 10**. Preço de venda da planilha foi usado como **custo provisório**, conforme autorização; não representa custo real verificado. Faltam auditoria de leitura/visual da tela Stock e teste de faturamento, que não estão homologados.
+
+
 **Alcance:** catálogo de CASA MINGO exclusivamente. No ejecutar en otra empresa. **El UUID real se determina por consulta a `empresas` y se pasa explícitamente con `-v empresa_uuid=...`.** Nunca suponer que `codigo='casa_mingo'` existe.
 **Estado:** publicado para revisión/ejecución en VM. NO se ejecutó en PostgreSQL.
 
