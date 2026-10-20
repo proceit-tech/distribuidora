@@ -1,7 +1,7 @@
 -- CASA MINGO | PREFLIGHT DE STOCK PARA 561 PRODUCTOS IMPORTADOS CON CANTIDADES REALES
 -- Solo lectura. NO inserta stock, no altera costos, no altera saldos.
 -- 465 positivos originales, 89 ceros explicitos, 7 sin dato=10; total 91864.
--- Objetivo propuesto: 10 unidades PROPIO/DISPONIBLE por producto
+-- Objetivo: cantidades exactas del Excel y 10 unidades SOLO en 7 vacios
 -- Deposito DEP-PRINCIPAL. Los 2 productos PRD-000001/2 NO estan incluidos.
 \set ON_ERROR_STOP on
 \echo '=== Empresa y deposito ==='
