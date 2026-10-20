@@ -641,7 +641,7 @@ BEGIN
    RAISE EXCEPTION 'criterio_costo invalido: seleccionar PRECIO_EXCEL o COSTO_FIJO explicitamente';
  END IF;
  IF modo='COSTO_FIJO' THEN
-   IF COALESCE(fijo,'') !~ '^([0-9]+)(\\.[0-9]{1,4})?$' THEN
+   IF COALESCE(fijo,'') !~ '^([0-9]+)(\.[0-9]{1,4})?$' THEN
      RAISE EXCEPTION 'costo_unitario debe ser numero PYG no negativo con hasta 4 decimales';
    END IF;
    IF fijo::numeric > 99999999999999 THEN RAISE EXCEPTION 'costo_unitario excesivo'; END IF;
