@@ -12,6 +12,7 @@ import { motivoObligatorio } from "@/lib/movimientos/reglas";
 import { hoyAsuncion } from "@/lib/listas-precio/calculos";
 import { useProtegerCambios } from "@/lib/ui/proteger-cambios";
 import { cargarCatalogosMovimientos, registrarMovimientoResultado } from "@/lib/movimientos/cliente-api";
+import { iniciarCargaCatalogos, resolverInicializacion } from "@/lib/movimientos/inicializacion";
 import { aplicarResultadoSiVigente, crearControlRegistro, MENSAJE_SALIDA, type EstadoIntento } from "@/lib/movimientos/intento";
 import {
   advertenciaSaldo,
@@ -19,7 +20,6 @@ import {
   ETIQUETA_ORIGEN,
   formularioInicial,
   movimientoSucio,
-  precargarDesdeConsulta,
   saldoVisible,
   TIPOS_INFO,
   validarMovimiento,
@@ -34,17 +34,22 @@ const idCampo = (campo: CampoMovimiento) => `mov-${campo}`;
 
 export default function NuevoMovimientoPage() {
   const router = useRouter();
-  const hoy = hoyAsuncion();
+  // MOV-D03: fecha INICIAL sugerida (solo siembra el formulario nuevo; no gobierna ningún efecto). La validación usa la fecha vigente de Asunción al registrar.
+  const [hoyInicial] = useState(() => hoyAsuncion());
 
   const [catalogo, setCatalogo] = useState<CatalogoMovimientos | null>(null);
-  const [form, setForm] = useState<NuevoMovimientoStock>(() => formularioInicial(hoy));
-  const [base, setBase] = useState<NuevoMovimientoStock>(() => formularioInicial(hoy));
+  const [form, setForm] = useState<NuevoMovimientoStock>(() => formularioInicial(hoyInicial));
+  const [base, setBase] = useState<NuevoMovimientoStock>(() => formularioInicial(hoyInicial));
   const [cantidadTxt, setCantidadTxt] = useState("");
   const [costoTxt, setCostoTxt] = useState("");
   const [errores, setErrores] = useState<ErroresMovimiento>({});
   const [errorForm, setErrorForm] = useState("");
   const [avisoCarga, setAvisoCarga] = useState("");
   const [precargado, setPrecargado] = useState(false);
+  // Reintento de la carga inicial de catálogos tras un error (no depende de la fecha). `inicializado`/`tocado` impiden que una respuesta restaure el formulario inicial sobre lo que escribió el operador.
+  const [intentoCarga, setIntentoCarga] = useState(0);
+  const inicializado = useRef(false);
+  const tocado = useRef(false);
   // MOV-D01: la intención de registro (clave de idempotencia + snapshot del payload) vive en el control, NO se renueva por editar el formulario; mientras exista, el formulario está bloqueado.
   const control = useRef(crearControlRegistro({ generarClave: () => crypto.randomUUID(), enviar: (d) => registrarMovimientoResultado(d) }));
   const [estadoRegistro, setEstadoRegistro] = useState<EstadoIntento>("LIBRE");
@@ -63,30 +68,25 @@ export default function NuevoMovimientoPage() {
   }, []);
 
   useEffect(() => {
-    let activo = true;
+    return iniciarCargaCatalogos(cargarCatalogosMovimientos, {
+      alCargar: (c) => {
+        const ini = resolverInicializacion({ inicializado: inicializado.current, tocado: tocado.current, catalogos: c, consulta: new URLSearchParams(window.location.search), hoyInicial });
 
-    cargarCatalogosMovimientos()
-      .then((c) => {
-        if (!activo) return;
-
-        const inicial = formularioInicial(hoy);
-        const p = precargarDesdeConsulta(new URLSearchParams(window.location.search), c, inicial);
-
+        if (!ini.aplicar) return;
+        inicializado.current = true;
         setCatalogo(c);
-        setForm(p.formulario);
-        setBase(p.formulario);
-        setCantidadTxt(p.formulario.cantidad > 0 ? String(p.formulario.cantidad) : "");
-        setPrecargado(p.precargado);
-        if (p.descartados.length) setAvisoCarga(`Se ignoró ${p.descartados.join(", ")} de la dirección: no corresponde a los datos que usted puede operar.`);
-      })
-      .catch((e: unknown) => {
-        if (activo) setErrorForm(e instanceof Error ? e.message : "No fue posible cargar los catálogos.");
-      });
-
-    return () => {
-      activo = false;
-    };
-  }, [hoy]);
+        setErrorForm("");
+        setForm(ini.formulario);
+        setBase(ini.formulario);
+        setCantidadTxt(ini.cantidadTxt);
+        setPrecargado(ini.precargado);
+        if (ini.descartados.length) setAvisoCarga(`Se ignoró ${ini.descartados.join(", ")} de la dirección: no corresponde a los datos que usted puede operar.`);
+      },
+      alFallar: (mensaje) => setErrorForm(mensaje),
+    });
+    // La carga depende solo del reintento: el cambio de día no la repite (hoyInicial se fija al abrir la pantalla).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [intentoCarga]);
 
   const sucio = !registrado && movimientoSucio(form, base);
 
@@ -108,6 +108,7 @@ export default function NuevoMovimientoPage() {
 
   function cambiar(parcial: Partial<NuevoMovimientoStock>, campo?: CampoMovimiento) {
     if (control.current.bloqueado()) return;
+    tocado.current = true;
     setForm((f) => ({ ...f, ...parcial }));
     if (campo) setErrores((e) => ({ ...e, [campo]: undefined }));
     setErrorForm("");
@@ -120,6 +121,7 @@ export default function NuevoMovimientoPage() {
 
   function cambiarTipo(tipo: MovimientoStockTipo) {
     if (control.current.bloqueado()) return;
+    tocado.current = true;
     setForm((f) => aplicarTipo(f, tipo));
     if (!TIPOS_INFO[tipo].costo) setCostoTxt("");
     setErrores({});
@@ -141,7 +143,8 @@ export default function NuevoMovimientoPage() {
     const datos: NuevoMovimientoStock = { ...form, costoUnitario: info.costo && costoTxt !== "" ? Number(costoTxt) : null };
 
     if (!reintento) {
-      const errs = validarMovimiento(datos, catalogo, hoy);
+      // La referencia de la regla «sin fecha futura» es la fecha VIGENTE en Asunción al registrar (no la del momento de abrir la pantalla); la fecha elegida por el operador no se modifica.
+      const errs = validarMovimiento(datos, catalogo, hoyAsuncion());
 
       setErrores(errs);
 
@@ -221,7 +224,10 @@ export default function NuevoMovimientoPage() {
 
       {errorForm && !catalogo ? (
         <div className={ui.alertError} role="alert">
-          {errorForm}
+          {errorForm}{" "}
+          <button type="button" className={ui.clearButton} onClick={() => { setErrorForm(""); setIntentoCarga((n) => n + 1); }}>
+            Reintentar
+          </button>
         </div>
       ) : null}
       {avisoCarga ? (
@@ -345,6 +351,7 @@ export default function NuevoMovimientoPage() {
               disabled={cargando}
               onChange={(e) => {
                 if (control.current.bloqueado()) return;
+                tocado.current = true;
                 setCantidadTxt(e.target.value);
                 cambiar({ cantidad: e.target.value === "" ? 0 : Number(e.target.value) }, "cantidad");
               }}
@@ -367,6 +374,7 @@ export default function NuevoMovimientoPage() {
                 disabled={cargando}
                 onChange={(e) => {
                   if (control.current.bloqueado()) return;
+                  tocado.current = true;
                   setCostoTxt(e.target.value);
                   setForm((f) => ({ ...f, costoUnitario: e.target.value === "" ? null : Number(e.target.value) }));
                   setErrores((x) => ({ ...x, costoUnitario: undefined }));
