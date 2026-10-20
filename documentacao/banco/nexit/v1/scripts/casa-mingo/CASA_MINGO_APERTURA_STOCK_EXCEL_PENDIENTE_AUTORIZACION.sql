@@ -5,7 +5,8 @@
 -- Total esperado: 91.864 unidades sobre 472 SKUs con stock; 89 con 0.
 -- Precio de venta: se respeta exactamente el Excel ya importado, sin UPDATE.
 -- El Excel NO contiene COSTO DE ADQUISICION: se exige criterio de valorizacion.
--- PRECIO_EXCEL usa el precio de VENTA como costo provisional (solo si autorizado).
+-- PRECIO_EXCEL autorizado por el responsable (20/10/2026) como costo PROVISIONAL.
+-- NO certifica costos reales ni los sustituye. Precios de venta INALTERADOS.
 -- COSTO_FIJO usa un costo unitario PYG expresamente autorizado (incluido 0).
 -- NO EJECUTAR antes de backup, auditoria y aprobacion del costo.
 -- Motor oficial NEX-014, 2 movimientos (300+172 lineas), usuario con permisos.
@@ -34,7 +35,7 @@
 
 BEGIN;
 SET LOCAL lock_timeout='10s';
-SET LOCAL statement_timeout='180s';
+SET LOCAL statement_timeout='600s';
 SELECT set_config('casa_mingo.usuario_uuid', :'usuario_uuid', true);
 SELECT set_config('casa_mingo.criterio_costo', :'criterio_costo', true);
 \if :{?costo_unitario}
