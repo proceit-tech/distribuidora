@@ -1986,3 +1986,11 @@ Após o encerramento **estático** de Inventario na `AUD-INV-R05` (sem homologa�
 - **Não executar novamente** a importação de catálogo, a correção de unidade ou a abertura: alterações já efetivadas na base `nexit`. Os dois `PRD-000001/2` anteriores foram preservados. Movimentos de abertura não são inventário físico auditado; quantidades são histórico janeiro/2026 + valores padrão autorizados.
 - **Próximos controles:** conferir saldos e valorização com consultas independentes e interface `Inventario → Stock / Movimientos` (ainda não informados), verificar permissão do operador no depósito e emissão de FE em ambiente autorizado. **Sem homologação completa de faturamento SIFEN/KuDE** apenas com o `COMMIT`.
 - Nota de prevalência: este registro de execução real substitui a afirmação histórica anterior de que o SQL de produtos/estoque não foi executado. Scripts `*_PENDIENTE_AUTORIZACION.sql` que foram executados devem ser tratados como histórico aplicado.
+
+
+### Correção visual de guaranis — Facturas → Nueva (20/10/2026)
+
+- Evidência da VM/navegador fornecida pelo responsável: tela principal ainda mostrava valores brutos em preço unitário (`82500.0000` e `125500.0000`) e IVA lateral (`18909.09090909`), embora o modal de revisão já usasse formatação visual.
+- Corrigida `app/(private)/facturas/nueva/page.tsx`: resumo lateral (exento, exonerado, gravados 5/10, IVA 5/10, IVA total, total geral e equivalente em Gs.), subtotais das linhas, preços de leitura e barra de resumo usam `formatearMontoVisual` na moeda da fatura. PYG sem decimais, separador de milhares; USD/BRL seguem com centavos.
+- Campo de preço editável: fora de foco mostra moeda formatada, em foco mostra valor numérico sem separadores e preserva edição de precisão válida; catálogo inicial elimina apenas zeros decimais finais com `precioParaEdicion`. Quantidades, câmbio, payload, preço efetivo, impostos e cálculo de 8 casas NÃO foram alterados.
+- Casos adicionados em `lib/facturacion/visual-v1.casos.ts`: valores da captura, helper de input, regressões estáticas do resumo lateral e entrada editável. Testes não executados pelo ChatGPT, ainda falta build/validação em VM e navegador. **Não homologado nem implantado na VM pelo ChatGPT.**
