@@ -669,6 +669,19 @@ BEGIN
  ) THEN
     RAISE EXCEPTION 'Codigos ya existentes en CASA MINGO tienen diferente descripcion. No reemplazar fichas historicas.';
  END IF;
+ -- No afirmar 100% con IVA10/unidad77 si existieran fichas antiguas incompatibles.
+ IF EXISTS (
+   SELECT 1 FROM casa_mingo_final s
+   JOIN productos p ON p.empresa_id=v_empresa AND p.codigo=s.codigo
+   LEFT JOIN impuestos iva ON iva.id=p.impuesto_id
+   LEFT JOIN unidades_medida un ON un.id=p.unidad_medida_id
+   WHERE p.afectacion_iva IS DISTINCT FROM 1
+      OR iva.codigo IS DISTINCT FROM 'IVA10'
+      OR iva.porcentaje IS DISTINCT FROM 10
+      OR un.unidad_sifen_codigo IS DISTINCT FROM 77
+ ) THEN
+    RAISE EXCEPTION 'Ya hay codigos de CASA MINGO con IVA o unidad incompatible. No se alteran: revisar antes de continuar.' USING ERRCODE='P0001';
+ END IF;
  IF EXISTS (
    SELECT 1 FROM listas_precio l WHERE l.empresa_id=v_empresa AND l.es_referencia
     AND (l.moneda_codigo <> 'PYG' OR NOT l.incluye_impuesto OR l.tipo_lista<>'VENTA')
