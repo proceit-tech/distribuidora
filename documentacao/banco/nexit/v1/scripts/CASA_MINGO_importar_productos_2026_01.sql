@@ -648,7 +648,7 @@ BEGIN
  IF (SELECT count(*) FROM casa_mingo_final WHERE codigo<>codigo_original) <> 5 THEN
     RAISE EXCEPTION 'ERROR: no hay exactamente 5 codigos corregidos' USING ERRCODE='P0001';
  END IF;
- IF EXISTS (SELECT 1 FROM casa_mingo_final WHERE codigo !~ '^[0-9]{1,20} OR btrim(descripcion)='' OR char_length(descripcion)>120 OR btrim(familia)='') THEN
+ IF EXISTS (SELECT 1 FROM casa_mingo_final WHERE codigo !~ '^[0-9]{1,20}$' OR btrim(descripcion)='' OR char_length(descripcion)>120 OR btrim(familia)='') THEN
     RAISE EXCEPTION 'Codigo, descripcion fiscal o familia invalidos en Excel.';
  END IF;
  IF EXISTS (SELECT 1 FROM casa_mingo_final WHERE precio_pyg<0 OR cantidad_excel<0 OR total_excel<0) THEN
