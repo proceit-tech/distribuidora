@@ -99,3 +99,7 @@ El responsable aclaró que **las cantidades y precios existentes deben respetars
 - Si se necesita que los 89 con cero se facturen, se requiere una decisión nueva sobre ese stock; no cambiar cero por diez arbitrariamente.
 
 - La validacion final del 20/10/2026 corrige el preflight anterior; `CASA_MINGO_preflight_stock_10_SOLO_LECTURA.sql` fue bloqueado, no ejecutarlo.
+
+
+## Autorización del costo provisional (20/10/2026)
+El responsable autorizó usar el precio de venta ya importado desde el Excel **como costo provisional de la apertura** para permitir el uso operativo. En el SQL pasar `-v criterio_costo=PRECIO_EXCEL`. Esta opción NO modifica el precio de venta, solo valoriza las entradas de stock. El valor es provisional, no un costo real verificado; se requerirá conciliación posterior con los costos correctos. La apertura sigue condicionada a usuario con MOVIMIENTOS.CREAR, depósito asignado, preflight sin inconsistencias y respaldo.
