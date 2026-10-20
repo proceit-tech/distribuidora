@@ -1994,3 +1994,12 @@ Após o encerramento **estático** de Inventario na `AUD-INV-R05` (sem homologa�
 - Corrigida `app/(private)/facturas/nueva/page.tsx`: resumo lateral (exento, exonerado, gravados 5/10, IVA 5/10, IVA total, total geral e equivalente em Gs.), subtotais das linhas, preços de leitura e barra de resumo usam `formatearMontoVisual` na moeda da fatura. PYG sem decimais, separador de milhares; USD/BRL seguem com centavos.
 - Campo de preço editável: fora de foco mostra moeda formatada, em foco mostra valor numérico sem separadores e preserva edição de precisão válida; catálogo inicial elimina apenas zeros decimais finais com `precioParaEdicion`. Quantidades, câmbio, payload, preço efetivo, impostos e cálculo de 8 casas NÃO foram alterados.
 - Casos adicionados em `lib/facturacion/visual-v1.casos.ts`: valores da captura, helper de input, regressões estáticas do resumo lateral e entrada editável. Testes não executados pelo ChatGPT, ainda falta build/validação em VM e navegador. **Não homologado nem implantado na VM pelo ChatGPT.**
+
+
+### Decisões do cliente CASA MINGO — limitar KuDE à NCE e criar item DESCUENTO (20/10/2026)
+
+- Fonte formal: `documentacao/definicoes/REQ-CASA-MINGO-DECISIONES-NCE-KUDE-2026-10-20.md`. Decisões **aprovadas**, mas **não implementadas/homologadas**.
+- **Fora do escopo:** substituir empresa/RUC no gateway de teste, logo em ambiente de teste, identidade impressa pelo gateway de outra empresa, reformar layout KuDE FE (colunas, impressora, até 23 linhas, uma página).
+- **KuDE:** exceção exclusiva é **KuDE da NCE**. Evidência no código: UI `kudeDisponible` e backend `obtenerKude` são FE-only; request gateway fixa `tipoDoc:"FE"`; arquivos/títulos forçam FE; NCE não tem `iTiOpe` no snapshot. Corrigir somente a via NCE, respeitando contrato NCE ainda não comprovado no gateway real. Preservar FE.
+- **NCE Descuento:** decisão explícita de item **DESCUENTO**, quantidade 1, valor informado, **não estocável**, sem movimentação de stock, com saldo/IVA/CDC original respeitados. Código atual associa linhas NCE a linhas da FE original; ficha de produto isolada não basta. Implementação precisa preservar tratamentos fiscais (inclusive IVA misto) e homologação fiscal; motivo Bonificación permanece, sem segundo SKU arbitrário.
+- Manter os demais pedidos funcionais (endereço/quantidade/descontos na FE, seleção em lote NCE) separados da exceção KuDE. Próximo passo: implementação dirigida por Claude, testes e auditoria independente antes de qualquer VM.
