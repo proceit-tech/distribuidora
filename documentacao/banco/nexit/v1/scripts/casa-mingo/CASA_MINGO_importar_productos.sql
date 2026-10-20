@@ -4,16 +4,22 @@
 -- Excel original SHA256: a607dafe65417a5f88c0183bd87c6c1d6b6cebd4dc50d385fcc3a74154cb8fbd
 -- Fuente: INVENTARIO ENERO 2026-Mingo Familia y Sub Familia (1).xlsx
 -- STAGING: 561 filas y 561 codigos unicos; 5 colisiones remapeadas.
--- SIFEN E701 dCodInt admite de 1 a 20 caracteres; los 11 digitos no se cortan.
+-- NEXIT codigo_sifen permite 1 a 20 caracteres; los 11 digitos no se cortan.
 -- GTIN de las 5 filas remapeadas queda SIN DEFINIR para evitar ambiguedad.
 -- Faltantes: SIN MARCA, SIN LINEA, precio 1000, cantidad 1.
 -- NO REGISTRA STOCK (no hay deposito ni costo de apertura).
 -- No modificar migraciones NEX-001...066 ni esquema de negocio.
--- NO EJECUTAR sin aprobacion humana, respaldo y preflight en VM.
+-- NO EJECUTAR sin aprobacion humana, UUID REAL, respaldo y preflight en VM.
+-- Requiere -v empresa_uuid=<UUID_REAL> (no usar codigo hardcodeado).
 -- Duplicados resueltos: ver CASA_MINGO_mapeo_codigos_duplicados.csv.
 -- Confirmacion explicita: psql -X -v ON_ERROR_STOP=1 -v autorizar_carga=true -f CASA_MINGO_importar_productos.sql
 -- =====================================================================
 \set ON_ERROR_STOP on
+\if :{?empresa_uuid}
+\else
+  \echo 'ABORTADO: falta -v empresa_uuid=UUID_REAL_DE_CASA_MINGO. Consultar SELECT id,codigo,razon_social FROM empresas.'
+  \quit 2
+\endif
 \if :{?autorizar_carga}
 \else
   \echo 'ABORTADO: informar -v autorizar_carga=true despues de auditoria y resolucion de duplicados'
@@ -26,6 +32,7 @@
 \endif
 
 BEGIN;
+SELECT set_config('import_casa_mingo.empresa_uuid', :'empresa_uuid', true);
 SET LOCAL lock_timeout = '10s';
 SET LOCAL statement_timeout = '120s';
 
@@ -621,8 +628,20 @@ DO $preflight$
 DECLARE v_empresa uuid;
 DECLARE v_cant integer;
 BEGIN
- SELECT id INTO STRICT v_empresa FROM empresas
-  WHERE codigo='casa_mingo' AND es_demo = false AND estado = 'ACTIVA';
+ SELECT id INTO v_empresa FROM empresas
+   WHERE id = current_setting('import_casa_mingo.empresa_uuid')::uuid;
+ IF v_empresa IS NULL THEN
+    RAISE EXCEPTION 'UUID de empresa no existe en esta base: %', current_setting('import_casa_mingo.empresa_uuid');
+ END IF;
+ IF NOT EXISTS (
+  SELECT 1 FROM empresas e
+   WHERE e.id = v_empresa
+     AND e.es_demo = false
+     AND e.estado = 'ACTIVA'
+     AND (e.razon_social ILIKE '%MINGO%' OR e.codigo ILIKE '%MINGO%')
+ ) THEN
+    RAISE EXCEPTION 'UUID % no corresponde a CASA MINGO activa y no demo; verificar empresa en BD', v_empresa;
+ END IF;
  PERFORM set_config('import_casa_mingo.empresa_id', v_empresa::text, true);
 
  SELECT count(*) INTO v_cant FROM casa_mingo_stage;
