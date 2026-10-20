@@ -137,6 +137,21 @@ export async function POST(request: Request) {
   try {
     const datos = prepararMovimiento(cuerpo);
     conexion = await db.connect();
+
+    // MOV-O07: este camino directo no puede eludir la protección durable. Con una intención PENDIENTE del operador solo se admite repetir ESA misma clave; cualquier otra (K2) se rechaza.
+    // Sin la migración NEX-066 el registro falla cerrado (503) en lugar de permitir una duplicación silenciosa.
+    let pendiente: { clave?: string } | undefined;
+
+    try {
+      pendiente = (await conexion.query(`SELECT o_clave AS clave FROM movimiento_intencion_pendiente($1::uuid, $2::uuid)`, [session.user.empresaId, session.user.id])).rows[0] as { clave?: string } | undefined;
+    } catch (e) {
+      if ((e as { code?: string }).code === "42883") return NextResponse.json({ error: "Servicio no disponible: falta la migración NEX-066 (intenciones de movimientos)." }, { status: 503 });
+      throw e;
+    }
+    if (pendiente && (!datos.clave || datos.clave !== pendiente.clave)) {
+      return NextResponse.json({ error: "Hay un registro anterior sin resolver. Recupérelo en «Nuevo movimiento» antes de iniciar otro.", pendiente: true }, { status: 409 });
+    }
+
     await conexion.query("BEGIN");
     const mov = await registrarMovimiento(conexion, session.user.empresaId, session.user.id, datos);
     await conexion.query("COMMIT");

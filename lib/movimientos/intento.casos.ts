@@ -162,7 +162,7 @@ export async function verificarCasosMovimientosIntento(): Promise<string[]> {
 
   s6.fallar("perder-respuesta");
   await c6.registrar(base());
-  igual("D: tras un resultado indeterminado no hay intención nueva implícita (descartarIndeterminado es la única salida y exige decisión explícita); sin indeterminado no hace nada", [c6.bloqueado(), c6.descartarIndeterminado(), c6.bloqueado(), c6.descartarIndeterminado()], [true, true, false, false]);
+  igual("D (MOV-O07): una intención indeterminada ya NO puede descartarse (no existe la operación); solo la confirmación o un rechazo definitivo comprobado la cierran; hasta entonces sigue bloqueada con K1", [c6.bloqueado(), c6.estado(), c6.clave(), "descartarIndeterminado" in c6], [true, "INDETERMINADO", "clave-K1-00000000", false]);
 
   // 10) Mensajes de salida: no afirman cancelación ni reversión.
   const textos = Object.values(MENSAJE_SALIDA).join(" ").toLowerCase();
@@ -297,7 +297,7 @@ export async function verificarCasosMovimientosIntento(): Promise<string[]> {
   // Estructura de la pantalla (complemento).
   const pagina = leer("app/(private)/movimientos/nuevo/page.tsx");
 
-  cierto("pantalla: ya no se limpia ninguna clave al editar; los manejadores cambiar/cambiarTipo/cantidad/costo se niegan con el control bloqueado; los campos van dentro de un fieldset deshabilitado; el submit usa el control (reserva síncrona) y la salida se advierte con el mensaje de intención abierta", !/clave\.current/.test(pagina) && (pagina.match(/if \(control\.current\.bloqueado\(\)\) return;/g) ?? []).length === 4 && /<fieldset disabled=\{bloqueado\}/.test(pagina) && /if \(control\.current\.estado\(\) === "ENVIANDO"\) return;/.test(pagina) && /control\.current\.registrar\(datos\)/.test(pagina) && /useProtegerCambios\(sucio \|\| bloqueado, bloqueado \? MENSAJE_SALIDA/.test(pagina) && /Reintentar el mismo registro/.test(pagina) && /Descartar este intento/.test(pagina));
+  cierto("pantalla: ya no se limpia ninguna clave al editar; los manejadores cambiar/cambiarTipo/cantidad/costo se niegan con el control bloqueado; los campos van dentro de un fieldset deshabilitado; el submit usa el control (reserva síncrona) y la salida se advierte con el mensaje de intención abierta", !/clave\.current/.test(pagina) && (pagina.match(/if \(control\.current\.bloqueado\(\)\) return;/g) ?? []).length === 4 && /<fieldset disabled=\{bloqueado\}/.test(pagina) && /estadoActual !== "LIBRE" && estadoActual !== "INDETERMINADO"\) return;/.test(pagina) && /control\.current\.registrar\(datos\)/.test(pagina) && /useProtegerCambios\(sucio \|\| bloqueado, estadoRegistro !== "LIBRE" \? MENSAJE_SALIDA/.test(pagina) && /Reintentar el mismo registro/.test(pagina) && !/Descartar este intento/.test(pagina) && !/descartarTentativa/.test(pagina));
 
   return fallos;
 }

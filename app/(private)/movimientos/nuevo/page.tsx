@@ -11,7 +11,8 @@ import { GRUPOS, ORDEN_GRUPOS, grupoDeTipo, tipoInicialDelGrupo, type GrupoMovim
 import { motivoObligatorio } from "@/lib/movimientos/reglas";
 import { hoyAsuncion } from "@/lib/listas-precio/calculos";
 import { useProtegerCambios } from "@/lib/ui/proteger-cambios";
-import { cargarCatalogosMovimientos, registrarMovimientoResultado } from "@/lib/movimientos/cliente-api";
+import { cargarCatalogosMovimientos, consultarIntencionApi, ejecutarIntencionApi, reservarIntencionApi } from "@/lib/movimientos/cliente-api";
+import { consultarResultado, recuperarIntencion } from "@/lib/movimientos/recuperacion";
 import { iniciarCargaCatalogos, procesarCargaCatalogos } from "@/lib/movimientos/inicializacion";
 import { aplicarResultadoSiVigente, crearControlRegistro, MENSAJE_SALIDA, type EstadoIntento } from "@/lib/movimientos/intento";
 import {
@@ -51,8 +52,13 @@ export default function NuevoMovimientoPage() {
   const inicializado = useRef(false);
   const tocado = useRef(false);
   // MOV-D01: la intención de registro (clave de idempotencia + snapshot del payload) vive en el control, NO se renueva por editar el formulario; mientras exista, el formulario está bloqueado.
-  const control = useRef(crearControlRegistro({ generarClave: () => crypto.randomUUID(), enviar: (d) => registrarMovimientoResultado(d) }));
-  const [estadoRegistro, setEstadoRegistro] = useState<EstadoIntento>("LIBRE");
+  // MOV-O07: modo DURABLE — K1 + snapshot se reservan en el servidor (PostgreSQL) antes de enviar nada a stock; al abrir se recupera la intención pendiente del operador (falla cerrado) y no existe descarte.
+  const control = useRef(
+    crearControlRegistro({ generarClave: () => crypto.randomUUID(), reservar: (d) => reservarIntencionApi(d), enviar: (d) => ejecutarIntencionApi(d.claveIdempotencia), iniciarRecuperando: true }),
+  );
+  const [estadoRegistro, setEstadoRegistro] = useState<EstadoIntento>("RECUPERANDO");
+  const [avisoRecuperacion, setAvisoRecuperacion] = useState("");
+  const [intentoRecuperacion, setIntentoRecuperacion] = useState(0);
   // PRO-186: validez de ESTA instancia de la pantalla; abandonada (desmontada) no se navega ni se muestra nada con una respuesta tardía.
   const vigente = useRef(true);
   const saving = estadoRegistro === "ENVIANDO";
@@ -66,6 +72,36 @@ export default function NuevoMovimientoPage() {
       vigente.current = false;
     };
   }, []);
+
+  // MOV-O07: antes de habilitar un registro nuevo se consulta al servidor la intención pendiente del operador. Un fallo deja el registro BLOQUEADO (no vuelve a modo libre).
+  useEffect(() => {
+    let activo = true;
+
+    void recuperarIntencion(control.current, consultarIntencionApi).then((r) => {
+      if (!activo) return;
+      if (r.estado === "LIBRE") {
+        setEstadoRegistro("LIBRE");
+        setAvisoRecuperacion("");
+      } else if (r.estado === "ERROR") {
+        setEstadoRegistro("RECUPERACION_ERROR");
+        setAvisoRecuperacion(r.mensaje);
+      } else {
+        // La operación original (snapshot del servidor) sustituye al formulario; la inicialización de catálogos / precarga ya no la tocará.
+        inicializado.current = true;
+        tocado.current = true;
+        setForm(r.formulario);
+        setCantidadTxt(r.formulario.cantidad > 0 ? String(r.formulario.cantidad) : "");
+        setCostoTxt(r.formulario.costoUnitario === null ? "" : String(r.formulario.costoUnitario));
+        setPrecargado(false);
+        setEstadoRegistro("INDETERMINADO");
+        setAvisoRecuperacion(r.mensaje);
+      }
+    });
+
+    return () => {
+      activo = false;
+    };
+  }, [intentoRecuperacion]);
 
   useEffect(() => {
     return iniciarCargaCatalogos(cargarCatalogosMovimientos, {
@@ -93,7 +129,7 @@ export default function NuevoMovimientoPage() {
   const sucio = !registrado && movimientoSucio(form, base);
 
   // Con un registro en curso o indeterminado se advierte al salir sin afirmar que se canceló o revirtió nada.
-  useProtegerCambios(sucio || bloqueado, bloqueado ? MENSAJE_SALIDA[estadoRegistro as "ENVIANDO" | "INDETERMINADO"] : undefined);
+  useProtegerCambios(sucio || bloqueado, estadoRegistro !== "LIBRE" ? MENSAJE_SALIDA[estadoRegistro] : undefined);
 
   const productos = catalogo?.productos ?? [];
   const depositos = (catalogo?.depositos ?? []).filter((d) => d.permitido);
@@ -137,7 +173,9 @@ export default function NuevoMovimientoPage() {
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     // Un submit consecutivo antes de que React actualice la pantalla no inicia otra intención: el control la reserva de forma síncrona.
-    if (control.current.estado() === "ENVIANDO") return;
+    const estadoActual = control.current.estado();
+
+    if (estadoActual !== "LIBRE" && estadoActual !== "INDETERMINADO") return;
     setErrorForm("");
 
     // Con un resultado indeterminado el reintento reenvía el snapshot original (no se revalida ni se recalcula con lo que haya en pantalla).
@@ -177,12 +215,21 @@ export default function NuevoMovimientoPage() {
     });
   }
 
-  /** Decisión explícita: dejar la tentativa de resultado desconocido y empezar otra operación (con otra clave). */
-  function descartarTentativa() {
-    if (!window.confirm("El registro anterior puede haberse efectuado. Si continúa con una operación nueva y esa ya estaba registrada, el movimiento podría duplicarse. Verifique antes en Movimientos. ¿Desea empezar una operación nueva?")) return;
-    if (control.current.descartarIndeterminado()) {
-      setEstadoRegistro("LIBRE");
-      setErrorForm("");
+  /** «Consultar resultado» (solo lectura): informa la evidencia del movimiento original; si el servidor ya resolvió la intención, libera la pantalla. NO existe descarte de una intención incierta. */
+  async function consultar() {
+    const r = await consultarResultado(control.current, consultarIntencionApi);
+
+    if (!vigente.current) return;
+    setAvisoRecuperacion(r.mensaje);
+    if (r.liberada) {
+      const limpio = formularioInicial(hoyAsuncion());
+
+      tocado.current = false;
+      setForm(limpio);
+      setBase(limpio);
+      setCantidadTxt("");
+      setCostoTxt("");
+      setEstadoRegistro(control.current.estado());
     }
   }
 
@@ -241,9 +288,19 @@ export default function NuevoMovimientoPage() {
       <section className={ui.contentCard} style={{ padding: 14 }}>
         <form className={styles.form} onSubmit={submit} noValidate aria-label="Nuevo movimiento de stock" aria-busy={cargando || saving}>
           <h3>Datos del movimiento</h3>
+          {avisoRecuperacion ? (
+            <div className={local.info} role="status">
+              {avisoRecuperacion}{" "}
+              {estadoRegistro === "RECUPERACION_ERROR" ? (
+                <button type="button" className={ui.secondaryButton} onClick={() => { setAvisoRecuperacion(""); setEstadoRegistro("RECUPERANDO"); setIntentoRecuperacion((n) => n + 1); }}>
+                  Reintentar
+                </button>
+              ) : null}
+            </div>
+          ) : null}
           {estadoRegistro === "INDETERMINADO" ? (
             <div className={local.info} role="status">
-              Los datos están bloqueados porque el resultado del último intento es desconocido. Use «Reintentar el mismo registro» (misma operación, no se duplica) o, si prefiere empezar otra operación, «Descartar este intento».
+              Los datos están bloqueados porque el resultado del último intento es desconocido. Use «Consultar resultado» o «Reintentar el mismo registro» (misma operación, no se duplica). La operación sigue guardada en el servidor.
             </div>
           ) : null}
           <fieldset disabled={bloqueado} style={{ display: "contents", border: 0, padding: 0, margin: 0 }}>
@@ -509,11 +566,11 @@ export default function NuevoMovimientoPage() {
               Cancelar
             </Link>
             {estadoRegistro === "INDETERMINADO" ? (
-              <button type="button" className={ui.secondaryButton} onClick={descartarTentativa}>
-                Descartar este intento
+              <button type="button" className={ui.secondaryButton} onClick={() => void consultar()}>
+                Consultar resultado
               </button>
             ) : null}
-            <button type="submit" className={ui.primaryButton} disabled={saving || cargando}>
+            <button type="submit" className={ui.primaryButton} disabled={saving || cargando || estadoRegistro === "RECUPERANDO" || estadoRegistro === "RECUPERACION_ERROR"}>
               {saving ? "Registrando..." : estadoRegistro === "INDETERMINADO" ? "Reintentar el mismo registro" : "Registrar movimiento"}
             </button>
           </div>
