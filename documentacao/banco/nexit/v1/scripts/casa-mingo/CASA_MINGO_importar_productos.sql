@@ -636,11 +636,12 @@ BEGIN
  IF NOT EXISTS (
   SELECT 1 FROM empresas e
    WHERE e.id = v_empresa
+     AND e.codigo = '80003314'
+     AND e.razon_social = 'CASA MINGO S.A.'
      AND e.es_demo = false
      AND e.estado = 'ACTIVA'
-     AND (e.razon_social ILIKE '%MINGO%' OR e.codigo ILIKE '%MINGO%')
  ) THEN
-    RAISE EXCEPTION 'UUID % no corresponde a CASA MINGO activa y no demo; verificar empresa en BD', v_empresa;
+    RAISE EXCEPTION 'UUID % no corresponde a CASA MINGO S.A. codigo 80003314, ACTIVA y no demo', v_empresa;
  END IF;
  PERFORM set_config('import_casa_mingo.empresa_id', v_empresa::text, true);
 
