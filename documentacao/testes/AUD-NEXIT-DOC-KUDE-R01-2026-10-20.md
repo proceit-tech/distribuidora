@@ -44,7 +44,7 @@ Entretanto:
 
 ## 5. Evidência de testes e limites
 
-**Claude reportou, ChatGPT NÃO reexecutou:** `kude` 70 verificações / 0 falhas; regressões `configuracion-gateway` 60, `gateway-config` 69, `fat-e2` 44, `facturacion` 271, `rediseno` 90, `nce` 205 = **809 verificações adicionais** e **879 verificações totais relatadas / 0 falhas**. `tsc` de projeto de casos e ESLint pontual reportados OK. A auditoria foi feita por leitura GitHub do código e do teste; **sem execução independente de testes, PostgreSQL, navegador/React, gateway real, VM, Docker, CI, build ou deploy**. Não validar impressão com browser a partir de teste unitário de callback.
+**Claude reportou, ChatGPT NÃO reexecutou:** `kude` 70 verificações / 0 falhas; regressões `configuracion-gateway` 60, `gateway-config` 69, `fat-e2` 44, `facturacion` 271, `rediseno` 90, `nce` 205 = **739 verificações de regressão** e **809 verificações totais relatadas / 0 falhas**. `tsc` de projeto de casos e ESLint pontual reportados OK. A auditoria foi feita por leitura GitHub do código e do teste; **sem execução independente de testes, PostgreSQL, navegador/React, gateway real, VM, Docker, CI, build ou deploy**. Não validar impressão com browser a partir de teste unitário de callback.
 
 ## 6. Status do projeto e próximo controle
 
