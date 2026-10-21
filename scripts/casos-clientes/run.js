@@ -88,6 +88,7 @@ Module._resolveFilename = function (request, ...resto) {
   const e06 = cargar("lib/facturacion/nce-seleccion-e06.casos.js");
   const e07 = cargar("lib/facturacion/nce-descuento-e07.casos.js");
   const r01 = cargar("lib/facturacion/nce-correcciones-r01.casos.js");
+  const uxf = cargar("lib/facturacion/flujo-factura-ux.casos.js");
   const red = cargar("lib/facturacion/rediseno.casos.js");
   const suites = [
     ["teléfono y día de cobro", async () => tel.verificarCasosTelefonoYCobro(), () => tel.CASOS_TELEFONO.length + 11 + 6 + 2],
@@ -171,6 +172,7 @@ Module._resolveFilename = function (request, ...resto) {
     ["NCE E06 (PRO-200): Seleccionar todos / Eliminar seleccionados, devolución parcial con coma, tope por saldo, sin entrada de inventario, motivo y corrección intactos", async () => e06.verificarCasosNceSeleccionE06(), null],
     ["NCE E07 (PRO-200): servicio fijo DESCUENTO (motivos 3/4), IVA 10%, sin stock, único ítem, saldo global, API, pantalla y NEX-070", async () => e07.verificarCasosNceDescuentoE07(), null],
     ["NCE R01 (PRO-210/211): Restaurar conserva lo digitado y el listado de facturas elegibles descuenta los DESCUENTO aprobados", async () => r01.verificarCasosNceCorreccionesR01(), null],
+    ["Nueva factura premium (desktop): forma de pago tras cliente y productos, tabla compacta y resumen jerárquico", async () => uxf.verificarCasosFlujoFacturaUx(), null],
   ];
   let total = 0;
   let fallosTotal = 0;

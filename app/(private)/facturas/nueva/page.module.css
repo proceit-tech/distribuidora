@@ -1451,3 +1451,254 @@
   border-radius: 8px;
   background: #f3fbfb;
 }
+
+/* ── Nueva factura premium (desktop): tabla de ítems compacta, forma de pago al final y resumen jerárquico ── */
+.itemsCompacta td {
+  padding: 4px 8px;
+}
+
+.itemsCompacta th {
+  padding: 6px 8px;
+}
+
+.itemsCompacta .prod {
+  max-width: 360px;
+}
+
+/* Nombre: hasta dos líneas visuales; la descripción completa está en el título (tooltip). Código/GTIN: UNA línea secundaria con puntos suspensivos. */
+.itemsCompacta .prod strong {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: 13.5px;
+  line-height: 1.25;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow-wrap: anywhere;
+}
+
+.itemsCompacta .prod small {
+  display: block;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.itemsCompacta .prod small.pendienteLinea {
+  white-space: normal;
+}
+
+.itemsCompacta input,
+.itemsCompacta select {
+  min-height: 30px;
+  padding-top: 2px;
+  padding-bottom: 2px;
+}
+
+.itemsCompacta td {
+  vertical-align: middle;
+}
+
+/* Resumen de la factura: alto máximo, cuerpo con scroll interno y acciones siempre visibles. */
+.modalResumen {
+  display: flex;
+  max-width: 1040px;
+  max-height: calc(100vh - 32px);
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.overlay:has(.modalResumen) {
+  align-items: center;
+}
+
+.resumenCabecera {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px 24px;
+  padding: 14px 20px 10px;
+  border-bottom: 1px solid #dce6ed;
+}
+
+.resumenCabecera h2 {
+  margin: 0;
+}
+
+.resumenCabecera .hint {
+  margin: 2px 0 0;
+}
+
+.resumenEmisor {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 20px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.resumenEmisor div {
+  display: grid;
+  gap: 0;
+}
+
+.resumenEmisor dt,
+.resumenDl dt,
+.totalesDetalle dt,
+.totalesPrincipales dt {
+  color: #5b7387;
+  font-size: 12px;
+}
+
+.resumenEmisor dd,
+.resumenDl dd,
+.totalesDetalle dd,
+.totalesPrincipales dd {
+  margin: 0;
+  color: #112f4a;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.resumenCuerpo {
+  display: grid;
+  flex: 1 1 auto;
+  gap: 12px;
+  padding: 12px 20px;
+  overflow-y: auto;
+}
+
+.resumenGrupos {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.grupo {
+  padding: 8px 12px;
+  border: 1px solid #e3ecf2;
+  border-radius: 8px;
+  background: #fbfdfe;
+}
+
+.grupo h3 {
+  margin: 0 0 4px;
+  color: #112f4a;
+  font-size: 13px;
+}
+
+.resumenDl {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.resumenDl div {
+  display: grid;
+  gap: 0;
+}
+
+.resumenTabla {
+  max-height: 260px;
+  overflow: auto;
+  border: 1px solid #e3ecf2;
+  border-radius: 8px;
+}
+
+.resumenTabla .itemsResumen {
+  min-width: 560px;
+}
+
+.resumenTabla th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.resumenTabla td,
+.resumenTabla th {
+  padding: 5px 8px;
+}
+
+.resumenTabla .prod strong {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow-wrap: anywhere;
+}
+
+.stockSalida summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.stockSalida[open] summary {
+  margin-bottom: 6px;
+}
+
+.resumenTotales {
+  display: grid;
+  grid-template-columns: minmax(240px, 320px) 1fr;
+  gap: 12px;
+  align-items: start;
+}
+
+.totalesPrincipales {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 10px 14px;
+  border: 1px solid #cfe0ea;
+  border-radius: 8px;
+  background: #f4f8fa;
+}
+
+.totalesPrincipales div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.totalGeneral dt {
+  color: #112f4a;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.totalGeneral dd {
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
+}
+
+.totalesDetalle {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px 16px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.totalesDetalle div {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 0;
+  border-bottom: 1px dashed #e3ecf2;
+}
+
+.resumenAcciones {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 10px 20px;
+  border-top: 1px solid #dce6ed;
+  background: #ffffff;
+}

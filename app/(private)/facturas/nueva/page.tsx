@@ -33,6 +33,8 @@ import { EditorFiscalItem, type UnidadSifen } from "./ajuste-fiscal-item";
 import { CantidadAnadido } from "./cantidad-anadido";
 import { CondicionCredito } from "./condicion-credito";
 import { EntregaCliente } from "./entrega-cliente";
+import { disponibilidadPago, resumenStockCompacto } from "@/lib/facturacion/flujo-factura";
+
 import { MediosPago } from "./medios-pago";
 import estilos from "./page.module.css";
 
@@ -622,6 +624,7 @@ export default function NuevaFacturaPage() {
   const hayPagos = !enCredito || (entregaDec !== null && entregaDec > B(0));
   const objetivoDec = enCredito ? entregaDec : parseDec(calculo.texto.total, 8);
   const pendientesDePagos = hayPagos && objetivoDec !== null && calculo.total > 0 ? pendientesPagos(pagos.map((p) => pagoParaEnvio(p, pagos.length === 1)), objetivoDec, Number(presencia)) : [];
+  const pagoFlujo = disponibilidadPago({ hayCliente: cliente !== null, nLineas: lineas.length, lineasValidas, totalPositivo: calculo.total > 0 });
   const faltan = [
     sucursalId === "" ? "sucursal" : "",
     puntoId === "" ? "punto de expedición" : "",
@@ -957,22 +960,6 @@ export default function NuevaFacturaPage() {
 
                   {enCredito ? <CondicionCredito moneda={moneda} simbolo={sim} estado={credito} total={calculo.texto.total} hoy={hoyIso} pendientes={pendientesDeCredito} alCambiar={(c) => setCredito((x) => ({ ...x, ...c }))} /> : null}
 
-                  {hayPagos ? (
-                    <MediosPago
-                      moneda={moneda}
-                      simbolo={sim}
-                      titulo={enCredito ? "Medios de pago de la entrega inicial" : "Forma de pago"}
-                      objetivo={objetivoDec === null ? "—" : textoDecimal(objetivoDec)}
-                      conciliacion={objetivoDec === null ? { suma: null, coincide: false } : conciliarPagos(pagos.map((p) => pagoParaEnvio(p, pagos.length === 1)), objetivoDec)}
-                      presencia={presencia}
-                      formas={opciones?.formasPago ?? {}}
-                      pagos={pagos}
-                      pendientes={pendientesDePagos}
-                      alCambiar={(i, c) => setPagos((ps) => ps.map((x, j) => (j === i ? { ...x, ...c } : x)))}
-                      alAgregar={() => setPagos((ps) => [...ps, { ...PAGO_UI_VACIO, tipo: "5" }])}
-                      alQuitar={(i) => setPagos((ps) => ps.filter((_, j) => j !== i))}
-                    />
-                  ) : null}
                 </div>
               </section>
 
@@ -1073,8 +1060,8 @@ export default function NuevaFacturaPage() {
                           <Fragment key={l.clave}>
                           <tr className={[!cantOk || !precOk || pr.length > 0 ? estilos.filaInvalida : "", seleccionada ? estilos.filaSeleccionada : ""].filter(Boolean).join(" ") || undefined}>
                             <td className={estilos.prod} data-label="Producto">
-                              <strong>{l.producto.descripcion}</strong>
-                              <small>{l.producto.codigo}{l.producto.gtin ? ` · GTIN ${l.producto.gtin}` : ""}</small>
+                              <strong title={l.producto.descripcion}>{l.producto.descripcion}</strong>
+                              <small title={`${l.producto.codigo}${l.producto.gtin ? ` · GTIN ${l.producto.gtin}` : ""}`}>{l.producto.codigo}{l.producto.gtin ? ` · GTIN ${l.producto.gtin}` : ""}</small>
                               {pr.length > 0 ? (
                                 <small className={estilos.pendienteLinea}>
                                   {puedeAjustarFiscal ? "Completar: " : "No facturable: "}{pr.join(", ")}
@@ -1189,6 +1176,37 @@ export default function NuevaFacturaPage() {
                       })}
                     </tbody>
                   </table>
+                </div>
+              </section>
+
+              <section className={estilos.card} aria-labelledby="sec-pago">
+                <div className={estilos.cardHead}>
+                  <h2 id="sec-pago">{enCredito ? "Pago de la entrega inicial" : "Forma de pago"}</h2>
+                  {pagoFlujo.disponible && objetivoDec !== null ? <span className={estilos.meta}>{enCredito ? "Entrega" : "Total"} {sim} {formatearMontoVisual(textoDecimal(objetivoDec), moneda)}</span> : null}
+                </div>
+                <div className={estilos.cardBody}>
+                  {!pagoFlujo.disponible ? (
+                    <p className={estilos.hint} data-estado={pagoFlujo.motivo}>{pagoFlujo.guia}</p>
+                  ) : hayPagos ? (
+              
+                <MediosPago
+                  moneda={moneda}
+                  simbolo={sim}
+                  titulo={enCredito ? "Medios de pago de la entrega inicial" : "Forma de pago"}
+                        ocultarTitulo
+                  objetivo={objetivoDec === null ? "—" : textoDecimal(objetivoDec)}
+                  conciliacion={objetivoDec === null ? { suma: null, coincide: false } : conciliarPagos(pagos.map((p) => pagoParaEnvio(p, pagos.length === 1)), objetivoDec)}
+                  presencia={presencia}
+                  formas={opciones?.formasPago ?? {}}
+                  pagos={pagos}
+                  pendientes={pendientesDePagos}
+                  alCambiar={(i, c) => setPagos((ps) => ps.map((x, j) => (j === i ? { ...x, ...c } : x)))}
+                  alAgregar={() => setPagos((ps) => [...ps, { ...PAGO_UI_VACIO, tipo: "5" }])}
+                  alQuitar={(i) => setPagos((ps) => ps.filter((_, j) => j !== i))}
+                />
+                  ) : (
+                    <p className={estilos.hint}>Crédito sin entrega inicial: no hay medio de pago que cargar.</p>
+                  )}
                 </div>
               </section>
 
@@ -1309,97 +1327,129 @@ export default function NuevaFacturaPage() {
 
       {resumen ? (
         <div className={estilos.overlay} role="presentation">
-          <div className={estilos.modal} role="dialog" aria-modal="true" aria-labelledby="titulo-resumen">
-            <h2 id="titulo-resumen">Resumen de la factura</h2>
-            <p className={estilos.hint} style={{ marginTop: 0 }}>Revise los datos antes de enviar la factura.</p>
-            <dl className={estilos.totals}>
-              <div><dt>Empresa</dt><dd>{resumen.empresa}</dd></div>
-              <div><dt>Establecimiento / sucursal</dt><dd>{etiquetaEstablecimiento(resumen.establecimiento)} · {resumen.sucursal}</dd></div>
-              <div><dt>Punto de expedición</dt><dd>{resumen.punto}</dd></div>
-              <div><dt>Fecha</dt><dd>{hoy || "—"}</dd></div>
-              <div><dt>Cliente</dt><dd>{resumen.cliente.razonSocial} ({resumen.cliente.documento})</dd></div>
-              <div><dt>Dirección de entrega</dt><dd>{resumen.entrega ? `${resumen.entrega.nombre} — ${resumen.entrega.direccion}` : "Sin destino de entrega registrado (se factura con el domicilio fiscal del receptor)"}</dd></div>
-              <div><dt>Transacción · presencia</dt><dd>{resumen.tipoTransaccion} · {resumen.presencia}</dd></div>
-              <div><dt>Condición de la operación</dt><dd>{resumen.condicion}</dd></div>
-              <div><dt>Moneda</dt><dd>{resumen.moneda}</dd></div>
-              {resumen.cambio ? (
-                <>
-                  <div><dt>Tipo de cambio (manual)</dt><dd>Gs. {fd(resumen.cambio.valor)} por 1 {resumen.moneda}{resumen.cambio.modificado && resumen.cambio.catalogo ? ` · distinto del registrado (${resumen.cambio.catalogo.cambio}, ${resumen.cambio.catalogo.fecha})` : ""}</dd></div>
-                  <div><dt>Equivalente en guaraníes</dt><dd>Gs. {formatearMontoVisual(resumen.cambio.totalGs, "PYG")}</dd></div>
-                </>
+          <div className={`${estilos.modal} ${estilos.modalResumen}`} role="dialog" aria-modal="true" aria-labelledby="titulo-resumen">
+            <header className={estilos.resumenCabecera}>
+              <div>
+                <h2 id="titulo-resumen">Resumen de la factura</h2>
+                <p className={estilos.hint}>Revise los datos antes de enviar la factura.</p>
+              </div>
+              <dl className={estilos.resumenEmisor}>
+                <div><dt>Empresa</dt><dd>{resumen.empresa}</dd></div>
+                <div><dt>Establecimiento</dt><dd>{etiquetaEstablecimiento(resumen.establecimiento)} · {resumen.sucursal}</dd></div>
+                <div><dt>Punto</dt><dd>{resumen.punto}</dd></div>
+                <div><dt>Fecha</dt><dd>{hoy || "—"}</dd></div>
+              </dl>
+            </header>
+
+            <div className={estilos.resumenCuerpo}>
+              <div className={estilos.resumenGrupos}>
+                <section className={estilos.grupo} aria-label="Cliente y entrega">
+                  <h3>Cliente y entrega</h3>
+                  <dl className={estilos.resumenDl}>
+                    <div><dt>Cliente</dt><dd>{resumen.cliente.razonSocial} ({resumen.cliente.documento})</dd></div>
+                    <div><dt>Dirección de entrega</dt><dd>{resumen.entrega ? `${resumen.entrega.nombre} — ${resumen.entrega.direccion}` : "Sin destino de entrega registrado (se factura con el domicilio fiscal del receptor)"}</dd></div>
+                  </dl>
+                </section>
+                <section className={estilos.grupo} aria-label="Operación">
+                  <h3>Operación</h3>
+                  <dl className={estilos.resumenDl}>
+                    <div><dt>Transacción · presencia</dt><dd>{resumen.tipoTransaccion} · {resumen.presencia}</dd></div>
+                    <div><dt>Condición</dt><dd>{resumen.condicion}</dd></div>
+                    <div><dt>Moneda</dt><dd>{resumen.moneda}</dd></div>
+                    {resumen.cambio ? (
+                      <>
+                        <div><dt>Tipo de cambio (manual)</dt><dd>Gs. {fd(resumen.cambio.valor)} por 1 {resumen.moneda}{resumen.cambio.modificado && resumen.cambio.catalogo ? ` · distinto del registrado (${resumen.cambio.catalogo.cambio}, ${resumen.cambio.catalogo.fecha})` : ""}</dd></div>
+                        <div><dt>Equivalente en guaraníes</dt><dd>Gs. {formatearMontoVisual(resumen.cambio.totalGs, "PYG")}</dd></div>
+                      </>
+                    ) : null}
+                  </dl>
+                </section>
+                <section className={estilos.grupo} aria-label="Pagos">
+                  <h3>Pagos</h3>
+                  <dl className={estilos.resumenDl}>
+                    {resumen.pagos && resumen.pagos.length > 0
+                      ? resumen.pagos.map((p, i) => <div key={i}><dt>{resumen.credito ? "Medio de la entrega" : "Pago"} · {p.medio}</dt><dd>{simboloMoneda(resumen.moneda)} {fmv(p.monto)}{p.detalle ? ` · ${p.detalle}` : ""}</dd></div>)
+                      : resumen.formaPago ? <div><dt>Forma de pago</dt><dd>{resumen.formaPago}</dd></div> : null}
+                    {resumen.credito ? (
+                      <>
+                        <div><dt>Tipo de crédito</dt><dd>{resumen.credito.tipo}{resumen.credito.plazo ? ` · ${resumen.credito.plazo}` : ""}</dd></div>
+                        <div><dt>Entrega inicial</dt><dd>{simboloMoneda(resumen.moneda)} {fmv(resumen.credito.entrega)}</dd></div>
+                        <div><dt>Saldo financiado</dt><dd>{simboloMoneda(resumen.moneda)} {fmv(resumen.credito.saldo)}</dd></div>
+                        {resumen.credito.cuotas.map((q) => <div key={q.numero}><dt>Cuota {q.numero}/{resumen.credito?.cuotas.length}</dt><dd>{simboloMoneda(resumen.moneda)} {fmv(q.monto)} · vence {q.vencimiento}</dd></div>)}
+                      </>
+                    ) : null}
+                  </dl>
+                </section>
+              </div>
+
+              <div className={estilos.resumenTabla} tabIndex={0} role="region" aria-label="Productos de la factura">
+                <table className={`${estilos.items} ${estilos.itemsResumen}`}>
+                  <thead><tr><th>Producto</th><th>Unid.</th><th className={estilos.num}>Cant.</th><th className={estilos.num}>Precio (IVA incl.)</th><th>IVA</th><th className={estilos.num}>Total</th></tr></thead>
+                  <tbody>
+                    {resumen.lineas.map((l, i) => (
+                      <tr key={i}>
+                        <td className={estilos.prod}>
+                          <strong title={l.descripcion}>{l.descripcion}</strong>
+                          <small>{l.codigo}</small>
+                          {l.ajustes && l.ajustes.length > 0 ? <small className={estilos.modificado}>Ajustado en esta factura: {l.ajustes.join(", ")}</small> : null}
+                        </td>
+                        <td>{l.unidad || "—"}</td>
+                        <td className={estilos.num}>{l.cantidad}</td>
+                        <td className={estilos.num}>
+                          {fmv(l.precio)}
+                          {l.descuento ? <span className={estilos.modificado}>Descuento: {fmv(l.descuento.unitario)} por unidad ({fd(l.descuento.porcentaje)} %) + general {fmv(l.descuento.global)} = {fmv(l.descuento.total)}</span> : null}
+                          {l.precioModificado ? <span className={estilos.modificado}>Precio modificado (lista {fmv(l.precioLista)})</span> : null}
+                        </td>
+                        <td>{etiquetaIva(l.afectacion, l.tasa, l.proporcion ?? null)}</td>
+                        <td className={estilos.num}>{fmv(l.totalTexto ?? String(l.total))}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {resumen.stock && resumen.stock.lineas.length > 0 ? (
+                <details className={estilos.stockSalida}>
+                  <summary>Salida de stock por depósito · {resumenStockCompacto(resumen.stock.lineas).texto}</summary>
+                  <ul>
+                    {resumen.stock.lineas.map((l) => (
+                      <li key={l.codigo}>
+                        <strong>{l.descripcion}</strong> ({l.codigo}) · {fd(l.requerido)}:{" "}
+                        {l.salidas.map((s) => `${s.depositoCodigo} ${s.depositoNombre}${s.loteCodigo ? ` · lote ${s.loteCodigo}` : ""}: ${fd(s.cantidad)}`).join(" + ")}
+                      </li>
+                    ))}
+                  </ul>
+                  <small className={estilos.hint}>El stock se descuenta de estos depósitos al enviar la factura.</small>
+                </details>
               ) : null}
-              {resumen.pagos && resumen.pagos.length > 0
-                ? resumen.pagos.map((p, i) => <div key={i}><dt>{resumen.credito ? "Medio de la entrega" : "Pago"} · {p.medio}</dt><dd>{simboloMoneda(resumen.moneda)} {fmv(p.monto)}{p.detalle ? ` · ${p.detalle}` : ""}</dd></div>)
-                : resumen.formaPago ? <div><dt>Forma de pago</dt><dd>{resumen.formaPago}</dd></div> : null}
-              {resumen.credito ? (
-                <>
-                  <div><dt>Tipo de crédito</dt><dd>{resumen.credito.tipo}{resumen.credito.plazo ? ` · ${resumen.credito.plazo}` : ""}</dd></div>
-                  <div><dt>Entrega inicial</dt><dd>{simboloMoneda(resumen.moneda)} {fmv(resumen.credito.entrega)}</dd></div>
-                  <div><dt>Saldo financiado</dt><dd>{simboloMoneda(resumen.moneda)} {fmv(resumen.credito.saldo)}</dd></div>
-                  {resumen.credito.cuotas.map((q) => <div key={q.numero}><dt>Cuota {q.numero}/{resumen.credito?.cuotas.length}</dt><dd>{simboloMoneda(resumen.moneda)} {fmv(q.monto)} · vence {q.vencimiento}</dd></div>)}
-                </>
-              ) : null}
-            </dl>
-            <div className={estilos.tableWrap} style={{ margin: "10px 0" }}>
-              <table className={`${estilos.items} ${estilos.itemsResumen}`}>
-                <thead><tr><th>Producto</th><th>Unid.</th><th className={estilos.num}>Cant.</th><th className={estilos.num}>Precio (IVA incl.)</th><th>IVA</th><th className={estilos.num}>Total</th></tr></thead>
-                <tbody>
-                  {resumen.lineas.map((l, i) => (
-                    <tr key={i}>
-                      <td className={estilos.prod}>
-                        <strong>{l.descripcion}</strong>
-                        <small>{l.codigo}</small>
-                        {l.ajustes && l.ajustes.length > 0 ? <small className={estilos.modificado}>Ajustado en esta factura: {l.ajustes.join(", ")}</small> : null}
-                      </td>
-                      <td>{l.unidad || "—"}</td>
-                      <td className={estilos.num}>{l.cantidad}</td>
-                      <td className={estilos.num}>
-                        {fmv(l.precio)}
-                        {l.descuento ? <span className={estilos.modificado}>Descuento: {fmv(l.descuento.unitario)} por unidad ({fd(l.descuento.porcentaje)} %) + general {fmv(l.descuento.global)} = {fmv(l.descuento.total)}</span> : null}
-                        {l.precioModificado ? <span className={estilos.modificado}>Precio modificado (lista {fmv(l.precioLista)})</span> : null}
-                      </td>
-                      <td>{etiquetaIva(l.afectacion, l.tasa, l.proporcion ?? null)}</td>
-                      <td className={estilos.num}>{fmv(l.totalTexto ?? String(l.total))}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+
+              <div className={estilos.resumenTotales}>
+                <dl className={estilos.totalesPrincipales}>
+                  <div className={estilos.totalGeneral}><dt>Total general</dt><dd>{fmv(resumen.totalesTexto?.total ?? String(resumen.totales.total))}</dd></div>
+                  <div><dt>Total IVA</dt><dd>{fmv(resumen.totalesTexto?.totalIva ?? String(resumen.totales.totalIva))}</dd></div>
+                  {resumen.descuentos ? <div><dt>Total descuentos</dt><dd>{fmv(resumen.descuentos.total)}</dd></div> : null}
+                </dl>
+                <dl className={estilos.totalesDetalle}>
+                  {resumen.descuentos ? (
+                    <>
+                      <div><dt>Descuento por ítems</dt><dd>{fmv(resumen.descuentos.totalItems)}</dd></div>
+                      <div><dt>Descuento general ({fd(resumen.descuentos.porcGlobal)} %)</dt><dd>{fmv(resumen.descuentos.totalGeneral)}</dd></div>
+                    </>
+                  ) : null}
+                  <div><dt>Exento</dt><dd>{fmv(resumen.totalesTexto?.exento ?? String(resumen.totales.exento))}</dd></div>
+                  <div><dt>Exonerado</dt><dd>{fmv(resumen.totalesTexto?.exonerado ?? String(resumen.totales.exonerado))}</dd></div>
+                  <div><dt>Gravado 5 %</dt><dd>{fmv(resumen.totalesTexto?.gravado5 ?? String(resumen.totales.gravado5))}</dd></div>
+                  <div><dt>Gravado 10 %</dt><dd>{fmv(resumen.totalesTexto?.gravado10 ?? String(resumen.totales.gravado10))}</dd></div>
+                  <div><dt>IVA 5 %</dt><dd>{fmv(resumen.totalesTexto?.iva5 ?? String(resumen.totales.iva5))}</dd></div>
+                  <div><dt>IVA 10 %</dt><dd>{fmv(resumen.totalesTexto?.iva10 ?? String(resumen.totales.iva10))}</dd></div>
+                </dl>
+              </div>
             </div>
-            {resumen.stock && resumen.stock.lineas.length > 0 ? (
-              <section className={estilos.stockSalida} aria-label="Salida de stock por depósito">
-                <h3>Salida de stock por depósito</h3>
-                <ul>
-                  {resumen.stock.lineas.map((l) => (
-                    <li key={l.codigo}>
-                      <strong>{l.descripcion}</strong> ({l.codigo}) · {fd(l.requerido)}:{" "}
-                      {l.salidas.map((s) => `${s.depositoCodigo} ${s.depositoNombre}${s.loteCodigo ? ` · lote ${s.loteCodigo}` : ""}: ${fd(s.cantidad)}`).join(" + ")}
-                    </li>
-                  ))}
-                </ul>
-                <small className={estilos.hint}>El stock se descuenta de estos depósitos al enviar la factura.</small>
-              </section>
-            ) : null}
-            <dl className={estilos.totals}>
-              {resumen.descuentos ? (
-                <>
-                  <div><dt>Descuento por ítems</dt><dd>{fmv(resumen.descuentos.totalItems)}</dd></div>
-                  <div><dt>Descuento general ({fd(resumen.descuentos.porcGlobal)} %)</dt><dd>{fmv(resumen.descuentos.totalGeneral)}</dd></div>
-                  <div><dt>Total descuentos</dt><dd>{fmv(resumen.descuentos.total)}</dd></div>
-                </>
-              ) : null}
-              <div><dt>Exento</dt><dd>{fmv(resumen.totalesTexto?.exento ?? String(resumen.totales.exento))}</dd></div>
-              <div><dt>Exonerado</dt><dd>{fmv(resumen.totalesTexto?.exonerado ?? String(resumen.totales.exonerado))}</dd></div>
-              <div><dt>Gravado 5 %</dt><dd>{fmv(resumen.totalesTexto?.gravado5 ?? String(resumen.totales.gravado5))}</dd></div>
-              <div><dt>Gravado 10 %</dt><dd>{fmv(resumen.totalesTexto?.gravado10 ?? String(resumen.totales.gravado10))}</dd></div>
-              <div><dt>IVA 5 %</dt><dd>{fmv(resumen.totalesTexto?.iva5 ?? String(resumen.totales.iva5))}</dd></div>
-              <div><dt>IVA 10 %</dt><dd>{fmv(resumen.totalesTexto?.iva10 ?? String(resumen.totales.iva10))}</dd></div>
-              <div><dt>Total IVA</dt><dd>{fmv(resumen.totalesTexto?.totalIva ?? String(resumen.totales.totalIva))}</dd></div>
-              <div><dt>Total general</dt><dd>{fmv(resumen.totalesTexto?.total ?? String(resumen.totales.total))}</dd></div>
-            </dl>
-            <div className={estilos.actions} style={{ marginTop: 14 }}>
+
+            <footer className={estilos.resumenAcciones}>
               <button type="button" className={ui.secondaryButton} onClick={() => limpiarRevision()}>Volver a editar</button>
               <button type="button" className={ui.primaryButton} disabled={enviando || !puedeEnviarPorGateway(gateway)} title={puedeEnviarPorGateway(gateway) ? undefined : gateway?.mensaje ?? "Verificando la configuración del gateway…"} onClick={enviar}>Enviar factura</button>
-            </div>
+            </footer>
           </div>
         </div>
       ) : null}

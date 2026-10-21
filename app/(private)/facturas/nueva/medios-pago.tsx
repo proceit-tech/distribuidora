@@ -11,16 +11,16 @@ import estilos from "./page.module.css";
  * sublínea con los datos que el Manual SIFEN exige para esa modalidad. Nunca se pide el número de la tarjeta ni el código de seguridad. Con un solo medio el monto es el total (o la entrega inicial en
  * Crédito) y no se escribe. La conciliación es DECIMAL exacta (módulo compartido con el servidor) y los importes se muestran como texto, sin pasar por Number. El servidor vuelve a validar todo.
  */
-export function MediosPago({ moneda, simbolo, titulo, objetivo, conciliacion, presencia, formas, pagos, pendientes, alCambiar, alAgregar, alQuitar }: {
+export function MediosPago({ moneda, simbolo, titulo, ocultarTitulo, objetivo, conciliacion, presencia, formas, pagos, pendientes, alCambiar, alAgregar, alQuitar }: {
   /** Código de la moneda (PYG sin decimales en lo que se muestra). */
-  moneda: string; simbolo: string; titulo: string; objetivo: string; conciliacion: { suma: string | null; coincide: boolean }; presencia: string; formas: Record<string, string>; pagos: PagoUI[]; pendientes: string[];
+  moneda: string; simbolo: string; titulo: string; /** El título ya lo muestra la sección contenedora (queda como etiqueta accesible). */ ocultarTitulo?: boolean; objetivo: string; conciliacion: { suma: string | null; coincide: boolean }; presencia: string; formas: Record<string, string>; pagos: PagoUI[]; pendientes: string[];
   alCambiar: (i: number, c: Partial<PagoUI>) => void; alAgregar: () => void; alQuitar: (i: number) => void;
 }) {
   const varios = pagos.length > 1;
 
   return (
     <div className={estilos.pagos} role="group" aria-label={titulo}>
-      <span className={estilos.pagosTitulo}>{titulo}</span>
+      {ocultarTitulo ? null : <span className={estilos.pagosTitulo}>{titulo}</span>}
 
       {pagos.map((p, i) => {
         const tipo = Number(p.tipo);
