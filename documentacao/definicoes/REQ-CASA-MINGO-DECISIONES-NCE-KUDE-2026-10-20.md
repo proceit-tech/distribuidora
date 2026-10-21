@@ -67,9 +67,15 @@
 ### A. Facturación FE + stock
 
 1. Al elegir una mercadería, el sistema **consulta en cuáles depósitos/estados tiene stock DISPONIBLE de propiedad PROPIO**; no considerar físicamente disponible si está reservado, en cuarentena o tránsito. Solo permitir operar dentro de los depósitos autorizados de la empresa/sucursal y usuario.
-2. **Impedir la venta por encima del saldo** del depósito realmente elegido. Bloqueo de stock en backend/BD, bajo concurrencia, no solo validación visual. No usar sumatoria de depósitos distintos para efectuar una baja desde uno solo ni permitir saldos negativos.
+2. **Impedir la venta por encima de la suma del stock DISPONIBLE de depósitos autorizados**. Bloqueo en backend/BD bajo concurrencia. Cada porción se descuenta del depósito de origen real, nunca del stock de otro depósito ni del saldo reservado o en tránsito; jamás permitir saldo negativo.
 3. **Dar de baja el stock al emitir la factura**, en el acto confirmado por el operador. Registrar un movimiento normal de salida de Inventario/Kardex vinculado inequívocamente a la FE, sin doble baja por reintento, actualización de estado, consulta o click repetido. No reducir stock al agregar un producto a una factura aún no emitida.
-4. **Decisión operacional PENDIENTE:** si existen unidades del mismo artículo en DOS depósitos, el usuario debe decidir entre (a) escoger depósito por línea o (b) una opción automática con regla de origen transparente. No asumir consumo automático de varios depósitos.
+4. **DECISIÓN CONFIRMADA: distribución automática entre depósitos.** Al vender un producto con stock distribuido, NEXIT asigna automáticamente la cantidad requerida entre los depósitos autorizados con saldo DISPONIBLE. El operador visualiza antes de confirmar de qué depósito saldrá cada porción y cuánto.
+   - Ejemplo de aceptación: depósito A=3, depósito B=5, vender 6 => tomar 3 de A + 3 de B (u otra asignación automática válida documentada) y mostrar ambas salidas.
+   - La factura conserva una única línea fiscal por producto por su cantidad total, sin duplicar líneas por depósito; el Kardex registra **una salida real por depósito**, vinculada a la misma FE.
+   - El motor actual `inventario_registrar_movimiento` admite un solo depósito de origen por movimiento: agrupar las líneas asignadas por depósito y ejecutar movimientos SALIDA/VENTA distintos; conjunto atómico/idempotente con la emisión para no confirmar solo un retiro parcial.
+   - Revalidación y bloqueo transaccional de saldos al confirmar, incluidas ventas simultáneas. Si el reparto mostrado queda obsoleto, exigir nueva revisión antes de confirmar o bloquear; no sustituir silenciosamente la distribución tras la aprobación del usuario.
+   - Excluir depósitos de otra empresa, inactivos, sin alcance autorizado, o existencias reservadas, en cuarentena o tránsito. Nunca hacer una salida desde el depósito equivocado.
+   - La precedencia entre depósitos igualmente aptos es un criterio técnico estable y documentado; no corresponde pedir selección manual obligatoria.
 5. **Estados de gateway:** diseñar reversión vinculada y auditable por rechazo fiscal definitivo; no liberar por timeout/ENVIO_INDETERMINADO mientras SIFEN pudiera aprobar. Cancelación oficial de FE debe tener reversión de inventario idempotente según reglas de control. Estas son garantías técnicas requeridas por la decisión de bajar al emitir, NO una segunda pregunta sobre momento de baja.
 6. El servicio DESCUENTO no controla stock, no está limitado por existencia y no genera movimiento. El resto de la mercancía sigue reglas de existencia.
 
@@ -109,14 +115,14 @@
 
 ### F. Lista de pendientes no resueltos por estas decisiones
 
-1. FE: política concreta de asignación del depósito cuando el mismo artículo se encuentre en varios depósitos (pregunta inmediata).
+1. FE: **RESUELTO** — asignación automática entre depósitos disponibles/autorizados con desglose visible y salidas por cada origen; implementación pendiente.
 2. NCE DESCUENTO: selección/derivación fiscal del IVA si la FE referencia tasas mixtas y eventual combinación con líneas originales.
 3. Evento de cancelación: verificar primero disponibilidad/cuerpo de API de gateway, estrategia técnica y compensación de stock/fiscal sin duplicidades.
 4. Solicitudes previas fuera de estas 8 respuestas: destino/dirección de entrega del cliente; foco automático en cantidad de nuevo producto; código de producto con ceros iniciales; descuentos en UI; resumen en PYG sin decimales; seleccionar todos y eliminar en NCE; KuDE NCE con los cinco campos contractuales sin `tipOpe`; texto `Establecimiento 001`. El layout/logo/empresa de KuDE TEST quedan fuera de alcance.
 
 ### Pruebas mínimas obligatorias (ninguna ejecutada en esta decisión)
 
-- Dos depósitos: no usar stock de uno para facturar con baja del otro; no vender > saldo disponible, ni mediante concurrencia doble.
+- Dos depósitos: A=3 y B=5, factura de 6 permite asignación automática de 3+3 y registrar dos salidas, conservando una única línea fiscal de 6; sin saldos negativos, doble baja ni consumo concurrente del mismo stock.
 - Reintentos FE y estados fiscales: baja única, reversión única sólo ante rechazo definitivo/cancelación oficial, estado indeterminado mantiene consistencia.
 - Cantidad `5,5` en UI, FE, Kardex y stock; cantidades sin redondeo; 0, diferencia mínima `0,0001`, inventario fraccionario.
 - NCE 2/3/4: devolución parcial con fracción sin entrada de stock, DESCUENTO fijo con cantidad 1 en motivos 3 y 4, selección/eliminación de todas las líneas, saldo/IVA/CDC válidos, múltiples tasas originales.
