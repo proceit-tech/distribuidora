@@ -3,12 +3,13 @@ import type { Pool } from "pg";
 
 import { type Dependencias, invalidarTokensEmpresa, probarLoginGateway, type EstadoPrueba } from "@/lib/facturacion/gateway";
 import { TIMEOUT_GATEWAY_MS, URL_GATEWAY_PRUEBA } from "@/lib/facturacion/gateway-credenciales";
+import { validarUrlGateway } from "@/lib/facturacion/gateway-url";
 import { ErrorFacturacion } from "@/lib/facturacion/shared";
 
 /**
  * Configuración del gateway de facturación electrónica por empresa (PRO-133, NEX-061). El servidor valida la FORMA y traduce errores; la autoridad es la función SQL (SECURITY DEFINER), que vuelve a
  * verificar el permiso FACTURACION_ELECTRONICA.CONFIGURAR. empresa_id y usuario salen SIEMPRE de la sesión. La clave se guarda sin cifrado en reposo (decisión expresa del responsable) pero NUNCA
- * se devuelve: ni en GET, ni en listados, ni en errores, ni en la auditoría. La URL no se pide: es la del gateway de prueba documentado.
+ * se devuelve: ni en GET, ni en listados, ni en errores, ni en la auditoría. La URL base del gateway es editable por empresa (G01): se valida en el servidor (https + dominio público) y de nuevo en la función SQL (NEX-069).
  */
 type Db = Pick<Pool, "query">;
 type F = Record<string, unknown>;
@@ -24,8 +25,9 @@ export type ConfiguracionGateway = {
   ultimaPruebaEstado: EstadoPrueba | null;
 };
 
-export type GuardadoGateway = { apiUsuario: string; password: string | null };
-export type PruebaGateway = { apiUsuario: string | null; password: string | null };
+/** baseUrl null = no informada: se conserva la persistida (o la del gateway de prueba documentado si la empresa aún no tiene configuración). */
+export type GuardadoGateway = { baseUrl: string | null; apiUsuario: string; password: string | null };
+export type PruebaGateway = { baseUrl: string | null; apiUsuario: string | null; password: string | null };
 
 const ESTADOS_PRUEBA: readonly string[] = ["OK", "CREDENCIALES_INVALIDAS", "NO_DISPONIBLE", "TIMEOUT"];
 
@@ -40,7 +42,19 @@ export const MENSAJES_PRUEBA: Record<EstadoPrueba, string> = {
 /** Texto libre: sin caracteres de control (no se rechaza la clave por su contenido, solo por largo/forma). */
 const SIN_CONTROL = /[\u0000-\u001f\u007f]/;
 
+/** Lee la URL del cuerpo: ausente/vacía = null (se usa la persistida); presente = debe ser válida (nunca se acepta una URL insegura o interna). */
+function leerUrl(c: Record<string, unknown>): { baseUrl: string | null } | string {
+  if (c.baseUrl === undefined || c.baseUrl === null || (typeof c.baseUrl === "string" && c.baseUrl.trim() === "")) return { baseUrl: null };
+
+  const v = validarUrlGateway(c.baseUrl);
+
+  return v.ok ? { baseUrl: v.url } : v.error;
+}
+
 export function leerGuardado(c: Record<string, unknown>): GuardadoGateway | string {
+  const u = leerUrl(c);
+
+  if (typeof u === "string") return u;
   if (typeof c.apiUsuario !== "string" || c.apiUsuario.trim().length < 1 || c.apiUsuario.trim().length > 60 || SIN_CONTROL.test(c.apiUsuario)) return "Informe el usuario de la API (1 a 60 caracteres).";
 
   let password: string | null = null;
@@ -50,10 +64,14 @@ export function leerGuardado(c: Record<string, unknown>): GuardadoGateway | stri
     password = c.password;
   }
 
-  return { apiUsuario: c.apiUsuario.trim(), password };
+  return { baseUrl: u.baseUrl, apiUsuario: c.apiUsuario.trim(), password };
 }
 
 export function leerPrueba(c: Record<string, unknown>): PruebaGateway | string {
+  const u = leerUrl(c);
+
+  if (typeof u === "string") return u;
+
   let apiUsuario: string | null = null;
   let password: string | null = null;
 
@@ -66,7 +84,7 @@ export function leerPrueba(c: Record<string, unknown>): PruebaGateway | string {
     password = c.password;
   }
 
-  return { apiUsuario, password };
+  return { baseUrl: u.baseUrl, apiUsuario, password };
 }
 
 export function traducirErrorConfiguracion(error: unknown): never {
@@ -122,17 +140,27 @@ export async function leerConfiguracion(db: Db, empresaId: string, usuarioId: st
   }
 }
 
-/** Guarda usuario y clave de la API (la clave en blanco conserva la actual). Invalida los tokens en caché de la empresa. */
+/** URL persistida de la empresa (solo si pasa la validación vigente); null si no hay configuración. */
+async function urlPersistida(db: Db, empresaId: string, usuarioId: string): Promise<string | null> {
+  const f = (await db.query("SELECT o_base_url FROM fe_gateway_config_ver($1::uuid, $2::uuid)", [empresaId, usuarioId])).rows[0] as F | undefined;
+  const v = validarUrlGateway(f?.o_base_url);
+
+  return v.ok ? v.url : null;
+}
+
+/** Guarda URL, usuario y clave de la API (la clave en blanco conserva la actual). Invalida los tokens en caché de la empresa; la función SQL sube la versión y borra la última prueba si cambia la URL. */
 export async function guardarConfiguracion(db: Db, empresaId: string, usuarioId: string, g: GuardadoGateway): Promise<void> {
   try {
-    await db.query("SELECT fe_gateway_config_guardar($1::uuid, $2::uuid, $3, $4, $5, $6::integer)", [empresaId, usuarioId, URL_GATEWAY_PRUEBA, g.apiUsuario, g.password, TIMEOUT_GATEWAY_MS]);
+    const baseUrl = g.baseUrl ?? (await urlPersistida(db, empresaId, usuarioId)) ?? URL_GATEWAY_PRUEBA;
+
+    await db.query("SELECT fe_gateway_config_guardar($1::uuid, $2::uuid, $3, $4, $5, $6::integer)", [empresaId, usuarioId, baseUrl, g.apiUsuario, g.password, TIMEOUT_GATEWAY_MS]);
     invalidarTokensEmpresa(empresaId);
   } catch (error) {
     traducirErrorConfiguracion(error);
   }
 }
 
-/** GUARDADAS = prueba de las credenciales vigentes (queda registrada); INFORMADAS = escritas en pantalla, aún no guardadas; ANTERIORES = las guardadas CAMBIARON durante la prueba (el resultado no se aplica a la configuración vigente). */
+/** GUARDADAS = prueba de la configuración vigente (URL + credenciales) (queda registrada); INFORMADAS = escritas en pantalla, aún no guardadas; ANTERIORES = las guardadas CAMBIARON durante la prueba (el resultado no se aplica a la configuración vigente). */
 export type ResultadoPrueba = { estado: EstadoPrueba; mensaje: string; credenciales: "GUARDADAS" | "INFORMADAS" | "ANTERIORES" };
 
 /**
@@ -147,14 +175,16 @@ export async function probarConexion(db: Db, empresaId: string, usuarioId: strin
 
     // La VERSIÓN de las credenciales se lee junto con ellas, ANTES de la llamada externa: el resultado solo vale para esa versión.
     const guardado = (await db.query("SELECT o_api_usuario AS ruc, o_api_password AS password, o_version AS version FROM fe_gateway_credenciales_leer($1::uuid, $2::uuid)", [empresaId, usuarioId])).rows[0] as { ruc?: string; password?: string; version?: number } | undefined;
+    const urlGuardada = await urlPersistida(db, empresaId, usuarioId);
+    const baseUrl = p.baseUrl ?? urlGuardada ?? URL_GATEWAY_PRUEBA;
     const ruc = p.apiUsuario ?? guardado?.ruc ?? null;
     const password = p.password ?? guardado?.password ?? null;
 
     if (!ruc || !password) throw new ErrorFacturacion(422, "Informe el usuario y la contraseña de la API (o guárdelos antes de probar).");
 
-    // La prueba se considera de las credenciales GUARDADAS solo si no se informó nada distinto de lo guardado.
-    const guardadas = guardado !== undefined && ruc === guardado.ruc && password === guardado.password;
-    const r = await probarLoginGateway({ baseUrl: URL_GATEWAY_PRUEBA, timeoutMs: TIMEOUT_GATEWAY_MS }, ruc, password, dep);
+    // La prueba se considera de la configuración GUARDADA solo si URL, usuario y clave coinciden con lo guardado; cualquier diferencia es una prueba TEMPORAL (INFORMADAS) que no se registra.
+    const guardadas = guardado !== undefined && ruc === guardado.ruc && password === guardado.password && urlGuardada !== null && baseUrl === urlGuardada;
+    const r = await probarLoginGateway({ baseUrl, timeoutMs: TIMEOUT_GATEWAY_MS }, ruc, password, dep);
 
     // La base solo aplica el resultado si la versión de las credenciales sigue siendo la probada (en la misma operación); si cambiaron mientras tanto, devuelve false.
     const aplicada = (await db.query("SELECT fe_gateway_prueba_registrar($1::uuid, $2::uuid, $3, $4, $5::integer) AS aplicada", [empresaId, usuarioId, r.estado, guardadas, guardadas ? Number(guardado?.version) : null])).rows[0] as { aplicada?: unknown };

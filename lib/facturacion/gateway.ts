@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { estadoSifenDesdeGateway, type EstadoSifen } from "@/lib/facturacion/estados";
+import { exigirDestinoPublico, fetchSeguro, validarUrlGateway } from "@/lib/facturacion/gateway-url";
 
 /**
  * Cliente del gateway de facturación electrónica (solo servidor). Contrato OBSERVADO en la especificación c1a8d63 (no inventado):
@@ -33,7 +34,10 @@ export const tipoDocConsulta = (tipo: string): string | null => TIPO_DOC_CONSULT
  */
 export function configGatewayValida(empresaId: string, fila: { baseUrl?: unknown; credencialRef?: unknown; timeoutMs?: unknown } | undefined): ConfigGateway | null {
   if (!fila || typeof fila.baseUrl !== "string" || typeof fila.credencialRef !== "string") return null;
-  if (!/^https:\/\/[A-Za-z0-9.-]+(:[0-9]{2,5})?$/.test(fila.baseUrl)) return null;
+  const u = validarUrlGateway(fila.baseUrl);
+
+  // Defensa en profundidad: lo persistido debe estar ya normalizado y cumplir la misma regla que al guardar (https + dominio público, sin IP/ruta/credenciales).
+  if (!u.ok || u.url !== fila.baseUrl) return null;
 
   const t = Number(fila.timeoutMs);
 
@@ -276,7 +280,7 @@ export type EstadoPrueba = "OK" | "CREDENCIALES_INVALIDAS" | "NO_DISPONIBLE" | "
  * el token y la clave jamás salen de aquí (ni se guardan en la caché: es una prueba). 200 + {status:"success", token} = OK; 4xx = credenciales rechazadas; red/5xx/otros = no disponible; tiempo agotado = timeout.
  */
 export async function probarLoginGateway(config: { baseUrl: string; timeoutMs: number }, ruc: string, password: string, dep: Pick<Dependencias, "fetch"> = {}): Promise<{ estado: EstadoPrueba; http: number | null }> {
-  const r = await enviar(`${config.baseUrl}/api/login`, {}, { ruc, password }, config.timeoutMs, dep.fetch ?? (globalThis.fetch as unknown as FetchLike));
+  const r = await enviar(`${config.baseUrl}/api/login`, {}, { ruc, password }, config.timeoutMs, dep.fetch ?? fetchSeguro);
 
   if (!r.ok) return { estado: r.motivo === "TIMEOUT" ? "TIMEOUT" : "NO_DISPONIBLE", http: null };
 
@@ -317,7 +321,7 @@ export async function consultarDocumentoGateway(config: ConfigGateway, doc: Docu
 
   if (!credenciales) return { sinContrato: "CREDENCIALES" };
 
-  const d = { fetch: dep.fetch ?? (globalThis.fetch as unknown as FetchLike), ahora: dep.ahora ?? Date.now };
+  const d = { fetch: dep.fetch ?? fetchSeguro, ahora: dep.ahora ?? Date.now };
   const cuerpo = { dEst: doc.establecimiento, dPunExp: doc.puntoExpedicion, dNumDoc: doc.numero, dSerieNum: doc.serie, tipoDoc };
 
   for (const forzar of [false, true]) {
@@ -585,7 +589,7 @@ export async function enviarDocumentoGateway(
 
   if (!credenciales) return { sinContrato: "CREDENCIALES" };
 
-  const d = { fetch: dep.fetch ?? (globalThis.fetch as unknown as FetchLike), ahora: dep.ahora ?? Date.now };
+  const d = { fetch: dep.fetch ?? fetchSeguro, ahora: dep.ahora ?? Date.now };
   const fases: FaseEnvio[] = [];
 
   for (const forzar of [false, true]) {
@@ -635,6 +639,13 @@ export async function enviarDocumentoGateway(
 export const MAX_KUDE_BYTES = 10 * 1024 * 1024;
 const MAX_KUDE_JSON = Math.ceil((MAX_KUDE_BYTES * 4) / 3) + 8192;
 export type CuerpoLegible = { getReader(): { read(): Promise<{ done: boolean; value?: Uint8Array }>; cancel(motivo?: unknown): Promise<void> } };
+/** fetch de producción del KuDE: mismo control de destino que el resto del gateway y sin seguir redirecciones. */
+const fetchKudeSeguro: KudeFetch = async (url, init) => {
+  await exigirDestinoPublico(url);
+
+  return (globalThis.fetch as unknown as KudeFetch)(url, { ...init, redirect: "manual" } as typeof init);
+};
+
 export type KudeFetch = (url: string, init: { method: string; headers: Record<string, string>; body: string; signal: AbortSignal }) => Promise<{ status: number; headers: { get(nombre: string): string | null }; body: CuerpoLegible | null }>;
 export type DependenciasKude = { fetch?: FetchLike; fetchKude?: KudeFetch; env?: Record<string, string | undefined>; ahora?: () => number };
 export type DocumentoKude = { tipOpe: string; establecimiento: string; puntoExpedicion: string; numero: string; serie: string | null; cdc: string };
@@ -746,8 +757,8 @@ export async function obtenerKudeGateway(config: ConfigGateway, doc: DocumentoKu
 
   if (!credenciales) return falloKude("SIN_CREDENCIALES", null, "Las credenciales del gateway de esta empresa no están configuradas.");
 
-  const d = { fetch: dep.fetch ?? (globalThis.fetch as unknown as FetchLike), ahora: dep.ahora ?? Date.now };
-  const fetchKude = dep.fetchKude ?? (globalThis.fetch as unknown as KudeFetch);
+  const d = { fetch: dep.fetch ?? fetchSeguro, ahora: dep.ahora ?? Date.now };
+  const fetchKude = dep.fetchKude ?? fetchKudeSeguro;
   const cuerpo = { tipOpe: doc.tipOpe, dEst: doc.establecimiento, dPunExp: doc.puntoExpedicion, dNumDoc: doc.numero, dSerieNum: doc.serie, tipoDoc: "FE" };
 
   for (const forzar of [false, true]) {
