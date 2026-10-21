@@ -162,6 +162,8 @@ export async function verificarCasosConfiguracionGateway(): Promise<string[]> {
   const codigoPg = async (p: Promise<unknown>) => { try { await p; return "OK"; } catch (e) { return (e as { code?: string }).code ?? "otro"; } };
   const rechaza = async (p: Promise<unknown>) => { try { await p; return "OK"; } catch (e) { return e instanceof ErrorFacturacion ? e.estado : "otro"; } };
 
+  igual("PRO133-NUEVA-URL: gateway de pruebas confirmado vía /api/login", URL_GATEWAY_PRUEBA, "https://gateway.e-factura-hub.com");
+
   // ── 1. Guardar y cambiar ───────────────────────────────────────────────────────────────────────
   const b = baseFalsa();
   igual("sin configuración: la pantalla ve «sin configurar», la empresa de la sesión y la URL de prueba fija (sin pedirla)", [(await leerConfiguracion(b.db, EMP_A, ADM_A)).configurado, (await leerConfiguracion(b.db, EMP_A, ADM_A)).empresa, (await leerConfiguracion(b.db, EMP_A, ADM_A)).baseUrl], [false, "CASA MINGO S.A.", URL_GATEWAY_PRUEBA]);
