@@ -85,6 +85,7 @@ Module._resolveFilename = function (request, ...resto) {
   const e04 = cargar("lib/facturacion/entrega-e04.casos.js");
   const e05 = cargar("lib/facturacion/visual-codigos-e05.casos.js");
   const gdest = cargar("lib/facturacion/gateway-destino.casos.js");
+  const e06 = cargar("lib/facturacion/nce-seleccion-e06.casos.js");
   const red = cargar("lib/facturacion/rediseno.casos.js");
   const suites = [
     ["teléfono y día de cobro", async () => tel.verificarCasosTelefonoYCobro(), () => tel.CASOS_TELEFONO.length + 11 + 6 + 2],
@@ -165,6 +166,7 @@ Module._resolveFilename = function (request, ...resto) {
     ["Facturación E04 (PRO-200): dirección de entrega del cliente (carga, principal automática, elección, sin destinos, cambio de cliente con respuestas tardías, validación del servidor, destino guardado; contrato NEX-068 simulado, SQL estructural)", async () => e04.verificarCasosEntregaE04(), null],
     ["Facturación E05 (PRO-200): guaraníes sin decimales en pantalla (precisión intacta), «Establecimiento 001» y códigos de producto como texto con ceros iniciales (búsqueda, Enter, payload)", async () => e05.verificarCasosVisualCodigosE05(), null],
     ["Gateway G01-R01 (PRO-208/209): IPv4 mapeada en IPv6 (toda representación), IP validada = IP conectada (sin DNS rebinding), hostname/SNI/certificado conservados, sin redirecciones, login/prueba/emisión/consulta/KuDE", async () => gdest.verificarCasosGatewayDestino(), null],
+    ["NCE E06 (PRO-200): Seleccionar todos / Eliminar seleccionados, devolución parcial con coma, tope por saldo, sin entrada de inventario, motivo y corrección intactos", async () => e06.verificarCasosNceSeleccionE06(), null],
   ];
   let total = 0;
   let fallosTotal = 0;

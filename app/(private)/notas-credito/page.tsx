@@ -7,7 +7,8 @@ import { useSearchParams } from "next/navigation";
 
 import ui from "@/components/ui/lista-padrao/lista.module.css";
 import { crearBusquedaClientes, crearBusquedaFacturas, crearCargaCorreccion, crearCargaDetalle, type EstadoClientes } from "@/lib/facturacion/nce-busqueda";
-import { entradasIniciales, etiquetaIvaLinea } from "@/lib/facturacion/nce-entradas";
+import { alternarLinea, alternarTodas, eliminadasPorPrecarga, eliminarSeleccionadas, enNota, entradasIniciales, errorCantidadDevolucion, etiquetaIvaLinea, lineasVisibles } from "@/lib/facturacion/nce-entradas";
+import { normalizarCantidadTexto } from "@/lib/formato/cantidad-campo";
 import { iniciarRefresco } from "@/lib/facturacion/refresco-documentos";
 import { formatearDecimalTexto } from "@/lib/formato/decimal-texto";
 import { formatearFechaPy } from "@/lib/formato/listas";
@@ -70,6 +71,9 @@ function Formulario() {
   const [puntoId, setPuntoId] = useState("");
   const [observacion, setObservacion] = useState("");
   const [entradas, setEntradas] = useState<Record<number, Entrada>>({});
+  // E06: líneas marcadas (para eliminar) y líneas eliminadas de la NOTA en preparación; la factura original y su catálogo no se tocan.
+  const [marcadas, setMarcadas] = useState<Set<number>>(new Set());
+  const [eliminadas, setEliminadas] = useState<Set<number>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [aviso, setAviso] = useState<string | null>(null);
   const [cargando, setCargando] = useState(false);
@@ -148,6 +152,8 @@ function Formulario() {
       setFactura(f);
       setSucursales(r.sucursales);
       setEntradas(nuevas);
+      setMarcadas(new Set());
+      setEliminadas(precarga ? eliminadasPorPrecarga(f.lineas, precarga.motivo, precarga.lineas) : new Set());
       setMotivo(precarga ? precarga.motivo : f.motivoFijado ?? "");
       setSucursalId(precarga?.sucursalId ?? (r.sucursales.some((s) => s.id === f.sucursalId) ? f.sucursalId : ""));
       setPuntoId(precarga?.puntoId ?? "");
@@ -187,11 +193,14 @@ function Formulario() {
   const punto = useMemo(() => sucursales.find((s) => s.id === sucursalId)?.puntos.find((p) => p.id === puntoId) ?? null, [sucursales, sucursalId, puntoId]);
   const sucursal = sucursales.find((s) => s.id === sucursalId) ?? null;
   const esDevolucion = motivo === 2;
+  const visibles = factura ? lineasVisibles(factura.lineas, eliminadas) : [];
+  const marcadasVisibles = visibles.filter((l) => marcadas.has(l.linea)).length;
+  const todasMarcadas = visibles.length > 0 && marcadasVisibles === visibles.length;
 
   const cuerpo = useCallback(() => {
     if (!factura || motivo === "") return null;
 
-    const lineas = factura.lineas.filter((l) => entradas[l.linea]?.incluida).map((l) => ({ linea: l.linea, ...(esDevolucion ? { cantidad: entradas[l.linea].valor.trim() } : { monto: entradas[l.linea].valor.trim() }) }));
+    const lineas = factura.lineas.filter((l) => enNota(esDevolucion, l, entradas[l.linea]?.valor ?? "", eliminadas)).map((l) => ({ linea: l.linea, ...(esDevolucion ? { cantidad: normalizarCantidadTexto(entradas[l.linea]?.valor ?? "") } : { monto: (entradas[l.linea]?.valor ?? "").trim() }) }));
     const firma = JSON.stringify([factura.id, motivo, puntoId, observacion.trim(), lineas]);
     let h1 = 5381;
     let h2 = 52711;
@@ -202,7 +211,7 @@ function Formulario() {
     }
 
     return { facturaId: factura.id, motivo, sucursalId, puntoId, observacion: observacion.trim(), lineas, claveIdempotencia: `nce-${nonce.current}-${h1.toString(36)}${h2.toString(36)}` };
-  }, [factura, motivo, entradas, esDevolucion, puntoId, sucursalId, observacion]);
+  }, [factura, motivo, entradas, eliminadas, esDevolucion, puntoId, sucursalId, observacion]);
 
   async function revisar() {
     const c = cuerpo();
@@ -251,15 +260,20 @@ function Formulario() {
     setError(null);
   }
 
-  const seleccionadas = factura ? factura.lineas.filter((l) => entradas[l.linea]?.incluida).length : 0;
-  const listoParaRevisar = !!factura && !factura.bloqueada && motivo !== "" && !!punto && seleccionadas > 0;
+  const seleccionadas = factura ? factura.lineas.filter((l) => enNota(esDevolucion, l, entradas[l.linea]?.valor ?? "", eliminadas)).length : 0;
+  const erroresCantidad = new Map<number, string>();
+
+  if (factura && esDevolucion) for (const l of factura.lineas) if (enNota(true, l, entradas[l.linea]?.valor ?? "", eliminadas)) { const e = errorCantidadDevolucion(entradas[l.linea]?.valor ?? "", l.cantidadDisponible); if (e) erroresCantidad.set(l.linea, e); }
+
+  const listoParaRevisar = !!factura && !factura.bloqueada && motivo !== "" && !!punto && seleccionadas > 0 && erroresCantidad.size === 0;
   const faltantes: string[] = [];
 
   if (factura) {
     if (factura.bloqueada) faltantes.push("Hay una nota de crédito pendiente de resultado para esta factura.");
     if (motivo === "") faltantes.push("Seleccione el motivo.");
     if (!punto) faltantes.push("Seleccione el establecimiento y el punto de expedición.");
-    if (seleccionadas === 0) faltantes.push("Incluya al menos una línea.");
+    if (seleccionadas === 0) faltantes.push(eliminadas.size > 0 ? "La nota no tiene líneas: restaure las eliminadas o cambie de motivo." : "Incluya al menos una línea.");
+    if (erroresCantidad.size > 0) faltantes.push(`Corrija la cantidad a devolver de ${erroresCantidad.size} línea${erroresCantidad.size === 1 ? "" : "s"}.`);
   }
 
   const paso = !cliente && !factura ? 1 : !factura ? 2 : 3;
@@ -400,7 +414,7 @@ function Formulario() {
                 <div className={estilos.grid}>
                   <label className={estilos.campo}>
                     <span>Motivo</span>
-                    <select value={motivo} onChange={(e) => { const m = e.target.value === "" ? "" : Number(e.target.value); setMotivo(m); setEntradas(entradasIniciales(factura.lineas, m)); }} disabled={factura.motivoFijado !== null}>
+                    <select value={motivo} onChange={(e) => { const m = e.target.value === "" ? "" : Number(e.target.value); setMotivo(m); setEntradas(entradasIniciales(factura.lineas, m)); setMarcadas(new Set()); setEliminadas(new Set()); }} disabled={factura.motivoFijado !== null}>
                       <option value="">Seleccione…</option>
                       {factura.motivosPermitidos.map((m) => <option key={m} value={m}>{MOTIVOS[m]}</option>)}
                     </select>
@@ -430,21 +444,29 @@ function Formulario() {
               </section>
 
               <section className={estilos.card} aria-label="Líneas a acreditar">
-                <h2>Líneas a acreditar <small>{esDevolucion ? "indique la cantidad a devolver" : "indique el monto a acreditar (IVA incluido)"}</small></h2>
+                <h2>Líneas a acreditar <small>{esDevolucion ? "indique la cantidad a devolver (puede ser parcial, con coma)" : "indique el monto a acreditar (IVA incluido)"}</small></h2>
+                <div className={estilos.barraLineas} role="toolbar" aria-label="Selección de líneas">
+                  <button type="button" className={ui.secondaryButton} disabled={visibles.length === 0} onClick={() => setMarcadas(alternarTodas(factura.lineas, eliminadas, marcadas))}>{todasMarcadas ? "Deseleccionar todos" : "Seleccionar todos"}</button>
+                  <button type="button" className={ui.secondaryButton} disabled={marcadasVisibles === 0} onClick={() => { const r = eliminarSeleccionadas(factura.lineas, eliminadas, marcadas); setEliminadas(r.eliminadas); setMarcadas(r.seleccion); setRevisado(null); }}>Eliminar seleccionados{marcadasVisibles > 0 ? ` (${marcadasVisibles})` : ""}</button>
+                  {eliminadas.size > 0 ? <button type="button" className={estilos.linkBtn} onClick={() => { setEntradas((p) => { const base = entradasIniciales(factura.lineas, motivo); const n = { ...p }; for (const l of eliminadas) n[l] = base[l] ?? { incluida: false, valor: "" }; return n; }); setEliminadas(new Set()); setRevisado(null); }}>Restaurar {eliminadas.size} línea{eliminadas.size === 1 ? "" : "s"} eliminada{eliminadas.size === 1 ? "" : "s"}</button> : null}
+                  <small className={estilos.hint}>Eliminar quita las líneas solo de esta nota; la factura original no se modifica. No se genera ninguna entrada de inventario.</small>
+                </div>
                 <div className={estilos.tabla}>
                   <table>
                     <thead>
-                      <tr><th><span className={estilos.soloLector}>Incluir</span></th><th>Producto</th><th>IVA</th><th className={estilos.num}>Factura original</th><th className={estilos.num}>Disponible</th><th className={estilos.num}>{esDevolucion ? "Cantidad a devolver" : "Monto a acreditar"}</th></tr>
+                      <tr><th><input type="checkbox" aria-label="Seleccionar todos" checked={todasMarcadas} disabled={visibles.length === 0} onChange={() => setMarcadas(alternarTodas(factura.lineas, eliminadas, marcadas))} /></th><th>Producto</th><th>IVA</th><th className={estilos.num}>Factura original</th><th className={estilos.num}>Disponible</th><th className={estilos.num}>{esDevolucion ? "Cantidad a devolver" : "Monto a acreditar"}</th></tr>
                     </thead>
                     <tbody>
-                      {factura.lineas.map((l) => {
+                      {visibles.length === 0 ? <tr><td colSpan={6} className={estilos.hint}>La nota no tiene líneas.</td></tr> : null}
+                      {visibles.map((l) => {
                         const e = entradas[l.linea] ?? { incluida: false, valor: "" };
+                        const errorCant = erroresCantidad.get(l.linea);
                         const abierta = abiertas.has(l.linea);
 
                         return (
                           <Fragment key={l.linea}>
                             <tr className={l.agotada ? estilos.agotada : undefined}>
-                              <td><input type="checkbox" aria-label={`Incluir ítem ${l.linea}`} checked={e.incluida} disabled={l.agotada} onChange={(ev) => setEntradas((p) => ({ ...p, [l.linea]: { ...e, incluida: ev.target.checked } }))} /></td>
+                              <td><input type="checkbox" aria-label={`Seleccionar ítem ${l.linea}`} checked={marcadas.has(l.linea)} onChange={(ev) => setMarcadas(alternarLinea(marcadas, l.linea, ev.target.checked))} /></td>
                               <td>
                                 {l.descripcion}{l.agotada ? <span className={estilos.chip}>Sin saldo</span> : null}
                                 <div className={estilos.sub}>{l.codigoInterno} · ítem {l.linea} · <button type="button" className={estilos.linkBtn} aria-expanded={abierta} onClick={() => setAbiertas((p) => { const n = new Set(p); if (n.has(l.linea)) n.delete(l.linea); else n.add(l.linea); return n; })}>{abierta ? "Ocultar acreditado" : "Ver acreditado"}</button></div>
@@ -453,8 +475,9 @@ function Formulario() {
                               <td className={estilos.num}>{fm(l.cantidad)} {l.unidad} × {fmv(l.precio, factura.moneda)}<div className={estilos.sub}>= {fmv(l.total, factura.moneda)}</div></td>
                               <td className={estilos.num}>{esDevolucion ? `${fm(l.cantidadDisponible)} ${l.unidad}` : fmv(l.saldoMonto, factura.moneda)}</td>
                               <td className={estilos.num}>
-                                <input className={estilos.entrada} inputMode="decimal" aria-label={`${esDevolucion ? "Cantidad" : "Monto"} del ítem ${l.linea}`} disabled={!e.incluida || l.agotada} value={e.valor} placeholder={esDevolucion ? l.cantidadDisponible : l.saldoMonto}
-                                  onChange={(ev) => setEntradas((p) => ({ ...p, [l.linea]: { ...e, valor: ev.target.value } }))} />
+                                <input className={estilos.entrada} inputMode="decimal" aria-label={`${esDevolucion ? "Cantidad" : "Monto"} del ítem ${l.linea}`} disabled={l.agotada} aria-invalid={errorCant ? true : undefined} value={e.valor} placeholder={esDevolucion ? l.cantidadDisponible : l.saldoMonto}
+                                  onChange={(ev) => setEntradas((p) => ({ ...p, [l.linea]: { ...e, incluida: ev.target.value.trim() !== "", valor: ev.target.value } }))} />
+                                {errorCant ? <small className={estilos.errorCampo} role="alert">{errorCant}</small> : null}
                               </td>
                             </tr>
                             {abierta ? (

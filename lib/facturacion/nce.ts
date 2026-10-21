@@ -1,6 +1,7 @@
 import type { Pool } from "pg";
 
 import { B, parseDec, textoDec } from "@/lib/facturacion/calculo";
+import { normalizarCantidadTexto } from "@/lib/formato/cantidad-campo";
 import { leerCambio } from "@/lib/facturacion/monedas";
 import { CAMPOS_RECEPTOR, construirPayloadNCE, esMotivoNce, lineasOriginalesDe, lineasParaSql, MAX_LINEAS_NCE, MOTIVOS_NCE, saldoDe, validarEntradaNce, calcularNce, type EntradaNce, type LineaOriginal, type MotivoNce } from "@/lib/facturacion/payload-nce";
 import { numeroDocumento } from "@/lib/facturacion/estados";
@@ -67,7 +68,7 @@ export function leerCuerpoNce(c: Record<string, unknown>): CuerpoNce | string {
 
     if (lineas.some((x) => x.linea === l.linea)) return "Una línea de la factura no puede repetirse en la nota de crédito.";
 
-    lineas.push({ linea: l.linea as number, ...(typeof l.cantidad === "string" ? { cantidad: l.cantidad.trim() } : {}), ...(typeof l.monto === "string" ? { monto: l.monto.trim() } : {}) });
+    lineas.push({ linea: l.linea as number, ...(typeof l.cantidad === "string" ? { cantidad: normalizarCantidadTexto(l.cantidad) } : {}), ...(typeof l.monto === "string" ? { monto: l.monto.trim() } : {}) });
   }
 
   return { facturaId: c.facturaId, motivo: c.motivo as number, sucursalId: c.sucursalId, puntoId: c.puntoId, observacion: typeof c.observacion === "string" ? c.observacion : "", claveIdempotencia: c.claveIdempotencia, lineas };
