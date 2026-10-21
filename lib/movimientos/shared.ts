@@ -155,7 +155,7 @@ export function respuestaError(error: unknown, accion: string) {
   const pg = error as { code?: string; message?: string; detail?: string };
   if (pg.code === "42501") return NextResponse.json({ error: "No tiene permiso o alcance sobre el depósito para esta operación." }, { status: 403 });
   if (pg.code === "P0001") {
-    const status = pg.detail?.startsWith("NEX:IDEMPOTENCIA_CONFLICTO") || pg.detail === "NEX:YA_ANULADO" ? 409 : 400;
+    const status = pg.detail?.startsWith("NEX:IDEMPOTENCIA_CONFLICTO") || pg.detail === "NEX:YA_ANULADO" || pg.detail === "NEX:MOVIMIENTO_VINCULADO_FE" ? 409 : 400;
     return NextResponse.json({ error: pg.message ?? "Operación rechazada por las reglas de inventario." }, { status });
   }
   if (pg.code === "23505") return NextResponse.json({ error: "El movimiento ya existe (clave repetida)." }, { status: 409 });

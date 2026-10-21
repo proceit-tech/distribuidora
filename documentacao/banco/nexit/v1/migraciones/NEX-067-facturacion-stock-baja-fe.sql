@@ -60,6 +60,24 @@ END $$;
 CREATE TRIGGER fe_stock_salidas_inmutable_trg BEFORE UPDATE OR DELETE ON public.documento_electronico_stock_salidas
   FOR EACH ROW EXECUTE FUNCTION public.fe_stock_salidas_inmutable();
 
+-- 1b) PRO-202 / F-001: un movimiento de salida vinculado a una FE NO se puede anular manualmente. inventario_anular_movimiento (NEX-014, aplicada, sin cambios) crea el movimiento inverso y luego pasa el original a
+--     ANULADO; este disparador (BEFORE UPDATE OF estado, se ejecuta antes que movimientos_inventario_guard_trg por orden alfabético) rechaza esa transición y, al ser la misma transacción, también se deshace el
+--     movimiento inverso: no se repone stock, aunque el usuario tenga MOVIMIENTOS.ANULAR o sea administrador. La reposición solo la hará el futuro procedimiento fiscal de cancelación oficial (E10), que deberá
+--     reemplazar esta función con su propia vía auditable; hoy no existe ninguna.
+CREATE OR REPLACE FUNCTION public.fe_stock_movimiento_protegido() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+BEGIN
+  IF NEW.estado = 'ANULADO' AND OLD.estado IS DISTINCT FROM 'ANULADO'
+     AND EXISTS (SELECT 1 FROM public.documento_electronico_stock_salidas s WHERE s.empresa_id = OLD.empresa_id AND s.movimiento_id = OLD.id) THEN
+    RAISE EXCEPTION 'el movimiento % está vinculado a una factura electrónica y no se puede anular manualmente: solo la cancelación oficial de la factura puede revertir su stock', OLD.numero_movimiento
+      USING ERRCODE = 'P0001', DETAIL = 'NEX:MOVIMIENTO_VINCULADO_FE';
+  END IF;
+  RETURN NEW;
+END $$;
+
+CREATE TRIGGER fe_stock_movimiento_protegido_trg BEFORE UPDATE OF estado ON public.movimientos_inventario
+  FOR EACH ROW EXECUTE FUNCTION public.fe_stock_movimiento_protegido();
+
 -- 2) Disponibilidad por depósito (SOLO LECTURA) para mostrar y calcular el reparto. Mismo filtro que la baja.
 CREATE OR REPLACE FUNCTION public.fe_stock_disponibilidad(p_empresa uuid, p_usuario uuid, p_sucursal uuid, p_productos uuid[])
 RETURNS TABLE (o_producto_id uuid, o_deposito_id uuid, o_deposito_codigo text, o_deposito_nombre text, o_lote_id uuid, o_lote_codigo text, o_vencimiento date, o_disponible numeric)
@@ -108,6 +126,7 @@ DECLARE
   a record;
   b record;
   e record;
+  det record;
 BEGIN
   PERFORM pg_advisory_xact_lock(hashtextextended('fe.stock:' || p_empresa::text || ':' || p_documento::text, 0));
 
@@ -129,6 +148,28 @@ BEGIN
   END IF;
 
   SELECT s.payload INTO v_payload FROM public.documento_electronico_solicitudes s WHERE s.empresa_id = p_empresa AND s.documento_id = p_documento ORDER BY s.version DESC LIMIT 1;
+
+  -- PRO-203 / F-002: TODOS los detalles fiscales deben ser verificables. Detalles ausente, vacío o que no sea un arreglo, un detalle sin código o sin cantidad numérica positiva, o con un código que no
+  -- corresponde a un producto de la empresa, se RECHAZAN (la FE no se crea). Los servicios legítimos (controla_stock = false) siguen admitidos y no generan movimiento; una mercadería con control de
+  -- stock nunca puede quedar fuera de la conciliación de abajo.
+  IF v_payload IS NULL OR jsonb_typeof(v_payload->'Detalles') IS DISTINCT FROM 'array' OR jsonb_array_length(v_payload->'Detalles') = 0 THEN
+    RAISE EXCEPTION 'la factura no tiene detalles fiscales válidos para conciliar el stock' USING ERRCODE = 'P0001', DETAIL = 'NEX:STOCK_PAYLOAD_INVALIDO';
+  END IF;
+  FOR det IN
+    SELECT x.d AS d, p.id AS producto_id
+      FROM jsonb_array_elements(v_payload->'Detalles') AS x(d)
+      LEFT JOIN public.productos p ON p.empresa_id = p_empresa AND p.codigo = x.d->>'dCodInt'
+  LOOP
+    IF jsonb_typeof(det.d) IS DISTINCT FROM 'object' OR btrim(COALESCE(det.d->>'dCodInt', '')) = '' OR det.producto_id IS NULL THEN
+      RAISE EXCEPTION 'un detalle fiscal no corresponde a un producto conocido de la empresa' USING ERRCODE = 'P0001', DETAIL = 'NEX:STOCK_PAYLOAD_INVALIDO';
+    END IF;
+    IF jsonb_typeof(det.d->'dCantProSer') IS DISTINCT FROM 'number' THEN
+      RAISE EXCEPTION 'un detalle fiscal no tiene cantidad numérica' USING ERRCODE = 'P0001', DETAIL = 'NEX:STOCK_PAYLOAD_INVALIDO';
+    END IF;
+    IF (det.d->>'dCantProSer')::numeric <= 0 THEN
+      RAISE EXCEPTION 'un detalle fiscal tiene cantidad no positiva' USING ERRCODE = 'P0001', DETAIL = 'NEX:STOCK_PAYLOAD_INVALIDO';
+    END IF;
+  END LOOP;
 
   -- Forma de cada asignación (cantidad > 0 con hasta 4 decimales; producto y depósito de la empresa; depósito activo, propio, de la sucursal de la FE y en el alcance del usuario).
   FOR a IN SELECT x FROM jsonb_array_elements(v_asig) x LOOP
@@ -237,6 +278,7 @@ BEGIN
 END $$;
 
 REVOKE ALL ON FUNCTION public.fe_stock_salidas_inmutable() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.fe_stock_movimiento_protegido() FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.fe_stock_baja_documento(uuid, uuid, uuid, jsonb) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.fe_stock_disponibilidad(uuid, uuid, uuid, uuid[]) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.fe_documento_crear_fe_con_stock(uuid, uuid, uuid, uuid, text, uuid, text, text, text, numeric, jsonb, jsonb) FROM PUBLIC;

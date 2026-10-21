@@ -18,6 +18,8 @@ BEGIN
   END IF;
 END $$;
 
+DROP TRIGGER IF EXISTS fe_stock_movimiento_protegido_trg ON public.movimientos_inventario;
+DROP FUNCTION IF EXISTS public.fe_stock_movimiento_protegido();
 DROP FUNCTION IF EXISTS public.fe_documento_crear_fe_con_stock(uuid, uuid, uuid, uuid, text, uuid, text, text, text, numeric, jsonb, jsonb);
 DROP FUNCTION IF EXISTS public.fe_stock_baja_documento(uuid, uuid, uuid, jsonb);
 DROP FUNCTION IF EXISTS public.fe_stock_disponibilidad(uuid, uuid, uuid, uuid[]);

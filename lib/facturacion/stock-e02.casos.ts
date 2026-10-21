@@ -39,6 +39,8 @@ function mundo(saldosIniciales: Saldo[], opciones: { sinAlcance?: string[]; perm
   const docs = new Map<string, { id: string; numero: string; asignaciones: unknown }>();
   const salidas: Array<{ doc: string; deposito: string; movimiento: string; lineas: Array<{ producto: string; lote: string | null; cantidad: number }> }> = [];
   const consultas: string[] = [];
+  const manuales: Array<{ id: string; deposito: string; producto: string; cantidad: number; estado: string }> = [];
+  const anulaciones: string[] = [];
   let secuencia = 0;
 
   const elegibles = (productoIds: string[], sucursal: string) =>
@@ -72,6 +74,13 @@ function mundo(saldosIniciales: Saldo[], opciones: { sinAlcance?: string[]; perm
         if (previo) return { rows: [{ documentoId: previo.id, numero: previo.numero, reutilizado: true }], rowCount: 1 };
 
         const payload = JSON.parse(String(p[9])) as { Detalles: Array<{ dCodInt: string; dCantProSer: number }> };
+
+        // PRO-203 (espejo del SQL): Detalles debe ser un arreglo NO vacío y cada detalle debe ser verificable (código de un producto de la empresa y cantidad numérica > 0).
+        if (!Array.isArray(payload.Detalles) || payload.Detalles.length === 0) throw errorSql("la factura no tiene detalles fiscales válidos para conciliar el stock", "NEX:STOCK_PAYLOAD_INVALIDO");
+        for (const d of payload.Detalles as Array<Record<string, unknown>>) {
+          if (!d || typeof d !== "object" || typeof d.dCodInt !== "string" || d.dCodInt.trim() === "" || !CATALOGO.some((c) => c.codigo === d.dCodInt)) throw errorSql("un detalle fiscal no corresponde a un producto conocido de la empresa", "NEX:STOCK_PAYLOAD_INVALIDO");
+          if (typeof d.dCantProSer !== "number" || d.dCantProSer <= 0) throw errorSql("un detalle fiscal no tiene una cantidad numérica positiva", "NEX:STOCK_PAYLOAD_INVALIDO");
+        }
         const asig = JSON.parse(String(p[11])) as Array<{ producto_id: string; deposito_id: string; lote_id: string | null; cantidad: string }>;
         // Conciliación con el payload persistido (solo productos que controlan stock).
         const esperado = new Map<string, number>();
@@ -115,7 +124,24 @@ function mundo(saldosIniciales: Saldo[], opciones: { sinAlcance?: string[]; perm
     },
   };
 
-  return { db: db as never, stock, docs, salidas, consultas, saldo: (producto: string, deposito: string) => stock.filter((s) => s.producto === producto && s.deposito === deposito && s.estado === "DISPONIBLE").reduce((a, s) => a + s.cantidad, 0) };
+  /** Espejo de inventario_anular_movimiento + disparador fe_stock_movimiento_protegido_trg: una salida vinculada a una FE NO se anula (la transacción completa se deshace, sin movimiento inverso). */
+  async function anular(movimiento: string) {
+    const vinculada = salidas.some((x) => x.movimiento === movimiento);
+
+    if (vinculada) throw errorSql("el movimiento está vinculado a una factura electrónica y no se puede anular manualmente", "NEX:MOVIMIENTO_VINCULADO_FE");
+
+    const man = manuales.find((x) => x.id === movimiento && x.estado === "REGISTRADO");
+
+    if (!man) throw errorSql("movimiento inexistente o ya anulado", "NEX:YA_ANULADO");
+
+    const s = stock.find((x) => x.producto === man.producto && x.deposito === man.deposito && x.estado === "DISPONIBLE" && x.propiedad === "PROPIO");
+
+    if (s) s.cantidad += man.cantidad;
+    man.estado = "ANULADO";
+    anulaciones.push(movimiento);
+  }
+
+  return { anular, manuales, anulaciones, secuencia: () => secuencia, db: db as never, stock, docs, salidas, consultas, saldo: (producto: string, deposito: string) => stock.filter((s) => s.producto === producto && s.deposito === deposito && s.estado === "DISPONIBLE").reduce((a, s) => a + s.cantidad, 0) };
 }
 
 const base = (producto: string, deposito: string, codigo: string, cantidad: number, extra: Partial<Saldo> = {}): Saldo => ({ producto, deposito, codigo, nombre: "Depósito " + codigo, sucursal: SUC, lote: null, venc: null, estado: "DISPONIBLE", propiedad: "PROPIO", cantidad, activo: true, ...extra });
@@ -298,6 +324,92 @@ export async function verificarCasosStockE02(): Promise<string[]> {
   cierto("E02-35 aplicación: la emisión usa SOLO la función atómica (nunca fe_documento_crear_fe directa), no vuelve a evaluar stock si la clave ya existe, exige la huella del reparto revisado y no escribe en stock_saldos", /FROM fe_documento_crear_fe_con_stock\(/.test(emision) && !/FROM fe_documento_crear_fe\(/.test(emision) && /clave_idempotencia = \$2/.test(emision) && /cuerpo\.repartoHuella !== plan\.huella/.test(emision) && !/stock_saldos/.test(emision) && !/inventario_registrar/.test(emision));
   cierto("E02-36 previa y pantalla: la previa devuelve el reparto (sin escribir) y bloquea si no alcanza; el resumen muestra la salida por depósito y la huella revisada viaja con el envío", /planificarStock\(b\.db/.test(previa) && /mensajeStockInsuficiente/.test(previa) && /resumen: plan\.lineas\.length > 0 \? \{ \.\.\.resumen, stock: resumenStock\(plan\) \}/.test(previa) && /Salida de stock por depósito/.test(pagina) && /enviar: async \(cuerpo, revisado\)/.test(pagina) && /repartoHuella: repartoDe\(revisado\)/.test(pagina) && /const repartoDe = \(r: Resumen \| null\): string \| null => r\?\.stock\?\.huella \?\? null/.test(pagina) && /deps\.enviar\(toma\.cuerpo, toma\.resumen\)/.test(leer("lib/facturacion/revision-factura.ts")));
   cierto("E02-37 documentación operativa de NEX-067: preflight, verificación, reversión y procedimiento versionados", ["scripts/preflight-NEX-067.sql", "scripts/verificar-NEX-067.sql", "scripts/reversion-NEX-067.sql", "docs/PROCEDIMIENTO-NEX-067.md"].every((f) => { try { return leer("documentacao/banco/nexit/v1/" + f).length > 200; } catch { return false; } }));
+
+
+  // ── 7. AUD E02-R01 — PRO-202 / F-001: una salida vinculada a una FE NO se anula manualmente ───────────────────────────────────────────────────
+  const errDetalle = async (p: Promise<unknown>) => { try { await p; return "OK"; } catch (e) { return (e as ErrorSql).detail ?? (e as Error).message; } };
+
+  {
+    const m = mundo([base(P1, DEP_A, "A", 3), base(P1, DEP_B, "B", 5)]);
+    const c = cuerpo([{ productoId: P1, cantidad: "6" }]);
+    const prep = await prepararFactura(m.db, EMPRESA, USUARIO, c);
+    const plan = await planificarStock(m.db, EMPRESA, USUARIO, SUC, prep.lineasStock);
+
+    await crearFacturaElectronica(m.db, EMPRESA, USUARIO, { ...c, repartoHuella: plan.huella });
+
+    const intentos = await Promise.all(m.salidas.map((x) => errDetalle(m.anular(x.movimiento))));
+    const concurrente = await Promise.all([errDetalle(m.anular(m.salidas[0].movimiento)), errDetalle(m.anular(m.salidas[0].movimiento))]);
+
+    igual("F001-01 FE con salidas A3+B3: intentar anular CADA salida (con o sin MOVIMIENTOS.ANULAR) falla con NEX:MOVIMIENTO_VINCULADO_FE; ni siquiera un administrador repone stock", intentos, ["NEX:MOVIMIENTO_VINCULADO_FE", "NEX:MOVIMIENTO_VINCULADO_FE"]);
+    igual("F001-02 tras los intentos no hay movimiento de compensación ni aumento de saldo (A=0, B=2), las salidas siguen registradas y la FE sigue siendo una sola", [m.saldo(P1, DEP_A), m.saldo(P1, DEP_B), m.anulaciones.length, m.salidas.length, m.docs.size], [0, 2, 0, 2, 1]);
+    igual("F001-03 intentos de anulación concurrentes sobre la misma salida: todos rechazados", concurrente, ["NEX:MOVIMIENTO_VINCULADO_FE", "NEX:MOVIMIENTO_VINCULADO_FE"]);
+
+    const reintento = await crearFacturaElectronica(m.db, EMPRESA, USUARIO, { ...c, repartoHuella: plan.huella });
+
+    igual("F001-04 el reintento de la FE tras los intentos de anulación sigue reutilizando el documento: no crea otra baja ni otra salida", [reintento.reutilizado, m.salidas.length, m.saldo(P1, DEP_A) + m.saldo(P1, DEP_B)], [true, 2, 2]);
+  }
+  {
+    // Una salida MANUAL no vinculada a FE sigue pudiendo anularse (el comportamiento de Movimientos no cambia).
+    const m = mundo([base(P1, DEP_A, "A", 4)]);
+
+    m.manuales.push({ id: "MOV-MANUAL-1", deposito: DEP_A, producto: P1, cantidad: 3, estado: "REGISTRADO" });
+    m.stock[0].cantidad -= 3;
+    await m.anular("MOV-MANUAL-1");
+    igual("F001-05 anular una SALIDA manual no ligada a FE sigue funcionando: repone 3 y queda ANULADO", [m.saldo(P1, DEP_A), m.manuales[0].estado, m.anulaciones], [4, "ANULADO", ["MOV-MANUAL-1"]]);
+  }
+
+  const sql2 = leer("documentacao/banco/nexit/v1/migraciones/NEX-067-facturacion-stock-baja-fe.sql");
+  const proc = leer("documentacao/banco/nexit/v1/docs/PROCEDIMIENTO-NEX-067.md");
+  const rev = leer("documentacao/banco/nexit/v1/scripts/reversion-NEX-067.sql");
+  const ver = leer("documentacao/banco/nexit/v1/scripts/verificar-NEX-067.sql");
+  const mig009 = leer("documentacao/banco/nexit/v1/migraciones/NEX-009-inventario-costos.sql");
+
+  cierto("F001-06 SQL: disparador BEFORE UPDATE OF estado sobre movimientos_inventario que rechaza la transición a ANULADO de un movimiento vinculado en documento_electronico_stock_salidas (NEX:MOVIMIENTO_VINCULADO_FE), SECURITY DEFINER con search_path fijo y sin permisos para PUBLIC", /CREATE OR REPLACE FUNCTION public\.fe_stock_movimiento_protegido\(\) RETURNS trigger\s+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp/.test(sql2) && /NEW\.estado = 'ANULADO' AND OLD\.estado IS DISTINCT FROM 'ANULADO'\s+AND EXISTS \(SELECT 1 FROM public\.documento_electronico_stock_salidas s WHERE s\.empresa_id = OLD\.empresa_id AND s\.movimiento_id = OLD\.id\)/.test(sql2) && /DETAIL = 'NEX:MOVIMIENTO_VINCULADO_FE'/.test(sql2) && /CREATE TRIGGER fe_stock_movimiento_protegido_trg BEFORE UPDATE OF estado ON public\.movimientos_inventario\s+FOR EACH ROW/.test(sql2) && /REVOKE ALL ON FUNCTION public\.fe_stock_movimiento_protegido\(\) FROM PUBLIC/.test(sql2) && !/administrador|es_administrador/.test(sql2.slice(sql2.indexOf("fe_stock_movimiento_protegido() RETURNS"), sql2.indexOf("CREATE TRIGGER fe_stock_movimiento_protegido_trg"))));
+  cierto("F001-07 el disparador dispara ANTES que el guard de NEX-014 (orden alfabético: fe_stock_… < movimientos_inventario_guard_trg), la excepción deshace la transacción de la función de anulación completa (también el movimiento inverso) y NEX-014 NO se modificó", "fe_stock_movimiento_protegido_trg" < "movimientos_inventario_guard_trg" && /CREATE TRIGGER movimientos_inventario_guard_trg/.test(mig009) && !/inventario_anular_movimiento|movimientos_inventario_guard/.test(sql2.replace(/--[^\n]*/g, "")) && !/CREATE OR REPLACE FUNCTION (public\.)?inventario_anular_movimiento/.test(sql2));
+  cierto("F001-08 verificación y reversión: verificar-NEX-067 comprueba el disparador; la reversión lo elimina y sigue negándose si hay bajas vinculadas", /fe_stock_movimiento_protegido_trg/.test(ver) && /DROP TRIGGER IF EXISTS fe_stock_movimiento_protegido_trg ON public\.movimientos_inventario/.test(rev) && /DROP FUNCTION IF EXISTS public\.fe_stock_movimiento_protegido\(\)/.test(rev) && /REVERSIÓN ABORTADA: ya hay facturas con baja de stock registrada/.test(rev));
+  cierto("F001-09 procedimiento: ya NO sugiere anular manualmente una salida vinculada a la FE; indica que está bloqueado y que solo la cancelación oficial (E10) revertirá el stock", !/anulación del movimiento|movimiento de entrada manual|anulación autorizada/i.test(proc) && /NO se puede anular manualmente/.test(proc) && /NEX:MOVIMIENTO_VINCULADO_FE/.test(proc) && /E10/.test(proc));
+  cierto("F001-10 la API de anulación de Movimientos informa el bloqueo como 409 con el mensaje claro (sin tocar la lógica de anulación)", /NEX:MOVIMIENTO_VINCULADO_FE/.test(leer("lib/movimientos/shared.ts")));
+
+  // ── 8. AUD E02-R01 — PRO-203 / F-002: la conciliación SQL cubre TODOS los detalles fiscales ───────────────────────────────────────────────────
+  const llamar = (m: ReturnType<typeof mundo>, detalles: unknown, asignaciones: unknown[], clave = "clave-contrato-0001") =>
+    (m.db as unknown as { query(sql: string, p: unknown[]): Promise<unknown> }).query("SELECT o_documento_id FROM fe_documento_crear_fe_con_stock($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5, $6::uuid, $7, $8, $11, $9::numeric, $10::jsonb, $12::jsonb)", [EMPRESA, USUARIO, SUC, PUNTO, clave, CLIENTE, "80000005-6", "CLIENTE", "11000", JSON.stringify({ iTiDE: 1, Detalles: detalles }), "PYG", JSON.stringify(asignaciones)]);
+  const det = (codigo: unknown, cantidad: unknown) => ({ dCodInt: codigo, dCantProSer: cantidad });
+
+  {
+    const m = mundo([base(P1, DEP_A, "A", 10)]);
+    const casos: Array<[string, unknown, string]> = [
+      ["Detalles vacío", [], "NEX:STOCK_PAYLOAD_INVALIDO"],
+      ["Detalles ausente", undefined, "NEX:STOCK_PAYLOAD_INVALIDO"],
+      ["Detalles no es un arreglo", { dCodInt: "P-1" }, "NEX:STOCK_PAYLOAD_INVALIDO"],
+      ["detalle sin dCodInt", [{ dCantProSer: 2 }], "NEX:STOCK_PAYLOAD_INVALIDO"],
+      ["detalle con dCodInt vacío", [det("  ", 2)], "NEX:STOCK_PAYLOAD_INVALIDO"],
+      ["código desconocido (con total positivo)", [det("DESCONOCIDO-9", 2)], "NEX:STOCK_PAYLOAD_INVALIDO"],
+      ["código desconocido escondido entre detalles válidos", [det("P-1", 2), det("DESCONOCIDO-9", 1)], "NEX:STOCK_PAYLOAD_INVALIDO"],
+      ["cantidad no numérica", [det("P-1", "2")], "NEX:STOCK_PAYLOAD_INVALIDO"],
+      ["cantidad cero", [det("P-1", 0)], "NEX:STOCK_PAYLOAD_INVALIDO"],
+      ["cantidad negativa", [det("P-1", -1)], "NEX:STOCK_PAYLOAD_INVALIDO"],
+      ["detalle que no es un objeto", [null], "NEX:STOCK_PAYLOAD_INVALIDO"],
+    ];
+
+    for (const [nombre, detalles, esperado] of casos) {
+      const antes = m.secuencia();
+
+      igual("F002 [" + nombre + "]: se rechaza con " + esperado + " y no se crea la FE, no se consume numeración y no se baja stock", [await errDetalle(llamar(m, detalles, [])), m.docs.size, m.secuencia() - antes, m.salidas.length, m.saldo(P1, DEP_A)], [esperado, 0, 0, 0, 10]);
+    }
+    igual("F002 mercadería real con control de stock y asignaciones vacías: se rechaza (no queda fuera de la conciliación) sin FE ni baja", [await errDetalle(llamar(m, [det("P-1", 2)], [])), m.docs.size, m.saldo(P1, DEP_A)], ["NEX:STOCK_REPARTO_INVALIDO", 0, 10]);
+    igual("F002 asignación para un producto que no está en los detalles fiscales: se rechaza", [await errDetalle(llamar(m, [det("SERV-1", 1)], [{ producto_id: P1, deposito_id: DEP_A, lote_id: null, cantidad: "1" }])), m.docs.size, m.saldo(P1, DEP_A)], ["NEX:STOCK_REPARTO_INVALIDO", 0, 10]);
+  }
+  {
+    // Lo legítimo sigue funcionando: servicio real sin control de stock (sin movimiento) y factura mixta (solo la mercadería baja).
+    const m = mundo([base(P1, DEP_A, "A", 10)]);
+
+    igual("F002 servicio legítimo (controla_stock = false) sin asignaciones: la FE se crea y no hay movimiento", [await errDetalle(llamar(m, [det("SERV-1", 4)], [], "clave-servicio-0001")), m.docs.size, m.salidas.length, m.saldo(P1, DEP_A)], ["OK", 1, 0, 10]);
+    igual("F002 factura mixta (mercadería + servicio): baja solo la mercadería y exactamente su cantidad", [await errDetalle(llamar(m, [det("P-1", 3), det("SERV-1", 9)], [{ producto_id: P1, deposito_id: DEP_A, lote_id: null, cantidad: "3" }], "clave-mixta-000002")), m.docs.size, m.salidas.length, m.saldo(P1, DEP_A)], ["OK", 2, 1, 7]);
+    igual("F002 la misma mercadería en dos líneas fiscales se concilia por suma (2 + 3 = 5 repartidos)", [await errDetalle(llamar(m, [det("P-1", 2), det("P-1", 3)], [{ producto_id: P1, deposito_id: DEP_A, lote_id: null, cantidad: "5" }], "clave-dos-lineas-03")), m.saldo(P1, DEP_A)], ["OK", 2]);
+    igual("F002 repartir menos o más de lo facturado se rechaza", [await errDetalle(llamar(m, [det("P-1", 2)], [{ producto_id: P1, deposito_id: DEP_A, lote_id: null, cantidad: "1" }], "clave-menos-000004")), await errDetalle(llamar(m, [det("P-1", 2)], [{ producto_id: P1, deposito_id: DEP_A, lote_id: null, cantidad: "3" }], "clave-mas-0000005"))], ["NEX:STOCK_REPARTO_INVALIDO", "NEX:STOCK_REPARTO_INVALIDO"]);
+  }
+  cierto("F002-SQL la baja valida ANTES de la conciliación que Detalles sea un arreglo no vacío y que cada detalle sea un objeto con dCodInt de un producto de la empresa y dCantProSer numérico > 0 (NEX:STOCK_PAYLOAD_INVALIDO); los servicios siguen admitidos y la conciliación por producto con control de stock se mantiene", /jsonb_typeof\(v_payload->'Detalles'\) IS DISTINCT FROM 'array' OR jsonb_array_length\(v_payload->'Detalles'\) = 0/.test(sql2) && /LEFT JOIN public\.productos p ON p\.empresa_id = p_empresa AND p\.codigo = x\.d->>'dCodInt'/.test(sql2) && /det\.producto_id IS NULL/.test(sql2) && /jsonb_typeof\(det\.d->'dCantProSer'\) IS DISTINCT FROM 'number'/.test(sql2) && /\(det\.d->>'dCantProSer'\)::numeric <= 0/.test(sql2) && /NEX:STOCK_PAYLOAD_INVALIDO/.test(sql2) && sql2.indexOf("NEX:STOCK_PAYLOAD_INVALIDO") < sql2.indexOf("Conciliación con el payload PERSISTIDO") && /AND p\.controla_stock/.test(sql2) && !/AND p\.controla_stock\s+LOOP/.test(sql2));
+  cierto("F002-APP la aplicación traduce el rechazo del payload a un 409 claro", /STOCK_\(REPARTO_INVALIDO\|DEPOSITO_NO_AUTORIZADO\|PAYLOAD_INVALIDO\)/.test(leer("lib/facturacion/shared.ts")));
 
   return fallos;
 }
