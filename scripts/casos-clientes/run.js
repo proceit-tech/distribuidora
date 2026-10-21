@@ -82,6 +82,7 @@ Module._resolveFilename = function (request, ...resto) {
   const e01 = cargar("lib/facturacion/cantidad-e01.casos.js");
   const e02 = cargar("lib/facturacion/stock-e02.casos.js");
   const e03 = cargar("lib/facturacion/descuentos-e03.casos.js");
+  const e04 = cargar("lib/facturacion/entrega-e04.casos.js");
   const red = cargar("lib/facturacion/rediseno.casos.js");
   const suites = [
     ["teléfono y día de cobro", async () => tel.verificarCasosTelefonoYCobro(), () => tel.CASOS_TELEFONO.length + 11 + 6 + 2],
@@ -159,6 +160,7 @@ Module._resolveFilename = function (request, ...resto) {
     ["Facturación E01 (PRO-200): cantidades fraccionarias con coma o punto (también unidad 77) y foco automático en Cantidad", async () => e01.verificarCasosCantidadE01(), null],
     ["Facturación E02 (PRO-200): control de stock, reparto automático entre depósitos y baja al emitir (contrato NEX-067 simulado; SQL estructural, no aplicado)", async () => e02.verificarCasosStockE02(), null],
     ["Facturación E03 (PRO-200 / PRO-124): descuentos por ítem y general (% o monto) según MT SIFEN v150 + NT 1: EA002/EA003/EA004/EA008, F009/F033/F011/F010, IVA sobre el neto, combinación y precisión Decimal", async () => e03.verificarCasosDescuentosE03(), null],
+    ["Facturación E04 (PRO-200): dirección de entrega del cliente (carga, principal automática, elección, sin destinos, cambio de cliente con respuestas tardías, validación del servidor, destino guardado; contrato NEX-068 simulado, SQL estructural)", async () => e04.verificarCasosEntregaE04(), null],
   ];
   let total = 0;
   let fallosTotal = 0;

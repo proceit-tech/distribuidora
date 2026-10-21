@@ -10,6 +10,7 @@ import { DENOMINACIONES_TARJETA, FORMAS_PAGO, FORMAS_PROCESAMIENTO, leerPagos, r
 import { construirPayloadFE, CONDICIONES_OPERACION, INDICADORES_PRESENCIA, resumenCalculo, TIPOS_TRANSACCION, totalFactura, validarEntradaFE, type EntradaFE, type LineaFE, type ReceptorFE } from "@/lib/facturacion/payload-fe";
 import { ErrorFacturacion, ErrorValidacionFiscal } from "@/lib/facturacion/shared";
 import { leerDescuento, type DescuentoEntrada } from "@/lib/facturacion/descuentos";
+import { opcionesEntrega, resolverEntrega, resumenEntrega } from "@/lib/facturacion/entrega";
 import { asignacionesSql, mensajeStockInsuficiente, planificarStock, type LineaStock } from "@/lib/facturacion/stock-fe";
 import { normalizarCantidadTexto } from "@/lib/formato/cantidad-campo";
 
@@ -160,6 +161,8 @@ export type CuerpoFactura = {
   moneda?: Moneda; cambio?: string; credito?: CreditoEntrada; infoAdicional: string; lineas: Array<{ productoId: string; cantidad: string; precio: string | null; ajuste?: AjusteFiscal; /** E03: descuento particular del ítem (% o monto por unidad). */ descuento?: DescuentoEntrada }>;
   /** E03: descuento general de la factura (% o monto). */
   descuentoGlobal?: DescuentoEntrada;
+  /** E04: dirección de entrega elegida entre las registradas del cliente (el servidor la valida contra la empresa y el cliente; sin destinos registrados no se informa). */
+  direccionEntregaId?: string;
   /** E02: huella del reparto de stock que el operador REVISÓ (la devuelve la previa). Obligatoria al emitir si hay productos con control de stock; si el stock cambió, se exige revisar de nuevo. */
   repartoHuella?: string;
 };
@@ -189,6 +192,7 @@ export function leerCuerpoFactura(c: Record<string, unknown>): CuerpoFactura | s
   const descuentoGlobal = leerDescuento(c.descuentoGlobal);
 
   if (typeof descuentoGlobal === "string") return descuentoGlobal;
+  if (c.direccionEntregaId !== undefined && c.direccionEntregaId !== null && !(typeof c.direccionEntregaId === "string" && UUID.test(c.direccionEntregaId))) return "La dirección de entrega no es válida.";
 
   const pagos = leerPagos(c.pagos);
 
@@ -221,6 +225,7 @@ export function leerCuerpoFactura(c: Record<string, unknown>): CuerpoFactura | s
     ...(credito ? { credito } : {}),
     infoAdicional: typeof c.infoAdicional === "string" ? c.infoAdicional.trim() : "",
     ...(descuentoGlobal ? { descuentoGlobal } : {}),
+    ...(typeof c.direccionEntregaId === "string" ? { direccionEntregaId: c.direccionEntregaId } : {}),
     ...(typeof c.repartoHuella === "string" && /^[0-9a-f]{64}$/.test(c.repartoHuella) ? { repartoHuella: c.repartoHuella } : {}),
     lineas: lineas.map((l) => {
       const ajuste = leerAjuste((l as F).ajuste);
@@ -344,6 +349,11 @@ export async function prepararFactura(db: Db, empresaId: string, usuarioId: stri
 
   if (aptitud && !aptitud.apto) throw detalles(422, "El cliente tiene datos fiscales pendientes de regularizar.", aptitud.pendientes);
   if (punto.rows.length === 0) throw new ErrorFacturacion(422, "La sucursal o el punto de expedición no son válidos (inactivos, sin establecimiento SIFEN o fuera de su alcance).");
+
+  // E04: el destino de entrega debe ser una dirección registrada de ESTE cliente y ESTA empresa; con destinos registrados hay que elegir uno, sin destinos la FE sale sin destino. Antes de reservar numeración.
+  const destino = resolverEntrega(await opcionesEntrega(db, empresaId, usuarioId, cuerpo.clienteId), cuerpo.direccionEntregaId);
+
+  if (!destino.ok) throw new ErrorFacturacion(422, destino.error);
 
   const porId = new Map((productos.rows as F[]).map((p) => [s(p.id), p]));
   const lineas: LineaFE[] = [];
@@ -491,11 +501,13 @@ export async function prepararFactura(db: Db, empresaId: string, usuarioId: stri
     lineas: lineas.map((l, i) => ({ codigo: l.codigoInterno, descripcion: l.descripcion, unidad: extras[i].unidadSimbolo, ...(extras[i].campos.length > 0 ? { ajustes: extras[i].campos } : {}), cantidad: l.cantidad, precio: l.precio, precioLista: precios[i].referencia, precioModificado: precios[i].modificado, afectacion: l.afectacion, tasa: l.tasa, proporcion: l.afectacion === 4 ? l.proporcion : null, total: calculo.items[i], totalTexto: calculo.texto.items[i], ...(calculo.descuentos.hay ? { descuento: calculo.descuentos.items[i] } : {}) })),
     totales: { exento: calculo.exento, exonerado: calculo.exonerado, gravado5: calculo.gravado5, gravado10: calculo.gravado10, iva5: calculo.iva5, iva10: calculo.iva10, totalIva: calculo.totalIva, total: calculo.total },
     totalesTexto: calculo.texto,
+    // E04: destino de entrega elegido (null = el cliente no tiene destinos registrados). No altera el domicilio fiscal del receptor ni el payload.
+    entrega: destino.opcion ? resumenEntrega(destino.opcion) : null,
     // E03: descuentos informados (solo si hay alguno): por ítem (unitario, %, global, total) y totales F009/F033/F011 + F010.
     ...(calculo.descuentos.hay ? { descuentos: calculo.descuentos } : {}),
   };
 
-  return { entrada: final, payload, totalTexto: String(payload.Subtotales[0].dTotGralOpe), receptor, resumen, guardar, lineasStock };
+  return { entrada: final, payload, totalTexto: String(payload.Subtotales[0].dTotGralOpe), receptor, resumen, guardar, lineasStock, entrega: destino.opcion };
 }
 
 /**
@@ -526,8 +538,8 @@ export async function crearFacturaElectronica(db: Db, empresaId: string, usuario
 
   const documento = receptor.naturaleza === 1 ? `${receptor.ruc}-${receptor.dv}` : receptor.numeroDocumento;
   const llamar = () =>
-    db.query(`SELECT o_documento_id AS "documentoId", o_numero AS numero, o_reutilizado AS reutilizado FROM fe_documento_crear_fe_con_stock($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5, $6::uuid, $7, $8, $11, $9::numeric, $10::jsonb, $12::jsonb)`,
-      [empresaId, usuarioId, cuerpo.sucursalId, cuerpo.puntoId, cuerpo.claveIdempotencia, cuerpo.clienteId, documento, receptor.razonSocial, totalTexto, JSON.stringify(payload), cuerpo.moneda ?? "PYG", JSON.stringify(asignaciones)]);
+    db.query(`SELECT o_documento_id AS "documentoId", o_numero AS numero, o_reutilizado AS reutilizado FROM fe_documento_crear_fe_con_stock_entrega($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5, $6::uuid, $7, $8, $11, $9::numeric, $10::jsonb, $12::jsonb, $13::uuid)`,
+      [empresaId, usuarioId, cuerpo.sucursalId, cuerpo.puntoId, cuerpo.claveIdempotencia, cuerpo.clienteId, documento, receptor.razonSocial, totalTexto, JSON.stringify(payload), cuerpo.moneda ?? "PYG", JSON.stringify(asignaciones), cuerpo.direccionEntregaId ?? null]);
 
   try {
     return (await llamar()).rows[0] as F;

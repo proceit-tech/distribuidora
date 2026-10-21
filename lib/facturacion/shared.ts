@@ -355,6 +355,8 @@ export function respuestaErrorFacturacion(error: unknown, accion: string) {
   if (pg.code === "42501") return NextResponse.json({ error: "No tiene permiso para esta acción." }, { status: 403 });
   if (pg.detail === "NEX:DOCUMENTO_NO_ENCONTRADO") return NextResponse.json({ error: "Documento no encontrado." }, { status: 404 });
   if (pg.detail === "NEX:IDEMPOTENCIA_CONFLICTO") return NextResponse.json({ error: "La clave de la operación ya se usó con otro contenido. Recargue el formulario e intente de nuevo." }, { status: 409 });
+  if (pg.detail === "NEX:ENTREGA_REQUERIDA") return NextResponse.json({ error: "El cliente tiene direcciones de entrega registradas: seleccione la dirección de entrega." }, { status: 409 });
+  if (pg.detail === "NEX:ENTREGA_INVALIDA") return NextResponse.json({ error: "La dirección de entrega elegida no pertenece al cliente seleccionado o ya no está disponible. Revise la factura de nuevo." }, { status: 409 });
   if (pg.detail === "NEX:STOCK_INSUFICIENTE") return NextResponse.json({ error: `${pg.message ?? "Stock insuficiente."}. Revise la factura de nuevo.` }, { status: 409 });
   if (pg.detail && /^NEX:STOCK_(REPARTO_INVALIDO|DEPOSITO_NO_AUTORIZADO|PAYLOAD_INVALIDO)$/.test(pg.detail)) return NextResponse.json({ error: "El reparto de stock ya no es válido (depósitos o cantidades cambiaron). Revise la factura de nuevo." }, { status: 409 });
   if (pg.detail && /^NEX:(YA_ENVIADO|ENVIO_INDETERMINADO|ENVIO_EN_CURSO|REENVIO_REQUIERE_CONFIRMACION|TIPO_NO_ENVIABLE|SIN_SOLICITUD|ENVIO_NO_INICIADO)$/.test(pg.detail)) {

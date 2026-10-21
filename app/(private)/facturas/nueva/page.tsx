@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Fragment, useCallback, useEffect, useId, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 
 import ui from "@/components/ui/lista-padrao/lista.module.css";
 import { AJUSTE_VACIO, ajusteParaEnvio, decidirProducto, problemasFiscales, valoresEfectivos, type AjusteUI, type PermisosProducto } from "@/lib/facturacion/ajuste-item";
@@ -9,6 +9,8 @@ import { puedeEnviarPorGateway, type EstadoGatewayUI } from "@/lib/facturacion/g
 import { crearBuscadorRapido, type EstadoBuscador, MAX_VISIBLES } from "@/lib/facturacion/busqueda-rapida";
 import { formularioModificado, perdidasAlCambiarCondicion, perdidasAlCambiarMoneda } from "@/lib/facturacion/cambios-formulario";
 import { descuentosTrasCambioMoneda } from "@/lib/facturacion/descuentos";
+import { pedirOpcionesEntrega } from "@/lib/facturacion/entrega";
+import { crearControlEntrega, pendienteEntrega } from "@/lib/facturacion/entrega-control";
 import { CREDITO_UI_VACIO, creditoParaEnvio, hoyParaguay, pendientesCredito, type EstadoCreditoUI } from "@/lib/facturacion/credito";
 import { cambiosPorOpcionIva, esParcial, etiquetaIva, OPCIONES_IVA, opcionIvaDe, RESTAURAR_IVA } from "@/lib/facturacion/iva-opciones";
 import { B, parseDec, textoDec } from "@/lib/facturacion/calculo";
@@ -28,6 +30,7 @@ import { useProtegerCambios } from "@/lib/ui/proteger-cambios";
 import { EditorFiscalItem, type UnidadSifen } from "./ajuste-fiscal-item";
 import { CantidadAnadido } from "./cantidad-anadido";
 import { CondicionCredito } from "./condicion-credito";
+import { EntregaCliente } from "./entrega-cliente";
 import { MediosPago } from "./medios-pago";
 import estilos from "./page.module.css";
 
@@ -55,6 +58,8 @@ type Resumen = {
   credito?: { tipo: string; plazo: string | null; entrega: string; saldo: string; cuotas: Array<{ numero: number; monto: string; vencimiento: string }> };
   /** E03: descuentos informados (solo si hay): totales F009/F033/F011 y F010. */
   descuentos?: { porcGlobal: string; totalItems: string; totalGeneral: string; total: string };
+  /** E04: destino de entrega elegido (null = el cliente no tiene destinos registrados). */
+  entrega?: { nombre: string; tipo: string; direccion: string; contacto: string; horario: string } | null;
   lineas: Array<{ descuento?: { unitario: string; porcentaje: string; global: string; total: string }; codigo: string; descripcion: string; unidad: string; cantidad: string; precio: string; precioLista: string; precioModificado: boolean; afectacion: number; tasa: number; proporcion?: string | null; total: number; totalTexto?: string; ajustes?: string[] }>;
   totales: { exento: number; exonerado: number; gravado5: number; gravado10: number; iva5: number; iva10: number; totalIva: number; total: number };
   totalesTexto?: { exento: string; exonerado: string; gravado5: string; gravado10: string; iva5: string; iva10: string; totalIva: string; total: string };
@@ -481,6 +486,9 @@ export default function NuevaFacturaPage() {
   const [cotizaciones, setCotizaciones] = useState<Record<string, { cambio: string; fecha: string }>>({});
   const [infoAdicional, setInfoAdicional] = useState("");
   const [descuentoGeneral, setDescuentoGeneral] = useState<DescUI>(DESC_VACIO);
+  // E04: dirección de entrega del cliente. El controlador descarta respuestas tardías de un cliente anterior y limpia el destino al cambiar de cliente.
+  const [entregaCtl] = useState(() => crearControlEntrega({ cargar: (id, signal) => pedirOpcionesEntrega(id, signal) }));
+  const entregaEstado = useSyncExternalStore(entregaCtl.suscribir, entregaCtl.estado, entregaCtl.estado);
   const [cliente, setCliente] = useState<Cliente | null>(null);
   const [lineas, setLineas] = useState<Linea[]>([]);
   const [precioEnFoco, setPrecioEnFoco] = useState<number | null>(null);
@@ -587,6 +595,11 @@ export default function NuevaFacturaPage() {
   const siguiente = puntoElegido && typeof puntoElegido.ultimoNumero === "number" ? numeracionSiguiente(puntoElegido.serie ?? null, puntoElegido.ultimoNumero) : null;
   const proximoNumero = puntoElegido && siguiente ? `${puntoElegido.codigo}-${textoNumeracion(siguiente.serie, siguiente.numero)}` : "";
   const descuentoGeneralFE = descuentoDe(descuentoGeneral);
+  const clienteIdActual = cliente?.id ?? null;
+  // Solo cuenta el estado que pertenece al cliente ACTUAL (nunca el de otro cliente).
+  const entregaVigente = entregaEstado.clienteId === clienteIdActual ? entregaEstado : null;
+  const direccionEntregaId = entregaVigente?.fase === "LISTO" && entregaVigente.elegida !== "" ? entregaVigente.elegida : null;
+  const pendienteDeEntrega = cliente ? (entregaVigente ? pendienteEntrega(entregaVigente) : "esperar las direcciones de entrega del cliente") : "";
   const calculo = resumenCalculo(lineas.map((l) => aLineaFE(l, moneda)), descuentoGeneralFE);
   const extranjera = moneda !== "PYG";
   const cambioNormal = extranjera ? leerCambio(cambio) : null;
@@ -610,6 +623,7 @@ export default function NuevaFacturaPage() {
     lineas.length === 0 ? "al menos un ítem" : "",
     lineas.length > 0 && !lineasValidas ? "corregir cantidades o precios" : "",
     calculo.erroresDescuento.length > 0 ? "corregir los descuentos" : "",
+    pendienteDeEntrega,
     problemas.length > 0 ? "completar los datos fiscales de los ítems marcados" : "",
     pendientesDeCredito.length > 0 ? "corregir las condiciones del crédito" : "",
     pendientesDePagos.length > 0 ? "corregir los medios de pago" : "",
@@ -617,6 +631,10 @@ export default function NuevaFacturaPage() {
   ].filter(Boolean);
   const puedeGuardar = !revisando && !enviando && faltan.length === 0 && cliente !== null && cliente.apto && calculo.completo;
   const hayPrecioModificado = lineas.some((l) => precioModificado(l, moneda));
+
+  useEffect(() => {
+    void entregaCtl.seleccionarCliente(clienteIdActual);
+  }, [entregaCtl, clienteIdActual]);
 
   useEffect(() => {
     if (lineaAFocar.current === null || selector !== null) return;
@@ -656,7 +674,7 @@ export default function NuevaFacturaPage() {
   // El precio solo viaja cuando difiere del de lista; el servidor lo contrasta con el catálogo y con el permiso del usuario.
   const cuerpoFactura = () => ({
     claveIdempotencia: clave, sucursalId, puntoId, clienteId: cliente?.id, tipoTransaccion: Number(tipoTransaccion), presencia: Number(presencia), moneda, ...(extranjera ? { cambio } : {}),
-    pagos: hayPagos ? pagos.map((p) => pagoParaEnvio(p, pagos.length === 1)) : [], condicion: Number(condicion), ...(enCredito ? { credito: creditoParaEnvio(credito) } : {}), infoAdicional, ...(descuentoGeneralFE ? { descuentoGlobal: descuentoGeneralFE } : {}),
+    pagos: hayPagos ? pagos.map((p) => pagoParaEnvio(p, pagos.length === 1)) : [], condicion: Number(condicion), ...(enCredito ? { credito: creditoParaEnvio(credito) } : {}), infoAdicional, ...(descuentoGeneralFE ? { descuentoGlobal: descuentoGeneralFE } : {}), ...(direccionEntregaId ? { direccionEntregaId } : {}),
     lineas: lineas.map((l) => {
       const ajuste = ajusteParaEnvio(l.producto, l.ajuste);
       const descuento = descuentoDe(l.descuento);
@@ -997,6 +1015,7 @@ export default function NuevaFacturaPage() {
                           </div>
                         </dl>
                       </details>
+                      <EntregaCliente control={entregaCtl} clienteId={cliente.id} />
                     </>
                   ) : (
                     <div className={estilos.buscarFila}>
@@ -1292,6 +1311,7 @@ export default function NuevaFacturaPage() {
               <div><dt>Punto de expedición</dt><dd>{resumen.punto}</dd></div>
               <div><dt>Fecha</dt><dd>{hoy || "—"}</dd></div>
               <div><dt>Cliente</dt><dd>{resumen.cliente.razonSocial} ({resumen.cliente.documento})</dd></div>
+              <div><dt>Dirección de entrega</dt><dd>{resumen.entrega ? `${resumen.entrega.nombre} — ${resumen.entrega.direccion}` : "Sin destino de entrega registrado (se factura con el domicilio fiscal del receptor)"}</dd></div>
               <div><dt>Transacción · presencia</dt><dd>{resumen.tipoTransaccion} · {resumen.presencia}</dd></div>
               <div><dt>Condición de la operación</dt><dd>{resumen.condicion}</dd></div>
               <div><dt>Moneda</dt><dd>{resumen.moneda}</dd></div>
