@@ -16,7 +16,8 @@
 - Conservar a FE original, CDC de referência, receptor, moeda/câmbio original, controle de saldo, idempotência e numeração. No fluxo de desconto/bonificação, nenhuma movimentação de estoque.
 - A decisão atual não inclui criar um segundo SKU chamado BONIFICACION. **Bonificación (motivo 4)** continua suportada como motivo; desenhar sua operacionalização por valor usando o mesmo tratamento contábil/fiscal seguro, sem inventar cadastro extra.
 - **Limitação concreta do código atual:** `lib/facturacion/nce.ts`/SQL vinculam `linea` a um ordinal da FE original; `lib/facturacion/payload-nce.ts` constrói `Detalles` a partir dos itens originais, herdando código, unidade e IVA. Para aceitar o item DESCUENTO, adaptar a validação, o mapeamento da NCE ao documento referenciado e as regras de tributos/saldos. A simples criação de uma ficha `productos` DESCUENTO não habilita a NCE hoje.
-- Se a FE original tiver itens com tratamentos de IVA diferentes, a aplicação deve preservar os tratamentos e distribuir internamente o valor por saldos/linhas fiscais compatíveis; mostrar ao usuário uma operação simples. Nunca colocar tudo automaticamente em IVA10 nem emitir uma única linha incompatível; detalhamento fiscal depende de aceite/homologação contra o gateway.
+- **DECISÃO POSTERIOR E VINCULANTE do responsável:** na NCE por motivo 3/4, emitir **somente um item DESCUENTO**, quantidade 1, valor digitado e **IVA 10% fixo (gravado 10%)**, sem rateio por produtos originais e sem itens fiscais auxiliares. Permitir remover as linhas originais na UI via `Seleccionar todos` + `Eliminar seleccionados`, sem afetar a FE original. Se houver linhas originais ainda incluídas com o serviço, bloquear emissão para permitir uma NCE apenas com DESCUENTO.
+- **RISCO FISCAL NÃO HOMOLOGADO:** IVA 10% fixo pode não corresponder ao IVA da FE original de 5% ou exenta. Não afirmar conformidade SIFEN sem teste real e verificação fiscal, não modificar silenciosamente a opção decidida. Manter limite de crédito, motivo, CDC e vínculo da FE.
 
 ## 3. KUDE NCE — ÚNICA EXCEÇÃO À PROIBIÇÃO KUDE
 - O problema não é apenas o botão FE; foi **confirmado no código** um bloqueio em vários pontos:
@@ -57,7 +58,7 @@
 2. NCE APROBADA + CDC: botão KuDE disponível e visor com PDF da própria NCE; impressão/download, nome `KuDE-NCE`; nenhuma troca de documento na UI.
 3. NCE PENDIENTE/RECHAZADA/sem CDC, outra empresa/sucursal ou sem permissão: não oferecer ou negar seguro, sem chamada insegura ao gateway.
 4. Mock do gateway valida **exatamente os cinco campos** (sem `tipOpe`), `tipoDoc` FE/NCE, autenticação, CDC próprio, Base64/PDF, erro, timeout e isolamento. **Homologação real somente pelo responsável**, se gateway oferecer KuDE NCE.
-5. DESCUENTO: operador informa valor e quantidade 1; resultado fiscal correto, sem alteração de estoque, sem exceder saldo; não alterar a FE original, respeitar IVA original (inclusive cenários mistos), motivos e bloqueios.
+5. DESCUENTO: somente uma linha de serviço, valor livre positivo, quantidade 1, IVA 10% fixo, sem estoque, sem exceder saldo; não alterar a FE original. Atenção: taxa fixa ainda requer validação fiscal em casos de FE com IVA 5%/exento/misto.
 6. Não abrir PR/issue para alterar identidade do ambiente de testes, logotipo nem layout de KuDE FE.
 
 ## 5. REGLAS FUNCIONALES DEFINITIVAS — FE, STOCK, NCE Y EVENTOS (20/10/2026)
@@ -88,13 +89,13 @@
 
 ### C. NCE — Devolución, Descuento y Bonificación
 
-- **Motivos 3/4:** tanto **Descuento** como **Bonificación** muestran `+ Agregar DESCUENTO`. Es el **mismo servicio fijo del sistema**, con código/identidad estable, `cantidad=1`, monto editable positivo e IVA conforme al tratamiento válido de los documentos originales. No generar entrada/salida de stock.
+- **Motivos 3/4:** tanto **Descuento** como **Bonificación** muestran `+ Agregar DESCUENTO`. Es el **mismo servicio fijo**, cantidad 1, precio unitario = monto elegido, **IVA 10% fijo**, sin movimiento de stock, sin repartir valor ni IVA en productos originales. La NCE emitida con este servicio contiene solamente este ítem (tras eliminar las líneas seleccionadas de la nota).
 - Permitir checkbox por línea y checkbox **seleccionar todos**, además de acción **Eliminar seleccionados** de la nota que se está creando. Se puede eliminar **todas las líneas originales de la NCE** y dejar exclusivamente el servicio `DESCUENTO`; no borrar el catálogo ni las líneas de la FE original.
 - La NCE mantiene el CDC de asociación a la FE original y sus propios identificadores de emisión. El monto NCE no supera saldo acreditable ni otros controles ya definidos (motivo fijado, NCE pendiente, idempotencia).
 - **Devolución (motivo 2):** permitir editar cantidad devuelta, con coma/fracción, sin exceder cantidad acreditable original. **La NCE NO genera entrada automática de inventario.** El operador realiza `Inventario → Movimientos → Entrada` por separado tras recibir la mercancía, con registro auditado; evitar entradas duplicadas.
 - Las actuales `nce_lineas` y `fe_documento_crear_nce` exigen ordinal de línea original de FE. Servicio extra exige adaptación completa de esquema/validaciones, cálculo IVA correcto, consumo de saldo e idempotencia. La inserción de una fila de `productos` por sí sola NO resuelve el flujo.
-- **Resta por especificar comportamiento tributario** para FE original con IVA 5%, 10% y exento mezclados: mostrar opción de base fiscal de referencia o cálculo automático trazable, antes de aprobar implementación de servicio único. No asumir IVA10 ni emitir PDF/payload fiscal ficticio.
-- **Queda por precisar** si al agregar el servicio se pueden mantener también algunos de los ítems de la FE dentro de la misma NCE (sin superar el saldo); la decisión confirmada admite eliminar todos, pero no obligó a hacerlo.
+- **DECISIÓN CERRADA:** IVA del servicio DESCUENTO **siempre 10%**, incluso si la FE original contiene otros IVA, sin prorrateo. Es una decisión comercial, no una certificación legal/fiscal; probar y validar con el SIFEN/gateway los casos de FE origen a 5%, exenta y mixta antes de producción. No crear documento fiscal ficticio si el proveedor lo rechaza.
+- **DECISIÓN CERRADA:** NCE por servicio DESCUENTO contiene exclusivamente ese ítem. Permitir marcar todos los originales y eliminarlos de la SELECCIÓN NCE (sin tocar la FE original). Si quedan líneas seleccionadas, bloquear envío hasta quitarlas; no eliminarlas automáticamente al añadir DESCUENTO.
 
 ### D. Descuento particular y global en FE — normativa confirmada
 
@@ -116,7 +117,7 @@
 ### F. Lista de pendientes no resueltos por estas decisiones
 
 1. FE: **RESUELTO** — asignación automática entre depósitos disponibles/autorizados con desglose visible y salidas por cada origen; implementación pendiente.
-2. NCE DESCUENTO: selección/derivación fiscal del IVA si la FE referencia tasas mixtas y eventual combinación con líneas originales.
+2. NCE DESCUENTO: **resuelto** IVA 10% fijo, un ítem, no ratear ni combinar con originales; **pendiente** homologación fiscal para FE 5%/exenta/mixta.
 3. Evento de cancelación: verificar primero disponibilidad/cuerpo de API de gateway, estrategia técnica y compensación de stock/fiscal sin duplicidades.
 4. Solicitudes previas fuera de estas 8 respuestas: destino/dirección de entrega del cliente; foco automático en cantidad de nuevo producto; código de producto con ceros iniciales; descuentos en UI; resumen en PYG sin decimales; seleccionar todos y eliminar en NCE; KuDE NCE con los cinco campos contractuales sin `tipOpe`; texto `Establecimiento 001`. El layout/logo/empresa de KuDE TEST quedan fuera de alcance.
 
@@ -125,6 +126,18 @@
 - Dos depósitos: A=3 y B=5, factura de 6 permite asignación automática de 3+3 y registrar dos salidas, conservando una única línea fiscal de 6; sin saldos negativos, doble baja ni consumo concurrente del mismo stock.
 - Reintentos FE y estados fiscales: baja única, reversión única sólo ante rechazo definitivo/cancelación oficial, estado indeterminado mantiene consistencia.
 - Cantidad `5,5` en UI, FE, Kardex y stock; cantidades sin redondeo; 0, diferencia mínima `0,0001`, inventario fraccionario.
-- NCE 2/3/4: devolución parcial con fracción sin entrada de stock, DESCUENTO fijo con cantidad 1 en motivos 3 y 4, selección/eliminación de todas las líneas, saldo/IVA/CDC válidos, múltiples tasas originales.
+- NCE 2/3/4: devolución parcial fraccionaria sin entrada de stock; en 3/4, DESCUENTO único (cantidad 1, IVA 10%), sin líneas originales, sin reparto, con CDC/saldo correcto; probar FE original 5/10/exenta/mixta y aceptación fiscal en el gateway real.
 - FE con descuentos de línea/global en % y Gs., IVA 5/10/exento y sumatorias F/EA exactas.
 - FE cancelación <=48h; NCE <=168h; fuera del plazo/cross-tenant/permisos => bloqueo, sin falsa aceptación.
+
+
+## 6. NUEVO GATEWAY DE PRUEBA — 20/10/2026
+
+- Endpoint confirmado por captura Postman: base `https://gateway.e-factura-hub.com`. `POST /api/login` respondió HTTP 200 con JSON `status:success` y token. **Esto verifica solo el login; no demuestra emisión, consulta, KuDE NCE ni validez de IVA fijo.**
+- La captura contiene credenciales y token reales: no replicar RUC de acceso, password ni token en Git, Linear o mensajes, y renovar contraseña antes de producción.
+- Código: `lib/facturacion/gateway-credenciales.ts` cambia `URL_GATEWAY_PRUEBA` a nuevo host, utilizado al GUARDAR configuración de la empresa en `Configuración → Facturación electrónica`. **No cambia automáticamente base_url ya persistido en `fe_gateway_config`.**
+- Para CASA MINGO actualizar por formulario autenticado y autorizado del NEXIT, preservando `NEXIT_DB` por empresa. Volver a guardar el usuario/clave de API mediante la interfaz segura y usar `Probar conexión`. No insertar secretos en SQL/terminal/README ni copiar login de una empresa como identidad fiscal de otra.
+- El gateway de pruebas puede usar identidad de emisor diferente a CASA MINGO, ya aceptado por el responsable. NO alterar el layout del KuDE ni RUC/empresa fiscal/CDC de CASA MINGO por cambiar URL de autenticación.
+- Las empresas ya configuradas conservan su URL registrada mientras no se actualicen expresamente; ninguna migración global debe reemplazar sus configuraciones.
+
+**Estado:** default de URL cambiado en Git, sin modificar VM/BD ni probar el nuevo gateway desde el NEXIT; pruebas simuladas del código pendientes de ejecutar.
