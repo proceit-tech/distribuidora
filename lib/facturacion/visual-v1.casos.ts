@@ -91,12 +91,13 @@ export async function verificarCasosVisualV1(): Promise<string[]> {
   // ── A. Lista de Documentos: acciones con iconos ──────────────────────────────────────────────────
   const casos: Array<[string, { tipo: string; estadoSifen: string; cdc: string | null }, boolean]> = [
     ["FE aprobada con CDC", { tipo: "FE", estadoSifen: "APROBADO", cdc: "0".repeat(44) }, true],
-    ["FE aprobada sin CDC", { tipo: "FE", estadoSifen: "APROBADO", cdc: null }, false],
-    ["FE aprobada con CDC vacío", { tipo: "FE", estadoSifen: "APROBADO", cdc: "" }, false],
-    ["FE pendiente", { tipo: "FE", estadoSifen: "PENDIENTE", cdc: "0".repeat(44) }, false],
-    ["FE rechazada", { tipo: "FE", estadoSifen: "RECHAZADO", cdc: "0".repeat(44) }, false],
-    ["FE sin consulta", { tipo: "FE", estadoSifen: "SIN_CONSULTA", cdc: "0".repeat(44) }, false],
-    ["NCE aprobada con CDC", { tipo: "NCE", estadoSifen: "APROBADO", cdc: "0".repeat(44) }, false],
+    ["FE aprobada sin CDC (E08: el estado y el CDC no condicionan)", { tipo: "FE", estadoSifen: "APROBADO", cdc: null }, true],
+    ["FE aprobada con CDC vacío", { tipo: "FE", estadoSifen: "APROBADO", cdc: "" }, true],
+    ["FE pendiente", { tipo: "FE", estadoSifen: "PENDIENTE", cdc: "0".repeat(44) }, true],
+    ["FE rechazada", { tipo: "FE", estadoSifen: "RECHAZADO", cdc: "0".repeat(44) }, true],
+    ["FE sin consulta", { tipo: "FE", estadoSifen: "SIN_CONSULTA", cdc: "0".repeat(44) }, true],
+    ["NCE aprobada con CDC", { tipo: "NCE", estadoSifen: "APROBADO", cdc: "0".repeat(44) }, true],
+    ["NCE pendiente sin CDC", { tipo: "NCE", estadoSifen: "PENDIENTE", cdc: null }, true],
     ["otro tipo aprobado", { tipo: "NDE", estadoSifen: "APROBADO", cdc: "0".repeat(44) }, false],
   ];
 
@@ -105,7 +106,7 @@ export async function verificarCasosVisualV1(): Promise<string[]> {
   const pagina = leer("app/(private)/documentos/page.tsx");
   const celda = pagina.slice(pagina.indexOf("<div className={estilos.accionesLinea}>"), pagina.indexOf("</td>", pagina.indexOf("<div className={estilos.accionesLinea}>")));
 
-  cierto("VIS-21 la columna Acciones muestra botones de icono compactos: KuDE (solo si kudeDisponible) y detalle (aria-expanded, título y etiqueta accesibles), sin texto largo", /kudeDisponible\(d\) \? \(/.test(celda) && /title="Ver KuDE \(PDF\)"/.test(celda) && /aria-label=\{`Ver KuDE \(PDF\) de la factura/.test(celda) && /onClick=\{\(\) => abrirKude\(d\)\}/.test(celda) && /aria-expanded=\{Boolean\(det\)\}/.test(celda) && /title=\{det \? "Ocultar detalle" : "Ver detalle"\}/.test(celda) && /onClick=\{\(\) => alternar\(d\)\}/.test(celda) && (celda.match(/<svg /g) ?? []).length === 2 && !/XML/.test(celda));
+  cierto("VIS-21 la columna Acciones muestra botones de icono compactos: KuDE (solo si kudeDisponible) y detalle (aria-expanded, título y etiqueta accesibles), sin texto largo", /kudeDisponible\(d\) \? \(/.test(celda) && /title="Ver KuDE \(PDF\)"/.test(celda) && /aria-label=\{`Ver KuDE \(PDF\) de \$\{d\.tipo === "NCE" \? "la nota de crédito" : "la factura"\}/.test(celda) && /onClick=\{\(\) => abrirKude\(d\)\}/.test(celda) && /aria-expanded=\{Boolean\(det\)\}/.test(celda) && /title=\{det \? "Ocultar detalle" : "Ver detalle"\}/.test(celda) && /onClick=\{\(\) => alternar\(d\)\}/.test(celda) && (celda.match(/<svg /g) ?? []).length === 2 && !/XML/.test(celda));
   cierto("VIS-22 no hay acción de XML ni falso soporte (el aviso «XML: descarga no disponible» se mantiene) y el KuDE no se duplica dentro del detalle", /XML: descarga no disponible/.test(pagina) && (pagina.match(/Ver KuDE \(PDF\)/g) ?? []).length === 2 && !/Descargar XML|Ver XML/.test(pagina));
   cierto("VIS-23 el clic en el icono usa el flujo ya aceptado: abrirKude → visor.abrir (modal, backend autenticado por ID, nueva consulta en cada apertura)", /function abrirKude\(d: Documento\) \{\s*void visor\.abrir\(/.test(pagina) && /pedirKudeAlServidor\(id, signal\)/.test(pagina) && /<KudeModal controlador=\{visor\}/.test(pagina) && !/window\.open/.test(pagina));
   cierto("VIS-24 los estilos de icono tienen foco visible, tamaño compacto y no dependen del color solo", /\.iconBtn:focus-visible/.test(leer("app/(private)/documentos/page.module.css")) && /\.accionesLinea/.test(leer("app/(private)/documentos/page.module.css")));

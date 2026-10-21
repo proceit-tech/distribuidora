@@ -150,5 +150,5 @@ export async function pedirKudeAlServidor(docId: string, signal: AbortSignal, fe
   return r.blob();
 }
 
-/** ¿Se ofrece el KuDE en la fila? Solo FE APROBADA con CDC (la integración existe únicamente para ese caso). */
-export const kudeDisponible = (d: { tipo: string; estadoSifen: string; cdc: string | null }): boolean => d.tipo === "FE" && d.estadoSifen === "APROBADO" && Boolean(d.cdc);
+/** ¿Se ofrece el KuDE en la fila? FE y NCE, sea cual sea su estado fiscal o si ya tienen CDC: el gateway decide si entrega el PDF (E08). */
+export const kudeDisponible = (d: { tipo: string }): boolean => d.tipo === "FE" || d.tipo === "NCE";

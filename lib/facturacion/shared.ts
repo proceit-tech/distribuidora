@@ -291,36 +291,23 @@ export async function consultarEstado(db: Db, empresaId: string, usuarioId: stri
   return { resultado: String((registrado.rows[0] as F).resultado), mensaje: r.mensaje };
 }
 
-/** tipOpe del KuDE: sale SOLO del payload fiscal persistido (iTiOpe, D202 = 1..4). Sin ese dato no hay fallback: el KuDE queda bloqueado. CONTRATO NO CONFIRMADO por el proveedor (ver REQ-DOC-KUDE-PDF-GATEWAY). */
-export function tipOpeDePayload(payload: unknown): string | null {
-  const v = payload && typeof payload === "object" ? (payload as Record<string, unknown>).iTiOpe : undefined;
-  const n = typeof v === "number" ? v : typeof v === "string" && /^[1-4]$/.test(v) ? Number(v) : NaN;
-
-  return Number.isInteger(n) && n >= 1 && n <= 4 ? String(n) : null;
-}
-
 /** Nombre de archivo derivado SOLO de la identidad fiscal del registro, saneado. */
 export function nombreArchivoKude(doc: Record<string, unknown>): string {
   const p = (v: unknown) => String(v ?? "").replace(/[^0-9A-Za-z]/g, "");
 
-  return `KuDE-FE-${p(doc.establecimiento)}-${p(doc.puntoExpedicion)}-${p(doc.numero)}${doc.serie ? `-${p(doc.serie)}` : ""}.pdf`;
+  return `KuDE-${doc.tipo === "NCE" ? "NCE" : "FE"}-${p(doc.establecimiento)}-${p(doc.puntoExpedicion)}-${p(doc.numero)}${doc.serie ? `-${p(doc.serie)}` : ""}.pdf`;
 }
 
 /**
- * KuDE (PDF) de una FE existente (PRO-194). Documento por ID dentro de empresa + sucursal de la SESIÓN; solo FE APROBADA con CDC; identidad fiscal y tipOpe del registro persistido
- * (nunca del navegador). Sin credenciales/config/tipOpe no se llama a nadie. No modifica ningún dato (ni estados, ni intentos, ni numeración).
+ * KuDE (PDF) de una FE o NCE existente (PRO-194 / E08). Documento por ID dentro de empresa + sucursal de la SESIÓN; identidad fiscal (tipo, establecimiento, punto, número, serie) del registro
+ * persistido, nunca del navegador. NO se exige estado fiscal ni CDC previo: se consulta al gateway y se muestra si devuelve un PDF válido de ESE documento (CDC coherente con la identidad y, si hay uno
+ * persistido, idéntico). Sin credenciales/config no se llama a nadie. No modifica ningún dato (ni estados, ni intentos, ni numeración).
  */
 export async function obtenerKude(db: Db, empresaId: string, usuarioId: string, id: string, dep: DependenciasKude = {}): Promise<{ pdf: Buffer; nombre: string }> {
   const doc = await leerDocumento(db, empresaId, usuarioId, id);
 
   if (!doc) throw new ErrorFacturacion(404, "Documento no encontrado.");
-  if (doc.tipo !== "FE") throw new ErrorFacturacion(409, "El KuDE solo está disponible para facturas electrónicas (FE).");
-  if (doc.estadoSifen !== "APROBADO" || !doc.cdc) throw new ErrorFacturacion(409, "El KuDE solo está disponible para facturas aprobadas por SIFEN con CDC.");
-
-  const sol = await db.query("SELECT payload FROM documento_electronico_solicitudes WHERE empresa_id = $1 AND documento_id = $2 ORDER BY version DESC LIMIT 1", [empresaId, id]);
-  const tipOpe = tipOpeDePayload((sol.rows[0] as F | undefined)?.payload);
-
-  if (!tipOpe) throw new ErrorFacturacion(409, "No se puede determinar el tipo de operación del documento para solicitar el KuDE.");
+  if (doc.tipo !== "FE" && doc.tipo !== "NCE") throw new ErrorFacturacion(409, "El KuDE solo está disponible para facturas (FE) y notas de crédito (NCE) electrónicas.");
 
   const cfg = await db.query(`SELECT base_url AS "baseUrl", credencial_ref AS "credencialRef", timeout_ms AS "timeoutMs" FROM fe_gateway_config WHERE empresa_id = $1 AND activo`, [empresaId]);
   const fila = cfg.rows[0] as { baseUrl: string; credencialRef: string; timeoutMs: number } | undefined;
@@ -333,7 +320,7 @@ export async function obtenerKude(db: Db, empresaId: string, usuarioId: string, 
 
   const r = await obtenerKudeGateway(
     await adjuntarCredencialesDeBase(db, config, usuarioId),
-    { tipOpe, establecimiento: String(doc.establecimiento), puntoExpedicion: String(doc.puntoExpedicion), numero: String(doc.numero), serie: (doc.serie as string | null) ?? null, cdc: String(doc.cdc) },
+    { tipoDoc: doc.tipo, establecimiento: String(doc.establecimiento), puntoExpedicion: String(doc.puntoExpedicion), numero: String(doc.numero), serie: (doc.serie as string | null) ?? null, cdc: doc.cdc ? String(doc.cdc) : null },
     dep,
   );
 

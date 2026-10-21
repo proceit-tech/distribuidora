@@ -2,7 +2,7 @@
  * PRO-194 — KuDE (PDF) de la FE desde Documentos electrónicos. Sin red, sin PostgreSQL y sin navegador. SOLO la respuesta externa del gateway es un MOCK, con el contrato REAL confirmado por el responsable:
  * HTTP 200 + JSON {status:"success", CDC, kude:<PDF en Base64>}. La orquestación del servidor (obtenerKude → obtenerKudeGateway) y el controlador del visor (crearControladorVisor, el mismo que usa la modal)
  * son los reales; la base es simulada (alcance por empresa/sucursal como ALCANCE de leerDocumento). React no se renderizó: la modal solo refleja el controlador (verificación estructural).
- * `tipOpe` (= iTiOpe del payload persistido) sigue siendo una HIPÓTESIS pendiente de confirmación del proveedor.
+ * E08: FE y NCE, sin tipOpe y sin exigir estado fiscal ni CDC previo.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { contador } from "@/lib/clientes/contador-casos";
 import { decodificarBase64Estricto, esPdfValido, leerCuerpoLimitado, limpiarCacheTokens, MAX_KUDE_BYTES, type FetchLike, type KudeFetch } from "@/lib/facturacion/gateway";
 import { crearControladorVisor, pedirKudeAlServidor } from "@/lib/facturacion/kude-visor";
-import { nombreArchivoKude, obtenerKude, tipOpeDePayload } from "@/lib/facturacion/shared";
+import { nombreArchivoKude, obtenerKude } from "@/lib/facturacion/shared";
 
 const raiz = process.cwd();
 const leer = (r: string) => readFileSync(join(raiz, r), "utf8");
@@ -23,7 +23,11 @@ const SUC_B = "s2";
 const D = (n: number) => "d0000000-0000-4000-8000-00000000000" + String(n);
 const PDF = Buffer.from("%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n", "latin1");
 const PDF_B = Buffer.from("%PDF-1.4\n2 0 obj<<>>endobj\ntrailer<<DOC-B>>\n%%EOF\n", "latin1");
-const CDC = "0".repeat(44);
+// CDC coherente con la identidad del documento (tipo 01 FE / 05 NCE, establecimiento, punto y número en sus posiciones). E08: el CDC devuelto por el gateway debe serlo.
+const CODIGO_TIPO: Record<string, string> = { FE: "01", NCE: "05" };
+const cdcDe = (tipo: string, est: string, punto: string, numero: string) => CODIGO_TIPO[tipo] + "800000017" + est + punto + numero + "1" + "20261016" + "1" + "123456789" + "0";
+const CDC = cdcDe("FE", "001", "001", "0010004");
+const AUTO = "AUTO";
 const CDC_B = "1".repeat(44);
 
 type Doc = { id: string; empresa: string; sucursal: string; tipo: string; establecimiento: string; puntoExpedicion: string; numero: string; serie: string | null; cdc: string | null; estadoSifen: string };
@@ -54,7 +58,7 @@ function flujoDe(r: Resp, registro: RegistroFlujo): ReadableStream<Uint8Array> {
 }
 type Comportamiento = Array<(n: number) => Resp> | ((n: number) => Resp);
 
-const ok = (extra: Record<string, unknown> = {}, pdf: Buffer = PDF, cdc: string = CDC): Resp => ({ status: 200, json: { status: "success", CDC: cdc, kude: pdf.toString("base64"), ...extra } });
+const ok = (extra: Record<string, unknown> = {}, pdf: Buffer = PDF, cdc: string = AUTO): Resp => ({ status: 200, json: { status: "success", CDC: cdc, kude: pdf.toString("base64"), ...extra } });
 
 export async function verificarCasosKude(): Promise<string[]> {
   const fallos: string[] = [];
@@ -65,6 +69,7 @@ export async function verificarCasosKude(): Promise<string[]> {
   const cierto = (nombre: string, c: boolean) => igual(nombre, c, true);
 
   const fe = (id: string, empresa: string, extra: Partial<Doc> = {}): Doc => ({ id, empresa, sucursal: SUC_A, tipo: "FE", establecimiento: "001", puntoExpedicion: "001", numero: "0010004", serie: null, cdc: CDC, estadoSifen: "APROBADO", ...extra });
+  const nce = (id: string, empresa: string, extra: Partial<Doc> = {}): Doc => fe(id, empresa, { tipo: "NCE", numero: "0000007", cdc: cdcDe("NCE", "001", "001", "0000007"), ...extra });
 
   function mundo(docs: Doc[], opciones: { payloads?: Record<string, unknown>; sinConfig?: Set<string>; sinCredenciales?: Set<string> } = {}) {
     const consultas: string[] = [];
@@ -112,7 +117,9 @@ export async function verificarCasosKude(): Promise<string[]> {
       kudes.push({ url, auth: init.headers.Authorization ?? null, body: JSON.parse(init.body) as Record<string, unknown> });
       const f = typeof comportamiento === "function" ? comportamiento : comportamiento[Math.min(n, comportamiento.length - 1)];
       const r = f(n);
+      const pedido = JSON.parse(init.body) as { dEst: string; dPunExp: string; dNumDoc: string; tipoDoc: string };
 
+      if (r.json && (r.json as { CDC?: unknown }).CDC === AUTO) r.json = { ...(r.json as object), CDC: cdcDe(pedido.tipoDoc, pedido.dEst, pedido.dPunExp, pedido.dNumDoc) };
       n += 1;
       if (r.lanza === "TIMEOUT") { const e = new Error("abortado"); e.name = "AbortError"; throw e; }
       if (r.lanza === "RED") throw new Error("ECONNRESET");
@@ -149,40 +156,86 @@ export async function verificarCasosKude(): Promise<string[]> {
     const g = gateway(pdfOk);
     const r = await obtenerKude(m.db, E1, U1, D(1), g.dep);
 
-    igual("KUDE-01: una solicitud POST a {base}/api/kude con el Bearer de la empresa y el cuerpo exacto (ceros a la izquierda, serie null, tipoDoc FE, tipOpe del payload persistido)", [g.kudes.length, g.kudes[0].url, /^Bearer TOKEN-RUC-E1-/.test(g.kudes[0].auth ?? ""), g.kudes[0].body], [1, "https://gw.example.test/api/kude", true, { tipOpe: "4", dEst: "001", dPunExp: "001", dNumDoc: "0010004", dSerieNum: null, tipoDoc: "FE" }]);
+    igual("KUDE-01: una solicitud POST a {base}/api/kude con el Bearer de la empresa y el cuerpo EXACTO de cinco campos (ceros a la izquierda, serie null, tipoDoc FE) y SIN tipOpe", [g.kudes.length, g.kudes[0].url, /^Bearer TOKEN-RUC-E1-/.test(g.kudes[0].auth ?? ""), JSON.stringify(g.kudes[0].body)], [1, "https://gw.example.test/api/kude", true, JSON.stringify({ dEst: "001", dPunExp: "001", dNumDoc: "0010004", dSerieNum: null, tipoDoc: "FE" })]);
+    igual("E08-01: la consulta del KuDE no lee la solicitud/payload persistido (no hay tipOpe)", m.consultas.some((q) => /documento_electronico_solicitudes/.test(q)), false);
     igual("KUDE-02: la respuesta JSON con status success, CDC correcto y Base64 se decodifica y el PDF llega INTACTO; el nombre sale solo de la identidad fiscal", [Buffer.compare(r.pdf, PDF), r.nombre], [0, "KuDE-FE-001-001-0010004.pdf"]);
     igual("KUDE-03: solo lectura — ninguna escritura en la base (ni estados SIFEN, ni intentos, ni numeración)", m.consultas.some((s) => /\b(INSERT|UPDATE|DELETE)\b|fe_documento_registrar/i.test(s)), false);
 
-    const m2 = mundo([fe(D(2), E1, { serie: "AB", numero: "0000123" })], { payloads: { [D(2)]: { iTiOpe: 2 } } });
+    const m2 = mundo([fe(D(2), E1, { serie: "AB", numero: "0000123", cdc: cdcDe("FE", "001", "001", "0000123") })]);
     const g2 = gateway(pdfOk);
     const r2 = await obtenerKude(m2.db, E1, U1, D(2), g2.dep);
 
-    igual("KUDE-04: tipOpe NO es constante — otro documento con iTiOpe 2 y serie AB envía «2» y la serie; el nombre incluye la serie", [g2.kudes[0].body.tipOpe, g2.kudes[0].body.dSerieNum, g2.kudes[0].body.dNumDoc, r2.nombre], ["2", "AB", "0000123", "KuDE-FE-001-001-0000123-AB.pdf"]);
+    igual("KUDE-04: otro documento con serie AB envía la serie y su número (sin tipOpe); el nombre incluye la serie", [g2.kudes[0].body.tipOpe, g2.kudes[0].body.dSerieNum, g2.kudes[0].body.dNumDoc, r2.nombre], [undefined, "AB", "0000123", "KuDE-FE-001-001-0000123-AB.pdf"]);
 
     const gMin = gateway(() => ({ status: 200, json: { status: "success", cdc: CDC, kude: PDF.toString("base64") } }));
 
     igual("KUDE-04b: el campo CDC también se acepta en minúsculas y exige igualdad exacta con el CDC persistido", (await obtenerKude(mundo([fe(D(1), E1)]).db, E1, U1, D(1), gMin.dep)).pdf.length, PDF.length);
   }
 
-  // ── 2. tipOpe: sin dato confiable no hay fallback ─────────────────────────────────────────────────────────────────────────────────────────
-  const sinDato: Array<[string, unknown]> = [["sin iTiOpe", {}], ["iTiOpe fuera de dominio", { iTiOpe: 9 }], ["iTiOpe no numérico", { iTiOpe: "x" }], ["sin solicitud persistida", undefined]];
+  // ── 2. E08: el KuDE se solicita para FE y NCE sin exigir estado fiscal ni CDC previo ─────────────────────────────────────────────────────
+  {
+    const estados = ["APROBADO", "PENDIENTE", "RECHAZADO", "CANCELADO", "ENVIADO"];
 
-  for (const [nombre, payload] of sinDato) {
+    for (const tipo of ["FE", "NCE"]) {
+      for (const estado of estados) {
+        limpiarCacheTokens();
+
+        const mk = tipo === "FE" ? fe : nce;
+        const m = mundo([mk(D(1), E1, { estadoSifen: estado })]);
+        const g = gateway(pdfOk);
+        const r = await obtenerKude(m.db, E1, U1, D(1), g.dep);
+
+        igual("E08-02 [" + tipo + " " + estado + "]: se consulta al gateway y se entrega el PDF (el estado fiscal no condiciona)", [r.pdf.length, g.kudes.length, g.kudes[0].body.tipoDoc, r.nombre.startsWith("KuDE-" + tipo + "-")], [PDF.length, 1, tipo, true]);
+      }
+    }
+
+    // Sin CDC persistido: se acepta el CDC coherente que devuelve el gateway; uno incoherente (otro tipo, número u otra empresa) se descarta
     limpiarCacheTokens();
-    const m = mundo([fe(D(1), E1)], { payloads: { [D(1)]: payload } });
-    const g = gateway(pdfOk);
-    const x = await falla(m, g, E1, U1, D(1));
 
-    igual("KUDE-05 [" + nombre + "]: se bloquea (409), no se inventa tipOpe y no se llama al gateway", [x.estado, g.kudes.length, g.logins.length], [409, 0, 0]);
+    const sinCdc = await obtenerKude(mundo([fe(D(1), E1, { cdc: null, estadoSifen: "PENDIENTE" })]).db, E1, U1, D(1), gateway(pdfOk).dep);
+
+    igual("E08-03 FE sin CDC persistido y sin aprobar: el PDF válido con CDC coherente se muestra", sinCdc.pdf.length, PDF.length);
+
+    const incoherentes: Array<[string, string]> = [["CDC de una NCE para una FE", cdcDe("NCE", "001", "001", "0010004")], ["CDC de otro número", cdcDe("FE", "001", "001", "0010005")], ["CDC de otro punto", cdcDe("FE", "001", "002", "0010004")], ["CDC de otro establecimiento", cdcDe("FE", "002", "001", "0010004")], ["CDC con formato inválido", "123"]];
+
+    for (const [nombre, cdc] of incoherentes) {
+      limpiarCacheTokens();
+
+      const x = await falla(mundo([fe(D(1), E1, { cdc: null })]), gateway(() => ok({}, PDF, cdc)), E1, U1, D(1));
+
+      igual("E08-03 [" + nombre + ", sin CDC persistido]: se descarta (502) y no se entrega el PDF", [x.estado, x.mensaje.includes("no corresponde a este documento")], [502, true]);
+    }
+
+    // NCE: tipoDoc NCE con los identificadores de la propia NCE, mismo contrato de cinco campos
+    limpiarCacheTokens();
+
+    const gN = gateway(pdfOk);
+    const rN = await obtenerKude(mundo([nce(D(1), E1, { serie: "AB", numero: "0000007", cdc: null })]).db, E1, U1, D(1), gN.dep);
+
+    igual("E08-04 NCE: solo cambia tipoDoc a «NCE» y los identificadores son los de la NCE; nombre propio; sin tipOpe", [JSON.stringify(gN.kudes[0].body), rN.nombre], [JSON.stringify({ dEst: "001", dPunExp: "001", dNumDoc: "0000007", dSerieNum: "AB", tipoDoc: "NCE" }), "KuDE-NCE-001-001-0000007-AB.pdf"]);
+
+    // Con CDC persistido, una divergencia con el devuelto se rechaza aunque sea coherente con la identidad
+    limpiarCacheTokens();
+
+    const div = await falla(mundo([fe(D(1), E1, { cdc: cdcDe("FE", "001", "001", "0010004").slice(0, 43) + "1" })]), gateway(pdfOk), E1, U1, D(1));
+
+    igual("E08-05 CDC persistido distinto del devuelto: divergencia rechazada (502), sin entregar el PDF", [div.estado, div.mensaje.includes("no corresponde a este documento")], [502, true]);
+
+    // Otros tipos (NDE/AFE...) siguen sin KuDE
+    limpiarCacheTokens();
+
+    const gT = gateway(pdfOk);
+    const xt = await falla(mundo([fe(D(1), E1, { tipo: "NDE" })]), gT, E1, U1, D(1));
+
+    igual("E08-06 un tipo distinto de FE/NCE responde 409 sin llamar al gateway", [xt.estado, gT.kudes.length, gT.logins.length], [409, 0, 0]);
   }
-  igual("KUDE-06: tipOpeDePayload acepta 1..4 (número o texto) y nada más", [tipOpeDePayload({ iTiOpe: 1 }), tipOpeDePayload({ iTiOpe: "3" }), tipOpeDePayload({ iTiOpe: 0 }), tipOpeDePayload(null)], ["1", "3", null, null]);
 
   // ── 3. Aislamiento, alcance y elegibilidad: nunca se llama al gateway ───────────────────────────────────────────────────────────────────────
   {
-    const docs = [fe(D(1), E1), fe(D(2), E2), fe(D(3), E1, { sucursal: SUC_B }), fe(D(4), E1, { tipo: "NCE" }), fe(D(5), E1, { estadoSifen: "PENDIENTE" }), fe(D(6), E1, { cdc: null }), fe(D(7), E1, { estadoSifen: "RECHAZADO" })];
+    const docs = [fe(D(1), E1), fe(D(2), E2), fe(D(3), E1, { sucursal: SUC_B }), fe(D(4), E1, { tipo: "NDE" }), nce(D(5), E2)];
     const casos: Array<[string, string, string, string, number]> = [
       ["documento de OTRA empresa", E1, U1, D(2), 404], ["sucursal fuera del alcance del usuario", E1, U1, D(3), 404], ["ID inexistente", E1, U1, D(9), 404], ["ID no válido", E1, U1, "../../etc/passwd", 404],
-      ["tipo NCE", E1, U1, D(4), 409], ["FE pendiente", E1, U1, D(5), 409], ["FE aprobada sin CDC", E1, U1, D(6), 409], ["FE rechazada", E1, U1, D(7), 409],
+      ["tipo no soportado (NDE)", E1, U1, D(4), 409], ["NCE de OTRA empresa", E1, U1, D(5), 404],
     ];
 
     for (const [nombre, e, u, id, estado] of casos) {
@@ -228,21 +281,21 @@ export async function verificarCasosKude(): Promise<string[]> {
     const escenarios: Array<[string, Comportamiento, number, string]> = [
       ["CDC distinto (documento ajeno)", () => ok({}, PDF_B, CDC_B), 502, "no corresponde a este documento"],
       ["sin CDC en la respuesta", () => ({ status: 200, json: { status: "success", kude: PDF.toString("base64") } }), 502, "no corresponde a este documento"],
-      ["status distinto de success", () => ({ status: 200, json: { status: "error", CDC, kude: PDF.toString("base64") } }), 502, "no entregó el KuDE"],
-      ["cuerpo que no es JSON", () => ({ status: 200, bytes: PDF, tipo: "application/pdf" }), 502, "no entregó el KuDE"],
-      ["Base64 inválido", () => ok({ kude: "***no-es-base64***" }), 502, "no es un PDF válido"],
-      ["Base64 vacío", () => ok({ kude: "" }), 502, "no es un PDF válido"],
-      ["kude ausente", () => ({ status: 200, json: { status: "success", CDC } }), 502, "no es un PDF válido"],
-      ["kude no es texto", () => ok({ kude: 123 }), 502, "no es un PDF válido"],
-      ["Base64 válido pero no es PDF", () => ok({ kude: noPdf }), 502, "no es un PDF válido"],
-      ["PDF truncado (sin %%EOF)", () => ok({ kude: Buffer.from("%PDF-1.4\n1 0 obj<<>>endobj\n").toString("base64") }), 502, "no es un PDF válido"],
-      ["con prefijo data:", () => ok({ kude: "data:application/pdf;base64," + PDF.toString("base64") }), 502, "no es un PDF válido"],
+      ["status distinto de success", () => ({ status: 200, json: { status: "error", CDC, kude: PDF.toString("base64") } }), 502, "no entregó un resultado válido"],
+      ["cuerpo que no es JSON", () => ({ status: 200, bytes: PDF, tipo: "application/pdf" }), 502, "no entregó un resultado válido"],
+      ["Base64 inválido", () => ok({ kude: "***no-es-base64***" }), 502, "no devolvió un PDF válido"],
+      ["Base64 vacío", () => ok({ kude: "" }), 502, "no devolvió un PDF válido"],
+      ["kude ausente", () => ({ status: 200, json: { status: "success", CDC } }), 502, "no devolvió un PDF válido"],
+      ["kude no es texto", () => ok({ kude: 123 }), 502, "no devolvió un PDF válido"],
+      ["Base64 válido pero no es PDF", () => ok({ kude: noPdf }), 502, "no devolvió un PDF válido"],
+      ["PDF truncado (sin %%EOF)", () => ok({ kude: Buffer.from("%PDF-1.4\n1 0 obj<<>>endobj\n").toString("base64") }), 502, "no devolvió un PDF válido"],
+      ["con prefijo data:", () => ok({ kude: "data:application/pdf;base64," + PDF.toString("base64") }), 502, "no devolvió un PDF válido"],
       ["JSON declarado demasiado grande", () => ({ status: 200, largo: String(MAX_KUDE_BYTES * 2), json: {} }), 502, "excede"],
       ["PDF decodificado mayor al límite", () => ok({ kude: Buffer.concat([PDF.subarray(0, PDF.length - 6), Buffer.alloc(MAX_KUDE_BYTES), Buffer.from("\n%%EOF\n")]).toString("base64") }), 502, "excede"],
       ["401 persistente", json(401), 502, "renovarla"],
       ["timeout", () => ({ status: 0, lanza: "TIMEOUT" }), 502, "Tiempo de espera"],
       ["red caída", () => ({ status: 0, lanza: "RED" }), 503, "comunicarse"],
-      ["404", json(404), 502, "no encontró"],
+      ["404", json(404), 502, "no está disponible en el gateway"],
       ["500", () => ({ status: 500, tipo: "text/html", bytes: Buffer.from("<html>error</html>") }), 503, "no está disponible"],
     ];
 
@@ -640,7 +693,7 @@ export async function verificarCasosKude(): Promise<string[]> {
     if (previo.m !== undefined) process.env.DEMO_MODE = previo.m;
     igual("KUDE-17 ruta real: sin base de datos configurada responde 503 sin PDF", [res.status, res.headers.get("content-type")?.includes("application/json")], [503, true]);
   }
-  cierto("KUDE-18 pantalla: «Ver KuDE (PDF)» solo para FE APROBADA con CDC, abre la modal por el controlador (sin window.open), usa el cliente del servidor por ID y libera al desmontar", /kudeDisponible\(d\)/.test(pagina) && /Ver KuDE \(PDF\)/.test(pagina) && !/window\.open/.test(pagina) && /crearControladorVisor\(/.test(pagina) && /pedirKudeAlServidor\(id, signal\)/.test(pagina) && /URL\.createObjectURL/.test(pagina) && /URL\.revokeObjectURL/.test(pagina) && /<KudeModal controlador=\{visor\}/.test(pagina) && /XML: descarga no disponible/.test(pagina) && !/endpoint del proveedor sin confirmar/.test(pagina));
+  cierto("KUDE-18 pantalla: «Ver KuDE (PDF)» para FE y NCE (sin condicionar el estado fiscal), abre la modal por el controlador (sin window.open), usa el cliente del servidor por ID y libera al desmontar", /kudeDisponible\(d\)/.test(pagina) && /Ver KuDE \(PDF\)/.test(pagina) && !/window\.open/.test(pagina) && /crearControladorVisor\(/.test(pagina) && /pedirKudeAlServidor\(id, signal\)/.test(pagina) && /URL\.createObjectURL/.test(pagina) && /URL\.revokeObjectURL/.test(pagina) && /<KudeModal controlador=\{visor\}/.test(pagina) && /XML: descarga no disponible/.test(pagina) && !/endpoint del proveedor sin confirmar/.test(pagina));
   cierto("KUDE-18b modal: diálogo accesible (role=dialog, aria-modal, título «KuDE · Factura …»), Descargar PDF (con estado de preparación y error) / Imprimir / Cerrar, Reintentar en error, Escape cierra, foco atrapado y devuelto, visor desmontado al cerrar, iframe solo con la URL temporal", /role="dialog"/.test(modal) && /aria-modal="true"/.test(modal) && /Descargar PDF/.test(modal) && />Imprimir</.test(modal) && />Cerrar</.test(modal) && /Reintentar/.test(modal) && /Preparando descarga/.test(modal) && /controlador\.descargar\(\)/.test(modal) && /e\.key === "Escape"/.test(modal) && /e\.key !== "Tab"/.test(modal) && /previo\?\.focus/.test(modal) && /estado\.fase === "CERRADO"\) return null/.test(modal) && /src=\{estado\.url\}/.test(modal) && /controlador\.cerrar\(\)/.test(modal) && !/localStorage|sessionStorage|indexedDB/.test(modal + pagina + leer("lib/facturacion/kude-visor.ts")));
   {
     const ini = shared.indexOf("export async function obtenerKude");

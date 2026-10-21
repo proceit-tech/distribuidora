@@ -242,8 +242,8 @@ export default function DocumentosPage() {
   function abrirKude(d: Documento) {
     void visor.abrir({
       id: d.id,
-      titulo: `KuDE · Factura ${d.establecimiento}-${d.puntoExpedicion}-${d.numero}${d.serie ? ` (${d.serie})` : ""}`,
-      nombre: `KuDE-FE-${d.establecimiento}-${d.puntoExpedicion}-${d.numero}${d.serie ? `-${d.serie}` : ""}.pdf`.replace(/[^0-9A-Za-z.-]/g, ""),
+      titulo: `KuDE · ${d.tipo === "NCE" ? "Nota de crédito" : "Factura"} ${d.establecimiento}-${d.puntoExpedicion}-${d.numero}${d.serie ? ` (${d.serie})` : ""}`,
+      nombre: `KuDE-${d.tipo === "NCE" ? "NCE" : "FE"}-${d.establecimiento}-${d.puntoExpedicion}-${d.numero}${d.serie ? `-${d.serie}` : ""}.pdf`.replace(/[^0-9A-Za-z.-]/g, ""),
     });
   }
 
@@ -429,7 +429,7 @@ export default function DocumentosPage() {
                       <td className={ui.actionsCell}>
                         <div className={estilos.accionesLinea}>
                           {kudeDisponible(d) ? (
-                            <button type="button" className={estilos.iconBtn} title="Ver KuDE (PDF)" aria-label={`Ver KuDE (PDF) de la factura ${d.establecimiento}-${d.puntoExpedicion}-${d.numero}`} onClick={() => abrirKude(d)}>
+                            <button type="button" className={estilos.iconBtn} title="Ver KuDE (PDF)" aria-label={`Ver KuDE (PDF) de ${d.tipo === "NCE" ? "la nota de crédito" : "la factura"} ${d.establecimiento}-${d.puntoExpedicion}-${d.numero}`} onClick={() => abrirKude(d)}>
                               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /><path d="M9 13h6M9 17h4" /></svg>
                             </button>
                           ) : null}
@@ -455,7 +455,7 @@ export default function DocumentosPage() {
                             <div><dt className={ui.muted}>Última consulta</dt><dd style={{ margin: 0 }}>{d.ultimaConsultaAt ? `${fechaHora(d.ultimaConsultaAt)} · ${ETIQUETA_RESULTADO_INTENTO[d.ultimaConsultaResultado ?? ""] ?? d.ultimaConsultaResultado}` : "Nunca consultado"}</dd></div>
                           </dl>
 
-                          <p className={ui.muted} style={{ margin: "4px 0" }}>{d.tipo === "FE" ? "XML: descarga no disponible." : "KuDE y XML: descarga no disponible para este tipo de documento."}</p>
+                          <p className={ui.muted} style={{ margin: "4px 0" }}>{d.tipo === "FE" || d.tipo === "NCE" ? "XML: descarga no disponible." : "KuDE y XML: descarga no disponible para este tipo de documento."}</p>
 
                           {crear && (d.estadoLocal === "PENDIENTE_ENVIO" || (d.estadoLocal === "ERROR_ENVIO" && d.envioErrorTipo !== "RECHAZO")) ? (
                             <button type="button" className={ui.primaryButton} disabled={det.consultando} onClick={() => enviarAlGateway(d)}>

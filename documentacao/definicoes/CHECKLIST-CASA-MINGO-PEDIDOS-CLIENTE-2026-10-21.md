@@ -35,9 +35,9 @@
 | NCE-01 | Checkbox individual, `Seleccionar todos` e `Eliminar seleccionados` apenas na nota (nunca na FE original) | [~] | E06 entregue no commit 64b9c7f7; auditoria E06-R01 **PENDENTE** |
 | NCE-02 | Devolução parcial por quantidade (ex.: 2 de 5), aceita vírgula/fração e respeita saldo | [~] | E06 entregue; auditoria E06-R01 pendente |
 | NCE-03 | NCE de devolução **não gera entrada automática de estoque** | [~] | E06 mantém regra; entrada de inventário manual separada; auditoria pendente |
-| NCE-04 | Motivos `Descuento` e `Bonificación`: botão `+ Agregar DESCUENTO`; único serviço fixo, qty=1, valor digitado, IVA10, zero stock | [ ] | E07 NÃO iniciada; adaptar validação/SQL/payload fiscal, não só criar SKU |
-| NCE-05 | Retirar todos os itens originais da nota e emitir só linha DESCUENTO sem afetar FE original | [ ] | Depende E06 auditada e E07; IVA10 para FE original 5%/isenta/mista requer prova SIFEN real |
-| NCE-06 | **KuDE de FE e NCE independentemente do estado SIFEN**: botão/visor/baixar/imprimir; consultar API com cinco campos e `tipoDoc=FE/NCE`, sem `tipOpe`; **se o gateway entregar PDF válido do documento solicitado, mostrar** | [ ] | E08 NÃO iniciada; **NÃO exigir APROBADA nem CDC previamente persistido** para tentar buscar; manter autorização, isolamento, identidade da FE/NCE, validação do PDF e rejeição de CDC divergente quando disponível |
+| NCE-04 | Motivos `Descuento` e `Bonificación`: botão `+ Agregar DESCUENTO`; único serviço fixo, qty=1, valor digitado, IVA10, zero stock | [~] | E07 entregue (commit fbc290cb); NEX-070 versionada, NÃO aplicada; auditoria consolidada pendente |
+| NCE-05 | Retirar todos os itens originais da nota e emitir só linha DESCUENTO sem afetar FE original | [~] | E07 entregue; IVA10 fixo com FE origem 5%/isenta/mista requer prova SIFEN real |
+| NCE-06 | **KuDE de FE e NCE independentemente do estado SIFEN**: botão/visor/baixar/imprimir; consultar API com cinco campos e `tipoDoc=FE/NCE`, sem `tipOpe`; **se o gateway entregar PDF válido do documento solicitado, mostrar** | [~] | E08 entregue: FE e NCE, cinco campos sem tipOpe, sem exigir APROBADA nem CDC prévio; auditoria consolidada pendente |
 
 ## 3. API, cancelamento e operação
 
