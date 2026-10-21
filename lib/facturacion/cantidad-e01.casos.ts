@@ -59,5 +59,16 @@ export async function verificarCasosCantidadE01(): Promise<string[]> {
     cierto("E01-R02-05 reglas fiscales intactas: la validación de la cantidad es la misma (cantidadFacturaValida, coma o punto, hasta 4 decimales), la edición no toca precio/IVA/cliente/estoque y el flujo de la búsqueda rápida sigue enfocando Cantidad", /import \{ cantidadFacturaValida,/.test(pagina2) && /lineaAFocar\.current = siguienteClave/.test(pagina2) && !/precio|afectacion|inventario/.test(comp));
   }
 
+  // ── E01-R03 (PRO-201, BAJA): la clase CSS del campo existe en el CSS publicado ─────────────────────────────────────────────────────────────────────
+  {
+    const css = leer("app/(private)/facturas/nueva/page.module.css");
+    const comp = leer("app/(private)/facturas/nueva/cantidad-anadido.tsx");
+    const clases = [...comp.matchAll(/estilos\.([A-Za-z0-9_]+)/g)].map((x) => x[1]);
+    const definidas = new Set([...css.matchAll(/\.([A-Za-z_][A-Za-z0-9_]*)/g)].map((x) => x[1]));
+
+    igual("E01-R03-01 todas las clases CSS que usa CantidadAnadido existen en page.module.css (incluida cantidadAnadido)", [clases.includes("cantidadAnadido"), clases.filter((c) => !definidas.has(c))], [true, []]);
+    cierto("E01-R03-02 la clase cantidadAnadido define agrupamiento, espaciado y realce (flex, gap, padding, borde, fondo) y el ancho del campo de cantidad", /\.cantidadAnadido \{[^}]*display: flex[^}]*gap:[^}]*padding:[^}]*border:[^}]*background:[^}]*\}/.test(css) && /\.cantidadAnadido \.qty \{[^}]*width:/.test(css) && /\.cantidadAnadido label \{/.test(css));
+  }
+
   return fallos;
 }

@@ -1370,3 +1370,24 @@
 .campoIva > label {
   width: 100%;
 }
+
+/* E01-R02: cantidad del último producto añadido, dentro del selector avanzado (CantidadAnadido). */
+.cantidadAnadido {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin: 8px 0;
+  padding: 8px 12px;
+  border: 1px solid #aadadd;
+  border-radius: 8px;
+  background: #f3fbfb;
+}
+
+.cantidadAnadido label {
+  font-weight: 600;
+}
+
+.cantidadAnadido .qty {
+  width: 110px;
+}
