@@ -643,8 +643,37 @@ export type KudeFetch = (url: string, init: { method: string; headers: Record<st
 export type DependenciasKude = { fetch?: FetchLike; fetchKude?: KudeFetch; env?: Record<string, string | undefined>; ahora?: () => number };
 /** Identidad del documento para el KuDE (FE o NCE). `cdc` es el persistido, si lo hay: NO es requisito para solicitar el PDF (E08), solo se contrasta con el que devuelve el gateway. */
 export type DocumentoKude = { tipoDoc: "FE" | "NCE"; establecimiento: string; puntoExpedicion: string; numero: string; serie: string | null; cdc: string | null };
-export type CodigoErrorKude = "SIN_CREDENCIALES" | "AUTENTICACION" | "TIMEOUT" | "NO_DISPONIBLE" | "NO_ENCONTRADO" | "FORMATO_NO_CONFIRMADO" | "CDC_NO_COINCIDE" | "PDF_INVALIDO" | "DEMASIADO_GRANDE";
-export type ResultadoKude = { ok: true; pdf: Buffer } | { ok: false; codigo: CodigoErrorKude; http: number | null; mensaje: string };
+export type CodigoErrorKude = "SIN_CREDENCIALES" | "AUTENTICACION" | "TIMEOUT" | "NO_DISPONIBLE" | "NO_ENCONTRADO" | "FORMATO_NO_CONFIRMADO" | "CDC_NO_COINCIDE" | "PDF_INVALIDO" | "DEMASIADO_GRANDE" | "SOLICITUD_RECHAZADA" | "PROHIBIDO" | "REDIRECCION" | "EMISOR_DIVERGENTE";
+/** `cdc` es el CDC que devolvió el gateway (ya validado contra la identidad del documento); solo lo usa el servidor para contrastar el emisor, nunca se muestra ni se guarda. */
+export type ResultadoKude = { ok: true; pdf: Buffer; cdc: string } | { ok: false; codigo: CodigoErrorKude; http: number | null; mensaje: string };
+
+/**
+ * Resumen SEGURO de lo que respondió el gateway ante un error (para el diagnóstico del operador): solo el texto del campo message/mensaje/error de un JSON, sin CDC (44 dígitos), sin cadenas largas tipo
+ * Base64/JWT, sin caracteres de control y acotado a 160 caracteres. Nunca devuelve el cuerpo crudo, credenciales ni tokens.
+ */
+export function resumenUpstreamSeguro(cuerpoTexto: string | null): string {
+  if (!cuerpoTexto) return "";
+
+  let m = "";
+
+  try {
+    const j = JSON.parse(cuerpoTexto) as Record<string, unknown>;
+    const v = [j?.message, j?.mensaje, j?.error, j?.msg].find((x) => typeof x === "string" && x.trim() !== "");
+
+    m = typeof v === "string" ? v : "";
+  } catch {
+    m = "";
+  }
+
+  return m
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
+    .replace(/\d{44}/g, "[CDC]")
+    .replace(/[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g, "[…]")
+    .replace(/[A-Za-z0-9+/=]{60,}/g, "[…]")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 160);
+}
 
 const falloKude = (codigo: CodigoErrorKude, http: number | null, mensaje: string): ResultadoKude => ({ ok: false, codigo, http, mensaje });
 const MSG_INVALIDO = "El KuDE de este documento no está disponible: el gateway no devolvió un PDF válido (fue descartado).";
@@ -680,7 +709,7 @@ export function interpretarKude(http: number, cuerpoTexto: string, doc: Pick<Doc
   } catch {
     j = null;
   }
-  if (!j || j.status !== "success") return falloKude("FORMATO_NO_CONFIRMADO", http, "El KuDE de este documento no está disponible: el gateway no entregó un resultado válido.");
+  if (!j || j.status !== "success") return falloKude("FORMATO_NO_CONFIRMADO", http, "El KuDE de este documento no está disponible: el gateway no entregó un resultado válido" + (resumenUpstreamSeguro(cuerpoTexto) ? " (" + resumenUpstreamSeguro(cuerpoTexto) + ")." : "."));
 
   const cdc = typeof j.CDC === "string" ? j.CDC : typeof j.cdc === "string" ? j.cdc : "";
 
@@ -693,7 +722,7 @@ export function interpretarKude(http: number, cuerpoTexto: string, doc: Pick<Doc
   if (!pdf || !esPdfValido(pdf)) return falloKude("PDF_INVALIDO", http, MSG_INVALIDO);
   if (pdf.length > MAX_KUDE_BYTES) return falloKude("DEMASIADO_GRANDE", http, "El archivo recibido del gateway excede el tamaño permitido y fue descartado.");
 
-  return { ok: true, pdf };
+  return { ok: true, pdf, cdc };
 }
 
 type RespuestaKude = { ok: true; status: number; texto: string | null } | { ok: false; motivo: "TIMEOUT" | "RED" };
@@ -777,9 +806,16 @@ export async function obtenerKudeGateway(config: ConfigGateway, doc: DocumentoKu
 
     if (esTokenInvalido(r.status, textoCorto) && !forzar) continue; // token vencido: se renueva UNA vez (solicitud de solo lectura)
     if (r.status === 401 || esTokenInvalido(r.status, textoCorto)) return falloKude("AUTENTICACION", r.status, "El gateway rechazó la sesión de la empresa tras renovarla.");
-    if (r.status === 404) return falloKude("NO_ENCONTRADO", 404, "El KuDE de este documento no está disponible en el gateway.");
+    const detalle = resumenUpstreamSeguro(r.texto);
+    const con = (base: string) => `${base} (HTTP ${r.status}${detalle ? `: ${detalle}` : ""})`;
+
+    // Diagnóstico por clase de respuesta del gateway (sin exponer token, credenciales, CDC completo ni el cuerpo).
+    if (r.status === 404) return falloKude("NO_ENCONTRADO", 404, con("El KuDE de este documento no está disponible en el gateway: no lo encuentra"));
     if (r.status >= 500 || r.status === 408 || r.status === 429) return falloKude("NO_DISPONIBLE", r.status, "El gateway no está disponible en este momento. Intente nuevamente en unos minutos.");
-    if (r.status !== 200) return falloKude("FORMATO_NO_CONFIRMADO", r.status, "El KuDE de este documento no está disponible: el gateway no lo entregó.");
+    if (r.status === 403) return falloKude("PROHIBIDO", 403, con("El gateway no autoriza a estas credenciales a obtener el KuDE de este documento"));
+    if (r.status === 400 || r.status === 422) return falloKude("SOLICITUD_RECHAZADA", r.status, con("El gateway rechazó la solicitud del KuDE (el documento puede no estar firmado o aceptado en el gateway)"));
+    if (r.status >= 300 && r.status < 400) return falloKude("REDIRECCION", r.status, con("El gateway respondió con una redirección que no se sigue por seguridad"));
+    if (r.status !== 200) return falloKude("FORMATO_NO_CONFIRMADO", r.status, con("El KuDE de este documento no está disponible: respuesta inesperada del gateway"));
     if (r.texto === null) return falloKude("DEMASIADO_GRANDE", r.status, "El archivo recibido del gateway excede el tamaño permitido y fue descartado.");
 
     return interpretarKude(r.status, r.texto, doc);

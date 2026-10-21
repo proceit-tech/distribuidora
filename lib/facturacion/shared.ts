@@ -330,6 +330,18 @@ export async function obtenerKude(db: Db, empresaId: string, usuarioId: string, 
     throw new ErrorFacturacion(estado, r.mensaje);
   }
 
+  // Emisor: el CDC trae el RUC (8 dígitos + DV) del emisor en las posiciones 3 a 11. Con CDC persistido ya se exigió igualdad. Sin él, la fuente de autoridad es el propio historial de la empresa: los emisores de
+  // sus documentos APROBADOS. Un KuDE de un emisor distinto de todos ellos no se muestra (entrega cruzada). Sin historial no hay con qué contrastar: se permite (ambiente de pruebas con emisor propio) y la
+  // identidad queda cubierta por tipo/establecimiento/punto/número y el CDC.
+  if (!doc.cdc) {
+    const ref = await db.query("SELECT DISTINCT substr(cdc, 3, 9) AS emisor FROM documentos_electronicos WHERE empresa_id = $1 AND id <> $2 AND estado_sifen = 'APROBADO' AND cdc IS NOT NULL LIMIT 10", [empresaId, id]);
+    const emisores = (ref.rows as F[]).map((x) => String(x.emisor));
+
+    if (emisores.length > 0 && !emisores.includes(r.cdc.slice(2, 11))) {
+      throw new ErrorFacturacion(502, "El KuDE recibido pertenece a un emisor distinto del de los documentos aprobados de esta empresa y no se muestra. Confirme con el responsable el emisor configurado en el gateway.");
+    }
+  }
+
   return { pdf: r.pdf, nombre: nombreArchivoKude(doc) };
 }
 
