@@ -236,5 +236,55 @@ export async function verificarCasosDescuentosE03(): Promise<string[]> {
   cierto("D-41 pantalla: el resumen previo al envío muestra los descuentos (por ítem, general y total) y los errores del descuento bloquean «Revisar»", /resumen\.descuentos/.test(pagina) && /Descuento por ítems/.test(pagina) && /Descuento general/.test(pagina) && /Total descuentos/.test(pagina) && /calculo\.erroresDescuento/.test(pagina));
   cierto("D-42 la NCE no se toca (no importa el módulo de descuentos) y el motor de cálculo solo recibe descuentos desde la Factura", !/descuentos/.test(payloadNce) && !/descuentoItem|descuentoGlobal/.test(payloadNce));
 
+
+  // ── 10. E03-R02 (PRO-204): al confirmar un cambio de moneda se limpian los descuentos en MONTO (por ítem y general); los porcentajes se conservan; cancelar no cambia nada ──────────────
+  {
+    const { descuentosTrasCambioMoneda, tieneDescuentoMonto } = await import("@/lib/facturacion/descuentos");
+    const { perdidasAlCambiarMoneda } = await import("@/lib/facturacion/cambios-formulario");
+    const { PAGO_UI_VACIO } = await import("@/lib/facturacion/pagos");
+    const { CREDITO_UI_VACIO } = await import("@/lib/facturacion/credito");
+    const base = { precios: [] as Array<{ actual: string; nuevo: string }>, pagos: [PAGO_UI_VACIO], credito: CREDITO_UI_VACIO, cambio: "", cambioManual: false, cambioNuevo: "" };
+
+    igual("R02-01 solo un monto digitado cuenta como descuento monetario (el vacío y el porcentaje no)", [tieneDescuentoMonto(monto("2000")), tieneDescuentoMonto(monto("  ")), tieneDescuentoMonto(pct("10")), tieneDescuentoMonto(null)], [true, false, false, false]);
+
+    const itemsAntes: Desc[] = [monto("2000"), pct("10"), { modo: "MONTO", valor: "" }, monto("500,5")];
+    const general: Desc = monto("1500");
+    const r = descuentosTrasCambioMoneda(itemsAntes, general);
+
+    igual("R02-02 confirmar: los montos por ítem y el general se limpian (el tipo elegido se conserva); el porcentaje queda intacto; no se convierte ningún valor", [r.items, r.general, r.perdidos], [[{ modo: "MONTO", valor: "" }, pct("10"), { modo: "MONTO", valor: "" }, { modo: "MONTO", valor: "" }], { modo: "MONTO", valor: "" }, { items: 2, general: true }]);
+    igual("R02-03 el porcentaje general se conserva; sin descuentos monetarios no hay nada que perder", [descuentosTrasCambioMoneda([pct("5")], pct("7")), descuentosTrasCambioMoneda([], { modo: "PORCENTAJE", valor: "" }).perdidos], [{ items: [pct("5")], general: pct("7"), perdidos: { items: 0, general: false } }, { items: 0, general: false }]);
+    igual("R02-04 la función no muta la entrada (cancelar conserva TODOS los valores: el estado original sigue intacto)", [JSON.stringify(itemsAntes), JSON.stringify(general)], [JSON.stringify([monto("2000"), pct("10"), { modo: "MONTO", valor: "" }, monto("500,5")]), JSON.stringify(monto("1500"))]);
+
+    // El diálogo de confirmación informa QUÉ descuentos monetarios se pierden (PYG → USD, USD → BRL, BRL → PYG, USD → PYG).
+    for (const [de, a] of [["PYG", "USD"], ["USD", "BRL"], ["BRL", "PYG"], ["USD", "PYG"]] as Array<[string, string]>) {
+      const conMonto = perdidasAlCambiarMoneda({ ...base, descuentosMonto: { items: 2, general: true } });
+      const soloPct = perdidasAlCambiarMoneda({ ...base, descuentosMonto: { items: 0, general: false } });
+
+      igual("R02-05 [" + de + " → " + a + "] con 2 descuentos en monto por ítem y el general, el diálogo los lista (sin convertir) y sin montos no pide confirmación por descuentos", [conMonto.some((x) => /descuento en monto de 2 ítems/.test(x)), conMonto.some((x) => /descuento general en monto/.test(x)), conMonto.every((x) => /no se convierte/.test(x) || !/descuento/.test(x)), soloPct], [true, true, true, []]);
+    }
+    igual("R02-06 un solo ítem usa el singular y las otras pérdidas (pagos, precios) siguen listándose junto a los descuentos", (() => {
+      const l = perdidasAlCambiarMoneda({ ...base, precios: [{ actual: "11000", nuevo: "1.5" }], descuentosMonto: { items: 1, general: false } });
+
+      return [l.some((x) => /descuento en monto de 1 ítem \(/.test(x)), l.some((x) => /precio de 1 ítem/.test(x))];
+    })(), [true, true]);
+
+    // Efecto en el cálculo: PYG con descuento en monto → USD: sin el monto el total es el bruto; con porcentaje sigue descontando.
+    const enUsd = (d1: Desc, g: Desc | null) => {
+      const t = descuentosTrasCambioMoneda([d1], g ?? { modo: "PORCENTAJE", valor: "" });
+
+      return resumenCalculo([linea({ precio: "10", cantidad: "2", descuento: t.items[0].valor.trim() === "" ? undefined : t.items[0] })], t.general.valor.trim() === "" ? null : t.general).texto.total;
+    };
+
+    igual("R02-07 tras el cambio a USD: un monto de 2000 (que eran guaraníes) ya NO descuenta 2.000 USD (total bruto 20); un 10 % por ítem y un 5 % general se conservan (20 × 0,9 − general)", [enUsd(monto("2000"), monto("3000")), enUsd(pct("10"), pct("5"))], ["20", "17"]);
+    igual("R02-08 en la nueva moneda se puede volver a digitar un monto válido (BRL y USD con decimales) y se calcula sobre ese valor", [resumenCalculo([linea({ precio: "10", cantidad: "2", descuento: monto("1.5") })]).texto.total, resumenCalculo([linea({ precio: "10", cantidad: "2" })], monto("2.5")).texto.total], ["17", "17.5"]);
+  }
+  {
+    const pag = leer("app/(private)/facturas/nueva/page.tsx");
+    const cierre = pag.slice(pag.indexOf("const cerrarConfirmacion = useCallback"), pag.indexOf("const cerrarConfirmacion = useCallback") + 300);
+
+    cierto("R02-09 pantalla: cambiarMoneda (solo al confirmar) limpia los montos por ítem y el general con descuentosTrasCambioMoneda; pedirMoneda informa los montos que se perderían; cancelar/cerrar la confirmación no toca descuentos ni valores", /const desc = descuentosTrasCambioMoneda\(lineas\.map\(\(l\) => l\.descuento\), descuentoGeneral\)/.test(pag) && /setDescuentoGeneral\(desc\.general\)/.test(pag) && /descuento: descPorClave\.get\(l\.clave\) \?\? l\.descuento/.test(pag) && /descuentosMonto: descuentosTrasCambioMoneda\(lineas\.map\(\(l\) => l\.descuento\), descuentoGeneral\)\.perdidos/.test(pag) && /if \(perdidas\.length === 0\) cambiarMoneda\(m\);\s+else setConfirmacion/.test(pag) && cierre.length > 0 && !/descuento|Descuento/.test(cierre));
+    cierto("R02-10 las fórmulas fiscales, el cálculo del IVA y el estoque no se tocaron en esta corrección (calculo.ts/payload-fe.ts/stock-fe.ts no importan los helpers de moneda)", !/descuentosTrasCambioMoneda|tieneDescuentoMonto/.test(leer("lib/facturacion/calculo.ts") + leer("lib/facturacion/payload-fe.ts") + leer("lib/facturacion/stock-fe.ts") + leer("lib/facturacion/emision.ts")));
+  }
+
   return fallos;
 }

@@ -156,3 +156,14 @@ export function resolverDescuentos(items: ItemDescuento[], general?: DescuentoEn
 
   return { hay, porItem, porcGlobal, errores: [...new Set(errores)] };
 }
+
+// ── E03-R02 (PRO-204): cambio de moneda ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+/** ¿Hay un descuento en MONTO digitado? (un monto está expresado en la moneda anterior: no se convierte, se descarta al confirmar el cambio de moneda). */
+export const tieneDescuentoMonto = (d: DescuentoEntrada | null | undefined): boolean => d !== null && d !== undefined && d.modo === "MONTO" && d.valor.trim() !== "";
+
+/** Tras confirmar un cambio de moneda: los descuentos en MONTO (por ítem y general) se limpian —conservando el tipo elegido—; los porcentajes se conservan intactos. No convierte nada. */
+export function descuentosTrasCambioMoneda<T extends DescuentoEntrada>(items: T[], general: T): { items: T[]; general: T; perdidos: { items: number; general: boolean } } {
+  const limpiar = (d: T): T => (tieneDescuentoMonto(d) ? { ...d, valor: "" } : d);
+
+  return { items: items.map(limpiar), general: limpiar(general), perdidos: { items: items.filter(tieneDescuentoMonto).length, general: tieneDescuentoMonto(general) } };
+}

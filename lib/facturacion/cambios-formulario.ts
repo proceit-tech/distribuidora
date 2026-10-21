@@ -23,11 +23,15 @@ export function perdidasAlCambiarMoneda(e: {
   cambio: string; cambioManual: boolean;
   /** Lo que quedaría en el campo de cambio tras el cambio de moneda: la cotización sugerida de la nueva moneda o "" (PYG / sin cotización). */
   cambioNuevo: string;
+  /** E03-R02 (PRO-204): descuentos en MONTO digitados (por ítem y general); no se convierten entre monedas y se pierden al confirmar. Los porcentajes se conservan y no se listan. */
+  descuentosMonto?: { items: number; general: boolean };
 }): string[] {
   const p: string[] = [];
   const preciosCambian = e.precios.filter((x) => x.actual !== x.nuevo && x.actual.trim() !== "").length;
 
   if (preciosCambian > 0) p.push(`el precio de ${preciosCambian} ítem${preciosCambian === 1 ? "" : "s"} (no se convierten: quedan solo los precios de lista en la nueva moneda)`);
+  if (e.descuentosMonto && e.descuentosMonto.items > 0) p.push(`el descuento en monto de ${e.descuentosMonto.items} ítem${e.descuentosMonto.items === 1 ? "" : "s"} (no se convierte entre monedas; los descuentos en porcentaje se conservan)`);
+  if (e.descuentosMonto?.general) p.push("el descuento general en monto (no se convierte entre monedas; el descuento en porcentaje se conserva)");
   if (e.pagos.length !== 1 || e.pagos.some(pagoModificado)) p.push("los medios de pago ya cargados");
   if (creditoModificado(e.credito)) p.push("el plazo y la entrega inicial del crédito");
   // AUD-PRO128-R02-01: solo se pierde un cambio ESCRITO por el operador (USD → BRL, BRL → USD o extranjera → PYG) y que no coincida con lo que quedaría; una cotización que la pantalla

@@ -8,6 +8,7 @@ import { AJUSTE_VACIO, ajusteParaEnvio, decidirProducto, problemasFiscales, valo
 import { puedeEnviarPorGateway, type EstadoGatewayUI } from "@/lib/facturacion/gateway-estado";
 import { crearBuscadorRapido, type EstadoBuscador, MAX_VISIBLES } from "@/lib/facturacion/busqueda-rapida";
 import { formularioModificado, perdidasAlCambiarCondicion, perdidasAlCambiarMoneda } from "@/lib/facturacion/cambios-formulario";
+import { descuentosTrasCambioMoneda } from "@/lib/facturacion/descuentos";
 import { CREDITO_UI_VACIO, creditoParaEnvio, hoyParaguay, pendientesCredito, type EstadoCreditoUI } from "@/lib/facturacion/credito";
 import { cambiosPorOpcionIva, esParcial, etiquetaIva, OPCIONES_IVA, opcionIvaDe, RESTAURAR_IVA } from "@/lib/facturacion/iva-opciones";
 import { B, parseDec, textoDec } from "@/lib/facturacion/calculo";
@@ -719,7 +720,13 @@ export default function NuevaFacturaPage() {
     setMoneda(m);
     setCambio(m === "PYG" ? "" : (cotizaciones[m]?.cambio ?? ""));
     setCambioManual(false);
-    setLineas((ls) => ls.map((l) => ({ ...l, precio: precioParaEdicion(referencia(l.producto, m)) })));
+    // E03-R02: los descuentos en MONTO (por ítem y general) están en la moneda anterior: se limpian al confirmar; los porcentajes se conservan. Nada se convierte.
+    const desc = descuentosTrasCambioMoneda(lineas.map((l) => l.descuento), descuentoGeneral);
+
+    const descPorClave = new Map(lineas.map((l, i) => [l.clave, desc.items[i]] as const));
+
+    setLineas((ls) => ls.map((l) => ({ ...l, precio: precioParaEdicion(referencia(l.producto, m)), descuento: descPorClave.get(l.clave) ?? l.descuento })));
+    setDescuentoGeneral(desc.general);
     setPagos([PAGO_UI_VACIO]);
     setCredito(CREDITO_UI_VACIO);
     limpiarRevision();
@@ -744,6 +751,7 @@ export default function NuevaFacturaPage() {
   function pedirMoneda(m: Moneda, iniciador: HTMLElement) {
     const perdidas = perdidasAlCambiarMoneda({
       precios: lineas.map((l) => ({ actual: l.precio, nuevo: referencia(l.producto, m) ?? "" })), pagos, credito, cambio, cambioManual, cambioNuevo: m === "PYG" ? "" : (cotizaciones[m]?.cambio ?? ""),
+      descuentosMonto: descuentosTrasCambioMoneda(lineas.map((l) => l.descuento), descuentoGeneral).perdidos,
     });
 
     iniciadorDialogo.current = iniciador;
