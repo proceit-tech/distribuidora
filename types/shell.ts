@@ -75,4 +75,7 @@ export type ShellContext = {
   company: ShellCompany;
   permissions: string[];
   navigation: ShellNavigationGroup[];
+  /** F-DASH-04: página de inicio real del usuario y si ve el Panel general. */
+  inicioHref: string;
+  puedeDashboard: boolean;
 };

@@ -17,11 +17,27 @@ export const NAVIGATION_GROUPS: ShellNavigationGroup[] = [
         permission: "CLIENTES.VER",
       },
       {
+        // CLI-D01: destino real del perfil que solo puede CREAR clientes (alta guiada sin acceso a la lista ni a las fichas). Se oculta si el usuario también puede VER.
+        id: "clients-new",
+        label: "Nuevo cliente",
+        href: "/clientes/nuevo",
+        icon: "clients",
+        permission: "CLIENTES.CREAR",
+      },
+      {
         id: "suppliers",
         label: "Proveedores",
         href: "/proveedores",
         icon: "suppliers",
         permission: "PROVEEDORES.VER",
+      },
+      {
+        // PRV-D01: destino real del perfil que solo puede CREAR proveedores (alta sin acceso a la lista ni a las fichas). Se oculta si el usuario también puede VER.
+        id: "suppliers-new",
+        label: "Nuevo proveedor",
+        href: "/proveedores/nuevo",
+        icon: "suppliers",
+        permission: "PROVEEDORES.CREAR",
       },
       {
         id: "products",
@@ -31,11 +47,49 @@ export const NAVIGATION_GROUPS: ShellNavigationGroup[] = [
         permission: "PRODUCTOS.VER",
       },
       {
+        // PRD-D01: destino real del perfil que solo puede CREAR productos (alta sin acceso a la lista ni a las fichas). Se oculta si el usuario también puede VER.
+        id: "products-new",
+        label: "Nuevo producto",
+        href: "/productos/nuevo",
+        icon: "products",
+        permission: "PRODUCTOS.CREAR",
+      },
+      {
+        id: "product-catalogs",
+        label: "Catálogos de productos",
+        href: "/productos/catalogos",
+        icon: "products",
+        permission: "PRODUCTOS.VER",
+      },
+      {
         id: "price-lists",
         label: "Listas de precios",
         href: "/listas-precio",
         icon: "prices",
         permission: "LISTAS_PRECIO.VER",
+      },
+      {
+        // LPR-D01: destino real del perfil que solo puede CREAR listas (alta sin acceso al listado ni a las fichas). Se oculta si el usuario también puede VER.
+        id: "price-lists-new",
+        label: "Nueva lista de precios",
+        href: "/listas-precio/nuevo",
+        icon: "prices",
+        permission: "LISTAS_PRECIO.CREAR",
+      },
+      {
+        id: "commercial-catalogs",
+        label: "Catálogos comerciales",
+        href: "/catalogos-comerciales",
+        icon: "prices",
+        permission: "LISTAS_PRECIO.VER",
+      },
+      {
+        // CC-D01: destino real del perfil que solo puede CREAR catálogos comerciales (alta sin listado ni historial). Se oculta si el usuario también puede VER.
+        id: "commercial-catalogs-new",
+        label: "Nuevo catálogo comercial",
+        href: "/catalogos-comerciales/nuevo",
+        icon: "prices",
+        permission: "LISTAS_PRECIO.CREAR",
       },
       {
         id: "salespeople",
@@ -98,14 +152,14 @@ export const NAVIGATION_GROUPS: ShellNavigationGroup[] = [
         label: "Stock",
         href: "/stock",
         icon: "stock",
-        permission: "INVENTARIO.VER",
+        permission: "STOCK.VER",
       },
       {
         id: "stock-movements",
         label: "Movimientos",
         href: "/movimientos",
         icon: "movements",
-        permission: "INVENTARIO.VER",
+        permission: "MOVIMIENTOS.VER",
       },
       {
         id: "warehouses",
@@ -119,7 +173,7 @@ export const NAVIGATION_GROUPS: ShellNavigationGroup[] = [
         label: "Reposición",
         href: "/reposicion",
         icon: "replenishment",
-        permission: "INVENTARIO.VER",
+        permission: "STOCK.VER",
       },
     ],
   },
@@ -199,31 +253,38 @@ export const NAVIGATION_GROUPS: ShellNavigationGroup[] = [
     icon: "billing",
     items: [
       {
+        id: "electronic-documents",
+        label: "Documentos electrónicos",
+        href: "/documentos",
+        icon: "documents",
+        permission: "FACTURACION_ELECTRONICA.VER",
+      },
+      {
         id: "invoices",
         label: "Facturas",
         href: "/facturas",
         icon: "invoice",
-        permission: "FACTURACION_ELECTRONICA.VER",
+        permission: "FACTURACION_ELECTRONICA.CREAR",
+      },
+      {
+        id: "dispatch-points",
+        label: "Puntos de expedición",
+        href: "/facturacion/puntos",
+        icon: "settings",
+        permission: "FACTURACION_ELECTRONICA.PUNTOS",
       },
       {
         id: "credit-notes",
         label: "Notas de crédito",
         href: "/notas-credito",
         icon: "creditNote",
-        permission: "FACTURACION_ELECTRONICA.VER",
+        permission: "FACTURACION_ELECTRONICA.CREAR",
       },
       {
         id: "remission-notes",
         label: "Notas de remisión",
         href: "/notas-remision",
         icon: "remission",
-        permission: "FACTURACION_ELECTRONICA.VER",
-      },
-      {
-        id: "electronic-documents",
-        label: "Todos los documentos",
-        href: "/documentos",
-        icon: "documents",
         permission: "FACTURACION_ELECTRONICA.VER",
       },
       {
@@ -244,6 +305,41 @@ export const NAVIGATION_GROUPS: ShellNavigationGroup[] = [
         id: "reports",
         label: "Reportes operativos",
         href: "/reportes",
+        icon: "reports",
+        permission: "REPORTES.VER",
+      },
+      {
+        id: "report-stock-general",
+        label: "Stock general",
+        href: "/reportes/stock-general",
+        icon: "reports",
+        permission: "REPORTES.VER",
+      },
+      {
+        id: "report-valorizacion",
+        label: "Valorización de inventario",
+        href: "/reportes/valorizacion",
+        icon: "reports",
+        permission: "REPORTES.VER",
+      },
+      {
+        id: "report-kardex",
+        label: "Kardex de movimientos",
+        href: "/reportes/kardex",
+        icon: "reports",
+        permission: "REPORTES.VER",
+      },
+      {
+        id: "report-stock-critico",
+        label: "Stock crítico y reposición",
+        href: "/reportes/stock-critico",
+        icon: "reports",
+        permission: "REPORTES.VER",
+      },
+      {
+        id: "report-lotes",
+        label: "Lotes y vencimientos",
+        href: "/reportes/lotes",
         icon: "reports",
         permission: "REPORTES.VER",
       },
@@ -276,6 +372,13 @@ export const NAVIGATION_GROUPS: ShellNavigationGroup[] = [
         permission: "CONFIGURACION.VER",
       },
       {
+        id: "settings-electronic-billing",
+        label: "Facturación electrónica",
+        href: "/configuracion/facturacion-electronica",
+        icon: "settings",
+        permission: "FACTURACION_ELECTRONICA.CONFIGURAR",
+      },
+      {
         id: "audit",
         label: "Auditoría",
         href: "/administracion/auditoria",
@@ -286,53 +389,104 @@ export const NAVIGATION_GROUPS: ShellNavigationGroup[] = [
   },
 ];
 
-function canShowItem(
-  item: ShellNavigationItem,
-  permissions: Set<string>,
-  enforcePermissions: boolean,
-) {
-  if (!enforcePermissions || !item.permission) {
-    return true;
-  }
+/**
+ * Rutas con página y API reales dentro del alcance de la V1. El resto del menú
+ * (compras, ventas, finanzas, facturación, etc.) queda oculto hasta existir.
+ * Las páginas todavía con datos de prueba se retiran de aquí al conectarse a PostgreSQL
+ * solo cuando el módulo esté listo; ver PROGRESSO-NEXIT-V1.md.
+ */
+const V1_HREFS = new Set([
+  "/clientes",
+  "/clientes/nuevo",
+  "/proveedores",
+  "/proveedores/nuevo",
+  "/productos",
+  "/productos/nuevo",
+  "/productos/catalogos",
+  "/listas-precio",
+  "/listas-precio/nuevo",
+  "/catalogos-comerciales",
+  "/catalogos-comerciales/nuevo",
+  "/stock",
+  "/reposicion",
+  "/depositos",
+  "/documentos",
+  "/facturas",
+  "/notas-credito",
+  "/facturacion/puntos",
+  "/configuracion/facturacion-electronica",
+  "/movimientos",
+  "/reportes",
+  "/reportes/stock-general",
+  "/reportes/valorizacion",
+  "/reportes/kardex",
+  "/reportes/stock-critico",
+  "/reportes/lotes",
+]);
 
-  return permissions.has(
-    item.permission.trim().toUpperCase(),
-  );
+export const PLATFORM_GROUP: ShellNavigationGroup = {
+  id: "platform",
+  label: "Plataforma",
+  icon: "admin",
+  items: [
+    {
+      id: "platform-companies",
+      label: "Empresas",
+      href: "/administracion/empresas",
+      icon: "admin",
+    },
+  ],
+};
+
+export type NavigationAccess = {
+  permissions: string[];
+  isCompanyAdmin: boolean;
+  isPlatformAdmin: boolean;
+};
+
+function canShowItem(item: ShellNavigationItem, access: NavigationAccess) {
+  if (!V1_HREFS.has(item.href)) return false;
+  // CLI-D01: «Nuevo cliente» solo para quien crea sin poder consultar (el administrador y quien tiene VER usan «Clientes»).
+  if (item.id === "clients-new") return !access.isCompanyAdmin && access.permissions.includes("CLIENTES.CREAR") && !access.permissions.includes("CLIENTES.VER");
+  if (item.id === "products-new") return !access.isCompanyAdmin && access.permissions.includes("PRODUCTOS.CREAR") && !access.permissions.includes("PRODUCTOS.VER");
+  if (item.id === "commercial-catalogs-new") return !access.isCompanyAdmin && access.permissions.includes("LISTAS_PRECIO.CREAR") && !access.permissions.includes("LISTAS_PRECIO.VER");
+  if (item.id === "price-lists-new") return !access.isCompanyAdmin && access.permissions.includes("LISTAS_PRECIO.CREAR") && !access.permissions.includes("LISTAS_PRECIO.VER");
+  if (item.id === "suppliers-new") return !access.isCompanyAdmin && access.permissions.includes("PROVEEDORES.CREAR") && !access.permissions.includes("PROVEEDORES.VER");
+  if (access.isCompanyAdmin) return true;
+  if (!item.permission) return false;
+  return access.permissions.includes(item.permission.trim().toUpperCase());
 }
 
-export function resolveNavigation(
-  permissionCodes: string[] = [],
-): ShellNavigationGroup[] {
-  const permissions = new Set(
-    permissionCodes
-      .map((permission) =>
-        permission.trim().toUpperCase(),
-      )
-      .filter(Boolean),
-  );
+/** Destino explícito (sin redirecciones) para quien no tiene ninguna página operativa autorizada. */
+export const RUTA_SIN_ACCESO = "/sin-acceso";
 
-  /*
-   * Para el mockup:
-   * si no recibimos permisos, mostramos todo el menú.
-   *
-   * Más adelante, cuando la sesión real entregue permisos,
-   * el mismo método filtrará automáticamente los módulos.
-   */
-  const enforcePermissions =
-    permissions.size > 0;
+/** F-DASH-04: el Panel general solo para quien tiene DASHBOARD.VER (o administra la empresa); la plataforma nunca opera una empresa. */
+export function puedeVerDashboard(access: NavigationAccess) {
+  if (access.isPlatformAdmin) return false;
+  return access.isCompanyAdmin || access.permissions.includes("DASHBOARD.VER");
+}
 
-  return NAVIGATION_GROUPS.map(
-    (group) => ({
-      ...group,
-      items: group.items.filter((item) =>
-        canShowItem(
-          item,
-          permissions,
-          enforcePermissions,
-        ),
-      ),
-    }),
-  ).filter(
-    (group) => group.items.length > 0,
-  );
+/**
+ * F-DASH-04: página de inicio real del usuario. Plataforma → Empresas; con DASHBOARD.VER → Panel general; si no, la primera página operativa autorizada de su menú;
+ * sin ninguna → página explícita de «sin acceso» (que no redirige: no hay bucle). No concede permisos: solo elige entre destinos ya autorizados.
+ */
+export function resolverInicio(access: NavigationAccess): string {
+  if (access.isPlatformAdmin) return PLATFORM_GROUP.items[0].href;
+  if (puedeVerDashboard(access)) return "/dashboard";
+
+  return resolveNavigation(access)[0]?.items[0]?.href ?? RUTA_SIN_ACCESO;
+}
+
+/**
+ * Menú por perfil. Administrador global de plataforma (PROCEIT): solo el menú de plataforma.
+ * Usuarios de empresa: únicamente los módulos que sus perfiles permiten. Sin permisos => sin módulos.
+ * El menú es solo comodidad visual: el control real está en el servidor (guardApi/guardPage).
+ */
+export function resolveNavigation(access: NavigationAccess): ShellNavigationGroup[] {
+  if (access.isPlatformAdmin) return [PLATFORM_GROUP];
+
+  return NAVIGATION_GROUPS.map((group) => ({
+    ...group,
+    items: group.items.filter((item) => canShowItem(item, access)),
+  })).filter((group) => group.items.length > 0);
 }

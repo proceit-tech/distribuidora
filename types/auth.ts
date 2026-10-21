@@ -3,7 +3,7 @@ export type AuthUser = {
   empresaId: string;
   sucursalId: string | null;
   nombre: string;
-  apellido: string;
+  apellido: string | null;
   usuario: string;
   email: string | null;
   perfiles: string[];

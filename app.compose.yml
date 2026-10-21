@@ -1,0 +1,29 @@
+services:
+  app:
+    image: nexit-app:teste
+    container_name: nexit-app
+    restart: unless-stopped
+
+    env_file:
+      - ./app.env
+
+    environment:
+      NEXIT_ARCHIVOS_DIR: /data/archivos
+
+    volumes:
+      - /srv/stacks/distribuidora/data/nexit-archivos:/data/archivos
+
+    expose:
+      - "3000"
+
+    networks:
+      - nexit_internal
+      - proxy
+
+    security_opt:
+      - no-new-privileges:true
+
+networks:
+  proxy:
+    external: true
+    name: proxy

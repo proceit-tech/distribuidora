@@ -1,0 +1,70 @@
+/* Indicadores de Documentos electrónicos: botones-filtro con el mismo acento turquesa de las listas (sin contornos negros). */
+.kpi {
+  appearance: none;
+  width: 100%;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+}
+
+.kpi:hover {
+  border-color: #b7d5db;
+}
+
+.kpi:focus-visible {
+  outline: 3px solid rgba(15, 156, 165, 0.4);
+  outline-offset: 2px;
+}
+
+.kpiActivo {
+  border-color: #0f9ca5;
+  background: #f3fbfb;
+  box-shadow: 0 0 0 3px rgba(15, 156, 165, 0.12);
+}
+
+/* Acciones compactas con iconos en la lista (KuDE visible en la fila + detalle). */
+.accionesLinea {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.iconBtn {
+  appearance: none;
+  display: inline-flex;
+  width: 34px;
+  height: 34px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #d3dfe8;
+  border-radius: 8px;
+  padding: 0;
+  color: #41647d;
+  background: #ffffff;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
+}
+
+.iconBtn:hover {
+  color: #0a7f88;
+  border-color: #aadadd;
+  background: #f3fbfb;
+}
+
+.iconBtn:focus-visible {
+  outline: 3px solid rgba(15, 156, 165, 0.4);
+  outline-offset: 2px;
+}
+
+.iconBtn svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
