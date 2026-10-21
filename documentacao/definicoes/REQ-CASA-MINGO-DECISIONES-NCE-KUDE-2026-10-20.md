@@ -119,7 +119,7 @@
 1. FE: **RESUELTO** — asignación automática entre depósitos disponibles/autorizados con desglose visible y salidas por cada origen; implementación pendiente.
 2. NCE DESCUENTO: **resuelto** IVA 10% fijo, un ítem, no ratear ni combinar con originales; **pendiente** homologación fiscal para FE 5%/exenta/mixta.
 3. Evento de cancelación: verificar primero disponibilidad/cuerpo de API de gateway, estrategia técnica y compensación de stock/fiscal sin duplicidades.
-4. Solicitudes previas fuera de estas 8 respuestas: destino/dirección de entrega del cliente; foco automático en cantidad de nuevo producto; código de producto con ceros iniciales; descuentos en UI; resumen en PYG sin decimales; seleccionar todos y eliminar en NCE; KuDE NCE con los cinco campos contractuales sin `tipOpe`; texto `Establecimiento 001`. El layout/logo/empresa de KuDE TEST quedan fuera de alcance.
+4. **Dirección de entrega RESUELTA** por el responsable: elegir exclusivamente entre direcciones ya registradas del propio cliente; ver Sección 7. Siguen pendientes foco automático en cantidad, códigos con ceros iniciales, descuentos UI, visualización PYG, seleccionar/eliminar en NCE, KuDE NCE de cinco campos sin `tipOpe` y texto `Establecimiento 001`. Layout/logo/identidad de KuDE TEST siguen fuera del alcance.
 
 ### Pruebas mínimas obligatorias (ninguna ejecutada en esta decisión)
 
@@ -141,3 +141,25 @@
 - Las empresas ya configuradas conservan su URL registrada mientras no se actualicen expresamente; ninguna migración global debe reemplazar sus configuraciones.
 
 **Estado:** default de URL cambiado en Git, sin modificar VM/BD ni probar el nuevo gateway desde el NEXIT; pruebas simuladas del código pendientes de ejecutar.
+
+
+## 7. DIRECCIÓN DE ENTREGA POR CLIENTE — DECISIÓN DEFINITIVA (20/10/2026)
+
+- **Comportamiento confirmado** por el responsable: en `Facturas → Nueva`, después de seleccionar un cliente, el operador podrá elegir entre **sus direcciones ya registradas**. Si ese cliente tiene cinco sucursales/filiales registradas como direcciones, las cinco deben poder seleccionarse. No obligar a volver a digitarlas ni crear una filial de la empresa emisora.
+- Mostrar selector `Dirección de entrega` con etiqueta/nombre de la filial y la dirección completa; la lista pertenece estrictamente al `cliente_id` de la empresa de la sesión, nunca a otro cliente ni tenant. Incluir las direcciones registradas que representen sucursal/destino de entrega; los tipos `SUCURSAL` y `ENTREGA` ya existen en `direcciones_cliente`. La política exacta de incluir `COMERCIAL`/fiscal se ajustará a los datos reales del cliente; no borrar direcciones existentes.
+- **Distinguir tres conceptos:** (1) sucursal/punto expedidor de CASA MINGO (numeración FE), (2) domicilio fiscal del receptor (datos fiscales SIFEN), (3) sucursal/dirección de entrega del receptor (destino logístico). La elección de entrega NO cambia de forma automática el RUC, razón social o establecimiento expedidor y NO modifica el domicilio fiscal maestro del cliente.
+- Al seleccionar el destino, guardar la identificación y una fotografía/snapshot de la dirección de entrega **vinculada a la factura**, para que quede trazable aunque luego se edite el catálogo de direcciones. No alterar el JSON SIFEN ni su `dDirRec` sin validar si el contrato fiscal pide esa información; la regla solicitada se refiere a la selección de destino logístico.
+- Al cambiar el cliente en el formulario, limpiar inmediatamente la dirección de entrega anterior, cargar únicamente las del nuevo cliente y descartar respuestas de búsqueda tardías. El backend valida que la dirección enviada corresponde a ese cliente/empresa, no solo el navegador.
+- Cuando el cliente no tiene direcciones registradas, **no crear ni capturar una dirección nueva dentro del formulario de FE**; el alta/edición seguirá en `Clientes → Direcciones`. Falta decidir si la FE continúa sin destino específico o si se obliga a completar ese registro antes de emitir.
+- Si hay varias direcciones, falta decidir si el sistema preselecciona la marcada como `es_entrega_default` cuando exista o si exige siempre selección expresa.
+- **Código revisado:** `lib/clientes/relacionados.ts` gestiona `direcciones_cliente` (tipos FISCAL/COMERCIAL/ENTREGA/SUCURSAL/OTRA y `es_entrega_default`). `lib/facturacion/emision.ts` y `app/(private)/facturas/nueva/page.tsx` actualmente solo exponen la dirección fiscal; necesitan lectura segura de destinos, UI e integración en revisión/guardado de FE.
+- **No hacer cambios visuales en el KuDE**: decisión anterior del responsable lo excluye. No asumir que el destino debe aparecer en el PDF del gateway de pruebas.
+
+### Escenarios de aceptación
+1. Cliente A tiene 5 direcciones de sucursales → exactamente sus 5 destinos disponibles; se puede elegir cualquiera sin modificar el fiscal del receptor.
+2. Cambiar cliente A → B: dirección A no puede seguir seleccionada, sin mostrar ni guardar un domicilio ajeno.
+3. Forjar ID de dirección de otro cliente/empresa/inexistente → rechazo de servidor sin reservar número ni enviar SIFEN.
+4. Confirmar FE: guardar destino elegido y snapshot vinculados a la factura, conservando trazabilidad histórica sin modificar direcciones maestras ni KuDE.
+5. Sin dirección o sin default: aplicar política operativa una vez que el responsable la defina.
+
+**Estado:** requisito acordado; todavía no implementado, probado ni desplegado.
