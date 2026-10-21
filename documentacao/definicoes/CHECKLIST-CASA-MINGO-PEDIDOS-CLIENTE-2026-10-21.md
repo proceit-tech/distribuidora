@@ -1,6 +1,6 @@
 # Checklist de escopo — Pedidos de José Franco / CASA MINGO
 
-**Data de corte:** 21/10/2026.
+**Data de corte:** 21/10/2026. **Revisão vinculante:** status da FE/NCE não condiciona tentativa de KuDE; E10 suspensa por falta de API.
 **Objetivo:** acompanhar **somente** os pedidos trazidos por José Franco (mensagens/áudio de 20/10) e as decisões já tomadas pelo responsável. **Não é backlog geral do NEXIT, pedido de nova funcionalidade nem homologação**.
 **Branch:** `feature/NEXIT-2026-001-banco-demo`.
 **Último commit funcional de referência (E06):** `64b9c7f7f706a5a8047e03087e7bc41a9f74f62e`.
@@ -37,7 +37,7 @@
 | NCE-03 | NCE de devolução **não gera entrada automática de estoque** | [~] | E06 mantém regra; entrada de inventário manual separada; auditoria pendente |
 | NCE-04 | Motivos `Descuento` e `Bonificación`: botão `+ Agregar DESCUENTO`; único serviço fixo, qty=1, valor digitado, IVA10, zero stock | [ ] | E07 NÃO iniciada; adaptar validação/SQL/payload fiscal, não só criar SKU |
 | NCE-05 | Retirar todos os itens originais da nota e emitir só linha DESCUENTO sem afetar FE original | [ ] | Depende E06 auditada e E07; IVA10 para FE original 5%/isenta/mista requer prova SIFEN real |
-| NCE-06 | KuDE NCE aprovada: botão, visor, impressão e download próprios; payload cinco campos e `tipoDoc=NCE` (FE com tipoDoc=FE), sem `tipOpe` | [ ] | E08 NÃO iniciada; conservar desenho e integração FE |
+| NCE-06 | **KuDE de FE e NCE independentemente do estado SIFEN**: botão/visor/baixar/imprimir; consultar API com cinco campos e `tipoDoc=FE/NCE`, sem `tipOpe`; **se o gateway entregar PDF válido do documento solicitado, mostrar** | [ ] | E08 NÃO iniciada; **NÃO exigir APROBADA nem CDC previamente persistido** para tentar buscar; manter autorização, isolamento, identidade da FE/NCE, validação do PDF e rejeição de CDC divergente quando disponível |
 
 ## 3. API, cancelamento e operação
 
@@ -45,8 +45,8 @@
 | --- | --- | --- | --- |
 | API-01 | Editar, testar e guardar URL, usuário e senha da API por empresa | [x] | G01/PRO-207, auditoria G01-R02; NEX-069 não aplicada; TLS real pendente |
 | API-02 | Nova URL efetiva para envio/consulta/KuDE sem mudar a identidade fiscal do emissor | [x] | G01, sem gateway real testado |
-| EVT-01 | Cancelamento SIFEN FE em 48h / NCE em 7 dias | [ ] | E10 NÃO iniciada; verificar contrato oficial de evento e critérios de prazo |
-| EVT-02 | Após cancelamento **oficial** de FE, estorno automático, idempotente e auditável do estoque aos depósitos originais | [ ] | E10, depende NEX-067 e contrato real; não estornar antes de confirmação |
+| EVT-01 | Cancelamento SIFEN de FE/NCE (48h/7 dias mencionados no requisito anterior) | [fora — adiado] | **NÃO DESENVOLVER nesta rodada: falta API/contrato do gateway**. Manter apenas histórico da decisão para eventual retomada expressa |
+| EVT-02 | Estorno automático do estoque após cancelamento oficial de FE | [fora — adiado] | **NÃO DESENVOLVER nesta rodada: depende da API de cancelamento**. Não implementar estorno presumido, manual alternativo ou evento fictício |
 | BASE-01 | Catálogo e estoque inicial CASA MINGO existentes | [x] | 561 produtos importados; 91.864 unidades confirmadas em MOV-000003/004, mais dois produtos anteriores. **Não reimportar/duplicar** |
 
 ## 4. Fora do escopo — não abrir tarefas
@@ -56,13 +56,14 @@
 - [fora] Abrir revisão geral de menus, melhorias de mobile, inventário geral, cadastros, novos catálogos, outras tarefas não trazidas pelo cliente.
 - [fora] Executar novamente scripts de importação do catálogo ou lançamento de estoque inicial.
 - [fora] Automatizar entrada de mercadoria por NCE de devolução; é movimento separado no Inventário.
+- [fora nesta rodada] Cancelamento de FE/NCE e reversão automática do estoque por cancelamento: dependem da API indisponível. Não iniciar E10.
 
 ## Próximas ações — ordem estrita, sem abrir novas frentes
 
 1. **Agora:** ChatGPT realiza **auditoria E06-R01** sobre commit `64b9c7f7f706a5a8047e03087e7bc41a9f74f62e`. Não marcar E06 aprovada apenas porque Claude relatou 23/0; navegador/PG ainda não executados.
 2. **Se E06 passar:** Claude desenvolve **apenas E07 — DESCUENTO/BONIFICACIÓN** e para para auditoria; não entrar em mudanças de KuDE ou outro módulo simultaneamente.
-3. **Após E07 auditada:** **E08 — KuDE NCE** com contrato de cinco campos; parar para auditoria.
-4. **E10 cancelamento:** permanecer registrado como demanda do cliente, mas desenvolvimento depende do contrato SIFEN real e da decisão de sequência/implantação. Não expandir para integração geral.
+3. **Após E07 auditada:** **E08 — KuDE NCE (e preservar FE)** com contrato exato de cinco campos; **nenhuma exigência de APROBADA/CDC persistido para solicitar PDF**. Se a API devolver PDF válido correspondente ao documento, exibir mesmo pendente/rejeitado; parar para auditoria.
+4. **E10 cancelamento + reversão de estoque: FORA DA RODADA ATUAL.** Sem API do gateway; não abrir implementação, teste de evento, migration ou sprint relacionada. Só retomar por solicitação expressa do responsável depois do contrato da API.
 5. **Implantação/homologação operacional pelo responsável humano:** antes de testar FE com stock/destino e G01 na VM, revisar backup, lista real de migrations e aplicar **NEX-067, NEX-068, NEX-069** apenas com autorização, scripts preflight/verificar e procedimento. Mesmo após deploy, testar navegador e gateway/SIFEN reais. O Git não confirma que esteja publicado.
 
 **Regra permanente:** implementação no Git != auditoria estática != homologação do responsável. Trabalhar apenas um pedido do checklist de cada vez; nenhuma tarefa fora deste escopo sem autorização expressa.
