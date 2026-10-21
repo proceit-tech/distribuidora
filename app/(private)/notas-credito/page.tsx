@@ -7,8 +7,7 @@ import { useSearchParams } from "next/navigation";
 
 import ui from "@/components/ui/lista-padrao/lista.module.css";
 import { crearBusquedaClientes, crearBusquedaFacturas, crearCargaCorreccion, crearCargaDetalle, type EstadoClientes } from "@/lib/facturacion/nce-busqueda";
-import { alternarLinea, alternarTodas, eliminadasPorPrecarga, eliminarSeleccionadas, enNota, entradasIniciales, errorCantidadDevolucion, errorMontoDescuento, etiquetaIvaLinea, lineasOriginalesPendientes, lineasVisibles, puedeAgregarDescuento, restaurarEntradas } from "@/lib/facturacion/nce-entradas";
-import { normalizarCantidadTexto } from "@/lib/formato/cantidad-campo";
+import { alternarLinea, alternarTodas, armarCuerpoNce, cuerpoRevisadoVigente, eliminadasPorPrecarga, eliminarSeleccionadas, enNota, entradasIniciales, errorCantidadDevolucion, errorMontoDescuento, etiquetaIvaLinea, lineasOriginalesPendientes, lineasVisibles, puedeAgregarDescuento, restaurarEntradas } from "@/lib/facturacion/nce-entradas";
 import { iniciarRefresco } from "@/lib/facturacion/refresco-documentos";
 import { formatearDecimalTexto } from "@/lib/formato/decimal-texto";
 import { formatearFechaPy } from "@/lib/formato/listas";
@@ -201,20 +200,10 @@ function Formulario() {
   const todasMarcadas = visibles.length > 0 && marcadasVisibles === visibles.length;
 
   const cuerpo = useCallback(() => {
-    if (!factura || motivo === "") return null;
+    if (!factura) return null;
 
-    const lineas = descuento !== null ? [] : factura.lineas.filter((l) => enNota(esDevolucion, l, entradas[l.linea]?.valor ?? "", eliminadas)).map((l) => ({ linea: l.linea, ...(esDevolucion ? { cantidad: normalizarCantidadTexto(entradas[l.linea]?.valor ?? "") } : { monto: (entradas[l.linea]?.valor ?? "").trim() }) }));
-    const firma = JSON.stringify([factura.id, motivo, puntoId, observacion.trim(), lineas, descuento === null ? null : normalizarCantidadTexto(descuento)]);
-    let h1 = 5381;
-    let h2 = 52711;
-
-    for (let i = 0; i < firma.length; i += 1) {
-      h1 = ((h1 * 33) ^ firma.charCodeAt(i)) >>> 0;
-      h2 = ((h2 * 31) + firma.charCodeAt(i)) >>> 0;
-    }
-
-    return { facturaId: factura.id, motivo, sucursalId, puntoId, observacion: observacion.trim(), lineas, ...(descuento !== null ? { servicio: { monto: normalizarCantidadTexto(descuento) } } : {}), claveIdempotencia: `nce-${nonce.current}-${h1.toString(36)}${h2.toString(36)}` };
-  }, [factura, motivo, entradas, eliminadas, descuento, esDevolucion, puntoId, sucursalId, observacion]);
+    return armarCuerpoNce({ facturaId: factura.id, lineas: factura.lineas, motivo, sucursalId, puntoId, observacion, entradas, eliminadas, descuento, nonce: nonce.current });
+  }, [factura, motivo, entradas, eliminadas, descuento, puntoId, sucursalId, observacion]);
 
   async function revisar() {
     const c = cuerpo();
@@ -239,7 +228,7 @@ function Formulario() {
     const c = revisado?.cuerpo;
 
     if (!c || enviando) return;
-    if (JSON.stringify(cuerpo()) !== JSON.stringify(c)) { setRevisado(null); setError("Los datos cambiaron después de la revisión: revise la nota de crédito de nuevo antes de emitirla."); return; }
+    if (!cuerpoRevisadoVigente(c, cuerpo())) { setRevisado(null); setError("Los datos cambiaron después de la revisión: revise la nota de crédito de nuevo antes de emitirla."); return; }
 
     setEnviando(true);
     setError(null);

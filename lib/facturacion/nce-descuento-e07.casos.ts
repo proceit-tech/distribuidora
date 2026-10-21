@@ -69,9 +69,9 @@ export async function verificarCasosNceDescuentoE07(): Promise<string[]> {
 
   igual("E07-09 con DESCUENTO, las líneas originales que siguen en la nota bloquean la emisión; tras seleccionar todas y eliminar (y sin contar las agotadas) puede emitirse solo el DESCUENTO", [lineasOriginalesPendientes(originales, new Set()), lineasOriginalesPendientes(originales, new Set([1])), lineasOriginalesPendientes(originales, new Set([1, 2]))], [2, 1, 0]);
 
-  const pagina = sinCom(leer("app/(private)/notas-credito/page.tsx"));
+  const pagina = sinCom(leer("app/(private)/notas-credito/page.tsx")) + sinCom(leer("lib/facturacion/nce-entradas.ts"));
 
-  cierto("E07-10 la pantalla ofrece «+ Agregar DESCUENTO» y «Quitar DESCUENTO», fila de servicio con monto editable, envía {servicio:{monto}} sin líneas, no elimina las originales por su cuenta y reinicia al cambiar de motivo", /\+ Agregar DESCUENTO/.test(pagina) && /Quitar DESCUENTO/.test(pagina) && /aria-label="Monto del DESCUENTO"/.test(pagina) && /descuento !== null \? \[\]/.test(pagina) && /servicio: \{ monto: normalizarCantidadTexto\(descuento\) \}/.test(pagina) && /originalesPendientes === 0/.test(pagina) && /setDescuento\(null\); \}\}/.test(pagina) && !/setEliminadas\(new Set\(factura\.lineas/.test(pagina.replace(/precarga\.servicio[^;]*;/, "")));
+  cierto("E07-10 la pantalla ofrece «+ Agregar DESCUENTO» y «Quitar DESCUENTO», fila de servicio con monto editable, envía {servicio:{monto}} sin líneas, no elimina las originales por su cuenta y reinicia al cambiar de motivo", /\+ Agregar DESCUENTO/.test(pagina) && /Quitar DESCUENTO/.test(pagina) && /aria-label="Monto del DESCUENTO"/.test(pagina) && /e\.descuento !== null \? \[\]/.test(pagina) && /servicio: \{ monto: normalizarCantidadTexto\(e\.descuento\) \}/.test(pagina) && /originalesPendientes === 0/.test(pagina) && /setDescuento\(null\); \}\}/.test(pagina) && !/setEliminadas\(new Set\(factura\.lineas/.test(pagina.replace(/precarga\.servicio[^;]*;/, "")));
   cierto("E07-10 la corrección de una NCE rechazada con DESCUENTO precarga el servicio y deja la nota sin líneas originales; el motivo fijado y la corrección siguen intactos", /precarga\.servicio/.test(pagina) && /motivoFijado/.test(pagina) && /correccion\.cargar\(corregir\)/.test(pagina));
 
   // ── SQL NEX-070 (texto) ────────────────────────────────────────────────────────────────────────

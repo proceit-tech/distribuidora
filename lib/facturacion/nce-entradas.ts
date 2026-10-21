@@ -113,6 +113,40 @@ export function restaurarEntradas(entradas: Readonly<Record<number, EntradaLinea
   return n;
 }
 
+/** Estado de la nota en preparación que determina el cuerpo enviado al servidor (la pantalla y las pruebas usan la MISMA función). */
+export type EstadoCuerpoNce = {
+  facturaId: string;
+  lineas: readonly LineaNota[];
+  motivo: number | "";
+  sucursalId: string;
+  puntoId: string;
+  observacion: string;
+  entradas: Readonly<Record<number, EntradaLinea>>;
+  eliminadas: ReadonlySet<number>;
+  /** Monto del servicio DESCUENTO (texto digitado) o null si no se agregó. */
+  descuento: string | null;
+  /** Identificador de la sesión de edición (parte de la clave de idempotencia). */
+  nonce: string;
+};
+
+/** Cuerpo de «Revisar»/«Emitir» a partir del estado de la nota. null si falta el motivo. La clave de idempotencia cambia con cualquier cambio de contenido (líneas, valores, motivo, punto, observación, DESCUENTO). */
+export function armarCuerpoNce(e: EstadoCuerpoNce) {
+  if (e.motivo === "") return null;
+
+  const esDevolucion = e.motivo === 2;
+  const lineas = e.descuento !== null ? [] : e.lineas.filter((l) => enNota(esDevolucion, l, e.entradas[l.linea]?.valor ?? "", e.eliminadas)).map((l) => ({ linea: l.linea, ...(esDevolucion ? { cantidad: normalizarCantidadTexto(e.entradas[l.linea]?.valor ?? "") } : { monto: (e.entradas[l.linea]?.valor ?? "").trim() }) }));
+  const firma = JSON.stringify([e.facturaId, e.motivo, e.puntoId, e.observacion.trim(), lineas, e.descuento === null ? null : normalizarCantidadTexto(e.descuento)]);
+  let h1 = 5381;
+  let h2 = 52711;
+
+  for (let i = 0; i < firma.length; i += 1) {
+    h1 = ((h1 * 33) ^ firma.charCodeAt(i)) >>> 0;
+    h2 = ((h2 * 31) + firma.charCodeAt(i)) >>> 0;
+  }
+
+  return { facturaId: e.facturaId, motivo: e.motivo, sucursalId: e.sucursalId, puntoId: e.puntoId, observacion: e.observacion.trim(), lineas, ...(e.descuento !== null ? { servicio: { monto: normalizarCantidadTexto(e.descuento) } } : {}), claveIdempotencia: `nce-${e.nonce}-${h1.toString(36)}${h2.toString(36)}` };
+}
+
 /** Corrección de una NCE rechazada (devolución): las líneas de la factura que NO estaban en la nota rechazada quedan eliminadas de la nota en preparación. Otros motivos no eliminan nada. */
 export function eliminadasPorPrecarga(lineas: readonly { linea: number }[], motivo: number, lineasPrecarga: readonly { linea: number }[]): Set<number> {
   return motivo === 2 ? new Set(lineas.filter((l) => !lineasPrecarga.some((x) => x.linea === l.linea)).map((l) => l.linea)) : new Set();
@@ -139,3 +173,6 @@ export function errorMontoDescuento(valor: string, moneda: string, saldo: string
 
 /** Con el servicio DESCUENTO la nota contiene SOLO ese ítem: cuántas líneas originales siguen en la nota (no eliminadas y con saldo) y por tanto bloquean la emisión. */
 export const lineasOriginalesPendientes = (lineas: readonly { linea: number; agotada: boolean }[], eliminadas: ReadonlySet<number>): number => lineas.filter((l) => !eliminadas.has(l.linea) && !l.agotada).length;
+
+/** ¿El cuerpo revisado sigue siendo EXACTAMENTE el de la nota actual? Solo entonces «Emitir» puede enviar el cuerpo ya validado por el servidor; cualquier cambio exige revisar de nuevo. */
+export const cuerpoRevisadoVigente = (revisado: unknown, actual: unknown): boolean => revisado !== null && actual !== null && JSON.stringify(revisado) === JSON.stringify(actual);

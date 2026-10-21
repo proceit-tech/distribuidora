@@ -196,7 +196,11 @@ export async function leerFacturaOriginal(db: Db, empresaId: string, usuarioId: 
     };
   });
   const receptor = Object.fromEntries(CAMPOS_RECEPTOR.map((k) => [k, payload[k] ?? null]));
-  const credito = originales.reduce((a, o) => a + (parseDec(o.total, 8) ?? B(0)) - (parseDec(porLinea.get(o.linea)?.monto ?? "0", 8) ?? B(0)), B(0)) - descuentos.monto;
+  const creditos: Array<{ tipo: "LINEA" | "DESCUENTO"; monto: string; estadoSifen: string }> = [...porLinea.values()].map((a) => ({ tipo: "LINEA", monto: a.monto === "" ? "0" : a.monto, estadoSifen: "APROBADO" }));
+
+  creditos.push({ tipo: "DESCUENTO", monto: textoDec(descuentos.monto), estadoSifen: "APROBADO" });
+
+  const credito = parseDec(saldoGlobalFe(originales.map((o) => o.total), creditos), 8) ?? B(0);
 
   return {
     id: s(f.id),
@@ -219,6 +223,17 @@ export async function leerFacturaOriginal(db: Db, empresaId: string, usuarioId: 
     saldoCredito: textoDec(credito > B(0) ? credito : B(0)),
     servicioDescuento: descuentos.disponible,
   };
+}
+
+/**
+ * Saldo GLOBAL de crédito de una FE (Decimal exacto, sin flotantes) = Σ importes de línea originales − créditos de NCE APROBADAS (por línea y por servicio DESCUENTO). Las NCE pendientes, indeterminadas o
+ * rechazadas NO consumen saldo (su bloqueo temporal es otra regla). Nunca negativo. Es la regla que replican el listado de elegibles (SQL) y NEX-070.
+ */
+export function saldoGlobalFe(totalesLinea: readonly string[], creditos: ReadonlyArray<{ tipo: "LINEA" | "DESCUENTO"; monto: string; estadoSifen: string }>): string {
+  const original = totalesLinea.reduce((a, t) => a + (parseDec(t, 8) ?? B(0)), B(0));
+  const usado = creditos.filter((x) => x.estadoSifen === "APROBADO").reduce((a, x) => a + (parseDec(x.monto, 8) ?? B(0)), B(0));
+
+  return textoDec(original > usado ? original - usado : B(0));
 }
 
 /** ¿Existe nce_descuentos (NEX-070 aplicada)? */
