@@ -150,8 +150,8 @@
 - **Distinguir tres conceptos:** (1) sucursal/punto expedidor de CASA MINGO (numeración FE), (2) domicilio fiscal del receptor (datos fiscales SIFEN), (3) sucursal/dirección de entrega del receptor (destino logístico). La elección de entrega NO cambia de forma automática el RUC, razón social o establecimiento expedidor y NO modifica el domicilio fiscal maestro del cliente.
 - Al seleccionar el destino, guardar la identificación y una fotografía/snapshot de la dirección de entrega **vinculada a la factura**, para que quede trazable aunque luego se edite el catálogo de direcciones. No alterar el JSON SIFEN ni su `dDirRec` sin validar si el contrato fiscal pide esa información; la regla solicitada se refiere a la selección de destino logístico.
 - Al cambiar el cliente en el formulario, limpiar inmediatamente la dirección de entrega anterior, cargar únicamente las del nuevo cliente y descartar respuestas de búsqueda tardías. El backend valida que la dirección enviada corresponde a ese cliente/empresa, no solo el navegador.
-- Cuando el cliente no tiene direcciones registradas, **no crear ni capturar una dirección nueva dentro del formulario de FE**; el alta/edición seguirá en `Clientes → Direcciones`. Falta decidir si la FE continúa sin destino específico o si se obliga a completar ese registro antes de emitir.
-- Si hay varias direcciones, falta decidir si el sistema preselecciona la marcada como `es_entrega_default` cuando exista o si exige siempre selección expresa.
+- Cuando el cliente no tiene direcciones registradas, **no crear ni capturar una dirección nueva dentro del formulario de FE**; el alta/edición seguirá en `Clientes → Direcciones`. **Única decisión restante:** permitir FE sin destino logístico específico o bloquear hasta registrar al menos uno.
+- **DECISIÓN CONFIRMADA (20/10/2026):** seleccionar automáticamente la dirección del cliente marcada como `es_entrega_default`, si existe; el operador podrá cambiarla a cualquiera de las demás direcciones registradas del mismo cliente antes de emitir. Nunca fijar por defecto una dirección de otro cliente o empresa. Si no hay una dirección marcada como default, no inventar una selección: solicitar que el operador elija una dirección registrada. Si el cliente no tiene ninguna dirección, queda pendiente decidir si se permite emitir sin destino logístico.
 - **Código revisado:** `lib/clientes/relacionados.ts` gestiona `direcciones_cliente` (tipos FISCAL/COMERCIAL/ENTREGA/SUCURSAL/OTRA y `es_entrega_default`). `lib/facturacion/emision.ts` y `app/(private)/facturas/nueva/page.tsx` actualmente solo exponen la dirección fiscal; necesitan lectura segura de destinos, UI e integración en revisión/guardado de FE.
 - **No hacer cambios visuales en el KuDE**: decisión anterior del responsable lo excluye. No asumir que el destino debe aparecer en el PDF del gateway de pruebas.
 
@@ -160,6 +160,6 @@
 2. Cambiar cliente A → B: dirección A no puede seguir seleccionada, sin mostrar ni guardar un domicilio ajeno.
 3. Forjar ID de dirección de otro cliente/empresa/inexistente → rechazo de servidor sin reservar número ni enviar SIFEN.
 4. Confirmar FE: guardar destino elegido y snapshot vinculados a la factura, conservando trazabilidad histórica sin modificar direcciones maestras ni KuDE.
-5. Sin dirección o sin default: aplicar política operativa una vez que el responsable la defina.
+5. Con `es_entrega_default`, preseleccionar ese destino; permitir cambiarlo y confirmar que la factura almacena el seleccionado realmente. Sin default, exigir selección manual entre las existentes; sin ninguna dirección registrada, política pendiente de decisión.
 
 **Estado:** requisito acordado; todavía no implementado, probado ni desplegado.
