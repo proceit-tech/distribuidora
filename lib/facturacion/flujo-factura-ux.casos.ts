@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { contador } from "@/lib/clientes/contador-casos";
-import { disponibilidadPago, resumenStockCompacto, type LineaStockResumen } from "@/lib/facturacion/flujo-factura";
+import { accionTeclaResumen, disponibilidadPago, resumenStockCompacto, siguienteFocoModal, type LineaStockResumen } from "@/lib/facturacion/flujo-factura";
 import { resumenCalculo, type LineaFE } from "@/lib/facturacion/payload-fe";
 import { B, parseDec } from "@/lib/facturacion/calculo";
 import { conciliarPagos, pendientesPagos, type PagoEntrada } from "@/lib/facturacion/pagos";
@@ -24,7 +24,13 @@ export async function verificarCasosFlujoFacturaUx(): Promise<string[]> {
   };
   const cierto = (nombre: string, c: boolean) => igual(nombre, c, true);
   const total = (lineas: LineaFE[]) => resumenCalculo(lineas).texto.total;
-  const disp = (hayCliente: boolean, lineas: LineaFE[], lineasValidas = true) => disponibilidadPago({ hayCliente, nLineas: lineas.length, lineasValidas, totalPositivo: resumenCalculo(lineas).total > 0 });
+  /** Disponibilidad con el resultado REAL del motor (igual que la pantalla): total positivo y cálculo completo sin errores de descuento. */
+  const dispCon = (hayCliente: boolean, lineas: LineaFE[], lineasValidas = true, descuentoGeneral: { modo: "PORCENTAJE" | "MONTO"; valor: string } | null = null) => {
+    const c = resumenCalculo(lineas, descuentoGeneral);
+
+    return disponibilidadPago({ hayCliente, nLineas: lineas.length, lineasValidas, totalPositivo: c.total > 0, calculoValido: c.completo && c.erroresDescuento.length === 0 });
+  };
+  const disp = (hayCliente: boolean, lineas: LineaFE[], lineasValidas = true) => dispCon(hayCliente, lineas, lineasValidas);
 
   // ── Disponibilidad de la forma de pago (flujo: cliente → productos → pago) ─────────────────────
   igual("UX-01 sin cliente ni productos: no editable, con guía y SIN «cubre Gs. 0»", [disp(false, []).disponible, disp(false, []).motivo, /cubre/.test(disp(false, []).guia)], [false, "SIN_CLIENTE", false]);
@@ -32,7 +38,7 @@ export async function verificarCasosFlujoFacturaUx(): Promise<string[]> {
   igual("UX-02 con cliente y sin productos: tampoco editable, con orientación", [disp(true, []).disponible, disp(true, []).motivo, disp(true, []).guia.length > 0], [false, "SIN_ITEMS", true]);
   igual("UX-02 con cliente y líneas con cantidad/precio inválidos: no editable hasta corregirlas", [disp(true, [L("0", "50000")], false).disponible, disp(true, [L("0", "50000")], false).motivo], [false, "ITEMS_INVALIDOS"]);
   igual("UX-03 con cliente y productos válidos hay total y se habilita (el total lo calcula el motor real)", [disp(true, [L("2", "50000")]).disponible, total([L("2", "50000")])], [true, "100000"]);
-  igual("UX-03 un total no calculable o cero no habilita el pago", [disponibilidadPago({ hayCliente: true, nLineas: 1, lineasValidas: true, totalPositivo: false }).motivo], ["SIN_TOTAL"]);
+  igual("UX-03 un total no calculable o cero no habilita el pago", [disponibilidadPago({ hayCliente: true, nLineas: 1, lineasValidas: true, totalPositivo: false, calculoValido: true }).motivo], ["SIN_TOTAL"]);
 
   // ── Total y conciliación siguen a las líneas (Cantidad fraccionaria, descuento, múltiples medios) ──
   const una: PagoEntrada[] = [{ tipo: 1 }];
@@ -72,6 +78,29 @@ export async function verificarCasosFlujoFacturaUx(): Promise<string[]> {
   cierto("UX-10 la distribución de stock queda resumida pero detallable: <details> con el resumen compacto y la lista completa (producto, depósito, lote, cantidad) y el aviso del descuento; no se oculta ni altera la huella", /<details className=\{estilos\.stockSalida\}>/.test(pagina) && /resumenStockCompacto\(resumen\.stock\.lineas\)\.texto/.test(pagina) && /s\.loteCodigo \? /.test(pagina) && /El stock se descuenta de estos depósitos al enviar la factura\./.test(pagina) && /repartoDe\(/.test(pagina));
   cierto("UX-11 la confirmación final se mantiene: Enviar factura exige gateway habilitado y la revisión sigue vinculada a la huella actual (el resumen solo aparece si coincide)", /revision && revision\.huella === huellaActual \? revision\.resumen : null/.test(pagina) && /disabled=\{enviando \|\| !puedeEnviarPorGateway\(gateway\)\}/.test(pagina));
   cierto("UX-12 alcance: sin tocar payload, IVA, descuentos, stock, numeración, permisos ni otros menús (el archivo de presentación no importa nada de emisión/servidor nuevo y el layout global no cambió)", !/from "@\/lib\/facturacion\/(emision|envio|shared|gateway)/.test(leer("lib/facturacion/flujo-factura.ts")) && !/color:\s*#(f00|ff0000)/i.test(css));
+
+  // ── R01: el pago no se habilita con un cálculo fiscal inválido (descuentos) ───────────────────────
+  const conDesc = (modo: "PORCENTAJE" | "MONTO", valor: string) => [L("2", "50000", { descuento: { modo, valor } })];
+
+  igual("UX-R01-01 descuento particular de 150 %: el motor lo rechaza y el pago NO se habilita", [resumenCalculo(conDesc("PORCENTAJE", "150")).erroresDescuento.length > 0, dispCon(true, conDesc("PORCENTAJE", "150")).disponible, dispCon(true, conDesc("PORCENTAJE", "150")).motivo], [true, false, "CALCULO_INVALIDO"]);
+  igual("UX-R01-02 descuento monetario por unidad mayor o igual al precio (50.000 de 50.000 y 60.000): pago no disponible", [dispCon(true, conDesc("MONTO", "50000")).disponible, dispCon(true, conDesc("MONTO", "60000")).disponible], [false, false]);
+  igual("UX-R01-03 descuento general inválido (150 % y monto mayor que el total): pago no disponible", [dispCon(true, [L("2", "50000")], true, { modo: "PORCENTAJE", valor: "150" }).disponible, dispCon(true, [L("2", "50000")], true, { modo: "MONTO", valor: "999999" }).disponible], [false, false]);
+  igual("UX-R01-04 al corregir el descuento (150 % → 10 %; monto 60.000 → 5.000; general 150 % → 5 %) el pago vuelve a estar disponible con el total exacto", [dispCon(true, conDesc("PORCENTAJE", "10")).disponible, total(conDesc("PORCENTAJE", "10")), dispCon(true, conDesc("MONTO", "5000")).disponible, dispCon(true, [L("2", "50000")], true, { modo: "PORCENTAJE", valor: "5" }).disponible], [true, "90000", true, true]);
+  igual("UX-R01-05 sin descuentos ni errores fiscales el comportamiento previo se conserva (cliente + productos válidos → disponible; pagos múltiples siguen conciliando)", [dispCon(true, [L("2", "50000")]).disponible, conciliarPagos(dos, objetivo(base)).coincide], [true, true]);
+
+  const pag = sinCom(leer("app/(private)/facturas/nueva/page.tsx"));
+
+  cierto("UX-R01-05 la pantalla pasa el resultado real del motor (completo y sin erroresDescuento) y no borra los pagos digitados al quedar indisponible", /calculoValido: calculo\.completo && calculo\.erroresDescuento\.length === 0/.test(pag) && !/setPagos\([^)]*pagoFlujo/.test(pag) && !/useEffect\([^]*?pagoFlujo[^]*?\[/.test(pag.slice(0, pag.indexOf("return ("))));
+
+  // ── R01: foco del diálogo de resumen ─────────────────────────────────────────────────────────────
+  igual("UX-R01-06 Escape equivale a «Volver a editar» salvo con un envío en curso (entonces se ignora); otras teclas no hacen nada", [accionTeclaResumen({ tecla: "Escape", enviando: false }), accionTeclaResumen({ tecla: "Escape", enviando: true }), accionTeclaResumen({ tecla: "Enter", enviando: false }), accionTeclaResumen({ tecla: "Tab", enviando: true })], ["VOLVER", "IGNORAR", null, null]);
+  igual("UX-R01-07 Tab/Shift+Tab nunca salen de la modal: del último al primero, del primero al último, foco fuera entra por el borde correcto y en el medio manda el orden natural", [siguienteFocoModal(4, 3, false), siguienteFocoModal(4, 0, true), siguienteFocoModal(4, -1, false), siguienteFocoModal(4, -1, true), siguienteFocoModal(4, 1, false), siguienteFocoModal(4, 2, true), siguienteFocoModal(1, 0, false), siguienteFocoModal(1, 0, true), siguienteFocoModal(0, -1, false)], [0, 3, 0, 3, null, null, 0, 0, null]);
+
+  const iRes = pag.indexOf("{resumen ? (");
+
+  cierto("UX-R01-08 el resumen mueve el foco adentro al abrirse (botón «Volver a editar»), atrapa Tab con el helper puro, cierra con Escape solo si no se está enviando y devuelve el foco al control que inició la revisión", /botonVolver\.current\?\.focus\(\)/.test(pag) && /accionTeclaResumen\(\{ tecla: e\.key, enviando: enviandoRef\.current \}\) === "VOLVER"/.test(pag) && /siguienteFocoModal\(lista\.length, lista\.indexOf\(document\.activeElement as HTMLElement\), ev\.shiftKey\)/.test(pag) && /iniciadorResumen\.current = document\.activeElement instanceof HTMLElement/.test(pag) && /i\.isConnected && !i\.hasAttribute\("disabled"\)\) i\.focus\(\)/.test(pag) && /ref=\{dialogoResumen\} tabIndex=\{-1\}/.test(pag.slice(iRes)));
+  cierto("UX-R01-09 durante el envío «Volver a editar» queda deshabilitado, Escape se ignora y «Enviar factura» sigue deshabilitado (sin doble envío); Enviar usa el cuerpo revisado y la misma clave de idempotencia", /ref=\{botonVolver\} className=\{ui\.secondaryButton\} disabled=\{enviando\}/.test(pag) && /disabled=\{enviando \|\| !puedeEnviarPorGateway\(gateway\)\}/.test(pag) && /void flujo\.enviar\(\)/.test(pag));
+  cierto("UX-R01-10 la revisión y la idempotencia no cambiaron: el cuerpo sigue saliendo de cuerpoFactura() y la huella actual valida el resumen; el contenido del resumen se conserva", /const huellaActual = JSON\.stringify\(cuerpoFactura\(\)\)/.test(pag) && /revision && revision\.huella === huellaActual \? revision\.resumen : null/.test(pag) && /resumen\.totalesTexto\?\.total/.test(pag) && /Salida de stock por depósito/.test(pag));
 
   return fallos;
 }

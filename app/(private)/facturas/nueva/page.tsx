@@ -33,7 +33,7 @@ import { EditorFiscalItem, type UnidadSifen } from "./ajuste-fiscal-item";
 import { CantidadAnadido } from "./cantidad-anadido";
 import { CondicionCredito } from "./condicion-credito";
 import { EntregaCliente } from "./entrega-cliente";
-import { disponibilidadPago, resumenStockCompacto } from "@/lib/facturacion/flujo-factura";
+import { accionTeclaResumen, disponibilidadPago, resumenStockCompacto, siguienteFocoModal } from "@/lib/facturacion/flujo-factura";
 
 import { MediosPago } from "./medios-pago";
 import estilos from "./page.module.css";
@@ -624,7 +624,7 @@ export default function NuevaFacturaPage() {
   const hayPagos = !enCredito || (entregaDec !== null && entregaDec > B(0));
   const objetivoDec = enCredito ? entregaDec : parseDec(calculo.texto.total, 8);
   const pendientesDePagos = hayPagos && objetivoDec !== null && calculo.total > 0 ? pendientesPagos(pagos.map((p) => pagoParaEnvio(p, pagos.length === 1)), objetivoDec, Number(presencia)) : [];
-  const pagoFlujo = disponibilidadPago({ hayCliente: cliente !== null, nLineas: lineas.length, lineasValidas, totalPositivo: calculo.total > 0 });
+  const pagoFlujo = disponibilidadPago({ hayCliente: cliente !== null, nLineas: lineas.length, lineasValidas, totalPositivo: calculo.total > 0, calculoValido: calculo.completo && calculo.erroresDescuento.length === 0 });
   const faltan = [
     sucursalId === "" ? "sucursal" : "",
     puntoId === "" ? "punto de expedición" : "",
@@ -704,6 +704,31 @@ export default function NuevaFacturaPage() {
     flujo.cancelar();
   }
 
+  // Resumen de la factura (diálogo modal): foco inicial dentro, Tab atrapado, Escape = «Volver a editar» salvo con un envío en curso, y el foco vuelve a quien inició la revisión al cerrarlo.
+  const resumenAbierto = resumen !== null;
+  const dialogoResumen = useRef<HTMLDivElement>(null);
+  const botonVolver = useRef<HTMLButtonElement>(null);
+  const iniciadorResumen = useRef<HTMLElement | null>(null);
+  const enviandoRef = useRef(enviando);
+
+  useEffect(() => { enviandoRef.current = enviando; }, [enviando]);
+  useEffect(() => {
+    if (!resumenAbierto) return;
+
+    botonVolver.current?.focus();
+
+    const f = (e: KeyboardEvent) => {
+      if (accionTeclaResumen({ tecla: e.key, enviando: enviandoRef.current }) === "VOLVER") { e.preventDefault(); flujo.cancelar(); }
+    };
+
+    window.addEventListener("keydown", f);
+
+    return () => {
+      window.removeEventListener("keydown", f);
+      window.requestAnimationFrame(() => { const i = iniciadorResumen.current; if (i && i.isConnected && !i.hasAttribute("disabled")) i.focus(); });
+    };
+  }, [resumenAbierto, flujo]);
+
   // El flujo conoce siempre la huella actual: cualquier cambio durante la previa o después de ella invalida la revisión (y descarta el resultado tardío de la previa anterior).
   useEffect(() => {
     const t = window.setTimeout(() => flujo.cambio(huellaActual), 0);
@@ -714,6 +739,9 @@ export default function NuevaFacturaPage() {
   // «Grabar»: solo revisión. El servidor valida y calcula; NO se reserva número ni se transmite nada. Se fija el cuerpo que se revisa y su versión.
   function grabar() {
     if (!cliente) return;
+
+    // El foco vuelve a este control al cerrar el resumen.
+    iniciadorResumen.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
 
     setErrores([]);
     void flujo.revisar(cuerpoFactura());
@@ -1327,7 +1355,15 @@ export default function NuevaFacturaPage() {
 
       {resumen ? (
         <div className={estilos.overlay} role="presentation">
-          <div className={`${estilos.modal} ${estilos.modalResumen}`} role="dialog" aria-modal="true" aria-labelledby="titulo-resumen">
+          <div className={`${estilos.modal} ${estilos.modalResumen}`} role="dialog" aria-modal="true" aria-labelledby="titulo-resumen" ref={dialogoResumen} tabIndex={-1} onKeyDown={(ev) => {
+            if (ev.key !== "Tab") return;
+
+            const lista = Array.from(dialogoResumen.current?.querySelectorAll<HTMLElement>("button:not([disabled]), summary, [tabindex=\"0\"], a[href], input:not([disabled]), select:not([disabled])") ?? []);
+            const salto = siguienteFocoModal(lista.length, lista.indexOf(document.activeElement as HTMLElement), ev.shiftKey);
+
+            if (lista.length === 0) { ev.preventDefault(); dialogoResumen.current?.focus(); }
+            else if (salto !== null) { ev.preventDefault(); lista[salto].focus(); }
+          }}>
             <header className={estilos.resumenCabecera}>
               <div>
                 <h2 id="titulo-resumen">Resumen de la factura</h2>
@@ -1447,7 +1483,7 @@ export default function NuevaFacturaPage() {
             </div>
 
             <footer className={estilos.resumenAcciones}>
-              <button type="button" className={ui.secondaryButton} onClick={() => limpiarRevision()}>Volver a editar</button>
+              <button type="button" ref={botonVolver} className={ui.secondaryButton} disabled={enviando} onClick={() => limpiarRevision()}>Volver a editar</button>
               <button type="button" className={ui.primaryButton} disabled={enviando || !puedeEnviarPorGateway(gateway)} title={puedeEnviarPorGateway(gateway) ? undefined : gateway?.mensaje ?? "Verificando la configuración del gateway…"} onClick={enviar}>Enviar factura</button>
             </footer>
           </div>
