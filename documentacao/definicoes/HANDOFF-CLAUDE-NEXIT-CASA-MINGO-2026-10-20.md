@@ -86,12 +86,13 @@
 - `documentacao/referencias/sifen/`, SIFEN MT v150 e NT; conferir só as regras fiscais de cada entrega.
 - Consultar scripts/migrations antes de criar incremental, especialmente `NEX-014`, `NEX-048`, `NEX-062` e `NEX-066` se presentes.
 
-## Prioridade revisada pelo responsável — 21/10/2026
+## Estado atualizado de prioridade — 21/10/2026
 
-- **E01–E05:** desenvolvimento concluído no Git e auditorado **estaticamente**, ainda SEM homologação operacional na VM/navegador/gateway. E05-R01: `documentacao/testes/AUD-NEXIT-CASA-MINGO-E05-R01-2026-10-21.md` (commit funcional `8888b7ed580cdbadc2598424fc1bc6daebd81d13`).
-- **Nova prioridade imediata: G01 / PRO-207, Configuración de API editável.** O responsável solicitou que a URL base e as credenciais da API possam ser alteradas e guardadas na interface por empresa. Documento completo: `documentacao/definicoes/REQ-NEXIT-CONFIGURACION-API-EDITABLE-2026-10-21.md`. Essa mudança antecipa e amplia a parte de configuração que estava prevista para E09, **sem reabrir E05 nem iniciar E06**. Não executar E09 separadamente para o mesmo comportamento se G01 já tiver resolvido a funcionalidade; E09 remanescente é homologação/procedimento operacional quando autorizada.
-- NEX-067/068 continuam não aplicadas; eventual migração de URL/versionamento deve ser incremental e não executada por agentes. Não alterar ambiente/identidade de outras empresas nem layout KuDE.
+- E01–E05: implementação auditada estaticamente, **sem homologação operacional**. E05-R01 registrada em `documentacao/testes/AUD-NEXIT-CASA-MINGO-E05-R01-2026-10-21.md`.
+- G01 / PRO-207 (URL, usuário e senha editáveis por empresa) foi implementada e auditada em G01-R01 e G01-R02; PRO-208/209 (IPv4-mapeada e DNS rebinding) **corrigidas e aceitas estaticamente**, sem teste TLS real nem aplicação. Auditoria canônica: `documentacao/testes/AUD-NEXIT-CASA-MINGO-G01-R02-2026-10-21.md`. A funcionalidade comercial prevista em E09 não deve ser duplicada; E09 restante é procedimento/homologação quando autorizado.
+- **Nova próxima entrega para DESENVOLVIMENTO: E06 — NCE seleção e devolução parcial.** Regras já aprovadas na seção E06 acima. **E07 não iniciar** antes de auditoria E06-R01.
+- **NEX-067/068/069 continuam não aplicadas** no banco real; testes, migrations, deploy, gateway e navegador reais seguem sob responsabilidade humana, com autorização expressa. Não mudar logo/KuDE visual, ambiente de outra empresa ou credenciais de outros tenants.
 
-## Mensagem de início autorizada ao Claude — ATUAL
+## Mensagem vigente para Claude
 
-> Claude, execute **somente G01 — PRO-207, Configuración FE: URL do gateway e credenciais editáveis por empresa**, de acordo com o requisito `documentacao/definicoes/REQ-NEXIT-CONFIGURACION-API-EDITABLE-2026-10-21.md`. Sincronize a branch, leia `CLAUDE.md`, `documentacao/PROTOCOLO-IA.md`, progresso e a implementação atual de PRO-133. Corrija UI, servidor e persistência por empresa, bem como `Probar conexión` com a URL escolhida; preserve isolamento e segredos, e trate versão/estado de teste quando a URL mudar. Testes dirigidos, commit/push, SHA e **PARE para auditoria G01-R01**. **Não iniciar E06, não acessar VM, não aplicar migrations nem declarar homologação.**
+> Claude, sincronize a branch, leia `CLAUDE.md`, `documentacao/PROTOCOLO-IA.md`, `PROGRESSO-NEXIT-V1.md` e este handoff, com foco na **E06**. Aplique somente **E06 — NCE: Seleccionar todos, Eliminar seleccionados, devolução parcial e quantidade com vírgula**, sem devolução de stock automática e sem alterar o motivo fixo ou fluxo de correção de NCE rejeitada. Reutilize código existente, testes direcionados e regressões pertinentes, commit/push, informe SHA e PARE para auditoria ChatGPT E06-R01. Não acesse VM, não aplique migrations nem declare homologação. **Não iniciar E07**.
