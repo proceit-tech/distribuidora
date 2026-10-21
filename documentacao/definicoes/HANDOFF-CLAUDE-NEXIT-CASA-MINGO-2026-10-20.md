@@ -30,11 +30,11 @@
 | NCE-SELECT | Seleção individual e `Seleccionar todos` no cabeçalho, `Eliminar seleccionados` remove apenas linhas da **nota em preparação**, podendo eliminar todas; nunca apaga itens da FE original. | Controles consistentes ao alternar motivo, selecionar e eliminar. |
 | NCE-DESCUENTO | Nos motivos 3 `Descuento` e 4 `Bonificación` mostrar `+ Agregar DESCUENTO`. **Item fixo/serviço não estocável**, com identidade estável de sistema, quantidade **1**, valor definido pelo operador, **IVA 10% SEMPRE**. A NCE desse fluxo terá **somente uma linha** `DESCUENTO`; sem rateio fiscal entre itens originais e sem mistura com outras linhas. | Adicionar serviço, selecionar/remover as linhas originais, informar Gs. 20.000 → 1 linha, qty 1, IVA10, total 20.000, sem estoque, sem ultrapassar saldo/CDC/controles da FE. **Não remover linhas originais automaticamente nem apagá-las na FE.** Se permanecerem selecionadas, bloquear emissão. |
 | NCE-FISC | IVA 10% fixo no `DESCUENTO` foi **decidido comercialmente**, mesmo com FE anterior 5%/exenta/mista; não substituir silenciosamente por rateio ou tributação original. | Verificar contrato do gateway/validação SIFEN nos casos 10%, 5%, exenta, mista antes da homologação. Se não aceito, bloquear emissão e documentar **erro fiscal concreto**; não inventar aprovação ou contornar validação. |
-| KUDE-NCE | **Única mudança autorizada em KuDE:** NCE aprovada com CDC próprio deve ter botão/ver/baixar/imprimir KuDE usando visor existente. Payload exato de `POST /api/kude`: `{dEst,dPunExp,dNumDoc,dSerieNum,tipoDoc}`, com `tipoDoc:"FE"` ou `"NCE"`. **Sem `tipOpe`** para ambos. | FE continua funcionando, NCE usa seus próprios números/CDC (zeros preservados), download `KuDE-NCE...`; NCE pendente/rejeitada sem CDC não oferece PDF. Verificar CDC retornado. |
+| KUDE-NCE | **FE e NCE podem solicitar KuDE em qualquer estado fiscal**: não exigir `APROBADA` nem CDC pré-gravado para mostrar ação e consultar o gateway. Se a API entregar PDF válido correspondente ao documento, permitir visualizar/baixar/imprimir. Body `POST /api/kude` exatamente `{dEst,dPunExp,dNumDoc,dSerieNum,tipoDoc}` com FE/NCE e **sem `tipOpe`**. | Reutilizar visualizador existente, usar identidade fiscal de cada FE/NCE (nunca da FE original para NCE), preservar zeros, isolar empresa/sucursal/permissões. Se houver CDC persistido, impedir divergência com o retornado; não inventar PDF nem aceitar documento errado. Quando API falhar/não entregar, informar indisponibilidade. |
 | GATEWAY | Nova base teste `https://gateway.e-factura-hub.com` (captura Postman comprovou `POST /api/login` HTTP 200). `lib/facturacion/gateway-credenciales.ts` já teve default alterado no Git. | Verificar testes e preservar URL/credenciais por empresa em `fe_gateway_config`/`NEXIT_DB`; **constante não altera URL já persistida**. Não mudar RUC/nome do emitente por causa da API de testes. Configuração efetiva só pelo operador autorizado na VM. |
-| CANCELAR | Evento fiscal de cancelación FE dentro de 48 h, NCE em até 168 h (7 dias) da aprovação SIFEN. **FE cancelada oficialmente** → reversão **automática, auditável e idempotente** das saídas de estoque nos mesmos depósitos originais, jamais antes da confirmação oficial. | FE saída A3+B3, SIFEN confirma cancelamento → entradas vinculadas A3+B3, sem repetir em reprocessamento. NCE cancelada não movimenta estoque automaticamente. Não inventar endpoint/payload de evento sem contrato. |
+| CANCELAR | **ADIADO E FORA DO ESCOPO ATUAL por falta de API.** Não implementar evento de cancelamento FE/NCE (48h/7 dias) nem estorno automático de estoque após cancelamento; histórico funcional preservado para eventual fase futura. | Nenhum desenvolvimento, migration, fluxo alternativo ou simulador operacional de cancelamento nesta rodada. Retomar só com contrato real da API e nova autorização expressa do responsável. |
 
-**Fluxo comercial simples acordado:** emitir FE verificando saldo e baixando estoque; FE aprovada segue; cancelamento fiscal oficial dentro do prazo provoca estorno automático. Não transformar o tratamento de rejeição/indeterminação em uma nova discussão comercial. Preservar idempotência e estados reais sem inventar confirmação.
+**Fluxo comercial atual:** emitir FE verificando saldo e baixando estoque. **Cancelamento e reversão automática NÃO serão implementados nesta rodada por ausência de API do gateway**. Não simular confirmação fiscal ou criar estornos presumidos; preservar integridade dos estados e registrar dependência futura.
 
 ## PROIBIÇÕES explícitas — fora de escopo
 
@@ -61,11 +61,11 @@
 
 **E07 — NCE serviço DESCUENTO** · Nos motivos 3/4 somente: serviço fixo, qty 1, IVA10, monto definido, linha única e sem stock. Adaptar `nce_lineas`/serviço/payload/validadores porque modelo atual exige ordinal original; acrescentar SQL incremental quando indispensável; saldos, CDC, permissão e motivo fixo intactos. Evidenciar risco e teste fiscal 5%/exento/misto; não alegar homologação sem gateway real.
 
-**E08 — KuDE NCE e request 5 campos** · Tratar FE/NCE com tipoDoc dinâmico e **remover `tipOpe`** do KuDE; habilitar NCE aprovada, PDF/CDC seguro, erros e nome do arquivo. Não modificar visual do PDF; preservar FE.
+**E08 — KuDE FE/NCE com 5 campos** · Tratar `tipoDoc` FE/NCE dinâmico, **sem `tipOpe`**. Disponibilizar tentativa de KuDE **sem bloquear por estado fiscal APROBADA/PENDIENTE/RECHAZADA ou por CDC local ausente**. Se o gateway entregar PDF válido do documento correto, permitir visualização, download e impressão; caso contrário, mostrar erro/indisponibilidade. Manter verificação de identidade, CDC quando existente, permissões e integridade PDF; não mudar o layout.
 
 **E09 — Gateway teste** · Validar default novo já alterado no Git e testes. Registrar procedimento seguro (sem segredos) para responsável mudar URL persistida por empresa na UI e testar login; Claude não faz deploy nem altera banco real.
 
-**E10 — Cancelamento SIFEN + estorno FE** · Implementar evento somente a partir de contrato real disponível e confirmação fiscal oficial, com reversão exata por depósito, status locais auditáveis e idempotência. Não inventar API; se contrato do evento não consta do Git, registrar bloqueio concreto para essa etapa sem interromper as anteriores.
+**E10 — SUSPENSA / FORA DO PACOTE ATUAL.** Cancelamento FE/NCE e estorno automático da FE aguardam API real do gateway; **não iniciar implementação, contrato fictício, migrations nem desenvolvimento até nova autorização explícita**. Texto histórico de regras de cancelamento permanece como referência futura, não como ordem de execução.
 
 ### Para cada entrega
 - Investigar SQL/serviços/protocolos existentes; reutilizar a lógica já implementada, não reescrever partes funcionais.
@@ -85,6 +85,12 @@
 - Contrato de KuDE: `documentacao/definicoes/REQ-DOC-KUDE-PDF-GATEWAY-2026-10-20.md` — correção posterior de 5 campos **sem tipOpe prevalece** sobre exemplos antigos.
 - `documentacao/referencias/sifen/`, SIFEN MT v150 e NT; conferir só as regras fiscais de cada entrega.
 - Consultar scripts/migrations antes de criar incremental, especialmente `NEX-014`, `NEX-048`, `NEX-062` e `NEX-066` se presentes.
+
+## Correção vinculante de escopo — 21/10/2026
+
+- **KUDE FE e NCE:** o responsável corrigiu a condição: **não é necessário estado APROBADA para visualizar KuDE, nem CDC persistido para tentar buscar**. A API é a fonte da disponibilidade. Para todo documento FE/NCE ao qual o operador tenha acesso e com identificadores para requisição, oferecer tentativa; **se o gateway devolver PDF válido daquele documento, exibir/baixar/imprimir**, qualquer que seja o estado fiscal local. Falha/ausência da API é informada, não se produz PDF fictício. Não aceitar divergência do CDC quando a base já possui CDC, e nunca mostrar documento de outro ID. Apenas cinco campos: `dEst,dPunExp,dNumDoc,dSerieNum,tipoDoc`; sem `tipOpe`.
+- **E10 cancelamento + estorno de estoque:** fora desta rodada **porque falta API**. Não iniciar, nem criar endpoints/payloads de evento ou reversão inventados; manter requisitos somente como memória histórica para eventual retomada autorizada.
+- **Ordem atual permanece:** auditar E06-R01 antes de E07; depois E07 e E08. **Parar após E08** para homologação dos pedidos do cliente; E10 não faz parte do encerramento atual.
 
 ## Estado atualizado de prioridade — 21/10/2026
 
