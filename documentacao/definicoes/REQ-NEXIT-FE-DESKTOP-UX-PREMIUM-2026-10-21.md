@@ -1,6 +1,6 @@
 # REQ-NEXIT-FE-DESKTOP-UX-PREMIUM — Nueva factura: flujo y densidad visual
 
-**Fecha:** 21/10/2026. **Estado:** pedido del responsable; implementación NO iniciada; propuesta de tarea separada para después del gate KuDE.
+**Fecha:** 21/10/2026. **Estado:** pedido del responsable; implementación NO iniciada; autorizado por el responsable junto a la corrección NCR en una sola entrega delimitada, con pruebas separadas por dominio.
 **Área:** Facturación → Facturas → Nueva factura. Exclusivo desktop; no rediseño móvil.
 **Evidencia:** capturas enviadas en ChatGPT el 21/10/2026; las imágenes NO están versionadas en Git.
 
@@ -29,4 +29,4 @@ Actualmente `<MediosPago>` se presenta dentro de configuración fiscal y **antes
 - Accesibilidad básica de foco, labels, teclado y diálogo.
 - Test focal de reglas originales/estado de revisión; revisión visual definitiva en navegador real corresponde al responsable humano, no Claude.
 
-**Restricciones:** No cambiar NCE/KuDE, SIFEN, XML, fiscalidad, identidad de empresa, API, migraciones, inventario ni acciones/estados de gateway. Tests locales puntuales, commit/push y detenerse para auditoría ChatGPT. No homologar por captura estática del código.
+**Restricciones:** Esta sección UX **no cambia NCE/KuDE**: esa corrección es un subalcance independiente autorizado en la misma entrega, definido en `INC-NEXIT-NCE-KUDE-GATEWAY-2026-10-21.md`. No cambiar SIFEN, XML, fiscalidad, identidad de empresa, API, migraciones, inventario ni acciones/estados de gateway. Tests locales puntuales, commit/push y detenerse para auditoría ChatGPT. No homologar por captura estática del código.
