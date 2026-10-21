@@ -9,10 +9,10 @@ import { join } from "node:path";
 import { contador } from "@/lib/clientes/contador-casos";
 import { guardarConfiguracion, leerConfiguracion, leerGuardado, leerPrueba, probarConexion, respuestaErrorConfiguracion } from "@/lib/facturacion/configuracion-gateway";
 import { configuracionGateway, estadoGateway } from "@/lib/facturacion/envio";
-import { configGatewayValida, consultarDocumentoGateway, enviarDocumentoGateway, limpiarCacheTokens, probarLoginGateway, tamanoCacheTokens, type FetchLike } from "@/lib/facturacion/gateway";
+import { configGatewayValida, consultarDocumentoGateway, enviarDocumentoGateway, limpiarCacheTokens, tamanoCacheTokens, type FetchLike } from "@/lib/facturacion/gateway";
 import { adjuntarCredencialesDeBase, URL_GATEWAY_PRUEBA } from "@/lib/facturacion/gateway-credenciales";
 import { puedeEnviarPorGateway } from "@/lib/facturacion/gateway-estado";
-import { crearFetchSeguro, ipNoPublica, validarUrlGateway } from "@/lib/facturacion/gateway-url";
+import { validarUrlGateway } from "@/lib/facturacion/gateway-url";
 import { ErrorFacturacion } from "@/lib/facturacion/shared";
 
 const raiz = process.cwd();
@@ -418,31 +418,7 @@ export async function verificarCasosConfiguracionGateway(): Promise<string[]> {
   igual("G01-07 una URL persistida inválida (manipulada en la base) NO se transmite: configGatewayValida la descarta", [configGatewayValida(EMP_A, { baseUrl: "https://127.0.0.1", credencialRef: "NEXIT_DB", timeoutMs: 1000 }), configGatewayValida(EMP_A, { baseUrl: "http://api.proveedor.com", credencialRef: "NEXIT_DB", timeoutMs: 1000 }), configGatewayValida(EMP_A, { baseUrl: "https://API.proveedor.com", credencialRef: "NEXIT_DB", timeoutMs: 1000 }), configGatewayValida(EMP_A, { baseUrl: "https://api.proveedor.com/x", credencialRef: "NEXIT_DB", timeoutMs: 1000 })], [null, null, null, null]);
   cierto("G01-07 las URL guardadas históricamente (gateway de prueba y dominios válidos) siguen válidas", configGatewayValida(EMP_A, { baseUrl: URL_GATEWAY_PRUEBA, credencialRef: "NEXIT_DB", timeoutMs: 30000 })?.baseUrl === URL_GATEWAY_PRUEBA && configGatewayValida(EMP_A, { baseUrl: "https://api.proveedor.com:8443", credencialRef: "NEXIT_DB", timeoutMs: 30000 }) !== null);
 
-  // destino al conectar
-  igual("G01-08 SSRF (destino): IP privadas, loopback, link-local/metadatos, CGNAT, reservadas, multicast y v6 no públicas se rechazan; públicas pasan", [
-    "127.0.0.1", "10.1.2.3", "172.16.5.5", "172.31.255.255", "192.168.0.1", "169.254.169.254", "100.64.0.1", "0.0.0.0", "224.0.0.1", "255.255.255.255", "198.18.0.1", "::1", "::", "fc00::1", "fd12::1", "fe80::1", "::ffff:10.0.0.1", "::ffff:127.0.0.1", "2001:db8::1",
-  ].filter((ip) => !ipNoPublica(ip)).concat(["8.8.8.8", "200.85.10.1", "172.32.0.1", "2606:4700::1111"].filter((ip) => ipNoPublica(ip))), []);
-
-  let llamadasBase = 0;
-  const baseFalsaFetch = (async () => { llamadasBase += 1; return { status: 200, text: async () => "{}" }; }) as unknown as typeof fetch;
-  const resolverPrivado = async () => ["93.184.216.34", "10.0.0.7"];
-  const resolverPublico = async () => ["93.184.216.34", "2606:4700::1111"];
-  const resolverVacio = async () => [];
-  const init = { method: "POST", headers: {}, body: "{}", signal: new AbortController().signal };
-  const privado = await crearFetchSeguro(resolverPrivado, baseFalsaFetch)("https://api.proveedor.com/api/login", init).then(() => "OK", (e: Error) => e.message);
-  const vacio = await crearFetchSeguro(resolverVacio, baseFalsaFetch)("https://api.proveedor.com/api/login", init).then(() => "OK", (e: Error) => e.message);
-  const interno = await crearFetchSeguro(resolverPublico, baseFalsaFetch)("https://127.0.0.1/api/login", init).then(() => "OK", (e: Error) => e.message);
-
-  igual("G01-08 un nombre que resuelve (aunque sea en parte) a una dirección privada, que no resuelve, o una IP literal NO se conecta (el fetch real ni se invoca)", [privado, vacio, interno, llamadasBase], ["DESTINO_NO_PERMITIDO", "DESTINO_NO_PERMITIDO", "DESTINO_NO_PERMITIDO", 0]);
-
-  let redirect: unknown;
-  const baseRedir = (async (_u: string, i: { redirect?: string }) => { redirect = i.redirect; return { status: 302, text: async () => "" }; }) as unknown as typeof fetch;
-  const respRedir = await crearFetchSeguro(resolverPublico, baseRedir)("https://api.proveedor.com/api/login", init);
-
-  cierto("G01-08 destino público: se conecta SIN seguir redirecciones (redirect: manual) y una 3xx no se trata como autenticación correcta", redirect === "manual" && respRedir.status === 302 && (await probarLoginGateway({ baseUrl: "https://api.proveedor.com", timeoutMs: 1000 }, "r", "p", { fetch: async () => ({ status: 302, text: async () => "" }) })).estado === "NO_DISPONIBLE");
-  const gwSrc = sinCom(leer("lib/facturacion/gateway.ts"));
-
-  cierto("G01-08 todos los transportes de producción (login/prueba, recepcion_de, consulta_de, KuDE) usan el fetch con control de destino; ninguno usa globalThis.fetch directo salvo el envoltorio del KuDE", !/dep\.fetch \?\? \(globalThis\.fetch/.test(gwSrc) && (gwSrc.match(/dep\.fetch \?\? fetchSeguro/g) ?? []).length === 4 && /dep\.fetchKude \?\? fetchKudeSeguro/.test(gwSrc) && /exigirDestinoPublico\(url\)/.test(gwSrc));
+  // destino al conectar (IP validada = IP conectada, IPv4 mapeada, redirecciones): PRO-208/209 en gateway-destino.casos.ts
 
   // SQL NEX-069 y pantalla
   const m69 = leer("documentacao/banco/nexit/v1/migraciones/NEX-069-facturacion-gateway-url-editable.sql");

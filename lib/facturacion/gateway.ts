@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { estadoSifenDesdeGateway, type EstadoSifen } from "@/lib/facturacion/estados";
-import { exigirDestinoPublico, fetchSeguro, validarUrlGateway } from "@/lib/facturacion/gateway-url";
+import { fetchKudeSeguro, fetchSeguro, validarUrlGateway } from "@/lib/facturacion/gateway-url";
 
 /**
  * Cliente del gateway de facturación electrónica (solo servidor). Contrato OBSERVADO en la especificación c1a8d63 (no inventado):
@@ -639,13 +639,6 @@ export async function enviarDocumentoGateway(
 export const MAX_KUDE_BYTES = 10 * 1024 * 1024;
 const MAX_KUDE_JSON = Math.ceil((MAX_KUDE_BYTES * 4) / 3) + 8192;
 export type CuerpoLegible = { getReader(): { read(): Promise<{ done: boolean; value?: Uint8Array }>; cancel(motivo?: unknown): Promise<void> } };
-/** fetch de producción del KuDE: mismo control de destino que el resto del gateway y sin seguir redirecciones. */
-const fetchKudeSeguro: KudeFetch = async (url, init) => {
-  await exigirDestinoPublico(url);
-
-  return (globalThis.fetch as unknown as KudeFetch)(url, { ...init, redirect: "manual" } as typeof init);
-};
-
 export type KudeFetch = (url: string, init: { method: string; headers: Record<string, string>; body: string; signal: AbortSignal }) => Promise<{ status: number; headers: { get(nombre: string): string | null }; body: CuerpoLegible | null }>;
 export type DependenciasKude = { fetch?: FetchLike; fetchKude?: KudeFetch; env?: Record<string, string | undefined>; ahora?: () => number };
 export type DocumentoKude = { tipOpe: string; establecimiento: string; puntoExpedicion: string; numero: string; serie: string | null; cdc: string };

@@ -9,7 +9,7 @@
 
 ## Aplicación (sin migrar datos)
 - URL editable en *Configuración → Facturación electrónica*; «Probar conexión» usa la URL **escrita** (prueba temporal, no se registra) o la guardada; la emisión, la consulta y el KuDE usan la URL **persistida** de la empresa (validada otra vez antes de transmitir).
-- Defensa SSRF al conectar: el nombre se resuelve y se rechaza si alguna dirección es privada/loopback/link-local/metadatos/reservada; **sin redirecciones**. Limitación: DNS rebinding entre resolución y conexión no se elimina por completo (no hay fijación de IP).
+- Defensa SSRF al conectar (G01-R02): la conexión HTTPS resuelve el nombre una sola vez en su `lookup`, valida TODAS las direcciones como públicas (IPv4 mapeada/incrustada en IPv6 en cualquier representación incluida) y conecta exactamente a una de ellas (sin DNS rebinding); conserva hostname/SNI y la verificación del certificado, y no sigue redirecciones. Aplica a login, Probar conexión, recepcion_de, consulta_de y KuDE.
 
 ## Orden
 1. Backup.

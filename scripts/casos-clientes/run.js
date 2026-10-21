@@ -84,6 +84,7 @@ Module._resolveFilename = function (request, ...resto) {
   const e03 = cargar("lib/facturacion/descuentos-e03.casos.js");
   const e04 = cargar("lib/facturacion/entrega-e04.casos.js");
   const e05 = cargar("lib/facturacion/visual-codigos-e05.casos.js");
+  const gdest = cargar("lib/facturacion/gateway-destino.casos.js");
   const red = cargar("lib/facturacion/rediseno.casos.js");
   const suites = [
     ["teléfono y día de cobro", async () => tel.verificarCasosTelefonoYCobro(), () => tel.CASOS_TELEFONO.length + 11 + 6 + 2],
@@ -163,6 +164,7 @@ Module._resolveFilename = function (request, ...resto) {
     ["Facturación E03 (PRO-200 / PRO-124): descuentos por ítem y general (% o monto) según MT SIFEN v150 + NT 1: EA002/EA003/EA004/EA008, F009/F033/F011/F010, IVA sobre el neto, combinación y precisión Decimal", async () => e03.verificarCasosDescuentosE03(), null],
     ["Facturación E04 (PRO-200): dirección de entrega del cliente (carga, principal automática, elección, sin destinos, cambio de cliente con respuestas tardías, validación del servidor, destino guardado; contrato NEX-068 simulado, SQL estructural)", async () => e04.verificarCasosEntregaE04(), null],
     ["Facturación E05 (PRO-200): guaraníes sin decimales en pantalla (precisión intacta), «Establecimiento 001» y códigos de producto como texto con ceros iniciales (búsqueda, Enter, payload)", async () => e05.verificarCasosVisualCodigosE05(), null],
+    ["Gateway G01-R01 (PRO-208/209): IPv4 mapeada en IPv6 (toda representación), IP validada = IP conectada (sin DNS rebinding), hostname/SNI/certificado conservados, sin redirecciones, login/prueba/emisión/consulta/KuDE", async () => gdest.verificarCasosGatewayDestino(), null],
   ];
   let total = 0;
   let fallosTotal = 0;
