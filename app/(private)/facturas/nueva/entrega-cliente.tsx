@@ -36,17 +36,18 @@ export function EntregaCliente({ control, clienteId }: { control: Control; clien
 
   const elegida = e.opciones.find((o) => o.id === e.elegida) ?? null;
 
+  const ayuda = elegida ? `${direccionCompleta(elegida)}${elegida.horario.trim() ? ` · Recepción: ${elegida.horario.trim()}` : ""}. ` : "";
+
   return (
     <div className={estilos.entregaCliente}>
       <label className={estilos.field}>
         <span>Dirección de entrega *</span>
-        <select aria-label="Dirección de entrega" value={e.elegida} onChange={(ev) => control.elegir(ev.target.value)}>
+        <select aria-label="Dirección de entrega" value={e.elegida} title={`${ayuda}Es solo el destino de la mercadería: no cambia el domicilio fiscal del receptor ni el establecimiento emisor.`} onChange={(ev) => control.elegir(ev.target.value)}>
           {e.elegida === "" ? <option value="">Seleccione una dirección…</option> : null}
           {e.opciones.map((o) => <option key={o.id} value={o.id}>{nombreEntrega(o)}{o.esDefault ? " (principal)" : ""} — {direccionCompleta(o)}</option>)}
         </select>
       </label>
-      {elegida ? <small className={estilos.hint}>{direccionCompleta(elegida)}{elegida.horario.trim() ? ` · Recepción: ${elegida.horario.trim()}` : ""}</small> : <small className={estilos.fieldError} role="alert">Seleccione la dirección de entrega.</small>}
-      <small className={estilos.hint}>Es solo el destino de la mercadería: no cambia el domicilio fiscal del receptor ni el establecimiento emisor.</small>
+      {elegida ? null : <small className={estilos.fieldError} role="alert">Seleccione la dirección de entrega.</small>}
     </div>
   );
 }

@@ -994,22 +994,24 @@ export default function NuevaFacturaPage() {
               <section className={estilos.card} aria-labelledby="sec-cliente">
                 <div className={estilos.cardHead}>
                   <h2 id="sec-cliente">Cliente *</h2>
-                  {cliente ? (
-                    <div className={estilos.actions}>
-                      <button type="button" className={ui.secondaryButton} onClick={() => setSelector("cliente")}>Cambiar cliente</button>
-                      <button type="button" className={ui.clearButton} onClick={() => setCliente(null)}>Quitar</button>
-                    </div>
-                  ) : null}
-                </div>
+                  {cliente ? <span className={estilos.meta}>{cliente.codigo}</span> : null}
+                  </div>
                 <div className={estilos.cardBody}>
                   {cliente ? (
                     <>
-                      <div className={estilos.clienteResumen}>
-                        <div className={estilos.clienteNombre}>
-                          <strong>{cliente.razonSocial}</strong>
-                          <span>{documentoCliente(cliente)} · {tipoContribuyente(cliente)} · {cliente.codigo}</span>
+                      <div className={estilos.bandaCliente}>
+                        <div className={estilos.clienteResumen}>
+                          <div className={estilos.clienteNombre}>
+                            <strong>{cliente.razonSocial}</strong>
+                            <span>{documentoCliente(cliente)} · {tipoContribuyente(cliente)}</span>
+                          </div>
+                          <span className={`${estilos.badge} ${cliente.apto ? estilos.badgeOk : estilos.badgeWarn}`}>{cliente.apto ? "Apto para facturar" : "Con pendientes"}</span>
                         </div>
-                        <span className={`${estilos.badge} ${cliente.apto ? estilos.badgeOk : estilos.badgeWarn}`}>{cliente.apto ? "Apto para facturar" : "Con pendientes"}</span>
+                        <EntregaCliente control={entregaCtl} clienteId={cliente.id} />
+                        <div className={estilos.actions}>
+                          <button type="button" className={ui.secondaryButton} onClick={() => setSelector("cliente")}>Cambiar cliente</button>
+                          <button type="button" className={ui.clearButton} onClick={() => setCliente(null)}>Quitar</button>
+                        </div>
                       </div>
                       {!cliente.apto ? (
                         <ul className={estilos.pendientes} role="alert">
@@ -1037,7 +1039,6 @@ export default function NuevaFacturaPage() {
                           </div>
                         </dl>
                       </details>
-                      <EntregaCliente control={entregaCtl} clienteId={cliente.id} />
                     </>
                   ) : (
                     <div className={estilos.buscarFila}>
@@ -1059,6 +1060,16 @@ export default function NuevaFacturaPage() {
                 </div>
                 <div className={estilos.tableWrap}>
                   <table className={`${estilos.items} ${estilos.itemsCompacta}`}>
+                    <colgroup>
+                      <col className={estilos.colProducto} />
+                      <col className={estilos.colIva} />
+                      <col className={estilos.colUnidad} />
+                      <col className={estilos.colCantidad} />
+                      <col className={estilos.colPrecio} />
+                      <col className={estilos.colDescuento} />
+                      <col className={estilos.colSubtotal} />
+                      <col className={estilos.colAcciones} />
+                    </colgroup>
                     <thead>
                       <tr>
                         <th>Producto</th>
@@ -1205,6 +1216,16 @@ export default function NuevaFacturaPage() {
                     </tbody>
                   </table>
                 </div>
+                <div className={estilos.descuentoLinea} role="group" aria-label="Descuento general">
+                  <span title="Se aplica a cada ítem sobre su precio, sin prorrateo y además del descuento propio del ítem.">Descuento general</span>
+                  <select aria-label="Tipo de descuento general" value={descuentoGeneral.modo} onChange={(e) => setDescuentoGeneral((d) => ({ ...d, modo: e.target.value as DescUI["modo"] }))}>
+                    <option value="PORCENTAJE">%</option>
+                    <option value="MONTO">{sim} (monto total)</option>
+                  </select>
+                  <input className={estilos.qty} inputMode="decimal" aria-label="Descuento general" placeholder="0" value={descuentoGeneral.valor} onChange={(e) => setDescuentoGeneral((d) => ({ ...d, valor: e.target.value }))} />
+                  {calculo.descuentos.hay && calculo.completo && descuentoGeneralFE ? <small className={estilos.hint}>Aplicado: {fmCampo(calculo.descuentos.totalGeneral)} ({fd(calculo.descuentos.porcGlobal)} %)</small> : null}
+                  {calculo.erroresDescuento.length > 0 ? <small className={estilos.fieldError} role="alert">{calculo.erroresDescuento.join(" ")}</small> : null}
+                </div>
               </section>
 
               <section className={estilos.card} aria-labelledby="sec-pago">
@@ -1238,84 +1259,75 @@ export default function NuevaFacturaPage() {
                 </div>
               </section>
 
-              <section className={estilos.card} aria-labelledby="sec-info">
-                <div className={estilos.cardHead}><h2 id="sec-info">Información adicional</h2></div>
-                <div className={estilos.cardBody}>
-                  <label className={estilos.field}>
-                    <span>Observaciones (opcional)</span>
-                    <textarea value={infoAdicional} maxLength={5000} onChange={(e) => setInfoAdicional(e.target.value)} />
-                  </label>
-                </div>
-              </section>
+              <details className={estilos.observaciones}>
+                <summary id="sec-info">Observaciones (opcional){infoAdicional.trim() !== "" ? <span className={estilos.meta}> · con texto</span> : null}</summary>
+                <label className={estilos.field}>
+                  <span className="sr-only">Observaciones</span>
+                  <textarea value={infoAdicional} maxLength={5000} rows={3} onChange={(e) => setInfoAdicional(e.target.value)} />
+                </label>
+              </details>
             </div>
 
-            <aside className={estilos.resumenPanel} aria-labelledby="sec-totales">
-              <h2 id="sec-totales">Resumen ({MONEDAS_FE[moneda].nombre.toLowerCase()})</h2>
-
-              <div className={estilos.descuentoGeneral} role="group" aria-label="Descuento general">
-                <span>Descuento general</span>
-                <div className={estilos.descuentoCampo}>
-                  <select aria-label="Tipo de descuento general" value={descuentoGeneral.modo} onChange={(e) => setDescuentoGeneral((d) => ({ ...d, modo: e.target.value as DescUI["modo"] }))}>
-                    <option value="PORCENTAJE">%</option>
-                    <option value="MONTO">{sim} (monto total)</option>
-                  </select>
-                  <input className={estilos.qty} inputMode="decimal" aria-label="Descuento general" placeholder="0" value={descuentoGeneral.valor} onChange={(e) => setDescuentoGeneral((d) => ({ ...d, valor: e.target.value }))} />
+            <div className={estilos.barraResumen} role="region" aria-label="Resumen financiero">
+              <dl className={estilos.barraTotales}>
+                <div className={estilos.barraTotal}>
+                  <dt>Total general</dt>
+                  <dd>{sim} {fmCampo(calculo.texto.total)}</dd>
+                  {extranjera ? <small>Equivalente: Gs. {equivalenteGs === null ? "—" : formatearMontoVisual(textoDec(equivalenteGs), "PYG")} (cambio {cambioNormal ?? "—"})</small> : <small>IVA incluido{hayPrecioModificado ? " · con precios modificados" : ""}</small>}
                 </div>
-                <small className={estilos.hint}>Se aplica a cada ítem sobre su precio, sin prorrateo y además del descuento propio del ítem.</small>
-                {calculo.erroresDescuento.length > 0 ? <small className={estilos.fieldError} role="alert">{calculo.erroresDescuento.join(" ")}</small> : null}
-              </div>
-
-              <dl className={estilos.totals}>
-                <div><dt>Exento</dt><dd>{fmCampo(calculo.texto.exento)}</dd></div>
-                <div><dt>Exonerado</dt><dd>{fmCampo(calculo.texto.exonerado)}</dd></div>
-                <div><dt>Gravado 5 % (IVA incl.)</dt><dd>{fmCampo(calculo.texto.gravado5)}</dd></div>
-                <div><dt>IVA 5 %</dt><dd>{fmCampo(calculo.texto.iva5)}</dd></div>
-                <div><dt>Gravado 10 % (IVA incl.)</dt><dd>{fmCampo(calculo.texto.gravado10)}</dd></div>
-                <div><dt>IVA 10 %</dt><dd>{fmCampo(calculo.texto.iva10)}</dd></div>
-                <div className={estilos.totalIva}><dt>Total IVA</dt><dd>{fmCampo(calculo.texto.totalIva)}</dd></div>
-                {calculo.descuentos.hay && calculo.completo ? (
-                  <>
-                    <div><dt>Descuento por ítems</dt><dd>{fmCampo(calculo.descuentos.totalItems)}</dd></div>
-                    <div><dt>Descuento general{descuentoGeneralFE ? ` (${fd(calculo.descuentos.porcGlobal)} %)` : ""}</dt><dd>{fmCampo(calculo.descuentos.totalGeneral)}</dd></div>
-                    <div><dt>Total descuentos</dt><dd>{fmCampo(calculo.descuentos.total)}</dd></div>
-                  </>
-                ) : null}
+                <div><dt>Total IVA</dt><dd>{fmCampo(calculo.texto.totalIva)}</dd></div>
+                {calculo.descuentos.hay && calculo.completo ? <div><dt>Descuentos</dt><dd>{fmCampo(calculo.descuentos.total)}</dd></div> : null}
               </dl>
 
-              <div className={estilos.totalGeneral}>
-                <span>Total general</span>
-                <strong>{sim} {fmCampo(calculo.texto.total)}</strong>
-                {extranjera ? <small>Equivalente: Gs. {equivalenteGs === null ? "—" : formatearMontoVisual(textoDec(equivalenteGs), "PYG")} (cambio {cambioNormal ?? "—"})</small> : null}
-                <small>IVA incluido{hayPrecioModificado ? " · con precios modificados" : ""}</small>
+              <details className={estilos.barraDetalle}>
+                <summary>Detalle de impuestos</summary>
+                <div className={estilos.barraPanel}>
+                  <h2 id="sec-totales">Resumen ({MONEDAS_FE[moneda].nombre.toLowerCase()})</h2>
+                  <dl className={estilos.totals}>
+                    <div><dt>Exento</dt><dd>{fmCampo(calculo.texto.exento)}</dd></div>
+                    <div><dt>Exonerado</dt><dd>{fmCampo(calculo.texto.exonerado)}</dd></div>
+                    <div><dt>Gravado 5 % (IVA incl.)</dt><dd>{fmCampo(calculo.texto.gravado5)}</dd></div>
+                    <div><dt>IVA 5 %</dt><dd>{fmCampo(calculo.texto.iva5)}</dd></div>
+                    <div><dt>Gravado 10 % (IVA incl.)</dt><dd>{fmCampo(calculo.texto.gravado10)}</dd></div>
+                    <div><dt>IVA 10 %</dt><dd>{fmCampo(calculo.texto.iva10)}</dd></div>
+                    <div className={estilos.totalIva}><dt>Total IVA</dt><dd>{fmCampo(calculo.texto.totalIva)}</dd></div>
+                    {calculo.descuentos.hay && calculo.completo ? (
+                      <>
+                        <div><dt>Descuento por ítems</dt><dd>{fmCampo(calculo.descuentos.totalItems)}</dd></div>
+                        <div><dt>Descuento general{descuentoGeneralFE ? ` (${fd(calculo.descuentos.porcGlobal)} %)` : ""}</dt><dd>{fmCampo(calculo.descuentos.totalGeneral)}</dd></div>
+                        <div><dt>Total descuentos</dt><dd>{fmCampo(calculo.descuentos.total)}</dd></div>
+                      </>
+                    ) : null}
+                    <div className={estilos.totalIva}><dt>Total general</dt><dd>{sim} {fmCampo(calculo.texto.total)}</dd></div>
+                  </dl>
+                  <dl className={estilos.pagoResumen}>
+                    <div><dt>Cliente</dt><dd>{cliente ? cliente.razonSocial : "Sin seleccionar"}</dd></div>
+                    <div><dt>Condición</dt><dd>{condicionTexto}</dd></div>
+                    {hayPagos ? <div><dt>{enCredito ? "Pago de la entrega" : "Forma de pago"}</dt><dd>{pagos.map((p) => textoOpcion(opciones?.formasPago, p.tipo)).join(" + ")}</dd></div> : null}
+                    {enCredito ? <div><dt>Crédito</dt><dd>{credito.tipo === "1" ? `A plazo (${credito.plazoDias || "—"} días)` : `${credito.cuotas.length} cuota${credito.cuotas.length === 1 ? "" : "s"}`}</dd></div> : null}
+                  </dl>
+                </div>
+              </details>
+
+              <div className={estilos.barraPendientes} aria-live="polite">
+                {pendientes.length > 0 ? (
+                  <details className={estilos.barraDetalle}>
+                    <summary className={estilos.pendienteResumen}>{pendientes.length} pendiente{pendientes.length === 1 ? "" : "s"} de validación</summary>
+                    <div className={estilos.barraPanel}>
+                      <h3>Pendientes de validación</h3>
+                      <ul>{pendientes.map((p) => <li key={p}>{p}</li>)}</ul>
+                    </div>
+                  </details>
+                ) : <span className={estilos.listo}>Todo listo para revisar.</span>}
               </div>
 
-              <dl className={estilos.pagoResumen}>
-                <div><dt>Cliente</dt><dd>{cliente ? cliente.razonSocial : "Sin seleccionar"}</dd></div>
-                <div><dt>Condición</dt><dd>{condicionTexto}</dd></div>
-                {hayPagos ? <div><dt>{enCredito ? "Pago de la entrega" : "Forma de pago"}</dt><dd>{pagos.map((p) => textoOpcion(opciones?.formasPago, p.tipo)).join(" + ")}</dd></div> : null}
-                {enCredito ? <div><dt>Crédito</dt><dd>{credito.tipo === "1" ? `A plazo (${credito.plazoDias || "—"} días)` : `${credito.cuotas.length} cuota${credito.cuotas.length === 1 ? "" : "s"}`}</dd></div> : null}
-              </dl>
-
-              <div className={estilos.pendientesPanel} aria-live="polite">
-                <h3>Pendientes de validación</h3>
-                {pendientes.length > 0 ? <ul>{pendientes.map((p) => <li key={p}>{p}</li>)}</ul> : <p className={estilos.listo}>Todo listo para revisar.</p>}
-              </div>
-
-              <div className={estilos.accionesPanel}>
-                <button type="button" className={`${ui.primaryButton} ${estilos.accionPrincipal} ${estilos.accionRevisar}`} disabled={!puedeGuardar} onClick={grabar}>
+              <div className={estilos.barraAcciones}>
+                <Link href="/dashboard" className={ui.secondaryButton}>Cancelar</Link>
+                <button type="button" className={`${ui.primaryButton} ${estilos.accionRevisar}`} disabled={!puedeGuardar} onClick={grabar}>
                   {revisando ? "Revisando..." : "Revisar y confirmar"}
                 </button>
-                <Link href="/dashboard" className={`${ui.secondaryButton} ${estilos.accionPrincipal}`}>Cancelar</Link>
               </div>
-            </aside>
-          </div>
-
-          <div className={estilos.barraMovil} inert={confirmacion !== null}>
-            <div>
-              <strong>{sim} {fmCampo(calculo.texto.total)}</strong>
-              <small>{faltan.length > 0 ? `Falta: ${faltan.join(", ")}.` : "Listo para revisar."}</small>
             </div>
-            <button type="button" className={ui.primaryButton} disabled={!puedeGuardar} onClick={grabar}>{revisando ? "Revisando..." : "Revisar"}</button>
           </div>
         </>
       )}

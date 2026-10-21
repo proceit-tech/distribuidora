@@ -1702,3 +1702,291 @@
   border-top: 1px solid #dce6ed;
   background: #ffffff;
 }
+
+/* ══ Nueva factura — pantalla de operación compacta (desktop) ══
+   Una sola columna a todo el ancho; tarjetas y cabeceras bajas; tabla de productos sin columna lateral; resumen financiero en una barra inferior. */
+.workspace {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-bottom: 8px;
+}
+
+.principal {
+  gap: 10px;
+}
+
+.cardHead {
+  min-height: 36px;
+  padding: 6px 12px;
+}
+
+.cardHead h2 {
+  font-size: 15px;
+}
+
+.cardBody {
+  padding: 10px 12px;
+}
+
+.gridOperacion {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px 12px;
+}
+
+.gridOperacion .field select,
+.gridOperacion .field input {
+  min-height: 34px;
+  padding: 3px 8px;
+}
+
+.bandaCliente {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+
+.bandaCliente .clienteResumen {
+  flex: 1 1 320px;
+  justify-content: flex-start;
+}
+
+.bandaCliente .entregaCliente {
+  flex: 1 1 320px;
+  max-width: 520px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.bandaCliente .actions {
+  margin-left: auto;
+}
+
+.clienteNombre strong {
+  font-size: 15px;
+}
+
+.entregaCliente .field select {
+  min-height: 34px;
+}
+
+/* Tabla de productos: todo el ancho; columnas con ancho fijo salvo Producto; sin scroll horizontal en escritorio habitual. */
+.itemsCompacta {
+  table-layout: fixed;
+}
+
+.colProducto { width: auto; }
+.colIva { width: 130px; }
+.colUnidad { width: 56px; }
+.colCantidad { width: 84px; }
+.colPrecio { width: 112px; }
+.colDescuento { width: 160px; }
+.colSubtotal { width: 104px; }
+.colAcciones { width: 120px; }
+
+.itemsCompacta .qty,
+.itemsCompacta .price,
+.itemsCompacta .ivaSelect {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.itemsCompacta .descuentoCampo select {
+  width: 70px;
+  flex: 0 0 70px;
+}
+
+.itemsCompacta .descuentoCampo .qty {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.itemsCompacta .accion {
+  white-space: normal;
+}
+
+.itemsCompacta td,
+.itemsCompacta th {
+  overflow-wrap: anywhere;
+}
+
+.descuentoLinea {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 6px 12px;
+  border-top: 1px solid #e8eff4;
+  font-size: 13px;
+}
+
+.descuentoLinea > span {
+  color: #35506a;
+  font-weight: 600;
+}
+
+.descuentoLinea select {
+  min-height: 32px;
+  max-width: 150px;
+}
+
+.descuentoLinea .qty {
+  width: 90px;
+  min-height: 32px;
+}
+
+.observaciones {
+  padding: 6px 12px;
+  border: 1px solid #dce6ed;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.observaciones summary {
+  cursor: pointer;
+  color: #35506a;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.observaciones textarea {
+  width: 100%;
+  margin-top: 6px;
+}
+
+/* Barra de resumen financiero inferior (sticky). Los paneles de detalle se abren HACIA ARRIBA y solo mientras el operador los pide. */
+.barraResumen {
+  position: sticky;
+  z-index: 20;
+  bottom: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 20px;
+  padding: 8px 14px;
+  border: 1px solid #dce6ed;
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 -4px 14px rgba(20, 50, 77, 0.1);
+}
+
+.barraTotales {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 22px;
+  margin: 0;
+}
+
+.barraTotales dt {
+  color: #5b7387;
+  font-size: 12px;
+}
+
+.barraTotales dd {
+  margin: 0;
+  color: #112f4a;
+  font-size: 15px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.barraTotal dd {
+  color: #0a6f77;
+  font-size: 20px;
+}
+
+.barraTotal small {
+  display: block;
+  color: #5b7387;
+  font-size: 12px;
+}
+
+.barraDetalle {
+  position: relative;
+}
+
+.barraDetalle > summary {
+  cursor: pointer;
+  color: #0a6f77;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.barraPanel {
+  position: absolute;
+  z-index: 25;
+  bottom: calc(100% + 14px);
+  left: 0;
+  width: min(420px, 90vw);
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 10px 14px;
+  border: 1px solid #dce6ed;
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 8px 24px rgba(20, 50, 77, 0.18);
+}
+
+.barraPanel h2,
+.barraPanel h3 {
+  margin: 0 0 6px;
+  color: #112f4a;
+  font-size: 14px;
+}
+
+.barraPanel ul {
+  margin: 0;
+  padding-left: 18px;
+  color: #8a5a00;
+  font-size: 13px;
+}
+
+.barraPendientes {
+  min-width: 0;
+  flex: 1 1 200px;
+}
+
+.pendienteResumen {
+  color: #8a5a00;
+}
+
+.barraAcciones {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+
+/* Con el foco por teclado, nada queda oculto bajo la barra fija. */
+.workspace input,
+.workspace select,
+.workspace textarea,
+.workspace button,
+.workspace summary,
+.workspace a {
+  scroll-margin-bottom: 110px;
+}
+
+@media (max-width: 760px) {
+  .barraPanel {
+    position: static;
+    width: auto;
+    max-height: none;
+    margin-top: 6px;
+    box-shadow: none;
+  }
+
+  .barraAcciones {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .barraAcciones > * {
+    flex: 1 1 0;
+  }
+}
