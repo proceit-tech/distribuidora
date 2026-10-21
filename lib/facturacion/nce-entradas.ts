@@ -104,3 +104,25 @@ export function errorCantidadDevolucion(valor: string, disponible: string): stri
 export function eliminadasPorPrecarga(lineas: readonly { linea: number }[], motivo: number, lineasPrecarga: readonly { linea: number }[]): Set<number> {
   return motivo === 2 ? new Set(lineas.filter((l) => !lineasPrecarga.some((x) => x.linea === l.linea)).map((l) => l.linea)) : new Set();
 }
+
+// ── E07: servicio fijo DESCUENTO (motivos 3/4) ───────────────────────────────────────────────────────────────────────────────
+/** El botón «+ Agregar DESCUENTO» solo existe en Descuento y Bonificación, con el servicio disponible (NEX-070) y sin haberlo agregado ya. */
+export const puedeAgregarDescuento = (motivo: number | "", disponible: boolean, agregado: boolean): boolean => (motivo === 3 || motivo === 4) && disponible && !agregado;
+
+/** Validación del monto del DESCUENTO: positivo, sin decimales en guaraníes (hasta 4 en otras monedas) y nunca mayor que el saldo disponible para crédito. null = válido. */
+export function errorMontoDescuento(valor: string, moneda: string, saldo: string): string | null {
+  const t = normalizarCantidadTexto(valor);
+
+  if (t === "") return "Indique el monto del descuento.";
+
+  const m = /^\d{1,15}(\.\d{1,4})?$/.test(t) && (moneda !== "PYG" || !t.includes(".")) ? parseDec(t, 4) : null;
+
+  if (m === null || m <= B(0)) return moneda === "PYG" ? "Monto no válido: mayor que cero y sin decimales en guaraníes." : "Monto no válido: mayor que cero, hasta 4 decimales.";
+
+  const s = parseDec(saldo, 8) ?? B(0);
+
+  return m > s ? `Supera el saldo disponible para crédito (${textoDec(s)}).` : null;
+}
+
+/** Con el servicio DESCUENTO la nota contiene SOLO ese ítem: cuántas líneas originales siguen en la nota (no eliminadas y con saldo) y por tanto bloquean la emisión. */
+export const lineasOriginalesPendientes = (lineas: readonly { linea: number; agotada: boolean }[], eliminadas: ReadonlySet<number>): number => lineas.filter((l) => !eliminadas.has(l.linea) && !l.agotada).length;

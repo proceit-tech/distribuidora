@@ -43,8 +43,19 @@ export type Acreditado = { cantidad: string; monto: string };
 
 export type LineaNceEntrada = { original: LineaOriginal; acreditado: Acreditado; cantidad?: string; monto?: string };
 
+/**
+ * E07: servicio FIJO del sistema «DESCUENTO» para los motivos Descuento (3) y Bonificación (4). Cantidad 1, precio unitario = monto digitado, IVA 10% gravado FIJO (decisión comercial del responsable,
+ * sin prorrateo por los productos originales), unidad 77, sin GTIN y SIN stock. Cuando está presente es el ÚNICO ítem de la nota (las líneas de la factura deben haberse retirado).
+ */
+export const CODIGO_SERVICIO_DESCUENTO = "DESCUENTO";
+export const lineaServicioDescuento = (monto: string): LineaOriginal => ({ linea: 0, codigoInterno: CODIGO_SERVICIO_DESCUENTO, gtin: null, descripcion: CODIGO_SERVICIO_DESCUENTO, unidadSifen: 77, cantidad: "1", precio: monto, total: monto, afectacion: 1, tasa: 10, proporcion: "100" });
+
 export type EntradaNce = {
   motivo: number;
+  /** Servicio DESCUENTO (motivos 3/4): monto positivo con IVA incluido. Excluye las líneas de la factura. */
+  servicio?: { monto: string };
+  /** Saldo global de crédito de la FE (Σ totales de línea − NCE aprobadas por líneas y por DESCUENTO), texto Decimal. Si se informa, el total de la nota no puede superarlo. */
+  saldoCredito?: string;
   moneda: string;
   /** Tipo de cambio ORIGINAL de la FE (texto), solo con moneda extranjera. Se copia sin edición. */
   cambio: string | null;
@@ -105,7 +116,7 @@ export function lineasOriginalesDe(payload: unknown): LineaOriginal[] | null {
   return salida;
 }
 
-export type ItemNce = { linea: number; cantidad: Dec; precio: Dec; original: LineaOriginal; totBruto: Dec; totOperacion: Dec; baseGravada: Dec; liquidacion: Dec; baseExenta: Dec; montoTexto: string; cantidadAcreditadaTexto: string };
+export type ItemNce = { linea: number; servicio?: true; cantidad: Dec; precio: Dec; original: LineaOriginal; totBruto: Dec; totOperacion: Dec; baseGravada: Dec; liquidacion: Dec; baseExenta: Dec; montoTexto: string; cantidadAcreditadaTexto: string };
 
 /** Saldos de una línea (Decimal): cantidad y monto disponibles. */
 export function saldoDe(l: LineaOriginal, a: Acreditado): { cantidad: Dec; monto: Dec } {
@@ -119,6 +130,24 @@ export function saldoDe(l: LineaOriginal, a: Acreditado): { cantidad: Dec; monto
 function calcular(e: EntradaNce, errores: string[]): ItemNce[] {
   const items: ItemNce[] = [];
   const vistas = new Set<number>();
+
+  if (e.servicio) {
+    if (e.motivo !== 3 && e.motivo !== 4) { errores.push("El servicio DESCUENTO solo se admite en los motivos Descuento y Bonificación."); return items; }
+    if (e.lineas.length > 0) { errores.push("Con el servicio DESCUENTO la nota no puede incluir líneas de la factura: retire todas las líneas originales."); return items; }
+
+    const m = parseDec(e.servicio.monto, e.moneda === "PYG" ? 0 : 4);
+
+    if (m === null || m <= B(0)) { errores.push(`DESCUENTO: indique un monto mayor que cero${e.moneda === "PYG" ? " (sin decimales en guaraníes)" : ", con hasta 4 decimales"}.`); return items; }
+
+    const o = lineaServicioDescuento(textoDec(m));
+    const r = calcularItem({ cantidad: S, precioUnitario: m, afectacion: o.afectacion, tasa: o.tasa, proporcion: parseDec(o.proporcion, 8) ?? B(0) });
+
+    if (r.totOperacion <= B(0)) { errores.push("DESCUENTO: el importe resultante debe ser mayor que cero."); return items; }
+
+    items.push({ linea: 0, servicio: true, cantidad: S, precio: m, original: o, ...r, montoTexto: textoDec(r.totOperacion), cantidadAcreditadaTexto: "0" });
+
+    return items;
+  }
 
   for (const l of e.lineas) {
     const o = l.original;
@@ -175,19 +204,24 @@ export function validarEntradaNce(e: EntradaNce): string[] {
   else if (e.moneda !== "PYG" && (e.cambio === null || leerCambio(e.cambio) === null)) errores.push("La factura original en moneda extranjera no tiene un tipo de cambio válido.");
   if (e.observacion.length > OBSERVACION_MAXIMA) errores.push(`La observación supera ${OBSERVACION_MAXIMA} caracteres.`);
   if (sinControl.test(e.observacion)) errores.push("La observación contiene caracteres no permitidos.");
-  if (e.lineas.length === 0) errores.push("Seleccione al menos una línea de la factura.");
+  if (e.lineas.length === 0 && !e.servicio) errores.push("Seleccione al menos una línea de la factura o agregue el servicio DESCUENTO.");
   if (e.lineas.length > MAX_LINEAS_NCE) errores.push(`Una nota de crédito admite hasta ${MAX_LINEAS_NCE} ítems.`);
   if (errores.length > 0 || !esMotivoNce(e.motivo)) return errores;
 
   const items = calcular(e, errores);
 
-  if (errores.length > 0 || items.length !== e.lineas.length) return errores;
+  if (errores.length > 0 || items.length !== (e.servicio ? 1 : e.lineas.length)) return errores;
 
   const calculados = items.map((i) => ({ entrada: { cantidad: i.cantidad, precioUnitario: i.precio, afectacion: i.original.afectacion, tasa: i.original.tasa, proporcion: parseDec(i.original.proporcion, 8) ?? B(0) }, resultado: i }));
   const sub = calcularSubtotales(calculados);
   const suma = items.reduce((a, i) => a + i.totOperacion, B(0));
 
   if (sub.dTotGralOpe <= B(0)) errores.push("El total de la nota de crédito debe ser mayor que cero.");
+  if (e.saldoCredito !== undefined) {
+    const saldoGlobal = parseDec(e.saldoCredito, 8) ?? B(0);
+
+    if (suma > saldoGlobal) errores.push(`El crédito de la nota (${textoDec(suma)}) supera el saldo disponible de la factura original (${textoDec(saldoGlobal)}).`);
+  }
   if (sub.dTotGralOpe >= TOTAL_MAXIMO_NCE) errores.push("El total de la nota de crédito supera el máximo admitido.");
   // NCE-DB-01/02: el total principal se guarda en documentos_electronicos.total numeric(20,4) y debe coincidir EXACTAMENTE con las líneas y el JSON: nunca se redondea ni se trunca en silencio.
   if (sub.dTotGralOpe % TOTAL_ESCALA_4 !== B(0)) errores.push("El total de la nota de crédito no se puede representar con hasta 4 decimales: ajuste la cantidad o el monto.");
@@ -294,8 +328,9 @@ export function construirPayloadNCE(e: EntradaNce, receptor: Record<string, unkn
 }
 
 /** Líneas para fe_documento_crear_nce: ordinal, cantidad (solo devolución; 0 en los demás) y monto con IVA incluido, como texto Decimal exacto. */
-export function lineasParaSql(e: EntradaNce): Array<{ linea: number; cantidad: string; monto: string }> {
+export function lineasParaSql(e: EntradaNce): Array<{ linea?: number; servicio?: true; cantidad: string; monto: string }> {
   const r = calcularNce(e);
 
-  return r.items.map((i) => ({ linea: i.linea, cantidad: e.motivo === 2 ? textoDec(i.cantidad) : "0", monto: i.montoTexto }));
+  // El servicio DESCUENTO no tiene ordinal en la FE: viaja como {servicio: true} (NEX-070).
+  return r.items.map((i) => (i.servicio ? { servicio: true as const, cantidad: "0", monto: i.montoTexto } : { linea: i.linea, cantidad: e.motivo === 2 ? textoDec(i.cantidad) : "0", monto: i.montoTexto }));
 }

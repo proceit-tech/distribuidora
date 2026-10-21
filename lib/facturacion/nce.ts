@@ -1,6 +1,6 @@
 import type { Pool } from "pg";
 
-import { B, parseDec, textoDec } from "@/lib/facturacion/calculo";
+import { B, parseDec, textoDec, type Dec } from "@/lib/facturacion/calculo";
 import { normalizarCantidadTexto } from "@/lib/formato/cantidad-campo";
 import { leerCambio } from "@/lib/facturacion/monedas";
 import { CAMPOS_RECEPTOR, construirPayloadNCE, esMotivoNce, lineasOriginalesDe, lineasParaSql, MAX_LINEAS_NCE, MOTIVOS_NCE, saldoDe, validarEntradaNce, calcularNce, type EntradaNce, type LineaOriginal, type MotivoNce } from "@/lib/facturacion/payload-nce";
@@ -44,6 +44,8 @@ export type CuerpoNce = {
   observacion: string;
   claveIdempotencia: string;
   lineas: Array<{ linea: number; cantidad?: string; monto?: string }>;
+  /** E07: servicio fijo DESCUENTO (motivos 3/4). Si viene, la nota no lleva líneas de la factura. */
+  servicio?: { monto: string };
 };
 
 /** Tope conservador (bytes del JSON) frente al CHECK de 262144 bytes de la solicitud persistida (NEX-048). */
@@ -55,12 +57,25 @@ export function leerCuerpoNce(c: Record<string, unknown>): CuerpoNce | string {
   if (typeof c.sucursalId !== "string" || !UUID.test(c.sucursalId) || typeof c.puntoId !== "string" || !UUID.test(c.puntoId)) return "Seleccione la sucursal y el punto de expedición.";
   if (typeof c.claveIdempotencia !== "string" || c.claveIdempotencia.length < 8 || c.claveIdempotencia.length > 120) return "La clave de la operación no es válida; recargue el formulario.";
   if (c.observacion !== undefined && c.observacion !== null && typeof c.observacion !== "string") return "La observación no es válida.";
-  if (!Array.isArray(c.lineas) || c.lineas.length === 0) return "Seleccione al menos una línea de la factura.";
-  if (c.lineas.length > MAX_LINEAS_NCE) return `Una nota de crédito admite hasta ${MAX_LINEAS_NCE} líneas.`;
+  let servicio: CuerpoNce["servicio"];
+
+  if (c.servicio !== undefined && c.servicio !== null) {
+    const sv = c.servicio as Record<string, unknown>;
+
+    if (typeof sv !== "object" || Array.isArray(sv) || typeof sv.monto !== "string" || sv.monto.trim() === "" || sv.monto.length > 40) return "El monto del servicio DESCUENTO no es válido.";
+    if (c.motivo !== 3 && c.motivo !== 4) return "El servicio DESCUENTO solo se admite en los motivos Descuento y Bonificación.";
+    if (Array.isArray(c.lineas) && c.lineas.length > 0) return "Con el servicio DESCUENTO la nota no puede incluir líneas de la factura: retírelas antes de emitir.";
+    servicio = { monto: normalizarCantidadTexto(sv.monto) };
+  }
+  if (servicio === undefined && (!Array.isArray(c.lineas) || c.lineas.length === 0)) return "Seleccione al menos una línea de la factura.";
+  if (servicio !== undefined && c.lineas !== undefined && !Array.isArray(c.lineas)) return "Las líneas de la nota no son válidas.";
+  const entradaLineas = Array.isArray(c.lineas) ? c.lineas : [];
+
+  if (entradaLineas.length > MAX_LINEAS_NCE) return `Una nota de crédito admite hasta ${MAX_LINEAS_NCE} líneas.`;
 
   const lineas: CuerpoNce["lineas"] = [];
 
-  for (const x of c.lineas as unknown[]) {
+  for (const x of entradaLineas as unknown[]) {
     const l = x as Record<string, unknown> | null;
 
     if (!l || typeof l !== "object" || !Number.isInteger(l.linea) || (l.linea as number) < 1 || (l.linea as number) > MAX_LINEAS_NCE) return "Una línea de la nota de crédito no es válida.";
@@ -71,7 +86,7 @@ export function leerCuerpoNce(c: Record<string, unknown>): CuerpoNce | string {
     lineas.push({ linea: l.linea as number, ...(typeof l.cantidad === "string" ? { cantidad: normalizarCantidadTexto(l.cantidad) } : {}), ...(typeof l.monto === "string" ? { monto: l.monto.trim() } : {}) });
   }
 
-  return { facturaId: c.facturaId, motivo: c.motivo as number, sucursalId: c.sucursalId, puntoId: c.puntoId, observacion: typeof c.observacion === "string" ? c.observacion : "", claveIdempotencia: c.claveIdempotencia, lineas };
+  return { facturaId: c.facturaId, motivo: c.motivo as number, sucursalId: c.sucursalId, puntoId: c.puntoId, observacion: typeof c.observacion === "string" ? c.observacion : "", claveIdempotencia: c.claveIdempotencia, lineas, ...(servicio ? { servicio } : {}) };
 }
 
 // ── Lectura de la factura original ────────────────────────────────────────────────────────────────────────────
@@ -120,6 +135,10 @@ export type FacturaOriginal = {
   bloqueada: boolean;
   /** Motivos que la pantalla puede ofrecer (el fijado, o los cuatro). */
   motivosPermitidos: number[];
+  /** E07: saldo global de crédito (Σ totales de línea − NCE aprobadas por líneas y por DESCUENTO). */
+  saldoCredito: string;
+  /** E07: el servicio DESCUENTO está disponible (NEX-070 aplicada). */
+  servicioDescuento: boolean;
 };
 
 /** Factura original lista para acreditar: aprobada, con CDC, en el alcance del usuario y con su payload persistido. Lanza ErrorFacturacion si no cumple. */
@@ -149,7 +168,7 @@ export async function leerFacturaOriginal(db: Db, empresaId: string, usuarioId: 
 
   if (moneda !== "PYG" && cambio === null) throw new ErrorFacturacion(409, "La factura original en moneda extranjera no tiene un tipo de cambio legible: no se emite la nota de crédito.");
 
-  const [acreditado, estado, unidades] = await Promise.all([
+  const [acreditado, estado, unidades, descuentos] = await Promise.all([
     db.query(
       `SELECT nl.linea, sum(nl.cantidad)::text AS cantidad, sum(nl.monto)::text AS monto
          FROM nce_lineas nl JOIN documentos_electronicos n ON n.empresa_id = nl.empresa_id AND n.id = nl.nce_id
@@ -158,6 +177,7 @@ export async function leerFacturaOriginal(db: Db, empresaId: string, usuarioId: 
     ),
     estadoNceDeFactura(db, empresaId, feId),
     db.query("SELECT codigo, representacion FROM unidades_medida_sifen WHERE codigo = ANY($1::int[])", [originales.map((o) => o.unidadSifen).filter((u): u is number => u !== null)]),
+    descuentosAcreditados(db, empresaId, feId),
   ]);
   const porLinea = new Map((acreditado.rows as F[]).map((a) => [Number(a.linea), { cantidad: s(a.cantidad), monto: s(a.monto) }]));
   const simbolos = new Map((unidades.rows as F[]).map((u) => [Number(u.codigo), s(u.representacion)]));
@@ -176,6 +196,7 @@ export async function leerFacturaOriginal(db: Db, empresaId: string, usuarioId: 
     };
   });
   const receptor = Object.fromEntries(CAMPOS_RECEPTOR.map((k) => [k, payload[k] ?? null]));
+  const credito = originales.reduce((a, o) => a + (parseDec(o.total, 8) ?? B(0)) - (parseDec(porLinea.get(o.linea)?.monto ?? "0", 8) ?? B(0)), B(0)) - descuentos.monto;
 
   return {
     id: s(f.id),
@@ -195,7 +216,24 @@ export async function leerFacturaOriginal(db: Db, empresaId: string, usuarioId: 
     motivoFijado: estado.motivoFijado,
     bloqueada: estado.bloqueada,
     motivosPermitidos: estado.motivoFijado !== null ? [estado.motivoFijado] : [2, 3, 4, 8],
+    saldoCredito: textoDec(credito > B(0) ? credito : B(0)),
+    servicioDescuento: descuentos.disponible,
   };
+}
+
+/** Σ de los servicios DESCUENTO de NCE APROBADAS de la FE. Sin la tabla (NEX-070 sin aplicar) no hay descuentos y el servicio no está disponible. */
+async function descuentosAcreditados(db: Db, empresaId: string, feId: string): Promise<{ monto: Dec; disponible: boolean }> {
+  const hay = (await db.query("SELECT to_regclass('public.nce_descuentos') IS NOT NULL AS ok")).rows[0] as F | undefined;
+
+  if (hay?.ok !== true) return { monto: B(0), disponible: false };
+
+  const r = await db.query(
+    `SELECT coalesce(sum(nd.monto), 0)::text AS monto FROM nce_descuentos nd JOIN documentos_electronicos n ON n.empresa_id = nd.empresa_id AND n.id = nd.nce_id
+      WHERE nd.empresa_id = $1 AND nd.fe_id = $2 AND n.estado_sifen = 'APROBADO'`,
+    [empresaId, feId],
+  );
+
+  return { monto: parseDec(s((r.rows[0] as F | undefined)?.monto ?? "0"), 8) ?? B(0), disponible: true };
 }
 
 // ── Catálogos de la pantalla ────────────────────────────────────────────────────────────────────────────────────────
@@ -291,7 +329,7 @@ export type PreparacionNce = {
   fe: FacturaOriginal;
   entrada: EntradaNce;
   payload: Record<string, unknown>;
-  lineasSql: Array<{ linea: number; cantidad: string; monto: string }>;
+  lineasSql: Array<{ linea?: number; servicio?: true; cantidad: string; monto: string }>;
   totalTexto: string;
   resumen: {
     factura: { numero: string; cdc: string; fechaEmision: string };
@@ -335,6 +373,8 @@ export async function prepararNce(db: Db, empresaId: string, usuarioId: string, 
   if (pf.tipoActivo !== true) throw new ErrorFacturacion(422, "El tipo «Nota de crédito» no está activo en este punto de expedición: actívelo en Puntos de expedición antes de emitir.");
 
   const porLinea = new Map(fe.lineas.map((l) => [l.linea, l]));
+  if (cuerpo.servicio && !fe.servicioDescuento) throw new ErrorFacturacion(409, "El servicio DESCUENTO no está disponible: falta aplicar la migración NEX-070.");
+
   const desconocidas = cuerpo.lineas.filter((l) => !porLinea.has(l.linea));
 
   if (desconocidas.length > 0) throw new ErrorFacturacion(422, "Una línea seleccionada no pertenece a la factura original.");
@@ -344,6 +384,8 @@ export async function prepararNce(db: Db, empresaId: string, usuarioId: string, 
     moneda: fe.moneda,
     cambio: fe.cambio,
     observacion: cuerpo.observacion,
+    saldoCredito: fe.saldoCredito,
+    ...(cuerpo.servicio ? { servicio: cuerpo.servicio } : {}),
     lineas: cuerpo.lineas.map((l) => {
       const d = porLinea.get(l.linea) as LineaDetalle;
 
@@ -375,7 +417,7 @@ export async function prepararNce(db: Db, empresaId: string, usuarioId: string, 
       cambio: fe.cambio,
       observacion: cuerpo.observacion.trim(),
       lineas: calculo.items.map((i) => ({
-        linea: i.linea, codigo: i.original.codigoInterno, descripcion: i.original.descripcion, unidad: (porLinea.get(i.linea) as LineaDetalle).unidad, cantidad: textoDec(i.cantidad), precioUnitario: textoDec(i.precio), monto: i.montoTexto,
+        linea: i.linea, codigo: i.original.codigoInterno, descripcion: i.original.descripcion, unidad: i.servicio ? "UNI" : (porLinea.get(i.linea) as LineaDetalle).unidad, cantidad: textoDec(i.cantidad), precioUnitario: textoDec(i.precio), monto: i.montoTexto,
         afectacion: i.original.afectacion, tasa: i.original.tasa, proporcion: i.original.proporcion,
       })),
       totales: calculo.totales,
@@ -433,10 +475,22 @@ export async function propuestaCorreccion(db: Db, empresaId: string, usuarioId: 
       observacion: n.observacion === null ? "" : s(n.observacion),
       numeroRechazado: numeroDocumento({ establecimiento: s(n.establecimiento), puntoExpedicion: s(n.puntoExpedicion), numero: s(n.numero), serie: n.serie === null || n.serie === undefined ? null : s(n.serie) }),
       lineas: (lineas.rows as F[]).map((l) => ({ linea: Number(l.linea), cantidad: textoDec(parseDec(s(l.cantidad), 8) ?? B(0)), monto: textoDec(parseDec(s(l.monto), 8) ?? B(0)) })),
+      servicio: await servicioDeNce(db, empresaId, nceId),
     };
   } catch (error) {
     return traducirErrorNce(error);
   }
+}
+
+/** Monto del servicio DESCUENTO de una NCE (para precargar su corrección); null si no lo tiene o NEX-070 no está aplicada. */
+async function servicioDeNce(db: Db, empresaId: string, nceId: string): Promise<{ monto: string } | null> {
+  const hay = (await db.query("SELECT to_regclass('public.nce_descuentos') IS NOT NULL AS ok")).rows[0] as F;
+
+  if (hay.ok !== true) return null;
+
+  const r = (await db.query("SELECT monto::text AS monto FROM nce_descuentos WHERE empresa_id = $1 AND nce_id = $2", [empresaId, nceId])).rows[0] as F | undefined;
+
+  return r ? { monto: textoDec(parseDec(s(r.monto), 8) ?? B(0)) } : null;
 }
 
 export { esMotivoNce, MOTIVOS_NCE };
