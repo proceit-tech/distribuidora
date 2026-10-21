@@ -1,4 +1,6 @@
 # Decisões CASA MINGO — Nota de Crédito / item DESCUENTO / KuDE NCE
+
+> **ACTUALIZACIÓN VINCULANTE 21/10/2026:** KuDE de FE/NCE no requiere estado `APROBADA` ni CDC previamente registrado para solicitarse. Si el gateway retorna un PDF válido correspondiente al documento, debe mostrarse sin bloquear por el estado local. **Cancelación FE/NCE y reversión automática de stock están suspendidas y fuera de este alcance porque falta la API**. Esta actualización sustituye cualquier criterio antiguo de elegibilidad y cualquier instrucción de ejecutar E10.
 **Data:** 20/10/2026. **Origem:** confirmação expressa do responsável após mensagens e áudio de José Franco. **Estado:** escopo aprovado; implementação NÃO realizada. Desenvolvimento por Claude, auditoria ChatGPT, VM/homologação pelo responsável.
 
 ## 1. FORA DE ESCOPO — proibição de tarefas nesta rodada
@@ -26,7 +28,7 @@
   3. `lib/facturacion/gateway.ts`: body de `POST /api/kude` envia `tipoDoc: "FE"` fixo.
   4. `app/(private)/documentos/page.tsx`: título `KuDE · Factura`, arquivo `KuDE-FE`, rótulos e mensagem de indisponibilidade codificados para FE.
   5. **ERRO ENCONTRADO:** o código atual exige `tipOpe` no gateway e o extrai de `iTiOpe`. **O contrato corrigido pelo responsável não inclui `tipOpe` nem para FE nem para NCE**. Remover essa dependência da solicitação do KuDE, sem alterar o payload de emissão fiscal.
-- Escopo funcional: no listado `Documentos electrónicos`, oferecer o mesmo botão/visor de KuDE para documentos **NCE APROBADA com CDC próprio válido**, exclusivamente dentro de empresa/sucursal/permissões da sessão. Usar **identidade fiscal da NCE**, nunca número/CDC da FE associada. Retornar `KuDE-NCE-EEE-PPP-NNNNNNN[-SERIE].pdf`; título `KuDE · Nota de crédito`.
+- **Escopo funcional atualizado (decisão de 21/10):** em `Documentos electrónicos`, oferecer tentativa de KuDE para **FE e NCE em qualquer estado local (inclusive PENDIENTE ou RECHAZADA)**, sem exigir `APROBADA` ou CDC local para abrir/consultar. Se a API devolver **PDF válido pertencente ao documento solicitado**, exibir/baixar/imprimir; se não devolver, mostrar erro claro. Continuar exigindo empresa/sucursal/permissões da sessão e identidade fiscal própria da NCE (nunca a da FE associada). Arquivo `KuDE-NCE-EEE-PPP-NNNNNNN[-SERIE].pdf`; título `KuDE · Nota de crédito`.
 - **Contrato de requisição CONFIRMADO diretamente pelo responsável (20/10/2026):** `POST /api/kude` usa os MESMOS cinco campos para FE e NCE: `dEst`, `dPunExp`, `dNumDoc`, `dSerieNum`, `tipoDoc`. **Não enviar `tipOpe`**. O único campo que muda por tipo é `tipoDoc`, com `"FE"` ou `"NCE"`. Os números devem vir do documento persistido, mantendo zeros à esquerda. Não inventar parâmetros extras.
 
 ```json
@@ -50,13 +52,13 @@
 ```
 
 - A resposta de sucesso segue o contrato já implementado para FE (`status:"success"`, `CDC` próprio do documento e `kude` Base64). Confirmar operacionalmente o KuDE NCE no gateway antes de declarar homologação; sem PDF falso.
-- Reutilizar os limites, checagem de `CDC` retornado igual ao CDC próprio da NCE, decodificação Base64 segura, PDF íntegro, token/credenciais da empresa, uma renovação 401, no-store, solicitação nova ao abrir e baixar, isolamento de sessão e ausência de persistência de KuDE.
+- Reutilizar limites, decodificação Base64 segura, integridade PDF, tokens/credenciais da empresa, renovação 401, no-store, requisição nova ao abrir/baixar, isolamento e ausência de persistência de KuDE. **Quando houver CDC persistido, rejeitar CDC incompatível retornado pela API; ausência de CDC persistido não bloqueia a tentativa de KuDE.** Validar que o PDF pertence aos identificadores fiscais FE/NCE consultados; nunca aceitar PDF de outra empresa/documento.
 - NÃO mudar comportamento da FE, layout, colunas, logo, série, gateways configurados, numeração, banco, estoque nem SIFEN. O cliente verá o KuDE tal como o gateway de teste gerar.
 
 ## 4. ACEITE
-1. FE APROBADA + CDC: KuDE e comportamento funcional existentes **preservados**, enviando apenas os cinco campos do contrato corrigido (`tipoDoc:"FE"`, sem `tipOpe`).
-2. NCE APROBADA + CDC: botão KuDE disponível e visor com PDF da própria NCE; impressão/download, nome `KuDE-NCE`; nenhuma troca de documento na UI.
-3. NCE PENDIENTE/RECHAZADA/sem CDC, outra empresa/sucursal ou sem permissão: não oferecer ou negar seguro, sem chamada insegura ao gateway.
+1. **FE em qualquer estado fiscal** (APROBADA, PENDIENTE, RECHAZADA etc.) e com identificadores necessários: permitir tentar KuDE e, **se a API retornar PDF válido do documento**, exibir/baixar/imprimir; body de cinco campos (`tipoDoc:"FE"`, sem `tipOpe`). Não exigir CDC local para tentar.
+2. **NCE em qualquer estado fiscal** e com identificadores necessários: permitir tentar KuDE; se a API retornar PDF válido da própria NCE, visor/impressão/download com nome `KuDE-NCE`. Não condicionar ao estado APROBADA nem à existência prévia de CDC.
+3. **PENDIENTE/RECHAZADA/sem CDC local não são motivos de veto**, seja FE ou NCE. **Outra empresa/sucursal, falta de permissão, identidade fiscal inexistente para formar os cinco campos, resposta inválida ou PDF/CDC incompatível: negar de forma segura**, com mensagem de erro. Não criar PDF fictício.
 4. Mock do gateway valida **exatamente os cinco campos** (sem `tipOpe`), `tipoDoc` FE/NCE, autenticação, CDC próprio, Base64/PDF, erro, timeout e isolamento. **Homologação real somente pelo responsável**, se gateway oferecer KuDE NCE.
 5. DESCUENTO: somente uma linha de serviço, valor livre positivo, quantidade 1, IVA 10% fixo, sem estoque, sem exceder saldo; não alterar a FE original. Atenção: taxa fixa ainda requer validação fiscal em casos de FE com IVA 5%/exento/misto.
 6. Não abrir PR/issue para alterar identidade do ambiente de testes, logotipo nem layout de KuDE FE.
@@ -105,7 +107,9 @@
 - Fuente oficial MT: https://ekuatia.set.gov.py/documents/20123/420592/Manual%2BT%C3%A9cnico%2BVersi%C3%B3n%2B150.pdf/e706f7c7-6d93-21d4-b45b-5d22d07b2d22
 - Nota Técnica 1: https://www.dnit.gov.py/documents/20123/420595/NT_E_KUATIA_001_MT_V150.pdf/c4d2ab8e-632b-dc8f-d3f6-6a144a3a3d9c
 
-### E. Cancelación de documentos (NO es edición de factura)
+### E. Cancelación de documentos — HISTÓRICO / SUSPENSO, SEM DESENVOLVIMENTO NESTA RODADA
+
+> **Decisão posterior de 21/10/2026:** evento de cancelamento FE/NCE e estorno automático do estoque após cancelamento estão **FORA do escopo atual porque falta a API real do gateway**. As regras abaixo ficam guardadas exclusivamente para futura consulta e **não autorizam Claude a desenvolver endpoints, migrations, eventos ou automações de cancelamento**. Só reabrir após chegada da API e nova autorização do responsável.
 
 - Evento SIFEN `CANCELACION` para un DE aprobado:
   - **FE:** hasta **48 horas** desde aprobación SIFEN.
@@ -125,7 +129,7 @@
 
 1. FE: **RESUELTO** — asignación automática entre depósitos disponibles/autorizados con desglose visible y salidas por cada origen; implementación pendiente.
 2. NCE DESCUENTO: **resuelto** IVA 10% fijo, un ítem, no ratear ni combinar con originales; **pendiente** homologación fiscal para FE 5%/exenta/mixta.
-3. Evento de cancelación: **decisión de stock cerrada** — revertir automáticamente por los depósitos de origen tras confirmación SIFEN. **Pendiente técnico**: disponibilidad/contrato de API de cancelación, persistencia de estados, reconciliación y pruebas de idempotencia.
+3. Evento de cancelación y reversión automática de inventario: **SUSPENDIDOS/FUERA DE LA ENTREGA ACTUAL por falta de API**. Conservar la decisión histórica, pero **no desarrollar ni incluir en aceptación de esta ronda**.
 4. **Dirección de entrega RESUELTA** por el responsable: elegir exclusivamente entre direcciones ya registradas del propio cliente; ver Sección 7. Siguen pendientes foco automático en cantidad, códigos con ceros iniciales, descuentos UI, visualización PYG, seleccionar/eliminar en NCE, KuDE NCE de cinco campos sin `tipOpe` y texto `Establecimiento 001`. Layout/logo/identidad de KuDE TEST siguen fuera del alcance.
 
 ### Pruebas mínimas obligatorias (ninguna ejecutada en esta decisión)
@@ -135,8 +139,8 @@
 - Cantidad `5,5` en UI, FE, Kardex y stock; cantidades sin redondeo; 0, diferencia mínima `0,0001`, inventario fraccionario.
 - NCE 2/3/4: devolución parcial fraccionaria sin entrada de stock; en 3/4, DESCUENTO único (cantidad 1, IVA 10%), sin líneas originales, sin reparto, con CDC/saldo correcto; probar FE original 5/10/exenta/mixta y aceptación fiscal en el gateway real.
 - FE con descuentos de línea/global en % y Gs., IVA 5/10/exento y sumatorias F/EA exactas.
-- FE cancelación <=48h; NCE <=168h; fuera del plazo/cross-tenant/permisos => bloqueo, sin falsa aceptación.
-- FE con baja multi-depósito 3 de A y 3 de B: evento cancelación confirmado => entradas compensatorias 3 en A + 3 en B; repetición de evento/consulta/reproceso no duplica stock. Sin confirmación, timeout/rechazo => no revertir. Si evento confirmado pero falla stock local, reparación idempotente y alerta, nunca perder la confirmación fiscal.
+- **FUERA DEL PLAN DE PRUEBAS ACTUAL — cancelación FE/NCE:** reglas históricas 48h/168h; no probar ni desarrollar sin API real.
+- **FUERA DEL PLAN DE PRUEBAS ACTUAL — estorno por cancelación:** prueba histórica A3+B3 se difiere hasta disponer de API de cancelación y autorización expresa.
 
 
 ## 6. NUEVO GATEWAY DE PRUEBA — 20/10/2026
