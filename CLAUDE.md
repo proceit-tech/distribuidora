@@ -1,5 +1,8 @@
 # Claude — protocolo PROCEIT / Nexit
 
+> **Handoff vigente CASA MINGO (20/10/2026):** o responsável autorizou o pacote de ajustes FE/NCE/stock e KuDE NCE. Ler `documentacao/definicoes/HANDOFF-CLAUDE-NEXIT-CASA-MINGO-2026-10-20.md` e acompanhar [PRO-200](https://linear.app/proceit/issue/PRO-200). **Implementar apenas a entrega E01 agora e parar para auditoria do ChatGPT antes de iniciar E02.** Este ponteiro não altera a política permanente de tarefas únicas, testes mínimos, commit/push e proibição de acesso à VM.
+
+
 O contexto do projeto vive no GitHub, não na memória da conversa. Claude implementa; ChatGPT audita (AUD-RNN); a validação operacional de cada entrega no único ambiente real cabe ao responsável humano. Nunca marcar HOMOLOGADO, nunca editar arquivos AUD, nunca fazer merge em `main`.
 
 
