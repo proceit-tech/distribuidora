@@ -18,6 +18,7 @@ import { crearFlujoRevision, type Revision } from "@/lib/facturacion/revision-fa
 import { numeracionSiguiente, textoNumeracion } from "@/lib/facturacion/series";
 import { formatearDecimalTexto } from "@/lib/formato/decimal-texto";
 import { formatearFechaPy } from "@/lib/formato/listas";
+import { cantidadFacturaValida, normalizarCantidadTexto, sumarUnaUnidad } from "@/lib/formato/cantidad-campo";
 import { formatearMontoVisual } from "@/lib/formato/monto-visual";
 import { precioParaEdicion } from "@/lib/formato/precio-campo";
 import { useProtegerCambios } from "@/lib/ui/proteger-cambios";
@@ -69,7 +70,6 @@ const ETIQUETA_IVA: Record<number, string> = { 1: "Gravado", 2: "Exonerado", 3: 
 const ETIQUETA_CONTRIBUYENTE: Record<number, string> = { 1: "Persona física", 2: "Persona jurídica" };
 // Importes como TEXTO decimal exacto (nunca Number): lo que se ve es lo que valida el servidor.
 const fd = (t: string | null | undefined) => formatearDecimalTexto(t);
-const CANTIDAD_OK = /^\d{1,10}(\.\d{1,4})?$/;
 const PRECIO_OK = /^\d{1,12}(\.\d{1,4})?$/;
 
 async function leer<T>(r: Response, porDefecto: string): Promise<T> {
@@ -80,7 +80,8 @@ async function leer<T>(r: Response, porDefecto: string): Promise<T> {
   return j;
 }
 
-const cantidadValida = (l: Linea) => CANTIDAD_OK.test(l.cantidad) && Number(l.cantidad) > 0 && (valoresEfectivos(l.producto, l.ajuste).unidadSifen !== 77 || /^\d+(\.0+)?$/.test(l.cantidad));
+// E01: la cantidad admite coma o punto y hasta 4 decimales para TODAS las unidades (también 77/UNI); el campo guarda lo escrito y se normaliza al validar/enviar.
+const cantidadValida = (l: Linea) => cantidadFacturaValida(l.cantidad);
 // Comparaciones de precio en Decimal EXACTO (nunca Number): una diferencia mínima o un valor enorme no se descartan en silencio.
 const precioValido = (l: Linea) => PRECIO_OK.test(l.precio) && (parseDec(l.precio, 4) ?? B(0)) > B(0);
 /** Precio de lista SOLO si está en la moneda de la factura: nunca se convierte un precio de otra moneda. */
@@ -91,7 +92,7 @@ const aLineaFE = (l: Linea, moneda: string): LineaFE => {
   const e = valoresEfectivos(l.producto, l.ajuste);
 
   return {
-    codigoInterno: l.producto.codigo, gtin: e.gtin, descripcion: e.descripcion, unidadSifen: e.unidadSifen, cantidad: l.cantidad,
+    codigoInterno: l.producto.codigo, gtin: e.gtin, descripcion: e.descripcion, unidadSifen: e.unidadSifen, cantidad: normalizarCantidadTexto(l.cantidad),
     precio: precioValido(l) ? l.precio : (referencia(l.producto, moneda) ?? "0"), afectacion: e.afectacion, tasa: e.tasa, proporcion: e.proporcion,
   };
 };
@@ -468,6 +469,8 @@ export default function NuevaFacturaPage() {
   const [siguienteClave, setSiguienteClave] = useState(1);
   const [clave, setClave] = useState(() => crypto.randomUUID());
   const [selector, setSelector] = useState<"cliente" | "producto" | null>(null);
+  // E01: tras agregar un producto, el foco va a su campo Cantidad (al cerrar el selector, que permite agregar varios).
+  const lineaAFocar = useRef<number | null>(null);
   const [hoy, setHoy] = useState("");
   const [revisando, setRevisando] = useState(false);
   const [errores, setErrores] = useState<string[]>([]);
@@ -594,12 +597,25 @@ export default function NuevaFacturaPage() {
   const puedeGuardar = !revisando && !enviando && faltan.length === 0 && cliente !== null && cliente.apto && calculo.completo;
   const hayPrecioModificado = lineas.some((l) => precioModificado(l, moneda));
 
+  useEffect(() => {
+    if (lineaAFocar.current === null || selector !== null) return;
+
+    const campo = document.getElementById(`cantidad-${lineaAFocar.current}`) as HTMLInputElement | null;
+
+    if (campo) {
+      campo.focus();
+      campo.select();
+      lineaAFocar.current = null;
+    }
+  }, [selector, lineas]);
+
   function agregar(p: Producto) {
     // El mismo producto no se duplica: suma una unidad a su línea.
     const existente = lineas.find((l) => l.producto.id === p.id);
 
     if (existente) {
-      setLineas((ls) => ls.map((l) => (l.clave === existente.clave ? { ...l, cantidad: String(Math.round((Number(l.cantidad || "0") + 1) * 10000) / 10000) } : l)));
+      setLineas((ls) => ls.map((l) => (l.clave === existente.clave ? { ...l, cantidad: sumarUnaUnidad(l.cantidad) ?? l.cantidad } : l)));
+      lineaAFocar.current = existente.clave;
 
       return;
     }
@@ -607,6 +623,7 @@ export default function NuevaFacturaPage() {
     setLineas((ls) => [...ls, { clave: siguienteClave, producto: p, cantidad: "1", precio: precioParaEdicion(referencia(p, moneda)), ajuste: AJUSTE_VACIO }]);
     // Un producto fiscalmente incompleto abre su panel contextual (solo con el permiso de ajuste fiscal) para completarlo sin salir de la factura.
     if (puedeAjustarFiscal && problemasFiscales(p, AJUSTE_VACIO, "1", moneda).filter((m) => !m.startsWith("sin precio")).length > 0) setEditando(siguienteClave);
+    lineaAFocar.current = siguienteClave;
     setSiguienteClave((n) => n + 1);
   }
 
@@ -620,7 +637,7 @@ export default function NuevaFacturaPage() {
     lineas: lineas.map((l) => {
       const ajuste = ajusteParaEnvio(l.producto, l.ajuste);
 
-      return { productoId: l.producto.id, cantidad: l.cantidad, ...(precioModificado(l, moneda) ? { precio: l.precio } : {}), ...(ajuste ? { ajuste } : {}) };
+      return { productoId: l.producto.id, cantidad: normalizarCantidadTexto(l.cantidad), ...(precioModificado(l, moneda) ? { precio: l.precio } : {}), ...(ajuste ? { ajuste } : {}) };
     }),
   });
 
@@ -1033,13 +1050,14 @@ export default function NuevaFacturaPage() {
                             <td className={estilos.num} data-label="Cantidad">
                               <input
                                 className={`${estilos.qty} ${cantOk ? "" : estilos.invalid}`}
+                                id={`cantidad-${l.clave}`}
                                 inputMode="decimal"
                                 aria-label={`Cantidad de ${l.producto.descripcion}`}
                                 aria-invalid={cantOk ? undefined : true}
                                 value={l.cantidad}
-                                onChange={(e) => editar(l.clave, { cantidad: e.target.value.replace(",", ".") })}
+                                onChange={(e) => editar(l.clave, { cantidad: e.target.value })}
                               />
-                              {!cantOk ? <small className={estilos.fieldError}>{e.unidadSifen === 77 ? "Entero mayor que 0" : "Mayor que 0, hasta 4 decimales"}</small> : null}
+                              {!cantOk ? <small className={estilos.fieldError}>Mayor que 0, hasta 4 decimales (coma o punto)</small> : null}
                             </td>
                             <td className={estilos.num} data-label="Precio">
                               {puedeEditarPrecio ? (

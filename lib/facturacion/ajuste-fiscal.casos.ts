@@ -135,12 +135,44 @@ export async function verificarCasosAjusteFiscal(): Promise<string[]> {
     (await resultado(preparar({ producto: incompleto, permisos: [PERMISO_AJUSTE, PERMISO_PRECIO], unidades: UNIDADES }, [linea({ precio: "5000", ajuste: { unidadSifen: 55, afectacion: 1, tasa: 10 } })]).p)).includes("no existe en el catálogo"),
     (await resultado(preparar({ producto: incompleto, permisos: [PERMISO_AJUSTE, PERMISO_PRECIO], unidades: UNIDADES }, [linea({ precio: "5000", ajuste: { unidadSifen: 99, afectacion: 1, tasa: 10 } })]).p)).includes("no está vigente"),
   ], [true, true]);
-  igual("servidor: la validación fiscal sigue mandando — exento con tasa 10, gravado parcial sin proporción válida, GTIN con dígitos inválidos en el cadastro, y 77 (unidad) con cantidad fraccionaria se rechazan", [
+  igual("servidor: la validación fiscal sigue mandando — exento con tasa 10, gravado parcial sin proporción válida, GTIN con dígitos inválidos en el cadastro, y (E01) 77 (unidad) con cantidad fraccionaria YA NO se rechaza", [
     (await resultado(preparar({ permisos: [PERMISO_AJUSTE] }, [linea({ ajuste: { afectacion: 3, tasa: 10 } })]).p)).includes("tasa de IVA"),
     (await resultado(preparar({ permisos: [PERMISO_AJUSTE] }, [linea({ ajuste: { afectacion: 4, tasa: 10, proporcion: "100" } })]).p)).includes("proporción gravada"),
-    (await resultado(preparar({ permisos: [PERMISO_AJUSTE] }, [linea({ cantidad: "1.5" })]).p)).includes("cantidad debe ser un número entero"),
+    (await resultado(preparar({ permisos: [PERMISO_AJUSTE] }, [linea({ cantidad: "1.5" })]).p)) === "OK",
     (await resultado(preparar({ permisos: [PERMISO_AJUSTE], unidades: UNIDADES }, [linea({ cantidad: "1.5", ajuste: { unidadSifen: 83 } })]).p)),
   ], [true, true, true, "OK"]);
+
+  // ── E01: cantidades fraccionarias en la Factura (unidad SIFEN 77/UNI incluida), con coma o punto; el payload fiscal usa la cantidad exacta ─────────────────
+  {
+    const payloadDe = async (cantidad: string) => {
+      const m = baseSimulada({ permisos: [PERMISO_AJUSTE] });
+      const c = leerCuerpoFactura(cuerpoBase([linea({ cantidad })]));
+
+      if (typeof c === "string") return { error: c };
+
+      let r: Awaited<ReturnType<typeof prepararFactura>>;
+
+      try {
+        r = await prepararFactura(m.db, EMPRESA, USUARIO, c);
+      } catch (e) {
+        return { error: e instanceof Error ? e.message : "error" };
+      }
+
+      const p = r.payload as unknown as { Detalles: Array<Record<string, unknown>>; Subtotales: Array<Record<string, unknown>> };
+
+      return { cant: p.Detalles[0].dCantProSer, total: p.Subtotales[0].dTotGralOpe, iva10: p.Subtotales[0].dIVA10, resumenCantidad: r.resumen.lineas[0].cantidad, escrituras: m.escrituras().length };
+    };
+    const a = await payloadDe("5,5");
+    const b = await payloadDe("5.5");
+    const c = await payloadDe("0,0001");
+    const d = await payloadDe("2,25");
+
+    igual("E01 servidor: 5,5 (coma) y 5.5 (punto) con unidad 77 dan el MISMO payload exacto: dCantProSer 5.5 y total 60500 (5,5 × 11000), sin escrituras en la previa", [JSON.stringify(a) === JSON.stringify(b), a.cant, a.total, a.resumenCantidad, a.escrituras], [true, 5.5, 60500, "5.5", 0]);
+    igual("E01 servidor: 2,25 × 11000 = 24750 exacto y 0,0001 viaja como dCantProSer 0.0001 (mínimo de 4 decimales) con el total que calcula el motor fiscal, sin redondear la cantidad", [d.cant, d.total, "error" in c ? "error" : c.cant], [2.25, 24750, 0.0001]);
+    igual("E01 servidor: cantidades inválidas se rechazan (vacía, cero, 5 decimales, 11 enteros, mezcla coma/punto, texto)", [
+      (await payloadDe("")), (await payloadDe("0")), (await payloadDe("0,0000")), (await payloadDe("1,23456")), (await payloadDe("12345678901")), (await payloadDe("1.234,5")), (await payloadDe("abc")),
+    ].map((x) => "error" in x || typeof (x as { total?: unknown }).total !== "number"), [true, true, true, true, true, true, true]);
+  }
   const sinAjuste = preparar({ producto: incompleto }, [linea()]);
 
   igual("servidor: producto incompleto sin ajuste → 422 «unidad de medida con equivalencia SIFEN» y sin consultar permisos de ajuste", [(await resultado(sinAjuste.p)).slice(0, 4), sinAjuste.b.llamadas.some((l) => /usuario_tiene_permiso/.test(l.sql))], ["422:", false]);

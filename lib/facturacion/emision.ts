@@ -9,6 +9,7 @@ import { leerMonedaYCambio, leerCambio, precioEnMoneda, precioSerializable, tota
 import { DENOMINACIONES_TARJETA, FORMAS_PAGO, FORMAS_PROCESAMIENTO, leerPagos, resolverMontos, type PagoEntrada } from "@/lib/facturacion/pagos";
 import { construirPayloadFE, CONDICIONES_OPERACION, INDICADORES_PRESENCIA, resumenCalculo, TIPOS_TRANSACCION, totalFactura, validarEntradaFE, type EntradaFE, type LineaFE, type ReceptorFE } from "@/lib/facturacion/payload-fe";
 import { ErrorFacturacion, ErrorValidacionFiscal } from "@/lib/facturacion/shared";
+import { normalizarCantidadTexto } from "@/lib/formato/cantidad-campo";
 
 /**
  * Preparación y registro de la Factura Electrónica (F-02). Todo lo fiscal sale de los cadastros de la empresa de la SESIÓN: el navegador solo envía
@@ -208,7 +209,7 @@ export function leerCuerpoFactura(c: Record<string, unknown>): CuerpoFactura | s
     lineas: lineas.map((l) => {
       const ajuste = leerAjuste((l as F).ajuste);
 
-      return { productoId: s((l as F).productoId), cantidad: s((l as F).cantidad).trim(), precio: s((l as F).precio).trim() === "" ? null : s((l as F).precio).trim(), ...(ajuste && typeof ajuste !== "string" ? { ajuste } : {}) };
+      return { productoId: s((l as F).productoId), cantidad: normalizarCantidadTexto(s((l as F).cantidad)), precio: s((l as F).precio).trim() === "" ? null : s((l as F).precio).trim(), ...(ajuste && typeof ajuste !== "string" ? { ajuste } : {}) };
     }),
   };
 }
@@ -410,8 +411,7 @@ export async function prepararFactura(db: Db, empresaId: string, usuarioId: stri
 
       if (!puedePrecio) throw new ErrorFacturacion(403, `No tiene permiso para modificar el precio del producto ${s(p.codigo)}. Se factura con el precio de lista.`);
     }
-    // Cantidad coherente con la unidad: la unidad SIFEN «Unidad» (77) no admite fracciones.
-    if (unidadSifen === 77 && !/^\d+$/.test(l.cantidad.replace(/\.0+$/, ""))) throw new ErrorFacturacion(422, `El producto ${s(p.codigo)} se vende por unidad: la cantidad debe ser un número entero.`);
+    // E01: todas las unidades (también SIFEN 77/UNI) admiten cantidades fraccionarias (hasta 4 decimales, validadas por el cálculo fiscal).
     precios.push({ referencia: referencia === null ? "" : s(p.precio), modificado });
     extras.push({ campos, unidadSimbolo });
 
