@@ -51,6 +51,8 @@ type Resumen = {
   lineas: Array<{ codigo: string; descripcion: string; unidad: string; cantidad: string; precio: string; precioLista: string; precioModificado: boolean; afectacion: number; tasa: number; proporcion?: string | null; total: number; totalTexto?: string; ajustes?: string[] }>;
   totales: { exento: number; exonerado: number; gravado5: number; gravado10: number; iva5: number; iva10: number; totalIva: number; total: number };
   totalesTexto?: { exento: string; exonerado: string; gravado5: string; gravado10: string; iva5: string; iva10: string; totalIva: string; total: string };
+  /** E02: reparto automático del stock por depósito (solo productos que controlan stock) y su huella, que se envía al emitir. */
+  stock?: { huella: string; lineas: Array<{ codigo: string; descripcion: string; requerido: string; salidas: Array<{ depositoCodigo: string; depositoNombre: string; loteCodigo: string | null; cantidad: string }> }> };
 };
 type FaseEnvio = { fase: string; ok: boolean; detalle: string; http?: number | null };
 type ResultadoEnvio = {
@@ -72,6 +74,8 @@ const ETIQUETA_IVA: Record<number, string> = { 1: "Gravado", 2: "Exonerado", 3: 
 const ETIQUETA_CONTRIBUYENTE: Record<number, string> = { 1: "Persona física", 2: "Persona jurídica" };
 // Importes como TEXTO decimal exacto (nunca Number): lo que se ve es lo que valida el servidor.
 const fd = (t: string | null | undefined) => formatearDecimalTexto(t);
+/** E02: huella del reparto de stock de una revisión (null si la factura no tiene productos con control de stock). */
+const repartoDe = (r: Resumen | null): string | null => r?.stock?.huella ?? null;
 const PRECIO_OK = /^\d{1,12}(\.\d{1,4})?$/;
 
 async function leer<T>(r: Response, porDefecto: string): Promise<T> {
@@ -489,8 +493,9 @@ export default function NuevaFacturaPage() {
       await fetch("/api/facturas/previa", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(cuerpo) }),
       "No fue posible revisar la factura.",
     )).resumen,
-    enviar: async (cuerpo) => leer<ResultadoEnvio>(
-      await fetch("/api/facturas", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(cuerpo) }),
+    // E02: junto con la factura revisada viaja la huella del reparto de stock de ESA revisión, para que la baja sea exactamente la que el operador vio.
+    enviar: async (cuerpo, revisado) => leer<ResultadoEnvio>(
+      await fetch("/api/facturas", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(repartoDe(revisado) ? { ...(cuerpo as Record<string, unknown>), repartoHuella: repartoDe(revisado) } : cuerpo) }),
       "No fue posible enviar la factura.",
     ),
     alRevisando: setRevisando,
@@ -1275,6 +1280,20 @@ export default function NuevaFacturaPage() {
                 </tbody>
               </table>
             </div>
+            {resumen.stock && resumen.stock.lineas.length > 0 ? (
+              <section className={estilos.stockSalida} aria-label="Salida de stock por depósito">
+                <h3>Salida de stock por depósito</h3>
+                <ul>
+                  {resumen.stock.lineas.map((l) => (
+                    <li key={l.codigo}>
+                      <strong>{l.descripcion}</strong> ({l.codigo}) · {fd(l.requerido)}:{" "}
+                      {l.salidas.map((s) => `${s.depositoCodigo} ${s.depositoNombre}${s.loteCodigo ? ` · lote ${s.loteCodigo}` : ""}: ${fd(s.cantidad)}`).join(" + ")}
+                    </li>
+                  ))}
+                </ul>
+                <small className={estilos.hint}>El stock se descuenta de estos depósitos al enviar la factura.</small>
+              </section>
+            ) : null}
             <dl className={estilos.totals}>
               <div><dt>Exento</dt><dd>{fmv(resumen.totalesTexto?.exento ?? String(resumen.totales.exento))}</dd></div>
               <div><dt>Exonerado</dt><dd>{fmv(resumen.totalesTexto?.exonerado ?? String(resumen.totales.exonerado))}</dd></div>

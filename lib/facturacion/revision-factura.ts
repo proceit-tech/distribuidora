@@ -4,7 +4,7 @@
  * (antes o después de la respuesta) invalida la revisión y obliga a revisar de nuevo. El envío toma SIEMPRE el cuerpo revisado fijado (nunca lo reconstruye desde el estado de la pantalla) y solo uno a la vez.
  */
 export type Revision<R> = { version: number; huella: string; cuerpo: unknown; resumen: R };
-export type TomaEnvio = { cuerpo: unknown; version: number } | "sin_revision" | "cambio" | "en_curso";
+export type TomaEnvio<R = unknown> = { cuerpo: unknown; version: number; resumen: R } | "sin_revision" | "cambio" | "en_curso";
 
 export function crearControlRevision<R>() {
   let version = 0;
@@ -51,14 +51,14 @@ export function crearControlRevision<R>() {
     /** Volver a editar / cancelar: no emite ni consume número; solo olvida la revisión. */
     cancelar() { pendiente = null; revisada = null; },
     /** «Enviar factura»: devuelve el cuerpo REVISADO (el mismo objeto fijado) o el motivo por el que no se puede enviar. Un envío en curso bloquea cualquier otro. */
-    tomarParaEnviar(huellaActual: string): TomaEnvio {
+    tomarParaEnviar(huellaActual: string): TomaEnvio<R> {
       if (enviando) return "en_curso";
       if (!revisada) return "sin_revision";
       if (revisada.huella !== huellaActual) { revisada = null; return "cambio"; }
 
       enviando = true;
 
-      return { cuerpo: revisada.cuerpo, version: revisada.version };
+      return { cuerpo: revisada.cuerpo, version: revisada.version, resumen: revisada.resumen };
     },
     terminarEnvio() { enviando = false; },
     enviando: () => enviando,
@@ -67,7 +67,8 @@ export function crearControlRevision<R>() {
 
 export type DepsFlujo<R, Res> = {
   previa: (cuerpo: unknown) => Promise<R>;
-  enviar: (cuerpo: unknown) => Promise<Res>;
+  /** Recibe el cuerpo REVISADO y el resumen de ESA revisión (p. ej. la huella del reparto de stock que el operador aprobó). */
+  enviar: (cuerpo: unknown, resumen: R) => Promise<Res>;
   alRevisando: (b: boolean) => void;
   alRevision: (r: Revision<R> | null) => void;
   alEnviando: (b: boolean) => void;
@@ -126,7 +127,7 @@ export function crearFlujoRevision<R, Res>(deps: DepsFlujo<R, Res>) {
 
       deps.alEnviando(true);
       try {
-        deps.alResultado(await deps.enviar(toma.cuerpo));
+        deps.alResultado(await deps.enviar(toma.cuerpo, toma.resumen));
         control.cancelar();
         deps.alRevision(null);
       } catch (e) {

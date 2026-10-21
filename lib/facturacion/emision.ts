@@ -9,6 +9,7 @@ import { leerMonedaYCambio, leerCambio, precioEnMoneda, precioSerializable, tota
 import { DENOMINACIONES_TARJETA, FORMAS_PAGO, FORMAS_PROCESAMIENTO, leerPagos, resolverMontos, type PagoEntrada } from "@/lib/facturacion/pagos";
 import { construirPayloadFE, CONDICIONES_OPERACION, INDICADORES_PRESENCIA, resumenCalculo, TIPOS_TRANSACCION, totalFactura, validarEntradaFE, type EntradaFE, type LineaFE, type ReceptorFE } from "@/lib/facturacion/payload-fe";
 import { ErrorFacturacion, ErrorValidacionFiscal } from "@/lib/facturacion/shared";
+import { asignacionesSql, mensajeStockInsuficiente, planificarStock, type LineaStock } from "@/lib/facturacion/stock-fe";
 import { normalizarCantidadTexto } from "@/lib/formato/cantidad-campo";
 
 /**
@@ -123,7 +124,7 @@ export async function buscarClientesFactura(db: Db, empresaId: string, texto: st
 }
 
 const SELECT_PRODUCTOS = `
-  SELECT p.id, p.codigo, p.descripcion_factura AS descripcion, um.unidad_sifen_codigo AS "unidadSifen", us.representacion AS "unidadSimbolo", us.descripcion AS "unidadNombre", us.vigente AS "unidadVigente", p.afectacion_iva AS afectacion,
+  SELECT p.id, p.codigo, p.controla_stock AS "controlaStock", p.descripcion_factura AS descripcion, um.unidad_sifen_codigo AS "unidadSifen", us.representacion AS "unidadSimbolo", us.descripcion AS "unidadNombre", us.vigente AS "unidadVigente", p.afectacion_iva AS afectacion,
          p.proporcion_gravada_iva::text AS proporcion, i.porcentaje::int AS tasa, pr.precio::text AS precio, pr.moneda AS "monedaPrecio",
          coalesce((SELECT pc.codigo FROM producto_codigos pc WHERE pc.empresa_id = p.empresa_id AND pc.producto_id = p.id AND pc.tipo = 'GTIN' AND pc.codigo ~ '^[0-9]{8,14}$'
                     ORDER BY pc.es_principal DESC, pc.creado_at LIMIT 1), CASE WHEN p.codigo_barras ~ '^[0-9]{8,14}$' THEN p.codigo_barras END) AS gtin
@@ -156,6 +157,8 @@ export type CuerpoFactura = {
   pagos: PagoEntrada[]; condicion?: number;
   /** D015 (PYG por omisión) y D018 (manual, guaraníes por 1 unidad; solo moneda extranjera). */
   moneda?: Moneda; cambio?: string; credito?: CreditoEntrada; infoAdicional: string; lineas: Array<{ productoId: string; cantidad: string; precio: string | null; ajuste?: AjusteFiscal }>;
+  /** E02: huella del reparto de stock que el operador REVISÓ (la devuelve la previa). Obligatoria al emitir si hay productos con control de stock; si el stock cambió, se exige revisar de nuevo. */
+  repartoHuella?: string;
 };
 
 const entero = (v: unknown) => (typeof v === "number" && Number.isInteger(v) ? v : typeof v === "string" && /^\d{1,3}$/.test(v) ? Number(v) : NaN);
@@ -206,6 +209,7 @@ export function leerCuerpoFactura(c: Record<string, unknown>): CuerpoFactura | s
     ...(monedaYCambio.moneda !== "PYG" ? { moneda: monedaYCambio.moneda, cambio: monedaYCambio.cambio as string } : {}),
     ...(credito ? { credito } : {}),
     infoAdicional: typeof c.infoAdicional === "string" ? c.infoAdicional.trim() : "",
+    ...(typeof c.repartoHuella === "string" && /^[0-9a-f]{64}$/.test(c.repartoHuella) ? { repartoHuella: c.repartoHuella } : {}),
     lineas: lineas.map((l) => {
       const ajuste = leerAjuste((l as F).ajuste);
 
@@ -329,6 +333,7 @@ export async function prepararFactura(db: Db, empresaId: string, usuarioId: stri
 
   const porId = new Map((productos.rows as F[]).map((p) => [s(p.id), p]));
   const lineas: LineaFE[] = [];
+  const lineasStock: LineaStock[] = [];
   const precios: Array<{ referencia: string; modificado: boolean }> = [];
   const extras: Array<{ campos: string[]; unidadSimbolo: string }> = [];
   const guardar: ClasificacionGuardar[] = [];
@@ -413,6 +418,7 @@ export async function prepararFactura(db: Db, empresaId: string, usuarioId: stri
     }
     // E01: todas las unidades (también SIFEN 77/UNI) admiten cantidades fraccionarias (hasta 4 decimales, validadas por el cálculo fiscal).
     precios.push({ referencia: referencia === null ? "" : s(p.precio), modificado });
+    lineasStock.push({ productoId: s(p.id), codigo: s(p.codigo), descripcion, cantidad: l.cantidad, controlaStock: p.controlaStock === true });
     extras.push({ campos, unidadSimbolo });
 
     lineas.push({
@@ -473,7 +479,7 @@ export async function prepararFactura(db: Db, empresaId: string, usuarioId: stri
     totalesTexto: calculo.texto,
   };
 
-  return { entrada: final, payload, totalTexto: String(payload.Subtotales[0].dTotGralOpe), receptor, resumen, guardar };
+  return { entrada: final, payload, totalTexto: String(payload.Subtotales[0].dTotGralOpe), receptor, resumen, guardar, lineasStock };
 }
 
 /**
@@ -481,14 +487,31 @@ export async function prepararFactura(db: Db, empresaId: string, usuarioId: stri
  * ante doble clic, reintento o pérdida de respuesta. Solo se llama al CONFIRMAR el envío: revisar o volver a editar no consume numeración.
  */
 export async function crearFacturaElectronica(db: Db, empresaId: string, usuarioId: string, cuerpo: CuerpoFactura, salida?: { guardar: ClasificacionGuardar[] }) {
-  const { payload, totalTexto, receptor, guardar } = await prepararFactura(db, empresaId, usuarioId, cuerpo);
+  const { payload, totalTexto, receptor, guardar, lineasStock } = await prepararFactura(db, empresaId, usuarioId, cuerpo);
 
   if (salida) salida.guardar = guardar;
 
+  // E02: control y baja de stock en la MISMA transacción que la FE (fe_documento_crear_fe_con_stock). Una repetición de la misma clave (doble clic, respuesta perdida, reintento) NO vuelve a evaluar el stock:
+  // la FE ya existe y el stock ya se bajó; PostgreSQL devuelve el documento existente sin tocar inventario.
+  let asignaciones: ReturnType<typeof asignacionesSql> = [];
+
+  if (lineasStock.some((l) => l.controlaStock)) {
+    const previa = await db.query("SELECT 1 AS ok FROM documentos_electronicos WHERE empresa_id = $1::uuid AND clave_idempotencia = $2", [empresaId, cuerpo.claveIdempotencia]);
+
+    if ((previa.rows as F[]).length === 0) {
+      const plan = await planificarStock(db, empresaId, usuarioId, cuerpo.sucursalId, lineasStock);
+
+      if (!plan.suficiente) throw new ErrorFacturacion(409, mensajeStockInsuficiente(plan));
+      // El reparto que se baja es EXACTAMENTE el que el operador revisó; si el stock cambió y el reparto ya no coincide, se exige revisar de nuevo (no se sustituye en silencio).
+      if (plan.salidas.length > 0 && cuerpo.repartoHuella !== plan.huella) throw new ErrorFacturacion(409, MENSAJE_REPARTO_CAMBIO);
+      asignaciones = asignacionesSql(plan);
+    }
+  }
+
   const documento = receptor.naturaleza === 1 ? `${receptor.ruc}-${receptor.dv}` : receptor.numeroDocumento;
   const llamar = () =>
-    db.query(`SELECT o_documento_id AS "documentoId", o_numero AS numero, o_reutilizado AS reutilizado FROM fe_documento_crear_fe($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5, $6::uuid, $7, $8, $11, $9::numeric, $10::jsonb)`,
-      [empresaId, usuarioId, cuerpo.sucursalId, cuerpo.puntoId, cuerpo.claveIdempotencia, cuerpo.clienteId, documento, receptor.razonSocial, totalTexto, JSON.stringify(payload), cuerpo.moneda ?? "PYG"]);
+    db.query(`SELECT o_documento_id AS "documentoId", o_numero AS numero, o_reutilizado AS reutilizado FROM fe_documento_crear_fe_con_stock($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5, $6::uuid, $7, $8, $11, $9::numeric, $10::jsonb, $12::jsonb)`,
+      [empresaId, usuarioId, cuerpo.sucursalId, cuerpo.puntoId, cuerpo.claveIdempotencia, cuerpo.clienteId, documento, receptor.razonSocial, totalTexto, JSON.stringify(payload), cuerpo.moneda ?? "PYG", JSON.stringify(asignaciones)]);
 
   try {
     return (await llamar()).rows[0] as F;
@@ -498,6 +521,8 @@ export async function crearFacturaElectronica(db: Db, empresaId: string, usuario
     throw error;
   }
 }
+
+export const MENSAJE_REPARTO_CAMBIO = "El stock disponible cambió desde la revisión y el reparto por depósito ya no es el mismo. Revise la factura de nuevo antes de enviarla.";
 
 /** ¿Puede el usuario facturar a un precio distinto del de lista? Permiso propio (NEX-051); sin él (o sin la migración) siempre falso. */
 export async function permisoPrecio(db: Db, empresaId: string, usuarioId: string): Promise<boolean> {

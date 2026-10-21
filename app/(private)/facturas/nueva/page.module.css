@@ -1391,3 +1391,22 @@
 .cantidadAnadido .qty {
   width: 110px;
 }
+
+/* E02: reparto del stock por depósito en el resumen previo al envío. */
+.stockSalida {
+  margin: 10px 0;
+  padding: 8px 12px;
+  border: 1px solid #aadadd;
+  border-radius: 8px;
+  background: #f3fbfb;
+}
+
+.stockSalida h3 {
+  margin: 0 0 6px;
+  font-size: 14px;
+}
+
+.stockSalida ul {
+  margin: 0 0 6px;
+  padding-left: 18px;
+}
