@@ -111,14 +111,21 @@
   - **FE:** hasta **48 horas** desde aprobación SIFEN.
   - **NCE y demás DTE:** hasta **168 horas (7 días)** desde aprobación SIFEN.
 - La posibilidad de solicitar evento debe considerar estado fiscal, vencimiento del plazo y restricciones de documentos asociados, no editar directamente una FE aprobada en BD ni usar NCE para simular cancelación.
-- Cancelación se confirma por resultado oficial del evento; estados locales y saldos se reconcilian después. Cancelar NCE y liberar saldo original es distinto de entrada automática de inventario.
+- **DECISIÓN DEFINITIVA DEL RESPONSABLE:** cuando SIFEN **confirme oficialmente la cancelación de una FE**, NEXIT debe **revertir automáticamente, de forma auditable e idempotente**, las salidas de stock que aquella FE produjo. Debe devolver exactamente los productos, cantidades (incluidas fracciones) y depósitos de origen de las salidas iniciales, sin intervención manual del operador.
+  - FE 6 unidades distribuidas: 3 de Depósito A y 3 de Depósito B => después de cancelación oficial, registrar **entrada compensatoria de 3 en A y 3 en B**, conservando el vínculo a cada movimiento original y al CDC/identificador de la FE cancelada. No asignar toda la devolución a un depósito.
+  - Registrar nuevos movimientos de reversión mediante el motor oficial de Inventario/Kardex, **sin borrar ni reescribir** salidas históricas y sin editar `stock_saldos` directamente. Idempotencia basada en documento fiscal y movimiento de salida: dos respuestas/reintentos de evento no pueden sumar stock dos veces.
+  - **Nunca reponer stock por una petición de cancelación aún pendiente**, timeout, estado indeterminado o rechazo del evento: se requiere confirmación oficial verificable de SIFEN.
+  - El evento SIFEN y los movimientos locales no comparten transacción distribuida. Si SIFEN ya confirmó y el registro de entradas locales falla, persistir estado **cancelación confirmada / reversión inventario pendiente**, alertar, conciliar y reintentar reversión idempotente. No ocultar inconsistencia ni reenviar a ciegas el evento externo.
+  - Si una salida no existe o está incompleta, no inventar cantidades: señalizar y bloquear reversión automática parcial sin auditoría. La reversión debe considerar todos los depósitos y líneas de la FE como un conjunto controlado.
+  - Cancelar NCE es distinto: como la NCE no mueve stock automáticamente, cancelar una NCE **no implica salida/entrada automática**; solo concilia saldos fiscales de la factura original.
+- Estados locales y saldos fiscales se reconcilian después del evento **oficial**; nunca basta cambiar `estado` en PostgreSQL.
 - Fuentes oficiales: RG 23/2019 art.22 https://ekuatia.set.gov.py/en/web/portal-institucional/w/resolucion-general-n-23-19 ; FAQ https://www.dnit.gov.py/web/e-kuatia/preguntas-frecuentes/-/categories/400231
 
 ### F. Lista de pendientes no resueltos por estas decisiones
 
 1. FE: **RESUELTO** — asignación automática entre depósitos disponibles/autorizados con desglose visible y salidas por cada origen; implementación pendiente.
 2. NCE DESCUENTO: **resuelto** IVA 10% fijo, un ítem, no ratear ni combinar con originales; **pendiente** homologación fiscal para FE 5%/exenta/mixta.
-3. Evento de cancelación: verificar primero disponibilidad/cuerpo de API de gateway, estrategia técnica y compensación de stock/fiscal sin duplicidades.
+3. Evento de cancelación: **decisión de stock cerrada** — revertir automáticamente por los depósitos de origen tras confirmación SIFEN. **Pendiente técnico**: disponibilidad/contrato de API de cancelación, persistencia de estados, reconciliación y pruebas de idempotencia.
 4. **Dirección de entrega RESUELTA** por el responsable: elegir exclusivamente entre direcciones ya registradas del propio cliente; ver Sección 7. Siguen pendientes foco automático en cantidad, códigos con ceros iniciales, descuentos UI, visualización PYG, seleccionar/eliminar en NCE, KuDE NCE de cinco campos sin `tipOpe` y texto `Establecimiento 001`. Layout/logo/identidad de KuDE TEST siguen fuera del alcance.
 
 ### Pruebas mínimas obligatorias (ninguna ejecutada en esta decisión)
@@ -129,6 +136,7 @@
 - NCE 2/3/4: devolución parcial fraccionaria sin entrada de stock; en 3/4, DESCUENTO único (cantidad 1, IVA 10%), sin líneas originales, sin reparto, con CDC/saldo correcto; probar FE original 5/10/exenta/mixta y aceptación fiscal en el gateway real.
 - FE con descuentos de línea/global en % y Gs., IVA 5/10/exento y sumatorias F/EA exactas.
 - FE cancelación <=48h; NCE <=168h; fuera del plazo/cross-tenant/permisos => bloqueo, sin falsa aceptación.
+- FE con baja multi-depósito 3 de A y 3 de B: evento cancelación confirmado => entradas compensatorias 3 en A + 3 en B; repetición de evento/consulta/reproceso no duplica stock. Sin confirmación, timeout/rechazo => no revertir. Si evento confirmado pero falla stock local, reparación idempotente y alerta, nunca perder la confirmación fiscal.
 
 
 ## 6. NUEVO GATEWAY DE PRUEBA — 20/10/2026
