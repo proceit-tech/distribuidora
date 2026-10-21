@@ -668,35 +668,6 @@
   font-weight: 600;
 }
 
-/* ---- Barra de acción para pantallas medianas y pequeñas ---- */
-.barraMovil {
-  position: sticky;
-  z-index: 5;
-  bottom: 0;
-  display: none;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px 14px;
-  margin-top: 12px;
-  padding: 10px 14px;
-  border: 1px solid #dce6ed;
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.98);
-  box-shadow: 0 -4px 14px rgba(20, 50, 77, 0.08);
-}
-
-.barraMovil strong {
-  display: block;
-  color: #0a6f77;
-  font-size: 18px;
-  font-variant-numeric: tabular-nums;
-}
-
-.barraMovil small {
-  display: block;
-  color: #8a5a00;
-  font-size: 12.5px;
-}
 
 .actions {
   display: flex;
@@ -858,27 +829,6 @@
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
-}
-
-/* ---- Pantallas medianas: el resumen pasa debajo y la acción primaria queda siempre a mano ---- */
-@media (max-width: 1099px) {
-  .workspace {
-    grid-template-columns: 1fr;
-  }
-
-  .resumenPanel {
-    position: static;
-    max-height: none;
-    overflow: visible;
-  }
-
-  .accionRevisar {
-    display: none;
-  }
-
-  .barraMovil {
-    display: flex;
-  }
 }
 
 /* ---- Ítems como tarjetas: sin desplazamiento horizontal en tablet y móvil ---- */
@@ -1957,8 +1907,10 @@
 
 .barraAcciones {
   display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: 8px 10px;
   margin-left: auto;
 }
 

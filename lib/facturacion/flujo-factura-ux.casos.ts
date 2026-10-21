@@ -125,5 +125,56 @@ export async function verificarCasosFlujoFacturaUx(): Promise<string[]> {
   cierto("C03-08 revisión, huella e idempotencia intactas: grabar() y cuerpoFactura() no cambiaron, el diálogo de resumen conserva foco, Tab, Escape y retorno del foco, y el contenido del resumen sigue saliendo del servidor", /function grabar\(\) \{\s*if \(!cliente\) return;/.test(pag) && /void flujo\.revisar\(cuerpoFactura\(\)\)/.test(pag) && /const huellaActual = JSON\.stringify\(cuerpoFactura\(\)\)/.test(pag) && /siguienteFocoModal\(/.test(pag) && /accionTeclaResumen\(/.test(pag) && /iniciadorResumen\.current/.test(pag) && /resumen\.totalesTexto\?\.total/.test(pag));
   cierto("C03-09 alcance: solo presentación — el módulo de cálculo y el payload no se importan de nuevo ni se modificó el motor, y el componente de pago conserva sus props", /resumenCalculo\(lineas\.map/.test(pag) && !/payload-fe/.test(entrega) && (pag.match(/<MediosPago/g) ?? []).length === 1 && /pagos: hayPagos \? pagos\.map/.test(pag));
 
+  // ── C03-F001: la acción principal nunca se oculta (cascada CSS real) ───────────────────────────────
+  type ReglaCss = { media: string | null; selector: string; cuerpo: string };
+
+  /** Aplana el CSS (sin comentarios) en reglas con su @media: lee los bloques por llaves, no por búsqueda de texto. */
+  const reglas = (texto: string): ReglaCss[] => {
+    const salida: ReglaCss[] = [];
+    const recorrer = (t: string, media: string | null) => {
+      let i = 0;
+
+      while (i < t.length) {
+        const a = t.indexOf("{", i);
+
+        if (a < 0) break;
+
+        const cab = t.slice(i, a).trim();
+        let prof = 1;
+        let j = a + 1;
+
+        while (j < t.length && prof > 0) { if (t[j] === "{") prof += 1; else if (t[j] === "}") prof -= 1; j += 1; }
+
+        const cuerpo = t.slice(a + 1, j - 1);
+
+        if (cab.startsWith("@media")) recorrer(cuerpo, cab.slice(6).trim());
+        else if (!cab.startsWith("@")) salida.push({ media, selector: cab, cuerpo });
+        i = j;
+      }
+    };
+
+    recorrer(texto, null);
+
+    return salida;
+  };
+  const aplica = (media: string | null, ancho: number): boolean => {
+    if (media === null) return true;
+
+    const max = /max-width:\s*(\d+)px/.exec(media);
+    const min = /min-width:\s*(\d+)px/.exec(media);
+
+    return (!max || ancho <= Number(max[1])) && (!min || ancho >= Number(min[1]));
+  };
+  const oculta = (r: ReglaCss) => /(^|;|\s)display:\s*none|visibility:\s*hidden/.test(r.cuerpo);
+  const tocaAccion = (r: ReglaCss) => /accionRevisar|barraAcciones|barraResumen|accionPrincipal/.test(r.selector) || /(^|,)\s*(\.[\w-]+\s+)?button\s*(,|$)/.test(r.selector);
+  const todas = reglas(css);
+  const ocultadores = (ancho: number) => todas.filter((r) => aplica(r.media, ancho) && oculta(r) && tocaAccion(r)).map((r) => r.selector);
+
+  igual("C03-F001-01 la cascada CSS real no oculta la barra ni su acción en 1024, 1099 ni en ≥ 1100 px (ninguna regla aplicable con display:none/visibility:hidden sobre accionRevisar, barraAcciones, barraResumen o accionPrincipal)", [1024, 1099, 1100, 1366, 1600, 1920].map(ocultadores), [[], [], [], [], [], []]);
+  igual("C03-F001-02 ya no existe el quiebre de 1099 px ni el CSS/markup de la barra móvil o de .accionRevisar (dependencias residuales eliminadas)", [/max-width:\s*1099px/.test(css), /barraMovil|accionRevisar/.test(css), /barraMovil|accionRevisar/.test(pag)], [false, false, false]);
+  igual("C03-F001-03 el JSX tiene UNA sola acción «Revisar y confirmar» (sin botones duplicados) con disabled={!puedeGuardar} y onClick={grabar}; Cancelar sigue a su lado", [(pag.match(/Revisar y confirmar/g) ?? []).length, (pag.match(/disabled=\{!puedeGuardar\} onClick=\{grabar\}/g) ?? []).length, /<Link href="\/dashboard" className=\{ui\.secondaryButton\}>Cancelar<\/Link>/.test(pag)], [1, 1, true]);
+  igual("C03-F001-04 la barra con varias líneas mantiene las acciones accesibles: contenedor con flex-wrap y sin encogerse (flex: 0 0 auto), y a ≤ 760 px las acciones ocupan toda la fila", [/\.barraAcciones \{[^}]*flex: 0 0 auto[^}]*flex-wrap: wrap/.test(css), /\.barraResumen \{[^}]*flex-wrap: wrap/.test(css), todas.some((r) => r.media !== null && /max-width:\s*760px/.test(r.media) && /\.barraAcciones/.test(r.selector) && /width: 100%/.test(r.cuerpo))], [true, true, true]);
+  cierto("C03-F001-05 revisión y emisión sin cambios: grabar(), cuerpoFactura(), huella, diálogo con foco/Escape y envío con la misma clave de idempotencia siguen idénticos", /function grabar\(\) \{\s*if \(!cliente\) return;/.test(pag) && /void flujo\.revisar\(cuerpoFactura\(\)\)/.test(pag) && /const huellaActual = JSON\.stringify\(cuerpoFactura\(\)\)/.test(pag) && /accionTeclaResumen\(/.test(pag) && /siguienteFocoModal\(/.test(pag) && /void flujo\.enviar\(\)/.test(pag));
+
   return fallos;
 }

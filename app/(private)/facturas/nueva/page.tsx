@@ -1323,7 +1323,7 @@ export default function NuevaFacturaPage() {
 
               <div className={estilos.barraAcciones}>
                 <Link href="/dashboard" className={ui.secondaryButton}>Cancelar</Link>
-                <button type="button" className={`${ui.primaryButton} ${estilos.accionRevisar}`} disabled={!puedeGuardar} onClick={grabar}>
+                <button type="button" className={ui.primaryButton} disabled={!puedeGuardar} onClick={grabar}>
                   {revisando ? "Revisando..." : "Revisar y confirmar"}
                 </button>
               </div>
