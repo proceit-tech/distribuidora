@@ -60,26 +60,65 @@
 5. DESCUENTO: operador informa valor e quantidade 1; resultado fiscal correto, sem alteração de estoque, sem exceder saldo; não alterar a FE original, respeitar IVA original (inclusive cenários mistos), motivos e bloqueios.
 6. Não abrir PR/issue para alterar identidade do ambiente de testes, logotipo nem layout de KuDE FE.
 
-## 5. DECISIONES ADICIONALES CONFIRMADAS Y PUNTOS DE COMPORTAMIENTO POR DEFINIR (20/10/2026)
+## 5. REGLAS FUNCIONALES DEFINITIVAS — FE, STOCK, NCE Y EVENTOS (20/10/2026)
 
-### Confirmado por el responsable
+> Esta sección SUPERA las dudas preliminares del mismo 20/10/2026. Las respuestas del responsable son vinculantes. Estado: especificación cerrada en los puntos indicados, **NO IMPLEMENTADA/HOMOLOGADA**; no modificar datos ni VM sin una entrega auditada.
 
-- **Ventas y existencia:** no permitir vender mercadería controlada por stock por encima de la cantidad disponible. Aplicar control definitivo en servidor y base de datos, no solamente en UI; considerar simultaneidad, reservas, depósitos y movimientos idempotentes. Los servicios sin control de stock se excluyen de la restricción de mercancía. La implementación fiscal actual NO registra movimientos de stock al emitir FE (`NEX-048` lo señala expresamente); no declarar esto resuelto por tener saldo inicial.
-- **Cantidad fraccionaria con coma:** operador podrá ingresar `5,5` y otras fracciones válidas, normalizadas a punto decimal internamente sin perder precisión; SIFEN E711 permite hasta 4 decimales. Existe veto actual específico de unidad SIFEN 77 en `facturas/nueva/page.tsx` y `lib/facturacion/emision.ts`; revisar junto con política de fraccionamiento por unidad/producto, en UI, API, movimientos y stock. No redondear cantidades a entero.
-- **Motivo NCE Bonificación (4):** mostrar botón **`+ Agregar DESCUENTO`** para incluir el **servicio fijo DESCUENTO** del sistema; cantidad 1, monto ingresado por operador, sin control de stock ni movimientos. Permitir que el operador **quite todas las líneas originales seleccionadas de la NCE** para emitir solo con el ítem de servicio, manteniendo vínculo fiscal con FE original y límite de saldo acreditable. Nunca modificar las líneas de la FE aprobada. Nombre solicitado es DESCUENTO incluso para motivo Bonificación.
-- El motivo NCE **Descuento (3)** tiene antecedente de solicitud del mismo servicio en esta especificación; queda por confirmar si comparte el botón o si Bonificación es el único motivo que lo habilita. No fusionar motivos automáticamente.
-- El esquema `nce_lineas` y la función `fe_documento_crear_nce` actualmente exigen ordinal de una línea existente en la FE; permitir renglón de servicio adicional exige una adaptación de modelo/validación, no basta un botón ni insertar un producto ficticio al catálogo.
+### A. Facturación FE + stock
 
-### Preguntas funcionales abiertas — NO asumir decisiones
+1. Al elegir una mercadería, el sistema **consulta en cuáles depósitos/estados tiene stock DISPONIBLE de propiedad PROPIO**; no considerar físicamente disponible si está reservado, en cuarentena o tránsito. Solo permitir operar dentro de los depósitos autorizados de la empresa/sucursal y usuario.
+2. **Impedir la venta por encima del saldo** del depósito realmente elegido. Bloqueo de stock en backend/BD, bajo concurrencia, no solo validación visual. No usar sumatoria de depósitos distintos para efectuar una baja desde uno solo ni permitir saldos negativos.
+3. **Dar de baja el stock al emitir la factura**, en el acto confirmado por el operador. Registrar un movimiento normal de salida de Inventario/Kardex vinculado inequívocamente a la FE, sin doble baja por reintento, actualización de estado, consulta o click repetido. No reducir stock al agregar un producto a una factura aún no emitida.
+4. **Decisión operacional PENDIENTE:** si existen unidades del mismo artículo en DOS depósitos, el usuario debe decidir entre (a) escoger depósito por línea o (b) una opción automática con regla de origen transparente. No asumir consumo automático de varios depósitos.
+5. **Estados de gateway:** diseñar reversión vinculada y auditable por rechazo fiscal definitivo; no liberar por timeout/ENVIO_INDETERMINADO mientras SIFEN pudiera aprobar. Cancelación oficial de FE debe tener reversión de inventario idempotente según reglas de control. Estas son garantías técnicas requeridas por la decisión de bajar al emitir, NO una segunda pregunta sobre momento de baja.
+6. El servicio DESCUENTO no controla stock, no está limitado por existencia y no genera movimiento. El resto de la mercancía sigue reglas de existencia.
 
-1. **Depósito en la FE:** usar automáticamente el depósito asignado a la sucursal/usuario (y permitir cambio autorizado), o elegir manualmente uno por factura; cómo tratar stock distribuido en varios depósitos.
-2. **Momento de afectación:** al confirmar «Enviar factura», reservar stock mientras SIFEN procesa y luego registrar salida al aprobar, o aplicar otra política explícita. Liberar ante rechazo; tratar estado indeterminado y reintentos idempotentes sin duplicar movimientos.
-3. **Fracciones por unidad:** admitir fracciones inclusive en `77 / UNI` y en cualquier mercadería, o usar configuración «permite fraccionar» por producto y unidad. Confirmar máximo de 4 decimales.
-4. **Bonificación/Descuento NCE:** el botón de servicio DESCUENTO aparece solo en motivo Bonificación, en ambos motivos (Bonificación y Descuento), o en algún otro; confirmar si se permite combinar servicio y líneas originales o si son excluyentes.
-5. **Tributación del servicio DESCUENTO:** factura original mixta IVA 5/10/exenta; distribuir el crédito sobre las bases originales o exigir selección explícita de líneas de referencia. Nunca asumir un 10% universal ni ignorar saldo; sin movimiento stock.
-6. **Devolución NCE:** según definición previa, no hace entrada automática al inventario; confirmar si esa regla sigue o cambia.
-7. **Otros pedidos pendientes del cliente:** checkbox «seleccionar todos» NCE; descuentos en FE por línea y final (%/Gs.); seleccionar sucursal/dirección de entrega; foco automático en cantidad tras agregar ítem; presentación sin decimales monetarios PYG; códigos con ceros a izquierda; significado de plazo «48 hs modificación»; mostrar Establecimiento 001. KuDE NCE es la única mejora KuDE autorizada; todas las mejoras visuales KuDE FE quedan excluidas.
+### B. Cantidades fraccionarias
 
-### Estado
+- **Todos los productos pueden ser facturados con fracciones, incluso los vinculados a unidad SIFEN 77/UNI; el operador decide.**
+- Aceptar coma como separador decimal (`5,5`, `2,25`), normalizar la entrada a Decimal interno; no utilizar binarios con errores acumulativos ni truncar a entero; hasta **4 decimales** según E711 `dCantProSer` del MT SIFEN v150.
+- Quitar la restricción actual de solo enteros para unidad 77 tanto en `app/(private)/facturas/nueva/page.tsx` (`cantidadValida`) como en `lib/facturacion/emision.ts` (validación de `unidadSifen===77`). Conservar precio, tributo y payload fiscales correctos.
+- Bloqueo de stock también compara cantidades Decimal fraccionarias (5.5 disponibles, 5.6 solicitado => bloquear).
 
-Esta adenda registra requisitos y decisiones para revisión funcional; **no cambia SQL, productos, stock, UI ni parámetros del gateway**. Esperar respuestas del responsable antes de implementar.
+### C. NCE — Devolución, Descuento y Bonificación
+
+- **Motivos 3/4:** tanto **Descuento** como **Bonificación** muestran `+ Agregar DESCUENTO`. Es el **mismo servicio fijo del sistema**, con código/identidad estable, `cantidad=1`, monto editable positivo e IVA conforme al tratamiento válido de los documentos originales. No generar entrada/salida de stock.
+- Permitir checkbox por línea y checkbox **seleccionar todos**, además de acción **Eliminar seleccionados** de la nota que se está creando. Se puede eliminar **todas las líneas originales de la NCE** y dejar exclusivamente el servicio `DESCUENTO`; no borrar el catálogo ni las líneas de la FE original.
+- La NCE mantiene el CDC de asociación a la FE original y sus propios identificadores de emisión. El monto NCE no supera saldo acreditable ni otros controles ya definidos (motivo fijado, NCE pendiente, idempotencia).
+- **Devolución (motivo 2):** permitir editar cantidad devuelta, con coma/fracción, sin exceder cantidad acreditable original. **La NCE NO genera entrada automática de inventario.** El operador realiza `Inventario → Movimientos → Entrada` por separado tras recibir la mercancía, con registro auditado; evitar entradas duplicadas.
+- Las actuales `nce_lineas` y `fe_documento_crear_nce` exigen ordinal de línea original de FE. Servicio extra exige adaptación completa de esquema/validaciones, cálculo IVA correcto, consumo de saldo e idempotencia. La inserción de una fila de `productos` por sí sola NO resuelve el flujo.
+- **Resta por especificar comportamiento tributario** para FE original con IVA 5%, 10% y exento mezclados: mostrar opción de base fiscal de referencia o cálculo automático trazable, antes de aprobar implementación de servicio único. No asumir IVA10 ni emitir PDF/payload fiscal ficticio.
+- **Queda por precisar** si al agregar el servicio se pueden mantener también algunos de los ítems de la FE dentro de la misma NCE (sin superar el saldo); la decisión confirmada admite eliminar todos, pero no obligó a hacerlo.
+
+### D. Descuento particular y global en FE — normativa confirmada
+
+- El operador podrá elegir **porcentaje (%) o monto monetario** en cada línea y también descuento general al final de la FE.
+- MT SIFEN v150: `EA002 dDescItem` y `EA003 dPorcDesIt` son descuento particular por unidad y su porcentaje; `EA004 dDescGloItem` aplica el descuento global de la operación por ítem, incluso cuando ya existe descuento particular; `F010 dPorcDescTotal`, `F009 dTotDesc`, `F033 dTotDescGlotem`, `F011 dDescTotal` y totales/impuestos deben corresponder al cálculo.
+- Nota Técnica nº 1 del MT v150 precisa `dDescGloItem = F010 * E721 / 100`, y totales particulares/globales multiplicados por E711. Descuento monetario global requiere cálculo consistente del porcentaje y conciliación sin redondear en silencio; validar resultados con las reglas SIFEN. Cálculos/IVA internamente conservan precisión fiscal; PYG sin centavos en totales visibles y transmitidos donde corresponde.
+- Fuente oficial MT: https://ekuatia.set.gov.py/documents/20123/420592/Manual%2BT%C3%A9cnico%2BVersi%C3%B3n%2B150.pdf/e706f7c7-6d93-21d4-b45b-5d22d07b2d22
+- Nota Técnica 1: https://www.dnit.gov.py/documents/20123/420595/NT_E_KUATIA_001_MT_V150.pdf/c4d2ab8e-632b-dc8f-d3f6-6a144a3a3d9c
+
+### E. Cancelación de documentos (NO es edición de factura)
+
+- Evento SIFEN `CANCELACION` para un DE aprobado:
+  - **FE:** hasta **48 horas** desde aprobación SIFEN.
+  - **NCE y demás DTE:** hasta **168 horas (7 días)** desde aprobación SIFEN.
+- La posibilidad de solicitar evento debe considerar estado fiscal, vencimiento del plazo y restricciones de documentos asociados, no editar directamente una FE aprobada en BD ni usar NCE para simular cancelación.
+- Cancelación se confirma por resultado oficial del evento; estados locales y saldos se reconcilian después. Cancelar NCE y liberar saldo original es distinto de entrada automática de inventario.
+- Fuentes oficiales: RG 23/2019 art.22 https://ekuatia.set.gov.py/en/web/portal-institucional/w/resolucion-general-n-23-19 ; FAQ https://www.dnit.gov.py/web/e-kuatia/preguntas-frecuentes/-/categories/400231
+
+### F. Lista de pendientes no resueltos por estas decisiones
+
+1. FE: política concreta de asignación del depósito cuando el mismo artículo se encuentre en varios depósitos (pregunta inmediata).
+2. NCE DESCUENTO: selección/derivación fiscal del IVA si la FE referencia tasas mixtas y eventual combinación con líneas originales.
+3. Evento de cancelación: verificar primero disponibilidad/cuerpo de API de gateway, estrategia técnica y compensación de stock/fiscal sin duplicidades.
+4. Solicitudes previas fuera de estas 8 respuestas: destino/dirección de entrega del cliente; foco automático en cantidad de nuevo producto; código de producto con ceros iniciales; descuentos en UI; resumen en PYG sin decimales; seleccionar todos y eliminar en NCE; KuDE NCE con los cinco campos contractuales sin `tipOpe`; texto `Establecimiento 001`. El layout/logo/empresa de KuDE TEST quedan fuera de alcance.
+
+### Pruebas mínimas obligatorias (ninguna ejecutada en esta decisión)
+
+- Dos depósitos: no usar stock de uno para facturar con baja del otro; no vender > saldo disponible, ni mediante concurrencia doble.
+- Reintentos FE y estados fiscales: baja única, reversión única sólo ante rechazo definitivo/cancelación oficial, estado indeterminado mantiene consistencia.
+- Cantidad `5,5` en UI, FE, Kardex y stock; cantidades sin redondeo; 0, diferencia mínima `0,0001`, inventario fraccionario.
+- NCE 2/3/4: devolución parcial con fracción sin entrada de stock, DESCUENTO fijo con cantidad 1 en motivos 3 y 4, selección/eliminación de todas las líneas, saldo/IVA/CDC válidos, múltiples tasas originales.
+- FE con descuentos de línea/global en % y Gs., IVA 5/10/exento y sumatorias F/EA exactas.
+- FE cancelación <=48h; NCE <=168h; fuera del plazo/cross-tenant/permisos => bloqueo, sin falsa aceptación.
