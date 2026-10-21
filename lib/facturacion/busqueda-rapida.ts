@@ -2,9 +2,9 @@
  * Regla pura de la búsqueda rápida de Nueva factura (cliente y producto): qué hacer al presionar Enter con el texto escrito (p. ej. un lector de códigos de barras).
  * Solo se selecciona sin ambigüedad: una única coincidencia EXACTA (código, GTIN o documento) o un único resultado habilitado. Nunca se elige «el primero» entre varios.
  */
-export type DecisionEnter<T> = { elegido: T | null; motivo: "" | "SIN_RESULTADOS" | "VARIOS" };
+export type DecisionEnter<T> = { elegido: T | null; motivo: "" | "SIN_RESULTADOS" | "VARIOS" | "CODIGO_PARECIDO" };
 
-export function elegirPorEnter<T>(habilitados: T[], texto: string, exacto: (t: T, texto: string) => boolean): DecisionEnter<T> {
+export function elegirPorEnter<T>(habilitados: T[], texto: string, exacto: (t: T, texto: string) => boolean, parecido?: (t: T, texto: string) => boolean): DecisionEnter<T> {
   const t = texto.trim();
 
   if (habilitados.length === 0) return { elegido: null, motivo: "SIN_RESULTADOS" };
@@ -12,12 +12,15 @@ export function elegirPorEnter<T>(habilitados: T[], texto: string, exacto: (t: T
   const iguales = habilitados.filter((x) => exacto(x, t));
 
   if (iguales.length === 1) return { elegido: iguales[0], motivo: "" };
+  // E05: un único resultado cuyo código solo difiere en CEROS INICIALES del texto (001234 vs 1234) es otro código: no se elige solo; el operador lo confirma en la lista.
+  if (habilitados.length === 1 && parecido?.(habilitados[0], t)) return { elegido: null, motivo: "CODIGO_PARECIDO" };
   if (habilitados.length === 1) return { elegido: habilitados[0], motivo: "" };
 
   return { elegido: null, motivo: "VARIOS" };
 }
 
-export const MENSAJE_ENTER: Record<"SIN_RESULTADOS" | "VARIOS", string> = {
+export const MENSAJE_ENTER: Record<"SIN_RESULTADOS" | "VARIOS" | "CODIGO_PARECIDO", string> = {
+  CODIGO_PARECIDO: "No hay un código idéntico: el resultado solo difiere en los ceros iniciales. Elíjalo de la lista si es el correcto.",
   SIN_RESULTADOS: "Sin resultados habilitados para ese texto.",
   VARIOS: "Hay varios resultados: elija uno de la lista.",
 };
@@ -47,6 +50,8 @@ export type EstadoBuscador<T> = {
 export type ConfigBuscador<T> = {
   habilitado: (t: T) => boolean;
   exacto: (t: T, texto: string) => boolean;
+  /** E05: código distinto que solo difiere en ceros iniciales del texto (no se elige solo con Enter). */
+  parecido?: (t: T, texto: string) => boolean;
   titulo: (t: T) => string;
   alElegir: (t: T) => void;
 };
@@ -146,7 +151,7 @@ export function crearBuscadorRapido<T>(deps0: {
 
         emitir({ buscando: false });
 
-        const decision = elegirPorEnter(r.items.filter(deps.habilitado), texto, deps.exacto);
+        const decision = elegirPorEnter(r.items.filter(deps.habilitado), texto, deps.exacto, deps.parecido);
 
         if (decision.elegido) seleccionar(decision.elegido);
         else if (decision.motivo) emitir({ aviso: MENSAJE_ENTER[decision.motivo] });

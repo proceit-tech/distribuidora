@@ -1,6 +1,7 @@
 "use client";
 
-import { formatearDecimalTexto } from "@/lib/formato/decimal-texto";
+import { formatearMontoVisual } from "@/lib/formato/monto-visual";
+import { textoConciliacionPagos } from "@/lib/facturacion/presentacion";
 import { DENOMINACIONES_TARJETA, FORMAS_PROCESAMIENTO, MAX_PAGOS, PRESENCIA_BANCARIA, TIPO_CHEQUE, TIPO_OTRO, TIPO_TARJETA_CREDITO, TIPO_TARJETA_DEBITO, type PagoUI } from "@/lib/facturacion/pagos";
 
 import estilos from "./page.module.css";
@@ -10,8 +11,9 @@ import estilos from "./page.module.css";
  * sublínea con los datos que el Manual SIFEN exige para esa modalidad. Nunca se pide el número de la tarjeta ni el código de seguridad. Con un solo medio el monto es el total (o la entrega inicial en
  * Crédito) y no se escribe. La conciliación es DECIMAL exacta (módulo compartido con el servidor) y los importes se muestran como texto, sin pasar por Number. El servidor vuelve a validar todo.
  */
-export function MediosPago({ simbolo, titulo, objetivo, conciliacion, presencia, formas, pagos, pendientes, alCambiar, alAgregar, alQuitar }: {
-  simbolo: string; titulo: string; objetivo: string; conciliacion: { suma: string | null; coincide: boolean }; presencia: string; formas: Record<string, string>; pagos: PagoUI[]; pendientes: string[];
+export function MediosPago({ moneda, simbolo, titulo, objetivo, conciliacion, presencia, formas, pagos, pendientes, alCambiar, alAgregar, alQuitar }: {
+  /** Código de la moneda (PYG sin decimales en lo que se muestra). */
+  moneda: string; simbolo: string; titulo: string; objetivo: string; conciliacion: { suma: string | null; coincide: boolean }; presencia: string; formas: Record<string, string>; pagos: PagoUI[]; pendientes: string[];
   alCambiar: (i: number, c: Partial<PagoUI>) => void; alAgregar: () => void; alQuitar: (i: number) => void;
 }) {
   const varios = pagos.length > 1;
@@ -32,7 +34,7 @@ export function MediosPago({ simbolo, titulo, objetivo, conciliacion, presencia,
             {varios ? (
               <input className={estilos.pagoMontoInput} aria-label={`Monto del pago ${i + 1}`} placeholder={`Monto (${simbolo})`} inputMode="decimal" value={p.monto} onChange={(e) => alCambiar(i, { monto: e.target.value.replace(",", ".") })} />
             ) : (
-              <span className={estilos.pagoMonto}>cubre {simbolo} {formatearDecimalTexto(objetivo)}</span>
+              <span className={estilos.pagoMonto}>cubre {simbolo} {formatearMontoVisual(objetivo, moneda)}</span>
             )}
 
             {tipo === TIPO_CHEQUE ? (
@@ -71,7 +73,7 @@ export function MediosPago({ simbolo, titulo, objetivo, conciliacion, presencia,
         <button type="button" className={estilos.linkButton} disabled={pagos.length >= MAX_PAGOS} onClick={alAgregar}>+ Agregar otro medio de pago</button>
         {varios ? (
           <small className={conciliacion.coincide ? estilos.hint : estilos.pendienteLinea}>
-            {conciliacion.suma === null ? `Revise los montos · a cubrir ${simbolo} ${formatearDecimalTexto(objetivo)}` : `Suma de los pagos ${simbolo} ${formatearDecimalTexto(conciliacion.suma)} de ${formatearDecimalTexto(objetivo)}${conciliacion.coincide ? " · coinciden" : " · NO coinciden"}`}
+            {textoConciliacionPagos({ simbolo, moneda, objetivo, suma: conciliacion.suma, coincide: conciliacion.coincide })}
           </small>
         ) : null}
         {pagos.some((p) => p.tipo === String(TIPO_TARJETA_CREDITO) || p.tipo === String(TIPO_TARJETA_DEBITO)) ? <small className={estilos.hint}>No se solicita el número de la tarjeta ni el código de seguridad.</small> : null}

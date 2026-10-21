@@ -9,6 +9,8 @@ import { puedeEnviarPorGateway, type EstadoGatewayUI } from "@/lib/facturacion/g
 import { crearBuscadorRapido, type EstadoBuscador, MAX_VISIBLES } from "@/lib/facturacion/busqueda-rapida";
 import { formularioModificado, perdidasAlCambiarCondicion, perdidasAlCambiarMoneda } from "@/lib/facturacion/cambios-formulario";
 import { descuentosTrasCambioMoneda } from "@/lib/facturacion/descuentos";
+import { soloDifierenCerosIniciales } from "@/lib/facturacion/codigo-producto";
+import { etiquetaEstablecimiento } from "@/lib/facturacion/presentacion";
 import { pedirOpcionesEntrega } from "@/lib/facturacion/entrega";
 import { crearControlEntrega, pendienteEntrega } from "@/lib/facturacion/entrega-control";
 import { CREDITO_UI_VACIO, creditoParaEnvio, hoyParaguay, pendientesCredito, type EstadoCreditoUI } from "@/lib/facturacion/credito";
@@ -306,8 +308,10 @@ type ItemBusqueda = { titulo: string; detalle: string; derecha?: string; impedim
  * Búsqueda rápida (combobox) para clientes y productos: escribe, elige con el ratón o con las flechas + Enter. Con Enter y una coincidencia exacta (código, GTIN o documento)
  * o un único resultado habilitado, lo selecciona directamente (útil con lector de código de barras). El selector avanzado (diálogo paginado) sigue disponible.
  */
-function BuscadorRapido<T extends { id: string }>({ url, campo, etiqueta, placeholder, describir, exacto, alElegir, mantenerAbierto, autoFocus }: {
+function BuscadorRapido<T extends { id: string }>({ url, campo, etiqueta, placeholder, describir, exacto, parecido, alElegir, mantenerAbierto, autoFocus }: {
   url: string; campo: "clientes" | "productos"; etiqueta: string; placeholder: string; describir: (t: T) => ItemBusqueda; exacto: (t: T, texto: string) => boolean;
+  /** E05: ¿el resultado es un código DISTINTO que solo difiere en ceros iniciales? (001234 ≠ 1234): Enter no lo elige solo. */
+  parecido?: (t: T, texto: string) => boolean;
   alElegir: (t: T) => void; mantenerAbierto?: boolean; autoFocus?: boolean;
 }) {
   const [abierto, setAbierto] = useState(false);
@@ -324,6 +328,7 @@ function BuscadorRapido<T extends { id: string }>({ url, campo, etiqueta, placeh
     cancelar: (t) => window.clearTimeout(t as number),
     habilitado: (t) => describir(t).habilitado,
     exacto,
+    parecido,
     titulo: (t) => describir(t).titulo,
     alCambiar: setB,
     alElegir: (t) => { alElegir(t); if (!mantenerAbierto) setAbierto(false); },
@@ -331,7 +336,7 @@ function BuscadorRapido<T extends { id: string }>({ url, campo, etiqueta, placeh
 
   // Moneda, permisos y callbacks pueden cambiar: el controlador usa siempre los vigentes.
   useEffect(() => {
-    ctl.configurar({ habilitado: (t) => describir(t).habilitado, exacto, titulo: (t) => describir(t).titulo, alElegir: (t) => { alElegir(t); if (!mantenerAbierto) setAbierto(false); } });
+    ctl.configurar({ habilitado: (t) => describir(t).habilitado, exacto, parecido, titulo: (t) => describir(t).titulo, alElegir: (t) => { alElegir(t); if (!mantenerAbierto) setAbierto(false); } });
   });
 
   useEffect(() => { if (abierto) ctl.abrir(); }, [abierto, ctl]);
@@ -454,6 +459,7 @@ function BuscadorProducto({ alElegir, permisos, moneda }: { alElegir: (p: Produc
         };
       }}
       exacto={(p, t) => p.codigo.toLowerCase() === t.toLowerCase() || p.gtin === t}
+      parecido={(p, t) => soloDifierenCerosIniciales(p.codigo, t)}
       alElegir={alElegir}
     />
   );
@@ -875,7 +881,7 @@ export default function NuevaFacturaPage() {
               <section className={estilos.card} aria-labelledby="sec-operacion">
                 <div className={estilos.cardHead}>
                   <h2 id="sec-operacion">Operación</h2>
-                  {sucursal ? <span className={estilos.meta}>Establecimiento {sucursal.establecimiento}{puntoId ? ` · Punto ${sucursal.puntos.find((p) => p.id === puntoId)?.codigo ?? ""}` : ""}</span> : null}
+                  {sucursal ? <span className={estilos.meta}>{etiquetaEstablecimiento(sucursal.establecimiento)}{puntoId ? ` · Punto ${sucursal.puntos.find((p) => p.id === puntoId)?.codigo ?? ""}` : ""}</span> : null}
                 </div>
                 <div className={estilos.cardBody}>
                   {gateway !== null && !puedeEnviarPorGateway(gateway) ? (
@@ -892,7 +898,7 @@ export default function NuevaFacturaPage() {
                       <span>Sucursal *</span>
                       <select value={sucursalId} onChange={(e) => { setSucursalId(e.target.value); setPuntoId(""); setUbicacionElegida(true); }}>
                         <option value="">Seleccione…</option>
-                        {sucursales.map((s) => <option key={s.id} value={s.id}>{s.nombre} ({s.establecimiento})</option>)}
+                        {sucursales.map((s) => <option key={s.id} value={s.id}>{s.nombre} · {etiquetaEstablecimiento(s.establecimiento)}</option>)}
                       </select>
                     </label>
 
@@ -949,10 +955,11 @@ export default function NuevaFacturaPage() {
                     </label>
                   </div>
 
-                  {enCredito ? <CondicionCredito simbolo={sim} estado={credito} total={calculo.texto.total} hoy={hoyIso} pendientes={pendientesDeCredito} alCambiar={(c) => setCredito((x) => ({ ...x, ...c }))} /> : null}
+                  {enCredito ? <CondicionCredito moneda={moneda} simbolo={sim} estado={credito} total={calculo.texto.total} hoy={hoyIso} pendientes={pendientesDeCredito} alCambiar={(c) => setCredito((x) => ({ ...x, ...c }))} /> : null}
 
                   {hayPagos ? (
                     <MediosPago
+                      moneda={moneda}
                       simbolo={sim}
                       titulo={enCredito ? "Medios de pago de la entrega inicial" : "Forma de pago"}
                       objetivo={objetivoDec === null ? "—" : textoDecimal(objetivoDec)}
@@ -1307,7 +1314,7 @@ export default function NuevaFacturaPage() {
             <p className={estilos.hint} style={{ marginTop: 0 }}>Revise los datos antes de enviar la factura.</p>
             <dl className={estilos.totals}>
               <div><dt>Empresa</dt><dd>{resumen.empresa}</dd></div>
-              <div><dt>Establecimiento / sucursal</dt><dd>{resumen.establecimiento} · {resumen.sucursal}</dd></div>
+              <div><dt>Establecimiento / sucursal</dt><dd>{etiquetaEstablecimiento(resumen.establecimiento)} · {resumen.sucursal}</dd></div>
               <div><dt>Punto de expedición</dt><dd>{resumen.punto}</dd></div>
               <div><dt>Fecha</dt><dd>{hoy || "—"}</dd></div>
               <div><dt>Cliente</dt><dd>{resumen.cliente.razonSocial} ({resumen.cliente.documento})</dd></div>

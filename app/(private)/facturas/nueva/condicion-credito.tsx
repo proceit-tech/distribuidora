@@ -2,7 +2,7 @@
 
 import { B, parseDec, textoDec } from "@/lib/facturacion/calculo";
 import { CUOTAS_HABILITADAS, MAX_CUOTAS, MAX_PLAZO_DIAS, plazoTexto, repartirCuotas, sumarDias, type EstadoCreditoUI } from "@/lib/facturacion/credito";
-import { formatearDecimalTexto } from "@/lib/formato/decimal-texto";
+import { formatearMontoVisual } from "@/lib/formato/monto-visual";
 
 import estilos from "./page.module.css";
 
@@ -11,7 +11,7 @@ import estilos from "./page.module.css";
  * servidor): el código de cuotas se conserva pero la opción no se ofrece. `total` es el total de la factura como texto Decimal; el saldo se calcula en Decimal exacto (sin Number). El servidor valida todo
  * de nuevo con el mismo código (`erroresCredito`).
  */
-export function CondicionCredito({ simbolo, estado, total, hoy, pendientes, alCambiar }: { simbolo: string; estado: EstadoCreditoUI; total: string; hoy: string; pendientes: string[]; alCambiar: (c: Partial<EstadoCreditoUI>) => void }) {
+export function CondicionCredito({ moneda, simbolo, estado, total, hoy, pendientes, alCambiar }: { moneda: string; simbolo: string; estado: EstadoCreditoUI; total: string; hoy: string; pendientes: string[]; alCambiar: (c: Partial<EstadoCreditoUI>) => void }) {
   const t = parseDec(total, 8) ?? B(0);
   const e = estado.entrega.trim() === "" ? B(0) : (parseDec(estado.entrega.trim(), 4) ?? B(0));
   const saldoDec = t > e ? t - e : B(0);
@@ -55,7 +55,7 @@ export function CondicionCredito({ simbolo, estado, total, hoy, pendientes, alCa
       </label>
 
       <small className={estilos.hint}>
-        Saldo a financiar {simbolo} {formatearDecimalTexto(saldo)}
+        Saldo a financiar {simbolo} {formatearMontoVisual(saldo, moneda)}
         {estado.tipo === "1" && dias > 0 && hoy ? ` · «${plazoTexto(dias)}» · vence ${sumarDias(hoy, dias)}` : ""}
       </small>
 
