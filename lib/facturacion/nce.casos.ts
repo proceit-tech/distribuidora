@@ -306,7 +306,7 @@ export async function verificarCasosNce(): Promise<string[]> {
   {
     const CDC44 = "01800000056001001000000112026101612345678901";
     const params: unknown[][] = [];
-    const dbBusq = { query: async (_t: string, p?: unknown[]) => { params.push(p ?? []); return { rows: [] }; } };
+    const dbBusq = { query: async (t: string, p?: unknown[]) => { if (/WITH base/.test(t)) params.push(p ?? []); return { rows: [] }; } };
 
     await listarFacturasElegibles(dbBusq as never, uuid, uuid, { clienteId: uuid, q: CDC44.replace(/(\d{4})/g, "$1 ").trim() });
     await listarFacturasElegibles(dbBusq as never, uuid, uuid, { clienteId: uuid, q: "001-001-0000001" });

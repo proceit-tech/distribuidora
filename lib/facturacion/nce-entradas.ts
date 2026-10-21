@@ -100,6 +100,19 @@ export function errorCantidadDevolucion(valor: string, disponible: string): stri
   return c > d ? `Supera el saldo disponible (${textoDec(d)}).` : null;
 }
 
+/**
+ * «Restaurar» (E06-F001): devuelve las líneas eliminadas a la nota CONSERVANDO lo que el operador había digitado (la eliminación nunca borra `entradas`). Solo una línea sin entrada (precarga especial)
+ * recibe su valor inicial; el resto de las líneas queda intacto.
+ */
+export function restaurarEntradas(entradas: Readonly<Record<number, EntradaLinea>>, eliminadas: ReadonlySet<number>, lineas: readonly LineaConSaldo[], motivo: number | ""): Record<number, EntradaLinea> {
+  const base = entradasIniciales(lineas, motivo);
+  const n: Record<number, EntradaLinea> = { ...entradas };
+
+  for (const l of eliminadas) if (n[l] === undefined) n[l] = base[l] ?? { incluida: false, valor: "" };
+
+  return n;
+}
+
 /** Corrección de una NCE rechazada (devolución): las líneas de la factura que NO estaban en la nota rechazada quedan eliminadas de la nota en preparación. Otros motivos no eliminan nada. */
 export function eliminadasPorPrecarga(lineas: readonly { linea: number }[], motivo: number, lineasPrecarga: readonly { linea: number }[]): Set<number> {
   return motivo === 2 ? new Set(lineas.filter((l) => !lineasPrecarga.some((x) => x.linea === l.linea)).map((l) => l.linea)) : new Set();

@@ -7,7 +7,7 @@ import { useSearchParams } from "next/navigation";
 
 import ui from "@/components/ui/lista-padrao/lista.module.css";
 import { crearBusquedaClientes, crearBusquedaFacturas, crearCargaCorreccion, crearCargaDetalle, type EstadoClientes } from "@/lib/facturacion/nce-busqueda";
-import { alternarLinea, alternarTodas, eliminadasPorPrecarga, eliminarSeleccionadas, enNota, entradasIniciales, errorCantidadDevolucion, errorMontoDescuento, etiquetaIvaLinea, lineasOriginalesPendientes, lineasVisibles, puedeAgregarDescuento } from "@/lib/facturacion/nce-entradas";
+import { alternarLinea, alternarTodas, eliminadasPorPrecarga, eliminarSeleccionadas, enNota, entradasIniciales, errorCantidadDevolucion, errorMontoDescuento, etiquetaIvaLinea, lineasOriginalesPendientes, lineasVisibles, puedeAgregarDescuento, restaurarEntradas } from "@/lib/facturacion/nce-entradas";
 import { normalizarCantidadTexto } from "@/lib/formato/cantidad-campo";
 import { iniciarRefresco } from "@/lib/facturacion/refresco-documentos";
 import { formatearDecimalTexto } from "@/lib/formato/decimal-texto";
@@ -455,7 +455,7 @@ function Formulario() {
                 <div className={estilos.barraLineas} role="toolbar" aria-label="Selección de líneas">
                   <button type="button" className={ui.secondaryButton} disabled={visibles.length === 0} onClick={() => setMarcadas(alternarTodas(factura.lineas, eliminadas, marcadas))}>{todasMarcadas ? "Deseleccionar todos" : "Seleccionar todos"}</button>
                   <button type="button" className={ui.secondaryButton} disabled={marcadasVisibles === 0} onClick={() => { const r = eliminarSeleccionadas(factura.lineas, eliminadas, marcadas); setEliminadas(r.eliminadas); setMarcadas(r.seleccion); setRevisado(null); }}>Eliminar seleccionados{marcadasVisibles > 0 ? ` (${marcadasVisibles})` : ""}</button>
-                  {eliminadas.size > 0 ? <button type="button" className={estilos.linkBtn} onClick={() => { setEntradas((p) => { const base = entradasIniciales(factura.lineas, motivo); const n = { ...p }; for (const l of eliminadas) n[l] = base[l] ?? { incluida: false, valor: "" }; return n; }); setEliminadas(new Set()); setRevisado(null); }}>Restaurar {eliminadas.size} línea{eliminadas.size === 1 ? "" : "s"} eliminada{eliminadas.size === 1 ? "" : "s"}</button> : null}
+                  {eliminadas.size > 0 ? <button type="button" className={estilos.linkBtn} onClick={() => { setEntradas((p) => restaurarEntradas(p, eliminadas, factura.lineas, motivo)); setEliminadas(new Set()); setRevisado(null); }}>Restaurar {eliminadas.size} línea{eliminadas.size === 1 ? "" : "s"} eliminada{eliminadas.size === 1 ? "" : "s"}</button> : null}
                   {puedeAgregarDescuento(motivo, factura.servicioDescuento, descuento !== null) ? <button type="button" className={ui.primaryButton} onClick={() => { setDescuento(""); setRevisado(null); }}>+ Agregar DESCUENTO</button> : null}
                   {(motivo === 3 || motivo === 4) && !factura.servicioDescuento ? <small className={estilos.hint}>El servicio DESCUENTO no está disponible hasta aplicar la migración NEX-070.</small> : null}
                   <small className={estilos.hint}>Eliminar quita las líneas solo de esta nota; la factura original no se modifica. No se genera ninguna entrada de inventario.</small>

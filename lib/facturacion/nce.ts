@@ -221,11 +221,14 @@ export async function leerFacturaOriginal(db: Db, empresaId: string, usuarioId: 
   };
 }
 
+/** ¿Existe nce_descuentos (NEX-070 aplicada)? */
+async function hayTablaDescuentos(db: Db): Promise<boolean> {
+  return ((await db.query("SELECT to_regclass('public.nce_descuentos') IS NOT NULL AS ok")).rows[0] as F | undefined)?.ok === true;
+}
+
 /** Σ de los servicios DESCUENTO de NCE APROBADAS de la FE. Sin la tabla (NEX-070 sin aplicar) no hay descuentos y el servicio no está disponible. */
 async function descuentosAcreditados(db: Db, empresaId: string, feId: string): Promise<{ monto: Dec; disponible: boolean }> {
-  const hay = (await db.query("SELECT to_regclass('public.nce_descuentos') IS NOT NULL AS ok")).rows[0] as F | undefined;
-
-  if (hay?.ok !== true) return { monto: B(0), disponible: false };
+  if (!(await hayTablaDescuentos(db))) return { monto: B(0), disponible: false };
 
   const r = await db.query(
     `SELECT coalesce(sum(nd.monto), 0)::text AS monto FROM nce_descuentos nd JOIN documentos_electronicos n ON n.empresa_id = nd.empresa_id AND n.id = nd.nce_id
@@ -277,12 +280,14 @@ export async function listarFacturasElegibles(db: Db, empresaId: string, usuario
   const p = entero(e.pagina, 1, 1, 100000);
 
   try {
+    // E07-F001: el saldo descuenta TAMBIÉN los servicios DESCUENTO de NCE APROBADAS (nce_descuentos). Sin NEX-070 la tabla no existe y se conserva el cálculo anterior.
+    const descuentos = (await hayTablaDescuentos(db)) ? " + (SELECT coalesce(sum(nd.monto), 0) FROM nce_descuentos nd JOIN documentos_electronicos nd_n ON nd_n.empresa_id = nd.empresa_id AND nd_n.id = nd.nce_id WHERE nd.empresa_id = d.empresa_id AND nd.fe_id = d.id AND nd_n.estado_sifen = 'APROBADO')" : "";
     const r = await db.query(
       `WITH base AS (
          SELECT d.id, d.establecimiento || '-' || d.punto_expedicion || '-' || d.numero || CASE WHEN d.serie IS NULL THEN '' ELSE ' (' || d.serie || ')' END AS numero, d.cdc, d.fecha_emision, d.moneda, d.total::text AS total, d.receptor_nombre,
                 (SELECT coalesce(sum((x.v->>'dTotOpeItem')::numeric), 0) FROM jsonb_array_elements(sv.payload->'Detalles') x(v)) AS original,
                 (SELECT coalesce(sum(nl.monto), 0) FROM nce_lineas nl JOIN documentos_electronicos nn ON nn.empresa_id = nl.empresa_id AND nn.id = nl.nce_id
-                  WHERE nl.empresa_id = d.empresa_id AND nl.fe_id = d.id AND nn.estado_sifen = 'APROBADO') AS acreditado,
+                  WHERE nl.empresa_id = d.empresa_id AND nl.fe_id = d.id AND nn.estado_sifen = 'APROBADO')${descuentos} AS acreditado,
                 EXISTS (SELECT 1 FROM nce_origen o JOIN documentos_electronicos nn ON nn.empresa_id = o.empresa_id AND nn.id = o.nce_id
                          WHERE o.empresa_id = d.empresa_id AND o.fe_id = d.id AND fe_nce_clasificar(nn.estado_local, nn.estado_sifen, nn.envio_error_tipo) = 'BLOQUEA') AS pendiente
            FROM documentos_electronicos d
