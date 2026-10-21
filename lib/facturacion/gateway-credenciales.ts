@@ -11,8 +11,12 @@ type Db = Pick<Pool, "query">;
 // REF_CREDENCIALES_BASE (NEXIT_DB) vive en gateway.ts: con esa referencia el modo es EXCLUSIVO de la base. Cualquier otra referencia sigue usando variables de entorno (configuración anterior).
 export { REF_CREDENCIALES_BASE };
 
-/** Gateway de PRUEBA documentado (REQUISITOS-FACTURACION-ELECTRONICA-API-EXTERNA): la pantalla no pide URL ni endpoints. */
-export const URL_GATEWAY_PRUEBA = "https://gateway-bebidas-py.e-factura-hub.com";
+/** Endpoint de TEST del proveedor confirmado por el responsable vía Postman (POST /api/login, HTTP 200).
+ * Solo se aplica en la configuración al GUARDAR por empresa (PRO-133).
+ * Las empresas con base_url persistida NO se modifican automáticamente por este cambio.
+ * Nunca almacenar usuario/clave ni token aquí; credenciales por empresa permanecen en NEXIT_DB.
+ */
+export const URL_GATEWAY_PRUEBA = "https://gateway.e-factura-hub.com";
 export const TIMEOUT_GATEWAY_MS = 30000;
 
 /** Si la configuración de la empresa usa credenciales de la base, las agrega a la configuración (solo en memoria del servidor). Sin ellas devuelve la configuración tal cual. */
