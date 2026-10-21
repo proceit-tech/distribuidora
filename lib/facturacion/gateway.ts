@@ -633,7 +633,7 @@ export async function enviarDocumentoGateway(
 }
 
 // ── KuDE (PDF) ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-// Contrato CONFIRMADO por el responsable (PRO-194 / E08): POST {base}/api/kude con Bearer y {dEst, dPunExp, dNumDoc, dSerieNum, tipoDoc: "FE"|"NCE"} (cinco campos, SIN tipOpe) → HTTP 200, JSON {status:"success", CDC, kude:<PDF en Base64, «JVBER…»>}.
+// Contrato CONFIRMADO por el responsable (PRO-194 / E08): POST {base}/api/kude con Bearer y FE: {dEst, dPunExp, dNumDoc, dSerieNum, tipoDoc:"FE"}; NCE: {tipOpe:"4", …, tipoDoc:"ncr"} (ver cuerpoKudeGateway) → HTTP 200, JSON {status:"success", CDC, kude:<PDF en Base64, «JVBER…»>}.
 // Se exige status «success», un CDC devuelto coherente con la identidad del documento solicitado (y, si hay uno persistido, idéntico: sin él también se puede consultar), Base64 estricto y un PDF íntegro («%PDF-» … «%%EOF», ≤ 10 MB).
 // Nada se guarda (ni Base64 ni PDF) y los errores no incluyen el CDC ni el contenido. No se sigue ninguna URL.
 export const MAX_KUDE_BYTES = 10 * 1024 * 1024;
@@ -645,6 +645,18 @@ export type DependenciasKude = { fetch?: FetchLike; fetchKude?: KudeFetch; env?:
 export type DocumentoKude = { tipoDoc: "FE" | "NCE"; establecimiento: string; puntoExpedicion: string; numero: string; serie: string | null; cdc: string | null };
 export type CodigoErrorKude = "SIN_CREDENCIALES" | "AUTENTICACION" | "TIMEOUT" | "NO_DISPONIBLE" | "NO_ENCONTRADO" | "FORMATO_NO_CONFIRMADO" | "CDC_NO_COINCIDE" | "PDF_INVALIDO" | "DEMASIADO_GRANDE" | "SOLICITUD_RECHAZADA" | "PROHIBIDO" | "REDIRECCION" | "EMISOR_DIVERGENTE";
 /** `cdc` es el CDC que devolvió el gateway (ya validado contra la identidad del documento); solo lo usa el servidor para contrastar el emisor, nunca se muestra ni se guarda. */
+/**
+ * ÚNICA transformación del documento interno al contrato EXTERNO de POST /api/kude (confirmado con HTTP 200 en Postman). El tipo interno (FE/NCE) no cambia; solo la solicitud al gateway:
+ *  · FE  → {dEst, dPunExp, dNumDoc, dSerieNum, tipoDoc: "FE"} (cinco campos, sin tipOpe).
+ *  · NCE → {tipOpe: "4", dEst, dPunExp, dNumDoc, dSerieNum, tipoDoc: "ncr"} (seis campos; «ncr» en minúsculas; NUNCA «NCE»).
+ * Los identificadores se transmiten como texto (ceros iniciales intactos) y la serie nula como null.
+ */
+export function cuerpoKudeGateway(doc: Pick<DocumentoKude, "tipoDoc" | "establecimiento" | "puntoExpedicion" | "numero" | "serie">): Record<string, string | null> {
+  const id = { dEst: doc.establecimiento, dPunExp: doc.puntoExpedicion, dNumDoc: doc.numero, dSerieNum: doc.serie };
+
+  return doc.tipoDoc === "NCE" ? { tipOpe: "4", ...id, tipoDoc: "ncr" } : { ...id, tipoDoc: "FE" };
+}
+
 export type ResultadoKude = { ok: true; pdf: Buffer; cdc: string } | { ok: false; codigo: CodigoErrorKude; http: number | null; mensaje: string };
 
 /**
@@ -786,8 +798,7 @@ export async function obtenerKudeGateway(config: ConfigGateway, doc: DocumentoKu
 
   const d = { fetch: dep.fetch ?? fetchSeguro, ahora: dep.ahora ?? Date.now };
   const fetchKude = dep.fetchKude ?? fetchKudeSeguro;
-  // Contrato confirmado: cinco campos y NINGÚN otro (sin tipOpe). Para una NCE solo cambia tipoDoc y los identificadores son los de la propia NCE.
-  const cuerpo = { dEst: doc.establecimiento, dPunExp: doc.puntoExpedicion, dNumDoc: doc.numero, dSerieNum: doc.serie, tipoDoc: doc.tipoDoc };
+  const cuerpo = cuerpoKudeGateway(doc);
 
   for (const forzar of [false, true]) {
     const token = await obtenerToken(config, credenciales.ruc, credenciales.password, d, forzar);

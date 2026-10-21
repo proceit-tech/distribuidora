@@ -11,7 +11,7 @@ import { contador } from "@/lib/clientes/contador-casos";
 import { decodificarBase64Estricto, esPdfValido, leerCuerpoLimitado, limpiarCacheTokens, MAX_KUDE_BYTES, type FetchLike, type KudeFetch } from "@/lib/facturacion/gateway";
 import { crearControladorVisor, pedirKudeAlServidor } from "@/lib/facturacion/kude-visor";
 import { nombreArchivoKude, obtenerKude } from "@/lib/facturacion/shared";
-import { resumenUpstreamSeguro } from "@/lib/facturacion/gateway";
+import { cuerpoKudeGateway, resumenUpstreamSeguro } from "@/lib/facturacion/gateway";
 
 const raiz = process.cwd();
 const leer = (r: string) => readFileSync(join(raiz, r), "utf8");
@@ -121,7 +121,7 @@ export async function verificarCasosKude(): Promise<string[]> {
       const r = f(n);
       const pedido = JSON.parse(init.body) as { dEst: string; dPunExp: string; dNumDoc: string; tipoDoc: string };
 
-      if (r.json && (r.json as { CDC?: unknown }).CDC === AUTO) r.json = { ...(r.json as object), CDC: cdcDe(pedido.tipoDoc, pedido.dEst, pedido.dPunExp, pedido.dNumDoc) };
+      if (r.json && (r.json as { CDC?: unknown }).CDC === AUTO) r.json = { ...(r.json as object), CDC: cdcDe(pedido.tipoDoc === "ncr" ? "NCE" : pedido.tipoDoc, pedido.dEst, pedido.dPunExp, pedido.dNumDoc) };
       n += 1;
       if (r.lanza === "TIMEOUT") { const e = new Error("abortado"); e.name = "AbortError"; throw e; }
       if (r.lanza === "RED") throw new Error("ECONNRESET");
@@ -187,7 +187,7 @@ export async function verificarCasosKude(): Promise<string[]> {
         const g = gateway(pdfOk);
         const r = await obtenerKude(m.db, E1, U1, D(1), g.dep);
 
-        igual("E08-02 [" + tipo + " " + estado + "]: se consulta al gateway y se entrega el PDF (el estado fiscal no condiciona)", [r.pdf.length, g.kudes.length, g.kudes[0].body.tipoDoc, r.nombre.startsWith("KuDE-" + tipo + "-")], [PDF.length, 1, tipo, true]);
+        igual("E08-02 [" + tipo + " " + estado + "]: se consulta al gateway y se entrega el PDF (el estado fiscal no condiciona)", [r.pdf.length, g.kudes.length, g.kudes[0].body.tipoDoc, r.nombre.startsWith("KuDE-" + tipo + "-")], [PDF.length, 1, tipo === "NCE" ? "ncr" : "FE", true]);
       }
     }
 
@@ -214,7 +214,7 @@ export async function verificarCasosKude(): Promise<string[]> {
     const gN = gateway(pdfOk);
     const rN = await obtenerKude(mundo([nce(D(1), E1, { serie: "AB", numero: "0000007", cdc: null })]).db, E1, U1, D(1), gN.dep);
 
-    igual("E08-04 NCE: solo cambia tipoDoc a «NCE» y los identificadores son los de la NCE; nombre propio; sin tipOpe", [JSON.stringify(gN.kudes[0].body), rN.nombre], [JSON.stringify({ dEst: "001", dPunExp: "001", dNumDoc: "0000007", dSerieNum: "AB", tipoDoc: "NCE" }), "KuDE-NCE-001-001-0000007-AB.pdf"]);
+    igual("NCR-02 NCE: contrato Postman — seis campos {tipOpe:\"4\", dEst, dPunExp, dNumDoc, dSerieNum, tipoDoc:\"ncr\"} con los identificadores de la NCE; nombre propio", [JSON.stringify(gN.kudes[0].body), rN.nombre], [JSON.stringify({ tipOpe: "4", dEst: "001", dPunExp: "001", dNumDoc: "0000007", dSerieNum: "AB", tipoDoc: "ncr" }), "KuDE-NCE-001-001-0000007-AB.pdf"]);
 
     // Con CDC persistido, una divergencia con el devuelto se rechaza aunque sea coherente con la identidad
     limpiarCacheTokens();
@@ -343,7 +343,61 @@ export async function verificarCasosKude(): Promise<string[]> {
 
     const contrato = leer("lib/facturacion/gateway.ts");
 
-    cierto("INC-11 el contrato POST /api/kude no cambió: cinco campos en ese orden y ningún tipOpe", /\{ dEst: doc\.establecimiento, dPunExp: doc\.puntoExpedicion, dNumDoc: doc\.numero, dSerieNum: doc\.serie, tipoDoc: doc\.tipoDoc \}/.test(contrato) && !/tipOpe:/.test(contrato.replace(/\/\/.*$/gm, "")));
+    cierto("INC-11 el cuerpo externo sale de UNA sola función (cuerpoKudeGateway); el tipo interno NCE nunca se envía como «NCE»", /const cuerpo = cuerpoKudeGateway\(doc\)/.test(contrato) && !/tipoDoc: doc\.tipoDoc/.test(contrato));
+  }
+
+// ── NCR: contrato confirmado con HTTP 200 en Postman ─────────────────────────────────────────────────────────────────────────────────────────
+  {
+    // FE: exactamente los cinco campos, tipoDoc «FE», sin tipOpe, claves en orden
+    const feDoc = { tipoDoc: "FE" as const, establecimiento: "001", puntoExpedicion: "003", numero: "0090004", serie: null };
+    const ncrDoc = { ...feDoc, tipoDoc: "NCE" as const };
+
+    igual("NCR-01 FE conserva su request de cinco campos (tipoDoc FE, sin tipOpe)", [Object.keys(cuerpoKudeGateway(feDoc)), cuerpoKudeGateway(feDoc).tipoDoc, "tipOpe" in cuerpoKudeGateway(feDoc)], [["dEst", "dPunExp", "dNumDoc", "dSerieNum", "tipoDoc"], "FE", false]);
+    igual("NCR-02 NCE: exactamente seis campos, tipOpe «4» (texto), tipoDoc «ncr» en minúsculas y nunca «NCE»; ceros iniciales y serie nula intactos (001-003-0090004)", [JSON.stringify(cuerpoKudeGateway(ncrDoc)), Object.keys(cuerpoKudeGateway(ncrDoc)).length], [JSON.stringify({ tipOpe: "4", dEst: "001", dPunExp: "003", dNumDoc: "0090004", dSerieNum: null, tipoDoc: "ncr" }), 6]);
+    igual("NCR-02 los identificadores no se convierten en números ni se recortan y la serie persistida se transmite tal cual", [cuerpoKudeGateway({ ...ncrDoc, serie: "AB" }).dSerieNum, typeof cuerpoKudeGateway(ncrDoc).dNumDoc, cuerpoKudeGateway(ncrDoc).dNumDoc], ["AB", "string", "0090004"]);
+
+    // De extremo a extremo con la orquestación real: la NCE 001-003-0090004 sin CDC local ni aprobación se pide con el request de Postman y el PDF se entrega
+    limpiarCacheTokens();
+
+    const mm = mundo([nce(D(1), E1, { establecimiento: "001", puntoExpedicion: "003", numero: "0090004", cdc: null, estadoSifen: "SIN_CONSULTA" })]);
+    const gg = gateway(pdfOk);
+    const rr = await obtenerKude(mm.db, E1, U1, D(1), gg.dep);
+
+    igual("NCR-03 la NCE sin CDC local y sin aprobar envía el request de seis campos con ncr y recibe el PDF (200 + CDC + Base64) para visualizar, descargar e imprimir", [JSON.stringify(gg.kudes[0].body), rr.pdf.length, Buffer.compare(rr.pdf, PDF), rr.nombre], [JSON.stringify({ tipOpe: "4", dEst: "001", dPunExp: "003", dNumDoc: "0090004", dSerieNum: null, tipoDoc: "ncr" }), PDF.length, 0, "KuDE-NCE-001-003-0090004.pdf"]);
+    igual("NCR-03 el estado fiscal local no cambió (solo lectura: ninguna escritura)", mm.consultas.some((q) => /\b(INSERT|UPDATE|DELETE)\b/i.test(q)), false);
+
+    // CDC devuelto de OTRO documento sigue bloqueado; un CDC con tipo FE (01) para una NCE también
+    limpiarCacheTokens();
+
+    const otroNum = await falla(mundo([nce(D(1), E1, { establecimiento: "001", puntoExpedicion: "003", numero: "0090004", cdc: null })]), gateway(() => ok({}, PDF, cdcDe("NCE", "001", "003", "0090005"))), E1, U1, D(1));
+    const tipoFe = await falla(mundo([nce(D(1), E1, { establecimiento: "001", puntoExpedicion: "003", numero: "0090004", cdc: null })]), gateway(() => ok({}, PDF, cdcDe("FE", "001", "003", "0090004"))), E1, U1, D(1));
+
+    igual("NCR-04 CDC de otro número o de tipo FE para una NCE se descarta (502) sin entregar el PDF", [otroNum.estado, otroNum.mensaje.includes("no corresponde"), tipoFe.estado, tipoFe.mensaje.includes("no corresponde")], [502, true, 502, true]);
+
+    // empresa no autorizada: nunca llega al gateway
+    limpiarCacheTokens();
+
+    const gx = gateway(pdfOk);
+    const nx = await falla(mundo([nce(D(1), E1)]), gx, E2, U1, D(1));
+
+    igual("NCR-05 empresa no autorizada: 404 y ninguna llamada al gateway", [nx.estado, gx.kudes.length, gx.logins.length], [404, 0, 0]);
+
+    // token inválido y 4xx/5xx inesperados mantienen el tratamiento seguro con el nuevo request
+    limpiarCacheTokens();
+
+    const gt = gateway([() => ({ status: 401, tipo: "application/json", bytes: Buffer.from("{}") }), () => ok()]);
+    const rt = await obtenerKude(mundo([nce(D(1), E1)]).db, E1, U1, D(1), gt.dep);
+
+    igual("NCR-06 token inválido: se renueva una vez y ambas solicitudes llevan el mismo cuerpo ncr", [rt.pdf.length, gt.kudes.length, gt.kudes.every((k) => k.body.tipoDoc === "ncr" && k.body.tipOpe === "4")], [PDF.length, 2, true]);
+
+    const inesperada = await falla(mundo([nce(D(1), E1)]), gateway(() => ({ status: 418, tipo: "application/json", bytes: Buffer.from("{}") })), E1, U1, D(1));
+
+    igual("NCR-06 respuesta HTTP inesperada: 502 con diagnóstico seguro y sin secretos", [inesperada.estado, /HTTP 418/.test(inesperada.mensaje), SECRETOS.test(inesperada.mensaje)], [502, true, false]);
+
+    // emisión y consulta fiscal intactas: siguen usando el tipo interno
+    const gwSrc = leer("lib/facturacion/gateway.ts");
+
+    cierto("NCR-07 emisión y consulta SIFEN no cambian (consulta_de sigue con su tabla de tipoDoc y recepcion_de no usa «ncr»)", /const TIPO_DOC_CONSULTA: Record<string, string \| undefined> = \{ NCE: "NCE", FE: "FE" \}/.test(gwSrc) && (gwSrc.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "").match(/"ncr"/g) ?? []).length === 1);
   }
 
   // ── 3. Aislamiento, alcance y elegibilidad: nunca se llama al gateway ───────────────────────────────────────────────────────────────────────
