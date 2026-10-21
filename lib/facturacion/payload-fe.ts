@@ -2,6 +2,7 @@ import { CONDICION_CONTADO, CONDICION_CREDITO, CREDITO_CUOTAS, CREDITO_PLAZO, er
 import { cabeEnF023, esMonedaFE, leerCambio, MAX_ENTEROS_F023, totalEnGuaranies } from "@/lib/facturacion/monedas";
 import { DESCRIPCION_FISCAL_DENOMINACION, DESCRIPCION_FISCAL_MONEDA, DESCRIPCION_FISCAL_PAGO, erroresMedio, FORMAS_PAGO, TIPO_EFECTIVO, numeroChequeFiscal, TIPO_CHEQUE, TIPO_OTRO, TIPO_TARJETA_CREDITO, TIPO_TARJETA_DEBITO, type PagoEntrada } from "@/lib/facturacion/pagos";
 import { B, S, calcularItem, calcularSubtotales, numeroDec, parseDec, textoDec, type AfectacionIva, type Dec, type Subtotales, type TasaIva } from "@/lib/facturacion/calculo";
+import { resolverDescuentos, type DescuentoEntrada } from "@/lib/facturacion/descuentos";
 
 /**
  * Validación fiscal y construcción del payload de Factura Electrónica (iTiDE = 1) a partir de datos YA resueltos por el servidor desde los
@@ -82,6 +83,8 @@ export type LineaFE = {
   afectacion: number | null; // E731
   tasa: number | null; // E734
   proporcion: string | null; // E733 (solo afectación 4)
+  /** E03: descuento particular del ítem (% o monto POR UNIDAD, EA002/EA003). */
+  descuento?: DescuentoEntrada | null;
 };
 
 export type EntradaFE = {
@@ -99,6 +102,8 @@ export type EntradaFE = {
   infoAdicional: string;
   receptor: ReceptorFE;
   lineas: LineaFE[];
+  /** E03: descuento general (F010; % o monto, que se convierte a % y se reparte sin prorrateo en EA004 de cada ítem). */
+  descuentoGlobal?: DescuentoEntrada | null;
 };
 
 function prepararLineas(lineas: LineaFE[], errores: string[]) {
@@ -146,8 +151,24 @@ function numeroExacto(d: Dec): number {
   return numeroDec(d);
 }
 
-function importesRepresentables(items: Array<{ cantidad: Dec; precio: Dec; proporcion: Dec }>, resultados: Array<{ totBruto: Dec; totOperacion: Dec; baseGravada: Dec; liquidacion: Dec; baseExenta: Dec }>, sub: Subtotales): boolean {
+type ItemPreparado = { linea: LineaFE; cantidad: Dec; precio: Dec; afectacion: AfectacionIva; tasa: TasaIva; proporcion: Dec };
+
+/** Cálculo único (validación, payload, total y pantalla): resuelve los descuentos (E03) y calcula ítems y subtotales con el mismo motor. */
+function calcularFE(items: ItemPreparado[], general?: DescuentoEntrada | null) {
+  const res = resolverDescuentos(items.map((i) => ({ cantidad: i.cantidad, precio: i.precio, descuento: i.linea.descuento ?? null })), general ?? null);
+  const calculados = items.map((i, k) => {
+    const entrada = { cantidad: i.cantidad, precioUnitario: i.precio, afectacion: i.afectacion, tasa: i.tasa, proporcion: i.proporcion, descuentoItem: res.porItem[k].descItem, descuentoGlobal: res.porItem[k].descGlobal };
+
+    return { i, entrada, resultado: calcularItem(entrada) };
+  });
+
+  return { res, calculados, sub: calcularSubtotales(calculados) };
+}
+
+function importesRepresentables(items: Array<{ cantidad: Dec; precio: Dec; proporcion: Dec }>, resultados: Array<{ totBruto: Dec; totOperacion: Dec; baseGravada: Dec; liquidacion: Dec; baseExenta: Dec }>, sub: Subtotales, extra: Dec[] = []): boolean {
   const valores: Dec[] = [
+    ...extra,
+    sub.dTotDesc, sub.dTotDescGlotem, sub.dDescTotal,
     ...items.flatMap((i) => [i.cantidad, i.precio, i.proporcion]),
     ...resultados.flatMap((x) => [x.totBruto, x.totOperacion, x.baseGravada, x.liquidacion, x.baseExenta]),
     sub.dSubExe, sub.dSubExo, sub.dSub5, sub.dSub10, sub.dTotOpe, sub.dTotGralOpe, sub.dIVA5, sub.dIVA10, sub.dTotIVA, sub.dBaseGrav5, sub.dBaseGrav10, sub.dTBasGraIVA, sub.dTotalGs,
@@ -176,8 +197,9 @@ export function validarEntradaFE(e: EntradaFE, hoy: string = hoyParaguay()): str
 
   if (errores.length > 0 || items.length !== e.lineas.length) return errores;
 
-  const calculados = items.map((i) => ({ entrada: { cantidad: i.cantidad, precioUnitario: i.precio, afectacion: i.afectacion, tasa: i.tasa, proporcion: i.proporcion }, resultado: calcularItem({ cantidad: i.cantidad, precioUnitario: i.precio, afectacion: i.afectacion, tasa: i.tasa, proporcion: i.proporcion }) }));
-  const sub = calcularSubtotales(calculados);
+  const { res: descuentos, calculados, sub } = calcularFE(items, e.descuentoGlobal);
+
+  if (descuentos.errores.length > 0) return descuentos.errores;
 
   if (sub.dTotGralOpe <= B(0)) errores.push("El total de la factura debe ser mayor que cero.");
   if (sub.dTotGralOpe >= TOTAL_MAXIMO) errores.push("El total de la factura supera el máximo admitido.");
@@ -187,7 +209,7 @@ export function validarEntradaFE(e: EntradaFE, hoy: string = hoyParaguay()): str
 
   if (sub.dTotGralOpe !== sumaItems) errores.push(`El total de la operación (${textoDec(sub.dTotGralOpe)}) difiere de la suma de los ítems (${textoDec(sumaItems)}) por el redondeo del IVA de un ítem con gravado parcial (NT 13). No se puede conciliar sin un ajuste no autorizado: use ítems con otra cantidad o precio, o no los combine.`);
   else if (sub.dTotGralOpe % PASO_MONTO_PAGO !== B(0)) errores.push(`El total de la factura (${textoDec(sub.dTotGralOpe)}) tiene más de 4 decimales y el pago (E608) admite solo 4: no se puede conciliar sin un ajuste no autorizado. Ajuste las cantidades o los precios.`);
-  if (!importesRepresentables(items, calculados.map((c) => c.resultado), sub)) errores.push("Algún importe de la factura no puede escribirse en el documento electrónico sin perder precisión. Reduzca las cantidades o los precios.");
+  if (!importesRepresentables(items, calculados.map((c) => c.resultado), sub, [descuentos.porcGlobal, ...descuentos.porItem.flatMap((d) => [d.descItem, d.porcItem, d.descGlobal])])) errores.push("Algún importe de la factura no puede escribirse en el documento electrónico sin perder precisión. Reduzca las cantidades o los precios.");
 
   // Moneda extranjera: F023 dTotalGs = F014 × D018 EXACTO (regla 2385). Con total y cambio de ≤ 4 decimales el producto es exacto; si no cupiera como número del JSON, se bloquea la modalidad (nunca se redondea).
   const totalGs = totalEnGuaranies0(e, sub.dTotGralOpe);
@@ -325,16 +347,11 @@ export function construirPayloadFE(e: EntradaFE, hoy?: string): Record<string, u
 
   if (errores.length > 0 || items.length !== e.lineas.length) throw new Error("La entrada no es válida para construir el payload FE.");
 
-  const calculados = items.map((i) => {
-    const entrada = { cantidad: i.cantidad, precioUnitario: i.precio, afectacion: i.afectacion, tasa: i.tasa, proporcion: i.proporcion };
-
-    return { i, entrada, resultado: calcularItem(entrada) };
-  });
-  const sub = calcularSubtotales(calculados);
+  const { res: descuentos, calculados, sub } = calcularFE(items, e.descuentoGlobal);
   const r = e.receptor;
   const contribuyente = r.naturaleza === 1;
   const sinDocumento = !contribuyente && r.tipoOperacion === 4;
-  const detalles = calculados.map(({ i, resultado: x }) => ({
+  const detalles = calculados.map(({ i, resultado: x }, k) => ({
     dCodInt: i.linea.codigoInterno,
     dGtin: i.linea.gtin,
     dDesProSer: i.linea.descripcion.trim(),
@@ -343,6 +360,8 @@ export function construirPayloadFE(e: EntradaFE, hoy?: string): Record<string, u
     dPUniProSer: numeroDec(i.precio),
     dTotBruOpeItem: numeroDec(x.totBruto),
     dTotOpeItem: numeroDec(x.totOperacion),
+    // E03: con algún descuento en el documento, EA002/EA003/EA004 se informan en TODOS los ítems (0 donde no hay, MT v150). Sin descuentos el payload es el de siempre.
+    ...(descuentos.hay ? { dDescItem: numeroExacto(descuentos.porItem[k].descItem), dPorcDesIt: numeroExacto(descuentos.porItem[k].porcItem), dDescGloItem: numeroExacto(descuentos.porItem[k].descGlobal) } : {}),
     iAfecIVA: i.afectacion,
     dPropIVA: numeroDec(i.proporcion),
     dTasaIVA: i.tasa,
@@ -393,7 +412,7 @@ export function construirPayloadFE(e: EntradaFE, hoy?: string): Record<string, u
     Subtotales: [
       {
         dSubExe: num(sub.dSubExe), dSubExo: num(sub.dSubExo), dSub5: num(sub.dSub5), dSub10: num(sub.dSub10), dTotOpe: num(sub.dTotOpe),
-        dTotDesc: 0, dTotDescGlotem: 0, dTotAntItem: 0, dTotAnt: 0, dPorcDescTotal: 0, dDescTotal: 0, dAnticipo: 0, dRedon: 0,
+        dTotDesc: num(sub.dTotDesc), dTotDescGlotem: num(sub.dTotDescGlotem), dTotAntItem: 0, dTotAnt: 0, dPorcDescTotal: num(descuentos.porcGlobal), dDescTotal: num(sub.dDescTotal), dAnticipo: 0, dRedon: 0,
         dTotGralOpe: num(sub.dTotGralOpe), dIVA5: num(sub.dIVA5), dIVA10: num(sub.dIVA10), dLiqTotIVA5: num(sub.dIVA5), dLiqTotIVA10: num(sub.dIVA10), dTotIVA: num(sub.dTotIVA),
         dBaseGrav5: num(sub.dBaseGrav5), dBaseGrav10: num(sub.dBaseGrav10), dTBasGraIVA: num(sub.dTBasGraIVA), dTotalGs: e.moneda === "PYG" ? num(sub.dTotalGs) : numeroF023(totalEnGuaranies0(e, sub.dTotGralOpe)),
       },
@@ -402,34 +421,33 @@ export function construirPayloadFE(e: EntradaFE, hoy?: string): Record<string, u
 }
 
 /** Total general de la operación (F014) o null si alguna línea no es calculable. */
-export function totalFactura(lineas: LineaFE[]): Dec | null {
+export function totalFactura(lineas: LineaFE[], descuentoGlobal?: DescuentoEntrada | null): Dec | null {
   const errores: string[] = [];
   const { items } = prepararLineas(lineas, errores);
 
   if (errores.length > 0 || items.length !== lineas.length || items.length === 0) return null;
 
-  const entradas = items.map((i) => {
-    const entrada = { cantidad: i.cantidad, precioUnitario: i.precio, afectacion: i.afectacion, tasa: i.tasa, proporcion: i.proporcion };
+  const { res, sub } = calcularFE(items, descuentoGlobal);
 
-    return { entrada, resultado: calcularItem(entrada) };
-  });
-
-  return calcularSubtotales(entradas).dTotGralOpe;
+  return res.errores.length > 0 ? null : sub.dTotGralOpe;
 }
 
 /** Resumen numérico para la pantalla (mismo motor que el payload): evita que el navegador calcule distinto del servidor. */
-export function resumenCalculo(lineas: LineaFE[]) {
+export function resumenCalculo(lineas: LineaFE[], descuentoGlobal?: DescuentoEntrada | null) {
   const errores: string[] = [];
   const { items } = prepararLineas(lineas, errores);
-  const calculados = items.map((i) => {
-    const entrada = { cantidad: i.cantidad, precioUnitario: i.precio, afectacion: i.afectacion, tasa: i.tasa, proporcion: i.proporcion };
-
-    return { entrada, resultado: calcularItem(entrada) };
-  });
-  const s = calcularSubtotales(calculados);
+  const { res, calculados, sub: s } = calcularFE(items, descuentoGlobal);
 
   return {
-    completo: items.length === lineas.length,
+    completo: items.length === lineas.length && res.errores.length === 0,
+    /** E03: errores de los descuentos (para mostrarlos junto al campo) y su detalle por ítem. */
+    erroresDescuento: res.errores,
+    descuentos: {
+      hay: res.hay,
+      porcGlobal: textoDec(res.porcGlobal),
+      items: res.porItem.map((d, k) => ({ unitario: textoDec(d.descItem), porcentaje: textoDec(d.porcItem), global: textoDec(d.descGlobal), total: textoDec(calculados[k].resultado.totBruto - calculados[k].resultado.totOperacion) })),
+      totalItems: textoDec(s.dTotDesc), totalGeneral: textoDec(s.dTotDescGlotem), total: textoDec(s.dDescTotal),
+    },
     items: calculados.map((c) => numeroDec(c.resultado.totOperacion)),
     exento: numeroDec(s.dSubExe), exonerado: numeroDec(s.dSubExo), gravado5: numeroDec(s.dSub5), gravado10: numeroDec(s.dSub10),
     iva5: numeroDec(s.dIVA5), iva10: numeroDec(s.dIVA10), totalIva: numeroDec(s.dTotIVA), total: numeroDec(s.dTotGralOpe),

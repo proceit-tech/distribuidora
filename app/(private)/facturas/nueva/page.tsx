@@ -41,14 +41,20 @@ type Producto = {
   id: string; codigo: string; descripcion: string; unidadSifen: number | null; unidadSimbolo: string | null; unidadNombre: string | null; unidadVigente?: boolean | null; afectacion: number | null; proporcion: string | null;
   tasa: number | null; precio: string | null; monedaPrecio: string | null; gtin: string | null;
 };
-type Linea = { clave: number; producto: Producto; cantidad: string; precio: string; ajuste: AjusteUI };
+/** E03: descuento en pantalla (% o monto POR UNIDAD para el ítem; % o monto total para el general). Vacío = sin descuento. */
+type DescUI = { modo: "PORCENTAJE" | "MONTO"; valor: string };
+const DESC_VACIO: DescUI = { modo: "PORCENTAJE", valor: "" };
+const descuentoDe = (d: DescUI): DescUI | null => (d.valor.trim() === "" ? null : { modo: d.modo, valor: d.valor.trim().replace(",", ".") });
+type Linea = { clave: number; producto: Producto; cantidad: string; precio: string; ajuste: AjusteUI; descuento: DescUI };
 type Resumen = {
   empresa: string; sucursal: string; establecimiento: string; punto: string; numero: string; cliente: { codigo: string; razonSocial: string; documento: string };
   tipoTransaccion: string; presencia: string; condicion: string; formaPago: string; moneda: string;
   cambio?: { valor: string; totalGs: string; catalogo: { cambio: string; fecha: string } | null; modificado: boolean };
   pagos?: Array<{ medio: string; monto: string; detalle: string }>;
   credito?: { tipo: string; plazo: string | null; entrega: string; saldo: string; cuotas: Array<{ numero: number; monto: string; vencimiento: string }> };
-  lineas: Array<{ codigo: string; descripcion: string; unidad: string; cantidad: string; precio: string; precioLista: string; precioModificado: boolean; afectacion: number; tasa: number; proporcion?: string | null; total: number; totalTexto?: string; ajustes?: string[] }>;
+  /** E03: descuentos informados (solo si hay): totales F009/F033/F011 y F010. */
+  descuentos?: { porcGlobal: string; totalItems: string; totalGeneral: string; total: string };
+  lineas: Array<{ descuento?: { unitario: string; porcentaje: string; global: string; total: string }; codigo: string; descripcion: string; unidad: string; cantidad: string; precio: string; precioLista: string; precioModificado: boolean; afectacion: number; tasa: number; proporcion?: string | null; total: number; totalTexto?: string; ajustes?: string[] }>;
   totales: { exento: number; exonerado: number; gravado5: number; gravado10: number; iva5: number; iva10: number; totalIva: number; total: number };
   totalesTexto?: { exento: string; exonerado: string; gravado5: string; gravado10: string; iva5: string; iva10: string; totalIva: string; total: string };
   /** E02: reparto automático del stock por depósito (solo productos que controlan stock) y su huella, que se envía al emitir. */
@@ -96,10 +102,11 @@ const precioModificado = (l: Linea, moneda: string) => precioValido(l) && (refer
 
 const aLineaFE = (l: Linea, moneda: string): LineaFE => {
   const e = valoresEfectivos(l.producto, l.ajuste);
+  const descuento = descuentoDe(l.descuento);
 
   return {
     codigoInterno: l.producto.codigo, gtin: e.gtin, descripcion: e.descripcion, unidadSifen: e.unidadSifen, cantidad: normalizarCantidadTexto(l.cantidad),
-    precio: precioValido(l) ? l.precio : (referencia(l.producto, moneda) ?? "0"), afectacion: e.afectacion, tasa: e.tasa, proporcion: e.proporcion,
+    precio: precioValido(l) ? l.precio : (referencia(l.producto, moneda) ?? "0"), afectacion: e.afectacion, tasa: e.tasa, proporcion: e.proporcion, ...(descuento ? { descuento } : {}),
   };
 };
 
@@ -472,6 +479,7 @@ export default function NuevaFacturaPage() {
   const [cambioManual, setCambioManual] = useState(false);
   const [cotizaciones, setCotizaciones] = useState<Record<string, { cambio: string; fecha: string }>>({});
   const [infoAdicional, setInfoAdicional] = useState("");
+  const [descuentoGeneral, setDescuentoGeneral] = useState<DescUI>(DESC_VACIO);
   const [cliente, setCliente] = useState<Cliente | null>(null);
   const [lineas, setLineas] = useState<Linea[]>([]);
   const [precioEnFoco, setPrecioEnFoco] = useState<number | null>(null);
@@ -577,7 +585,8 @@ export default function NuevaFacturaPage() {
   // Referencial: el número definitivo se reserva de forma atómica al emitir (con el paso a la serie siguiente tras 9999999).
   const siguiente = puntoElegido && typeof puntoElegido.ultimoNumero === "number" ? numeracionSiguiente(puntoElegido.serie ?? null, puntoElegido.ultimoNumero) : null;
   const proximoNumero = puntoElegido && siguiente ? `${puntoElegido.codigo}-${textoNumeracion(siguiente.serie, siguiente.numero)}` : "";
-  const calculo = resumenCalculo(lineas.map((l) => aLineaFE(l, moneda)));
+  const descuentoGeneralFE = descuentoDe(descuentoGeneral);
+  const calculo = resumenCalculo(lineas.map((l) => aLineaFE(l, moneda)), descuentoGeneralFE);
   const extranjera = moneda !== "PYG";
   const cambioNormal = extranjera ? leerCambio(cambio) : null;
   const totalDec = parseDec(calculo.texto.total, 8);
@@ -599,6 +608,7 @@ export default function NuevaFacturaPage() {
     cliente === null ? "cliente" : "",
     lineas.length === 0 ? "al menos un ítem" : "",
     lineas.length > 0 && !lineasValidas ? "corregir cantidades o precios" : "",
+    calculo.erroresDescuento.length > 0 ? "corregir los descuentos" : "",
     problemas.length > 0 ? "completar los datos fiscales de los ítems marcados" : "",
     pendientesDeCredito.length > 0 ? "corregir las condiciones del crédito" : "",
     pendientesDePagos.length > 0 ? "corregir los medios de pago" : "",
@@ -630,7 +640,7 @@ export default function NuevaFacturaPage() {
       return existente.clave;
     }
 
-    setLineas((ls) => [...ls, { clave: siguienteClave, producto: p, cantidad: "1", precio: precioParaEdicion(referencia(p, moneda)), ajuste: AJUSTE_VACIO }]);
+    setLineas((ls) => [...ls, { clave: siguienteClave, producto: p, cantidad: "1", precio: precioParaEdicion(referencia(p, moneda)), ajuste: AJUSTE_VACIO, descuento: DESC_VACIO }]);
     // Un producto fiscalmente incompleto abre su panel contextual (solo con el permiso de ajuste fiscal) para completarlo sin salir de la factura.
     if (puedeAjustarFiscal && problemasFiscales(p, AJUSTE_VACIO, "1", moneda).filter((m) => !m.startsWith("sin precio")).length > 0) setEditando(siguienteClave);
     lineaAFocar.current = siguienteClave;
@@ -639,17 +649,18 @@ export default function NuevaFacturaPage() {
     return siguienteClave;
   }
 
-  const editar = (k: number, cambio: Partial<Pick<Linea, "cantidad" | "precio">>) => setLineas((ls) => ls.map((x) => (x.clave === k ? { ...x, ...cambio } : x)));
+  const editar = (k: number, cambio: Partial<Pick<Linea, "cantidad" | "precio" | "descuento">>) => setLineas((ls) => ls.map((x) => (x.clave === k ? { ...x, ...cambio } : x)));
   const editarAjuste = (k: number, cambio: Partial<AjusteUI>) => setLineas((ls) => ls.map((x) => (x.clave === k ? { ...x, ajuste: { ...x.ajuste, ...cambio } } : x)));
 
   // El precio solo viaja cuando difiere del de lista; el servidor lo contrasta con el catálogo y con el permiso del usuario.
   const cuerpoFactura = () => ({
     claveIdempotencia: clave, sucursalId, puntoId, clienteId: cliente?.id, tipoTransaccion: Number(tipoTransaccion), presencia: Number(presencia), moneda, ...(extranjera ? { cambio } : {}),
-    pagos: hayPagos ? pagos.map((p) => pagoParaEnvio(p, pagos.length === 1)) : [], condicion: Number(condicion), ...(enCredito ? { credito: creditoParaEnvio(credito) } : {}), infoAdicional,
+    pagos: hayPagos ? pagos.map((p) => pagoParaEnvio(p, pagos.length === 1)) : [], condicion: Number(condicion), ...(enCredito ? { credito: creditoParaEnvio(credito) } : {}), infoAdicional, ...(descuentoGeneralFE ? { descuentoGlobal: descuentoGeneralFE } : {}),
     lineas: lineas.map((l) => {
       const ajuste = ajusteParaEnvio(l.producto, l.ajuste);
+      const descuento = descuentoDe(l.descuento);
 
-      return { productoId: l.producto.id, cantidad: normalizarCantidadTexto(l.cantidad), ...(precioModificado(l, moneda) ? { precio: l.precio } : {}), ...(ajuste ? { ajuste } : {}) };
+      return { productoId: l.producto.id, cantidad: normalizarCantidadTexto(l.cantidad), ...(precioModificado(l, moneda) ? { precio: l.precio } : {}), ...(ajuste ? { ajuste } : {}), ...(descuento ? { descuento } : {}) };
     }),
   });
 
@@ -758,7 +769,7 @@ export default function NuevaFacturaPage() {
   function nueva() {
     setCliente(null);
     setLineas([]);
-    setInfoAdicional("");
+    setInfoAdicional(""); setDescuentoGeneral(DESC_VACIO);
     setCondicion("1");
     setCredito(CREDITO_UI_VACIO);
     setPagos([PAGO_UI_VACIO]);
@@ -1006,13 +1017,14 @@ export default function NuevaFacturaPage() {
                         <th>Unidad</th>
                         <th className={estilos.num}>Cantidad</th>
                         <th className={estilos.num}>Precio ({sim}, IVA incl.)</th>
+                        <th>Descuento</th>
                         <th className={estilos.num}>Subtotal</th>
                         <th><span className="sr-only">Acciones</span></th>
                       </tr>
                     </thead>
                     <tbody>
                       {lineas.length === 0 ? (
-                        <tr><td colSpan={7} className={estilos.tableEmpty}>Aún no agregó ítems. Busque arriba por código, GTIN o descripción, o use «Búsqueda avanzada».</td></tr>
+                        <tr><td colSpan={8} className={estilos.tableEmpty}>Aún no agregó ítems. Busque arriba por código, GTIN o descripción, o use «Búsqueda avanzada».</td></tr>
                       ) : lineas.map((l, i) => {
                         const cantOk = cantidadValida(l);
                         const precOk = precioValido(l);
@@ -1097,6 +1109,23 @@ export default function NuevaFacturaPage() {
                                 fmCampo(referencia(l.producto, moneda))
                               )}
                             </td>
+                            <td data-label="Descuento">
+                              <div className={estilos.descuentoCampo}>
+                                <select aria-label={`Tipo de descuento de ${l.producto.descripcion}`} value={l.descuento.modo} onChange={(e) => editar(l.clave, { descuento: { ...l.descuento, modo: e.target.value as DescUI["modo"] } })}>
+                                  <option value="PORCENTAJE">%</option>
+                                  <option value="MONTO">{sim} por unidad</option>
+                                </select>
+                                <input
+                                  className={estilos.qty}
+                                  inputMode="decimal"
+                                  aria-label={`Descuento de ${l.producto.descripcion}`}
+                                  placeholder="0"
+                                  value={l.descuento.valor}
+                                  onChange={(e) => editar(l.clave, { descuento: { ...l.descuento, valor: e.target.value } })}
+                                />
+                              </div>
+                              {calculo.descuentos.hay && descuentoDe(l.descuento) && calculo.completo ? <small className={estilos.hint}>Descuento: {fmCampo(calculo.descuentos.items[i].total)} ({fd(calculo.descuentos.items[i].porcentaje)} %)</small> : null}
+                            </td>
                             <td className={`${estilos.num} ${estilos.subtotal}`} data-label="Subtotal">{calculo.completo ? fmCampo(calculo.texto.items[i]) : "—"}</td>
                             <td className={estilos.accion}>
                               {puedeAjustarFiscal ? (
@@ -1116,7 +1145,7 @@ export default function NuevaFacturaPage() {
                           </tr>
                           {puedeAjustarFiscal && seleccionada ? (
                             <tr className={estilos.filaPanel}>
-                              <td colSpan={7}>
+                              <td colSpan={8}>
                                 <EditorFiscalItem key={l.clave} moneda={moneda} producto={l.producto} precio={l.precio} ajuste={l.ajuste} unidades={unidadesSifen} puedeEditarProductos={puedeEditarProductos} alCambiar={(c) => editarAjuste(l.clave, c)} alCerrar={() => cerrarPanel(l.clave)} />
                               </td>
                             </tr>
@@ -1143,6 +1172,19 @@ export default function NuevaFacturaPage() {
             <aside className={estilos.resumenPanel} aria-labelledby="sec-totales">
               <h2 id="sec-totales">Resumen ({MONEDAS_FE[moneda].nombre.toLowerCase()})</h2>
 
+              <div className={estilos.descuentoGeneral} role="group" aria-label="Descuento general">
+                <span>Descuento general</span>
+                <div className={estilos.descuentoCampo}>
+                  <select aria-label="Tipo de descuento general" value={descuentoGeneral.modo} onChange={(e) => setDescuentoGeneral((d) => ({ ...d, modo: e.target.value as DescUI["modo"] }))}>
+                    <option value="PORCENTAJE">%</option>
+                    <option value="MONTO">{sim} (monto total)</option>
+                  </select>
+                  <input className={estilos.qty} inputMode="decimal" aria-label="Descuento general" placeholder="0" value={descuentoGeneral.valor} onChange={(e) => setDescuentoGeneral((d) => ({ ...d, valor: e.target.value }))} />
+                </div>
+                <small className={estilos.hint}>Se aplica a cada ítem sobre su precio, sin prorrateo y además del descuento propio del ítem.</small>
+                {calculo.erroresDescuento.length > 0 ? <small className={estilos.fieldError} role="alert">{calculo.erroresDescuento.join(" ")}</small> : null}
+              </div>
+
               <dl className={estilos.totals}>
                 <div><dt>Exento</dt><dd>{fmCampo(calculo.texto.exento)}</dd></div>
                 <div><dt>Exonerado</dt><dd>{fmCampo(calculo.texto.exonerado)}</dd></div>
@@ -1151,6 +1193,13 @@ export default function NuevaFacturaPage() {
                 <div><dt>Gravado 10 % (IVA incl.)</dt><dd>{fmCampo(calculo.texto.gravado10)}</dd></div>
                 <div><dt>IVA 10 %</dt><dd>{fmCampo(calculo.texto.iva10)}</dd></div>
                 <div className={estilos.totalIva}><dt>Total IVA</dt><dd>{fmCampo(calculo.texto.totalIva)}</dd></div>
+                {calculo.descuentos.hay && calculo.completo ? (
+                  <>
+                    <div><dt>Descuento por ítems</dt><dd>{fmCampo(calculo.descuentos.totalItems)}</dd></div>
+                    <div><dt>Descuento general{descuentoGeneralFE ? ` (${fd(calculo.descuentos.porcGlobal)} %)` : ""}</dt><dd>{fmCampo(calculo.descuentos.totalGeneral)}</dd></div>
+                    <div><dt>Total descuentos</dt><dd>{fmCampo(calculo.descuentos.total)}</dd></div>
+                  </>
+                ) : null}
               </dl>
 
               <div className={estilos.totalGeneral}>
@@ -1271,6 +1320,7 @@ export default function NuevaFacturaPage() {
                       <td className={estilos.num}>{l.cantidad}</td>
                       <td className={estilos.num}>
                         {fmv(l.precio)}
+                        {l.descuento ? <span className={estilos.modificado}>Descuento: {fmv(l.descuento.unitario)} por unidad ({fd(l.descuento.porcentaje)} %) + general {fmv(l.descuento.global)} = {fmv(l.descuento.total)}</span> : null}
                         {l.precioModificado ? <span className={estilos.modificado}>Precio modificado (lista {fmv(l.precioLista)})</span> : null}
                       </td>
                       <td>{etiquetaIva(l.afectacion, l.tasa, l.proporcion ?? null)}</td>
@@ -1295,6 +1345,13 @@ export default function NuevaFacturaPage() {
               </section>
             ) : null}
             <dl className={estilos.totals}>
+              {resumen.descuentos ? (
+                <>
+                  <div><dt>Descuento por ítems</dt><dd>{fmv(resumen.descuentos.totalItems)}</dd></div>
+                  <div><dt>Descuento general ({fd(resumen.descuentos.porcGlobal)} %)</dt><dd>{fmv(resumen.descuentos.totalGeneral)}</dd></div>
+                  <div><dt>Total descuentos</dt><dd>{fmv(resumen.descuentos.total)}</dd></div>
+                </>
+              ) : null}
               <div><dt>Exento</dt><dd>{fmv(resumen.totalesTexto?.exento ?? String(resumen.totales.exento))}</dd></div>
               <div><dt>Exonerado</dt><dd>{fmv(resumen.totalesTexto?.exonerado ?? String(resumen.totales.exonerado))}</dd></div>
               <div><dt>Gravado 5 %</dt><dd>{fmv(resumen.totalesTexto?.gravado5 ?? String(resumen.totales.gravado5))}</dd></div>

@@ -9,6 +9,7 @@ import { leerMonedaYCambio, leerCambio, precioEnMoneda, precioSerializable, tota
 import { DENOMINACIONES_TARJETA, FORMAS_PAGO, FORMAS_PROCESAMIENTO, leerPagos, resolverMontos, type PagoEntrada } from "@/lib/facturacion/pagos";
 import { construirPayloadFE, CONDICIONES_OPERACION, INDICADORES_PRESENCIA, resumenCalculo, TIPOS_TRANSACCION, totalFactura, validarEntradaFE, type EntradaFE, type LineaFE, type ReceptorFE } from "@/lib/facturacion/payload-fe";
 import { ErrorFacturacion, ErrorValidacionFiscal } from "@/lib/facturacion/shared";
+import { leerDescuento, type DescuentoEntrada } from "@/lib/facturacion/descuentos";
 import { asignacionesSql, mensajeStockInsuficiente, planificarStock, type LineaStock } from "@/lib/facturacion/stock-fe";
 import { normalizarCantidadTexto } from "@/lib/formato/cantidad-campo";
 
@@ -156,7 +157,9 @@ export type CuerpoFactura = {
   /** Medios de pago: del total (Contado) o de la ENTREGA INICIAL (Crédito); ver `pagos.ts`. */
   pagos: PagoEntrada[]; condicion?: number;
   /** D015 (PYG por omisión) y D018 (manual, guaraníes por 1 unidad; solo moneda extranjera). */
-  moneda?: Moneda; cambio?: string; credito?: CreditoEntrada; infoAdicional: string; lineas: Array<{ productoId: string; cantidad: string; precio: string | null; ajuste?: AjusteFiscal }>;
+  moneda?: Moneda; cambio?: string; credito?: CreditoEntrada; infoAdicional: string; lineas: Array<{ productoId: string; cantidad: string; precio: string | null; ajuste?: AjusteFiscal; /** E03: descuento particular del ítem (% o monto por unidad). */ descuento?: DescuentoEntrada }>;
+  /** E03: descuento general de la factura (% o monto). */
+  descuentoGlobal?: DescuentoEntrada;
   /** E02: huella del reparto de stock que el operador REVISÓ (la devuelve la previa). Obligatoria al emitir si hay productos con control de stock; si el stock cambió, se exige revisar de nuevo. */
   repartoHuella?: string;
 };
@@ -177,7 +180,15 @@ export function leerCuerpoFactura(c: Record<string, unknown>): CuerpoFactura | s
     const a = leerAjuste((l as F | null)?.ajuste);
 
     if (typeof a === "string") return a;
+
+    const d = leerDescuento((l as F | null)?.descuento);
+
+    if (typeof d === "string") return d;
   }
+
+  const descuentoGlobal = leerDescuento(c.descuentoGlobal);
+
+  if (typeof descuentoGlobal === "string") return descuentoGlobal;
 
   const pagos = leerPagos(c.pagos);
 
@@ -209,11 +220,14 @@ export function leerCuerpoFactura(c: Record<string, unknown>): CuerpoFactura | s
     ...(monedaYCambio.moneda !== "PYG" ? { moneda: monedaYCambio.moneda, cambio: monedaYCambio.cambio as string } : {}),
     ...(credito ? { credito } : {}),
     infoAdicional: typeof c.infoAdicional === "string" ? c.infoAdicional.trim() : "",
+    ...(descuentoGlobal ? { descuentoGlobal } : {}),
     ...(typeof c.repartoHuella === "string" && /^[0-9a-f]{64}$/.test(c.repartoHuella) ? { repartoHuella: c.repartoHuella } : {}),
     lineas: lineas.map((l) => {
       const ajuste = leerAjuste((l as F).ajuste);
 
-      return { productoId: s((l as F).productoId), cantidad: normalizarCantidadTexto(s((l as F).cantidad)), precio: s((l as F).precio).trim() === "" ? null : s((l as F).precio).trim(), ...(ajuste && typeof ajuste !== "string" ? { ajuste } : {}) };
+      const descuento = leerDescuento((l as F).descuento) as DescuentoEntrada | null;
+
+      return { productoId: s((l as F).productoId), ...(descuento ? { descuento } : {}), cantidad: normalizarCantidadTexto(s((l as F).cantidad)), precio: s((l as F).precio).trim() === "" ? null : s((l as F).precio).trim(), ...(ajuste && typeof ajuste !== "string" ? { ajuste } : {}) };
     }),
   };
 }
@@ -422,14 +436,14 @@ export async function prepararFactura(db: Db, empresaId: string, usuarioId: stri
     extras.push({ campos, unidadSimbolo });
 
     lineas.push({
-      codigoInterno: s(p.codigo), gtin, descripcion, unidadSifen, cantidad: l.cantidad, precio: modificado ? (l.precio as string) : s(p.precio), afectacion, tasa, proporcion,
+      codigoInterno: s(p.codigo), gtin, descripcion, unidadSifen, cantidad: l.cantidad, precio: modificado ? (l.precio as string) : s(p.precio), afectacion, tasa, proporcion, ...(l.descuento ? { descuento: l.descuento } : {}),
     });
   }
 
-  const base = { moneda, ...(cambio !== undefined ? { cambio } : {}), tipoTransaccion: cuerpo.tipoTransaccion, presencia: cuerpo.presencia, condicion, ...(cuerpo.credito ? { credito: cuerpo.credito } : {}), infoAdicional: cuerpo.infoAdicional, receptor, lineas };
+  const base = { moneda, ...(cambio !== undefined ? { cambio } : {}), tipoTransaccion: cuerpo.tipoTransaccion, presencia: cuerpo.presencia, condicion, ...(cuerpo.credito ? { credito: cuerpo.credito } : {}), infoAdicional: cuerpo.infoAdicional, receptor, lineas, ...(cuerpo.descuentoGlobal ? { descuentoGlobal: cuerpo.descuentoGlobal } : {}) };
   // Contado: el pago único cubre el total que calcula el servidor (nunca un monto del navegador). Crédito: el único pago es la entrega inicial (si la hay); el resto se valida
   // contra el total del servidor (entrega + cuotas = total) y nunca se cuenta dos veces.
-  const total = totalFactura(lineas);
+  const total = totalFactura(lineas, cuerpo.descuentoGlobal);
   const enCredito = condicion === CONDICION_CREDITO;
   const entrega = enCredito ? cuerpo.credito?.entrega ?? null : null;
 
@@ -456,7 +470,7 @@ export async function prepararFactura(db: Db, empresaId: string, usuarioId: stri
   if (errores.length > 0) throw detalles(422, "La factura no cumple las reglas fiscales.", errores);
 
   const payload = construirPayloadFE(final) as { Subtotales: Array<{ dTotGralOpe: number }> };
-  const calculo = resumenCalculo(lineas);
+  const calculo = resumenCalculo(lineas, cuerpo.descuentoGlobal);
   const fila = punto.rows[0] as F;
   const resumen = {
     empresa: s(fila.empresa),
@@ -474,9 +488,11 @@ export async function prepararFactura(db: Db, empresaId: string, usuarioId: stri
     ...(enCredito && cuerpo.credito ? { credito: resumenCredito(cuerpo.credito, total) } : {}),
     moneda,
     ...(cambio !== undefined ? { cambio: await resumenCambio(db, empresaId, moneda, cambio, total) } : {}),
-    lineas: lineas.map((l, i) => ({ codigo: l.codigoInterno, descripcion: l.descripcion, unidad: extras[i].unidadSimbolo, ...(extras[i].campos.length > 0 ? { ajustes: extras[i].campos } : {}), cantidad: l.cantidad, precio: l.precio, precioLista: precios[i].referencia, precioModificado: precios[i].modificado, afectacion: l.afectacion, tasa: l.tasa, proporcion: l.afectacion === 4 ? l.proporcion : null, total: calculo.items[i], totalTexto: calculo.texto.items[i] })),
+    lineas: lineas.map((l, i) => ({ codigo: l.codigoInterno, descripcion: l.descripcion, unidad: extras[i].unidadSimbolo, ...(extras[i].campos.length > 0 ? { ajustes: extras[i].campos } : {}), cantidad: l.cantidad, precio: l.precio, precioLista: precios[i].referencia, precioModificado: precios[i].modificado, afectacion: l.afectacion, tasa: l.tasa, proporcion: l.afectacion === 4 ? l.proporcion : null, total: calculo.items[i], totalTexto: calculo.texto.items[i], ...(calculo.descuentos.hay ? { descuento: calculo.descuentos.items[i] } : {}) })),
     totales: { exento: calculo.exento, exonerado: calculo.exonerado, gravado5: calculo.gravado5, gravado10: calculo.gravado10, iva5: calculo.iva5, iva10: calculo.iva10, totalIva: calculo.totalIva, total: calculo.total },
     totalesTexto: calculo.texto,
+    // E03: descuentos informados (solo si hay alguno): por ítem (unitario, %, global, total) y totales F009/F033/F011 + F010.
+    ...(calculo.descuentos.hay ? { descuentos: calculo.descuentos } : {}),
   };
 
   return { entrada: final, payload, totalTexto: String(payload.Subtotales[0].dTotGralOpe), receptor, resumen, guardar, lineasStock };

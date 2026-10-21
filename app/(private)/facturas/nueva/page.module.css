@@ -1410,3 +1410,33 @@
   margin: 0 0 6px;
   padding-left: 18px;
 }
+
+/* E03: descuentos por ítem y general. */
+.descuentoCampo {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.descuentoCampo select {
+  min-width: 0;
+  max-width: 120px;
+}
+
+.descuentoCampo .qty {
+  width: 90px;
+}
+
+.descuentoGeneral {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0 12px;
+  padding: 8px 12px;
+  border: 1px solid #aadadd;
+  border-radius: 8px;
+  background: #f3fbfb;
+}
+
+.descuentoGeneral > span {
+  font-weight: 600;
+}

@@ -2,7 +2,9 @@
  * Motor de cálculo fiscal de la Factura Electrónica (puro, sin base de datos). Aritmética decimal EXACTA con BigInt a escala 10^-8 (los campos del DE
  * admiten hasta 8 decimales: 1-15p(0-8)); nunca float. Fórmulas del Manual Técnico SIFEN v150 y de la Nota Técnica 13:
  *   E727 dTotBruOpeItem = E721 × E711                       (precio con impuestos incluidos × cantidad)
- *   EA008 dTotOpeItem   = E727                              (sin descuentos ni anticipos en esta etapa)
+ *   EA008 dTotOpeItem   = (E721 − EA002 − EA004) × E711     (MT v150 + NT 1: EA002 dDescItem y EA004 dDescGloItem son descuentos POR UNIDAD, con impuestos incluidos; sin anticipos en esta etapa).
+ *                         Sin descuentos EA008 = E727 (resultado idéntico al anterior).
+ *   F009 dTotDesc = Σ EA002 × E711;  F033 dTotDescGlotem = Σ EA004 × E711;  F011 dDescTotal = F009 + F033  (NT 1).  F014 = F008 − F013 + F025 (NT 1): F008 ya es neto, NO se vuelve a restar el descuento.
  *   E735 dBasGravIVA    = 100 × EA008 × E733 / (10000 + E734 × E733)       (E731 = 1 o 4; 0 si 2 o 3)
  *   E736 dLiqIVAItem    = E735 × E734 / 100
  *   E737 dBasExe        = 100 × EA008 × (100 − E733) / (10000 + E734 × E733)   (solo E731 = 4)
@@ -53,13 +55,18 @@ export type EntradaItem = {
   afectacion: AfectacionIva; // E731
   tasa: TasaIva; // E734
   proporcion: Dec; // E733 (100 para gravado, 0 para exonerado/exento, x para parcial), en porcentaje
+  /** EA002: descuento particular POR UNIDAD (impuestos incluidos). Ausente = 0. */
+  descuentoItem?: Dec;
+  /** EA004: descuento global POR UNIDAD (impuestos incluidos), aplicado sin prorrateo a cada ítem (EA004 = F010 × E721 / 100). Ausente = 0. */
+  descuentoGlobal?: Dec;
 };
 
 export type ResultadoItem = { totBruto: Dec; totOperacion: Dec; baseGravada: Dec; liquidacion: Dec; baseExenta: Dec };
 
 export function calcularItem(i: EntradaItem): ResultadoItem {
   const totBruto = divRedondeo(i.cantidad * i.precioUnitario, S);
-  const totOperacion = totBruto;
+  const descUnidad = (i.descuentoItem ?? B(0)) + (i.descuentoGlobal ?? B(0));
+  const totOperacion = descUnidad === B(0) ? totBruto : divRedondeo(i.cantidad * (i.precioUnitario - descUnidad), S);
   const gravado = i.afectacion === 1 || i.afectacion === 4;
   const P = i.proporcion;
   const den = B(10000) * S + BigInt(i.tasa) * P;
@@ -73,12 +80,16 @@ export function calcularItem(i: EntradaItem): ResultadoItem {
 export type Subtotales = {
   dSubExe: Dec; dSubExo: Dec; dSub5: Dec; dSub10: Dec; dTotOpe: Dec; dTotGralOpe: Dec;
   dIVA5: Dec; dIVA10: Dec; dTotIVA: Dec; dBaseGrav5: Dec; dBaseGrav10: Dec; dTBasGraIVA: Dec; dTotalGs: Dec;
+  /** F009, F033 y F011 (NT 1). Cero sin descuentos. */
+  dTotDesc: Dec; dTotDescGlotem: Dec; dDescTotal: Dec;
 };
 
 export function calcularSubtotales(items: Array<{ entrada: EntradaItem; resultado: ResultadoItem }>): Subtotales {
-  let exe = B(0), exo = B(0), s5 = B(0), s10 = B(0), iva5 = B(0), iva10 = B(0), b5 = B(0), b10 = B(0);
+  let exe = B(0), exo = B(0), s5 = B(0), s10 = B(0), iva5 = B(0), iva10 = B(0), b5 = B(0), b10 = B(0), totDesc = B(0), totDescGlobal = B(0);
 
   for (const { entrada: e, resultado: r } of items) {
+    totDesc += divRedondeo(e.cantidad * (e.descuentoItem ?? B(0)), S);
+    totDescGlobal += divRedondeo(e.cantidad * (e.descuentoGlobal ?? B(0)), S);
     if (e.afectacion === 3) exe += r.totOperacion;
     else if (e.afectacion === 2) exo += r.totOperacion;
     else if (e.afectacion === 1) {
@@ -97,5 +108,5 @@ export function calcularSubtotales(items: Array<{ entrada: EntradaItem; resultad
 
   const total = exe + exo + s5 + s10;
 
-  return { dSubExe: exe, dSubExo: exo, dSub5: s5, dSub10: s10, dTotOpe: total, dTotGralOpe: total, dIVA5: iva5, dIVA10: iva10, dTotIVA: iva5 + iva10, dBaseGrav5: b5, dBaseGrav10: b10, dTBasGraIVA: b5 + b10, dTotalGs: total };
+  return { dSubExe: exe, dSubExo: exo, dSub5: s5, dSub10: s10, dTotOpe: total, dTotGralOpe: total, dIVA5: iva5, dIVA10: iva10, dTotIVA: iva5 + iva10, dBaseGrav5: b5, dBaseGrav10: b10, dTBasGraIVA: b5 + b10, dTotalGs: total, dTotDesc: totDesc, dTotDescGlotem: totDescGlobal, dDescTotal: totDesc + totDescGlobal };
 }
