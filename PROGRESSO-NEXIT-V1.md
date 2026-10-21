@@ -2051,3 +2051,10 @@ Após o encerramento **estático** de Inventario na `AUD-INV-R05` (sem homologa�
 ### Facturación E01-R03 — estilo del campo Cantidad del selector (PRO-201, BAJA E01-R02-01) (20/10/2026)
 - La clase `.cantidadAnadido` (y `label`/`.qty` anidados) no estaba en `page.module.css` publicado; se versionó (flex, gap, padding, borde y fondo de realce, ancho del campo). Sin cambios de lógica, cálculo, API ni estoque.
 - **Prueba dirigida:** cantidad-e01 16/0 (nuevas E01-R03-01/02: toda clase `estilos.*` de `CantidadAnadido` existe en el CSS y `cantidadAnadido` define su presentación; en el HEAD anterior la clase no existía). Regresiones facturacion 271 y rediseno 90 = 0 fallos. NO homologado; E02 no iniciada.
+
+
+### Auditoria ChatGPT E01-R03 — fechamento técnico de E01 (20/10/2026)
+- **Commit do Claude:** `19ad469ffa07e7ef67bf00cc2bec4c72b38d4674`; **relatório oficial:** `documentacao/testes/AUD-NEXIT-CASA-MINGO-E01-R03-2026-10-20.md`.
+- **E01-R02-01 CSS ausente corrigido:** classe `.cantidadAnadido` foi publicada em `page.module.css`, com agrupamento visual e rótulo; classe consumida pelo componente é válida. Sem alterações de lógica/FE/backend/estoque no commit. Testes relatados pelo Claude: cantidad-e01 16/0, facturacion 271/0, rediseno 90/0; não reexecutados pelo ChatGPT.
+- **Observação BAIXA:** regra de largura 110px encontra `max-width:100px` de `.qty`; largura efetiva permanece 100px. Não compromete edição e não bloqueia E02; solicitar refinamento apenas se responsável reportar necessidade, sem declarar 10/10.
+- **Parecer:** E01 estática conforme, **não homologada**; prova de foco/teclado/aparência com browser/VM não ocorreu. `PRO-201`, `PRO-200`, `PRO-93` atualizadas no Linear. **E02 LIBERADA SOMENTE PARA DESENVOLVIMENTO** após gate estático, uma entrega por vez, commit/push e pausa para auditoria; sem VM/SQL operacionais.
