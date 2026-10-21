@@ -16,11 +16,11 @@ UNION ALL SELECT 'NEX-068 ausente (no se reaplica)', to_regclass('public.documen
 SELECT version, nombre FROM public.schema_migrations WHERE version IN ('NEX-065', 'NEX-066', 'NEX-067', 'NEX-068') ORDER BY version;
 SELECT count(*) AS total, max(version) AS ultima FROM public.schema_migrations;
 
-\echo '== 3. Informativo: destinos elegibles por cliente (tipo ENTREGA o SUCURSAL, o la marcada como predeterminada) =='
+\echo '== 3. Informativo: destinos elegibles por cliente (toda dirección registrada que no sea exclusivamente la fiscal, o la fiscal marcada como predeterminada de entrega) =='
 SELECT count(*) AS clientes_con_destinos_elegibles
-  FROM (SELECT empresa_id, cliente_id FROM public.direcciones_cliente WHERE tipo IN ('ENTREGA', 'SUCURSAL') OR es_entrega_default GROUP BY empresa_id, cliente_id) x;
+  FROM (SELECT empresa_id, cliente_id FROM public.direcciones_cliente WHERE es_entrega_default OR (NOT es_fiscal AND tipo <> 'FISCAL') GROUP BY empresa_id, cliente_id) x;
 SELECT count(*) AS clientes_con_destinos_pero_sin_predeterminado
-  FROM (SELECT empresa_id, cliente_id FROM public.direcciones_cliente WHERE tipo IN ('ENTREGA', 'SUCURSAL') OR es_entrega_default GROUP BY empresa_id, cliente_id HAVING NOT bool_or(es_entrega_default)) x;
+  FROM (SELECT empresa_id, cliente_id FROM public.direcciones_cliente WHERE es_entrega_default OR (NOT es_fiscal AND tipo <> 'FISCAL') GROUP BY empresa_id, cliente_id HAVING NOT bool_or(es_entrega_default)) x;
 SELECT tipo, count(*) AS direcciones, count(*) FILTER (WHERE es_entrega_default) AS predeterminadas FROM public.direcciones_cliente GROUP BY tipo ORDER BY tipo;
 
 ROLLBACK;

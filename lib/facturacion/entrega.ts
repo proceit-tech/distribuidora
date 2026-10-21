@@ -1,7 +1,7 @@
 /**
  * E04 (PRO-200) — dirección de ENTREGA en la Factura Electrónica. El operador elige entre las direcciones YA registradas del cliente (sucursales/destinos); no se crean desde la FE y no cambian ni el domicilio
- * fiscal del receptor, ni el establecimiento emisor, ni el payload SIFEN. La lista y la validación del servidor salen de la MISMA regla SQL (`fe_entrega_opciones`, NEX-068): destinos de tipo ENTREGA o
- * SUCURSAL, o la marcada predeterminada; siempre del cliente y la empresa de la sesión.
+ * fiscal del receptor, ni el establecimiento emisor, ni el payload SIFEN. La lista y la validación del servidor salen de la MISMA regla SQL (`fe_entrega_opciones`, NEX-068, PRO-206): TODA dirección registrada del
+ * cliente que no sea exclusivamente el domicilio fiscal (ENTREGA, SUCURSAL, COMERCIAL, OTRA); el fiscal solo si está marcado predeterminado de entrega. Siempre del cliente y la empresa de la sesión.
  */
 import type { Pool } from "pg";
 

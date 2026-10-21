@@ -323,7 +323,7 @@ function detallePago(p: PagoEntrada): string {
  * Valida y calcula la factura SIN escribir nada ni reservar número: es la base de la previa («Grabar») y de la emisión. Todo sale de los cadastros de la
  * empresa de la sesión y se recalcula en el servidor. Lanza ErrorFacturacion / ErrorValidacionFiscal (422) con los motivos.
  */
-export async function prepararFactura(db: Db, empresaId: string, usuarioId: string, cuerpo: CuerpoFactura) {
+export async function prepararFactura(db: Db, empresaId: string, usuarioId: string, cuerpo: CuerpoFactura, opciones: { documentoExiste?: () => Promise<boolean> } = {}) {
   const condicion = cuerpo.condicion ?? CONDICION_CONTADO;
   const moneda: Moneda = cuerpo.moneda ?? "PYG";
   const cambio = moneda === "PYG" ? undefined : cuerpo.cambio;
@@ -351,7 +351,8 @@ export async function prepararFactura(db: Db, empresaId: string, usuarioId: stri
   if (punto.rows.length === 0) throw new ErrorFacturacion(422, "La sucursal o el punto de expedición no son válidos (inactivos, sin establecimiento SIFEN o fuera de su alcance).");
 
   // E04: el destino de entrega debe ser una dirección registrada de ESTE cliente y ESTA empresa; con destinos registrados hay que elegir uno, sin destinos la FE sale sin destino. Antes de reservar numeración.
-  const destino = resolverEntrega(await opcionesEntrega(db, empresaId, usuarioId, cuerpo.clienteId), cuerpo.direccionEntregaId);
+  // Reintento de una FE YA creada (misma clave): el destino ya quedó guardado y es inmutable; si la dirección del catálogo se editó o eliminó después, el reintento NO la vuelve a exigir (PRO-205).
+  const destino = opciones.documentoExiste && (await opciones.documentoExiste()) ? ({ ok: true, opcion: null } as const) : resolverEntrega(await opcionesEntrega(db, empresaId, usuarioId, cuerpo.clienteId), cuerpo.direccionEntregaId);
 
   if (!destino.ok) throw new ErrorFacturacion(422, destino.error);
 
@@ -515,7 +516,16 @@ export async function prepararFactura(db: Db, empresaId: string, usuarioId: stri
  * ante doble clic, reintento o pérdida de respuesta. Solo se llama al CONFIRMAR el envío: revisar o volver a editar no consume numeración.
  */
 export async function crearFacturaElectronica(db: Db, empresaId: string, usuarioId: string, cuerpo: CuerpoFactura, salida?: { guardar: ClasificacionGuardar[] }) {
-  const { payload, totalTexto, receptor, guardar, lineasStock } = await prepararFactura(db, empresaId, usuarioId, cuerpo);
+  // ¿La FE de esta clave ya existe? (doble clic, respuesta perdida, reintento): entonces ni el stock ni el destino se vuelven a evaluar; PostgreSQL devuelve el documento existente sin tocar inventario ni destino.
+  // La consulta es perezosa: se hace después de las validaciones previas (p. ej. Cuotas suspendidas se rechaza sin tocar la base) y se reutiliza abajo.
+  let existencia: boolean | null = null;
+  const documentoExiste = async () => {
+    if (existencia === null) existencia = ((await db.query("SELECT 1 AS ok FROM documentos_electronicos WHERE empresa_id = $1::uuid AND clave_idempotencia = $2", [empresaId, cuerpo.claveIdempotencia])).rows as F[]).length > 0;
+
+    return existencia;
+  };
+  const { payload, totalTexto, receptor, guardar, lineasStock } = await prepararFactura(db, empresaId, usuarioId, cuerpo, { documentoExiste });
+  const documentoExistente = await documentoExiste();
 
   if (salida) salida.guardar = guardar;
 
@@ -523,17 +533,13 @@ export async function crearFacturaElectronica(db: Db, empresaId: string, usuario
   // la FE ya existe y el stock ya se bajó; PostgreSQL devuelve el documento existente sin tocar inventario.
   let asignaciones: ReturnType<typeof asignacionesSql> = [];
 
-  if (lineasStock.some((l) => l.controlaStock)) {
-    const previa = await db.query("SELECT 1 AS ok FROM documentos_electronicos WHERE empresa_id = $1::uuid AND clave_idempotencia = $2", [empresaId, cuerpo.claveIdempotencia]);
+  if (!documentoExistente && lineasStock.some((l) => l.controlaStock)) {
+    const plan = await planificarStock(db, empresaId, usuarioId, cuerpo.sucursalId, lineasStock);
 
-    if ((previa.rows as F[]).length === 0) {
-      const plan = await planificarStock(db, empresaId, usuarioId, cuerpo.sucursalId, lineasStock);
-
-      if (!plan.suficiente) throw new ErrorFacturacion(409, mensajeStockInsuficiente(plan));
-      // El reparto que se baja es EXACTAMENTE el que el operador revisó; si el stock cambió y el reparto ya no coincide, se exige revisar de nuevo (no se sustituye en silencio).
-      if (plan.salidas.length > 0 && cuerpo.repartoHuella !== plan.huella) throw new ErrorFacturacion(409, MENSAJE_REPARTO_CAMBIO);
-      asignaciones = asignacionesSql(plan);
-    }
+    if (!plan.suficiente) throw new ErrorFacturacion(409, mensajeStockInsuficiente(plan));
+    // El reparto que se baja es EXACTAMENTE el que el operador revisó; si el stock cambió y el reparto ya no coincide, se exige revisar de nuevo (no se sustituye en silencio).
+    if (plan.salidas.length > 0 && cuerpo.repartoHuella !== plan.huella) throw new ErrorFacturacion(409, MENSAJE_REPARTO_CAMBIO);
+    asignaciones = asignacionesSql(plan);
   }
 
   const documento = receptor.naturaleza === 1 ? `${receptor.ruc}-${receptor.dv}` : receptor.numeroDocumento;

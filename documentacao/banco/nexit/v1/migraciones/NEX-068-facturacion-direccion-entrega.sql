@@ -2,11 +2,13 @@
 -- NEX-068 — Facturación E04 (PRO-200): dirección de ENTREGA elegida en la Factura Electrónica.
 -- Reglas aprobadas (REQ-CASA-MINGO-DECISIONES §7, HANDOFF FE-END):
 --   * El operador elige un destino entre las direcciones YA registradas del cliente de la factura (direcciones_cliente); la que está marcada es_entrega_default se preselecciona; no se crean direcciones desde la FE.
---   * Destinos elegibles = direcciones del cliente de tipo ENTREGA o SUCURSAL, o la marcada es_entrega_default (la dirección fiscal NO es un destino por sí misma). Si el cliente no tiene ninguno, la FE se emite
+--   * Destinos elegibles (PRO-206) = TODAS las direcciones registradas del cliente que no sean exclusivamente el domicilio FISCAL (ENTREGA, SUCURSAL, COMERCIAL —tipo por defecto de las filiales heredadas— y OTRA); el domicilio fiscal (es_fiscal o
+--     tipo FISCAL) solo es destino si está explícitamente marcado es_entrega_default. Una única función (fe_entrega_elegible) aplica la MISMA regla en la consulta, la validación y la emisión. Si el cliente no tiene ninguno, la FE se emite
 --     SIN destino (no se inventa ni se copia la dirección fiscal) y no se guarda fila.
 --   * Si el cliente tiene destinos elegibles, la FE debe llevar uno (NEX:ENTREGA_REQUERIDA); un destino que no pertenece a ese cliente/empresa, o que ya no es elegible, se rechaza (NEX:ENTREGA_INVALIDA) y TODA la
 --     transacción se deshace (ni FE, ni numeración, ni baja de stock).
---   * Se guarda la referencia y una FOTOGRAFÍA (snapshot) del destino vinculada a la FE (documento_electronico_entregas): trazable aunque luego se edite el catálogo de direcciones. Inmutable.
+--   * Se guarda la referencia y una FOTOGRAFÍA (snapshot) del destino vinculada a la FE (documento_electronico_entregas): trazable aunque luego se edite o se ELIMINE la dirección del catálogo (PRO-205: direccion_id es una
+--     referencia histórica SIN clave foránea, para no bloquear Clientes → Direcciones; la pertenencia a la empresa y al cliente se valida bajo bloqueo en la emisión). Inmutable.
 --   * El domicilio fiscal del receptor, el establecimiento/punto emisor, el payload SIFEN, el KuDE, las reglas fiscales y el stock NO cambian: el destino es solo un dato logístico interno.
 --   * Idempotencia: repetir la emisión (misma clave) devuelve la FE existente y NO toca el destino original.
 -- Requiere NEX-067 (envoltorio de emisión con stock). ESTADO: versionada y NO aplicada. Ningún agente de IA la aplica: la ejecuta SOLO el responsable en la VM (docs/PROCEDIMIENTO-NEX-068.md). Primero la migración, después el código.
@@ -33,13 +35,12 @@ CREATE TABLE public.documento_electronico_entregas (
   empresa_id   uuid        NOT NULL REFERENCES public.empresas (id),
   documento_id uuid        NOT NULL,
   cliente_id   uuid        NOT NULL,
-  direccion_id uuid        NOT NULL,
+  direccion_id uuid        NOT NULL, -- referencia HISTÓRICA (sin FK): la dirección del catálogo puede editarse o eliminarse después; la fotografía (snapshot) es la evidencia
   snapshot     jsonb       NOT NULL CHECK (jsonb_typeof(snapshot) = 'object' AND pg_column_size(snapshot) < 8192),
   creado_por   uuid        NOT NULL,
   creado_at    timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (empresa_id, documento_id),
-  CONSTRAINT fe_entregas_documento_fk FOREIGN KEY (empresa_id, documento_id) REFERENCES public.documentos_electronicos (empresa_id, id),
-  CONSTRAINT fe_entregas_direccion_fk FOREIGN KEY (empresa_id, direccion_id) REFERENCES public.direcciones_cliente (empresa_id, id)
+  CONSTRAINT fe_entregas_documento_fk FOREIGN KEY (empresa_id, documento_id) REFERENCES public.documentos_electronicos (empresa_id, id)
 );
 COMMENT ON TABLE public.documento_electronico_entregas IS 'NEX-068: destino de entrega (referencia + fotografía) elegido al emitir la FE. Sin acceso directo para la aplicación; inmutable.';
 
@@ -56,6 +57,12 @@ END $$;
 CREATE TRIGGER fe_entregas_inmutable_trg BEFORE UPDATE OR DELETE ON public.documento_electronico_entregas
   FOR EACH ROW EXECUTE FUNCTION public.fe_entregas_inmutable();
 
+-- 1b) Regla ÚNICA de elegibilidad (PRO-206): cualquier dirección registrada que no sea exclusivamente el domicilio fiscal; el fiscal solo si está marcado como predeterminado de entrega.
+CREATE OR REPLACE FUNCTION public.fe_entrega_elegible(p_tipo text, p_es_fiscal boolean, p_es_default boolean) RETURNS boolean
+LANGUAGE sql IMMUTABLE AS $$
+  SELECT p_es_default OR (NOT p_es_fiscal AND p_tipo <> 'FISCAL')
+$$;
+
 -- 2) Destinos elegibles del cliente (SOLO LECTURA): la lista que muestra la pantalla y la regla que valida el servidor son la MISMA.
 CREATE OR REPLACE FUNCTION public.fe_entrega_opciones(p_empresa uuid, p_usuario uuid, p_cliente uuid)
 RETURNS TABLE (o_id uuid, o_tipo text, o_etiqueta text, o_descripcion text, o_direccion text, o_numero_casa text, o_complemento text, o_departamento text, o_distrito text, o_ciudad text, o_pais text,
@@ -71,7 +78,7 @@ BEGIN
            d.contacto_nombre::text, d.contacto_telefono::text, d.horario_recepcion::text, d.es_entrega_default
       FROM public.direcciones_cliente d
      WHERE d.empresa_id = p_empresa AND d.cliente_id = p_cliente
-       AND (d.tipo IN ('ENTREGA', 'SUCURSAL') OR d.es_entrega_default)
+       AND public.fe_entrega_elegible(d.tipo, d.es_fiscal, d.es_entrega_default)
      ORDER BY d.es_entrega_default DESC, lower(coalesce(nullif(btrim(d.etiqueta), ''), nullif(btrim(d.descripcion), ''), d.direccion)), d.id;
 END $$;
 
@@ -90,7 +97,7 @@ BEGIN
     FROM public.fe_documento_crear_fe_con_stock(p_empresa, p_usuario, p_sucursal, p_punto, p_clave, p_cliente, p_receptor_documento, p_receptor_nombre, p_moneda, p_total, p_payload, p_asignaciones) c;
 
   IF NOT v_reutilizado THEN
-    SELECT EXISTS (SELECT 1 FROM public.direcciones_cliente d WHERE d.empresa_id = p_empresa AND d.cliente_id = p_cliente AND (d.tipo IN ('ENTREGA', 'SUCURSAL') OR d.es_entrega_default)) INTO v_hay;
+    SELECT EXISTS (SELECT 1 FROM public.direcciones_cliente d WHERE d.empresa_id = p_empresa AND d.cliente_id = p_cliente AND public.fe_entrega_elegible(d.tipo, d.es_fiscal, d.es_entrega_default)) INTO v_hay;
 
     IF p_direccion_entrega IS NULL THEN
       IF v_hay THEN
@@ -98,7 +105,7 @@ BEGIN
       END IF;
     ELSE
       SELECT d.* INTO v_dir FROM public.direcciones_cliente d
-       WHERE d.empresa_id = p_empresa AND d.cliente_id = p_cliente AND d.id = p_direccion_entrega AND (d.tipo IN ('ENTREGA', 'SUCURSAL') OR d.es_entrega_default) FOR SHARE;
+       WHERE d.empresa_id = p_empresa AND d.cliente_id = p_cliente AND d.id = p_direccion_entrega AND public.fe_entrega_elegible(d.tipo, d.es_fiscal, d.es_entrega_default) FOR SHARE;
       IF NOT FOUND THEN
         RAISE EXCEPTION 'la dirección de entrega no pertenece al cliente de la factura o ya no está disponible' USING ERRCODE = 'P0001', DETAIL = 'NEX:ENTREGA_INVALIDA';
       END IF;
@@ -132,6 +139,7 @@ BEGIN
 END $$;
 
 REVOKE ALL ON FUNCTION public.fe_entregas_inmutable() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.fe_entrega_elegible(text, boolean, boolean) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.fe_entrega_opciones(uuid, uuid, uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.fe_documento_crear_fe_con_stock_entrega(uuid, uuid, uuid, uuid, text, uuid, text, text, text, numeric, jsonb, jsonb, uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.nex_aplicar_grants_facturacion_stock_entrega() FROM PUBLIC;

@@ -18,6 +18,7 @@ END $$;
 
 DROP FUNCTION IF EXISTS public.fe_documento_crear_fe_con_stock_entrega(uuid, uuid, uuid, uuid, text, uuid, text, text, text, numeric, jsonb, jsonb, uuid);
 DROP FUNCTION IF EXISTS public.fe_entrega_opciones(uuid, uuid, uuid);
+DROP FUNCTION IF EXISTS public.fe_entrega_elegible(text, boolean, boolean);
 DROP FUNCTION IF EXISTS public.nex_aplicar_grants_facturacion_stock_entrega();
 DROP TABLE public.documento_electronico_entregas;
 DROP FUNCTION IF EXISTS public.fe_entregas_inmutable();

@@ -36,6 +36,22 @@ const D1 = op(dirId(21), "Destino D1");
 const D2 = op(dirId(22), "Destino D2");
 const CATALOGO_DIRS: Record<string, OpcionEntrega[]> = { [CLI_A]: [A1, A2, A3], [CLI_B]: [B1], [CLI_C]: [], [CLI_D]: [D1, D2] };
 
+// PRO-206: catálogo CRUDO por cliente (como direcciones_cliente) y la regla ÚNICA de elegibilidad (espejo de fe_entrega_elegible): toda dirección que no sea exclusivamente la fiscal; el fiscal solo si es predeterminado.
+type DirCruda = { op: OpcionEntrega; esFiscal: boolean };
+const CLI_E = "c5c5c5c5-c5c5-4c5c-8c5c-c5c5c5c5c5c5"; // cinco filiales tipo COMERCIAL, sin principal
+const CLI_F = "c6c6c6c6-c6c6-4c6c-8c6c-c6c6c6c6c6c6"; // cinco filiales COMERCIAL con una principal
+const CLI_G = "c7c7c7c7-c7c7-4c7c-8c7c-c7c7c7c7c7c7"; // solo domicilio fiscal
+const CLI_H = "c8c8c8c8-c8c8-4c8c-8c8c-c8c8c8c8c8c8"; // fiscal marcado como predeterminado + comercial marcada fiscal + OTRA
+const filial = (n: number, extra: Partial<OpcionEntrega> = {}): OpcionEntrega => op(dirId(100 + n), "Filial " + n, { tipo: "COMERCIAL", ...extra });
+const RAW: Record<string, DirCruda[]> = {
+  [CLI_E]: [1, 2, 3, 4, 5].map((n) => ({ op: filial(n), esFiscal: false })),
+  [CLI_F]: [1, 2, 3, 4, 5].map((n) => ({ op: filial(n + 10, n === 3 ? { esDefault: true } : {}), esFiscal: false })),
+  [CLI_G]: [{ op: op(dirId(201), "Domicilio fiscal", { tipo: "FISCAL" }), esFiscal: true }],
+  [CLI_H]: [{ op: op(dirId(301), "Fiscal-predeterminado", { tipo: "FISCAL", esDefault: true }), esFiscal: true }, { op: filial(31), esFiscal: true }, { op: op(dirId(303), "Otra sede", { tipo: "OTRA" }), esFiscal: false }],
+};
+const elegibleRegla = (d: DirCruda): boolean => d.op.esDefault || (!d.esFiscal && d.op.tipo !== "FISCAL");
+const elegiblesDe = (cliente: string): OpcionEntrega[] => CATALOGO_DIRS[cliente] ?? (RAW[cliente] ?? []).filter(elegibleRegla).map((d) => d.op).sort((a, b) => (a.esDefault === b.esDefault ? 0 : a.esDefault ? -1 : 1));
+
 const filaCliente = (id: string) => ({ codigo: "CLI-" + id.slice(0, 2), naturaleza_receptor: 1, tipo_operacion: 1, tipo_contribuyente_sifen: 2, pais_codigo: "PRY", tipo_documento_identidad_sifen: null, descripcion_documento_identidad: null, numero_documento: "80000005", dv: "6", razon_social: "CLIENTE " + id.slice(0, 2), nombre_fantasia: null, email: null, email_copia: null, email_facturacion: null, telefono: null, celular: null, telefono_ddi: null, celular_ddi: null, activo: true, bloqueado_ventas: false, direccion: "Domicilio FISCAL " + id.slice(0, 2), numero_casa: "999", departamento_codigo: "1", distrito_codigo: "1", ciudad_codigo: "1" });
 const producto = { id: P1, codigo: "P-1", controlaStock: true, descripcion: "Producto P-1", unidadSifen: 77, unidadSimbolo: "UNI", unidadNombre: "Unidad", unidadVigente: true, afectacion: 1, proporcion: null, tasa: 10, precio: "11000", monedaPrecio: "PYG", gtin: null };
 
@@ -58,7 +74,7 @@ function mundo(opciones: { stock?: number } = {}) {
       if (/FROM documentos_electronicos WHERE empresa_id/.test(sql)) return { rows: docs.has(String(p[1])) ? [{ ok: 1 }] : [], rowCount: 0 };
       if (/FROM fe_entrega_opciones/.test(sql)) {
         // Contrato SQL: solo la empresa de la sesión y el cliente pedido; cliente ajeno/inexistente → vacío.
-        return { rows: p[0] === EMPRESA ? (CATALOGO_DIRS[String(p[2])] ?? []) : [], rowCount: 1 };
+        return { rows: p[0] === EMPRESA ? elegiblesDe(String(p[2])) : [], rowCount: 1 };
       }
       if (/FROM fe_stock_disponibilidad/.test(sql)) return { rows: [{ productoId: P1, depositoId: DEP_A, depositoCodigo: "A", depositoNombre: "Depósito A", loteId: null, loteCodigo: null, vencimiento: null, disponible: String(stock) }], rowCount: 1 };
       if (/fe_documento_crear_fe_con_stock_entrega/.test(sql)) {
@@ -69,7 +85,7 @@ function mundo(opciones: { stock?: number } = {}) {
 
         const cliente = String(p[5]);
         const dir = p[12] as string | null;
-        const elegibles = CATALOGO_DIRS[cliente] ?? [];
+        const elegibles = elegiblesDe(cliente);
 
         // Espejo del SQL: sin destino con destinos registrados → ENTREGA_REQUERIDA; destino ajeno/no elegible → ENTREGA_INVALIDA. Todo o nada: ni FE ni numeración.
         if (dir === null && elegibles.length > 0) throw Object.assign(new Error("el cliente tiene direcciones de entrega registradas: seleccione una"), { code: "P0001", detail: "NEX:ENTREGA_REQUERIDA" });
@@ -294,6 +310,47 @@ export async function verificarCasosEntregaE04(): Promise<string[]> {
     igual("EN-43 SQL (contrato): destino ajeno → NEX:ENTREGA_INVALIDA y destino faltante con destinos registrados → NEX:ENTREGA_REQUERIDA, ambos sin FE ni numeración consumida", [await llamar(CLI_A, B1.id, "clave-forjada-0001"), await llamar(CLI_A, null, "clave-forjada-0002"), await llamar(CLI_C, null, "clave-sin-dest-0003"), m.secuencia() - antes, m.docs.size], ["NEX:ENTREGA_INVALIDA", "NEX:ENTREGA_REQUERIDA", "OK", 1, 2]);
   }
 
+  // ── 3b. PRO-206 (F-002): las filiales ya registradas como COMERCIAL se ofrecen; el domicilio exclusivamente fiscal queda aparte ───────────────────────────────────────────────────────────────
+  {
+    const m = mundo();
+
+    igual("EN-60 cliente con CINCO filiales tipo COMERCIAL (sin etiquetar como SUCURSAL/ENTREGA): se ofrecen exactamente las 5 y, sin principal, hay que elegir una (no se emite sin destino)", [elegiblesDe(CLI_E).map((o) => o.id), resolverEntrega(elegiblesDe(CLI_E), undefined), await estado(prepararFactura(m.db, EMPRESA, USUARIO, cuerpo(CLI_E))), await estado(prepararFactura(m.db, EMPRESA, USUARIO, cuerpo(CLI_E, { direccionEntregaId: filial(4).id })))], [[1, 2, 3, 4, 5].map((n) => filial(n).id), { ok: false, error: MENSAJE_ENTREGA_REQUERIDA }, "422:" + MENSAJE_ENTREGA_REQUERIDA, "OK"]);
+
+    const { ctl, pendientes } = control();
+    const carga = ctl.seleccionarCliente(CLI_F);
+
+    pendientes[0].resolver(elegiblesDe(CLI_F));
+    await carga;
+    igual("EN-61 con cinco filiales COMERCIAL y una marcada principal: se preselecciona esa (la 3.ª), aparece primero en la lista y el operador puede cambiarla a cualquiera de las otras cuatro", [ctl.estado().opciones.length, ctl.estado().elegida, ctl.estado().opciones[0].id, (ctl.elegir(filial(11).id), ctl.estado().elegida)], [5, filial(13).id, filial(13).id, filial(11).id]);
+
+    igual("EN-62 el domicilio EXCLUSIVAMENTE fiscal no es destino: cliente con solo domicilio fiscal → sin destinos (se factura con aviso); una dirección COMERCIAL marcada fiscal tampoco", [elegiblesDe(CLI_G).length, resolverEntrega(elegiblesDe(CLI_G), undefined), elegiblesDe(CLI_H).map((o) => o.id)], [0, { ok: true, opcion: null }, [dirId(301), dirId(303)]]);
+    igual("EN-63 solo el fiscal EXPLÍCITAMENTE marcado predeterminado de entrega, y las direcciones OTRA, entran en la lista (con la marcada primero)", [elegiblesDe(CLI_H).map((o) => [o.tipo, o.esDefault])], [[["FISCAL", true], ["OTRA", false]]]);
+    igual("EN-64 sin destinos por ser solo fiscal, la previa sale normalmente con entrega = null; un id forjado hacia el domicilio fiscal se rechaza", [(await prepararFactura(m.db, EMPRESA, USUARIO, cuerpo(CLI_G))).entrega, await estado(prepararFactura(m.db, EMPRESA, USUARIO, cuerpo(CLI_G, { direccionEntregaId: dirId(201) })))], [null, "422:" + MENSAJE_ENTREGA_INVALIDA]);
+  }
+
+  // ── 3c. PRO-205 (F-001): eliminar después la dirección del catálogo no se bloquea y la FE conserva su fotografía ──────────────────────────────────────────────────────────────────────────────────
+  {
+    const m = mundo();
+    const elegida = filial(2);
+    const c = cuerpo(CLI_E, { direccionEntregaId: elegida.id }, "clave-historica-001");
+    const prep = await prepararFactura(m.db, EMPRESA, USUARIO, c);
+    const plan = await planificarStock(m.db, EMPRESA, USUARIO, SUC, prep.lineasStock);
+
+    await crearFacturaElectronica(m.db, EMPRESA, USUARIO, { ...c, repartoHuella: plan.huella });
+
+    const antes = JSON.stringify(m.entregas);
+
+    // Clientes → Direcciones elimina la dirección ya usada (DELETE sobre direcciones_cliente): sin clave foránea no hay error y la fila histórica queda intacta.
+    RAW[CLI_E] = RAW[CLI_E].filter((d) => d.op.id !== elegida.id);
+    igual("EN-70 tras eliminar la dirección usada en una FE: la lista del cliente ya no la ofrece (4 restantes), pero el destino histórico y su fotografía de la FE siguen EXACTAMENTE iguales", [elegiblesDe(CLI_E).map((o) => o.id).includes(elegida.id), elegiblesDe(CLI_E).length, JSON.stringify(m.entregas) === antes, m.entregas[0].direccion, m.entregas[0].snapshot.etiqueta], [false, 4, true, elegida.id, "Filial 2"]);
+
+    const reintento = await crearFacturaElectronica(m.db, EMPRESA, USUARIO, { ...c, repartoHuella: plan.huella });
+    const nueva = await estado(prepararFactura(m.db, EMPRESA, USUARIO, cuerpo(CLI_E, { direccionEntregaId: elegida.id }, "clave-historica-002")));
+
+    igual("EN-71 el reintento de la FE original sigue siendo idempotente (misma FE, destino intacto) y una FE NUEVA con la dirección eliminada se rechaza como inválida (la validación de pertenencia sigue vigente)", [reintento.reutilizado, m.entregas.length, nueva], [true, 1, "422:" + MENSAJE_ENTREGA_INVALIDA]);
+    RAW[CLI_E] = [1, 2, 3, 4, 5].map((n) => ({ op: filial(n), esFiscal: false })); // restablece el catálogo para las pruebas siguientes
+  }
+
   // ── 4. SQL de NEX-068 (estructural: NO se ejecutó), ruta y pantalla ─────────────────────────────────────────────────────────────────────────────
   const sql = leer("documentacao/banco/nexit/v1/migraciones/NEX-068-facturacion-direccion-entrega.sql");
   const emision = leer("lib/facturacion/emision.ts");
@@ -301,7 +358,18 @@ export async function verificarCasosEntregaE04(): Promise<string[]> {
   const pagina = leer("app/(private)/facturas/nueva/page.tsx");
   const comp = leer("app/(private)/facturas/nueva/entrega-cliente.tsx");
 
-  cierto("EN-50 SQL: destinos elegibles = ENTREGA o SUCURSAL o predeterminada del cliente y la empresa pedidos (fe_entrega_opciones), exige FACTURACION_ELECTRONICA.CREAR, sin tocar el domicilio fiscal", /d\.empresa_id = p_empresa AND d\.cliente_id = p_cliente\s+AND \(d\.tipo IN \('ENTREGA', 'SUCURSAL'\) OR d\.es_entrega_default\)/.test(sql) && /'FACTURACION_ELECTRONICA', 'CREAR'/.test(sql) && !/UPDATE public\.direcciones_cliente|INSERT INTO public\.direcciones_cliente|DELETE FROM public\.direcciones_cliente/.test(sql));
+  cierto("EN-50 SQL: destinos elegibles = TODA dirección del cliente y la empresa pedidos que no sea exclusivamente fiscal (fe_entrega_elegible), exige FACTURACION_ELECTRONICA.CREAR, sin tocar el domicilio fiscal ni el catálogo", /d\.empresa_id = p_empresa AND d\.cliente_id = p_cliente\s+AND public\.fe_entrega_elegible\(d\.tipo, d\.es_fiscal, d\.es_entrega_default\)/.test(sql) && /'FACTURACION_ELECTRONICA', 'CREAR'/.test(sql) && !/UPDATE public\.direcciones_cliente|INSERT INTO public\.direcciones_cliente|DELETE FROM public\.direcciones_cliente/.test(sql));
+  cierto("EN-72 SQL (PRO-206): la regla de elegibilidad es UNA sola función (SELECT p_es_default OR (NOT p_es_fiscal AND p_tipo <> 'FISCAL')) usada exactamente en la consulta, la existencia de destinos y la validación de la emisión; ya no existe el filtro por tipo ENTREGA/SUCURSAL", /CREATE OR REPLACE FUNCTION public\.fe_entrega_elegible\(p_tipo text, p_es_fiscal boolean, p_es_default boolean\) RETURNS boolean\s+LANGUAGE sql IMMUTABLE AS \$\$\s+SELECT p_es_default OR \(NOT p_es_fiscal AND p_tipo <> 'FISCAL'\)/.test(sql) && (sql.match(/public\.fe_entrega_elegible\(d\.tipo, d\.es_fiscal, d\.es_entrega_default\)/g) ?? []).length === 3 && !/IN \('ENTREGA', 'SUCURSAL'\)/.test(sql));
+  cierto("EN-73 SQL (PRO-205): la referencia histórica direccion_id NO tiene clave foránea a direcciones_cliente (la fotografía inmutable es la evidencia); se conserva la FK a empresa/documento y la validación de pertenencia bajo FOR SHARE al emitir", !/REFERENCES public\.direcciones_cliente/.test(sql) && !/fe_entregas_direccion_fk/.test(sql) && /fe_entregas_documento_fk FOREIGN KEY \(empresa_id, documento_id\) REFERENCES public\.documentos_electronicos/.test(sql) && /empresa_id   uuid        NOT NULL REFERENCES public\.empresas/.test(sql) && /d\.empresa_id = p_empresa AND d\.cliente_id = p_cliente AND d\.id = p_direccion_entrega AND public\.fe_entrega_elegible\(d\.tipo, d\.es_fiscal, d\.es_entrega_default\) FOR SHARE/.test(sql) && /fe_entregas_inmutable_trg BEFORE UPDATE OR DELETE/.test(sql));
+  {
+    const ver = leer("documentacao/banco/nexit/v1/scripts/verificar-NEX-068.sql");
+    const rev = leer("documentacao/banco/nexit/v1/scripts/reversion-NEX-068.sql");
+    const pre = leer("documentacao/banco/nexit/v1/scripts/preflight-NEX-068.sql");
+    const doc = leer("documentacao/banco/nexit/v1/docs/PROCEDIMIENTO-NEX-068.md");
+
+    cierto("EN-74 scripts y procedimiento coherentes: la verificación exige 2 FK y NINGUNA a direcciones_cliente y prueba la regla de elegibilidad; la reversión elimina la función de elegibilidad; el preflight cuenta con la regla nueva; el procedimiento documenta COMERCIAL/OTRA, el fiscal aislado y la eliminación posterior de direcciones", /contype = 'f'\) = 2/.test(ver) && /confrelid = 'public\.direcciones_cliente'::regclass/.test(ver) && /fe_entrega_elegible\('COMERCIAL', false, false\)/.test(ver) && /NOT public\.fe_entrega_elegible\('FISCAL', true, false\)/.test(ver) && /DROP FUNCTION IF EXISTS public\.fe_entrega_elegible\(text, boolean, boolean\)/.test(rev) && /NOT es_fiscal AND tipo <> 'FISCAL'/.test(pre) && !/IN \('ENTREGA', 'SUCURSAL'\)/.test(pre) && /COMERCIAL/.test(doc) && /no tiene clave foránea/.test(doc) && /E-10/.test(doc) && !/tipo \*\*ENTREGA\*\* o \*\*SUCURSAL\*\*/.test(doc));
+  }
+  cierto("EN-75 el reintento de una FE ya creada NO vuelve a exigir el destino (aunque la dirección se haya editado o eliminado): la emisión consulta primero si la clave existe y lo pasa a la preparación; la aplicación sigue sin tocar direcciones_cliente", /\.rows as F\[\]\)\.length > 0/.test(emision) && /prepararFactura\(db, empresaId, usuarioId, cuerpo, \{ documentoExiste \}\)/.test(emision) && /opciones\.documentoExiste && \(await opciones\.documentoExiste\(\)\) \? \(\{ ok: true, opcion: null \} as const\)/.test(emision) && /!documentoExistente && lineasStock\.some/.test(emision) && !/DELETE FROM direcciones_cliente|UPDATE direcciones_cliente|INSERT INTO direcciones_cliente/.test(emision));
   cierto("EN-51 SQL: la emisión con destino es atómica (llama a la emisión con stock de NEX-067 en la misma función), valida el destino contra cliente y empresa (NEX:ENTREGA_INVALIDA / NEX:ENTREGA_REQUERIDA), guarda referencia + snapshot SOLO en la creación original y la tabla es inmutable", /FROM public\.fe_documento_crear_fe_con_stock\(p_empresa/.test(sql) && /IF NOT v_reutilizado THEN/.test(sql) && /NEX:ENTREGA_REQUERIDA/.test(sql) && /NEX:ENTREGA_INVALIDA/.test(sql) && /d\.empresa_id = p_empresa AND d\.cliente_id = p_cliente AND d\.id = p_direccion_entrega/.test(sql) && /INSERT INTO public\.documento_electronico_entregas/.test(sql) && /jsonb_strip_nulls\(jsonb_build_object\('tipo'/.test(sql) && /fe_entregas_inmutable_trg BEFORE UPDATE OR DELETE/.test(sql) && /PRIMARY KEY \(empresa_id, documento_id\)/.test(sql));
   cierto("EN-52 SQL: grants — la aplicación ejecuta la lectura y la emisión con destino, no la tabla ni la emisión sin destino; el ayudante se ejecuta después del de NEX-067 (orden alfabético); NEX-067 y el payload no se modifican; migración NO aplicada", /GRANT EXECUTE ON FUNCTION public\.fe_entrega_opciones/.test(sql) && /GRANT EXECUTE ON FUNCTION public\.fe_documento_crear_fe_con_stock_entrega/.test(sql) && /REVOKE ALL ON FUNCTION public\.fe_documento_crear_fe_con_stock\(uuid, uuid, uuid, uuid, text, uuid, text, text, text, numeric, jsonb, jsonb\) FROM nexit_runtime/.test(sql) && "nex_aplicar_grants_facturacion_stock" < "nex_aplicar_grants_facturacion_stock_entrega" && /nex_aplicar_grants_facturacion_stock_entrega\(\)/.test(sql) && !/CREATE OR REPLACE FUNCTION public\.fe_documento_crear_fe_con_stock\(|CREATE OR REPLACE FUNCTION public\.fe_stock_/.test(sql) && /NO aplicada/.test(sql));
   cierto("EN-53 aplicación: la emisión usa SOLO la función con destino (nunca la de NEX-067 ni la original); el servidor valida el destino antes de reservar numeración; el cuerpo ignora empresa", /FROM fe_documento_crear_fe_con_stock_entrega\(/.test(emision) && !/FROM fe_documento_crear_fe_con_stock\(/.test(emision) && /resolverEntrega\(await opcionesEntrega\(db, empresaId, usuarioId, cuerpo\.clienteId\), cuerpo\.direccionEntregaId\)/.test(emision) && !/direcciones_cliente/.test(emision.slice(emision.indexOf("export async function crearFacturaElectronica"))));
