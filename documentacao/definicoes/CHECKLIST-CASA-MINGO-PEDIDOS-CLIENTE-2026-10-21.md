@@ -67,3 +67,10 @@
 5. **Implantação/homologação operacional pelo responsável humano:** antes de testar FE com stock/destino e G01 na VM, revisar backup, lista real de migrations e aplicar **NEX-067, NEX-068, NEX-069** apenas com autorização, scripts preflight/verificar e procedimento. Mesmo após deploy, testar navegador e gateway/SIFEN reais. O Git não confirma que esteja publicado.
 
 **Regra permanente:** implementação no Git != auditoria estática != homologação do responsável. Trabalhar apenas um pedido do checklist de cada vez; nenhuma tarefa fora deste escopo sem autorização expressa.
+
+## Gate de auditoría consolidada E06–E08 — 21/10/2026
+
+- E06, E07 y E08 están **implementadas en Git, NO homologadas en VM ni gateway real**. Commits: E06 `64b9c7f7`, E07 `fbc290cb`, E08 `9dc8e28f`.
+- Auditoría `documentacao/testes/AUD-NEXIT-CASA-MINGO-E06-E07-E08-R01-2026-10-21.md`: **PRO-210 BAJA** restaurar conserva cantidad/monto digitados (actualmente se restablece default); **PRO-211 MEDIA** saldo del listado de facturas elegibles debe descontar servicio `DESCUENTO` ya aprobado (actualmente solo descuenta `nce_lineas`). Son las **únicas correcciones exigidas en esta ronda de revisión**.
+- E08 KuDE FE/NCE conforme estáticamente: cinco campos, sin `tipOpe`, sin exigir `APROBADA`/CDC local para intentar. Gateway real pendiente; no alterar más código E08 sin hallazgo comprobado.
+- Próximo gate: Claude corrige exclusivamente PRO-210 y PRO-211, publica SHA y se detiene para auditoría R02. Si R02 aprueba, el responsable pasa a homologación real. **No iniciar E10 ni otros menús**. NEX-067/068/069/070 siguen pendientes de aplicación y autorización según reporte.
