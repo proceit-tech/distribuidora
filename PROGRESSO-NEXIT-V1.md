@@ -2011,3 +2011,12 @@ Após o encerramento **estático** de Inventario na `AUD-INV-R05` (sem homologa�
 - **NÃO usar `tipOpe`.** Afirmações anteriores do progresso, testes, requisitos ou implementação que exigem `tipOpe=iTiOpe` são **obsoletas e substituídas** por esta decisão. O valor de `iTiOpe` pode permanecer no payload fiscal de emissão, mas não integra o request `/api/kude`.
 - Diagnóstico estático da versão antes da correção de código: `gateway.ts` envia `tipOpe` e `tipoDoc:"FE"` fixo; `shared.ts` exige extração `iTiOpe` e rejeita NCE; `kude-visor.ts` exibe somente FE; UI fixa nome FE. Essas são as mudanças pontuais necessárias, **sem alterar o layout do KuDE, logo ou ambiente de teste**.
 - Requisitos atualizados: `documentacao/definicoes/REQ-CASA-MINGO-DECISIONES-NCE-KUDE-2026-10-20.md` e `documentacao/definicoes/REQ-DOC-KUDE-PDF-GATEWAY-2026-10-20.md`. Proibido continuar desenvolvimento com contrato antigo. **Código ainda não foi alterado nesta correção documental; testes/VM/deploy/homologação pendentes.**
+
+
+### Regra FE — baixa automática multi-depósito confirmada (20/10/2026)
+
+- Decisão do responsável: ao faturar um produto presente em vários depósitos, o NEXIT **distribui automaticamente a quantidade** pelos depósitos autorizados com stock DISPONIBLE e **exibe antes da confirmação** os depósitos/origens e respectivas quantidades. Não exigir seleção manual. Ex.: 3 unidades no A e 5 no B, faturar 6 => repartir, com **uma só linha fiscal** de quantidade 6.
+- Baixa de estoque no ato da emissão da FE, não ao incluir item no rascunho. Registar uma saída SALIDA/VENTA por depósito com referência à mesma factura e idempotência; evitar vendas concorrentes acima do stock, movimentos parciais e saldo negativo. Revalidar distribuição no fechamento e pedir conferência caso mude.
+- O motor `inventario_registrar_movimiento` (NEX-014) aceita um depósito de origem por movimento: será necessário agrupar por depósito sob transação consistente com FE. **Não implementado ainda**.
+- Documento de referência: `documentacao/definicoes/REQ-CASA-MINGO-DECISIONES-NCE-KUDE-2026-10-20.md`; issue `PRO-93` atualizada.
+- Próxima decisão funcional: no motivo Descuento/Bonificación, serviço único DESCUENTO quando a factura tem linhas de IVA 5%, 10% ou exentas — distribuição automática proporcional sobre saldos fiscais da factura vs atribuição manual a itens de referência.
