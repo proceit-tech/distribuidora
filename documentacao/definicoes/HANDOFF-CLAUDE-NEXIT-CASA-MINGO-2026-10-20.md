@@ -86,6 +86,12 @@
 - `documentacao/referencias/sifen/`, SIFEN MT v150 e NT; conferir só as regras fiscais de cada entrega.
 - Consultar scripts/migrations antes de criar incremental, especialmente `NEX-014`, `NEX-048`, `NEX-062` e `NEX-066` se presentes.
 
-## Mensagem de início autorizada ao Claude
+## Prioridade revisada pelo responsável — 21/10/2026
 
-> Claude, execute **somente E01 — quantidade fracionária na Factura** segundo este handoff; sincronize a branch e leia `CLAUDE.md`, `documentacao/PROTOCOLO-IA.md`, progresso e arquivos do módulo. Corrija UI/API/validação para aceitar vírgula e até quatro decimais inclusive unidade 77, com foco em Cantidad após adicionar, mantendo preço/IVA/estoque e payload intactos. Testes básicos dirigidos, commit + push, SHA e PARE para a auditoria ChatGPT. As etapas E02–E10 estão aprovadas como escopo, mas somente devem começar após revisão da etapa anterior; não solicite novamente decisões já registradas.
+- **E01–E05:** desenvolvimento concluído no Git e auditorado **estaticamente**, ainda SEM homologação operacional na VM/navegador/gateway. E05-R01: `documentacao/testes/AUD-NEXIT-CASA-MINGO-E05-R01-2026-10-21.md` (commit funcional `8888b7ed580cdbadc2598424fc1bc6daebd81d13`).
+- **Nova prioridade imediata: G01 / PRO-207, Configuración de API editável.** O responsável solicitou que a URL base e as credenciais da API possam ser alteradas e guardadas na interface por empresa. Documento completo: `documentacao/definicoes/REQ-NEXIT-CONFIGURACION-API-EDITABLE-2026-10-21.md`. Essa mudança antecipa e amplia a parte de configuração que estava prevista para E09, **sem reabrir E05 nem iniciar E06**. Não executar E09 separadamente para o mesmo comportamento se G01 já tiver resolvido a funcionalidade; E09 remanescente é homologação/procedimento operacional quando autorizada.
+- NEX-067/068 continuam não aplicadas; eventual migração de URL/versionamento deve ser incremental e não executada por agentes. Não alterar ambiente/identidade de outras empresas nem layout KuDE.
+
+## Mensagem de início autorizada ao Claude — ATUAL
+
+> Claude, execute **somente G01 — PRO-207, Configuración FE: URL do gateway e credenciais editáveis por empresa**, de acordo com o requisito `documentacao/definicoes/REQ-NEXIT-CONFIGURACION-API-EDITABLE-2026-10-21.md`. Sincronize a branch, leia `CLAUDE.md`, `documentacao/PROTOCOLO-IA.md`, progresso e a implementação atual de PRO-133. Corrija UI, servidor e persistência por empresa, bem como `Probar conexión` com a URL escolhida; preserve isolamento e segredos, e trate versão/estado de teste quando a URL mudar. Testes dirigidos, commit/push, SHA e **PARE para auditoria G01-R01**. **Não iniciar E06, não acessar VM, não aplicar migrations nem declarar homologação.**
