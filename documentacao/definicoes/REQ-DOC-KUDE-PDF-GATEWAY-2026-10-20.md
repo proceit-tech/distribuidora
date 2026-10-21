@@ -1,8 +1,11 @@
 # REQ-DOC-KUDE-PDF-GATEWAY — KuDE/PDF de Factura Electrónica desde Documentos electrónicos
 
+> **ACTUALIZACIÓN VINCULANTE 21/10/2026 — POSTMAN NCR (REVISA LA DECISIÓN DEL 20/10):** El responsable confirmó mediante captura real **HTTP 200 OK** del endpoint `POST https://gateway.e-factura-hub.com/api/kude` para la NCE 001-003-0090004 con **SEIS** claves: `tipOpe:"4"`, `dEst:"001"`, `dPunExp:"003"`, `dNumDoc:"0090004"`, `dSerieNum:null` y **`tipoDoc:"ncr"` en minúsculas**. El JSON de respuesta contiene `status:"success"`, `CDC` y `kude` Base64. Este contrato **sustituye exclusivamente para NCE/NCR** al anterior `tipoDoc:"NCE"` sin `tipOpe`. **FE conserva el contrato anterior de cinco campos `tipoDoc:"FE"` sin `tipOpe`**; no cambiar su emisión/consulta/KuDE por analogía. El host mostrado en la captura no autoriza cambiar la URL configurada por empresa: confirmar la discrepancia con la configuración actual antes de alterar endpoints. No escribir el CDC real, tokens ni Base64 en Git; el PDF 200 no acredita aprobación SIFEN.
+
+
 > **REVISÃO DEFINITIVA 21/10/2026:** para KuDE **FE e NCE** o gateway é a fonte da disponibilidade; não exigir `APROBADA` nem CDC local na tentativa. Se entregar PDF válido do documento, exibir independentemente do estado. O histórico de demonstração apenas com FE aprovada abaixo não define mais elegibilidade. Cancelamento e estorno de estoque foram adiados em especificação separada, sem API.
 
-> **CORREÇÃO VINCULANTE DO RESPONSÁVEL — 20/10/2026:** contrato definitivo de REQUISIÇÃO FE e NCE tem **cinco campos**, sem `tipOpe`. A evidência anterior com `tipOpe:"4"` ficou **SUPERADA**. Para KuDE de FE enviar `dEst,dPunExp,dNumDoc,dSerieNum,tipoDoc:"FE"`; para KuDE de NCE, o mesmo com `tipoDoc:"NCE"`. Não inferir, calcular, validar ou enviar `tipOpe`. Essa correção se aplica ao código, testes e à issue PRO-194. Ver `REQ-CASA-MINGO-DECISIONES-NCE-KUDE-2026-10-20.md`.
+> **HISTÓRICO SUPERADO PARCIALMENTE — 20/10/2026 (FE segue vigente; NCE substituída pela atualização Postman 21/10):** contrato de REQUISIÇÃO FE e NCE tem **cinco campos**, sem `tipOpe`. A evidência anterior com `tipOpe:"4"` ficou **SUPERADA**. Para KuDE de FE enviar `dEst,dPunExp,dNumDoc,dSerieNum,tipoDoc:"FE"`; para KuDE de NCE, o mesmo com `tipoDoc:"NCE"`. Não inferir, calcular, validar ou enviar `tipOpe`. Essa correção se aplica ao código, testes e à issue PRO-194. Ver `REQ-CASA-MINGO-DECISIONES-NCE-KUDE-2026-10-20.md`.
 
 
 **Data:** 20/10/2026 · **Prioridade:** P0, demonstração próxima.  
@@ -28,7 +31,7 @@
 }
 ```
 
-**Mesmo contrato para NCE — só varia `tipoDoc`:**
+**Exemplo HISTÓRICO OBSOLETO para NCE — não utilizar; válido só antes da correção Postman de 21/10:**
 
 ```json
 {
@@ -40,7 +43,7 @@
 }
 ```
 
-`dEst` e `dPunExp` têm 3 caracteres; `dNumDoc` tem 7 caracteres, **preservar zeros à esquerda e o tipo string**; `dSerieNum` é null se a série persistida for nula. Contrato **confirmado pelo responsável**: `tipoDoc` é `"FE"` ou `"NCE"` e **NÃO existe campo `tipOpe`** na requisição de KuDE. Não introduzir parâmetros extras.
+**Para NCE/NCR atual, usar seis campos, com `tipOpe:"4"` e `tipoDoc:"ncr"`, não o JSON histórico acima.** `dEst` e `dPunExp` têm 3 caracteres; `dNumDoc` tem 7 caracteres, **preservar zeros à esquerda e o tipo string**; `dSerieNum` é null se a série persistida for nula. Contrato **confirmado pelo responsável**: `tipoDoc` é `"FE"` ou `"NCE"` e **NÃO existe campo `tipOpe`** na requisição de KuDE. Não introduzir parâmetros extras.
 
 A aba de autorização aparece configurada no Postman, mas **os headers e o token estão ocultos**. O **FORMATO do response foi agora observado como JSON** com campo `kude` Base64; header HTTP `Content-Type` exato não foi mostrado. O gateway NEXIT já autentica por empresa via `/api/login` e Bearer para `/api/consulta_de` e `/api/recepcion_de`; o novo endpoint deverá aproveitar a configuração existente e o mesmo isolamento de credenciais/token, **após confirmar que aceita esse Bearer**, sem credencial fixa/código no browser. Não inventar respostas do fornecedor.
 
