@@ -18,12 +18,14 @@ import { crearFlujoRevision, type Revision } from "@/lib/facturacion/revision-fa
 import { numeracionSiguiente, textoNumeracion } from "@/lib/facturacion/series";
 import { formatearDecimalTexto } from "@/lib/formato/decimal-texto";
 import { formatearFechaPy } from "@/lib/formato/listas";
+import { registrarAnadido, type UltimoAnadido } from "@/lib/facturacion/seleccion-cantidad";
 import { cantidadFacturaValida, normalizarCantidadTexto, sumarUnaUnidad } from "@/lib/formato/cantidad-campo";
 import { formatearMontoVisual } from "@/lib/formato/monto-visual";
 import { precioParaEdicion } from "@/lib/formato/precio-campo";
 import { useProtegerCambios } from "@/lib/ui/proteger-cambios";
 
 import { EditorFiscalItem, type UnidadSifen } from "./ajuste-fiscal-item";
+import { CantidadAnadido } from "./cantidad-anadido";
 import { CondicionCredito } from "./condicion-credito";
 import { MediosPago } from "./medios-pago";
 import estilos from "./page.module.css";
@@ -220,10 +222,12 @@ function SelectorCliente({ alElegir, alCerrar }: { alElegir: (c: Cliente) => voi
 }
 
 /** Selector de productos: lista paginada inmediata; filtro opcional (código, descripción, GTIN, código de barras). Permite añadir varios sin cerrar. */
-function SelectorProducto({ alAgregar, alCerrar, cantidadItems, permisos, moneda }: { alAgregar: (p: Producto) => void; alCerrar: () => void; cantidadItems: number; permisos: PermisosProducto; moneda: string }) {
+function SelectorProducto({ alAgregar, alCerrar, cantidadItems, permisos, moneda, cantidadDe, alEditarCantidad }: { alAgregar: (p: Producto) => number; alCerrar: () => void; cantidadItems: number; permisos: PermisosProducto; moneda: string; cantidadDe: (clave: number) => string; alEditarCantidad: (clave: number, valor: string) => void }) {
   const f = useFiltro();
   const l = useListado<Producto>("/api/facturas/productos", "productos", f.q, f.pagina);
   const [aviso, setAviso] = useState("");
+  // E01-R02: tras cada «Añadir» la cantidad de ese producto se edita aquí mismo, sin cerrar el diálogo (foco dentro del diálogo aria-modal).
+  const [ultimo, setUltimo] = useState<UltimoAnadido | null>(null);
 
   useEscape(alCerrar);
 
@@ -236,11 +240,12 @@ function SelectorProducto({ alAgregar, alCerrar, cantidadItems, permisos, moneda
         </div>
 
         <form className={estilos.searchRow} onSubmit={(e) => { e.preventDefault(); f.aplicar(); }}>
-          <input autoFocus value={f.texto} onChange={(e) => f.setTexto(e.target.value)} placeholder="Filtrar por código, GTIN o descripción" aria-label="Filtrar productos" />
+          <input id="filtro-productos" autoFocus value={f.texto} onChange={(e) => f.setTexto(e.target.value)} placeholder="Filtrar por código, GTIN o descripción" aria-label="Filtrar productos" />
         </form>
 
         {l.error ? <p className={estilos.fieldError} role="alert">{l.error}</p> : null}
         {aviso ? <p className={estilos.aviso} role="status">{aviso}</p> : null}
+        {ultimo ? <CantidadAnadido descripcion={ultimo.descripcion} valor={cantidadDe(ultimo.clave)} valida={cantidadFacturaValida(cantidadDe(ultimo.clave))} solicitud={ultimo.solicitud} alCambiar={(v) => alEditarCantidad(ultimo.clave, v)} alTerminar={() => document.getElementById("filtro-productos")?.focus()} /> : null}
 
         {l.cargando || !f.vigente ? (
           <div className={estilos.mensajeVacio} role="status">Cargando productos…</div>
@@ -260,7 +265,7 @@ function SelectorProducto({ alAgregar, alCerrar, cantidadItems, permisos, moneda
                     {d.mensaje && !d.habilitado ? <small className={estilos.impedimento}>{d.mensaje}{d.corregirEnProductos ? <> <Link href="/productos">Corregir en Productos</Link></> : null}</small> : null}
                   </div>
                   <span className={estilos.precio}>{p.precio && p.monedaPrecio === moneda ? `${simboloMoneda(moneda)} ${formatearMontoVisual(p.precio, moneda)}` : "—"}</span>
-                  <button type="button" className={ui.secondaryButton} disabled={!d.habilitado} onClick={() => { alAgregar(p); setAviso(`«${p.descripcion}» añadido.`); }}>Añadir</button>
+                  <button type="button" className={ui.secondaryButton} disabled={!d.habilitado} onClick={() => { const clave = alAgregar(p); setUltimo((u) => registrarAnadido(u, clave, p.descripcion)); setAviso(`«${p.descripcion}» añadido.`); }}>Añadir</button>
                 </li>
               );
             })}
@@ -609,7 +614,7 @@ export default function NuevaFacturaPage() {
     }
   }, [selector, lineas]);
 
-  function agregar(p: Producto) {
+  function agregar(p: Producto): number {
     // El mismo producto no se duplica: suma una unidad a su línea.
     const existente = lineas.find((l) => l.producto.id === p.id);
 
@@ -617,7 +622,7 @@ export default function NuevaFacturaPage() {
       setLineas((ls) => ls.map((l) => (l.clave === existente.clave ? { ...l, cantidad: sumarUnaUnidad(l.cantidad) ?? l.cantidad } : l)));
       lineaAFocar.current = existente.clave;
 
-      return;
+      return existente.clave;
     }
 
     setLineas((ls) => [...ls, { clave: siguienteClave, producto: p, cantidad: "1", precio: precioParaEdicion(referencia(p, moneda)), ajuste: AJUSTE_VACIO }]);
@@ -625,6 +630,8 @@ export default function NuevaFacturaPage() {
     if (puedeAjustarFiscal && problemasFiscales(p, AJUSTE_VACIO, "1", moneda).filter((m) => !m.startsWith("sin precio")).length > 0) setEditando(siguienteClave);
     lineaAFocar.current = siguienteClave;
     setSiguienteClave((n) => n + 1);
+
+    return siguienteClave;
   }
 
   const editar = (k: number, cambio: Partial<Pick<Linea, "cantidad" | "precio">>) => setLineas((ls) => ls.map((x) => (x.clave === k ? { ...x, ...cambio } : x)));
@@ -1180,7 +1187,7 @@ export default function NuevaFacturaPage() {
       )}
 
       {selector === "cliente" ? <SelectorCliente alCerrar={() => setSelector(null)} alElegir={(c) => { setCliente(c); setSelector(null); }} /> : null}
-      {selector === "producto" ? <SelectorProducto alCerrar={() => setSelector(null)} alAgregar={agregar} cantidadItems={lineas.length} permisos={{ puedeAjustarFiscal, puedeEditarPrecio }} moneda={moneda} /> : null}
+      {selector === "producto" ? <SelectorProducto alCerrar={() => setSelector(null)} alAgregar={agregar} cantidadDe={(clave) => lineas.find((x) => x.clave === clave)?.cantidad ?? "1"} alEditarCantidad={(clave, valor) => editar(clave, { cantidad: valor })} cantidadItems={lineas.length} permisos={{ puedeAjustarFiscal, puedeEditarPrecio }} moneda={moneda} /> : null}
 
       {confirmacion ? (
         <div className={estilos.overlay} role="presentation">

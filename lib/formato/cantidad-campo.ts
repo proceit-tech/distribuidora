@@ -33,6 +33,8 @@ export function sumarUnaUnidad(texto: string): string | null {
   const [entera, frac = ""] = n.split(".");
   const total = (Number(entera) + 1).toString();
 
+  if (total.length > 10) return null; // ya está en el máximo de 10 enteros: no se suma (la línea conserva su cantidad)
+
   const fracTrim = frac.replace(/0+$/, "");
 
   return fracTrim === "" ? total : total + "." + fracTrim;
