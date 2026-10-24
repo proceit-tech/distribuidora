@@ -5,7 +5,7 @@ import { normalizarCantidadTexto } from "@/lib/formato/cantidad-campo";
 import { leerCambio } from "@/lib/facturacion/monedas";
 import { CAMPOS_RECEPTOR, construirPayloadNCE, esMotivoNce, lineasOriginalesDe, lineasParaSql, MAX_LINEAS_NCE, MOTIVOS_NCE, saldoDe, validarEntradaNce, calcularNce, type EntradaNce, type LineaOriginal, type MotivoNce } from "@/lib/facturacion/payload-nce";
 import { numeroDocumento } from "@/lib/facturacion/estados";
-import { componerInfoAdicional, infoAdicionalPersistida, LIMITE_INFO_ADICIONAL, separarObservacion, vendedorDe } from "@/lib/facturacion/info-adicional";
+import { componerInfoAdicional, huellaInfoAdicional, infoAdicionalPersistida, LIMITE_INFO_ADICIONAL, separarObservacion, vendedorDe } from "@/lib/facturacion/info-adicional";
 import { ErrorFacturacion, ErrorValidacionFiscal } from "@/lib/facturacion/shared";
 
 /**
@@ -37,6 +37,8 @@ export function traducirErrorNce(error: unknown): never {
 }
 
 /** Cuerpo de «Emitir Nota de Crédito» ya validado en su forma. string = error para el operador. */
+export const MENSAJE_INFO_NCE_CAMBIO = "La información adicional (vendedor) cambió desde la revisión. Revise la nota de crédito de nuevo antes de emitirla.";
+
 export type CuerpoNce = {
   facturaId: string;
   motivo: number;
@@ -47,6 +49,8 @@ export type CuerpoNce = {
   lineas: Array<{ linea: number; cantidad?: string; monto?: string }>;
   /** E07: servicio fijo DESCUENTO (motivos 3/4). Si viene, la nota no lleva líneas de la factura. */
   servicio?: { monto: string };
+  /** E1: huella del dInfAdic (observaciones + vendedor) que el operador REVISÓ (la devuelve la previa). Si al emitir el servidor compondría otro texto (cambió el nombre del vendedor), se exige revisar de nuevo. */
+  infoAdicionalHuella?: string;
 };
 
 /** Tope conservador (bytes del JSON) frente al CHECK de 262144 bytes de la solicitud persistida (NEX-048). */
@@ -87,7 +91,7 @@ export function leerCuerpoNce(c: Record<string, unknown>): CuerpoNce | string {
     lineas.push({ linea: l.linea as number, ...(typeof l.cantidad === "string" ? { cantidad: normalizarCantidadTexto(l.cantidad) } : {}), ...(typeof l.monto === "string" ? { monto: l.monto.trim() } : {}) });
   }
 
-  return { facturaId: c.facturaId, motivo: c.motivo as number, sucursalId: c.sucursalId, puntoId: c.puntoId, observacion: typeof c.observacion === "string" ? c.observacion : "", claveIdempotencia: c.claveIdempotencia, lineas, ...(servicio ? { servicio } : {}) };
+  return { facturaId: c.facturaId, motivo: c.motivo as number, sucursalId: c.sucursalId, puntoId: c.puntoId, observacion: typeof c.observacion === "string" ? c.observacion : "", claveIdempotencia: c.claveIdempotencia, lineas, ...(servicio ? { servicio } : {}), ...(typeof c.infoAdicionalHuella === "string" && /^[0-9a-f]{64}$/.test(c.infoAdicionalHuella) ? { infoAdicionalHuella: c.infoAdicionalHuella } : {}) };
 }
 
 // ── Lectura de la factura original ────────────────────────────────────────────────────────────────────────────
@@ -352,6 +356,8 @@ export type PreparacionNce = {
   payload: Record<string, unknown>;
   lineasSql: Array<{ linea?: number; servicio?: true; cantidad: string; monto: string }>;
   totalTexto: string;
+  /** true si la clave ya tenía un documento y se reutilizó su dInfAdic persistido. */
+  infoReutilizada: boolean;
   resumen: {
     factura: { numero: string; cdc: string; fechaEmision: string };
     motivo: { codigo: number; nombre: string };
@@ -359,6 +365,9 @@ export type PreparacionNce = {
     moneda: string;
     cambio: string | null;
     observacion: string;
+    /** E1: dInfAdic final (observaciones + «Vendedor») y su huella; la emisión verifica que sea el mismo texto. */
+    infoAdicional: string;
+    infoAdicionalHuella: string;
     lineas: Array<{ linea: number; codigo: string; descripcion: string; unidad: string; cantidad: string; precioUnitario: string; monto: string; afectacion: number; tasa: number; proporcion: string }>;
     totales: { exento: string; exonerado: string; gravado5: string; gravado10: string; iva5: string; iva10: string; totalIva: string; total: string };
     numero: string;
@@ -437,6 +446,7 @@ export async function prepararNce(db: Db, empresaId: string, usuarioId: string, 
     payload,
     lineasSql: lineasParaSql(entrada),
     totalTexto: calculo.totalTexto,
+    infoReutilizada: persistida !== undefined,
     resumen: {
       factura: { numero: fe.numero, cdc: fe.cdc, fechaEmision: fe.fechaEmision },
       motivo: { codigo: cuerpo.motivo, nombre: MOTIVOS_NCE[cuerpo.motivo] },
@@ -444,6 +454,8 @@ export async function prepararNce(db: Db, empresaId: string, usuarioId: string, 
       moneda: fe.moneda,
       cambio: fe.cambio,
       observacion: cuerpo.observacion.trim(),
+      infoAdicional: observacionFinal,
+      infoAdicionalHuella: huellaInfoAdicional(observacionFinal),
       lineas: calculo.items.map((i) => ({
         linea: i.linea, codigo: i.original.codigoInterno, descripcion: i.original.descripcion, unidad: i.servicio ? "UNI" : (porLinea.get(i.linea) as LineaDetalle).unidad, cantidad: textoDec(i.cantidad), precioUnitario: textoDec(i.precio), monto: i.montoTexto,
         afectacion: i.original.afectacion, tasa: i.original.tasa, proporcion: i.original.proporcion,
@@ -456,6 +468,9 @@ export async function prepararNce(db: Db, empresaId: string, usuarioId: string, 
 
 /** Crea la NCE (documento + payload inmutable + relación con la FE, número reservado UNA vez) de forma idempotente. Solo se llama al CONFIRMAR. */
 export async function crearNotaCredito(db: Db, empresaId: string, usuarioId: string, cuerpo: CuerpoNce, prep: PreparacionNce) {
+  // E1-F003: una NCE NUEVA solo se crea con el dInfAdic que el operador revisó (el nombre del vendedor se relee del servidor); si cambió entre la previa y el envío, se exige revisar de nuevo, sin reservar numeración.
+  if (!prep.infoReutilizada && cuerpo.infoAdicionalHuella !== undefined && cuerpo.infoAdicionalHuella !== prep.resumen.infoAdicionalHuella) throw new ErrorFacturacion(409, MENSAJE_INFO_NCE_CAMBIO);
+
   const llamar = () =>
     db.query(
       `SELECT o_documento_id AS "documentoId", o_numero AS numero, o_reutilizado AS reutilizado FROM fe_documento_crear_nce($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5, $6::uuid, $7::integer, $8::jsonb, $9, $10::numeric, $11::jsonb)`,

@@ -6,9 +6,10 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { contador } from "@/lib/clientes/contador-casos";
-import { crearFacturaElectronica, leerCuerpoFactura, MENSAJE_REPARTO_CAMBIO, prepararFactura, type CuerpoFactura } from "@/lib/facturacion/emision";
+import { crearFacturaElectronica, leerCuerpoFactura, MENSAJE_INFO_CAMBIO, MENSAJE_REPARTO_CAMBIO, prepararFactura, type CuerpoFactura } from "@/lib/facturacion/emision";
 import { direccionCompleta, MENSAJE_ENTREGA_INVALIDA, MENSAJE_ENTREGA_REQUERIDA, nombreEntrega, pedirOpcionesEntrega, resolverEntrega, type OpcionEntrega } from "@/lib/facturacion/entrega";
 import { crearControlEntrega, pendienteEntrega } from "@/lib/facturacion/entrega-control";
+import { MARCA_AUTOMATICA } from "@/lib/facturacion/info-adicional";
 import { ErrorFacturacion } from "@/lib/facturacion/shared";
 import { planificarStock } from "@/lib/facturacion/stock-fe";
 
@@ -398,6 +399,7 @@ export async function verificarCasosEntregaE04(): Promise<string[]> {
 
   // ── E1 (PRO-93): J003 dInfAdic de la FE = observaciones + dirección de entrega validada + vendedor autenticado ──────────────────────
   {
+    const M = MARCA_AUTOMATICA;
     const info = (p: { payload: unknown }) => (p.payload as { dInfAdic: string | null }).dInfAdic;
     const m = mundo();
     const eA = await prepararFactura(m.db, EMPRESA, USUARIO, cuerpo(CLI_A, { direccionEntregaId: A1.id }));
@@ -405,17 +407,22 @@ export async function verificarCasosEntregaE04(): Promise<string[]> {
     const sinDir = await prepararFactura(m.db, EMPRESA, USUARIO, cuerpo(CLI_C));
     const conObs = await prepararFactura(m.db, EMPRESA, USUARIO, cuerpo(CLI_A, { direccionEntregaId: A2.id, infoAdicional: "Entregar por la tarde\nPedido 123" }));
 
-    igual("E1-01 FE con la dirección A: «Dirección de entrega: sede — dirección» (la elegida y validada) y «Vendedor: nombre apellido» de la cuenta que emite", info(eA)?.split("\n"), ["Dirección de entrega: " + nombreEntrega(A1) + " — " + direccionCompleta(A1), "Vendedor: Juan Pérez"]);
+    igual("E1-01 FE con la dirección A: «Dirección de entrega: sede — dirección» (la elegida y validada) y «Vendedor: nombre apellido» de la cuenta que emite, tras la marca de datos automáticos", info(eA)?.split("\n"), [M, "Dirección de entrega: " + nombreEntrega(A1) + " — " + direccionCompleta(A1), "Vendedor: Juan Pérez"]);
     igual("E1-02 FE con la dirección B: otro destino, otra línea (no la anterior ni el domicilio fiscal)", [info(eB)?.includes(nombreEntrega(A2)), info(eB)?.includes(nombreEntrega(A1)), info(eB)?.includes("Domicilio FISCAL")], [true, false, false]);
-    igual("E1-03 FE sin dirección de entrega (cliente sin destinos): sin línea de dirección, solo el vendedor; no se inventa destino", [info(sinDir), (sinDir.payload as { dDirRec?: string }).dDirRec], ["Vendedor: Juan Pérez", "Domicilio FISCAL c3"]);
-    igual("E1-04 las observaciones del operador se preservan íntegras (con sus saltos de línea) y las líneas automáticas se añaden después, en orden estable", info(conObs)?.split("\n"), ["Entregar por la tarde", "Pedido 123", "Dirección de entrega: " + nombreEntrega(A2) + " — " + direccionCompleta(A2), "Vendedor: Juan Pérez"]);
+    igual("E1-03 FE sin dirección de entrega (cliente sin destinos): sin línea de dirección, solo el vendedor; no se inventa destino", [info(sinDir), (sinDir.payload as { dDirRec?: string }).dDirRec], [M + "\nVendedor: Juan Pérez", "Domicilio FISCAL c3"]);
+    igual("E1-04 las observaciones del operador se preservan íntegras (con sus saltos de línea) y los datos automáticos se añaden después de la marca, en orden estable", info(conObs)?.split("\n"), ["Entregar por la tarde", "Pedido 123", M, "Dirección de entrega: " + nombreEntrega(A2) + " — " + direccionCompleta(A2), "Vendedor: Juan Pérez"]);
 
     m.cuentas.set(EMPRESA + "|" + "88888888-8888-4888-8888-888888888888", { nombre: "María", apellido: "Gómez" });
 
     const otro = await prepararFactura(m.db, EMPRESA, "88888888-8888-4888-8888-888888888888", cuerpo(CLI_A, { direccionEntregaId: A1.id }));
 
     igual("E1-05 el vendedor es el usuario AUTENTICADO que emite: la misma factura emitida por otra cuenta lleva su nombre, no el de otra", [info(otro)?.includes("Vendedor: María Gómez"), info(otro)?.includes("Juan")], [true, false]);
-    igual("E1-06 el navegador no puede imponer el vendedor ni la dirección: un texto de observaciones que simula «Vendedor: Otro» no reemplaza al real (se añade el real) y una dirección que no es del cliente se rechaza antes de reservar numeración", [info(await prepararFactura(m.db, EMPRESA, USUARIO, cuerpo(CLI_A, { direccionEntregaId: A1.id, infoAdicional: "Vendedor: Otro" })))?.split("\n").filter((l) => l.startsWith("Vendedor:")), (await estado(prepararFactura(m.db, EMPRESA, USUARIO, cuerpo(CLI_A, { direccionEntregaId: B1.id })))).endsWith(MENSAJE_ENTREGA_INVALIDA)], [["Vendedor: Otro", "Vendedor: Juan Pérez"], true]);
+
+    const manual = await prepararFactura(m.db, EMPRESA, USUARIO, cuerpo(CLI_A, { direccionEntregaId: A1.id, infoAdicional: "Vendedor: Otro\nDirección de entrega: Otra casa" }));
+    const lm = info(manual)?.split("\n") ?? [];
+
+    igual("E1-06 (F002) observaciones con «Vendedor: Otro» y «Dirección de entrega: Otra casa»: se preservan íntegras ANTES de la marca; la identificación autoritativa (dirección validada y vendedor autenticado) va DESPUÉS, una sola vez, y lo manual no la sustituye", [lm, lm.indexOf("Vendedor: Otro") < lm.indexOf(M), (info(manual)?.split(M)[1] ?? "").includes("Otro")], [["Vendedor: Otro", "Dirección de entrega: Otra casa", M, "Dirección de entrega: " + nombreEntrega(A1) + " — " + direccionCompleta(A1), "Vendedor: Juan Pérez"], true, false]);
+    igual("E1-06b una dirección que no es del cliente se rechaza antes de reservar numeración", (await estado(prepararFactura(m.db, EMPRESA, USUARIO, cuerpo(CLI_A, { direccionEntregaId: B1.id })))).endsWith(MENSAJE_ENTREGA_INVALIDA), true);
 
     // aislamiento entre empresas: la cuenta de otra empresa no existe para esta; sin cuenta no se inventa vendedor
     const OTRA_EMPRESA = "22222222-2222-4222-8222-222222222222";
@@ -424,31 +431,95 @@ export async function verificarCasosEntregaE04(): Promise<string[]> {
     igual("E1-07 sin fuga entre tenants: con la empresa B el usuario de la empresa A no se resuelve y nunca aparece el nombre de la otra empresa", [info(ajena) === null || !info(ajena)?.includes("Juan"), m.llamadas.filter((l) => /FROM usuarios/.test(l.sql)).every((l) => l.p.length === 2)], [true, true]);
 
     // límite de 5000 sobre el texto FINAL, antes de reservar numeración, sin recortar
-    const largo = "x".repeat(5000);
-    const justo = "y".repeat(5000 - ("\nVendedor: Juan Pérez").length);
+    const sufijo = ("\n" + M + "\nVendedor: Juan Pérez").length;
+    const largo = "x".repeat(5000 - sufijo + 1);
+    const justo = "y".repeat(5000 - sufijo);
     const conLargo = await estado(prepararFactura(m.db, EMPRESA, USUARIO, cuerpo(CLI_C, { infoAdicional: largo })));
-    const llamadasAntes = m.llamadas.length;
     const enLimite = await prepararFactura(m.db, EMPRESA, USUARIO, cuerpo(CLI_C, { infoAdicional: justo }));
 
-    igual("E1-08 5000 caracteres de observaciones + el vendedor superan el máximo: error explícito (422), sin recortar y sin llegar a la función de emisión", [conLargo.startsWith("422:La información adicional"), m.llamadas.some((l) => /fe_documento_crear_fe_con_stock_entrega/.test(l.sql))], [true, false]);
-    igual("E1-08 el texto final de exactamente 5000 caracteres se acepta completo (sin truncar)", [info(enLimite)?.length, llamadasAntes > 0], [5000, true]);
+    igual("E1-08 (5001) el texto final supera el máximo por un carácter: error explícito (422), sin recortar y sin llegar a la función de emisión", [conLargo.startsWith("422:La información adicional"), m.llamadas.some((l) => /fe_documento_crear_fe_con_stock_entrega/.test(l.sql))], [true, false]);
+    igual("E1-08b (5000) el texto final de exactamente 5000 caracteres se acepta completo (sin truncar)", info(enLimite)?.length, 5000);
 
     // reintento idempotente: mismo contenido, sin duplicar líneas, y snapshot aunque cambie el nombre del vendedor o la dirección
     const m2 = mundo();
     const c0 = cuerpo(CLI_A, { direccionEntregaId: A2.id, infoAdicional: "Nota" }, "clave-e1-reintento-01");
-    const plan2 = await planificarStock(m2.db, EMPRESA, USUARIO, SUC, (await prepararFactura(m2.db, EMPRESA, USUARIO, c0)).lineasStock);
-    const c = { ...c0, repartoHuella: plan2.huella };
+    const prev2 = await prepararFactura(m2.db, EMPRESA, USUARIO, c0);
+    const plan2 = await planificarStock(m2.db, EMPRESA, USUARIO, SUC, prev2.lineasStock);
+    const c = { ...c0, repartoHuella: plan2.huella, infoAdicionalHuella: prev2.resumen.infoAdicionalHuella };
     const r1 = await crearFacturaElectronica(m2.db, EMPRESA, USUARIO, c);
     const guardada = m2.infoPorClave.get("clave-e1-reintento-01");
 
     m2.cuentas.set(EMPRESA + "|" + USUARIO, { nombre: "Nombre", apellido: "Cambiado" });
 
-    const r2 = await crearFacturaElectronica(m2.db, EMPRESA, USUARIO, c);
+    const etiquetaOriginal = A2.etiqueta;
+
+    A2.etiqueta = "Sede renombrada";
+
+    let r2: Awaited<ReturnType<typeof crearFacturaElectronica>>;
+
+    try { r2 = await crearFacturaElectronica(m2.db, EMPRESA, USUARIO, c); } finally { A2.etiqueta = etiquetaOriginal; }
+
     const reenviado = JSON.parse(String(m2.llamadas.filter((l) => /fe_documento_crear_fe_con_stock_entrega/.test(l.sql)).pop()?.p[9])) as { dInfAdic: string };
 
-    igual("E1-09 reenvío idempotente: la misma clave devuelve el mismo documento, el dInfAdic reenviado es EXACTAMENTE el persistido (no se recompone con el nombre nuevo) y no hay líneas duplicadas", [r1.reutilizado, r2.reutilizado, r1.documentoId === r2.documentoId, reenviado.dInfAdic === guardada, (guardada ?? "").split("\n").filter((l) => l.startsWith("Vendedor:")).length, (reenviado.dInfAdic.match(/Dirección de entrega:/g) ?? []).length], [false, true, true, true, 1, 1]);
+    igual("E1-09 (reenvío tras cambio de nombre y de dirección) la misma clave devuelve el mismo documento, el dInfAdic reenviado es EXACTAMENTE el persistido (no se recompone) y no hay líneas duplicadas ni 409", [r1.reutilizado, r2.reutilizado, r1.documentoId === r2.documentoId, reenviado.dInfAdic === guardada, (guardada ?? "").split("\n").filter((l) => l.startsWith("Vendedor:")).length, (reenviado.dInfAdic.match(/Dirección de entrega:/g) ?? []).length, m2.llamadas.filter((l) => /fe_documento_crear_fe_con_stock_entrega/.test(l.sql)).length], [false, true, true, true, 1, 1, 2]);
     igual("E1-10 el JSON enviado conserva exactamente el nombre dInfAdic (J003) y no introduce campos con otro nombre", [Object.keys(reenviado).filter((k) => /inf.*adic/i.test(k)), "dInfAdic" in reenviado], [["dInfAdic"], true]);
-    igual("E1-11 revisar dos veces la misma factura produce el mismo texto (la composición no acumula)", [info(await prepararFactura(m.db, EMPRESA, USUARIO, cuerpo(CLI_A, { direccionEntregaId: A2.id, infoAdicional: "Nota" }))) === info(await prepararFactura(m.db, EMPRESA, USUARIO, cuerpo(CLI_A, { direccionEntregaId: A2.id, infoAdicional: "Nota" })))], [true]);
+    igual("E1-11 revisar dos veces la misma factura produce el mismo texto y la misma huella (la composición no acumula)", [info(await prepararFactura(m.db, EMPRESA, USUARIO, cuerpo(CLI_A, { direccionEntregaId: A2.id, infoAdicional: "Nota" }))) === info(await prepararFactura(m.db, EMPRESA, USUARIO, cuerpo(CLI_A, { direccionEntregaId: A2.id, infoAdicional: "Nota" }))), (await prepararFactura(m.db, EMPRESA, USUARIO, cuerpo(CLI_A, { direccionEntregaId: A2.id, infoAdicional: "Nota" }))).resumen.infoAdicionalHuella === (await prepararFactura(m.db, EMPRESA, USUARIO, cuerpo(CLI_A, { direccionEntregaId: A2.id, infoAdicional: "Nota" }))).resumen.infoAdicionalHuella], [true, true]);
+
+    // ── F003: se emite lo que se revisó ──────────────────────────────────────────────────────────
+    const creaciones = (w: ReturnType<typeof mundo>) => w.llamadas.filter((l) => /fe_documento_crear_fe_con_stock_entrega/.test(l.sql)).length;
+    const conStock = async (w: ReturnType<typeof mundo>, cu: CuerpoFactura, extra: Record<string, unknown> = {}) => ({ ...cu, repartoHuella: (await planificarStock(w.db, EMPRESA, USUARIO, SUC, (await prepararFactura(w.db, EMPRESA, USUARIO, cu)).lineasStock)).huella, ...extra });
+
+    const f1 = mundo();
+    const cf1 = cuerpo(CLI_A, { direccionEntregaId: A1.id }, "clave-e1-f003-nombre");
+    const rev1 = await prepararFactura(f1.db, EMPRESA, USUARIO, cf1);
+
+    igual("E1-12 la previa expone el dInfAdic final (lo que se imprimirá) y su huella SHA-256", [rev1.resumen.infoAdicional === info(rev1), /^[0-9a-f]{64}$/.test(rev1.resumen.infoAdicionalHuella)], [true, true]);
+
+    f1.cuentas.set(EMPRESA + "|" + USUARIO, { nombre: "Juan", apellido: "Gómez" });
+
+    const e1 = await estado(crearFacturaElectronica(f1.db, EMPRESA, USUARIO, await conStock(f1, cf1, { infoAdicionalHuella: rev1.resumen.infoAdicionalHuella })));
+
+    igual("E1-13 (F003) el nombre del vendedor cambió entre la previa y el envío: 409 «revise de nuevo» y NO se llega a la función de emisión (sin numeración, sin documento)", [e1, creaciones(f1), f1.docs.size], ["409:" + MENSAJE_INFO_CAMBIO, 0, 0]);
+
+    const rev1b = await prepararFactura(f1.db, EMPRESA, USUARIO, cf1);
+    const ok1 = await crearFacturaElectronica(f1.db, EMPRESA, USUARIO, await conStock(f1, cf1, { infoAdicionalHuella: rev1b.resumen.infoAdicionalHuella }));
+
+    igual("E1-14 (F003) tras revisar de nuevo se emite con el nombre actual, una sola vez, y el payload lleva exactamente el texto revisado", [ok1.reutilizado, creaciones(f1), f1.infoPorClave.get("clave-e1-f003-nombre") === rev1b.resumen.infoAdicional, (f1.infoPorClave.get("clave-e1-f003-nombre") ?? "").includes("Vendedor: Juan Gómez")], [false, 1, true, true]);
+
+    const f2 = mundo();
+    const cf2 = cuerpo(CLI_A, { direccionEntregaId: A2.id }, "clave-e1-f003-direccion");
+    const rev2 = await prepararFactura(f2.db, EMPRESA, USUARIO, cf2);
+    const etiqueta2 = A2.etiqueta;
+
+    A2.etiqueta = "Otra etiqueta de la misma dirección";
+
+    let e2 = "";
+
+    try { e2 = await estado(crearFacturaElectronica(f2.db, EMPRESA, USUARIO, await conStock(f2, cf2, { infoAdicionalHuella: rev2.resumen.infoAdicionalHuella }))); } finally { A2.etiqueta = etiqueta2; }
+
+    igual("E1-15 (F003) la dirección de entrega elegida cambió de descripción (mismo id) entre la previa y el envío: 409 y sin emisión", [e2, creaciones(f2)], ["409:" + MENSAJE_INFO_CAMBIO, 0]);
+
+    const f3 = mundo();
+    const cf3 = cuerpo(CLI_A, { direccionEntregaId: A1.id }, "clave-e1-f003-igual");
+    const rev3 = await prepararFactura(f3.db, EMPRESA, USUARIO, cf3);
+    const ok3 = await crearFacturaElectronica(f3.db, EMPRESA, USUARIO, await conStock(f3, cf3, { infoAdicionalHuella: rev3.resumen.infoAdicionalHuella }));
+
+    igual("E1-16 (F003) sin cambios entre previa y envío la emisión procede normalmente (huella idéntica, un solo documento)", [ok3.reutilizado, creaciones(f3), f3.docs.size], [false, 1, 1]);
+
+    const leida = leerCuerpoFactura({ claveIdempotencia: "clave-e1-huella-01", sucursalId: SUC, puntoId: PUNTO, clienteId: CLI_C, tipoTransaccion: 1, presencia: 1, pagos: [{ tipo: 1 }], infoAdicional: "", lineas: [{ productoId: P1, cantidad: "1", precio: null }], infoAdicionalHuella: rev3.resumen.infoAdicionalHuella, nombreVendedor: "Impostor" }) as CuerpoFactura & { nombreVendedor?: string };
+    const basura = leerCuerpoFactura({ claveIdempotencia: "clave-e1-huella-02", sucursalId: SUC, puntoId: PUNTO, clienteId: CLI_C, tipoTransaccion: 1, presencia: 1, pagos: [{ tipo: 1 }], infoAdicional: "", lineas: [{ productoId: P1, cantidad: "1", precio: null }], infoAdicionalHuella: "no-es-hex" }) as CuerpoFactura;
+
+    igual("E1-17 el cuerpo del navegador solo aporta la huella (64 hex): un nombre de vendedor enviado se ignora y una huella inválida se descarta (la ruta exigirá revisar de nuevo)", [leida.infoAdicionalHuella === rev3.resumen.infoAdicionalHuella, "nombreVendedor" in leida, basura.infoAdicionalHuella], [true, false, undefined]);
+
+    const rutaFe = leer("app/api/facturas/route.ts");
+    const rutaNce = leer("app/api/notas-credito/route.ts");
+
+    cierto("E1-18 las rutas de emisión de FE y NCE exigen la huella de la información adicional revisada (409 antes de cualquier escritura) y la previa no escribe", /datos\.infoAdicionalHuella === undefined\) return NextResponse\.json\(\{ error: MENSAJE_INFO_CAMBIO \}, \{ status: 409 \}\)[\s\S]*emitirFactura/.test(rutaFe) && /datos\.infoAdicionalHuella === undefined\) return NextResponse\.json\(\{ error: MENSAJE_INFO_NCE_CAMBIO \}, \{ status: 409 \}\)[\s\S]*emitirNce/.test(rutaNce));
+
+    const paginaFe = leer("app/(private)/facturas/nueva/page.tsx");
+    const paginaNce = leer("app/(private)/notas-credito/page.tsx");
+
+    cierto("E1-19 las pantallas envían al emitir la huella del resumen REVISADO (no un nombre) y muestran al operador el texto de información adicional que se imprimirá", paginaFe.includes("infoAdicionalHuella: revisado.infoAdicionalHuella") && paginaFe.includes("resumen.infoAdicional ?") && paginaNce.includes("JSON.stringify({ ...c, ...(revisado?.resumen.infoAdicionalHuella") && paginaNce.includes("resumen.infoAdicional ?"));
   }
 
   return fallos;

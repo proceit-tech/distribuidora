@@ -31,7 +31,7 @@ type Factura = {
 type Punto = { id: string; codigo: string; nombre: string; ultimoNumero: number; serie?: string | null };
 type Sucursal = { id: string; nombre: string; establecimiento: string; puntos: Punto[]; sinSecuencia: number };
 type Resumen = {
-  factura: { numero: string; cdc: string; fechaEmision: string }; motivo: { codigo: number; nombre: string }; punto: string; moneda: string; cambio: string | null; observacion: string; numero: string;
+  factura: { numero: string; cdc: string; fechaEmision: string }; motivo: { codigo: number; nombre: string }; punto: string; moneda: string; cambio: string | null; observacion: string; infoAdicional?: string; infoAdicionalHuella?: string; numero: string;
   lineas: Array<{ linea: number; codigo: string; descripcion: string; unidad: string; cantidad: string; precioUnitario: string; monto: string; afectacion: number; tasa: number; proporcion: string }>;
   totales: { exento: string; exonerado: string; gravado5: string; gravado10: string; iva5: string; iva10: string; totalIva: string; total: string };
 };
@@ -233,7 +233,7 @@ function Formulario() {
     setEnviando(true);
     setError(null);
     try {
-      const r = await pedir<{ numero: string; mensaje?: string }>("/api/notas-credito", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(c) });
+      const r = await pedir<{ numero: string; mensaje?: string }>("/api/notas-credito", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...c, ...(revisado?.resumen.infoAdicionalHuella ? { infoAdicionalHuella: revisado.resumen.infoAdicionalHuella } : {}) }) });
 
       router.push(`/documentos?q=${encodeURIComponent(r.numero)}`);
     } catch (e) {
@@ -545,7 +545,7 @@ function Formulario() {
                 <div><dt>Punto</dt><dd>{resumen.punto}</dd></div>
                 <div><dt>Moneda</dt><dd>{resumen.moneda}{resumen.cambio ? ` · cambio ${fm(resumen.cambio)}` : ""}</dd></div>
                 <div style={{ gridColumn: "1 / -1" }}><dt>CDC de la factura</dt><dd className={estilos.mono}>{resumen.factura.cdc}</dd></div>
-                {resumen.observacion ? <div style={{ gridColumn: "1 / -1" }}><dt>Observación</dt><dd>{resumen.observacion}</dd></div> : null}
+                {resumen.infoAdicional ? <div style={{ gridColumn: "1 / -1" }}><dt>Información adicional</dt><dd style={{ whiteSpace: "pre-line" }}>{resumen.infoAdicional}</dd></div> : null}
               </dl>
               <div className={estilos.tabla}>
                 <table>

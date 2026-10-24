@@ -11,7 +11,7 @@ import { construirPayloadFE, CONDICIONES_OPERACION, INDICADORES_PRESENCIA, resum
 import { ErrorFacturacion, ErrorValidacionFiscal } from "@/lib/facturacion/shared";
 import { leerDescuento, type DescuentoEntrada } from "@/lib/facturacion/descuentos";
 import { opcionesEntrega, resolverEntrega, resumenEntrega } from "@/lib/facturacion/entrega";
-import { componerInfoAdicional, infoAdicionalPersistida, LIMITE_INFO_ADICIONAL, lineaEntrega, vendedorDe } from "@/lib/facturacion/info-adicional";
+import { componerInfoAdicional, huellaInfoAdicional, infoAdicionalPersistida, LIMITE_INFO_ADICIONAL, lineaEntrega, vendedorDe } from "@/lib/facturacion/info-adicional";
 import { asignacionesSql, mensajeStockInsuficiente, planificarStock, type LineaStock } from "@/lib/facturacion/stock-fe";
 import { normalizarCantidadTexto } from "@/lib/formato/cantidad-campo";
 
@@ -166,6 +166,8 @@ export type CuerpoFactura = {
   direccionEntregaId?: string;
   /** E02: huella del reparto de stock que el operador REVISÓ (la devuelve la previa). Obligatoria al emitir si hay productos con control de stock; si el stock cambió, se exige revisar de nuevo. */
   repartoHuella?: string;
+  /** E1: huella del dInfAdic (observaciones + entrega + vendedor) que el operador REVISÓ (la devuelve la previa). Si al emitir el texto que el servidor compondría es otro (cambió el nombre del vendedor o la dirección), se exige revisar de nuevo. */
+  infoAdicionalHuella?: string;
 };
 
 const entero = (v: unknown) => (typeof v === "number" && Number.isInteger(v) ? v : typeof v === "string" && /^\d{1,3}$/.test(v) ? Number(v) : NaN);
@@ -228,6 +230,7 @@ export function leerCuerpoFactura(c: Record<string, unknown>): CuerpoFactura | s
     ...(descuentoGlobal ? { descuentoGlobal } : {}),
     ...(typeof c.direccionEntregaId === "string" ? { direccionEntregaId: c.direccionEntregaId } : {}),
     ...(typeof c.repartoHuella === "string" && /^[0-9a-f]{64}$/.test(c.repartoHuella) ? { repartoHuella: c.repartoHuella } : {}),
+    ...(typeof c.infoAdicionalHuella === "string" && /^[0-9a-f]{64}$/.test(c.infoAdicionalHuella) ? { infoAdicionalHuella: c.infoAdicionalHuella } : {}),
     lineas: lineas.map((l) => {
       const ajuste = leerAjuste((l as F).ajuste);
 
@@ -513,11 +516,14 @@ export async function prepararFactura(db: Db, empresaId: string, usuarioId: stri
     totalesTexto: calculo.texto,
     // E04: destino de entrega elegido (null = el cliente no tiene destinos registrados). No altera el domicilio fiscal del receptor ni el payload.
     entrega: destino.opcion ? resumenEntrega(destino.opcion) : null,
+    // E1: texto J003 final (lo que viajará en dInfAdic) y su huella: el operador revisa EXACTAMENTE esto y la emisión lo verifica.
+    infoAdicional,
+    infoAdicionalHuella: huellaInfoAdicional(infoAdicional),
     // E03: descuentos informados (solo si hay alguno): por ítem (unitario, %, global, total) y totales F009/F033/F011 + F010.
     ...(calculo.descuentos.hay ? { descuentos: calculo.descuentos } : {}),
   };
 
-  return { entrada: final, payload, totalTexto: String(payload.Subtotales[0].dTotGralOpe), receptor, resumen, guardar, lineasStock, entrega: destino.opcion };
+  return { entrada: final, payload, totalTexto: String(payload.Subtotales[0].dTotGralOpe), receptor, resumen, guardar, lineasStock, entrega: destino.opcion, infoReutilizada: persistida !== undefined };
 }
 
 /**
@@ -533,8 +539,12 @@ export async function crearFacturaElectronica(db: Db, empresaId: string, usuario
 
     return existencia;
   };
-  const { payload, totalTexto, receptor, guardar, lineasStock } = await prepararFactura(db, empresaId, usuarioId, cuerpo, { documentoExiste });
+  const { payload, totalTexto, receptor, guardar, lineasStock, resumen } = await prepararFactura(db, empresaId, usuarioId, cuerpo, { documentoExiste });
   const documentoExistente = await documentoExiste();
+
+  // E1-F003: un documento NUEVO solo se crea con el dInfAdic que el operador revisó (nombre del vendedor y dirección releídos del servidor); si cambiaron entre la previa y el envío, se exige revisar de nuevo, sin reservar numeración.
+  // Una repetición de una clave ya creada reutiliza el snapshot persistido y no se compara.
+  if (!documentoExistente && cuerpo.infoAdicionalHuella !== undefined && cuerpo.infoAdicionalHuella !== resumen.infoAdicionalHuella) throw new ErrorFacturacion(409, MENSAJE_INFO_CAMBIO);
 
   if (salida) salida.guardar = guardar;
 
@@ -564,6 +574,8 @@ export async function crearFacturaElectronica(db: Db, empresaId: string, usuario
     throw error;
   }
 }
+
+export const MENSAJE_INFO_CAMBIO = "La información adicional (dirección de entrega o vendedor) cambió desde la revisión. Revise la factura de nuevo antes de enviarla.";
 
 export const MENSAJE_REPARTO_CAMBIO = "El stock disponible cambió desde la revisión y el reparto por depósito ya no es el mismo. Revise la factura de nuevo antes de enviarla.";
 

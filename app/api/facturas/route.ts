@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { leerCuerpoFactura } from "@/lib/facturacion/emision";
+import { leerCuerpoFactura, MENSAJE_INFO_CAMBIO } from "@/lib/facturacion/emision";
 import { emitirFactura } from "@/lib/facturacion/envio";
 import { prepararFacturacion } from "@/lib/facturacion/servidor";
 import { respuestaErrorFacturacion } from "@/lib/facturacion/shared";
@@ -25,6 +25,9 @@ export async function POST(request: Request) {
   const datos = leerCuerpoFactura(cuerpo as Record<string, unknown>);
 
   if (typeof datos === "string") return NextResponse.json({ error: datos }, { status: 400 });
+
+  // E1-F003: se emite solo lo revisado; sin la huella de la información adicional revisada se exige revisar de nuevo (antes de reservar numeración).
+  if (datos.infoAdicionalHuella === undefined) return NextResponse.json({ error: MENSAJE_INFO_CAMBIO }, { status: 409 });
 
   try {
     return NextResponse.json(await emitirFactura(b.db, b.empresaId, b.usuarioId, datos));

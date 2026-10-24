@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import type { Pool } from "pg";
 
 /**
@@ -13,7 +15,8 @@ type Db = Pick<Pool, "query">;
 export const LIMITE_INFO_ADICIONAL = 5000;
 const PREFIJO_ENTREGA = "Dirección de entrega: ";
 const PREFIJO_VENDEDOR = "Vendedor: ";
-const AUTOMATICA = /^(Dirección de entrega|Vendedor): /;
+/** Línea que separa el texto libre del operador de los datos automáticos del sistema. */
+export const MARCA_AUTOMATICA = "[Datos automáticos del sistema]";
 const limpio = (t: string) => t.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, " ").replace(/[ \t]+/g, " ").trim();
 
 /** «Dirección de entrega: SUCURSAL — dirección». null si no hay destino. */
@@ -35,22 +38,38 @@ export function lineaVendedor(nombre: string | null | undefined, apellido: strin
   return completo === "" ? null : `${PREFIJO_VENDEDOR}${completo}`;
 }
 
-/** Observaciones + líneas automáticas, en orden estable (observaciones, entrega, vendedor), separadas por salto de línea. Una línea automática ya presente tal cual en las observaciones no se repite. "" si no hay nada. */
+/**
+ * Observaciones del operador y datos automáticos del sistema, en un solo texto pero SEPARADOS por una línea marcadora fija: todo lo anterior a la marca es texto libre del operador (se preserva íntegro, aunque
+ * escriba «Vendedor: …» o «Dirección de entrega: …») y solo lo posterior es la identificación autoritativa (entrega validada, vendedor autenticado). Una observación manual nunca sustituye ni evita la línea
+ * automática. Sin datos automáticos no hay marca. Orden estable: observaciones, marca, entrega, vendedor.
+ */
 export function componerInfoAdicional(p: { observaciones: string; entrega?: string | null; vendedor?: string | null }): string {
   const obs = p.observaciones.trim();
-  const presentes = new Set(obs.split(/\r?\n/).map((l) => l.trim()));
-  const automaticas = [p.entrega, p.vendedor].filter((l): l is string => typeof l === "string" && l !== "" && !presentes.has(l));
+  const automaticas = [p.entrega, p.vendedor].filter((l): l is string => typeof l === "string" && l !== "");
 
-  return [obs, ...automaticas].filter((t) => t !== "").join("\n");
+  return (automaticas.length === 0 ? [obs] : [obs, MARCA_AUTOMATICA, ...automaticas]).filter((t) => t !== "").join("\n");
 }
 
-/** Observaciones propias de un texto ya compuesto: quita las líneas automáticas del FINAL (para precargar la corrección de una NCE rechazada sin acumular «Vendedor: …»). */
+/**
+ * Observaciones propias de un texto ya compuesto (precarga de la corrección de una NCE rechazada). Solo se retira el bloque automático si existe la marca Y lo que la sigue son exclusivamente líneas
+ * automáticas válidas (entrega y/o vendedor, en ese orden). Sin marca verificable (NCE anteriores a esta marca) se conserva TODO el texto: nunca se descarta algo que pudo escribir el operador.
+ */
 export function separarObservacion(texto: string): string {
   const lineas = texto.split(/\r?\n/);
+  const marca = lineas.map((l) => l.trim()).lastIndexOf(MARCA_AUTOMATICA);
 
-  while (lineas.length > 0 && AUTOMATICA.test(lineas[lineas.length - 1].trim())) lineas.pop();
+  if (marca < 0) return texto.trim();
 
-  return lineas.join("\n").trim();
+  const cola = lineas.slice(marca + 1).map((l) => l.trim());
+  const prefijos = cola.map((l) => (l.startsWith(PREFIJO_ENTREGA) ? 0 : l.startsWith(PREFIJO_VENDEDOR) ? 1 : -1));
+  const valida = cola.length > 0 && cola.length <= 2 && prefijos.every((x, i) => x >= 0 && (i === 0 || x > prefijos[i - 1]));
+
+  return valida ? lineas.slice(0, marca).join("\n").trim() : texto.trim();
+}
+
+/** Huella (SHA-256) del dInfAdic final: identifica el texto exacto que el operador revisó; al emitir se compara con el que el servidor volvería a componer. */
+export function huellaInfoAdicional(texto: string): string {
+  return createHash("sha256").update(texto, "utf8").digest("hex");
 }
 
 /**

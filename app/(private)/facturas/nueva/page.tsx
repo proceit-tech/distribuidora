@@ -64,6 +64,9 @@ type Resumen = {
   descuentos?: { porcGlobal: string; totalItems: string; totalGeneral: string; total: string };
   /** E04: destino de entrega elegido (null = el cliente no tiene destinos registrados). */
   entrega?: { nombre: string; tipo: string; direccion: string; contacto: string; horario: string } | null;
+  /** E1: dInfAdic final (observaciones + entrega + vendedor) y su huella, que se envía al emitir para que se emita exactamente lo revisado. */
+  infoAdicional?: string;
+  infoAdicionalHuella?: string;
   lineas: Array<{ descuento?: { unitario: string; porcentaje: string; global: string; total: string }; codigo: string; descripcion: string; unidad: string; cantidad: string; precio: string; precioLista: string; precioModificado: boolean; afectacion: number; tasa: number; proporcion?: string | null; total: number; totalTexto?: string; ajustes?: string[] }>;
   totales: { exento: number; exonerado: number; gravado5: number; gravado10: number; iva5: number; iva10: number; totalIva: number; total: number };
   totalesTexto?: { exento: string; exonerado: string; gravado5: string; gravado10: string; iva5: string; iva10: string; totalIva: string; total: string };
@@ -520,7 +523,7 @@ export default function NuevaFacturaPage() {
     )).resumen,
     // E02: junto con la factura revisada viaja la huella del reparto de stock de ESA revisión, para que la baja sea exactamente la que el operador vio.
     enviar: async (cuerpo, revisado) => leer<ResultadoEnvio>(
-      await fetch("/api/facturas", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(repartoDe(revisado) ? { ...(cuerpo as Record<string, unknown>), repartoHuella: repartoDe(revisado) } : cuerpo) }),
+      await fetch("/api/facturas", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...(cuerpo as Record<string, unknown>), ...(repartoDe(revisado) ? { repartoHuella: repartoDe(revisado) } : {}), ...(revisado?.infoAdicionalHuella ? { infoAdicionalHuella: revisado.infoAdicionalHuella } : {}) }) }),
       "No fue posible enviar la factura.",
     ),
     alRevisando: setRevisando,
@@ -1395,6 +1398,7 @@ export default function NuevaFacturaPage() {
                   <h3>Cliente y entrega</h3>
                   <dl className={estilos.resumenDl}>
                     <div><dt>Cliente</dt><dd>{resumen.cliente.razonSocial} ({resumen.cliente.documento})</dd></div>
+                    {resumen.infoAdicional ? <div><dt>Información adicional</dt><dd style={{ whiteSpace: "pre-line" }}>{resumen.infoAdicional}</dd></div> : null}
                     <div><dt>Dirección de entrega</dt><dd>{resumen.entrega ? `${resumen.entrega.nombre} — ${resumen.entrega.direccion}` : "Sin destino de entrega registrado (se factura con el domicilio fiscal del receptor)"}</dd></div>
                   </dl>
                 </section>
