@@ -59,11 +59,16 @@ function mundo(opciones: { stock?: number } = {}) {
   const llamadas: Array<{ sql: string; p: unknown[] }> = [];
   const docs = new Map<string, { id: string; numero: string }>();
   const entregas: Array<{ doc: string; cliente: string; direccion: string; snapshot: Record<string, unknown> }> = [];
+  // E1: cuentas por empresa (nombre/apellido persistidos) y dInfAdic persistido por clave (snapshot de la emisión).
+  const cuentas = new Map<string, { nombre: string; apellido: string | null }>([[EMPRESA + "|" + USUARIO, { nombre: "Juan", apellido: "Pérez" }]]);
+  const infoPorClave = new Map<string, string | null>();
   let secuencia = 0;
   const stock = opciones.stock ?? 10;
   const db = {
     async query(sql: string, p: unknown[] = []) {
       llamadas.push({ sql, p });
+      if (/FROM usuarios WHERE empresa_id/.test(sql)) { const u = cuentas.get(String(p[0]) + "|" + String(p[1])); return { rows: u ? [u] : [], rowCount: u ? 1 : 0 }; }
+      if (/FROM documentos_electronicos d JOIN documento_electronico_solicitudes s/.test(sql)) return infoPorClave.has(String(p[1])) ? { rows: [{ info: infoPorClave.get(String(p[1])) }], rowCount: 1 } : { rows: [], rowCount: 0 };
       if (/usuario_tiene_permiso/.test(sql)) return { rows: [{ ok: false }], rowCount: 1 };
       if (/FROM clientes c\s+LEFT JOIN LATERAL/.test(sql)) return { rows: [filaCliente(String(p[1]))], rowCount: 1 };
       if (/SELECT c\.id, c\.naturaleza_receptor/.test(sql)) return { rows: [{ ...filaCliente(String(p[1])), id: p[1], tipo_persona: "JURIDICA", tipo_documento: "RUC" }], rowCount: 1 };
@@ -99,6 +104,7 @@ function mundo(opciones: { stock?: number } = {}) {
         const id = "d0000000-0000-4000-8000-" + String(secuencia).padStart(12, "0");
 
         docs.set(clave, { id, numero: "00" + String(50000 + secuencia) });
+        infoPorClave.set(clave, (JSON.parse(String(p[9])) as { dInfAdic?: string | null }).dInfAdic ?? null);
         if (elegida) entregas.push({ doc: id, cliente, direccion: elegida.id, snapshot: { etiqueta: elegida.etiqueta, direccion: elegida.direccion, tipo: elegida.tipo } });
 
         return { rows: [{ documentoId: id, numero: "00" + String(50000 + secuencia), reutilizado: false }], rowCount: 1 };
@@ -108,7 +114,7 @@ function mundo(opciones: { stock?: number } = {}) {
     },
   } as never;
 
-  return { db, llamadas, docs, entregas, secuencia: () => secuencia };
+  return { db, llamadas, docs, entregas, cuentas, infoPorClave, secuencia: () => secuencia };
 }
 
 const cuerpo = (cliente: string, extra: Record<string, unknown> = {}, clave = "clave-entrega-0001"): CuerpoFactura =>
@@ -291,7 +297,7 @@ export async function verificarCasosEntregaE04(): Promise<string[]> {
     const prepB = await prepararFactura(sinDest.db, EMPRESA, USUARIO, cB);
     const prepB2 = await prepararFactura(sinDest.db, EMPRESA, USUARIO, cuerpo(CLI_B, { direccionEntregaId: B1.id }, "clave-entrega-0002"));
 
-    igual("EN-41 el payload SIFEN no cambia por el destino: mismo payload con el mismo cuerpo y el domicilio fiscal del receptor (dDirRec) sigue siendo el fiscal, nunca el destino", [JSON.stringify(prepB.payload) === JSON.stringify(prepB2.payload), (prepB.payload as unknown as Record<string, unknown>).dDirRec, JSON.stringify(prepB.payload).includes("Filial B1")], [true, "Domicilio FISCAL c2", false]);
+    igual("EN-41 el payload SIFEN no cambia por el destino: mismo payload con el mismo cuerpo y el domicilio fiscal del receptor (dDirRec) sigue siendo el fiscal, nunca el destino", [JSON.stringify(prepB.payload) === JSON.stringify(prepB2.payload), (prepB.payload as unknown as Record<string, unknown>).dDirRec, JSON.stringify({ ...(prepB.payload as unknown as Record<string, unknown>), dInfAdic: null }).includes("Filial B1")], [true, "Domicilio FISCAL c2", false]);   // E1: el destino solo viaja como línea de dInfAdic (J003), nunca en los datos fiscales
   }
   {
     const m = mundo();
@@ -389,6 +395,61 @@ export async function verificarCasosEntregaE04(): Promise<string[]> {
   cierto("EN-56 pantalla: controlador con efecto por cliente, destino SOLO si pertenece al cliente actual, id en el cuerpo revisado (cambia la huella), pendiente bloquea revisar, fila en el resumen previo y componente sin destinos informativo", /crearControlEntrega\(\{ cargar: \(id, signal\) => pedirOpcionesEntrega\(id, signal\) \}\)/.test(pagina) && /void entregaCtl\.seleccionarCliente\(clienteIdActual\)/.test(pagina) && /const entregaVigente = entregaEstado\.clienteId === clienteIdActual \? entregaEstado : null/.test(pagina) && /\.\.\.\(direccionEntregaId \? \{ direccionEntregaId \} : \{\}\)/.test(pagina) && /pendienteDeEntrega,/.test(pagina) && /<EntregaCliente control=\{entregaCtl\} clienteId=\{cliente\.id\} \/>/.test(pagina) && /Dirección de entrega<\/dt>/.test(pagina) && /no tiene direcciones de entrega registradas: la factura se emite igual/.test(comp) && /e\.clienteId !== clienteId/.test(comp) && /Es solo el destino de la mercadería: no cambia el domicilio fiscal/.test(comp));
   cierto("EN-57 fuera de alcance intacto: ni el payload FE, ni el cálculo, ni el stock, ni el gateway/KuDE importan el módulo de entrega", !/facturacion\/entrega/.test(leer("lib/facturacion/payload-fe.ts") + leer("lib/facturacion/stock-fe.ts") + leer("lib/facturacion/gateway.ts") + leer("lib/facturacion/calculo.ts") + leer("lib/facturacion/kude-visor.ts")));
   cierto("EN-58 documentación operativa de NEX-068: preflight, verificación, reversión y procedimiento versionados", ["scripts/preflight-NEX-068.sql", "scripts/verificar-NEX-068.sql", "scripts/reversion-NEX-068.sql", "docs/PROCEDIMIENTO-NEX-068.md"].every((f) => { try { return leer("documentacao/banco/nexit/v1/" + f).length > 200; } catch { return false; } }));
+
+  // ── E1 (PRO-93): J003 dInfAdic de la FE = observaciones + dirección de entrega validada + vendedor autenticado ──────────────────────
+  {
+    const info = (p: { payload: unknown }) => (p.payload as { dInfAdic: string | null }).dInfAdic;
+    const m = mundo();
+    const eA = await prepararFactura(m.db, EMPRESA, USUARIO, cuerpo(CLI_A, { direccionEntregaId: A1.id }));
+    const eB = await prepararFactura(m.db, EMPRESA, USUARIO, cuerpo(CLI_A, { direccionEntregaId: A2.id }));
+    const sinDir = await prepararFactura(m.db, EMPRESA, USUARIO, cuerpo(CLI_C));
+    const conObs = await prepararFactura(m.db, EMPRESA, USUARIO, cuerpo(CLI_A, { direccionEntregaId: A2.id, infoAdicional: "Entregar por la tarde\nPedido 123" }));
+
+    igual("E1-01 FE con la dirección A: «Dirección de entrega: sede — dirección» (la elegida y validada) y «Vendedor: nombre apellido» de la cuenta que emite", info(eA)?.split("\n"), ["Dirección de entrega: " + nombreEntrega(A1) + " — " + direccionCompleta(A1), "Vendedor: Juan Pérez"]);
+    igual("E1-02 FE con la dirección B: otro destino, otra línea (no la anterior ni el domicilio fiscal)", [info(eB)?.includes(nombreEntrega(A2)), info(eB)?.includes(nombreEntrega(A1)), info(eB)?.includes("Domicilio FISCAL")], [true, false, false]);
+    igual("E1-03 FE sin dirección de entrega (cliente sin destinos): sin línea de dirección, solo el vendedor; no se inventa destino", [info(sinDir), (sinDir.payload as { dDirRec?: string }).dDirRec], ["Vendedor: Juan Pérez", "Domicilio FISCAL c3"]);
+    igual("E1-04 las observaciones del operador se preservan íntegras (con sus saltos de línea) y las líneas automáticas se añaden después, en orden estable", info(conObs)?.split("\n"), ["Entregar por la tarde", "Pedido 123", "Dirección de entrega: " + nombreEntrega(A2) + " — " + direccionCompleta(A2), "Vendedor: Juan Pérez"]);
+
+    m.cuentas.set(EMPRESA + "|" + "88888888-8888-4888-8888-888888888888", { nombre: "María", apellido: "Gómez" });
+
+    const otro = await prepararFactura(m.db, EMPRESA, "88888888-8888-4888-8888-888888888888", cuerpo(CLI_A, { direccionEntregaId: A1.id }));
+
+    igual("E1-05 el vendedor es el usuario AUTENTICADO que emite: la misma factura emitida por otra cuenta lleva su nombre, no el de otra", [info(otro)?.includes("Vendedor: María Gómez"), info(otro)?.includes("Juan")], [true, false]);
+    igual("E1-06 el navegador no puede imponer el vendedor ni la dirección: un texto de observaciones que simula «Vendedor: Otro» no reemplaza al real (se añade el real) y una dirección que no es del cliente se rechaza antes de reservar numeración", [info(await prepararFactura(m.db, EMPRESA, USUARIO, cuerpo(CLI_A, { direccionEntregaId: A1.id, infoAdicional: "Vendedor: Otro" })))?.split("\n").filter((l) => l.startsWith("Vendedor:")), (await estado(prepararFactura(m.db, EMPRESA, USUARIO, cuerpo(CLI_A, { direccionEntregaId: B1.id })))).endsWith(MENSAJE_ENTREGA_INVALIDA)], [["Vendedor: Otro", "Vendedor: Juan Pérez"], true]);
+
+    // aislamiento entre empresas: la cuenta de otra empresa no existe para esta; sin cuenta no se inventa vendedor
+    const OTRA_EMPRESA = "22222222-2222-4222-8222-222222222222";
+    const ajena = await prepararFactura(m.db, OTRA_EMPRESA, USUARIO, cuerpo(CLI_C));
+
+    igual("E1-07 sin fuga entre tenants: con la empresa B el usuario de la empresa A no se resuelve y nunca aparece el nombre de la otra empresa", [info(ajena) === null || !info(ajena)?.includes("Juan"), m.llamadas.filter((l) => /FROM usuarios/.test(l.sql)).every((l) => l.p.length === 2)], [true, true]);
+
+    // límite de 5000 sobre el texto FINAL, antes de reservar numeración, sin recortar
+    const largo = "x".repeat(5000);
+    const justo = "y".repeat(5000 - ("\nVendedor: Juan Pérez").length);
+    const conLargo = await estado(prepararFactura(m.db, EMPRESA, USUARIO, cuerpo(CLI_C, { infoAdicional: largo })));
+    const llamadasAntes = m.llamadas.length;
+    const enLimite = await prepararFactura(m.db, EMPRESA, USUARIO, cuerpo(CLI_C, { infoAdicional: justo }));
+
+    igual("E1-08 5000 caracteres de observaciones + el vendedor superan el máximo: error explícito (422), sin recortar y sin llegar a la función de emisión", [conLargo.startsWith("422:La información adicional"), m.llamadas.some((l) => /fe_documento_crear_fe_con_stock_entrega/.test(l.sql))], [true, false]);
+    igual("E1-08 el texto final de exactamente 5000 caracteres se acepta completo (sin truncar)", [info(enLimite)?.length, llamadasAntes > 0], [5000, true]);
+
+    // reintento idempotente: mismo contenido, sin duplicar líneas, y snapshot aunque cambie el nombre del vendedor o la dirección
+    const m2 = mundo();
+    const c0 = cuerpo(CLI_A, { direccionEntregaId: A2.id, infoAdicional: "Nota" }, "clave-e1-reintento-01");
+    const plan2 = await planificarStock(m2.db, EMPRESA, USUARIO, SUC, (await prepararFactura(m2.db, EMPRESA, USUARIO, c0)).lineasStock);
+    const c = { ...c0, repartoHuella: plan2.huella };
+    const r1 = await crearFacturaElectronica(m2.db, EMPRESA, USUARIO, c);
+    const guardada = m2.infoPorClave.get("clave-e1-reintento-01");
+
+    m2.cuentas.set(EMPRESA + "|" + USUARIO, { nombre: "Nombre", apellido: "Cambiado" });
+
+    const r2 = await crearFacturaElectronica(m2.db, EMPRESA, USUARIO, c);
+    const reenviado = JSON.parse(String(m2.llamadas.filter((l) => /fe_documento_crear_fe_con_stock_entrega/.test(l.sql)).pop()?.p[9])) as { dInfAdic: string };
+
+    igual("E1-09 reenvío idempotente: la misma clave devuelve el mismo documento, el dInfAdic reenviado es EXACTAMENTE el persistido (no se recompone con el nombre nuevo) y no hay líneas duplicadas", [r1.reutilizado, r2.reutilizado, r1.documentoId === r2.documentoId, reenviado.dInfAdic === guardada, (guardada ?? "").split("\n").filter((l) => l.startsWith("Vendedor:")).length, (reenviado.dInfAdic.match(/Dirección de entrega:/g) ?? []).length], [false, true, true, true, 1, 1]);
+    igual("E1-10 el JSON enviado conserva exactamente el nombre dInfAdic (J003) y no introduce campos con otro nombre", [Object.keys(reenviado).filter((k) => /inf.*adic/i.test(k)), "dInfAdic" in reenviado], [["dInfAdic"], true]);
+    igual("E1-11 revisar dos veces la misma factura produce el mismo texto (la composición no acumula)", [info(await prepararFactura(m.db, EMPRESA, USUARIO, cuerpo(CLI_A, { direccionEntregaId: A2.id, infoAdicional: "Nota" }))) === info(await prepararFactura(m.db, EMPRESA, USUARIO, cuerpo(CLI_A, { direccionEntregaId: A2.id, infoAdicional: "Nota" })))], [true]);
+  }
 
   return fallos;
 }

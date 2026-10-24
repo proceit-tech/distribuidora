@@ -11,6 +11,7 @@ import { construirPayloadFE, CONDICIONES_OPERACION, INDICADORES_PRESENCIA, resum
 import { ErrorFacturacion, ErrorValidacionFiscal } from "@/lib/facturacion/shared";
 import { leerDescuento, type DescuentoEntrada } from "@/lib/facturacion/descuentos";
 import { opcionesEntrega, resolverEntrega, resumenEntrega } from "@/lib/facturacion/entrega";
+import { componerInfoAdicional, infoAdicionalPersistida, LIMITE_INFO_ADICIONAL, lineaEntrega, vendedorDe } from "@/lib/facturacion/info-adicional";
 import { asignacionesSql, mensajeStockInsuficiente, planificarStock, type LineaStock } from "@/lib/facturacion/stock-fe";
 import { normalizarCantidadTexto } from "@/lib/formato/cantidad-campo";
 
@@ -451,7 +452,15 @@ export async function prepararFactura(db: Db, empresaId: string, usuarioId: stri
     });
   }
 
-  const base = { moneda, ...(cambio !== undefined ? { cambio } : {}), tipoTransaccion: cuerpo.tipoTransaccion, presencia: cuerpo.presencia, condicion, ...(cuerpo.credito ? { credito: cuerpo.credito } : {}), infoAdicional: cuerpo.infoAdicional, receptor, lineas, ...(cuerpo.descuentoGlobal ? { descuentoGlobal: cuerpo.descuentoGlobal } : {}) };
+  // J003 dInfAdic: observaciones del operador + dirección de entrega validada + vendedor (usuario autenticado que emite), compuestos AQUÍ en el servidor. Un reintento de una emisión ya creada reutiliza el texto persistido.
+  const persistida = opciones.documentoExiste && (await opciones.documentoExiste()) ? await infoAdicionalPersistida(db, empresaId, cuerpo.claveIdempotencia) : undefined;
+  const infoAdicional = persistida !== undefined
+    ? (persistida ?? "")
+    : componerInfoAdicional({ observaciones: cuerpo.infoAdicional, entrega: lineaEntrega(destino.opcion ? resumenEntrega(destino.opcion) : null), vendedor: await vendedorDe(db, empresaId, usuarioId) });
+
+  if (infoAdicional.length > LIMITE_INFO_ADICIONAL) throw new ErrorFacturacion(422, `La información adicional (observaciones + dirección de entrega + vendedor) tiene ${infoAdicional.length} caracteres y el máximo es ${LIMITE_INFO_ADICIONAL}. Acorte las observaciones; no se recorta automáticamente.`);
+
+  const base = { moneda, ...(cambio !== undefined ? { cambio } : {}), tipoTransaccion: cuerpo.tipoTransaccion, presencia: cuerpo.presencia, condicion, ...(cuerpo.credito ? { credito: cuerpo.credito } : {}), infoAdicional, receptor, lineas, ...(cuerpo.descuentoGlobal ? { descuentoGlobal: cuerpo.descuentoGlobal } : {}) };
   // Contado: el pago único cubre el total que calcula el servidor (nunca un monto del navegador). Crédito: el único pago es la entrega inicial (si la hay); el resto se valida
   // contra el total del servidor (entrega + cuotas = total) y nunca se cuenta dos veces.
   const total = totalFactura(lineas, cuerpo.descuentoGlobal);

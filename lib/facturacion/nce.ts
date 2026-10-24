@@ -5,6 +5,7 @@ import { normalizarCantidadTexto } from "@/lib/formato/cantidad-campo";
 import { leerCambio } from "@/lib/facturacion/monedas";
 import { CAMPOS_RECEPTOR, construirPayloadNCE, esMotivoNce, lineasOriginalesDe, lineasParaSql, MAX_LINEAS_NCE, MOTIVOS_NCE, saldoDe, validarEntradaNce, calcularNce, type EntradaNce, type LineaOriginal, type MotivoNce } from "@/lib/facturacion/payload-nce";
 import { numeroDocumento } from "@/lib/facturacion/estados";
+import { componerInfoAdicional, infoAdicionalPersistida, LIMITE_INFO_ADICIONAL, separarObservacion, vendedorDe } from "@/lib/facturacion/info-adicional";
 import { ErrorFacturacion, ErrorValidacionFiscal } from "@/lib/facturacion/shared";
 
 /**
@@ -399,11 +400,18 @@ export async function prepararNce(db: Db, empresaId: string, usuarioId: string, 
 
   if (desconocidas.length > 0) throw new ErrorFacturacion(422, "Una línea seleccionada no pertenece a la factura original.");
 
+  // Reintento de una NCE ya creada con esta clave: se reutiliza el dInfAdic persistido (snapshot; un cambio posterior del nombre del vendedor no altera el documento ni la idempotencia).
+  const persistida = await infoAdicionalPersistida(db, empresaId, cuerpo.claveIdempotencia);
+  const observacionFinal = persistida !== undefined ? (persistida ?? "") : componerInfoAdicional({ observaciones: cuerpo.observacion, vendedor: await vendedorDe(db, empresaId, usuarioId) });
+
+  if (observacionFinal.length > LIMITE_INFO_ADICIONAL) throw new ErrorFacturacion(422, `La información adicional (observaciones + vendedor) tiene ${observacionFinal.length} caracteres y el máximo es ${LIMITE_INFO_ADICIONAL}. Acorte las observaciones; no se recorta automáticamente.`);
+
   const entrada: EntradaNce = {
     motivo: cuerpo.motivo,
     moneda: fe.moneda,
     cambio: fe.cambio,
-    observacion: cuerpo.observacion,
+    // J003 dInfAdic de la NCE: las observaciones propias de la nota + «Vendedor: …» del usuario que EMITE esta NCE (no el de la factura original).
+    observacion: observacionFinal,
     saldoCredito: fe.saldoCredito,
     ...(cuerpo.servicio ? { servicio: cuerpo.servicio } : {}),
     lineas: cuerpo.lineas.map((l) => {
@@ -492,7 +500,8 @@ export async function propuestaCorreccion(db: Db, empresaId: string, usuarioId: 
       motivo: Number(n.motivo),
       sucursalId: s(n.sucursalId),
       puntoId: n.puntoId === null ? null : s(n.puntoId),
-      observacion: n.observacion === null ? "" : s(n.observacion),
+      // La observación guardada es el dInfAdic compuesto: se precargan solo las observaciones propias (sin «Vendedor: …»), que se recomponen con el usuario que emita la corrección.
+      observacion: n.observacion === null ? "" : separarObservacion(s(n.observacion)),
       numeroRechazado: numeroDocumento({ establecimiento: s(n.establecimiento), puntoExpedicion: s(n.puntoExpedicion), numero: s(n.numero), serie: n.serie === null || n.serie === undefined ? null : s(n.serie) }),
       lineas: (lineas.rows as F[]).map((l) => ({ linea: Number(l.linea), cantidad: textoDec(parseDec(s(l.cantidad), 8) ?? B(0)), monto: textoDec(parseDec(s(l.monto), 8) ?? B(0)) })),
       servicio: await servicioDeNce(db, empresaId, nceId),
