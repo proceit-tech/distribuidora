@@ -178,7 +178,10 @@ function importesRepresentables(items: Array<{ cantidad: Dec; precio: Dec; propo
 }
 
 /** Errores de validación fiscal de la entrada (lista vacía = emitible). Mensajes en español para la pantalla y la API. */
-export function validarEntradaFE(e: EntradaFE, hoy: string = hoyParaguay()): string[] {
+/** `domicilioHistorico`: reintento de una FE YA creada, cuyo payload original se reutiliza tal cual; el domicilio actual del cadastro no se reevalúa. */
+export type OpcionesPayloadFE = { domicilioHistorico?: boolean };
+
+export function validarEntradaFE(e: EntradaFE, hoy: string = hoyParaguay(), opciones: OpcionesPayloadFE = {}): string[] {
   const errores: string[] = [];
 
   if (!esMonedaFE(e.moneda)) errores.push("La moneda de la factura no es válida (PYG, USD o BRL).");
@@ -264,7 +267,7 @@ export function validarEntradaFE(e: EntradaFE, hoy: string = hoyParaguay()): str
   if (r.direccion.length > 255) errores.push("La dirección del cliente no puede superar 255 caracteres.");
   if (r.tipoOperacion === 4 && r.direccion.trim() === "") errores.push("Una operación B2F requiere la dirección del receptor (D213).");
   if (r.naturaleza === 2 && r.tipoOperacion !== 4 && (r.tipoDocumentoIdentidad === null || r.numeroDocumento === "")) errores.push("El cliente no contribuyente requiere tipo y número de documento.");
-  errores.push(...erroresDomicilioReceptor(r));
+  if (!opciones.domicilioHistorico) errores.push(...erroresDomicilioReceptor(r));
 
   return errores;
 }
@@ -276,7 +279,7 @@ const CODIGO_CIUDAD = /^[1-9]\d{0,4}$/;
 
 /**
  * País y bloque de domicilio fiscal del receptor (D203, D213, D218, D219, D221, D223; MT v150 y NT 003). El bloque es todo o nada: sin calle no se informa ningún dato de
- * domicilio (el país se conserva); con calle se exige un número de casa numérico real (1–6 dígitos, nunca un 0 inventado) y, fuera de B2F, departamento, distrito y ciudad
+ * domicilio (el país se conserva); con calle se exige un número de casa numérico real (1–6 dígitos, nunca un 0 inventado) y, fuera de B2F, departamento y ciudad (obligatorios) y distrito (D221, ocurrencia 0–1: opcional)
  * como CÓDIGOS (las descripciones las resuelve el gateway). En B2F la geografía paraguaya no se informa ni se exige. La existencia y la jerarquía de los códigos las valida el
  * servidor contra el catálogo geográfico (`validarGeografiaReceptor`), antes de reservar numeración.
  */
@@ -290,7 +293,7 @@ export function erroresDomicilioReceptor(r: ReceptorFE): string[] {
   if (!/^\d{1,6}$/.test(r.numeroCasa.trim())) errores.push("La dirección fiscal del cliente requiere un número de casa numérico de 1 a 6 dígitos (D218). Corríjalo en Clientes; no se reemplaza por 0.");
   if (b2f) return errores;
   if (!CODIGO_DEPARTAMENTO.test(r.departamento.trim())) errores.push("La dirección fiscal del cliente requiere un departamento válido (D219, NT 003).");
-  if (!CODIGO_DISTRITO.test(r.distrito.trim())) errores.push("La dirección fiscal del cliente requiere un distrito válido (D221).");
+  if (r.distrito.trim() !== "" && !CODIGO_DISTRITO.test(r.distrito.trim())) errores.push("El distrito de la dirección fiscal del cliente no es válido (D221).");
   if (!CODIGO_CIUDAD.test(r.ciudad.trim())) errores.push("La dirección fiscal del cliente requiere una ciudad válida (D223, NT 003).");
 
   return errores;
@@ -298,7 +301,7 @@ export function erroresDomicilioReceptor(r: ReceptorFE): string[] {
 
 /**
  * País y domicilio del receptor en el JSON. `cPaisRec` va siempre. Sin calle: `dDirRec` y `dNumCasRec` nulos como hasta ahora y NINGUNA clave geográfica. Con calle: `dNumCasRec` es el
- * número real de la ficha y, fuera de B2F, se agregan SOLO los códigos `cDepRec`, `cDisRec` y `cCiuRec` (jamás `dDesPaisRe`/`dDesDepRec`/`dDesDisRec`/`dDesCiuRec`: el gateway
+ * número real de la ficha y, fuera de B2F, se agregan SOLO los códigos `cDepRec`, `cCiuRec` y, únicamente si la ficha lo trae, `cDisRec` (jamás `dDesPaisRe`/`dDesDepRec`/`dDesDisRec`/`dDesCiuRec`: el gateway
  * las resuelve). En B2F no viaja geografía paraguaya. Solo se llama con la entrada ya validada.
  */
 function domicilioFiscalJSON(r: ReceptorFE): Record<string, unknown> {
@@ -308,7 +311,7 @@ function domicilioFiscalJSON(r: ReceptorFE): Record<string, unknown> {
 
   const base = { dDirRec: calle, dNumCasRec: Number(r.numeroCasa.trim()) };
 
-  return r.tipoOperacion === 4 ? base : { ...base, cDepRec: Number(r.departamento.trim()), cDisRec: Number(r.distrito.trim()), cCiuRec: Number(r.ciudad.trim()) };
+  return r.tipoOperacion === 4 ? base : { ...base, cDepRec: Number(r.departamento.trim()), ...(r.distrito.trim() !== "" ? { cDisRec: Number(r.distrito.trim()) } : {}), cCiuRec: Number(r.ciudad.trim()) };
 }
 
 /**
@@ -379,8 +382,8 @@ const nulo = (v: string) => (v.trim() === "" ? null : v.trim());
  * Construye el payload FE (sin cdc ni numeración). Aplica ella misma `validarEntradaFE` (receptor, ítems, conciliación ítems ↔ total ↔ pago, precisión): una llamada futura que no pase
  * por la validación previa nunca produce un JSON fiscal parcial o inconsistente; lanza con la lista de motivos.
  */
-export function construirPayloadFE(e: EntradaFE, hoy?: string): Record<string, unknown> {
-  const invalidos = validarEntradaFE(e, hoy);
+export function construirPayloadFE(e: EntradaFE, hoy?: string, opciones: OpcionesPayloadFE = {}): Record<string, unknown> {
+  const invalidos = validarEntradaFE(e, hoy, opciones);
 
   if (invalidos.length > 0) throw new Error(`La entrada no es válida para construir el payload FE: ${invalidos.join(" | ")}`);
 
@@ -438,7 +441,7 @@ export function construirPayloadFE(e: EntradaFE, hoy?: string): Record<string, u
     dNomRec: r.razonSocial,
     dNomFanRec: nulo(r.nombreFantasia),
     // dDirRec, dNumCasRec (numérico, el de la ficha: sin fallback a 0) y, si corresponde, solo los códigos cDepRec/cDisRec/cCiuRec.
-    ...domicilioFiscalJSON(r),
+    ...(opciones.domicilioHistorico ? { dDirRec: nulo(r.direccion), dNumCasRec: null } : domicilioFiscalJSON(r)),
     dTelRec: nulo(r.telefono),
     dCelRec: nulo(r.celular),
     dEmailRec: nulo(r.email),

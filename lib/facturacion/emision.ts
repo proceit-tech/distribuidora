@@ -7,14 +7,14 @@ import { B, parseDec, textoDec, type Dec } from "@/lib/facturacion/calculo";
 import { CONDICION_CONTADO, CONDICION_CREDITO, CREDITO_CUOTAS, CREDITO_PLAZO, CUOTAS_HABILITADAS, MENSAJE_CUOTAS_SUSPENDIDAS, leerCredito, plazoTexto, type CreditoEntrada } from "@/lib/facturacion/credito";
 import { leerMonedaYCambio, leerCambio, precioEnMoneda, precioSerializable, totalEnGuaranies, type Moneda } from "@/lib/facturacion/monedas";
 import { DENOMINACIONES_TARJETA, FORMAS_PAGO, FORMAS_PROCESAMIENTO, leerPagos, resolverMontos, type PagoEntrada } from "@/lib/facturacion/pagos";
-import { construirPayloadFE, CONDICIONES_OPERACION, INDICADORES_PRESENCIA, resumenCalculo, TIPOS_TRANSACCION, totalFactura, validarEntradaFE, type EntradaFE, type LineaFE, type ReceptorFE } from "@/lib/facturacion/payload-fe";
+import { construirPayloadFE, CONDICIONES_OPERACION, INDICADORES_PRESENCIA, resumenCalculo, TIPOS_TRANSACCION, totalFactura, erroresDomicilioReceptor, validarEntradaFE, type EntradaFE, type LineaFE, type ReceptorFE } from "@/lib/facturacion/payload-fe";
 import { ErrorFacturacion, ErrorValidacionFiscal } from "@/lib/facturacion/shared";
 import { leerDescuento, type DescuentoEntrada } from "@/lib/facturacion/descuentos";
 import { opcionesEntrega, resolverEntrega, resumenEntrega } from "@/lib/facturacion/entrega";
 import { componerInfoAdicional, huellaInfoAdicional, infoAdicionalPersistida, LIMITE_INFO_ADICIONAL, lineaEntrega, vendedorDe } from "@/lib/facturacion/info-adicional";
 import { asignacionesSql, mensajeStockInsuficiente, planificarStock, type LineaStock } from "@/lib/facturacion/stock-fe";
 import { normalizarCantidadTexto } from "@/lib/formato/cantidad-campo";
-import { ErrorGeografia, resolverPais, resolverUbicacionParaguay, validarPaisPorOperacion } from "@/lib/geografia/referencia";
+import { ErrorGeografia, resolverPais, validarPaisPorOperacion } from "@/lib/geografia/referencia";
 
 /**
  * Preparación y registro de la Factura Electrónica (F-02). Todo lo fiscal sale de los cadastros de la empresa de la SESIÓN: el navegador solo envía
@@ -253,14 +253,29 @@ async function validarGeografiaReceptor(db: Db, r: ReceptorFE): Promise<void> {
 
   if (operacion === undefined) throw new ErrorFacturacion(422, "El tipo de operación del cliente no es válido. Corríjalo en Clientes.");
 
+  const motivos = erroresDomicilioReceptor(r);
+
+  if (motivos.length > 0) throw detalles(422, "El domicilio fiscal del cliente no es válido para la factura.", motivos);
+
   try {
     await resolverPais(db as never, r.pais, "El país del cliente");
     validarPaisPorOperacion(operacion, r.pais);
 
     if (r.direccion.trim() !== "" && r.tipoOperacion !== 4) {
-      const u = await resolverUbicacionParaguay(db as never, r.departamento.trim(), r.distrito.trim(), r.ciudad.trim(), "La dirección fiscal del cliente");
+      // Validación propia de la FE (el helper de Clientes/Proveedores exige distrito para la ciudad): departamento y ciudad obligatorios y coherentes; el distrito (D221) es opcional,
+      // pero si la ficha lo trae debe existir en el departamento y ser el de la ciudad. Nunca se inventa un distrito.
+      const dis = r.distrito.trim();
+      const g = await db.query(
+        `SELECT EXISTS (SELECT 1 FROM referencia_geografica_departamentos d WHERE d.codigo = $1::int AND d.activo) AS dep,
+                ($2::int IS NULL OR EXISTS (SELECT 1 FROM referencia_geografica_distritos di WHERE di.departamento_codigo = $1::int AND di.codigo = $2::int AND di.activo)) AS dis,
+                EXISTS (SELECT 1 FROM referencia_geografica_ciudades ci WHERE ci.departamento_codigo = $1::int AND ci.codigo = $3::int AND ci.activo AND ($2::int IS NULL OR ci.distrito_codigo = $2::int)) AS ciu`,
+        [r.departamento.trim(), dis === "" ? null : dis, r.ciudad.trim()],
+      );
+      const f = g.rows[0] as F | undefined;
 
-      if (u.departamentoCodigo === null || u.distritoCodigo === null || u.ciudadCodigo === null) throw new ErrorGeografia("La dirección fiscal del cliente requiere departamento, distrito y ciudad.");
+      if (f?.dep !== true) throw new ErrorGeografia("El departamento de la dirección fiscal del cliente no existe en el catálogo.");
+      if (f.dis !== true) throw new ErrorGeografia("El distrito de la dirección fiscal del cliente no existe en el departamento indicado.");
+      if (f.ciu !== true) throw new ErrorGeografia("La ciudad de la dirección fiscal del cliente no existe en el catálogo o no corresponde al departamento (y distrito) indicados.");
     }
   } catch (error) {
     if (error instanceof ErrorGeografia) throw new ErrorFacturacion(422, `${error.message} Corrija la dirección fiscal del cliente en Clientes antes de facturar.`);
@@ -354,7 +369,7 @@ function detallePago(p: PagoEntrada): string {
  * Valida y calcula la factura SIN escribir nada ni reservar número: es la base de la previa («Grabar») y de la emisión. Todo sale de los cadastros de la
  * empresa de la sesión y se recalcula en el servidor. Lanza ErrorFacturacion / ErrorValidacionFiscal (422) con los motivos.
  */
-export async function prepararFactura(db: Db, empresaId: string, usuarioId: string, cuerpo: CuerpoFactura, opciones: { documentoExiste?: () => Promise<boolean> } = {}) {
+export async function prepararFactura(db: Db, empresaId: string, usuarioId: string, cuerpo: CuerpoFactura, opciones: { documentoExiste?: () => Promise<boolean>; domicilioHistorico?: boolean } = {}) {
   const condicion = cuerpo.condicion ?? CONDICION_CONTADO;
   const moneda: Moneda = cuerpo.moneda ?? "PYG";
   const cambio = moneda === "PYG" ? undefined : cuerpo.cambio;
@@ -380,7 +395,8 @@ export async function prepararFactura(db: Db, empresaId: string, usuarioId: stri
 
   if (aptitud && !aptitud.apto) throw detalles(422, "El cliente tiene datos fiscales pendientes de regularizar.", aptitud.pendientes);
   // PRO-322: país y domicilio fiscal (códigos) validados contra el catálogo geográfico antes de cualquier reserva; el destino de entrega no interviene.
-  await validarGeografiaReceptor(db, receptor);
+  // Una FE ya creada (reintento de la misma clave) conserva su payload original: el domicilio y el catálogo actuales no se reevalúan.
+  if (opciones.domicilioHistorico !== true) await validarGeografiaReceptor(db, receptor);
   if (punto.rows.length === 0) throw new ErrorFacturacion(422, "La sucursal o el punto de expedición no son válidos (inactivos, sin establecimiento SIFEN o fuera de su alcance).");
 
   // E04: el destino de entrega debe ser una dirección registrada de ESTE cliente y ESTA empresa; con destinos registrados hay que elegir uno, sin destinos la FE sale sin destino. Antes de reservar numeración.
@@ -517,11 +533,11 @@ export async function prepararFactura(db: Db, empresaId: string, usuarioId: stri
   }
 
   const final: EntradaFE = { ...base, pagos: pagosFinal };
-  const errores = validarEntradaFE(final);
+  const errores = validarEntradaFE(final, undefined, { domicilioHistorico: opciones.domicilioHistorico });
 
   if (errores.length > 0) throw detalles(422, "La factura no cumple las reglas fiscales.", errores);
 
-  const payload = construirPayloadFE(final) as { Subtotales: Array<{ dTotGralOpe: number }> };
+  const payload = construirPayloadFE(final, undefined, { domicilioHistorico: opciones.domicilioHistorico }) as { Subtotales: Array<{ dTotGralOpe: number }> };
   const calculo = resumenCalculo(lineas, cuerpo.descuentoGlobal);
   const fila = punto.rows[0] as F;
   const resumen = {
@@ -568,7 +584,12 @@ export async function crearFacturaElectronica(db: Db, empresaId: string, usuario
 
     return existencia;
   };
-  const { payload, totalTexto, receptor, guardar, lineasStock, resumen } = await prepararFactura(db, empresaId, usuarioId, cuerpo, { documentoExiste });
+  // F002-R01: si la FE de esta clave ya existe, se reutiliza su payload original (verificado contra el hash de entrada guardado, de la misma empresa); no se reconstruye con el cadastro actual.
+  const historico = (await documentoExiste()) ? await payloadHistorico(db, empresaId, cuerpo.claveIdempotencia) : null;
+  const preparada = await prepararFactura(db, empresaId, usuarioId, cuerpo, { documentoExiste, domicilioHistorico: historico !== null });
+  const { receptor, guardar, lineasStock, resumen } = preparada;
+  const payload = historico ?? preparada.payload;
+  const totalTexto = historico ? String((historico as { Subtotales: Array<{ dTotGralOpe: number }> }).Subtotales[0].dTotGralOpe) : preparada.totalTexto;
   const documentoExistente = await documentoExiste();
 
   // E1-F003: un documento NUEVO solo se crea con el dInfAdic que el operador revisó (nombre del vendedor y dirección releídos del servidor); si cambiaron entre la previa y el envío, se exige revisar de nuevo, sin reservar numeración.
@@ -602,6 +623,25 @@ export async function crearFacturaElectronica(db: Db, empresaId: string, usuario
     if ((error as { code?: string }).code === "23505") return (await llamar()).rows[0] as F;
     throw error;
   }
+}
+
+/**
+ * Payload ORIGINAL (el que entró a fe_documento_crear_fe, sin las claves que agrega la base: dEst, dPunExp, dNumDoc, dSerieNum, dFeEmiDE) de la FE de esta empresa y clave de idempotencia. Solo se devuelve
+ * si su hash coincide con el `entrada_hash` persistido; si no se puede comprobar, null y el flujo sigue con la reconstrucción habitual (que fallará cerrado ante cualquier diferencia).
+ */
+async function payloadHistorico(db: Db, empresaId: string, clave: string): Promise<Record<string, unknown> | null> {
+  const r = await db.query(
+    `SELECT p.payload FROM (
+       SELECT s.payload - 'dEst' - 'dPunExp' - 'dNumDoc' - 'dSerieNum' - 'dFeEmiDE' AS payload, s.entrada_hash
+         FROM documento_electronico_solicitudes s
+         JOIN documentos_electronicos d ON d.empresa_id = s.empresa_id AND d.id = s.documento_id
+        WHERE d.empresa_id = $1::uuid AND d.clave_idempotencia = $2 AND d.tipo = 'FE' AND s.version = 1) p
+      WHERE encode(sha256(convert_to(p.payload::text, 'UTF8')), 'hex') = p.entrada_hash`,
+    [empresaId, clave],
+  );
+  const p = (r.rows[0] as F | undefined)?.payload;
+
+  return p !== null && typeof p === "object" ? (p as Record<string, unknown>) : null;
 }
 
 export const MENSAJE_INFO_CAMBIO = "La información adicional (dirección de entrega o vendedor) cambió desde la revisión. Revise la factura de nuevo antes de enviarla.";
