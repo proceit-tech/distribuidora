@@ -56,3 +56,16 @@
 - `documentacao/definicoes/REQ-NEXIT-FE-V1-ESTADOS-RESERVA-CORRECCION-2026-10-25.md`
 - `documentacao/analises/AUD-NEXIT-FE-V1-R01-REVISAO-INTEGRAL-PERGUNTAS-2026-10-25.md`
 - Linear PRO-309 (decisões abertas), PRO-310/311/312/313 (entregas), PRO-314 (E01 autorizada).
+
+
+## ORDEM IMEDIATA PARA CLAUDE — E02 / PRO-315 (ÚNICA ORDEM ATUAL)
+
+> Executar **somente E02 / PRO-315** na branch `feature/NEXIT-2026-001-banco-demo` de `proceit-tech/distribuidora`. Ler `CLAUDE.md`, `documentacao/PROTOCOLO-IA.md`, progresso pertinente, esta ordem e os arquivos envolvidos. Partir da E01-R02 já entregue `86d6961706ffed2c6ec071a63958001bc1b0a5f7` e **NÃO regredir F-001/F-002**. A auditoria `documentacao/testes/AUD-NEXIT-FE-E01-PRO-314-R02-2026-10-25.md` aprovou E01 somente estaticamente; **não mexer nela fora do necessário para E02**.
+>
+> Em `Facturación → Documentos electrónicos`, a tabela existente `Historial de consultas` lista ENVIO e CONSULTA, mas `lib/facturacion/shared.ts:listarIntentos` só retorna os últimos 100. Implementar leitura **PAGINADA/INCREMENTAL de todo o histórico existente**, preferencialmente por cursor estável `(creado_at, id)` em ordem decrescente, no máximo **100 tentativas por página**. A UI deve carregar primeiras tentativas como hoje, mostrar **`Cargar intentos anteriores`** quando há mais, e poder continuar até o último registro. Atualizar título para **`Historial de envíos y consultas`**. Sem resposta registrada, manter o aviso atual. Não inventar contador total sem evidência.
+>
+> Backend: consulta parametrizada com cursor estritamente validado, filtrada por `empresa_id` e `documento_id`, sem levar JSON das respostas na lista. **Toda API GET adicional deve chamar `prepararFacturacion("VER")` e verificar `leerDocumento(db,empresaId,usuarioId,id)` antes de acessar os intentos**, respeitando `sucursal_en_alcance` e 404 fora de alcance. Preservar contratos atuais de `/api/documentos/[id]`, `/enviar` e `/consultar`, que esperam array `intentos`; adicionar metadados de paginação de forma compatível ou endpoint GET específico protegido. Evitar duplicatas após eventos novos, manter ordenação `creado_at DESC, id DESC`.
+>
+> UI: preservar botões `Ver JSON de solicitud` / `Ver JSON de respuesta` por tentativa/versão, leitor sob demanda e invalidação E01-R02 ao fechar/colapsar/trocar seleção. Não permitir resposta de página anterior/tardia reabrir painel, sobrescrever histórico mais recente ou injetar dados de outro documento. Tratar estado de carregamento/erro da paginação e evitar repetição da mesma página. **Sem carregar `respuesta`/payloads em massa**.
+>
+> **Escopo proibido:** criar/modificar tabela, migration ou SQL de escrita; modificar emissão, SIFEN, assinatura, `gateway.ts`, envio/reenvio, correção, estoque, módulos, perfis, data, vendedor, NCE/KuDE ou qualquer etapa E03+. **Não criar nem executar testes, lint, build, typecheck, scripts SQL, CI manual, navegador, VM ou gateway. Não atualizar Linear, PROGRESSO ou documentação gerencial.** Claude faz código mínimo, commit/push e para. Resposta apenas resultado, `Testes: não executados (ordem do responsável)`, bloqueio real e SHA completo. **PARAR para auditoria E02-R01 de ChatGPT.**
