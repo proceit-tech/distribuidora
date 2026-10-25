@@ -1,5 +1,7 @@
 # NEXIT — FE-V1 E03: documento fiscal, revisiones JSON, transmisiones y consultas (R02)
 
+> **HISTÓRICO DE ANÁLISE — ESPECIFICAÇÃO ATIVA SUBSTITUTA:** [E03-R03](ESPEC-NEXIT-FE-E03-HISTORICO-REPROCESSAMENTOS-R03-2026-10-25.md). O R03 consolida TODAS as decisões, define contratos E03-A1/A2/B, cria gate para PRO-321 SQL **autorizada somente para escrita (SEM aplicar ao banco)** e mantém E09 corretiva bloqueada. Este R02 não é mais a ordem operacional; manter para trilha de decisão.
+
 **Fecha:** 25/10/2026. **Estado:** ANÁLISIS FUNCIONAL/TÉCNICO EN CURSO; SIN ORDEN A CLAUDE, SIN MIGRACIÓN NI DESPLIEGUE. **Este R02 SUSTITUYE las interpretaciones equivocadas del R01 sobre atribuir estados SIFEN a cada envío.** Mantener R01 solamente como historial del análisis.
 **Issues:** PRO-312 / PRO-311 / PRO-309. **Interfaz:** es-PY.
 **Repo/branch:** `proceit-tech/distribuidora` / `feature/NEXIT-2026-001-banco-demo`.
