@@ -2616,3 +2616,11 @@ Após o encerramento **estático** de Inventario na `AUD-INV-R05` (sem homologa�
 - **Ordem antiga SUPERADA:** [PRO-93-GATEWAY-400-UX](documentacao/ordens/ORD-CLAUDE-NEXIT-PRO-93-GATEWAY-400-UX-2026-10-25.md), não executar. **Ordem única R05 exclusivamente UX:** [PRO-93-R05-UX](documentacao/ordens/ORD-CLAUDE-NEXIT-PRO-93-R05-UX-RESUMO-PRODUTOS-BUSCA-KUDE-2026-10-25.md).
 - Corrigir SOMENTE: (1) `Resumen de la factura` com lista de PRODUTOS como conteúdo prioritário, cartões superiores compactos sem esticar, só um scroll vertical no corpo; (2) alinhar o campo de adicionar produto com `Búsqueda avanzada` mesmo quando se exibe aviso `«... añadido»`; (3) erro na modal KuDE compacto, sem quadro branco de 92vh, mantendo visor PDF normal e regra de consulta KuDE em qualquer estado.
 - **Estado:** ordem versionada, nenhum código de interface modificado nesta etapa, não homologado. NEX-072/073/074 sem aplicação autorizada, sem testes/SQL/VM/gateway/deploy. PRO-310/309 continuam tarefas independentes de estoque, não executar sob esta ordem.
+
+### AUDITORIA PRO-93-R05 — UX resumo / Búsqueda avanzada / KuDE (25/10/2026)
+- Código funcional inspecionado nos SHAs `4cc5f0c02dd5f604c9bf614ca07aef114aebf3fb` e `dada93410d3bc1b6efca40fdfb93765ec5076dec`. [Auditoria R05](documentacao/testes/AUD-NEXIT-PRO-93-R05-UX-2026-10-25.md). **CONFORME NA AUDITORIA ESTÁTICA, NÃO HOMOLOGADO VISUALMENTE.**
+- Resumo: cartões naturais/compactos, tabela produtos sem altura 260px e sem scroll vertical próprio; corpo da modal continua com rolagem e rodapé de ações independente; linhas/total/IVA não alterados.
+- Busca: campo e `Búsqueda avanzada` na mesma fila; mensagens `«…» añadido` ficam abaixo, mantendo combobox, scanner, Enter e busca do cliente.
+- KuDE: ERROR/CARGANDO em modal compacta, LISTO/PDF com visor amplo; regra PRO-194 e API inalteradas.
+- Conexão HTTP400 resolvida no fornecedor conforme responsável; esta R05 NÃO toca JSON, gateway ou credenciais. Não reabrir esse incidente.
+- **Sem testes, navegador, SQL, migrations, runner, VM, build, SIFEN ou deploy**. NEX-072/073/074 continuam sem autorização. Aceite visual futuro deve verificar resumo 0/1/20/100 linhas em viewport/zoom, foco e modal KuDE. PRO-93/128/194 permanecem In Review; PRO-115 pendente. Não abrir R06 sem regressão comprovada.
