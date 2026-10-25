@@ -1,5 +1,7 @@
 # ORD-CLAUDE-NEXIT-FE-E03-A1-SQL — ÚNICA ORDEM DE EXECUÇÃO
 
+> **SUPERADA PELA ORDEM CORRETIVA E03-A1-R02 (25/10/2026).** O SQL entregue em `4b1ba2d21ea89924ab4eddade8fe9d4e0d690372` foi auditado como NÃO CONFORME. Nova única ordem: [E03-A1-R02](documentacao/ordens/ORD-CLAUDE-NEXIT-FE-E03-A1-R02-2026-10-25.md); auditoria: [AUD-R01](../testes/AUD-NEXIT-FE-E03-A1-PRO-321-R01-2026-10-25.md). Correções somente NEX-072, quatro achados; sem aplicar SQL, sem testes/VM, E03-A2/B e demais etapas bloqueadas. O restante abaixo é histórico.
+
 **25/10/2026 — AUTORIZADA PELO RESPONSÁVEL após E01/E02 revisadas estaticamente.**
 **Issue:** [PRO-321](https://linear.app/proceit/issue/PRO-321/fe-e03-a1-base-sql-inmutable-de-evidencia-http-por-version-fiscal) (subtask de PRO-312).
 **Repositório:** `proceit-tech/distribuidora`; **branch existente:** `feature/NEXIT-2026-001-banco-demo`.
