@@ -4,7 +4,8 @@ import { evaluarAptitudCliente } from "@/lib/clientes/aptitud-cliente";
 import { leerAjuste, type AjusteFiscal } from "@/lib/facturacion/ajuste-item";
 import { permisoAjusteFiscal, permisoEditarProductos, type ClasificacionGuardar } from "@/lib/facturacion/ajuste-fiscal";
 import { B, parseDec, textoDec, type Dec } from "@/lib/facturacion/calculo";
-import { CONDICION_CONTADO, CONDICION_CREDITO, CREDITO_CUOTAS, CREDITO_PLAZO, CUOTAS_HABILITADAS, MENSAJE_CUOTAS_SUSPENDIDAS, leerCredito, plazoTexto, type CreditoEntrada } from "@/lib/facturacion/credito";
+import { CLAVE_FECHA_SOLICITADA, evaluarFechaEmision, fechaIsoValida } from "@/lib/facturacion/fecha-emision";
+import { CONDICION_CONTADO, CONDICION_CREDITO, CREDITO_CUOTAS, CREDITO_PLAZO, CUOTAS_HABILITADAS, hoyParaguay, MENSAJE_CUOTAS_SUSPENDIDAS, leerCredito, plazoTexto, type CreditoEntrada } from "@/lib/facturacion/credito";
 import { leerMonedaYCambio, leerCambio, precioEnMoneda, precioSerializable, totalEnGuaranies, type Moneda } from "@/lib/facturacion/monedas";
 import { DENOMINACIONES_TARJETA, FORMAS_PAGO, FORMAS_PROCESAMIENTO, leerPagos, resolverMontos, type PagoEntrada } from "@/lib/facturacion/pagos";
 import { construirPayloadFE, CONDICIONES_OPERACION, INDICADORES_PRESENCIA, resumenCalculo, TIPOS_TRANSACCION, totalFactura, erroresDomicilioReceptor, validarEntradaFE, type EntradaFE, type LineaFE, type ReceptorFE } from "@/lib/facturacion/payload-fe";
@@ -169,6 +170,8 @@ export type CuerpoFactura = {
   repartoHuella?: string;
   /** E1: huella del dInfAdic (observaciones + entrega + vendedor) que el operador REVISÓ (la devuelve la previa). Si al emitir el texto que el servidor compondría es otro (cambió el nombre del vendedor o la dirección), se exige revisar de nuevo. */
   infoAdicionalHuella?: string;
+  /** D002: fecha de emisión elegida (AAAA-MM-DD, día local de Paraguay). Sin ella, la de hoy. Se valida en el servidor (selección −30/+5 días y ventana fiscalmente habilitada) antes de reservar numeración. */
+  fechaEmision?: string;
 };
 
 const entero = (v: unknown) => (typeof v === "number" && Number.isInteger(v) ? v : typeof v === "string" && /^\d{1,3}$/.test(v) ? Number(v) : NaN);
@@ -197,6 +200,8 @@ export function leerCuerpoFactura(c: Record<string, unknown>): CuerpoFactura | s
 
   if (typeof descuentoGlobal === "string") return descuentoGlobal;
   if (c.direccionEntregaId !== undefined && c.direccionEntregaId !== null && !(typeof c.direccionEntregaId === "string" && UUID.test(c.direccionEntregaId))) return "La dirección de entrega no es válida.";
+
+  if (c.fechaEmision !== undefined && c.fechaEmision !== null && fechaIsoValida(c.fechaEmision) === null) return "La fecha de emisión no es válida.";
 
   const pagos = leerPagos(c.pagos);
 
@@ -231,6 +236,7 @@ export function leerCuerpoFactura(c: Record<string, unknown>): CuerpoFactura | s
     ...(descuentoGlobal ? { descuentoGlobal } : {}),
     ...(typeof c.direccionEntregaId === "string" ? { direccionEntregaId: c.direccionEntregaId } : {}),
     ...(typeof c.repartoHuella === "string" && /^[0-9a-f]{64}$/.test(c.repartoHuella) ? { repartoHuella: c.repartoHuella } : {}),
+    ...(typeof c.fechaEmision === "string" ? { fechaEmision: c.fechaEmision } : {}),
     ...(typeof c.infoAdicionalHuella === "string" && /^[0-9a-f]{64}$/.test(c.infoAdicionalHuella) ? { infoAdicionalHuella: c.infoAdicionalHuella } : {}),
     lineas: lineas.map((l) => {
       const ajuste = leerAjuste((l as F).ajuste);
@@ -279,6 +285,13 @@ async function validarGeografiaReceptor(db: Db, r: ReceptorFE): Promise<void> {
     if (error instanceof ErrorGeografia) throw new ErrorFacturacion(422, `${error.message} Corrija la dirección fiscal del cliente en Clientes antes de facturar.`);
     throw error;
   }
+}
+
+/** ¿Está aplicada NEX-073 (la base honra la fecha de emisión elegida)? */
+async function fechaEmisionSoportada(db: Db): Promise<boolean> {
+  const r = await db.query("SELECT to_regprocedure('public.fe_emision_fecha_soportada()') IS NOT NULL AS ok");
+
+  return (r.rows[0] as F | undefined)?.ok === true;
 }
 
 async function receptorDe(db: Db, empresaId: string, clienteId: string): Promise<ReceptorFE> {
@@ -375,6 +388,18 @@ export async function prepararFactura(db: Db, empresaId: string, usuarioId: stri
   // Cuotas suspendido (MFE-03): también aquí, por si el cuerpo no pasó por leerCuerpoFactura. Antes de cualquier consulta y, por tanto, antes de reservar numeración (NEX-048).
   if (cuerpo.credito?.tipo === CREDITO_CUOTAS && !CUOTAS_HABILITADAS) throw new ErrorFacturacion(422, MENSAJE_CUOTAS_SUSPENDIDAS);
   if (cuerpo.pagos.some((p) => !(p.tipo in FORMAS_PAGO))) throw new ErrorFacturacion(422, "La forma de pago no es válida.");
+
+  // D002: fecha de emisión elegida. Una FE NUEVA debe estar dentro de la selección comercial y de la ventana fiscalmente habilitada (antes de cualquier reserva); un reintento de una FE ya creada conserva su fecha original (se compara en la equivalencia).
+  const hoyFecha = hoyParaguay();
+  const fechaElegida = cuerpo.fechaEmision ?? hoyFecha;
+
+  if (opciones.domicilioHistorico !== true) {
+    const f = evaluarFechaEmision(fechaElegida, hoyFecha);
+
+    if (!f.ok) throw new ErrorFacturacion(422, f.error);
+    // NEX-073 (fecha elegida) no aplicada: la función antigua ignoraría la fecha; se rechaza en vez de emitir con otra.
+    if (fechaElegida !== hoyFecha && !(await fechaEmisionSoportada(db))) throw new ErrorFacturacion(422, "Elegir una fecha de emisión distinta de hoy requiere la migración NEX-073 en la base de datos (aún no aplicada). Use la fecha de hoy.");
+  }
 
   const [receptor, aptitud, productos, punto] = await Promise.all([
     receptorDe(db, empresaId, cuerpo.clienteId),
@@ -536,7 +561,10 @@ export async function prepararFactura(db: Db, empresaId: string, usuarioId: stri
 
   if (errores.length > 0) throw detalles(422, "La factura no cumple las reglas fiscales.", errores);
 
-  const payload = construirPayloadFE(final, undefined, { domicilioHistorico: opciones.domicilioHistorico }) as { Subtotales: Array<{ dTotGralOpe: number }> };
+  const payload = construirPayloadFE(final, undefined, { domicilioHistorico: opciones.domicilioHistorico }) as { Subtotales: Array<{ dTotGralOpe: number }> } & Record<string, unknown>;
+
+  // La fecha solo viaja a la base si difiere de hoy (la función SQL la valida y la fija como dFeEmiDE/fecha_emision; no queda en el snapshot que se envía). Sin ella el payload es el de siempre.
+  if (fechaElegida !== hoyFecha) payload[CLAVE_FECHA_SOLICITADA] = fechaElegida;
   const calculo = resumenCalculo(lineas, cuerpo.descuentoGlobal);
   const fila = punto.rows[0] as F;
   const resumen = {
@@ -545,6 +573,7 @@ export async function prepararFactura(db: Db, empresaId: string, usuarioId: stri
     establecimiento: s(fila.establecimiento),
     punto: s(fila.punto),
     numero: "Se asigna al enviar la factura",
+    fechaEmision: fechaElegida,
     cliente: { codigo: receptor.codigo, razonSocial: receptor.razonSocial, documento: receptor.naturaleza === 1 ? `${receptor.ruc}-${receptor.dv}` : receptor.numeroDocumento },
     tipoTransaccion: ETIQUETA_TRANSACCION[cuerpo.tipoTransaccion] ?? "",
     presencia: ETIQUETA_PRESENCIA[cuerpo.presencia] ?? "",
@@ -626,33 +655,36 @@ export async function crearFacturaElectronica(db: Db, empresaId: string, usuario
   }
 }
 
-type Historico = { payload: Record<string, unknown>; clienteId: string; sucursalId: string; puntoId: string };
+type Historico = { payload: Record<string, unknown>; clienteId: string; sucursalId: string; puntoId: string; fecha: string };
 
 /**
  * FE existente de esta empresa y clave de idempotencia con su payload ORIGINAL (el que entró a fe_documento_crear_fe, sin las claves que agrega la base: dEst, dPunExp, dNumDoc, dSerieNum, dFeEmiDE),
  * solo si su hash coincide con el `entrada_hash` persistido. Si no se puede comprobar, null.
  */
 async function payloadHistorico(db: Db, empresaId: string, clave: string): Promise<Historico | null> {
+  // El hash de entrada se calculó sobre el payload tal como entró a la base: sin las claves que ella agrega y, si se eligió otra fecha, CON dFecEmiSol (que la base no deja en el snapshot; se reconstruye desde dFeEmiDE y el hash lo comprueba).
   const r = await db.query(
-    `SELECT p.payload, p.cliente_id AS "clienteId", p.sucursal_id AS "sucursalId", p.punto_id AS "puntoId" FROM (
-       SELECT s.payload - 'dEst' - 'dPunExp' - 'dNumDoc' - 'dSerieNum' - 'dFeEmiDE' AS payload, s.entrada_hash, d.cliente_id, d.sucursal_id,
-              (SELECT CASE WHEN count(*) = 1 THEN min(x.id::text) END FROM fe_puntos_expedicion x WHERE x.empresa_id = d.empresa_id AND x.sucursal_id = d.sucursal_id AND x.codigo = d.punto_expedicion) AS punto_id
-         FROM documento_electronico_solicitudes s
-         JOIN documentos_electronicos d ON d.empresa_id = s.empresa_id AND d.id = s.documento_id
-        WHERE d.empresa_id = $1::uuid AND d.clave_idempotencia = $2 AND d.tipo = 'FE' AND s.version = 1) p
-      WHERE encode(sha256(convert_to(p.payload::text, 'UTF8')), 'hex') = p.entrada_hash`,
+    `SELECT CASE WHEN encode(sha256(convert_to(p.base::text, 'UTF8')), 'hex') = p.entrada_hash THEN p.base ELSE p.con_fecha END AS payload,
+            p.cliente_id AS "clienteId", p.sucursal_id AS "sucursalId", p.punto_id AS "puntoId", left(p.fecha_emi, 10) AS fecha FROM (
+       SELECT b.base, b.base || jsonb_build_object('dFecEmiSol', left(b.fecha_emi, 10)) AS con_fecha, b.fecha_emi, b.entrada_hash, b.cliente_id, b.sucursal_id, b.punto_id FROM (
+         SELECT s.payload - 'dEst' - 'dPunExp' - 'dNumDoc' - 'dSerieNum' - 'dFeEmiDE' AS base, s.payload->>'dFeEmiDE' AS fecha_emi, s.entrada_hash, d.cliente_id, d.sucursal_id,
+                (SELECT CASE WHEN count(*) = 1 THEN min(x.id::text) END FROM fe_puntos_expedicion x WHERE x.empresa_id = d.empresa_id AND x.sucursal_id = d.sucursal_id AND x.codigo = d.punto_expedicion) AS punto_id
+           FROM documento_electronico_solicitudes s
+           JOIN documentos_electronicos d ON d.empresa_id = s.empresa_id AND d.id = s.documento_id
+          WHERE d.empresa_id = $1::uuid AND d.clave_idempotencia = $2 AND d.tipo = 'FE' AND s.version = 1) b) p
+      WHERE encode(sha256(convert_to(p.base::text, 'UTF8')), 'hex') = p.entrada_hash OR encode(sha256(convert_to(p.con_fecha::text, 'UTF8')), 'hex') = p.entrada_hash`,
     [empresaId, clave],
   );
   const f = r.rows[0] as F | undefined;
 
-  return f && f.payload !== null && typeof f.payload === "object" ? { payload: f.payload as Record<string, unknown>, clienteId: s(f.clienteId), sucursalId: s(f.sucursalId), puntoId: s(f.puntoId) } : null;
+  return f && f.payload !== null && typeof f.payload === "object" ? { payload: f.payload as Record<string, unknown>, clienteId: s(f.clienteId), sucursalId: s(f.sucursalId), puntoId: s(f.puntoId), fecha: s(f.fecha) } : null;
 }
 
 /** Claves de la identidad y el domicilio del receptor: derivan del cadastro ACTUAL del cliente y no se comparan con el snapshot histórico (la identidad se prueba por cliente_id). */
 const CLAVES_RECEPTOR = new Set(["iNatRec", "iTiOpe", "cPaisRec", "iTiContRec", "dRucRec", "dDVRec", "iTipIDRec", "dDTipIDRec", "dNumIDRec", "dNomRec", "dNomFanRec", "dDirRec", "dNumCasRec", "cDepRec", "cDisRec", "cCiuRec", "dTelRec", "dCelRec", "dEmailRec", "dEmailAdic", "dEmailAdmin", "dCodCliente", "dInfAdic"]);
 
 const canonico = (v: unknown): string => JSON.stringify(v, (_k, x) => (x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.entries(x as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) : x));
-const operacionComercial = (p: Record<string, unknown>) => canonico(Object.fromEntries(Object.entries(p).filter(([k]) => !CLAVES_RECEPTOR.has(k))));
+const operacionComercial = (p: Record<string, unknown>) => canonico(Object.fromEntries(Object.entries(p).filter(([k]) => !CLAVES_RECEPTOR.has(k) && k !== CLAVE_FECHA_SOLICITADA)));
 
 /**
  * Equivalencia de la operación de un reintento con la FE histórica de la misma clave (la clave por sí sola no lo prueba). Todo debe coincidir, o el llamador responde 409 (equivalencia no demostrable = falla cerrado):
@@ -664,6 +696,7 @@ const operacionComercial = (p: Record<string, unknown>) => canonico(Object.fromE
  */
 async function equivalente(db: Db, empresaId: string, usuarioId: string, historico: Historico, nuevo: Record<string, unknown>, cuerpo: CuerpoFactura): Promise<boolean> {
   if (historico.clienteId !== cuerpo.clienteId || historico.sucursalId !== cuerpo.sucursalId || historico.puntoId.toLowerCase() !== cuerpo.puntoId.toLowerCase()) return false;
+  if (cuerpo.fechaEmision !== undefined && cuerpo.fechaEmision !== historico.fecha) return false;
   if (operacionComercial(historico.payload) !== operacionComercial(nuevo)) return false;
 
   const guardada = typeof historico.payload.dInfAdic === "string" ? historico.payload.dInfAdic : null;

@@ -23,6 +23,22 @@ export const CATALOGO_TIPOS_TRANSACCION: Record<number, string> = {
   1: "Venta de mercadería", 2: "Prestación de servicios", 3: "Mixto (venta de mercadería y servicios)", 4: "Venta de activo fijo", 5: "Venta de divisas", 6: "Compra de divisas",
   7: "Promoción o entrega de muestras", 8: "Donación", 9: "Anticipo", 10: "Compra de productos", 11: "Compra de servicios", 12: "Venta de crédito fiscal", 13: "Muestras médicas (Art. 3 RG 24/2014)",
 };
+/**
+ * Matriz de soporte de los 13 códigos iTipTra (D011) en la Factura Electrónica ordinaria (iTiDE 1). Todos se MUESTRAN; solo los habilitados pueden emitirse. Los demás exigen datos o un documento distintos que
+ * esta etapa no implementa, y su motivo se muestra al operador y se devuelve en 422 ANTES de reservar numeración. Nada se envía con un código no soportado ni se transforma en otro tipo de documento.
+ */
+export const SOPORTE_TIPO_TRANSACCION: Record<number, { habilitado: boolean; motivo?: string }> = {
+  1: { habilitado: true }, 2: { habilitado: true }, 3: { habilitado: true }, 4: { habilitado: true },
+  5: { habilitado: false, motivo: "La venta de divisas requiere las reglas de operación cambiaria (monedas y cotizaciones propias) que la factura ordinaria aún no implementa." },
+  6: { habilitado: false, motivo: "La compra de divisas requiere las reglas de operación cambiaria (monedas y cotizaciones propias) que la factura ordinaria aún no implementa." },
+  7: { habilitado: false, motivo: "La promoción o entrega de muestras tiene un tratamiento fiscal propio (sin contraprestación) que aún no está implementado." },
+  8: { habilitado: false, motivo: "La donación tiene un tratamiento fiscal propio (sin contraprestación) que aún no está implementado." },
+  9: { habilitado: false, motivo: "El anticipo requiere el manejo de anticipos (Subtotales de anticipo y su posterior aplicación) que aún no está implementado." },
+  10: { habilitado: false, motivo: "La compra de productos se documenta con una Autofactura (otro tipo de documento electrónico), no con una factura de venta." },
+  11: { habilitado: false, motivo: "La compra de servicios se documenta con una Autofactura (otro tipo de documento electrónico), no con una factura de venta." },
+  12: { habilitado: false, motivo: "La venta de crédito fiscal requiere datos y reglas específicos que aún no están implementados." },
+  13: { habilitado: false, motivo: "Las muestras médicas (Art. 3 RG 24/2014) requieren datos y reglas específicos que aún no están implementados." },
+};
 export const TIPOS_TRANSACCION = { 1: CATALOGO_TIPOS_TRANSACCION[1], 2: CATALOGO_TIPOS_TRANSACCION[2], 3: CATALOGO_TIPOS_TRANSACCION[3], 4: CATALOGO_TIPOS_TRANSACCION[4] } as Record<number, string>;
 /** iCondOpe (E601): 1 Contado / 2 Crédito (plazo o cuotas, MFE-B1). */
 export const CONDICIONES_OPERACION = { 1: "Contado", 2: "Crédito" } as Record<number, string>;
@@ -187,7 +203,8 @@ export function validarEntradaFE(e: EntradaFE, hoy: string = hoyParaguay(), opci
   if (!esMonedaFE(e.moneda)) errores.push("La moneda de la factura no es válida (PYG, USD o BRL).");
   else if (e.moneda === "PYG" && e.cambio !== undefined) errores.push("Una factura en guaraníes no lleva tipo de cambio.");
   else if (e.moneda !== "PYG" && (e.cambio === undefined || leerCambio(e.cambio) === null)) errores.push(`Indique el tipo de cambio manual: guaraníes por 1 ${e.moneda} (mayor que cero, hasta 5 enteros y 4 decimales).`);
-  if (!(e.tipoTransaccion in TIPOS_TRANSACCION)) errores.push("Seleccione un tipo de transacción válido.");
+  if (!(e.tipoTransaccion in CATALOGO_TIPOS_TRANSACCION)) errores.push("Seleccione un tipo de transacción válido.");
+  else if (SOPORTE_TIPO_TRANSACCION[e.tipoTransaccion]?.habilitado !== true) errores.push(`El tipo de transacción «${CATALOGO_TIPOS_TRANSACCION[e.tipoTransaccion]}» no se puede emitir en esta factura: ${SOPORTE_TIPO_TRANSACCION[e.tipoTransaccion]?.motivo ?? "no está soportado."}`);
   if (!(e.presencia in INDICADORES_PRESENCIA)) errores.push("Seleccione un indicador de presencia válido.");
   if (e.condicion !== CONDICION_CONTADO && e.condicion !== CONDICION_CREDITO) errores.push("Seleccione la condición de la operación: Contado o Crédito.");
   if (e.condicion === CONDICION_CONTADO && e.credito !== undefined) errores.push("Una factura al contado no lleva datos de crédito.");
