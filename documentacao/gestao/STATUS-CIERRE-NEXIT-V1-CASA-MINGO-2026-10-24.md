@@ -1,5 +1,10 @@
 # NEXIT V1 / CASA MINGO — Estado de alcance, implementación y liberación
 
+> **ACTUALIZACIÓN DEL PLAN LINEAR — 24/10/2026 (después de la ampliación del plan):** confirmado mediante creación real que el workspace **YA permite crear nuevas issues**. El error de límite gratuito descrito abajo es histórico y queda superado. Fueron creadas y vinculadas las siguientes issues **Todo, NO homologadas**: **PRO-292** `[E1-R02-F001]` conservación de observaciones NCE históricas (subissue PRO-94; gate inmediato); **PRO-293** E2 Usuarios=Vendedores (PRO-109); **PRO-294** E3 fecha FE −30/+5 días (PRO-93); **PRO-295** E4 presentación de cantidades Movimientos (PRO-79); **PRO-296** E5 Informe de Ventas (PRO-108); **PRO-297** E6 fuente real e Informe de Compras (PRO-108); **PRO-298** cabecera y diseño KuDE FE/NCR a cargo del responsable/proveedor (PRO-91). Los vínculos de dependencia operativa siguen la secuencia **PRO-292 → PRO-293 → PRO-294 → PRO-295 → PRO-296 → PRO-297**, y todos ellos más PRO-298 bloquean la aceptación **PRO-115**. La secuencia es de autorización/auditoría, no una dependencia técnica que obliga a mezclar código. **Claude autorizado sólo a PRO-292**; debe parar para AUD E1-R03 antes de E2. Mantener estados y evidencias reales, sin Done por documentación. El proyecto anterior tenía 151 issues; tras esta acción debería tener 158, sujeto a confirmación de API. El indicador % de Linear puede variar con nuevas tareas y no es % de código terminado.
+
+---
+
+
 **Actualización:** 24/10/2026. **Función:** análisis de negocio/sistemas y reconciliación Linear ↔ Git; no sustituye auditoría funcional ni homologación humana.  
 **Repositorio:** `proceit-tech/distribuidora`, branch `feature/NEXIT-2026-001-banco-demo`.  
 **Proyecto Linear:** https://linear.app/proceit/project/distribuidora-nexit-v1-c4619a4bc91d (`P-PRO-2`).  
