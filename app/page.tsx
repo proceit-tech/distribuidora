@@ -12,5 +12,6 @@ export default async function HomePage() {
   }
 
   const access = await getAccessContext(session.user, session.demo === true);
+  if (access.mustChangePassword) redirect("/cambiar-contrasena");
   redirect(resolverInicio(access));
 }

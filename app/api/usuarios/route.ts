@@ -18,6 +18,9 @@ export async function GET(request: Request) {
     const r = await b.db.query(
       `SELECT u.id, u.usuario, u.nombre, u.apellido, u.email, u.estado, u.ultimo_acceso_at AS "ultimoAcceso", u.debe_cambiar_contrasena AS "debeCambiarContrasena",
               coalesce(json_agg(json_build_object('codigo', pf.codigo, 'nombre', pf.nombre) ORDER BY pf.nombre) FILTER (WHERE pf.id IS NOT NULL), '[]'::json) AS perfiles,
+              u.alcance_sucursales AS "alcanceSucursales", u.alcance_depositos AS "alcanceDepositos",
+              (SELECT count(*)::int FROM usuario_sucursal us WHERE us.empresa_id = u.empresa_id AND us.usuario_id = u.id) AS "sucursalesAsignadas",
+              (SELECT count(*)::int FROM usuario_deposito ud WHERE ud.empresa_id = u.empresa_id AND ud.usuario_id = u.id) AS "depositosAsignados",
               count(*) OVER() AS total
          FROM usuarios u
          LEFT JOIN usuario_perfil up ON up.empresa_id = u.empresa_id AND up.usuario_id = u.id

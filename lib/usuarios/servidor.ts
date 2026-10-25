@@ -35,6 +35,9 @@ const MENSAJES: Record<string, string> = {
   "NEX:AUTODESACTIVACION": "No puede desactivar su propio usuario.",
   "NEX:USUARIO_BAJA": "Un usuario dado de baja no se puede reactivar.",
   "NEX:PERFIL_INVALIDO": "Alguno de los perfiles no pertenece al catálogo de la empresa.",
+  "NEX:ALCANCE_TOTAL": "El usuario tiene alcance total (todas las sucursales y depósitos) y no se modifica desde aquí.",
+  "NEX:ALCANCE_INVALIDO": "Alguna sucursal o depósito no existe en la empresa o está inactivo.",
+  "NEX:PERFIL_CONFLICTO": "La empresa tiene un perfil heredado que impide completar el catálogo de perfiles. Contacte al soporte.",
 };
 
 /** Errores de las funciones usr_* → respuesta HTTP clara (P0001 con detalle NEX:* → 422/409, 42501 → 403; lo demás, 500 genérico sin detalles internos). */

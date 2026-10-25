@@ -71,6 +71,8 @@ export type ShellNavigationGroup = {
 };
 
 export type ShellContext = {
+  /** Contraseña provisional pendiente de cambio: el layout privado redirige a /cambiar-contrasena. */
+  debeCambiarContrasena?: boolean;
   user: ShellUser;
   company: ShellCompany;
   permissions: string[];

@@ -62,5 +62,6 @@ export async function getShellContext(): Promise<ShellContext | null> {
     navigation: resolveNavigation(access),
     inicioHref: resolverInicio(access),
     puedeDashboard: puedeVerDashboard(access),
+    debeCambiarContrasena: access.mustChangePassword === true,
   };
 }

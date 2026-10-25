@@ -13,7 +13,8 @@ import estilos from "./gestion-usuarios.module.css";
  */
 type Modo = "usuarios" | "vendedores";
 type Perfil = { codigo: string; nombre: string };
-type Fila = { id: string; usuario: string; nombre: string; apellido: string | null; email: string | null; estado: string; perfiles?: Perfil[]; ultimoAcceso?: string | null };
+type Fila = { id: string; usuario: string; nombre: string; apellido: string | null; email: string | null; estado: string; perfiles?: Perfil[]; ultimoAcceso?: string | null; alcanceSucursales?: string; alcanceDepositos?: string; sucursalesAsignadas?: number; depositosAsignados?: number };
+type Alcance = { alcanceSucursales: string; alcanceDepositos: string; sucursales: Array<{ id: string; nombre: string; establecimiento: string; asignada: boolean }>; depositos: Array<{ id: string; codigo: string; nombre: string; asignado: boolean }> };
 type Catalogo = { id: string; codigo: string; nombre: string };
 type Formulario = { id: string | null; usuario: string; nombre: string; apellido: string; email: string; contrasena: string; perfiles: string[] };
 
@@ -49,6 +50,8 @@ export function GestionUsuarios({ modo }: { modo: Modo }) {
   const [guardando, setGuardando] = useState(false);
   const [errorForm, setErrorForm] = useState("");
   const [version, setVersion] = useState(0);
+  // Alcance (sucursales y depósitos) del usuario elegido: se carga al abrir el diálogo; se guarda exactamente lo marcado (nunca «todas» automáticamente).
+  const [alcance, setAlcance] = useState<{ fila: Fila; datos: Alcance | null; sucursales: string[]; depositos: string[] } | null>(null);
 
   useEffect(() => {
     const t = window.setTimeout(() => { setQ(texto.trim()); setPagina(1); }, 300);
@@ -68,7 +71,7 @@ export function GestionUsuarios({ modo }: { modo: Modo }) {
 
         const lista = (esVendedores ? j.vendedores : j.usuarios) as Array<Record<string, unknown>>;
 
-        setFilas(lista.map((x) => ({ id: String(x.id), usuario: String(x.usuario), nombre: String(x.nombre), apellido: (x.apellido as string | null) ?? null, email: (x.email as string | null) || null, estado: String(x.estado), perfiles: x.perfiles as Perfil[] | undefined, ultimoAcceso: (x.ultimoAcceso as string | null | undefined) ?? null })));
+        setFilas(lista.map((x) => ({ id: String(x.id), usuario: String(x.usuario), nombre: String(x.nombre), apellido: (x.apellido as string | null) ?? null, email: (x.email as string | null) || null, estado: String(x.estado), perfiles: x.perfiles as Perfil[] | undefined, ultimoAcceso: (x.ultimoAcceso as string | null | undefined) ?? null, alcanceSucursales: x.alcanceSucursales as string | undefined, alcanceDepositos: x.alcanceDepositos as string | undefined, sucursalesAsignadas: x.sucursalesAsignadas as number | undefined, depositosAsignados: x.depositosAsignados as number | undefined })));
         setTotal(Number(j.total ?? 0));
         if (esVendedores) setPuedeGestionar(j.puedeGestionar === true);
         setError("");
@@ -108,6 +111,45 @@ export function GestionUsuarios({ modo }: { modo: Modo }) {
     if (tipo !== "datos" && !(esVendedores && tipo === "alta")) void cargarCatalogo();
   }
 
+  async function abrirAlcance(fila: Fila) {
+    setErrorForm("");
+    setAviso("");
+    setAlcance({ fila, datos: null, sucursales: [], depositos: [] });
+    try {
+      const d = await pedir<Alcance>(`/api/usuarios/${fila.id}/alcance`);
+
+      setAlcance({ fila, datos: d, sucursales: d.sucursales.filter((x) => x.asignada).map((x) => x.id), depositos: d.depositos.filter((x) => x.asignado).map((x) => x.id) });
+    } catch (e) {
+      setAlcance(null);
+      setError(e instanceof Error ? e.message : "No fue posible cargar el alcance.");
+    }
+  }
+
+  async function guardarAlcance() {
+    if (!alcance) return;
+
+    setGuardando(true);
+    setErrorForm("");
+    try {
+      await pedir(`/api/usuarios/${alcance.fila.id}/alcance`, json("PUT", { sucursales: alcance.sucursales, depositos: alcance.depositos }));
+      setAviso("Alcance actualizado.");
+      setAlcance(null);
+      recargar();
+    } catch (e) {
+      setErrorForm(e instanceof Error ? e.message : "No fue posible guardar el alcance.");
+    } finally {
+      setGuardando(false);
+    }
+  }
+
+  const alternar = (lista: string[], id: string) => (lista.includes(id) ? lista.filter((x) => x !== id) : [...lista, id]);
+  const textoAlcance = (f: Fila) =>
+    f.alcanceSucursales === "TODAS" || f.alcanceDepositos === "TODOS"
+      ? "Alcance total"
+      : (f.sucursalesAsignadas ?? 0) === 0
+        ? "Sin sucursales asignadas"
+        : `${f.sucursalesAsignadas} sucursal${f.sucursalesAsignadas === 1 ? "" : "es"} · ${f.depositosAsignados ?? 0} depósito${f.depositosAsignados === 1 ? "" : "s"}`;
+
   async function guardar() {
     if (!form) return;
 
@@ -118,7 +160,7 @@ export function GestionUsuarios({ modo }: { modo: Modo }) {
     try {
       if (form.tipo === "alta") {
         await pedir("/api/usuarios", json("POST", { usuario: d.usuario, nombre: d.nombre, apellido: d.apellido, email: d.email, contrasena: d.contrasena, perfiles: d.perfiles }));
-        setAviso(`${esVendedores ? "Vendedor" : "Usuario"} «${d.usuario.trim().toLowerCase()}» creado. Deberá cambiar su contraseña inicial.`);
+        setAviso(`${esVendedores ? "Vendedor" : "Usuario"} «${d.usuario.trim().toLowerCase()}» creado. Deberá cambiar su contraseña provisional al ingresar y, para operar, necesitará sucursales y depósitos asignados (botón Alcance).`);
       } else if (form.tipo === "datos" && d.id) {
         await pedir(`/api/usuarios/${d.id}`, json("PATCH", { nombre: d.nombre, apellido: d.apellido, email: d.email }));
         setAviso("Datos actualizados.");
@@ -203,6 +245,7 @@ export function GestionUsuarios({ modo }: { modo: Modo }) {
               <th>Usuario</th>
               <th>Nombre</th>
               <th>Correo</th>
+              {esVendedores ? null : <th>Alcance</th>}
               {esVendedores ? null : <th>Perfiles</th>}
               <th>Situación</th>
               {puedeGestionar ? <th>Acciones</th> : null}
@@ -210,20 +253,22 @@ export function GestionUsuarios({ modo }: { modo: Modo }) {
           </thead>
           <tbody>
             {cargando ? (
-              <tr><td colSpan={6} className={estilos.vacio} role="status">Cargando…</td></tr>
+              <tr><td colSpan={7} className={estilos.vacio} role="status">Cargando…</td></tr>
             ) : filas.length === 0 ? (
-              <tr><td colSpan={6} className={estilos.vacio}>{q || estado !== "TODOS" ? "Ningún registro coincide con el filtro." : esVendedores ? "Sin vendedores registrados." : "Sin usuarios."}</td></tr>
+              <tr><td colSpan={7} className={estilos.vacio}>{q || estado !== "TODOS" ? "Ningún registro coincide con el filtro." : esVendedores ? "Sin vendedores registrados." : "Sin usuarios."}</td></tr>
             ) : filas.map((f) => (
               <tr key={f.id}>
                 <td>{f.usuario}</td>
                 <td>{nombreCompleto(f)}</td>
                 <td>{f.email ?? "—"}</td>
+                {esVendedores ? null : <td>{textoAlcance(f)}</td>}
                 {esVendedores ? null : <td>{(f.perfiles ?? []).length === 0 ? "Sin perfiles" : (f.perfiles ?? []).map((p) => <span key={p.codigo} className={estilos.chip}>{p.nombre}</span>)}</td>}
                 <td><span className={`${estilos.badge} ${f.estado === "ACTIVO" ? estilos.activo : estilos.inactivo}`}>{f.estado === "ACTIVO" ? "Activo" : "Inactivo"}</span></td>
                 {puedeGestionar ? (
                   <td className={estilos.acciones}>
                     <button type="button" className={ui.secondaryButton} onClick={() => abrir("datos", f)}>Editar</button>
                     {esVendedores ? null : <button type="button" className={ui.secondaryButton} onClick={() => abrir("perfiles", f)}>Perfiles</button>}
+                    {esVendedores ? null : <button type="button" className={ui.secondaryButton} onClick={() => void abrirAlcance(f)}>Alcance</button>}
                     <button type="button" className={ui.clearButton} onClick={() => void cambiarEstado(f)}>{f.estado === "ACTIVO" ? "Desactivar" : "Activar"}</button>
                   </td>
                 ) : null}
@@ -243,6 +288,50 @@ export function GestionUsuarios({ modo }: { modo: Modo }) {
       </div>
 
       {!puedeGestionar && !cargando ? <p className={estilos.nota}>Solo el administrador de la empresa puede crear o modificar vendedores. <Link href="/dashboard">Volver al panel</Link></p> : null}
+
+      {alcance ? (
+        <div className={estilos.overlay} role="presentation">
+          <div className={estilos.modal} role="dialog" aria-modal="true" aria-labelledby="titulo-alcance">
+            <h2 id="titulo-alcance">Alcance de {alcance.fila.usuario}</h2>
+            <p className={estilos.nota}>Solo las sucursales y depósitos marcados quedan habilitados para este usuario; sin marcar nada no podrá operar en ninguno. No se concede acceso total automáticamente.</p>
+            {alcance.datos === null ? (
+              <p className={estilos.vacio} role="status">Cargando…</p>
+            ) : alcance.datos.alcanceSucursales === "TODAS" || alcance.datos.alcanceDepositos === "TODOS" ? (
+              <p className={estilos.nota}>Este usuario tiene alcance total y no se modifica desde aquí.</p>
+            ) : (
+              <>
+                <fieldset className={estilos.perfiles}>
+                  <legend>Sucursales</legend>
+                  {alcance.datos.sucursales.length === 0 ? <p className={estilos.vacio}>La empresa no tiene sucursales activas.</p> : null}
+                  {alcance.datos.sucursales.map((x) => (
+                    <label key={x.id} className={estilos.opcion}>
+                      <input type="checkbox" checked={alcance.sucursales.includes(x.id)} onChange={() => setAlcance((a) => (a ? { ...a, sucursales: alternar(a.sucursales, x.id) } : a))} />
+                      <span>{x.establecimiento ? `${x.establecimiento} — ` : ""}{x.nombre}</span>
+                    </label>
+                  ))}
+                </fieldset>
+                <fieldset className={estilos.perfiles}>
+                  <legend>Depósitos</legend>
+                  {alcance.datos.depositos.length === 0 ? <p className={estilos.vacio}>La empresa no tiene depósitos activos.</p> : null}
+                  {alcance.datos.depositos.map((x) => (
+                    <label key={x.id} className={estilos.opcion}>
+                      <input type="checkbox" checked={alcance.depositos.includes(x.id)} onChange={() => setAlcance((a) => (a ? { ...a, depositos: alternar(a.depositos, x.id) } : a))} />
+                      <span>{x.codigo} — {x.nombre}</span>
+                    </label>
+                  ))}
+                </fieldset>
+              </>
+            )}
+
+            {errorForm ? <div className={ui.alertError} role="alert">{errorForm}</div> : null}
+
+            <div className={estilos.botones}>
+              <button type="button" className={ui.secondaryButton} disabled={guardando} onClick={() => setAlcance(null)}>Cancelar</button>
+              <button type="button" className={ui.primaryButton} disabled={guardando || alcance.datos === null || alcance.datos.alcanceSucursales === "TODAS" || alcance.datos.alcanceDepositos === "TODOS"} onClick={() => void guardarAlcance()}>{guardando ? "Guardando…" : "Guardar"}</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {form ? (
         <div className={estilos.overlay} role="presentation">

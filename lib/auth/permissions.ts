@@ -18,9 +18,15 @@ export type AccessContext = {
    * de plataforma explícita (hasPlatformAccess), nunca hasPermission.
    */
   isPlatformAdmin: boolean;
+  /**
+   * La cuenta tiene una contraseña PROVISIONAL (la definió un administrador): hasta cambiarla no recibe permisos, ni módulos, ni administración; solo puede cambiar su contraseña.
+   * Con true, `permissions` está vacío e `isCompanyAdmin`/`isPlatformAdmin` son false: todas las guardas existentes deniegan sin cambios.
+   */
+  mustChangePassword?: boolean;
 };
 
 type AccessRow = {
+  debe_cambiar: boolean;
   es_admin: boolean;
   codigos: string[];
   plataforma: boolean;
@@ -40,7 +46,8 @@ export async function getAccessContext(
 
   const { db } = await import("@/lib/db");
   const result = await db.query<AccessRow>(
-    `SELECT COALESCE(bool_or(pf.es_administrador), false) AS es_admin,
+    `SELECT u.debe_cambiar_contrasena AS debe_cambiar,
+            COALESCE(bool_or(pf.es_administrador), false) AS es_admin,
             COALESCE(array_agg(DISTINCT pe.codigo) FILTER (WHERE pe.codigo IS NOT NULL), '{}') AS codigos,
             EXISTS (
               SELECT 1
@@ -65,6 +72,9 @@ export async function getAccessContext(
   const row = result.rows[0];
   if (!row) {
     return { permissions: [], isCompanyAdmin: false, isPlatformAdmin: false };
+  }
+  if (row.debe_cambiar) {
+    return { permissions: [], isCompanyAdmin: false, isPlatformAdmin: false, mustChangePassword: true };
   }
   if (row.plataforma) {
     // Separación estricta: el administrador global no hereda nada operacional.
