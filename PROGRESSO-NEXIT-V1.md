@@ -2535,3 +2535,9 @@ Após o encerramento **estático** de Inventario na `AUD-INV-R05` (sem homologa�
 - **PRO-322 In Review aguardando APENAS homologação do contrato do fornecedor JSON→SIFEN/XML/KuDE.** Não reabrir R06 por código já pronto e não marcar Done sem evidência externa.
 - **PRO-205/PRO-324**: risco REAL de idempotência por comparação textual em entrega, **separado da conformidade fiscal**; não liberar emissão real enquanto aceitar IDs distintos com texto igual. Não criar migration ou modificar SQL sem ordem; nenhuma funcionalidade iniciada.
 - ÚNICO gate: encerrar auditoria estática fiscal e aguardar evidência do fornecedor para PRO-322; nenhum novo comando Claude para PRO-322 autorizado nesta revisão. Manter PRO-323/E03+/NCE/estoque fora do escopo fiscal.
+
+
+### RETIFICAÇÃO FINAL — PRO-322: FORNECEDOR JÁ CONFIRMADO PELO RESPONSÁVEL (25/10/2026)
+- **Não solicitar nem registrar mais como pendente confirmação da API** para códigos geográficos: NEXIT manda `cPaisRec` como código, `cDepRec/cDisRec/cCiuRec` como CÓDIGOS NUMÉRICOS e NÃO manda descrições `dDes*`. A API busca essas descrições na base SIFEN e as compõe no XML/KuDE. Regra expressamente ratificada pelo responsável; substitui os gates antigos que pediam “evidência do fornecedor”.
+- **PRO-322/AUD-R05: CONFORME ESTATICAMENTE** no SHA funcional `831773fb0dbb8e585f75c113295c23d6958921f8`, SEM erro fiscal novo, SEM patch. **In Review exclusivamente por ainda não existir validação operacional autorizada/executada** (testes, VM, gateway, FE real), não por regra ou contrato indefinidos. Não reabrir R06 nem continuar confirmando com fornecedor.
+- O defeito independente de idempotência de IDs de entrega no `equivalente` continua ABERTO em PRO-205/PRO-324 e impede declarar emissão real segura; não misturar com mapeamento SIFEN. Nenhum código, SQL, testes ou VM alterado nesta retificação.
