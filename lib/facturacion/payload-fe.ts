@@ -291,13 +291,13 @@ export function erroresDomicilioReceptor(r: ReceptorFE): string[] {
   if (b2f && (r.pais === "" || r.pais === "PRY")) errores.push("En una operación B2F el país del receptor debe ser distinto de Paraguay (D203).");
   else if (!b2f && r.pais !== "PRY") errores.push("En operaciones B2B, B2C y B2G el país del receptor debe ser Paraguay (D203).");
   if (b2f) {
-    if (r.direccion.trim() !== "" && !/^d{1,6}$/.test(r.numeroCasa.trim())) errores.push("La dirección fiscal del cliente requiere un número de casa numérico de 1 a 6 dígitos (D218). Corríjalo en Clientes; no se reemplaza por 0.");
+    if (r.direccion.trim() !== "" && !/^\d{1,6}$/.test(r.numeroCasa.trim())) errores.push("La dirección fiscal del cliente requiere un número de casa numérico de 1 a 6 dígitos (D218). Corríjalo en Clientes; no se reemplaza por 0.");
 
     return errores;
   }
   if ([r.direccion, r.numeroCasa, r.departamento, r.distrito, r.ciudad].every((v) => v.trim() === "")) return errores;
   if (r.direccion.trim() === "") errores.push("La dirección fiscal del cliente está incompleta: falta la calle (D213). Complete o vacíe todo el domicilio fiscal en Clientes.");
-  if (!/^d{1,6}$/.test(r.numeroCasa.trim())) errores.push("La dirección fiscal del cliente requiere un número de casa numérico de 1 a 6 dígitos (D218). Corríjalo en Clientes; no se reemplaza por 0.");
+  if (!/^\d{1,6}$/.test(r.numeroCasa.trim())) errores.push("La dirección fiscal del cliente requiere un número de casa numérico de 1 a 6 dígitos (D218). Corríjalo en Clientes; no se reemplaza por 0.");
   if (!CODIGO_DEPARTAMENTO.test(r.departamento.trim())) errores.push("La dirección fiscal del cliente requiere un departamento válido (D219, NT 003).");
   if (!CODIGO_DISTRITO.test(r.distrito.trim())) errores.push("La dirección fiscal del cliente requiere un distrito válido (D221, política NEXIT).");
   if (!CODIGO_CIUDAD.test(r.ciudad.trim())) errores.push("La dirección fiscal del cliente requiere una ciudad válida (D223, NT 003).");

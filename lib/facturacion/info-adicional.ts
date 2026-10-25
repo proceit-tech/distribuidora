@@ -80,6 +80,31 @@ export function legadoCoincide(guardada: string | null, observaciones: string): 
   return g === observaciones.trim() && !g.split(/\r?\n/).some((l) => l.trim() === MARCA_AUTOMATICA);
 }
 
+/**
+ * Partes comprobables del dInfAdic persistido de una FE para verificar un REINTENTO (no reconstruye nada: solo compara lo que el operador vuelve a enviar). Exige la forma exacta que produce
+ * `componerInfoAdicional`: sin marca, todo el texto son observaciones; con UNA sola marca, lo anterior son las observaciones y lo posterior solo líneas «Dirección de entrega: …» (a lo sumo una) y
+ * «Vendedor: …» (a lo sumo una, al final). Cualquier otra forma (varias marcas, bloque vacío o con líneas ajenas) no permite probar qué escribió el operador: null (el llamador responde 409).
+ */
+export function descomponerInfoAdicional(texto: string | null): { observacion: string; entrega: string | null } | null {
+  const lineas = (texto ?? "").replace(/\r\n/g, "\n").split("\n");
+  const marcas = lineas.flatMap((l, i) => (l.trim() === MARCA_AUTOMATICA ? [i] : []));
+
+  if (marcas.length === 0) return { observacion: lineas.join("\n").trim(), entrega: null };
+  if (marcas.length > 1) return null;
+
+  const automaticas = lineas.slice(marcas[0] + 1).map((l) => l.trim()).filter((l) => l !== "");
+  const entregas = automaticas.filter((l) => l.startsWith(PREFIJO_ENTREGA));
+  const vendedores = automaticas.filter((l) => l.startsWith(PREFIJO_VENDEDOR));
+
+  if (automaticas.length === 0 || entregas.length > 1 || vendedores.length > 1 || entregas.length + vendedores.length !== automaticas.length) return null;
+  if (vendedores.length === 1 && automaticas[automaticas.length - 1] !== vendedores[0]) return null;
+
+  return { observacion: lineas.slice(0, marcas[0]).join("\n").trim(), entrega: entregas[0] ?? null };
+}
+
+/** ¿El texto contiene la línea marcadora? (una observación enviada con la marca no permite probar equivalencia con un snapshot compuesto). */
+export const contieneMarcaAutomatica = (texto: string): boolean => texto.split(/\r?\n/).some((l) => l.trim() === MARCA_AUTOMATICA);
+
 /** Huella (SHA-256) del dInfAdic final: identifica el texto exacto que el operador revisó; al emitir se compara con el que el servidor volvería a componer. */
 export function huellaInfoAdicional(texto: string): string {
   return createHash("sha256").update(texto, "utf8").digest("hex");
