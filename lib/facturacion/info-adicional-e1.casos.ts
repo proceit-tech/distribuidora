@@ -283,6 +283,38 @@ export async function verificarCasosInfoAdicionalE1(): Promise<string[]> {
 
   igual("E1-31 sin fuga entre tenants: la cuenta se busca por empresa y usuario de la sesión; el usuario de la empresa A no resuelve nombre en B (no se inventa vendedor) y el nombre de B solo aparece para B", [deB, cruce, (cruce ?? "").includes("Luis")], [M + "\nVendedor: Zoe Ajena", null, false]);
 
+  // ── PRO-303: recuperación tras SQLSTATE 23505 (carrera de la misma clave) y conflicto de la función SQL ──────────────
+  {
+    const crear = async (comportamiento: "carrera" | "conflicto", observacion: string) => {
+      const m = base({ migracion: true });
+      let intentos = 0;
+      const query = m.db as unknown as { query: (sql: string, p?: unknown[]) => Promise<{ rows: unknown[] }> };
+      const original = query.query.bind(query);
+      const db = { async query(sql: string, p: unknown[] = []) {
+        if (/fe_documento_crear_nce_obs/.test(sql)) {
+          intentos += 1;
+          m.parametros.push({ sql, p });
+          if (comportamiento === "carrera" && intentos === 1) throw Object.assign(new Error("duplicate key"), { code: "23505" });
+          if (comportamiento === "conflicto") throw Object.assign(new Error("la clave de idempotencia ya se usó con otro contenido"), { code: "P0001", detail: "NEX:IDEMPOTENCIA_CONFLICTO" });
+
+          return { rows: [{ documentoId: NCE_RECH, numero: "0000009", reutilizado: true }] };
+        }
+
+        return original(sql, p);
+      } };
+      const c = cuerpo({ observacion }, "clave-nce-e1-0013");
+      const prep = await prepararNce(db as never, EMP_A, U_NCE, c);
+      const resultado = await crearNotaCredito(db as never, EMP_A, U_NCE, c, prep).then((x) => ({ ok: x }), (e: unknown) => ({ error: { code: (e as { code?: string }).code, detail: (e as { detail?: string }).detail } }));
+
+      return { resultado, intentos, parametros: m.parametros.filter((q) => /fe_documento_crear_nce_obs/.test(q.sql)).map((q) => [q.p.length, q.p[11]]) };
+    };
+    const carrera = await crear("carrera", " Nota ");
+    const conflicto = await crear("conflicto", "Nota");
+
+    igual("E1-55 (PRO-303) carrera 23505: la aplicación relee con la MISMA función (misma observación cruda como 12.º parámetro), una sola relectura y sin otra vía de creación; la comparación de originales la hace la función SQL", [carrera.resultado, carrera.intentos, carrera.parametros], [{ ok: { documentoId: NCE_RECH, numero: "0000009", reutilizado: true } }, 2, [[12, " Nota "], [12, " Nota "]]]);
+    igual("E1-56 (PRO-303) si la función SQL responde conflicto de idempotencia (P0001 / NEX:IDEMPOTENCIA_CONFLICTO) la aplicación lo propaga sin reintentar ni crear por otra vía (la capa HTTP lo convierte en 409)", [conflicto.resultado, conflicto.intentos], [{ error: { code: "P0001", detail: "NEX:IDEMPOTENCIA_CONFLICTO" } }, 1]);
+  }
+
   // ── contrato de NEX-071 (SQL versionado, nunca ejecutado aquí) ────────────────────────────────
   {
     const leerSql = (r: string) => readFileSync(join(process.cwd(), "documentacao/banco/nexit/v1", r), "utf8");
@@ -296,6 +328,13 @@ export async function verificarCasosInfoAdicionalE1(): Promise<string[]> {
     cierto("E1-45 NEX-071: tabla de solo altas, anclada por (empresa, nce) a nce_origen, observación acotada a 5000, sin tocar nce_origen ni fe_documento_crear_nce", /CREATE TABLE public\.nce_observaciones_originales/.test(sql) && /FOREIGN KEY \(empresa_id, nce_id\) REFERENCES public\.nce_origen \(empresa_id, nce_id\)/.test(sql) && /char_length\(observacion\) <= 5000/.test(sql) && /nce_observaciones_originales_inmutable_fila_trg BEFORE UPDATE OR DELETE/.test(sql) && /inmutable_truncate_trg BEFORE TRUNCATE/.test(sql) && !/CREATE OR REPLACE FUNCTION public\.fe_documento_crear_nce\(/.test(sql) && !/ALTER TABLE/.test(sql) && !/UPDATE public\.nce_origen/.test(sql));
     cierto("E1-46 NEX-071: el registro se inserta en la misma transacción que la creación y SOLO si la NCE es nueva; la función delega en fe_documento_crear_nce (permiso, idempotencia, numeración) y valida la cadena cruda (obligatoria, hasta 5000)", /FROM public\.fe_documento_crear_nce\(p_empresa, p_usuario, p_sucursal, p_punto, p_clave, p_fe, p_motivo, p_lineas, p_moneda, p_total, p_payload\)/.test(sql) && /IF NOT v_reutilizado THEN\s+INSERT INTO public\.nce_observaciones_originales \(empresa_id, nce_id, observacion\) VALUES \(p_empresa, v_id, p_observacion_original\)/.test(sql) && !/left\(v_info/.test(sql) && /p_observacion_original IS NULL OR char_length\(p_observacion_original\) > 5000/.test(sql) && /SECURITY DEFINER SET search_path = public, pg_temp/.test(sql));
     cierto("E1-47 NEX-071: la aplicación solo LEE la tabla y ejecuta la función nueva; PUBLIC sin acceso; reversión que se niega si hay registros; preflight y verificación de solo lectura; procedimiento versionado y NO aplicado", /GRANT SELECT ON public\.nce_observaciones_originales TO nexit_runtime/.test(sql) && /REVOKE ALL ON FUNCTION public\.fe_documento_crear_nce_obs\([^)]*\) FROM PUBLIC/.test(sql) && !/GRANT (INSERT|UPDATE|DELETE)/.test(sql) && /REVERSIÓN ABORTADA/.test(rev) && /DROP TABLE public\.nce_observaciones_originales/.test(rev) && !/DROP FUNCTION IF EXISTS public\.fe_documento_crear_nce\(/.test(rev) && /BEGIN READ ONLY/.test(ver) && /BEGIN READ ONLY/.test(pre) && /NO aplicada/.test(doc) && /sin la migración/i.test(doc));
+
+    // ── PRO-303: reutilización en la función SQL (contrato; el comportamiento real depende de PostgreSQL y NO se ejecuta aquí) ──
+    const cuerpoFn = sql.slice(sql.indexOf("CREATE OR REPLACE FUNCTION public.fe_documento_crear_nce_obs"), sql.indexOf("COMMENT ON FUNCTION public.fe_documento_crear_nce_obs"));
+    const rama = cuerpoFn.slice(cuerpoFn.indexOf("ELSE"));
+
+    cierto("E1-53 NEX-071 (PRO-303): si fe_documento_crear_nce devuelve reutilizado, la función lee la observación registrada de ESA empresa y NCE y lanza NEX:IDEMPOTENCIA_CONFLICTO si falta o difiere (IS DISTINCT FROM, igualdad exacta); la rama no inserta, actualiza ni borra nada, y la función original no se modifica", /IF NOT v_reutilizado THEN\s+INSERT INTO public\.nce_observaciones_originales[^;]*;\s+ELSE/.test(cuerpoFn) && /SELECT o\.observacion INTO v_original FROM public\.nce_observaciones_originales o WHERE o\.empresa_id = p_empresa AND o\.nce_id = v_id/.test(rama) && /IF NOT FOUND OR v_original IS DISTINCT FROM p_observacion_original THEN/.test(rama) && /DETAIL = 'NEX:IDEMPOTENCIA_CONFLICTO'/.test(rama) && !/INSERT|UPDATE|DELETE/.test(rama.replace(/--[^\n]*/g, "")) && !/CREATE OR REPLACE FUNCTION public\.fe_documento_crear_nce\(/.test(sql));
+    cierto("E1-54 la comprobación está dentro del wrapper (no solo en el precheck TypeScript) y el conflicto SQL se traduce a 409 en la capa HTTP", /NEX:IDEMPOTENCIA_CONFLICTO/.test(cuerpoFn) && /pg\.detail === "NEX:IDEMPOTENCIA_CONFLICTO"\) return NextResponse\.json\(\{ error: [^}]*\}, \{ status: 409 \}\)/.test(readFileSync(join(process.cwd(), "lib/facturacion/shared.ts"), "utf8")));
   }
 
   return fallos;

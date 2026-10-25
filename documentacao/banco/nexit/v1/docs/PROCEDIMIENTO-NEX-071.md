@@ -4,7 +4,7 @@
 
 ## Qué hace
 - Crea `nce_observaciones_originales` (solo altas, anclada a `nce_origen`, aislada por empresa): la observación **cruda** recibida (sin recortar ni normalizar: espacios y saltos de línea incluidos, puede ser vacía o solo espacios) al crear una NCE nueva. El `dInfAdic` que viaja al proveedor no cambia.
-- Crea `fe_documento_crear_nce_obs` (12 parámetros): llama a `fe_documento_crear_nce` **sin modificarla** y, en la misma transacción, registra la observación original solo si la NCE es nueva. Un reenvío con la misma clave no escribe nada.
+- Crea `fe_documento_crear_nce_obs` (12 parámetros): llama a `fe_documento_crear_nce` **sin modificarla** y, en la misma transacción, registra la observación original solo si la NCE es nueva. Un reenvío con la misma clave no escribe nada: la función compara la observación recibida con la registrada (igualdad exacta) y, si difiere o la NCE no tiene registro, responde conflicto de idempotencia (409), incluso en carreras concurrentes.
 - Las NCE anteriores **no se reclasifican**: no tienen fila, y la aplicación las trata de forma conservadora (ver abajo).
 
 ## Comportamiento de la aplicación

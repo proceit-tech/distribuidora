@@ -29,6 +29,7 @@ DECLARE
   v_id uuid;
   v_numero text;
   v_reutilizado boolean;
+  v_original text;
 BEGIN
   -- La observación es la cadena CRUDA del operador (sin trim); el dInfAdic del payload se compone aparte (recortado) y no se relaciona byte a byte con ella.
   IF p_observacion_original IS NULL OR char_length(p_observacion_original) > 5000 THEN
@@ -41,12 +42,20 @@ BEGIN
 
   IF NOT v_reutilizado THEN
     INSERT INTO public.nce_observaciones_originales (empresa_id, nce_id, observacion) VALUES (p_empresa, v_id, p_observacion_original);
+  ELSE
+    -- E1-R05-F001 (PRO-303): fe_documento_crear_nce identifica la repetición por el hash del payload fiscal, que NO incluye la observación cruda (distintas observaciones pueden componer el mismo dInfAdic).
+    -- Una reutilización solo es legítima si la observación original registrada para ESA NCE (misma empresa) es exactamente la recibida. Sin registro confiable (NCE anterior a NEX-071) no se acepta una reutilización ambigua.
+    -- Esta comprobación vive aquí, dentro de la función, para cubrir también la carrera (23505 y relectura) y no depender del precheck de la aplicación. No se escribe nada ni se consume numeración (la excepción deshace todo).
+    SELECT o.observacion INTO v_original FROM public.nce_observaciones_originales o WHERE o.empresa_id = p_empresa AND o.nce_id = v_id;
+    IF NOT FOUND OR v_original IS DISTINCT FROM p_observacion_original THEN
+      RAISE EXCEPTION 'la clave de idempotencia ya se usó con otro contenido' USING ERRCODE = 'P0001', DETAIL = 'NEX:IDEMPOTENCIA_CONFLICTO';
+    END IF;
   END IF;
 
   RETURN QUERY SELECT v_id, v_numero, v_reutilizado;
 END $$;
 
-COMMENT ON FUNCTION public.fe_documento_crear_nce_obs(uuid, uuid, uuid, uuid, text, uuid, integer, jsonb, text, numeric, jsonb, text) IS 'NEX-071: crea la NCE con fe_documento_crear_nce y registra, en la misma transacción, la observación original del operador (solo si la NCE es nueva).';
+COMMENT ON FUNCTION public.fe_documento_crear_nce_obs(uuid, uuid, uuid, uuid, text, uuid, integer, jsonb, text, numeric, jsonb, text) IS 'NEX-071: crea la NCE con fe_documento_crear_nce y registra, en la misma transacción, la observación original del operador (solo si la NCE es nueva); si se reutiliza, exige que la observación original registrada sea exactamente la recibida (si no, conflicto de idempotencia).';
 
 CREATE OR REPLACE FUNCTION public.nex_aplicar_grants_facturacion_nce_observacion() RETURNS void
 LANGUAGE plpgsql AS $$
