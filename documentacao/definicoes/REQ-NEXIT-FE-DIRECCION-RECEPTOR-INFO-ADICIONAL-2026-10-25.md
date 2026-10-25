@@ -53,6 +53,17 @@
 
 **Linear de implementación:** [PRO-322](https://linear.app/proceit/issue/PRO-322/fe-dir-serializar-e-validar-direccion-fiscal-completa-del-receptor-en) (dirección fiscal integral), [PRO-323](https://linear.app/proceit/issue/PRO-323/fe-inf-dinfadic-editable-con-insercion-asistida-de-entrega-y-vendedor) (editor asistido), ambos subissues de PRO-93 y estado Todo, no implementados.
 
+## 4.1. Revisión técnica adicional de contrato — 25/10/2026
+
+**Aclaraciones normativas (Manual Técnico SIFEN v150, D203–D224, reglas 1320/1330/1324/1327/1328):**
+- La **omisión de descripciones en el JSON de NEXIT** solo es válida si el gateway **demuestra** que completa `dDesPaisRe` (D204; obligatoria en XML), `dDesDepRec`, `dDesDisRec` si existe distrito y `dDesCiuRec` cuando corresponda, con el catálogo SIFEN. No interpretar que pueden omitirse del XML final. Los tipos/ubicaciones del JSON reducido deben verificarse con el contrato real del gateway, sin asumir que coincide con el XML.
+- **País/tipo de operación:** si D202=4 (B2F), D203 debe ser distinto de PRY; si D202≠4, D203 debe ser PRY. No informar códigos de departamento ni ciudad paraguayos en B2F. El distrito es condicional según normativa/contrato, no rellenar por defecto.
+- **Número de casa:** D218 es obligatorio cuando hay D213, numérico de 1–6 dígitos; si D201=1, debe corresponder a lo declarado en el RUC según MT. El `0` no es un fallback genérico válido de un valor vacío, inválido o conocido. Solo admitirlo si es coherente con el dato fiscal real y las reglas vigentes. El código actual de `construirPayloadFE` convierte automáticamente números vacíos/inválidos en cero, y deberá corregirse sin inventar datos.
+- **Hallazgo de código:** `receptorDe` recupera códigos geográficos, pero `construirPayloadFE` no serializa `cDepRec/cDisRec/cCiuRec`. `validarEntradaFE` solo verifica presencia de departamento/ciudad en un caso, no existencia ni relación jerárquica de los códigos. Antes de elegir consultas, verificar catálogos realmente disponibles, relaciones/alcances y contrato gateway. Si no hay fuente confiable o contrato comprobable, reportar bloqueo y no inventar consultas/campos ni enviar FE.
+- **Compatibilidad:** trabajo aislado en PRO-322; no comenzar PRO-323 ni crear vendedores hasta cerrar PRO-307/PRO-72. No alterar originales fiscales emitidos, KuDE externo, CDC, NCE, idempotencia, SQL, migrations ni VM. Sin autorización para envío real.
+
+**Fuente oficial:** https://www.dnit.gov.py/documents/20123/420592/Manual%2BT%C3%A9cnico%2BVersi%C3%B3n%2B150.pdf/e706f7c7-6d93-21d4-b45b-5d22d07b2d22?t=1687362295907.pdf (pp. impresas 71–73 y validaciones D203/D213/D218/D219/D223).
+
 ## 5. Separación de alcance y gate
 
 - **Trilha fiscal receptor**: ticket separado, hijo de PRO-93; análisis estático de formato y contrato gateway primero; después patch min. `payload-fe.ts`, `emision.ts` y validación de códigos/jerarquía geográfica; la API aporta las descripciones, con tests focalizados bajo autorización.
