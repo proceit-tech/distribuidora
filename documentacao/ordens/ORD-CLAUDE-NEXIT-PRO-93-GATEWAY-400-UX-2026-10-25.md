@@ -1,3 +1,5 @@
+> **ORDEM HISTÓRICA SUPERADA — NÃO EXECUTAR.** Em 25/10/2026, o responsável CONFIRMOU que o problema de conexão/HTTP400 foi corrigido por AJUSTE NO FORNECEDOR. Portanto, TODA a investigação de gateway/JSON/empresa da seção 3, correções de mensagem/estado e solicitações ao fornecedor nesta ordem foram **CANCELADAS** como trabalho de Claude. A nova ordem única estritamente de UX é [PRO-93-R05 — resumo, busca e modal KuDE](./ORD-CLAUDE-NEXIT-PRO-93-R05-UX-RESUMO-PRODUTOS-BUSCA-KUDE-2026-10-25.md). Preserve o histórico desta ordem para rastreabilidade, mas NÃO a utilize para desenvolver.
+
 # ORDEM PARA CLAUDE — Nueva factura: tabela da revisão, busca avançada, gateway HTTP 400 e erro KuDE
 
 **Data:** 25/10/2026 · **Repositório:** `proceit-tech/distribuidora` · **Branch:** `feature/NEXIT-2026-001-banco-demo`  
