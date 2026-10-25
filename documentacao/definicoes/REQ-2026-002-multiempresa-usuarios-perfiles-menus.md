@@ -15,7 +15,7 @@ Una instalación del DistribuNex debe admitir múltiples empresas independientes
 - RN-01 MULTIEMPRESA: una misma instalación y backend sirven a numerosas empresas; todos los datos de negocio deben pertenecer explícitamente a una empresa o estar clasificados como catálogos globales.
 - RN-02 AISLAMIENTO: un usuario no puede consultar, crear, modificar, exportar o borrar información de otra empresa por manipulación de URL, IDs, payloads o API. El contexto de empresa se determina en el servidor y se valida en cada operación.
 - RN-03 USUARIOS: cada empresa puede disponer de múltiples usuarios, con altas, bajas lógicas, bloqueo/reactivación y auditoría. El identificador de inicio de sesión actual utiliza empresa + usuario + contraseña; conservarlo mientras no se apruebe otra especificación.
-- RN-04 PERFILES: la empresa puede administrar perfiles (ej. Administrador, Ventas, Depósito, Compras, Finanzas), asignar uno o varios perfiles a cada usuario y definir sus permisos. Nombres de perfiles son ejemplos, no perfiles obligatorios ni permisos presuntos.
+- RN-04 PERFILES (DECISIÓN ACTUALIZADA 24/10/2026): **la empresa NO puede crear, editar, eliminar perfiles ni definir o modificar sus permisos**. Su administrador interno puede únicamente **asignar y retirar uno o varios perfiles preexistentes** habilitados para esa empresa. El catálogo y su mantenimiento son controlados fuera del tenant, según definición pendiente. Ejemplos VENDEDOR, FATURADOR, CONTADOR; no son perfiles nuevos creados por el tenant.
 - RN-05 MENÚS: se muestran exclusivamente módulos, grupos y acciones autorizados. Un usuario sin permisos no debe recibir automáticamente todos los menús. Ocultar el menú por sí solo NO protege los endpoints.
 - RN-06 PERMISOS: matriz granular por recurso y acción (VER, CREAR, EDITAR, ELIMINAR, APROBAR, EXPORTAR cuando proceda); el backend rechaza acciones no autorizadas aun por llamada directa.
 - RN-07 ALCANCE: permisos y registros también deben respetar sucursal, depósito y demás alcances de usuario según corresponda. Definir comportamiento de usuarios con varias sucursales y depósitos en una etapa de especificación detallada.
@@ -55,7 +55,7 @@ Estos son escenarios ilustrativos sujetos a aprobación de matriz de permisos.
 D-01: si un mismo usuario humano puede pertenecer a varias empresas con una única identidad o precisa cuentas separadas (hoy login es empresa+usuario).
 D-02: política de agregación cuando un usuario tiene varios perfiles (propuesto: unión de permisos concedidos, sin reglas de denegación explícita).
 D-03: qué funciones son exclusivas del administrador global PROCEIT.
-D-04: lista definitiva de permisos por módulo y alcance sucursal/depósito.
+D-04: lista definitiva de permisos por módulo y alcance sucursal/depósito. **Decisión adicional confirmada:** el admin empresarial NO edita perfiles/permisos; solo administra asignaciones de perfiles preexistentes, incluso varias por usuario. Ver requisito canónico R01, RN-08/RN-09 y D-02/D-02A.
 No bloquear REQ-2026-001 por estas decisiones; documentar antes de implementación de REQ-2026-002.
 
 ## Instrucciones para Claude
