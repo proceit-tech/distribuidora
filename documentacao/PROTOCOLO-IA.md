@@ -1,5 +1,7 @@
 # PROCEIT — Protocolo de desenvolvimento colaborativo por IA (v1.0)
 
+> **EXCEÇÃO AUTORIZADA PELO RESPONSÁVEL — 25/10/2026 / FE-V1:** Para **etapas E01–E10 da sequência `documentacao/ordens/ORD-CLAUDE-NEXIT-FE-V1-ETAPAS-R01-2026-10-25.md`**, Claude **não cria e não executa testes, lint, typecheck, build, CI manual ou verificações em banco/gateway/VM**. Faz exclusivamente o código da etapa expressamente autorizada, um commit/push e PARA para a auditoria de diff/arquivos completos pelo ChatGPT. **E01/PRO-314 é a única liberada neste momento**; restantes fases dependem do gate. Esta determinação específica prevalece sobre as normas padrão de testes deste protocolo só nas etapas FE V1, sem desativar pipelines automáticos nem dispensar homologação real humana. ChatGPT registra `não testado` e não declara homologação sem prova.
+
 Este repositório utiliza o GitHub como fonte única de verdade do código e da documentação; o Linear é o controle das tarefas. **Claude desenvolve e testa unitariamente; ChatGPT é analista de negócios e sistemas, faz auditoria independente e administra todo o Linear; o responsável humano aplica e valida as entregas no único ambiente operacional real.** Nenhuma aprovação técnica substitui a homologação humana.
 
 
