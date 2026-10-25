@@ -13,6 +13,7 @@
 --      fe_e03_cerrar_envio    → fe_documento_registrar_envio (NEX-050)    + evento CIERRE enlazado al intento insertado; idempotente por operación.
 --  · Tabla nueva y vacía: NO hay backfill. Los envíos anteriores NO tienen evidencia de transmisión (la futura lectura debe señalar EVIDENCIA_TRANSMISION_NO_DISPONIBLE).
 --  · Esta migración es INERTE para la aplicación actual: no instrumenta envio.ts/gateway.ts (E03-A2) ni agrega pantallas/API (E03-B). Sin credenciales, tokens ni cabeceras Authorization en ninguna columna.
+--  · R03 (F002-R02 / F004-R02): el CIERRE OK exige además status=success y evidencia de recepción en la respuesta saneada del último POST; Basic/Bearer cortos se redactan y se detectan.
 --  · R02 (E03-A1-F001..F004): NO_TRANSMITIDO es terminal por operación; el CIERRE se valida contra la cadena de POST/salidas; hash y bytes de la respuesta los calcula el banco sobre el objeto saneado persistido; los
 --    secretos (claves y VALORES) se redactan antes de persistir y, si queda un residuo, se rechaza sin repetir el valor.
 --  · Grants: nex_aplicar_grants_facturacion_e03() es descubierta por el envoltorio dinámico nex_aplicar_grants_runtime() (NEX-052); no se redefine ese envoltorio.
@@ -158,32 +159,129 @@ END $$;
 CREATE TRIGGER envio_evidencias_guarda_trg BEFORE INSERT ON public.documento_electronico_envio_evidencias
   FOR EACH ROW EXECUTE FUNCTION public.fe_e03_evidencia_guarda();
 
--- ── Redacción de secretos (E03-A1-F004). Alcance: claves sensibles con valor cadena, cabeceras/valores «Bearer»/«Basic», JWT y pares «token=…» / «password: …» dentro de VALORES de texto. Lo que se reconoce se reemplaza por
--- [REDACTED] ANTES de persistir; si aún queda una clave sensible con un valor no redactado (p. ej. un objeto), la evidencia se rechaza SIN repetir el valor. La obligación primaria de no enviar credenciales sigue siendo de la capa de
--- transporte (saneado en gateway.ts); esto es una barrera de defensa por patrones: puede redactar de más (p. ej. «token: inválido») y no sustituye al saneado de origen.
+-- ── Redacción de secretos (E03-A1-F004 / F004-R02). Alcance: claves sensibles con valor cadena, cabeceras/valores «Bearer» y «Basic» (Basic = Base64 válido de 4 caracteres o más, incluso corto, p. ej. «Basic dTpw»; «Bearer» desde 4
+-- caracteres, salvo la palabra «token»), JWT y pares «token=…» / «password: …» dentro de VALORES de texto. Lo reconocido se reemplaza por [REDACTED] ANTES de persistir; si aún queda una clave sensible con un valor no redactado (p. ej. un
+-- objeto), un Basic/Bearer/JWT sin redactar, la evidencia se rechaza SIN repetir el valor. La obligación primaria de no enviar credenciales es del saneado de origen (gateway.ts); esto es DEFENSA EN PROFUNDIDAD por patrones, no un
+-- saneamiento infalible: puede redactar de más (p. ej. «token: inválido», «Basic auth») y no detecta secretos sin forma reconocible.
 CREATE OR REPLACE FUNCTION public.fe_e03_redactar_texto(p_texto text) RETURNS text
 LANGUAGE sql IMMUTABLE AS $$
   SELECT regexp_replace(
            regexp_replace(
              regexp_replace(
                regexp_replace(
-                 regexp_replace(p_texto,
+                 regexp_replace(
+                   regexp_replace(p_texto,
                      '("(?:authorization|password|passwd|pwd|token|access_token|refresh_token|id_token|secret|client_secret|api_key|apikey)"\s*:\s*)"(?:[^"\\]|\\.)*"', '\1"[REDACTED]"', 'gi'),
-                   '\mbearer\s+[A-Za-z0-9._~+/=-]{8,}', 'Bearer [REDACTED]', 'gi'),
-                 '\mbasic\s+[A-Za-z0-9+/=]{12,}', 'Basic [REDACTED]', 'gi'),
+                   '\mbearer\s+(?!token\M)[A-Za-z0-9._~+/=-]{4,}', 'Bearer [REDACTED]', 'gi'),
+                 '\mbasic\s+(?:[A-Za-z0-9+/]{4})+(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?(?![A-Za-z0-9+/=])', 'Basic [REDACTED]', 'gi'),
                'eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*', '[REDACTED]', 'g'),
-             '(\m(?:authorization|password|passwd|pwd|token|access_token|refresh_token|secret|client_secret|api_key|apikey)\s*[:=]\s*)(?!\[REDACTED\])[^\s",\\}\]]{4,}', '\1[REDACTED]', 'gi')
+             '(\m(?:authorization|password|passwd|pwd|token|access_token|refresh_token|secret|client_secret|api_key|apikey)\s*[:=]\s*)(?!\[REDACTED\])[^\s",\\}\]]{4,}', '\1[REDACTED]', 'gi'),
+           '(\m(?:authorization)\s*[:=]\s*)(?!\[REDACTED\])[^\s",\\}\]]{1,3}\M', '\1[REDACTED]', 'gi')
 $$;
 
 CREATE OR REPLACE FUNCTION public.fe_e03_secreto_residual(p_texto text) RETURNS boolean
 LANGUAGE sql IMMUTABLE AS $$
   SELECT p_texto ~* '"(?:authorization|password|passwd|pwd|token|access_token|refresh_token|id_token|secret|client_secret|api_key|apikey)"\s*:\s*(?!"\[REDACTED\]"|null\M)'
-      OR p_texto ~* '\mbearer\s+(?!\[REDACTED\])[A-Za-z0-9._~+/=-]{8,}'
+      OR p_texto ~* '\mbearer\s+(?!\[REDACTED\]|token\M)[A-Za-z0-9._~+/=-]{4,}'
+      OR p_texto ~* '\mbasic\s+(?!\[REDACTED\])(?:[A-Za-z0-9+/]{4})+(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?(?![A-Za-z0-9+/=])'
       OR p_texto ~ 'eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.'
 $$;
 
 REVOKE ALL ON FUNCTION public.fe_e03_redactar_texto(text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.fe_e03_secreto_residual(text) FROM PUBLIC;
+
+-- ── Recepción confirmada por el gateway (E03-A1-F002-R02). Un HTTP 2xx NO prueba recepción: interpretarRecepcion (gateway.ts) exige status = "success" y evidencia específica (lote válido, CDC coherente con el documento o eco
+-- íntegro de dEst/dPunExp/dNumDoc), sin contradicciones. Estos ayudantes revisan la respuesta SANEADA que quedó persistida con la MISMA búsqueda de claves de gateway.ts (claves normalizadas, profundidad <= 5, arrays <= 20) pero de forma
+-- ESTRICTA: examinan todas las coincidencias (no solo la primera) y cualquier contradicción o respuesta truncada impide el OK. Es un subconjunto de lo que gateway.ts acepta (puede rechazar más, nunca aceptar más) y NO infiere
+-- aprobación SIFEN: solo habilita registrar ENVIADO (= el gateway recibió el documento).
+CREATE OR REPLACE FUNCTION public.fe_e03_valores_por_clave(p_json jsonb, p_claves text[], p_prof integer DEFAULT 0) RETURNS SETOF jsonb
+LANGUAGE plpgsql IMMUTABLE AS $$
+DECLARE
+  k text;
+  v jsonb;
+  x jsonb;
+BEGIN
+  IF p_prof > 5 OR p_json IS NULL OR jsonb_typeof(p_json) NOT IN ('object', 'array') THEN
+    RETURN;
+  END IF;
+  IF jsonb_typeof(p_json) = 'array' THEN
+    FOR x IN SELECT t.e FROM jsonb_array_elements(p_json) WITH ORDINALITY AS t(e, n) WHERE t.n <= 20 LOOP
+      RETURN QUERY SELECT * FROM public.fe_e03_valores_por_clave(x, p_claves, p_prof + 1);
+    END LOOP;
+    RETURN;
+  END IF;
+  FOR k, v IN SELECT j.key, j.value FROM jsonb_each(p_json) AS j LOOP
+    IF regexp_replace(lower(k), '[^a-z0-9]', '', 'g') = ANY (p_claves) AND jsonb_typeof(v) <> 'null' AND v <> '""'::jsonb THEN
+      RETURN NEXT v;
+    END IF;
+    RETURN QUERY SELECT * FROM public.fe_e03_valores_por_clave(v, p_claves, p_prof + 1);
+  END LOOP;
+END $$;
+
+CREATE OR REPLACE FUNCTION public.fe_e03_respuesta_contiene(p_respuesta jsonb, p_claves text[], p_valor text) RETURNS boolean
+LANGUAGE sql STABLE AS $$
+  SELECT EXISTS (SELECT 1 FROM public.fe_e03_valores_por_clave(p_respuesta, p_claves) v WHERE jsonb_typeof(v) IN ('string', 'number') AND btrim(v #>> '{}') = p_valor)
+$$;
+
+CREATE OR REPLACE FUNCTION public.fe_e03_recepcion_confirmada(p_respuesta jsonb, p_tipo text, p_establecimiento text, p_punto text, p_numero text) RETURNS boolean
+LANGUAGE plpgsql STABLE AS $$
+DECLARE
+  v jsonb;
+  t text;
+  v_lote boolean := false;
+  v_cdc boolean := false;
+  est text[] := ARRAY[]::text[];
+  pun text[] := ARRAY[]::text[];
+  num text[] := ARRAY[]::text[];
+BEGIN
+  -- Solo una respuesta íntegra de éxito declarado: raíz objeto con status exactamente "success" y sin la marca de contenido descartado ("truncado" de gateway.ts).
+  IF p_respuesta IS NULL OR jsonb_typeof(p_respuesta) <> 'object' OR p_respuesta->'status' IS DISTINCT FROM to_jsonb('success'::text) OR p_respuesta ? 'truncado' THEN
+    RETURN false;
+  END IF;
+
+  -- Rechazos declarados en cualquier parte reconocible (contador o lista no vacía): no es una recepción.
+  FOR v IN SELECT * FROM public.fe_e03_valores_por_clave(p_respuesta, ARRAY['rechazados']) LOOP
+    IF (jsonb_typeof(v) = 'array' AND jsonb_array_length(v) > 0) OR (jsonb_typeof(v) = 'number' AND (v #>> '{}')::numeric > 0) THEN
+      RETURN false;
+    END IF;
+  END LOOP;
+
+  -- Lote: cada candidato debe ser texto/número no vacío de a lo sumo 60 caracteres; al menos uno vale como evidencia.
+  FOR v IN SELECT * FROM public.fe_e03_valores_por_clave(p_respuesta, ARRAY['lote', 'nrolote', 'numerolote', 'nrodelote', 'numerodelote']) LOOP
+    IF jsonb_typeof(v) IN ('string', 'number') THEN
+      t := btrim(v #>> '{}');
+      IF t = '' OR char_length(t) > 60 THEN RETURN false; END IF;
+      v_lote := true;
+    END IF;
+  END LOOP;
+
+  -- CDC: todo candidato de 44 dígitos debe ser coherente con el documento (tipo, establecimiento, punto, número); uno incoherente contradice.
+  FOR v IN SELECT * FROM public.fe_e03_valores_por_clave(p_respuesta, ARRAY['cdc']) LOOP
+    IF jsonb_typeof(v) = 'string' AND btrim(v #>> '{}') ~ '^[0-9]{44}$' THEN
+      IF NOT public.fe_cdc_coherente(p_tipo, p_establecimiento, p_punto, p_numero, btrim(v #>> '{}')) THEN RETURN false; END IF;
+      v_cdc := true;
+    END IF;
+  END LOOP;
+
+  -- Eco del número: si el gateway devuelve alguno de dEst/dPunExp/dNumDoc, los TRES deben estar presentes e iguales a los del documento (si no, contradice); el eco íntegro es evidencia de recepción.
+  SELECT coalesce(array_agg(btrim(x #>> '{}')), ARRAY[]::text[]) INTO est FROM public.fe_e03_valores_por_clave(p_respuesta, ARRAY['dest']) x WHERE jsonb_typeof(x) IN ('string', 'number');
+  SELECT coalesce(array_agg(btrim(x #>> '{}')), ARRAY[]::text[]) INTO pun FROM public.fe_e03_valores_por_clave(p_respuesta, ARRAY['dpunexp']) x WHERE jsonb_typeof(x) IN ('string', 'number');
+  SELECT coalesce(array_agg(btrim(x #>> '{}')), ARRAY[]::text[]) INTO num FROM public.fe_e03_valores_por_clave(p_respuesta, ARRAY['dnumdoc']) x WHERE jsonb_typeof(x) IN ('string', 'number');
+  IF cardinality(est) + cardinality(pun) + cardinality(num) > 0 THEN
+    IF cardinality(est) = 0 OR cardinality(pun) = 0 OR cardinality(num) = 0
+       OR EXISTS (SELECT 1 FROM unnest(est) a WHERE a <> p_establecimiento) OR EXISTS (SELECT 1 FROM unnest(pun) a WHERE a <> p_punto) OR EXISTS (SELECT 1 FROM unnest(num) a WHERE a <> p_numero) THEN
+      RETURN false;
+    END IF;
+
+    RETURN true;
+  END IF;
+
+  RETURN v_lote OR v_cdc;
+END $$;
+
+REVOKE ALL ON FUNCTION public.fe_e03_valores_por_clave(jsonb, text[], integer) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.fe_e03_respuesta_contiene(jsonb, text[], text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.fe_e03_recepcion_confirmada(jsonb, text, text, text, text) FROM PUBLIC;
 
 -- ── 1) Inicio: envuelve fe_documento_iniciar_envio y fija la versión/hash EXACTOS del snapshot que esa función devolvió ─────────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION public.fe_e03_iniciar_envio(p_empresa uuid, p_usuario uuid, p_documento uuid, p_confirma_rechazo boolean DEFAULT false)
@@ -429,6 +527,8 @@ DECLARE
   v_salida_tipo text;
   v_salida_http integer;
   v_no boolean;
+  v_salida_resp jsonb;
+  v_salida_trunc boolean;
 BEGIN
   IF NOT public.usuario_tiene_permiso(p_empresa, p_usuario, 'FACTURACION_ELECTRONICA', 'CREAR') THEN
     RAISE EXCEPTION 'el usuario no tiene permiso FACTURACION_ELECTRONICA.CREAR en esta empresa' USING ERRCODE = '42501';
@@ -464,7 +564,7 @@ BEGIN
   v_no := EXISTS (SELECT 1 FROM public.documento_electronico_envio_evidencias e WHERE e.empresa_id = p_empresa AND e.documento_id = p_documento AND e.operacion_id = p_operacion AND e.tipo_evento = 'NO_TRANSMITIDO');
   SELECT max(e.nro_post) INTO v_ultimo_post FROM public.documento_electronico_envio_evidencias e
    WHERE e.empresa_id = p_empresa AND e.documento_id = p_documento AND e.operacion_id = p_operacion AND e.tipo_evento = 'POST_INTENTADO';
-  SELECT e.tipo_evento, e.http_status INTO v_salida_tipo, v_salida_http FROM public.documento_electronico_envio_evidencias e
+  SELECT e.tipo_evento, e.http_status, e.respuesta_saneada, e.respuesta_truncada INTO v_salida_tipo, v_salida_http, v_salida_resp, v_salida_trunc FROM public.documento_electronico_envio_evidencias e
    WHERE e.empresa_id = p_empresa AND e.documento_id = p_documento AND e.operacion_id = p_operacion AND e.tipo_evento IN ('HTTP_RESPUESTA', 'ERROR_TRANSMISION') AND e.nro_post = v_ultimo_post;
 
   IF p_resultado = 'OK' THEN
@@ -472,6 +572,16 @@ BEGIN
     IF p_fase <> 'TRANSMISION' OR v_n_posts = 0 OR v_n_posts <> v_n_salidas OR v_salida_tipo IS DISTINCT FROM 'HTTP_RESPUESTA'
        OR v_salida_http NOT BETWEEN 200 AND 299 OR p_http IS DISTINCT FROM v_salida_http THEN
       RAISE EXCEPTION 'el cierre OK no corresponde a la respuesta HTTP 2xx del último POST registrado' USING ERRCODE = 'P0001', DETAIL = 'NEX:CIERRE_CONTRADICTORIO';
+    END IF;
+    -- Un 2xx no basta (F002-R02): la respuesta saneada del último POST debe declarar éxito Y traer evidencia específica de recepción (lote válido, CDC coherente o eco íntegro del número), sin contradicciones, y no estar truncada.
+    IF v_salida_trunc OR NOT public.fe_e03_recepcion_confirmada(v_salida_resp, d.tipo, d.establecimiento, d.punto_expedicion, d.numero) THEN
+      RAISE EXCEPTION 'la respuesta del último POST no confirma la recepción del documento (sin éxito declarado o sin lote, CDC ni número que lo identifiquen)' USING ERRCODE = 'P0001', DETAIL = 'NEX:CIERRE_CONTRADICTORIO';
+    END IF;
+    -- Los datos de recepción que se cierran (lote, CDC) deben provenir de esa misma respuesta; nada se inventa.
+    IF (nullif(btrim(coalesce(p_lote, '')), '') IS NOT NULL AND NOT public.fe_e03_respuesta_contiene(v_salida_resp, ARRAY['lote', 'nrolote', 'numerolote', 'nrodelote', 'numerodelote'], btrim(p_lote)))
+       OR (p_cdc_informado IS NOT NULL AND NOT public.fe_e03_respuesta_contiene(v_salida_resp, ARRAY['cdc'], p_cdc_informado))
+       OR (p_cdc IS NOT NULL AND NOT public.fe_e03_respuesta_contiene(v_salida_resp, ARRAY['cdc'], p_cdc)) THEN
+      RAISE EXCEPTION 'el lote o el CDC del cierre no figuran en la respuesta registrada del último POST' USING ERRCODE = 'P0001', DETAIL = 'NEX:CIERRE_CONTRADICTORIO';
     END IF;
   ELSIF p_fase = 'AUTENTICACION' THEN
     -- Falla de autenticación: o nada se transmitió (NO_TRANSMITIDO comprobado, sin POST) o el último POST ya tiene su respuesta HTTP (p. ej. token rechazado) y la renovación falló. Nunca con un POST pendiente o con error de red.
