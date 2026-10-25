@@ -46,3 +46,25 @@ La tabla describe **responsabilidades de arquitectura**, no declara todas las fu
 Esta decisión es solo funcional/arquitectónica: **no cambia el código, esquema, migraciones o permisos, ni aprueba tests/build/CI/VM/gateway**. Mantener auditorías históricas como hechos del código visto, distinguiéndolas de una decisión de planificación de alcance. En particular, el bug real de idempotencia comparando destinos diferentes mediante el mismo texto se mantiene registrado, pero no obliga a encadenar el contrato de domicilio fiscal a una migración de logística.
 
 **En una frase:** **el modelo y las operaciones de NEXIT son la fuente de verdad del negocio; el JSON SIFEN es una proyección fiscal validada de los datos aplicables.**
+
+## 7. Regla de diseño obligatoria para todos los módulos
+
+**El caso de uso empresarial se modela ANTES de diseñar su representación tributaria.** El análisis de un módulo no empieza por preguntar «¿qué acepta SIFEN?», sino por definir: proceso del negocio, actores/perfiles, entidad y clave interna, estados, alcance empresa/sucursal/depósito, efectos y reversos, validaciones operativas, transacciones, auditoría y reportes. Luego se mapean exclusivamente los datos fiscales pertinentes al documento electrónico. Si una función no necesita FE, debe poder diseñarse y registrarse independientemente del adaptador fiscal, según el alcance contratado.
+
+**Ejemplo concreto de una venta**: el pedido/venta mantiene sus productos, cantidades, precios y cliente; una reserva y baja de stock mantiene depósito, ubicación, existencias y kardex; una entrega conserva `direccionEntregaId`, destino, estado y fotografía histórica; el financiero conserva condiciones y cobranzas; la FE conserva emisor/receptor fiscal, importes, código geográfico aplicable y CDC/estado del gateway. Un JSON fiscal no es un pedido, movimiento de inventario ni orden de entrega.
+
+**Reintentos y correcciones son operaciones por dominio.** Volver a solicitar el resultado de una FE con una clave ya procesada no crea una segunda FE ni duplica sus movimientos asociados. La equivalencia comercial debe demostrarse con identificadores internos/snapshots confiables cuando importa; el proveedor SIFEN no participa en la identificación de depósitos, clientes internos, direcciones de entrega, vendedores ni kardex. No deducir identidad a partir de texto de `dInfAdic`.
+
+**Regla de permanencia de datos**: las modificaciones posteriores en maestros no reescriben instantáneas históricas de operaciones finalizadas. Las validaciones para una operación NUEVA no deben confundirse con el reintento de una operación YA persistida. Las políticas de acceso/bloqueo requieren decisión de seguridad separada; no eximirlas por copiar un payload antiguo.
+
+**Criterios para una especificación nueva**: declarar su dominio NEXIT, fuente de datos (tabla/ID), alcance y permisos, efecto en stock/logística/finanzas, relación con FE (si aplica), datos transformados hacia SIFEN, comportamiento de reversión/reintento y qué es asunto del proveedor. Queda prohibido describir movimientos/entregas solo mediante campos del JSON fiscal.
+
+## 8. Estado de implementación comprobado en la revisión del 25/10/2026
+
+- En la branch oficial, el commit funcional `831773fb0dbb8e585f75c113295c23d6958921f8` ya serializa `cDepRec/cDisRec/cCiuRec` (números/códigos) cuando existe domicilio fiscal nacional completo, junto con `cPaisRec`, calle y número; exige distrito y verifica su jerarquía con departamento y ciudad. Esto es una **observación estática del código**, no homologación ni confirmación del gateway.
+- La integración fiscal requiere aún contrato probado del proveedor JSON→SIFEN para claves, tipos y descripción automática en el XML; ninguna emisión real autorizada.
+- `PRO-324` es tarea del dominio de logística/histórico, bajo `PRO-205`; no es requisito de SIFEN ni bloqueante de alcance de `PRO-322`. Sin embargo, `emision.ts::equivalente` todavía equipara destinos por texto y eso **puede aceptar IDs de entrega distintos con descripción igual**. El riesgo de idempotencia se conserva como defecto de seguridad real, tratado separadamente del mapeo fiscal. No se habilita el uso real inseguro por separar tickets.
+- No se crea una migration por esta revisión, ni se elimina la futura opción de una lectura de identidad logística histórica con permisos mínimos: esa decisión y su ejecución requerirán autorización propia.
+- `PRO-323` (editor asistido `dInfAdic`) no está autorizada; no mezclar la futura UI con la corrección del JSON receptor.
+
+**Orden de prioridad para el proyecto:** no reabrir campos SIFEN ya resueltos por presión de lógica logística; no declarar conforme/homologado si persiste un problema de identidad de reintento en la ruta real; gestionar y corregir cada defecto dentro de su dominio con tareas y decisiones independientes.
