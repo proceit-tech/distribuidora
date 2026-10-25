@@ -45,7 +45,7 @@
 
 - **KuDE fora do escopo desta R06**: não editar `app/(private)/documentos/kude-modal.tsx`, `lib/facturacion/kude-visor.ts`, `app/(private)/documentos/page.tsx`, regra PRO-194, `/api/kude` ou fornecedor. A produção/entrega do PDF vem do provedor, mas a janela é UI local; isso **não autoriza** alterações em nenhuma parte do fluxo KuDE.
 - **Enter e scanner:** deixar precisamente a lógica atual, sem aprimoramento não solicitado.
-- **Cálculos, IVA, preços, desconto, totais, arredondamento, JSON FE, `dInfAdic`, `payload-fe.ts`, gateway, credenciais, APIs, SIFEN, RUC, CD C, stock, NCE, perfis, sequência, impostos e migrations:** FORA DO ESCOPO; NÃO modificar. Preservar snapshot revisto, idempotência, validações e envio.
+- **Cálculos, IVA, preços, desconto, totais, arredondamento, JSON FE, `dInfAdic`, `payload-fe.ts`, gateway, credenciais, APIs, SIFEN, RUC, CDC, stock, NCE, perfis, sequência, impostos e migrations:** FORA DO ESCOPO; NÃO modificar. Preservar snapshot revisto, idempotência, validações e envio.
 - **P7 Homologação visual cabe ao responsável.** Você pode apresentar critérios/capturas propostas, mas não declarar teste, navegador, impressão, publicação ou aceite visual realizados.
 - **P10 Documentação:** ordem e `CLAUDE.md` organizados pelo ChatGPT. Claude deve lê-los e, se necessário, documentar apenas evidências exatas dos arquivos alterados; não apagar histórico R05, nem reabrir ordens históricas.
 
