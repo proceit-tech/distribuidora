@@ -9,6 +9,10 @@ UNION ALL SELECT 'usr_crear / usr_actualizar / usr_cambiar_estado / usr_asignar_
        AND to_regprocedure('public.usr_perfiles_catalogo(uuid,uuid)') IS NOT NULL
 UNION ALL SELECT 'cada empresa tiene los nueve perfiles del catálogo', NOT EXISTS (
          SELECT 1 FROM public.empresas e WHERE (SELECT count(*) FROM public.perfiles p WHERE p.empresa_id = e.id AND p.codigo = ANY (public.usr_codigos_catalogo())) <> 9)
+UNION ALL SELECT 'usr_cambiar_contrasena_propia / usr_asignar_alcance / usr_serializar_admins',
+       to_regprocedure('public.usr_cambiar_contrasena_propia(uuid,uuid,uuid,text,text)') IS NOT NULL AND to_regprocedure('public.usr_asignar_alcance(uuid,uuid,uuid,uuid[],uuid[])') IS NOT NULL AND to_regprocedure('public.usr_serializar_admins(uuid,uuid)') IS NOT NULL
+UNION ALL SELECT 'cada empresa tiene su perfil ADMIN como administrador', NOT EXISTS (SELECT 1 FROM public.empresas e WHERE NOT EXISTS (SELECT 1 FROM public.perfiles p WHERE p.empresa_id = e.id AND p.codigo = 'ADMIN' AND p.es_administrador))
+UNION ALL SELECT 'la aplicación ejecuta usr_cambiar_contrasena_propia y usr_asignar_alcance', has_function_privilege('nexit_runtime', 'public.usr_cambiar_contrasena_propia(uuid,uuid,uuid,text,text)', 'EXECUTE') AND has_function_privilege('nexit_runtime', 'public.usr_asignar_alcance(uuid,uuid,uuid,uuid[],uuid[])', 'EXECUTE')
 UNION ALL SELECT 'la aplicación ejecuta la emisión con vendedor', has_function_privilege('nexit_runtime', 'public.fe_documento_crear_fe_vendedor(uuid,uuid,uuid,uuid,text,uuid,text,text,text,numeric,jsonb,jsonb,uuid,uuid)', 'EXECUTE')
 UNION ALL SELECT 'la aplicación YA NO ejecuta la emisión de 13 parámetros', NOT has_function_privilege('nexit_runtime', 'public.fe_documento_crear_fe_con_stock_entrega(uuid,uuid,uuid,uuid,text,uuid,text,text,text,numeric,jsonb,jsonb,uuid)', 'EXECUTE')
 UNION ALL SELECT 'la aplicación no escribe directamente en documento_electronico_vendedor', NOT has_table_privilege('nexit_runtime', 'public.documento_electronico_vendedor', 'INSERT, UPDATE, DELETE')

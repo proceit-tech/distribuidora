@@ -85,11 +85,11 @@ export function legadoCoincide(guardada: string | null, observaciones: string): 
  * `componerInfoAdicional`: sin marca, todo el texto son observaciones; con UNA sola marca, lo anterior son las observaciones y lo posterior solo líneas «Dirección de entrega: …» (a lo sumo una) y
  * «Vendedor: …» (a lo sumo una, al final). Cualquier otra forma (varias marcas, bloque vacío o con líneas ajenas) no permite probar qué escribió el operador: null (el llamador responde 409).
  */
-export function descomponerInfoAdicional(texto: string | null): { observacion: string; entrega: string | null } | null {
+export function descomponerInfoAdicional(texto: string | null): { observacion: string; entrega: string | null; vendedor: string | null } | null {
   const lineas = (texto ?? "").replace(/\r\n/g, "\n").split("\n");
   const marcas = lineas.flatMap((l, i) => (l.trim() === MARCA_AUTOMATICA ? [i] : []));
 
-  if (marcas.length === 0) return { observacion: lineas.join("\n").trim(), entrega: null };
+  if (marcas.length === 0) return { observacion: lineas.join("\n").trim(), entrega: null, vendedor: null };
   if (marcas.length > 1) return null;
 
   const automaticas = lineas.slice(marcas[0] + 1).map((l) => l.trim()).filter((l) => l !== "");
@@ -99,7 +99,7 @@ export function descomponerInfoAdicional(texto: string | null): { observacion: s
   if (automaticas.length === 0 || entregas.length > 1 || vendedores.length > 1 || entregas.length + vendedores.length !== automaticas.length) return null;
   if (vendedores.length === 1 && automaticas[automaticas.length - 1] !== vendedores[0]) return null;
 
-  return { observacion: lineas.slice(0, marcas[0]).join("\n").trim(), entrega: entregas[0] ?? null };
+  return { observacion: lineas.slice(0, marcas[0]).join("\n").trim(), entrega: entregas[0] ?? null, vendedor: vendedores[0] ?? null };
 }
 
 /** ¿El texto contiene la línea marcadora? (una observación enviada con la marca no permite probar equivalencia con un snapshot compuesto). */

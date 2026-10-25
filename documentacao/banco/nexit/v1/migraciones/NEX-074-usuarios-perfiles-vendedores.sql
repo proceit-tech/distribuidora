@@ -9,8 +9,11 @@
 --      las sesiones y se incrementa version_acceso; todo queda en eventos_seguridad.
 --   3) documento_electronico_vendedor (inmutable) + fe_documento_crear_fe_vendedor (14 parámetros): envuelve SIN COPIARLA a fe_documento_crear_fe_con_stock_entrega y, en la MISMA transacción, valida que el vendedor sea un usuario
 --      ACTIVO de la empresa con el perfil VENDEDOR activo y registra su ID + nombre-snapshot, separado del emisor (creado_por). Una repetición de la clave con OTRO vendedor (o sin vendedor registrado) es conflicto de idempotencia.
--- NO incluye (pendiente, fuera de este recorte): matriz de permisos por perfil, módulos contratados por empresa (RN-14: aún no existe el catálogo técnico de módulos), alcance por sucursal/depósito de cada usuario, cambio forzado
--- de contraseña en el login, restablecimiento de contraseña, alta de empresa/primer administrador por MASTER. No modifica documentos existentes ni NEX-072/NEX-073.
+--   4) PRO-93-R03: (F002) FE anteriores a NEX-074 (sin vendedor registrado) se reconocen en el reintento sin atribuirles vendedor; (F003) usr_cambiar_contrasena_propia: fin de la contraseña inicial provisional (el login/sesión la exigen en la
+--      aplicación); (F004) las operaciones que pueden reducir administradores se serializan por EMPRESA (bloqueo asesor transaccional) y el invariante se verifica dentro de la sección serializada; (F005) usr_asignar_alcance: sucursales y depósitos
+--      del usuario con las relaciones existentes (fail-closed: nunca TODAS/TODOS automáticamente); (F007) el perfil de administrador se garantiza SIN asignarlo a nadie y los conflictos de legado se rechazan.
+-- NO incluye (pendiente, fuera de este recorte): matriz de permisos por perfil, módulos contratados por empresa (RN-14: aún no existe el catálogo técnico de módulos), restablecimiento de contraseña por el administrador,
+-- alta de empresa/primer administrador por MASTER. No modifica documentos existentes ni NEX-072/NEX-073.
 -- ESTADO: versionada y NO aplicada. Ningún agente de IA la aplica: la ejecuta SOLO el responsable en la VM (docs/PROCEDIMIENTO-NEX-074.md). Primero la migración, después el código.
 -- =====================================================================
 DO $$
@@ -31,9 +34,23 @@ END $$;
 -- 1) Catálogo de nueve perfiles ------------------------------------------------------------------------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.nex_asegurar_perfiles_estandar(p_empresa uuid) RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE r record;
 BEGIN
+  -- Administrador de empresa (ADMIN): se garantiza el perfil, SIN asignarlo a ningún usuario (nadie es elevado a administrador). Un ADMIN existente que no sea administrador es un legado inconsistente: se rechaza para conciliarlo a mano.
+  IF EXISTS (SELECT 1 FROM public.perfiles WHERE empresa_id = p_empresa AND codigo = 'ADMIN' AND NOT es_administrador) THEN
+    RAISE EXCEPTION 'la empresa tiene un perfil ADMIN que no es administrador: concilie el legado antes de aplicar NEX-074' USING ERRCODE = 'P0001', DETAIL = 'NEX:PERFIL_CONFLICTO';
+  END IF;
   UPDATE public.perfiles SET nombre = 'Administrador de empresa', actualizado_at = now()
    WHERE empresa_id = p_empresa AND codigo = 'ADMIN' AND es_administrador AND nombre <> 'Administrador de empresa';
+  INSERT INTO public.perfiles (empresa_id, codigo, nombre, es_administrador, es_sistema)
+  VALUES (p_empresa, 'ADMIN', 'Administrador de empresa', true, true)
+  ON CONFLICT (empresa_id, codigo) DO NOTHING;
+
+  -- Los otros ocho: si la empresa ya tenía un perfil propio con ese código (no del sistema, quizá con permisos), no se adopta en silencio.
+  FOR r IN SELECT codigo FROM public.perfiles WHERE empresa_id = p_empresa AND NOT es_sistema
+                AND codigo IN ('GERENTE','VENDEDOR','FACTURADOR','CONTADOR','COMPRAS','INVENTARIO_DEPOSITOS','FINANZAS','CONSULTAS_INFORMES') LOOP
+    RAISE EXCEPTION 'la empresa ya tiene un perfil propio con el código %: concilie el legado antes de aplicar NEX-074', r.codigo USING ERRCODE = 'P0001', DETAIL = 'NEX:PERFIL_CONFLICTO';
+  END LOOP;
 
   INSERT INTO public.perfiles (empresa_id, codigo, nombre, es_administrador, es_sistema)
   SELECT p_empresa, v.codigo, v.nombre, false, true
@@ -85,6 +102,16 @@ BEGIN
   IF NOT public.usuario_es_admin_empresa(p_empresa, p_actor) THEN
     RAISE EXCEPTION 'solo el administrador de la empresa puede gestionar usuarios y perfiles' USING ERRCODE = '42501';
   END IF;
+END $$;
+
+-- F004: serializa por EMPRESA toda operación que pueda reducir los administradores activos (cambio de estado, retiro de perfiles). El bloqueo asesor es transaccional (se libera al terminar), la clave es la empresa y el orden es siempre
+-- el mismo: primero el bloqueo de la empresa, después las filas del usuario. El actor se verifica antes y DESPUÉS de obtener el bloqueo (otra operación pudo quitarle el rol mientras esperaba).
+CREATE OR REPLACE FUNCTION public.usr_serializar_admins(p_empresa uuid, p_actor uuid) RETURNS void
+LANGUAGE plpgsql SET search_path = public, pg_temp AS $$
+BEGIN
+  PERFORM public.usr_exigir_admin(p_empresa, p_actor);
+  PERFORM pg_advisory_xact_lock(hashtextextended('nexit:usr_admins:' || p_empresa::text, 0));
+  PERFORM public.usr_exigir_admin(p_empresa, p_actor);
 END $$;
 
 -- Perfiles que el administrador puede asignar (los nueve del catálogo; los códigos son fijos y comunes a todas las empresas).
@@ -201,7 +228,7 @@ CREATE OR REPLACE FUNCTION public.usr_cambiar_estado(p_empresa uuid, p_actor uui
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
 DECLARE v_u public.usuarios%ROWTYPE;
 BEGIN
-  PERFORM public.usr_exigir_admin(p_empresa, p_actor);
+  PERFORM public.usr_serializar_admins(p_empresa, p_actor);
   SELECT * INTO v_u FROM public.usuarios u WHERE u.empresa_id = p_empresa AND u.id = p_id FOR UPDATE;
   IF NOT FOUND OR EXISTS (SELECT 1 FROM public.administradores_plataforma ap WHERE ap.empresa_id = p_empresa AND ap.usuario_id = p_id AND ap.activo) THEN
     RAISE EXCEPTION 'el usuario no existe en la empresa' USING ERRCODE = 'P0001', DETAIL = 'NEX:USUARIO_NO_ENCONTRADO';
@@ -228,7 +255,7 @@ END $$;
 CREATE OR REPLACE FUNCTION public.usr_asignar_perfiles(p_empresa uuid, p_actor uuid, p_id uuid, p_perfiles text[]) RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
 BEGIN
-  PERFORM public.usr_exigir_admin(p_empresa, p_actor);
+  PERFORM public.usr_serializar_admins(p_empresa, p_actor);
   PERFORM public.nex_asegurar_perfiles_estandar(p_empresa);
   PERFORM 1 FROM public.usuarios u WHERE u.empresa_id = p_empresa AND u.id = p_id FOR UPDATE;
   IF NOT FOUND OR EXISTS (SELECT 1 FROM public.administradores_plataforma ap WHERE ap.empresa_id = p_empresa AND ap.usuario_id = p_id AND ap.activo) THEN
@@ -237,7 +264,7 @@ BEGIN
 
   PERFORM public.usr_aplicar_perfiles(p_empresa, p_actor, p_id, p_perfiles);
 
-  -- Protección del último administrador: tras el cambio la empresa debe conservar al menos un administrador activo.
+  -- Protección del último administrador (dentro de la sección serializada por empresa): tras el cambio la empresa debe conservar al menos un administrador activo.
   IF NOT public.usuario_es_admin_empresa(p_empresa, p_id) AND public.usr_otros_admins(p_empresa, p_id) = 0 THEN
     RAISE EXCEPTION 'la empresa quedaría sin administrador activo' USING ERRCODE = 'P0001', DETAIL = 'NEX:ULTIMO_ADMIN';
   END IF;
@@ -249,6 +276,59 @@ BEGIN
   END IF;
   INSERT INTO public.eventos_seguridad (empresa_id, usuario_id, tipo, detalle)
   VALUES (p_empresa, p_actor, 'USUARIO_PERFILES', jsonb_build_object('usuario_id', p_id, 'perfiles', to_jsonb(coalesce(p_perfiles, ARRAY[]::text[]))));
+END $$;
+
+-- F003: contraseña inicial provisional. La define el administrador al crear la cuenta; el PROPIO usuario debe reemplazarla antes de operar (la aplicación solo le permite este flujo mientras debe_cambiar_contrasena sea true).
+-- Exige la contraseña actual (bcrypt en la base), valida la nueva (10-200 caracteres, distinta de la actual y del usuario), cierra las demás sesiones y registra el evento. No es un restablecimiento: no la puede ejecutar nadie por otro.
+CREATE OR REPLACE FUNCTION public.usr_cambiar_contrasena_propia(p_empresa uuid, p_usuario uuid, p_sesion uuid, p_actual text, p_nueva text) RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE v_u public.usuarios%ROWTYPE;
+BEGIN
+  SELECT * INTO v_u FROM public.usuarios u WHERE u.empresa_id = p_empresa AND u.id = p_usuario AND u.estado = 'ACTIVO' FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'usuario no válido' USING ERRCODE = '42501';
+  END IF;
+  IF p_actual IS NULL OR p_nueva IS NULL OR v_u.password_hash <> crypt(p_actual, v_u.password_hash) THEN
+    RAISE EXCEPTION 'la contraseña actual no es correcta' USING ERRCODE = 'P0001', DETAIL = 'NEX:CONTRASENA_ACTUAL';
+  END IF;
+  IF char_length(p_nueva) NOT BETWEEN 10 AND 200 OR lower(p_nueva) = v_u.usuario OR p_nueva = p_actual THEN
+    RAISE EXCEPTION 'la contraseña nueva debe tener de 10 a 200 caracteres y ser distinta de la actual y del usuario' USING ERRCODE = 'P0001', DETAIL = 'NEX:CONTRASENA_INVALIDA';
+  END IF;
+
+  UPDATE public.usuarios SET password_hash = crypt(p_nueva, gen_salt('bf', 12)), debe_cambiar_contrasena = false, intentos_fallidos = 0, bloqueado_hasta = NULL,
+         version_acceso = version_acceso + 1, actualizado_at = now()
+   WHERE empresa_id = p_empresa AND id = p_usuario;
+  UPDATE public.sesiones_usuario SET revocada_at = now() WHERE empresa_id = p_empresa AND usuario_id = p_usuario AND revocada_at IS NULL AND id <> p_sesion;
+  INSERT INTO public.eventos_seguridad (empresa_id, usuario_id, tipo, detalle) VALUES (p_empresa, p_usuario, 'CONTRASENA_CAMBIADA', jsonb_build_object('inicial', v_u.debe_cambiar_contrasena));
+END $$;
+
+-- F005: alcance del usuario con las relaciones EXISTENTES (usuario_sucursal / usuario_deposito). Fail-closed: se fija alcance «asignadas/asignados» y solo lo marcado; nunca TODAS/TODOS. No altera a quien ya tiene alcance total (cuenta de
+-- arranque/plataforma): se rechaza. Sucursales y depósitos deben ser ACTIVOS de la misma empresa (las claves foráneas compuestas lo imponen además).
+CREATE OR REPLACE FUNCTION public.usr_asignar_alcance(p_empresa uuid, p_actor uuid, p_usuario uuid, p_sucursales uuid[], p_depositos uuid[]) RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE v_u public.usuarios%ROWTYPE;
+BEGIN
+  PERFORM public.usr_exigir_admin(p_empresa, p_actor);
+  SELECT * INTO v_u FROM public.usuarios u WHERE u.empresa_id = p_empresa AND u.id = p_usuario FOR UPDATE;
+  IF NOT FOUND OR EXISTS (SELECT 1 FROM public.administradores_plataforma ap WHERE ap.empresa_id = p_empresa AND ap.usuario_id = p_usuario AND ap.activo) THEN
+    RAISE EXCEPTION 'el usuario no existe en la empresa' USING ERRCODE = 'P0001', DETAIL = 'NEX:USUARIO_NO_ENCONTRADO';
+  END IF;
+  IF v_u.alcance_sucursales = 'TODAS' OR v_u.alcance_depositos = 'TODOS' THEN
+    RAISE EXCEPTION 'el usuario tiene alcance total y no se modifica desde aquí' USING ERRCODE = 'P0001', DETAIL = 'NEX:ALCANCE_TOTAL';
+  END IF;
+  p_sucursales := coalesce(p_sucursales, ARRAY[]::uuid[]);
+  p_depositos := coalesce(p_depositos, ARRAY[]::uuid[]);
+  IF (SELECT count(*) FROM public.sucursales s WHERE s.empresa_id = p_empresa AND s.activo AND s.id = ANY (p_sucursales)) <> (SELECT count(DISTINCT x) FROM unnest(p_sucursales) x)
+     OR (SELECT count(*) FROM public.depositos d WHERE d.empresa_id = p_empresa AND d.activo AND d.id = ANY (p_depositos)) <> (SELECT count(DISTINCT x) FROM unnest(p_depositos) x) THEN
+    RAISE EXCEPTION 'alguna sucursal o depósito no existe en la empresa o está inactivo' USING ERRCODE = 'P0001', DETAIL = 'NEX:ALCANCE_INVALIDO';
+  END IF;
+
+  DELETE FROM public.usuario_sucursal WHERE empresa_id = p_empresa AND usuario_id = p_usuario AND NOT (sucursal_id = ANY (p_sucursales));
+  INSERT INTO public.usuario_sucursal (empresa_id, usuario_id, sucursal_id, asignado_por) SELECT p_empresa, p_usuario, x, p_actor FROM unnest(p_sucursales) x ON CONFLICT DO NOTHING;
+  DELETE FROM public.usuario_deposito WHERE empresa_id = p_empresa AND usuario_id = p_usuario AND NOT (deposito_id = ANY (p_depositos));
+  INSERT INTO public.usuario_deposito (empresa_id, usuario_id, deposito_id, asignado_por) SELECT p_empresa, p_usuario, x, p_actor FROM unnest(p_depositos) x ON CONFLICT DO NOTHING;
+  INSERT INTO public.eventos_seguridad (empresa_id, usuario_id, tipo, detalle)
+  VALUES (p_empresa, p_actor, 'USUARIO_ALCANCE', jsonb_build_object('usuario_id', p_usuario, 'sucursales', to_jsonb(p_sucursales), 'depositos', to_jsonb(p_depositos)));
 END $$;
 
 -- 5) Vendedor estructurado en la FE ---------------------------------------------------------------------------------------------------------------------------------------
@@ -310,8 +390,10 @@ BEGIN
     SELECT btrim(regexp_replace(concat_ws(' ', u.nombre, u.apellido), '\s+', ' ', 'g')) INTO v_nombre FROM public.usuarios u WHERE u.empresa_id = p_empresa AND u.id = p_vendedor;
     INSERT INTO public.documento_electronico_vendedor (empresa_id, documento_id, vendedor_id, vendedor_nombre, emisor_id) VALUES (p_empresa, v_id, p_vendedor, v_nombre, p_usuario);
   ELSE
+    -- FE posterior a NEX-074: el vendedor registrado debe ser el mismo. FE ANTERIOR (sin fila): no se le atribuye ningún vendedor ni se escribe nada; esta función solo devuelve el documento existente y la aplicación ya probó la
+    -- equivalencia con los datos congelados de esa FE (o respondió 409). Sin fila no hay forma de que un documento NUEVO quede sin vendedor: la fila se inserta en la misma transacción que la creación.
     SELECT v.vendedor_id INTO v_previo FROM public.documento_electronico_vendedor v WHERE v.empresa_id = p_empresa AND v.documento_id = v_id;
-    IF v_previo IS DISTINCT FROM p_vendedor THEN
+    IF FOUND AND v_previo IS DISTINCT FROM p_vendedor THEN
       RAISE EXCEPTION 'la clave de idempotencia ya se usó con otro vendedor' USING ERRCODE = 'P0001', DETAIL = 'NEX:IDEMPOTENCIA_CONFLICTO';
     END IF;
   END IF;
@@ -353,11 +435,16 @@ BEGIN
   REVOKE ALL ON FUNCTION public.usr_actualizar(uuid, uuid, uuid, text, text, text) FROM PUBLIC;
   REVOKE ALL ON FUNCTION public.usr_cambiar_estado(uuid, uuid, uuid, boolean) FROM PUBLIC;
   REVOKE ALL ON FUNCTION public.usr_asignar_perfiles(uuid, uuid, uuid, text[]) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION public.usr_serializar_admins(uuid, uuid) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION public.usr_cambiar_contrasena_propia(uuid, uuid, uuid, text, text) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION public.usr_asignar_alcance(uuid, uuid, uuid, uuid[], uuid[]) FROM PUBLIC;
   GRANT EXECUTE ON FUNCTION public.usr_perfiles_catalogo(uuid, uuid) TO nexit_runtime;
   GRANT EXECUTE ON FUNCTION public.usr_crear(uuid, uuid, text, text, text, text, text, text[]) TO nexit_runtime;
   GRANT EXECUTE ON FUNCTION public.usr_actualizar(uuid, uuid, uuid, text, text, text) TO nexit_runtime;
   GRANT EXECUTE ON FUNCTION public.usr_cambiar_estado(uuid, uuid, uuid, boolean) TO nexit_runtime;
   GRANT EXECUTE ON FUNCTION public.usr_asignar_perfiles(uuid, uuid, uuid, text[]) TO nexit_runtime;
+  GRANT EXECUTE ON FUNCTION public.usr_cambiar_contrasena_propia(uuid, uuid, uuid, text, text) TO nexit_runtime;
+  GRANT EXECUTE ON FUNCTION public.usr_asignar_alcance(uuid, uuid, uuid, uuid[], uuid[]) TO nexit_runtime;
 END $$;
 REVOKE ALL ON FUNCTION public.nex_aplicar_grants_usuarios_vendedores() FROM PUBLIC;
 

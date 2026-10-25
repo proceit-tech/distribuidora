@@ -53,6 +53,18 @@ export async function vendedorActivo(db: Db, empresaId: string, id: string): Pro
   return f ? aVendedor(f) : null;
 }
 
+/** Nombre de un usuario de la empresa (cualquier estado; nunca un administrador de plataforma) o null. Solo para comparar con el texto congelado de una FE ANTERIOR a NEX-074; no habilita a nadie como vendedor. */
+export async function nombreDeUsuario(db: Db, empresaId: string, id: string): Promise<{ nombre: string; apellido: string } | null> {
+  const r = await db.query(
+    `SELECT u.nombre, u.apellido FROM usuarios u WHERE u.empresa_id = $1 AND u.id = $2
+        AND NOT EXISTS (SELECT 1 FROM administradores_plataforma ap WHERE ap.empresa_id = u.empresa_id AND ap.usuario_id = u.id AND ap.activo)`,
+    [empresaId, id],
+  );
+  const f = r.rows[0] as F | undefined;
+
+  return f ? { nombre: s(f.nombre), apellido: s(f.apellido) } : null;
+}
+
 /** ¿Está aplicada NEX-074 (la base registra el vendedor estructurado de la FE)? */
 export async function vendedorFeSoportado(db: Db): Promise<boolean> {
   const r = await db.query("SELECT to_regprocedure('public.fe_documento_crear_fe_vendedor(uuid,uuid,uuid,uuid,text,uuid,text,text,text,numeric,jsonb,jsonb,uuid,uuid)') IS NOT NULL AS ok");

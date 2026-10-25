@@ -17,6 +17,21 @@ UNION ALL SELECT 'NEX-074 ausente (no se reaplica)', to_regclass('public.documen
 \echo '== 2. Estado de migraciones registrado =='
 SELECT version, nombre FROM public.schema_migrations WHERE version IN ('NEX-067', 'NEX-068', 'NEX-072', 'NEX-073', 'NEX-074') ORDER BY version;
 
+\echo '== 2b. Conciliación de legado (TODAS las filas deben dar ok = true; si no, NO APLICAR: NEX-074 rechazaría la empresa) =='
+SELECT 'ninguna empresa con perfil ADMIN que no sea administrador' AS control, NOT EXISTS (SELECT 1 FROM public.perfiles p WHERE p.codigo = 'ADMIN' AND NOT p.es_administrador) AS ok
+UNION ALL SELECT 'ninguna empresa con perfil PROPIO (no del sistema) cuyo código coincida con los ocho nuevos',
+       NOT EXISTS (SELECT 1 FROM public.perfiles p WHERE NOT p.es_sistema AND p.codigo IN ('GERENTE','VENDEDOR','FACTURADOR','CONTADOR','COMPRAS','INVENTARIO_DEPOSITOS','FINANZAS','CONSULTAS_INFORMES'));
+
+\echo '== 2c. Informativo: empresas sin perfil ADMIN (NEX-074 lo crea SIN asignarlo a nadie) y empresas sin administrador activo =='
+SELECT e.codigo AS empresa,
+       EXISTS (SELECT 1 FROM public.perfiles p WHERE p.empresa_id = e.id AND p.codigo = 'ADMIN') AS tiene_perfil_admin,
+       (SELECT count(DISTINCT u.id) FROM public.usuarios u JOIN public.usuario_perfil up ON up.empresa_id = u.empresa_id AND up.usuario_id = u.id
+          JOIN public.perfiles p ON p.empresa_id = up.empresa_id AND p.id = up.perfil_id AND p.activo AND p.es_administrador WHERE u.empresa_id = e.id AND u.estado = 'ACTIVO') AS administradores_activos
+  FROM public.empresas e ORDER BY e.codigo;
+
+\echo '== 2d. Informativo: usuarios con contraseña provisional pendiente (debe_cambiar_contrasena) =='
+SELECT count(*) AS pendientes FROM public.usuarios WHERE debe_cambiar_contrasena;
+
 \echo '== 3. Informativo: perfiles por empresa (los nueve del catálogo se crean sin permisos) =='
 SELECT e.codigo AS empresa, string_agg(p.codigo, ', ' ORDER BY p.codigo) AS perfiles FROM public.empresas e LEFT JOIN public.perfiles p ON p.empresa_id = e.id GROUP BY e.codigo ORDER BY e.codigo;
 

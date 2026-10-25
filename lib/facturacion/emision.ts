@@ -13,7 +13,7 @@ import { ErrorFacturacion, ErrorValidacionFiscal } from "@/lib/facturacion/share
 import { leerDescuento, type DescuentoEntrada } from "@/lib/facturacion/descuentos";
 import { opcionesEntrega, resolverEntrega, resumenEntrega } from "@/lib/facturacion/entrega";
 import { componerInfoAdicional, contieneMarcaAutomatica, descomponerInfoAdicional, huellaInfoAdicional, infoAdicionalPersistida, LIMITE_INFO_ADICIONAL, lineaEntrega, lineaVendedor } from "@/lib/facturacion/info-adicional";
-import { vendedorActivo, vendedorFeSoportado } from "@/lib/usuarios/vendedores";
+import { nombreDeUsuario, vendedorActivo, vendedorFeSoportado } from "@/lib/usuarios/vendedores";
 import { asignacionesSql, mensajeStockInsuficiente, planificarStock, type LineaStock } from "@/lib/facturacion/stock-fe";
 import { normalizarCantidadTexto } from "@/lib/formato/cantidad-campo";
 import { ErrorGeografia, resolverPais, validarPaisPorOperacion } from "@/lib/geografia/referencia";
@@ -630,7 +630,9 @@ export async function crearFacturaElectronica(db: Db, empresaId: string, usuario
   const historico = (await documentoExiste()) ? await payloadHistorico(db, empresaId, cuerpo.claveIdempotencia) : null;
   const preparada = await prepararFactura(db, empresaId, usuarioId, cuerpo, { documentoExiste, domicilioHistorico: historico !== null });
   const { receptor, guardar, lineasStock, resumen } = preparada;
-  if (historico && !(await equivalente(db, empresaId, usuarioId, historico, preparada.payload, cuerpo))) throw new ErrorFacturacion(409, "La clave de la operación ya se usó con otro contenido. Recargue el formulario e intente de nuevo.");
+  const noEquivalente = historico ? await equivalente(db, empresaId, usuarioId, historico, preparada.payload, cuerpo) : null;
+
+  if (noEquivalente !== null) throw new ErrorFacturacion(409, noEquivalente);
 
   const payload = historico ? historico.payload : preparada.payload;
   const totalTexto = historico ? String((historico.payload as { Subtotales: Array<{ dTotGralOpe: number }> }).Subtotales[0].dTotGralOpe) : preparada.totalTexto;
@@ -719,22 +721,36 @@ const operacionComercial = (p: Record<string, unknown>) => canonico(Object.fromE
  *  · destino de entrega: sin destino ahora ⇒ el dInfAdic histórico no trae línea de entrega; con destino ⇒ su línea (destino elegible del cliente y la empresa) es la del snapshot histórico.
  * La tabla documento_electronico_entregas no es legible por la aplicación (NEX-068 revoca el acceso directo): la identidad del destino se prueba por la línea congelada en el dInfAdic, nunca por el cadastro actual del domicilio fiscal.
  */
-async function equivalente(db: Db, empresaId: string, usuarioId: string, historico: Historico, nuevo: Record<string, unknown>, cuerpo: CuerpoFactura): Promise<boolean> {
-  if (historico.clienteId !== cuerpo.clienteId || historico.sucursalId !== cuerpo.sucursalId || historico.puntoId.toLowerCase() !== cuerpo.puntoId.toLowerCase()) return false;
-  if (historico.vendedorId.toLowerCase() !== cuerpo.vendedorId.toLowerCase()) return false;
-  if (cuerpo.fechaEmision !== undefined && cuerpo.fechaEmision !== historico.fecha) return false;
-  if (operacionComercial(historico.payload) !== operacionComercial(nuevo)) return false;
+async function equivalente(db: Db, empresaId: string, usuarioId: string, historico: Historico, nuevo: Record<string, unknown>, cuerpo: CuerpoFactura): Promise<string | null> {
+  const OTRO = "La clave de la operación ya se usó con otro contenido. Recargue el formulario e intente de nuevo.";
+
+  if (historico.clienteId !== cuerpo.clienteId || historico.sucursalId !== cuerpo.sucursalId || historico.puntoId.toLowerCase() !== cuerpo.puntoId.toLowerCase()) return OTRO;
+  if (cuerpo.fechaEmision !== undefined && cuerpo.fechaEmision !== historico.fecha) return OTRO;
+  if (operacionComercial(historico.payload) !== operacionComercial(nuevo)) return OTRO;
 
   const guardada = typeof historico.payload.dInfAdic === "string" ? historico.payload.dInfAdic : null;
   const partes = descomponerInfoAdicional(guardada);
   const enviada = cuerpo.infoAdicional.trim();
 
-  if (partes === null || contieneMarcaAutomatica(enviada) || partes.observacion !== enviada.replace(/\r\n/g, "\n")) return false;
-  if (cuerpo.direccionEntregaId === undefined) return partes.entrega === null;
+  if (partes === null || contieneMarcaAutomatica(enviada) || partes.observacion !== enviada.replace(/\r\n/g, "\n")) return OTRO;
+
+  // Vendedor. FE posterior a NEX-074: el ID registrado debe ser el mismo. FE ANTERIOR (sin registro): no hay ID que comparar y NUNCA se le atribuye uno; solo se reconoce el reintento si el vendedor elegido coincide con la
+  // línea «Vendedor: …» congelada en su dInfAdic (nombre del usuario que la emitió entonces). Si no se puede probar, conflicto específico (no se recrea ni se modifica la FE).
+  if (historico.vendedorId !== "") {
+    if (historico.vendedorId.toLowerCase() !== cuerpo.vendedorId.toLowerCase()) return OTRO;
+  } else {
+    const u = await nombreDeUsuario(db, empresaId, cuerpo.vendedorId);
+
+    if (u === null || partes.vendedor === null || lineaVendedor(u.nombre, u.apellido) !== partes.vendedor) {
+      return "Esta factura es anterior al registro estructurado del vendedor y no se puede comprobar que el vendedor elegido sea el original. No se vuelve a crear ni a modificar: consulte o reintente su envío desde Documentos electrónicos.";
+    }
+  }
+
+  if (cuerpo.direccionEntregaId === undefined) return partes.entrega === null ? null : OTRO;
 
   const opcion = (await opcionesEntrega(db, empresaId, usuarioId, cuerpo.clienteId)).find((o) => o.id === cuerpo.direccionEntregaId);
 
-  return opcion !== undefined && partes.entrega !== null && lineaEntrega(resumenEntrega(opcion)) === partes.entrega;
+  return opcion !== undefined && partes.entrega !== null && lineaEntrega(resumenEntrega(opcion)) === partes.entrega ? null : OTRO;
 }
 
 export const MENSAJE_INFO_CAMBIO = "La información adicional (dirección de entrega o vendedor) cambió desde la revisión. Revise la factura de nuevo antes de enviarla.";

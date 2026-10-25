@@ -19,6 +19,9 @@ DROP FUNCTION IF EXISTS public.usr_actualizar(uuid, uuid, uuid, text, text, text
 DROP FUNCTION IF EXISTS public.usr_cambiar_estado(uuid, uuid, uuid, boolean);
 DROP FUNCTION IF EXISTS public.usr_asignar_perfiles(uuid, uuid, uuid, text[]);
 DROP FUNCTION IF EXISTS public.usr_perfiles_catalogo(uuid, uuid);
+DROP FUNCTION IF EXISTS public.usr_cambiar_contrasena_propia(uuid, uuid, uuid, text, text);
+DROP FUNCTION IF EXISTS public.usr_asignar_alcance(uuid, uuid, uuid, uuid[], uuid[]);
+DROP FUNCTION IF EXISTS public.usr_serializar_admins(uuid, uuid);
 DROP FUNCTION IF EXISTS public.usr_aplicar_perfiles(uuid, uuid, uuid, text[]);
 DROP FUNCTION IF EXISTS public.usr_exigir_admin(uuid, uuid);
 DROP FUNCTION IF EXISTS public.usr_otros_admins(uuid, uuid);
