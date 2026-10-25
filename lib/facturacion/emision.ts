@@ -261,21 +261,19 @@ async function validarGeografiaReceptor(db: Db, r: ReceptorFE): Promise<void> {
     await resolverPais(db as never, r.pais, "El país del cliente");
     validarPaisPorOperacion(operacion, r.pais);
 
-    if (r.direccion.trim() !== "" && r.tipoOperacion !== 4) {
-      // Validación propia de la FE (el helper de Clientes/Proveedores exige distrito para la ciudad): departamento y ciudad obligatorios y coherentes; el distrito (D221) es opcional,
-      // pero si la ficha lo trae debe existir en el departamento y ser el de la ciudad. Nunca se inventa un distrito.
-      const dis = r.distrito.trim();
+    if (r.tipoOperacion !== 4 && [r.direccion, r.numeroCasa, r.departamento, r.distrito, r.ciudad].some((v) => v.trim() !== "")) {
+      // Domicilio nacional informado (completo, ya garantizado por erroresDomicilioReceptor): departamento, distrito y ciudad existen y forman la cadena jerárquica del catálogo.
       const g = await db.query(
         `SELECT EXISTS (SELECT 1 FROM referencia_geografica_departamentos d WHERE d.codigo = $1::int AND d.activo) AS dep,
-                ($2::int IS NULL OR EXISTS (SELECT 1 FROM referencia_geografica_distritos di WHERE di.departamento_codigo = $1::int AND di.codigo = $2::int AND di.activo)) AS dis,
-                EXISTS (SELECT 1 FROM referencia_geografica_ciudades ci WHERE ci.departamento_codigo = $1::int AND ci.codigo = $3::int AND ci.activo AND ($2::int IS NULL OR ci.distrito_codigo = $2::int)) AS ciu`,
-        [r.departamento.trim(), dis === "" ? null : dis, r.ciudad.trim()],
+                EXISTS (SELECT 1 FROM referencia_geografica_distritos di WHERE di.departamento_codigo = $1::int AND di.codigo = $2::int AND di.activo) AS dis,
+                EXISTS (SELECT 1 FROM referencia_geografica_ciudades ci WHERE ci.departamento_codigo = $1::int AND ci.distrito_codigo = $2::int AND ci.codigo = $3::int AND ci.activo) AS ciu`,
+        [r.departamento.trim(), r.distrito.trim(), r.ciudad.trim()],
       );
       const f = g.rows[0] as F | undefined;
 
       if (f?.dep !== true) throw new ErrorGeografia("El departamento de la dirección fiscal del cliente no existe en el catálogo.");
       if (f.dis !== true) throw new ErrorGeografia("El distrito de la dirección fiscal del cliente no existe en el departamento indicado.");
-      if (f.ciu !== true) throw new ErrorGeografia("La ciudad de la dirección fiscal del cliente no existe en el catálogo o no corresponde al departamento (y distrito) indicados.");
+      if (f.ciu !== true) throw new ErrorGeografia("La ciudad de la dirección fiscal del cliente no corresponde al departamento y distrito indicados.");
     }
   } catch (error) {
     if (error instanceof ErrorGeografia) throw new ErrorFacturacion(422, `${error.message} Corrija la dirección fiscal del cliente en Clientes antes de facturar.`);
@@ -584,12 +582,14 @@ export async function crearFacturaElectronica(db: Db, empresaId: string, usuario
 
     return existencia;
   };
-  // F002-R01: si la FE de esta clave ya existe, se reutiliza su payload original (verificado contra el hash de entrada guardado, de la misma empresa); no se reconstruye con el cadastro actual.
+  // F002-R02: si la FE de esta clave ya existe, solo se reutiliza su payload original (verificado contra el hash de entrada guardado, de la misma empresa) cuando la operación comercial del reintento es equivalente; si no, 409.
   const historico = (await documentoExiste()) ? await payloadHistorico(db, empresaId, cuerpo.claveIdempotencia) : null;
   const preparada = await prepararFactura(db, empresaId, usuarioId, cuerpo, { documentoExiste, domicilioHistorico: historico !== null });
   const { receptor, guardar, lineasStock, resumen } = preparada;
-  const payload = historico ?? preparada.payload;
-  const totalTexto = historico ? String((historico as { Subtotales: Array<{ dTotGralOpe: number }> }).Subtotales[0].dTotGralOpe) : preparada.totalTexto;
+  if (historico && !equivalente(historico, preparada.payload, cuerpo)) throw new ErrorFacturacion(409, "La clave de la operación ya se usó con otro contenido. Recargue el formulario e intente de nuevo.");
+
+  const payload = historico ? historico.payload : preparada.payload;
+  const totalTexto = historico ? String((historico.payload as { Subtotales: Array<{ dTotGralOpe: number }> }).Subtotales[0].dTotGralOpe) : preparada.totalTexto;
   const documentoExistente = await documentoExiste();
 
   // E1-F003: un documento NUEVO solo se crea con el dInfAdic que el operador revisó (nombre del vendedor y dirección releídos del servidor); si cambiaron entre la previa y el envío, se exige revisar de nuevo, sin reservar numeración.
@@ -625,23 +625,39 @@ export async function crearFacturaElectronica(db: Db, empresaId: string, usuario
   }
 }
 
+type Historico = { payload: Record<string, unknown>; clienteId: string; sucursalId: string };
+
 /**
- * Payload ORIGINAL (el que entró a fe_documento_crear_fe, sin las claves que agrega la base: dEst, dPunExp, dNumDoc, dSerieNum, dFeEmiDE) de la FE de esta empresa y clave de idempotencia. Solo se devuelve
- * si su hash coincide con el `entrada_hash` persistido; si no se puede comprobar, null y el flujo sigue con la reconstrucción habitual (que fallará cerrado ante cualquier diferencia).
+ * FE existente de esta empresa y clave de idempotencia con su payload ORIGINAL (el que entró a fe_documento_crear_fe, sin las claves que agrega la base: dEst, dPunExp, dNumDoc, dSerieNum, dFeEmiDE),
+ * solo si su hash coincide con el `entrada_hash` persistido. Si no se puede comprobar, null.
  */
-async function payloadHistorico(db: Db, empresaId: string, clave: string): Promise<Record<string, unknown> | null> {
+async function payloadHistorico(db: Db, empresaId: string, clave: string): Promise<Historico | null> {
   const r = await db.query(
-    `SELECT p.payload FROM (
-       SELECT s.payload - 'dEst' - 'dPunExp' - 'dNumDoc' - 'dSerieNum' - 'dFeEmiDE' AS payload, s.entrada_hash
+    `SELECT p.payload, p.cliente_id AS "clienteId", p.sucursal_id AS "sucursalId" FROM (
+       SELECT s.payload - 'dEst' - 'dPunExp' - 'dNumDoc' - 'dSerieNum' - 'dFeEmiDE' AS payload, s.entrada_hash, d.cliente_id, d.sucursal_id
          FROM documento_electronico_solicitudes s
          JOIN documentos_electronicos d ON d.empresa_id = s.empresa_id AND d.id = s.documento_id
         WHERE d.empresa_id = $1::uuid AND d.clave_idempotencia = $2 AND d.tipo = 'FE' AND s.version = 1) p
       WHERE encode(sha256(convert_to(p.payload::text, 'UTF8')), 'hex') = p.entrada_hash`,
     [empresaId, clave],
   );
-  const p = (r.rows[0] as F | undefined)?.payload;
+  const f = r.rows[0] as F | undefined;
 
-  return p !== null && typeof p === "object" ? (p as Record<string, unknown>) : null;
+  return f && f.payload !== null && typeof f.payload === "object" ? { payload: f.payload as Record<string, unknown>, clienteId: s(f.clienteId), sucursalId: s(f.sucursalId) } : null;
+}
+
+/** Claves de la identidad y el domicilio del receptor: derivan del cadastro ACTUAL del cliente y no se comparan con el snapshot histórico (la identidad se prueba por cliente_id). */
+const CLAVES_RECEPTOR = new Set(["iNatRec", "iTiOpe", "cPaisRec", "iTiContRec", "dRucRec", "dDVRec", "iTipIDRec", "dDTipIDRec", "dNumIDRec", "dNomRec", "dNomFanRec", "dDirRec", "dNumCasRec", "cDepRec", "cDisRec", "cCiuRec", "dTelRec", "dCelRec", "dEmailRec", "dEmailAdic", "dEmailAdmin", "dCodCliente"]);
+
+const canonico = (v: unknown): string => JSON.stringify(v, (_k, x) => (x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.entries(x as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) : x));
+const operacionComercial = (p: Record<string, unknown>) => canonico(Object.fromEntries(Object.entries(p).filter(([k]) => !CLAVES_RECEPTOR.has(k))));
+
+/**
+ * Equivalencia de la operación de un reintento con la FE histórica de la misma clave: mismo cliente y sucursal, y la operación comercial recalculada (ítems, precios, impuestos, descuentos, pagos, moneda,
+ * condición, información adicional persistida) idéntica a la original. Solo así se reutiliza el payload histórico; si difiere, conflicto de idempotencia.
+ */
+function equivalente(historico: Historico, nuevo: Record<string, unknown>, cuerpo: CuerpoFactura): boolean {
+  return historico.clienteId === cuerpo.clienteId && historico.sucursalId === cuerpo.sucursalId && operacionComercial(historico.payload) === operacionComercial(nuevo);
 }
 
 export const MENSAJE_INFO_CAMBIO = "La información adicional (dirección de entrega o vendedor) cambió desde la revisión. Revise la factura de nuevo antes de enviarla.";

@@ -278,10 +278,11 @@ const CODIGO_DISTRITO = /^[1-9]\d{0,3}$/;
 const CODIGO_CIUDAD = /^[1-9]\d{0,4}$/;
 
 /**
- * País y bloque de domicilio fiscal del receptor (D203, D213, D218, D219, D221, D223; MT v150 y NT 003). El bloque es todo o nada: sin calle no se informa ningún dato de
- * domicilio (el país se conserva); con calle se exige un número de casa numérico real (1–6 dígitos, nunca un 0 inventado) y, fuera de B2F, departamento y ciudad (obligatorios) y distrito (D221, ocurrencia 0–1: opcional)
- * como CÓDIGOS (las descripciones las resuelve el gateway). En B2F la geografía paraguaya no se informa ni se exige. La existencia y la jerarquía de los códigos las valida el
- * servidor contra el catálogo geográfico (`validarGeografiaReceptor`), antes de reservar numeración.
+ * País y bloque de domicilio fiscal del receptor (D203, D213, D218, D219, D221, D223; MT v150 y NT 003; decisión del responsable, REQ §4.2). Nacional (B2B, B2C, B2G): o NINGÚN dato de domicilio
+ * (si la norma permite omitirlo; el país se conserva) o TODOS completos: calle, número de casa numérico real (1–6 dígitos, nunca un 0 inventado), departamento, distrito y ciudad como CÓDIGOS
+ * (las descripciones las resuelve el gateway). Cualquier combinación parcial (p. ej. códigos sin calle, calle sin distrito) se bloquea; nada se completa ni se descarta en silencio. En B2F la
+ * calle y el número son obligatorios y la geografía paraguaya no se informa ni se exige. La existencia y la jerarquía de los códigos las valida el servidor contra el catálogo
+ * geográfico (`validarGeografiaReceptor`), antes de reservar numeración.
  */
 export function erroresDomicilioReceptor(r: ReceptorFE): string[] {
   const errores: string[] = [];
@@ -289,20 +290,25 @@ export function erroresDomicilioReceptor(r: ReceptorFE): string[] {
 
   if (b2f && (r.pais === "" || r.pais === "PRY")) errores.push("En una operación B2F el país del receptor debe ser distinto de Paraguay (D203).");
   else if (!b2f && r.pais !== "PRY") errores.push("En operaciones B2B, B2C y B2G el país del receptor debe ser Paraguay (D203).");
-  if (r.direccion.trim() === "") return errores;
-  if (!/^\d{1,6}$/.test(r.numeroCasa.trim())) errores.push("La dirección fiscal del cliente requiere un número de casa numérico de 1 a 6 dígitos (D218). Corríjalo en Clientes; no se reemplaza por 0.");
-  if (b2f) return errores;
+  if (b2f) {
+    if (r.direccion.trim() !== "" && !/^d{1,6}$/.test(r.numeroCasa.trim())) errores.push("La dirección fiscal del cliente requiere un número de casa numérico de 1 a 6 dígitos (D218). Corríjalo en Clientes; no se reemplaza por 0.");
+
+    return errores;
+  }
+  if ([r.direccion, r.numeroCasa, r.departamento, r.distrito, r.ciudad].every((v) => v.trim() === "")) return errores;
+  if (r.direccion.trim() === "") errores.push("La dirección fiscal del cliente está incompleta: falta la calle (D213). Complete o vacíe todo el domicilio fiscal en Clientes.");
+  if (!/^d{1,6}$/.test(r.numeroCasa.trim())) errores.push("La dirección fiscal del cliente requiere un número de casa numérico de 1 a 6 dígitos (D218). Corríjalo en Clientes; no se reemplaza por 0.");
   if (!CODIGO_DEPARTAMENTO.test(r.departamento.trim())) errores.push("La dirección fiscal del cliente requiere un departamento válido (D219, NT 003).");
-  if (r.distrito.trim() !== "" && !CODIGO_DISTRITO.test(r.distrito.trim())) errores.push("El distrito de la dirección fiscal del cliente no es válido (D221).");
+  if (!CODIGO_DISTRITO.test(r.distrito.trim())) errores.push("La dirección fiscal del cliente requiere un distrito válido (D221, política NEXIT).");
   if (!CODIGO_CIUDAD.test(r.ciudad.trim())) errores.push("La dirección fiscal del cliente requiere una ciudad válida (D223, NT 003).");
 
   return errores;
 }
 
 /**
- * País y domicilio del receptor en el JSON. `cPaisRec` va siempre. Sin calle: `dDirRec` y `dNumCasRec` nulos como hasta ahora y NINGUNA clave geográfica. Con calle: `dNumCasRec` es el
- * número real de la ficha y, fuera de B2F, se agregan SOLO los códigos `cDepRec`, `cCiuRec` y, únicamente si la ficha lo trae, `cDisRec` (jamás `dDesPaisRe`/`dDesDepRec`/`dDesDisRec`/`dDesCiuRec`: el gateway
- * las resuelve). En B2F no viaja geografía paraguaya. Solo se llama con la entrada ya validada.
+ * País y domicilio del receptor en el JSON. `cPaisRec` va siempre. Sin domicilio (permitido): `dDirRec` y `dNumCasRec` nulos y NINGUNA clave geográfica. Con domicilio: `dNumCasRec` es el
+ * número real de la ficha y, fuera de B2F, se agregan los TRES códigos `cDepRec`, `cDisRec` y `cCiuRec` (jamás `dDesPaisRe`/`dDesDepRec`/`dDesDisRec`/`dDesCiuRec`: el gateway las resuelve).
+ * En B2F no viaja geografía paraguaya. Solo se llama con la entrada ya validada.
  */
 function domicilioFiscalJSON(r: ReceptorFE): Record<string, unknown> {
   const calle = nulo(r.direccion);
@@ -311,7 +317,7 @@ function domicilioFiscalJSON(r: ReceptorFE): Record<string, unknown> {
 
   const base = { dDirRec: calle, dNumCasRec: Number(r.numeroCasa.trim()) };
 
-  return r.tipoOperacion === 4 ? base : { ...base, cDepRec: Number(r.departamento.trim()), ...(r.distrito.trim() !== "" ? { cDisRec: Number(r.distrito.trim()) } : {}), cCiuRec: Number(r.ciudad.trim()) };
+  return r.tipoOperacion === 4 ? base : { ...base, cDepRec: Number(r.departamento.trim()), cDisRec: Number(r.distrito.trim()), cCiuRec: Number(r.ciudad.trim()) };
 }
 
 /**
