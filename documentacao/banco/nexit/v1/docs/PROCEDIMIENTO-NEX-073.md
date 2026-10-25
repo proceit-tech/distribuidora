@@ -1,5 +1,8 @@
 # Procedimiento NEX-073 — Fecha de emisión elegida (PRO-93 / PRO-294)
 
+> **BLOQUEIO CRÍTICO — AUD-PRO-93-R01 (25/10/2026): NÃO EXECUTAR ESTE PROCEDIMENTO NEM O RUNNER AGORA.** O runner oficial percorre TODAS as migrations versionadas pendentes; a `NEX-072` também está versionada e NÃO APLICADA/NÃO AUTORIZADA. Assim, tentar aplicar NEX-073 pelo runner pode executar NEX-072 sem consentimento. Antes de qualquer futuro plano de aplicação, o responsável deve examinar a saída `--solo-listar`, o estado real `schema_migrations`, e aprovar EXPLICITAMENTE cada migration pendente. Se NEX-072 aparecer, ABORTAR. Também há ERRATA NORMATIVA: o bloqueio universal de datas futuras `hoy−4…hoy` foi baseado em premissa incompleta; a FAQ oficial DNIT inclui emissão POSTERIOR à transmissão dentro de 120h e assinatura→transmissão até 72h. Corrigir/verificar a regra em código E migration ANTES da aplicação. Fonte: `documentacao/testes/AUD-NEXIT-PRO-93-R01-2026-10-25.md`; DNIT https://www.dnit.gov.py/en/web/e-kuatia/preguntas-frecuentes/-/categories/2705333. **Este documento abaixo é histórico NÃO APROVADO para execução.** Não aplicar NEX-072 nem NEX-073, não editar a VM e não marcar versão manualmente.
+
+
 **Estado:** versionada y **NO aplicada**. Ningún agente de IA la aplica. La ejecuta **solo el responsable humano** en la VM, con backup previo, según `documentacao/infra/PROCEDIMENTO-ATUALIZACAO-AMBIENTE-NEXIT-VM.md` (runner oficial `aplicar-migraciones.sh`, `--solo-listar` antes). Requiere NEX-065 (y por tanto NEX-063).
 
 ## Qué hace
