@@ -264,9 +264,51 @@ export function validarEntradaFE(e: EntradaFE, hoy: string = hoyParaguay()): str
   if (r.direccion.length > 255) errores.push("La dirección del cliente no puede superar 255 caracteres.");
   if (r.tipoOperacion === 4 && r.direccion.trim() === "") errores.push("Una operación B2F requiere la dirección del receptor (D213).");
   if (r.naturaleza === 2 && r.tipoOperacion !== 4 && (r.tipoDocumentoIdentidad === null || r.numeroDocumento === "")) errores.push("El cliente no contribuyente requiere tipo y número de documento.");
-  if (r.pais === "PRY" && r.direccion !== "" && (r.departamento === "" || r.ciudad === "") && r.tipoOperacion !== 4) errores.push("La dirección fiscal del cliente en Paraguay requiere departamento y ciudad (NT 003).");
+  errores.push(...erroresDomicilioReceptor(r));
 
   return errores;
+}
+
+/** Códigos geográficos SIFEN del receptor: enteros positivos, sin ceros a la izquierda, con el largo del Manual (D219 1-2, D221 1-4, D223 1-5 dígitos). */
+const CODIGO_DEPARTAMENTO = /^[1-9]\d{0,1}$/;
+const CODIGO_DISTRITO = /^[1-9]\d{0,3}$/;
+const CODIGO_CIUDAD = /^[1-9]\d{0,4}$/;
+
+/**
+ * País y bloque de domicilio fiscal del receptor (D203, D213, D218, D219, D221, D223; MT v150 y NT 003). El bloque es todo o nada: sin calle no se informa ningún dato de
+ * domicilio (el país se conserva); con calle se exige un número de casa numérico real (1–6 dígitos, nunca un 0 inventado) y, fuera de B2F, departamento, distrito y ciudad
+ * como CÓDIGOS (las descripciones las resuelve el gateway). En B2F la geografía paraguaya no se informa ni se exige. La existencia y la jerarquía de los códigos las valida el
+ * servidor contra el catálogo geográfico (`validarGeografiaReceptor`), antes de reservar numeración.
+ */
+export function erroresDomicilioReceptor(r: ReceptorFE): string[] {
+  const errores: string[] = [];
+  const b2f = r.tipoOperacion === 4;
+
+  if (b2f && (r.pais === "" || r.pais === "PRY")) errores.push("En una operación B2F el país del receptor debe ser distinto de Paraguay (D203).");
+  else if (!b2f && r.pais !== "PRY") errores.push("En operaciones B2B, B2C y B2G el país del receptor debe ser Paraguay (D203).");
+  if (r.direccion.trim() === "") return errores;
+  if (!/^\d{1,6}$/.test(r.numeroCasa.trim())) errores.push("La dirección fiscal del cliente requiere un número de casa numérico de 1 a 6 dígitos (D218). Corríjalo en Clientes; no se reemplaza por 0.");
+  if (b2f) return errores;
+  if (!CODIGO_DEPARTAMENTO.test(r.departamento.trim())) errores.push("La dirección fiscal del cliente requiere un departamento válido (D219, NT 003).");
+  if (!CODIGO_DISTRITO.test(r.distrito.trim())) errores.push("La dirección fiscal del cliente requiere un distrito válido (D221).");
+  if (!CODIGO_CIUDAD.test(r.ciudad.trim())) errores.push("La dirección fiscal del cliente requiere una ciudad válida (D223, NT 003).");
+
+  return errores;
+}
+
+/**
+ * País y domicilio del receptor en el JSON. `cPaisRec` va siempre. Sin calle: `dDirRec` y `dNumCasRec` nulos como hasta ahora y NINGUNA clave geográfica. Con calle: `dNumCasRec` es el
+ * número real de la ficha y, fuera de B2F, se agregan SOLO los códigos `cDepRec`, `cDisRec` y `cCiuRec` (jamás `dDesPaisRe`/`dDesDepRec`/`dDesDisRec`/`dDesCiuRec`: el gateway
+ * las resuelve). En B2F no viaja geografía paraguaya. Solo se llama con la entrada ya validada.
+ */
+function domicilioFiscalJSON(r: ReceptorFE): Record<string, unknown> {
+  const calle = nulo(r.direccion);
+
+  if (calle === null) return { dDirRec: null, dNumCasRec: null };
+
+  const base = { dDirRec: calle, dNumCasRec: Number(r.numeroCasa.trim()) };
+
+  return r.tipoOperacion === 4 ? base : { ...base, cDepRec: Number(r.departamento.trim()), cDisRec: Number(r.distrito.trim()), cCiuRec: Number(r.ciudad.trim()) };
 }
 
 /**
@@ -395,9 +437,8 @@ export function construirPayloadFE(e: EntradaFE, hoy?: string): Record<string, u
     dNumIDRec: contribuyente || sinDocumento ? null : nulo(r.numeroDocumento),
     dNomRec: r.razonSocial,
     dNomFanRec: nulo(r.nombreFantasia),
-    dDirRec: nulo(r.direccion),
-    // Numérico como en el JSON funcional. 0 solo si el cadastro no trae un número utilizable (parámetro de la primera prueba; no sobrescribe la ficha).
-    dNumCasRec: nulo(r.direccion) === null ? null : /^\d{1,6}$/.test(r.numeroCasa.trim()) ? Number(r.numeroCasa.trim()) : 0,
+    // dDirRec, dNumCasRec (numérico, el de la ficha: sin fallback a 0) y, si corresponde, solo los códigos cDepRec/cDisRec/cCiuRec.
+    ...domicilioFiscalJSON(r),
     dTelRec: nulo(r.telefono),
     dCelRec: nulo(r.celular),
     dEmailRec: nulo(r.email),

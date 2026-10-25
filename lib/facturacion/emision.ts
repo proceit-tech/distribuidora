@@ -14,6 +14,7 @@ import { opcionesEntrega, resolverEntrega, resumenEntrega } from "@/lib/facturac
 import { componerInfoAdicional, huellaInfoAdicional, infoAdicionalPersistida, LIMITE_INFO_ADICIONAL, lineaEntrega, vendedorDe } from "@/lib/facturacion/info-adicional";
 import { asignacionesSql, mensajeStockInsuficiente, planificarStock, type LineaStock } from "@/lib/facturacion/stock-fe";
 import { normalizarCantidadTexto } from "@/lib/formato/cantidad-campo";
+import { ErrorGeografia, resolverPais, resolverUbicacionParaguay, validarPaisPorOperacion } from "@/lib/geografia/referencia";
 
 /**
  * Preparación y registro de la Factura Electrónica (F-02). Todo lo fiscal sale de los cadastros de la empresa de la SESIÓN: el navegador solo envía
@@ -241,6 +242,32 @@ export function leerCuerpoFactura(c: Record<string, unknown>): CuerpoFactura | s
   };
 }
 
+const OPERACION_RECEPTOR: Record<number, string> = { 1: "B2B", 2: "B2C", 3: "B2G", 4: "B2F" };
+
+/**
+ * País y domicilio fiscal del receptor contra el catálogo geográfico oficial (los mismos `referencia_geografica_*` que validan Clientes): el país existe y es el que exige el tipo de operación;
+ * con calle fuera de B2F, departamento, distrito y ciudad existen y forman una cadena jerárquica coherente. Solo lectura, ANTES de reservar numeración o transmitir; 422 con el motivo.
+ */
+async function validarGeografiaReceptor(db: Db, r: ReceptorFE): Promise<void> {
+  const operacion = OPERACION_RECEPTOR[r.tipoOperacion];
+
+  if (operacion === undefined) throw new ErrorFacturacion(422, "El tipo de operación del cliente no es válido. Corríjalo en Clientes.");
+
+  try {
+    await resolverPais(db, r.pais, "El país del cliente");
+    validarPaisPorOperacion(operacion, r.pais);
+
+    if (r.direccion.trim() !== "" && r.tipoOperacion !== 4) {
+      const u = await resolverUbicacionParaguay(db, r.departamento.trim(), r.distrito.trim(), r.ciudad.trim(), "La dirección fiscal del cliente");
+
+      if (u.departamentoCodigo === null || u.distritoCodigo === null || u.ciudadCodigo === null) throw new ErrorGeografia("La dirección fiscal del cliente requiere departamento, distrito y ciudad.");
+    }
+  } catch (error) {
+    if (error instanceof ErrorGeografia) throw new ErrorFacturacion(422, `${error.message} Corrija la dirección fiscal del cliente en Clientes antes de facturar.`);
+    throw error;
+  }
+}
+
 async function receptorDe(db: Db, empresaId: string, clienteId: string): Promise<ReceptorFE> {
   const r = await db.query(
     `SELECT c.codigo, c.naturaleza_receptor, c.tipo_operacion, c.tipo_contribuyente_sifen, c.pais_codigo, c.tipo_documento_identidad_sifen,
@@ -352,6 +379,8 @@ export async function prepararFactura(db: Db, empresaId: string, usuarioId: stri
   ]);
 
   if (aptitud && !aptitud.apto) throw detalles(422, "El cliente tiene datos fiscales pendientes de regularizar.", aptitud.pendientes);
+  // PRO-322: país y domicilio fiscal (códigos) validados contra el catálogo geográfico antes de cualquier reserva; el destino de entrega no interviene.
+  await validarGeografiaReceptor(db, receptor);
   if (punto.rows.length === 0) throw new ErrorFacturacion(422, "La sucursal o el punto de expedición no son válidos (inactivos, sin establecimiento SIFEN o fuera de su alcance).");
 
   // E04: el destino de entrega debe ser una dirección registrada de ESTE cliente y ESTA empresa; con destinos registrados hay que elegir uno, sin destinos la FE sale sin destino. Antes de reservar numeración.
