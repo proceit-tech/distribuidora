@@ -1,5 +1,8 @@
 # AUD-NEXIT-FE-DIR-PRO-322-R01 — Auditoría estática independiente (25/10/2026)
 
+> **RECTIFICACIÓN EXPRESA POSTERIOR DEL RESPONSABLE — 25/10/2026:** La auditoría histórica R01-F001 fue **FALSO POSITIVO**: confundió el mínimo normativo SIFEN D221 (0–1) con el requisito más exigente del producto NEXIT. La regla de negocio vinculante es **domicilio fiscal paraguayo TODO COMPLETO o TODO AUSENTE**, cuando su omisión sea legal: calle, número, departamento, **distrito obligatorio** y ciudad, país PRY siempre. La implementación R01 que exigía `cDisRec` para una dirección nacional existente era coherente con el requisito ahora aclarado. **No seguir la orden histórica de hacer distrito opcional.** La observación de idempotencia R01-F002 permanece válida. Fuente prevaleciente: [REQ FE-DIR 4.2](../definicoes/REQ-NEXIT-FE-DIRECCION-RECEPTOR-INFO-ADICIONAL-2026-10-25.md). Los apartados siguientes son el registro histórico original y están superados solo respecto a R01-F001.
+
+
 **Resultado: NO CONFORME.** Implementación Claude auditada en `8657b6a205cf46b1344fa5ae01ce8eac61a6c4ad` + ajuste final `16a1a85b22bab1a25bf20656a9a2d023b06cc452` (HEAD funcional en la auditoría). Base `685175a2849b09bf779a60e86cff45229a7641d9`. Diff funcional: solo `lib/facturacion/emision.ts` (+29 líneas) y `lib/facturacion/payload-fe.ts` (+45/−4). **0 pruebas creadas/ejecutadas por Claude por orden expresa; sin build, VM, PostgreSQL, gateway, XML ni PDF examinados operacionalmente.**
 
 ## 1. Aspectos conformes en revisión estática
