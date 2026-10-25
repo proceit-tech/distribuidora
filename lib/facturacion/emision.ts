@@ -12,7 +12,8 @@ import { construirPayloadFE, CONDICIONES_OPERACION, INDICADORES_PRESENCIA, resum
 import { ErrorFacturacion, ErrorValidacionFiscal } from "@/lib/facturacion/shared";
 import { leerDescuento, type DescuentoEntrada } from "@/lib/facturacion/descuentos";
 import { opcionesEntrega, resolverEntrega, resumenEntrega } from "@/lib/facturacion/entrega";
-import { componerInfoAdicional, contieneMarcaAutomatica, descomponerInfoAdicional, huellaInfoAdicional, infoAdicionalPersistida, LIMITE_INFO_ADICIONAL, lineaEntrega, vendedorDe } from "@/lib/facturacion/info-adicional";
+import { componerInfoAdicional, contieneMarcaAutomatica, descomponerInfoAdicional, huellaInfoAdicional, infoAdicionalPersistida, LIMITE_INFO_ADICIONAL, lineaEntrega, lineaVendedor } from "@/lib/facturacion/info-adicional";
+import { vendedorActivo, vendedorFeSoportado } from "@/lib/usuarios/vendedores";
 import { asignacionesSql, mensajeStockInsuficiente, planificarStock, type LineaStock } from "@/lib/facturacion/stock-fe";
 import { normalizarCantidadTexto } from "@/lib/formato/cantidad-campo";
 import { ErrorGeografia, resolverPais, validarPaisPorOperacion } from "@/lib/geografia/referencia";
@@ -170,6 +171,8 @@ export type CuerpoFactura = {
   repartoHuella?: string;
   /** E1: huella del dInfAdic (observaciones + entrega + vendedor) que el operador REVISÓ (la devuelve la previa). Si al emitir el texto que el servidor compondría es otro (cambió el nombre del vendedor o la dirección), se exige revisar de nuevo. */
   infoAdicionalHuella?: string;
+  /** PRO-72/PRO-307: vendedor comercial elegido (ID de un usuario ACTIVO de la empresa con el perfil Vendedor). Es independiente del usuario que emite; el servidor lo revalida y lo registra de forma estructurada. */
+  vendedorId: string;
   /** D002: fecha de emisión elegida (AAAA-MM-DD, día local de Paraguay). Sin ella, la de hoy. Se valida en el servidor (selección −30/+5 días y ventana fiscalmente habilitada) antes de reservar numeración. */
   fechaEmision?: string;
 };
@@ -201,6 +204,7 @@ export function leerCuerpoFactura(c: Record<string, unknown>): CuerpoFactura | s
   if (typeof descuentoGlobal === "string") return descuentoGlobal;
   if (c.direccionEntregaId !== undefined && c.direccionEntregaId !== null && !(typeof c.direccionEntregaId === "string" && UUID.test(c.direccionEntregaId))) return "La dirección de entrega no es válida.";
 
+  if (typeof c.vendedorId !== "string" || !UUID.test(c.vendedorId)) return "Seleccione el vendedor.";
   if (c.fechaEmision !== undefined && c.fechaEmision !== null && fechaIsoValida(c.fechaEmision) === null) return "La fecha de emisión no es válida.";
 
   const pagos = leerPagos(c.pagos);
@@ -236,6 +240,7 @@ export function leerCuerpoFactura(c: Record<string, unknown>): CuerpoFactura | s
     ...(descuentoGlobal ? { descuentoGlobal } : {}),
     ...(typeof c.direccionEntregaId === "string" ? { direccionEntregaId: c.direccionEntregaId } : {}),
     ...(typeof c.repartoHuella === "string" && /^[0-9a-f]{64}$/.test(c.repartoHuella) ? { repartoHuella: c.repartoHuella } : {}),
+    vendedorId: c.vendedorId,
     ...(typeof c.fechaEmision === "string" ? { fechaEmision: c.fechaEmision } : {}),
     ...(typeof c.infoAdicionalHuella === "string" && /^[0-9a-f]{64}$/.test(c.infoAdicionalHuella) ? { infoAdicionalHuella: c.infoAdicionalHuella } : {}),
     lineas: lineas.map((l) => {
@@ -389,6 +394,9 @@ export async function prepararFactura(db: Db, empresaId: string, usuarioId: stri
   if (cuerpo.credito?.tipo === CREDITO_CUOTAS && !CUOTAS_HABILITADAS) throw new ErrorFacturacion(422, MENSAJE_CUOTAS_SUSPENDIDAS);
   if (cuerpo.pagos.some((p) => !(p.tipo in FORMAS_PAGO))) throw new ErrorFacturacion(422, "La forma de pago no es válida.");
 
+  // Vendedor estructurado (NEX-074): sin la migración no hay dónde registrarlo y no se emite con el emisor "por defecto"; se rechaza ANTES de reservar numeración.
+  if (!(await vendedorFeSoportado(db))) throw new ErrorFacturacion(422, "Elegir el vendedor de la factura requiere la migración NEX-074 en la base de datos (aún no aplicada).");
+
   // D002: fecha de emisión elegida. Una FE NUEVA debe estar dentro de la selección comercial y de la ventana fiscalmente habilitada (antes de cualquier reserva); un reintento de una FE ya creada conserva su fecha original (se compara en la equivalencia).
   const hoyFecha = hoyParaguay();
   const fechaElegida = cuerpo.fechaEmision ?? hoyFecha;
@@ -418,6 +426,11 @@ export async function prepararFactura(db: Db, empresaId: string, usuarioId: stri
 
   // Reintento de una FE ya creada y verificada (domicilioHistorico): la aptitud ACTUAL del cadastro no se reevalúa (la FE ya congeló sus datos); la equivalencia se prueba después en crearFacturaElectronica. Una FE nueva siempre la exige.
   if (aptitud && !aptitud.apto && opciones.domicilioHistorico !== true) throw detalles(422, "El cliente tiene datos fiscales pendientes de regularizar.", aptitud.pendientes);
+  // El vendedor se revalida en el servidor (empresa de la sesión, usuario ACTIVO con el perfil Vendedor); un reintento de una FE ya creada conserva su vendedor original (se compara en la equivalencia).
+  const vendedor = await vendedorActivo(db, empresaId, cuerpo.vendedorId);
+
+  if (!vendedor && opciones.domicilioHistorico !== true) throw new ErrorFacturacion(422, "El vendedor elegido no existe en la empresa, está inactivo o no tiene el perfil Vendedor. Elija otro en Maestros → Vendedores.");
+
   // PRO-322: país y domicilio fiscal (códigos) validados contra el catálogo geográfico antes de cualquier reserva; el destino de entrega no interviene.
   // Una FE ya creada (reintento de la misma clave) conserva su payload original: el domicilio y el catálogo actuales no se reevalúan.
   if (opciones.domicilioHistorico !== true) await validarGeografiaReceptor(db, receptor);
@@ -524,11 +537,11 @@ export async function prepararFactura(db: Db, empresaId: string, usuarioId: stri
     });
   }
 
-  // J003 dInfAdic: observaciones del operador + dirección de entrega validada + vendedor (usuario autenticado que emite), compuestos AQUÍ en el servidor. Un reintento de una emisión ya creada reutiliza el texto persistido.
+  // J003 dInfAdic: observaciones del operador + dirección de entrega validada + vendedor COMERCIAL elegido (revalidado; no el usuario que emite), compuestos AQUÍ en el servidor. Un reintento de una emisión ya creada reutiliza el texto persistido.
   const persistida = opciones.documentoExiste && (await opciones.documentoExiste()) ? await infoAdicionalPersistida(db, empresaId, cuerpo.claveIdempotencia) : undefined;
   const infoAdicional = persistida !== undefined
     ? (persistida ?? "")
-    : componerInfoAdicional({ observaciones: cuerpo.infoAdicional, entrega: lineaEntrega(destino.opcion ? resumenEntrega(destino.opcion) : null), vendedor: await vendedorDe(db, empresaId, usuarioId) });
+    : componerInfoAdicional({ observaciones: cuerpo.infoAdicional, entrega: lineaEntrega(destino.opcion ? resumenEntrega(destino.opcion) : null), vendedor: vendedor ? lineaVendedor(vendedor.nombre, vendedor.apellido) : null });
 
   if (infoAdicional.length > LIMITE_INFO_ADICIONAL) throw new ErrorFacturacion(422, `La información adicional (observaciones + dirección de entrega + vendedor) tiene ${infoAdicional.length} caracteres y el máximo es ${LIMITE_INFO_ADICIONAL}. Acorte las observaciones; no se recorta automáticamente.`);
 
@@ -574,6 +587,7 @@ export async function prepararFactura(db: Db, empresaId: string, usuarioId: stri
     punto: s(fila.punto),
     numero: "Se asigna al enviar la factura",
     fechaEmision: fechaElegida,
+    vendedor: vendedor ? { id: vendedor.id, nombre: vendedor.nombreCompleto } : null,
     cliente: { codigo: receptor.codigo, razonSocial: receptor.razonSocial, documento: receptor.naturaleza === 1 ? `${receptor.ruc}-${receptor.dv}` : receptor.numeroDocumento },
     tipoTransaccion: ETIQUETA_TRANSACCION[cuerpo.tipoTransaccion] ?? "",
     presencia: ETIQUETA_PRESENCIA[cuerpo.presencia] ?? "",
@@ -643,8 +657,8 @@ export async function crearFacturaElectronica(db: Db, empresaId: string, usuario
 
   const documento = receptor.naturaleza === 1 ? `${receptor.ruc}-${receptor.dv}` : receptor.numeroDocumento;
   const llamar = () =>
-    db.query(`SELECT o_documento_id AS "documentoId", o_numero AS numero, o_reutilizado AS reutilizado FROM fe_documento_crear_fe_con_stock_entrega($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5, $6::uuid, $7, $8, $11, $9::numeric, $10::jsonb, $12::jsonb, $13::uuid)`,
-      [empresaId, usuarioId, cuerpo.sucursalId, cuerpo.puntoId, cuerpo.claveIdempotencia, cuerpo.clienteId, documento, receptor.razonSocial, totalTexto, JSON.stringify(payload), cuerpo.moneda ?? "PYG", JSON.stringify(asignaciones), cuerpo.direccionEntregaId ?? null]);
+    db.query(`SELECT o_documento_id AS "documentoId", o_numero AS numero, o_reutilizado AS reutilizado FROM fe_documento_crear_fe_vendedor($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5, $6::uuid, $7, $8, $11, $9::numeric, $10::jsonb, $12::jsonb, $13::uuid, $14::uuid)`,
+      [empresaId, usuarioId, cuerpo.sucursalId, cuerpo.puntoId, cuerpo.claveIdempotencia, cuerpo.clienteId, documento, receptor.razonSocial, totalTexto, JSON.stringify(payload), cuerpo.moneda ?? "PYG", JSON.stringify(asignaciones), cuerpo.direccionEntregaId ?? null, cuerpo.vendedorId]);
 
   try {
     return (await llamar()).rows[0] as F;
@@ -655,19 +669,20 @@ export async function crearFacturaElectronica(db: Db, empresaId: string, usuario
   }
 }
 
-type Historico = { payload: Record<string, unknown>; clienteId: string; sucursalId: string; puntoId: string; fecha: string };
+type Historico = { payload: Record<string, unknown>; clienteId: string; sucursalId: string; puntoId: string; fecha: string; vendedorId: string };
 
 /**
  * FE existente de esta empresa y clave de idempotencia con su payload ORIGINAL (el que entró a fe_documento_crear_fe, sin las claves que agrega la base: dEst, dPunExp, dNumDoc, dSerieNum, dFeEmiDE),
  * solo si su hash coincide con el `entrada_hash` persistido. Si no se puede comprobar, null.
  */
-async function payloadHistorico(db: Db, empresaId: string, clave: string): Promise<Historico | null> {
+async function leerPayloadHistorico(db: Db, empresaId: string, clave: string): Promise<Historico | null> {
   // El hash de entrada se calculó sobre el payload tal como entró a la base: sin las claves que ella agrega y, si se eligió otra fecha, CON dFecEmiSol (que la base no deja en el snapshot; se reconstruye desde dFeEmiDE y el hash lo comprueba).
   const r = await db.query(
     `SELECT CASE WHEN encode(sha256(convert_to(p.base::text, 'UTF8')), 'hex') = p.entrada_hash THEN p.base ELSE p.con_fecha END AS payload,
-            p.cliente_id AS "clienteId", p.sucursal_id AS "sucursalId", p.punto_id AS "puntoId", left(p.fecha_emi, 10) AS fecha FROM (
-       SELECT b.base, b.base || jsonb_build_object('dFecEmiSol', left(b.fecha_emi, 10)) AS con_fecha, b.fecha_emi, b.entrada_hash, b.cliente_id, b.sucursal_id, b.punto_id FROM (
+            p.cliente_id AS "clienteId", p.sucursal_id AS "sucursalId", p.punto_id AS "puntoId", left(p.fecha_emi, 10) AS fecha, p.vendedor_id AS "vendedorId" FROM (
+       SELECT b.base, b.base || jsonb_build_object('dFecEmiSol', left(b.fecha_emi, 10)) AS con_fecha, b.fecha_emi, b.entrada_hash, b.cliente_id, b.sucursal_id, b.punto_id, b.vendedor_id FROM (
          SELECT s.payload - 'dEst' - 'dPunExp' - 'dNumDoc' - 'dSerieNum' - 'dFeEmiDE' AS base, s.payload->>'dFeEmiDE' AS fecha_emi, s.entrada_hash, d.cliente_id, d.sucursal_id,
+                (SELECT v.vendedor_id::text FROM documento_electronico_vendedor v WHERE v.empresa_id = d.empresa_id AND v.documento_id = d.id) AS vendedor_id,
                 (SELECT CASE WHEN count(*) = 1 THEN min(x.id::text) END FROM fe_puntos_expedicion x WHERE x.empresa_id = d.empresa_id AND x.sucursal_id = d.sucursal_id AND x.codigo = d.punto_expedicion) AS punto_id
            FROM documento_electronico_solicitudes s
            JOIN documentos_electronicos d ON d.empresa_id = s.empresa_id AND d.id = s.documento_id
@@ -677,7 +692,17 @@ async function payloadHistorico(db: Db, empresaId: string, clave: string): Promi
   );
   const f = r.rows[0] as F | undefined;
 
-  return f && f.payload !== null && typeof f.payload === "object" ? { payload: f.payload as Record<string, unknown>, clienteId: s(f.clienteId), sucursalId: s(f.sucursalId), puntoId: s(f.puntoId), fecha: s(f.fecha) } : null;
+  return f && f.payload !== null && typeof f.payload === "object" ? { payload: f.payload as Record<string, unknown>, clienteId: s(f.clienteId), sucursalId: s(f.sucursalId), puntoId: s(f.puntoId), fecha: s(f.fecha), vendedorId: s(f.vendedorId) } : null;
+}
+
+/** Sin la tabla del vendedor (NEX-074 no aplicada) no se puede probar la equivalencia: null, y prepararFactura rechaza con el motivo claro antes de cualquier reserva. */
+async function payloadHistorico(db: Db, empresaId: string, clave: string): Promise<Historico | null> {
+  try {
+    return await leerPayloadHistorico(db, empresaId, clave);
+  } catch (error) {
+    if ((error as { code?: string }).code === "42P01") return null;
+    throw error;
+  }
 }
 
 /** Claves de la identidad y el domicilio del receptor: derivan del cadastro ACTUAL del cliente y no se comparan con el snapshot histórico (la identidad se prueba por cliente_id). */
@@ -688,7 +713,7 @@ const operacionComercial = (p: Record<string, unknown>) => canonico(Object.fromE
 
 /**
  * Equivalencia de la operación de un reintento con la FE histórica de la misma clave (la clave por sí sola no lo prueba). Todo debe coincidir, o el llamador responde 409 (equivalencia no demostrable = falla cerrado):
- *  · cliente, sucursal y punto de expedición del documento persistido (el punto se resuelve por su código en esa sucursal; si no es único, no se prueba);
+ *  · cliente, sucursal, punto de expedición y VENDEDOR (ID registrado en documento_electronico_vendedor) del documento persistido (el punto se resuelve por su código en esa sucursal; si no es único, no se prueba);
  *  · operación comercial recalculada (ítems, precios, impuestos, descuentos, pagos, moneda, condición) idéntica al payload original;
  *  · observaciones: las enviadas ahora deben ser EXACTAMENTE las del dInfAdic persistido (ver `descomponerInfoAdicional`: sin marca propia, forma única comprobable);
  *  · destino de entrega: sin destino ahora ⇒ el dInfAdic histórico no trae línea de entrega; con destino ⇒ su línea (destino elegible del cliente y la empresa) es la del snapshot histórico.
@@ -696,6 +721,7 @@ const operacionComercial = (p: Record<string, unknown>) => canonico(Object.fromE
  */
 async function equivalente(db: Db, empresaId: string, usuarioId: string, historico: Historico, nuevo: Record<string, unknown>, cuerpo: CuerpoFactura): Promise<boolean> {
   if (historico.clienteId !== cuerpo.clienteId || historico.sucursalId !== cuerpo.sucursalId || historico.puntoId.toLowerCase() !== cuerpo.puntoId.toLowerCase()) return false;
+  if (historico.vendedorId.toLowerCase() !== cuerpo.vendedorId.toLowerCase()) return false;
   if (cuerpo.fechaEmision !== undefined && cuerpo.fechaEmision !== historico.fecha) return false;
   if (operacionComercial(historico.payload) !== operacionComercial(nuevo)) return false;
 

@@ -150,6 +150,15 @@ export async function guardPlatformPage() {
   return { session, access };
 }
 
+/** Páginas de administración de usuarios de la EMPRESA: solo el administrador de empresa (nunca la plataforma). Redirige a /login o responde 404. */
+export async function guardCompanyAdminPage() {
+  const session = await getCurrentSession();
+  if (!session) redirect("/login");
+  const access = await getAccessContext(session.user, session.demo === true);
+  if (access.isPlatformAdmin || !access.isCompanyAdmin) notFound();
+  return { session, access };
+}
+
 /** Atajo para rutas API que ya validaron la sesión: devuelve 403 o null. */
 export async function denyIfNoPermission(
   session: AuthSession,
