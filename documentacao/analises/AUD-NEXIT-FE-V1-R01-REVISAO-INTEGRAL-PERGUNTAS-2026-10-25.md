@@ -67,12 +67,16 @@ Se confirma ventana de interfaz de −30/+5. Para fecha anterior a cinco días, 
 - **Propuesta:** permitir seleccionar fecha, mostrar aviso fiscal; **no transmitir** fuera de la regla que el gateway/SIFEN realmente soporte, hasta tener evidencia de homologación. *No aprobado.*
 
 **P07 — Tipos especiales 5–13 y stock (bloqueante fiscal P1).**
-El responsable confirmó ofrecer los trece `iTipTra`. ¿La V1 debe **emitir operacionalmente todos** (con sus reglas de IVA, impuestos, contraparte y movimientos), o mostrar el catálogo completo y habilitar progresivamente los tipos fiscalmente compatibles con el gateway? Operaciones `Compra de productos`, `Donación`, `Venta de divisas`, `Anticipo`, etc. no deben heredar automáticamente la salida de stock de la `Venta de mercadería`.
+El responsable confirmó ofrecer los trece `iTipTra`. El Manual Técnico v150 exige, por ejemplo, H013 (número de resolución) cuando D011=12: un combo solo no vuelve fiscalmente válido ese tipo. ¿La V1 debe **emitir operacionalmente todos** (con sus reglas de IVA, impuestos, contraparte y movimientos), o mostrar el catálogo completo y habilitar progresivamente los tipos fiscalmente compatibles con el gateway? Operaciones `Compra de productos`, `Donación`, `Venta de divisas`, `Anticipo`, etc. no deben heredar automáticamente la salida de stock de la `Venta de mercadería`.
 - **Propuesta:** combo de 13 visible; habilitar emisión por tipo con validación/gateway probado; operaciones no soportadas informan motivo y no reservan stock o número. *No aprobado como restricción de todos los tipos.*
 
 **P08 — Seguimiento de FE y conversión automática de stock (bloqueante de operación P1).**
 ¿Confirmamos que el backend debe consultar de forma automática y duradera las FE `ENVIADO/PENDIENTE` y efectuar SALIDA cuando llega APROBADO, aunque nadie esté conectado al navegador?
 - **Propuesta:** sí; reutilizar scheduler de NCE con cadencia, leases, tolerancia a caídas y estado de reproceso visible en Documentos. No simular APROBADO cuando falla consulta/stock. *No aprobado aún.*
+
+## 4.1 Interpretación para la reunión de decisiones
+
+**Preguntas de negocio prioritarias a hacer al responsable:** P01, P02, P04 (solo campos funcionales; CDC/número es una verificación técnica normativa), P05, P06 y P07. **P03 y P08 deben resolverse como diseño técnico seguro a partir de las reglas ya aprobadas, sin exigir al responsable reinventar el manejo de idempotencia:** el preflight evita reservas inútiles, incertidumbre conserva reserva hasta consulta fiable y la aprobación debe producir SALIDA automáticamente sin navegador. Si el responsable discrepa con esta interpretación, dejarlo pendiente y documentar.
 
 ## 5. Decisiones de implementación que deben ser técnicas, NO nuevas preguntas del usuario
 
@@ -96,6 +100,9 @@ El responsable confirmó ofrecer los trece `iTipTra`. ¿La V1 debe **emitir oper
 5. **Humano:** preflight/migration/backup/rollback autorizados, homologación en PG, gateway y navegador, sin reemitir FE reales sin autorización. Solo tras aceptación marcar completadas.
 
 ## 7. Correspondencia Linear
+
+- **Gate de decisiones:** [PRO-309](https://linear.app/proceit/issue/PRO-309).
+- **Entregas separadas NO AUTORIZADAS:** [PRO-310](https://linear.app/proceit/issue/PRO-310) (reserva y salida), [PRO-311](https://linear.app/proceit/issue/PRO-311) (corregir rechazadas), [PRO-312](https://linear.app/proceit/issue/PRO-312) (historial y consulta FE), [PRO-313](https://linear.app/proceit/issue/PRO-313) (botón cancelación inactivo).
 
 - `PRO-93` formulario FE; `PRO-294` fecha; `PRO-307`/`PRO-72` vendedor; `PRO-134` iTipTra; `PRO-91` documentos y timeline; `PRO-97/98` consulta FE.
 - `PRO-200` paquete histórico CASA MINGO: **no usar para implementar sin rediseño** de NEX-067; issue nueva específica para reserva/aprobación recomendada.
