@@ -1942,3 +1942,160 @@
     flex: 1 1 0;
   }
 }
+
+/* ══ PRO-93 — correcciones de la pantalla (cliente, tabla, pie financiero) ══
+   Se aplican al final para prevalecer sobre las reglas anteriores. */
+
+/* Cliente · Dirección de entrega · Acciones: una fila estable en escritorio; el destino largo se recorta con puntos suspensivos (el texto completo está en el title del select). */
+.bandaCliente {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(260px, 1.4fr) auto;
+  align-items: end;
+  gap: 8px 16px;
+}
+
+.bandaCliente .clienteResumen {
+  min-width: 0;
+  flex-wrap: nowrap;
+  justify-content: flex-start;
+  align-self: end;
+  gap: 4px 12px;
+}
+
+.bandaCliente .clienteNombre {
+  min-width: 0;
+}
+
+.bandaCliente .clienteNombre strong,
+.bandaCliente .clienteNombre span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bandaCliente .clienteResumen .badge {
+  flex: 0 0 auto;
+}
+
+.bandaCliente .entregaCliente {
+  min-width: 0;
+  max-width: none;
+  flex: initial;
+}
+
+.bandaCliente .entregaCliente .field,
+.bandaCliente .entregaCliente .field select {
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+}
+
+.bandaCliente .entregaCliente .field select {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bandaCliente > .hint,
+.bandaCliente > [role="status"],
+.bandaCliente > [role="alert"] {
+  align-self: center;
+  margin: 0;
+}
+
+.bandaCliente .actions {
+  flex-wrap: nowrap;
+  align-self: end;
+  margin-left: 0;
+  white-space: nowrap;
+}
+
+@media (max-width: 1000px) {
+  .bandaCliente {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .bandaCliente .actions {
+    justify-self: start;
+  }
+}
+
+/* Tabla de productos: Unidad sin partir palabras; columnas con ancho suficiente; solo la descripción puede partirse. La página tiene una única rolagem vertical. */
+.itemsCompacta {
+  min-width: 980px;
+}
+
+.itemsCompacta th,
+.itemsCompacta td {
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.itemsCompacta th {
+  white-space: nowrap;
+}
+
+.itemsCompacta .prod strong,
+.itemsCompacta .prod small {
+  overflow-wrap: anywhere;
+}
+
+.itemsCompacta td:nth-child(3) {
+  white-space: nowrap;
+}
+
+.colIva { width: 150px; }
+.colUnidad { width: 88px; }
+.colCantidad { width: 96px; }
+.colPrecio { width: 140px; }
+.colDescuento { width: 190px; }
+.colSubtotal { width: 120px; }
+.colAcciones { width: 132px; }
+
+.itemsCompacta .accion {
+  display: table-cell;
+  white-space: nowrap;
+}
+
+.tableWrap {
+  overflow-x: auto;
+  overflow-y: visible;
+}
+
+/* Pie financiero: franja compacta de ancho completo, EN FLUJO (sin position sticky/absolute): nunca tapa Descuento general, Forma de pago, Observaciones ni el foco por teclado.
+   Los paneles «Detalle de impuestos» y «Pendientes» se expanden en el flujo, ocupando su propia fila. */
+.barraResumen {
+  position: static;
+  width: 100%;
+  box-sizing: border-box;
+  box-shadow: none;
+  gap: 8px 24px;
+}
+
+.barraDetalle {
+  position: static;
+}
+
+.barraDetalle[open] {
+  order: 10;
+  flex: 1 1 100%;
+}
+
+.barraPanel {
+  position: static;
+  width: 100%;
+  max-height: none;
+  margin-top: 8px;
+  overflow: visible;
+  box-sizing: border-box;
+  box-shadow: none;
+}
+
+.workspace input,
+.workspace select,
+.workspace textarea,
+.workspace button,
+.workspace summary,
+.workspace a {
+  scroll-margin-bottom: 24px;
+}

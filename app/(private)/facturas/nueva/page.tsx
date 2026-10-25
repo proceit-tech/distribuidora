@@ -10,6 +10,7 @@ import { crearBuscadorRapido, type EstadoBuscador, MAX_VISIBLES } from "@/lib/fa
 import { formularioModificado, perdidasAlCambiarCondicion, perdidasAlCambiarMoneda } from "@/lib/facturacion/cambios-formulario";
 import { descuentosTrasCambioMoneda } from "@/lib/facturacion/descuentos";
 import { soloDifierenCerosIniciales } from "@/lib/facturacion/codigo-producto";
+import { evaluarFechaEmision, rangoSeleccion } from "@/lib/facturacion/fecha-emision";
 import { etiquetaEstablecimiento } from "@/lib/facturacion/presentacion";
 import { pedirOpcionesEntrega } from "@/lib/facturacion/entrega";
 import { crearControlEntrega, pendienteEntrega } from "@/lib/facturacion/entrega-control";
@@ -40,7 +41,7 @@ import estilos from "./page.module.css";
 
 type Punto = { id: string; codigo: string; nombre: string; ultimoNumero?: number; serie?: string | null };
 type Sucursal = { id: string; nombre: string; establecimiento: string; puntos: Punto[]; puntosInactivos?: number };
-type Opciones = { condiciones: Record<string, string>; tiposTransaccion: Record<string, string>; presencias: Record<string, string>; formasPago: Record<string, string> };
+type Opciones = { condiciones: Record<string, string>; tiposTransaccion: Record<string, string>; soporteTipoTransaccion?: Record<string, { habilitado: boolean; motivo?: string }>; presencias: Record<string, string>; formasPago: Record<string, string> };
 type Cliente = {
   id: string; codigo: string; razonSocial: string; nombreFantasia: string | null; numeroDocumento: string; dv: string | null; naturaleza: number; tipoContribuyente: number | null;
   email: string | null; emailFacturacion: string | null; telefono: string | null; celular: string | null; direccion: string | null; numeroCasa: string | null; apto: boolean; pendientes: string[];
@@ -56,7 +57,7 @@ const descuentoDe = (d: DescUI): DescUI | null => (d.valor.trim() === "" ? null 
 type Linea = { clave: number; producto: Producto; cantidad: string; precio: string; ajuste: AjusteUI; descuento: DescUI };
 type Resumen = {
   empresa: string; sucursal: string; establecimiento: string; punto: string; numero: string; cliente: { codigo: string; razonSocial: string; documento: string };
-  tipoTransaccion: string; presencia: string; condicion: string; formaPago: string; moneda: string;
+  tipoTransaccion: string; presencia: string; condicion: string; formaPago: string; moneda: string; fechaEmision?: string;
   cambio?: { valor: string; totalGs: string; catalogo: { cambio: string; fecha: string } | null; modificado: boolean };
   pagos?: Array<{ medio: string; monto: string; detalle: string }>;
   credito?: { tipo: string; plazo: string | null; entrega: string; saldo: string; cuotas: Array<{ numero: number; monto: string; vencimiento: string }> };
@@ -490,6 +491,8 @@ export default function NuevaFacturaPage() {
   const [condicion, setCondicion] = useState("1");
   const [credito, setCredito] = useState<EstadoCreditoUI>(CREDITO_UI_VACIO);
   const [hoyIso, setHoyIso] = useState("");
+  // D002: fecha de emisión elegida (AAAA-MM-DD, día local de Paraguay). Viaja en el cuerpo, se valida en el servidor y la persiste la base (NEX-073); cambiarla invalida la revisión.
+  const [fechaEmision, setFechaEmision] = useState("");
   const [moneda, setMoneda] = useState<Moneda>("PYG");
   const [cambio, setCambio] = useState("");
   // true solo cuando el OPERADOR escribió el cambio; false si lo precargó la pantalla con la cotización sugerida (no cuenta como dato a perder).
@@ -578,6 +581,7 @@ export default function NuevaFacturaPage() {
 
         setHoy(formatearFechaPy(new Date()));
         setHoyIso(hoyParaguay());
+        setFechaEmision(hoyParaguay());
         setSucursales(j.sucursales);
         setSinEstablecimiento(j.sucursalesSinEstablecimiento ?? 0);
         setGateway(j.gateway ?? null);
@@ -628,7 +632,15 @@ export default function NuevaFacturaPage() {
   const objetivoDec = enCredito ? entregaDec : parseDec(calculo.texto.total, 8);
   const pendientesDePagos = hayPagos && objetivoDec !== null && calculo.total > 0 ? pendientesPagos(pagos.map((p) => pagoParaEnvio(p, pagos.length === 1)), objetivoDec, Number(presencia)) : [];
   const pagoFlujo = disponibilidadPago({ hayCliente: cliente !== null, nLineas: lineas.length, lineasValidas, totalPositivo: calculo.total > 0, calculoValido: calculo.completo && calculo.erroresDescuento.length === 0 });
+  const fechaEval = fechaEmision === "" || hoyIso === "" ? null : evaluarFechaEmision(fechaEmision, hoyIso);
+  const rangoFecha = hoyIso === "" ? null : rangoSeleccion(hoyIso);
+  const fechaTexto = fechaEmision === "" ? hoy : formatearFechaPy(new Date(`${fechaEmision}T12:00:00`));
+  const soporteTipo = opciones?.soporteTipoTransaccion?.[tipoTransaccion];
+  const tipoBloqueado = soporteTipo !== undefined && soporteTipo.habilitado !== true;
   const faltan = [
+    fechaEmision === "" ? "fecha de emisión" : "",
+    fechaEval && !fechaEval.ok ? "corregir la fecha de emisión" : "",
+    tipoBloqueado ? "elegir un tipo de transacción que se pueda emitir" : "",
     sucursalId === "" ? "sucursal" : "",
     puntoId === "" ? "punto de expedición" : "",
     cliente === null ? "cliente" : "",
@@ -685,7 +697,7 @@ export default function NuevaFacturaPage() {
 
   // El precio solo viaja cuando difiere del de lista; el servidor lo contrasta con el catálogo y con el permiso del usuario.
   const cuerpoFactura = () => ({
-    claveIdempotencia: clave, sucursalId, puntoId, clienteId: cliente?.id, tipoTransaccion: Number(tipoTransaccion), presencia: Number(presencia), moneda, ...(extranjera ? { cambio } : {}),
+    claveIdempotencia: clave, sucursalId, puntoId, clienteId: cliente?.id, tipoTransaccion: Number(tipoTransaccion), presencia: Number(presencia), ...(fechaEmision ? { fechaEmision } : {}), moneda, ...(extranjera ? { cambio } : {}),
     pagos: hayPagos ? pagos.map((p) => pagoParaEnvio(p, pagos.length === 1)) : [], condicion: Number(condicion), ...(enCredito ? { credito: creditoParaEnvio(credito) } : {}), infoAdicional, ...(descuentoGeneralFE ? { descuentoGlobal: descuentoGeneralFE } : {}), ...(direccionEntregaId ? { direccionEntregaId } : {}),
     lineas: lineas.map((l) => {
       const ajuste = ajusteParaEnvio(l.producto, l.ajuste);
@@ -845,6 +857,7 @@ export default function NuevaFacturaPage() {
     setTipoTransaccion("1");
     setPresencia("1");
     setEditando(null);
+    setFechaEmision(hoyParaguay());
     setUbicacionElegida(false);
     setErrores([]);
     setResultado(null);
@@ -874,7 +887,7 @@ export default function NuevaFacturaPage() {
         </div>
 
         <div className={estilos.contexto} aria-label="Contexto de la operación">
-          <span className={estilos.meta}>Fecha: {hoy || "—"} · Moneda: {moneda}{extranjera && cambioNormal ? ` · Cambio: ${cambioNormal}` : ""}</span>
+          <span className={estilos.meta}>Fecha de emisión: {fechaTexto || "—"} · Moneda: {moneda}{extranjera && cambioNormal ? ` · Cambio: ${cambioNormal}` : ""}</span>
           <span className={`${estilos.estado} ${resultado ? (resultado.estadoLocal === "ENVIADO" ? estilos.estadoOk : estilos.estadoWarn) : sucio ? estilos.estadoBorrador : ""}`} role="status">{estadoOperacion}</span>
         </div>
       </header>
@@ -929,10 +942,10 @@ export default function NuevaFacturaPage() {
                   ) : null}
                   <div className={estilos.gridOperacion}>
                     <label className={estilos.field}>
-                      <span>Sucursal *</span>
+                      <span>Sucursal / Establecimiento *</span>
                       <select value={sucursalId} onChange={(e) => { setSucursalId(e.target.value); setPuntoId(""); setUbicacionElegida(true); }}>
                         <option value="">Seleccione…</option>
-                        {sucursales.map((s) => <option key={s.id} value={s.id}>{s.nombre} · {etiquetaEstablecimiento(s.establecimiento)}</option>)}
+                        {sucursales.map((s) => <option key={s.id} value={s.id}>{s.establecimiento} — {s.nombre}</option>)}
                       </select>
                     </label>
 
@@ -940,7 +953,7 @@ export default function NuevaFacturaPage() {
                       <span>Punto de expedición *</span>
                       <select value={puntoId} onChange={(e) => { setPuntoId(e.target.value); setUbicacionElegida(true); }} disabled={!sucursal}>
                         <option value="">Seleccione…</option>
-                        {(sucursal?.puntos ?? []).map((p) => <option key={p.id} value={p.id}>{p.codigo} · {p.nombre}</option>)}
+                        {(sucursal?.puntos ?? []).map((p) => <option key={p.id} value={p.id}>{p.codigo} — {p.nombre}</option>)}
                       </select>
                       {sucursal && sucursal.puntos.length === 0 ? (
                         <small className={estilos.fieldError} role="alert">
@@ -949,6 +962,12 @@ export default function NuevaFacturaPage() {
                         </small>
                       ) : null}
                       {sucursal && puntoId && proximoNumero ? <small className={estilos.hint}>Próximo N.º (referencial): {sucursal.establecimiento}-{proximoNumero}</small> : null}
+                    </label>
+
+                    <label className={estilos.field}>
+                      <span>Fecha de emisión *</span>
+                      <input type="date" aria-label="Fecha de emisión" value={fechaEmision} min={rangoFecha?.min} max={rangoFecha?.max} required disabled={hoyIso === ""} onChange={(e) => setFechaEmision(e.target.value)} aria-invalid={fechaEval && !fechaEval.ok ? true : undefined} />
+                      {fechaEval && !fechaEval.ok ? <small className={estilos.fieldError} role="alert">{fechaEval.error}</small> : <small className={estilos.hint}>Se puede elegir de 30 días atrás a 5 adelante; se emite con transmisión normal de hoy a 4 días atrás.</small>}
                     </label>
 
                     <label className={estilos.field}>
@@ -977,8 +996,9 @@ export default function NuevaFacturaPage() {
                     <label className={estilos.field}>
                       <span>Tipo de transacción</span>
                       <select aria-label="Tipo de transacción" value={tipoTransaccion} onChange={(e) => setTipoTransaccion(e.target.value)}>
-                        {Object.entries(opciones?.tiposTransaccion ?? {}).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                        {Object.entries(opciones?.tiposTransaccion ?? {}).map(([k, v]) => <option key={k} value={k}>{k} — {v}{opciones?.soporteTipoTransaccion?.[k]?.habilitado === false ? " (no emitible aún)" : ""}</option>)}
                       </select>
+                      {tipoBloqueado ? <small className={estilos.fieldError} role="alert">No se puede emitir con este tipo: {soporteTipo?.motivo}</small> : null}
                     </label>
 
                     <label className={estilos.field}>
@@ -1032,7 +1052,7 @@ export default function NuevaFacturaPage() {
                           {cliente.nombreFantasia ? <div><dt>Nombre de fantasía</dt><dd>{cliente.nombreFantasia}</dd></div> : null}
                           <div>
                             <dt>Dirección fiscal</dt>
-                            <dd>{cliente.direccion ? `${cliente.direccion} · N.º ${cliente.numeroCasa && /^\d{1,6}$/.test(cliente.numeroCasa.trim()) ? cliente.numeroCasa.trim() : "0 (no cargado; se informa 0)"}` : "No informada"}</dd>
+                            <dd>{cliente.direccion ? `${cliente.direccion} · N.º ${cliente.numeroCasa && /^\d{1,6}$/.test(cliente.numeroCasa.trim()) ? cliente.numeroCasa.trim() : "no cargado: corríjalo en Clientes (no se reemplaza por 0)"}` : "No informada"}</dd>
                           </div>
                           <div><dt>Teléfono</dt><dd>{cliente.celular || cliente.telefono || "No informado"}</dd></div>
                           <div><dt>Correo</dt><dd>{cliente.emailFacturacion || cliente.email || "No informado"}</dd></div>
@@ -1388,7 +1408,7 @@ export default function NuevaFacturaPage() {
                 <div><dt>Empresa</dt><dd>{resumen.empresa}</dd></div>
                 <div><dt>Establecimiento</dt><dd>{etiquetaEstablecimiento(resumen.establecimiento)} · {resumen.sucursal}</dd></div>
                 <div><dt>Punto</dt><dd>{resumen.punto}</dd></div>
-                <div><dt>Fecha</dt><dd>{hoy || "—"}</dd></div>
+                <div><dt>Fecha de emisión</dt><dd>{resumen.fechaEmision ? formatearFechaPy(new Date(`${resumen.fechaEmision}T12:00:00`)) : (hoy || "—")}</dd></div>
               </dl>
             </header>
 
