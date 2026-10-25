@@ -1,5 +1,7 @@
 # ORD-CLAUDE-NEXIT-FE-E03-A1-R02 — ÚNICA ORDEM VIGENTE PARA CLAUDE
 
+> **HISTÓRICO SUPERADO — SUBSTITUÍDO POR [ORD-E03-A1-R03](documentacao/ordens/ORD-CLAUDE-NEXIT-FE-E03-A1-R03-2026-10-25.md) (25/10/2026).** Claude entregou `c8af2dd7107346c1de954ebedda5d2b0c3d83936`. [AUD-R02](../testes/AUD-NEXIT-FE-E03-A1-PRO-321-R02-2026-10-25.md): F001/F003 fechados estaticamente; F002/F004 permanecem bloqueantes. A única ordem vigente é corrigir F002-R02 e F004-R02 no mesmo SQL NEX-072, commit/push, parar. NEX-072 não aplicada, outros módulos bloqueados.
+
 **25/10/2026.** **Issue:** PRO-321 (filha PRO-312). **Branch:** `feature/NEXIT-2026-001-banco-demo` do `proceit-tech/distribuidora`.
 **Origem:** Claude entregou SQL E03-A1 em `4b1ba2d21ea89924ab4eddade8fe9d4e0d690372` (+427 linhas, um arquivo, não aplicado).
 **Auditoria ChatGPT NÃO CONFORME:** [AUD-NEXIT-FE-E03-A1-PRO-321-R01](../testes/AUD-NEXIT-FE-E03-A1-PRO-321-R01-2026-10-25.md). Ler **inteiramente** antes de modificar.
