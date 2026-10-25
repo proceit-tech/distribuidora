@@ -415,6 +415,8 @@ export async function prepararNce(db: Db, empresaId: string, usuarioId: string, 
 
   if (observacionFinal.length > LIMITE_INFO_ADICIONAL) throw new ErrorFacturacion(422, `La información adicional (observaciones + vendedor) tiene ${observacionFinal.length} caracteres y el máximo es ${LIMITE_INFO_ADICIONAL}. Acorte las observaciones; no se recorta automáticamente.`);
 
+  if (cuerpo.observacion.length > LIMITE_INFO_ADICIONAL) throw new ErrorFacturacion(422, `La observación tiene ${cuerpo.observacion.length} caracteres y el máximo es ${LIMITE_INFO_ADICIONAL}. Acórtela; no se recorta automáticamente.`);
+
   const entrada: EntradaNce = {
     motivo: cuerpo.motivo,
     moneda: fe.moneda,
@@ -479,7 +481,7 @@ export async function crearNotaCredito(db: Db, empresaId: string, usuarioId: str
     conRegistro
       ? db.query(
           `SELECT o_documento_id AS "documentoId", o_numero AS numero, o_reutilizado AS reutilizado FROM fe_documento_crear_nce_obs($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5, $6::uuid, $7::integer, $8::jsonb, $9, $10::numeric, $11::jsonb, $12)`,
-          [...argumentos, cuerpo.observacion.trim()],
+          [...argumentos, cuerpo.observacion],
         )
       : db.query(
           `SELECT o_documento_id AS "documentoId", o_numero AS numero, o_reutilizado AS reutilizado FROM fe_documento_crear_nce($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5, $6::uuid, $7::integer, $8::jsonb, $9, $10::numeric, $11::jsonb)`,
@@ -536,10 +538,10 @@ export async function propuestaCorreccion(db: Db, empresaId: string, usuarioId: 
 }
 
 /** Monto del servicio DESCUENTO de una NCE (para precargar su corrección); null si no lo tiene o NEX-070 no está aplicada. */
-async function servicioDeNce(db: Db, empresaId: string, nceId: string): Promise<{ monto: string } | null> {
-  const hay = (await db.query("SELECT to_regclass('public.nce_descuentos') IS NOT NULL AS ok")).rows[0] as F;
+export async function servicioDeNce(db: Db, empresaId: string, nceId: string): Promise<{ monto: string } | null> {
+  const hay = (await db.query("SELECT to_regclass('public.nce_descuentos') IS NOT NULL AS ok")).rows[0] as F | undefined;
 
-  if (hay.ok !== true) return null;
+  if (hay?.ok !== true) return null;
 
   const r = (await db.query("SELECT monto::text AS monto FROM nce_descuentos WHERE empresa_id = $1 AND nce_id = $2", [empresaId, nceId])).rows[0] as F | undefined;
 

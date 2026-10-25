@@ -4,7 +4,7 @@ import { parseDec } from "@/lib/facturacion/calculo";
 import { configuracionGateway, enviarDocumento, type RespuestaEnvio } from "@/lib/facturacion/envio";
 import type { Dependencias } from "@/lib/facturacion/gateway";
 import { legadoCoincide, observacionOriginalDe } from "@/lib/facturacion/info-adicional";
-import { crearNotaCredito, prepararNce, traducirErrorNce, type CuerpoNce } from "@/lib/facturacion/nce";
+import { crearNotaCredito, prepararNce, servicioDeNce, traducirErrorNce, type CuerpoNce } from "@/lib/facturacion/nce";
 import { consultarEstado, ErrorFacturacion } from "@/lib/facturacion/shared";
 
 /**
@@ -39,7 +39,7 @@ export async function repeticion(db: Db, empresaId: string, usuarioId: string, c
   // migración aún no aplicada) la identidad no se puede probar: solo se acepta el texto guardado idéntico y sin bloque automático; todo lo demás es conflicto (409), nunca un documento distinto aceptado como el mismo.
   const original = await observacionOriginalDe(db, empresaId, String(d.id));
   const guardada = typeof d.observacion === "string" ? d.observacion : null;
-  const mismaObservacion = original !== null ? original === cuerpo.observacion.trim() : legadoCoincide(guardada, cuerpo.observacion);
+  const mismaObservacion = original !== null ? original === cuerpo.observacion : legadoCoincide(guardada, cuerpo.observacion);
 
   if (d.sucursalId !== cuerpo.sucursalId || (punto.rows[0] as F | undefined)?.codigo !== d.puntoCodigo || !mismaObservacion) throw conflicto();
 
@@ -64,6 +64,18 @@ export async function repeticion(db: Db, empresaId: string, usuarioId: string, c
     const guardado = parseDec(String(g[campo]), 8);
 
     if (p === undefined || pedido === null || guardado === null || pedido !== guardado) throw conflicto();
+  }
+
+  // PRO-301: el servicio DESCUENTO también es parte de la identidad. Una NCE con servicio (nce_descuentos, NEX-070) se reutiliza solo si se pide el MISMO monto (decimal); una NCE por líneas no se confunde con una de servicio
+  // ni al revés. Sin NEX-070 no existen NCE de servicio: pedir el servicio con una clave ya usada es conflicto.
+  const guardadoServicio = await servicioDeNce(db, empresaId, String(d.id));
+
+  if ((guardadoServicio === null) !== (cuerpo.servicio === undefined)) throw conflicto();
+  if (guardadoServicio !== null && cuerpo.servicio !== undefined) {
+    const guardadoMonto = parseDec(guardadoServicio.monto, 8);
+    const pedidoMonto = parseDec(cuerpo.servicio.monto, 8);
+
+    if (guardadoMonto === null || pedidoMonto === null || guardadoMonto !== pedidoMonto) throw conflicto();
   }
 
   return { documentoId: String(d.id), numero: String(d.numero) };

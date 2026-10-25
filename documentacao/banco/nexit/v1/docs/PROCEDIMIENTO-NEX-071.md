@@ -3,7 +3,7 @@
 **Estado:** versionada y **NO aplicada**. Ningún agente de IA la aplica. La ejecuta **solo el responsable humano** en la VM, con backup previo, según `documentacao/infra/PROCEDIMENTO-ATUALIZACAO-AMBIENTE-NEXIT-VM.md` (runner oficial `aplicar-migraciones.sh`, `--solo-listar` antes). Requiere NEX-062 y NEX-070.
 
 ## Qué hace
-- Crea `nce_observaciones_originales` (solo altas, anclada a `nce_origen`, aislada por empresa): la observación **exacta** que el operador escribió al crear una NCE nueva (puede ser vacía). El `dInfAdic` que viaja al proveedor no cambia.
+- Crea `nce_observaciones_originales` (solo altas, anclada a `nce_origen`, aislada por empresa): la observación **cruda** recibida (sin recortar ni normalizar: espacios y saltos de línea incluidos, puede ser vacía o solo espacios) al crear una NCE nueva. El `dInfAdic` que viaja al proveedor no cambia.
 - Crea `fe_documento_crear_nce_obs` (12 parámetros): llama a `fe_documento_crear_nce` **sin modificarla** y, en la misma transacción, registra la observación original solo si la NCE es nueva. Un reenvío con la misma clave no escribe nada.
 - Las NCE anteriores **no se reclasifican**: no tienen fila, y la aplicación las trata de forma conservadora (ver abajo).
 

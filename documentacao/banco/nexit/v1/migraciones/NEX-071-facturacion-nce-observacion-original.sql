@@ -2,7 +2,7 @@
 -- NEX-071 — NCE E1-R03 (PRO-292 / PRO-300): observación ORIGINAL del operador, inmutable, junto a la NCE.
 -- Problema: nce_origen.observacion guarda el dInfAdic COMPUESTO (observaciones + bloque automático «Vendedor»). A partir de ese texto no se puede probar qué escribió el operador
 -- (ni para precargar la corrección de una NCE rechazada sin perder texto, ni para decidir si un reintento con la misma clave trae el MISMO contenido).
---   * Tabla nce_observaciones_originales (solo altas, anclada a nce_origen, aislada por empresa): una fila por NCE NUEVA con exactamente lo que el operador escribió (puede ser ''). Las NCE anteriores a esta
+--   * Tabla nce_observaciones_originales (solo altas, anclada a nce_origen, aislada por empresa): una fila por NCE NUEVA con la cadena CRUDA recibida, sin recortar ni normalizar (puede ser '' o solo espacios; conserva saltos de línea). Las NCE anteriores a esta
 --     migración NO tienen fila y NO se reclasifican: su procedencia sigue siendo desconocida (la aplicación las trata de forma conservadora).
 --   * fe_documento_crear_nce_obs (12 parámetros): envuelve SIN COPIARLA a fe_documento_crear_nce (misma lógica, permisos, numeración, idempotencia, saldos) y, en la MISMA transacción, inserta la fila cuando
 --     la NCE es nueva. Si el documento ya existía (reutilizado) no escribe nada: no se fabrica procedencia. fe_documento_crear_nce no se modifica.
@@ -29,11 +29,10 @@ DECLARE
   v_id uuid;
   v_numero text;
   v_reutilizado boolean;
-  v_info text := coalesce(p_payload->>'dInfAdic', '');
 BEGIN
-  IF p_observacion_original IS NULL OR char_length(p_observacion_original) > 5000
-     OR left(v_info, char_length(p_observacion_original)) IS DISTINCT FROM p_observacion_original THEN
-    RAISE EXCEPTION 'la observación original no es válida o no corresponde al dInfAdic de la nota de crédito' USING ERRCODE = 'P0001', DETAIL = 'NEX:PAYLOAD_INVALIDO';
+  -- La observación es la cadena CRUDA del operador (sin trim); el dInfAdic del payload se compone aparte (recortado) y no se relaciona byte a byte con ella.
+  IF p_observacion_original IS NULL OR char_length(p_observacion_original) > 5000 THEN
+    RAISE EXCEPTION 'la observación original no es válida (obligatoria, hasta 5000 caracteres)' USING ERRCODE = 'P0001', DETAIL = 'NEX:PAYLOAD_INVALIDO';
   END IF;
 
   -- Toda la lógica fiscal (permiso, idempotencia, saldos, numeración, persistencia) es la de fe_documento_crear_nce; esta función solo añade el registro de la observación original.
