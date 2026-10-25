@@ -2634,3 +2634,11 @@ Após o encerramento **estático** de Inventario na `AUD-INV-R05` (sem homologa�
 - **P3/P4:** KuDE fora desta R06 (nenhuma modificação em UI local ou fornecedor). **P7:** homologação em navegador feita depois pelo responsável; não alegar teste. **P10:** `CLAUDE.md` retificado; ordens R05 e HTTP400 são históricas e não podem ser reativadas.
 - **Linear:** PRO-93/128 permanecem `In Review`; PRO-115 controla o aceite humano; PRO-194 permanece independente, sem novo trabalho KuDE.
 - **Gate:** Claude faz somente código UX e commit/push; **SEM executar testes, lint, typecheck, build, CI, SQL, migrations NEX-072/073/074, VM, gateway, SIFEN, browser ou deploy**; depois **PARA PARA AUDITORIA DO CHATGPT**. Nenhum código, teste ou publicação foi executado nesta organização documental.
+
+### AUDITORIA INDEPENDENTE PRO-93-R06 — R01 (25/10/2026): NÃO CONFORME PARA ACEITE INTEGRAL
+
+- **Commit funcional:** `4cdcbf75dee6e0912360f05e3ee9ae32991b5e59` (somente `page.tsx`, `page.module.css` da Nueva factura). **Relatório técnico:** [AUD-NEXIT-PRO-93-R06-UX-R01](documentacao/testes/AUD-NEXIT-PRO-93-R06-UX-R01-2026-10-25.md).
+- **Conforme estaticamente:** largura da modal até 1280px, tabela ocupa largura disponível, scrollbar vertical no corpo, cabeçalho sticky implementado, expansão `Información adicional`, nenhuma mudança `Búsqueda avanzada`/Enter/scanner/cálculos/JSON/KuDE/SQL. Cabeçalho sticky ainda NÃO homologado em navegador.
+- **F001 MÉDIA/BLOQUEANTE UX:** no mobile o `td` de preço usa `display:flex` com `::before` + valor + spans de desconto/preço modificado como irmãos, comprimindo e desordenando valores. **F002 MÉDIA/BLOQUEANTE UX:** descrição permanece em `-webkit-line-clamp:2` sem acesso confiável por toque. **O001 BAIXA:** `texto.length` vs `Array.from` na prévia de Unicode.
+- **ORDEM CORRETIVA ÚNICA ATIVA:** [ORD-CLAUDE-NEXIT-PRO-93-R06-C01-UX-MOBILE-2026-10-25.md](documentacao/ordens/ORD-CLAUDE-NEXIT-PRO-93-R06-C01-UX-MOBILE-2026-10-25.md). Só F001/F002, O001 opcional; R05/R06 original não reexecutar. Claude realiza patch mínimo, commit/push e PARA para reauditoria ChatGPT. **PRO-93/128 In Review, PRO-115 Todo, PRO-194 sem alteração**.
+- **Nada executado:** testes, navegador, lint, build, CI, SQL, migrations NEX-072/073/074, VM, gateway, SIFEN ou deploy. Visual real continua sob responsabilidade do proprietário do ambiente.
