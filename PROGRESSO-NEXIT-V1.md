@@ -2624,3 +2624,13 @@ Após o encerramento **estático** de Inventario na `AUD-INV-R05` (sem homologa�
 - KuDE: ERROR/CARGANDO em modal compacta, LISTO/PDF com visor amplo; regra PRO-194 e API inalteradas.
 - Conexão HTTP400 resolvida no fornecedor conforme responsável; esta R05 NÃO toca JSON, gateway ou credenciais. Não reabrir esse incidente.
 - **Sem testes, navegador, SQL, migrations, runner, VM, build, SIFEN ou deploy**. NEX-072/073/074 continuam sem autorização. Aceite visual futuro deve verificar resumo 0/1/20/100 linhas em viewport/zoom, foco e modal KuDE. PRO-93/128/194 permanecem In Review; PRO-115 pendente. Não abrir R06 sem regressão comprovada.
+
+### DECISÃO EXPRESSA DO RESPONSÁVEL — PRO-93-R06 / PRO-128 (25/10/2026) — ORDEM ATIVA
+- **Fonte canônica e única para Claude agora:** [ORD-CLAUDE-NEXIT-PRO-93-R06-UX-RESUMEN-PRODUCTOS-2026-10-25.md](documentacao/ordens/ORD-CLAUDE-NEXIT-PRO-93-R06-UX-RESUMEN-PRODUCTOS-2026-10-25.md). Decisões fechadas P1–P10; o responsável **AUTORIZOU** implementação e pediu auditoria posterior pelo ChatGPT. **R05 está encerrada estaticamente como histórico**, não reexecutar, e não é necessário defeito adicional para a R06 pois esta nova melhoria foi expressamente escolhida.
+- **P1:** organizar e compactar dados da modal `Resumen de la factura` e ampliar área/largura da tabela de produtos. Uma só rolagem vertical do corpo, ações finais acessíveis; preservar todos os itens e valores.
+- **P8:** cabeçalhos de colunas permanecem visíveis em listas longas sem criar scrollbar vertical independente, considerando a interação técnica de `sticky` com `overflow-x:auto`; não declarar funcionamento sem evidência.
+- **P9:** prévia de `Información adicional` longa e expandir para texto completo; nunca alterar `dInfAdic` nem JSON.
+- **P2:** somente alinhamento do `Búsqueda avanzada`; como R05 já mudou DOM/CSS, não refazer busca sem evidência residual. **P5:** Enter/scanner intactos. **P6:** cálculos, IVA, payload e gateway intactos.
+- **P3/P4:** KuDE fora desta R06 (nenhuma modificação em UI local ou fornecedor). **P7:** homologação em navegador feita depois pelo responsável; não alegar teste. **P10:** `CLAUDE.md` retificado; ordens R05 e HTTP400 são históricas e não podem ser reativadas.
+- **Linear:** PRO-93/128 permanecem `In Review`; PRO-115 controla o aceite humano; PRO-194 permanece independente, sem novo trabalho KuDE.
+- **Gate:** Claude faz somente código UX e commit/push; **SEM executar testes, lint, typecheck, build, CI, SQL, migrations NEX-072/073/074, VM, gateway, SIFEN, browser ou deploy**; depois **PARA PARA AUDITORIA DO CHATGPT**. Nenhum código, teste ou publicação foi executado nesta organização documental.
