@@ -5,15 +5,19 @@ import { hoyParaguay } from "@/lib/facturacion/credito";
  *
  * Dos conceptos distintos (no confundir):
  *  · VENTANA DE SELECCIÓN comercial: el operador puede ELEGIR desde 30 días atrás hasta 5 días adelante (día local de Paraguay).
- *  · VENTANA HABILITADA para emitir: la transmisión NORMAL a SIFEN exige enviar el DE dentro de las 120 h de su emisión (DNIT, preguntas frecuentes e-Kuatia). Fuera de ella el tratamiento fiscal es otro (extemporáneo) y
- *    este flujo NO lo implementa: la fecha se puede elegir, pero la emisión se bloquea ANTES de reservar numeración, con el motivo; nunca se cambia en silencio por la de hoy ni se falsifica fecha/hora.
- *    Se habilitan hasta 4 días atrás (96 h + margen: el envío ocurre segundos después de crear el documento) y nunca fechas futuras (el DE no puede declararse emitido después de transmitirse).
- * Un cambio de estas constantes es una decisión fiscal; la migración NEX-073 aplica los mismos límites en la base.
+ *  · VENTANA HABILITADA para emitir: transmisión NORMAL a SIFEN. Según las preguntas frecuentes e-Kuatia de la DNIT, el documento se transmite normalmente cuando la FIRMA→transmisión no pasa de 72 h y la EMISIÓN→transmisión
+ *    (emisión anterior O posterior a la transmisión) no pasa de 120 h. La firma y la transmisión las ejecuta el gateway justo después de crear el documento, así que este flujo no presume ningún instante de transmisión.
+ *    Convención de la hora: el selector solo trae una FECHA; la base compone el instante de emisión con esa fecha y la hora LOCAL de Asunción en que se reserva el número (el operador no elige hora).
+ *    Con esa convención la diferencia emisión−transmisión es de N×24 h menos (futuro) o más (pasado) el retraso hasta transmitir:
+ *      – Futuro (+1…+5 días): la diferencia es ≤ 120 h porque la transmisión ocurre DESPUÉS de crear el documento ⇒ habilitado en toda la selección.
+ *      – Pasado: −4 días = 96 h deja 24 h de margen para el envío (y un reintento); −5 días = 120 h ya no tiene margen y −6…−30 la exceden ⇒ la emisión se BLOQUEA antes de reservar numeración, con el motivo.
+ *        Esas fechas requieren el tratamiento fiscal extemporáneo que este flujo no implementa; nunca se cambia la fecha en silencio ni se falsifica hora/CDC.
+ * Los límites de este módulo y de la migración NEX-073 deben coincidir; cambiar uno exige cambiar el otro (decisión fiscal).
  */
 export const SELECCION_DIAS_ATRAS = 30;
 export const SELECCION_DIAS_ADELANTE = 5;
 export const HABILITADA_DIAS_ATRAS = 4;
-export const HABILITADA_DIAS_ADELANTE = 0;
+export const HABILITADA_DIAS_ADELANTE = 5;
 
 const FORMA = /^(\d{4})-(\d{2})-(\d{2})$/;
 
@@ -63,11 +67,8 @@ export function evaluarFechaEmision(fecha: unknown, hoy: string = hoyParaguay())
   if (dif < -SELECCION_DIAS_ATRAS || dif > SELECCION_DIAS_ADELANTE) {
     return { ok: false, error: `La fecha de emisión debe estar entre ${SELECCION_DIAS_ATRAS} días atrás y ${SELECCION_DIAS_ADELANTE} días adelante de hoy.` };
   }
-  if (dif > HABILITADA_DIAS_ADELANTE) {
-    return { ok: false, error: "Una fecha de emisión futura no está habilitada para emitir: el documento no puede declararse emitido después de su transmisión. Use la fecha de hoy." };
-  }
   if (dif < -HABILITADA_DIAS_ATRAS) {
-    return { ok: false, error: `La emisión con fecha de hace más de ${HABILITADA_DIAS_ATRAS} días queda fuera del plazo de transmisión normal a SIFEN (120 horas) y requiere un tratamiento fiscal extemporáneo que este flujo aún no implementa. Use una fecha más reciente.` };
+    return { ok: false, error: `La emisión con fecha de hace más de ${HABILITADA_DIAS_ATRAS} días queda fuera del plazo de transmisión normal a SIFEN (120 horas, con el envío ya incluido) y requiere un tratamiento fiscal extemporáneo que este flujo aún no implementa. Use una fecha más reciente.` };
   }
 
   return { ok: true };
