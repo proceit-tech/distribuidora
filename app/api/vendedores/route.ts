@@ -20,10 +20,11 @@ export async function GET(request: Request) {
     const { db } = await import("@/lib/db");
     const acceso = await getAccessContext(g.session.user, g.session.demo === true);
 
-    return NextResponse.json({
-      ...(await listarVendedores(db, g.session.user.empresaId, { ...leerPagina(url), estado: estado === "ACTIVO" || estado === "INACTIVO" ? estado : "TODOS" })),
-      puedeGestionar: acceso.isCompanyAdmin && !acceso.isPlatformAdmin,
-    });
+    // CI, correo y teléfono solo para el administrador de la empresa; quien solo tiene VENDEDORES.VER ve usuario, nombre y situación.
+    const gestor = acceso.isCompanyAdmin && !acceso.isPlatformAdmin;
+    const r = await listarVendedores(db, g.session.user.empresaId, { ...leerPagina(url), estado: estado === "ACTIVO" || estado === "INACTIVO" ? estado : "TODOS" }, gestor);
+
+    return NextResponse.json({ ...r, vendedores: gestor ? r.vendedores : r.vendedores.map((v) => ({ id: v.id, usuario: v.usuario, nombre: v.nombre, apellido: v.apellido, nombreCompleto: v.nombreCompleto, estado: v.estado, activo: v.activo })), puedeGestionar: gestor });
   } catch (error) {
     return respuestaErrorUsuarios(error);
   }

@@ -35,6 +35,12 @@ const MENSAJES: Record<string, string> = {
   "NEX:AUTODESACTIVACION": "No puede desactivar su propio usuario.",
   "NEX:USUARIO_BAJA": "Un usuario dado de baja no se puede reactivar.",
   "NEX:PERFIL_INVALIDO": "Alguno de los perfiles no pertenece al catálogo de la empresa.",
+  "NEX:CI_DUPLICADA": "Ya existe otro usuario con esa CI en la empresa.",
+  "NEX:CI_INVALIDA": "La CI es obligatoria y debe tener de 4 a 10 dígitos.",
+  "NEX:EMAIL_INVALIDO": "El correo electrónico es obligatorio y debe ser válido.",
+  "NEX:TELEFONO_INVALIDO": "El teléfono es obligatorio y debe tener de 6 a 15 dígitos.",
+  "NEX:NOMBRE_INVALIDO": "El nombre es obligatorio (hasta 120 caracteres).",
+  "NEX:APELLIDO_INVALIDO": "El apellido es obligatorio (hasta 120 caracteres).",
   "NEX:ALCANCE_TOTAL": "El usuario tiene alcance total (todas las sucursales y depósitos) y no se modifica desde aquí.",
   "NEX:ALCANCE_INVALIDO": "Alguna sucursal o depósito no existe en la empresa o está inactivo.",
   "NEX:PERFIL_CONFLICTO": "La empresa tiene un perfil heredado que impide completar el catálogo de perfiles. Contacte al soporte.",
@@ -46,12 +52,12 @@ export function respuestaErrorUsuarios(error: unknown): NextResponse {
 
   if (e.code === "42501") return NextResponse.json({ error: "Solo el administrador de la empresa puede gestionar usuarios y perfiles." }, { status: 403 });
   if (e.code === "P0001" && e.detail?.startsWith("NEX:")) {
-    const estado = e.detail === "NEX:USUARIO_DUPLICADO" || e.detail === "NEX:ULTIMO_ADMIN" ? 409 : 422;
+    const estado = e.detail === "NEX:USUARIO_DUPLICADO" || e.detail === "NEX:CI_DUPLICADA" || e.detail === "NEX:ULTIMO_ADMIN" ? 409 : 422;
     const texto = MENSAJES[e.detail] ?? (e.message ? e.message.charAt(0).toUpperCase() + e.message.slice(1) + "." : "La operación no es válida.");
 
     return NextResponse.json({ error: texto }, { status: estado });
   }
-  if (e.code === "42883" || e.code === "42P01") return NextResponse.json({ error: "La administración de usuarios requiere la migración NEX-074 en la base de datos (aún no aplicada)." }, { status: 503 });
+  if (e.code === "42883" || e.code === "42P01" || e.code === "42703") return NextResponse.json({ error: "La administración de usuarios requiere la migración NEX-074 en la base de datos (aún no aplicada)." }, { status: 503 });
 
   return NextResponse.json({ error: "No fue posible completar la operación." }, { status: 500 });
 }

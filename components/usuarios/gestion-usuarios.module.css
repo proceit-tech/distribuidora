@@ -201,3 +201,13 @@
   gap: 8px;
   font-size: 14px;
 }
+
+.errorCampo {
+  color: #9b2c2c;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.campo input[aria-invalid="true"] {
+  border-color: #c0392b;
+}

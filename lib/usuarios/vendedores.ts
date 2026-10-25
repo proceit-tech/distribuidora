@@ -13,6 +13,10 @@ const s = (v: unknown) => (v === null || v === undefined ? "" : String(v));
 const comodin = (t: string) => t.replace(/[!%_]/g, (c) => `!${c}`);
 
 export type Vendedor = { id: string; usuario: string; nombre: string; apellido: string; nombreCompleto: string; email: string; estado: string; activo: boolean };
+/** Datos de contacto/identificación (CI, correo, teléfono): solo para el administrador de la empresa en Maestros → Vendedores; nunca en el selector de la factura. */
+export type VendedorConContacto = Vendedor & { ci: string; telefono: string };
+/** Lo mínimo que necesita el selector de «Nueva factura»: el ID (usuarios.id) es la identidad; el usuario ayuda a distinguir nombres parecidos. */
+export type VendedorSelector = { id: string; usuario: string; nombreCompleto: string };
 
 const nombreCompleto = (nombre: string, apellido: string) => `${nombre} ${apellido}`.replace(/\s+/g, " ").trim();
 
@@ -26,23 +30,25 @@ const BASE = `FROM usuarios u
   WHERE u.empresa_id = $1 AND u.estado <> 'BAJA'
     AND NOT EXISTS (SELECT 1 FROM administradores_plataforma ap WHERE ap.empresa_id = u.empresa_id AND ap.usuario_id = u.id AND ap.activo)`;
 
-/** Lista paginada de vendedores de la empresa (con filtro por texto y por estado). */
-export async function listarVendedores(db: Db, empresaId: string, p: { q: string; estado: "TODOS" | "ACTIVO" | "INACTIVO"; pagina: number; porPagina: number }) {
+/** Lista paginada de vendedores de la empresa (filtro por texto y estado). `conContacto` agrega CI, correo y teléfono (solo administrador de empresa); sin él no se leen esas columnas. */
+export async function listarVendedores(db: Db, empresaId: string, p: { q: string; estado: "TODOS" | "ACTIVO" | "INACTIVO"; pagina: number; porPagina: number }, conContacto = false) {
   const r = await db.query(
-    `SELECT u.id, u.usuario, u.nombre, u.apellido, u.email, u.estado, count(*) OVER() AS total ${BASE}
-      AND ($2 = '' OR u.usuario ILIKE $3 ESCAPE '!' OR u.nombre ILIKE $3 ESCAPE '!' OR coalesce(u.apellido, '') ILIKE $3 ESCAPE '!' OR concat_ws(' ', u.nombre, u.apellido) ILIKE $3 ESCAPE '!')
+    `SELECT u.id, u.usuario, u.nombre, u.apellido, u.email, u.estado${conContacto ? ", u.ci, u.telefono" : ""}, count(*) OVER() AS total ${BASE}
+      AND ($2 = '' OR u.usuario ILIKE $3 ESCAPE '!' OR u.nombre ILIKE $3 ESCAPE '!' OR coalesce(u.apellido, '') ILIKE $3 ESCAPE '!' OR concat_ws(' ', u.nombre, u.apellido) ILIKE $3 ESCAPE '!'${conContacto ? " OR coalesce(u.ci, '') ILIKE $3 ESCAPE '!'" : ""})
       AND ($4 = 'TODOS' OR ($4 = 'ACTIVO' AND u.estado = 'ACTIVO') OR ($4 = 'INACTIVO' AND u.estado <> 'ACTIVO'))
       ORDER BY u.nombre, u.apellido, u.id LIMIT $5 OFFSET $6`,
     [empresaId, p.q, `%${comodin(p.q)}%`, p.estado, p.porPagina, (p.pagina - 1) * p.porPagina],
   );
   const filas = r.rows as F[];
 
-  return { vendedores: filas.map(aVendedor), total: filas.length > 0 ? Number(filas[0].total) : 0, pagina: p.pagina, porPagina: p.porPagina };
+  return { vendedores: filas.map((f): Vendedor | VendedorConContacto => (conContacto ? { ...aVendedor(f), ci: s(f.ci), telefono: s(f.telefono) } : aVendedor(f))), total: filas.length > 0 ? Number(filas[0].total) : 0, pagina: p.pagina, porPagina: p.porPagina };
 }
 
-/** Vendedores ACTIVOS para el selector de la factura (solo la empresa actual; usuarios sin el perfil o inactivos no aparecen). */
+/** Vendedores ACTIVOS para el selector de la factura: solo ID, usuario y nombre (sin CI, correo ni teléfono). Usuarios sin el perfil Vendedor o inactivos no aparecen. */
 export async function listarVendedoresActivos(db: Db, empresaId: string, p: { q: string; pagina: number; porPagina: number }) {
-  return listarVendedores(db, empresaId, { ...p, estado: "ACTIVO" });
+  const r = await listarVendedores(db, empresaId, { ...p, estado: "ACTIVO" });
+
+  return { vendedores: r.vendedores.map((v): VendedorSelector => ({ id: v.id, usuario: v.usuario, nombreCompleto: v.nombreCompleto })), total: r.total, pagina: r.pagina, porPagina: r.porPagina };
 }
 
 /** Un vendedor ACTIVO de la empresa (por ID) o null: el servidor revalida siempre lo que eligió el navegador. */

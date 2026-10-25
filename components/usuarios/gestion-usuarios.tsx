@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
 import ui from "@/components/ui/lista-padrao/lista.module.css";
+import { validarAccesoUsuario, validarDatosUsuario, type CampoUsuario } from "@/lib/usuarios/validacion";
 
 import estilos from "./gestion-usuarios.module.css";
 
@@ -13,13 +14,13 @@ import estilos from "./gestion-usuarios.module.css";
  */
 type Modo = "usuarios" | "vendedores";
 type Perfil = { codigo: string; nombre: string };
-type Fila = { id: string; usuario: string; nombre: string; apellido: string | null; email: string | null; estado: string; perfiles?: Perfil[]; ultimoAcceso?: string | null; alcanceSucursales?: string; alcanceDepositos?: string; sucursalesAsignadas?: number; depositosAsignados?: number };
+type Fila = { id: string; usuario: string; nombre: string; apellido: string | null; ci?: string | null; email: string | null; telefono?: string | null; estado: string; perfiles?: Perfil[]; ultimoAcceso?: string | null; alcanceSucursales?: string; alcanceDepositos?: string; sucursalesAsignadas?: number; depositosAsignados?: number };
 type Alcance = { alcanceSucursales: string; alcanceDepositos: string; sucursales: Array<{ id: string; nombre: string; establecimiento: string; asignada: boolean }>; depositos: Array<{ id: string; codigo: string; nombre: string; asignado: boolean }> };
 type Catalogo = { id: string; codigo: string; nombre: string };
-type Formulario = { id: string | null; usuario: string; nombre: string; apellido: string; email: string; contrasena: string; perfiles: string[] };
+type Formulario = { id: string | null; usuario: string; nombre: string; apellido: string; ci: string; email: string; telefono: string; contrasena: string; perfiles: string[] };
 
 const POR_PAGINA = 10;
-const VACIO: Formulario = { id: null, usuario: "", nombre: "", apellido: "", email: "", contrasena: "", perfiles: [] };
+const VACIO: Formulario = { id: null, usuario: "", nombre: "", apellido: "", ci: "", email: "", telefono: "", contrasena: "", perfiles: [] };
 
 async function pedir<T>(url: string, init?: RequestInit): Promise<T> {
   const r = await fetch(url, { cache: "no-store", ...init });
@@ -49,6 +50,7 @@ export function GestionUsuarios({ modo }: { modo: Modo }) {
   const [form, setForm] = useState<{ tipo: "alta" | "datos" | "perfiles"; datos: Formulario } | null>(null);
   const [guardando, setGuardando] = useState(false);
   const [errorForm, setErrorForm] = useState("");
+  const [erroresCampo, setErroresCampo] = useState<Partial<Record<CampoUsuario, string>>>({});
   const [version, setVersion] = useState(0);
   // Alcance (sucursales y depósitos) del usuario elegido: se carga al abrir el diálogo; se guarda exactamente lo marcado (nunca «todas» automáticamente).
   const [alcance, setAlcance] = useState<{ fila: Fila; datos: Alcance | null; sucursales: string[]; depositos: string[] } | null>(null);
@@ -71,7 +73,7 @@ export function GestionUsuarios({ modo }: { modo: Modo }) {
 
         const lista = (esVendedores ? j.vendedores : j.usuarios) as Array<Record<string, unknown>>;
 
-        setFilas(lista.map((x) => ({ id: String(x.id), usuario: String(x.usuario), nombre: String(x.nombre), apellido: (x.apellido as string | null) ?? null, email: (x.email as string | null) || null, estado: String(x.estado), perfiles: x.perfiles as Perfil[] | undefined, ultimoAcceso: (x.ultimoAcceso as string | null | undefined) ?? null, alcanceSucursales: x.alcanceSucursales as string | undefined, alcanceDepositos: x.alcanceDepositos as string | undefined, sucursalesAsignadas: x.sucursalesAsignadas as number | undefined, depositosAsignados: x.depositosAsignados as number | undefined })));
+        setFilas(lista.map((x) => ({ id: String(x.id), usuario: String(x.usuario), nombre: String(x.nombre), apellido: (x.apellido as string | null) ?? null, ci: (x.ci as string | null | undefined) ?? null, telefono: (x.telefono as string | null | undefined) ?? null, email: (x.email as string | null) || null, estado: String(x.estado), perfiles: x.perfiles as Perfil[] | undefined, ultimoAcceso: (x.ultimoAcceso as string | null | undefined) ?? null, alcanceSucursales: x.alcanceSucursales as string | undefined, alcanceDepositos: x.alcanceDepositos as string | undefined, sucursalesAsignadas: x.sucursalesAsignadas as number | undefined, depositosAsignados: x.depositosAsignados as number | undefined })));
         setTotal(Number(j.total ?? 0));
         if (esVendedores) setPuedeGestionar(j.puedeGestionar === true);
         setError("");
@@ -101,11 +103,12 @@ export function GestionUsuarios({ modo }: { modo: Modo }) {
 
   function abrir(tipo: "alta" | "datos" | "perfiles", fila?: Fila) {
     setErrorForm("");
+    setErroresCampo({});
     setAviso("");
     setForm({
       tipo,
       datos: fila
-        ? { ...VACIO, id: fila.id, usuario: fila.usuario, nombre: fila.nombre, apellido: fila.apellido ?? "", email: fila.email ?? "", perfiles: (fila.perfiles ?? []).map((p) => p.codigo) }
+        ? { ...VACIO, id: fila.id, usuario: fila.usuario, nombre: fila.nombre, apellido: fila.apellido ?? "", ci: fila.ci ?? "", telefono: fila.telefono ?? "", email: fila.email ?? "", perfiles: (fila.perfiles ?? []).map((p) => p.codigo) }
         : { ...VACIO, perfiles: esVendedores ? ["VENDEDOR"] : [] },
     });
     if (tipo !== "datos" && !(esVendedores && tipo === "alta")) void cargarCatalogo();
@@ -155,14 +158,28 @@ export function GestionUsuarios({ modo }: { modo: Modo }) {
 
     const d = form.datos;
 
+    if (form.tipo !== "perfiles") {
+      // Misma validación que el servidor y la base (todos los campos obligatorios); el servidor la repite.
+      const v = validarDatosUsuario({ ...d });
+      const ac = form.tipo === "alta" ? validarAccesoUsuario({ ...d }) : null;
+      const campos = { ...(v.ok ? {} : v.errores), ...(ac && !ac.ok ? ac.errores : {}) };
+
+      setErroresCampo(campos);
+      if (Object.keys(campos).length > 0) {
+        setErrorForm("Revise los campos marcados: todos son obligatorios.");
+
+        return;
+      }
+    }
+
     setGuardando(true);
     setErrorForm("");
     try {
       if (form.tipo === "alta") {
-        await pedir("/api/usuarios", json("POST", { usuario: d.usuario, nombre: d.nombre, apellido: d.apellido, email: d.email, contrasena: d.contrasena, perfiles: d.perfiles }));
+        await pedir("/api/usuarios", json("POST", { usuario: d.usuario, nombre: d.nombre, apellido: d.apellido, ci: d.ci, email: d.email, telefono: d.telefono, contrasena: d.contrasena, perfiles: d.perfiles }));
         setAviso(`${esVendedores ? "Vendedor" : "Usuario"} «${d.usuario.trim().toLowerCase()}» creado. Deberá cambiar su contraseña provisional al ingresar y, para operar, necesitará sucursales y depósitos asignados (botón Alcance).`);
       } else if (form.tipo === "datos" && d.id) {
-        await pedir(`/api/usuarios/${d.id}`, json("PATCH", { nombre: d.nombre, apellido: d.apellido, email: d.email }));
+        await pedir(`/api/usuarios/${d.id}`, json("PATCH", { nombre: d.nombre, apellido: d.apellido, ci: d.ci, email: d.email, telefono: d.telefono }));
         setAviso("Datos actualizados.");
       } else if (form.tipo === "perfiles" && d.id) {
         await pedir(`/api/usuarios/${d.id}/perfiles`, json("PUT", { perfiles: d.perfiles }));
@@ -196,7 +213,6 @@ export function GestionUsuarios({ modo }: { modo: Modo }) {
   const campo = (k: keyof Formulario, v: string) => setForm((f) => (f ? { ...f, datos: { ...f.datos, [k]: v } } : f));
   const paginas = Math.max(1, Math.ceil(total / POR_PAGINA));
   const titulo = esVendedores ? "Vendedores" : "Usuarios";
-  const altaValida = form?.tipo !== "alta" || (form.datos.usuario.trim().length >= 3 && form.datos.nombre.trim() !== "" && form.datos.contrasena.length >= 10);
 
   return (
     <section className={ui.page}>
@@ -244,7 +260,7 @@ export function GestionUsuarios({ modo }: { modo: Modo }) {
             <tr>
               <th>Usuario</th>
               <th>Nombre</th>
-              <th>Correo</th>
+              {puedeGestionar ? <><th>CI</th><th>Correo</th><th>Teléfono</th></> : null}
               {esVendedores ? null : <th>Alcance</th>}
               {esVendedores ? null : <th>Perfiles</th>}
               <th>Situación</th>
@@ -253,14 +269,14 @@ export function GestionUsuarios({ modo }: { modo: Modo }) {
           </thead>
           <tbody>
             {cargando ? (
-              <tr><td colSpan={7} className={estilos.vacio} role="status">Cargando…</td></tr>
+              <tr><td colSpan={10} className={estilos.vacio} role="status">Cargando…</td></tr>
             ) : filas.length === 0 ? (
-              <tr><td colSpan={7} className={estilos.vacio}>{q || estado !== "TODOS" ? "Ningún registro coincide con el filtro." : esVendedores ? "Sin vendedores registrados." : "Sin usuarios."}</td></tr>
+              <tr><td colSpan={10} className={estilos.vacio}>{q || estado !== "TODOS" ? "Ningún registro coincide con el filtro." : esVendedores ? "Sin vendedores registrados." : "Sin usuarios."}</td></tr>
             ) : filas.map((f) => (
               <tr key={f.id}>
                 <td>{f.usuario}</td>
                 <td>{nombreCompleto(f)}</td>
-                <td>{f.email ?? "—"}</td>
+                {puedeGestionar ? <><td>{f.ci ?? "—"}</td><td>{f.email ?? "—"}</td><td>{f.telefono ?? "—"}</td></> : null}
                 {esVendedores ? null : <td>{textoAlcance(f)}</td>}
                 {esVendedores ? null : <td>{(f.perfiles ?? []).length === 0 ? "Sin perfiles" : (f.perfiles ?? []).map((p) => <span key={p.codigo} className={estilos.chip}>{p.nombre}</span>)}</td>}
                 <td><span className={`${estilos.badge} ${f.estado === "ACTIVO" ? estilos.activo : estilos.inactivo}`}>{f.estado === "ACTIVO" ? "Activo" : "Inactivo"}</span></td>
@@ -341,24 +357,51 @@ export function GestionUsuarios({ modo }: { modo: Modo }) {
             </h2>
 
             {form.tipo !== "perfiles" ? (
-              <div className={estilos.formGrid}>
-                {form.tipo === "alta" ? (
-                  <label className={estilos.campo}>
-                    <span>Usuario * (3 a 60: minúsculas, números, punto o guion)</span>
-                    <input value={form.datos.usuario} onChange={(e) => campo("usuario", e.target.value)} autoComplete="off" />
-                  </label>
-                ) : null}
-                <label className={estilos.campo}><span>Nombre *</span><input value={form.datos.nombre} onChange={(e) => campo("nombre", e.target.value)} maxLength={120} /></label>
-                <label className={estilos.campo}><span>Apellido</span><input value={form.datos.apellido} onChange={(e) => campo("apellido", e.target.value)} maxLength={120} /></label>
-                <label className={estilos.campo}><span>Correo</span><input type="email" value={form.datos.email} onChange={(e) => campo("email", e.target.value)} maxLength={200} /></label>
-                {form.tipo === "alta" ? (
-                  <label className={estilos.campo}>
-                    <span>Contraseña inicial * (mínimo 10 caracteres)</span>
-                    <input type="password" value={form.datos.contrasena} onChange={(e) => campo("contrasena", e.target.value)} autoComplete="new-password" />
-                    <small>El usuario deberá cambiarla. No se muestra ni se guarda en pantalla.</small>
-                  </label>
-                ) : null}
-              </div>
+              <>
+                <p className={estilos.nota}>Todos los campos marcados con * son obligatorios. El nombre completo se forma con Nombre y Apellido.</p>
+                <div className={estilos.formGrid}>
+                <label className={estilos.campo}>
+                  <span>Nombre *</span>
+                  <input value={form.datos.nombre} onChange={(e) => campo("nombre", e.target.value)} maxLength={120} autoComplete="off" aria-invalid={erroresCampo.nombre ? true : undefined} />
+                  {erroresCampo.nombre ? <small className={estilos.errorCampo} role="alert">{erroresCampo.nombre}</small> : null}
+                </label>
+                <label className={estilos.campo}>
+                  <span>Apellido *</span>
+                  <input value={form.datos.apellido} onChange={(e) => campo("apellido", e.target.value)} maxLength={120} autoComplete="off" aria-invalid={erroresCampo.apellido ? true : undefined} />
+                  {erroresCampo.apellido ? <small className={estilos.errorCampo} role="alert">{erroresCampo.apellido}</small> : null}
+                </label>
+                <label className={estilos.campo}>
+                  <span>CI *</span>
+                  <input value={form.datos.ci} onChange={(e) => campo("ci", e.target.value)} inputMode="numeric" maxLength={14} autoComplete="off" placeholder="Ej.: 1.234.567" aria-invalid={erroresCampo.ci ? true : undefined} />
+                  {erroresCampo.ci ? <small className={estilos.errorCampo} role="alert">{erroresCampo.ci}</small> : null}
+                </label>
+                <label className={estilos.campo}>
+                  <span>Correo electrónico *</span>
+                  <input type="email" value={form.datos.email} onChange={(e) => campo("email", e.target.value)} maxLength={200} autoComplete="off" aria-invalid={erroresCampo.email ? true : undefined} />
+                  {erroresCampo.email ? <small className={estilos.errorCampo} role="alert">{erroresCampo.email}</small> : null}
+                </label>
+                <label className={estilos.campo}>
+                  <span>Teléfono *</span>
+                  <input value={form.datos.telefono} onChange={(e) => campo("telefono", e.target.value)} inputMode="tel" maxLength={24} autoComplete="off" placeholder="Ej.: 0981 123 456" aria-invalid={erroresCampo.telefono ? true : undefined} />
+                  {erroresCampo.telefono ? <small className={estilos.errorCampo} role="alert">{erroresCampo.telefono}</small> : null}
+                </label>
+                  {form.tipo === "alta" ? (
+                    <>
+                <label className={estilos.campo}>
+                  <span>Usuario *</span>
+                  <input value={form.datos.usuario} onChange={(e) => campo("usuario", e.target.value)} maxLength={60} autoComplete="off" placeholder="minúsculas, números, punto o guion" aria-invalid={erroresCampo.usuario ? true : undefined} />
+                  {erroresCampo.usuario ? <small className={estilos.errorCampo} role="alert">{erroresCampo.usuario}</small> : null}
+                </label>
+                <label className={estilos.campo}>
+                  <span>Contraseña inicial * (mínimo 10 caracteres)</span>
+                  <input type="password" value={form.datos.contrasena} onChange={(e) => campo("contrasena", e.target.value)} maxLength={200} autoComplete="new-password" aria-invalid={erroresCampo.contrasena ? true : undefined} />
+                  {erroresCampo.contrasena ? <small className={estilos.errorCampo} role="alert">{erroresCampo.contrasena}</small> : null}
+                </label>
+                    </>
+                  ) : null}
+                </div>
+                {form.tipo === "alta" ? <p className={estilos.nota}>El usuario deberá cambiar la contraseña inicial en su primer ingreso. No se muestra ni se guarda en pantalla.</p> : null}
+              </>
             ) : null}
 
             {form.tipo === "perfiles" || (form.tipo === "alta" && !esVendedores) ? (
@@ -379,7 +422,7 @@ export function GestionUsuarios({ modo }: { modo: Modo }) {
 
             <div className={estilos.botones}>
               <button type="button" className={ui.secondaryButton} disabled={guardando} onClick={() => setForm(null)}>Cancelar</button>
-              <button type="button" className={ui.primaryButton} disabled={guardando || !altaValida || (form.tipo !== "perfiles" && form.datos.nombre.trim() === "")} onClick={() => void guardar()}>{guardando ? "Guardando…" : "Guardar"}</button>
+              <button type="button" className={ui.primaryButton} disabled={guardando} onClick={() => void guardar()}>{guardando ? "Guardando…" : "Guardar"}</button>
             </div>
           </div>
         </div>
