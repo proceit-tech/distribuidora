@@ -43,16 +43,16 @@ type Documento = {
 };
 
 const MOTIVO_NCE: Record<number, string> = { 2: "Devolución", 3: "Descuento", 4: "Bonificación", 8: "Ajuste de precio" };
-type Intento = { id: string; tipo: string; fase: string | null; lote: string | null; cdcInformado: string | null; resultado: string; httpStatus: number | null; estadoGateway: string | null; estadoSifen: string | null; codRespuesta: string | null; mensaje: string | null; creadoAt: string; actorNombre: string; tieneRespuesta?: boolean };
+type Intento = { id: string; tipo: string; fase: string | null; lote: string | null; cdcInformado: string | null; resultado: string; httpStatus: number | null; estadoGateway: string | null; estadoSifen: string | null; codRespuesta: string | null; mensaje: string | null; creadoAt: string; actorNombre: string; tieneRespuesta?: boolean; cursor?: string };
 type Solicitud = { version: number; payloadHash: string; creadoAt: string };
 /** E01 (PRO-314): JSON leído bajo demanda de UNA solicitud o respuesta; se muestra como texto formateado (nunca HTML). */
 type VistaJson = { titulo: string; detalle: string; texto: string; cargando: boolean; error: string };
 type Respuesta = {
   documentos: Documento[]; total: number; pagina: number; totalPaginas: number; resumen: Record<string, number>; sucursales: Array<{ id: string; nombre: string }>; permisos: { editar: boolean; crear: boolean };
 };
-type Detalle = { cargando: boolean; error: string; intentos: Intento[]; solicitudes: Solicitud[]; json: VistaJson | null; aviso: string; consultando: boolean };
+type Detalle = { cargando: boolean; error: string; intentos: Intento[]; siguienteIntentos: string | null; cargandoMas: boolean; errorMas: string; solicitudes: Solicitud[]; json: VistaJson | null; aviso: string; consultando: boolean };
 
-const DETALLE_VACIO: Detalle = { cargando: false, error: "", intentos: [], solicitudes: [], json: null, aviso: "", consultando: false };
+const DETALLE_VACIO: Detalle = { cargando: false, error: "", intentos: [], siguienteIntentos: null, cargandoMas: false, errorMas: "", solicitudes: [], json: null, aviso: "", consultando: false };
 
 const INDICADORES: Array<{ grupo: GrupoIndicador | ""; titulo: string; ayuda: string; clase: string }> = [
   { grupo: "", titulo: "Total", ayuda: "Documentos visibles", clase: ui.summaryTeal },
@@ -124,6 +124,8 @@ export default function DocumentosPage() {
   const [abiertos, setAbiertos] = useState<Record<string, Detalle>>({});
   // E01 (PRO-314): petición de JSON vigente por documento. Seleccionar otro JSON, cerrar el visor o colapsar el detalle la invalida: una respuesta tardía ya no sustituye la selección ni reabre nada.
   const jsonVigente = useRef<Record<string, number>>({});
+  // E02 (PRO-315): generación del historial por documento; colapsar el detalle la invalida y una página tardía no se aplica.
+  const historialVigente = useRef<Record<string, number>>({});
 
   useEffect(() => {
     // Llegada desde «Emitir nota de crédito»: precarga el número emitido en la búsqueda.
@@ -226,9 +228,52 @@ export default function DocumentosPage() {
     setAbiertos((a) => ({ ...a, [id]: { ...DETALLE_VACIO, ...a[id], ...parte } }));
   }
 
+  // Tras consultar/enviar llega la primera página actualizada: se fusiona con lo ya cargado (sin duplicados, orden creado_at DESC, id DESC) y se conserva el cursor de las páginas anteriores. Si hubo más de una página de
+  // eventos nuevos (la primera página no se solapa con lo cargado) se vuelve a esa página para no dejar huecos.
+  function fusionarIntentos(id: string, nuevos: Intento[], parte: Partial<Detalle>) {
+    setAbiertos((a) => {
+      if (!a[id]) return a;
+
+      const previos = a[id].intentos;
+      const masViejoNuevo = nuevos.length > 0 ? nuevos[nuevos.length - 1].cursor : undefined;
+      const hueco = nuevos.length >= 100 && previos.length > 0 && masViejoNuevo !== undefined && (previos[0].cursor ?? "") < masViejoNuevo;
+      const vistos = new Set<string>();
+      const unidos = (hueco ? nuevos : [...nuevos, ...previos]).filter((i) => (vistos.has(i.id) ? false : (vistos.add(i.id), true))).sort((x, y) => ((y.cursor ?? "") < (x.cursor ?? "") ? -1 : (y.cursor ?? "") > (x.cursor ?? "") ? 1 : 0));
+      const siguiente = hueco || previos.length === 0 ? (nuevos.length >= 100 && masViejoNuevo !== undefined ? masViejoNuevo : null) : a[id].siguienteIntentos;
+
+      return { ...a, [id]: { ...a[id], ...parte, intentos: unidos, siguienteIntentos: siguiente } };
+    });
+  }
+
+  // Página anterior del historial (hasta 100 por vez). Solo se aplica si el detalle sigue abierto, el documento es el mismo y el cursor pedido sigue siendo el vigente (no repite ni pisa páginas).
+  async function cargarAnteriores(d: Documento) {
+    const cursor = abiertos[d.id]?.siguienteIntentos;
+
+    if (!cursor || abiertos[d.id]?.cargandoMas) return;
+
+    const generacion = historialVigente.current[d.id] ?? 0;
+    const aplica = (a: Record<string, Detalle>) => a[d.id] && a[d.id].siguienteIntentos === cursor && (historialVigente.current[d.id] ?? 0) === generacion;
+
+    actualizarDetalle(d.id, { cargandoMas: true, errorMas: "" });
+    try {
+      const j = await leerJson<{ intentos: Intento[]; siguiente: string | null }>(await fetch(`/api/documentos/${d.id}/intentos?cursor=${encodeURIComponent(cursor)}`, { cache: "no-store" }), "No fue posible cargar los intentos anteriores.");
+
+      setAbiertos((a) => {
+        if (!aplica(a)) return a;
+
+        const vistos = new Set(a[d.id].intentos.map((i) => i.id));
+
+        return { ...a, [d.id]: { ...a[d.id], cargandoMas: false, errorMas: "", intentos: [...a[d.id].intentos, ...j.intentos.filter((i) => !vistos.has(i.id))], siguienteIntentos: j.siguiente } };
+      });
+    } catch (e) {
+      setAbiertos((a) => (aplica(a) ? { ...a, [d.id]: { ...a[d.id], cargandoMas: false, errorMas: e instanceof Error ? e.message : "No fue posible cargar los intentos anteriores." } } : a));
+    }
+  }
+
   async function alternar(d: Documento) {
     if (abiertos[d.id]) {
       jsonVigente.current[d.id] = (jsonVigente.current[d.id] ?? 0) + 1;
+      historialVigente.current[d.id] = (historialVigente.current[d.id] ?? 0) + 1;
       setAbiertos((a) => Object.fromEntries(Object.entries(a).filter(([k]) => k !== d.id)));
 
       return;
@@ -236,9 +281,9 @@ export default function DocumentosPage() {
 
     actualizarDetalle(d.id, { cargando: true });
     try {
-      const j = await leerJson<{ intentos: Intento[]; solicitudes?: Solicitud[] }>(await fetch(`/api/documentos/${d.id}`, { cache: "no-store" }), "No fue posible cargar el detalle.");
+      const j = await leerJson<{ intentos: Intento[]; siguienteIntentos?: string | null; solicitudes?: Solicitud[] }>(await fetch(`/api/documentos/${d.id}`, { cache: "no-store" }), "No fue posible cargar el detalle.");
 
-      actualizarDetalle(d.id, { cargando: false, intentos: j.intentos, solicitudes: j.solicitudes ?? [] });
+      actualizarDetalle(d.id, { cargando: false, intentos: j.intentos, siguienteIntentos: j.siguienteIntentos ?? null, solicitudes: j.solicitudes ?? [] });
     } catch (e) {
       actualizarDetalle(d.id, { cargando: false, error: e instanceof Error ? e.message : "No fue posible cargar el detalle." });
     }
@@ -292,7 +337,7 @@ export default function DocumentosPage() {
     try {
       const j = await leerJson<{ resultado: string; mensaje: string | null; intentos: Intento[] }>(await fetch(`/api/documentos/${d.id}/consultar`, { method: "POST" }), "No fue posible consultar el estado.");
 
-      actualizarDetalle(d.id, { consultando: false, intentos: j.intentos, aviso: `${ETIQUETA_RESULTADO_INTENTO[j.resultado] ?? j.resultado}${j.mensaje ? `: ${j.mensaje}` : ""}` });
+      fusionarIntentos(d.id, j.intentos, { consultando: false, aviso: `${ETIQUETA_RESULTADO_INTENTO[j.resultado] ?? j.resultado}${j.mensaje ? `: ${j.mensaje}` : ""}` });
       setRecarga((n) => n + 1);
     } catch (e) {
       actualizarDetalle(d.id, { consultando: false, error: e instanceof Error ? e.message : "No fue posible consultar el estado." });
@@ -310,7 +355,7 @@ export default function DocumentosPage() {
       );
       const partes = [etiquetaIntento("ENVIO", j.resultado), j.http ? `HTTP ${j.http}` : "", j.lote ? `lote ${j.lote}` : "", j.mensaje ?? "", ...j.errores].filter(Boolean);
 
-      actualizarDetalle(d.id, { consultando: false, intentos: j.intentos, aviso: partes.join(" · ") });
+      fusionarIntentos(d.id, j.intentos, { consultando: false, aviso: partes.join(" · ") });
       setRecarga((n) => n + 1);
     } catch (e) {
       actualizarDetalle(d.id, { consultando: false, error: e instanceof Error ? e.message : "No fue posible enviar el documento." });
@@ -552,7 +597,7 @@ export default function DocumentosPage() {
                             </div>
                           ) : null}
 
-                          <h4 style={{ margin: "10px 0 4px", fontSize: 13.5 }}>Historial de consultas</h4>
+                          <h4 style={{ margin: "10px 0 4px", fontSize: 13.5 }}>Historial de envíos y consultas</h4>
                           {det.cargando ? (
                             <p className={ui.muted}>Cargando historial...</p>
                           ) : det.intentos.length === 0 ? (
@@ -585,6 +630,14 @@ export default function DocumentosPage() {
                               </table>
                             </div>
                           )}
+                          {det.errorMas ? <div className={ui.alertError} role="alert" style={{ margin: "8px 0" }}>{det.errorMas}</div> : null}
+                          {det.siguienteIntentos ? (
+                            <p style={{ margin: "8px 0 0" }}>
+                              <button type="button" className={ui.secondaryButton} disabled={det.cargandoMas} onClick={() => void cargarAnteriores(d)}>
+                                {det.cargandoMas ? "Cargando..." : "Cargar intentos anteriores"}
+                              </button>
+                            </p>
+                          ) : null}
                         </td>
                       </tr>
                     ) : null}

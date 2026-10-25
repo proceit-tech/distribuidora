@@ -214,11 +214,16 @@ export async function leerDocumento(db: Db, empresaId: string, usuarioId: string
   }
 }
 
+/** Cursor estable de un intento (creado_at con microsegundos en UTC + id): la paginación es estrictamente decreciente por (creado_at, id). */
+const CURSOR_INTENTO = `to_char(i.creado_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') || '|' || i.id::text`;
+const CURSOR_FORMA = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z)\|([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+export const INTENTOS_POR_PAGINA = 100;
+
 /** Intentos (evidencia) del documento, del más reciente al más antiguo, máx. 100. Solo se llama tras comprobar que el documento está en el alcance. */
 export async function listarIntentos(db: Db, empresaId: string, documentoId: string) {
   const r = await db.query(
     `SELECT i.id, i.tipo, i.resultado, i.http_status AS "httpStatus", i.request_id AS "requestId", i.estado_gateway AS "estadoGateway", i.estado_sifen AS "estadoSifen", i.fase, i.lote, i.cdc_informado AS "cdcInformado",
-            i.cod_respuesta AS "codRespuesta", i.mensaje, i.creado_at AS "creadoAt", (i.respuesta IS NOT NULL) AS "tieneRespuesta",
+            i.cod_respuesta AS "codRespuesta", i.mensaje, i.creado_at AS "creadoAt", (i.respuesta IS NOT NULL) AS "tieneRespuesta", ${CURSOR_INTENTO} AS "cursor",
             trim(coalesce(u.nombre, '') || ' ' || coalesce(u.apellido, '')) AS "actorNombre"
        FROM documento_electronico_intentos i JOIN usuarios u ON u.empresa_id = i.empresa_id AND u.id = i.actor_id
       WHERE i.empresa_id = $1 AND i.documento_id = $2 ORDER BY i.creado_at DESC, i.id DESC LIMIT 100`,
@@ -271,6 +276,35 @@ export async function leerRespuestaIntento(db: Db, empresaId: string, usuarioId:
   if (!fila) throw new ErrorFacturacion(404, "Intento no encontrado.");
 
   return fila;
+}
+
+/**
+ * Página del historial de envíos y consultas (sin las respuestas JSON): hasta 100 intentos más antiguos que el cursor (o los más recientes si no hay cursor), orden creado_at DESC, id DESC. `siguiente` es el cursor
+ * de la página que sigue (null = no hay más). El cursor se valida estrictamente y siempre se filtra por empresa + documento. Solo se llama tras comprobar que el documento está en el alcance (ver leerIntentosPagina).
+ */
+export async function listarIntentosPagina(db: Db, empresaId: string, documentoId: string, cursor?: string) {
+  const m = cursor === undefined ? null : CURSOR_FORMA.exec(cursor);
+
+  if (cursor !== undefined && !m) throw new ErrorFacturacion(400, "El cursor del historial no es válido.");
+
+  const r = await db.query(
+    `SELECT i.id, i.tipo, i.resultado, i.http_status AS "httpStatus", i.request_id AS "requestId", i.estado_gateway AS "estadoGateway", i.estado_sifen AS "estadoSifen", i.fase, i.lote, i.cdc_informado AS "cdcInformado",
+            i.cod_respuesta AS "codRespuesta", i.mensaje, i.creado_at AS "creadoAt", (i.respuesta IS NOT NULL) AS "tieneRespuesta", ${CURSOR_INTENTO} AS "cursor",
+            trim(coalesce(u.nombre, '') || ' ' || coalesce(u.apellido, '')) AS "actorNombre"
+       FROM documento_electronico_intentos i JOIN usuarios u ON u.empresa_id = i.empresa_id AND u.id = i.actor_id
+      WHERE i.empresa_id = $1 AND i.documento_id = $2${m ? " AND (i.creado_at, i.id) < ($3::timestamptz, $4::uuid)" : ""} ORDER BY i.creado_at DESC, i.id DESC LIMIT ${INTENTOS_POR_PAGINA + 1}`,
+    m ? [empresaId, documentoId, m[1], m[2]] : [empresaId, documentoId],
+  );
+  const filas = r.rows as F[];
+
+  return { intentos: filas.slice(0, INTENTOS_POR_PAGINA), siguiente: filas.length > INTENTOS_POR_PAGINA ? String(filas[INTENTOS_POR_PAGINA - 1].cursor) : null };
+}
+
+/** Página de intentos con el MISMO orden de seguridad que el resto: el documento se resuelve primero con el alcance de la sesión (fuera de alcance / otra empresa / inexistente = 404 sin contenido). */
+export async function leerIntentosPagina(db: Db, empresaId: string, usuarioId: string, id: string, cursor?: string) {
+  if (!(await leerDocumento(db, empresaId, usuarioId, id))) throw new ErrorFacturacion(404, "Documento no encontrado.");
+
+  return listarIntentosPagina(db, empresaId, id, cursor);
 }
 
 export class ErrorFacturacion extends Error {
