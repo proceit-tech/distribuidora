@@ -1,5 +1,7 @@
 # ORD-CLAUDE-NEXIT-FE-E03-A1-R03 — ORDEM CORRETIVA ÚNICA
 
+> **HISTÓRICO — ORDEM SUPERADA (25/10/2026).** Claude publicou `0d5e9c0586c8eb703dd93e0ecd0349238849614e`. A [AUD-R03](../testes/AUD-NEXIT-FE-E03-A1-PRO-321-R03-2026-10-25.md) registrou F001/F003/F004 conformes estaticamente e **F002-R03 bloqueante** (resposta de terceiros sanitizada em `OtrosDocumentosOmitidos` não avaliada pelo SQL). A **única ordem atual** é [E03-A1-R04](documentacao/ordens/ORD-CLAUDE-NEXIT-FE-E03-A1-R04-2026-10-25.md), somente NEX-072; sem SQL executado, sem testes/VM; E03-A2/B e E08/E09 bloqueadas.
+
 **25/10/2026.** **Projeto:** NEXIT; repo `proceit-tech/distribuidora`; branch `feature/NEXIT-2026-001-banco-demo`; issue PRO-321 (PRO-312).
 **Último SHA Claude:** `c8af2dd7107346c1de954ebedda5d2b0c3d83936`.
 **Auditoria estática R02 — NÃO CONFORME:** [AUD-E03-A1-R02](../testes/AUD-NEXIT-FE-E03-A1-PRO-321-R02-2026-10-25.md) (leitura integral obrigatória).
