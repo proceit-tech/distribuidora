@@ -41,13 +41,14 @@ NEXIT es ERP; el estándar SIFEN determina solo el documento fiscal. **Contrato 
 1. Combo `Sucursal / Establecimiento`: cada opción `001 — Casa central` (código SIFEN de tres dígitos PRIMERO, nombre después). `Punto de expedición`: `003 — CAJA TEST`. Encabezado/resumen/confirmación: `Establecimiento 001 · Punto 003`, y número `001-003-0009010` referencial según secuencia real. **No confundir código de sucursal interna con establecimiento SIFEN** y no concatenar `001` dos veces.
 2. No cambiar IDs, número, sucursal/punto autorizados, catálogos ni secuencia de PostgreSQL. Texto `Próximo N.º (referencial)` discreto y sin salto de línea incoherente.
 
-### C. Los 13 tipos de transacción — PRO-134
+### C. Tipo de transacción — RETIFICACIÓN EXPRESA DEL RESPONSABLE (PRO-134)
 
-1. **Mostrar los 13 códigos oficiales `iTipTra` (D011) en `Tipo de transacción`, siempre**, con nombre en español y código claro si mejora comprensión. Basarse en `CATALOGO_TIPOS_TRANSACCION` existente, no crear catálogo paralelo.
-2. **NO** limitarse a cambiar `TIPOS_TRANSACCION` por el catálogo completo: servidor, `validarEntradaFE`, `iTipTra`, `dDesTipTra` (resolución por gateway), lógica de impuestos/condición, previsualización y requisitos específicos deben concordar. En factura ordinaria el `iTiDE` permanece 1; no convertir `Compra de productos/servicios` en Autofactura por una selección.
-3. Construir matriz real de soporte por código **1 a 13**, con qué datos faltan, qué tipo de documento aplica, cuáles son admitidos por el motor vigente y cuáles precisan reglas diferentes (divisas, donación, muestras, anticipos, compra/autofactura, venta de crédito fiscal), y mensaje exacto en UI. **Todo código debe aparecer y poder ser examinado/seleccionado; si no es legalmente emitible en este flujo, mostrar el motivo y deshabilitar `Revisar y confirmar` ANTES de numeración, nunca enviar payload falso.** No declarar los 13 “emisión habilitada” si aún no hay contrato/campos.
-4. Implementar de manera completa y mínima todas las categorías que realmente puedan ejecutarse con el modelo de FE disponible; documentar como PENDENTE las que requieren flujos/atributos nuevos fuera de FE ordinaria, enlazadas a PRO-134. El resultado no puede ser un combo truncado sin explicación.
-5. Ref: Manual Técnico SIFEN v150 D011/D012: https://www.dnit.gov.py/documents/20123/420592/Manual%2BT%C3%A9cnico%2BVersi%C3%B3n%2B150.pdf/e706f7c7-6d93-21d4-b45b-5d22d07b2d22?t=1687362295907.pdf.
+**Pedido exacto: mostrar el combo completo con los TRECE tipos oficiales. NO pidió agregar campos ni implementar nuevas operaciones fiscales.**
+
+1. En `Tipo de transacción`, mostrar en el **mismo selector** las trece opciones `iTipTra` (D011), con nombres en español y valores seleccionables, reutilizando `CATALOGO_TIPOS_TRANSACCION`.
+2. **Alcance limitado al combo**: no crear campos condicionales, pantallas, flujos tributarios especiales, Autofactura, anticipo, divisas, nuevas migraciones o reglas adicionales por este pedido.
+3. Mantener intactas las validaciones fiscales existentes en el backend. Que una opción se pueda seleccionar no significa que se haya implementado legalmente una emisión para ese tipo; no quitar controles para simular esa capacidad.
+4. **Ya realizado en `03623ec4a7daf32f4f832c47f5fbc0b8112cb9fc`**: las 13 opciones están visibles y seleccionables. NO ordenar nuevo trabajo sobre el combo por considerar necesario soporte de emisión 5–13. La limitación actual de backend puede documentarse de manera separada, pero **no es un encargo del responsable de construir campos adicionales**.
 
 ### D. Vendedores: cadastro visível + seleção independente — PRO-72, PRO-307, PRO-109
 
