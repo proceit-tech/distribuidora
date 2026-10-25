@@ -60,23 +60,30 @@ export function KudeModal({ controlador }: { controlador: Controlador }) {
 
   if (estado.fase === "CERRADO") return null;
 
+  // Solo el visor del PDF (LISTO) usa la modal grande; ERROR y CARGANDO son cajas compactas de altura natural (sin 92vh de blanco).
+  const visor = estado.fase === "LISTO";
+
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }} onMouseDown={(e) => { if (e.target === e.currentTarget) controlador.cerrar(); }}>
-      <div ref={caja} role="dialog" aria-modal="true" aria-labelledby="kude-titulo" style={{ background: "var(--surface, #fff)", color: "inherit", borderRadius: 8, width: "min(1100px, 100%)", height: "min(92vh, 100%)", display: "flex", flexDirection: "column", boxShadow: "0 12px 40px rgba(0,0,0,0.35)" }}>
+      <div ref={caja} role="dialog" aria-modal="true" aria-labelledby="kude-titulo" style={{ background: "var(--surface, #fff)", color: "inherit", borderRadius: 8, width: visor ? "min(1100px, 100%)" : "min(520px, 100%)", ...(visor ? { height: "min(92vh, 100%)" } : { maxHeight: "100%" }), display: "flex", flexDirection: "column", boxShadow: "0 12px 40px rgba(0,0,0,0.35)" }}>
         <header style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "12px 16px", borderBottom: "1px solid var(--border, #d6dcdc)" }}>
           <h2 id="kude-titulo" style={{ margin: 0, fontSize: "1.05rem" }}>{estado.titulo}</h2>
           <div style={{ display: "flex", gap: 8 }}>
-            <button type="button" className={ui.secondaryButton} disabled={estado.fase !== "LISTO" || estado.descarga === "CARGANDO"} onClick={() => void controlador.descargar()}>{estado.fase === "LISTO" && estado.descarga === "CARGANDO" ? "Preparando descarga…" : "Descargar PDF"}</button>
-            <button type="button" className={ui.secondaryButton} disabled={estado.fase !== "LISTO"} onClick={() => controlador.imprimir()}>Imprimir</button>
+            {visor ? (
+              <>
+                <button type="button" className={ui.secondaryButton} disabled={estado.fase !== "LISTO" || estado.descarga === "CARGANDO"} onClick={() => void controlador.descargar()}>{estado.fase === "LISTO" && estado.descarga === "CARGANDO" ? "Preparando descarga…" : "Descargar PDF"}</button>
+                <button type="button" className={ui.secondaryButton} disabled={estado.fase !== "LISTO"} onClick={() => controlador.imprimir()}>Imprimir</button>
+              </>
+            ) : null}
             <button ref={cierre} type="button" className={ui.primaryButton} onClick={() => controlador.cerrar()}>Cerrar</button>
           </div>
         </header>
         {estado.fase === "LISTO" && estado.descarga === "ERROR" ? <p className={ui.alertError} role="alert" style={{ margin: "8px 16px 0" }}>{estado.mensajeDescarga} Puede intentar «Descargar PDF» nuevamente.</p> : null}
-        <div style={{ flex: 1, minHeight: 0, display: "flex", alignItems: "stretch", justifyContent: "center" }}>
-          {estado.fase === "CARGANDO" ? <p role="status" style={{ margin: "auto" }}>Obteniendo el KuDE del gateway…</p> : null}
+        <div style={visor ? { flex: 1, minHeight: 0, display: "flex", alignItems: "stretch", justifyContent: "center" } : { padding: "16px 16px 20px", overflowY: "auto" }}>
+          {estado.fase === "CARGANDO" ? <p role="status" style={{ margin: 0 }}>Obteniendo el KuDE del gateway…</p> : null}
           {estado.fase === "ERROR" ? (
-            <div role="alert" style={{ margin: "auto", textAlign: "center", maxWidth: 520 }}>
-              <p className={ui.alertError}>{estado.mensaje}</p>
+            <div role="alert" style={{ textAlign: "left" }}>
+              <p className={ui.alertError} style={{ marginTop: 0, overflowWrap: "anywhere" }}>{estado.mensaje}</p>
               <button type="button" className={ui.secondaryButton} onClick={() => void controlador.reintentar()}>Reintentar</button>
             </div>
           ) : null}
