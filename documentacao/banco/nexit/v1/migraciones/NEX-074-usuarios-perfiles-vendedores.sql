@@ -12,6 +12,8 @@
 --   4) PRO-93-R03: (F002) FE anteriores a NEX-074 (sin vendedor registrado) se reconocen en el reintento sin atribuirles vendedor; (F003) usr_cambiar_contrasena_propia: fin de la contraseña inicial provisional (el login/sesión la exigen en la
 --      aplicación); (F004) las operaciones que pueden reducir administradores se serializan por EMPRESA (bloqueo asesor transaccional) y el invariante se verifica dentro de la sección serializada; (F005) usr_asignar_alcance: sucursales y depósitos
 --      del usuario con las relaciones existentes (fail-closed: nunca TODAS/TODOS automáticamente); (F007) el perfil de administrador se garantiza SIN asignarlo a nadie y los conflictos de legado se rechazan.
+--   5) Datos de identificación del usuario (CI y teléfono): columnas propias en usuarios (texto; los ceros iniciales se conservan), CI única por empresa (índice parcial), validación en la base y en la aplicación; usr_crear / usr_actualizar
+--      exigen nombre, apellido, CI, correo y teléfono. Los usuarios históricos conservan ci / telefono en NULL (no se inventan); documento_hash NO se usa como CI.
 -- NO incluye (pendiente, fuera de este recorte): matriz de permisos por perfil, módulos contratados por empresa (RN-14: aún no existe el catálogo técnico de módulos), restablecimiento de contraseña por el administrador,
 -- alta de empresa/primer administrador por MASTER. No modifica documentos existentes ni NEX-072/NEX-073.
 -- ESTADO: versionada y NO aplicada. Ningún agente de IA la aplica: la ejecuta SOLO el responsable en la VM (docs/PROCEDIMIENTO-NEX-074.md). Primero la migración, después el código.
@@ -26,10 +28,28 @@ BEGIN
      OR to_regprocedure('public.nex_reinicio_demo_activo(uuid)') IS NULL THEN
     RAISE EXCEPTION 'NEX-074 requiere la emisión de FE con stock y entrega (NEX-067/NEX-068).';
   END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'usuarios' AND column_name IN ('ci', 'telefono')) THEN
+    RAISE EXCEPTION 'usuarios ya tiene las columnas ci/telefono: NEX-074 parece aplicada o hay una estructura paralela; no se reaplica por suposición.';
+  END IF;
   IF to_regclass('public.documento_electronico_vendedor') IS NOT NULL THEN
     RAISE EXCEPTION 'documento_electronico_vendedor ya existe: NEX-074 parece aplicada; no se reaplica por suposición.';
   END IF;
 END $$;
+
+-- 0) Identificación del usuario: CI y teléfono (texto). Los históricos quedan NULL. CI: solo dígitos (4 a 10; se aceptan puntos y espacios al escribirla y se guardan sin ellos, sin tocar los ceros iniciales); teléfono: dígitos con + inicial
+--    opcional (6 a 15; espacios, guiones, puntos y paréntesis se descartan al guardar). Única la CI por empresa.
+ALTER TABLE public.usuarios ADD COLUMN ci text, ADD COLUMN telefono text;
+ALTER TABLE public.usuarios
+  ADD CONSTRAINT usuarios_ci_chk CHECK (ci IS NULL OR ci ~ '^[0-9]{4,10}$'),
+  ADD CONSTRAINT usuarios_telefono_chk CHECK (telefono IS NULL OR telefono ~ '^\+?[0-9]{6,15}$');
+CREATE UNIQUE INDEX usuarios_empresa_ci_key ON public.usuarios (empresa_id, ci) WHERE ci IS NOT NULL;
+COMMENT ON COLUMN public.usuarios.ci IS 'NEX-074: cédula de identidad del usuario (texto, ceros iniciales conservados). NULL en usuarios históricos. No es documento_hash.';
+COMMENT ON COLUMN public.usuarios.telefono IS 'NEX-074: teléfono de contacto del usuario (texto, ceros iniciales conservados). NULL en usuarios históricos.';
+
+CREATE OR REPLACE FUNCTION public.usr_normalizar_ci(p text) RETURNS text
+LANGUAGE sql IMMUTABLE AS $$ SELECT nullif(regexp_replace(btrim(coalesce(p, '')), '[[:space:].]', '', 'g'), '') $$;
+CREATE OR REPLACE FUNCTION public.usr_normalizar_telefono(p text) RETURNS text
+LANGUAGE sql IMMUTABLE AS $$ SELECT nullif(regexp_replace(btrim(coalesce(p, '')), '[[:space:]().-]', '', 'g'), '') $$;
 
 -- 1) Catálogo de nueve perfiles ------------------------------------------------------------------------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.nex_asegurar_perfiles_estandar(p_empresa uuid) RETURNS void
@@ -159,16 +179,41 @@ BEGIN
 END $$;
 
 -- 4) Alta, edición, estado y perfiles --------------------------------------------------------------------------------------------------------------------------------------
+-- Validación común de los datos del usuario (alta y edición). Todos obligatorios; mensajes con DETAIL por campo.
+CREATE OR REPLACE FUNCTION public.usr_exigir_datos(p_nombre text, p_apellido text, p_ci text, p_email text, p_telefono text) RETURNS void
+LANGUAGE plpgsql IMMUTABLE SET search_path = public, pg_temp AS $$
+DECLARE
+  v_nombre text := btrim(coalesce(p_nombre, ''));
+  v_apellido text := btrim(coalesce(p_apellido, ''));
+  v_ci text := public.usr_normalizar_ci(p_ci);
+  v_email text := btrim(coalesce(p_email, ''));
+  v_tel text := public.usr_normalizar_telefono(p_telefono);
+BEGIN
+  IF char_length(v_nombre) NOT BETWEEN 1 AND 120 THEN
+    RAISE EXCEPTION 'el nombre es obligatorio (hasta 120 caracteres)' USING ERRCODE = 'P0001', DETAIL = 'NEX:NOMBRE_INVALIDO';
+  END IF;
+  IF char_length(v_apellido) NOT BETWEEN 1 AND 120 THEN
+    RAISE EXCEPTION 'el apellido es obligatorio (hasta 120 caracteres)' USING ERRCODE = 'P0001', DETAIL = 'NEX:APELLIDO_INVALIDO';
+  END IF;
+  IF v_ci IS NULL OR v_ci !~ '^[0-9]{4,10}$' THEN
+    RAISE EXCEPTION 'la CI es obligatoria y debe tener de 4 a 10 dígitos' USING ERRCODE = 'P0001', DETAIL = 'NEX:CI_INVALIDA';
+  END IF;
+  IF v_email = '' OR char_length(v_email) > 200 OR v_email !~ '^[^@\s]+@[^@\s]+\.[^@\s]+$' THEN
+    RAISE EXCEPTION 'el correo electrónico es obligatorio y debe ser válido' USING ERRCODE = 'P0001', DETAIL = 'NEX:EMAIL_INVALIDO';
+  END IF;
+  IF v_tel IS NULL OR v_tel !~ '^\+?[0-9]{6,15}$' THEN
+    RAISE EXCEPTION 'el teléfono es obligatorio y debe tener de 6 a 15 dígitos' USING ERRCODE = 'P0001', DETAIL = 'NEX:TELEFONO_INVALIDO';
+  END IF;
+END $$;
+
 CREATE OR REPLACE FUNCTION public.usr_crear(
-  p_empresa uuid, p_actor uuid, p_usuario text, p_nombre text, p_apellido text, p_email text, p_password text, p_perfiles text[])
+  p_empresa uuid, p_actor uuid, p_usuario text, p_nombre text, p_apellido text, p_ci text, p_email text, p_telefono text, p_password text, p_perfiles text[])
 RETURNS uuid
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
 DECLARE
   v_usuario text := lower(btrim(coalesce(p_usuario, '')));
-  v_nombre text := btrim(coalesce(p_nombre, ''));
-  v_apellido text := nullif(btrim(coalesce(p_apellido, '')), '');
-  v_email text := nullif(btrim(coalesce(p_email, '')), '');
   v_id uuid;
+  v_c text;
 BEGIN
   PERFORM public.usr_exigir_admin(p_empresa, p_actor);
   PERFORM public.nex_asegurar_perfiles_estandar(p_empresa);
@@ -176,48 +221,51 @@ BEGIN
   IF v_usuario !~ '^[a-z0-9][a-z0-9._-]{2,59}$' THEN
     RAISE EXCEPTION 'el usuario debe tener de 3 a 60 caracteres (letras minúsculas, números, punto, guion)' USING ERRCODE = 'P0001', DETAIL = 'NEX:USUARIO_INVALIDO';
   END IF;
-  IF char_length(v_nombre) NOT BETWEEN 1 AND 120 OR (v_apellido IS NOT NULL AND char_length(v_apellido) > 120) THEN
-    RAISE EXCEPTION 'el nombre es obligatorio (hasta 120 caracteres)' USING ERRCODE = 'P0001', DETAIL = 'NEX:NOMBRE_INVALIDO';
-  END IF;
-  IF v_email IS NOT NULL AND (char_length(v_email) > 200 OR v_email !~ '^[^@\s]+@[^@\s]+\.[^@\s]+$') THEN
-    RAISE EXCEPTION 'el correo no es válido' USING ERRCODE = 'P0001', DETAIL = 'NEX:EMAIL_INVALIDO';
-  END IF;
+  PERFORM public.usr_exigir_datos(p_nombre, p_apellido, p_ci, p_email, p_telefono);
   IF p_password IS NULL OR char_length(p_password) NOT BETWEEN 10 AND 200 OR lower(p_password) = v_usuario THEN
     RAISE EXCEPTION 'la contraseña inicial debe tener de 10 a 200 caracteres y no ser igual al usuario' USING ERRCODE = 'P0001', DETAIL = 'NEX:CONTRASENA_INVALIDA';
   END IF;
 
   BEGIN
-    INSERT INTO public.usuarios (empresa_id, usuario, nombre, apellido, email, password_hash, estado, debe_cambiar_contrasena, creado_por, creado_por_tipo)
-    VALUES (p_empresa, v_usuario, v_nombre, v_apellido, v_email, crypt(p_password, gen_salt('bf', 12)), 'ACTIVO', true, p_actor, 'USUARIO')
+    INSERT INTO public.usuarios (empresa_id, usuario, nombre, apellido, ci, email, telefono, password_hash, estado, debe_cambiar_contrasena, creado_por, creado_por_tipo)
+    VALUES (p_empresa, v_usuario, btrim(p_nombre), btrim(p_apellido), public.usr_normalizar_ci(p_ci), btrim(p_email), public.usr_normalizar_telefono(p_telefono),
+            crypt(p_password, gen_salt('bf', 12)), 'ACTIVO', true, p_actor, 'USUARIO')
     RETURNING id INTO v_id;
   EXCEPTION WHEN unique_violation THEN
+    GET STACKED DIAGNOSTICS v_c = CONSTRAINT_NAME;
+    IF v_c = 'usuarios_empresa_ci_key' THEN
+      RAISE EXCEPTION 'ya existe otro usuario con esa CI en la empresa' USING ERRCODE = 'P0001', DETAIL = 'NEX:CI_DUPLICADA';
+    END IF;
     RAISE EXCEPTION 'ya existe un usuario con ese nombre en la empresa' USING ERRCODE = 'P0001', DETAIL = 'NEX:USUARIO_DUPLICADO';
   END;
 
   PERFORM public.usr_aplicar_perfiles(p_empresa, p_actor, v_id, p_perfiles);
+  -- El evento no guarda CI, correo ni teléfono (datos personales): solo identifica al usuario creado.
   INSERT INTO public.eventos_seguridad (empresa_id, usuario_id, tipo, detalle)
   VALUES (p_empresa, p_actor, 'USUARIO_CREADO', jsonb_build_object('usuario_id', v_id, 'usuario', v_usuario, 'perfiles', to_jsonb(coalesce(p_perfiles, ARRAY[]::text[]))));
 
   RETURN v_id;
 END $$;
 
-CREATE OR REPLACE FUNCTION public.usr_actualizar(p_empresa uuid, p_actor uuid, p_id uuid, p_nombre text, p_apellido text, p_email text) RETURNS void
+CREATE OR REPLACE FUNCTION public.usr_actualizar(p_empresa uuid, p_actor uuid, p_id uuid, p_nombre text, p_apellido text, p_ci text, p_email text, p_telefono text) RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
-DECLARE
-  v_nombre text := btrim(coalesce(p_nombre, ''));
-  v_apellido text := nullif(btrim(coalesce(p_apellido, '')), '');
-  v_email text := nullif(btrim(coalesce(p_email, '')), '');
+DECLARE v_c text;
 BEGIN
   PERFORM public.usr_exigir_admin(p_empresa, p_actor);
-  IF char_length(v_nombre) NOT BETWEEN 1 AND 120 OR (v_apellido IS NOT NULL AND char_length(v_apellido) > 120) THEN
-    RAISE EXCEPTION 'el nombre es obligatorio (hasta 120 caracteres)' USING ERRCODE = 'P0001', DETAIL = 'NEX:NOMBRE_INVALIDO';
-  END IF;
-  IF v_email IS NOT NULL AND (char_length(v_email) > 200 OR v_email !~ '^[^@\s]+@[^@\s]+\.[^@\s]+$') THEN
-    RAISE EXCEPTION 'el correo no es válido' USING ERRCODE = 'P0001', DETAIL = 'NEX:EMAIL_INVALIDO';
-  END IF;
-  UPDATE public.usuarios SET nombre = v_nombre, apellido = v_apellido, email = v_email, actualizado_at = now()
-   WHERE empresa_id = p_empresa AND id = p_id
-     AND NOT EXISTS (SELECT 1 FROM public.administradores_plataforma ap WHERE ap.empresa_id = usuarios.empresa_id AND ap.usuario_id = usuarios.id AND ap.activo);
+  PERFORM public.usr_exigir_datos(p_nombre, p_apellido, p_ci, p_email, p_telefono);
+
+  BEGIN
+    UPDATE public.usuarios SET nombre = btrim(p_nombre), apellido = btrim(p_apellido), ci = public.usr_normalizar_ci(p_ci), email = btrim(p_email),
+           telefono = public.usr_normalizar_telefono(p_telefono), actualizado_at = now()
+     WHERE empresa_id = p_empresa AND id = p_id
+       AND NOT EXISTS (SELECT 1 FROM public.administradores_plataforma ap WHERE ap.empresa_id = usuarios.empresa_id AND ap.usuario_id = usuarios.id AND ap.activo);
+  EXCEPTION WHEN unique_violation THEN
+    GET STACKED DIAGNOSTICS v_c = CONSTRAINT_NAME;
+    IF v_c = 'usuarios_empresa_ci_key' THEN
+      RAISE EXCEPTION 'ya existe otro usuario con esa CI en la empresa' USING ERRCODE = 'P0001', DETAIL = 'NEX:CI_DUPLICADA';
+    END IF;
+    RAISE;
+  END;
   IF NOT FOUND THEN
     RAISE EXCEPTION 'el usuario no existe en la empresa' USING ERRCODE = 'P0001', DETAIL = 'NEX:USUARIO_NO_ENCONTRADO';
   END IF;
@@ -427,20 +475,23 @@ BEGIN
   REVOKE ALL ON FUNCTION public.nex_asegurar_perfiles_estandar(uuid) FROM PUBLIC;
   REVOKE ALL ON FUNCTION public.usr_aplicar_perfiles(uuid, uuid, uuid, text[]) FROM PUBLIC;
   REVOKE ALL ON FUNCTION public.usr_exigir_admin(uuid, uuid) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION public.usr_exigir_datos(text, text, text, text, text) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION public.usr_normalizar_ci(text) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION public.usr_normalizar_telefono(text) FROM PUBLIC;
   REVOKE ALL ON FUNCTION public.usr_otros_admins(uuid, uuid) FROM PUBLIC;
   REVOKE ALL ON FUNCTION public.usuario_es_admin_empresa(uuid, uuid) FROM PUBLIC;
   REVOKE ALL ON FUNCTION public.usuario_es_vendedor_activo(uuid, uuid) FROM PUBLIC;
   REVOKE ALL ON FUNCTION public.usr_perfiles_catalogo(uuid, uuid) FROM PUBLIC;
-  REVOKE ALL ON FUNCTION public.usr_crear(uuid, uuid, text, text, text, text, text, text[]) FROM PUBLIC;
-  REVOKE ALL ON FUNCTION public.usr_actualizar(uuid, uuid, uuid, text, text, text) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION public.usr_crear(uuid, uuid, text, text, text, text, text, text, text, text[]) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION public.usr_actualizar(uuid, uuid, uuid, text, text, text, text, text) FROM PUBLIC;
   REVOKE ALL ON FUNCTION public.usr_cambiar_estado(uuid, uuid, uuid, boolean) FROM PUBLIC;
   REVOKE ALL ON FUNCTION public.usr_asignar_perfiles(uuid, uuid, uuid, text[]) FROM PUBLIC;
   REVOKE ALL ON FUNCTION public.usr_serializar_admins(uuid, uuid) FROM PUBLIC;
   REVOKE ALL ON FUNCTION public.usr_cambiar_contrasena_propia(uuid, uuid, uuid, text, text) FROM PUBLIC;
   REVOKE ALL ON FUNCTION public.usr_asignar_alcance(uuid, uuid, uuid, uuid[], uuid[]) FROM PUBLIC;
   GRANT EXECUTE ON FUNCTION public.usr_perfiles_catalogo(uuid, uuid) TO nexit_runtime;
-  GRANT EXECUTE ON FUNCTION public.usr_crear(uuid, uuid, text, text, text, text, text, text[]) TO nexit_runtime;
-  GRANT EXECUTE ON FUNCTION public.usr_actualizar(uuid, uuid, uuid, text, text, text) TO nexit_runtime;
+  GRANT EXECUTE ON FUNCTION public.usr_crear(uuid, uuid, text, text, text, text, text, text, text, text[]) TO nexit_runtime;
+  GRANT EXECUTE ON FUNCTION public.usr_actualizar(uuid, uuid, uuid, text, text, text, text, text) TO nexit_runtime;
   GRANT EXECUTE ON FUNCTION public.usr_cambiar_estado(uuid, uuid, uuid, boolean) TO nexit_runtime;
   GRANT EXECUTE ON FUNCTION public.usr_asignar_perfiles(uuid, uuid, uuid, text[]) TO nexit_runtime;
   GRANT EXECUTE ON FUNCTION public.usr_cambiar_contrasena_propia(uuid, uuid, uuid, text, text) TO nexit_runtime;

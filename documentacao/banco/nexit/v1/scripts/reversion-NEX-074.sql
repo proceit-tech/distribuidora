@@ -14,8 +14,8 @@ DROP TABLE IF EXISTS public.documento_electronico_vendedor;
 DROP FUNCTION IF EXISTS public.fe_vendedor_inmutable();
 DROP FUNCTION IF EXISTS public.nex_aplicar_grants_facturacion_vendedor();
 
-DROP FUNCTION IF EXISTS public.usr_crear(uuid, uuid, text, text, text, text, text, text[]);
-DROP FUNCTION IF EXISTS public.usr_actualizar(uuid, uuid, uuid, text, text, text);
+DROP FUNCTION IF EXISTS public.usr_crear(uuid, uuid, text, text, text, text, text, text, text, text[]);
+DROP FUNCTION IF EXISTS public.usr_actualizar(uuid, uuid, uuid, text, text, text, text, text);
 DROP FUNCTION IF EXISTS public.usr_cambiar_estado(uuid, uuid, uuid, boolean);
 DROP FUNCTION IF EXISTS public.usr_asignar_perfiles(uuid, uuid, uuid, text[]);
 DROP FUNCTION IF EXISTS public.usr_perfiles_catalogo(uuid, uuid);
@@ -24,6 +24,9 @@ DROP FUNCTION IF EXISTS public.usr_asignar_alcance(uuid, uuid, uuid, uuid[], uui
 DROP FUNCTION IF EXISTS public.usr_serializar_admins(uuid, uuid);
 DROP FUNCTION IF EXISTS public.usr_aplicar_perfiles(uuid, uuid, uuid, text[]);
 DROP FUNCTION IF EXISTS public.usr_exigir_admin(uuid, uuid);
+DROP FUNCTION IF EXISTS public.usr_exigir_datos(text, text, text, text, text);
+DROP FUNCTION IF EXISTS public.usr_normalizar_ci(text);
+DROP FUNCTION IF EXISTS public.usr_normalizar_telefono(text);
 DROP FUNCTION IF EXISTS public.usr_otros_admins(uuid, uuid);
 DROP FUNCTION IF EXISTS public.usr_codigos_catalogo();
 DROP FUNCTION IF EXISTS public.usuario_es_vendedor_activo(uuid, uuid);
@@ -36,6 +39,17 @@ DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'nexit_runtime') THEN
     GRANT EXECUTE ON FUNCTION public.fe_documento_crear_fe_con_stock_entrega(uuid, uuid, uuid, uuid, text, uuid, text, text, text, numeric, jsonb, jsonb, uuid) TO nexit_runtime;
+  END IF;
+END $$;
+
+-- Columnas CI/teléfono: se eliminan SOLO si ningún usuario las ha llenado (son datos personales cargados por los administradores; no se destruyen). Si hay datos, se conservan y la reversión continúa sin tocarlas.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM public.usuarios WHERE ci IS NOT NULL OR telefono IS NOT NULL) THEN
+    DROP INDEX IF EXISTS public.usuarios_empresa_ci_key;
+    ALTER TABLE public.usuarios DROP CONSTRAINT IF EXISTS usuarios_ci_chk, DROP CONSTRAINT IF EXISTS usuarios_telefono_chk, DROP COLUMN IF EXISTS ci, DROP COLUMN IF EXISTS telefono;
+  ELSE
+    RAISE NOTICE 'Se conservan usuarios.ci / usuarios.telefono: ya contienen datos cargados.';
   END IF;
 END $$;
 

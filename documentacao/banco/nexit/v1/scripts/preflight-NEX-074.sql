@@ -12,7 +12,8 @@ UNION ALL SELECT 'emisión con stock y entrega de 13 parámetros (NEX-067/068)',
 UNION ALL SELECT 'nex_reinicio_demo_activo(uuid)', to_regprocedure('public.nex_reinicio_demo_activo(uuid)') IS NOT NULL
 UNION ALL SELECT 'pgcrypto (crypt / gen_salt)', to_regprocedure('crypt(text,text)') IS NOT NULL AND to_regprocedure('gen_salt(text,integer)') IS NOT NULL
 UNION ALL SELECT 'rol nexit_runtime existe', EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'nexit_runtime')
-UNION ALL SELECT 'NEX-074 ausente (no se reaplica)', to_regclass('public.documento_electronico_vendedor') IS NULL AND to_regprocedure('public.usr_crear(uuid,uuid,text,text,text,text,text,text[])') IS NULL;
+UNION ALL SELECT 'usuarios SIN columnas ci/telefono (NEX-074 las agrega)', NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'usuarios' AND column_name IN ('ci', 'telefono'))
+UNION ALL SELECT 'NEX-074 ausente (no se reaplica)', to_regclass('public.documento_electronico_vendedor') IS NULL AND to_regprocedure('public.usr_crear(uuid,uuid,text,text,text,text,text,text,text,text[])') IS NULL;
 
 \echo '== 2. Estado de migraciones registrado =='
 SELECT version, nombre FROM public.schema_migrations WHERE version IN ('NEX-067', 'NEX-068', 'NEX-072', 'NEX-073', 'NEX-074') ORDER BY version;
@@ -31,6 +32,9 @@ SELECT e.codigo AS empresa,
 
 \echo '== 2d. Informativo: usuarios con contraseña provisional pendiente (debe_cambiar_contrasena) =='
 SELECT count(*) AS pendientes FROM public.usuarios WHERE debe_cambiar_contrasena;
+
+\echo '== 2e. Informativo: usuarios existentes (quedan con ci y telefono NULL; el administrador los completa al editarlos) =='
+SELECT count(*) AS usuarios_historicos FROM public.usuarios;
 
 \echo '== 3. Informativo: perfiles por empresa (los nueve del catálogo se crean sin permisos) =='
 SELECT e.codigo AS empresa, string_agg(p.codigo, ', ' ORDER BY p.codigo) AS perfiles FROM public.empresas e LEFT JOIN public.perfiles p ON p.empresa_id = e.id GROUP BY e.codigo ORDER BY e.codigo;
