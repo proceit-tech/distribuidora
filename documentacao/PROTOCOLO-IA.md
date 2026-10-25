@@ -1,6 +1,6 @@
 # PROCEIT — Protocolo de desenvolvimento colaborativo por IA (v1.0)
 
-Este repositório utiliza o GitHub como fonte única de verdade. Claude implementa; ChatGPT audita; o responsável humano aplica e valida as entregas no único ambiente operacional real. Nenhuma aprovação técnica substitui a homologação humana.
+Este repositório utiliza o GitHub como fonte única de verdade do código e da documentação; o Linear é o controle das tarefas. **Claude desenvolve e testa unitariamente; ChatGPT é analista de negócios e sistemas, faz auditoria independente e administra todo o Linear; o responsável humano aplica e valida as entregas no único ambiente operacional real.** Nenhuma aprovação técnica substitui a homologação humana.
 
 
 ## Política obrigatória de testes — somente testes da funcionalidade, salvo solicitação expressa
@@ -17,9 +17,9 @@ Este repositório utiliza o GitHub como fonte única de verdade. Claude implemen
 
 Este protocolo vincula **Claude Code e ChatGPT**. No início **de toda solicitação de implementação, revisão, retomada, nova conversa ou após compactação**, ambas as IAs devem consultar no GitHub a versão atual de `CLAUDE.md`, deste `documentacao/PROTOCOLO-IA.md` e os trechos relevantes de `PROGRESSO-NEXIT-V1.md`, além de branch, commit e arquivos relacionados. Os documentos versionados prevalecem sobre lembranças imprecisas de chat. Usar leitura seletiva de código e progresso; não realizar auditorias gerais sem pedido.
 
-**Fluxo de responsabilidades sem exceções presumidas:**
-1. Claude Code implementa tarefa única autorizada, prepara/atualiza código, documentação e arquivos SQL, realiza apenas verificações permitidas pelas instruções do projeto, faz **commit e push GitHub** e **para**. Não acessa VM, Docker nem PostgreSQL real para aplicar scripts ou fazer deploy.
-2. ChatGPT consulta o repositório e os documentos a cada tarefa, revisa a entrega, identifica defeitos concretos e orienta a execução. Pode publicar correções diretamente no GitHub somente mediante autorização do usuário; isso **não** significa aplicar SQL no banco real.
+**Fluxo de responsabilidades sem exceções presumidas (decisão do responsável em 24/10/2026):**
+1. **Claude Code — desenvolvedor:** implementa somente a tarefa autorizada, altera código e testes unitários/focais, prepara scripts/migrations técnicos estritamente necessários quando houver mudança estrutural, executa verificações pontuais, faz **commit e push no GitHub**, informa SHA, testes e bloqueios e **para**. Não cria, edita ou movimenta tarefas no Linear; não define backlog/escopo, não mantém PROGRESSO ou documentação de gestão e não escreve auditorias independentes. Não acessa VM, Docker nem PostgreSQL real para aplicar scripts ou fazer deploy.
+2. **ChatGPT — analista de negócios/sistemas, auditor e gestor:** coleta/interpreta requisitos, especifica regras e critérios de aceite, organiza backlog, prioridades, marcos e dependências; **cria e atualiza todas as issues do Linear**, inclusive estados, SHA, resultados, bloqueios e relações. Após o push, lê HEAD/diff/código/testes, produz a auditoria independente AUD-RNN no Git, atualiza `PROGRESSO-NEXIT-V1.md` e documentação de requisitos/gestão. Passa a issue para In Review após conferir a entrega; somente registra Done/Homologado com aceite humano. Pode publicar requisitos, auditorias e registros gerenciais no Git; só altera código da aplicação por pedido expresso. Isso **não** significa aplicar SQL no banco real.
 3. O responsável humano revisa/aprova, executa **git pull na VM**, comandos Docker, migrations/cargas SQL e deploy quando pertinente; confere os resultados no único ambiente real. Git commit/push não significa banco atualizado ou aplicação publicada.
 4. Nunca limpar/recriar banco, containers ou volumes como rotina. Proteger dados reais e versões de migration já aplicadas. Quando houver dúvida sobre estado efetivo, perguntar ou verificar no ambiente antes de autorizar execução.
 5. Se GitHub ou documentos estiverem inacessíveis, declarar que não houve verificação e não inventar estado. Registrar mudanças de decisão no Git, para sobreviver à perda de contexto das duas IAs.
@@ -59,8 +59,8 @@ O requisito deve conter: contexto; objetivo; escopo/não escopo; personas e perm
 Não implementar requisito marcado RASCUNHO ou com decisões bloqueantes em aberto.
 
 ## Etapa 2 — Claude desenvolve
-Antes de alterar código, ler este protocolo, a definição relevante, regras locais do projeto (CLAUDE.md/AGENTS.md) e implementações relacionadas. Desenvolver mantendo compatibilidade e preservando convenções existentes. Criar SQL incremental, com ordem e rollback quando pertinente. Registrar testes automatizados, comandos executados e resultados em TST. Se houver mudanças fora de escopo, justificar na definição. Nunca dizer que executou testes não executados.
-Entregar commit/PR e marcar PRONTO_PARA_AUDITORIA, identificando os caminhos alterados.
+Antes de alterar código, ler este protocolo, a definição relevante, regras locais do projeto (CLAUDE.md/AGENTS.md) e implementações relacionadas. Desenvolver mantendo compatibilidade e preservando convenções existentes. Criar SQL incremental, com ordem e rollback quando pertinente. Manter os testes automatizados junto ao código e informar os resultados na entrega; o registro gerencial dos resultados em PROGRESSO/TST e Linear cabe ao ChatGPT depois da inspeção do commit, exceto documentação técnica estritamente necessária. Se houver mudanças fora de escopo, justificar na definição. Nunca dizer que executou testes não executados.
+Entregar commit/PR e informar SHA, testes e eventuais bloqueios ao ChatGPT. O estado de tarefa no **Linear será atualizado exclusivamente pelo ChatGPT**, após conferência da entrega. Não editar documentação gerencial, PROGRESSO ou AUD-* como rotina de desenvolvimento.
 
 ## Etapa 3 — ChatGPT audita
 Ler definição, diff completo/arquivos relevantes, scripts SQL e TST. Verificar cobertura de cada RN e CA, coerência entre camadas, segurança e autenticação, multi-tenancy, integridade de dados, migração e rollback, erros/observabilidade, regressões, performance, tipagem, testes e manutenção.
