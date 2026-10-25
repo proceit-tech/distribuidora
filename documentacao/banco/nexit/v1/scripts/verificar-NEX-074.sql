@@ -4,7 +4,7 @@ BEGIN READ ONLY;
 SELECT 'tabla documento_electronico_vendedor' AS control, to_regclass('public.documento_electronico_vendedor') IS NOT NULL AS ok
 UNION ALL SELECT 'usuarios.ci y usuarios.telefono son texto', (SELECT count(*) FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'usuarios' AND column_name IN ('ci', 'telefono') AND data_type = 'text') = 2
 UNION ALL SELECT 'CI única por empresa (índice parcial)', to_regclass('public.usuarios_empresa_ci_key') IS NOT NULL
-UNION ALL SELECT 'ci/telefono solo existen en usuarios cargados por usr_crear/usr_actualizar (la migración no inventó ninguno)', NOT EXISTS (
+UNION ALL SELECT 'todo usuario con ci o telefono tiene al menos un evento USUARIO_CREADO/USUARIO_ACTUALIZADO en eventos_seguridad (no prueba cuándo se registraron ni descarta por sí solo un llenado histórico)', NOT EXISTS (
          SELECT 1 FROM public.usuarios u WHERE (u.ci IS NOT NULL OR u.telefono IS NOT NULL) AND NOT EXISTS (
            SELECT 1 FROM public.eventos_seguridad e WHERE e.empresa_id = u.empresa_id AND e.tipo IN ('USUARIO_CREADO', 'USUARIO_ACTUALIZADO') AND e.detalle ->> 'usuario_id' = u.id::text))
 UNION ALL SELECT 'emisión con vendedor de 14 parámetros', to_regprocedure('public.fe_documento_crear_fe_vendedor(uuid,uuid,uuid,uuid,text,uuid,text,text,text,numeric,jsonb,jsonb,uuid,uuid)') IS NOT NULL
