@@ -15,6 +15,18 @@
 - **RN-08 — PERFIS PREEXISTENTES / ADMIN DA EMPRESA (CONFIRMADO 24/10/2026):** o administrador interno **NÃO cria, edita, exclui ou define perfis nem altera os respectivos conjuntos de permissões**. Ele somente **atribui e retira perfis já existentes**, disponibilizados de forma controlada pela plataforma, aos usuários da **sua própria empresa**. Pode atribuir **mais de um** perfil à mesma conta. A interface da empresa deve ter **seleção de perfis** e não editor/criador de perfis. Validação obrigatória no backend; um admin não deve poder criar permissões, elevar-se a MASTER ou atribuir perfil de outra empresa. A autoria/manutenção do catálogo padrão fica fora da administração de tenants; a lista de perfis disponíveis e o procedimento de manutenção central ainda precisam de definição.
 - **RN-09 — Permissões associadas ao perfil são fixas para o tenant:** a empresa utiliza o perfil pré-configurado; não pode modificar ações/menus/permissões incluídos nele. A combinação de múltiplos perfis e limites de acesso ainda será especificada em D-03.
 - **RN-10 — CATÁLOGO ÚNICO PARA TODAS AS EMPRESAS (CONFIRMADO 24/10/2026):** todas as empresas têm acesso à **mesma lista de perfis preexistentes**, com os mesmos nomes e permissões. O MASTER **não escolhe individualmente** quais perfis liberar por empresa. O administrador empresarial só seleciona, atribui e retira um ou vários perfis desse catálogo comum para usuários de sua empresa. A criação/manutenção do catálogo é central, fora das empresas; **não está decidido** quais são todos os perfis iniciais ou como o catálogo central será administrado. O isolamento de dados, usuários e atribuições permanece por empresa.
+- **RN-11 — CATÁLOGO INICIAL DE NOVE PERFIS APROVADO (24/10/2026):** os nomes **visíveis ao usuário devem estar em espanhol (Paraguai / es-PY)**, em TODAS as empresas, sem tradução para português na UI:
+  1. **Administrador de empresa**
+  2. **Gerente**
+  3. **Vendedor**
+  4. **Facturador**
+  5. **Contador**
+  6. **Compras**
+  7. **Inventario y depósitos**
+  8. **Finanzas**
+  9. **Consultas e informes**
+  O **MASTER de la plataforma** é uma identidade/autoridade administrativa GLOBAL separada, **não o décimo perfil empresarial**, não atribuível por administrador de empresa. Esta aprovação confirma **NOMES e EXISTÊNCIA dos nove perfis**, **NÃO** define permissões/menus/ações de cada um. Manter chaves internas/IDs estáveis quando existentes; rótulos visíveis devem seguir exatamente a nomenclatura espanhola aprovada. O cadastro dos nove perfis no DB e sua UI continuam **não autorizados** até revisão de desenho e migrations atuais.
+- **RN-12 — Idioma da interface (CONFIRMADO):** todas as telas, menus, formulários, nomes de perfis, ações, alertas e mensagens funcionais exibidos aos usuários do NEXIT devem utilizar **espanhol do Paraguai**. Documentação interna de análise pode permanecer em português; **não deixar português na interface**.
 - **RN-06 — Sem equivalência universal:** a identidade do usuário, seus perfis, o operador que emite FE/NCE e o vendedor comercial não são conceitos necessariamente iguais. Um usuário pode não ser vendedor e pode acumular funções.
 - **RN-07 — Cliente específico:** CASA MINGO pediu gerenciamento de usuários e exibição do vendedor no KuDE. Isso é requisito do cliente a conciliar com o modelo da plataforma, não regra estrutural global.
 
@@ -49,14 +61,14 @@ NEXIT (plataforma)
 
 - **D-01 MASTER:** campos obrigatórios de cadastro de empresa e mecanismo seguro de criação/entrega da credencial do primeiro administrador; capacidade de acrescentar/recuperar outros admins depois.
 - **D-02 — DECIDIDO: atribuição apenas.** Administrador empresarial **não cria nem edita perfis ou suas permissões; somente atribui ou retira perfis preexistentes** entre os disponibilizados para sua empresa, inclusive múltiplos simultâneos. Esta questão está ENCERRADA, não voltar a propor editor de perfis empresarial.
-- **D-02A — PARCIALMENTE DECIDIDO:** **todas as empresas recebem a MESMA lista de perfis preexistentes; não existe seleção por empresa feita pelo MASTER**. Ainda PENDENTE: definir **os nomes e permissões do catálogo inicial completo** e **como é mantido centralmente** (fora das empresas). ADMIN EMPRESA, VENDEDOR, FATURADOR e CONTADOR foram citados como exemplos; não assumir lista exaustiva nem rotina de criação pelo MASTER sem validação específica.
+- **D-02A — CATÁLOGO DE NOMES DECIDIDO:** as empresas recebem os MESMOS NOVE perfis de RN-11, com rótulos em **espanhol do Paraguai**. Não existe seleção de perfis por empresa. **PENDENTE somente:** matriz exata de permissões, menus e ações de cada perfil; mecanismo de manutenção central do catálogo; como tratar perfis administrativos MASTER (fora do catálogo empresarial). Não inventar permissões pela semântica do nome; não implementar por este documento.
 - **D-03 permissão multiperfil:** proposta para avaliação: **união das permissões permitidas** por todos os perfis atribuídos, sempre limitada por empresa, sucursal e depósito e por poderes indelegáveis. Confirmar regras de conflito/negação explícita.
 - **D-04 vendedor versus emissor:** quando um faturador registra a venda de outro vendedor, o faturador escolhe um vendedor autorizado distinto? Quais usuários podem ser selecionados como vendedor? Como registrar ambos (operador e vendedor) para auditoria e KuDE? Não assumir que são iguais.
 - **D-05 segurança:** limites de alteração de permissões, proteção do último admin, bloqueio/reativação, troca de senha, reset e revogação de sessões. Operação em tenant, sem escalada ao MASTER.
 
 ## 5. Sequência de análise/entrega — proposta, NÃO autorizada para Claude
 
-1. Aprovação deste modelo e das decisões restantes D-01, **detalhes pendentes de D-02A**, D-03, D-04 e D-05 (**D-02 = apenas atribuição e D-02A = mesmo catálogo para todas as empresas já decididos**).
+1. Revisão da matriz de permissões e ações dos **nove perfis aprovados em espanhol**, governança do catálogo central e decisões D-01, D-03, D-04 e D-05; D-02 e nomes/lista comum de D-02A estão encerrados.
 2. MASTER: alta de empresa e bootstrap do primeiro administrador.
 3. Empresa: administração de usuários com **múltiplos perfis e escopos**.
 4. Catálogo central controlado de perfis/permissões (definição a aprovar); no tenant, apenas seleção/atribuição de perfis preexistentes, sem editor de perfis.
