@@ -254,11 +254,11 @@ async function validarGeografiaReceptor(db: Db, r: ReceptorFE): Promise<void> {
   if (operacion === undefined) throw new ErrorFacturacion(422, "El tipo de operación del cliente no es válido. Corríjalo en Clientes.");
 
   try {
-    await resolverPais(db, r.pais, "El país del cliente");
+    await resolverPais(db as never, r.pais, "El país del cliente");
     validarPaisPorOperacion(operacion, r.pais);
 
     if (r.direccion.trim() !== "" && r.tipoOperacion !== 4) {
-      const u = await resolverUbicacionParaguay(db, r.departamento.trim(), r.distrito.trim(), r.ciudad.trim(), "La dirección fiscal del cliente");
+      const u = await resolverUbicacionParaguay(db as never, r.departamento.trim(), r.distrito.trim(), r.ciudad.trim(), "La dirección fiscal del cliente");
 
       if (u.departamentoCodigo === null || u.distritoCodigo === null || u.ciudadCodigo === null) throw new ErrorGeografia("La dirección fiscal del cliente requiere departamento, distrito y ciudad.");
     }
