@@ -2,8 +2,11 @@
  * E1 (PRO-93 / PRO-94) — J003 `dInfAdic` de la NCE y composición pura. Lógica REAL del servidor (prepararNce, propuestaCorreccion y las funciones de composición) con una base simulada que responde las
  * consultas que el código emite; la parte FE se prueba en entrega-e04.casos (E1-01…E1-11). Sin PostgreSQL ni gateway.
  */
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { contador } from "@/lib/clientes/contador-casos";
-import { coincideConObservaciones, componerInfoAdicional, lineaEntrega, lineaVendedor, LIMITE_INFO_ADICIONAL, MARCA_AUTOMATICA, separarObservacion } from "@/lib/facturacion/info-adicional";
+import { componerInfoAdicional, legadoCoincide, lineaEntrega, lineaVendedor, LIMITE_INFO_ADICIONAL, MARCA_AUTOMATICA } from "@/lib/facturacion/info-adicional";
 import { crearNotaCredito, leerCuerpoNce, MENSAJE_INFO_NCE_CAMBIO, prepararNce, propuestaCorreccion } from "@/lib/facturacion/nce";
 import { repeticion } from "@/lib/facturacion/nce-emision";
 import { ErrorFacturacion } from "@/lib/facturacion/shared";
@@ -21,13 +24,18 @@ const CDC = "01800000017001001000000112026101612345678901";
 
 const detalle = { dCodInt: "P1", dGtin: null, dDesProSer: "Producto uno", cUniMed: 77, dCantProSer: 5, dPUniProSer: 10000, dTotOpeItem: 50000, iAfecIVA: 1, dPropIVA: 100, dTasaIVA: 10 };
 
-function base(opciones: { persistida?: Map<string, string | null>; cuentas?: Map<string, { nombre: string; apellido: string | null }>; rechazada?: { observacion: string }; emisor?: string } = {}) {
+function base(opciones: { persistida?: Map<string, string | null>; cuentas?: Map<string, { nombre: string; apellido: string | null }>; rechazada?: { observacion: string }; migracion?: boolean; originales?: Map<string, string>; documento?: { observacion: string | null } } = {}) {
   const cuentas = opciones.cuentas ?? new Map([[EMP_A + "|" + U_FE, { nombre: "Ana", apellido: "López" }], [EMP_A + "|" + U_NCE, { nombre: "Luis", apellido: "Gómez" }], [EMP_B + "|" + U_B, { nombre: "Zoe", apellido: "Ajena" }]]);
   const llamadas: string[] = [];
+  const parametros: Array<{ sql: string; p: unknown[] }> = [];
   const db = {
     async query(sql: string, p: unknown[] = []) {
       llamadas.push(sql);
-      if (/FROM documentos_electronicos d JOIN usuarios u/.test(sql)) { const u = cuentas.get(String(p[0]) + "|" + (opciones.emisor ?? U_FE)); return { rows: u ? [u] : [] }; }
+      parametros.push({ sql, p });
+      if (/to_regclass\('public\.nce_observaciones_originales'\)/.test(sql)) return { rows: [{ ok: opciones.migracion === true }] };
+      if (/FROM nce_observaciones_originales/.test(sql)) { const o = opciones.originales?.get(String(p[0]) + "|" + String(p[1])); return { rows: o === undefined ? [] : [{ observacion: o }] }; }
+      if (/LEFT JOIN nce_origen o/.test(sql) && opciones.documento) return { rows: [{ id: NCE_RECH, numero: "0000009", tipo: "NCE", sucursalId: SUC, puntoCodigo: "001", feId: FE, motivo: 2, observacion: opciones.documento.observacion }] };
+      if (/FROM fe_puntos_expedicion WHERE empresa_id/.test(sql)) return { rows: [{ codigo: "001" }] };
       if (/FROM usuarios WHERE empresa_id/.test(sql)) { const u = cuentas.get(String(p[0]) + "|" + String(p[1])); return { rows: u ? [u] : [] }; }
       if (/FROM documentos_electronicos d JOIN documento_electronico_solicitudes s/.test(sql)) { const k = String(p[1]); return opciones.persistida?.has(k) ? { rows: [{ info: opciones.persistida.get(k) }] } : { rows: [] }; }
       if (/to_regclass/.test(sql)) return { rows: [{ ok: false }] };
@@ -43,7 +51,7 @@ function base(opciones: { persistida?: Map<string, string | null>; cuentas?: Map
     },
   };
 
-  return { db: db as never, llamadas, cuentas };
+  return { db: db as never, llamadas, parametros, cuentas };
 }
 
 const cuerpo = (extra: Record<string, unknown> = {}, clave = "clave-nce-e1-0001") => {
@@ -68,37 +76,15 @@ export async function verificarCasosInfoAdicionalE1(): Promise<string[]> {
 
   igual("E1-20 líneas: «Dirección de entrega: sede — dirección» y «Vendedor: nombre apellido» (espacios y controles limpiados; sin datos → null)", [lineaEntrega({ nombre: "SUC ESPAÑA", direccion: "AVDA ESPAÑA C/ DR BESTARD, ASUNCIÓN" }), lineaEntrega(null), lineaEntrega({ nombre: " ", direccion: "" }), lineaVendedor("Juan", "Pérez"), lineaVendedor(" Juan ", null), lineaVendedor("", " "), lineaVendedor(null, null)], ["Dirección de entrega: SUC ESPAÑA — AVDA ESPAÑA C/ DR BESTARD, ASUNCIÓN", null, null, "Vendedor: Juan Pérez", "Vendedor: Juan", null, null]);
   igual("E1-21 (F002) composición: observaciones → marca → entrega → vendedor; una línea «Vendedor:» escrita por el operador NO sustituye ni evita la automática; sin datos automáticos no hay marca; vacía si no hay nada", [componerInfoAdicional({ observaciones: "Obs", entrega: "Dirección de entrega: X", vendedor: "Vendedor: Y" }), componerInfoAdicional({ observaciones: "Obs\nVendedor: Y", vendedor: "Vendedor: Y" }), componerInfoAdicional({ observaciones: "  ", entrega: null, vendedor: null }), componerInfoAdicional({ observaciones: "", vendedor: "Vendedor: Y" }), componerInfoAdicional({ observaciones: "Solo obs", vendedor: null })], ["Obs\n" + M + "\nDirección de entrega: X\nVendedor: Y", "Obs\nVendedor: Y\n" + M + "\nVendedor: Y", "", M + "\nVendedor: Y", "Solo obs"]);
-  const ANA = "Vendedor: Ana López";
-
-  igual("E1-22 (F001) separarObservacion solo retira el bloque cuyo origen es VERIFICABLE: marca + UNA línea idéntica al «Vendedor» del emisor persistido de la NCE. Todo lo demás se conserva íntegro", [
-    separarObservacion("Obs propia\n" + M + "\n" + ANA, ANA),
-    separarObservacion("Entrega especial\n" + M + "\nVendedor: Pablo", ANA),
-    separarObservacion("Entrega especial\n" + M + "\n" + ANA, null),
-    separarObservacion("Entrega especial\nVendedor: Pablo", ANA),
-    separarObservacion("Nota\nDirección de entrega: Depósito 3", ANA),
-    separarObservacion("L1\nVendedor: algo\nL3", ANA),
-    separarObservacion(M + "\n" + ANA, ANA),
-    separarObservacion("Sin automáticas", ANA),
-    separarObservacion("", ANA),
-    separarObservacion("X\n" + M + "\nOtra cosa", ANA),
-    separarObservacion("Obs\n" + M + "\nDirección de entrega: A\n" + ANA, ANA),
-    separarObservacion("Obs\n" + M + "\n" + ANA + "\nlínea extra", ANA),
-  ], ["Obs propia", "Entrega especial\n" + M + "\nVendedor: Pablo", "Entrega especial\n" + M + "\n" + ANA, "Entrega especial\nVendedor: Pablo", "Nota\nDirección de entrega: Depósito 3", "L1\nVendedor: algo\nL3", "", "Sin automáticas", "", "X\n" + M + "\nOtra cosa", "Obs\n" + M + "\nDirección de entrega: A\n" + ANA, "Obs\n" + M + "\n" + ANA + "\nlínea extra"]);
-  igual("E1-22b componer → separar con el emisor real es reversible y no acumula; un marcador manual anterior sobrevive y solo se retira el último bloque auténtico", [
-    separarObservacion(componerInfoAdicional({ observaciones: "Vendedor: Otro", vendedor: ANA }), ANA),
-    separarObservacion("A\n" + M + "\nVendedor: Otro\n" + M + "\n" + ANA, ANA),
-    separarObservacion(componerInfoAdicional({ observaciones: separarObservacion(componerInfoAdicional({ observaciones: "Obs", vendedor: ANA }), ANA), vendedor: "Vendedor: Z" }), "Vendedor: Z"),
-    separarObservacion("Obs\n" + M + "\n" + ANA, "Vendedor: Ana Renombrada"),
-  ], ["Vendedor: Otro", "A\n" + M + "\nVendedor: Otro", "Obs", "Obs\n" + M + "\n" + ANA]);
-  igual("E1-22c coincideConObservaciones (reintento): igual tal cual, o observaciones + marca + UNA línea Vendedor, sin depender del nombre actual; otra observación o líneas de más no coinciden", [
-    coincideConObservaciones("Nota\n" + M + "\nVendedor: Quien sea", "Nota"),
-    coincideConObservaciones(M + "\nVendedor: X", ""),
-    coincideConObservaciones("Nota", "Nota"),
-    coincideConObservaciones(null, "  "),
-    coincideConObservaciones("Nota\n" + M + "\nVendedor: X", "Otra"),
-    coincideConObservaciones("Nota\n" + M + "\nVendedor: X\nExtra", "Nota"),
-    coincideConObservaciones("Nota\n" + M + "\nDirección de entrega: Y", "Nota"),
-  ], [true, true, true, true, false, false, false]);
+  igual("E1-22 (R03-F002) NCE sin observación original registrada: el reintento solo coincide si el texto guardado es EXACTAMENTE el enviado y no hay bloque automático; con marca (dInfAdic compuesto) o texto distinto, no", [
+    legadoCoincide("Nota", "Nota"),
+    legadoCoincide(null, "  "),
+    legadoCoincide("Nota\n" + M + "\nVendedor: Luis Gómez", "Nota"),
+    legadoCoincide(M + "\nVendedor: Luis Gómez", ""),
+    legadoCoincide(M + "\nVendedor: Luis Gómez", M + "\nVendedor: Luis Gómez"),
+    legadoCoincide("Nota\n" + M + "\nVendedor: Luis Gómez", "Nota\n" + M + "\nVendedor: Luis Gómez"),
+    legadoCoincide("Nota", "Otra"),
+  ], [true, true, false, false, false, false, false]);
 
   // ── NCE emitida por el usuario B (distinto del que emitió la FE) ──────────────────────────────
   const b = base();
@@ -129,38 +115,49 @@ export async function verificarCasosInfoAdicionalE1(): Promise<string[]> {
 
   igual("E1-28 reenvío de una NCE ya creada con esa clave: se reutiliza el dInfAdic PERSISTIDO (no se recompone con el nombre nuevo ni se duplica el vendedor)", [dInf(rn), (dInf(rn) ?? "").split("\n").filter((l) => l.startsWith("Vendedor:")).length, rn.infoReutilizada], ["Obs original\n" + M + "\nVendedor: Luis Gómez", 1, true]);
 
-  // ── corrección de NCE rechazada ───────────────────────────────────────────────────────────────
-  const corr = base({ rechazada: { observacion: "Obs de la rechazada\n" + M + "\nVendedor: Ana López" } });
-  const prop = (await propuestaCorreccion(corr.db, EMP_A, U_NCE, NCE_RECH)) as { observacion: string; motivo: number; lineas: Array<{ linea: number }> };
+  // ── corrección de NCE rechazada (NEX-071: observación original persistida) ────────────────────
+  const clave = (nce: string) => EMP_A + "|" + nce;
+  const conOriginal = (texto: string, original: string, nce = NCE_RECH) => base({ migracion: true, rechazada: { observacion: texto }, originales: new Map([[clave(nce), original]]) });
+  const manualM = "Entrega especial\n" + M + "\nVendedor: Ana López"; // lo tecleó el operador; el creador de la NCE histórica también se llama Ana López
 
-  igual("E1-29 la corrección precarga solo las observaciones propias (sin el bloque automático de la nota rechazada) y conserva motivo y líneas", [prop.observacion, prop.motivo, prop.lineas.length], ["Obs de la rechazada", 2, 1]);
+  const prop = (await propuestaCorreccion(conOriginal("Obs de la rechazada\n" + M + "\nVendedor: Ana López", "Obs de la rechazada").db, EMP_A, U_NCE, NCE_RECH)) as { observacion: string; motivo: number; lineas: Array<{ linea: number }> };
 
+  igual("E1-29 (NCE nueva) la corrección precarga EXACTAMENTE la observación original registrada, sin inferir nada del bloque automático, y conserva motivo y líneas", [prop.observacion, prop.motivo, prop.lineas.length], ["Obs de la rechazada", 2, 1]);
+
+  const corr = base({ migracion: true });
   const reemitida = await prepararNce(corr.db, EMP_A, U_NCE, cuerpo({ observacion: prop.observacion }, "clave-nce-e1-0002"));
 
   igual("E1-30 (corregida por OTRO vendedor) al emitir la corrección, el vendedor es quien la emite ahora, aparece UNA sola vez y la observación no se pierde", [dInf(reemitida)?.split("\n"), (dInf(reemitida)?.match(/Vendedor:/g) ?? []).length], [["Obs de la rechazada", M, "Vendedor: Luis Gómez"], 1]);
 
-  // F001: NCE histórica (sin marca) con observación manual que termina en «Vendedor:» / «Dirección de entrega:»
-  const histV = await propuestaCorreccion(base({ rechazada: { observacion: "Entrega especial\nVendedor: Pablo" } }).db, EMP_A, U_NCE, NCE_RECH) as { observacion: string };
-  const histD = await propuestaCorreccion(base({ rechazada: { observacion: "Retira cliente\nDirección de entrega: Depósito 3" } }).db, EMP_A, U_NCE, NCE_RECH) as { observacion: string };
-  const reHist = await prepararNce(b.db, EMP_A, U_NCE, cuerpo({ observacion: histV.observacion }, "clave-nce-e1-0003"));
-  const segunda = await propuestaCorreccion(base({ rechazada: { observacion: dInf(reHist) ?? "" }, emisor: U_NCE }).db, EMP_A, U_NCE, NCE_RECH) as { observacion: string };
+  // R03-F001: NCE HISTÓRICA (sin registro) cuyo marcador y vendedor coinciden con el nombre del creador: no se pierde ninguna línea
+  const hist1 = (await propuestaCorreccion(base({ migracion: true, rechazada: { observacion: manualM } }).db, EMP_A, U_NCE, NCE_RECH)) as { observacion: string };
+  const hist2 = (await propuestaCorreccion(base({ migracion: true, rechazada: { observacion: "Entrega especial\n" + M + "\nVendedor: Pablo" } }).db, EMP_A, U_NCE, NCE_RECH)) as { observacion: string };
+  const hist3 = (await propuestaCorreccion(base({ migracion: false, rechazada: { observacion: manualM } }).db, EMP_A, U_NCE, NCE_RECH)) as { observacion: string };
+  const hist4 = (await propuestaCorreccion(base({ migracion: true, rechazada: { observacion: "Retira cliente\nDirección de entrega: Depósito 3\nVendedor: Pablo" } }).db, EMP_A, U_NCE, NCE_RECH)) as { observacion: string };
 
-  igual("E1-32 (F001) NCE histórica con observación manual terminada en «Vendedor:» o «Dirección de entrega:»: la corrección la conserva íntegra; recompuesta se distingue del vendedor autenticado y en una segunda corrección no se acumula nada", [histV.observacion, histD.observacion, dInf(reHist)?.split("\n"), segunda.observacion], ["Entrega especial\nVendedor: Pablo", "Retira cliente\nDirección de entrega: Depósito 3", ["Entrega especial", "Vendedor: Pablo", M, "Vendedor: Luis Gómez"], "Entrega especial\nVendedor: Pablo"]);
+  igual("E1-32 (R03-F001) NCE histórica sin registro: la corrección conserva el texto íntegro aunque el marcador y el vendedor coincidan con el creador, aunque sea otro vendedor, sin la migración aplicada, o con «Vendedor:» / «Dirección de entrega:» manuales", [hist1.observacion, hist2.observacion, hist3.observacion, hist4.observacion], [manualM, "Entrega especial\n" + M + "\nVendedor: Pablo", manualM, "Retira cliente\nDirección de entrega: Depósito 3\nVendedor: Pablo"]);
 
-  // E1-R02-F001: NCE histórica con marcador y vendedor TECLEADOS por el operador (la reproducción de la auditoría) y NCE nueva con bloque auténtico
-  const manualM = "Entrega especial\n" + M + "\nVendedor: Pablo";
-  const hMan = await propuestaCorreccion(base({ rechazada: { observacion: manualM } }).db, EMP_A, U_NCE, NCE_RECH) as { observacion: string };
-  const reMan = await prepararNce(b.db, EMP_A, U_NCE, cuerpo({ observacion: hMan.observacion }, "clave-nce-e1-0005"));
-  const hMan2 = await propuestaCorreccion(base({ rechazada: { observacion: dInf(reMan) ?? "" }, emisor: U_NCE }).db, EMP_A, U_NCE, NCE_RECH) as { observacion: string };
-  const reMan2 = await prepararNce(b.db, EMP_A, U_FE, cuerpo({ observacion: hMan2.observacion }, "clave-nce-e1-0006"));
-  const renombrado = base({ rechazada: { observacion: "Obs\n" + M + "\nVendedor: Ana López" } });
+  // NCE nueva con observación que imita el bloque automático: se conserva exactamente lo escrito; segunda corrección sin duplicación
+  const nuevo1 = await prepararNce(corr.db, EMP_A, U_NCE, cuerpo({ observacion: manualM }, "clave-nce-e1-0005"));
+  const sep2 = (await propuestaCorreccion(conOriginal(dInf(nuevo1) ?? "", manualM).db, EMP_A, U_FE, NCE_RECH)) as { observacion: string };
+  const nuevo2 = await prepararNce(corr.db, EMP_A, U_FE, cuerpo({ observacion: sep2.observacion }, "clave-nce-e1-0006"));
+  const sep3 = (await propuestaCorreccion(conOriginal(dInf(nuevo2) ?? "", sep2.observacion).db, EMP_A, U_NCE, NCE_RECH)) as { observacion: string };
 
-  renombrado.cuentas.set(EMP_A + "|" + U_FE, { nombre: "Ana", apellido: "Renombrada" });
+  igual("E1-38 (R03-F001) NCE nueva con observación que imita marca + vendedor: se conserva tal cual; la 1.ª y la 2.ª corrección (por otros usuarios) recomponen UN solo bloque auténtico y no acumulan nada", [sep2.observacion, dInf(nuevo2)?.split("\n"), sep3.observacion], [manualM, ["Entrega especial", M, "Vendedor: Ana López", M, "Vendedor: Ana López"], manualM]);
 
-  const hRen = await propuestaCorreccion(renombrado.db, EMP_A, U_NCE, NCE_RECH) as { observacion: string };
+  // usuario renombrado después: el registro persistido no depende del nombre
+  const ren = base({ migracion: true, rechazada: { observacion: "Obs\n" + M + "\nVendedor: Ana López" }, originales: new Map([[clave(NCE_RECH), "Obs"]]) });
 
-  igual("E1-38 (F001) NCE histórica con las tres líneas exactas de la auditoría (marcador y «Vendedor: Pablo» tecleados; el emisor persistido es otra persona): la corrección las conserva íntegras; recompuesta, queda el marcador manual y un único bloque auténtico; en la 2.ª corrección se retira solo el auténtico y en la 3.ª no se acumula", [hMan.observacion, dInf(reMan)?.split("\n"), hMan2.observacion, dInf(reMan2)?.split("\n")], [manualM, ["Entrega especial", M, "Vendedor: Pablo", M, "Vendedor: Luis Gómez"], manualM, ["Entrega especial", M, "Vendedor: Pablo", M, "Vendedor: Ana López"]]);
-  igual("E1-39 (F001) NCE nueva con bloque auténtico pero el emisor fue renombrado después: no se puede verificar el origen, así que se conserva todo (integridad antes que limpieza) y el reenvío legítimo sigue reconociéndose", [hRen.observacion, coincideConObservaciones("Obs\n" + M + "\nVendedor: Ana López", "Obs")], ["Obs\n" + M + "\nVendedor: Ana López", true]);
+  ren.cuentas.set(EMP_A + "|" + U_FE, { nombre: "Ana", apellido: "Renombrada" });
+
+  const hRen = (await propuestaCorreccion(ren.db, EMP_A, U_NCE, NCE_RECH)) as { observacion: string };
+
+  igual("E1-39 NCE nueva y creador renombrado después: la observación original sale intacta del registro (sin reinterpretar texto)", hRen.observacion, "Obs");
+
+  // aislamiento por empresa: el registro de otra empresa no se ve
+  const otraEmpresa = (await propuestaCorreccion(base({ migracion: true, rechazada: { observacion: "Guardado A" }, originales: new Map([[EMP_B + "|" + NCE_RECH, "SECRETO B"]]) }).db, EMP_A, U_NCE, NCE_RECH)) as { observacion: string };
+
+  igual("E1-40 aislamiento: el registro de observación original se busca por la empresa de la sesión; el de otra empresa nunca se usa", otraEmpresa.observacion, "Guardado A");
 
   // ── F003: la NCE se emite con el texto que se revisó ──────────────────────────────────────────
   const rev = base();
@@ -192,18 +189,48 @@ export async function verificarCasosInfoAdicionalE1(): Promise<string[]> {
   await crearNotaCredito(persistidoRev.db, EMP_A, U_NCE, cuerpo({ observacion: "Nota", infoAdicionalHuella: previa.resumen.infoAdicionalHuella }, "clave-nce-e1-0004"), reenvio);
   igual("E1-36 (F003) reenvío de una NCE YA creada tras un cambio de nombre: reutiliza el snapshot original (misma huella que la revisión), sin 409 y sin recomponer", [reenvio.infoReutilizada, reenvio.resumen.infoAdicionalHuella === previa.resumen.infoAdicionalHuella, persistidoRev.llamadas.filter((q) => /fe_documento_crear_nce/.test(q)).length], [true, true, 1]);
 
-  // falso conflicto de idempotencia: lo guardado es el dInfAdic compuesto, el reintento trae las observaciones crudas
-  const guardado = base();
-  const dbRep = { async query(sql: string, p: unknown[] = []): Promise<unknown> {
-    if (/LEFT JOIN nce_origen o/.test(sql)) return { rows: [{ id: NCE_RECH, numero: "0000009", tipo: "NCE", sucursalId: SUC, puntoCodigo: "001", feId: FE, motivo: 2, observacion: "Nota\n" + M + "\nVendedor: Luis Gómez" }] };
-    if (/FROM fe_puntos_expedicion WHERE empresa_id/.test(sql)) return { rows: [{ codigo: "001" }] };
+  // ── NEX-071: creación con registro de la observación original (o ruta conservadora sin la migración) ─
+  const conMig = base({ migracion: true });
+  const prepM = await prepararNce(conMig.db, EMP_A, U_NCE, cuerpo({ observacion: "  Nota original  " }, "clave-nce-e1-0007"));
 
-    return (guardado.db as unknown as { query: (s: string, p: unknown[]) => Promise<unknown> }).query(sql, p);
-  } };
-  const rep = await repeticion(dbRep as never, EMP_A, U_NCE, cuerpo({ observacion: "Nota" }, "clave-nce-e1-0004"));
-  const repOtra = await estado(repeticion(dbRep as never, EMP_A, U_NCE, cuerpo({ observacion: "Otra observación" }, "clave-nce-e1-0004")));
+  await crearNotaCredito(conMig.db, EMP_A, U_NCE, cuerpo({ observacion: "  Nota original  " }, "clave-nce-e1-0007"), prepM);
 
-  igual("E1-37 reintento legítimo (respuesta perdida) de una NCE cuyo dInfAdic guardado incluye el vendedor: se reconoce como repetición (no falso conflicto); otra observación sigue siendo conflicto 409", [rep?.numero, repOtra.startsWith("409:")], ["0000009", true]);
+  const llamM = conMig.parametros.filter((q) => /fe_documento_crear_nce/.test(q.sql));
+  const sinMig = base({ migracion: false });
+  const prepS = await prepararNce(sinMig.db, EMP_A, U_NCE, cuerpo({ observacion: "Nota" }, "clave-nce-e1-0008"));
+
+  await crearNotaCredito(sinMig.db, EMP_A, U_NCE, cuerpo({ observacion: "Nota" }, "clave-nce-e1-0008"), prepS);
+
+  const llamS = sinMig.parametros.filter((q) => /fe_documento_crear_nce/.test(q.sql));
+
+  igual("E1-41 (NEX-071 aplicada) la NCE nueva se crea con fe_documento_crear_nce_obs en UNA sola llamada, con la observación original recortada como 12.º parámetro y el mismo dInfAdic en el payload; sin la migración usa la función anterior y no envía observación original", [llamM.length, /fe_documento_crear_nce_obs/.test(llamM[0]?.sql ?? ""), llamM[0]?.p.length, llamM[0]?.p[11], (JSON.parse(String(llamM[0]?.p[10])) as { dInfAdic: string }).dInfAdic.startsWith("Nota original\n" + M), llamS.length, /fe_documento_crear_nce_obs/.test(llamS[0]?.sql ?? ""), llamS[0]?.p.length], [1, true, 12, "Nota original", true, 1, false, 11]);
+
+  const snap = base({ migracion: true, persistida: new Map([["clave-nce-e1-0009", "Nota\n" + M + "\nVendedor: Luis Gómez"]]) });
+  const prepR = await prepararNce(snap.db, EMP_A, U_NCE, cuerpo({ observacion: "Nota" }, "clave-nce-e1-0009"));
+
+  await crearNotaCredito(snap.db, EMP_A, U_NCE, cuerpo({ observacion: "Nota" }, "clave-nce-e1-0009"), prepR);
+  igual("E1-42 si el documento ya existía (snapshot reutilizado) no se envía observación original: no se fabrica procedencia", snap.parametros.filter((q) => /fe_documento_crear_nce/.test(q.sql)).map((q) => [/_obs/.test(q.sql), q.p.length]), [[false, 11]]);
+
+  // R03-F002: la clave reutilizada con observación distinta es conflicto 409; el reenvío legítimo reutiliza documento y número
+  const guardadaEj = "Nota\n" + M + "\nVendedor: Luis Gómez";
+  const rep = (o: { migracion: boolean; original?: string; guardada: string | null }, obs: string) => repeticion(base({ migracion: o.migracion, documento: { observacion: o.guardada }, originales: o.original === undefined ? undefined : new Map([[clave(NCE_RECH), o.original]]) }).db, EMP_A, U_NCE, cuerpo({ observacion: obs }, "clave-nce-e1-0004"));
+  const vacioGuardado = M + "\nVendedor: Luis Gómez";
+
+  igual("E1-37 (NEX-071, original registrada) reenvío legítimo: misma observación → mismo documento y número (aunque el vendedor se haya renombrado); original vacía → vacía", [(await rep({ migracion: true, original: "Nota", guardada: guardadaEj }, "Nota"))?.numero, (await rep({ migracion: true, original: "", guardada: vacioGuardado }, ""))?.numero, (await rep({ migracion: true, original: "", guardada: vacioGuardado }, "   "))?.numero], ["0000009", "0000009", "0000009"]);
+  igual("E1-43 (R03-F002) observación distinta con la misma clave → 409: el dInfAdic guardado enviado como observación, original vacía vs. dInfAdic, \"Nota\" vs. \"Nota + bloque\", u otra observación", [
+    await estado(rep({ migracion: true, original: "", guardada: vacioGuardado }, vacioGuardado)),
+    await estado(rep({ migracion: true, original: "Nota", guardada: guardadaEj }, guardadaEj)),
+    await estado(rep({ migracion: true, original: "Nota", guardada: guardadaEj }, "Otra observación")),
+    await estado(rep({ migracion: true, original: "Nota", guardada: guardadaEj }, "")),
+  ].map((x) => x.slice(0, 4)), ["409:", "409:", "409:", "409:"]);
+  igual("E1-44 (sin registro: NCE histórica o migración no aplicada) texto guardado idéntico al enviado y sin bloque → reutiliza; dInfAdic compuesto guardado con cualquier observación (incluida la igual al guardado o vacía) → 409 seguro", [
+    (await rep({ migracion: true, guardada: "Nota" }, "Nota"))?.numero,
+    (await rep({ migracion: false, guardada: null }, ""))?.numero,
+    (await estado(rep({ migracion: false, guardada: guardadaEj }, "Nota"))).slice(0, 4),
+    (await estado(rep({ migracion: false, guardada: guardadaEj }, guardadaEj))).slice(0, 4),
+    (await estado(rep({ migracion: true, guardada: vacioGuardado }, vacioGuardado))).slice(0, 4),
+    (await estado(rep({ migracion: true, guardada: "Nota" }, "Otra"))).slice(0, 4),
+  ], ["0000009", "0000009", "409:", "409:", "409:", "409:"]);
 
   // ── aislamiento entre empresas ────────────────────────────────────────────────────────────────
   const aj = base();
@@ -211,6 +238,21 @@ export async function verificarCasosInfoAdicionalE1(): Promise<string[]> {
   const cruce = await prepararNce(aj.db, EMP_B, U_NCE, cuerpo()).then((x) => dInf(x), () => "ERR");
 
   igual("E1-31 sin fuga entre tenants: la cuenta se busca por empresa y usuario de la sesión; el usuario de la empresa A no resuelve nombre en B (no se inventa vendedor) y el nombre de B solo aparece para B", [deB, cruce, (cruce ?? "").includes("Luis")], [M + "\nVendedor: Zoe Ajena", null, false]);
+
+  // ── contrato de NEX-071 (SQL versionado, nunca ejecutado aquí) ────────────────────────────────
+  {
+    const leerSql = (r: string) => readFileSync(join(process.cwd(), "documentacao/banco/nexit/v1", r), "utf8");
+    const sql = leerSql("migraciones/NEX-071-facturacion-nce-observacion-original.sql");
+    const rev = leerSql("scripts/reversion-NEX-071.sql");
+    const ver = leerSql("scripts/verificar-NEX-071.sql");
+    const pre = leerSql("scripts/preflight-NEX-071.sql");
+    const doc = leerSql("docs/PROCEDIMIENTO-NEX-071.md");
+    const cierto = (nombre: string, c: boolean) => igual(nombre, c, true);
+
+    cierto("E1-45 NEX-071: tabla de solo altas, anclada por (empresa, nce) a nce_origen, observación acotada a 5000, sin tocar nce_origen ni fe_documento_crear_nce", /CREATE TABLE public\.nce_observaciones_originales/.test(sql) && /FOREIGN KEY \(empresa_id, nce_id\) REFERENCES public\.nce_origen \(empresa_id, nce_id\)/.test(sql) && /char_length\(observacion\) <= 5000/.test(sql) && /nce_observaciones_originales_inmutable_fila_trg BEFORE UPDATE OR DELETE/.test(sql) && /inmutable_truncate_trg BEFORE TRUNCATE/.test(sql) && !/CREATE OR REPLACE FUNCTION public\.fe_documento_crear_nce\(/.test(sql) && !/ALTER TABLE/.test(sql) && !/UPDATE public\.nce_origen/.test(sql));
+    cierto("E1-46 NEX-071: el registro se inserta en la misma transacción que la creación y SOLO si la NCE es nueva; la función delega en fe_documento_crear_nce (permiso, idempotencia, numeración) y exige que el dInfAdic empiece por la observación", /FROM public\.fe_documento_crear_nce\(p_empresa, p_usuario, p_sucursal, p_punto, p_clave, p_fe, p_motivo, p_lineas, p_moneda, p_total, p_payload\)/.test(sql) && /IF NOT v_reutilizado THEN\s+INSERT INTO public\.nce_observaciones_originales \(empresa_id, nce_id, observacion\) VALUES \(p_empresa, v_id, p_observacion_original\)/.test(sql) && /left\(v_info, char_length\(p_observacion_original\)\) IS DISTINCT FROM p_observacion_original/.test(sql) && /SECURITY DEFINER SET search_path = public, pg_temp/.test(sql));
+    cierto("E1-47 NEX-071: la aplicación solo LEE la tabla y ejecuta la función nueva; PUBLIC sin acceso; reversión que se niega si hay registros; preflight y verificación de solo lectura; procedimiento versionado y NO aplicado", /GRANT SELECT ON public\.nce_observaciones_originales TO nexit_runtime/.test(sql) && /REVOKE ALL ON FUNCTION public\.fe_documento_crear_nce_obs\([^)]*\) FROM PUBLIC/.test(sql) && !/GRANT (INSERT|UPDATE|DELETE)/.test(sql) && /REVERSIÓN ABORTADA/.test(rev) && /DROP TABLE public\.nce_observaciones_originales/.test(rev) && !/DROP FUNCTION IF EXISTS public\.fe_documento_crear_nce\(/.test(rev) && /BEGIN READ ONLY/.test(ver) && /BEGIN READ ONLY/.test(pre) && /NO aplicada/.test(doc) && /sin la migración/i.test(doc));
+  }
 
   return fallos;
 }

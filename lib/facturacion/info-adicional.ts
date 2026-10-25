@@ -51,47 +51,33 @@ export function componerInfoAdicional(p: { observaciones: string; entrega?: stri
 }
 
 /**
- * Observaciones propias de un texto ya compuesto (precarga de la corrección de una NCE rechazada). Un texto almacenado no trae procedencia (la marca visible la puede teclear el operador), así que el bloque
- * final solo se retira si su origen es VERIFICABLE con un dato persistido: después de la última marca debe haber UNA línea y coincidir EXACTAMENTE con «Vendedor: …» del usuario que creó esa NCE
- * (`vendedorEmisor`, leído de documentos_electronicos.creado_por → usuarios). Una NCE solo compone el vendedor (nunca «Dirección de entrega»). Sin emisor verificable, sin coincidencia exacta o sin marca se
- * conserva TODO el texto: ante la duda prevalece la integridad de lo que escribió el operador (a costa de, quizá, dejar un «Vendedor:» antiguo).
+ * El dInfAdic guardado NO prueba qué escribió el operador (la marca visible y el nombre del vendedor se pueden teclear o cambiar), así que ya no se infiere nada de ese texto. La observación ORIGINAL
+ * de una NCE nueva se persiste aparte, inmutable y en la misma transacción de la creación (NEX-071, tabla nce_observaciones_originales). ¿Existe esa migración en esta base?
  */
-export function separarObservacion(texto: string, vendedorEmisor: string | null): string {
-  const lineas = texto.split(/\r?\n/);
-  const marca = lineas.map((l) => l.trim()).lastIndexOf(MARCA_AUTOMATICA);
+export async function observacionOriginalDisponible(db: Db): Promise<boolean> {
+  const r = await db.query("SELECT to_regclass('public.nce_observaciones_originales') IS NOT NULL AS ok");
 
-  if (marca < 0 || vendedorEmisor === null) return texto.trim();
+  return (r.rows[0] as { ok?: boolean } | undefined)?.ok === true;
+}
 
-  const cola = lineas.slice(marca + 1).map((l) => l.trim());
+/** Observación original registrada para una NCE (misma empresa). null = sin registro (NCE anterior a NEX-071, o la migración aún no está aplicada): procedencia desconocida, no se reclasifica. */
+export async function observacionOriginalDe(db: Db, empresaId: string, nceId: string): Promise<string | null> {
+  if (!(await observacionOriginalDisponible(db))) return null;
 
-  return cola.length === 1 && cola[0] === vendedorEmisor ? lineas.slice(0, marca).join("\n").trim() : texto.trim();
+  const r = await db.query("SELECT observacion FROM nce_observaciones_originales WHERE empresa_id = $1 AND nce_id = $2", [empresaId, nceId]);
+  const f = r.rows[0] as { observacion?: string } | undefined;
+
+  return f && typeof f.observacion === "string" ? f.observacion : null;
 }
 
 /**
- * ¿El dInfAdic guardado corresponde a estas observaciones crudas (las que reenvía el operador al repetir la operación)? Igual tal cual, o esas observaciones seguidas de la marca y UNA línea «Vendedor: …».
- * No depende del nombre actual del usuario (un renombrado posterior no convierte un reintento legítimo en conflicto) ni elimina nada del texto: solo compara contra lo que el propio operador aportó.
+ * Reintento de una NCE SIN observación original registrada (histórica): solo se acepta si el texto guardado es exactamente el enviado y no contiene ninguna marca de bloque automático (si la contiene,
+ * el guardado es un dInfAdic compuesto y la identidad no se puede probar: se rechaza con 409 en vez de aceptar contenido distinto).
  */
-export function coincideConObservaciones(guardada: string | null, observaciones: string): boolean {
-  const obs = observaciones.trim();
-  const g = guardada === null ? "" : guardada.trim();
+export function legadoCoincide(guardada: string | null, observaciones: string): boolean {
+  const g = (guardada ?? "").trim();
 
-  if (g === obs) return true;
-
-  const cabecera = obs === "" ? MARCA_AUTOMATICA + "\n" : obs + "\n" + MARCA_AUTOMATICA + "\n";
-  const resto = g.startsWith(cabecera) ? g.slice(cabecera.length) : null;
-
-  return resto !== null && !resto.includes("\n") && resto.startsWith(PREFIJO_VENDEDOR);
-}
-
-/** «Vendedor: …» del usuario que CREÓ el documento (dato persistido, misma empresa). null si no existe o no tiene nombre. */
-export async function vendedorEmisorDe(db: Db, empresaId: string, documentoId: string): Promise<string | null> {
-  const r = await db.query(
-    "SELECT u.nombre, u.apellido FROM documentos_electronicos d JOIN usuarios u ON u.empresa_id = d.empresa_id AND u.id = d.creado_por WHERE d.empresa_id = $1 AND d.id = $2",
-    [empresaId, documentoId],
-  );
-  const f = r.rows[0] as { nombre?: string | null; apellido?: string | null } | undefined;
-
-  return f ? lineaVendedor(f.nombre, f.apellido) : null;
+  return g === observaciones.trim() && !g.split(/\r?\n/).some((l) => l.trim() === MARCA_AUTOMATICA);
 }
 
 /** Huella (SHA-256) del dInfAdic final: identifica el texto exacto que el operador revisó; al emitir se compara con el que el servidor volvería a componer. */

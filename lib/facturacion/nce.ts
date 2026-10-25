@@ -5,7 +5,7 @@ import { normalizarCantidadTexto } from "@/lib/formato/cantidad-campo";
 import { leerCambio } from "@/lib/facturacion/monedas";
 import { CAMPOS_RECEPTOR, construirPayloadNCE, esMotivoNce, lineasOriginalesDe, lineasParaSql, MAX_LINEAS_NCE, MOTIVOS_NCE, saldoDe, validarEntradaNce, calcularNce, type EntradaNce, type LineaOriginal, type MotivoNce } from "@/lib/facturacion/payload-nce";
 import { numeroDocumento } from "@/lib/facturacion/estados";
-import { componerInfoAdicional, huellaInfoAdicional, infoAdicionalPersistida, LIMITE_INFO_ADICIONAL, separarObservacion, vendedorDe, vendedorEmisorDe } from "@/lib/facturacion/info-adicional";
+import { componerInfoAdicional, huellaInfoAdicional, infoAdicionalPersistida, LIMITE_INFO_ADICIONAL, observacionOriginalDe, observacionOriginalDisponible, vendedorDe } from "@/lib/facturacion/info-adicional";
 import { ErrorFacturacion, ErrorValidacionFiscal } from "@/lib/facturacion/shared";
 
 /**
@@ -471,11 +471,20 @@ export async function crearNotaCredito(db: Db, empresaId: string, usuarioId: str
   // E1-F003: una NCE NUEVA solo se crea con el dInfAdic que el operador revisó (el nombre del vendedor se relee del servidor); si cambió entre la previa y el envío, se exige revisar de nuevo, sin reservar numeración.
   if (!prep.infoReutilizada && cuerpo.infoAdicionalHuella !== undefined && cuerpo.infoAdicionalHuella !== prep.resumen.infoAdicionalHuella) throw new ErrorFacturacion(409, MENSAJE_INFO_NCE_CAMBIO);
 
+  // NEX-071: con la migración aplicada, la NCE NUEVA se crea con fe_documento_crear_nce_obs, que registra en la MISMA transacción la observación original del operador (inmutable). Sin la migración, o si el documento
+  // ya existe (snapshot reutilizado), se usa fe_documento_crear_nce tal cual: nunca se fabrica procedencia.
+  const conRegistro = !prep.infoReutilizada && (await observacionOriginalDisponible(db));
+  const argumentos = [empresaId, usuarioId, cuerpo.sucursalId, cuerpo.puntoId, cuerpo.claveIdempotencia, cuerpo.facturaId, cuerpo.motivo, JSON.stringify(prep.lineasSql), prep.fe.moneda, prep.totalTexto, JSON.stringify(prep.payload)];
   const llamar = () =>
-    db.query(
-      `SELECT o_documento_id AS "documentoId", o_numero AS numero, o_reutilizado AS reutilizado FROM fe_documento_crear_nce($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5, $6::uuid, $7::integer, $8::jsonb, $9, $10::numeric, $11::jsonb)`,
-      [empresaId, usuarioId, cuerpo.sucursalId, cuerpo.puntoId, cuerpo.claveIdempotencia, cuerpo.facturaId, cuerpo.motivo, JSON.stringify(prep.lineasSql), prep.fe.moneda, prep.totalTexto, JSON.stringify(prep.payload)],
-    );
+    conRegistro
+      ? db.query(
+          `SELECT o_documento_id AS "documentoId", o_numero AS numero, o_reutilizado AS reutilizado FROM fe_documento_crear_nce_obs($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5, $6::uuid, $7::integer, $8::jsonb, $9, $10::numeric, $11::jsonb, $12)`,
+          [...argumentos, cuerpo.observacion.trim()],
+        )
+      : db.query(
+          `SELECT o_documento_id AS "documentoId", o_numero AS numero, o_reutilizado AS reutilizado FROM fe_documento_crear_nce($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5, $6::uuid, $7::integer, $8::jsonb, $9, $10::numeric, $11::jsonb)`,
+          argumentos,
+        );
 
   try {
     return (await llamar()).rows[0] as F;
@@ -515,8 +524,8 @@ export async function propuestaCorreccion(db: Db, empresaId: string, usuarioId: 
       motivo: Number(n.motivo),
       sucursalId: s(n.sucursalId),
       puntoId: n.puntoId === null ? null : s(n.puntoId),
-      // La observación guardada es el dInfAdic compuesto: se precargan solo las observaciones propias (se retira el bloque automático únicamente si su origen es verificable: coincide con el emisor persistido), que se recomponen con el usuario que emita la corrección.
-      observacion: n.observacion === null ? "" : separarObservacion(s(n.observacion), await vendedorEmisorDe(db, empresaId, nceId)),
+      // La observación guardada es el dInfAdic compuesto: se precargan solo las observaciones propias (NEX-071: la observación original registrada; una NCE sin registro conserva TODO el texto guardado, sin inferir ni borrar nada), que se recomponen con el usuario que emita la corrección.
+      observacion: n.observacion === null ? "" : (await observacionOriginalDe(db, empresaId, nceId)) ?? s(n.observacion).trim(),
       numeroRechazado: numeroDocumento({ establecimiento: s(n.establecimiento), puntoExpedicion: s(n.puntoExpedicion), numero: s(n.numero), serie: n.serie === null || n.serie === undefined ? null : s(n.serie) }),
       lineas: (lineas.rows as F[]).map((l) => ({ linea: Number(l.linea), cantidad: textoDec(parseDec(s(l.cantidad), 8) ?? B(0)), monto: textoDec(parseDec(s(l.monto), 8) ?? B(0)) })),
       servicio: await servicioDeNce(db, empresaId, nceId),

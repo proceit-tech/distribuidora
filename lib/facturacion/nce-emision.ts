@@ -3,7 +3,7 @@ import type { Pool } from "pg";
 import { parseDec } from "@/lib/facturacion/calculo";
 import { configuracionGateway, enviarDocumento, type RespuestaEnvio } from "@/lib/facturacion/envio";
 import type { Dependencias } from "@/lib/facturacion/gateway";
-import { coincideConObservaciones } from "@/lib/facturacion/info-adicional";
+import { legadoCoincide, observacionOriginalDe } from "@/lib/facturacion/info-adicional";
 import { crearNotaCredito, prepararNce, traducirErrorNce, type CuerpoNce } from "@/lib/facturacion/nce";
 import { consultarEstado, ErrorFacturacion } from "@/lib/facturacion/shared";
 
@@ -35,10 +35,13 @@ export async function repeticion(db: Db, empresaId: string, usuarioId: string, c
 
   // Identidad completa (NCE-R01-03): sucursal, punto de expedición y observación también deben coincidir.
   const punto = await db.query("SELECT codigo FROM fe_puntos_expedicion WHERE empresa_id = $1 AND id = $2 AND sucursal_id = $3", [empresaId, cuerpo.puntoId, cuerpo.sucursalId]);
-  // E1: lo guardado es el dInfAdic compuesto (observaciones + marca + «Vendedor»); se compara contra las observaciones que reenvía el operador, sin depender del nombre actual del usuario, para que un reintento legítimo no sea un falso conflicto.
+  // E1-R03-F002: la identidad de la observación se compara con lo que el operador ESCRIBIÓ, no con el dInfAdic compuesto. NCE con observación original registrada (NEX-071): igualdad exacta. Sin registro (NCE histórica o
+  // migración aún no aplicada) la identidad no se puede probar: solo se acepta el texto guardado idéntico y sin bloque automático; todo lo demás es conflicto (409), nunca un documento distinto aceptado como el mismo.
+  const original = await observacionOriginalDe(db, empresaId, String(d.id));
   const guardada = typeof d.observacion === "string" ? d.observacion : null;
+  const mismaObservacion = original !== null ? original === cuerpo.observacion.trim() : legadoCoincide(guardada, cuerpo.observacion);
 
-  if (d.sucursalId !== cuerpo.sucursalId || (punto.rows[0] as F | undefined)?.codigo !== d.puntoCodigo || !coincideConObservaciones(guardada, cuerpo.observacion)) throw conflicto();
+  if (d.sucursalId !== cuerpo.sucursalId || (punto.rows[0] as F | undefined)?.codigo !== d.puntoCodigo || !mismaObservacion) throw conflicto();
 
   const lineas = (await db.query("SELECT linea, cantidad::text AS cantidad, monto::text AS monto FROM nce_lineas WHERE empresa_id = $1 AND nce_id = $2", [empresaId, String(d.id)])).rows as F[];
 
