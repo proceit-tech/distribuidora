@@ -13,6 +13,8 @@
 --      fe_e03_cerrar_envio    → fe_documento_registrar_envio (NEX-050)    + evento CIERRE enlazado al intento insertado; idempotente por operación.
 --  · Tabla nueva y vacía: NO hay backfill. Los envíos anteriores NO tienen evidencia de transmisión (la futura lectura debe señalar EVIDENCIA_TRANSMISION_NO_DISPONIBLE).
 --  · Esta migración es INERTE para la aplicación actual: no instrumenta envio.ts/gateway.ts (E03-A2) ni agrega pantallas/API (E03-B). Sin credenciales, tokens ni cabeceras Authorization en ninguna columna.
+--  · R02 (E03-A1-F001..F004): NO_TRANSMITIDO es terminal por operación; el CIERRE se valida contra la cadena de POST/salidas; hash y bytes de la respuesta los calcula el banco sobre el objeto saneado persistido; los
+--    secretos (claves y VALORES) se redactan antes de persistir y, si queda un residuo, se rechaza sin repetir el valor.
 --  · Grants: nex_aplicar_grants_facturacion_e03() es descubierta por el envoltorio dinámico nex_aplicar_grants_runtime() (NEX-052); no se redefine ese envoltorio.
 -- =====================================================================
 DO $$
@@ -72,6 +74,8 @@ CREATE TABLE public.documento_electronico_envio_evidencias (
   CONSTRAINT envio_evidencias_identidad_uk UNIQUE (empresa_id, documento_id, version, id),
   -- Raíz autorreferente: el evento INICIO es su propia operación (id = operacion_id); los demás apuntan a una raíz de la MISMA empresa, documento y versión (el tipo raíz lo verifica el disparador).
   CONSTRAINT envio_evidencias_operacion_fk FOREIGN KEY (empresa_id, documento_id, version, operacion_id) REFERENCES public.documento_electronico_envio_evidencias (empresa_id, documento_id, version, id) ON DELETE CASCADE,
+  -- Respuesta: el hash y los bytes los calcula el banco sobre el objeto saneado PERSISTIDO (jsonb::text en UTF-8); existen si y solo si hay objeto. «Truncada» solo con objeto parcial presente.
+  CONSTRAINT envio_evidencias_respuesta_coherente_chk CHECK ((respuesta_saneada IS NULL) = (respuesta_sha256 IS NULL) AND (respuesta_saneada IS NULL) = (respuesta_bytes IS NULL) AND (NOT respuesta_truncada OR respuesta_saneada IS NOT NULL)),
   CONSTRAINT envio_evidencias_solicitud_coherente_chk CHECK ((solicitud_http_texto IS NULL) = (solicitud_sha256 IS NULL) AND (solicitud_http_texto IS NULL) = (solicitud_bytes IS NULL)),
   -- Forma de cada tipo de evento: nada se fabrica por defecto (un campo que no corresponde al tipo debe ser NULL).
   CONSTRAINT envio_evidencias_forma_chk CHECK (
@@ -95,8 +99,13 @@ CREATE INDEX envio_evidencias_operacion_idx ON public.documento_electronico_envi
 CREATE UNIQUE INDEX envio_evidencias_cierre_uk  ON public.documento_electronico_envio_evidencias (empresa_id, documento_id, operacion_id) WHERE tipo_evento = 'CIERRE';
 CREATE UNIQUE INDEX envio_evidencias_post_uk    ON public.documento_electronico_envio_evidencias (empresa_id, documento_id, operacion_id, nro_post) WHERE tipo_evento = 'POST_INTENTADO';
 CREATE UNIQUE INDEX envio_evidencias_salida_uk  ON public.documento_electronico_envio_evidencias (empresa_id, documento_id, operacion_id, nro_post) WHERE tipo_evento IN ('HTTP_RESPUESTA', 'ERROR_TRANSMISION');
+-- NO_TRANSMITIDO: a lo sumo uno por operación (y terminal: el disparador de guarda impide cualquier POST/respuesta/error después de él).
+CREATE UNIQUE INDEX envio_evidencias_no_transmitido_uk ON public.documento_electronico_envio_evidencias (empresa_id, documento_id, operacion_id) WHERE tipo_evento = 'NO_TRANSMITIDO';
 CREATE UNIQUE INDEX envio_evidencias_intento_uk ON public.documento_electronico_envio_evidencias (empresa_id, documento_id, intento_id) WHERE intento_id IS NOT NULL;
 
+COMMENT ON COLUMN public.documento_electronico_envio_evidencias.respuesta_sha256 IS 'SHA-256 (UTF-8) del texto jsonb del objeto saneado persistido en respuesta_saneada, calculado por el banco. NO es el hash del cuerpo HTTP original; con respuesta_truncada = true cubre solo el objeto parcial persistido.';
+COMMENT ON COLUMN public.documento_electronico_envio_evidencias.respuesta_bytes IS 'Tamaño en bytes UTF-8 del texto jsonb del objeto saneado persistido (mismo alcance que respuesta_sha256). No describe el cuerpo HTTP bruto.';
+COMMENT ON COLUMN public.documento_electronico_envio_evidencias.respuesta_truncada IS 'true = el llamador entregó un objeto de respuesta parcial (el cuerpo bruto no se conserva ni se verifica aquí).';
 COMMENT ON TABLE public.documento_electronico_envio_evidencias IS 'NEX-072 (E03-A1): log append-only de eventos de envío por operación y versión de solicitud. POST_INTENTADO = POST que se está por invocar (texto HTTP exacto y SHA-256 UTF-8 grabados antes del fetch), no prueba de entrega. Sin credenciales. Sin backfill: lo anterior a esta migración no tiene evidencia.';
 
 -- Inmutabilidad: solo altas. DELETE solo durante el reinicio DEMO autorizado (misma regla de NEX-047); TRUNCATE nunca.
@@ -129,6 +138,15 @@ BEGIN
                     WHERE r.empresa_id = NEW.empresa_id AND r.documento_id = NEW.documento_id AND r.version = NEW.version AND r.id = NEW.operacion_id AND r.tipo_evento = 'INICIO') THEN
       RAISE EXCEPTION 'la operación de envío no existe para este documento y versión' USING ERRCODE = 'P0001', DETAIL = 'NEX:OPERACION_NO_ENCONTRADA';
     END IF;
+    -- NO_TRANSMITIDO es terminal para la captura de transmisión: después de él solo cabe el CIERRE, y no puede registrarse si la operación ya intentó un POST.
+    IF NEW.tipo_evento NOT IN ('CIERRE', 'NO_TRANSMITIDO') AND EXISTS (SELECT 1 FROM public.documento_electronico_envio_evidencias n
+                                                                       WHERE n.empresa_id = NEW.empresa_id AND n.documento_id = NEW.documento_id AND n.operacion_id = NEW.operacion_id AND n.tipo_evento = 'NO_TRANSMITIDO') THEN
+      RAISE EXCEPTION 'la operación de envío ya se declaró NO TRANSMITIDA' USING ERRCODE = 'P0001', DETAIL = 'NEX:OPERACION_NO_TRANSMITIDA';
+    END IF;
+    IF NEW.tipo_evento = 'NO_TRANSMITIDO' AND EXISTS (SELECT 1 FROM public.documento_electronico_envio_evidencias p
+                                                       WHERE p.empresa_id = NEW.empresa_id AND p.documento_id = NEW.documento_id AND p.operacion_id = NEW.operacion_id AND p.tipo_evento = 'POST_INTENTADO') THEN
+      RAISE EXCEPTION 'NO_TRANSMITIDO no es válido: la operación ya intentó un POST' USING ERRCODE = 'P0001', DETAIL = 'NEX:EVENTO_CONTRADICTORIO';
+    END IF;
     IF NEW.tipo_evento <> 'CIERRE' AND EXISTS (SELECT 1 FROM public.documento_electronico_envio_evidencias c
                                                 WHERE c.empresa_id = NEW.empresa_id AND c.documento_id = NEW.documento_id AND c.operacion_id = NEW.operacion_id AND c.tipo_evento = 'CIERRE') THEN
       RAISE EXCEPTION 'la operación de envío ya está cerrada' USING ERRCODE = 'P0001', DETAIL = 'NEX:OPERACION_CERRADA';
@@ -139,6 +157,33 @@ END $$;
 
 CREATE TRIGGER envio_evidencias_guarda_trg BEFORE INSERT ON public.documento_electronico_envio_evidencias
   FOR EACH ROW EXECUTE FUNCTION public.fe_e03_evidencia_guarda();
+
+-- ── Redacción de secretos (E03-A1-F004). Alcance: claves sensibles con valor cadena, cabeceras/valores «Bearer»/«Basic», JWT y pares «token=…» / «password: …» dentro de VALORES de texto. Lo que se reconoce se reemplaza por
+-- [REDACTED] ANTES de persistir; si aún queda una clave sensible con un valor no redactado (p. ej. un objeto), la evidencia se rechaza SIN repetir el valor. La obligación primaria de no enviar credenciales sigue siendo de la capa de
+-- transporte (saneado en gateway.ts); esto es una barrera de defensa por patrones: puede redactar de más (p. ej. «token: inválido») y no sustituye al saneado de origen.
+CREATE OR REPLACE FUNCTION public.fe_e03_redactar_texto(p_texto text) RETURNS text
+LANGUAGE sql IMMUTABLE AS $$
+  SELECT regexp_replace(
+           regexp_replace(
+             regexp_replace(
+               regexp_replace(
+                 regexp_replace(p_texto,
+                     '("(?:authorization|password|passwd|pwd|token|access_token|refresh_token|id_token|secret|client_secret|api_key|apikey)"\s*:\s*)"(?:[^"\\]|\\.)*"', '\1"[REDACTED]"', 'gi'),
+                   '\mbearer\s+[A-Za-z0-9._~+/=-]{8,}', 'Bearer [REDACTED]', 'gi'),
+                 '\mbasic\s+[A-Za-z0-9+/=]{12,}', 'Basic [REDACTED]', 'gi'),
+               'eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*', '[REDACTED]', 'g'),
+             '(\m(?:authorization|password|passwd|pwd|token|access_token|refresh_token|secret|client_secret|api_key|apikey)\s*[:=]\s*)(?!\[REDACTED\])[^\s",\\}\]]{4,}', '\1[REDACTED]', 'gi')
+$$;
+
+CREATE OR REPLACE FUNCTION public.fe_e03_secreto_residual(p_texto text) RETURNS boolean
+LANGUAGE sql IMMUTABLE AS $$
+  SELECT p_texto ~* '"(?:authorization|password|passwd|pwd|token|access_token|refresh_token|id_token|secret|client_secret|api_key|apikey)"\s*:\s*(?!"\[REDACTED\]"|null\M)'
+      OR p_texto ~* '\mbearer\s+(?!\[REDACTED\])[A-Za-z0-9._~+/=-]{8,}'
+      OR p_texto ~ 'eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.'
+$$;
+
+REVOKE ALL ON FUNCTION public.fe_e03_redactar_texto(text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.fe_e03_secreto_residual(text) FROM PUBLIC;
 
 -- ── 1) Inicio: envuelve fe_documento_iniciar_envio y fija la versión/hash EXACTOS del snapshot que esa función devolvió ─────────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION public.fe_e03_iniciar_envio(p_empresa uuid, p_usuario uuid, p_documento uuid, p_confirma_rechazo boolean DEFAULT false)
@@ -187,7 +232,7 @@ END $$;
 CREATE OR REPLACE FUNCTION public.fe_e03_registrar_evento(
   p_empresa uuid, p_usuario uuid, p_documento uuid, p_operacion uuid, p_tipo_evento text,
   p_nro_post smallint DEFAULT NULL, p_solicitud_http_texto text DEFAULT NULL, p_http_status integer DEFAULT NULL,
-  p_respuesta jsonb DEFAULT NULL, p_respuesta_truncada boolean DEFAULT false, p_respuesta_bytes integer DEFAULT NULL, p_respuesta_sha256 text DEFAULT NULL, p_mensaje text DEFAULT NULL)
+  p_respuesta jsonb DEFAULT NULL, p_respuesta_truncada boolean DEFAULT false, p_mensaje text DEFAULT NULL)
 RETURNS TABLE (o_evento_id uuid, o_nro_post smallint, o_solicitud_sha256 text, o_solicitud_bytes integer)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
 DECLARE
@@ -201,6 +246,11 @@ DECLARE
   v_bytes integer;
   v_mensaje text := left(nullif(btrim(coalesce(p_mensaje, '')), ''), 500);
   v_id uuid;
+  v_resp jsonb;
+  v_resp_txt text;
+  v_resp_bytes integer;
+  v_resp_sha text;
+  v_redactado boolean := false;
 BEGIN
   IF NOT public.usuario_tiene_permiso(p_empresa, p_usuario, 'FACTURACION_ELECTRONICA', 'CREAR') THEN
     RAISE EXCEPTION 'el usuario no tiene permiso FACTURACION_ELECTRONICA.CREAR en esta empresa' USING ERRCODE = '42501';
@@ -230,10 +280,27 @@ BEGIN
     RAISE EXCEPTION 'el documento no está en envío' USING ERRCODE = 'P0001', DETAIL = 'NEX:ENVIO_NO_INICIADO';
   END IF;
 
-  -- Nunca se almacenan credenciales ni cabeceras de autorización.
-  IF (p_respuesta IS NOT NULL AND p_respuesta::text ~* '"(authorization|password|passwd|token|access_token|refresh_token|secret|api_key|apikey)"\s*:')
-     OR (v_mensaje IS NOT NULL AND v_mensaje ~* '(bearer\s+[a-z0-9._~+/=-]{10,}|authorization\s*:)') THEN
-    RAISE EXCEPTION 'la evidencia contiene credenciales o cabeceras de autorización: no se registra' USING ERRCODE = 'P0001', DETAIL = 'NEX:EVIDENCIA_CON_CREDENCIALES';
+  -- NO_TRANSMITIDO es terminal (E03-A1-F001): ningún POST, respuesta, error ni segundo NO_TRANSMITIDO después de él; solo cabe el CIERRE. La fila del documento está bloqueada, así que la comprobación es serial.
+  IF EXISTS (SELECT 1 FROM public.documento_electronico_envio_evidencias e WHERE e.empresa_id = p_empresa AND e.documento_id = p_documento AND e.operacion_id = p_operacion AND e.tipo_evento = 'NO_TRANSMITIDO') THEN
+    RAISE EXCEPTION 'la operación de envío ya se declaró NO TRANSMITIDA: solo admite el cierre' USING ERRCODE = 'P0001', DETAIL = 'NEX:OPERACION_NO_TRANSMITIDA';
+  END IF;
+
+  -- Nunca se almacenan credenciales ni cabeceras de autorización (E03-A1-F004): se redactan claves y valores reconocibles, también en el motivo; un residuo se rechaza sin repetir el valor.
+  IF v_mensaje IS NOT NULL THEN
+    v_resp_txt := public.fe_e03_redactar_texto(v_mensaje);
+    IF v_resp_txt IS DISTINCT FROM v_mensaje THEN v_redactado := true; END IF;
+    v_mensaje := nullif(v_resp_txt, '');
+  END IF;
+  IF p_respuesta IS NOT NULL THEN
+    v_resp_txt := public.fe_e03_redactar_texto(p_respuesta::text);
+    IF v_resp_txt IS DISTINCT FROM p_respuesta::text THEN v_redactado := true; END IF;
+    IF public.fe_e03_secreto_residual(v_resp_txt) THEN
+      RAISE EXCEPTION 'la respuesta contiene credenciales que no se pudieron redactar: no se registra' USING ERRCODE = 'P0001', DETAIL = 'NEX:EVIDENCIA_CON_CREDENCIALES';
+    END IF;
+    v_resp := v_resp_txt::jsonb;
+  END IF;
+  IF v_mensaje IS NOT NULL AND public.fe_e03_secreto_residual(v_mensaje) THEN
+    RAISE EXCEPTION 'el motivo contiene credenciales que no se pudieron redactar: no se registra' USING ERRCODE = 'P0001', DETAIL = 'NEX:EVIDENCIA_CON_CREDENCIALES';
   END IF;
 
   IF p_tipo_evento = 'POST_INTENTADO' THEN
@@ -310,14 +377,22 @@ BEGIN
       RAISE EXCEPTION 'HTTP_RESPUESTA exige un estado HTTP válido' USING ERRCODE = 'P0001', DETAIL = 'NEX:EVENTO_INVALIDO';
     END IF;
     IF p_respuesta IS NOT NULL AND pg_column_size(p_respuesta) >= 65536 THEN
-      RAISE EXCEPTION 'la respuesta saneada supera el límite: envíela truncada (respuesta_truncada) con su hash y tamaño' USING ERRCODE = 'P0001', DETAIL = 'NEX:EVENTO_INVALIDO';
+      RAISE EXCEPTION 'la respuesta saneada supera el límite: envíela truncada (respuesta_truncada = true); el hash y el tamaño los calcula el banco' USING ERRCODE = 'P0001', DETAIL = 'NEX:EVENTO_INVALIDO';
     END IF;
-    IF (p_respuesta_sha256 IS NOT NULL AND p_respuesta_sha256 !~ '^[0-9a-f]{64}$') OR (p_respuesta_bytes IS NOT NULL AND p_respuesta_bytes < 0) THEN
-      RAISE EXCEPTION 'hash o tamaño de respuesta no válidos' USING ERRCODE = 'P0001', DETAIL = 'NEX:EVENTO_INVALIDO';
+    IF v_resp IS NULL AND p_respuesta_truncada THEN
+      RAISE EXCEPTION 'una respuesta truncada exige el objeto parcial saneado' USING ERRCODE = 'P0001', DETAIL = 'NEX:EVENTO_INVALIDO';
+    END IF;
+    IF v_redactado THEN
+      v_mensaje := left(coalesce(v_mensaje || ' · ', '') || 'respuesta con credenciales redactadas', 500);
+    END IF;
+    -- Hash y bytes: calculados AQUÍ sobre el objeto saneado persistido (texto jsonb en UTF-8); no se aceptan valores del llamador ni se presentan como hash del cuerpo HTTP original.
+    IF v_resp IS NOT NULL THEN
+      v_resp_bytes := octet_length(convert_to(v_resp::text, 'UTF8'));
+      v_resp_sha := encode(sha256(convert_to(v_resp::text, 'UTF8')), 'hex');
     END IF;
 
     INSERT INTO public.documento_electronico_envio_evidencias (empresa_id, documento_id, version, operacion_id, tipo_evento, nro_post, http_status, respuesta_saneada, respuesta_truncada, respuesta_bytes, respuesta_sha256, mensaje, actor_id)
-    VALUES (p_empresa, p_documento, v_raiz.version, p_operacion, 'HTTP_RESPUESTA', p_nro_post, p_http_status, p_respuesta, coalesce(p_respuesta_truncada, false), p_respuesta_bytes, p_respuesta_sha256, v_mensaje, p_usuario)
+    VALUES (p_empresa, p_documento, v_raiz.version, p_operacion, 'HTTP_RESPUESTA', p_nro_post, p_http_status, v_resp, coalesce(p_respuesta_truncada, false), v_resp_bytes, v_resp_sha, v_mensaje, p_usuario)
     RETURNING id INTO v_id;
   ELSE
     -- ERROR_TRANSMISION (TIMEOUT / RED después de iniciar el POST): sin respuesta ni estado; el motivo es obligatorio.
@@ -348,6 +423,12 @@ DECLARE
   v_antes uuid[];
   v_nuevos uuid[];
   v_estado text;
+  v_n_posts integer;
+  v_n_salidas integer;
+  v_ultimo_post smallint;
+  v_salida_tipo text;
+  v_salida_http integer;
+  v_no boolean;
 BEGIN
   IF NOT public.usuario_tiene_permiso(p_empresa, p_usuario, 'FACTURACION_ELECTRONICA', 'CREAR') THEN
     RAISE EXCEPTION 'el usuario no tiene permiso FACTURACION_ELECTRONICA.CREAR en esta empresa' USING ERRCODE = '42501';
@@ -375,12 +456,48 @@ BEGIN
     RAISE EXCEPTION 'la operación de envío ya no está vigente' USING ERRCODE = 'P0001', DETAIL = 'NEX:OPERACION_NO_VIGENTE';
   END IF;
 
-  -- Coherencia mínima con la evidencia: un envío OK exige una respuesta HTTP registrada; la fase TRANSMISION exige un POST registrado.
-  IF p_resultado = 'OK' AND NOT EXISTS (SELECT 1 FROM public.documento_electronico_envio_evidencias e WHERE e.empresa_id = p_empresa AND e.documento_id = p_documento AND e.operacion_id = p_operacion AND e.tipo_evento = 'HTTP_RESPUESTA') THEN
-    RAISE EXCEPTION 'no hay respuesta HTTP registrada para cerrar el envío como OK' USING ERRCODE = 'P0001', DETAIL = 'NEX:EVENTO_CONTRADICTORIO';
-  END IF;
-  IF p_fase = 'TRANSMISION' AND NOT EXISTS (SELECT 1 FROM public.documento_electronico_envio_evidencias e WHERE e.empresa_id = p_empresa AND e.documento_id = p_documento AND e.operacion_id = p_operacion AND e.tipo_evento = 'POST_INTENTADO') THEN
-    RAISE EXCEPTION 'no hay POST registrado para cerrar una fase de transmisión' USING ERRCODE = 'P0001', DETAIL = 'NEX:EVENTO_CONTRADICTORIO';
+  -- Coherencia del cierre con la evidencia (E03-A1-F002). Cadena de POST de la operación: cada POST numerado tiene a lo sumo una salida (HTTP_RESPUESTA o ERROR_TRANSMISION); solo cuenta la salida del ÚLTIMO POST.
+  SELECT count(*) INTO v_n_posts FROM public.documento_electronico_envio_evidencias e
+   WHERE e.empresa_id = p_empresa AND e.documento_id = p_documento AND e.operacion_id = p_operacion AND e.tipo_evento = 'POST_INTENTADO';
+  SELECT count(*) INTO v_n_salidas FROM public.documento_electronico_envio_evidencias e
+   WHERE e.empresa_id = p_empresa AND e.documento_id = p_documento AND e.operacion_id = p_operacion AND e.tipo_evento IN ('HTTP_RESPUESTA', 'ERROR_TRANSMISION');
+  v_no := EXISTS (SELECT 1 FROM public.documento_electronico_envio_evidencias e WHERE e.empresa_id = p_empresa AND e.documento_id = p_documento AND e.operacion_id = p_operacion AND e.tipo_evento = 'NO_TRANSMITIDO');
+  SELECT max(e.nro_post) INTO v_ultimo_post FROM public.documento_electronico_envio_evidencias e
+   WHERE e.empresa_id = p_empresa AND e.documento_id = p_documento AND e.operacion_id = p_operacion AND e.tipo_evento = 'POST_INTENTADO';
+  SELECT e.tipo_evento, e.http_status INTO v_salida_tipo, v_salida_http FROM public.documento_electronico_envio_evidencias e
+   WHERE e.empresa_id = p_empresa AND e.documento_id = p_documento AND e.operacion_id = p_operacion AND e.tipo_evento IN ('HTTP_RESPUESTA', 'ERROR_TRANSMISION') AND e.nro_post = v_ultimo_post;
+
+  IF p_resultado = 'OK' THEN
+    -- Éxito: solo con la respuesta HTTP 2xx del ÚLTIMO POST (nunca con la de un POST anterior ni con un POST sin salida) y con el mismo estado HTTP que se cierra.
+    IF p_fase <> 'TRANSMISION' OR v_n_posts = 0 OR v_n_posts <> v_n_salidas OR v_salida_tipo IS DISTINCT FROM 'HTTP_RESPUESTA'
+       OR v_salida_http NOT BETWEEN 200 AND 299 OR p_http IS DISTINCT FROM v_salida_http THEN
+      RAISE EXCEPTION 'el cierre OK no corresponde a la respuesta HTTP 2xx del último POST registrado' USING ERRCODE = 'P0001', DETAIL = 'NEX:CIERRE_CONTRADICTORIO';
+    END IF;
+  ELSIF p_fase = 'AUTENTICACION' THEN
+    -- Falla de autenticación: o nada se transmitió (NO_TRANSMITIDO comprobado, sin POST) o el último POST ya tiene su respuesta HTTP (p. ej. token rechazado) y la renovación falló. Nunca con un POST pendiente o con error de red.
+    IF NOT ((v_n_posts = 0 AND v_no) OR (v_n_posts > 0 AND v_n_posts = v_n_salidas AND v_salida_tipo = 'HTTP_RESPUESTA')) THEN
+      RAISE EXCEPTION 'el cierre por autenticación no corresponde a la evidencia registrada (NO_TRANSMITIDO o respuesta del último POST)' USING ERRCODE = 'P0001', DETAIL = 'NEX:CIERRE_CONTRADICTORIO';
+    END IF;
+  ELSE
+    -- Fase de transmisión no exitosa: exige POST registrado y NO puede haber sido declarada NO_TRANSMITIDO.
+    IF p_fase <> 'TRANSMISION' OR v_n_posts = 0 OR v_no THEN
+      RAISE EXCEPTION 'no hay POST registrado para cerrar una fase de transmisión' USING ERRCODE = 'P0001', DETAIL = 'NEX:CIERRE_CONTRADICTORIO';
+    END IF;
+    IF v_n_salidas < v_n_posts THEN
+      -- Último POST sin salida conocida: solo incertidumbre explícita (ENVIO_INDETERMINADO, sin estado HTTP inventado) y nunca un error "cierto".
+      IF p_estado_local <> 'ENVIO_INDETERMINADO' OR p_http IS NOT NULL THEN
+        RAISE EXCEPTION 'con un POST sin salida registrada el cierre solo puede ser ENVIO_INDETERMINADO sin estado HTTP' USING ERRCODE = 'P0001', DETAIL = 'NEX:CIERRE_CONTRADICTORIO';
+      END IF;
+    ELSIF v_salida_tipo = 'ERROR_TRANSMISION' THEN
+      IF p_estado_local <> 'ENVIO_INDETERMINADO' OR p_http IS NOT NULL OR p_resultado NOT IN ('TIMEOUT', 'RED') THEN
+        RAISE EXCEPTION 'el error de transmisión del último POST solo cierra como TIMEOUT/RED, ENVIO_INDETERMINADO y sin estado HTTP' USING ERRCODE = 'P0001', DETAIL = 'NEX:CIERRE_CONTRADICTORIO';
+      END IF;
+    ELSE
+      -- Último POST con respuesta HTTP: el cierre debe reflejarla (mismo estado HTTP) y no declararse como error de red.
+      IF p_http IS DISTINCT FROM v_salida_http OR p_resultado NOT IN ('ERROR_HTTP', 'RESPUESTA_INVALIDA') THEN
+        RAISE EXCEPTION 'el cierre no coincide con la respuesta HTTP del último POST registrado' USING ERRCODE = 'P0001', DETAIL = 'NEX:CIERRE_CONTRADICTORIO';
+      END IF;
+    END IF;
   END IF;
 
   -- Intentos ENVIO existentes ANTES del cierre (la fila del documento está bloqueada: nadie inserta intentos de este documento en paralelo).
@@ -403,7 +520,7 @@ BEGIN
 END $$;
 
 COMMENT ON FUNCTION public.fe_e03_iniciar_envio(uuid, uuid, uuid, boolean) IS 'NEX-072: envuelve fe_documento_iniciar_envio y registra el evento INICIO con la versión/hash exactos del snapshot devuelto.';
-COMMENT ON FUNCTION public.fe_e03_registrar_evento(uuid, uuid, uuid, uuid, text, smallint, text, integer, jsonb, boolean, integer, text, text) IS 'NEX-072: registra POST_INTENTADO (antes del fetch), HTTP_RESPUESTA, NO_TRANSMITIDO o ERROR_TRANSMISION de la operación vigente. No cambia estados fiscales.';
+COMMENT ON FUNCTION public.fe_e03_registrar_evento(uuid, uuid, uuid, uuid, text, smallint, text, integer, jsonb, boolean, text) IS 'NEX-072: registra POST_INTENTADO (antes del fetch), HTTP_RESPUESTA, NO_TRANSMITIDO o ERROR_TRANSMISION de la operación vigente. No cambia estados fiscales.';
 COMMENT ON FUNCTION public.fe_e03_cerrar_envio(uuid, uuid, uuid, uuid, text, text, text, text, integer, text, text, text, text, text, text, jsonb) IS 'NEX-072: envuelve fe_documento_registrar_envio y registra CIERRE enlazado al intento insertado; idempotente por operación.';
 
 -- ── Privilegios del rol de la aplicación (el envoltorio nex_aplicar_grants_runtime() descubre este ayudante y lo reaplica) ───────────────────────────────────────────────────────
@@ -417,10 +534,10 @@ BEGIN
   REVOKE ALL ON public.documento_electronico_envio_evidencias FROM nexit_runtime;
   GRANT SELECT ON public.documento_electronico_envio_evidencias TO nexit_runtime;
   REVOKE ALL ON FUNCTION public.fe_e03_iniciar_envio(uuid, uuid, uuid, boolean) FROM PUBLIC;
-  REVOKE ALL ON FUNCTION public.fe_e03_registrar_evento(uuid, uuid, uuid, uuid, text, smallint, text, integer, jsonb, boolean, integer, text, text) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION public.fe_e03_registrar_evento(uuid, uuid, uuid, uuid, text, smallint, text, integer, jsonb, boolean, text) FROM PUBLIC;
   REVOKE ALL ON FUNCTION public.fe_e03_cerrar_envio(uuid, uuid, uuid, uuid, text, text, text, text, integer, text, text, text, text, text, text, jsonb) FROM PUBLIC;
   GRANT EXECUTE ON FUNCTION public.fe_e03_iniciar_envio(uuid, uuid, uuid, boolean) TO nexit_runtime;
-  GRANT EXECUTE ON FUNCTION public.fe_e03_registrar_evento(uuid, uuid, uuid, uuid, text, smallint, text, integer, jsonb, boolean, integer, text, text) TO nexit_runtime;
+  GRANT EXECUTE ON FUNCTION public.fe_e03_registrar_evento(uuid, uuid, uuid, uuid, text, smallint, text, integer, jsonb, boolean, text) TO nexit_runtime;
   GRANT EXECUTE ON FUNCTION public.fe_e03_cerrar_envio(uuid, uuid, uuid, uuid, text, text, text, text, integer, text, text, text, text, text, text, jsonb) TO nexit_runtime;
 END $$;
 REVOKE ALL ON FUNCTION public.nex_aplicar_grants_facturacion_e03() FROM PUBLIC;
