@@ -218,7 +218,7 @@ export async function leerDocumento(db: Db, empresaId: string, usuarioId: string
 export async function listarIntentos(db: Db, empresaId: string, documentoId: string) {
   const r = await db.query(
     `SELECT i.id, i.tipo, i.resultado, i.http_status AS "httpStatus", i.request_id AS "requestId", i.estado_gateway AS "estadoGateway", i.estado_sifen AS "estadoSifen", i.fase, i.lote, i.cdc_informado AS "cdcInformado",
-            i.cod_respuesta AS "codRespuesta", i.mensaje, i.creado_at AS "creadoAt",
+            i.cod_respuesta AS "codRespuesta", i.mensaje, i.creado_at AS "creadoAt", (i.respuesta IS NOT NULL) AS "tieneRespuesta",
             trim(coalesce(u.nombre, '') || ' ' || coalesce(u.apellido, '')) AS "actorNombre"
        FROM documento_electronico_intentos i JOIN usuarios u ON u.empresa_id = i.empresa_id AND u.id = i.actor_id
       WHERE i.empresa_id = $1 AND i.documento_id = $2 ORDER BY i.creado_at DESC, i.id DESC LIMIT 100`,
@@ -226,6 +226,51 @@ export async function listarIntentos(db: Db, empresaId: string, documentoId: str
   );
 
   return r.rows as F[];
+}
+
+/** Versiones de solicitud del documento (SOLO metadatos: versión, huella y fecha; el JSON se lee bajo demanda con leerSolicitudJson). Solo se llama tras comprobar que el documento está en el alcance. */
+export async function listarSolicitudes(db: Db, empresaId: string, documentoId: string) {
+  const r = await db.query(
+    `SELECT s.version, s.payload_hash AS "payloadHash", s.creado_at AS "creadoAt" FROM documento_electronico_solicitudes s WHERE s.empresa_id = $1 AND s.documento_id = $2 ORDER BY s.version DESC LIMIT 100`,
+    [empresaId, documentoId],
+  );
+
+  return r.rows as F[];
+}
+
+/**
+ * JSON fiscal persistido de UNA versión de solicitud (lectura individual, solo lectura). El documento se resuelve PRIMERO con el alcance de la sesión (leerDocumento); fuera de alcance, de otra empresa o
+ * inexistente = 404 sin contenido. La solicitud se correlaciona por empresa + documento + versión. Es la solicitud REGISTRADA, no necesariamente transmitida.
+ */
+export async function leerSolicitudJson(db: Db, empresaId: string, usuarioId: string, id: string, version: unknown) {
+  const v = typeof version === "string" && /^[0-9]{1,5}$/.test(version) ? Number(version) : NaN;
+
+  if (!Number.isInteger(v) || v < 1 || v > 32767 || !(await leerDocumento(db, empresaId, usuarioId, id))) throw new ErrorFacturacion(404, "Documento no encontrado.");
+
+  const r = await db.query(
+    `SELECT s.version, s.payload_hash AS "payloadHash", s.creado_at AS "creadoAt", s.payload FROM documento_electronico_solicitudes s WHERE s.empresa_id = $1 AND s.documento_id = $2 AND s.version = $3`,
+    [empresaId, id, v],
+  );
+  const fila = r.rows[0] as F | undefined;
+
+  if (!fila) throw new ErrorFacturacion(404, "No hay JSON registrado para esta solicitud.");
+
+  return fila;
+}
+
+/** JSON de respuesta ya saneado de UN intento (lectura individual). Mismo orden de seguridad: documento en alcance primero; intento correlacionado por empresa + documento + intento. */
+export async function leerRespuestaIntento(db: Db, empresaId: string, usuarioId: string, id: string, intentoId: string) {
+  if (!UUID.test(intentoId) || !(await leerDocumento(db, empresaId, usuarioId, id))) throw new ErrorFacturacion(404, "Documento no encontrado.");
+
+  const r = await db.query(
+    `SELECT i.id, i.tipo, i.creado_at AS "creadoAt", i.respuesta FROM documento_electronico_intentos i WHERE i.empresa_id = $1 AND i.documento_id = $2 AND i.id = $3`,
+    [empresaId, id, intentoId],
+  );
+  const fila = r.rows[0] as F | undefined;
+
+  if (!fila) throw new ErrorFacturacion(404, "Intento no encontrado.");
+
+  return fila;
 }
 
 export class ErrorFacturacion extends Error {

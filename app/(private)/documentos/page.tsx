@@ -43,13 +43,16 @@ type Documento = {
 };
 
 const MOTIVO_NCE: Record<number, string> = { 2: "Devolución", 3: "Descuento", 4: "Bonificación", 8: "Ajuste de precio" };
-type Intento = { id: string; tipo: string; fase: string | null; lote: string | null; cdcInformado: string | null; resultado: string; httpStatus: number | null; estadoGateway: string | null; estadoSifen: string | null; codRespuesta: string | null; mensaje: string | null; creadoAt: string; actorNombre: string };
+type Intento = { id: string; tipo: string; fase: string | null; lote: string | null; cdcInformado: string | null; resultado: string; httpStatus: number | null; estadoGateway: string | null; estadoSifen: string | null; codRespuesta: string | null; mensaje: string | null; creadoAt: string; actorNombre: string; tieneRespuesta?: boolean };
+type Solicitud = { version: number; payloadHash: string; creadoAt: string };
+/** E01 (PRO-314): JSON leído bajo demanda de UNA solicitud o respuesta; se muestra como texto formateado (nunca HTML). */
+type VistaJson = { titulo: string; detalle: string; texto: string; cargando: boolean; error: string };
 type Respuesta = {
   documentos: Documento[]; total: number; pagina: number; totalPaginas: number; resumen: Record<string, number>; sucursales: Array<{ id: string; nombre: string }>; permisos: { editar: boolean; crear: boolean };
 };
-type Detalle = { cargando: boolean; error: string; intentos: Intento[]; aviso: string; consultando: boolean };
+type Detalle = { cargando: boolean; error: string; intentos: Intento[]; solicitudes: Solicitud[]; json: VistaJson | null; aviso: string; consultando: boolean };
 
-const DETALLE_VACIO: Detalle = { cargando: false, error: "", intentos: [], aviso: "", consultando: false };
+const DETALLE_VACIO: Detalle = { cargando: false, error: "", intentos: [], solicitudes: [], json: null, aviso: "", consultando: false };
 
 const INDICADORES: Array<{ grupo: GrupoIndicador | ""; titulo: string; ayuda: string; clase: string }> = [
   { grupo: "", titulo: "Total", ayuda: "Documentos visibles", clase: ui.summaryTeal },
@@ -230,12 +233,33 @@ export default function DocumentosPage() {
 
     actualizarDetalle(d.id, { cargando: true });
     try {
-      const j = await leerJson<{ intentos: Intento[] }>(await fetch(`/api/documentos/${d.id}`, { cache: "no-store" }), "No fue posible cargar el detalle.");
+      const j = await leerJson<{ intentos: Intento[]; solicitudes?: Solicitud[] }>(await fetch(`/api/documentos/${d.id}`, { cache: "no-store" }), "No fue posible cargar el detalle.");
 
-      actualizarDetalle(d.id, { cargando: false, intentos: j.intentos });
+      actualizarDetalle(d.id, { cargando: false, intentos: j.intentos, solicitudes: j.solicitudes ?? [] });
     } catch (e) {
       actualizarDetalle(d.id, { cargando: false, error: e instanceof Error ? e.message : "No fue posible cargar el detalle." });
     }
+  }
+
+  // E01 (PRO-314): JSON registrado, solo lectura y bajo demanda (una solicitud o una respuesta a la vez; el listado nunca los trae).
+  async function verJson(d: Documento, vista: Omit<VistaJson, "texto" | "cargando" | "error">, url: string, extraer: (j: Record<string, unknown>) => unknown) {
+    actualizarDetalle(d.id, { json: { ...vista, texto: "", cargando: true, error: "" } });
+    try {
+      const j = await leerJson<Record<string, unknown>>(await fetch(url, { cache: "no-store" }), "No fue posible cargar el JSON.");
+      const valor = extraer(j);
+
+      actualizarDetalle(d.id, { json: { ...vista, texto: valor === null || valor === undefined ? "" : JSON.stringify(valor, null, 2), cargando: false, error: "" } });
+    } catch (e) {
+      actualizarDetalle(d.id, { json: { ...vista, texto: "", cargando: false, error: e instanceof Error ? e.message : "No fue posible cargar el JSON." } });
+    }
+  }
+
+  function verSolicitud(d: Documento, sol: Solicitud) {
+    void verJson(d, { titulo: "Solicitud registrada (no necesariamente transmitida)", detalle: `Versión ${sol.version} · huella ${sol.payloadHash}` }, `/api/documentos/${d.id}/solicitud?version=${sol.version}`, (j) => (j.solicitud as { payload?: unknown } | undefined)?.payload);
+  }
+
+  function verRespuesta(d: Documento, i: Intento) {
+    void verJson(d, { titulo: "Respuesta registrada", detalle: `${i.tipo === "ENVIO" ? "Envío" : "Consulta"} del ${fechaHora(i.creadoAt)}` }, `/api/documentos/${d.id}/intentos/${i.id}/respuesta`, (j) => (j.intento as { respuesta?: unknown } | undefined)?.respuesta);
   }
 
   // KuDE (PRO-194): cada apertura consulta de nuevo al servidor (sin caché); el visor libera todo al cerrar.
@@ -484,6 +508,34 @@ export default function DocumentosPage() {
                           {det.aviso ? <div className={ui.alertOk} role="status" style={{ margin: "8px 0" }}>{det.aviso}</div> : null}
                           {det.error ? <div className={ui.alertError} role="alert" style={{ margin: "8px 0" }}>{det.error}</div> : null}
 
+                          <h4 style={{ margin: "10px 0 4px", fontSize: 13.5 }}>Solicitud registrada (no necesariamente transmitida)</h4>
+                          {det.cargando ? null : det.solicitudes.length === 0 ? (
+                            <p className={ui.muted}>No hay JSON registrado para este documento.</p>
+                          ) : (
+                            <div>
+                              {det.solicitudes.map((sol) => (
+                                <button key={sol.version} type="button" className={ui.secondaryButton} style={{ marginRight: 6 }} onClick={() => verSolicitud(d, sol)}>
+                                  Ver JSON de solicitud · versión {sol.version}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                          {det.json ? (
+                            <div style={{ margin: "8px 0" }} role="region" aria-label={det.json.titulo}>
+                              <strong>{det.json.titulo}</strong> <small className={ui.muted}>{det.json.detalle}</small>{" "}
+                              <button type="button" className={ui.secondaryButton} onClick={() => actualizarDetalle(d.id, { json: null })}>Cerrar JSON</button>
+                              {det.json.cargando ? <p className={ui.muted}>Cargando JSON...</p> : null}
+                              {det.json.error ? <div className={ui.alertError} role="alert">{det.json.error}</div> : null}
+                              {!det.json.cargando && !det.json.error ? (
+                                det.json.texto === "" ? (
+                                  <p className={ui.muted}>No hay JSON registrado para este intento</p>
+                                ) : (
+                                  <pre style={{ margin: "6px 0 0", padding: 10, maxHeight: 360, overflow: "auto", whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: 12, border: "1px solid var(--line, #d9dee4)", borderRadius: 6 }}>{det.json.texto}</pre>
+                                )
+                              ) : null}
+                            </div>
+                          ) : null}
+
                           <h4 style={{ margin: "10px 0 4px", fontSize: 13.5 }}>Historial de consultas</h4>
                           {det.cargando ? (
                             <p className={ui.muted}>Cargando historial...</p>
@@ -491,9 +543,9 @@ export default function DocumentosPage() {
                             <p className={ui.muted}>Sin consultas registradas.</p>
                           ) : (
                             <div className={ui.tableScroll}>
-                              <table className={ui.table} style={{ minWidth: 560 }}>
+                              <table className={ui.table} style={{ minWidth: 760 }}>
                                 <thead>
-                                  <tr><th>Fecha</th><th>Intento</th><th>Resultado</th><th>HTTP</th><th>Estado informado</th><th>Realizado por</th></tr>
+                                  <tr><th>Fecha</th><th>Intento</th><th>Resultado</th><th>HTTP</th><th>Estado informado</th><th>Realizado por</th><th>Respuesta registrada</th></tr>
                                 </thead>
                                 <tbody>
                                   {det.intentos.map((i) => (
@@ -504,6 +556,13 @@ export default function DocumentosPage() {
                                       <td>{i.httpStatus ?? "—"}</td>
                                       <td>{i.estadoGateway ?? "—"}</td>
                                       <td>{i.actorNombre}</td>
+                                      <td>
+                                        {i.tieneRespuesta ? (
+                                          <button type="button" className={ui.secondaryButton} onClick={() => verRespuesta(d, i)}>Ver JSON de respuesta</button>
+                                        ) : (
+                                          <small className={ui.muted}>No hay JSON registrado para este intento</small>
+                                        )}
+                                      </td>
                                     </tr>
                                   ))}
                                 </tbody>

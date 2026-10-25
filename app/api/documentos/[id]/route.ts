@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { prepararFacturacion } from "@/lib/facturacion/servidor";
-import { leerDocumento, listarIntentos, respuestaErrorFacturacion } from "@/lib/facturacion/shared";
+import { leerDocumento, listarIntentos, listarSolicitudes, respuestaErrorFacturacion } from "@/lib/facturacion/shared";
 
 type Contexto = { params: Promise<{ id: string }> };
 
@@ -18,7 +18,7 @@ export async function GET(_request: Request, contexto: Contexto) {
 
     if (!documento) return NextResponse.json({ error: "Documento no encontrado." }, { status: 404 });
 
-    return NextResponse.json({ documento, intentos: await listarIntentos(b.db, b.empresaId, id), permisos: b.permisos });
+    return NextResponse.json({ documento, intentos: await listarIntentos(b.db, b.empresaId, id), solicitudes: await listarSolicitudes(b.db, b.empresaId, id), permisos: b.permisos });
   } catch (error) {
     return respuestaErrorFacturacion(error, "cargar");
   }
