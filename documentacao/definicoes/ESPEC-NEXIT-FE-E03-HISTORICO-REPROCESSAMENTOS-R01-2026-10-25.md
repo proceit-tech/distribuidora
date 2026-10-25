@@ -1,5 +1,7 @@
 # NEXIT FE-V1 — E03 / Historial de procesamientos, reenvíos, JSONs y respuestas (modelo en definición R01)
 
+> **SUSTITUÍDO COMO ESPECIFICACIÓN ACTIVA por [E03 R02](ESPEC-NEXIT-FE-E03-HISTORICO-REPROCESSAMENTOS-R02-2026-10-25.md) (25/10/2026).** El responsable aclaró que SIFEN responde por DOCUMENTO, no por intento HTTP; mientras no exista rechazo final no se reenvía el mismo JSON/CDC, sino que se CONSULTA el documento. Las afirmaciones R01 que atribuían estados SIFEN independientes a cada intento y la pregunta de asociar consultas a «último envío» quedan revocadas. Se preserva R01 solamente como trazabilidad de decisiones previas; NO dar orden a Claude basándose en R01.
+
 **Fecha:** 25/10/2026. **Estado:** MODELO PARCIALMENTE APROBADO — diseño técnico y decisiones pendientes. **Sin autorización de implementación ni migración.**
 **Tareas:** PRO-312 (historial/evidencia fiscal), PRO-311 (corrección de FE rechazada), PRO-315 (E02: paginación ya revisada estáticamente), PRO-309 (gate de negocio).
 **Interfaz:** es-PY. **Branch:** `feature/NEXIT-2026-001-banco-demo`.
