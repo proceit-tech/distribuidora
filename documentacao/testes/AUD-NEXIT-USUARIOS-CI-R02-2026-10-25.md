@@ -38,3 +38,12 @@ NOT EXISTS (
 A migration **NEX-074 ainda não aplicada** e o runner normal pode tentar NEX-072 e NEX-073 também pendentes, sem autorização. Nenhum teste ou deploy efetuado; interface ainda não homologada operacionalmente.
 
 **Status recomendado:** aceitar A01 como resolvido; A02 **controle real mas rótulo excessivo**, requer somente precisão na descrição de sua evidência. Nada justifica reconstruir usuários/vendedores, mexer em `Nueva factura`, no combo de 13 tipos ou no problema independente de reintentos legados.
+
+
+## Encerramento final A01/A02 — commit 2745f8c (25/10/2026)
+
+**Commit confirmado:** `2745f8c963bd51f37204033b53705632ff9e5e99`, pai `48177092152f579bf37625fd95315358441f6e5b`, HEAD funcional/documental no momento da revisão. O diff contém **somente** `documentacao/banco/nexit/v1/scripts/verificar-NEX-074.sql`; a única linha alterada é o **rótulo** do controle que consulta `eventos_seguridad`. A consulta SQL não mudou.
+
+**Decisão:** **A01 E A02 CONFORMES NA AUDITORIA ESTÁTICA**. A02 deixou de afirmar que os eventos comprovam ausência de backfill histórico: agora declara corretamente que todo usuário com `ci` ou `telefono` preenchidos tem ao menos um evento `USUARIO_CREADO`/`USUARIO_ACTUALIZADO`, e ressalva que isso não prova QUANDO houve preenchimento nem descarta sozinho uma migração retrospectiva. Esta afirmação corresponde à condição `NOT EXISTS (... NOT EXISTS(evento))` existente.
+
+**Nenhum patch adicional solicitado.** Não prolongar A01/A02, não inventar nova exigência para usuário/vendedor, não reabrir o combo D011 nem lógica de reintentos de FE. O cumprimento é **estático apenas**: NEX-072, NEX-073 e NEX-074 permanecem **NÃO APLICADAS**, sem testes/lint/typecheck/build/SQL/runner/VM/gateway/emissão/deploy/homologação humana. PRO-293/109/72 continuam com os demais gates não resolvidos, não marcá-los Done por estas duas correções.
