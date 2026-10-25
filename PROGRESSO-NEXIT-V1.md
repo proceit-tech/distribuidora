@@ -2572,3 +2572,15 @@ Após o encerramento **estático** de Inventario na `AUD-INV-R05` (sem homologa�
 - **REQUISITO DO COMBO JÁ IMPLEMENTADO ESTATICAMENTE** no SHA `03623ec4a7daf32f4f832c47f5fbc0b8112cb9fc`. Nenhum novo patch funcional solicitado; proibir a Claude ampliar esse pedido.
 - Backend atual de FE ordinária emite somente 1–4; 5–13 exigiriam fluxos próprios, mas **isso é uma limitação técnica conhecida, não uma pendência encomendada pelo responsável**. Preservar as validações atuais sem simular emissão inválida; não atribuir ao usuário obrigação de acrescentar campos.
 - Especificação original PRO-93, ordem R02, errata AUD-R01 e gate `CLAUDE.md` retificados. Outras pendências (vendedor, data/NEX-073 e visual) independentes.
+
+### AUDITORIA INDEPENDENTE PRO-93-R02 — BLOQUEADA PARA DEPLOY (25/10/2026)
+- **Commits Claude auditados:** data `f675510ba19c2962aba3362b2621bdbe75b807ba`, vendedor SQL/API `226e1a70f6f12350dab2d11fe5fd4633d8e2af0f`, UI `b3bf03186ba67ca6a6451e84c9f5eaebce675b37`. [Auditoria R02](documentacao/testes/AUD-NEXIT-PRO-93-R02-2026-10-25.md); [ordem corretiva R03 preparada](documentacao/ordens/ORD-CLAUDE-NEXIT-PRO-93-R03-CORRECCIONES-AUD-R02-2026-10-25.md). **Não conforme / não implantável.** Não foram realizados testes/SQL/migrations/VM/gateway.
+- **Preservar** alterações funcionalmente adequadas: data UI/FE com NEX-073 versionada, 001 antes da sucursal, 13 opções D011 no MESMO COMBO sem pedir campos adicionais, Cliente grid, Unidade e resumo em fluxo; modelo Vendedor = `usuarios` + perfil padronizado, sem tabela comercial paralela; novo menu, API e snapshot do vendedor. Sem homologação visual.
+- **F001 data ALTA:** +5 dias exatamente 120h na reserva; atraso de envio excede normal DNIT. Rever política de margem/cálculo de horas sem inventar aceitação gateway.
+- **F002 legado ALTA:** FE históricas anteriores NEX-074 não têm `documento_electronico_vendedor` e o reintento compara ID vazio com vendedor obrigatório → 409 mesmo sem intenção diferente. Não inventar retroativamente o vendedor/emissor.
+- **F003 segurança ALTA:** novas contas têm `debe_cambiar_contrasena` mas não há fluxo nem verificação na autenticação; credencial provisória permite sessões operacionais.
+- **F004 concorrência ALTA:** proteções do último administrador em `usr_cambiar_estado`/`usr_asignar_perfiles` não serializam por empresa; duas operações em alvos distintos podem retirar todos os admins.
+- **F005 alcance ALTA:** usuários novos ficam ASIGNADAS/ASIGNADOS sem vínculo de sucursal/depósito e sem UI de atribuição. Não remover controles de alcance nem atribuir TODAS automaticamente.
+- **F006 deployment:** NEX-072, 073 e 074 versionadas, ainda NÃO APLICADAS; runner normal aplicaria a NEX-072 não autorizada. SQL/VM estritamente bloqueados.
+- **F007 catálogo:** função standard cria oito perfis e depende de ADMIN já existente; validar pré-condição de empresa sem ADMIN.
+- **Ordem R03 só preparada**, não executada automaticamente, focada nessas correções; PRO-93 In Review e subtarefas abertas. Não reabrir PRO-322 ou PRO-134/combo de 13.
