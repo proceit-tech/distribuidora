@@ -51,6 +51,8 @@
 **Info adicional:** (I) libre puro; (J) solo dirección; (K) solo vendedor; (L) ambos + comentario libre; (M) cambio del vendedor/destino no duplica ni apaga anotaciones; (N) reintento de misma clave y cambios posteriores de maestros mantienen snapshot; (O) NCE/E1 existentes sin regresión; (P) 5000 caracteres completos y 5001 se bloquea; (Q) secuencia revisar/confirmar/cambiar invalida huella, sin reservar número; (R) permisos/empresa/cliente.
 **KuDE:** comparar misma FE: `dInfAdic` persistido vs. PDF del gateway e identificar si impresión del proveedor omite líneas (PRO-298). Ninguna inferencia de producción sin prueba real.
 
+**Linear de implementación:** [PRO-322](https://linear.app/proceit/issue/PRO-322/fe-dir-serializar-e-validar-direccion-fiscal-completa-del-receptor-en) (dirección fiscal integral), [PRO-323](https://linear.app/proceit/issue/PRO-323/fe-inf-dinfadic-editable-con-insercion-asistida-de-entrega-y-vendedor) (editor asistido), ambos subissues de PRO-93 y estado Todo, no implementados.
+
 ## 5. Separación de alcance y gate
 
 - **Trilha fiscal receptor**: ticket separado, hijo de PRO-93; análisis estático de formato y contrato gateway primero; después patch min. `payload-fe.ts`, `emision.ts` y catálogo de códigos/descripciones, con tests focalizados bajo autorización.
