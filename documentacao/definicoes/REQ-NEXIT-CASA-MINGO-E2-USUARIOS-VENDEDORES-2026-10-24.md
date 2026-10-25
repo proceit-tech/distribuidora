@@ -1,4 +1,7 @@
-# REQ-NEXIT-CASA-MINGO-E2 — Administración de Usuarios = Vendedores
+# REQ-NEXIT-CASA-MINGO-E2 — Administración de Usuarios = Vendedores — HISTÓRICO SUPERADO
+
+> **DOCUMENTO SUPERADO / NÃO VIGENTE — 24/10/2026.** O responsável rejeitou a premissa de que todo usuário seja vendedor, e revogou a autorização de implementar E2. Este documento é preservado **apenas como histórico da análise equivocada**. **NÃO usar suas regras RN-E2 sobre vendedor ou seu comando para Claude**. A referência canônica é `documentacao/definicoes/REQ-NEXIT-PLATAFORMA-MULTIEMPRESA-PERFILES-R01-2026-10-24.md` (MASTER global, empresa com admin próprio, múltiplos perfis, regras comerciais pendentes). O código E1 atualmente atribui `Vendedor:` ao emissor autenticado, mas isso NÃO é regra universal aprovada e exige decisão funcional específica. **Nenhum desenvolvimento E2 está autorizado** até aprovação formal do responsável.
+
 
 **Fecha:** 24/10/2026. **Fuente de negocio:** solicitud CASA MINGO del 22/10/2026 y decisión del responsable: «para ellos Usuario y Vendedor son lo mismo».  
 **Estado:** autorización para iniciar *desarrollo E2*, **no para homologar ni desplegar**.  
