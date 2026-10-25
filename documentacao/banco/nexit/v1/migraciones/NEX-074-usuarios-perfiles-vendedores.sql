@@ -36,11 +36,11 @@ BEGIN
   END IF;
 END $$;
 
--- 0) Identificación del usuario: CI y teléfono (texto). Los históricos quedan NULL. CI: solo dígitos (4 a 10; se aceptan puntos y espacios al escribirla y se guardan sin ellos, sin tocar los ceros iniciales); teléfono: dígitos con + inicial
+-- 0) Identificación del usuario: CI y teléfono (texto). Los históricos quedan NULL. CI: solo dígitos (1 a 10, no todo ceros: la numeración oficial empezó en 1, así que no hay mínimo de cuatro dígitos; se aceptan puntos y espacios al escribirla y se guardan sin ellos, sin tocar los ceros iniciales); teléfono: dígitos con + inicial
 --    opcional (6 a 15; espacios, guiones, puntos y paréntesis se descartan al guardar). Única la CI por empresa.
 ALTER TABLE public.usuarios ADD COLUMN ci text, ADD COLUMN telefono text;
 ALTER TABLE public.usuarios
-  ADD CONSTRAINT usuarios_ci_chk CHECK (ci IS NULL OR ci ~ '^[0-9]{4,10}$'),
+  ADD CONSTRAINT usuarios_ci_chk CHECK (ci IS NULL OR (ci ~ '^[0-9]{1,10}$' AND ci !~ '^0+$')),
   ADD CONSTRAINT usuarios_telefono_chk CHECK (telefono IS NULL OR telefono ~ '^\+?[0-9]{6,15}$');
 CREATE UNIQUE INDEX usuarios_empresa_ci_key ON public.usuarios (empresa_id, ci) WHERE ci IS NOT NULL;
 COMMENT ON COLUMN public.usuarios.ci IS 'NEX-074: cédula de identidad del usuario (texto, ceros iniciales conservados). NULL en usuarios históricos. No es documento_hash.';
@@ -195,8 +195,8 @@ BEGIN
   IF char_length(v_apellido) NOT BETWEEN 1 AND 120 THEN
     RAISE EXCEPTION 'el apellido es obligatorio (hasta 120 caracteres)' USING ERRCODE = 'P0001', DETAIL = 'NEX:APELLIDO_INVALIDO';
   END IF;
-  IF v_ci IS NULL OR v_ci !~ '^[0-9]{4,10}$' THEN
-    RAISE EXCEPTION 'la CI es obligatoria y debe tener de 4 a 10 dígitos' USING ERRCODE = 'P0001', DETAIL = 'NEX:CI_INVALIDA';
+  IF v_ci IS NULL OR v_ci !~ '^[0-9]{1,10}$' OR v_ci ~ '^0+$' THEN
+    RAISE EXCEPTION 'la CI es obligatoria y debe tener de 1 a 10 dígitos (no todos ceros)' USING ERRCODE = 'P0001', DETAIL = 'NEX:CI_INVALIDA';
   END IF;
   IF v_email = '' OR char_length(v_email) > 200 OR v_email !~ '^[^@\s]+@[^@\s]+\.[^@\s]+$' THEN
     RAISE EXCEPTION 'el correo electrónico es obligatorio y debe ser válido' USING ERRCODE = 'P0001', DETAIL = 'NEX:EMAIL_INVALIDO';

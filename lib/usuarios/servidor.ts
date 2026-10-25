@@ -36,7 +36,7 @@ const MENSAJES: Record<string, string> = {
   "NEX:USUARIO_BAJA": "Un usuario dado de baja no se puede reactivar.",
   "NEX:PERFIL_INVALIDO": "Alguno de los perfiles no pertenece al catálogo de la empresa.",
   "NEX:CI_DUPLICADA": "Ya existe otro usuario con esa CI en la empresa.",
-  "NEX:CI_INVALIDA": "La CI es obligatoria y debe tener de 4 a 10 dígitos.",
+  "NEX:CI_INVALIDA": "La CI es obligatoria y debe tener de 1 a 10 dígitos (no todos ceros).",
   "NEX:EMAIL_INVALIDO": "El correo electrónico es obligatorio y debe ser válido.",
   "NEX:TELEFONO_INVALIDO": "El teléfono es obligatorio y debe tener de 6 a 15 dígitos.",
   "NEX:NOMBRE_INVALIDO": "El nombre es obligatorio (hasta 120 caracteres).",

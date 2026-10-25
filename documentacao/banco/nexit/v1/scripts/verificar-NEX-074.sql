@@ -4,7 +4,9 @@ BEGIN READ ONLY;
 SELECT 'tabla documento_electronico_vendedor' AS control, to_regclass('public.documento_electronico_vendedor') IS NOT NULL AS ok
 UNION ALL SELECT 'usuarios.ci y usuarios.telefono son texto', (SELECT count(*) FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'usuarios' AND column_name IN ('ci', 'telefono') AND data_type = 'text') = 2
 UNION ALL SELECT 'CI única por empresa (índice parcial)', to_regclass('public.usuarios_empresa_ci_key') IS NOT NULL
-UNION ALL SELECT 'los usuarios históricos conservan ci/telefono NULL (ninguno inventado por la migración)', true
+UNION ALL SELECT 'ci/telefono solo existen en usuarios cargados por usr_crear/usr_actualizar (la migración no inventó ninguno)', NOT EXISTS (
+         SELECT 1 FROM public.usuarios u WHERE (u.ci IS NOT NULL OR u.telefono IS NOT NULL) AND NOT EXISTS (
+           SELECT 1 FROM public.eventos_seguridad e WHERE e.empresa_id = u.empresa_id AND e.tipo IN ('USUARIO_CREADO', 'USUARIO_ACTUALIZADO') AND e.detalle ->> 'usuario_id' = u.id::text))
 UNION ALL SELECT 'emisión con vendedor de 14 parámetros', to_regprocedure('public.fe_documento_crear_fe_vendedor(uuid,uuid,uuid,uuid,text,uuid,text,text,text,numeric,jsonb,jsonb,uuid,uuid)') IS NOT NULL
 UNION ALL SELECT 'usr_crear / usr_actualizar / usr_cambiar_estado / usr_asignar_perfiles / usr_perfiles_catalogo',
        to_regprocedure('public.usr_crear(uuid,uuid,text,text,text,text,text,text,text,text[])') IS NOT NULL AND to_regprocedure('public.usr_actualizar(uuid,uuid,uuid,text,text,text,text,text)') IS NOT NULL

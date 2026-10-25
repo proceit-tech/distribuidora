@@ -27,7 +27,7 @@ export function validarDatosUsuario(entrada: Record<string, unknown>): Resultado
   if (nombre.length < 1 || nombre.length > 120) errores.nombre = "El nombre es obligatorio (hasta 120 caracteres).";
   if (apellido.length < 1 || apellido.length > 120) errores.apellido = "El apellido es obligatorio (hasta 120 caracteres).";
   if (ci === "") errores.ci = "La CI es obligatoria.";
-  else if (!/^[0-9]{4,10}$/.test(ci)) errores.ci = "La CI debe tener de 4 a 10 dígitos (puede escribirla con puntos).";
+  else if (!/^[0-9]{1,10}$/.test(ci) || /^0+$/.test(ci)) errores.ci = "La CI debe tener de 1 a 10 dígitos, sin todos ceros (puede escribirla con puntos).";
   if (email === "") errores.email = "El correo electrónico es obligatorio.";
   else if (email.length > 200 || !EMAIL.test(email)) errores.email = "El correo electrónico no es válido.";
   if (telefono === "") errores.telefono = "El teléfono es obligatorio.";
