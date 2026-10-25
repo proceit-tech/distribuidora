@@ -1,0 +1,28 @@
+# Instalado separadamente em /srv/infrastructure/proxy/compose.yml
+name: proceit-proxy
+services:
+  caddy:
+    image: caddy:2
+    container_name: proceit-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - proxy
+    security_opt:
+      - no-new-privileges:true
+networks:
+  proxy:
+    external: true
+    name: proxy
+volumes:
+  caddy_data:
+    name: proceit_caddy_data
+  caddy_config:
+    name: proceit_caddy_config

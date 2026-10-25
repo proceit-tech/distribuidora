@@ -1,0 +1,6 @@
+# OBSOLETO — APENAS REFERENCIA HISTORICA DA PR #6
+# A VM JA POSSUI O BANCO nexit-db E VOLUME nexit_pgdata.
+# NAO EXECUTAR ESTE ARQUIVO. Usar os arquivos revisados em infra/nexit/.
+# Esta configuracao propositalmente nao tem services para impedir criar segundo DB.
+name: distribunex-obsoleto
+services: {}

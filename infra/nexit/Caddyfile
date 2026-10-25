@@ -1,0 +1,10 @@
+nexit.proceit.net {
+    encode zstd gzip
+    reverse_proxy nexit-app:3000
+}
+
+:80 {
+    @health path /healthz
+    respond @health "OK" 200
+    respond "Servidor PROCEIT em preparação" 503
+}

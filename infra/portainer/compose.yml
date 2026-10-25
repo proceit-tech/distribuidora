@@ -1,0 +1,16 @@
+name: proceit-portainer
+services:
+  portainer:
+    image: portainer/portainer-ce:lts
+    restart: unless-stopped
+    ports:
+      # Interface SOMENTE na VM: acesso remoto por túnel SSH.
+      - "127.0.0.1:9443:9443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer_data:/data
+    security_opt:
+      - no-new-privileges:true
+volumes:
+  portainer_data:
+    name: proceit_portainer_data

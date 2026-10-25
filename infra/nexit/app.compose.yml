@@ -1,0 +1,18 @@
+services:
+  app:
+    image: ghcr.io/proceit-tech/distribuidora:0437fed36944a0cedf28c1ef93954bf922949a1e
+    container_name: nexit-app
+    restart: unless-stopped
+    env_file:
+      - ./app.env
+    expose:
+      - "3000"
+    networks:
+      - nexit_internal
+      - proxy
+    security_opt:
+      - no-new-privileges:true
+networks:
+  proxy:
+    external: true
+    name: proxy
