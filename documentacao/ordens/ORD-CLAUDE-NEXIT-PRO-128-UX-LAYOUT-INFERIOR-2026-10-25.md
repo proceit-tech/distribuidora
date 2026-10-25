@@ -1,5 +1,8 @@
 # ORDEM CLAUDE — PRO-128 · Nova factura electrónica · Reparação de UX da tela (25/10/2026)
 
+> **ORDEN ANTIGUA SUPERADA — 25/10/2026:** el responsable confirmó que **NO ENVIÓ** esta orden CSS al Claude. **NO EJECUTARLA POR SEPARADO.** Fue sustituida por el mandato único `documentacao/ordens/ORD-CLAUDE-NEXIT-PRO-93-PENDIENTES-NUEVA-FACTURA-INTEGRAL-2026-10-25.md` que incluye fecha editable, establecimiento 001 primero, los 13 tipos, cliente alineado, cadastro/selección de vendedor, tabla y rodapié. Este archivo se conserva solo como referencia visual/histórica; en caso de conflicto PREVALECE la orden integral.
+
+
 **Responsável:** definição visual a partir de captura real do responsável (25/10/2026). **Implementador:** Claude. **Auditoria:** ChatGPT após commit.  
 **Repositório:** `proceit-tech/distribuidora`. **Branch:** `feature/NEXIT-2026-001-banco-demo`.  
 **Issue ÚNICA:** `PRO-128` (já existe, In Review). Relacionada à UX `PRO-93` e aceite humano `PRO-115`; não criar issue repetida.
