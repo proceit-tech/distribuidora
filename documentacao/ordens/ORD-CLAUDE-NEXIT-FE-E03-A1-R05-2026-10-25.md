@@ -1,5 +1,7 @@
 # ORD-CLAUDE-NEXIT-FE-E03-A1-R05 — ÚNICA ORDEM CORRETIVA VIGENTE
 
+> **R05 FINALIZADA — SEM ORDEM CORRETIVA R06 (25/10/2026).** Claude já executou esta ordem, produzindo `5acd9ca3aa317a95c6deee61a696c9e21d52c433`; [auditoria R05](documentacao/testes/AUD-NEXIT-FE-E03-A1-PRO-321-R05-2026-10-25.md) confirmou conformidade SOMENTE ESTÁTICA da NEX-072. Esta ordem foi atendida e é HISTÓRICA, não deve ser executada novamente. **A migration ainda NÃO foi aplicada nem testada em PostgreSQL.** Próximo gate: validação/aplicação controlada em homologação sob autorização humana. E03-A2/B e E08/E09 não foram liberadas.
+
 **Data:** 25/10/2026. **Issue:** PRO-321 (subtarefa PRO-312). **Repositório:** `proceit-tech/distribuidora`; **branch:** `feature/NEXIT-2026-001-banco-demo`.
 **SHA Claude R04:** `7d5764769a30eeadf0221a07f42f9f73341d33be`.
 **Auditoria INDEPENDENTE — LER INTEIRA:** [AUD-E03-A1-R04](../testes/AUD-NEXIT-FE-E03-A1-PRO-321-R04-2026-10-25.md).
