@@ -2099,3 +2099,16 @@
 .workspace a {
   scroll-margin-bottom: 24px;
 }
+
+/* Vendedor comercial: tarjeta propia, alineada como la banda del cliente. */
+.bandaVendedor {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+
+.bandaVendedor .clienteNombre {
+  min-width: 0;
+}

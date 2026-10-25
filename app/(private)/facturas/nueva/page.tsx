@@ -46,6 +46,8 @@ type Cliente = {
   id: string; codigo: string; razonSocial: string; nombreFantasia: string | null; numeroDocumento: string; dv: string | null; naturaleza: number; tipoContribuyente: number | null;
   email: string | null; emailFacturacion: string | null; telefono: string | null; celular: string | null; direccion: string | null; numeroCasa: string | null; apto: boolean; pendientes: string[];
 };
+/** Vendedor comercial (usuario de la empresa con el perfil Vendedor). Independiente del usuario que emite la factura. */
+type Vendedor = { id: string; usuario: string; nombreCompleto: string };
 type Producto = {
   id: string; codigo: string; descripcion: string; unidadSifen: number | null; unidadSimbolo: string | null; unidadNombre: string | null; unidadVigente?: boolean | null; afectacion: number | null; proporcion: string | null;
   tasa: number | null; precio: string | null; monedaPrecio: string | null; gtin: string | null;
@@ -65,6 +67,8 @@ type Resumen = {
   descuentos?: { porcGlobal: string; totalItems: string; totalGeneral: string; total: string };
   /** E04: destino de entrega elegido (null = el cliente no tiene destinos registrados). */
   entrega?: { nombre: string; tipo: string; direccion: string; contacto: string; horario: string } | null;
+  /** PRO-72/PRO-307: vendedor comercial elegido (revalidado por el servidor). */
+  vendedor?: { id: string; nombre: string } | null;
   /** E1: dInfAdic final (observaciones + entrega + vendedor) y su huella, que se envía al emitir para que se emita exactamente lo revisado. */
   infoAdicional?: string;
   infoAdicionalHuella?: string;
@@ -315,7 +319,7 @@ type ItemBusqueda = { titulo: string; detalle: string; derecha?: string; impedim
  * o un único resultado habilitado, lo selecciona directamente (útil con lector de código de barras). El selector avanzado (diálogo paginado) sigue disponible.
  */
 function BuscadorRapido<T extends { id: string }>({ url, campo, etiqueta, placeholder, describir, exacto, parecido, alElegir, mantenerAbierto, autoFocus }: {
-  url: string; campo: "clientes" | "productos"; etiqueta: string; placeholder: string; describir: (t: T) => ItemBusqueda; exacto: (t: T, texto: string) => boolean;
+  url: string; campo: "clientes" | "productos" | "vendedores"; etiqueta: string; placeholder: string; describir: (t: T) => ItemBusqueda; exacto: (t: T, texto: string) => boolean;
   /** E05: ¿el resultado es un código DISTINTO que solo difiere en ceros iniciales? (001234 ≠ 1234): Enter no lo elige solo. */
   parecido?: (t: T, texto: string) => boolean;
   alElegir: (t: T) => void; mantenerAbierto?: boolean; autoFocus?: boolean;
@@ -444,6 +448,21 @@ function BuscadorCliente({ alElegir }: { alElegir: (c: Cliente) => void }) {
   );
 }
 
+/** Búsqueda rápida de vendedores ACTIVOS de la empresa (nombre o usuario). No hay selección automática: ni siquiera del usuario que emite. */
+function BuscadorVendedor({ alElegir }: { alElegir: (v: Vendedor) => void }) {
+  return (
+    <BuscadorRapido<Vendedor>
+      url="/api/facturas/vendedores"
+      campo="vendedores"
+      etiqueta="Buscar vendedor por nombre o usuario"
+      placeholder="Escriba para buscar…"
+      describir={(v) => ({ titulo: v.nombreCompleto, detalle: `Usuario ${v.usuario}`, habilitado: true })}
+      exacto={(v, t) => v.usuario.toLowerCase() === t.toLowerCase()}
+      alElegir={alElegir}
+    />
+  );
+}
+
 /** Búsqueda rápida de productos (código, GTIN o descripción): permanece abierta para añadir varios; los que tienen impedimentos no se pueden añadir. */
 function BuscadorProducto({ alElegir, permisos, moneda }: { alElegir: (p: Producto) => void; permisos: PermisosProducto; moneda: string }) {
   return (
@@ -504,6 +523,9 @@ export default function NuevaFacturaPage() {
   const [entregaCtl] = useState(() => crearControlEntrega({ cargar: (id, signal) => pedirOpcionesEntrega(id, signal) }));
   const entregaEstado = useSyncExternalStore(entregaCtl.suscribir, entregaCtl.estado, entregaCtl.estado);
   const [cliente, setCliente] = useState<Cliente | null>(null);
+  // Vendedor comercial elegido por ID (nunca se preselecciona el usuario emisor). null = sin elegir; sinVendedores: la empresa no tiene vendedores activos (se enlaza a Maestros → Vendedores).
+  const [vendedor, setVendedor] = useState<Vendedor | null>(null);
+  const [sinVendedores, setSinVendedores] = useState(false);
   const [lineas, setLineas] = useState<Linea[]>([]);
   const [precioEnFoco, setPrecioEnFoco] = useState<number | null>(null);
   const [siguienteClave, setSiguienteClave] = useState(1);
@@ -638,6 +660,7 @@ export default function NuevaFacturaPage() {
   const soporteTipo = opciones?.soporteTipoTransaccion?.[tipoTransaccion];
   const tipoBloqueado = soporteTipo !== undefined && soporteTipo.habilitado !== true;
   const faltan = [
+    vendedor === null ? "vendedor" : "",
     fechaEmision === "" ? "fecha de emisión" : "",
     fechaEval && !fechaEval.ok ? "corregir la fecha de emisión" : "",
     tipoBloqueado ? "elegir un tipo de transacción que se pueda emitir" : "",
@@ -655,6 +678,19 @@ export default function NuevaFacturaPage() {
   ].filter(Boolean);
   const puedeGuardar = !revisando && !enviando && faltan.length === 0 && cliente !== null && cliente.apto && calculo.completo;
   const hayPrecioModificado = lineas.some((l) => precioModificado(l, moneda));
+
+  useEffect(() => {
+    let activo = true;
+
+    fetch("/api/facturas/vendedores?pagina=1&porPagina=1", { cache: "no-store" })
+      .then((r) => leer<{ total: number }>(r, "No fue posible cargar los vendedores."))
+      .then((j) => activo && setSinVendedores(j.total === 0))
+      .catch(() => undefined);
+
+    return () => {
+      activo = false;
+    };
+  }, []);
 
   useEffect(() => {
     void entregaCtl.seleccionarCliente(clienteIdActual);
@@ -697,7 +733,7 @@ export default function NuevaFacturaPage() {
 
   // El precio solo viaja cuando difiere del de lista; el servidor lo contrasta con el catálogo y con el permiso del usuario.
   const cuerpoFactura = () => ({
-    claveIdempotencia: clave, sucursalId, puntoId, clienteId: cliente?.id, tipoTransaccion: Number(tipoTransaccion), presencia: Number(presencia), ...(fechaEmision ? { fechaEmision } : {}), moneda, ...(extranjera ? { cambio } : {}),
+    claveIdempotencia: clave, sucursalId, puntoId, clienteId: cliente?.id, vendedorId: vendedor?.id, tipoTransaccion: Number(tipoTransaccion), presencia: Number(presencia), ...(fechaEmision ? { fechaEmision } : {}), moneda, ...(extranjera ? { cambio } : {}),
     pagos: hayPagos ? pagos.map((p) => pagoParaEnvio(p, pagos.length === 1)) : [], condicion: Number(condicion), ...(enCredito ? { credito: creditoParaEnvio(credito) } : {}), infoAdicional, ...(descuentoGeneralFE ? { descuentoGlobal: descuentoGeneralFE } : {}), ...(direccionEntregaId ? { direccionEntregaId } : {}),
     lineas: lineas.map((l) => {
       const ajuste = ajusteParaEnvio(l.producto, l.ajuste);
@@ -846,6 +882,7 @@ export default function NuevaFacturaPage() {
 
   function nueva() {
     setCliente(null);
+    setVendedor(null);
     setLineas([]);
     setInfoAdicional(""); setDescuentoGeneral(DESC_VACIO);
     setCondicion("1");
@@ -967,7 +1004,7 @@ export default function NuevaFacturaPage() {
                     <label className={estilos.field}>
                       <span>Fecha de emisión *</span>
                       <input type="date" aria-label="Fecha de emisión" value={fechaEmision} min={rangoFecha?.min} max={rangoFecha?.max} required disabled={hoyIso === ""} onChange={(e) => setFechaEmision(e.target.value)} aria-invalid={fechaEval && !fechaEval.ok ? true : undefined} />
-                      {fechaEval && !fechaEval.ok ? <small className={estilos.fieldError} role="alert">{fechaEval.error}</small> : <small className={estilos.hint}>Se puede elegir de 30 días atrás a 5 adelante; se emite con transmisión normal de hoy a 4 días atrás.</small>}
+                      {fechaEval && !fechaEval.ok ? <small className={estilos.fieldError} role="alert">{fechaEval.error}</small> : <small className={estilos.hint}>Se puede elegir de 30 días atrás a 5 adelante; se emite con transmisión normal de 4 días atrás a 5 adelante.</small>}
                     </label>
 
                     <label className={estilos.field}>
@@ -1068,6 +1105,31 @@ export default function NuevaFacturaPage() {
                       <BuscadorCliente alElegir={setCliente} />
                       <button type="button" className={ui.secondaryButton} onClick={() => setSelector("cliente")}>Búsqueda avanzada</button>
                     </div>
+                  )}
+                </div>
+              </section>
+
+              <section className={estilos.card} aria-labelledby="sec-vendedor">
+                <div className={estilos.cardHead}>
+                  <h2 id="sec-vendedor">Vendedor *</h2>
+                  {vendedor ? <span className={estilos.meta}>Usuario {vendedor.usuario}</span> : null}
+                </div>
+                <div className={estilos.cardBody}>
+                  {vendedor ? (
+                    <div className={estilos.bandaVendedor}>
+                      <div className={estilos.clienteNombre}>
+                        <strong>{vendedor.nombreCompleto}</strong>
+                        <span>Vendedor comercial de esta factura (distinto de quien la emite)</span>
+                      </div>
+                      <div className={estilos.actions}>
+                        <button type="button" className={ui.clearButton} onClick={() => setVendedor(null)}>Cambiar vendedor</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <BuscadorVendedor alElegir={setVendedor} />
+                      {sinVendedores ? <p className={estilos.hint} role="status">Sin vendedores registrados. <Link href="/vendedores">Registrar un vendedor en Maestros → Vendedores</Link></p> : null}
+                    </>
                   )}
                 </div>
               </section>
@@ -1418,6 +1480,7 @@ export default function NuevaFacturaPage() {
                   <h3>Cliente y entrega</h3>
                   <dl className={estilos.resumenDl}>
                     <div><dt>Cliente</dt><dd>{resumen.cliente.razonSocial} ({resumen.cliente.documento})</dd></div>
+                    <div><dt>Vendedor</dt><dd>{resumen.vendedor ? resumen.vendedor.nombre : "—"}</dd></div>
                     {resumen.infoAdicional ? <div><dt>Información adicional</dt><dd style={{ whiteSpace: "pre-line" }}>{resumen.infoAdicional}</dd></div> : null}
                     <div><dt>Dirección de entrega</dt><dd>{resumen.entrega ? `${resumen.entrega.nombre} — ${resumen.entrega.direccion}` : "Sin destino de entrega registrado (se factura con el domicilio fiscal del receptor)"}</dd></div>
                   </dl>

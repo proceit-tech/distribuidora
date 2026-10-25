@@ -411,6 +411,8 @@ const V1_HREFS = new Set([
   "/reposicion",
   "/depositos",
   "/documentos",
+  "/vendedores",
+  "/administracion/usuarios",
   "/facturas",
   "/notas-credito",
   "/facturacion/puntos",
