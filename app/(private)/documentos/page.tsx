@@ -279,13 +279,21 @@ export default function DocumentosPage() {
       return;
     }
 
+    // E02-F001: cada apertura inicia una generación nueva; la respuesta (éxito o error) solo se aplica si sigue siendo la vigente y la fila sigue abierta. Cerrar la fila o reabrirla invalida la carga anterior.
+    const generacion = (historialVigente.current[d.id] ?? 0) + 1;
+    const vigente = () => historialVigente.current[d.id] === generacion;
+    const aplicar = (parte: Partial<Detalle>) => {
+      if (vigente()) setAbiertos((a) => (a[d.id] ? { ...a, [d.id]: { ...a[d.id], ...parte } } : a));
+    };
+
+    historialVigente.current[d.id] = generacion;
     actualizarDetalle(d.id, { cargando: true });
     try {
       const j = await leerJson<{ intentos: Intento[]; siguienteIntentos?: string | null; solicitudes?: Solicitud[] }>(await fetch(`/api/documentos/${d.id}`, { cache: "no-store" }), "No fue posible cargar el detalle.");
 
-      actualizarDetalle(d.id, { cargando: false, intentos: j.intentos, siguienteIntentos: j.siguienteIntentos ?? null, solicitudes: j.solicitudes ?? [] });
+      aplicar({ cargando: false, intentos: j.intentos, siguienteIntentos: j.siguienteIntentos ?? null, solicitudes: j.solicitudes ?? [] });
     } catch (e) {
-      actualizarDetalle(d.id, { cargando: false, error: e instanceof Error ? e.message : "No fue posible cargar el detalle." });
+      aplicar({ cargando: false, error: e instanceof Error ? e.message : "No fue posible cargar el detalle." });
     }
   }
 

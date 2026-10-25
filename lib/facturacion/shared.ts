@@ -219,6 +219,14 @@ const CURSOR_INTENTO = `to_char(i.creado_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH
 const CURSOR_FORMA = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z)\|([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 export const INTENTOS_POR_PAGINA = 100;
 
+/** Fecha/hora del cursor (YYYY-MM-DDTHH:MM:SS.uuuuuuZ) con calendario real: se valida ANTES de la consulta para responder 400 (la precisión de microsegundos se conserva: solo se comprueban los componentes). */
+function fechaCursorValida(texto: string): boolean {
+  const [anio, mes, dia, hora, minuto, segundo] = texto.slice(0, 19).split(/[-T:]/).map(Number);
+  const f = new Date(Date.UTC(anio, mes - 1, dia, hora, minuto, segundo));
+
+  return f.getUTCFullYear() === anio && f.getUTCMonth() === mes - 1 && f.getUTCDate() === dia && f.getUTCHours() === hora && f.getUTCMinutes() === minuto && f.getUTCSeconds() === segundo;
+}
+
 /** Intentos (evidencia) del documento, del más reciente al más antiguo, máx. 100. Solo se llama tras comprobar que el documento está en el alcance. */
 export async function listarIntentos(db: Db, empresaId: string, documentoId: string) {
   const r = await db.query(
@@ -285,7 +293,7 @@ export async function leerRespuestaIntento(db: Db, empresaId: string, usuarioId:
 export async function listarIntentosPagina(db: Db, empresaId: string, documentoId: string, cursor?: string) {
   const m = cursor === undefined ? null : CURSOR_FORMA.exec(cursor);
 
-  if (cursor !== undefined && !m) throw new ErrorFacturacion(400, "El cursor del historial no es válido.");
+  if (cursor !== undefined && (!m || !fechaCursorValida(m[1]))) throw new ErrorFacturacion(400, "El cursor del historial no es válido.");
 
   const r = await db.query(
     `SELECT i.id, i.tipo, i.resultado, i.http_status AS "httpStatus", i.request_id AS "requestId", i.estado_gateway AS "estadoGateway", i.estado_sifen AS "estadoSifen", i.fase, i.lote, i.cdc_informado AS "cdcInformado",
