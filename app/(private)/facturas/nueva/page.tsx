@@ -1004,7 +1004,7 @@ export default function NuevaFacturaPage() {
                     <label className={estilos.field}>
                       <span>Fecha de emisión *</span>
                       <input type="date" aria-label="Fecha de emisión" value={fechaEmision} min={rangoFecha?.min} max={rangoFecha?.max} required disabled={hoyIso === ""} onChange={(e) => setFechaEmision(e.target.value)} aria-invalid={fechaEval && !fechaEval.ok ? true : undefined} />
-                      {fechaEval && !fechaEval.ok ? <small className={estilos.fieldError} role="alert">{fechaEval.error}</small> : <small className={estilos.hint}>Se puede elegir de 30 días atrás a 5 adelante; se emite con transmisión normal de 4 días atrás a 5 adelante.</small>}
+                      {fechaEval && !fechaEval.ok ? <small className={estilos.fieldError} role="alert">{fechaEval.error}</small> : <small className={estilos.hint}>Se puede elegir de 30 días atrás a 5 adelante; se emite con transmisión normal de 4 días atrás a 4 adelante.</small>}
                     </label>
 
                     <label className={estilos.field}>

@@ -3,9 +3,9 @@
 -- Problema: fe_documento_crear_fe (NEX-065) fija SIEMPRE dFeEmiDE y fecha_emision con now(). La pantalla ofrece elegir la fecha, pero sin esta función esa elección no llegaría al documento.
 -- Qué cambia (solo fe_documento_crear_fe; misma firma, mismo propietario y mismos permisos; los envoltorios NEX-067/NEX-068 la siguen llamando sin cambios):
 --   * Clave OPCIONAL de entrada «dFecEmiSol» (AAAA-MM-DD) en p_payload. Sin ella el comportamiento es EXACTAMENTE el de NEX-065 (now()).
---   * Con ella: debe ser una fecha real dentro de la SELECCIÓN comercial (hoy−30 … hoy+5, día local America/Asuncion) y dentro de la ventana FISCALMENTE HABILITADA de transmisión normal (hoy−4 … hoy+5; DNIT e-Kuatia: emisión→transmisión ≤120 h, anterior o posterior).
+--   * Con ella: debe ser una fecha real dentro de la SELECCIÓN comercial (hoy−30 … hoy+5, día local America/Asuncion) y dentro de la ventana FISCALMENTE HABILITADA de transmisión normal con margen (hoy−4 … hoy+4; DNIT e-Kuatia: emisión→transmisión ≤120 h, anterior o posterior; ±5 días es una frontera sin margen).
 --     Fuera de rango: NEX:FECHA_FUERA_DE_RANGO / NEX:FECHA_NO_HABILITADA, ANTES de reservar numeración. Nunca se sustituye en silencio por la de hoy.
---   * Convención de la hora: el operador elige solo la FECHA; dFeEmiDE = fecha elegida + la hora LOCAL de Asunción en que se reserva el número (no se simula una hora elegida). Futuro (+1…+5): emisión→transmisión ≤120 h porque se transmite después de crear; pasado: se habilita hasta −4 días (96 h, 24 h de margen de envío).
+--   * Convención de la hora: el operador elige solo la FECHA; dFeEmiDE = fecha elegida + la hora LOCAL de Asunción en que se reserva el número (no se simula una hora elegida). Como la hora es la de la reserva, N días equivalen a N×24 h nominales: ±5 días = 120 h exactas, SIN margen para el envío ni reintentos; se habilita ±4 días (96 h, 24 h de margen).
 --   * dFeEmiDE = fecha elegida + hora local actual de Asunción; fecha_emision = ese mismo instante. La clave dFecEmiSol NO queda en el snapshot (no viaja al proveedor).
 --   * El hash de idempotencia (entrada_hash) sigue calculándose sobre p_payload TAL COMO ENTRÓ (con dFecEmiSol si existe): la misma clave con otra fecha es otro contenido (conflicto).
 --   * fe_emision_fecha_soportada(): marcador para que la aplicación NO envíe una fecha distinta de hoy si esta migración no está aplicada (si no, la función antigua ignoraría la fecha).
@@ -84,8 +84,8 @@ BEGIN
     IF v_fecha < v_hoy - 30 OR v_fecha > v_hoy + 5 THEN
       RAISE EXCEPTION 'la fecha de emisión debe estar entre 30 días atrás y 5 días adelante de hoy' USING ERRCODE = 'P0001', DETAIL = 'NEX:FECHA_FUERA_DE_RANGO';
     END IF;
-    IF v_fecha < v_hoy - 4 THEN
-      RAISE EXCEPTION 'la fecha de emisión queda fuera de la ventana de transmisión normal (hasta 4 días atrás; el resto requiere tratamiento extemporáneo no implementado)' USING ERRCODE = 'P0001', DETAIL = 'NEX:FECHA_NO_HABILITADA';
+    IF v_fecha < v_hoy - 4 OR v_fecha > v_hoy + 4 THEN
+      RAISE EXCEPTION 'la fecha de emisión queda fuera de la ventana de transmisión normal con margen (hasta 4 días atrás o adelante; el resto requiere un tratamiento adicional no implementado)' USING ERRCODE = 'P0001', DETAIL = 'NEX:FECHA_NO_HABILITADA';
     END IF;
     v_instante := ((v_fecha + (now() AT TIME ZONE 'America/Asuncion')::time) AT TIME ZONE 'America/Asuncion');
   END IF;

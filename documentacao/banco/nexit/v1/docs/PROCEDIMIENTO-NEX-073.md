@@ -6,14 +6,14 @@
 
 ## Qué hace
 - Reemplaza `fe_documento_crear_fe` (misma firma; los envoltorios de stock/entrega/vendedor siguen llamándola sin cambios). Sin la clave de entrada `dFecEmiSol` el comportamiento es idéntico a NEX-065 (`now()`).
-- Con `dFecEmiSol` (AAAA-MM-DD, enviada por la aplicación solo cuando la fecha elegida difiere de hoy): valida fecha real, **selección comercial** hoy−30…hoy+5 y **ventana habilitada de transmisión normal** hoy−4…hoy+5 (día local de Asunción), **antes de reservar numeración**; fija `dFeEmiDE` y `documentos_electronicos.fecha_emision` = fecha elegida + hora local de Asunción en que se reserva el número. La clave no queda en el snapshot que se envía al proveedor.
+- Con `dFecEmiSol` (AAAA-MM-DD, enviada por la aplicación solo cuando la fecha elegida difiere de hoy): valida fecha real, **selección comercial** hoy−30…hoy+5 y **ventana habilitada de transmisión normal con margen** hoy−4…hoy+4 (día local de Asunción), **antes de reservar numeración**; fija `dFeEmiDE` y `documentos_electronicos.fecha_emision` = fecha elegida + hora local de Asunción en que se reserva el número. La clave no queda en el snapshot que se envía al proveedor.
 - Crea el marcador `fe_emision_fecha_soportada()`: la aplicación **no envía** una fecha distinta de hoy si el marcador no existe (responde 422 con el motivo), para que la función antigua nunca ignore la fecha en silencio.
 - No modifica documentos, numeración, series, stock, entrega ni NCE.
 
-## Regla fiscal aplicada (corrige la premisa anterior)
-Fuente: preguntas frecuentes e-Kuatia de la DNIT: transmisión **normal** cuando firma→transmisión ≤ 72 h y emisión→transmisión ≤ 120 h, siendo la emisión **anterior o posterior** a la transmisión. Por eso **no se prohíben las fechas futuras** (+1…+5): al transmitir después de crear el documento la diferencia es ≤ 120 h. En el pasado se habilita hasta −4 días (96 h, 24 h de margen para el envío y un reintento); −5 días ya no deja margen y −6…−30 exceden las 120 h: se bloquean antes de numerar con el motivo («tratamiento extemporáneo no implementado»), nunca se cambian en silencio.
-- **Hora:** el operador elige solo la fecha; la hora es la local de Asunción al reservar el número. La aplicación no presume el instante de transmisión (lo ejecuta el gateway).
-- **Pendiente de confirmación del responsable:** que el gateway/SIFEN acepte una `dFeEmiDE` futura con la hora local actual, y la cota de −4 días como margen operativo.
+## Regla fiscal aplicada
+Fuente: preguntas frecuentes e-Kuatia de la DNIT: transmisión **normal** cuando firma→transmisión ≤ 72 h y emisión→transmisión ≤ 120 h, siendo la emisión **anterior o posterior** a la transmisión. Convención de la hora: el operador elige solo la fecha y la base usa la hora local de Asunción de la reserva del número; el instante de transmisión lo ejecuta el gateway y **no se presume** (ni su demora ni los reintentos).
+- Con esa convención, N días equivalen a N×24 h nominales: **±5 días = 120 h exactas, una frontera sin margen** (cualquier demora del envío la excede). Por eso se habilita **−4…+4 días** (96 h, 24 h de margen) y se **bloquean antes de numerar, con el motivo,** las fechas ±5 y −6…−30 (seleccionables pero no emitibles sin un tratamiento adicional que este flujo no implementa). No se prohíbe el futuro en bloque: +1…+4 sí se emiten.
+- **Pendiente de confirmación del responsable:** que el gateway/SIFEN acepte una `dFeEmiDE` futura con la hora local de la reserva, y la cota de ±4 días como margen operativo.
 - **Idempotencia:** la fecha forma parte del contenido de la clave; un reintento conserva fecha, hash y número y no revalida la fecha ni consume otra numeración.
 
 ## Orden de ejecución (cuando exista plan aprobado)
