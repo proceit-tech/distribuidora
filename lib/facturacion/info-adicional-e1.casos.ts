@@ -3,7 +3,7 @@
  * consultas que el código emite; la parte FE se prueba en entrega-e04.casos (E1-01…E1-11). Sin PostgreSQL ni gateway.
  */
 import { contador } from "@/lib/clientes/contador-casos";
-import { componerInfoAdicional, lineaEntrega, lineaVendedor, LIMITE_INFO_ADICIONAL, MARCA_AUTOMATICA, separarObservacion } from "@/lib/facturacion/info-adicional";
+import { coincideConObservaciones, componerInfoAdicional, lineaEntrega, lineaVendedor, LIMITE_INFO_ADICIONAL, MARCA_AUTOMATICA, separarObservacion } from "@/lib/facturacion/info-adicional";
 import { crearNotaCredito, leerCuerpoNce, MENSAJE_INFO_NCE_CAMBIO, prepararNce, propuestaCorreccion } from "@/lib/facturacion/nce";
 import { repeticion } from "@/lib/facturacion/nce-emision";
 import { ErrorFacturacion } from "@/lib/facturacion/shared";
@@ -21,12 +21,13 @@ const CDC = "01800000017001001000000112026101612345678901";
 
 const detalle = { dCodInt: "P1", dGtin: null, dDesProSer: "Producto uno", cUniMed: 77, dCantProSer: 5, dPUniProSer: 10000, dTotOpeItem: 50000, iAfecIVA: 1, dPropIVA: 100, dTasaIVA: 10 };
 
-function base(opciones: { persistida?: Map<string, string | null>; cuentas?: Map<string, { nombre: string; apellido: string | null }>; rechazada?: { observacion: string } } = {}) {
+function base(opciones: { persistida?: Map<string, string | null>; cuentas?: Map<string, { nombre: string; apellido: string | null }>; rechazada?: { observacion: string }; emisor?: string } = {}) {
   const cuentas = opciones.cuentas ?? new Map([[EMP_A + "|" + U_FE, { nombre: "Ana", apellido: "López" }], [EMP_A + "|" + U_NCE, { nombre: "Luis", apellido: "Gómez" }], [EMP_B + "|" + U_B, { nombre: "Zoe", apellido: "Ajena" }]]);
   const llamadas: string[] = [];
   const db = {
     async query(sql: string, p: unknown[] = []) {
       llamadas.push(sql);
+      if (/FROM documentos_electronicos d JOIN usuarios u/.test(sql)) { const u = cuentas.get(String(p[0]) + "|" + (opciones.emisor ?? U_FE)); return { rows: u ? [u] : [] }; }
       if (/FROM usuarios WHERE empresa_id/.test(sql)) { const u = cuentas.get(String(p[0]) + "|" + String(p[1])); return { rows: u ? [u] : [] }; }
       if (/FROM documentos_electronicos d JOIN documento_electronico_solicitudes s/.test(sql)) { const k = String(p[1]); return opciones.persistida?.has(k) ? { rows: [{ info: opciones.persistida.get(k) }] } : { rows: [] }; }
       if (/to_regclass/.test(sql)) return { rows: [{ ok: false }] };
@@ -67,22 +68,37 @@ export async function verificarCasosInfoAdicionalE1(): Promise<string[]> {
 
   igual("E1-20 líneas: «Dirección de entrega: sede — dirección» y «Vendedor: nombre apellido» (espacios y controles limpiados; sin datos → null)", [lineaEntrega({ nombre: "SUC ESPAÑA", direccion: "AVDA ESPAÑA C/ DR BESTARD, ASUNCIÓN" }), lineaEntrega(null), lineaEntrega({ nombre: " ", direccion: "" }), lineaVendedor("Juan", "Pérez"), lineaVendedor(" Juan ", null), lineaVendedor("", " "), lineaVendedor(null, null)], ["Dirección de entrega: SUC ESPAÑA — AVDA ESPAÑA C/ DR BESTARD, ASUNCIÓN", null, null, "Vendedor: Juan Pérez", "Vendedor: Juan", null, null]);
   igual("E1-21 (F002) composición: observaciones → marca → entrega → vendedor; una línea «Vendedor:» escrita por el operador NO sustituye ni evita la automática; sin datos automáticos no hay marca; vacía si no hay nada", [componerInfoAdicional({ observaciones: "Obs", entrega: "Dirección de entrega: X", vendedor: "Vendedor: Y" }), componerInfoAdicional({ observaciones: "Obs\nVendedor: Y", vendedor: "Vendedor: Y" }), componerInfoAdicional({ observaciones: "  ", entrega: null, vendedor: null }), componerInfoAdicional({ observaciones: "", vendedor: "Vendedor: Y" }), componerInfoAdicional({ observaciones: "Solo obs", vendedor: null })], ["Obs\n" + M + "\nDirección de entrega: X\nVendedor: Y", "Obs\nVendedor: Y\n" + M + "\nVendedor: Y", "", M + "\nVendedor: Y", "Solo obs"]);
-  igual("E1-22 (F001) separarObservacion solo retira un bloque automático VERIFICABLE (marca + líneas válidas al final); sin marca conserva todo, incluso «Vendedor:» o «Dirección de entrega:» escritos por el operador", [
-    separarObservacion("Obs propia\n" + M + "\nVendedor: Ana López"),
-    separarObservacion("Entrega especial\nVendedor: Pablo"),
-    separarObservacion("Nota\nDirección de entrega: Depósito 3"),
-    separarObservacion("L1\nVendedor: algo\nL3"),
-    separarObservacion(M + "\nVendedor: Ana López"),
-    separarObservacion("Sin automáticas"),
-    separarObservacion(""),
-    separarObservacion("X\n" + M + "\nOtra cosa"),
-    separarObservacion("Obs\n" + M + "\nDirección de entrega: A\nVendedor: B"),
-  ], ["Obs propia", "Entrega especial\nVendedor: Pablo", "Nota\nDirección de entrega: Depósito 3", "L1\nVendedor: algo\nL3", "", "Sin automáticas", "", "X\n" + M + "\nOtra cosa", "Obs"]);
-  igual("E1-22b componer → separar es reversible y no acumula: la observación «Vendedor: Otro» sobrevive intacta, y una marca falsificada por el operador solo retira el bloque propio del sistema (el último)", [
-    separarObservacion(componerInfoAdicional({ observaciones: "Vendedor: Otro", vendedor: "Vendedor: Y" })),
-    separarObservacion("A\n" + M + "\nVendedor: Otro\n" + M + "\nVendedor: Ana"),
-    separarObservacion(componerInfoAdicional({ observaciones: separarObservacion(componerInfoAdicional({ observaciones: "Obs", vendedor: "Vendedor: Y" })), vendedor: "Vendedor: Z" })),
-  ], ["Vendedor: Otro", "A\n" + M + "\nVendedor: Otro", "Obs"]);
+  const ANA = "Vendedor: Ana López";
+
+  igual("E1-22 (F001) separarObservacion solo retira el bloque cuyo origen es VERIFICABLE: marca + UNA línea idéntica al «Vendedor» del emisor persistido de la NCE. Todo lo demás se conserva íntegro", [
+    separarObservacion("Obs propia\n" + M + "\n" + ANA, ANA),
+    separarObservacion("Entrega especial\n" + M + "\nVendedor: Pablo", ANA),
+    separarObservacion("Entrega especial\n" + M + "\n" + ANA, null),
+    separarObservacion("Entrega especial\nVendedor: Pablo", ANA),
+    separarObservacion("Nota\nDirección de entrega: Depósito 3", ANA),
+    separarObservacion("L1\nVendedor: algo\nL3", ANA),
+    separarObservacion(M + "\n" + ANA, ANA),
+    separarObservacion("Sin automáticas", ANA),
+    separarObservacion("", ANA),
+    separarObservacion("X\n" + M + "\nOtra cosa", ANA),
+    separarObservacion("Obs\n" + M + "\nDirección de entrega: A\n" + ANA, ANA),
+    separarObservacion("Obs\n" + M + "\n" + ANA + "\nlínea extra", ANA),
+  ], ["Obs propia", "Entrega especial\n" + M + "\nVendedor: Pablo", "Entrega especial\n" + M + "\n" + ANA, "Entrega especial\nVendedor: Pablo", "Nota\nDirección de entrega: Depósito 3", "L1\nVendedor: algo\nL3", "", "Sin automáticas", "", "X\n" + M + "\nOtra cosa", "Obs\n" + M + "\nDirección de entrega: A\n" + ANA, "Obs\n" + M + "\n" + ANA + "\nlínea extra"]);
+  igual("E1-22b componer → separar con el emisor real es reversible y no acumula; un marcador manual anterior sobrevive y solo se retira el último bloque auténtico", [
+    separarObservacion(componerInfoAdicional({ observaciones: "Vendedor: Otro", vendedor: ANA }), ANA),
+    separarObservacion("A\n" + M + "\nVendedor: Otro\n" + M + "\n" + ANA, ANA),
+    separarObservacion(componerInfoAdicional({ observaciones: separarObservacion(componerInfoAdicional({ observaciones: "Obs", vendedor: ANA }), ANA), vendedor: "Vendedor: Z" }), "Vendedor: Z"),
+    separarObservacion("Obs\n" + M + "\n" + ANA, "Vendedor: Ana Renombrada"),
+  ], ["Vendedor: Otro", "A\n" + M + "\nVendedor: Otro", "Obs", "Obs\n" + M + "\n" + ANA]);
+  igual("E1-22c coincideConObservaciones (reintento): igual tal cual, o observaciones + marca + UNA línea Vendedor, sin depender del nombre actual; otra observación o líneas de más no coinciden", [
+    coincideConObservaciones("Nota\n" + M + "\nVendedor: Quien sea", "Nota"),
+    coincideConObservaciones(M + "\nVendedor: X", ""),
+    coincideConObservaciones("Nota", "Nota"),
+    coincideConObservaciones(null, "  "),
+    coincideConObservaciones("Nota\n" + M + "\nVendedor: X", "Otra"),
+    coincideConObservaciones("Nota\n" + M + "\nVendedor: X\nExtra", "Nota"),
+    coincideConObservaciones("Nota\n" + M + "\nDirección de entrega: Y", "Nota"),
+  ], [true, true, true, true, false, false, false]);
 
   // ── NCE emitida por el usuario B (distinto del que emitió la FE) ──────────────────────────────
   const b = base();
@@ -127,9 +143,24 @@ export async function verificarCasosInfoAdicionalE1(): Promise<string[]> {
   const histV = await propuestaCorreccion(base({ rechazada: { observacion: "Entrega especial\nVendedor: Pablo" } }).db, EMP_A, U_NCE, NCE_RECH) as { observacion: string };
   const histD = await propuestaCorreccion(base({ rechazada: { observacion: "Retira cliente\nDirección de entrega: Depósito 3" } }).db, EMP_A, U_NCE, NCE_RECH) as { observacion: string };
   const reHist = await prepararNce(b.db, EMP_A, U_NCE, cuerpo({ observacion: histV.observacion }, "clave-nce-e1-0003"));
-  const segunda = await propuestaCorreccion(base({ rechazada: { observacion: dInf(reHist) ?? "" } }).db, EMP_A, U_NCE, NCE_RECH) as { observacion: string };
+  const segunda = await propuestaCorreccion(base({ rechazada: { observacion: dInf(reHist) ?? "" }, emisor: U_NCE }).db, EMP_A, U_NCE, NCE_RECH) as { observacion: string };
 
   igual("E1-32 (F001) NCE histórica con observación manual terminada en «Vendedor:» o «Dirección de entrega:»: la corrección la conserva íntegra; recompuesta se distingue del vendedor autenticado y en una segunda corrección no se acumula nada", [histV.observacion, histD.observacion, dInf(reHist)?.split("\n"), segunda.observacion], ["Entrega especial\nVendedor: Pablo", "Retira cliente\nDirección de entrega: Depósito 3", ["Entrega especial", "Vendedor: Pablo", M, "Vendedor: Luis Gómez"], "Entrega especial\nVendedor: Pablo"]);
+
+  // E1-R02-F001: NCE histórica con marcador y vendedor TECLEADOS por el operador (la reproducción de la auditoría) y NCE nueva con bloque auténtico
+  const manualM = "Entrega especial\n" + M + "\nVendedor: Pablo";
+  const hMan = await propuestaCorreccion(base({ rechazada: { observacion: manualM } }).db, EMP_A, U_NCE, NCE_RECH) as { observacion: string };
+  const reMan = await prepararNce(b.db, EMP_A, U_NCE, cuerpo({ observacion: hMan.observacion }, "clave-nce-e1-0005"));
+  const hMan2 = await propuestaCorreccion(base({ rechazada: { observacion: dInf(reMan) ?? "" }, emisor: U_NCE }).db, EMP_A, U_NCE, NCE_RECH) as { observacion: string };
+  const reMan2 = await prepararNce(b.db, EMP_A, U_FE, cuerpo({ observacion: hMan2.observacion }, "clave-nce-e1-0006"));
+  const renombrado = base({ rechazada: { observacion: "Obs\n" + M + "\nVendedor: Ana López" } });
+
+  renombrado.cuentas.set(EMP_A + "|" + U_FE, { nombre: "Ana", apellido: "Renombrada" });
+
+  const hRen = await propuestaCorreccion(renombrado.db, EMP_A, U_NCE, NCE_RECH) as { observacion: string };
+
+  igual("E1-38 (F001) NCE histórica con las tres líneas exactas de la auditoría (marcador y «Vendedor: Pablo» tecleados; el emisor persistido es otra persona): la corrección las conserva íntegras; recompuesta, queda el marcador manual y un único bloque auténtico; en la 2.ª corrección se retira solo el auténtico y en la 3.ª no se acumula", [hMan.observacion, dInf(reMan)?.split("\n"), hMan2.observacion, dInf(reMan2)?.split("\n")], [manualM, ["Entrega especial", M, "Vendedor: Pablo", M, "Vendedor: Luis Gómez"], manualM, ["Entrega especial", M, "Vendedor: Pablo", M, "Vendedor: Ana López"]]);
+  igual("E1-39 (F001) NCE nueva con bloque auténtico pero el emisor fue renombrado después: no se puede verificar el origen, así que se conserva todo (integridad antes que limpieza) y el reenvío legítimo sigue reconociéndose", [hRen.observacion, coincideConObservaciones("Obs\n" + M + "\nVendedor: Ana López", "Obs")], ["Obs\n" + M + "\nVendedor: Ana López", true]);
 
   // ── F003: la NCE se emite con el texto que se revisó ──────────────────────────────────────────
   const rev = base();

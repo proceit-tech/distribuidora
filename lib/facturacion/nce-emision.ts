@@ -3,7 +3,7 @@ import type { Pool } from "pg";
 import { parseDec } from "@/lib/facturacion/calculo";
 import { configuracionGateway, enviarDocumento, type RespuestaEnvio } from "@/lib/facturacion/envio";
 import type { Dependencias } from "@/lib/facturacion/gateway";
-import { separarObservacion } from "@/lib/facturacion/info-adicional";
+import { coincideConObservaciones } from "@/lib/facturacion/info-adicional";
 import { crearNotaCredito, prepararNce, traducirErrorNce, type CuerpoNce } from "@/lib/facturacion/nce";
 import { consultarEstado, ErrorFacturacion } from "@/lib/facturacion/shared";
 
@@ -35,11 +35,10 @@ export async function repeticion(db: Db, empresaId: string, usuarioId: string, c
 
   // Identidad completa (NCE-R01-03): sucursal, punto de expedición y observación también deben coincidir.
   const punto = await db.query("SELECT codigo FROM fe_puntos_expedicion WHERE empresa_id = $1 AND id = $2 AND sucursal_id = $3", [empresaId, cuerpo.puntoId, cuerpo.sucursalId]);
-  const observacion = cuerpo.observacion.trim() === "" ? null : cuerpo.observacion.trim();
-  // E1: lo guardado es el dInfAdic compuesto (observaciones + marca + «Vendedor»); se compara solo su parte de observaciones propias, para que un reintento legítimo no sea un falso conflicto.
-  const guardada = typeof d.observacion === "string" ? separarObservacion(d.observacion) || null : null;
+  // E1: lo guardado es el dInfAdic compuesto (observaciones + marca + «Vendedor»); se compara contra las observaciones que reenvía el operador, sin depender del nombre actual del usuario, para que un reintento legítimo no sea un falso conflicto.
+  const guardada = typeof d.observacion === "string" ? d.observacion : null;
 
-  if (d.sucursalId !== cuerpo.sucursalId || (punto.rows[0] as F | undefined)?.codigo !== d.puntoCodigo || guardada !== observacion) throw conflicto();
+  if (d.sucursalId !== cuerpo.sucursalId || (punto.rows[0] as F | undefined)?.codigo !== d.puntoCodigo || !coincideConObservaciones(guardada, cuerpo.observacion)) throw conflicto();
 
   const lineas = (await db.query("SELECT linea, cantidad::text AS cantidad, monto::text AS monto FROM nce_lineas WHERE empresa_id = $1 AND nce_id = $2", [empresaId, String(d.id)])).rows as F[];
 

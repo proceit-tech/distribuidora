@@ -51,20 +51,47 @@ export function componerInfoAdicional(p: { observaciones: string; entrega?: stri
 }
 
 /**
- * Observaciones propias de un texto ya compuesto (precarga de la corrección de una NCE rechazada). Solo se retira el bloque automático si existe la marca Y lo que la sigue son exclusivamente líneas
- * automáticas válidas (entrega y/o vendedor, en ese orden). Sin marca verificable (NCE anteriores a esta marca) se conserva TODO el texto: nunca se descarta algo que pudo escribir el operador.
+ * Observaciones propias de un texto ya compuesto (precarga de la corrección de una NCE rechazada). Un texto almacenado no trae procedencia (la marca visible la puede teclear el operador), así que el bloque
+ * final solo se retira si su origen es VERIFICABLE con un dato persistido: después de la última marca debe haber UNA línea y coincidir EXACTAMENTE con «Vendedor: …» del usuario que creó esa NCE
+ * (`vendedorEmisor`, leído de documentos_electronicos.creado_por → usuarios). Una NCE solo compone el vendedor (nunca «Dirección de entrega»). Sin emisor verificable, sin coincidencia exacta o sin marca se
+ * conserva TODO el texto: ante la duda prevalece la integridad de lo que escribió el operador (a costa de, quizá, dejar un «Vendedor:» antiguo).
  */
-export function separarObservacion(texto: string): string {
+export function separarObservacion(texto: string, vendedorEmisor: string | null): string {
   const lineas = texto.split(/\r?\n/);
   const marca = lineas.map((l) => l.trim()).lastIndexOf(MARCA_AUTOMATICA);
 
-  if (marca < 0) return texto.trim();
+  if (marca < 0 || vendedorEmisor === null) return texto.trim();
 
   const cola = lineas.slice(marca + 1).map((l) => l.trim());
-  const prefijos = cola.map((l) => (l.startsWith(PREFIJO_ENTREGA) ? 0 : l.startsWith(PREFIJO_VENDEDOR) ? 1 : -1));
-  const valida = cola.length > 0 && cola.length <= 2 && prefijos.every((x, i) => x >= 0 && (i === 0 || x > prefijos[i - 1]));
 
-  return valida ? lineas.slice(0, marca).join("\n").trim() : texto.trim();
+  return cola.length === 1 && cola[0] === vendedorEmisor ? lineas.slice(0, marca).join("\n").trim() : texto.trim();
+}
+
+/**
+ * ¿El dInfAdic guardado corresponde a estas observaciones crudas (las que reenvía el operador al repetir la operación)? Igual tal cual, o esas observaciones seguidas de la marca y UNA línea «Vendedor: …».
+ * No depende del nombre actual del usuario (un renombrado posterior no convierte un reintento legítimo en conflicto) ni elimina nada del texto: solo compara contra lo que el propio operador aportó.
+ */
+export function coincideConObservaciones(guardada: string | null, observaciones: string): boolean {
+  const obs = observaciones.trim();
+  const g = guardada === null ? "" : guardada.trim();
+
+  if (g === obs) return true;
+
+  const cabecera = obs === "" ? MARCA_AUTOMATICA + "\n" : obs + "\n" + MARCA_AUTOMATICA + "\n";
+  const resto = g.startsWith(cabecera) ? g.slice(cabecera.length) : null;
+
+  return resto !== null && !resto.includes("\n") && resto.startsWith(PREFIJO_VENDEDOR);
+}
+
+/** «Vendedor: …» del usuario que CREÓ el documento (dato persistido, misma empresa). null si no existe o no tiene nombre. */
+export async function vendedorEmisorDe(db: Db, empresaId: string, documentoId: string): Promise<string | null> {
+  const r = await db.query(
+    "SELECT u.nombre, u.apellido FROM documentos_electronicos d JOIN usuarios u ON u.empresa_id = d.empresa_id AND u.id = d.creado_por WHERE d.empresa_id = $1 AND d.id = $2",
+    [empresaId, documentoId],
+  );
+  const f = r.rows[0] as { nombre?: string | null; apellido?: string | null } | undefined;
+
+  return f ? lineaVendedor(f.nombre, f.apellido) : null;
 }
 
 /** Huella (SHA-256) del dInfAdic final: identifica el texto exacto que el operador revisó; al emitir se compara con el que el servidor volvería a componer. */

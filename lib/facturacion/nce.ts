@@ -5,7 +5,7 @@ import { normalizarCantidadTexto } from "@/lib/formato/cantidad-campo";
 import { leerCambio } from "@/lib/facturacion/monedas";
 import { CAMPOS_RECEPTOR, construirPayloadNCE, esMotivoNce, lineasOriginalesDe, lineasParaSql, MAX_LINEAS_NCE, MOTIVOS_NCE, saldoDe, validarEntradaNce, calcularNce, type EntradaNce, type LineaOriginal, type MotivoNce } from "@/lib/facturacion/payload-nce";
 import { numeroDocumento } from "@/lib/facturacion/estados";
-import { componerInfoAdicional, huellaInfoAdicional, infoAdicionalPersistida, LIMITE_INFO_ADICIONAL, separarObservacion, vendedorDe } from "@/lib/facturacion/info-adicional";
+import { componerInfoAdicional, huellaInfoAdicional, infoAdicionalPersistida, LIMITE_INFO_ADICIONAL, separarObservacion, vendedorDe, vendedorEmisorDe } from "@/lib/facturacion/info-adicional";
 import { ErrorFacturacion, ErrorValidacionFiscal } from "@/lib/facturacion/shared";
 
 /**
@@ -515,8 +515,8 @@ export async function propuestaCorreccion(db: Db, empresaId: string, usuarioId: 
       motivo: Number(n.motivo),
       sucursalId: s(n.sucursalId),
       puntoId: n.puntoId === null ? null : s(n.puntoId),
-      // La observación guardada es el dInfAdic compuesto: se precargan solo las observaciones propias (sin «Vendedor: …»), que se recomponen con el usuario que emita la corrección.
-      observacion: n.observacion === null ? "" : separarObservacion(s(n.observacion)),
+      // La observación guardada es el dInfAdic compuesto: se precargan solo las observaciones propias (se retira el bloque automático únicamente si su origen es verificable: coincide con el emisor persistido), que se recomponen con el usuario que emita la corrección.
+      observacion: n.observacion === null ? "" : separarObservacion(s(n.observacion), await vendedorEmisorDe(db, empresaId, nceId)),
       numeroRechazado: numeroDocumento({ establecimiento: s(n.establecimiento), puntoExpedicion: s(n.puntoExpedicion), numero: s(n.numero), serie: n.serie === null || n.serie === undefined ? null : s(n.serie) }),
       lineas: (lineas.rows as F[]).map((l) => ({ linea: Number(l.linea), cantidad: textoDec(parseDec(s(l.cantidad), 8) ?? B(0)), monto: textoDec(parseDec(s(l.monto), 8) ?? B(0)) })),
       servicio: await servicioDeNce(db, empresaId, nceId),
