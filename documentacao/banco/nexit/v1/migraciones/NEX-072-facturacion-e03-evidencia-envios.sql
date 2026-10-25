@@ -192,7 +192,7 @@ REVOKE ALL ON FUNCTION public.fe_e03_secreto_residual(text) FROM PUBLIC;
 
 -- ── Recepción confirmada por el gateway (E03-A1-F002-R02). Un HTTP 2xx NO prueba recepción: interpretarRecepcion (gateway.ts) exige status = "success" y evidencia específica (lote válido, CDC coherente con el documento o eco
 -- íntegro de dEst/dPunExp/dNumDoc), sin contradicciones. Estos ayudantes revisan la respuesta SANEADA que quedó persistida con la MISMA búsqueda de claves de gateway.ts (claves normalizadas, profundidad <= 5, arrays <= 20) pero de forma
--- ESTRICTA: examinan todas las coincidencias (no solo la primera) y cualquier contradicción o respuesta truncada impide el OK. Es un subconjunto de lo que gateway.ts acepta (puede rechazar más, nunca aceptar más) y NO infiere
+-- ESTRICTA: examinan todas las coincidencias (no solo la primera) y cualquier contradicción, respuesta truncada o rastro de documentos de terceros omitidos (OtrosDocumentosOmitidos, Aceptados ajenos) impide el OK. Es un subconjunto de lo que gateway.ts acepta (puede rechazar más, nunca aceptar más) y NO infiere
 -- aprobación SIFEN: solo habilita registrar ENVIADO (= el gateway recibió el documento).
 CREATE OR REPLACE FUNCTION public.fe_e03_valores_por_clave(p_json jsonb, p_claves text[], p_prof integer DEFAULT 0) RETURNS SETOF jsonb
 LANGUAGE plpgsql IMMUTABLE AS $$
@@ -227,9 +227,12 @@ CREATE OR REPLACE FUNCTION public.fe_e03_recepcion_confirmada(p_respuesta jsonb,
 LANGUAGE plpgsql STABLE AS $$
 DECLARE
   v jsonb;
+  item jsonb;
   t text;
   v_lote boolean := false;
   v_cdc boolean := false;
+  v_numero_fiscal text := p_establecimiento || '-' || p_punto || '-' || p_numero;
+  clave text;
   est text[] := ARRAY[]::text[];
   pun text[] := ARRAY[]::text[];
   num text[] := ARRAY[]::text[];
@@ -244,6 +247,33 @@ BEGIN
     IF (jsonb_typeof(v) = 'array' AND jsonb_array_length(v) > 0) OR (jsonb_typeof(v) = 'number' AND (v #>> '{}')::numeric > 0) THEN
       RETURN false;
     END IF;
+  END LOOP;
+
+  -- Documentos de terceros (E03-A1-F002-R03). gateway.ts::redactarAjenos NO conserva en la evidencia las entradas de Aceptados/Rechazados que no son de este documento: solo deja su conteo en OtrosDocumentosOmitidos, y
+  -- interpretarRecepcion habría clasificado esa respuesta como ENVIO_INDETERMINADO ("el gateway aceptó/rechazó documentos que no incluyen este número"). Regla ESTRICTAMENTE conservadora, sin reconstruir nada de terceros:
+  --   · cualquier OtrosDocumentosOmitidos distinto de cero (o de forma no numérica) invalida la recepción;
+  --   · toda entrada de Aceptados debe identificar exclusivamente el número fiscal de ESTE documento (texto igual al número, u objeto cuyas únicas claves sean ese número); cualquier otra, o de forma desconocida, la invalida.
+  FOR v IN SELECT * FROM public.fe_e03_valores_por_clave(p_respuesta, ARRAY['otrosdocumentosomitidos']) LOOP
+    IF jsonb_typeof(v) <> 'number' OR (v #>> '{}')::numeric <> 0 THEN
+      RETURN false;
+    END IF;
+  END LOOP;
+  FOR v IN SELECT * FROM public.fe_e03_valores_por_clave(p_respuesta, ARRAY['aceptados']) LOOP
+    IF jsonb_typeof(v) <> 'array' THEN
+      RETURN false;
+    END IF;
+    FOR item IN SELECT e FROM jsonb_array_elements(v) AS t(e) LOOP
+      IF jsonb_typeof(item) = 'string' THEN
+        IF btrim(item #>> '{}') <> v_numero_fiscal THEN RETURN false; END IF;
+      ELSIF jsonb_typeof(item) = 'object' THEN
+        IF item = '{}'::jsonb THEN RETURN false; END IF;
+        FOR clave IN SELECT jsonb_object_keys(item) LOOP
+          IF btrim(clave) <> v_numero_fiscal THEN RETURN false; END IF;
+        END LOOP;
+      ELSE
+        RETURN false;
+      END IF;
+    END LOOP;
   END LOOP;
 
   -- Lote: cada candidato debe ser texto/número no vacío de a lo sumo 60 caracteres; al menos uno vale como evidencia.
