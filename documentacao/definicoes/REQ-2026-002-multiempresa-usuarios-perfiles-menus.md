@@ -1,5 +1,8 @@
 # REQ-2026-002 — Multiempresa, usuarios, perfiles y menús por permisos
 
+> **ATUALIZAÇÃO ANALÍTICA 24/10/2026:** responsável confirmou MASTER global, cadastro de empresas/primeiro admin, administrador próprio em cada empresa e **múltiplos perfis por usuário** (VENDEDOR + FATURADOR, CONTADOR e outros). A referência atual de decisões confirmadas/em aberto é `REQ-NEXIT-PLATAFORMA-MULTIEMPRESA-PERFILES-R01-2026-10-24.md`. D-01…D-04 e os “hallazgos del código actual” abaixo são HISTÓRICOS: verificar código atual antes de segui-los. A premissa universal Usuario=Vendedor foi revogada e E2 está bloqueada para análise. Esta nota não autoriza implementação.
+
+
 Estado: DEFINIDO PARA ANÁLISIS; NO AUTORIZA CAMBIOS DE CÓDIGO HASTA REVISAR LA ESTRUCTURA REAL DEL BANCO.
 Prioridad: ALTA — fundamento transversal del DistribuNex.
 Idioma funcional y de interfaz: español (Paraguay).
