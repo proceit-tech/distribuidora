@@ -2415,3 +2415,7 @@ Após o encerramento **estático** de Inventario na `AUD-INV-R05` (sem homologa�
 
 ### E03 — DECISÃO A: TENTATIVAS NÃO TRANSMITIDAS — 25/10/2026
 - **Confirmado pelo responsável:** tentativas iniciadas para FE/NCE existente aparecem como processamento no histórico, mesmo quando autenticación impediu a transmissão: `NO TRANSMITIDO` com causa/fase/hora/ator, sem fingir POST ou resposta SIFEN. Preflight antes de início/criação de documento não gera processamento. Timeout/rede depois de tentar POST é `ENVIO_INDETERMINADO` até reconciliar, nunca afirmar `NO TRANSMITIDO` sem prova. Isto se soma às regras de reenvios separados, consultas como eventos internos, filtro `Mostrar todos los reprocesamientos` off, documentos originais/correções distintas (B). Especificação: `documentacao/definicoes/ESPEC-NEXIT-FE-E03-HISTORICO-REPROCESSAMENTOS-R01-2026-10-25.md`. Próxima decisão: se estado do processamento histórico reflete resultado próprio das consultas correlacionadas ou estado global atualizado. **E03 não autorizado a Claude.**
+
+
+### E03: ESTADOS HISTORICOS POR PROCESSAMENTO — 25/10/2026
+- Regra A aprovada: cada envio ou reenvio conserva seu resultado particular, mesmo depois de novos processamentos. Consulta SIFEN posterior so atualiza o estado atribuido a um processamento com correlacao confiavel. Na ausencia dela, preservar o resultado original. Fonte: `documentacao/definicoes/ESPEC-NEXIT-FE-E03-HISTORICO-REPROCESSAMENTOS-R01-2026-10-25.md`. PRO-312 e PRO-311 atualizadas. E03 ainda em analise, sem ordem para Claude.
