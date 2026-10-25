@@ -1,5 +1,7 @@
 # ORD-CLAUDE-NEXIT-FE-V1-ETAPAS-R01 — Sequência controlada e auditoria independente
 
+> **AUDITORIA E01-R01 (25/10/2026) / SOBREPÕE-SE À ORDEM E01 ORIGINAL:** Claude já entregou o commit `2f8dbceddd97416b42ae1316a18272aa268a243d`. A auditoria [AUD-E01-R01](../testes/AUD-NEXIT-FE-E01-PRO-314-R01-2026-10-25.md) encontrou F-001 ALTA (JSON fora de ordem) e F-002 MEDIA (reabrir painel após fechar). **ORDEM VIGENTE AGORA: SOMENTE CORRIGIR F-001/F-002 EM E01/PRO-314**, `app/(private)/documentos/page.tsx`, mantendo ACL/endpoints/dados/fluxos atuais intactos. **Sem testes** por ordem do responsável, commit/push, SHA, **PARAR** para reauditoria ChatGPT. **Não repetir a implementação inicial nem iniciar E02.**
+
 **Data:** 25/10/2026. **Branch:** `feature/NEXIT-2026-001-banco-demo`. **Projeto:** NEXIT multiempresa (es-PY). **Gestão:** ChatGPT/Linear; **desenvolvimento:** Claude Code; **VM, deploy, banco real e homologação:** responsável humano.
 
 **AUTORIZAÇÃO ATUAL: SOMENTE E01 / PRO-314.** Etapas E02–E10 são roteiro NÃO AUTORIZADO; nunca executá-las automaticamente nem deduzir respostas P01/P02/P04/P05/P06/P07 da preferência técnica registrada na auditoria. MASTER/E2/PRO-293 continua bloqueado pelo próprio gate PRO-304.
