@@ -1,9 +1,12 @@
 # AUD-NEXIT-FE-DIR-PRO-322-R05 — Parecer independente de revisão fiscal estática
 
+> **ERRATA VINCULANTE SOBRE CONTRATO DO FORNECEDOR (25/10/2026):** a conclusão original abaixo confundiu "contrato de integração não definido" com "validação operacional não executada". **O responsável JÁ CONFIRMOU:** o JSON NEXIT envia códigos numéricos `cDepRec/cDisRec/cCiuRec` e país `cPaisRec`; a API consulta a base SIFEN, obtém as descrições e monta XML/KuDE. **Não existe pendência de perguntar/confirmar novamente esses três pontos com o fornecedor.** A auditoria de código R05 segue CONFORME ESTATICAMENTE; o fato de nenhum teste/emissão/VM/gateway ter sido executado é APENAS ausência de validação operacional, não dúvida de contrato. O defeito independente de idempotência de entrega permanece aberto em PRO-205/PRO-324. Esta errata prevalece sobre as frases históricas de “falta evidência do fornecedor” e “obter contrato” nesta AUD.
+
+
 **Data:** 25/10/2026  
 **Branch:** `feature/NEXIT-2026-001-banco-demo`  
 **SHA funcional confirmado:** `831773fb0dbb8e585f75c113295c23d6958921f8`  
-**Conclusão:** **CONFORME ESTATICAMENTE NO ESCOPO FISCAL PRO-322; NÃO HOMOLOGADO EXTERNAMENTE.** Nenhum commit funcional R05 necessário; não reabrir alterações de endereço já implementadas. PRO-322 segue **In Review** devido à confirmação contratual do fornecedor; não declarar Done/produção.
+**Conclusão:** **CONFORME ESTATICAMENTE NO ESCOPO FISCAL PRO-322; NÃO HOMOLOGADO EXTERNAMENTE.** Nenhum commit funcional R05 necessário; não reabrir alterações de endereço já implementadas. PRO-322 segue **In Review** por ausência de validação operacional autorizada, **não** por confirmação contratual; não declarar homologação prática/produção.
 
 ## Evidência consultada
 
@@ -28,15 +31,15 @@ Comparação da branch oficial contra o SHA funcional R04 mostrou **11 commits p
 
 - **NEXIT** é ERP: gestão de comercial, clientes, estoque, depósitos, movimentações, entregas e financeiro. **SIFEN** é padrão de documento fiscal e integração; não é a finalidade nem fonte de identidade do ERP. Referência: `documentacao/definicoes/DEC-NEXIT-SEPARACAO-DOMINIOS-NEGOCIO-SIFEN-2026-10-25.md`.
 - A FE nacional envia `cPaisRec`, `dDirRec`, `dNumCasRec`, `cDepRec`, `cDisRec`, `cCiuRec` conforme o endereço fiscal; se estiver ausente inteiramente e tal omissão for lícita, conservar país e omitir geografia. **Distrito obrigatório na política NEXIT** quando endereço fiscal nacional é informado. Não usar dados de entrega para inventar endereço fiscal.
-- O gateway provedor, segundo a regra comunicada, resolve descrições geográficas pela tabela SIFEN; NEXIT fornece **apenas códigos**. Mas **ainda falta evidência externa** de que o contrato JSON aceite precisamente essas chaves e tipos, as derive corretamente para XML e as represente no KuDE. Não presumir homologação.
+- **Contrato confirmado pelo responsável:** NEXIT envia os códigos geográficos numéricos para departamento/distrito/cidade e o país como código; a API obtém as descrições na base SIFEN para XML/KuDE. Não reabrir confirmação do contrato. Como nenhuma execução de gateway/SIFEN foi autorizada, não alegar teste de integração executado ou homologação operacional.
 - O risco R04 de entrega é real: dois `direccionEntregaId` diferentes mas com **mesma descrição textual** podem ser considerados equivalentes numa mesma chave de idempotência. A NEX-068 tem `documento_electronico_entregas.direccion_id` imutável, porém o papel runtime não possui leitura direta; PRO-324 (filha PRO-205) identifica a necessidade de uma solução segura **no domínio logístico**, sem subordinar o mapeamento fiscal PRO-322 a novas migrations. Essa situação **continua impedindo declarar emissão real segura**, mesmo com mapeamento fiscal estático conforme.
 - `dInfAdic` é texto complementar fiscal, não identidade operacional da entrega. PRO-323 continua separada.
 
 ## Gate após auditoria R05
 
-1. **PRO-322: revisão estática de código fiscal CONCLUÍDA; issue In Review aguardando prova contratual/homologação de fornecedor. Não solicitar R06 fiscal nem commits cosméticos.**
+1. **PRO-322: revisão estática de código fiscal CONCLUÍDA; contrato funcional do fornecedor CONFIRMADO pelo responsável; In Review somente porque a validação operacional não foi executada/autorizada. Não solicitar R06 fiscal nem commits cosméticos.**
 2. **PRO-205/PRO-324: incidente operacional de idempotência/entrega aberto e independente; NÃO afirmar que foi corrigido.** A aprovação de SQL/migration para uma eventual leitura segura requer instrução humana específica. Não usar comparação textual como chave.
-3. **Próximo passo externo:** obter do fornecedor exemplo/contrato de payload aceito com país/departamento/distrito/cidade, tipos de dados, resposta e demonstração da derivação das descrições no documento/XML/KuDE; conferir em homologação autorizada, sem emissão real agora.
+3. **Próximo passo, quando autorizado pelo responsável:** validação operacional do fluxo completo conforme contrato JÁ confirmado; não pedir outra confirmação de JSON ao fornecedor. Sem emissão real ou testes agora.
 4. **Fora de escopo:** PRO-323, NCE, stock, kardex, finanças, NEX-072, E03-A2/B/E08/E09, deploy. Não iniciar tarefa de código nova automaticamente.
 
 Este registro **não altera código, schema nem histórico fiscal**, apenas documenta conclusão estática.
