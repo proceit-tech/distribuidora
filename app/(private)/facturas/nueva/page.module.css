@@ -2112,3 +2112,98 @@
 .bandaVendedor .clienteNombre {
   min-width: 0;
 }
+
+/* ══ PRO-93-R05 — Resumen de la factura, búsqueda avanzada ══ */
+
+/* Resumen: el cuerpo tiene UNA sola rolagem vertical (la de la modal). Las filas de la grilla ya no se estiran: los grupos miden lo que ocupa su contenido y la tabla de productos recibe el espacio. */
+.resumenCuerpo {
+  align-content: start;
+  grid-auto-rows: auto;
+}
+
+.resumenGrupos {
+  align-items: start;
+  gap: 8px;
+}
+
+.grupo {
+  padding: 6px 10px;
+}
+
+.resumenDl {
+  gap: 2px;
+}
+
+.resumenCabecera {
+  padding: 10px 20px 8px;
+}
+
+/* La tabla de productos NO tiene altura máxima ni rolagem vertical propia; solo desplazamiento horizontal si el ancho no alcanza. */
+.resumenTabla {
+  max-height: none;
+  overflow-x: auto;
+  overflow-y: visible;
+}
+
+.resumenTabla th {
+  position: static;
+}
+
+.detalleLargo summary {
+  cursor: pointer;
+  color: #0a6f77;
+  font-weight: 600;
+}
+
+.detalleLargo div {
+  margin-top: 4px;
+  font-weight: 400;
+}
+
+@media (max-width: 900px) {
+  .resumenGrupos {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .resumenTotales {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .totalesDetalle {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* Búsqueda: campo y acción en la misma fila (estructura estable); el aviso queda debajo y no desplaza el botón. */
+.buscarFila {
+  display: block;
+}
+
+.buscarFila > .buscador {
+  width: 100%;
+  flex: none;
+}
+
+.buscadorControl {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px 12px;
+}
+
+.buscadorCampo {
+  position: relative;
+  min-width: 0;
+  flex: 1 1 320px;
+}
+
+.buscadorControl > button {
+  flex: 0 0 auto;
+  height: 40px;
+}
+
+@media (max-width: 640px) {
+  .buscadorControl > button {
+    width: 100%;
+  }
+}

@@ -318,11 +318,13 @@ type ItemBusqueda = { titulo: string; detalle: string; derecha?: string; impedim
  * Búsqueda rápida (combobox) para clientes y productos: escribe, elige con el ratón o con las flechas + Enter. Con Enter y una coincidencia exacta (código, GTIN o documento)
  * o un único resultado habilitado, lo selecciona directamente (útil con lector de código de barras). El selector avanzado (diálogo paginado) sigue disponible.
  */
-function BuscadorRapido<T extends { id: string }>({ url, campo, etiqueta, placeholder, describir, exacto, parecido, alElegir, mantenerAbierto, autoFocus }: {
+function BuscadorRapido<T extends { id: string }>({ url, campo, etiqueta, placeholder, describir, exacto, parecido, alElegir, mantenerAbierto, autoFocus, accion }: {
   url: string; campo: "clientes" | "productos" | "vendedores"; etiqueta: string; placeholder: string; describir: (t: T) => ItemBusqueda; exacto: (t: T, texto: string) => boolean;
   /** E05: ¿el resultado es un código DISTINTO que solo difiere en ceros iniciales? (001234 ≠ 1234): Enter no lo elige solo. */
   parecido?: (t: T, texto: string) => boolean;
   alElegir: (t: T) => void; mantenerAbierto?: boolean; autoFocus?: boolean;
+  /** Acción de la misma fila que el campo (p. ej. «Búsqueda avanzada»): el aviso de resultado va DEBAJO de la fila y no mueve la acción. */
+  accion?: React.ReactNode;
 }) {
   const [abierto, setAbierto] = useState(false);
   const [b, setB] = useState<EstadoBuscador<T>>({ texto: "", consulta: null, items: [], total: 0, cargando: false, error: "", activo: -1, aviso: "", buscando: false });
@@ -374,6 +376,8 @@ function BuscadorRapido<T extends { id: string }>({ url, campo, etiqueta, placeh
 
   return (
     <div className={estilos.buscador} onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) { ctl.cerrar(); setAbierto(false); } }}>
+      <div className={estilos.buscadorControl}>
+      <div className={estilos.buscadorCampo}>
       <label className={estilos.field}>
         <span>{etiqueta}</span>
         <input
@@ -425,13 +429,17 @@ function BuscadorRapido<T extends { id: string }>({ url, campo, etiqueta, placeh
         </ul>
       ) : null}
 
+      </div>
+      {accion}
+      </div>
+
       {b.aviso ? <p className={estilos.aviso} role="status">{b.aviso}</p> : null}
     </div>
   );
 }
 
 /** Búsqueda rápida de clientes: solo los aptos para facturar son seleccionables. */
-function BuscadorCliente({ alElegir }: { alElegir: (c: Cliente) => void }) {
+function BuscadorCliente({ alElegir, accion }: { alElegir: (c: Cliente) => void; accion?: React.ReactNode }) {
   return (
     <BuscadorRapido<Cliente>
       url="/api/facturas/clientes"
@@ -444,6 +452,7 @@ function BuscadorCliente({ alElegir }: { alElegir: (c: Cliente) => void }) {
       })}
       exacto={(c, t) => c.numeroDocumento === t || documentoCliente(c) === t || c.codigo.toLowerCase() === t.toLowerCase()}
       alElegir={alElegir}
+      accion={accion}
     />
   );
 }
@@ -464,7 +473,7 @@ function BuscadorVendedor({ alElegir }: { alElegir: (v: Vendedor) => void }) {
 }
 
 /** Búsqueda rápida de productos (código, GTIN o descripción): permanece abierta para añadir varios; los que tienen impedimentos no se pueden añadir. */
-function BuscadorProducto({ alElegir, permisos, moneda }: { alElegir: (p: Producto) => void; permisos: PermisosProducto; moneda: string }) {
+function BuscadorProducto({ alElegir, permisos, moneda, accion }: { alElegir: (p: Producto) => void; permisos: PermisosProducto; moneda: string; accion?: React.ReactNode }) {
   return (
     <BuscadorRapido<Producto>
       url="/api/facturas/productos"
@@ -486,6 +495,7 @@ function BuscadorProducto({ alElegir, permisos, moneda }: { alElegir: (p: Produc
       exacto={(p, t) => p.codigo.toLowerCase() === t.toLowerCase() || p.gtin === t}
       parecido={(p, t) => soloDifierenCerosIniciales(p.codigo, t)}
       alElegir={alElegir}
+      accion={accion}
     />
   );
 }
@@ -1102,8 +1112,7 @@ export default function NuevaFacturaPage() {
                     </>
                   ) : (
                     <div className={estilos.buscarFila}>
-                      <BuscadorCliente alElegir={setCliente} />
-                      <button type="button" className={ui.secondaryButton} onClick={() => setSelector("cliente")}>Búsqueda avanzada</button>
+                      <BuscadorCliente alElegir={setCliente} accion={<button type="button" className={ui.secondaryButton} onClick={() => setSelector("cliente")}>Búsqueda avanzada</button>} />
                     </div>
                   )}
                 </div>
@@ -1140,8 +1149,7 @@ export default function NuevaFacturaPage() {
                   <span className={estilos.meta}>{lineas.length} ítem{lineas.length === 1 ? "" : "s"}</span>
                 </div>
                 <div className={`${estilos.cardBody} ${estilos.buscarFila}`}>
-                  <BuscadorProducto alElegir={agregar} permisos={{ puedeAjustarFiscal, puedeEditarPrecio }} moneda={moneda} />
-                  <button type="button" className={ui.secondaryButton} onClick={() => setSelector("producto")}>Búsqueda avanzada</button>
+                  <BuscadorProducto alElegir={agregar} permisos={{ puedeAjustarFiscal, puedeEditarPrecio }} moneda={moneda} accion={<button type="button" className={ui.secondaryButton} onClick={() => setSelector("producto")}>Búsqueda avanzada</button>} />
                 </div>
                 <div className={estilos.tableWrap}>
                   <table className={`${estilos.items} ${estilos.itemsCompacta}`}>
@@ -1481,7 +1489,11 @@ export default function NuevaFacturaPage() {
                   <dl className={estilos.resumenDl}>
                     <div><dt>Cliente</dt><dd>{resumen.cliente.razonSocial} ({resumen.cliente.documento})</dd></div>
                     <div><dt>Vendedor</dt><dd>{resumen.vendedor ? resumen.vendedor.nombre : "—"}</dd></div>
-                    {resumen.infoAdicional ? <div><dt>Información adicional</dt><dd style={{ whiteSpace: "pre-line" }}>{resumen.infoAdicional}</dd></div> : null}
+                    {resumen.infoAdicional ? (
+                      resumen.infoAdicional.length > 160
+                        ? <div><dt>Información adicional</dt><dd><details className={estilos.detalleLargo}><summary>{resumen.infoAdicional.length} caracteres · ver texto completo</summary><div style={{ whiteSpace: "pre-line" }}>{resumen.infoAdicional}</div></details></dd></div>
+                        : <div><dt>Información adicional</dt><dd style={{ whiteSpace: "pre-line" }}>{resumen.infoAdicional}</dd></div>
+                    ) : null}
                     <div><dt>Dirección de entrega</dt><dd>{resumen.entrega ? `${resumen.entrega.nombre} — ${resumen.entrega.direccion}` : "Sin destino de entrega registrado (se factura con el domicilio fiscal del receptor)"}</dd></div>
                   </dl>
                 </section>
