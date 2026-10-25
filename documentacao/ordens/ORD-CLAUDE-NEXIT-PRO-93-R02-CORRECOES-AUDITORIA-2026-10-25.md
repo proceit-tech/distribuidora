@@ -5,7 +5,7 @@
 
 ## 1. O que NÃO deve ser refeito
 
-Preservar: combo `001 — Casa central`, ponto `003` separado, as 13 opções D011 visíveis, bloqueio honesto dos tipos 5–13 não suportados, nova coluna `Unidad`, grid Cliente/Entrega/botões, rodapé em fluxo, modal de prévia, cálculos, estoque/entregas, PRO-322 e seus códigos geográficos. Não reabrir implementação visual ou inventar homologação: a tela ainda não foi testada em navegador.
+Preservar: combo `001 — Casa central`, ponto `003` separado, **combo simples com as 13 opções D011 visíveis e selecionáveis**, nova coluna `Unidad`, grid Cliente/Entrega/botões, rodapé em fluxo, modal de prévia, cálculos, estoque/entregas, PRO-322 e seus códigos geográficos. **O responsável pediu SOMENTE o combo completo, NÃO pediu suporte fiscal operacional a todos os tipos nem novos campos.** Não reabrir implementação visual ou inventar homologação: a tela ainda não foi testada em navegador.
 
 ## 2. PRO-294 F001 — CORRIGIR REGRA DE DATA, SEM ALTERAR HISTÓRICO
 
@@ -36,9 +36,14 @@ Como `app/(private)/vendedores` e `app/(private)/administracion/usuarios` não e
 - **Higiene de segurança:** criação de senha/token não inventados nem exibidos; isolamento A/B; respeito a módulo contratado; proteção do último admin/alterações de perfis; revogação de sessões e auditoria conforme controles EXISTENTES. Se algum desses guardas não puder ser implementado com segurança sem decisão de autorização, **parar EXCLUSIVAMENTE este bloco com arquivo/linha e impacto**, não substituir o vendedor automaticamente pelo emissor nem fingir menu funcional.
 - Não alterar NCE, STOCK, SQL fiscal histórico, nem criar cadastro paralelo ou permissões de sistema SUPERADMIN para usuários de empresa.
 
-## 5. Tipos 1–13 — status claro sem reabrir o combo
+## 5. Tipo de transacción — ESCOPO FECHADO PELO RESPONSÁVEL (RETIFICAÇÃO)
 
-13 nomes completos visíveis já estão corretos. 1–4 podem emitir; 5–13 permanecem bloqueados com motivo para evitar falso documento fiscal. Relatar `implementado catálogo, NÃO implementada emissão de 5–13`; manter PRO-134 aberta, sem alterar iTiDE e sem transformar compra em autofactura silenciosamente. Não liberar fiscalmente tipos especiais por remoção de if.
+**Solicitação exata: COLOCAR O COMBO COMPLETO COM OS 13 TIPOS. SOMENTE ISSO.**
+- O catálogo oficial 1–13 já existe em `CATALOGO_TIPOS_TRANSACCION` e a entrega `03623ec4a7daf32f4f832c47f5fbc0b8112cb9fc` já exibe as 13 opções selecionáveis no MESMO campo. **Requisito de interface atendido estaticamente; não reimplementar.**
+- **NÃO** criar outros campos, modais, telas, operações fiscais adicionais, fluxos de autofactura, regras por tipo, migrations ou catálogos paralelos a partir desse pedido.
+- A seleção do combo não demonstra que a FE ordinária possa transmitir todos os treze tipos. **Preservar o backend e as validações existentes**, sem habilitar emissão inválida nem interpretar isso como uma solicitação de novos fluxos fiscais.
+- O fato de o backend atual aceitar 1–4 e rejeitar 5–13 fica apenas como **limitação técnica conhecida**, não como um novo requisito de desenvolvimento do responsável, nem motivo para pedir campos adicionais. Não exigir "emitir os 13" nem "implementar campos para 5–13" nesta ordem.
+- Não voltar a perguntar ao responsável se ele pediu só exibição ou operação completa: **ele ratificou que era somente o combo completo e nenhum campo extra**.
 
 ## 6. Entrega e gate
 
@@ -46,7 +51,7 @@ Antes de editar, ler cada arquivo inteiro. Fazer SOMENTE patches comprovadamente
 - F001 data: correção de norma + impacto em UI/API/SQL prévia/huella;
 - F002 procedimento runner: bloqueio seguro NEX-072;
 - F003 vendedor: modelagem usuários/perfis, rotas/APIs persistência/tenant, migrations versionadas e o que permanece pendente por segurança; nenhuma tela inexistente apontada como pronta;
-- Tipos 13: visualizados 13, emitíveis 1–4 e motivos;
+- Tipo de transacción: 13 opções visíveis/selecionáveis JÁ entregues no mesmo combo, sem novas funções ou campos; nenhuma alteração adicional requerida;
 - UX: CSS atualizado, **não homologado visualmente**.
 
 **Nunca executar testes, lint, typecheck, build, CI, SQL, PostgreSQL, migration, VM, deploy, gateway, SIFEN, FE real. Não marcar Linear Done. Não iniciar E03, NEX-072, PRO-205/324, NCE.**
