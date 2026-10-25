@@ -53,7 +53,7 @@ Estos son escenarios ilustrativos sujetos a aprobación de matriz de permisos.
 
 ## Dependencias y decisiones a confirmar
 D-01: si un mismo usuario humano puede pertenecer a varias empresas con una única identidad o precisa cuentas separadas (hoy login es empresa+usuario).
-D-02: política de agregación cuando un usuario tiene varios perfiles (propuesto: unión de permisos concedidos, sin reglas de denegación explícita).
+D-02: **DECISIÓN CONFIRMADA 24/10/2026:** los permisos efectivos de un usuario con varios perfiles son la **UNIÓN de todos los permisos concedidos por sus perfiles activos**, limitada siempre por la empresa de la sesión y por sucursales/depósitos autorizados; sin elevación a permisos MASTER. Un perfil que no concede un permiso no anula el otorgado por otro. Sin permiso concedido se rechaza la acción. El backend y los menús deben respetar esta agregación; los cambios de perfiles requieren revalidar acceso/sesión. Las asignaciones de sucursales/depósitos y la matriz concreta por perfil siguen pendientes de especificación.
 D-03: qué funciones son exclusivas del administrador global PROCEIT.
 D-04: lista definitiva de permisos por módulo y alcance sucursal/depósito. **Decisión adicional confirmada:** el admin empresarial NO edita perfiles/permisos; solo administra asignaciones de perfiles preexistentes, incluso varias por usuario. Ver requisito canónico R01, RN-08/RN-09 y D-02/D-02A.
 No bloquear REQ-2026-001 por estas decisiones; documentar antes de implementación de REQ-2026-002.
