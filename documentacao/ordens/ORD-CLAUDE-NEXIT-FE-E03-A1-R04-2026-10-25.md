@@ -1,5 +1,7 @@
 # ORD-CLAUDE-NEXIT-FE-E03-A1-R04 — ÚNICA ORDEM CORRETIVA VIGENTE
 
+> **SUPERADA — HISTÓRICO:** Claude entregou `7d5764769a30eeadf0221a07f42f9f73341d33be`; [AUD-R04](../testes/AUD-NEXIT-FE-E03-A1-PRO-321-R04-2026-10-25.md) **NÃO CONFORME**. A guarda para terceiros foi fechada estaticamente; ficou F002-R04 (contadores de rejeição como texto/boolean, candidatos CDC/lote/eco malformados com outra ocorrência válida). **Nova ÚNICA ordem [E03-A1-R05](documentacao/ordens/ORD-CLAUDE-NEXIT-FE-E03-A1-R05-2026-10-25.md)**, só NEX-072, sem aplicar SQL/testes/VM. E03-A2/B bloqueadas. Instruções abaixo são históricas.
+
 **Data:** 25/10/2026. **Issue:** PRO-321 (subtarefa PRO-312). **Branch:** `feature/NEXIT-2026-001-banco-demo`, repositório `proceit-tech/distribuidora`.
 **SHA Claude R03:** `0d5e9c0586c8eb703dd93e0ecd0349238849614e`.
 **Auditoria independente (LER INTEIRA):** [AUD-E03-A1-R03](../testes/AUD-NEXIT-FE-E03-A1-PRO-321-R03-2026-10-25.md).
