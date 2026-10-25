@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 
 import { CampoFecha } from "@/components/ui/campo-fecha";
 import ui from "@/components/ui/lista-padrao/lista.module.css";
@@ -122,6 +122,8 @@ export default function DocumentosPage() {
   const [recarga, setRecarga] = useState(0);
   const [resultado, setResultado] = useState<{ clave: string; datos: Respuesta | null; error: string } | null>(null);
   const [abiertos, setAbiertos] = useState<Record<string, Detalle>>({});
+  // E01 (PRO-314): petición de JSON vigente por documento. Seleccionar otro JSON, cerrar el visor o colapsar el detalle la invalida: una respuesta tardía ya no sustituye la selección ni reabre nada.
+  const jsonVigente = useRef<Record<string, number>>({});
 
   useEffect(() => {
     // Llegada desde «Emitir nota de crédito»: precarga el número emitido en la búsqueda.
@@ -226,6 +228,7 @@ export default function DocumentosPage() {
 
   async function alternar(d: Documento) {
     if (abiertos[d.id]) {
+      jsonVigente.current[d.id] = (jsonVigente.current[d.id] ?? 0) + 1;
       setAbiertos((a) => Object.fromEntries(Object.entries(a).filter(([k]) => k !== d.id)));
 
       return;
@@ -243,15 +246,28 @@ export default function DocumentosPage() {
 
   // E01 (PRO-314): JSON registrado, solo lectura y bajo demanda (una solicitud o una respuesta a la vez; el listado nunca los trae).
   async function verJson(d: Documento, vista: Omit<VistaJson, "texto" | "cargando" | "error">, url: string, extraer: (j: Record<string, unknown>) => unknown) {
-    actualizarDetalle(d.id, { json: { ...vista, texto: "", cargando: true, error: "" } });
+    const peticion = (jsonVigente.current[d.id] ?? 0) + 1;
+    const vigente = () => jsonVigente.current[d.id] === peticion;
+    // Solo escribe si esta petición sigue vigente y el detalle sigue abierto (nunca recrea una fila colapsada).
+    const mostrar = (json: VistaJson) => {
+      if (vigente()) setAbiertos((a) => (a[d.id] ? { ...a, [d.id]: { ...a[d.id], json } } : a));
+    };
+
+    jsonVigente.current[d.id] = peticion;
+    mostrar({ ...vista, texto: "", cargando: true, error: "" });
     try {
       const j = await leerJson<Record<string, unknown>>(await fetch(url, { cache: "no-store" }), "No fue posible cargar el JSON.");
       const valor = extraer(j);
 
-      actualizarDetalle(d.id, { json: { ...vista, texto: valor === null || valor === undefined ? "" : JSON.stringify(valor, null, 2), cargando: false, error: "" } });
+      mostrar({ ...vista, texto: valor === null || valor === undefined ? "" : JSON.stringify(valor, null, 2), cargando: false, error: "" });
     } catch (e) {
-      actualizarDetalle(d.id, { json: { ...vista, texto: "", cargando: false, error: e instanceof Error ? e.message : "No fue posible cargar el JSON." } });
+      mostrar({ ...vista, texto: "", cargando: false, error: e instanceof Error ? e.message : "No fue posible cargar el JSON." });
     }
+  }
+
+  function cerrarJson(d: Documento) {
+    jsonVigente.current[d.id] = (jsonVigente.current[d.id] ?? 0) + 1;
+    actualizarDetalle(d.id, { json: null });
   }
 
   function verSolicitud(d: Documento, sol: Solicitud) {
@@ -523,7 +539,7 @@ export default function DocumentosPage() {
                           {det.json ? (
                             <div style={{ margin: "8px 0" }} role="region" aria-label={det.json.titulo}>
                               <strong>{det.json.titulo}</strong> <small className={ui.muted}>{det.json.detalle}</small>{" "}
-                              <button type="button" className={ui.secondaryButton} onClick={() => actualizarDetalle(d.id, { json: null })}>Cerrar JSON</button>
+                              <button type="button" className={ui.secondaryButton} onClick={() => cerrarJson(d)}>Cerrar JSON</button>
                               {det.json.cargando ? <p className={ui.muted}>Cargando JSON...</p> : null}
                               {det.json.error ? <div className={ui.alertError} role="alert">{det.json.error}</div> : null}
                               {!det.json.cargando && !det.json.error ? (
