@@ -457,6 +457,32 @@ function BuscadorCliente({ alElegir, accion }: { alElegir: (c: Cliente) => void;
   );
 }
 
+/**
+ * Información adicional del resumen (solo PRESENTACIÓN: el texto mostrado es el mismo dInfAdic que se envía; no se recorta, reescribe ni vuelve a guardar). Hasta 160 caracteres se muestra completo; si es más largo,
+ * se ve una previa del inicio y «Ver texto completo» (botón accesible por teclado) lo reemplaza por el texto íntegro, con sus saltos de línea y sin duplicarlo.
+ */
+const LIMITE_PREVIA_INFO = 160;
+
+function InfoAdicionalResumen({ texto }: { texto: string }) {
+  const [completo, setCompleto] = useState(false);
+  const id = useId();
+  const largo = texto.length > LIMITE_PREVIA_INFO;
+  const previa = largo ? `${Array.from(texto).slice(0, LIMITE_PREVIA_INFO).join("").trimEnd()}…` : texto;
+
+  return (
+    <>
+      <span id={id} style={{ whiteSpace: "pre-line" }}>{largo && !completo ? previa : texto}</span>
+      {largo ? (
+        <>
+          {" "}
+          <button type="button" className={estilos.linkButton} aria-expanded={completo} aria-controls={id} onClick={() => setCompleto((v) => !v)}>{completo ? "Ver menos" : "Ver texto completo"}</button>
+          <small className={estilos.hint} style={{ display: "block", margin: 0 }}>{texto.length} caracteres</small>
+        </>
+      ) : null}
+    </>
+  );
+}
+
 /** Búsqueda rápida de vendedores ACTIVOS de la empresa (nombre o usuario). No hay selección automática: ni siquiera del usuario que emite. */
 function BuscadorVendedor({ alElegir }: { alElegir: (v: Vendedor) => void }) {
   return (
@@ -1489,11 +1515,7 @@ export default function NuevaFacturaPage() {
                   <dl className={estilos.resumenDl}>
                     <div><dt>Cliente</dt><dd>{resumen.cliente.razonSocial} ({resumen.cliente.documento})</dd></div>
                     <div><dt>Vendedor</dt><dd>{resumen.vendedor ? resumen.vendedor.nombre : "—"}</dd></div>
-                    {resumen.infoAdicional ? (
-                      resumen.infoAdicional.length > 160
-                        ? <div><dt>Información adicional</dt><dd><details className={estilos.detalleLargo}><summary>{resumen.infoAdicional.length} caracteres · ver texto completo</summary><div style={{ whiteSpace: "pre-line" }}>{resumen.infoAdicional}</div></details></dd></div>
-                        : <div><dt>Información adicional</dt><dd style={{ whiteSpace: "pre-line" }}>{resumen.infoAdicional}</dd></div>
-                    ) : null}
+                    {resumen.infoAdicional ? <div><dt>Información adicional</dt><dd><InfoAdicionalResumen texto={resumen.infoAdicional} /></dd></div> : null}
                     <div><dt>Dirección de entrega</dt><dd>{resumen.entrega ? `${resumen.entrega.nombre} — ${resumen.entrega.direccion}` : "Sin destino de entrega registrado (se factura con el domicilio fiscal del receptor)"}</dd></div>
                   </dl>
                 </section>
@@ -1529,7 +1551,7 @@ export default function NuevaFacturaPage() {
                 </section>
               </div>
 
-              <div className={estilos.resumenTabla} tabIndex={0} role="region" aria-label="Productos de la factura">
+              <div className={estilos.resumenTabla} role="region" aria-label="Productos de la factura">
                 <table className={`${estilos.items} ${estilos.itemsResumen}`}>
                   <thead><tr><th>Producto</th><th>Unid.</th><th className={estilos.num}>Cant.</th><th className={estilos.num}>Precio (IVA incl.)</th><th>IVA</th><th className={estilos.num}>Total</th></tr></thead>
                   <tbody>
@@ -1540,15 +1562,15 @@ export default function NuevaFacturaPage() {
                           <small>{l.codigo}</small>
                           {l.ajustes && l.ajustes.length > 0 ? <small className={estilos.modificado}>Ajustado en esta factura: {l.ajustes.join(", ")}</small> : null}
                         </td>
-                        <td>{l.unidad || "—"}</td>
-                        <td className={estilos.num}>{l.cantidad}</td>
-                        <td className={estilos.num}>
+                        <td data-label="Unid.">{l.unidad || "—"}</td>
+                        <td className={estilos.num} data-label="Cant.">{l.cantidad}</td>
+                        <td className={estilos.num} data-label="Precio (IVA incl.)">
                           {fmv(l.precio)}
                           {l.descuento ? <span className={estilos.modificado}>Descuento: {fmv(l.descuento.unitario)} por unidad ({fd(l.descuento.porcentaje)} %) + general {fmv(l.descuento.global)} = {fmv(l.descuento.total)}</span> : null}
                           {l.precioModificado ? <span className={estilos.modificado}>Precio modificado (lista {fmv(l.precioLista)})</span> : null}
                         </td>
-                        <td>{etiquetaIva(l.afectacion, l.tasa, l.proporcion ?? null)}</td>
-                        <td className={estilos.num}>{fmv(l.totalTexto ?? String(l.total))}</td>
+                        <td data-label="IVA">{etiquetaIva(l.afectacion, l.tasa, l.proporcion ?? null)}</td>
+                        <td className={estilos.num} data-label="Total">{fmv(l.totalTexto ?? String(l.total))}</td>
                       </tr>
                     ))}
                   </tbody>

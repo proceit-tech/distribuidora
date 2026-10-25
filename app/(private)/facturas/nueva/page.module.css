@@ -2207,3 +2207,102 @@
     width: 100%;
   }
 }
+
+/* ══ PRO-93-R06 — Resumen de la factura: los productos son el elemento principal ══
+   Estructura de rolagem: ÚNICA vertical = .resumenCuerpo (cuerpo de la modal). La tabla ya NO es un contenedor de rolagem.
+   Cabecera fija: `position: sticky` se ancla al ancestro con rolagem MÁS CERCANO. Con `overflow-x: auto` en el envoltorio de la tabla, el eje Y también pasa a `auto` (CSS Overflow 3: si un eje no es visible/clip, el otro «visible» se computa como `auto`),
+   el envoltorio se vuelve ese ancestro y, como nunca rola en vertical, los títulos no se fijarían. Por eso el envoltorio queda en `overflow: visible` (no es contenedor de rolagem) y los títulos se anclan al cuerpo de la modal.
+   Sin rolagem horizontal propia: la tabla usa `table-layout: fixed` y anchos por columna; por debajo de 720 px cada ítem se apila (una tarjeta por producto con etiquetas), así que no hace falta desplazar. */
+.modalResumen {
+  max-width: min(1280px, 100%);
+}
+
+.resumenTabla {
+  overflow: visible;
+  max-height: none;
+}
+
+.resumenTabla .itemsResumen {
+  min-width: 0;
+  width: 100%;
+  table-layout: fixed;
+}
+
+.itemsResumen th:nth-child(1) { width: auto; }
+.itemsResumen th:nth-child(2) { width: 72px; }
+.itemsResumen th:nth-child(3) { width: 84px; }
+.itemsResumen th:nth-child(4) { width: 168px; }
+.itemsResumen th:nth-child(5) { width: 120px; }
+.itemsResumen th:nth-child(6) { width: 132px; }
+
+.resumenTabla .itemsResumen th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #f4f8fa;
+  box-shadow: 0 1px 0 #dce6ed;
+  white-space: normal;
+}
+
+.resumenTabla .itemsResumen td {
+  overflow-wrap: anywhere;
+  vertical-align: top;
+}
+
+.resumenTabla .itemsResumen .num {
+  font-variant-numeric: tabular-nums;
+}
+
+.resumenTabla .itemsResumen .modificado {
+  display: block;
+}
+
+@media (max-width: 720px) {
+  .resumenTabla .itemsResumen,
+  .resumenTabla .itemsResumen tbody {
+    display: block;
+  }
+
+  .resumenTabla .itemsResumen thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+
+  .resumenTabla .itemsResumen tr {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 2px 12px;
+    padding: 8px 10px;
+    border-bottom: 1px solid #e3ecf2;
+  }
+
+  .resumenTabla .itemsResumen td {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 2px 0;
+    border: 0;
+    text-align: right;
+  }
+
+  .resumenTabla .itemsResumen td::before {
+    content: attr(data-label);
+    color: #5b7387;
+    font-size: 12px;
+    font-weight: 600;
+    text-align: left;
+  }
+
+  .resumenTabla .itemsResumen td.prod {
+    display: block;
+    grid-column: 1 / -1;
+    text-align: left;
+  }
+
+  .resumenTabla .itemsResumen td.prod::before {
+    content: none;
+  }
+}
