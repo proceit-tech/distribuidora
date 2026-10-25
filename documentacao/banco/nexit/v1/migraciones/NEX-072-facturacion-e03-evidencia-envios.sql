@@ -192,7 +192,7 @@ REVOKE ALL ON FUNCTION public.fe_e03_secreto_residual(text) FROM PUBLIC;
 
 -- ── Recepción confirmada por el gateway (E03-A1-F002-R02). Un HTTP 2xx NO prueba recepción: interpretarRecepcion (gateway.ts) exige status = "success" y evidencia específica (lote válido, CDC coherente con el documento o eco
 -- íntegro de dEst/dPunExp/dNumDoc), sin contradicciones. Estos ayudantes revisan la respuesta SANEADA que quedó persistida con la MISMA búsqueda de claves de gateway.ts (claves normalizadas, profundidad <= 5, arrays <= 20) pero de forma
--- ESTRICTA: examinan todas las coincidencias (no solo la primera) y cualquier contradicción, respuesta truncada o rastro de documentos de terceros omitidos (OtrosDocumentosOmitidos, Aceptados ajenos) impide el OK. Es un subconjunto de lo que gateway.ts acepta (puede rechazar más, nunca aceptar más) y NO infiere
+-- ESTRICTA (fail-closed: un candidato mal formado, de otro tipo o contradictorio invalida aunque exista otro válido más adelante): examinan todas las coincidencias (no solo la primera) y cualquier contradicción, respuesta truncada o rastro de documentos de terceros omitidos (OtrosDocumentosOmitidos, Aceptados ajenos) impide el OK. Es un subconjunto de lo que gateway.ts acepta (puede rechazar más, nunca aceptar más) y NO infiere
 -- aprobación SIFEN: solo habilita registrar ENVIADO (= el gateway recibió el documento).
 CREATE OR REPLACE FUNCTION public.fe_e03_valores_por_clave(p_json jsonb, p_claves text[], p_prof integer DEFAULT 0) RETURNS SETOF jsonb
 LANGUAGE plpgsql IMMUTABLE AS $$
@@ -242,9 +242,14 @@ BEGIN
     RETURN false;
   END IF;
 
-  -- Rechazos declarados en cualquier parte reconocible (contador o lista no vacía): no es una recepción.
+  -- Rechazos declarados (F002-R04). gateway.ts lee Number(raiz.rechazados) > 0 y la lista response.Rechazados; Number("1"), Number(true) o un array con elementos cuentan como rechazo. Regla fail-closed sobre TODA aparición reconocible de
+  -- «rechazados» (cualquier profundidad): solo se tolera la ausencia, null/"" (que el buscador omite), el número 0, el texto "0", el booleano false y la lista vacía; cualquier otra forma o tipo (texto distinto de "0", true, objeto, lista con
+  -- elementos, número no cero) invalida la recepción, aunque el gateway pudiera interpretarla de otro modo.
   FOR v IN SELECT * FROM public.fe_e03_valores_por_clave(p_respuesta, ARRAY['rechazados']) LOOP
-    IF (jsonb_typeof(v) = 'array' AND jsonb_array_length(v) > 0) OR (jsonb_typeof(v) = 'number' AND (v #>> '{}')::numeric > 0) THEN
+    IF NOT ((jsonb_typeof(v) = 'number' AND (v #>> '{}')::numeric = 0)
+            OR (jsonb_typeof(v) = 'string' AND btrim(v #>> '{}') = '0')
+            OR (jsonb_typeof(v) = 'boolean' AND v = 'false'::jsonb)
+            OR (jsonb_typeof(v) = 'array' AND jsonb_array_length(v) = 0)) THEN
       RETURN false;
     END IF;
   END LOOP;
@@ -276,24 +281,27 @@ BEGIN
     END LOOP;
   END LOOP;
 
-  -- Lote: cada candidato debe ser texto/número no vacío de a lo sumo 60 caracteres; al menos uno vale como evidencia.
+  -- Lote (fail-closed, F002-R04): gateway.ts toma la PRIMERA aparición; aquí se examinan TODAS y cualquiera mal formada invalida (tipo distinto de texto/número, vacía tras recortar o de más de 60 caracteres). Al menos una válida vale como evidencia.
   FOR v IN SELECT * FROM public.fe_e03_valores_por_clave(p_respuesta, ARRAY['lote', 'nrolote', 'numerolote', 'nrodelote', 'numerodelote']) LOOP
-    IF jsonb_typeof(v) IN ('string', 'number') THEN
-      t := btrim(v #>> '{}');
-      IF t = '' OR char_length(t) > 60 THEN RETURN false; END IF;
-      v_lote := true;
-    END IF;
+    IF jsonb_typeof(v) NOT IN ('string', 'number') THEN RETURN false; END IF;
+    t := btrim(v #>> '{}');
+    IF t = '' OR char_length(t) > 60 THEN RETURN false; END IF;
+    v_lote := true;
   END LOOP;
 
-  -- CDC: todo candidato de 44 dígitos debe ser coherente con el documento (tipo, establecimiento, punto, número); uno incoherente contradice.
+  -- CDC (fail-closed, F002-R04): TODA aparición reconocible debe ser texto de exactamente 44 dígitos y coherente con el documento (tipo, establecimiento, punto, número). Un candidato ilegible, con otro tipo o incoherente invalida la
+  -- recepción aunque más adelante exista otro CDC válido (gateway.ts solo miraría el primero y concluiría indeterminado).
   FOR v IN SELECT * FROM public.fe_e03_valores_por_clave(p_respuesta, ARRAY['cdc']) LOOP
-    IF jsonb_typeof(v) = 'string' AND btrim(v #>> '{}') ~ '^[0-9]{44}$' THEN
-      IF NOT public.fe_cdc_coherente(p_tipo, p_establecimiento, p_punto, p_numero, btrim(v #>> '{}')) THEN RETURN false; END IF;
-      v_cdc := true;
-    END IF;
+    IF jsonb_typeof(v) <> 'string' OR btrim(v #>> '{}') !~ '^[0-9]{44}$' THEN RETURN false; END IF;
+    IF NOT public.fe_cdc_coherente(p_tipo, p_establecimiento, p_punto, p_numero, btrim(v #>> '{}')) THEN RETURN false; END IF;
+    v_cdc := true;
   END LOOP;
 
   -- Eco del número: si el gateway devuelve alguno de dEst/dPunExp/dNumDoc, los TRES deben estar presentes e iguales a los del documento (si no, contradice); el eco íntegro es evidencia de recepción.
+  -- Eco (fail-closed, F002-R04): una aparición de dEst/dPunExp/dNumDoc con tipo distinto de texto/número invalida (no se ignora para tomar otra posterior).
+  IF EXISTS (SELECT 1 FROM public.fe_e03_valores_por_clave(p_respuesta, ARRAY['dest', 'dpunexp', 'dnumdoc']) y WHERE jsonb_typeof(y) NOT IN ('string', 'number')) THEN
+    RETURN false;
+  END IF;
   SELECT coalesce(array_agg(btrim(x #>> '{}')), ARRAY[]::text[]) INTO est FROM public.fe_e03_valores_por_clave(p_respuesta, ARRAY['dest']) x WHERE jsonb_typeof(x) IN ('string', 'number');
   SELECT coalesce(array_agg(btrim(x #>> '{}')), ARRAY[]::text[]) INTO pun FROM public.fe_e03_valores_por_clave(p_respuesta, ARRAY['dpunexp']) x WHERE jsonb_typeof(x) IN ('string', 'number');
   SELECT coalesce(array_agg(btrim(x #>> '{}')), ARRAY[]::text[]) INTO num FROM public.fe_e03_valores_por_clave(p_respuesta, ARRAY['dnumdoc']) x WHERE jsonb_typeof(x) IN ('string', 'number');
