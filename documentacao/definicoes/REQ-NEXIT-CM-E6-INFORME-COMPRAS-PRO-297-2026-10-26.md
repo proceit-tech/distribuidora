@@ -3,6 +3,8 @@
 **Estado:** ANALIZADO Y BLOQUEADO PARA IMPLEMENTACIÓN COMERCIAL porque aún NO se ha comprobado una fuente de documentos de compra realmente operativa en la V1. Este documento no autoriza cambios de esquema, formularios de Compras, datos sintéticos ni despliegue.
 **Responsables:** ChatGPT analiza/especifica, audita Git y mantiene Linear; Claude SOLO desarrolla con orden técnica formal; titular aprueba ampliación de negocio y homologa ambiente.
 
+> **DECISÃO POSTERIOR DO RESPONSÁVEL: COMPRAS → ENTRADAS (26/10/2026) — PREVALECE SOBRE O GATE DE ESCOLHA DE FONTE ABAIXO.** O responsável escolheu como ÚNICA fonte do futuro «Informe de Compras» as entradas reais que serão registradas no NOVO menu «Compras → Entradas», sem criar facturas fiscais, ordens ou recepciones DEMO. Os indicadores medirão **costo de mercadería ingresada, SIN IVA fiscal**; título de informe com subtítulo obrigatório «Entradas registradas a costo, no compras facturadas». Norma operacional canônica: [REQ-NEXIT-CM-E6-COMPRAS-ENTRADAS-2026-10-26.md](REQ-NEXIT-CM-E6-COMPRAS-ENTRADAS-2026-10-26.md). A análise histórica de compra faturada e as alternativas A/B/C abaixo são preservadas apenas como HISTÓRICO SUPERADO nesta E6. E6-A primeiro, E6-B depois de auditoria; não reabrir escolha de fonte sem nova instrução do responsável.
+
 ## 1. Pedido y alcance
 El cliente pidió una tarjeta llamada "Informe de Compras" en "Reportes operativos", acompañando el Informe de Ventas (E5: auditoría estática R03 conforme, datos reales/VM/browser todavía sin homologación). El reporte gerencial de costos y ganancias brutas es OPCIONAL y no forma parte de E6.
 Patrones comparativos ERP:
