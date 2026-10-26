@@ -43,7 +43,7 @@ export const COBERTURA_VENTAS = [
   "Monedas separadas: no hay total general entre PYG, USD y BRL ni conversión con tipos de cambio.",
   "Situación fiscal al generar: el informe refleja los estados SIFEN actuales al momento de generarlo; un cambio posterior (p. ej. una cancelación) modifica la lectura del mismo período. No se atribuye fecha de aprobación.",
   "Vendedor: vendedor comercial registrado en la FE (NEX-074), nunca el usuario emisor; la NCE hereda el de su factura original. Las FE anteriores al registro de vendedor figuran «Sin vendedor registrado».",
-  `Productos: ítems del JSON fiscal original (código, descripción y unidad de emisión históricos). Las NCE de servicio DESCUENTO (descuento/bonificación) y las que no pueden vincularse a ítems se muestran en «${ETIQUETA_AJUSTE_NO_ATRIBUIBLE}» y forman parte del total. Las cantidades se informan por unidad de emisión; la cantidad devuelta solo proviene de NCE de devolución.`,
+  `Productos: ítems del JSON fiscal original (código, descripción y unidad de emisión históricos). Una NCE se atribuye a productos solo si cada ítem corresponde, por sus datos históricos, a la línea acreditada de la factura original (nce_lineas); las NCE de servicio DESCUENTO (descuento/bonificación) y las que no se pueden vincular así se muestran en «${ETIQUETA_AJUSTE_NO_ATRIBUIBLE}» y forman parte del total. Las cantidades se informan por unidad de emisión; la cantidad devuelta solo proviene de NCE de devolución.`,
   "Un documento aprobado sin información fiscal conciliable (sin JSON, versión incierta, sin CDC, subtotales o ítems inconsistentes, NCE sin vínculo verificable) se informa como anomalía con su monto aparte: no se suma como cero ni se incluye en los indicadores.",
 ];
 
@@ -112,6 +112,8 @@ export function parsearFiltrosVentas(sp: URLSearchParams, hoy: string = hoyParag
 const like = (t: string) => `%${t.replace(/[!%_]/g, (c) => `!${c}`)}%`;
 /** Número de un valor JSON solo si es un número JSON (un texto, nulo u objeto queda NULL → anomalía; nunca se fuerza un cast que falle). */
 const NUM = (e: string) => `(CASE WHEN jsonb_typeof(${e}) = 'number' THEN (${e} #>> '{}')::numeric END)`;
+/** Número JSON o texto decimal (comparación de campos copiados de la FE a la NCE); cualquier otro valor queda NULL y la comparación no prueba nada. */
+const NUMX = (e: string) => `(CASE WHEN jsonb_typeof(${e}) = 'number' THEN (${e} #>> '{}')::numeric WHEN jsonb_typeof(${e}) = 'string' AND (${e} #>> '{}') ~ '^-?[0-9]+([.][0-9]+)?$' THEN (${e} #>> '{}')::numeric END)`;
 const ARREGLO = (e: string) => `(CASE WHEN jsonb_typeof(${e}) = 'array' THEN ${e} ELSE '[]'::jsonb END)`;
 /** Orden de monedas: PYG primero, luego alfabético (las monedas NUNCA se suman). */
 const ORDEN_MONEDA = "(moneda <> 'PYG'), moneda";
@@ -248,12 +250,56 @@ function construirCte(f: VentasFiltros, esq: Esquema, p: (v: unknown) => string)
     fil AS (
       SELECT cls2.*,
              CASE WHEN estado_sifen <> 'APROBADO' THEN 'NO_COMPUTA' WHEN anomalia IS NULL THEN 'COMPUTA' ELSE 'ANOMALIA' END AS situacion,
-             -- NCE vinculable a ítems (devolución / ajuste por línea): sin servicio DESCUENTO y una línea acreditada por ítem del JSON (las líneas ya concilian con el total por la clasificación).
+             -- CANDIDATA a atribución por producto: sin servicio DESCUENTO y una línea acreditada por ítem del JSON. La atribución solo se concede tras verificar cada par
+             -- ítem NCE ↔ nce_lineas.linea ↔ FE.Detalles[linea − 1] (CTE ATRIBUCION_NCE, vista Productos); si no se prueba, la NCE va a ajustes no atribuibles.
              (tipo = 'NCE' AND coalesce(dsc_n, 0) = 0 AND lin_n IS NOT NULL AND lin_n = it_n) AS atribuible
         FROM cls2
        ${condFil.length ? `WHERE ${condFil.join(" AND ")}` : ""}
     )`;
 }
+
+/**
+ * Atribución VERIFICADA de una NCE a productos (R01-F001). nce_lineas guarda el ordinal de la línea de la FE (`linea`, 1..n de su Detalles[]) pero NO la posición del ítem en el JSON de la NCE: la
+ * correspondencia ítem NCE ↔ línea acreditada se prueba por contenido, con los mismos campos que NEX-062/NEX-070 exigen al emitir (identificación histórica del producto, unidad, IVA, monto, cantidad y precio
+ * según el motivo) contra FE.Detalles[linea − 1] de la ÚNICA solicitud de la FE original. Nunca se usa solo dCodInt ni el orden de los ítems. Se atribuye solo si CADA ítem de la NCE corresponde a alguna línea
+ * acreditada y CADA línea acreditada a algún ítem; un ítem solo puede corresponder a líneas con su mismo código, descripción y unidad (la clave del producto), así que el producto informado es siempre el de la
+ * línea original acreditada, también cuando la FE repite el producto en varias líneas. Lo no probado queda como ajuste no atribuible (con el importe de cabecera, sin cambiar los totales).
+ */
+const ATRIBUCION_NCE = `
+  fev AS (
+    SELECT f.id AS nce_id, s.payload->'Detalles' AS fe_det
+      FROM fil f
+      JOIN documento_electronico_solicitudes s ON s.empresa_id = $1 AND s.documento_id = f.fe_id
+     WHERE f.situacion = 'COMPUTA' AND f.atribuible
+       AND (SELECT count(*) FROM documento_electronico_solicitudes s2 WHERE s2.empresa_id = $1 AND s2.documento_id = f.fe_id) = 1
+       AND jsonb_typeof(s.payload->'Detalles') = 'array'
+  ),
+  par AS (
+    SELECT fev.nce_id, x.ord, nl.linea
+      FROM fev
+      JOIN fil f ON f.id = fev.nce_id
+     CROSS JOIN LATERAL jsonb_array_elements(${ARREGLO("f.det")}) WITH ORDINALITY x(e, ord)
+      JOIN nce_lineas nl ON nl.empresa_id = $1 AND nl.nce_id = fev.nce_id AND nl.fe_id = f.fe_id
+     CROSS JOIN LATERAL (SELECT fev.fe_det->(nl.linea - 1) AS o) fo
+     WHERE nl.linea BETWEEN 1 AND jsonb_array_length(fev.fe_det) AND jsonb_typeof(fo.o) = 'object' AND jsonb_typeof(x.e) = 'object'
+       AND nullif(btrim(x.e->>'dCodInt'), '') IS NOT DISTINCT FROM nullif(btrim(fo.o->>'dCodInt'), '')
+       AND nullif(btrim(x.e->>'dGtin'), '') IS NOT DISTINCT FROM nullif(btrim(fo.o->>'dGtin'), '')
+       AND btrim(coalesce(x.e->>'dDesProSer', '')) = btrim(coalesce(fo.o->>'dDesProSer', ''))
+       AND ${NUMX("x.e->'cUniMed'")} = ${NUMX("fo.o->'cUniMed'")}
+       AND ${NUMX("x.e->'iAfecIVA'")} = ${NUMX("fo.o->'iAfecIVA'")}
+       AND ${NUMX("x.e->'dTasaIVA'")} = ${NUMX("fo.o->'dTasaIVA'")}
+       AND ${NUMX("x.e->'dPropIVA'")} = ${NUMX("fo.o->'dPropIVA'")}
+       AND ${NUM("x.e->'dTotOpeItem'")} = nl.monto
+       AND CASE WHEN f.motivo = 2
+                THEN nl.cantidad > 0 AND ${NUMX("x.e->'dCantProSer'")} = nl.cantidad AND ${NUMX("x.e->'dPUniProSer'")} = ${NUMX("fo.o->'dPUniProSer'")}
+                ELSE nl.cantidad = 0 AND ${NUMX("x.e->'dCantProSer'")} = 1 AND ${NUMX("x.e->'dPUniProSer'")} = nl.monto END
+  ),
+  atr AS (
+    SELECT fev.nce_id
+      FROM fev JOIN fil f ON f.id = fev.nce_id
+     WHERE (SELECT count(DISTINCT par.ord) FROM par WHERE par.nce_id = fev.nce_id) = f.it_n
+       AND (SELECT count(DISTINCT par.linea) FROM par WHERE par.nce_id = fev.nce_id) = f.lin_n
+  )`;
 
 /** Medidas agregadas (sobre filas ya COMPUTA): cantidades de documentos DISTINTOS y sumas de cabecera; NCE en positivo y restadas en los netos. */
 const MEDIDAS = (tot: string, iva: string, doc: string, cond = "") => `
@@ -393,14 +439,14 @@ export async function leerVentas(
       const um = esq.unidades
         ? `LEFT JOIN unidades_medida_sifen um ON um.codigo::text = g.unidad`
         : `LEFT JOIN (SELECT NULL::text AS codigo, NULL::text AS representacion WHERE false) um ON um.codigo = g.unidad`;
-      // Grano ítem: SOLO documentos que computan; las NCE sin vínculo a ítems (servicio DESCUENTO u otras) van al bloque «no atribuible» con los importes de su cabecera (sin repartirlas).
-      const prd = `
+      // Grano ítem: SOLO documentos que computan; las NCE sin correspondencia VERIFICADA con las líneas de su FE (servicio DESCUENTO u otras) van al bloque «no atribuible» con los importes de su cabecera.
+      const prd = `${ATRIBUCION_NCE},
         itm AS (
           SELECT f.id AS doc_id, f.tipo, f.moneda, f.motivo, f.fecha_emision, x.ord,
                  nullif(btrim(x.e->>'dCodInt'), '') AS codigo, btrim(coalesce(x.e->>'dDesProSer', '')) AS descripcion, coalesce(x.e->>'cUniMed', '') AS unidad,
                  ${NUM("x.e->'dCantProSer'")} AS cant, ${NUM("x.e->'dTotOpeItem'")} AS monto, ${NUM("x.e->'dLiqIVAItem'")} AS iva
             FROM fil f CROSS JOIN LATERAL jsonb_array_elements(${ARREGLO("f.det")}) WITH ORDINALITY x(e, ord)
-           WHERE f.situacion = 'COMPUTA' AND (f.tipo = 'FE' OR f.atribuible)
+           WHERE f.situacion = 'COMPUTA' AND (f.tipo = 'FE' OR f.id IN (SELECT nce_id FROM atr))
         ),
         prd AS (SELECT itm.*, CASE WHEN codigo IS NULL THEN descripcion END AS desc_clave FROM itm ${condPrd}),
         g AS (
@@ -429,7 +475,8 @@ export async function leerVentas(
       )).map((x) => ({ moneda: String(x.moneda), ...importesDe(x) }));
       ajustesNoAtribuibles = (await q(
         `SELECT moneda, count(*)::int AS n, sum(tot)::text AS tot, sum(iva)::text AS iva, sum(tot - iva)::text AS sin
-           FROM fil WHERE situacion = 'COMPUTA' AND tipo = 'NCE' AND NOT atribuible GROUP BY moneda ORDER BY ${ORDEN_MONEDA}`,
+           FROM fil WHERE situacion = 'COMPUTA' AND tipo = 'NCE' AND id NOT IN (SELECT nce_id FROM atr) GROUP BY moneda ORDER BY ${ORDEN_MONEDA}`,
+        ATRIBUCION_NCE,
       )).map((x) => ({ moneda: String(x.moneda), documentos: num(x.n), conIva: String(x.tot), iva: String(x.iva), sinIva: String(x.sin) }));
     } else if (filtros.vista === "VENDEDORES" && !esq.vendedor) {
       // Sin NEX-074 no hay vendedor comercial confiable: la vista queda «No disponible por esquema» (no se agrupa por el emisor).
