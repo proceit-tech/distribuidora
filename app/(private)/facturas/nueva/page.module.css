@@ -2306,3 +2306,54 @@
     content: none;
   }
 }
+
+/* ══ PRO-93-R06-C01 — celda de precio del resumen y descripción completa ══ */
+
+/* F001: valor del precio, descuento y precio modificado van en UN bloque vertical (no como elementos flex hermanos del rótulo). Escritorio: alineado a la derecha como la columna numérica.
+   Celular: la celda de precio ocupa toda la fila de la tarjeta y el bloque ocupa el ancho restante, con quiebre natural de líneas. Nada se oculta. */
+.resumenTabla .itemsResumen .precioResumen {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.resumenTabla .itemsResumen .precioValor {
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.resumenTabla .itemsResumen .precioResumen .modificado {
+  display: block;
+  max-width: 100%;
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+@media (max-width: 720px) {
+  .resumenTabla .itemsResumen td[data-label^="Precio"] {
+    grid-column: 1 / -1;
+    align-items: flex-start;
+  }
+
+  .resumenTabla .itemsResumen td[data-label^="Precio"]::before {
+    flex: 0 0 auto;
+    padding-top: 1px;
+  }
+
+  .resumenTabla .itemsResumen td[data-label^="Precio"] .precioResumen {
+    flex: 1 1 0;
+  }
+}
+
+/* F002: la descripción del producto se ve COMPLETA en el resumen (sin límite de 2 líneas): la altura de la fila es la natural. */
+.resumenTabla .prod strong {
+  display: block;
+  overflow: visible;
+  -webkit-line-clamp: unset;
+  line-clamp: unset;
+  overflow-wrap: anywhere;
+}

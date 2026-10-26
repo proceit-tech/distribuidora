@@ -466,8 +466,9 @@ const LIMITE_PREVIA_INFO = 160;
 function InfoAdicionalResumen({ texto }: { texto: string }) {
   const [completo, setCompleto] = useState(false);
   const id = useId();
-  const largo = texto.length > LIMITE_PREVIA_INFO;
-  const previa = largo ? `${Array.from(texto).slice(0, LIMITE_PREVIA_INFO).join("").trimEnd()}…` : texto;
+  const puntos = Array.from(texto); // misma unidad (caracteres Unicode completos) para decidir, cortar y contar
+  const largo = puntos.length > LIMITE_PREVIA_INFO;
+  const previa = largo ? `${puntos.slice(0, LIMITE_PREVIA_INFO).join("").trimEnd()}…` : texto;
 
   return (
     <>
@@ -476,7 +477,7 @@ function InfoAdicionalResumen({ texto }: { texto: string }) {
         <>
           {" "}
           <button type="button" className={estilos.linkButton} aria-expanded={completo} aria-controls={id} onClick={() => setCompleto((v) => !v)}>{completo ? "Ver menos" : "Ver texto completo"}</button>
-          <small className={estilos.hint} style={{ display: "block", margin: 0 }}>{texto.length} caracteres</small>
+          <small className={estilos.hint} style={{ display: "block", margin: 0 }}>{puntos.length} caracteres</small>
         </>
       ) : null}
     </>
@@ -1565,9 +1566,11 @@ export default function NuevaFacturaPage() {
                         <td data-label="Unid.">{l.unidad || "—"}</td>
                         <td className={estilos.num} data-label="Cant.">{l.cantidad}</td>
                         <td className={estilos.num} data-label="Precio (IVA incl.)">
-                          {fmv(l.precio)}
-                          {l.descuento ? <span className={estilos.modificado}>Descuento: {fmv(l.descuento.unitario)} por unidad ({fd(l.descuento.porcentaje)} %) + general {fmv(l.descuento.global)} = {fmv(l.descuento.total)}</span> : null}
-                          {l.precioModificado ? <span className={estilos.modificado}>Precio modificado (lista {fmv(l.precioLista)})</span> : null}
+                          <div className={estilos.precioResumen}>
+                            <span className={estilos.precioValor}>{fmv(l.precio)}</span>
+                            {l.descuento ? <span className={estilos.modificado}>Descuento: {fmv(l.descuento.unitario)} por unidad ({fd(l.descuento.porcentaje)} %) + general {fmv(l.descuento.global)} = {fmv(l.descuento.total)}</span> : null}
+                            {l.precioModificado ? <span className={estilos.modificado}>Precio modificado (lista {fmv(l.precioLista)})</span> : null}
+                          </div>
                         </td>
                         <td data-label="IVA">{etiquetaIva(l.afectacion, l.tasa, l.proporcion ?? null)}</td>
                         <td className={estilos.num} data-label="Total">{fmv(l.totalTexto ?? String(l.total))}</td>
