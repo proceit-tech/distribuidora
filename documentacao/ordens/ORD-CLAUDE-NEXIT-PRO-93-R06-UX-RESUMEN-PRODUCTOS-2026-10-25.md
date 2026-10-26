@@ -1,5 +1,7 @@
 # ORDEM ATIVA — PRO-93-R06 / PRO-128 — Resumen de la factura: prioridade aos produtos (25/10/2026)
 
+> **HISTÓRICO EXECUTADO — ESCOPO CORRIGIDO (26/10/2026):** implementação original entregue em `4cdcbf75dee6e0912360f05e3ee9ae32991b5e59`, complemento C01 em `275e19aaa9c9d341a5ea9ac70e4369d861e3010f`. Os cenários celular/mobile inscritos nesta ordem foram criados indevidamente pelo ChatGPT; **não representam decisão do responsável e não compõem os critérios de aceite**. O foco é desktop. Ver [AUD-R06-R02](../testes/AUD-NEXIT-PRO-93-R06-UX-R02-ESCOPO-DESKTOP-2026-10-26.md). Não reexecutar.
+
 **Origem:** decisões explícitas do responsável após reauditoria R05 (P1–P10).  
 **Repo:** `proceit-tech/distribuidora` — **branch única:** `feature/NEXIT-2026-001-banco-demo`.  
 **Estado:** AUTORIZADA PARA IMPLEMENTAÇÃO DE CÓDIGO PELO CLAUDE, SEM EXECUÇÃO DE TESTES/BUILD/VM/DEPLOY. **Parar após commit e push para auditoria independente do ChatGPT.**  
