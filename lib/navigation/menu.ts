@@ -113,6 +113,13 @@ export const NAVIGATION_GROUPS: ShellNavigationGroup[] = [
     icon: "purchases",
     items: [
       {
+        id: "purchase-entries",
+        label: "Entradas",
+        href: "/compras/entradas",
+        icon: "receipts",
+        permission: "COMPRAS.VER",
+      },
+      {
         id: "purchase-requests",
         label: "Solicitudes",
         href: "/solicitudes",
@@ -425,6 +432,7 @@ const V1_HREFS = new Set([
   "/facturacion/puntos",
   "/configuracion/facturacion-electronica",
   "/movimientos",
+  "/compras/entradas",
   "/reportes",
   "/reportes/stock-general",
   "/reportes/valorizacion",
