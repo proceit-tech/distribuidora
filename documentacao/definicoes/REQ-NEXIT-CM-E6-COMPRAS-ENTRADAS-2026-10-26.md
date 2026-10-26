@@ -1,6 +1,8 @@
 # NEXIT E6 — Decisión normativa: Compras → Entradas e Informe de Compras por entradas
 **26/10/2026 | Casa Mingo | idioma UI español Paraguay | prioridad desktop**
 
+> **DECISÃO DE AUDITORIA R01 / PRO-325 (26/10/2026) — SUPRIMENTOS:** Fornecedor elegível requer somente **mesma empresa + ativo + não bloqueado**; NÃO exigir código interno nem homologação comercial. A NEX-006 permite `proveedores.codigo NULL`, logo a NEX-075 deve conservar snapshot de código opcional sem rejeitar registro e usar nome/documento verdadeiro quando o código não existe. Os novos `COMPRAS.VER` e `COMPRAS.CREAR` permanecem sem atribuição automática a perfis: inicialmente somente administrador da empresa autorizado pelos controles existentes. Parecer: `documentacao/testes/AUD-NEXIT-CM-E6-A-PRO-325-R01-2026-10-26.md`; ordem focal: `documentacao/ordens/ORD-CLAUDE-NEXIT-E6-A-R01-F001-PROVEEDOR-CODIGO-2026-10-26.md`. E6-B segue não autorizada.
+
 ## DECISIÓN EXPRESA
 El responsable decidió: «somente entradas no menu que vamos criar de compras».
 **Origen exclusivo del Informe de Compras:** registros reales hechos en el nuevo módulo **Compras → Entradas**.
