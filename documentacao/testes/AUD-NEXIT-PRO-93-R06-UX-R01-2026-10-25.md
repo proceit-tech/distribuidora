@@ -1,5 +1,7 @@
 # Auditoria independente — PRO-93-R06 / PRO-128 — R01 (25/10/2026)
 
+> **RETIFICAÇÃO POSTERIOR (26/10/2026):** a reprovação por UX mobile nesta auditoria R01 usou requisito introduzido indevidamente pelo ChatGPT, não aprovado pelo responsável. **Não é um bloqueio vigente.** O código C01 foi publicado e reavaliado estaticamente em [AUD-R06-R02 — escopo desktop](AUD-NEXIT-PRO-93-R06-UX-R02-ESCOPO-DESKTOP-2026-10-26.md). Preservar este relatório como histórico; sem ordem corretiva ativa.
+
 **Resultado: NÃO CONFORME PARA ACEITE INTEGRAL DA R06 (2 pendências de apresentação em mobile).** O objetivo desktop foi atendido no código, mas não há garantia de leitura completa de produtos com descontos/descrição extensa em celular. **NENHUM teste ou navegador foi executado.**
 
 - Repositório: `proceit-tech/distribuidora`; branch `feature/NEXIT-2026-001-banco-demo`.
