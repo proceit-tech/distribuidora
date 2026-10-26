@@ -259,12 +259,17 @@ function construirCte(f: VentasFiltros, esq: Esquema, p: (v: unknown) => string)
 }
 
 /**
- * Atribución VERIFICADA de una NCE a productos (R01-F001). nce_lineas guarda el ordinal de la línea de la FE (`linea`, 1..n de su Detalles[]) pero NO la posición del ítem en el JSON de la NCE: la
- * correspondencia ítem NCE ↔ línea acreditada se prueba por contenido, con los mismos campos que NEX-062/NEX-070 exigen al emitir (identificación histórica del producto, unidad, IVA, monto, cantidad y precio
- * según el motivo) contra FE.Detalles[linea − 1] de la ÚNICA solicitud de la FE original. Nunca se usa solo dCodInt ni el orden de los ítems. Se atribuye solo si CADA ítem de la NCE corresponde a alguna línea
- * acreditada y CADA línea acreditada a algún ítem; un ítem solo puede corresponder a líneas con su mismo código, descripción y unidad (la clave del producto), así que el producto informado es siempre el de la
- * línea original acreditada, también cuando la FE repite el producto en varias líneas. Lo no probado queda como ajuste no atribuible (con el importe de cabecera, sin cambiar los totales).
+ * Atribución VERIFICADA de una NCE a productos (R01-F001 / R02-F001). nce_lineas guarda el ordinal de la línea de la FE (`linea`, 1..n de su Detalles[]) pero NO la posición del ítem en el JSON de la NCE,
+ * así que la correspondencia ítem NCE ↔ línea acreditada se prueba por contenido y sin suponer orden. Cada ítem de la NCE y cada fila de nce_lineas (contra FE.Detalles[linea − 1] de la ÚNICA solicitud de la FE
+ * original) se reducen a una FIRMA con los mismos campos que NEX-062/NEX-070 exigen al emitir: código, GTIN, descripción, unidad, afectación, tasa y proporción de IVA, monto, cantidad y precio unitario
+ * (motivo 2: cantidad acreditada y precio de la línea original; demás motivos: cantidad 1, precio = monto y cantidad acreditada 0). Un ítem y una línea son compatibles exactamente cuando sus firmas son iguales,
+ * por lo que existe una correspondencia 1:1 (cada ítem usado una vez, cada línea una vez) si y solo si las DOS MULTIPLICIDADES por firma coinciden. Así se aceptan duplicados legítimos (dos líneas idénticas A, A)
+ * y se rechaza, p. ej., NCE [A, A, B] contra líneas acreditadas [A, B, B] aunque cada lado tenga algún candidato y el total coincida. Una firma incompleta (campo numérico ilegible, línea fuera de rango, ítem
+ * no objeto) invalida la NCE entera. Nunca se usa solo dCodInt ni el orden. Lo no probado queda COMPLETO como ajuste no atribuible (importe de cabecera, sin cambiar los totales).
  */
+const FIRMA = (cod: string, gtin: string, des: string, uni: string, afe: string, tasa: string, prop: string, monto: string, cant: string, prec: string) =>
+  `CASE WHEN ${[uni, afe, tasa, prop, monto, cant, prec].map((x) => `${x} IS NOT NULL`).join(" AND ")}
+        THEN jsonb_build_array(${cod}, ${gtin}, ${des}, ${uni}, ${afe}, ${tasa}, ${prop}, ${monto}, ${cant}, ${prec}) END`;
 const ATRIBUCION_NCE = `
   fev AS (
     SELECT f.id AS nce_id, s.payload->'Detalles' AS fe_det
@@ -274,31 +279,44 @@ const ATRIBUCION_NCE = `
        AND (SELECT count(*) FROM documento_electronico_solicitudes s2 WHERE s2.empresa_id = $1 AND s2.documento_id = f.fe_id) = 1
        AND jsonb_typeof(s.payload->'Detalles') = 'array'
   ),
-  par AS (
-    SELECT fev.nce_id, x.ord, nl.linea
+  -- Firma de cada ítem del JSON de la NCE.
+  fn AS (
+    SELECT fev.nce_id,
+           CASE WHEN jsonb_typeof(x.e) = 'object' THEN ${FIRMA(
+             "nullif(btrim(x.e->>'dCodInt'), '')", "nullif(btrim(x.e->>'dGtin'), '')", "btrim(coalesce(x.e->>'dDesProSer', ''))",
+             NUMX("x.e->'cUniMed'"), NUMX("x.e->'iAfecIVA'"), NUMX("x.e->'dTasaIVA'"), NUMX("x.e->'dPropIVA'"),
+             NUM("x.e->'dTotOpeItem'"), NUMX("x.e->'dCantProSer'"), NUMX("x.e->'dPUniProSer'"),
+           )} END AS firma
       FROM fev
       JOIN fil f ON f.id = fev.nce_id
-     CROSS JOIN LATERAL jsonb_array_elements(${ARREGLO("f.det")}) WITH ORDINALITY x(e, ord)
+     CROSS JOIN LATERAL jsonb_array_elements(${ARREGLO("f.det")}) x(e)
+  ),
+  -- Firma esperada de cada línea acreditada, desde la línea original de la FE y los importes registrados en nce_lineas.
+  fl AS (
+    SELECT fev.nce_id,
+           CASE WHEN nl.linea BETWEEN 1 AND jsonb_array_length(fev.fe_det) AND jsonb_typeof(fo.o) = 'object'
+                     AND CASE WHEN f.motivo = 2 THEN nl.cantidad > 0 ELSE nl.cantidad = 0 END
+                THEN ${FIRMA(
+                  "nullif(btrim(fo.o->>'dCodInt'), '')", "nullif(btrim(fo.o->>'dGtin'), '')", "btrim(coalesce(fo.o->>'dDesProSer', ''))",
+                  NUMX("fo.o->'cUniMed'"), NUMX("fo.o->'iAfecIVA'"), NUMX("fo.o->'dTasaIVA'"), NUMX("fo.o->'dPropIVA'"),
+                  "nl.monto", "CASE WHEN f.motivo = 2 THEN nl.cantidad ELSE 1 END", `CASE WHEN f.motivo = 2 THEN ${NUMX("fo.o->'dPUniProSer'")} ELSE nl.monto END`,
+                )} END AS firma
+      FROM fev
+      JOIN fil f ON f.id = fev.nce_id
       JOIN nce_lineas nl ON nl.empresa_id = $1 AND nl.nce_id = fev.nce_id AND nl.fe_id = f.fe_id
-     CROSS JOIN LATERAL (SELECT fev.fe_det->(nl.linea - 1) AS o) fo
-     WHERE nl.linea BETWEEN 1 AND jsonb_array_length(fev.fe_det) AND jsonb_typeof(fo.o) = 'object' AND jsonb_typeof(x.e) = 'object'
-       AND nullif(btrim(x.e->>'dCodInt'), '') IS NOT DISTINCT FROM nullif(btrim(fo.o->>'dCodInt'), '')
-       AND nullif(btrim(x.e->>'dGtin'), '') IS NOT DISTINCT FROM nullif(btrim(fo.o->>'dGtin'), '')
-       AND btrim(coalesce(x.e->>'dDesProSer', '')) = btrim(coalesce(fo.o->>'dDesProSer', ''))
-       AND ${NUMX("x.e->'cUniMed'")} = ${NUMX("fo.o->'cUniMed'")}
-       AND ${NUMX("x.e->'iAfecIVA'")} = ${NUMX("fo.o->'iAfecIVA'")}
-       AND ${NUMX("x.e->'dTasaIVA'")} = ${NUMX("fo.o->'dTasaIVA'")}
-       AND ${NUMX("x.e->'dPropIVA'")} = ${NUMX("fo.o->'dPropIVA'")}
-       AND ${NUM("x.e->'dTotOpeItem'")} = nl.monto
-       AND CASE WHEN f.motivo = 2
-                THEN nl.cantidad > 0 AND ${NUMX("x.e->'dCantProSer'")} = nl.cantidad AND ${NUMX("x.e->'dPUniProSer'")} = ${NUMX("fo.o->'dPUniProSer'")}
-                ELSE nl.cantidad = 0 AND ${NUMX("x.e->'dCantProSer'")} = 1 AND ${NUMX("x.e->'dPUniProSer'")} = nl.monto END
+     CROSS JOIN LATERAL (SELECT CASE WHEN nl.linea BETWEEN 1 AND jsonb_array_length(fev.fe_det) THEN fev.fe_det->(nl.linea - 1) END AS o) fo
+  ),
+  -- Multiplicidad por firma de cada lado (jsonb compara los números por valor: 1 = 1.0).
+  mult AS (
+    SELECT nce_id, firma, sum(n_item)::int AS n_item, sum(n_linea)::int AS n_linea
+      FROM (SELECT nce_id, firma, 1 AS n_item, 0 AS n_linea FROM fn UNION ALL SELECT nce_id, firma, 0, 1 FROM fl) u
+     GROUP BY nce_id, firma
   ),
   atr AS (
     SELECT fev.nce_id
-      FROM fev JOIN fil f ON f.id = fev.nce_id
-     WHERE (SELECT count(DISTINCT par.ord) FROM par WHERE par.nce_id = fev.nce_id) = f.it_n
-       AND (SELECT count(DISTINCT par.linea) FROM par WHERE par.nce_id = fev.nce_id) = f.lin_n
+      FROM fev
+     WHERE EXISTS (SELECT 1 FROM mult m WHERE m.nce_id = fev.nce_id)
+       AND NOT EXISTS (SELECT 1 FROM mult m WHERE m.nce_id = fev.nce_id AND (m.firma IS NULL OR m.n_item <> m.n_linea))
   )`;
 
 /** Medidas agregadas (sobre filas ya COMPUTA): cantidades de documentos DISTINTOS y sumas de cabecera; NCE en positivo y restadas en los netos. */
