@@ -9,6 +9,7 @@ import { CampoFecha } from "@/components/ui/campo-fecha";
 import ui from "@/components/ui/lista-padrao/lista.module.css";
 import {
   cargarCatalogosEntrada,
+  conCodigo,
   confirmadaDe,
   consultarPendienteEntradaApi,
   ejecutarEntradaApi,
@@ -382,7 +383,7 @@ export default function NuevaEntradaPage() {
               <dl className={local.resumen} aria-label="Resumen de la entrada">
                 <div>
                   <dt>Proveedor</dt>
-                  <dd>{proveedor ? `${proveedor.codigo} · ${proveedor.nombre}` : cab.proveedorId ? "Proveedor guardado en la operación original" : "—"}</dd>
+                  <dd>{proveedor ? conCodigo(proveedor.codigo, proveedor.nombre) : cab.proveedorId ? "Proveedor guardado en la operación original" : "—"}</dd>
                 </div>
                 <div>
                   <dt>Documento</dt>
@@ -425,13 +426,11 @@ export default function NuevaEntradaPage() {
                 <select value={cab.proveedorId} disabled={!edicion || cargando} aria-invalid={errores.proveedorId ? true : undefined} onChange={(e) => cambiarCab({ proveedorId: e.target.value })} aria-label="Proveedor">
                   <option value="">Seleccione el proveedor</option>
                   {proveedor && !proveedoresFiltrados.some((p) => p.id === proveedor.id) ? (
-                    <option value={proveedor.id}>
-                      {proveedor.codigo} · {proveedor.nombre}
-                    </option>
+                    <option value={proveedor.id}>{conCodigo(proveedor.codigo, proveedor.nombre)}</option>
                   ) : null}
                   {proveedoresFiltrados.map((p) => (
                     <option key={p.id} value={p.id}>
-                      {p.codigo} · {p.nombre} · {p.documento}
+                      {conCodigo(p.codigo, `${p.nombre} · ${p.documento}`)}
                     </option>
                   ))}
                 </select>

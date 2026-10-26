@@ -2,7 +2,7 @@
 -- NEX-075 — Compras → Entradas (E6-A / PRO-325): entrada de mercadería con proveedor, registrada por el motor oficial de inventario en UNA sola transacción, con intención DURABLE.
 -- Norma: documentacao/definicoes/REQ-NEXIT-CM-E6-COMPRAS-ENTRADAS-2026-10-26.md. Orden: documentacao/ordens/ORD-CLAUDE-NEXIT-E6-A-COMPRAS-ENTRADAS-2026-10-26.md.
 -- Qué agrega (incremental, NO modifica NEX-001…074 ni el motor NEX-014):
---  · compras_entradas: metadatos 1:1 de la entrada (proveedor + snapshot código/nombre/documento, fecha operativa, referencia libre, usuario) ligados por FK compuesta (empresa) al ÚNICO movimiento
+--  · compras_entradas: metadatos 1:1 de la entrada (proveedor + snapshot código —opcional, NULL si el proveedor no tiene— / nombre / documento, fecha operativa, referencia libre, usuario) ligados por FK compuesta (empresa) al ÚNICO movimiento
 --    ENTRADA/COMPRA (movimiento_id UNIQUE). No guarda stock, cantidades ni costos: las líneas y costos reales viven en movimiento_lineas (motor). Es la fuente EXCLUSIVA de la futura E6-B; un movimiento
 --    COMPRA manual anterior NO tiene fila aquí y nunca se clasifica como entrada de Compras. Inmutable (solo el reinicio DEMO borra).
 --  · compras_entradas_intenciones: protocolo durable EQUIVALENTE a NEX-066 (mismos estados RESERVADA / CONFIRMADA / RECHAZADA_DEFINITIVA, ACK `reconocida_at`, una pendiente por operador garantizada por
@@ -49,7 +49,7 @@ CREATE TABLE public.compras_entradas (
   empresa_id          uuid        NOT NULL REFERENCES public.empresas (id),
   movimiento_id       uuid        NOT NULL,
   proveedor_id        uuid        NOT NULL,
-  proveedor_codigo    text        NOT NULL,
+  proveedor_codigo    text,       -- opcional: NEX-006 admite proveedores sin código interno (NULL = sin código; nunca se inventa)
   proveedor_nombre    text        NOT NULL,
   proveedor_documento text        NOT NULL,
   fecha_operativa     date        NOT NULL,
@@ -66,7 +66,7 @@ CREATE TABLE public.compras_entradas (
   CONSTRAINT compras_entradas_usuario_fk       FOREIGN KEY (empresa_id, creado_por) REFERENCES public.usuarios (empresa_id, id),
   CONSTRAINT compras_entradas_referencia_chk   CHECK (referencia IS NULL OR (length(btrim(referencia)) > 0 AND char_length(referencia) <= 120)),
   CONSTRAINT compras_entradas_clave_chk        CHECK (length(btrim(clave)) BETWEEN 8 AND 120),
-  CONSTRAINT compras_entradas_snapshot_chk     CHECK (length(btrim(proveedor_codigo)) > 0 AND length(btrim(proveedor_nombre)) > 0 AND length(btrim(proveedor_documento)) > 0)
+  CONSTRAINT compras_entradas_snapshot_chk     CHECK ((proveedor_codigo IS NULL OR length(btrim(proveedor_codigo)) > 0) AND length(btrim(proveedor_nombre)) > 0 AND length(btrim(proveedor_documento)) > 0)
 );
 CREATE INDEX compras_entradas_fecha_idx ON public.compras_entradas (empresa_id, fecha_operativa DESC, creado_at DESC);
 CREATE INDEX compras_entradas_proveedor_idx ON public.compras_entradas (empresa_id, proveedor_id);
@@ -233,6 +233,9 @@ DECLARE
   v_num       text;
   v_rep       boolean;
   v_entrada   uuid;
+  v_prov_cod  text;
+  v_prov_doc  text;
+  v_prov_id   text;
 BEGIN
   IF NOT public.usuario_tiene_permiso(p_empresa, p_usuario, 'COMPRAS', 'CREAR') THEN
     RAISE EXCEPTION 'el usuario no tiene permiso COMPRAS.CREAR en esta empresa' USING ERRCODE = '42501';
@@ -263,8 +266,12 @@ BEGIN
   IF NOT FOUND THEN
     RAISE EXCEPTION 'el proveedor no existe en esta empresa' USING ERRCODE = 'P0001', DETAIL = 'NEX:COMPRA_PROVEEDOR_INVALIDO';
   END IF;
+  -- Código interno OPCIONAL (NEX-006): NULL o vacío = sin código; se guarda NULL. Sin código, el proveedor se identifica por su razón social y documento reales.
+  v_prov_cod := CASE WHEN btrim(COALESCE(pv.codigo, '')) = '' THEN NULL ELSE pv.codigo END;
+  v_prov_doc := pv.tipo_documento || ' ' || pv.numero_documento || CASE WHEN pv.dv IS NOT NULL THEN '-' || pv.dv ELSE '' END;
+  v_prov_id  := COALESCE(v_prov_cod, pv.razon_social || ' (' || v_prov_doc || ')');
   IF NOT pv.activo OR pv.bloqueado THEN
-    RAISE EXCEPTION 'el proveedor % está inactivo o bloqueado', pv.codigo USING ERRCODE = 'P0001', DETAIL = 'NEX:COMPRA_PROVEEDOR_INVALIDO';
+    RAISE EXCEPTION 'el proveedor % está inactivo o bloqueado', v_prov_id USING ERRCODE = 'P0001', DETAIL = 'NEX:COMPRA_PROVEEDOR_INVALIDO';
   END IF;
 
   -- Líneas
@@ -353,14 +360,13 @@ BEGIN
   -- Motor oficial (NEX-014): permisos MOVIMIENTOS.CREAR, alcance del depósito, fecha no futura, stock y costo promedio, idempotencia K1. Sin escritura directa de saldos ni costos.
   SELECT r.o_movimiento_id, r.o_numero, r.o_repetido INTO v_mov, v_num, v_rep
     FROM public.inventario_registrar_movimiento(p_empresa, p_usuario, 'ENTRADA', 'COMPRA', v_fecha, NULL, v_deposito, v_lineas, v_clave_mov, NULL,
-                                                'Compras → Entradas · proveedor ' || pv.codigo, v_obs, v_ref) r;
+                                                'Compras → Entradas · proveedor ' || v_prov_id, v_obs, v_ref) r;
   IF v_rep THEN
     RAISE EXCEPTION 'el motor devolvió un movimiento ya existente para esta entrada: requiere revisión' USING ERRCODE = 'P0001', DETAIL = 'NEX:COMPRA_ENTRADA_INCONSISTENTE';
   END IF;
 
   INSERT INTO public.compras_entradas (empresa_id, movimiento_id, proveedor_id, proveedor_codigo, proveedor_nombre, proveedor_documento, fecha_operativa, referencia, clave, creado_por)
-  VALUES (p_empresa, v_mov, pv.id, pv.codigo, pv.razon_social,
-          pv.tipo_documento || ' ' || pv.numero_documento || CASE WHEN pv.dv IS NOT NULL THEN '-' || pv.dv ELSE '' END,
+  VALUES (p_empresa, v_mov, pv.id, v_prov_cod, pv.razon_social, v_prov_doc,
           v_fecha, v_ref, p_clave, p_usuario)
   RETURNING id INTO v_entrada;
 

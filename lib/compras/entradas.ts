@@ -216,7 +216,7 @@ const FROM_ENTRADAS = `
                          FROM movimiento_lineas l WHERE l.empresa_id = m.empresa_id AND l.movimiento_id = m.id) t ON true`;
 
 const SELECT_ENTRADA = `SELECT e.id, m.id AS "movimientoId", m.numero_movimiento AS numero, m.estado, to_char(e.fecha_operativa, 'YYYY-MM-DD') AS fecha,
-         e.proveedor_id AS "proveedorId", e.proveedor_codigo AS "proveedorCodigo", e.proveedor_nombre AS "proveedorNombre", e.proveedor_documento AS "proveedorDocumento",
+         e.proveedor_id AS "proveedorId", coalesce(e.proveedor_codigo, '') AS "proveedorCodigo", e.proveedor_nombre AS "proveedorNombre", e.proveedor_documento AS "proveedorDocumento",
          m.deposito_destino_id AS "depositoId", coalesce(d.codigo, '') AS "depositoCodigo", coalesce(d.nombre, '') AS "depositoNombre",
          coalesce(e.referencia, '') AS referencia, coalesce(m.observacion, '') AS observacion, coalesce(u.usuario, '') AS usuario, e.creado_at AS "creadoEn",
          t.lineas, coalesce(t.total, '0') AS "costoTotal", coalesce(t.moneda, '') AS moneda`;
@@ -302,7 +302,7 @@ export async function leerEntrada(db: Pick<Pool, "query">, empresaId: string, us
 export async function catalogosEntrada(db: Pick<Pool, "query">, empresaId: string, usuarioId: string) {
   const [proveedores, depositos, productos, moneda] = await Promise.all([
     db.query(
-      `SELECT p.id, p.codigo, p.razon_social AS nombre, coalesce(p.nombre_fantasia, '') AS fantasia,
+      `SELECT p.id, CASE WHEN btrim(coalesce(p.codigo, '')) = '' THEN '' ELSE p.codigo END AS codigo, p.razon_social AS nombre, coalesce(p.nombre_fantasia, '') AS fantasia,
               p.tipo_documento || ' ' || p.numero_documento || CASE WHEN p.dv IS NOT NULL THEN '-' || p.dv ELSE '' END AS documento
          FROM proveedores p WHERE p.empresa_id = $1 AND p.activo AND NOT p.bloqueado ORDER BY p.razon_social`,
       [empresaId],

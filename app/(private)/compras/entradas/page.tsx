@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 
 import ui from "@/components/ui/lista-padrao/lista.module.css";
 import { CampoFecha } from "@/components/ui/campo-fecha";
-import { cargarEntradas, type RespuestaEntradas } from "@/lib/compras/entradas-cliente";
+import { cargarEntradas, conCodigo, type RespuestaEntradas } from "@/lib/compras/entradas-cliente";
 import { formatearFechaIso } from "@/lib/formato/listas";
 import { formatearMontoTexto } from "@/lib/inventario/decimal";
 
@@ -180,9 +180,7 @@ export default function EntradasPage() {
                   <td>
                     <div className={ui.cell}>
                       <strong>{e.proveedorNombre}</strong>
-                      <span>
-                        {e.proveedorCodigo} · {e.proveedorDocumento}
-                      </span>
+                      <span>{conCodigo(e.proveedorCodigo, e.proveedorDocumento)}</span>
                     </div>
                   </td>
 

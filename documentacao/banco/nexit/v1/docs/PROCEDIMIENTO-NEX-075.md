@@ -33,3 +33,4 @@
 | C-05 | Costo 0 explícito vs vacío; cantidad 0, negativa o con 5 decimales; producto por serie | 0 aceptado; vacío y demás rechazados |
 | C-06 | Anular el movimiento en Movimientos | Movimiento inverso; la entrada figura «Anulada» |
 | C-07 | Entrada manual COMPRA anterior / recepciones DEMO | No aparecen en Compras → Entradas |
+| C-08 | Proveedor activo y no bloqueado SIN código interno (NULL o vacío) | Entrada registrada; `proveedor_codigo` NULL; motivo «proveedor <razón social> (<documento>)»; pantallas sin «null» ni separadores sueltos |

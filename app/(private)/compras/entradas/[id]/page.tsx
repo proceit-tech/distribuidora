@@ -6,7 +6,7 @@ import { Suspense, useEffect, useState } from "react";
 
 import local from "@/app/(private)/movimientos/[id]/page.module.css";
 import ui from "@/components/ui/lista-padrao/lista.module.css";
-import { cargarEntrada, type EntradaDetalle } from "@/lib/compras/entradas-cliente";
+import { cargarEntrada, conCodigo, type EntradaDetalle } from "@/lib/compras/entradas-cliente";
 import { formatearFechaIso } from "@/lib/formato/listas";
 import { formatearCostoUnitarioTexto, formatearMontoTexto } from "@/lib/inventario/decimal";
 import { formatearCantidadMovimiento } from "@/lib/movimientos/formato-cantidad";
@@ -95,7 +95,7 @@ function DetalleEntrada() {
             {entrada.numero} <span className={anulada ? ui.statusDanger : ui.statusActive}>{anulada ? "Anulada" : "Registrada"}</span>
           </h1>
           <p className={local.subtitulo}>
-            {entrada.proveedorCodigo} · {entrada.proveedorNombre} · {formatearFechaIso(entrada.fecha)}
+            {conCodigo(entrada.proveedorCodigo, entrada.proveedorNombre)} · {formatearFechaIso(entrada.fecha)}
           </p>
         </div>
 
@@ -122,7 +122,7 @@ function DetalleEntrada() {
 
       <section className={local.bloque} aria-label="Datos de la entrada">
         <dl className={local.datos}>
-          {dato("Proveedor", `${entrada.proveedorCodigo} · ${entrada.proveedorNombre}`)}
+          {dato("Proveedor", conCodigo(entrada.proveedorCodigo, entrada.proveedorNombre))}
           {dato("Documento del proveedor", entrada.proveedorDocumento)}
           {dato("Depósito destino", entrada.depositoCodigo ? `${entrada.depositoCodigo} · ${entrada.depositoNombre}` : entrada.depositoNombre)}
           {dato("Fecha", formatearFechaIso(entrada.fecha))}

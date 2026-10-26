@@ -11,6 +11,7 @@ export type EntradaFila = {
   estado: "REGISTRADO" | "ANULADO";
   fecha: string;
   proveedorId: string;
+  /** Código interno del proveedor al registrar la entrada; '' si el proveedor no tiene código (NEX-006 lo admite). */
   proveedorCodigo: string;
   proveedorNombre: string;
   proveedorDocumento: string;
@@ -46,6 +47,7 @@ export type EntradaDetalle = EntradaFila & { anuladoPor: string; lineasDetalle: 
 export type RespuestaEntradas = { entradas: EntradaFila[]; total: number; pagina: number; tamano: number; totalPaginas: number; permisos?: { crear: boolean } };
 
 export type CatalogoEntrada = {
+  /** codigo = '' cuando el proveedor no tiene código interno. */
   proveedores: Array<{ id: string; codigo: string; nombre: string; fantasia: string; documento: string }>;
   depositos: Array<{ id: string; codigo: string; nombre: string }>;
   productos: Array<{ id: string; codigo: string; descripcion: string; unidadMedidaNombre: string; modoControl: ModoControl }>;
@@ -53,6 +55,9 @@ export type CatalogoEntrada = {
 };
 
 export type ConsultaEntradasCliente = { q?: string; desde?: string; hasta?: string; proveedorId?: string; depositoId?: string; estado?: string; pagina?: number };
+
+/** «CÓDIGO · texto», o solo el texto si no hay código: un proveedor sin código interno se muestra por su nombre/documento reales, sin separadores sueltos ni «null». */
+export const conCodigo = (codigo: string | null | undefined, texto: string) => (codigo && codigo.trim() ? `${codigo} · ${texto}` : texto);
 
 const jsonDe = async (r: Response): Promise<Record<string, unknown> | null> => {
   try {
