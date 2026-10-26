@@ -567,3 +567,116 @@ export type LotesRespuesta = {
 
 /** Respuesta de la API: agrega `permisos.exportar` (el servidor vuelve a exigir REPORTES.EXPORTAR en la exportación). */
 export type LotesRespuestaApi = LotesRespuesta & { permisos: { exportar: boolean } };
+
+// ── Informe de Ventas (E5 / PRO-296) ─────────────────────────────────────────────────────────────────────────────────────
+export type VistaVentas = "RESUMEN" | "DOCUMENTOS" | "PRODUCTOS" | "CLIENTES" | "VENDEDORES" | "MESES";
+/** Situación de un documento en el informe: COMPUTA (APROBADO y conciliable), NO_COMPUTA (cualquier otro estado SIFEN) o ANOMALIA (APROBADO sin información fiscal conciliable). */
+export type SituacionVentas = "COMPUTA" | "NO_COMPUTA" | "ANOMALIA";
+/** Origen del vendedor comercial de una fila: snapshot NEX-074 de la FE (la NCE lo hereda por nce_origen). Nunca el usuario emisor. */
+export type EstadoVendedorVentas = "REGISTRADO" | "SIN_REGISTRO" | "FUERA_ALCANCE" | "SIN_ORIGEN" | "NO_DISPONIBLE";
+
+export type VentasFiltros = {
+  vista: VistaVentas;
+  /** Fechas fiscales AAAA-MM-DD (día calendario de Asunción); intervalo [desde, hasta + 1 día). */
+  desde: string;
+  hasta: string;
+  sucursalId: string;
+  tipo: "" | "FE" | "NCE";
+  moneda: "" | "PYG" | "USD" | "BRL";
+  /** Número de documento, CDC, nombre o documento del receptor (snapshot). */
+  q: string;
+  /** cliente_id exacto (agrupación por cliente vinculado). */
+  clienteId: string;
+  /** "" = todos; UUID = vendedor registrado; "SIN" = sin vendedor registrado. */
+  vendedor: string;
+  /** Solo vista Productos: código o descripción histórica del ítem. */
+  producto: string;
+  /** Solo vista Documentos: estado SIFEN y situación del documento. */
+  estado: string;
+  situacion: "TODAS" | SituacionVentas;
+};
+
+/** Importes por moneda: texto numeric exacto de PostgreSQL. FE y NCE aprobadas y conciliables; las NCE se informan en positivo y se restan en los netos. */
+export type VentasImportes = {
+  documentosFe: number;
+  documentosNce: number;
+  feConIva: string;
+  ivaFe: string;
+  feSinIva: string;
+  nceConIva: string;
+  ivaNce: string;
+  nceSinIva: string;
+  netoConIva: string;
+  ivaNeto: string;
+  netoSinIva: string;
+};
+
+export type VentasResumenMoneda = VentasImportes & { moneda: string };
+
+export type VentasEstadoInformativo = { tipo: string; estadoSifen: string; moneda: string; documentos: number; enviados: number; total: string };
+export type VentasAnomalia = { motivo: string; tipo: string; moneda: string; documentos: number; total: string };
+
+export type VentasFilaDocumento = {
+  clave: string;
+  fecha: string;
+  tipo: string;
+  numero: string;
+  cdc: string | null;
+  sucursal: string;
+  receptor: string;
+  receptorDocumento: string | null;
+  clienteVinculado: boolean;
+  vendedorEstado: EstadoVendedorVentas;
+  vendedor: string | null;
+  moneda: string;
+  /** Con signo: FE positiva, NCE negativa. totalConIva = total del documento; IVA y sin IVA solo si el documento computa. */
+  totalConIva: string;
+  iva: string | null;
+  sinIva: string | null;
+  estadoSifen: string;
+  estadoLocal: string;
+  situacion: SituacionVentas;
+  anomalia: string | null;
+  nceMotivo: number | null;
+  /** Número de la FE original de la NCE; null si no hay vínculo o si la FE está fuera del alcance (feFueraAlcance). */
+  feReferencia: string | null;
+  feFueraAlcance: boolean;
+};
+
+/** Fila agregada (Productos, Clientes, Vendedores, Meses). En Productos, cantidades por unidad de emisión (nunca se suman unidades distintas). */
+export type VentasFilaGrupo = VentasImportes & {
+  clave: string;
+  etiqueta: string;
+  detalle: string;
+  moneda: string;
+  unidad: string;
+  cantidadVendida: string | null;
+  cantidadDevuelta: string | null;
+  clienteId: string | null;
+};
+
+export type VentasTotalDocumentos = { moneda: string; filas: number; computan: number; totalConIva: string; iva: string; sinIva: string };
+export type VentasAjusteNoAtribuible = { moneda: string; documentos: number; conIva: string; iva: string; sinIva: string };
+
+export type VentasRespuesta = {
+  empresa: { nombre: string };
+  generado: string;
+  sello: string;
+  filtros: VentasFiltros;
+  pagina: { numero: number; tamano: number; totalFilas: number };
+  esquema: { vendedor: boolean; nceDescuento: boolean };
+  resumen: VentasResumenMoneda[];
+  estados: VentasEstadoInformativo[];
+  anomalias: VentasAnomalia[];
+  documentos: VentasFilaDocumento[];
+  totalesDocumentos: VentasTotalDocumentos[];
+  grupos: VentasFilaGrupo[];
+  /** Vista Productos: subtotal de los productos (con el filtro de producto, si lo hay) por moneda. */
+  totalesProductos: VentasResumenMoneda[];
+  ajustesNoAtribuibles: VentasAjusteNoAtribuible[];
+  catalogos: { sucursales: { id: string; nombre: string }[]; vendedores: { id: string; nombre: string }[]; cliente: { id: string; nombre: string } | null };
+  avisos: string[];
+  cobertura: string[];
+};
+
+export type VentasRespuestaApi = VentasRespuesta & { permisos: { exportar: boolean } };

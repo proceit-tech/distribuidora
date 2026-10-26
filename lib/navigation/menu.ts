@@ -343,6 +343,13 @@ export const NAVIGATION_GROUPS: ShellNavigationGroup[] = [
         icon: "reports",
         permission: "REPORTES.VER",
       },
+      {
+        id: "report-ventas",
+        label: "Informe de Ventas",
+        href: "/reportes/ventas",
+        icon: "reports",
+        permission: "REPORTES.VER",
+      },
     ],
   },
   {
@@ -424,6 +431,7 @@ const V1_HREFS = new Set([
   "/reportes/kardex",
   "/reportes/stock-critico",
   "/reportes/lotes",
+  "/reportes/ventas",
 ]);
 
 export const PLATFORM_GROUP: ShellNavigationGroup = {
