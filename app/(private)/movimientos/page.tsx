@@ -11,7 +11,8 @@ import type { MovimientoStockTipo } from "@/types/movimientos-stock";
 import { siguienteOrden, type Orden } from "@/components/ui/lista-padrao/orden";
 import { ThOrdenable } from "@/components/ui/lista-padrao/th-ordenable";
 import ui from "@/components/ui/lista-padrao/lista.module.css";
-import { formatearCantidad, formatearFechaIso } from "@/lib/formato/listas";
+import { formatearFechaIso } from "@/lib/formato/listas";
+import { formatearCantidadMovimiento } from "@/lib/movimientos/formato-cantidad";
 
 const PAGE_SIZE = 20;
 
@@ -327,7 +328,7 @@ export default function MovimientosPage() {
                   <td className={ui.numeric}>
                     <div className={ui.cell}>
                       <strong className={ui.mono}>
-                        {formatearCantidad(mov.cantidad)} {mov.unidadMedidaNombre}
+                        {formatearCantidadMovimiento(mov.cantidad)} {mov.unidadMedidaNombre}
                       </strong>
                       <span>{mov.lote ? `Lote ${mov.lote}` : mov.propiedad === "TERCERO" ? "Stock tercero" : "Stock propio"}</span>
                     </div>

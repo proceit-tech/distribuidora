@@ -13,6 +13,7 @@ import { hoyAsuncion } from "@/lib/listas-precio/calculos";
 import { useProtegerCambios } from "@/lib/ui/proteger-cambios";
 import { cargarCatalogosMovimientos, consultarIntencionApi, ejecutarIntencionApi, reconocerIntencionApi, reservarIntencionApi } from "@/lib/movimientos/cliente-api";
 import { confirmarRecepcionOperador, consultarResultado, recuperarIntencion } from "@/lib/movimientos/recuperacion";
+import { formatearCantidadMovimiento } from "@/lib/movimientos/formato-cantidad";
 import { iniciarCargaCatalogos, procesarCargaCatalogos } from "@/lib/movimientos/inicializacion";
 import { aplicarResultadoSiVigente, crearControlRegistro, MENSAJE_SALIDA, MENSAJE_SIN_ACK, type EstadoIntento } from "@/lib/movimientos/intento";
 import {
@@ -466,19 +467,19 @@ export default function NuevoMovimientoPage() {
               <div className={local.saldos} aria-label="Saldo visible del producto">
                 <div>
                   <span>Disponible</span>
-                  <strong>{saldos.disponible}</strong>
+                  <strong>{formatearCantidadMovimiento(saldos.disponible)}</strong>
                 </div>
                 <div>
                   <span>Reservado</span>
-                  <strong>{saldos.reservado}</strong>
+                  <strong>{formatearCantidadMovimiento(saldos.reservado)}</strong>
                 </div>
                 <div>
                   <span>Cuarentena</span>
-                  <strong>{saldos.cuarentena}</strong>
+                  <strong>{formatearCantidadMovimiento(saldos.cuarentena)}</strong>
                 </div>
                 <div>
                   <span>Tránsito</span>
-                  <strong>{saldos.transito}</strong>
+                  <strong>{formatearCantidadMovimiento(saldos.transito)}</strong>
                 </div>
               </div>
               <p className={local.saldosNota}>{depositoRef ? `Saldo propio en ${nombreDeposito(depositoRef)}.` : "Saldo propio total de los depósitos que usted puede operar."}</p>
@@ -538,7 +539,7 @@ export default function NuevoMovimientoPage() {
                 <datalist id="lotes-sugeridos">
                   {lotesSugeridos.map((x, i) => (
                     <option key={`${x.codigo}-${x.estado}-${i}`} value={x.codigo}>
-                      {x.estado} · {x.cantidad}
+                      {x.estado} · {formatearCantidadMovimiento(x.cantidad)}
                     </option>
                   ))}
                 </datalist>

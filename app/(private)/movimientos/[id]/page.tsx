@@ -6,7 +6,8 @@ import { useEffect, useRef, useState } from "react";
 
 import styles from "@/app/(private)/productos/catalogos/page.module.css";
 import ui from "@/components/ui/lista-padrao/lista.module.css";
-import { formatearCantidad, formatearFechaIso, formatearMonto } from "@/lib/formato/listas";
+import { formatearFechaIso, formatearMonto } from "@/lib/formato/listas";
+import { formatearCantidadMovimiento } from "@/lib/movimientos/formato-cantidad";
 import { anularMovimientoApi, cargarMovimiento, type RespuestaMovimiento } from "@/lib/movimientos/cliente-api";
 import { ETIQUETA_ORIGEN, TIPOS_INFO } from "@/lib/movimientos/formulario";
 import { MOTIVO_MINIMO } from "@/lib/movimientos/reglas";
@@ -179,7 +180,7 @@ export default function MovimientoDetallePage() {
         <dl className={local.datos}>
           {dato("Tipo", TIPOS_INFO[mov.tipo]?.etiqueta ?? mov.tipo)}
           {dato("Origen", origen)}
-          {dato("Cantidad", `${formatearCantidad(mov.cantidad)} ${mov.unidadMedidaNombre}`)}
+          {dato("Cantidad", `${formatearCantidadMovimiento(mov.cantidad)} ${mov.unidadMedidaNombre}`)}
           {dato("Usuario", mov.usuario)}
           {dato("Depósito origen", mov.depositoOrigenNombre)}
           {dato("Depósito destino", mov.depositoDestinoNombre)}
@@ -221,7 +222,7 @@ export default function MovimientoDetallePage() {
                     <td>{l.lote || "—"}</td>
                     <td className={ui.numeric}>
                       <span className={ui.mono}>
-                        {formatearCantidad(l.cantidad)} {l.unidadMedidaNombre}
+                        {formatearCantidadMovimiento(l.cantidad)} {l.unidadMedidaNombre}
                       </span>
                     </td>
                   </tr>

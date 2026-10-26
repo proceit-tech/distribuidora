@@ -4,6 +4,7 @@
  * Nada de lo que se precarga por la dirección (producto, tipo, depósitos, cantidad) se acepta sin validarlo contra el catálogo que la API
  * entrega para la sesión (depósitos autorizados, productos activos con control de stock).
  */
+import { formatearCantidadMovimiento } from "@/lib/movimientos/formato-cantidad";
 import { motivoObligatorio, mensajeMotivoObligatorio, MOTIVO_MINIMO, ORIGENES_POR_TIPO } from "@/lib/movimientos/reglas";
 import type { CatalogoMovimientos, MovimientoProductoOpcion, MovimientoStockOrigen, MovimientoStockTipo, NuevoMovimientoStock } from "@/types/movimientos-stock";
 
@@ -134,7 +135,7 @@ export function advertenciaSaldo(f: NuevoMovimientoStock, producto: MovimientoPr
 
   if (f.cantidad <= visible) return "";
 
-  return `La cantidad supera el ${consume} visible en el depósito origen (${visible}). El sistema validará el saldo real al registrar${producto.modoControl === "LOTE" ? " y el lote indicado" : ""}.`;
+  return `La cantidad supera el ${consume} visible en el depósito origen (${formatearCantidadMovimiento(visible)}). El sistema validará el saldo real al registrar${producto.modoControl === "LOTE" ? " y el lote indicado" : ""}.`;
 }
 
 export function movimientoSucio(actual: NuevoMovimientoStock, base: NuevoMovimientoStock): boolean {
