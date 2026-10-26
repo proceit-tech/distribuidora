@@ -1,5 +1,7 @@
 # ORDEM FOCAL — PRO-93-R06-C01 / PRO-128 — fechar auditoria estática R01 (25/10/2026)
 
+> **HISTÓRICO EXECUTADO — NÃO EXECUTAR NOVAMENTE (26/10/2026):** esta ordem foi emitida pelo ChatGPT com base em exigências mobile que o responsável NÃO solicitou. Claude executou no SHA `275e19aaa9c9d341a5ea9ac70e4369d861e3010f`. Não há nova tarefa mobile nem obrigação de ampliar responsividade. [Parecer de retificação R02](../testes/AUD-NEXIT-PRO-93-R06-UX-R02-ESCOPO-DESKTOP-2026-10-26.md).
+
 **Branch única:** `feature/NEXIT-2026-001-banco-demo`. **Commit funcional auditado:** `4cdcbf75dee6e0912360f05e3ee9ae32991b5e59`.
 
 **LEITURA INICIAL OBRIGATÓRIA (integrais):** `CLAUDE.md`, `documentacao/ordens/ORD-CLAUDE-NEXIT-PRO-93-R06-UX-RESUMEN-PRODUCTOS-2026-10-25.md`, `documentacao/testes/AUD-NEXIT-PRO-93-R06-UX-R01-2026-10-25.md`, Linear PRO-93/128/115 e arquivos COMPLETOS `app/(private)/facturas/nueva/page.tsx` / `page.module.css`. Conferir a cascata inteira ANTES da edição; revisar integralmente os dois arquivos DEPOIS.
