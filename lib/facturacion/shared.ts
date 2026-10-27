@@ -387,8 +387,8 @@ export function nombreArchivoKude(doc: Record<string, unknown>): string {
 
 /**
  * KuDE (PDF) de una FE o NCE existente (PRO-194 / E08). Documento por ID dentro de empresa + sucursal de la SESIÓN; identidad fiscal (tipo, establecimiento, punto, número, serie) del registro
- * persistido, nunca del navegador. NO se exige estado fiscal ni CDC previo: se consulta al gateway y se muestra si devuelve un PDF válido de ESE documento (CDC coherente con la identidad y, si hay uno
- * persistido, idéntico). Sin credenciales/config no se llama a nadie. No modifica ningún dato (ni estados, ni intentos, ni numeración).
+ * persistido, nunca del navegador. PRO-326: ni el estado fiscal ni el CDC (persistido, devuelto o histórico) condicionan el KuDE: se consulta al gateway de la empresa por esa identidad y se muestra
+ * el PDF válido que devuelva. Sin credenciales/config no se llama a nadie. No modifica ningún dato (ni estados, ni CDC, ni intentos, ni numeración).
  */
 export async function obtenerKude(db: Db, empresaId: string, usuarioId: string, id: string, dep: DependenciasKude = {}): Promise<{ pdf: Buffer; nombre: string }> {
   const doc = await leerDocumento(db, empresaId, usuarioId, id);
@@ -407,7 +407,7 @@ export async function obtenerKude(db: Db, empresaId: string, usuarioId: string, 
 
   const r = await obtenerKudeGateway(
     await adjuntarCredencialesDeBase(db, config, usuarioId),
-    { tipoDoc: doc.tipo, establecimiento: String(doc.establecimiento), puntoExpedicion: String(doc.puntoExpedicion), numero: String(doc.numero), serie: (doc.serie as string | null) ?? null, cdc: doc.cdc ? String(doc.cdc) : null },
+    { tipoDoc: doc.tipo, establecimiento: String(doc.establecimiento), puntoExpedicion: String(doc.puntoExpedicion), numero: String(doc.numero), serie: (doc.serie as string | null) ?? null },
     dep,
   );
 
@@ -415,18 +415,6 @@ export async function obtenerKude(db: Db, empresaId: string, usuarioId: string, 
     const estado = r.codigo === "SIN_CREDENCIALES" ? 409 : r.codigo === "NO_DISPONIBLE" ? 503 : 502;
 
     throw new ErrorFacturacion(estado, r.mensaje);
-  }
-
-  // Emisor: el CDC trae el RUC (8 dígitos + DV) del emisor en las posiciones 3 a 11. Con CDC persistido ya se exigió igualdad. Sin él, la fuente de autoridad es el propio historial de la empresa: los emisores de
-  // sus documentos APROBADOS. Un KuDE de un emisor distinto de todos ellos no se muestra (entrega cruzada). Sin historial no hay con qué contrastar: se permite (ambiente de pruebas con emisor propio) y la
-  // identidad queda cubierta por tipo/establecimiento/punto/número y el CDC.
-  if (!doc.cdc) {
-    const ref = await db.query("SELECT DISTINCT substr(cdc, 3, 9) AS emisor FROM documentos_electronicos WHERE empresa_id = $1 AND id <> $2 AND estado_sifen = 'APROBADO' AND cdc IS NOT NULL LIMIT 10", [empresaId, id]);
-    const emisores = (ref.rows as F[]).map((x) => String(x.emisor));
-
-    if (emisores.length > 0 && !emisores.includes(r.cdc.slice(2, 11))) {
-      throw new ErrorFacturacion(502, "El KuDE recibido pertenece a un emisor distinto del de los documentos aprobados de esta empresa y no se muestra. Confirme con el responsable el emisor configurado en el gateway.");
-    }
   }
 
   return { pdf: r.pdf, nombre: nombreArchivoKude(doc) };

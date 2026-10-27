@@ -633,31 +633,30 @@ export async function enviarDocumentoGateway(
 }
 
 // ── KuDE (PDF) ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-// Contrato CONFIRMADO por el responsable (PRO-194 / E08): POST {base}/api/kude con Bearer y FE: {dEst, dPunExp, dNumDoc, dSerieNum, tipoDoc:"FE"}; NCE: {tipOpe:"4", …, tipoDoc:"ncr"} (ver cuerpoKudeGateway) → HTTP 200, JSON {status:"success", CDC, kude:<PDF en Base64, «JVBER…»>}.
-// Se exige status «success», un CDC devuelto coherente con la identidad del documento solicitado (y, si hay uno persistido, idéntico: sin él también se puede consultar), Base64 estricto y un PDF íntegro («%PDF-» … «%%EOF», ≤ 10 MB).
-// Nada se guarda (ni Base64 ni PDF) y los errores no incluyen el CDC ni el contenido. No se sigue ninguna URL.
+// Contrato CONFIRMADO por el responsable (PRO-194 / E08): POST {base}/api/kude con Bearer y FE: {dEst, dPunExp, dNumDoc, dSerieNum, tipoDoc:"FE"}; NCE: {tipOpe:"4", …, tipoDoc:"ncr"} (ver cuerpoKudeGateway) → HTTP 200, JSON {status:"success", kude:<PDF en Base64, «JVBER…»>}.
+// PRO-326: el KuDE se pide por la identidad del documento (tipo, establecimiento, punto, número, serie); el CDC NO participa: no se exige en la respuesta, no se compara y, si llega, se ignora y no se guarda.
+// Se exige status «success», Base64 estricto y un PDF íntegro («%PDF-» … «%%EOF», ≤ 10 MB). Nada se guarda (ni Base64 ni PDF) y los errores no incluyen el CDC ni el contenido. No se sigue ninguna URL.
 export const MAX_KUDE_BYTES = 10 * 1024 * 1024;
 const MAX_KUDE_JSON = Math.ceil((MAX_KUDE_BYTES * 4) / 3) + 8192;
 export type CuerpoLegible = { getReader(): { read(): Promise<{ done: boolean; value?: Uint8Array }>; cancel(motivo?: unknown): Promise<void> } };
 export type KudeFetch = (url: string, init: { method: string; headers: Record<string, string>; body: string; signal: AbortSignal }) => Promise<{ status: number; headers: { get(nombre: string): string | null }; body: CuerpoLegible | null }>;
 export type DependenciasKude = { fetch?: FetchLike; fetchKude?: KudeFetch; env?: Record<string, string | undefined>; ahora?: () => number };
-/** Identidad del documento para el KuDE (FE o NCE). `cdc` es el persistido, si lo hay: NO es requisito para solicitar el PDF (E08), solo se contrasta con el que devuelve el gateway. */
-export type DocumentoKude = { tipoDoc: "FE" | "NCE"; establecimiento: string; puntoExpedicion: string; numero: string; serie: string | null; cdc: string | null };
-export type CodigoErrorKude = "SIN_CREDENCIALES" | "AUTENTICACION" | "TIMEOUT" | "NO_DISPONIBLE" | "NO_ENCONTRADO" | "FORMATO_NO_CONFIRMADO" | "CDC_NO_COINCIDE" | "PDF_INVALIDO" | "DEMASIADO_GRANDE" | "SOLICITUD_RECHAZADA" | "PROHIBIDO" | "REDIRECCION" | "EMISOR_DIVERGENTE";
-/** `cdc` es el CDC que devolvió el gateway (ya validado contra la identidad del documento); solo lo usa el servidor para contrastar el emisor, nunca se muestra ni se guarda. */
+/** Identidad del documento para el KuDE (FE o NCE). Sin CDC (PRO-326): ni el persistido ni el devuelto condicionan el PDF. */
+export type DocumentoKude = { tipoDoc: "FE" | "NCE"; establecimiento: string; puntoExpedicion: string; numero: string; serie: string | null };
+export type CodigoErrorKude = "SIN_CREDENCIALES" | "AUTENTICACION" | "TIMEOUT" | "NO_DISPONIBLE" | "NO_ENCONTRADO" | "FORMATO_NO_CONFIRMADO" | "PDF_INVALIDO" | "DEMASIADO_GRANDE" | "SOLICITUD_RECHAZADA" | "PROHIBIDO" | "REDIRECCION";
 /**
  * ÚNICA transformación del documento interno al contrato EXTERNO de POST /api/kude (confirmado con HTTP 200 en Postman). El tipo interno (FE/NCE) no cambia; solo la solicitud al gateway:
  *  · FE  → {dEst, dPunExp, dNumDoc, dSerieNum, tipoDoc: "FE"} (cinco campos, sin tipOpe).
  *  · NCE → {tipOpe: "4", dEst, dPunExp, dNumDoc, dSerieNum, tipoDoc: "ncr"} (seis campos; «ncr» en minúsculas; NUNCA «NCE»).
  * Los identificadores se transmiten como texto (ceros iniciales intactos) y la serie nula como null.
  */
-export function cuerpoKudeGateway(doc: Pick<DocumentoKude, "tipoDoc" | "establecimiento" | "puntoExpedicion" | "numero" | "serie">): Record<string, string | null> {
+export function cuerpoKudeGateway(doc: DocumentoKude): Record<string, string | null> {
   const id = { dEst: doc.establecimiento, dPunExp: doc.puntoExpedicion, dNumDoc: doc.numero, dSerieNum: doc.serie };
 
   return doc.tipoDoc === "NCE" ? { tipOpe: "4", ...id, tipoDoc: "ncr" } : { ...id, tipoDoc: "FE" };
 }
 
-export type ResultadoKude = { ok: true; pdf: Buffer; cdc: string } | { ok: false; codigo: CodigoErrorKude; http: number | null; mensaje: string };
+export type ResultadoKude = { ok: true; pdf: Buffer } | { ok: false; codigo: CodigoErrorKude; http: number | null; mensaje: string };
 
 /**
  * Resumen SEGURO de lo que respondió el gateway ante un error (para el diagnóstico del operador): solo el texto del campo message/mensaje/error de un JSON, sin CDC (44 dígitos), sin cadenas largas tipo
@@ -706,12 +705,11 @@ export function decodificarBase64Estricto(texto: string): Buffer | null {
   return b.length > 0 ? b : null;
 }
 
-/** Interpreta la respuesta JSON del gateway. `cdcPersistido` es el CDC del documento en la base. */
 /**
- * Interpreta la respuesta de /api/kude {status, CDC, kude(Base64)}. El CDC devuelto debe ser coherente con la identidad del documento solicitado (tipo, establecimiento, punto y número) y, si hay uno
- * persistido, idéntico a él. No se exige un CDC previo ni un estado fiscal: basta un PDF válido de ESE documento.
+ * Interpreta la respuesta de /api/kude {status, kude(Base64)} del documento solicitado por su identidad. PRO-326: no se exige estado fiscal ni CDC; un CDC/cdc en la respuesta se ignora (no se compara
+ * con el persistido, con la identidad ni con otros documentos, y no se devuelve ni se guarda). Basta status «success» y un PDF íntegro.
  */
-export function interpretarKude(http: number, cuerpoTexto: string, doc: Pick<DocumentoKude, "tipoDoc" | "establecimiento" | "puntoExpedicion" | "numero" | "cdc">): ResultadoKude {
+export function interpretarKude(http: number, cuerpoTexto: string): ResultadoKude {
   let j: Record<string, unknown> | null = null;
 
   try {
@@ -723,9 +721,6 @@ export function interpretarKude(http: number, cuerpoTexto: string, doc: Pick<Doc
   }
   if (!j || j.status !== "success") return falloKude("FORMATO_NO_CONFIRMADO", http, "El KuDE de este documento no está disponible: el gateway no entregó un resultado válido" + (resumenUpstreamSeguro(cuerpoTexto) ? " (" + resumenUpstreamSeguro(cuerpoTexto) + ")." : "."));
 
-  const cdc = typeof j.CDC === "string" ? j.CDC : typeof j.cdc === "string" ? j.cdc : "";
-
-  if ((doc.cdc && cdc !== doc.cdc) || !cdcCoherente({ tipo: doc.tipoDoc, establecimiento: doc.establecimiento, puntoExpedicion: doc.puntoExpedicion, numero: doc.numero }, cdc)) return falloKude("CDC_NO_COINCIDE", http, "El KuDE recibido no corresponde a este documento y fue descartado.");
   if (typeof j.kude !== "string" || j.kude.length === 0) return falloKude("PDF_INVALIDO", http, MSG_INVALIDO);
   if (j.kude.length > MAX_KUDE_JSON) return falloKude("DEMASIADO_GRANDE", http, "El archivo recibido del gateway excede el tamaño permitido y fue descartado.");
 
@@ -734,7 +729,7 @@ export function interpretarKude(http: number, cuerpoTexto: string, doc: Pick<Doc
   if (!pdf || !esPdfValido(pdf)) return falloKude("PDF_INVALIDO", http, MSG_INVALIDO);
   if (pdf.length > MAX_KUDE_BYTES) return falloKude("DEMASIADO_GRANDE", http, "El archivo recibido del gateway excede el tamaño permitido y fue descartado.");
 
-  return { ok: true, pdf, cdc };
+  return { ok: true, pdf };
 }
 
 type RespuestaKude = { ok: true; status: number; texto: string | null } | { ok: false; motivo: "TIMEOUT" | "RED" };
@@ -829,7 +824,7 @@ export async function obtenerKudeGateway(config: ConfigGateway, doc: DocumentoKu
     if (r.status !== 200) return falloKude("FORMATO_NO_CONFIRMADO", r.status, con("El KuDE de este documento no está disponible: respuesta inesperada del gateway"));
     if (r.texto === null) return falloKude("DEMASIADO_GRANDE", r.status, "El archivo recibido del gateway excede el tamaño permitido y fue descartado.");
 
-    return interpretarKude(r.status, r.texto, doc);
+    return interpretarKude(r.status, r.texto);
   }
 
   return falloKude("AUTENTICACION", 401, "El gateway rechazó el token tras renovarlo.");

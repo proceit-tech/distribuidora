@@ -1,8 +1,8 @@
 /**
  * PRO-194 — KuDE (PDF) de la FE desde Documentos electrónicos. Sin red, sin PostgreSQL y sin navegador. SOLO la respuesta externa del gateway es un MOCK, con el contrato REAL confirmado por el responsable:
- * HTTP 200 + JSON {status:"success", CDC, kude:<PDF en Base64>}. La orquestación del servidor (obtenerKude → obtenerKudeGateway) y el controlador del visor (crearControladorVisor, el mismo que usa la modal)
+ * HTTP 200 + JSON {status:"success", kude:<PDF en Base64>} (un CDC/cdc eventual se ignora). La orquestación del servidor (obtenerKude → obtenerKudeGateway) y el controlador del visor (crearControladorVisor, el mismo que usa la modal)
  * son los reales; la base es simulada (alcance por empresa/sucursal como ALCANCE de leerDocumento). React no se renderizó: la modal solo refleja el controlador (verificación estructural).
- * E08: FE y NCE, sin tipOpe y sin exigir estado fiscal ni CDC previo.
+ * E08: FE y NCE, sin exigir estado fiscal ni CDC previo. PRO-326: el CDC (persistido, devuelto o histórico) no participa en la selección, autorización ni validación del PDF.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -24,7 +24,7 @@ const SUC_B = "s2";
 const D = (n: number) => "d0000000-0000-4000-8000-00000000000" + String(n);
 const PDF = Buffer.from("%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n", "latin1");
 const PDF_B = Buffer.from("%PDF-1.4\n2 0 obj<<>>endobj\ntrailer<<DOC-B>>\n%%EOF\n", "latin1");
-// CDC coherente con la identidad del documento (tipo 01 FE / 05 NCE, establecimiento, punto y número en sus posiciones). E08: el CDC devuelto por el gateway debe serlo.
+// CDC con la forma de SIFEN (tipo 01 FE / 05 NCE, emisor, establecimiento, punto y número). PRO-326: solo sirve para simular respuestas; el KuDE lo ignora.
 const CODIGO_TIPO: Record<string, string> = { FE: "01", NCE: "05" };
 const cdcDe = (tipo: string, est: string, punto: string, numero: string, emisor = "800000017") => CODIGO_TIPO[tipo] + emisor + est + punto + numero + "1" + "20261016" + "1" + "123456789" + "0";
 const CDC = cdcDe("FE", "001", "001", "0010004");
@@ -72,13 +72,13 @@ export async function verificarCasosKude(): Promise<string[]> {
   const fe = (id: string, empresa: string, extra: Partial<Doc> = {}): Doc => ({ id, empresa, sucursal: SUC_A, tipo: "FE", establecimiento: "001", puntoExpedicion: "001", numero: "0010004", serie: null, cdc: CDC, estadoSifen: "APROBADO", ...extra });
   const nce = (id: string, empresa: string, extra: Partial<Doc> = {}): Doc => fe(id, empresa, { tipo: "NCE", numero: "0000007", cdc: cdcDe("NCE", "001", "001", "0000007"), ...extra });
 
-  function mundo(docs: Doc[], opciones: { payloads?: Record<string, unknown>; sinConfig?: Set<string>; sinCredenciales?: Set<string>; emisores?: Record<string, string[]> } = {}) {
+  // PRO-326: cualquier consulta no prevista (p. ej. historial de CDC de documentos APROBADOS o RUC/DV de la empresa) lanza «consulta inesperada».
+  function mundo(docs: Doc[], opciones: { payloads?: Record<string, unknown>; sinConfig?: Set<string>; sinCredenciales?: Set<string> } = {}) {
     const consultas: string[] = [];
     const alcance: Record<string, Set<string>> = { [E1 + "|" + U1]: new Set([SUC_A]), [E1 + "|" + U2]: new Set([SUC_A, SUC_B]), [E2 + "|" + U1]: new Set([SUC_A]) };
     const db = {
       async query(sql: string, p: unknown[] = []) {
         consultas.push(sql);
-        if (/substr\(cdc, 3, 9\)/.test(sql)) return { rows: (opciones.emisores?.[String(p[0])] ?? []).map((emisor) => ({ emisor })) };
         if (/FROM documentos_electronicos/.test(sql)) {
           const d = docs.find((x) => x.empresa === p[0] && x.id === p[2] && alcance[String(p[0]) + "|" + String(p[1])]?.has(x.sucursal));
 
@@ -160,7 +160,7 @@ export async function verificarCasosKude(): Promise<string[]> {
 
     igual("KUDE-01: una solicitud POST a {base}/api/kude con el Bearer de la empresa y el cuerpo EXACTO de cinco campos (ceros a la izquierda, serie null, tipoDoc FE) y SIN tipOpe", [g.kudes.length, g.kudes[0].url, /^Bearer TOKEN-RUC-E1-/.test(g.kudes[0].auth ?? ""), JSON.stringify(g.kudes[0].body)], [1, "https://gw.example.test/api/kude", true, JSON.stringify({ dEst: "001", dPunExp: "001", dNumDoc: "0010004", dSerieNum: null, tipoDoc: "FE" })]);
     igual("E08-01: la consulta del KuDE no lee la solicitud/payload persistido (no hay tipOpe)", m.consultas.some((q) => /documento_electronico_solicitudes/.test(q)), false);
-    igual("KUDE-02: la respuesta JSON con status success, CDC correcto y Base64 se decodifica y el PDF llega INTACTO; el nombre sale solo de la identidad fiscal", [Buffer.compare(r.pdf, PDF), r.nombre], [0, "KuDE-FE-001-001-0010004.pdf"]);
+    igual("KUDE-02: la respuesta JSON con status success y Base64 se decodifica y el PDF llega INTACTO; el nombre sale solo de la identidad fiscal", [Buffer.compare(r.pdf, PDF), r.nombre], [0, "KuDE-FE-001-001-0010004.pdf"]);
     igual("KUDE-03: solo lectura — ninguna escritura en la base (ni estados SIFEN, ni intentos, ni numeración)", m.consultas.some((s) => /\b(INSERT|UPDATE|DELETE)\b|fe_documento_registrar/i.test(s)), false);
 
     const m2 = mundo([fe(D(2), E1, { serie: "AB", numero: "0000123", cdc: cdcDe("FE", "001", "001", "0000123") })]);
@@ -171,7 +171,7 @@ export async function verificarCasosKude(): Promise<string[]> {
 
     const gMin = gateway(() => ({ status: 200, json: { status: "success", cdc: CDC, kude: PDF.toString("base64") } }));
 
-    igual("KUDE-04b: el campo CDC también se acepta en minúsculas y exige igualdad exacta con el CDC persistido", (await obtenerKude(mundo([fe(D(1), E1)]).db, E1, U1, D(1), gMin.dep)).pdf.length, PDF.length);
+    igual("KUDE-04b: un campo cdc en minúsculas en la respuesta se ignora y el PDF válido se entrega", (await obtenerKude(mundo([fe(D(1), E1)]).db, E1, U1, D(1), gMin.dep)).pdf.length, PDF.length);
   }
 
   // ── 2. E08: el KuDE se solicita para FE y NCE sin exigir estado fiscal ni CDC previo ─────────────────────────────────────────────────────
@@ -191,21 +191,21 @@ export async function verificarCasosKude(): Promise<string[]> {
       }
     }
 
-    // Sin CDC persistido: se acepta el CDC coherente que devuelve el gateway; uno incoherente (otro tipo, número u otra empresa) se descarta
+    // PRO-326: sin CDC persistido, cualquier CDC devuelto (o ninguno) se ignora: el PDF válido del documento solicitado se muestra
     limpiarCacheTokens();
 
     const sinCdc = await obtenerKude(mundo([fe(D(1), E1, { cdc: null, estadoSifen: "PENDIENTE" })]).db, E1, U1, D(1), gateway(pdfOk).dep);
 
-    igual("E08-03 FE sin CDC persistido y sin aprobar: el PDF válido con CDC coherente se muestra", sinCdc.pdf.length, PDF.length);
+    igual("E08-03 FE sin CDC persistido y sin aprobar: el PDF válido se muestra", sinCdc.pdf.length, PDF.length);
 
     const incoherentes: Array<[string, string]> = [["CDC de una NCE para una FE", cdcDe("NCE", "001", "001", "0010004")], ["CDC de otro número", cdcDe("FE", "001", "001", "0010005")], ["CDC de otro punto", cdcDe("FE", "001", "002", "0010004")], ["CDC de otro establecimiento", cdcDe("FE", "002", "001", "0010004")], ["CDC con formato inválido", "123"]];
 
     for (const [nombre, cdc] of incoherentes) {
       limpiarCacheTokens();
 
-      const x = await falla(mundo([fe(D(1), E1, { cdc: null })]), gateway(() => ok({}, PDF, cdc)), E1, U1, D(1));
+      const x = await obtenerKude(mundo([fe(D(1), E1, { cdc: null })]).db, E1, U1, D(1), gateway(() => ok({}, PDF, cdc)).dep);
 
-      igual("E08-03 [" + nombre + ", sin CDC persistido]: se descarta (502) y no se entrega el PDF", [x.estado, x.mensaje.includes("no corresponde a este documento")], [502, true]);
+      igual("PRO326-E08-03 [" + nombre + ", sin CDC persistido]: el CDC devuelto no se valida y el PDF válido se MUESTRA", Buffer.compare(x.pdf, PDF), 0);
     }
 
     // NCE: tipoDoc NCE con los identificadores de la propia NCE, mismo contrato de cinco campos
@@ -216,12 +216,13 @@ export async function verificarCasosKude(): Promise<string[]> {
 
     igual("NCR-02 NCE: contrato Postman — seis campos {tipOpe:\"4\", dEst, dPunExp, dNumDoc, dSerieNum, tipoDoc:\"ncr\"} con los identificadores de la NCE; nombre propio", [JSON.stringify(gN.kudes[0].body), rN.nombre], [JSON.stringify({ tipOpe: "4", dEst: "001", dPunExp: "001", dNumDoc: "0000007", dSerieNum: "AB", tipoDoc: "ncr" }), "KuDE-NCE-001-001-0000007-AB.pdf"]);
 
-    // Con CDC persistido, una divergencia con el devuelto se rechaza aunque sea coherente con la identidad
+    // PRO-326: con CDC persistido, una divergencia con el devuelto no impide el PDF (el CDC no es criterio del KuDE)
     limpiarCacheTokens();
 
-    const div = await falla(mundo([fe(D(1), E1, { cdc: cdcDe("FE", "001", "001", "0010004").slice(0, 43) + "1" })]), gateway(pdfOk), E1, U1, D(1));
+    const mDiv = mundo([fe(D(1), E1, { cdc: cdcDe("FE", "001", "001", "0010004").slice(0, 43) + "1" })]);
+    const div = await obtenerKude(mDiv.db, E1, U1, D(1), gateway(pdfOk).dep);
 
-    igual("E08-05 CDC persistido distinto del devuelto: divergencia rechazada (502), sin entregar el PDF", [div.estado, div.mensaje.includes("no corresponde a este documento")], [502, true]);
+    igual("PRO326-E08-05 CDC persistido distinto del devuelto: el PDF válido se MUESTRA y nada se escribe", [Buffer.compare(div.pdf, PDF), mDiv.consultas.some((q) => /\b(INSERT|UPDATE|DELETE)\b/i.test(q))], [0, false]);
 
     // Otros tipos (NDE/AFE...) siguen sin KuDE
     limpiarCacheTokens();
@@ -290,42 +291,22 @@ export async function verificarCasosKude(): Promise<string[]> {
 
     igual("INC-05 reintento tras una falla: el segundo intento consulta de nuevo y entrega; nada se guardó ni se bloqueó tras el error", [f1.estado, f2.pdf.length, m.consultas.some((q) => /\b(INSERT|UPDATE|DELETE)\b/i.test(q))], [502, PDF.length, false]);
 
-    // emisor
+    // PRO-326: emisor — el CDC devuelto de OTRO emisor no bloquea y nunca se consulta el historial de CDC de documentos APROBADOS
     const EMISOR_OTRO = "800206533";
-    const hist = { [E1]: ["800000017"], [E2]: ["800206533"] };
 
     limpiarCacheTokens();
 
-    const okMismo = await obtenerKude(mundo([nceInc()], { emisores: hist }).db, E1, U1, D(1), gateway(pdfOk).dep);
+    const mOtro = mundo([nceInc()]);
+    const otro = await obtenerKude(mOtro.db, E1, U1, D(1), gateway(() => ok({}, PDF, cdcDe("NCE", "001", "003", "0090004", EMISOR_OTRO))).dep);
 
-    igual("INC-06 emisor del CDC devuelto = emisor de los documentos aprobados de la empresa: se entrega", okMismo.pdf.length, PDF.length);
-
-    limpiarCacheTokens();
-
-    const gO = gateway(() => ok({}, PDF, cdcDe("NCE", "001", "003", "0090004", EMISOR_OTRO)));
-    const otro = await falla(mundo([nceInc()], { emisores: hist }), gO, E1, U1, D(1));
-
-    igual("INC-06 CDC coherente con el número pero de OTRO emisor distinto al historial aprobado de la empresa: no se muestra (502) y el mensaje pide confirmar el emisor sin revelar RUC ni CDC", [otro.estado, /emisor distinto/.test(otro.mensaje), otro.mensaje.includes(EMISOR_OTRO), otro.mensaje.includes("JVBER")], [502, true, false, false]);
+    igual("PRO326-INC-06 CDC devuelto de OTRO emisor: el PDF válido se MUESTRA y no hay consulta de historial APROBADO ni de RUC/DV", [Buffer.compare(otro.pdf, PDF), mOtro.consultas.some((q) => /substr\(cdc|estado_sifen = 'APROBADO'|FROM empresas\b/i.test(q))], [0, false]);
 
     limpiarCacheTokens();
 
-    const sinHist = await obtenerKude(mundo([nceInc()]).db, E1, U1, D(1), gateway(() => ok({}, PDF, cdcDe("NCE", "001", "003", "0090004", EMISOR_OTRO))).dep);
+    const conCdc = mundo([nceInc({ cdc: cdcDe("NCE", "001", "003", "0090004") })]);
 
-    igual("INC-06 sin historial aprobado no hay fuente de autoridad: se permite (ambiente de pruebas con emisor propio); la identidad sigue cubierta por tipo/establecimiento/punto/número", sinHist.pdf.length, PDF.length);
-
-    limpiarCacheTokens();
-
-    const cruce = await falla(mundo([nceInc()], { emisores: { [E1]: ["800000017"], [E2]: [EMISOR_OTRO] } }), gateway(() => ok({}, PDF, cdcDe("NCE", "001", "003", "0090004", EMISOR_OTRO))), E1, U1, D(1));
-
-    igual("INC-07 el historial de OTRA empresa no autoriza un emisor ajeno: con el emisor de la empresa B devuelto para un documento de A se bloquea", cruce.estado, 502);
-
-    // con CDC persistido: igualdad exacta (ya cubierta) y sin consulta de historial
-    limpiarCacheTokens();
-
-    const conCdc = mundo([nceInc({ cdc: cdcDe("NCE", "001", "003", "0090004") })], { emisores: hist });
-
-    await obtenerKude(conCdc.db, E1, U1, D(1), gateway(pdfOk).dep);
-    igual("INC-08 con CDC persistido no se consulta el historial (la igualdad con el persistido es la autoridad)", conCdc.consultas.some((q) => /substr\(cdc, 3, 9\)/.test(q)), false);
+    await obtenerKude(conCdc.db, E1, U1, D(1), gateway(() => ok({}, PDF, cdcDe("NCE", "001", "003", "0090004", EMISOR_OTRO))).dep);
+    igual("PRO326-INC-08 con CDC persistido distinto del devuelto tampoco se consulta historial ni se escribe nada", conCdc.consultas.some((q) => /substr\(cdc|\b(INSERT|UPDATE|DELETE)\b/i.test(q)), false);
 
     // acceso cruzado entre empresas y FE sin regresión
     limpiarCacheTokens();
@@ -337,7 +318,7 @@ export async function verificarCasosKude(): Promise<string[]> {
 
     limpiarCacheTokens();
 
-    const feInc = await obtenerKude(mundo([fe(D(1), E1, { estadoSifen: "PENDIENTE" })], { emisores: hist }).db, E1, U1, D(1), gateway(pdfOk).dep);
+    const feInc = await obtenerKude(mundo([fe(D(1), E1, { estadoSifen: "PENDIENTE" })]).db, E1, U1, D(1), gateway(pdfOk).dep);
 
     igual("INC-10 FE sin regresión: sigue entregándose con el contrato de cinco campos", feInc.pdf.length, PDF.length);
 
@@ -366,13 +347,13 @@ export async function verificarCasosKude(): Promise<string[]> {
     igual("NCR-03 la NCE sin CDC local y sin aprobar envía el request de seis campos con ncr y recibe el PDF (200 + CDC + Base64) para visualizar, descargar e imprimir", [JSON.stringify(gg.kudes[0].body), rr.pdf.length, Buffer.compare(rr.pdf, PDF), rr.nombre], [JSON.stringify({ tipOpe: "4", dEst: "001", dPunExp: "003", dNumDoc: "0090004", dSerieNum: null, tipoDoc: "ncr" }), PDF.length, 0, "KuDE-NCE-001-003-0090004.pdf"]);
     igual("NCR-03 el estado fiscal local no cambió (solo lectura: ninguna escritura)", mm.consultas.some((q) => /\b(INSERT|UPDATE|DELETE)\b/i.test(q)), false);
 
-    // CDC devuelto de OTRO documento sigue bloqueado; un CDC con tipo FE (01) para una NCE también
+    // PRO-326: el CDC devuelto (de otro número o con tipo FE) se ignora; el PDF pedido por la identidad de la NCE se muestra
     limpiarCacheTokens();
 
-    const otroNum = await falla(mundo([nce(D(1), E1, { establecimiento: "001", puntoExpedicion: "003", numero: "0090004", cdc: null })]), gateway(() => ok({}, PDF, cdcDe("NCE", "001", "003", "0090005"))), E1, U1, D(1));
-    const tipoFe = await falla(mundo([nce(D(1), E1, { establecimiento: "001", puntoExpedicion: "003", numero: "0090004", cdc: null })]), gateway(() => ok({}, PDF, cdcDe("FE", "001", "003", "0090004"))), E1, U1, D(1));
+    const otroNum = await obtenerKude(mundo([nce(D(1), E1, { establecimiento: "001", puntoExpedicion: "003", numero: "0090004", cdc: null })]).db, E1, U1, D(1), gateway(() => ok({}, PDF, cdcDe("NCE", "001", "003", "0090005"))).dep);
+    const tipoFe = await obtenerKude(mundo([nce(D(1), E1, { establecimiento: "001", puntoExpedicion: "003", numero: "0090004", cdc: null })]).db, E1, U1, D(1), gateway(() => ok({}, PDF, cdcDe("FE", "001", "003", "0090004"))).dep);
 
-    igual("NCR-04 CDC de otro número o de tipo FE para una NCE se descarta (502) sin entregar el PDF", [otroNum.estado, otroNum.mensaje.includes("no corresponde"), tipoFe.estado, tipoFe.mensaje.includes("no corresponde")], [502, true, 502, true]);
+    igual("PRO326-NCR-04 CDC devuelto de otro número o de tipo FE para una NCE: no se valida y el PDF válido se MUESTRA", [Buffer.compare(otroNum.pdf, PDF), Buffer.compare(tipoFe.pdf, PDF)], [0, 0]);
 
     // empresa no autorizada: nunca llega al gateway
     limpiarCacheTokens();
@@ -398,6 +379,100 @@ export async function verificarCasosKude(): Promise<string[]> {
     const gwSrc = leer("lib/facturacion/gateway.ts");
 
     cierto("NCR-07 emisión y consulta SIFEN no cambian (consulta_de sigue con su tabla de tipoDoc y recepcion_de no usa «ncr»)", /const TIPO_DOC_CONSULTA: Record<string, string \| undefined> = \{ NCE: "NCE", FE: "FE" \}/.test(gwSrc) && (gwSrc.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "").match(/"ncr"/g) ?? []).length === 1);
+  }
+
+  // ── PRO-326: KuDE por documento seleccionado, SIN validación por CDC ni estado fiscal ──────────────────────────────────────────────────────
+  {
+    const sinCdcResp = (): Resp => ({ status: 200, json: { status: "success", kude: PDF.toString("base64") } });
+    const fe9011 = (extra: Partial<Doc> = {}) => fe(D(1), E1, { establecimiento: "001", puntoExpedicion: "003", numero: "0009011", ...extra });
+    const sinEscritura = (m: ReturnType<typeof mundo>) => !m.consultas.some((q) => /\b(INSERT|UPDATE|DELETE)\b|fe_documento_registrar/i.test(q));
+
+    // 1. FE RECHAZADA sin CDC local y sin CDC en la respuesta, con PDF válido → MOSTRAR
+    limpiarCacheTokens();
+
+    const m1 = mundo([fe9011({ cdc: null, estadoSifen: "RECHAZADO" })]);
+    const g1 = gateway(sinCdcResp);
+    const r1 = await obtenerKude(m1.db, E1, U1, D(1), g1.dep);
+
+    igual("PRO326-01 FE 001-003-0009011 RECHAZADA, sin CDC local ni en la respuesta, PDF válido: se MUESTRA con el cuerpo de cinco campos y sin escribir nada", [Buffer.compare(r1.pdf, PDF), JSON.stringify(g1.kudes[0].body), sinEscritura(m1)], [0, JSON.stringify({ dEst: "001", dPunExp: "003", dNumDoc: "0009011", dSerieNum: null, tipoDoc: "FE" }), true]);
+
+    // 2. FE con CDC recibido diferente del CDC local, con PDF válido → MOSTRAR
+    limpiarCacheTokens();
+
+    const m2 = mundo([fe9011({ cdc: cdcDe("FE", "001", "003", "0009011"), estadoSifen: "RECHAZADO" })]);
+    const r2 = await obtenerKude(m2.db, E1, U1, D(1), gateway(() => ok({}, PDF, CDC_B)).dep);
+
+    igual("PRO326-02 FE con CDC recibido distinto del local, PDF válido: se MUESTRA, sin escribir ni actualizar el CDC", [Buffer.compare(r2.pdf, PDF), sinEscritura(m2)], [0, true]);
+
+    // 3. FE APROBADA con CDC divergente, con PDF válido → MOSTRAR
+    limpiarCacheTokens();
+
+    const m3 = mundo([fe9011({ cdc: cdcDe("FE", "001", "003", "0009011"), estadoSifen: "APROBADO" })]);
+    const r3 = await obtenerKude(m3.db, E1, U1, D(1), gateway(() => ok({}, PDF, cdcDe("FE", "001", "003", "0009011", "800206533"))).dep);
+
+    igual("PRO326-03 FE APROBADA con CDC devuelto divergente, PDF válido: se MUESTRA, sin escribir nada y sin consultar historial", [Buffer.compare(r3.pdf, PDF), sinEscritura(m3), m3.consultas.some((q) => /substr\(cdc|estado_sifen = 'APROBADO'/.test(q))], [0, true, false]);
+
+    // 4. NCE RECHAZADA, ncr + tipOpe "4", PDF válido → MOSTRAR
+    limpiarCacheTokens();
+
+    const m4 = mundo([nce(D(1), E1, { establecimiento: "001", puntoExpedicion: "003", numero: "0009011", cdc: null, estadoSifen: "RECHAZADO" })]);
+    const g4 = gateway(sinCdcResp);
+    const r4 = await obtenerKude(m4.db, E1, U1, D(1), g4.dep);
+
+    igual("PRO326-04 NCE RECHAZADA con contrato ncr / tipOpe «4» y PDF válido: se MUESTRA", [Buffer.compare(r4.pdf, PDF), JSON.stringify(g4.kudes[0].body), r4.nombre, sinEscritura(m4)], [0, JSON.stringify({ tipOpe: "4", dEst: "001", dPunExp: "003", dNumDoc: "0009011", dSerieNum: null, tipoDoc: "ncr" }), "KuDE-NCE-001-003-0009011.pdf", true]);
+
+    // 5. Documento de otra empresa o sucursal no autorizada → NEGAR antes del gateway
+    for (const [nombre, docs, empresa] of [["otra empresa", [fe9011({ empresa: E2, cdc: null, estadoSifen: "RECHAZADO" })], E1], ["sucursal no autorizada", [fe9011({ sucursal: SUC_B, cdc: null, estadoSifen: "RECHAZADO" })], E1]] as Array<[string, Doc[], string]>) {
+      limpiarCacheTokens();
+
+      const g5 = gateway(sinCdcResp);
+      const x5 = await falla(mundo(docs), g5, empresa, U1, D(1));
+
+      igual("PRO326-05 [" + nombre + "]: se NIEGA (404) sin llamar al gateway", [x5.estado, g5.kudes.length, g5.logins.length], [404, 0, 0]);
+    }
+
+    // 6. Usuario sin permiso VER → NEGAR (la ruta exige FACTURACION_ELECTRONICA.VER antes de obtenerKude)
+    const rutaKude = leer("app/api/documentos/[id]/kude/route.ts");
+
+    cierto("PRO326-06 la ruta exige el permiso VER (prepararFacturacion(\"VER\")) antes de obtener el KuDE", /prepararFacturacion\("VER"\)/.test(rutaKude) && rutaKude.indexOf('prepararFacturacion("VER")') < rutaKude.indexOf("obtenerKude("));
+
+    // 7. HTTP no exitoso o status «error» → ERROR; 8. sin campo kude → ERROR; 9. Base64/PDF inválido o excesivo → ERROR
+    const errores: Array<[string, () => Resp, string]> = [
+      ["HTTP 500", () => ({ status: 500, tipo: "application/json", bytes: Buffer.from("{}") }), "no está disponible"],
+      ["status error", () => ({ status: 200, json: { status: "error", kude: PDF.toString("base64") } }), "no entregó un resultado válido"],
+      ["sin campo kude", () => ({ status: 200, json: { status: "success" } }), "no devolvió un PDF válido"],
+      ["Base64 inválido", () => ({ status: 200, json: { status: "success", kude: "***" } }), "no devolvió un PDF válido"],
+      ["PDF inválido", () => ({ status: 200, json: { status: "success", kude: Buffer.from("no es pdf").toString("base64") } }), "no devolvió un PDF válido"],
+      ["PDF excesivo", () => ({ status: 200, json: { status: "success", kude: Buffer.concat([Buffer.from("%PDF-1.4\n"), Buffer.alloc(MAX_KUDE_BYTES), Buffer.from("\n%%EOF\n")]).toString("base64") } }), "excede"],
+    ];
+
+    for (const [nombre, comp, trozo] of errores) {
+      limpiarCacheTokens();
+
+      const x = await falla(mundo([fe9011({ cdc: null, estadoSifen: "RECHAZADO" })]), gateway(comp), E1, U1, D(1));
+
+      igual("PRO326-07 [" + nombre + "]: ERROR controlado, sin PDF", [x.estado >= 500, x.mensaje.includes(trozo)], [true, true]);
+    }
+
+    // 10. Nueva apertura o descarga → NUEVA consulta (sin caché)
+    limpiarCacheTokens();
+
+    const m10 = mundo([fe9011({ cdc: null, estadoSifen: "RECHAZADO" })]);
+    const g10 = gateway(sinCdcResp);
+
+    await obtenerKude(m10.db, E1, U1, D(1), g10.dep);
+    await obtenerKude(m10.db, E1, U1, D(1), g10.dep);
+    igual("PRO326-08 cada apertura/descarga del mismo documento es una consulta NUEVA al gateway", g10.kudes.length, 2);
+
+    // Estructural: el camino KuDE no usa CDC; las validaciones CDC de recepción/consulta siguen intactas
+    const sinComentarios = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+    const gw = leer("lib/facturacion/gateway.ts");
+    const sh = leer("lib/facturacion/shared.ts");
+    const tramoKude = sinComentarios(gw.slice(gw.indexOf("export function interpretarKude"), gw.indexOf("type RespuestaKude")));
+    const tramoObtener = sinComentarios(sh.slice(sh.indexOf("export async function obtenerKude"), sh.indexOf("export function respuestaErrorFacturacion")));
+
+    cierto("PRO326-09 interpretarKude y obtenerKude no leen, comparan ni envían CDC, no consultan historial APROBADO ni RUC/DV", !/cdc/i.test(tramoKude) && !/cdc|substr\(|APROBADO|empresas|\bruc\b|\bdv\b/i.test(tramoObtener));
+    cierto("PRO326-10 cdcCoherente se conserva en la recepción fiscal (fuera del KuDE)", /cdcCoherente\(doc, cdcInformado\)/.test(gw) && /export function cdcCoherente/.test(gw));
   }
 
   // ── 3. Aislamiento, alcance y elegibilidad: nunca se llama al gateway ───────────────────────────────────────────────────────────────────────
@@ -449,8 +524,6 @@ export async function verificarCasosKude(): Promise<string[]> {
     const json = (s: number) => (): Resp => ({ status: s, tipo: "application/json", bytes: Buffer.from("{}") });
     const noPdf = Buffer.from("esto no es un pdf").toString("base64");
     const escenarios: Array<[string, Comportamiento, number, string]> = [
-      ["CDC distinto (documento ajeno)", () => ok({}, PDF_B, CDC_B), 502, "no corresponde a este documento"],
-      ["sin CDC en la respuesta", () => ({ status: 200, json: { status: "success", kude: PDF.toString("base64") } }), 502, "no corresponde a este documento"],
       ["status distinto de success", () => ({ status: 200, json: { status: "error", CDC, kude: PDF.toString("base64") } }), 502, "no entregó un resultado válido"],
       ["cuerpo que no es JSON", () => ({ status: 200, bytes: PDF, tipo: "application/pdf" }), 502, "no entregó un resultado válido"],
       ["Base64 inválido", () => ok({ kude: "***no-es-base64***" }), 502, "no devolvió un PDF válido"],
@@ -811,7 +884,7 @@ export async function verificarCasosKude(): Promise<string[]> {
   }
 
   {
-    // De extremo a extremo con la orquestación real: otra empresa / sucursal sin alcance no obtienen descarga; CDC ajeno se descarta; nada se persiste.
+    // De extremo a extremo con la orquestación real: otra empresa / sucursal sin alcance no obtienen descarga; el CDC devuelto no condiciona; nada se persiste.
     limpiarCacheTokens();
     const docs = [fe(D(1), E1), fe(D(2), E2), fe(D(3), E1, { sucursal: SUC_B })];
     const g = gateway(pdfOk);
@@ -820,17 +893,17 @@ export async function verificarCasosKude(): Promise<string[]> {
 
     await v.visor.abrir(docVisor(D(1)));
     await v.visor.descargar();
-    igual("KUDE-55 descarga autorizada: dos solicitudes con el token y la identidad de LA empresa del usuario; CDC verificado en cada una; sin escrituras en la base", [g.kudes.length, g.kudes.every((k) => /^Bearer TOKEN-RUC-E1-/.test(k.auth ?? "")), mm.consultas.some((q) => /\b(INSERT|UPDATE|DELETE)\b|fe_documento_registrar/i.test(q))], [2, true, false]);
+    igual("KUDE-55 descarga autorizada: dos solicitudes con el token y la identidad de LA empresa del usuario; sin escrituras en la base", [g.kudes.length, g.kudes.every((k) => /^Bearer TOKEN-RUC-E1-/.test(k.auth ?? "")), mm.consultas.some((q) => /\b(INSERT|UPDATE|DELETE)\b|fe_documento_registrar/i.test(q))], [2, true, false]);
     v.visor.cerrar();
 
     const gAjeno = gateway([pdfOk, () => ok({}, PDF_B, CDC_B)]);
     const vA = visorSimulado("directo", gAjeno, mundo(docs));
 
     await vA.visor.abrir(docVisor(D(1)));
-    await vA.visor.descargar(); // el gateway devuelve el KuDE de OTRO documento
+    await vA.visor.descargar(); // PRO-326: el gateway devuelve otro CDC; no se compara
     const eA = vA.visor.estado();
 
-    igual("KUDE-56 si en la descarga el gateway devuelve un CDC ajeno se descarta: error en la modal, nada se descarga", [eA.fase === "LISTO" ? eA.descarga : null, eA.fase === "LISTO" && /no corresponde/.test(eA.mensajeDescarga), vA.acciones], ["ERROR", true, []]);
+    igual("PRO326-KUDE-56 si en la descarga el gateway devuelve un CDC distinto, el CDC se ignora: la descarga (consulta nueva) se completa con el PDF devuelto", [eA.fase === "LISTO" ? eA.descarga : null, gAjeno.kudes.length, vA.acciones.length, (await bytesDe(vA.urls.get("blob:nexit/2"))).equals(PDF_B)], ["INACTIVA", 2, 1, true]);
     vA.visor.cerrar();
 
     for (const [nombre, id] of [["otra empresa", D(2)], ["sucursal sin alcance", D(3)]] as Array<[string, string]>) {
