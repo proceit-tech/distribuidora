@@ -608,7 +608,18 @@ fila_excel,codigo_anterior,codigo_nuevo,codigo_cliente,codigo_sifen,descripcion,
 CREATE TEMP TABLE pro327_resuelto ON COMMIT DROP AS
  SELECT m.*,p.id AS producto_id,p.codigo AS bd_codigo,p.codigo_inventario AS bd_inventario,
         p.codigo_sifen AS bd_sifen,p.descripcion AS bd_descripcion,
-        coalesce(p.codigo=m.codigo_anterior AND p.codigo_inventario IS NOT DISTINCT FROM m.codigo_anterior
+        -- Excepcion auditada PRO-327, fila Excel 8 / UUID 7c76f865-f1bf-47a2-9539-8658cbf331a0:
+        -- el inventario ya contiene el valor intermedio 026102466070 (12 digitos).
+        -- Es el MISMO codigo del origen 26102466070 con un cero, pero aun NO es el correcto:
+        -- 0026102466070 (13 digitos). Solo este UUID/fila/valor se acepta como estado anterior.
+        -- No se relajan las validaciones para ningun otro producto ni codigo numerico.
+        coalesce(p.codigo=m.codigo_anterior
+          AND (p.codigo_inventario IS NOT DISTINCT FROM m.codigo_anterior
+            OR (m.fila_excel=8
+              AND p.id='7c76f865-f1bf-47a2-9539-8658cbf331a0'::uuid
+              AND p.codigo='26102466070'
+              AND m.codigo_nuevo='0026102466070'
+              AND p.codigo_inventario='026102466070'))
           AND p.codigo_sifen IS NOT DISTINCT FROM m.codigo_anterior,false) AS previo,
         coalesce(p.codigo=m.codigo_nuevo AND p.codigo_inventario IS NOT DISTINCT FROM m.codigo_cliente
           AND p.codigo_sifen IS NOT DISTINCT FROM m.codigo_sifen,false) AS final
