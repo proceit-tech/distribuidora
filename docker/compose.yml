@@ -1,0 +1,40 @@
+# PROCEIT — docker/compose.yml padrão de um projeto na VM.
+# Pré-requisitos na VM (proceit-infra): redes externas "proxy" (Traefik) e "db" (PostgreSQL compartilhado).
+# Uso na VM, em /srv/<projeto>:  docker compose -f docker/compose.yml --env-file .env up -d --build
+#
+# Variáveis do .env (fora do Git):
+#   APP_NAME     nome curto e único do projeto (ex.: terport)
+#   APP_DOMAIN   domínio público (ex.: terport.proceit.net ou terport-dev.proceit.net)
+#   + variáveis da própria aplicação (ver .env.example)
+
+name: ${APP_NAME:?defina APP_NAME}
+
+services:
+  web:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: proceit/${APP_NAME}:${APP_VERSION:-latest}
+    restart: unless-stopped
+    env_file: ../.env
+    networks: [proxy, db]
+    deploy:
+      resources:
+        limits:
+          memory: ${APP_MEMORY_LIMIT:-512m}
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=proxy
+      - traefik.http.routers.${APP_NAME}.rule=Host(`${APP_DOMAIN:?defina APP_DOMAIN}`)
+      - traefik.http.routers.${APP_NAME}.entrypoints=websecure
+      - traefik.http.routers.${APP_NAME}.tls.certresolver=letsencrypt
+      - traefik.http.services.${APP_NAME}.loadbalancer.server.port=${APP_PORT:-3000}
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+networks:
+  proxy:
+    external: true
+  db:
+    external: true
