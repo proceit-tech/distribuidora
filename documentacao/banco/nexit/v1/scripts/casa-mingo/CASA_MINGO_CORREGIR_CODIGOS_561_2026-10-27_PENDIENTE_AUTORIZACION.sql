@@ -615,6 +615,52 @@ CREATE TEMP TABLE pro327_resuelto ON COMMIT DROP AS
  FROM pro327_mapa m LEFT JOIN public.productos p ON p.empresa_id=current_setting('pro327.empresa_uuid')::uuid
     AND p.codigo IN (m.codigo_anterior,m.codigo_nuevo);
 
+-- DIAGNOSTICO PRO-327: solo SELECT contra la foto de 561 filas; se emite ANTES de cualquier error bloqueante.
+-- En especial, revela estados parciales de codigo/inventario/SIFEN sin relajarlos ni actualizar.
+\echo '===== PRO327 DIAGNOSTICO SOLO LECTURA: resumen de las 561 correspondencias ====='
+SELECT count(*) AS filas_mapa,
+       count(DISTINCT producto_id) AS productos_uuid_distintos,
+       count(*) FILTER (WHERE producto_id IS NULL) AS sin_producto_en_bd,
+       count(*) FILTER (WHERE previo AND final) AS sin_cambios,
+       count(*) FILTER (WHERE previo AND NOT final) AS pendientes_completos,
+       count(*) FILTER (WHERE final AND NOT previo) AS ya_corregidos_completos,
+       count(*) FILTER (WHERE NOT (previo OR final)) AS estado_no_previsto,
+       count(*) FILTER (WHERE bd_codigo IS DISTINCT FROM codigo_anterior
+                          AND bd_codigo IS DISTINCT FROM codigo_nuevo) AS codigo_imprevisto,
+       count(*) FILTER (WHERE bd_inventario IS DISTINCT FROM codigo_anterior
+                          AND bd_inventario IS DISTINCT FROM codigo_cliente) AS inventario_imprevisto,
+       count(*) FILTER (WHERE bd_sifen IS DISTINCT FROM codigo_anterior
+                          AND bd_sifen IS DISTINCT FROM codigo_sifen) AS sifen_imprevisto,
+       count(*) FILTER (WHERE lower(btrim(bd_descripcion))
+                           IS DISTINCT FROM lower(btrim(descripcion))) AS descripcion_diferente
+FROM pro327_resuelto;
+
+\echo '===== PRO327 DIAGNOSTICO: lista de discrepancias (hasta 60, NO se altera nada) ====='
+SELECT fila_excel,producto_id,
+       bd_codigo AS codigo_bd,codigo_anterior,codigo_nuevo,
+       bd_inventario AS inventario_bd,codigo_cliente AS inventario_esperado,
+       bd_sifen AS sifen_bd,codigo_sifen AS sifen_esperado,
+       bd_descripcion AS descripcion_bd,descripcion AS descripcion_esperada,
+       array_to_string(array_remove(ARRAY[
+         CASE WHEN producto_id IS NULL THEN 'PRODUCTO_NO_ENCONTRADO'::text END,
+         CASE WHEN bd_codigo IS DISTINCT FROM codigo_anterior
+                   AND bd_codigo IS DISTINCT FROM codigo_nuevo THEN 'CODIGO_NO_ESPERADO'::text END,
+         CASE WHEN bd_inventario IS DISTINCT FROM codigo_anterior
+                   AND bd_inventario IS DISTINCT FROM codigo_cliente THEN 'INVENTARIO_NO_ESPERADO'::text END,
+         CASE WHEN bd_sifen IS DISTINCT FROM codigo_anterior
+                   AND bd_sifen IS DISTINCT FROM codigo_sifen THEN 'SIFEN_NO_ESPERADO'::text END,
+         CASE WHEN lower(btrim(bd_descripcion))
+                    IS DISTINCT FROM lower(btrim(descripcion)) THEN 'DESCRIPCION_DIFERENTE'::text END,
+         CASE WHEN NOT (previo OR final) THEN 'CAMPOS_EN_ESTADO_MIXTO'::text END
+       ],NULL), ',') AS motivo_diferencia
+FROM pro327_resuelto
+WHERE NOT (previo OR final)
+   OR lower(btrim(bd_descripcion)) IS DISTINCT FROM lower(btrim(descripcion))
+ORDER BY fila_excel
+LIMIT 60;
+
+\echo '===== FIN DIAGNOSTICO: cualquier diferencia sigue impidiendo UPDATE ====='
+
 DO $validar$
 DECLARE e uuid:=current_setting('pro327.empresa_uuid')::uuid; pendientes int; aplicados int;
 BEGIN
