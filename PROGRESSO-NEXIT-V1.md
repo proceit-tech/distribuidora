@@ -2,6 +2,13 @@
 
 Branch: `feature/NEXIT-2026-001-banco-demo`. Regra: uma funcionalidade por vez; sem mock/localStorage/dados fixos no modo real; commit+push ao terminar cada item.
 
+## PRO-326 — KuDE FE/NCE por documento sem CDC (27/10/2026) — AUD-R01
+
+- **Commit funcional Claude:** `d22fa7da53a07be9aa08e1fe5dfef9403548fc23` (três arquivos: `shared.ts`, `gateway.ts`, `kude.casos.ts`). Removidas consultas de emissores históricos e veto por CDC local/retornado; FE/NCE inclusive RECHAZADA exibe KuDE quando gateway entrega PDF Base64 válido para identificadores do documento selecionado. Mantidos ACL, tenant/sucursal, credenciais empresa, contratos FE/NCE, integridade PDF, visor e regras fiscais CDC de emissão/consulta.
+- **Auditoria independente ChatGPT:** [AUD-NEXIT-PRO-326-KUDE-SEM-CDC-R01](documentacao/testes/AUD-NEXIT-PRO-326-KUDE-SEM-CDC-R01-2026-10-27.md): **CONFORME ESTATICAMENTE, sem achados corretivos novos no escopo.** PRO-326 **In Review** (não Done). PRO-194 permanece In Review.
+- **Testes e homologação:** Claude ajustou/escreveu casos automatizados, mas NÃO os executou por ordem expressa. ChatGPT não executou testes, lint/build/typecheck, gateway real, navegador, PostgreSQL/SQL, VM ou deploy. Sem homologação operacional e sem autorização implícita de deploy; próxima etapa só com autorização expressa do responsável. **Não reexecutar PRO-326.**
+
+
 | # | Item | Estado | Commit |
 |---|---|---|---|
 | 1 | Menu e acesso por perfil | **ENTREGUE (pendente: typecheck/build no seu ambiente)** | ver git log |
