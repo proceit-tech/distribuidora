@@ -2,6 +2,15 @@
 
 Branch: `feature/NEXIT-2026-001-banco-demo`. Regra: uma funcionalidade por vez; sem mock/localStorage/dados fixos no modo real; commit+push ao terminar cada item.
 
+## PRO-327 — CASA MINGO / 561 produtos: SQL aplicado e pós-COMMIT confirmado (27/10/2026)
+
+- **SQL ChatGPT:** `documentacao/banco/nexit/v1/scripts/casa-mingo/CASA_MINGO_CORREGIR_CODIGOS_561_2026-10-27_PENDIENTE_AUTORIZACION.sql`. Script versão focal baseada linha a linha no original importado, com exceção para linha 8 e preservação de cinco códigos duplicados.
+- **Execução confirmada pelo responsável:** `NOTICE: PRO327 validacion final OK: 561 UUID, codigo, inventario, SIFEN. Trigger habilitado.`; `PRO327_CONTROL_FINAL | 561 | 249 | 254 | 5`; `COMMIT`. São **249 códigos principais/SIFEN restaurados** e **254 códigos de inventário**, preservando UUID/estoque/preços/FE histórica.
+- **Pós-COMMIT em nova sessão — APROVADO:** `Resultado: 0`, `NOTICE: PRO327 preflight OK. Pendientes 0, corregidos 254`, `ROLLBACK` de preflight (normal, somente leitura). **Não reexecutar UPDATE/importação/abertura.**
+- **Pendências separadas:** evidência de backup externo não compartilhada; UI/API `Nuevo producto` com código alfanumérico e zeros à esquerda ainda precisa implementação, auditoria de código e homologação. PRO-327 não marcada Done por incluir essa funcionalidade. Claude **somente desenvolve UI/API, nunca reexecuta ou altera SQL**.
+
+
+
 ## PRO-326 — KuDE FE/NCE por documento sem CDC (27/10/2026) — AUD-R01
 
 - **Commit funcional Claude:** `d22fa7da53a07be9aa08e1fe5dfef9403548fc23` (três arquivos: `shared.ts`, `gateway.ts`, `kude.casos.ts`). Removidas consultas de emissores históricos e veto por CDC local/retornado; FE/NCE inclusive RECHAZADA exibe KuDE quando gateway entrega PDF Base64 válido para identificadores do documento selecionado. Mantidos ACL, tenant/sucursal, credenciais empresa, contratos FE/NCE, integridade PDF, visor e regras fiscais CDC de emissão/consulta.
