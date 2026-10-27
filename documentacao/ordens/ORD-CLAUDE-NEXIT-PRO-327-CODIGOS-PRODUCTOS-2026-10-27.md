@@ -44,22 +44,13 @@ Leer integrales `CLAUDE.md`, `documentacao/PROTOCOLO-IA.md`, esta orden, el mapa
 - No autollenar por copia `codigo_inventario`, `codigo_sifen`, código de barras o GTIN sin decisión explícita del usuario: mantener campos distinguibles y reglas fiscales actuales, sin falsear código fiscal.
 - No tocar precios, cantidades, FE, línea de factura o los flujos existentes.
 
-## 4. Entrega de script B — Corrección histórica puntual CASA MINGO
+## 4. SCRIPT SQL YA CREADO POR CHATGPT — CLAUDE NO DEBE DESARROLLARLO NI CAMBIARLO
 
-Crear SOLO:
-- `documentacao/banco/nexit/v1/scripts/casa-mingo/CASA_MINGO_CORREGIR_CODIGOS_PREFLIGHT_SOLO_LECTURA.sql`
-- `documentacao/banco/nexit/v1/scripts/casa-mingo/CASA_MINGO_CORREGIR_CODIGOS_PENDIENTE_AUTORIZACION.sql`
-- Breve instrucción de ejecución y rollback lógico documentada junto a los archivos, sin tocar scripts antiguos ya ejecutados.
+**Decisión del responsable de 27/10/2026:** ChatGPT crea el script para corregir las 561 líneas del archivo original de importación de CASA MINGO. Claude únicamente desarrolla la interfaz, el formulario y la API.
 
-Reglas obligatorias:
-1. Leer el **MAPA canónico versionado de 561 filas**, no fabricar por `lpad` los 561 códigos indiscriminadamente. Los originales texto son literales y los cinco remapeos son excepciones.
-2. Preflight no modifica datos. Recibe `empresa_uuid` explícito y comprueba `empresas` == `CASA MINGO S.A.` / `codigo='80003314'` / activa / no demo; verifica esquema/triggers, tabla y roles. Muestra por fila **UUID vigente / código actual / código propuesto / `codigo_inventario` actual/propuesto / `codigo_sifen` actual/propuesto / descripción**, stock asociado (informativo), colisiones y discrepancias. Protege contra reutilizar código ya tomado por los 2 productos anteriores u otro SKU; admite solo source-state o target-state previstos; cualquier tercer valor ABORTA.
-3. Aplicación requiere parámetro afirmativo específico `autorizar_actualizacion=true` **además** de UUID, backup externo confirmado y preflight aceptado. Sin ello debe terminar sin UPDATE. **NO EJECUTAR AHORA**.
-4. Transacción única, bloqueos y timeouts razonables, anti-concurrencia, 561 registros exactos identificados por `empresa_uuid` + código previo o corregido y con descripción confirmada, sin depender solo de descripción. Validar correspondencia 1:1, 561 UUID inalterados y resultados finales exactos; `ROLLBACK` ante cualquier fallo, jamás éxito parcial. Idempotente solo para un segundo ciclo plenamente confirmado (no reescribir parcialmente). Generar comprobante antes/después fuera de las tablas de stock/fiscales y conteos 561, 249, 254 según estado.
-5. **NEX-038:** no eliminar ni modificar migración histórica y NO eliminar definitivamente el trigger. Si se necesitara modificar `productos.codigo`, diseñar una excepción one-off transaccional estricta que solo afecte el lote exacto de CASA MINGO, evitando bypass global de todas las tablas/FK/triggers (PROHIBIDO `session_replication_role=replica` o `DISABLE TRIGGER ALL`). Si no puede asegurarse reactivación atómica y un lock que evite otro UPDATE sin control, REPORTAR BLOQUEO al ChatGPT. No alterar función de inmutabilidad para uso general. El trigger tiene que continuar habilitado tras COMMIT/ROLLBACK.
-6. El usuario de aplicación quizá no sea el propietario del objeto y no tenga permiso DDL para una excepción temporal. No ampliar grants; detallar el rol dueño necesario para ejecución posterior segura, sin usar ni adivinar credenciales.
-7. Prohibidos `INSERT` de productos, `DELETE`, inventario_registrar_movimiento, actualización de `stock_saldos`, `inventario_costos`, `movimiento_lineas`, `listas_precio`, documentos electrónicos, payloads/versiones fiscales o datos de otro tenant. Los movimientos previos conservan `producto_id`; la nueva FE usa la identidad actual. No modificar GTIN/etiquetas ni realizar correcciones fiscales retroactivas.
-8. Caso excepcional: 5 duplicados conservan código único de sistema/fiscal, guardando en `codigo_inventario` el valor original del cliente; comunicar su duplicación en el reporte, sin generar cinco nuevas identidades.
+**SQL PUBLICADO POR CHATGPT:** `documentacao/banco/nexit/v1/scripts/casa-mingo/CASA_MINGO_CORREGIR_CODIGOS_561_2026-10-27_PENDIENTE_AUTORIZACION.sql`. Commit `074a7b7428b3f55be48fcca36138b0d2aac5c964`. Incluye 561 filas de mapeo, modo preflight, doble autorización para UPDATE, protección transaccional del trigger NEX-038, rollback y validaciones 561/249/254/5. **No ejecutado.**
+
+**Prohibido para Claude:** modificar o reemplazar el SQL, escribir otro script de corrección, ejecutar SQL, aplicar migration, modificar VM o actualizar Linear. **Resta únicamente entrega A: ajuste de la pantalla Nuevo producto y API para códigos alfanuméricos con ceros iniciales, más casos automatizados de esas funciones como código, sin ejecutarlos.**
 
 ## 5. Casos de aceptación como código, NO ejecutar
 
