@@ -9,7 +9,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { contador } from "@/lib/clientes/contador-casos";
-import { consultarDisponibilidadEnLotes, evaluarDisponibilidadPreventiva, LOTE_DISPONIBILIDAD, lotesDe, type LineaStock, type SaldoDisponible } from "@/lib/facturacion/stock-fe";
+import { asignarStock, consultarDisponibilidadEnLotes, evaluarDisponibilidadPreventiva, huellaReparto, LOTE_DISPONIBILIDAD, lotesDe, planificarStock, type LineaStock, type SaldoDisponible } from "@/lib/facturacion/stock-fe";
 import {
   cantidadCanonica, crearVerificadorStock, leerSolicitudDisponibilidad, lineasParaStock, MAX_LINEAS_FE, prepararVerificacion, productosParaStock, respuestaCoherente, sucursalParaStock, textoInsuficiente, vistaStock,
   type BorradorStock, type SolicitudDisponibilidad,
@@ -375,7 +375,7 @@ export async function verificarCasosStockPreventivo(): Promise<string[]> {
     const plan = fe.slice(fe.indexOf("export async function planificarStock"), fe.indexOf("export const asignacionesSql"));
 
     cierto("PRO330-54 la previa conserva su consulta real, el bloqueo 409 por insuficiencia y el resumen con la huella del reparto", /planificarStock\(b\.db, b\.empresaId, b\.usuarioId, datos\.sucursalId, lineasStock\)/.test(previa) && /if \(!plan\.suficiente\) throw new ErrorFacturacion\(409, mensajeStockInsuficiente\(plan\)\)/.test(previa) && /stock: resumenStock\(plan\)/.test(previa));
-    cierto("PRO330-55 planificarStock sigue igual (una consulta con los UUID controlados + asignarStock)", /const controladas = lineas\.filter\(\(l\) => l\.controlaStock\);/.test(plan) && /const saldos = await consultarDisponibilidad\(db, empresaId, usuarioId, sucursalId, \[\.\.\.new Set\(controladas\.map\(\(l\) => l\.productoId\)\)\]\);/.test(plan) && /return asignarStock\(lineas, saldos\);/.test(plan));
+    cierto("PRO330-55 planificarStock (R01-F001): misma forma (sin controladas → asignarStock vacío; saldos → asignarStock), ahora leyendo en tandas de ≤ 500", /const controladas = lineas\.filter\(\(l\) => l\.controlaStock\);/.test(plan) && /if \(controladas\.length === 0\) return asignarStock\(\[\], \[\]\);/.test(plan) && /const saldos = await consultarDisponibilidadEnLotes\(db, empresaId, usuarioId, sucursalId, controladas\.map\(\(l\) => l\.productoId\)\);/.test(plan) && !/await consultarDisponibilidad\(/.test(plan) && /return asignarStock\(lineas, saldos\);/.test(plan));
     cierto("PRO330-56 la emisión sigue exigiendo y validando repartoHuella", /repartoHuella/.test(leer("lib/facturacion/emision.ts")) && /MENSAJE_REPARTO_CAMBIO/.test(leer("lib/facturacion/emision.ts")));
   }
   {
@@ -393,6 +393,80 @@ export async function verificarCasosStockPreventivo(): Promise<string[]> {
 
       return !/from "node:/.test(m) && /import type \{ LineaStock, ProductoStockPreventivo \} from "@\/lib\/facturacion\/stock-fe";/.test(m) && !/^import \{[^}]*\} from "@\/lib\/facturacion\/stock-fe"/m.test(m);
     })());
+  }
+
+
+  // ── 4. R01-F001: previa y emisión (planificarStock) también en tandas de ≤ 500 ────────────────────────────────────────────────────────────────────
+  {
+    // Simulador del contrato de fe_stock_disponibilidad: > 500 UUID ⇒ vacío (sin error); saldos por UUID según `disp` (sin fila = sin saldo válido).
+    const contrato = (disp: (id: string) => string | null) => {
+      const llamadas: Array<{ sql: string; p: unknown[] }> = [];
+      const db = {
+        async query(sql: string, p: unknown[] = []) {
+          llamadas.push({ sql, p });
+          const ids = p[3] as string[];
+
+          if (ids.length > 500) return { rows: [], rowCount: 0 };
+
+          return {
+            rows: ids.flatMap((id) => {
+              const d = disp(id);
+
+              return d === null ? [] : [{ productoId: id, depositoId: DEP, depositoCodigo: "A", depositoNombre: "Depósito A", loteId: null, loteCodigo: null, vencimiento: null, disponible: d }];
+            }),
+            rowCount: 1,
+          };
+        },
+      };
+
+      return { db: db as never, llamadas, tamanos: () => llamadas.map((x) => (x.p[3] as string[]).length) };
+    };
+    const ids501 = Array.from({ length: 501 }, (_, i) => uuid(i + 1));
+
+    {
+      const c = contrato(() => "1");
+      const plan = await planificarStock(c.db, EMPRESA, USUARIO, SUC_A, ids501.map((id) => linea(id, "1")));
+
+      igual("PRO330-64 previa/emisión con 501 productos controlados únicos (1 pedido, 1 disponible): 2 llamadas 500 + 1 a fe_stock_disponibilidad con empresa/usuario/sucursal", [c.tamanos(), c.llamadas.every((x) => /FROM fe_stock_disponibilidad\(\$1::uuid, \$2::uuid, \$3::uuid, \$4::uuid\[\]\)/.test(x.sql) && x.p[0] === EMPRESA && x.p[1] === USUARIO && x.p[2] === SUC_A)], [[500, 1], true]);
+      igual("PRO330-65 con las tandas el plan es SUFICIENTE: 501 líneas de plan y 501 salidas válidas (antes: 409 falso por saldo vacío)", [plan.suficiente, plan.lineas.length, plan.salidas.length, plan.salidas.every((s) => s.cantidad === "1" && s.depositoId === DEP), /^[0-9a-f]{64}$/.test(plan.huella)], [true, 501, 501, true, true]);
+    }
+    {
+      const ultimo = ids501[500];
+      const c = contrato((id) => (id === ultimo ? "2" : "1"));
+      const plan = await planificarStock(c.db, EMPRESA, USUARIO, SUC_A, ids501.map((id) => linea(id, id === ultimo ? "3" : "1")));
+      const faltan = plan.lineas.filter((x) => x.faltante !== null);
+
+      igual("PRO330-66 501 productos con UNA insuficiencia real (el de la segunda tanda: 3 pedido, 2 disponible): insuficiente solo por ese UUID, con cantidades exactas", [c.tamanos(), plan.suficiente, faltan.map((x) => [x.productoId, x.requerido, x.disponible, x.faltante]), plan.salidas.length], [[500, 1], false, [[ultimo, "3", "2", "1"]], 500]);
+    }
+    {
+      const c = contrato(() => "5");
+      const plan = await planificarStock(c.db, EMPRESA, USUARIO, SUC_A, [linea(P1, "1"), linea(P1, "2"), linea(SERV, "9", false)]);
+
+      igual("PRO330-67 el mismo SKU repetido viaja una sola vez (un UUID) y se suma 1 + 2 = 3; el servicio no entra a la consulta", [c.llamadas.length, c.llamadas[0].p[3], plan.lineas.map((x) => [x.productoId, x.requerido, x.faltante]), plan.salidas.map((s) => s.cantidad)], [1, [P1], [[P1, "3", null]], ["3"]]);
+    }
+    {
+      const c = contrato(() => "1");
+      const servicios = Array.from({ length: 3 }, (_, i) => linea(uuid(9000 + i), "1", false));
+      const plan = await planificarStock(c.db, EMPRESA, USUARIO, SUC_A, [...ids501.slice(0, 500).map((id) => linea(id, "1")), ...servicios]);
+
+      igual("PRO330-68 500 controlados + 3 servicios: los servicios no cuentan para el límite (una sola tanda de 500, sin UUID de servicios) y el plan es suficiente", [c.tamanos(), (c.llamadas[0].p[3] as string[]).some((id) => id.startsWith("00000000-0000-4000-8000-00000000900")), plan.suficiente, plan.lineas.length], [[500], false, true, 500]);
+
+      const solo = contrato(() => "1");
+
+      igual("PRO330-69 solo servicios: sin consulta y el mismo plan vacío de antes", [solo.llamadas.length, JSON.stringify(await planificarStock(solo.db, EMPRESA, USUARIO, SUC_A, servicios)) === JSON.stringify(asignarStock([], []))], [0, true]);
+    }
+    {
+      // Referencia pequeña: el reparto (orden por depósito, cantidades) y la huella que firma `repartoHuella` son idénticos a los del cálculo directo.
+      const saldos = [{ ...saldo(P1, "5"), depositoId: "a0000000-0000-4000-8000-00000000000b", depositoCodigo: "B", depositoNombre: "Depósito B" }, saldo(P1, "3")];
+      const llamadas: unknown[][] = [];
+      const db = { async query(_sql: string, p: unknown[] = []) { llamadas.push(p); return { rows: saldos, rowCount: saldos.length }; } };
+      const lineas = [linea(P1, "6"), linea(SERV, "2", false)];
+      const plan = await planificarStock(db as never, EMPRESA, USUARIO, SUC_A, lineas);
+      const directo = asignarStock(lineas, saldos);
+
+      igual("PRO330-70 caso pequeño: una sola llamada con los mismos parámetros de antes ([empresa, usuario, sucursal, [P1]])", llamadas, [[EMPRESA, USUARIO, SUC_A, [P1]]]);
+      igual("PRO330-71 caso pequeño: plan idéntico al cálculo directo (A:3 + B:3, por código de depósito) y misma huella del reparto", [JSON.stringify(plan) === JSON.stringify(directo), plan.salidas.map((s) => s.depositoCodigo + ":" + s.cantidad), plan.huella === huellaReparto(directo.salidas)], [true, ["A:3", "B:3"], true]);
+    }
   }
 
   return fallos;

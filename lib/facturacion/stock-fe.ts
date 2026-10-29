@@ -139,7 +139,8 @@ export async function planificarStock(db: Db, empresaId: string, usuarioId: stri
 
   if (controladas.length === 0) return asignarStock([], []);
 
-  const saldos = await consultarDisponibilidad(db, empresaId, usuarioId, sucursalId, [...new Set(controladas.map((l) => l.productoId))]);
+  // PRO-330 R01-F001: tandas de ≤ 500 UUID únicos (NEX-067 devuelve vacío con más de 500); mismo cálculo y mismo reparto.
+  const saldos = await consultarDisponibilidadEnLotes(db, empresaId, usuarioId, sucursalId, controladas.map((l) => l.productoId));
 
   return asignarStock(lineas, saldos);
 }
