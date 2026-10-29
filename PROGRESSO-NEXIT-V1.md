@@ -2,6 +2,16 @@
 
 Branch: `feature/NEXIT-2026-001-banco-demo`. Regra: uma funcionalidade por vez; sem mock/localStorage/dados fixos no modo real; commit+push ao terminar cada item.
 
+## PRO-330 — ORDEM DE CÓDIGO ATIVA 29/10/2026 — AVISO DE STOCK AO ADICIONAR ITEM
+
+**Linear:** [PRO-330](https://linear.app/proceit/issue/PRO-330). **Requisito de negócio fechado ChatGPT:** [REQ](documentacao/definicoes/REQ-NEXIT-CM-PRO-330-STOCK-AL-CARGAR-LINEA-2026-10-29.md). **Ordem de implementação exclusivamente Claude:** [ORD](documentacao/ordens/ORD-CLAUDE-NEXIT-CM-PRO-330-STOCK-INMEDIATO-2026-10-29.md).
+
+**Situação:** diagnóstico de código confirmado (NEX-067 `fe_stock_disponibilidad` + `stock-fe.ts::planificarStock` já calculam só depósitos ativos da sucursal, DISPONIBLE/PROPIO, filtro usuário; faltava API+UI consultar ao adicionar/alterar linha). Desenvolvimento **AUTORIZADO, AINDA NÃO ENTREGUE**. Regra: avisar na linha pedido/disponível/faltante, agregar SKU por UUID/quantidades decimais, invalidar resposta assíncrona, serviço sem controle livre, bloquear revisão durante falta/erro e preservar revisão/emissão SQL/transacional e `repartoHuella`. **API nova exclusivamente leitura**, 500 UUID por consulta NEX-067, até 999 linhas. Sem migrations, SQL real, VM, Docker, build/test/CI manual, gateway, deploy. Claude commit+push SHA, PARA; ChatGPT audita.
+
+**PRO-328** entregue em SHA `e551943d9742212d1b85b0f4a841d058f33be9c4` e conforme estaticamente R01, In Review e NEX-076 não aplicada, não tocar. **PRO-327** SQL 561 concluído, UI/API pendente e pausada; não reexecutar. As demais PRO-329 não têm ordem de implementação ativa.
+
+
+
 ## PRO-328 — AUDITORIA R01 / 29-10-2026 — CÓDIGO ENTREGUE, NEX-076 AINDA NÃO APLICADA
 
 - **Commit funcional Claude:** `e551943d9742212d1b85b0f4a841d058f33be9c4`, 7 arquivos (FE nova: direção selecionada no bloco principal receptor SIFEN; dInfAdic sem inserção automática de entrega; UI de resumo e hash, idempotência por UUID, SQL NEX-076 apenas versionada, 50 casos PRO328 como código).
