@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { crearCompuerta } from "@/lib/productos/catalogos-carga";
 import { descargarVentas, filtrosVentasNormalizados, pedirVentas } from "@/lib/reportes/cliente-ventas";
 import { negativo, textoReferenciaFe, textoSituacion, textoVendedor } from "@/lib/reportes/export-ventas";
-import { fmtCantidadTexto, fmtDinero, fmtNum } from "@/lib/reportes/formato";
+import { fmtCantidadTexto, fmtImporteMoneda, fmtNum } from "@/lib/reportes/formato";
 import {
   ESTADOS_SIFEN_VENTAS,
   ETIQUETA_AJUSTE_NO_ATRIBUIBLE,
@@ -32,19 +32,19 @@ const BADGE_SITUACION: Record<SituacionVentas, string> = { COMPUTA: styles.badge
 const esNegativo = (v: string | null | undefined) => typeof v === "string" && v.startsWith("-") && !/^-0+(\.0+)?$/.test(v);
 const claseNum = (v: string | null | undefined) => [styles.num, esNegativo(v) ? styles.neg : ""].join(" ");
 
-/** Celdas de importes (FE/NCE aprobadas y netos) de una fila agregada o de un total. */
-function CeldasImportes({ i }: { i: VentasImportes }) {
+/** Celdas de importes (FE/NCE aprobadas y netos) de una fila agregada o de un total, en la moneda de ESA fila (PRO-335: nunca la del filtro ni la de la empresa). */
+function CeldasImportes({ i, moneda }: { i: VentasImportes; moneda: string }) {
   return (
     <>
       <td className={styles.num}>{fmtNum(i.documentosFe)}</td>
       <td className={styles.num}>{fmtNum(i.documentosNce)}</td>
-      <td className={styles.num}>{fmtDinero(i.feConIva)}</td>
-      <td className={styles.num}>{fmtDinero(i.ivaFe)}</td>
-      <td className={styles.num}>{fmtDinero(i.nceConIva)}</td>
-      <td className={styles.num}>{fmtDinero(i.ivaNce)}</td>
-      <td className={claseNum(i.netoConIva)}>{fmtDinero(i.netoConIva)}</td>
-      <td className={claseNum(i.ivaNeto)}>{fmtDinero(i.ivaNeto)}</td>
-      <td className={claseNum(i.netoSinIva)}>{fmtDinero(i.netoSinIva)}</td>
+      <td className={styles.num}>{fmtImporteMoneda(i.feConIva, moneda)}</td>
+      <td className={styles.num}>{fmtImporteMoneda(i.ivaFe, moneda)}</td>
+      <td className={styles.num}>{fmtImporteMoneda(i.nceConIva, moneda)}</td>
+      <td className={styles.num}>{fmtImporteMoneda(i.ivaNce, moneda)}</td>
+      <td className={claseNum(i.netoConIva)}>{fmtImporteMoneda(i.netoConIva, moneda)}</td>
+      <td className={claseNum(i.ivaNeto)}>{fmtImporteMoneda(i.ivaNeto, moneda)}</td>
+      <td className={claseNum(i.netoSinIva)}>{fmtImporteMoneda(i.netoSinIva, moneda)}</td>
     </>
   );
 }
@@ -276,27 +276,27 @@ export default function InformeVentasPage() {
             <div className={styles.summaryGrid}>
               <article className={[styles.summaryCard, styles.summaryTeal].join(" ")}>
                 <span>FE aprobadas con IVA</span>
-                <strong>{fmtDinero(m.feConIva)}</strong>
-                <small>{fmtNum(m.documentosFe)} factura(s) · IVA {fmtDinero(m.ivaFe)} · sin IVA {fmtDinero(m.feSinIva)}</small>
+                <strong>{fmtImporteMoneda(m.feConIva, m.moneda)}</strong>
+                <small>{fmtNum(m.documentosFe)} factura(s) · IVA {fmtImporteMoneda(m.ivaFe, m.moneda)} · sin IVA {fmtImporteMoneda(m.feSinIva, m.moneda)}</small>
               </article>
               <article className={[styles.summaryCard, styles.summaryAmber].join(" ")}>
                 <span>NCE aprobadas con IVA</span>
-                <strong>{fmtDinero(m.nceConIva)}</strong>
-                <small>{fmtNum(m.documentosNce)} nota(s) de crédito · IVA {fmtDinero(m.ivaNce)} · sin IVA {fmtDinero(m.nceSinIva)}</small>
+                <strong>{fmtImporteMoneda(m.nceConIva, m.moneda)}</strong>
+                <small>{fmtNum(m.documentosNce)} nota(s) de crédito · IVA {fmtImporteMoneda(m.ivaNce, m.moneda)} · sin IVA {fmtImporteMoneda(m.nceSinIva, m.moneda)}</small>
               </article>
               <article className={[styles.summaryCard, styles.summaryBlue].join(" ")}>
                 <span>Venta neta con IVA</span>
-                <strong>{fmtDinero(m.netoConIva)}</strong>
+                <strong>{fmtImporteMoneda(m.netoConIva, m.moneda)}</strong>
                 <small>FE aprobadas − NCE aprobadas (con IVA)</small>
               </article>
               <article className={[styles.summaryCard, styles.summaryPurple].join(" ")}>
                 <span>IVA neto</span>
-                <strong>{fmtDinero(m.ivaNeto)}</strong>
+                <strong>{fmtImporteMoneda(m.ivaNeto, m.moneda)}</strong>
                 <small>IVA FE − IVA NCE{esNegativo(m.ivaNeto) ? " · negativo por NCE de ventas anteriores" : ""}</small>
               </article>
               <article className={[styles.summaryCard, styles.summaryTeal].join(" ")}>
                 <span>Venta neta sin IVA</span>
-                <strong>{fmtDinero(m.netoSinIva)}</strong>
+                <strong>{fmtImporteMoneda(m.netoSinIva, m.moneda)}</strong>
                 <small>Venta neta con IVA − IVA neto</small>
               </article>
             </div>
@@ -316,7 +316,7 @@ export default function InformeVentasPage() {
                   {actual.estados.map((e) => (
                     <tr key={`${e.tipo}|${e.estadoSifen}|${e.moneda}`}>
                       <td>{etiquetaTipoVentas(e.tipo)}</td><td>{etiquetaSifen(e.estadoSifen)}</td><td>{e.moneda}</td>
-                      <td className={propios.num}>{fmtNum(e.documentos)}</td><td className={propios.num}>{fmtNum(e.enviados)}</td><td className={propios.num}>{fmtDinero(e.total)}</td>
+                      <td className={propios.num}>{fmtNum(e.documentos)}</td><td className={propios.num}>{fmtNum(e.enviados)}</td><td className={propios.num}>{fmtImporteMoneda(e.total, e.moneda)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -333,7 +333,7 @@ export default function InformeVentasPage() {
                     {actual.anomalias.map((a) => (
                       <tr key={`${a.motivo}|${a.tipo}|${a.moneda}`}>
                         <td style={{ whiteSpace: "normal" }}>{ETIQUETA_ANOMALIA[a.motivo] ?? a.motivo}</td><td>{etiquetaTipoVentas(a.tipo)}</td><td>{a.moneda}</td>
-                        <td className={propios.num}>{fmtNum(a.documentos)}</td><td className={propios.num}>{fmtDinero(a.total)}</td>
+                        <td className={propios.num}>{fmtNum(a.documentos)}</td><td className={propios.num}>{fmtImporteMoneda(a.total, a.moneda)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -406,9 +406,9 @@ export default function InformeVentasPage() {
                 {(actual?.resumen ?? []).map((m) => (
                   <tr key={m.moneda}>
                     <td><strong>{m.moneda}</strong></td>
-                    <td className={styles.num}>{fmtNum(m.documentosFe)}</td><td className={styles.num}>{fmtDinero(m.feConIva)}</td><td className={styles.num}>{fmtDinero(m.ivaFe)}</td><td className={styles.num}>{fmtDinero(m.feSinIva)}</td>
-                    <td className={styles.num}>{fmtNum(m.documentosNce)}</td><td className={styles.num}>{fmtDinero(m.nceConIva)}</td><td className={styles.num}>{fmtDinero(m.ivaNce)}</td><td className={styles.num}>{fmtDinero(m.nceSinIva)}</td>
-                    <td className={claseNum(m.netoConIva)}>{fmtDinero(m.netoConIva)}</td><td className={claseNum(m.ivaNeto)}>{fmtDinero(m.ivaNeto)}</td><td className={claseNum(m.netoSinIva)}>{fmtDinero(m.netoSinIva)}</td>
+                    <td className={styles.num}>{fmtNum(m.documentosFe)}</td><td className={styles.num}>{fmtImporteMoneda(m.feConIva, m.moneda)}</td><td className={styles.num}>{fmtImporteMoneda(m.ivaFe, m.moneda)}</td><td className={styles.num}>{fmtImporteMoneda(m.feSinIva, m.moneda)}</td>
+                    <td className={styles.num}>{fmtNum(m.documentosNce)}</td><td className={styles.num}>{fmtImporteMoneda(m.nceConIva, m.moneda)}</td><td className={styles.num}>{fmtImporteMoneda(m.ivaNce, m.moneda)}</td><td className={styles.num}>{fmtImporteMoneda(m.nceSinIva, m.moneda)}</td>
+                    <td className={claseNum(m.netoConIva)}>{fmtImporteMoneda(m.netoConIva, m.moneda)}</td><td className={claseNum(m.ivaNeto)}>{fmtImporteMoneda(m.ivaNeto, m.moneda)}</td><td className={claseNum(m.netoSinIva)}>{fmtImporteMoneda(m.netoSinIva, m.moneda)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -437,9 +437,9 @@ export default function InformeVentasPage() {
                     </td>
                     <td className={d.vendedorEstado === "REGISTRADO" ? undefined : styles.muted}>{textoVendedor(d)}</td>
                     <td>{d.moneda}</td>
-                    <td className={[claseNum(d.totalConIva), d.situacion === "COMPUTA" ? "" : styles.muted].join(" ")}>{fmtDinero(d.totalConIva)}</td>
-                    <td className={claseNum(d.iva)}>{fmtDinero(d.iva)}</td>
-                    <td className={claseNum(d.sinIva)}>{fmtDinero(d.sinIva)}</td>
+                    <td className={[claseNum(d.totalConIva), d.situacion === "COMPUTA" ? "" : styles.muted].join(" ")}>{fmtImporteMoneda(d.totalConIva, d.moneda)}</td>
+                    <td className={claseNum(d.iva)}>{fmtImporteMoneda(d.iva, d.moneda)}</td>
+                    <td className={claseNum(d.sinIva)}>{fmtImporteMoneda(d.sinIva, d.moneda)}</td>
                     <td>{etiquetaSifen(d.estadoSifen)}</td>
                     <td className={styles.muted}>{etiquetaLocal(d.estadoLocal)}</td>
                     <td><span className={[styles.badge, BADGE_SITUACION[d.situacion]].join(" ")} title={textoSituacion(d)}>{d.situacion === "ANOMALIA" ? "Anomalía" : d.situacion === "COMPUTA" ? "Computa" : "No computa"}</span>{d.situacion === "ANOMALIA" && d.anomalia ? <small> {ETIQUETA_ANOMALIA[d.anomalia] ?? d.anomalia}</small> : null}</td>
@@ -454,9 +454,9 @@ export default function InformeVentasPage() {
                     <tr key={t.moneda}>
                       <td colSpan={7}>TOTAL COMPUTADO {t.moneda} — {fmtNum(t.computan)} de {fmtNum(t.filas)} documento(s) de la lista computan (todas las páginas)</td>
                       <td>{t.moneda}</td>
-                      <td className={claseNum(t.totalConIva)}>{fmtDinero(t.totalConIva)}</td>
-                      <td className={claseNum(t.iva)}>{fmtDinero(t.iva)}</td>
-                      <td className={claseNum(t.sinIva)}>{fmtDinero(t.sinIva)}</td>
+                      <td className={claseNum(t.totalConIva)}>{fmtImporteMoneda(t.totalConIva, t.moneda)}</td>
+                      <td className={claseNum(t.iva)}>{fmtImporteMoneda(t.iva, t.moneda)}</td>
+                      <td className={claseNum(t.sinIva)}>{fmtImporteMoneda(t.sinIva, t.moneda)}</td>
                       <td colSpan={5} />
                     </tr>
                   ))}
@@ -478,7 +478,7 @@ export default function InformeVentasPage() {
                   <tr key={`${g.moneda}|${g.clave}`}>
                     <td>{g.etiqueta}</td><td className={styles.desc} title={g.detalle}>{g.detalle}</td><td>{g.unidad || "—"}</td><td>{g.moneda}</td>
                     <td className={styles.num}>{fmtCantidadTexto(g.cantidadVendida)}</td><td className={styles.num}>{fmtCantidadTexto(g.cantidadDevuelta)}</td>
-                    <CeldasImportes i={g} />
+                    <CeldasImportes i={g} moneda={g.moneda} />
                   </tr>
                 ))}
               </tbody>
@@ -494,20 +494,20 @@ export default function InformeVentasPage() {
                       sub ? (
                         <tr key={`${m}-sub`} className={propios.subtotal}>
                           <td colSpan={3}>Subtotal productos {m}{conFiltro ? " — filtro de producto: no concilia con el total de la empresa" : " (todas las páginas)"}</td><td>{m}</td><td /><td />
-                          <CeldasImportes i={sub} />
+                          <CeldasImportes i={sub} moneda={m} />
                         </tr>
                       ) : null,
                       aj ? (
                         <tr key={`${m}-aj`} className={propios.subtotal}>
                           <td colSpan={3}>{ETIQUETA_AJUSTE_NO_ATRIBUIBLE} {m} (NCE de servicio DESCUENTO u otras sin vínculo a ítems)</td><td>{m}</td><td /><td />
-                          <td /><td className={styles.num}>{fmtNum(aj.documentos)}</td><td /><td /><td className={styles.num}>{fmtDinero(aj.conIva)}</td><td className={styles.num}>{fmtDinero(aj.iva)}</td>
-                          <td className={styles.num + " " + styles.neg}>{fmtDinero(negativo(aj.conIva))}</td><td className={styles.num + " " + styles.neg}>{fmtDinero(negativo(aj.iva))}</td><td className={styles.num + " " + styles.neg}>{fmtDinero(negativo(aj.sinIva))}</td>
+                          <td /><td className={styles.num}>{fmtNum(aj.documentos)}</td><td /><td /><td className={styles.num}>{fmtImporteMoneda(aj.conIva, m)}</td><td className={styles.num}>{fmtImporteMoneda(aj.iva, m)}</td>
+                          <td className={styles.num + " " + styles.neg}>{fmtImporteMoneda(negativo(aj.conIva), m)}</td><td className={styles.num + " " + styles.neg}>{fmtImporteMoneda(negativo(aj.iva), m)}</td><td className={styles.num + " " + styles.neg}>{fmtImporteMoneda(negativo(aj.sinIva), m)}</td>
                         </tr>
                       ) : null,
                       !conFiltro && tot ? (
                         <tr key={`${m}-tot`}>
                           <td colSpan={3}>TOTAL {m} (productos + ajustes no atribuibles = total del período)</td><td>{m}</td><td /><td />
-                          <CeldasImportes i={tot} />
+                          <CeldasImportes i={tot} moneda={m} />
                         </tr>
                       ) : null,
                     ];
@@ -538,7 +538,7 @@ export default function InformeVentasPage() {
                       <td className={styles.desc} title={g.etiqueta}>{g.etiqueta}</td>
                       {vista === "CLIENTES" ? <td>{g.detalle || "—"}</td> : null}
                       <td>{g.moneda}</td>
-                      <CeldasImportes i={g} />
+                      <CeldasImportes i={g} moneda={g.moneda} />
                       <td>
                         {vista === "CLIENTES" && g.clienteId ? <button type="button" className={propios.enlace} onClick={() => verDocumentos({ clienteId: g.clienteId ?? "", moneda: g.moneda as VentasFiltros["moneda"] })}>Ver documentos</button> : null}
                         {filtroVendedor ? <button type="button" className={propios.enlace} onClick={() => verDocumentos({ vendedor: filtroVendedor, moneda: g.moneda as VentasFiltros["moneda"] })}>Ver documentos</button> : null}
@@ -553,7 +553,7 @@ export default function InformeVentasPage() {
                     <tr key={t.moneda}>
                       <td colSpan={vista === "CLIENTES" ? 2 : 1}>TOTAL {t.moneda} (todos los resultados del filtro)</td>
                       <td>{t.moneda}</td>
-                      <CeldasImportes i={t} />
+                      <CeldasImportes i={t} moneda={t.moneda} />
                       <td />
                     </tr>
                   ))}

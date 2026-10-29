@@ -1,4 +1,4 @@
-import { formatearDecimalTexto } from "@/lib/formato/decimal-texto";
+import { formatearImporteConMoneda } from "@/lib/formato/monto-visual";
 
 /**
  * F-DASH-07 — importes del Dashboard como DECIMAL en texto (sin pasar por `number`/`float8`). Redondea a `decimales` (mitad hacia arriba, en valor absoluto) con BigInt y formatea es-PY;
@@ -22,8 +22,7 @@ export function redondearDecimalTexto(texto: string, decimales: number): string 
   return `${negativo ? "-" : ""}${entero}${dec ? `.${dec}` : ""}`;
 }
 
+/** PRO-335 — importe visual del Dashboard con la semántica única del NEXIT: «Gs. 1.234.567» (PYG 0 decimales), «USD 1.234,50» (USD/BRL 2 fijos); moneda desconocida → valor exacto. */
 export function montoTexto(valor: string, moneda: string): string {
-  const r = redondearDecimalTexto(valor, moneda === "PYG" ? 0 : 2);
-
-  return `${moneda === "PYG" ? "Gs." : moneda} ${formatearDecimalTexto(r)}`;
+  return formatearImporteConMoneda(valor, moneda);
 }

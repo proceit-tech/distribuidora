@@ -148,9 +148,9 @@ export async function verificarCasosDashboard(): Promise<string[]> {
   // ── F-DASH-07: precisión monetaria ─────────────────────────────────────────────────────────────────────────────────────────────────────────
   igual("F-DASH-07: total elevado sin pérdida (más de 2^53) en guaraníes", montoTexto("9007199254740993.4000", "PYG"), "Gs. 9.007.199.254.740.993");
   igual("F-DASH-07: redondeo a la mitad hacia arriba en guaraníes", [montoTexto("0.4999", "PYG"), montoTexto("0.5", "PYG"), montoTexto("1234567.5000", "PYG")], ["Gs. 0", "Gs. 1", "Gs. 1.234.568"]);
-  igual("F-DASH-07: otras monedas con 2 decimales exactos", [montoTexto("1234567.8950", "USD"), montoTexto("99999999999999.9949", "USD"), montoTexto("10.0000", "BRL")], ["USD 1.234.567,9", "USD 99.999.999.999.999,99", "BRL 10"]);
+  igual("F-DASH-07 / PRO-335: otras monedas con 2 decimales FIJOS (centavos visibles)", [montoTexto("1234567.8950", "USD"), montoTexto("99999999999999.9949", "USD"), montoTexto("10.0000", "BRL")], ["USD 1.234.567,90", "USD 99.999.999.999.999,99", "BRL 10,00"]);
   igual("F-DASH-07: negativos y cero", [redondearDecimalTexto("-0.5", 0), redondearDecimalTexto("-0.4", 0), redondearDecimalTexto("0", 2), redondearDecimalTexto("-1234.5678", 2)], ["-1", "0", "0.00", "-1234.57"]);
-  igual("F-DASH-07: un texto que no es decimal no se inventa", montoTexto("abc", "PYG"), "Gs. abc");
+  igual("F-DASH-07 / PRO-335: un texto que no es decimal no se inventa ni se rotula como importe", montoTexto("abc", "PYG"), "abc");
   {
     const s = dbSimulada({ valor: "123456789012345678.1234" });
     const r = await leerDashboard(s.db, "E1", "U1", TODOS, "7d", "");

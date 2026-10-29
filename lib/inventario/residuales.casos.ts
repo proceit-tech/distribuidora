@@ -7,7 +7,7 @@ import { join } from "node:path";
 
 import { contador } from "@/lib/clientes/contador-casos";
 import { cargarDepositos, interpretarDepositoUrl } from "@/lib/depositos/carga";
-import { compararDecimales, dividirDecimales, formatearCostoUnitarioTexto } from "@/lib/inventario/decimal";
+import { compararDecimales, dividirDecimales, formatearCostoUnitarioExactoTexto, formatearCostoUnitarioTexto } from "@/lib/inventario/decimal";
 import { permisosVigentes, crearCompuerta } from "@/lib/productos/catalogos-carga";
 import { cargarReposicion } from "@/lib/reposicion/carga";
 import { leerStock } from "@/lib/stock/shared";
@@ -39,8 +39,11 @@ export async function verificarCasosInventarioResiduales(): Promise<string[]> {
   igual("R02-01 comparación exacta para ordenar (empates de double, valores > 2^53, sin costo al final)", [
     compararDecimales("0.1", "0.10"), compararDecimales("10.0001", "10"), compararDecimales("9007199254740993", "9007199254740992"), compararDecimales("2", "10"), compararDecimales(null, "1"), compararDecimales("1", null), compararDecimales(null, null),
   ], [0, 1, 1, -1, 1, -1, 0]);
-  igual("R02-01 presentación del costo unitario: hasta 4 decimales sin ceros finales, moneda correcta, sin costo → «—»", [
+  igual("R02-01 / PRO-335 presentación del costo unitario en pantalla: política monetaria (PYG 0, USD 2), moneda correcta, sin costo → «—»", [
     formatearCostoUnitarioTexto("1234.5000", "PYG"), formatearCostoUnitarioTexto("0.3333", "PYG"), formatearCostoUnitarioTexto("12.3400", "USD"), formatearCostoUnitarioTexto("1000", "PYG"), formatearCostoUnitarioTexto(null, "PYG"), formatearCostoUnitarioTexto("x", "PYG"),
+  ], ["Gs. 1.235", "Gs. 0", "USD 12,34", "Gs. 1.000", "—", "—"]);
+  igual("R02-01 / PRO-335 precisión del costo unitario conservada para el detalle técnico: hasta 4 decimales sin ceros finales", [
+    formatearCostoUnitarioExactoTexto("1234.5000", "PYG"), formatearCostoUnitarioExactoTexto("0.3333", "PYG"), formatearCostoUnitarioExactoTexto("12.3400", "USD"), formatearCostoUnitarioExactoTexto("1000", "PYG"), formatearCostoUnitarioExactoTexto(null, "PYG"), formatearCostoUnitarioExactoTexto("x", "PYG"),
   ], ["Gs. 1.234,5", "Gs. 0,3333", "USD 12,34", "Gs. 1.000", "—", "—"]);
 
   // Lectura simulada: múltiples depósitos, cantidades fraccionarias, producto sin costo y productos con unidades distintas (sin promedio mezclado)

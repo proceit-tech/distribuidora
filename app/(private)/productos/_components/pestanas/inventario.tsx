@@ -1,5 +1,6 @@
 "use client";
 
+import { formatearDecimalExacto, formatearImporteMoneda } from "@/lib/formato/monto-visual";
 import type { ProductoModoControlStock } from "@/types/productos";
 
 import { Casilla, Dato, Selector, SubTitulo, Texto } from "../campos";
@@ -63,7 +64,7 @@ export function PestanaInventario({ ctx }: { ctx: ContextoFormulario }) {
         ) : (
           <>
             <Dato etiqueta="Cantidad inicial" valor={apertura ? `${apertura.cantidad} · mov. ${apertura.numero}` : ""} vacio="Sin movimiento de apertura" ayuda="Los cambios de stock se hacen con movimientos." />
-            <Dato etiqueta="Costo de apertura" valor={apertura?.costoUnitario ?? ""} />
+            <Dato etiqueta={`Costo de apertura${moneda}`} valor={apertura?.costoUnitario ? formatearImporteMoneda(apertura.costoUnitario, catalogos.monedaReferencia) : ""} ayuda={apertura?.costoUnitario ? `Exacto: ${formatearDecimalExacto(apertura.costoUnitario)}` : undefined} />
             <Dato etiqueta="Depósito de apertura" valor={apertura?.depositoNombre ?? ""} />
           </>
         )}
@@ -72,7 +73,7 @@ export function PestanaInventario({ ctx }: { ctx: ContextoFormulario }) {
       <SubTitulo>Indicadores operacionales (solo lectura)</SubTitulo>
       <div className={styles.gridFour}>
         <Dato etiqueta="Stock actual (real)" valor={ctx.modo === "crear" ? "0" : (detalle?.stockActual ?? "0")} ayuda={ctx.modo === "crear" ? "Se calcula con el movimiento de apertura." : "Calculado por los movimientos."} />
-        <Dato etiqueta={`Costo promedio${moneda}`} valor={detalle?.costoPromedio ?? ""} vacio="Sin saldo valorizado" />
+        <Dato etiqueta={`Costo promedio${moneda}`} valor={detalle?.costoPromedio ? formatearImporteMoneda(detalle.costoPromedio, catalogos.monedaReferencia) : ""} vacio="Sin saldo valorizado" ayuda={detalle?.costoPromedio ? `Exacto: ${formatearDecimalExacto(detalle.costoPromedio)}` : undefined} />
         {detalle?.stockPorDeposito.map((s) => <Dato key={s.depositoId} etiqueta={`Stock en ${s.depositoNombre}`} valor={s.cantidad} />)}
       </div>
 

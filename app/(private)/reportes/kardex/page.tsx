@@ -6,7 +6,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { crearCompuerta } from "@/lib/productos/catalogos-carga";
 import { descargarKardex, pedirKardex } from "@/lib/reportes/cliente-kardex";
 import { sgDecimal, textoCambioEstado, textoDeposito, textoEstadoMov, textoPropiedadFila, textoTipo, textoVinculo } from "@/lib/reportes/export-kardex";
-import { fmtCantidadTexto, fmtDinero, fmtNum } from "@/lib/reportes/formato";
+import { fmtCantidadTexto, fmtImporteMoneda, fmtNum } from "@/lib/reportes/formato";
 import { esCeroDecimal, etiquetaGrupo, etiquetasUnidad, filtrosKardexIguales, netoMovimientos, nombreUnidad, respuestaKardexVigente } from "@/lib/reportes/kardex-plan";
 import type { KardexFiltros, KardexFila, KardexGrupo, KardexRespuestaApi, KardexResumenFila } from "@/types/reportes";
 
@@ -101,8 +101,10 @@ export default function ReporteKardexPage() {
   const cc = actual?.conciliacion;
   const fl = t?.filtrosDeFila === true;
   const depositos = catalogos?.depositos ?? [];
-  const costo = (f: KardexFila) => (f.costoUnitario === null ? "—" : `${fmtDinero(f.costoUnitario)} ${f.moneda}`.trim());
-  const costoTotal = (f: KardexFila) => (f.costoTotal === null ? "—" : `${fmtDinero(f.costoTotal)} ${f.moneda}`.trim());
+  // PRO-335: importe visual en la moneda de la línea; el costo unitario exacto registrado queda visible en el título y en el detalle expandido.
+  const costo = (f: KardexFila) => (f.costoUnitario === null ? "—" : `${fmtImporteMoneda(f.costoUnitario, f.moneda)} ${f.moneda}`.trim());
+  const costoExacto = (f: KardexFila) => (f.costoUnitario === null ? undefined : `Costo unitario exacto: ${fmtCantidadTexto(f.costoUnitario)} ${f.moneda}`.trim());
+  const costoTotal = (f: KardexFila) => (f.costoTotal === null ? "—" : `${fmtImporteMoneda(f.costoTotal, f.moneda)} ${f.moneda}`.trim());
 
   return (
     <section className={styles.page}>
@@ -341,7 +343,7 @@ export default function ReporteKardexPage() {
                       <td className={styles.num}>{cant(f.saldoDisponible)}</td>
                       <td className={styles.num}>{cant(f.saldoReservado)}</td>
                       <td className={styles.num}>{cant(f.saldoCuarentena)}</td>
-                      <td className={styles.num}>{costo(f)}</td>
+                      <td className={styles.num} title={costoExacto(f)}>{costo(f)}</td>
                       <td className={styles.num}>{costoTotal(f)}</td>
                       <td>{f.usuario || "—"}</td>
                       <td>{textoVinculo(f) || "—"}</td>
@@ -354,7 +356,7 @@ export default function ReporteKardexPage() {
                           {" "}Producto {f.productoCodigo} · {f.productoDescripcion} ({nombreUnidad(et, f)}); depósito {textoDeposito(f)}{f.lote ? `; lote ${f.lote}` : ""}; {textoPropiedadFila(f)}.
                           {" "}Efecto: disponible {sgDecimal(f.dDisponible)}, reservado {sgDecimal(f.dReservado)}, cuarentena {sgDecimal(f.dCuarentena)}.
                           {" "}Motivo: {f.motivo || "—"}. Observación: {f.observacion || "—"}. Documento: {f.documento || "—"}.
-                          {f.costoTotal !== null ? ` Costo registrado: ${fmtDinero(f.costoUnitario)} por unidad, ${fmtDinero(f.costoTotal)} en total (${f.moneda}).` : f.propiedad === "TERCERO" ? " Stock de terceros: sin costo patrimonial." : " Sin costo registrado en esta fila (reservas, entrada de una transferencia o movimiento sin costo)."}
+                          {f.costoTotal !== null ? ` Costo registrado: ${fmtImporteMoneda(f.costoUnitario, f.moneda)} por unidad (exacto ${fmtCantidadTexto(f.costoUnitario)}), ${fmtImporteMoneda(f.costoTotal, f.moneda)} en total (${f.moneda}).` : f.propiedad === "TERCERO" ? " Stock de terceros: sin costo patrimonial." : " Sin costo registrado en esta fila (reservas, entrada de una transferencia o movimiento sin costo)."}
                           {textoVinculo(f) ? ` ${textoVinculo(f)}.` : ""}
                         </td>
                       </tr>

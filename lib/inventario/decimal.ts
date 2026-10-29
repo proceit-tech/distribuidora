@@ -2,6 +2,8 @@
  * INV-04 — aritmética decimal EXACTA sobre texto (BigInt), para importes de inventario que vienen de PostgreSQL `numeric`: nunca float8/Number.
  * Funciones puras. Soportan signo; el resultado se devuelve canónico («12.5», «0», «-3.25»).
  */
+import { formatearImporteConMoneda, normalizarMonedaVisual } from "@/lib/formato/monto-visual";
+
 type Dec = { n: bigint; escala: number };
 
 function parsear(texto: string): Dec | null {
@@ -64,21 +66,13 @@ export function redondearDecimal(texto: string, decimales: number): string | nul
 }
 
 /**
- * Importe es-PY sin pérdida: «Gs. 1.234.567» (PYG sin decimales) u otras monedas «USD 1.234,50». Solo agrupa y redondea sobre texto. Entrada inválida → «—».
+ * Importe es-PY sin pérdida: «Gs. 1.234.567» (PYG sin decimales) u otras monedas «USD 1.234,50». Solo agrupa y redondea sobre texto. Entrada inválida o ausente → «—».
+ * PRO-335: delega en la semántica visual única (`formatearImporteConMoneda`); una moneda ausente o desconocida ya no se asume PYG (valor exacto, sin redondear).
  */
 export function formatearMontoTexto(texto: string | null | undefined, moneda?: string | null): string {
-  const codigo = (moneda ?? "").trim().toUpperCase();
-  const pyg = codigo === "" || codigo === "PYG" || codigo === "GS" || codigo === "GS.";
-  const r = texto == null ? null : redondearDecimal(texto, pyg ? 0 : 2);
+  if (texto == null || parsear(texto) === null) return "—";
 
-  if (r === null) return "—";
-
-  const neg = r.startsWith("-");
-  const [entera, frac] = (neg ? r.slice(1) : r).split(".");
-  const miles = entera.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
-  const cuerpo = `${neg ? "-" : ""}${miles}${frac ? `,${frac}` : ""}`;
-
-  return pyg ? `Gs. ${cuerpo}` : `${codigo} ${cuerpo}`;
+  return formatearImporteConMoneda(texto.trim().replace(/\.$/, ""), moneda);
 }
 
 /**
@@ -117,10 +111,18 @@ export function compararDecimales(a: string | null | undefined, b: string | null
   return d < BigInt(0) ? -1 : d > BigInt(0) ? 1 : 0;
 }
 
-/** Costo unitario sin pérdida (hasta 4 decimales, como Valorización): «Gs. 1.234,5678»; sin ceros finales. Entrada inválida o ausente → «—». */
+/**
+ * PRO-335 — costo unitario en PANTALLA: es un importe monetario y sigue la política visual (PYG 0 decimales, USD/BRL 2). Entrada inválida o ausente → «—».
+ * El dato exacto (hasta 4 decimales) no cambia; para trazabilidad, la pantalla lo deja visible con `formatearCostoUnitarioExactoTexto` (título/detalle).
+ */
 export function formatearCostoUnitarioTexto(texto: string | null | undefined, moneda?: string | null): string {
+  return formatearMontoTexto(texto, moneda);
+}
+
+/** Costo unitario sin pérdida (hasta 4 decimales, como Valorización): «Gs. 1.234,5678»; sin ceros finales. Entrada inválida o ausente → «—». Solo para el detalle técnico de precisión. */
+export function formatearCostoUnitarioExactoTexto(texto: string | null | undefined, moneda?: string | null): string {
   const codigo = (moneda ?? "").trim().toUpperCase();
-  const pyg = codigo === "" || codigo === "PYG" || codigo === "GS" || codigo === "GS.";
+  const pyg = normalizarMonedaVisual(codigo) === "PYG";
   const r = texto == null ? null : redondearDecimal(texto, 4);
 
   if (r === null) return "—";
@@ -130,5 +132,5 @@ export function formatearCostoUnitarioTexto(texto: string | null | undefined, mo
   const dec = (frac ?? "").replace(/0+$/, "");
   const cuerpo = `${neg ? "-" : ""}${entera.replace(/\B(?=(\d{3})+(?!\d))/g, ".")}${dec ? `,${dec}` : ""}`;
 
-  return pyg ? `Gs. ${cuerpo}` : `${codigo} ${cuerpo}`;
+  return pyg ? `Gs. ${cuerpo}` : codigo ? `${codigo} ${cuerpo}` : cuerpo;
 }

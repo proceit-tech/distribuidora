@@ -8,7 +8,7 @@ import local from "@/app/(private)/movimientos/[id]/page.module.css";
 import ui from "@/components/ui/lista-padrao/lista.module.css";
 import { cargarEntrada, conCodigo, type EntradaDetalle } from "@/lib/compras/entradas-cliente";
 import { formatearFechaIso } from "@/lib/formato/listas";
-import { formatearCostoUnitarioTexto, formatearMontoTexto } from "@/lib/inventario/decimal";
+import { formatearCostoUnitarioExactoTexto, formatearCostoUnitarioTexto, formatearMontoTexto } from "@/lib/inventario/decimal";
 import { formatearCantidadMovimiento } from "@/lib/movimientos/formato-cantidad";
 
 /** E6-A — detalle de una entrada de Compras: cabecera con el proveedor registrado, líneas del movimiento oficial y totales a costo. Solo lectura; la anulación es la oficial de Movimientos. */
@@ -168,7 +168,7 @@ function DetalleEntrada() {
                     </span>
                   </td>
                   <td className={ui.numeric}>
-                    <span className={ui.mono}>{formatearCostoUnitarioTexto(l.costoUnitario, l.moneda || moneda)}</span>
+                    <span className={ui.mono} title={`Costo unitario exacto: ${formatearCostoUnitarioExactoTexto(l.costoUnitario, l.moneda || moneda)}`}>{formatearCostoUnitarioTexto(l.costoUnitario, l.moneda || moneda)}</span>
                   </td>
                   <td>{l.lote || "—"}</td>
                   <td>{l.fechaVencimiento ? formatearFechaIso(l.fechaVencimiento) : "—"}</td>

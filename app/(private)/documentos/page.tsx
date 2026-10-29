@@ -26,6 +26,7 @@ import {
   type TipoDocumento,
 } from "@/lib/facturacion/estados";
 import { formatearFechaHoraPy } from "@/lib/formato/listas";
+import { formatearImporteMoneda } from "@/lib/formato/monto-visual";
 
 import { KudeModal } from "./kude-modal";
 import estilos from "./page.module.css";
@@ -75,7 +76,8 @@ const fechaGateway = (v: string | null) => {
 
   return m ? `${m[3]}/${m[2]}/${m[1]}${m[4] ? ` ${m[4]}` : ""}` : (v ?? "—");
 };
-const importe = (d: Documento) => `${Number(d.total).toLocaleString("es-PY", { maximumFractionDigits: d.moneda === "PYG" ? 0 : 2 })} ${d.moneda}`;
+// PRO-335: importe visual desde el texto numeric exacto (sin Number), en la moneda del propio documento.
+const importe = (d: Documento) => `${formatearImporteMoneda(d.total, d.moneda)} ${d.moneda}`;
 
 async function leerJson<T>(r: Response, porDefecto: string): Promise<T> {
   const j = (await r.json().catch(() => ({}))) as T & { error?: string };

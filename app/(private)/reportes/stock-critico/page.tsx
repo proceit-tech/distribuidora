@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { crearCompuerta } from "@/lib/productos/catalogos-carga";
 import { descargarStockCritico, pedirStockCritico } from "@/lib/reportes/cliente-stock-critico";
 import { SITUACIONES_CRITICO } from "@/lib/reportes/export-stock-critico";
-import { fmtDinero, fmtNum } from "@/lib/reportes/formato";
+import { fmtImporteMoneda, fmtNum } from "@/lib/reportes/formato";
 import { ETIQUETA_CRITICIDAD, filtrosIguales, respuestaVigente } from "@/lib/reportes/stock-critico-plan";
 import type { StockCriticoFila, StockCriticoFiltros, StockCriticoRespuestaApi } from "@/types/reportes";
 
@@ -151,7 +151,7 @@ export default function ReporteStockCriticoPage() {
         </article>
         <article className={[styles.summaryCard, styles.summaryPurple].join(" ")}>
           <span>VALOR DE REFERENCIA ({t?.moneda ?? ""})</span>
-          <strong>{t ? fmtDinero(t.valorReferencia) : "—"}</strong>
+          <strong>{t ? fmtImporteMoneda(t.valorReferencia, t.moneda) : "—"}</strong>
           <small>{t && t.sinCosto > 0 ? `${fmtNum(t.sinCosto)} sin costo registrado (no se estiman)` : "Estimación a costo real; no es valorización"}</small>
         </article>
       </section>
@@ -262,7 +262,7 @@ export default function ReporteStockCriticoPage() {
                   <td className={styles.num}>{f.necesita ? fmtNum(f.transferencia) : "—"}</td>
                   <td className={styles.num}>{f.necesita ? conMeta(f.compra, f) : "—"}</td>
                   {porDeposito ? <td className={styles.desc} title={f.origenes}>{f.origenes || "—"}</td> : null}
-                  <td className={styles.num}>{f.valorReferencia === null ? (f.destinosSinCosto > 0 ? "Sin costo" : "—") : fmtDinero(f.valorReferencia)}</td>
+                  <td className={styles.num}>{f.valorReferencia === null ? (f.destinosSinCosto > 0 ? "Sin costo" : "—") : fmtImporteMoneda(f.valorReferencia, t?.moneda ?? actual?.empresa.moneda)}</td>
                 </tr>
               ))}
             </tbody>
@@ -276,7 +276,7 @@ export default function ReporteStockCriticoPage() {
                   <td>{fmtNum(t.necesitan)} alerta(s)</td>
                   <td className={styles.num}>n/a</td><td className={styles.num}>n/a</td><td className={styles.num}>n/a</td><td className={styles.num}>n/a</td>
                   {porDeposito ? <td /> : null}
-                  <td className={styles.num}>{fmtDinero(t.valorReferencia)}</td>
+                  <td className={styles.num}>{fmtImporteMoneda(t.valorReferencia, t.moneda)}</td>
                 </tr>
               </tfoot>
             ) : null}

@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { crearCompuerta } from "@/lib/productos/catalogos-carga";
 import { descargarValorizacion, pedirValorizacion } from "@/lib/reportes/cliente-valorizacion";
 import { SITUACION_COSTO } from "@/lib/reportes/export-valorizacion";
-import { fmtCantidadTexto, fmtDinero, fmtNum } from "@/lib/reportes/formato";
+import { fmtCantidadTexto, fmtImporteMoneda, fmtNum } from "@/lib/reportes/formato";
 import { filtrosValorizacionIguales, porcentajeCobertura, respuestaValorizacionVigente, totalDivergencias } from "@/lib/reportes/valorizacion-cobertura";
 import type { ValorizacionFiltros, ValorizacionFila, ValorizacionRespuestaApi } from "@/types/reportes";
 
@@ -135,7 +135,7 @@ export default function ReporteValorizacionPage() {
       <section className={styles.summaryGrid}>
         <article className={[styles.summaryCard, styles.summaryTeal].join(" ")}>
           <span>VALOR TOTAL ({mon || "—"})</span>
-          <strong>{t ? fmtDinero(t.valorTotal) : "—"}</strong>
+          <strong>{t ? fmtImporteMoneda(t.valorTotal, mon) : "—"}</strong>
           <small>{t ? `${fmtNum(t.productosConCosto)} producto(s) con costo · solo costo real` : "—"}</small>
         </article>
         <article className={[styles.summaryCard, styles.summaryBlue].join(" ")}>
@@ -154,7 +154,7 @@ export default function ReporteValorizacionPage() {
           <span>ALCANCE</span>
           <strong>{t ? `${fmtNum(t.depositos)} depósito(s)` : "—"}</strong>
           <small>
-            {t ? (t.inactivos.filas > 0 ? `Incluye ${fmtNum(t.inactivos.filas)} par(es) de depósitos inactivos por ${fmtDinero(t.inactivos.valor)} ${mon}` : `${fmtNum(t.productos)} producto(s) · foto de hoy`) : "—"}
+            {t ? (t.inactivos.filas > 0 ? `Incluye ${fmtNum(t.inactivos.filas)} par(es) de depósitos inactivos por ${fmtImporteMoneda(t.inactivos.valor, mon)} ${mon}` : `${fmtNum(t.productos)} producto(s) · foto de hoy`) : "—"}
           </small>
         </article>
       </section>
@@ -272,8 +272,8 @@ export default function ReporteValorizacionPage() {
                   {vista === "DEPOSITO" ? <td className={styles.desc}>{f.deposito}{f.depositoInactivo ? " (inactivo)" : ""}</td> : null}
                   {vista === "DEPOSITO" || vista === "CATEGORIA" ? <td className={styles.num}>{fmtNum(f.productos)}</td> : null}
                   {vista === "CATEGORIA" ? <td className={styles.num}>{fmtNum(f.depositos)}</td> : null}
-                  {conCantidades ? <><td className={styles.num}>{fmtCantidadTexto(f.fisico)}</td><td className={styles.num}>{fmtCantidadTexto(f.cantidadValorizada)}</td><td className={styles.num}>{fmtCantidadTexto(f.sinValorizar)}</td><td className={styles.num}>{fmtCantidadTexto(f.excedente)}</td><td className={styles.num}>{fmtDinero(f.costoPromedio)}</td></> : null}
-                  <td className={styles.num}>{fmtDinero(f.valorTotal)}</td>
+                  {conCantidades ? <><td className={styles.num}>{fmtCantidadTexto(f.fisico)}</td><td className={styles.num}>{fmtCantidadTexto(f.cantidadValorizada)}</td><td className={styles.num}>{fmtCantidadTexto(f.sinValorizar)}</td><td className={styles.num}>{fmtCantidadTexto(f.excedente)}</td><td className={styles.num} title={f.costoPromedio === null ? undefined : `Costo promedio exacto: ${fmtCantidadTexto(f.costoPromedio)} ${f.moneda}`.trim()}>{fmtImporteMoneda(f.costoPromedio, f.moneda)}</td></> : null}
+                  <td className={styles.num}>{fmtImporteMoneda(f.valorTotal, f.moneda)}</td>
                   {conProducto ? (
                     <td>
                       <span className={[styles.badge, styles[`badge${f.situacionCosto}`]].join(" ")}>{SITUACION_COSTO[f.situacionCosto]}</span>
@@ -293,7 +293,7 @@ export default function ReporteValorizacionPage() {
                   {vista === "DEPOSITO" || vista === "CATEGORIA" ? <td className={styles.num}>{fmtNum(t.productos)}</td> : null}
                   {vista === "CATEGORIA" ? <td className={styles.num}>{fmtNum(t.depositos)}</td> : null}
                   {conCantidades ? <><td className={styles.num}>n/a</td><td className={styles.num}>n/a</td><td className={styles.num}>n/a</td><td className={styles.num}>n/a</td><td className={styles.num}>n/a</td></> : null}
-                  <td className={styles.num}>{fmtDinero(t.valorTotal)}</td>
+                  <td className={styles.num}>{fmtImporteMoneda(t.valorTotal, mon)}</td>
                   {conProducto ? <td>{fmtNum(divergencias)} divergencia(s)</td> : (
                     <><td className={styles.num}>{fmtNum(t.conteos.CON_COSTO)}</td><td className={styles.num}>{fmtNum(t.conteos.PARCIAL)}</td><td className={styles.num}>{fmtNum(t.conteos.SIN_COSTO)}</td><td className={styles.num}>{fmtNum(t.conteos.EXCEDENTE)}</td><td className={styles.num}>{fmtNum(t.conteos.RESIDUO)}</td></>
                   )}
@@ -324,7 +324,7 @@ export default function ReporteValorizacionPage() {
         </footer>
 
         <ul className={styles.notes}>
-          {t && divergencias > 0 ? <li>Divergencias sin compensar: {fmtNum(t.conteos.SIN_COSTO)} sin costo (valor {fmtDinero(t.valorPorSituacion.SIN_COSTO)}), {fmtNum(t.conteos.PARCIAL)} parciales (valor {fmtDinero(t.valorPorSituacion.PARCIAL)}), {fmtNum(t.conteos.EXCEDENTE)} con excedente valorizado (valor {fmtDinero(t.valorPorSituacion.EXCEDENTE)}), {fmtNum(t.conteos.RESIDUO)} con valor sin cantidad (valor {fmtDinero(t.valorPorSituacion.RESIDUO)}). El reporte las detecta; no corrige costos ni saldos.</li> : null}
+          {t && divergencias > 0 ? <li>Divergencias sin compensar: {fmtNum(t.conteos.SIN_COSTO)} sin costo (valor {fmtImporteMoneda(t.valorPorSituacion.SIN_COSTO, mon)}), {fmtNum(t.conteos.PARCIAL)} parciales (valor {fmtImporteMoneda(t.valorPorSituacion.PARCIAL, mon)}), {fmtNum(t.conteos.EXCEDENTE)} con excedente valorizado (valor {fmtImporteMoneda(t.valorPorSituacion.EXCEDENTE, mon)}), {fmtNum(t.conteos.RESIDUO)} con valor sin cantidad (valor {fmtImporteMoneda(t.valorPorSituacion.RESIDUO, mon)}). El reporte las detecta; no corrige costos ni saldos.</li> : null}
           {(actual?.cobertura ?? []).map((n) => <li key={n}>{n}</li>)}
         </ul>
       </section>

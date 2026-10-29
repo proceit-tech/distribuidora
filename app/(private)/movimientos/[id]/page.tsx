@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from "react";
 import styles from "@/app/(private)/productos/catalogos/page.module.css";
 import ui from "@/components/ui/lista-padrao/lista.module.css";
 import { formatearFechaIso, formatearMonto } from "@/lib/formato/listas";
+import { formatearDecimalExacto } from "@/lib/formato/monto-visual";
 import { formatearCantidadMovimiento } from "@/lib/movimientos/formato-cantidad";
 import { anularMovimientoApi, cargarMovimiento, type RespuestaMovimiento } from "@/lib/movimientos/cliente-api";
 import { ETIQUETA_ORIGEN, TIPOS_INFO } from "@/lib/movimientos/formulario";
@@ -119,7 +120,8 @@ export default function MovimientoDetallePage() {
     );
   }
 
-  const moneda = mov.monedaCosto || "PYG";
+  // PRO-335: la moneda es la del costo registrado; sin moneda no se asume PYG (se muestra el valor exacto).
+  const moneda = mov.monedaCosto;
   const puedeAnular = datos.permisos.anular && mov.estado === "REGISTRADO" && !mov.anulaA;
   const origen = ETIQUETA_ORIGEN[mov.origen as keyof typeof ETIQUETA_ORIGEN] ?? ORIGEN_EXTRA[mov.origen] ?? mov.origen;
   const dato = (titulo: string, valor: React.ReactNode) => (
@@ -189,7 +191,7 @@ export default function MovimientoDetallePage() {
           {dato("Lote", mov.lote)}
           {dato("Vencimiento", mov.fechaVencimiento ? formatearFechaIso(mov.fechaVencimiento) : "")}
           {dato("Propiedad", mov.propiedad === "TERCERO" ? "Tercero" : "Propio")}
-          {dato("Costo unitario", mov.costoUnitario === null ? "" : formatearMonto(mov.costoUnitario, moneda))}
+          {dato("Costo unitario", mov.costoUnitario === null ? "" : <span title={`Costo unitario exacto: ${formatearDecimalExacto(mov.costoUnitario)}`}>{formatearMonto(mov.costoUnitario, moneda)}</span>)}
           {dato("Costo total", mov.costoTotal === null ? "" : formatearMonto(mov.costoTotal, moneda))}
           {mov.anuladoPor ? dato("Anulado por", mov.anuladoPor) : null}
           {mov.anulaA ? dato("Anula al movimiento", mov.anulaA) : null}

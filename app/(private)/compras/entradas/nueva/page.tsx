@@ -31,7 +31,7 @@ import {
   type LineaEntrada,
   type SnapshotEntrada,
 } from "@/lib/compras/entradas-reglas";
-import { formatearCostoUnitarioTexto, formatearMontoTexto, multiplicarDecimales, redondearDecimal, sumarDecimales } from "@/lib/inventario/decimal";
+import { formatearCostoUnitarioExactoTexto, formatearCostoUnitarioTexto, formatearMontoTexto, multiplicarDecimales, redondearDecimal, sumarDecimales } from "@/lib/inventario/decimal";
 import { hoyAsuncion } from "@/lib/listas-precio/calculos";
 import { formatearCantidadMovimiento } from "@/lib/movimientos/formato-cantidad";
 import { useProtegerCambios } from "@/lib/ui/proteger-cambios";
@@ -553,7 +553,7 @@ export default function NuevaEntradaPage() {
                             {errLinea(i, "costo") ? <span className={local.error}>{errLinea(i, "costo")}</span> : null}
                           </>
                         ) : (
-                          <span className={ui.mono}>{formatearCostoUnitarioTexto(decimalCanonico(l.costo), moneda)}</span>
+                          <span className={ui.mono} title={`Costo unitario exacto: ${formatearCostoUnitarioExactoTexto(decimalCanonico(l.costo), moneda)}`}>{formatearCostoUnitarioTexto(decimalCanonico(l.costo), moneda)}</span>
                         )}
                       </td>
                       <td>

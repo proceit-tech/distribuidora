@@ -3,6 +3,7 @@
  * Reglas que NO se inventan aquí: conversión de moneda, precedencia/acumulación de descuentos y redondeo comercial más allá de la precisión
  * de la moneda. Esas decisiones siguen pendientes (ver documentación).
  */
+import { formatearImporteMoneda } from "@/lib/formato/monto-visual";
 
 /** Decimales de la moneda para precios mostrados y calculados: PYG sin decimales; el resto, 2. */
 export function decimalesMoneda(monedaCodigo: string): number {
@@ -18,10 +19,9 @@ export function redondearMoneda(valor: number, monedaCodigo: string): number {
   return Object.is(r, -0) ? 0 : r;
 }
 
+/** Solo PRESENTACIÓN (PRO-335): semántica visual única del NEXIT (PYG 0 decimales, USD/BRL 2 fijos). Un valor no finito se muestra «—», nunca como 0. No interviene en cálculos ni redondeos de precio. */
 export function formatoMoneda(valor: number, monedaCodigo: string): string {
-  const d = decimalesMoneda(monedaCodigo);
-
-  return new Intl.NumberFormat("es-PY", { minimumFractionDigits: d, maximumFractionDigits: d }).format(Number.isFinite(valor) ? valor : 0);
+  return formatearImporteMoneda(Number.isFinite(valor) ? valor : null, monedaCodigo);
 }
 
 /**

@@ -11,7 +11,7 @@ import { cargarStock } from "@/lib/stock/cliente-api";
 import { iniciarCargaStock } from "@/lib/stock/carga-instancia";
 import { puedeAbrirNuevoMovimiento, puedeVerMovimientos, normalizarPermisosMovimientos, SIN_PERMISOS_MOVIMIENTOS } from "@/lib/inventario/acceso";
 import { interpretarDepositoUrl } from "@/lib/depositos/carga";
-import { compararDecimales, formatearCostoUnitarioTexto, formatearMontoTexto } from "@/lib/inventario/decimal";
+import { compararDecimales, formatearCostoUnitarioExactoTexto, formatearCostoUnitarioTexto, formatearMontoTexto } from "@/lib/inventario/decimal";
 import { descripcionSinStockVista, etiquetaNivelVista, indicadoresStock, sinAccesoADepositos, textoCantidad, vistaPorDeposito, type AlcanceStock } from "@/lib/stock/vista";
 
 import {
@@ -672,7 +672,7 @@ export default function StockPage() {
 
                   <td className={ui.numeric}>
                     <div className={ui.cell}>
-                      <strong className={ui.mono}>{monedaBase && !sinAccesoADepositos(alcance) ? formatearCostoUnitarioTexto(item.costoPromedioTexto, monedaBase) : "—"}</strong>
+                      <strong className={ui.mono} title={monedaBase && !sinAccesoADepositos(alcance) && item.costoPromedioTexto !== null ? `Costo promedio exacto: ${formatearCostoUnitarioExactoTexto(item.costoPromedioTexto, monedaBase)}` : undefined}>{monedaBase && !sinAccesoADepositos(alcance) ? formatearCostoUnitarioTexto(item.costoPromedioTexto, monedaBase) : "—"}</strong>
                       <span>Valor costo: {monedaBase && !sinAccesoADepositos(alcance) ? formatearMontoTexto(item.valorInventarioTexto, monedaBase) : "—"}</span>
                       <span>
                         Venta referencia:{" "}

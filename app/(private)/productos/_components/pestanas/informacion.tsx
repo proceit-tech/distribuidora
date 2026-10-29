@@ -1,7 +1,8 @@
 "use client";
 
 import { etiquetaUnidad } from "@/lib/fiscal/unidades-sifen";
-import { productoRedondeado } from "@/lib/productos/decimales";
+import { formatearImporteConMoneda } from "@/lib/formato/monto-visual";
+import { multiplicarDecimales } from "@/lib/inventario/decimal";
 import { textoAfectacion } from "@/lib/productos/fiscal";
 import type { ProductoTipo } from "@/types/productos";
 
@@ -39,7 +40,8 @@ export function PestanaInformacion({ ctx }: { ctx: ContextoFormulario }) {
   }
   const impuesto = catalogos.impuestos.find((i) => i.id === form.impuestoId);
   const pais = catalogos.paises.find((p) => p.codigo === form.paisOrigenCodigo);
-  const valor = detalle && form.precioVentaReferencia ? productoRedondeado(form.precioVentaReferencia, detalle.stockActual) : null;
+  // PRO-335: valor visual exacto (precio × stock sobre texto) presentado en la moneda del precio de referencia (PYG 0 decimales, USD/BRL 2).
+  const valor = detalle && form.precioVentaReferencia ? multiplicarDecimales(form.precioVentaReferencia.trim(), detalle.stockActual) : null;
 
   return (
     <>
@@ -110,7 +112,7 @@ export function PestanaInformacion({ ctx }: { ctx: ContextoFormulario }) {
           placeholder="Sin precio"
           ayuda="Hasta 4 decimales, con punto. Vacío = sin precio."
         />
-        <Dato etiqueta="Valor venta referencia" valor={valor === null ? "" : new Intl.NumberFormat("es-PY").format(valor)} ayuda="Precio de referencia × stock actual; no es un valor contable del inventario." />
+        <Dato etiqueta="Valor venta referencia" valor={valor === null ? "" : formatearImporteConMoneda(valor, catalogos.monedaReferencia)} ayuda="Precio de referencia × stock actual; no es un valor contable del inventario." />
         <Dato etiqueta="Impuesto / IVA" valor={impuesto ? `${impuesto.nombre}${form.afectacionIva ? ` · ${textoAfectacion(Number(form.afectacionIva))}` : " · sin clasificar"}` : "Sin impuesto"} ayuda="Se edita en SIFEN y códigos." />
         <Dato etiqueta="País de origen" valor={pais ? `${pais.codigo} · ${pais.nombre}` : form.paisOrigenCodigo} ayuda="Se edita en SIFEN y códigos." />
       </div>
