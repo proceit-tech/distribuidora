@@ -1,7 +1,15 @@
 # PROGRESSO-NEXIT-V1
 
 Branch: `feature/NEXIT-2026-001-banco-demo`. Regra: uma funcionalidade por vez; sem mock/localStorage/dados fixos no modo real; commit+push ao terminar cada item.
-## PRO-337 — ORDEM ATIVA ÚNICA 29/10/2026 — COLUNA DO INFORME DE VENTAS CORTADA
+## PRO-337 — AUDITORIA R01 / 29-10-2026 — SEIS PONTOS CONFORMES ESTATICAMENTE, NAVEGADOR PENDENTE
+
+- **Commit Claude:** `137f49f1942550a6676643a2a41774bde1835815` (3 arquivos, JSX+CSS locais do Informe de Ventas e `lib/reportes/ventas-layout.casos.ts`). Claude reconferiu a ordem dos 6 pontos e reportou **nenhum commit adicional necessário**.
+- **[AUDITORIA INDEPENDENTE CHATGPT R01](documentacao/testes/AUD-NEXIT-PRO-337-INFORME-VENTAS-LAYOUT-R01-2026-10-29.md): CONFORME ESTATICAMENTE.** Sexta coluna `Importe informativo` e valores preservados; card documental recebe proporção 2.2:1 quando o contêiner permite, cartão empilha em largura insuficiente (container queries, sem depender do viewport); scroll horizontal local focável/rotulado em cada tabela, não esconder colunas; títulos `Documentos no computados` e `Anomalías fiscales` compactos, com explicações; cartões altura natural e estado vazio.
+- **36 casos `PRO337-01..36` escritos como suite-fonte isolada, NÃO integrados ao runner**, **ZERO executados**. 0 lint/typecheck/build/VM/SQL/Docker/gateway/browser/deploy. **Não homologado**: estimativas de largura não comprovam seis colunas sem scroll em TODOS desktop, nem que o código já está em uso na VM do cliente. Exige revisão visual real autorizada com sidebar, dados longos, 1366/1600/1920, 360/768, zoom 125/200 antes de `Done`.
+- **Linear PRO-337 `In Review`**, sem defeito corretivo novo comprovado. **NENHUMA ordem de código ativa para Claude** após auditoria R01; próxima etapa somente por nova ordem específica. PRO-335 In Review (R03 estática), PRO-328/330 In Review, NEX-076 não aplicada; não repetir SQL PRO-327 561 produtos.
+
+
+## HISTÓRICO — PRO-337 ORDEM ORIGINAL 29/10/2026 — EXECUTADA EM 137f49f
 
 **Nova captura REAL CASA MINGO confirma defeito AINDA NÃO CORRIGIDO:** no card `No computan por estado fiscal`, sexta coluna `Importe informativo` e valores numéricos estão cortados, embora formatação PRO-335 esteja conforme estaticamente. Causa verificada GitHub: `app/(private)/reportes/ventas/page.module.css` usa `grid-template-columns:repeat(auto-fit,minmax(420px,1fr))` (50/50), `overflow:hidden` em card e `white-space:nowrap` na tabela de 6 colunas, sem wrapper próprio; a segunda tarjeta `Anomalías` permanece esticada e com título excessivo.
 
