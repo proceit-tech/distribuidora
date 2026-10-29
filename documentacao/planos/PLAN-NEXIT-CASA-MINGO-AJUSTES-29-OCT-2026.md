@@ -9,7 +9,7 @@
 | Etapa | Linear | Estado inicial | Alcance exacto | Tipo |
 |---|---|---|---|---|
 | 00 | [PRO-327](https://linear.app/proceit/issue/PRO-327) | **UI/API PENDIENTE; SQL 561 COMPLETADO** | Habilitar código alfanumérico/ceros en alta de productos; SQL ya ejecutado y poscheck OK; **pausada** al priorizar este paquete | Código, orden antigua NO activa |
-| 01 | [PRO-328](https://linear.app/proceit/issue/PRO-328) | **ÚNICA ORDEN NUEVA AUTORIZADA** | FE nueva: origen geográfico del receptor = dirección elegida; quitar dirección automática de `dInfAdic`; proteger históricos/idempotencia | P0 fiscal; código + eventual migration solo versionada |
+| 01 | [PRO-328](https://linear.app/proceit/issue/PRO-328) | **IMPLEMENTADA EN CÓDIGO e551943; AUD-R01 CONFORME ESTÁTICAMENTE; IN REVIEW; NEX-076 NO APLICADA** | FE nueva: origen geográfico del receptor = dirección elegida; quitar dirección automática de `dInfAdic`; proteger históricos/idempotencia | P0 fiscal; código + eventual migration solo versionada |
 | 02 | [PRO-330](https://linear.app/proceit/issue/PRO-330) | Todo; no autorizada todavía | Stock disponible por línea al agregar/cambiar, sin alterar reserva/venta al emitir | P0 operativo |
 | 03 | [PRO-333](https://linear.app/proceit/issue/PRO-333) | Todo; no autorizada | Orden numérico `Documento`, servidor, paginación, IDs estables | P1 bug |
 | 04 | [PRO-331](https://linear.app/proceit/issue/PRO-331) | Todo; no autorizada | Ordinal visual, scroll propio de tabla editable, foco al código tras agregar | P1 UX |
@@ -23,8 +23,8 @@
 
 ## 2. Política de ejecución
 
-1. **ÚNICA orden nueva de código:** [ORD-CLAUDE-NEXIT-CM-PRO-328-DIRECCION-SELECCIONADA-2026-10-29.md](../ordens/ORD-CLAUDE-NEXIT-CM-PRO-328-DIRECCION-SELECCIONADA-2026-10-29.md). No iniciar otras etapas de esta tabla automáticamente.
-2. Claude comprueba el árbol Git limpio y sincroniza solo fast-forward. Si hay cambios locales sin commit, los protege y PARA; no sobrescribir.
+1. **Orden PRO-328 EJECUTADA y CERRADA para Claude:** [ORD-CLAUDE-NEXIT-CM-PRO-328-DIRECCION-SELECCIONADA-2026-10-29.md](../ordens/ORD-CLAUDE-NEXIT-CM-PRO-328-DIRECCION-SELECCIONADA-2026-10-29.md). No iniciar otras etapas de esta tabla automáticamente. [AUD-PRO-328-R01](../testes/AUD-NEXIT-PRO-328-DIRECCION-RECEPTOR-R01-2026-10-29.md): código conforme estaticamente, sin pruebas ejecutadas ni NEX-076 aplicada.
+2. **No hay orden activa de código desde la auditoría R01 del 29/10/2026.** El siguiente código (PRO-330 u otra incidencia) requiere orden NUEVA del ChatGPT; no iniciar automáticamente por este plan. Claude comprueba el árbol Git limpio y sincroniza solo fast-forward. Si hay cambios locales sin commit, los protege y PARA; no sobrescribir.
 3. Claude modifica **únicamente archivos autorizados por la orden**, prepara casos puntuales como código y puede versionar migración incremental solicitada, **sin ejecutarla**. No ejecutar NEXIT VM/DB/gateway, ni emitir FE reales, ni desplegar.
 4. Final: commit+push, SHA completo, conteo de casos como código, pruebas ejecutadas o no y bloqueos concretos; PARA. ChatGPT audita GitHub HEAD/diff completo, prueba reglas, y autoriza siguiente etapa si está conforme.
 5. **No declarar Done** con revisión estática. Las diez peticiones quedan pendientes de visualización y comparación con documentos y datos reales en ambiente humano; si alguna depende del proveedor, no prometer solución por cambio frontend.
