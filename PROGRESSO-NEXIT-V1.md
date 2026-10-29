@@ -2,7 +2,16 @@
 
 Branch: `feature/NEXIT-2026-001-banco-demo`. Regra: uma funcionalidade por vez; sem mock/localStorage/dados fixos no modo real; commit+push ao terminar cada item.
 
-## PRO-330 — AUDITORIA INDEPENDENTE R01 / 29-10-2026 — F-001 ALTA / CORRETIVO ATIVO
+## PRO-330 — AUDITORIA R02 / 29-10-2026 — F-001 RESOLVIDO ESTATICAMENTE, AGUARDANDO HOMOLOGAÇÃO
+
+- **Implementação inicial Claude:** `2b54b468359c00df4726bc55b592bc9d9d5fff18` (7 arquivos / 63 casos).
+- **Corretivo R01-F001:** `da4a02ed098cc40993b3af5a6a35f0228214637e` (2 arquivos / 8 casos adicionais = **71 casos escritos, nenhum executado**). `planificarStock` substituiu consulta única por `consultarDisponibilidadEnLotes`: 501 UUID são consultados em 500+1 também na prévia e emissão, mantendo `asignarStock`, `huellaReparto`, baixa e SQL existentes.
+- **[AUDITORIA INDEPENDENTE R02](documentacao/testes/AUD-NEXIT-PRO-330-STOCK-INMEDIATO-R02-2026-10-29.md): CONFORME ESTATICAMENTE, F-001 ENCERRADO POR INSPEÇÃO**; sem novo corretivo comprovado. **0 testes/lint/typecheck/build/SQL/VM/Docker/gateway/browser/deploy**; PRO-330 permanece [In Review](https://linear.app/proceit/issue/PRO-330), **NÃO homologada/Done**.
+- **Gate:** NENHUMA ordem de código ativa para Claude agora. A próxima PRO-333/331/332 etc. requer ordem nova do ChatGPT. PRO-328 In Review com NEX-076 somente versionada/não aplicada; PRO-327 SQL 561 já executado e poscheck aprovado/UI pausada, NÃO repetir.
+
+
+
+## HISTÓRICO — PRO-330 AUDITORIA R01 / 29-10-2026 — F-001 CORRIGIDO NA R02
 
 - **Claude entregou** commit funcional `2b54b468359c00df4726bc55b592bc9d9d5fff18`, 7 arquivos, 63 casos PRO330 escritos (0 executados). A UI/endpoint antecipam verificação de saldos, agrupam UUID, mostram insuficiência/erro na linha, invalidam respostas atrasadas e bloqueiam revisão; preservaram NEX-067, PRO-328, PRO-327 e o restante da FE.
 - **[AUDITORIA CHATGPT R01](documentacao/testes/AUD-NEXIT-PRO-330-STOCK-INMEDIATO-R01-2026-10-29.md): PARCIALMENTE CONFORME, 1 ACHADO ALTO F-001.** NEX-067 `fe_stock_disponibilidad` aceita no máximo 500 UUID; a API nova consulta lotes 500+1, porém `planificarStock` da **prévia/emissão** ainda faz chamada única e retorna falsa falta de saldo para 501+ SKU.
@@ -11,7 +20,7 @@ Branch: `feature/NEXIT-2026-001-banco-demo`. Regra: uma funcionalidade por vez; 
 
 
 
-## PRO-330 — ORDEM DE CÓDIGO ATIVA 29/10/2026 — AVISO DE STOCK AO ADICIONAR ITEM
+## HISTÓRICO — PRO-330 ORDEM ORIGINAL 29/10/2026 — JÁ ENTREGUE E AUDITADA
 
 **Linear:** [PRO-330](https://linear.app/proceit/issue/PRO-330). **Requisito de negócio fechado ChatGPT:** [REQ](documentacao/definicoes/REQ-NEXIT-CM-PRO-330-STOCK-AL-CARGAR-LINEA-2026-10-29.md). **Ordem de implementação exclusivamente Claude:** [ORD](documentacao/ordens/ORD-CLAUDE-NEXIT-CM-PRO-330-STOCK-INMEDIATO-2026-10-29.md).
 
