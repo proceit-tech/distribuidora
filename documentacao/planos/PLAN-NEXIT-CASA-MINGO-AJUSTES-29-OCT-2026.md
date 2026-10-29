@@ -14,7 +14,7 @@
 | 03 | [PRO-333](https://linear.app/proceit/issue/PRO-333) | Todo; no autorizada | Orden numérico `Documento`, servidor, paginación, IDs estables | P1 bug |
 | 04 | [PRO-331](https://linear.app/proceit/issue/PRO-331) | Todo; no autorizada | Ordinal visual, scroll propio de tabla editable, foco al código tras agregar | P1 UX |
 | 05 | [PRO-334](https://linear.app/proceit/issue/PRO-334) | Todo; no autorizada | FE azul suave/NCE amarillo suave, estados independentes | P1 UX |
-| 06 | [PRO-335](https://linear.app/proceit/issue/PRO-335) | **ORDEN ÚNICA ACTIVA, AÚN SIN CÓDIGO ENTREGADO** | TODAS LAS PANTALLAS: PYG 0 decimales y USD hasta 2 SOLO en importes MONETARIOS, sin alterar cantidades/fracciones, cálculo, SIFEN ni exportaciones | **P0 visual** |
+| 06 | [PRO-335](https://linear.app/proceit/issue/PRO-335) | **IMPLEMENTADA d2214351; AUD-R01 PARCIAL; CORRECTIVO F001–F003 ÚNICO ACTIVO** | TODAS LAS PANTALLAS: PYG 0 decimales y USD hasta 2 SOLO en importes MONETARIOS, sin alterar cantidades/fracciones, cálculo, SIFEN ni exportaciones | **P0 visual** |
 | 06b | [PRO-337](https://linear.app/proceit/issue/PRO-337) | **Todo; no autorizada hasta auditoría PRO-335** | Informe de Ventas: tabla «No computan» cortada, títulos compactos, responsive y scroll local (SIN lógica monetaria) | P1 UX |
 | 07 | [PRO-332](https://linear.app/proceit/issue/PRO-332) | Todo; no autorizada | Vista/Excel/PDF por documento×línea×producto×vendedor×fecha, histórico fiscal fiel | P1 reporte |
 | E1 | [PRO-298](https://linear.app/proceit/issue/PRO-298) | Todo; proveedor | PDF KuDE cabecera y USD 2 decimales; produce el gateway. No manipular PDF en NEXIT | Validación externa |
@@ -23,6 +23,9 @@
 **Relacionadas sin reabrir ni duplicar:** PRO-322 geografía del receptor ya implementada para la dirección fiscal antigua; PRO-323 texto asistido, cuyo diseño de inserción automática debe respetar la nueva decisión; PRO-324/PRO-205 identidad logística histórica; PRO-296 ventas E5 ya revisado estaticamente pero sin la nueva vista de detalle; PRO-295 cantidades de movimientos E4 sin ceros finales, pendiente de homologación; PRO-326 KuDE sin CDC (conforme estáticamente, no reabrir); PRO-93 UI factura; PRO-207 credenciales API, no certificado.
 
 ## 2. Política de ejecución
+
+**ÚNICA ORDEN AHORA (R01):** [PRO-335 R01 CORRECCIONES MONETARIAS PRODUCTOS/CLIENTES](../ordens/ORD-CLAUDE-NEXIT-PRO-335-R01-CORRECCIONES-MONEDAS-PRODUCTOS-CLIENTES-2026-10-29.md), basada en [AUD-R01](../testes/AUD-NEXIT-PRO-335-FORMATO-MONETARIO-R01-2026-10-29.md), reemplaza cualquier puerta de entrada anterior de PRO-335. **No comenzar PRO-337** hasta revisión R02. Claude solo corregirá KPI multimoneda, moneda real del costo de inventario y vista de conversión de límites; no alterar campo editable Proveedores. Commit+push y PARA; **0 tests/VM/SQL/deploy autorizados**.
+
 
 **NUEVA DECISIÓN 29/10:** [ORD-PRO-335 FORMATO MONETARIO EN TODAS LAS PANTALLAS](../ordens/ORD-CLAUDE-NEXIT-PRO-335-FORMATO-MONETARIO-TODAS-TELAS-2026-10-29.md) es la **ÚNICA orden activa**. Las descripciones históricas más abajo que aún dicen «no hay orden activa» se consideran supersedidas. PRO-337 queda explícitamente bloqueada hasta commit y auditoría PRO-335. [AUDITORÍA TRANSVERSAL](../analises/AUD-NEXIT-FORMATO-MONETARIO-TODAS-TELAS-E-LAYOUT-VENTAS-2026-10-29.md) fija el alcance; no ejecutar tests/VM/SQL/CI manual/deploy.
 
