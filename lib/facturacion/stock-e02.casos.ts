@@ -10,6 +10,7 @@ import { contador } from "@/lib/clientes/contador-casos";
 import { crearFacturaElectronica, leerCuerpoFactura, MENSAJE_REPARTO_CAMBIO, prepararFactura, type CuerpoFactura } from "@/lib/facturacion/emision";
 import { ErrorFacturacion } from "@/lib/facturacion/shared";
 import { asignarStock, huellaReparto, planificarStock, type SaldoDisponible } from "@/lib/facturacion/stock-fe";
+import { verificarCasosStockPreventivo } from "@/lib/facturacion/stock-preventivo.casos";
 
 const leer = (r: string) => readFileSync(join(process.cwd(), r), "utf8");
 const EMPRESA = "11111111-1111-4111-8111-111111111111";
@@ -410,6 +411,9 @@ export async function verificarCasosStockE02(): Promise<string[]> {
   }
   cierto("F002-SQL la baja valida ANTES de la conciliación que Detalles sea un arreglo no vacío y que cada detalle sea un objeto con dCodInt de un producto de la empresa y dCantProSer numérico > 0 (NEX:STOCK_PAYLOAD_INVALIDO); los servicios siguen admitidos y la conciliación por producto con control de stock se mantiene", /jsonb_typeof\(v_payload->'Detalles'\) IS DISTINCT FROM 'array' OR jsonb_array_length\(v_payload->'Detalles'\) = 0/.test(sql2) && /LEFT JOIN public\.productos p ON p\.empresa_id = p_empresa AND p\.codigo = x\.d->>'dCodInt'/.test(sql2) && /det\.producto_id IS NULL/.test(sql2) && /jsonb_typeof\(det\.d->'dCantProSer'\) IS DISTINCT FROM 'number'/.test(sql2) && /\(det\.d->>'dCantProSer'\)::numeric <= 0/.test(sql2) && /NEX:STOCK_PAYLOAD_INVALIDO/.test(sql2) && sql2.indexOf("NEX:STOCK_PAYLOAD_INVALIDO") < sql2.indexOf("Conciliación con el payload PERSISTIDO") && /AND p\.controla_stock/.test(sql2) && !/AND p\.controla_stock\s+LOOP/.test(sql2));
   cierto("F002-APP la aplicación traduce el rechazo del payload a un 409 claro", /STOCK_\(REPARTO_INVALIDO\|DEPOSITO_NO_AUTORIZADO\|PAYLOAD_INVALIDO\)/.test(leer("lib/facturacion/shared.ts")));
+
+  // PRO-330: aviso inmediato de stock al cargar líneas (consulta anticipada de solo lectura con la misma fuente).
+  fallos.push(...(await verificarCasosStockPreventivo()));
 
   return fallos;
 }

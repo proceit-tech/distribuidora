@@ -146,3 +146,69 @@ export async function planificarStock(db: Db, empresaId: string, usuarioId: stri
 
 /** Forma que recibe PostgreSQL (`fe_documento_crear_fe_con_stock`): [{producto_id, deposito_id, lote_id, cantidad}]. */
 export const asignacionesSql = (plan: PlanStock) => plan.salidas.map((s) => ({ producto_id: s.productoId, deposito_id: s.depositoId, lote_id: s.loteId, cantidad: s.cantidad }));
+
+/**
+ * PRO-330 — consulta ANTICIPADA (solo lectura) al cargar líneas en «Nueva factura». Reutiliza `consultarDisponibilidad` (fe_stock_disponibilidad, NEX-067) y `asignarStock` tal cual:
+ * no hay otra fórmula de saldo. NEX-067 devuelve VACÍO con más de 500 UUID (no error), así que se consulta en tandas de hasta 500 y se agregan los saldos en memoria antes de UNA sola asignación;
+ * nunca se trunca ni se confunde «sin respuesta» con «saldo cero». Es referencial: la previa y la emisión siguen con `planificarStock`, `repartoHuella` y la revalidación SQL bajo bloqueo.
+ */
+export const LOTE_DISPONIBILIDAD = 500;
+
+export function lotesDe<T>(xs: T[], tam = LOTE_DISPONIBILIDAD): T[][] {
+  const lotes: T[][] = [];
+
+  for (let i = 0; i < xs.length; i += tam) lotes.push(xs.slice(i, i + tam));
+
+  return lotes;
+}
+
+/** Saldos (SOLO LECTURA) de cualquier cantidad de productos: tandas secuenciales de ≤ 500 UUID únicos. Sin productos no consulta. */
+export async function consultarDisponibilidadEnLotes(db: Db, empresaId: string, usuarioId: string, sucursalId: string, productoIds: string[]): Promise<SaldoDisponible[]> {
+  const saldos: SaldoDisponible[] = [];
+
+  for (const lote of lotesDe([...new Set(productoIds)])) saldos.push(...(await consultarDisponibilidad(db, empresaId, usuarioId, sucursalId, lote)));
+
+  return saldos;
+}
+
+export type EstadoStockPreventivo = "SUFICIENTE" | "INSUFICIENTE" | "SIN_CONTROL";
+export type ProductoStockPreventivo = { productoId: string; codigo: string; descripcion: string; controlaStock: boolean; requerido: string; disponible: string | null; faltante: string | null; estado: EstadoStockPreventivo };
+
+/**
+ * Resultado por UUID (una entrada por producto, en el orden de su primera línea): requerido = suma EXACTA de sus líneas; disponible/faltante salen de `asignarStock`.
+ * Sin control de stock (flag del servidor): SIN_CONTROL con disponible y faltante null (no es «saldo cero»). Las cantidades deben llegar ya validadas (> 0, hasta 4 decimales).
+ */
+export function evaluarDisponibilidadPreventiva(lineas: LineaStock[], saldos: SaldoDisponible[]): { suficiente: boolean; productos: ProductoStockPreventivo[] } {
+  const plan = asignarStock(lineas, saldos);
+  const porPlan = new Map(plan.lineas.map((l) => [l.productoId, l] as const));
+  const sinControl = new Map<string, { linea: LineaStock; total: Dec }>();
+  const orden: string[] = [];
+
+  for (const l of lineas) {
+    if (!orden.includes(l.productoId)) orden.push(l.productoId);
+    if (l.controlaStock) continue;
+
+    const previo = sinControl.get(l.productoId);
+    const c = parseDec(l.cantidad, 4) ?? CERO;
+
+    if (previo) previo.total += c;
+    else sinControl.set(l.productoId, { linea: l, total: c });
+  }
+
+  const productos: ProductoStockPreventivo[] = [];
+
+  for (const id of orden) {
+    const p = porPlan.get(id);
+
+    if (p) {
+      productos.push({ productoId: id, codigo: p.codigo, descripcion: p.descripcion, controlaStock: true, requerido: p.requerido, disponible: p.disponible, faltante: p.faltante, estado: p.faltante === null ? "SUFICIENTE" : "INSUFICIENTE" });
+      continue;
+    }
+
+    const s = sinControl.get(id);
+
+    if (s) productos.push({ productoId: id, codigo: s.linea.codigo, descripcion: s.linea.descripcion, controlaStock: false, requerido: textoDec(s.total), disponible: null, faltante: null, estado: "SIN_CONTROL" });
+  }
+
+  return { suficiente: productos.every((p) => p.estado !== "INSUFICIENTE"), productos };
+}

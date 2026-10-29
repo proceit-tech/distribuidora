@@ -2357,3 +2357,43 @@
   line-clamp: unset;
   overflow-wrap: anywhere;
 }
+
+/* PRO-330: aviso de stock en la propia línea (insuficiente / verificando / error / disponible), discreto y legible; el texto largo se ajusta dentro de la celda del producto. */
+.filaSinStock {
+  background: #fffaf2;
+  box-shadow: inset 3px 0 0 #b45309;
+}
+
+.stockInsuficiente,
+.stockVerificando,
+.stockError,
+.stockOk {
+  display: block;
+  margin: 4px 0 0;
+  font-size: 12.5px;
+  line-height: 1.35;
+}
+
+.stockInsuficiente {
+  color: #9a3412;
+  font-weight: 600;
+}
+
+.stockVerificando {
+  color: #5b6573;
+}
+
+.stockError {
+  color: #b3261e;
+}
+
+.stockOk {
+  color: #0f6f68;
+}
+
+.itemsCompacta .prod small.stockInsuficiente,
+.itemsCompacta .prod small.stockVerificando,
+.itemsCompacta .prod small.stockError,
+.itemsCompacta .prod small.stockOk {
+  white-space: normal;
+}

@@ -23,6 +23,7 @@ import { resumenCalculo, type LineaFE } from "@/lib/facturacion/payload-fe";
 import { crearFlujoRevision, type Revision } from "@/lib/facturacion/revision-factura";
 import { numeracionSiguiente, textoNumeracion } from "@/lib/facturacion/series";
 import { formatearDecimalTexto } from "@/lib/formato/decimal-texto";
+import { crearVerificadorStock, pedirDisponibilidad, textoInsuficiente, vistaStock, type AvisoStock, type BorradorStock } from "@/lib/facturacion/stock-preventivo";
 import { formatearFechaPy } from "@/lib/formato/listas";
 import { registrarAnadido, type UltimoAnadido } from "@/lib/facturacion/seleccion-cantidad";
 import { cantidadFacturaValida, normalizarCantidadTexto, sumarUnaUnidad } from "@/lib/formato/cantidad-campo";
@@ -51,6 +52,8 @@ type Vendedor = { id: string; usuario: string; nombreCompleto: string };
 type Producto = {
   id: string; codigo: string; descripcion: string; unidadSifen: number | null; unidadSimbolo: string | null; unidadNombre: string | null; unidadVigente?: boolean | null; afectacion: number | null; proporcion: string | null;
   tasa: number | null; precio: string | null; monedaPrecio: string | null; gtin: string | null;
+  /** PRO-330: del catálogo, solo para no consultar stock de servicios; el servidor decide con `controla_stock` de la base. */
+  controlaStock?: boolean | null;
 };
 /** E03: descuento en pantalla (% o monto POR UNIDAD para el ítem; % o monto total para el general). Vacío = sin descuento. */
 type DescUI = { modo: "PORCENTAJE" | "MONTO"; valor: string };
@@ -543,6 +546,31 @@ function BuscadorProducto({ alElegir, permisos, moneda, accion }: { alElegir: (p
   );
 }
 
+// PRO-330: aviso de stock en la propia línea. Insuficiencia (alerta), verificación en curso y error técnico se distinguen; sin control de stock no se muestra nada.
+function AvisoStockLinea({ aviso, alReintentar }: { aviso: AvisoStock; alReintentar: () => void }) {
+  if (aviso.tipo === "INSUFICIENTE") {
+    return (
+      <small className={estilos.stockInsuficiente} role="alert">
+        <span className="sr-only">{aviso.codigo} {aviso.descripcion}: </span>{textoInsuficiente(aviso)}
+      </small>
+    );
+  }
+  if (aviso.tipo === "VERIFICANDO") return <small className={estilos.stockVerificando} role="status" aria-live="polite">Verificando stock…</small>;
+  if (aviso.tipo === "ERROR") {
+    return (
+      <small className={estilos.stockError} role="alert">
+        No se pudo verificar el stock. <button type="button" className={estilos.linkButton} onClick={alReintentar}>Reintentar</button>
+      </small>
+    );
+  }
+  if (aviso.tipo === "CANTIDAD_INVALIDA") return <small className={estilos.stockVerificando} role="status">Corrija la cantidad para verificar el stock.</small>;
+  if (aviso.tipo === "SUFICIENTE") return <small className={estilos.stockOk} role="status">Stock disponible</small>;
+
+  return null;
+}
+
+const SIN_AVISO: AvisoStock = { tipo: "NINGUNO" };
+
 export default function NuevaFacturaPage() {
   const [sucursales, setSucursales] = useState<Sucursal[]>([]);
   const [opciones, setOpciones] = useState<Opciones | null>(null);
@@ -575,6 +603,9 @@ export default function NuevaFacturaPage() {
   // E04: dirección de entrega del cliente. El controlador descarta respuestas tardías de un cliente anterior y limpia el destino al cambiar de cliente.
   const [entregaCtl] = useState(() => crearControlEntrega({ cargar: (id, signal) => pedirOpcionesEntrega(id, signal) }));
   const entregaEstado = useSyncExternalStore(entregaCtl.suscribir, entregaCtl.estado, entregaCtl.estado);
+  // PRO-330: verificación anticipada de stock (solo lectura) del borrador completo; descarta respuestas tardías por versión y firma (sucursal, cliente, productos, cantidades).
+  const [stockCtl] = useState(() => crearVerificadorStock({ consultar: (s, signal) => pedirDisponibilidad(s, signal) }));
+  const estadoStock = useSyncExternalStore(stockCtl.suscribir, stockCtl.estado, stockCtl.estado);
   const [cliente, setCliente] = useState<Cliente | null>(null);
   // Vendedor comercial elegido por ID (nunca se preselecciona el usuario emisor). null = sin elegir; sinVendedores: la empresa no tiene vendedores activos (se enlaza a Maestros → Vendedores).
   const [vendedor, setVendedor] = useState<Vendedor | null>(null);
@@ -690,6 +721,10 @@ export default function NuevaFacturaPage() {
   const entregaVigente = entregaEstado.clienteId === clienteIdActual ? entregaEstado : null;
   const direccionEntregaId = entregaVigente?.fase === "LISTO" && entregaVigente.elegida !== "" ? entregaVigente.elegida : null;
   const pendienteDeEntrega = cliente ? (entregaVigente ? pendienteEntrega(entregaVigente) : "esperar las direcciones de entrega del cliente") : "";
+  const borradorStock: BorradorStock = { sucursalId, clienteId: clienteIdActual, lineas: lineas.map((l) => ({ productoId: l.producto.id, cantidad: l.cantidad, controlaStock: l.producto.controlaStock })) };
+  const claveStock = JSON.stringify(borradorStock);
+  // Calculada contra el borrador ACTUAL en cada render: un resultado de otra firma cuenta como «verificando», nunca como stock confirmado.
+  const vista = vistaStock(estadoStock, borradorStock);
   const calculo = resumenCalculo(lineas.map((l) => aLineaFE(l, moneda)), descuentoGeneralFE);
   const extranjera = moneda !== "PYG";
   const cambioNormal = extranjera ? leerCambio(cambio) : null;
@@ -724,6 +759,7 @@ export default function NuevaFacturaPage() {
     lineas.length > 0 && !lineasValidas ? "corregir cantidades o precios" : "",
     calculo.erroresDescuento.length > 0 ? "corregir los descuentos" : "",
     pendienteDeEntrega,
+    vista.pendiente,
     problemas.length > 0 ? "completar los datos fiscales de los ítems marcados" : "",
     pendientesDeCredito.length > 0 ? "corregir las condiciones del crédito" : "",
     pendientesDePagos.length > 0 ? "corregir los medios de pago" : "",
@@ -748,6 +784,12 @@ export default function NuevaFacturaPage() {
   useEffect(() => {
     void entregaCtl.seleccionarCliente(clienteIdActual);
   }, [entregaCtl, clienteIdActual]);
+
+  // PRO-330: cada alta, incremento, edición de cantidad, retiro, cambio de sucursal o de cliente reconsulta (una sola petición agrupada, con espera corta); sin líneas se limpia.
+  useEffect(() => {
+    stockCtl.actualizar(JSON.parse(claveStock) as BorradorStock);
+  }, [stockCtl, claveStock]);
+  useEffect(() => () => stockCtl.destruir(), [stockCtl]);
 
   useEffect(() => {
     if (lineaAFocar.current === null || selector !== null) return;
@@ -1230,10 +1272,11 @@ export default function NuevaFacturaPage() {
                         const opcionIva = opcionIvaDe(e.afectacion, e.tasa);
                         const unidad = l.ajuste.unidadSifen !== "" ? (unidadesSifen.find((u) => String(u.codigo) === l.ajuste.unidadSifen)?.representacion ?? l.ajuste.unidadSifen) : (l.producto.unidadSimbolo ?? "—");
                         const seleccionada = editando === l.clave;
+                        const avisoStock = vista.avisos.get(l.producto.id) ?? SIN_AVISO;
 
                         return (
                           <Fragment key={l.clave}>
-                          <tr className={[!cantOk || !precOk || pr.length > 0 ? estilos.filaInvalida : "", seleccionada ? estilos.filaSeleccionada : ""].filter(Boolean).join(" ") || undefined}>
+                          <tr className={[!cantOk || !precOk || pr.length > 0 ? estilos.filaInvalida : "", avisoStock.tipo === "INSUFICIENTE" ? estilos.filaSinStock : "", seleccionada ? estilos.filaSeleccionada : ""].filter(Boolean).join(" ") || undefined}>
                             <td className={estilos.prod} data-label="Producto">
                               <strong title={l.producto.descripcion}>{l.producto.descripcion}</strong>
                               <small title={`${l.producto.codigo}${l.producto.gtin ? ` · GTIN ${l.producto.gtin}` : ""}`}>{l.producto.codigo}{l.producto.gtin ? ` · GTIN ${l.producto.gtin}` : ""}</small>
@@ -1242,6 +1285,7 @@ export default function NuevaFacturaPage() {
                                   {puedeAjustarFiscal ? "Completar: " : "No facturable: "}{pr.join(", ")}
                                 </small>
                               ) : null}
+                              <AvisoStockLinea aviso={avisoStock} alReintentar={() => stockCtl.reintentar()} />
                             </td>
                             <td data-label="IVA">
                               {puedeAjustarFiscal ? (
