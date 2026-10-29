@@ -2,6 +2,18 @@
 
 Branch: `feature/NEXIT-2026-001-banco-demo`. Regra: uma funcionalidade por vez; sem mock/localStorage/dados fixos no modo real; commit+push ao terminar cada item.
 
+## CASA MINGO — PACOTE DE 10 SOLICITAÇÕES 29/10/2026 — REGRAS REGISTRADAS / CÓDIGO NOVO NÃO INICIADO
+
+**Gestão:** [PRO-329](https://linear.app/proceit/issue/PRO-329) · [AUDITORÍA DO CÓDIGO](documentacao/analises/AUD-NEXIT-CASA-MINGO-SOLICITUDES-2026-10-29.md) · [PLANO/GATES](documentacao/planos/PLAN-NEXIT-CASA-MINGO-AJUSTES-29-OCT-2026.md).
+
+**ÚNICA ORDEM ATIVA para CLAUDE:** [PRO-328: direção selecionada como endereço principal do receptor na FE nova](documentacao/ordens/ORD-CLAUDE-NEXIT-CM-PRO-328-DIRECCION-SELECCIONADA-2026-10-29.md). Inclui país+rua+número+códigos dep/dis/ciu da mesma direção, sem linha `Dirección de entrega` automática em `dInfAdic`; preserva FE/KuDE/CDC históricos, NCE, ACL, estoque, cálculos e identidade de destino por UUID. Se necessária, NEX-076 apenas como código versionado, **não executado**. Claude commit+push e PARA; ChatGPT audita SHA/diff antes de liberar próxima issue.
+
+**Demais solicitações novas, ainda NÃO AUTORIZADAS PARA CLAUDE:** PRO-330 aviso stock na inclusão; PRO-331 numeração/scroll/foco; PRO-332 vista cruzada Excel/PDF vendedor/produto/fatura/data; PRO-333 ordenação numérica de documento; PRO-334 cores por tipo FE/NCE; PRO-335 exibição IVA/stock. **Provedor externo:** PRO-298 PDF KuDE USD 2 decimais + cabeçalho, PRO-336 certificado e consulta DTE APROBADOS (não criar upload local).
+
+**PRO-327:** etapa SQL 561 produtos CONCLUÍDA no banco real com `COMMIT` + pré-verificação POST `0 pendentes/254 corrigidos`; UI/API alta alfanumérica/zeros continua Todo, porém **ordem de código PAUSADA** para prioridade PRO-328, sem ser cancelada. Não reexecutar SQL ou importação. Nada deste pacote foi deployado/homologado; tarefas novas permanecem Todo. Relatórios PRO-296 e KUDE PRO-326 continuam com auditoria estática anterior, sem reabertura indiscriminada.
+
+
+
 ## PRO-327 — CASA MINGO / 561 produtos: SQL aplicado e pós-COMMIT confirmado (27/10/2026)
 
 - **SQL ChatGPT:** `documentacao/banco/nexit/v1/scripts/casa-mingo/CASA_MINGO_CORREGIR_CODIGOS_561_2026-10-27_PENDIENTE_AUTORIZACION.sql`. Script versão focal baseada linha a linha no original importado, com exceção para linha 8 e preservação de cinco códigos duplicados.
