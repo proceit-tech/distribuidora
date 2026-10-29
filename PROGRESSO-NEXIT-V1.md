@@ -2,7 +2,17 @@
 
 Branch: `feature/NEXIT-2026-001-banco-demo`. Regra: uma funcionalidade por vez; sem mock/localStorage/dados fixos no modo real; commit+push ao terminar cada item.
 
-## PRO-335 — AUDITORIA R01 / 29-10-2026 — 3 PENDÊNCIAS E ORDEM CORRETIVA ÚNICA ATIVA
+## PRO-335 — AUDITORIA INDEPENDENTE R02 / 29-10-2026 — F001/F003 CERRADOS; F004 RÓTULO ABERTURA PENDENTE
+
+- **SHA Claude R01:** `dd310116c8bb86425114e41f30741ab7c1cd053b`, **9 arquivos / 18 casos novos, NENHUM executado**. [AUDITORIA CHATGPT R02](documentacao/testes/AUD-NEXIT-PRO-335-FORMATO-MONETARIO-R02-2026-10-29.md): **PARCIALMENTE CONFORME**.
+- **F-001 FECHADO ESTATICAMENTE:** KPI `Valor a precio venta` de Productos agrupa subtotais por moeda real sem somar PYG+USD e usa `multiplicarDecimales`/`sumarDecimales` com dados `numeric` textuais.
+- **F-002 FECHADO PARA LEITURA:** custos médios em moeda-base `empresas.moneda_base_codigo` e custo de abertura registrado usa `movimiento_lineas.moneda_costo_codigo`; GET/DTO apenas leitura. **R02-F004 NOVO RESIDUAL:** na CRIAÇÃO, rótulo do input `Costo unitario de apertura` ainda indica `catalogos.monedaReferencia` (moeda comercial), embora o registro contabilize em `monedaBaseCosto`; editar somente rótulo, mantendo precisão e valor editável. O teste `PRO335-R01-12` atualmente exige o rótulo errado e deve ser atualizado.
+- **F-003 FECHADO ESTATICAMENTE:** confirmação de conversão limites Cliente apresenta moeda por lado e texto exato quando arredondamento esconde dígitos; inputs e lógica/payload preservados.
+- **[ÚNICA ORDEM CORRETIVA ATIVA R02-F004](documentacao/ordens/ORD-CLAUDE-NEXIT-PRO-335-R02-F004-ROTULO-CUSTO-APERTURA-2026-10-29.md):** modificar só `productos/_components/pestanas/inventario.tsx` e `lib/formato/monto-visual.casos.ts`, commit+push e PARAR para auditoria R03. **0 testes/lint/typecheck/build/CI manual/VM/SQL/Docker/gateway/browser/deploy**. **PRO-335 permanece In Review, não Done/homologada**; PRO-337 não autorizada até R03. PRO-328/330 In Review, NEX-076 pendente; PRO-327 SQL 561 concluído não executar novamente.
+
+
+
+## HISTÓRICO — PRO-335 AUDITORIA R01 / 29-10-2026 — R01-F001/F003 ENCERRADOS NA R02
 
 - **Claude publicou:** `d2214351d2bf2677b3dc6dc166733aafa6af1a8a` (22 arquivos, 74 casos escritos + 1 em residuales), 0 executados. **[AUDITORIA CHATGPT R01](documentacao/testes/AUD-NEXIT-PRO-335-FORMATO-MONETARIO-R01-2026-10-29.md): PARCIALMENTE CONFORME.** Núcleo visual PYG 0 / USD 2, formato por linha de Informe de Ventas, separação do `fmtCantidadTexto`, preservação de XLSX/PDF e dados fiscais conforme inspeção. **Não homologado/Done**.
 - **F-001 ALTA:** `productos/listado-productos.tsx` soma valores de preços de referência USD/PYG em `valorVenta` e apresenta moeda do último produto: KPI comercial inválido; exigir subtotais por moeda sem conversão automática.
