@@ -1,0 +1,2399 @@
+/* Nueva factura electrónica — workspace de emisión: panel de operación (~70 %) + resumen financiero fijo (~30 %).
+   Escala del sistema V1: H1 26 px (lista.module.css), secciones 16 px, etiquetas 13 px, valores 14 px, campos de 40 px, botones de 38 px.
+   Tokens: borde #dce6ed, texto #112f4a / #35506a / #5b7387, acento #0f9ca5. Un solo punto de quiebre de maquetación (1100 px) y uno de ítems (900 px). */
+
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 16px;
+  align-items: start;
+  padding-bottom: 12px;
+}
+
+.principal {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.card {
+  min-width: 0;
+  border: 1px solid #dce6ed;
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 4px 12px rgba(20, 50, 77, 0.03);
+}
+
+.cardHead {
+  display: flex;
+  min-height: 52px;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  padding: 10px 18px;
+  border-bottom: 1px solid #e8eff4;
+}
+
+.cardHead h2,
+.resumenPanel h2 {
+  margin: 0;
+  color: #112f4a;
+  font-size: 16px;
+  font-weight: 650;
+}
+
+.cardBody {
+  padding: 16px 18px;
+}
+
+.meta {
+  color: #5b7387;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Contexto del encabezado ---- */
+.contexto {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+}
+
+.estado {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: #eef3f6;
+  color: #35506a;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.estadoBorrador {
+  background: #fff3d6;
+  color: #7a5200;
+}
+
+.estadoOk {
+  background: #e2f5ec;
+  color: #11683f;
+}
+
+.estadoWarn {
+  background: #fdeceb;
+  color: #9a1f17;
+}
+
+/* ---- Campos ---- */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px 16px;
+}
+
+.field {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 13px;
+}
+
+.field > span {
+  color: #35506a;
+  font-weight: 600;
+}
+
+.field select,
+.field input,
+.field textarea,
+.readonly {
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 1px solid #d3dfe8;
+  border-radius: 9px;
+  background: #ffffff;
+  color: #112f4a;
+  font: inherit;
+  font-size: 14px;
+}
+
+.field select:focus,
+.field input:focus,
+.field textarea:focus,
+.qty:focus,
+.price:focus,
+.avanzado summary:focus-visible {
+  border-color: #0f9ca5;
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(15, 156, 165, 0.16);
+}
+
+.field textarea {
+  min-height: 72px;
+  resize: vertical;
+}
+
+.field select:disabled {
+  background: #f6f9fb;
+  color: #35506a;
+}
+
+.readonly {
+  display: flex;
+  align-items: center;
+  border-style: dashed;
+  background: #f6f9fb;
+  color: #35506a;
+}
+
+.hint {
+  margin: 6px 0 0;
+  color: #5b7387;
+  font-size: 13px;
+}
+
+.field .hint {
+  margin: 0;
+  font-size: 12.5px;
+}
+
+.fieldError {
+  display: block;
+  color: #b3261e;
+  font-size: 12.5px;
+}
+
+.avanzado {
+  margin-top: 14px;
+  border-top: 1px solid #eef3f6;
+  padding-top: 10px;
+}
+
+.avanzado summary {
+  width: fit-content;
+  padding: 4px 6px;
+  border-radius: 6px;
+  color: #0a7f88;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.avanzado[open] summary {
+  margin-bottom: 12px;
+}
+
+/* ---- Cliente ---- */
+.clienteResumen {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 14px;
+}
+
+.clienteNombre {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.clienteNombre strong {
+  color: #112f4a;
+  font-size: 16px;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.clienteNombre span {
+  color: #5b7387;
+  font-size: 13px;
+}
+
+.ficha {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px 18px;
+  margin: 0;
+}
+
+.ficha div {
+  min-width: 0;
+}
+
+.ficha dt {
+  color: #5b7387;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.ficha dd {
+  margin: 2px 0 0;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.fichaTitulo {
+  grid-column: 1 / -1;
+}
+
+.fichaTitulo dd {
+  color: #112f4a;
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.badgeOk {
+  background: #e2f5ec;
+  color: #11683f;
+}
+
+.badgeWarn {
+  background: #fdeceb;
+  color: #9a1f17;
+}
+
+.pendientes {
+  margin: 10px 0 0;
+  padding: 10px 14px 10px 30px;
+  border-radius: 9px;
+  background: #fdeceb;
+  color: #7a1a14;
+  font-size: 13px;
+}
+
+/* ---- Búsqueda rápida (combobox) ---- */
+.buscarFila {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px 12px;
+}
+
+.buscarFila > button {
+  flex: 0 0 auto;
+  height: 40px;
+}
+
+.buscador {
+  position: relative;
+  min-width: 0;
+  flex: 1 1 320px;
+}
+
+.opciones {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% - 2px);
+  right: 0;
+  left: 0;
+  max-height: 340px;
+  margin: 0;
+  padding: 4px;
+  overflow-y: auto;
+  border: 1px solid #c9d8e3;
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: 0 12px 28px rgba(20, 50, 77, 0.16);
+  list-style: none;
+}
+
+.opcion {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 14px;
+  padding: 9px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.opcionActiva {
+  background: #eaf6f7;
+}
+
+.opcionBloqueada {
+  cursor: not-allowed;
+  opacity: 0.75;
+}
+
+.opcionTexto {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.opcionTexto strong {
+  color: #112f4a;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.opcionTexto small {
+  color: #5b7387;
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+
+.opcionVacia {
+  padding: 12px;
+  color: #5b7387;
+  font-size: 13px;
+  text-align: center;
+}
+
+.aviso {
+  margin: 6px 0 0;
+  color: #11683f;
+  font-size: 13px;
+}
+
+/* ---- Ítems ---- */
+.tableWrap {
+  overflow-x: auto;
+}
+
+.items {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.itemsResumen {
+  min-width: 560px;
+}
+
+.items th {
+  padding: 10px 12px;
+  border-bottom: 1px solid #dce6ed;
+  background: #f4f8fa;
+  color: #4d6579;
+  font-size: 12.5px;
+  font-weight: 650;
+  text-align: left;
+}
+
+.items td {
+  padding: 10px 12px;
+  border-bottom: 1px solid #eef3f6;
+  vertical-align: middle;
+}
+
+.items .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.items th.num {
+  white-space: normal;
+}
+
+.items .prod strong {
+  display: block;
+  color: #112f4a;
+  font-weight: 600;
+}
+
+.items .prod small {
+  display: block;
+  color: #5b7387;
+  font-size: 12.5px;
+}
+
+.filaInvalida {
+  background: #fff8f7;
+  box-shadow: inset 3px 0 0 #b3261e;
+}
+
+.subtotal {
+  color: #112f4a;
+  font-weight: 650;
+}
+
+.qty,
+.price {
+  width: 100%;
+  min-height: 40px;
+  padding: 6px 10px;
+  border: 1px solid #d3dfe8;
+  border-radius: 9px;
+  background: #ffffff;
+  color: #112f4a;
+  font: inherit;
+  font-size: 14px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.qty {
+  max-width: 100px;
+}
+
+.price {
+  max-width: 150px;
+}
+
+.invalid {
+  border-color: #b3261e;
+}
+
+.modificado {
+  display: block;
+  margin-top: 2px;
+  color: #8a5a00;
+  font-size: 12px;
+}
+
+.linkButton {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #0a7f88;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.remove {
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid #f0c9c6;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #9a1f17;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.remove:hover {
+  background: #fdeceb;
+}
+
+.tableEmpty {
+  padding: 28px 16px;
+  color: #5b7387;
+  font-size: 14px;
+  text-align: center;
+}
+
+/* ---- Resumen financiero ---- */
+.resumenPanel {
+  position: sticky;
+  top: 12px;
+  display: flex;
+  max-height: calc(100vh - 24px);
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+  padding: 16px 18px;
+  border: 1px solid #dce6ed;
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 4px 12px rgba(20, 50, 77, 0.03);
+}
+
+.totals {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px 16px;
+  margin: 0;
+}
+
+.resumenPanel .totals {
+  grid-template-columns: 1fr;
+  gap: 0;
+}
+
+.totals div {
+  display: flex;
+  flex-direction: column;
+}
+
+.resumenPanel .totals div {
+  flex-direction: row;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 0;
+  border-bottom: 1px solid #eef3f6;
+}
+
+.totals dt {
+  color: #5b7387;
+  font-size: 13px;
+}
+
+.totals dd {
+  margin: 0;
+  color: #112f4a;
+  font-size: 14px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.resumenPanel .totalIva dd {
+  font-weight: 700;
+}
+
+.totalGeneral {
+  padding: 14px 16px;
+  border: 1px solid #cfe7e9;
+  border-radius: 12px;
+  background: #f3fbfb;
+  color: #112f4a;
+  text-align: right;
+}
+
+.totalGeneral span,
+.totalGeneral small {
+  display: block;
+  color: #5b7387;
+  font-size: 13px;
+}
+
+.totalGeneral strong {
+  display: block;
+  color: #0a6f77;
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+
+.pagoResumen {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+
+.pagoResumen div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.pagoResumen dt {
+  color: #5b7387;
+}
+
+.pagoResumen dd {
+  margin: 0;
+  max-width: 60%;
+  color: #112f4a;
+  font-weight: 600;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.pendientesPanel h3 {
+  margin: 0 0 6px;
+  color: #112f4a;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.pendientesPanel ul {
+  margin: 0;
+  padding-left: 18px;
+  color: #8a5a00;
+  font-size: 13px;
+}
+
+.listo {
+  margin: 0;
+  color: #11683f;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.accionesPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.accionPrincipal {
+  width: 100%;
+  height: 42px;
+  justify-content: center;
+}
+
+/* ---- Resultado del envío ---- */
+.resultado {
+  max-width: 760px;
+  padding: 20px 22px;
+  border: 1px solid #dce6ed;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.resultado h2 {
+  margin: 0 0 6px;
+  color: #112f4a;
+  font-size: 18px;
+}
+
+.resultado p {
+  margin: 4px 0;
+}
+
+.resultadoOk {
+  color: #11683f;
+  font-weight: 600;
+}
+
+.resultadoError {
+  color: #9a1f17;
+  font-weight: 600;
+}
+
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.errorList {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+
+/* ---- Diálogos (selectores avanzados, resumen y detalle técnico) ---- */
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 16px;
+  overflow-y: auto;
+  background: rgba(10, 30, 48, 0.5);
+}
+
+.modal {
+  width: 100%;
+  max-width: 780px;
+  margin: 24px 0;
+  padding: 20px;
+  border-radius: 14px;
+  background: #ffffff;
+  color: inherit;
+  box-shadow: 0 16px 40px rgba(10, 30, 48, 0.35);
+}
+
+.modalWide {
+  max-width: 920px;
+}
+
+.modal h2 {
+  margin: 0 0 6px;
+  color: #112f4a;
+  font-size: 18px;
+}
+
+.modalHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.close {
+  width: 36px;
+  height: 36px;
+  border: 1px solid #d3dfe8;
+  border-radius: 8px;
+  background: #ffffff;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.searchRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.searchRow input {
+  min-height: 40px;
+  flex: 1 1 240px;
+  padding: 8px 12px;
+  border: 1px solid #d3dfe8;
+  border-radius: 9px;
+  font: inherit;
+  font-size: 14px;
+}
+
+.searchRow input:focus {
+  border-color: #0f9ca5;
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(15, 156, 165, 0.16);
+}
+
+.resultados {
+  max-height: 52vh;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  border: 1px solid #dce6ed;
+  border-radius: 10px;
+  list-style: none;
+}
+
+.resultados li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 14px;
+  padding: 10px 12px;
+  border-bottom: 1px solid #eef3f6;
+}
+
+.resultados li:last-child {
+  border-bottom: 0;
+}
+
+.resultados .info {
+  min-width: 0;
+  flex: 1 1 260px;
+}
+
+.resultados .info strong {
+  display: block;
+  font-size: 14px;
+}
+
+.resultados .info small {
+  display: block;
+  color: #5b7387;
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+
+.impedimento {
+  color: #9a1f17 !important;
+}
+
+.mensajeVacio {
+  padding: 22px 14px;
+  color: #5b7387;
+  font-size: 14px;
+  text-align: center;
+}
+
+.paginacion {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  margin-top: 10px;
+  color: #5b7387;
+  font-size: 13px;
+}
+
+.paginacion .actions {
+  align-items: center;
+}
+
+.precio {
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ---- Ítems como tarjetas: sin desplazamiento horizontal en tablet y móvil ---- */
+@media (max-width: 900px) {
+  .items:not(.itemsResumen) thead {
+    display: none;
+  }
+
+  .items:not(.itemsResumen),
+  .items:not(.itemsResumen) tbody {
+    display: block;
+  }
+
+  .items:not(.itemsResumen) tr {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px 14px;
+    padding: 14px 16px;
+    border-bottom: 1px solid #e8eff4;
+  }
+
+  .items:not(.itemsResumen) td {
+    display: block;
+    padding: 0;
+    border: 0;
+  }
+
+  .items:not(.itemsResumen) td[data-label]::before {
+    display: block;
+    margin-bottom: 3px;
+    color: #5b7387;
+    font-size: 12.5px;
+    font-weight: 600;
+    content: attr(data-label);
+  }
+
+  .items:not(.itemsResumen) td.prod {
+    grid-column: 1 / -1;
+  }
+
+  .items:not(.itemsResumen) td.prod::before {
+    display: none;
+  }
+
+  .items:not(.itemsResumen) td.accion,
+  .items:not(.itemsResumen) td.tableEmpty {
+    grid-column: 1 / -1;
+  }
+
+  .items:not(.itemsResumen) td.accion {
+    text-align: right;
+  }
+
+  .items .num {
+    text-align: left;
+  }
+
+  .qty,
+  .price {
+    max-width: none;
+    text-align: left;
+  }
+}
+
+@media (max-width: 760px) {
+  .cardHead,
+  .cardBody {
+    padding-right: 14px;
+    padding-left: 14px;
+  }
+
+  .grid {
+    grid-template-columns: 1fr;
+  }
+
+  .buscarFila > button {
+    width: 100%;
+  }
+
+  .modal {
+    margin: 8px 0;
+    padding: 14px;
+  }
+
+  .totalGeneral strong {
+    font-size: 24px;
+  }
+}
+
+/* Fase A (PRO-93): datos fiscales del ítem dentro de la propia factura. Misma jerarquía de tarjetas; el editor es un bloque plegable bajo la fila del ítem. */
+.filaFiscal > td {
+  padding: 0 12px 12px;
+  background: #fafcfc;
+  border-top: 0;
+}
+
+.fiscal {
+  border: 1px solid #d5e4e4;
+  border-radius: 8px;
+  padding: 8px 12px;
+  background: #ffffff;
+}
+
+.fiscal > summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 32px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.fiscal .grid {
+  margin-top: 10px;
+}
+
+.radios {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 12px 0 4px;
+  padding: 8px 12px;
+  border: 1px solid #d5e4e4;
+  border-radius: 8px;
+  font-size: 14px;
+}
+
+.radios legend {
+  padding: 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.radios label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* MFE-B1: condiciones de crédito dentro de la tarjeta Operación (solo con la condición Crédito). */
+.credito {
+  margin: 12px 0 0;
+  padding: 8px 12px 12px;
+  border: 1px solid #d5e4e4;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.credito legend {
+  padding: 0 6px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.credito .tableWrap {
+  margin-top: 10px;
+}
+
+.credito .items input {
+  width: 100%;
+  min-height: 34px;
+}
+
+.botonCuotas {
+  min-height: 34px;
+  padding: 0 14px;
+  border: 1px solid #b7cccc;
+  border-radius: 8px;
+  background: #ffffff;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.botonCuotas:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.plazos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+/* =====================================================================================================================================================
+   PRO-128 — rediseño compacto: Operación a la vista, pago y crédito en una línea, tabla de ítems compacta y panel fiscal contextual.
+   ===================================================================================================================================================== */
+.gridOperacion {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 10px 14px;
+}
+
+.gridOperacion .field select,
+.gridOperacion .field input {
+  min-height: 36px;
+  padding: 5px 10px;
+}
+
+.pendienteLinea {
+  margin: 4px 0 0;
+  color: #8a5a00;
+  font-size: 12.5px;
+  line-height: 1.35;
+}
+
+.pagos,
+.creditoFila {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-top: 12px;
+  padding: 8px 12px;
+  border: 1px solid #e0e9ef;
+  border-radius: 9px;
+  background: #fafcfd;
+}
+
+.pagos {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.pagosTitulo {
+  color: #35506a;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.pagoFila {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+
+.pagoFila select,
+.pagoFila input,
+.creditoFila input,
+.creditoFila select {
+  min-height: 34px;
+  padding: 4px 8px;
+  border: 1px solid #d3dfe8;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #112f4a;
+  font: inherit;
+  font-size: 14px;
+}
+
+.pagoFila select {
+  min-width: 190px;
+}
+
+.pagoMonto {
+  color: #4d6579;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.pagoMontoInput {
+  width: 150px;
+  text-align: right;
+}
+
+.pagoDato {
+  min-width: 140px;
+}
+
+.pagoPie {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+}
+
+.chips {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.chip {
+  min-height: 30px;
+  padding: 0 11px;
+  border: 1px solid #b7cccc;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #112f4a;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.chip[aria-pressed="true"] {
+  border-color: #0f6f68;
+  background: #e5f4f2;
+  font-weight: 650;
+}
+
+.inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #35506a;
+  font-size: 13px;
+}
+
+.corto {
+  width: 64px;
+  text-align: right;
+}
+
+.medio {
+  width: 130px;
+  text-align: right;
+}
+
+/* Tabla de ítems compacta: celdas bajas y controles pequeños; el editor fiscal es UN panel bajo la tabla, no una fila por ítem. */
+.itemsCompacta th {
+  padding: 7px 10px;
+}
+
+.itemsCompacta td {
+  padding: 6px 10px;
+}
+
+.itemsCompacta .qty {
+  width: 84px;
+}
+
+.itemsCompacta .price {
+  width: 120px;
+}
+
+.itemsCompacta .accion {
+  white-space: nowrap;
+  text-align: right;
+}
+
+.itemsCompacta .accion > * + * {
+  margin-left: 10px;
+}
+
+.ivaSelect {
+  min-height: 32px;
+  max-width: 190px;
+  padding: 3px 8px;
+  border: 1px solid #d3dfe8;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #112f4a;
+  font: inherit;
+  font-size: 13.5px;
+}
+
+.proporcion {
+  display: block;
+  width: 110px;
+  min-height: 30px;
+  margin-top: 4px;
+  padding: 3px 8px;
+  border: 1px solid #d3dfe8;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 13px;
+}
+
+.filaSeleccionada {
+  background: #f1f8f7;
+  box-shadow: inset 3px 0 0 #0f6f68;
+}
+
+.panelFiscal {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid #cfe1e0;
+  border-radius: 10px;
+  background: #f8fcfc;
+}
+
+.panelFiscalCabecera {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 14px;
+}
+
+.gridFiscal {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 10px 14px;
+}
+
+.gridFiscal .field select,
+.gridFiscal .field input {
+  min-height: 36px;
+  padding: 5px 10px;
+}
+
+.campoUnidad {
+  grid-column: span 2;
+}
+
+.campoUnidad label {
+  color: #35506a;
+  font-weight: 600;
+}
+
+.radiosCompactos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+  margin: 0;
+  padding: 6px 10px;
+  border: 1px solid #d5e4e4;
+  border-radius: 8px;
+  font-size: 13.5px;
+}
+
+.radiosCompactos legend {
+  padding: 0 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+@media (max-width: 760px) {
+  .campoUnidad {
+    grid-column: auto;
+  }
+
+  .pagoFila select,
+  .pagoMontoInput,
+  .pagoDato {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .itemsCompacta .qty,
+  .itemsCompacta .price {
+    width: 100%;
+  }
+
+  .ivaSelect {
+    max-width: none;
+    width: 100%;
+  }
+
+  .creditoFila {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
+/* AUD-PRO128-R01-02: el panel fiscal es una fila contextual JUSTO bajo el producto elegido (uno a la vez). */
+.filaPanel > td {
+  padding: 0 10px 10px;
+  border-bottom: 1px solid #dce6ed;
+  background: #fafcfc;
+}
+
+@media (max-width: 900px) {
+  .items:not(.itemsResumen) tr.filaPanel {
+    display: block;
+    padding: 0 10px 12px;
+  }
+
+  .items:not(.itemsResumen) tr.filaPanel > td {
+    grid-column: 1 / -1;
+    padding: 0;
+  }
+}
+
+/* AUD-PRO128-R02-02: el botón «Usar IVA del producto» es hermano del label del selector de IVA. */
+.campoIva {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.campoIva > label {
+  width: 100%;
+}
+
+/* E01-R02: cantidad del último producto añadido, dentro del selector avanzado (CantidadAnadido). */
+.cantidadAnadido {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin: 8px 0;
+  padding: 8px 12px;
+  border: 1px solid #aadadd;
+  border-radius: 8px;
+  background: #f3fbfb;
+}
+
+.cantidadAnadido label {
+  font-weight: 600;
+}
+
+.cantidadAnadido .qty {
+  width: 110px;
+}
+
+/* E02: reparto del stock por depósito en el resumen previo al envío. */
+.stockSalida {
+  margin: 10px 0;
+  padding: 8px 12px;
+  border: 1px solid #aadadd;
+  border-radius: 8px;
+  background: #f3fbfb;
+}
+
+.stockSalida h3 {
+  margin: 0 0 6px;
+  font-size: 14px;
+}
+
+.stockSalida ul {
+  margin: 0 0 6px;
+  padding-left: 18px;
+}
+
+/* E03: descuentos por ítem y general. */
+.descuentoCampo {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.descuentoCampo select {
+  min-width: 0;
+  max-width: 120px;
+}
+
+.descuentoCampo .qty {
+  width: 90px;
+}
+
+.descuentoGeneral {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0 12px;
+  padding: 8px 12px;
+  border: 1px solid #aadadd;
+  border-radius: 8px;
+  background: #f3fbfb;
+}
+
+.descuentoGeneral > span {
+  font-weight: 600;
+}
+
+/* E04: dirección de entrega del cliente. */
+.entregaCliente {
+  display: grid;
+  gap: 4px;
+  margin-top: 10px;
+  padding: 8px 12px;
+  border: 1px solid #aadadd;
+  border-radius: 8px;
+  background: #f3fbfb;
+}
+
+/* ── Nueva factura premium (desktop): tabla de ítems compacta, forma de pago al final y resumen jerárquico ── */
+.itemsCompacta td {
+  padding: 4px 8px;
+}
+
+.itemsCompacta th {
+  padding: 6px 8px;
+}
+
+.itemsCompacta .prod {
+  max-width: 360px;
+}
+
+/* Nombre: hasta dos líneas visuales; la descripción completa está en el título (tooltip). Código/GTIN: UNA línea secundaria con puntos suspensivos. */
+.itemsCompacta .prod strong {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: 13.5px;
+  line-height: 1.25;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow-wrap: anywhere;
+}
+
+.itemsCompacta .prod small {
+  display: block;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.itemsCompacta .prod small.pendienteLinea {
+  white-space: normal;
+}
+
+.itemsCompacta input,
+.itemsCompacta select {
+  min-height: 30px;
+  padding-top: 2px;
+  padding-bottom: 2px;
+}
+
+.itemsCompacta td {
+  vertical-align: middle;
+}
+
+/* Resumen de la factura: alto máximo, cuerpo con scroll interno y acciones siempre visibles. */
+.modalResumen {
+  display: flex;
+  max-width: 1040px;
+  max-height: calc(100vh - 32px);
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.overlay:has(.modalResumen) {
+  align-items: center;
+}
+
+.resumenCabecera {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px 24px;
+  padding: 14px 20px 10px;
+  border-bottom: 1px solid #dce6ed;
+}
+
+.resumenCabecera h2 {
+  margin: 0;
+}
+
+.resumenCabecera .hint {
+  margin: 2px 0 0;
+}
+
+.resumenEmisor {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 20px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.resumenEmisor div {
+  display: grid;
+  gap: 0;
+}
+
+.resumenEmisor dt,
+.resumenDl dt,
+.totalesDetalle dt,
+.totalesPrincipales dt {
+  color: #5b7387;
+  font-size: 12px;
+}
+
+.resumenEmisor dd,
+.resumenDl dd,
+.totalesDetalle dd,
+.totalesPrincipales dd {
+  margin: 0;
+  color: #112f4a;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.resumenCuerpo {
+  display: grid;
+  flex: 1 1 auto;
+  gap: 12px;
+  padding: 12px 20px;
+  overflow-y: auto;
+}
+
+.resumenGrupos {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.grupo {
+  padding: 8px 12px;
+  border: 1px solid #e3ecf2;
+  border-radius: 8px;
+  background: #fbfdfe;
+}
+
+.grupo h3 {
+  margin: 0 0 4px;
+  color: #112f4a;
+  font-size: 13px;
+}
+
+.resumenDl {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.resumenDl div {
+  display: grid;
+  gap: 0;
+}
+
+.resumenTabla {
+  max-height: 260px;
+  overflow: auto;
+  border: 1px solid #e3ecf2;
+  border-radius: 8px;
+}
+
+.resumenTabla .itemsResumen {
+  min-width: 560px;
+}
+
+.resumenTabla th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.resumenTabla td,
+.resumenTabla th {
+  padding: 5px 8px;
+}
+
+.resumenTabla .prod strong {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow-wrap: anywhere;
+}
+
+.stockSalida summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.stockSalida[open] summary {
+  margin-bottom: 6px;
+}
+
+.resumenTotales {
+  display: grid;
+  grid-template-columns: minmax(240px, 320px) 1fr;
+  gap: 12px;
+  align-items: start;
+}
+
+.totalesPrincipales {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 10px 14px;
+  border: 1px solid #cfe0ea;
+  border-radius: 8px;
+  background: #f4f8fa;
+}
+
+.totalesPrincipales div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.totalGeneral dt {
+  color: #112f4a;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.totalGeneral dd {
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
+}
+
+.totalesDetalle {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px 16px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.totalesDetalle div {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 0;
+  border-bottom: 1px dashed #e3ecf2;
+}
+
+.resumenAcciones {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 10px 20px;
+  border-top: 1px solid #dce6ed;
+  background: #ffffff;
+}
+
+/* ══ Nueva factura — pantalla de operación compacta (desktop) ══
+   Una sola columna a todo el ancho; tarjetas y cabeceras bajas; tabla de productos sin columna lateral; resumen financiero en una barra inferior. */
+.workspace {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-bottom: 8px;
+}
+
+.principal {
+  gap: 10px;
+}
+
+.cardHead {
+  min-height: 36px;
+  padding: 6px 12px;
+}
+
+.cardHead h2 {
+  font-size: 15px;
+}
+
+.cardBody {
+  padding: 10px 12px;
+}
+
+.gridOperacion {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px 12px;
+}
+
+.gridOperacion .field select,
+.gridOperacion .field input {
+  min-height: 34px;
+  padding: 3px 8px;
+}
+
+.bandaCliente {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+
+.bandaCliente .clienteResumen {
+  flex: 1 1 320px;
+  justify-content: flex-start;
+}
+
+.bandaCliente .entregaCliente {
+  flex: 1 1 320px;
+  max-width: 520px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.bandaCliente .actions {
+  margin-left: auto;
+}
+
+.clienteNombre strong {
+  font-size: 15px;
+}
+
+.entregaCliente .field select {
+  min-height: 34px;
+}
+
+/* Tabla de productos: todo el ancho; columnas con ancho fijo salvo Producto; sin scroll horizontal en escritorio habitual. */
+.itemsCompacta {
+  table-layout: fixed;
+}
+
+.colProducto { width: auto; }
+.colIva { width: 130px; }
+.colUnidad { width: 56px; }
+.colCantidad { width: 84px; }
+.colPrecio { width: 112px; }
+.colDescuento { width: 160px; }
+.colSubtotal { width: 104px; }
+.colAcciones { width: 120px; }
+
+.itemsCompacta .qty,
+.itemsCompacta .price,
+.itemsCompacta .ivaSelect {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.itemsCompacta .descuentoCampo select {
+  width: 70px;
+  flex: 0 0 70px;
+}
+
+.itemsCompacta .descuentoCampo .qty {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.itemsCompacta .accion {
+  white-space: normal;
+}
+
+.itemsCompacta td,
+.itemsCompacta th {
+  overflow-wrap: anywhere;
+}
+
+.descuentoLinea {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 6px 12px;
+  border-top: 1px solid #e8eff4;
+  font-size: 13px;
+}
+
+.descuentoLinea > span {
+  color: #35506a;
+  font-weight: 600;
+}
+
+.descuentoLinea select {
+  min-height: 32px;
+  max-width: 150px;
+}
+
+.descuentoLinea .qty {
+  width: 90px;
+  min-height: 32px;
+}
+
+.observaciones {
+  padding: 6px 12px;
+  border: 1px solid #dce6ed;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.observaciones summary {
+  cursor: pointer;
+  color: #35506a;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.observaciones textarea {
+  width: 100%;
+  margin-top: 6px;
+}
+
+/* Barra de resumen financiero inferior (sticky). Los paneles de detalle se abren HACIA ARRIBA y solo mientras el operador los pide. */
+.barraResumen {
+  position: sticky;
+  z-index: 20;
+  bottom: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 20px;
+  padding: 8px 14px;
+  border: 1px solid #dce6ed;
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 -4px 14px rgba(20, 50, 77, 0.1);
+}
+
+.barraTotales {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 22px;
+  margin: 0;
+}
+
+.barraTotales dt {
+  color: #5b7387;
+  font-size: 12px;
+}
+
+.barraTotales dd {
+  margin: 0;
+  color: #112f4a;
+  font-size: 15px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.barraTotal dd {
+  color: #0a6f77;
+  font-size: 20px;
+}
+
+.barraTotal small {
+  display: block;
+  color: #5b7387;
+  font-size: 12px;
+}
+
+.barraDetalle {
+  position: relative;
+}
+
+.barraDetalle > summary {
+  cursor: pointer;
+  color: #0a6f77;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.barraPanel {
+  position: absolute;
+  z-index: 25;
+  bottom: calc(100% + 14px);
+  left: 0;
+  width: min(420px, 90vw);
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 10px 14px;
+  border: 1px solid #dce6ed;
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 8px 24px rgba(20, 50, 77, 0.18);
+}
+
+.barraPanel h2,
+.barraPanel h3 {
+  margin: 0 0 6px;
+  color: #112f4a;
+  font-size: 14px;
+}
+
+.barraPanel ul {
+  margin: 0;
+  padding-left: 18px;
+  color: #8a5a00;
+  font-size: 13px;
+}
+
+.barraPendientes {
+  min-width: 0;
+  flex: 1 1 200px;
+}
+
+.pendienteResumen {
+  color: #8a5a00;
+}
+
+.barraAcciones {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  margin-left: auto;
+}
+
+/* Con el foco por teclado, nada queda oculto bajo la barra fija. */
+.workspace input,
+.workspace select,
+.workspace textarea,
+.workspace button,
+.workspace summary,
+.workspace a {
+  scroll-margin-bottom: 110px;
+}
+
+@media (max-width: 760px) {
+  .barraPanel {
+    position: static;
+    width: auto;
+    max-height: none;
+    margin-top: 6px;
+    box-shadow: none;
+  }
+
+  .barraAcciones {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .barraAcciones > * {
+    flex: 1 1 0;
+  }
+}
+
+/* ══ PRO-93 — correcciones de la pantalla (cliente, tabla, pie financiero) ══
+   Se aplican al final para prevalecer sobre las reglas anteriores. */
+
+/* Cliente · Dirección de entrega · Acciones: una fila estable en escritorio; el destino largo se recorta con puntos suspensivos (el texto completo está en el title del select). */
+.bandaCliente {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(260px, 1.4fr) auto;
+  align-items: end;
+  gap: 8px 16px;
+}
+
+.bandaCliente .clienteResumen {
+  min-width: 0;
+  flex-wrap: nowrap;
+  justify-content: flex-start;
+  align-self: end;
+  gap: 4px 12px;
+}
+
+.bandaCliente .clienteNombre {
+  min-width: 0;
+}
+
+.bandaCliente .clienteNombre strong,
+.bandaCliente .clienteNombre span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bandaCliente .clienteResumen .badge {
+  flex: 0 0 auto;
+}
+
+.bandaCliente .entregaCliente {
+  min-width: 0;
+  max-width: none;
+  flex: initial;
+}
+
+.bandaCliente .entregaCliente .field,
+.bandaCliente .entregaCliente .field select {
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+}
+
+.bandaCliente .entregaCliente .field select {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bandaCliente > .hint,
+.bandaCliente > [role="status"],
+.bandaCliente > [role="alert"] {
+  align-self: center;
+  margin: 0;
+}
+
+.bandaCliente .actions {
+  flex-wrap: nowrap;
+  align-self: end;
+  margin-left: 0;
+  white-space: nowrap;
+}
+
+@media (max-width: 1000px) {
+  .bandaCliente {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .bandaCliente .actions {
+    justify-self: start;
+  }
+}
+
+/* Tabla de productos: Unidad sin partir palabras; columnas con ancho suficiente; solo la descripción puede partirse. La página tiene una única rolagem vertical. */
+.itemsCompacta {
+  min-width: 980px;
+}
+
+.itemsCompacta th,
+.itemsCompacta td {
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.itemsCompacta th {
+  white-space: nowrap;
+}
+
+.itemsCompacta .prod strong,
+.itemsCompacta .prod small {
+  overflow-wrap: anywhere;
+}
+
+.itemsCompacta td:nth-child(3) {
+  white-space: nowrap;
+}
+
+.colIva { width: 150px; }
+.colUnidad { width: 88px; }
+.colCantidad { width: 96px; }
+.colPrecio { width: 140px; }
+.colDescuento { width: 190px; }
+.colSubtotal { width: 120px; }
+.colAcciones { width: 132px; }
+
+.itemsCompacta .accion {
+  display: table-cell;
+  white-space: nowrap;
+}
+
+.tableWrap {
+  overflow-x: auto;
+  overflow-y: visible;
+}
+
+/* Pie financiero: franja compacta de ancho completo, EN FLUJO (sin position sticky/absolute): nunca tapa Descuento general, Forma de pago, Observaciones ni el foco por teclado.
+   Los paneles «Detalle de impuestos» y «Pendientes» se expanden en el flujo, ocupando su propia fila. */
+.barraResumen {
+  position: static;
+  width: 100%;
+  box-sizing: border-box;
+  box-shadow: none;
+  gap: 8px 24px;
+}
+
+.barraDetalle {
+  position: static;
+}
+
+.barraDetalle[open] {
+  order: 10;
+  flex: 1 1 100%;
+}
+
+.barraPanel {
+  position: static;
+  width: 100%;
+  max-height: none;
+  margin-top: 8px;
+  overflow: visible;
+  box-sizing: border-box;
+  box-shadow: none;
+}
+
+.workspace input,
+.workspace select,
+.workspace textarea,
+.workspace button,
+.workspace summary,
+.workspace a {
+  scroll-margin-bottom: 24px;
+}
+
+/* Vendedor comercial: tarjeta propia, alineada como la banda del cliente. */
+.bandaVendedor {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+
+.bandaVendedor .clienteNombre {
+  min-width: 0;
+}
+
+/* ══ PRO-93-R05 — Resumen de la factura, búsqueda avanzada ══ */
+
+/* Resumen: el cuerpo tiene UNA sola rolagem vertical (la de la modal). Las filas de la grilla ya no se estiran: los grupos miden lo que ocupa su contenido y la tabla de productos recibe el espacio. */
+.resumenCuerpo {
+  align-content: start;
+  grid-auto-rows: auto;
+}
+
+.resumenGrupos {
+  align-items: start;
+  gap: 8px;
+}
+
+.grupo {
+  padding: 6px 10px;
+}
+
+.resumenDl {
+  gap: 2px;
+}
+
+.resumenCabecera {
+  padding: 10px 20px 8px;
+}
+
+/* La tabla de productos NO tiene altura máxima ni rolagem vertical propia; solo desplazamiento horizontal si el ancho no alcanza. */
+.resumenTabla {
+  max-height: none;
+  overflow-x: auto;
+  overflow-y: visible;
+}
+
+.resumenTabla th {
+  position: static;
+}
+
+.detalleLargo summary {
+  cursor: pointer;
+  color: #0a6f77;
+  font-weight: 600;
+}
+
+.detalleLargo div {
+  margin-top: 4px;
+  font-weight: 400;
+}
+
+@media (max-width: 900px) {
+  .resumenGrupos {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .resumenTotales {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .totalesDetalle {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* Búsqueda: campo y acción en la misma fila (estructura estable); el aviso queda debajo y no desplaza el botón. */
+.buscarFila {
+  display: block;
+}
+
+.buscarFila > .buscador {
+  width: 100%;
+  flex: none;
+}
+
+.buscadorControl {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px 12px;
+}
+
+.buscadorCampo {
+  position: relative;
+  min-width: 0;
+  flex: 1 1 320px;
+}
+
+.buscadorControl > button {
+  flex: 0 0 auto;
+  height: 40px;
+}
+
+@media (max-width: 640px) {
+  .buscadorControl > button {
+    width: 100%;
+  }
+}
+
+/* ══ PRO-93-R06 — Resumen de la factura: los productos son el elemento principal ══
+   Estructura de rolagem: ÚNICA vertical = .resumenCuerpo (cuerpo de la modal). La tabla ya NO es un contenedor de rolagem.
+   Cabecera fija: `position: sticky` se ancla al ancestro con rolagem MÁS CERCANO. Con `overflow-x: auto` en el envoltorio de la tabla, el eje Y también pasa a `auto` (CSS Overflow 3: si un eje no es visible/clip, el otro «visible» se computa como `auto`),
+   el envoltorio se vuelve ese ancestro y, como nunca rola en vertical, los títulos no se fijarían. Por eso el envoltorio queda en `overflow: visible` (no es contenedor de rolagem) y los títulos se anclan al cuerpo de la modal.
+   Sin rolagem horizontal propia: la tabla usa `table-layout: fixed` y anchos por columna; por debajo de 720 px cada ítem se apila (una tarjeta por producto con etiquetas), así que no hace falta desplazar. */
+.modalResumen {
+  max-width: min(1280px, 100%);
+}
+
+.resumenTabla {
+  overflow: visible;
+  max-height: none;
+}
+
+.resumenTabla .itemsResumen {
+  min-width: 0;
+  width: 100%;
+  table-layout: fixed;
+}
+
+.itemsResumen th:nth-child(1) { width: auto; }
+.itemsResumen th:nth-child(2) { width: 72px; }
+.itemsResumen th:nth-child(3) { width: 84px; }
+.itemsResumen th:nth-child(4) { width: 168px; }
+.itemsResumen th:nth-child(5) { width: 120px; }
+.itemsResumen th:nth-child(6) { width: 132px; }
+
+.resumenTabla .itemsResumen th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #f4f8fa;
+  box-shadow: 0 1px 0 #dce6ed;
+  white-space: normal;
+}
+
+.resumenTabla .itemsResumen td {
+  overflow-wrap: anywhere;
+  vertical-align: top;
+}
+
+.resumenTabla .itemsResumen .num {
+  font-variant-numeric: tabular-nums;
+}
+
+.resumenTabla .itemsResumen .modificado {
+  display: block;
+}
+
+@media (max-width: 720px) {
+  .resumenTabla .itemsResumen,
+  .resumenTabla .itemsResumen tbody {
+    display: block;
+  }
+
+  .resumenTabla .itemsResumen thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+
+  .resumenTabla .itemsResumen tr {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 2px 12px;
+    padding: 8px 10px;
+    border-bottom: 1px solid #e3ecf2;
+  }
+
+  .resumenTabla .itemsResumen td {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 2px 0;
+    border: 0;
+    text-align: right;
+  }
+
+  .resumenTabla .itemsResumen td::before {
+    content: attr(data-label);
+    color: #5b7387;
+    font-size: 12px;
+    font-weight: 600;
+    text-align: left;
+  }
+
+  .resumenTabla .itemsResumen td.prod {
+    display: block;
+    grid-column: 1 / -1;
+    text-align: left;
+  }
+
+  .resumenTabla .itemsResumen td.prod::before {
+    content: none;
+  }
+}
+
+/* ══ PRO-93-R06-C01 — celda de precio del resumen y descripción completa ══ */
+
+/* F001: valor del precio, descuento y precio modificado van en UN bloque vertical (no como elementos flex hermanos del rótulo). Escritorio: alineado a la derecha como la columna numérica.
+   Celular: la celda de precio ocupa toda la fila de la tarjeta y el bloque ocupa el ancho restante, con quiebre natural de líneas. Nada se oculta. */
+.resumenTabla .itemsResumen .precioResumen {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.resumenTabla .itemsResumen .precioValor {
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.resumenTabla .itemsResumen .precioResumen .modificado {
+  display: block;
+  max-width: 100%;
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+@media (max-width: 720px) {
+  .resumenTabla .itemsResumen td[data-label^="Precio"] {
+    grid-column: 1 / -1;
+    align-items: flex-start;
+  }
+
+  .resumenTabla .itemsResumen td[data-label^="Precio"]::before {
+    flex: 0 0 auto;
+    padding-top: 1px;
+  }
+
+  .resumenTabla .itemsResumen td[data-label^="Precio"] .precioResumen {
+    flex: 1 1 0;
+  }
+}
+
+/* F002: la descripción del producto se ve COMPLETA en el resumen (sin límite de 2 líneas): la altura de la fila es la natural. */
+.resumenTabla .prod strong {
+  display: block;
+  overflow: visible;
+  -webkit-line-clamp: unset;
+  line-clamp: unset;
+  overflow-wrap: anywhere;
+}
+
+/* PRO-330: aviso de stock en la propia línea (insuficiente / verificando / error / disponible), discreto y legible; el texto largo se ajusta dentro de la celda del producto. */
+.filaSinStock {
+  background: #fffaf2;
+  box-shadow: inset 3px 0 0 #b45309;
+}
+
+.stockInsuficiente,
+.stockVerificando,
+.stockError,
+.stockOk {
+  display: block;
+  margin: 4px 0 0;
+  font-size: 12.5px;
+  line-height: 1.35;
+}
+
+.stockInsuficiente {
+  color: #9a3412;
+  font-weight: 600;
+}
+
+.stockVerificando {
+  color: #5b6573;
+}
+
+.stockError {
+  color: #b3261e;
+}
+
+.stockOk {
+  color: #0f6f68;
+}
+
+.itemsCompacta .prod small.stockInsuficiente,
+.itemsCompacta .prod small.stockVerificando,
+.itemsCompacta .prod small.stockError,
+.itemsCompacta .prod small.stockOk {
+  white-space: normal;
+}

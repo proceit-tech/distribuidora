@@ -1,0 +1,432 @@
+"use client";
+
+import Link from "next/link";
+import { useCallback, useEffect, useState } from "react";
+
+import ui from "@/components/ui/lista-padrao/lista.module.css";
+import { validarAccesoUsuario, validarDatosUsuario, type CampoUsuario } from "@/lib/usuarios/validacion";
+
+import estilos from "./gestion-usuarios.module.css";
+
+/**
+ * Administración de usuarios de la EMPRESA (modo «usuarios», solo administrador de empresa) y Maestros → Vendedores (modo «vendedores»: usuarios con el perfil Vendedor).
+ * No hay editor de perfiles: el administrador solo asigna o retira los nueve perfiles predefinidos. Todo el control real está en las APIs y en la base; esta pantalla solo presenta.
+ */
+type Modo = "usuarios" | "vendedores";
+type Perfil = { codigo: string; nombre: string };
+type Fila = { id: string; usuario: string; nombre: string; apellido: string | null; ci?: string | null; email: string | null; telefono?: string | null; estado: string; perfiles?: Perfil[]; ultimoAcceso?: string | null; alcanceSucursales?: string; alcanceDepositos?: string; sucursalesAsignadas?: number; depositosAsignados?: number };
+type Alcance = { alcanceSucursales: string; alcanceDepositos: string; sucursales: Array<{ id: string; nombre: string; establecimiento: string; asignada: boolean }>; depositos: Array<{ id: string; codigo: string; nombre: string; asignado: boolean }> };
+type Catalogo = { id: string; codigo: string; nombre: string };
+type Formulario = { id: string | null; usuario: string; nombre: string; apellido: string; ci: string; email: string; telefono: string; contrasena: string; perfiles: string[] };
+
+const POR_PAGINA = 10;
+const VACIO: Formulario = { id: null, usuario: "", nombre: "", apellido: "", ci: "", email: "", telefono: "", contrasena: "", perfiles: [] };
+
+async function pedir<T>(url: string, init?: RequestInit): Promise<T> {
+  const r = await fetch(url, { cache: "no-store", ...init });
+  const j = (await r.json().catch(() => ({}))) as T & { error?: string };
+
+  if (!r.ok) throw new Error(j.error ?? "No fue posible completar la operación.");
+
+  return j;
+}
+
+const json = (metodo: string, cuerpo: unknown): RequestInit => ({ method: metodo, headers: { "Content-Type": "application/json" }, body: JSON.stringify(cuerpo) });
+const nombreCompleto = (f: Fila) => `${f.nombre} ${f.apellido ?? ""}`.trim();
+
+export function GestionUsuarios({ modo }: { modo: Modo }) {
+  const esVendedores = modo === "vendedores";
+  const [texto, setTexto] = useState("");
+  const [q, setQ] = useState("");
+  const [estado, setEstado] = useState<"TODOS" | "ACTIVO" | "INACTIVO">("TODOS");
+  const [pagina, setPagina] = useState(1);
+  const [filas, setFilas] = useState<Fila[]>([]);
+  const [total, setTotal] = useState(0);
+  const [cargando, setCargando] = useState(true);
+  const [error, setError] = useState("");
+  const [aviso, setAviso] = useState("");
+  const [puedeGestionar, setPuedeGestionar] = useState(!esVendedores);
+  const [catalogo, setCatalogo] = useState<Catalogo[]>([]);
+  const [form, setForm] = useState<{ tipo: "alta" | "datos" | "perfiles"; datos: Formulario } | null>(null);
+  const [guardando, setGuardando] = useState(false);
+  const [errorForm, setErrorForm] = useState("");
+  const [erroresCampo, setErroresCampo] = useState<Partial<Record<CampoUsuario, string>>>({});
+  const [version, setVersion] = useState(0);
+  // Alcance (sucursales y depósitos) del usuario elegido: se carga al abrir el diálogo; se guarda exactamente lo marcado (nunca «todas» automáticamente).
+  const [alcance, setAlcance] = useState<{ fila: Fila; datos: Alcance | null; sucursales: string[]; depositos: string[] } | null>(null);
+
+  useEffect(() => {
+    const t = window.setTimeout(() => { setQ(texto.trim()); setPagina(1); }, 300);
+
+    return () => window.clearTimeout(t);
+  }, [texto]);
+
+  useEffect(() => {
+    let activo = true;
+    const url = esVendedores
+      ? `/api/vendedores?q=${encodeURIComponent(q)}&estado=${estado}&pagina=${pagina}&porPagina=${POR_PAGINA}`
+      : `/api/usuarios?q=${encodeURIComponent(q)}&pagina=${pagina}&porPagina=${POR_PAGINA}`;
+
+    pedir<Record<string, unknown>>(url)
+      .then((j) => {
+        if (!activo) return;
+
+        const lista = (esVendedores ? j.vendedores : j.usuarios) as Array<Record<string, unknown>>;
+
+        setFilas(lista.map((x) => ({ id: String(x.id), usuario: String(x.usuario), nombre: String(x.nombre), apellido: (x.apellido as string | null) ?? null, ci: (x.ci as string | null | undefined) ?? null, telefono: (x.telefono as string | null | undefined) ?? null, email: (x.email as string | null) || null, estado: String(x.estado), perfiles: x.perfiles as Perfil[] | undefined, ultimoAcceso: (x.ultimoAcceso as string | null | undefined) ?? null, alcanceSucursales: x.alcanceSucursales as string | undefined, alcanceDepositos: x.alcanceDepositos as string | undefined, sucursalesAsignadas: x.sucursalesAsignadas as number | undefined, depositosAsignados: x.depositosAsignados as number | undefined })));
+        setTotal(Number(j.total ?? 0));
+        if (esVendedores) setPuedeGestionar(j.puedeGestionar === true);
+        setError("");
+        setCargando(false);
+      })
+      .catch((e: unknown) => {
+        if (!activo) return;
+
+        setError(e instanceof Error ? e.message : "No fue posible cargar la lista.");
+        setCargando(false);
+      });
+
+    return () => { activo = false; };
+  }, [esVendedores, q, estado, pagina, version]);
+
+  const recargar = useCallback(() => { setCargando(true); setVersion((v) => v + 1); }, []);
+
+  async function cargarCatalogo() {
+    if (catalogo.length > 0) return;
+
+    try {
+      setCatalogo((await pedir<{ perfiles: Catalogo[] }>("/api/usuarios/perfiles")).perfiles);
+    } catch (e) {
+      setErrorForm(e instanceof Error ? e.message : "No fue posible cargar los perfiles.");
+    }
+  }
+
+  function abrir(tipo: "alta" | "datos" | "perfiles", fila?: Fila) {
+    setErrorForm("");
+    setErroresCampo({});
+    setAviso("");
+    setForm({
+      tipo,
+      datos: fila
+        ? { ...VACIO, id: fila.id, usuario: fila.usuario, nombre: fila.nombre, apellido: fila.apellido ?? "", ci: fila.ci ?? "", telefono: fila.telefono ?? "", email: fila.email ?? "", perfiles: (fila.perfiles ?? []).map((p) => p.codigo) }
+        : { ...VACIO, perfiles: esVendedores ? ["VENDEDOR"] : [] },
+    });
+    if (tipo !== "datos" && !(esVendedores && tipo === "alta")) void cargarCatalogo();
+  }
+
+  async function abrirAlcance(fila: Fila) {
+    setErrorForm("");
+    setAviso("");
+    setAlcance({ fila, datos: null, sucursales: [], depositos: [] });
+    try {
+      const d = await pedir<Alcance>(`/api/usuarios/${fila.id}/alcance`);
+
+      setAlcance({ fila, datos: d, sucursales: d.sucursales.filter((x) => x.asignada).map((x) => x.id), depositos: d.depositos.filter((x) => x.asignado).map((x) => x.id) });
+    } catch (e) {
+      setAlcance(null);
+      setError(e instanceof Error ? e.message : "No fue posible cargar el alcance.");
+    }
+  }
+
+  async function guardarAlcance() {
+    if (!alcance) return;
+
+    setGuardando(true);
+    setErrorForm("");
+    try {
+      await pedir(`/api/usuarios/${alcance.fila.id}/alcance`, json("PUT", { sucursales: alcance.sucursales, depositos: alcance.depositos }));
+      setAviso("Alcance actualizado.");
+      setAlcance(null);
+      recargar();
+    } catch (e) {
+      setErrorForm(e instanceof Error ? e.message : "No fue posible guardar el alcance.");
+    } finally {
+      setGuardando(false);
+    }
+  }
+
+  const alternar = (lista: string[], id: string) => (lista.includes(id) ? lista.filter((x) => x !== id) : [...lista, id]);
+  const textoAlcance = (f: Fila) =>
+    f.alcanceSucursales === "TODAS" || f.alcanceDepositos === "TODOS"
+      ? "Alcance total"
+      : (f.sucursalesAsignadas ?? 0) === 0
+        ? "Sin sucursales asignadas"
+        : `${f.sucursalesAsignadas} sucursal${f.sucursalesAsignadas === 1 ? "" : "es"} · ${f.depositosAsignados ?? 0} depósito${f.depositosAsignados === 1 ? "" : "s"}`;
+
+  async function guardar() {
+    if (!form) return;
+
+    const d = form.datos;
+
+    if (form.tipo !== "perfiles") {
+      // Misma validación que el servidor y la base (todos los campos obligatorios); el servidor la repite.
+      const v = validarDatosUsuario({ ...d });
+      const ac = form.tipo === "alta" ? validarAccesoUsuario({ ...d }) : null;
+      const campos = { ...(v.ok ? {} : v.errores), ...(ac && !ac.ok ? ac.errores : {}) };
+
+      setErroresCampo(campos);
+      if (Object.keys(campos).length > 0) {
+        setErrorForm("Revise los campos marcados: todos son obligatorios.");
+
+        return;
+      }
+    }
+
+    setGuardando(true);
+    setErrorForm("");
+    try {
+      if (form.tipo === "alta") {
+        await pedir("/api/usuarios", json("POST", { usuario: d.usuario, nombre: d.nombre, apellido: d.apellido, ci: d.ci, email: d.email, telefono: d.telefono, contrasena: d.contrasena, perfiles: d.perfiles }));
+        setAviso(`${esVendedores ? "Vendedor" : "Usuario"} «${d.usuario.trim().toLowerCase()}» creado. Deberá cambiar su contraseña provisional al ingresar y, para operar, necesitará sucursales y depósitos asignados (botón Alcance).`);
+      } else if (form.tipo === "datos" && d.id) {
+        await pedir(`/api/usuarios/${d.id}`, json("PATCH", { nombre: d.nombre, apellido: d.apellido, ci: d.ci, email: d.email, telefono: d.telefono }));
+        setAviso("Datos actualizados.");
+      } else if (form.tipo === "perfiles" && d.id) {
+        await pedir(`/api/usuarios/${d.id}/perfiles`, json("PUT", { perfiles: d.perfiles }));
+        setAviso("Perfiles actualizados. Las sesiones anteriores del usuario fueron cerradas.");
+      }
+      setForm(null);
+      recargar();
+    } catch (e) {
+      setErrorForm(e instanceof Error ? e.message : "No fue posible completar la operación.");
+    } finally {
+      setGuardando(false);
+    }
+  }
+
+  async function cambiarEstado(f: Fila) {
+    const activar = f.estado !== "ACTIVO";
+
+    if (!activar && !window.confirm(`¿Desactivar a ${nombreCompleto(f)}? Se cerrarán sus sesiones${esVendedores ? " y dejará de aparecer para elegir en las facturas nuevas" : ""}.`)) return;
+
+    setAviso("");
+    try {
+      await pedir(`/api/usuarios/${f.id}/estado`, json("POST", { activo: activar }));
+      setAviso(`${nombreCompleto(f)} ${activar ? "activado" : "desactivado"}.`);
+      recargar();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No fue posible cambiar el estado.");
+    }
+  }
+
+  const alternarPerfil = (codigo: string) => setForm((f) => (f ? { ...f, datos: { ...f.datos, perfiles: f.datos.perfiles.includes(codigo) ? f.datos.perfiles.filter((c) => c !== codigo) : [...f.datos.perfiles, codigo] } } : f));
+  const campo = (k: keyof Formulario, v: string) => setForm((f) => (f ? { ...f, datos: { ...f.datos, [k]: v } } : f));
+  const paginas = Math.max(1, Math.ceil(total / POR_PAGINA));
+  const titulo = esVendedores ? "Vendedores" : "Usuarios";
+
+  return (
+    <section className={ui.page}>
+      <header className={ui.topbar}>
+        <div className={ui.titleBlock}>
+          <nav className={ui.breadcrumb} aria-label="Ruta de navegación">
+            <span>{esVendedores ? "Maestros" : "Administración"}</span>
+            <i aria-hidden="true">/</i>
+            <span aria-current="page">{titulo}</span>
+          </nav>
+          <h1>{titulo}</h1>
+        </div>
+        {puedeGestionar ? <button type="button" className={ui.primaryButton} onClick={() => abrir("alta")}>{esVendedores ? "Nuevo vendedor" : "Nuevo usuario"}</button> : null}
+      </header>
+
+      <p className={estilos.nota}>
+        {esVendedores
+          ? "Un vendedor es un usuario de la empresa con el perfil Vendedor; no es necesariamente quien emite la factura. Para convertir un usuario existente en vendedor, asígnele el perfil en Administración → Usuarios."
+          : "Los perfiles son los nueve predefinidos, iguales para todas las empresas: aquí solo se asignan o retiran. Un usuario puede tener varios perfiles."}
+      </p>
+
+      {error ? <div className={ui.alertError} role="alert">{error}</div> : null}
+      {aviso ? <p className={estilos.aviso} role="status">{aviso}</p> : null}
+
+      <div className={estilos.filtros}>
+        <label className={estilos.campo}>
+          <span>Buscar por nombre{esVendedores ? " o código" : ", usuario o correo"}</span>
+          <input value={texto} onChange={(e) => setTexto(e.target.value)} placeholder="Escriba para buscar…" />
+        </label>
+        {esVendedores ? (
+          <label className={estilos.campo}>
+            <span>Situación</span>
+            <select value={estado} onChange={(e) => { setEstado(e.target.value as typeof estado); setPagina(1); }}>
+              <option value="TODOS">Todos</option>
+              <option value="ACTIVO">Activo</option>
+              <option value="INACTIVO">Inactivo</option>
+            </select>
+          </label>
+        ) : null}
+      </div>
+
+      <div className={estilos.tablaWrap}>
+        <table className={estilos.tabla}>
+          <thead>
+            <tr>
+              <th>Usuario</th>
+              <th>Nombre</th>
+              {puedeGestionar ? <><th>CI</th><th>Correo</th><th>Teléfono</th></> : null}
+              {esVendedores ? null : <th>Alcance</th>}
+              {esVendedores ? null : <th>Perfiles</th>}
+              <th>Situación</th>
+              {puedeGestionar ? <th>Acciones</th> : null}
+            </tr>
+          </thead>
+          <tbody>
+            {cargando ? (
+              <tr><td colSpan={10} className={estilos.vacio} role="status">Cargando…</td></tr>
+            ) : filas.length === 0 ? (
+              <tr><td colSpan={10} className={estilos.vacio}>{q || estado !== "TODOS" ? "Ningún registro coincide con el filtro." : esVendedores ? "Sin vendedores registrados." : "Sin usuarios."}</td></tr>
+            ) : filas.map((f) => (
+              <tr key={f.id}>
+                <td>{f.usuario}</td>
+                <td>{nombreCompleto(f)}</td>
+                {puedeGestionar ? <><td>{f.ci ?? "—"}</td><td>{f.email ?? "—"}</td><td>{f.telefono ?? "—"}</td></> : null}
+                {esVendedores ? null : <td>{textoAlcance(f)}</td>}
+                {esVendedores ? null : <td>{(f.perfiles ?? []).length === 0 ? "Sin perfiles" : (f.perfiles ?? []).map((p) => <span key={p.codigo} className={estilos.chip}>{p.nombre}</span>)}</td>}
+                <td><span className={`${estilos.badge} ${f.estado === "ACTIVO" ? estilos.activo : estilos.inactivo}`}>{f.estado === "ACTIVO" ? "Activo" : "Inactivo"}</span></td>
+                {puedeGestionar ? (
+                  <td className={estilos.acciones}>
+                    <button type="button" className={ui.secondaryButton} onClick={() => abrir("datos", f)}>Editar</button>
+                    {esVendedores ? null : <button type="button" className={ui.secondaryButton} onClick={() => abrir("perfiles", f)}>Perfiles</button>}
+                    {esVendedores ? null : <button type="button" className={ui.secondaryButton} onClick={() => void abrirAlcance(f)}>Alcance</button>}
+                    <button type="button" className={ui.clearButton} onClick={() => void cambiarEstado(f)}>{f.estado === "ACTIVO" ? "Desactivar" : "Activar"}</button>
+                  </td>
+                ) : null}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className={estilos.paginacion}>
+        <span>{total} resultado{total === 1 ? "" : "s"}</span>
+        <div className={estilos.botones}>
+          <button type="button" className={ui.secondaryButton} disabled={pagina <= 1} onClick={() => setPagina(pagina - 1)}>Anterior</button>
+          <span aria-live="polite">Página {Math.min(pagina, paginas)} de {paginas}</span>
+          <button type="button" className={ui.secondaryButton} disabled={pagina >= paginas} onClick={() => setPagina(pagina + 1)}>Siguiente</button>
+        </div>
+      </div>
+
+      {!puedeGestionar && !cargando ? <p className={estilos.nota}>Solo el administrador de la empresa puede crear o modificar vendedores. <Link href="/dashboard">Volver al panel</Link></p> : null}
+
+      {alcance ? (
+        <div className={estilos.overlay} role="presentation">
+          <div className={estilos.modal} role="dialog" aria-modal="true" aria-labelledby="titulo-alcance">
+            <h2 id="titulo-alcance">Alcance de {alcance.fila.usuario}</h2>
+            <p className={estilos.nota}>Solo las sucursales y depósitos marcados quedan habilitados para este usuario; sin marcar nada no podrá operar en ninguno. No se concede acceso total automáticamente.</p>
+            {alcance.datos === null ? (
+              <p className={estilos.vacio} role="status">Cargando…</p>
+            ) : alcance.datos.alcanceSucursales === "TODAS" || alcance.datos.alcanceDepositos === "TODOS" ? (
+              <p className={estilos.nota}>Este usuario tiene alcance total y no se modifica desde aquí.</p>
+            ) : (
+              <>
+                <fieldset className={estilos.perfiles}>
+                  <legend>Sucursales</legend>
+                  {alcance.datos.sucursales.length === 0 ? <p className={estilos.vacio}>La empresa no tiene sucursales activas.</p> : null}
+                  {alcance.datos.sucursales.map((x) => (
+                    <label key={x.id} className={estilos.opcion}>
+                      <input type="checkbox" checked={alcance.sucursales.includes(x.id)} onChange={() => setAlcance((a) => (a ? { ...a, sucursales: alternar(a.sucursales, x.id) } : a))} />
+                      <span>{x.establecimiento ? `${x.establecimiento} — ` : ""}{x.nombre}</span>
+                    </label>
+                  ))}
+                </fieldset>
+                <fieldset className={estilos.perfiles}>
+                  <legend>Depósitos</legend>
+                  {alcance.datos.depositos.length === 0 ? <p className={estilos.vacio}>La empresa no tiene depósitos activos.</p> : null}
+                  {alcance.datos.depositos.map((x) => (
+                    <label key={x.id} className={estilos.opcion}>
+                      <input type="checkbox" checked={alcance.depositos.includes(x.id)} onChange={() => setAlcance((a) => (a ? { ...a, depositos: alternar(a.depositos, x.id) } : a))} />
+                      <span>{x.codigo} — {x.nombre}</span>
+                    </label>
+                  ))}
+                </fieldset>
+              </>
+            )}
+
+            {errorForm ? <div className={ui.alertError} role="alert">{errorForm}</div> : null}
+
+            <div className={estilos.botones}>
+              <button type="button" className={ui.secondaryButton} disabled={guardando} onClick={() => setAlcance(null)}>Cancelar</button>
+              <button type="button" className={ui.primaryButton} disabled={guardando || alcance.datos === null || alcance.datos.alcanceSucursales === "TODAS" || alcance.datos.alcanceDepositos === "TODOS"} onClick={() => void guardarAlcance()}>{guardando ? "Guardando…" : "Guardar"}</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {form ? (
+        <div className={estilos.overlay} role="presentation">
+          <div className={estilos.modal} role="dialog" aria-modal="true" aria-labelledby="titulo-form">
+            <h2 id="titulo-form">
+              {form.tipo === "alta" ? (esVendedores ? "Nuevo vendedor" : "Nuevo usuario") : form.tipo === "datos" ? `Editar ${form.datos.usuario}` : `Perfiles de ${form.datos.usuario}`}
+            </h2>
+
+            {form.tipo !== "perfiles" ? (
+              <>
+                <p className={estilos.nota}>Todos los campos marcados con * son obligatorios. El nombre completo se forma con Nombre y Apellido.</p>
+                <div className={estilos.formGrid}>
+                <label className={estilos.campo}>
+                  <span>Nombre *</span>
+                  <input value={form.datos.nombre} onChange={(e) => campo("nombre", e.target.value)} maxLength={120} autoComplete="off" aria-invalid={erroresCampo.nombre ? true : undefined} />
+                  {erroresCampo.nombre ? <small className={estilos.errorCampo} role="alert">{erroresCampo.nombre}</small> : null}
+                </label>
+                <label className={estilos.campo}>
+                  <span>Apellido *</span>
+                  <input value={form.datos.apellido} onChange={(e) => campo("apellido", e.target.value)} maxLength={120} autoComplete="off" aria-invalid={erroresCampo.apellido ? true : undefined} />
+                  {erroresCampo.apellido ? <small className={estilos.errorCampo} role="alert">{erroresCampo.apellido}</small> : null}
+                </label>
+                <label className={estilos.campo}>
+                  <span>CI *</span>
+                  <input value={form.datos.ci} onChange={(e) => campo("ci", e.target.value)} inputMode="numeric" maxLength={14} autoComplete="off" placeholder="Ej.: 1.234.567" aria-invalid={erroresCampo.ci ? true : undefined} />
+                  {erroresCampo.ci ? <small className={estilos.errorCampo} role="alert">{erroresCampo.ci}</small> : null}
+                </label>
+                <label className={estilos.campo}>
+                  <span>Correo electrónico *</span>
+                  <input type="email" value={form.datos.email} onChange={(e) => campo("email", e.target.value)} maxLength={200} autoComplete="off" aria-invalid={erroresCampo.email ? true : undefined} />
+                  {erroresCampo.email ? <small className={estilos.errorCampo} role="alert">{erroresCampo.email}</small> : null}
+                </label>
+                <label className={estilos.campo}>
+                  <span>Teléfono *</span>
+                  <input value={form.datos.telefono} onChange={(e) => campo("telefono", e.target.value)} inputMode="tel" maxLength={24} autoComplete="off" placeholder="Ej.: 0981 123 456" aria-invalid={erroresCampo.telefono ? true : undefined} />
+                  {erroresCampo.telefono ? <small className={estilos.errorCampo} role="alert">{erroresCampo.telefono}</small> : null}
+                </label>
+                  {form.tipo === "alta" ? (
+                    <>
+                <label className={estilos.campo}>
+                  <span>Usuario *</span>
+                  <input value={form.datos.usuario} onChange={(e) => campo("usuario", e.target.value)} maxLength={60} autoComplete="off" placeholder="minúsculas, números, punto o guion" aria-invalid={erroresCampo.usuario ? true : undefined} />
+                  {erroresCampo.usuario ? <small className={estilos.errorCampo} role="alert">{erroresCampo.usuario}</small> : null}
+                </label>
+                <label className={estilos.campo}>
+                  <span>Contraseña inicial * (mínimo 10 caracteres)</span>
+                  <input type="password" value={form.datos.contrasena} onChange={(e) => campo("contrasena", e.target.value)} maxLength={200} autoComplete="new-password" aria-invalid={erroresCampo.contrasena ? true : undefined} />
+                  {erroresCampo.contrasena ? <small className={estilos.errorCampo} role="alert">{erroresCampo.contrasena}</small> : null}
+                </label>
+                    </>
+                  ) : null}
+                </div>
+                {form.tipo === "alta" ? <p className={estilos.nota}>El usuario deberá cambiar la contraseña inicial en su primer ingreso. No se muestra ni se guarda en pantalla.</p> : null}
+              </>
+            ) : null}
+
+            {form.tipo === "perfiles" || (form.tipo === "alta" && !esVendedores) ? (
+              <fieldset className={estilos.perfiles}>
+                <legend>Perfiles (se pueden asignar varios)</legend>
+                {catalogo.length === 0 ? <p className={estilos.vacio} role="status">Cargando perfiles…</p> : null}
+                {catalogo.map((p) => (
+                  <label key={p.codigo} className={estilos.opcion}>
+                    <input type="checkbox" checked={form.datos.perfiles.includes(p.codigo)} onChange={() => alternarPerfil(p.codigo)} />
+                    <span>{p.nombre}</span>
+                  </label>
+                ))}
+              </fieldset>
+            ) : null}
+            {form.tipo === "alta" && esVendedores ? <p className={estilos.nota}>Se creará con el perfil Vendedor.</p> : null}
+
+            {errorForm ? <div className={ui.alertError} role="alert">{errorForm}</div> : null}
+
+            <div className={estilos.botones}>
+              <button type="button" className={ui.secondaryButton} disabled={guardando} onClick={() => setForm(null)}>Cancelar</button>
+              <button type="button" className={ui.primaryButton} disabled={guardando} onClick={() => void guardar()}>{guardando ? "Guardando…" : "Guardar"}</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </section>
+  );
+}

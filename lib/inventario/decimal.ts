@@ -1,0 +1,136 @@
+/**
+ * INV-04 — aritmética decimal EXACTA sobre texto (BigInt), para importes de inventario que vienen de PostgreSQL `numeric`: nunca float8/Number.
+ * Funciones puras. Soportan signo; el resultado se devuelve canónico («12.5», «0», «-3.25»).
+ */
+import { formatearImporteConMoneda, normalizarMonedaVisual } from "@/lib/formato/monto-visual";
+
+type Dec = { n: bigint; escala: number };
+
+function parsear(texto: string): Dec | null {
+  const m = /^(-)?(\d+)(?:\.(\d*))?$/.exec(texto.trim());
+
+  if (!m) return null;
+
+  const frac = m[3] ?? "";
+  const n = BigInt(`${m[2]}${frac}`);
+
+  return { n: m[1] ? -n : n, escala: frac.length };
+}
+
+function aTexto(d: Dec, fijo = false): string {
+  const neg = d.n < BigInt(0);
+  const abs = (neg ? -d.n : d.n).toString().padStart(d.escala + 1, "0");
+  const entera = abs.slice(0, abs.length - d.escala);
+  const fracCompleta = abs.slice(abs.length - d.escala);
+  const frac = fijo ? fracCompleta : fracCompleta.replace(/0+$/, "");
+  const cuerpo = frac ? `${entera}.${frac}` : entera;
+
+  return neg && cuerpo !== "0" ? `-${cuerpo}` : cuerpo;
+}
+
+const ajustar = (d: Dec, escala: number): bigint => d.n * BigInt(10) ** BigInt(escala - d.escala);
+
+/** Suma exacta; los textos no numéricos se ignoran como 0. Lista vacía → «0». */
+export function sumarDecimales(valores: Array<string | null | undefined>): string {
+  const ds = valores.map((v) => (v == null ? null : parsear(v))).filter((d): d is Dec => d !== null);
+  const escala = ds.reduce((a, d) => Math.max(a, d.escala), 0);
+
+  return aTexto({ n: ds.reduce((a, d) => a + ajustar(d, escala), BigInt(0)), escala });
+}
+
+/** Producto exacto; si algún factor no es numérico → null. */
+export function multiplicarDecimales(a: string | null | undefined, b: string | null | undefined): string | null {
+  const x = a == null ? null : parsear(a);
+  const y = b == null ? null : parsear(b);
+
+  if (!x || !y) return null;
+
+  return aTexto({ n: x.n * y.n, escala: x.escala + y.escala });
+}
+
+/** Redondeo «mitad hacia arriba» (en valor absoluto) a `decimales` posiciones, sobre texto. null si no es numérico. */
+export function redondearDecimal(texto: string, decimales: number): string | null {
+  const d = parsear(texto);
+
+  if (!d) return null;
+  if (d.escala <= decimales) return aTexto({ n: d.n * BigInt(10) ** BigInt(decimales - d.escala), escala: decimales }, true);
+
+  const neg = d.n < BigInt(0);
+  const abs = neg ? -d.n : d.n;
+  const factor = BigInt(10) ** BigInt(d.escala - decimales);
+  let q = abs / factor;
+
+  if ((abs % factor) * BigInt(2) >= factor) q += BigInt(1);
+
+  return aTexto({ n: neg ? -q : q, escala: decimales }, true);
+}
+
+/**
+ * Importe es-PY sin pérdida: «Gs. 1.234.567» (PYG sin decimales) u otras monedas «USD 1.234,50». Solo agrupa y redondea sobre texto. Entrada inválida o ausente → «—».
+ * PRO-335: delega en la semántica visual única (`formatearImporteConMoneda`); una moneda ausente o desconocida ya no se asume PYG (valor exacto, sin redondear).
+ */
+export function formatearMontoTexto(texto: string | null | undefined, moneda?: string | null): string {
+  if (texto == null || parsear(texto) === null) return "—";
+
+  return formatearImporteConMoneda(texto.trim().replace(/\.$/, ""), moneda);
+}
+
+/**
+ * INV-R02-01 — división exacta a `decimales` posiciones, «mitad hacia arriba» (igual que `round(numeric, n)` de PostgreSQL, usado por Valorización).
+ * null si algún operando no es numérico o el divisor es 0.
+ */
+export function dividirDecimales(a: string | null | undefined, b: string | null | undefined, decimales: number): string | null {
+  const x = a == null ? null : parsear(a);
+  const y = b == null ? null : parsear(b);
+
+  if (!x || !y || y.n === BigInt(0)) return null;
+
+  // x/y = (x.n / 10^x.escala) / (y.n / 10^y.escala); se escala el numerador a `decimales` posiciones.
+  const neg = (x.n < BigInt(0)) !== (y.n < BigInt(0));
+  const num = (x.n < BigInt(0) ? -x.n : x.n) * BigInt(10) ** BigInt(decimales + y.escala);
+  const den = (y.n < BigInt(0) ? -y.n : y.n) * BigInt(10) ** BigInt(x.escala);
+  let q = num / den;
+
+  if ((num % den) * BigInt(2) >= den) q += BigInt(1);
+
+  return aTexto({ n: neg ? -q : q, escala: decimales }, true);
+}
+
+/** Comparación exacta (−1, 0, 1). Un texto no numérico se trata como ausente: queda después de todo valor numérico. */
+export function compararDecimales(a: string | null | undefined, b: string | null | undefined): number {
+  const x = a == null ? null : parsear(a);
+  const y = b == null ? null : parsear(b);
+
+  if (!x && !y) return 0;
+  if (!x) return 1;
+  if (!y) return -1;
+
+  const escala = Math.max(x.escala, y.escala);
+  const d = ajustar(x, escala) - ajustar(y, escala);
+
+  return d < BigInt(0) ? -1 : d > BigInt(0) ? 1 : 0;
+}
+
+/**
+ * PRO-335 — costo unitario en PANTALLA: es un importe monetario y sigue la política visual (PYG 0 decimales, USD/BRL 2). Entrada inválida o ausente → «—».
+ * El dato exacto (hasta 4 decimales) no cambia; para trazabilidad, la pantalla lo deja visible con `formatearCostoUnitarioExactoTexto` (título/detalle).
+ */
+export function formatearCostoUnitarioTexto(texto: string | null | undefined, moneda?: string | null): string {
+  return formatearMontoTexto(texto, moneda);
+}
+
+/** Costo unitario sin pérdida (hasta 4 decimales, como Valorización): «Gs. 1.234,5678»; sin ceros finales. Entrada inválida o ausente → «—». Solo para el detalle técnico de precisión. */
+export function formatearCostoUnitarioExactoTexto(texto: string | null | undefined, moneda?: string | null): string {
+  const codigo = (moneda ?? "").trim().toUpperCase();
+  const pyg = normalizarMonedaVisual(codigo) === "PYG";
+  const r = texto == null ? null : redondearDecimal(texto, 4);
+
+  if (r === null) return "—";
+
+  const neg = r.startsWith("-");
+  const [entera, frac] = (neg ? r.slice(1) : r).split(".");
+  const dec = (frac ?? "").replace(/0+$/, "");
+  const cuerpo = `${neg ? "-" : ""}${entera.replace(/\B(?=(\d{3})+(?!\d))/g, ".")}${dec ? `,${dec}` : ""}`;
+
+  return pyg ? `Gs. ${cuerpo}` : codigo ? `${codigo} ${cuerpo}` : cuerpo;
+}

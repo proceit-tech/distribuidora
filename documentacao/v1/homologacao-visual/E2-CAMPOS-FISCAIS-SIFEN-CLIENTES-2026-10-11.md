@@ -1,0 +1,51 @@
+# Nexit V1 — E2: adequação dos campos fiscais do Cadastro de Clientes às regras SIFEN (D3)
+
+**Data:** 2026-10-11 · **Decisão:** `DECISAO-LIMITES-CAMPOS-FISCAIS-SIFEN-CADASTRO-2026-10-11.md` · **Estado:** implementado em UI e API, **não executado nem homologado** (sem testes/build no notebook).
+**Implementação:** `lib/fiscal/campos-receptor.ts` (regra única, pura) + `lib/fiscal/calcular-dv-ruc.ts`; usada por "Nuevo cliente", edição, POST, PUT e sincronização de endereços (`lib/clientes/relacionados.ts`). Sem truncamento: `texto(valor, máx)` continua cortando apenas como rede de segurança, mas a validação ocorre antes sobre o valor integral recebido.
+
+## Auditoria campo a campo (UI × POST × PUT × coluna × norma)
+| Campo | Norma (MT v150 / NT) | Regra aplicada | Coluna | Situação |
+|---|---|---|---|---|
+| RUC (D206) | N 3–8, contribuinte | 3–8 dígitos ASCII, sem pontuação | `numero_documento` varchar(30) | Aplicado (E2-DV) |
+| DV (D207) | 1 dígito, módulo 11 | calculado e comparado | `dv` varchar(5) | Aplicado (E2-DV) |
+| Número de documento (D210) | A 1–20; Innominado = "0" | 1–20 (não contribuinte); sem `maxLength` silencioso na UI | varchar(30) | Aplicado |
+| Descrição Otro (D209) | A 9–41 | 9–41 quando tipo = Otro | varchar(100) | Aplicado |
+| Razão social (D211) | A 4–255 | 4–**200** (efetivo) | varchar(200) | Aplicado; **máx. 255 depende de migration** (abaixo) |
+| Nome fantasia (D212) | A 4–255, opcional | 4–**200** se informado | varchar(200) | Idem |
+| E-mail (D216) | A 3–80 | 3–80 + formato existente | varchar(150) | Aplicado (sem reduzir coluna) |
+| Telefone (D214) | A 6–15 | 6–15 se informado | varchar(30) | Aplicado |
+| Celular (D215) | A 10–20 | 10–20 se informado | varchar(30) | Aplicado |
+| Endereço fiscal (D213) | A 1–255 | 1–255 no endereço fiscal (`tipo` FISCAL ou `esFiscal`) | varchar(300) | Aplicado |
+| Nro. de casa (D218) | N 1–6, obrigatório se há D213 (val. 68) | no endereço fiscal: obrigatório, 1–6 dígitos | varchar(20) | Aplicado; rótulo "Nro. de casa *" só no fiscal |
+| Código do cliente (D217) | A 3–15 | gerado por trigger `CLI-NNNNNN` (10 caracteres) | varchar(50) | Compatível; sem mudança |
+| Tipo/número de documento B2F | cadastro obrigatório (DEC-CLI-01) | mantido; XML B2F não inferido | — | Preservado |
+| Geografia D219–D223 | obrigatória na emissão se D213 e ≠ B2F | **não exigida** no cadastro (NEX-021 opcional) | — | Decisão anterior preservada; pendente de decisão se virará bloqueio |
+
+Outros pontos: telefone/celular/endereço de **contatos** e endereços não fiscais são dados ERP (sem limites D3). Edição (PUT): campo que **não mudou** em relação ao gravado é tolerado (dados anteriores à regra) até ser alterado; no endereço fiscal vale o mesmo para dirección + número.
+
+## Migration necessária (NÃO criada, NÃO aplicada — CRIAÇÃO JÁ AUTORIZADA)
+Para comportar os máximos oficiais de 255 caracteres em `clientes.razon_social` e `clientes.nombre_fantasia` (hoje `varchar(200)`), seria necessária uma migration incremental nova (NEX-022), sem editar a NEX-005: ampliar ambas as colunas para `varchar(255)` (operação não destrutiva, só amplia o tipo). Depois dela, `LIMITES_RECEPTOR.razonSocial.max` e `nombreFantasia.max` passam de 200 para 255. Até que a migration e a alteração da regra sejam versionadas e aplicadas, o sistema rejeita (com mensagem clara) nomes de 201–255 caracteres, em vez de truncar.
+
+## Ambiguidades preservadas (não resolvidas por suposição)
+NT002 × NT023 sobre D208/D210 em B2F no XML; geografia obrigatória no D3 vs. NEX-021; formato de telefone (prefixo da cidade se PRY) — só comprimentos foram aplicados; NT 021 ausente.
+
+## Atualização — por que a NEX-022 ainda não foi escrita
+A política vigente permite versionar a migration sem autorização separada, mas a ampliação de `razon_social` esbarra numa dependência real: as views `v_movimientos_detalle` e `v_ventas_al_costo` (NEX-011) leem `clientes.razon_social`, e o PostgreSQL **não permite `ALTER COLUMN … TYPE` em coluna usada por view**, mesmo ao apenas ampliar o `varchar`. A migration correta precisa, numa única transação, recriar essas views (e qualquer view/regra dependente, p. ex. `v_dashboard_*` se derivarem delas) preservando `security_invoker` e grants, o que exige conferir as definições **efetivas no banco real** (não só no Git, onde podem ter sido alteradas por migrations posteriores) e não pode ser validado no notebook. Por isso, e para não entregar um SQL não verificável, a NEX-022 fica **pendente de implementação dentro da E2 já autorizada**; os limites efetivos permanecem em 200 (rejeição explícita, sem truncamento). Nome fantasia (`nombre_fantasia`) não é usado por views e poderia ser ampliado isoladamente.
+
+## Pendências auditáveis e próximo trabalho obrigatório (revisão ChatGPT 11/10/2026)
+**E2 NÃO concluída integralmente.** Código de campos fiscais foi publicado no commit `41d780b` (integrado à branch no merge `ef2b485`), porém a adequação de nomes 201–255 caracteres está INCOMPLETA. **NEX-022 não foi criada** no relatório publicado. A autorização existente permite criar/versionar a migration, não aplicá-la à base real. A dependência com as views não justifica encerramento: Claude deve consultar todas as migrations posteriores que alteram as views, capturar definições e grants a partir de SQL versionado, propor inspeção prévia **somente leitura** para comparar a definição efetiva no único banco real antes da aplicação, e criar SQL incremental idempotente quando apropriado, atômico, com restauração das views/grants/opções. Se o SQL versionado não permitir reconstrução confiável, registrar exatamente o dado ausente e a consulta de pré-inspeção; não executar a migration. Atualizar o limite de validação UI/API para 255 na mesma entrega versionada, coordenada com a aplicação do script. Não ampliar V2 nem criar arquivos extras de auditoria sem necessidade.
+**Outros itens ainda abertos na matriz P0/R05, fora da adequação D3 E2 entregue:** unicidade concorrente do Innominado, mensagem específica por constraint, matriz natureza×operação no backend, validação do esquema de URL http(s), truncamentos remanescentes e preferência oculta de notificações D-12 (aguarda decisão). Auditoria de E2 atual NÃO pode encerrar essas pendências por inferência: confrontar código real antes de marcar cada uma feita; registrar resultado no progresso existente. **Geografia D219–D223:** o responsável determinou que campos enviados à SIFEN devem respeitar regra desde cadastro; portanto não considerar 'geografia opcional' conformidade definitiva sem definir condicional exata por tipo de operação/DE conforme MT/NT. Não impor B2F exigência geográfica indevida.
+**Política:** manter este documento e `PROGRESSO-NEXIT-V1.md` como registro consolidado de entregas/pendências de Clientes; só criar documento técnico novo se necessário para artefato específico (migration, script de pré-inspeção ou requisito normativo original). Não criar auditoria nova apenas para replicar lista existente. Testes/build/execução em banco real não realizados pela IA; implantação e verificação cabem ao responsável no único ambiente real.
+
+## Critério de revisão integral — três referenciais, um único mapa (decisão do responsável)
+Antes de encerrar **100% do Cadastro de Clientes**, confrontar **campo a campo e fluxo a fluxo** as **três origens distintas**, sem confundi-las:
+1. **SIFEN/DNIT (norma obrigatória):** Manual Técnico MT v150, notas técnicas aplicáveis e documentação oficial arquivada, com identificação de campo D3, cenário, limite, tipo, formato, obrigatoriedade, restrição e trecho/fonte. Todo dado destinado à SIFEN deve obedecer à regra desde o cadastro. Observar condicionais de emissão sem criar regra XML não comprovada.
+2. **Nexit/PROCEIT (requisito funcional próprio):** decisões aprovadas pelo responsável, seis abas, cadastros auxiliares, relacionamentos, multiempresa, permissões, código automático, fluxo de inclusão/edição, contatos, endereços, crédito, logística, documentos e integridade dos dados. Confrontar formulário, API POST/PUT/GET, validações compartilhadas, migrations, constraints, views e permissões com as regras documentadas no Git.
+3. **Comparativo com outros ERPs (benchmark de UX, não norma):** consultar AUD-R02 e capturas concorrentes efetivamente acessíveis. Registrar para cada comparação a **fonte/evidência disponível**, organização dos campos, legibilidade, sequência, compactação, navegação, estados e feedback. **Não inventar** nomes de concorrentes, telas ou funcionalidades não documentadas. Capturas originais foram vistas na conversa mas **não versionadas no GitHub**; isso limita qualquer declaração de comparação integral. Benchmark nunca prevalece sobre DNIT ou decisão do responsável.
+
+**Matriz rastreável única:** para cada aba/campo/ação e variação condicional, manter os atributos: identificador e campo; fonte SIFEN (ou 'não se aplica'); regra Nexit (ou 'não definida'); achado benchmark (ou 'sem evidência'); estado da UI; estado POST/PUT/GET; estado DB; divergência concreta; ajuste necessário; commit que resolveu; resultado de verificação; pendência. **Atualizar a matriz/documentos já existentes, sem criar um documento novo por alteração.**
+
+**Conclusão obrigatória:** não declarar 100% se faltar confronto comprovável de qualquer referencial, se ainda houver defeitos técnicos conhecidos, migration/script necessários não versionados ou validações reais não realizadas. Distinguir 'implementado no Git', 'auditado estaticamente' e 'verificado no ambiente real'. Quando faltar evidência do concorrente, deixar lacuna objetiva sem bloquear correção independente já autorizada. Protocolo de resposta econômica permanece.
+
+## Atualização final — NEX-022 resolvida
+A NEX-022 foi escrita (`migraciones/NEX-022-clientes-nombres-255.sql`) detectando as views dependentes no catálogo no momento da aplicação e recriando-as com propietário, opções, comentário e GRANTs; os limites de razão social e nome fantasia passaram a 255. Detalhes no dicionário `docs/11-DICCIONARIO-CLIENTES.md`.
