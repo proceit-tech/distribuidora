@@ -2,6 +2,17 @@
 
 Branch: `feature/NEXIT-2026-001-banco-demo`. Regra: uma funcionalidade por vez; sem mock/localStorage/dados fixos no modo real; commit+push ao terminar cada item.
 
+## PRO-335 — AUDITORIA R01 / 29-10-2026 — 3 PENDÊNCIAS E ORDEM CORRETIVA ÚNICA ATIVA
+
+- **Claude publicou:** `d2214351d2bf2677b3dc6dc166733aafa6af1a8a` (22 arquivos, 74 casos escritos + 1 em residuales), 0 executados. **[AUDITORIA CHATGPT R01](documentacao/testes/AUD-NEXIT-PRO-335-FORMATO-MONETARIO-R01-2026-10-29.md): PARCIALMENTE CONFORME.** Núcleo visual PYG 0 / USD 2, formato por linha de Informe de Ventas, separação do `fmtCantidadTexto`, preservação de XLSX/PDF e dados fiscais conforme inspeção. **Não homologado/Done**.
+- **F-001 ALTA:** `productos/listado-productos.tsx` soma valores de preços de referência USD/PYG em `valorVenta` e apresenta moeda do último produto: KPI comercial inválido; exigir subtotais por moeda sem conversão automática.
+- **F-002 ALTA:** `inventario_costos` é valorizado em `empresas.moneda_base_codigo`, mas Produto ficha usa `catalogos.monedaReferencia` (moeda da lista de preços) para custo médio/abertura, e listado força PYG. Requer obter código da moeda-base de fonte autoritativa para custos e, para abertura, verificar `movimiento_lineas.moneda_costo_codigo`; só metadados GET/DTO de leitura, sem migração/DB mutation.
+- **F-003 MÉDIA:** `clientes/[id]` mostra limites de crédito na confirmação de conversão sem formato por moeda. Corrigir apenas visual com valor exato ainda acessível; não alterar inputs, taxa, lógica de conversão ou payload.
+- `Proveedores.montoMinimoCompra` é campo **EDITÁVEL** e não deve ser formatado/redondo por regra visual, nenhuma alteração. **[ÚNICA ORDEM NOVA ATIVA PRO-335 R01](documentacao/ordens/ORD-CLAUDE-NEXIT-PRO-335-R01-CORRECCIONES-MONEDAS-PRODUCTOS-CLIENTES-2026-10-29.md)** autoriza exclusivamente três correções; Claude commit+push e PARA para auditoria R02. Nada de tests/lint/typecheck/build/CI manual, PostgreSQL/VM/SQL/Docker/gateway/browser/deploy.
+- **PRO-337 permanece Todo sem autorização** para CSS/card cortado/títulos de Ventas, que serão abordados depois. PRO-328/330 In Review e não homologadas/NEX-076 não aplicada; PRO-327 SQL 561 já concluído/pós-check OK e UI pendente.
+
+
+
 ## PRO-335 — ORDEM ATIVA ÚNICA 29/10/2026 — FORMATO MONETÁRIO TODAS AS TELAS (AGUARDANDO CLAUDE)
 
 **Nova ordem do responsável:** desenvolver padronização **VISUAL MONETÁRIA** global PYG 0 decimais e USD <=2 (BRL 2), mantendo quantidades, taxa de câmbio, números/códigos fiscais e campos editáveis na precisão original. **Ordem técnica canônica:** [ORD-CLAUDE-NEXIT-PRO-335-FORMATO-MONETARIO-TODAS-TELAS-2026-10-29.md](documentacao/ordens/ORD-CLAUDE-NEXIT-PRO-335-FORMATO-MONETARIO-TODAS-TELAS-2026-10-29.md), [auditoria transversal](documentacao/analises/AUD-NEXIT-FORMATO-MONETARIO-TODAS-TELAS-E-LAYOUT-VENTAS-2026-10-29.md), [Linear PRO-335](https://linear.app/proceit/issue/PRO-335).
