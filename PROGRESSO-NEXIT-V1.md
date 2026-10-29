@@ -2,6 +2,15 @@
 
 Branch: `feature/NEXIT-2026-001-banco-demo`. Regra: uma funcionalidade por vez; sem mock/localStorage/dados fixos no modo real; commit+push ao terminar cada item.
 
+## PRO-328 — AUDITORIA R01 / 29-10-2026 — CÓDIGO ENTREGUE, NEX-076 AINDA NÃO APLICADA
+
+- **Commit funcional Claude:** `e551943d9742212d1b85b0f4a841d058f33be9c4`, 7 arquivos (FE nova: direção selecionada no bloco principal receptor SIFEN; dInfAdic sem inserção automática de entrega; UI de resumo e hash, idempotência por UUID, SQL NEX-076 apenas versionada, 50 casos PRO328 como código).
+- **[AUDITORIA INDEPENDENTE R01](documentacao/testes/AUD-NEXIT-PRO-328-DIRECCION-RECEPTOR-R01-2026-10-29.md): CONFORME ESTATICAMENTE**, sem novo defeito corretivo provado em código/diff e confronto com NEX-048/052/068/074. Linear [PRO-328](https://linear.app/proceit/issue/PRO-328) **In Review**, nunca Done/homologada por auditoria estática.
+- **Execuções:** 0 testes, 0 lint/typecheck/build, 0 SQL real, 0 deploy/VM/browser/gateway, 0 migration aplicada. NEX-076 não instalada; FE com direção escolhida retorna 422 até aplicação controlada autorizada pelo responsável. **NÃO implantar código alterado como operativo nem aplicar migration sem backup, preflight, teste e aceite operacional.**
+- **Gate:** nenhuma ordem corretiva da PRO-328, nenhuma outra issue do pacote PRO-329 liberada para Claude até nova ordem. PRO-327 UI/API ainda suspensa; os dados SQL 561 já corrigidos e verificados e jamais devem ser reimportados ou corrigidos outra vez.
+
+
+
 ## CASA MINGO — PACOTE DE 10 SOLICITAÇÕES 29/10/2026 — REGRAS REGISTRADAS / CÓDIGO NOVO NÃO INICIADO
 
 **Gestão:** [PRO-329](https://linear.app/proceit/issue/PRO-329) · [AUDITORÍA DO CÓDIGO](documentacao/analises/AUD-NEXIT-CASA-MINGO-SOLICITUDES-2026-10-29.md) · [PLANO/GATES](documentacao/planos/PLAN-NEXIT-CASA-MINGO-AJUSTES-29-OCT-2026.md).
