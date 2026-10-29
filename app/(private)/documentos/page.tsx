@@ -25,6 +25,7 @@ import {
   type GrupoIndicador,
   type TipoDocumento,
 } from "@/lib/facturacion/estados";
+import { alertaConsulta, presentacionSifen, type TonoSifen } from "@/lib/facturacion/presentacion-sifen";
 import { formatearFechaHoraPy } from "@/lib/formato/listas";
 import { formatearImporteMoneda } from "@/lib/formato/monto-visual";
 
@@ -66,7 +67,14 @@ const INDICADORES: Array<{ grupo: GrupoIndicador | ""; titulo: string; ayuda: st
   { grupo: "SIN_EMAIL", titulo: "Sin e-mail", ayuda: "Sin información de envío", clase: ui.summaryAmber },
 ];
 
-const claseSifen = (e: EstadoSifen) => (e === "APROBADO" ? ui.statusActive : e === "RECHAZADO" || e === "CANCELADO" || e === "INUTILIZADO" ? ui.statusDanger : e === "PENDIENTE" ? ui.statusWarning : ui.statusInfo);
+// PRO-338: el color del badge fiscal sale de presentacionSifen (estado persistido + envío); las anomalías técnicas de la última consulta van en un aviso aparte (alertaConsulta).
+const CLASE_TONO_SIFEN: Record<TonoSifen, string> = {
+  aprobado: estilos.sifenAprobado,
+  rechazado: estilos.sifenRechazado,
+  pendiente: estilos.sifenPendiente,
+  sinTransmitir: estilos.sifenSinTransmitir,
+  anulado: estilos.sifenAnulado,
+};
 const claseLocal = (e: EstadoLocal) => (e === "ENVIADO" ? ui.statusActive : e === "ERROR_ENVIO" ? ui.statusDanger : ui.statusWarning);
 const claseEmail = (e: EstadoEmail) => (e === "ENVIADO" ? ui.statusActive : e === "ERROR" ? ui.statusDanger : e === "PENDIENTE" ? ui.statusWarning : ui.statusInfo);
 const fechaHora = (v: string) => formatearFechaHoraPy(v);
@@ -492,6 +500,8 @@ export default function DocumentosPage() {
             <tbody>
               {filas.map((d) => {
                 const det = abiertos[d.id];
+                const sifen = presentacionSifen(d);
+                const alerta = alertaConsulta(d);
 
                 return (
                   <Fragment key={d.id}>
@@ -515,10 +525,16 @@ export default function DocumentosPage() {
                       </td>
                       <td>
                         <div className={ui.statuses}>
-                          <span className={claseSifen(d.estadoSifen)} title="Estado informado por SIFEN/gateway">SIFEN: {ETIQUETA_SIFEN[d.estadoSifen]}</span>
+                          <span className={`${estilos.sifen} ${CLASE_TONO_SIFEN[sifen.tono]}`} title={sifen.detalle}>SIFEN: {sifen.texto}</span>
+                          {alerta ? (
+                            <span className={alerta.tipo === "inconsistencia" ? estilos.alertaInconsistencia : estilos.alertaTecnica} title={alerta.detalle}>
+                              <span aria-hidden="true" className={estilos.alertaIcono}>!</span>
+                              {alerta.texto}
+                            </span>
+                          ) : null}
                           <span className={claseLocal(d.estadoLocal)} title="Estado del envío al gateway">Envío: {ETIQUETA_LOCAL[d.estadoLocal]}</span>
                           <span className={claseEmail(d.estadoEmail)} title="Estado del e-mail al cliente">{ETIQUETA_EMAIL[d.estadoEmail]}</span>
-                          {d.requiereRevision ? <span className={ui.statusDanger} title="Lleva mucho tiempo sin resultado definitivo. Se sigue consultando automáticamente; no se reenvía ni se libera el saldo.">Requiere revisión</span> : null}
+                          {d.requiereRevision ? <span className={ui.statusDanger} title={`Lleva mucho tiempo sin resultado definitivo. Se sigue consultando automáticamente; no se reenvía${d.tipo === "NCE" ? " ni se libera el saldo" : ""}.`}>Requiere revisión</span> : null}
                         </div>
                       </td>
                       <td className={ui.actionsCell}>
@@ -542,6 +558,7 @@ export default function DocumentosPage() {
                             {d.tipo === "NCE" ? <div><dt className={ui.muted}>Factura original</dt><dd style={{ margin: 0 }}>{d.feNumero ?? "—"}{d.nceMotivo ? ` · Motivo: ${MOTIVO_NCE[d.nceMotivo] ?? d.nceMotivo}` : ""}</dd></div> : null}
                             {d.tipo === "NCE" ? <div><dt className={ui.muted}>CDC de la factura original</dt><dd className={ui.mono} style={{ overflowWrap: "anywhere", margin: 0 }}>{d.feCdc ?? "—"}</dd></div> : null}
                             <div><dt className={ui.muted}>{d.tipo === "NCE" ? "CDC de la nota de crédito" : "CDC"}</dt><dd className={ui.mono} style={{ overflowWrap: "anywhere", margin: 0 }}>{d.cdc ?? "Aún no informado"}</dd></div>
+                            <div><dt className={ui.muted}>Estado fiscal registrado</dt><dd style={{ margin: 0 }}>{ETIQUETA_SIFEN[d.estadoSifen]}</dd></div>
                             <div><dt className={ui.muted}>Estado informado</dt><dd style={{ margin: 0 }}>{d.estadoGatewayTexto ?? "—"}</dd></div>
                             <div><dt className={ui.muted}>Último mensaje SIFEN</dt><dd style={{ margin: 0 }}>{d.codRespuesta ? `${d.codRespuesta} · ` : ""}{d.mensajeRespuesta ?? "—"}</dd></div>
                             <div><dt className={ui.muted}>Lote</dt><dd style={{ margin: 0 }}>{d.lote ?? "No informado"}</dd></div>
@@ -549,6 +566,13 @@ export default function DocumentosPage() {
                             <div><dt className={ui.muted}>Fecha de envío</dt><dd style={{ margin: 0 }}>{fechaGateway(d.fechaEnvio)}</dd></div>
                             <div><dt className={ui.muted}>Última consulta</dt><dd style={{ margin: 0 }}>{d.ultimaConsultaAt ? `${fechaHora(d.ultimaConsultaAt)} · ${ETIQUETA_RESULTADO_INTENTO[d.ultimaConsultaResultado ?? ""] ?? d.ultimaConsultaResultado}` : "Nunca consultado"}</dd></div>
                           </dl>
+
+                          {alerta ? (
+                            <div className={alerta.tipo === "inconsistencia" ? estilos.avisoInconsistencia : estilos.avisoTecnico} role="note">
+                              <strong>{alerta.texto}.</strong> {alerta.detalle}
+                              {d.ultimaConsultaAt ? ` Última consulta: ${fechaHora(d.ultimaConsultaAt)}.` : ""}
+                            </div>
+                          ) : null}
 
                           <p className={ui.muted} style={{ margin: "4px 0" }}>{d.tipo === "FE" || d.tipo === "NCE" ? "XML: descarga no disponible." : "KuDE y XML: descarga no disponible para este tipo de documento."}</p>
 

@@ -2,7 +2,7 @@ import type { Pool } from "pg";
 
 import type { Dependencias } from "@/lib/facturacion/gateway";
 import { UMBRAL_REVISION_HORAS } from "@/lib/facturacion/estados";
-import { consultarEstado } from "@/lib/facturacion/shared";
+import { consultarEstado, ErrorFacturacion } from "@/lib/facturacion/shared";
 
 export { UMBRAL_REVISION_HORAS };
 
@@ -19,12 +19,17 @@ type F = Record<string, unknown>;
 
 /** Escalera provisional de reintentos en segundos según los intentos automáticos ya realizados; el último valor se repite. */
 export const CADENCIA_SEGUNDOS: readonly number[] = [60, 120, 300, 600, 1800, 3600];
-export const TIPOS_CONSULTA_AUTOMATICA: readonly string[] = ["NCE"];
+/**
+ * PRO-338: FE y NCE. La FE quedaba fuera solo por esta lista: fe_consulta_reservar (NEX-062) ya filtra por p_tipos, estados pendientes, lease y actor real, y la función de registro del flujo
+ * (fe_documento_registrar_consulta_flujo_nce) ya admite FE y NCE pendientes con CREAR o EDITAR, el mismo criterio con que la reserva elige al actor. No hay un segundo planificador.
+ */
+export const TIPOS_CONSULTA_AUTOMATICA: readonly string[] = ["NCE", "FE"];
 export const INTERVALO_TICK_MS = 60_000;
 
 export const segundosHastaProxima = (intentos: number): number => CADENCIA_SEGUNDOS[Math.min(Math.max(0, intentos), CADENCIA_SEGUNDOS.length - 1)];
 
-export type ResultadoLote = { reservados: number; consultados: number; fallidos: number; sinActor: number };
+/** `limitados`: no se llegó a consultar al gateway (empresa sin gateway o credenciales configuradas, tipo sin contrato, documento fuera del alcance del actor). No cuenta como intento. */
+export type ResultadoLote = { reservados: number; consultados: number; fallidos: number; sinActor: number; limitados: number };
 
 export type OpcionesLote = {
   limite?: number;
@@ -45,7 +50,7 @@ export async function ejecutarLote(db: Db, o: OpcionesLote = {}): Promise<Result
   const dormir = o.dormir ?? dormirReal;
   const r = await db.query("SELECT o_empresa, o_documento, o_actor, o_tipo, o_intentos FROM fe_consulta_reservar($1::integer, $2::integer, $3::text[])", [o.limite ?? 10, o.leaseSegundos ?? 120, [...(o.tipos ?? TIPOS_CONSULTA_AUTOMATICA)]]);
   const filas = r.rows as F[];
-  const res: ResultadoLote = { reservados: filas.length, consultados: 0, fallidos: 0, sinActor: 0 };
+  const res: ResultadoLote = { reservados: filas.length, consultados: 0, fallidos: 0, sinActor: 0, limitados: 0 };
 
   for (const f of filas) {
     const empresa = String(f.o_empresa);
@@ -58,12 +63,21 @@ export async function ejecutarLote(db: Db, o: OpcionesLote = {}): Promise<Result
     } else {
       try {
         intentado = true;
-        // ZERO-01: las NCE se consultan con la función del flujo NCE (CREAR o EDITAR, alcance, actor real); el worker solo trata NCE.
-        await consultarEstado(db, empresa, String(f.o_actor), documento, o.dep ?? {}, { flujoNce: String(f.o_tipo) === "NCE" });
+        // ZERO-01 / PRO-338: FE y NCE se registran con la función del flujo (CREAR o EDITAR, alcance, actor real, solo documentos ENVIADOS o de envío indeterminado y sin resultado
+        // definitivo; un estado final exige CDC coherente). Las guardas de NEX-054 (CDC divergente, sin retroceso de un estado final) se aplican igual. La consulta manual no cambia.
+        await consultarEstado(db, empresa, String(f.o_actor), documento, o.dep ?? {}, { flujoNce: true });
         res.consultados += 1;
       } catch (error) {
-        res.fallidos += 1;
-        console.error("Consulta automática fallida:", (error as { code?: string; message?: string }).code ?? (error instanceof Error ? error.message.slice(0, 120) : "desconocido"));
+        if (error instanceof ErrorFacturacion) {
+          // PRO-338: consultarEstado solo lanza ErrorFacturacion ANTES de llamar al gateway (sin configuración, sin credenciales, tipo sin contrato, documento fuera de alcance):
+          // no hubo consulta, no se registra un intento inexistente ni se cuenta como tal. Queda la señal operativa en el log (texto propio, sin secretos) y se reprograma.
+          intentado = false;
+          res.limitados += 1;
+          console.warn("Consulta automática no realizada (limitación):", error.estado, error.message.slice(0, 160));
+        } else {
+          res.fallidos += 1;
+          console.error("Consulta automática fallida:", (error as { code?: string; message?: string }).code ?? (error instanceof Error ? error.message.slice(0, 120) : "desconocido"));
+        }
       }
     }
 

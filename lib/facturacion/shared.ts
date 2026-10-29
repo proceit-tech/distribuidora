@@ -77,11 +77,12 @@ const DESDE_BASE = `
 
 /**
  * NCE (PRO-94, NEX-062): relación con la factura original y motivo, acción «Corregir y emitir nueva» (rechazo DEFINITIVO) y «Requiere revisión» (pendiente de resultado fiscal más de UMBRAL_REVISION_HORAS,
- * valor provisional común: solo etiqueta, no cambia ni libera nada). Si la migración NEX-062 aún no está aplicada se usa la consulta básica (la lista de facturas sigue funcionando).
+ * valor provisional común: solo etiqueta, no cambia ni libera nada; PRO-338: también FE, que ahora se consulta automáticamente). Si la migración NEX-062 aún no está aplicada se usa la consulta básica
+ * (la lista de facturas sigue funcionando).
  */
 const COLUMNAS_NCE = `, o.motivo AS "nceMotivo", o.fe_id AS "feId", o.fe_cdc AS "feCdc", fe.establecimiento || '-' || fe.punto_expedicion || '-' || fe.numero || CASE WHEN fe.serie IS NULL THEN '' ELSE ' (' || fe.serie || ')' END AS "feNumero",
        (d.tipo = 'NCE' AND (d.estado_sifen = 'RECHAZADO' OR (d.estado_local = 'ERROR_ENVIO' AND d.envio_error_tipo = 'RECHAZO'))) AS corregible,
-       (d.tipo = 'NCE' AND d.estado_local IN ('ENVIADO','ENVIO_INDETERMINADO') AND d.estado_sifen IN ('SIN_CONSULTA','PENDIENTE','NO_RECONOCIDO') AND d.creado_at < now() - interval '${UMBRAL_REVISION_HORAS} hours') AS "requiereRevision"`;
+       (d.tipo IN ('FE','NCE') AND d.estado_local IN ('ENVIADO','ENVIO_INDETERMINADO') AND d.estado_sifen IN ('SIN_CONSULTA','PENDIENTE','NO_RECONOCIDO') AND d.creado_at < now() - interval '${UMBRAL_REVISION_HORAS} hours') AS "requiereRevision"`;
 const DESDE_NCE = `${DESDE_BASE}
   LEFT JOIN nce_origen o ON o.empresa_id = d.empresa_id AND o.nce_id = d.id
   LEFT JOIN documentos_electronicos fe ON fe.empresa_id = o.empresa_id AND fe.id = o.fe_id`;

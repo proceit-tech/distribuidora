@@ -68,3 +68,127 @@
   stroke-linecap: round;
   stroke-linejoin: round;
 }
+
+/*
+ * PRO-338: estado FISCAL en cápsula con borde y fondo (no se colorea la fila; independiente del color por tipo FE/NCE de PRO-334). El texto siempre dice el estado: el color es complemento.
+ * Verde = aprobado, rojo = rechazo fiscal confirmado, amarillo = enviado sin resultado final, gris = sin transmitir, neutro oscuro = cancelado/inutilizado.
+ */
+.sifen {
+  display: inline-flex;
+  min-height: 24px;
+  max-width: 100%;
+  align-items: center;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 0 9px;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.sifenAprobado {
+  color: #14653a;
+  background: #e6f6ec;
+  border-color: #8fcfa8;
+}
+
+.sifenRechazado {
+  color: #a3221a;
+  background: #fdeceb;
+  border-color: #eea59f;
+}
+
+.sifenPendiente {
+  color: #6f4a00;
+  background: #fff6d6;
+  border-color: #e8c35a;
+}
+
+.sifenSinTransmitir {
+  color: #46525d;
+  background: #f1f3f5;
+  border-color: #cdd5dc;
+}
+
+.sifenAnulado {
+  color: #2f3b48;
+  background: #e9edf2;
+  border-color: #98a5b3;
+}
+
+/* Alertas TÉCNICAS de la última consulta: forma rectangular y marcador «!» para no confundirse con el badge fiscal. Rojo = inconsistencia (CDC divergente), ámbar = error técnico. */
+.alertaInconsistencia,
+.alertaTecnica {
+  display: inline-flex;
+  min-height: 24px;
+  max-width: 100%;
+  align-items: center;
+  gap: 5px;
+  border: 1.5px solid;
+  border-radius: 5px;
+  padding: 1px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.alertaInconsistencia {
+  color: #8f1d14;
+  background: #ffffff;
+  border-color: #c8372d;
+}
+
+.alertaTecnica {
+  color: #7a4300;
+  background: #ffffff;
+  border-color: #d08a1e;
+}
+
+.alertaIcono {
+  display: inline-flex;
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.alertaInconsistencia .alertaIcono {
+  background: #c8372d;
+}
+
+.alertaTecnica .alertaIcono {
+  background: #b06f0c;
+}
+
+/* Detalle desplegado: explicación de la alerta técnica (no reemplaza historial, KuDE ni acciones). */
+.avisoInconsistencia,
+.avisoTecnico {
+  margin: 8px 0;
+  border: 1px solid;
+  border-left-width: 4px;
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 13px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.avisoInconsistencia {
+  color: #7d1a12;
+  background: #fff6f5;
+  border-color: #c8372d;
+}
+
+.avisoTecnico {
+  color: #6a3a00;
+  background: #fffaf0;
+  border-color: #d08a1e;
+}
