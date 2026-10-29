@@ -1,6 +1,15 @@
 # PROGRESSO-NEXIT-V1
 
 Branch: `feature/NEXIT-2026-001-banco-demo`. Regra: uma funcionalidade por vez; sem mock/localStorage/dados fixos no modo real; commit+push ao terminar cada item.
+## PRO-337 — ORDEM ATIVA ÚNICA 29/10/2026 — COLUNA DO INFORME DE VENTAS CORTADA
+
+**Nova captura REAL CASA MINGO confirma defeito AINDA NÃO CORRIGIDO:** no card `No computan por estado fiscal`, sexta coluna `Importe informativo` e valores numéricos estão cortados, embora formatação PRO-335 esteja conforme estaticamente. Causa verificada GitHub: `app/(private)/reportes/ventas/page.module.css` usa `grid-template-columns:repeat(auto-fit,minmax(420px,1fr))` (50/50), `overflow:hidden` em card e `white-space:nowrap` na tabela de 6 colunas, sem wrapper próprio; a segunda tarjeta `Anomalías` permanece esticada e com título excessivo.
+
+**[ORDEM CLAUDE FOCAL PRO-337](documentacao/ordens/ORD-CLAUDE-NEXIT-PRO-337-INFORME-VENTAS-CARDS-SIN-RECORTES-2026-10-29.md)** LIBERADA agora como **ÚNICA ORDEM DE CÓDIGO ATIVA**: desenvolver só `reportes/ventas/page.tsx` e `page.module.css`, caso opcional fonte `lib/reportes/ventas-layout.casos.ts`. Em desktop dispor cards assimetricamente (maior largura para seis colunas), empilhar em viewports/containers insuficientes, wrapper overflow-x local acessível como fallback móvel/zoom (nunca cortar a última coluna), títulos `Documentos no computados` e `Anomalías fiscales`, descrições secundárias concisas, altura natural do painel vazio. **NÃO** alterar dados, cálculos, PRO-335 formato 0/2, API, exportadores, CSS global, SQL ou outras issues. Claude commit+push, SHA, **PARAR para auditoria ChatGPT**. **0 testes/lint/typecheck/build/VM/SQL/browser/deploy** autorizados nesta ordem; inspeção real posterior obrigatória para homologação.
+
+**PRO-335:** último corretivo `b8b448cc324ef759d58612712272847692528964` auditado R03 CONFORME ESTATICAMENTE mas `In Review`/não homologado. PRO-328 e PRO-330 ainda In Review, NEX-076 não aplicada; PRO-327 SQL 561 já corrigido e pós-check aprovado, não reexecutar.
+
+
 
 ## PRO-335 — AUDITORIA R03 / 29-10-2026 — F001 F002 F003 F004 RESOLVIDOS ESTATICAMENTE; HOMOLOGAÇÃO PENDENTE
 
