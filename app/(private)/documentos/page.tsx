@@ -25,7 +25,7 @@ import {
   type GrupoIndicador,
   type TipoDocumento,
 } from "@/lib/facturacion/estados";
-import { alertaConsulta, presentacionSifen, type TonoSifen } from "@/lib/facturacion/presentacion-sifen";
+import { alertaConsulta, cdcDeIntento, presentacionSifen, resumenConsultas, type IntentoConsulta, type TonoSifen } from "@/lib/facturacion/presentacion-sifen";
 import { formatearFechaHoraPy } from "@/lib/formato/listas";
 import { formatearImporteMoneda } from "@/lib/formato/monto-visual";
 
@@ -45,7 +45,7 @@ type Documento = {
 };
 
 const MOTIVO_NCE: Record<number, string> = { 2: "Devolución", 3: "Descuento", 4: "Bonificación", 8: "Ajuste de precio" };
-type Intento = { id: string; tipo: string; fase: string | null; lote: string | null; cdcInformado: string | null; resultado: string; httpStatus: number | null; estadoGateway: string | null; estadoSifen: string | null; codRespuesta: string | null; mensaje: string | null; creadoAt: string; actorNombre: string; tieneRespuesta?: boolean; cursor?: string };
+type Intento = { id: string; tipo: string; fase: string | null; lote: string | null; cdcInformado: string | null; cdcRespuesta?: string | null; resultado: string; httpStatus: number | null; estadoGateway: string | null; estadoSifen: string | null; codRespuesta: string | null; mensaje: string | null; creadoAt: string; actorNombre: string; tieneRespuesta?: boolean; cursor?: string };
 type Solicitud = { version: number; payloadHash: string; creadoAt: string };
 /** E01 (PRO-314): JSON leído bajo demanda de UNA solicitud o respuesta; se muestra como texto formateado (nunca HTML). */
 type VistaJson = { titulo: string; detalle: string; texto: string; cargando: boolean; error: string };
@@ -58,8 +58,8 @@ const DETALLE_VACIO: Detalle = { cargando: false, error: "", intentos: [], sigui
 
 const INDICADORES: Array<{ grupo: GrupoIndicador | ""; titulo: string; ayuda: string; clase: string }> = [
   { grupo: "", titulo: "Total", ayuda: "Documentos visibles", clase: ui.summaryTeal },
-  { grupo: "PEND_ENVIO", titulo: "Pendientes de envío", ayuda: "Aún sin recibir el gateway", clase: ui.summaryAmber },
-  { grupo: "PEND_RESPUESTA", titulo: "Pendientes de respuesta", ayuda: "Enviados, sin respuesta SIFEN", clase: ui.summaryBlue },
+  { grupo: "PEND_ENVIO", titulo: "Pendientes de envío", ayuda: "Recepción del gateway no confirmada (incluye envío indeterminado)", clase: ui.summaryAmber },
+  { grupo: "PEND_RESPUESTA", titulo: "Pendientes de respuesta", ayuda: "Enviados o envío indeterminado, sin resultado fiscal final", clase: ui.summaryBlue },
   { grupo: "APROBADO", titulo: "Aprobados", ayuda: "Estado SIFEN aprobado", clase: ui.summaryTeal },
   { grupo: "RECHAZADO", titulo: "Rechazados", ayuda: "Estado SIFEN rechazado", clase: ui.summaryRed },
   { grupo: "EMAIL_ENVIADO", titulo: "E-mail enviado", ayuda: "Según el proveedor", clase: ui.summaryViolet },
@@ -85,6 +85,14 @@ const fechaGateway = (v: string | null) => {
   return m ? `${m[3]}/${m[2]}/${m[1]}${m[4] ? ` ${m[4]}` : ""}` : (v ?? "—");
 };
 // PRO-335: importe visual desde el texto numeric exacto (sin Number), en la moneda del propio documento.
+// PRO-338-R02 (F003): una línea por intento de consulta, con fecha, resultado, HTTP, mensaje y CDC informado (indicando si sale del JSON de respuesta).
+const describirConsulta = (i: IntentoConsulta, conResultado: boolean) => {
+  const cdc = cdcDeIntento(i);
+
+  return [fechaHora(i.creadoAt), conResultado ? ETIQUETA_RESULTADO_INTENTO[i.resultado] ?? i.resultado : null, i.httpStatus ? `HTTP ${i.httpStatus}` : null, i.estadoGateway, i.codRespuesta, i.mensaje, cdc ? `CDC informado${cdc.fuente === "json" ? " (según el JSON de respuesta)" : ""}: ${cdc.cdc}` : null]
+    .filter(Boolean)
+    .join(" · ");
+};
 const importe = (d: Documento) => `${formatearImporteMoneda(d.total, d.moneda)} ${d.moneda}`;
 
 async function leerJson<T>(r: Response, porDefecto: string): Promise<T> {
@@ -502,6 +510,7 @@ export default function DocumentosPage() {
                 const det = abiertos[d.id];
                 const sifen = presentacionSifen(d);
                 const alerta = alertaConsulta(d);
+                const consultas = det ? resumenConsultas(det.intentos) : { valida: null, ultima: null };
 
                 return (
                   <Fragment key={d.id}>
@@ -559,12 +568,13 @@ export default function DocumentosPage() {
                             {d.tipo === "NCE" ? <div><dt className={ui.muted}>CDC de la factura original</dt><dd className={ui.mono} style={{ overflowWrap: "anywhere", margin: 0 }}>{d.feCdc ?? "—"}</dd></div> : null}
                             <div><dt className={ui.muted}>{d.tipo === "NCE" ? "CDC de la nota de crédito" : "CDC"}</dt><dd className={ui.mono} style={{ overflowWrap: "anywhere", margin: 0 }}>{d.cdc ?? "Aún no informado"}</dd></div>
                             <div><dt className={ui.muted}>Estado fiscal registrado</dt><dd style={{ margin: 0 }}>{ETIQUETA_SIFEN[d.estadoSifen]}</dd></div>
-                            <div><dt className={ui.muted}>Estado informado</dt><dd style={{ margin: 0 }}>{d.estadoGatewayTexto ?? "—"}</dd></div>
-                            <div><dt className={ui.muted}>Último mensaje SIFEN</dt><dd style={{ margin: 0 }}>{d.codRespuesta ? `${d.codRespuesta} · ` : ""}{d.mensajeRespuesta ?? "—"}</dd></div>
+                            <div><dt className={ui.muted}>Estado informado (última consulta válida)</dt><dd style={{ margin: 0 }}>{d.estadoGatewayTexto ?? "—"}</dd></div>
+                            <div><dt className={ui.muted}>Último mensaje registrado del gateway</dt><dd style={{ margin: 0 }}>{d.codRespuesta ? `${d.codRespuesta} · ` : ""}{d.mensajeRespuesta ?? "—"}<br /><small className={ui.muted}>De un envío o de una consulta válida; las consultas fallidas no lo modifican.</small></dd></div>
                             <div><dt className={ui.muted}>Lote</dt><dd style={{ margin: 0 }}>{d.lote ?? "No informado"}</dd></div>
                             <div><dt className={ui.muted}>Fecha de firma</dt><dd style={{ margin: 0 }}>{fechaGateway(d.fechaFirma)}</dd></div>
                             <div><dt className={ui.muted}>Fecha de envío</dt><dd style={{ margin: 0 }}>{fechaGateway(d.fechaEnvio)}</dd></div>
-                            <div><dt className={ui.muted}>Última consulta</dt><dd style={{ margin: 0 }}>{d.ultimaConsultaAt ? `${fechaHora(d.ultimaConsultaAt)} · ${ETIQUETA_RESULTADO_INTENTO[d.ultimaConsultaResultado ?? ""] ?? d.ultimaConsultaResultado}` : "Nunca consultado"}</dd></div>
+                            <div><dt className={ui.muted}>Última respuesta fiscal válida</dt><dd style={{ margin: 0, overflowWrap: "anywhere" }}>{consultas.valida ? describirConsulta(consultas.valida, false) : det.cargando ? "Cargando historial..." : "No hay una consulta válida en el historial cargado."}</dd></div>
+                            <div><dt className={ui.muted}>Último intento de consulta</dt><dd style={{ margin: 0, overflowWrap: "anywhere" }}>{consultas.ultima ? describirConsulta(consultas.ultima, true) : d.ultimaConsultaAt ? `${fechaHora(d.ultimaConsultaAt)} · ${ETIQUETA_RESULTADO_INTENTO[d.ultimaConsultaResultado ?? ""] ?? d.ultimaConsultaResultado}` : "Nunca consultado"}<br /><small className={ui.muted}>Detalle completo y JSON de respuesta en el historial de consultas.</small></dd></div>
                           </dl>
 
                           {alerta ? (
@@ -647,7 +657,7 @@ export default function DocumentosPage() {
                                     <tr key={i.id} className={ui.row}>
                                       <td>{fechaHora(i.creadoAt)}</td>
                                       <td>{i.tipo === "ENVIO" ? "Envío" : "Consulta"}{i.fase ? ` · ${i.fase.toLowerCase()}` : ""}</td>
-                                      <td>{etiquetaIntento(i.tipo, i.resultado)}{i.lote ? ` · lote ${i.lote}` : ""}{i.cdcInformado ? <><br /><small className={ui.muted}>CDC informado: {i.cdcInformado}</small></> : null}{i.mensaje ? <><br /><small className={ui.muted}>{i.mensaje}</small></> : null}</td>
+                                      <td>{etiquetaIntento(i.tipo, i.resultado)}{i.lote ? ` · lote ${i.lote}` : ""}{i.cdcInformado ? <><br /><small className={ui.muted}>CDC informado: {i.cdcInformado}</small></> : i.cdcRespuesta ? <><br /><small className={ui.muted}>CDC informado (según el JSON de respuesta): {i.cdcRespuesta}</small></> : null}{i.mensaje ? <><br /><small className={ui.muted}>{i.mensaje}</small></> : null}</td>
                                       <td>{i.httpStatus ?? "—"}</td>
                                       <td>{i.estadoGateway ?? "—"}</td>
                                       <td>{i.actorNombre}</td>

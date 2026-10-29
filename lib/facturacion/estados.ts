@@ -97,6 +97,14 @@ export function estadoSifenDesdeGateway(texto: unknown): EstadoSifen {
   }
 }
 
+/**
+ * PRO-338-R02 (AUD-R01 F002): ÚNICA definición de «enviado sin resultado fiscal final». La usan el badge amarillo (presentacion-sifen.ts) y el indicador/filtro PEND_RESPUESTA (shared.ts), así que
+ * ningún documento amarillo queda fuera del indicador. ENVIO_INDETERMINADO también cuenta en PEND_ENVIO (la transmisión no está confirmada): ese documento está en las dos fases a la vez, y
+ * así lo explican los textos de ayuda de ambas tarjetas. APROBADO / RECHAZADO solo cuentan el estado fiscal persistido (una alerta CDC_DIVERGENTE no cambia estado_sifen).
+ */
+export const ESTADOS_LOCAL_TRANSMITIDO: readonly EstadoLocal[] = ["ENVIADO", "ENVIO_INDETERMINADO"];
+export const ESTADOS_SIFEN_SIN_FINAL: readonly EstadoSifen[] = ["SIN_CONSULTA", "PENDIENTE", "NO_RECONOCIDO"];
+
 /** Indicadores de la pantalla (tarjetas). Cada uno es también un filtro; la definición SQL equivalente vive en lib/facturacion/shared.ts. */
 export const GRUPOS_INDICADOR = ["PEND_ENVIO", "PEND_RESPUESTA", "APROBADO", "RECHAZADO", "EMAIL_ENVIADO", "EMAIL_ERROR", "SIN_EMAIL"] as const;
 export type GrupoIndicador = (typeof GRUPOS_INDICADOR)[number];

@@ -28,6 +28,9 @@ const TIPO_DOC_CONSULTA: Record<string, string | undefined> = { NCE: "NCE", FE: 
 
 export const tipoDocConsulta = (tipo: string): string | null => TIPO_DOC_CONSULTA[tipo] ?? null;
 
+/** Tope del tiempo de espera de UNA petición HTTP al gateway (configGatewayValida). PRO-338-R02: el lease de la consulta automática se dimensiona con este valor. */
+export const TIMEOUT_GATEWAY_MAX_MS = 60000;
+
 /**
  * Configuración del gateway leída de la base, VALIDADA en el servidor (la tabla ya tiene CHECK, pero el envío no confía en ello): URL https sin ruta ni credenciales
  * embebidas y tiempo de espera acotado a 1–60 s. null = configuración inutilizable (no se transmite nada).
@@ -41,7 +44,7 @@ export function configGatewayValida(empresaId: string, fila: { baseUrl?: unknown
 
   const t = Number(fila.timeoutMs);
 
-  return { empresaId, baseUrl: fila.baseUrl, credencialRef: fila.credencialRef, timeoutMs: Number.isFinite(t) ? Math.min(60000, Math.max(1000, Math.trunc(t))) : 15000 };
+  return { empresaId, baseUrl: fila.baseUrl, credencialRef: fila.credencialRef, timeoutMs: Number.isFinite(t) ? Math.min(TIMEOUT_GATEWAY_MAX_MS, Math.max(1000, Math.trunc(t))) : 15000 };
 }
 
 /**

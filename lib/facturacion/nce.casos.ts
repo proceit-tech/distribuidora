@@ -151,14 +151,15 @@ export async function verificarCasosNce(): Promise<string[]> {
       void _p;
       llamadas.push(texto.includes("fe_consulta_reservar") ? "reservar" : texto.includes("fe_consulta_programar") ? "programar" : "otra");
 
-      if (texto.includes("fe_consulta_reservar")) return { rows: [{ o_empresa: uuid, o_documento: uuid, o_actor: null, o_tipo: "NCE", o_intentos: 0 }] };
+      // PRO-338-R02: la reserva es de UN documento por vez y el ciclo termina cuando no hay más; la base simulada lo entrega una sola vez.
+      if (texto.includes("fe_consulta_reservar")) return { rows: llamadas.filter((x) => x === "reservar").length > 1 ? [] : [{ o_empresa: uuid, o_documento: uuid, o_actor: null, o_tipo: "NCE", o_intentos: 0, o_token: uuid }] };
 
       return { rows: [] };
     },
   };
   const lote = await ejecutarLote(dbFalsa as never, { dormir: async () => undefined });
 
-  igual("lote sin usuario autorizado: no consulta, reprograma y cuenta sinActor", [lote.reservados, lote.consultados, lote.sinActor, llamadas], [1, 0, 1, ["reservar", "programar"]]);
+  igual("lote sin usuario autorizado: no consulta, reprograma y cuenta sinActor", [lote.reservados, lote.consultados, lote.sinActor, llamadas], [1, 0, 1, ["reservar", "programar", "reservar"]]);
 
   // ── 9. Corrección AUD-PRO94-NCE-R01 ───────────────────────────────────────────────────────────────
   // R01-01: el cliente con facturas enviadas sin resultado se localiza; solo las APROBADAS con CDC son elegibles.
@@ -398,13 +399,13 @@ export async function verificarCasosNce(): Promise<string[]> {
     const dbW = { query: async (t: string, p?: unknown[]) => {
       llamadasSql.push(t.includes("fe_consulta_reservar") ? "reservar" : t.includes("fe_consulta_programar") ? "programar:" + String((p ?? [])[3]) : "otra");
 
-      if (t.includes("fe_consulta_reservar")) return { rows: [{ o_empresa: uuid, o_documento: uuid, o_actor: null, o_tipo: "NCE", o_intentos: 2 }] };
+      if (t.includes("fe_consulta_reservar")) return { rows: llamadasSql.filter((x) => x === "reservar").length > 1 ? [] : [{ o_empresa: uuid, o_documento: uuid, o_actor: null, o_tipo: "NCE", o_intentos: 2, o_token: uuid }] };
 
       return { rows: [] };
     } };
     const rw = await ejecutarLote(dbW as never, { dormir: async () => undefined });
 
-    igual("ZERO-01: sin usuario autorizado el worker no consulta, reprograma sin contar intento y no toca el documento", [rw.sinActor, rw.consultados, llamadasSql], [1, 0, ["reservar", "programar:false"]]);
+    igual("ZERO-01: sin usuario autorizado el worker no consulta, reprograma sin contar intento y no toca el documento", [rw.sinActor, rw.consultados, llamadasSql], [1, 0, ["reservar", "programar:false", "reservar"]]);
   }
 
   // ZERO-02

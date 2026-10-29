@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import type { Pool } from "pg";
 
-import { ESTADOS_EMAIL, ESTADOS_LOCAL, ESTADOS_SIFEN, GRUPOS_INDICADOR, TIPOS_DOCUMENTO, UMBRAL_REVISION_HORAS, type GrupoIndicador } from "@/lib/facturacion/estados";
+import { ESTADOS_EMAIL, ESTADOS_LOCAL, ESTADOS_LOCAL_TRANSMITIDO, ESTADOS_SIFEN, ESTADOS_SIFEN_SIN_FINAL, GRUPOS_INDICADOR, TIPOS_DOCUMENTO, UMBRAL_REVISION_HORAS, type GrupoIndicador } from "@/lib/facturacion/estados";
 import { configGatewayValida, consultarDocumentoGateway, obtenerKudeGateway, type Dependencias, type DependenciasKude } from "@/lib/facturacion/gateway";
 import { adjuntarCredencialesDeBase } from "@/lib/facturacion/gateway-credenciales";
 import { decidirConsulta } from "@/lib/facturacion/reconciliacion";
@@ -54,7 +54,8 @@ const comodin = (t: string) => t.replace(/[!%_]/g, (c) => `!${c}`);
 /** Definición SQL de cada indicador (también sirve de filtro). Un documento puede estar en varios ejes a la vez; nunca se infiere uno de otro. */
 export const SQL_GRUPO: Record<GrupoIndicador, string> = {
   PEND_ENVIO: "d.estado_local IN ('PENDIENTE_ENVIO','ENVIANDO','ENVIO_INDETERMINADO','ERROR_ENVIO')",
-  PEND_RESPUESTA: "d.estado_local = 'ENVIADO' AND d.estado_sifen IN ('SIN_CONSULTA','PENDIENTE')",
+  // PRO-338-R02: mismo conjunto que el badge amarillo «Pendiente de confirmación» (ENVIADO / ENVIO_INDETERMINADO × SIN_CONSULTA / PENDIENTE / NO_RECONOCIDO).
+  PEND_RESPUESTA: `d.estado_local IN (${ESTADOS_LOCAL_TRANSMITIDO.map((e) => `'${e}'`).join(",")}) AND d.estado_sifen IN (${ESTADOS_SIFEN_SIN_FINAL.map((e) => `'${e}'`).join(",")})`,
   APROBADO: "d.estado_sifen = 'APROBADO'",
   RECHAZADO: "d.estado_sifen = 'RECHAZADO'",
   EMAIL_ENVIADO: "d.estado_email = 'ENVIADO'",
@@ -228,11 +229,17 @@ function fechaCursorValida(texto: string): boolean {
   return f.getUTCFullYear() === anio && f.getUTCMonth() === mes - 1 && f.getUTCDate() === dia && f.getUTCHours() === hora && f.getUTCMinutes() === minuto && f.getUTCSeconds() === segundo;
 }
 
+/**
+ * PRO-338-R02 (AUD-R01 F003): las consultas registradas por NEX-054 / flujo NCE no guardan cdc_informado; el CDC que informó el gateway sigue en el JSON de respuesta saneado (DE.CDC). Se expone APARTE
+ * (`cdcRespuesta`, solo lectura, 44 dígitos) y únicamente cuando la columna está vacía, para que la pantalla indique su fuente y no lo presente como la columna estructurada.
+ */
+const CDC_EN_RESPUESTA = `CASE WHEN i.cdc_informado IS NULL AND i.tipo = 'CONSULTA' AND (i.respuesta #>> '{response,DE,CDC}') ~ '^[0-9]{44}$' THEN i.respuesta #>> '{response,DE,CDC}' END`;
+
 /** Intentos (evidencia) del documento, del más reciente al más antiguo, máx. 100. Solo se llama tras comprobar que el documento está en el alcance. */
 export async function listarIntentos(db: Db, empresaId: string, documentoId: string) {
   const r = await db.query(
     `SELECT i.id, i.tipo, i.resultado, i.http_status AS "httpStatus", i.request_id AS "requestId", i.estado_gateway AS "estadoGateway", i.estado_sifen AS "estadoSifen", i.fase, i.lote, i.cdc_informado AS "cdcInformado",
-            i.cod_respuesta AS "codRespuesta", i.mensaje, i.creado_at AS "creadoAt", (i.respuesta IS NOT NULL) AS "tieneRespuesta", ${CURSOR_INTENTO} AS "cursor",
+            ${CDC_EN_RESPUESTA} AS "cdcRespuesta", i.cod_respuesta AS "codRespuesta", i.mensaje, i.creado_at AS "creadoAt", (i.respuesta IS NOT NULL) AS "tieneRespuesta", ${CURSOR_INTENTO} AS "cursor",
             trim(coalesce(u.nombre, '') || ' ' || coalesce(u.apellido, '')) AS "actorNombre"
        FROM documento_electronico_intentos i JOIN usuarios u ON u.empresa_id = i.empresa_id AND u.id = i.actor_id
       WHERE i.empresa_id = $1 AND i.documento_id = $2 ORDER BY i.creado_at DESC, i.id DESC LIMIT 100`,
@@ -298,7 +305,7 @@ export async function listarIntentosPagina(db: Db, empresaId: string, documentoI
 
   const r = await db.query(
     `SELECT i.id, i.tipo, i.resultado, i.http_status AS "httpStatus", i.request_id AS "requestId", i.estado_gateway AS "estadoGateway", i.estado_sifen AS "estadoSifen", i.fase, i.lote, i.cdc_informado AS "cdcInformado",
-            i.cod_respuesta AS "codRespuesta", i.mensaje, i.creado_at AS "creadoAt", (i.respuesta IS NOT NULL) AS "tieneRespuesta", ${CURSOR_INTENTO} AS "cursor",
+            ${CDC_EN_RESPUESTA} AS "cdcRespuesta", i.cod_respuesta AS "codRespuesta", i.mensaje, i.creado_at AS "creadoAt", (i.respuesta IS NOT NULL) AS "tieneRespuesta", ${CURSOR_INTENTO} AS "cursor",
             trim(coalesce(u.nombre, '') || ' ' || coalesce(u.apellido, '')) AS "actorNombre"
        FROM documento_electronico_intentos i JOIN usuarios u ON u.empresa_id = i.empresa_id AND u.id = i.actor_id
       WHERE i.empresa_id = $1 AND i.documento_id = $2${m ? " AND (i.creado_at, i.id) < ($3::timestamptz, $4::uuid)" : ""} ORDER BY i.creado_at DESC, i.id DESC LIMIT ${INTENTOS_POR_PAGINA + 1}`,
@@ -341,7 +348,11 @@ export class ErrorValidacionFiscal extends ErrorFacturacion {
  * (fe_documento_registrar_consulta) guarda el intento y actualiza los estados con la fila bloqueada. Un fallo del gateway queda como evidencia y no
  * cambia el estado fiscal. Sin configuración/credenciales/tipo confirmado no se llama a nadie ni se registra un intento ficticio.
  */
-export async function consultarEstado(db: Db, empresaId: string, usuarioId: string, id: string, dep: Dependencias = {}, opciones: { flujoNce?: boolean } = {}) {
+/**
+ * `flujoNce`: registro por fe_documento_registrar_consulta_flujo_nce (CREAR o EDITAR, solo pendientes). `leaseToken` (PRO-338-R02, consulta automática): registro por fe_documento_registrar_consulta_auto
+ * (NEX-077), mismas reglas del flujo + token vigente de la reserva (fencing) + cdc_informado en el intento.
+ */
+export async function consultarEstado(db: Db, empresaId: string, usuarioId: string, id: string, dep: Dependencias = {}, opciones: { flujoNce?: boolean; leaseToken?: string } = {}) {
   const doc = await leerDocumento(db, empresaId, usuarioId, id);
 
   if (!doc) throw new ErrorFacturacion(404, "Documento no encontrado.");
@@ -371,9 +382,10 @@ export async function consultarEstado(db: Db, empresaId: string, usuarioId: stri
   // Solo una respuesta asociada de forma confiable al documento y coherente con su estado previo puede fijar el estado fiscal (RN-E2-08).
   const r = decidirConsulta({ tipo: String(doc.tipo), establecimiento: String(doc.establecimiento), puntoExpedicion: String(doc.puntoExpedicion), numero: String(doc.numero), cdc: (doc.cdc as string | null) ?? null, estadoSifen: (doc.estadoSifen as string | null) ?? null }, bruto);
 
+  const funcion = opciones.leaseToken ? "fe_documento_registrar_consulta_auto" : opciones.flujoNce ? "fe_documento_registrar_consulta_flujo_nce" : "fe_documento_registrar_consulta";
   const registrado = await db.query(
-    `SELECT ${opciones.flujoNce ? "fe_documento_registrar_consulta_flujo_nce" : "fe_documento_registrar_consulta"}($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb) AS resultado`,
-    [empresaId, usuarioId, id, r.resultado, r.http, crypto.randomUUID(), r.estadoGateway, r.estadoSifen, r.cdc, r.codRespuesta, r.mensaje, r.fechaFirma, r.fechaEnvio, r.respuesta ? JSON.stringify(r.respuesta) : null],
+    `SELECT ${funcion}($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb${opciones.leaseToken ? ", $15::uuid" : ""}) AS resultado`,
+    [empresaId, usuarioId, id, r.resultado, r.http, crypto.randomUUID(), r.estadoGateway, r.estadoSifen, r.cdc, r.codRespuesta, r.mensaje, r.fechaFirma, r.fechaEnvio, r.respuesta ? JSON.stringify(r.respuesta) : null, ...(opciones.leaseToken ? [opciones.leaseToken] : [])],
   );
 
   return { resultado: String((registrado.rows[0] as F).resultado), mensaje: r.mensaje };
