@@ -2,6 +2,16 @@
 
 Branch: `feature/NEXIT-2026-001-banco-demo`. Regra: uma funcionalidade por vez; sem mock/localStorage/dados fixos no modo real; commit+push ao terminar cada item.
 
+## 29/10/2026 — AUDITORIA TRANSVERSAL DE MONEDA / PRO-335 + LAYOUT VENTAS / PRO-337 — SÓ DIAGNÓSTICO
+
+O responsável enviou três capturas reais de CASA MINGO e definiu **PYG/Gs sem decimais visíveis para todo IMPORTE MONETÁRIO em TODAS AS TELAS**, USD com máximo 2 casas (BRL 2 conforme padrão atual). Isso **substitui a regra anterior PRO-335** de mostrar decimal fiscal PYG quando não integral somente no valor visual; **DB numeric, XML/JSON SIFEN, preço/custo real, cálculos, stock fracionário, descontos, taxas, campos editáveis e XLSX numérico NÃO mudam**.
+
+**[AUDITORIA ESTÁTICA COM MATRIZ TRANSVERSAL](documentacao/analises/AUD-NEXIT-FORMATO-MONETARIO-TODAS-TELAS-E-LAYOUT-VENTAS-2026-10-29.md):** foram inspecionadas rotas/telas de Reportes (Ventas/Valorización/Kardex/Stock Crítico/General/Lotes), Facturación/NCE/Documentos, Dashboard, Inventario/Movimientos/Stock/Compras, Productos/Listas e componentes. **Falhas confirmadas:** `fmtDinero` de reportes mostra todas as casas da fonte fiscal e é reutilizado para quantidades; `CeldasImportes` não recebe moeda por linha; formatos duplicados `formatearMontoVisual`, `formatearMontoTexto`, `formatearMonto`, `montoTexto`, `formatoMoneda`; `documentos/page.tsx` converte `numeric` para JS `Number`; e `Informe de Ventas .informativo` limita cartão em 2 colunas, `overflow:hidden` com tabela `white-space:nowrap`, cortando `Importe informativo`. Títulos longos precisam compactação legível.
+
+**Linear:** [PRO-335](https://linear.app/proceit/issue/PRO-335) — normalização monetária global de apresentação; [PRO-337](https://linear.app/proceit/issue/PRO-337) — layout responsivo e card truncado no Informe de Ventas. Ambas `Todo`, sem código alterado nem telas homologadas. **Nenhuma ordem nova ativa para Claude**, até decisão expressa do responsável; conclusão anterior PRO-330 R02 está In Review/sem testes, PRO-328 In Review/NEX-076 não aplicada. Não autoriza testes/VM/SQL/deploy nesta auditoria.
+
+
+
 ## PRO-330 — AUDITORIA R02 / 29-10-2026 — F-001 RESOLVIDO ESTATICAMENTE, AGUARDANDO HOMOLOGAÇÃO
 
 - **Implementação inicial Claude:** `2b54b468359c00df4726bc55b592bc9d9d5fff18` (7 arquivos / 63 casos).
