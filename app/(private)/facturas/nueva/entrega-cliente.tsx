@@ -12,7 +12,8 @@ type Control = ReturnType<typeof crearControlEntrega>;
 
 /**
  * Dirección de entrega del cliente elegido (E04). Solo muestra datos del cliente ACTUAL (si el estado pertenece a otro cliente, no se muestra nada de él). Sin destinos registrados es un aviso
- * informativo que no bloquea; con destinos hay que tener uno elegido (el predeterminado viene preseleccionado). No modifica el domicilio fiscal ni el establecimiento emisor.
+ * informativo que no bloquea; con destinos hay que tener uno elegido (el predeterminado viene preseleccionado). PRO-328: en una FE nueva la dirección elegida es el domicilio del receptor que viaja al SIFEN
+ * (el resumen muestra el que devuelve el servidor); no modifica la ficha del cliente ni el establecimiento emisor.
  */
 export function EntregaCliente({ control, clienteId }: { control: Control; clienteId: string }) {
   const e = useSyncExternalStore(control.suscribir, control.estado, control.estado);
@@ -42,12 +43,12 @@ export function EntregaCliente({ control, clienteId }: { control: Control; clien
     <div className={estilos.entregaCliente}>
       <label className={estilos.field}>
         <span>Dirección de entrega *</span>
-        <select aria-label="Dirección de entrega" value={e.elegida} title={`${ayuda}Es solo el destino de la mercadería: no cambia el domicilio fiscal del receptor ni el establecimiento emisor.`} onChange={(ev) => control.elegir(ev.target.value)}>
+        <select aria-label="Dirección de entrega" value={e.elegida} title={`${ayuda}Se usa como domicilio del receptor de esta factura (SIFEN): no modifica la ficha del cliente ni el establecimiento emisor.`} onChange={(ev) => control.elegir(ev.target.value)}>
           {e.elegida === "" ? <option value="">Seleccione una dirección…</option> : null}
           {e.opciones.map((o) => <option key={o.id} value={o.id}>{nombreEntrega(o)}{o.esDefault ? " (principal)" : ""} — {direccionCompleta(o)}</option>)}
         </select>
       </label>
-      {elegida ? null : <small className={estilos.fieldError} role="alert">Seleccione la dirección de entrega.</small>}
+      {elegida ? <small className={estilos.hint}>Esta dirección irá como domicilio del receptor en la factura electrónica. Si está incompleta, corríjala en <Link href="/clientes">Clientes → Direcciones</Link>.</small> : <small className={estilos.fieldError} role="alert">Seleccione la dirección de entrega.</small>}
     </div>
   );
 }

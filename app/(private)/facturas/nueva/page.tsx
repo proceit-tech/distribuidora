@@ -69,9 +69,12 @@ type Resumen = {
   entrega?: { nombre: string; tipo: string; direccion: string; contacto: string; horario: string } | null;
   /** PRO-72/PRO-307: vendedor comercial elegido (revalidado por el servidor). */
   vendedor?: { id: string; nombre: string } | null;
-  /** E1: dInfAdic final (observaciones + entrega + vendedor) y su huella, que se envía al emitir para que se emita exactamente lo revisado. */
+  /** E1: dInfAdic final (observaciones + vendedor; PRO-328: sin línea automática de entrega) y su huella, que se envía al emitir para que se emita exactamente lo revisado. */
   infoAdicional?: string;
   infoAdicionalHuella?: string;
+  /** PRO-328: domicilio del receptor EXACTAMENTE como irá en el JSON SIFEN (dirección seleccionada o fiscal; códigos + nombres oficiales) y su huella, que se envía al emitir. */
+  receptorDomicilio?: DomicilioReceptor;
+  receptorHuella?: string;
   lineas: Array<{ descuento?: { unitario: string; porcentaje: string; global: string; total: string }; codigo: string; descripcion: string; unidad: string; cantidad: string; precio: string; precioLista: string; precioModificado: boolean; afectacion: number; tasa: number; proporcion?: string | null; total: number; totalTexto?: string; ajustes?: string[] }>;
   totales: { exento: number; exonerado: number; gravado5: number; gravado10: number; iva5: number; iva10: number; totalIva: number; total: number };
   totalesTexto?: { exento: string; exonerado: string; gravado5: string; gravado10: string; iva5: string; iva10: string; totalIva: string; total: string };
@@ -100,6 +103,19 @@ const ETIQUETA_CONTRIBUYENTE: Record<number, string> = { 1: "Persona física", 2
 const fd = (t: string | null | undefined) => formatearDecimalTexto(t);
 /** E02: huella del reparto de stock de una revisión (null si la factura no tiene productos con control de stock). */
 const repartoDe = (r: Resumen | null): string | null => r?.stock?.huella ?? null;
+
+type DomicilioReceptor = {
+  origen: "SELECCIONADA" | "FISCAL"; pais: string; direccion: string; numeroCasa: string; departamento: string; distrito: string; ciudad: string;
+  nombres: { pais: string; departamento: string; distrito: string; ciudad: string } | null;
+};
+
+/** PRO-328 (solo presentación): domicilio del receptor que devolvió el servidor, con el código oficial de cada nivel junto a su nombre del catálogo. */
+function textoDomicilioReceptor(d: DomicilioReceptor): string {
+  const nivel = (nombre: string | undefined, codigo: string) => (codigo === "" ? "" : `${nombre ? nombre + " " : ""}(cód. ${codigo})`);
+  const partes = [[d.direccion, d.numeroCasa].filter((x) => x !== "").join(" "), nivel(d.nombres?.ciudad, d.ciudad), nivel(d.nombres?.distrito, d.distrito), nivel(d.nombres?.departamento, d.departamento), `${d.nombres?.pais ? d.nombres.pais + " " : ""}(${d.pais})`];
+
+  return d.direccion === "" ? `Sin domicilio informado · ${partes[partes.length - 1]}` : partes.filter((x) => x !== "").join(", ");
+}
 const PRECIO_OK = /^\d{1,12}(\.\d{1,4})?$/;
 
 async function leer<T>(r: Response, porDefecto: string): Promise<T> {
@@ -585,7 +601,7 @@ export default function NuevaFacturaPage() {
     )).resumen,
     // E02: junto con la factura revisada viaja la huella del reparto de stock de ESA revisión, para que la baja sea exactamente la que el operador vio.
     enviar: async (cuerpo, revisado) => leer<ResultadoEnvio>(
-      await fetch("/api/facturas", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...(cuerpo as Record<string, unknown>), ...(repartoDe(revisado) ? { repartoHuella: repartoDe(revisado) } : {}), ...(revisado?.infoAdicionalHuella ? { infoAdicionalHuella: revisado.infoAdicionalHuella } : {}) }) }),
+      await fetch("/api/facturas", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...(cuerpo as Record<string, unknown>), ...(repartoDe(revisado) ? { repartoHuella: repartoDe(revisado) } : {}), ...(revisado?.infoAdicionalHuella ? { infoAdicionalHuella: revisado.infoAdicionalHuella } : {}), ...(revisado?.receptorHuella ? { receptorHuella: revisado.receptorHuella } : {}) }) }),
       "No fue posible enviar la factura.",
     ),
     alRevisando: setRevisando,
@@ -1518,6 +1534,7 @@ export default function NuevaFacturaPage() {
                     <div><dt>Vendedor</dt><dd>{resumen.vendedor ? resumen.vendedor.nombre : "—"}</dd></div>
                     {resumen.infoAdicional ? <div><dt>Información adicional</dt><dd><InfoAdicionalResumen texto={resumen.infoAdicional} /></dd></div> : null}
                     <div><dt>Dirección de entrega</dt><dd>{resumen.entrega ? `${resumen.entrega.nombre} — ${resumen.entrega.direccion}` : "Sin destino de entrega registrado (se factura con el domicilio fiscal del receptor)"}</dd></div>
+                    {resumen.receptorDomicilio ? <div><dt>Domicilio del receptor (SIFEN)</dt><dd>{textoDomicilioReceptor(resumen.receptorDomicilio)} · {resumen.receptorDomicilio.origen === "SELECCIONADA" ? "dirección seleccionada (no modifica la ficha del cliente)" : "domicilio fiscal del cliente"}</dd></div> : null}
                   </dl>
                 </section>
                 <section className={estilos.grupo} aria-label="Operación">

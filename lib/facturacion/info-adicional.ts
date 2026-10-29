@@ -5,7 +5,8 @@ import type { Pool } from "pg";
 /**
  * Información adicional de interés para el emisor — J003 `dInfAdic` (MT SIFEN v150, 1 a 5000 caracteres) de la FE y de la NCE. Se compone SOLO en el servidor, a partir de datos autoritativos:
  *  · Observaciones del operador (se preservan íntegras, sin duplicarlas ni recortarlas).
- *  · «Dirección de entrega: …» con el destino que el servidor validó para el cliente y la empresa de la sesión (FE; nunca el domicilio fiscal; sin destino no hay línea).
+ *  · «Dirección de entrega: …»: SOLO en FE LEGADAS (PRO-328: una FE nueva ya no la compone; la dirección seleccionada viaja como domicilio del receptor). `lineaEntrega` y el parser se conservan para
+ *    reconocer esos snapshots históricos; jamás se usan para probar la identidad del destino (eso es por UUID persistido).
  *  · «Vendedor: nombre apellido» del usuario autenticado que EMITE el documento (empresa de la sesión), no un dato enviado por el navegador.
  * La cadena resultante es la que viaja en el payload inmutable (snapshot histórico). El navegador solo envía las observaciones crudas, así que revisar o reintentar nunca acumula líneas.
  * No es un campo del XML firmado: es un dato comercial del JSON del proveedor.

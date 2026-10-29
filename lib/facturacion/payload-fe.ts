@@ -87,6 +87,8 @@ export type ReceptorFE = {
   email: string;
   emailCopia: string;
   emailFacturacion: string;
+  /** PRO-328: origen del domicilio (D213–D223): el fiscal del cliente o la dirección que el operador SELECCIONÓ para esta FE (misma fila, nunca mezclado). Con SELECCIONADA los mensajes la nombran y el domicilio nacional no puede ir vacío; sin valor = fiscal (regla anterior intacta). */
+  origenDomicilio?: "FISCAL" | "SELECCIONADA";
 };
 
 export type LineaFE = {
@@ -295,7 +297,7 @@ const CODIGO_DISTRITO = /^[1-9]\d{0,3}$/;
 const CODIGO_CIUDAD = /^[1-9]\d{0,4}$/;
 
 /**
- * País y bloque de domicilio fiscal del receptor (D203, D213, D218, D219, D221, D223; MT v150 y NT 003; decisión del responsable, REQ §4.2). Nacional (B2B, B2C, B2G): o NINGÚN dato de domicilio
+ * País y bloque de domicilio del receptor —el fiscal del cliente o, en una FE nueva, la dirección seleccionada (PRO-328)— (D203, D213, D218, D219, D221, D223; MT v150 y NT 003; decisión del responsable, REQ §4.2). Nacional (B2B, B2C, B2G): o NINGÚN dato de domicilio
  * (si la norma permite omitirlo; el país se conserva) o TODOS completos: calle, número de casa numérico real (1–6 dígitos, nunca un 0 inventado), departamento, distrito y ciudad como CÓDIGOS
  * (las descripciones las resuelve el gateway). Cualquier combinación parcial (p. ej. códigos sin calle, calle sin distrito) se bloquea; nada se completa ni se descarta en silencio. En B2F la
  * calle y el número son obligatorios y la geografía paraguaya no se informa ni se exige. La existencia y la jerarquía de los códigos las valida el servidor contra el catálogo
@@ -304,20 +306,25 @@ const CODIGO_CIUDAD = /^[1-9]\d{0,4}$/;
 export function erroresDomicilioReceptor(r: ReceptorFE): string[] {
   const errores: string[] = [];
   const b2f = r.tipoOperacion === 4;
+  // PRO-328: con una dirección SELECCIONADA el mensaje la nombra (se corrige esa dirección en Clientes; nunca se completa con el domicilio fiscal). La regla es la misma.
+  const seleccionada = r.origenDomicilio === "SELECCIONADA";
+  const dir = seleccionada ? "La dirección seleccionada para la factura" : "La dirección fiscal del cliente";
+  const vaciar = seleccionada ? "Complete la dirección seleccionada en Clientes → Direcciones." : "Complete o vacíe todo el domicilio fiscal en Clientes.";
 
-  if (b2f && (r.pais === "" || r.pais === "PRY")) errores.push("En una operación B2F el país del receptor debe ser distinto de Paraguay (D203).");
-  else if (!b2f && r.pais !== "PRY") errores.push("En operaciones B2B, B2C y B2G el país del receptor debe ser Paraguay (D203).");
+  if (b2f && (r.pais === "" || r.pais === "PRY")) errores.push(`En una operación B2F el país del receptor debe ser distinto de Paraguay (D203)${seleccionada ? ": revise el país de la dirección seleccionada" : ""}.`);
+  else if (!b2f && r.pais !== "PRY") errores.push(`En operaciones B2B, B2C y B2G el país del receptor debe ser Paraguay (D203)${seleccionada ? ": revise el país de la dirección seleccionada" : ""}.`);
   if (b2f) {
-    if (r.direccion.trim() !== "" && !/^\d{1,6}$/.test(r.numeroCasa.trim())) errores.push("La dirección fiscal del cliente requiere un número de casa numérico de 1 a 6 dígitos (D218). Corríjalo en Clientes; no se reemplaza por 0.");
+    if (r.direccion.trim() !== "" && !/^\d{1,6}$/.test(r.numeroCasa.trim())) errores.push(`${dir} requiere un número de casa numérico de 1 a 6 dígitos (D218). Corríjalo en Clientes; no se reemplaza por 0.`);
 
     return errores;
   }
-  if ([r.direccion, r.numeroCasa, r.departamento, r.distrito, r.ciudad].every((v) => v.trim() === "")) return errores;
-  if (r.direccion.trim() === "") errores.push("La dirección fiscal del cliente está incompleta: falta la calle (D213). Complete o vacíe todo el domicilio fiscal en Clientes.");
-  if (!/^\d{1,6}$/.test(r.numeroCasa.trim())) errores.push("La dirección fiscal del cliente requiere un número de casa numérico de 1 a 6 dígitos (D218). Corríjalo en Clientes; no se reemplaza por 0.");
-  if (!CODIGO_DEPARTAMENTO.test(r.departamento.trim())) errores.push("La dirección fiscal del cliente requiere un departamento válido (D219, NT 003).");
-  if (!CODIGO_DISTRITO.test(r.distrito.trim())) errores.push("La dirección fiscal del cliente requiere un distrito válido (D221, política NEXIT).");
-  if (!CODIGO_CIUDAD.test(r.ciudad.trim())) errores.push("La dirección fiscal del cliente requiere una ciudad válida (D223, NT 003).");
+  // Un domicilio totalmente vacío solo es admisible para el fiscal (si la norma permite omitirlo); una dirección seleccionada se envía completa o no se emite.
+  if (!seleccionada && [r.direccion, r.numeroCasa, r.departamento, r.distrito, r.ciudad].every((v) => v.trim() === "")) return errores;
+  if (r.direccion.trim() === "") errores.push(`${dir} está incompleta: falta la calle (D213). ${vaciar}`);
+  if (!/^\d{1,6}$/.test(r.numeroCasa.trim())) errores.push(`${dir} requiere un número de casa numérico de 1 a 6 dígitos (D218). Corríjalo en Clientes; no se reemplaza por 0.`);
+  if (!CODIGO_DEPARTAMENTO.test(r.departamento.trim())) errores.push(`${dir} requiere un departamento válido (D219, NT 003).`);
+  if (!CODIGO_DISTRITO.test(r.distrito.trim())) errores.push(`${dir} requiere un distrito válido (D221, política NEXIT).`);
+  if (!CODIGO_CIUDAD.test(r.ciudad.trim())) errores.push(`${dir} requiere una ciudad válida (D223, NT 003).`);
 
   return errores;
 }

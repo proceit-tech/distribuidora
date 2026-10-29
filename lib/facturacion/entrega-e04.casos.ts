@@ -6,11 +6,12 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { contador } from "@/lib/clientes/contador-casos";
-import { crearFacturaElectronica, leerCuerpoFactura, MENSAJE_INFO_CAMBIO, MENSAJE_REPARTO_CAMBIO, prepararFactura, type CuerpoFactura } from "@/lib/facturacion/emision";
+import { crearFacturaElectronica, huellaReceptor, leerCuerpoFactura, MENSAJE_DESTINO_NO_COMPROBABLE, MENSAJE_INFO_CAMBIO, MENSAJE_RECEPTOR_CAMBIO, MENSAJE_RECEPTOR_SIN_MIGRACION, MENSAJE_REPARTO_CAMBIO, prepararFactura, type CuerpoFactura } from "@/lib/facturacion/emision";
 import { direccionCompleta, MENSAJE_ENTREGA_INVALIDA, MENSAJE_ENTREGA_REQUERIDA, nombreEntrega, pedirOpcionesEntrega, resolverEntrega, type OpcionEntrega } from "@/lib/facturacion/entrega";
 import { crearControlEntrega, pendienteEntrega } from "@/lib/facturacion/entrega-control";
-import { MARCA_AUTOMATICA } from "@/lib/facturacion/info-adicional";
-import { ErrorFacturacion } from "@/lib/facturacion/shared";
+import { componerInfoAdicional, descomponerInfoAdicional, huellaInfoAdicional, MARCA_AUTOMATICA } from "@/lib/facturacion/info-adicional";
+import { erroresDomicilioReceptor } from "@/lib/facturacion/payload-fe";
+import { ErrorFacturacion, ErrorValidacionFiscal } from "@/lib/facturacion/shared";
 import { planificarStock } from "@/lib/facturacion/stock-fe";
 
 void MENSAJE_REPARTO_CAMBIO;
@@ -288,7 +289,7 @@ export async function verificarCasosEntregaE04(): Promise<string[]> {
     const c = cuerpo(CLI_A, { direccionEntregaId: A3.id });
     const prep = await prepararFactura(m.db, EMPRESA, USUARIO, c);
     const plan = await planificarStock(m.db, EMPRESA, USUARIO, SUC, prep.lineasStock);
-    const creado = await crearFacturaElectronica(m.db, EMPRESA, USUARIO, { ...c, repartoHuella: plan.huella });
+    const creado = await crearFacturaElectronica(m.db, EMPRESA, USUARIO, { ...c, repartoHuella: plan.huella, receptorHuella: prep.resumen.receptorHuella });
     const llamada = m.llamadas.find((l) => /fe_documento_crear_fe_con_stock_entrega/.test(l.sql));
 
     igual("EN-40 la emisión pasa el destino elegido a la función atómica (13.er parámetro) y queda guardado vinculado a la FE y al cliente correcto", [llamada?.p[12], m.entregas.map((e) => [e.cliente, e.direccion, e.snapshot.etiqueta, e.snapshot.tipo]), m.docs.size, creado.reutilizado], [A3.id, [[CLI_A, A3.id, "Depósito Este", "ENTREGA"]], 1, false]);
@@ -298,14 +299,14 @@ export async function verificarCasosEntregaE04(): Promise<string[]> {
     const prepB = await prepararFactura(sinDest.db, EMPRESA, USUARIO, cB);
     const prepB2 = await prepararFactura(sinDest.db, EMPRESA, USUARIO, cuerpo(CLI_B, { direccionEntregaId: B1.id }, "clave-entrega-0002"));
 
-    igual("EN-41 el payload SIFEN no cambia por el destino: mismo payload con el mismo cuerpo y el domicilio fiscal del receptor (dDirRec) sigue siendo el fiscal, nunca el destino", [JSON.stringify(prepB.payload) === JSON.stringify(prepB2.payload), (prepB.payload as unknown as Record<string, unknown>).dDirRec, JSON.stringify({ ...(prepB.payload as unknown as Record<string, unknown>), dInfAdic: null }).includes("Filial B1")], [true, "Domicilio FISCAL c2", false]);   // E1: el destino solo viaja como línea de dInfAdic (J003), nunca en los datos fiscales
+    igual("EN-41 (PRO-328, sustituye la regla E04 anterior) mismo cuerpo, mismo payload; en una FE nueva el domicilio del receptor (dDirRec) es la dirección SELECCIONADA, nunca el fiscal, y el dInfAdic ya no la repite", [JSON.stringify(prepB.payload) === JSON.stringify(prepB2.payload), (prepB.payload as unknown as Record<string, unknown>).dDirRec, String((prepB.payload as unknown as Record<string, unknown>).dInfAdic ?? "").includes("Dirección de entrega:")], [true, B1.direccion, false]);
   }
   {
     const m = mundo();
     const c = cuerpo(CLI_A, { direccionEntregaId: A1.id }, "clave-doble-clic-01");
     const prep = await prepararFactura(m.db, EMPRESA, USUARIO, c);
     const plan = await planificarStock(m.db, EMPRESA, USUARIO, SUC, prep.lineasStock);
-    const [x, y] = await Promise.all([crearFacturaElectronica(m.db, EMPRESA, USUARIO, { ...c, repartoHuella: plan.huella }), crearFacturaElectronica(m.db, EMPRESA, USUARIO, { ...c, repartoHuella: plan.huella })]);
+    const [x, y] = await Promise.all([crearFacturaElectronica(m.db, EMPRESA, USUARIO, { ...c, repartoHuella: plan.huella, receptorHuella: prep.resumen.receptorHuella }), crearFacturaElectronica(m.db, EMPRESA, USUARIO, { ...c, repartoHuella: plan.huella, receptorHuella: prep.resumen.receptorHuella })]);
 
     igual("EN-42 doble clic con la misma clave: una FE y un solo destino guardado; la repetición no toca el destino original", [[x.reutilizado, y.reutilizado].sort(), m.docs.size, m.entregas.length], [[false, true], 1, 1]);
 
@@ -343,7 +344,7 @@ export async function verificarCasosEntregaE04(): Promise<string[]> {
     const prep = await prepararFactura(m.db, EMPRESA, USUARIO, c);
     const plan = await planificarStock(m.db, EMPRESA, USUARIO, SUC, prep.lineasStock);
 
-    await crearFacturaElectronica(m.db, EMPRESA, USUARIO, { ...c, repartoHuella: plan.huella });
+    await crearFacturaElectronica(m.db, EMPRESA, USUARIO, { ...c, repartoHuella: plan.huella, receptorHuella: prep.resumen.receptorHuella });
 
     const antes = JSON.stringify(m.entregas);
 
@@ -351,7 +352,7 @@ export async function verificarCasosEntregaE04(): Promise<string[]> {
     RAW[CLI_E] = RAW[CLI_E].filter((d) => d.op.id !== elegida.id);
     igual("EN-70 tras eliminar la dirección usada en una FE: la lista del cliente ya no la ofrece (4 restantes), pero el destino histórico y su fotografía de la FE siguen EXACTAMENTE iguales", [elegiblesDe(CLI_E).map((o) => o.id).includes(elegida.id), elegiblesDe(CLI_E).length, JSON.stringify(m.entregas) === antes, m.entregas[0].direccion, m.entregas[0].snapshot.etiqueta], [false, 4, true, elegida.id, "Filial 2"]);
 
-    const reintento = await crearFacturaElectronica(m.db, EMPRESA, USUARIO, { ...c, repartoHuella: plan.huella });
+    const reintento = await crearFacturaElectronica(m.db, EMPRESA, USUARIO, { ...c, repartoHuella: plan.huella, receptorHuella: prep.resumen.receptorHuella });
     const nueva = await estado(prepararFactura(m.db, EMPRESA, USUARIO, cuerpo(CLI_E, { direccionEntregaId: elegida.id }, "clave-historica-002")));
 
     igual("EN-71 el reintento de la FE original sigue siendo idempotente (misma FE, destino intacto) y una FE NUEVA con la dirección eliminada se rechaza como inválida (la validación de pertenencia sigue vigente)", [reintento.reutilizado, m.entregas.length, nueva], [true, 1, "422:" + MENSAJE_ENTREGA_INVALIDA]);
@@ -393,7 +394,7 @@ export async function verificarCasosEntregaE04(): Promise<string[]> {
     if (previo.m !== undefined) process.env.DEMO_MODE = previo.m;
     igual("EN-55 ruta real: sin base de datos configurada responde 503 sin datos", res.status, 503);
   }
-  cierto("EN-56 pantalla: controlador con efecto por cliente, destino SOLO si pertenece al cliente actual, id en el cuerpo revisado (cambia la huella), pendiente bloquea revisar, fila en el resumen previo y componente sin destinos informativo", /crearControlEntrega\(\{ cargar: \(id, signal\) => pedirOpcionesEntrega\(id, signal\) \}\)/.test(pagina) && /void entregaCtl\.seleccionarCliente\(clienteIdActual\)/.test(pagina) && /const entregaVigente = entregaEstado\.clienteId === clienteIdActual \? entregaEstado : null/.test(pagina) && /\.\.\.\(direccionEntregaId \? \{ direccionEntregaId \} : \{\}\)/.test(pagina) && /pendienteDeEntrega,/.test(pagina) && /<EntregaCliente control=\{entregaCtl\} clienteId=\{cliente\.id\} \/>/.test(pagina) && /Dirección de entrega<\/dt>/.test(pagina) && /no tiene direcciones de entrega registradas: la factura se emite igual/.test(comp) && /e\.clienteId !== clienteId/.test(comp) && /Es solo el destino de la mercadería: no cambia el domicilio fiscal/.test(comp));
+  cierto("EN-56 pantalla: controlador con efecto por cliente, destino SOLO si pertenece al cliente actual, id en el cuerpo revisado (cambia la huella), pendiente bloquea revisar, fila en el resumen previo y componente sin destinos informativo", /crearControlEntrega\(\{ cargar: \(id, signal\) => pedirOpcionesEntrega\(id, signal\) \}\)/.test(pagina) && /void entregaCtl\.seleccionarCliente\(clienteIdActual\)/.test(pagina) && /const entregaVigente = entregaEstado\.clienteId === clienteIdActual \? entregaEstado : null/.test(pagina) && /\.\.\.\(direccionEntregaId \? \{ direccionEntregaId \} : \{\}\)/.test(pagina) && /pendienteDeEntrega,/.test(pagina) && /<EntregaCliente control=\{entregaCtl\} clienteId=\{cliente\.id\} \/>/.test(pagina) && /Dirección de entrega<\/dt>/.test(pagina) && /no tiene direcciones de entrega registradas: la factura se emite igual/.test(comp) && /e\.clienteId !== clienteId/.test(comp) && /Se usa como domicilio del receptor de esta factura \(SIFEN\): no modifica la ficha del cliente/.test(comp));
   cierto("EN-57 fuera de alcance intacto: ni el payload FE, ni el cálculo, ni el stock, ni el gateway/KuDE importan el módulo de entrega", !/facturacion\/entrega/.test(leer("lib/facturacion/payload-fe.ts") + leer("lib/facturacion/stock-fe.ts") + leer("lib/facturacion/gateway.ts") + leer("lib/facturacion/calculo.ts") + leer("lib/facturacion/kude-visor.ts")));
   cierto("EN-58 documentación operativa de NEX-068: preflight, verificación, reversión y procedimiento versionados", ["scripts/preflight-NEX-068.sql", "scripts/verificar-NEX-068.sql", "scripts/reversion-NEX-068.sql", "docs/PROCEDIMIENTO-NEX-068.md"].every((f) => { try { return leer("documentacao/banco/nexit/v1/" + f).length > 200; } catch { return false; } }));
 
@@ -407,10 +408,10 @@ export async function verificarCasosEntregaE04(): Promise<string[]> {
     const sinDir = await prepararFactura(m.db, EMPRESA, USUARIO, cuerpo(CLI_C));
     const conObs = await prepararFactura(m.db, EMPRESA, USUARIO, cuerpo(CLI_A, { direccionEntregaId: A2.id, infoAdicional: "Entregar por la tarde\nPedido 123" }));
 
-    igual("E1-01 FE con la dirección A: «Dirección de entrega: sede — dirección» (la elegida y validada) y «Vendedor: nombre apellido» de la cuenta que emite, tras la marca de datos automáticos", info(eA)?.split("\n"), [M, "Dirección de entrega: " + nombreEntrega(A1) + " — " + direccionCompleta(A1), "Vendedor: Juan Pérez"]);
-    igual("E1-02 FE con la dirección B: otro destino, otra línea (no la anterior ni el domicilio fiscal)", [info(eB)?.includes(nombreEntrega(A2)), info(eB)?.includes(nombreEntrega(A1)), info(eB)?.includes("Domicilio FISCAL")], [true, false, false]);
+    igual("E1-01 (PRO-328) FE nueva con la dirección A: el dInfAdic ya NO lleva «Dirección de entrega: …»; solo la marca y «Vendedor: …»", info(eA)?.split("\n"), [M, "Vendedor: Juan Pérez"]);
+    igual("E1-02 (PRO-328) FE nueva con la dirección B: ni ese destino, ni otro, ni el domicilio fiscal aparecen en el dInfAdic", [info(eB)?.includes(nombreEntrega(A2)), info(eB)?.includes(nombreEntrega(A1)), info(eB)?.includes("Domicilio FISCAL")], [false, false, false]);
     igual("E1-03 FE sin dirección de entrega (cliente sin destinos): sin línea de dirección, solo el vendedor; no se inventa destino", [info(sinDir), (sinDir.payload as { dDirRec?: string }).dDirRec], [M + "\nVendedor: Juan Pérez", "Domicilio FISCAL c3"]);
-    igual("E1-04 las observaciones del operador se preservan íntegras (con sus saltos de línea) y los datos automáticos se añaden después de la marca, en orden estable", info(conObs)?.split("\n"), ["Entregar por la tarde", "Pedido 123", M, "Dirección de entrega: " + nombreEntrega(A2) + " — " + direccionCompleta(A2), "Vendedor: Juan Pérez"]);
+    igual("E1-04 las observaciones del operador se preservan íntegras (con sus saltos de línea) y el vendedor se añade después de la marca (PRO-328: sin línea de entrega)", info(conObs)?.split("\n"), ["Entregar por la tarde", "Pedido 123", M, "Vendedor: Juan Pérez"]);
 
     m.cuentas.set(EMPRESA + "|" + "88888888-8888-4888-8888-888888888888", { nombre: "María", apellido: "Gómez" });
 
@@ -421,7 +422,7 @@ export async function verificarCasosEntregaE04(): Promise<string[]> {
     const manual = await prepararFactura(m.db, EMPRESA, USUARIO, cuerpo(CLI_A, { direccionEntregaId: A1.id, infoAdicional: "Vendedor: Otro\nDirección de entrega: Otra casa" }));
     const lm = info(manual)?.split("\n") ?? [];
 
-    igual("E1-06 (F002) observaciones con «Vendedor: Otro» y «Dirección de entrega: Otra casa»: se preservan íntegras ANTES de la marca; la identificación autoritativa (dirección validada y vendedor autenticado) va DESPUÉS, una sola vez, y lo manual no la sustituye", [lm, lm.indexOf("Vendedor: Otro") < lm.indexOf(M), (info(manual)?.split(M)[1] ?? "").includes("Otro")], [["Vendedor: Otro", "Dirección de entrega: Otra casa", M, "Dirección de entrega: " + nombreEntrega(A1) + " — " + direccionCompleta(A1), "Vendedor: Juan Pérez"], true, false]);
+    igual("E1-06 (F002/PRO-328) observaciones con «Vendedor: Otro» y «Dirección de entrega: Otra casa»: se preservan literalmente ANTES de la marca; después solo el vendedor autoritativo, una sola vez (sin línea automática de entrega)", [lm, lm.indexOf("Vendedor: Otro") < lm.indexOf(M), (info(manual)?.split(M)[1] ?? "").includes("Otro")], [["Vendedor: Otro", "Dirección de entrega: Otra casa", M, "Vendedor: Juan Pérez"], true, false]);
     igual("E1-06b una dirección que no es del cliente se rechaza antes de reservar numeración", (await estado(prepararFactura(m.db, EMPRESA, USUARIO, cuerpo(CLI_A, { direccionEntregaId: B1.id })))).endsWith(MENSAJE_ENTREGA_INVALIDA), true);
 
     // aislamiento entre empresas: la cuenta de otra empresa no existe para esta; sin cuenta no se inventa vendedor
@@ -445,7 +446,7 @@ export async function verificarCasosEntregaE04(): Promise<string[]> {
     const c0 = cuerpo(CLI_A, { direccionEntregaId: A2.id, infoAdicional: "Nota" }, "clave-e1-reintento-01");
     const prev2 = await prepararFactura(m2.db, EMPRESA, USUARIO, c0);
     const plan2 = await planificarStock(m2.db, EMPRESA, USUARIO, SUC, prev2.lineasStock);
-    const c = { ...c0, repartoHuella: plan2.huella, infoAdicionalHuella: prev2.resumen.infoAdicionalHuella };
+    const c = { ...c0, repartoHuella: plan2.huella, infoAdicionalHuella: prev2.resumen.infoAdicionalHuella, receptorHuella: prev2.resumen.receptorHuella };
     const r1 = await crearFacturaElectronica(m2.db, EMPRESA, USUARIO, c);
     const guardada = m2.infoPorClave.get("clave-e1-reintento-01");
 
@@ -461,7 +462,7 @@ export async function verificarCasosEntregaE04(): Promise<string[]> {
 
     const reenviado = JSON.parse(String(m2.llamadas.filter((l) => /fe_documento_crear_fe_con_stock_entrega/.test(l.sql)).pop()?.p[9])) as { dInfAdic: string };
 
-    igual("E1-09 (reenvío tras cambio de nombre y de dirección) la misma clave devuelve el mismo documento, el dInfAdic reenviado es EXACTAMENTE el persistido (no se recompone) y no hay líneas duplicadas ni 409", [r1.reutilizado, r2.reutilizado, r1.documentoId === r2.documentoId, reenviado.dInfAdic === guardada, (guardada ?? "").split("\n").filter((l) => l.startsWith("Vendedor:")).length, (reenviado.dInfAdic.match(/Dirección de entrega:/g) ?? []).length, m2.llamadas.filter((l) => /fe_documento_crear_fe_con_stock_entrega/.test(l.sql)).length], [false, true, true, true, 1, 1, 2]);
+    igual("E1-09 (reenvío tras cambio de nombre y de dirección) la misma clave devuelve el mismo documento, el dInfAdic reenviado es EXACTAMENTE el persistido (no se recompone) y no hay líneas duplicadas ni 409", [r1.reutilizado, r2.reutilizado, r1.documentoId === r2.documentoId, reenviado.dInfAdic === guardada, (guardada ?? "").split("\n").filter((l) => l.startsWith("Vendedor:")).length, (reenviado.dInfAdic.match(/Dirección de entrega:/g) ?? []).length, m2.llamadas.filter((l) => /fe_documento_crear_fe_con_stock_entrega/.test(l.sql)).length], [false, true, true, true, 1, 0, 2]);
     igual("E1-10 el JSON enviado conserva exactamente el nombre dInfAdic (J003) y no introduce campos con otro nombre", [Object.keys(reenviado).filter((k) => /inf.*adic/i.test(k)), "dInfAdic" in reenviado], [["dInfAdic"], true]);
     igual("E1-11 revisar dos veces la misma factura produce el mismo texto y la misma huella (la composición no acumula)", [info(await prepararFactura(m.db, EMPRESA, USUARIO, cuerpo(CLI_A, { direccionEntregaId: A2.id, infoAdicional: "Nota" }))) === info(await prepararFactura(m.db, EMPRESA, USUARIO, cuerpo(CLI_A, { direccionEntregaId: A2.id, infoAdicional: "Nota" }))), (await prepararFactura(m.db, EMPRESA, USUARIO, cuerpo(CLI_A, { direccionEntregaId: A2.id, infoAdicional: "Nota" }))).resumen.infoAdicionalHuella === (await prepararFactura(m.db, EMPRESA, USUARIO, cuerpo(CLI_A, { direccionEntregaId: A2.id, infoAdicional: "Nota" }))).resumen.infoAdicionalHuella], [true, true]);
 
@@ -482,7 +483,7 @@ export async function verificarCasosEntregaE04(): Promise<string[]> {
     igual("E1-13 (F003) el nombre del vendedor cambió entre la previa y el envío: 409 «revise de nuevo» y NO se llega a la función de emisión (sin numeración, sin documento)", [e1, creaciones(f1), f1.docs.size], ["409:" + MENSAJE_INFO_CAMBIO, 0, 0]);
 
     const rev1b = await prepararFactura(f1.db, EMPRESA, USUARIO, cf1);
-    const ok1 = await crearFacturaElectronica(f1.db, EMPRESA, USUARIO, await conStock(f1, cf1, { infoAdicionalHuella: rev1b.resumen.infoAdicionalHuella }));
+    const ok1 = await crearFacturaElectronica(f1.db, EMPRESA, USUARIO, await conStock(f1, cf1, { infoAdicionalHuella: rev1b.resumen.infoAdicionalHuella, receptorHuella: rev1b.resumen.receptorHuella }));
 
     igual("E1-14 (F003) tras revisar de nuevo se emite con el nombre actual, una sola vez, y el payload lleva exactamente el texto revisado", [ok1.reutilizado, creaciones(f1), f1.infoPorClave.get("clave-e1-f003-nombre") === rev1b.resumen.infoAdicional, (f1.infoPorClave.get("clave-e1-f003-nombre") ?? "").includes("Vendedor: Juan Gómez")], [false, 1, true, true]);
 
@@ -495,14 +496,14 @@ export async function verificarCasosEntregaE04(): Promise<string[]> {
 
     let e2 = "";
 
-    try { e2 = await estado(crearFacturaElectronica(f2.db, EMPRESA, USUARIO, await conStock(f2, cf2, { infoAdicionalHuella: rev2.resumen.infoAdicionalHuella }))); } finally { A2.etiqueta = etiqueta2; }
+    try { e2 = await estado(crearFacturaElectronica(f2.db, EMPRESA, USUARIO, await conStock(f2, cf2, { infoAdicionalHuella: rev2.resumen.infoAdicionalHuella, receptorHuella: rev2.resumen.receptorHuella }))); } finally { A2.etiqueta = etiqueta2; }
 
-    igual("E1-15 (F003) la dirección de entrega elegida cambió de descripción (mismo id) entre la previa y el envío: 409 y sin emisión", [e2, creaciones(f2)], ["409:" + MENSAJE_INFO_CAMBIO, 0]);
+    igual("E1-15 (PRO-328) cambiar solo la ETIQUETA de la dirección elegida (mismo id, misma calle/número/códigos) ya no altera ni el dInfAdic ni el domicilio del receptor: la emisión procede una vez", [e2, creaciones(f2)], ["OK", 1]);
 
     const f3 = mundo();
     const cf3 = cuerpo(CLI_A, { direccionEntregaId: A1.id }, "clave-e1-f003-igual");
     const rev3 = await prepararFactura(f3.db, EMPRESA, USUARIO, cf3);
-    const ok3 = await crearFacturaElectronica(f3.db, EMPRESA, USUARIO, await conStock(f3, cf3, { infoAdicionalHuella: rev3.resumen.infoAdicionalHuella }));
+    const ok3 = await crearFacturaElectronica(f3.db, EMPRESA, USUARIO, await conStock(f3, cf3, { infoAdicionalHuella: rev3.resumen.infoAdicionalHuella, receptorHuella: rev3.resumen.receptorHuella }));
 
     igual("E1-16 (F003) sin cambios entre previa y envío la emisión procede normalmente (huella idéntica, un solo documento)", [ok3.reutilizado, creaciones(f3), f3.docs.size], [false, 1, 1]);
 
@@ -522,5 +523,414 @@ export async function verificarCasosEntregaE04(): Promise<string[]> {
     cierto("E1-19 las pantallas envían al emitir la huella del resumen REVISADO (no un nombre) y muestran al operador el texto de información adicional que se imprimirá", paginaFe.includes("infoAdicionalHuella: revisado.infoAdicionalHuella") && paginaFe.includes("resumen.infoAdicional ?") && paginaNce.includes("JSON.stringify({ ...c, ...(revisado?.resumen.infoAdicionalHuella") && paginaNce.includes("resumen.infoAdicional ?"));
   }
 
+  // PRO-328: la dirección seleccionada como domicilio del receptor (simulador propio del contrato NEX-074/NEX-076).
+  await casosPro328(igual, cierto);
+
   return fallos;
+}
+
+// ══ PRO-328 (P0 fiscal): la dirección SELECCIONADA es el domicilio principal del receptor en el JSON de las FE NUEVAS ══════════════════════════════════════════════════════════════════════════════════
+// Simulador PROPIO y completo del contrato (no reutiliza `mundo`, anterior a NEX-074/PRO-322): NEX-074 (vendedor), catálogo geográfico, fe_entrega_opciones (NEX-068) y NEX-076 (fe_direccion_receptor_elegida +
+// fe_documento_crear_fe_receptor: comparación bajo bloqueo con el payload, fotografía de la MISMA dirección e identidad del reintento por UUID). El SQL de NEX-076 se verifica de forma estructural y NO se ejecutó.
+const VEND_328 = "77777777-7777-4777-8777-777777777777";
+const CLI_P = "e1e1e1e1-e1e1-4e1e-8e1e-e1e1e1e1e1e1"; // PY, B2B, con destinos (uno predeterminado)
+const CLI_S = "e2e2e2e2-e2e2-4e2e-8e2e-e2e2e2e2e2e2"; // sin destinos
+const CLI_N = "e3e3e3e3-e3e3-4e3e-8e3e-e3e3e3e3e3e3"; // con destinos, sin predeterminado
+const CLI_X = "e4e4e4e4-e4e4-4e4e-8e4e-e4e4e4e4e4e4"; // B2F (exterior)
+const OTRA_EMPRESA_328 = "22222222-2222-4222-8222-222222222222";
+const d328 = (n: number) => "d3280000-0000-4000-8000-" + String(n).padStart(12, "0");
+
+type Dir328 = { id: string; cliente: string; tipo: string; esFiscal: boolean; esDefault: boolean; etiqueta: string; pais: string; direccion: string; numeroCasa: string | null; dep: number | null; dis: number | null; ciu: number | null; departamento: string; ciudad: string; revocada?: boolean };
+
+const base328 = (id: string, cliente: string, extra: Partial<Dir328> = {}): Dir328 => ({ id, cliente, tipo: "SUCURSAL", esFiscal: false, esDefault: false, etiqueta: "Sucursal Luque", pais: "PRY", direccion: "Avda. Gral. Aquino", numeroCasa: "1500", dep: 11, dis: 5, ciu: 3, departamento: "Central", ciudad: "Luque", ...extra });
+const DP1 = d328(1), DP2 = d328(2), DP3 = d328(3), DP4 = d328(4), DP5 = d328(5), DP6 = d328(6), DP7 = d328(7), DPF = d328(8), DN1 = d328(21), DN2 = d328(22), DX1 = d328(31), DX2 = d328(32);
+const dirs328 = (): Dir328[] => [
+  base328(DP1, CLI_P, { esDefault: true }),
+  base328(DP2, CLI_P, { etiqueta: "Sin número", numeroCasa: null }),
+  base328(DP3, CLI_P, { etiqueta: "Número S/N", numeroCasa: "S/N" }),
+  base328(DP4, CLI_P, { etiqueta: "Sin ciudad", ciu: null }),
+  base328(DP5, CLI_P, { etiqueta: "Geografía ajena", ciu: 9 }),
+  base328(DP6, CLI_P, {}), // MISMO texto que DP1, otro UUID
+  base328(DP7, CLI_P, { etiqueta: "Argentina", pais: "ARG" }),
+  base328(DPF, CLI_P, { tipo: "FISCAL", esFiscal: true, etiqueta: "Fiscal" }), // no elegible
+  base328(DN1, CLI_N, { etiqueta: "Norte" }),
+  base328(DN2, CLI_N, { etiqueta: "Sur" }),
+  base328(DX1, CLI_X, { esDefault: true, etiqueta: "São Paulo", pais: "BRA", direccion: "Rua das Flores", numeroCasa: "200", dep: null, dis: null, ciu: null }),
+  base328(DX2, CLI_X, { etiqueta: "Asunción", pais: "PRY", direccion: "Calle PY", numeroCasa: "10", dep: 1, dis: 1, ciu: 1 }),
+];
+const PAISES_328: Record<string, string> = { PRY: "Paraguay", ARG: "Argentina", BRA: "Brasil" };
+const GEO_328: Record<string, string> = { "1": "CAPITAL", "1|1": "ASUNCIÓN", "1|1|1": "ASUNCIÓN", "11": "CENTRAL", "11|5": "LUQUE", "11|5|3": "LUQUE" };
+const fila328 = (id: string) =>
+  id === CLI_X
+    ? { codigo: "CLI-X", naturaleza_receptor: 2, tipo_operacion: 4, tipo_contribuyente_sifen: null, pais_codigo: "ARG", tipo_documento_identidad_sifen: 3, descripcion_documento_identidad: null, numero_documento: "AB123456", dv: null, razon_social: "CLIENTE EXTERIOR SA", nombre_fantasia: null, email: null, email_copia: null, email_facturacion: null, telefono: null, celular: null, telefono_ddi: null, celular_ddi: null, activo: true, bloqueado_ventas: false, direccion: "Av. Corrientes FISCAL", numero_casa: "300", departamento_codigo: null, distrito_codigo: null, ciudad_codigo: null }
+    : { codigo: "CLI-" + id.slice(0, 2), naturaleza_receptor: 1, tipo_operacion: 1, tipo_contribuyente_sifen: 2, pais_codigo: "PRY", tipo_documento_identidad_sifen: null, descripcion_documento_identidad: null, numero_documento: "80000005", dv: "6", razon_social: "CLIENTE " + id.slice(0, 2), nombre_fantasia: null, email: null, email_copia: null, email_facturacion: null, telefono: null, celular: null, telefono_ddi: null, celular_ddi: null, activo: true, bloqueado_ventas: false, direccion: "Domicilio FISCAL", numero_casa: "999", departamento_codigo: "1", distrito_codigo: "1", ciudad_codigo: "1" };
+const producto328 = { id: P1, codigo: "P-1", controlaStock: false, descripcion: "Producto P-1", unidadSifen: 77, unidadSimbolo: "UNI", unidadNombre: "Unidad", unidadVigente: true, afectacion: 1, proporcion: null, tasa: 10, precio: "11000", monedaPrecio: "PYG", gtin: null };
+
+type Doc328 = { id: string; numero: string; cliente: string; payload: Record<string, unknown>; vendedor: string };
+
+function mundo328(o: { nex076?: boolean } = {}) {
+  const estado = { nex076: o.nex076 ?? true, antesDeBloquear: null as null | (() => void) };
+  const dirs = dirs328();
+  const llamadas: Array<{ sql: string; p: unknown[] }> = [];
+  const docs = new Map<string, Doc328>();
+  const entregas = new Map<string, { direccionId: string; snapshot: Record<string, unknown> }>();
+  let secuencia = 0;
+  const filas = (rows: unknown[]) => ({ rows, rowCount: rows.length });
+  const elegible = (d: Dir328) => d.esDefault || (!d.esFiscal && d.tipo !== "FISCAL");
+  const deCliente = (empresa: unknown, cliente: unknown) => (empresa === EMPRESA ? dirs.filter((d) => d.cliente === cliente && elegible(d)) : []);
+  const err = (detail: string, mensaje: string) => Object.assign(new Error(mensaje), { code: "P0001", detail });
+  // Espejo de la comparación de fe_documento_crear_fe_receptor (NEX-076) entre la fila bloqueada y el receptor del payload.
+  const coincide = (d: Dir328, pl: Record<string, unknown>) => {
+    const num = (d.numeroCasa ?? "").trim();
+
+    if (pl.cPaisRec !== d.pais || pl.dDirRec !== d.direccion.trim() || !/^[0-9]{1,6}$/.test(num) || String(pl.dNumCasRec) !== String(Number(num))) return false;
+
+    return String(pl.iTiOpe) === "4" ? !("cDepRec" in pl) && !("cDisRec" in pl) && !("cCiuRec" in pl) : String(pl.cDepRec) === String(d.dep) && String(pl.cDisRec) === String(d.dis) && String(pl.cCiuRec) === String(d.ciu);
+  };
+  const crear = (p: unknown[], conReceptor: boolean) => {
+    const clave = String(p[4]);
+    const cliente = String(p[5]);
+    const payload = JSON.parse(String(p[9])) as Record<string, unknown>;
+    const dir = (p[12] as string | null) ?? null;
+    const previo = docs.get(clave);
+
+    if (!previo && dir !== null && conReceptor) {
+      estado.antesDeBloquear?.();
+
+      const d = deCliente(p[0], cliente).find((x) => x.id === dir && !x.revocada);
+
+      if (!d) throw err("NEX:ENTREGA_INVALIDA", "la dirección de entrega no pertenece al cliente de la factura o ya no está disponible");
+      if (!coincide(d, payload)) throw err("NEX:ENTREGA_INVALIDA", "la dirección seleccionada cambió o no coincide con el receptor revisado");
+    }
+    if (previo) {
+      if (previo.vendedor !== String(p[13])) throw err("NEX:IDEMPOTENCIA_CONFLICTO", "la clave de idempotencia ya se usó con otro vendedor");
+      if (conReceptor && (entregas.get(previo.id)?.direccionId ?? null) !== dir) throw err("NEX:IDEMPOTENCIA_CONFLICTO", "la clave de idempotencia ya se usó con otra dirección seleccionada");
+
+      return { documentoId: previo.id, numero: previo.numero, reutilizado: true };
+    }
+
+    const elegibles = deCliente(p[0], cliente);
+
+    if (dir === null && elegibles.length > 0) throw err("NEX:ENTREGA_REQUERIDA", "el cliente tiene direcciones de entrega registradas: seleccione una");
+
+    const d = dir === null ? null : elegibles.find((x) => x.id === dir) ?? null;
+
+    if (dir !== null && !d) throw err("NEX:ENTREGA_INVALIDA", "la dirección de entrega no pertenece al cliente de la factura o ya no está disponible");
+    secuencia += 1;
+
+    const id = "d0328000-0000-4000-8000-" + String(secuencia).padStart(12, "0");
+
+    docs.set(clave, { id, numero: String(90000 + secuencia), cliente, payload, vendedor: String(p[13]) });
+    if (d) entregas.set(id, { direccionId: d.id, snapshot: { etiqueta: d.etiqueta, direccion: d.direccion, numeroCasa: d.numeroCasa, pais: d.pais } });
+
+    return { documentoId: id, numero: String(90000 + secuencia), reutilizado: false };
+  };
+  const db = {
+    async query(sql: string, p: unknown[] = []) {
+      llamadas.push({ sql, p });
+      if (/to_regprocedure\('public\.fe_documento_crear_fe_receptor/.test(sql)) return filas([{ ok: estado.nex076 }]);
+      if (/to_regprocedure/.test(sql)) return filas([{ ok: true }]);
+      if (/FROM fe_documento_crear_fe_receptor\(/.test(sql)) {
+        if (!estado.nex076) throw Object.assign(new Error("function fe_documento_crear_fe_receptor does not exist"), { code: "42883" });
+        return filas([crear(p, true)]);
+      }
+      if (/FROM fe_documento_crear_fe_vendedor\(/.test(sql)) return filas([crear(p, false)]);
+      if (/FROM fe_direccion_receptor_elegida/.test(sql)) {
+        if (!estado.nex076) throw Object.assign(new Error("function fe_direccion_receptor_elegida does not exist"), { code: "42883" });
+
+        const d = deCliente(p[0], p[2]).find((x) => x.id === p[3] && !x.revocada);
+
+        return filas(d ? [{ id: d.id, pais: d.pais, direccion: d.direccion, numeroCasa: d.numeroCasa, departamento: d.dep, distrito: d.dis, ciudad: d.ciu }] : []);
+      }
+      if (/FROM fe_entrega_opciones/.test(sql)) {
+        return filas(deCliente(p[0], p[2]).map((d) => ({ id: d.id, tipo: d.tipo, etiqueta: d.etiqueta, descripcion: "", direccion: d.direccion, numeroCasa: d.numeroCasa ?? "", complemento: "", departamento: d.departamento, distrito: "", ciudad: d.ciudad, pais: d.pais, contactoNombre: "", contactoTelefono: "", horario: "", esDefault: d.esDefault })).sort((a, b) => Number(b.esDefault) - Number(a.esDefault)));
+      }
+      if (/FROM clientes c\s+LEFT JOIN LATERAL/.test(sql)) return filas(p[0] === EMPRESA ? [fila328(String(p[1]))] : []);
+      if (/FROM clientes c WHERE c\.empresa_id/.test(sql)) return filas([]); // aptitud sin fila: no se reevalúa aquí (cubierta en sus propios casos)
+      if (/FROM direcciones_cliente d\s+WHERE/.test(sql)) return filas([]);
+      if (/FROM referencia_geografica_paises WHERE codigo = \$1/.test(sql)) return filas(PAISES_328[String(p[0])] ? [{ codigo: p[0], nombre: PAISES_328[String(p[0])] }] : []);
+      if (/FROM referencia_geografica_paises WHERE activo/.test(sql)) return filas(Object.keys(PAISES_328).map((codigo) => ({ codigo })));
+      if (/referencia_geografica_departamentos d WHERE d\.codigo/.test(sql)) {
+        const [a, b, c] = p.map(String);
+
+        return filas([{ dep: a in GEO_328, dis: `${a}|${b}` in GEO_328, ciu: `${a}|${b}|${c}` in GEO_328, depNombre: GEO_328[a] ?? null, disNombre: GEO_328[`${a}|${b}`] ?? null, ciuNombre: GEO_328[`${a}|${b}|${c}`] ?? null }]);
+      }
+      if (/FROM productos p/.test(sql)) return filas([producto328]);
+      if (/FROM sucursales sc JOIN empresas e/.test(sql)) return filas([{ empresa: "EMPRESA SINTETICA", sucursal: "Casa Central", establecimiento: "001", punto: "002", puntoNombre: "Punto 002" }]);
+      if (/FROM usuarios u\s+JOIN usuario_perfil/.test(sql)) return filas(p[0] === EMPRESA && p[1] === VEND_328 ? [{ id: VEND_328, usuario: "ana", nombre: "Ana", apellido: "Vendedora", email: "", estado: "ACTIVO" }] : []);
+      if (/SELECT 1 AS ok FROM documentos_electronicos WHERE/.test(sql)) return filas(p[0] === EMPRESA && docs.has(String(p[1])) ? [{ ok: 1 }] : []);
+      if (/FROM documento_electronico_solicitudes s\s+JOIN documentos_electronicos d/.test(sql)) {
+        const d = docs.get(String(p[1]));
+
+        return filas(d ? [{ payload: d.payload, clienteId: d.cliente, sucursalId: SUC, puntoId: PUNTO, fecha: "", vendedorId: d.vendedor }] : []);
+      }
+      if (/FROM documentos_electronicos d JOIN documento_electronico_solicitudes s/.test(sql)) {
+        const d = docs.get(String(p[1]));
+
+        return filas(d ? [{ info: typeof d.payload.dInfAdic === "string" ? d.payload.dInfAdic : null }] : []);
+      }
+
+      return filas([]);
+    },
+  } as never;
+
+  return { db, llamadas, docs, entregas, dirs, estado, secuencia: () => secuencia, dir: (id: string) => dirs.find((d) => d.id === id) as Dir328 };
+}
+
+async function casosPro328(igual: (nombre: string, obtenido: unknown, esperado: unknown) => void, cierto: (nombre: string, c: boolean) => void) {
+  const M = MARCA_AUTOMATICA;
+  const cuerpo328 = (cliente: string, extra: Record<string, unknown> = {}, clave = "clave-pro328-0001"): CuerpoFactura =>
+    leerCuerpoFactura({ claveIdempotencia: clave, sucursalId: SUC, puntoId: PUNTO, clienteId: cliente, vendedorId: VEND_328, tipoTransaccion: 1, presencia: 1, pagos: [{ tipo: 1 }], infoAdicional: "", lineas: [{ productoId: P1, cantidad: "2", precio: null }], ...extra }) as CuerpoFactura;
+  const pl = (x: { payload: unknown }) => x.payload as unknown as Record<string, unknown>;
+  const domicilio = (x: { payload: unknown }) => ["cPaisRec", "dDirRec", "dNumCasRec", "cDepRec", "cDisRec", "cCiuRec"].map((k) => (k in pl(x) ? pl(x)[k] : "∅"));
+  const resultado = async (p: Promise<unknown>): Promise<Record<string, unknown>> => {
+    try {
+      await p;
+
+      return { ok: true };
+    } catch (e) {
+      if (e instanceof ErrorValidacionFiscal) return { estado: e.estado, mensaje: e.message, detalles: e.detalles };
+      if (e instanceof ErrorFacturacion) return { estado: e.estado, mensaje: e.message };
+
+      return { detail: (e as { detail?: string }).detail ?? String((e as Error).message) };
+    }
+  };
+  const creaciones = (w: ReturnType<typeof mundo328>) => w.llamadas.filter((l) => /FROM fe_documento_crear_fe_(receptor|vendedor)\(/.test(l.sql)).length;
+  const lecturas = (w: ReturnType<typeof mundo328>) => w.llamadas.filter((l) => /FROM fe_direccion_receptor_elegida/.test(l.sql)).length;
+  const revisarYEmitir = async (w: ReturnType<typeof mundo328>, c: CuerpoFactura) => {
+    const prev = await prepararFactura(w.db, EMPRESA, USUARIO, c);
+
+    return crearFacturaElectronica(w.db, EMPRESA, USUARIO, { ...c, infoAdicionalHuella: prev.resumen.infoAdicionalHuella, receptorHuella: prev.resumen.receptorHuella });
+  };
+  const enviado = (w: ReturnType<typeof mundo328>) => JSON.parse(String(w.llamadas.filter((l) => /FROM fe_documento_crear_fe_(receptor|vendedor)\(/.test(l.sql)).pop()?.p[9] ?? "{}")) as Record<string, unknown>;
+
+  // ── A. FE nueva, Paraguay, destino válido ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+  {
+    const w = mundo328();
+    const prev = await prepararFactura(w.db, EMPRESA, USUARIO, cuerpo328(CLI_P, { direccionEntregaId: DP1 }));
+
+    igual("PRO328-01 FE nueva PY con destino válido: cPaisRec, dDirRec, dNumCasRec, cDepRec, cDisRec y cCiuRec son EXACTAMENTE los de la dirección seleccionada (misma fila, códigos oficiales)", domicilio(prev), ["PRY", "Avda. Gral. Aquino", 1500, 11, 5, 3]);
+    igual("PRO328-02 la dirección fiscal del cliente (Domicilio FISCAL 999, 1/1/1) no contamina ningún campo del receptor ni del payload", [JSON.stringify(pl(prev)).includes("Domicilio FISCAL"), JSON.stringify(pl(prev)).includes("999")], [false, false]);
+    igual("PRO328-03 la identidad del receptor no cambia (RUC, DV, nombre, tipo de operación del cliente)", [pl(prev).dRucRec, pl(prev).dDVRec, pl(prev).dNomRec, pl(prev).iTiOpe], ["80000005", 6, "CLIENTE e1", 1]);
+    igual("PRO328-04 la revisión muestra el domicilio que REALMENTE irá en el JSON (desde el servidor): origen, calle, número, códigos y nombres oficiales; con su huella SHA-256", [prev.resumen.receptorDomicilio, /^[0-9a-f]{64}$/.test(prev.resumen.receptorHuella)], [{ origen: "SELECCIONADA", pais: "PRY", direccion: "Avda. Gral. Aquino", numeroCasa: "1500", departamento: "11", distrito: "5", ciudad: "3", nombres: { pais: "Paraguay", departamento: "CENTRAL", distrito: "LUQUE", ciudad: "LUQUE" } }, true]);
+    igual("PRO328-05 los códigos se leen de la función autorizada de NEX-076 con empresa, usuario, cliente y UUID de la sesión (el navegador solo envía el UUID)", w.llamadas.filter((l) => /FROM fe_direccion_receptor_elegida/.test(l.sql)).map((l) => l.p), [[EMPRESA, USUARIO, CLI_P, DP1]]);
+    igual("PRO328-06 la revisión no escribe ni reserva nada", [creaciones(w), w.docs.size, w.secuencia()], [0, 0, 0]);
+  }
+
+  // ── B. dInfAdic de las FE nuevas: observaciones íntegras + vendedor COMERCIAL, NUNCA la línea automática de entrega ──────────────────────────────────────────
+  {
+    const w = mundo328();
+    const conObs = await prepararFactura(w.db, EMPRESA, USUARIO, cuerpo328(CLI_P, { direccionEntregaId: DP1, infoAdicional: "Entregar por la tarde\nPedido 123" }));
+    const manual = await prepararFactura(w.db, EMPRESA, USUARIO, cuerpo328(CLI_P, { direccionEntregaId: DP1, infoAdicional: "Dirección de entrega: Portón 2" }));
+    const sinObs = await prepararFactura(w.db, EMPRESA, USUARIO, cuerpo328(CLI_P, { direccionEntregaId: DP1 }));
+
+    igual("PRO328-10 FE nueva con observaciones y vendedor: dInfAdic = observaciones íntegras + marca + «Vendedor: …» comercial; NO hay «Dirección de entrega: …» automática", String(pl(conObs).dInfAdic).split("\n"), ["Entregar por la tarde", "Pedido 123", M, "Vendedor: Ana Vendedora"]);
+    igual("PRO328-11 si el operador escribe «Dirección de entrega: …» en las observaciones se preserva literalmente (antes de la marca) y no se agrega ninguna otra", String(pl(manual).dInfAdic).split("\n"), ["Dirección de entrega: Portón 2", M, "Vendedor: Ana Vendedora"]);
+    igual("PRO328-12 sin observaciones: solo la marca y el vendedor (la marca existe porque hay una línea automática: el vendedor); la previa muestra exactamente ese texto con su huella", [String(pl(sinObs).dInfAdic), sinObs.resumen.infoAdicional === pl(sinObs).dInfAdic, sinObs.resumen.infoAdicionalHuella === huellaInfoAdicional(String(pl(sinObs).dInfAdic))], [M + "\nVendedor: Ana Vendedora", true, true]);
+    igual("PRO328-13 composición pura de FE nueva (sin entrega) y parser legado intacto: el texto de una FE ANTIGUA con la línea automática sigue reconociéndose, sin derivar de él la identidad del destino", [componerInfoAdicional({ observaciones: "Obs", vendedor: "Vendedor: Ana Vendedora" }), descomponerInfoAdicional("Obs\n" + M + "\nDirección de entrega: Sucursal Luque — Avda. Gral. Aquino 1500\nVendedor: Ana Vendedora")], ["Obs\n" + M + "\nVendedor: Ana Vendedora", { observacion: "Obs", entrega: "Dirección de entrega: Sucursal Luque — Avda. Gral. Aquino 1500", vendedor: "Vendedor: Ana Vendedora" }]);
+    igual("PRO328-14 límite de 5000 caracteres sobre el texto final (observaciones + vendedor), sin recortar", [(await resultado(prepararFactura(w.db, EMPRESA, USUARIO, cuerpo328(CLI_P, { direccionEntregaId: DP1, infoAdicional: "x".repeat(5000 - ("\n" + M + "\nVendedor: Ana Vendedora").length + 1) })))).estado, String(pl(await prepararFactura(w.db, EMPRESA, USUARIO, cuerpo328(CLI_P, { direccionEntregaId: DP1, infoAdicional: "y".repeat(5000 - ("\n" + M + "\nVendedor: Ana Vendedora").length) }))).dInfAdic).length], [422, 5000]);
+  }
+
+  // ── C. Sin destinos registrados / con destinos sin elegir / destinos ajenos ─────────────────────────────────────────────────────────────────────────────
+  {
+    const w = mundo328();
+    const sin = await prepararFactura(w.db, EMPRESA, USUARIO, cuerpo328(CLI_S, { infoAdicional: "Nota" }));
+
+    igual("PRO328-20 cliente SIN destinos: domicilio FISCAL original, sin línea «Dirección de entrega», sin bloquear y sin leer NEX-076", [domicilio(sin), String(pl(sin).dInfAdic), sin.resumen.receptorDomicilio.origen, sin.entrega, lecturas(w)], [["PRY", "Domicilio FISCAL", 999, 1, 1, 1], "Nota\n" + M + "\nVendedor: Ana Vendedora", "FISCAL", null, 0]);
+
+    const sinMig = mundo328({ nex076: false });
+    const okSinMig = await revisarYEmitir(sinMig, cuerpo328(CLI_S, {}, "clave-pro328-sin-mig"));
+
+    igual("PRO328-21 sin destinos y SIN NEX-076 la FE sigue emitiéndose con el domicilio fiscal (vía de NEX-074), sin exigir crear destinos", [okSinMig.reutilizado, sinMig.llamadas.some((l) => /FROM fe_documento_crear_fe_vendedor\(/.test(l.sql)), enviado(sinMig).dDirRec], [false, true, "Domicilio FISCAL"]);
+
+    const n = await resultado(prepararFactura(w.db, EMPRESA, USUARIO, cuerpo328(CLI_N)));
+
+    igual("PRO328-22 con destinos pero sin elegir: error legible (422) y nada se emite", [n, creaciones(w)], [{ estado: 422, mensaje: MENSAJE_ENTREGA_REQUERIDA }, 0]);
+
+    const ajeno = await resultado(prepararFactura(w.db, EMPRESA, USUARIO, cuerpo328(CLI_P, { direccionEntregaId: DN1 })));
+    const noElegible = await resultado(prepararFactura(w.db, EMPRESA, USUARIO, cuerpo328(CLI_P, { direccionEntregaId: DPF })));
+    const otraEmpresa = await resultado(prepararFactura(w.db, OTRA_EMPRESA_328, USUARIO, cuerpo328(CLI_P, { direccionEntregaId: DP1 })));
+
+    igual("PRO328-23 destino de OTRO cliente o no elegible (domicilio exclusivamente fiscal): rechazo 422 sin filtrar datos de la dirección", [ajeno, noElegible, JSON.stringify([ajeno, noElegible]).includes("Avda.")], [{ estado: 422, mensaje: MENSAJE_ENTREGA_INVALIDA }, { estado: 422, mensaje: MENSAJE_ENTREGA_INVALIDA }, false]);
+    igual("PRO328-24 otra empresa: el cliente y sus direcciones no existen para ella (rechazo, sin datos ajenos ni emisión)", [otraEmpresa.ok === true, JSON.stringify(otraEmpresa).includes("Avda."), creaciones(w)], [false, false, 0]);
+
+    w.dir(DP1).revocada = true; // sigue en la lista vista por la pantalla, pero la función autorizada ya no la devuelve (revocada/inactiva entre la carga y la previa)
+
+    const revocada = await resultado(prepararFactura(w.db, EMPRESA, USUARIO, cuerpo328(CLI_P, { direccionEntregaId: DP1 })));
+
+    igual("PRO328-25 dirección revocada o inactiva durante la preparación: 422 «ya no está disponible», nunca el domicilio fiscal en su lugar", [revocada, creaciones(w)], [{ estado: 422, mensaje: MENSAJE_ENTREGA_INVALIDA }, 0]);
+  }
+
+  // ── D. Dirección seleccionada inválida: 422 por campo, nada se completa con el fiscal ────────────────────────────────────────────────────────────────────
+  {
+    const w = mundo328();
+    const r = async (id: string) => resultado(prepararFactura(w.db, EMPRESA, USUARIO, cuerpo328(CLI_P, { direccionEntregaId: id })));
+    const sinNumero = await r(DP2);
+    const noNumerico = await r(DP3);
+    const sinCiudad = await r(DP4);
+    const geoAjena = await r(DP5);
+    const paisAjeno = await r(DP7);
+    const SEL = "La dirección seleccionada no es válida para la factura: corríjala en Clientes → Direcciones.";
+
+    igual("PRO328-30 sin número de casa: 422 que nombra la dirección seleccionada (D218); no se toma el 999 del fiscal ni se pone 0", [sinNumero.estado, sinNumero.mensaje, sinNumero.detalles], [422, SEL, ["La dirección seleccionada para la factura requiere un número de casa numérico de 1 a 6 dígitos (D218). Corríjalo en Clientes; no se reemplaza por 0."]]);
+    igual("PRO328-31 número no numérico (S/N): mismo rechazo", [noNumerico.estado, noNumerico.detalles], [422, ["La dirección seleccionada para la factura requiere un número de casa numérico de 1 a 6 dígitos (D218). Corríjalo en Clientes; no se reemplaza por 0."]]);
+    igual("PRO328-32 falta el código de ciudad: 422 (D223); el código 1 del fiscal NO completa el hueco", [sinCiudad.estado, sinCiudad.detalles], [422, ["La dirección seleccionada para la factura requiere una ciudad válida (D223, NT 003)."]]);
+    igual("PRO328-33 geografía fuera de la jerarquía oficial (ciudad 9 inexistente en 11/5): 422 con el nivel exacto y la indicación de corregir la seleccionada", geoAjena, { estado: 422, mensaje: "La ciudad de la dirección seleccionada para la factura no corresponde al departamento y distrito indicados. Corrija la dirección seleccionada en Clientes → Direcciones antes de facturar (no se reemplaza por el domicilio fiscal)." });
+    igual("PRO328-34 país extranjero en una operación B2B: 422 (D203) sin cambiar iTiOpe ni la naturaleza del receptor", [paisAjeno.estado, paisAjeno.detalles], [422, ["En operaciones B2B, B2C y B2G el país del receptor debe ser Paraguay (D203): revise el país de la dirección seleccionada."]]);
+    igual("PRO328-35 ningún rechazo llega a emitir, numerar o descontar stock", [creaciones(w), w.secuencia()], [0, 0]);
+
+    const fiscal = erroresDomicilioReceptor({ codigo: "C", naturaleza: 1, tipoOperacion: 1, tipoContribuyente: 2, pais: "PRY", ruc: "80000005", dv: "6", tipoDocumentoIdentidad: null, descripcionTipoDocumento: "", numeroDocumento: "", razonSocial: "CLIENTE", nombreFantasia: "", direccion: "", numeroCasa: "", departamento: "", distrito: "", ciudad: "", telefono: "", celular: "", email: "", emailCopia: "", emailFacturacion: "" });
+    const seleccionadaVacia = erroresDomicilioReceptor({ codigo: "C", naturaleza: 1, tipoOperacion: 1, tipoContribuyente: 2, pais: "PRY", ruc: "80000005", dv: "6", tipoDocumentoIdentidad: null, descripcionTipoDocumento: "", numeroDocumento: "", razonSocial: "CLIENTE", nombreFantasia: "", direccion: "", numeroCasa: "", departamento: "", distrito: "", ciudad: "", telefono: "", celular: "", email: "", emailCopia: "", emailFacturacion: "", origenDomicilio: "SELECCIONADA" });
+
+    igual("PRO328-36 regla fiscal intacta: un domicilio FISCAL totalmente vacío sigue admitido; una dirección SELECCIONADA vacía nunca (se envía completa o no se emite)", [fiscal, seleccionadaVacia.length], [[], 5]);
+  }
+
+  // ── E. B2F ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  {
+    const w = mundo328();
+    const ok = await prepararFactura(w.db, EMPRESA, USUARIO, cuerpo328(CLI_X, { direccionEntregaId: DX1 }));
+    const py = await resultado(prepararFactura(w.db, EMPRESA, USUARIO, cuerpo328(CLI_X, { direccionEntregaId: DX2 })));
+
+    igual("PRO328-40 B2F con destino extranjero: país, calle y número de la dirección seleccionada, SIN geografía paraguaya (ni del destino ni del fiscal)", domicilio(ok), ["BRA", "Rua das Flores", 200, "∅", "∅", "∅"]);
+    igual("PRO328-41 B2F con una dirección seleccionada en Paraguay: 422 (D203), sin cambiar el tipo de operación", [py.estado, py.detalles, pl(ok).iTiOpe], [422, ["En una operación B2F el país del receptor debe ser distinto de Paraguay (D203): revise el país de la dirección seleccionada."], 4]);
+  }
+
+  // ── F. Emisión atómica y cambios entre la previa y el envío ─────────────────────────────────────────────────────────────────────────────────────────────
+  {
+    const w = mundo328();
+    const c = cuerpo328(CLI_P, { direccionEntregaId: DP1, infoAdicional: "Pedido 9" }, "clave-pro328-emision");
+    const creado = await revisarYEmitir(w, c);
+    const llamada = w.llamadas.find((l) => /FROM fe_documento_crear_fe_receptor\(/.test(l.sql));
+    const doc = w.docs.get("clave-pro328-emision");
+
+    igual("PRO328-50 la emisión usa fe_documento_crear_fe_receptor (NEX-076) con el UUID de la dirección y el vendedor; crea UNA FE", [creado.reutilizado, llamada?.p[12], llamada?.p[13], w.docs.size, w.secuencia()], [false, DP1, VEND_328, 1, 1]);
+    igual("PRO328-51 el JSON creado lleva como receptor la dirección validada, y la fotografía logística es de la MISMA dirección (UUID) con la misma calle/número/país", [domicilio({ payload: doc?.payload }), w.entregas.get(String(doc?.id))?.direccionId, w.entregas.get(String(doc?.id))?.snapshot.direccion, w.entregas.get(String(doc?.id))?.snapshot.numeroCasa], [["PRY", "Avda. Gral. Aquino", 1500, 11, 5, 3], DP1, "Avda. Gral. Aquino", "1500"]);
+    igual("PRO328-52 el dInfAdic creado no tiene la línea automática de entrega", String(doc?.payload.dInfAdic).includes("Dirección de entrega:"), false);
+  }
+  {
+    const w = mundo328();
+    const c = cuerpo328(CLI_P, { direccionEntregaId: DP1 }, "clave-pro328-editada");
+    const prev = await prepararFactura(w.db, EMPRESA, USUARIO, c);
+
+    w.dir(DP1).numeroCasa = "1600"; // Clientes → Direcciones edita la MISMA fila después de la previa
+
+    const r = await resultado(crearFacturaElectronica(w.db, EMPRESA, USUARIO, { ...c, infoAdicionalHuella: prev.resumen.infoAdicionalHuella, receptorHuella: prev.resumen.receptorHuella }));
+
+    igual("PRO328-53 dirección editada entre la previa y la emisión: 409 «revise de nuevo» aunque la huella del dInfAdic siga igual; no se llega a la emisión (sin FE, número ni stock)", [r, creaciones(w), w.docs.size, w.secuencia()], [{ estado: 409, mensaje: MENSAJE_RECEPTOR_CAMBIO }, 0, 0, 0]);
+
+    const sinHuella = await resultado(crearFacturaElectronica(w.db, EMPRESA, USUARIO, { ...c, infoAdicionalHuella: prev.resumen.infoAdicionalHuella }));
+
+    igual("PRO328-54 con dirección seleccionada la huella del receptor es obligatoria: sin ella 409, sin emisión", [sinHuella, creaciones(w)], [{ estado: 409, mensaje: MENSAJE_RECEPTOR_CAMBIO }, 0]);
+
+    const prev2 = await prepararFactura(w.db, EMPRESA, USUARIO, c);
+    const ok = await crearFacturaElectronica(w.db, EMPRESA, USUARIO, { ...c, infoAdicionalHuella: prev2.resumen.infoAdicionalHuella, receptorHuella: prev2.resumen.receptorHuella });
+
+    igual("PRO328-55 tras revisar de nuevo se emite UNA vez con el número de casa actual", [ok.reutilizado, enviado(w).dNumCasRec, w.docs.size], [false, 1600, 1]);
+  }
+  {
+    const w = mundo328();
+    const c = cuerpo328(CLI_P, { direccionEntregaId: DP1 }, "clave-pro328-concurrente");
+    const prev = await prepararFactura(w.db, EMPRESA, USUARIO, c);
+
+    w.estado.antesDeBloquear = () => { w.dir(DP1).ciu = 1; w.dir(DP1).dis = 1; w.dir(DP1).dep = 1; }; // edición concurrente confirmada justo antes del bloqueo de la función SQL
+
+    const r = await resultado(crearFacturaElectronica(w.db, EMPRESA, USUARIO, { ...c, infoAdicionalHuella: prev.resumen.infoAdicionalHuella, receptorHuella: prev.resumen.receptorHuella }));
+
+    igual("PRO328-56 edición concurrente después de la verificación TypeScript: la función SQL compara bajo bloqueo y rechaza (NEX:ENTREGA_INVALIDA → 409); rollback completo: sin FE, sin número, sin fotografía", [r, w.docs.size, w.secuencia(), w.entregas.size], [{ detail: "NEX:ENTREGA_INVALIDA" }, 0, 0, 0]);
+  }
+
+  // ── G. Idempotencia: identidad del destino por UUID persistido, nunca por texto ─────────────────────────────────────────────────────────────────────────────
+  {
+    const w = mundo328();
+    const c = cuerpo328(CLI_P, { direccionEntregaId: DP1 }, "clave-pro328-reintento");
+    const r1 = await revisarYEmitir(w, c);
+    const original = JSON.stringify(w.docs.get("clave-pro328-reintento")?.payload);
+    const r2 = await crearFacturaElectronica(w.db, EMPRESA, USUARIO, c);
+
+    igual("PRO328-60 reintento con la misma clave y el mismo UUID: misma FE (reutilizada), sin segunda FE ni número", [r1.reutilizado, r2.reutilizado, r1.documentoId === r2.documentoId, w.docs.size, w.secuencia()], [false, true, true, 1, 1]);
+
+    w.dir(DP1).direccion = "Calle renombrada";
+    w.dir(DP1).numeroCasa = "7";
+
+    const r3 = await crearFacturaElectronica(w.db, EMPRESA, USUARIO, c);
+
+    w.dirs.splice(w.dirs.findIndex((d) => d.id === DP1), 1); // y luego la dirección se ELIMINA del catálogo
+
+    const r4 = await crearFacturaElectronica(w.db, EMPRESA, USUARIO, c);
+
+    igual("PRO328-61 la dirección original editada y luego eliminada NO altera la FE emitida: el reintento reenvía el payload histórico íntegro y la fotografía sigue igual", [r3.reutilizado, r4.reutilizado, JSON.stringify(enviado(w)) === original, JSON.stringify(w.docs.get("clave-pro328-reintento")?.payload) === original, w.entregas.get(r1.documentoId as string)?.snapshot.direccion], [true, true, true, true, "Avda. Gral. Aquino"]);
+
+    const otroId = await resultado(crearFacturaElectronica(w.db, EMPRESA, USUARIO, { ...c, direccionEntregaId: DP6 }));
+
+    igual("PRO328-62 misma clave con OTRO direccionEntregaId de texto idéntico (DP6 = DP1 en calle/número/códigos): conflicto de idempotencia (409), no reutiliza ni crea otra FE", [otroId, w.docs.size, w.secuencia()], [{ detail: "NEX:IDEMPOTENCIA_CONFLICTO" }, 1, 1]);
+
+    const sinDir = await resultado(crearFacturaElectronica(w.db, EMPRESA, USUARIO, cuerpo328(CLI_P, {}, "clave-pro328-reintento")));
+
+    igual("PRO328-63 misma clave SIN dirección cuando la original tenía una: conflicto (no se prueba identidad)", [sinDir, w.docs.size], [{ detail: "NEX:IDEMPOTENCIA_CONFLICTO" }, 1]);
+    igual("PRO328-64 huellas: el UUID forma parte de la del receptor (DP1 y DP6 de texto idéntico dan huellas distintas; mismo dato, misma huella)", [huellaReceptor({ cPaisRec: "PRY", dDirRec: "X", dNumCasRec: 1 }, DP1) === huellaReceptor({ cPaisRec: "PRY", dDirRec: "X", dNumCasRec: 1 }, DP6), huellaReceptor({ cPaisRec: "PRY", dDirRec: "X", dNumCasRec: 1 }, DP1) === huellaReceptor({ dNumCasRec: 1, dDirRec: "X", cPaisRec: "PRY" }, DP1.toUpperCase())], [false, true]);
+  }
+  {
+    // FE HISTÓRICA (legada) con la línea automática en su dInfAdic y receptor fiscal: el reintento la preserva íntegra; la identidad del destino se prueba por el UUID de su fotografía.
+    const w = mundo328();
+    const base = await prepararFactura(w.db, EMPRESA, USUARIO, cuerpo328(CLI_P, { direccionEntregaId: DP1 }, "clave-pro328-legada"));
+    const legada = { ...pl(base), dDirRec: "Domicilio FISCAL", dNumCasRec: 999, cDepRec: 1, cDisRec: 1, cCiuRec: 1, dInfAdic: M + "\nDirección de entrega: Sucursal Luque — Avda. Gral. Aquino 1500, Luque, Central\nVendedor: Ana Vendedora" };
+
+    w.docs.set("clave-pro328-legada", { id: "d0328000-0000-4000-8000-0000000000aa", numero: "80001", cliente: CLI_P, payload: legada, vendedor: VEND_328 });
+    w.entregas.set("d0328000-0000-4000-8000-0000000000aa", { direccionId: DP1, snapshot: { direccion: "Avda. Gral. Aquino" } });
+    w.docs.set("clave-pro328-sin-foto", { id: "d0328000-0000-4000-8000-0000000000bb", numero: "80002", cliente: CLI_P, payload: legada, vendedor: VEND_328 }); // anterior a NEX-068: sin fotografía
+
+    const ok = await crearFacturaElectronica(w.db, EMPRESA, USUARIO, cuerpo328(CLI_P, { direccionEntregaId: DP1 }, "clave-pro328-legada"));
+    const reenviado = enviado(w);
+    const otro = await resultado(crearFacturaElectronica(w.db, EMPRESA, USUARIO, cuerpo328(CLI_P, { direccionEntregaId: DP6 }, "clave-pro328-legada")));
+    const sinFoto = await resultado(crearFacturaElectronica(w.db, EMPRESA, USUARIO, cuerpo328(CLI_P, { direccionEntregaId: DP1 }, "clave-pro328-sin-foto")));
+
+    igual("PRO328-65 FE histórica con la línea automática: el reintento con el mismo UUID se reconoce y reenvía EXACTAMENTE su dInfAdic y su receptor fiscal (nada se recompone ni se reescribe)", [ok.reutilizado, reenviado.dInfAdic === legada.dInfAdic, reenviado.dDirRec, JSON.stringify(w.docs.get("clave-pro328-legada")?.payload) === JSON.stringify(legada)], [true, true, "Domicilio FISCAL", true]);
+    igual("PRO328-66 FE histórica: otro UUID aunque el texto de su línea coincida → 409; FE sin fotografía (sin mecanismo de identidad) con dirección → 409; ninguna FE nueva", [otro, sinFoto, w.secuencia()], [{ detail: "NEX:IDEMPOTENCIA_CONFLICTO" }, { detail: "NEX:IDEMPOTENCIA_CONFLICTO" }, 0]);
+  }
+
+  // ── H. Sin NEX-076 aplicada: error controlado, nunca simulación ni vuelta silenciosa al fiscal ───────────────────────────────────────────────────────────────
+  {
+    const w = mundo328({ nex076: false });
+    const r = await resultado(prepararFactura(w.db, EMPRESA, USUARIO, cuerpo328(CLI_P, { direccionEntregaId: DP1 })));
+
+    igual("PRO328-70 sin NEX-076, una FE nueva con dirección seleccionada se rechaza (422) con mensaje claro, sin leer la dirección ni emitir con el domicilio fiscal", [r, lecturas(w), creaciones(w)], [{ estado: 422, mensaje: MENSAJE_RECEPTOR_SIN_MIGRACION }, 0, 0]);
+
+    w.docs.set("clave-pro328-pre076", { id: "d0328000-0000-4000-8000-0000000000cc", numero: "80003", cliente: CLI_P, payload: { ...pl(await prepararFactura(mundo328().db, EMPRESA, USUARIO, cuerpo328(CLI_P, { direccionEntregaId: DP1 }))), dInfAdic: M + "\nVendedor: Ana Vendedora" }, vendedor: VEND_328 });
+
+    const ret = await resultado(crearFacturaElectronica(w.db, EMPRESA, USUARIO, cuerpo328(CLI_P, { direccionEntregaId: DP1 }, "clave-pro328-pre076")));
+
+    igual("PRO328-71 sin NEX-076 un reintento con dirección no puede probar el UUID histórico: 409 seguro, sin side effects", [ret, w.secuencia(), creaciones(w)], [{ estado: 409, mensaje: MENSAJE_DESTINO_NO_COMPROBABLE }, 0, 0]);
+  }
+
+  // ── I. SQL de NEX-076 (estructural: NO se ejecutó; migración NO aplicada), aplicación, pantalla y fuera de alcance ─────────────────────────────────────────
+  const sql = leer("documentacao/banco/nexit/v1/migraciones/NEX-076-facturacion-fe-direccion-receptor-seleccionada.sql");
+  const sinComentarios = sql.replace(/--[^\n]*/g, "");
+  const emision = leer("lib/facturacion/emision.ts");
+  const pagina = leer("app/(private)/facturas/nueva/page.tsx");
+  const comp = leer("app/(private)/facturas/nueva/entrega-cliente.tsx");
+  const lectura = sinComentarios.slice(sinComentarios.indexOf("CREATE FUNCTION public.fe_direccion_receptor_elegida"), sinComentarios.indexOf("CREATE FUNCTION public.fe_documento_crear_fe_receptor"));
+  const emisionSql = sinComentarios.slice(sinComentarios.indexOf("CREATE FUNCTION public.fe_documento_crear_fe_receptor"), sinComentarios.indexOf("COMMENT ON FUNCTION"));
+
+  cierto("PRO328-80 SQL lectura: SECURITY DEFINER con search_path fijo, exige FACTURACION_ELECTRONICA.CREAR, devuelve SOLO id/país/calle/número/códigos de la MISMA fila del cliente y la empresa, elegible (fe_entrega_elegible) y cliente activo; sin escritura",
+    /LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp/.test(lectura) && /'FACTURACION_ELECTRONICA', 'CREAR'/.test(lectura) && /RETURNS TABLE \(o_id uuid, o_pais_codigo text, o_direccion text, o_numero_casa text, o_departamento_codigo integer, o_distrito_codigo integer, o_ciudad_codigo integer\)/.test(lectura)
+    && /d\.empresa_id = p_empresa AND d\.cliente_id = p_cliente AND d\.id = p_direccion/.test(lectura) && /public\.fe_entrega_elegible\(d\.tipo, d\.es_fiscal, d\.es_entrega_default\)/.test(lectura) && /c\.activo AND NOT c\.bloqueado_ventas/.test(lectura) && !/INSERT|UPDATE|DELETE/.test(lectura) && !/d\.departamento\b|d\.ciudad\b|d\.distrito\b/.test(lectura));
+  cierto("PRO328-81 SQL emisión: bloquea la fila (FOR SHARE OF d) ANTES de crear y compara cPaisRec, dDirRec, dNumCasRec, cDepRec, cDisRec y cCiuRec (B2F sin geografía) con NEX:ENTREGA_INVALIDA; envuelve SIN copiar a fe_documento_crear_fe_vendedor",
+    /FOR SHARE OF d/.test(emisionSql) && emisionSql.indexOf("FOR SHARE OF d") < emisionSql.indexOf("FROM public.fe_documento_crear_fe_vendedor(") && ["cPaisRec", "dDirRec", "dNumCasRec", "cDepRec", "cDisRec", "cCiuRec"].every((k) => emisionSql.includes(`'${k}'`)) && /v_b2f := \(p_payload->>'iTiOpe'\) = '4'/.test(emisionSql)
+    && /DETAIL = 'NEX:ENTREGA_INVALIDA'/.test(emisionSql) && !/INSERT INTO public\.documentos_electronicos|fe_secuencia_reservar|INSERT INTO public\.documento_electronico_entregas/.test(emisionSql));
+  cierto("PRO328-82 SQL: la fotografía creada se comprueba de la MISMA dirección (direccion_id) y con calle/número/país validados; el reintento compara SOLO el direccion_id persistido (IS DISTINCT FROM) con NEX:IDEMPOTENCIA_CONFLICTO, sin escribir",
+    /e\.direccion_id = v_dir\.id/.test(emisionSql) && /\(e\.snapshot->>'direccion'\) IS NOT DISTINCT FROM v_dir\.direccion/.test(emisionSql) && /SELECT e\.direccion_id INTO v_previa FROM public\.documento_electronico_entregas e WHERE e\.empresa_id = p_empresa AND e\.documento_id = v_id/.test(emisionSql) && /IF v_previa IS DISTINCT FROM p_direccion_entrega THEN/.test(emisionSql) && /DETAIL = 'NEX:IDEMPOTENCIA_CONFLICTO'/.test(emisionSql) && !/dInfAdic/.test(emisionSql));
+  cierto("PRO328-83 SQL grants: REVOKE PUBLIC, EXECUTE solo a nexit_runtime, la emisión de NEX-074 deja de ser directa; sin SELECT nuevo a direcciones_cliente ni a documento_electronico_entregas; el ayudante corre después del de NEX-074; guardas de dependencias y de reaplicación; NO aplicada",
+    /GRANT EXECUTE ON FUNCTION public\.fe_direccion_receptor_elegida\(uuid, uuid, uuid, uuid\) TO nexit_runtime/.test(sql) && /GRANT EXECUTE ON FUNCTION public\.fe_documento_crear_fe_receptor\(uuid, uuid, uuid, uuid, text, uuid, text, text, text, numeric, jsonb, jsonb, uuid, uuid\) TO nexit_runtime/.test(sql)
+    && /REVOKE ALL ON FUNCTION public\.fe_documento_crear_fe_vendedor\(uuid, uuid, uuid, uuid, text, uuid, text, text, text, numeric, jsonb, jsonb, uuid, uuid\) FROM nexit_runtime/.test(sql) && !/GRANT SELECT/.test(sinComentarios) && "nex_aplicar_grants_facturacion_vendedor" < "nex_aplicar_grants_facturacion_vendedor_receptor"
+    && /NEX-076 parece aplicada; no se reaplica por suposición/.test(sql) && /NEX-076 requiere la emisión de FE con vendedor \(NEX-074\)/.test(sql) && /NO aplicada/.test(sql));
+  cierto("PRO328-84 SQL aditiva: no redefine funciones instaladas (solo CREATE FUNCTION nuevas, ningún CREATE OR REPLACE ni ALTER/DROP de NEX-005/048/067/068/073/074) ni toca tablas existentes",
+    !/CREATE OR REPLACE/.test(sinComentarios) && !/ALTER TABLE|DROP |UPDATE public\.|DELETE FROM/.test(sinComentarios) && (sinComentarios.match(/CREATE FUNCTION/g) ?? []).length === 3);
+  cierto("PRO328-85 aplicación: el receptor seleccionado sale de fe_direccion_receptor_elegida (no de las descripciones del destino), la FE nueva no compone la línea de entrega, la emisión elige fe_documento_crear_fe_receptor con NEX-076 y la equivalencia ya no compara el texto del destino",
+    /FROM fe_direccion_receptor_elegida\(\$1::uuid, \$2::uuid, \$3::uuid, \$4::uuid\)/.test(emision) && !/destino\.opcion\.(departamento|distrito|ciudad|direccion|numeroCasa|pais)/.test(emision) && /componerInfoAdicional\(\{ observaciones: cuerpo\.infoAdicional, vendedor:/.test(emision) && !/lineaEntrega/.test(emision)
+    && /conReceptor \? "fe_documento_crear_fe_receptor" : "fe_documento_crear_fe_vendedor"/.test(emision) && !/partes\.entrega !== null && lineaEntrega/.test(emision));
+  cierto("PRO328-86 pantalla: envía la huella del receptor REVISADO, muestra el «Domicilio del receptor (SIFEN)» devuelto por el servidor y el selector indica que la dirección elegida se usa para la FE sin modificar el maestro; el destino forma parte del cuerpo revisado (cambiarlo invalida la revisión)",
+    pagina.includes("receptorHuella: revisado.receptorHuella") && pagina.includes("Domicilio del receptor (SIFEN)") && /\.\.\.\(direccionEntregaId \? \{ direccionEntregaId \} : \{\}\)/.test(pagina) && /const huellaActual = JSON\.stringify\(cuerpoFactura\(\)\)/.test(pagina)
+    && /Se usa como domicilio del receptor de esta factura \(SIFEN\): no modifica la ficha del cliente/.test(comp) && /irá como domicilio del receptor en la factura electrónica/.test(comp));
+  cierto("PRO328-87 fuera de alcance intacto: NCE (sin dirección de entrega ni receptor seleccionado), KuDE (PRO-326) y payload de NCE no usan NEX-076; el parser legado se conserva",
+    !/fe_direccion_receptor_elegida|fe_documento_crear_fe_receptor|receptorSeleccionado/.test(leer("lib/facturacion/nce.ts") + leer("lib/facturacion/gateway.ts") + leer("lib/facturacion/shared.ts")) && /export function descomponerInfoAdicional/.test(leer("lib/facturacion/info-adicional.ts")) && /export function lineaEntrega/.test(leer("lib/facturacion/info-adicional.ts")));
 }

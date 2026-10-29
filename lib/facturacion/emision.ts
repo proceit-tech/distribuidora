@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import type { Pool } from "pg";
 
 import { evaluarAptitudCliente } from "@/lib/clientes/aptitud-cliente";
@@ -11,8 +13,8 @@ import { DENOMINACIONES_TARJETA, FORMAS_PAGO, FORMAS_PROCESAMIENTO, leerPagos, r
 import { construirPayloadFE, CONDICIONES_OPERACION, INDICADORES_PRESENCIA, resumenCalculo, TIPOS_TRANSACCION, totalFactura, erroresDomicilioReceptor, validarEntradaFE, type EntradaFE, type LineaFE, type ReceptorFE } from "@/lib/facturacion/payload-fe";
 import { ErrorFacturacion, ErrorValidacionFiscal } from "@/lib/facturacion/shared";
 import { leerDescuento, type DescuentoEntrada } from "@/lib/facturacion/descuentos";
-import { opcionesEntrega, resolverEntrega, resumenEntrega } from "@/lib/facturacion/entrega";
-import { componerInfoAdicional, contieneMarcaAutomatica, descomponerInfoAdicional, huellaInfoAdicional, infoAdicionalPersistida, LIMITE_INFO_ADICIONAL, lineaEntrega, lineaVendedor } from "@/lib/facturacion/info-adicional";
+import { MENSAJE_ENTREGA_INVALIDA, opcionesEntrega, resolverEntrega, resumenEntrega } from "@/lib/facturacion/entrega";
+import { componerInfoAdicional, contieneMarcaAutomatica, descomponerInfoAdicional, huellaInfoAdicional, infoAdicionalPersistida, LIMITE_INFO_ADICIONAL, lineaVendedor } from "@/lib/facturacion/info-adicional";
 import { nombreDeUsuario, vendedorActivo, vendedorFeSoportado } from "@/lib/usuarios/vendedores";
 import { asignacionesSql, mensajeStockInsuficiente, planificarStock, type LineaStock } from "@/lib/facturacion/stock-fe";
 import { normalizarCantidadTexto } from "@/lib/formato/cantidad-campo";
@@ -169,8 +171,10 @@ export type CuerpoFactura = {
   direccionEntregaId?: string;
   /** E02: huella del reparto de stock que el operador REVISÓ (la devuelve la previa). Obligatoria al emitir si hay productos con control de stock; si el stock cambió, se exige revisar de nuevo. */
   repartoHuella?: string;
-  /** E1: huella del dInfAdic (observaciones + entrega + vendedor) que el operador REVISÓ (la devuelve la previa). Si al emitir el texto que el servidor compondría es otro (cambió el nombre del vendedor o la dirección), se exige revisar de nuevo. */
+  /** E1: huella del dInfAdic (observaciones + vendedor) que el operador REVISÓ (la devuelve la previa). Si al emitir el texto que el servidor compondría es otro (cambió el nombre del vendedor), se exige revisar de nuevo. */
   infoAdicionalHuella?: string;
+  /** PRO-328: huella del domicilio del receptor REVISADO (dirección seleccionada o fiscal, tal como irá en el JSON; la devuelve la previa). Obligatoria al crear una FE nueva: si cambió, se exige revisar de nuevo. */
+  receptorHuella?: string;
   /** PRO-72/PRO-307: vendedor comercial elegido (ID de un usuario ACTIVO de la empresa con el perfil Vendedor). Es independiente del usuario que emite; el servidor lo revalida y lo registra de forma estructurada. */
   vendedorId: string;
   /** D002: fecha de emisión elegida (AAAA-MM-DD, día local de Paraguay). Sin ella, la de hoy. Se valida en el servidor (selección −30/+5 días y ventana fiscalmente habilitada) antes de reservar numeración. */
@@ -243,6 +247,7 @@ export function leerCuerpoFactura(c: Record<string, unknown>): CuerpoFactura | s
     vendedorId: c.vendedorId,
     ...(typeof c.fechaEmision === "string" ? { fechaEmision: c.fechaEmision } : {}),
     ...(typeof c.infoAdicionalHuella === "string" && /^[0-9a-f]{64}$/.test(c.infoAdicionalHuella) ? { infoAdicionalHuella: c.infoAdicionalHuella } : {}),
+    ...(typeof c.receptorHuella === "string" && /^[0-9a-f]{64}$/.test(c.receptorHuella) ? { receptorHuella: c.receptorHuella } : {}),
     lineas: lineas.map((l) => {
       const ajuste = leerAjuste((l as F).ajuste);
 
@@ -255,21 +260,29 @@ export function leerCuerpoFactura(c: Record<string, unknown>): CuerpoFactura | s
 
 const OPERACION_RECEPTOR: Record<number, string> = { 1: "B2B", 2: "B2C", 3: "B2G", 4: "B2F" };
 
+/** Nombres OFICIALES (catálogo, por código) del domicilio del receptor validado: solo para que el operador revise lo que irá en el JSON; nunca se deriva un código de un nombre. */
+export type NombresGeografia = { pais: string; departamento: string; distrito: string; ciudad: string };
+
 /**
- * País y domicilio fiscal del receptor contra el catálogo geográfico oficial (los mismos `referencia_geografica_*` que validan Clientes): el país existe y es el que exige el tipo de operación;
- * con calle fuera de B2F, departamento, distrito y ciudad existen y forman una cadena jerárquica coherente. Solo lectura, ANTES de reservar numeración o transmitir; 422 con el motivo.
+ * País y domicilio del receptor (el fiscal o, en una FE nueva, la dirección SELECCIONADA: PRO-328) contra el catálogo geográfico oficial (los mismos `referencia_geografica_*` que validan Clientes): el país
+ * existe y es el que exige el tipo de operación; con calle fuera de B2F, departamento, distrito y ciudad existen y forman una cadena jerárquica coherente. Solo lectura, ANTES de reservar numeración o
+ * transmitir; 422 con el motivo, que nombra la dirección a corregir (la seleccionada nunca se completa ni se sustituye por la fiscal).
  */
-async function validarGeografiaReceptor(db: Db, r: ReceptorFE): Promise<void> {
+async function validarGeografiaReceptor(db: Db, r: ReceptorFE): Promise<NombresGeografia> {
   const operacion = OPERACION_RECEPTOR[r.tipoOperacion];
+  const seleccionada = r.origenDomicilio === "SELECCIONADA";
+  const cual = seleccionada ? "dirección seleccionada para la factura" : "dirección fiscal del cliente";
 
   if (operacion === undefined) throw new ErrorFacturacion(422, "El tipo de operación del cliente no es válido. Corríjalo en Clientes.");
 
   const motivos = erroresDomicilioReceptor(r);
 
-  if (motivos.length > 0) throw detalles(422, "El domicilio fiscal del cliente no es válido para la factura.", motivos);
+  if (motivos.length > 0) throw detalles(422, seleccionada ? "La dirección seleccionada no es válida para la factura: corríjala en Clientes → Direcciones." : "El domicilio fiscal del cliente no es válido para la factura.", motivos);
 
   try {
-    await resolverPais(db as never, r.pais, "El país del cliente");
+    const pais = await resolverPais(db as never, r.pais, seleccionada ? "El país de la dirección seleccionada" : "El país del cliente");
+    const nombres: NombresGeografia = { pais: s(pais.nombre), departamento: "", distrito: "", ciudad: "" };
+
     validarPaisPorOperacion(operacion, r.pais);
 
     if (r.tipoOperacion !== 4 && [r.direccion, r.numeroCasa, r.departamento, r.distrito, r.ciudad].some((v) => v.trim() !== "")) {
@@ -277,19 +290,68 @@ async function validarGeografiaReceptor(db: Db, r: ReceptorFE): Promise<void> {
       const g = await db.query(
         `SELECT EXISTS (SELECT 1 FROM referencia_geografica_departamentos d WHERE d.codigo = $1::int AND d.activo) AS dep,
                 EXISTS (SELECT 1 FROM referencia_geografica_distritos di WHERE di.departamento_codigo = $1::int AND di.codigo = $2::int AND di.activo) AS dis,
-                EXISTS (SELECT 1 FROM referencia_geografica_ciudades ci WHERE ci.departamento_codigo = $1::int AND ci.distrito_codigo = $2::int AND ci.codigo = $3::int AND ci.activo) AS ciu`,
+                EXISTS (SELECT 1 FROM referencia_geografica_ciudades ci WHERE ci.departamento_codigo = $1::int AND ci.distrito_codigo = $2::int AND ci.codigo = $3::int AND ci.activo) AS ciu,
+                (SELECT d.nombre FROM referencia_geografica_departamentos d WHERE d.codigo = $1::int AND d.activo) AS "depNombre",
+                (SELECT di.nombre FROM referencia_geografica_distritos di WHERE di.departamento_codigo = $1::int AND di.codigo = $2::int AND di.activo) AS "disNombre",
+                (SELECT ci.nombre FROM referencia_geografica_ciudades ci WHERE ci.departamento_codigo = $1::int AND ci.distrito_codigo = $2::int AND ci.codigo = $3::int AND ci.activo) AS "ciuNombre"`,
         [r.departamento.trim(), r.distrito.trim(), r.ciudad.trim()],
       );
       const f = g.rows[0] as F | undefined;
 
-      if (f?.dep !== true) throw new ErrorGeografia("El departamento de la dirección fiscal del cliente no existe en el catálogo.");
-      if (f.dis !== true) throw new ErrorGeografia("El distrito de la dirección fiscal del cliente no existe en el departamento indicado.");
-      if (f.ciu !== true) throw new ErrorGeografia("La ciudad de la dirección fiscal del cliente no corresponde al departamento y distrito indicados.");
+      if (f?.dep !== true) throw new ErrorGeografia(`El departamento de la ${cual} no existe en el catálogo.`);
+      if (f.dis !== true) throw new ErrorGeografia(`El distrito de la ${cual} no existe en el departamento indicado.`);
+      if (f.ciu !== true) throw new ErrorGeografia(`La ciudad de la ${cual} no corresponde al departamento y distrito indicados.`);
+      nombres.departamento = s(f.depNombre); nombres.distrito = s(f.disNombre); nombres.ciudad = s(f.ciuNombre);
     }
+
+    return nombres;
   } catch (error) {
-    if (error instanceof ErrorGeografia) throw new ErrorFacturacion(422, `${error.message} Corrija la dirección fiscal del cliente en Clientes antes de facturar.`);
+    if (error instanceof ErrorGeografia) throw new ErrorFacturacion(422, `${error.message} ${seleccionada ? "Corrija la dirección seleccionada en Clientes → Direcciones antes de facturar (no se reemplaza por el domicilio fiscal)." : "Corrija la dirección fiscal del cliente en Clientes antes de facturar."}`);
     throw error;
   }
+}
+
+/** PRO-328: ¿Está aplicada NEX-076 (lectura autorizada de la dirección seleccionada y emisión que la verifica bajo bloqueo)? */
+async function receptorSeleccionadoSoportado(db: Db): Promise<boolean> {
+  const r = await db.query(
+    "SELECT to_regprocedure('public.fe_documento_crear_fe_receptor(uuid,uuid,uuid,uuid,text,uuid,text,text,text,numeric,jsonb,jsonb,uuid,uuid)') IS NOT NULL AND to_regprocedure('public.fe_direccion_receptor_elegida(uuid,uuid,uuid,uuid)') IS NOT NULL AS ok",
+  );
+
+  return (r.rows[0] as F | undefined)?.ok === true;
+}
+
+export const MENSAJE_RECEPTOR_SIN_MIGRACION = "Usar la dirección seleccionada como domicilio del receptor de la factura requiere la migración NEX-076 en la base de datos (aún no aplicada). No se emite con el domicilio fiscal en su lugar.";
+export const MENSAJE_RECEPTOR_CAMBIO = "La dirección del receptor (dirección seleccionada o domicilio fiscal) cambió desde la revisión. Revise la factura de nuevo antes de enviarla.";
+export const MENSAJE_DESTINO_NO_COMPROBABLE = "No se puede comprobar que la dirección seleccionada sea la de la factura ya creada con esta clave (falta la migración NEX-076). No se vuelve a crear ni a modificar: consulte o reintente su envío desde Documentos electrónicos.";
+
+/**
+ * PRO-328: domicilio del receptor de una FE NUEVA con dirección seleccionada. El navegador solo envía el UUID; país, calle, número y CÓDIGOS oficiales de departamento / distrito / ciudad se leen de ESA MISMA fila
+ * con la función autorizada de NEX-076 (empresa, cliente, permiso y elegibilidad), sin mezclar ningún dato del domicilio fiscal (los huecos quedan vacíos y la validación los rechaza). Identidad y contacto del receptor
+ * (RUC, nombre, teléfonos, correos, tipo de operación) no cambian. Sin NEX-076: 422 claro, nunca el fiscal en silencio.
+ */
+async function receptorSeleccionado(db: Db, empresaId: string, usuarioId: string, clienteId: string, direccionId: string, fiscal: ReceptorFE): Promise<ReceptorFE> {
+  if (!(await receptorSeleccionadoSoportado(db))) throw new ErrorFacturacion(422, MENSAJE_RECEPTOR_SIN_MIGRACION);
+
+  const r = await db.query(
+    `SELECT o_id AS id, o_pais_codigo AS pais, o_direccion AS direccion, o_numero_casa AS "numeroCasa", o_departamento_codigo AS departamento, o_distrito_codigo AS distrito, o_ciudad_codigo AS ciudad
+       FROM fe_direccion_receptor_elegida($1::uuid, $2::uuid, $3::uuid, $4::uuid)`,
+    [empresaId, usuarioId, clienteId, direccionId],
+  );
+  const f = r.rows[0] as F | undefined;
+
+  if (!f || s(f.id).toLowerCase() !== direccionId.toLowerCase()) throw new ErrorFacturacion(422, MENSAJE_ENTREGA_INVALIDA);
+
+  return { ...fiscal, pais: s(f.pais), direccion: s(f.direccion), numeroCasa: s(f.numeroCasa), departamento: s(f.departamento), distrito: s(f.distrito), ciudad: s(f.ciudad), origenDomicilio: "SELECCIONADA" };
+}
+
+/** Claves del domicilio del receptor en el JSON (D203, D213, D218, D219, D221, D223). */
+const CLAVES_DOMICILIO = ["cPaisRec", "dDirRec", "dNumCasRec", "cDepRec", "cDisRec", "cCiuRec"] as const;
+
+/** PRO-328: huella del domicilio del receptor TAL COMO va en el JSON (más el UUID de la dirección seleccionada): el operador revisa exactamente esto y la emisión de una FE nueva lo exige igual. */
+export function huellaReceptor(payload: Record<string, unknown>, direccionId: string | null): string {
+  const domicilio = Object.fromEntries(CLAVES_DOMICILIO.map((k) => [k, payload[k] ?? null]));
+
+  return createHash("sha256").update(JSON.stringify({ direccionId: direccionId === null ? null : direccionId.toLowerCase(), domicilio }), "utf8").digest("hex");
 }
 
 /** ¿Está aplicada NEX-073 (la base honra la fecha de emisión elegida)? */
@@ -409,7 +471,7 @@ export async function prepararFactura(db: Db, empresaId: string, usuarioId: stri
     if (fechaElegida !== hoyFecha && !(await fechaEmisionSoportada(db))) throw new ErrorFacturacion(422, "Elegir una fecha de emisión distinta de hoy requiere la migración NEX-073 en la base de datos (aún no aplicada). Use la fecha de hoy.");
   }
 
-  const [receptor, aptitud, productos, punto] = await Promise.all([
+  const [receptorFiscal, aptitud, productos, punto] = await Promise.all([
     receptorDe(db, empresaId, cuerpo.clienteId),
     evaluarAptitudCliente(db as never, empresaId, cuerpo.clienteId),
     db.query(`${SELECT_PRODUCTOS} AND p.id = ANY($2::uuid[])`, [empresaId, [...new Set(cuerpo.lineas.map((l) => l.productoId))]]),
@@ -431,16 +493,21 @@ export async function prepararFactura(db: Db, empresaId: string, usuarioId: stri
 
   if (!vendedor && opciones.domicilioHistorico !== true) throw new ErrorFacturacion(422, "El vendedor elegido no existe en la empresa, está inactivo o no tiene el perfil Vendedor. Elija otro en Maestros → Vendedores.");
 
-  // PRO-322: país y domicilio fiscal (códigos) validados contra el catálogo geográfico antes de cualquier reserva; el destino de entrega no interviene.
-  // Una FE ya creada (reintento de la misma clave) conserva su payload original: el domicilio y el catálogo actuales no se reevalúan.
-  if (opciones.domicilioHistorico !== true) await validarGeografiaReceptor(db, receptor);
-  if (punto.rows.length === 0) throw new ErrorFacturacion(422, "La sucursal o el punto de expedición no son válidos (inactivos, sin establecimiento SIFEN o fuera de su alcance).");
-
   // E04: el destino de entrega debe ser una dirección registrada de ESTE cliente y ESTA empresa; con destinos registrados hay que elegir uno, sin destinos la FE sale sin destino. Antes de reservar numeración.
   // Reintento de una FE YA creada (misma clave): el destino ya quedó guardado y es inmutable; si la dirección del catálogo se editó o eliminó después, el reintento NO la vuelve a exigir (PRO-205).
   const destino = opciones.documentoExiste && (await opciones.documentoExiste()) ? ({ ok: true, opcion: null } as const) : resolverEntrega(await opcionesEntrega(db, empresaId, usuarioId, cuerpo.clienteId), cuerpo.direccionEntregaId);
 
   if (!destino.ok) throw new ErrorFacturacion(422, destino.error);
+
+  // PRO-328: en una FE NUEVA con dirección seleccionada, ESA dirección (misma fila, con sus códigos oficiales, leída por la función autorizada de NEX-076) es el domicilio principal del receptor en el JSON; sin
+  // destinos, el domicilio fiscal como hasta ahora. Un reintento de una FE ya creada reutiliza su payload histórico (destino.opcion es null): nada se recompone.
+  const receptor = destino.opcion && opciones.domicilioHistorico !== true ? await receptorSeleccionado(db, empresaId, usuarioId, cuerpo.clienteId, destino.opcion.id, receptorFiscal) : receptorFiscal;
+
+  // PRO-322: país y domicilio del receptor (códigos) validados contra el catálogo geográfico antes de cualquier reserva (la dirección seleccionada con las mismas reglas que el fiscal).
+  // Una FE ya creada (reintento de la misma clave) conserva su payload original: el domicilio y el catálogo actuales no se reevalúan.
+  const nombresGeo = opciones.domicilioHistorico !== true ? await validarGeografiaReceptor(db, receptor) : null;
+
+  if (punto.rows.length === 0) throw new ErrorFacturacion(422, "La sucursal o el punto de expedición no son válidos (inactivos, sin establecimiento SIFEN o fuera de su alcance).");
 
   const porId = new Map((productos.rows as F[]).map((p) => [s(p.id), p]));
   const lineas: LineaFE[] = [];
@@ -537,13 +604,15 @@ export async function prepararFactura(db: Db, empresaId: string, usuarioId: stri
     });
   }
 
-  // J003 dInfAdic: observaciones del operador + dirección de entrega validada + vendedor COMERCIAL elegido (revalidado; no el usuario que emite), compuestos AQUÍ en el servidor. Un reintento de una emisión ya creada reutiliza el texto persistido.
+  // J003 dInfAdic: observaciones del operador + vendedor COMERCIAL elegido (revalidado; no el usuario que emite), compuestos AQUÍ en el servidor. PRO-328: una FE NUEVA ya NO lleva la línea automática
+  // «Dirección de entrega: …» (la dirección seleccionada viaja como domicilio del receptor); lo que el operador escriba en las observaciones se preserva literalmente. Un reintento de una emisión ya creada
+  // reutiliza el texto persistido (también el de una FE legada que sí tiene esa línea).
   const persistida = opciones.documentoExiste && (await opciones.documentoExiste()) ? await infoAdicionalPersistida(db, empresaId, cuerpo.claveIdempotencia) : undefined;
   const infoAdicional = persistida !== undefined
     ? (persistida ?? "")
-    : componerInfoAdicional({ observaciones: cuerpo.infoAdicional, entrega: lineaEntrega(destino.opcion ? resumenEntrega(destino.opcion) : null), vendedor: vendedor ? lineaVendedor(vendedor.nombre, vendedor.apellido) : null });
+    : componerInfoAdicional({ observaciones: cuerpo.infoAdicional, vendedor: vendedor ? lineaVendedor(vendedor.nombre, vendedor.apellido) : null });
 
-  if (infoAdicional.length > LIMITE_INFO_ADICIONAL) throw new ErrorFacturacion(422, `La información adicional (observaciones + dirección de entrega + vendedor) tiene ${infoAdicional.length} caracteres y el máximo es ${LIMITE_INFO_ADICIONAL}. Acorte las observaciones; no se recorta automáticamente.`);
+  if (infoAdicional.length > LIMITE_INFO_ADICIONAL) throw new ErrorFacturacion(422, `La información adicional (observaciones + vendedor) tiene ${infoAdicional.length} caracteres y el máximo es ${LIMITE_INFO_ADICIONAL}. Acorte las observaciones; no se recorta automáticamente.`);
 
   const base = { moneda, ...(cambio !== undefined ? { cambio } : {}), tipoTransaccion: cuerpo.tipoTransaccion, presencia: cuerpo.presencia, condicion, ...(cuerpo.credito ? { credito: cuerpo.credito } : {}), infoAdicional, receptor, lineas, ...(cuerpo.descuentoGlobal ? { descuentoGlobal: cuerpo.descuentoGlobal } : {}) };
   // Contado: el pago único cubre el total que calcula el servidor (nunca un monto del navegador). Crédito: el único pago es la entrega inicial (si la hay); el resto se valida
@@ -601,8 +670,20 @@ export async function prepararFactura(db: Db, empresaId: string, usuarioId: stri
     lineas: lineas.map((l, i) => ({ codigo: l.codigoInterno, descripcion: l.descripcion, unidad: extras[i].unidadSimbolo, ...(extras[i].campos.length > 0 ? { ajustes: extras[i].campos } : {}), cantidad: l.cantidad, precio: l.precio, precioLista: precios[i].referencia, precioModificado: precios[i].modificado, afectacion: l.afectacion, tasa: l.tasa, proporcion: l.afectacion === 4 ? l.proporcion : null, total: calculo.items[i], totalTexto: calculo.texto.items[i], ...(calculo.descuentos.hay ? { descuento: calculo.descuentos.items[i] } : {}) })),
     totales: { exento: calculo.exento, exonerado: calculo.exonerado, gravado5: calculo.gravado5, gravado10: calculo.gravado10, iva5: calculo.iva5, iva10: calculo.iva10, totalIva: calculo.totalIva, total: calculo.total },
     totalesTexto: calculo.texto,
-    // E04: destino de entrega elegido (null = el cliente no tiene destinos registrados). No altera el domicilio fiscal del receptor ni el payload.
+    // E04: destino de entrega elegido (null = el cliente no tiene destinos registrados). PRO-328: en una FE nueva es también el domicilio del receptor (ver receptorDomicilio); el maestro del cliente no cambia.
     entrega: destino.opcion ? resumenEntrega(destino.opcion) : null,
+    // PRO-328: domicilio del receptor EXACTAMENTE como va en el JSON (país, calle, número y códigos; nombres oficiales del catálogo solo para leer) y su huella, que la emisión exige igual.
+    receptorDomicilio: {
+      origen: receptor.origenDomicilio === "SELECCIONADA" ? "SELECCIONADA" : "FISCAL",
+      pais: s(payload.cPaisRec),
+      direccion: s(payload.dDirRec),
+      numeroCasa: s(payload.dNumCasRec),
+      departamento: s(payload.cDepRec),
+      distrito: s(payload.cDisRec),
+      ciudad: s(payload.cCiuRec),
+      nombres: nombresGeo,
+    },
+    receptorHuella: huellaReceptor(payload, destino.opcion ? destino.opcion.id : null),
     // E1: texto J003 final (lo que viajará en dInfAdic) y su huella: el operador revisa EXACTAMENTE esto y la emisión lo verifica.
     infoAdicional,
     infoAdicionalHuella: huellaInfoAdicional(infoAdicional),
@@ -630,7 +711,9 @@ export async function crearFacturaElectronica(db: Db, empresaId: string, usuario
   const historico = (await documentoExiste()) ? await payloadHistorico(db, empresaId, cuerpo.claveIdempotencia) : null;
   const preparada = await prepararFactura(db, empresaId, usuarioId, cuerpo, { documentoExiste, domicilioHistorico: historico !== null });
   const { receptor, guardar, lineasStock, resumen } = preparada;
-  const noEquivalente = historico ? await equivalente(db, empresaId, usuarioId, historico, preparada.payload, cuerpo) : null;
+  // PRO-328: con NEX-076 la emisión pasa SIEMPRE por fe_documento_crear_fe_receptor (verifica bajo bloqueo la dirección seleccionada y, en un reintento, la identidad del destino por UUID persistido).
+  const conReceptor = await receptorSeleccionadoSoportado(db);
+  const noEquivalente = historico ? await equivalente(db, empresaId, historico, preparada.payload, cuerpo, conReceptor) : null;
 
   if (noEquivalente !== null) throw new ErrorFacturacion(409, noEquivalente);
 
@@ -638,9 +721,12 @@ export async function crearFacturaElectronica(db: Db, empresaId: string, usuario
   const totalTexto = historico ? String((historico.payload as { Subtotales: Array<{ dTotGralOpe: number }> }).Subtotales[0].dTotGralOpe) : preparada.totalTexto;
   const documentoExistente = await documentoExiste();
 
-  // E1-F003: un documento NUEVO solo se crea con el dInfAdic que el operador revisó (nombre del vendedor y dirección releídos del servidor); si cambiaron entre la previa y el envío, se exige revisar de nuevo, sin reservar numeración.
+  // E1-F003: un documento NUEVO solo se crea con el dInfAdic que el operador revisó (observaciones y nombre del vendedor releído del servidor); si cambiaron entre la previa y el envío, se exige revisar de nuevo, sin reservar numeración.
   // Una repetición de una clave ya creada reutiliza el snapshot persistido y no se compara.
   if (!documentoExistente && cuerpo.infoAdicionalHuella !== undefined && cuerpo.infoAdicionalHuella !== resumen.infoAdicionalHuella) throw new ErrorFacturacion(409, MENSAJE_INFO_CAMBIO);
+  // PRO-328: un documento NUEVO solo se crea con el domicilio del receptor que el operador revisó (dirección seleccionada releída ahora); si cambió se revisa de nuevo, sin reservar numeración. Con dirección
+  // seleccionada la huella es OBLIGATORIA (sin ella también 409); la huella de reparto o de dInfAdic no la sustituye. La función SQL vuelve a verificar la misma dirección bajo bloqueo al crear.
+  if (!documentoExistente && (cuerpo.receptorHuella !== undefined || cuerpo.direccionEntregaId !== undefined) && cuerpo.receptorHuella !== resumen.receptorHuella) throw new ErrorFacturacion(409, MENSAJE_RECEPTOR_CAMBIO);
 
   if (salida) salida.guardar = guardar;
 
@@ -659,7 +745,7 @@ export async function crearFacturaElectronica(db: Db, empresaId: string, usuario
 
   const documento = receptor.naturaleza === 1 ? `${receptor.ruc}-${receptor.dv}` : receptor.numeroDocumento;
   const llamar = () =>
-    db.query(`SELECT o_documento_id AS "documentoId", o_numero AS numero, o_reutilizado AS reutilizado FROM fe_documento_crear_fe_vendedor($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5, $6::uuid, $7, $8, $11, $9::numeric, $10::jsonb, $12::jsonb, $13::uuid, $14::uuid)`,
+    db.query(`SELECT o_documento_id AS "documentoId", o_numero AS numero, o_reutilizado AS reutilizado FROM ${conReceptor ? "fe_documento_crear_fe_receptor" : "fe_documento_crear_fe_vendedor"}($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5, $6::uuid, $7, $8, $11, $9::numeric, $10::jsonb, $12::jsonb, $13::uuid, $14::uuid)`,
       [empresaId, usuarioId, cuerpo.sucursalId, cuerpo.puntoId, cuerpo.claveIdempotencia, cuerpo.clienteId, documento, receptor.razonSocial, totalTexto, JSON.stringify(payload), cuerpo.moneda ?? "PYG", JSON.stringify(asignaciones), cuerpo.direccionEntregaId ?? null, cuerpo.vendedorId]);
 
   try {
@@ -707,7 +793,7 @@ async function payloadHistorico(db: Db, empresaId: string, clave: string): Promi
   }
 }
 
-/** Claves de la identidad y el domicilio del receptor: derivan del cadastro ACTUAL del cliente y no se comparan con el snapshot histórico (la identidad se prueba por cliente_id). */
+/** Claves de la identidad y el domicilio del receptor: derivan del cadastro ACTUAL del cliente (o de la dirección seleccionada) y no se comparan con el snapshot histórico (la identidad se prueba por cliente_id y el destino por su UUID). */
 const CLAVES_RECEPTOR = new Set(["iNatRec", "iTiOpe", "cPaisRec", "iTiContRec", "dRucRec", "dDVRec", "iTipIDRec", "dDTipIDRec", "dNumIDRec", "dNomRec", "dNomFanRec", "dDirRec", "dNumCasRec", "cDepRec", "cDisRec", "cCiuRec", "dTelRec", "dCelRec", "dEmailRec", "dEmailAdic", "dEmailAdmin", "dCodCliente", "dInfAdic"]);
 
 const canonico = (v: unknown): string => JSON.stringify(v, (_k, x) => (x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.entries(x as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) : x));
@@ -718,10 +804,11 @@ const operacionComercial = (p: Record<string, unknown>) => canonico(Object.fromE
  *  · cliente, sucursal, punto de expedición y VENDEDOR (ID registrado en documento_electronico_vendedor) del documento persistido (el punto se resuelve por su código en esa sucursal; si no es único, no se prueba);
  *  · operación comercial recalculada (ítems, precios, impuestos, descuentos, pagos, moneda, condición) idéntica al payload original;
  *  · observaciones: las enviadas ahora deben ser EXACTAMENTE las del dInfAdic persistido (ver `descomponerInfoAdicional`: sin marca propia, forma única comprobable);
- *  · destino de entrega: sin destino ahora ⇒ el dInfAdic histórico no trae línea de entrega; con destino ⇒ su línea (destino elegible del cliente y la empresa) es la del snapshot histórico.
- * La tabla documento_electronico_entregas no es legible por la aplicación (NEX-068 revoca el acceso directo): la identidad del destino se prueba por la línea congelada en el dInfAdic, nunca por el cadastro actual del domicilio fiscal.
+ *  · destino de entrega (PRO-328): SOLO por el UUID persistido en documento_electronico_entregas, que fe_documento_crear_fe_receptor (NEX-076) compara en la misma transacción (otro UUID, o UUID sin registro, o
+ *    registro sin UUID enviado = NEX:IDEMPOTENCIA_CONFLICTO → 409). Nunca por el texto del dInfAdic (las FE nuevas ya no lo llevan; el de las legadas solo se conserva) ni por el catálogo actual (editado o eliminado).
+ *    Sin NEX-076 no existe un mecanismo autorizado para probar ese UUID: con dirección enviada, 409; sin dirección, se acepta solo si el snapshot no trae una línea legada de entrega (rechazo conservador, no identidad).
  */
-async function equivalente(db: Db, empresaId: string, usuarioId: string, historico: Historico, nuevo: Record<string, unknown>, cuerpo: CuerpoFactura): Promise<string | null> {
+async function equivalente(db: Db, empresaId: string, historico: Historico, nuevo: Record<string, unknown>, cuerpo: CuerpoFactura, conReceptor: boolean): Promise<string | null> {
   const OTRO = "La clave de la operación ya se usó con otro contenido. Recargue el formulario e intente de nuevo.";
 
   if (historico.clienteId !== cuerpo.clienteId || historico.sucursalId !== cuerpo.sucursalId || historico.puntoId.toLowerCase() !== cuerpo.puntoId.toLowerCase()) return OTRO;
@@ -746,14 +833,13 @@ async function equivalente(db: Db, empresaId: string, usuarioId: string, histori
     }
   }
 
-  if (cuerpo.direccionEntregaId === undefined) return partes.entrega === null ? null : OTRO;
+  if (conReceptor) return null;
+  if (cuerpo.direccionEntregaId !== undefined) return MENSAJE_DESTINO_NO_COMPROBABLE;
 
-  const opcion = (await opcionesEntrega(db, empresaId, usuarioId, cuerpo.clienteId)).find((o) => o.id === cuerpo.direccionEntregaId);
-
-  return opcion !== undefined && partes.entrega !== null && lineaEntrega(resumenEntrega(opcion)) === partes.entrega ? null : OTRO;
+  return partes.entrega === null ? null : OTRO;
 }
 
-export const MENSAJE_INFO_CAMBIO = "La información adicional (dirección de entrega o vendedor) cambió desde la revisión. Revise la factura de nuevo antes de enviarla.";
+export const MENSAJE_INFO_CAMBIO = "La información adicional (observaciones o vendedor) cambió desde la revisión. Revise la factura de nuevo antes de enviarla.";
 
 export const MENSAJE_REPARTO_CAMBIO = "El stock disponible cambió desde la revisión y el reparto por depósito ya no es el mismo. Revise la factura de nuevo antes de enviarla.";
 
