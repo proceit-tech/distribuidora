@@ -307,43 +307,55 @@ export default function InformeVentasPage() {
       {/* Bloque INFORMATIVO separado: lo que no computa y las anomalías. Nunca alteran los netos. */}
       {actual ? (
         <div className={propios.informativo}>
-          <section aria-label="Documentos que no computan">
-            <h2>No computan por estado fiscal<small>Informativo: enviado, pendiente, sin consultar, rechazado, cancelado, inutilizado o no reconocido. No altera los netos.</small></h2>
-            {actual.estados.length === 0 ? <div className={propios.sinDatos}>Ningún documento fuera de APROBADO en el período.</div> : (
-              <table className={propios.tablaChica}>
-                <thead><tr><th>Tipo</th><th>Estado fiscal</th><th>Moneda</th><th className={propios.num}>Documentos</th><th className={propios.num}>Enviados sin aprobación</th><th className={propios.num}>Importe informativo</th></tr></thead>
-                <tbody>
-                  {actual.estados.map((e) => (
-                    <tr key={`${e.tipo}|${e.estadoSifen}|${e.moneda}`}>
-                      <td>{etiquetaTipoVentas(e.tipo)}</td><td>{etiquetaSifen(e.estadoSifen)}</td><td>{e.moneda}</td>
-                      <td className={propios.num}>{fmtNum(e.documentos)}</td><td className={propios.num}>{fmtNum(e.enviados)}</td><td className={propios.num}>{fmtImporteMoneda(e.total, e.moneda)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </section>
-          <section aria-label="Anomalías">
-            <h2>Anomalías: aprobados sin información fiscal conciliable<small>Excluidos de los indicadores; se informan con su monto, no como cero.</small></h2>
-            {actual.anomalias.length === 0 ? <div className={propios.sinDatos}>Sin anomalías en el período.</div> : (
-              <>
-                <table className={propios.tablaChica}>
-                  <thead><tr><th>Motivo</th><th>Tipo</th><th>Moneda</th><th className={propios.num}>Documentos</th><th className={propios.num}>Importe</th></tr></thead>
-                  <tbody>
-                    {actual.anomalias.map((a) => (
-                      <tr key={`${a.motivo}|${a.tipo}|${a.moneda}`}>
-                        <td style={{ whiteSpace: "normal" }}>{ETIQUETA_ANOMALIA[a.motivo] ?? a.motivo}</td><td>{etiquetaTipoVentas(a.tipo)}</td><td>{a.moneda}</td>
-                        <td className={propios.num}>{fmtNum(a.documentos)}</td><td className={propios.num}>{fmtImporteMoneda(a.total, a.moneda)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                <div className={propios.sinDatos}>
-                  <button type="button" className={propios.enlace} onClick={() => cambiar({ vista: "DOCUMENTOS", estado: "", situacion: "ANOMALIA" })}>Ver los documentos con anomalía</button>
+          <div className={[propios.informativoGrilla, actual.anomalias.length > 0 ? propios.conAnomalias : ""].filter(Boolean).join(" ")}>
+            <section className={propios.tarjetaInformativa} aria-labelledby="ventas-no-computados-titulo">
+              <header>
+                <h2 id="ventas-no-computados-titulo">Documentos no computados</h2>
+                <p>Informativo: no computan por estado fiscal (enviado, pendiente, sin consultar, rechazado, cancelado, inutilizado o no reconocido). No alteran los netos.</p>
+              </header>
+              {actual.estados.length === 0 ? <div className={propios.sinDatos}>Ningún documento fuera de APROBADO en el período.</div> : (
+                <div className={propios.tablaScroll} tabIndex={0} role="region" aria-label="Tabla de documentos no computados (desplazable horizontalmente si no entra)">
+                  <table className={propios.tablaChica}>
+                    <thead><tr><th scope="col">Tipo</th><th scope="col">Estado fiscal</th><th scope="col">Moneda</th><th scope="col" className={propios.num}>Documentos</th><th scope="col" className={propios.num}>Enviados sin aprobación</th><th scope="col" className={propios.num}>Importe informativo</th></tr></thead>
+                    <tbody>
+                      {actual.estados.map((e) => (
+                        <tr key={`${e.tipo}|${e.estadoSifen}|${e.moneda}`}>
+                          <td>{etiquetaTipoVentas(e.tipo)}</td><td>{etiquetaSifen(e.estadoSifen)}</td><td>{e.moneda}</td>
+                          <td className={propios.num}>{fmtNum(e.documentos)}</td><td className={propios.num}>{fmtNum(e.enviados)}</td><td className={propios.num}>{fmtImporteMoneda(e.total, e.moneda)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
-              </>
-            )}
-          </section>
+              )}
+            </section>
+            <section className={propios.tarjetaInformativa} aria-labelledby="ventas-anomalias-titulo">
+              <header>
+                <h2 id="ventas-anomalias-titulo">Anomalías fiscales</h2>
+                <p>Aprobados sin información fiscal conciliable: excluidos de los indicadores; se informan con su monto, no como cero.</p>
+              </header>
+              {actual.anomalias.length === 0 ? <div className={propios.sinDatos}>Sin anomalías en el período.</div> : (
+                <>
+                  <div className={propios.tablaScroll} tabIndex={0} role="region" aria-label="Tabla de anomalías fiscales (desplazable horizontalmente si no entra)">
+                    <table className={propios.tablaChica}>
+                      <thead><tr><th scope="col">Motivo</th><th scope="col">Tipo</th><th scope="col">Moneda</th><th scope="col" className={propios.num}>Documentos</th><th scope="col" className={propios.num}>Importe</th></tr></thead>
+                      <tbody>
+                        {actual.anomalias.map((a) => (
+                          <tr key={`${a.motivo}|${a.tipo}|${a.moneda}`}>
+                            <td className={propios.motivo}>{ETIQUETA_ANOMALIA[a.motivo] ?? a.motivo}</td><td>{etiquetaTipoVentas(a.tipo)}</td><td>{a.moneda}</td>
+                            <td className={propios.num}>{fmtNum(a.documentos)}</td><td className={propios.num}>{fmtImporteMoneda(a.total, a.moneda)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className={propios.sinDatos}>
+                    <button type="button" className={propios.enlace} onClick={() => cambiar({ vista: "DOCUMENTOS", estado: "", situacion: "ANOMALIA" })}>Ver los documentos con anomalía</button>
+                  </div>
+                </>
+              )}
+            </section>
+          </div>
         </div>
       ) : null}
 

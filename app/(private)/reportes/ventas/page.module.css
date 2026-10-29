@@ -27,35 +27,85 @@
   font-weight: 500;
 }
 
+/* PRO-337: bloque informativo («Documentos no computados» + «Anomalías fiscales»).
+   La grilla responde al ancho REAL del bloque (container query: descuenta el menú lateral y el zoom), no al viewport.
+   La tabla de seis columnas necesita ~760px; por debajo de eso las tarjetas se apilan a ancho completo y, si aun así
+   no entra (móvil, zoom alto), la tabla se desplaza horizontalmente DENTRO de su contenedor. Nada se recorta ni se oculta. */
 .informativo {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
-  gap: 10px;
+  container-type: inline-size;
+  container-name: informativo;
+  min-width: 0;
   margin-bottom: 12px;
 }
 
-.informativo > section {
-  overflow: hidden;
+.informativoGrilla {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+}
+
+/* Sin anomalías: la tarjeta de anomalías solo muestra un mensaje; la tabla recibe ~2.2 veces su ancho. */
+@container informativo (min-width: 1120px) {
+  .informativoGrilla {
+    grid-template-columns: minmax(0, 2.2fr) minmax(0, 1fr);
+  }
+}
+
+/* Con anomalías la segunda tarjeta también tiene una tabla (cinco columnas): lado a lado solo si ambas entran. */
+@container informativo (min-width: 1120px) and (max-width: 1459.98px) {
+  .informativoGrilla.conAnomalias {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@container informativo (min-width: 1460px) {
+  .informativoGrilla.conAnomalias {
+    grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+  }
+}
+
+.tarjetaInformativa {
+  min-width: 0;
   border: 1px solid #dce6ed;
   border-radius: 12px;
   background: #ffffff;
 }
 
-.informativo h2 {
-  margin: 0;
-  padding: 10px 14px;
+.tarjetaInformativa > header {
+  padding: 9px 14px;
   border-bottom: 1px solid #edf2f5;
-  color: #173b59;
+  border-radius: 11px 11px 0 0;
   background: #fbfcfd;
-  font-size: 13.5px;
-  font-weight: 700;
 }
 
-.informativo h2 small {
-  display: block;
+.tarjetaInformativa h2 {
+  margin: 0;
+  color: #173b59;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.tarjetaInformativa header p {
+  margin: 2px 0 0;
   color: #7f92a5;
   font-size: 12px;
   font-weight: 500;
+  line-height: 1.4;
+}
+
+/* Desplazamiento horizontal LOCAL de cada tabla: solo aparece cuando la tabla no entra; nunca altura máxima ni scroll vertical propio. */
+.tablaScroll {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: visible;
+  overscroll-behavior-x: contain;
+}
+
+.tablaScroll:focus-visible {
+  outline: 2px solid #0b8c95;
+  outline-offset: -2px;
 }
 
 .tablaChica {
@@ -66,17 +116,35 @@
 
 .tablaChica th,
 .tablaChica td {
-  padding: 7px 12px;
+  padding: 7px 10px;
   border-bottom: 1px solid #edf2f5;
   text-align: left;
+  vertical-align: middle;
+}
+
+/* Cifras, monedas, tipos y estados no se dividen ni se truncan. */
+.tablaChica td {
   white-space: nowrap;
 }
 
+/* Encabezados largos («Enviados sin aprobación», «Importe informativo») pueden pasar a dos líneas. */
 .tablaChica th {
   color: #5c7388;
   background: #f6f9fb;
   font-size: 12px;
   font-weight: 650;
+  line-height: 1.3;
+  vertical-align: bottom;
+  white-space: normal;
+}
+
+.tablaChica th.num {
+  min-width: 76px;
+}
+
+.tablaChica td.motivo {
+  min-width: 160px;
+  white-space: normal;
 }
 
 .tablaChica td.num,
