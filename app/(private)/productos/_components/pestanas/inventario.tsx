@@ -11,6 +11,11 @@ import { TarjetaFila, TituloColeccion } from "./repetidores";
 export function PestanaInventario({ ctx }: { ctx: ContextoFormulario }) {
   const { form, errores, catalogos, detalle } = ctx;
   const apertura = detalle?.aperturaRegistrada ?? null;
+  // PRO-335-R01 F-002: los costos NO usan la moneda del precio de referencia. Promedio = moneda base de la empresa (inventario_costos); apertura = moneda registrada en su línea.
+  const monedaPromedio = detalle?.monedaCostoPromedio ?? catalogos.monedaBaseCosto ?? "";
+  const monedaApertura = apertura?.monedaCosto ?? "";
+  const rotulo = (m: string) => (m ? ` (${m})` : "");
+  // Rótulo del campo EDITABLE de alta: sin cambios en esta corrección (fuera del alcance R01).
   const moneda = catalogos.monedaReferencia ? ` (${catalogos.monedaReferencia})` : "";
 
   return (
@@ -64,7 +69,7 @@ export function PestanaInventario({ ctx }: { ctx: ContextoFormulario }) {
         ) : (
           <>
             <Dato etiqueta="Cantidad inicial" valor={apertura ? `${apertura.cantidad} · mov. ${apertura.numero}` : ""} vacio="Sin movimiento de apertura" ayuda="Los cambios de stock se hacen con movimientos." />
-            <Dato etiqueta={`Costo de apertura${moneda}`} valor={apertura?.costoUnitario ? formatearImporteMoneda(apertura.costoUnitario, catalogos.monedaReferencia) : ""} ayuda={apertura?.costoUnitario ? `Exacto: ${formatearDecimalExacto(apertura.costoUnitario)}` : undefined} />
+            <Dato etiqueta={`Costo de apertura${rotulo(monedaApertura)}`} valor={apertura?.costoUnitario ? formatearImporteMoneda(apertura.costoUnitario, monedaApertura) : ""} ayuda={apertura?.costoUnitario ? `Exacto: ${formatearDecimalExacto(apertura.costoUnitario)}` : undefined} />
             <Dato etiqueta="Depósito de apertura" valor={apertura?.depositoNombre ?? ""} />
           </>
         )}
@@ -73,7 +78,7 @@ export function PestanaInventario({ ctx }: { ctx: ContextoFormulario }) {
       <SubTitulo>Indicadores operacionales (solo lectura)</SubTitulo>
       <div className={styles.gridFour}>
         <Dato etiqueta="Stock actual (real)" valor={ctx.modo === "crear" ? "0" : (detalle?.stockActual ?? "0")} ayuda={ctx.modo === "crear" ? "Se calcula con el movimiento de apertura." : "Calculado por los movimientos."} />
-        <Dato etiqueta={`Costo promedio${moneda}`} valor={detalle?.costoPromedio ? formatearImporteMoneda(detalle.costoPromedio, catalogos.monedaReferencia) : ""} vacio="Sin saldo valorizado" ayuda={detalle?.costoPromedio ? `Exacto: ${formatearDecimalExacto(detalle.costoPromedio)}` : undefined} />
+        <Dato etiqueta={`Costo promedio${rotulo(monedaPromedio)}`} valor={detalle?.costoPromedio ? formatearImporteMoneda(detalle.costoPromedio, monedaPromedio) : ""} vacio="Sin saldo valorizado" ayuda={detalle?.costoPromedio ? `Exacto: ${formatearDecimalExacto(detalle.costoPromedio)}` : undefined} />
         {detalle?.stockPorDeposito.map((s) => <Dato key={s.depositoId} etiqueta={`Stock en ${s.depositoNombre}`} valor={s.cantidad} />)}
       </div>
 

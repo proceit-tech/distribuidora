@@ -178,7 +178,7 @@ export async function GET(_request: Request, contexto: Contexto) {
       ),
       db.query(
         `SELECT mi.numero_movimiento AS numero, to_char(mi.fecha_movimiento, 'YYYY-MM-DD') AS fecha, ml.cantidad::text AS cantidad,
-                ml.costo_unitario::text AS "costoUnitario", d.nombre AS "depositoNombre"
+                ml.costo_unitario::text AS "costoUnitario", coalesce(ml.moneda_costo_codigo, '') AS "monedaCosto", d.nombre AS "depositoNombre"
            FROM movimiento_lineas ml
            JOIN movimientos_inventario mi ON mi.empresa_id = ml.empresa_id AND mi.id = ml.movimiento_id
            LEFT JOIN depositos d ON d.empresa_id = mi.empresa_id AND d.id = mi.deposito_destino_id
@@ -216,7 +216,9 @@ export async function GET(_request: Request, contexto: Contexto) {
     );
     const referenciasHistoricas = Object.fromEntries((historicas.rows as Array<{ campo: string; id: string; codigo: string; nombre: string; padreId: string | null }>).map((h) => [h.campo, { id: h.id, codigo: h.codigo, nombre: h.nombre, padreId: h.padreId }]));
     const monedaBase = await db.query(
-      `SELECT coalesce((SELECT moneda_codigo FROM listas_precio WHERE empresa_id = e.id AND es_referencia), e.moneda_base_codigo) AS moneda
+      // PRO-335-R01: `monedaBase` = moneda de los COSTOS de inventario (empresas.moneda_base_codigo), distinta de la moneda del precio de referencia. Solo lectura.
+      `SELECT coalesce((SELECT moneda_codigo FROM listas_precio WHERE empresa_id = e.id AND es_referencia), e.moneda_base_codigo) AS moneda,
+              e.moneda_base_codigo AS "monedaBase"
          FROM empresas e WHERE e.id = $1`,
       [empresaId],
     );
@@ -244,6 +246,7 @@ export async function GET(_request: Request, contexto: Contexto) {
         stockActual: (stockTotal.rows[0] as { total: string }).total,
         stockPorDeposito: stockRows,
         costoPromedio: costo.rowCount ? (costo.rows[0] as { costo: string | null }).costo : null,
+        monedaCostoPromedio: (monedaBase.rows[0] as { monedaBase?: string } | undefined)?.monedaBase ?? "",
         aperturaRegistrada: apertura.rowCount ? apertura.rows[0] : null,
         historialUnidadBase,
         referenciasHistoricas,

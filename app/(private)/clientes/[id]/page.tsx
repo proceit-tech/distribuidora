@@ -30,6 +30,7 @@ import { pestanaDeErrorApi } from "@/lib/clientes/pestanas";
 import { convertirLimites, requiereConversion, validarTasa } from "@/lib/clientes/cambio";
 import { validarFrecuenciaYDias } from "@/lib/clientes/logistica";
 import { validarDireccionFiscalRequerida } from "@/lib/clientes/obligatoriedad-fiscal";
+import { importeVerificable } from "@/lib/formato/monto-visual";
 import { useProtegerCambios } from "@/lib/ui/proteger-cambios";
 
 import styles from "./page.module.css";
@@ -429,6 +430,18 @@ function SelectInput({
     >
       {children}
     </select>
+  );
+}
+
+/** PRO-335-R01 F-003: importe de la confirmación de conversión de límites — visual por moneda (PYG 0 / USD-BRL 2) y, si oculta decimales, el valor exacto que se confirma. Solo presentación. */
+function ImporteConversion({ valor, moneda }: { valor: string | null; moneda: string | null | undefined }) {
+  const i = importeVerificable(valor, moneda);
+
+  return (
+    <>
+      {i.visual} {moneda}
+      {i.difiere ? <small> (exacto: {i.exacto})</small> : null}
+    </>
   );
 }
 
@@ -1897,12 +1910,12 @@ export default function ClienteDetallePage() {
                               <tr>
                                 <td style={{ padding: "2px 12px 2px 0" }}>Límite de crédito</td>
                                 <td style={{ padding: "2px 12px 2px 0" }}>
-                                  {vistaConversion.limite} {cliente?.monedaCodigoPredeterminada}
+                                  <ImporteConversion valor={vistaConversion.limite} moneda={cliente?.monedaCodigoPredeterminada} />
                                 </td>
                                 <td style={{ padding: "2px 12px 2px 0" }}>→</td>
                                 <td>
                                   <strong>
-                                    {vistaConversion.limiteDestino} {form.moneda}
+                                    <ImporteConversion valor={vistaConversion.limiteDestino} moneda={form.moneda} />
                                   </strong>
                                 </td>
                               </tr>
@@ -1910,12 +1923,12 @@ export default function ClienteDetallePage() {
                                 <tr>
                                   <td style={{ padding: "2px 12px 2px 0" }}>Límite temporal</td>
                                   <td style={{ padding: "2px 12px 2px 0" }}>
-                                    {vistaConversion.temporal} {cliente?.monedaCodigoPredeterminada}
+                                    <ImporteConversion valor={vistaConversion.temporal} moneda={cliente?.monedaCodigoPredeterminada} />
                                   </td>
                                   <td style={{ padding: "2px 12px 2px 0" }}>→</td>
                                   <td>
                                     <strong>
-                                      {vistaConversion.temporalDestino} {form.moneda}
+                                      <ImporteConversion valor={vistaConversion.temporalDestino} moneda={form.moneda} />
                                     </strong>
                                   </td>
                                 </tr>

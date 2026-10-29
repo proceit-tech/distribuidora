@@ -16,6 +16,7 @@ import { compararTexto, ordenarLista, siguienteOrden, type Orden } from "@/compo
 import { ThOrdenable } from "@/components/ui/lista-padrao/th-ordenable";
 import ui from "@/components/ui/lista-padrao/lista.module.css";
 import { formatearCantidad, formatearMonto } from "@/lib/formato/listas";
+import { subtotalesValorVenta, textoSubtotalesValorVenta, valorVentaFila } from "@/lib/productos/valor-venta";
 
 const PAGE_SIZE = 20;
 
@@ -30,7 +31,7 @@ type TipoFiltro =
   | "TODOS"
   | ProductoTipo;
 
-function money(value: number, moneda: string) {
+function money(value: number | string, moneda: string) {
   return formatearMonto(value, moneda);
 }
 
@@ -108,6 +109,10 @@ function desdeApi(fila: FilaApi): ProductoLista {
         ? null
         : Number(fila.precio_venta_referencia),
     monedaPrecioReferencia: fila.moneda_precio_referencia ?? "",
+    // PRO-335-R01: textos numeric exactos para presentación/agregación monetaria sin Number.
+    precioVentaReferenciaTexto: fila.precio_venta_referencia === null ? null : String(fila.precio_venta_referencia),
+    stockDisponibleTexto: String(fila.stock_disponible ?? "0"),
+    costoPromedioTexto: fila.costo_promedio === null ? null : String(fila.costo_promedio),
     inventarioInicial: Number(fila.inventario_inicial ?? 0),
     activo: fila.activo,
   };
@@ -160,6 +165,9 @@ export default function ListadoProductos({ puedeCrear }: { puedeCrear: boolean }
 
   const [orden, setOrden] = useState<Orden<CampoOrden>>(null);
 
+  // PRO-335-R01 F-002: moneda de COSTO = moneda base de la empresa (inventario_costos), distinta de la moneda del precio de referencia.
+  const [monedaCosto, setMonedaCosto] = useState("");
+
   useEffect(() => {
     let activo = true;
 
@@ -185,12 +193,14 @@ export default function ListadoProductos({ puedeCrear }: { puedeCrear: boolean }
         const json =
           (await respuesta.json()) as {
             productos: FilaApi[];
+            catalogos?: { monedaBaseCosto?: string };
           };
 
         if (activo) {
           setProductos(
             json.productos.map(desdeApi),
           );
+          setMonedaCosto(json.catalogos?.monedaBaseCosto ?? "");
         }
       } catch (e) {
         if (activo) {
@@ -306,15 +316,6 @@ export default function ListadoProductos({ puedeCrear }: { puedeCrear: boolean }
           acc.bajoMinimo += 1;
         }
 
-        // Valor a precio de venta de referencia: solo productos con precio cargado (sin precio no suman).
-        if (producto.precioVentaReferencia !== null) {
-          acc.valorVenta +=
-            producto.precioVentaReferencia *
-            Number(producto.stockDisponible || 0);
-          acc.monedaValor =
-            producto.monedaPrecioReferencia || acc.monedaValor;
-        }
-
         return acc;
       },
       {
@@ -323,11 +324,15 @@ export default function ListadoProductos({ puedeCrear }: { puedeCrear: boolean }
         inventario: 0,
         sinStock: 0,
         bajoMinimo: 0,
-        valorVenta: 0,
-        monedaValor: "",
       },
     );
   }, [productos]);
+
+  // PRO-335-R01 F-001: «Valor a precio venta» con un subtotal por moneda REAL del precio (sin conversión ni total entre monedas), en aritmética exacta.
+  const valorVentaPorMoneda = useMemo(
+    () => subtotalesValorVenta(productos.map((p) => ({ precioTexto: p.precioVentaReferencia === null ? null : (p.precioVentaReferenciaTexto ?? String(p.precioVentaReferencia)), stockTexto: p.stockDisponibleTexto ?? String(p.stockDisponible || 0), moneda: p.monedaPrecioReferencia }))),
+    [productos],
+  );
 
   const filtrados = useMemo(() => {
     const term =
@@ -530,8 +535,8 @@ export default function ListadoProductos({ puedeCrear }: { puedeCrear: boolean }
 
         <article className={[ui.summaryCard, ui.summaryViolet].join(" ")}>
           <span>Valor a precio venta</span>
-          <strong>{money(resumen.valorVenta, resumen.monedaValor)}</strong>
-          <small>Solo productos con precio de referencia</small>
+          <strong>{textoSubtotalesValorVenta(valorVentaPorMoneda)}</strong>
+          <small>{valorVentaPorMoneda.length > 1 ? "Un subtotal por moneda del precio, sin conversión" : "Solo productos con precio de referencia"}</small>
         </article>
       </section>
 
@@ -745,12 +750,12 @@ export default function ListadoProductos({ puedeCrear }: { puedeCrear: boolean }
                           {producto.precioVentaReferencia === null
                             ? "—"
                             : money(
-                                producto.precioVentaReferencia * Number(producto.stockDisponible || 0),
+                                valorVentaFila(producto.precioVentaReferenciaTexto ?? String(producto.precioVentaReferencia), producto.stockDisponibleTexto ?? String(producto.stockDisponible || 0)) ?? "",
                                 producto.monedaPrecioReferencia,
                               )}
                         </span>
                         <span>
-                          Costo promedio: {producto.costoPromedio === null ? "—" : money(producto.costoPromedio, "PYG")}
+                          Costo promedio: {producto.costoPromedio === null ? "—" : money(producto.costoPromedioTexto ?? producto.costoPromedio, monedaCosto)}
                         </span>
                       </div>
                     </td>

@@ -147,6 +147,8 @@ export type ProductoDetalle = {
   stockPorDeposito: { depositoId: string; depositoNombre: string; cantidad: string }[];
   /** Costo promedio real (inventario_costos). null = sin saldo valorizado. Solo lectura. */
   costoPromedio: string | null;
+  /** PRO-335-R01: moneda del costo promedio = moneda base de la empresa (inventario_costos). "" si no se conoce. Solo lectura. */
+  monedaCostoPromedio?: string;
   /** Categoría, marca, familia y línea ya asignadas pero hoy inactivas (solo del producto). Se muestran «(inactivo)» sin ofrecerlas como elección nueva. */
   referenciasHistoricas?: Partial<Record<"categoriaId" | "marcaId" | "familiaId" | "lineaId", { id: string; codigo: string; nombre: string; padreId: string | null }>>;
   /** Cambios de unidad base (NEX-052), del más reciente al más antiguo. Solo lectura. */
@@ -157,6 +159,8 @@ export type ProductoDetalle = {
     fecha: string;
     cantidad: string;
     costoUnitario: string | null;
+    /** PRO-335-R01: moneda registrada en la línea (`movimiento_lineas.moneda_costo_codigo`); "" si no tiene costo. */
+    monedaCosto?: string;
     depositoNombre: string;
   } | null;
 
@@ -240,6 +244,10 @@ export type ProductoLista = {
   costoPromedio: number | null;
   precioVentaReferencia: number | null;
   monedaPrecioReferencia: string;
+  /** PRO-335-R01: textos numeric exactos (solo lectura) para presentar y agregar importes sin Number. */
+  precioVentaReferenciaTexto?: string | null;
+  stockDisponibleTexto?: string;
+  costoPromedioTexto?: string | null;
   inventarioInicial: number;
   bajoMinimo: boolean;
   activo: boolean;
@@ -253,6 +261,8 @@ export type CatalogoProductos = {
   lineas: { id: string; familiaId: string; codigo: string; nombre: string }[];
   /** Moneda del precio de venta de referencia (moneda base de la empresa o la de la lista de referencia). */
   monedaReferencia: string;
+  /** PRO-335-R01: moneda base de la empresa (`empresas.moneda_base_codigo`), en la que están los COSTOS de inventario. Solo lectura; no es la moneda del precio. */
+  monedaBaseCosto?: string;
   /** `sifenCodigo`/`sifenRepresentacion`: equivalencia oficial E709/E710 (Tabla 5); null = sin equivalencia SIFEN configurada. */
   unidades: { id: string; codigo: string; nombre: string; sifenCodigo: number | null; sifenRepresentacion: string; sifenVigente?: boolean | null }[];
   impuestos: { id: string; codigo: string; nombre: string; porcentaje: string }[];

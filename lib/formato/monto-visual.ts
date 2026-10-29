@@ -151,3 +151,15 @@ export function formatearMontoVisual(texto: string | number | null | undefined, 
 
   return redondear(p, !moneda ? 0 : (decimalesMonedaVisual(moneda) ?? 2));
 }
+
+/**
+ * PRO-335-R01 F-003 — importe de una vista de CONFIRMACIÓN: valor visual por moneda + valor exacto (sin redondear) para que el operador sepa exactamente qué confirma.
+ * `difiere` = el visual oculta decimales del exacto (entonces la pantalla muestra ambos). Solo presentación: no recalcula ni cambia el dato enviado.
+ */
+export function importeVerificable(valor: string | null | undefined, moneda: string | null | undefined): { visual: string; exacto: string; difiere: boolean } {
+  const visual = formatearImporteMoneda(valor, moneda);
+  const exacto = formatearDecimalExacto(valor);
+  const sinCerosFinales = (t: string) => (t.includes(",") ? t.replace(/0+$/, "").replace(/,$/, "") : t);
+
+  return { visual, exacto, difiere: sinCerosFinales(visual) !== exacto };
+}

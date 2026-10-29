@@ -43,6 +43,7 @@ const CATALOGOS_VACIOS = {
   familias: [],
   lineas: [],
   monedaReferencia: "",
+  monedaBaseCosto: "",
   unidades: [],
   impuestos: [],
   proveedores: [],
@@ -134,7 +135,9 @@ export async function GET(request: Request) {
         db.query(`SELECT id, coalesce(codigo, '') AS codigo, nombre, categoria_id AS "categoriaId" FROM familias_producto WHERE empresa_id = $1 AND activo = true ORDER BY nombre`, [empresaId]),
         db.query(`SELECT id, familia_id, coalesce(codigo, '') AS codigo, nombre FROM lineas_producto WHERE empresa_id = $1 AND activo = true ORDER BY nombre`, [empresaId]),
         db.query(
-          `SELECT coalesce((SELECT moneda_codigo FROM listas_precio WHERE empresa_id = e.id AND es_referencia), e.moneda_base_codigo) AS moneda
+          // PRO-335-R01: además de la moneda del PRECIO de referencia, la moneda base de la empresa (moneda de los COSTOS de inventario), solo lectura.
+          `SELECT coalesce((SELECT moneda_codigo FROM listas_precio WHERE empresa_id = e.id AND es_referencia), e.moneda_base_codigo) AS moneda,
+                  e.moneda_base_codigo AS moneda_base
              FROM empresas e WHERE e.id = $1`,
           [empresaId],
         ),
@@ -168,6 +171,7 @@ export async function GET(request: Request) {
           nombre: x.nombre,
         })),
         monedaReferencia: (moneda.rows[0] as { moneda?: string } | undefined)?.moneda ?? "",
+        monedaBaseCosto: (moneda.rows[0] as { moneda_base?: string } | undefined)?.moneda_base ?? "",
         unidades: unidades.rows,
         impuestos: impuestos.rows,
         proveedores: proveedores.rows,

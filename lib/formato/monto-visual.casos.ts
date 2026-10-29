@@ -15,10 +15,12 @@ import {
   formatearImporteConMoneda,
   formatearImporteMoneda,
   formatearMontoVisual,
+  importeVerificable,
   normalizarMonedaVisual,
 } from "@/lib/formato/monto-visual";
 import { formatearCostoUnitarioExactoTexto, formatearCostoUnitarioTexto, formatearMontoTexto } from "@/lib/inventario/decimal";
 import { formatoMoneda } from "@/lib/listas-precio/calculos";
+import { subtotalesValorVenta, textoSubtotalesValorVenta, valorVentaFila } from "@/lib/productos/valor-venta";
 import { fmtCantidadTexto, fmtDinero, fmtImporteMoneda } from "@/lib/reportes/formato";
 
 const raiz = process.cwd();
@@ -159,7 +161,7 @@ export async function verificarCasosFormatoMonetarioPro335(): Promise<string[]> 
   const info = leer("app/(private)/productos/_components/pestanas/informacion.tsx");
   const inv = leer("app/(private)/productos/_components/pestanas/inventario.tsx");
 
-  cierto("PRO335-H10 Producto: valor venta referencia exacto (sin Intl/redondeo a entero) en la moneda del precio; costos de apertura/promedio con moneda y exacto en ayuda", !/new Intl\.NumberFormat/.test(info) && /formatearImporteConMoneda\(valor, catalogos\.monedaReferencia\)/.test(info) && /formatearImporteMoneda\(detalle\.costoPromedio, catalogos\.monedaReferencia\)/.test(inv) && /formatearImporteMoneda\(apertura\.costoUnitario, catalogos\.monedaReferencia\)/.test(inv));
+  cierto("PRO335-H10 Producto: valor venta referencia exacto (sin Intl/redondeo a entero) en la moneda del precio; costos de apertura/promedio con SU moneda (R01 F-002) y exacto en ayuda", !/new Intl\.NumberFormat/.test(info) && /formatearImporteConMoneda\(valor, catalogos\.monedaReferencia\)/.test(info) && /formatearImporteMoneda\(detalle\.costoPromedio, monedaPromedio\)/.test(inv) && /formatearImporteMoneda\(apertura\.costoUnitario, monedaApertura\)/.test(inv));
 
   const stock = leer("app/(private)/stock/page.tsx");
   const stockDetalle = leer("app/(private)/stock/[id]/page.tsx");
@@ -167,6 +169,43 @@ export async function verificarCasosFormatoMonetarioPro335(): Promise<string[]> 
   const entradaNueva = leer("app/(private)/compras/entradas/nueva/page.tsx");
 
   cierto("PRO335-H11 Stock y Compras: costo unitario visual con política monetaria y su valor exacto visible en el título; el input editable de costo no cambia", [stock, stockDetalle, entrada, entradaNueva].every((p) => /formatearCostoUnitarioExactoTexto\(/.test(p) && /formatearCostoUnitarioTexto\(/.test(p)) && /<input inputMode="decimal" value=\{l\.costo\}/.test(entradaNueva));
+
+  // ── J. Corrección AUD-R01 (F-001 KPI por moneda, F-002 moneda de costo, F-003 confirmación de Clientes) ──────────
+  {
+    const kpi = (filas: Array<[string | null, string | null, string | null]>) => subtotalesValorVenta(filas.map(([precioTexto, stockTexto, moneda]) => ({ precioTexto, stockTexto, moneda })));
+    const dos = kpi([["100000", "1", "PYG"], ["20", "1", "USD"]]);
+
+    igual("PRO335-R01-01 F-001 PYG 100.000 + USD 20 → DOS subtotales (nunca USD 100.020 ni Gs. 100.020)", [dos, textoSubtotalesValorVenta(dos)], [[{ moneda: "PYG", valor: "100000", productos: 1 }, { moneda: "USD", valor: "20", productos: 1 }], "Gs. 100.000 · USD 20,00"]);
+    cierto("PRO335-R01-02 F-001 el texto del KPI no contiene la suma falsa entre monedas", !/100\.020/.test(textoSubtotalesValorVenta(dos)));
+    igual("PRO335-R01-03 F-001 misma moneda → un subtotal exacto (1500,5 × 2 + 1000 × 3 = 6.001)", textoSubtotalesValorVenta(kpi([["1500.5", "2", "PYG"], ["1000", "3", "PYG"]])), "Gs. 6.001");
+    const tres = kpi([["10", "2", "BRL"], ["5", "1", "USD"], ["1000", "1", "PYG"], ["7", "1", "USD"]]);
+    igual("PRO335-R01-04 F-001 mezcla USD/PYG/BRL → tres líneas (orden PYG, USD, BRL) sin total agregado", [tres.map((t) => [t.moneda, t.valor, t.productos]), textoSubtotalesValorVenta(tres)], [[["PYG", "1000", 1], ["USD", "12", 2], ["BRL", "20", 1]], "Gs. 1.000 · USD 12,00 · BRL 20,00"]);
+    igual("PRO335-R01-05 F-001 precio sin moneda → grupo «Sin moneda» con valor exacto, sin atribuirle divisa", textoSubtotalesValorVenta(kpi([["5", "1", ""], ["2.5", "1", null], ["1000", "1", "PYG"]])), "Gs. 1.000 · Sin moneda 7,5");
+    igual("PRO335-R01-06 F-001 productos sin precio no computan; ninguno con precio → «—»; alias Gs se agrupa con PYG", [textoSubtotalesValorVenta(kpi([[null, "10", "PYG"]])), textoSubtotalesValorVenta(kpi([["100", "1", "Gs."], ["200", "1", "PYG"]]))], ["—", "Gs. 300"]);
+    igual("PRO335-R01-07 F-001 aritmética exacta sobre texto (stock fraccionario, valores > 2^53, stock ausente = 0)", [valorVentaFila("12.25", "0.5"), valorVentaFila("1234567890.1234", "3"), valorVentaFila("9007199254740993", "1"), valorVentaFila("100", null), valorVentaFila(null, "5"), textoSubtotalesValorVenta(kpi([["12.25", "0.5", "USD"]]))], ["6.125", "3703703670.3702", "9007199254740993", "0", null, "USD 6,13"]);
+  }
+
+  const listado = leer("app/(private)/productos/_components/listado-productos.tsx");
+  const apiLista = leer("app/api/productos/route.ts");
+  const apiDetalle = leer("app/api/productos/[id]/route.ts");
+
+  cierto("PRO335-R01-08 F-001 pantalla: el KPI usa subtotales por moneda; ya no acumula valorVenta ni toma la moneda del último producto", /textoSubtotalesValorVenta\(valorVentaPorMoneda\)/.test(listado) && /subtotalesValorVenta\(productos\.map/.test(listado) && !/acc\.valorVenta|monedaValor/.test(listado));
+  cierto("PRO335-R01-09 F-002 listado: costo promedio en la moneda base de la empresa (catalogos.monedaBaseCosto), no «PYG» fijo", /money\(producto\.costoPromedioTexto \?\? producto\.costoPromedio, monedaCosto\)/.test(listado) && /setMonedaCosto\(json\.catalogos\?\.monedaBaseCosto \?\? ""\)/.test(listado) && !/costoPromedio, "PYG"\)/.test(listado));
+  cierto("PRO335-R01-10 F-002 API (solo lectura): el listado expone la moneda base desde empresas.moneda_base_codigo, separada de la moneda del precio", /e\.moneda_base_codigo AS moneda_base/.test(apiLista) && /monedaBaseCosto: \(moneda\.rows\[0\]/.test(apiLista) && /monedaReferencia: \(moneda\.rows\[0\] as \{ moneda\?: string \}/.test(apiLista));
+  cierto("PRO335-R01-11 F-002 API detalle (solo lectura): moneda del costo promedio = moneda base; apertura con movimiento_lineas.moneda_costo_codigo", /e\.moneda_base_codigo AS "monedaBase"/.test(apiDetalle) && /monedaCostoPromedio: \(monedaBase\.rows\[0\]/.test(apiDetalle) && /coalesce\(ml\.moneda_costo_codigo, ''\) AS "monedaCosto"/.test(apiDetalle));
+  cierto("PRO335-R01-12 F-002 pestaña Inventario: costos con su moneda propia (no la del precio); el rótulo del input editable de alta no cambia", /const monedaPromedio = detalle\?\.monedaCostoPromedio \?\? catalogos\.monedaBaseCosto \?\? ""/.test(inv) && /const monedaApertura = apertura\?\.monedaCosto \?\? ""/.test(inv) && !/formatearImporteMoneda\([^)]*catalogos\.monedaReferencia\)/.test(inv) && /Costo unitario de apertura\$\{moneda\}/.test(inv));
+  igual("PRO335-R01-13 F-002 base PYG con lista USD → costo Gs. sin decimales y precio USD con 2; base USD con lista PYG → costo USD 2 y precio Gs. 0", [formatearImporteMoneda("15000.5000", "PYG"), formatearImporteConMoneda("12.5", "USD"), formatearImporteMoneda("10.1234", "USD"), formatearImporteConMoneda("82500.0000", "PYG")], ["15.001", "USD 12,50", "10,12", "Gs. 82.500"]);
+  igual("PRO335-R01-14 F-002 costo de apertura con su moneda registrada; sin moneda → exacto, sin inventar", [formatearImporteMoneda("7.1234", "USD"), formatearImporteMoneda("7.1234", ""), formatearImporteMoneda("7.1234", undefined)], ["7,12", "7,1234", "7,1234"]);
+
+  // F-003 — Clientes: confirmación de conversión de límites (solo lectura).
+  igual("PRO335-R01-15 F-003 PYG 142090.90909092 → visual 142.091 y exacto visible", importeVerificable("142090.90909092", "PYG"), { visual: "142.091", exacto: "142.090,90909092", difiere: true });
+  igual("PRO335-R01-16 F-003 USD 1234.56789 → visual 1.234,57 y exacto conservado", importeVerificable("1234.56789", "USD"), { visual: "1.234,57", exacto: "1.234,56789", difiere: true });
+  igual("PRO335-R01-17 F-003 sin decimales ocultos no se duplica el exacto; ausencia «—»", [importeVerificable("1500.00", "USD"), importeVerificable("7500250", "PYG"), importeVerificable(null, "PYG")], [{ visual: "1.500,00", exacto: "1.500", difiere: false }, { visual: "7.500.250", exacto: "7.500.250", difiere: false }, { visual: "—", exacto: "—", difiere: false }]);
+  {
+    const cli = leer("app/(private)/clientes/[id]/page.tsx");
+
+    cierto("PRO335-R01-18 F-003 pantalla: los 4 importes de la confirmación usan ImporteConversion con la moneda de CADA lado; cálculo convertirLimites y textos crudos reemplazados solo en la vista", (cli.match(/<ImporteConversion valor=\{vistaConversion\.(limite|limiteDestino|temporal|temporalDestino)\} moneda=\{(cliente\?\.monedaCodigoPredeterminada|form\.moneda)\} \/>/g) ?? []).length === 4 && !/\{vistaConversion\.limite\} \{cliente/.test(cli) && /convertirLimites\(/.test(cli) && /const i = importeVerificable\(valor, moneda\)/.test(cli));
+  }
 
   // ── I. Contratos que NO cambian: exportaciones y cálculos ────────────────────────────────────────
   cierto("PRO335-I01 exportadores conservan el valor exacto (fmtDinero/fmtCantidadTexto) y no usan el formato monetario de pantalla", /fmtDinero\(v as string \| null\)/.test(leer("lib/reportes/export.ts")) && !/fmtImporteMoneda|formatearImporteMoneda/.test(leer("lib/reportes/export.ts") + leer("lib/reportes/export-ventas.ts") + leer("lib/reportes/xlsx.ts") + leer("lib/reportes/pdf.ts")));
