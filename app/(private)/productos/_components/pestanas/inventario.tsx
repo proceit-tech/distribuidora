@@ -15,8 +15,7 @@ export function PestanaInventario({ ctx }: { ctx: ContextoFormulario }) {
   const monedaPromedio = detalle?.monedaCostoPromedio ?? catalogos.monedaBaseCosto ?? "";
   const monedaApertura = apertura?.monedaCosto ?? "";
   const rotulo = (m: string) => (m ? ` (${m})` : "");
-  // Rótulo del campo EDITABLE de alta: sin cambios en esta corrección (fuera del alcance R01).
-  const moneda = catalogos.monedaReferencia ? ` (${catalogos.monedaReferencia})` : "";
+  // PRO-335-R02-F004: el costo de alta se registra en la moneda BASE (NEX-009), no en la de la lista de precios; sin base conocida, el rótulo no lleva moneda. El valor editable no cambia.
 
   return (
     <>
@@ -56,7 +55,7 @@ export function PestanaInventario({ ctx }: { ctx: ContextoFormulario }) {
         {ctx.modo === "crear" ? (
           <>
             <Texto etiqueta="Cantidad inicial" campo="inventarioInicial.cantidad" errores={errores} valor={form.inventarioInicial.cantidad} alCambiar={(v) => ctx.set("inventarioInicial", { ...form.inventarioInicial, cantidad: v })} modo="decimal" maxLength={19} ayuda="Genera un movimiento real de apertura." />
-            <Texto etiqueta={`Costo unitario de apertura${moneda}`} campo="inventarioInicial.costoUnitario" errores={errores} valor={form.inventarioInicial.costoUnitario} alCambiar={(v) => ctx.set("inventarioInicial", { ...form.inventarioInicial, costoUnitario: v })} modo="decimal" maxLength={19} ayuda="Obligatorio si hay cantidad inicial." />
+            <Texto etiqueta={`Costo unitario de apertura${rotulo(catalogos.monedaBaseCosto ?? "")}`} campo="inventarioInicial.costoUnitario" errores={errores} valor={form.inventarioInicial.costoUnitario} alCambiar={(v) => ctx.set("inventarioInicial", { ...form.inventarioInicial, costoUnitario: v })} modo="decimal" maxLength={19} ayuda="Obligatorio si hay cantidad inicial." />
             <Selector
               etiqueta="Depósito de apertura"
               campo="inventarioInicial.depositoId"
