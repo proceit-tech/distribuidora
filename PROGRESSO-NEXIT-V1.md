@@ -2,6 +2,16 @@
 
 Branch: `feature/NEXIT-2026-001-banco-demo`. Regra: uma funcionalidade por vez; sem mock/localStorage/dados fixos no modo real; commit+push ao terminar cada item.
 
+## PRO-335 — ORDEM ATIVA ÚNICA 29/10/2026 — FORMATO MONETÁRIO TODAS AS TELAS (AGUARDANDO CLAUDE)
+
+**Nova ordem do responsável:** desenvolver padronização **VISUAL MONETÁRIA** global PYG 0 decimais e USD <=2 (BRL 2), mantendo quantidades, taxa de câmbio, números/códigos fiscais e campos editáveis na precisão original. **Ordem técnica canônica:** [ORD-CLAUDE-NEXIT-PRO-335-FORMATO-MONETARIO-TODAS-TELAS-2026-10-29.md](documentacao/ordens/ORD-CLAUDE-NEXIT-PRO-335-FORMATO-MONETARIO-TODAS-TELAS-2026-10-29.md), [auditoria transversal](documentacao/analises/AUD-NEXIT-FORMATO-MONETARIO-TODAS-TELAS-E-LAYOUT-VENTAS-2026-10-29.md), [Linear PRO-335](https://linear.app/proceit/issue/PRO-335).
+
+**Escopo:** TODOS os valores monetários de telas, cards, tabelas, detalhes, modais e resumos; separar `fmtDinero` monetário do `fmtCantidadTexto`, exigir moeda por linha e usar o formatter sobre `numeric` TEXTUAL exato. Preservar cálculo fiscal, DB, SIFEN JSON/XML/CDC, estoque, NCE/FE, preços gravados, exports XLSX/PDF, KuDE gateway, layout e CSS. Inventário das telas/algoritmo e casos como código obrigatórios. **PRO-337** (coluna `Importe informativo` cortada, títulos/layout do Informe de Ventas) continua `Todo`, **NÃO AUTORIZADA** até auditoria PRO-335. Claude commit+push SHA e PARA; SEM testes/lint/typecheck/build/CI manual/VM/SQL/Docker/gateway/deploy. **Nenhum código PRO-335 foi entregue, testado ou homologado ainda.**
+
+**Situação anterior preservada:** PRO-330 `In Review` conforme estaticamente R02, 71 casos escritos/nenhum executado; PRO-328 `In Review`, NEX-076 versionada não aplicada; PRO-327 SQL histórico 561 concluído/pós-check OK, UI ainda pausada.
+
+
+
 ## 29/10/2026 — AUDITORIA TRANSVERSAL DE MONEDA / PRO-335 + LAYOUT VENTAS / PRO-337 — SÓ DIAGNÓSTICO
 
 O responsável enviou três capturas reais de CASA MINGO e definiu **PYG/Gs sem decimais visíveis para todo IMPORTE MONETÁRIO em TODAS AS TELAS**, USD com máximo 2 casas (BRL 2 conforme padrão atual). Isso **substitui a regra anterior PRO-335** de mostrar decimal fiscal PYG quando não integral somente no valor visual; **DB numeric, XML/JSON SIFEN, preço/custo real, cálculos, stock fracionário, descontos, taxas, campos editáveis e XLSX numérico NÃO mudam**.
