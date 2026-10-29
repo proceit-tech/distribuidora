@@ -57,7 +57,7 @@
 
 ## 5. Validación funcional y trazabilidad
 
-- Probar en código el formato de `0, -0, 0.499999, 0.5, -0.5, 142090.90909092, 1420909.09090908, 999999.99999999` en PYG y `1.234, 1.235, -1.235, 1234.5, 1234.56789` en USD, BRI/BRL cuando aplique, números enormes como TEXTO, null y inválidos (no fabricar saldo ni dato).
+- Probar en código el formato de `0, -0, 0.499999, 0.5, -0.5, 142090.90909092, 1420909.09090908, 999999.99999999` en PYG y `1.234, 1.235, -1.235, 1234.5, 1234.56789` en USD, BRL cuando aplique, números enormes como TEXTO, null y inválidos (no fabricar saldo ni dato).
 - PYG 0 y USD ≤2 para todos los **importes visibles**; cantidades como 0,0001 conservadas; moneda por fila para pantallas mixtas; signo de FE/NCE intacto; datos exactos en API/DB/JSON/XML/SIFEN y en exportaciones XLSX.
 - Comparar KPI Resumen ventas con tabla Resumen, Documentos, Producto, Clientes, Vendedores, Meses, fechas/filtros de período y estado fiscal. Nunca sumar valores visuales redondeados como nueva fuente del total.
 - Señalar en auditoría diferencias deliberadas de costo unitario de alta precisión y tasas: diferenciarlas de moneda del valor TOTAL.
