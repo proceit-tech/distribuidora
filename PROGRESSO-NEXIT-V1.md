@@ -2,7 +2,16 @@
 
 Branch: `feature/NEXIT-2026-001-banco-demo`. Regra: uma funcionalidade por vez; sem mock/localStorage/dados fixos no modo real; commit+push ao terminar cada item.
 
-## PRO-335 — AUDITORIA INDEPENDENTE R02 / 29-10-2026 — F001/F003 CERRADOS; F004 RÓTULO ABERTURA PENDENTE
+## PRO-335 — AUDITORIA R03 / 29-10-2026 — F001 F002 F003 F004 RESOLVIDOS ESTATICAMENTE; HOMOLOGAÇÃO PENDENTE
+
+- **Último SHA funcional Claude:** `b8b448cc324ef759d58612712272847692528964`: somente 2 arquivos, `productos/_components/pestanas/inventario.tsx` e `lib/formato/monto-visual.casos.ts`. `Costo unitario de apertura` em modo criar passou a usar `catalogos.monedaBaseCosto` (base do inventário), sem trocar valor, precisão, `alCambiar`, validação ou SQL de movimento. Caso `PRO335-R01-12` foi atualizado; +6 casos `PRO335-R02-19..24`, **NÃO executados**.
+- **[PARECER CHATGPT R03](documentacao/testes/AUD-NEXIT-PRO-335-FORMATO-MONETARIO-R03-2026-10-29.md): CONFORME ESTATICAMENTE**, consolida F-001 (KPI preços por moeda real), F-002 (custos em moeda-base e abertura histórica em moeda do movimento), F-003 (confirmação de crédito Cliente por moeda com exato), R02-F004 (rótulo de moeda-base correto), todos fechados por inspeção. Proveedores `montoMinimoCompra` segue editável e NÃO recebeu formatação destrutiva. Total reportado 74 casos novos da entrega inicial + 1 residual + 18 R01 + 6 R02 = **99 verificações escritas/referenciadas, não executadas**; não atribuir cobertura dinâmica.
+- **PRO-335 `In Review`, NÃO Done/homologada:** faltam execução autorizada de testes, lint/typecheck/build, validação de dados multiempresa, navegador nas telas relevantes e homologação por pessoa responsável. **0 testes/SQL/VM/Docker/gateway/browser/deploy executados** nesta série de auditorias.
+- **GATE:** NENHUMA ordem de código ativa para Claude após R03. [PRO-337](https://linear.app/proceit/issue/PRO-337), correção de card cortado e títulos do Informe de Ventas, CONTINUA `Todo` e exige NOVA ordem explícita; não iniciar automaticamente. PRO-328/330 continuam In Review, NEX-076 não aplicada; PRO-327 SQL 561 já concluído com poscheck, não reexecutar.
+
+
+
+## HISTÓRICO — PRO-335 AUDITORIA R02 / 29-10-2026 — F004 ENCERRADO NA R03
 
 - **SHA Claude R01:** `dd310116c8bb86425114e41f30741ab7c1cd053b`, **9 arquivos / 18 casos novos, NENHUM executado**. [AUDITORIA CHATGPT R02](documentacao/testes/AUD-NEXIT-PRO-335-FORMATO-MONETARIO-R02-2026-10-29.md): **PARCIALMENTE CONFORME**.
 - **F-001 FECHADO ESTATICAMENTE:** KPI `Valor a precio venta` de Productos agrupa subtotais por moeda real sem somar PYG+USD e usa `multiplicarDecimales`/`sumarDecimales` com dados `numeric` textuais.
