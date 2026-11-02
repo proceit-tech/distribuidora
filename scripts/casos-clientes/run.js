@@ -91,6 +91,7 @@ Module._resolveFilename = function (request, ...resto) {
   const r01 = cargar("lib/facturacion/nce-correcciones-r01.casos.js");
   const e1ia = cargar("lib/facturacion/info-adicional-e1.casos.js");
   const p331 = cargar("lib/facturacion/detalle-factura-vista.casos.js");
+  const p333 = cargar("lib/facturacion/orden-documentos.casos.js");
   const uxf = cargar("lib/facturacion/flujo-factura-ux.casos.js");
   const red = cargar("lib/facturacion/rediseno.casos.js");
   const suites = [
@@ -179,6 +180,7 @@ Module._resolveFilename = function (request, ...resto) {
     ["Nueva factura premium (desktop): forma de pago tras cliente y productos, tabla compacta y resumen jerárquico", async () => uxf.verificarCasosFlujoFacturaUx(), null],
     ["E1 (PRO-93/94): J003 dInfAdic en FE y NCE — observaciones + dirección de entrega validada + vendedor autenticado, snapshot idempotente, límite 5000 y aislamiento", async () => e1ia.verificarCasosInfoAdicionalE1(), null],
     ["PRO-331 (CASA MINGO): Nueva factura — cuatro líneas visibles con rolagem local desde la quinta y cabecera sticky, columna N° 1..n solo visual, foco limpio de vuelta al buscador tras alta rápida sin robar foco (límite 999 intacto)", async () => p331.verificarCasosDetalleFacturaPro331(), null],
+    ["PRO-333 (CASA MINGO): Documentos — columna «Documento» ordenada por valor numérico del número fiscal en SQL antes de LIMIT/OFFSET, ceros de presentación, desempates estables, filtros y fecha por defecto intactos", async () => p333.verificarCasosOrdenDocumentosPro333(), null],
   ];
   let total = 0;
   let fallosTotal = 0;

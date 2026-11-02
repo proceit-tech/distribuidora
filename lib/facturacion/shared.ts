@@ -33,12 +33,35 @@ export type ConsultaDocumentos = {
   tamano?: number;
 };
 
-const ORDEN: Record<string, string[]> = {
-  fecha: ["d.fecha_emision"],
-  numero: ["d.establecimiento", "d.punto_expedicion", "d.numero"],
-  cliente: ["d.receptor_nombre"],
-  total: ["d.total"],
-  estado: ["d.estado_sifen"],
+type Dir = "ASC" | "DESC";
+
+/**
+ * PRO-333: la columna «Documento» ordena por el VALOR NUMÉRICO del número fiscal como criterio primario (DESC: 90015, 90014, 90006, 90005, 90004), no por texto
+ * ni por establecimiento/punto. Sin cast a integer/bigint (el número es TEXT y se conserva tal cual, con sus ceros): solo para cadenas de dígitos se compara la
+ * longitud sin ceros a la izquierda y luego esos dígitos byte a byte (COLLATE "C"), lo que equivale al orden numérico para cualquier longitud. Un número no
+ * numérico (hoy imposible por el CHECK '^[0-9]{7}$' de NEX-047) queda siempre DESPUÉS de los numéricos, en ambas direcciones, y entre sí por su texto en "C".
+ * Desempates estables en la misma dirección: texto exacto (ceros), establecimiento, punto, serie, tipo y fecha; el ID cierra en construirConsultas.
+ */
+const ORDEN_NUMERO = (dir: Dir) => [
+  `(d.numero !~ '^[0-9]+$') ASC`,
+  `CASE WHEN d.numero ~ '^[0-9]+$' THEN length(ltrim(d.numero, '0')) END ${dir}`,
+  `CASE WHEN d.numero ~ '^[0-9]+$' THEN ltrim(d.numero, '0') END COLLATE "C" ${dir}`,
+  `d.numero COLLATE "C" ${dir}`,
+  `d.establecimiento COLLATE "C" ${dir}`,
+  `d.punto_expedicion COLLATE "C" ${dir}`,
+  `coalesce(d.serie, '') COLLATE "C" ${dir}`,
+  `d.tipo COLLATE "C" ${dir}`,
+  `d.fecha_emision ${dir}`,
+];
+
+const columnas = (lista: string[]) => (dir: Dir) => lista.map((x) => `${x} ${dir}`);
+
+const ORDEN: Record<string, (dir: Dir) => string[]> = {
+  fecha: columnas(["d.fecha_emision"]),
+  numero: ORDEN_NUMERO,
+  cliente: columnas(["d.receptor_nombre"]),
+  total: columnas(["d.total"]),
+  estado: columnas(["d.estado_sifen"]),
 };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -145,8 +168,8 @@ export function construirConsultas(empresaId: string, usuarioId: string, entrada
   const c = normalizarConsulta(entrada);
   const f = filtros(c);
   const base = `WHERE ${ALCANCE}${f.sql}`;
-  const dir = c.dir === "asc" ? "ASC" : "DESC";
-  const principal = c.orden ? `${ORDEN[c.orden].map((x) => `${x} ${dir}`).join(", ")}, ` : "d.fecha_emision DESC, ";
+  const dir: Dir = c.dir === "asc" ? "ASC" : "DESC";
+  const principal = c.orden ? `${ORDEN[c.orden](dir).join(", ")}, ` : "d.fecha_emision DESC, ";
   const params = [empresaId, usuarioId, ...f.params];
 
   return {
