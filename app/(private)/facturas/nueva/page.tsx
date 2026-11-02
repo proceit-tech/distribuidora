@@ -9,6 +9,7 @@ import { puedeEnviarPorGateway, type EstadoGatewayUI } from "@/lib/facturacion/g
 import { crearBuscadorRapido, type EstadoBuscador, MAX_VISIBLES } from "@/lib/facturacion/busqueda-rapida";
 import { formularioModificado, perdidasAlCambiarCondicion, perdidasAlCambiarMoneda } from "@/lib/facturacion/cambios-formulario";
 import { descuentosTrasCambioMoneda } from "@/lib/facturacion/descuentos";
+import { altoMaximoDetalle, desplazamientoParaMostrar, destinoFocoTrasAlta, FILAS_VISIBLES_DETALLE, ID_BUSCADOR_PRODUCTOS, ordinalLinea, puedeVolverAlBuscador, type OrigenAlta } from "@/lib/facturacion/detalle-factura-vista";
 import { soloDifierenCerosIniciales } from "@/lib/facturacion/codigo-producto";
 import { evaluarFechaEmision, rangoSeleccion } from "@/lib/facturacion/fecha-emision";
 import { etiquetaEstablecimiento } from "@/lib/facturacion/presentacion";
@@ -337,13 +338,15 @@ type ItemBusqueda = { titulo: string; detalle: string; derecha?: string; impedim
  * Búsqueda rápida (combobox) para clientes y productos: escribe, elige con el ratón o con las flechas + Enter. Con Enter y una coincidencia exacta (código, GTIN o documento)
  * o un único resultado habilitado, lo selecciona directamente (útil con lector de código de barras). El selector avanzado (diálogo paginado) sigue disponible.
  */
-function BuscadorRapido<T extends { id: string }>({ url, campo, etiqueta, placeholder, describir, exacto, parecido, alElegir, mantenerAbierto, autoFocus, accion }: {
+function BuscadorRapido<T extends { id: string }>({ url, campo, etiqueta, placeholder, describir, exacto, parecido, alElegir, mantenerAbierto, autoFocus, accion, idCampo }: {
   url: string; campo: "clientes" | "productos" | "vendedores"; etiqueta: string; placeholder: string; describir: (t: T) => ItemBusqueda; exacto: (t: T, texto: string) => boolean;
   /** E05: ¿el resultado es un código DISTINTO que solo difiere en ceros iniciales? (001234 ≠ 1234): Enter no lo elige solo. */
   parecido?: (t: T, texto: string) => boolean;
   alElegir: (t: T) => void; mantenerAbierto?: boolean; autoFocus?: boolean;
   /** Acción de la misma fila que el campo (p. ej. «Búsqueda avanzada»): el aviso de resultado va DEBAJO de la fila y no mueve la acción. */
   accion?: React.ReactNode;
+  /** PRO-331: id estable del campo (el buscador de productos lo usa para recibir de vuelta el foco tras un alta rápida). */
+  idCampo?: string;
 }) {
   const [abierto, setAbierto] = useState(false);
   const [b, setB] = useState<EstadoBuscador<T>>({ texto: "", consulta: null, items: [], total: 0, cargando: false, error: "", activo: -1, aviso: "", buscando: false });
@@ -400,6 +403,7 @@ function BuscadorRapido<T extends { id: string }>({ url, campo, etiqueta, placeh
       <label className={estilos.field}>
         <span>{etiqueta}</span>
         <input
+          id={idCampo}
           role="combobox"
           aria-expanded={abierto}
           aria-controls={`${idBase}-lista`}
@@ -542,6 +546,7 @@ function BuscadorProducto({ alElegir, permisos, moneda, accion }: { alElegir: (p
       parecido={(p, t) => soloDifierenCerosIniciales(p.codigo, t)}
       alElegir={alElegir}
       accion={accion}
+      idCampo={ID_BUSCADOR_PRODUCTOS}
     />
   );
 }
@@ -615,8 +620,11 @@ export default function NuevaFacturaPage() {
   const [siguienteClave, setSiguienteClave] = useState(1);
   const [clave, setClave] = useState(() => crypto.randomUUID());
   const [selector, setSelector] = useState<"cliente" | "producto" | null>(null);
-  // E01: tras agregar un producto, el foco va a su campo Cantidad (al cerrar el selector, que permite agregar varios).
+  // E01: tras agregar un producto desde el selector AVANZADO, el foco va a su campo Cantidad (al cerrar el selector, que permite agregar varios).
+  // PRO-331: el alta RÁPIDA (código/GTIN/Enter) ya no usa este camino: devuelve el foco al buscador (ver volverAlBuscador).
   const lineaAFocar = useRef<number | null>(null);
+  // PRO-331: contenedor de la tabla de detalle editable (cuatro líneas visibles; desde la quinta, rolagem vertical local).
+  const [contenedorDetalle, setContenedorDetalle] = useState<HTMLDivElement | null>(null);
   const [hoy, setHoy] = useState("");
   const [revisando, setRevisando] = useState(false);
   const [errores, setErrores] = useState<string[]>([]);
@@ -803,25 +811,92 @@ export default function NuevaFacturaPage() {
     }
   }, [selector, lineas]);
 
-  function agregar(p: Producto): number {
+  // PRO-331: alto máximo = cabecera + cuatro líneas REALES (alto variable: stock, pendientes, descuentos, panel fiscal); se vuelve a medir con cada cambio de tamaño de la tabla.
+  useEffect(() => {
+    const wrap = contenedorDetalle;
+    const tabla = wrap?.querySelector("table");
+
+    if (!wrap || !tabla) return;
+
+    const medir = () => {
+      const filas = tabla.querySelectorAll<HTMLTableRowElement>("tbody > tr[data-linea]");
+      const quinta = filas[FILAS_VISIBLES_DETALLE];
+      const inicioQuinta = quinta ? quinta.getBoundingClientRect().top - tabla.getBoundingClientRect().top : null;
+      const alto = altoMaximoDetalle(filas.length, inicioQuinta, wrap.offsetHeight - wrap.clientHeight);
+      const valor = alto === null ? "" : `${alto}px`;
+
+      if (wrap.style.maxHeight !== valor) wrap.style.maxHeight = valor;
+    };
+    const observador = new ResizeObserver(medir);
+
+    medir();
+    observador.observe(tabla);
+
+    return () => observador.disconnect();
+  }, [contenedorDetalle]);
+
+  // PRO-331: deja a la vista (solo rolagem LOCAL de la tabla) la línea añadida o incrementada. Doble frame: primero se aplica el alto máximo de la quinta línea.
+  function mostrarLineaEnDetalle(clave: number) {
+    window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+      const wrap = contenedorDetalle;
+      const fila = wrap?.querySelector<HTMLTableRowElement>(`tbody > tr[data-linea="${clave}"]`);
+
+      if (!wrap || !fila || wrap.scrollHeight <= wrap.clientHeight) return;
+
+      const vista = wrap.getBoundingClientRect();
+      const f = fila.getBoundingClientRect();
+      const delta = desplazamientoParaMostrar({ filaArriba: f.top, filaAbajo: f.bottom, vistaArriba: vista.top + wrap.clientTop, vistaAlto: wrap.clientHeight, cabecera: wrap.querySelector("thead")?.getBoundingClientRect().height ?? 0 });
+
+      if (delta !== 0) wrap.scrollTop += delta;
+    }));
+  }
+
+  // PRO-331: tras un alta rápida correcta el buscador (ya limpio por el controlador) recupera el foco para la siguiente lectura; nunca se roba el foco de otro control.
+  function volverAlBuscador(clave: number) {
+    mostrarLineaEnDetalle(clave);
+    window.requestAnimationFrame(() => {
+      const campo = document.getElementById(ID_BUSCADOR_PRODUCTOS) as HTMLInputElement | null;
+      const activo = document.activeElement;
+
+      if (!campo || !campo.isConnected || campo.disabled) return;
+      if (!puedeVolverAlBuscador(activo === campo ? "buscador" : !activo || activo === document.body ? "ninguno" : "otro")) return;
+      if (activo !== campo) campo.focus({ preventScroll: true });
+    });
+  }
+
+  function agregar(p: Producto, origen: OrigenAlta = "avanzado"): number {
     // El mismo producto no se duplica: suma una unidad a su línea.
     const existente = lineas.find((l) => l.producto.id === p.id);
 
     if (existente) {
       setLineas((ls) => ls.map((l) => (l.clave === existente.clave ? { ...l, cantidad: sumarUnaUnidad(l.cantidad) ?? l.cantidad } : l)));
-      lineaAFocar.current = existente.clave;
+      // PRO-331: avanzado → Cantidad al cerrar el selector (E01); rápido → de vuelta al buscador, sin crear otra línea.
+      if (destinoFocoTrasAlta(origen, false) === "cantidad") lineaAFocar.current = existente.clave;
+      else { lineaAFocar.current = null; volverAlBuscador(existente.clave); }
 
       return existente.clave;
     }
 
     setLineas((ls) => [...ls, { clave: siguienteClave, producto: p, cantidad: "1", precio: precioParaEdicion(referencia(p, moneda)), ajuste: AJUSTE_VACIO, descuento: DESC_VACIO }]);
     // Un producto fiscalmente incompleto abre su panel contextual (solo con el permiso de ajuste fiscal) para completarlo sin salir de la factura.
-    if (puedeAjustarFiscal && problemasFiscales(p, AJUSTE_VACIO, "1", moneda).filter((m) => !m.startsWith("sin precio")).length > 0) setEditando(siguienteClave);
-    lineaAFocar.current = siguienteClave;
+    const abrePanel = puedeAjustarFiscal && problemasFiscales(p, AJUSTE_VACIO, "1", moneda).filter((m) => !m.startsWith("sin precio")).length > 0;
+
+    if (abrePanel) setEditando(siguienteClave);
+    // PRO-331: avanzado → Cantidad (E01); rápido con panel fiscal → el panel toma el foco (requiere intervención); rápido normal → buscador limpio.
+    const destino = destinoFocoTrasAlta(origen, abrePanel);
+
+    // («panel»: el propio EditorFiscalItem se hace visible y toma el foco al montarse; aquí no se mueve nada más).
+    if (destino === "cantidad") lineaAFocar.current = siguienteClave;
+    else {
+      lineaAFocar.current = null;
+      if (destino === "buscador") volverAlBuscador(siguienteClave);
+    }
     setSiguienteClave((n) => n + 1);
 
     return siguienteClave;
   }
+
+  const agregarRapido = (p: Producto) => { agregar(p, "rapido"); };
 
   const editar = (k: number, cambio: Partial<Pick<Linea, "cantidad" | "precio" | "descuento">>) => setLineas((ls) => ls.map((x) => (x.clave === k ? { ...x, ...cambio } : x)));
   const editarAjuste = (k: number, cambio: Partial<AjusteUI>) => setLineas((ls) => ls.map((x) => (x.clave === k ? { ...x, ajuste: { ...x.ajuste, ...cambio } } : x)));
@@ -1234,11 +1309,12 @@ export default function NuevaFacturaPage() {
                   <span className={estilos.meta}>{lineas.length} ítem{lineas.length === 1 ? "" : "s"}</span>
                 </div>
                 <div className={`${estilos.cardBody} ${estilos.buscarFila}`}>
-                  <BuscadorProducto alElegir={agregar} permisos={{ puedeAjustarFiscal, puedeEditarPrecio }} moneda={moneda} accion={<button type="button" className={ui.secondaryButton} onClick={() => setSelector("producto")}>Búsqueda avanzada</button>} />
+                  <BuscadorProducto alElegir={agregarRapido} permisos={{ puedeAjustarFiscal, puedeEditarPrecio }} moneda={moneda} accion={<button type="button" className={ui.secondaryButton} onClick={() => setSelector("producto")}>Búsqueda avanzada</button>} />
                 </div>
-                <div className={estilos.tableWrap}>
+                <div className={`${estilos.tableWrap} ${estilos.detalleScroll}`} ref={setContenedorDetalle}>
                   <table className={`${estilos.items} ${estilos.itemsCompacta}`}>
                     <colgroup>
+                      <col className={estilos.colOrden} />
                       <col className={estilos.colProducto} />
                       <col className={estilos.colIva} />
                       <col className={estilos.colUnidad} />
@@ -1250,6 +1326,7 @@ export default function NuevaFacturaPage() {
                     </colgroup>
                     <thead>
                       <tr>
+                        <th scope="col" className={estilos.orden}><span aria-hidden="true">N°</span><span className="sr-only">Número de orden</span></th>
                         <th>Producto</th>
                         <th>IVA</th>
                         <th>Unidad</th>
@@ -1262,7 +1339,7 @@ export default function NuevaFacturaPage() {
                     </thead>
                     <tbody>
                       {lineas.length === 0 ? (
-                        <tr><td colSpan={8} className={estilos.tableEmpty}>Aún no agregó ítems. Busque arriba por código, GTIN o descripción, o use «Búsqueda avanzada».</td></tr>
+                        <tr><td colSpan={9} className={estilos.tableEmpty}>Aún no agregó ítems. Busque arriba por código, GTIN o descripción, o use «Búsqueda avanzada».</td></tr>
                       ) : lineas.map((l, i) => {
                         const cantOk = cantidadValida(l);
                         const precOk = precioValido(l);
@@ -1276,7 +1353,8 @@ export default function NuevaFacturaPage() {
 
                         return (
                           <Fragment key={l.clave}>
-                          <tr className={[!cantOk || !precOk || pr.length > 0 ? estilos.filaInvalida : "", avisoStock.tipo === "INSUFICIENTE" ? estilos.filaSinStock : "", seleccionada ? estilos.filaSeleccionada : ""].filter(Boolean).join(" ") || undefined}>
+                          <tr data-linea={l.clave} className={[!cantOk || !precOk || pr.length > 0 ? estilos.filaInvalida : "", avisoStock.tipo === "INSUFICIENTE" ? estilos.filaSinStock : "", seleccionada ? estilos.filaSeleccionada : ""].filter(Boolean).join(" ") || undefined}>
+                            <td className={estilos.orden} data-label="N°">{ordinalLinea(i)}</td>
                             <td className={estilos.prod} data-label="Producto">
                               <strong title={l.producto.descripcion}>{l.producto.descripcion}</strong>
                               <small title={`${l.producto.codigo}${l.producto.gtin ? ` · GTIN ${l.producto.gtin}` : ""}`}>{l.producto.codigo}{l.producto.gtin ? ` · GTIN ${l.producto.gtin}` : ""}</small>
@@ -1385,7 +1463,7 @@ export default function NuevaFacturaPage() {
                           </tr>
                           {puedeAjustarFiscal && seleccionada ? (
                             <tr className={estilos.filaPanel}>
-                              <td colSpan={8}>
+                              <td colSpan={9}>
                                 <EditorFiscalItem key={l.clave} moneda={moneda} producto={l.producto} precio={l.precio} ajuste={l.ajuste} unidades={unidadesSifen} puedeEditarProductos={puedeEditarProductos} alCambiar={(c) => editarAjuste(l.clave, c)} alCerrar={() => cerrarPanel(l.clave)} />
                               </td>
                             </tr>

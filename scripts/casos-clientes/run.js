@@ -90,6 +90,7 @@ Module._resolveFilename = function (request, ...resto) {
   const e07 = cargar("lib/facturacion/nce-descuento-e07.casos.js");
   const r01 = cargar("lib/facturacion/nce-correcciones-r01.casos.js");
   const e1ia = cargar("lib/facturacion/info-adicional-e1.casos.js");
+  const p331 = cargar("lib/facturacion/detalle-factura-vista.casos.js");
   const uxf = cargar("lib/facturacion/flujo-factura-ux.casos.js");
   const red = cargar("lib/facturacion/rediseno.casos.js");
   const suites = [
@@ -177,6 +178,7 @@ Module._resolveFilename = function (request, ...resto) {
     ["NCE R01 (PRO-210/211): Restaurar conserva lo digitado y el listado de facturas elegibles descuenta los DESCUENTO aprobados", async () => r01.verificarCasosNceCorreccionesR01(), null],
     ["Nueva factura premium (desktop): forma de pago tras cliente y productos, tabla compacta y resumen jerárquico", async () => uxf.verificarCasosFlujoFacturaUx(), null],
     ["E1 (PRO-93/94): J003 dInfAdic en FE y NCE — observaciones + dirección de entrega validada + vendedor autenticado, snapshot idempotente, límite 5000 y aislamiento", async () => e1ia.verificarCasosInfoAdicionalE1(), null],
+    ["PRO-331 (CASA MINGO): Nueva factura — cuatro líneas visibles con rolagem local desde la quinta y cabecera sticky, columna N° 1..n solo visual, foco limpio de vuelta al buscador tras alta rápida sin robar foco (límite 999 intacto)", async () => p331.verificarCasosDetalleFacturaPro331(), null],
   ];
   let total = 0;
   let fallosTotal = 0;

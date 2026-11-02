@@ -2040,7 +2040,8 @@
   overflow-wrap: anywhere;
 }
 
-.itemsCompacta td:nth-child(3) {
+/* PRO-331: Unidad pasó a ser la 4.ª columna (la 1.ª es N°). */
+.itemsCompacta td:nth-child(4) {
   white-space: nowrap;
 }
 
@@ -2396,4 +2397,52 @@
 .itemsCompacta .prod small.stockError,
 .itemsCompacta .prod small.stockOk {
   white-space: normal;
+}
+
+/* ══ PRO-331 — Nueva factura: tabla de detalle EDITABLE ══
+   Cuatro líneas de producto visibles; desde la quinta, rolagem vertical LOCAL en este contenedor (no en la página ni en la barra lateral). El alto máximo lo fija la
+   pantalla midiendo la cabecera + las cuatro primeras líneas reales (alto variable: stock, pendientes, descuento, panel fiscal), así ninguna fila queda recortada a medias.
+   Con 4 o menos líneas no hay límite. El buscador «Añadir producto…» está FUERA de este contenedor. La rolagem horizontal local se conserva. No afecta al modal Resumen. */
+.tableWrap.detalleScroll {
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+/* Cabecera fija dentro del contenedor con rolagem (el contenedor es el ancestro con scroll más cercano). */
+.detalleScroll .itemsCompacta thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #f4f8fa;
+  box-shadow: 0 1px 0 #dce6ed;
+}
+
+/* Columna N°: posición visual 1..n (no es ID ni código). */
+.colOrden { width: 48px; }
+
+.detalleScroll .itemsCompacta {
+  min-width: 1028px;
+}
+
+.itemsCompacta th.orden,
+.itemsCompacta td.orden {
+  color: #5b7387;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  white-space: nowrap;
+}
+
+@media (max-width: 900px) {
+  /* Tarjeta por ítem: «N° 3» en su propia franja, encima del producto. */
+  .detalleScroll .items:not(.itemsResumen) td.orden {
+    display: flex;
+    grid-column: 1 / -1;
+    gap: 6px;
+    align-items: baseline;
+    text-align: left;
+  }
+
+  .detalleScroll .items:not(.itemsResumen) td.orden::before {
+    margin-bottom: 0;
+  }
 }
