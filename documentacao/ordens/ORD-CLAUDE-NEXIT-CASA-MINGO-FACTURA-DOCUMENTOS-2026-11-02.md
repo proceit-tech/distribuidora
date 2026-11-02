@@ -1,3 +1,5 @@
+> **ACTUALIZACIÓN 02/11/2026 — PRO-339-R01 ES LA ÚNICA ORDEN ACTIVA (DESARROLLO AUTORIZADO):** Las etapas PRO-331, PRO-333 y PRO-334 ya pasaron auditoría ESTÁTICA pero no homologación real. La ETAPA 4 quedó reformulada por decisión posterior del responsable: el límite de líneas FE será **CONFIGURABLE POR CADA EMPRESA NEXIT** y NO «21 fijo para CASA MINGO». Valores ilustrativos A=21, B=63, C=99, sin configuración=999. Se autoriza solo implementar configuración `empresas.fe_max_lineas` + validaciones UI/servidor para FE nuevas y migration incremental sin aplicar; la **pantalla ADMIN se difiere a PRO-340**. La [ORDEN TÉCNICA VIGENTE PRO-339-R01](ORD-CLAUDE-NEXIT-PRO-339-R01-LIMITE-FE-CONFIGURABLE-EMPRESA-2026-11-02.md) y el `CLAUDE.md` prevalecen sobre la secuencia/hitos históricos más abajo. PRO-339 desarrolla, commit/push SHA y PARA para auditoría; no ejecutar tests, SQL, VM o deploy.
+
 # CASA MINGO — ORDEN MAESTRA DE DESARROLLO POR ETAPAS
 
 **Fecha:** 02/11/2026. **Proyecto:** NEXIT · `proceit-tech/distribuidora` · branch `feature/NEXIT-2026-001-banco-demo`.
