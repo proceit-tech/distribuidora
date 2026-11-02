@@ -75,6 +75,14 @@ const CLASE_TONO_SIFEN: Record<TonoSifen, string> = {
   sinTransmitir: estilos.sifenSinTransmitir,
   anulado: estilos.sifenAnulado,
 };
+/**
+ * PRO-334 (CASA MINGO, ETAPA 3): color por TIPO de comprobante, independiente del estado fiscal PRO-338. FE = azul suave, NCE = amarillo claro suave (fondo + acento
+ * lateral de la fila y del detalle desplegado). El tipo sigue escrito en texto («Factura electrónica» / «Nota de crédito»): el color es complemento. Otros tipos sin color.
+ */
+const CLASE_FILA_TIPO: Partial<Record<TipoDocumento, string>> = { FE: estilos.filaFE, NCE: estilos.filaNCE };
+const CLASE_DETALLE_TIPO: Partial<Record<TipoDocumento, string>> = { FE: estilos.detalleFE, NCE: estilos.detalleNCE };
+const CLASE_ETIQUETA_TIPO: Partial<Record<TipoDocumento, string>> = { FE: estilos.tipoFE, NCE: estilos.tipoNCE };
+const clases = (...c: Array<string | undefined>) => c.filter(Boolean).join(" ");
 const claseLocal = (e: EstadoLocal) => (e === "ENVIADO" ? ui.statusActive : e === "ERROR_ENVIO" ? ui.statusDanger : ui.statusWarning);
 const claseEmail = (e: EstadoEmail) => (e === "ENVIADO" ? ui.statusActive : e === "ERROR" ? ui.statusDanger : e === "PENDIENTE" ? ui.statusWarning : ui.statusInfo);
 const fechaHora = (v: string) => formatearFechaHoraPy(v);
@@ -514,11 +522,11 @@ export default function DocumentosPage() {
 
                 return (
                   <Fragment key={d.id}>
-                    <tr className={ui.row}>
+                    <tr className={clases(ui.row, CLASE_FILA_TIPO[d.tipo])} data-tipo={d.tipo}>
                       <td>
                         <div className={ui.cell}>
                           <strong className={ui.mono}>{numeroDocumento(d)}</strong>
-                          <span>{ETIQUETA_TIPO[d.tipo]} · {d.sucursalNombre}</span>
+                          <span><span className={CLASE_ETIQUETA_TIPO[d.tipo]}>{ETIQUETA_TIPO[d.tipo]}</span> · {d.sucursalNombre}</span>
                           {d.tipo === "NCE" && d.feNumero ? <span>Factura {d.feNumero}{d.nceMotivo ? ` · ${MOTIVO_NCE[d.nceMotivo] ?? ""}` : ""}</span> : null}
                         </div>
                       </td>
@@ -561,8 +569,8 @@ export default function DocumentosPage() {
                     </tr>
 
                     {det ? (
-                      <tr>
-                        <td colSpan={6} style={{ background: "var(--surface-muted, #f6f8f8)" }}>
+                      <tr className={clases(estilos.detalle, CLASE_DETALLE_TIPO[d.tipo])} data-tipo={d.tipo}>
+                        <td colSpan={6}>
                           <dl style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "6px 16px", margin: "6px 0" }}>
                             {d.tipo === "NCE" ? <div><dt className={ui.muted}>Factura original</dt><dd style={{ margin: 0 }}>{d.feNumero ?? "—"}{d.nceMotivo ? ` · Motivo: ${MOTIVO_NCE[d.nceMotivo] ?? d.nceMotivo}` : ""}</dd></div> : null}
                             {d.tipo === "NCE" ? <div><dt className={ui.muted}>CDC de la factura original</dt><dd className={ui.mono} style={{ overflowWrap: "anywhere", margin: 0 }}>{d.feCdc ?? "—"}</dd></div> : null}

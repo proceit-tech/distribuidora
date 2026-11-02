@@ -192,3 +192,90 @@
   background: #fffaf0;
   border-color: #d08a1e;
 }
+
+/*
+ * PRO-334 (CASA MINGO, ETAPA 3): color por TIPO de comprobante. FE = azul suave, NCE = amarillo claro suave, como fondo tenue + acento lateral de 4px.
+ * Es INDEPENDIENTE del estado fiscal PRO-338: nunca rojo/verde en la fila; el estado sigue en su cápsula (.sifen*) y la alerta CDC_DIVERGENTE en su rectángulo rojo.
+ * El amarillo de NCE es más claro que .sifenPendiente y sin borde de cápsula; además el tipo siempre está escrito («Factura electrónica» / «Nota de crédito»).
+ * Selectores con «tr» para superar a .row:hover/.row:focus-within de la lista estándar sin tocar el CSS global; el acento usa box-shadow inset (no cambia anchos ni desborda).
+ */
+tr.filaFE > td {
+  background: #f4f8fd;
+}
+
+tr.filaFE > td:first-child {
+  box-shadow: inset 4px 0 0 #6d9bd1;
+}
+
+tr.filaFE:hover > td,
+tr.filaFE:focus-within > td {
+  background: #e9f1fb;
+}
+
+tr.filaNCE > td {
+  background: #fffcee;
+}
+
+tr.filaNCE > td:first-child {
+  box-shadow: inset 4px 0 0 #d9bb4e;
+}
+
+tr.filaNCE:hover > td,
+tr.filaNCE:focus-within > td {
+  background: #fdf6da;
+}
+
+/* Detalle desplegado: mismo acento del tipo con fondo aún más tenue (datos y acciones sin cambios). Otros tipos conservan el fondo neutro anterior. */
+tr.detalle > td {
+  background: var(--surface-muted, #f6f8f8);
+}
+
+tr.detalleFE > td {
+  background: #f9fbfe;
+  box-shadow: inset 4px 0 0 #6d9bd1;
+}
+
+tr.detalleNCE > td {
+  background: #fffdf5;
+  box-shadow: inset 4px 0 0 #d9bb4e;
+}
+
+/*
+ * Etiqueta de tipo: rectangular (no cápsula como el estado fiscal), texto oscuro con contraste AA sobre su fondo.
+ * Prefijada con la fila del tipo para superar a «.cell span» (gris 12.5px) de la lista estándar sin depender del orden de carga de los módulos.
+ */
+.filaFE .tipoFE,
+.filaNCE .tipoNCE {
+  display: inline-block;
+  border: 1px solid;
+  border-radius: 4px;
+  padding: 0 6px;
+  font-weight: 600;
+  line-height: 1.45;
+  white-space: nowrap;
+}
+
+.filaFE .tipoFE {
+  color: #1d4a7c;
+  background: #e5eefa;
+  border-color: #b3cbe9;
+}
+
+.filaNCE .tipoNCE {
+  color: #5a4500;
+  background: #fbf1c6;
+  border-color: #dfc56a;
+}
+
+/* Alto contraste del sistema: los fondos y sombras se anulan; el acento pasa a borde real para que el tipo siga distinguiéndose además del texto. */
+@media (forced-colors: active) {
+  tr.filaFE > td:first-child,
+  tr.detalleFE > td {
+    border-left: 4px solid CanvasText;
+  }
+
+  tr.filaNCE > td:first-child,
+  tr.detalleNCE > td {
+    border-left: 4px dashed CanvasText;
+  }
+}
