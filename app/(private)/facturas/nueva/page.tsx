@@ -27,6 +27,7 @@ import { formatearDecimalTexto } from "@/lib/formato/decimal-texto";
 import { crearVerificadorStock, pedirDisponibilidad, textoInsuficiente, vistaStock, type AvisoStock, type BorradorStock } from "@/lib/facturacion/stock-preventivo";
 import { formatearFechaPy } from "@/lib/formato/listas";
 import { registrarAnadido, type UltimoAnadido } from "@/lib/facturacion/seleccion-cantidad";
+import { agregarSiCabe, ALTA_BLOQUEADA, leerMaximoApi, mensajeAltaBloqueada, puedeAgregarLinea, textoContadorLineas } from "@/lib/facturacion/limite-lineas";
 import { cantidadFacturaValida, normalizarCantidadTexto, sumarUnaUnidad } from "@/lib/formato/cantidad-campo";
 import { formatearMontoVisual } from "@/lib/formato/monto-visual";
 import { precioParaEdicion } from "@/lib/formato/precio-campo";
@@ -123,9 +124,10 @@ function textoDomicilioReceptor(d: DomicilioReceptor): string {
 const PRECIO_OK = /^\d{1,12}(\.\d{1,4})?$/;
 
 async function leer<T>(r: Response, porDefecto: string): Promise<T> {
-  const j = (await r.json().catch(() => ({}))) as T & { error?: string; detalles?: string[] };
+  const j = (await r.json().catch(() => ({}))) as T & { error?: string; detalles?: string[]; maxLineasFE?: unknown };
 
-  if (!r.ok) throw Object.assign(new Error(j.error ?? porDefecto), { detalles: j.detalles ?? [] });
+  // PRO-339-R01: un 422 por exceso de líneas trae el máximo VIGENTE de la empresa (si cambió mientras se editaba, la pantalla lo actualiza sin perder el borrador).
+  if (!r.ok) throw Object.assign(new Error(j.error ?? porDefecto), { detalles: j.detalles ?? [], maxLineasFE: leerMaximoApi(j.maxLineasFE) });
 
   return j;
 }
@@ -271,7 +273,7 @@ function SelectorCliente({ alElegir, alCerrar }: { alElegir: (c: Cliente) => voi
 }
 
 /** Selector de productos: lista paginada inmediata; filtro opcional (código, descripción, GTIN, código de barras). Permite añadir varios sin cerrar. */
-function SelectorProducto({ alAgregar, alCerrar, cantidadItems, permisos, moneda, cantidadDe, alEditarCantidad }: { alAgregar: (p: Producto) => number; alCerrar: () => void; cantidadItems: number; permisos: PermisosProducto; moneda: string; cantidadDe: (clave: number) => string; alEditarCantidad: (clave: number, valor: string) => void }) {
+function SelectorProducto({ alAgregar, alCerrar, cantidadItems, maxLineas, permisos, moneda, cantidadDe, alEditarCantidad }: { alAgregar: (p: Producto) => number; alCerrar: () => void; cantidadItems: number; maxLineas: number | null; permisos: PermisosProducto; moneda: string; cantidadDe: (clave: number) => string; alEditarCantidad: (clave: number, valor: string) => void }) {
   const f = useFiltro();
   const l = useListado<Producto>("/api/facturas/productos", "productos", f.q, f.pagina);
   const [aviso, setAviso] = useState("");
@@ -314,7 +316,7 @@ function SelectorProducto({ alAgregar, alCerrar, cantidadItems, permisos, moneda
                     {d.mensaje && !d.habilitado ? <small className={estilos.impedimento}>{d.mensaje}{d.corregirEnProductos ? <> <Link href="/productos">Corregir en Productos</Link></> : null}</small> : null}
                   </div>
                   <span className={estilos.precio}>{p.precio && p.monedaPrecio === moneda ? `${simboloMoneda(moneda)} ${formatearMontoVisual(p.precio, moneda)}` : "—"}</span>
-                  <button type="button" className={ui.secondaryButton} disabled={!d.habilitado} onClick={() => { const clave = alAgregar(p); setUltimo((u) => registrarAnadido(u, clave, p.descripcion)); setAviso(`«${p.descripcion}» añadido.`); }}>Añadir</button>
+                  <button type="button" className={ui.secondaryButton} disabled={!d.habilitado} onClick={() => { const clave = alAgregar(p); setUltimo((u) => (clave === ALTA_BLOQUEADA ? u : registrarAnadido(u, clave, p.descripcion))); setAviso(clave === ALTA_BLOQUEADA ? mensajeAltaBloqueada(maxLineas) : `«${p.descripcion}» añadido.`); }}>Añadir</button>
                 </li>
               );
             })}
@@ -324,7 +326,7 @@ function SelectorProducto({ alAgregar, alCerrar, cantidadItems, permisos, moneda
         <Paginacion pagina={f.pagina} total={l.total} alCambiar={f.setPagina} />
 
         <div className={estilos.actions} style={{ marginTop: 12 }}>
-          <span className={estilos.hint} style={{ margin: 0 }}>{cantidadItems} ítem{cantidadItems === 1 ? "" : "s"} en la factura</span>
+          <span className={estilos.hint} style={{ margin: 0 }}>{textoContadorLineas(cantidadItems, maxLineas)} en la factura</span>
           <button type="button" className={ui.primaryButton} onClick={alCerrar}>Listo</button>
         </div>
       </div>
@@ -616,6 +618,10 @@ export default function NuevaFacturaPage() {
   const [vendedor, setVendedor] = useState<Vendedor | null>(null);
   const [sinVendedores, setSinVendedores] = useState(false);
   const [lineas, setLineas] = useState<Linea[]>([]);
+  // PRO-339-R01: máximo de líneas por FE nueva de la EMPRESA de la sesión (catálogos; null = aún desconocido o sin NEX-078). Solo para avisar: el servidor lo vuelve a leer y lo exige.
+  const [maxLineasFE, setMaxLineasFE] = useState<number | null>(null);
+  const [errorLimiteLineas, setErrorLimiteLineas] = useState("");
+  const [avisoLimiteLineas, setAvisoLimiteLineas] = useState("");
   const [precioEnFoco, setPrecioEnFoco] = useState<number | null>(null);
   const [siguienteClave, setSiguienteClave] = useState(1);
   const [clave, setClave] = useState(() => crypto.randomUUID());
@@ -650,8 +656,11 @@ export default function NuevaFacturaPage() {
     alAviso: (m) => setErrores([m]),
     alError: (e, fase) => {
       const d = (e as { detalles?: string[] }).detalles ?? [];
+      const maximo = leerMaximoApi((e as { maxLineasFE?: unknown }).maxLineasFE);
 
       if (fase === "envio") setMostrarEnvio(false);
+      // PRO-339-R01: la política cambió entre el borrador y la revisión/envío: se actualiza el máximo mostrado; el borrador queda intacto para corregirlo y revisar de nuevo (nunca se reenvía solo).
+      if (maximo !== null) { setMaxLineasFE(maximo); setErrorLimiteLineas(""); }
 
       setErrores([e instanceof Error ? e.message : fase === "envio" ? "No fue posible enviar la factura." : "No fue posible revisar la factura.", ...d]);
     },
@@ -689,7 +698,7 @@ export default function NuevaFacturaPage() {
     let activo = true;
 
     fetch("/api/facturas/catalogos", { cache: "no-store" })
-      .then((r) => leer<{ gateway?: EstadoGatewayUI; sucursales: Sucursal[]; opciones: Opciones; puedeEditarPrecio?: boolean; puedeAjustarFiscal?: boolean; puedeGestionarPuntos?: boolean; puedeEditarProductos?: boolean; unidadesSifen?: UnidadSifen[]; cotizaciones?: Record<string, { cambio: string; fecha: string }>; sucursalesSinEstablecimiento?: number }>(r, "No fue posible cargar los datos del formulario."))
+      .then((r) => leer<{ gateway?: EstadoGatewayUI; sucursales: Sucursal[]; opciones: Opciones; puedeEditarPrecio?: boolean; puedeAjustarFiscal?: boolean; puedeGestionarPuntos?: boolean; puedeEditarProductos?: boolean; unidadesSifen?: UnidadSifen[]; cotizaciones?: Record<string, { cambio: string; fecha: string }>; sucursalesSinEstablecimiento?: number; maxLineasFE?: unknown; maxLineasFEError?: string }>(r, "No fue posible cargar los datos del formulario."))
       .then((j) => {
         if (!activo) return;
 
@@ -706,6 +715,8 @@ export default function NuevaFacturaPage() {
         setPuedeEditarProductos(j.puedeEditarProductos === true);
         setUnidadesSifen(j.unidadesSifen ?? []);
         setCotizaciones(j.cotizaciones ?? {});
+        setMaxLineasFE(leerMaximoApi(j.maxLineasFE));
+        setErrorLimiteLineas(leerMaximoApi(j.maxLineasFE) === null ? j.maxLineasFEError ?? "" : "");
         if (j.sucursales.length === 1) {
           setSucursalId(j.sucursales[0].id);
           if (j.sucursales[0].puntos.length === 1) setPuntoId(j.sucursales[0].puntos[0].id);
@@ -877,7 +888,17 @@ export default function NuevaFacturaPage() {
       return existente.clave;
     }
 
-    setLineas((ls) => [...ls, { clave: siguienteClave, producto: p, cantidad: "1", precio: precioParaEdicion(referencia(p, moneda)), ajuste: AJUSTE_VACIO, descuento: DESC_VACIO }]);
+    // PRO-339-R01: una línea NUEVA por encima del máximo de la empresa no se agrega; el borrador queda intacto y el foco vuelve al buscador (alta rápida) o sigue en el selector (avanzado).
+    if (!puedeAgregarLinea(lineas.length, maxLineasFE)) {
+      setAvisoLimiteLineas(mensajeAltaBloqueada(maxLineasFE));
+      lineaAFocar.current = null;
+      if (origen === "rapido") volverAlBuscador(ALTA_BLOQUEADA);
+
+      return ALTA_BLOQUEADA;
+    }
+
+    setAvisoLimiteLineas("");
+    setLineas((ls) => agregarSiCabe(ls, { clave: siguienteClave, producto: p, cantidad: "1", precio: precioParaEdicion(referencia(p, moneda)), ajuste: AJUSTE_VACIO, descuento: DESC_VACIO }, maxLineasFE));
     // Un producto fiscalmente incompleto abre su panel contextual (solo con el permiso de ajuste fiscal) para completarlo sin salir de la factura.
     const abrePanel = puedeAjustarFiscal && problemasFiscales(p, AJUSTE_VACIO, "1", moneda).filter((m) => !m.startsWith("sin precio")).length > 0;
 
@@ -1306,8 +1327,10 @@ export default function NuevaFacturaPage() {
               <section className={estilos.card} aria-labelledby="sec-detalle">
                 <div className={estilos.cardHead}>
                   <h2 id="sec-detalle">Detalle de la factura *</h2>
-                  <span className={estilos.meta}>{lineas.length} ítem{lineas.length === 1 ? "" : "s"}</span>
+                  <span className={estilos.meta}>{textoContadorLineas(lineas.length, maxLineasFE)}</span>
                 </div>
+                {errorLimiteLineas ? <p className={estilos.fieldError} role="alert">{errorLimiteLineas}</p> : null}
+                {avisoLimiteLineas && !puedeAgregarLinea(lineas.length, maxLineasFE) ? <p className={estilos.fieldError} role="alert">{avisoLimiteLineas}</p> : null}
                 <div className={`${estilos.cardBody} ${estilos.buscarFila}`}>
                   <BuscadorProducto alElegir={agregarRapido} permisos={{ puedeAjustarFiscal, puedeEditarPrecio }} moneda={moneda} accion={<button type="button" className={ui.secondaryButton} onClick={() => setSelector("producto")}>Búsqueda avanzada</button>} />
                 </div>
@@ -1591,7 +1614,7 @@ export default function NuevaFacturaPage() {
       )}
 
       {selector === "cliente" ? <SelectorCliente alCerrar={() => setSelector(null)} alElegir={(c) => { setCliente(c); setSelector(null); }} /> : null}
-      {selector === "producto" ? <SelectorProducto alCerrar={() => setSelector(null)} alAgregar={agregar} cantidadDe={(clave) => lineas.find((x) => x.clave === clave)?.cantidad ?? "1"} alEditarCantidad={(clave, valor) => editar(clave, { cantidad: valor })} cantidadItems={lineas.length} permisos={{ puedeAjustarFiscal, puedeEditarPrecio }} moneda={moneda} /> : null}
+      {selector === "producto" ? <SelectorProducto alCerrar={() => setSelector(null)} alAgregar={agregar} cantidadDe={(clave) => lineas.find((x) => x.clave === clave)?.cantidad ?? "1"} alEditarCantidad={(clave, valor) => editar(clave, { cantidad: valor })} cantidadItems={lineas.length} maxLineas={maxLineasFE} permisos={{ puedeAjustarFiscal, puedeEditarPrecio }} moneda={moneda} /> : null}
 
       {confirmacion ? (
         <div className={estilos.overlay} role="presentation">

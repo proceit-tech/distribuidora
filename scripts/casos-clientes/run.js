@@ -93,6 +93,7 @@ Module._resolveFilename = function (request, ...resto) {
   const p331 = cargar("lib/facturacion/detalle-factura-vista.casos.js");
   const p333 = cargar("lib/facturacion/orden-documentos.casos.js");
   const p334 = cargar("lib/facturacion/colores-tipo-documentos.casos.js");
+  const p339 = cargar("lib/facturacion/limite-lineas.casos.js");
   const uxf = cargar("lib/facturacion/flujo-factura-ux.casos.js");
   const red = cargar("lib/facturacion/rediseno.casos.js");
   const suites = [
@@ -183,6 +184,7 @@ Module._resolveFilename = function (request, ...resto) {
     ["PRO-331 (CASA MINGO): Nueva factura — cuatro líneas visibles con rolagem local desde la quinta y cabecera sticky, columna N° 1..n solo visual, foco limpio de vuelta al buscador tras alta rápida sin robar foco (límite 999 intacto)", async () => p331.verificarCasosDetalleFacturaPro331(), null],
     ["PRO-333 (CASA MINGO): Documentos — columna «Documento» ordenada por valor numérico del número fiscal en SQL antes de LIMIT/OFFSET, ceros de presentación, desempates estables, filtros y fecha por defecto intactos", async () => p333.verificarCasosOrdenDocumentosPro333(), null],
     ["PRO-334 (CASA MINGO): Documentos — color por tipo (FE azul suave, NCE amarillo claro) en fila y detalle, independiente del estado fiscal PRO-338 y de la alerta CDC_DIVERGENTE; hover/foco, contraste y KuDE preservados", async () => p334.verificarCasosColoresTipoPro334(), null],
+    ["PRO-339-R01: máximo de líneas por FE NUEVA configurable POR EMPRESA (empresas.fe_max_lineas, NULL = 999; A=21/B=63/C=99 sintéticas), validado en prepararFactura antes de numeración/stock, falla cerrado sin NEX-078; pantalla «N de M ítems» y alta bloqueada; NCE, históricas y MAX_LINEAS 999 intactos", async () => p339.verificarCasosLimiteLineasPro339(), null],
   ];
   let total = 0;
   let fallosTotal = 0;

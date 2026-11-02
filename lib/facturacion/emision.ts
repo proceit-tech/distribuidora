@@ -13,6 +13,7 @@ import { DENOMINACIONES_TARJETA, FORMAS_PAGO, FORMAS_PROCESAMIENTO, leerPagos, r
 import { construirPayloadFE, CONDICIONES_OPERACION, INDICADORES_PRESENCIA, resumenCalculo, TIPOS_TRANSACCION, totalFactura, erroresDomicilioReceptor, validarEntradaFE, type EntradaFE, type LineaFE, type ReceptorFE } from "@/lib/facturacion/payload-fe";
 import { ErrorFacturacion, ErrorValidacionFiscal } from "@/lib/facturacion/shared";
 import { leerDescuento, type DescuentoEntrada } from "@/lib/facturacion/descuentos";
+import { excedeLimite, interpretarLimiteLineas, mensajeExcesoLineas, type LecturaLimite } from "@/lib/facturacion/limite-lineas";
 import { MENSAJE_ENTREGA_INVALIDA, opcionesEntrega, resolverEntrega, resumenEntrega } from "@/lib/facturacion/entrega";
 import { componerInfoAdicional, contieneMarcaAutomatica, descomponerInfoAdicional, huellaInfoAdicional, infoAdicionalPersistida, LIMITE_INFO_ADICIONAL, lineaVendedor } from "@/lib/facturacion/info-adicional";
 import { nombreDeUsuario, vendedorActivo, vendedorFeSoportado } from "@/lib/usuarios/vendedores";
@@ -63,7 +64,26 @@ export async function catalogosFactura(db: Db, empresaId: string, usuarioId: str
     if (c) cotizaciones[m] = c;
   }
 
-  return { sucursales: r.rows as F[], sucursalesSinEstablecimiento: Number((falta.rows[0] as F | undefined)?.n ?? 0), unidadesSifen: unidades.rows as F[], cotizaciones };
+  // PRO-339-R01: máximo de líneas por FE nueva de la empresa de la SESIÓN (solo para avisar en la pantalla; el servidor lo vuelve a leer y lo exige en prepararFactura).
+  const limite = await limiteLineasEmpresa(db, empresaId);
+
+  return {
+    sucursales: r.rows as F[], sucursalesSinEstablecimiento: Number((falta.rows[0] as F | undefined)?.n ?? 0), unidadesSifen: unidades.rows as F[], cotizaciones,
+    maxLineasFE: limite.ok ? limite.maximo : null, ...(limite.ok ? {} : { maxLineasFEError: limite.mensaje }),
+  };
+}
+
+/**
+ * PRO-339-R01: máximo EFECTIVO de líneas por Factura Electrónica NUEVA de la empresa (empresas.fe_max_lineas, NEX-078; NULL = 999). `empresaId` sale SIEMPRE de la sesión, nunca del cuerpo HTTP
+ * ni del cliente/receptor. Consulta paramétrica de SOLO LECTURA que no falla si la columna aún no existe (to_jsonb de la fila): sin NEX-078, empresa inexistente o valor ilegible → { ok: false }
+ * y el llamador falla cerrado. Ninguna empresa se identifica por nombre, RUC ni UUID en el código.
+ */
+export async function limiteLineasEmpresa(db: Db, empresaId: string): Promise<LecturaLimite> {
+  if (!UUID.test(empresaId)) return interpretarLimiteLineas(undefined);
+
+  const r = await db.query("SELECT to_jsonb(e) ? 'fe_max_lineas' AS existe, to_jsonb(e) -> 'fe_max_lineas' AS valor FROM empresas e WHERE e.id = $1::uuid", [empresaId]);
+
+  return interpretarLimiteLineas(r.rows[0] as F | undefined);
 }
 
 /**
@@ -455,6 +475,16 @@ export async function prepararFactura(db: Db, empresaId: string, usuarioId: stri
   // Cuotas suspendido (MFE-03): también aquí, por si el cuerpo no pasó por leerCuerpoFactura. Antes de cualquier consulta y, por tanto, antes de reservar numeración (NEX-048).
   if (cuerpo.credito?.tipo === CREDITO_CUOTAS && !CUOTAS_HABILITADAS) throw new ErrorFacturacion(422, MENSAJE_CUOTAS_SUSPENDIDAS);
   if (cuerpo.pagos.some((p) => !(p.tipo in FORMAS_PAGO))) throw new ErrorFacturacion(422, "La forma de pago no es válida.");
+
+  // PRO-339-R01: máximo de líneas de la empresa de la SESIÓN, leído AHORA (vale el vigente al revisar y al confirmar), ANTES de cualquier reserva de numeración, stock o gateway. Cuenta filas de
+  // cuerpo.lineas (no cantidades ni SKU distintos). Solo FE NUEVA: un reintento de una FE ya creada y con payload histórico VERIFICADO (domicilioHistorico) reutiliza ese payload y no se reevalúa;
+  // si el histórico no se pudo verificar, la validación se aplica igual. Sin NEX-078 o con configuración ilegible: 422, sin aplicar 999 en silencio. MAX_LINEAS (999) sigue en leerCuerpoFactura/validarEntradaFE.
+  if (opciones.domicilioHistorico !== true) {
+    const limite = await limiteLineasEmpresa(db, empresaId);
+
+    if (!limite.ok) throw new ErrorFacturacion(422, limite.mensaje);
+    if (excedeLimite(cuerpo.lineas.length, limite.maximo)) throw Object.assign(new ErrorFacturacion(422, mensajeExcesoLineas(limite.maximo, cuerpo.lineas.length)), { maxLineasFE: limite.maximo });
+  }
 
   // Vendedor estructurado (NEX-074): sin la migración no hay dónde registrarlo y no se emite con el emisor "por defecto"; se rechaza ANTES de reservar numeración.
   if (!(await vendedorFeSoportado(db))) throw new ErrorFacturacion(422, "Elegir el vendedor de la factura requiere la migración NEX-074 en la base de datos (aún no aplicada).");

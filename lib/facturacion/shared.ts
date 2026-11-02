@@ -458,7 +458,12 @@ export async function obtenerKude(db: Db, empresaId: string, usuarioId: string, 
 
 export function respuestaErrorFacturacion(error: unknown, accion: string) {
   if (error instanceof ErrorValidacionFiscal) return NextResponse.json({ error: error.message, detalles: error.detalles }, { status: error.estado });
-  if (error instanceof ErrorFacturacion) return NextResponse.json({ error: error.message }, { status: error.estado });
+  // PRO-339-R01: un 422 por exceso de líneas informa el máximo VIGENTE de la empresa de la sesión, para que la pantalla actualice su aviso sin perder el borrador.
+  if (error instanceof ErrorFacturacion) {
+    const maxLineasFE = (error as { maxLineasFE?: unknown }).maxLineasFE;
+
+    return NextResponse.json({ error: error.message, ...(typeof maxLineasFE === "number" ? { maxLineasFE } : {}) }, { status: error.estado });
+  }
 
   const pg = error as { code?: string; message?: string; detail?: string };
 
