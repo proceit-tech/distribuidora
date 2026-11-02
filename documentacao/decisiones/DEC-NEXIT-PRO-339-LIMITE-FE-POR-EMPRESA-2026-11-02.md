@@ -1,3 +1,17 @@
+# DECISIÓN VIGENTE — PRO-339: límite FE VARIABLE POR EMPRESA (02/11/2026)
+
+**El responsable PROCEIT autorizó IMPLEMENTAR el mecanismo parametrizable** (no valores fijos, no despliegue). Cada empresa cliente de NEXIT tendrá su propio `empresas.fe_max_lineas` (integer NULL, permitido 1..999; `NULL=999`). Valores **21, 63, 99 son EJEMPLOS**; prohibido fijar CASA MINGO=21, hardcodear tenant, nombre/RUC, o poner ese valor como DEFAULT o UPDATE en la migration. La empresa compradora de la FE (`clienteId`) NO determina la cuota; es el tenant (`empresaId` de sesión) quien la determina.
+
+**Ámbito:** solo FE NUEVAS; contar elementos `cuerpo.lineas`, no cantidades ni SKU distintos, NCE inalteradas, FE históricas/reintentos idempotentes equivalentes sin cambio. `MAX_LINEAS=999` sigue límite fiscal común. Validar en backend `prepararFactura` antes de numeración/stock y UX en Nueva factura leyendo catálogo autenticado. Migration incremental solo versionada, **NO APLICADA**. La futura **tela administrativa PRO-340** ([Linear](https://linear.app/proceit/issue/PRO-340) · [GitHub #17](https://github.com/proceit-tech/distribuidora/issues/17)) será etapa separada, **NO DESARROLLAR AHORA**.
+
+**ÚNICA ORDEN ACTIVA DE CÓDIGO:** [ORD-PRO-339-R01-LÍMITE-CONFIGURABLE](../ordens/ORD-CLAUDE-NEXIT-PRO-339-R01-LIMITE-FE-CONFIGURABLE-EMPRESA-2026-11-02.md), bajo protocolo 1 archivo completo/actual por vez, casos fuente sin ejecutar, commit+push SHA y **PARAR para auditoría ChatGPT PRO-339-R01**. Sin test/lint/build/SQL/migrations aplicadas/VM/gateway/deploy.
+
+**ATENCIÓN:** El material D01 a continuación es histórico y queda **SUPERADO** en cuanto a «pendiente autorización», «CASA MINGO fijo 21» o «sólo diagnóstico». Conserva valor como análisis de los archivos, pero no como instrucción activa. La configuración comercial concreta de una empresa se autorizará y aplicará por separado después.
+
+---
+
+## Anexo — parecer D01 histórico (sustituido en los puntos indicados)
+
 # PARECER TÉCNICO — PRO-339-D01 / Límite opcional de líneas FE por empresa
 
 **Fecha:** 02/11/2026  
