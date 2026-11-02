@@ -1,0 +1,124 @@
+# NEXIT V1 — Decisión vinculante: puntos de expedición, tipo documental, series y rediseño visual
+
+**Fecha:** 2026-10-17. **Estado:** DEFINIDO para especificación; IMPLEMENTACIÓN Y HOMOLOGACIÓN PENDIENTES.
+**Origen:** decisiones expresas del responsable, capturas de las pantallas de Puntos de expedición y Nota de crédito del 17/10/2026, Manual Técnico SIFEN v150 y preguntas frecuentes oficiales DNIT.
+**Alcance:** multiempresa, catálogo fiscal de puntos, numeración FE/NCE y tipos futuros, filtros de emisión, experiencia visual. **No autoriza aplicar SQL, deploy ni emitir documentos.**
+**Precedencia:** esta decisión sustituye la interpretación «una fila/punto solo FE y columna NCE» y el inicio automático en AA. Complementa RN-16 de `REQUISITOS-NCE-V1-EMISION-2026-10-16.md`, y las decisiones de numeración de PRO-129/PRO-94; no altera MT-01/UI-01.
+
+## 1. Identidad de la numeración — RN-PUN-01
+
+Cada **cliente/empresa emisora** mantiene secuencias independientes por la combinación:
+
+`empresa_id + establecimiento_sifen (3 dígitos) + punto_expedicion (3 dígitos) + tipo_documento (iTiDE)`
+
+- Dentro de la misma empresa y establecimiento, el **mismo código de punto** puede tener **FE, NCE, NRE, NDE o AFE** con contadores independientes. También puede existir el mismo tipo en puntos distintos y en establecimientos distintos. Otra empresa puede usar esos mismos códigos sin compartir numeración.
+- Ejemplo vinculante del responsable (inicio en rango sin serie; todos independientes):
+
+| Establecimiento | Punto | Tipo | Serie | Número |
+|---|---|---|---|---|
+| 001 | 001 | FE | Sin serie | 0000001 |
+| 001 | 001 | NCE | Sin serie | 0000001 |
+| 001 | 001 | NRE | Sin serie | 0000001 |
+| 001 | 002 | NRE | Sin serie | 0000001 |
+| 002 | 001 | FE | Sin serie | 0000001 |
+| 002 | 001 | NCE | Sin serie | 0000001 |
+| 002 | 001 | NRE | Sin serie | 0000001 |
+
+- Modelo conceptual: un punto físico/administrativo `empresa + establecimiento + código` puede ser compartido; **cada fila de la administración fiscal corresponde a una configuración de tipo documental**, sin una columna adicional exclusiva de NCE. No duplicar artificialmente el punto físico para crear sus secuencias. Si la implementación actual conserva `fe_puntos_expedicion` + `fe_punto_secuencias`, respetar las claves/locks y garantizar que la UI gestione cada combinación por separado. Validación de unicidad efectiva por identidad fiscal, también entre sucursales con el mismo establecimiento.
+- **Timbrado/ambiente:** son contexto de autorización y conciliación de la emisión, **no** deben reiniciar automáticamente la secuencia ni agregarse por suposición como nueva dimensión de contador. Verificar restricciones reales del gateway y la autorización por empresa/ambiente.
+
+## 2. Serie SIFEN — RN-PUN-02
+
+**Regla normativa confirmada:** la primera numeración **NO lleva serie**: `dSerieNum` (C010) es opcional (`0-1`, longitud 2); `dNumDoc` (C007) tiene siete dígitos. Para una identidad nueva sin historial, el primer número es `0000001` con **serie ausente**. Agotado `9999999` sin serie, avanza `AA-0000001`; agotada AA, `AB-0000001`; después AC…AZ, BA…BZ, …, ZA…ZZ. Agotada `ZZ-9999999`, detener y escalar: jamás reiniciar o reutilizar.
+- En BD, representar **sin serie = NULL** (nunca «AA» automático ni cadena vacía que llegue como XML). En interfaz, mostrar **«Sin serie»**. En XML SIFEN sin serie, **omitir el nodo `dSerieNum`**; en JSON al gateway comprobar contrato real (ausencia frente a `null`), sin inventar compatibilidad.
+- El último número y la **serie actual** deben persistir y reservarse atómicamente por identidad de secuencia; cero solo se acepta cuando un operador lo informa y confirma expresamente como ausencia de documentos previos, con historial conciliado. `9999999` es valor final **válido** para indicar el paso a la siguiente serie, no truncarlo a 9999998.
+- DNIT no admite dos series corrientes en paralelo para una misma identidad; el Manual v150 también describe condiciones de validación temporal para DE firmados en la serie anterior/actual/siguiente. No simplificar esas excepciones a una prohibición de consultar o conciliar documentos históricos. Confirmar implicaciones de firma/fecha y lote con gateway antes de habilitar rollover automático.
+- No reutilizar números reservados, aceptados, rechazados o indeterminados por simple reintento. Idempotencia por documento, reserva transaccional, aislamiento por empresa y trazabilidad. Evitar colisiones con otro ERP que emite sobre la misma identidad mediante autoridad compartida de numeración o coordinación operacional; una confirmación manual única no garantiza coordinación futura.
+
+**Fuentes oficiales:** Manual Técnico SIFEN v150, sección «Manejo del timbrado y Numeración», grupo C (C007/C010): https://ekuatia.set.gov.py/documents/20123/420592/Manual%2BT%C3%A9cnico%2BVersi%C3%B3n%2B150.pdf/e706f7c7-6d93-21d4-b45b-5d22d07b2d22?t=1687362295907.pdf ; DNIT FAQ: https://ekuatia.set.gov.py/web/e-kuatia/preguntas-frecuentes/-/categories/2704943?p_r_p_categoryId=2704943 . Antes de implementar, confrontar notas técnicas/XSD vigentes archivados en `documentacao/referencias/sifen/`; no declarar todos los tipos homologados por el solo hecho de poder configurar sus contadores.
+
+## 3. Registro y activación — RN-PUN-03
+
+- **Alta fiscal obligatoriamente por tipo, EN UN SOLO FLUJO (decisión de corrección visual 17/10/2026, captura 14:04):** el botón «Nuevo punto» abre **un formulario único** con Sucursal/Establecimiento, Código del punto (001–999), Tipo de documento **obligatorio** (FE/NCE/NRE/NDE/AFE), Nombre (nuevo punto) y la configuración inicial del tipo (Serie actual, Último número realmente emitido, Próximo referencial, Confirmación y Estado). No puede crear un punto «sin tipo» como resultado final ni obligar a cerrar el formulario y abrir otro «Configurar tipo». La confirmación fiscal se hace UNA sola vez en este flujo.
+- **Si el código administrativo ya existe:** la misma pantalla reconoce el punto existente en la empresa/establecimiento/sucursal y reutiliza su identificador, muestra su nombre sin sobrescribirlo, y **registra únicamente el nuevo tipo documental** en su secuencia. Ejemplo: 001-001 FE existente + nuevo 001-001 NCE ⇒ ALTA NCE permitida, SIN error «Ya existe un punto con ese código en la sucursal», SIN duplicar `fe_puntos_expedicion`. Si ya está configurado también el mismo tipo, no crear duplicado ni reiniciar secuencia: indicar «Este tipo de documento ya está configurado para el punto. Use Configurar» y ofrecer navegación directa.
+- **Si el código no existe:** crear el punto administrativo y su primera configuración fiscal **atómicamente, en una misma transacción de servidor/banco**; si falla cualquiera de las dos operaciones no debe quedar un punto huérfano sin tipo, secuencia ficticia ni número perdido. No prometer éxito antes de confirmar ambas escrituras. Mantener permisos, empresa y sucursal, unicidad fiscal real y bloqueos concurrentes. Si no puede implementarse sin migration adicional, preparar script incremental para aplicación humana y **NO** simular atomicidad con dos solicitudes HTTP consecutivas.
+- **Acciones de administración — CORRECCIÓN VINCULANTE 17/10/2026, captura 16:03:** cada fila **empresa + establecimiento + punto + tipo** posee su **propio estado de habilitación para emisión**. La interfaz ofrece exactamente «Activar» / «Desactivar» **del tipo de esa fila** (solo para FE/NCE hoy); **PROHIBIDO** un botón visible «Activar punto»/«Desactivar punto», porque modifica a la vez todos los tipos del mismo punto. No debe existir una compuerta de estado del punto físico que pueda deshabilitar FE y NCE conjuntamente en la emisión. `fe_puntos_expedicion` conserva la identidad administrativa, pero su `activo` histórico se debe conciliar/migrar de manera segura a estados independientes por tipo, sin reactivar silenciosamente tipos previamente bloqueados. El servidor debe validar siempre el estado por tipo, la empresa, establecimiento, punto y sucursal autorizados.
+- **Configuración de una secuencia por tipo:** serie actual (por defecto visual «Sin serie» para identidad realmente nueva; no inventar valor para identidad histórica), último número realmente emitido/reservado/conciliado, próximo referencial, estado y confirmación expresa. Último=0 solo si declarado; si existe historial importado o externa, exigir conciliación y mostrar su valor real.
+- **Confirmar una sola vez en la configuración inicial.** No pedir el mismo último número al crear punto y volver a preguntarlo en la activación inicial. En reactivación, exigir conciliación adicional solo si existieron emisiones externas o desajuste demostrado.
+- **Estado de emisión exclusivamente por tipo** (corrección del responsable): activar/desactivar `001-001-FE` jamás modifica ni condiciona `001-001-NCE`, `001-001-NRE` o cualquier otro tipo, y viceversa. El estado `activo` administrativo del punto **NO** debe seguir sirviendo como segunda condición de emisión, ni en los formularios, filtros, servicio, función de alta, ni en `fe_documento_crear_fe/nce`; conservarlo solo si existe una justificación no operacional y sin que afecte emisión. Desactivar una configuración fiscal no altera serie, contador, documentos, CDC, reservas ni otra configuración. La sucursal/empresa inactiva, permisos y demás validaciones de seguridad **se mantienen**, por ser controles distintos.
+- La configuración administrativa de NRE/NDE/AFE **no habilita** su emisión si no existe flujo completo, contrato gateway y validaciones homologadas. FE y NCE son los únicos flujos actualmente implementados, pero tampoco se consideran homologados por este documento.
+- Los combos y reservas de Nueva factura filtran estrictamente FE, y los de Nota de crédito estrictamente NCE. El backend valida empresa, alcance, tipo, estado y secuencia; no depender del dropdown. Evitar ofrecer como disponible un tipo que no pueda emitirse.
+
+## 4. UX/UI obligatoria — RN-PUN-04
+
+**Puntos de expedición:** diseño profesional, compacto, consistente con Clientes/Productos/Catálogos. Pantalla centrada en la lista con filtros por sucursal/establecimiento, tipo y estado y acción «Nuevo punto». Alta/configuración en panel o formulario compacto, no formulario gigante fijo ni campos duplicados.
+- Tabla de **filas por tipo**: «Establecimiento», «Punto», «Nombre», «Tipo de documento», «Serie actual», «Último número», «Próximo (referencial)», «Estado» y «Acciones». Puede agruparse por establecimiento, manteniendo claramente el tipo por fila. Sin columna «Nota de crédito (NCE)» y sin controles/botones mezclados en celdas con textos recortados.
+- Configuración/confirmación y activación en diálogo/panel con etiquetas claras y validaciones por campo; mensajes de error junto al campo y resumen del problema; no presentar error de numeración huérfano. «Próximo» nunca se promete como número definitivo antes de la reserva atómica.
+- Responsive y accesible (375 px, 768 px, desktop; foco, teclado, rótulos, estados vacíos/errores, contraste, sin overflow destructivo). Español Paraguay. Capturas ANTES/DEPOIS y aceptación explícita del responsable.
+
+**Nota de crédito:** mantener el flujo aprobado de cliente → factura → detalle/motivo/punto NCE → revisión final → emitir; rediseñar header, espacios, búsqueda, filas, formulario y resumen conforme mismo patrón compacto. Quitar texto introductorio extenso y cabeceras redundantes; conservar los avisos realmente necesarios, filtros, accesibilidad y paginación. No introducir cambios en MT-01 (Innominado no seleccionable SOLO en búsqueda normal) ni UI-01 (emitir el cuerpo exacto de la revisión); conservar reversión de R04-01 y corrección «Corregir y emitir nueva» previa sin nuevo veto.
+
+**Evidencia visual remitida por el responsable (NO versionada aún como imagen en GitHub):**
+1. `image(20261017-122840).png`: Nota de crédito, cabecera muy alta y búsqueda/fila dispersas.
+2. `image(20261017-123022).png`: Puntos, formulario fijo y «Último número» forzado FE; confirmaciones repetidas.
+3. `image(20261017-123112).png`: tabla de puntos, columna NCE improcedente, «Sin configurar» y botones alineados incorrectamente.
+Registrar capturas originales en la carpeta de homologación visual cuando exista un mecanismo seguro para adjuntarlas a Git; por ahora estas referencias son **solo textuales**.
+
+## 5. Seguridad de datos y migración — RN-PUN-05
+
+Auditar NEX-047/048/057/058/059/060/061/062 **según aplicación real**; consultar también rutas, FE/NCE, reservas y documentos históricos. Escribir migration **nueva e incremental**, nunca editar scripts aplicados ni inventar que NEX-062 está aplicada. Inventariar secuencias FE/NCE actuales, documentos históricos y reservas antes de convertir; mantener CDC, numeración, payload inmutable, solicitudes, intentos, idempotencia y auditoría.
+- Toda actualización de tabla/constraint/function compatible con datos existentes; estrategia de transición para puntos que solo contienen FE y para puntos con FE+NCE. Detectar y bloquear ambigüedades en lugar de asignar `AA`, `NULL` o `0` de manera destructiva.
+- Migración y rollback seguros, scripts separados para preflight read-only, aplicación por humano y validación post-ejecución. El responsable es el único que ejecuta en la VM/PG real; ni Claude ni ChatGPT acceden.
+- Identidad por empresa/establecimiento/punto/tipo con bloqueo transaccional; pruebas de concurrencia y límites de serie sin alterar datos productivos.
+
+## 6. Criterios de aceptación y pruebas dirigidas — CA-PUN
+
+- **CA-01:** empresa A, est.001/punto001 admite FE/NCE/NRE por separado, cada uno inicial `sin serie-0000001` cuando corresponda; est.001/punto002 NRE y est.002/punto001 FE/NCE/NRE independientes; empresa B totalmente aislada.
+- **CA-02:** avance sin serie `9999998 → 9999999 → AA-0000001`; AA `9999999 → AB-0000001`; AZ→BA; ZY→ZZ; ZZ `9999999` → bloqueado. No se permite reserva duplicada bajo simultaneidad.
+- **CA-03:** XML sin serie omite `dSerieNum`; con serie declara AA/AB/etc. El contrato JSON real del gateway determina null/ausencia. Fecha/serie obedecen reglas SIFEN.
+- **CA-04 (corregido 17/10 14:04):** «Nuevo punto» muestra el selector **Tipo de documento obligatorio en el primer y único formulario**. Guardar 001-001 NCE cuando 001-001 FE ya existe agrega NCE a ese punto, sin error de punto duplicado y sin cambiar la FE. Para punto nuevo, alta del punto y de la secuencia del tipo es transaccional; ninguna fila «Sin tipo» huérfana; confirma serie y último número UNA vez; no modifica números al reactivar/desactivar.
+- **CA-05:** listado agrupa o representa una fila por tipo sin columna NCE; admin puede filtrar y configurar; UI profesional validada con capturas desktop/tablet/móvil por responsable.
+- **CA-05B — prueba visual crítica:** apertura «Nuevo punto» → seleccionar establecimiento 001, código 001, tipo NCE → mostrar nombre del punto existente y configurar serie/último/estado en el mismo formulario → guardar y verificar fila `001|001|NCE` independiente de `001|001|FE`; si se elige FE ya configurada, señalar duplicidad **del tipo**, no del punto. Verificar NRE en mismo punto y NRE en otro punto; mensajes/validaciones accesibles. Captura original de esta incidencia: `image(20261017-140402).png` (suministrada en chat; todavía NO archivada como binario en GitHub).
+- **CA-06 (ACTUALIZADO):** FE nunca consume NCE/NRE, NCE nunca consume FE. **El estado se controla exclusivamente por tipo documental**: desactivar FE en `empresa A / 001 / 001` bloquea solo FE; la NCE sigue emitiendo si está habilitada; desactivar NCE no bloquea FE; reactivar cada una no altera el otro estado, serie ni número. UI, APIs y funciones SQL de emisión deben respetar tipo, permiso PUNTOS/CREAR, empresa y alcance de sucursal. Ningún endpoint público residual podrá hacer activación/desactivación masiva del punto y afectar otros tipos.
+- **CA-07:** números/séries existentes, documentos/CDC, FE y NCE previas conservados; migración reversible o procedimiento de recuperación justificado; error temprano sin reservar ante estado inconsistente.
+- **CA-08:** NRE/NDE/AFE registrables según el catálogo decidido, pero su emisión está bloqueada hasta implementación/autorización específica.
+- **CA-09:** formulario NCE rediseñado sin cambios de negocio ni regresión MT-01, UI-01, idempotencia, corrección de rechazadas o alcance multiempresa.
+- **CA-10:** test dirigidos en código/mocks + SQL de prueba versionado **no ejecutado** en PostgreSQL real, sin suite global ni build global por defecto; evidencias de lo ejecutado/no ejecutado, SHA y parada para auditoría.
+
+## 7. Orden de implementación para Claude
+
+**Etapa 1 (primera entrega; única autorizada inicialmente):** actualizar el modelo/queries de puntos y secuencias, APIs, selección FE/NCE y reservas serie+num, migration incremental segura y rediseño de Puntos de expedición. Testes dirigidos, commit/push y detenerse para auditoría de ChatGPT **antes de cualquier aplicación SQL en VM**.
+**Etapa 2 (posterior a revisión y nueva autorización):** rediseñar Nota de crédito con su flujo actual, sin añadir nuevas reglas Innominado y sin alterar las reglas fiscales NCE; capturas ANTES/DEPOIS y auditoría independiente.
+**Bloqueo de puesta en operación:** ninguna modificación de banco o deploy a cargo de IA; aprobación técnica no equivale a homologación visual ni operacional.
+
+## 8. Registro de contradicciones previas resueltas
+
+- RN-16 anterior decía «Puntos compartidos, NO por tipo»; **interpretación correcta:** un punto administrativo es compartible, pero **cada tipo tiene configuración fiscal visible e independiente**, representada por fila. No hay columna NCE dentro de la fila FE.
+- La interfaz actual exige «Último número» dos veces; se sustituye por confirmación única inicial.
+- **Corrección explícita 17/10/2026 14:04:** la opción anterior de «registrar punto físico vacío y configurar tipo después» se mostró en el navegador y resultó FUNCIONALMENTE INCORRECTA. El responsable exige tipo seleccionado **durante el alta**, con reutilización transparente del punto existente. Este texto prevalece sobre la frase histórica «dentro del flujo de alta o después» y las capturas previas.
+- La serie **no comienza en AA**: debe comenzar ausente y migrar a AA solo tras agotar el rango sin serie.
+- La regla MT-01 y reversión de R04-01 no son objeto de esta reforma.
+
+## 9. Corrección de homologación — RN-PUN-06: independencia integral de estado por tipo (17/10/2026, 16:03)
+
+**Nueva evidencia del responsable:** `image(20261017-160313).png` (captura recibida en la conversación, NO archivada como imagen binaria en GitHub). La tabla muestra empresa/casa central est.001/punto001 con FE y NCE y dos acciones independientes aparentes («Desactivar tipo» y «Activar punto»). Al activar o desactivar el punto, ambas filas cambian juntas. **Esto se reprueba expresamente.** La autorización previa AUD-PRO129-UX-R03 se limitó a cambios estáticos R02 y no cubre esta homologación visual negativa.
+
+**Definiciones que no deben mezclarse:**
+
+1. **Identidad completa del documento emitido (unicidad fiscal):** `empresa/emisor + establecimiento SIFEN + punto + serie (NULL si sin serie) + tipo de DE + número de siete dígitos`. La serie es parte **del identificador del documento**, y debe ser correctamente persistida y distinguida. Comprobar el índice único efectivo para `serie IS NULL`: los UNIQUE ordinarios PostgreSQL admiten múltiples NULL; emplear la restricción/índice apropiado sin crear conflictos en históricos. La entidad «cliente» aquí es el CLIENTE EMISOR / EMPRESA del sistema multiempresa, **no** el receptor de cada factura.
+2. **Identidad del contador y estado operativo:** `empresa/emisor + establecimiento + punto + tipo de documento`; cada contador guarda `serie_actual + ultimo_numero + activo_por_tipo`. El avance `sin serie → AA → AB … ZZ` ocurre DENTRO del mismo contador y no crea un segundo estado de activación por serie.
+3. **Punto administrativo:** puede existir una sola fila interna `fe_puntos_expedicion` para compartir nombre/código, **sin jamás compartir activación fiscal**. El estado de una sucursal inactiva y permisos de acceso mantienen su significado propio.
+
+**Evidencia causal en código anterior a la corrección:** `page.tsx` muestra `alternarPunto` y llama `POST /api/facturacion/puntos/[id]/estado`; `lib/facturacion/puntos.ts` agrupa punto.activo con tipo.activo; NEX-063 `fe_documento_crear_fe/nce` exige `fe_puntos_expedicion.activo`; NEX-064 `fe_punto_alta_tipo` activa opcionalmente el punto entero mediante `fe_punto_estado`. No basta esconder la acción en React si estas dependencias sobreviven en SQL/APIs.
+
+**Corrección a implementar por Claude, solo tras autorización explícita:** nueva migration incremental (NEX-065 solo si está libre al revisar Git), sin modificar NEX-063/NEX-064; preflight de estados previos y configuraciones; reconciliación *sin reactivaciones inesperadas*. Una configuración cuya disponibilidad efectiva anterior era `punto.activo AND secuencia.activo` debe **comenzar con ese mismo estado** después de la migración, independientemente de las demás. Redefinir cuidadosamente funciones SQL de emisión FE/NCE, alta, configuración y cambio de estado por tipo para no leer un bloqueo físico compartido; mantener autorización por empresa/sucursal/permisos e integridad de identidad fiscal. Retirar del contrato accesible el toggle masivo `POST /api/facturacion/puntos/[id]/estado` o hacer que rechace su uso sin efectos; no dejarlo habilitado aunque el botón desaparezca. La función física antigua solo debe subsistir si tiene uso administrativo documentado que no interfiera con emisión. Preservar histórico, series, números, CDC, idempotencia, auditoría y tipos futuros no emitibles.
+
+**Criterios obligatorios adicionales — CA-11…CA-16:**
+- **CA-11:** FE activa y NCE inactiva en est.001/punto001 ⇒ solo FE puede emitir. Activar NCE ⇒ **solo NCE** cambia a activa; FE y sus contadores permanecen idénticos. Desactivar FE ⇒ **solo FE** se bloquea; NCE continúa activa. Revertir ambas acciones no altera numeración.
+- **CA-12:** FE/NCE ambas inactivas (estado mostrado en la captura) ⇒ después de migrar, **ambas permanecen inactivas**, até o operador ativar cada uma separadamente. Nunca ativar automaticamente os dois tipos.
+- **CA-13:** filas, filtros, modal y mensajes muestran exclusivamente el estado por tipo y acciones inequívocas «Activar FE»/«Desactivar NCE» (o equivalente). Sin botones «Activar punto» o «Desactivar punto» que alteren otra fila. NRE/NDE/AFE quedan configurables pero sin emisión y nunca «disponibles para emitir».
+- **CA-14:** API oculta/directa de estado físico no puede afectar otros tipos; permiso y alcance server-side comprobados. Transacciones concurrentes de activación/desactivación FE versus NCE no se pisan ni causan deadlock por reintroducción de un estado común.
+- **CA-15:** unicidad real del documento con serie vacía y serie AA/AB: misma empresa+est+punto+tipo+serie+número jamás duplica; un número idéntico con tipo distinto o serie distinta puede coexistir. Verificar el índice PostgreSQL real (atención NULL), no inferir por texto.
+- **CA-16:** migración segura y reversible/plan de recuperación, estado anterior → estado por tipo sin habilitar documentos; scripts read-only y validación posterior, pruebas dirigidas TS/SQL preparadas, screenshots ANTES/DEPOIS. Solo responsable aplica en VM y homologa. La etapa 2 de rediseño NCE permanece fuera del alcance.
+
+**Precedencia:** RN-PUN-06 y CA-11…CA-16 sustituyen cualquier decisión anterior que permita usar `fe_puntos_expedicion.activo` como bloqueo colectivo de emisión; no se modifica la regla de serie inicial ausente ni el rollover fiscal.

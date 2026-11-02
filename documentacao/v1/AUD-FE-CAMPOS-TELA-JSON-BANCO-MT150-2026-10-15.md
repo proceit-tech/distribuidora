@@ -1,0 +1,59 @@
+# AUD-FE-CAMPOS-R01 — Confronto inicial de campos da Nueva factura electrónica (15/10/2026)
+
+**Status:** DIAGNÓSTICO DE LACUNAS; **NÃO** significa conformidade integral SIFEN, homologação operacional nem autorização de emissão real. Esta auditoria é **diferente** da AUD-PRO93-FA-R02, que examinou **somente idempotência do update de Produtos e GTIN triestado**. O usuário pediu explicitamente confrontar **tela × JSON gateway × banco × Manual/NT SIFEN**.
+
+## 1. Fontes efetivamente examinadas e limites
+
+1. **Tela:** capturas fornecidas pelo responsável na conversa de 14/10 (nova UI e sistema anterior de referência) e código versionado `app/(private)/facturas/nueva/page.tsx`, `ajuste-fiscal-item.tsx`, `app/api/facturas/*`. **Capturas originais não foram adicionadas ao Git**; não declarar evidencia visual versionada ou execução em navegador.
+2. **JSON do gateway:** mapeamento do exemplo de entrada/saída originalmente fornecido pelo responsável em `documentacao/v1/REQUISITOS-FACTURACION-ELECTRONICA-API-EXTERNA-2026-10-12.md` (§4) e implementação real `lib/facturacion/{payload-fe,emision,ajuste-item,envio}.ts`. **O corpo bruto original do JSON do fornecedor não foi novamente recuperado nem confrontado byte a byte nesta rodada; o que foi auditado é o mapeamento documentado e o JSON gerado pelo código**. Os campos do JSON proprietário não são automaticamente os grupos nem obrigatoriedades do XML SIFEN.
+3. **Banco / DDL:** NEX-047 (documentos/tentativas/config), NEX-048 (pontos/numeração, snapshots, chave idempotente), NEX-049/050 (envio/estado), NEX-054/055 (estado/triggers), NEX-056 (permissão e bitácora IVA), cadastros referenciados pelo servidor. **Somente repositório versionado**: não se acessou `schema_migrations`, informações/credenciais reais, nem esquema efetivo da VM nesta auditoria. O último reporte humano dizia 55 migrations registradas até NEX-055; NEX-056 **não tem comprovação de aplicação na VM**.
+4. **Norma primária consultada diretamente:** [Manual Técnico DNIT SIFEN v150 oficial](https://www.dnit.gov.py/documents/20123/420592/Manual%2BT%C3%A9cnico%2BVersi%C3%B3n%2B150.pdf/e706f7c7-6d93-21d4-b45b-5d22d07b2d22?t=1687351495907), partes D1, E1, E7, E7.1/2, E8, EA; [NT 023](https://ekuatia.set.gov.py/en/web/e-kuatia/documentacion-tecnica) (E711 até 8 decimais), **NT 026** (campos DNCP passam a opcionais em B2G), **NT 027** (evento de nominação, não campos usuais FE). **NT 021 está disponível no portal da DNIT, mas ausente do ZIP original do repositório**; conferir as notas e XSD vigentes antes de liberar novos tipos fiscais. [Portal técnico DNIT](https://ekuatia.set.gov.py/en/web/e-kuatia/documentacion-tecnica) e [XSD públicos](https://ekuatia.set.gov.py/sifen/xsd/).
+5. **13 XMLs fornecidos pelo responsável:** examinados apenas para contagem/estrutura, não publicados por dados sensíveis. **2 XMLs a crédito**, **11 a contado**, **27 itens com `dPorcDesIt`**; todos em PYG. Como são XMLs de saída de outros emissores/gateway, **não provam** contrato JSON de entrada nem validação de gateway real do NEXIT; ver `documentacao/v1/EVIDENCIAS-FISCAIS-FE-13-XML-2026-10-14.md`.
+
+**Legenda:** OK = entregue no escopo atual; PARCIAL = existe mas não permite operação completa; AUSENTE = não há fluxo operacional; AUTO = deve vir do cadastro/servidor/gateway e não necessariamente ser um input; COND = só aplica para a natureza/tipo de documento/operação correto; PEND = contrato/norma ainda precisa de decisão.
+
+## 2. Matriz comparativa — UI / JSON / DB / MT
+
+| Grupo e refs normativas | Tela NEXIT atual | JSON / servidor | Persistência / fonte | Parecer |
+|---|---|---|---|---|
+| Sucursal, estabelecimento, ponto, série, numeração, timbrado (C/D) | Sucursal+ponto, erro sem ponto; próximo número referencial | NEX-048 injeta `dEst`, `dPunExp`, `dNumDoc`, `dSerieNum=null` | `sucursales.establecimiento_sifen`, `fe_puntos_expedicion.ultimo_numero`, documento/snapshot; **timbrado gestionado pelo gateway, não modelado no banco NEXIT** | PARCIAL; falta configuração real de ponto e prova de número atual, jamais autogerar ponto 001 |
+| Data/hora emissão (`dFeEmiDE`) | Data informativa, sem edição | NEX-048 grava `now()` zona `America/Asuncion` ao reservar | `documentos_electronicos.fecha_emision` | AUTO; se usuário quer alterar, exige regras fiscais/contrato e decisão explícita; NÃO presumir `competencia` = `fecha_emision` |
+| Tipo de transação `iTipTra` (D011) | Seleciona 1,2,3,4 | Catálogo contempla 1–13; código bloqueia 5–13 | Snapshot JSON | PARCIAL; casos especiais por regra própria, não liberar simplesmente opções |
+| Tipo imposto afetado `iTImp` (D013) | Sem seletor | Fixado em 1=IVA | Snapshot | PARCIAL somente se negócio realmente requer ISC/Renta/ninguno/IVA-Renta; não obrigatório oferecer todos para negócio IVA |
+| Indicador presença `iIndPres` (E011) | 1–6 | 1–6 | Snapshot | PARCIAL: código 9 «Otro» sem texto adicional não habilitado |
+| Condição operação `iCondOpe` (E601) | Texto somente Contado | Hardcoded 1 | Snapshot; sem estrutura comercial de financiamento | AUSENTE Crédito |
+| Crédito por prazo `iCondCred=1`, `dPlazoCre` (E640–E643) | Sem controles | JSON `null` | Não modelado em contrato de entrada | AUSENTE; condicional para Crédito |
+| Crédito por cuotas `iCondCred=2`, `dCuotas`, `Cuotas[].dMonCuota/dVencCuo` (E644/E650–654) | Sem grade | JSON `null`/`[]` | Não modelado | AUSENTE; parcelas, vencimentos, precisão e somatório |
+| Entrega inicial em crédito `dMonEnt` (E645) e pagamento inicial (E605) | Sem | Não implementado | Não modelado | COND, AUSENTE |
+| Formas `iTiPago`, valor, moeda (`dMonTiPag`, `cMoneTiPag`) (E606–609) | Apenas Efectivo | Único `FormaPago[]`, valor = total servidor; moeda PYG | JSON imutável | PARCIAL; catálogo oficial tem cheque, cartão, transferência etc. e admite grupo repetível (regras de parcelamento diferentes) |
+| Dados de cartão `gPagTarCD`, cheque `gPagCheq` (E620–E632) | Sem | Não implementado | Não modelado | COND e AUSENTE; não inventar validações do gateway |
+| Moeda de operação `cMoneOpe` (D015) | Exibe só PYG | Fixado PYG | `documentos_electronicos.moneda` é genérico texto, **mas serviço fixa PYG** | AUSENTE USD/BRL: banco genérico sozinho não habilita emissão |
+| Taxa `dCondTiCam`, `dTiCam`, `dTiCamIt`, `dTiCamTiPag`, `dTotalGs` | Sem edição | `null` ou valor PYG fixo (ver P-02) | Tabela comercial de câmbio exige integração; histórico/snapshot de taxa por documento ainda não projetado | AUSENTE; decisão aprovada de **taxa manual PYG por 1 moeda** não implementada para FE |
+| Cliente/receptor D200–D224 (natureza, documento, endereço, RUC, contatos) | Busca e ficha cadastral recolhível | Preenchido do cadastro, `receptorDe`, validações de aptidão | Clientes + endereços; snapshot receptor no payload | OK/PARCIAL conforme natureza, B2F/B2G/innominado; cada regra de D201/D202 exige caso dirigido, não input livre obrigatório |
+| Unidade, descrição, GTIN, IVA de item (`cUniMed` E709, `dDesProSer` E708, `dGtin` E706, E731/733/734) | Editor Fase A, produto incompleto com permissão; GTIN 3 modos | Ajustes revalidados; snapshot imutável; NEX-056 persiste opcionalmente apenas IVA no produto | Produtos/unidades/impostos + `producto_clasificacion_fiscal_log` (NEX-056 não comprovada na VM) | PARCIAL funcional até aplicar NEX-056 e validar no ambiente operacional |
+| Informação por item `dInfItem` **E714**; GTIN por pacote E707; país origem E712/E713, partidas E702/E703 | Sem UI | Não entra no builder atual | Não modelado em `CuerpoFactura` | COND/OPCIONAL, AUSENTE para uso em FE quando apropriado |
+| Desconto individual/global por item `dDescItem`, `dPorcDesIt`, `dDescGloItem` (EA002–EA004) | Sem | Cálculo ignora desconto comercial (totais de desconto fixados em zero) | Snapshot não captura desconto/justificativa | AUSENTE: **27 itens dos 13 XMLs de referência usavam descontos** |
+| Antecipos `iCondAnt`, `dCDCAnticipo`, `dAntPreUniIt` e demais EA | Sem | Fixado ausente/0 | Não modelado | COND, AUSENTE; regra fiscal própria |
+| `dInfAdic` / dados opcionais cabeçalho (G002) | Campo Informação adicional | Texto 0–5000 ou null | Snapshot | OK para este campo; não abrange outros opcionais |
+| Compras públicas `gCompPub`, `dDncpG/E` e casos B2G | Sem | Excluídos do escopo | Sem fluxo | COND. **NT 026 tornou opcionais itens DNCP específicos em B2G**; não marcar como obrigatório geral nem inventar compr. públicas |
+| Composição de mercadoria (BOM) vs descrição/item fiscal | Cadastro de produto e fiscal item são conceitos distintos | `dInfItem` não enviado; BOM não é o mesmo campo | BOM comercial não se mistura com JSON FE por padrão | PEND: esclarecer se 'composición' significa metadados fiscais ou kit/BOM de estoque |
+| Totais, IVA, arredondamento (E7/E8/F) | Resumo e valores | Cálculos no servidor; `dRedon=0`; `dTotDesc=0`; `dLiqTotIVA5/10` e `dTotalGs` conforme JSON proprietário | Documento guarda total e payload | **PEND CRÍTICO**: P-02/P-11/P-12, não afirmar aceitação pelo gateway/SIFEN |
+| Documentos associados / veículo / setor especial | Sem | Não habilitados | Sem suporte fiscal completo | COND e fora do escopo da FE simples; não incluir no formulário genérico sem modalidade e contrato |
+
+### Correção de referência comprovada na fonte oficial
+
+**O Manual v150 identifica `dGtin` = E706, `dGtinPq` = E707, `dInfItem` = E714.** Os comentários da aplicação `lib/facturacion/{ajuste-item,payload-fe}.ts` e da matriz FAT-E1 que indicam **`dGtin` como E714 estão errados quanto ao ID normativo**. Isso é defeito de referência em **documentação/comentários**, não demonstra erro da chave enviada em JSON (que permanece `dGtin`). Não mudar payload baseado neste erro de numeração; atualizar referências numa futura edição autorizada.
+
+### Evidência e limites do JSON do gateway
+
+O JSON de exemplo registrado pelo usuário foi mapeado na especificação, porém a documentação ressalva que **pode representar documento já emitido**, não exatamente o POST novo de `/api/recepcion_de`. O XML normativo SIFEN não estabelece por si só as chaves obrigatórias/null do envelope JSON do **fornecedor**. Obrigatório validar com o contrato real do provedor e, se autorizado pelo responsável, uma emissão de teste controlada; preservar P-02/P-11/P-12 em aberto.
+
+### Conclusão e portas para avanço
+
+- **AUD-PRO93-FA-R02 fica aceita apenas nos 2 defeitos R01**, **não** aprova completude fiscal/funcional integral da tela. O CI verde e T18 em PostgreSQL efêmero não comprovam funcionalidade de operações Crédito/Multimoneda e nem implantação na VM.
+- O responsável solicitou **tela completa para os cenários comerciais usuais**, mas isto depende de evolução do motor e contratos. Organizar por **Fase B: crédito, entregas, parcelas e formas de pagamento; Fase C: moedas e câmbio; Fase D: descontos, opcionais por item/tipos transacionais especiais**, mantendo todas as regras condicionais e revisão campo a campo por contrato.
+- **Não** enviar a Claude tarefa para habilitar tudo de uma vez; nenhuma implementação/deploy/migration ou suíte completa foi autorizada por esta auditoria.
+- Permanecem decisões pendentes: significado do termo `competencia` no pedido do usuário; serviços especializados/ISC/B2G/exportação; política/contrato de pagamentos mistos e de moedas distintas; suporte JSON real a campos opcionais; exposição de timbrado e garantias de numeração; descontos comerciais e método fiscal NT 13; gateway P-02/P-12 e cálculo parcial P-11.
+- Para cada módulo futuro, testes **básicos dirigidos** à funcionalidade, sem suíte global salvo pedido expresso. Evidência de aprovação só via auditoria + homologação humana na VM.
+
+**Fontes oficiais:** Manual Técnico DNIT v150 (págs. impressas 68–89), NT 023 E711, NT 026 B2G, NT 027 (nominação) no portal e-Kuatia; consultar XSD em vigor e contrato proprietário. Dados reais XML/identidades e credenciais fora do repositório.

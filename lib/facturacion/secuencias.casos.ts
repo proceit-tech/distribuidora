@@ -1,0 +1,126 @@
+/**
+ * PRO-131 (AUD-FISC P0) — secuencia fiscal independiente por tipo de documento (NEX-060). Sin red y sin PostgreSQL: la migración, sus funciones, T21 y T22 NO se ejecutaron aquí (las corre el runner
+ * sobre un PostgreSQL descartable); lo que se verifica es el texto versionado de SQL/reversión/pruebas y la lógica de TypeScript que lee las secuencias. No prueba comportamiento real de PostgreSQL.
+ */
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
+import { contador } from "@/lib/clientes/contador-casos";
+import { listarPuntos, traducirErrorPunto } from "@/lib/facturacion/puntos";
+import { ErrorFacturacion } from "@/lib/facturacion/shared";
+
+const raiz = process.cwd();
+const leer = (r: string) => readFileSync(join(raiz, r), "utf8");
+const sinComentarios = (t: string) => t.replace(/--.*$/gm, "");
+
+export async function verificarCasosSecuencias(): Promise<string[]> {
+  const fallos: string[] = [];
+  const igual = (nombre: string, obtenido: unknown, esperado: unknown) => {
+    contador.n += 1;
+    if (JSON.stringify(obtenido) !== JSON.stringify(esperado)) fallos.push(`${nombre}: esperado ${JSON.stringify(esperado)}, obtenido ${JSON.stringify(obtenido)}`);
+  };
+  const cierto = (nombre: string, c: boolean) => igual(nombre, c, true);
+
+  const mig = leer("documentacao/banco/nexit/v1/migraciones/NEX-060-facturacion-secuencias-por-tipo.sql");
+  const sql = sinComentarios(mig);
+  const rev = leer("documentacao/banco/nexit/v1/scripts/reversion-NEX-060.sql");
+
+  // ── 1. Esquema: identidad empresa + punto (⇒ establecimiento/código) + tipo ─────────────────────
+  cierto("tabla fe_punto_secuencias: PK (empresa, punto, tipo), FK por empresa al punto, los 5 tipos del catálogo (FE, NCE, NDE, NRE, AFE) y rango 0…9999999", /CREATE TABLE public\.fe_punto_secuencias/.test(sql) && /PRIMARY KEY \(empresa_id, punto_id, tipo_documento\)/.test(sql) && /FOREIGN KEY \(empresa_id, punto_id\) REFERENCES public\.fe_puntos_expedicion \(empresa_id, id\)/.test(sql) && /tipo_documento IN \('FE', 'NCE', 'NDE', 'NRE', 'AFE'\)/.test(sql) && /ultimo_numero\s+integer\s+NOT NULL CHECK \(ultimo_numero BETWEEN 0 AND 9999999\)/.test(sql));
+  cierto("ningún tipo nace en cero por omisión: ultimo_numero sin DEFAULT en la secuencia", !/fe_punto_secuencias[\s\S]{0,400}ultimo_numero\s+integer\s+NOT NULL\s+DEFAULT/.test(sql));
+  cierto("secuencia inmutable: identidad fija, nunca retrocede, no se elimina ni se vacía (salvo reinicio DEMO)", /fe_secuencias_inmutable\(\)/.test(sql) && /NEW\.ultimo_numero < OLD\.ultimo_numero/.test(sql) && /nex_reinicio_demo_activo\(OLD\.empresa_id\)/.test(sql) && /BEFORE TRUNCATE ON public\.fe_punto_secuencias/.test(sql));
+  cierto("el máximo emitido se calcula por TIPO (fe_punto_maximo_emitido con 4.º argumento) y filtra documentos_electronicos.tipo", /fe_punto_maximo_emitido\(p_empresa uuid, p_establecimiento text, p_codigo text, p_tipo text\)/.test(sql) && /tipo = p_tipo/.test(sql));
+  cierto("NEX-060 incremental: exige NEX-048/057/058/059, no se reaplica por suposición, no toca NEX-001…059 ni DROP de datos, estado «NO aplicada»", /requiere NEX-048, NEX-057, NEX-058 y NEX-059/.test(mig) && /parece aplicada/.test(mig) && /NO aplicada/.test(mig) && !/DROP TABLE|DROP COLUMN|TRUNCATE (?!public\.fe_punto_secuencias)|DELETE FROM/i.test(sql.replace(/BEFORE TRUNCATE ON public\.fe_punto_secuencias/g, "")));
+
+  // ── 2. Migración del legado: conciliar antes de copiar, solo a FE ──────────────────────────────
+  cierto("el contador legado migra SOLO a la secuencia FE (tipo 'FE'), con origen MIGRACION_NEX060; no se crea ninguna fila para NCE/NDE/NRE/AFE", /SELECT p\.empresa_id, p\.id, 'FE', p\.ultimo_numero, 'MIGRACION_NEX060'/.test(sql) && !/'NCE'|'NDE'|'NRE'|'AFE'/.test(sql.replace(/tipo_documento IN \('FE', 'NCE', 'NDE', 'NRE', 'AFE'\)/, "")));
+  cierto("conciliación previa: aborta (NEX:LEGADO_INCONSISTENTE) si el contador legado es MENOR que el mayor FE registrado, antes de insertar nada (nunca reduce ni emite el siguiente por suposición)", /IF r\.ultimo_numero < r\.maximo_fe THEN/.test(sql) && /NEX:LEGADO_INCONSISTENTE/.test(sql) && sql.indexOf("NEX:LEGADO_INCONSISTENTE") < sql.indexOf("INSERT INTO public.fe_punto_secuencias (empresa_id, punto_id, tipo_documento, ultimo_numero, origen)\n  SELECT") && /SELECT public\.fe_secuencias_conciliar_legado\(NULL\);/.test(sql));
+  cierto("solo toca puntos sin secuencia FE (idempotente) y la función no está concedida al rol de la aplicación", /NOT EXISTS \(SELECT 1 FROM public\.fe_punto_secuencias s WHERE s\.empresa_id = p\.empresa_id AND s\.punto_id = p\.id AND s\.tipo_documento = 'FE'\)/.test(sql) && /REVOKE ALL ON FUNCTION public\.fe_secuencias_conciliar_legado\(uuid\) FROM PUBLIC/.test(sql) && !/GRANT EXECUTE ON FUNCTION public\.fe_secuencias_conciliar_legado/.test(sql));
+  cierto("contador legado congelado: trigger que rechaza cualquier cambio de ultimo_numero (un solo escritor del contador FE)", /fe_puntos_expedicion_contador_congelado_trg BEFORE UPDATE OF ultimo_numero ON public\.fe_puntos_expedicion/.test(sql) && /NEX:CONTADOR_LEGADO_CONGELADO/.test(sql));
+
+  // ── 3. Reserva FE: solo la secuencia FE; todo lo demás intacto ─────────────────────────────────
+  const crear = sql.slice(sql.indexOf("CREATE OR REPLACE FUNCTION public.fe_documento_crear_fe("), sql.indexOf("CREATE OR REPLACE FUNCTION public.fe_punto_crear("));
+  cierto("fe_documento_crear_fe reserva EXCLUSIVAMENTE la secuencia 'FE' con FOR UPDATE, tras FOR SHARE del punto activo, y ya no escribe ultimo_numero del punto", /FROM public\.fe_puntos_expedicion WHERE [^;]*activo FOR SHARE/.test(crear) && /FROM public\.fe_punto_secuencias WHERE empresa_id = p_empresa AND punto_id = p_punto AND tipo_documento = 'FE' FOR UPDATE/.test(crear) && /UPDATE public\.fe_punto_secuencias SET ultimo_numero = v_num/.test(crear) && !/UPDATE public\.fe_puntos_expedicion/.test(crear));
+  cierto("sin secuencia FE no numera (NEX:SECUENCIA_NO_CONFIGURADA) y el agotamiento se evalúa sobre la secuencia", /NEX:SECUENCIA_NO_CONFIGURADA/.test(crear) && /v_sec\.ultimo_numero >= 9999999/.test(crear));
+  const ant = sinComentarios(leer("documentacao/banco/nexit/v1/migraciones/NEX-048-facturacion-emision-fe.sql"));
+  const norm = (t: string) => t.replace(/\s+/g, " ");
+  const antCrear = norm(ant.slice(ant.indexOf("CREATE OR REPLACE FUNCTION public.fe_documento_crear_fe("), ant.indexOf("CREATE OR REPLACE FUNCTION public.nex_aplicar_grants_facturacion_emision")));
+  const nuevaCrear = norm(crear);
+  // El cuerpo de NEX-048 se conserva TEXTUALMENTE (validaciones, idempotencia, completado del payload, INSERT del documento y de la solicitud) salvo el bloque de reserva del número.
+  const tramoAntes = antCrear.slice(antCrear.indexOf("IF NOT public.usuario_tiene_permiso"), antCrear.indexOf("SELECT * INTO v_punto"));
+  const tramoDespues = antCrear.slice(antCrear.indexOf("v_payload := p_payload"));
+  cierto("fe_documento_crear_fe: el cuerpo de NEX-048 antes y después de la reserva (permiso, clave, payload, idempotencia, sucursal, cliente, payload final, INSERT del documento y de la solicitud) se conserva idéntico", tramoAntes.length > 500 && tramoDespues.length > 500 && nuevaCrear.includes(tramoAntes) && nuevaCrear.includes(tramoDespues));
+  cierto("el cuerpo de fe_documento_crear_fe conserva de NEX-048: permiso CREAR, clave 8–120, payload sin cdc/número con iTiDE 1, idempotencia por entrada_hash, sucursal/cliente, INSERT del documento FE y de la solicitud", [
+    /usuario_tiene_permiso\(p_empresa, p_usuario, 'FACTURACION_ELECTRONICA', 'CREAR'\)/, /char_length\(p_clave\) NOT BETWEEN 8 AND 120/, /p_payload \? 'cdc' OR p_payload \? 'dNumDoc'/, /NEX:IDEMPOTENCIA_CONFLICTO/, /s\.entrada_hash = v_entrada/,
+    /NEX:SIN_ESTABLECIMIENTO/, /NEX:CLIENTE_INVALIDO/, /'dEst', v_est, 'dPunExp', v_punto\.codigo, 'dNumDoc', v_numero, 'dSerieNum', NULL/, /VALUES \(p_empresa, p_sucursal, 'FE', v_est, v_punto\.codigo, v_numero, NULL, now\(\)/, /INSERT INTO public\.documento_electronico_solicitudes/,
+  ].every((x) => x.test(crear)));
+  cierto("el CDC nunca se fabrica ni se toca: la función no menciona cdc salvo para rechazarlo en el payload recibido", /p_payload \? 'cdc'/.test(crear) && !/'cdc'/.test(crear.replace(/p_payload \? 'cdc'/, "")) && !/\bcdc\s*[,=]/i.test(crear));
+
+  // ── 4. Gestión de puntos: mismas firmas, permisos y locks; el número confirmado es el de la secuencia FE ─
+  cierto("fe_punto_crear/activar/desactivar mantienen firma, permiso PUNTOS, confirmación y SECURITY DEFINER con search_path fijo", /fe_punto_crear\(p_empresa uuid, p_usuario uuid, p_sucursal uuid, p_codigo text, p_nombre text, p_ultimo_numero integer, p_confirmado boolean\)/.test(sql) && /fe_punto_activar\(p_empresa uuid, p_usuario uuid, p_punto uuid, p_ultimo_numero integer, p_confirmado boolean\)/.test(sql) && /fe_punto_desactivar\(p_empresa uuid, p_usuario uuid, p_punto uuid\)/.test(sql) && (sql.match(/usuario_tiene_permiso\(p_empresa, p_usuario, 'FACTURACION_ELECTRONICA', 'PUNTOS'\)/g) ?? []).length === 3 && (sql.match(/SECURITY DEFINER SET search_path = public, pg_temp/g) ?? []).length === 4);
+  cierto("NEX-059 preservado en el alta: FOR SHARE de la sucursal ANTES del advisory lock de identidad y de comprobar el uso; luego el INSERT", sql.indexOf("FROM public.sucursales WHERE empresa_id = p_empresa AND id = p_sucursal FOR SHARE") > 0 && sql.indexOf("FOR SHARE;\n  IF NOT FOUND OR NOT v_activa") > 0 && sql.indexOf("FOR SHARE;\n  IF NOT FOUND OR NOT v_activa") < sql.indexOf("PERFORM public.fe_punto_bloquear_identidad(p_empresa, v_est, p_codigo)") && sql.indexOf("PERFORM public.fe_punto_bloquear_identidad(p_empresa, v_est, p_codigo)") < sql.indexOf("INSERT INTO public.fe_puntos_expedicion (empresa_id, sucursal_id, codigo, nombre, ultimo_numero, activo)"));
+  cierto("el alta crea SOLO la secuencia FE con el número informado y confirmado (el contador legado nace en 0); no hay pregunta duplicada: la misma API/firma", /VALUES \(p_empresa, v_id, 'FE', p_ultimo_numero, 'ALTA_PUNTO'\)/.test(sql) && /VALUES \(p_empresa, p_sucursal, p_codigo, btrim\(p_nombre\), 0, false\)/.test(sql));
+  cierto("la activación bloquea punto → secuencia FE (mismo orden que la emisión), exige no retroceder frente a la secuencia y al máximo FE emitido, y crea la secuencia si el punto no la tenía", /FOR UPDATE;\n  v_actual := CASE/.test(sql) && /v_piso := coalesce\(v_actual, v_p\.ultimo_numero\);\s+IF p_ultimo_numero < v_piso OR p_ultimo_numero < public\.fe_punto_maximo_emitido\(p_empresa, v_est, v_p\.codigo, 'FE'\)/.test(sql) && /'ACTIVACION_PUNTO'/.test(sql) && /SET activo = true, actualizado_at = now\(\)/.test(sql));
+  cierto("el alta también compara con el máximo FE (no con el de otros tipos)", /p_ultimo_numero < public\.fe_punto_maximo_emitido\(p_empresa, v_est, p_codigo, 'FE'\)/.test(sql) && !/fe_punto_maximo_emitido\([^)]*\)(?!\s*,)[^;]*;/.test("") );
+  cierto("grants: la aplicación solo LEE fe_punto_secuencias; helper descubierto por el envoltorio de NEX-052 y reaplicado", /GRANT SELECT ON public\.fe_punto_secuencias TO nexit_runtime/.test(sql) && !/GRANT (INSERT|UPDATE|DELETE|ALL)[^;]*fe_punto_secuencias/.test(sql) && /nex_aplicar_grants_facturacion_secuencias\(\) RETURNS void/.test(sql) && /SELECT public\.nex_aplicar_grants_facturacion_secuencias\(\);/.test(sql));
+  cierto("no toca documentos_electronicos, solicitudes, intentos ni CDC: ningún INSERT/UPDATE/DELETE sobre ellos fuera de fe_documento_crear_fe", !/(UPDATE|DELETE FROM) public\.(documentos_electronicos|documento_electronico_solicitudes)/.test(sql) && (sql.match(/INSERT INTO public\.documentos_electronicos/g) ?? []).length === 1);
+
+  // ── 5. Reversión segura ────────────────────────────────────────────────────────────────────────
+  cierto("reversión: aborta si existen secuencias de otros tipos, sincroniza el contador legado SOLO hacia arriba desde la secuencia FE, restaura los cuerpos de NEX-048/057/059 y elimina la tabla sin tocar documentos", /existen secuencias de otros tipos/.test(rev) && /tipo_documento <> 'FE'/.test(rev) && /s\.ultimo_numero > p\.ultimo_numero/.test(rev) && rev.indexOf("DROP TRIGGER fe_puntos_expedicion_contador_congelado_trg") < rev.indexOf("UPDATE public.fe_puntos_expedicion p SET ultimo_numero") && (rev.match(/CREATE OR REPLACE FUNCTION public\.(fe_documento_crear_fe|fe_punto_crear|fe_punto_activar|fe_punto_desactivar)\(/g) ?? []).length === 4 && /DROP TABLE public\.fe_punto_secuencias/.test(rev) && !/(UPDATE|DELETE FROM|TRUNCATE)[^;]*documentos_electronicos/.test(sinComentarios(rev)));
+  cierto("reversión: el cuerpo restaurado de fe_documento_crear_fe vuelve a reservar sobre fe_puntos_expedicion.ultimo_numero (NEX-048) y fe_punto_crear/activar vuelven a la versión sin secuencias", /UPDATE public\.fe_puntos_expedicion SET ultimo_numero = v_num/.test(rev) && !/INSERT INTO public\.fe_punto_secuencias/.test(sinComentarios(rev)));
+
+  // ── 6. Pruebas SQL versionadas y registradas ───────────────────────────────────────────────────
+  const t21 = leer("documentacao/banco/nexit/v1/pruebas/T21-nex060-secuencias-por-tipo.sql");
+  const t22 = leer("documentacao/banco/nexit/v1/pruebas/T22-concurrencia-secuencias.sh");
+  const runner = leer("documentacao/banco/nexit/v1/scripts/ejecutar-pruebas.sh");
+  cierto("T21 (SQL) versionada y registrada en el runner: FE y NCE independientes, sin colisión del número 0000001, máximo por tipo, sin secuencia presumida, idempotencia, inmutabilidad, legado congelado, aislamiento por empresa y migración (coherente, inconsistente, idempotente, documentos intactos)", /T14 T15 T16 T18 T19 T21( T25)?( T26)?( T27)?( T30)?( T32)?; do/.test(runner) && [
+    /T-F01/, /T-F02/, /T-F04/, /T-F05/, /T-F08/, /T-F09/, /T-F14/, /T-F15/, /T-F16/, /T-F22/, /NEX:SECUENCIA_NO_CONFIGURADA/, /NEX:LEGADO_INCONSISTENTE/, /fe_punto_maximo_emitido\(v_a, '001', '001', 'NCE'\)/, /tipo_documento <> 'FE'/, /has_table_privilege\('nexit_runtime'/,
+  ].every((x) => x.test(t21)));
+  cierto("T22 (dos sesiones reales) registrada: dos FE del mismo punto se serializan por la secuencia FE (la segunda queda BLOQUEADA y recibe el siguiente número) y la secuencia NCE del mismo punto NO espera (sin deadlock)", /T22-concurrencia-secuencias\.sh/.test(runner) && /T-F06/.test(t22) && /T-F07/.test(t22) && /wait_event_type='Lock'/.test(t22) && /FE=12,NCE=1/.test(t22) && /0000011/.test(t22) && /0000012/.test(t22));
+  cierto("T19/T20/T16 adaptadas sin debilitarse: leen la secuencia FE y T16 prueba que el legado ya no se reescribe", /CREATE TEMP VIEW pt AS/.test(leer("documentacao/banco/nexit/v1/pruebas/T19-nex057-puntos-expedicion.sql")) && /fe_punto_secuencias/.test(leer("documentacao/banco/nexit/v1/pruebas/T20-concurrencia-puntos.sh")) && /congelado por NEX-060/.test(leer("documentacao/banco/nexit/v1/pruebas/T16-nex054-consulta-estado-final.sql")));
+
+  const puntosTs = leer("lib/facturacion/puntos.ts");
+  // ── 6b. AUD-PRO131-R01 ─────────────────────────────────────────────────────────────────────────
+  const t19 = leer("documentacao/banco/nexit/v1/pruebas/T19-nex057-puntos-expedicion.sql");
+  const t23 = leer("documentacao/banco/nexit/v1/pruebas/T23-concurrencia-migracion-secuencias.sh");
+  const revSql = sinComentarios(rev);
+  const dentroDeConciliar = sql.slice(sql.indexOf("CREATE OR REPLACE FUNCTION public.fe_secuencias_conciliar_legado"), sql.indexOf("SELECT public.fe_secuencias_conciliar_legado(NULL);"));
+  cierto("R01-03: la conciliación bloquea la tabla de puntos en modo EXCLUSIVE ANTES de leer el contador legado (el bloqueo dura hasta el commit de la migración, que el runner ejecuta con psql -1) y el trigger de congelamiento se instala en la misma transacción", /LOCK TABLE public\.fe_puntos_expedicion IN EXCLUSIVE MODE;/.test(dentroDeConciliar) && dentroDeConciliar.indexOf("LOCK TABLE") < dentroDeConciliar.indexOf("FOR r IN") && sql.indexOf("SELECT public.fe_secuencias_conciliar_legado(NULL);") < sql.indexOf("CREATE TRIGGER fe_puntos_expedicion_contador_congelado_trg") && / -1 /.test(leer("documentacao/banco/nexit/v1/scripts/aplicar-migraciones.sh")));
+  cierto("R01-03: T23 (dos sesiones reales) registrada: la emisión antigua sin confirmar bloquea la conciliación y la secuencia FE nace con el valor consolidado (130), no con el anterior (120)", /T23-concurrencia-migracion-secuencias\.sh/.test(leer("documentacao/banco/nexit/v1/scripts/ejecutar-pruebas.sh")) && /wait_event_type='Lock'/.test(t23) && /\b130\b/.test(t23) && /valor CONSOLIDADO/.test(t23) && /DISABLE TRIGGER fe_puntos_expedicion_contador_congelado_trg|disable trigger fe_puntos_expedicion_contador_congelado_trg/.test(t23) && /ENABLE TRIGGER fe_puntos_expedicion_contador_congelado_trg/.test(t23));
+  cierto("R01-02: sin secuencia FE la activación usa como piso el contador legado del punto (no 0) además del máximo FE; T19 y T21 con el caso negativo (legado 500/300 no se activa con 126/250/0)", /v_piso := coalesce\(v_actual, v_p\.ultimo_numero\)/.test(sql) && /confirmar 126|SIN secuencia FE no se activa confirmando 126/.test(t19) && /R01-02: contador legado 300/.test(leer("documentacao/banco/nexit/v1/pruebas/T21-nex060-secuencias-por-tipo.sql")));
+  const pagina = leer("app/(private)/facturacion/puntos/page.tsx");
+  cierto("R01-01 (NEX-063): la ausencia de configuración NO se representa como 0: un punto sin tipos devuelve lista vacía (sin coalesce a 0), la pantalla muestra «Sin tipo configurado» y el campo del último número nace vacío (el cero exige digitarlo y confirmarlo)", !/coalesce\(q?s?\.?ultimo_numero, 0\)/.test(puntosTs) && /tipos: TipoConfigurado\[\]/.test(puntosTs) && /Sin tipo configurado/.test(pagina) && /ultimo: ""/.test(pagina));
+  cierto("R01-01 (T21): punto sin secuencia no tiene fila; activar sin confirmación se rechaza; informando y confirmando 0 expresamente el primer FE es 0000001", /R01-01: un punto sin secuencia FE no tiene fila/.test(leer("documentacao/banco/nexit/v1/pruebas/T21-nex060-secuencias-por-tipo.sql")) && /R01-01: informando y confirmando 0 expresamente el primer FE es 0000001/.test(leer("documentacao/banco/nexit/v1/pruebas/T21-nex060-secuencias-por-tipo.sql")));
+  cierto("R01-04: la reversión bloquea la tabla y ABORTA si hay puntos ACTIVOS sin secuencia FE o si el contador resultante (mayor entre legado y secuencia) quedaría por debajo del mayor FE registrado, antes de tocar nada", /LOCK TABLE public\.fe_puntos_expedicion IN EXCLUSIVE MODE;/.test(revSql) && /p\.activo AND NOT EXISTS \(SELECT 1 FROM public\.fe_punto_secuencias s/.test(revSql) && /greatest\(p\.ultimo_numero, coalesce\(s\.ultimo_numero, 0\)\) < public\.fe_punto_maximo_emitido\(/.test(revSql) && revSql.indexOf("puntos ACTIVOS sin secuencia FE") < revSql.indexOf("DROP TRIGGER") && revSql.indexOf("quedaría con un contador MENOR") < revSql.indexOf("UPDATE public.fe_puntos_expedicion p SET"));
+  cierto("R01-05 (T21): FE 0000001 y NCE 0000001 en la MISMA empresa, establecimiento 050 y punto 001, ambos persistidos (2 documentos, 2 tipos) con secuencias FE=1 y NCE=1", /R01-05: FE 0000001 y NCE 0000001 coexisten en la misma empresa \+ establecimiento 050 \+ punto 001/.test(leer("documentacao/banco/nexit/v1/pruebas/T21-nex060-secuencias-por-tipo.sql")) && /count\(\*\) = 2 AND count\(DISTINCT tipo\) = 2/.test(leer("documentacao/banco/nexit/v1/pruebas/T21-nex060-secuencias-por-tipo.sql")));
+
+  // ── 6c. AUD-PRO131-R02-01: la reversión bloquea ANTES de comprobar ───────────────────────────
+  const idxLockPuntos = revSql.indexOf("LOCK TABLE public.fe_puntos_expedicion IN EXCLUSIVE MODE;");
+  const idxLockSec = revSql.indexOf("LOCK TABLE public.fe_punto_secuencias IN EXCLUSIVE MODE;");
+  const idxOtros = revSql.indexOf("tipo_documento <> 'FE'");
+  const idxActivos = revSql.indexOf("p.activo AND NOT EXISTS");
+  const idxRetroceso = revSql.indexOf("greatest(p.ultimo_numero");
+  const idxDrop = revSql.indexOf("DROP TRIGGER");
+  cierto("R02-01: la reversión toma EXCLUSIVE sobre puntos y luego sobre secuencias (orden punto → secuencia, como la emisión) ANTES de CUALQUIER comprobación de pre-condición, y no queda ninguna lectura de fe_punto_secuencias previa a los bloqueos", idxLockPuntos > 0 && idxLockSec > idxLockPuntos && idxOtros > idxLockSec && idxActivos > idxLockSec && idxRetroceso > idxLockSec && idxDrop > idxRetroceso && revSql.slice(0, idxLockSec).indexOf("tipo_documento") < 0 && revSql.slice(0, idxLockSec).indexOf("fe_punto_secuencias WHERE") < 0);
+  cierto("R02-01: los bloqueos y las tres pre-condiciones (sin secuencias de otros tipos, sin punto activo sin FE, sin contador por debajo del mayor FE) están en el MISMO bloque anónimo previo a cualquier cambio (atómico) y el DROP TABLE va después, en la misma transacción -1", (revSql.match(/DO \$\$/g) ?? []).length === 1 && revSql.indexOf("END $$;") < idxDrop && revSql.indexOf("DROP TABLE public.fe_punto_secuencias") > idxDrop && /psql -v ON_ERROR_STOP=1 -1 -f reversion-NEX-060\.sql/.test(rev));
+  const t24 = leer("documentacao/banco/nexit/v1/pruebas/T24-reversion-secuencias.sh");
+  cierto("R02-01 T24 registrada: corrida real (inserción concurrente de una secuencia NCE bloquea la reversión, que revalida y ABORTA sin borrarla), reversión válida (solo FE: contador legado = último FE, documentos idénticos, numeración continúa sin repetir, idempotencia) y aborto por punto activo sin FE sin alterar esquema ni contadores; usa copias descartables de la base", /T24-reversion-secuencias\.sh/.test(leer("documentacao/banco/nexit/v1/scripts/ejecutar-pruebas.sh")) && /wait_event_type='Lock'/.test(t24) && /TEMPLATE \$ORIG/.test(t24) && /otros tipos/.test(t24) && /FE=10,NCE=0/.test(t24) && /0000012/.test(t24) && /ACTIVOS sin secuencia FE/.test(t24) && /md5\(string_agg/.test(t24) && /DROP DATABASE IF EXISTS/.test(t24));
+
+  // ── 7. Aplicación: lee la secuencia FE; nada cambia en tipos de transacción, gateway ni pantalla ──
+  const emisionTs = leer("lib/facturacion/emision.ts");
+  cierto("listado de puntos y catálogo de la factura leen el último número y la serie de la secuencia del tipo (por empresa y punto), nunca del contador legado", /fe_punto_secuencias q WHERE q\.empresa_id = p\.empresa_id AND q\.punto_id = p\.id/.test(puntosTs) && /fe_punto_secuencias s ON s\.empresa_id = p\.empresa_id AND s\.punto_id = p\.id AND s\.tipo_documento = 'FE'/.test(emisionTs) && !/p\.ultimo_numero/.test(puntosTs) && !/p\.ultimo_numero/.test(emisionTs));
+  cierto("la factura solo ofrece puntos con secuencia FE configurada y ACTIVA (NEX-063) y la validación previa exige esa secuencia activa (un punto sin ella no llega a reservar)", /FILTER \(WHERE p\.id IS NOT NULL AND s\.ultimo_numero IS NOT NULL AND s\.activo\)/.test(emisionTs) && /JOIN fe_punto_secuencias fs ON fs\.empresa_id = p\.empresa_id AND fs\.punto_id = p\.id AND fs\.tipo_documento = 'FE' AND fs\.activo/.test(emisionTs));
+  igual("NEX:SECUENCIA_NO_CONFIGURADA → 409 dirigido en la gestión de puntos; en la emisión llega como 409 con el mensaje de la función", [(() => { try { traducirErrorPunto(Object.assign(new Error("x"), { detail: "NEX:SECUENCIA_NO_CONFIGURADA" })); return "no lanzó"; } catch (e) { return e instanceof ErrorFacturacion ? e.estado : "otro"; } })(), /PUNTO_INVALIDO\|SECUENCIA_NO_CONFIGURADA\|NUMERACION_AGOTADA/.test(leer("lib/facturacion/shared.ts"))], [409, true]);
+  cierto("alcance: tipos de transacción, contrato del gateway y pantallas de Pontos de Expedición sin tocar", /TIPOS_TRANSACCION/.test(leer("lib/facturacion/payload-fe.ts")) && !/fe_punto_secuencias/.test(leer("app/(private)/facturacion/puntos/page.tsx")) && !/fe_punto_secuencias/.test(leer("lib/facturacion/gateway.ts")) && !/fe_punto_secuencias/.test(leer("lib/facturacion/envio.ts")));
+
+  // ── 8. SQL que ejecuta la aplicación (consulta simulada, sin PostgreSQL) ───────────────────────
+  const consultas: string[] = [];
+  const db = { async query(sql: string) { consultas.push(sql); return { rows: [{ id: "s1", nombre: "Casa", establecimiento: "001", puntos: [{ id: "p1", codigo: "001", nombre: "Caja", activo: true, tipos: [{ tipo: "FE", serie: null, ultimoNumero: 125, activo: true }] }] }] }; } };
+  const lista = await listarPuntos(db as never, "e", "u");
+  const dbSin = { async query() { return { rows: [{ id: "s1", nombre: "Casa", establecimiento: "001", puntos: [{ id: "p1", codigo: "001", nombre: "Caja", activo: false, tipos: [] }, { id: "p2", codigo: "002", nombre: "Caja 2", activo: true, tipos: [{ tipo: "FE", serie: null, ultimoNumero: 0, activo: true }] }] }] }; } };
+  const sinSec = await listarPuntos(dbSin as never, "e", "u");
+  igual("R01-01 listarPuntos (NEX-063): un punto sin ningún tipo no inventa contador (lista vacía); con 0 confirmado → 0 y próximo 0000001", [sinSec[0].puntos[0].tipos, sinSec[0].puntos[1].tipos.map((t) => [t.ultimoNumero, t.proximo])], [[], [[0, "0000001"]]]);
+  igual("listarPuntos: el próximo número sale del último de la secuencia del tipo (FE 125 → 0000126) y la consulta lee fe_punto_secuencias", [lista[0].puntos[0].tipos[0].proximo, /fe_punto_secuencias q/.test(consultas[0])], ["0000126", true]);
+
+  return fallos;
+}

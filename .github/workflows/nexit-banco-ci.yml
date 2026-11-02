@@ -1,0 +1,60 @@
+# CI del banco Nexit V1: batería completa sobre un PostgreSQL 16 DESCARTABLE (servicio del runner). No toca ningún entorno real.
+name: nexit-banco-ci
+on:
+  # Además del pull request: cada push a la rama oficial que toque el banco ejecuta la batería (PostgreSQL 16 DESCARTABLE del runner; nunca la VM ni la base 'nexit').
+  push:
+    branches:
+      - 'feature/NEXIT-2026-001-banco-demo'
+    paths:
+      - 'documentacao/banco/nexit/v1/**'
+      - '.github/workflows/nexit-banco-*.yml'
+  pull_request:
+    paths:
+      - 'documentacao/banco/nexit/v1/**'
+      - '.github/workflows/nexit-banco-*.yml'
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  pruebas:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: ci-efimero-sin-valor      # clúster descartable del runner; sin relación con ningún entorno real
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      PGHOST: localhost
+      PGPORT: '5432'
+      PGUSER: postgres
+      PGPASSWORD: ci-efimero-sin-valor
+    steps:
+      - uses: actions/checkout@v4
+      - name: Herramientas (cliente psql 16, bcrypt real)
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client-16 python3-bcrypt shellcheck
+      - name: Sin secretos en el árbol de la V1
+        run: documentacao/banco/nexit/v1/scripts/verificar-sin-secretos.sh
+      - name: shellcheck de scripts de implantación
+        run: shellcheck -S error documentacao/banco/nexit/v1/implantacion/vm/nexit-db-remote.sh
+      - name: shellcheck del runner de migraciones y de las pruebas de concurrencia
+        run: shellcheck -S error documentacao/banco/nexit/v1/scripts/aplicar-migraciones.sh documentacao/banco/nexit/v1/pruebas/T17-concurrencia-consulta.sh
+      - name: Batería completa (migraciones, T01–T17, respaldo/restauración, runtime)
+        env:
+          APP_REPO: ${{ github.workspace }}
+        run: |
+          set -o pipefail
+          documentacao/banco/nexit/v1/scripts/ejecutar-pruebas.sh 2>&1 | tee "$RUNNER_TEMP/pruebas.log"
+      # El registro del job no es público: el resultado de cada prueba (OK/FALLA con su detalle) se publica también como anotaciones de la ejecución.
+      - name: Resultado por prueba como anotaciones
+        if: always()
+        run: |
+          f="$RUNNER_TEMP/pruebas.log"; [[ -f "$f" ]] || exit 0
+          codificar() { awk 'BEGIN { ORS = "%0A" } { print substr($0, 1, 300) }'; }
+          echo "::notice title=nexit-banco-ci - resultado por prueba::$(grep -E '^[A-Z][0-9]+[a-z]? ' "$f" | codificar)"
+          echo "::notice title=nexit-banco-ci - totales::$(tail -3 "$f" | codificar)"
+          if grep -q 'FALLA' "$f"; then echo "::error title=nexit-banco-ci - detalle de fallas::$(grep -A8 'FALLA' "$f" | head -120 | codificar)"; fi

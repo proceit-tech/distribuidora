@@ -1,0 +1,230 @@
+/**
+ * Controladores PUROS de la búsqueda de la pantalla de NCE (AUD-PRO94-NCE-UI-ETAPA2-R01). Sin React ni red: los temporizadores y las peticiones se inyectan, de modo que las carreras
+ * (escribir, esperar, Escape, cambiar de cliente, respuestas tardías o con error) se prueban con secuencias de eventos reales en `nce-busqueda.casos.ts`.
+ */
+import { crearControlListado } from "@/lib/facturacion/nce-entradas";
+
+export const ESPERA_BUSQUEDA_MS = 300;
+export const MIN_CARACTERES = 2;
+
+type Programar = (fn: () => void, ms: number) => unknown;
+type Cancelar = (t: unknown) => void;
+
+export type EstadoClientes<C> = {
+  texto: string;
+  /** Texto exacto al que corresponden `items`; null mientras no haya resultados vigentes. */
+  consulta: string | null;
+  items: C[];
+  pagina: number;
+  totalPaginas: number;
+  abierto: boolean;
+  buscando: boolean;
+};
+
+export function crearBusquedaClientes<C extends { innominado: boolean }>(deps: {
+  buscar: (q: string, pagina: number) => Promise<{ clientes: C[]; pagina: number; totalPaginas: number }>;
+  programar: Programar;
+  cancelar: Cancelar;
+  alCambiar: (e: EstadoClientes<C>) => void;
+  alError: (mensaje: string | null) => void;
+}) {
+  let e: EstadoClientes<C> = { texto: "", consulta: null, items: [], pagina: 1, totalPaginas: 1, abierto: false, buscando: false };
+  let token = 0;
+  let timer: unknown = null;
+
+  const emitir = (parcial: Partial<EstadoClientes<C>>) => { e = { ...e, ...parcial }; deps.alCambiar(e); };
+  const parar = () => { token += 1; if (timer !== null) { deps.cancelar(timer); timer = null; } };
+
+  async function ejecutar(q: string, pagina: number) {
+    const mio = ++token;
+
+    emitir({ buscando: true });
+    try {
+      const r = await deps.buscar(q, pagina);
+
+      if (mio !== token) return;
+
+      emitir({ items: r.clientes, consulta: q, pagina: r.pagina, totalPaginas: r.totalPaginas, buscando: false });
+      deps.alError(null);
+    } catch (err) {
+      if (mio !== token) return;
+
+      emitir({ items: [], consulta: null, buscando: false });
+      deps.alError((err as Error).message);
+    }
+  }
+
+  return {
+    estado: () => e,
+    /** Cada cambio de texto INVALIDA de inmediato peticiones y resultados anteriores (antes de la espera). */
+    escribir(texto: string) {
+      parar();
+
+      const q = texto.trim();
+
+      emitir({ texto, items: [], consulta: null, pagina: 1, totalPaginas: 1, buscando: false, abierto: q.length >= MIN_CARACTERES });
+      if (q.length >= MIN_CARACTERES) timer = deps.programar(() => { timer = null; void ejecutar(q, 1); }, ESPERA_BUSQUEDA_MS);
+    },
+    /** Escape: cierra de forma estable; ninguna respuesta pendiente la reabre. */
+    cerrar() { parar(); emitir({ abierto: false, buscando: false, items: [], consulta: null }); },
+    /** Reapertura EXPLÍCITA (flecha abajo): vuelve a buscar el texto actual. */
+    reabrir() {
+      const q = e.texto.trim();
+
+      if (q.length < MIN_CARACTERES) return;
+
+      parar();
+      emitir({ abierto: true, items: [], consulta: null });
+      void ejecutar(q, 1);
+    },
+    /** Cambio de página: los resultados de la página anterior dejan de ser elegibles al instante (OBS-R02-03). */
+    pagina(p: number) { const q = e.texto.trim(); if (q.length >= MIN_CARACTERES && e.abierto) { parar(); emitir({ items: [], consulta: null }); void ejecutar(q, p); } },
+    /** Resultados que corresponden exactamente al texto actual (nunca los de una consulta anterior). */
+    vigentes(): C[] { return e.abierto && !e.buscando && e.consulta !== null && e.consulta === e.texto.trim() ? e.items : []; },
+    /** Enter: el primer cliente SELECCIONABLE de la consulta vigente; null si aún no hay consulta vigente. Innominado nunca. */
+    primeroElegible(): C | null { return this.vigentes().find((c) => !c.innominado) ?? null; },
+    /** Limpia todo (cliente elegido o desmontaje). */
+    reiniciar() { parar(); emitir({ texto: "", consulta: null, items: [], pagina: 1, totalPaginas: 1, abierto: false, buscando: false }); },
+  };
+}
+
+export type RespuestaFacturas<F> = { facturas: F[]; pagina: number; totalPaginas: number };
+
+export function crearBusquedaFacturas<F>(deps: {
+  pedir: (clienteId: string, q: string, pagina: number, actualizar: boolean) => Promise<RespuestaFacturas<F>>;
+  programar: Programar;
+  cancelar: Cancelar;
+  alLimpiar: () => void;
+  alResultado: (r: RespuestaFacturas<F>) => void;
+  alCargando: (b: boolean) => void;
+  alError: (mensaje: string | null) => void;
+}) {
+  const control = crearControlListado({ clienteId: "", q: "", pagina: 1 });
+  let timer: unknown = null;
+  let cliente = "";
+
+  const cancelarTimer = () => { if (timer !== null) { deps.cancelar(timer); timer = null; } };
+
+  async function cargar(clienteId: string, q: string, pagina: number, actualizar: boolean) {
+    const token = control.aplicar({ clienteId, q, pagina });
+
+    deps.alCargando(true);
+    try {
+      const r = await deps.pedir(clienteId, q, pagina, actualizar);
+
+      if (!control.vigente(token)) return;
+
+      deps.alResultado(r);
+      deps.alError(null);
+    } catch (err) {
+      if (control.vigente(token)) deps.alError((err as Error).message);
+    } finally {
+      if (control.vigente(token)) deps.alCargando(false);
+    }
+  }
+
+  return {
+    control,
+    /** Cambio de contexto (elegir otro cliente, «Cambiar», abrir factura o desmontar): cancela el filtro agendado, invalida lo pendiente y VACÍA la lista al instante. */
+    cambiarCliente(id: string | null) {
+      cancelarTimer();
+      cliente = id ?? "";
+      control.aplicar({ clienteId: cliente, q: "", pagina: 1 });
+      deps.alCargando(false);
+      deps.alLimpiar();
+      if (id) void cargar(id, "", 1, true);
+    },
+    /**
+     * R02-01: escribir en el filtro INVALIDA al instante (antes de los 300 ms) el token/filtro aplicado y vacía la lista: ninguna factura de la consulta anterior queda visible ni seleccionable, y
+     * una respuesta o un error tardío de ella se descartan. El refresco automático lee el filtro nuevo (control.leer) y la carga queda marcada hasta que llegue la consulta vigente.
+     */
+    filtrar(q: string) {
+      cancelarTimer();
+      if (!cliente) return;
+
+      control.aplicar({ clienteId: cliente, q, pagina: 1 });
+      deps.alLimpiar();
+      deps.alCargando(true);
+
+      const id = cliente;
+
+      timer = deps.programar(() => { timer = null; if (cliente === id) void cargar(id, q, 1, false); }, ESPERA_BUSQUEDA_MS);
+    },
+    /** Paginación: invalida lo pendiente y bloquea la selección (alCargando) hasta que llegue la página pedida. */
+    pagina(q: string, p: number) { cancelarTimer(); if (cliente) void cargar(cliente, q, p, false); },
+    /** Pausa (se abre una factura): cancela el filtro agendado e invalida lo pendiente, conservando el cliente y la lista visible. */
+    detener() { cancelarTimer(); control.aplicar({ clienteId: cliente, q: "", pagina: 1 }); deps.alCargando(false); },
+    cancelar() { cancelarTimer(); control.aplicar({ clienteId: "", q: "", pagina: 1 }); cliente = ""; },
+  };
+}
+
+/**
+ * C03 / NCE-D01 — carga del DETALLE de la factura. Cada apertura invalida la anterior; cambiar de cliente, volver a la lista, cambiar el contexto de corrección o desmontar la pantalla la invalida
+ * también. Solo la petición vigente aplica su resultado, informa su error o apaga «Cargando…» (el `finally` de una consulta antigua no toca el estado de la vigente).
+ */
+export function crearCargaDetalle<R, C>(deps: {
+  pedir: (id: string) => Promise<R>;
+  alCargando: (b: boolean) => void;
+  alResultado: (r: R, contexto: C) => void;
+  alError: (mensaje: string) => void;
+}) {
+  let token = 0;
+  let enVuelo = false;
+
+  return {
+    async abrir(id: string, contexto: C) {
+      const mio = ++token;
+
+      enVuelo = true;
+      deps.alCargando(true);
+      try {
+        const r = await deps.pedir(id);
+
+        if (mio !== token) return;
+
+        deps.alResultado(r, contexto);
+      } catch (e) {
+        if (mio === token) deps.alError((e as Error).message);
+      } finally {
+        if (mio === token) { enVuelo = false; deps.alCargando(false); }
+      }
+    },
+    /** Descarta lo pendiente. Solo apaga «Cargando…» si había un detalle en vuelo (no pisa la carga de otras listas). */
+    invalidar() {
+      token += 1;
+      if (enVuelo) { enVuelo = false; deps.alCargando(false); }
+    },
+  };
+}
+
+/**
+ * C03-R02-01 — la propuesta de CORRECCIÓN de una NCE rechazada (primera etapa) comparte identidad de contexto con la apertura de la factura (segunda etapa, `crearCargaDetalle`). Cambiar de cliente,
+ * «Cambiar», volver, salir o corregir otra NCE invalida también la propuesta pendiente: su éxito o error tardíos se descartan ANTES de mostrar el aviso o de abrir la factura.
+ */
+export function crearCargaCorreccion<P extends { facturaId: string }>(deps: {
+  pedir: (corregirId: string) => Promise<P>;
+  alPropuesta: (p: P) => void;
+  /** Segunda etapa: abre la factura de la propuesta (normalmente `crearCargaDetalle.abrir`). */
+  abrir: (facturaId: string, propuesta: P) => Promise<void> | void;
+  alError: (mensaje: string) => void;
+}) {
+  let token = 0;
+
+  return {
+    async cargar(corregirId: string) {
+      const mio = ++token;
+
+      try {
+        const p = await deps.pedir(corregirId);
+
+        if (mio !== token) return;
+
+        deps.alPropuesta(p);
+        await deps.abrir(p.facturaId, p);
+      } catch (e) {
+        if (mio === token) deps.alError((e as Error).message);
+      }
+    },
+    invalidar() { token += 1; },
+  };
+}
