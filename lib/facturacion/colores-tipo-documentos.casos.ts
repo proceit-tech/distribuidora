@@ -2,6 +2,7 @@
  * PRO-334 (CASA MINGO, ETAPA 3) — Documentos electrónicos: color por TIPO de comprobante (FE = azul suave, NCE = amarillo claro suave) en la fila y en el detalle
  * desplegado, INDEPENDIENTE del estado fiscal PRO-338 (cápsula verde/roja/amarilla/gris) y de la alerta técnica CDC_DIVERGENTE (rectángulo rojo).
  * Lógica REAL probada: presentacionSifen/alertaConsulta (el tono fiscal no depende del tipo). Pantalla y CSS se verifican sobre el texto fuente (sin navegador).
+ * PRO-334-R02 (R01-F001): texto secundario de filas y detalle FE/NCE con contraste AA ABSOLUTO ≥ 4.5:1 (PRO334-18b corregido, PRO334-25..30 nuevos).
  * Casos ESCRITOS, NO EJECUTADOS en la entrega (restricción vigente: sin runner, lint, typecheck, build, SQL ni navegador).
  */
 import { readFileSync } from "node:fs";
@@ -126,8 +127,38 @@ export async function verificarCasosColoresTipoPro334(): Promise<string[]> {
     contraste(hex(regla(css, ".filaFE .tipoFE"), "color"), hex(regla(css, ".filaFE .tipoFE"), "background")) >= 4.5 &&
     contraste(hex(regla(css, ".filaNCE .tipoNCE"), "color"), hex(regla(css, ".filaNCE .tipoNCE"), "background")) >= 4.5 &&
     fondosFila.every((f) => f !== "" && contraste("#234560", f) >= 4.5));
-  cierto("PRO334-18b el texto secundario gris existente (.cell span #6f8498, 3.87:1 sobre blanco) no pierde más de 0.5 de contraste sobre los fondos de tipo",
-    fondosFila.every((f) => contraste("#6f8498", "#ffffff") - contraste("#6f8498", f) <= 0.5));
+  // ── R02 (R01-F001): texto secundario con contraste AA ABSOLUTO, colores y selectores reales ────────────────────────────────────────────────────────
+  const lista = leer("components/ui/lista-padrao/lista.module.css");
+  const SEL_SECUNDARIO = [
+    "tr.filaFE > td:is(:nth-child(1), :nth-child(3)) > div > span",
+    "tr.filaNCE > td:is(:nth-child(1), :nth-child(3)) > div > span",
+    "tr.detalleFE > td :is(dt, small, p:not([role]))",
+    "tr.detalleNCE > td :is(dt, small, p:not([role]))",
+  ].join(",\n");
+  const secundario = hex(regla(css, SEL_SECUNDARIO), "color");
+  const detalleFe = hex(regla(css, "tr.detalleFE > td"), "background");
+  const detalleNce = hex(regla(css, "tr.detalleNCE > td"), "background");
+  const hoverAnidado = hex(regla(lista, ".row:hover td,\n.row:focus-within td"), "background");
+  const fondosSecundario = [...fondosFila, detalleFe, detalleNce, hoverAnidado];
+  const minimo = Math.min(...fondosSecundario.map((f) => contraste(secundario, f)));
+
+  cierto("PRO334-18b contraste ABSOLUTO ≥ 4.5:1 del texto secundario local en los 6 fondos de tipo (FE/NCE normal, hover/foco y detalle) y en el hover de filas del historial dentro del detalle",
+    secundario !== "" && fondosSecundario.length === 7 && fondosSecundario.every((f) => f !== "") && minimo >= 4.5);
+  igual("PRO334-25 texto secundario = #53687a; el peor caso es el hover/foco FE (≈ 5.08:1)", [secundario, Math.round(contraste(secundario, fondosFila[2]) * 100) / 100 === Math.round(minimo * 100) / 100, minimo >= 5], ["#53687a", true, true]);
+  cierto("PRO334-26 los colores heredados que fallaban AA (.cell span #6f8498, .muted #8092a4) quedan sustituidos solo localmente: la regla R02 gana en especificidad y el CSS global no cambia",
+    hex(regla(lista, ".cell span"), "color") === "#6f8498" && hex(regla(lista, ".muted"), "color") === "#8092a4" &&
+    [fe, nce, detalleFe, detalleNce].some((f) => contraste("#6f8498", f) < 4.5 || contraste("#8092a4", f) < 4.5) && !/53687a/i.test(lista));
+  cierto("PRO334-27 filas: el selector alcanza solo los metadatos directos de las columnas 1 (Documento) y 3 (Cliente); la 5.ª es Estados (cápsula SIFEN, alerta CDC, envío, e-mail) y queda fuera",
+    /titulo="Documento"[\s\S]*titulo="Fecha"[\s\S]*titulo="Cliente"[\s\S]*titulo="Total"[\s\S]*titulo="Estados"[\s\S]*titulo="Acciones"/.test(pagina) &&
+    !/nth-child\((2|4|5|6)\)/.test(regla(css, SEL_SECUNDARIO) + SEL_SECUNDARIO) && /<div className=\{ui\.statuses\}>/.test(pagina));
+  cierto("PRO334-28 la etiqueta de tipo no es hija directa de la celda (va dentro del span de metadatos) y conserva su color propio con contraste AA",
+    /<span><span className=\{CLASE_ETIQUETA_TIPO\[d\.tipo\]\}>/.test(pagina) && hex(regla(css, ".filaFE .tipoFE"), "color") === "#1d4a7c" && hex(regla(css, ".filaNCE .tipoNCE"), "color") === "#5a4500");
+  cierto("PRO334-29 detalle: todos los <dt> y <small> del detalle son ui.muted; los <p> sin role son ui.muted o solo contienen el botón «Cargar intentos anteriores» (color propio); los avisos role=alert quedan excluidos",
+    (pagina.match(/<dt /g) ?? []).length === (pagina.match(/<dt className=\{ui\.muted\}>/g) ?? []).length &&
+    (pagina.match(/<small className=\{ui\.muted\}>/g) ?? []).length === (pagina.match(/<small/g) ?? []).length - 1 && /<small>\{i\.ayuda\}<\/small>/.test(pagina) &&
+    (pagina.match(/<p (?![^>]*role=)(?![^>]*ui\.muted)[^>]*>/g) ?? []).length === 1 && /<p style=\{\{ margin: "8px 0 0" \}\}>\s*<button type="button" className=\{ui\.secondaryButton\}/.test(pagina) &&
+    /<p className=\{ui\.alertError\} role="alert">/.test(pagina) && /p:not\(\[role\]\)/.test(SEL_SECUNDARIO));
+  igual("PRO334-30 R02 no altera fondos, acentos ni hover/foco de PRO-334 R01", [fe, nce, fondosFila[2], fondosFila[3], detalleFe, detalleNce, acentoFe, acentoNce], ["#f4f8fd", "#fffcee", "#e9f1fb", "#fdf6da", "#f9fbfe", "#fffdf5", "#6d9bd1", "#d9bb4e"]);
   cierto("PRO334-19 alto contraste del sistema: el acento pasa a borde real (sólido FE, discontinuo NCE)", /@media \(forced-colors: active\)[\s\S]*border-left: 4px solid CanvasText[\s\S]*border-left: 4px dashed CanvasText/.test(css));
   cierto("PRO334-20 sin desborde: el acento es box-shadow inset (no suma ancho) y la tabla conserva tableScroll y minWidth 860",
     /inset 4px 0 0/.test(regla(css, "tr.filaFE > td:first-child")) && !/width|padding|margin/.test(regla(css, "tr.filaFE > td:first-child")) &&

@@ -267,6 +267,20 @@ tr.detalleNCE > td {
   border-color: #dfc56a;
 }
 
+/*
+ * PRO-334-R02 (R01-F001): texto secundario legible (WCAG AA ≥ 4.5:1) SOLO sobre los fondos de tipo. #53687a da 5.08:1 en el peor caso (hover/foco FE #e9f1fb).
+ * Filas: únicamente los metadatos directos de la celda Documento (1.ª) y Cliente (3.ª), que heredan «.cell span» #6f8498; nunca la columna Estados (cápsulas SIFEN,
+ * alerta CDC, envío/e-mail), ni la etiqueta de tipo (.tipoFE/.tipoNCE conserva su color propio) ni controles.
+ * Detalle: los textos «ui.muted» (#8092a4) del detalle FE/NCE. Como «.muted» pertenece a otro módulo CSS (nombre con hash, no seleccionable desde aquí), se eligen por
+ * estructura: TODOS los <dt>, <small> y <p> sin role del detalle son «ui.muted»; los <p role="alert"> (alertError) quedan excluidos y los botones tienen color propio.
+ */
+tr.filaFE > td:is(:nth-child(1), :nth-child(3)) > div > span,
+tr.filaNCE > td:is(:nth-child(1), :nth-child(3)) > div > span,
+tr.detalleFE > td :is(dt, small, p:not([role])),
+tr.detalleNCE > td :is(dt, small, p:not([role])) {
+  color: #53687a;
+}
+
 /* Alto contraste del sistema: los fondos y sombras se anulan; el acento pasa a borde real para que el tipo siga distinguiéndose además del texto. */
 @media (forced-colors: active) {
   tr.filaFE > td:first-child,
