@@ -2408,20 +2408,24 @@
   overscroll-behavior: contain;
 }
 
-/* Cabecera fija dentro del contenedor con rolagem (el contenedor es el ancestro con scroll más cercano). */
-.detalleScroll .itemsCompacta thead th {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  background: #f4f8fa;
-  box-shadow: 0 1px 0 #dce6ed;
-}
-
 /* Columna N°: posición visual 1..n (no es ID ni código). */
 .colOrden { width: 48px; }
 
-.detalleScroll .itemsCompacta {
-  min-width: 1028px;
+/* PRO-331-R02 (R01-F001): SOLO en modo TABLA (≥ 901 px) rigen la cabecera sticky y el ancho técnico mínimo (980 + 48 de N°); si el ancho no alcanza, la tabla rola
+   en horizontal DENTRO de su contenedor. En modo TARJETA (≤ 900 px) no hay mínimo artificial: ver el bloque @media (max-width: 900px) de abajo. */
+@media (min-width: 901px) {
+  /* Cabecera fija dentro del contenedor con rolagem (el contenedor es el ancestro con scroll más cercano). */
+  .detalleScroll .itemsCompacta thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: #f4f8fa;
+    box-shadow: 0 1px 0 #dce6ed;
+  }
+
+  .detalleScroll .itemsCompacta {
+    min-width: 1028px;
+  }
 }
 
 .itemsCompacta th.orden,
@@ -2433,6 +2437,18 @@
 }
 
 @media (max-width: 900px) {
+  /* PRO-331-R02 (R01-F001): tarjetas al ancho DISPONIBLE (360 / 768 / 900 px). Se anula también el mínimo de escritorio de 980 px heredado de .itemsCompacta
+     y el layout fijo de columnas (sin efecto real con display:block/grid); la celda del producto ocupa toda la tarjeta. Solo afecta al editor (.detalleScroll). */
+  .detalleScroll .itemsCompacta {
+    width: 100%;
+    min-width: 0;
+    table-layout: auto;
+  }
+
+  .detalleScroll .itemsCompacta .prod {
+    max-width: none;
+  }
+
   /* Tarjeta por ítem: «N° 3» en su propia franja, encima del producto. */
   .detalleScroll .items:not(.itemsResumen) td.orden {
     display: flex;
