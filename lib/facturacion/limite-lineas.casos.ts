@@ -3,6 +3,7 @@
  * Lógica REAL probada: reglas puras de limite-lineas.ts, lectura parametrizada limiteLineasEmpresa y el control de prepararFactura con una base simulada (sin PostgreSQL).
  * Pantalla, API, migración y aislamiento NCE se verifican sobre el código fuente (el comportamiento en navegador lo revisa el responsable).
  * Empresas A/B/C son SINTÉTICAS (UUID de prueba): ningún caso depende de un tenant real ni de CASA MINGO.
+ * PRO-339-R02 (R01-F001): casos 70..86 — alta atómica (modelo del contrato + inspección del código real; Strict Mode solo por inspección).
  * Casos ESCRITOS, NO EJECUTADOS en la entrega (restricción vigente: sin runner, lint, typecheck ni build).
  */
 import { readFileSync, existsSync, readdirSync } from "node:fs";
@@ -15,6 +16,7 @@ import {
   MENSAJE_LIMITE_INVALIDO, MENSAJE_LIMITE_SIN_EMPRESA, MENSAJE_LIMITE_SIN_MIGRACION, puedeAgregarLinea, textoContadorLineas,
 } from "@/lib/facturacion/limite-lineas";
 import { MAX_LINEAS } from "@/lib/facturacion/payload-fe";
+import { sumarUnaUnidad } from "@/lib/formato/cantidad-campo";
 import { ErrorFacturacion, respuestaErrorFacturacion } from "@/lib/facturacion/shared";
 
 const leer = (r: string) => readFileSync(join(process.cwd(), r), "utf8");
@@ -80,6 +82,44 @@ async function intentar(empresa: string, n: number, opciones: { domicilioHistori
 
 const esExceso = (e: unknown) => e instanceof ErrorFacturacion && e.estado === 422 && /Esta empresa admite un máximo de/.test(e.message);
 const maxDe = (e: unknown) => (e as { maxLineasFE?: unknown }).maxLineasFE;
+
+type FilaModelo = { clave: number; productoId: string; cantidad: string };
+
+/**
+ * PRO-339-R02: MODELO del alta de la pantalla (no es el componente React; el código real se inspecciona en la sección 9). Reproduce el contrato de agregar + aplicarLineas:
+ * las acciones se deciden sobre el borrador MÁS RECIENTE (ref síncrona), no sobre el snapshot del render, y la clave se reserva solo al agregar. `render` = snapshot que
+ * veía la pantalla (el que usaba R01), para mostrar que dos acciones antes de re-renderizar ya no dependen de él.
+ */
+function editorModelo(maximo: number | null, iniciales: FilaModelo[] = []) {
+  let actual = iniciales;
+  let siguiente = iniciales.reduce((m, l) => Math.max(m, l.clave), 0) + 1;
+  const avisos: string[] = [];
+  const agregarModelo = (productoId: string): number => {
+    const existente = actual.find((l) => l.productoId === productoId);
+
+    if (existente) {
+      actual = actual.map((l) => (l.clave === existente.clave ? { ...l, cantidad: sumarUnaUnidad(l.cantidad) ?? l.cantidad } : l));
+
+      return existente.clave;
+    }
+    if (!puedeAgregarLinea(actual.length, maximo)) {
+      avisos.push(mensajeAltaBloqueada(maximo));
+
+      return ALTA_BLOQUEADA;
+    }
+
+    const clave = siguiente;
+
+    siguiente = clave + 1;
+    actual = agregarSiCabe(actual, { clave, productoId, cantidad: "1" }, maximo);
+
+    return clave;
+  };
+
+  return { agregar: agregarModelo, quitar: (clave: number) => { actual = actual.filter((l) => l.clave !== clave); }, lineas: () => actual, avisos };
+}
+
+const filas = (n: number): FilaModelo[] => Array.from({ length: n }, (_, i) => ({ clave: i + 1, productoId: `p-${i + 1}`, cantidad: "1" }));
 
 export async function verificarCasosLimiteLineasPro339(): Promise<string[]> {
   const fallos: string[] = [];
@@ -286,13 +326,77 @@ export async function verificarCasosLimiteLineasPro339(): Promise<string[]> {
 
     cierto("PRO339-61 el mismo SKU suma cantidad ANTES del control (no cuenta línea nueva, permitido aun en el máximo)", agregar.indexOf("return existente.clave;") > 0 && agregar.indexOf("return existente.clave;") < agregar.indexOf("puedeAgregarLinea(lineas.length, maxLineasFE)"));
     cierto("PRO339-62 una línea nueva por encima del máximo no se agrega: aviso, sin foco a Cantidad y ALTA_BLOQUEADA", /if \(!puedeAgregarLinea\(lineas\.length, maxLineasFE\)\) \{\s*setAvisoLimiteLineas\(mensajeAltaBloqueada\(maxLineasFE\)\);\s*lineaAFocar\.current = null;\s*if \(origen === "rapido"\) volverAlBuscador\(ALTA_BLOQUEADA\);\s*return ALTA_BLOQUEADA;\s*\}/.test(agregar));
-    cierto("PRO339-63 el alta usa agregarSiCabe (doble lectura del lector) y PRO331-22 sigue válido (agregar sin 21/999/MAX_LINEAS/FILAS_VISIBLES_DETALLE)", /setLineas\(\(ls\) => agregarSiCabe\(ls, \{/.test(agregar) && !/FILAS_VISIBLES_DETALLE|\b21\b|MAX_LINEAS|999/.test(agregar));
+    cierto("PRO339-63 el alta usa agregarSiCabe (doble lectura del lector) y PRO331-22 sigue válido (agregar sin 21/999/MAX_LINEAS/FILAS_VISIBLES_DETALLE)", /aplicarLineas\(\(ls\) => agregarSiCabe\(ls, \{/.test(agregar) && !/FILAS_VISIBLES_DETALLE|\b21\b|MAX_LINEAS|999/.test(agregar));
     cierto("PRO339-64 selector avanzado: con ALTA_BLOQUEADA no registra «añadido» y muestra el aviso; el diálogo sigue abierto (foco en el selector)", /const clave = alAgregar\(p\); setUltimo\(\(u\) => \(clave === ALTA_BLOQUEADA \? u : registrarAnadido\(u, clave, p\.descripcion\)\)\); setAviso\(clave === ALTA_BLOQUEADA \? mensajeAltaBloqueada\(maxLineas\)/.test(selector) && /maxLineas=\{maxLineasFE\}/.test(pag));
     cierto("PRO339-65 contador «N de M ítems» en la tarjeta Detalle y en el selector", /textoContadorLineas\(lineas\.length, maxLineasFE\)/.test(pag) && /textoContadorLineas\(cantidadItems, maxLineas\)/.test(selector));
     cierto("PRO339-66 el máximo se lee de los catálogos autenticados (maxLineasFE), con aviso si falta NEX-078; nunca se envía al servidor", /setMaxLineasFE\(leerMaximoApi\(j\.maxLineasFE\)\)/.test(pag) && /j\.maxLineasFEError/.test(pag) && !/maxLineas/.test(pag.slice(pag.indexOf("const cuerpoFactura = () => ({"), pag.indexOf("const huellaActual"))));
     cierto("PRO339-67 un 422 con maxLineasFE (política cambiada) actualiza el máximo y conserva el borrador (solo errores; sin reenvío automático)", /maxLineasFE: leerMaximoApi\(j\.maxLineasFE\)/.test(pag) && /if \(maximo !== null\) \{ setMaxLineasFE\(maximo\); setErrorLimiteLineas\(""\); \}/.test(pag));
     cierto("PRO339-68 el aviso se oculta al bajar del máximo (borrar una línea habilita agregar otra)", /\{avisoLimiteLineas && !puedeAgregarLinea\(lineas\.length, maxLineasFE\) \?/.test(pag));
     cierto("PRO339-69 PRO-331 intacto: cuatro filas visibles y rolagem local medidos con FILAS_VISIBLES_DETALLE, sin relación con el máximo", /filas\[FILAS_VISIBLES_DETALLE\]/.test(pag) && /ref=\{setContenedorDetalle\}/.test(pag) && !/maxLineasFE/.test(pag.slice(pag.indexOf("const medir = () => {"), pag.indexOf("const observador = new ResizeObserver(medir);"))));
+  }
+
+  // ── 9. PRO-339-R02 (R01-F001): alta atómica, claves únicas y respuesta coherente ─────────────────────────────────────────────────────────────────────
+  {
+    // Modelo: acciones consecutivas ANTES de re-renderizar.
+    const unHueco = editorModelo(21, filas(20));
+    const r1 = unHueco.agregar("nuevo-a");
+    const r2 = unHueco.agregar("nuevo-b");
+
+    igual("PRO339-70 1 hueco y dos SKU distintos antes del re-render: entra solo el primero, el segundo devuelve ALTA_BLOQUEADA con el aviso del máximo de la empresa (nunca «añadido»)",
+      [r1 > 0, r2, unHueco.lineas().length, unHueco.lineas().some((l) => l.productoId === "nuevo-b"), unHueco.avisos], [true, ALTA_BLOQUEADA, 21, false, ["Esta empresa admite un máximo de 21 líneas por factura electrónica."]]);
+
+    const dosHuecos = editorModelo(63, filas(61));
+    const c1 = dosHuecos.agregar("nuevo-a");
+    const c2 = dosHuecos.agregar("nuevo-b");
+    const claves = dosHuecos.lineas().map((l) => l.clave);
+
+    igual("PRO339-71 2 huecos y dos SKU distintos antes del re-render: ambos entran con claves DISTINTAS y todas las claves del borrador son únicas", [c1 > 0 && c2 > 0 && c1 !== c2, dosHuecos.lineas().length, new Set(claves).size === claves.length], [true, 63, true]);
+
+    const mismo = editorModelo(21, filas(3));
+    const m1 = mismo.agregar("nuevo-a");
+    const m2 = mismo.agregar("nuevo-a");
+    const filaNueva = mismo.lineas().filter((l) => l.productoId === "nuevo-a");
+
+    igual("PRO339-72 mismo SKU dos veces antes del re-render: una sola fila, cantidad 2, misma clave en ambas respuestas", [filaNueva.length, filaNueva[0]?.cantidad, m1 === m2, mismo.lineas().length], [1, "2", true, 4]);
+
+    const lleno = editorModelo(21, filas(21));
+    const inc = lleno.agregar("p-5");
+
+    igual("PRO339-73 en el máximo exacto, sumar un SKU existente sigue permitido (clave de esa fila, sin aviso, sin fila nueva)", [inc, lleno.lineas().length, lleno.lineas()[4].cantidad, lleno.avisos.length], [5, 21, "2", 0]);
+
+    const borrar = editorModelo(21, filas(21));
+
+    borrar.quitar(7);
+
+    const tras = borrar.agregar("nuevo-a");
+    const otra = borrar.agregar("nuevo-b");
+
+    igual("PRO339-74 quitar una con 21/21 y agregar dos seguidas: entra una (clave nueva, no reutiliza la quitada), la siguiente se bloquea", [tras > 21, otra, borrar.lineas().length], [true, ALTA_BLOQUEADA, 21]);
+
+    const mixto = editorModelo(99, filas(97));
+
+    igual("PRO339-75 alternar lector y selector (misma función) con 2 huecos: SKU nuevo, SKU repetido, SKU nuevo, SKU nuevo → 2 filas nuevas, 1 incremento, 1 bloqueo", [mixto.agregar("x") > 0, mixto.agregar("x") > 0, mixto.agregar("y") > 0, mixto.agregar("z"), mixto.lineas().length], [true, true, true, ALTA_BLOQUEADA, 99]);
+    igual("PRO339-76 sin máximo conocido (null) el modelo solo respeta el fiscal común", [editorModelo(null, filas(998)).agregar("n") > 0, editorModelo(null, filas(999)).agregar("n")], [true, ALTA_BLOQUEADA]);
+
+    // Código real de la pantalla.
+    const pag = leer("app/(private)/facturas/nueva/page.tsx");
+    const iAgregar = pag.indexOf("function agregar(");
+    const agregar = pag.slice(iAgregar, pag.indexOf("const agregarRapido", iAgregar));
+    const selector = pag.slice(pag.indexOf("function SelectorProducto("), pag.indexOf("type ItemBusqueda"));
+    const iAplicar = pag.indexOf("const aplicarLineas = useCallback(");
+    const aplicar = pag.slice(iAplicar, pag.indexOf("}, []);", iAplicar));
+
+    cierto("PRO339-77 borrador y próxima clave en refs síncronas; aplicarLineas calcula sobre la ref y fija el VALOR (sin actualizador funcional)", /const lineasActuales = useRef<Linea\[\]>\(\[\]\);/.test(pag) && /const claveSiguiente = useRef\(1\);/.test(pag) && /const nuevas = cambio\(lineasActuales\.current\);\s*lineasActuales\.current = nuevas;\s*setLineas\(nuevas\);/.test(aplicar));
+    cierto("PRO339-78 ninguna escritura de líneas fuera de aplicarLineas (agregar, editar, ajuste, moneda, quitar, nueva factura): setLineas aparece una sola vez", (pag.match(/setLineas\(/g) ?? []).length === 1 && !/setSiguienteClave/.test(pag));
+    cierto("PRO339-79 agregar decide SKU existente y cupo sobre el borrador más reciente (no el snapshot del render)", /const lineas = lineasActuales\.current;\s*\/\/ El mismo producto no se duplica: suma una unidad a su línea\.\s*const existente = lineas\.find/.test(agregar) && /puedeAgregarLinea\(lineas\.length, maxLineasFE\)/.test(agregar));
+    cierto("PRO339-80 la clave se reserva SOLO después del control de cupo y avanza en el acto (dos altas no comparten clave); el rechazo no consume clave", agregar.indexOf("return ALTA_BLOQUEADA;") < agregar.indexOf("const siguienteClave = claveSiguiente.current;") && /const siguienteClave = claveSiguiente\.current;\s*claveSiguiente\.current = siguienteClave \+ 1;/.test(agregar));
+    cierto("PRO339-81 sin efectos dentro de actualizadores: foco, aviso y panel fiscal se deciden en el manejador; ningún setState/foco dentro de aplicarLineas((ls) => …)", !/aplicarLineas\(\(ls\) => [^;]*(setEditando|setAviso|focus|lineaAFocar|volverAlBuscador)/.test(pag) && !/setLineas\(\(ls\)/.test(pag));
+    cierto("PRO339-82 alta rechazada: no abre el panel fiscal ni enfoca Cantidad (el return ocurre antes de setEditando y de lineaAFocar = siguienteClave)", agregar.indexOf("return ALTA_BLOQUEADA;") < agregar.indexOf("if (abrePanel) setEditando(siguienteClave);") && agregar.indexOf("return ALTA_BLOQUEADA;") < agregar.indexOf('if (destino === "cantidad") lineaAFocar.current = siguienteClave;'));
+    cierto("PRO339-83 selector avanzado: «añadido» y registro del último SOLO con clave real; con ALTA_BLOQUEADA, aviso del máximo de la empresa", /setUltimo\(\(u\) => \(clave === ALTA_BLOQUEADA \? u : registrarAnadido\(u, clave, p\.descripcion\)\)\)/.test(selector) && /setAviso\(clave === ALTA_BLOQUEADA \? mensajeAltaBloqueada\(maxLineas\) : `«\$\{p\.descripcion\}» añadido\.`\)/.test(selector));
+    cierto("PRO339-84 quitar pasa por la ref (borrar y reagregar antes del re-render ve el borrador real)", /onClick=\{\(\) => \{ aplicarLineas\(\(ls\) => ls\.filter\(\(x\) => x\.clave !== l\.clave\)\);/.test(pag));
+    cierto("PRO339-85 PRO-331 intacto en agregar: mismo SKU suma con sumarUnaUnidad y vuelve al buscador; alta nueva sin foco a Cantidad en rápido; panel fiscal con permiso", /sumarUnaUnidad\(l\.cantidad\)/.test(agregar) && /const destino = destinoFocoTrasAlta\(origen, abrePanel\);/.test(agregar) && /if \(abrePanel\) setEditando\(siguienteClave\);/.test(agregar) && !/FILAS_VISIBLES_DETALLE|\b21\b|MAX_LINEAS|999/.test(agregar));
+    cierto("PRO339-86 el 422 por cambio de política sigue conservando el borrador (solo actualiza máximo y errores) y R02 no toca backend ni NEX-078", /if \(maximo !== null\) \{ setMaxLineasFE\(maximo\); setErrorLimiteLineas\(""\); \}/.test(pag) && /limiteLineasEmpresa\(db, empresaId\)/.test(leer("lib/facturacion/emision.ts")));
+    // Strict Mode / intercalado: verificado SOLO por inspección (no se ejecutó React). Los manejadores de eventos no se duplican en Strict Mode; los actualizadores sí, y ya no hay ninguno con efectos.
   }
 
   return fallos;

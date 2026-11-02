@@ -623,7 +623,18 @@ export default function NuevaFacturaPage() {
   const [errorLimiteLineas, setErrorLimiteLineas] = useState("");
   const [avisoLimiteLineas, setAvisoLimiteLineas] = useState("");
   const [precioEnFoco, setPrecioEnFoco] = useState<number | null>(null);
-  const [siguienteClave, setSiguienteClave] = useState(1);
+  // PRO-339-R02 (R01-F001): el borrador de líneas y la próxima clave viven también en refs ACTUALIZADAS SINCRÓNICAMENTE en el manejador del evento. Toda escritura pasa por
+  // aplicarLineas, que calcula el nuevo arreglo sobre el ÚLTIMO estado (aunque React aún no haya re-renderizado) y lo fija como valor: dos lecturas del lector o dos «Añadir» seguidos
+  // deciden SKU existente / línea nueva / cupo con el estado real, cada fila agregada recibe una clave única y la respuesta (clave o ALTA_BLOQUEADA) coincide con lo que quedó en el
+  // borrador. Sin efectos dentro de actualizadores de React (nada se repite bajo Strict Mode): foco, aviso y panel fiscal se deciden en el manejador con el resultado ya aplicado.
+  const lineasActuales = useRef<Linea[]>([]);
+  const claveSiguiente = useRef(1);
+  const aplicarLineas = useCallback((cambio: (ls: Linea[]) => Linea[]) => {
+    const nuevas = cambio(lineasActuales.current);
+
+    lineasActuales.current = nuevas;
+    setLineas(nuevas);
+  }, []);
   const [clave, setClave] = useState(() => crypto.randomUUID());
   const [selector, setSelector] = useState<"cliente" | "producto" | null>(null);
   // E01: tras agregar un producto desde el selector AVANZADO, el foco va a su campo Cantidad (al cerrar el selector, que permite agregar varios).
@@ -876,11 +887,13 @@ export default function NuevaFacturaPage() {
   }
 
   function agregar(p: Producto, origen: OrigenAlta = "avanzado"): number {
+    // PRO-339-R02: la decisión usa el borrador MÁS RECIENTE (incluye altas de este mismo ciclo aún no renderizadas), nunca el snapshot del render.
+    const lineas = lineasActuales.current;
     // El mismo producto no se duplica: suma una unidad a su línea.
     const existente = lineas.find((l) => l.producto.id === p.id);
 
     if (existente) {
-      setLineas((ls) => ls.map((l) => (l.clave === existente.clave ? { ...l, cantidad: sumarUnaUnidad(l.cantidad) ?? l.cantidad } : l)));
+      aplicarLineas((ls) => ls.map((l) => (l.clave === existente.clave ? { ...l, cantidad: sumarUnaUnidad(l.cantidad) ?? l.cantidad } : l)));
       // PRO-331: avanzado → Cantidad al cerrar el selector (E01); rápido → de vuelta al buscador, sin crear otra línea.
       if (destinoFocoTrasAlta(origen, false) === "cantidad") lineaAFocar.current = existente.clave;
       else { lineaAFocar.current = null; volverAlBuscador(existente.clave); }
@@ -897,8 +910,12 @@ export default function NuevaFacturaPage() {
       return ALTA_BLOQUEADA;
     }
 
+    // PRO-339-R02: clave única reservada SOLO para una fila efectivamente agregada (la ref avanza en el acto; dos altas seguidas nunca comparten clave).
+    const siguienteClave = claveSiguiente.current;
+
+    claveSiguiente.current = siguienteClave + 1;
     setAvisoLimiteLineas("");
-    setLineas((ls) => agregarSiCabe(ls, { clave: siguienteClave, producto: p, cantidad: "1", precio: precioParaEdicion(referencia(p, moneda)), ajuste: AJUSTE_VACIO, descuento: DESC_VACIO }, maxLineasFE));
+    aplicarLineas((ls) => agregarSiCabe(ls, { clave: siguienteClave, producto: p, cantidad: "1", precio: precioParaEdicion(referencia(p, moneda)), ajuste: AJUSTE_VACIO, descuento: DESC_VACIO }, maxLineasFE));
     // Un producto fiscalmente incompleto abre su panel contextual (solo con el permiso de ajuste fiscal) para completarlo sin salir de la factura.
     const abrePanel = puedeAjustarFiscal && problemasFiscales(p, AJUSTE_VACIO, "1", moneda).filter((m) => !m.startsWith("sin precio")).length > 0;
 
@@ -912,15 +929,14 @@ export default function NuevaFacturaPage() {
       lineaAFocar.current = null;
       if (destino === "buscador") volverAlBuscador(siguienteClave);
     }
-    setSiguienteClave((n) => n + 1);
 
     return siguienteClave;
   }
 
   const agregarRapido = (p: Producto) => { agregar(p, "rapido"); };
 
-  const editar = (k: number, cambio: Partial<Pick<Linea, "cantidad" | "precio" | "descuento">>) => setLineas((ls) => ls.map((x) => (x.clave === k ? { ...x, ...cambio } : x)));
-  const editarAjuste = (k: number, cambio: Partial<AjusteUI>) => setLineas((ls) => ls.map((x) => (x.clave === k ? { ...x, ajuste: { ...x.ajuste, ...cambio } } : x)));
+  const editar = (k: number, cambio: Partial<Pick<Linea, "cantidad" | "precio" | "descuento">>) => aplicarLineas((ls) => ls.map((x) => (x.clave === k ? { ...x, ...cambio } : x)));
+  const editarAjuste = (k: number, cambio: Partial<AjusteUI>) => aplicarLineas((ls) => ls.map((x) => (x.clave === k ? { ...x, ajuste: { ...x.ajuste, ...cambio } } : x)));
 
   // El precio solo viaja cuando difiere del de lista; el servidor lo contrasta con el catálogo y con el permiso del usuario.
   const cuerpoFactura = () => ({
@@ -1022,7 +1038,7 @@ export default function NuevaFacturaPage() {
 
     const descPorClave = new Map(lineas.map((l, i) => [l.clave, desc.items[i]] as const));
 
-    setLineas((ls) => ls.map((l) => ({ ...l, precio: precioParaEdicion(referencia(l.producto, m)), descuento: descPorClave.get(l.clave) ?? l.descuento })));
+    aplicarLineas((ls) => ls.map((l) => ({ ...l, precio: precioParaEdicion(referencia(l.producto, m)), descuento: descPorClave.get(l.clave) ?? l.descuento })));
     setDescuentoGeneral(desc.general);
     setPagos([PAGO_UI_VACIO]);
     setCredito(CREDITO_UI_VACIO);
@@ -1074,7 +1090,7 @@ export default function NuevaFacturaPage() {
   function nueva() {
     setCliente(null);
     setVendedor(null);
-    setLineas([]);
+    aplicarLineas(() => []);
     setInfoAdicional(""); setDescuentoGeneral(DESC_VACIO);
     setCondicion("1");
     setCredito(CREDITO_UI_VACIO);
@@ -1481,7 +1497,7 @@ export default function NuevaFacturaPage() {
                                   {pr.length > 0 ? "Completar" : "Fiscal"}
                                 </button>
                               ) : null}
-                              <button type="button" className={estilos.remove} aria-label={`Quitar ${l.producto.descripcion}`} onClick={() => { setLineas((ls) => ls.filter((x) => x.clave !== l.clave)); if (editando === l.clave) setEditando(null); }}>Quitar</button>
+                              <button type="button" className={estilos.remove} aria-label={`Quitar ${l.producto.descripcion}`} onClick={() => { aplicarLineas((ls) => ls.filter((x) => x.clave !== l.clave)); if (editando === l.clave) setEditando(null); }}>Quitar</button>
                             </td>
                           </tr>
                           {puedeAjustarFiscal && seleccionada ? (
