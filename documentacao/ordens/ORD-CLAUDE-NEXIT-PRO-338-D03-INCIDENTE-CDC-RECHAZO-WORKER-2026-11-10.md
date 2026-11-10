@@ -1,3 +1,15 @@
+## RECTIFICACIÓN OBLIGATORIA DE REGLA FISCAL — 10/11/2026
+
+**Aclaración expresa del responsable: NEXIT NO ENVÍA CDC A /api/consulta_de.** La solicitud contiene exclusivamente `{dEst,dPunExp,dNumDoc,dSerieNum,tipoDoc}` (ver `gateway.ts:328`). **EL CDC SE CONOCE CUANDO EL GATEWAY RESPONDE A LA PRIMERA CONSULTA CON IDENTIDAD VERIFICABLE.** En documentos nuevos, `documentos_electronicos.cdc` está en `NULL` hasta ese momento; no puede calificarse como «distinto de un CDC ya registrado» porque no existe uno. El resultado `CDC_DIVERGENTE` actual engloba una validación diferente de identidad fiscal (CDC de otro documento) además de discrepancia con un CDC anterior, y la etiqueta de la interfaz confunde ambas circunstancias.
+
+**COMPORTAMIENTO QUE DEBE GARANTIZARSE (sin ejecutar ni cambiar código durante D03):** En primer resultado, si el gateway respondió por la identidad consultada y su CDC de 44 dígitos tiene tipo/establecimiento/punto/número concordantes, registrar el CDC recibido y el estado fiscal de esa misma respuesta (incluido `RECHAZADO` con `CodRespuesta=1101`, `Mensaje=Número de timbrado inválido`) a través de las funciones SQL protegidas e histórico inmutable. El CDC no se exige ni se envía EN LA SOLICITUD; la inexistencia de CDC previo NO es por sí sola motivo de bloqueo. Si respuesta no contiene CDC o trae CDC incompatible, registrar evidencia y diagnosticar la identidad sin inventar CDC ni adjudicar a ciegas un resultado a una FE. **Distinguir expresamente `SIN_CDC_PREVIO`, `CDC_CONTRA_IDENTIDAD` y `CDC_CONTRA_CDC_PREVIO` en el análisis; los dos primeros NO son sinónimos.** Si la política del gateway admite rechazo sin CDC, documentar cómo se acredita inequívocamente la identidad de esa consulta antes de proponer persistirlo.
+
+**EVIDENCIA CONCRETA:** Las cuatro FE `001-003-0009018..0009021` tienen CDC externo estructuralmente coherente y estado Rechazado por timbrado. Si el último intento NEXIT devolvió ese mismo CDC, no hay justificación en el SQL VERSIONADO para `CDC_DIVERGENTE` cuando d.cdc es NULL. Investigar el CDC REAL de `response.DE.CDC`, columnas de identidad, respuesta asociada, función SQL efectivamente desplegada y el motivo concreto de divergencia. NO insistir en comparar con un CDC local inexistente, NO ocultar el mensaje fiscal 1101 de la respuesta histórica, NO eliminar validaciones de identidad para forzar rechazo.
+
+**Criterio de salida D03:** identificar la causa REAL de que la primera consulta no consolide `RECHAZADO`; proponer correctivo mínimo y pruebas de primera consulta con `d.cdc=NULL` + rechazo válido, CDC correcto pero sin previo, CDC de otra FE, CDC local previo diferente, cambio de estados y consultas repetidas; verificar aparte ejecución real del worker (NEX-077). **Sin cambios funcionales ni SQL/test/deploy en este diagnóstico.** Esta rectificación prevalece sobre frases ambiguas de la orden histórica.
+
+---
+
 # ORDEN CLAUDE — PRO-338-D03 / Incidente real: CDC divergente, SIFEN rechazada y consulta automática
 
 **Fecha:** 10/11/2026  
