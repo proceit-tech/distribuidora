@@ -386,7 +386,21 @@ export async function verificarCasosStockPreventivo(): Promise<string[]> {
     cierto("PRO330-58 pantalla: reconsulta en cada cambio del borrador (efecto por la clave del borrador) y se desmonta limpio", /stockCtl\.actualizar\(JSON\.parse\(claveStock\) as BorradorStock\);\s*\}, \[stockCtl, claveStock\]\);/.test(pag) && /useEffect\(\(\) => \(\) => stockCtl\.destruir\(\), \[stockCtl\]\);/.test(pag));
     cierto("PRO330-59 pantalla: aviso por línea accesible (role=alert en insuficiencia y error; status en verificando) con «Reintentar» funcional", /className=\{estilos\.stockInsuficiente\} role="alert"/.test(aviso) && /textoInsuficiente\(aviso\)/.test(aviso) && /Verificando stock…/.test(aviso) && /No se pudo verificar el stock\./.test(aviso) && /onClick=\{alReintentar\}>Reintentar</.test(aviso) && /alReintentar=\{\(\) => stockCtl\.reintentar\(\)\}/.test(pag));
     cierto("PRO330-60 pantalla: la causa de stock entra en los pendientes y por ello deshabilita «Revisar y confirmar»; Enviar no se toca", /pendienteDeEntrega,\s*vista\.pendiente,/.test(pag) && /const puedeGuardar = !revisando && !enviando && faltan\.length === 0/.test(pag) && /disabled=\{!puedeGuardar\} onClick=\{grabar\}/.test(pag) && !/vista\.pendiente[^\n]*enviar/.test(pag));
-    cierto("PRO330-61 pantalla: búsqueda rápida/escáner y «Búsqueda avanzada» siguen entrando por agregar() (mismo incremento por UUID)", /<BuscadorProducto alElegir=\{agregar\}/.test(pag) && /<SelectorProducto alCerrar=\{\(\) => setSelector\(null\)\} alAgregar=\{agregar\}/.test(pag) && /const existente = lineas\.find\(\(l\) => l\.producto\.id === p\.id\);/.test(pag));
+    // PRO-330-T01: el flujo vigente (PRO-331/339/341) es BuscadorProducto → agregarRapido → agregar(p, "rapido") y SelectorProducto → agregar (origen por defecto «avanzado»).
+    {
+      const fAgregar = pag.slice(pag.indexOf("function agregar(p: Producto"), pag.indexOf("const agregarRapido"));
+
+      cierto("PRO330-61 pantalla (PRO-330-T01): búsqueda rápida/escáner (BuscadorProducto → agregarRapido → agregar(p, \"rapido\"), con resultado real aceptado/bloqueado) y «Búsqueda avanzada» (SelectorProducto → agregar, origen «avanzado») entran por el MISMO agregar(): incremento por UUID, escritura vía aplicarLineas sobre la ref sincronizada y el borrador de stock se arma con esas líneas",
+        /<BuscadorProducto alElegir=\{agregarRapido\}/.test(pag)
+        && /const agregarRapido = \(p: Producto\): ResultadoEleccion => \(agregar\(p, "rapido"\) === ALTA_BLOQUEADA \? ELECCION_RECHAZADA : ELECCION_ACEPTADA\);/.test(pag)
+        && /<SelectorProducto alCerrar=\{\(\) => setSelector\(null\)\} alAgregar=\{agregar\}/.test(pag)
+        && /function agregar\(p: Producto, origen: OrigenAlta = "avanzado"\): number \{/.test(pag)
+        && /const lineas = lineasActuales\.current;/.test(fAgregar)
+        && /const existente = lineas\.find\(\(l\) => l\.producto\.id === p\.id\);/.test(fAgregar)
+        && (fAgregar.match(/aplicarLineas\(\(ls\) =>/g) ?? []).length === 2 && !/setLineas\(/.test(fAgregar)
+        && /const nuevas = cambio\(lineasActuales\.current\);\s*lineasActuales\.current = nuevas;\s*setLineas\(nuevas\);/.test(pag)
+        && /const borradorStock: BorradorStock = \{ sucursalId, clienteId: clienteIdActual, lineas: lineas\.map\(\(l\) => \(\{ productoId: l\.producto\.id, cantidad: l\.cantidad, controlaStock: l\.producto\.controlaStock \}\)\) \};/.test(pag));
+    }
     cierto("PRO330-62 pantalla: la fila insuficiente se destaca con estilo propio y el CSS define los cuatro avisos", /avisoStock\.tipo === "INSUFICIENTE" \? estilos\.filaSinStock/.test(pag) && ["filaSinStock", "stockInsuficiente", "stockVerificando", "stockError", "stockOk"].every((c) => new RegExp("\\." + c + "\\b").test(leer("app/(private)/facturas/nueva/page.module.css"))));
     cierto("PRO330-63 módulo de la pantalla sin dependencias de Node (no importa valores de stock-fe ni node:)", (() => {
       const m = leer("lib/facturacion/stock-preventivo.ts");
