@@ -1415,7 +1415,8 @@
   max-width: 360px;
 }
 
-/* Nombre: hasta dos líneas visuales; la descripción completa está en el título (tooltip). Código/GTIN: UNA línea secundaria con puntos suspensivos. */
+/* Nombre: hasta dos líneas visuales; la descripción completa está en el título (tooltip). Código/GTIN: ver PRO-341 (.codigoProducto), completo y sin puntos suspensivos;
+   la regla genérica de abajo queda para otros <small> de la celda que no la redefinan. */
 .itemsCompacta .prod strong {
   display: -webkit-box;
   overflow: hidden;
@@ -2399,6 +2400,28 @@
   white-space: normal;
 }
 
+/* ══ PRO-341 — Nueva factura: código de producto COMPLETO ══
+   El código interno (ceros iniciales, numérico de 13/20+ dígitos, alfanumérico largo) y el GTIN se leen ENTEROS en la tabla, sin depender del tooltip: sin ellipsis, sin
+   nowrap ni recorte; si no caben en el ancho de Producto se parten en varias líneas. Clase EXCLUSIVA del código: no cambia otros <small> (stock, pendientes, avisos). */
+.itemsCompacta .prod small.codigoProducto {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+
+.codigoProducto .codigoValor {
+  color: #29455d;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.codigoProducto .gtinValor {
+  color: #5b7387;
+  font-variant-numeric: tabular-nums;
+}
+
 /* ══ PRO-331 — Nueva factura: tabla de detalle EDITABLE ══
    Cuatro líneas de producto visibles; desde la quinta, rolagem vertical LOCAL en este contenedor (no en la página ni en la barra lateral). El alto máximo lo fija la
    pantalla midiendo la cabecera + las cuatro primeras líneas reales (alto variable: stock, pendientes, descuento, panel fiscal), así ninguna fila queda recortada a medias.
@@ -2411,8 +2434,10 @@
 /* Columna N°: posición visual 1..n (no es ID ni código). */
 .colOrden { width: 48px; }
 
-/* PRO-331-R02 (R01-F001): SOLO en modo TABLA (≥ 901 px) rigen la cabecera sticky y el ancho técnico mínimo (980 + 48 de N°); si el ancho no alcanza, la tabla rola
-   en horizontal DENTRO de su contenedor. En modo TARJETA (≤ 900 px) no hay mínimo artificial: ver el bloque @media (max-width: 900px) de abajo. */
+/* PRO-331-R02 (R01-F001): SOLO en modo TABLA (≥ 901 px) rigen la cabecera sticky y el ancho técnico mínimo; si el ancho no alcanza, la tabla rola
+   en horizontal DENTRO de su contenedor. En modo TARJETA (≤ 900 px) no hay mínimo artificial: ver el bloque @media (max-width: 900px) de abajo.
+   PRO-341: el mínimo pasa de 1028 px a 1164 px = columnas fijas (N° 48 + IVA 150 + Unidad 88 + Cantidad 96 + Precio 140 + Descuento 190 + Subtotal 120 + Acciones 132
+   = 964 px) + 200 px ÚTILES garantizados para Producto (con 1028 px quedaban ~64 px). Con más ancho, Producto toma todo el sobrante (sin el tope de 360 px). */
 @media (min-width: 901px) {
   /* Cabecera fija dentro del contenedor con rolagem (el contenedor es el ancestro con scroll más cercano). */
   .detalleScroll .itemsCompacta thead th {
@@ -2424,7 +2449,11 @@
   }
 
   .detalleScroll .itemsCompacta {
-    min-width: 1028px;
+    min-width: 1164px;
+  }
+
+  .detalleScroll .itemsCompacta .prod {
+    max-width: none;
   }
 }
 

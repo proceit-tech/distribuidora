@@ -5,8 +5,10 @@
  * - Cuatro líneas de producto visibles: con 5 o más, la tabla rola en vertical DENTRO de su contenedor (cabecera sticky); el buscador queda fuera.
  *   «Cuatro» es solo la cantidad de filas visibles, NUNCA un tope de ítems.
  * - Columna N°: posición visual 1..n según el orden actual de la lista; no es ID ni clave de la línea y no viaja al servidor.
- * - Foco: un alta correcta desde el buscador rápido (código, GTIN, Enter o clic en la lista) devuelve el cursor LIMPIO al buscador para la siguiente lectura;
- *   el selector avanzado conserva su comportamiento (foco a Cantidad al cerrar) y un alta que abre el panel fiscal deja el foco en ese panel.
+ * - Foco: PRO-341 (pedido expreso de CASA MINGO, 10/11/2026) SUSTITUYE la regla de PRO-331 que devolvía el cursor al buscador. Un alta correcta desde el buscador rápido
+ *   (código, GTIN, Enter o clic en la lista), sea línea NUEVA o mismo SKU incrementado, lleva el foco a Cantidad de ESA línea con su valor seleccionado; el selector avanzado
+ *   conserva su comportamiento (foco a Cantidad al cerrar) y un alta que abre el panel fiscal deja el foco en ese panel (excepción: requiere intervención).
+ *   Un alta RECHAZADA (máximo de la empresa) no enfoca ninguna fila: el cursor sigue en el buscador.
  */
 
 /** Filas de producto visibles en la tabla de edición antes de rolar. NO limita la cantidad de ítems de la factura. */
@@ -48,18 +50,18 @@ export function desplazamientoParaMostrar(v: { filaArriba: number; filaAbajo: nu
 /** Origen del alta: buscador rápido (código/GTIN/Enter/clic) o selector avanzado (diálogo multi-alta). */
 export type OrigenAlta = "rapido" | "avanzado";
 
-/** A dónde va el foco tras un alta correcta. */
-export type DestinoFoco = "buscador" | "cantidad" | "panel";
+/** A dónde va el foco tras un alta correcta. PRO-341: «buscador» dejó de ser destino de un alta aceptada (solo el rechazo deja el cursor en el buscador). */
+export type DestinoFoco = "cantidad" | "panel";
 
 /**
  * - avanzado → «cantidad» (E01: al cerrar el selector, foco y selección en Cantidad de la última línea añadida; sin cambios).
  * - rápido con panel fiscal abierto (producto fiscalmente incompleto y permiso de ajuste) → «panel»: requiere intervención; el panel toma el foco y no se lo quita.
- * - rápido normal (nuevo o mismo SKU sumado) → «buscador»: listo para la siguiente lectura.
+ * - rápido normal (nuevo o mismo SKU sumado) → «cantidad» (PRO-341, sustituye «buscador» de PRO-331): foco y selección en Cantidad de la línea añadida/incrementada.
  */
 export function destinoFocoTrasAlta(origen: OrigenAlta, abrePanelFiscal: boolean): DestinoFoco {
   if (origen === "avanzado") return "cantidad";
 
-  return abrePanelFiscal ? "panel" : "buscador";
+  return abrePanelFiscal ? "panel" : "cantidad";
 }
 
 /** Dónde está el foco del documento al momento de devolverlo. */
@@ -70,3 +72,12 @@ export type FocoActual = "buscador" | "ninguno" | "otro";
  * diálogo de búsqueda avanzada, panel fiscal), NO se le roba.
  */
 export const puedeVolverAlBuscador = (foco: FocoActual): boolean => foco !== "otro";
+
+/** Dónde está el foco del documento cuando se ejecuta el pedido de foco a Cantidad de un alta rápida. */
+export type FocoAntesDeCantidad = "buscador" | "cantidad" | "ninguno" | "otro";
+
+/**
+ * PRO-341: el foco a Cantidad tras un alta rápida solo se aplica si el cursor sigue en el buscador (desde donde se hizo el alta), ya está en esa misma Cantidad o se perdió
+ * (body/null). Si el operador ya se movió a otro control (Precio, IVA, Descuento, Tab, clic, diálogo, panel fiscal), el pedido es obsoleto y se descarta: no se le roba el foco.
+ */
+export const puedeEnfocarCantidad = (foco: FocoAntesDeCantidad): boolean => foco !== "otro";

@@ -9,7 +9,7 @@ import { puedeEnviarPorGateway, type EstadoGatewayUI } from "@/lib/facturacion/g
 import { crearBuscadorRapido, type EstadoBuscador, MAX_VISIBLES } from "@/lib/facturacion/busqueda-rapida";
 import { formularioModificado, perdidasAlCambiarCondicion, perdidasAlCambiarMoneda } from "@/lib/facturacion/cambios-formulario";
 import { descuentosTrasCambioMoneda } from "@/lib/facturacion/descuentos";
-import { altoMaximoDetalle, desplazamientoParaMostrar, destinoFocoTrasAlta, FILAS_VISIBLES_DETALLE, ID_BUSCADOR_PRODUCTOS, ordinalLinea, puedeVolverAlBuscador, type OrigenAlta } from "@/lib/facturacion/detalle-factura-vista";
+import { altoMaximoDetalle, desplazamientoParaMostrar, destinoFocoTrasAlta, FILAS_VISIBLES_DETALLE, ID_BUSCADOR_PRODUCTOS, ordinalLinea, puedeEnfocarCantidad, puedeVolverAlBuscador, type OrigenAlta } from "@/lib/facturacion/detalle-factura-vista";
 import { soloDifierenCerosIniciales } from "@/lib/facturacion/codigo-producto";
 import { evaluarFechaEmision, rangoSeleccion } from "@/lib/facturacion/fecha-emision";
 import { etiquetaEstablecimiento } from "@/lib/facturacion/presentacion";
@@ -638,8 +638,10 @@ export default function NuevaFacturaPage() {
   const [clave, setClave] = useState(() => crypto.randomUUID());
   const [selector, setSelector] = useState<"cliente" | "producto" | null>(null);
   // E01: tras agregar un producto desde el selector AVANZADO, el foco va a su campo Cantidad (al cerrar el selector, que permite agregar varios).
-  // PRO-331: el alta RÁPIDA (código/GTIN/Enter) ya no usa este camino: devuelve el foco al buscador (ver volverAlBuscador).
+  // PRO-341 (sustituye la vuelta al buscador de PRO-331): el alta RÁPIDA correcta (código/GTIN/Enter/clic, nueva o mismo SKU) también usa este camino: foco y selección
+  // en Cantidad de la línea añadida/incrementada. `origenFoco` distingue el alta rápida, cuyo pedido se descarta si el operador ya se movió a otro control.
   const lineaAFocar = useRef<number | null>(null);
+  const origenFoco = useRef<OrigenAlta>("avanzado");
   // PRO-331: contenedor de la tabla de detalle editable (cuatro líneas visibles; desde la quinta, rolagem vertical local).
   const [contenedorDetalle, setContenedorDetalle] = useState<HTMLDivElement | null>(null);
   const [hoy, setHoy] = useState("");
@@ -821,16 +823,35 @@ export default function NuevaFacturaPage() {
   }, [stockCtl, claveStock]);
   useEffect(() => () => stockCtl.destruir(), [stockCtl]);
 
+  // Foco a Cantidad tras el render que ya contiene la línea añadida/incrementada (nunca dentro de actualizadores de React; una sola vez por pedido: la ref se limpia al usarse).
   useEffect(() => {
-    if (lineaAFocar.current === null || selector !== null) return;
+    const claveFoco = lineaAFocar.current;
 
-    const campo = document.getElementById(`cantidad-${lineaAFocar.current}`) as HTMLInputElement | null;
+    if (claveFoco === null || selector !== null) return;
 
-    if (campo) {
-      campo.focus();
+    const campo = document.getElementById(`cantidad-${claveFoco}`) as HTMLInputElement | null;
+
+    if (!campo) return;
+
+    lineaAFocar.current = null;
+
+    // PRO-341: alta rápida. Solo si el cursor sigue en el buscador, ya en esta Cantidad o perdido (body); si el operador se movió a otro control, el pedido se descarta.
+    // Sin desplazar la página (preventScroll): la fila se deja a la vista con la rolagem LOCAL de la tabla (fila 5+ dentro del contenedor).
+    if (origenFoco.current === "rapido") {
+      const activo = document.activeElement;
+      const foco = activo === campo ? "cantidad" : activo instanceof HTMLElement && activo.id === ID_BUSCADOR_PRODUCTOS ? "buscador" : !activo || activo === document.body ? "ninguno" : "otro";
+
+      if (!puedeEnfocarCantidad(foco)) return;
+
+      campo.focus({ preventScroll: true });
       campo.select();
-      lineaAFocar.current = null;
+      mostrarLineaEnDetalle(claveFoco);
+
+      return;
     }
+
+    campo.focus();
+    campo.select();
   }, [selector, lineas]);
 
   // PRO-331: alto máximo = cabecera + cuatro líneas REALES (alto variable: stock, pendientes, descuentos, panel fiscal); se vuelve a medir con cada cambio de tamaño de la tabla.
@@ -873,7 +894,8 @@ export default function NuevaFacturaPage() {
     }));
   }
 
-  // PRO-331: tras un alta rápida correcta el buscador (ya limpio por el controlador) recupera el foco para la siguiente lectura; nunca se roba el foco de otro control.
+  // PRO-331 → PRO-341: ya NO se usa tras un alta correcta (el foco va a Cantidad). Solo queda para el alta rápida RECHAZADA (máximo de la empresa): el cursor sigue en el
+  // buscador, sin enfocar ninguna fila; nunca se roba el foco de otro control.
   function volverAlBuscador(clave: number) {
     mostrarLineaEnDetalle(clave);
     window.requestAnimationFrame(() => {
@@ -894,9 +916,9 @@ export default function NuevaFacturaPage() {
 
     if (existente) {
       aplicarLineas((ls) => ls.map((l) => (l.clave === existente.clave ? { ...l, cantidad: sumarUnaUnidad(l.cantidad) ?? l.cantidad } : l)));
-      // PRO-331: avanzado → Cantidad al cerrar el selector (E01); rápido → de vuelta al buscador, sin crear otra línea.
-      if (destinoFocoTrasAlta(origen, false) === "cantidad") lineaAFocar.current = existente.clave;
-      else { lineaAFocar.current = null; volverAlBuscador(existente.clave); }
+      // PRO-341: avanzado → Cantidad al cerrar el selector (E01); rápido → Cantidad de ESA línea con la cantidad ya incrementada seleccionada (el foco no suma otra unidad),
+      // sin crear otra línea. destinoFocoTrasAlta(origen, false) es siempre «cantidad».
+      if (destinoFocoTrasAlta(origen, false) === "cantidad") { lineaAFocar.current = existente.clave; origenFoco.current = origen; }
 
       return existente.clave;
     }
@@ -920,15 +942,13 @@ export default function NuevaFacturaPage() {
     const abrePanel = puedeAjustarFiscal && problemasFiscales(p, AJUSTE_VACIO, "1", moneda).filter((m) => !m.startsWith("sin precio")).length > 0;
 
     if (abrePanel) setEditando(siguienteClave);
-    // PRO-331: avanzado → Cantidad (E01); rápido con panel fiscal → el panel toma el foco (requiere intervención); rápido normal → buscador limpio.
+    // PRO-341: avanzado → Cantidad (E01); rápido normal → Cantidad de la línea nueva con «1» seleccionado; rápido con panel fiscal → el panel toma el foco (excepción:
+    // requiere intervención; no hay dos focos competidores, Cantidad queda editable al terminar).
     const destino = destinoFocoTrasAlta(origen, abrePanel);
 
-    // («panel»: el propio EditorFiscalItem se hace visible y toma el foco al montarse; aquí no se mueve nada más).
-    if (destino === "cantidad") lineaAFocar.current = siguienteClave;
-    else {
-      lineaAFocar.current = null;
-      if (destino === "buscador") volverAlBuscador(siguienteClave);
-    }
+    // («panel»: el propio EditorFiscalItem se hace visible y toma el foco al montarse; aquí no se mueve nada más y se cancela cualquier pedido anterior a Cantidad).
+    if (destino === "cantidad") { lineaAFocar.current = siguienteClave; origenFoco.current = origen; }
+    else lineaAFocar.current = null;
 
     return siguienteClave;
   }
@@ -1396,7 +1416,12 @@ export default function NuevaFacturaPage() {
                             <td className={estilos.orden} data-label="N°">{ordinalLinea(i)}</td>
                             <td className={estilos.prod} data-label="Producto">
                               <strong title={l.producto.descripcion}>{l.producto.descripcion}</strong>
-                              <small title={`${l.producto.codigo}${l.producto.gtin ? ` · GTIN ${l.producto.gtin}` : ""}`}>{l.producto.codigo}{l.producto.gtin ? ` · GTIN ${l.producto.gtin}` : ""}</small>
+                              {/* PRO-341: código interno COMPLETO (ceros iniciales, alfanumérico largo) visible en la tabla, sin puntos suspensivos; si no cabe, se parte en
+                                  varias líneas. El GTIN, si existe, se distingue del código y tampoco se recorta. */}
+                              <small className={estilos.codigoProducto} title={`${l.producto.codigo}${l.producto.gtin ? ` · GTIN ${l.producto.gtin}` : ""}`}>
+                                <span className={estilos.codigoValor}>{l.producto.codigo}</span>
+                                {l.producto.gtin ? <span className={estilos.gtinValor}> · GTIN {l.producto.gtin}</span> : null}
+                              </small>
                               {pr.length > 0 ? (
                                 <small className={estilos.pendienteLinea}>
                                   {puedeAjustarFiscal ? "Completar: " : "No facturable: "}{pr.join(", ")}

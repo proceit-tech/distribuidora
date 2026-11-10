@@ -94,6 +94,7 @@ Module._resolveFilename = function (request, ...resto) {
   const p333 = cargar("lib/facturacion/orden-documentos.casos.js");
   const p334 = cargar("lib/facturacion/colores-tipo-documentos.casos.js");
   const p339 = cargar("lib/facturacion/limite-lineas.casos.js");
+  const p341 = cargar("lib/facturacion/codigo-foco-pro341.casos.js");
   const uxf = cargar("lib/facturacion/flujo-factura-ux.casos.js");
   const red = cargar("lib/facturacion/rediseno.casos.js");
   const suites = [
@@ -181,10 +182,11 @@ Module._resolveFilename = function (request, ...resto) {
     ["NCE R01 (PRO-210/211): Restaurar conserva lo digitado y el listado de facturas elegibles descuenta los DESCUENTO aprobados", async () => r01.verificarCasosNceCorreccionesR01(), null],
     ["Nueva factura premium (desktop): forma de pago tras cliente y productos, tabla compacta y resumen jerárquico", async () => uxf.verificarCasosFlujoFacturaUx(), null],
     ["E1 (PRO-93/94): J003 dInfAdic en FE y NCE — observaciones + dirección de entrega validada + vendedor autenticado, snapshot idempotente, límite 5000 y aislamiento", async () => e1ia.verificarCasosInfoAdicionalE1(), null],
-    ["PRO-331 (CASA MINGO): Nueva factura — cuatro líneas visibles con rolagem local desde la quinta y cabecera sticky, columna N° 1..n solo visual, foco limpio de vuelta al buscador tras alta rápida sin robar foco (límite 999 intacto)", async () => p331.verificarCasosDetalleFacturaPro331(), null],
+    ["PRO-331 (CASA MINGO): Nueva factura — cuatro líneas visibles con rolagem local desde la quinta y cabecera sticky, columna N° 1..n solo visual, foco tras alta rápida sin robar foco (PRO-341: ahora a Cantidad, ya no al buscador) (límite 999 intacto)", async () => p331.verificarCasosDetalleFacturaPro331(), null],
     ["PRO-333 (CASA MINGO): Documentos — columna «Documento» ordenada por valor numérico del número fiscal en SQL antes de LIMIT/OFFSET, ceros de presentación, desempates estables, filtros y fecha por defecto intactos", async () => p333.verificarCasosOrdenDocumentosPro333(), null],
     ["PRO-334 (CASA MINGO): Documentos — color por tipo (FE azul suave, NCE amarillo claro) en fila y detalle, independiente del estado fiscal PRO-338 y de la alerta CDC_DIVERGENTE; hover/foco, contraste y KuDE preservados", async () => p334.verificarCasosColoresTipoPro334(), null],
     ["PRO-339-R01: máximo de líneas por FE NUEVA configurable POR EMPRESA (empresas.fe_max_lineas, NULL = 999; A=21/B=63/C=99 sintéticas), validado en prepararFactura antes de numeración/stock, falla cerrado sin NEX-078; pantalla «N de M ítems» y alta bloqueada; R02: alta atómica con claves únicas y respuesta coherente; NCE, históricas y MAX_LINEAS 999 intactos", async () => p339.verificarCasosLimiteLineasPro339(), null],
+    ["PRO-341-R01 (CASA MINGO): Nueva factura — código de producto COMPLETO (sin «…», con quiebre; Producto con 200 px útiles en modo tabla y rolagem horizontal local; tarjetas ≤ 900 px intactas) y foco/selección en Cantidad de la línea añadida o incrementada tras un alta rápida (sustituye la vuelta al buscador de PRO-331), sin robar foco; rechazo por máximo, selector avanzado y panel fiscal preservados", async () => p341.verificarCasosCodigoFocoPro341(), null],
   ];
   let total = 0;
   let fallosTotal = 0;
