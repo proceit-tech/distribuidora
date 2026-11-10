@@ -1,3 +1,15 @@
+## RECTIFICACIÓN DE ANÁLISIS — CDC NO SE ENVÍA EN CONSULTA (10/11/2026)
+
+El responsable corrigió una confusión del análisis inicial: **NEXIT jamás envía un CDC al consultar estado**. `POST /api/consulta_de` envía `dEst,dPunExp,dNumDoc,dSerieNum,tipoDoc` y recibe `response.DE.CDC`. **En la PRIMERA CONSULTA no hay CDC registrado en `documentos_electronicos.cdc`**; el primer resultado asociado inequívocamente al documento debe aportar el CDC y, si se confirma la identidad, el estado SIFEN y su código/mensaje, incluido `Rechazado / 1101 / Número de timbrado inválido`.
+
+El término `CDC_DIVERGENTE` no demuestra que haya un CDC previo diferente: las funciones versionadas también lo emiten si el CDC RECIBIDO contradice tipo/EEE/PPP/NNNNNNN. La pantalla `CDC distinto del registrado` es **engañosa** cuando `d.cdc=NULL`. **No interpretar CDC NULL como incoherencia**. La validación de identidad, en cambio, sigue siendo obligatoria para no atribuir respuesta de otra FE. Si el CDC del gateway coincide con el CDC estructuralmente correcto del portal/Excel, el código SQL versionado no debería impedir el rechazo: se debe encontrar exactamente por qué se devolvió `CDC_DIVERGENTE` (CDC recibido, identidad persistida, implementación SQL real o correlación del gateway), no justificar permanentemente el estado Pendiente ni inventar otra causa.
+
+**Rectificación del flujo exigido:** `primera consulta sin CDC local -> respuesta identificable con CDC válido -> validar identidad -> guardar CDC + RECHAZADO/APROBADO y código/mensaje mediante función SQL transaccional -> listar estado confirmado`. No enviar CDC en request, no presuponer que ya existía, ni establecer RECHAZADO sin correlación segura. Evidencia de intento y estado final son ejes distintos, pero no se debe convertir una primera respuesta válida en bloqueo eterno.
+
+La investigación D03 continúa siendo **SOLO DIAGNÓSTICO**, sin ejecución de SQL, gateway ni cambios en producción. Esta aclaración prevalece sobre cualquier redacción anterior que sugiera que el CDC necesariamente se encontraba ya registrado.
+
+---
+
 # INCIDENTE CRÍTICO — PRO-338 / CDC_DIVERGENTE versus rechazo fiscal real
 
 **Fecha:** 10/11/2026  
