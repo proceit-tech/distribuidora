@@ -6,7 +6,7 @@ import { Fragment, useCallback, useEffect, useId, useRef, useState, useSyncExter
 import ui from "@/components/ui/lista-padrao/lista.module.css";
 import { AJUSTE_VACIO, ajusteParaEnvio, decidirProducto, problemasFiscales, valoresEfectivos, type AjusteUI, type PermisosProducto } from "@/lib/facturacion/ajuste-item";
 import { puedeEnviarPorGateway, type EstadoGatewayUI } from "@/lib/facturacion/gateway-estado";
-import { crearBuscadorRapido, type EstadoBuscador, MAX_VISIBLES } from "@/lib/facturacion/busqueda-rapida";
+import { crearBuscadorRapido, ELECCION_ACEPTADA, ELECCION_RECHAZADA, type EstadoBuscador, MAX_VISIBLES, type ResultadoEleccion } from "@/lib/facturacion/busqueda-rapida";
 import { formularioModificado, perdidasAlCambiarCondicion, perdidasAlCambiarMoneda } from "@/lib/facturacion/cambios-formulario";
 import { descuentosTrasCambioMoneda } from "@/lib/facturacion/descuentos";
 import { altoMaximoDetalle, desplazamientoParaMostrar, destinoFocoTrasAlta, FILAS_VISIBLES_DETALLE, ID_BUSCADOR_PRODUCTOS, ordinalLinea, puedeEnfocarCantidad, puedeVolverAlBuscador, type OrigenAlta } from "@/lib/facturacion/detalle-factura-vista";
@@ -344,7 +344,8 @@ function BuscadorRapido<T extends { id: string }>({ url, campo, etiqueta, placeh
   url: string; campo: "clientes" | "productos" | "vendedores"; etiqueta: string; placeholder: string; describir: (t: T) => ItemBusqueda; exacto: (t: T, texto: string) => boolean;
   /** E05: ¿el resultado es un código DISTINTO que solo difiere en ceros iniciales? (001234 ≠ 1234): Enter no lo elige solo. */
   parecido?: (t: T, texto: string) => boolean;
-  alElegir: (t: T) => void; mantenerAbierto?: boolean; autoFocus?: boolean;
+  /** PRO-341-R02: resultado efectivo de la elección (productos: aceptada o rechazada); sin retorno = aceptada (clientes, vendedores, como antes). */
+  alElegir: (t: T) => ResultadoEleccion | void; mantenerAbierto?: boolean; autoFocus?: boolean;
   /** Acción de la misma fila que el campo (p. ej. «Búsqueda avanzada»): el aviso de resultado va DEBAJO de la fila y no mueve la acción. */
   accion?: React.ReactNode;
   /** PRO-331: id estable del campo (el buscador de productos lo usa para recibir de vuelta el foco tras un alta rápida). */
@@ -367,12 +368,12 @@ function BuscadorRapido<T extends { id: string }>({ url, campo, etiqueta, placeh
     parecido,
     titulo: (t) => describir(t).titulo,
     alCambiar: setB,
-    alElegir: (t) => { alElegir(t); if (!mantenerAbierto) setAbierto(false); },
+    alElegir: (t) => { const resultado = alElegir(t); if (!mantenerAbierto) setAbierto(false); return resultado; },
   }));
 
   // Moneda, permisos y callbacks pueden cambiar: el controlador usa siempre los vigentes.
   useEffect(() => {
-    ctl.configurar({ habilitado: (t) => describir(t).habilitado, exacto, parecido, titulo: (t) => describir(t).titulo, alElegir: (t) => { alElegir(t); if (!mantenerAbierto) setAbierto(false); } });
+    ctl.configurar({ habilitado: (t) => describir(t).habilitado, exacto, parecido, titulo: (t) => describir(t).titulo, alElegir: (t) => { const resultado = alElegir(t); if (!mantenerAbierto) setAbierto(false); return resultado; } });
   });
 
   useEffect(() => { if (abierto) ctl.abrir(); }, [abierto, ctl]);
@@ -525,7 +526,7 @@ function BuscadorVendedor({ alElegir }: { alElegir: (v: Vendedor) => void }) {
 }
 
 /** Búsqueda rápida de productos (código, GTIN o descripción): permanece abierta para añadir varios; los que tienen impedimentos no se pueden añadir. */
-function BuscadorProducto({ alElegir, permisos, moneda, accion }: { alElegir: (p: Producto) => void; permisos: PermisosProducto; moneda: string; accion?: React.ReactNode }) {
+function BuscadorProducto({ alElegir, permisos, moneda, accion }: { alElegir: (p: Producto) => ResultadoEleccion; permisos: PermisosProducto; moneda: string; accion?: React.ReactNode }) {
   return (
     <BuscadorRapido<Producto>
       url="/api/facturas/productos"
@@ -953,7 +954,9 @@ export default function NuevaFacturaPage() {
     return siguienteClave;
   }
 
-  const agregarRapido = (p: Producto) => { agregar(p, "rapido"); };
+  // PRO-341-R02 (R01-F001): el resultado REAL del alta llega al controlador de la búsqueda rápida: ALTA_BLOQUEADA → rechazada (sin «añadido»; la alerta del máximo
+  // de la empresa la muestra la tarjeta Detalle); línea nueva o SKU existente incrementado → aceptada. Nunca se trata la clave numérica como éxito/fracaso por sí misma.
+  const agregarRapido = (p: Producto): ResultadoEleccion => (agregar(p, "rapido") === ALTA_BLOQUEADA ? ELECCION_RECHAZADA : ELECCION_ACEPTADA);
 
   const editar = (k: number, cambio: Partial<Pick<Linea, "cantidad" | "precio" | "descuento">>) => aplicarLineas((ls) => ls.map((x) => (x.clave === k ? { ...x, ...cambio } : x)));
   const editarAjuste = (k: number, cambio: Partial<AjusteUI>) => aplicarLineas((ls) => ls.map((x) => (x.clave === k ? { ...x, ajuste: { ...x.ajuste, ...cambio } } : x)));

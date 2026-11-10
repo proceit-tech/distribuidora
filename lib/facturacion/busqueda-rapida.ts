@@ -47,13 +47,31 @@ export type EstadoBuscador<T> = {
   buscando: boolean;
 };
 
+/**
+ * PRO-341-R02 — resultado EFECTIVO de una elección (contrato explícito entre la pantalla y el controlador).
+ * - `{ aceptado: true }`: la pantalla incorporó la elección (p. ej. línea nueva o SKU existente incrementado) → el controlador anuncia «… añadido.».
+ * - `{ aceptado: false }`: la pantalla la RECHAZÓ (p. ej. máximo de líneas de la empresa) → el controlador NO anuncia éxito; el motivo lo presenta la pantalla
+ *   (alerta propia, p. ej. mensajeAltaBloqueada). Solo este objeto explícito es rechazo: nunca se interpreta un número (ALTA_BLOQUEADA = -1) ni otro valor.
+ * - Sin retorno (`void`): callbacks que no pueden rechazar (clientes, vendedores) → aceptado, exactamente como antes.
+ */
+export type ResultadoEleccion = { aceptado: true } | { aceptado: false };
+
+export const ELECCION_ACEPTADA: ResultadoEleccion = { aceptado: true };
+export const ELECCION_RECHAZADA: ResultadoEleccion = { aceptado: false };
+
+/** ¿La pantalla rechazó la elección? Solo con el objeto explícito `{ aceptado: false }`. */
+export function eleccionRechazada(r: ResultadoEleccion | void): boolean {
+  return typeof r === "object" && r !== null && r.aceptado === false;
+}
+
 export type ConfigBuscador<T> = {
   habilitado: (t: T) => boolean;
   exacto: (t: T, texto: string) => boolean;
   /** E05: código distinto que solo difiere en ceros iniciales del texto (no se elige solo con Enter). */
   parecido?: (t: T, texto: string) => boolean;
   titulo: (t: T) => string;
-  alElegir: (t: T) => void;
+  /** PRO-341-R02: devuelve el resultado efectivo (ResultadoEleccion) o nada (= aceptado, compatibilidad con clientes/vendedores). */
+  alElegir: (t: T) => ResultadoEleccion | void;
 };
 
 export function crearBuscadorRapido<T>(deps0: {
@@ -96,9 +114,14 @@ export function crearBuscadorRapido<T>(deps0: {
     }
   }
 
+  // Clic, Enter con opción resaltada y Enter con consulta directa (lector/GTIN) pasan TODOS por aquí: mismo contrato de resultado.
   function seleccionar(t: T) {
-    deps.alElegir(t);
+    const resultado = deps.alElegir(t);
+
+    // El texto se limpia en ambos casos (el lector queda listo); escribir("") ya deja el aviso vacío.
     api.escribir("");
+    // PRO-341-R02 (R01-F001): «añadido» SOLO si la pantalla confirmó el alta; un rechazo no muestra éxito (el motivo lo presenta la pantalla).
+    if (eleccionRechazada(resultado)) return;
     emitir({ aviso: `«${deps.titulo(t)}» añadido.` });
   }
 

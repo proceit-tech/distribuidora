@@ -92,7 +92,7 @@ export async function verificarCasosVisualCodigosE05(): Promise<string[]> {
       cancelar: () => undefined,
       habilitado: () => true, exacto, parecido, titulo: (t) => t.codigo,
       alCambiar: (e) => { if (e.aviso) avisos.push(e.aviso); },
-      alElegir: (t) => elegidos.push(t.codigo),
+      alElegir: (t) => { elegidos.push(t.codigo); }, // PRO-341-R02: sin retorno = aceptada (contrato ResultadoEleccion | void)
     });
 
     b.escribir("1234");

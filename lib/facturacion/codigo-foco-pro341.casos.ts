@@ -6,6 +6,8 @@
  *   (scroll horizontal LOCAL), tarjetas ≤ 900 px sin mínimo artificial; cuatro filas visibles y rolagem local de PRO-331 intactas.
  * - Requisito B (foco): SUSTITUYE la vuelta al buscador de PRO-331. Lógica REAL probada: destinoFocoTrasAlta y puedeEnfocarCantidad con un MODELO del editor que replica
  *   agregar() (ref sincrónica PRO-339-R02, SKU repetido, máximo por empresa, claves únicas) y el efecto de foco (pedido único, descartado si el operador se movió).
+ * - PRO-341-R02 (R01-F001): el resultado EFECTIVO del alta llega a la búsqueda rápida (ResultadoEleccion). Casos 47–66 ejercitan el controlador REAL crearBuscadorRapido
+ *   con dependencias simuladas (temporizadores, respuestas diferidas) conectado al modelo con el mismo adaptador de agregarRapido: clic/Enter/lector/GTIN/async/ceros.
  *   El foco efectivo en navegador NO se ejecuta aquí: se inspecciona el código real de page.tsx; la revisión visual corresponde al responsable.
  *
  * Empresas con máximo 21/63/99 son SINTÉTICAS. Casos ESCRITOS, NO EJECUTADOS en la entrega (restricción vigente: sin runner, lint, typecheck ni build).
@@ -14,6 +16,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { contador } from "@/lib/clientes/contador-casos";
+import { crearBuscadorRapido, ELECCION_ACEPTADA, ELECCION_RECHAZADA, eleccionRechazada, type EstadoBuscador, MENSAJE_ENTER, type ResultadoEleccion } from "@/lib/facturacion/busqueda-rapida";
 import { destinoFocoTrasAlta, FILAS_VISIBLES_DETALLE, ID_BUSCADOR_PRODUCTOS, puedeEnfocarCantidad, puedeVolverAlBuscador, type OrigenAlta } from "@/lib/facturacion/detalle-factura-vista";
 import { agregarSiCabe, ALTA_BLOQUEADA, mensajeAltaBloqueada, puedeAgregarLinea } from "@/lib/facturacion/limite-lineas";
 import { MAX_LINEAS } from "@/lib/facturacion/payload-fe";
@@ -109,6 +112,80 @@ function anchoColumna(css: string, clase: string): number {
   const todas = [...css.matchAll(new RegExp(`\\.${clase} \\{ width: (\\d+)px; \\}`, "g"))];
 
   return todas.length ? Number(todas[todas.length - 1][1]) : Number.NaN;
+}
+
+/* ── PRO-341-R02: harness del controlador REAL de la búsqueda rápida (crearBuscadorRapido) con dependencias simuladas ────────────────────────────────────
+ * Temporizadores manuales (`disparar`), respuestas de `buscar` diferidas (`responder`) o inmediatas, historial de estados emitidos y conteo de llamadas a alElegir.
+ * `alElegir` del producto se conecta al modelo `editorFoco` con el MISMO adaptador que page.tsx::agregarRapido. */
+type Prod = { id: string; codigo: string; gtin: string | null; nombre: string };
+
+const vaciar = () => new Promise<void>((r) => setTimeout(r, 0));
+
+function buscadorSimulado<T>(catalogo: T[], cfg: { exacto: (t: T, q: string) => boolean; parecido?: (t: T, q: string) => boolean; coincide: (t: T, q: string) => boolean; titulo: (t: T) => string; alElegir: (t: T) => ResultadoEleccion | void; diferido?: boolean }) {
+  const timers = new Map<number, () => void>();
+  let idTimer = 0;
+  const pendientes: { q: string; ok: () => void; falla: (e: Error) => void }[] = [];
+  const estados: EstadoBuscador<T>[] = [];
+  let elecciones = 0;
+  const ctl = crearBuscadorRapido<T>({
+    buscar: (q) => new Promise((ok, falla) => {
+      const resp = () => { const items = catalogo.filter((t) => cfg.coincide(t, q)); ok({ items, total: items.length }); };
+
+      if (cfg.diferido) pendientes.push({ q, ok: resp, falla });
+      else resp();
+    }),
+    programar: (fn) => { idTimer += 1; timers.set(idTimer, fn); return idTimer; },
+    cancelar: (t) => { timers.delete(t as number); },
+    alCambiar: (e) => { estados.push(e); },
+    habilitado: () => true,
+    exacto: cfg.exacto,
+    parecido: cfg.parecido,
+    titulo: cfg.titulo,
+    alElegir: (t) => { elecciones += 1; return cfg.alElegir(t); },
+  });
+
+  return {
+    ctl, estados, pendientes,
+    elecciones: () => elecciones,
+    disparar: () => { const fns = [...timers.values()]; timers.clear(); fns.forEach((f) => f()); },
+    responder: (i = 0) => { const [r] = pendientes.splice(i, 1); r?.ok(); },
+    fallar: (i = 0) => { const [r] = pendientes.splice(i, 1); r?.falla(new Error("Error de red simulado.")); },
+    anuncios: () => estados.map((e) => e.aviso).filter((a) => a.endsWith(" añadido.")),
+  };
+}
+
+const configProducto = {
+  exacto: (p: Prod, q: string) => p.codigo === q || p.gtin === q,
+  parecido: (p: Prod, q: string) => p.codigo !== q && p.codigo.replace(/^0+/, "") === q.replace(/^0+/, ""),
+  coincide: (p: Prod, q: string) => p.codigo.includes(q) || (p.gtin ?? "").includes(q) || p.nombre.toLowerCase().includes(q.toLowerCase()),
+  titulo: (p: Prod) => p.nombre,
+};
+
+/** Catálogo: los `n` productos ya facturados (p-1..p-n) + uno nuevo con ceros iniciales y GTIN. */
+const catalogoCon = (n: number): Prod[] => [
+  ...Array.from({ length: n }, (_, i) => ({ id: `p-${i + 1}`, codigo: `SKU-${i + 1}`, gtin: null, nombre: `Producto ${i + 1}` })),
+  { id: "p-nuevo", codigo: "0001234", gtin: "7840000000017", nombre: "Producto nuevo" },
+  { id: "p-otro", codigo: "A-77", gtin: null, nombre: "Producto otro" },
+];
+
+/** Editor simulado + buscador real conectados con el adaptador de page.tsx::agregarRapido. */
+function pantallaRapida(maximo: number | null, n: number, diferido = false) {
+  const editor = editorFoco(maximo, filas(n));
+  const b = buscadorSimulado<Prod>(catalogoCon(n), { ...configProducto, diferido, alElegir: (p) => (editor.agregar(p.id, "rapido") === ALTA_BLOQUEADA ? ELECCION_RECHAZADA : ELECCION_ACEPTADA) });
+
+  return { editor, ...b };
+}
+
+type Via = "clic" | "enterResaltado" | "enterDirecto";
+
+/** Elige `codigo` por la vía indicada (texto = código exacto) y devuelve tras resolver todo. */
+async function elegirPor(p: ReturnType<typeof pantallaRapida>, via: Via, codigo: string) {
+  p.ctl.escribir(codigo);
+  if (via === "enterDirecto") { await p.ctl.enter(); return; }
+  p.disparar();
+  await vaciar();
+  if (via === "clic") p.ctl.elegir(p.ctl.visibles()[0]);
+  else { p.ctl.mover(1); await p.ctl.enter(); }
 }
 
 export async function verificarCasosCodigoFocoPro341(): Promise<string[]> {
@@ -328,8 +405,165 @@ export async function verificarCasosCodigoFocoPro341(): Promise<string[]> {
   cierto("PRO341-44 Cantidad del selector avanzado (CantidadAnadido) se edita dentro del diálogo y al terminar vuelve al filtro; el input de fondo conserva id y teclado decimal",
     /<CantidadAnadido [\s\S]*?alTerminar=\{\(\) => document\.getElementById\("filtro-productos"\)\?\.focus\(\)\}/.test(pag) && /campo\.current\?\.focus\(\)/.test(sinCom(leer("app/(private)/facturas/nueva/cantidad-anadido.tsx"))) && /id=\{`cantidad-\$\{l\.clave\}`\}\s*inputMode="decimal"/.test(tabla));
   cierto("PRO341-45 el buscador sigue limpio y usable al volver (id estable, mantenerAbierto, controlador limpia el texto tras elegir); sin atajo nuevo que devuelva el foco tras digitar la cantidad",
-    /idCampo=\{ID_BUSCADOR_PRODUCTOS\}/.test(pag) && /mantenerAbierto\s*describir=/.test(pag) && /deps\.alElegir\(t\);\s*api\.escribir\(""\);/.test(leer("lib/facturacion/busqueda-rapida.ts")) && !/onKeyDown=\{[^}]*ID_BUSCADOR_PRODUCTOS/.test(tabla) && ID_BUSCADOR_PRODUCTOS === "buscador-productos-factura");
+    /idCampo=\{ID_BUSCADOR_PRODUCTOS\}/.test(pag) && /mantenerAbierto\s*describir=/.test(pag) && /const resultado = deps\.alElegir\(t\);\s*api\.escribir\(""\);/.test(leer("lib/facturacion/busqueda-rapida.ts")) && !/onKeyDown=\{[^}]*ID_BUSCADOR_PRODUCTOS/.test(tabla) && ID_BUSCADOR_PRODUCTOS === "buscador-productos-factura");
   igual("PRO341-46 límite fiscal común intacto (MAX_LINEAS = 999) y cuatro filas visibles no son tope", [MAX_LINEAS, FILAS_VISIBLES_DETALLE], [999, 4]);
+
+  // ── 9. PRO-341-R02 (R01-F001): resultado EFECTIVO de la búsqueda rápida — controlador REAL crearBuscadorRapido con dependencias simuladas ──────────────
+  igual("PRO341-47 contrato: solo el objeto explícito { aceptado:false } es rechazo; aceptado, void, null y el número ALTA_BLOQUEADA nunca se interpretan como rechazo",
+    [eleccionRechazada(ELECCION_RECHAZADA), eleccionRechazada({ aceptado: false }), eleccionRechazada(ELECCION_ACEPTADA), eleccionRechazada(undefined), eleccionRechazada(null as unknown as void), eleccionRechazada(ALTA_BLOQUEADA as unknown as void)],
+    [true, true, false, false, false, false]);
+
+  for (const [caso, maximo] of [["PRO341-48", 21], ["PRO341-49", 63], ["PRO341-50", 99]] as const) {
+    const p = pantallaRapida(maximo, maximo);
+
+    await elegirPor(p, "enterDirecto", "0001234");
+    p.editor.render();
+    igual(`${caso} empresa sintética con máximo ${maximo} completa + SKU NUEVO por lector (Enter directo): alElegir llamado 1 vez, línea NO creada, mensaje real de máximo, SIN «añadido» en ningún estado emitido, texto limpio y foco sigue en el buscador (no en Cantidad inexistente)`,
+      [p.elecciones(), p.editor.lineas().length, p.editor.avisos, p.anuncios(), p.ctl.estado().aviso, p.ctl.estado().texto, p.editor.foco(), p.editor.focos()],
+      [1, maximo, [mensajeAltaBloqueada(maximo)], [], "", "", "buscador", 0]);
+  }
+
+  {
+    const p = pantallaRapida(21, 21);
+
+    await elegirPor(p, "enterDirecto", "SKU-7");
+    p.editor.render();
+    igual("PRO341-51 FE completa (21/21) + MISMO SKU: es aceptado (incrementa, no crea línea), anuncia «añadido» y el foco va a la Cantidad de ESA línea con el valor seleccionado",
+      [p.editor.lineas().length, p.editor.lineas()[6].cantidad, p.anuncios(), p.ctl.estado().aviso, p.editor.avisos, p.editor.foco(), p.editor.seleccion()],
+      [21, "2", ["«Producto 7» añadido."], "«Producto 7» añadido.", [], "cantidad-7", "2"]);
+  }
+  {
+    const p = pantallaRapida(21, 20);
+
+    await elegirPor(p, "clic", "0001234");
+    p.editor.render();
+    igual("PRO341-52 20/21 + SKU nuevo por clic: aceptado → línea 21 creada, «añadido» y foco en cantidad-21",
+      [p.editor.lineas().length, p.anuncios(), p.editor.foco(), p.editor.seleccion(), p.editor.avisos], [21, ["«Producto nuevo» añadido."], "cantidad-21", "1", []]);
+  }
+  {
+    const p = pantallaRapida(21, 20);
+
+    await elegirPor(p, "enterDirecto", "0001234");
+    await elegirPor(p, "enterDirecto", "A-77"); // segunda lectura ANTES del render
+    p.editor.render();
+    igual("PRO341-53 una sola vacante y DOS lecturas en el mismo ciclo: la primera aceptada con «añadido», la segunda rechazada SIN «añadido» (estado final sin aviso de éxito) y sin foco a línea inexistente",
+      [p.elecciones(), p.editor.lineas().length, p.editor.lineas().map((l) => l.productoId).slice(-1), p.anuncios(), p.ctl.estado().aviso, p.editor.avisos, p.editor.foco(), p.editor.focos()],
+      [2, 21, ["p-nuevo"], ["«Producto nuevo» añadido."], "", [mensajeAltaBloqueada(21)], "buscador", 0]);
+  }
+  {
+    const p = pantallaRapida(21, 19);
+
+    await elegirPor(p, "enterDirecto", "0001234");
+    await elegirPor(p, "enterDirecto", "A-77");
+    p.editor.render();
+
+    const claves = p.editor.lineas().map((l) => l.clave);
+
+    igual("PRO341-54 dos vacantes y dos lecturas en el mismo ciclo: ambas aceptadas con su «añadido», claves únicas 20/21 y foco a la Cantidad de la ÚLTIMA aceptada",
+      [p.anuncios(), claves.slice(-2), new Set(claves).size === claves.length, p.editor.foco()], [["«Producto nuevo» añadido.", "«Producto otro» añadido."], [20, 21], true, "cantidad-21"]);
+  }
+
+  const porVia = async (via: Via, n: number) => {
+    const p = pantallaRapida(21, n);
+
+    await elegirPor(p, via, "0001234");
+    p.editor.render();
+
+    return [p.elecciones(), p.editor.lineas().length, p.anuncios().length, p.ctl.estado().aviso === "", p.editor.foco()];
+  };
+
+  igual("PRO341-55 clic, Enter con opción resaltada y Enter directo (lector/GTIN) pasan por el MISMO seleccionar: con la FE completa los tres rechazan sin «añadido»",
+    await Promise.all((["clic", "enterResaltado", "enterDirecto"] as const).map((v) => porVia(v, 21))), Array(3).fill([1, 21, 0, true, "buscador"]));
+  igual("PRO341-56 … y con vacante los tres aceptan, anuncian una vez y enfocan la Cantidad nueva",
+    await Promise.all((["clic", "enterResaltado", "enterDirecto"] as const).map((v) => porVia(v, 20))), Array(3).fill([1, 21, 1, false, "cantidad-21"]));
+  {
+    const p = pantallaRapida(21, 20);
+
+    await elegirPor(p, "enterDirecto", "7840000000017");
+    p.editor.render();
+    igual("PRO341-57 GTIN exacto leído por escáner: selecciona el producto y respeta el mismo contrato", [p.editor.lineas().slice(-1)[0].productoId, p.anuncios(), p.editor.foco()], ["p-nuevo", ["«Producto nuevo» añadido."], "cantidad-21"]);
+  }
+  {
+    const p = pantallaRapida(21, 20);
+
+    p.ctl.escribir("1234");
+    await p.ctl.enter();
+    igual("PRO341-58 E05 ceros iniciales: «1234» no elige «0001234» solo (CODIGO_PARECIDO), sin llamar a alElegir ni anunciar éxito",
+      [p.elecciones(), p.ctl.estado().aviso, p.anuncios(), p.editor.lineas().length], [0, MENSAJE_ENTER.CODIGO_PARECIDO, [], 20]);
+  }
+  {
+    const p = pantallaRapida(21, 20, true);
+
+    p.ctl.escribir("0001234");
+    const enter = p.ctl.enter();
+
+    p.ctl.escribir("A-7"); // el texto cambia mientras la consulta directa está pendiente
+    p.responder(0);
+    await enter;
+    await vaciar();
+
+    const q = pantallaRapida(21, 20, true);
+
+    q.ctl.escribir("0001234");
+    const enter2 = q.ctl.enter();
+
+    q.ctl.cerrar(); // Escape / blur
+    q.responder(0);
+    await enter2;
+    await vaciar();
+    igual("PRO341-59 async: respuesta tardía de Enter tras cambiar el texto o cerrar (Escape/blur) se descarta — ni alElegir, ni línea, ni «añadido»",
+      [p.elecciones(), p.editor.lineas().length, p.anuncios(), q.elecciones(), q.editor.lineas().length, q.anuncios()], [0, 20, [], 0, 20, []]);
+  }
+  {
+    const p = pantallaRapida(21, 21, true);
+
+    p.ctl.escribir("0001234");
+    const enter = p.ctl.enter();
+
+    igual("PRO341-60 async: mientras la consulta directa está pendiente se muestra «Buscando…» sin aviso; al resolverse con la FE completa termina sin éxito",
+      [p.ctl.estado().buscando, p.ctl.estado().aviso], [true, ""]);
+    p.responder(0);
+    await enter;
+    igual("PRO341-60b … resultado: rechazo sin «añadido», buscando=false, texto limpio", [p.ctl.estado().buscando, p.anuncios(), p.ctl.estado().texto, p.editor.lineas().length], [false, [], "", 21]);
+  }
+  {
+    type Ent = { id: string; documento: string; nombre: string };
+    const entidades: Ent[] = [{ id: "c-1", documento: "80012345-6", nombre: "Cliente Uno" }, { id: "c-2", documento: "4444444", nombre: "Cliente Dos" }];
+    const elegidos: string[] = [];
+    const cfg = { exacto: (c: Ent, q: string) => c.documento === q, coincide: (c: Ent, q: string) => c.documento.includes(q) || c.nombre.includes(q), titulo: (c: Ent) => c.nombre };
+    const cliente = buscadorSimulado<Ent>(entidades, { ...cfg, alElegir: (c) => { elegidos.push(c.id); } });
+
+    await (async () => { cliente.ctl.escribir("80012345-6"); await cliente.ctl.enter(); })();
+
+    const vendedor = buscadorSimulado<Ent>(entidades, { ...cfg, alElegir: (v) => { elegidos.push(v.id); } });
+
+    vendedor.ctl.escribir("Cliente Dos");
+    vendedor.disparar();
+    await vaciar();
+    vendedor.ctl.elegir(vendedor.ctl.visibles()[0]);
+    igual("PRO341-61 clientes y vendedores (callbacks void, sin rechazo posible) se comportan como antes: eligen y anuncian «añadido»",
+      [elegidos, cliente.ctl.estado().aviso, vendedor.ctl.estado().aviso], [["c-1", "c-2"], "«Cliente Uno» añadido.", "«Cliente Dos» añadido."]);
+  }
+
+  // ── 10. PRO-341-R02: integración en el código real de la pantalla y del controlador ─────────────────────────────────────────────────────────────────
+  const ctlFuente = sinCom(leer("lib/facturacion/busqueda-rapida.ts"));
+
+  cierto("PRO341-62 controlador: alElegir tipado ResultadoEleccion | void; seleccionar guarda el resultado, limpia el texto y solo emite «añadido» si NO fue rechazado",
+    /alElegir: \(t: T\) => ResultadoEleccion \| void;/.test(ctlFuente) && /const resultado = deps\.alElegir\(t\);\s*api\.escribir\(""\);\s*if \(eleccionRechazada\(resultado\)\) return;\s*emitir\(\{ aviso: `«\$\{deps\.titulo\(t\)\}» añadido\.` \}\);/.test(ctlFuente)
+    && (ctlFuente.match(/añadido\./g) ?? []).length === 1);
+  cierto("PRO341-63 pantalla: agregarRapido traduce ALTA_BLOQUEADA a ELECCION_RECHAZADA (y todo lo demás a ELECCION_ACEPTADA) y es lo que recibe BuscadorProducto",
+    /const agregarRapido = \(p: Producto\): ResultadoEleccion => \(agregar\(p, "rapido"\) === ALTA_BLOQUEADA \? ELECCION_RECHAZADA : ELECCION_ACEPTADA\);/.test(pag) && /<BuscadorProducto alElegir=\{agregarRapido\}/.test(pag)
+    && /function BuscadorProducto\(\{[^}]*\}: \{ alElegir: \(p: Producto\) => ResultadoEleccion;/.test(pag));
+  cierto("PRO341-64 BuscadorRapido genérico propaga el resultado al controlador en la creación y en configurar (sin descartarlo al cerrar la lista)",
+    (pag.match(/alElegir: \(t\) => \{ const resultado = alElegir\(t\); if \(!mantenerAbierto\) setAbierto\(false\); return resultado; \}/g) ?? []).length === 2 && /alElegir: \(t: T\) => ResultadoEleccion \| void;/.test(pag));
+  cierto("PRO341-65 clientes y vendedores siguen con callbacks void (setCliente / setVendedor) y la pantalla muestra el motivo del rechazo en su propia alerta (role=alert, mensajeAltaBloqueada)",
+    /function BuscadorCliente\(\{ alElegir, accion \}: \{ alElegir: \(c: Cliente\) => void;/.test(pag) && /function BuscadorVendedor\(\{ alElegir \}: \{ alElegir: \(v: Vendedor\) => void \}\)/.test(pag)
+    && /<BuscadorCliente alElegir=\{setCliente\}/.test(pag) && /<BuscadorVendedor alElegir=\{setVendedor\}/.test(pag)
+    && /\{avisoLimiteLineas && !puedeAgregarLinea\(lineas\.length, maxLineasFE\) \? <p className=\{estilos\.fieldError\} role="alert">\{avisoLimiteLineas\}<\/p> : null\}/.test(pag)
+    && /setAvisoLimiteLineas\(mensajeAltaBloqueada\(maxLineasFE\)\);/.test(agregar));
+  cierto("PRO341-66 selector avanzado intacto: recibe agregar (origen por defecto «avanzado») y sigue decidiendo su propio aviso con ALTA_BLOQUEADA, sin pasar por agregarRapido",
+    /<SelectorProducto [^>]*alAgregar=\{agregar\}/.test(pag) && /function agregar\(p: Producto, origen: OrigenAlta = "avanzado"\): number \{/.test(pag)
+    && /setAviso\(clave === ALTA_BLOQUEADA \? mensajeAltaBloqueada\(maxLineas\) : `«\$\{p\.descripcion\}» añadido\.`\);/.test(pag) && (pag.match(/agregarRapido/g) ?? []).length === 2);
 
   return fallos;
 }

@@ -30,7 +30,7 @@ function montar() {
     programar: (fn) => { const t = { id: ++n, fn, vivo: true }; cola.push(t); return t.id; },
     cancelar: (id) => { const t = cola.find((x) => x.id === id); if (t) t.vivo = false; },
     habilitado: (t) => t.ok, exacto: (t, x) => t.id === x || t.gtin === x, titulo: (t) => t.id,
-    alCambiar: () => undefined, alElegir: (t) => elegidos.push(t.id),
+    alCambiar: () => undefined, alElegir: (t) => { elegidos.push(t.id); }, // PRO-341-R02: sin retorno = aceptada (contrato ResultadoEleccion | void)
   });
 
   return { b, pedidos, elegidos, avanzar: () => { for (const t of cola.splice(0)) if (t.vivo) t.fn(); }, timers: () => cola.filter((x) => x.vivo).length };
