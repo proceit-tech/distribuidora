@@ -293,3 +293,264 @@ tr.detalleNCE > td :is(dt, small, p:not([role])) {
     border-left: 4px dashed CanvasText;
   }
 }
+
+/*
+ * PRO-342-R04 (UX01): cuatro iconos INDEPENDIENTES por documento en una sola línea (Envío · XML/CDC · SIFEN · Correo) y un quinto «!» solo si hay aviso técnico.
+ * Cada icono tiene símbolo propio (el color nunca es la única señal), nombre corto debajo, aria-label y tooltip en hover, foco de teclado y toque (tabIndex). Sin librerías.
+ * Colores del círculo: verde = confirmado, azul = XML firmado/CDC (no es aprobación), ámbar = pendiente/aviso, rojo = rechazo/error, gris = sin información.
+ */
+.iconosEstado {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.icono {
+  position: relative;
+  display: inline-flex;
+  min-width: 40px;
+  min-height: 40px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  border-radius: 8px;
+  outline: none;
+  cursor: help;
+}
+
+.icono:focus-visible {
+  outline: 3px solid rgba(15, 156, 165, 0.45);
+  outline-offset: 1px;
+}
+
+.iconoCirculo {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  border: 1.5px solid transparent;
+  border-radius: 50%;
+}
+
+.iconoCirculo svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.iconoNombre {
+  color: #46586a;
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+.iconoOk .iconoCirculo {
+  color: #ffffff;
+  background: #17864b;
+}
+
+.iconoInfo .iconoCirculo {
+  color: #ffffff;
+  background: #2463ad;
+}
+
+.iconoAviso .iconoCirculo {
+  color: #3d2a00;
+  background: #f0c24b;
+  border-color: #b8860b;
+}
+
+.iconoError .iconoCirculo {
+  color: #ffffff;
+  background: #c0362c;
+}
+
+.iconoNeutro .iconoCirculo {
+  color: #ffffff;
+  background: #687a8c;
+}
+
+/* Tooltip propio (mouse, foco y toque): el texto completo del estado; no tapa la fila siguiente gracias al z-index y al ancho acotado. */
+.icono[data-tip]:hover::after,
+.icono[data-tip]:focus-visible::after,
+.icono[data-tip]:focus::after {
+  content: attr(data-tip);
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 4px);
+  right: 0;
+  width: max-content;
+  max-width: 260px;
+  border-radius: 6px;
+  padding: 6px 8px;
+  color: #ffffff;
+  background: #1d3349;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.35;
+  text-align: left;
+  white-space: normal;
+  box-shadow: 0 4px 12px rgba(16, 33, 52, 0.25);
+}
+
+/* Leyenda breve, una vez por listado. */
+.leyenda {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 14px;
+  margin: 0 0 8px;
+  color: #3d5165;
+  font-size: 12.5px;
+}
+
+.leyendaAyuda {
+  flex-basis: 100%;
+  color: #53687a;
+}
+
+/* PRO-342-R04 (UX02): primera capa del detalle, cuatro datos fiscales alineados; lote y CDC monoespaciados y completos. */
+.fiscalCabecera {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 16px;
+  margin: 6px 0 4px;
+  color: #173d63;
+}
+
+.fiscalFases {
+  color: #3d5165;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.fiscal {
+  display: grid;
+  gap: 0;
+  max-width: 920px;
+  margin: 4px 0 8px;
+}
+
+.fiscal > div {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 12px;
+  border-bottom: 1px solid #e3eaf2;
+  padding: 6px 0;
+}
+
+.fiscal dt {
+  font-weight: 600;
+}
+
+.fiscal dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.mensajeRechazo {
+  color: #a3221a;
+  font-weight: 600;
+}
+
+.copiar {
+  appearance: none;
+  min-width: 64px;
+  min-height: 34px;
+  border: 1px solid #b4d0e9;
+  border-radius: 6px;
+  padding: 0 10px;
+  color: #1e5f96;
+  background: #ffffff;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.copiar:hover {
+  background: #f1f7fd;
+}
+
+.copiar:focus-visible,
+.toggleTecnico:focus-visible {
+  outline: 3px solid rgba(15, 156, 165, 0.4);
+  outline-offset: 2px;
+}
+
+.barraAcciones {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  margin: 8px 0;
+}
+
+/* Segunda capa: botón «Historial técnico (n)», cerrada por defecto. */
+.toggleTecnico {
+  appearance: none;
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #d6e2ed;
+  border-radius: 8px;
+  padding: 0 12px;
+  color: #204e7c;
+  background: #ffffff;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.tecnico {
+  margin: 8px 0 0;
+  border-top: 1px solid #e3eaf2;
+  padding-top: 6px;
+}
+
+.srSolo {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* Móvil: la etiqueta del dato pasa arriba y el botón Copiar debajo; los iconos siguen en una línea con su nombre visible. */
+@media (max-width: 640px) {
+  .fiscal > div {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .fiscal dt {
+    grid-column: 1 / -1;
+  }
+
+  .icono[data-tip]:hover::after,
+  .icono[data-tip]:focus-visible::after,
+  .icono[data-tip]:focus::after {
+    max-width: 200px;
+  }
+}
+
+/* Alto contraste del sistema: el círculo conserva un borde visible y el símbolo usa el color del texto. */
+@media (forced-colors: active) {
+  .iconoCirculo {
+    border-color: CanvasText;
+    color: CanvasText;
+  }
+}

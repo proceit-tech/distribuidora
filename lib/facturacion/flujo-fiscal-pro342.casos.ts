@@ -11,6 +11,8 @@
  * PRO-342-R03 / R03-01 retificada (casos ESCRITOS, NO EJECUTADOS): regla fiscal del responsable — un XML firmado SIEMPRE tiene CDC. Los escenarios usan «XML firmado» CON CDC; sin CDC
  * (ni registrado) «XML firmado» y los finales son RESPUESTA_INVALIDA y el seguimiento continúa (nunca final con CDC NULL). El lote del documento solo se fija con ENVIADO (ACK correlacionado).
  * Continuidad: credenciales de ENTORNO nunca MISMA.
+ * PRO-342-R04 (casos ESCRITOS, NO EJECUTADOS): «XML firmado» exige CDC en la RESPUESTA ACTUAL aunque el documento ya tenga CDC; CDC leído LITERAL (sin trim) en consulta y ACK; guarda
+ * complementaria en NEX-079; iconos independientes Envío · XML/CDC · SIFEN · Correo, primera capa de cuatro datos fiscales y historial técnico en segunda capa (funciones reales + fuente).
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -20,10 +22,10 @@ import { CADENCIA_SEGUNDOS, ejecutarLote } from "@/lib/facturacion/consulta-auto
 import { enviarDocumento } from "@/lib/facturacion/envio";
 import { esFaseXmlFirmado, estadoSifenDesdeGateway } from "@/lib/facturacion/estados";
 import {
-  cdcCoherente, consultarDocumentoGateway, continuidadConexion, cuerpoKudeGateway, interpretarRecepcion, limpiarCacheTokens, obtenerKudeGateway, referenciaConexion,
+  cdcCoherente, cdcLiteral, consultarDocumentoGateway, continuidadConexion, cuerpoKudeGateway, interpretarConsulta, interpretarRecepcion, limpiarCacheTokens, obtenerKudeGateway, referenciaConexion,
   type CuerpoLegible, type DocumentoKude, type FetchLike, type KudeFetch, type ResultadoConsulta,
 } from "@/lib/facturacion/gateway";
-import { presentacionSifen, seguimientoFiscal, textoConexion } from "@/lib/facturacion/presentacion-sifen";
+import { alertaConsulta, alertaIntegridad, detalleFiscalPrimario, iconosEstado, presentacionSifen, resumenFases, seguimientoFiscal, textoConexion } from "@/lib/facturacion/presentacion-sifen";
 import { consultarEstado } from "@/lib/facturacion/shared";
 import { decidirConsulta } from "@/lib/facturacion/reconciliacion";
 
@@ -79,7 +81,7 @@ function mundo(docs: Partial<DocMundo>[], opciones: { sinNex079?: boolean; falta
   const pgError = (detail: string) => Object.assign(new Error(detail), { code: "P0001", detail });
   const conexionDe = (v: unknown) => (typeof v === "string" ? (JSON.parse(v) as Record<string, unknown>) : null);
 
-  const registrarConsulta = (modo: "MANUAL" | "FLUJO" | "AUTO", p: unknown[], token: unknown, conexion: unknown) => {
+  const registrarConsulta = (modo: "MANUAL" | "FLUJO" | "AUTO", p: unknown[], token: unknown, conexion: unknown, nex079 = false) => {
     const d = tabla.get(String(p[2]));
 
     if (!d) throw pgError("NEX:DOCUMENTO_NO_ENCONTRADO");
@@ -97,6 +99,11 @@ function mundo(docs: Partial<DocMundo>[], opciones: { sinNex079?: boolean; falta
     if (resultado === "OK" && pEstado && FINALES.includes(pEstado) && !((pCdc ?? d.cdc) && coherente(d, String(pCdc ?? d.cdc)))) {
       resultado = "RESPUESTA_INVALIDA";
       mensaje = `La consulta informa «${pEstado}» sin un CDC válido y coherente con el documento: no se modifica el estado fiscal.`;
+    }
+    // NEX-079 (R04-F03, solo sobrecargas con p_conexion): «XML firmado» PENDIENTE exige CDC literal en ESTA respuesta, aunque el documento ya tenga CDC (sin coalesce).
+    if (nex079 && resultado === "OK" && pEstado === "PENDIENTE" && String(p[6] ?? "").trim().toLowerCase() === "xml firmado" && !(typeof pCdc === "string" && /^\d{44}$/.test(pCdc))) {
+      resultado = "RESPUESTA_INVALIDA";
+      mensaje = "CDC ausente en XML firmado: la respuesta no informa el CDC del documento; no se confirma la firma ni se modifica el documento.";
     }
 
     intentos.push({
@@ -157,9 +164,9 @@ function mundo(docs: Partial<DocMundo>[], opciones: { sinNex079?: boolean; falta
         return { rows: [{ ok: true }] };
       }
       if (/FROM fe_gateway_config/.test(sql)) return { rows: [{ baseUrl: opciones.baseUrl ?? CONFIG.baseUrl, credencialRef: "PRUEBA", timeoutMs: 1000, credencialesVersion: "3" }] };
-      if (/fe_documento_registrar_consulta_auto/.test(sql)) return { rows: [{ resultado: registrarConsulta("AUTO", p, p[14], conConexion ? p[15] : null) }] };
-      if (/fe_documento_registrar_consulta_flujo_nce/.test(sql)) return { rows: [{ resultado: registrarConsulta("FLUJO", p, null, conConexion ? p[14] : null) }] };
-      if (/fe_documento_registrar_consulta/.test(sql)) return { rows: [{ resultado: registrarConsulta("MANUAL", p, null, conConexion ? p[14] : null) }] };
+      if (/fe_documento_registrar_consulta_auto/.test(sql)) return { rows: [{ resultado: registrarConsulta("AUTO", p, p[14], conConexion ? p[15] : null, conConexion) }] };
+      if (/fe_documento_registrar_consulta_flujo_nce/.test(sql)) return { rows: [{ resultado: registrarConsulta("FLUJO", p, null, conConexion ? p[14] : null, conConexion) }] };
+      if (/fe_documento_registrar_consulta/.test(sql)) return { rows: [{ resultado: registrarConsulta("MANUAL", p, null, conConexion ? p[14] : null, conConexion) }] };
       if (/fe_documento_iniciar_envio/.test(sql)) {
         const d = tabla.get(String(p[2]))!;
 
@@ -725,10 +732,11 @@ export async function verificarCasosFlujoFiscalPro342(): Promise<string[]> {
     const d = (x: typeof doc, r: ResultadoConsulta) => { const y = decidirConsulta(x, r); return [y.resultado, y.estadoSifen, y.cdc]; };
     const conCdc = { ...doc, cdc: CDC1 };
 
-    igual("PRO342-R03-F09 decidirConsulta (pura): sin CDC disponible, Rechazado/Aprobado/«XML firmado» → RESPUESTA_INVALIDA; «XML firmado» con CDC → PENDIENTE; con CDC ya registrado el final sin CDC en la respuesta se acepta (la SQL conserva el registrado); CDC ajeno pasa a la SQL (CDC_DIVERGENTE); final contrario a uno registrado → RESPUESTA_INVALIDA", [
+    // PRO-342-R04 (AUD-01): actualizado — «XML firmado» SIN CDC en la respuesta actual es RESPUESTA_INVALIDA aunque el documento ya tenga CDC (antes se esperaba OK/PENDIENTE: conducta incorrecta).
+    igual("PRO342-R03-F09 (actualizado R04) decidirConsulta (pura): sin CDC disponible, Rechazado/Aprobado/«XML firmado» → RESPUESTA_INVALIDA; «XML firmado» con CDC → PENDIENTE; con CDC ya registrado el final sin CDC en la respuesta se acepta (la SQL conserva el registrado) pero «XML firmado» sin CDC en la respuesta actual → RESPUESTA_INVALIDA; CDC ajeno pasa a la SQL (CDC_DIVERGENTE); final contrario a uno registrado → RESPUESTA_INVALIDA", [
       d(doc, rc("Rechazado", null)), d(doc, rc("Aprobado", null)), d(doc, rc("XML firmado", null)), d(doc, rc("XML firmado", CDC1)),
       d(conCdc, rc("Rechazado", null)), d(conCdc, rc("XML firmado", null)), d(doc, rc("Rechazado", CDC2)), d({ ...conCdc, estadoSifen: "RECHAZADO" }, rc("Aprobado", null)),
-    ], [["RESPUESTA_INVALIDA", null, null], ["RESPUESTA_INVALIDA", null, null], ["RESPUESTA_INVALIDA", null, null], ["OK", "PENDIENTE", CDC1], ["OK", "RECHAZADO", null], ["OK", "PENDIENTE", null], ["OK", "RECHAZADO", CDC2], ["RESPUESTA_INVALIDA", null, null]]);
+    ], [["RESPUESTA_INVALIDA", null, null], ["RESPUESTA_INVALIDA", null, null], ["RESPUESTA_INVALIDA", null, null], ["OK", "PENDIENTE", CDC1], ["OK", "RECHAZADO", null], ["RESPUESTA_INVALIDA", null, null], ["OK", "RECHAZADO", CDC2], ["RESPUESTA_INVALIDA", null, null]]);
 
     const nex079 = leer("documentacao/banco/nexit/v1/migraciones/NEX-079-facturacion-intentos-conexion-cdc-consulta.sql");
     const sinComentarios = nex079.replace(/--.*$/gm, "");
@@ -836,6 +844,189 @@ export async function verificarCasosFlujoFiscalPro342(): Promise<string[]> {
     igual("PRO342-R03-C04 NEXIT_DB (BASE): misma versión conocida → MISMA; versión alterada → DISTINTA; versión ausente → SIN_REFERENCIA (no es prueba); host cambiado → DISTINTA; origen distinto → DISTINTA", [bas(snapBase, 3), bas(snapBase, 4), bas(snapBase, null), bas({ ...snapBase, credencialesVersion: null }, 3), bas(snapBase, 3, "otro.prueba.invalid"), bas({ ...snapBase, origenCredenciales: "ENTORNO" }, 3)], ["MISMA", "DISTINTA", "SIN_REFERENCIA", "SIN_REFERENCIA", "DISTINTA", "DISTINTA"]);
     igual("PRO342-R03-C05 referenciaConexion: NEXIT_DB → origen BASE; credenciales de entorno → ENTORNO; nunca incluye usuario, clave, token ni hash", [referenciaConexion({ ...CONFIG, credencialRef: "NEXIT_DB" }).origenCredenciales, referenciaConexion(CONFIG).origenCredenciales, Object.keys(referenciaConexion(CONFIG)).sort()], ["BASE", "ENTORNO", ["credencialRef", "credencialesVersion", "host", "origenCredenciales"]]);
     cierto("PRO342-R03-C06 pantalla: tras «Reconsultar» la continuidad SIN_REFERENCIA se informa como no verificable (incluye credenciales de entorno)", /Continuidad de la conexión no verificable \(conexión del envío no registrada o credenciales de entorno del servidor\)/.test(leer("app/(private)/documentos/page.tsx")));
+  }
+
+  // ══ PRO-342-R04 — matriz de la reauditoría integral (sección 4). Casos ESCRITOS, NO EJECUTADOS ═══════════════════════════════════════════════════════
+  // Ya cubiertos por casos vigentes de este archivo (se mantienen): A1/A5 → PRO342-01*, R02-L*, 10a; A2 → R03-L06; A3 → R03-L01..L05; B1 → 03a/R03-F02; B2 → R03-F01;
+  // B6 → R03-F06a/b; C1/C2 → R03-F03/F04; C3 → R03-F05; C4 → R03-F08; C5 → R03-F07; D3/D4/D7 → 04a/R03-F04/08*; E1/E4 → 09*/kude.casos R02-K05. A4 → nce/kude casos INT-01.
+  // D1/D2/D5/D6 (NEX-077/079 aplicadas en PostgreSQL real, dos instancias reales) y E6/F9 (prueba del proveedor, captura real de NEXIT) NO son simulables aquí: gates de homologación.
+  type VistaDoc = Parameters<typeof iconosEstado>[0] & Parameters<typeof detalleFiscalPrimario>[0];
+  const vista = (x: Partial<VistaDoc>): VistaDoc => ({ estadoLocal: "ENVIADO", estadoSifen: "PENDIENTE", estadoEmail: "NO_INFORMADO", cdc: null, ultimaConsultaResultado: null, envioErrorTipo: null, lote: null, fechaFirma: null, codRespuesta: null, mensajeRespuesta: null, ...x });
+  const deMundo = (d: DocMundo, extra: Partial<VistaDoc> = {}) => vista({ estadoLocal: d.estadoLocal as never, estadoSifen: d.estadoSifen as never, cdc: d.cdc, ultimaConsultaResultado: d.ultimaConsultaResultado, lote: d.lote, fechaFirma: d.fechaFirma, codRespuesta: d.codRespuesta, mensajeRespuesta: d.mensajeRespuesta, ...extra });
+  const ejes = (v: VistaDoc) => iconosEstado(v).map((i) => [i.eje, i.simbolo, i.tono]);
+  const pagina = leer("app/(private)/documentos/page.tsx");
+  const css = leer("app/(private)/documentos/page.module.css");
+
+  // ── R04-F01 / B3: «XML firmado» SIN CDC en la respuesta ACTUAL con CDC ya registrado ─────────────────────────────────────────────────────────────
+  {
+    limpiarCacheTokens();
+    const m = mundo([{ lote: LOTE, cdc: CDC1, estadoSifen: "PENDIENTE", estadoGatewayTexto: "XML firmado", codRespuesta: null, mensajeRespuesta: null, fechaFirma: "2026-11-11 09:10:30" }]);
+    const g = gateway({ consultas: [consulta("XML firmado", null, { kude: "habilitado" }), consulta("Rechazado", null, { cod: "1101", mensaje: "Número de timbrado inválido" })] });
+
+    await lote(m, g);
+    const doc = m.tabla.get(DOC1)!;
+
+    igual("PRO342-R04-B3a worker: «XML firmado» SIN CDC en la respuesta actual aunque el documento YA tiene CDC → intento RESPUESTA_INVALIDA «CDC ausente en XML firmado»; CDC previo, estado, texto y fecha de firma intactos; reconsulta reprogramada y sin reenvío",
+      [m.intentos[0].resultado, /CDC ausente en XML firmado/.test(String(m.intentos[0].mensaje)), m.intentos[0].estadoSifen, m.intentos[0].cdcInformado, doc.cdc, doc.estadoSifen, doc.estadoGatewayTexto, doc.fechaFirma, doc.ultimaConsultaResultado, doc.proxima > m.reloj.t, doc.leaseToken, g.posts["/api/recepcion_de"] ?? 0],
+      ["RESPUESTA_INVALIDA", true, null, null, CDC1, "PENDIENTE", "XML firmado", "2026-11-11 09:10:30", "RESPUESTA_INVALIDA", true, null, 0]);
+    avanzar(m, CADENCIA_SEGUNDOS[0]);
+    await lote(m, g);
+    igual("PRO342-R04-B3b la reconsulta siguiente del MISMO documento recibe «Rechazado» final sin repetir CDC: se consolida con el CDC YA registrado (regla del responsable), código y mensaje exactos",
+      [m.intentos[1].resultado, doc.estadoSifen, doc.cdc, doc.codRespuesta, doc.mensajeRespuesta, g.posts["/api/consulta_de"], g.posts["/api/recepcion_de"] ?? 0], ["OK", "RECHAZADO", CDC1, "1101", "Número de timbrado inválido", 2, 0]);
+
+    for (const sinNex079 of [false, true]) {
+      limpiarCacheTokens();
+      const m2 = mundo([{ lote: LOTE, cdc: CDC1, estadoSifen: "PENDIENTE", estadoGatewayTexto: "XML firmado" }], { sinNex079 });
+      const r = await consultarEstado(m2.db, EMPRESA, USUARIO, DOC1, gateway({ consultas: [consulta("XML firmado", null)] }).dep);
+
+      igual(`PRO342-R04-B3c [${sinNex079 ? "firma antigua NEX-054" : "NEX-079"}] consulta manual «XML firmado» sin CDC actual con CDC registrado: bloqueada en la aplicación ANTES de la SQL (RESPUESTA_INVALIDA), CDC y estado intactos`,
+        [r.resultado, m2.intentos[0].resultado, m2.tabla.get(DOC1)!.cdc, m2.tabla.get(DOC1)!.estadoSifen], ["RESPUESTA_INVALIDA", "RESPUESTA_INVALIDA", CDC1, "PENDIENTE"]);
+    }
+  }
+  {
+    const doc = { tipo: "FE", establecimiento: "001", puntoExpedicion: "001", numero: "0000001", cdc: CDC1 as string | null, estadoSifen: "PENDIENTE" };
+    const rc = (estadoGateway: string, cdc: string | null): ResultadoConsulta => ({ resultado: "OK", http: 200, estadoGateway, estadoSifen: estadoSifenDesdeGateway(estadoGateway), cdc, codRespuesta: null, mensaje: null, fechaFirma: null, fechaEnvio: null, respuesta: null });
+    const y = decidirConsulta(doc, rc("XML firmado", null));
+
+    igual("PRO342-R04-B3d decidirConsulta (pura): con CDC registrado, «XML firmado» sin CDC actual → RESPUESTA_INVALIDA con mensaje «CDC ausente en XML firmado»; también con texto «xml firmado» en otra caja/espacios; «XML firmado» + CDC → OK/PENDIENTE; «Aprobado» sin CDC actual → OK (usa el registrado)",
+      [y.resultado, /^CDC ausente en XML firmado/.test(String(y.mensaje)), decidirConsulta(doc, rc(" xml FIRMADO ", null)).resultado, decidirConsulta(doc, rc("XML firmado", CDC1)).resultado, decidirConsulta(doc, rc("Aprobado", null)).estadoSifen],
+      ["RESPUESTA_INVALIDA", true, "RESPUESTA_INVALIDA", "OK", "APROBADO"]);
+    igual("PRO342-R04-B6 decidirConsulta: «XML firmado» con CDC DISTINTO del registrado no se decide aquí (pasa a la SQL, que lo anota CDC_DIVERGENTE sin sobrescribir)", [decidirConsulta(doc, rc("XML firmado", CDC1_OTRO)).resultado, decidirConsulta(doc, rc("XML firmado", CDC1_OTRO)).cdc], ["OK", CDC1_OTRO]);
+    cierto("PRO342-R04-F01 fuente reconciliacion.ts: la regla de «XML firmado» usa SOLO el CDC de la respuesta (r.cdc === null), sin depender de doc.cdc; los finales siguen admitiendo el CDC registrado",
+      /if \(r\.cdc === null && esFaseXmlFirmado\(r\.estadoGateway\)\)/.test(leer("lib/facturacion/reconciliacion.ts")) && !/sinCdc && esFaseXmlFirmado/.test(leer("lib/facturacion/reconciliacion.ts")) && /sinCdc && FINALES\.has\(r\.estadoSifen\)/.test(leer("lib/facturacion/reconciliacion.ts")));
+  }
+  {
+    // B6 de punta a punta: «XML firmado» con CDC ajeno sobre documento con CDC → CDC_DIVERGENTE y el registrado no cambia.
+    limpiarCacheTokens();
+    const m = mundo([{ lote: LOTE, cdc: CDC1, estadoSifen: "PENDIENTE", estadoGatewayTexto: "XML firmado" }]);
+
+    await lote(m, gateway({ consultas: [consulta("XML firmado", CDC1_OTRO)] }));
+    igual("PRO342-R04-B6b worker: «XML firmado» con CDC distinto del registrado → CDC_DIVERGENTE (CDC informado exacto en el intento), el CDC registrado no se reemplaza y sigue pendiente", [m.intentos[0].resultado, m.intentos[0].cdcInformado, m.tabla.get(DOC1)!.cdc, m.tabla.get(DOC1)!.estadoSifen], ["CDC_DIVERGENTE", CDC1_OTRO, CDC1, "PENDIENTE"]);
+  }
+
+  // ── R04-F02 / B4-B5: CDC LITERAL, sin trim ni normalización ─────────────────────────────────────────────────────────────────────────────────────
+  {
+    const ic = (estado: string, cdc: unknown) => {
+      const r = interpretarConsulta(200, JSON.stringify({ status: "success", response: { Estado: estado, DE: { CDC: cdc, FechaFirma: "2026-11-11 09:10:30", Retorno: { CodRespuesta: "1101", Mensaje: "Número de timbrado inválido" } } } }));
+
+      return [r.resultado, r.estadoSifen, r.cdc];
+    };
+    const malos: unknown[] = [` ${CDC1}`, `${CDC1} `, `${CDC1}\n`, `\t${CDC1}`, CDC1.slice(0, 43), `${CDC1}0`, `A${CDC1.slice(1)}`, Number(CDC1)];
+
+    igual("PRO342-R04-B5a interpretarConsulta: «XML firmado» con CDC exacto → OK/PENDIENTE y el MISMO texto de 44 dígitos (sin tocar)", ic("XML firmado", CDC1), ["OK", "PENDIENTE", CDC1]);
+    igual("PRO342-R04-B5b interpretarConsulta: «XML firmado» con CDC PRESENTE pero malformado (espacios/salto/tab en extremos, 43 o 45 dígitos, letra, número JSON) → RESPUESTA_INVALIDA sin CDC: nunca se recorta ni «arregla»", malos.map((c) => ic("XML firmado", c)), malos.map(() => ["RESPUESTA_INVALIDA", null, null]));
+    igual("PRO342-R04-B5c interpretarConsulta: final «Rechazado»/«Aprobado» con CDC con espacios → RESPUESTA_INVALIDA (no se convierte en final con CDC recortado)", [ic("Rechazado", ` ${CDC1} `), ic("Aprobado", `${CDC1} `)], [["RESPUESTA_INVALIDA", null, null], ["RESPUESTA_INVALIDA", null, null]]);
+    igual("PRO342-R04-B5d interpretarConsulta: «XML firmado» sin campo CDC (ausente o vacío) → OK sin CDC (lo bloquea luego decidirConsulta como «CDC ausente en XML firmado»)", [ic("XML firmado", undefined), ic("XML firmado", null), ic("XML firmado", "")], [["OK", "PENDIENTE", null], ["OK", "PENDIENTE", null], ["OK", "PENDIENTE", null]]);
+    igual("PRO342-R04-B5e cdcLiteral: válido solo con 44 dígitos EXACTOS como texto; presente distingue malformado de ausente", [cdcLiteral(CDC1), cdcLiteral(` ${CDC1}`), cdcLiteral(undefined), cdcLiteral(null), cdcLiteral(""), cdcLiteral(Number(CDC1))], [{ presente: true, valido: CDC1 }, { presente: true, valido: null }, { presente: false, valido: null }, { presente: false, valido: null }, { presente: false, valido: null }, { presente: true, valido: null }]);
+
+    const docR = { tipo: "FE", establecimiento: "001", puntoExpedicion: "001", numero: "0000001" };
+    const ack = (cdc: unknown) => interpretarRecepcion(200, JSON.stringify({ status: "success", message: "Documento recibido", nro_lote: LOTE, cdc }), [], docR).cdcInformado;
+
+    igual("PRO342-R04-B5f interpretarRecepcion: el CDC de la raíz del ACK se lee LITERAL — exacto se conserva; con espacios/43 dígitos/número → null (sin trim); sin CDC → null (no se asume CDC en el ACK)", [ack(CDC1), ack(` ${CDC1} `), ack(CDC1.slice(0, 43)), ack(Number(CDC1)), ack(undefined)], [CDC1, null, null, null, null]);
+    const gw = leer("lib/facturacion/gateway.ts");
+
+    cierto("PRO342-R04-F02 fuente gateway.ts: el CDC ya no pasa por texto() ni .trim() (consulta y ACK usan cdcLiteral)", /const cdcLeido = cdcLiteral\(de\?\.CDC\)/.test(gw) && /const cdcInformado = cdcLiteral\(cdcBruto\)\.valido/.test(gw) && !/texto\(de\.CDC/.test(gw) && !/cdcBruto\.trim\(\)/.test(gw));
+
+    // B4 de punta a punta: CDC malformado en «XML firmado» con CDC local existente.
+    limpiarCacheTokens();
+    const m = mundo([{ lote: LOTE, cdc: CDC1, estadoSifen: "PENDIENTE", estadoGatewayTexto: "XML firmado" }]);
+
+    await lote(m, gateway({ consultas: [consulta("XML firmado", ` ${CDC1} `)] }));
+    igual("PRO342-R04-B4 worker: «XML firmado» con CDC malformado (espacios) y CDC local existente → RESPUESTA_INVALIDA; el CDC registrado no cambia ni se «normaliza» el recibido", [m.intentos[0].resultado, m.intentos[0].cdcInformado, m.tabla.get(DOC1)!.cdc, m.tabla.get(DOC1)!.estadoSifen], ["RESPUESTA_INVALIDA", null, CDC1, "PENDIENTE"]);
+  }
+
+  // ── R04-F03: guarda complementaria en NEX-079 (versionada, NO aplicada) ───────────────────────────────────────────────────────────────────────────
+  {
+    const nex079 = leer("documentacao/banco/nexit/v1/migraciones/NEX-079-facturacion-intentos-conexion-cdc-consulta.sql").replace(/--.*$/gm, "");
+    const guarda = nex079.slice(nex079.indexOf("p_estado_sifen = 'PENDIENTE' AND lower(btrim(coalesce(p_estado_gateway"), nex079.indexOf("INSERT INTO public.documento_electronico_intentos (empresa_id, documento_id, tipo, resultado"));
+
+    cierto("PRO342-R04-F03a NEX-079: «XML firmado» PENDIENTE sin CDC literal de 44 dígitos EN LA RESPUESTA (p_cdc) → RESPUESTA_INVALIDA aunque d.cdc exista (la guarda no usa coalesce con d.cdc); va antes del INSERT y solo anota el intento",
+      guarda.length > 0 && /p_cdc IS NULL OR p_cdc !~ '\^\[0-9\]\{44\}\$'/.test(guarda) && !/coalesce\(p_cdc, d\.cdc\)/.test(guarda) && /v_resultado := 'RESPUESTA_INVALIDA'/.test(guarda) && /CDC ausente en XML firmado/.test(guarda));
+    cierto("PRO342-R04-F03b NEX-079 sigue sin DROP FUNCTION, sin tocar migraciones previas, con las MISMAS 3 escrituras de documentos (UPDATE OK / UPDATE solo última consulta / UPDATE envío), guarda de finales con coalesce y sin btrim del CDC",
+      !/DROP FUNCTION/i.test(nex079) && (nex079.match(/UPDATE public\.documentos_electronicos/g) ?? []).length === 3 && /coalesce\(p_cdc, d\.cdc\) IS NULL OR NOT public\.fe_cdc_coherente/.test(nex079) && !/btrim\(p_cdc|trim\(p_cdc/.test(nex079));
+
+    limpiarCacheTokens();
+    const m = mundo([{ lote: LOTE, cdc: CDC1, estadoSifen: "PENDIENTE", estadoGatewayTexto: "XML firmado" }]);
+    const db = m.db as unknown as { query: (sql: string, p: unknown[]) => Promise<{ rows: Array<{ resultado: string }> }> };
+    const resultadoSql = await db.query("SELECT public.fe_documento_registrar_consulta($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb) AS resultado", [EMPRESA, USUARIO, DOC1, "OK", 200, null, "XML firmado", "PENDIENTE", null, null, null, null, null, null, JSON.stringify({ host: "gateway.prueba.invalid" })]);
+
+    igual("PRO342-R04-F03c llamada DIRECTA a la función NEX-079 (simulada, sin pasar por la aplicación) con «XML firmado» PENDIENTE y p_cdc NULL sobre documento con CDC: RESPUESTA_INVALIDA; CDC, estado y última respuesta válida intactos", [resultadoSql.rows[0].resultado, m.tabla.get(DOC1)!.cdc, m.tabla.get(DOC1)!.estadoSifen, m.intentos[0].estadoSifen], ["RESPUESTA_INVALIDA", CDC1, "PENDIENTE", null]);
+  }
+
+  // ── R04-UX01: cuatro iconos independientes (funciones reales) ────────────────────────────────────────────────────────────────────────────────────
+  {
+    // F2: el caso del proveedor de punta a punta — XML firmado + CDC → Rechazado 1101 → Enviado ✓ · XML ✓ · SIFEN ✕ · Correo neutro.
+    limpiarCacheTokens();
+    const m = mundo([{ lote: LOTE }]);
+    const g = gateway({ consultas: [consulta("XML firmado", CDC1), consulta("Rechazado", null, { cod: "1101", mensaje: "Número de timbrado inválido" })] });
+
+    await lote(m, g);
+    avanzar(m, CADENCIA_SEGUNDOS[0]);
+    await lote(m, g);
+    const v = deMundo(m.tabla.get(DOC1)!);
+    const iconos = iconosEstado(v);
+    const fiscal = detalleFiscalPrimario(v);
+
+    igual("PRO342-R04-F2a XML firmado + CDC → Rechazado final: ENVÍO ✓ verde, XML/CDC archivo ✓ azul, SIFEN ✕ rojo, CORREO neutro — cuatro estados que coexisten", ejes(v), [["envio", "check", "ok"], ["xml", "archivoCheck", "info"], ["sifen", "cruz", "error"], ["correo", "correo", "neutro"]]);
+    igual("PRO342-R04-F2b tooltip/aria de cada icono nombra su eje y no mezcla aprobación: XML firmado «No es aprobación SIFEN»; envío «No es aprobación SIFEN»; correo «independiente del estado SIFEN»", [iconos[0].texto.startsWith("Envío:"), /No es aprobación SIFEN/.test(iconos[0].texto), iconos[1].texto.startsWith("XML/CDC:"), /No es aprobación SIFEN/.test(iconos[1].texto), /rechazo fiscal confirmado/.test(iconos[2].texto), /independiente del estado SIFEN/.test(iconos[3].texto)], [true, true, true, true, true, true]);
+    igual("PRO342-R04-F3/F5 primera capa: SOLO lote literal, CDC exacto, fecha de firma de la API y «código · mensaje» exactos; rojo solo por RECHAZADO persistido con CDC; cabecera «Enviado · XML firmado · SIFEN Rechazado»",
+      [fiscal, resumenFases(v)], [{ lote: LOTE, cdc: CDC1, fechaFirma: "2026-11-11 09:10:30", mensaje: "1101 · Número de timbrado inválido", rechazo: true }, "Enviado · XML firmado · SIFEN Rechazado"]);
+  }
+  {
+    igual("PRO342-R04-F1 siempre CUATRO iconos en orden fijo Envío · XML/CDC · SIFEN · Correo, con símbolos distintos por estado (el color nunca es la única señal)",
+      [iconosEstado(vista({})).map((i) => i.nombre), new Set(([["APROBADO", CDC1], ["RECHAZADO", CDC1], ["PENDIENTE", null], ["CANCELADO", CDC1], ["APROBADO", null]] as const).map(([e, c]) => iconosEstado(vista({ estadoSifen: e, cdc: c }))[2].simbolo).concat(iconosEstado(vista({ estadoLocal: "PENDIENTE_ENVIO", estadoSifen: "SIN_CONSULTA" }))[2].simbolo)).size],
+      [["Envío", "XML/CDC", "SIFEN", "Correo"], 6]);
+    igual("PRO342-R04-F1b Aprobado con CDC: SIFEN ✓ verde y XML ✓ azul (XML firmado nunca es verde)", ejes(vista({ estadoSifen: "APROBADO", cdc: CDC1, estadoEmail: "ENVIADO" })), [["envio", "check", "ok"], ["xml", "archivoCheck", "info"], ["sifen", "check", "ok"], ["correo", "correoCheck", "ok"]]);
+    igual("PRO342-R04-F1c pendiente sin CDC: SIFEN reloj ámbar, XML archivo-reloj gris (sin CDC), envío ✓", ejes(vista({ estadoSifen: "PENDIENTE" })), [["envio", "check", "ok"], ["xml", "archivoReloj", "neutro"], ["sifen", "reloj", "aviso"], ["correo", "correo", "neutro"]]);
+    igual("PRO342-R04-F1d envío indeterminado: ENVÍO «!» ámbar (no confirmado) y SIFEN pendiente; no transmitido: envío/SIFEN «−» gris", [ejes(vista({ estadoLocal: "ENVIO_INDETERMINADO", estadoSifen: "SIN_CONSULTA" })).slice(0, 3), ejes(vista({ estadoLocal: "PENDIENTE_ENVIO", estadoSifen: "SIN_CONSULTA" })).slice(0, 3)],
+      [[["envio", "alerta", "aviso"], ["xml", "archivoReloj", "neutro"], ["sifen", "reloj", "aviso"]], [["envio", "guion", "neutro"], ["xml", "archivoReloj", "neutro"], ["sifen", "guion", "neutro"]]]);
+    const rechazoGateway = iconosEstado(vista({ estadoLocal: "ERROR_ENVIO", envioErrorTipo: "RECHAZO", estadoSifen: "SIN_CONSULTA" }));
+
+    igual("PRO342-R04-A4 rechazo por validación del GATEWAY (envío): ENVÍO ✕ rojo «no es un rechazo SIFEN» y SIFEN «−» sin información (nunca ✕ fiscal)", [rechazoGateway[0].simbolo, rechazoGateway[0].tono, /no es un rechazo SIFEN/.test(rechazoGateway[0].texto), rechazoGateway[2].simbolo], ["cruz", "error", true, "guion"]);
+    const tecnico = vista({ estadoSifen: "PENDIENTE", cdc: CDC1, ultimaConsultaResultado: "ERROR_HTTP" });
+
+    igual("PRO342-R04-F1e error técnico de consulta SIN rechazo fiscal: SIFEN sigue reloj ámbar (no ✕), XML ✓ con CDC registrado, aviso técnico aparte (alertaConsulta «tecnica»)", [iconosEstado(tecnico)[2].simbolo, iconosEstado(tecnico)[1].simbolo, alertaConsulta(tecnico)?.tipo], ["reloj", "archivoCheck", "tecnica"]);
+    igual("PRO342-R04-F1f última respuesta inconsistente (RESPUESTA_INVALIDA o CDC_DIVERGENTE): XML/CDC archivo «!» ámbar, conservando el CDC registrado", [iconosEstado(vista({ cdc: CDC1, ultimaConsultaResultado: "RESPUESTA_INVALIDA" }))[1].simbolo, iconosEstado(vista({ cdc: CDC1, ultimaConsultaResultado: "CDC_DIVERGENTE" }))[1].tono, /Se conserva el CDC ya registrado/.test(iconosEstado(vista({ cdc: CDC1, ultimaConsultaResultado: "CDC_DIVERGENTE" }))[1].texto)], ["archivoAlerta", "aviso", true]);
+    igual("PRO342-R04-F1g correo independiente: e-mail con error en un documento APROBADO → SIFEN ✓ y CORREO ✕; e-mail enviado en RECHAZADO → SIFEN ✕ y CORREO ✓; pendiente → reloj", [ejes(vista({ estadoSifen: "APROBADO", cdc: CDC1, estadoEmail: "ERROR" })).slice(2), ejes(vista({ estadoSifen: "RECHAZADO", cdc: CDC1, estadoEmail: "ENVIADO" })).slice(2), ejes(vista({ estadoEmail: "PENDIENTE" }))[3]],
+      [[["sifen", "check", "ok"], ["correo", "correoCruz", "error"]], [["sifen", "cruz", "error"], ["correo", "correoCheck", "ok"]], ["correo", "reloj", "aviso"]]);
+    igual("PRO342-R04-C6 Cancelado/Inutilizado con CDC: SIFEN símbolo neutro «prohibido» (no verde, no rojo)", [ejes(vista({ estadoSifen: "CANCELADO", cdc: CDC1 }))[2], ejes(vista({ estadoSifen: "INUTILIZADO", cdc: CDC1 }))[2]], [["sifen", "prohibido", "neutro"], ["sifen", "prohibido", "neutro"]]);
+    // F10: final histórico con CDC NULL → alerta de integridad, nunca verde/rojo; el estado de la base no se toca (función pura).
+    const legado = vista({ estadoSifen: "APROBADO", cdc: null });
+
+    igual("PRO342-R04-F10 estado final histórico APROBADO/RECHAZADO con CDC NULL: SIFEN «!» ámbar (no ✓ verde ni ✕ rojo), alerta de integridad en el detalle; el objeto de entrada no cambia", [iconosEstado(legado)[2].simbolo, iconosEstado(legado)[2].tono, iconosEstado(vista({ estadoSifen: "RECHAZADO", cdc: null }))[2].simbolo, /Alerta de integridad/.test(String(alertaIntegridad(legado))), alertaIntegridad(vista({ estadoSifen: "APROBADO", cdc: CDC1 })), legado.estadoSifen, legado.cdc, detalleFiscalPrimario({ ...legado, estadoSifen: "RECHAZADO" }).rechazo],
+      ["alerta", "aviso", "alerta", true, null, "APROBADO", null, false]);
+    igual("PRO342-R04-F7 primera capa devuelve lote y CDC SIN tocarlos (copia íntegra: guiones, mayúsculas, longitud); sin datos → null («No informado» en pantalla), nunca inventados", [detalleFiscalPrimario(vista({ lote: LOTE, cdc: CDC1 })).lote === LOTE, detalleFiscalPrimario(vista({ lote: LOTE, cdc: CDC1 })).cdc === CDC1, detalleFiscalPrimario(vista({})), detalleFiscalPrimario(vista({ mensajeRespuesta: "Número de timbrado inválido" })).mensaje],
+      [true, true, { lote: null, cdc: null, fechaFirma: null, mensaje: null, rechazo: false }, "Número de timbrado inválido"]);
+  }
+
+  // ── R04-UX01/UX02/UX03: pantalla (fuente) — iconos, accesibilidad, primera/segunda capa, KuDE y no regresión ─────────────────────────────────────
+  {
+    const fila = pagina.slice(pagina.indexOf("<tr className={clases(ui.row, CLASE_FILA_TIPO[d.tipo])} data-tipo={d.tipo}>"), pagina.indexOf("{det ? (\n                      <tr"));
+    const detalle = pagina.slice(pagina.indexOf("PRIMERA CAPA"), pagina.indexOf("</Fragment>"));
+    const primera = detalle.slice(0, detalle.indexOf("SEGUNDA CAPA"));
+    const segunda = detalle.slice(detalle.indexOf("SEGUNDA CAPA"));
+
+    cierto("PRO342-R04-UX01a lista: la celda Estados usa SOLO los cuatro iconos de iconosEstado (+ «!» si hay aviso) y ya no las cápsulas de texto «SIFEN: …», «Envío: …», e-mail ni «Requiere revisión»",
+      /iconos\.map\(\(i\) => <IconoFase key=\{i\.eje\} icono=\{i\} \/>\)/.test(fila) && /\{avisoFila \? \(/.test(fila) && !/SIFEN: \{|Envío: \{|ETIQUETA_EMAIL|>Requiere revisión</.test(fila) && /role="group" aria-label=\{`Estados de \$\{numeroDocumento\(d\)\}`\}/.test(fila));
+    cierto("PRO342-R04-F8a accesibilidad: cada icono es role=img con aria-label y data-tip (tooltip) del texto completo, enfocable por teclado/toque (tabIndex 0), SVG y nombre corto aria-hidden",
+      /role="img" tabIndex=\{0\} aria-label=\{icono\.texto\} data-tip=\{icono\.texto\}/.test(pagina) && /<span className=\{estilos\.iconoCirculo\} aria-hidden="true">/.test(pagina) && /<span className=\{estilos\.iconoNombre\} aria-hidden="true">\{icono\.nombre\}<\/span>/.test(pagina));
+    cierto("PRO342-R04-F8b CSS: tooltip en :hover, :focus-visible y :focus; foco visible; área táctil ≥ 40px; alto contraste (forced-colors) con borde; versión móvil; sin CSS global",
+      /\.icono\[data-tip\]:hover::after,\s*\.icono\[data-tip\]:focus-visible::after,\s*\.icono\[data-tip\]:focus::after \{[^}]*content: attr\(data-tip\)/.test(css) && /\.icono:focus-visible \{/.test(css) && /min-width: 40px;\s*min-height: 40px;/.test(css) && /@media \(forced-colors: active\) \{\s*\.iconoCirculo/.test(css) && /@media \(max-width: 640px\)/.test(css) && !/iconoCirculo|data-tip/.test(leer("components/ui/lista-padrao/lista.module.css")));
+    cierto("PRO342-R04-F8c leyenda visible UNA vez por listado (Envío · XML/CDC · SIFEN · Correo) fuera del bucle de filas",
+      (pagina.match(/className=\{estilos\.leyenda\}/g) ?? []).length === 1 && pagina.indexOf("estilos.leyenda}") < pagina.indexOf("filas.map((d) =>") && /NOMBRE_EJE\.envio[\s\S]*NOMBRE_EJE\.xml[\s\S]*NOMBRE_EJE\.sifen[\s\S]*NOMBRE_EJE\.correo/.test(pagina));
+    cierto("PRO342-R04-F5 primera capa: SOLO «Nro lote», «CDC», «Fecha firma» y «Mensaje» (4 <dt>), con «No informado»/«No informada» y mensaje en rojo solo si fiscal.rechazo",
+      (primera.match(/<dt /g) ?? []).length === 4 && /Nro lote<\/dt>/.test(primera) && /"CDC de la nota de crédito" : "CDC"/.test(primera) && /Fecha firma<\/dt>/.test(primera) && /Mensaje<\/dt>/.test(primera) && /d\.lote \?\? "No informado"/.test(primera) && /fiscal\.cdc \?\? "No informado"/.test(primera) && /"No informada"/.test(primera) && /fiscal\.rechazo \? estilos\.mensajeRechazo/.test(primera) && !/describirConsulta|verRespuesta|Historial de envíos/.test(primera));
+    cierto("PRO342-R04-F7b botones Copiar de lote y CDC con aria-label, copia EXACTA por navigator.clipboard.writeText(valor), feedback «Copiado» y aviso aria-live; error de copia visible sin alterar datos",
+      /aria-label="Copiar número de lote" onClick=\{\(\) => void copiar\(d, "lote", fiscal\.lote as string\)\}/.test(primera) && /aria-label="Copiar CDC" onClick=\{\(\) => void copiar\(d, "cdc", fiscal\.cdc as string\)\}/.test(primera) && /await navigator\.clipboard\.writeText\(valor\);/.test(pagina) && /"Copiado" : "Copiar"/.test(primera) && /aria-live="polite"/.test(primera));
+    cierto("PRO342-R04-F6 segunda capa «Historial técnico (n)» CERRADA por defecto (tecnico: false) con aria-expanded/aria-controls; dentro quedan seguimiento, último intento, JSON de solicitud/respuesta, historial completo, conexión y paginación",
+      /tecnico: false, copiado: "" \};/.test(pagina) && /aria-expanded=\{det\.tecnico\} aria-controls=\{`tecnico-\$\{d\.id\}`\}/.test(segunda) && /Historial técnico \(/.test(segunda) && /\{det\.tecnico \? \(/.test(segunda) &&
+      ["seguimiento.envio", "Último intento de consulta", "verSolicitud(d, sol)", "verRespuesta(d, i)", "Historial de envíos y consultas", "Conexión: no registrada (anterior a NEX-079 o modo compatibilidad)", "cargarAnteriores(d)", "XML: descarga no disponible"].every((t) => segunda.includes(t) && !primera.includes(t)));
+    cierto("PRO342-R04-UX02 abrir la fila y la segunda capa NO consultan al gateway: alternar solo hace GET /api/documentos/{id}; alternarTecnico no hace fetch; «Consultar estado en SIFEN» sigue siendo una acción explícita con permiso EDITAR",
+      /fetch\(`\/api\/documentos\/\$\{d\.id\}`, \{ cache: "no-store" \}\)/.test(pagina.slice(pagina.indexOf("async function alternar"), pagina.indexOf("// E01 (PRO-314): JSON registrado"))) && !/fetch/.test(pagina.slice(pagina.indexOf("function alternarTecnico"), pagina.indexOf("function verSolicitud"))) && /\{editar \? \(/.test(primera) && /Consultar estado en SIFEN/.test(primera));
+    cierto("PRO342-R04-F4/UX03 KuDE: la acción se llama «Consultar KuDE» (fila y detalle), sigue condicionada por kudeDisponible (permiso, no estado fiscal) y no aparece «Ver KuDE»; el visor y su aviso NO VERIFICADO no cambian",
+      /aria-label=\{`Consultar KuDE \(PDF\) de \$\{d\.tipo === "NCE" \? "la nota de crédito" : "la factura"\}/.test(pagina) && /Consultar KuDE \(PDF\)<\/button>/.test(primera) && !/Ver KuDE/.test(pagina) && (pagina.match(/kudeDisponible\(d\) \? \(/g) ?? []).length === 2 && /AVISO_KUDE_NO_VERIFICADO/.test(leer("app/(private)/documentos/kude-modal.tsx")));
+    cierto("PRO342-R04-UX01b no regresión: filtros (tipo, sucursal, estado SIFEN, fechas, búsqueda), indicadores, orden por columnas, paginación, refresco GET, colores FE/NCE, acciones de envío/NCE y avisos de consulta siguen presentes",
+      ["ESTADOS_SIFEN.map", "setBusqueda(e.target.value)", "INDICADORES.map", '<ThOrdenable titulo="Estados" campo="estado"', "setPagina(paginaMostrada + 1)", "iniciarRefresco", "CLASE_FILA_TIPO[d.tipo]", "CLASE_DETALLE_TIPO[d.tipo]", "enviarAlGateway(d)", "Corregir y emitir nueva", 'modoRegistro === "COMPATIBILIDAD"', "alertaConsulta(d)"].every((t) => pagina.includes(t)));
   }
 
   return fallos;

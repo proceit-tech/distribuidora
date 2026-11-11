@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { estadoSifenDesdeGateway, type EstadoSifen } from "@/lib/facturacion/estados";
+import { esFaseXmlFirmado, estadoSifenDesdeGateway, type EstadoSifen } from "@/lib/facturacion/estados";
 import { fetchKudeSeguro, fetchSeguro, validarUrlGateway } from "@/lib/facturacion/gateway-url";
 
 /**
@@ -312,6 +312,15 @@ const texto = (v: unknown, max = 500): string | null => {
 
   return t === null ? null : limpiarTexto(t);
 };
+/**
+ * PRO-342-R04-F02: lectura LITERAL del CDC informado por la API. Nunca se usa texto() (que recorta y limpia): el CDC solo es válido si el valor recibido ES una cadena de exactamente 44 dígitos
+ * (^\d{44}$ sobre los caracteres originales). `presente` distingue «no informado» (ausente, null o "") de «informado pero malformado», que nunca se convierte en CDC ni se trata como ausente.
+ */
+export function cdcLiteral(v: unknown): { presente: boolean; valido: string | null } {
+  const presente = v !== undefined && v !== null && v !== "";
+
+  return { presente, valido: typeof v === "string" && CDC_FORMATO.test(v) ? v : null };
+}
 const registro = (v: unknown): Record<string, unknown> | null => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null);
 
 /** No asume que todas las respuestas tienen la misma forma: lo que no esté presente queda en null y lo no interpretable es RESPUESTA_INVALIDA. */
@@ -344,13 +353,15 @@ export function interpretarConsulta(http: number, cuerpoTexto: string): Resultad
 
   const de = registro(respuesta.DE);
   const retorno = de ? registro(de.Retorno) : null;
-  const cdc = de ? texto(de.CDC, 60) : null;
+  const cdcLeido = cdcLiteral(de?.CDC);
+  const cdc = cdcLeido.valido;
   const estadoSifen = estadoSifenDesdeGateway(estado);
 
-  // PRO-342-R03: un final que trae un CDC que NO es un CDC válido no se acepta como final: no se corrige ni se descarta ese CDC en silencio (queda como evidencia y RESPUESTA_INVALIDA).
-  // Un final o «XML firmado» SIN CDC disponible para el documento lo bloquea decidirConsulta (R03-01: un XML firmado siempre tiene CDC; nunca final con CDC NULL).
-  if (cdc && !/^\d{44}$/.test(cdc) && ["APROBADO", "RECHAZADO", "CANCELADO", "INUTILIZADO"].includes(estadoSifen)) {
-    return { ...vacio("RESPUESTA_INVALIDA", http, `La consulta informa «${estado}» con un CDC que no es válido: no se modifica el estado fiscal.`), estadoGateway: estado, respuesta: guardada };
+  // PRO-342-R03/R04-F02: un final o «XML firmado» que trae un CDC PRESENTE pero que no es literalmente un CDC válido (espacios, letras, 43/45 dígitos, número JSON...) no se acepta: el CDC
+  // no se recorta, corrige ni descarta en silencio como si estuviera ausente (queda como evidencia y RESPUESTA_INVALIDA).
+  // Un final SIN CDC disponible para el documento, o «XML firmado» SIN CDC en esta respuesta, lo bloquea decidirConsulta (R03-01 / R04-F01).
+  if (cdcLeido.presente && cdc === null && (["APROBADO", "RECHAZADO", "CANCELADO", "INUTILIZADO"].includes(estadoSifen) || esFaseXmlFirmado(estado))) {
+    return { ...vacio("RESPUESTA_INVALIDA", http, `La consulta informa «${estado}» con un CDC que no es válido (debe ser exactamente de 44 dígitos): no se modifica el estado fiscal ni el CDC.`), estadoGateway: estado, respuesta: guardada };
   }
 
   return {
@@ -358,7 +369,7 @@ export function interpretarConsulta(http: number, cuerpoTexto: string): Resultad
     http,
     estadoGateway: estado,
     estadoSifen,
-    cdc: cdc && /^\d{44}$/.test(cdc) ? cdc : null,
+    cdc,
     codRespuesta: retorno ? texto(retorno.CodRespuesta, 20) : null,
     mensaje: retorno ? texto(retorno.Mensaje) : null,
     fechaFirma: de ? texto(de.FechaFirma, 60) : null,
@@ -706,8 +717,8 @@ export function interpretarRecepcion(http: number, cuerpoTexto: string, fases: F
 
   const raiz = cuerpo && typeof cuerpo === "object" && !Array.isArray(cuerpo) ? (cuerpo as Record<string, unknown>) : null;
   const cdcBruto = enRaiz(raiz, "cdc");
-  const cdcTexto = typeof cdcBruto === "string" ? cdcBruto.trim() : null;
-  const cdcInformado = cdcTexto && /^\d{44}$/.test(cdcTexto) ? cdcTexto : null;
+  // PRO-342-R04-F02: CDC del ACK leído LITERAL (sin trim): un valor con espacios o malformado no se convierte en CDC. No se asume que el ACK traiga CDC.
+  const cdcInformado = cdcLiteral(cdcBruto).valido;
   const mensaje = raiz ? comoTexto(buscar(raiz, CLAVES_MENSAJE)) : null;
   const resp = raiz ? Object.entries(raiz).find(([k, v]) => CLAVES_RESPUESTA.has(norm(k)) && v && typeof v === "object" && !Array.isArray(v))?.[1] as Record<string, unknown> | undefined : undefined;
   const lista = (nombre: string) => entradasPorNumero(resp ? Object.entries(resp).find(([k]) => norm(k) === nombre)?.[1] : undefined);

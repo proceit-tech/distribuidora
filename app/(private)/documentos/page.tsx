@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { CampoFecha } from "@/components/ui/campo-fecha";
 import ui from "@/components/ui/lista-padrao/lista.module.css";
@@ -11,8 +11,6 @@ import { crearControladorVisor, kudeDisponible, pedirKudeAlServidor } from "@/li
 import { iniciarRefresco } from "@/lib/facturacion/refresco-documentos";
 import {
   ESTADOS_SIFEN,
-  ETIQUETA_EMAIL,
-  ETIQUETA_LOCAL,
   etiquetaIntento,
   ETIQUETA_RESULTADO_INTENTO,
   ETIQUETA_SIFEN,
@@ -25,7 +23,22 @@ import {
   type GrupoIndicador,
   type TipoDocumento,
 } from "@/lib/facturacion/estados";
-import { alertaConsulta, cdcDeIntento, presentacionSifen, resumenConsultas, seguimientoFiscal, textoConexion, type IntentoConsulta, type TonoSifen } from "@/lib/facturacion/presentacion-sifen";
+import {
+  alertaConsulta,
+  alertaIntegridad,
+  cdcDeIntento,
+  detalleFiscalPrimario,
+  iconosEstado,
+  NOMBRE_EJE,
+  resumenConsultas,
+  resumenFases,
+  seguimientoFiscal,
+  textoConexion,
+  type IconoEstado,
+  type IntentoConsulta,
+  type SimboloEstado,
+  type TonoIcono,
+} from "@/lib/facturacion/presentacion-sifen";
 import { formatearFechaHoraPy } from "@/lib/formato/listas";
 import { formatearImporteMoneda } from "@/lib/formato/monto-visual";
 
@@ -52,9 +65,10 @@ type VistaJson = { titulo: string; detalle: string; texto: string; cargando: boo
 type Respuesta = {
   documentos: Documento[]; total: number; pagina: number; totalPaginas: number; resumen: Record<string, number>; sucursales: Array<{ id: string; nombre: string }>; permisos: { editar: boolean; crear: boolean };
 };
-type Detalle = { cargando: boolean; error: string; intentos: Intento[]; siguienteIntentos: string | null; cargandoMas: boolean; errorMas: string; solicitudes: Solicitud[]; json: VistaJson | null; aviso: string; consultando: boolean };
+/** PRO-342-R04: `tecnico` = segunda capa (historial técnico) abierta; cerrada por defecto. `copiado` = feedback breve del botón Copiar. */
+type Detalle = { cargando: boolean; error: string; intentos: Intento[]; siguienteIntentos: string | null; cargandoMas: boolean; errorMas: string; solicitudes: Solicitud[]; json: VistaJson | null; aviso: string; consultando: boolean; tecnico: boolean; copiado: "" | "lote" | "cdc" | "error" };
 
-const DETALLE_VACIO: Detalle = { cargando: false, error: "", intentos: [], siguienteIntentos: null, cargandoMas: false, errorMas: "", solicitudes: [], json: null, aviso: "", consultando: false };
+const DETALLE_VACIO: Detalle = { cargando: false, error: "", intentos: [], siguienteIntentos: null, cargandoMas: false, errorMas: "", solicitudes: [], json: null, aviso: "", consultando: false, tecnico: false, copiado: "" };
 
 const INDICADORES: Array<{ grupo: GrupoIndicador | ""; titulo: string; ayuda: string; clase: string }> = [
   { grupo: "", titulo: "Total", ayuda: "Documentos visibles", clase: ui.summaryTeal },
@@ -67,14 +81,37 @@ const INDICADORES: Array<{ grupo: GrupoIndicador | ""; titulo: string; ayuda: st
   { grupo: "SIN_EMAIL", titulo: "Sin e-mail", ayuda: "Sin información de envío", clase: ui.summaryAmber },
 ];
 
-// PRO-338: el color del badge fiscal sale de presentacionSifen (estado persistido + envío); las anomalías técnicas de la última consulta van en un aviso aparte (alertaConsulta).
-const CLASE_TONO_SIFEN: Record<TonoSifen, string> = {
-  aprobado: estilos.sifenAprobado,
-  rechazado: estilos.sifenRechazado,
-  pendiente: estilos.sifenPendiente,
-  sinTransmitir: estilos.sifenSinTransmitir,
-  anulado: estilos.sifenAnulado,
+/**
+ * PRO-342-R04 (UX01): cuatro iconos INDEPENDIENTES por documento (Envío · XML/CDC · SIFEN · Correo), derivados por iconosEstado del estado persistido. Cada uno tiene símbolo propio
+ * (no solo color), aria-label y tooltip en mouse/foco/toque. Las anomalías técnicas de la última consulta van en un quinto indicador «!» que aparece solo si existen (alertaConsulta).
+ */
+const CLASE_TONO_ICONO: Record<TonoIcono, string> = { ok: estilos.iconoOk, info: estilos.iconoInfo, aviso: estilos.iconoAviso, error: estilos.iconoError, neutro: estilos.iconoNeutro };
+const ARCHIVO = <path d="M8 3.5h6l4 4V20H8z" />;
+const GLIFO: Record<SimboloEstado, ReactNode> = {
+  check: <path d="m6.5 12.5 3.8 3.8 7.2-8" />,
+  cruz: <path d="m7.5 7.5 9 9m0-9-9 9" />,
+  reloj: <><circle cx="12" cy="12" r="7" /><path d="M12 8.5V12l2.6 1.8" /></>,
+  alerta: <path d="M12 6.5v7M12 17.2v.3" />,
+  guion: <path d="M7.5 12h9" />,
+  archivoCheck: <>{ARCHIVO}<path d="m10.3 14 1.9 1.9 3.4-3.6" /></>,
+  archivoReloj: <>{ARCHIVO}<path d="M13 11.5v3h2" /></>,
+  archivoAlerta: <>{ARCHIVO}<path d="M13 10.5v4M13 17v.3" /></>,
+  prohibido: <><circle cx="12" cy="12" r="7" /><path d="m7.2 16.8 9.6-9.6" /></>,
+  correo: <><path d="M4.5 7h15v10h-15z" /><path d="m4.5 7.5 7.5 6 7.5-6" /></>,
+  correoCheck: <><path d="M4.5 7h15v10h-15z" /><path d="m8.5 12.2 2.4 2.3 4.6-4.6" /></>,
+  correoCruz: <><path d="M4.5 7h15v10h-15z" /><path d="m9.2 9.2 5.6 5.6m0-5.6-5.6 5.6" /></>,
 };
+
+function IconoFase({ icono }: { icono: IconoEstado }) {
+  return (
+    <span className={clases(estilos.icono, CLASE_TONO_ICONO[icono.tono])} role="img" tabIndex={0} aria-label={icono.texto} data-tip={icono.texto} data-eje={icono.eje} data-simbolo={icono.simbolo}>
+      <span className={estilos.iconoCirculo} aria-hidden="true">
+        <svg viewBox="0 0 24 24">{GLIFO[icono.simbolo]}</svg>
+      </span>
+      <span className={estilos.iconoNombre} aria-hidden="true">{icono.nombre}</span>
+    </span>
+  );
+}
 /**
  * PRO-334 (CASA MINGO, ETAPA 3): color por TIPO de comprobante, independiente del estado fiscal PRO-338. FE = azul suave, NCE = amarillo claro suave (fondo + acento
  * lateral de la fila y del detalle desplegado). El tipo sigue escrito en texto («Factura electrónica» / «Nota de crédito»): el color es complemento. Otros tipos sin color.
@@ -83,8 +120,6 @@ const CLASE_FILA_TIPO: Partial<Record<TipoDocumento, string>> = { FE: estilos.fi
 const CLASE_DETALLE_TIPO: Partial<Record<TipoDocumento, string>> = { FE: estilos.detalleFE, NCE: estilos.detalleNCE };
 const CLASE_ETIQUETA_TIPO: Partial<Record<TipoDocumento, string>> = { FE: estilos.tipoFE, NCE: estilos.tipoNCE };
 const clases = (...c: Array<string | undefined>) => c.filter(Boolean).join(" ");
-const claseLocal = (e: EstadoLocal) => (e === "ENVIADO" ? ui.statusActive : e === "ERROR_ENVIO" ? ui.statusDanger : ui.statusWarning);
-const claseEmail = (e: EstadoEmail) => (e === "ENVIADO" ? ui.statusActive : e === "ERROR" ? ui.statusDanger : e === "PENDIENTE" ? ui.statusWarning : ui.statusInfo);
 const fechaHora = (v: string) => formatearFechaHoraPy(v);
 // Fechas que informa el gateway como texto (sin zona): se reordenan a dd/MM/yyyy sin convertir la hora.
 const fechaGateway = (v: string | null) => {
@@ -349,6 +384,24 @@ export default function DocumentosPage() {
     actualizarDetalle(d.id, { json: null });
   }
 
+  // PRO-342-R04 (UX02): copia EXACTA del lote o del CDC registrados (sin recortar ni enmascarar). Solo escribe si el detalle sigue abierto; el aviso «Copiado» dura 2 s.
+  async function copiar(d: Documento, campo: "lote" | "cdc", valor: string) {
+    const marcar = (copiado: Detalle["copiado"]) => setAbiertos((a) => (a[d.id] ? { ...a, [d.id]: { ...a[d.id], copiado } } : a));
+
+    try {
+      await navigator.clipboard.writeText(valor);
+      marcar(campo);
+    } catch {
+      marcar("error");
+    }
+    window.setTimeout(() => setAbiertos((a) => (a[d.id] && a[d.id].copiado !== "" ? { ...a, [d.id]: { ...a[d.id], copiado: "" } } : a)), 2000);
+  }
+
+  // PRO-342-R04 (UX02): segunda capa (historial técnico, JSON, conexión). Solo muestra/oculta lo ya cargado por GET al abrir la fila: no consulta al gateway.
+  function alternarTecnico(d: Documento) {
+    setAbiertos((a) => (a[d.id] ? { ...a, [d.id]: { ...a[d.id], tecnico: !a[d.id].tecnico } } : a));
+  }
+
   function verSolicitud(d: Documento, sol: Solicitud) {
     void verJson(d, { titulo: "Solicitud registrada (no necesariamente transmitida)", detalle: `Versión ${sol.version} · huella ${sol.payloadHash}` }, `/api/documentos/${d.id}/solicitud?version=${sol.version}`, (j) => (j.solicitud as { payload?: unknown } | undefined)?.payload);
   }
@@ -505,6 +558,16 @@ export default function DocumentosPage() {
           </div>
         ) : null}
 
+        {/* PRO-342-R04 (UX01): leyenda breve, visible una vez por listado. */}
+        <div className={estilos.leyenda} aria-label="Leyenda de los iconos de estado">
+          <strong>Estados:</strong>
+          <span>{NOMBRE_EJE.envio} (recepción del gateway)</span>
+          <span>{NOMBRE_EJE.xml} (XML firmado / CDC de la API)</span>
+          <span>{NOMBRE_EJE.sifen} (resultado fiscal)</span>
+          <span>{NOMBRE_EJE.correo} (e-mail al cliente)</span>
+          <span className={estilos.leyendaAyuda}>Pase el cursor, enfoque o toque un icono para ver su significado. ✓ confirmado · ✕ rechazo/error · reloj pendiente · ! aviso · − sin información.</span>
+        </div>
+
         <div className={ui.tableScroll}>
           <table className={ui.table} style={{ minWidth: 860 }}>
             <thead>
@@ -521,11 +584,14 @@ export default function DocumentosPage() {
             <tbody>
               {filas.map((d) => {
                 const det = abiertos[d.id];
-                const sifen = presentacionSifen(d);
+                const iconos = iconosEstado(d);
                 const alerta = alertaConsulta(d);
+                const integridad = alertaIntegridad(d);
+                const fiscal = detalleFiscalPrimario(d);
                 const consultas = det ? resumenConsultas(det.intentos) : { valida: null, ultima: null };
-                // PRO-342-R01: envío (ACK), último retorno del gateway (p. ej. «XML firmado») y resultado fiscal SIFEN en ejes separados.
+                // PRO-342-R01: envío (ACK), último retorno del gateway (p. ej. «XML firmado») y resultado fiscal SIFEN en ejes separados (segunda capa).
                 const seguimiento = seguimientoFiscal(d);
+                const avisoFila = [alerta ? `${alerta.texto}. ${alerta.detalle}` : "", d.requiereRevision ? `Requiere revisión: lleva mucho tiempo sin resultado definitivo; no se reenvía${d.tipo === "NCE" ? " ni se libera el saldo" : ""}.` : ""].filter(Boolean).join(" ");
 
                 return (
                   <Fragment key={d.id}>
@@ -548,23 +614,20 @@ export default function DocumentosPage() {
                         <strong className={ui.mono}>{importe(d)}</strong>
                       </td>
                       <td>
-                        <div className={ui.statuses}>
-                          <span className={`${estilos.sifen} ${CLASE_TONO_SIFEN[sifen.tono]}`} title={sifen.detalle}>SIFEN: {sifen.texto}</span>
-                          {alerta ? (
-                            <span className={alerta.tipo === "inconsistencia" ? estilos.alertaInconsistencia : estilos.alertaTecnica} title={alerta.detalle}>
-                              <span aria-hidden="true" className={estilos.alertaIcono}>!</span>
-                              {alerta.texto}
+                        <div className={estilos.iconosEstado} role="group" aria-label={`Estados de ${numeroDocumento(d)}`}>
+                          {iconos.map((i) => <IconoFase key={i.eje} icono={i} />)}
+                          {avisoFila ? (
+                            <span className={clases(estilos.icono, alerta?.tipo === "inconsistencia" || !alerta ? estilos.iconoError : estilos.iconoAviso)} role="img" tabIndex={0} aria-label={`Aviso técnico: ${avisoFila}`} data-tip={`Aviso técnico: ${avisoFila}`} data-eje="aviso">
+                              <span className={estilos.iconoCirculo} aria-hidden="true"><svg viewBox="0 0 24 24">{GLIFO.alerta}</svg></span>
+                              <span className={estilos.iconoNombre} aria-hidden="true">Aviso</span>
                             </span>
                           ) : null}
-                          <span className={claseLocal(d.estadoLocal)} title="Estado del envío al gateway">Envío: {ETIQUETA_LOCAL[d.estadoLocal]}</span>
-                          <span className={claseEmail(d.estadoEmail)} title="Estado del e-mail al cliente">{ETIQUETA_EMAIL[d.estadoEmail]}</span>
-                          {d.requiereRevision ? <span className={ui.statusDanger} title={`Lleva mucho tiempo sin resultado definitivo. Se sigue consultando automáticamente; no se reenvía${d.tipo === "NCE" ? " ni se libera el saldo" : ""}.`}>Requiere revisión</span> : null}
                         </div>
                       </td>
                       <td className={ui.actionsCell}>
                         <div className={estilos.accionesLinea}>
                           {kudeDisponible(d) ? (
-                            <button type="button" className={estilos.iconBtn} title="Ver KuDE (PDF)" aria-label={`Ver KuDE (PDF) de ${d.tipo === "NCE" ? "la nota de crédito" : "la factura"} ${d.establecimiento}-${d.puntoExpedicion}-${d.numero}`} onClick={() => abrirKude(d)}>
+                            <button type="button" className={estilos.iconBtn} title="Consultar KuDE (PDF) al gateway: no confirma por sí que el PDF exista ni que esté verificado" aria-label={`Consultar KuDE (PDF) de ${d.tipo === "NCE" ? "la nota de crédito" : "la factura"} ${d.establecimiento}-${d.puntoExpedicion}-${d.numero}`} onClick={() => abrirKude(d)}>
                               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /><path d="M9 13h6M9 17h4" /></svg>
                             </button>
                           ) : null}
@@ -578,129 +641,168 @@ export default function DocumentosPage() {
                     {det ? (
                       <tr className={clases(estilos.detalle, CLASE_DETALLE_TIPO[d.tipo])} data-tipo={d.tipo}>
                         <td colSpan={6}>
-                          <dl style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "6px 16px", margin: "6px 0" }} aria-label="Seguimiento fiscal">
-                            <div><dt className={ui.muted}>1 · Envío al gateway</dt><dd style={{ margin: 0, overflowWrap: "anywhere" }}>{seguimiento.envio}</dd></div>
-                            <div><dt className={ui.muted}>2 · Último retorno del gateway</dt><dd style={{ margin: 0, overflowWrap: "anywhere" }}>{seguimiento.ultimoRetorno}{d.ultimaConsultaAt ? ` (${fechaHora(d.ultimaConsultaAt)})` : ""}</dd></div>
-                            <div><dt className={ui.muted}>3 · Resultado fiscal SIFEN</dt><dd style={{ margin: 0 }}>{seguimiento.resultadoFiscal}</dd></div>
+                          {/* PRO-342-R04 (UX02) — PRIMERA CAPA: solo cuatro datos fiscales, tal como los registró la API (sin inventar, recortar ni enmascarar). */}
+                          <div className={estilos.fiscalCabecera}>
+                            <strong>Detalle fiscal · {numeroDocumento(d)}</strong>
+                            <span className={estilos.fiscalFases} aria-label="Fases del documento">{resumenFases(d)}</span>
+                          </div>
+                          <dl className={estilos.fiscal} aria-label="Datos fiscales">
+                            <div>
+                              <dt className={ui.muted}>Nro lote</dt>
+                              <dd className={ui.mono}>{d.lote ?? "No informado"}</dd>
+                              {fiscal.lote ? <button type="button" className={estilos.copiar} aria-label="Copiar número de lote" onClick={() => void copiar(d, "lote", fiscal.lote as string)}>{det.copiado === "lote" ? "Copiado" : "Copiar"}</button> : null}
+                            </div>
+                            <div>
+                              <dt className={ui.muted}>{d.tipo === "NCE" ? "CDC de la nota de crédito" : "CDC"}</dt>
+                              <dd className={ui.mono}>{fiscal.cdc ?? "No informado"}</dd>
+                              {fiscal.cdc ? <button type="button" className={estilos.copiar} aria-label="Copiar CDC" onClick={() => void copiar(d, "cdc", fiscal.cdc as string)}>{det.copiado === "cdc" ? "Copiado" : "Copiar"}</button> : null}
+                            </div>
+                            <div>
+                              <dt className={ui.muted}>Fecha firma</dt>
+                              <dd>{fiscal.fechaFirma ? fechaGateway(fiscal.fechaFirma) : "No informada"}</dd>
+                            </div>
+                            <div>
+                              <dt className={ui.muted}>Mensaje</dt>
+                              <dd className={fiscal.rechazo ? estilos.mensajeRechazo : undefined}>{fiscal.mensaje ?? "Sin mensaje informado"}</dd>
+                            </div>
                           </dl>
-                          <dl style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "6px 16px", margin: "6px 0" }}>
-                            {d.tipo === "NCE" ? <div><dt className={ui.muted}>Factura original</dt><dd style={{ margin: 0 }}>{d.feNumero ?? "—"}{d.nceMotivo ? ` · Motivo: ${MOTIVO_NCE[d.nceMotivo] ?? d.nceMotivo}` : ""}</dd></div> : null}
-                            {d.tipo === "NCE" ? <div><dt className={ui.muted}>CDC de la factura original</dt><dd className={ui.mono} style={{ overflowWrap: "anywhere", margin: 0 }}>{d.feCdc ?? "—"}</dd></div> : null}
-                            <div><dt className={ui.muted}>{d.tipo === "NCE" ? "CDC de la nota de crédito" : "CDC"}</dt><dd className={ui.mono} style={{ overflowWrap: "anywhere", margin: 0 }}>{d.cdc ?? "Aún no informado"}</dd></div>
-                            <div><dt className={ui.muted}>Estado fiscal registrado</dt><dd style={{ margin: 0 }}>{ETIQUETA_SIFEN[d.estadoSifen]}</dd></div>
-                            <div><dt className={ui.muted}>Texto informado por el gateway (última consulta válida)</dt><dd style={{ margin: 0 }}>{d.estadoGatewayTexto ?? "—"}</dd></div>
-                            <div><dt className={ui.muted}>Último mensaje registrado del gateway</dt><dd style={{ margin: 0 }}>{d.codRespuesta ? `${d.codRespuesta} · ` : ""}{d.mensajeRespuesta ?? "—"}<br /><small className={ui.muted}>De un envío o de una consulta válida; las consultas fallidas no lo modifican.</small></dd></div>
-                            <div><dt className={ui.muted}>Lote</dt><dd style={{ margin: 0 }}>{d.lote ?? "No informado"}</dd></div>
-                            <div><dt className={ui.muted}>Fecha de firma</dt><dd style={{ margin: 0 }}>{fechaGateway(d.fechaFirma)}</dd></div>
-                            <div><dt className={ui.muted}>Fecha de envío</dt><dd style={{ margin: 0 }}>{fechaGateway(d.fechaEnvio)}</dd></div>
-                            <div><dt className={ui.muted}>Última respuesta fiscal válida</dt><dd style={{ margin: 0, overflowWrap: "anywhere" }}>{consultas.valida ? describirConsulta(consultas.valida, false) : det.cargando ? "Cargando historial..." : "No hay una consulta válida en el historial cargado."}</dd></div>
-                            <div><dt className={ui.muted}>Último intento de consulta</dt><dd style={{ margin: 0, overflowWrap: "anywhere" }}>{consultas.ultima ? describirConsulta(consultas.ultima, true) : d.ultimaConsultaAt ? `${fechaHora(d.ultimaConsultaAt)} · ${ETIQUETA_RESULTADO_INTENTO[d.ultimaConsultaResultado ?? ""] ?? d.ultimaConsultaResultado}` : "Nunca consultado"}<br /><small className={ui.muted}>Detalle completo y JSON de respuesta en el historial de consultas.</small></dd></div>
-                          </dl>
+                          <span className={estilos.srSolo} role="status" aria-live="polite">{det.copiado === "lote" || det.copiado === "cdc" ? "Copiado al portapapeles" : det.copiado === "error" ? "No fue posible copiar: seleccione el texto manualmente" : ""}</span>
+                          {det.copiado === "error" ? <div className={ui.alertError} role="alert" style={{ margin: "4px 0" }}>No fue posible copiar: seleccione el texto manualmente.</div> : null}
 
+                          {integridad ? <div className={estilos.avisoInconsistencia} role="note">{integridad}</div> : null}
                           {alerta ? (
                             <div className={alerta.tipo === "inconsistencia" ? estilos.avisoInconsistencia : estilos.avisoTecnico} role="note">
-                              <strong>{alerta.texto}.</strong> {alerta.detalle}
+                              <strong>Aviso técnico: {alerta.texto}.</strong> {alerta.detalle}
                               {d.ultimaConsultaAt ? ` Última consulta: ${fechaHora(d.ultimaConsultaAt)}.` : ""}
                             </div>
                           ) : null}
 
-                          <p className={ui.muted} style={{ margin: "4px 0" }}>{d.tipo === "FE" || d.tipo === "NCE" ? "XML: descarga no disponible." : "KuDE y XML: descarga no disponible para este tipo de documento."}</p>
+                          <div className={estilos.barraAcciones}>
+                            {crear && (d.estadoLocal === "PENDIENTE_ENVIO" || (d.estadoLocal === "ERROR_ENVIO" && d.envioErrorTipo !== "RECHAZO")) ? (
+                              <button type="button" className={ui.primaryButton} disabled={det.consultando} onClick={() => enviarAlGateway(d)}>
+                                {det.consultando ? "Enviando..." : "Enviar al gateway"}
+                              </button>
+                            ) : null}
+                            {crear && d.tipo !== "NCE" && d.estadoLocal === "ERROR_ENVIO" && d.envioErrorTipo === "RECHAZO" ? (
+                              <button type="button" className={ui.secondaryButton} disabled={det.consultando} onClick={() => enviarAlGateway(d, true)}>
+                                {det.consultando ? "Enviando..." : "Reenviar el mismo documento (confirmar)"}
+                              </button>
+                            ) : null}
+                            {d.estadoLocal === "ERROR_ENVIO" && d.envioErrorTipo === "RECHAZO" ? (
+                              <p className={ui.alertError} role="alert">{d.tipo === "NCE" ? "El gateway rechazó esta nota de crédito por validación. Se conserva su número y el historial; no se reenvía: emita una nueva con «Corregir y emitir nueva»." : "El gateway rechazó este documento por validación. Se conserva su número y el historial; no se genera otro número ni se reenvía automáticamente."}</p>
+                            ) : null}
+                            {crear && d.tipo === "NCE" && d.corregible ? (
+                              <Link className={ui.primaryButton} href={`/notas-credito?corregir=${d.id}`}>Corregir y emitir nueva</Link>
+                            ) : null}{" "}
+                            {d.estadoLocal === "ENVIO_INDETERMINADO" ? (
+                              <p className={ui.alertError} role="alert">El resultado del envío no está confirmado. Verifique el documento en el gateway antes de cualquier reenvío: Nexit no reenvía automáticamente un envío indeterminado.</p>
+                            ) : null}{" "}
+                            {kudeDisponible(d) ? (
+                              <button type="button" className={ui.secondaryButton} onClick={() => abrirKude(d)}>Consultar KuDE (PDF)</button>
+                            ) : null}{" "}
+                            {editar ? (
+                              <button type="button" className={ui.secondaryButton} disabled={det.consultando} onClick={() => reconsultar(d)}>
+                                {det.consultando ? "Consultando..." : "Consultar estado en SIFEN"}
+                              </button>
+                            ) : null}
+                            {det.aviso ? <div className={ui.alertOk} role="status" style={{ margin: "8px 0" }}>{det.aviso}</div> : null}
+                            {det.error ? <div className={ui.alertError} role="alert" style={{ margin: "8px 0" }}>{det.error}</div> : null}
+                          </div>
 
-                          {crear && (d.estadoLocal === "PENDIENTE_ENVIO" || (d.estadoLocal === "ERROR_ENVIO" && d.envioErrorTipo !== "RECHAZO")) ? (
-                            <button type="button" className={ui.primaryButton} disabled={det.consultando} onClick={() => enviarAlGateway(d)}>
-                              {det.consultando ? "Enviando..." : "Enviar al gateway"}
-                            </button>
-                          ) : null}
-                          {crear && d.tipo !== "NCE" && d.estadoLocal === "ERROR_ENVIO" && d.envioErrorTipo === "RECHAZO" ? (
-                            <button type="button" className={ui.secondaryButton} disabled={det.consultando} onClick={() => enviarAlGateway(d, true)}>
-                              {det.consultando ? "Enviando..." : "Reenviar el mismo documento (confirmar)"}
-                            </button>
-                          ) : null}
-                          {d.estadoLocal === "ERROR_ENVIO" && d.envioErrorTipo === "RECHAZO" ? (
-                            <p className={ui.alertError} role="alert">{d.tipo === "NCE" ? "El gateway rechazó esta nota de crédito por validación. Se conserva su número y el historial; no se reenvía: emita una nueva con «Corregir y emitir nueva»." : "El gateway rechazó este documento por validación. Se conserva su número y el historial; no se genera otro número ni se reenvía automáticamente."}</p>
-                          ) : null}
-                          {crear && d.tipo === "NCE" && d.corregible ? (
-                            <Link className={ui.primaryButton} href={`/notas-credito?corregir=${d.id}`}>Corregir y emitir nueva</Link>
-                          ) : null}{" "}
-                          {d.estadoLocal === "ENVIO_INDETERMINADO" ? (
-                            <p className={ui.alertError} role="alert">El resultado del envío no está confirmado. Verifique el documento en el gateway antes de cualquier reenvío: Nexit no reenvía automáticamente un envío indeterminado.</p>
-                          ) : null}{" "}
-                          {editar ? (
-                            <button type="button" className={ui.secondaryButton} disabled={det.consultando} onClick={() => reconsultar(d)}>
-                              {det.consultando ? "Consultando..." : "Consultar estado en SIFEN"}
-                            </button>
-                          ) : null}
-                          {det.aviso ? <div className={ui.alertOk} role="status" style={{ margin: "8px 0" }}>{det.aviso}</div> : null}
-                          {det.error ? <div className={ui.alertError} role="alert" style={{ margin: "8px 0" }}>{det.error}</div> : null}
+                          {/* PRO-342-R04 (UX02) — SEGUNDA CAPA, cerrada por defecto: seguimiento, historial completo, JSON y conexión. */}
+                          <button type="button" className={estilos.toggleTecnico} aria-expanded={det.tecnico} aria-controls={`tecnico-${d.id}`} onClick={() => alternarTecnico(d)}>
+                            <span aria-hidden="true">{det.tecnico ? "▾" : "▸"}</span> Historial técnico ({det.cargando ? "…" : `${det.intentos.length}${det.siguienteIntentos ? "+" : ""}`})
+                          </button>
+                          {det.tecnico ? (
+                            <div id={`tecnico-${d.id}`} className={estilos.tecnico} role="region" aria-label="Historial técnico">
+                              <dl style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "6px 16px", margin: "6px 0" }} aria-label="Seguimiento fiscal">
+                                <div><dt className={ui.muted}>1 · Envío al gateway</dt><dd style={{ margin: 0, overflowWrap: "anywhere" }}>{seguimiento.envio}</dd></div>
+                                <div><dt className={ui.muted}>2 · Último retorno del gateway</dt><dd style={{ margin: 0, overflowWrap: "anywhere" }}>{seguimiento.ultimoRetorno}{d.ultimaConsultaAt ? ` (${fechaHora(d.ultimaConsultaAt)})` : ""}</dd></div>
+                                <div><dt className={ui.muted}>3 · Resultado fiscal SIFEN</dt><dd style={{ margin: 0 }}>{seguimiento.resultadoFiscal}</dd></div>
+                              </dl>
+                              <dl style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "6px 16px", margin: "6px 0" }}>
+                                {d.tipo === "NCE" ? <div><dt className={ui.muted}>Factura original</dt><dd style={{ margin: 0 }}>{d.feNumero ?? "—"}{d.nceMotivo ? ` · Motivo: ${MOTIVO_NCE[d.nceMotivo] ?? d.nceMotivo}` : ""}</dd></div> : null}
+                                {d.tipo === "NCE" ? <div><dt className={ui.muted}>CDC de la factura original</dt><dd className={ui.mono} style={{ overflowWrap: "anywhere", margin: 0 }}>{d.feCdc ?? "—"}</dd></div> : null}
+                                <div><dt className={ui.muted}>Estado fiscal registrado</dt><dd style={{ margin: 0 }}>{ETIQUETA_SIFEN[d.estadoSifen]}</dd></div>
+                                <div><dt className={ui.muted}>Texto informado por el gateway (última consulta válida)</dt><dd style={{ margin: 0 }}>{d.estadoGatewayTexto ?? "—"}</dd></div>
+                                <div><dt className={ui.muted}>Último mensaje registrado del gateway</dt><dd style={{ margin: 0 }}>{d.codRespuesta ? `${d.codRespuesta} · ` : ""}{d.mensajeRespuesta ?? "—"}<br /><small className={ui.muted}>De un envío o de una consulta válida; las consultas fallidas no lo modifican.</small></dd></div>
+                                <div><dt className={ui.muted}>Fecha de envío</dt><dd style={{ margin: 0 }}>{fechaGateway(d.fechaEnvio)}</dd></div>
+                                <div><dt className={ui.muted}>Última respuesta fiscal válida</dt><dd style={{ margin: 0, overflowWrap: "anywhere" }}>{consultas.valida ? describirConsulta(consultas.valida, false) : det.cargando ? "Cargando historial..." : "No hay una consulta válida en el historial cargado."}</dd></div>
+                                <div><dt className={ui.muted}>Último intento de consulta</dt><dd style={{ margin: 0, overflowWrap: "anywhere" }}>{consultas.ultima ? describirConsulta(consultas.ultima, true) : d.ultimaConsultaAt ? `${fechaHora(d.ultimaConsultaAt)} · ${ETIQUETA_RESULTADO_INTENTO[d.ultimaConsultaResultado ?? ""] ?? d.ultimaConsultaResultado}` : "Nunca consultado"}<br /><small className={ui.muted}>Detalle completo y JSON de respuesta en el historial de consultas.</small></dd></div>
+                              </dl>
 
-                          <h4 style={{ margin: "10px 0 4px", fontSize: 13.5 }}>Solicitud registrada (no necesariamente transmitida)</h4>
-                          {det.cargando ? null : det.solicitudes.length === 0 ? (
-                            <p className={ui.muted}>No hay JSON registrado para este documento.</p>
-                          ) : (
-                            <div>
-                              {det.solicitudes.map((sol) => (
-                                <button key={sol.version} type="button" className={ui.secondaryButton} style={{ marginRight: 6 }} onClick={() => verSolicitud(d, sol)}>
-                                  Ver JSON de solicitud · versión {sol.version}
-                                </button>
-                              ))}
-                            </div>
-                          )}
-                          {det.json ? (
-                            <div style={{ margin: "8px 0" }} role="region" aria-label={det.json.titulo}>
-                              <strong>{det.json.titulo}</strong> <small className={ui.muted}>{det.json.detalle}</small>{" "}
-                              <button type="button" className={ui.secondaryButton} onClick={() => cerrarJson(d)}>Cerrar JSON</button>
-                              {det.json.cargando ? <p className={ui.muted}>Cargando JSON...</p> : null}
-                              {det.json.error ? <div className={ui.alertError} role="alert">{det.json.error}</div> : null}
-                              {!det.json.cargando && !det.json.error ? (
-                                det.json.texto === "" ? (
-                                  <p className={ui.muted}>No hay JSON registrado para este intento</p>
-                                ) : (
-                                  <pre style={{ margin: "6px 0 0", padding: 10, maxHeight: 360, overflow: "auto", whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: 12, border: "1px solid var(--line, #d9dee4)", borderRadius: 6 }}>{det.json.texto}</pre>
-                                )
+                              <p className={ui.muted} style={{ margin: "4px 0" }}>{d.tipo === "FE" || d.tipo === "NCE" ? "XML: descarga no disponible." : "KuDE y XML: descarga no disponible para este tipo de documento."}</p>
+
+                              <h4 style={{ margin: "10px 0 4px", fontSize: 13.5 }}>Solicitud registrada (no necesariamente transmitida)</h4>
+                              {det.cargando ? null : det.solicitudes.length === 0 ? (
+                                <p className={ui.muted}>No hay JSON registrado para este documento.</p>
+                              ) : (
+                                <div>
+                                  {det.solicitudes.map((sol) => (
+                                    <button key={sol.version} type="button" className={ui.secondaryButton} style={{ marginRight: 6 }} onClick={() => verSolicitud(d, sol)}>
+                                      Ver JSON de solicitud · versión {sol.version}
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+                              {det.json ? (
+                                <div style={{ margin: "8px 0" }} role="region" aria-label={det.json.titulo}>
+                                  <strong>{det.json.titulo}</strong> <small className={ui.muted}>{det.json.detalle}</small>{" "}
+                                  <button type="button" className={ui.secondaryButton} onClick={() => cerrarJson(d)}>Cerrar JSON</button>
+                                  {det.json.cargando ? <p className={ui.muted}>Cargando JSON...</p> : null}
+                                  {det.json.error ? <div className={ui.alertError} role="alert">{det.json.error}</div> : null}
+                                  {!det.json.cargando && !det.json.error ? (
+                                    det.json.texto === "" ? (
+                                      <p className={ui.muted}>No hay JSON registrado para este intento</p>
+                                    ) : (
+                                      <pre style={{ margin: "6px 0 0", padding: 10, maxHeight: 360, overflow: "auto", whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: 12, border: "1px solid var(--line, #d9dee4)", borderRadius: 6 }}>{det.json.texto}</pre>
+                                    )
+                                  ) : null}
+                                </div>
+                              ) : null}
+
+                              <h4 style={{ margin: "10px 0 4px", fontSize: 13.5 }}>Historial de envíos y consultas</h4>
+                              {det.cargando ? (
+                                <p className={ui.muted}>Cargando historial...</p>
+                              ) : det.intentos.length === 0 ? (
+                                <p className={ui.muted}>Sin consultas registradas.</p>
+                              ) : (
+                                <div className={ui.tableScroll}>
+                                  <table className={ui.table} style={{ minWidth: 760 }}>
+                                    <thead>
+                                      <tr><th>Fecha</th><th>Intento</th><th>Resultado</th><th>HTTP</th><th>Estado informado</th><th>Realizado por</th><th>Respuesta registrada</th></tr>
+                                    </thead>
+                                    <tbody>
+                                      {det.intentos.map((i) => (
+                                        <tr key={i.id} className={ui.row}>
+                                          <td>{fechaHora(i.creadoAt)}</td>
+                                          <td>{i.tipo === "ENVIO" ? "Envío" : "Consulta"}{i.fase ? ` · ${i.fase.toLowerCase()}` : ""}</td>
+                                          <td>{etiquetaIntento(i.tipo, i.resultado)}{i.lote ? ` · lote ${i.lote}` : ""}{i.cdcInformado ? <><br /><small className={ui.muted}>CDC informado: {i.cdcInformado}</small></> : i.cdcRespuesta ? <><br /><small className={ui.muted}>CDC informado (según el JSON de respuesta): {i.cdcRespuesta}</small></> : null}{i.mensaje ? <><br /><small className={ui.muted}>{i.mensaje}</small></> : null}{textoConexion(i.conexion) ? <><br /><small className={ui.muted}>Conexión: {textoConexion(i.conexion)}</small></> : <><br /><small className={ui.muted}>Conexión: no registrada (anterior a NEX-079 o modo compatibilidad)</small></>}</td>
+                                          <td>{i.httpStatus ?? "—"}</td>
+                                          <td>{i.estadoGateway ?? "—"}</td>
+                                          <td>{i.actorNombre}</td>
+                                          <td>
+                                            {i.tieneRespuesta ? (
+                                              <button type="button" className={ui.secondaryButton} onClick={() => verRespuesta(d, i)}>Ver JSON de respuesta</button>
+                                            ) : (
+                                              <small className={ui.muted}>No hay JSON registrado para este intento</small>
+                                            )}
+                                          </td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              )}
+                              {det.errorMas ? <div className={ui.alertError} role="alert" style={{ margin: "8px 0" }}>{det.errorMas}</div> : null}
+                              {det.siguienteIntentos ? (
+                                <p style={{ margin: "8px 0 0" }}>
+                                  <button type="button" className={ui.secondaryButton} disabled={det.cargandoMas} onClick={() => void cargarAnteriores(d)}>
+                                    {det.cargandoMas ? "Cargando..." : "Cargar intentos anteriores"}
+                                  </button>
+                                </p>
                               ) : null}
                             </div>
-                          ) : null}
-
-                          <h4 style={{ margin: "10px 0 4px", fontSize: 13.5 }}>Historial de envíos y consultas</h4>
-                          {det.cargando ? (
-                            <p className={ui.muted}>Cargando historial...</p>
-                          ) : det.intentos.length === 0 ? (
-                            <p className={ui.muted}>Sin consultas registradas.</p>
-                          ) : (
-                            <div className={ui.tableScroll}>
-                              <table className={ui.table} style={{ minWidth: 760 }}>
-                                <thead>
-                                  <tr><th>Fecha</th><th>Intento</th><th>Resultado</th><th>HTTP</th><th>Estado informado</th><th>Realizado por</th><th>Respuesta registrada</th></tr>
-                                </thead>
-                                <tbody>
-                                  {det.intentos.map((i) => (
-                                    <tr key={i.id} className={ui.row}>
-                                      <td>{fechaHora(i.creadoAt)}</td>
-                                      <td>{i.tipo === "ENVIO" ? "Envío" : "Consulta"}{i.fase ? ` · ${i.fase.toLowerCase()}` : ""}</td>
-                                      <td>{etiquetaIntento(i.tipo, i.resultado)}{i.lote ? ` · lote ${i.lote}` : ""}{i.cdcInformado ? <><br /><small className={ui.muted}>CDC informado: {i.cdcInformado}</small></> : i.cdcRespuesta ? <><br /><small className={ui.muted}>CDC informado (según el JSON de respuesta): {i.cdcRespuesta}</small></> : null}{i.mensaje ? <><br /><small className={ui.muted}>{i.mensaje}</small></> : null}{textoConexion(i.conexion) ? <><br /><small className={ui.muted}>Conexión: {textoConexion(i.conexion)}</small></> : <><br /><small className={ui.muted}>Conexión: no registrada (anterior a NEX-079 o modo compatibilidad)</small></>}</td>
-                                      <td>{i.httpStatus ?? "—"}</td>
-                                      <td>{i.estadoGateway ?? "—"}</td>
-                                      <td>{i.actorNombre}</td>
-                                      <td>
-                                        {i.tieneRespuesta ? (
-                                          <button type="button" className={ui.secondaryButton} onClick={() => verRespuesta(d, i)}>Ver JSON de respuesta</button>
-                                        ) : (
-                                          <small className={ui.muted}>No hay JSON registrado para este intento</small>
-                                        )}
-                                      </td>
-                                    </tr>
-                                  ))}
-                                </tbody>
-                              </table>
-                            </div>
-                          )}
-                          {det.errorMas ? <div className={ui.alertError} role="alert" style={{ margin: "8px 0" }}>{det.errorMas}</div> : null}
-                          {det.siguienteIntentos ? (
-                            <p style={{ margin: "8px 0 0" }}>
-                              <button type="button" className={ui.secondaryButton} disabled={det.cargandoMas} onClick={() => void cargarAnteriores(d)}>
-                                {det.cargandoMas ? "Cargando..." : "Cargar intentos anteriores"}
-                              </button>
-                            </p>
                           ) : null}
                         </td>
                       </tr>

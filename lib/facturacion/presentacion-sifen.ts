@@ -8,7 +8,7 @@
  *  · Cancelado / Inutilizado: estados propios, tono neutro oscuro (no se presentan como rechazo).
  * Las anomalías técnicas de la ÚLTIMA consulta (CDC divergente, errores HTTP, tiempo de espera, red, respuesta inválida, no encontrado) van en un aviso aparte, nunca en el badge fiscal.
  */
-import { esFaseXmlFirmado, ESTADOS_LOCAL_TRANSMITIDO, ESTADOS_SIFEN_FINALES, ESTADOS_SIFEN_SIN_FINAL, ETIQUETA_LOCAL, ETIQUETA_RESULTADO_INTENTO, ETIQUETA_SIFEN, type EstadoLocal, type EstadoSifen } from "@/lib/facturacion/estados";
+import { esFaseXmlFirmado, ESTADOS_LOCAL_TRANSMITIDO, ESTADOS_SIFEN_FINALES, ESTADOS_SIFEN_SIN_FINAL, ETIQUETA_EMAIL, ETIQUETA_LOCAL, ETIQUETA_RESULTADO_INTENTO, ETIQUETA_SIFEN, type EstadoEmail, type EstadoLocal, type EstadoSifen } from "@/lib/facturacion/estados";
 
 export type TonoSifen = "aprobado" | "rechazado" | "pendiente" | "sinTransmitir" | "anulado";
 export type PresentacionSifen = { tono: TonoSifen; texto: string; detalle: string };
@@ -130,4 +130,112 @@ export function cdcDeIntento(i: Pick<IntentoConsulta, "cdcInformado" | "cdcRespu
   if (i.cdcRespuesta) return { cdc: i.cdcRespuesta, fuente: "json" };
 
   return null;
+}
+
+// ── PRO-342-R04 (UX01/UX02): iconos de estado por eje INDEPENDIENTE y primera capa fiscal ───────────────────────────────────────────────────────────────
+/**
+ * Cuatro ejes que nunca se mezclan ni se deducen unos de otros: ENVÍO (ACK del gateway), XML/CDC (CDC auténtico informado por la API), SIFEN (estado fiscal PERSISTIDO) y CORREO.
+ * Una factura puede estar a la vez «Enviado ✓ · XML firmado ✓ · SIFEN Rechazado ✕»: la firma/CDC no es aprobación. Puro: solo deriva presentación desde lo persistido; nunca cambia datos.
+ * Cada icono lleva un símbolo distinto además del color (el color nunca es la única señal) y un texto completo para aria-label/tooltip.
+ */
+export type EjeEstado = "envio" | "xml" | "sifen" | "correo";
+export type SimboloEstado = "check" | "reloj" | "alerta" | "cruz" | "guion" | "archivoCheck" | "archivoReloj" | "archivoAlerta" | "prohibido" | "correo" | "correoCheck" | "correoCruz";
+export type TonoIcono = "ok" | "info" | "aviso" | "error" | "neutro";
+export type IconoEstado = { eje: EjeEstado; nombre: string; simbolo: SimboloEstado; tono: TonoIcono; corto: string; texto: string };
+
+export const NOMBRE_EJE: Record<EjeEstado, string> = { envio: "Envío", xml: "XML/CDC", sifen: "SIFEN", correo: "Correo" };
+
+/** CDC válido = EXACTAMENTE 44 dígitos (literal, sin recortar). */
+export const cdcValido = (c: unknown): c is string => typeof c === "string" && /^\d{44}$/.test(c);
+
+const RESULTADOS_INCONSISTENTES = new Set(["CDC_DIVERGENTE", "RESPUESTA_INVALIDA"]);
+
+type DocIconos = { estadoLocal: EstadoLocal; estadoSifen: EstadoSifen; estadoEmail: EstadoEmail; cdc: string | null; ultimaConsultaResultado: string | null; envioErrorTipo?: string | null };
+
+/**
+ * PRO-342-R04 (AUD-04/F10): un estado FINAL persistido sin CDC válido es un dato histórico incoherente (la regla vigente nunca lo registra). Se muestra como ALERTA DE INTEGRIDAD;
+ * el estado de la base NO se cambia ni se reinterpreta. null si no aplica.
+ */
+export function alertaIntegridad(d: { estadoSifen: EstadoSifen; cdc: string | null }): string | null {
+  return ESTADOS_SIFEN_FINALES.includes(d.estadoSifen) && !cdcValido(d.cdc)
+    ? `Alerta de integridad: el documento figura «${ETIQUETA_SIFEN[d.estadoSifen]}» sin CDC registrado. Es un dato histórico que no cumple la regla vigente (nunca un final sin CDC); no se modifica: revise con el proveedor.`
+    : null;
+}
+
+function iconoEnvio(d: DocIconos): IconoEstado {
+  const base = { eje: "envio" as const, nombre: NOMBRE_EJE.envio };
+
+  switch (d.estadoLocal) {
+    case "ENVIADO":
+      return { ...base, simbolo: "check", tono: "ok", corto: "Enviado", texto: "Envío: recepción confirmada por el gateway (ACK). No es aprobación SIFEN." };
+    case "ENVIO_INDETERMINADO":
+      return { ...base, simbolo: "alerta", tono: "aviso", corto: "Envío indeterminado", texto: "Envío: resultado indeterminado. Verifique en el gateway antes de cualquier reenvío." };
+    case "ERROR_ENVIO":
+      return d.envioErrorTipo === "RECHAZO"
+        ? { ...base, simbolo: "cruz", tono: "error", corto: "Error de envío", texto: "Envío: el gateway rechazó el documento por validación (no es un rechazo SIFEN)." }
+        : { ...base, simbolo: "cruz", tono: "error", corto: "Error de envío", texto: "Envío: error al enviar al gateway; el documento no fue recibido." };
+    case "ENVIANDO":
+      return { ...base, simbolo: "reloj", tono: "aviso", corto: "Enviando", texto: "Envío: en curso, todavía sin confirmación del gateway." };
+    default:
+      return { ...base, simbolo: "guion", tono: "neutro", corto: "Pendiente de envío", texto: "Envío: pendiente, todavía no se transmitió al gateway." };
+  }
+}
+
+function iconoXml(d: DocIconos): IconoEstado {
+  const base = { eje: "xml" as const, nombre: NOMBRE_EJE.xml };
+  const conCdc = cdcValido(d.cdc);
+
+  if (d.ultimaConsultaResultado && RESULTADOS_INCONSISTENTES.has(d.ultimaConsultaResultado)) {
+    return { ...base, simbolo: "archivoAlerta", tono: "aviso", corto: "XML/CDC con aviso", texto: `XML/CDC: la última respuesta del gateway es inconsistente (CDC ausente, inválido o distinto). ${conCdc ? "Se conserva el CDC ya registrado." : "Aún no hay CDC registrado."}` };
+  }
+  if (conCdc) return { ...base, simbolo: "archivoCheck", tono: "info", corto: "XML firmado", texto: "XML/CDC: XML firmado, CDC informado por la API y registrado. No es aprobación SIFEN." };
+
+  return { ...base, simbolo: "archivoReloj", tono: "neutro", corto: "Sin CDC", texto: "XML/CDC: la API aún no informó el CDC de este documento." };
+}
+
+function iconoSifen(d: DocIconos): IconoEstado {
+  const base = { eje: "sifen" as const, nombre: NOMBRE_EJE.sifen };
+  const etiqueta = ETIQUETA_SIFEN[d.estadoSifen] ?? d.estadoSifen;
+
+  if (alertaIntegridad(d)) return { ...base, simbolo: "alerta", tono: "aviso", corto: `SIFEN ${etiqueta} sin CDC`, texto: `SIFEN: «${etiqueta}» registrado SIN CDC. Alerta de integridad (dato histórico, no se modifica).` };
+  if (d.estadoSifen === "APROBADO") return { ...base, simbolo: "check", tono: "ok", corto: "SIFEN Aprobado", texto: "SIFEN: aprobado (resultado fiscal registrado con CDC)." };
+  if (d.estadoSifen === "RECHAZADO") return { ...base, simbolo: "cruz", tono: "error", corto: "SIFEN Rechazado", texto: "SIFEN: rechazo fiscal confirmado y registrado con CDC. Ver código y mensaje en el detalle." };
+  if (d.estadoSifen === "CANCELADO" || d.estadoSifen === "INUTILIZADO") return { ...base, simbolo: "prohibido", tono: "neutro", corto: `SIFEN ${etiqueta}`, texto: `SIFEN: ${etiqueta} (estado fiscal registrado).` };
+  if (ESTADOS_SIFEN_SIN_FINAL.includes(d.estadoSifen) && ESTADOS_LOCAL_TRANSMITIDO.includes(d.estadoLocal)) {
+    return { ...base, simbolo: "reloj", tono: "aviso", corto: "SIFEN pendiente", texto: `SIFEN: pendiente de resultado, todavía sin decisión fiscal (estado registrado: ${etiqueta}).` };
+  }
+
+  return { ...base, simbolo: "guion", tono: "neutro", corto: "SIFEN sin información", texto: "SIFEN: sin información fiscal (documento aún no recibido por el gateway)." };
+}
+
+function iconoCorreo(d: DocIconos): IconoEstado {
+  const base = { eje: "correo" as const, nombre: NOMBRE_EJE.correo, corto: ETIQUETA_EMAIL[d.estadoEmail] ?? d.estadoEmail };
+  const texto = `Correo: ${ETIQUETA_EMAIL[d.estadoEmail] ?? d.estadoEmail} (independiente del estado SIFEN).`;
+
+  if (d.estadoEmail === "ENVIADO") return { ...base, simbolo: "correoCheck", tono: "ok", texto };
+  if (d.estadoEmail === "ERROR") return { ...base, simbolo: "correoCruz", tono: "error", texto };
+  if (d.estadoEmail === "PENDIENTE") return { ...base, simbolo: "reloj", tono: "aviso", texto };
+
+  return { ...base, simbolo: "correo", tono: "neutro", texto };
+}
+
+/** Siempre CUATRO iconos, en orden fijo Envío · XML/CDC · SIFEN · Correo. */
+export function iconosEstado(d: DocIconos): [IconoEstado, IconoEstado, IconoEstado, IconoEstado] {
+  return [iconoEnvio(d), iconoXml(d), iconoSifen(d), iconoCorreo(d)];
+}
+
+/** Línea compacta de fases para la cabecera del detalle (sin correo): p. ej. «Enviado · XML firmado · SIFEN Rechazado». */
+export function resumenFases(d: DocIconos): string {
+  return iconosEstado(d).slice(0, 3).map((i) => i.corto).join(" · ");
+}
+
+/**
+ * PRO-342-R04 (UX02): primera capa del detalle, SOLO cuatro datos fiscales tal como se registraron (sin inventar, recortar ni enmascarar):
+ * lote literal, CDC de 44 dígitos, fecha de firma informada por la API y código + mensaje de la última respuesta registrada. `rechazo` solo con RECHAZADO persistido y CDC válido:
+ * el rojo nunca se deduce del texto del mensaje.
+ */
+export function detalleFiscalPrimario(d: { lote: string | null; cdc: string | null; fechaFirma: string | null; codRespuesta: string | null; mensajeRespuesta: string | null; estadoSifen: EstadoSifen }) {
+  const mensaje = [d.codRespuesta, d.mensajeRespuesta].filter((x): x is string => typeof x === "string" && x !== "").join(" · ");
+
+  return { lote: d.lote, cdc: d.cdc, fechaFirma: d.fechaFirma, mensaje: mensaje === "" ? null : mensaje, rechazo: d.estadoSifen === "RECHAZADO" && cdcValido(d.cdc) };
 }

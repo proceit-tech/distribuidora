@@ -112,9 +112,10 @@ export async function verificarCasosColoresTipoPro334(): Promise<string[]> {
   cierto("PRO334-15 cápsula fiscal sin cambios: verde aprobado, rojo rechazado, amarillo pendiente, gris sin transmitir",
     hex(regla(css, ".sifenAprobado"), "background") === "#e6f6ec" && hex(regla(css, ".sifenRechazado"), "background") === "#fdeceb" &&
     hex(regla(css, ".sifenPendiente"), "background") === "#fff6d6" && hex(regla(css, ".sifenSinTransmitir"), "background") === "#f1f3f5");
-  cierto("PRO334-16 cápsula fiscal y alerta CDC siguen en la celda Estados con sus clases PRO-338",
-    /<span className=\{`\$\{estilos\.sifen\} \$\{CLASE_TONO_SIFEN\[sifen\.tono\]\}`\} title=\{sifen\.detalle\}>SIFEN: \{sifen\.texto\}<\/span>/.test(pagina) &&
-    /alerta\.tipo === "inconsistencia" \? estilos\.alertaInconsistencia : estilos\.alertaTecnica/.test(pagina) && hex(regla(css, ".alertaInconsistencia"), "border-color") === "#c8372d");
+  // PRO-342-R04 (UX01): la cápsula de texto fue sustituida por los iconos independientes (Envío · XML/CDC · SIFEN · Correo); el color por TIPO sigue sin mezclarse con el estado.
+  cierto("PRO334-16 (actualizado R04) iconos de estado y aviso técnico en la celda Estados (clases propias, no las del tipo); el aviso del detalle conserva las clases PRO-338",
+    /iconos\.map\(\(i\) => <IconoFase key=\{i\.eje\} icono=\{i\} \/>\)/.test(pagina) && !/CLASE_TONO_ICONO\[[^\]]*tipo/.test(pagina) &&
+    /alerta\.tipo === "inconsistencia" \? estilos\.avisoInconsistencia : estilos\.avisoTecnico/.test(pagina) && hex(regla(css, ".alertaInconsistencia"), "border-color") === "#c8372d");
 
   // ── 4. Hover/foco, accesibilidad y responsive ─────────────────────────────────────────────────────────────────────────────────────────────────────
   cierto("PRO334-17 hover y foco de teclado (focus-within) siguen visibles sobre FE y NCE con un tono más intenso del MISMO color",
@@ -150,7 +151,7 @@ export async function verificarCasosColoresTipoPro334(): Promise<string[]> {
     [fe, nce, detalleFe, detalleNce].some((f) => contraste("#6f8498", f) < 4.5 || contraste("#8092a4", f) < 4.5) && !/53687a/i.test(lista));
   cierto("PRO334-27 filas: el selector alcanza solo los metadatos directos de las columnas 1 (Documento) y 3 (Cliente); la 5.ª es Estados (cápsula SIFEN, alerta CDC, envío, e-mail) y queda fuera",
     /titulo="Documento"[\s\S]*titulo="Fecha"[\s\S]*titulo="Cliente"[\s\S]*titulo="Total"[\s\S]*titulo="Estados"[\s\S]*titulo="Acciones"/.test(pagina) &&
-    !/nth-child\((2|4|5|6)\)/.test(regla(css, SEL_SECUNDARIO) + SEL_SECUNDARIO) && /<div className=\{ui\.statuses\}>/.test(pagina));
+    !/nth-child\((2|4|5|6)\)/.test(regla(css, SEL_SECUNDARIO) + SEL_SECUNDARIO) && /<div className=\{estilos\.iconosEstado\} role="group"/.test(pagina) /* R04: iconos en lugar de ui.statuses */);
   cierto("PRO334-28 la etiqueta de tipo no es hija directa de la celda (va dentro del span de metadatos) y conserva su color propio con contraste AA",
     /<span><span className=\{CLASE_ETIQUETA_TIPO\[d\.tipo\]\}>/.test(pagina) && hex(regla(css, ".filaFE .tipoFE"), "color") === "#1d4a7c" && hex(regla(css, ".filaNCE .tipoNCE"), "color") === "#5a4500");
   cierto("PRO334-29 detalle: todos los <dt> y <small> del detalle son ui.muted; los <p> sin role son ui.muted o solo contienen el botón «Cargar intentos anteriores» (color propio); los avisos role=alert quedan excluidos",
@@ -167,7 +168,7 @@ export async function verificarCasosColoresTipoPro334(): Promise<string[]> {
 
   // ── 5. Funcionalidades preservadas ────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   cierto("PRO334-22 KuDE sigue en la fila por kudeDisponible (FE/NCE aun rechazadas o sin CDC), con su aria-label por tipo",
-    /\{kudeDisponible\(d\) \? \(/.test(pagina) && /aria-label=\{`Ver KuDE \(PDF\) de \$\{d\.tipo === "NCE" \? "la nota de crédito" : "la factura"\}/.test(pagina));
+    /\{kudeDisponible\(d\) \? \(/.test(pagina) && /aria-label=\{`Consultar KuDE \(PDF\) de \$\{d\.tipo === "NCE" \? "la nota de crédito" : "la factura"\}/.test(pagina));
   cierto("PRO334-23 expansión, historial, JSON, consulta manual y automática y orden numérico (PRO-333) siguen presentes",
     /aria-expanded=\{Boolean\(det\)\}/.test(pagina) && /reconsultar\(d\)/.test(pagina) && /iniciarRefresco/.test(pagina) && /verRespuesta\(d, i\)/.test(pagina) &&
     /<ThOrdenable titulo="Documento" campo="numero" orden=\{orden\} onOrden=\{cambiarOrden\} \/>/.test(pagina));

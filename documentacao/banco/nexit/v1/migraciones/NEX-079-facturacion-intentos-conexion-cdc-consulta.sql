@@ -12,6 +12,7 @@
 --   2) Sobrecargas de registro con p_conexion:
 --        · fe_documento_registrar_consulta (manual, NEX-054): mismas reglas + cdc_informado (antes la consulta manual no lo guardaba).
 --          PRO-342-R03-01 (las tres vías): un estado final solo con CDC válido y coherente (informado o ya guardado del mismo documento); nunca con CDC NULL.
+--          PRO-342-R04 (las tres vías): «XML firmado» (PENDIENTE) solo con CDC literal de 44 dígitos EN LA RESPUESTA ACTUAL, aunque el documento ya tenga CDC; si no, RESPUESTA_INVALIDA.
 --        · fe_documento_registrar_consulta_flujo_nce (NEX-062): mismas reglas + cdc_informado.
 --        · fe_documento_registrar_consulta_auto (NEX-077): mismas reglas (token vigente) + conexión.
 --        · fe_documento_registrar_envio (NEX-050): mismas reglas + conexión. El lote se guarda tal como lo informó el gateway (ya validado por la aplicación), solo si el documento aún no tiene uno
@@ -121,6 +122,14 @@ BEGIN
      AND (coalesce(p_cdc, d.cdc) IS NULL OR NOT public.fe_cdc_coherente(d.tipo, d.establecimiento, d.punto_expedicion, d.numero, coalesce(p_cdc, d.cdc))) THEN
     v_resultado := 'RESPUESTA_INVALIDA';
     v_mensaje := left('La consulta informa «' || p_estado_sifen || '» sin un CDC válido y coherente con el documento: no se modifica el estado fiscal.', 500);
+  END IF;
+
+  -- PRO-342-R04-F03 (defensa en profundidad): «XML firmado» exige el CDC EN ESTA RESPUESTA (p_cdc literal de 44 dígitos), aunque el documento ya tenga CDC: no se usa coalesce(p_cdc, d.cdc).
+  -- Sin él, el intento queda como RESPUESTA_INVALIDA (evidencia) y NO se modifican estado, CDC ni la última respuesta fiscal válida; el documento sigue pendiente de consulta.
+  IF v_resultado = 'OK' AND p_estado_sifen = 'PENDIENTE' AND lower(btrim(coalesce(p_estado_gateway, ''))) = 'xml firmado'
+     AND (p_cdc IS NULL OR p_cdc !~ '^[0-9]{44}$') THEN
+    v_resultado := 'RESPUESTA_INVALIDA';
+    v_mensaje := 'CDC ausente en XML firmado: la respuesta no informa el CDC del documento; no se confirma la firma ni se modifica el documento.';
   END IF;
 
   INSERT INTO public.documento_electronico_intentos (empresa_id, documento_id, tipo, resultado, http_status, request_id, estado_gateway, estado_sifen, cdc_informado, cod_respuesta, mensaje, respuesta, actor_id, conexion)
