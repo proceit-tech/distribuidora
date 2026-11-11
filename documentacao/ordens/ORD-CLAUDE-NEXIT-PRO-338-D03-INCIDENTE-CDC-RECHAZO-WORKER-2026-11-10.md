@@ -1,3 +1,13 @@
+## INVARIANTE DE INMUTABILIDAD CDC — 11/11/2026
+
+**Decisión posterior y superior del responsable PROCEIT:** **NEXIT NUNCA CAMBIA UN CDC.** No lo genera ni calcula, modifica, enmascara, corta, rellena ni reconstruye por su cuenta. **El valor del CDC sólo lo aporta la API/gateway**, y la consulta `/api/consulta_de` no envía CDC. En la primera respuesta válida asociada a FE con `d.cdc=NULL`, NEXIT debe validar identidad y guardar los **44 dígitos EXACTOS** de CDC recibidos, junto al estado y mensaje SIFEN verdaderos, sin ninguna transformación; no existe un CDC previo que pueda ser «distinto». Si el registro contiene CDC previo y una nueva respuesta del gateway informa otro, **NO reemplazar automáticamente**: registrar intento y alerta para investigación, manteniendo el identificador anterior y las garantías de identidad. Que venga de la API **no habilita sobrescrituras arbitrarias**.
+
+**PROHIBIDO en el futuro fix:** usar `sinSecretos` sobre objetos funcionales/identificadores fiscales si puede modificar `cdc`/CDC de `response.DE.CDC`; intentar recomponer el CDC después de `[omitido]`; persistir CDC fabricado o extraído manualmente del Excel; modificar valores históricos/estados por UPDATE directo; desactivar validaciones de identidad. El saneamiento para seguridad debe ser específico por campo/destino de log/evidencia, sin alterar el resultado fiscal utilizado para reconciliar; preservar protección de contraseñas, tokens y privacidad. Analizar también `enviarDocumentoGateway`.
+
+**Esta es una corrección de reglas y del diagnóstico, NO una autorización de desarrollo ni de despliegue.** Tras evidencias de solo lectura, el responsable debe autorizar por separado la orden de corrección. PRO-340 permanece pendiente.
+
+---
+
 ## RECTIFICACIÓN OBLIGATORIA DE REGLA FISCAL — 10/11/2026
 
 **Aclaración expresa del responsable: NEXIT NO ENVÍA CDC A /api/consulta_de.** La solicitud contiene exclusivamente `{dEst,dPunExp,dNumDoc,dSerieNum,tipoDoc}` (ver `gateway.ts:328`). **EL CDC SE CONOCE CUANDO EL GATEWAY RESPONDE A LA PRIMERA CONSULTA CON IDENTIDAD VERIFICABLE.** En documentos nuevos, `documentos_electronicos.cdc` está en `NULL` hasta ese momento; no puede calificarse como «distinto de un CDC ya registrado» porque no existe uno. El resultado `CDC_DIVERGENTE` actual engloba una validación diferente de identidad fiscal (CDC de otro documento) además de discrepancia con un CDC anterior, y la etiqueta de la interfaz confunde ambas circunstancias.
