@@ -6,6 +6,14 @@
 **Estado:** decisión de negocio vinculante. **No es autorización de programación, SQL, tests, consultas reales, VM ni despliegue.**
 **Prevalencia:** este documento **REEMPLAZA ÍNTEGRAMENTE** la propuesta anterior de validaciones adicionales de CDC, cálculo de RUC/DV/fecha/dígito, configuración de emisores alternativos, vínculo artificial con serie AA, pruebas criptográficas del PDF y cualquier complejidad añadida que impida registrar un CDC legítimo del gateway. Los informes anteriores son diagnósticos históricos, no nuevas órdenes activas.
 
+## ACLARACIÓN DEL ANALISTA — RESULTADO FINAL SIN CDC (AUD PRO-342-R02)
+
+**La decisión fiscal `Aprobado` / `Rechazado` y la entrega del CDC son DOS datos diferentes de la API.** Si `consulta_de`, para el documento solicitado y bajo su conexión correspondiente, comunica un estado fiscal final verificable `Aprobado` o `Rechazado` con código/mensaje pero **no devuelve CDC**, registrar ese estado final y su historial, manteniendo `cdc=NULL` hasta que el proveedor lo informe. **No degradar un `Rechazado` auténtico a `RESPUESTA_INVALIDA` exclusivamente por no traer CDC** ni seguir consultando indefinidamente por esa razón. El rechazo no se inventa a partir de HTTP, mensaje genérico ni `XML firmado`: debe venir expresamente del campo oficial de estado del proveedor para el documento consultado. Si la respuesta trae un CDC ajeno o distinto del ya registrado, conservar las protecciones de divergencia y no tomarla como estado final confiable. Las reglas normales de cancelación/inutilización y estados finales previos permanecen intactas.
+
+**No crear CDC para cerrar un estado.** La ausencia de CDC se muestra como dato pendiente del proveedor, sin reabrir envíos ni reconstruir el documento. La regla obliga a la implementación TypeScript y a la persistencia SQL (NEX-079 versionada y flujo compatible existente); no autoriza ejecutar migrations ni editar históricos.
+
+---
+
 ## RECTIFICACIÓN DEFINITIVA — RESPUESTA «XML firmado» Y RECONSULTAS (11/11/2026)
 
 **Decisión expresa del responsable, prioridad sobre TODO el texto anterior:**
