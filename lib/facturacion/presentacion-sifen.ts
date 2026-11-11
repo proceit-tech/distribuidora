@@ -31,18 +31,31 @@ export function presentacionSifen(d: { estadoLocal: EstadoLocal; estadoSifen: Es
     : { tono: "sinTransmitir", texto: "Aún sin transmitir", detalle: "El documento todavía no fue recibido por el gateway: no hay información fiscal." };
 }
 
-/** Aviso técnico de la ÚLTIMA consulta registrada (ultima_consulta_resultado). Si la última fue satisfactoria (OK) o no hubo consultas, no hay aviso: una alerta antigua no se muestra como actual. */
-export function alertaConsulta(d: { ultimaConsultaResultado: string | null }): AlertaConsulta | null {
+/**
+ * Aviso técnico de la ÚLTIMA consulta registrada (ultima_consulta_resultado). Si la última fue satisfactoria (OK) o no hubo consultas, no hay aviso: una alerta antigua no se muestra como actual.
+ * PRO-338-R03 — CDC_DIVERGENTE según el CDC REGISTRADO del documento (`cdc`):
+ *  · sin CDC registrado (NULL, lo normal antes de la primera consulta válida): no se afirma que exista uno; la SQL solo marca la divergencia si el CDC informado no corresponde a la
+ *    identidad fiscal del documento (tipo, establecimiento, punto, número) o no es un CDC válido;
+ *  · con CDC registrado: ese CDC ya es coherente con la identidad (CHECK de NEX-047), así que el informado es necesariamente distinto del previamente registrado; NO se sobrescribe.
+ * En ningún caso se presenta como rechazo fiscal ni cambia el estado persistido.
+ */
+export function alertaConsulta(d: { ultimaConsultaResultado: string | null; cdc?: string | null }): AlertaConsulta | null {
   const r = d.ultimaConsultaResultado;
 
   if (!r || r === "OK") return null;
 
   if (r === "CDC_DIVERGENTE") {
-    return {
-      tipo: "inconsistencia",
-      texto: "Inconsistencia de consulta: CDC distinto del registrado",
-      detalle: "La última consulta devolvió un CDC que no corresponde al registrado para este documento: su respuesta NO se tomó como resultado fiscal. Ver mensaje, CDC informado, fecha y JSON en el historial.",
-    };
+    return d.cdc
+      ? {
+          tipo: "inconsistencia",
+          texto: "Inconsistencia de consulta: CDC distinto del previamente registrado",
+          detalle: "La última consulta devolvió un CDC distinto del ya registrado para este documento: el CDC registrado se conserva y la respuesta NO se tomó como resultado fiscal. Ver mensaje, CDC informado, fecha y JSON en el historial.",
+        }
+      : {
+          tipo: "inconsistencia",
+          texto: "Inconsistencia de consulta: el CDC informado no corresponde a la identidad fiscal del documento",
+          detalle: "El documento aún no tiene CDC registrado. La última consulta devolvió un CDC que no corresponde al tipo, establecimiento, punto o número de este documento (o no es un CDC válido): su respuesta NO se tomó como resultado fiscal. Ver mensaje, CDC informado, fecha y JSON en el historial.",
+        };
   }
 
   return {

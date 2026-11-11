@@ -75,17 +75,76 @@ const PATRON_SECRETO = /\bBearer\s+[A-Za-z0-9._~+/=-]{8,}|\beyJ[A-Za-z0-9_-]{8,}
 
 export const limpiarTexto = (t: string): string => t.replace(PATRON_SECRETO, "[omitido]");
 
-/** Quita de un resultado (JSON) cualquier aparición literal de los secretos conocidos (clave y token de esta sesión), aunque el gateway los repita en un mensaje. */
+// PRO-338-R03 — INVARIANTE: NEXIT NUNCA MODIFICA UN CDC. El saneamiento de secretos ya no reemplaza texto sobre el JSON serializado completo (una clave de API igual al RUC, o
+// cualquier secuencia de dígitos contenida en el CDC, convertía «01…80012345…» en «01[omitido]…» y la SQL lo anotaba CDC_DIVERGENTE). Ahora recorre la estructura y:
+//  · conserva EXACTOS los identificadores fiscales: todo valor de texto con forma de CDC (44 dígitos), y por nombre de campo + formato estricto el establecimiento, punto,
+//    número, serie, código de respuesta y lote; también las claves «EEE-PPP-NNNNNNN» de Aceptados/Rechazados. Son datos fiscales públicos (impresos en el KuDE), no credenciales;
+//  · sigue omitiendo la clave y el token de la sesión en todo texto libre (mensajes, errores, fases, estado del gateway, resto del JSON de evidencia) y en los nombres de campo;
+//    un número cuyo texto contiene un secreto se omite completo. Bearer/JWT y claves sensibles siguen saliendo por limpiarTexto / sanearRespuesta.
+const CDC_FORMATO = /^\d{44}$/;
+const NUMERO_FISCAL_CLAVE = /^\d{3}-\d{3}-\d{7}$/;
+const FORMATO_LOTE = /^[0-9A-Za-z-]{1,60}$/;
+const IDENTIFICADORES_FISCALES: Record<string, RegExp> = {
+  cdc: CDC_FORMATO,
+  cdcinformado: CDC_FORMATO,
+  dest: /^\d{3}$/,
+  dpunexp: /^\d{3}$/,
+  dnumdoc: /^\d{7}$/,
+  dserienum: /^[A-Z]{2}$/,
+  codrespuesta: /^\d{1,6}$/,
+  lote: FORMATO_LOTE,
+  nrolote: FORMATO_LOTE,
+  numerolote: FORMATO_LOTE,
+  nrodelote: FORMATO_LOTE,
+  numerodelote: FORMATO_LOTE,
+};
+const normalizarClave = (k: string) => k.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+/** true = valor de un identificador fiscal que el saneamiento NUNCA altera (forma de CDC en cualquier campo, o campo fiscal conocido con su formato exacto). */
+export function esIdentificadorFiscal(clave: string | null, valor: string): boolean {
+  if (CDC_FORMATO.test(valor)) return true;
+
+  const nombre = clave === null ? "" : normalizarClave(clave);
+  const formato = Object.prototype.hasOwnProperty.call(IDENTIFICADORES_FISCALES, nombre) ? IDENTIFICADORES_FISCALES[nombre] : undefined;
+
+  return formato !== undefined && formato.test(valor);
+}
+
+const omitirEn = (texto: string, secretos: string[]) => secretos.reduce((t, s) => t.split(s).join("[omitido]"), texto);
+
+function sanearValor(valor: unknown, secretos: string[], clave: string | null): unknown {
+  if (typeof valor === "string") return esIdentificadorFiscal(clave, valor) ? valor : omitirEn(valor, secretos);
+  if (typeof valor === "number") return esIdentificadorFiscal(clave, String(valor)) || !secretos.some((s) => String(valor).includes(s)) ? valor : "[omitido]";
+  if (Array.isArray(valor)) return valor.map((v) => sanearValor(v, secretos, null));
+  if (valor && typeof valor === "object") {
+    // Object.fromEntries define propiedades propias (también «__proto__»), igual que el JSON.parse anterior.
+    return Object.fromEntries(Object.entries(valor as Record<string, unknown>).map(([k, v]) => [NUMERO_FISCAL_CLAVE.test(k.trim()) ? k : omitirEn(k, secretos), sanearValor(v, secretos, k)]));
+  }
+
+  return valor;
+}
+
+/**
+ * Quita de un resultado cualquier aparición literal de los secretos conocidos (clave y token de esta sesión), aunque el gateway los repita en un mensaje, SIN alterar los
+ * identificadores fiscales (ver arriba). Devuelve una copia; el valor recibido no se modifica.
+ */
 export function sinSecretos<T>(valor: T, secretos: string[]): T {
   const utiles = secretos.filter((s) => s.length >= 4);
 
   if (utiles.length === 0) return valor;
 
-  let texto = JSON.stringify(valor);
+  return sanearValor(valor, utiles, null) as T;
+}
 
-  for (const s of utiles) texto = texto.split(JSON.stringify(s).slice(1, -1)).join("[omitido]");
+/**
+ * PRO-338-R03: resultado OPERACIONAL de consulta/envío. Separa el dato fiscal íntegro de la evidencia saneada: todo se sanea con sinSecretos y, además, el CDC operacional (`cdc`,
+ * y `cdcInformado` en el envío) se repone EXACTAMENTE como lo interpretó la respuesta de la API (ya validado como 44 dígitos o null). Nada del CDC se genera, completa ni corrige aquí.
+ */
+export function resultadoFiscalSinSecretos<T extends { cdc: string | null; cdcInformado?: string | null }>(resultado: T, secretos: string[]): T {
+  const saneado = sinSecretos(resultado, secretos);
+  const intacto = (v: string | null | undefined) => (v === null || v === undefined || CDC_FORMATO.test(v) ? v : null);
 
-  return JSON.parse(texto) as T;
+  return { ...saneado, cdc: intacto(resultado.cdc) ?? null, ...("cdcInformado" in resultado ? { cdcInformado: intacto(resultado.cdcInformado) ?? null } : {}) } as T;
 }
 
 export function sanearRespuesta(valor: unknown, profundidad = 0): unknown {
@@ -338,7 +397,8 @@ export async function consultarDocumentoGateway(config: ConfigGateway, doc: Docu
     // Token vencido o revocado: se renueva UNA vez y se reintenta (la consulta es de solo lectura, no duplica nada).
     if (esTokenInvalido(r.status, r.texto) && !forzar) continue;
 
-    return sinSecretos(interpretarConsulta(r.status, r.texto), [credenciales.password, token]);
+    // PRO-338-R03: el CDC de response.DE.CDC llega intacto a decidirConsulta y a la SQL (nunca «[omitido]» por coincidir con la clave); los textos libres siguen saneados.
+    return resultadoFiscalSinSecretos(interpretarConsulta(r.status, r.texto), [credenciales.password, token]);
   }
 
   return vacio("ERROR_HTTP", 401, "El gateway rechazó el token tras renovarlo.");
@@ -629,7 +689,8 @@ export async function enviarDocumentoGateway(
 
     fases.push({ fase: "RESPUESTA", ok: res.estadoLocal === "ENVIADO", detalle, http: r.status });
 
-    return sinSecretos(res, [credenciales.password, token]);
+    // PRO-338-R03: mismo contrato en el envío: cdc / cdcInformado y lote llegan exactos a fe_documento_registrar_envio; mensajes, errores y fases siguen saneados.
+    return resultadoFiscalSinSecretos(res, [credenciales.password, token]);
   }
 
   return resultadoEnvioVacio("ERROR_HTTP", "AUTENTICACION", "ERROR_ENVIO", "AUTENTICACION", 401, "El gateway rechazó el token tras renovarlo.", fases);

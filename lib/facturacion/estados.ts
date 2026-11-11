@@ -58,7 +58,8 @@ export const ETIQUETA_RESULTADO_INTENTO: Record<string, string> = {
   TIMEOUT: "Tiempo de espera agotado",
   RED: "Error de red",
   RESPUESTA_INVALIDA: "Respuesta no interpretable",
-  CDC_DIVERGENTE: "CDC distinto del registrado",
+  // PRO-338-R03: rótulo NEUTRO del intento (el historial no sabe si en ese momento ya había CDC registrado). La alerta del documento distingue los casos (presentacion-sifen.ts).
+  CDC_DIVERGENTE: "CDC informado inconsistente con el documento",
 };
 
 /** Etiqueta del resultado de un intento según su tipo: un OK de ENVÍO significa «recibido por el gateway», nunca aprobación SIFEN. */

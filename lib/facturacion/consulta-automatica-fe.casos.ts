@@ -264,7 +264,8 @@ export async function verificarCasosPro338(): Promise<string[]> {
     const p = presentacionSifen(filaReal);
     const a = alertaConsulta(filaReal);
 
-    igual("P338-09: FE 001-003-0009015 → «SIFEN: Pendiente de confirmación» (amarillo) + «Inconsistencia de consulta: CDC distinto del registrado» (alerta técnica roja, separada)", [p.tono, p.texto, a?.tipo, a?.texto], ["pendiente", "Pendiente de confirmación", "inconsistencia", "Inconsistencia de consulta: CDC distinto del registrado"]);
+    // PRO-338-R03: sin CDC registrado la alerta ya no afirma «distinto del registrado» (texto actualizado; tipo y tono sin cambios).
+    igual("P338-09: FE 001-003-0009015 → «SIFEN: Pendiente de confirmación» (amarillo) + «Inconsistencia de consulta: el CDC informado no corresponde a la identidad fiscal del documento» (alerta técnica roja, separada)", [p.tono, p.texto, a?.tipo, a?.texto], ["pendiente", "Pendiente de confirmación", "inconsistencia", "Inconsistencia de consulta: el CDC informado no corresponde a la identidad fiscal del documento"]);
     cierto("P338-09: el KPI «Rechazados» solo cuenta estado_sifen = RECHAZADO (no la anomalía técnica)", SQL_GRUPO.RECHAZADO === "d.estado_sifen = 'RECHAZADO'");
   }
 
