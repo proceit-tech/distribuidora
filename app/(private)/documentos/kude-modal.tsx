@@ -3,7 +3,7 @@
 import { useEffect, useRef, useSyncExternalStore } from "react";
 
 import ui from "@/components/ui/lista-padrao/lista.module.css";
-import type { crearControladorVisor } from "@/lib/facturacion/kude-visor";
+import { AVISO_KUDE_NO_VERIFICADO, tituloKude, type crearControladorVisor } from "@/lib/facturacion/kude-visor";
 
 type Controlador = ReturnType<typeof crearControladorVisor>;
 
@@ -62,12 +62,15 @@ export function KudeModal({ controlador }: { controlador: Controlador }) {
 
   // Solo el visor del PDF (LISTO) usa la modal grande; ERROR y CARGANDO son cajas compactas de altura natural (sin 92vh de blanco).
   const visor = estado.fase === "LISTO";
+  // PRO-342-R02 (F001): sin pertenencia verificada el PDF no se titula como KuDE del documento y se advierte de forma explícita.
+  const noVerificado = estado.fase === "LISTO" && estado.pertenencia !== "VERIFICADA";
+  const titulo = estado.fase === "LISTO" ? tituloKude(estado.titulo, estado.pertenencia) : estado.titulo;
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }} onMouseDown={(e) => { if (e.target === e.currentTarget) controlador.cerrar(); }}>
       <div ref={caja} role="dialog" aria-modal="true" aria-labelledby="kude-titulo" style={{ background: "var(--surface, #fff)", color: "inherit", borderRadius: 8, width: visor ? "min(1100px, 100%)" : "min(520px, 100%)", ...(visor ? { height: "min(92vh, 100%)" } : { maxHeight: "100%" }), display: "flex", flexDirection: "column", boxShadow: "0 12px 40px rgba(0,0,0,0.35)" }}>
         <header style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "12px 16px", borderBottom: "1px solid var(--border, #d6dcdc)" }}>
-          <h2 id="kude-titulo" style={{ margin: 0, fontSize: "1.05rem" }}>{estado.titulo}</h2>
+          <h2 id="kude-titulo" style={{ margin: 0, fontSize: "1.05rem" }}>{titulo}</h2>
           <div style={{ display: "flex", gap: 8 }}>
             {visor ? (
               <>
@@ -78,6 +81,7 @@ export function KudeModal({ controlador }: { controlador: Controlador }) {
             <button ref={cierre} type="button" className={ui.primaryButton} onClick={() => controlador.cerrar()}>Cerrar</button>
           </div>
         </header>
+        {noVerificado ? <p className={ui.alertError} role="alert" style={{ margin: "8px 16px 0" }}>{AVISO_KUDE_NO_VERIFICADO}</p> : null}
         {estado.fase === "LISTO" && estado.descarga === "ERROR" ? <p className={ui.alertError} role="alert" style={{ margin: "8px 16px 0" }}>{estado.mensajeDescarga} Puede intentar «Descargar PDF» nuevamente.</p> : null}
         <div style={visor ? { flex: 1, minHeight: 0, display: "flex", alignItems: "stretch", justifyContent: "center" } : { padding: "16px 16px 20px", overflowY: "auto" }}>
           {estado.fase === "CARGANDO" ? <p role="status" style={{ margin: 0 }}>Obteniendo el KuDE del gateway…</p> : null}
@@ -87,7 +91,7 @@ export function KudeModal({ controlador }: { controlador: Controlador }) {
               <button type="button" className={ui.secondaryButton} onClick={() => void controlador.reintentar()}>Reintentar</button>
             </div>
           ) : null}
-          {estado.fase === "LISTO" ? <iframe id="kude-visor" key={estado.url} src={estado.url} title={estado.titulo} style={{ border: 0, width: "100%", height: "100%" }} /> : null}
+          {estado.fase === "LISTO" ? <iframe id="kude-visor" key={estado.url} src={estado.url} title={titulo} style={{ border: 0, width: "100%", height: "100%" }} /> : null}
         </div>
       </div>
     </div>

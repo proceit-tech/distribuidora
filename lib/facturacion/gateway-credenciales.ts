@@ -23,10 +23,12 @@ export const TIMEOUT_GATEWAY_MS = 30000;
 export async function adjuntarCredencialesDeBase(db: Db, config: ConfigGateway, usuarioId: string): Promise<ConfigGateway> {
   if (config.credencialRef !== REF_CREDENCIALES_BASE) return config;
 
-  const r = await db.query("SELECT o_api_usuario AS ruc, o_api_password AS password FROM fe_gateway_credenciales_leer($1::uuid, $2::uuid)", [config.empresaId, usuarioId]);
-  const f = r.rows[0] as { ruc?: unknown; password?: unknown } | undefined;
+  const r = await db.query("SELECT o_api_usuario AS ruc, o_api_password AS password, o_version AS version FROM fe_gateway_credenciales_leer($1::uuid, $2::uuid)", [config.empresaId, usuarioId]);
+  const f = r.rows[0] as { ruc?: unknown; password?: unknown; version?: unknown } | undefined;
+  // PRO-342-R02 (F002): la versión de la referencia de conexión es la de las credenciales EFECTIVAMENTE leídas en esta misma lectura (no la de una lectura anterior de la configuración).
+  const version = typeof f?.version === "number" && Number.isInteger(f.version) && f.version >= 0 ? f.version : config.credencialesVersion ?? null;
 
-  return f && typeof f.ruc === "string" && typeof f.password === "string" && f.ruc && f.password ? { ...config, credenciales: { ruc: f.ruc, password: f.password } } : config;
+  return f && typeof f.ruc === "string" && typeof f.password === "string" && f.ruc && f.password ? { ...config, credencialesVersion: version, credenciales: { ruc: f.ruc, password: f.password } } : config;
 }
 
 /** ¿Hay credenciales guardadas para la empresa? (booleano; sin secretos). */

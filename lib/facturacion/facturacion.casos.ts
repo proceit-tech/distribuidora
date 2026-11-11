@@ -530,7 +530,8 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
   const m1 = mkDb();
   const em = await ejecutar(m1.db, gE.fetch);
 
-  igual("emisión: orden config → crear → iniciar envío → registrar envío, con una sola transmisión", [orden(m1.llamadas), bodyRecepcion(gE).length], [["config", "crear", "config", "iniciar", "registrar"], 1]);
+  // PRO-342-R02 (F002): la configuración se lee UNA vez (preflight) y esa misma se usa en la transmisión; ya no hay segunda lectura entre crear e iniciar.
+  igual("emisión: orden config → crear → iniciar envío → registrar envío (config leída UNA sola vez, R02), con una sola transmisión", [orden(m1.llamadas), bodyRecepcion(gE).length], [["config", "crear", "iniciar", "registrar"], 1]);
   igual("emisión: respuesta con documento, número reservado, estado ENVIADO, HTTP 200, sin lote inventado; CDC solo el informado y coherente", [em.documentoId, em.numero, em.reutilizado, em.estadoLocal, em.resultado, em.http, em.lote, em.cdc, em.fases.length], [DOC, "0050000", false, "ENVIADO", "OK", 200, null, CDC_FE, 3]);
   const reg = m1.llamadas.find((l) => /fe_documento_registrar_envio/.test(l.sql))!;
 

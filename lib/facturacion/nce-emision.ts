@@ -83,7 +83,8 @@ export async function repeticion(db: Db, empresaId: string, usuarioId: string, c
 
 export async function emitirNce(db: Db, empresaId: string, usuarioId: string, cuerpo: CuerpoNce, dep: Dependencias = {}): Promise<RespuestaEnvio> {
   // 1) Gateway configurado y credenciales presentes ANTES de reservar numeración (409 sin consumir número).
-  await configuracionGateway(db, empresaId, dep, usuarioId);
+  // PRO-342-R02 (F002): la configuración del preflight es la misma de la transmisión (sin releer entre ambos).
+  const config = await configuracionGateway(db, empresaId, dep, usuarioId);
 
   let documentoId: string;
   let numero: string;
@@ -110,7 +111,7 @@ export async function emitirNce(db: Db, empresaId: string, usuarioId: string, cu
 
   // 4) Envío (misma exclusión mutua y evidencia que la factura).
   try {
-    return { documentoId, reutilizado, ...(await enviarDocumento(db, empresaId, usuarioId, documentoId, dep)), numero };
+    return { documentoId, reutilizado, ...(await enviarDocumento(db, empresaId, usuarioId, documentoId, dep, { config })), numero };
   } catch (error) {
     const pg = error as { detail?: string };
 

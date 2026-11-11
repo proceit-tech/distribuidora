@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import type { Pool } from "pg";
 
 import { ESTADOS_EMAIL, ESTADOS_LOCAL, ESTADOS_LOCAL_TRANSMITIDO, ESTADOS_SIFEN, ESTADOS_SIFEN_SIN_FINAL, GRUPOS_INDICADOR, TIPOS_DOCUMENTO, UMBRAL_REVISION_HORAS, type GrupoIndicador } from "@/lib/facturacion/estados";
-import { configGatewayValida, consultarDocumentoGateway, obtenerKudeGateway, referenciaConexion, type CorrespondenciaKude, type Dependencias, type DependenciasKude } from "@/lib/facturacion/gateway";
+import { configGatewayValida, consultarDocumentoGateway, continuidadConexion, obtenerKudeGateway, referenciaConexion, type ConfigGateway, type ContinuidadConexion, type CorrespondenciaKude, type Dependencias, type DependenciasKude } from "@/lib/facturacion/gateway";
 import { adjuntarCredencialesDeBase } from "@/lib/facturacion/gateway-credenciales";
 import { decidirConsulta } from "@/lib/facturacion/reconciliacion";
 
@@ -20,13 +20,27 @@ type F = Record<string, unknown>;
  */
 export const SQL_CONFIG_GATEWAY = `SELECT base_url AS "baseUrl", credencial_ref AS "credencialRef", timeout_ms AS "timeoutMs", (to_jsonb(fe_gateway_config) ->> 'credenciales_version') AS "credencialesVersion" FROM fe_gateway_config WHERE empresa_id = $1 AND activo`;
 
-/** PRO-342-R01: código PostgreSQL de función inexistente (42883): NEX-079 no aplicada; se registra con la firma anterior (sin la conexión del intento), sin perder la evidencia. */
+/** Código PostgreSQL de función inexistente (42883). Por sí solo NO prueba que falte NEX-079: también lo produce una dependencia INTERNA ausente dentro de una función que sí existe. */
 const faltaFuncion = (e: unknown) => (e as { code?: string } | null)?.code === "42883";
 let avisoSinNex079 = false;
 
 /**
- * Ejecuta el registro con la firma NEX-079 (parámetros + conexión del intento) y, solo si esa firma no existe todavía, con la firma anterior (mismos parámetros sin la conexión). Cualquier otro
- * error se propaga tal cual (permiso, documento, estado, lease obsoleto).
+ * PRO-342-R02 (F004): ¿existe la SOBRECARGA NEX-079 (misma función, `n` parámetros, el último jsonb = conexión)? Lectura del catálogo, sin efectos. Solo si NO existe, el 42883 se debe a que
+ * NEX-079 no está aplicada.
+ */
+export const SQL_SOBRECARGA_NEX079 = `SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+  WHERE n.nspname = 'public' AND p.proname = $1 AND p.pronargs = $2::integer AND p.proargtypes[$2::integer - 1] = 'jsonb'::regtype) AS existe`;
+
+/**
+ * Cómo quedó registrado un intento: INTEGRAL = sobrecarga NEX-079 (conexión del intento y, en consulta manual/flujo, cdc_informado estructurado); COMPATIBILIDAD = firma anterior porque NEX-079
+ * no está aplicada: el intento NO se pierde, pero sin conexión ni (en la consulta manual) cdc_informado. Es un modo DEGRADADO, no la funcionalidad integral homologable.
+ */
+export type ModoRegistro = "INTEGRAL" | "COMPATIBILIDAD";
+
+/**
+ * Ejecuta el registro con la firma NEX-079 (parámetros + conexión del intento) y, SOLO si esa sobrecarga no existe en el catálogo, con la firma anterior (mismos parámetros sin la conexión).
+ * PRO-342-R02: un 42883 con la sobrecarga PRESENTE (dependencia interna ausente: migración defectuosa o incompleta) se propaga tal cual; nunca se disfraza de «NEX-079 no aplicada». Si el catálogo
+ * no se puede leer, también se propaga el error original. Cualquier otro error se propaga (permiso, documento, estado, lease obsoleto).
  */
 export async function registrarConConexion(db: Db, funcion: string, tipos: readonly string[], parametros: readonly unknown[], conexion: Record<string, unknown>) {
   const sql = (conConexion: boolean) => {
@@ -36,14 +50,58 @@ export async function registrarConConexion(db: Db, funcion: string, tipos: reado
   };
 
   try {
-    return await db.query(sql(true), [...parametros, JSON.stringify(conexion)]);
+    return Object.assign(await db.query(sql(true), [...parametros, JSON.stringify(conexion)]), { modoRegistro: "INTEGRAL" as ModoRegistro });
   } catch (error) {
     if (!faltaFuncion(error)) throw error;
-    if (!avisoSinNex079) console.warn("Registro sin conexión del intento: falta la migración NEX-079.");
+
+    let sobrecargaExiste: boolean;
+
+    try {
+      const q = await db.query(SQL_SOBRECARGA_NEX079, [funcion, tipos.length + 1]);
+
+      sobrecargaExiste = (q.rows[0] as F | undefined)?.existe === true;
+    } catch {
+      throw error;
+    }
+    if (sobrecargaExiste) {
+      console.error(`Registro con conexión fallido: ${funcion} (NEX-079) existe pero una función que usa no (42883). No se registra en modo compatibilidad: revisar la migración.`);
+      throw error;
+    }
+    if (!avisoSinNex079) console.warn("Registro en MODO COMPATIBILIDAD (sin conexión del intento): la migración NEX-079 no está aplicada.");
     avisoSinNex079 = true;
 
-    return db.query(sql(false), [...parametros]);
+    return Object.assign(await db.query(sql(false), [...parametros]), { modoRegistro: "COMPATIBILIDAD" as ModoRegistro });
   }
+}
+
+/** PRO-342-R02 (F002): referencia NO secreta de la conexión registrada en el último ENVÍO del documento que la tenga (NEX-079); null si no hay (anterior a NEX-079 o modo compatibilidad). */
+export const SQL_CONEXION_ENVIO = `SELECT (to_jsonb(i) -> 'conexion') AS "conexion" FROM documento_electronico_intentos i
+  WHERE i.empresa_id = $1 AND i.documento_id = $2 AND i.tipo = 'ENVIO' AND jsonb_typeof(to_jsonb(i) -> 'conexion') = 'object' ORDER BY i.creado_at DESC, i.id DESC LIMIT 1`;
+
+export const MENSAJE_CONEXION_DISTINTA =
+  "La conexión del gateway de la empresa (servidor o credenciales) cambió desde que este documento fue enviado: no se consulta su estado ni se muestra su KuDE con otra conexión, para no atribuirle datos de otra cuenta. Restablezca la conexión con la que fue enviado o revise el caso con el proveedor del gateway.";
+
+/**
+ * PRO-342-R02 (F002): conexión EFECTIVA para un documento ya enviado (configuración activa + credenciales leídas en esta operación) y su continuidad con la del envío. Con DISTINTA no se llama al
+ * gateway (409): nunca se consulta un documento ni se pide su KuDE en otra cuenta/servidor por tanteo, ni se cambian URL o credenciales. Documento solo leído; nada se escribe.
+ */
+async function conexionParaDocumento(db: Db, empresaId: string, usuarioId: string, documentoId: string): Promise<{ config: ConfigGateway; continuidad: ContinuidadConexion }> {
+  const cfg = await db.query(SQL_CONFIG_GATEWAY, [empresaId]);
+  const fila = cfg.rows[0] as { baseUrl: string; credencialRef: string; timeoutMs: number; credencialesVersion?: unknown } | undefined;
+
+  if (!fila) throw new ErrorFacturacion(409, "La empresa no tiene configurado el gateway de facturación electrónica.");
+
+  const valida = configGatewayValida(empresaId, fila);
+
+  if (!valida) throw new ErrorFacturacion(409, "La configuración del gateway de esta empresa no es válida (URL https y tiempo de espera).");
+
+  const config = await adjuntarCredencialesDeBase(db, valida, usuarioId);
+  const envio = await db.query(SQL_CONEXION_ENVIO, [empresaId, documentoId]);
+  const continuidad = continuidadConexion((envio.rows[0] as F | undefined)?.conexion ?? null, referenciaConexion(config));
+
+  if (continuidad === "DISTINTA") throw new ErrorFacturacion(409, MENSAJE_CONEXION_DISTINTA);
+
+  return { config, continuidad };
 }
 
 export const TAMANO_DEFECTO = 20;
@@ -412,17 +470,11 @@ export async function consultarEstado(db: Db, empresaId: string, usuarioId: stri
 
   if (!doc) throw new ErrorFacturacion(404, "Documento no encontrado.");
 
-  const cfg = await db.query(SQL_CONFIG_GATEWAY, [empresaId]);
-  const fila = cfg.rows[0] as { baseUrl: string; credencialRef: string; timeoutMs: number; credencialesVersion?: unknown } | undefined;
-
-  if (!fila) throw new ErrorFacturacion(409, "La empresa no tiene configurado el gateway de facturación electrónica.");
-
-  const config = configGatewayValida(empresaId, fila);
-
-  if (!config) throw new ErrorFacturacion(409, "La configuración del gateway de esta empresa no es válida (URL https y tiempo de espera).");
+  // PRO-342-R02: la consulta usa la MISMA conexión del envío (o, sin referencia registrada, la activa en modo compatibilidad); si cambió, no se consulta (409, sin intento: no hubo llamada).
+  const { config, continuidad } = await conexionParaDocumento(db, empresaId, usuarioId, id);
 
   const bruto = await consultarDocumentoGateway(
-    await adjuntarCredencialesDeBase(db, config, usuarioId),
+    config,
     { tipo: String(doc.tipo), establecimiento: String(doc.establecimiento), puntoExpedicion: String(doc.puntoExpedicion), numero: String(doc.numero), serie: (doc.serie as string | null) ?? null },
     dep,
   );
@@ -449,7 +501,7 @@ export async function consultarEstado(db: Db, empresaId: string, usuarioId: stri
     referenciaConexion(config),
   );
 
-  return { resultado: String((registrado.rows[0] as F).resultado), mensaje: r.mensaje };
+  return { resultado: String((registrado.rows[0] as F).resultado), mensaje: r.mensaje, modoRegistro: registrado.modoRegistro, continuidadConexion: continuidad };
 }
 
 /** Nombre de archivo derivado SOLO de la identidad fiscal del registro, saneado. */
@@ -464,23 +516,17 @@ export function nombreArchivoKude(doc: Record<string, unknown>): string {
  * persistido, nunca del navegador. PRO-326: ni el estado fiscal ni el CDC (persistido, devuelto o histórico) condicionan el KuDE: se consulta al gateway de la empresa por esa identidad y se muestra
  * el PDF válido que devuelva. Sin credenciales/config no se llama a nadie. No modifica ningún dato (ni estados, ni CDC, ni intentos, ni numeración).
  */
-export async function obtenerKude(db: Db, empresaId: string, usuarioId: string, id: string, dep: DependenciasKude = {}): Promise<{ pdf: Buffer; nombre: string; correspondencia: CorrespondenciaKude }> {
+export async function obtenerKude(db: Db, empresaId: string, usuarioId: string, id: string, dep: DependenciasKude = {}): Promise<{ pdf: Buffer; nombre: string; correspondencia: CorrespondenciaKude; continuidadConexion: ContinuidadConexion }> {
   const doc = await leerDocumento(db, empresaId, usuarioId, id);
 
   if (!doc) throw new ErrorFacturacion(404, "Documento no encontrado.");
   if (doc.tipo !== "FE" && doc.tipo !== "NCE") throw new ErrorFacturacion(409, "El KuDE solo está disponible para facturas (FE) y notas de crédito (NCE) electrónicas.");
 
-  const cfg = await db.query(SQL_CONFIG_GATEWAY, [empresaId]);
-  const fila = cfg.rows[0] as { baseUrl: string; credencialRef: string; timeoutMs: number; credencialesVersion?: unknown } | undefined;
-
-  if (!fila) throw new ErrorFacturacion(409, "La empresa no tiene configurado el gateway de facturación electrónica.");
-
-  const config = configGatewayValida(empresaId, fila);
-
-  if (!config) throw new ErrorFacturacion(409, "La configuración del gateway de esta empresa no es válida (URL https y tiempo de espera).");
+  // PRO-342-R02: el KuDE se pide en la MISMA conexión del envío; si cambió, no se pide (409) para no presentar un PDF de otra cuenta.
+  const { config, continuidad } = await conexionParaDocumento(db, empresaId, usuarioId, id);
 
   const r = await obtenerKudeGateway(
-    await adjuntarCredencialesDeBase(db, config, usuarioId),
+    config,
     // PRO-342-R01: el CDC registrado (si la API ya lo informó) NO se envía: solo verifica que el PDF devuelto corresponda a ESTE documento (gateway.correspondenciaKude).
     { tipoDoc: doc.tipo, establecimiento: String(doc.establecimiento), puntoExpedicion: String(doc.puntoExpedicion), numero: String(doc.numero), serie: (doc.serie as string | null) ?? null, cdcRegistrado: (doc.cdc as string | null) ?? null },
     dep,
@@ -492,7 +538,10 @@ export async function obtenerKude(db: Db, empresaId: string, usuarioId: string, 
     throw new ErrorFacturacion(estado, r.mensaje);
   }
 
-  return { pdf: r.pdf, nombre: nombreArchivoKude(doc), correspondencia: r.correspondencia };
+  // PRO-342-R02 (F001): sin pertenencia verificada el nombre del archivo no lo presenta como KuDE propio confirmado.
+  const nombre = r.correspondencia === "CDC_REGISTRADO" ? nombreArchivoKude(doc) : nombreArchivoKude(doc).replace(/\.pdf$/, "-NO-VERIFICADO.pdf");
+
+  return { pdf: r.pdf, nombre, correspondencia: r.correspondencia, continuidadConexion: continuidad };
 }
 
 export function respuestaErrorFacturacion(error: unknown, accion: string) {

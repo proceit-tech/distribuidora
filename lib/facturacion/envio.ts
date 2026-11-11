@@ -160,9 +160,14 @@ async function cerrarEnvio(db: Db, empresaId: string, usuarioId: string, documen
   }
 }
 
-/** Envía un documento ya creado (PENDIENTE_ENVIO o ERROR_ENVIO). Lanza ErrorFacturacion/errores de la función SQL si no es enviable. */
-export async function enviarDocumento(db: Db, empresaId: string, usuarioId: string, documentoId: string, dep: Dependencias = {}, opciones: { confirmaRechazo?: boolean } = {}): Promise<Omit<RespuestaEnvio, "reutilizado" | "numero" | "documentoId"> & { numero: string }> {
-  const config = await configuracionGateway(db, empresaId, dep, usuarioId);
+/**
+ * Envía un documento ya creado (PENDIENTE_ENVIO o ERROR_ENVIO). Lanza ErrorFacturacion/errores de la función SQL si no es enviable.
+ * PRO-342-R02 (F002): `opciones.config` = la configuración YA validada por el preflight de la MISMA operación (emitirFactura / emitirNotaCredito): se transmite con ella, sin releer, para que un
+ * cambio concurrente de URL/referencia/credenciales entre el preflight y el POST no cambie la cuenta de la emisión. Sin ella (envío desde «Documentos») se lee UNA vez aquí y esa misma
+ * configuración se usa para el POST y para la referencia registrada del intento.
+ */
+export async function enviarDocumento(db: Db, empresaId: string, usuarioId: string, documentoId: string, dep: Dependencias = {}, opciones: { confirmaRechazo?: boolean; config?: ConfigGateway } = {}): Promise<Omit<RespuestaEnvio, "reutilizado" | "numero" | "documentoId"> & { numero: string }> {
+  const config = opciones.config ?? (await configuracionGateway(db, empresaId, dep, usuarioId));
   const inicio = await db.query(
     `SELECT o_resultado AS resultado, o_payload AS payload, o_numero AS numero, o_tipo AS tipo, o_establecimiento AS establecimiento, o_punto AS punto FROM fe_documento_iniciar_envio($1::uuid, $2::uuid, $3::uuid, $4::boolean)`,
     [empresaId, usuarioId, documentoId, opciones.confirmaRechazo === true],
@@ -198,7 +203,8 @@ export async function enviarDocumento(db: Db, empresaId: string, usuarioId: stri
 
 /** «Enviar factura»: valida, crea (idempotente) y transmite. Repetir con la misma clave no duplica documento ni numeración ni envío. */
 export async function emitirFactura(db: Db, empresaId: string, usuarioId: string, cuerpo: CuerpoFactura, dep: Dependencias = {}): Promise<RespuestaEnvio> {
-  await configuracionGateway(db, empresaId, dep, usuarioId);
+  // PRO-342-R02 (F002): UNA configuración efectiva por operación: la del preflight es la que se usa en la transmisión.
+  const config = await configuracionGateway(db, empresaId, dep, usuarioId);
 
   const salida: { guardar: ClasificacionGuardar[] } = { guardar: [] };
   const creado = await crearFacturaElectronica(db, empresaId, usuarioId, cuerpo, salida);
@@ -221,7 +227,7 @@ export async function emitirFactura(db: Db, empresaId: string, usuarioId: string
   const extra = ajustesProducto.length > 0 ? { ajustesProducto } : {};
 
   try {
-    return { documentoId, reutilizado, ...(await enviarDocumento(db, empresaId, usuarioId, documentoId, dep)), numero, ...extra };
+    return { documentoId, reutilizado, ...(await enviarDocumento(db, empresaId, usuarioId, documentoId, dep, { config })), numero, ...extra };
   } catch (error) {
     const pg = error as { detail?: string };
 

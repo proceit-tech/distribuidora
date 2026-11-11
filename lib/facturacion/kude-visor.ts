@@ -3,12 +3,27 @@
  *  · CADA apertura (y cada «Reintentar») hace una solicitud NUEVA al servidor: no hay caché, reutilización del archivo ni límite de aperturas (decisión del responsable).
  *  · El PDF solo existe como Blob + URL temporal mientras la modal está abierta; al cerrar se aborta lo pendiente, se revoca la URL y se descartan los datos. Nada se guarda en disco, almacenamiento del navegador ni base.
  *  · Una respuesta tardía (de otro documento, o posterior al cierre) nunca se presenta: cada solicitud tiene un número de secuencia y solo la vigente puede cambiar el estado.
+ *  · PRO-342-R02 (F001): cada PDF trae su PERTENENCIA (cabecera X-Nexit-Kude-Correspondencia del servidor). Solo «VERIFICADA» (CDC idéntico al que la API informó para el documento) se presenta
+ *    como KuDE del documento; «NO_VERIFICADA» se muestra con advertencia explícita y otro título, y se descarga con nombre «…-NO-VERIFICADO.pdf». Un Blob sin esa marca cuenta como NO_VERIFICADA.
  */
 export type DocumentoKudeVisor = { id: string; titulo: string; nombre: string };
+export type PertenenciaKude = "VERIFICADA" | "NO_VERIFICADA";
+/** Blob del KuDE con su pertenencia (la pone pedirKudeAlServidor). */
+export type BlobKude = Blob & { pertenencia?: PertenenciaKude };
+
+export const pertenenciaDe = (b: Blob): PertenenciaKude => ((b as BlobKude).pertenencia === "VERIFICADA" ? "VERIFICADA" : "NO_VERIFICADA");
+
+/** Título visible: sin pertenencia verificada el PDF NO se titula como KuDE del documento. */
+export const tituloKude = (titulo: string, p: PertenenciaKude): string => (p === "VERIFICADA" ? titulo : `PDF devuelto por el gateway — pertenencia NO verificada (${titulo.replace(/^KuDE · /, "")})`);
+
+export const AVISO_KUDE_NO_VERIFICADO =
+  "El gateway devolvió este PDF para el número de documento solicitado, pero NEXIT no puede comprobar que pertenezca a este documento ni a esta empresa: el documento aún no tiene un CDC informado por la API con el cual compararlo, o la respuesta no trajo CDC. Verifique el emisor, la fecha y los importes del PDF antes de usarlo; no lo entregue como KuDE de este documento si no coinciden.";
+
+const nombreSegun = (nombre: string, p: PertenenciaKude) => (p === "VERIFICADA" ? nombre : nombre.replace(/\.pdf$/i, "") + "-NO-VERIFICADO.pdf");
 export type EstadoKudeVisor =
   | { fase: "CERRADO" }
   | { fase: "CARGANDO"; docId: string; titulo: string }
-  | { fase: "LISTO"; docId: string; titulo: string; nombre: string; url: string; descarga: "INACTIVA" | "CARGANDO" | "ERROR"; mensajeDescarga: string }
+  | { fase: "LISTO"; docId: string; titulo: string; nombre: string; url: string; descarga: "INACTIVA" | "CARGANDO" | "ERROR"; mensajeDescarga: string; pertenencia: PertenenciaKude }
   | { fase: "ERROR"; docId: string; titulo: string; mensaje: string };
 
 export type DependenciasVisor = {
@@ -60,7 +75,7 @@ export function crearControladorVisor(dep: DependenciasVisor) {
 
       if (mia !== secuencia || control.signal.aborted) return; // respuesta tardía: se descarta sin presentarla
 
-      poner({ fase: "LISTO", docId: d.id, titulo: d.titulo, nombre: d.nombre, url: dep.crearUrl(blob), descarga: "INACTIVA", mensajeDescarga: "" });
+      poner({ fase: "LISTO", docId: d.id, titulo: d.titulo, nombre: d.nombre, url: dep.crearUrl(blob), descarga: "INACTIVA", mensajeDescarga: "", pertenencia: pertenenciaDe(blob) });
     } catch (e) {
       if (mia !== secuencia || control.signal.aborted) return;
       poner({ fase: "ERROR", docId: d.id, titulo: d.titulo, mensaje: e instanceof Error && e.message ? e.message : MENSAJE_KUDE_GENERICO });
@@ -104,12 +119,12 @@ export function crearControladorVisor(dep: DependenciasVisor) {
     async descargar(): Promise<void> {
       if (estado.fase !== "LISTO" || estado.descarga === "CARGANDO") return;
 
-      const { docId, titulo, nombre, url } = estado;
+      const { docId, titulo, nombre, url, pertenencia } = estado;
       const mia = (secuenciaDescarga += 1);
       const control = new AbortController();
 
       abortoDescarga = control;
-      poner({ fase: "LISTO", docId, titulo, nombre, url, descarga: "CARGANDO", mensajeDescarga: "" });
+      poner({ fase: "LISTO", docId, titulo, nombre, url, descarga: "CARGANDO", mensajeDescarga: "", pertenencia });
       try {
         const blob = await dep.obtener(docId, control.signal);
 
@@ -118,16 +133,17 @@ export function crearControladorVisor(dep: DependenciasVisor) {
         const temporal = dep.crearUrl(blob);
 
         try {
-          dep.descargar(temporal, nombre);
+          // La descarga es una consulta NUEVA: su propia pertenencia decide el nombre del archivo.
+          dep.descargar(temporal, nombreSegun(nombre, pertenenciaDe(blob)));
         } finally {
           (dep.diferir ?? ((f) => void setTimeout(f, 60_000)))(() => dep.revocarUrl(temporal));
         }
         abortoDescarga = null;
-        poner({ fase: "LISTO", docId, titulo, nombre, url, descarga: "INACTIVA", mensajeDescarga: "" });
+        poner({ fase: "LISTO", docId, titulo, nombre, url, descarga: "INACTIVA", mensajeDescarga: "", pertenencia });
       } catch (e) {
         if (mia !== secuenciaDescarga || control.signal.aborted) return;
         abortoDescarga = null;
-        poner({ fase: "LISTO", docId, titulo, nombre, url, descarga: "ERROR", mensajeDescarga: e instanceof Error && e.message ? e.message : MENSAJE_KUDE_GENERICO });
+        poner({ fase: "LISTO", docId, titulo, nombre, url, descarga: "ERROR", mensajeDescarga: e instanceof Error && e.message ? e.message : MENSAJE_KUDE_GENERICO, pertenencia });
       }
     },
     imprimir() {
@@ -136,8 +152,8 @@ export function crearControladorVisor(dep: DependenciasVisor) {
   };
 }
 
-/** Solicitud real al servidor de NEXIT. Solo viaja el ID; valida que la respuesta sea application/pdf. */
-export async function pedirKudeAlServidor(docId: string, signal: AbortSignal, fetchFn: typeof fetch = fetch): Promise<Blob> {
+/** Solicitud real al servidor de NEXIT. Solo viaja el ID; valida que la respuesta sea application/pdf. PRO-342-R02: el Blob lleva la pertenencia informada por el servidor (CDC_REGISTRADO = VERIFICADA). */
+export async function pedirKudeAlServidor(docId: string, signal: AbortSignal, fetchFn: typeof fetch = fetch): Promise<BlobKude> {
   const r = await fetchFn("/api/documentos/" + encodeURIComponent(docId) + "/kude", { cache: "no-store", signal });
 
   if (!r.ok) {
@@ -147,7 +163,9 @@ export async function pedirKudeAlServidor(docId: string, signal: AbortSignal, fe
   }
   if (!(r.headers.get("content-type") ?? "").toLowerCase().includes("application/pdf")) throw new Error("El servidor no devolvió un PDF válido.");
 
-  return r.blob();
+  const pertenencia: PertenenciaKude = r.headers.get("x-nexit-kude-correspondencia") === "CDC_REGISTRADO" ? "VERIFICADA" : "NO_VERIFICADA";
+
+  return Object.assign(await r.blob(), { pertenencia });
 }
 
 /** ¿Se ofrece el KuDE en la fila? FE y NCE, sea cual sea su estado fiscal o si ya tienen CDC: el gateway decide si entrega el PDF (E08). */

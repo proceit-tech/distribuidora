@@ -369,9 +369,14 @@ export default function DocumentosPage() {
   async function reconsultar(d: Documento) {
     actualizarDetalle(d.id, { consultando: true, aviso: "", error: "" });
     try {
-      const j = await leerJson<{ resultado: string; mensaje: string | null; intentos: Intento[] }>(await fetch(`/api/documentos/${d.id}/consultar`, { method: "POST" }), "No fue posible consultar el estado.");
+      const j = await leerJson<{ resultado: string; mensaje: string | null; intentos: Intento[]; modoRegistro?: string; continuidadConexion?: string }>(await fetch(`/api/documentos/${d.id}/consultar`, { method: "POST" }), "No fue posible consultar el estado.");
+      // PRO-342-R02: el modo degradado (sin NEX-079) y la conexión no verificable se informan; nunca se presentan como registro integral.
+      const notas = [
+        j.modoRegistro === "COMPATIBILIDAD" ? "Registrado en modo compatibilidad (NEX-079 no aplicada): sin conexión ni CDC estructurado en el intento" : "",
+        j.continuidadConexion === "SIN_REFERENCIA" ? "Conexión del envío no registrada: no se pudo verificar que la consulta use la misma cuenta del envío" : "",
+      ].filter(Boolean);
 
-      fusionarIntentos(d.id, j.intentos, { consultando: false, aviso: `${ETIQUETA_RESULTADO_INTENTO[j.resultado] ?? j.resultado}${j.mensaje ? `: ${j.mensaje}` : ""}` });
+      fusionarIntentos(d.id, j.intentos, { consultando: false, aviso: [`${ETIQUETA_RESULTADO_INTENTO[j.resultado] ?? j.resultado}${j.mensaje ? `: ${j.mensaje}` : ""}`, ...notas].join(" · ") });
       setRecarga((n) => n + 1);
     } catch (e) {
       actualizarDetalle(d.id, { consultando: false, error: e instanceof Error ? e.message : "No fue posible consultar el estado." });
@@ -672,7 +677,7 @@ export default function DocumentosPage() {
                                     <tr key={i.id} className={ui.row}>
                                       <td>{fechaHora(i.creadoAt)}</td>
                                       <td>{i.tipo === "ENVIO" ? "Envío" : "Consulta"}{i.fase ? ` · ${i.fase.toLowerCase()}` : ""}</td>
-                                      <td>{etiquetaIntento(i.tipo, i.resultado)}{i.lote ? ` · lote ${i.lote}` : ""}{i.cdcInformado ? <><br /><small className={ui.muted}>CDC informado: {i.cdcInformado}</small></> : i.cdcRespuesta ? <><br /><small className={ui.muted}>CDC informado (según el JSON de respuesta): {i.cdcRespuesta}</small></> : null}{i.mensaje ? <><br /><small className={ui.muted}>{i.mensaje}</small></> : null}{textoConexion(i.conexion) ? <><br /><small className={ui.muted}>Conexión: {textoConexion(i.conexion)}</small></> : null}</td>
+                                      <td>{etiquetaIntento(i.tipo, i.resultado)}{i.lote ? ` · lote ${i.lote}` : ""}{i.cdcInformado ? <><br /><small className={ui.muted}>CDC informado: {i.cdcInformado}</small></> : i.cdcRespuesta ? <><br /><small className={ui.muted}>CDC informado (según el JSON de respuesta): {i.cdcRespuesta}</small></> : null}{i.mensaje ? <><br /><small className={ui.muted}>{i.mensaje}</small></> : null}{textoConexion(i.conexion) ? <><br /><small className={ui.muted}>Conexión: {textoConexion(i.conexion)}</small></> : <><br /><small className={ui.muted}>Conexión: no registrada (anterior a NEX-079 o modo compatibilidad)</small></>}</td>
                                       <td>{i.httpStatus ?? "—"}</td>
                                       <td>{i.estadoGateway ?? "—"}</td>
                                       <td>{i.actorNombre}</td>

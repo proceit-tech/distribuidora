@@ -184,7 +184,7 @@ DECLARE
   d public.documentos_electronicos%ROWTYPE;
   v_mensaje text := left(nullif(btrim(coalesce(p_mensaje, '')), ''), 500);
   -- El lote llega validado (≤ 60 caracteres, sin caracteres de control) y se guarda TAL CUAL: sin recortar ni sanear su contenido.
-  v_lote text := CASE WHEN p_lote IS NOT NULL AND char_length(p_lote) BETWEEN 1 AND 60 AND p_lote !~ '[[:cntrl:]]' THEN p_lote END;
+  v_lote text := CASE WHEN p_lote IS NOT NULL AND char_length(p_lote) BETWEEN 1 AND 60 AND p_lote !~ '[[:cntrl:]]' AND p_lote !~ '^[[:space:]]|[[:space:]]$' THEN p_lote END;
 BEGIN
   IF NOT public.usuario_tiene_permiso(p_empresa, p_usuario, 'FACTURACION_ELECTRONICA', 'CREAR') THEN
     RAISE EXCEPTION 'el usuario no tiene permiso FACTURACION_ELECTRONICA.CREAR en esta empresa' USING ERRCODE = '42501';

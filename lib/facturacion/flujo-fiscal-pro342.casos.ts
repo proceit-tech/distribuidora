@@ -16,7 +16,7 @@ import { CADENCIA_SEGUNDOS, ejecutarLote } from "@/lib/facturacion/consulta-auto
 import { enviarDocumento } from "@/lib/facturacion/envio";
 import { esFaseXmlFirmado, estadoSifenDesdeGateway } from "@/lib/facturacion/estados";
 import {
-  cdcCoherente, consultarDocumentoGateway, cuerpoKudeGateway, interpretarRecepcion, limpiarCacheTokens, obtenerKudeGateway, referenciaConexion,
+  cdcCoherente, consultarDocumentoGateway, continuidadConexion, cuerpoKudeGateway, interpretarRecepcion, limpiarCacheTokens, obtenerKudeGateway, referenciaConexion,
   type CuerpoLegible, type DocumentoKude, type FetchLike, type KudeFetch, type ResultadoConsulta,
 } from "@/lib/facturacion/gateway";
 import { presentacionSifen, seguimientoFiscal, textoConexion } from "@/lib/facturacion/presentacion-sifen";
@@ -53,7 +53,7 @@ const FINALES = ["APROBADO", "RECHAZADO", "CANCELADO", "INUTILIZADO"];
 const PENDIENTES = ["SIN_CONSULTA", "PENDIENTE", "NO_RECONOCIDO"];
 
 /** Base simulada con las reglas de las funciones SQL de registro (NEX-050 / NEX-077 / NEX-079). `sinNex079` = las sobrecargas con p_conexion no existen (42883). */
-function mundo(docs: Partial<DocMundo>[], opciones: { sinNex079?: boolean } = {}) {
+function mundo(docs: Partial<DocMundo>[], opciones: { sinNex079?: boolean; faltaDependenciaInterna?: boolean; catalogoIlegible?: boolean; baseUrl?: string } = {}) {
   const reloj = { t: Date.parse("2026-11-11T09:30:00Z") };
   const tabla = new Map<string, DocMundo>();
 
@@ -117,7 +117,20 @@ function mundo(docs: Partial<DocMundo>[], opciones: { sinNex079?: boolean } = {}
       sqls.push(sql);
       const conConexion = /fe_documento_registrar_(consulta|envio)/.test(sql) && (/\$15::jsonb\) AS resultado/.test(sql) || /\$16::jsonb\) AS resultado/.test(sql));
 
-      if (opciones.sinNex079 && conConexion) throw Object.assign(new Error("function does not exist"), { code: "42883" });
+      // sinNex079: la sobrecarga NEX-079 no existe (42883). faltaDependenciaInterna: la sobrecarga EXISTE pero una función que usa no (42883 por migración defectuosa).
+      if ((opciones.sinNex079 || opciones.faltaDependenciaInterna) && conConexion) throw Object.assign(new Error("function does not exist"), { code: "42883" });
+      // PRO-342-R02 (F004): verificación en el catálogo de la sobrecarga NEX-079 (nombre + cantidad de argumentos con jsonb al final).
+      if (/pg_catalog\.pg_proc/.test(sql)) {
+        if (opciones.catalogoIlegible) throw Object.assign(new Error("permission denied for pg_proc"), { code: "42501" });
+
+        return { rows: [{ existe: !opciones.sinNex079 }] };
+      }
+      // PRO-342-R02 (F002): conexión (sin secretos) del último ENVÍO del documento con snapshot, por empresa y documento.
+      if (/i\.tipo = 'ENVIO'/.test(sql)) {
+        const env = [...intentos].reverse().find((i) => p[0] === EMPRESA && i.documento === p[1] && i.tipo === "ENVIO" && i.conexion !== null);
+
+        return { rows: env ? [{ conexion: env.conexion }] : [] };
+      }
       if (/fe_consulta_reservar_token/.test(sql)) {
         const elegido = [...tabla.values()].find((d) => ["ENVIADO", "ENVIO_INDETERMINADO"].includes(d.estadoLocal) && PENDIENTES.includes(d.estadoSifen) && d.proxima <= reloj.t && d.leaseToken === null);
 
@@ -137,7 +150,7 @@ function mundo(docs: Partial<DocMundo>[], opciones: { sinNex079?: boolean } = {}
 
         return { rows: [{ ok: true }] };
       }
-      if (/FROM fe_gateway_config/.test(sql)) return { rows: [{ baseUrl: CONFIG.baseUrl, credencialRef: "PRUEBA", timeoutMs: 1000, credencialesVersion: "3" }] };
+      if (/FROM fe_gateway_config/.test(sql)) return { rows: [{ baseUrl: opciones.baseUrl ?? CONFIG.baseUrl, credencialRef: "PRUEBA", timeoutMs: 1000, credencialesVersion: "3" }] };
       if (/fe_documento_registrar_consulta_auto/.test(sql)) return { rows: [{ resultado: registrarConsulta("AUTO", p, p[14], conConexion ? p[15] : null) }] };
       if (/fe_documento_registrar_consulta_flujo_nce/.test(sql)) return { rows: [{ resultado: registrarConsulta("FLUJO", p, null, conConexion ? p[14] : null) }] };
       if (/fe_documento_registrar_consulta/.test(sql)) return { rows: [{ resultado: registrarConsulta("MANUAL", p, null, conConexion ? p[14] : null) }] };
@@ -173,16 +186,19 @@ function mundo(docs: Partial<DocMundo>[], opciones: { sinNex079?: boolean } = {}
     },
   };
 
-  return { db: db as never, tabla, intentos, sqls, reloj, iniciados: () => iniciados };
+  return { db: db as never, tabla, intentos, sqls, reloj, iniciados: () => iniciados, opciones };
 }
 
 /** Gateway simulado: login, recepcion_de y consulta_de (cola de respuestas; un elemento `null` = caída de red). Cuenta cada POST por ruta. */
 function gateway(o: { recepcion?: { status: number; cuerpo: unknown }; consultas?: Array<{ status: number; cuerpo: unknown } | null> } = {}) {
   const cola = [...(o.consultas ?? [])];
   const posts: Record<string, number> = {};
+  const hosts: string[] = [];
   const cuerpos: Array<{ ruta: string; cuerpo: Record<string, unknown> }> = [];
   const fetchSim: FetchLike = async (url, init) => {
     const ruta = new URL(url).pathname;
+
+    hosts.push(new URL(url).host);
 
     posts[ruta] = (posts[ruta] ?? 0) + 1;
     cuerpos.push({ ruta, cuerpo: JSON.parse(init.body) as Record<string, unknown> });
@@ -200,7 +216,7 @@ function gateway(o: { recepcion?: { status: number; cuerpo: unknown }; consultas
     return { status: r?.status ?? 500, text: async () => JSON.stringify(r?.cuerpo ?? {}) };
   };
 
-  return { fetch: fetchSim, posts, cuerpos, dep: { fetch: fetchSim, env: ENV } };
+  return { fetch: fetchSim, posts, hosts, cuerpos, dep: { fetch: fetchSim, env: ENV } };
 }
 
 const consulta = (estado: string, cdc: string | null, extra: { cod?: string | null; mensaje?: string | null; kude?: unknown; fecha?: string } = {}) => ({
@@ -398,9 +414,9 @@ export async function verificarCasosFlujoFiscalPro342(): Promise<string[]> {
     limpiarCacheTokens();
     const m = mundo([{ lote: LOTE }], { sinNex079: true });
     const g = gateway({ consultas: [consulta("XML firmado", null)] });
+    const r = await consultarEstado(m.db, EMPRESA, USUARIO, DOC1, g.dep);
 
-    await consultarEstado(m.db, EMPRESA, USUARIO, DOC1, g.dep);
-    igual("PRO342-08c sin NEX-079 (42883) se registra con la firma anterior: el intento no se pierde (sin conexión)", [m.intentos.length, m.intentos[0].conexion, m.sqls.filter((x) => /fe_documento_registrar_consulta/.test(x)).length], [1, null, 2]);
+    igual("PRO342-08c (actualizado R02) sin NEX-079 (42883 y la sobrecarga NO está en el catálogo): firma anterior, el intento no se pierde (sin conexión) y se informa MODO COMPATIBILIDAD", [m.intentos.length, m.intentos[0].conexion, m.sqls.filter((x) => /fe_documento_registrar_consulta/.test(x)).length, m.sqls.filter((x) => /pg_catalog\.pg_proc/.test(x)).length, r.modoRegistro], [1, null, 2, 1, "COMPATIBILIDAD"]);
   }
   {
     // Dos instancias: A reserva, su lease vence y B reserva el mismo documento con otro token. A no registra ni reprograma; solo B deja evidencia.
@@ -436,7 +452,8 @@ export async function verificarCasosFlujoFiscalPro342(): Promise<string[]> {
     const k1 = gatewayKude(CDC1);
     const r1 = await obtenerKudeGateway(CONFIG, fe, k1.dep);
 
-    igual("PRO342-09b documento PENDIENTE (XML firmado, sin CDC registrado): el KuDE del MISMO documento se entrega (identidad coherente), sin exigir aprobación", [r1.ok, r1.ok ? r1.correspondencia : null, k1.pedidos[0]?.dNumDoc], [true, "IDENTIDAD", "0000001"]);
+    // PRO-342-R02 (F001): sin CDC registrado no hay prueba de pertenencia → NO_VERIFICADO (se entrega con advertencia; nunca «identidad confirmada»).
+    igual("PRO342-09b (actualizado R02) documento PENDIENTE (XML firmado, sin CDC registrado): el KuDE se entrega sin exigir aprobación, pero NO_VERIFICADO", [r1.ok, r1.ok ? r1.correspondencia : null, k1.pedidos[0]?.dNumDoc], [true, "NO_VERIFICADO", "0000001"]);
 
     limpiarCacheTokens();
     const r2 = await obtenerKudeGateway(CONFIG, { ...fe, cdcRegistrado: CDC1 }, gatewayKude(CDC1_OTRA_EMPRESA).dep);
@@ -451,7 +468,7 @@ export async function verificarCasosFlujoFiscalPro342(): Promise<string[]> {
     limpiarCacheTokens();
     const r4 = await obtenerKudeGateway(CONFIG, { ...fe, cdcRegistrado: CDC1 }, gatewayKude(null).dep);
 
-    igual("PRO342-09e respuesta sin CDC: no verificable por la API → PDF mostrado (PRO-326) con correspondencia NO_VERIFICABLE", [r4.ok, r4.ok ? r4.correspondencia : null], [true, "NO_VERIFICABLE"]);
+    igual("PRO342-09e (actualizado R02) respuesta sin CDC: PDF mostrado (PRO-326) como NO_VERIFICADO aunque haya CDC registrado", [r4.ok, r4.ok ? r4.correspondencia : null], [true, "NO_VERIFICADO"]);
     igual("PRO342-09f la disponibilidad del KuDE no es estado fiscal: el badge sigue «Pendiente de confirmación» y menciona XML firmado", [presentacionSifen({ estadoLocal: "ENVIADO", estadoSifen: "PENDIENTE", estadoGatewayTexto: "XML firmado" }).texto, /XML firmado/.test(presentacionSifen({ estadoLocal: "ENVIADO", estadoSifen: "PENDIENTE", estadoGatewayTexto: "XML firmado" }).detalle)], ["Pendiente de confirmación", true]);
   }
 
@@ -473,6 +490,140 @@ export async function verificarCasosFlujoFiscalPro342(): Promise<string[]> {
     cierto("PRO342-10e NEX-079: la columna conexion rechaza claves de credenciales; el CDC del documento solo se fija con coalesce(d.cdc, p_cdc) y el lote con coalesce(lote, v_lote)", /conexion \?\| ARRAY\['password', 'clave', 'token', 'ruc'/.test(nex079) && /cdc = coalesce\(d\.cdc, p_cdc\)/.test(nex079) && /lote = coalesce\(lote, v_lote\)/.test(nex079));
     cierto("PRO342-10f NEX-079: las tres vías de consulta guardan cdc_informado y conexión; la vía AUTO conserva el fencing NEX:LEASE_OBSOLETO y las no manuales exigen documento pendiente", /cdc_informado, cod_respuesta, mensaje, respuesta, actor_id, conexion/.test(nex079) && /NEX:LEASE_OBSOLETO/.test(nex079) && /NEX:DOCUMENTO_NO_PENDIENTE/.test(nex079) && /'MANUAL', p_empresa/.test(nex079) && /'FLUJO', p_empresa/.test(nex079) && /'AUTO', p_empresa/.test(nex079));
   }
+
+  // ══ PRO-342-R02 — correcciones focales F002/F003/F004 (casos ESCRITOS, NO EJECUTADOS) ══════════════════════════════════════════════════════
+  const envioShared = leer("lib/facturacion/envio.ts");
+  const nceEmision = leer("lib/facturacion/nce-emision.ts");
+  const shared = leer("lib/facturacion/shared.ts");
+
+  // ── R02-F003: lote LITERAL (sin trim ni normalización) ────────────────────────────────────────────────────────────────────────────────
+  {
+    const doc = { tipo: "FE", establecimiento: "001", puntoExpedicion: "001", numero: "0000001" };
+    const recep = (lote: unknown, secretos: string[] = []) => interpretarRecepcion(200, JSON.stringify({ status: "success", nro_lote: lote }), secretos, doc);
+    const limpio = recep(LOTE);
+    const espacios = recep(` ${LOTE} `);
+    const finalEspacio = recep(`${LOTE} `);
+    const control = recep(`${LOTE}\u0007`);
+    const salto = recep(`${LOTE}\n`);
+    const numerico = recep(1234567);
+    const parcial = recep(LOTE, [RUC.slice(2, 6)]); // contraseña sintética = PARTE del RUC (aparece dentro del lote)
+
+    igual("PRO342-R02-L01 lote limpio: ENVIADO con el lote EXACTO", [limpio.estadoLocal, limpio.lote], ["ENVIADO", LOTE]);
+    igual("PRO342-R02-L02 lote rodeado de espacios (o con espacio final): NO se recorta ni se registra otro valor → ENVIO_INDETERMINADO sin lote y con diagnóstico", [espacios.estadoLocal, espacios.lote, finalEspacio.estadoLocal, finalEspacio.lote, /espacios al inicio o al final/.test(String(espacios.mensaje))], ["ENVIO_INDETERMINADO", null, "ENVIO_INDETERMINADO", null, true]);
+    igual("PRO342-R02-L03 lote con caracteres de control (BEL, salto de línea): indeterminado sin lote (no se limpia en silencio)", [control.estadoLocal, control.lote, salto.estadoLocal, salto.lote], ["ENVIO_INDETERMINADO", null, "ENVIO_INDETERMINADO", null]);
+    igual("PRO342-R02-L04 lote numérico entero: su texto exacto («1234567»)", [numerico.estadoLocal, numerico.lote], ["ENVIADO", "1234567"]);
+    igual("PRO342-R02-L05 contraseña sintética = parte del RUC: el lote operacional queda EXACTO (sin «[omitido]») y la evidencia no lo mutila en la raíz", [parcial.lote, String(parcial.lote).includes("[omitido]"), JSON.stringify(parcial.respuesta).includes(`"nro_lote":"${LOTE}"`)], [LOTE, false, true]);
+
+    // De punta a punta: el gateway devuelve el lote con espacios → el documento NO guarda un lote recortado; una sola transmisión.
+    limpiarCacheTokens();
+    const m = mundo([{ estadoLocal: "PENDIENTE_ENVIO" }]);
+    const g = gateway({ recepcion: { status: 200, cuerpo: { status: "success", message: "Documento recibido", nro_lote: ` ${LOTE} ` } } });
+    const r = await enviarDocumento(m.db, EMPRESA, USUARIO, DOC1, g.dep);
+
+    igual("PRO342-R02-L06 envío real con lote « LOTE »: ENVIO_INDETERMINADO, el documento y el intento quedan SIN lote (nunca el recortado) y hubo UNA transmisión", [r.estadoLocal, m.tabla.get(DOC1)!.lote, m.intentos[0].lote, g.posts["/api/recepcion_de"]], ["ENVIO_INDETERMINADO", null, null, 1]);
+    cierto("PRO342-R02-L07 fuente: interpretarRecepcion ya no aplica trim al lote; NEX-079 rechaza (NULL) un p_lote con espacios al inicio o al final en lugar de normalizarlo", !/String\(loteBruto\)\.trim\(\)/.test(leer("lib/facturacion/gateway.ts")) && /p_lote !~ '\^\[\[:space:\]\]\|\[\[:space:\]\]\$'/.test(leer("documentacao/banco/nexit/v1/migraciones/NEX-079-facturacion-intentos-conexion-cdc-consulta.sql")));
+  }
+
+  // ── R02-F002: UNA configuración por operación de envío; consulta/KuDE solo con la conexión del envío ──────────────────────────────────
+  {
+    // Cambio de configuración ENTRE el preflight y la transmisión: con la configuración del preflight, enviarDocumento no relee y transmite al host del preflight.
+    limpiarCacheTokens();
+    const m = mundo([{ estadoLocal: "PENDIENTE_ENVIO" }], { baseUrl: "https://otro-gateway.prueba.invalid" });
+    const g = gateway();
+    const preflight = { ...CONFIG };
+
+    await enviarDocumento(m.db, EMPRESA, USUARIO, DOC1, g.dep, { config: preflight });
+    igual("PRO342-R02-C01 config cambiada entre preflight y POST: no se relee fe_gateway_config, el POST va al host del preflight y el intento registra ESE host (sin secretos)", [m.sqls.filter((x) => /FROM fe_gateway_config/.test(x)).length, g.hosts.every((h) => h === "gateway.prueba.invalid"), m.intentos[0].conexion?.host, JSON.stringify(m.intentos[0].conexion).includes(CLAVE), JSON.stringify(m.intentos[0].conexion).includes(TOKEN)], [0, true, "gateway.prueba.invalid", false, false]);
+
+    limpiarCacheTokens();
+    const m2 = mundo([{ estadoLocal: "PENDIENTE_ENVIO" }]);
+    const g2 = gateway();
+
+    await enviarDocumento(m2.db, EMPRESA, USUARIO, DOC1, g2.dep);
+    igual("PRO342-R02-C02 envío desde «Documentos» (sin preflight): la configuración se lee UNA vez y esa misma es la del POST y la del intento", [m2.sqls.filter((x) => /FROM fe_gateway_config/.test(x)).length, m2.intentos[0].conexion?.host], [1, "gateway.prueba.invalid"]);
+
+    const emitir = envioShared.slice(envioShared.indexOf("export async function emitirFactura"));
+    const nce = nceEmision.slice(nceEmision.indexOf("export async function emitirNce"));
+
+    cierto("PRO342-R02-C03 fuente: emitirFactura y emitirNce leen la configuración UNA vez (preflight) y la pasan al envío; enviarDocumento solo la lee si no la recibió", (emitir.match(/configuracionGateway\(/g) ?? []).length === 1 && /enviarDocumento\(db, empresaId, usuarioId, documentoId, dep, \{ config \}\)/.test(emitir) && (nce.match(/configuracionGateway\(/g) ?? []).length === 1 && /enviarDocumento\(db, empresaId, usuarioId, documentoId, dep, \{ config \}\)/.test(nce) && /opciones\.config \?\? \(await configuracionGateway\(/.test(envioShared));
+  }
+  {
+    // Cambio DESPUÉS del envío y antes de consultar: la consulta manual y el worker no consultan con otra conexión (409 / limitado), sin intento inventado ni reenvío.
+    limpiarCacheTokens();
+    const m = mundo([{ estadoLocal: "PENDIENTE_ENVIO" }]);
+    const g = gateway({ consultas: [consulta("XML firmado", CDC1)] });
+
+    await enviarDocumento(m.db, EMPRESA, USUARIO, DOC1, g.dep);
+    m.opciones.baseUrl = "https://otro-gateway.prueba.invalid";
+    let estado = 0;
+    let mensaje = "";
+
+    try {
+      await consultarEstado(m.db, EMPRESA, USUARIO, DOC1, g.dep);
+    } catch (e) {
+      estado = (e as { estado?: number }).estado ?? -1;
+      mensaje = String((e as Error).message);
+    }
+    igual("PRO342-R02-C04 conexión cambiada después del envío: consulta manual 409 «la conexión cambió», sin POST a consulta_de ni intento de consulta, y el estado fiscal no cambia", [estado, /cambió desde que este documento fue enviado/.test(mensaje), g.posts["/api/consulta_de"] ?? 0, m.intentos.filter((i) => i.tipo === "CONSULTA").length, m.tabla.get(DOC1)!.estadoSifen], [409, true, 0, 0, "SIN_CONSULTA"]);
+
+    const lw = await lote(m, g);
+
+    igual("PRO342-R02-C05 el worker tampoco consulta con la otra conexión: lo cuenta como «limitado», reprograma sin contar intento y no reenvía JSON", [lw.reservados, lw.limitados, lw.consultados, g.posts["/api/consulta_de"] ?? 0, g.posts["/api/recepcion_de"], m.tabla.get(DOC1)!.leaseToken, m.tabla.get(DOC1)!.consultasAuto], [1, 1, 0, 0, 1, null, 0]);
+
+    // Con la conexión original restablecida, la misma reconsulta continúa (MISMA) y registra la conexión del intento.
+    m.opciones.baseUrl = undefined;
+    const r = await consultarEstado(m.db, EMPRESA, USUARIO, DOC1, g.dep);
+
+    igual("PRO342-R02-C06 conexión original: la consulta continúa con continuidad MISMA y modo INTEGRAL; la conexión registrada no contiene secretos", [r.continuidadConexion, r.modoRegistro, m.intentos.filter((i) => i.tipo === "CONSULTA")[0].conexion?.host, JSON.stringify(m.intentos).includes(TOKEN)], ["MISMA", "INTEGRAL", "gateway.prueba.invalid", false]);
+  }
+  {
+    // Documento histórico SIN snapshot NEX-079: no se presume conexión equivocada; se consulta y se informa SIN_REFERENCIA.
+    limpiarCacheTokens();
+    const m = mundo([{ lote: LOTE }], { baseUrl: "https://otro-gateway.prueba.invalid" });
+    const r = await consultarEstado(m.db, EMPRESA, USUARIO, DOC1, gateway({ consultas: [consulta("XML firmado", null)] }).dep);
+
+    igual("PRO342-R02-C07 sin snapshot de conexión del envío (anterior a NEX-079): consulta realizada con continuidad SIN_REFERENCIA (compatibilidad honesta, no se inventa conflicto)", [r.resultado, r.continuidadConexion], ["OK", "SIN_REFERENCIA"]);
+    cierto("PRO342-R02-C08 fuente: la conexión del envío se lee por empresa_id Y documento_id de la sesión (sin cruzar tenants) y sin columnas de credenciales; DISTINTA lanza 409 antes de llamar al gateway", /i\.empresa_id = \$1 AND i\.documento_id = \$2 AND i\.tipo = 'ENVIO'/.test(shared) && !/password|token/i.test(shared.slice(shared.indexOf("export const SQL_CONEXION_ENVIO"), shared.indexOf("export const MENSAJE_CONEXION_DISTINTA"))) && /continuidad === "DISTINTA"\) throw new ErrorFacturacion\(409, MENSAJE_CONEXION_DISTINTA\)/.test(shared));
+    const cont = (envio: unknown, version: number | null, host = "gateway.prueba.invalid") => continuidadConexion(envio, { host, credencialRef: "PRUEBA", credencialesVersion: version, origenCredenciales: "ENTORNO" });
+    const snap = { host: "gateway.prueba.invalid", credencialRef: "PRUEBA", credencialesVersion: 3, origenCredenciales: "ENTORNO" };
+
+    igual("PRO342-R02-C09 continuidadConexion: misma → MISMA; host/versión/referencia distinta → DISTINTA; sin snapshot o versión no comparable → SIN_REFERENCIA", [cont(snap, 3), cont(snap, 4), cont(snap, 3, "otro.prueba.invalid"), cont({ ...snap, credencialRef: "OTRA" }, 3), cont(null, 3), cont({ ...snap, credencialesVersion: null }, 3), cont({ ...snap, credencialesVersion: null }, null)], ["MISMA", "DISTINTA", "DISTINTA", "DISTINTA", "SIN_REFERENCIA", "SIN_REFERENCIA", "MISMA"]);
+  }
+
+  // ── R02-F004: el retroceso a la firma anterior SOLO si la sobrecarga NEX-079 no existe ────────────────────────────────────────────────
+  {
+    limpiarCacheTokens();
+    const m = mundo([{ lote: LOTE }], { faltaDependenciaInterna: true });
+    let codigo = "";
+
+    try {
+      await consultarEstado(m.db, EMPRESA, USUARIO, DOC1, gateway({ consultas: [consulta("XML firmado", null)] }).dep);
+    } catch (e) {
+      codigo = String((e as { code?: string }).code);
+    }
+    igual("PRO342-R02-F01 sobrecarga NEX-079 PRESENTE pero dependencia interna ausente (42883): el error se propaga, NO se registra en modo compatibilidad ni se pierde/inventa historial", [codigo, m.intentos.length, m.sqls.filter((x) => /fe_documento_registrar_consulta/.test(x)).length], ["42883", 0, 1]);
+
+    limpiarCacheTokens();
+    const m2 = mundo([{ lote: LOTE }], { sinNex079: true, catalogoIlegible: true });
+    let codigo2 = "";
+
+    try {
+      await consultarEstado(m2.db, EMPRESA, USUARIO, DOC1, gateway({ consultas: [consulta("XML firmado", null)] }).dep);
+    } catch (e) {
+      codigo2 = String((e as { code?: string }).code);
+    }
+    igual("PRO342-R02-F02 si el catálogo no se puede leer, tampoco hay retroceso: se propaga el 42883 original", [codigo2, m2.intentos.length], ["42883", 0]);
+
+    limpiarCacheTokens();
+    const m3 = mundo([{ estadoLocal: "PENDIENTE_ENVIO" }], { sinNex079: true });
+    const g3 = gateway();
+
+    await enviarDocumento(m3.db, EMPRESA, USUARIO, DOC1, g3.dep);
+    igual("PRO342-R02-F03 envío sin NEX-079: modo compatibilidad (intento ENVIO registrado sin conexión, lote exacto) y la consulta posterior queda SIN_REFERENCIA (no DISTINTA)", [m3.intentos[0].conexion, m3.intentos[0].lote, (await consultarEstado(m3.db, EMPRESA, USUARIO, DOC1, gateway({ consultas: [consulta("XML firmado", null)] }).dep)).continuidadConexion], [null, LOTE, "SIN_REFERENCIA"]);
+    cierto("PRO342-R02-F04 fuente: registrarConConexion consulta el catálogo (SQL_SOBRECARGA_NEX079) antes de retroceder y propaga el error si la sobrecarga existe; la consulta manual informa modoRegistro y la ruta lo devuelve", /db\.query\(SQL_SOBRECARGA_NEX079/.test(shared) && /if \(sobrecargaExiste\) \{[\s\S]{0,300}throw error;/.test(shared) && /modoRegistro: "COMPATIBILIDAD"/.test(shared) && /modoRegistro/.test(leer("app/api/documentos/[id]/consultar/route.ts")));
+  }
+
+  cierto("PRO342-R02-F05 pantalla: tras «Reconsultar» se informa el modo compatibilidad (sin NEX-079) y la conexión no verificable; el historial muestra «Conexión: no registrada» cuando el intento no la tiene", /modoRegistro === "COMPATIBILIDAD"/.test(leer("app/(private)/documentos/page.tsx")) && /continuidadConexion === "SIN_REFERENCIA"/.test(leer("app/(private)/documentos/page.tsx")) && /Conexión: no registrada \(anterior a NEX-079 o modo compatibilidad\)/.test(leer("app/(private)/documentos/page.tsx")));
 
   return fallos;
 }
