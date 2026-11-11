@@ -8,13 +8,13 @@
  *  · Cancelado / Inutilizado: estados propios, tono neutro oscuro (no se presentan como rechazo).
  * Las anomalías técnicas de la ÚLTIMA consulta (CDC divergente, errores HTTP, tiempo de espera, red, respuesta inválida, no encontrado) van en un aviso aparte, nunca en el badge fiscal.
  */
-import { ESTADOS_LOCAL_TRANSMITIDO, ESTADOS_SIFEN_SIN_FINAL, ETIQUETA_RESULTADO_INTENTO, ETIQUETA_SIFEN, type EstadoLocal, type EstadoSifen } from "@/lib/facturacion/estados";
+import { esFaseXmlFirmado, ESTADOS_LOCAL_TRANSMITIDO, ESTADOS_SIFEN_FINALES, ESTADOS_SIFEN_SIN_FINAL, ETIQUETA_LOCAL, ETIQUETA_RESULTADO_INTENTO, ETIQUETA_SIFEN, type EstadoLocal, type EstadoSifen } from "@/lib/facturacion/estados";
 
 export type TonoSifen = "aprobado" | "rechazado" | "pendiente" | "sinTransmitir" | "anulado";
 export type PresentacionSifen = { tono: TonoSifen; texto: string; detalle: string };
 export type AlertaConsulta = { tipo: "inconsistencia" | "tecnica"; texto: string; detalle: string };
 
-export function presentacionSifen(d: { estadoLocal: EstadoLocal; estadoSifen: EstadoSifen }): PresentacionSifen {
+export function presentacionSifen(d: { estadoLocal: EstadoLocal; estadoSifen: EstadoSifen; estadoGatewayTexto?: string | null; ultimaConsultaAt?: string | null }): PresentacionSifen {
   const registrado = ETIQUETA_SIFEN[d.estadoSifen] ?? d.estadoSifen;
 
   if (d.estadoSifen === "APROBADO") return { tono: "aprobado", texto: "Aprobado", detalle: "Resultado fiscal aprobado, registrado para este documento." };
@@ -23,7 +23,11 @@ export function presentacionSifen(d: { estadoLocal: EstadoLocal; estadoSifen: Es
 
   // PRO-338-R02: el mismo conjunto que el indicador PEND_RESPUESTA (estados.ts).
   if (ESTADOS_SIFEN_SIN_FINAL.includes(d.estadoSifen) && ESTADOS_LOCAL_TRANSMITIDO.includes(d.estadoLocal)) {
-    return { tono: "pendiente", texto: "Pendiente de confirmación", detalle: `Enviado sin resultado fiscal final confirmado (estado registrado: ${registrado}).` };
+    // PRO-342-R01: «XML firmado» es la fase intermedia del gateway; «Sin consultar» con una consulta técnica ya hecha se dice tal cual (la consulta existió pero no dio estado válido).
+    const fase = esFaseXmlFirmado(d.estadoGatewayTexto) ? " El gateway informó «XML firmado»: fase intermedia, todavía sin decisión SIFEN." : "";
+    const consultado = d.estadoSifen === "SIN_CONSULTA" && d.ultimaConsultaAt ? " Ya se consultó técnicamente al gateway, sin un estado fiscal válido todavía." : "";
+
+    return { tono: "pendiente", texto: "Pendiente de confirmación", detalle: `Enviado sin resultado fiscal final confirmado (estado registrado: ${registrado}).${fase}${consultado} Se sigue consultando automáticamente hasta «Aprobado» o «Rechazado».` };
   }
 
   return d.estadoLocal === "ENVIANDO"
@@ -65,8 +69,50 @@ export function alertaConsulta(d: { ultimaConsultaResultado: string | null; cdc?
   };
 }
 
+/**
+ * PRO-342-R01 — Seguimiento fiscal en TRES ejes que nunca se mezclan (pantalla de detalle):
+ *  · envío: ACK del gateway (ENVIADO = recibido, con su lote literal), nunca aprobación;
+ *  · último retorno del gateway: el texto crudo de la última consulta válida (p. ej. «XML firmado», fase intermedia) o, si solo hubo consultas sin estado válido, que la consulta técnica existió;
+ *  · resultado fiscal SIFEN: solo un estado final persistido (Aprobado / Rechazado / Cancelado / Inutilizado); si no, pendiente y en seguimiento automático.
+ * Puro: no lee ni escribe nada; la disponibilidad del KuDE no participa (no es aprobación).
+ */
+export type SeguimientoFiscal = { envio: string; ultimoRetorno: string; resultadoFiscal: string; final: boolean; consultando: boolean };
+
+export function seguimientoFiscal(d: { estadoLocal: EstadoLocal; estadoSifen: EstadoSifen; estadoGatewayTexto: string | null; ultimaConsultaAt: string | null; ultimaConsultaResultado: string | null; lote: string | null }): SeguimientoFiscal {
+  const final = ESTADOS_SIFEN_FINALES.includes(d.estadoSifen);
+  const transmitido = ESTADOS_LOCAL_TRANSMITIDO.includes(d.estadoLocal);
+  const envio = d.estadoLocal === "ENVIADO"
+    ? `Recibido por el gateway${d.lote ? ` (lote ${d.lote})` : ""}. La recepción no es aprobación SIFEN.`
+    : ETIQUETA_LOCAL[d.estadoLocal] ?? d.estadoLocal;
+  const tecnica = d.ultimaConsultaAt && d.ultimaConsultaResultado && d.ultimaConsultaResultado !== "OK" ? ` Última consulta: ${ETIQUETA_RESULTADO_INTENTO[d.ultimaConsultaResultado] ?? d.ultimaConsultaResultado}.` : "";
+  const ultimoRetorno = d.estadoGatewayTexto
+    ? `«${d.estadoGatewayTexto}»${esFaseXmlFirmado(d.estadoGatewayTexto) ? " (fase intermedia del gateway: XML firmado, todavía sin decisión SIFEN; el KuDE puede estar disponible)" : ""}.${tecnica}`
+    : d.ultimaConsultaAt
+      ? `Consultado técnicamente, sin un estado válido informado por el gateway.${tecnica}`
+      : "Aún no consultado.";
+  const resultadoFiscal = final
+    ? `${ETIQUETA_SIFEN[d.estadoSifen]} (informado por la API y registrado para este documento).`
+    : transmitido
+      ? "Pendiente: se sigue consultando automáticamente el mismo documento hasta «Aprobado» o «Rechazado» (sin reenviar el JSON)."
+      : "Sin información fiscal: el documento todavía no fue recibido por el gateway.";
+
+  return { envio, ultimoRetorno, resultadoFiscal, final, consultando: !final && transmitido };
+}
+
 /** Campos de un intento del historial que usa el resumen de consultas (los devuelve listarIntentos / listarIntentosPagina). */
-export type IntentoConsulta = { tipo: string; resultado: string; creadoAt: string; httpStatus: number | null; estadoGateway: string | null; codRespuesta: string | null; mensaje: string | null; cdcInformado: string | null; cdcRespuesta?: string | null };
+export type IntentoConsulta = { tipo: string; resultado: string; creadoAt: string; httpStatus: number | null; estadoGateway: string | null; codRespuesta: string | null; mensaje: string | null; cdcInformado: string | null; cdcRespuesta?: string | null; conexion?: Record<string, unknown> | null };
+
+/** PRO-342-R01: texto de la conexión usada en un intento (NEX-079): host y versión de credenciales; nunca usuario, RUC, clave ni token (la columna no los admite). null si no se registró. */
+export function textoConexion(c: Record<string, unknown> | null | undefined): string | null {
+  if (!c || typeof c !== "object") return null;
+
+  const host = typeof c.host === "string" && c.host ? c.host : null;
+  const version = typeof c.credencialesVersion === "number" ? `credenciales v${c.credencialesVersion}` : null;
+  const origen = c.origenCredenciales === "BASE" ? "de la empresa" : c.origenCredenciales === "ENTORNO" ? "del servidor" : null;
+  const partes = [host, version && origen ? `${version} ${origen}` : version ?? (origen ? `credenciales ${origen}` : null)].filter(Boolean);
+
+  return partes.length ? partes.join(" · ") : null;
+}
 
 /**
  * PRO-338-R02 (AUD-R01 F003): separa la ÚLTIMA RESPUESTA FISCAL VÁLIDA (consulta con resultado OK) del ÚLTIMO INTENTO DE CONSULTA (cualquier resultado, p. ej. CDC_DIVERGENTE o ERROR_HTTP), a partir del

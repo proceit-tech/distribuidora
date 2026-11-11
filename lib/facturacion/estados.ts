@@ -92,6 +92,9 @@ export function estadoSifenDesdeGateway(texto: unknown): EstadoSifen {
     case "inutilizado":
       return "INUTILIZADO";
     case "pendiente":
+    // PRO-342-R01: «XML firmado» es la PRIMERA fase que informa el gateway (XML firmado, aún sin decisión SIFEN). Es un estado INTERMEDIO conocido: el documento sigue pendiente y la
+    // consulta automática lo vuelve a consultar hasta «Aprobado» o «Rechazado». Nunca es aprobación ni rechazo; el texto literal queda en estado_gateway_texto y en el historial.
+    case "xml firmado":
       return "PENDIENTE";
     default:
       return "NO_RECONOCIDO";
@@ -105,6 +108,12 @@ export function estadoSifenDesdeGateway(texto: unknown): EstadoSifen {
  */
 export const ESTADOS_LOCAL_TRANSMITIDO: readonly EstadoLocal[] = ["ENVIADO", "ENVIO_INDETERMINADO"];
 export const ESTADOS_SIFEN_SIN_FINAL: readonly EstadoSifen[] = ["SIN_CONSULTA", "PENDIENTE", "NO_RECONOCIDO"];
+
+/** PRO-342-R01: estados con los que la consulta (manual o automática) TERMINA el seguimiento fiscal del documento. Todo lo demás (XML firmado, sin consultar, no reconocido) sigue consultándose. */
+export const ESTADOS_SIFEN_FINALES: readonly EstadoSifen[] = ["APROBADO", "RECHAZADO", "CANCELADO", "INUTILIZADO"];
+
+/** PRO-342-R01: ¿el texto crudo del gateway es la fase intermedia «XML firmado»? (solo presentación; el estado persistido lo fija estadoSifenDesdeGateway). */
+export const esFaseXmlFirmado = (texto: unknown): boolean => typeof texto === "string" && sinTildes(texto).trim().toLowerCase() === "xml firmado";
 
 /** Indicadores de la pantalla (tarjetas). Cada uno es también un filtro; la definición SQL equivalente vive en lib/facturacion/shared.ts. */
 export const GRUPOS_INDICADOR = ["PEND_ENVIO", "PEND_RESPUESTA", "APROBADO", "RECHAZADO", "EMAIL_ENVIADO", "EMAIL_ERROR", "SIN_EMAIL"] as const;

@@ -393,8 +393,9 @@ async function casosR05(igual: Igual, cierto: Cierto, consultar: Consultar, regi
     const g = gateway([{ status: 200, cuerpo: { status: "success", nro_lote: "L-906", response: { CDC: CDC_FE } } }]);
     const r = (await enviarDocumentoGateway(CONFIG, { dEst: "001" }, FE, { fetch: g.fetch, env: env(CLAVE_RUC) })) as ResultadoEnvio;
 
-    // interpretarRecepcion admite el CDC a cualquier profundidad (buscar): el operacional queda exacto; en la evidencia solo la raíz es ruta del contrato, el resto es texto libre.
-    igual("R05-13 envío con CDC anidado (response.CDC): cdc / cdcInformado operacionales EXACTOS; la copia anidada de la evidencia no es ruta de contrato y se sanea", [r.estadoLocal, r.cdc, r.cdcInformado, (r.respuesta as { response: { CDC: unknown } }).response.CDC], ["ENVIADO", CDC_FE, CDC_FE, sinRuc(CDC_FE)]);
+    // PRO-342-R01 (R05-F001 resuelto): parser y saneador usan la MISMA ruta del contrato (raíz). Un CDC anidado (response.CDC) no es origen comprobado: NO se reconoce como CDC del documento
+    // (ni operacional ni informado) y en la evidencia se sanea como texto libre. La recepción se confirma por el lote de la raíz. Ningún CDC reconocido se mutila.
+    igual("R05-13 (actualizado PRO-342-R01) envío con CDC anidado (response.CDC): no se reconoce (cdc / cdcInformado null), ENVIADO por nro_lote exacto; la copia anidada se sanea", [r.estadoLocal, r.cdc, r.cdcInformado, r.lote, (r.respuesta as { response: { CDC: unknown } }).response.CDC], ["ENVIADO", null, null, "L-906", sinRuc(CDC_FE)]);
   }
 
   // ── Envío: Aceptados/Rechazados oficiales frente a Nota.Aceptados falso (clave = número del documento)

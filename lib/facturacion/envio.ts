@@ -3,9 +3,9 @@ import type { Pool } from "pg";
 import { guardarClasificacionIva, type ClasificacionGuardar, type ResultadoGuardado } from "@/lib/facturacion/ajuste-fiscal";
 import { crearFacturaElectronica, type CuerpoFactura } from "@/lib/facturacion/emision";
 import { adjuntarCredencialesDeBase, hayCredencialesEnBase, REF_CREDENCIALES_BASE } from "@/lib/facturacion/gateway-credenciales";
-import { configGatewayValida, credencialesDe, enviarDocumentoGateway, leerCredenciales, type ConfigGateway, type Dependencias, type FaseEnvio, type ResultadoEnvio } from "@/lib/facturacion/gateway";
+import { configGatewayValida, credencialesDe, enviarDocumentoGateway, leerCredenciales, referenciaConexion, type ConfigGateway, type Dependencias, type FaseEnvio, type ReferenciaConexion, type ResultadoEnvio } from "@/lib/facturacion/gateway";
 import { MENSAJES_GATEWAY, type EstadoGateway, type EstadoGatewayUI } from "@/lib/facturacion/gateway-estado";
-import { ErrorFacturacion } from "@/lib/facturacion/shared";
+import { ErrorFacturacion, registrarConConexion, SQL_CONFIG_GATEWAY } from "@/lib/facturacion/shared";
 
 /**
  * Envío de la Factura Electrónica al gateway (recepcion_de) desde el servidor. Ciclo:
@@ -69,8 +69,9 @@ export async function estadoGateway(db: Db, empresaId: string, dep: Dependencias
 
 /** Configuración del gateway de la empresa y presencia de credenciales (sin leerlas hacia afuera). 409 si falta algo. */
 export async function configuracionGateway(db: Db, empresaId: string, dep: Dependencias = {}, usuarioId?: string): Promise<ConfigGateway> {
-  const cfg = await db.query(`SELECT base_url AS "baseUrl", credencial_ref AS "credencialRef", timeout_ms AS "timeoutMs" FROM fe_gateway_config WHERE empresa_id = $1 AND activo`, [empresaId]);
-  const fila = cfg.rows[0] as { baseUrl: string; credencialRef: string; timeoutMs: number } | undefined;
+  // PRO-342-R01: misma lectura que la consulta, con la versión de credenciales para la referencia no secreta de la conexión del intento.
+  const cfg = await db.query(SQL_CONFIG_GATEWAY, [empresaId]);
+  const fila = cfg.rows[0] as { baseUrl: string; credencialRef: string; timeoutMs: number; credencialesVersion?: unknown } | undefined;
 
   if (!fila) throw new ErrorFacturacion(409, "La empresa no tiene configurado el gateway de facturación electrónica.");
 
@@ -85,7 +86,10 @@ export async function configuracionGateway(db: Db, empresaId: string, dep: Depen
   return conCredenciales;
 }
 
-const SQL_REGISTRAR_ENVIO = "SELECT fe_documento_registrar_envio($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb)";
+// PRO-342-R01: fe_documento_registrar_envio con la conexión del intento (NEX-079); sin NEX-079, la firma anterior (NEX-050) con los mismos 15 parámetros.
+const TIPOS_REGISTRAR_ENVIO = ["uuid", "uuid", "uuid", "", "", "", "", "", "", "", "", "", "", "", "jsonb"] as const;
+const registrarEnvio = (db: Db, parametros: unknown[], conexion: ReferenciaConexion | null) =>
+  registrarConConexion(db, "fe_documento_registrar_envio", TIPOS_REGISTRAR_ENVIO, parametros, conexion ?? {});
 
 const MENSAJE_INDETERMINADO = "No se pudo guardar el resultado del envío: el resultado es indeterminado. Verifique el documento en el gateway antes de reenviar.";
 
@@ -124,13 +128,13 @@ async function resultadoPersistido(db: Db, empresaId: string, documentoId: strin
  * cierre se confirmó pero se perdió la respuesta (ENVIO_NO_INICIADO en el reintento) se lee el estado real guardado; si ni eso es posible, 502 (el documento queda ENVIANDO y a
  * los 2 minutos pasa a indeterminado: nunca se reenvía a ciegas).
  */
-async function cerrarEnvio(db: Db, empresaId: string, usuarioId: string, documentoId: string, r: ResultadoEnvio): Promise<ResultadoEnvio> {
+async function cerrarEnvio(db: Db, empresaId: string, usuarioId: string, documentoId: string, r: ResultadoEnvio, conexion: ReferenciaConexion | null = null): Promise<ResultadoEnvio> {
   const completo = [empresaId, usuarioId, documentoId, r.faseFinal, r.resultado, r.estadoLocal, r.errorTipo, r.http, crypto.randomUUID(), r.estadoGateway, r.mensaje, r.lote, r.cdc, r.cdcInformado, r.respuesta ? JSON.stringify(r.respuesta) : null];
   let fallo = false;
 
   for (let intento = 0; intento < 2; intento++) {
     try {
-      await db.query(SQL_REGISTRAR_ENVIO, completo);
+      await registrarEnvio(db, completo, conexion);
 
       return r;
     } catch (error) {
@@ -143,7 +147,7 @@ async function cerrarEnvio(db: Db, empresaId: string, usuarioId: string, documen
     }
   }
   try {
-    await db.query(SQL_REGISTRAR_ENVIO, [empresaId, usuarioId, documentoId, r.faseFinal, "RESPUESTA_INVALIDA", "ENVIO_INDETERMINADO", null, r.http, crypto.randomUUID(), null, MENSAJE_INDETERMINADO, null, null, null, null]);
+    await registrarEnvio(db, [empresaId, usuarioId, documentoId, r.faseFinal, "RESPUESTA_INVALIDA", "ENVIO_INDETERMINADO", null, r.http, crypto.randomUUID(), null, MENSAJE_INDETERMINADO, null, null, null, null], conexion);
 
     return comoIndeterminado(r);
   } catch (error) {
@@ -186,7 +190,8 @@ export async function enviarDocumento(db: Db, empresaId: string, usuarioId: stri
     };
   }
 
-  r = await cerrarEnvio(db, empresaId, usuarioId, documentoId, r);
+  // PRO-342-R01: el JSON se transmitió UNA vez (arriba); aquí solo se persiste el resultado, con el lote EXACTO informado por el gateway y la conexión usada. Nunca se reenvía.
+  r = await cerrarEnvio(db, empresaId, usuarioId, documentoId, r, referenciaConexion(config));
 
   return { numero, estadoLocal: r.estadoLocal, errorTipo: r.errorTipo, resultado: r.resultado, http: r.http, mensaje: r.mensaje, lote: r.lote, cdc: r.cdc, estadoGateway: r.estadoGateway, errores: r.errores, fases: r.fases };
 }

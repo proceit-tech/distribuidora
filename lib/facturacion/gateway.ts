@@ -19,7 +19,7 @@ import { fetchKudeSeguro, fetchSeguro, validarUrlGateway } from "@/lib/facturaci
 export const REF_CREDENCIALES_BASE = "NEXIT_DB";
 
 /** `credenciales`: usuario/clave de la API guardados en la base para la empresa (PRO-133, NEX-061); si faltan se usan las variables de entorno NEXIT_FE_<REF>_*. Nunca se serializan ni se devuelven. */
-export type ConfigGateway = { empresaId: string; baseUrl: string; credencialRef: string; timeoutMs: number; credenciales?: { ruc: string; password: string } };
+export type ConfigGateway = { empresaId: string; baseUrl: string; credencialRef: string; timeoutMs: number; credenciales?: { ruc: string; password: string }; credencialesVersion?: number | null };
 export type FetchLike = (url: string, init: { method: string; headers: Record<string, string>; body: string; signal: AbortSignal }) => Promise<{ status: number; text(): Promise<string> }>;
 export type Dependencias = { fetch?: FetchLike; env?: Record<string, string | undefined>; ahora?: () => number };
 
@@ -44,7 +44,36 @@ export function configGatewayValida(empresaId: string, fila: { baseUrl?: unknown
 
   const t = Number(fila.timeoutMs);
 
-  return { empresaId, baseUrl: fila.baseUrl, credencialRef: fila.credencialRef, timeoutMs: Number.isFinite(t) ? Math.min(TIMEOUT_GATEWAY_MAX_MS, Math.max(1000, Math.trunc(t))) : 15000 };
+  const v = Number((fila as { credencialesVersion?: unknown }).credencialesVersion);
+
+  return {
+    empresaId, baseUrl: fila.baseUrl, credencialRef: fila.credencialRef, timeoutMs: Number.isFinite(t) ? Math.min(TIMEOUT_GATEWAY_MAX_MS, Math.max(1000, Math.trunc(t))) : 15000,
+    ...(Number.isInteger(v) && v >= 0 ? { credencialesVersion: v } : {}),
+  };
+}
+
+/**
+ * PRO-342-R01 — Referencia NO SECRETA de la conexión usada en UN intento (envío o consulta), para el historial (documento_electronico_intentos.conexion, NEX-079): host del gateway, referencia
+ * lógica de credenciales, versión de las credenciales de la empresa (fe_gateway_config.credenciales_version) y su origen. NUNCA incluye usuario/RUC de la API, clave, token ni huellas de
+ * ellos (un RUC de 8 dígitos se recupera de su hash por fuerza bruta, y la clave puede coincidir con él).
+ */
+export type ReferenciaConexion = { host: string; credencialRef: string; credencialesVersion: number | null; origenCredenciales: "BASE" | "ENTORNO" };
+
+export function referenciaConexion(config: ConfigGateway): ReferenciaConexion {
+  let host = "";
+
+  try {
+    host = new URL(config.baseUrl).host;
+  } catch {
+    host = "";
+  }
+
+  return {
+    host,
+    credencialRef: config.credencialRef,
+    credencialesVersion: typeof config.credencialesVersion === "number" ? config.credencialesVersion : null,
+    origenCredenciales: config.credencialRef === REF_CREDENCIALES_BASE ? "BASE" : "ENTORNO",
+  };
 }
 
 /**
@@ -85,7 +114,9 @@ export const limpiarTexto = (t: string): string => t.replace(PATRON_SECRETO, "[o
 // del saneamiento. Sin contrato (uso genérico de sinSecretos) no se exime nada.
 const CDC_FORMATO = /^\d{44}$/;
 const NUMERO_FISCAL_CLAVE = /^\d{3}-\d{3}-\d{7}$/;
-const FORMATO_LOTE = /^[0-9A-Za-z-]{1,60}$/;
+// PRO-342-R01: el lote es el identificador LITERAL que devolvió el gateway (p. ej. «RUC-tipo-EEE-PPP-NNNNNNN-fecha-aleatorio»): se conserva tal cual (hasta 60 caracteres imprimibles, sin
+// caracteres de control), aunque contenga dígitos iguales al RUC o a la clave de la API. Antes se exigía [0-9A-Za-z-]: un lote con otro carácter quedaba «[omitido]» en la evidencia.
+const FORMATO_LOTE = /^[^\u0000-\u001f\u007f]{1,60}$/u;
 const FORMATO_COD_RESPUESTA = /^\d{1,6}$/;
 const normalizarClave = (k: string) => k.toLowerCase().replace(/[^a-z0-9]/g, "");
 
@@ -124,6 +155,11 @@ export const CONTRATO_FISCAL_ENVIO: ContratoFiscal = {
     lote: FORMATO_LOTE,
     "respuesta.cdc": CDC_FORMATO,
     "respuesta.nrolote": FORMATO_LOTE,
+    // PRO-342-R01: los mismos nombres de lote que interpretarRecepcion lee, y SOLO en la raíz (ruta del contrato), quedan exactos en la evidencia.
+    "respuesta.lote": FORMATO_LOTE,
+    "respuesta.numerolote": FORMATO_LOTE,
+    "respuesta.nrodelote": FORMATO_LOTE,
+    "respuesta.numerodelote": FORMATO_LOTE,
     "respuesta.dest": /^\d{3}$/,
     "respuesta.dpunexp": /^\d{3}$/,
     "respuesta.dnumdoc": /^\d{7}$/,
@@ -180,11 +216,18 @@ export function sinSecretos<T>(valor: T, secretos: string[], contrato: ContratoF
  * además, el CDC operacional (`cdc`, y `cdcInformado` en el envío) se repone EXACTAMENTE como lo interpretó la respuesta de la API (ya validado como 44 dígitos o null). Nada del
  * CDC se genera, completa ni corrige aquí.
  */
-export function resultadoFiscalSinSecretos<T extends { cdc: string | null; cdcInformado?: string | null }>(resultado: T, secretos: string[], contrato: ContratoFiscal): T {
+export function resultadoFiscalSinSecretos<T extends { cdc: string | null; cdcInformado?: string | null; lote?: string | null }>(resultado: T, secretos: string[], contrato: ContratoFiscal): T {
   const saneado = sinSecretos(resultado, secretos, contrato);
   const intacto = (v: string | null | undefined) => (v === null || v === undefined || CDC_FORMATO.test(v) ? v : null);
+  // PRO-342-R01: el lote operacional (leído SOLO de la ruta contractual nro_lote por interpretarRecepcion) se repone exacto: nunca «[omitido]» en el dato que se persiste en el documento.
+  const loteIntacto = (v: string | null | undefined) => (typeof v === "string" && FORMATO_LOTE.test(v) ? v : null);
 
-  return { ...saneado, cdc: intacto(resultado.cdc) ?? null, ...("cdcInformado" in resultado ? { cdcInformado: intacto(resultado.cdcInformado) ?? null } : {}) } as T;
+  return {
+    ...saneado,
+    cdc: intacto(resultado.cdc) ?? null,
+    ...("cdcInformado" in resultado ? { cdcInformado: intacto(resultado.cdcInformado) ?? null } : {}),
+    ...("lote" in resultado ? { lote: loteIntacto(resultado.lote) } : {}),
+  } as T;
 }
 
 export function sanearRespuesta(valor: unknown, profundidad = 0): unknown {
@@ -482,11 +525,9 @@ export type ResultadoEnvio = {
 };
 
 const norm = (k: string) => k.toLowerCase().replace(/[^a-z0-9]/g, "");
-const CLAVES_LOTE = new Set(["lote", "nrolote", "numerolote", "nrodelote", "numerodelote"]);
 const CLAVES_RESPUESTA = new Set(["response"]);
 const CLAVES_ERRORES = new Set(["errors", "errores", "validaciones", "validationerrors", "erroresvalidacion"]);
 const CLAVES_MENSAJE = new Set(["message", "mensaje", "msg"]);
-const CLAVES_CDC = new Set(["cdc"]);
 const CLAVES_ESTADO = new Set(["estado"]);
 const DUPLICADO = /duplicad|ya existe|ya fue|already|exist[ea]|registrad[oa] previamente|repetid/i;
 const CODIGO_TIPO: Record<string, string> = { FE: "01", AFE: "04", NCE: "05", NDE: "06", NRE: "07" };
@@ -494,6 +535,22 @@ const CODIGO_TIPO: Record<string, string> = { FE: "01", AFE: "04", NCE: "05", ND
 /** Mismo criterio que fe_cdc_coherente (SQL): tipo de DE y posiciones de establecimiento, punto y número (MT v150 §10.1). */
 export function cdcCoherente(doc: DocumentoRecepcion, cdc: string): boolean {
   return /^\d{44}$/.test(cdc) && cdc.slice(0, 2) === CODIGO_TIPO[doc.tipo] && cdc.slice(11, 14) === doc.establecimiento && cdc.slice(14, 17) === doc.puntoExpedicion && cdc.slice(17, 24) === doc.numero;
+}
+
+/**
+ * PRO-342-R01 (R05-F001): los IDENTIFICADORES fiscales del envío (lote, CDC, eco de establecimiento/punto/número) se leen SOLO de la RAÍZ de la respuesta, que es la ruta del contrato
+ * confirmado (`{status, message, nro_lote}`; CDC y eco dEst/dPunExp/dNumDoc en la raíz) y la misma que CONTRATO_FISCAL_ENVIO conserva exacta en la evidencia. Un «CDC» o «lote» anidado
+ * (response.CDC, Nota.lote, …) NO es un origen comprobado: no se reconoce como identificador (antes buscar() lo tomaba a cualquier profundidad mientras la evidencia lo saneaba).
+ */
+const CLAVES_LOTE_RAIZ = new Set(["nrolote", "lote", "numerolote", "nrodelote", "numerodelote"]);
+
+function enRaiz(raiz: Record<string, unknown> | null, clave: string | ReadonlySet<string>): unknown {
+  if (!raiz) return undefined;
+
+  const coincide = (k: string) => (typeof clave === "string" ? norm(k) === clave : clave.has(norm(k)));
+  const hallado = Object.entries(raiz).find(([k, x]) => coincide(k) && x !== null && x !== undefined && x !== "");
+
+  return hallado ? hallado[1] : undefined;
 }
 
 function buscar(v: unknown, claves: Set<string>, profundidad = 0): unknown {
@@ -606,7 +663,8 @@ export function interpretarRecepcion(http: number, cuerpoTexto: string, fases: F
   }
 
   const raiz = cuerpo && typeof cuerpo === "object" && !Array.isArray(cuerpo) ? (cuerpo as Record<string, unknown>) : null;
-  const cdcTexto = raiz ? comoTexto(buscar(raiz, CLAVES_CDC), 60) : null;
+  const cdcBruto = enRaiz(raiz, "cdc");
+  const cdcTexto = typeof cdcBruto === "string" ? cdcBruto.trim() : null;
   const cdcInformado = cdcTexto && /^\d{44}$/.test(cdcTexto) ? cdcTexto : null;
   const mensaje = raiz ? comoTexto(buscar(raiz, CLAVES_MENSAJE)) : null;
   const resp = raiz ? Object.entries(raiz).find(([k, v]) => CLAVES_RESPUESTA.has(norm(k)) && v && typeof v === "object" && !Array.isArray(v))?.[1] as Record<string, unknown> | undefined : undefined;
@@ -615,9 +673,10 @@ export function interpretarRecepcion(http: number, cuerpoTexto: string, fases: F
   const aceptados = lista("aceptados");
   const numeroFiscal = doc ? `${doc.establecimiento}-${doc.puntoExpedicion}-${doc.numero}` : null;
   const propio = rechazados.find((e) => e.numero === numeroFiscal);
-  const loteBruto = raiz ? buscar(raiz, CLAVES_LOTE) : undefined;
+  const loteBruto = enRaiz(raiz, CLAVES_LOTE_RAIZ);
   const loteTexto = typeof loteBruto === "string" || typeof loteBruto === "number" ? String(loteBruto).trim() : "";
-  const loteValido = loteTexto !== "" && loteTexto.length <= 60 ? loteTexto : null;
+  // PRO-342-R01: el lote se guarda EXACTO (sin saneamiento): solo se acepta el que cumple FORMATO_LOTE (≤ 60 caracteres, sin caracteres de control).
+  const loteValido = loteTexto !== "" && FORMATO_LOTE.test(loteTexto) ? loteTexto : null;
   const errores = propio && !aceptados.some((e) => e.numero === numeroFiscal) ? erroresDeEntrada(propio) : raiz ? listaErrores(buscar(raiz, CLAVES_ERRORES)) : [];
   const duplicado = DUPLICADO.test([mensaje ?? "", ...errores].join(" "));
   const base = (r: ResultadoEnvio["resultado"], estado: EstadoLocalEnvio, errorTipo: ErrorTipoEnvio | null, texto: string | null): ResultadoEnvio => ({
@@ -660,7 +719,7 @@ export function interpretarRecepcion(http: number, cuerpoTexto: string, fases: F
       return duplicado ? indeterminado(mensaje ?? "El gateway informó un error de duplicidad.", "ERROR_HTTP") : base("ERROR_HTTP", "ERROR_ENVIO", "RECHAZO", mensaje ?? "El gateway informó un error.");
     }
     if (raiz.status === "success") {
-      const eco = { est: comoTexto(buscar(raiz, new Set(["dest"])), 10), pun: comoTexto(buscar(raiz, new Set(["dpunexp"])), 10), num: comoTexto(buscar(raiz, new Set(["dnumdoc"])), 10) };
+      const eco = { est: comoTexto(enRaiz(raiz, "dest"), 10), pun: comoTexto(enRaiz(raiz, "dpunexp"), 10), num: comoTexto(enRaiz(raiz, "dnumdoc"), 10) };
       const hayEco = eco.est !== null || eco.pun !== null || eco.num !== null;
       const ecoOk = doc !== undefined && eco.est === doc.establecimiento && eco.pun === doc.puntoExpedicion && eco.num === doc.numero;
 
@@ -738,7 +797,10 @@ export async function enviarDocumentoGateway(
 
 // ── KuDE (PDF) ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 // Contrato CONFIRMADO por el responsable (PRO-194 / E08): POST {base}/api/kude con Bearer y FE: {dEst, dPunExp, dNumDoc, dSerieNum, tipoDoc:"FE"}; NCE: {tipOpe:"4", …, tipoDoc:"ncr"} (ver cuerpoKudeGateway) → HTTP 200, JSON {status:"success", kude:<PDF en Base64, «JVBER…»>}.
-// PRO-326: el KuDE se pide por la identidad del documento (tipo, establecimiento, punto, número, serie); el CDC NO participa: no se exige en la respuesta, no se compara y, si llega, se ignora y no se guarda.
+// PRO-326: el KuDE se pide por la identidad del documento (tipo, establecimiento, punto, número, serie); el CDC NO participa en la SOLICITUD ni se exige en la respuesta, y nunca se guarda.
+// PRO-342-R01: si la respuesta SÍ trae un CDC, se usa SOLO para no presentar como propio el PDF de OTRO documento (o de otra empresa): debe ser IGUAL al CDC ya registrado del documento (que
+// informó la API) o, si el documento aún no tiene CDC, coherente con su identidad (cdcCoherente: tipo, establecimiento, punto, número; mismo criterio ya existente, sin algoritmos nuevos). Si no
+// corresponde, el PDF se descarta (NO_CORRESPONDE). Sin CDC en la respuesta la correspondencia no es verificable por la API: se muestra el PDF (PRO-326) informando «NO_VERIFICABLE».
 // Se exige status «success», Base64 estricto y un PDF íntegro («%PDF-» … «%%EOF», ≤ 10 MB). Nada se guarda (ni Base64 ni PDF) y los errores no incluyen el CDC ni el contenido. No se sigue ninguna URL.
 export const MAX_KUDE_BYTES = 10 * 1024 * 1024;
 const MAX_KUDE_JSON = Math.ceil((MAX_KUDE_BYTES * 4) / 3) + 8192;
@@ -746,8 +808,11 @@ export type CuerpoLegible = { getReader(): { read(): Promise<{ done: boolean; va
 export type KudeFetch = (url: string, init: { method: string; headers: Record<string, string>; body: string; signal: AbortSignal }) => Promise<{ status: number; headers: { get(nombre: string): string | null }; body: CuerpoLegible | null }>;
 export type DependenciasKude = { fetch?: FetchLike; fetchKude?: KudeFetch; env?: Record<string, string | undefined>; ahora?: () => number };
 /** Identidad del documento para el KuDE (FE o NCE). Sin CDC (PRO-326): ni el persistido ni el devuelto condicionan el PDF. */
-export type DocumentoKude = { tipoDoc: "FE" | "NCE"; establecimiento: string; puntoExpedicion: string; numero: string; serie: string | null };
-export type CodigoErrorKude = "SIN_CREDENCIALES" | "AUTENTICACION" | "TIMEOUT" | "NO_DISPONIBLE" | "NO_ENCONTRADO" | "FORMATO_NO_CONFIRMADO" | "PDF_INVALIDO" | "DEMASIADO_GRANDE" | "SOLICITUD_RECHAZADA" | "PROHIBIDO" | "REDIRECCION";
+/** `cdcRegistrado` (PRO-342-R01): CDC persistido del documento (el que informó la API), usado SOLO para verificar la correspondencia del PDF devuelto; nunca se envía al gateway. */
+export type DocumentoKude = { tipoDoc: "FE" | "NCE"; establecimiento: string; puntoExpedicion: string; numero: string; serie: string | null; cdcRegistrado?: string | null };
+export type CodigoErrorKude = "SIN_CREDENCIALES" | "AUTENTICACION" | "TIMEOUT" | "NO_DISPONIBLE" | "NO_ENCONTRADO" | "FORMATO_NO_CONFIRMADO" | "PDF_INVALIDO" | "DEMASIADO_GRANDE" | "SOLICITUD_RECHAZADA" | "PROHIBIDO" | "REDIRECCION" | "NO_CORRESPONDE";
+/** PRO-342-R01: cómo se verificó que el PDF corresponde al documento: CDC idéntico al registrado, CDC coherente con la identidad (documento aún sin CDC) o no verificable (la respuesta no trae CDC). */
+export type CorrespondenciaKude = "CDC_REGISTRADO" | "IDENTIDAD" | "NO_VERIFICABLE";
 /**
  * ÚNICA transformación del documento interno al contrato EXTERNO de POST /api/kude (confirmado con HTTP 200 en Postman). El tipo interno (FE/NCE) no cambia; solo la solicitud al gateway:
  *  · FE  → {dEst, dPunExp, dNumDoc, dSerieNum, tipoDoc: "FE"} (cinco campos, sin tipOpe).
@@ -760,7 +825,7 @@ export function cuerpoKudeGateway(doc: DocumentoKude): Record<string, string | n
   return doc.tipoDoc === "NCE" ? { tipOpe: "4", ...id, tipoDoc: "ncr" } : { ...id, tipoDoc: "FE" };
 }
 
-export type ResultadoKude = { ok: true; pdf: Buffer } | { ok: false; codigo: CodigoErrorKude; http: number | null; mensaje: string };
+export type ResultadoKude = { ok: true; pdf: Buffer; correspondencia: CorrespondenciaKude } | { ok: false; codigo: CodigoErrorKude; http: number | null; mensaje: string };
 
 /**
  * Resumen SEGURO de lo que respondió el gateway ante un error (para el diagnóstico del operador): solo el texto del campo message/mensaje/error de un JSON, sin CDC (44 dígitos), sin cadenas largas tipo
@@ -809,11 +874,26 @@ export function decodificarBase64Estricto(texto: string): Buffer | null {
   return b.length > 0 ? b : null;
 }
 
+const MSG_NO_CORRESPONDE = "El gateway devolvió un KuDE que no corresponde a este documento (el CDC de su respuesta no coincide con el documento consultado): fue descartado y no se muestra como propio. Solicite la corrección al proveedor del gateway.";
+
+/** PRO-342-R01: correspondencia del PDF con el documento según el CDC que trae la respuesta (null = no corresponde). Nunca devuelve ni registra el CDC. */
+export function correspondenciaKude(doc: DocumentoKude, cdcRespuesta: unknown): CorrespondenciaKude | null {
+  const cdc = typeof cdcRespuesta === "string" ? cdcRespuesta.trim() : "";
+
+  if (!CDC_FORMATO.test(cdc)) return "NO_VERIFICABLE";
+
+  const registrado = typeof doc.cdcRegistrado === "string" && CDC_FORMATO.test(doc.cdcRegistrado) ? doc.cdcRegistrado : null;
+
+  if (registrado) return cdc === registrado ? "CDC_REGISTRADO" : null;
+
+  return cdcCoherente({ tipo: doc.tipoDoc, establecimiento: doc.establecimiento, puntoExpedicion: doc.puntoExpedicion, numero: doc.numero }, cdc) ? "IDENTIDAD" : null;
+}
+
 /**
- * Interpreta la respuesta de /api/kude {status, kude(Base64)} del documento solicitado por su identidad. PRO-326: no se exige estado fiscal ni CDC; un CDC/cdc en la respuesta se ignora (no se compara
- * con el persistido, con la identidad ni con otros documentos, y no se devuelve ni se guarda). Basta status «success» y un PDF íntegro.
+ * Interpreta la respuesta de /api/kude {status, CDC, kude(Base64)} del documento solicitado por su identidad. PRO-326: no se exige estado fiscal ni CDC. PRO-342-R01: si la respuesta trae CDC y NO
+ * corresponde a `doc` (ver correspondenciaKude), el PDF se descarta. Sin `doc` no hay verificación posible: NO_VERIFICABLE. Basta status «success» y un PDF íntegro.
  */
-export function interpretarKude(http: number, cuerpoTexto: string): ResultadoKude {
+export function interpretarKude(http: number, cuerpoTexto: string, doc?: DocumentoKude): ResultadoKude {
   let j: Record<string, unknown> | null = null;
 
   try {
@@ -833,7 +913,11 @@ export function interpretarKude(http: number, cuerpoTexto: string): ResultadoKud
   if (!pdf || !esPdfValido(pdf)) return falloKude("PDF_INVALIDO", http, MSG_INVALIDO);
   if (pdf.length > MAX_KUDE_BYTES) return falloKude("DEMASIADO_GRANDE", http, "El archivo recibido del gateway excede el tamaño permitido y fue descartado.");
 
-  return { ok: true, pdf };
+  const correspondencia = doc ? correspondenciaKude(doc, enRaiz(j, "cdc")) : "NO_VERIFICABLE";
+
+  if (correspondencia === null) return falloKude("NO_CORRESPONDE", http, MSG_NO_CORRESPONDE);
+
+  return { ok: true, pdf, correspondencia };
 }
 
 type RespuestaKude = { ok: true; status: number; texto: string | null } | { ok: false; motivo: "TIMEOUT" | "RED" };
@@ -928,7 +1012,7 @@ export async function obtenerKudeGateway(config: ConfigGateway, doc: DocumentoKu
     if (r.status !== 200) return falloKude("FORMATO_NO_CONFIRMADO", r.status, con("El KuDE de este documento no está disponible: respuesta inesperada del gateway"));
     if (r.texto === null) return falloKude("DEMASIADO_GRANDE", r.status, "El archivo recibido del gateway excede el tamaño permitido y fue descartado.");
 
-    return interpretarKude(r.status, r.texto);
+    return interpretarKude(r.status, r.texto, doc);
   }
 
   return falloKude("AUTENTICACION", 401, "El gateway rechazó el token tras renovarlo.");

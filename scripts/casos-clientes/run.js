@@ -96,6 +96,7 @@ Module._resolveFilename = function (request, ...resto) {
   const p339 = cargar("lib/facturacion/limite-lineas.casos.js");
   const p341 = cargar("lib/facturacion/codigo-foco-pro341.casos.js");
   const r338 = cargar("lib/facturacion/cdc-inmutable-r03.casos.js");
+  const r342 = cargar("lib/facturacion/flujo-fiscal-pro342.casos.js");
   const uxf = cargar("lib/facturacion/flujo-factura-ux.casos.js");
   const red = cargar("lib/facturacion/rediseno.casos.js");
   const suites = [
@@ -189,6 +190,7 @@ Module._resolveFilename = function (request, ...resto) {
     ["PRO-339-R01: máximo de líneas por FE NUEVA configurable POR EMPRESA (empresas.fe_max_lineas, NULL = 999; A=21/B=63/C=99 sintéticas), validado en prepararFactura antes de numeración/stock, falla cerrado sin NEX-078; pantalla «N de M ítems» y alta bloqueada; R02: alta atómica con claves únicas y respuesta coherente; NCE, históricas y MAX_LINEAS 999 intactos", async () => p339.verificarCasosLimiteLineasPro339(), null],
     ["PRO-341-R01 (CASA MINGO): Nueva factura — código de producto COMPLETO (sin «…», con quiebre; Producto con 200 px útiles en modo tabla y rolagem horizontal local; tarjetas ≤ 900 px intactas) y foco/selección en Cantidad de la línea añadida o incrementada tras un alta rápida (sustituye la vuelta al buscador de PRO-331), sin robar foco; rechazo por máximo, selector avanzado y panel fiscal preservados; R02: la búsqueda rápida solo anuncia «añadido» si el alta fue aceptada (controlador real, clic/Enter/lector/GTIN/async; clientes y vendedores sin cambio)", async () => p341.verificarCasosCodigoFocoPro341(), null],
     ["PRO-338-R03: CDC INMUTABLE — el saneamiento de secretos no modifica el CDC de la API en consulta ni envío (clave = RUC contenido en el CDC), primera consulta Rechazado/1101 sin falso CDC_DIVERGENTE, CDC de otra FE / previo distinto sin sobrescritura, textos libres saneados y alerta sin «distinto del registrado» cuando no hay CDC", async () => r338.verificarCasosCdcInmutableR03(), null],
+    ["PRO-342-R01: FLUJO FISCAL INTEGRAL — envío único con lote exacto, «XML firmado» intermedio (CDC solo si la API lo informa), reconsultas del mismo documento por el worker NEX-077 hasta Aprobado/Rechazado, CDC nunca sobrescrito, KuDE durante XML firmado sin PDF ajeno, secretos saneados", async () => r342.verificarCasosFlujoFiscalPro342(), null],
   ];
   let total = 0;
   let fallosTotal = 0;

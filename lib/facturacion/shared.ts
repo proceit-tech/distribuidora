@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import type { Pool } from "pg";
 
 import { ESTADOS_EMAIL, ESTADOS_LOCAL, ESTADOS_LOCAL_TRANSMITIDO, ESTADOS_SIFEN, ESTADOS_SIFEN_SIN_FINAL, GRUPOS_INDICADOR, TIPOS_DOCUMENTO, UMBRAL_REVISION_HORAS, type GrupoIndicador } from "@/lib/facturacion/estados";
-import { configGatewayValida, consultarDocumentoGateway, obtenerKudeGateway, type Dependencias, type DependenciasKude } from "@/lib/facturacion/gateway";
+import { configGatewayValida, consultarDocumentoGateway, obtenerKudeGateway, referenciaConexion, type CorrespondenciaKude, type Dependencias, type DependenciasKude } from "@/lib/facturacion/gateway";
 import { adjuntarCredencialesDeBase } from "@/lib/facturacion/gateway-credenciales";
 import { decidirConsulta } from "@/lib/facturacion/reconciliacion";
 
@@ -13,6 +13,38 @@ import { decidirConsulta } from "@/lib/facturacion/reconciliacion";
 
 type Db = Pick<Pool, "query">;
 type F = Record<string, unknown>;
+
+/**
+ * PRO-342-R01: configuración ACTIVA del gateway de la empresa, con la versión de sus credenciales (NEX-061) para la referencia NO secreta de la conexión de cada intento. La versión se lee con
+ * to_jsonb(fila) para no fallar si la columna no existiera (queda null). Nunca se leen aquí usuario ni clave.
+ */
+export const SQL_CONFIG_GATEWAY = `SELECT base_url AS "baseUrl", credencial_ref AS "credencialRef", timeout_ms AS "timeoutMs", (to_jsonb(fe_gateway_config) ->> 'credenciales_version') AS "credencialesVersion" FROM fe_gateway_config WHERE empresa_id = $1 AND activo`;
+
+/** PRO-342-R01: código PostgreSQL de función inexistente (42883): NEX-079 no aplicada; se registra con la firma anterior (sin la conexión del intento), sin perder la evidencia. */
+const faltaFuncion = (e: unknown) => (e as { code?: string } | null)?.code === "42883";
+let avisoSinNex079 = false;
+
+/**
+ * Ejecuta el registro con la firma NEX-079 (parámetros + conexión del intento) y, solo si esa firma no existe todavía, con la firma anterior (mismos parámetros sin la conexión). Cualquier otro
+ * error se propaga tal cual (permiso, documento, estado, lease obsoleto).
+ */
+export async function registrarConConexion(db: Db, funcion: string, tipos: readonly string[], parametros: readonly unknown[], conexion: Record<string, unknown>) {
+  const sql = (conConexion: boolean) => {
+    const lista = [...tipos, ...(conConexion ? ["jsonb"] : [])].map((t, i) => `$${i + 1}${t ? `::${t}` : ""}`).join(", ");
+
+    return `SELECT ${funcion}(${lista}) AS resultado`;
+  };
+
+  try {
+    return await db.query(sql(true), [...parametros, JSON.stringify(conexion)]);
+  } catch (error) {
+    if (!faltaFuncion(error)) throw error;
+    if (!avisoSinNex079) console.warn("Registro sin conexión del intento: falta la migración NEX-079.");
+    avisoSinNex079 = true;
+
+    return db.query(sql(false), [...parametros]);
+  }
+}
 
 export const TAMANO_DEFECTO = 20;
 export const TAMANO_MAXIMO = 100;
@@ -262,7 +294,7 @@ const CDC_EN_RESPUESTA = `CASE WHEN i.cdc_informado IS NULL AND i.tipo = 'CONSUL
 export async function listarIntentos(db: Db, empresaId: string, documentoId: string) {
   const r = await db.query(
     `SELECT i.id, i.tipo, i.resultado, i.http_status AS "httpStatus", i.request_id AS "requestId", i.estado_gateway AS "estadoGateway", i.estado_sifen AS "estadoSifen", i.fase, i.lote, i.cdc_informado AS "cdcInformado",
-            ${CDC_EN_RESPUESTA} AS "cdcRespuesta", i.cod_respuesta AS "codRespuesta", i.mensaje, i.creado_at AS "creadoAt", (i.respuesta IS NOT NULL) AS "tieneRespuesta", ${CURSOR_INTENTO} AS "cursor",
+            ${CDC_EN_RESPUESTA} AS "cdcRespuesta", (to_jsonb(i) -> 'conexion') AS "conexion", i.cod_respuesta AS "codRespuesta", i.mensaje, i.creado_at AS "creadoAt", (i.respuesta IS NOT NULL) AS "tieneRespuesta", ${CURSOR_INTENTO} AS "cursor",
             trim(coalesce(u.nombre, '') || ' ' || coalesce(u.apellido, '')) AS "actorNombre"
        FROM documento_electronico_intentos i JOIN usuarios u ON u.empresa_id = i.empresa_id AND u.id = i.actor_id
       WHERE i.empresa_id = $1 AND i.documento_id = $2 ORDER BY i.creado_at DESC, i.id DESC LIMIT 100`,
@@ -328,7 +360,7 @@ export async function listarIntentosPagina(db: Db, empresaId: string, documentoI
 
   const r = await db.query(
     `SELECT i.id, i.tipo, i.resultado, i.http_status AS "httpStatus", i.request_id AS "requestId", i.estado_gateway AS "estadoGateway", i.estado_sifen AS "estadoSifen", i.fase, i.lote, i.cdc_informado AS "cdcInformado",
-            ${CDC_EN_RESPUESTA} AS "cdcRespuesta", i.cod_respuesta AS "codRespuesta", i.mensaje, i.creado_at AS "creadoAt", (i.respuesta IS NOT NULL) AS "tieneRespuesta", ${CURSOR_INTENTO} AS "cursor",
+            ${CDC_EN_RESPUESTA} AS "cdcRespuesta", (to_jsonb(i) -> 'conexion') AS "conexion", i.cod_respuesta AS "codRespuesta", i.mensaje, i.creado_at AS "creadoAt", (i.respuesta IS NOT NULL) AS "tieneRespuesta", ${CURSOR_INTENTO} AS "cursor",
             trim(coalesce(u.nombre, '') || ' ' || coalesce(u.apellido, '')) AS "actorNombre"
        FROM documento_electronico_intentos i JOIN usuarios u ON u.empresa_id = i.empresa_id AND u.id = i.actor_id
       WHERE i.empresa_id = $1 AND i.documento_id = $2${m ? " AND (i.creado_at, i.id) < ($3::timestamptz, $4::uuid)" : ""} ORDER BY i.creado_at DESC, i.id DESC LIMIT ${INTENTOS_POR_PAGINA + 1}`,
@@ -380,8 +412,8 @@ export async function consultarEstado(db: Db, empresaId: string, usuarioId: stri
 
   if (!doc) throw new ErrorFacturacion(404, "Documento no encontrado.");
 
-  const cfg = await db.query(`SELECT base_url AS "baseUrl", credencial_ref AS "credencialRef", timeout_ms AS "timeoutMs" FROM fe_gateway_config WHERE empresa_id = $1 AND activo`, [empresaId]);
-  const fila = cfg.rows[0] as { baseUrl: string; credencialRef: string; timeoutMs: number } | undefined;
+  const cfg = await db.query(SQL_CONFIG_GATEWAY, [empresaId]);
+  const fila = cfg.rows[0] as { baseUrl: string; credencialRef: string; timeoutMs: number; credencialesVersion?: unknown } | undefined;
 
   if (!fila) throw new ErrorFacturacion(409, "La empresa no tiene configurado el gateway de facturación electrónica.");
 
@@ -405,10 +437,16 @@ export async function consultarEstado(db: Db, empresaId: string, usuarioId: stri
   // Solo una respuesta asociada de forma confiable al documento y coherente con su estado previo puede fijar el estado fiscal (RN-E2-08).
   const r = decidirConsulta({ tipo: String(doc.tipo), establecimiento: String(doc.establecimiento), puntoExpedicion: String(doc.puntoExpedicion), numero: String(doc.numero), cdc: (doc.cdc as string | null) ?? null, estadoSifen: (doc.estadoSifen as string | null) ?? null }, bruto);
 
+  // PRO-342-R01: las TRES vías (manual, flujo NCE, automática) registran un intento append-only con el CDC informado (cdc_informado) y la referencia NO secreta de la conexión usada (NEX-079).
+  // Un estado intermedio (XML firmado = PENDIENTE) o sin final deja el documento pendiente: la consulta automática lo vuelve a consultar; solo Aprobado/Rechazado (o Cancelado/Inutilizado) lo cierran.
   const funcion = opciones.leaseToken ? "fe_documento_registrar_consulta_auto" : opciones.flujoNce ? "fe_documento_registrar_consulta_flujo_nce" : "fe_documento_registrar_consulta";
-  const registrado = await db.query(
-    `SELECT ${funcion}($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb${opciones.leaseToken ? ", $15::uuid" : ""}) AS resultado`,
+  const tipos = ["uuid", "uuid", "uuid", "", "", "", "", "", "", "", "", "", "", "jsonb", ...(opciones.leaseToken ? ["uuid"] : [])];
+  const registrado = await registrarConConexion(
+    db,
+    funcion,
+    tipos,
     [empresaId, usuarioId, id, r.resultado, r.http, crypto.randomUUID(), r.estadoGateway, r.estadoSifen, r.cdc, r.codRespuesta, r.mensaje, r.fechaFirma, r.fechaEnvio, r.respuesta ? JSON.stringify(r.respuesta) : null, ...(opciones.leaseToken ? [opciones.leaseToken] : [])],
+    referenciaConexion(config),
   );
 
   return { resultado: String((registrado.rows[0] as F).resultado), mensaje: r.mensaje };
@@ -426,14 +464,14 @@ export function nombreArchivoKude(doc: Record<string, unknown>): string {
  * persistido, nunca del navegador. PRO-326: ni el estado fiscal ni el CDC (persistido, devuelto o histórico) condicionan el KuDE: se consulta al gateway de la empresa por esa identidad y se muestra
  * el PDF válido que devuelva. Sin credenciales/config no se llama a nadie. No modifica ningún dato (ni estados, ni CDC, ni intentos, ni numeración).
  */
-export async function obtenerKude(db: Db, empresaId: string, usuarioId: string, id: string, dep: DependenciasKude = {}): Promise<{ pdf: Buffer; nombre: string }> {
+export async function obtenerKude(db: Db, empresaId: string, usuarioId: string, id: string, dep: DependenciasKude = {}): Promise<{ pdf: Buffer; nombre: string; correspondencia: CorrespondenciaKude }> {
   const doc = await leerDocumento(db, empresaId, usuarioId, id);
 
   if (!doc) throw new ErrorFacturacion(404, "Documento no encontrado.");
   if (doc.tipo !== "FE" && doc.tipo !== "NCE") throw new ErrorFacturacion(409, "El KuDE solo está disponible para facturas (FE) y notas de crédito (NCE) electrónicas.");
 
-  const cfg = await db.query(`SELECT base_url AS "baseUrl", credencial_ref AS "credencialRef", timeout_ms AS "timeoutMs" FROM fe_gateway_config WHERE empresa_id = $1 AND activo`, [empresaId]);
-  const fila = cfg.rows[0] as { baseUrl: string; credencialRef: string; timeoutMs: number } | undefined;
+  const cfg = await db.query(SQL_CONFIG_GATEWAY, [empresaId]);
+  const fila = cfg.rows[0] as { baseUrl: string; credencialRef: string; timeoutMs: number; credencialesVersion?: unknown } | undefined;
 
   if (!fila) throw new ErrorFacturacion(409, "La empresa no tiene configurado el gateway de facturación electrónica.");
 
@@ -443,7 +481,8 @@ export async function obtenerKude(db: Db, empresaId: string, usuarioId: string, 
 
   const r = await obtenerKudeGateway(
     await adjuntarCredencialesDeBase(db, config, usuarioId),
-    { tipoDoc: doc.tipo, establecimiento: String(doc.establecimiento), puntoExpedicion: String(doc.puntoExpedicion), numero: String(doc.numero), serie: (doc.serie as string | null) ?? null },
+    // PRO-342-R01: el CDC registrado (si la API ya lo informó) NO se envía: solo verifica que el PDF devuelto corresponda a ESTE documento (gateway.correspondenciaKude).
+    { tipoDoc: doc.tipo, establecimiento: String(doc.establecimiento), puntoExpedicion: String(doc.puntoExpedicion), numero: String(doc.numero), serie: (doc.serie as string | null) ?? null, cdcRegistrado: (doc.cdc as string | null) ?? null },
     dep,
   );
 
@@ -453,7 +492,7 @@ export async function obtenerKude(db: Db, empresaId: string, usuarioId: string, 
     throw new ErrorFacturacion(estado, r.mensaje);
   }
 
-  return { pdf: r.pdf, nombre: nombreArchivoKude(doc) };
+  return { pdf: r.pdf, nombre: nombreArchivoKude(doc), correspondencia: r.correspondencia };
 }
 
 export function respuestaErrorFacturacion(error: unknown, accion: string) {
