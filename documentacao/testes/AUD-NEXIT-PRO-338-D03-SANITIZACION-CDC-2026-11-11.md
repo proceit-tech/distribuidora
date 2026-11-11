@@ -1,3 +1,17 @@
+## INVARIANTE DEL CDC — DECISIÓN EXPRESA PROCEIT 11/11/2026
+
+**Regla principal e innegociable:** El CDC nunca puede ser generado, completado, corregido, sustituido, truncado, enmascarado, reconstruido o alterado por NEXIT. **La API/gateway es la única fuente autorizada del valor CDC**. En `/api/consulta_de` se solicita por identidad numérica sin enviar CDC; cuando el registro no tiene CDC (`NULL`), **la primera respuesta válida de la API** puede poblarlo con los **44 dígitos EXACTOS** informados, sin ninguna transformación y sólo después de comprobar que identifica ese documento.
+
+**CDC ya guardado:** si una consulta posterior devuelve un CDC distinto, NEXIT **NO debe sobrescribir** el CDC persistido automáticamente, aunque venga de la API. Debe guardar evidencia inmutable del intento, mantener el CDC anterior y la protección de identidad, y alertar para investigación. La expresión «solo la API puede proporcionar un CDC» no autoriza cambiar un identificador ya fijado por otra respuesta contradictoria.
+
+**El fallo confirmado:** `sinSecretos()` en `gateway.ts` puede sustituir por `[omitido]` una subcadena del CDC entre la interpretación y la persistencia. Esto es una modificación indebida del identificador fiscal. El arreglo **no es reconstruir o reparar el CDC después**: es que `cdc`/`cdcInformado` permanezcan íntegros como datos fiscales de negocio y que los secretos se filtren exclusivamente en mensajes, logs y evidencia no fiscal, sin cambiar el valor operacional. El CDC íntegro se protege por permisos y destino; no usar credenciales en registros ni revelar tokens. Revisar consulta y envío. Los intentos antiguos ya alterados no se reescriben; una futura consulta válida, autorizada y vinculada a la factura puede aportar nuevamente el CDC desde la API.
+
+**Estados fiscales:** `Rechazado/1101/Número de timbrado inválido` sólo se consolida si la respuesta se vincula verificablemente a la identidad fiscal, y sin modificar el CDC recibido. Nunca forzar estado por `UPDATE` manual o por lectura de otra fuente sin correlación.
+
+**GATE:** la invariante queda documentada. No se autoriza con esta anotación modificar código, ejecutar tests/SQL/migrations, llamar gateway productivo, activar worker ni desplegar.
+
+---
+
 # AUDITORÍA INDEPENDIENTE — PRO-338-D03 / Sanitización que puede modificar el CDC fiscal
 
 **Fecha:** 11/11/2026  
