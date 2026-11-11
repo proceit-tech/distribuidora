@@ -1,24 +1,24 @@
-# AUDITORÍA INDEPENDIENTE PRO-342-R03 — CIERRE DE LA CORRECCIÓN ESTÁTICA
+# AUDITORÍA INDEPENDIENTE PRO-342-R03 — PARECER RECTIFICADO POR DECISIÓN EXPRESA DEL RESPONSABLE
 
 **Fecha:** 11/11/2026
 **Commit funcional auditado:** [b17dda189f0b966d43ebedcebb5138c06b3eee11](https://github.com/proceit-tech/distribuidora/commit/b17dda189f0b966d43ebedcebb5138c06b3eee11)
 **Fuente contractual:** [ORDEN PRO-342-R03](../ordens/ORD-CLAUDE-NEXIT-PRO-342-R03-AJUSTES-FINALES-FLUJO-FISCAL-2026-11-11.md) y [reglas vigentes](../definicoes/PRO-342-SOLUCAO-UNICA-AUDITORIAS-CONSOLIDADAS-2026-11-11.md).
 **Auditor:** ChatGPT, analista de sistemas y negocio; **desarrollador:** Claude.
 **Ámbito:** 8 archivos del commit R03; funciones TypeScript de interpretación, reconciliación, continuidad de conexión y envío; SQL NEX-079 completa y comparación con NEX-047/050/054/062/077; revisión de la intención de casos PRO342-R03 escritos y ajustados. **No se ejecutaron tests, lint, build, SQL, migrations, llamadas al gateway, VM ni deploy.**
-**VEREDICTO:** **PRO-342-R03 CONFORME ESTÁTICAMENTE CON LOS TRES REQUISITOS DE LA ORDEN. CIERRE DE CORRECCIÓN DE CÓDIGO PARA ESTE CICLO. NO EQUIVALE A HOMOLOGACIÓN NI AUTORIZACIÓN DE PRODUCCIÓN.** No solicitar una R04 por hipótesis sin evidencias de pruebas.
+**VEREDICTO RECTIFICADO:** **R03-01 NO CONFORME CON LA REGLA REAL DEL GATEWAY; R03-02 y R03-03 CONFORMES ESTÁTICAMENTE.** Se revoca la aprobación estática integral anterior. El responsable aclaró que un XML firmado SIEMPRE tiene CDC; un estado final Aprobado/Rechazado con CDC NULL contradice el contrato. No homologar ni ejecutar tests/SQL/deploy sobre esta regla.
 
-## A. Conformidad R03-01 — final fiscal sin CDC
+## A. R03-01 NO CONFORME — nunca consolidar un final con CDC NULL
 
-- `lib/facturacion/reconciliacion.ts::decidirConsulta`: ya no rechaza `APROBADO/RECHAZADO` por la sola ausencia de CDC. Sigue impidiendo retroceso o contradicción de un resultado final ya registrado.
-- `lib/facturacion/gateway.ts::interpretarConsulta`: si el estado oficial `Aprobado/Rechazado` viene con CDC malformado, devuelve `RESPUESTA_INVALIDA` para no presentar la respuesta como «sin CDC». Un estado final sin campo CDC puede conservar `cdc=null`; el estado intermedio `XML firmado` sigue sin ser estado definitivo. No construye ni calcula CDC.
-- `NEX-079::fe_documento_registrar_consulta_nucleo`: cambió la condición a «si existe CDC y es incoherente, rechazar»; permite estado final con `p_cdc/d.cdc=NULL`, conserva código/mensaje y deja `cdc=NULL`. La protección `CDC_DIVERGENTE`, los finales anteriores y el fencing/lease del worker permanecen.
+- **Defecto funcional:** `lib/facturacion/reconciliacion.ts::decidirConsulta` deja pasar `APROBADO/RECHAZADO` sin CDC y sin CDC previo. Debe tratarlo como `RESPUESTA_INVALIDA`, conservar intento/mensaje y continuar seguimiento, sin inventar CDC. Preservar protección contra contradicción de finales ya registrados.
+- `lib/facturacion/gateway.ts::interpretarConsulta` ya rechaza CDC presente malformado en finales, pero `XML firmado` sin CDC tampoco demuestra firma: el parser/conciliador debe conservar respuesta como evidencia inconsistente y NO consolidar `PENDIENTE` de XML firmado validado en ausencia de CDC (o CDC previo). No generar CDC.
+- **Defecto SQL NEX-079 (todavía NO aplicada):** `fe_documento_registrar_consulta_nucleo` permite finales con `coalesce(p_cdc,d.cdc) IS NULL`; restaurar la guarda de CDC auténtico presente/coherente (informado en respuesta o persistido previamente) tanto para APROBADO/RECHAZADO como otros finales. Conservar `CDC_DIVERGENTE`, lease, permisos, historial append-only y no reescribir migrations históricas.
 - El estado `APROBADO/RECHAZADO` sale del campo oficial del contrato `response.Estado` bajo `status=success`/HTTP 200, NO de HTTP 200 aislado. Consulta de identidad y aislamiento se hacen como ya estaban diseñados.
-- Casos escritos R03-F (además de reajustes de PRO342-06c, P338-10, T-E2 y R03-14), **no ejecutados**, cubren XML firmado→final sin CDC, final con CDC malformado y divergente, no regresión de final y conservación de mensaje/código.
+- **Casos escritos con expectativa incorrecta:** R03-F, `PRO342-06c`, `P338-10`, `T-E2` y `R03-14` que esperan FINAL válido sin CDC deben cambiar para exigir `RESPUESTA_INVALIDA` y mantener seguimiento. Agregar `XML firmado` sin CDC como anormalidad, `XML firmado+CDC` → nuevas consultas → Aprobado/Rechazado con CDC ya persistido.
 
 **MATIZ IMPORTANTE SOBRE COMPATIBILIDAD SQL ANTIGUA:**
 - La afirmación «NEX-054, 062 y 077 antiguas bloquean resultado final sin CDC» es INEXACTA en la SQL versionada.
-- **NEX-054 (consulta MANUAL) NO contiene una condición que obligue a CDC para fijar un final**; tras la corrección TypeScript R03 puede registrar `APROBADO/RECHAZADO` sin CDC, aunque su intento no tenga `cdc_informado` estructurado ni conexión de NEX-079.
-- **NEX-062 (flujo NCE con CREAR/EDITAR) y NEX-077 (consulta AUTO con token) SÍ exigen `coalesce(p_cdc,d.cdc)` válido para finales**. En ausencia de NEX-079, pueden guardar una respuesta `RESPUESTA_INVALIDA` y mantener pendiente un RECHAZADO real sin CDC.
+- **NEX-054 antigua (MANUAL) NO contiene guarda SQL propia de CDC para el final**, por lo que la aplicación DEBE bloquear antes de enviar la llamada a la firma antigua una respuesta sin CDC, y el modo compatibilidad debe seguir declarado limitado. No editar NEX-054 histórica.
+- **NEX-062 (FLUJO NCE) y NEX-077 (AUTO) antiguas SÍ exigen CDC válido**: son coherentes con la regla real y deben permanecer intactas; no hay motivo de negocio para permitir finales sin CDC.
 - Lo anterior describe VERSIONES GIT, no garantiza qué funciones están actualmente aplicadas en la VM. La aplicación NO está integralmente conforme en modo degradado. Verificar las firmas reales antes de homologar.
 
 ## B. Conformidad R03-02 — credenciales de entorno y continuidad
@@ -42,8 +42,8 @@
 JSON FE/NCE único → POST /api/recepcion_de → ACK/lote (no aprobación)
                   → /api/consulta_de → «XML firmado» (intermedio)
                   → reconsultas del MISMO documento por el worker NEX-077
-                  → «Aprobado» o «Rechazado» (final SIFEN)
-                  → resultado, código, mensaje, fecha, intento y CDC solo si API lo informa
+                  → «Aprobado» o «Rechazado» CON CDC del documento (final SIFEN)
+                  → resultado, código, mensaje, fecha, intento (sin generar ni sustituir CDC)
                   → KuDE puede habilitarse ANTES del final, sin hacerlo pasar por aprobación
 ```
 
@@ -55,9 +55,9 @@ JSON FE/NCE único → POST /api/recepcion_de → ACK/lote (no aprobación)
 
 1. **Verificar instancia real:** SHA del despliegue, firmas de NEX-050/054/062/061/077/078/079 y columna `conexion`; cotejar si base cuenta con NEX-079 aplicada, no inferir por Git.
 2. **Backup y migrations:** autorizar por separado revisión de precondiciones y posterior ejecución de NEX-079 con plan de reversión. La R03 NO sirve como solución integral del worker sin la firma SQL nueva. No ejecutar NEX-079 sin validar NEX-077 y dependencias, y la NEX-078 si la versión de emisión la requiere.
-3. **Pruebas controladas:** autorizar explícitamente ejecución de casos unitarios/integración y SQL de homologación, incluyendo devolución final `Rechazado 1101` sin CDC, `XML firmado` repetido, ausencia/error de gateway, NCE, cambio ENV y `KUDE-NO-VERIFICADO`. No confundir mocks con validación de gateway/SIFEN.
+3. **Pruebas controladas:** una vez corregidos el código y casos y tras autorización expresa, probar `XML firmado+CDC` → reconsultas → `Aprobado` o `Rechazado`; y casos negativos `XML firmado` sin CDC y final sin CDC **sin CDC previo** → evidencia de `RESPUESTA_INVALIDA`, sin estado fiscal definitivo ni CDC inventado; NCE, ENV, KuDE no verificado. Ninguna prueba fue ejecutada en esta auditoría.
 4. **Contrato proveedor para KuDE:** confirmar ambiente/cuenta autenticada, emisor del PDF, relación con serie AA y lote; sin esa evidencia NO afirmar titularidad fiscal del PDF cuando no hay CDC verificado.
 5. **Control de operación:** conservar histórico real y no reenviar/editar facturas existentes por diagnóstico. Validar autorizaciones por empresa y sucursal, lease y reconsulta. GO-LIVE necesita un procedimiento de cambio aprobado.
 6. **Proceso de revisión:** una vez ejecutadas pruebas autorizadas, el analista revisa resultados y publica decisión de homologación; ningún deploy ni cambio de producción se deduce de esta auditoría.
 
-**ESTADO RECOMENDADO PARA LINEAR:** `In Review` (código R03 conforme estáticamente, pero pruebas/migration/operación aún pendientes), mantener P0 abierto. **NO levantar PRO-340.** Evitar rondas adicionales de código por defectos no demostrados, salvo si los tests revelan hallazgos concretos.
+**ESTADO RECOMENDADO PARA LINEAR:** `In Review`, con **BLOQUEO R03-01 confirmado por regla de negócio** e R03-02/R03-03 conformes estáticamente. La anterior conclusión «R03 íntegra aprobada / no más código» queda revocada; requiere una única corrección focal, sin reabrir otros módulos. **PRO-340 bloqueada.**
