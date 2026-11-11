@@ -6,9 +6,25 @@
 **Estado:** decisión de negocio vinculante. **No es autorización de programación, SQL, tests, consultas reales, VM ni despliegue.**
 **Prevalencia:** este documento **REEMPLAZA ÍNTEGRAMENTE** la propuesta anterior de validaciones adicionales de CDC, cálculo de RUC/DV/fecha/dígito, configuración de emisores alternativos, vínculo artificial con serie AA, pruebas criptográficas del PDF y cualquier complejidad añadida que impida registrar un CDC legítimo del gateway. Los informes anteriores son diagnósticos históricos, no nuevas órdenes activas.
 
+## RECTIFICACIÓN DEFINITIVA — RESPUESTA «XML firmado» Y RECONSULTAS (11/11/2026)
+
+**Decisión expresa del responsable, prioridad sobre TODO el texto anterior:**
+- **«XML firmado» es el PRIMER ESTADO de la API/gateway, NO es estado fiscal definitivo.** Un primer resultado `XML firmado` NUNCA significa `Aprobado` ni `Rechazado`.
+- **No terminar la consulta después del primer resultado.** El scheduler existente debe VOLVER A CONSULTAR EL MISMO DOCUMENTO tantas veces como permita la política de reintentos hasta recibir del SIFEN **`Aprobado` o `Rechazado`**. Registrar CADA intento y respuesta (HTTP, fecha, estado bruto, código, mensaje, error o estado final). Si hay errores temporales, mantener pendiente y reprogramar; ante bloqueo persistente, alertar al operador, sin inventar respuesta definitiva.
+- **«XML firmado» puede traer KuDE habilitado**, pero esa habilitación NO implica aprobación fiscal. No usar el KuDE como prueba de estado final.
+- **No asumir que «XML firmado» entrega CDC.** Si la API no lo incluyó, NEXIT deja CDC ausente; si una respuesta de la API efectivamente lo incluye para ese documento, registrarlo EXACTAMENTE tal como llegó, sin deducirlo de XML firmado, del KuDE ni del JSON enviado. Nunca generar CDC ni alterar el que ya está persistido.
+- **No reenviar el JSON por necesidad de reconsulta.** Otro documento/JSON tiene el CDC que su propia respuesta de API informe; las consultas repetidas del MISMO documento no crean otro CDC.
+- **Estados separados:** `ENVIADO` = ACK del gateway; `XML firmado` = fase inicial/intermedia; `KuDE habilitado` = disponibilidad del PDF; `Aprobado/Rechazado` = decisión final SIFEN. Nunca mezclar.
+
+**Criterios de aceptación vinculantes:** (1) primer retorno XML firmado queda guardado sin marcar final; (2) hay consultas posteriores automáticas del mismo documento hasta respuesta final o incidencia operativa; (3) llegada de Aprobado/Rechazado se persiste con código/mensaje/fecha; (4) ausencia de CDC en XML firmado no produce CDC artificial; (5) KuDE habilitado no cierra el seguimiento; (6) un solo envío JSON y lote íntegro, sin reenvío al consultar.
+
+**Esta rectificación prevalece sobre frases históricas del documento que decían o presuponían que el XML firmado siempre trae CDC.** Ningún cambio funcional, SQL, test, worker, VM o deploy queda autorizado por la rectificación.
+
+---
+
 ## 1. La regla de negocio no es complicada
 
-**El XML ya firmado tiene su CDC. Ese es el CDC de ese documento. Punto.**
+**El CDC se registra únicamente si la API lo informa. «XML firmado» es estado inicial y exige nuevas consultas hasta «Aprobado» o «Rechazado».**
 
 1. NEXIT genera el JSON fiscal del documento, con empresa/punto/número/serie y demás datos que YA utiliza. Lo manda SIN generar ni informar CDC.
 2. La API/gateway recibe el JSON y devuelve la respuesta y el lote. El lote se registra **exactamente** como fue recibido, sin reemplazar el RUC por `[omitido]` ni alterar ningún carácter.
