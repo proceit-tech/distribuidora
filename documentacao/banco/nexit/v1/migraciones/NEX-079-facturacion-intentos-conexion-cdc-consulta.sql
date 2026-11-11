@@ -10,10 +10,12 @@
 --   1) documento_electronico_intentos.conexion (jsonb, solo altas como el resto de la tabla): {host, credencialRef, credencialesVersion, origenCredenciales}. NUNCA usuario/RUC de la API, clave,
 --      token ni hashes de ellos. Es la evidencia de con qué gateway y qué versión de credenciales se hizo ESE intento (la configuración puede cambiar después).
 --   2) Sobrecargas de registro con p_conexion:
---        · fe_documento_registrar_consulta (manual, NEX-054): mismas reglas + cdc_informado (antes la consulta manual no lo guardaba) + estado final solo con CDC coherente (como el flujo).
+--        · fe_documento_registrar_consulta (manual, NEX-054): mismas reglas + cdc_informado (antes la consulta manual no lo guardaba).
+--          PRO-342-R03 (las tres vías): un estado final informado por la API se registra aunque la respuesta no traiga CDC (CDC NULL, nunca inventado); un CDC presente debe ser coherente.
 --        · fe_documento_registrar_consulta_flujo_nce (NEX-062): mismas reglas + cdc_informado.
 --        · fe_documento_registrar_consulta_auto (NEX-077): mismas reglas (token vigente) + conexión.
---        · fe_documento_registrar_envio (NEX-050): mismas reglas + conexión. El lote se guarda tal como lo informó el gateway (ya validado por la aplicación) y solo si el documento aún no tiene uno.
+--        · fe_documento_registrar_envio (NEX-050): mismas reglas + conexión. El lote se guarda tal como lo informó el gateway (ya validado por la aplicación), solo si el documento aún no tiene uno
+--          y (PRO-342-R03) solo con estado ENVIADO (ACK correlacionado con este documento).
 --   Ninguna función calcula, completa ni corrige un CDC: el CDC del documento solo se fija UNA vez con el que informó la API (coherente con tipo/establecimiento/punto/número, criterio ya
 --   existente fe_cdc_coherente) y nunca se sobrescribe. Un estado intermedio (PENDIENTE, p. ej. «XML firmado») deja el documento pendiente: la consulta automática lo vuelve a consultar; solo un
 --   estado final (APROBADO, RECHAZADO, CANCELADO, INUTILIZADO) lo saca de la reserva (fe_consulta_reservar_token ya filtra por estado_sifen pendiente).
@@ -113,9 +115,11 @@ BEGIN
     v_mensaje := left('La consulta informa «' || p_estado_sifen || '» pero el documento ya figura como «' || d.estado_sifen || '»: no se modifica el estado fiscal.', 500);
   END IF;
 
-  -- NEX-062/077: un estado DEFINITIVO solo se registra con un CDC válido y coherente con el documento (el informado o el ya guardado).
+  -- PRO-342-R03: un estado DEFINITIVO informado expresamente por la API para ESTE documento se registra aunque la respuesta aún no traiga CDC (el CDC queda NULL; nunca se inventa).
+  -- Solo se rechaza si hay un CDC (informado o ya guardado) y NO es coherente con el documento (el informado incoherente ya quedó como CDC_DIVERGENTE arriba).
+  -- (Las firmas anteriores NEX-054/062/077 siguen exigiendo CDC: sin NEX-079 un final sin CDC queda RESPUESTA_INVALIDA — modo compatibilidad degradado.)
   IF v_resultado = 'OK' AND p_estado_sifen IN ('APROBADO', 'RECHAZADO', 'CANCELADO', 'INUTILIZADO')
-     AND (coalesce(p_cdc, d.cdc) IS NULL OR NOT public.fe_cdc_coherente(d.tipo, d.establecimiento, d.punto_expedicion, d.numero, coalesce(p_cdc, d.cdc))) THEN
+     AND coalesce(p_cdc, d.cdc) IS NOT NULL AND NOT public.fe_cdc_coherente(d.tipo, d.establecimiento, d.punto_expedicion, d.numero, coalesce(p_cdc, d.cdc)) THEN
     v_resultado := 'RESPUESTA_INVALIDA';
     v_mensaje := left('La consulta informa «' || p_estado_sifen || '» sin un CDC válido y coherente con el documento: no se modifica el estado fiscal.', 500);
   END IF;
@@ -204,14 +208,15 @@ BEGIN
   END IF;
 
   INSERT INTO public.documento_electronico_intentos (empresa_id, documento_id, tipo, fase, resultado, http_status, request_id, estado_gateway, lote, cdc_informado, mensaje, respuesta, actor_id, conexion)
-  VALUES (p_empresa, p_documento, 'ENVIO', p_fase, p_resultado, p_http, left(p_request_id, 80), left(p_estado_gateway, 120), v_lote,
+  VALUES (p_empresa, p_documento, 'ENVIO', p_fase, p_resultado, p_http, left(p_request_id, 80), left(p_estado_gateway, 120), CASE WHEN p_estado_local = 'ENVIADO' THEN v_lote END,
           CASE WHEN p_cdc_informado ~ '^[0-9]{44}$' THEN p_cdc_informado END, v_mensaje, p_respuesta, p_usuario, public.fe_intento_conexion_segura(p_conexion));
 
   UPDATE public.documentos_electronicos SET
     estado_local = p_estado_local,
     envio_error_tipo = CASE WHEN p_estado_local = 'ERROR_ENVIO' THEN p_error_tipo END,
     -- PRO-342-R01: el lote del documento se fija una sola vez (el primero informado); un intento posterior no lo reemplaza.
-    lote = coalesce(lote, v_lote),
+    -- PRO-342-R03: SOLO con ACK que identifica la recepción de ESTE documento (ENVIADO); un lote de respuesta indeterminada/de otro documento/de error nunca se atribuye al documento.
+    lote = CASE WHEN p_estado_local = 'ENVIADO' THEN coalesce(lote, v_lote) ELSE lote END,
     -- Un CDC solo se guarda en el documento si es coherente con su identidad y no hay otro registrado.
     cdc = CASE WHEN cdc IS NULL AND p_cdc IS NOT NULL AND public.fe_cdc_coherente(tipo, establecimiento, punto_expedicion, numero, p_cdc) THEN p_cdc ELSE cdc END,
     mensaje_respuesta = coalesce(v_mensaje, mensaje_respuesta),

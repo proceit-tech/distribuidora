@@ -142,11 +142,13 @@ export async function verificarCasosCdcInmutableR03(): Promise<string[]> {
   {
     const p = await registrar({}, CLAVE_RUC, consultaRespuesta("Rechazado", null, "1101", "Número de timbrado inválido"));
 
-    igual("R03-14 Rechazado SIN CDC y sin CDC previo: RESPUESTA_INVALIDA, sin estado fiscal y sin inventar CDC", [p[3], p[7], p[8]], ["RESPUESTA_INVALIDA", null, null]);
+    // PRO-342-R03 (actualizado): el final informado por la API se registra aunque no traiga CDC; el CDC queda NULL (no se inventa).
+    igual("R03-14 (actualizado PRO-342-R03) Rechazado SIN CDC y sin CDC previo: OK/RECHAZADO con CDC NULL, sin inventar CDC", [p[3], p[7], p[8]], ["OK", "RECHAZADO", null]);
   }
   {
     const p = await registrar({}, CLAVE_RUC, consultaRespuesta("Rechazado", "0180000005600100300090201", "1101", "Número de timbrado inválido"));
 
+    // PRO-342-R03: sigue así porque interpretarConsulta no acepta como final una respuesta con CDC presente pero inválido (no la convierte en «sin CDC»).
     igual("R03-15 CDC inválido (no 44 dígitos): no se completa ni corrige; queda null y la respuesta no fija estado", [p[3], p[8]], ["RESPUESTA_INVALIDA", null]);
   }
 

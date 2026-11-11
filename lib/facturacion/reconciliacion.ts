@@ -1,10 +1,11 @@
-import { cdcCoherente, type ResultadoConsulta } from "@/lib/facturacion/gateway";
+import { type ResultadoConsulta } from "@/lib/facturacion/gateway";
 
 /**
  * Decide (puro) si el resultado de una consulta puede fijar el estado fiscal del documento (RN-E2-08). La aprobación o el rechazo son del gateway/SIFEN: Nexit solo los
  * ACEPTA cuando la respuesta se asocia al documento de forma confiable y no contradice lo ya registrado.
- *  · Un estado FINAL (aprobado, rechazado, cancelado, inutilizado) exige un CDC coherente con la identidad del documento (el informado en la respuesta o el ya guardado). Sin él, la
- *    respuesta queda como evidencia RESPUESTA_INVALIDA y el estado fiscal NO cambia.
+ *  · PRO-342-R03: un estado FINAL (aprobado, rechazado, cancelado, inutilizado) informado EXPRESAMENTE por la API de consulta del documento solicitado se registra aunque la respuesta
+ *    todavía no traiga CDC (el CDC queda NULL: nunca se inventa ni se calcula). Si la respuesta trae un CDC que no corresponde al documento, no se toma como final (CDC_DIVERGENTE en la SQL).
+ *    HTTP 200 sin estado o «XML firmado» (PENDIENTE) nunca son finales.
  *  · Un estado final ya registrado no retrocede a transitorio ni cambia a otro final (solo APROBADO → CANCELADO es una evolución legítima). La contradicción queda como evidencia.
  *  · Un CDC informado que contradice el documento no se toca aquí: la función SQL lo anota como CDC_DIVERGENTE sin modificar el documento.
  */
@@ -24,13 +25,7 @@ export function decidirConsulta(doc: DocumentoReconciliable, r: ResultadoConsult
   if (previo && FINALES.has(previo) && !(EVOLUCIONES[previo] ?? []).includes(r.estadoSifen)) {
     return invalida(r, `La consulta informa «${r.estadoSifen}» pero el documento ya figura como «${previo}»: la respuesta contradice el estado fiscal registrado y no lo modifica.`);
   }
-  if (FINALES.has(r.estadoSifen)) {
-    if (r.cdc !== null && !cdcCoherente({ tipo: doc.tipo, establecimiento: doc.establecimiento, puntoExpedicion: doc.puntoExpedicion, numero: doc.numero }, r.cdc)) return r; // la función SQL lo anota como CDC_DIVERGENTE
-
-    const identificado = r.cdc !== null || (doc.cdc !== null && cdcCoherente({ tipo: doc.tipo, establecimiento: doc.establecimiento, puntoExpedicion: doc.puntoExpedicion, numero: doc.numero }, doc.cdc));
-
-    if (!identificado) return invalida(r, `La consulta informa «${r.estadoSifen}» sin un CDC que identifique el documento: no se registra el estado fiscal hasta confirmarlo.`);
-  }
-
+  // PRO-342-R03: un final con CDC informado que no corresponde al documento NO se registra como final: la función SQL lo anota como CDC_DIVERGENTE (el CDC registrado nunca se sobrescribe).
+  // Un final SIN CDC en la respuesta pasa tal cual (CDC NULL): la ausencia de CDC no anula el resultado que la API informó para este documento.
   return r;
 }

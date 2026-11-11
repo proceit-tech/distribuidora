@@ -277,7 +277,8 @@ export async function verificarCasosPro338(): Promise<string[]> {
     const b = baseSimulada([fila(DOC_FE, "FE")], { [DOC_FE]: doc });
 
     await ejecutarLote(b.db as never, { ...sinPausa, dep: { fetch: gw.fetch, env: ENV } });
-    igual("P338-10: «Rechazado» sin CDC que identifique el documento → RESPUESTA_INVALIDA (decidirConsulta), sin estado fiscal; el mensaje del certificado se conserva", [b.registros[0]?.params[3], b.registros[0]?.params[7], /Certificado digital no vigente/.test(JSON.stringify(b.registros[0]?.params[13] ?? ""))], ["RESPUESTA_INVALIDA", null, true]);
+    // PRO-342-R03 (actualizado): el «Rechazado» informado por la API de consulta de ESTE documento se registra aunque no traiga CDC (CDC NULL, no se inventa).
+    igual("P338-10: (R03) «Rechazado» sin CDC → OK/RECHAZADO con CDC NULL; el mensaje del certificado se conserva", [b.registros[0]?.params[3], b.registros[0]?.params[7], b.registros[0]?.params[8], /Certificado digital no vigente/.test(JSON.stringify(b.registros[0]?.params[13] ?? ""))], ["OK", "RECHAZADO", null, true]);
     cierto("P338-10: el detalle de la fila muestra el historial con mensaje, CDC informado y JSON de respuesta", /i\.cdcInformado/.test(pagina) && /i\.mensaje/.test(pagina) && /verRespuesta\(d, i\)/.test(pagina));
   }
 

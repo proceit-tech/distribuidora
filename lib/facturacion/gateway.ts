@@ -81,10 +81,12 @@ export function referenciaConexion(config: ConfigGateway): ReferenciaConexion {
 /**
  * PRO-342-R02 (F002) — Continuidad de la conexión de un documento: compara la referencia NO secreta registrada en su ENVÍO (NEX-079) con la conexión efectiva que se usaría ahora para
  * consultarlo o pedir su KuDE.
- *  · MISMA: mismo host, referencia y origen de credenciales y misma versión de credenciales (o ninguna de las dos conocida).
- *  · DISTINTA: cambió el host, la referencia, el origen o la versión de las credenciales (puede ser otra cuenta): no se consulta ni se muestra el KuDE con otra conexión; se informa la incidencia.
- *  · SIN_REFERENCIA: el envío no registró conexión (documento anterior a NEX-079 o registrado en modo compatibilidad) o una de las versiones es desconocida: NO prueba una conexión equivocada ni
- *    una correcta; se continúa en modo compatibilidad, informándolo como no verificado.
+ *  · MISMA: SOLO credenciales de la base (NEXIT_DB, origen BASE) con mismo host y referencia y la MISMA versión de credenciales conocida en ambos lados (prueba de credenciales iguales).
+ *  · DISTINTA: cambió el host, la referencia, el origen o la versión conocida de las credenciales (puede ser otra cuenta): no se consulta ni se muestra el KuDE con otra
+ *    conexión; se informa la incidencia.
+ *  · SIN_REFERENCIA: no hay prueba de igualdad de las credenciales usadas: el envío no registró conexión (anterior a NEX-079 o modo compatibilidad); credenciales de ENTORNO (PRO-342-R03:
+ *    usuario/clave de variables de entorno que pueden cambiar sin que cambie ninguna versión registrada); o versión desconocida en alguno de los lados. NO prueba una conexión equivocada ni
+ *    una correcta; se continúa informándolo como no verificado.
  * Pura: no lee nada ni expone secretos.
  */
 export type ContinuidadConexion = "MISMA" | "DISTINTA" | "SIN_REFERENCIA";
@@ -99,9 +101,14 @@ export function continuidadConexion(envio: unknown, actual: ReferenciaConexion):
 
   const versionEnvio = typeof e.credencialesVersion === "number" ? e.credencialesVersion : null;
 
-  if (versionEnvio !== null && actual.credencialesVersion !== null) return versionEnvio === actual.credencialesVersion ? "MISMA" : "DISTINTA";
+  // Una versión conocida que cambió es indicio de otra configuración: DISTINTA (también con credenciales de entorno; conservador, como en R02).
+  if (versionEnvio !== null && actual.credencialesVersion !== null && versionEnvio !== actual.credencialesVersion) return "DISTINTA";
+  // PRO-342-R03: con credenciales de ENTORNO la versión de la base no prueba que usuario/clave sigan siendo los mismos → nunca MISMA.
+  if (actual.origenCredenciales !== "BASE" || e.origenCredenciales !== "BASE") return "SIN_REFERENCIA";
+  if (versionEnvio !== null && actual.credencialesVersion !== null) return "MISMA";
 
-  return versionEnvio === null && actual.credencialesVersion === null ? "MISMA" : "SIN_REFERENCIA";
+  // Versión ausente en alguno de los lados (incluso en ambos): no es prueba de igualdad.
+  return "SIN_REFERENCIA";
 }
 
 /**
@@ -338,12 +345,19 @@ export function interpretarConsulta(http: number, cuerpoTexto: string): Resultad
   const de = registro(respuesta.DE);
   const retorno = de ? registro(de.Retorno) : null;
   const cdc = de ? texto(de.CDC, 60) : null;
+  const estadoSifen = estadoSifenDesdeGateway(estado);
+
+  // PRO-342-R03: un estado FINAL sin CDC se registra (CDC NULL), pero un final que trae un CDC que NO es un CDC válido no se acepta como final: no se corrige ni se descarta ese CDC
+  // en silencio para convertir la respuesta en «sin CDC» (queda como evidencia y RESPUESTA_INVALIDA). Un estado intermedio con CDC inválido sigue como antes (CDC no registrado).
+  if (cdc && !/^\d{44}$/.test(cdc) && ["APROBADO", "RECHAZADO", "CANCELADO", "INUTILIZADO"].includes(estadoSifen)) {
+    return { ...vacio("RESPUESTA_INVALIDA", http, `La consulta informa «${estado}» con un CDC que no es válido: no se modifica el estado fiscal.`), estadoGateway: estado, respuesta: guardada };
+  }
 
   return {
     resultado: "OK",
     http,
     estadoGateway: estado,
-    estadoSifen: estadoSifenDesdeGateway(estado),
+    estadoSifen,
     cdc: cdc && /^\d{44}$/.test(cdc) ? cdc : null,
     codRespuesta: retorno ? texto(retorno.CodRespuesta, 20) : null,
     mensaje: retorno ? texto(retorno.Mensaje) : null,
@@ -714,7 +728,9 @@ export function interpretarRecepcion(http: number, cuerpoTexto: string, fases: F
   const base = (r: ResultadoEnvio["resultado"], estado: EstadoLocalEnvio, errorTipo: ErrorTipoEnvio | null, texto: string | null): ResultadoEnvio => ({
     ...resultadoEnvioVacio(r, "TRANSMISION", estado, errorTipo, http, texto, fases),
     respuesta: cuerpo === undefined ? null : respuestaParaGuardar(redactarAjenos(cuerpo, numeroFiscal)),
-    lote: loteValido,
+    // PRO-342-R03: el lote se atribuye al documento SOLO con un ACK que identifica su recepción (ENVIADO). En una respuesta indeterminada, de otro documento o de error, el lote informado
+    // NO es el lote del documento: queda únicamente en la evidencia saneada del intento (respuesta.nro_lote), nunca en documentos_electronicos.lote.
+    lote: estado === "ENVIADO" ? loteValido : null,
     cdcInformado,
     estadoGateway: raiz ? comoTexto(buscar(raiz, CLAVES_ESTADO), 120) : null,
     errores,

@@ -373,7 +373,7 @@ export default function DocumentosPage() {
       // PRO-342-R02: el modo degradado (sin NEX-079) y la conexión no verificable se informan; nunca se presentan como registro integral.
       const notas = [
         j.modoRegistro === "COMPATIBILIDAD" ? "Registrado en modo compatibilidad (NEX-079 no aplicada): sin conexión ni CDC estructurado en el intento" : "",
-        j.continuidadConexion === "SIN_REFERENCIA" ? "Conexión del envío no registrada: no se pudo verificar que la consulta use la misma cuenta del envío" : "",
+        j.continuidadConexion === "SIN_REFERENCIA" ? "Continuidad de la conexión no verificable (conexión del envío no registrada o credenciales de entorno del servidor): no se pudo comprobar que la consulta use la misma cuenta del envío" : "",
       ].filter(Boolean);
 
       fusionarIntentos(d.id, j.intentos, { consultando: false, aviso: [`${ETIQUETA_RESULTADO_INTENTO[j.resultado] ?? j.resultado}${j.mensaje ? `: ${j.mensaje}` : ""}`, ...notas].join(" · ") });

@@ -7,6 +7,9 @@
  * seguimientoFiscal, textoConexion) con `fetch`, entorno y base SIMULADOS. La base simulada reproduce las reglas de las funciones SQL (NEX-050 / NEX-077 / NEX-079: reserva con token,
  * programación con token, CDC_DIVERGENTE, estado final solo con CDC coherente, CDC fijado una vez, intentos solo altas); el texto de la migración NEX-079 se verifica por separado.
  * Sin red, sin PostgreSQL, sin gateway ni credenciales reales. ESCRITOS, NO EJECUTADOS en esta entrega (orden PRO-342-R01).
+ *
+ * PRO-342-R03 (casos ESCRITOS, NO EJECUTADOS): la base simulada sigue NEX-079 R03 — un final informado por la API se registra aunque no traiga CDC (CDC NULL) y solo un CDC presente debe
+ * ser coherente; el lote del documento solo se fija con ENVIADO (ACK correlacionado). Continuidad: credenciales de ENTORNO nunca MISMA.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -21,6 +24,7 @@ import {
 } from "@/lib/facturacion/gateway";
 import { presentacionSifen, seguimientoFiscal, textoConexion } from "@/lib/facturacion/presentacion-sifen";
 import { consultarEstado } from "@/lib/facturacion/shared";
+import { decidirConsulta } from "@/lib/facturacion/reconciliacion";
 
 const leer = (r: string) => readFileSync(join(process.cwd(), r), "utf8");
 
@@ -88,9 +92,10 @@ function mundo(docs: Partial<DocMundo>[], opciones: { sinNex079?: boolean; falta
 
     if (resultado === "OK" && pCdc !== null && ((d.cdc !== null && pCdc !== d.cdc) || !coherente(d, pCdc))) resultado = "CDC_DIVERGENTE";
     if (resultado === "OK" && FINALES.includes(d.estadoSifen) && !(pEstado === d.estadoSifen || (d.estadoSifen === "APROBADO" && pEstado === "CANCELADO"))) resultado = "RESPUESTA_INVALIDA";
-    if (resultado === "OK" && pEstado && FINALES.includes(pEstado) && !((pCdc ?? d.cdc) && coherente(d, String(pCdc ?? d.cdc)))) {
+    // NEX-079 R03: un final SIN CDC se registra (CDC NULL); solo un CDC presente (informado o guardado) que no es coherente impide el final.
+    if (resultado === "OK" && pEstado && FINALES.includes(pEstado) && (pCdc ?? d.cdc) !== null && !coherente(d, String(pCdc ?? d.cdc))) {
       resultado = "RESPUESTA_INVALIDA";
-      mensaje = `La consulta informa «${pEstado}» sin un CDC válido y coherente con el documento: no se modifica el estado fiscal.`;
+      mensaje = `La consulta informa «${pEstado}» con un CDC que no es coherente con el documento: no se modifica el estado fiscal.`;
     }
 
     intentos.push({
@@ -167,7 +172,8 @@ function mundo(docs: Partial<DocMundo>[], opciones: { sinNex079?: boolean; falta
         const d = tabla.get(String(p[2]))!;
 
         if (d.estadoLocal !== "ENVIANDO") throw pgError("NEX:ENVIO_NO_INICIADO");
-        const lote = typeof p[11] === "string" && p[11].length >= 1 && p[11].length <= 60 ? p[11] : null;
+        // NEX-079 R03: el lote solo se registra (intento y documento) con ENVIADO (ACK correlacionado con este documento).
+        const lote = p[5] === "ENVIADO" && typeof p[11] === "string" && p[11].length >= 1 && p[11].length <= 60 ? p[11] : null;
 
         intentos.push({ documento: d.id, tipo: "ENVIO", resultado: String(p[4]), http: (p[7] as number | null) ?? null, estadoGateway: (p[9] as string | null) ?? null, estadoSifen: null, cdcInformado: (p[13] as string | null) ?? null, lote, mensaje: (p[10] as string | null) ?? null, respuesta: (p[14] as string | null) ?? null, conexion: conConexion ? conexionDe(p[15]) : null, actor: String(p[1]) });
         d.estadoLocal = String(p[5]);
@@ -371,14 +377,14 @@ export async function verificarCasosFlujoFiscalPro342(): Promise<string[]> {
     igual("PRO342-06a Rechazado 1101: estado RECHAZADO, código, mensaje y CDC exactos persistidos", [doc.estadoSifen, doc.codRespuesta, doc.mensajeRespuesta, doc.cdc], ["RECHAZADO", "1101", "Número de timbrado inválido", CDC1]);
     avanzar(m, 3600);
     igual("PRO342-06b tras el rechazo final no hay más consultas automáticas", (await lote(m, g)).reservados, 0);
-    igual("PRO342-06c un «Rechazado» sin CDC (ni registrado) NO se toma como final: RESPUESTA_INVALIDA y sigue pendiente", await (async () => {
+    igual("PRO342-06c (actualizado R03) un «Rechazado» sin CDC (ni registrado) informado por la API SÍ es final: RECHAZADO con código/mensaje y CDC NULL (no se inventa)", await (async () => {
       limpiarCacheTokens();
       const m2 = mundo([{ lote: LOTE }]);
 
       await lote(m2, gateway({ consultas: [consulta("Rechazado", null, { cod: "1101", mensaje: "Número de timbrado inválido" })] }));
 
-      return [m2.intentos[0].resultado, m2.tabla.get(DOC1)!.estadoSifen];
-    })(), ["RESPUESTA_INVALIDA", "SIN_CONSULTA"]);
+      return [m2.intentos[0].resultado, m2.tabla.get(DOC1)!.estadoSifen, m2.tabla.get(DOC1)!.codRespuesta, m2.tabla.get(DOC1)!.cdc];
+    })(), ["OK", "RECHAZADO", "1101", null]);
   }
 
   // ── 7. CDC nunca sobrescrito; otra FE recibe SU CDC de la API ─────────────────────────────────────────────────────────────
@@ -487,7 +493,7 @@ export async function verificarCasosFlujoFiscalPro342(): Promise<string[]> {
     const sinComentarios = nex079.replace(/--.*$/gm, "");
 
     cierto("PRO342-10d NEX-079 aditiva: no edita migraciones anteriores, no actualiza ni borra intentos históricos, no repara CDC/lote/estado de documentos existentes fuera de las funciones de registro", /parece aplicada; no se reaplica/.test(nex079) && !/UPDATE public\.documento_electronico_intentos|DELETE FROM/.test(sinComentarios) && (sinComentarios.match(/UPDATE public\.documentos_electronicos/g) ?? []).length === 3 && !/DROP FUNCTION/.test(sinComentarios));
-    cierto("PRO342-10e NEX-079: la columna conexion rechaza claves de credenciales; el CDC del documento solo se fija con coalesce(d.cdc, p_cdc) y el lote con coalesce(lote, v_lote)", /conexion \?\| ARRAY\['password', 'clave', 'token', 'ruc'/.test(nex079) && /cdc = coalesce\(d\.cdc, p_cdc\)/.test(nex079) && /lote = coalesce\(lote, v_lote\)/.test(nex079));
+    cierto("PRO342-10e (actualizado R03) NEX-079: la columna conexion rechaza claves de credenciales; el CDC del documento solo se fija con coalesce(d.cdc, p_cdc) y el lote con coalesce(lote, v_lote) SOLO con ENVIADO", /conexion \?\| ARRAY\['password', 'clave', 'token', 'ruc'/.test(nex079) && /cdc = coalesce\(d\.cdc, p_cdc\)/.test(nex079) && /lote = CASE WHEN p_estado_local = 'ENVIADO' THEN coalesce\(lote, v_lote\) ELSE lote END/.test(nex079));
     cierto("PRO342-10f NEX-079: las tres vías de consulta guardan cdc_informado y conexión; la vía AUTO conserva el fencing NEX:LEASE_OBSOLETO y las no manuales exigen documento pendiente", /cdc_informado, cod_respuesta, mensaje, respuesta, actor_id, conexion/.test(nex079) && /NEX:LEASE_OBSOLETO/.test(nex079) && /NEX:DOCUMENTO_NO_PENDIENTE/.test(nex079) && /'MANUAL', p_empresa/.test(nex079) && /'FLUJO', p_empresa/.test(nex079) && /'AUTO', p_empresa/.test(nex079));
   }
 
@@ -574,7 +580,8 @@ export async function verificarCasosFlujoFiscalPro342(): Promise<string[]> {
     m.opciones.baseUrl = undefined;
     const r = await consultarEstado(m.db, EMPRESA, USUARIO, DOC1, g.dep);
 
-    igual("PRO342-R02-C06 conexión original: la consulta continúa con continuidad MISMA y modo INTEGRAL; la conexión registrada no contiene secretos", [r.continuidadConexion, r.modoRegistro, m.intentos.filter((i) => i.tipo === "CONSULTA")[0].conexion?.host, JSON.stringify(m.intentos).includes(TOKEN)], ["MISMA", "INTEGRAL", "gateway.prueba.invalid", false]);
+    // PRO-342-R03: CONFIG usa credenciales de ENTORNO (PRUEBA): misma host/referencia/versión NO prueba la misma cuenta → SIN_REFERENCIA (antes MISMA).
+    igual("PRO342-R02-C06 (actualizado R03) conexión original con credenciales de entorno: la consulta continúa en modo INTEGRAL con continuidad SIN_REFERENCIA (nunca MISMA); la conexión registrada no contiene secretos", [r.continuidadConexion, r.modoRegistro, m.intentos.filter((i) => i.tipo === "CONSULTA")[0].conexion?.host, JSON.stringify(m.intentos).includes(TOKEN)], ["SIN_REFERENCIA", "INTEGRAL", "gateway.prueba.invalid", false]);
   }
   {
     // Documento histórico SIN snapshot NEX-079: no se presume conexión equivocada; se consulta y se informa SIN_REFERENCIA.
@@ -587,7 +594,7 @@ export async function verificarCasosFlujoFiscalPro342(): Promise<string[]> {
     const cont = (envio: unknown, version: number | null, host = "gateway.prueba.invalid") => continuidadConexion(envio, { host, credencialRef: "PRUEBA", credencialesVersion: version, origenCredenciales: "ENTORNO" });
     const snap = { host: "gateway.prueba.invalid", credencialRef: "PRUEBA", credencialesVersion: 3, origenCredenciales: "ENTORNO" };
 
-    igual("PRO342-R02-C09 continuidadConexion: misma → MISMA; host/versión/referencia distinta → DISTINTA; sin snapshot o versión no comparable → SIN_REFERENCIA", [cont(snap, 3), cont(snap, 4), cont(snap, 3, "otro.prueba.invalid"), cont({ ...snap, credencialRef: "OTRA" }, 3), cont(null, 3), cont({ ...snap, credencialesVersion: null }, 3), cont({ ...snap, credencialesVersion: null }, null)], ["MISMA", "DISTINTA", "DISTINTA", "DISTINTA", "SIN_REFERENCIA", "SIN_REFERENCIA", "MISMA"]);
+    igual("PRO342-R02-C09 (actualizado R03) continuidadConexion con credenciales de ENTORNO: igual → SIN_REFERENCIA (nunca MISMA); host/versión/referencia distinta → DISTINTA; sin snapshot o versión no comparable → SIN_REFERENCIA", [cont(snap, 3), cont(snap, 4), cont(snap, 3, "otro.prueba.invalid"), cont({ ...snap, credencialRef: "OTRA" }, 3), cont(null, 3), cont({ ...snap, credencialesVersion: null }, 3), cont({ ...snap, credencialesVersion: null }, null)], ["SIN_REFERENCIA", "DISTINTA", "DISTINTA", "DISTINTA", "SIN_REFERENCIA", "SIN_REFERENCIA", "SIN_REFERENCIA"]);
   }
 
   // ── R02-F004: el retroceso a la firma anterior SOLO si la sobrecarga NEX-079 no existe ────────────────────────────────────────────────
@@ -624,6 +631,187 @@ export async function verificarCasosFlujoFiscalPro342(): Promise<string[]> {
   }
 
   cierto("PRO342-R02-F05 pantalla: tras «Reconsultar» se informa el modo compatibilidad (sin NEX-079) y la conexión no verificable; el historial muestra «Conexión: no registrada» cuando el intento no la tiene", /modoRegistro === "COMPATIBILIDAD"/.test(leer("app/(private)/documentos/page.tsx")) && /continuidadConexion === "SIN_REFERENCIA"/.test(leer("app/(private)/documentos/page.tsx")) && /Conexión: no registrada \(anterior a NEX-079 o modo compatibilidad\)/.test(leer("app/(private)/documentos/page.tsx")));
+
+
+  // ══ PRO-342-R03 — final sin CDC, continuidad con credenciales de entorno y lote solo con ACK correlacionado (casos ESCRITOS, NO EJECUTADOS) ══════════════════════
+
+  // ── R03-01: estado FINAL informado por la API para ESTE documento aunque la respuesta no traiga CDC ────────────────────────────────────────
+  {
+    limpiarCacheTokens();
+    const m = mundo([{ lote: LOTE }]);
+    const g = gateway({ consultas: [consulta("XML firmado", null), consulta("Rechazado", null, { cod: "1101", mensaje: "Número de timbrado inválido", fecha: "2026-11-11 09:40:12" })] });
+
+    await lote(m, g);
+    avanzar(m, CADENCIA_SEGUNDOS[0]);
+    await lote(m, g);
+    const doc = m.tabla.get(DOC1)!;
+
+    igual("PRO342-R03-F01 worker: XML firmado (sin CDC) → reconsulta → «Rechazado» 1101 SIN CDC: RECHAZADO con código, mensaje y fecha de firma; CDC NULL (no inventado); lote intacto", [m.intentos.map((i) => [i.resultado, i.estadoSifen, i.cdcInformado]), doc.estadoSifen, doc.codRespuesta, doc.mensajeRespuesta, doc.fechaFirma, doc.cdc, doc.lote], [[["OK", "PENDIENTE", null], ["OK", "RECHAZADO", null]], "RECHAZADO", "1101", "Número de timbrado inválido", "2026-11-11 09:10:30", null, LOTE]);
+    cierto("PRO342-R03-F01b el historial conserva la respuesta bruta del final (estado, código, mensaje y fecha de registro informados por la API)", /"Estado":"Rechazado"/.test(String(m.intentos[1].respuesta)) && /Número de timbrado inválido/.test(String(m.intentos[1].respuesta)) && /2026-11-11 09:40:12/.test(String(m.intentos[1].respuesta)));
+    avanzar(m, 3600);
+    igual("PRO342-R03-F02 tras el final sin CDC el worker deja de consultar y nunca reenvía el JSON", [(await lote(m, g)).reservados, m.intentos.length, g.posts["/api/recepcion_de"] ?? 0], [0, 2, 0]);
+  }
+  {
+    limpiarCacheTokens();
+    const m = mundo([{ lote: LOTE, estadoSifen: "PENDIENTE", estadoGatewayTexto: "XML firmado" }]);
+    const r = await consultarEstado(m.db, EMPRESA, USUARIO, DOC1, gateway({ consultas: [consulta("Aprobado", null, { cod: "0260", mensaje: "Aprobado" })] }).dep);
+    const doc = m.tabla.get(DOC1)!;
+
+    igual("PRO342-R03-F03 consulta manual «Aprobado» SIN CDC: OK/APROBADO con código y mensaje; CDC NULL", [r.resultado, doc.estadoSifen, doc.codRespuesta, doc.mensajeRespuesta, doc.cdc, m.intentos[0].cdcInformado], ["OK", "APROBADO", "0260", "Aprobado", null, null]);
+  }
+  {
+    // CDC ajeno (otra numeración) sin CDC registrado: no es final; la SQL lo anota CDC_DIVERGENTE y el CDC no se registra.
+    limpiarCacheTokens();
+    const m = mundo([{ lote: LOTE }]);
+
+    await lote(m, gateway({ consultas: [consulta("Rechazado", CDC2, { cod: "1101", mensaje: "Número de timbrado inválido" })] }));
+    const doc = m.tabla.get(DOC1)!;
+
+    igual("PRO342-R03-F04 «Rechazado» con CDC de OTRO documento: intento CDC_DIVERGENTE (CDC informado exacto), el documento NO queda RECHAZADO ni recibe ese CDC y sigue en seguimiento", [m.intentos[0].resultado, m.intentos[0].cdcInformado, doc.estadoSifen, doc.cdc, doc.leaseToken], ["CDC_DIVERGENTE", CDC2, "SIN_CONSULTA", null, null]);
+
+    // CDC divergente del registrado: tampoco es final; el registrado no cambia.
+    limpiarCacheTokens();
+    const m2 = mundo([{ lote: LOTE, cdc: CDC1, estadoSifen: "PENDIENTE" }]);
+
+    await lote(m2, gateway({ consultas: [consulta("Rechazado", CDC1_OTRO, { cod: "1101", mensaje: "Número de timbrado inválido" })] }));
+    igual("PRO342-R03-F05 «Rechazado» con CDC distinto del registrado: CDC_DIVERGENTE, sigue PENDIENTE y el CDC registrado no cambia", [m2.intentos[0].resultado, m2.tabla.get(DOC1)!.estadoSifen, m2.tabla.get(DOC1)!.cdc], ["CDC_DIVERGENTE", "PENDIENTE", CDC1]);
+
+    // CDC presente pero inválido (no 44 dígitos) en un final: no se convierte en «sin CDC» para registrarlo.
+    limpiarCacheTokens();
+    const m3 = mundo([{ lote: LOTE }]);
+
+    await lote(m3, gateway({ consultas: [consulta("Rechazado", "0180000005600100100000011", { cod: "1101", mensaje: "Número de timbrado inválido" })] }));
+    igual("PRO342-R03-F06 «Rechazado» con CDC inválido (no 44 dígitos): RESPUESTA_INVALIDA, sin estado final ni CDC", [m3.intentos[0].resultado, m3.tabla.get(DOC1)!.estadoSifen, m3.tabla.get(DOC1)!.cdc], ["RESPUESTA_INVALIDA", "SIN_CONSULTA", null]);
+  }
+  {
+    // HTTP 200 sin estado: pendiente (no final); se reprograma.
+    limpiarCacheTokens();
+    const m = mundo([{ lote: LOTE }]);
+
+    await lote(m, gateway({ consultas: [{ status: 200, cuerpo: { status: "success", response: { DE: { Retorno: { CodRespuesta: null, Mensaje: null } } } } }] }));
+    const doc = m.tabla.get(DOC1)!;
+
+    igual("PRO342-R03-F07 HTTP 200 SIN estado: RESPUESTA_INVALIDA, el documento sigue pendiente (SIN_CONSULTA) y se reprograma la reconsulta", [m.intentos[0].resultado, m.intentos[0].http, doc.estadoSifen, doc.proxima > m.reloj.t, doc.leaseToken], ["RESPUESTA_INVALIDA", 200, "SIN_CONSULTA", true, null]);
+
+    // Un final ya registrado no retrocede ni cambia por una consulta posterior sin CDC.
+    limpiarCacheTokens();
+    const m2 = mundo([{ lote: LOTE, estadoSifen: "RECHAZADO", codRespuesta: "1101", mensajeRespuesta: "Número de timbrado inválido" }]);
+    const r = await consultarEstado(m2.db, EMPRESA, USUARIO, DOC1, gateway({ consultas: [consulta("Aprobado", null, { cod: "0260", mensaje: "Aprobado" })] }).dep);
+
+    igual("PRO342-R03-F08 documento ya RECHAZADO y la API informa «Aprobado» sin CDC: RESPUESTA_INVALIDA; el estado, código y mensaje registrados no cambian", [r.resultado, m2.tabla.get(DOC1)!.estadoSifen, m2.tabla.get(DOC1)!.codRespuesta, m2.tabla.get(DOC1)!.mensajeRespuesta], ["RESPUESTA_INVALIDA", "RECHAZADO", "1101", "Número de timbrado inválido"]);
+  }
+  {
+    const doc = { tipo: "FE", establecimiento: "001", puntoExpedicion: "001", numero: "0000001", cdc: null, estadoSifen: "PENDIENTE" };
+    const rc = (estadoGateway: string, cdc: string | null): ResultadoConsulta => ({ resultado: "OK", http: 200, estadoGateway, estadoSifen: estadoSifenDesdeGateway(estadoGateway), cdc, codRespuesta: "1101", mensaje: "m", fechaFirma: null, fechaEnvio: null, respuesta: null });
+    const d = (x: typeof doc, r: ResultadoConsulta) => { const y = decidirConsulta(x, r); return [y.resultado, y.estadoSifen, y.cdc]; };
+
+    igual("PRO342-R03-F09 decidirConsulta (pura): Rechazado/Aprobado SIN CDC → OK con CDC null; XML firmado → PENDIENTE (no final); final con CDC ajeno pasa a la SQL (CDC_DIVERGENTE allí); final contrario a uno registrado → RESPUESTA_INVALIDA", [d(doc, rc("Rechazado", null)), d(doc, rc("Aprobado", null)), d(doc, rc("XML firmado", null)), d(doc, rc("Rechazado", CDC2)), d({ ...doc, estadoSifen: "RECHAZADO" }, rc("Aprobado", null))], [["OK", "RECHAZADO", null], ["OK", "APROBADO", null], ["OK", "PENDIENTE", null], ["OK", "RECHAZADO", CDC2], ["RESPUESTA_INVALIDA", null, null]]);
+
+    const nex079 = leer("documentacao/banco/nexit/v1/migraciones/NEX-079-facturacion-intentos-conexion-cdc-consulta.sql");
+    const sinComentarios = nex079.replace(/--.*$/gm, "");
+
+    cierto("PRO342-R03-F10 NEX-079 (no aplicada): el final solo se bloquea por CDC PRESENTE incoherente (coalesce(p_cdc, d.cdc) IS NOT NULL AND NOT fe_cdc_coherente); ya no exige CDC; CDC_DIVERGENTE y el CDC fijado una vez se conservan", /coalesce\(p_cdc, d\.cdc\) IS NOT NULL AND NOT public\.fe_cdc_coherente/.test(sinComentarios) && !/coalesce\(p_cdc, d\.cdc\) IS NULL OR/.test(sinComentarios) && /cdc = coalesce\(d\.cdc, p_cdc\)/.test(sinComentarios) && /CDC_DIVERGENTE/.test(sinComentarios));
+    cierto("PRO342-R03-F11 reconciliacion.ts ya no rechaza un final por falta de CDC y no calcula ni completa CDC", !/sin un CDC válido/.test(leer("lib/facturacion/reconciliacion.ts")) && !/fe_cdc_coherente|cdcCoherente/.test(leer("lib/facturacion/reconciliacion.ts")));
+  }
+
+  // ── R03-03: el lote del documento SOLO con ACK correlacionado (ENVIADO) ────────────────────────────────────────────────────────────────────
+  {
+    const doc = { tipo: "FE", establecimiento: "001", puntoExpedicion: "001", numero: "0000001" };
+    const recep = (cuerpo: unknown, http = 200) => interpretarRecepcion(http, JSON.stringify(cuerpo), [], doc);
+    const ecoAjeno = recep({ status: "success", nro_lote: LOTE, dEst: "001", dPunExp: "001", dNumDoc: "0000002" });
+    const aceptadoAjeno = recep({ status: "success", nro_lote: LOTE, response: { Aceptados: ["001-001-0000002"], Rechazados: [] } });
+    const error = recep({ status: "error", message: "Error de validación", nro_lote: LOTE });
+    const propio = recep({ status: "success", message: "Documento recibido", nro_lote: LOTE });
+
+    igual("PRO342-R03-L01 success + nro_lote válido + eco fiscal de OTRO documento: ENVIO_INDETERMINADO y SIN lote del documento", [ecoAjeno.estadoLocal, ecoAjeno.lote], ["ENVIO_INDETERMINADO", null]);
+    igual("PRO342-R03-L02 success + nro_lote válido + Aceptados de OTRO documento: ENVIO_INDETERMINADO y SIN lote del documento", [aceptadoAjeno.estadoLocal, aceptadoAjeno.lote], ["ENVIO_INDETERMINADO", null]);
+    igual("PRO342-R03-L03 status:error con nro_lote: no es ACK de recepción → sin lote del documento", [error.estadoLocal === "ENVIADO", error.lote], [false, null]);
+    igual("PRO342-R03-L04 éxito propio correcto: ENVIADO con el lote EXACTO", [propio.estadoLocal, propio.lote], ["ENVIADO", LOTE]);
+
+    // De punta a punta: el lote de una respuesta que no es ACK del documento no queda en documentos_electronicos.lote ni en el lote del intento; una sola transmisión, sin reenvío.
+    const casos: Array<[string, unknown]> = [
+      ["eco de otro documento", { status: "success", nro_lote: LOTE, dEst: "001", dPunExp: "001", dNumDoc: "0000002" }],
+      ["Aceptados de otro documento", { status: "success", nro_lote: LOTE, response: { Aceptados: ["001-001-0000002"], Rechazados: [] } }],
+      ["status:error con lote", { status: "error", message: "Error de validación", nro_lote: LOTE }],
+    ];
+
+    for (const [nombre, cuerpo] of casos) {
+      limpiarCacheTokens();
+      const m = mundo([{ estadoLocal: "PENDIENTE_ENVIO" }]);
+      const g = gateway({ recepcion: { status: 200, cuerpo } });
+      const r = await enviarDocumento(m.db, EMPRESA, USUARIO, DOC1, g.dep);
+
+      igual(`PRO342-R03-L05 envío real [${nombre}]: no ENVIADO, el documento y el intento quedan SIN lote y hubo UNA transmisión`, [r.estadoLocal === "ENVIADO", r.lote, m.tabla.get(DOC1)!.lote, m.intentos[0].lote, g.posts["/api/recepcion_de"]], [false, null, null, null, 1]);
+    }
+
+    // Timeout sin ACK: indeterminado, sin lote y sin reenvío automático.
+    limpiarCacheTokens();
+    const m = mundo([{ estadoLocal: "PENDIENTE_ENVIO" }]);
+    const g = gateway();
+    const fetchCaido: FetchLike = async (url, init) => {
+      if (new URL(url).pathname === "/api/recepcion_de") {
+        g.posts["/api/recepcion_de"] = (g.posts["/api/recepcion_de"] ?? 0) + 1;
+        throw Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" });
+      }
+
+      return g.fetch(url, init);
+    };
+    const r = await enviarDocumento(m.db, EMPRESA, USUARIO, DOC1, { fetch: fetchCaido, env: ENV });
+
+    igual("PRO342-R03-L06 timeout sin ACK: ENVIO_INDETERMINADO, sin lote en el documento ni en el intento, UNA transmisión y sin reenvío automático", [r.estadoLocal, r.lote, m.tabla.get(DOC1)!.lote, m.intentos[0]?.lote ?? null, g.posts["/api/recepcion_de"]], ["ENVIO_INDETERMINADO", null, null, null, 1]);
+
+    // Éxito propio de punta a punta: lote fijado intacto.
+    limpiarCacheTokens();
+    const m2 = mundo([{ estadoLocal: "PENDIENTE_ENVIO" }]);
+
+    await enviarDocumento(m2.db, EMPRESA, USUARIO, DOC1, gateway().dep);
+    igual("PRO342-R03-L07 éxito propio: documento e intento con el lote EXACTO", [m2.tabla.get(DOC1)!.lote, m2.intentos[0].lote], [LOTE, LOTE]);
+
+    // Retroceso a la firma anterior (sin NEX-079): la aplicación ya no entrega lote para respuestas no ENVIADO, así que NEX-050 tampoco lo fija.
+    limpiarCacheTokens();
+    const m3 = mundo([{ estadoLocal: "PENDIENTE_ENVIO" }], { sinNex079: true });
+
+    await enviarDocumento(m3.db, EMPRESA, USUARIO, DOC1, gateway({ recepcion: { status: 200, cuerpo: casos[0][1] } }).dep);
+    const reg = m3.sqls.filter((x) => /fe_documento_registrar_envio/.test(x)).length;
+
+    igual("PRO342-R03-L08 sin NEX-079 (firma anterior NEX-050): el lote de una respuesta de otro documento tampoco se fija en el documento", [m3.tabla.get(DOC1)!.lote, m3.intentos[0].lote, m3.intentos[0].conexion, reg], [null, null, null, 2]);
+    cierto("PRO342-R03-L09 fuente: interpretarRecepcion entrega lote solo con ENVIADO; NEX-079 inserta el lote del intento y fija el del documento solo con p_estado_local = 'ENVIADO'", /lote: estado === "ENVIADO" \? loteValido : null/.test(leer("lib/facturacion/gateway.ts")) && /CASE WHEN p_estado_local = 'ENVIADO' THEN v_lote END/.test(leer("documentacao/banco/nexit/v1/migraciones/NEX-079-facturacion-intentos-conexion-cdc-consulta.sql")));
+  }
+
+  // ── R03-02: credenciales de ENTORNO nunca MISMA; NEXIT_DB con versión conocida igual → MISMA ───────────────────────────────────────────────────
+  {
+    // Dos claves de entorno distintas con mismo host/referencia/versión: la consulta no puede afirmar la misma cuenta.
+    limpiarCacheTokens();
+    const m = mundo([{ estadoLocal: "PENDIENTE_ENVIO" }]);
+
+    await enviarDocumento(m.db, EMPRESA, USUARIO, DOC1, gateway().dep);
+    limpiarCacheTokens();
+    const g2 = gateway({ consultas: [consulta("XML firmado", null)] });
+    const r = await consultarEstado(m.db, EMPRESA, USUARIO, DOC1, { fetch: g2.fetch, env: { ...ENV, NEXIT_FE_PRUEBA_PASSWORD: "otra-clave-sintetica-r03" } });
+
+    igual("PRO342-R03-C01 credenciales de ENTORNO con otra clave (mismo host/referencia/versión): continuidad SIN_REFERENCIA (nunca MISMA); la conexión registrada no guarda clave, token ni RUC", [r.resultado, r.continuidadConexion, JSON.stringify(m.intentos).includes("otra-clave-sintetica-r03"), JSON.stringify(m.intentos.map((i) => i.conexion)).includes(RUC), JSON.stringify(m.intentos).includes(TOKEN)], ["OK", "SIN_REFERENCIA", false, false, false]);
+
+    // Host cambiado: 409 aun con credenciales de entorno.
+    m.opciones.baseUrl = "https://otro-gateway.prueba.invalid";
+    let estado = 0;
+
+    try {
+      await consultarEstado(m.db, EMPRESA, USUARIO, DOC1, gateway({ consultas: [consulta("XML firmado", null)] }).dep);
+    } catch (e) {
+      estado = (e as { estado?: number }).estado ?? -1;
+    }
+    igual("PRO342-R03-C02 host cambiado después del envío: 409 (DISTINTA) también con credenciales de entorno", estado, 409);
+
+    const ent = (envio: unknown, version: number | null) => continuidadConexion(envio, { host: "gateway.prueba.invalid", credencialRef: "PRUEBA", credencialesVersion: version, origenCredenciales: "ENTORNO" });
+    const snapEnt = { host: "gateway.prueba.invalid", credencialRef: "PRUEBA", credencialesVersion: 3, origenCredenciales: "ENTORNO" };
+    const bas = (envio: unknown, version: number | null, host = "gw.prueba.invalid") => continuidadConexion(envio, { host, credencialRef: "NEXIT_DB", credencialesVersion: version, origenCredenciales: "BASE" });
+    const snapBase = { host: "gw.prueba.invalid", credencialRef: "NEXIT_DB", credencialesVersion: 3, origenCredenciales: "BASE" };
+
+    igual("PRO342-R03-C03 ENTORNO: misma versión → SIN_REFERENCIA; versión null/null → SIN_REFERENCIA; versión cambiada → DISTINTA", [ent(snapEnt, 3), ent({ ...snapEnt, credencialesVersion: null }, null), ent(snapEnt, 4)], ["SIN_REFERENCIA", "SIN_REFERENCIA", "DISTINTA"]);
+    igual("PRO342-R03-C04 NEXIT_DB (BASE): misma versión conocida → MISMA; versión alterada → DISTINTA; versión ausente → SIN_REFERENCIA (no es prueba); host cambiado → DISTINTA; origen distinto → DISTINTA", [bas(snapBase, 3), bas(snapBase, 4), bas(snapBase, null), bas({ ...snapBase, credencialesVersion: null }, 3), bas(snapBase, 3, "otro.prueba.invalid"), bas({ ...snapBase, origenCredenciales: "ENTORNO" }, 3)], ["MISMA", "DISTINTA", "SIN_REFERENCIA", "SIN_REFERENCIA", "DISTINTA", "DISTINTA"]);
+    igual("PRO342-R03-C05 referenciaConexion: NEXIT_DB → origen BASE; credenciales de entorno → ENTORNO; nunca incluye usuario, clave, token ni hash", [referenciaConexion({ ...CONFIG, credencialRef: "NEXIT_DB" }).origenCredenciales, referenciaConexion(CONFIG).origenCredenciales, Object.keys(referenciaConexion(CONFIG)).sort()], ["BASE", "ENTORNO", ["credencialRef", "credencialesVersion", "host", "origenCredenciales"]]);
+    cierto("PRO342-R03-C06 pantalla: tras «Reconsultar» la continuidad SIN_REFERENCIA se informa como no verificable (incluye credenciales de entorno)", /Continuidad de la conexión no verificable \(conexión del envío no registrada o credenciales de entorno del servidor\)/.test(leer("app/(private)/documentos/page.tsx")));
+  }
 
   return fallos;
 }

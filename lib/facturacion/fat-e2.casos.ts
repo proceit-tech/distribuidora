@@ -215,11 +215,12 @@ export async function verificarCasosFatE2(): Promise<string[]> {
   const consulta = (estado: unknown, extra?: Parameters<typeof cuerpoConsulta>[1]) => interpretarConsulta(200, JSON.stringify(cuerpoConsulta(estado, extra)));
   const decision = (doc: DocumentoReconciliable, r: ReturnType<typeof consulta>) => { const x = decidirConsulta(doc, r); return [x.resultado, x.estadoSifen]; };
 
-  igual("T-E2-10 reconciliación pura: Pendiente se acepta sin CDC; Aprobado/Rechazado con CDC coherente se aceptan; Aprobado/Rechazado/Cancelado/Inutilizado SIN CDC (ni guardado) no fijan estado final", [
+  // PRO-342-R03 (actualizado): un final informado por la API para el documento se registra aunque la respuesta no traiga CDC (CDC NULL, nunca inventado).
+  igual("T-E2-10 reconciliación pura: Pendiente se acepta sin CDC; Aprobado/Rechazado con CDC coherente se aceptan; (R03) Aprobado/Rechazado/Cancelado/Inutilizado SIN CDC también se aceptan, sin inventar CDC", [
     decision(docBase, consulta("Pendiente")), decision(docBase, consulta("Aprobado", { cdc: CDC_FE })), decision(docBase, consulta("Rechazado", { cdc: CDC_FE })),
     decision(docBase, consulta("Aprobado")), decision(docBase, consulta("Rechazado")), decision(docBase, consulta("Cancelado")), decision(docBase, consulta("Inutilizado")),
     decision({ ...docBase, cdc: CDC_FE }, consulta("Aprobado")),
-  ], [["OK", "PENDIENTE"], ["OK", "APROBADO"], ["OK", "RECHAZADO"], ["RESPUESTA_INVALIDA", null], ["RESPUESTA_INVALIDA", null], ["RESPUESTA_INVALIDA", null], ["RESPUESTA_INVALIDA", null], ["OK", "APROBADO"]]);
+  ], [["OK", "PENDIENTE"], ["OK", "APROBADO"], ["OK", "RECHAZADO"], ["OK", "APROBADO"], ["OK", "RECHAZADO"], ["OK", "CANCELADO"], ["OK", "INUTILIZADO"], ["OK", "APROBADO"]]);
   igual("T-E2-12 estado desconocido → NO_RECONOCIDO (nunca aprobado); CDC de otro documento pasa a la función SQL (CDC_DIVERGENTE) sin que Nexit lo apruebe; 400 «no encontrado» y 2xx sin estado no cambian nada", [
     decision(docBase, consulta("Aprobado con observación", { cdc: CDC_FE })), decision(docBase, consulta("Aprobado", { cdc: CDC_OTRO })), cdcCoherente(FE, CDC_OTRO),
     decision(docBase, interpretarConsulta(400, JSON.stringify({ status: "error", message: "Documento no encontrado" }))), decision(docBase, interpretarConsulta(200, JSON.stringify({ status: "success", response: {} }))),
@@ -261,7 +262,7 @@ export async function verificarCasosFatE2(): Promise<string[]> {
 
   igual("T-E2-10 consulta Pendiente → PENDIENTE y luego Aprobado con CDC coherente → APROBADO (solo tras la consulta válida; una consulta por vez, empresa/usuario de la sesión)", [pendiente.r.resultado, pendiente.p[7], aprobado.r.resultado, aprobado.p[7], aprobado.p[8] === CDC_FE, aprobado.p.slice(0, 3), aprobado.g.posts()], ["OK", "PENDIENTE", "OK", "APROBADO", true, [EMPRESA, USUARIO, DOC], 1]);
   igual("T-E2-11 consulta Rechazado con código y mensaje → RECHAZADO fiscal con CodRespuesta/mensaje en el historial; el payload original no se toca (la consulta solo ejecuta registrar_consulta)", [rechazado.p[7], rechazado.p[9], rechazado.p[10]], ["RECHAZADO", "1234", "RUC del receptor inválido"]);
-  igual("T-E2-12 Aprobado sin CDC → se anota RESPUESTA_INVALIDA y NO se persiste ningún estado SIFEN; Pendiente sobre un APROBADO no lo regresa", [sinCdc.r.resultado, sinCdc.p[7], regresion.r.resultado, regresion.p[7]], ["RESPUESTA_INVALIDA", null, "RESPUESTA_INVALIDA", null]);
+  igual("T-E2-12 (actualizado R03) Aprobado sin CDC → OK/APROBADO con CDC NULL (no se inventa); Pendiente sobre un APROBADO no lo regresa", [sinCdc.r.resultado, sinCdc.p[7], sinCdc.p[8], regresion.r.resultado, regresion.p[7]], ["OK", "APROBADO", null, "RESPUESTA_INVALIDA", null]);
 
   // ── T-E2-13: aislamiento multiempresa / alcance
   limpiarCacheTokens();
