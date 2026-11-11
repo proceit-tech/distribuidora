@@ -8,9 +8,9 @@
 --   docker exec -i nexit-db psql -U nexit_app -d nexit -X -v empresa=<UUID_EMPRESA_CASA_MINGO> \
 --     < documentacao/banco/nexit/v1/scripts/diagnostico-PRO-342-D01-SOLO-LECTURA.sql > /tmp/PRO-342-D01-salida.txt 2>&1
 --   NO usar -v ON_ERROR_STOP=1: si una sección depende de una migración no aplicada (p. ej. NEX-077), falla sola y las siguientes continúan.
---   Sección 11 (credenciales, SOLO booleanos) se omite salvo que se agregue  -v incluir_credenciales=1  con autorización expresa.
+--   Sección 13 de credenciales DESHABILITADA: no hay lectura ni comparación de passwords ni reconstrucción de lote, aunque se pase una variable extra.
 --
--- Privacidad: no imprime contraseña, token, payload completo, CDC completo ni lote completo. Imprime identidad fiscal del documento (EEE-PPP-NNNNNNN,
+-- Privacidad: no imprime contraseña, token, payload completo, CDC completo ni lote completo. Imprime sólo documentos de la empresa autorizada (no cruza tenants): identidad fiscal (EEE-PPP-NNNNNNN,
 -- serie, fecha), RUC/DV de la propia empresa (dato público) y segmentos NO secretos del lote/CDC. Revisar la salida antes de compartirla.
 -- =====================================================================================================================================================
 
@@ -147,11 +147,15 @@ SELECT pe.codigo AS punto, lg.creado_at, lg.accion, lg.usuario_id, lg.anterior, 
  WHERE lg.empresa_id = :'empresa'::uuid AND pe.codigo IN ('001','003')
  ORDER BY lg.creado_at;
 
-\echo '== 11) Colisión del número 001-001-0000001 dentro de NEXIT (solo conteos; propia vs otras empresas) =='
-SELECT (d.empresa_id = :'empresa'::uuid) AS propia, (d.serie IS NULL) AS sin_serie, d.estado_sifen, count(*) AS cantidad
+\echo '== 11) Identidad del mismo número SOLO dentro de CASA MINGO (tenant; NO inspecciona otras empresas) =='
+-- No demuestra colisiones en el proveedor: eso lo confirma exclusivamente el proveedor.
+SELECT d.establecimiento, d.punto_expedicion, d.numero, d.serie, d.estado_sifen,
+       count(*) AS cantidad_dentro_empresa
   FROM public.documentos_electronicos d
- WHERE d.tipo = 'FE' AND d.establecimiento = '001' AND d.punto_expedicion = '001' AND d.numero = '0000001'
- GROUP BY 1, 2, 3 ORDER BY 1 DESC, 2;
+ WHERE d.empresa_id = :'empresa'::uuid AND d.tipo = 'FE'
+   AND d.establecimiento = '001' AND d.punto_expedicion = '001' AND d.numero = '0000001'
+ GROUP BY d.establecimiento, d.punto_expedicion, d.numero, d.serie, d.estado_sifen
+ ORDER BY d.serie NULLS FIRST, d.estado_sifen;
 
 \echo '== 12) Consultas desde el 10/11: quién y cuándo (manual vs worker) =='
 SELECT d.punto_expedicion, d.numero, d.serie, i.creado_at, i.resultado, i.actor_id,
@@ -167,21 +171,8 @@ SELECT d.punto_expedicion, d.numero, d.serie, d.proxima_consulta_at, d.consulta_
    AND ((d.establecimiento = '001' AND d.punto_expedicion = '001' AND d.numero = '0000001' AND d.serie = 'AA')
      OR (d.establecimiento = '001' AND d.punto_expedicion = '003' AND d.numero IN ('0009018','0009019','0009020','0009021')));
 
-\if :{?incluir_credenciales}
-\echo '== 13) OPCIONAL, autorización expresa: comparaciones de la clave de la API SOLO como booleanos (nunca imprime la clave) =='
--- Requiere un rol con SELECT sobre fe_gateway_credenciales (nexit_runtime NO lo tiene). Si falla por permiso, NO usar otro rol sin autorización.
-SELECT (c.api_password = c.api_usuario) AS clave_igual_usuario_api,
-       (c.api_password = e.ruc OR c.api_password = lpad(e.ruc, 8, '0')) AS clave_igual_ruc_empresa,
-       (c.api_password = '80020653') AS clave_igual_ruc_80020653,
-       (c.api_usuario = e.ruc) AS usuario_api_igual_ruc_empresa,
-       EXISTS (SELECT 1 FROM public.documentos_electronicos d
-                WHERE d.empresa_id = c.empresa_id AND d.tipo = 'FE' AND d.establecimiento = '001' AND d.punto_expedicion = '001'
-                  AND d.numero = '0000001' AND d.serie = 'AA' AND d.lote LIKE '[omitido]-%'
-                  AND split_part(replace(d.lote, '[omitido]', c.api_password), '-', 1) = lpad(e.ruc, 8, '0')) AS lote_original_empieza_con_ruc_empresa
-  FROM public.fe_gateway_credenciales c JOIN public.empresas e ON e.id = c.empresa_id
- WHERE c.empresa_id = :'empresa'::uuid;
-\else
-\echo '== 13) Omitida (credenciales). Para incluirla: -v incluir_credenciales=1, solo con autorización expresa. =='
-\endif
+\echo '== 13) Credenciales omitidas por seguridad. No se leen claves ni se reconstruyen lotes antiguos. =='
+-- La comprobación excepcional de una hipótesis de igualdad clave/RUC exige aprobación separada y mecanismo aislado que NO manipule lotes/CDC.
+-- Está expresamente prohibido reconstruir un lote usando una contraseña, incluso dentro de una expresión que devuelva booleanos.
 
 \echo '== FIN: ninguna fila fue modificada (sesión READ ONLY). =='
