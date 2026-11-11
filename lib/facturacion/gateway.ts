@@ -76,83 +76,112 @@ const PATRON_SECRETO = /\bBearer\s+[A-Za-z0-9._~+/=-]{8,}|\beyJ[A-Za-z0-9_-]{8,}
 export const limpiarTexto = (t: string): string => t.replace(PATRON_SECRETO, "[omitido]");
 
 // PRO-338-R03 — INVARIANTE: NEXIT NUNCA MODIFICA UN CDC. El saneamiento de secretos ya no reemplaza texto sobre el JSON serializado completo (una clave de API igual al RUC, o
-// cualquier secuencia de dígitos contenida en el CDC, convertía «01…80012345…» en «01[omitido]…» y la SQL lo anotaba CDC_DIVERGENTE). Ahora recorre la estructura y:
-//  · conserva EXACTOS los identificadores fiscales SOLO por su CAMPO (PRO-338-R04): el valor del campo CDC de la API («cdc»/«CDC», p. ej. response.DE.CDC de consulta_de o la clave
-//    «cdc» de la que interpretarRecepcion toma el CDC del envío) y «cdcInformado», con 44 dígitos exactos; el establecimiento, punto, número, serie, código de respuesta y lote por
-//    nombre de campo + formato estricto; y las claves «EEE-PPP-NNNNNNN» únicamente dentro de las listas Aceptados/Rechazados. Son datos fiscales públicos (impresos en el KuDE);
-//  · sigue omitiendo la clave y el token de la sesión en todo texto libre (mensajes, errores, fases, estado del gateway, elementos de listas, resto del JSON de evidencia) y en los
-//    nombres de campo; un número cuyo texto contiene un secreto se omite completo. Bearer/JWT y claves sensibles siguen saliendo por limpiarTexto / sanearRespuesta.
-// PRO-338-R04 (R03-F001): la FORMA de un valor (44 dígitos) NUNCA lo exime del saneamiento. Un «mensaje», «Nota», error o elemento de lista de 44 dígitos que contenga la clave
-// (corta o de 44 dígitos) se sanea como cualquier texto libre: la excepción depende de la procedencia (campo fiscal), nunca del patrón del valor.
+// cualquier secuencia de dígitos contenida en el CDC, convertía «01…80012345…» en «01[omitido]…» y la SQL lo anotaba CDC_DIVERGENTE). Ahora recorre la estructura y omite la clave
+// y el token de la sesión en todo texto (valores y nombres de campo); un número cuyo texto contiene un secreto se omite completo. Bearer/JWT y claves sensibles siguen saliendo
+// por limpiarTexto / sanearRespuesta.
+// PRO-338-R04/R05 — EXCEPCIÓN SOLO POR RUTA FISCAL: un valor queda EXACTO únicamente si su CAMINO COMPLETO desde la raíz del resultado figura en el contrato fiscal de la
+// operación (CONTRATO_FISCAL_CONSULTA / CONTRATO_FISCAL_ENVIO, tomados de los contratos del proveedor ya implementados en interpretarConsulta / interpretarRecepcion) y cumple
+// su formato exacto. Ni la forma del valor (44 dígitos, R03-F001) ni el NOMBRE de un campo (R04-F001: «Nota.CDC», «Nota.lote», listas «Aceptados» fuera de response) eximen
+// del saneamiento. Sin contrato (uso genérico de sinSecretos) no se exime nada.
 const CDC_FORMATO = /^\d{44}$/;
 const NUMERO_FISCAL_CLAVE = /^\d{3}-\d{3}-\d{7}$/;
 const FORMATO_LOTE = /^[0-9A-Za-z-]{1,60}$/;
-const IDENTIFICADORES_FISCALES: Record<string, RegExp> = {
-  cdc: CDC_FORMATO,
-  cdcinformado: CDC_FORMATO,
-  dest: /^\d{3}$/,
-  dpunexp: /^\d{3}$/,
-  dnumdoc: /^\d{7}$/,
-  dserienum: /^[A-Z]{2}$/,
-  codrespuesta: /^\d{1,6}$/,
-  lote: FORMATO_LOTE,
-  nrolote: FORMATO_LOTE,
-  numerolote: FORMATO_LOTE,
-  nrodelote: FORMATO_LOTE,
-  numerodelote: FORMATO_LOTE,
-};
-/** Listas del envío cuyas entradas se identifican por el número fiscal «EEE-PPP-NNNNNNN» (contrato recepcion_de: response.Aceptados / response.Rechazados). */
-const LISTAS_POR_NUMERO_FISCAL = new Set(["aceptados", "rechazados"]);
+const FORMATO_COD_RESPUESTA = /^\d{1,6}$/;
 const normalizarClave = (k: string) => k.toLowerCase().replace(/[^a-z0-9]/g, "");
 
 /**
- * true = el valor está en un CAMPO fiscal conocido y cumple su formato exacto: el saneamiento NUNCA lo altera. Sin campo (clave null: raíz o elemento de una lista) jamás es
- * identificador, aunque tenga forma de CDC (PRO-338-R04).
+ * Contrato fiscal de una operación. Rutas: segmentos normalizados (minúsculas, sin signos) unidos por «.», «[]» = elemento de lista, relativas a la raíz del resultado tipado.
+ *  · `valores`: ruta → formato exacto del identificador que se conserva sin cambios.
+ *  · `listasPorNumeroFiscal`: rutas de elementos de lista (objetos) cuyas CLAVES «EEE-PPP-NNNNNNN» se conservan (y elementos de texto con ese formato, vía `valores`).
  */
-export function esIdentificadorFiscal(clave: string | null, valor: string): boolean {
-  if (clave === null) return false;
+export type ContratoFiscal = { valores: Readonly<Record<string, RegExp>>; listasPorNumeroFiscal: ReadonlySet<string> };
 
-  const nombre = normalizarClave(clave);
-  const formato = Object.prototype.hasOwnProperty.call(IDENTIFICADORES_FISCALES, nombre) ? IDENTIFICADORES_FISCALES[nombre] : undefined;
+const SIN_CONTRATO: ContratoFiscal = { valores: {}, listasPorNumeroFiscal: new Set() };
+
+/**
+ * Consulta (POST /api/consulta_de → interpretarConsulta): `cdc` y `codRespuesta` operacionales; en la evidencia, response.DE.CDC (único origen del CDC) y
+ * response.DE.Retorno.CodRespuesta. Cualquier otro «CDC» de la respuesta (p. ej. response.Nota.CDC) es texto libre.
+ */
+export const CONTRATO_FISCAL_CONSULTA: ContratoFiscal = {
+  valores: {
+    cdc: CDC_FORMATO,
+    codrespuesta: FORMATO_COD_RESPUESTA,
+    "respuesta.response.de.cdc": CDC_FORMATO,
+    "respuesta.response.de.retorno.codrespuesta": FORMATO_COD_RESPUESTA,
+  },
+  listasPorNumeroFiscal: new Set(),
+};
+
+/**
+ * Envío (POST /api/recepcion_de → interpretarRecepcion): `cdc`, `cdcInformado` y `lote` operacionales; en la evidencia, las rutas de la raíz de la respuesta que el contrato
+ * confirmado usa (nro_lote; CDC y eco dEst/dPunExp/dNumDoc que certifican la recepción) y las entradas por número fiscal de response.Aceptados / response.Rechazados.
+ * Un CDC, lote o número en cualquier otra ubicación (anidado en notas, mensajes o listas ajenas) se sanea como texto libre: el CDC operacional sigue exacto por `cdc`/`cdcInformado`.
+ */
+export const CONTRATO_FISCAL_ENVIO: ContratoFiscal = {
+  valores: {
+    cdc: CDC_FORMATO,
+    cdcinformado: CDC_FORMATO,
+    lote: FORMATO_LOTE,
+    "respuesta.cdc": CDC_FORMATO,
+    "respuesta.nrolote": FORMATO_LOTE,
+    "respuesta.dest": /^\d{3}$/,
+    "respuesta.dpunexp": /^\d{3}$/,
+    "respuesta.dnumdoc": /^\d{7}$/,
+    "respuesta.response.aceptados.[]": NUMERO_FISCAL_CLAVE,
+    "respuesta.response.rechazados.[]": NUMERO_FISCAL_CLAVE,
+  },
+  listasPorNumeroFiscal: new Set(["respuesta.response.aceptados.[]", "respuesta.response.rechazados.[]"]),
+};
+
+/** true = el valor está en una RUTA fiscal del contrato y cumple su formato exacto: el saneamiento NUNCA lo altera. Sin contrato, nunca (PRO-338-R05). */
+export function esIdentificadorFiscal(ruta: string, valor: string, contrato: ContratoFiscal = SIN_CONTRATO): boolean {
+  const formato = Object.prototype.hasOwnProperty.call(contrato.valores, ruta) ? contrato.valores[ruta] : undefined;
 
   return formato !== undefined && formato.test(valor);
 }
 
 const omitirEn = (texto: string, secretos: string[]) => secretos.reduce((t, s) => t.split(s).join("[omitido]"), texto);
+const unirRuta = (ruta: string, segmento: string) => (ruta === "" ? segmento : `${ruta}.${segmento}`);
 
-/** `clave`: campo que contiene el valor (null en la raíz y en elementos de listas). `lista`: campo de la lista que contiene este objeto (solo para elementos de listas). */
-function sanearValor(valor: unknown, secretos: string[], clave: string | null, lista: string | null = null): unknown {
-  if (typeof valor === "string") return esIdentificadorFiscal(clave, valor) ? valor : omitirEn(valor, secretos);
-  if (typeof valor === "number") return esIdentificadorFiscal(clave, String(valor)) || !secretos.some((s) => String(valor).includes(s)) ? valor : "[omitido]";
-  if (Array.isArray(valor)) return valor.map((v) => sanearValor(v, secretos, null, clave));
+/** `ruta`: camino normalizado desde la raíz del resultado («» en la raíz; «[]» por cada elemento de lista). */
+function sanearValor(valor: unknown, secretos: string[], ruta: string, contrato: ContratoFiscal): unknown {
+  if (typeof valor === "string") return esIdentificadorFiscal(ruta, valor, contrato) ? valor : omitirEn(valor, secretos);
+  if (typeof valor === "number") return esIdentificadorFiscal(ruta, String(valor), contrato) || !secretos.some((s) => String(valor).includes(s)) ? valor : "[omitido]";
+  if (Array.isArray(valor)) return valor.map((v) => sanearValor(v, secretos, unirRuta(ruta, "[]"), contrato));
   if (valor && typeof valor === "object") {
-    const porNumeroFiscal = lista !== null && LISTAS_POR_NUMERO_FISCAL.has(normalizarClave(lista));
+    const porNumeroFiscal = contrato.listasPorNumeroFiscal.has(ruta);
 
     // Object.fromEntries define propiedades propias (también «__proto__»), igual que el JSON.parse anterior.
-    return Object.fromEntries(Object.entries(valor as Record<string, unknown>).map(([k, v]) => [porNumeroFiscal && NUMERO_FISCAL_CLAVE.test(k.trim()) ? k : omitirEn(k, secretos), sanearValor(v, secretos, k)]));
+    return Object.fromEntries(
+      Object.entries(valor as Record<string, unknown>).map(([k, v]) => [
+        porNumeroFiscal && NUMERO_FISCAL_CLAVE.test(k.trim()) ? k : omitirEn(k, secretos),
+        sanearValor(v, secretos, unirRuta(ruta, normalizarClave(k)), contrato),
+      ]),
+    );
   }
 
   return valor;
 }
 
 /**
- * Quita de un resultado cualquier aparición literal de los secretos conocidos (clave y token de esta sesión), aunque el gateway los repita en un mensaje, SIN alterar los
- * identificadores fiscales (ver arriba). Devuelve una copia; el valor recibido no se modifica.
+ * Quita de un resultado cualquier aparición literal de los secretos conocidos (clave y token de esta sesión), aunque el gateway los repita en un mensaje. Solo las rutas del
+ * `contrato` fiscal (ver arriba) se conservan exactas; sin contrato se sanea todo. Devuelve una copia; el valor recibido no se modifica.
  */
-export function sinSecretos<T>(valor: T, secretos: string[]): T {
+export function sinSecretos<T>(valor: T, secretos: string[], contrato: ContratoFiscal = SIN_CONTRATO): T {
   const utiles = secretos.filter((s) => s.length >= 4);
 
   if (utiles.length === 0) return valor;
 
-  return sanearValor(valor, utiles, null) as T;
+  return sanearValor(valor, utiles, "", contrato) as T;
 }
 
 /**
- * PRO-338-R03: resultado OPERACIONAL de consulta/envío. Separa el dato fiscal íntegro de la evidencia saneada: todo se sanea con sinSecretos y, además, el CDC operacional (`cdc`,
- * y `cdcInformado` en el envío) se repone EXACTAMENTE como lo interpretó la respuesta de la API (ya validado como 44 dígitos o null). Nada del CDC se genera, completa ni corrige aquí.
+ * PRO-338-R03: resultado OPERACIONAL de consulta/envío. Separa el dato fiscal íntegro de la evidencia saneada: todo se sanea con sinSecretos según el contrato de la operación y,
+ * además, el CDC operacional (`cdc`, y `cdcInformado` en el envío) se repone EXACTAMENTE como lo interpretó la respuesta de la API (ya validado como 44 dígitos o null). Nada del
+ * CDC se genera, completa ni corrige aquí.
  */
-export function resultadoFiscalSinSecretos<T extends { cdc: string | null; cdcInformado?: string | null }>(resultado: T, secretos: string[]): T {
-  const saneado = sinSecretos(resultado, secretos);
+export function resultadoFiscalSinSecretos<T extends { cdc: string | null; cdcInformado?: string | null }>(resultado: T, secretos: string[], contrato: ContratoFiscal): T {
+  const saneado = sinSecretos(resultado, secretos, contrato);
   const intacto = (v: string | null | undefined) => (v === null || v === undefined || CDC_FORMATO.test(v) ? v : null);
 
   return { ...saneado, cdc: intacto(resultado.cdc) ?? null, ...("cdcInformado" in resultado ? { cdcInformado: intacto(resultado.cdcInformado) ?? null } : {}) } as T;
@@ -408,8 +437,8 @@ export async function consultarDocumentoGateway(config: ConfigGateway, doc: Docu
     // Token vencido o revocado: se renueva UNA vez y se reintenta (la consulta es de solo lectura, no duplica nada).
     if (esTokenInvalido(r.status, r.texto) && !forzar) continue;
 
-    // PRO-338-R03: el CDC de response.DE.CDC llega intacto a decidirConsulta y a la SQL (nunca «[omitido]» por coincidir con la clave); los textos libres siguen saneados.
-    return resultadoFiscalSinSecretos(interpretarConsulta(r.status, r.texto), [credenciales.password, token]);
+    // PRO-338-R03/R05: el CDC de response.DE.CDC llega intacto a decidirConsulta y a la SQL (nunca «[omitido]» por coincidir con la clave); solo las rutas de CONTRATO_FISCAL_CONSULTA se eximen.
+    return resultadoFiscalSinSecretos(interpretarConsulta(r.status, r.texto), [credenciales.password, token], CONTRATO_FISCAL_CONSULTA);
   }
 
   return vacio("ERROR_HTTP", 401, "El gateway rechazó el token tras renovarlo.");
@@ -700,8 +729,8 @@ export async function enviarDocumentoGateway(
 
     fases.push({ fase: "RESPUESTA", ok: res.estadoLocal === "ENVIADO", detalle, http: r.status });
 
-    // PRO-338-R03: mismo contrato en el envío: cdc / cdcInformado y lote llegan exactos a fe_documento_registrar_envio; mensajes, errores y fases siguen saneados.
-    return resultadoFiscalSinSecretos(res, [credenciales.password, token]);
+    // PRO-338-R03/R05: cdc / cdcInformado y lote llegan exactos a fe_documento_registrar_envio; solo las rutas de CONTRATO_FISCAL_ENVIO se eximen; mensajes, errores y fases saneados.
+    return resultadoFiscalSinSecretos(res, [credenciales.password, token], CONTRATO_FISCAL_ENVIO);
   }
 
   return resultadoEnvioVacio("ERROR_HTTP", "AUTENTICACION", "ERROR_ENVIO", "AUTENTICACION", 401, "El gateway rechazó el token tras renovarlo.", fases);

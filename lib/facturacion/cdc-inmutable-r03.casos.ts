@@ -1,7 +1,7 @@
 /**
  * PRO-338-R03 — CDC INMUTABLE: el saneamiento de secretos nunca modifica el CDC informado por la API (consulta y envío). Casos sobre las funciones REALES
  * (consultarDocumentoGateway, enviarDocumentoGateway, consultarEstado → decidirConsulta → parámetros de la función SQL, sinSecretos, alertaConsulta) con `fetch`, entorno y base SIMULADOS.
- * Sin red, sin PostgreSQL y sin credenciales reales. ESCRITOS, NO EJECUTADOS en esta entrega (órdenes PRO-338-R03 y R04). No prueban el gateway ni la SQL reales.
+ * Sin red, sin PostgreSQL y sin credenciales reales. ESCRITOS, NO EJECUTADOS en esta entrega (órdenes PRO-338-R03, R04 y R05). No prueban el gateway ni la SQL reales.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { contador } from "@/lib/clientes/contador-casos";
 import { ETIQUETA_RESULTADO_INTENTO } from "@/lib/facturacion/estados";
 import {
-  cdcCoherente, consultarDocumentoGateway, enviarDocumentoGateway, esIdentificadorFiscal, limpiarCacheTokens, sinSecretos, type FetchLike, type ResultadoConsulta, type ResultadoEnvio,
+  cdcCoherente, consultarDocumentoGateway, CONTRATO_FISCAL_CONSULTA, CONTRATO_FISCAL_ENVIO, enviarDocumentoGateway, esIdentificadorFiscal, limpiarCacheTokens, sinSecretos, type FetchLike, type ResultadoConsulta, type ResultadoEnvio,
 } from "@/lib/facturacion/gateway";
 import { alertaConsulta, presentacionSifen } from "@/lib/facturacion/presentacion-sifen";
 import { consultarEstado } from "@/lib/facturacion/shared";
@@ -173,14 +173,19 @@ export async function verificarCasosCdcInmutableR03(): Promise<string[]> {
 
   // ── sinSecretos (función real) — contrato por campo
   {
-    const original = { cdc: CDC_FE, cdcInformado: CDC_FE, lote: "L-1", codRespuesta: "1101", mensaje: `x ${RUC} y`, respuesta: { DE: { CDC: CDC_FE }, dNumDoc: "0009020", texto: `clave ${RUC}`, lista: [`a ${RUC}`, CDC_FE] }, http: 200 };
+    const original = { cdc: CDC_FE, cdcInformado: CDC_FE, lote: "L-1", codRespuesta: "1101", mensaje: `x ${RUC} y`, respuesta: { response: { DE: { CDC: CDC_FE } }, dNumDoc: "0009020", texto: `clave ${RUC}`, lista: [`a ${RUC}`, CDC_FE] }, http: 200 };
     const copia = JSON.parse(JSON.stringify(original)) as typeof original;
-    const s = sinSecretos(original, [CLAVE_RUC, TOKEN, "ab"]);
+    const s = sinSecretos(original, [CLAVE_RUC, TOKEN, "ab"], CONTRATO_FISCAL_CONSULTA);
+    const sinR = (t: string) => t.split(RUC).join("[omitido]");
 
-    // PRO-338-R04: un elemento de lista NO es campo fiscal: aunque tenga forma de CDC, se sanea (antes R03 lo conservaba por su forma: R03-F001).
-    igual("R03-21 sinSecretos: CDC en sus CAMPOS (cdc, cdcInformado, DE.CDC), dNumDoc, lote y código se conservan; textos libres y elementos de listas omiten la clave", [s.cdc, s.cdcInformado, s.lote, s.codRespuesta, s.mensaje, s.respuesta.DE.CDC, s.respuesta.dNumDoc, s.respuesta.texto, s.respuesta.lista, s.http], [CDC_FE, CDC_FE, "L-1", "1101", "x [omitido] y", CDC_FE, "0009020", "clave [omitido]", ["a [omitido]", CDC_FE.split(RUC).join("[omitido]")], 200]);
+    // PRO-338-R04/R05: solo las RUTAS del contrato de consulta (cdc, codRespuesta, respuesta.response.DE.CDC) se conservan; cdcInformado no pertenece a la consulta y los
+    // elementos de listas no son rutas fiscales: se sanean aunque tengan forma de CDC (R03-F001 / R04-F001).
+    igual("R03-21 sinSecretos con contrato de consulta: cdc, código y response.DE.CDC exactos; cdcInformado (fuera de contrato), textos libres y elementos de listas omiten la clave", [s.cdc, s.cdcInformado, s.lote, s.codRespuesta, s.mensaje, s.respuesta.response.DE.CDC, s.respuesta.dNumDoc, s.respuesta.texto, s.respuesta.lista, s.http], [CDC_FE, sinR(CDC_FE), "L-1", "1101", "x [omitido] y", CDC_FE, "0009020", "clave [omitido]", ["a [omitido]", sinR(CDC_FE)], 200]);
     igual("R03-22 sinSecretos no muta el objeto recibido (devuelve copia)", original, copia);
-    igual("R03-23 esIdentificadorFiscal (R04): CDC solo en su campo; sin campo o en texto libre NO; dNumDoc solo con su formato exacto", [esIdentificadorFiscal(null, CDC_FE), esIdentificadorFiscal("CDC", CDC_FE), esIdentificadorFiscal("Mensaje", CDC_FE), esIdentificadorFiscal("dNumDoc", "0009020"), esIdentificadorFiscal("dNumDoc", `n ${RUC}`), esIdentificadorFiscal("Mensaje", RUC)], [false, true, false, true, false, false]);
+    igual("R03-23 esIdentificadorFiscal (R05): solo la RUTA del contrato con su formato exacto; ruta homónima fuera de contrato o sin contrato NO", [
+      esIdentificadorFiscal("respuesta.response.de.cdc", CDC_FE, CONTRATO_FISCAL_CONSULTA), esIdentificadorFiscal("respuesta.response.nota.cdc", CDC_FE, CONTRATO_FISCAL_CONSULTA), esIdentificadorFiscal("cdc", CDC_FE),
+      esIdentificadorFiscal("respuesta.dnumdoc", "0009020", CONTRATO_FISCAL_ENVIO), esIdentificadorFiscal("respuesta.dnumdoc", `n ${RUC}`, CONTRATO_FISCAL_ENVIO), esIdentificadorFiscal("mensaje", RUC, CONTRATO_FISCAL_ENVIO),
+    ], [true, false, false, true, false, false]);
     igual("R03-24 sinSecretos conserva el contrato anterior para textos (T-E2-15)", sinSecretos({ m: `la clave es ${CLAVE_ALFA}`, n: [CLAVE_ALFA] }, [CLAVE_ALFA, "ab"]), { m: "la clave es [omitido]", n: ["[omitido]"] });
   }
 
@@ -284,14 +289,15 @@ async function casosR04(igual: Igual, cierto: Cierto, consultar: Consultar, regi
       respuesta: { response: { DE: { CDC: CDC_FE, Retorno: { Mensaje: LIBRE_44_CON_RUC } }, Rechazados: [{ "001-003-0009020": { campo: "x" } }], Otro: { "001-003-0009020": "y" } } },
     };
     const copia = JSON.parse(JSON.stringify(original)) as typeof original;
-    const s = sinSecretos(original, [CLAVE_44, CLAVE_RUC]);
+    const s = sinSecretos(original, [CLAVE_44, CLAVE_RUC], CONTRATO_FISCAL_CONSULTA);
+    const e = sinSecretos(original, [CLAVE_44, CLAVE_RUC], CONTRATO_FISCAL_ENVIO);
 
-    igual("R04-13 sinSecretos: cdc, cdcInformado y response.DE.CDC (campos fiscales) EXACTOS aunque contengan la clave (RUC)", [s.cdc, s.cdcInformado, s.respuesta.response.DE.CDC], [CDC_FE, CDC_FE, CDC_FE]);
+    igual("R04-13 sinSecretos: cdc y response.DE.CDC (rutas de consulta) y cdcInformado (ruta de envío) EXACTOS aunque contengan la clave (RUC)", [s.cdc, e.cdcInformado, s.respuesta.response.DE.CDC], [CDC_FE, CDC_FE, CDC_FE]);
     igual("R04-14 sinSecretos: mensaje, errores, fases y Retorno.Mensaje de 44 dígitos se sanean (clave de 44 y clave corta)", [s.mensaje, s.errores, s.fases[0]?.detalle, s.respuesta.response.DE.Retorno.Mensaje], ["[omitido]", ["[omitido]", sinRuc(LIBRE_44_CON_RUC)], sinRuc(LIBRE_44_CON_RUC), sinRuc(LIBRE_44_CON_RUC)]);
     const secretoNumero = "0009020";
-    const t = sinSecretos(original, [secretoNumero]);
+    const t = sinSecretos(original, [secretoNumero], CONTRATO_FISCAL_ENVIO);
 
-    igual("R04-15 sinSecretos: la clave «EEE-PPP-NNNNNNN» solo se conserva dentro de Rechazados/Aceptados; fuera de esas listas se sanea; el CDC del campo sigue EXACTO", [Object.keys(t.respuesta.response.Rechazados[0] ?? {}), Object.keys(t.respuesta.response.Otro), t.cdc], [["001-003-0009020"], ["001-003-[omitido]"], CDC_FE]);
+    igual("R04-15 sinSecretos: la clave «EEE-PPP-NNNNNNN» solo se conserva dentro de respuesta.response.Rechazados/Aceptados; fuera de esas listas se sanea; el CDC operacional sigue EXACTO", [Object.keys(t.respuesta.response.Rechazados[0] ?? {}), Object.keys(t.respuesta.response.Otro), t.cdc], [["001-003-0009020"], ["001-003-[omitido]"], CDC_FE]);
     igual("R04-16 sinSecretos no muta el objeto recibido", original, copia);
   }
 
@@ -300,6 +306,125 @@ async function casosR04(igual: Igual, cierto: Cierto, consultar: Consultar, regi
     const gw = leer("lib/facturacion/gateway.ts");
     const funcion = gw.slice(gw.indexOf("export function esIdentificadorFiscal"), gw.indexOf("const omitirEn"));
 
-    cierto("R04-17 esIdentificadorFiscal ya no exime un valor por su forma (sin «CDC_FORMATO.test(valor)) return true»; clave null → false)", !/CDC_FORMATO\.test\(valor\)\)\s*return true/.test(funcion) && /if \(clave === null\) return false;/.test(funcion));
+    cierto("R04-17 esIdentificadorFiscal ya no exime un valor por su forma (sin «CDC_FORMATO.test(valor)) return true»): decide por la ruta del contrato", !/CDC_FORMATO\.test\(valor\)\)\s*return true/.test(funcion) && /contrato\.valores/.test(funcion));
+  }
+
+  await casosR05(igual, cierto, consultar, registrar);
+}
+
+// ── PRO-338-R05 (R04-F001): el NOMBRE de un campo no prueba procedencia fiscal; solo la RUTA del contrato de la operación ──────────────────────────────────────
+// Funciones REALES (consultarDocumentoGateway, enviarDocumentoGateway → interpretarConsulta/interpretarRecepcion, consultarEstado → parámetros SQL, sinSecretos) con fetch, entorno
+// y base SIMULADOS y credenciales SINTÉTICAS. ESCRITOS, NO EJECUTADOS. No prueban el gateway ni la SQL reales ni los logs del servidor en ejecución.
+/** Clave sintética alfanumérica con formato válido de lote (1–60 caracteres [0-9A-Za-z-]). */
+const CLAVE_LOTE = "claveSintetica123";
+/** Clave numérica corta sintética: cabe en dNumDoc (7 dígitos), codRespuesta (1–6) y en un texto de 44 dígitos. */
+const CLAVE_6 = "445566";
+const CON_CLAVE_6_44 = CLAVE_6 + "0".repeat(38);
+
+async function casosR05(igual: Igual, cierto: Cierto, consultar: Consultar, registrar: Registrar) {
+  type Evidencia = { response: Record<string, unknown> & { DE: { CDC: unknown; Retorno: { CodRespuesta: unknown; Mensaje: unknown } }; Nota: Record<string, unknown> } };
+
+  cierto("R05-00 premisas: claves sintéticas; CLAVE_LOTE cumple el formato de lote; CON_CLAVE_6_44 tiene 44 dígitos y contiene la clave", /^[0-9A-Za-z-]{1,60}$/.test(CLAVE_LOTE) && /^\d{44}$/.test(CON_CLAVE_6_44) && CON_CLAVE_6_44.includes(CLAVE_6) && !CDC_FE.includes(CLAVE_6));
+
+  // ── Consulta: Nota.CDC falso (44 dígitos con la clave = RUC) frente a response.DE.CDC auténtico
+  {
+    const { r } = await consultar(CLAVE_RUC, consultaRespuesta("Rechazado", CDC_FE, "1101", "Número de timbrado inválido", { Nota: { CDC: LIBRE_44_CON_RUC } }));
+    const ev = (r.respuesta as unknown as Evidencia).response;
+
+    igual("R05-01 consulta, clave = RUC: resultado.cdc y response.DE.CDC EXACTOS; response.Nota.CDC (44 dígitos, mismo nombre) se sanea", [r.cdc, ev.DE.CDC, ev.Nota.CDC], [CDC_FE, CDC_FE, sinRuc(LIBRE_44_CON_RUC)]);
+    igual("R05-02 consulta: Rechazado/1101/«Número de timbrado inválido» intacto con el CDC asociado", [r.resultado, r.estadoSifen, r.codRespuesta, r.mensaje], ["OK", "RECHAZADO", "1101", "Número de timbrado inválido"]);
+  }
+
+  // ── Consulta: Nota.lote igual a la clave alfanumérica (formato válido de lote)
+  {
+    const { r } = await consultar(CLAVE_LOTE, { ...consultaRespuesta("Rechazado", CDC_FE, "1101", "Número de timbrado inválido", { Nota: { lote: CLAVE_LOTE, nro_lote: CLAVE_LOTE } }), nro_lote: CLAVE_LOTE });
+    const ev = r.respuesta as unknown as Evidencia & { nro_lote: unknown };
+
+    igual("R05-03 consulta, clave con formato de lote: Nota.lote, Nota.nro_lote y nro_lote (no son rutas de consulta) quedan «[omitido]»; el CDC sigue exacto", [ev.response.Nota.lote, ev.response.Nota.nro_lote, ev.nro_lote, r.cdc], ["[omitido]", "[omitido]", "[omitido]", CDC_FE]);
+    cierto("R05-04 consulta: la clave alfanumérica no aparece en ninguna parte del resultado", !JSON.stringify(r).includes(CLAVE_LOTE));
+  }
+
+  // ── Consulta: otros nombres fiscales (dNumDoc, codRespuesta, cdcInformado) fuera de su ruta, con la clave
+  {
+    const { r } = await consultar(CLAVE_6, consultaRespuesta("Rechazado", CDC_FE, "1101", `ver ${CLAVE_6}`, { Nota: { dNumDoc: `${CLAVE_6}0`, codRespuesta: CLAVE_6, cdcInformado: CON_CLAVE_6_44, CDC: CON_CLAVE_6_44 } }));
+    const ev = (r.respuesta as unknown as Evidencia).response;
+
+    igual("R05-05 consulta: Nota.dNumDoc / codRespuesta / cdcInformado / CDC (nombres fiscales en ruta ajena) se sanean; DE.CDC y Retorno.CodRespuesta oficiales exactos", [ev.Nota.dNumDoc, ev.Nota.codRespuesta, ev.Nota.cdcInformado, ev.Nota.CDC, ev.DE.CDC, ev.DE.Retorno.CodRespuesta, r.codRespuesta, r.mensaje], ["[omitido]0", "[omitido]", `[omitido]${"0".repeat(38)}`, `[omitido]${"0".repeat(38)}`, CDC_FE, "1101", "1101", "ver [omitido]"]);
+  }
+
+  // ── Consulta: clave de 44 dígitos en Nota.CDC
+  {
+    const { r } = await consultar(CLAVE_44, consultaRespuesta("Rechazado", CDC_FE, "1101", "Número de timbrado inválido", { Nota: { CDC: CLAVE_44 } }));
+    const ev = (r.respuesta as unknown as Evidencia).response;
+
+    igual("R05-06 consulta, clave de 44 dígitos en Nota.CDC: «[omitido]»; DE.CDC exacto; la clave no aparece en el resultado", [ev.Nota.CDC, ev.DE.CDC, JSON.stringify(r).includes(CLAVE_44)], ["[omitido]", CDC_FE, false]);
+  }
+
+  // ── consultarEstado (real) → parámetros SQL con Nota.CDC falso
+  {
+    const p = await registrar({}, CLAVE_RUC, consultaRespuesta("Rechazado", CDC_FE, "1101", "Número de timbrado inválido", { Nota: { CDC: LIBRE_44_CON_RUC, lote: RUC } }));
+
+    igual("R05-07 primera consulta (d.cdc NULL): a la SQL llegan OK/RECHAZADO/CDC exacto/1101/mensaje", [p[3], p[7], p[8], p[9], p[10]], ["OK", "RECHAZADO", CDC_FE, "1101", "Número de timbrado inválido"]);
+    cierto("R05-08 la evidencia JSON para la SQL conserva DE.CDC exacto y sanea Nota.CDC y Nota.lote", String(p[13]).includes(`"CDC":"${CDC_FE}"`) && !String(p[13]).includes(LIBRE_44_CON_RUC) && String(p[13]).includes(`"lote":"[omitido]"`));
+  }
+  {
+    const p = await registrar({}, CLAVE_RUC, consultaRespuesta("Rechazado", CDC_OTRA_FE, "1101", "Número de timbrado inválido", { Nota: { CDC: CDC_FE } }));
+
+    igual("R05-09 CDC de OTRA FE en DE.CDC: llega exacto a la SQL (que lo anota CDC_DIVERGENTE), no se reemplaza por el de Nota.CDC", [p[3], p[8], cdcCoherente(FE, String(p[8]))], ["OK", CDC_OTRA_FE, false]);
+  }
+  {
+    const p = await registrar({ cdc: CDC_FE, estadoSifen: "PENDIENTE" }, CLAVE_RUC, consultaRespuesta("Rechazado", CDC_FE_OTRO_CODIGO, "1101", "Número de timbrado inválido", { Nota: { CDC: LIBRE_44_CON_RUC } }));
+
+    igual("R05-10 CDC previo registrado y la API informa otro: el informado llega exacto a la SQL (que no sobrescribe) y Nota.CDC no se filtra", [p[8], String(p[13]).includes(LIBRE_44_CON_RUC)], [CDC_FE_OTRO_CODIGO, false]);
+  }
+
+  // ── Envío: rutas oficiales (raíz CDC, nro_lote, eco) frente a Nota con nombres fiscales
+  {
+    limpiarCacheTokens();
+    const g = gateway([{ status: 200, cuerpo: { status: "success", message: LIBRE_44_CON_RUC, nro_lote: "L-905", CDC: CDC_FE, dEst: "001", dPunExp: "003", dNumDoc: "0009020", Nota: { CDC: LIBRE_44_CON_RUC, nro_lote: RUC, dNumDoc: `${RUC.slice(0, 7)}` } } }]);
+    const r = (await enviarDocumentoGateway(CONFIG, { dEst: "001" }, FE, { fetch: g.fetch, env: env(CLAVE_RUC) })) as ResultadoEnvio;
+    const ev = r.respuesta as Record<string, unknown> & { Nota: Record<string, unknown> };
+
+    igual("R05-11 envío, clave = RUC: ENVIADO con cdc / cdcInformado / lote exactos; CDC, nro_lote y eco de la raíz de la respuesta exactos", [r.estadoLocal, r.cdc, r.cdcInformado, r.lote, ev.CDC, ev.nro_lote, ev.dEst, ev.dPunExp, ev.dNumDoc], ["ENVIADO", CDC_FE, CDC_FE, "L-905", CDC_FE, "L-905", "001", "003", "0009020"]);
+    igual("R05-12 envío: Nota.CDC / Nota.nro_lote (fuera de ruta) y el mensaje libre de 44 dígitos se sanean", [ev.Nota.CDC, ev.Nota.nro_lote, r.mensaje], [sinRuc(LIBRE_44_CON_RUC), "[omitido]", sinRuc(LIBRE_44_CON_RUC)]);
+  }
+  {
+    limpiarCacheTokens();
+    const g = gateway([{ status: 200, cuerpo: { status: "success", nro_lote: "L-906", response: { CDC: CDC_FE } } }]);
+    const r = (await enviarDocumentoGateway(CONFIG, { dEst: "001" }, FE, { fetch: g.fetch, env: env(CLAVE_RUC) })) as ResultadoEnvio;
+
+    // interpretarRecepcion admite el CDC a cualquier profundidad (buscar): el operacional queda exacto; en la evidencia solo la raíz es ruta del contrato, el resto es texto libre.
+    igual("R05-13 envío con CDC anidado (response.CDC): cdc / cdcInformado operacionales EXACTOS; la copia anidada de la evidencia no es ruta de contrato y se sanea", [r.estadoLocal, r.cdc, r.cdcInformado, (r.respuesta as { response: { CDC: unknown } }).response.CDC], ["ENVIADO", CDC_FE, CDC_FE, sinRuc(CDC_FE)]);
+  }
+
+  // ── Envío: Aceptados/Rechazados oficiales frente a Nota.Aceptados falso (clave = número del documento)
+  {
+    const claveNumero = "0009020";
+
+    limpiarCacheTokens();
+    const g = gateway([{ status: 200, cuerpo: { status: "error", rechazados: 1, response: { Aceptados: [], Rechazados: [{ "001-003-0009020": { dNumTim: "Timbrado inválido" } }], Nota: { Aceptados: [{ "001-003-0009020": "falso" }] } } } }]);
+    const r = (await enviarDocumentoGateway(CONFIG, { dEst: "001" }, FE, { fetch: g.fetch, env: env(claveNumero) })) as ResultadoEnvio;
+    const resp = (r.respuesta as { response: { Rechazados: Array<Record<string, unknown>>; Nota: { Aceptados: Array<Record<string, unknown>> } } }).response;
+
+    igual("R05-14 envío rechazado: la clave del documento se conserva SOLO en response.Rechazados oficial; en Nota.Aceptados (lista falsa) se sanea; el rechazo se atribuye a ESTE documento", [r.estadoLocal, r.errorTipo, Object.keys(resp.Rechazados[0] ?? {}), Object.keys(resp.Nota.Aceptados[0] ?? {})], ["ERROR_ENVIO", "RECHAZO", ["001-003-0009020"], ["001-003-[omitido]"]]);
+  }
+
+  // ── sinSecretos (función real): no mutación y seguridad por defecto
+  {
+    const original = { cdc: CDC_FE, respuesta: { CDC: CDC_FE, nro_lote: CLAVE_LOTE, response: { DE: { CDC: CDC_FE }, Nota: { CDC: LIBRE_44_CON_RUC, lote: CLAVE_LOTE } } } };
+    const copia = JSON.parse(JSON.stringify(original)) as typeof original;
+    const c = sinSecretos(original, [CLAVE_RUC, CLAVE_LOTE], CONTRATO_FISCAL_CONSULTA);
+    const n = sinSecretos(original, [CLAVE_RUC, CLAVE_LOTE]);
+
+    igual("R05-15 contrato de consulta: DE.CDC y cdc exactos; respuesta.CDC y nro_lote (rutas de ENVÍO) y Nota.* se sanean", [c.cdc, c.respuesta.response.DE.CDC, c.respuesta.CDC, c.respuesta.nro_lote, c.respuesta.response.Nota.CDC, c.respuesta.response.Nota.lote], [CDC_FE, CDC_FE, sinRuc(CDC_FE), "[omitido]", sinRuc(LIBRE_44_CON_RUC), "[omitido]"]);
+    igual("R05-16 sin contrato (uso genérico) no se exime ninguna ruta", [n.cdc, n.respuesta.response.DE.CDC], [sinRuc(CDC_FE), sinRuc(CDC_FE)]);
+    igual("R05-17 sinSecretos no muta el objeto recibido", original, copia);
+  }
+
+  // ── Fuente: la excepción se decide por ruta del contrato, sin allowlist global por nombre
+  {
+    const gw = leer("lib/facturacion/gateway.ts");
+
+    cierto("R05-18 consulta usa CONTRATO_FISCAL_CONSULTA y envío CONTRATO_FISCAL_ENVIO; ya no existe la allowlist por nombre IDENTIFICADORES_FISCALES ni LISTAS_POR_NUMERO_FISCAL", /resultadoFiscalSinSecretos\(interpretarConsulta\(r\.status, r\.texto\), \[credenciales\.password, token\], CONTRATO_FISCAL_CONSULTA\)/.test(gw) && /resultadoFiscalSinSecretos\(res, \[credenciales\.password, token\], CONTRATO_FISCAL_ENVIO\)/.test(gw) && !/IDENTIFICADORES_FISCALES|LISTAS_POR_NUMERO_FISCAL/.test(gw));
   }
 }
