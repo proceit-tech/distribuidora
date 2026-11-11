@@ -77,10 +77,13 @@ export const limpiarTexto = (t: string): string => t.replace(PATRON_SECRETO, "[o
 
 // PRO-338-R03 — INVARIANTE: NEXIT NUNCA MODIFICA UN CDC. El saneamiento de secretos ya no reemplaza texto sobre el JSON serializado completo (una clave de API igual al RUC, o
 // cualquier secuencia de dígitos contenida en el CDC, convertía «01…80012345…» en «01[omitido]…» y la SQL lo anotaba CDC_DIVERGENTE). Ahora recorre la estructura y:
-//  · conserva EXACTOS los identificadores fiscales: todo valor de texto con forma de CDC (44 dígitos), y por nombre de campo + formato estricto el establecimiento, punto,
-//    número, serie, código de respuesta y lote; también las claves «EEE-PPP-NNNNNNN» de Aceptados/Rechazados. Son datos fiscales públicos (impresos en el KuDE), no credenciales;
-//  · sigue omitiendo la clave y el token de la sesión en todo texto libre (mensajes, errores, fases, estado del gateway, resto del JSON de evidencia) y en los nombres de campo;
-//    un número cuyo texto contiene un secreto se omite completo. Bearer/JWT y claves sensibles siguen saliendo por limpiarTexto / sanearRespuesta.
+//  · conserva EXACTOS los identificadores fiscales SOLO por su CAMPO (PRO-338-R04): el valor del campo CDC de la API («cdc»/«CDC», p. ej. response.DE.CDC de consulta_de o la clave
+//    «cdc» de la que interpretarRecepcion toma el CDC del envío) y «cdcInformado», con 44 dígitos exactos; el establecimiento, punto, número, serie, código de respuesta y lote por
+//    nombre de campo + formato estricto; y las claves «EEE-PPP-NNNNNNN» únicamente dentro de las listas Aceptados/Rechazados. Son datos fiscales públicos (impresos en el KuDE);
+//  · sigue omitiendo la clave y el token de la sesión en todo texto libre (mensajes, errores, fases, estado del gateway, elementos de listas, resto del JSON de evidencia) y en los
+//    nombres de campo; un número cuyo texto contiene un secreto se omite completo. Bearer/JWT y claves sensibles siguen saliendo por limpiarTexto / sanearRespuesta.
+// PRO-338-R04 (R03-F001): la FORMA de un valor (44 dígitos) NUNCA lo exime del saneamiento. Un «mensaje», «Nota», error o elemento de lista de 44 dígitos que contenga la clave
+// (corta o de 44 dígitos) se sanea como cualquier texto libre: la excepción depende de la procedencia (campo fiscal), nunca del patrón del valor.
 const CDC_FORMATO = /^\d{44}$/;
 const NUMERO_FISCAL_CLAVE = /^\d{3}-\d{3}-\d{7}$/;
 const FORMATO_LOTE = /^[0-9A-Za-z-]{1,60}$/;
@@ -98,13 +101,18 @@ const IDENTIFICADORES_FISCALES: Record<string, RegExp> = {
   nrodelote: FORMATO_LOTE,
   numerodelote: FORMATO_LOTE,
 };
+/** Listas del envío cuyas entradas se identifican por el número fiscal «EEE-PPP-NNNNNNN» (contrato recepcion_de: response.Aceptados / response.Rechazados). */
+const LISTAS_POR_NUMERO_FISCAL = new Set(["aceptados", "rechazados"]);
 const normalizarClave = (k: string) => k.toLowerCase().replace(/[^a-z0-9]/g, "");
 
-/** true = valor de un identificador fiscal que el saneamiento NUNCA altera (forma de CDC en cualquier campo, o campo fiscal conocido con su formato exacto). */
+/**
+ * true = el valor está en un CAMPO fiscal conocido y cumple su formato exacto: el saneamiento NUNCA lo altera. Sin campo (clave null: raíz o elemento de una lista) jamás es
+ * identificador, aunque tenga forma de CDC (PRO-338-R04).
+ */
 export function esIdentificadorFiscal(clave: string | null, valor: string): boolean {
-  if (CDC_FORMATO.test(valor)) return true;
+  if (clave === null) return false;
 
-  const nombre = clave === null ? "" : normalizarClave(clave);
+  const nombre = normalizarClave(clave);
   const formato = Object.prototype.hasOwnProperty.call(IDENTIFICADORES_FISCALES, nombre) ? IDENTIFICADORES_FISCALES[nombre] : undefined;
 
   return formato !== undefined && formato.test(valor);
@@ -112,13 +120,16 @@ export function esIdentificadorFiscal(clave: string | null, valor: string): bool
 
 const omitirEn = (texto: string, secretos: string[]) => secretos.reduce((t, s) => t.split(s).join("[omitido]"), texto);
 
-function sanearValor(valor: unknown, secretos: string[], clave: string | null): unknown {
+/** `clave`: campo que contiene el valor (null en la raíz y en elementos de listas). `lista`: campo de la lista que contiene este objeto (solo para elementos de listas). */
+function sanearValor(valor: unknown, secretos: string[], clave: string | null, lista: string | null = null): unknown {
   if (typeof valor === "string") return esIdentificadorFiscal(clave, valor) ? valor : omitirEn(valor, secretos);
   if (typeof valor === "number") return esIdentificadorFiscal(clave, String(valor)) || !secretos.some((s) => String(valor).includes(s)) ? valor : "[omitido]";
-  if (Array.isArray(valor)) return valor.map((v) => sanearValor(v, secretos, null));
+  if (Array.isArray(valor)) return valor.map((v) => sanearValor(v, secretos, null, clave));
   if (valor && typeof valor === "object") {
+    const porNumeroFiscal = lista !== null && LISTAS_POR_NUMERO_FISCAL.has(normalizarClave(lista));
+
     // Object.fromEntries define propiedades propias (también «__proto__»), igual que el JSON.parse anterior.
-    return Object.fromEntries(Object.entries(valor as Record<string, unknown>).map(([k, v]) => [NUMERO_FISCAL_CLAVE.test(k.trim()) ? k : omitirEn(k, secretos), sanearValor(v, secretos, k)]));
+    return Object.fromEntries(Object.entries(valor as Record<string, unknown>).map(([k, v]) => [porNumeroFiscal && NUMERO_FISCAL_CLAVE.test(k.trim()) ? k : omitirEn(k, secretos), sanearValor(v, secretos, k)]));
   }
 
   return valor;
