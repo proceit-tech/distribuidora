@@ -11,7 +11,7 @@
 --      token ni hashes de ellos. Es la evidencia de con qué gateway y qué versión de credenciales se hizo ESE intento (la configuración puede cambiar después).
 --   2) Sobrecargas de registro con p_conexion:
 --        · fe_documento_registrar_consulta (manual, NEX-054): mismas reglas + cdc_informado (antes la consulta manual no lo guardaba).
---          PRO-342-R03 (las tres vías): un estado final informado por la API se registra aunque la respuesta no traiga CDC (CDC NULL, nunca inventado); un CDC presente debe ser coherente.
+--          PRO-342-R03-01 (las tres vías): un estado final solo con CDC válido y coherente (informado o ya guardado del mismo documento); nunca con CDC NULL.
 --        · fe_documento_registrar_consulta_flujo_nce (NEX-062): mismas reglas + cdc_informado.
 --        · fe_documento_registrar_consulta_auto (NEX-077): mismas reglas (token vigente) + conexión.
 --        · fe_documento_registrar_envio (NEX-050): mismas reglas + conexión. El lote se guarda tal como lo informó el gateway (ya validado por la aplicación), solo si el documento aún no tiene uno
@@ -115,11 +115,10 @@ BEGIN
     v_mensaje := left('La consulta informa «' || p_estado_sifen || '» pero el documento ya figura como «' || d.estado_sifen || '»: no se modifica el estado fiscal.', 500);
   END IF;
 
-  -- PRO-342-R03: un estado DEFINITIVO informado expresamente por la API para ESTE documento se registra aunque la respuesta aún no traiga CDC (el CDC queda NULL; nunca se inventa).
-  -- Solo se rechaza si hay un CDC (informado o ya guardado) y NO es coherente con el documento (el informado incoherente ya quedó como CDC_DIVERGENTE arriba).
-  -- (Las firmas anteriores NEX-054/062/077 siguen exigiendo CDC: sin NEX-079 un final sin CDC queda RESPUESTA_INVALIDA — modo compatibilidad degradado.)
+  -- PRO-342-R03-01: un XML firmado SIEMPRE tiene CDC. Un estado DEFINITIVO solo se registra con un CDC válido y coherente (el informado o el ya guardado del mismo documento):
+  -- nunca un final con CDC NULL (como NEX-062/077). La aplicación bloquea antes también «XML firmado» sin CDC (y la firma antigua NEX-054, que no tiene esta guarda).
   IF v_resultado = 'OK' AND p_estado_sifen IN ('APROBADO', 'RECHAZADO', 'CANCELADO', 'INUTILIZADO')
-     AND coalesce(p_cdc, d.cdc) IS NOT NULL AND NOT public.fe_cdc_coherente(d.tipo, d.establecimiento, d.punto_expedicion, d.numero, coalesce(p_cdc, d.cdc)) THEN
+     AND (coalesce(p_cdc, d.cdc) IS NULL OR NOT public.fe_cdc_coherente(d.tipo, d.establecimiento, d.punto_expedicion, d.numero, coalesce(p_cdc, d.cdc))) THEN
     v_resultado := 'RESPUESTA_INVALIDA';
     v_mensaje := left('La consulta informa «' || p_estado_sifen || '» sin un CDC válido y coherente con el documento: no se modifica el estado fiscal.', 500);
   END IF;

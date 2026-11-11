@@ -347,8 +347,8 @@ export function interpretarConsulta(http: number, cuerpoTexto: string): Resultad
   const cdc = de ? texto(de.CDC, 60) : null;
   const estadoSifen = estadoSifenDesdeGateway(estado);
 
-  // PRO-342-R03: un estado FINAL sin CDC se registra (CDC NULL), pero un final que trae un CDC que NO es un CDC válido no se acepta como final: no se corrige ni se descarta ese CDC
-  // en silencio para convertir la respuesta en «sin CDC» (queda como evidencia y RESPUESTA_INVALIDA). Un estado intermedio con CDC inválido sigue como antes (CDC no registrado).
+  // PRO-342-R03: un final que trae un CDC que NO es un CDC válido no se acepta como final: no se corrige ni se descarta ese CDC en silencio (queda como evidencia y RESPUESTA_INVALIDA).
+  // Un final o «XML firmado» SIN CDC disponible para el documento lo bloquea decidirConsulta (R03-01: un XML firmado siempre tiene CDC; nunca final con CDC NULL).
   if (cdc && !/^\d{44}$/.test(cdc) && ["APROBADO", "RECHAZADO", "CANCELADO", "INUTILIZADO"].includes(estadoSifen)) {
     return { ...vacio("RESPUESTA_INVALIDA", http, `La consulta informa «${estado}» con un CDC que no es válido: no se modifica el estado fiscal.`), estadoGateway: estado, respuesta: guardada };
   }
