@@ -13,6 +13,10 @@ export default async function PrivateLayout({
   if (!context) {
     redirect("/login");
   }
+  // Contraseña provisional: hasta cambiarla no se entra a ninguna página privada.
+  if (context.debeCambiarContrasena) {
+    redirect("/cambiar-contrasena");
+  }
 
   return (
     <AppShell context={context}>

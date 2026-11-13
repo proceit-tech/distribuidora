@@ -56,6 +56,8 @@ export default function AppShell({
         user={context.user}
         company={context.company}
         navigation={context.navigation}
+        inicioHref={context.inicioHref}
+        puedeDashboard={context.puedeDashboard}
         collapsed={collapsed && hydrated}
         mobileOpen={mobileOpen}
         onCollapsedChange={handleCollapsedChange}

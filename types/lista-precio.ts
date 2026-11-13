@@ -2,11 +2,8 @@ export type ListaPrecioTipo =
   | "VENTA"
   | "COMPRA";
 
-export type ListaPrecioMoneda =
-  | "PYG"
-  | "USD"
-  | "BRL"
-  | "EUR";
+/** Código ISO de la tabla `monedas` (catálogo del banco). */
+export type ListaPrecioMoneda = string;
 
 export type ListaPrecioEstado =
   | "BORRADOR"
@@ -66,6 +63,9 @@ export type ListaPrecioProducto = {
 
   activo: boolean;
 
+  /** Versión del precio (actualizado_at µs) que la pantalla cargó; se devuelve al guardar (LPR-A02). Ausente en precios nuevos. */
+  version?: string;
+
   escalas: ListaPrecioEscala[];
 };
 
@@ -102,7 +102,7 @@ export type ListaPrecioAjusteMasivo = {
   valor: number;
 };
 
-export type ListaPrecioDemo = {
+export type ListaPrecioDetalle = {
   id: string;
 
   codigo: string;
@@ -155,19 +155,61 @@ export type ListaPrecioDemo = {
 
   observacion: string;
 
+  /** Lista de precio de venta de referencia de la ficha de Productos (NEX-017). Solo lectura. */
+  esReferencia: boolean;
+
   creadoEn: string;
   actualizadoEn: string;
+  /** Versión de la cabecera (actualizado_at con microsegundos, UTC): precondición obligatoria del PUT (LPR-A02). */
+  version?: string;
 };
 
-export type NuevaListaPrecioDemo = Omit<
-  ListaPrecioDemo,
-  "id" | "creadoEn" | "actualizadoEn"
->;
+export type NuevaListaPrecio = Omit<
+  ListaPrecioDetalle,
+  "id" | "creadoEn" | "actualizadoEn" | "esReferencia"
+> & {
+  /** Id y versión de TODOS los precios que existían al abrir la lista (también los que se quiten del borrador): los que ya no estén en `productos` se eliminan por decisión explícita (LPR-A01/A02). Solo edición. */
+  itemsCargados?: Array<{ id: string; version: string }>;
+};
+
+/** Fila de la lista (GET /api/listas-precio): sin los hijos, con sus conteos. */
+export type ListaPrecioFila = Omit<
+  ListaPrecioDetalle,
+  "productos" | "reglasComerciales"
+> & {
+  productosCount: number;
+  reglasCount: number;
+};
+
+export type ListaPrecioProductoOpcion = {
+  id: string;
+  codigo: string;
+  descripcion: string;
+  unidadMedidaId: string;
+  unidadMedidaNombre: string;
+  /** Costo promedio real (inventario_costos); 0 si no hay saldo valorizado. */
+  costoPromedio: number;
+  /** Precio de venta de referencia (lista de referencia) o null si no tiene. */
+  precioReferencia: number | null;
+};
+
+export type CatalogoListasPrecio = {
+  monedas: { codigo: string; nombre: string; simbolo: string }[];
+  gruposCliente: ListaPrecioCatalogoOpcion[];
+  zonas: ListaPrecioCatalogoOpcion[];
+  canales: ListaPrecioCatalogoOpcion[];
+  clientes: ListaPrecioCatalogoOpcion[];
+  productos: ListaPrecioProductoOpcion[];
+  listasBase: { id: string; codigo: string; nombre: string; monedaCodigo: string; tipo: ListaPrecioTipo; activo: boolean }[];
+  monedaBase: string;
+};
 
 export type ListaPrecioCatalogoOpcion = {
   id: string;
   codigo: string;
   nombre: string;
+  /** Los catálogos llegan completos: las opciones inactivas solo se ofrecen si ya estaban seleccionadas. */
+  activo?: boolean;
 };
 
 export type ListaPrecioResumen = {
