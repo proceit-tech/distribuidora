@@ -437,7 +437,9 @@ export async function verificarCasosFlujoFiscalPro342(): Promise<string[]> {
     limpiarCacheTokens();
     const m = mundo([{ lote: LOTE }]);
     const g = gateway({ consultas: [consulta("XML firmado", CDC1), consulta("XML firmado", CDC1)] });
-    const reservaA = await m.db.query("SELECT * FROM fe_consulta_reservar_token(1, $1::integer, $2::text[])", [300, ["FE"]]) as { rows: Array<Record<string, unknown>> };
+    // mundo() expone `db` como `never` (inyectable en cualquier firma); para llamar query() directamente se usa una referencia local tipada (mismo patrón que R04-F03c).
+    const dbSim = m.db as unknown as { query: (sql: string, p: unknown[]) => Promise<{ rows: Array<Record<string, unknown>> }> };
+    const reservaA = await dbSim.query("SELECT * FROM fe_consulta_reservar_token(1, $1::integer, $2::text[])", [300, ["FE"]]) as { rows: Array<Record<string, unknown>> };
     const tokenA = String(reservaA.rows[0].o_token);
 
     m.tabla.get(DOC1)!.leaseToken = null; // lease de A vencido
@@ -449,7 +451,7 @@ export async function verificarCasosFlujoFiscalPro342(): Promise<string[]> {
     } catch (e) {
       detalleA = String((e as { detail?: string }).detail);
     }
-    const programarA = await m.db.query("SELECT fe_consulta_programar_token($1::uuid, $2::uuid, $3::timestamptz, $4::boolean, $5::uuid) AS ok", [EMPRESA, DOC1, new Date(m.reloj.t).toISOString(), true, tokenA]) as { rows: Array<{ ok: boolean }> };
+    const programarA = await dbSim.query("SELECT fe_consulta_programar_token($1::uuid, $2::uuid, $3::timestamptz, $4::boolean, $5::uuid) AS ok", [EMPRESA, DOC1, new Date(m.reloj.t).toISOString(), true, tokenA]) as { rows: Array<{ ok: boolean }> };
 
     igual("PRO342-08d instancia con token reemplazado: NEX:LEASE_OBSOLETO, no reprograma (false) y solo hay UN intento (el de la instancia vigente)", [detalleA, programarA.rows[0].ok, m.intentos.length], ["NEX:LEASE_OBSOLETO", false, 1]);
     cierto("PRO342-08e no hay un segundo planificador: un solo setInterval en lib/facturacion (consulta-automatica.ts) y el worker sigue usando la reserva con token NEX-077", (leer("lib/facturacion/consulta-automatica.ts").match(/setInterval\(/g) ?? []).length === 1 && /fe_consulta_reservar_token/.test(leer("lib/facturacion/consulta-automatica.ts")));
