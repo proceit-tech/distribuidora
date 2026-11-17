@@ -138,6 +138,28 @@ const MAX_JSON = 30_000;
 const PATRON_SECRETO = /\bBearer\s+[A-Za-z0-9._~+/=-]{8,}|\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]*/g;
 
 export const limpiarTexto = (t: string): string => t.replace(PATRON_SECRETO, "[omitido]");
+/** Copia sin el indicador «g» (test() sin estado entre llamadas). */
+const PATRON_SECRETO_UNICO = new RegExp(PATRON_SECRETO.source);
+
+/**
+ * PRO-342-R05-R01 (F003): marca técnica que se agrega a la evidencia JSON del intento cuando la API devolvió, en la ruta contractual del CDC, una credencial (ver cdcEsCredencial).
+ * No contiene el secreto. El estado informado se registra igual (el CDC no condiciona el estado): solo el CDC se trata como NO informado.
+ */
+export const ANOMALIA_CDC_CREDENCIAL = "CDC_CON_CREDENCIAL_OMITIDO";
+export const CLAVE_ANOMALIA_NEXIT = "_nexit_anomalia";
+
+/**
+ * PRO-342-R05-R01 (F003): distingue un DATO OPACO de la API de un SECRETO INEQUÍVOCO devuelto por error en la ruta del CDC. NO es una validación fiscal del CDC (no mira longitud fiscal,
+ * dígitos, composición ni posiciones): un CDC legítimo que CONTIENE una subcadena de la clave numérica o del RUC se conserva intacto. Es credencial solo si:
+ *  · es EXACTAMENTE uno de los secretos de la sesión (clave de la API o token), o
+ *  · contiene un secreto largo (≥ 16 caracteres) que no es solo dígitos (el token de sesión o una clave alfanumérica larga: su presencia no es casual), o
+ *  · tiene forma de credencial de sesión inequívoca: «Bearer <valor>» o un JWT (PATRON_SECRETO, el mismo que ya se omite en todo texto libre).
+ */
+export function cdcEsCredencial(valor: string, secretos: readonly string[]): boolean {
+  if (PATRON_SECRETO_UNICO.test(valor)) return true;
+
+  return secretos.some((s) => typeof s === "string" && s !== "" && (valor === s || (s.length >= 16 && !/^\d+$/.test(s) && valor.includes(s))));
+}
 
 // PRO-338-R03 — INVARIANTE: NEXIT NUNCA MODIFICA UN CDC. El saneamiento de secretos ya no reemplaza texto sobre el JSON serializado completo (una clave de API igual al RUC, o
 // cualquier secuencia de dígitos contenida en el CDC, convertía «01…80012345…» en «01[omitido]…» y la SQL lo anotaba CDC_DIVERGENTE). Ahora recorre la estructura y omite la clave
@@ -219,11 +241,22 @@ export function esIdentificadorFiscal(ruta: string, valor: string, contrato: Con
 const omitirEn = (texto: string, secretos: string[]) => secretos.reduce((t, s) => t.split(s).join("[omitido]"), texto);
 const unirRuta = (ruta: string, segmento: string) => (ruta === "" ? segmento : `${ruta}.${segmento}`);
 
-/** `ruta`: camino normalizado desde la raíz del resultado («» en la raíz; «[]» por cada elemento de lista). */
-function sanearValor(valor: unknown, secretos: string[], ruta: string, contrato: ContratoFiscal): unknown {
-  if (typeof valor === "string") return esIdentificadorFiscal(ruta, valor, contrato) ? valor : omitirEn(valor, secretos);
+/** PRO-342-R05-R01 (F003): la ruta contractual es la de un CDC (y no la de un lote, código o número fiscal). */
+const esRutaCdc = (ruta: string, contrato: ContratoFiscal) => Object.prototype.hasOwnProperty.call(contrato.valores, ruta) && contrato.valores[ruta] === CDC_TRANSPORTABLE;
+
+/**
+ * `ruta`: camino normalizado desde la raíz del resultado («» en la raíz; «[]» por cada elemento de lista). `credenciales`: TODOS los secretos de la sesión (también los de < 4 caracteres),
+ * solo para reconocer una credencial EXACTA en la ruta del CDC (cdcEsCredencial).
+ */
+function sanearValor(valor: unknown, secretos: string[], ruta: string, contrato: ContratoFiscal, credenciales: readonly string[]): unknown {
+  if (typeof valor === "string") {
+    // PRO-342-R05-R01 (F003): la exención de la ruta del CDC nunca conserva una credencial: se omite ENTERA (no se mutila un CDC legítimo, ver cdcEsCredencial).
+    if (esIdentificadorFiscal(ruta, valor, contrato)) return esRutaCdc(ruta, contrato) && cdcEsCredencial(valor, credenciales) ? "[omitido]" : valor;
+
+    return omitirEn(valor, secretos);
+  }
   if (typeof valor === "number") return esIdentificadorFiscal(ruta, String(valor), contrato) || !secretos.some((s) => String(valor).includes(s)) ? valor : "[omitido]";
-  if (Array.isArray(valor)) return valor.map((v) => sanearValor(v, secretos, unirRuta(ruta, "[]"), contrato));
+  if (Array.isArray(valor)) return valor.map((v) => sanearValor(v, secretos, unirRuta(ruta, "[]"), contrato, credenciales));
   if (valor && typeof valor === "object") {
     const porNumeroFiscal = contrato.listasPorNumeroFiscal.has(ruta);
 
@@ -231,7 +264,7 @@ function sanearValor(valor: unknown, secretos: string[], ruta: string, contrato:
     return Object.fromEntries(
       Object.entries(valor as Record<string, unknown>).map(([k, v]) => [
         porNumeroFiscal && NUMERO_FISCAL_CLAVE.test(k.trim()) ? k : omitirEn(k, secretos),
-        sanearValor(v, secretos, unirRuta(ruta, normalizarClave(k)), contrato),
+        sanearValor(v, secretos, unirRuta(ruta, normalizarClave(k)), contrato, credenciales),
       ]),
     );
   }
@@ -245,21 +278,30 @@ function sanearValor(valor: unknown, secretos: string[], ruta: string, contrato:
  */
 export function sinSecretos<T>(valor: T, secretos: string[], contrato: ContratoFiscal = SIN_CONTRATO): T {
   const utiles = secretos.filter((s) => s.length >= 4);
+  const credenciales = secretos.filter((s) => typeof s === "string" && s !== "");
 
-  if (utiles.length === 0) return valor;
+  // PRO-342-R05-R01 (F003): con contrato fiscal se recorre igual aunque no haya secretos «útiles», para no conservar en la ruta del CDC un Bearer/JWT o una credencial corta exacta.
+  if (utiles.length === 0 && contrato === SIN_CONTRATO) return valor;
 
-  return sanearValor(valor, utiles, "", contrato) as T;
+  return sanearValor(valor, utiles, "", contrato, credenciales) as T;
 }
 
 /**
  * PRO-338-R03: resultado OPERACIONAL de consulta/envío. Separa el dato fiscal íntegro de la evidencia saneada: todo se sanea con sinSecretos según el contrato de la operación y,
  * además, el CDC operacional (`cdc`, y `cdcInformado` en el envío) se repone EXACTAMENTE como lo interpretó la respuesta de la API (PRO-342-R05: texto literal informado o null; sin
  * validar su forma). Nada del CDC se genera, completa ni corrige aquí.
+ * PRO-342-R05-R01 (F003): si la API devolvió en la ruta del CDC una CREDENCIAL (cdcEsCredencial: la clave o el token exactos, un token largo contenido, «Bearer …» o un JWT), ese valor NO se
+ * repone: el CDC queda como NO informado (null → la SQL registra el estado informado con proyección AUSENTE y conserva el CDC anterior), la evidencia lo lleva «[omitido]» y se agrega la
+ * marca técnica ANOMALIA_CDC_CREDENCIAL (sin el secreto). El estado y el resto del resultado no cambian: el CDC no condiciona el estado.
  */
 export function resultadoFiscalSinSecretos<T extends { cdc: string | null; cdcInformado?: string | null; lote?: string | null }>(resultado: T, secretos: string[], contrato: ContratoFiscal): T {
   const saneado = sinSecretos(resultado, secretos, contrato);
-  // PRO-342-R05: el valor ya es el texto literal de la ruta contractual (cdcInformadoPorApi) o null: se repone tal cual, sin filtro de formato.
-  const intacto = (v: string | null | undefined) => (typeof v === "string" && CDC_TRANSPORTABLE.test(v) ? v : null);
+  const credenciales = secretos.filter((s) => typeof s === "string" && s !== "");
+  const esCredencial = (v: string | null | undefined) => typeof v === "string" && cdcEsCredencial(v, credenciales);
+  const conCredencial = esCredencial(resultado.cdc) || ("cdcInformado" in resultado && esCredencial(resultado.cdcInformado));
+  // PRO-342-R05: el valor ya es el texto literal de la ruta contractual (cdcInformadoPorApi) o null: se repone tal cual, sin filtro de formato (R05-R01: salvo una credencial).
+  const intacto = (v: string | null | undefined) => (typeof v === "string" && CDC_TRANSPORTABLE.test(v) && !esCredencial(v) ? v : null);
+  const conMarca = (r: unknown) => ({ ...(r && typeof r === "object" && !Array.isArray(r) ? (r as Record<string, unknown>) : {}), [CLAVE_ANOMALIA_NEXIT]: ANOMALIA_CDC_CREDENCIAL });
   // PRO-342-R01: el lote operacional (leído SOLO de la ruta contractual nro_lote por interpretarRecepcion) se repone exacto: nunca «[omitido]» en el dato que se persiste en el documento.
   const loteIntacto = (v: string | null | undefined) => (typeof v === "string" && FORMATO_LOTE.test(v) ? v : null);
 
@@ -268,6 +310,7 @@ export function resultadoFiscalSinSecretos<T extends { cdc: string | null; cdcIn
     cdc: intacto(resultado.cdc) ?? null,
     ...("cdcInformado" in resultado ? { cdcInformado: intacto(resultado.cdcInformado) ?? null } : {}),
     ...("lote" in resultado ? { lote: loteIntacto(resultado.lote) } : {}),
+    ...(conCredencial && "respuesta" in saneado ? { respuesta: conMarca((saneado as { respuesta?: unknown }).respuesta) } : {}),
   } as T;
 }
 
@@ -329,7 +372,8 @@ export type CdcInformado = { presente: boolean; valor: string | null; motivo: nu
 export function cdcInformadoPorApi(v: unknown): CdcInformado {
   if (v === undefined || v === null || v === "") return { presente: false, valor: null, motivo: null };
   if (typeof v !== "string") return { presente: true, valor: null, motivo: "NO_TEXTO" };
-  if (v.length > MAX_CDC) return { presente: true, valor: null, motivo: "EXCEDE_LIMITE" };
+  // PRO-342-R05-R01: el límite se cuenta en caracteres (puntos de código), igual que CDC_TRANSPORTABLE (/u) en la evidencia y char_length en la SQL; no en unidades UTF-16 de .length.
+  if (Array.from(v).length > MAX_CDC) return { presente: true, valor: null, motivo: "EXCEDE_LIMITE" };
   if (v.includes("\u0000")) return { presente: true, valor: null, motivo: "CARACTER_NUL" };
 
   return { presente: true, valor: v, motivo: null };
@@ -337,28 +381,78 @@ export function cdcInformadoPorApi(v: unknown): CdcInformado {
 const registro = (v: unknown): Record<string, unknown> | null => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null);
 
 /**
- * PRO-342-R05: eco EXPLÍCITO de identidad en la respuesta de consulta. El contrato documentado no trae eco (la correlación es la solicitud: cuenta autenticada + tipoDoc/dEst/dPunExp/
- * dNumDoc/dSerieNum); pero SI la respuesta trae alguno de esos campos (en response o en response.DE) como texto y contradice lo solicitado, la respuesta no es de este documento.
- * Independiente del CDC. Devuelve el nombre del campo contradictorio o null.
+ * PRO-342-R05-R01 (F001): identidad COMPLETA del documento solicitado (establecimiento, punto de expedición, número, serie y tipo documental), contra la que se comparan los ecos EXPLÍCITOS de
+ * la respuesta. El CDC NO forma parte de la identidad. `serie`: null = sin serie; undefined = desconocida (un eco de serie no se puede comparar). `tipoDoc`: valor contractual del tipo
+ * (tipoDocConsulta: «FE»/«NCE»), null si el tipo no tiene valor contractual.
  */
-export function ecoIdentidadContradice(respuesta: Record<string, unknown>, doc: DocumentoConsulta | undefined): string | null {
-  if (!doc) return null;
+export type IdentidadDocumento = { establecimiento: string; puntoExpedicion: string; numero: string; serie?: string | null; tipoDoc: string | null };
+export type ClaseEco = "COINCIDE" | "CONTRADICE" | "NO_INTERPRETABLE";
+export type EcoIdentidad = { campo: string; clase: Exclude<ClaseEco, "COINCIDE"> };
 
-  const esperado: Record<string, string | null> = { dest: doc.establecimiento, dpunexp: doc.puntoExpedicion, dnumdoc: doc.numero, dserienum: doc.serie, tipodoc: tipoDocConsulta(doc.tipo) };
-  const de = registro(respuesta.DE);
+const CAMPOS_ECO_IDENTIDAD = new Set(["dest", "dpunexp", "dnumdoc", "dserienum", "tipodoc"]);
 
-  for (const nivel of [respuesta, de]) {
+/**
+ * Clasifica UN eco explícito, sin normalizar ni inventar equivalencias (los identificadores y la serie se comparan literalmente; tipoDoc sin distinguir mayúsculas, como el contrato «FE»/«fe»):
+ *  · null en establecimiento/punto/número/tipo = AUSENCIA (no es contradicción); en la serie, null es el valor «sin serie» que la solicitud envía (dSerieNum: null) y se compara.
+ *  · Texto: COINCIDE o CONTRADICE. Texto vacío, número, booleano, objeto o lista (tipos que el contrato no usa para estos campos), o una serie/tipo que no se conoce: NO_INTERPRETABLE
+ *    (no se usa para confirmar la identidad y tampoco se ignora). Devuelve null para la ausencia.
+ */
+function claseEco(clave: string, v: unknown, id: IdentidadDocumento): ClaseEco | null {
+  if (v === undefined) return null;
+  if (clave === "dserienum") {
+    if (id.serie === undefined) return "NO_INTERPRETABLE";
+    if (v === null) return id.serie === null ? "COINCIDE" : "CONTRADICE";
+    if (typeof v !== "string" || v === "") return "NO_INTERPRETABLE";
+
+    return v === id.serie ? "COINCIDE" : "CONTRADICE";
+  }
+  if (v === null) return null;
+  if (typeof v !== "string" || v === "") return "NO_INTERPRETABLE";
+  if (clave === "tipodoc") return id.tipoDoc === null ? "NO_INTERPRETABLE" : v.toUpperCase() === id.tipoDoc.toUpperCase() ? "COINCIDE" : "CONTRADICE";
+
+  return v === (clave === "dest" ? id.establecimiento : clave === "dpunexp" ? id.puntoExpedicion : id.numero) ? "COINCIDE" : "CONTRADICE";
+}
+
+/** Todos los ecos explícitos de identidad presentes en los `niveles` (objetos de la respuesta), con su clase. Recorre TODAS las claves (también variantes de mayúsculas repetidas). */
+export function ecosIdentidad(niveles: ReadonlyArray<Record<string, unknown> | null>, id: IdentidadDocumento): Array<{ campo: string; clave: string; clase: ClaseEco }> {
+  const salida: Array<{ campo: string; clave: string; clase: ClaseEco }> = [];
+
+  for (const nivel of niveles) {
     if (!nivel) continue;
     for (const [k, v] of Object.entries(nivel)) {
       const clave = normalizarClave(k);
+      const clase = CAMPOS_ECO_IDENTIDAD.has(clave) ? claseEco(clave, v, id) : null;
 
-      if (!(clave in esperado) || typeof v !== "string" || v === "") continue;
-      // tipoDoc: se compara sin distinguir mayúsculas («FE»/«fe»); los identificadores numéricos y la serie, literalmente.
-      if (clave === "tipodoc" ? v.toUpperCase() !== String(esperado.tipodoc ?? "").toUpperCase() : v !== esperado[clave]) return k;
+      if (clase !== null) salida.push({ campo: k, clave, clase });
     }
   }
 
-  return null;
+  return salida;
+}
+
+/** Primer eco que impide atribuir la respuesta al documento: una CONTRADICCIÓN (prioritaria) o un eco NO_INTERPRETABLE; null si todos los ecos presentes coinciden o no hay ecos. */
+export function ecoIdentidadProblema(ecos: ReadonlyArray<{ campo: string; clase: ClaseEco }>): EcoIdentidad | null {
+  const c = ecos.find((e) => e.clase === "CONTRADICE") ?? ecos.find((e) => e.clase === "NO_INTERPRETABLE");
+
+  return c ? { campo: c.campo, clase: c.clase as EcoIdentidad["clase"] } : null;
+}
+
+const identidadConsulta = (doc: DocumentoConsulta): IdentidadDocumento => ({ establecimiento: doc.establecimiento, puntoExpedicion: doc.puntoExpedicion, numero: doc.numero, serie: doc.serie, tipoDoc: tipoDocConsulta(doc.tipo) });
+
+/**
+ * PRO-342-R05: eco EXPLÍCITO de identidad en la respuesta de consulta. El contrato documentado no trae eco (la correlación es la solicitud: cuenta autenticada + tipoDoc/dEst/dPunExp/
+ * dNumDoc/dSerieNum); pero SI la respuesta trae alguno de esos campos (en response o en response.DE) y contradice lo solicitado, la respuesta no es de este documento.
+ * PRO-342-R05-R01 (F001): también un eco explícito NO interpretable (vacío, número, booleano, objeto…) impide atribuirla: ya no se ignora. Independiente del CDC.
+ * Devuelve el nombre del campo o null (ver ecoIdentidadConsulta para la clase).
+ */
+export function ecoIdentidadContradice(respuesta: Record<string, unknown>, doc: DocumentoConsulta | undefined): string | null {
+  return ecoIdentidadConsulta(respuesta, doc)?.campo ?? null;
+}
+
+export function ecoIdentidadConsulta(respuesta: Record<string, unknown>, doc: DocumentoConsulta | undefined): EcoIdentidad | null {
+  if (!doc) return null;
+
+  return ecoIdentidadProblema(ecosIdentidad([respuesta, registro(respuesta.DE)], identidadConsulta(doc)));
 }
 
 /**
@@ -398,10 +492,14 @@ export function interpretarConsulta(http: number, cuerpoTexto: string, doc?: Doc
   // PRO-342-R05: ÚNICA ruta contractual del CDC en la consulta = response.DE.CDC; se toma literal (dato opaco). No se busca en otras rutas.
   const cdc = cdcInformadoPorApi(de?.CDC).valor;
   const estadoSifen = estadoSifenDesdeGateway(estado);
-  const ecoAjeno = ecoIdentidadContradice(respuesta, doc);
+  const ecoAjeno = ecoIdentidadConsulta(respuesta, doc);
 
   if (ecoAjeno !== null) {
-    return { ...vacio("RESPUESTA_INVALIDA", http, `La respuesta del gateway identifica otro documento (campo «${ecoAjeno}» distinto del solicitado): no se registra como resultado fiscal de este documento.`), estadoGateway: estado, respuesta: guardada };
+    const motivo = ecoAjeno.clase === "CONTRADICE"
+      ? `La respuesta del gateway identifica otro documento (campo «${ecoAjeno.campo}» distinto del solicitado): no se registra como resultado fiscal de este documento.`
+      : `La respuesta del gateway trae un identificador del documento (campo «${ecoAjeno.campo}») que no se puede comparar con el solicitado: no se registra como resultado fiscal de este documento.`;
+
+    return { ...vacio("RESPUESTA_INVALIDA", http, motivo), estadoGateway: estado, respuesta: guardada };
   }
 
   return {
@@ -596,7 +694,19 @@ export type EstadoLocalEnvio = "ENVIADO" | "ERROR_ENVIO" | "ENVIO_INDETERMINADO"
 /** Causa de un ERROR_ENVIO: define si el reenvío es seguro (AUTENTICACION/TRANSITORIO) o exige confirmación explícita (RECHAZO). */
 export type ErrorTipoEnvio = "AUTENTICACION" | "RECHAZO" | "TRANSITORIO";
 export type FaseEnvio = { fase: "AUTENTICACION" | "TRANSMISION" | "RESPUESTA"; ok: boolean; detalle: string; http?: number | null };
-export type DocumentoRecepcion = { tipo: string; establecimiento: string; puntoExpedicion: string; numero: string };
+/**
+ * PRO-342-R05-R01 (F001): `serie` = dSerieNum del payload PERSISTIDO que se transmite (null = sin serie; ausente = desconocida). Solo se usa para comparar un eco explícito de serie.
+ */
+export type DocumentoRecepcion = { tipo: string; establecimiento: string; puntoExpedicion: string; numero: string; serie?: string | null };
+
+/** dSerieNum del payload persistido que se transmite (texto o null); undefined si el payload no lo trae o trae otro tipo (no se inventa una serie). */
+export function seriePayload(payload: Record<string, unknown> | null | undefined): string | null | undefined {
+  if (!payload || !Object.prototype.hasOwnProperty.call(payload, "dSerieNum")) return undefined;
+
+  const s = payload.dSerieNum;
+
+  return s === null ? null : typeof s === "string" ? s : undefined;
+}
 
 export type ResultadoEnvio = {
   resultado: "OK" | "ERROR_HTTP" | "TIMEOUT" | "RED" | "RESPUESTA_INVALIDA";
@@ -823,11 +933,18 @@ export function interpretarRecepcion(http: number, cuerpoTexto: string, fases: F
       return duplicado ? indeterminado(mensaje ?? "El gateway informó un error de duplicidad.", "ERROR_HTTP") : base("ERROR_HTTP", "ERROR_ENVIO", "RECHAZO", mensaje ?? "El gateway informó un error.");
     }
     if (raiz.status === "success") {
-      const eco = { est: comoTexto(enRaiz(raiz, "dest"), 10), pun: comoTexto(enRaiz(raiz, "dpunexp"), 10), num: comoTexto(enRaiz(raiz, "dnumdoc"), 10) };
-      const hayEco = eco.est !== null || eco.pun !== null || eco.num !== null;
-      const ecoOk = doc !== undefined && eco.est === doc.establecimiento && eco.pun === doc.puntoExpedicion && eco.num === doc.numero;
+      // PRO-342-R05-R01 (F001): ecos EXPLÍCITOS de la raíz (ruta del contrato) contra la identidad COMPLETA enviada: establecimiento, punto, número, serie (dSerieNum del payload) y tipo.
+      // Ningún eco presente puede contradecir ni ser no interpretable (texto vacío, número, booleano…: sin normalizar). La AUSENCIA de un eco no es contradicción: success + nro_lote
+      // sigue confirmando sin ecos; la confirmación por eco (sin lote) sigue exigiendo establecimiento, punto y número coincidentes (no se exigen ecos nuevos al proveedor).
+      const ecos = doc ? ecosIdentidad([raiz], { establecimiento: doc.establecimiento, puntoExpedicion: doc.puntoExpedicion, numero: doc.numero, serie: doc.serie, tipoDoc: tipoDocConsulta(doc.tipo) }) : [];
+      const problema = ecoIdentidadProblema(ecos);
+      const coincide = (clave: string) => ecos.some((e) => e.clave === clave && e.clase === "COINCIDE");
+      const hayEco = ecos.some((e) => e.clave === "dest" || e.clave === "dpunexp" || e.clave === "dnumdoc");
+      const ecoOk = doc !== undefined && problema === null && coincide("dest") && coincide("dpunexp") && coincide("dnumdoc");
 
       // PRO-342-R05: el CDC del ACK no confirma ni descarta la recepción (sin cdcCoherente). La identidad la dan el lote del contrato o el eco del número.
+      if (doc && problema?.clase === "CONTRADICE") return indeterminado(`El gateway devolvió un identificador del documento (campo «${problema.campo}») distinto del enviado: no se confirma la recepción; verifique en el gateway antes de reenviar.`);
+      if (doc && problema) return indeterminado(`El gateway devolvió un identificador del documento (campo «${problema.campo}») que no se puede comparar con el enviado: no se confirma la recepción; verifique en el gateway antes de reenviar.`);
       if (doc && hayEco && !ecoOk) return indeterminado("El número de documento devuelto por el gateway no coincide con el enviado: verifique en el gateway antes de reenviar.");
       const ajenos = aceptados.filter((e) => /^\d{3}-\d{3}-\d{7}$/.test(e.numero));
 

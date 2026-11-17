@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import type { Pool } from "pg";
 
 import { ESTADOS_EMAIL, ESTADOS_LOCAL, ESTADOS_LOCAL_TRANSMITIDO, ESTADOS_SIFEN, ESTADOS_SIFEN_SIN_FINAL, GRUPOS_INDICADOR, TIPOS_DOCUMENTO, UMBRAL_REVISION_HORAS, type GrupoIndicador } from "@/lib/facturacion/estados";
-import { configGatewayValida, consultarDocumentoGateway, continuidadConexion, obtenerKudeGateway, referenciaConexion, type ConfigGateway, type ContinuidadConexion, type CorrespondenciaKude, type Dependencias, type DependenciasKude } from "@/lib/facturacion/gateway";
+import { ANOMALIA_CDC_CREDENCIAL, CLAVE_ANOMALIA_NEXIT, configGatewayValida, consultarDocumentoGateway, continuidadConexion, obtenerKudeGateway, referenciaConexion, type ConfigGateway, type ContinuidadConexion, type CorrespondenciaKude, type Dependencias, type DependenciasKude } from "@/lib/facturacion/gateway";
 import { adjuntarCredencialesDeBase } from "@/lib/facturacion/gateway-credenciales";
 import { decidirConsulta } from "@/lib/facturacion/reconciliacion";
 
@@ -344,8 +344,10 @@ function fechaCursorValida(texto: string): boolean {
  * PRO-338-R02 (AUD-R01 F003): las consultas registradas por NEX-054 / flujo NCE no guardan cdc_informado; el CDC que informó el gateway sigue en el JSON de respuesta saneado (DE.CDC). Se expone APARTE
  * (`cdcRespuesta`, solo lectura) y únicamente cuando la columna está vacía, para que la pantalla indique su fuente y no lo presente como la columna estructurada.
  * PRO-342-R05: cualquier texto no vacío (dato opaco, sin exigir 44 dígitos); un valor JSON no textual no se convierte.
+ * PRO-342-R05-R01 (F003): si la evidencia lleva la marca de credencial omitida, ese «[omitido]» NO se presenta como CDC informado.
  */
-const CDC_EN_RESPUESTA = `CASE WHEN i.cdc_informado IS NULL AND i.tipo = 'CONSULTA' AND jsonb_typeof(i.respuesta #> '{response,DE,CDC}') = 'string' AND (i.respuesta #>> '{response,DE,CDC}') <> '' THEN i.respuesta #>> '{response,DE,CDC}' END`;
+const CDC_EN_RESPUESTA = `CASE WHEN i.cdc_informado IS NULL AND i.tipo = 'CONSULTA' AND jsonb_typeof(i.respuesta #> '{response,DE,CDC}') = 'string' AND (i.respuesta #>> '{response,DE,CDC}') <> ''
+  AND (i.respuesta ->> '${CLAVE_ANOMALIA_NEXIT}') IS DISTINCT FROM '${ANOMALIA_CDC_CREDENCIAL}' THEN i.respuesta #>> '{response,DE,CDC}' END`;
 
 /** PRO-342-R05: traza de la proyección del CDC en el documento (NEX-080). Por to_jsonb(i) para no fallar en la lectura si NEX-080 aún no está aplicada (quedan null). */
 const PROYECCION_CDC = `(to_jsonb(i) ->> 'cdc_proyeccion') AS "cdcProyeccion", (to_jsonb(i) ->> 'cdc_anterior') AS "cdcAnterior"`;

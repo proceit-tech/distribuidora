@@ -3,7 +3,7 @@ import type { Pool } from "pg";
 import { guardarClasificacionIva, type ClasificacionGuardar, type ResultadoGuardado } from "@/lib/facturacion/ajuste-fiscal";
 import { crearFacturaElectronica, type CuerpoFactura } from "@/lib/facturacion/emision";
 import { adjuntarCredencialesDeBase, hayCredencialesEnBase, REF_CREDENCIALES_BASE } from "@/lib/facturacion/gateway-credenciales";
-import { configGatewayValida, credencialesDe, enviarDocumentoGateway, leerCredenciales, referenciaConexion, type ConfigGateway, type Dependencias, type FaseEnvio, type ReferenciaConexion, type ResultadoEnvio } from "@/lib/facturacion/gateway";
+import { configGatewayValida, credencialesDe, enviarDocumentoGateway, leerCredenciales, referenciaConexion, seriePayload, type ConfigGateway, type Dependencias, type FaseEnvio, type ReferenciaConexion, type ResultadoEnvio } from "@/lib/facturacion/gateway";
 import { MENSAJES_GATEWAY, type EstadoGateway, type EstadoGatewayUI } from "@/lib/facturacion/gateway-estado";
 import { ErrorFacturacion, exigirNex080, registrarR05, SQL_CONFIG_GATEWAY } from "@/lib/facturacion/shared";
 
@@ -187,7 +187,8 @@ export async function enviarDocumento(db: Db, empresaId: string, usuarioId: stri
   let r: ResultadoEnvio;
 
   try {
-    const enviado = await enviarDocumentoGateway(config, fila.payload as Record<string, unknown>, { tipo: String(fila.tipo), establecimiento: String(fila.establecimiento), puntoExpedicion: String(fila.punto), numero }, dep);
+    // PRO-342-R05-R01 (F001): identidad completa del documento transmitido; la serie sale del MISMO payload persistido que se envía (dSerieNum), nunca de otra numeración ni del cliente.
+    const enviado = await enviarDocumentoGateway(config, fila.payload as Record<string, unknown>, { tipo: String(fila.tipo), establecimiento: String(fila.establecimiento), puntoExpedicion: String(fila.punto), numero, serie: seriePayload(fila.payload as Record<string, unknown>) }, dep);
 
     if ("sinContrato" in enviado) throw new Error("sin credenciales");
     r = enviado;

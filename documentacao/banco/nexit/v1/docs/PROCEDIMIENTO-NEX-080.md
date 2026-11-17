@@ -22,6 +22,8 @@ Regla definitiva del responsable: **NEXIT NO valida el CDC**. El CDC lo genera e
 2. **Preflight**: `scripts/preflight-NEX-080.sql`. Es de solo lectura (`BEGIN READ ONLY … ROLLBACK`). Cualquier fila con `ok = false` significa NO APLICAR hasta conciliar.
 3. **Aplicar** `migraciones/NEX-080-facturacion-cdc-dato-api.sql` en una transacción, en una ventana sin emisiones ni consultas en curso. Si hay error, se hace ROLLBACK y no se aplica parcialmente.
 4. **Verificar**: `scripts/verificar-NEX-080.sql`, también de solo lectura. Debe dar todas las filas `ok = true`, incluido «ningún intento existente modificado».
+   - PRO-342-R05-R01 (F002): las filas que revisan el código de las funciones inspeccionan solo el código **ejecutable** (`prosrc` sin comentarios; para las llamadas, también sin literales). Un comentario que nombra `fe_cdc_coherente` ya no da falso negativo.
+   - Las primeras filas («detector: …») prueban el propio limpiado con textos de muestra. Si alguna da `false`, la verificación no vale: no desplegar y avisar.
 5. **Desplegar la aplicación R05**, solo después del paso 4.
    - La app R05 exige las 4 funciones `*_r05` en el catálogo (`exigirNex080`).
    - Sin NEX-080, la app R05 **falla cerrada con 503 antes de llamar al gateway**: no envía, no consulta y no consume numeración. El worker cuenta esos casos como «limitados» y los reprograma.
@@ -52,6 +54,8 @@ Antes de revertir hay que volver a desplegar la app anterior a R05.
 
 - No se ejecutó en PostgreSQL. Los casos R05 son textuales y simulados, y no se ejecutaron.
 - No se conocen el esquema real de la VM ni el estado aplicado de NEX-077/078/079. El preflight lo verifica antes de aplicar.
-- Hay dos dependencias del proveedor que NEXIT no puede comprobar:
+- Hay dependencias del proveedor que NEXIT no puede comprobar:
   - cambios de CDC para un mismo documento;
-  - titularidad del PDF del KuDE.
+  - titularidad del PDF del KuDE (cuenta, identidad y serie en el retorno);
+  - PRO-342-R05-R01 (F001): qué ecos de identidad devuelven `recepcion_de` y `consulta_de` y con qué tipo JSON. NEXIT compara los que vengan (establecimiento, punto, número, serie y tipo) sin normalizar; un eco vacío o no textual impide confirmar. Si el proveedor devolviera, por ejemplo, el número como número JSON, las respuestas quedarían indeterminadas o inválidas hasta confirmar el contrato. No se exigen ecos nuevos: la ausencia de eco no bloquea;
+  - PRO-342-R05-R01 (F003): una respuesta que trae en el campo del CDC la clave, el token, «Bearer …» o un JWT se trata como CDC no informado, con la marca técnica `_nexit_anomalia = CDC_CON_CREDENCIAL_OMITIDO` en la evidencia y sin el secreto. El estado informado se registra igual. Conviene reportarlo al proveedor si aparece.
