@@ -7,8 +7,8 @@ import ui from "@/components/ui/lista-padrao/lista.module.css";
 import { formatearDecimalTexto } from "@/lib/formato/decimal-texto";
 import { formatearFechaPy } from "@/lib/formato/listas";
 import {
-  compararDecimal, consultaBajas, crearContextoBajas, puedeIntentarConfirmar, rangoPaginaBajas, TAMANOS_PAGINA_BAJAS,
-  type BajaPendiente, type CatalogoFiltrosBajas, type TicketBajas,
+  compararDecimal, consultaBajas, crearContextoBajas, puedeIntentarConfirmar, rangoPaginaBajas, resultadoConfirmacion, TAMANOS_PAGINA_BAJAS,
+  type BajaPendiente, type CatalogoFiltrosBajas, type ResultadoConfirmacion, type TicketBajas,
 } from "@/lib/stock/bajas-pendientes";
 
 type Respuesta = {
@@ -28,6 +28,8 @@ const CATALOGO_VACIO: CatalogoFiltrosBajas = { sucursales: [], depositos: [] };
  * Confirmar es manual: la base verifica de nuevo saldo real suficiente, estado de la FE, unidad, sucursal, depósito, lotes, permiso y alcance.
  * R01/F002: paginado con total, filtros de sucursal y depósito desde un catálogo propio, referencia fiscal con serie.
  * R01/F003: la generación de contexto cambia en cuanto cambian los filtros; las filas de otro contexto no se muestran ni se accionan; tras confirmar se relee con los filtros vigentes.
+ * R02-R02/F003-R: el error de CARGA del listado y el resultado de una CONFIRMACIÓN son estados distintos. Una lectura exitosa solo limpia el error de carga;
+ * el resultado de la confirmación (identificado por la factura) se conserva hasta «Cerrar» o hasta iniciar otra confirmación.
  */
 export default function BajasPendientesPage() {
   const [estado, setEstado] = useState<EstadoFiltro>("PENDIENTE");
@@ -38,8 +40,8 @@ export default function BajasPendientesPage() {
   const [porPagina, setPorPagina] = useState<number>(TAMANOS_PAGINA_BAJAS[0]);
   const [datos, setDatos] = useState<Datos | null>(null);
   const [catalogo, setCatalogo] = useState<CatalogoFiltrosBajas>(CATALOGO_VACIO);
-  const [error, setError] = useState("");
-  const [aviso, setAviso] = useState("");
+  const [errorListado, setErrorListado] = useState("");
+  const [resultado, setResultado] = useState<ResultadoConfirmacion | null>(null);
   const [cargando, setCargando] = useState(true);
   const [confirmando, setConfirmando] = useState<string | null>(null);
   const contexto = useRef(crearContextoBajas());
@@ -62,11 +64,12 @@ export default function BajasPendientesPage() {
       }
       setDatos({ ...j, clave: ticket.clave });
       setCatalogo(j.filtros ?? CATALOGO_VACIO);
-      setError("");
+      // Solo el error de CARGA; el resultado de una confirmación no se toca.
+      setErrorListado("");
     } catch (e) {
       if (!contexto.current.vigente(ticket)) return;
       setDatos(null);
-      setError(e instanceof Error ? e.message : "No fue posible cargar las bajas pendientes.");
+      setErrorListado(e instanceof Error ? e.message : "No fue posible cargar las bajas pendientes.");
     } finally {
       if (contexto.current.vigente(ticket)) setCargando(false);
     }
@@ -89,7 +92,7 @@ export default function BajasPendientesPage() {
   function cambiarFiltro(aplicar: () => void) {
     aplicar();
     setPagina(1);
-    setAviso("");
+    // R02-R02/F003-R: cambiar filtros NO borra el resultado de una confirmación (está identificado por su factura).
   }
 
   async function confirmar(b: BajaPendiente) {
@@ -97,16 +100,15 @@ export default function BajasPendientesPage() {
     if (confirmando || !vigentes || cargando) return;
     if (!window.confirm(`¿Confirmar la baja de ${fd(b.pendienteActual)} ${b.unidad} de ${b.productoCodigo} en ${b.depositoCodigo} ${b.depositoNombre} (factura ${b.documento})? Se registrará una salida de stock.`)) return;
     setConfirmando(b.id);
-    setAviso("");
-    setError("");
+    // Iniciar otra confirmación reemplaza el resultado anterior (el error de carga del listado no se toca).
+    setResultado(null);
     try {
       const r = await fetch(`/api/stock/bajas-pendientes/${b.id}/confirmar`, { method: "POST" });
       const j = (await r.json().catch(() => ({}))) as { numero?: string; repetido?: boolean; error?: string };
 
-      if (!r.ok) throw new Error(j.error ?? "No fue posible confirmar la baja pendiente.");
-      setAviso(j.repetido ? `La baja de la factura ${b.documento} ya estaba confirmada (movimiento ${j.numero}).` : `Baja de la factura ${b.documento} confirmada: movimiento ${j.numero}.`);
+      setResultado(resultadoConfirmacion(b, r.ok, j));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "No fue posible confirmar la baja pendiente.");
+      setResultado(resultadoConfirmacion(b, false, { error: e instanceof Error ? e.message : undefined }));
     } finally {
       setConfirmando(null);
       // Relectura con los filtros VIGENTES (los de la ref de contexto), no con los del render en que se pulsó el botón.
@@ -138,8 +140,13 @@ export default function BajasPendientesPage() {
         El saldo proyectado es informativo: un valor negativo no es stock físico ni contable.
       </p>
 
-      {error ? <p className={ui.alertError} role="alert" style={{ margin: "0 0 8px" }}>{error}</p> : null}
-      {aviso ? <p className={ui.resultCount} role="status" style={{ margin: "0 0 8px" }}>{aviso}</p> : null}
+      {resultado ? (
+        <div className={resultado.tipo === "ERROR" ? ui.alertError : ui.resultCount} role={resultado.tipo === "ERROR" ? "alert" : "status"} style={{ margin: "0 0 8px", display: "flex", gap: 8, alignItems: "center" }}>
+          <span style={{ flex: 1 }}>{resultado.texto}</span>
+          <button type="button" className={ui.secondaryButton} onClick={() => setResultado(null)} aria-label={`Cerrar el resultado de la factura ${resultado.documento}`}>Cerrar</button>
+        </div>
+      ) : null}
+      {errorListado ? <p className={ui.alertError} role="alert" style={{ margin: "0 0 8px" }}>{errorListado}</p> : null}
 
       <section className={ui.contentCard}>
         <div className={[ui.toolbar, ui.toolbarDensa].join(" ")}>

@@ -184,6 +184,26 @@ export function compararDecimal(a: string, b: string): number {
 }
 
 /* ---------------------------------------------------------------------------------------------------------------------------------
+ * R02-R02/F003-R — Resultado de una CONFIRMACIÓN, separado de los errores de CARGA del listado.
+ * · Pertenece a la baja/factura confirmada (no a la consulta): se muestra identificado por la factura aunque los filtros hayan cambiado mientras
+ *   el POST estaba en curso (la confirmación sí cambió el stock y el operador debe saberlo).
+ * · Una lectura exitosa del listado NO lo borra (solo limpia el error de carga). Se reemplaza al iniciar otra confirmación y se descarta solo
+ *   con la acción explícita «Cerrar». Cambiar filtros o página no lo borra.
+ * ------------------------------------------------------------------------------------------------------------------------------- */
+export type ResultadoConfirmacion = { tipo: "OK" | "ERROR"; bajaId: string; documento: string; texto: string };
+
+export function resultadoConfirmacion(
+  b: { id: string; documento: string }, ok: boolean, j: { numero?: string; repetido?: boolean; error?: string },
+): ResultadoConfirmacion {
+  if (!ok) return { tipo: "ERROR", bajaId: b.id, documento: b.documento, texto: `Factura ${b.documento}: no se confirmó la baja. ${j.error ?? "No fue posible confirmar la baja pendiente."}` };
+
+  return {
+    tipo: "OK", bajaId: b.id, documento: b.documento,
+    texto: j.repetido ? `Factura ${b.documento}: la baja ya estaba confirmada (movimiento ${j.numero ?? "—"}).` : `Factura ${b.documento}: baja confirmada, movimiento ${j.numero ?? "—"}.`,
+  };
+}
+
+/* ---------------------------------------------------------------------------------------------------------------------------------
  * R01/F003 — Contexto vigente de la vista. Toda respuesta pertenece a una CONSULTA (filtros + página) y a una GENERACIÓN.
  * La generación sube EN EL MISMO MOMENTO en que cambia la consulta (no al lanzar la lectura después del retardo de la búsqueda), y también
  * para la relectura posterior a una confirmación. Solo se aplica la respuesta de la generación y consulta vigentes; las filas de otra

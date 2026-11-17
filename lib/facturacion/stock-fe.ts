@@ -16,7 +16,8 @@ import { B, parseDec, textoDec, type Dec } from "@/lib/facturacion/calculo";
 type Db = Pick<Pool, "query">;
 type F = Record<string, unknown>;
 
-export type LineaStock = { productoId: string; codigo: string; descripcion: string; cantidad: string; controlaStock: boolean };
+/** `unidadId` (PRO-354-R02-R02): UUID de la unidad BASE del producto leída al preparar la factura (no el código SIFEN). Solo la usa el faltante pendiente; el reparto y la huella de siempre no cambian. */
+export type LineaStock = { productoId: string; codigo: string; descripcion: string; cantidad: string; controlaStock: boolean; unidadId?: string | null };
 export type SaldoDisponible = { productoId: string; depositoId: string; depositoCodigo: string; depositoNombre: string; loteId: string | null; loteCodigo: string | null; vencimiento: string | null; disponible: string };
 export type SalidaStock = { productoId: string; depositoId: string; depositoCodigo: string; depositoNombre: string; loteId: string | null; loteCodigo: string | null; cantidad: string };
 export type LineaPlan = { productoId: string; codigo: string; descripcion: string; requerido: string; disponible: string; faltante: string | null; salidas: SalidaStock[] };

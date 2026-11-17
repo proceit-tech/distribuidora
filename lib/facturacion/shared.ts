@@ -574,6 +574,8 @@ export function respuestaErrorFacturacion(error: unknown, accion: string) {
   if (pg.detail === "NEX:STOCK_INSUFICIENTE") return NextResponse.json({ error: `${pg.message ?? "Stock insuficiente."}. Revise la factura de nuevo.` }, { status: 409 });
   // PRO-354-R02 (NEX-081): política de stock insuficiente por empresa y bajas pendientes.
   if (pg.detail === "NEX:STOCK_POLITICA_CAMBIO") return NextResponse.json({ error: "La política de stock insuficiente de la empresa cambió desde la revisión. Revise la factura de nuevo." }, { status: 409 });
+  // R02-R02: la unidad base cambió entre la revisión y la emisión (comparada bajo bloqueo antes de numerar).
+  if (pg.detail === "NEX:STOCK_PENDIENTE_UNIDAD_CAMBIO") return NextResponse.json({ error: pg.message ?? "La unidad base de un producto cambió desde la revisión. Revise la factura de nuevo." }, { status: 409 });
   if (pg.detail && /^NEX:(STOCK_PENDIENTE_LOTE|STOCK_PENDIENTE_CON_DISPONIBLE|PENDIENTE_FE_NO_CONFIRMABLE|POLITICA_STOCK_INVALIDA)$/.test(pg.detail)) {
     return NextResponse.json({ error: pg.message ?? "La operación de stock no cumple las reglas vigentes." }, { status: 409 });
   }

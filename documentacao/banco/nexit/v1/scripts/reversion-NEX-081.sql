@@ -171,6 +171,7 @@ END $$;
 REVOKE ALL ON FUNCTION public.fe_stock_baja_documento(uuid, uuid, uuid, jsonb) FROM PUBLIC;
 DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'nexit_runtime') THEN REVOKE ALL ON FUNCTION public.fe_stock_baja_documento(uuid, uuid, uuid, jsonb) FROM nexit_runtime; END IF; END $$;
 
+-- R02-R02: sin objetos nuevos (mismas firmas; deposito_en_alcance es de NEX-046 y NO se quita).
 -- R01/F001: guardas de integridad sobre productos y depósitos (no se toca ningún otro trigger de esas tablas).
 DROP TRIGGER fe_stock_pendientes_producto_guarda_trg ON public.productos;
 DROP FUNCTION public.fe_stock_pendientes_producto_guarda();

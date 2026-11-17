@@ -21,7 +21,7 @@ import { asignacionesSql, asignarStock, mensajeStockInsuficiente, type LineaStoc
 import { eleccionesVigentes, respuestaCoherente, textoFaltantePendiente, vistaStock, type EstadoVerificacion } from "@/lib/facturacion/stock-preventivo";
 import {
   compararDecimal, consultaBajas, crearContextoBajas, errorBajaPendiente, filaBajaPendiente, leerFiltrosBajas, listarBajasPendientes, listarFiltrosBajas, puedeIntentarConfirmar,
-  rangoPaginaBajas, SinNex081Error, type BajaPendiente,
+  rangoPaginaBajas, resultadoConfirmacion, SinNex081Error, type BajaPendiente,
 } from "@/lib/stock/bajas-pendientes";
 
 const leer = (r: string) => readFileSync(join(process.cwd(), r), "utf8");
@@ -36,8 +36,10 @@ const P2 = "66666666-0000-4000-8000-0000000003a6";
 const SERV = "77777777-0000-4000-8000-0000000003a7";
 const D1 = "d1d1d1d1-0000-4000-8000-0000000003a8";
 const D2 = "d2d2d2d2-0000-4000-8000-0000000003a9";
+const U1 = "a1a1a1a1-0000-4000-8000-0000000003c1"; // unidad base sintética (UNI)
+const U2 = "a2a2a2a2-0000-4000-8000-0000000003c2"; // unidad base sintética (CAJA), misma equivalencia SIFEN posible
 
-const linea = (productoId: string, cantidad: string, controlaStock = true): LineaStock => ({ productoId, codigo: `C-${productoId.slice(0, 4)}`, descripcion: `Producto ${productoId.slice(0, 4)}`, cantidad, controlaStock });
+const linea = (productoId: string, cantidad: string, controlaStock = true, unidadId: string | null = U1): LineaStock => ({ productoId, codigo: `C-${productoId.slice(0, 4)}`, descripcion: `Producto ${productoId.slice(0, 4)}`, cantidad, controlaStock, unidadId });
 const saldo = (productoId: string, depositoId: string, disponible: string, loteId: string | null = null): SaldoDisponible => ({
   productoId, depositoId, depositoCodigo: depositoId === D1 ? "D01" : "D02", depositoNombre: depositoId === D1 ? "Central" : "Anexo", loteId, loteCodigo: loteId ? "L1" : null, vencimiento: null, disponible,
 });
@@ -119,12 +121,12 @@ export async function verificarCasosPoliticaStockPro354(): Promise<string[]> {
   {
     const p = aplicarPolitica([linea(P1, "15")], [saldo(P1, D1, "10")], permite());
 
-    igual("PRO354-05 FALSE 10/15: salida inmediata 10 y pendiente 5 en el depósito elegible; emitible", [p.emitible, asignacionesSql(p), pendientesSql(p)], [true, [{ producto_id: P1, deposito_id: D1, lote_id: null, cantidad: "10" }], [{ producto_id: P1, deposito_id: D1, cantidad: "5" }]]);
+    igual("PRO354-05 FALSE 10/15: salida inmediata 10 y pendiente 5 en el depósito elegible; emitible", [p.emitible, asignacionesSql(p), pendientesSql(p)], [true, [{ producto_id: P1, deposito_id: D1, lote_id: null, cantidad: "10" }], [{ producto_id: P1, deposito_id: D1, cantidad: "5", unidad_medida_id: U1 }]]);
     igual("PRO354-06 FALSE 10/15: conciliación exacta salidas + pendiente = facturado", [p.lineas[0].requerido, p.lineas[0].disponible, p.lineas[0].pendiente], ["15", "10", "5"]);
 
     const cero = aplicarPolitica([linea(P1, "3")], [], permite());
 
-    igual("PRO354-07 FALSE disponible cero: TODO pendiente y NINGUNA salida (sin movimiento artificial)", [cero.emitible, cero.salidas.length, pendientesSql(cero)], [true, 0, [{ producto_id: P1, deposito_id: D1, cantidad: "3" }]]);
+    igual("PRO354-07 FALSE disponible cero: TODO pendiente y NINGUNA salida (sin movimiento artificial)", [cero.emitible, cero.salidas.length, pendientesSql(cero)], [true, 0, [{ producto_id: P1, deposito_id: D1, cantidad: "3", unidad_medida_id: U1 }]]);
     cierto("PRO354-08 FALSE disponible cero: la huella es obligatoria igual (no vacía ni la de un reparto vacío)", cero.huella !== asignarStock([], []).huella && /^[0-9a-f]{64}$/.test(cero.huella));
 
     const suf = aplicarPolitica([linea(P1, "4")], [saldo(P1, D1, "10")], permite());
@@ -138,7 +140,7 @@ export async function verificarCasosPoliticaStockPro354(): Promise<string[]> {
     const rep = aplicarPolitica([linea(P1, "6"), linea(P1, "9"), linea(SERV, "1", false)], [saldo(P1, D1, "4"), saldo(P1, D2, "6")], permite({ depositos: [DEP1] }));
 
     igual("PRO354-11 FALSE líneas repetidas: se agregan por UUID (15), se toma todo el disponible de ambos depósitos y un solo pendiente; servicios excluidos",
-      [asignacionesSql(rep).map((a) => [a.deposito_id, a.cantidad]), pendientesSql(rep)], [[[D1, "4"], [D2, "6"]], [{ producto_id: P1, deposito_id: D1, cantidad: "5" }]]);
+      [asignacionesSql(rep).map((a) => [a.deposito_id, a.cantidad]), pendientesSql(rep)], [[[D1, "4"], [D2, "6"]], [{ producto_id: P1, deposito_id: D1, cantidad: "5", unidad_medida_id: U1 }]]);
 
     const mixto = aplicarPolitica([linea(P1, "15"), linea(P2, "2")], [saldo(P1, D1, "10"), saldo(P2, D1, "5")], permite());
 
@@ -164,7 +166,7 @@ export async function verificarCasosPoliticaStockPro354(): Promise<string[]> {
   // ── E. Huella: incluye política, salidas, pendientes y depósito ───────────────────────────────────────────────────────────────────────────
   {
     const s = [{ productoId: P1, depositoId: D1, depositoCodigo: "D01", depositoNombre: "Central", loteId: null, loteCodigo: null, cantidad: "10" }];
-    const pd = (dep: string, c: string) => [{ productoId: P1, codigo: "C", descripcion: "D", depositoId: dep, depositoCodigo: "X", depositoNombre: "Y", cantidad: c }];
+    const pd = (dep: string, c: string, unidadId: string | null = U1) => [{ productoId: P1, codigo: "C", descripcion: "D", depositoId: dep, depositoCodigo: "X", depositoNombre: "Y", cantidad: c, unidadId }];
 
     cierto("PRO354-21 huella: cambia con el depósito del pendiente, con la cantidad pendiente y con la salida", huellaConFaltante(s, pd(D1, "5")) !== huellaConFaltante(s, pd(D2, "5")) && huellaConFaltante(s, pd(D1, "5")) !== huellaConFaltante(s, pd(D1, "4")) && huellaConFaltante(s, pd(D1, "5")) !== huellaConFaltante([], pd(D1, "5")));
     cierto("PRO354-22 huella con faltante ≠ huella TRUE del mismo reparto (un cambio de política exige revisar de nuevo)", huellaConFaltante(s, []) !== asignarStock([linea(P1, "10")], [saldo(P1, D1, "10")]).huella);
@@ -288,7 +290,7 @@ export async function verificarCasosPoliticaStockPro354(): Promise<string[]> {
     cierto("PRO354-58 confirmación: MOVIMIENTOS.CREAR, advisory lock + FOR UPDATE, alcance, idempotente, FE ENVIADA y no rechazada/cancelada/inutilizada", /'MOVIMIENTOS', 'CREAR'/.test(confirmar) && /pg_advisory_xact_lock/.test(confirmar) && /FOR UPDATE/.test(confirmar) && /usuario_puede_deposito\(p_empresa, p_usuario, v_p\.deposito_id\)/.test(confirmar) && /v_p\.estado = 'CONFIRMADA'/.test(confirmar) && /estado_local IS DISTINCT FROM 'ENVIADO' OR v_doc\.estado_sifen NOT IN \('SIN_CONSULTA', 'PENDIENTE', 'APROBADO'\)/.test(confirmar));
     cierto("PRO354-59 confirmación solo con saldo real suficiente (jamás negativo; R01: lo decide el motor bajo su bloqueo) y por el motor ordinario con clave idempotente", /SQLERRM LIKE 'saldo disponible insuficiente%'/.test(confirmar) && /NEX:STOCK_INSUFICIENTE/.test(confirmar) && /inventario_registrar_movimiento\(p_empresa, p_usuario, 'SALIDA', 'VENTA'/.test(confirmar) && /'FE-STOCK-PEND:' \|\| v_p\.id::text/.test(confirmar));
     cierto("PRO354-60 NO toca CHECK de stock_saldos, inventario_costos (estructura), costo promedio ni saldo negativo", !/ALTER TABLE public\.stock_saldos|stock_saldos_cant_chk|ALTER TABLE public\.inventario_costos|costo_promedio\s*=|UPDATE public\.stock_saldos/.test(cod));
-    cierto("PRO354-61 listado: STOCK.VER y alcance de depósito; proyectado = registrado − pendientes abiertos", /'STOCK', 'VER'/.test(listar) && /usuario_puede_deposito\(p_empresa, p_usuario, p\.deposito_id\)/.test(listar) && /sal\.registrado - ab\.abierto/.test(listar));
+    cierto("PRO354-61 listado: STOCK.VER y alcance de depósito (R02-R02: alcance histórico); proyectado = registrado − pendientes abiertos", /'STOCK', 'VER'/.test(listar) && /deposito_en_alcance\(p_empresa, p_usuario, p\.deposito_id\)/.test(listar) && /sal\.registrado - ab\.abierto/.test(listar));
     cierto("PRO354-62 inmutabilidad: solo PENDIENTE→CONFIRMADA; el movimiento complementario no se anula a mano", /CREATE TRIGGER fe_stock_pendientes_inmutable_trg/.test(cod) && /CREATE TRIGGER fe_stock_pendiente_movimiento_protegido_trg/.test(cod));
     cierto("PRO354-63 grants mínimos: tablas sin acceso; la app solo EJECUTA las 6 funciones (R01: + catálogo de filtros); la baja interna sigue sin ejecución", /REVOKE ALL ON public\.documento_electronico_stock_pendientes FROM nexit_runtime/.test(cod) && (cod.match(/GRANT EXECUTE ON FUNCTION public\.fe_(politica_stock_actualizar|stock_politica_contexto|documento_crear_fe_stock_pendiente|stock_pendientes_listar|stock_pendientes_filtros|stock_pendiente_confirmar)\(/g) ?? []).length === 6 && /REVOKE ALL ON FUNCTION public\.fe_stock_baja_documento\(uuid, uuid, uuid, jsonb\) FROM nexit_runtime/.test(cod));
     cierto("PRO354-64 NEX-067 y NEX-080 NO editadas (el archivo de NEX-067 conserva su baja original)", !/fe_stock_pendientes_preparacion/.test(nex067) && !/bloquear_stock_insuficiente/.test(leer("documentacao/banco/nexit/v1/migraciones/NEX-080-facturacion-cdc-dato-api.sql")));
@@ -361,7 +363,7 @@ export async function verificarCasosPoliticaStockPro354(): Promise<string[]> {
     cierto("PRO354-R01-06 reposición concurrente sin fila de saldo previa: el faltante real se comprueba DESPUÉS del candado de numeración de movimientos (el que toma toda entrada antes de tocar saldos)",
       enOrden(crear, "fe_documento_crear_fe_receptor(", "pg_advisory_xact_lock(hashtextextended('movimientos.numero:' || p_empresa::text, 0))", "NEX:STOCK_PENDIENTE_CON_DISPONIBLE", "INSERT INTO public.documento_electronico_stock_pendientes")
       && /pg_advisory_xact_lock\(hashtextextended\('movimientos\.numero:' \|\| p_empresa::text, 0\)\)/.test(leer("documentacao/banco/nexit/v1/migraciones/NEX-011-reportes-dashboard.sql")));
-    cierto("PRO354-R01-07 registro: guarda la unidad base vigente (fila aún bloqueada) y la sucursal de la FE", /unidad_medida_id, sucursal_id,/.test(crear) && /SELECT pu\.unidad_medida_id FROM public\.productos pu WHERE pu\.empresa_id = p_empresa AND pu\.id = r\.producto_id\), p_sucursal,/.test(crear));
+    cierto("PRO354-R01-07 registro: guarda la unidad base (R02-R02: la revisada, comprobada igual a la vigente bajo bloqueo) y la sucursal de la FE", /unidad_medida_id, sucursal_id,/.test(crear) && /VALUES \(p_empresa, v_id, r\.producto_id, r\.deposito_id, r\.unidad_medida_id, p_sucursal,/.test(crear));
     cierto("PRO354-R01-08 confirmación: NO bloquea costo ni saldo antes del motor (no invierte numeración → costo → saldo de los movimientos ordinarios)",
       !/inventario_costos/.test(confirmar) && !/FROM public\.stock_saldos/.test(confirmar));
     cierto("PRO354-R01-09 confirmación: orden de bloqueos candado propio → pendiente FOR UPDATE → FE FOR SHARE → depósito FOR SHARE → producto FOR SHARE → motor",
@@ -408,7 +410,7 @@ export async function verificarCasosPoliticaStockPro354(): Promise<string[]> {
     cierto("PRO354-R01-23 cantidades diferenciadas: faltante original (evidencia), pendiente actual (0 si confirmada) y descontado total (emisión + confirmación)",
       /CASE WHEN p\.estado = 'PENDIENTE' THEN p\.cantidad_pendiente ELSE 0::numeric END/.test(listar) && /p\.cantidad_descontada \+ CASE WHEN p\.estado = 'CONFIRMADA' THEN p\.cantidad_pendiente ELSE 0::numeric END/.test(listar)
       && /o_faltante_original numeric, o_pendiente_actual numeric, o_descontado_total numeric/.test(listar));
-    cierto("PRO354-R01-24 catálogo de filtros independiente de página y filtros: STOCK.VER, depósitos propios autorizados con su sucursal", /'STOCK', 'VER'/.test(filtros) && /usuario_puede_deposito\(p_empresa, p_usuario, dp\.id\)/.test(filtros) && /NOT dp\.es_de_terceros/.test(filtros) && !/p_estado|p_buscar|OFFSET/.test(filtros));
+    cierto("PRO354-R01-24 catálogo de filtros independiente de página y filtros: STOCK.VER, depósitos propios autorizados con su sucursal (R02-R02: alcance histórico)", /'STOCK', 'VER'/.test(filtros) && /deposito_en_alcance\(p_empresa, p_usuario, dp\.id\)/.test(filtros) && /NOT dp\.es_de_terceros/.test(filtros) && !/p_estado|p_buscar|OFFSET/.test(filtros));
     igual("PRO354-R01-25 filtros de URL: sucursal UUID; página ≥ 1; tamaño 25|50|100; cualquier otro valor = inválido",
       [leerFiltrosBajas(new URLSearchParams(`sucursal=${SUC.toUpperCase()}&pagina=3&porPagina=50`)), ...["sucursal=x", "pagina=0", "pagina=-1", "pagina=1.5", "pagina=10001", "porPagina=26", "porPagina=abc"].map((q) => leerFiltrosBajas(new URLSearchParams(q)))],
       [{ estado: "PENDIENTE", sucursalId: SUC, depositoId: null, buscar: "", pagina: 3, porPagina: 50 }, null, null, null, null, null, null, null]);
@@ -484,9 +486,107 @@ export async function verificarCasosPoliticaStockPro354(): Promise<string[]> {
       cierto("PRO354-R01-46 sin acciones sobre filas obsoletas: botón deshabilitado si no son vigentes o se está cargando; la confirmación vuelve a comprobarlo",
         /disabled=\{!c\.puede \|\| confirmando !== null \|\| cargando \|\| !vigentes\}/.test(pagina) && /if \(confirmando \|\| !vigentes \|\| cargando\) return;/.test(pagina));
       cierto("PRO354-R01-47 tras confirmar se relee con los filtros vigentes (ref de contexto), nunca con la función del render anterior; los errores de un contexto viejo no se muestran",
-        /void leer\(contexto\.current\.releer\(\)\);/.test(pagina) && !/await cargar\(\)/.test(pagina) && enOrden(pagina, "} catch (e) {\n      if (!contexto.current.vigente(ticket)) return;", "setError(e instanceof Error"));
+        /void leer\(contexto\.current\.releer\(\)\);/.test(pagina) && !/await cargar\(\)/.test(pagina) && enOrden(pagina, "} catch (e) {\n      if (!contexto.current.vigente(ticket)) return;", "setErrorListado(e instanceof Error"));
       cierto("PRO354-R01-48 cambiar un filtro vuelve a la página 1; cambiar de sucursal limpia un depósito de otra sucursal; confirmación explícita y resultado idempotente conservados",
-        /function cambiarFiltro\(aplicar: \(\) => void\) \{\s*aplicar\(\);\s*setPagina\(1\);/.test(pagina) && /d\.id === deposito && d\.sucursalId === v/.test(pagina) && /window\.confirm/.test(pagina) && /ya estaba confirmada/.test(pagina));
+        /function cambiarFiltro\(aplicar: \(\) => void\) \{\s*aplicar\(\);\s*setPagina\(1\);/.test(pagina) && /d\.id === deposito && d\.sucursalId === v/.test(pagina) && /window\.confirm/.test(pagina) && /resultadoConfirmacion\(b, r\.ok, j\)/.test(pagina));
+    }
+  }
+
+  // ── M. PRO-354-R02-R02 — correctivo de la auditoría R01 (F001-R unidad base revisada + lotes; F002-R historial; F003-R resultado vs. carga) ──
+  {
+    const ruta = "documentacao/banco/nexit/v1/migraciones/NEX-081-facturacion-politica-stock-pendientes.sql";
+    const cod = sinComSql(leer(ruta));
+    const tramo = (desde: string, hasta: string) => cod.slice(cod.indexOf(desde), cod.indexOf(hasta, cod.indexOf(desde) + desde.length));
+    const crear = tramo("CREATE FUNCTION public.fe_documento_crear_fe_stock_pendiente", "CREATE FUNCTION public.fe_stock_pendientes_listar");
+    const listar = tramo("CREATE FUNCTION public.fe_stock_pendientes_listar", "CREATE FUNCTION public.fe_stock_pendientes_filtros");
+    const filtros = tramo("CREATE FUNCTION public.fe_stock_pendientes_filtros", "CREATE FUNCTION public.fe_stock_pendiente_confirmar");
+    const confirmar = tramo("CREATE FUNCTION public.fe_stock_pendiente_confirmar", "COMMENT ON FUNCTION");
+    const gDep = tramo("CREATE FUNCTION public.fe_stock_pendientes_deposito_guarda()", "CREATE TABLE public.fe_stock_pendientes_preparacion");
+    const pos = (t: string, s: string, desde = 0) => t.indexOf(s, desde);
+    const enOrden = (t: string, ...ss: string[]) => ss.every((s) => pos(t, s) >= 0) && ss.every((s, i) => i === 0 || pos(t, ss[i - 1]) < pos(t, s));
+    const nex046 = leer("documentacao/banco/nexit/v1/migraciones/NEX-046-depositos-gestion.sql");
+    const alcance = nex046.slice(nex046.indexOf("FUNCTION public.deposito_en_alcance"), nex046.indexOf("$$;", nex046.indexOf("FUNCTION public.deposito_en_alcance")));
+    const emision = leer("lib/facturacion/emision.ts");
+    const pagina = leer("app/(private)/stock/bajas-pendientes/page.tsx");
+    const scripts = (n: string) => leer(`documentacao/banco/nexit/v1/scripts/${n}-NEX-081.sql`);
+    const loteCrear = [...crear.matchAll(/NEX:STOCK_PENDIENTE_LOTE/g)].map((m) => m.index ?? -1);
+    const candado = pos(crear, "pg_advisory_xact_lock(hashtextextended('movimientos.numero:' || p_empresa::text, 0))");
+
+    // F001-R — unidad base revisada: plan, huella, cuerpo SQL y comparación bajo bloqueo antes de numerar
+    {
+      const conU1 = aplicarPolitica([linea(P1, "15", true, U1)], [saldo(P1, D1, "10")], permite());
+      const conU2 = aplicarPolitica([linea(P1, "15", true, U2)], [saldo(P1, D1, "10")], permite());
+      const repetidas = aplicarPolitica([linea(P1, "2", true, U1), linea(P1, "3", true, U1)], [], permite());
+
+      igual("PRO354-R02-01 el pendiente del plan lleva la unidad base revisada (UUID) y la envía a la base", [conU1.pendientes[0].unidadId, pendientesSql(conU1)[0].unidad_medida_id], [U1, U1]);
+      cierto("PRO354-R02-02 cambio entre la previa y la emisión (misma cantidad/depósito, otra unidad base): la huella cambia → la emisión exige revisar de nuevo (409 MENSAJE_REPARTO_CAMBIO)",
+        conU1.huella !== conU2.huella && /cuerpo\.repartoHuella !== plan\.huella\) throw new ErrorFacturacion\(409, MENSAJE_REPARTO_CAMBIO\)/.test(emision));
+      igual("PRO354-R02-03 líneas repetidas del mismo UUID: un solo pendiente con la unidad de ese producto", [repetidas.pendientes.length, repetidas.pendientes[0].cantidad, repetidas.pendientes[0].unidadId], [1, "5", U1]);
+      igual("PRO354-R02-04 sin unidad base conocida el pendiente viaja con null y la base lo rechaza (falla cerrada, nunca se completa con otra unidad)",
+        pendientesSql(aplicarPolitica([linea(P1, "3", true, null)], [], permite()))[0].unidad_medida_id, null);
+      cierto("PRO354-R02-05 sin cambio: misma unidad = misma huella (determinista)", conU1.huella === aplicarPolitica([linea(P1, "15", true, U1)], [saldo(P1, D1, "10")], permite()).huella);
+      cierto("PRO354-R02-06 la emisión toma la unidad BASE del producto (p.unidad_medida_id), no la unidad SIFEN de la línea (un override SIFEN legítimo no la altera)",
+        /p\.unidad_medida_id AS "unidadId"/.test(emision) && /unidadId: p\.unidadId === null \|\| p\.unidadId === undefined \? null : s\(p\.unidadId\)/.test(emision) && !/unidadId: [^,}]*unidadSifen/.test(emision));
+      cierto("PRO354-R02-07 base: cada pendiente exige exactamente 4 claves con unidad_medida_id UUID en texto",
+        /jsonb_object_keys\(x\)\) <> 4/.test(crear) && /jsonb_typeof\(x->'unidad_medida_id'\) IS DISTINCT FROM 'string'/.test(crear) && /\(x->>'unidad_medida_id'\) !~\* '\^\[0-9a-f\]\{8\}/.test(crear));
+      cierto("PRO354-R02-08 cambio entre la preparación y la base: la unidad VIGENTE se lee bajo FOR SHARE y se compara por identidad ANTES de reservar numeración (NEX:STOCK_PENDIENTE_UNIDAD_CAMBIO)",
+        /SELECT p\.activo, p\.controla_stock, p\.unidad_medida_id INTO v_pr FROM public\.productos p WHERE p\.empresa_id = p_empresa AND p\.id = v_prod FOR SHARE;/.test(crear)
+        && enOrden(crear, "AND p.id = v_prod FOR SHARE", "v_pr.unidad_medida_id IS DISTINCT FROM v_uni", "NEX:STOCK_PENDIENTE_UNIDAD_CAMBIO", "FROM public.fe_documento_crear_fe_receptor("));
+      cierto("PRO354-R02-09 misma equivalencia SIFEN con otro UUID = cambio: la comparación es por UUID, sin leer códigos SIFEN ni convertir",
+        !/unidad_sifen|unidades_sifen|conversion|factor/i.test(crear) && /IS DISTINCT FROM v_uni/.test(crear));
+      cierto("PRO354-R02-10 la unidad revisada integra la forma normalizada y es la que se guarda en el pendiente",
+        /'unidad_medida_id', v_uni\)\)/.test(crear) && /\(n->>'unidad_medida_id'\)::uuid AS unidad_medida_id/.test(crear) && /VALUES \(p_empresa, v_id, r\.producto_id, r\.deposito_id, r\.unidad_medida_id, p_sucursal,/.test(crear) && !/SELECT pu\.unidad_medida_id/.test(crear));
+      cierto("PRO354-R02-11 reintento idempotente: compara también la unidad persistida (misma clave con otra unidad = NEX:IDEMPOTENCIA_CONFLICTO, sin escribir)",
+        /round\(p\.cantidad_pendiente, 4\)::text, p\.unidad_medida_id::text\)/.test(crear) && /round\(\(n->>'cantidad'\)::numeric, 4\)::text, \(n->>'unidad_medida_id'\)::uuid::text\)/.test(crear)
+        && pos(crear, "IF v_reutilizado THEN") < pos(crear, "INSERT INTO public.documento_electronico_stock_pendientes"));
+      cierto("PRO354-R02-12 la API traduce NEX:STOCK_PENDIENTE_UNIDAD_CAMBIO a 409 (revisar de nuevo)", /STOCK_PENDIENTE_UNIDAD_CAMBIO/.test(leer("lib/facturacion/shared.ts")));
+      cierto("PRO354-R02-13 lotes: la evidencia se comprueba antes de numerar Y se RE-COMPRUEBA tras el candado de numeración, antes de insertar el pendiente",
+        loteCrear.length === 2 && loteCrear[0] < pos(crear, "FROM public.fe_documento_crear_fe_receptor(") && candado > 0 && loteCrear[1] > candado
+        && loteCrear[1] < pos(crear, "INSERT INTO public.documento_electronico_stock_pendientes", candado) && /FROM public\.stock_lotes l WHERE l\.empresa_id = p_empresa AND l\.producto_id = r\.producto_id/.test(crear));
+    }
+
+    // F002-R — historial visible tras inactivar el depósito; confirmación sigue exigiendo depósito activo
+    cierto("PRO354-R02-14 listado: alcance HISTÓRICO (deposito_en_alcance) en lugar de usuario_puede_deposito; empresa de la sesión y STOCK.VER intactos",
+      /AND public\.deposito_en_alcance\(p_empresa, p_usuario, p\.deposito_id\)/.test(listar) && !/usuario_puede_deposito/.test(listar) && /WHERE p\.empresa_id = p_empresa/.test(listar) && /'STOCK', 'VER'/.test(listar));
+    cierto("PRO354-R02-15 baja confirmada con depósito inactivo y alcance autorizado: deposito_en_alcance (NEX-046) NO filtra por activo; alcance TODOS o asignación",
+      alcance.length > 0 && !/activo/.test(alcance) && /alcance_depositos = 'TODOS'/.test(alcance) && /usuario_deposito ud/.test(alcance));
+    cierto("PRO354-R02-16 alcance revocado u otra empresa: no se ve (asignación del usuario y misma empresa exigidas por deposito_en_alcance; filas de la empresa de la sesión)",
+      /u\.empresa_id = p_empresa AND u\.id = p_usuario/.test(alcance) && /d\.empresa_id = u\.empresa_id/.test(alcance) && /ud\.deposito_id = p_deposito/.test(alcance) && /WHERE p\.empresa_id = p_empresa/.test(listar));
+    cierto("PRO354-R02-17 catálogo de filtros con el mismo alcance histórico; los inactivos se marcan (o_deposito_activo) y la vista los rotula «(inactivo)»",
+      /deposito_en_alcance\(p_empresa, p_usuario, dp\.id\)/.test(filtros) && !/usuario_puede_deposito/.test(filtros) && /dp\.activo/.test(filtros) && /" \(inactivo\)"/.test(pagina));
+    cierto("PRO354-R02-18 confirmar NO cambia: MOVIMIENTOS.CREAR, alcance operativo (usuario_puede_deposito, solo activos) y depósito activo bajo bloqueo",
+      /'MOVIMIENTOS', 'CREAR'/.test(confirmar) && /usuario_puede_deposito\(p_empresa, p_usuario, v_p\.deposito_id\)/.test(confirmar) && /IF NOT v_dp\.activo OR v_dp\.es_de_terceros THEN/.test(confirmar) && !/deposito_en_alcance/.test(confirmar));
+    cierto("PRO354-R02-19 las guardas de inactivación no cambian (depósito con PENDIENTE no se inactiva ni pasa a terceros; con cualquier baja no cambia de sucursal)",
+      /CREATE TRIGGER fe_stock_pendientes_deposito_guarda_trg/.test(cod) && /p\.estado = 'PENDIENTE'/.test(gDep) && /sucursal_id/.test(gDep));
+    cierto("PRO354-R02-20 scripts: preflight exige deposito_en_alcance; verificar comprueba unidad, lotes y alcance histórico; reversión sin objetos nuevos; procedimiento documentado",
+      /deposito_en_alcance\(uuid,uuid,uuid\)/.test(scripts("preflight")) && /NEX:STOCK_PENDIENTE_UNIDAD_CAMBIO/.test(scripts("verificar")) && /NEX:STOCK_PENDIENTE_LOTE/.test(scripts("verificar"))
+      && /deposito_en_alcance/.test(scripts("verificar")) && /R02-R02: sin objetos nuevos/.test(scripts("reversion")) && /DROP FUNCTION public\.fe_stock_pendientes_listar\(uuid, uuid, text, uuid, uuid, text, integer, integer\)/.test(scripts("reversion"))
+      && /Corrección R02-R02/.test(leer("documentacao/banco/nexit/v1/docs/PROCEDIMIENTO-NEX-081.md")) && /deposito_en_alcance\(uuid,uuid,uuid\)/.test(cod));
+
+    // F003-R — resultado de la confirmación separado del error de carga del listado
+    {
+      const b = { id: "b1", documento: "001-001-0000007 (AA)" };
+      const r409 = resultadoConfirmacion(b, false, { error: "Stock disponible insuficiente." });
+      const ok = resultadoConfirmacion(b, true, { numero: "MOV-9" });
+      const rep = resultadoConfirmacion(b, true, { numero: "MOV-9", repetido: true });
+      const leerFn = pagina.slice(pagina.indexOf("const leer = useCallback"), pagina.indexOf("useEffect(() => {"));
+      const cambiar = pagina.slice(pagina.indexOf("function cambiarFiltro"), pagina.indexOf("async function confirmar"));
+
+      igual("PRO354-R02-21 resultado de confirmación identificado por la factura: 409 conserva el motivo; éxito y repetido con el movimiento",
+        [r409.tipo, /001-001-0000007 \(AA\)/.test(r409.texto) && /Stock disponible insuficiente\./.test(r409.texto), ok.tipo, /baja confirmada, movimiento MOV-9/.test(ok.texto), /ya estaba confirmada \(movimiento MOV-9\)/.test(rep.texto)],
+        ["ERROR", true, "OK", true, true]);
+      cierto("PRO354-R02-22 POST 409 + GET 200: la lectura exitosa solo limpia el error de CARGA y nunca toca el resultado de la confirmación",
+        /setErrorListado\(""\);/.test(leerFn) && !/setResultado/.test(leerFn) && !/setError\(|setAviso\(/.test(pagina));
+      cierto("PRO354-R02-23 estados separados y mostrados por separado: resultado (alert/status con «Cerrar») y error de carga del listado",
+        /useState<ResultadoConfirmacion \| null>\(null\)/.test(pagina) && /const \[errorListado, setErrorListado\] = useState\(""\);/.test(pagina)
+        && /\{resultado \? \(/.test(pagina) && /\{errorListado \? <p className=\{ui\.alertError\} role="alert"/.test(pagina) && /onClick=\{\(\) => setResultado\(null\)\}/.test(pagina));
+      cierto("PRO354-R02-24 cambio de filtros durante el POST (éxito o error): el resultado se aplica igual, identificado por su factura; cambiar filtros no lo borra",
+        !/setResultado/.test(cambiar) && /setResultado\(resultadoConfirmacion\(b, r\.ok, j\)\);/.test(pagina) && /setResultado\(resultadoConfirmacion\(b, false, \{ error:/.test(pagina));
+      cierto("PRO354-R02-25 A→B→A con respuesta tardía: la lectura vieja se descarta por generación/clave antes de aplicar datos o errores de carga",
+        enOrden(leerFn, "if (!contexto.current.vigente(ticket)) return;", "setDatos({ ...j, clave: ticket.clave });") && enOrden(leerFn, "} catch (e) {", "if (!contexto.current.vigente(ticket)) return;", "setErrorListado(e instanceof Error"));
+      cierto("PRO354-R02-26 acciones bloqueadas mientras carga o confirma; iniciar otra confirmación reemplaza el resultado anterior; relectura con filtros vigentes",
+        /if \(confirmando \|\| !vigentes \|\| cargando\) return;/.test(pagina) && /disabled=\{!c\.puede \|\| confirmando !== null \|\| cargando \|\| !vigentes\}/.test(pagina)
+        && enOrden(pagina, "setConfirmando(b.id);", "setResultado(null);", "await fetch(`/api/stock/bajas-pendientes/${b.id}/confirmar`") && /void leer\(contexto\.current\.releer\(\)\);/.test(pagina));
     }
   }
 

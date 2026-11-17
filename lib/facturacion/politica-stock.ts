@@ -45,7 +45,8 @@ export type PoliticaStock = { bloquear: boolean; soportada: boolean };
 export type DepositoElegible = { id: string; codigo: string; nombre: string };
 export type ContextoFaltante = { bloquear: boolean; depositos: DepositoElegible[]; conLote: Set<string> };
 export type BloqueoFaltante = "CANTIDAD_INVALIDA" | "LOTE" | "SIN_DEPOSITO" | "ELEGIR_DEPOSITO";
-export type PendienteStock = { productoId: string; codigo: string; descripcion: string; depositoId: string; depositoCodigo: string; depositoNombre: string; cantidad: string };
+/** `unidadId` (R02-R02): unidad BASE revisada (UUID) del producto; forma parte de la huella y la base la exige igual a la vigente bajo bloqueo. */
+export type PendienteStock = { productoId: string; codigo: string; descripcion: string; depositoId: string; depositoCodigo: string; depositoNombre: string; cantidad: string; unidadId: string | null };
 export type LineaPlanPolitica = LineaPlan & { pendiente: string | null; bloqueo: BloqueoFaltante | null };
 export type PlanPolitica = {
   bloquear: boolean;
@@ -127,7 +128,8 @@ export function leerDepositosPendiente(v: unknown): Record<string, string> | nul
 export function huellaConFaltante(salidas: SalidaStock[], pendientes: PendienteStock[]): string {
   const orden = (x: string[], y: string[]) => (x.join("|") < y.join("|") ? -1 : x.join("|") > y.join("|") ? 1 : 0);
   const s = salidas.map((x) => [x.productoId, x.depositoId, x.loteId ?? "", x.cantidad]).sort(orden);
-  const p = pendientes.map((x) => [x.productoId, x.depositoId, x.cantidad]).sort(orden);
+  // R02-R02: la unidad base revisada integra la huella: si cambia entre la previa y la emisión, la emisión exige revisar de nuevo.
+  const p = pendientes.map((x) => [x.productoId, x.depositoId, x.cantidad, x.unidadId ?? ""]).sort(orden);
 
   return createHash("sha256").update(JSON.stringify(["POLITICA:PERMITIR_FALTANTE", s, p])).digest("hex");
 }
@@ -170,6 +172,8 @@ export function aplicarPolitica(lineas: LineaStock[], saldos: SaldoDisponible[],
   const lineasPlan: LineaPlanPolitica[] = [];
   const salidas: SalidaStock[] = [];
   const pendientes: PendienteStock[] = [];
+  // Unidad base revisada por producto (la misma en líneas repetidas del mismo UUID).
+  const unidades = new Map(lineas.filter((l) => l.controlaStock).map((l) => [l.productoId, l.unidadId ?? null] as const));
 
   for (const l of base.lineas) {
     if (l.faltante === null) {
@@ -203,7 +207,7 @@ export function aplicarPolitica(lineas: LineaStock[], saldos: SaldoDisponible[],
 
     lineasPlan.push({ ...l, salidas: propias, pendiente: textoDec(pendiente), bloqueo: null });
     salidas.push(...propias);
-    pendientes.push({ productoId: l.productoId, codigo: l.codigo, descripcion: l.descripcion, depositoId: deposito.id, depositoCodigo: deposito.codigo, depositoNombre: deposito.nombre, cantidad: textoDec(pendiente) });
+    pendientes.push({ productoId: l.productoId, codigo: l.codigo, descripcion: l.descripcion, depositoId: deposito.id, depositoCodigo: deposito.codigo, depositoNombre: deposito.nombre, cantidad: textoDec(pendiente), unidadId: unidades.get(l.productoId) ?? null });
   }
 
   const emitible = lineasPlan.every((l) => l.bloqueo === null);
@@ -274,4 +278,5 @@ export function resumenStockPolitica(plan: PlanPolitica): ResumenStockPolitica {
 }
 
 /** Pendientes para la función SQL (forma estricta: producto_id, deposito_id, cantidad texto). */
-export const pendientesSql = (plan: PlanPolitica) => plan.pendientes.map((p) => ({ producto_id: p.productoId, deposito_id: p.depositoId, cantidad: p.cantidad }));
+// R02-R02: cada pendiente lleva la unidad base revisada; sin ella la base rechaza (falla cerrada).
+export const pendientesSql = (plan: PlanPolitica) => plan.pendientes.map((p) => ({ producto_id: p.productoId, deposito_id: p.depositoId, cantidad: p.cantidad, unidad_medida_id: p.unidadId }));

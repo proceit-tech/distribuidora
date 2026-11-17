@@ -22,6 +22,18 @@ UNION ALL SELECT 'R01: la confirmación no bloquea costo/saldo antes del motor y
        AND position('v_doc.serie' IN pg_get_functiondef('public.fe_stock_pendiente_confirmar(uuid,uuid,uuid)'::regprocedure)) > 0
 UNION ALL SELECT 'R01: el registro del faltante toma el candado de numeración de movimientos',
        position('movimientos.numero:' IN pg_get_functiondef('public.fe_documento_crear_fe_stock_pendiente(uuid,uuid,uuid,uuid,text,uuid,text,text,text,numeric,jsonb,jsonb,uuid,uuid,jsonb,boolean)'::regprocedure)) > 0
+UNION ALL SELECT 'R02-R02: el registro exige la unidad base revisada (UUID) y la compara bajo bloqueo antes de numerar',
+       position('NEX:STOCK_PENDIENTE_UNIDAD_CAMBIO' IN pg_get_functiondef('public.fe_documento_crear_fe_stock_pendiente(uuid,uuid,uuid,uuid,text,uuid,text,text,text,numeric,jsonb,jsonb,uuid,uuid,jsonb,boolean)'::regprocedure)) > 0
+       AND position('NEX:STOCK_PENDIENTE_UNIDAD_CAMBIO' IN pg_get_functiondef('public.fe_documento_crear_fe_stock_pendiente(uuid,uuid,uuid,uuid,text,uuid,text,text,text,numeric,jsonb,jsonb,uuid,uuid,jsonb,boolean)'::regprocedure))
+         < position('fe_documento_crear_fe_receptor' IN pg_get_functiondef('public.fe_documento_crear_fe_stock_pendiente(uuid,uuid,uuid,uuid,text,uuid,text,text,text,numeric,jsonb,jsonb,uuid,uuid,jsonb,boolean)'::regprocedure))
+UNION ALL SELECT 'R02-R02: la evidencia de lotes se re-comprueba después del candado de numeración',
+       (SELECT count(*) FROM regexp_matches(pg_get_functiondef('public.fe_documento_crear_fe_stock_pendiente(uuid,uuid,uuid,uuid,text,uuid,text,text,text,numeric,jsonb,jsonb,uuid,uuid,jsonb,boolean)'::regprocedure), 'NEX:STOCK_PENDIENTE_LOTE', 'g')) = 2
+UNION ALL SELECT 'R02-R02: listado y filtros usan el alcance histórico (deposito_en_alcance); la confirmación sigue exigiendo depósito activo',
+       position('deposito_en_alcance' IN pg_get_functiondef('public.fe_stock_pendientes_listar(uuid,uuid,text,uuid,uuid,text,integer,integer)'::regprocedure)) > 0
+       AND position('usuario_puede_deposito' IN pg_get_functiondef('public.fe_stock_pendientes_listar(uuid,uuid,text,uuid,uuid,text,integer,integer)'::regprocedure)) = 0
+       AND position('deposito_en_alcance' IN pg_get_functiondef('public.fe_stock_pendientes_filtros(uuid,uuid)'::regprocedure)) > 0
+       AND position('usuario_puede_deposito' IN pg_get_functiondef('public.fe_stock_pendiente_confirmar(uuid,uuid,uuid)'::regprocedure)) > 0
+       AND position('NOT v_dp.activo' IN pg_get_functiondef('public.fe_stock_pendiente_confirmar(uuid,uuid,uuid)'::regprocedure)) > 0
 UNION ALL SELECT 'PK histórica de documento_electronico_stock_salidas intacta (empresa, documento, depósito)',
        EXISTS (SELECT 1 FROM pg_constraint c WHERE c.conrelid = 'public.documento_electronico_stock_salidas'::regclass AND c.contype = 'p' AND array_length(c.conkey, 1) = 3)
 UNION ALL SELECT 'baja redefinida: lee la preparación y concilia pendientes', position('fe_stock_pendientes_preparacion' IN pg_get_functiondef('public.fe_stock_baja_documento(uuid,uuid,uuid,jsonb)'::regprocedure)) > 0

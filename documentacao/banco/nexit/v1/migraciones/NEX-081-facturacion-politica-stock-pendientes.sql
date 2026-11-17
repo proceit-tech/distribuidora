@@ -37,6 +37,10 @@ BEGIN
      OR to_regprocedure('public.usuario_puede_deposito(uuid,uuid,uuid)') IS NULL THEN
     RAISE EXCEPTION 'NEX-081 requiere el motor de movimientos de inventario (NEX-014).';
   END IF;
+  -- R02-R02/F002-R: el historial usa el alcance histórico de depósitos de NEX-046.
+  IF to_regprocedure('public.deposito_en_alcance(uuid,uuid,uuid)') IS NULL THEN
+    RAISE EXCEPTION 'NEX-081 requiere deposito_en_alcance (NEX-046).';
+  END IF;
   IF to_regprocedure('public.fe_stock_baja_documento(uuid,uuid,uuid,jsonb)') IS NULL OR to_regclass('public.documento_electronico_stock_salidas') IS NULL THEN
     RAISE EXCEPTION 'NEX-081 requiere la baja de stock de la FE (NEX-067).';
   END IF;
@@ -409,7 +413,7 @@ DECLARE
   v_norm jsonb := '[]'::jsonb;
   v_payload jsonb;
   x jsonb;
-  v_prod uuid; v_dep uuid; v_cant numeric;
+  v_prod uuid; v_dep uuid; v_cant numeric; v_uni uuid;
   v_pr record; v_dp record;
   r record;
 BEGIN
@@ -428,20 +432,30 @@ BEGIN
 
   -- Forma y pertenencia de cada pendiente (uno por producto; producto de la empresa que controla stock y SIN control de lotes evidenciado; depósito propio, activo, de la sucursal y en el alcance).
   FOR x IN SELECT e FROM jsonb_array_elements(p_pendientes) e LOOP
-    IF jsonb_typeof(x) <> 'object' OR (SELECT count(*) FROM jsonb_object_keys(x)) <> 3
+    -- R02-R02/F001-R: cada pendiente trae la unidad BASE (UUID, no el código SIFEN) con la que la aplicación preparó la factura; sin ella se rechaza (falla cerrada).
+    IF jsonb_typeof(x) <> 'object' OR (SELECT count(*) FROM jsonb_object_keys(x)) <> 4
        OR jsonb_typeof(x->'producto_id') IS DISTINCT FROM 'string' OR jsonb_typeof(x->'deposito_id') IS DISTINCT FROM 'string' OR jsonb_typeof(x->'cantidad') IS DISTINCT FROM 'string'
+       OR jsonb_typeof(x->'unidad_medida_id') IS DISTINCT FROM 'string'
        OR (x->>'producto_id') !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' OR (x->>'deposito_id') !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+       OR (x->>'unidad_medida_id') !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
        OR (x->>'cantidad') !~ '^[0-9]{1,14}(\.[0-9]{1,4})?$' OR (x->>'cantidad')::numeric <= 0 THEN
       RAISE EXCEPTION 'el faltante pendiente contiene un elemento inválido' USING ERRCODE = 'P0001', DETAIL = 'NEX:STOCK_PENDIENTE_INVALIDO';
     END IF;
-    v_prod := (x->>'producto_id')::uuid; v_dep := (x->>'deposito_id')::uuid; v_cant := (x->>'cantidad')::numeric;
+    v_prod := (x->>'producto_id')::uuid; v_dep := (x->>'deposito_id')::uuid; v_cant := (x->>'cantidad')::numeric; v_uni := (x->>'unidad_medida_id')::uuid;
     IF EXISTS (SELECT 1 FROM jsonb_array_elements(v_norm) n WHERE (n->>'producto_id')::uuid = v_prod) THEN
       RAISE EXCEPTION 'el faltante pendiente repite un producto' USING ERRCODE = 'P0001', DETAIL = 'NEX:STOCK_PENDIENTE_INVALIDO';
     END IF;
     -- R01/F001: fila del producto BLOQUEADA (FOR SHARE, como el motor de NEX-052) antes de validar: un cambio de unidad base / control de stock / estado espera o ya se ve aquí.
-    SELECT p.activo, p.controla_stock INTO v_pr FROM public.productos p WHERE p.empresa_id = p_empresa AND p.id = v_prod FOR SHARE;
+    SELECT p.activo, p.controla_stock, p.unidad_medida_id INTO v_pr FROM public.productos p WHERE p.empresa_id = p_empresa AND p.id = v_prod FOR SHARE;
     IF NOT FOUND OR NOT v_pr.controla_stock OR NOT v_pr.activo THEN
       RAISE EXCEPTION 'el faltante pendiente es de un producto inactivo, sin control de stock o de otra empresa' USING ERRCODE = 'P0001', DETAIL = 'NEX:STOCK_PENDIENTE_INVALIDO';
+    END IF;
+    -- R02-R02/F001-R: la unidad base VIGENTE (bajo el FOR SHARE de arriba; el trigger de productos no la deja cambiar con pendiente abierto y un cambio en curso espera) debe ser EXACTAMENTE
+    -- la revisada por la aplicación. Se compara por identidad (UUID): dos unidades con la misma equivalencia SIFEN siguen siendo distintas. Se verifica ANTES de reservar numeración
+    -- (fe_documento_crear_fe_receptor, más abajo). No se convierte nada; un override de la unidad SIFEN en la línea no interviene (la obligación de stock es en unidad base).
+    IF v_pr.unidad_medida_id IS DISTINCT FROM v_uni THEN
+      RAISE EXCEPTION 'la unidad base del producto % cambió desde la revisión: revise la factura de nuevo', (SELECT codigo FROM public.productos WHERE empresa_id = p_empresa AND id = v_prod)
+        USING ERRCODE = 'P0001', DETAIL = 'NEX:STOCK_PENDIENTE_UNIDAD_CAMBIO';
     END IF;
     IF EXISTS (SELECT 1 FROM public.stock_lotes l WHERE l.empresa_id = p_empresa AND l.producto_id = v_prod) THEN
       RAISE EXCEPTION 'el producto % controla lotes: su faltante no se puede dejar pendiente (requiere definición específica)', (SELECT codigo FROM public.productos WHERE empresa_id = p_empresa AND id = v_prod)
@@ -453,7 +467,7 @@ BEGIN
        OR NOT public.usuario_puede_deposito(p_empresa, p_usuario, v_dep) THEN
       RAISE EXCEPTION 'el depósito del faltante no es válido para esta factura (inactivo, de otra sucursal o fuera de su alcance)' USING ERRCODE = '42501', DETAIL = 'NEX:STOCK_DEPOSITO_NO_AUTORIZADO';
     END IF;
-    v_norm := v_norm || jsonb_build_array(jsonb_build_object('producto_id', v_prod, 'deposito_id', v_dep, 'cantidad', round(v_cant, 4)));
+    v_norm := v_norm || jsonb_build_array(jsonb_build_object('producto_id', v_prod, 'deposito_id', v_dep, 'cantidad', round(v_cant, 4), 'unidad_medida_id', v_uni));
   END LOOP;
 
   SELECT EXISTS (SELECT 1 FROM public.documentos_electronicos d WHERE d.empresa_id = p_empresa AND d.clave_idempotencia = p_clave) INTO v_existe;
@@ -470,10 +484,11 @@ BEGIN
 
   IF v_reutilizado THEN
     -- Reintento (o carrera de la misma clave): no se escribe nada; los pendientes deben ser EXACTAMENTE los persistidos.
-    IF (SELECT COALESCE(jsonb_agg(jsonb_build_array(p.producto_id::text, p.deposito_id::text, round(p.cantidad_pendiente, 4)::text) ORDER BY p.producto_id), '[]'::jsonb)
+    -- R02-R02/F001-R: la unidad base forma parte de la identidad del faltante persistido (mismo producto/depósito/cantidad con otra unidad = conflicto).
+    IF (SELECT COALESCE(jsonb_agg(jsonb_build_array(p.producto_id::text, p.deposito_id::text, round(p.cantidad_pendiente, 4)::text, p.unidad_medida_id::text) ORDER BY p.producto_id), '[]'::jsonb)
           FROM public.documento_electronico_stock_pendientes p WHERE p.empresa_id = p_empresa AND p.documento_id = v_id)
        IS DISTINCT FROM
-       (SELECT COALESCE(jsonb_agg(jsonb_build_array(n->>'producto_id', n->>'deposito_id', round((n->>'cantidad')::numeric, 4)::text) ORDER BY (n->>'producto_id')::uuid), '[]'::jsonb)
+       (SELECT COALESCE(jsonb_agg(jsonb_build_array(n->>'producto_id', n->>'deposito_id', round((n->>'cantidad')::numeric, 4)::text, (n->>'unidad_medida_id')::uuid::text) ORDER BY (n->>'producto_id')::uuid), '[]'::jsonb)
           FROM jsonb_array_elements(v_norm) n) THEN
       RAISE EXCEPTION 'la clave de idempotencia ya se usó con otro faltante de stock' USING ERRCODE = 'P0001', DETAIL = 'NEX:IDEMPOTENCIA_CONFLICTO';
     END IF;
@@ -492,12 +507,18 @@ BEGIN
   PERFORM pg_advisory_xact_lock(hashtextextended('movimientos.numero:' || p_empresa::text, 0));
 
   FOR r IN
-    SELECT (n->>'producto_id')::uuid AS producto_id, (n->>'deposito_id')::uuid AS deposito_id, (n->>'cantidad')::numeric AS pendiente,
+    SELECT (n->>'producto_id')::uuid AS producto_id, (n->>'deposito_id')::uuid AS deposito_id, (n->>'cantidad')::numeric AS pendiente, (n->>'unidad_medida_id')::uuid AS unidad_medida_id,
            (SELECT sum((d->>'dCantProSer')::numeric) FROM jsonb_array_elements(COALESCE(v_payload->'Detalles', '[]'::jsonb)) d
               JOIN public.productos p ON p.empresa_id = p_empresa AND p.codigo = d->>'dCodInt' AND p.id = (n->>'producto_id')::uuid) AS facturado,
            COALESCE((SELECT sum((a->>'cantidad')::numeric) FROM jsonb_array_elements(COALESCE(p_asignaciones, '[]'::jsonb)) a WHERE (a->>'producto_id')::uuid = (n->>'producto_id')::uuid), 0) AS descontado
       FROM jsonb_array_elements(v_norm) n ORDER BY 1
   LOOP
+    -- R02-R02/F001-R: evidencia de lotes RE-COMPROBADA con el candado de numeración tomado y antes de insertar el pendiente: la primera lectura (arriba) fue anterior al candado y un lote
+    -- creado por una entrada concurrente (que toma 'movimientos.numero:' antes de escribir) ya terminó y se ve aquí (READ COMMITTED) o espera a esta transacción.
+    IF EXISTS (SELECT 1 FROM public.stock_lotes l WHERE l.empresa_id = p_empresa AND l.producto_id = r.producto_id) THEN
+      RAISE EXCEPTION 'el producto % controla lotes: su faltante no se puede dejar pendiente (requiere definición específica)', (SELECT codigo FROM public.productos WHERE empresa_id = p_empresa AND id = r.producto_id)
+        USING ERRCODE = 'P0001', DETAIL = 'NEX:STOCK_PENDIENTE_LOTE';
+    END IF;
     PERFORM 1 FROM public.stock_saldos s
       JOIN public.depositos d ON d.empresa_id = s.empresa_id AND d.id = s.deposito_id AND d.activo AND NOT d.es_de_terceros AND d.sucursal_id = p_sucursal
      WHERE s.empresa_id = p_empresa AND s.producto_id = r.producto_id AND s.estado_stock = 'DISPONIBLE' AND s.propiedad = 'PROPIO' AND s.cantidad > 0
@@ -510,17 +531,17 @@ BEGIN
     IF r.facturado IS NULL OR r.facturado <> r.descontado + r.pendiente THEN
       RAISE EXCEPTION 'el faltante pendiente no coincide con la cantidad facturada' USING ERRCODE = 'P0001', DETAIL = 'NEX:STOCK_REPARTO_INVALIDO';
     END IF;
-    -- Unidad base congelada: la fila del producto sigue bloqueada (FOR SHARE desde la validación), así que es la unidad con la que se facturó.
+    -- Unidad base congelada (R02-R02/F001-R): la REVISADA por la aplicación y comprobada igual a la vigente bajo el FOR SHARE del producto (que se mantiene hasta el fin de la transacción).
     INSERT INTO public.documento_electronico_stock_pendientes (empresa_id, documento_id, producto_id, deposito_id, unidad_medida_id, sucursal_id,
                                                                 cantidad_facturada, cantidad_descontada, cantidad_pendiente, creado_por)
-    VALUES (p_empresa, v_id, r.producto_id, r.deposito_id, (SELECT pu.unidad_medida_id FROM public.productos pu WHERE pu.empresa_id = p_empresa AND pu.id = r.producto_id), p_sucursal,
+    VALUES (p_empresa, v_id, r.producto_id, r.deposito_id, r.unidad_medida_id, p_sucursal,
             r.facturado, r.descontado, r.pendiente, p_usuario);
   END LOOP;
 
   RETURN QUERY SELECT v_id, v_numero, v_reutilizado;
 END $$;
 
--- 8) «Bajas pendientes de stock» (SOLO LECTURA): STOCK.VER y solo depósitos del alcance del usuario. Saldo registrado = disponible propio real (>= 0); proyectado = registrado − pendientes abiertos
+-- 8) «Bajas pendientes de stock» (SOLO LECTURA): STOCK.VER y solo depósitos del alcance del usuario (R02-R02/F002-R: alcance histórico, activos o no). Saldo registrado = disponible propio real (>= 0); proyectado = registrado − pendientes abiertos
 --    del MISMO producto y depósito (un proyectado negativo NO es saldo físico ni contable; se repite igual en cada fila del par y no se suma).
 --    R01/F002: referencia fiscal con serie; filtro por sucursal (en el alcance); paginado estable (límite 1..100, desplazamiento) con total; faltante original (cantidad_pendiente, evidencia inmutable),
 --    pendiente actual (0 si está confirmada) y descontado total (al emitir + confirmado).
@@ -582,7 +603,9 @@ BEGIN
       CROSS JOIN LATERAL (SELECT COALESCE(sum(q.cantidad_pendiente), 0) AS abierto FROM public.documento_electronico_stock_pendientes q
                            WHERE q.empresa_id = p.empresa_id AND q.producto_id = p.producto_id AND q.deposito_id = p.deposito_id AND q.estado = 'PENDIENTE') ab
      WHERE p.empresa_id = p_empresa
-       AND public.usuario_puede_deposito(p_empresa, p_usuario, p.deposito_id)
+       -- R02-R02/F002-R: alcance HISTÓRICO de lectura (NEX-046 deposito_en_alcance: alcance TODOS o depósito asignado, activo o no). Una baja ya confirmada sigue visible si su depósito se
+       -- inactivó después; un alcance revocado la oculta y otra empresa nunca se ve (p.empresa_id = p_empresa). Confirmar sigue exigiendo depósito activo (fe_stock_pendiente_confirmar).
+       AND public.deposito_en_alcance(p_empresa, p_usuario, p.deposito_id)
        AND (p_estado IS NULL OR p.estado = p_estado)
        AND (p_sucursal IS NULL OR p.sucursal_id = p_sucursal)
        AND (p_deposito IS NULL OR p.deposito_id = p_deposito)
@@ -606,7 +629,8 @@ BEGIN
       FROM public.depositos dp
       JOIN public.sucursales su ON su.empresa_id = dp.empresa_id AND su.id = dp.sucursal_id
      WHERE dp.empresa_id = p_empresa AND NOT dp.es_de_terceros
-       AND public.usuario_puede_deposito(p_empresa, p_usuario, dp.id)
+       -- R02-R02/F002-R: mismo alcance histórico que el listado (incluye depósitos inactivos, marcados con o_deposito_activo) para poder filtrar su historial confirmado.
+       AND public.deposito_en_alcance(p_empresa, p_usuario, dp.id)
      ORDER BY su.codigo, su.id, dp.codigo, dp.id
      LIMIT 1000;
 END $$;

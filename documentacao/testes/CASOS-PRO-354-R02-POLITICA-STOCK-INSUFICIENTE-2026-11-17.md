@@ -115,3 +115,43 @@ Casos automatizables nuevos: `PRO354-R01-01` a `PRO354-R01-48` (sección L del m
 | Confirmar y cambiar el filtro durante el POST | Al terminar se relee con los filtros vigentes; la lectura anterior no gana. | R01-43, R01-47 |
 | Re-render con la misma consulta | No invalida nada. | R01-40, R01-44 |
 | Cambio de filtro | Vuelve a la página 1; un depósito de otra sucursal se limpia. Se conservan la confirmación explícita y el resultado idempotente. | R01-48 |
+
+## 5. Correctivo PRO-354-R02-R02 (auditoría AUD-CHATGPT-PRO-354-R02-R01, hallazgos F001-R–F003-R)
+
+Casos escritos en `lib/facturacion/politica-stock-pro354.casos.ts`, sección M (`PRO354-R02-01..26`). **No ejecutados** (orden del responsable). Ningún SQL ni migration aplicado.
+
+### F001-R — Unidad base revisada y lotes
+
+| Escenario | Esperado | Caso |
+|---|---|---|
+| El plan con faltante lleva la unidad base (UUID) de la línea y la envía a la base | `unidadId` = `unidad_medida_id` = U1 | R02-01 |
+| Cambio de unidad base entre la previa y la emisión (misma cantidad y depósito) | La huella cambia; la emisión responde 409 «revisar de nuevo» | R02-02 |
+| Líneas repetidas del mismo UUID | Un pendiente con la unidad del producto | R02-03 |
+| Producto sin unidad base conocida | Viaja `null`; la base rechaza (falla cerrada) | R02-04, R02-07 |
+| Sin cambio | Misma huella | R02-05 |
+| Override SIFEN legítimo en la línea | No altera la unidad base revisada (`p.unidad_medida_id`) | R02-06 |
+| Cambio entre la preparación y la base | Unidad vigente leída bajo FOR SHARE ≠ revisada → `NEX:STOCK_PENDIENTE_UNIDAD_CAMBIO` (409) **antes** de reservar numeración | R02-08, R02-12 |
+| Misma equivalencia SIFEN con otro UUID | Es un cambio (comparación por UUID, sin conversión) | R02-09 |
+| La unidad guardada en el pendiente | La revisada (igual a la vigente bajo bloqueo) | R02-10 |
+| Reintento idempotente con otra unidad | `NEX:IDEMPOTENCIA_CONFLICTO`, sin escribir | R02-11 |
+| Lote creado por una entrada concurrente | Se re-comprueba `stock_lotes` tras el candado `movimientos.numero:` y antes de insertar | R02-13 |
+
+### F002-R — Historial con depósito inactivo
+
+| Escenario | Esperado | Caso |
+|---|---|---|
+| Baja confirmada, depósito inactivado después, alcance autorizado | Sigue visible en el listado y en el filtro (rotulado «(inactivo)») | R02-14, R02-15, R02-17 |
+| Alcance del depósito revocado | No se ve | R02-16 |
+| Otra empresa | No se ve | R02-16 |
+| Confirmar en depósito inactivo | Rechazado (alcance operativo + depósito activo, MOVIMIENTOS.CREAR) | R02-18 |
+| Guardas de inactivación | Sin cambios | R02-19 |
+| Scripts NEX-081 | Preflight, verificación, reversión y procedimiento actualizados | R02-20 |
+
+### F003-R — Resultado de la confirmación vs. error de carga
+
+| Escenario | Esperado | Caso |
+|---|---|---|
+| POST 409 y luego GET 200 | El motivo del rechazo se conserva (identificado por factura); la lectura solo limpia el error de carga | R02-21, R02-22, R02-23 |
+| Cambio de filtros durante el POST (éxito o error) | El resultado se muestra igual, con su factura; cambiar filtros no lo borra | R02-24 |
+| A→B→A con respuesta tardía | La lectura vieja se descarta (generación y clave) | R02-25 |
+| Acciones mientras carga o confirma | Bloqueadas; iniciar otra confirmación reemplaza el resultado; «Cerrar» lo descarta | R02-26 |

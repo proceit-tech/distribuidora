@@ -27,6 +27,9 @@ UNION ALL SELECT 'R01: la numeración de movimientos usa el candado ''movimiento
        AND position('movimientos.numero:' IN pg_get_functiondef('public.nex_siguiente_numero_movimiento(uuid)'::regprocedure)) > 0
 UNION ALL SELECT 'R01: el motor de líneas lee el producto con FOR SHARE (NEX-052)',
        position('FOR SHARE' IN pg_get_functiondef('public.inventario_agregar_linea(uuid,uuid,uuid,numeric,numeric,uuid,text,uuid,numeric,text,numeric)'::regprocedure)) > 0
+UNION ALL SELECT 'R02-R02: alcance histórico de depósitos para el historial (deposito_en_alcance, NEX-046: activos o no)',
+       to_regprocedure('public.deposito_en_alcance(uuid,uuid,uuid)') IS NOT NULL
+       AND position('activo' IN pg_get_functiondef('public.deposito_en_alcance(uuid,uuid,uuid)'::regprocedure)) = 0
 UNION ALL SELECT 'tabla stock_lotes (evidencia de control de lotes, NEX-009)', to_regclass('public.stock_lotes') IS NOT NULL
 UNION ALL SELECT 'tabla eventos_seguridad (auditoría del cambio de política)', to_regclass('public.eventos_seguridad') IS NOT NULL
 UNION ALL SELECT 'NEX-081 ausente: empresas.bloquear_stock_insuficiente no existe',

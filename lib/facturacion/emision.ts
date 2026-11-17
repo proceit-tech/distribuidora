@@ -153,7 +153,7 @@ export async function buscarClientesFactura(db: Db, empresaId: string, texto: st
 }
 
 const SELECT_PRODUCTOS = `
-  SELECT p.id, p.codigo, p.controla_stock AS "controlaStock", p.descripcion_factura AS descripcion, um.unidad_sifen_codigo AS "unidadSifen", us.representacion AS "unidadSimbolo", us.descripcion AS "unidadNombre", us.vigente AS "unidadVigente", p.afectacion_iva AS afectacion,
+  SELECT p.id, p.codigo, p.controla_stock AS "controlaStock", p.unidad_medida_id AS "unidadId", p.descripcion_factura AS descripcion, um.unidad_sifen_codigo AS "unidadSifen", us.representacion AS "unidadSimbolo", us.descripcion AS "unidadNombre", us.vigente AS "unidadVigente", p.afectacion_iva AS afectacion,
          p.proporcion_gravada_iva::text AS proporcion, i.porcentaje::int AS tasa, pr.precio::text AS precio, pr.moneda AS "monedaPrecio",
          coalesce((SELECT pc.codigo FROM producto_codigos pc WHERE pc.empresa_id = p.empresa_id AND pc.producto_id = p.id AND pc.tipo = 'GTIN' AND pc.codigo ~ '^[0-9]{8,14}$'
                     ORDER BY pc.es_principal DESC, pc.creado_at LIMIT 1), CASE WHEN p.codigo_barras ~ '^[0-9]{8,14}$' THEN p.codigo_barras END) AS gtin
@@ -635,7 +635,8 @@ export async function prepararFactura(db: Db, empresaId: string, usuarioId: stri
     }
     // E01: todas las unidades (también SIFEN 77/UNI) admiten cantidades fraccionarias (hasta 4 decimales, validadas por el cálculo fiscal).
     precios.push({ referencia: referencia === null ? "" : s(p.precio), modificado });
-    lineasStock.push({ productoId: s(p.id), codigo: s(p.codigo), descripcion, cantidad: l.cantidad, controlaStock: p.controlaStock === true });
+    // PRO-354-R02-R02: identidad (UUID) de la unidad BASE leída aquí; viaja en el plan con faltante y la base la compara bajo bloqueo antes de numerar. No se confunde con la unidad SIFEN.
+    lineasStock.push({ productoId: s(p.id), codigo: s(p.codigo), descripcion, cantidad: l.cantidad, controlaStock: p.controlaStock === true, unidadId: p.unidadId === null || p.unidadId === undefined ? null : s(p.unidadId) });
     extras.push({ campos, unidadSimbolo });
 
     lineas.push({

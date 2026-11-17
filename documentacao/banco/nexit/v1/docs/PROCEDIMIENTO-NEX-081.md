@@ -41,6 +41,12 @@
 - Los FOR SHARE no se bloquean entre sí; solo esperan a las funciones de administración (cambio de unidad base, edición o cambio de estado del depósito), que toman una sola fila y no esperan nada más. Si aun así PostgreSQL detectara un interbloqueo, aborta una de las transacciones completas, sin efectos parciales.
 - Las lecturas suponen el aislamiento por defecto (READ COMMITTED), que es el de la aplicación.
 
+### Corrección R02-R02
+
+- **Unidad base revisada:** cada pendiente que envía la aplicación lleva `unidad_medida_id` (UUID de la unidad base con la que preparó la factura; no el código SIFEN). El registro la compara con la vigente bajo el FOR SHARE del producto **antes** de reservar numeración fiscal (`NEX:STOCK_PENDIENTE_UNIDAD_CAMBIO`, 409) y la guarda tal cual. Un reintento idempotente compara también la unidad. La aplicación y NEX-081 deben ser de la misma revisión: un pendiente sin unidad se rechaza (falla cerrada).
+- **Lotes:** la evidencia de `stock_lotes` se vuelve a comprobar después del candado `movimientos.numero:` y antes de insertar cada pendiente.
+- **Historial:** listado y filtros usan `deposito_en_alcance` (NEX-046, alcance histórico, depósitos activos o no): una baja confirmada sigue visible tras inactivar su depósito. La confirmación sigue exigiendo depósito activo y en el alcance operativo (`usuario_puede_deposito`). La reversión no cambia (mismas firmas; `deposito_en_alcance` pertenece a NEX-046).
+
 ## Coexistencia
 
 | Combinación | Resultado |
