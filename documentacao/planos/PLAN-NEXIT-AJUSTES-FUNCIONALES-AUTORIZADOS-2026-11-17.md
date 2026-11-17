@@ -1,4 +1,7 @@
 # NEXIT — Cola de ajustes funcionales autorizados — 17/11/2026
+
+> **HISTÓRICO — sustituido por [plan R02](https://github.com/proceit-tech/distribuidora/blob/c98adec49de06250aea8b3f2cce236e25983dece/documentacao/planos/PLAN-NEXIT-AJUSTES-FUNCIONALES-R02-2026-11-17.md).** PRO-310 cancelada por decisión del responsable; no ejecutar el gate de reserva ni usar su orden activa. La única orden vigente es PRO-354-R02-R04 focal.
+
 Base auditada 04b65afb597579caffd0bbe9ddc50b18376ef6cd. El responsable aprobó los ítems 01–05 y 07–10 de la auditoría general. No autorizó rediseño KuDE (06): responsabilidad del proveedor; responsabilidad NEXIT es enviar JSON contractual correcto por identidad y credenciales de la empresa, conservar evidencia y guardas existentes. No inventar CDC, no retirar controles de pertenencia, no afirmar que el JSON correcto garantiza PDF correcto. Sin cambios de seguridad/infraestructura/nuevos módulos. 
 Aprobación funcional no equivale a aprobación de detalles de negocio pendientes, corrección sin diagnóstico, ejecución SQL/test ni producción.
 
