@@ -278,7 +278,8 @@ export function construirPayloadNCE(e: EntradaNce, receptor: Record<string, unkn
   const invalidos = validarEntradaNce(e);
 
   if (invalidos.length > 0) throw new Error(`La entrada no es válida para construir el payload NCE: ${invalidos.join(" | ")}`);
-  if (!/^\d{44}$/.test(cdcOriginal)) throw new Error("El CDC de la factura original no es válido.");
+  // PRO-342-R05: solo PRESENCIA del CDC informado por la API (texto no vacío); se envía literal, sin validar su forma.
+  if (typeof cdcOriginal !== "string" || cdcOriginal === "") throw new Error("La factura original no tiene el CDC informado por la API.");
 
   const r = calcularNce(e);
   const sub = calcularSubtotales(r.items.map((i) => ({ entrada: { cantidad: i.cantidad, precioUnitario: i.precio, afectacion: i.original.afectacion, tasa: i.original.tasa, proporcion: parseDec(i.original.proporcion, 8) ?? B(0) }, resultado: i })));

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { esFaseXmlFirmado, estadoSifenDesdeGateway, type EstadoSifen } from "@/lib/facturacion/estados";
+import { estadoSifenDesdeGateway, type EstadoSifen } from "@/lib/facturacion/estados";
 import { fetchKudeSeguro, fetchSeguro, validarUrlGateway } from "@/lib/facturacion/gateway-url";
 
 /**
@@ -147,6 +147,11 @@ export const limpiarTexto = (t: string): string => t.replace(PATRON_SECRETO, "[o
 // operación (CONTRATO_FISCAL_CONSULTA / CONTRATO_FISCAL_ENVIO, tomados de los contratos del proveedor ya implementados en interpretarConsulta / interpretarRecepcion) y cumple
 // su formato exacto. Ni la forma del valor (44 dígitos, R03-F001) ni el NOMBRE de un campo (R04-F001: «Nota.CDC», «Nota.lote», listas «Aceptados» fuera de response) eximen
 // del saneamiento. Sin contrato (uso genérico de sinSecretos) no se exime nada.
+// PRO-342-R05 — CDC = DATO OPACO de la API: en su ruta contractual se conserva CUALQUIER texto (sin exigir 44 dígitos ni composición), dentro del límite de transporte MAX_CDC (la columna
+// SQL admite 1..256 caracteres, NEX-080). Fuera de la ruta contractual sigue siendo texto libre y se sanea como antes.
+export const MAX_CDC = 256;
+const CDC_TRANSPORTABLE = /^[^\u0000]{1,256}$/u;
+/** SOLO KuDE (gate R05-5, ver correspondenciaKude): forma de CDC SIFEN usada únicamente para DESCARTAR un PDF de otra numeración. No participa en envío, consulta ni estado fiscal. */
 const CDC_FORMATO = /^\d{44}$/;
 const NUMERO_FISCAL_CLAVE = /^\d{3}-\d{3}-\d{7}$/;
 // PRO-342-R01: el lote es el identificador LITERAL que devolvió el gateway (p. ej. «RUC-tipo-EEE-PPP-NNNNNNN-fecha-aleatorio»): se conserva tal cual (hasta 60 caracteres imprimibles, sin
@@ -170,9 +175,9 @@ const SIN_CONTRATO: ContratoFiscal = { valores: {}, listasPorNumeroFiscal: new S
  */
 export const CONTRATO_FISCAL_CONSULTA: ContratoFiscal = {
   valores: {
-    cdc: CDC_FORMATO,
+    cdc: CDC_TRANSPORTABLE,
     codrespuesta: FORMATO_COD_RESPUESTA,
-    "respuesta.response.de.cdc": CDC_FORMATO,
+    "respuesta.response.de.cdc": CDC_TRANSPORTABLE,
     "respuesta.response.de.retorno.codrespuesta": FORMATO_COD_RESPUESTA,
   },
   listasPorNumeroFiscal: new Set(),
@@ -185,10 +190,10 @@ export const CONTRATO_FISCAL_CONSULTA: ContratoFiscal = {
  */
 export const CONTRATO_FISCAL_ENVIO: ContratoFiscal = {
   valores: {
-    cdc: CDC_FORMATO,
-    cdcinformado: CDC_FORMATO,
+    cdc: CDC_TRANSPORTABLE,
+    cdcinformado: CDC_TRANSPORTABLE,
     lote: FORMATO_LOTE,
-    "respuesta.cdc": CDC_FORMATO,
+    "respuesta.cdc": CDC_TRANSPORTABLE,
     "respuesta.nrolote": FORMATO_LOTE,
     // PRO-342-R01: los mismos nombres de lote que interpretarRecepcion lee, y SOLO en la raíz (ruta del contrato), quedan exactos en la evidencia.
     "respuesta.lote": FORMATO_LOTE,
@@ -248,12 +253,13 @@ export function sinSecretos<T>(valor: T, secretos: string[], contrato: ContratoF
 
 /**
  * PRO-338-R03: resultado OPERACIONAL de consulta/envío. Separa el dato fiscal íntegro de la evidencia saneada: todo se sanea con sinSecretos según el contrato de la operación y,
- * además, el CDC operacional (`cdc`, y `cdcInformado` en el envío) se repone EXACTAMENTE como lo interpretó la respuesta de la API (ya validado como 44 dígitos o null). Nada del
- * CDC se genera, completa ni corrige aquí.
+ * además, el CDC operacional (`cdc`, y `cdcInformado` en el envío) se repone EXACTAMENTE como lo interpretó la respuesta de la API (PRO-342-R05: texto literal informado o null; sin
+ * validar su forma). Nada del CDC se genera, completa ni corrige aquí.
  */
 export function resultadoFiscalSinSecretos<T extends { cdc: string | null; cdcInformado?: string | null; lote?: string | null }>(resultado: T, secretos: string[], contrato: ContratoFiscal): T {
   const saneado = sinSecretos(resultado, secretos, contrato);
-  const intacto = (v: string | null | undefined) => (v === null || v === undefined || CDC_FORMATO.test(v) ? v : null);
+  // PRO-342-R05: el valor ya es el texto literal de la ruta contractual (cdcInformadoPorApi) o null: se repone tal cual, sin filtro de formato.
+  const intacto = (v: string | null | undefined) => (typeof v === "string" && CDC_TRANSPORTABLE.test(v) ? v : null);
   // PRO-342-R01: el lote operacional (leído SOLO de la ruta contractual nro_lote por interpretarRecepcion) se repone exacto: nunca «[omitido]» en el dato que se persiste en el documento.
   const loteIntacto = (v: string | null | undefined) => (typeof v === "string" && FORMATO_LOTE.test(v) ? v : null);
 
@@ -313,18 +319,54 @@ const texto = (v: unknown, max = 500): string | null => {
   return t === null ? null : limpiarTexto(t);
 };
 /**
- * PRO-342-R04-F02: lectura LITERAL del CDC informado por la API. Nunca se usa texto() (que recorta y limpia): el CDC solo es válido si el valor recibido ES una cadena de exactamente 44 dígitos
- * (^\d{44}$ sobre los caracteres originales). `presente` distingue «no informado» (ausente, null o "") de «informado pero malformado», que nunca se convierte en CDC ni se trata como ausente.
+ * PRO-342-R05: lectura del CDC informado por la API como DATO OPACO. Nunca se usa texto() (que recorta y limpia) ni se valida longitud, dígitos, composición o posiciones:
+ *  · `valor`: la cadena EXACTA recibida (espacios, letras, 43/45 caracteres... incluidos), o null si no hay un texto contractual transportable.
+ *  · `presente`: la API informó algo en la ruta (distinto de ausente, null o ""). Un valor presente pero no transportable (`motivo`) — un número u otro tipo JSON, más de MAX_CDC caracteres o
+ *    un carácter NUL — NO se convierte a texto ni se recorta: queda solo en la evidencia JSON del intento y NUNCA se usa para rechazar el estado informado.
  */
-export function cdcLiteral(v: unknown): { presente: boolean; valido: string | null } {
-  const presente = v !== undefined && v !== null && v !== "";
+export type CdcInformado = { presente: boolean; valor: string | null; motivo: null | "NO_TEXTO" | "EXCEDE_LIMITE" | "CARACTER_NUL" };
 
-  return { presente, valido: typeof v === "string" && CDC_FORMATO.test(v) ? v : null };
+export function cdcInformadoPorApi(v: unknown): CdcInformado {
+  if (v === undefined || v === null || v === "") return { presente: false, valor: null, motivo: null };
+  if (typeof v !== "string") return { presente: true, valor: null, motivo: "NO_TEXTO" };
+  if (v.length > MAX_CDC) return { presente: true, valor: null, motivo: "EXCEDE_LIMITE" };
+  if (v.includes("\u0000")) return { presente: true, valor: null, motivo: "CARACTER_NUL" };
+
+  return { presente: true, valor: v, motivo: null };
 }
 const registro = (v: unknown): Record<string, unknown> | null => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null);
 
-/** No asume que todas las respuestas tienen la misma forma: lo que no esté presente queda en null y lo no interpretable es RESPUESTA_INVALIDA. */
-export function interpretarConsulta(http: number, cuerpoTexto: string): ResultadoConsulta {
+/**
+ * PRO-342-R05: eco EXPLÍCITO de identidad en la respuesta de consulta. El contrato documentado no trae eco (la correlación es la solicitud: cuenta autenticada + tipoDoc/dEst/dPunExp/
+ * dNumDoc/dSerieNum); pero SI la respuesta trae alguno de esos campos (en response o en response.DE) como texto y contradice lo solicitado, la respuesta no es de este documento.
+ * Independiente del CDC. Devuelve el nombre del campo contradictorio o null.
+ */
+export function ecoIdentidadContradice(respuesta: Record<string, unknown>, doc: DocumentoConsulta | undefined): string | null {
+  if (!doc) return null;
+
+  const esperado: Record<string, string | null> = { dest: doc.establecimiento, dpunexp: doc.puntoExpedicion, dnumdoc: doc.numero, dserienum: doc.serie, tipodoc: tipoDocConsulta(doc.tipo) };
+  const de = registro(respuesta.DE);
+
+  for (const nivel of [respuesta, de]) {
+    if (!nivel) continue;
+    for (const [k, v] of Object.entries(nivel)) {
+      const clave = normalizarClave(k);
+
+      if (!(clave in esperado) || typeof v !== "string" || v === "") continue;
+      // tipoDoc: se compara sin distinguir mayúsculas («FE»/«fe»); los identificadores numéricos y la serie, literalmente.
+      if (clave === "tipodoc" ? v.toUpperCase() !== String(esperado.tipodoc ?? "").toUpperCase() : v !== esperado[clave]) return k;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * No asume que todas las respuestas tienen la misma forma: lo que no esté presente queda en null y lo no interpretable es RESPUESTA_INVALIDA.
+ * PRO-342-R05: el CDC NO condiciona el resultado: un estado contractual auténtico se interpreta igual con CDC ausente, de cualquier longitud o forma, o distinto del registrado.
+ * `doc` (opcional): documento solicitado, para rechazar un eco explícito de identidad contradictorio (ecoIdentidadContradice).
+ */
+export function interpretarConsulta(http: number, cuerpoTexto: string, doc?: DocumentoConsulta): ResultadoConsulta {
   let cuerpo: unknown;
 
   try {
@@ -353,15 +395,13 @@ export function interpretarConsulta(http: number, cuerpoTexto: string): Resultad
 
   const de = registro(respuesta.DE);
   const retorno = de ? registro(de.Retorno) : null;
-  const cdcLeido = cdcLiteral(de?.CDC);
-  const cdc = cdcLeido.valido;
+  // PRO-342-R05: ÚNICA ruta contractual del CDC en la consulta = response.DE.CDC; se toma literal (dato opaco). No se busca en otras rutas.
+  const cdc = cdcInformadoPorApi(de?.CDC).valor;
   const estadoSifen = estadoSifenDesdeGateway(estado);
+  const ecoAjeno = ecoIdentidadContradice(respuesta, doc);
 
-  // PRO-342-R03/R04-F02: un final o «XML firmado» que trae un CDC PRESENTE pero que no es literalmente un CDC válido (espacios, letras, 43/45 dígitos, número JSON...) no se acepta: el CDC
-  // no se recorta, corrige ni descarta en silencio como si estuviera ausente (queda como evidencia y RESPUESTA_INVALIDA).
-  // Un final SIN CDC disponible para el documento, o «XML firmado» SIN CDC en esta respuesta, lo bloquea decidirConsulta (R03-01 / R04-F01).
-  if (cdcLeido.presente && cdc === null && (["APROBADO", "RECHAZADO", "CANCELADO", "INUTILIZADO"].includes(estadoSifen) || esFaseXmlFirmado(estado))) {
-    return { ...vacio("RESPUESTA_INVALIDA", http, `La consulta informa «${estado}» con un CDC que no es válido (debe ser exactamente de 44 dígitos): no se modifica el estado fiscal ni el CDC.`), estadoGateway: estado, respuesta: guardada };
+  if (ecoAjeno !== null) {
+    return { ...vacio("RESPUESTA_INVALIDA", http, `La respuesta del gateway identifica otro documento (campo «${ecoAjeno}» distinto del solicitado): no se registra como resultado fiscal de este documento.`), estadoGateway: estado, respuesta: guardada };
   }
 
   return {
@@ -534,7 +574,8 @@ export async function consultarDocumentoGateway(config: ConfigGateway, doc: Docu
     if (esTokenInvalido(r.status, r.texto) && !forzar) continue;
 
     // PRO-338-R03/R05: el CDC de response.DE.CDC llega intacto a decidirConsulta y a la SQL (nunca «[omitido]» por coincidir con la clave); solo las rutas de CONTRATO_FISCAL_CONSULTA se eximen.
-    return resultadoFiscalSinSecretos(interpretarConsulta(r.status, r.texto), [credenciales.password, token], CONTRATO_FISCAL_CONSULTA);
+    // PRO-342-R05: con el documento solicitado, para rechazar un eco explícito de identidad contradictorio (nunca por el CDC).
+    return resultadoFiscalSinSecretos(interpretarConsulta(r.status, r.texto, doc), [credenciales.password, token], CONTRATO_FISCAL_CONSULTA);
   }
 
   return vacio("ERROR_HTTP", 401, "El gateway rechazó el token tras renovarlo.");
@@ -547,8 +588,8 @@ export async function consultarDocumentoGateway(config: ConfigGateway, doc: Docu
 //  · Rechazo: {status:"error", rechazados, response:{Aceptados[], Rechazados:[{"EEE-PPP-NNNNNNN":{campo:mensaje}}]}} → ERROR_ENVIO/RECHAZO solo si
 //    Rechazados identifica ESTE documento por su número fiscal (nunca se atribuye el error de otro); si no, indeterminado.
 //  · «Token inválido» (incluso con HTTP 400) es AUTORIZACIÓN: se renueva la sesión UNA vez; si persiste, ERROR_ENVIO/AUTENTICACION (no es rechazo).
-//  · Un CDC coherente o el eco de dEst/dPunExp/dNumDoc también certifican la recepción. 4xx ambiguos (408/409/423/425, duplicados), 5xx, timeout,
-//    red y respuesta ilegible → ENVIO_INDETERMINADO.
+//  · El eco de dEst/dPunExp/dNumDoc también certifica la recepción. PRO-342-R05: el CDC NO certifica ni descarta la recepción (es un dato opaco: se guarda literal si el ACK lo trae).
+//    4xx ambiguos (408/409/423/425, duplicados), 5xx, timeout, red y respuesta ilegible → ENVIO_INDETERMINADO.
 // Un HTTP 2xx significa «el gateway respondió», NUNCA «aprobado por SIFEN»: estado_sifen solo lo fija la consulta de estado.
 
 export type EstadoLocalEnvio = "ENVIADO" | "ERROR_ENVIO" | "ENVIO_INDETERMINADO";
@@ -567,9 +608,9 @@ export type ResultadoEnvio = {
   http: number | null;
   mensaje: string | null;
   lote: string | null;
-  /** CDC coherente con el documento (el único que se guarda en el documento). */
+  /** PRO-342-R05: CDC informado en un ACK ENVIADO (correlacionado por lote o eco, nunca por el CDC), literal; null en cualquier otro caso. */
   cdc: string | null;
-  /** CDC tal como lo informó el gateway (44 dígitos), coherente o no: queda como evidencia del intento. */
+  /** CDC tal como lo informó el gateway en la raíz de la respuesta (texto literal, cualquier forma): evidencia del intento; la SQL solo lo proyecta en el documento con ENVIADO. */
   cdcInformado: string | null;
   estadoGateway: string | null;
   errores: string[];
@@ -585,7 +626,11 @@ const CLAVES_ESTADO = new Set(["estado"]);
 const DUPLICADO = /duplicad|ya existe|ya fue|already|exist[ea]|registrad[oa] previamente|repetid/i;
 const CODIGO_TIPO: Record<string, string> = { FE: "01", AFE: "04", NCE: "05", NDE: "06", NRE: "07" };
 
-/** Mismo criterio que fe_cdc_coherente (SQL): tipo de DE y posiciones de establecimiento, punto y número (MT v150 §10.1). */
+/**
+ * Mismo criterio que fe_cdc_coherente (SQL): tipo de DE y posiciones de establecimiento, punto y número (MT v150 §10.1).
+ * PRO-342-R05: YA NO participa en envío, recepción, consulta, estado fiscal ni persistencia. Uso EXCLUSIVO y congelado: descartar en el KuDE un PDF cuyo CDC muestra OTRA numeración cuando
+ * el documento no tiene CDC registrado (única evidencia disponible contra un PDF ajeno: gate R05-5, ver correspondenciaKude). Retirarla exige antes evidencia contractual del proveedor.
+ */
 export function cdcCoherente(doc: DocumentoRecepcion, cdc: string): boolean {
   return /^\d{44}$/.test(cdc) && cdc.slice(0, 2) === CODIGO_TIPO[doc.tipo] && cdc.slice(11, 14) === doc.establecimiento && cdc.slice(14, 17) === doc.puntoExpedicion && cdc.slice(17, 24) === doc.numero;
 }
@@ -717,8 +762,8 @@ export function interpretarRecepcion(http: number, cuerpoTexto: string, fases: F
 
   const raiz = cuerpo && typeof cuerpo === "object" && !Array.isArray(cuerpo) ? (cuerpo as Record<string, unknown>) : null;
   const cdcBruto = enRaiz(raiz, "cdc");
-  // PRO-342-R04-F02: CDC del ACK leído LITERAL (sin trim): un valor con espacios o malformado no se convierte en CDC. No se asume que el ACK traiga CDC.
-  const cdcInformado = cdcLiteral(cdcBruto).valido;
+  // PRO-342-R05: CDC del ACK (solo en la raíz, ruta contractual) leído como DATO OPACO literal: cualquier texto se conserva tal cual. No se asume que el ACK traiga CDC ni se usa para decidir.
+  const cdcInformado = cdcInformadoPorApi(cdcBruto).valor;
   const mensaje = raiz ? comoTexto(buscar(raiz, CLAVES_MENSAJE)) : null;
   const resp = raiz ? Object.entries(raiz).find(([k, v]) => CLAVES_RESPUESTA.has(norm(k)) && v && typeof v === "object" && !Array.isArray(v))?.[1] as Record<string, unknown> | undefined : undefined;
   const lista = (nombre: string) => entradasPorNumero(resp ? Object.entries(resp).find(([k]) => norm(k) === nombre)?.[1] : undefined);
@@ -782,7 +827,7 @@ export function interpretarRecepcion(http: number, cuerpoTexto: string, fases: F
       const hayEco = eco.est !== null || eco.pun !== null || eco.num !== null;
       const ecoOk = doc !== undefined && eco.est === doc.establecimiento && eco.pun === doc.puntoExpedicion && eco.num === doc.numero;
 
-      if (doc && cdcInformado && !cdcCoherente(doc, cdcInformado)) return indeterminado("El CDC informado por el gateway no corresponde al documento enviado: verifique en el gateway antes de reenviar.");
+      // PRO-342-R05: el CDC del ACK no confirma ni descarta la recepción (sin cdcCoherente). La identidad la dan el lote del contrato o el eco del número.
       if (doc && hayEco && !ecoOk) return indeterminado("El número de documento devuelto por el gateway no coincide con el enviado: verifique en el gateway antes de reenviar.");
       const ajenos = aceptados.filter((e) => /^\d{3}-\d{3}-\d{7}$/.test(e.numero));
 
@@ -791,9 +836,10 @@ export function interpretarRecepcion(http: number, cuerpoTexto: string, fases: F
       if (doc && loteInvalido) return indeterminado("El número de lote informado por el gateway no es un identificador válido (vacío, con espacios al inicio o al final, caracteres de control o tipo no admitido): no se registra un lote distinto del recibido; verifique en el gateway antes de reenviar.");
       // Contrato confirmado: success + nro_lote no vacío = recepción del documento por el gateway (sin CDC). No es aprobación SIFEN.
       if (doc && loteValido) return { ...base("OK", "ENVIADO", null, mensaje), cdc: cdcInformado };
-      if (doc && ((cdcInformado && cdcCoherente(doc, cdcInformado)) || ecoOk)) return { ...base("OK", "ENVIADO", null, mensaje), cdc: cdcInformado };
+      if (doc && ecoOk) return { ...base("OK", "ENVIADO", null, mensaje), cdc: cdcInformado };
 
-      return indeterminado("El gateway respondió sin identificar el documento recibido (sin lote, CDC ni número): no se confirma la recepción; verifique en el gateway antes de reenviar.");
+      // PRO-342-R05: un ACK «success» con solo un CDC (sin lote ni eco del número) no identifica el documento: no se confirma (el CDC queda como evidencia).
+      return indeterminado("El gateway respondió sin identificar el documento recibido (sin lote ni número): no se confirma la recepción; verifique en el gateway antes de reenviar.");
     }
   }
 
@@ -874,8 +920,8 @@ export type DependenciasKude = { fetch?: FetchLike; fetchKude?: KudeFetch; env?:
 export type DocumentoKude = { tipoDoc: "FE" | "NCE"; establecimiento: string; puntoExpedicion: string; numero: string; serie: string | null; cdcRegistrado?: string | null };
 export type CodigoErrorKude = "SIN_CREDENCIALES" | "AUTENTICACION" | "TIMEOUT" | "NO_DISPONIBLE" | "NO_ENCONTRADO" | "FORMATO_NO_CONFIRMADO" | "PDF_INVALIDO" | "DEMASIADO_GRANDE" | "SOLICITUD_RECHAZADA" | "PROHIBIDO" | "REDIRECCION" | "NO_CORRESPONDE";
 /**
- * PRO-342-R02: pertenencia del PDF al documento. CDC_REGISTRADO = el CDC de la respuesta es IDÉNTICO al que la API informó para este documento al consultarlo. NO_VERIFICADO = no hay forma de
- * comprobarla con el contrato actual (documento sin CDC registrado o respuesta sin CDC): el PDF puede mostrarse (PRO-326) pero NUNCA como KuDE propio confirmado.
+ * PRO-342-R02: pertenencia del PDF al documento. NO_VERIFICADO = no hay forma de comprobarla con el contrato actual: el PDF puede mostrarse (PRO-326) pero NUNCA como KuDE propio confirmado.
+ * PRO-342-R05: «CDC_REGISTRADO» queda SOLO por compatibilidad de tipos con la UI/cabecera; correspondenciaKude ya no lo produce (un CDC igual no prueba la titularidad del PDF).
  */
 export type CorrespondenciaKude = "CDC_REGISTRADO" | "NO_VERIFICADO";
 /**
@@ -942,17 +988,23 @@ export function decodificarBase64Estricto(texto: string): Buffer | null {
 const MSG_NO_CORRESPONDE = "El gateway devolvió un KuDE que no corresponde a este documento (el CDC de su respuesta no coincide con el documento consultado): fue descartado y no se muestra como propio. Solicite la corrección al proveedor del gateway.";
 
 /**
- * PRO-342-R02: pertenencia del PDF según el CDC que trae la respuesta (null = NO corresponde: se descarta). Solo la igualdad con el CDC registrado (informado por la API para este documento)
- * verifica; la coherencia de numeración (criterio existente cdcCoherente) solo sirve para DESCARTAR un PDF de otro número, nunca para confirmar el emisor. Nunca devuelve ni registra el CDC.
+ * Pertenencia del PDF según el CDC que trae la respuesta (null = NO corresponde: se descarta).
+ * PRO-342-R05 (gate R05-5): el CDC es un dato opaco de la API y NO prueba pertenencia: este método YA NO devuelve «CDC_REGISTRADO» (verificado); todo PDF aceptado es NO_VERIFICADO
+ * (política vigente de aviso, sin cambios). Se CONSERVAN, congelados, los dos únicos descartes protectores contra un PDF ajeno, porque no existe evidencia contractual alternativa del
+ * proveedor (titularidad binaria del PDF):
+ *  · el documento tiene CDC registrado (informado por la API, cualquier forma) y la respuesta trae OTRO texto de CDC → se descarta (comparación literal, sin trim);
+ *  · sin CDC registrado, la respuesta trae un CDC con forma SIFEN que muestra OTRA numeración (cdcCoherente) → se descarta.
+ * Un CDC ausente, no textual o de forma no SIFEN sin CDC registrado no descarta ni verifica. Nunca devuelve ni registra el CDC.
  */
 export function correspondenciaKude(doc: DocumentoKude, cdcRespuesta: unknown): CorrespondenciaKude | null {
-  const cdc = typeof cdcRespuesta === "string" ? cdcRespuesta : ""; // R02: sin trim — un CDC con espacios no se iguala al registrado
+  const cdc = typeof cdcRespuesta === "string" ? cdcRespuesta : ""; // sin trim: un CDC con espacios no se iguala al registrado
 
+  if (cdc === "") return "NO_VERIFICADO";
+
+  const registrado = typeof doc.cdcRegistrado === "string" && doc.cdcRegistrado !== "" ? doc.cdcRegistrado : null;
+
+  if (registrado) return cdc === registrado ? "NO_VERIFICADO" : null;
   if (!CDC_FORMATO.test(cdc)) return "NO_VERIFICADO";
-
-  const registrado = typeof doc.cdcRegistrado === "string" && CDC_FORMATO.test(doc.cdcRegistrado) ? doc.cdcRegistrado : null;
-
-  if (registrado) return cdc === registrado ? "CDC_REGISTRADO" : null;
 
   return cdcCoherente({ tipo: doc.tipoDoc, establecimiento: doc.establecimiento, puntoExpedicion: doc.puntoExpedicion, numero: doc.numero }, cdc) ? "NO_VERIFICADO" : null;
 }

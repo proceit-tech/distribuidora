@@ -5,6 +5,8 @@
  * PRO-338-R02: casos R02-F001-* (lease con token, dos workers, lease vencido, respuesta tardía, reprogramación obsoleta, reinicio), R02-F002-* (indicador = badge amarillo en TODAS las
  * combinaciones) y R02-F003-* (CDC informado y última respuesta válida vs. último intento). NEX-077 se verifica como TEXTO y su semántica con el modelo en memoria.
  * NO registrado en el runner global (scripts/casos-clientes/run.js) por orden PRO-338; NO EJECUTADO en la entrega.
+ * PRO-342-R05: la base simulada responde a la verificación de catálogo de NEX-080 y registra SOLO por las funciones *_r05 (las firmas anteriores lanzan error en la simulación). NEXIT ya no valida
+ * el CDC: la simulación ya no anota CDC_DIVERGENTE; los casos que lo esperaban se marcan «(actualizado R05)» o «(histórico)». NO EJECUTADOS.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -110,21 +112,20 @@ function baseSimulada(filasOMundo: Fila[] | Mundo, docs: Record<string, Doc> = {
 
         return { rows: [{ ok }] };
       }
+      if (/to_regprocedure/.test(texto)) return { rows: [{ disponible: true }] };
       if (/FROM fe_gateway_config/.test(texto)) return { rows: opciones.sinConfig ? [] : [{ ...CONFIG, empresaId: params[0] }] };
+      if (/fe_documento_registrar_consulta/.test(texto) && !/_r05\(/.test(texto)) throw new Error("R05: firma anterior a NEX-080 (no debe usarse)");
       if (/fe_documento_registrar_consulta/.test(texto)) {
-        const funcion = /_auto\(/.test(texto) ? "auto" : /_flujo_nce\(/.test(texto) ? "flujo" : "manual";
-        const d = mundo.docs[String(params[2])];
+        const funcion = /_auto_r05\(/.test(texto) ? "auto" : /_flujo_nce_r05\(/.test(texto) ? "flujo" : "manual";
         const r = mundo.reservas.get(String(params[2]));
 
         // Fallo ajeno al fencing (p. ej. serialización) ANTES de la comprobación del token: deja al worker con la reserva perdida y obliga a probar programar_token con un token viejo.
         if (mundo.fallarRegistroUnaVez === worker) { mundo.fallarRegistroUnaVez = undefined; throw Object.assign(new Error("could not serialize access"), { code: "40001" }); }
         if (funcion === "auto" && (!r || r.token !== params[14])) throw Object.assign(new Error("la reserva de la consulta automática ya no pertenece a este proceso"), { code: "P0001", detail: "NEX:LEASE_OBSOLETO" });
-        const cdc = params[8] as string | null;
-        const divergente = params[3] === "OK" && cdc !== null && (cdc.slice(17, 24) !== d.numero || (d.cdc !== null && d.cdc !== cdc));
-
+        // PRO-342-R05 (NEX-080): el resultado informado se registra tal cual; el CDC no se valida (ni posiciones ni coincidencia con el registrado).
         mundo.registros.push({ funcion, params, worker });
 
-        return { rows: [{ resultado: divergente ? "CDC_DIVERGENTE" : params[3] }] };
+        return { rows: [{ resultado: params[3] }] };
       }
 
       const d = mundo.docs[String(params[2] ?? params[1] ?? "")] ?? Object.values(mundo.docs)[0];
@@ -256,16 +257,16 @@ export async function verificarCasosPro338(): Promise<string[]> {
     const b = baseSimulada([fila(DOC_FE, "FE")], { [DOC_FE]: FE_ENVIADA });
     const r = await ejecutarLote(b.db as never, { ...sinPausa, dep: { fetch: gw.fetch, env: ENV } });
 
-    igual("P338-09: la respuesta «Rechazado» con CDC de otro documento llega a la SQL, que la anota CDC_DIVERGENTE (simulado) y el worker no lo trata como fallo", [r.consultados, r.fallidos, b.registros[0]?.params[8]], [1, 0, CDC_OTRO]);
+    igual("P338-09 (actualizado R05): la respuesta «Rechazado» con un CDC cuya numeración difiere llega a la SQL R05 como OK/RECHAZADO con ese CDC literal (sin CDC_DIVERGENTE) y el worker no lo trata como fallo", [r.consultados, r.fallidos, b.registros[0]?.params[3], b.registros[0]?.params[7], b.registros[0]?.params[8]], [1, 0, "OK", "RECHAZADO", CDC_OTRO]);
   }
-  cierto("P338-09: la SQL del flujo convierte un CDC incoherente en CDC_DIVERGENTE y en ese caso NO actualiza estado_sifen", /v_resultado := 'CDC_DIVERGENTE'/.test(flujo) && /IF v_resultado = 'OK' THEN\s+UPDATE public\.documentos_electronicos SET\s+estado_sifen = p_estado_sifen/.test(flujo) && /CASE WHEN v_resultado = 'OK' THEN p_estado_sifen END/.test(flujo));
+  cierto("P338-09 (histórico NEX-062, ya no usada por la aplicación R05): la SQL anterior del flujo convertía un CDC incoherente en CDC_DIVERGENTE y en ese caso NO actualiza estado_sifen", /v_resultado := 'CDC_DIVERGENTE'/.test(flujo) && /IF v_resultado = 'OK' THEN\s+UPDATE public\.documentos_electronicos SET\s+estado_sifen = p_estado_sifen/.test(flujo) && /CASE WHEN v_resultado = 'OK' THEN p_estado_sifen END/.test(flujo));
   {
     const filaReal = { estadoLocal: "ENVIADO" as const, estadoSifen: "SIN_CONSULTA" as const, ultimaConsultaResultado: "CDC_DIVERGENTE" };
     const p = presentacionSifen(filaReal);
     const a = alertaConsulta(filaReal);
 
-    // PRO-338-R03: sin CDC registrado la alerta ya no afirma «distinto del registrado» (texto actualizado; tipo y tono sin cambios).
-    igual("P338-09: FE 001-003-0009015 → «SIFEN: Pendiente de confirmación» (amarillo) + «Inconsistencia de consulta: el CDC informado no corresponde a la identidad fiscal del documento» (alerta técnica roja, separada)", [p.tono, p.texto, a?.tipo, a?.texto], ["pendiente", "Pendiente de confirmación", "inconsistencia", "Inconsistencia de consulta: el CDC informado no corresponde a la identidad fiscal del documento"]);
+    // PRO-342-R05: una fila HISTÓRICA con CDC_DIVERGENTE se muestra como «Registro histórico» (la validación del CDC ya no se aplica); tipo y tono sin cambios.
+    igual("P338-09 (actualizado R05): FE 001-003-0009015 histórica → «SIFEN: Pendiente de confirmación» (amarillo) + aviso «Registro histórico…» separado, sin afirmar que el CDC no corresponde", [p.tono, p.texto, a?.tipo, /^Registro histórico/.test(a?.texto ?? ""), /no corresponde/.test(a?.texto ?? "")], ["pendiente", "Pendiente de confirmación", "inconsistencia", true, false]);
     cierto("P338-09: el KPI «Rechazados» solo cuenta estado_sifen = RECHAZADO (no la anomalía técnica)", SQL_GRUPO.RECHAZADO === "d.estado_sifen = 'RECHAZADO'");
   }
 
@@ -277,8 +278,8 @@ export async function verificarCasosPro338(): Promise<string[]> {
     const b = baseSimulada([fila(DOC_FE, "FE")], { [DOC_FE]: doc });
 
     await ejecutarLote(b.db as never, { ...sinPausa, dep: { fetch: gw.fetch, env: ENV } });
-    // PRO-342-R03-01 (retificada): sin CDC disponible un final no se consolida (un XML firmado siempre tiene CDC); el CDC no se inventa.
-    igual("P338-10: «Rechazado» sin CDC que identifique el documento → RESPUESTA_INVALIDA (decidirConsulta), sin estado fiscal ni CDC; el mensaje del certificado se conserva", [b.registros[0]?.params[3], b.registros[0]?.params[7], b.registros[0]?.params[8], /Certificado digital no vigente/.test(JSON.stringify(b.registros[0]?.params[13] ?? ""))], ["RESPUESTA_INVALIDA", null, null, true]);
+    // PRO-342-R05: el estado fiscal informado por la API se registra sin condicionarlo al CDC; el CDC ausente no se inventa.
+    igual("P338-10 (actualizado R05): «Rechazado» sin CDC → OK/RECHAZADO con CDC NULL (no se inventa); el mensaje del certificado se conserva", [b.registros[0]?.params[3], b.registros[0]?.params[7], b.registros[0]?.params[8], /Certificado digital no vigente/.test(JSON.stringify(b.registros[0]?.params[13] ?? ""))], ["OK", "RECHAZADO", null, true]);
     cierto("P338-10: el detalle de la fila muestra el historial con mensaje, CDC informado y JSON de respuesta", /i\.cdcInformado/.test(pagina) && /i\.mensaje/.test(pagina) && /verRespuesta\(d, i\)/.test(pagina));
   }
 
@@ -473,7 +474,7 @@ export async function verificarCasosPro338(): Promise<string[]> {
     await ejecutarLote(b.db as never, { ...sinPausa, dep: { fetch: gw.fetch, env: ENV } });
     igual("R02-F003-01: la consulta automática entrega a la SQL el CDC informado (p_cdc) y el token (p_token)", [b.registros[0]?.funcion, b.registros[0]?.params[8], b.registros[0]?.params[14]], ["auto", CDC_OTRO, "token-1"]);
   }
-  cierto("R02-F003-02: NEX-077 guarda cdc_informado (44 dígitos, coherente o no) en el intento y NO toca estado fiscal ni mensaje_respuesta si no es OK", /v_cdc_informado text := CASE WHEN p_cdc ~ '\^\[0-9\]\{44\}\$' THEN p_cdc END/.test(registrarAuto) && /estado_sifen, cdc_informado, cod_respuesta, mensaje, respuesta, actor_id\)/.test(registrarAuto) && /ELSE[\s\S]*SET ultima_consulta_at = now\(\), ultima_consulta_resultado = v_resultado, actualizado_at = now\(\)/.test(registrarAuto));
+  cierto("R02-F003-02 (histórico NEX-077; en R05 NEX-080 guarda el CDC literal de 1..256 caracteres): NEX-077 guarda cdc_informado (44 dígitos, coherente o no) en el intento y NO toca estado fiscal ni mensaje_respuesta si no es OK", /v_cdc_informado text := CASE WHEN p_cdc ~ '\^\[0-9\]\{44\}\$' THEN p_cdc END/.test(registrarAuto) && /estado_sifen, cdc_informado, cod_respuesta, mensaje, respuesta, actor_id\)/.test(registrarAuto) && /ELSE[\s\S]*SET ultima_consulta_at = now\(\), ultima_consulta_resultado = v_resultado, actualizado_at = now\(\)/.test(registrarAuto));
   cierto("R02-F003-03: para intentos antiguos sin columna, el CDC se lee del JSON saneado SOLO si la columna está vacía, y la pantalla indica la fuente", /CASE WHEN i\.cdc_informado IS NULL AND i\.tipo = 'CONSULTA'/.test(shared) && (shared.match(/\$\{CDC_EN_RESPUESTA\} AS "cdcRespuesta"/g) ?? []).length === 2 && /según el JSON de respuesta/.test(pagina));
   {
     const base = { httpStatus: 200, codRespuesta: null, cdcInformado: null } as const;
@@ -484,12 +485,12 @@ export async function verificarCasosPro338(): Promise<string[]> {
     const r1 = resumenConsultas([divergente, okPrevio]);
     const r2 = resumenConsultas([envio, http, divergente, okPrevio]);
 
-    igual("R02-F003-04: OK previo seguido de CDC_DIVERGENTE → última respuesta válida = la OK previa; último intento = el divergente (con su mensaje y CDC)", [r1.valida?.creadoAt, r1.ultima?.resultado, r1.ultima?.mensaje, r1.ultima ? cdcDeIntento(r1.ultima) : null], [okPrevio.creadoAt, "CDC_DIVERGENTE", divergente.mensaje, { cdc: CDC_OTRO, fuente: "columna" }]);
+    igual("R02-F003-04 (intento histórico CDC_DIVERGENTE): OK previo seguido de CDC_DIVERGENTE → última respuesta válida = la OK previa; último intento = el divergente (con su mensaje y CDC)", [r1.valida?.creadoAt, r1.ultima?.resultado, r1.ultima?.mensaje, r1.ultima ? cdcDeIntento(r1.ultima) : null], [okPrevio.creadoAt, "CDC_DIVERGENTE", divergente.mensaje, { cdc: CDC_OTRO, fuente: "columna" }]);
     igual("R02-F003-05: OK previo seguido de error HTTP (y un envío posterior) → válida sigue siendo la OK; último intento de CONSULTA = ERROR_HTTP; los envíos no cuentan", [r2.valida?.resultado, r2.valida?.creadoAt, r2.ultima?.resultado, r2.ultima?.httpStatus], ["OK", okPrevio.creadoAt, "ERROR_HTTP", 502]);
     igual("R02-F003-06: sin consulta válida cargada no se inventa una; CDC del JSON se marca como tal", [resumenConsultas([http]).valida, cdcDeIntento({ cdcInformado: null, cdcRespuesta: CDC_FE }), cdcDeIntento({ cdcInformado: null, cdcRespuesta: null })], [null, { cdc: CDC_FE, fuente: "json" }, null]);
     const alerta = alertaConsulta({ ultimaConsultaResultado: "CDC_DIVERGENTE" });
 
-    igual("R02-F003-07: con CDC_DIVERGENTE el estado fiscal sigue amarillo y la alerta técnica sigue aparte", [presentacionSifen({ estadoLocal: "ENVIADO", estadoSifen: "PENDIENTE" }).tono, alerta?.tipo], ["pendiente", "inconsistencia"]);
+    igual("R02-F003-07 (intento histórico): con CDC_DIVERGENTE el estado fiscal sigue amarillo y la alerta técnica sigue aparte", [presentacionSifen({ estadoLocal: "ENVIADO", estadoSifen: "PENDIENTE" }).tono, alerta?.tipo], ["pendiente", "inconsistencia"]);
   }
   cierto("R02-F003-08: la pantalla separa «Última respuesta fiscal válida» de «Último intento de consulta» (fecha, resultado, mensaje, acceso al historial) y ya no rotula un mensaje viejo como «Último mensaje SIFEN»", /Última respuesta fiscal válida/.test(pagina) && /Último intento de consulta/.test(pagina) && /resumenConsultas\(det\.intentos\)/.test(pagina) && /historial de consultas/.test(pagina) && !/Último mensaje SIFEN/.test(pagina) && /las consultas fallidas no lo modifican/.test(pagina));
 

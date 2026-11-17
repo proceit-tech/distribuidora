@@ -25,7 +25,7 @@ export async function GET(request: Request, contexto: Contexto) {
         "Content-Length": String(pdf.length),
         "Cache-Control": "private, no-store",
         "X-Content-Type-Options": "nosniff",
-        // PRO-342-R02: pertenencia del PDF (CDC_REGISTRADO = igual al CDC que la API informó para este documento; NO_VERIFICADO = no comprobable con el contrato actual: la pantalla lo advierte y
+        // PRO-342-R02/R05: pertenencia del PDF (con R05 el servidor ya no emite CDC_REGISTRADO: un CDC igual no prueba la titularidad del PDF; valor conservado por compatibilidad; NO_VERIFICADO = no comprobable con el contrato actual: la pantalla lo advierte y
         // no lo presenta como KuDE propio) y continuidad de la conexión con la del envío (MISMA / SIN_REFERENCIA). Nunca incluye el CDC ni datos de la conexión.
         "X-Nexit-Kude-Correspondencia": correspondencia,
         "X-Nexit-Kude-Conexion": continuidadConexion,

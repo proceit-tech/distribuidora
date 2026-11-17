@@ -105,8 +105,9 @@ export async function ejecutarLote(db: Db, o: OpcionesLote = {}): Promise<Result
     } else {
       try {
         intentado = true;
-        // ZERO-01 / PRO-338: FE y NCE con las reglas del flujo (CREAR o EDITAR, alcance, actor real, solo ENVIADOS o de envío indeterminado sin resultado definitivo; un estado final exige
-        // CDC coherente; CDC divergente sin tocar el estado fiscal). PRO-338-R02: registro con el token de la reserva (fe_documento_registrar_consulta_auto) y cdc_informado. La consulta manual no cambia.
+        // ZERO-01 / PRO-338: FE y NCE con las reglas del flujo (CREAR o EDITAR, alcance, actor real, solo ENVIADOS o de envío indeterminado sin resultado definitivo). PRO-338-R02: registro con el
+        // token de la reserva (fencing). PRO-342-R05: fe_documento_registrar_consulta_auto_r05 (NEX-080): el estado informado se registra sin condicionarlo al CDC (literal en cdc_informado);
+        // sin NEX-080, consultarEstado lanza 503 ANTES del gateway y aquí cuenta como «limitado» (se reprograma, no hay intento ficticio).
         await consultarEstado(db, empresa, String(f.o_actor), documento, o.dep ?? {}, { flujoNce: true, leaseToken: token });
         res.consultados += 1;
       } catch (error) {

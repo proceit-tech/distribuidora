@@ -103,8 +103,11 @@ export async function verificarCasosCdcInmutableR03(): Promise<string[]> {
     const params: unknown[][] = [];
     const db = {
       async query(sql: string, p: unknown[] = []) {
+        // PRO-342-R05: NEX-080 presente (catálogo) y registro SOLO por la función R05 (fe_documento_registrar_consulta_r05), sin firmas anteriores.
+        if (/to_regprocedure/.test(sql)) return { rows: [{ disponible: true }] };
         if (/FROM fe_gateway_config/.test(sql)) return { rows: [{ baseUrl: CONFIG.baseUrl, credencialRef: "PRUEBA", timeoutMs: 1000 }] };
-        if (/fe_documento_registrar_consulta/.test(sql)) { params.push(p); return { rows: [{ resultado: p[3] }] }; }
+        if (/fe_documento_registrar_consulta_r05\(/.test(sql)) { params.push(p); return { rows: [{ resultado: p[3] }] }; }
+        if (/fe_documento_registrar_consulta/.test(sql)) throw new Error("R05: firma anterior a NEX-080");
 
         return { rows: [{ id: DOC, ...FE, serie: null, cdc: null, estadoSifen: "SIN_CONSULTA", ...fila }] };
       },
@@ -120,7 +123,7 @@ export async function verificarCasosCdcInmutableR03(): Promise<string[]> {
     const p = await registrar({}, CLAVE_RUC, consultaRespuesta("Rechazado", CDC_FE, "1101", "Número de timbrado inválido"));
 
     igual("R03-08 primera consulta (d.cdc NULL) + clave = RUC: a la SQL llegan OK, RECHAZADO, el CDC EXACTO, 1101 y el mensaje (no hay falso CDC_DIVERGENTE en la aplicación)", [p[3], p[7], p[8], p[9], p[10]], ["OK", "RECHAZADO", CDC_FE, "1101", "Número de timbrado inválido"]);
-    cierto("R03-09 con ese p_cdc coherente y d.cdc NULL, la condición SQL de divergencia es falsa (fe_cdc_coherente equivalente) y el CDC se registra por coalesce(d.cdc, p_cdc)", cdcCoherente(FE, String(p[8])) && /cdc = coalesce\(d\.cdc, p_cdc\)/.test(leer("documentacao/banco/nexit/v1/migraciones/NEX-054-facturacion-consulta-estado-final.sql")));
+    cierto("R03-09 (histórico NEX-054, sin uso en R05) con ese p_cdc coherente y d.cdc NULL, la condición SQL de divergencia es falsa (fe_cdc_coherente equivalente) y el CDC se registra por coalesce(d.cdc, p_cdc)", cdcCoherente(FE, String(p[8])) && /cdc = coalesce\(d\.cdc, p_cdc\)/.test(leer("documentacao/banco/nexit/v1/migraciones/NEX-054-facturacion-consulta-estado-final.sql")));
   }
   {
     const p = await registrar({}, CLAVE_RUC, consultaRespuesta("Aprobado", CDC_FE, "0260", "Aprobado"));
@@ -130,26 +133,26 @@ export async function verificarCasosCdcInmutableR03(): Promise<string[]> {
   {
     const p = await registrar({}, CLAVE_RUC, consultaRespuesta("Rechazado", CDC_OTRA_FE, "1101", "Número de timbrado inválido"));
 
-    igual("R03-11 CDC de OTRA FE (0009021): se entrega a la SQL tal cual (para anotarlo CDC_DIVERGENTE), sin corregirlo ni sustituirlo", [p[3], p[8], cdcCoherente(FE, String(p[8]))], ["OK", CDC_OTRA_FE, false]);
+    igual("R03-11 (actualizado R05) CDC de OTRA numeración (0009021): se entrega a la SQL R05 tal cual (que lo registra literal, sin CDC_DIVERGENTE), sin corregirlo ni sustituirlo", [p[3], p[8], cdcCoherente(FE, String(p[8]))], ["OK", CDC_OTRA_FE, false]);
   }
   {
     const p = await registrar({ cdc: CDC_FE, estadoSifen: "PENDIENTE" }, CLAVE_RUC, consultaRespuesta("Rechazado", CDC_FE_OTRO_CODIGO, "1101", "Número de timbrado inválido"));
     const sql = leer("documentacao/banco/nexit/v1/migraciones/NEX-054-facturacion-consulta-estado-final.sql");
 
     igual("R03-12 CDC previo registrado y la API informa OTRO: el informado llega íntegro a la SQL", p[8], CDC_FE_OTRO_CODIGO);
-    cierto("R03-13 la SQL lo anota CDC_DIVERGENTE (p_cdc <> d.cdc) y nunca sobrescribe el registrado (coalesce(d.cdc, p_cdc) solo con resultado OK)", /\(d\.cdc IS NOT NULL AND p_cdc <> d\.cdc\)/.test(sql) && /IF v_resultado = 'OK' THEN\s+UPDATE/.test(sql) && /cdc = coalesce\(d\.cdc, p_cdc\)/.test(sql));
+    cierto("R03-13 (histórico NEX-054, sin uso en R05: la regla vigente es NEX-080, que proyecta el último informado con traza CAMBIO) la SQL anterior lo anotaba CDC_DIVERGENTE (p_cdc <> d.cdc) y nunca sobrescribe el registrado (coalesce(d.cdc, p_cdc) solo con resultado OK)", /\(d\.cdc IS NOT NULL AND p_cdc <> d\.cdc\)/.test(sql) && /IF v_resultado = 'OK' THEN\s+UPDATE/.test(sql) && /cdc = coalesce\(d\.cdc, p_cdc\)/.test(sql));
   }
   {
     const p = await registrar({}, CLAVE_RUC, consultaRespuesta("Rechazado", null, "1101", "Número de timbrado inválido"));
 
-    // PRO-342-R03-01 (retificada): sin CDC disponible un final no se consolida.
-    igual("R03-14 Rechazado SIN CDC y sin CDC previo: RESPUESTA_INVALIDA, sin estado fiscal y sin inventar CDC", [p[3], p[7], p[8]], ["RESPUESTA_INVALIDA", null, null]);
+    // PRO-342-R05: NEXIT no valida el CDC: el final informado por la API se registra sin CDC (sin inventarlo).
+    igual("R03-14 (actualizado R05) Rechazado SIN CDC y sin CDC previo: OK/RECHAZADO a la SQL, CDC NULL (no se inventa)", [p[3], p[7], p[8]], ["OK", "RECHAZADO", null]);
   }
   {
     const p = await registrar({}, CLAVE_RUC, consultaRespuesta("Rechazado", "0180000005600100300090201", "1101", "Número de timbrado inválido"));
 
-    // PRO-342-R03: interpretarConsulta no acepta como final una respuesta con CDC presente pero inválido (no la convierte en «sin CDC»).
-    igual("R03-15 CDC inválido (no 44 dígitos): no se completa ni corrige; queda null y la respuesta no fija estado", [p[3], p[8]], ["RESPUESTA_INVALIDA", null]);
+    // PRO-342-R05: el CDC es dato opaco: 25 caracteres se registran tal cual, sin completar ni corregir, y el estado informado se registra.
+    igual("R03-15 (actualizado R05) CDC de 25 caracteres: no se completa ni corrige; llega literal a la SQL con OK", [p[3], p[8]], ["OK", "0180000005600100300090201"]);
   }
 
   // ── Envío (recepcion_de): clave = RUC contenido en el CDC informado
@@ -198,14 +201,14 @@ export async function verificarCasosCdcInmutableR03(): Promise<string[]> {
     cierto("R03-25 consulta y envío devuelven resultadoFiscalSinSecretos (2 usos) y sinSecretos ya no reemplaza sobre JSON.stringify", (gw.match(/return resultadoFiscalSinSecretos\(/g) ?? []).length === 2 && !/texto\.split\(JSON\.stringify\(s\)/.test(gw));
   }
 
-  // ── Pantalla: alerta de CDC_DIVERGENTE según exista o no CDC registrado
+  // ── Pantalla (actualizado PRO-342-R05): CDC_DIVERGENTE solo puede ser un resultado HISTÓRICO; se muestra sin juicio sobre el CDC, con o sin CDC registrado
   {
     const sinCdc = alertaConsulta({ ultimaConsultaResultado: "CDC_DIVERGENTE", cdc: null });
     const conCdc = alertaConsulta({ ultimaConsultaResultado: "CDC_DIVERGENTE", cdc: CDC_FE });
 
-    igual("R03-26 sin CDC registrado: NO dice «distinto del registrado»; dice que no corresponde a la identidad fiscal", [sinCdc?.tipo, sinCdc?.texto, /registrado/.test(sinCdc?.texto ?? "")], ["inconsistencia", "Inconsistencia de consulta: el CDC informado no corresponde a la identidad fiscal del documento", false]);
-    igual("R03-27 con CDC registrado: «distinto del previamente registrado» y el registrado se conserva", [conCdc?.tipo, conCdc?.texto, /se conserva/.test(conCdc?.detalle ?? "")], ["inconsistencia", "Inconsistencia de consulta: CDC distinto del previamente registrado", true]);
-    igual("R03-28 rótulo del intento en el historial: neutro, sin afirmar CDC previo", ETIQUETA_RESULTADO_INTENTO.CDC_DIVERGENTE, "CDC informado inconsistente con el documento");
+    igual("R03-26 (actualizado R05) sin CDC registrado: «Registro histórico», sin afirmar que el CDC no corresponde ni que exista uno registrado", [sinCdc?.tipo, /^Registro histórico/.test(sinCdc?.texto ?? ""), /registrado|no corresponde/.test(sinCdc?.texto ?? "")], ["inconsistencia", true, false]);
+    igual("R03-27 (actualizado R05) con CDC registrado: el mismo aviso histórico (no «distinto del previamente registrado»); el historial se conserva", [conCdc?.texto === sinCdc?.texto, /distinto/.test(conCdc?.texto ?? ""), /se conserva sin cambios/.test(conCdc?.detalle ?? "")], [true, false, true]);
+    igual("R03-28 (actualizado R05) rótulo del intento histórico CDC_DIVERGENTE: «Registro histórico…», la validación ya no se aplica", ETIQUETA_RESULTADO_INTENTO.CDC_DIVERGENTE, "Registro histórico: CDC no aceptado por una validación anterior (ya no se aplica)");
     igual("R03-29 la alerta no altera el badge fiscal: sin final sigue «Pendiente»; RECHAZADO confirmado sigue «Rechazado»", [presentacionSifen({ estadoLocal: "ENVIADO", estadoSifen: "SIN_CONSULTA" }).texto, presentacionSifen({ estadoLocal: "ENVIADO", estadoSifen: "RECHAZADO" }).texto], ["Pendiente de confirmación", "Rechazado"]);
     cierto("R03-30 la pantalla pasa el documento (con su cdc) a alertaConsulta", /alertaConsulta\(d\)/.test(leer("app/(private)/documentos/page.tsx")));
   }
@@ -260,7 +263,7 @@ async function casosR04(igual: Igual, cierto: Cierto, consultar: Consultar, regi
   {
     const p = await registrar({ cdc: CDC_FE, estadoSifen: "PENDIENTE" }, CLAVE_44, consultaRespuesta("Rechazado", CDC_FE_OTRO_CODIGO, "1101", CLAVE_44));
 
-    igual("R04-07 CDC previo y la API informa OTRO: llega íntegro a la SQL (que no sobrescribe) y la clave de 44 dígitos del mensaje no llega", [p[8], p[10], String(p[13]).includes(CLAVE_44)], [CDC_FE_OTRO_CODIGO, "[omitido]", false]);
+    igual("R04-07 (actualizado R05) CDC previo y la API informa OTRO: llega íntegro a la SQL R05 (que proyecta el último con traza CAMBIO) y la clave de 44 dígitos del mensaje no llega", [p[8], p[10], String(p[13]).includes(CLAVE_44)], [CDC_FE_OTRO_CODIGO, "[omitido]", false]);
   }
 
   // ── Envío: CDC auténtico en su campo + aviso libre numérico de 44 dígitos con la clave
@@ -372,12 +375,12 @@ async function casosR05(igual: Igual, cierto: Cierto, consultar: Consultar, regi
   {
     const p = await registrar({}, CLAVE_RUC, consultaRespuesta("Rechazado", CDC_OTRA_FE, "1101", "Número de timbrado inválido", { Nota: { CDC: CDC_FE } }));
 
-    igual("R05-09 CDC de OTRA FE en DE.CDC: llega exacto a la SQL (que lo anota CDC_DIVERGENTE), no se reemplaza por el de Nota.CDC", [p[3], p[8], cdcCoherente(FE, String(p[8]))], ["OK", CDC_OTRA_FE, false]);
+    igual("R05-09 (actualizado PRO-342-R05) CDC de OTRA numeración en DE.CDC: llega exacto a la SQL R05 (que lo registra literal), no se reemplaza por el de Nota.CDC", [p[3], p[8], cdcCoherente(FE, String(p[8]))], ["OK", CDC_OTRA_FE, false]);
   }
   {
     const p = await registrar({ cdc: CDC_FE, estadoSifen: "PENDIENTE" }, CLAVE_RUC, consultaRespuesta("Rechazado", CDC_FE_OTRO_CODIGO, "1101", "Número de timbrado inválido", { Nota: { CDC: LIBRE_44_CON_RUC } }));
 
-    igual("R05-10 CDC previo registrado y la API informa otro: el informado llega exacto a la SQL (que no sobrescribe) y Nota.CDC no se filtra", [p[8], String(p[13]).includes(LIBRE_44_CON_RUC)], [CDC_FE_OTRO_CODIGO, false]);
+    igual("R05-10 (actualizado PRO-342-R05) CDC previo registrado y la API informa otro: el informado llega exacto a la SQL R05 (que proyecta el último con traza CAMBIO) y Nota.CDC no se filtra", [p[8], String(p[13]).includes(LIBRE_44_CON_RUC)], [CDC_FE_OTRO_CODIGO, false]);
   }
 
   // ── Envío: rutas oficiales (raíz CDC, nro_lote, eco) frente a Nota con nombres fiscales
@@ -428,6 +431,6 @@ async function casosR05(igual: Igual, cierto: Cierto, consultar: Consultar, regi
   {
     const gw = leer("lib/facturacion/gateway.ts");
 
-    cierto("R05-18 consulta usa CONTRATO_FISCAL_CONSULTA y envío CONTRATO_FISCAL_ENVIO; ya no existe la allowlist por nombre IDENTIFICADORES_FISCALES ni LISTAS_POR_NUMERO_FISCAL", /resultadoFiscalSinSecretos\(interpretarConsulta\(r\.status, r\.texto\), \[credenciales\.password, token\], CONTRATO_FISCAL_CONSULTA\)/.test(gw) && /resultadoFiscalSinSecretos\(res, \[credenciales\.password, token\], CONTRATO_FISCAL_ENVIO\)/.test(gw) && !/IDENTIFICADORES_FISCALES|LISTAS_POR_NUMERO_FISCAL/.test(gw));
+    cierto("R05-18 (regex actualizado PRO-342-R05: interpretarConsulta recibe el documento para el eco de identidad) consulta usa CONTRATO_FISCAL_CONSULTA y envío CONTRATO_FISCAL_ENVIO; ya no existe la allowlist por nombre IDENTIFICADORES_FISCALES ni LISTAS_POR_NUMERO_FISCAL", /resultadoFiscalSinSecretos\(interpretarConsulta\(r\.status, r\.texto, doc\), \[credenciales\.password, token\], CONTRATO_FISCAL_CONSULTA\)/.test(gw) && /resultadoFiscalSinSecretos\(res, \[credenciales\.password, token\], CONTRATO_FISCAL_ENVIO\)/.test(gw) && !/IDENTIFICADORES_FISCALES|LISTAS_POR_NUMERO_FISCAL/.test(gw));
   }
 }

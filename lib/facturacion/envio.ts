@@ -5,7 +5,7 @@ import { crearFacturaElectronica, type CuerpoFactura } from "@/lib/facturacion/e
 import { adjuntarCredencialesDeBase, hayCredencialesEnBase, REF_CREDENCIALES_BASE } from "@/lib/facturacion/gateway-credenciales";
 import { configGatewayValida, credencialesDe, enviarDocumentoGateway, leerCredenciales, referenciaConexion, type ConfigGateway, type Dependencias, type FaseEnvio, type ReferenciaConexion, type ResultadoEnvio } from "@/lib/facturacion/gateway";
 import { MENSAJES_GATEWAY, type EstadoGateway, type EstadoGatewayUI } from "@/lib/facturacion/gateway-estado";
-import { ErrorFacturacion, registrarConConexion, SQL_CONFIG_GATEWAY } from "@/lib/facturacion/shared";
+import { ErrorFacturacion, exigirNex080, registrarR05, SQL_CONFIG_GATEWAY } from "@/lib/facturacion/shared";
 
 /**
  * Envío de la Factura Electrónica al gateway (recepcion_de) desde el servidor. Ciclo:
@@ -13,7 +13,7 @@ import { ErrorFacturacion, registrarConConexion, SQL_CONFIG_GATEWAY } from "@/li
  *   2) crear el documento (idempotente por clave; reserva el número una sola vez);
  *   3) fe_documento_iniciar_envio: exclusión mutua (ENVIANDO) y payload inmutable; un envío indeterminado NUNCA se reenvía a ciegas;
  *   4) transmisión FUERA de transacción;
- *   5) fe_documento_registrar_envio: intento (fase, HTTP, resultado, lote/CDC solo si el gateway los informó) y estado local.
+ *   5) fe_documento_registrar_envio_r05 (NEX-080): intento (fase, HTTP, resultado, lote/CDC literal solo si el gateway los informó) y estado local. PRO-342-R05: el CDC no se valida.
  * Nunca toca estado_sifen: el HTTP 200 de recepción no es aprobación; la aprobación solo la fija la consulta de estado.
  */
 
@@ -67,8 +67,13 @@ export async function estadoGateway(db: Db, empresaId: string, dep: Dependencias
   }
 }
 
-/** Configuración del gateway de la empresa y presencia de credenciales (sin leerlas hacia afuera). 409 si falta algo. */
+/**
+ * Configuración del gateway de la empresa y presencia de credenciales (sin leerlas hacia afuera). 409 si falta algo.
+ * PRO-342-R05: es el preflight de emitirFactura, emitirNce y enviarDocumento ANTES de numerar o transmitir; sin NEX-080 falla cerrada (503) y no se consume número ni se llama al gateway.
+ */
 export async function configuracionGateway(db: Db, empresaId: string, dep: Dependencias = {}, usuarioId?: string): Promise<ConfigGateway> {
+  await exigirNex080(db);
+
   // PRO-342-R01: misma lectura que la consulta, con la versión de credenciales para la referencia no secreta de la conexión del intento.
   const cfg = await db.query(SQL_CONFIG_GATEWAY, [empresaId]);
   const fila = cfg.rows[0] as { baseUrl: string; credencialRef: string; timeoutMs: number; credencialesVersion?: unknown } | undefined;
@@ -86,10 +91,10 @@ export async function configuracionGateway(db: Db, empresaId: string, dep: Depen
   return conCredenciales;
 }
 
-// PRO-342-R01: fe_documento_registrar_envio con la conexión del intento (NEX-079); sin NEX-079, la firma anterior (NEX-050) con los mismos 15 parámetros.
-const TIPOS_REGISTRAR_ENVIO = ["uuid", "uuid", "uuid", "", "", "", "", "", "", "", "", "", "", "", "jsonb"] as const;
-const registrarEnvio = (db: Db, parametros: unknown[], conexion: ReferenciaConexion | null) =>
-  registrarConConexion(db, "fe_documento_registrar_envio", TIPOS_REGISTRAR_ENVIO, parametros, conexion ?? {});
+// PRO-342-R05: fe_documento_registrar_envio_r05 (NEX-080) con la conexión del intento; SIN fallback a NEX-050/079 (que exigen CDC de 44 dígitos coherente). Un único parámetro de CDC: el
+// literal informado por el gateway (cdcInformado); la SQL lo guarda en el intento y solo lo proyecta en el documento con ENVIADO (ACK correlacionado por lote o eco, nunca por el CDC).
+const TIPOS_REGISTRAR_ENVIO = ["uuid", "uuid", "uuid", "text", "text", "text", "text", "integer", "text", "text", "text", "text", "text", "jsonb"] as const;
+const registrarEnvio = (db: Db, parametros: unknown[], conexion: ReferenciaConexion | null) => registrarR05(db, "fe_documento_registrar_envio_r05", TIPOS_REGISTRAR_ENVIO, parametros, conexion ?? {});
 
 const MENSAJE_INDETERMINADO = "No se pudo guardar el resultado del envío: el resultado es indeterminado. Verifique el documento en el gateway antes de reenviar.";
 
@@ -129,7 +134,7 @@ async function resultadoPersistido(db: Db, empresaId: string, documentoId: strin
  * los 2 minutos pasa a indeterminado: nunca se reenvía a ciegas).
  */
 async function cerrarEnvio(db: Db, empresaId: string, usuarioId: string, documentoId: string, r: ResultadoEnvio, conexion: ReferenciaConexion | null = null): Promise<ResultadoEnvio> {
-  const completo = [empresaId, usuarioId, documentoId, r.faseFinal, r.resultado, r.estadoLocal, r.errorTipo, r.http, crypto.randomUUID(), r.estadoGateway, r.mensaje, r.lote, r.cdc, r.cdcInformado, r.respuesta ? JSON.stringify(r.respuesta) : null];
+  const completo = [empresaId, usuarioId, documentoId, r.faseFinal, r.resultado, r.estadoLocal, r.errorTipo, r.http, crypto.randomUUID(), r.estadoGateway, r.mensaje, r.lote, r.cdcInformado, r.respuesta ? JSON.stringify(r.respuesta) : null];
   let fallo = false;
 
   for (let intento = 0; intento < 2; intento++) {
@@ -147,7 +152,7 @@ async function cerrarEnvio(db: Db, empresaId: string, usuarioId: string, documen
     }
   }
   try {
-    await registrarEnvio(db, [empresaId, usuarioId, documentoId, r.faseFinal, "RESPUESTA_INVALIDA", "ENVIO_INDETERMINADO", null, r.http, crypto.randomUUID(), null, MENSAJE_INDETERMINADO, null, null, null, null], conexion);
+    await registrarEnvio(db, [empresaId, usuarioId, documentoId, r.faseFinal, "RESPUESTA_INVALIDA", "ENVIO_INDETERMINADO", null, r.http, crypto.randomUUID(), null, MENSAJE_INDETERMINADO, null, null, null], conexion);
 
     return comoIndeterminado(r);
   } catch (error) {

@@ -177,8 +177,11 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
   const filaDoc = { id: DOC, tipo: "NCE", establecimiento: "001", puntoExpedicion: "001", numero: "0005996", serie: null };
   const dbConsulta = (cfg: boolean, doc: boolean) => ({
     async query(sql: string, parametros: unknown[] = []) {
+      // PRO-342-R05: NEX-080 presente en el catálogo; el registro solo por fe_documento_registrar_consulta_r05.
+      if (/to_regprocedure/.test(sql)) return { rows: [{ disponible: true }] };
       if (/FROM fe_gateway_config/.test(sql)) return { rows: cfg ? [CONFIG] : [] };
-      if (/fe_documento_registrar_consulta/.test(sql)) { registrar.push(parametros); return { rows: [{ resultado: parametros[3] }] }; }
+      if (/fe_documento_registrar_consulta_r05\(/.test(sql)) { registrar.push(parametros); return { rows: [{ resultado: parametros[3] }] }; }
+      if (/fe_documento_registrar_consulta/.test(sql)) throw new Error("R05: firma anterior a NEX-080");
 
       return { rows: doc ? [filaDoc] : [] };
     },
@@ -198,7 +201,7 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
   igual("consultar: documento ajeno/fuera de alcance 404; sin gateway configurado 409; tipo sin contrato 409; sin credenciales 409 — ninguno registra un intento", [
     await codigoError(consultarEstado(dbConsulta(true, false), EMPRESA, USUARIO, DOC, { fetch: g6.fetch, env: ENV })),
     await codigoError(consultarEstado(dbConsulta(false, true), EMPRESA, USUARIO, DOC, { fetch: g6.fetch, env: ENV })),
-    await codigoError(consultarEstado({ async query(sql: string) { return /fe_gateway_config/.test(sql) ? { rows: [CONFIG] } : { rows: [{ ...filaDoc, tipo: "AFE" }] }; } } as never, EMPRESA, USUARIO, DOC, { fetch: g6.fetch, env: ENV })),
+    await codigoError(consultarEstado({ async query(sql: string) { return /to_regprocedure/.test(sql) ? { rows: [{ disponible: true }] } : /fe_gateway_config/.test(sql) ? { rows: [CONFIG] } : { rows: [{ ...filaDoc, tipo: "AFE" }] }; } } as never, EMPRESA, USUARIO, DOC, { fetch: g6.fetch, env: ENV })),
     await codigoError(consultarEstado(dbConsulta(true, true), EMPRESA, USUARIO, DOC, { fetch: g6.fetch, env: {} })),
     registrar.length - previo,
   ], [404, 409, 409, 409, 0]);
@@ -224,7 +227,7 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
   cierto("NEX-047: la configuración del gateway no guarda secretos (solo URL HTTPS y referencia de variables de entorno)", !/(password|clave|token|secret|ruc)\s+text/i.test(mig.slice(mig.indexOf("CREATE TABLE public.fe_gateway_config"), mig.indexOf("COMMENT ON TABLE public.fe_gateway_config"))) && /base_url\s+text\s+NOT NULL CHECK \(base_url ~ '\^https:\/\//.test(mig) && /credencial_ref/.test(mig));
   cierto("NEX-047: registros fiscales inmutables (identidad/importes, CDC una vez, intentos de solo altas; DELETE solo en reinicio DEMO)", /NEX:DOCUMENTO_INMUTABLE/.test(mig) && /NEX:CDC_INMUTABLE/.test(mig) && /documento_electronico_intentos es de solo altas/.test(mig) && /nex_reinicio_demo_activo\(OLD\.empresa_id\)/.test(mig) && /BEFORE TRUNCATE/.test(mig));
   cierto("NEX-047: la función exige FACTURACION_ELECTRONICA.EDITAR y sucursal en alcance ANTES de escribir, bloquea el documento (FOR UPDATE) y no cambia el estado fiscal ante errores o «no encontrado»", fn.indexOf("'FACTURACION_ELECTRONICA', 'EDITAR'") > 0 && fn.indexOf("sucursal_en_alcance") > fn.indexOf("FOR UPDATE") && fn.indexOf("FOR UPDATE") < fn.indexOf("INSERT INTO public.documento_electronico_intentos") && fn.indexOf("INSERT INTO public.documento_electronico_intentos") < fn.indexOf("UPDATE public.documentos_electronicos") && /ELSE[\s\S]*SET ultima_consulta_at = now\(\), ultima_consulta_resultado = v_resultado/.test(fn) && !/ELSE[\s\S]*estado_sifen =/.test(fn.slice(fn.indexOf("ELSE"))));
-  cierto("NEX-047: un CDC distinto del registrado se anota como CDC_DIVERGENTE sin tocar el documento", /p_cdc <> d\.cdc\) OR NOT public\.fe_cdc_coherente\([^)]*\)\)\s+THEN\s+v_resultado := 'CDC_DIVERGENTE'/.test(fn) && /cdc = coalesce\(d\.cdc, p_cdc\)/.test(fn));
+  cierto("NEX-047 (histórico; la aplicación R05 usa NEX-080, que no valida el CDC): un CDC distinto del registrado se anotaba como CDC_DIVERGENTE sin tocar el documento", /p_cdc <> d\.cdc\) OR NOT public\.fe_cdc_coherente\([^)]*\)\)\s+THEN\s+v_resultado := 'CDC_DIVERGENTE'/.test(fn) && /cdc = coalesce\(d\.cdc, p_cdc\)/.test(fn));
   cierto("NEX-047: el runtime solo lee las tablas y ejecuta la función (sin INSERT/UPDATE/DELETE directos); el envoltorio de grants incluye depósitos y facturación", /GRANT SELECT ON public\.documentos_electronicos, public\.documento_electronico_intentos, public\.fe_gateway_config TO nexit_runtime/.test(mig) && !/GRANT[^;]*(INSERT|UPDATE|DELETE)[^;]*TO nexit_runtime/i.test(mig) && /PERFORM public\.nex_aplicar_grants_depositos\(\);\s+PERFORM public\.nex_aplicar_grants_facturacion\(\);/.test(mig));
   cierto("NEX-047: permisos solo VER y EDITAR, sin asignarlos a perfiles; exige NEX-046 y no reaplica", /\('FACTURACION_ELECTRONICA','VER'\), \('FACTURACION_ELECTRONICA','EDITAR'\)/.test(mig) && !/perfil_permiso/.test(sinComentarios) && /sucursal_en_alcance\(uuid,uuid,uuid\)/.test(mig) && /NEX-047 parece aplicada/.test(mig));
   cierto("NEX-047: sin PDF/XML, sin movimiento de stock y sin modificar migraciones previas", !/pdf|xml|kude/i.test(sinComentarios) && !/movimientos_inventario|stock_saldos|inventario_costos/.test(sinComentarios));
@@ -444,7 +447,8 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
     interpretarRecepcion(200, JSON.stringify({ status: "error", message: "Número ya registrado previamente" }), [], DOC_ENVIO).estadoLocal,
   ], Array(7).fill("ENVIO_INDETERMINADO"));
   // PRO-342-R01: lote y CDC SOLO en la raíz (nombres tolerantes de lote, pero nunca anidados): data.NroLote / data.CDC ya no se reconocen.
-  igual("recepción: el lote solo aparece si la raíz de la respuesta lo trae (nombres tolerantes) y el CDC solo si es válido; anidados no se reconocen", (() => { const a = interpretarRecepcion(200, JSON.stringify({ status: "success", NroLote: 12345, CDC: CDC_FE }), [], DOC_ENVIO); const b = interpretarRecepcion(200, JSON.stringify({ status: "success", cdc: "123" }), [], DOC_ENVIO); const c = interpretarRecepcion(200, JSON.stringify({ status: "success", data: { NroLote: 12345, CDC: CDC_FE } }), [], DOC_ENVIO); return [a.lote, a.cdc, b.cdc, c.lote, c.cdcInformado, c.estadoLocal]; })(), ["12345", CDC_FE, null, null, null, "ENVIO_INDETERMINADO"]);
+  // PRO-342-R05: el CDC del ACK es dato opaco (cualquier texto, literal); NO confirma la recepción por sí solo (sin lote ni eco → indeterminado, el CDC queda como evidencia).
+  igual("recepción (actualizado R05): el lote solo aparece si la raíz lo trae (nombres tolerantes); el CDC de la raíz se toma literal sin validar («123» con lote → ENVIADO con «123»); solo CDC → indeterminado con el CDC como evidencia; anidados no se reconocen", (() => { const a = interpretarRecepcion(200, JSON.stringify({ status: "success", NroLote: 12345, CDC: CDC_FE }), [], DOC_ENVIO); const b = interpretarRecepcion(200, JSON.stringify({ status: "success", cdc: "123" }), [], DOC_ENVIO); const c = interpretarRecepcion(200, JSON.stringify({ status: "success", data: { NroLote: 12345, CDC: CDC_FE } }), [], DOC_ENVIO); const d = interpretarRecepcion(200, JSON.stringify({ status: "success", nro_lote: "L-1", cdc: "123" }), [], DOC_ENVIO); return [a.lote, a.cdc, b.cdc, b.cdcInformado, b.estadoLocal, c.lote, c.cdcInformado, c.estadoLocal, d.estadoLocal, d.cdc, d.cdcInformado]; })(), ["12345", CDC_FE, null, "123", "ENVIO_INDETERMINADO", null, null, "ENVIO_INDETERMINADO", "ENVIADO", "123", "123"]);
   igual("recepción: 2xx con status error → rechazo informado (ERROR_ENVIO) con sus errores de validación", (() => { const r = interpretarRecepcion(200, JSON.stringify({ status: "error", message: "Validación fallida", errors: ["dRucRec inválido", { campo: "dDVRec", detalle: "DV incorrecto" }] })); return [r.resultado, r.estadoLocal, r.mensaje, r.errores.length, r.errores[0]]; })(), ["ERROR_HTTP", "ERROR_ENVIO", "Validación fallida", 2, "dRucRec inválido"]);
   igual("recepción: 4xx → ERROR_ENVIO (no hubo recepción); 5xx → ENVIO_INDETERMINADO; 2xx sin forma reconocible o no JSON → ENVIO_INDETERMINADO", [
     interpretarRecepcion(400, JSON.stringify({ message: "Datos inválidos" })).estadoLocal, interpretarRecepcion(422, "{}").estadoLocal, interpretarRecepcion(500, "boom").estadoLocal,
@@ -462,7 +466,8 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
   igual("envío: el resultado nunca contiene clave ni token", [JSON.stringify(e1).includes(SECRETO), JSON.stringify(e1).includes(TOKEN)], [false, false]);
 
   limpiarCacheTokens();
-  const ge2 = gateway({ consulta: [{ status: 401, cuerpo: {} }, { status: 200, cuerpo: { status: "success", cdc: CDC_FE } }] });
+  // PRO-342-R05: el ACK del reintento trae lote (un ACK con solo CDC ya no confirma la recepción).
+  const ge2 = gateway({ consulta: [{ status: 401, cuerpo: {} }, { status: 200, cuerpo: { status: "success", nro_lote: "L-78", cdc: CDC_FE } }] });
   const e2 = resultadoDe(await enviarDocumentoGateway(CONFIG, PAYLOAD_ENVIO, DOC_ENVIO, { fetch: ge2.fetch, env: ENV }));
 
   igual("envío: ante 401 renueva la sesión UNA vez y reintenta (un 401 no procesó nada)", [e2.estadoLocal, ge2.llamadas.map((l) => l.url.replace(CONFIG.baseUrl, ""))], ["ENVIADO", ["/api/login", "/api/recepcion_de", "/api/login", "/api/recepcion_de"]]);
@@ -508,6 +513,7 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
     const db = {
       async query(sql: string, parametros: unknown[] = []) {
         llamadas.push({ sql, parametros });
+        if (/to_regprocedure/.test(sql)) return { rows: [{ disponible: true }] };
         if (/FROM fe_gateway_config/.test(sql)) return { rows: o.cfg === false ? [] : [{ baseUrl: CONFIG.baseUrl, credencialRef: CONFIG.credencialRef, timeoutMs: 1000 }] };
         if (/fe_documento_crear_fe/.test(sql)) return { rows: [{ documentoId: DOC, numero: "0050000", reutilizado: o.reutilizado === true }] };
         if (/fe_documento_iniciar_envio/.test(sql)) {
@@ -515,7 +521,8 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
 
           return { rows: [{ resultado: o.inicio ?? "INICIADO", payload: o.inicio === "INDETERMINADO" ? null : PAYLOAD_ENVIO, numero: "0050000", tipo: "FE", establecimiento: "001", punto: "002" }] };
         }
-        if (/fe_documento_registrar_envio/.test(sql)) return { rows: [{ fe_documento_registrar_envio: parametros[5] }] };
+        if (/fe_documento_registrar_envio/.test(sql) && !/fe_documento_registrar_envio_r05\(/.test(sql)) throw new Error("R05: firma anterior a NEX-080");
+        if (/fe_documento_registrar_envio_r05\(/.test(sql)) return { rows: [{ resultado: parametros[5] }] };
 
         return base.query(sql, parametros);
       },
@@ -527,13 +534,14 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
   const orden = (l: SqlEnvio[]) => l.map((x) => (/fe_gateway_config/.test(x.sql) ? "config" : /fe_documento_crear_fe/.test(x.sql) ? "crear" : /fe_documento_iniciar_envio/.test(x.sql) ? "iniciar" : /fe_documento_registrar_envio/.test(x.sql) ? "registrar" : "otro")).filter((x) => x !== "otro");
 
   limpiarCacheTokens();
-  const gE = gateway({ consulta: [{ status: 200, cuerpo: { status: "success", message: "Recibido", cdc: CDC_FE } }] });
+  // PRO-342-R05: ACK correlacionado por el ECO del número (sin lote); el CDC informado viaja literal. Un ACK con solo CDC ya no confirma la recepción (ver ENV-01b).
+  const gE = gateway({ consulta: [{ status: 200, cuerpo: { status: "success", message: "Recibido", dEst: "001", dPunExp: "002", dNumDoc: "0050000", cdc: CDC_FE } }] });
   const m1 = mkDb();
   const em = await ejecutar(m1.db, gE.fetch);
 
   // PRO-342-R02 (F002): la configuración se lee UNA vez (preflight) y esa misma se usa en la transmisión; ya no hay segunda lectura entre crear e iniciar.
   igual("emisión: orden config → crear → iniciar envío → registrar envío (config leída UNA sola vez, R02), con una sola transmisión", [orden(m1.llamadas), bodyRecepcion(gE).length], [["config", "crear", "iniciar", "registrar"], 1]);
-  igual("emisión: respuesta con documento, número reservado, estado ENVIADO, HTTP 200, sin lote inventado; CDC solo el informado y coherente", [em.documentoId, em.numero, em.reutilizado, em.estadoLocal, em.resultado, em.http, em.lote, em.cdc, em.fases.length], [DOC, "0050000", false, "ENVIADO", "OK", 200, null, CDC_FE, 3]);
+  igual("emisión (actualizado R05): respuesta con documento, número reservado, estado ENVIADO (eco del número), HTTP 200, sin lote inventado; CDC el informado, literal", [em.documentoId, em.numero, em.reutilizado, em.estadoLocal, em.resultado, em.http, em.lote, em.cdc, em.fases.length], [DOC, "0050000", false, "ENVIADO", "OK", 200, null, CDC_FE, 3]);
   const reg = m1.llamadas.find((l) => /fe_documento_registrar_envio/.test(l.sql))!;
 
   igual("emisión: registra fase TRANSMISION, resultado OK, estado ENVIADO, HTTP 200 con empresa/usuario de la sesión; no envía estado SIFEN", [reg.parametros.slice(0, 6), reg.parametros[7], /estado_sifen/i.test(reg.sql)], [[EMPRESA, USUARIO, DOC, "TRANSMISION", "OK", "ENVIADO"], 200, false]);
@@ -637,20 +645,29 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
   const emSin = await ejecutar(mSin.db, gateway({ consulta: [{ status: 200, cuerpo: { status: "success", message: "ok" } }] }).fetch);
 
   igual("ENV-01: éxito del gateway que no identifica el documento → ENVIO_INDETERMINADO persistido (RESPUESTA_INVALIDA), sin lote ni CDC", [emSin.estadoLocal, emSin.resultado, emSin.lote, emSin.cdc, regDe(mSin).slice(3, 8), regDe(mSin)[11]], ["ENVIO_INDETERMINADO", "RESPUESTA_INVALIDA", null, null, ["TRANSMISION", "RESPUESTA_INVALIDA", "ENVIO_INDETERMINADO", null, 200], null]);
-  igual("ENV-01: la fase de respuesta del modal NO dice que la recepción esté confirmada", emSin.fases.at(-1), { fase: "RESPUESTA", ok: false, detalle: "Recepción NO confirmada: El gateway respondió sin identificar el documento recibido (sin lote, CDC ni número): no se confirma la recepción; verifique en el gateway antes de reenviar.", http: 200 });
+  igual("ENV-01 (texto actualizado R05): la fase de respuesta del modal NO dice que la recepción esté confirmada", emSin.fases.at(-1), { fase: "RESPUESTA", ok: false, detalle: "Recepción NO confirmada: El gateway respondió sin identificar el documento recibido (sin lote ni número): no se confirma la recepción; verifique en el gateway antes de reenviar.", http: 200 });
+
+  // ENV-01b (PRO-342-R05): éxito con SOLO un CDC (sin lote ni eco) → no identifica el documento: indeterminado; el CDC llega literal a la SQL solo como evidencia (p_cdc_informado).
+  limpiarCacheTokens();
+  const mSoloCdc = mkDb();
+  const emSoloCdc = await ejecutar(mSoloCdc.db, gateway({ consulta: [{ status: 200, cuerpo: { status: "success", cdc: CDC_FE } }] }).fetch);
+
+  igual("ENV-01b (R05): ACK success con solo CDC → ENVIO_INDETERMINADO, sin lote; el CDC viaja literal como evidencia (índice 12) y el documento no lo recibe en el resultado", [emSoloCdc.estadoLocal, emSoloCdc.lote, emSoloCdc.cdc, regDe(mSoloCdc)[11], regDe(mSoloCdc)[12]], ["ENVIO_INDETERMINADO", null, null, null, CDC_FE]);
 
   // PERSISTENCIA lote/CDC: CDC coherente informado → documento y evidencia; CDC ajeno → solo evidencia y documento indeterminado
   limpiarCacheTokens();
   const mOk = mkDb();
   const emOk = await ejecutar(mOk.db, gateway({ consulta: [{ status: 200, cuerpo: { status: "success", lote: "L-5", cdc: CDC_FE } }] }).fetch);
 
-  igual("persistencia: CDC coherente y lote del gateway viajan a la función (p_cdc = p_cdc_informado) y se devuelven; error_tipo nulo", [emOk.estadoLocal, emOk.lote, emOk.cdc, regDe(mOk)[6], regDe(mOk)[11], regDe(mOk)[12], regDe(mOk)[13]], ["ENVIADO", "L-5", CDC_FE, null, "L-5", CDC_FE, CDC_FE]);
+  // PRO-342-R05: fe_documento_registrar_envio_r05 recibe UN solo CDC (p_cdc_informado, índice 12) y la respuesta en el 13; la conexión va aparte (último jsonb).
+  igual("persistencia (actualizado R05): CDC y lote del gateway viajan a la función R05 (lote = 11, CDC literal = 12, 14 parámetros + conexión) y se devuelven; error_tipo nulo", [emOk.estadoLocal, emOk.lote, emOk.cdc, regDe(mOk)[6], regDe(mOk)[11], regDe(mOk)[12], regDe(mOk).length], ["ENVIADO", "L-5", CDC_FE, null, "L-5", CDC_FE, 15]);
 
   limpiarCacheTokens();
   const mAj = mkDb();
   const emAj = await ejecutar(mAj.db, gateway({ consulta: [{ status: 200, cuerpo: { status: "success", lote: "L-6", cdc: CDC } }] }).fetch);
 
-  igual("persistencia: un CDC que no corresponde al documento NO se guarda en él (p_cdc nulo), queda como evidencia (p_cdc_informado) y el envío es indeterminado", [emAj.estadoLocal, regDe(mAj)[12], regDe(mAj)[13], emAj.cdc], ["ENVIO_INDETERMINADO", null, CDC, null]);
+  // PRO-342-R05: NEXIT no valida el CDC: con lote (ACK correlacionado) un CDC de cualquier composición se registra literal y el envío es ENVIADO.
+  igual("persistencia (actualizado R05): un CDC con otra composición NO se valida: con lote L-6 → ENVIADO y el CDC viaja literal (índice 12) y se devuelve", [emAj.estadoLocal, regDe(mAj)[11], regDe(mAj)[12], emAj.cdc], ["ENVIADO", "L-6", CDC, CDC]);
 
   // ENV-02: rechazo, ambiguos y autenticación
   limpiarCacheTokens();

@@ -20,58 +20,56 @@ type F = Record<string, unknown>;
  */
 export const SQL_CONFIG_GATEWAY = `SELECT base_url AS "baseUrl", credencial_ref AS "credencialRef", timeout_ms AS "timeoutMs", (to_jsonb(fe_gateway_config) ->> 'credenciales_version') AS "credencialesVersion" FROM fe_gateway_config WHERE empresa_id = $1 AND activo`;
 
-/** Código PostgreSQL de función inexistente (42883). Por sí solo NO prueba que falte NEX-079: también lo produce una dependencia INTERNA ausente dentro de una función que sí existe. */
-const faltaFuncion = (e: unknown) => (e as { code?: string } | null)?.code === "42883";
-let avisoSinNex079 = false;
+/**
+ * PRO-342-R05: funciones de registro de NEX-080 (CDC como dato opaco de la API). La aplicación R05 registra envíos y consultas EXCLUSIVAMENTE con ellas: no hay modo compatibilidad ni
+ * fallback a las firmas NEX-054/062/077/079 (que validan el CDC y anotan CDC_DIVERGENTE). Sin NEX-080 la operación falla CERRADA antes de llamar al gateway (ver exigirNex080).
+ */
+export const FUNCIONES_NEX080 = [
+  "public.fe_documento_registrar_envio_r05(uuid,uuid,uuid,text,text,text,text,integer,text,text,text,text,text,jsonb,jsonb)",
+  "public.fe_documento_registrar_consulta_r05(uuid,uuid,uuid,text,integer,text,text,text,text,text,text,text,text,jsonb,jsonb)",
+  "public.fe_documento_registrar_consulta_flujo_nce_r05(uuid,uuid,uuid,text,integer,text,text,text,text,text,text,text,text,jsonb,jsonb)",
+  "public.fe_documento_registrar_consulta_auto_r05(uuid,uuid,uuid,text,integer,text,text,text,text,text,text,text,text,jsonb,uuid,jsonb)",
+] as const;
+
+export type FuncionRegistroR05 = "fe_documento_registrar_envio_r05" | "fe_documento_registrar_consulta_r05" | "fe_documento_registrar_consulta_flujo_nce_r05" | "fe_documento_registrar_consulta_auto_r05";
+
+/** Lectura del catálogo, sin efectos: ¿existen TODAS las funciones R05? (to_regprocedure devuelve NULL si una firma no existe; no requiere privilegios sobre la función). */
+export const SQL_NEX080_DISPONIBLE = `SELECT coalesce(bool_and(to_regprocedure(f) IS NOT NULL), false) AS disponible FROM unnest($1::text[]) AS f`;
+
+export const MENSAJE_SIN_NEX080 =
+  "La facturación electrónica está detenida en esta instalación: falta aplicar la migración NEX-080 (registro del CDC como dato informado por la API). No se envió ni consultó nada; avise al administrador.";
+
+let nex080Confirmada = false;
 
 /**
- * PRO-342-R02 (F004): ¿existe la SOBRECARGA NEX-079 (misma función, `n` parámetros, el último jsonb = conexión)? Lectura del catálogo, sin efectos. Solo si NO existe, el 42883 se debe a que
- * NEX-079 no está aplicada.
+ * PRO-342-R05: falla CERRADA (503) si NEX-080 no está aplicada. Se llama ANTES de numerar/transmitir (configuracionGateway) y ANTES de consultar al gateway (consultarEstado): así nunca hay una
+ * llamada al gateway cuyo resultado no pueda registrarse con la regla R05. La consulta automática trata el 503 como «limitado» y reprograma el documento. Solo se recuerda el resultado POSITIVO.
  */
-export const SQL_SOBRECARGA_NEX079 = `SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
-  WHERE n.nspname = 'public' AND p.proname = $1 AND p.pronargs = $2::integer AND p.proargtypes[$2::integer - 1] = 'jsonb'::regtype) AS existe`;
+export async function exigirNex080(db: Db): Promise<void> {
+  if (nex080Confirmada) return;
+
+  const r = await db.query(SQL_NEX080_DISPONIBLE, [FUNCIONES_NEX080]);
+
+  if ((r.rows[0] as F | undefined)?.disponible !== true) throw new ErrorFacturacion(503, MENSAJE_SIN_NEX080);
+
+  nex080Confirmada = true;
+}
+
+/** PRO-342-R05: solo para los casos escritos (reinicia la confirmación recordada en el módulo). */
+export function reiniciarNex080ParaCasos() {
+  nex080Confirmada = false;
+}
 
 /**
- * Cómo quedó registrado un intento: INTEGRAL = sobrecarga NEX-079 (conexión del intento y, en consulta manual/flujo, cdc_informado estructurado); COMPATIBILIDAD = firma anterior porque NEX-079
- * no está aplicada: el intento NO se pierde, pero sin conexión ni (en la consulta manual) cdc_informado. Es un modo DEGRADADO, no la funcionalidad integral homologable.
+ * Registro con una función R05 (NEX-080): parámetros + referencia NO secreta de la conexión del intento (último parámetro jsonb). Sin fallback: cualquier error (42883 incluido) se propaga.
+ * `modoRegistro` queda siempre «INTEGRAL» (compatibilidad del contrato de la API de consulta; el modo COMPATIBILIDAD de R02 se retiró).
  */
-export type ModoRegistro = "INTEGRAL" | "COMPATIBILIDAD";
+export type ModoRegistro = "INTEGRAL";
 
-/**
- * Ejecuta el registro con la firma NEX-079 (parámetros + conexión del intento) y, SOLO si esa sobrecarga no existe en el catálogo, con la firma anterior (mismos parámetros sin la conexión).
- * PRO-342-R02: un 42883 con la sobrecarga PRESENTE (dependencia interna ausente: migración defectuosa o incompleta) se propaga tal cual; nunca se disfraza de «NEX-079 no aplicada». Si el catálogo
- * no se puede leer, también se propaga el error original. Cualquier otro error se propaga (permiso, documento, estado, lease obsoleto).
- */
-export async function registrarConConexion(db: Db, funcion: string, tipos: readonly string[], parametros: readonly unknown[], conexion: Record<string, unknown>) {
-  const sql = (conConexion: boolean) => {
-    const lista = [...tipos, ...(conConexion ? ["jsonb"] : [])].map((t, i) => `$${i + 1}${t ? `::${t}` : ""}`).join(", ");
+export async function registrarR05(db: Db, funcion: FuncionRegistroR05, tipos: readonly string[], parametros: readonly unknown[], conexion: Record<string, unknown>) {
+  const lista = [...tipos, "jsonb"].map((t, i) => `$${i + 1}${t ? `::${t}` : ""}`).join(", ");
 
-    return `SELECT ${funcion}(${lista}) AS resultado`;
-  };
-
-  try {
-    return Object.assign(await db.query(sql(true), [...parametros, JSON.stringify(conexion)]), { modoRegistro: "INTEGRAL" as ModoRegistro });
-  } catch (error) {
-    if (!faltaFuncion(error)) throw error;
-
-    let sobrecargaExiste: boolean;
-
-    try {
-      const q = await db.query(SQL_SOBRECARGA_NEX079, [funcion, tipos.length + 1]);
-
-      sobrecargaExiste = (q.rows[0] as F | undefined)?.existe === true;
-    } catch {
-      throw error;
-    }
-    if (sobrecargaExiste) {
-      console.error(`Registro con conexión fallido: ${funcion} (NEX-079) existe pero una función que usa no (42883). No se registra en modo compatibilidad: revisar la migración.`);
-      throw error;
-    }
-    if (!avisoSinNex079) console.warn("Registro en MODO COMPATIBILIDAD (sin conexión del intento): la migración NEX-079 no está aplicada.");
-    avisoSinNex079 = true;
-
-    return Object.assign(await db.query(sql(false), [...parametros]), { modoRegistro: "COMPATIBILIDAD" as ModoRegistro });
-  }
+  return Object.assign(await db.query(`SELECT public.${funcion}(${lista}) AS resultado`, [...parametros, JSON.stringify(conexion)]), { modoRegistro: "INTEGRAL" as ModoRegistro });
 }
 
 /** PRO-342-R02 (F002): referencia NO secreta de la conexión registrada en el último ENVÍO del documento que la tenga (NEX-079); null si no hay (anterior a NEX-079 o modo compatibilidad). */
@@ -344,15 +342,19 @@ function fechaCursorValida(texto: string): boolean {
 
 /**
  * PRO-338-R02 (AUD-R01 F003): las consultas registradas por NEX-054 / flujo NCE no guardan cdc_informado; el CDC que informó el gateway sigue en el JSON de respuesta saneado (DE.CDC). Se expone APARTE
- * (`cdcRespuesta`, solo lectura, 44 dígitos) y únicamente cuando la columna está vacía, para que la pantalla indique su fuente y no lo presente como la columna estructurada.
+ * (`cdcRespuesta`, solo lectura) y únicamente cuando la columna está vacía, para que la pantalla indique su fuente y no lo presente como la columna estructurada.
+ * PRO-342-R05: cualquier texto no vacío (dato opaco, sin exigir 44 dígitos); un valor JSON no textual no se convierte.
  */
-const CDC_EN_RESPUESTA = `CASE WHEN i.cdc_informado IS NULL AND i.tipo = 'CONSULTA' AND (i.respuesta #>> '{response,DE,CDC}') ~ '^[0-9]{44}$' THEN i.respuesta #>> '{response,DE,CDC}' END`;
+const CDC_EN_RESPUESTA = `CASE WHEN i.cdc_informado IS NULL AND i.tipo = 'CONSULTA' AND jsonb_typeof(i.respuesta #> '{response,DE,CDC}') = 'string' AND (i.respuesta #>> '{response,DE,CDC}') <> '' THEN i.respuesta #>> '{response,DE,CDC}' END`;
+
+/** PRO-342-R05: traza de la proyección del CDC en el documento (NEX-080). Por to_jsonb(i) para no fallar en la lectura si NEX-080 aún no está aplicada (quedan null). */
+const PROYECCION_CDC = `(to_jsonb(i) ->> 'cdc_proyeccion') AS "cdcProyeccion", (to_jsonb(i) ->> 'cdc_anterior') AS "cdcAnterior"`;
 
 /** Intentos (evidencia) del documento, del más reciente al más antiguo, máx. 100. Solo se llama tras comprobar que el documento está en el alcance. */
 export async function listarIntentos(db: Db, empresaId: string, documentoId: string) {
   const r = await db.query(
     `SELECT i.id, i.tipo, i.resultado, i.http_status AS "httpStatus", i.request_id AS "requestId", i.estado_gateway AS "estadoGateway", i.estado_sifen AS "estadoSifen", i.fase, i.lote, i.cdc_informado AS "cdcInformado",
-            ${CDC_EN_RESPUESTA} AS "cdcRespuesta", (to_jsonb(i) -> 'conexion') AS "conexion", i.cod_respuesta AS "codRespuesta", i.mensaje, i.creado_at AS "creadoAt", (i.respuesta IS NOT NULL) AS "tieneRespuesta", ${CURSOR_INTENTO} AS "cursor",
+            ${CDC_EN_RESPUESTA} AS "cdcRespuesta", ${PROYECCION_CDC}, (to_jsonb(i) -> 'conexion') AS "conexion", i.cod_respuesta AS "codRespuesta", i.mensaje, i.creado_at AS "creadoAt", (i.respuesta IS NOT NULL) AS "tieneRespuesta", ${CURSOR_INTENTO} AS "cursor",
             trim(coalesce(u.nombre, '') || ' ' || coalesce(u.apellido, '')) AS "actorNombre"
        FROM documento_electronico_intentos i JOIN usuarios u ON u.empresa_id = i.empresa_id AND u.id = i.actor_id
       WHERE i.empresa_id = $1 AND i.documento_id = $2 ORDER BY i.creado_at DESC, i.id DESC LIMIT 100`,
@@ -418,7 +420,7 @@ export async function listarIntentosPagina(db: Db, empresaId: string, documentoI
 
   const r = await db.query(
     `SELECT i.id, i.tipo, i.resultado, i.http_status AS "httpStatus", i.request_id AS "requestId", i.estado_gateway AS "estadoGateway", i.estado_sifen AS "estadoSifen", i.fase, i.lote, i.cdc_informado AS "cdcInformado",
-            ${CDC_EN_RESPUESTA} AS "cdcRespuesta", (to_jsonb(i) -> 'conexion') AS "conexion", i.cod_respuesta AS "codRespuesta", i.mensaje, i.creado_at AS "creadoAt", (i.respuesta IS NOT NULL) AS "tieneRespuesta", ${CURSOR_INTENTO} AS "cursor",
+            ${CDC_EN_RESPUESTA} AS "cdcRespuesta", ${PROYECCION_CDC}, (to_jsonb(i) -> 'conexion') AS "conexion", i.cod_respuesta AS "codRespuesta", i.mensaje, i.creado_at AS "creadoAt", (i.respuesta IS NOT NULL) AS "tieneRespuesta", ${CURSOR_INTENTO} AS "cursor",
             trim(coalesce(u.nombre, '') || ' ' || coalesce(u.apellido, '')) AS "actorNombre"
        FROM documento_electronico_intentos i JOIN usuarios u ON u.empresa_id = i.empresa_id AND u.id = i.actor_id
       WHERE i.empresa_id = $1 AND i.documento_id = $2${m ? " AND (i.creado_at, i.id) < ($3::timestamptz, $4::uuid)" : ""} ORDER BY i.creado_at DESC, i.id DESC LIMIT ${INTENTOS_POR_PAGINA + 1}`,
@@ -470,9 +472,13 @@ export async function consultarEstado(db: Db, empresaId: string, usuarioId: stri
 
   if (!doc) throw new ErrorFacturacion(404, "Documento no encontrado.");
 
-  // PRO-342-R02: la consulta usa la MISMA conexión del envío (o, sin referencia registrada, la activa en modo compatibilidad); si cambió, no se consulta (409, sin intento: no hubo llamada).
+  // PRO-342-R05: sin NEX-080 no se consulta (503 antes de cualquier llamada): el resultado no podría registrarse con la regla R05 y no hay fallback a las firmas que validan el CDC.
+  await exigirNex080(db);
+
+  // PRO-342-R02: la consulta usa la MISMA conexión del envío (o, sin referencia registrada, la activa); si cambió, no se consulta (409, sin intento: no hubo llamada).
   const { config, continuidad } = await conexionParaDocumento(db, empresaId, usuarioId, id);
 
+  // PRO-342-R05: identidad de la consulta = cuenta autenticada (config) + tipo, establecimiento, punto, número y serie del documento persistido. El CDC no se envía ni identifica.
   const bruto = await consultarDocumentoGateway(
     config,
     { tipo: String(doc.tipo), establecimiento: String(doc.establecimiento), puntoExpedicion: String(doc.puntoExpedicion), numero: String(doc.numero), serie: (doc.serie as string | null) ?? null },
@@ -486,14 +492,14 @@ export async function consultarEstado(db: Db, empresaId: string, usuarioId: stri
     );
   }
 
-  // Solo una respuesta asociada de forma confiable al documento y coherente con su estado previo puede fijar el estado fiscal (RN-E2-08).
+  // Solo una respuesta asociada al documento y coherente con su estado fiscal previo puede fijarlo (RN-E2-08). PRO-342-R05: sin condiciones sobre el CDC.
   const r = decidirConsulta({ tipo: String(doc.tipo), establecimiento: String(doc.establecimiento), puntoExpedicion: String(doc.puntoExpedicion), numero: String(doc.numero), cdc: (doc.cdc as string | null) ?? null, estadoSifen: (doc.estadoSifen as string | null) ?? null }, bruto);
 
-  // PRO-342-R01: las TRES vías (manual, flujo NCE, automática) registran un intento append-only con el CDC informado (cdc_informado) y la referencia NO secreta de la conexión usada (NEX-079).
-  // Un estado intermedio (XML firmado = PENDIENTE) o sin final deja el documento pendiente: la consulta automática lo vuelve a consultar; solo Aprobado/Rechazado (o Cancelado/Inutilizado) lo cierran.
-  const funcion = opciones.leaseToken ? "fe_documento_registrar_consulta_auto" : opciones.flujoNce ? "fe_documento_registrar_consulta_flujo_nce" : "fe_documento_registrar_consulta";
-  const tipos = ["uuid", "uuid", "uuid", "", "", "", "", "", "", "", "", "", "", "jsonb", ...(opciones.leaseToken ? ["uuid"] : [])];
-  const registrado = await registrarConConexion(
+  // PRO-342-R01/R05: las TRES vías (manual, flujo NCE, automática) registran un intento append-only con el CDC LITERAL informado (cdc_informado), la traza de su proyección y la referencia NO
+  // secreta de la conexión. Un estado intermedio (XML firmado = PENDIENTE) deja el documento pendiente: la consulta automática lo vuelve a consultar; solo Aprobado/Rechazado (o Cancelado/Inutilizado) lo cierran.
+  const funcion: FuncionRegistroR05 = opciones.leaseToken ? "fe_documento_registrar_consulta_auto_r05" : opciones.flujoNce ? "fe_documento_registrar_consulta_flujo_nce_r05" : "fe_documento_registrar_consulta_r05";
+  const tipos = ["uuid", "uuid", "uuid", "text", "integer", "text", "text", "text", "text", "text", "text", "text", "text", "jsonb", ...(opciones.leaseToken ? ["uuid"] : [])];
+  const registrado = await registrarR05(
     db,
     funcion,
     tipos,
@@ -527,7 +533,7 @@ export async function obtenerKude(db: Db, empresaId: string, usuarioId: string, 
 
   const r = await obtenerKudeGateway(
     config,
-    // PRO-342-R01: el CDC registrado (si la API ya lo informó) NO se envía: solo verifica que el PDF devuelto corresponda a ESTE documento (gateway.correspondenciaKude).
+    // PRO-342-R01/R05: el CDC registrado (si la API ya lo informó) NO se envía ni prueba pertenencia: solo permite DESCARTAR un PDF cuyo CDC es otro (gateway.correspondenciaKude).
     { tipoDoc: doc.tipo, establecimiento: String(doc.establecimiento), puntoExpedicion: String(doc.puntoExpedicion), numero: String(doc.numero), serie: (doc.serie as string | null) ?? null, cdcRegistrado: (doc.cdc as string | null) ?? null },
     dep,
   );
@@ -538,7 +544,7 @@ export async function obtenerKude(db: Db, empresaId: string, usuarioId: string, 
     throw new ErrorFacturacion(estado, r.mensaje);
   }
 
-  // PRO-342-R02 (F001): sin pertenencia verificada el nombre del archivo no lo presenta como KuDE propio confirmado.
+  // PRO-342-R02 (F001) / R05: sin pertenencia verificada el nombre del archivo no lo presenta como KuDE propio confirmado (con R05 siempre NO_VERIFICADO).
   const nombre = r.correspondencia === "CDC_REGISTRADO" ? nombreArchivoKude(doc) : nombreArchivoKude(doc).replace(/\.pdf$/, "-NO-VERIFICADO.pdf");
 
   return { pdf: r.pdf, nombre, correspondencia: r.correspondencia, continuidadConexion: continuidad };
@@ -569,7 +575,7 @@ export function respuestaErrorFacturacion(error: unknown, accion: string) {
     return NextResponse.json({ error: pg.message ?? "La operación no cumple las reglas de facturación." }, { status: 409 });
   }
   if (pg.code === "P0001") return NextResponse.json({ error: pg.message ?? "La operación no cumple las reglas de facturación." }, { status: 400 });
-  if (pg.code === "23505") return NextResponse.json({ error: "El CDC informado ya pertenece a otro documento de la empresa." }, { status: 409 });
+  if (pg.code === "23505") return NextResponse.json({ error: "La operación entra en conflicto con un dato único ya registrado en otro documento de la empresa (PRO-342-R05: un CDC repetido ya no produce este error; queda como evidencia del intento)." }, { status: 409 });
   console.error(`Error al ${accion} el documento electrónico:`, error);
 
   return NextResponse.json({ error: `No fue posible ${accion} el documento electrónico.` }, { status: 500 });

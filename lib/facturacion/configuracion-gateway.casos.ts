@@ -49,6 +49,8 @@ function baseFalsa() {
     async query(sql: string, p: unknown[] = []) {
       llamadas.push({ sql, parametros: p });
       if (caida) throw new Error("connection terminated");
+      // PRO-342-R05: el preflight (configuracionGateway) exige NEX-080 en el catálogo (exigirNex080).
+      if (/to_regprocedure/.test(sql)) return { rows: [{ disponible: true }] };
 
       const [e, u] = p as string[];
 

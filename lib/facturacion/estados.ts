@@ -58,8 +58,8 @@ export const ETIQUETA_RESULTADO_INTENTO: Record<string, string> = {
   TIMEOUT: "Tiempo de espera agotado",
   RED: "Error de red",
   RESPUESTA_INVALIDA: "Respuesta no interpretable",
-  // PRO-338-R03: rótulo NEUTRO del intento (el historial no sabe si en ese momento ya había CDC registrado). La alerta del documento distingue los casos (presentacion-sifen.ts).
-  CDC_DIVERGENTE: "CDC informado inconsistente con el documento",
+  // PRO-342-R05: CDC_DIVERGENTE solo existe en intentos HISTÓRICOS (anteriores a NEX-080, que ya no lo produce ni lo acepta). Se muestra como dato histórico, sin juicio sobre el CDC.
+  CDC_DIVERGENTE: "Registro histórico: CDC no aceptado por una validación anterior (ya no se aplica)",
 };
 
 /** Etiqueta del resultado de un intento según su tipo: un OK de ENVÍO significa «recibido por el gateway», nunca aprobación SIFEN. */
@@ -104,7 +104,7 @@ export function estadoSifenDesdeGateway(texto: unknown): EstadoSifen {
 /**
  * PRO-338-R02 (AUD-R01 F002): ÚNICA definición de «enviado sin resultado fiscal final». La usan el badge amarillo (presentacion-sifen.ts) y el indicador/filtro PEND_RESPUESTA (shared.ts), así que
  * ningún documento amarillo queda fuera del indicador. ENVIO_INDETERMINADO también cuenta en PEND_ENVIO (la transmisión no está confirmada): ese documento está en las dos fases a la vez, y
- * así lo explican los textos de ayuda de ambas tarjetas. APROBADO / RECHAZADO solo cuentan el estado fiscal persistido (una alerta CDC_DIVERGENTE no cambia estado_sifen).
+ * así lo explican los textos de ayuda de ambas tarjetas. APROBADO / RECHAZADO solo cuentan el estado fiscal persistido (un intento histórico CDC_DIVERGENTE no cambia estado_sifen).
  */
 export const ESTADOS_LOCAL_TRANSMITIDO: readonly EstadoLocal[] = ["ENVIADO", "ENVIO_INDETERMINADO"];
 export const ESTADOS_SIFEN_SIN_FINAL: readonly EstadoSifen[] = ["SIN_CONSULTA", "PENDIENTE", "NO_RECONOCIDO"];

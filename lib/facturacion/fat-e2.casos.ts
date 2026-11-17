@@ -87,6 +87,9 @@ export async function verificarCasosFatE2(): Promise<string[]> {
       async query(sql: string, parametros: unknown[] = []) {
         llamadas.push({ sql, parametros });
 
+        // PRO-342-R05: NEX-080 presente en el catálogo; el cierre solo por fe_documento_registrar_envio_r05 (lote = 11, CDC literal = 12).
+        if (/to_regprocedure/.test(sql)) return { rows: [{ disponible: true }] };
+        if (/fe_documento_registrar_envio/.test(sql) && !/fe_documento_registrar_envio_r05\(/.test(sql)) throw new Error("R05: firma anterior a NEX-080");
         if (/FROM fe_gateway_config/.test(sql)) return { rows: [{ baseUrl: opciones.baseUrl ?? CONFIG.baseUrl, credencialRef: "PRUEBA", timeoutMs: 1000 }] };
         if (/fe_documento_iniciar_envio/.test(sql)) return { rows: [{ resultado: "INICIADO", payload: PAYLOAD, numero: FE.numero, tipo: "FE", establecimiento: FE.establecimiento, punto: FE.puntoExpedicion }] };
         if (/FROM documentos_electronicos/.test(sql)) {
@@ -137,10 +140,11 @@ export async function verificarCasosFatE2(): Promise<string[]> {
   // ── T-E2-03/04: respuesta sin identidad o con identidad ajena
   const rec = (cuerpo: unknown, doc = FE) => interpretarRecepcion(200, JSON.stringify(cuerpo), [], doc);
 
-  igual("T-E2-03/04 200 sin lote/CDC/número, con CDC de otro documento o con eco de otro número → indeterminado (nunca ENVIADO)", [
+  // PRO-342-R05: el CDC del ACK no confirma ni descarta la recepción: con lote válido el ACK es ENVIADO aunque el CDC tenga otra composición (se registra literal).
+  igual("T-E2-03/04 (actualizado R05) 200 sin lote/número, con SOLO un CDC o con eco de otro número → indeterminado; lote + CDC de otra composición → ENVIADO (el CDC no se valida); lote > 60 → indeterminado", [
     rec({ status: "success", message: "ok" }).estadoLocal, rec({ status: "success", cdc: CDC_OTRO }).estadoLocal, rec({ status: "success", dEst: "001", dPunExp: "002", dNumDoc: "0050001" }).estadoLocal,
-    rec({ status: "success", nro_lote: "L-1", cdc: CDC_OTRO }).estadoLocal, rec({ status: "success", nro_lote: "x".repeat(61) }).estadoLocal,
-  ], Array(5).fill("ENVIO_INDETERMINADO"));
+    rec({ status: "success", nro_lote: "L-1", cdc: CDC_OTRO }).estadoLocal, rec({ status: "success", nro_lote: "x".repeat(61) }).estadoLocal, rec({ status: "success", nro_lote: "L-1", cdc: CDC_OTRO }).cdc,
+  ], ["ENVIO_INDETERMINADO", "ENVIO_INDETERMINADO", "ENVIO_INDETERMINADO", "ENVIADO", "ENVIO_INDETERMINADO", CDC_OTRO]);
 
   // ── T-E2-05/06: rechazos por documento
   const rechazo = (rechazados: unknown[], aceptados: unknown[] = []) => rec({ status: "error", rechazados: rechazados.length, message: "Hay documentos rechazados", response: { Aceptados: aceptados, Rechazados: rechazados } });
@@ -215,13 +219,13 @@ export async function verificarCasosFatE2(): Promise<string[]> {
   const consulta = (estado: unknown, extra?: Parameters<typeof cuerpoConsulta>[1]) => interpretarConsulta(200, JSON.stringify(cuerpoConsulta(estado, extra)));
   const decision = (doc: DocumentoReconciliable, r: ReturnType<typeof consulta>) => { const x = decidirConsulta(doc, r); return [x.resultado, x.estadoSifen]; };
 
-  // PRO-342-R03-01 (retificada): un XML firmado siempre tiene CDC; un final sin CDC disponible (ni en la respuesta ni registrado) NO se consolida.
-  igual("T-E2-10 reconciliación pura: Pendiente se acepta sin CDC; Aprobado/Rechazado con CDC coherente se aceptan; Aprobado/Rechazado/Cancelado/Inutilizado SIN CDC (ni guardado) no fijan estado final", [
+  // PRO-342-R05: NEXIT no valida el CDC: el estado informado se registra con o sin CDC (R03-01 revocada).
+  igual("T-E2-10 (actualizado R05) reconciliación pura: Pendiente se acepta sin CDC; Aprobado/Rechazado con CDC se aceptan; Aprobado/Rechazado/Cancelado/Inutilizado SIN CDC también fijan el estado informado", [
     decision(docBase, consulta("Pendiente")), decision(docBase, consulta("Aprobado", { cdc: CDC_FE })), decision(docBase, consulta("Rechazado", { cdc: CDC_FE })),
     decision(docBase, consulta("Aprobado")), decision(docBase, consulta("Rechazado")), decision(docBase, consulta("Cancelado")), decision(docBase, consulta("Inutilizado")),
     decision({ ...docBase, cdc: CDC_FE }, consulta("Aprobado")),
-  ], [["OK", "PENDIENTE"], ["OK", "APROBADO"], ["OK", "RECHAZADO"], ["RESPUESTA_INVALIDA", null], ["RESPUESTA_INVALIDA", null], ["RESPUESTA_INVALIDA", null], ["RESPUESTA_INVALIDA", null], ["OK", "APROBADO"]]);
-  igual("T-E2-12 estado desconocido → NO_RECONOCIDO (nunca aprobado); CDC de otro documento pasa a la función SQL (CDC_DIVERGENTE) sin que Nexit lo apruebe; 400 «no encontrado» y 2xx sin estado no cambian nada", [
+  ], [["OK", "PENDIENTE"], ["OK", "APROBADO"], ["OK", "RECHAZADO"], ["OK", "APROBADO"], ["OK", "RECHAZADO"], ["OK", "CANCELADO"], ["OK", "INUTILIZADO"], ["OK", "APROBADO"]]);
+  igual("T-E2-12 (actualizado R05) estado desconocido → NO_RECONOCIDO (nunca aprobado); un CDC de otra composición pasa literal a la función SQL R05 con el estado informado (sin CDC_DIVERGENTE; cdcCoherente solo queda para el KuDE); 400 «no encontrado» y 2xx sin estado no cambian nada", [
     decision(docBase, consulta("Aprobado con observación", { cdc: CDC_FE })), decision(docBase, consulta("Aprobado", { cdc: CDC_OTRO })), cdcCoherente(FE, CDC_OTRO),
     decision(docBase, interpretarConsulta(400, JSON.stringify({ status: "error", message: "Documento no encontrado" }))), decision(docBase, interpretarConsulta(200, JSON.stringify({ status: "success", response: {} }))),
   ], [["OK", "NO_RECONOCIDO"], ["OK", "APROBADO"], false, ["NO_ENCONTRADO", null], ["RESPUESTA_INVALIDA", null]]);
@@ -237,7 +241,9 @@ export async function verificarCasosFatE2(): Promise<string[]> {
     const registrar: unknown[][] = [];
     const db = {
       async query(sql: string, parametros: unknown[] = []) {
+        if (/to_regprocedure/.test(sql)) return { rows: [{ disponible: true }] };
         if (/FROM fe_gateway_config/.test(sql)) return { rows: [{ baseUrl: CONFIG.baseUrl, credencialRef: "PRUEBA", timeoutMs: 1000 }] };
+        if (/fe_documento_registrar_consulta/.test(sql) && !/_r05\(/.test(sql)) throw new Error("R05: firma anterior a NEX-080");
         if (/fe_documento_registrar_consulta/.test(sql)) { registrar.push(parametros); return { rows: [{ resultado: parametros[3] }] }; }
 
         return { rows: [{ id: DOC, ...FE, serie: null, cdc: null, estadoSifen: "SIN_CONSULTA", ...fila }] };
@@ -262,12 +268,12 @@ export async function verificarCasosFatE2(): Promise<string[]> {
 
   igual("T-E2-10 consulta Pendiente → PENDIENTE y luego Aprobado con CDC coherente → APROBADO (solo tras la consulta válida; una consulta por vez, empresa/usuario de la sesión)", [pendiente.r.resultado, pendiente.p[7], aprobado.r.resultado, aprobado.p[7], aprobado.p[8] === CDC_FE, aprobado.p.slice(0, 3), aprobado.g.posts()], ["OK", "PENDIENTE", "OK", "APROBADO", true, [EMPRESA, USUARIO, DOC], 1]);
   igual("T-E2-11 consulta Rechazado con código y mensaje → RECHAZADO fiscal con CodRespuesta/mensaje en el historial; el payload original no se toca (la consulta solo ejecuta registrar_consulta)", [rechazado.p[7], rechazado.p[9], rechazado.p[10]], ["RECHAZADO", "1234", "RUC del receptor inválido"]);
-  igual("T-E2-12 (R03-01) Aprobado sin CDC disponible → RESPUESTA_INVALIDA, NO se persiste ningún estado SIFEN ni se inventa CDC; Pendiente sobre un APROBADO no lo regresa", [sinCdc.r.resultado, sinCdc.p[7], sinCdc.p[8], regresion.r.resultado, regresion.p[7]], ["RESPUESTA_INVALIDA", null, null, "RESPUESTA_INVALIDA", null]);
+  igual("T-E2-12 (actualizado R05) Aprobado sin CDC → OK/APROBADO registrado sin inventar CDC (p_cdc NULL); Pendiente sobre un APROBADO no lo regresa (guarda de estado final)", [sinCdc.r.resultado, sinCdc.p[7], sinCdc.p[8], regresion.r.resultado, regresion.p[7]], ["OK", "APROBADO", null, "RESPUESTA_INVALIDA", null]);
 
   // ── T-E2-13: aislamiento multiempresa / alcance
   limpiarCacheTokens();
   const gAjeno = gateway([{ status: 200, cuerpo: cuerpoConsulta("Aprobado", { cdc: CDC_FE }) }]);
-  const dbAjena = { async query(sql: string) { return /FROM fe_gateway_config/.test(sql) ? { rows: [{ baseUrl: CONFIG.baseUrl, credencialRef: "PRUEBA", timeoutMs: 1000 }] } : { rows: [] }; } } as never;
+  const dbAjena = { async query(sql: string) { return /to_regprocedure/.test(sql) ? { rows: [{ disponible: true }] } : /FROM fe_gateway_config/.test(sql) ? { rows: [{ baseUrl: CONFIG.baseUrl, credencialRef: "PRUEBA", timeoutMs: 1000 }] } : { rows: [] }; } } as never;
 
   igual("T-E2-13 documento ajeno/fuera de alcance → 404 sin llamar al gateway; la sesión (empresa/usuario) decide el SQL del documento", [await codigo(consultarEstado(dbAjena, EMPRESA, USUARIO, DOC, { fetch: gAjeno.fetch, env: ENV })), gAjeno.llamadas.length], [404, 0]);
   const apiEnviar = leer("app/api/documentos/[id]/enviar/route.ts");
@@ -295,7 +301,8 @@ export async function verificarCasosFatE2(): Promise<string[]> {
   igual("T-E2-15 limpiarTexto/sinSecretos: omiten Bearer, JWT y los secretos literales de la sesión aunque el gateway los repita en un mensaje", [
     limpiarTexto(`x Bearer abcdefgh12345678 y`), limpiarTexto(`jwt ${JWT} fin`), sinSecretos({ m: `la clave es ${SECRETO}`, n: [SECRETO] }, [SECRETO, "ab"]), sinSecretos({ a: 1 }, []),
   ], ["x [omitido] y", "jwt [omitido] fin", { m: "la clave es [omitido]", n: ["[omitido]"] }, { a: 1 }]);
-  cierto("T-E2-15 el cliente solo guarda en el documento un CDC coherente y un lote ≤ 60; los mensajes de terceros en pantallas salen de campos saneados", cdcCoherente(FE, CDC_FE) && !cdcCoherente(FE, CDC_OTRO) && /limpiarTexto/.test(leer("lib/facturacion/gateway.ts")));
+  // PRO-342-R05: la recepción ya no usa cdcCoherente (queda solo para el descarte del KuDE); el CDC del ACK se guarda literal.
+  cierto("T-E2-15 (actualizado R05) el cliente guarda el CDC literal informado (sin validar composición; cdcCoherente queda solo para el KuDE) y un lote ≤ 60; los mensajes de terceros en pantallas salen de campos saneados", cdcCoherente(FE, CDC_FE) && !cdcCoherente(FE, CDC_OTRO) && !/cdcCoherente\(doc, cdcInformado\)/.test(leer("lib/facturacion/gateway.ts")) && /limpiarTexto/.test(leer("lib/facturacion/gateway.ts")));
 
   // ── T-E2-14: regresión fiscal con los vectores sanitizados de los 13 XML (la evidencia no prueba el JSON de entrada) y FAT-E1
   const receptor: ReceptorFE = {
@@ -330,7 +337,7 @@ export async function verificarCasosFatE2(): Promise<string[]> {
   const f54 = funcion(m54);
 
   cierto("NEX-054 SQL: reemplaza SOLO el cuerpo de fe_documento_registrar_consulta con la misma firma (privilegios intactos), exige NEX-047, no se reaplica y no toca tablas, grants ni migraciones previas", /requiere NEX-047/.test(m54) && /parece aplicada/.test(m54) && funcion(m54).split("\n")[1] === funcion(m47).split("\n")[1] && !/\b(ALTER|DROP|CREATE)\s+TABLE|\bGRANT\b|\bREVOKE\b|\bINSERT INTO public\.(?!documento_electronico_intentos)/i.test(m54.replace(/--.*$/gm, "")) && !/NEX-054/.test(m47));
-  cierto("NEX-054 SQL: la guarda va DESPUÉS del SELECT … FOR UPDATE de la fila y de la comprobación de CDC, y ANTES de insertar el intento y de actualizar el documento; solo admite el mismo estado final o APROBADO → CANCELADO", (() => {
+  cierto("NEX-054 SQL (histórico; NEX-080 reproduce la misma guarda de estado final sin la comprobación de CDC): la guarda va DESPUÉS del SELECT … FOR UPDATE de la fila y de la comprobación de CDC, y ANTES de insertar el intento y de actualizar el documento; solo admite el mismo estado final o APROBADO → CANCELADO", (() => {
     const iLock = f54.indexOf("FOR UPDATE"), iCdc = f54.indexOf("CDC_DIVERGENTE"), iGuarda = f54.indexOf("-- NEX-054:"), iIntento = f54.indexOf("INSERT INTO public.documento_electronico_intentos"), iUpdate = f54.indexOf("UPDATE public.documentos_electronicos SET");
 
     return iLock > 0 && iLock < iCdc && iCdc < iGuarda && iGuarda < iIntento && iIntento < iUpdate
@@ -349,8 +356,9 @@ export async function verificarCasosFatE2(): Promise<string[]> {
         await Promise.resolve();
         let res = String(p[3]);
 
-        if (res === "OK" && p[8] && doc.cdc && p[8] !== doc.cdc) res = "CDC_DIVERGENTE";
         if (guarda && res === "OK" && FINALES_MODELO.has(doc.sifen) && !(p[7] === doc.sifen || (doc.sifen === "APROBADO" && p[7] === "CANCELADO"))) res = "RESPUESTA_INVALIDA";
+        // PRO-342-R05 (NEX-080): sin regla de CDC (el modelo conserva solo la guarda de estado final); el CDC informado se proyecta como último informado.
+        if (res === "OK" && p[8]) doc.cdc = String(p[8]);
         doc.intentos.push({ resultado: res, estadoSifen: res === "OK" ? p[7] : null, estadoGateway: p[6] });
         if (res === "OK") { doc.sifen = String(p[7]); doc.cdc ??= (p[8] as string | null); }
 
@@ -363,8 +371,9 @@ export async function verificarCasosFatE2(): Promise<string[]> {
     };
     const db = {
       async query(sql: string, parametros: unknown[] = []) {
+        if (/to_regprocedure/.test(sql)) return { rows: [{ disponible: true }] };
         if (/FROM fe_gateway_config/.test(sql)) return { rows: [{ baseUrl: CONFIG.baseUrl, credencialRef: "PRUEBA", timeoutMs: 1000 }] };
-        if (/fe_documento_registrar_consulta/.test(sql)) return { rows: [{ resultado: await registrar(parametros) }] };
+        if (/fe_documento_registrar_consulta_r05\(/.test(sql)) return { rows: [{ resultado: await registrar(parametros) }] };
 
         return { rows: [{ id: DOC, ...FE, serie: null, cdc: doc.cdc, estadoSifen: doc.sifen }] };
       },

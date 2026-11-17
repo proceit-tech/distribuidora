@@ -312,6 +312,8 @@ export async function verificarCasosAjusteFiscal(): Promise<string[]> {
   const dbReplay = {
     async query(sql: string, parametros: unknown[] = []) {
       if (/usuario_tiene_permiso/.test(sql)) { const lit = /'([A-Z_]+)',\s*'([A-Z_]+)'\)/.exec(sql); const c = parametros.length >= 4 ? `${String(parametros[2])}.${String(parametros[3])}` : lit ? `${lit[1]}.${lit[2]}` : ""; return { rows: [{ ok: [PERMISO_AJUSTE, PERMISO_PRODUCTOS].includes(c) }] }; }
+      // PRO-342-R05: el preflight de emisión exige NEX-080 en el catálogo (exigirNex080).
+      if (/to_regprocedure/.test(sql)) return { rows: [{ disponible: true }] };
       if (/FROM fe_gateway_config/.test(sql)) return { rows: [{ baseUrl: "https://gw.prueba.invalid", credencialRef: "PRUEBA", timeoutMs: 1000 }] };
       if (/FROM clientes c\s+LEFT JOIN LATERAL/.test(sql)) return { rows: [filaCliente], rowCount: 1 };
       if (/SELECT c\.id, c\.naturaleza_receptor/.test(sql)) return { rows: [{ ...filaCliente, id: CLIENTE, tipo_persona: "JURIDICA", tipo_documento: "RUC", pais_codigo: "PRY" }], rowCount: 1 };

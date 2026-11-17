@@ -166,14 +166,14 @@ export async function verificarCasosKude(): Promise<string[]> {
 
     igual("KUDE-01: una solicitud POST a {base}/api/kude con el Bearer de la empresa y el cuerpo EXACTO de cinco campos (ceros a la izquierda, serie null, tipoDoc FE) y SIN tipOpe", [g.kudes.length, g.kudes[0].url, /^Bearer TOKEN-RUC-E1-/.test(g.kudes[0].auth ?? ""), JSON.stringify(g.kudes[0].body)], [1, "https://gw.example.test/api/kude", true, JSON.stringify({ dEst: "001", dPunExp: "001", dNumDoc: "0010004", dSerieNum: null, tipoDoc: "FE" })]);
     igual("E08-01: la consulta del KuDE no lee la solicitud/payload persistido (no hay tipOpe)", m.consultas.some((q) => /documento_electronico_solicitudes/.test(q)), false);
-    igual("KUDE-02: la respuesta JSON con status success y Base64 se decodifica y el PDF llega INTACTO; el nombre sale solo de la identidad fiscal", [Buffer.compare(r.pdf, PDF), r.nombre], [0, "KuDE-FE-001-001-0010004.pdf"]);
+    igual("KUDE-02 (actualizado R05): la respuesta JSON con status success y Base64 se decodifica y el PDF llega INTACTO; el nombre sale solo de la identidad fiscal (con «-NO-VERIFICADO»: el CDC no prueba pertenencia)", [Buffer.compare(r.pdf, PDF), r.nombre], [0, "KuDE-FE-001-001-0010004-NO-VERIFICADO.pdf"]);
     igual("KUDE-03: solo lectura — ninguna escritura en la base (ni estados SIFEN, ni intentos, ni numeración)", m.consultas.some((s) => /\b(INSERT|UPDATE|DELETE)\b|fe_documento_registrar/i.test(s)), false);
 
     const m2 = mundo([fe(D(2), E1, { serie: "AB", numero: "0000123", cdc: cdcDe("FE", "001", "001", "0000123") })]);
     const g2 = gateway(pdfOk);
     const r2 = await obtenerKude(m2.db, E1, U1, D(2), g2.dep);
 
-    igual("KUDE-04: otro documento con serie AB envía la serie y su número (sin tipOpe); el nombre incluye la serie", [g2.kudes[0].body.tipOpe, g2.kudes[0].body.dSerieNum, g2.kudes[0].body.dNumDoc, r2.nombre], [undefined, "AB", "0000123", "KuDE-FE-001-001-0000123-AB.pdf"]);
+    igual("KUDE-04 (actualizado R05): otro documento con serie AB envía la serie y su número (sin tipOpe); el nombre incluye la serie", [g2.kudes[0].body.tipOpe, g2.kudes[0].body.dSerieNum, g2.kudes[0].body.dNumDoc, r2.nombre], [undefined, "AB", "0000123", "KuDE-FE-001-001-0000123-AB-NO-VERIFICADO.pdf"]);
 
     const gMin = gateway(() => ({ status: 200, json: { status: "success", cdc: CDC, kude: PDF.toString("base64") } }));
 
@@ -243,7 +243,8 @@ export async function verificarCasosKude(): Promise<string[]> {
     const mIgual = mundo([fe(D(1), E1, { cdc: CDC, estadoSifen: "PENDIENTE" })]);
     const igualCdc = await obtenerKude(mIgual.db, E1, U1, D(1), gateway(pdfOk).dep);
 
-    igual("PRO342-R01-K04 CDC persistido IGUAL al devuelto (documento pendiente, XML firmado): PDF mostrado con correspondencia CDC_REGISTRADO, sin escrituras", [Buffer.compare(igualCdc.pdf, PDF), igualCdc.correspondencia, mIgual.consultas.some((q) => /\b(INSERT|UPDATE|DELETE)\b/i.test(q))], [0, "CDC_REGISTRADO", false]);
+    // PRO-342-R05: el CDC es dato opaco de la API y no prueba la titularidad del PDF: un CDC igual ya no «verifica» (CDC_REGISTRADO inalcanzable).
+    igual("PRO342-R01-K04 (actualizado R05) CDC persistido IGUAL al devuelto (documento pendiente, XML firmado): PDF mostrado como NO_VERIFICADO (no CDC_REGISTRADO), sin escrituras", [Buffer.compare(igualCdc.pdf, PDF), igualCdc.correspondencia, mIgual.consultas.some((q) => /\b(INSERT|UPDATE|DELETE)\b/i.test(q))], [0, "NO_VERIFICADO", false]);
 
     // Otros tipos (NDE/AFE...) siguen sin KuDE
     limpiarCacheTokens();
@@ -503,7 +504,8 @@ export async function verificarCasosKude(): Promise<string[]> {
     const tramoCuerpo = sinComentarios(gw.slice(gw.indexOf("export function cuerpoKudeGateway"), gw.indexOf("export type ResultadoKude")));
 
     cierto("PRO326-09 (actualizado PRO-342-R01) el KuDE no ENVÍA CDC, no consulta historial APROBADO ni RUC/DV; la correspondencia solo usa igualdad con el CDC registrado o cdcCoherente", !/cdc/i.test(tramoCuerpo) && !/substr\(|APROBADO|empresas|\bruc\b|\bdv\b/i.test(tramoObtener) && /correspondenciaKude\(doc, enRaiz\(j, "cdc"\)\)/.test(tramoKude) && /cdc === registrado/.test(tramoCorrespondencia) && /cdcCoherente\(/.test(tramoCorrespondencia) && !/slice\(|substr|ruc|\bdv\b/i.test(tramoCorrespondencia));
-    cierto("PRO326-10 cdcCoherente se conserva en la recepción fiscal (fuera del KuDE)", /cdcCoherente\(doc, cdcInformado\)/.test(gw) && /export function cdcCoherente/.test(gw));
+    // PRO-342-R05: la recepción fiscal ya no valida el CDC; cdcCoherente queda SOLO como heurística de descarte del KuDE.
+    cierto("PRO326-10 (actualizado R05) cdcCoherente ya NO se usa en la recepción fiscal; existe solo para el descarte del KuDE", !/cdcCoherente\(doc, cdcInformado\)/.test(gw) && /export function cdcCoherente/.test(gw) && /cdcCoherente\(\{ tipo: doc\.tipoDoc/.test(gw));
   }
 
   // ── 3. Aislamiento, alcance y elegibilidad: nunca se llama al gateway ───────────────────────────────────────────────────────────────────────
@@ -526,7 +528,7 @@ export async function verificarCasosKude(): Promise<string[]> {
     const gAmplio = gateway(pdfOk);
     const otro = await obtenerKude(mundo(docs).db, E1, U2, D(3), gAmplio.dep);
 
-    igual("KUDE-08: el usuario CON alcance a la otra sucursal sí obtiene su KuDE (decide el alcance, no el rol)", [otro.nombre, gAmplio.kudes.length], ["KuDE-FE-001-001-0010004.pdf", 1]);
+    igual("KUDE-08 (actualizado R05): el usuario CON alcance a la otra sucursal sí obtiene su KuDE (decide el alcance, no el rol)", [otro.nombre, gAmplio.kudes.length], ["KuDE-FE-001-001-0010004-NO-VERIFICADO.pdf", 1]);
   }
 
   // ── 4. Credenciales y configuración por empresa; dos empresas no comparten token ─────────────────────────────────────────────────────────────
@@ -980,7 +982,7 @@ export async function verificarCasosKude(): Promise<string[]> {
     const propioE1 = await obtenerKude(mundo(docsDos).db, E1, U1, D(1), gPropio.dep);
     const propioE2 = await obtenerKude(mundo(docsDos).db, E2, U1, D(2), gPropio.dep);
 
-    igual("PRO342-R02-K03 mismo número 001-001-0000001 (AA) en dos cuentas: cada empresa con SU CDC registrado obtiene CDC_REGISTRADO con el token de su cuenta", [propioE1.correspondencia, propioE2.correspondencia, /^Bearer TOKEN-RUC-E1-/.test(gPropio.kudes[0].auth ?? ""), /^Bearer TOKEN-RUC-E2-/.test(gPropio.kudes[1].auth ?? "")], ["CDC_REGISTRADO", "CDC_REGISTRADO", true, true]);
+    igual("PRO342-R02-K03 (actualizado R05) mismo número 001-001-0000001 (AA) en dos cuentas: cada empresa con SU CDC registrado recibe el PDF (NO_VERIFICADO) con el token de su cuenta", [propioE1.correspondencia, propioE2.correspondencia, /^Bearer TOKEN-RUC-E1-/.test(gPropio.kudes[0].auth ?? ""), /^Bearer TOKEN-RUC-E2-/.test(gPropio.kudes[1].auth ?? "")], ["NO_VERIFICADO", "NO_VERIFICADO", true, true]);
     limpiarCacheTokens();
     const cruzado = await falla(mundo(docsDos), gateway(() => ok({}, PDF, CDC_E2)), E1, U1, D(1));
 
@@ -990,9 +992,10 @@ export async function verificarCasosKude(): Promise<string[]> {
     limpiarCacheTokens();
     const k4 = await obtenerKude(mundo([feAA({ cdc: CDC_E1 })]).db, E1, U1, D(1), gateway(() => ok({}, PDF, CDC_E1)).dep);
     const k4b = await falla(mundo([feAA({ cdc: CDC_E1 })]), gateway(() => ok({}, PDF, CDC_E1.slice(0, 43) + "9")), E1, U1, D(1));
-    const k4c = await obtenerKude(mundo([feAA({ cdc: CDC_E1 })]).db, E1, U1, D(1), gateway(() => ok({}, PDF, " " + CDC_E1 + " ")).dep);
+    const k4c = await falla(mundo([feAA({ cdc: CDC_E1 })]), gateway(() => ok({}, PDF, " " + CDC_E1 + " ")), E1, U1, D(1));
 
-    igual("PRO342-R02-K04 CDC local coincidente: CDC_REGISTRADO y nombre propio; divergente: 502; con espacios alrededor: NO se iguala (NO_VERIFICADO, sin normalizar)", [k4.correspondencia, k4.nombre, k4b.estado, k4c.correspondencia], ["CDC_REGISTRADO", "KuDE-FE-001-001-0000001-AA.pdf", 502, "NO_VERIFICADO"]);
+    // PRO-342-R05: igualdad literal (sin trim) con el CDC registrado: igual → NO_VERIFICADO (no verificado); distinto (incluido con espacios) → descartado como posible PDF ajeno (dependencia del proveedor).
+    igual("PRO342-R02-K04 (actualizado R05) CDC local coincidente: NO_VERIFICADO y nombre «-NO-VERIFICADO»; divergente: 502; con espacios alrededor: NO se iguala (literal, sin normalizar) → 502", [k4.correspondencia, k4.nombre, k4b.estado, k4c.estado], ["NO_VERIFICADO", "KuDE-FE-001-001-0000001-AA-NO-VERIFICADO.pdf", 502, 502]);
 
     // R02-K05: FE y NCE legítimas durante «XML firmado» (PENDIENTE): el KuDE se pide sin exigir APROBADO; con el CDC informado por la API → verificado; sin él → mostrado con advertencia.
     for (const tipo of ["FE", "NCE"] as const) {
@@ -1002,7 +1005,7 @@ export async function verificarCasosKude(): Promise<string[]> {
       const con = await obtenerKude(mundo([{ ...base, cdc: cdcPropio }]).db, E1, U1, D(1), gateway(pdfOk).dep);
       const sin = await obtenerKude(mundo([base]).db, E1, U1, D(1), gateway(pdfOk).dep);
 
-      igual("PRO342-R02-K05 [" + tipo + " en XML firmado]: con CDC informado por la API → CDC_REGISTRADO; sin CDC aún → PDF mostrado como NO_VERIFICADO (no bloqueado, no APROBADO exigido)", [con.correspondencia, sin.correspondencia, sin.pdf.length], ["CDC_REGISTRADO", "NO_VERIFICADO", PDF.length]);
+      igual("PRO342-R02-K05 (actualizado R05) [" + tipo + " en XML firmado]: con o sin CDC informado por la API → PDF mostrado como NO_VERIFICADO (no bloqueado, no APROBADO exigido)", [con.correspondencia, sin.correspondencia, sin.pdf.length], ["NO_VERIFICADO", "NO_VERIFICADO", PDF.length]);
     }
 
     // R02-C: conexión del envío (NEX-079) vs conexión efectiva actual. Con DISTINTA: 409, sin llamar al gateway (ni login) y sin escribir nada.
@@ -1027,7 +1030,7 @@ export async function verificarCasosKude(): Promise<string[]> {
       } else {
         const r = await obtenerKude(m.db, E1, U1, D(1), g.dep);
 
-        igual("PRO342-R02-C02 KuDE [" + nombre + "]: continúa y la continuidad se informa (" + esperado + ")", [r.continuidadConexion, r.correspondencia, g.kudes.length], [esperado, "CDC_REGISTRADO", 1]);
+        igual("PRO342-R02-C02 (actualizado R05) KuDE [" + nombre + "]: continúa y la continuidad se informa (" + esperado + "); pertenencia NO_VERIFICADO", [r.continuidadConexion, r.correspondencia, g.kudes.length], [esperado, "NO_VERIFICADO", 1]);
       }
     }
 

@@ -37,11 +37,8 @@ export function presentacionSifen(d: { estadoLocal: EstadoLocal; estadoSifen: Es
 
 /**
  * Aviso técnico de la ÚLTIMA consulta registrada (ultima_consulta_resultado). Si la última fue satisfactoria (OK) o no hubo consultas, no hay aviso: una alerta antigua no se muestra como actual.
- * PRO-338-R03 — CDC_DIVERGENTE según el CDC REGISTRADO del documento (`cdc`):
- *  · sin CDC registrado (NULL, lo normal antes de la primera consulta válida): no se afirma que exista uno; la SQL solo marca la divergencia si el CDC informado no corresponde a la
- *    identidad fiscal del documento (tipo, establecimiento, punto, número) o no es un CDC válido;
- *  · con CDC registrado: ese CDC ya es coherente con la identidad (CHECK de NEX-047), así que el informado es necesariamente distinto del previamente registrado; NO se sobrescribe.
- * En ningún caso se presenta como rechazo fiscal ni cambia el estado persistido.
+ * PRO-342-R05: NEXIT ya no valida el CDC; CDC_DIVERGENTE solo puede ser un resultado HISTÓRICO (anterior a NEX-080). Se muestra como registro histórico, sin afirmar que el CDC sea incorrecto y
+ * sin presentarlo como rechazo fiscal. La próxima consulta registra el estado informado por la API con la regla vigente.
  */
 export function alertaConsulta(d: { ultimaConsultaResultado: string | null; cdc?: string | null }): AlertaConsulta | null {
   const r = d.ultimaConsultaResultado;
@@ -49,17 +46,11 @@ export function alertaConsulta(d: { ultimaConsultaResultado: string | null; cdc?
   if (!r || r === "OK") return null;
 
   if (r === "CDC_DIVERGENTE") {
-    return d.cdc
-      ? {
-          tipo: "inconsistencia",
-          texto: "Inconsistencia de consulta: CDC distinto del previamente registrado",
-          detalle: "La última consulta devolvió un CDC distinto del ya registrado para este documento: el CDC registrado se conserva y la respuesta NO se tomó como resultado fiscal. Ver mensaje, CDC informado, fecha y JSON en el historial.",
-        }
-      : {
-          tipo: "inconsistencia",
-          texto: "Inconsistencia de consulta: el CDC informado no corresponde a la identidad fiscal del documento",
-          detalle: "El documento aún no tiene CDC registrado. La última consulta devolvió un CDC que no corresponde al tipo, establecimiento, punto o número de este documento (o no es un CDC válido): su respuesta NO se tomó como resultado fiscal. Ver mensaje, CDC informado, fecha y JSON en el historial.",
-        };
+    return {
+      tipo: "inconsistencia",
+      texto: "Registro histórico: una validación anterior del CDC (ya retirada) no aceptó la última consulta",
+      detalle: "Esa consulta se registró con una regla anterior que validaba el CDC. Hoy el CDC es un dato informado por la API: la próxima consulta registrará el estado fiscal informado. El historial se conserva sin cambios.",
+    };
   }
 
   return {
@@ -100,7 +91,29 @@ export function seguimientoFiscal(d: { estadoLocal: EstadoLocal; estadoSifen: Es
 }
 
 /** Campos de un intento del historial que usa el resumen de consultas (los devuelve listarIntentos / listarIntentosPagina). */
-export type IntentoConsulta = { tipo: string; resultado: string; creadoAt: string; httpStatus: number | null; estadoGateway: string | null; codRespuesta: string | null; mensaje: string | null; cdcInformado: string | null; cdcRespuesta?: string | null; conexion?: Record<string, unknown> | null };
+export type IntentoConsulta = {
+  tipo: string; resultado: string; creadoAt: string; httpStatus: number | null; estadoGateway: string | null; codRespuesta: string | null; mensaje: string | null; cdcInformado: string | null; cdcRespuesta?: string | null;
+  conexion?: Record<string, unknown> | null;
+  /** PRO-342-R05 (NEX-080): qué hizo la SQL con el CDC informado en este intento, y el CDC que tenía el documento antes de un CAMBIO. null en intentos anteriores a NEX-080. */
+  cdcProyeccion?: string | null; cdcAnterior?: string | null;
+};
+
+/**
+ * PRO-342-R05: aviso INFORMATIVO (nunca bloqueo) de la proyección del CDC registrada en el intento. El CDC de cada intento es inmutable en el historial; el documento muestra el último informado
+ * por una respuesta aceptada. null si no hay nada que avisar.
+ */
+export function avisoProyeccionCdc(i: Pick<IntentoConsulta, "cdcProyeccion" | "cdcAnterior">): string | null {
+  switch (i.cdcProyeccion) {
+    case "CAMBIO":
+      return `La API informó un CDC distinto del registrado antes${i.cdcAnterior ? ` (anterior: ${i.cdcAnterior})` : ""}: el documento muestra el nuevo; el anterior queda en el historial. No se modificaron notas de crédito ya emitidas.`;
+    case "NO_PROYECTADO_OTRO_DOCUMENTO":
+      return "El CDC informado ya figura en otro documento de la empresa: se guardó como evidencia de este intento y no se asignó al documento. Revise el caso con el proveedor.";
+    case "NO_PROYECTADO":
+      return "Respuesta no aceptada como resultado del documento: el CDC informado se guardó solo como evidencia.";
+    default:
+      return null;
+  }
+}
 
 /** PRO-342-R01: texto de la conexión usada en un intento (NEX-079): host y versión de credenciales; nunca usuario, RUC, clave ni token (la columna no los admite). null si no se registró. */
 export function textoConexion(c: Record<string, unknown> | null | undefined): string | null {
@@ -134,7 +147,7 @@ export function cdcDeIntento(i: Pick<IntentoConsulta, "cdcInformado" | "cdcRespu
 
 // ── PRO-342-R04 (UX01/UX02): iconos de estado por eje INDEPENDIENTE y primera capa fiscal ───────────────────────────────────────────────────────────────
 /**
- * Cuatro ejes que nunca se mezclan ni se deducen unos de otros: ENVÍO (ACK del gateway), XML/CDC (CDC auténtico informado por la API), SIFEN (estado fiscal PERSISTIDO) y CORREO.
+ * Cuatro ejes que nunca se mezclan ni se deducen unos de otros: ENVÍO (ACK del gateway), XML/CDC (CDC informado por la API, dato opaco), SIFEN (estado fiscal PERSISTIDO) y CORREO.
  * Una factura puede estar a la vez «Enviado ✓ · XML firmado ✓ · SIFEN Rechazado ✕»: la firma/CDC no es aprobación. Puro: solo deriva presentación desde lo persistido; nunca cambia datos.
  * Cada icono lleva un símbolo distinto además del color (el color nunca es la única señal) y un texto completo para aria-label/tooltip.
  */
@@ -145,20 +158,21 @@ export type IconoEstado = { eje: EjeEstado; nombre: string; simbolo: SimboloEsta
 
 export const NOMBRE_EJE: Record<EjeEstado, string> = { envio: "Envío", xml: "XML/CDC", sifen: "SIFEN", correo: "Correo" };
 
-/** CDC válido = EXACTAMENTE 44 dígitos (literal, sin recortar). */
-export const cdcValido = (c: unknown): c is string => typeof c === "string" && /^\d{44}$/.test(c);
+/** PRO-342-R05: hay CDC informado por la API = cualquier texto no vacío (dato opaco: sin exigir 44 dígitos ni composición). */
+export const cdcPresente = (c: unknown): c is string => typeof c === "string" && c !== "";
 
+/** Respuesta no interpretable (RESPUESTA_INVALIDA) o resultado histórico CDC_DIVERGENTE (anterior a NEX-080). */
 const RESULTADOS_INCONSISTENTES = new Set(["CDC_DIVERGENTE", "RESPUESTA_INVALIDA"]);
 
 type DocIconos = { estadoLocal: EstadoLocal; estadoSifen: EstadoSifen; estadoEmail: EstadoEmail; cdc: string | null; ultimaConsultaResultado: string | null; envioErrorTipo?: string | null };
 
 /**
- * PRO-342-R04 (AUD-04/F10): un estado FINAL persistido sin CDC válido es un dato histórico incoherente (la regla vigente nunca lo registra). Se muestra como ALERTA DE INTEGRIDAD;
- * el estado de la base NO se cambia ni se reinterpreta. null si no aplica.
+ * PRO-342-R05: nota INFORMATIVA cuando el documento tiene un estado fiscal final informado por la API pero la API no informó CDC. Ya no es una «alerta de integridad»: el estado se registra
+ * sin condicionarlo al CDC. Nada se modifica. null si no aplica.
  */
-export function alertaIntegridad(d: { estadoSifen: EstadoSifen; cdc: string | null }): string | null {
-  return ESTADOS_SIFEN_FINALES.includes(d.estadoSifen) && !cdcValido(d.cdc)
-    ? `Alerta de integridad: el documento figura «${ETIQUETA_SIFEN[d.estadoSifen]}» sin CDC registrado. Es un dato histórico que no cumple la regla vigente (nunca un final sin CDC); no se modifica: revise con el proveedor.`
+export function avisoSinCdc(d: { estadoSifen: EstadoSifen; cdc: string | null }): string | null {
+  return ESTADOS_SIFEN_FINALES.includes(d.estadoSifen) && !cdcPresente(d.cdc)
+    ? `La API informó el estado «${ETIQUETA_SIFEN[d.estadoSifen]}» sin CDC para este documento: se registró el estado tal como fue informado. Si la API informa el CDC en una consulta posterior, se registrará.`
     : null;
 }
 
@@ -183,12 +197,14 @@ function iconoEnvio(d: DocIconos): IconoEstado {
 
 function iconoXml(d: DocIconos): IconoEstado {
   const base = { eje: "xml" as const, nombre: NOMBRE_EJE.xml };
-  const conCdc = cdcValido(d.cdc);
+  const conCdc = cdcPresente(d.cdc);
 
   if (d.ultimaConsultaResultado && RESULTADOS_INCONSISTENTES.has(d.ultimaConsultaResultado)) {
-    return { ...base, simbolo: "archivoAlerta", tono: "aviso", corto: "XML/CDC con aviso", texto: `XML/CDC: la última respuesta del gateway es inconsistente (CDC ausente, inválido o distinto). ${conCdc ? "Se conserva el CDC ya registrado." : "Aún no hay CDC registrado."}` };
+    const motivo = d.ultimaConsultaResultado === "CDC_DIVERGENTE" ? "registro histórico de una validación de CDC ya retirada" : "la última respuesta del gateway no fue interpretable para este documento";
+
+    return { ...base, simbolo: "archivoAlerta", tono: "aviso", corto: "XML/CDC con aviso", texto: `XML/CDC: ${motivo}. ${conCdc ? "Se conserva el CDC registrado." : "Aún no hay CDC informado."}` };
   }
-  if (conCdc) return { ...base, simbolo: "archivoCheck", tono: "info", corto: "XML firmado", texto: "XML/CDC: XML firmado, CDC informado por la API y registrado. No es aprobación SIFEN." };
+  if (conCdc) return { ...base, simbolo: "archivoCheck", tono: "info", corto: "CDC informado", texto: "XML/CDC: CDC informado por la API y registrado tal cual. No es aprobación SIFEN." };
 
   return { ...base, simbolo: "archivoReloj", tono: "neutro", corto: "Sin CDC", texto: "XML/CDC: la API aún no informó el CDC de este documento." };
 }
@@ -197,9 +213,9 @@ function iconoSifen(d: DocIconos): IconoEstado {
   const base = { eje: "sifen" as const, nombre: NOMBRE_EJE.sifen };
   const etiqueta = ETIQUETA_SIFEN[d.estadoSifen] ?? d.estadoSifen;
 
-  if (alertaIntegridad(d)) return { ...base, simbolo: "alerta", tono: "aviso", corto: `SIFEN ${etiqueta} sin CDC`, texto: `SIFEN: «${etiqueta}» registrado SIN CDC. Alerta de integridad (dato histórico, no se modifica).` };
-  if (d.estadoSifen === "APROBADO") return { ...base, simbolo: "check", tono: "ok", corto: "SIFEN Aprobado", texto: "SIFEN: aprobado (resultado fiscal registrado con CDC)." };
-  if (d.estadoSifen === "RECHAZADO") return { ...base, simbolo: "cruz", tono: "error", corto: "SIFEN Rechazado", texto: "SIFEN: rechazo fiscal confirmado y registrado con CDC. Ver código y mensaje en el detalle." };
+  // PRO-342-R05: el estado fiscal se presenta tal como lo informó la API, con o sin CDC (sin «alerta de integridad»).
+  if (d.estadoSifen === "APROBADO") return { ...base, simbolo: "check", tono: "ok", corto: "SIFEN Aprobado", texto: "SIFEN: aprobado (resultado fiscal informado por la API)." };
+  if (d.estadoSifen === "RECHAZADO") return { ...base, simbolo: "cruz", tono: "error", corto: "SIFEN Rechazado", texto: "SIFEN: rechazo fiscal informado por la API. Ver código y mensaje en el detalle." };
   if (d.estadoSifen === "CANCELADO" || d.estadoSifen === "INUTILIZADO") return { ...base, simbolo: "prohibido", tono: "neutro", corto: `SIFEN ${etiqueta}`, texto: `SIFEN: ${etiqueta} (estado fiscal registrado).` };
   if (ESTADOS_SIFEN_SIN_FINAL.includes(d.estadoSifen) && ESTADOS_LOCAL_TRANSMITIDO.includes(d.estadoLocal)) {
     return { ...base, simbolo: "reloj", tono: "aviso", corto: "SIFEN pendiente", texto: `SIFEN: pendiente de resultado, todavía sin decisión fiscal (estado registrado: ${etiqueta}).` };
@@ -231,11 +247,11 @@ export function resumenFases(d: DocIconos): string {
 
 /**
  * PRO-342-R04 (UX02): primera capa del detalle, SOLO cuatro datos fiscales tal como se registraron (sin inventar, recortar ni enmascarar):
- * lote literal, CDC de 44 dígitos, fecha de firma informada por la API y código + mensaje de la última respuesta registrada. `rechazo` solo con RECHAZADO persistido y CDC válido:
- * el rojo nunca se deduce del texto del mensaje.
+ * lote literal, CDC literal informado por la API (PRO-342-R05: cualquier forma), fecha de firma informada por la API y código + mensaje de la última respuesta registrada. `rechazo` solo con
+ * RECHAZADO persistido (sin condición sobre el CDC): el rojo nunca se deduce del texto del mensaje.
  */
 export function detalleFiscalPrimario(d: { lote: string | null; cdc: string | null; fechaFirma: string | null; codRespuesta: string | null; mensajeRespuesta: string | null; estadoSifen: EstadoSifen }) {
   const mensaje = [d.codRespuesta, d.mensajeRespuesta].filter((x): x is string => typeof x === "string" && x !== "").join(" · ");
 
-  return { lote: d.lote, cdc: d.cdc, fechaFirma: d.fechaFirma, mensaje: mensaje === "" ? null : mensaje, rechazo: d.estadoSifen === "RECHAZADO" && cdcValido(d.cdc) };
+  return { lote: d.lote, cdc: d.cdc, fechaFirma: d.fechaFirma, mensaje: mensaje === "" ? null : mensaje, rechazo: d.estadoSifen === "RECHAZADO" };
 }

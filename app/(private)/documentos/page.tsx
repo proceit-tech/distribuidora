@@ -25,7 +25,8 @@ import {
 } from "@/lib/facturacion/estados";
 import {
   alertaConsulta,
-  alertaIntegridad,
+  avisoProyeccionCdc,
+  avisoSinCdc,
   cdcDeIntento,
   detalleFiscalPrimario,
   iconosEstado,
@@ -58,7 +59,7 @@ type Documento = {
 };
 
 const MOTIVO_NCE: Record<number, string> = { 2: "Devolución", 3: "Descuento", 4: "Bonificación", 8: "Ajuste de precio" };
-type Intento = { id: string; tipo: string; fase: string | null; lote: string | null; cdcInformado: string | null; cdcRespuesta?: string | null; conexion?: Record<string, unknown> | null; resultado: string; httpStatus: number | null; estadoGateway: string | null; estadoSifen: string | null; codRespuesta: string | null; mensaje: string | null; creadoAt: string; actorNombre: string; tieneRespuesta?: boolean; cursor?: string };
+type Intento = { id: string; tipo: string; fase: string | null; lote: string | null; cdcInformado: string | null; cdcRespuesta?: string | null; cdcProyeccion?: string | null; cdcAnterior?: string | null; conexion?: Record<string, unknown> | null; resultado: string; httpStatus: number | null; estadoGateway: string | null; estadoSifen: string | null; codRespuesta: string | null; mensaje: string | null; creadoAt: string; actorNombre: string; tieneRespuesta?: boolean; cursor?: string };
 type Solicitud = { version: number; payloadHash: string; creadoAt: string };
 /** E01 (PRO-314): JSON leído bajo demanda de UNA solicitud o respuesta; se muestra como texto formateado (nunca HTML). */
 type VistaJson = { titulo: string; detalle: string; texto: string; cargando: boolean; error: string };
@@ -423,9 +424,8 @@ export default function DocumentosPage() {
     actualizarDetalle(d.id, { consultando: true, aviso: "", error: "" });
     try {
       const j = await leerJson<{ resultado: string; mensaje: string | null; intentos: Intento[]; modoRegistro?: string; continuidadConexion?: string }>(await fetch(`/api/documentos/${d.id}/consultar`, { method: "POST" }), "No fue posible consultar el estado.");
-      // PRO-342-R02: el modo degradado (sin NEX-079) y la conexión no verificable se informan; nunca se presentan como registro integral.
+      // PRO-342-R02/R05: la conexión no verificable se informa. El modo compatibilidad (sin NEX-079) ya no existe: sin NEX-080 la consulta falla cerrada (503) y llega como error.
       const notas = [
-        j.modoRegistro === "COMPATIBILIDAD" ? "Registrado en modo compatibilidad (NEX-079 no aplicada): sin conexión ni CDC estructurado en el intento" : "",
         j.continuidadConexion === "SIN_REFERENCIA" ? "Continuidad de la conexión no verificable (conexión del envío no registrada o credenciales de entorno del servidor): no se pudo comprobar que la consulta use la misma cuenta del envío" : "",
       ].filter(Boolean);
 
@@ -586,7 +586,8 @@ export default function DocumentosPage() {
                 const det = abiertos[d.id];
                 const iconos = iconosEstado(d);
                 const alerta = alertaConsulta(d);
-                const integridad = alertaIntegridad(d);
+                // PRO-342-R05: nota informativa (no alerta de integridad) si la API informó un estado final sin CDC.
+                const sinCdc = avisoSinCdc(d);
                 const fiscal = detalleFiscalPrimario(d);
                 const consultas = det ? resumenConsultas(det.intentos) : { valida: null, ultima: null };
                 // PRO-342-R01: envío (ACK), último retorno del gateway (p. ej. «XML firmado») y resultado fiscal SIFEN en ejes separados (segunda capa).
@@ -654,7 +655,8 @@ export default function DocumentosPage() {
                             </div>
                             <div>
                               <dt className={ui.muted}>{d.tipo === "NCE" ? "CDC de la nota de crédito" : "CDC"}</dt>
-                              <dd className={ui.mono}>{fiscal.cdc ?? "No informado"}</dd>
+                              {/* PRO-342-R05: CDC literal informado por la API (cualquier forma/longitud): se muestra completo, con espacios conservados y corte de línea. */}
+                              <dd className={ui.mono} style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{fiscal.cdc ?? "No informado"}</dd>
                               {fiscal.cdc ? <button type="button" className={estilos.copiar} aria-label="Copiar CDC" onClick={() => void copiar(d, "cdc", fiscal.cdc as string)}>{det.copiado === "cdc" ? "Copiado" : "Copiar"}</button> : null}
                             </div>
                             <div>
@@ -669,7 +671,7 @@ export default function DocumentosPage() {
                           <span className={estilos.srSolo} role="status" aria-live="polite">{det.copiado === "lote" || det.copiado === "cdc" ? "Copiado al portapapeles" : det.copiado === "error" ? "No fue posible copiar: seleccione el texto manualmente" : ""}</span>
                           {det.copiado === "error" ? <div className={ui.alertError} role="alert" style={{ margin: "4px 0" }}>No fue posible copiar: seleccione el texto manualmente.</div> : null}
 
-                          {integridad ? <div className={estilos.avisoInconsistencia} role="note">{integridad}</div> : null}
+                          {sinCdc ? <div className={estilos.avisoTecnico} role="note">{sinCdc}</div> : null}
                           {alerta ? (
                             <div className={alerta.tipo === "inconsistencia" ? estilos.avisoInconsistencia : estilos.avisoTecnico} role="note">
                               <strong>Aviso técnico: {alerta.texto}.</strong> {alerta.detalle}
@@ -777,7 +779,7 @@ export default function DocumentosPage() {
                                         <tr key={i.id} className={ui.row}>
                                           <td>{fechaHora(i.creadoAt)}</td>
                                           <td>{i.tipo === "ENVIO" ? "Envío" : "Consulta"}{i.fase ? ` · ${i.fase.toLowerCase()}` : ""}</td>
-                                          <td>{etiquetaIntento(i.tipo, i.resultado)}{i.lote ? ` · lote ${i.lote}` : ""}{i.cdcInformado ? <><br /><small className={ui.muted}>CDC informado: {i.cdcInformado}</small></> : i.cdcRespuesta ? <><br /><small className={ui.muted}>CDC informado (según el JSON de respuesta): {i.cdcRespuesta}</small></> : null}{i.mensaje ? <><br /><small className={ui.muted}>{i.mensaje}</small></> : null}{textoConexion(i.conexion) ? <><br /><small className={ui.muted}>Conexión: {textoConexion(i.conexion)}</small></> : <><br /><small className={ui.muted}>Conexión: no registrada (anterior a NEX-079 o modo compatibilidad)</small></>}</td>
+                                          <td>{etiquetaIntento(i.tipo, i.resultado)}{i.lote ? ` · lote ${i.lote}` : ""}{i.cdcInformado ? <><br /><small className={ui.muted} style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>CDC informado: {i.cdcInformado}</small></> : i.cdcRespuesta ? <><br /><small className={ui.muted} style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>CDC informado (según el JSON de respuesta): {i.cdcRespuesta}</small></> : null}{avisoProyeccionCdc(i) ? <><br /><small className={ui.muted}>{avisoProyeccionCdc(i)}</small></> : null}{i.mensaje ? <><br /><small className={ui.muted}>{i.mensaje}</small></> : null}{textoConexion(i.conexion) ? <><br /><small className={ui.muted}>Conexión: {textoConexion(i.conexion)}</small></> : <><br /><small className={ui.muted}>Conexión: no registrada (intento anterior a NEX-079)</small></>}</td>
                                           <td>{i.httpStatus ?? "—"}</td>
                                           <td>{i.estadoGateway ?? "—"}</td>
                                           <td>{i.actorNombre}</td>

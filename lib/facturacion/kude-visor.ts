@@ -152,7 +152,7 @@ export function crearControladorVisor(dep: DependenciasVisor) {
   };
 }
 
-/** Solicitud real al servidor de NEXIT. Solo viaja el ID; valida que la respuesta sea application/pdf. PRO-342-R02: el Blob lleva la pertenencia informada por el servidor (CDC_REGISTRADO = VERIFICADA). */
+/** Solicitud real al servidor de NEXIT. Solo viaja el ID; valida que la respuesta sea application/pdf. PRO-342-R02: el Blob lleva la pertenencia informada por el servidor (CDC_REGISTRADO = VERIFICADA; PRO-342-R05: el servidor ya no la emite, todo PDF llega NO_VERIFICADA). */
 export async function pedirKudeAlServidor(docId: string, signal: AbortSignal, fetchFn: typeof fetch = fetch): Promise<BlobKude> {
   const r = await fetchFn("/api/documentos/" + encodeURIComponent(docId) + "/kude", { cache: "no-store", signal });
 

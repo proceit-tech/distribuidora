@@ -230,7 +230,8 @@ function construirCte(f: VentasFiltros, esq: Esquema, p: (v: unknown) => string)
                   WHEN iva <> iva5 + iva10 OR iva < 0 OR iva > tot THEN 'IVA_INCONSISTENTE'
                   WHEN coalesce(it_n, 0) = 0 OR it_malos > 0 OR it_tot <> tot OR it_iva <> iva THEN 'ITEMS'
                   WHEN tipo = 'NCE' AND fe_id IS NULL THEN 'NCE_SIN_ORIGEN'
-                  WHEN tipo = 'NCE' AND (fe_tipo IS DISTINCT FROM 'FE' OR fe_moneda IS DISTINCT FROM moneda OR fe_cdc_doc IS DISTINCT FROM fe_cdc) THEN 'NCE_ORIGEN_INVALIDO'
+                  -- PRO-342-R05: el vínculo NCE→FE es la FK nce_origen.fe_id; el CDC de la FE es un dato opaco que la API puede actualizar (proyección NEX-080) y no se compara con el asociado en la NCE.
+                  WHEN tipo = 'NCE' AND (fe_tipo IS DISTINCT FROM 'FE' OR fe_moneda IS DISTINCT FROM moneda) THEN 'NCE_ORIGEN_INVALIDO'
                   WHEN tipo = 'NCE' AND imotemi IS DISTINCT FROM motivo::text THEN 'NCE_MOTIVO'
                   WHEN tipo = 'NCE' AND coalesce(lin_monto, 0) + coalesce(dsc_monto, 0) <> total THEN 'NCE_LINEAS'
                   WHEN tipo = 'NCE' AND fe_estado IS DISTINCT FROM 'APROBADO' THEN 'NCE_FE_NO_APROBADA'

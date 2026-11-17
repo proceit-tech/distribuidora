@@ -108,7 +108,7 @@ export async function verificarCasosColoresTipoPro334(): Promise<string[]> {
   igual("PRO334-11 FE y NCE APROBADO → tono «aprobado» (verde) en ambos tipos", tonos("ENVIADO", "APROBADO"), ["aprobado", "aprobado"]);
   igual("PRO334-12 FE y NCE RECHAZADO → tono «rechazado» (rojo) en ambos tipos; PENDIENTE enviado → «pendiente» (amarillo) en ambos", [tonos("ENVIADO", "RECHAZADO"), tonos("ENVIADO", "PENDIENTE")], [["rechazado", "rechazado"], ["pendiente", "pendiente"]]);
   igual("PRO334-13 FE y NCE aún no transmitidos → «sinTransmitir» (gris) en ambos tipos", tonos("PENDIENTE_ENVIO", "SIN_CONSULTA"), ["sinTransmitir", "sinTransmitir"]);
-  igual("PRO334-14 CDC_DIVERGENTE sigue siendo alerta de «inconsistencia» (roja técnica) para FE y NCE", alertas, ["inconsistencia", "inconsistencia"]);
+  igual("PRO334-14 (R05: CDC_DIVERGENTE solo como registro histórico) CDC_DIVERGENTE sigue siendo alerta de «inconsistencia» (roja técnica) para FE y NCE", alertas, ["inconsistencia", "inconsistencia"]);
   cierto("PRO334-15 cápsula fiscal sin cambios: verde aprobado, rojo rechazado, amarillo pendiente, gris sin transmitir",
     hex(regla(css, ".sifenAprobado"), "background") === "#e6f6ec" && hex(regla(css, ".sifenRechazado"), "background") === "#fdeceb" &&
     hex(regla(css, ".sifenPendiente"), "background") === "#fff6d6" && hex(regla(css, ".sifenSinTransmitir"), "background") === "#f1f3f5");

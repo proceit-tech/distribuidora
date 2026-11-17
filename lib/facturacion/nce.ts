@@ -161,7 +161,8 @@ export async function leerFacturaOriginal(db: Db, empresaId: string, usuarioId: 
   const f = r.rows[0] as F | undefined;
 
   if (!f) throw new ErrorFacturacion(404, "Factura original no encontrada.");
-  if (f.estadoSifen !== "APROBADO" || !/^\d{44}$/.test(s(f.cdc))) throw new ErrorFacturacion(409, "La factura original debe estar APROBADA por SIFEN y tener su CDC para emitir una nota de crédito.");
+  // PRO-342-R05: se exige la PRESENCIA del CDC informado por la API para la FE (dato opaco: sin validar longitud, dígitos ni composición); se asocia literal en dCdCDERef.
+  if (f.estadoSifen !== "APROBADO" || typeof f.cdc !== "string" || f.cdc === "") throw new ErrorFacturacion(409, "La factura original debe estar APROBADA por SIFEN y tener el CDC informado por la API para emitir una nota de crédito.");
 
   const payload = f.payload as Record<string, unknown>;
   const originales = lineasOriginalesDe(payload);

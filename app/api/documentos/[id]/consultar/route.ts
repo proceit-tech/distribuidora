@@ -17,7 +17,7 @@ export async function POST(_request: Request, contexto: Contexto) {
     const r = await consultarEstado(b.db, b.empresaId, b.usuarioId, id);
     const documento = await leerDocumento(b.db, b.empresaId, b.usuarioId, id);
 
-    // PRO-342-R02: modo de registro (INTEGRAL con NEX-079 / COMPATIBILIDAD sin ella) y continuidad de la conexión con la del envío, para que la pantalla no presente un modo degradado como integral.
+    // PRO-342-R02/R05: modo de registro (siempre INTEGRAL: NEX-080 sin fallback; sin ella la consulta falla cerrada 503) y continuidad de la conexión con la del envío.
     return NextResponse.json({ resultado: r.resultado, mensaje: r.mensaje, modoRegistro: r.modoRegistro, continuidadConexion: r.continuidadConexion, documento, intentos: await listarIntentos(b.db, b.empresaId, id) });
   } catch (error) {
     return respuestaErrorFacturacion(error, "consultar");
