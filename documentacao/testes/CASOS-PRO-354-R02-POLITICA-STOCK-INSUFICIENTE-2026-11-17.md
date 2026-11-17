@@ -59,7 +59,7 @@ Estos casos solo se pueden comprobar con PostgreSQL real y la aplicación. Ejecu
 9. **Política TRUE con pendientes:** los pendientes siguen visibles y confirmables solo con disponible. La reversión de NEX-081 se rehúsa.
 10. **Anulación protegida:** el movimiento de la confirmación no se puede anular manualmente (NEX:MOVIMIENTO_VINCULADO_FE).
 11. **Reportes:** Kardex y Movimientos muestran las dos salidas (inmediata y confirmación) una sola vez cada una. El pendiente no aparece como movimiento.
-12. **Grants:** `nexit_runtime` no lee las tablas nuevas y solo ejecuta las 5 funciones.
+12. **Grants:** `nexit_runtime` no lee las tablas nuevas y solo ejecuta las 6 funciones (R01: más el catálogo de filtros).
 
 ## 3. PENDIENTES POR GATE (no simulados ni aprobados)
 
@@ -70,3 +70,48 @@ Estos casos solo se pueden comprobar con PostgreSQL real y la aplicación. Ejecu
 - **Reportes de valorización y Kardex** con el pendiente valorizado.
 - **R01-D6:** política final de confirmación por estado fiscal. R02 usa la condición conservadora de la orden.
 - **PRO-310:** reserva al envío y salida al aprobar. Es incompatible con la baja al emitir y **bloquea el GO de producción** hasta reconciliarla por separado.
+
+## 4. Correctivo PRO-354-R02-R01 (auditoría AUD-CHATGPT-PRO-354-R02, hallazgos F001–F003)
+
+Casos automatizables nuevos: `PRO354-R01-01` a `PRO354-R01-48` (sección L del mismo archivo). Se actualizaron al contrato R01, sin cambiar lo que verifican: PRO354-40 (filtros con sucursal y página), PRO354-55 (producto y depósito bloqueados antes de validar), PRO354-59 (el saldo lo decide el motor) y PRO354-63 (6 funciones). Todos escritos, **ninguno ejecutado**.
+
+### F001 — Integridad de la baja pendiente
+
+| Escenario | Resultado esperado | Casos |
+|---|---|---|
+| FE sin stock con faltante 5 UNI; con stock en cero se intenta cambiar la unidad base a CAJA | El cambio se rechaza (409, NEX:PRODUCTO_CON_BAJAS_PENDIENTES) mientras la baja esté PENDIENTE, por cualquier camino de UPDATE. Una baja confirmada no lo impide. | R01-02, R01-16 |
+| Producto con baja pendiente: dejar de controlar stock o inactivarlo | Rechazado (409). | R01-03 |
+| Depósito vinculado a una baja (abierta o confirmada) movido a otra sucursal | Rechazado (409, NEX:DEPOSITO_CON_BAJAS_PENDIENTES). La historia queda en la sucursal de la FE. | R01-04, R01-16 |
+| Depósito con baja abierta: inactivarlo o marcarlo de terceros | Rechazado (409). Sin bajas abiertas se permite como antes (NEX-046). | R01-04 |
+| Registro concurrente con un cambio de unidad o de depósito | El registro bloquea producto y depósito (FOR SHARE) antes de validar: el cambio espera o ya se ve. | R01-05 |
+| Registro concurrente con una entrada de stock, aunque no exista fila de saldo | El faltante real se comprueba después del candado de numeración de movimientos: la entrada terminó antes (y se ve, NEX:STOCK_PENDIENTE_CON_DISPONIBLE) o espera. | R01-06 |
+| Confirmación tras cambios de sucursal o unidad (defensa adicional a las guardas) | 409 NEX:PENDIENTE_SUCURSAL_DISTINTA o NEX:PENDIENTE_UNIDAD_DISTINTA; nunca se convierte la cantidad. | R01-10, R01-17 |
+| Confirmación con depósito inactivo/terceros, producto inactivo/sin control o con lotes | 409, sin movimiento. | R01-10, R01-17 |
+| Confirmación con stock insuficiente en el momento del bloqueo | El motor rechaza bajo su propio bloqueo; 409 NEX:STOCK_INSUFICIENTE; subtransacción deshecha, nada escrito, jamás saldo negativo. | R01-11, PRO354-59 |
+| Dos confirmaciones simultáneas de la misma baja | Una crea el movimiento; la otra devuelve el mismo movimiento como repetido. | R01-12 |
+| Confirmación frente a movimientos ordinarios simultáneos | Sin bloquear costo ni saldo antes del motor; orden compatible con NEX-014. | R01-08, R01-09 |
+| Permisos | Confirmar exige MOVIMIENTOS.CREAR y alcance del depósito; listar exige STOCK.VER y la sucursal en el alcance. | PRO354-58, R01-21 |
+| Motor, numeración, depósitos y cambio de unidad | No se redefinen; sin conversiones ni saldo negativo. | R01-14 |
+| Scripts | Preflight, verificación y reversión cubren columnas, guardas, catálogo y la nueva firma del listado. | R01-15 |
+
+### F002 — Listado
+
+| Escenario | Resultado esperado | Casos |
+|---|---|---|
+| Dos FE AA y AB con el mismo número | Se muestran como `001-001-0000010 (AA)` y `(AB)`; la búsqueda acepta la serie; la referencia del movimiento complementario incluye la serie. | R01-13, R01-22, R01-27 |
+| Más de una página | Paginación estable (25/50/100), total real, «Mostrando a–b de N», Anterior/Siguiente. Sin límite fijo de 500. | R01-20, R01-26, R01-30, R01-32 |
+| Filtro de sucursal | Solo sucursales del alcance (42501 si no); filtra por la sucursal congelada de la baja. | R01-21, R01-25 |
+| Opciones de filtro | Catálogo propio de sucursales y depósitos autorizados, que no desaparece al filtrar ni depende de la página. | R01-24, R01-28, R01-31, R01-32 |
+| Baja confirmada | Faltante original conservado, pendiente actual 0, descontado total = emisión + confirmación. | R01-23, R01-27, R01-29 |
+| Saldo proyectado | Por producto y depósito; se repite en cada fila del par y nunca se suma. | R01-32 |
+
+### F003 — Respuestas tardías
+
+| Escenario | Resultado esperado | Casos |
+|---|---|---|
+| Cambio de filtro mientras hay una lectura en vuelo | La consulta anterior queda inválida al instante; sus filas no se muestran ni se accionan. | R01-41, R01-42, R01-45, R01-46 |
+| Respuesta del filtro anterior llega después de la actual | Se descarta. | R01-42 |
+| Error de una lectura de contexto viejo | No se muestra. | R01-47 |
+| Confirmar y cambiar el filtro durante el POST | Al terminar se relee con los filtros vigentes; la lectura anterior no gana. | R01-43, R01-47 |
+| Re-render con la misma consulta | No invalida nada. | R01-40, R01-44 |
+| Cambio de filtro | Vuelve a la página 1; un depósito de otra sucursal se limpia. Se conservan la confirmación explícita y el resultado idempotente. | R01-48 |

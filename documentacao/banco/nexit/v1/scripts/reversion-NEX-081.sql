@@ -4,7 +4,8 @@
 -- ANTES desplegar una versión de la aplicación anterior a PRO-354-R02 (la R02 sin NEX-081 lee la política como TRUE y no ofrece el faltante, pero la vista de bajas pendientes
 -- y el interruptor responden 503).
 -- PROTEGIDA: se DETIENE si existe CUALQUIER baja pendiente (abierta o confirmada: son vínculos FE↔stock que no se pierden) o si alguna empresa tiene la política en FALSE
--- (no se cambia una política vigente sin decisión expresa). Después borrar la fila 'NEX-081' de schema_migrations. Las FE y los movimientos no se tocan.
+-- (no se cambia una política vigente sin decisión expresa). Quita también las guardas de producto/depósito de la corrección R01 (las tablas de pendientes ya están vacías).
+-- Después borrar la fila 'NEX-081' de schema_migrations. Las FE y los movimientos no se tocan.
 -- =====================================================================
 DO $$
 BEGIN
@@ -28,7 +29,8 @@ END $$;
 -- Funciones de NEX-081 (las firmas anteriores no se tocan).
 DROP FUNCTION public.nex_aplicar_grants_facturacion_stock_pendientes();
 DROP FUNCTION public.fe_stock_pendiente_confirmar(uuid, uuid, uuid);
-DROP FUNCTION public.fe_stock_pendientes_listar(uuid, uuid, text, uuid, text);
+DROP FUNCTION public.fe_stock_pendientes_listar(uuid, uuid, text, uuid, uuid, text, integer, integer);
+DROP FUNCTION public.fe_stock_pendientes_filtros(uuid, uuid);
 DROP FUNCTION public.fe_documento_crear_fe_stock_pendiente(uuid, uuid, uuid, uuid, text, uuid, text, text, text, numeric, jsonb, jsonb, uuid, uuid, jsonb, boolean);
 DROP FUNCTION public.fe_stock_politica_contexto(uuid, uuid, uuid, uuid[]);
 DROP FUNCTION public.fe_politica_stock_actualizar(uuid, uuid, boolean);
@@ -169,6 +171,11 @@ END $$;
 REVOKE ALL ON FUNCTION public.fe_stock_baja_documento(uuid, uuid, uuid, jsonb) FROM PUBLIC;
 DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'nexit_runtime') THEN REVOKE ALL ON FUNCTION public.fe_stock_baja_documento(uuid, uuid, uuid, jsonb) FROM nexit_runtime; END IF; END $$;
 
+-- R01/F001: guardas de integridad sobre productos y depósitos (no se toca ningún otro trigger de esas tablas).
+DROP TRIGGER fe_stock_pendientes_producto_guarda_trg ON public.productos;
+DROP FUNCTION public.fe_stock_pendientes_producto_guarda();
+DROP TRIGGER fe_stock_pendientes_deposito_guarda_trg ON public.depositos;
+DROP FUNCTION public.fe_stock_pendientes_deposito_guarda();
 DROP TRIGGER fe_stock_pendiente_movimiento_protegido_trg ON public.movimientos_inventario;
 DROP FUNCTION public.fe_stock_pendiente_movimiento_protegido();
 DROP TRIGGER fe_stock_pendientes_inmutable_trg ON public.documento_electronico_stock_pendientes;

@@ -1,4 +1,4 @@
-# PROCEDIMIENTO NEX-081 — Política de stock insuficiente por empresa y bajas pendientes (PRO-354-R02)
+# PROCEDIMIENTO NEX-081 — Política de stock insuficiente por empresa y bajas pendientes (PRO-354-R02, corrección R01)
 
 > **Estado:** migración VERSIONADA, **NO APLICADA**. Claude no ejecutó nada de este procedimiento (la orden PRO-354-R02 prohíbe SQL, migraciones, VM, Docker, gateway y deploy). Ejecutarlo requiere autorización expresa del responsable.
 
@@ -10,7 +10,8 @@
 | `documento_electronico_stock_pendientes` | Tabla nueva, con PK propia. Guarda una fila por FE y producto con faltante: facturado, descontado, pendiente, depósito y estado PENDIENTE o CONFIRMADA. Es inmutable salvo esa única transición. La aplicación no tiene acceso directo. |
 | `fe_stock_pendientes_preparacion` | Tabla interna, de una sola transacción. La aplicación no tiene acceso. |
 | `fe_stock_baja_documento` | Se redefine con el cuerpo de NEX-067 y tres cambios: lee la preparación, concilia salidas + pendientes = facturado, y una FE con pendientes cuenta como baja ya registrada. **Sin preparación da el mismo resultado que NEX-067.** |
-| Funciones nuevas | `fe_politica_stock_actualizar`, `fe_stock_politica_contexto`, `fe_documento_crear_fe_stock_pendiente`, `fe_stock_pendientes_listar` y `fe_stock_pendiente_confirmar`. |
+| Funciones nuevas | `fe_politica_stock_actualizar`, `fe_stock_politica_contexto`, `fe_documento_crear_fe_stock_pendiente`, `fe_stock_pendientes_listar` (paginado, filtro de sucursal), `fe_stock_pendientes_filtros` (catálogo de filtros) y `fe_stock_pendiente_confirmar`. |
+| Guardas de integridad (R01) | Triggers en `productos` y `depositos`. Mientras haya una baja PENDIENTE: el producto no cambia de unidad base, no deja de controlar stock y no se inactiva; el depósito no se inactiva ni pasa a ser de terceros. Con cualquier baja vinculada (también confirmada), el depósito no cambia de sucursal. La baja guarda la unidad base y la sucursal con las que nació. |
 | Sin cambios | `stock_saldos_cant_chk` (cantidad >= 0), `inventario_costos`, el método de costo promedio, la PK de `documento_electronico_stock_salidas`, `fe_documento_crear_fe_receptor` (NEX-076), el momento de la baja (PRO-310), las FE históricas, NCE, CDC, KuDE, el gateway y la numeración. |
 
 ## Dependencias reales
@@ -33,6 +34,13 @@
 4. **Verificar:** `scripts/verificar-NEX-081.sql`. Todas las filas deben dar `ok = true`.
 5. **Desplegar** la aplicación PRO-354-R02.
 
+## Bloqueos y concurrencia (R01)
+
+- **Registro del faltante:** fila de la empresa (FOR SHARE), producto y depósito de cada pendiente (FOR SHARE) → emisión vigente (FE, numeración fiscal, baja del disponible) → candado de numeración de movimientos de la empresa (`movimientos.numero:`, NEX-011) → comprobación de que no queda disponible. Toda entrada de stock toma ese mismo candado antes de tocar costos y saldos, así que una entrada simultánea terminó antes (y se ve) o espera, aunque todavía no exista fila de saldo.
+- **Confirmación:** candado propio de la baja → fila de la baja (FOR UPDATE) → FE (FOR SHARE) → depósito y producto (FOR SHARE) → motor ordinario (`inventario_registrar_movimiento`: clave, numeración, costo, saldo). Ya **no** se bloquean costo ni saldo antes del motor, para no invertir su orden.
+- Los FOR SHARE no se bloquean entre sí; solo esperan a las funciones de administración (cambio de unidad base, edición o cambio de estado del depósito), que toman una sola fila y no esperan nada más. Si aun así PostgreSQL detectara un interbloqueo, aborta una de las transacciones completas, sin efectos parciales.
+- Las lecturas suponen el aislamiento por defecto (READ COMMITTED), que es el de la aplicación.
+
 ## Coexistencia
 
 | Combinación | Resultado |
@@ -45,5 +53,5 @@
 ## Reversión (`scripts/reversion-NEX-081.sql`)
 
 - Es **protegida**: se detiene si existe cualquier baja pendiente (abierta o confirmada) o si alguna empresa está en FALSE.
-- Restaura literalmente el cuerpo de `fe_stock_baja_documento` de NEX-067 y elimina funciones, triggers, tablas y la columna.
+- Restaura literalmente el cuerpo de `fe_stock_baja_documento` de NEX-067 y elimina funciones, triggers (incluidas las guardas de `productos` y `depositos`), tablas y la columna.
 - Antes de ejecutarla, desplegar la versión anterior de la app. Después, borrar la fila `NEX-081` de `schema_migrations`.

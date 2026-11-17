@@ -1,66 +1,101 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import ui from "@/components/ui/lista-padrao/lista.module.css";
 import { formatearDecimalTexto } from "@/lib/formato/decimal-texto";
 import { formatearFechaPy } from "@/lib/formato/listas";
-import { compararDecimal, puedeIntentarConfirmar, type BajaPendiente } from "@/lib/stock/bajas-pendientes";
+import {
+  compararDecimal, consultaBajas, crearContextoBajas, puedeIntentarConfirmar, rangoPaginaBajas, TAMANOS_PAGINA_BAJAS,
+  type BajaPendiente, type CatalogoFiltrosBajas, type TicketBajas,
+} from "@/lib/stock/bajas-pendientes";
 
-type Respuesta = { bajas: BajaPendiente[]; permisos: { confirmar: boolean }; error?: string };
+type Respuesta = {
+  bajas: BajaPendiente[]; total: number; pagina: number; porPagina: number; filtros: CatalogoFiltrosBajas; permisos: { confirmar: boolean }; error?: string;
+};
+/** Datos SIEMPRE junto a la consulta que los produjo: si no es la vigente, no se muestran ni se accionan. */
+type Datos = Respuesta & { clave: string };
 type EstadoFiltro = "PENDIENTE" | "CONFIRMADA" | "TODOS";
 
 const fd = (t: string) => formatearDecimalTexto(t);
+const CATALOGO_VACIO: CatalogoFiltrosBajas = { sucursales: [], depositos: [] };
 
 /**
  * PRO-354-R02 — Inventario › «Bajas pendientes de stock».
- * Faltantes de FE emitidas con la política «permitir facturar con stock insuficiente». Cada fila muestra lo facturado, lo ya descontado, lo pendiente, el saldo registrado y el saldo proyectado.
- * El proyectado es solo una lectura: si es negativo NO es saldo físico ni contable.
- * Confirmar es manual: la base verifica de nuevo saldo real suficiente, estado de la FE, lotes, permiso y alcance. Una respuesta tardía de un filtro anterior se descarta.
+ * Faltantes de FE emitidas con la política «permitir facturar con stock insuficiente». Cada fila muestra lo facturado, lo descontado, el faltante original,
+ * lo pendiente hoy, el saldo registrado y el saldo proyectado (solo una lectura: si es negativo NO es saldo físico ni contable).
+ * Confirmar es manual: la base verifica de nuevo saldo real suficiente, estado de la FE, unidad, sucursal, depósito, lotes, permiso y alcance.
+ * R01/F002: paginado con total, filtros de sucursal y depósito desde un catálogo propio, referencia fiscal con serie.
+ * R01/F003: la generación de contexto cambia en cuanto cambian los filtros; las filas de otro contexto no se muestran ni se accionan; tras confirmar se relee con los filtros vigentes.
  */
 export default function BajasPendientesPage() {
   const [estado, setEstado] = useState<EstadoFiltro>("PENDIENTE");
   const [buscar, setBuscar] = useState("");
+  const [sucursal, setSucursal] = useState("");
   const [deposito, setDeposito] = useState("");
-  const [datos, setDatos] = useState<Respuesta | null>(null);
+  const [pagina, setPagina] = useState(1);
+  const [porPagina, setPorPagina] = useState<number>(TAMANOS_PAGINA_BAJAS[0]);
+  const [datos, setDatos] = useState<Datos | null>(null);
+  const [catalogo, setCatalogo] = useState<CatalogoFiltrosBajas>(CATALOGO_VACIO);
   const [error, setError] = useState("");
   const [aviso, setAviso] = useState("");
   const [cargando, setCargando] = useState(true);
   const [confirmando, setConfirmando] = useState<string | null>(null);
-  const version = useRef(0);
+  const contexto = useRef(crearContextoBajas());
 
-  const cargar = useCallback(async () => {
-    const mia = ++version.current;
+  const consulta = useMemo(() => consultaBajas({ estado, sucursal, deposito, buscar, pagina, porPagina }), [estado, sucursal, deposito, buscar, pagina, porPagina]);
 
+  /** Lee la consulta del ticket; aplica la respuesta SOLO si el ticket sigue vigente (generación y consulta). */
+  const leer = useCallback(async (ticket: TicketBajas) => {
     setCargando(true);
     try {
-      const q = new URLSearchParams({ estado, ...(deposito ? { deposito } : {}), ...(buscar.trim() ? { buscar: buscar.trim() } : {}) });
-      const r = await fetch(`/api/stock/bajas-pendientes?${q.toString()}`, { cache: "no-store" });
+      const r = await fetch(`/api/stock/bajas-pendientes?${ticket.clave}`, { cache: "no-store" });
       const j = (await r.json().catch(() => ({}))) as Respuesta;
 
-      if (mia !== version.current) return;
+      if (!contexto.current.vigente(ticket)) return;
       if (!r.ok) throw new Error(j.error ?? "No fue posible cargar las bajas pendientes.");
-      setDatos(j);
+      // Una página más allá del final (p. ej. tras confirmar la última fila de la última página): se vuelve a la primera.
+      if (j.bajas.length === 0 && j.pagina > 1) {
+        setPagina(1);
+        return;
+      }
+      setDatos({ ...j, clave: ticket.clave });
+      setCatalogo(j.filtros ?? CATALOGO_VACIO);
       setError("");
     } catch (e) {
-      if (mia !== version.current) return;
+      if (!contexto.current.vigente(ticket)) return;
       setDatos(null);
       setError(e instanceof Error ? e.message : "No fue posible cargar las bajas pendientes.");
     } finally {
-      if (mia === version.current) setCargando(false);
+      if (contexto.current.vigente(ticket)) setCargando(false);
     }
-  }, [estado, deposito, buscar]);
+  }, []);
 
+  // El contexto cambia YA (invalida respuestas en vuelo y oculta las filas anteriores); solo la lectura espera el retardo de la búsqueda.
   useEffect(() => {
-    const t = setTimeout(() => void cargar(), 250);
+    const ticket = contexto.current.cambiar(consulta);
+
+    setCargando(true);
+    const t = setTimeout(() => void leer(ticket), 250);
 
     return () => clearTimeout(t);
-  }, [cargar]);
+  }, [consulta, leer]);
+
+  const vigentes = datos !== null && datos.clave === consulta;
+  const bajas = vigentes ? datos.bajas : [];
+  const depositosVisibles = catalogo.depositos.filter((d) => !sucursal || d.sucursalId === sucursal);
+
+  function cambiarFiltro(aplicar: () => void) {
+    aplicar();
+    setPagina(1);
+    setAviso("");
+  }
 
   async function confirmar(b: BajaPendiente) {
-    if (confirmando) return;
-    if (!window.confirm(`¿Confirmar la baja de ${fd(b.pendiente)} de ${b.productoCodigo} en ${b.depositoCodigo} ${b.depositoNombre} (factura ${b.documento})? Se registrará una salida de stock.`)) return;
+    // Solo filas del contexto vigente y ya cargado.
+    if (confirmando || !vigentes || cargando) return;
+    if (!window.confirm(`¿Confirmar la baja de ${fd(b.pendienteActual)} ${b.unidad} de ${b.productoCodigo} en ${b.depositoCodigo} ${b.depositoNombre} (factura ${b.documento})? Se registrará una salida de stock.`)) return;
     setConfirmando(b.id);
     setAviso("");
     setError("");
@@ -69,18 +104,18 @@ export default function BajasPendientesPage() {
       const j = (await r.json().catch(() => ({}))) as { numero?: string; repetido?: boolean; error?: string };
 
       if (!r.ok) throw new Error(j.error ?? "No fue posible confirmar la baja pendiente.");
-      setAviso(j.repetido ? `La baja ya estaba confirmada (movimiento ${j.numero}).` : `Baja confirmada: movimiento ${j.numero}.`);
+      setAviso(j.repetido ? `La baja de la factura ${b.documento} ya estaba confirmada (movimiento ${j.numero}).` : `Baja de la factura ${b.documento} confirmada: movimiento ${j.numero}.`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "No fue posible confirmar la baja pendiente.");
     } finally {
       setConfirmando(null);
-      await cargar();
+      // Relectura con los filtros VIGENTES (los de la ref de contexto), no con los del render en que se pulsó el botón.
+      void leer(contexto.current.releer());
     }
   }
 
-  const bajas = datos?.bajas ?? [];
-  const depositos = [...new Map(bajas.map((b) => [b.depositoId, `${b.depositoCodigo} ${b.depositoNombre}`] as const)).entries()];
-  const abiertas = bajas.filter((b) => b.estado === "PENDIENTE").length;
+  const total = vigentes ? datos.total : 0;
+  const paginas = Math.max(1, Math.ceil(total / porPagina));
 
   return (
     <section className={ui.page}>
@@ -110,38 +145,54 @@ export default function BajasPendientesPage() {
         <div className={[ui.toolbar, ui.toolbarDensa].join(" ")}>
           <label className={ui.search}>
             <span aria-hidden="true">⌕</span>
-            <input value={buscar} onChange={(e) => setBuscar(e.target.value.slice(0, 80))} placeholder="Buscar por producto o número de factura…" aria-label="Buscar bajas pendientes" />
+            <input value={buscar} onChange={(e) => { const v = e.target.value.slice(0, 80); cambiarFiltro(() => setBuscar(v)); }}
+              placeholder="Buscar por producto, factura o serie…" aria-label="Buscar bajas pendientes" />
           </label>
           <label className={ui.filterField}>
             <span>Estado</span>
-            <select value={estado} onChange={(e) => setEstado(e.target.value as EstadoFiltro)}>
+            <select value={estado} onChange={(e) => { const v = e.target.value as EstadoFiltro; cambiarFiltro(() => setEstado(v)); }}>
               <option value="PENDIENTE">Pendientes</option>
               <option value="CONFIRMADA">Confirmadas</option>
               <option value="TODOS">Todas</option>
             </select>
           </label>
           <label className={ui.filterField}>
+            <span>Sucursal</span>
+            <select value={sucursal} onChange={(e) => {
+              const v = e.target.value;
+              cambiarFiltro(() => {
+                setSucursal(v);
+                // Un depósito de otra sucursal deja de ser un filtro válido.
+                if (deposito && v && !catalogo.depositos.some((d) => d.id === deposito && d.sucursalId === v)) setDeposito("");
+              });
+            }}>
+              <option value="">Todas</option>
+              {catalogo.sucursales.map((s) => <option key={s.id} value={s.id}>{s.codigo} {s.nombre}</option>)}
+            </select>
+          </label>
+          <label className={ui.filterField}>
             <span>Depósito</span>
-            <select value={deposito} onChange={(e) => setDeposito(e.target.value)}>
+            <select value={deposito} onChange={(e) => { const v = e.target.value; cambiarFiltro(() => setDeposito(v)); }}>
               <option value="">Todos</option>
-              {depositos.map(([id, nombre]) => <option key={id} value={id}>{nombre}</option>)}
+              {depositosVisibles.map((d) => <option key={d.id} value={d.id}>{d.codigo} {d.nombre}{d.activo ? "" : " (inactivo)"}</option>)}
             </select>
           </label>
           <div className={ui.toolbarEnd}>
-            <span className={ui.resultCount} aria-live="polite">{cargando ? "Cargando…" : `${bajas.length} registros · ${abiertas} pendientes`}</span>
+            <span className={ui.resultCount} aria-live="polite">{cargando || !vigentes ? "Cargando…" : rangoPaginaBajas(total, pagina, porPagina, bajas.length)}</span>
           </div>
         </div>
 
-        <div className={ui.tableScroll}>
+        <div className={ui.tableScroll} aria-busy={cargando || !vigentes}>
           <table className={ui.table}>
             <thead>
               <tr>
                 <th>Factura</th>
                 <th>Producto</th>
-                <th>Depósito</th>
+                <th>Sucursal / depósito</th>
                 <th className={ui.numeric}>Facturado</th>
-                <th className={ui.numeric}>Descontado</th>
-                <th className={ui.numeric}>Pendiente</th>
+                <th className={ui.numeric} title="Total descontado del stock: al emitir y, si se confirmó, también el faltante.">Descontado</th>
+                <th className={ui.numeric} title="Faltante registrado al emitir la factura (no cambia).">Faltante original</th>
+                <th className={ui.numeric} title="Lo que queda por descontar hoy (cero si ya se confirmó).">Pendiente actual</th>
                 <th className={ui.numeric}>Saldo registrado</th>
                 <th className={ui.numeric}>Saldo proyectado</th>
                 <th>Estado</th>
@@ -150,21 +201,23 @@ export default function BajasPendientesPage() {
             </thead>
             <tbody>
               {bajas.length === 0 ? (
-                <tr><td colSpan={10} className={ui.emptyCell}><div className={ui.empty}>{cargando ? "Cargando…" : "No hay bajas pendientes con estos filtros."}</div></td></tr>
+                <tr><td colSpan={11} className={ui.emptyCell}><div className={ui.empty}>{cargando || !vigentes ? "Cargando…" : "No hay bajas pendientes con estos filtros."}</div></td></tr>
               ) : bajas.map((b) => {
                 const c = puedeIntentarConfirmar(b, datos?.permisos.confirmar === true);
                 const negativo = compararDecimal(b.saldoProyectado, "0") < 0;
+                const descontadoDistinto = compararDecimal(b.descontadoTotal, b.descontadoEmision) !== 0;
 
                 return (
                   <tr key={b.id} className={ui.row}>
                     <td className={ui.cell}><span className={ui.code}>{b.documento}</span><small>{b.fechaEmision ? formatearFechaPy(b.fechaEmision) : ""} · {b.estadoSifen}</small></td>
-                    <td className={ui.cell}><strong>{b.productoDescripcion}</strong><small className={ui.code}>{b.productoCodigo}</small></td>
-                    <td className={ui.cell}>{b.depositoCodigo} {b.depositoNombre}</td>
+                    <td className={ui.cell}><strong>{b.productoDescripcion}</strong><small><span className={ui.code}>{b.productoCodigo}</span>{b.unidad ? ` · ${b.unidad}` : ""}</small></td>
+                    <td className={ui.cell}>{b.depositoCodigo} {b.depositoNombre}<small>{b.sucursalNombre}</small></td>
                     <td className={ui.numeric}>{fd(b.facturado)}</td>
-                    <td className={ui.numeric}>{fd(b.descontado)}</td>
-                    <td className={ui.numeric}><strong>{fd(b.pendiente)}</strong></td>
+                    <td className={ui.numeric}>{fd(b.descontadoTotal)}{descontadoDistinto ? <small>al emitir {fd(b.descontadoEmision)}</small> : null}</td>
+                    <td className={ui.numeric}>{fd(b.faltanteOriginal)}</td>
+                    <td className={ui.numeric}><strong>{fd(b.pendienteActual)}</strong></td>
                     <td className={ui.numeric}>{fd(b.saldoRegistrado)}</td>
-                    <td className={ui.numeric} title="Informativo: saldo registrado menos todos los pendientes abiertos del producto en este depósito.">
+                    <td className={ui.numeric} title="Informativo, por producto y depósito: saldo registrado menos todos los pendientes abiertos. Se repite en cada fila del mismo par; no se suma.">
                       {negativo ? <span className={ui.statusWarning}>{fd(b.saldoProyectado)}</span> : fd(b.saldoProyectado)}
                     </td>
                     <td className={ui.cell}>
@@ -173,7 +226,7 @@ export default function BajasPendientesPage() {
                     </td>
                     <td className={ui.numeric}>
                       {b.estado === "PENDIENTE" ? (
-                        <button type="button" className={ui.secondaryButton} disabled={!c.puede || confirmando !== null} title={c.motivo || undefined} onClick={() => void confirmar(b)}>
+                        <button type="button" className={ui.secondaryButton} disabled={!c.puede || confirmando !== null || cargando || !vigentes} title={c.motivo || undefined} onClick={() => void confirmar(b)}>
                           {confirmando === b.id ? "Confirmando…" : "Confirmar baja"}
                         </button>
                       ) : null}
@@ -184,6 +237,20 @@ export default function BajasPendientesPage() {
               })}
             </tbody>
           </table>
+        </div>
+
+        <div className={[ui.toolbar, ui.toolbarDensa].join(" ")}>
+          <label className={ui.filterField}>
+            <span>Por página</span>
+            <select value={porPagina} onChange={(e) => { const v = Number(e.target.value); cambiarFiltro(() => setPorPagina(v)); }}>
+              {TAMANOS_PAGINA_BAJAS.map((n) => <option key={n} value={n}>{n}</option>)}
+            </select>
+          </label>
+          <div className={ui.toolbarEnd}>
+            <button type="button" className={ui.secondaryButton} disabled={pagina <= 1 || cargando || !vigentes} onClick={() => setPagina((p) => Math.max(1, p - 1))}>Anterior</button>
+            <span className={ui.resultCount}>Página {pagina} de {paginas}</span>
+            <button type="button" className={ui.secondaryButton} disabled={pagina >= paginas || cargando || !vigentes} onClick={() => setPagina((p) => p + 1)}>Siguiente</button>
+          </div>
         </div>
       </section>
     </section>

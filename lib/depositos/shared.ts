@@ -113,7 +113,7 @@ export function respuestaErrorDeposito(error: unknown, accion: string) {
   if (pg.detail === "NEX:DEPOSITO_CODIGO_DUPLICADO" || pg.code === "23505") return NextResponse.json({ error: "Ya existe un depósito con ese código.", campo: "codigo" }, { status: 409 });
   if (pg.detail === "NEX:DEPOSITO_CON_SALDO") return NextResponse.json({ error: pg.message ?? "El depósito aún tiene saldo.", campo: "estado" }, { status: 409 });
   if (pg.detail === "NEX:USUARIO_NO_ENCONTRADO") return NextResponse.json({ error: "Usuario no encontrado." }, { status: 404 });
-  if (pg.detail && /^NEX:(USUARIO_ALCANCE_TODOS|USUARIO_SUCURSAL_FUERA|DEPOSITO_SUCURSAL_CON_MOVIMIENTOS|DEPOSITO_SUCURSAL_USUARIOS|DEPOSITO_INACTIVO)$/.test(pg.detail)) {
+  if (pg.detail && /^NEX:(USUARIO_ALCANCE_TODOS|USUARIO_SUCURSAL_FUERA|DEPOSITO_SUCURSAL_CON_MOVIMIENTOS|DEPOSITO_SUCURSAL_USUARIOS|DEPOSITO_INACTIVO|DEPOSITO_CON_BAJAS_PENDIENTES)$/.test(pg.detail)) {
     return NextResponse.json({ error: pg.message ?? "La operación no cumple las reglas de depósitos." }, { status: 409 });
   }
   if (pg.code === "P0001") return NextResponse.json({ error: pg.message ?? "La operación no cumple las reglas de depósitos." }, { status: 400 });

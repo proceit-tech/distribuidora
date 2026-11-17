@@ -154,6 +154,10 @@ export function respuestaError(error: unknown, accion: string) {
   if (pg.code === "42501") {
     return NextResponse.json({ error: pg.message ?? "No tiene permiso para esta operación." }, { status: 403 });
   }
+  // PRO-354-R02-R01 (NEX-081): con bajas pendientes de stock de facturas, la unidad base, el control de stock y el estado del producto no cambian.
+  if ((error as { detail?: string }).detail === "NEX:PRODUCTO_CON_BAJAS_PENDIENTES") {
+    return NextResponse.json({ error: pg.message ?? "El producto tiene bajas pendientes de stock de facturas." }, { status: 409 });
+  }
   if (pg.code === "P0001") {
     return NextResponse.json({ error: pg.message ?? "Los datos no cumplen las reglas del producto." }, { status: 400 });
   }

@@ -17,6 +17,14 @@
 --  7) fe_stock_pendientes_listar (lectura, STOCK.VER + alcance de depósito) y fe_stock_pendiente_confirmar (MOVIMIENTOS.CREAR + alcance): SALIDA/VENTA complementaria por el motor ordinario
 --     (inventario_registrar_movimiento, costo promedio vigente) con clave 'FE-STOCK-PEND:<id>', SOLO con saldo real suficiente y FE ENVIADA no rechazada/cancelada/inutilizada/no reconocida.
 --     El movimiento complementario queda protegido contra la anulación manual (igual que la salida de NEX-067).
+-- PRO-354-R02-R01 (auditoría AUD-CHATGPT-PRO-354-R02, F001/F002; la migración sigue NO aplicada, por eso se corrige en este mismo archivo):
+--  · F001: la obligación congela la UNIDAD BASE del producto y la SUCURSAL de la FE (columnas nuevas). Guardas por trigger, en TODOS los caminos de UPDATE: mientras haya una baja PENDIENTE del
+--    producto no cambia su unidad base ni deja de controlar stock ni se inactiva; un depósito con una baja vinculada (abierta o confirmada: preserva la historia) no cambia de sucursal, y con una
+--    abierta no se inactiva ni pasa a ser de terceros. Registro y confirmación bloquean producto y depósito (FOR SHARE) ANTES de revalidar. El faltante real se comprueba con el candado de
+--    numeración de movimientos de la empresa ('movimientos.numero:', NEX-011): toda entrada que pudiera crear disponible lo toma antes de tocar saldos, así que terminó antes (y se ve) o espera.
+--    La confirmación ya NO bloquea costo/saldo antes del motor: respeta el orden efectivo de inventario_registrar_movimiento (clave → numeración → depósito/producto FOR SHARE → costo → saldo).
+--  · F002: la referencia fiscal incluye la serie; el listado es paginado (total), filtra por sucursal en el alcance, distingue faltante original / pendiente actual / descontado total, y un
+--    catálogo propio de filtros (fe_stock_pendientes_filtros) no depende de la página ni del filtro.
 -- NO hace (gate PRO-354 D1–D3 / RF07): saldo físico negativo, cambios a stock_saldos_cant_chk (>= 0) ni a inventario_costos, deuda valorizada, regularización, cambio del método de costo,
 -- reposición que confirme sola, cambio del momento de la baja (PRO-310), reproceso de FE históricas, NCE, CDC, KuDE, gateway, numeración ni Documentos electrónicos.
 -- DEPENDENCIAS: NEX-014 (motor), NEX-067 (baja FE), NEX-076 (emisión vigente). No depende funcionalmente de NEX-077..080; el runner aplica las pendientes EN ORDEN, por lo que NEX-080 (PRO-342) se aplicaría
@@ -61,6 +69,8 @@ CREATE TABLE public.documento_electronico_stock_pendientes (
   documento_id        uuid          NOT NULL,
   producto_id         uuid          NOT NULL,
   deposito_id         uuid          NOT NULL,
+  unidad_medida_id    uuid          NOT NULL REFERENCES public.unidades_medida (id),   -- R01/F001: unidad base del producto al facturar (la obligación no se convierte)
+  sucursal_id         uuid          NOT NULL,                                          -- R01/F001: sucursal de la FE (= sucursal del depósito al registrar)
   cantidad_facturada  numeric(18,4) NOT NULL,
   cantidad_descontada numeric(18,4) NOT NULL,
   cantidad_pendiente  numeric(18,4) NOT NULL,
@@ -80,9 +90,12 @@ CREATE TABLE public.documento_electronico_stock_pendientes (
   CONSTRAINT fe_stock_pend_documento_fk FOREIGN KEY (empresa_id, documento_id) REFERENCES public.documentos_electronicos (empresa_id, id),
   CONSTRAINT fe_stock_pend_producto_fk FOREIGN KEY (empresa_id, producto_id) REFERENCES public.productos (empresa_id, id),
   CONSTRAINT fe_stock_pend_deposito_fk FOREIGN KEY (empresa_id, deposito_id) REFERENCES public.depositos (empresa_id, id),
+  CONSTRAINT fe_stock_pend_sucursal_fk FOREIGN KEY (empresa_id, sucursal_id) REFERENCES public.sucursales (empresa_id, id),
   CONSTRAINT fe_stock_pend_movimiento_fk FOREIGN KEY (empresa_id, movimiento_id) REFERENCES public.movimientos_inventario (empresa_id, id)
 );
 CREATE INDEX fe_stock_pend_abiertas_idx ON public.documento_electronico_stock_pendientes (empresa_id, producto_id, deposito_id) WHERE estado = 'PENDIENTE';
+CREATE INDEX fe_stock_pend_deposito_idx ON public.documento_electronico_stock_pendientes (empresa_id, deposito_id);
+CREATE INDEX fe_stock_pend_listado_idx ON public.documento_electronico_stock_pendientes (empresa_id, estado, sucursal_id, deposito_id);
 COMMENT ON TABLE public.documento_electronico_stock_pendientes IS 'NEX-081 / PRO-354-R02: faltante de stock de una FE emitida con la política FALSE (facturado = descontado al emitir + pendiente). No es saldo negativo ni deuda valorizada. Inmutable salvo PENDIENTE → CONFIRMADA.';
 
 CREATE FUNCTION public.fe_stock_pendientes_inmutable() RETURNS trigger
@@ -94,6 +107,7 @@ BEGIN
   END IF;
   IF TG_OP = 'UPDATE' AND OLD.estado = 'PENDIENTE' AND NEW.estado = 'CONFIRMADA'
      AND NEW.id = OLD.id AND NEW.empresa_id = OLD.empresa_id AND NEW.documento_id = OLD.documento_id AND NEW.producto_id = OLD.producto_id AND NEW.deposito_id = OLD.deposito_id
+     AND NEW.unidad_medida_id = OLD.unidad_medida_id AND NEW.sucursal_id = OLD.sucursal_id
      AND NEW.cantidad_facturada = OLD.cantidad_facturada AND NEW.cantidad_descontada = OLD.cantidad_descontada AND NEW.cantidad_pendiente = OLD.cantidad_pendiente
      AND NEW.creado_por = OLD.creado_por AND NEW.creado_at = OLD.creado_at THEN
     RETURN NEW;
@@ -118,6 +132,53 @@ END $$;
 
 CREATE TRIGGER fe_stock_pendiente_movimiento_protegido_trg BEFORE UPDATE OF estado ON public.movimientos_inventario
   FOR EACH ROW EXECUTE FUNCTION public.fe_stock_pendiente_movimiento_protegido();
+
+-- R01/F001: la obligación pendiente sigue siendo confirmable tal como nació. Triggers (cubren TODOS los caminos de UPDATE, incluida la función de cambio de unidad base de NEX-052, que bloquea la
+-- fila del producto FOR UPDATE: espera a un registro/confirmación en curso, que la retiene FOR SHARE, y luego ve la baja). SECURITY DEFINER: leen la tabla de pendientes, sin acceso de la aplicación.
+CREATE FUNCTION public.fe_stock_pendientes_producto_guarda() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+BEGIN
+  IF public.nex_reinicio_demo_activo(OLD.empresa_id) THEN
+    RETURN NEW;
+  END IF;
+  IF (NEW.unidad_medida_id IS DISTINCT FROM OLD.unidad_medida_id
+      OR (OLD.controla_stock AND NOT NEW.controla_stock)
+      OR (OLD.activo AND NOT NEW.activo))
+     AND EXISTS (SELECT 1 FROM public.documento_electronico_stock_pendientes p
+                  WHERE p.empresa_id = OLD.empresa_id AND p.producto_id = OLD.id AND p.estado = 'PENDIENTE') THEN
+    RAISE EXCEPTION 'el producto % tiene bajas pendientes de stock de facturas: confírmelas antes de cambiar su unidad base, su control de stock o su estado', OLD.codigo
+      USING ERRCODE = 'P0001', DETAIL = 'NEX:PRODUCTO_CON_BAJAS_PENDIENTES';
+  END IF;
+  RETURN NEW;
+END $$;
+
+CREATE TRIGGER fe_stock_pendientes_producto_guarda_trg BEFORE UPDATE OF unidad_medida_id, controla_stock, activo ON public.productos
+  FOR EACH ROW EXECUTE FUNCTION public.fe_stock_pendientes_producto_guarda();
+
+CREATE FUNCTION public.fe_stock_pendientes_deposito_guarda() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+BEGIN
+  IF public.nex_reinicio_demo_activo(OLD.empresa_id) THEN
+    RETURN NEW;
+  END IF;
+  -- Cambio de sucursal: bloqueado con CUALQUIER baja vinculada (abierta o confirmada), para que la historia siga en la sucursal de su FE.
+  IF NEW.sucursal_id IS DISTINCT FROM OLD.sucursal_id
+     AND EXISTS (SELECT 1 FROM public.documento_electronico_stock_pendientes p WHERE p.empresa_id = OLD.empresa_id AND p.deposito_id = OLD.id) THEN
+    RAISE EXCEPTION 'el depósito % tiene bajas de stock de facturas vinculadas: no puede cambiar de sucursal', OLD.codigo
+      USING ERRCODE = 'P0001', DETAIL = 'NEX:DEPOSITO_CON_BAJAS_PENDIENTES';
+  END IF;
+  -- Inactivación o paso a depósito de terceros: bloqueados mientras haya una baja ABIERTA (quedaría sin poder confirmarse).
+  IF ((OLD.activo AND NOT NEW.activo) OR (NOT OLD.es_de_terceros AND NEW.es_de_terceros))
+     AND EXISTS (SELECT 1 FROM public.documento_electronico_stock_pendientes p
+                  WHERE p.empresa_id = OLD.empresa_id AND p.deposito_id = OLD.id AND p.estado = 'PENDIENTE') THEN
+    RAISE EXCEPTION 'el depósito % tiene bajas pendientes de stock de facturas: confírmelas antes de inactivarlo', OLD.codigo
+      USING ERRCODE = 'P0001', DETAIL = 'NEX:DEPOSITO_CON_BAJAS_PENDIENTES';
+  END IF;
+  RETURN NEW;
+END $$;
+
+CREATE TRIGGER fe_stock_pendientes_deposito_guarda_trg BEFORE UPDATE OF sucursal_id, activo, es_de_terceros ON public.depositos
+  FOR EACH ROW EXECUTE FUNCTION public.fe_stock_pendientes_deposito_guarda();
 
 -- 3) Preparación interna (una fila por transacción de emisión con faltante; se borra antes de terminar la función que la crea).
 CREATE TABLE public.fe_stock_pendientes_preparacion (
@@ -349,6 +410,7 @@ DECLARE
   v_payload jsonb;
   x jsonb;
   v_prod uuid; v_dep uuid; v_cant numeric;
+  v_pr record; v_dp record;
   r record;
 BEGIN
   IF NOT public.usuario_tiene_permiso(p_empresa, p_usuario, 'FACTURACION_ELECTRONICA', 'CREAR') OR NOT public.sucursal_en_alcance(p_empresa, p_usuario, p_sucursal) THEN
@@ -376,14 +438,18 @@ BEGIN
     IF EXISTS (SELECT 1 FROM jsonb_array_elements(v_norm) n WHERE (n->>'producto_id')::uuid = v_prod) THEN
       RAISE EXCEPTION 'el faltante pendiente repite un producto' USING ERRCODE = 'P0001', DETAIL = 'NEX:STOCK_PENDIENTE_INVALIDO';
     END IF;
-    IF NOT EXISTS (SELECT 1 FROM public.productos p WHERE p.empresa_id = p_empresa AND p.id = v_prod AND p.controla_stock) THEN
-      RAISE EXCEPTION 'el faltante pendiente es de un producto sin control de stock o de otra empresa' USING ERRCODE = 'P0001', DETAIL = 'NEX:STOCK_PENDIENTE_INVALIDO';
+    -- R01/F001: fila del producto BLOQUEADA (FOR SHARE, como el motor de NEX-052) antes de validar: un cambio de unidad base / control de stock / estado espera o ya se ve aquí.
+    SELECT p.activo, p.controla_stock INTO v_pr FROM public.productos p WHERE p.empresa_id = p_empresa AND p.id = v_prod FOR SHARE;
+    IF NOT FOUND OR NOT v_pr.controla_stock OR NOT v_pr.activo THEN
+      RAISE EXCEPTION 'el faltante pendiente es de un producto inactivo, sin control de stock o de otra empresa' USING ERRCODE = 'P0001', DETAIL = 'NEX:STOCK_PENDIENTE_INVALIDO';
     END IF;
     IF EXISTS (SELECT 1 FROM public.stock_lotes l WHERE l.empresa_id = p_empresa AND l.producto_id = v_prod) THEN
       RAISE EXCEPTION 'el producto % controla lotes: su faltante no se puede dejar pendiente (requiere definición específica)', (SELECT codigo FROM public.productos WHERE empresa_id = p_empresa AND id = v_prod)
         USING ERRCODE = 'P0001', DETAIL = 'NEX:STOCK_PENDIENTE_LOTE';
     END IF;
-    IF NOT EXISTS (SELECT 1 FROM public.depositos d WHERE d.empresa_id = p_empresa AND d.id = v_dep AND d.activo AND NOT d.es_de_terceros AND d.sucursal_id = p_sucursal)
+    -- R01/F001: fila del depósito BLOQUEADA (FOR SHARE, como el trigger de movimientos de NEX-046) antes de validar sucursal/estado/tipo: un cambio de sucursal o una inactivación espera o se ve.
+    SELECT d.activo, d.es_de_terceros, d.sucursal_id INTO v_dp FROM public.depositos d WHERE d.empresa_id = p_empresa AND d.id = v_dep FOR SHARE;
+    IF NOT FOUND OR NOT v_dp.activo OR v_dp.es_de_terceros OR v_dp.sucursal_id IS DISTINCT FROM p_sucursal
        OR NOT public.usuario_puede_deposito(p_empresa, p_usuario, v_dep) THEN
       RAISE EXCEPTION 'el depósito del faltante no es válido para esta factura (inactivo, de otra sucursal o fuera de su alcance)' USING ERRCODE = '42501', DETAIL = 'NEX:STOCK_DEPOSITO_NO_AUTORIZADO';
     END IF;
@@ -420,6 +486,11 @@ BEGIN
   --  · se registran los pendientes con facturado / descontado / pendiente.
   SELECT s.payload INTO v_payload FROM public.documento_electronico_solicitudes s WHERE s.empresa_id = p_empresa AND s.documento_id = v_id ORDER BY s.version DESC LIMIT 1;
 
+  -- R01/F001 — faltante real serializado con las ENTRADAS simultáneas, también cuando aún no existe fila de saldo (no hay nada que bloquear con FOR UPDATE): se toma el candado de numeración de
+  -- movimientos de la empresa (NEX-011, el mismo que toma todo movimiento ANTES de tocar costos y saldos). Una entrada que terminó antes se ve en la lectura de abajo (READ COMMITTED: cada sentencia
+  -- usa una instantánea nueva); una que empieza después espera a esta transacción. Orden compatible: FE → numeración → saldos, igual que la baja de NEX-067 y el motor de NEX-014.
+  PERFORM pg_advisory_xact_lock(hashtextextended('movimientos.numero:' || p_empresa::text, 0));
+
   FOR r IN
     SELECT (n->>'producto_id')::uuid AS producto_id, (n->>'deposito_id')::uuid AS deposito_id, (n->>'cantidad')::numeric AS pendiente,
            (SELECT sum((d->>'dCantProSer')::numeric) FROM jsonb_array_elements(COALESCE(v_payload->'Detalles', '[]'::jsonb)) d
@@ -439,23 +510,33 @@ BEGIN
     IF r.facturado IS NULL OR r.facturado <> r.descontado + r.pendiente THEN
       RAISE EXCEPTION 'el faltante pendiente no coincide con la cantidad facturada' USING ERRCODE = 'P0001', DETAIL = 'NEX:STOCK_REPARTO_INVALIDO';
     END IF;
-    INSERT INTO public.documento_electronico_stock_pendientes (empresa_id, documento_id, producto_id, deposito_id, cantidad_facturada, cantidad_descontada, cantidad_pendiente, creado_por)
-    VALUES (p_empresa, v_id, r.producto_id, r.deposito_id, r.facturado, r.descontado, r.pendiente, p_usuario);
+    -- Unidad base congelada: la fila del producto sigue bloqueada (FOR SHARE desde la validación), así que es la unidad con la que se facturó.
+    INSERT INTO public.documento_electronico_stock_pendientes (empresa_id, documento_id, producto_id, deposito_id, unidad_medida_id, sucursal_id,
+                                                                cantidad_facturada, cantidad_descontada, cantidad_pendiente, creado_por)
+    VALUES (p_empresa, v_id, r.producto_id, r.deposito_id, (SELECT pu.unidad_medida_id FROM public.productos pu WHERE pu.empresa_id = p_empresa AND pu.id = r.producto_id), p_sucursal,
+            r.facturado, r.descontado, r.pendiente, p_usuario);
   END LOOP;
 
   RETURN QUERY SELECT v_id, v_numero, v_reutilizado;
 END $$;
 
 -- 8) «Bajas pendientes de stock» (SOLO LECTURA): STOCK.VER y solo depósitos del alcance del usuario. Saldo registrado = disponible propio real (>= 0); proyectado = registrado − pendientes abiertos
---    (un proyectado negativo NO es saldo físico ni contable: es solo una lectura informativa).
-CREATE FUNCTION public.fe_stock_pendientes_listar(p_empresa uuid, p_usuario uuid, p_estado text, p_deposito uuid, p_buscar text)
-RETURNS TABLE (o_id uuid, o_documento_id uuid, o_documento text, o_fecha_emision timestamptz, o_estado_local text, o_estado_sifen text,
-               o_producto_codigo text, o_producto_descripcion text, o_deposito_id uuid, o_deposito_codigo text, o_deposito_nombre text,
-               o_facturado numeric, o_descontado numeric, o_pendiente numeric, o_saldo_registrado numeric, o_pendiente_abierto numeric, o_saldo_proyectado numeric,
-               o_estado text, o_creado_at timestamptz, o_confirmado_at timestamptz, o_confirmado_por text, o_movimiento_numero text, o_fe_confirmable boolean, o_con_lote boolean)
+--    del MISMO producto y depósito (un proyectado negativo NO es saldo físico ni contable; se repite igual en cada fila del par y no se suma).
+--    R01/F002: referencia fiscal con serie; filtro por sucursal (en el alcance); paginado estable (límite 1..100, desplazamiento) con total; faltante original (cantidad_pendiente, evidencia inmutable),
+--    pendiente actual (0 si está confirmada) y descontado total (al emitir + confirmado).
+CREATE FUNCTION public.fe_stock_pendientes_listar(p_empresa uuid, p_usuario uuid, p_estado text, p_sucursal uuid, p_deposito uuid, p_buscar text, p_limite integer, p_desplazamiento integer)
+RETURNS TABLE (o_id uuid, o_documento_id uuid, o_documento text, o_serie text, o_fecha_emision timestamptz, o_estado_local text, o_estado_sifen text,
+               o_producto_codigo text, o_producto_descripcion text, o_unidad text, o_sucursal_id uuid, o_sucursal_nombre text,
+               o_deposito_id uuid, o_deposito_codigo text, o_deposito_nombre text,
+               o_facturado numeric, o_descontado_emision numeric, o_faltante_original numeric, o_pendiente_actual numeric, o_descontado_total numeric,
+               o_saldo_registrado numeric, o_pendiente_abierto numeric, o_saldo_proyectado numeric,
+               o_estado text, o_creado_at timestamptz, o_confirmado_at timestamptz, o_confirmado_por text, o_movimiento_numero text, o_fe_confirmable boolean, o_con_lote boolean,
+               o_total bigint)
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
 DECLARE
   v_buscar text := NULLIF(btrim(COALESCE(p_buscar, '')), '');
+  v_limite integer := COALESCE(p_limite, 50);
+  v_desde integer := COALESCE(p_desplazamiento, 0);
 BEGIN
   IF NOT public.usuario_tiene_permiso(p_empresa, p_usuario, 'STOCK', 'VER') THEN
     RAISE EXCEPTION 'el usuario no tiene permiso STOCK.VER en esta empresa' USING ERRCODE = '42501';
@@ -463,18 +544,36 @@ BEGIN
   IF p_estado IS NOT NULL AND p_estado NOT IN ('PENDIENTE', 'CONFIRMADA') THEN
     RAISE EXCEPTION 'estado inválido' USING ERRCODE = 'P0001';
   END IF;
+  IF p_sucursal IS NOT NULL AND NOT public.sucursal_en_alcance(p_empresa, p_usuario, p_sucursal) THEN
+    RAISE EXCEPTION 'la sucursal está fuera del alcance del usuario' USING ERRCODE = '42501';
+  END IF;
+  IF v_limite < 1 OR v_limite > 100 OR v_desde < 0 OR v_desde > 1000000 THEN
+    RAISE EXCEPTION 'paginación inválida' USING ERRCODE = 'P0001';
+  END IF;
+  IF v_buscar IS NOT NULL AND length(v_buscar) > 80 THEN
+    RAISE EXCEPTION 'búsqueda demasiado larga' USING ERRCODE = 'P0001';
+  END IF;
 
   RETURN QUERY
-    SELECT p.id, p.documento_id, d.establecimiento || '-' || d.punto_expedicion || '-' || d.numero, d.fecha_emision, d.estado_local, d.estado_sifen,
-           pr.codigo::text, pr.descripcion::text, p.deposito_id, dp.codigo::text, dp.nombre::text,
-           p.cantidad_facturada, p.cantidad_descontada, p.cantidad_pendiente, sal.registrado, ab.abierto, sal.registrado - ab.abierto,
+    SELECT p.id, p.documento_id,
+           d.establecimiento || '-' || d.punto_expedicion || '-' || d.numero || CASE WHEN d.serie IS NULL THEN '' ELSE ' (' || d.serie || ')' END,
+           d.serie, d.fecha_emision, d.estado_local, d.estado_sifen,
+           pr.codigo::text, pr.descripcion::text, um.codigo::text, p.sucursal_id, su.nombre::text,
+           p.deposito_id, dp.codigo::text, dp.nombre::text,
+           p.cantidad_facturada, p.cantidad_descontada, p.cantidad_pendiente,
+           CASE WHEN p.estado = 'PENDIENTE' THEN p.cantidad_pendiente ELSE 0::numeric END,
+           p.cantidad_descontada + CASE WHEN p.estado = 'CONFIRMADA' THEN p.cantidad_pendiente ELSE 0::numeric END,
+           sal.registrado, ab.abierto, sal.registrado - ab.abierto,
            p.estado, p.creado_at, p.confirmado_at, NULLIF(btrim(COALESCE(u.nombre, '') || ' ' || COALESCE(u.apellido, '')), ''), m.numero_movimiento,
            (d.estado_local = 'ENVIADO' AND d.estado_sifen IN ('SIN_CONSULTA', 'PENDIENTE', 'APROBADO')),
-           EXISTS (SELECT 1 FROM public.stock_lotes l WHERE l.empresa_id = p.empresa_id AND l.producto_id = p.producto_id)
+           EXISTS (SELECT 1 FROM public.stock_lotes l WHERE l.empresa_id = p.empresa_id AND l.producto_id = p.producto_id),
+           count(*) OVER ()
       FROM public.documento_electronico_stock_pendientes p
       JOIN public.documentos_electronicos d ON d.empresa_id = p.empresa_id AND d.id = p.documento_id
       JOIN public.productos pr ON pr.empresa_id = p.empresa_id AND pr.id = p.producto_id
       JOIN public.depositos dp ON dp.empresa_id = p.empresa_id AND dp.id = p.deposito_id
+      JOIN public.sucursales su ON su.empresa_id = p.empresa_id AND su.id = p.sucursal_id
+      LEFT JOIN public.unidades_medida um ON um.id = p.unidad_medida_id
       LEFT JOIN public.usuarios u ON u.empresa_id = p.empresa_id AND u.id = p.confirmado_por
       LEFT JOIN public.movimientos_inventario m ON m.empresa_id = p.empresa_id AND m.id = p.movimiento_id
       CROSS JOIN LATERAL (SELECT COALESCE(sum(s.cantidad), 0) AS registrado FROM public.stock_saldos s
@@ -485,21 +584,46 @@ BEGIN
      WHERE p.empresa_id = p_empresa
        AND public.usuario_puede_deposito(p_empresa, p_usuario, p.deposito_id)
        AND (p_estado IS NULL OR p.estado = p_estado)
+       AND (p_sucursal IS NULL OR p.sucursal_id = p_sucursal)
        AND (p_deposito IS NULL OR p.deposito_id = p_deposito)
-       AND (v_buscar IS NULL OR pr.codigo ILIKE '%' || v_buscar || '%' OR pr.descripcion ILIKE '%' || v_buscar || '%'
-            OR (d.establecimiento || '-' || d.punto_expedicion || '-' || d.numero) ILIKE '%' || v_buscar || '%')
-     ORDER BY (p.estado = 'PENDIENTE') DESC, d.fecha_emision DESC, d.numero DESC, pr.codigo, p.id
-     LIMIT 500;
+       AND (v_buscar IS NULL OR strpos(lower(pr.codigo), lower(v_buscar)) > 0 OR strpos(lower(pr.descripcion), lower(v_buscar)) > 0
+            OR strpos(lower(d.establecimiento || '-' || d.punto_expedicion || '-' || d.numero || CASE WHEN d.serie IS NULL THEN '' ELSE ' (' || d.serie || ')' END), lower(v_buscar)) > 0
+            OR strpos(lower(COALESCE(d.serie || '-' || d.numero, '')), lower(v_buscar)) > 0)
+     ORDER BY (p.estado = 'PENDIENTE') DESC, d.fecha_emision DESC, d.establecimiento, d.punto_expedicion, d.numero DESC, COALESCE(d.serie, ''), pr.codigo, p.id
+     LIMIT v_limite OFFSET v_desde;
+END $$;
+
+-- 8b) R01/F002 — Catálogo de filtros (SOLO LECTURA): sucursales y depósitos propios autorizados del usuario, independiente de la página y de los filtros aplicados (no «desaparecen» al filtrar).
+CREATE FUNCTION public.fe_stock_pendientes_filtros(p_empresa uuid, p_usuario uuid)
+RETURNS TABLE (o_sucursal_id uuid, o_sucursal_codigo text, o_sucursal_nombre text, o_deposito_id uuid, o_deposito_codigo text, o_deposito_nombre text, o_deposito_activo boolean)
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+BEGIN
+  IF NOT public.usuario_tiene_permiso(p_empresa, p_usuario, 'STOCK', 'VER') THEN
+    RAISE EXCEPTION 'el usuario no tiene permiso STOCK.VER en esta empresa' USING ERRCODE = '42501';
+  END IF;
+  RETURN QUERY
+    SELECT su.id, su.codigo::text, su.nombre::text, dp.id, dp.codigo::text, dp.nombre::text, dp.activo
+      FROM public.depositos dp
+      JOIN public.sucursales su ON su.empresa_id = dp.empresa_id AND su.id = dp.sucursal_id
+     WHERE dp.empresa_id = p_empresa AND NOT dp.es_de_terceros
+       AND public.usuario_puede_deposito(p_empresa, p_usuario, dp.id)
+     ORDER BY su.codigo, su.id, dp.codigo, dp.id
+     LIMIT 1000;
 END $$;
 
 -- 9) Confirmación MANUAL de una baja pendiente: SALIDA/VENTA complementaria por el motor ordinario, solo con saldo real suficiente (nunca a negativo) y FE enviada no rechazada/cancelada/inutilizada.
 --    Idempotente: el pendiente se bloquea; si ya está confirmado devuelve su movimiento; la clave del movimiento es 'FE-STOCK-PEND:<id>'. La reposición nunca confirma sola.
+--    R01/F001 — Orden de bloqueos: candado propio del pendiente → fila del pendiente (FOR UPDATE) → FE (FOR SHARE) → depósito y producto (FOR SHARE: los mismos modos que toman el trigger de
+--    movimientos de NEX-046 y el motor de NEX-052, que no entran en conflicto entre sí) → motor (clave, numeración, costo, saldo). NO se bloquean costo ni saldo antes del motor: así no se invierte el
+--    orden numeración → costo → saldo de los movimientos ordinarios. Bajo esos bloqueos se revalidan unidad base, sucursal, depósito (activo, propio, sucursal, alcance), producto y FE.
+--    El saldo suficiente lo decide el motor bajo SU bloqueo (CHECK >= 0 de NEX-014 intacto); su error se traduce a NEX:STOCK_INSUFICIENTE.
 CREATE FUNCTION public.fe_stock_pendiente_confirmar(p_empresa uuid, p_usuario uuid, p_pendiente uuid)
 RETURNS TABLE (o_movimiento_id uuid, o_numero text, o_repetido boolean)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
 DECLARE
   v_p public.documento_electronico_stock_pendientes%ROWTYPE;
   v_doc public.documentos_electronicos%ROWTYPE;
+  v_pr record; v_dp record;
   v_ref text;
   v_mov uuid; v_num text; v_rep boolean;
 BEGIN
@@ -525,28 +649,42 @@ BEGIN
     RAISE EXCEPTION 'la factura no tiene la recepción confirmada o fue rechazada, cancelada, inutilizada o no reconocida: la baja pendiente no se puede confirmar'
       USING ERRCODE = 'P0001', DETAIL = 'NEX:PENDIENTE_FE_NO_CONFIRMABLE';
   END IF;
+
+  -- Depósito y producto bajo bloqueo compartido, luego revalidación completa de la obligación (los triggers de guarda lo impiden, pero se comprueba igual: falla cerrada).
+  SELECT d.activo, d.es_de_terceros, d.sucursal_id, d.codigo INTO v_dp FROM public.depositos d WHERE d.empresa_id = p_empresa AND d.id = v_p.deposito_id FOR SHARE;
+  SELECT p.activo, p.controla_stock, p.unidad_medida_id, p.codigo INTO v_pr FROM public.productos p WHERE p.empresa_id = p_empresa AND p.id = v_p.producto_id FOR SHARE;
+  IF v_dp.sucursal_id IS DISTINCT FROM v_p.sucursal_id OR v_doc.sucursal_id IS DISTINCT FROM v_p.sucursal_id THEN
+    RAISE EXCEPTION 'el depósito de la baja pendiente ya no pertenece a la sucursal de la factura' USING ERRCODE = 'P0001', DETAIL = 'NEX:PENDIENTE_SUCURSAL_DISTINTA';
+  END IF;
+  IF NOT v_dp.activo OR v_dp.es_de_terceros THEN
+    RAISE EXCEPTION 'el depósito % de la baja pendiente está inactivo o es de terceros', v_dp.codigo USING ERRCODE = 'P0001', DETAIL = 'NEX:STOCK_DEPOSITO_NO_AUTORIZADO';
+  END IF;
+  IF v_pr.unidad_medida_id IS DISTINCT FROM v_p.unidad_medida_id THEN
+    RAISE EXCEPTION 'la unidad base del producto % cambió desde la factura: la baja pendiente no se convierte', v_pr.codigo USING ERRCODE = 'P0001', DETAIL = 'NEX:PENDIENTE_UNIDAD_DISTINTA';
+  END IF;
+  IF NOT v_pr.activo OR NOT v_pr.controla_stock THEN
+    RAISE EXCEPTION 'el producto % está inactivo o no controla stock' , v_pr.codigo USING ERRCODE = 'P0001', DETAIL = 'NEX:STOCK_PENDIENTE_INVALIDO';
+  END IF;
   IF EXISTS (SELECT 1 FROM public.stock_lotes l WHERE l.empresa_id = p_empresa AND l.producto_id = v_p.producto_id) THEN
     RAISE EXCEPTION 'el producto controla lotes: la confirmación requiere una definición específica' USING ERRCODE = 'P0001', DETAIL = 'NEX:STOCK_PENDIENTE_LOTE';
   END IF;
 
-  -- Mismo orden de bloqueo que el motor (costo, luego saldo). Sin saldo real suficiente NO se confirma (jamás saldo negativo).
-  INSERT INTO public.inventario_costos (empresa_id, producto_id, deposito_id) VALUES (p_empresa, v_p.producto_id, v_p.deposito_id) ON CONFLICT (empresa_id, producto_id, deposito_id) DO NOTHING;
-  PERFORM 1 FROM public.inventario_costos WHERE empresa_id = p_empresa AND producto_id = v_p.producto_id AND deposito_id = v_p.deposito_id FOR UPDATE;
-  PERFORM 1 FROM public.stock_saldos s
-    WHERE s.empresa_id = p_empresa AND s.producto_id = v_p.producto_id AND s.deposito_id = v_p.deposito_id AND s.estado_stock = 'DISPONIBLE' AND s.propiedad = 'PROPIO'
-      AND s.propietario_id IS NULL AND s.lote_id IS NULL AND s.cantidad >= v_p.cantidad_pendiente FOR UPDATE;
-  IF NOT FOUND THEN
-    RAISE EXCEPTION 'stock disponible insuficiente para confirmar la baja pendiente (producto %, depósito %, cantidad %)',
-      (SELECT codigo FROM public.productos WHERE empresa_id = p_empresa AND id = v_p.producto_id), (SELECT codigo FROM public.depositos WHERE empresa_id = p_empresa AND id = v_p.deposito_id), v_p.cantidad_pendiente
-      USING ERRCODE = 'P0001', DETAIL = 'NEX:STOCK_INSUFICIENTE';
-  END IF;
-
-  v_ref := 'FE ' || v_doc.establecimiento || '-' || v_doc.punto_expedicion || '-' || v_doc.numero;
-  SELECT c.o_movimiento_id, c.o_numero, c.o_repetido INTO v_mov, v_num, v_rep
-    FROM public.inventario_registrar_movimiento(p_empresa, p_usuario, 'SALIDA', 'VENTA', NULL, v_p.deposito_id, NULL,
-           jsonb_build_array(jsonb_build_object('producto_id', v_p.producto_id, 'cantidad', v_p.cantidad_pendiente)),
-           'FE-STOCK-PEND:' || v_p.id::text, v_doc.cliente_id, 'Venta por factura electrónica (baja pendiente confirmada)',
-           'Confirmación manual de la baja pendiente de ' || v_ref, v_ref) c;
+  -- Referencia fiscal COMPLETA (con serie: dos FE de series distintas pueden tener el mismo número).
+  v_ref := 'FE ' || v_doc.establecimiento || '-' || v_doc.punto_expedicion || '-' || v_doc.numero || CASE WHEN v_doc.serie IS NULL THEN '' ELSE ' (' || v_doc.serie || ')' END;
+  BEGIN
+    SELECT c.o_movimiento_id, c.o_numero, c.o_repetido INTO v_mov, v_num, v_rep
+      FROM public.inventario_registrar_movimiento(p_empresa, p_usuario, 'SALIDA', 'VENTA', NULL, v_p.deposito_id, NULL,
+             jsonb_build_array(jsonb_build_object('producto_id', v_p.producto_id, 'cantidad', v_p.cantidad_pendiente)),
+             'FE-STOCK-PEND:' || v_p.id::text, v_doc.cliente_id, 'Venta por factura electrónica (baja pendiente confirmada)',
+             'Confirmación manual de la baja pendiente de ' || v_ref, v_ref) c;
+  EXCEPTION WHEN raise_exception THEN
+    -- El motor decide el saldo bajo su propio bloqueo; su mensaje se traduce a un error propio (el resto se propaga igual). La subtransacción se deshace entera: nada queda escrito.
+    IF SQLERRM LIKE 'saldo disponible insuficiente%' THEN
+      RAISE EXCEPTION 'stock disponible insuficiente para confirmar la baja pendiente (producto %, depósito %, cantidad %)', v_pr.codigo, v_dp.codigo, v_p.cantidad_pendiente
+        USING ERRCODE = 'P0001', DETAIL = 'NEX:STOCK_INSUFICIENTE';
+    END IF;
+    RAISE;
+  END;
 
   UPDATE public.documento_electronico_stock_pendientes
      SET estado = 'CONFIRMADA', confirmado_por = p_usuario, confirmado_at = now(), movimiento_id = v_mov
@@ -558,7 +696,8 @@ END $$;
 COMMENT ON FUNCTION public.fe_politica_stock_actualizar(uuid, uuid, boolean) IS 'NEX-081 / PRO-354-R02: cambia la política «Bloquear facturación por stock insuficiente» de la empresa (CONFIGURAR, auditado).';
 COMMENT ON FUNCTION public.fe_stock_politica_contexto(uuid, uuid, uuid, uuid[]) IS 'NEX-081: política vigente, depósitos elegibles para el faltante y productos con lotes. Solo lectura.';
 COMMENT ON FUNCTION public.fe_documento_crear_fe_stock_pendiente(uuid, uuid, uuid, uuid, text, uuid, text, text, text, numeric, jsonb, jsonb, uuid, uuid, jsonb, boolean) IS 'NEX-081: emisión de FE con faltante pendiente (política FALSE revalidada bajo bloqueo); envuelve fe_documento_crear_fe_receptor.';
-COMMENT ON FUNCTION public.fe_stock_pendientes_listar(uuid, uuid, text, uuid, text) IS 'NEX-081: «Bajas pendientes de stock» (STOCK.VER, alcance de depósito). Solo lectura.';
+COMMENT ON FUNCTION public.fe_stock_pendientes_listar(uuid, uuid, text, uuid, uuid, text, integer, integer) IS 'NEX-081: «Bajas pendientes de stock» (STOCK.VER, alcance de depósito y sucursal, paginado con total). Solo lectura.';
+COMMENT ON FUNCTION public.fe_stock_pendientes_filtros(uuid, uuid) IS 'NEX-081 R01: sucursales y depósitos autorizados para los filtros de «Bajas pendientes de stock». Solo lectura.';
 COMMENT ON FUNCTION public.fe_stock_pendiente_confirmar(uuid, uuid, uuid) IS 'NEX-081: confirmación manual de una baja pendiente con saldo real suficiente (MOVIMIENTOS.CREAR, alcance, idempotente).';
 
 -- 10) Grants (ayudante descubierto por el envoltorio global, después de nex_aplicar_grants_facturacion_stock por orden alfabético): la aplicación SOLO ejecuta las funciones; tablas sin acceso directo.
@@ -576,22 +715,27 @@ BEGIN
   REVOKE ALL ON FUNCTION public.fe_politica_stock_actualizar(uuid, uuid, boolean) FROM PUBLIC;
   REVOKE ALL ON FUNCTION public.fe_stock_politica_contexto(uuid, uuid, uuid, uuid[]) FROM PUBLIC;
   REVOKE ALL ON FUNCTION public.fe_documento_crear_fe_stock_pendiente(uuid, uuid, uuid, uuid, text, uuid, text, text, text, numeric, jsonb, jsonb, uuid, uuid, jsonb, boolean) FROM PUBLIC;
-  REVOKE ALL ON FUNCTION public.fe_stock_pendientes_listar(uuid, uuid, text, uuid, text) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION public.fe_stock_pendientes_listar(uuid, uuid, text, uuid, uuid, text, integer, integer) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION public.fe_stock_pendientes_filtros(uuid, uuid) FROM PUBLIC;
   REVOKE ALL ON FUNCTION public.fe_stock_pendiente_confirmar(uuid, uuid, uuid) FROM PUBLIC;
   GRANT EXECUTE ON FUNCTION public.fe_politica_stock_actualizar(uuid, uuid, boolean) TO nexit_runtime;
   GRANT EXECUTE ON FUNCTION public.fe_stock_politica_contexto(uuid, uuid, uuid, uuid[]) TO nexit_runtime;
   GRANT EXECUTE ON FUNCTION public.fe_documento_crear_fe_stock_pendiente(uuid, uuid, uuid, uuid, text, uuid, text, text, text, numeric, jsonb, jsonb, uuid, uuid, jsonb, boolean) TO nexit_runtime;
-  GRANT EXECUTE ON FUNCTION public.fe_stock_pendientes_listar(uuid, uuid, text, uuid, text) TO nexit_runtime;
+  GRANT EXECUTE ON FUNCTION public.fe_stock_pendientes_listar(uuid, uuid, text, uuid, uuid, text, integer, integer) TO nexit_runtime;
+  GRANT EXECUTE ON FUNCTION public.fe_stock_pendientes_filtros(uuid, uuid) TO nexit_runtime;
   GRANT EXECUTE ON FUNCTION public.fe_stock_pendiente_confirmar(uuid, uuid, uuid) TO nexit_runtime;
 END $$;
 
 REVOKE ALL ON FUNCTION public.fe_stock_pendientes_inmutable() FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.fe_stock_pendiente_movimiento_protegido() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.fe_stock_pendientes_producto_guarda() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.fe_stock_pendientes_deposito_guarda() FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.fe_stock_baja_documento(uuid, uuid, uuid, jsonb) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.fe_politica_stock_actualizar(uuid, uuid, boolean) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.fe_stock_politica_contexto(uuid, uuid, uuid, uuid[]) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.fe_documento_crear_fe_stock_pendiente(uuid, uuid, uuid, uuid, text, uuid, text, text, text, numeric, jsonb, jsonb, uuid, uuid, jsonb, boolean) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.fe_stock_pendientes_listar(uuid, uuid, text, uuid, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.fe_stock_pendientes_listar(uuid, uuid, text, uuid, uuid, text, integer, integer) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.fe_stock_pendientes_filtros(uuid, uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.fe_stock_pendiente_confirmar(uuid, uuid, uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.nex_aplicar_grants_facturacion_stock_pendientes() FROM PUBLIC;
 
