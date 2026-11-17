@@ -17,7 +17,8 @@ import { excedeLimite, interpretarLimiteLineas, mensajeExcesoLineas, type Lectur
 import { MENSAJE_ENTREGA_INVALIDA, opcionesEntrega, resolverEntrega, resumenEntrega } from "@/lib/facturacion/entrega";
 import { componerInfoAdicional, contieneMarcaAutomatica, descomponerInfoAdicional, huellaInfoAdicional, infoAdicionalPersistida, LIMITE_INFO_ADICIONAL, lineaVendedor } from "@/lib/facturacion/info-adicional";
 import { nombreDeUsuario, vendedorActivo, vendedorFeSoportado } from "@/lib/usuarios/vendedores";
-import { asignacionesSql, mensajeStockInsuficiente, planificarStock, type LineaStock } from "@/lib/facturacion/stock-fe";
+import { leerDepositosPendiente, mensajePlanNoEmitible, pendientesSql, planificarStockConPolitica } from "@/lib/facturacion/politica-stock";
+import { asignacionesSql, type LineaStock } from "@/lib/facturacion/stock-fe";
 import { normalizarCantidadTexto } from "@/lib/formato/cantidad-campo";
 import { ErrorGeografia, resolverPais, validarPaisPorOperacion } from "@/lib/geografia/referencia";
 
@@ -191,6 +192,9 @@ export type CuerpoFactura = {
   direccionEntregaId?: string;
   /** E02: huella del reparto de stock que el operador REVISÓ (la devuelve la previa). Obligatoria al emitir si hay productos con control de stock; si el stock cambió, se exige revisar de nuevo. */
   repartoHuella?: string;
+  /** PRO-354-R02: depósito elegido para el FALTANTE pendiente de cada producto (`{productoId: depositoId}`), solo si la política de la empresa permite facturar con stock insuficiente y hay varios
+   *  depósitos elegibles. El servidor lo valida contra los depósitos elegibles; la base lo revalida bajo bloqueo. */
+  depositosPendiente?: Record<string, string>;
   /** E1: huella del dInfAdic (observaciones + vendedor) que el operador REVISÓ (la devuelve la previa). Si al emitir el texto que el servidor compondría es otro (cambió el nombre del vendedor), se exige revisar de nuevo. */
   infoAdicionalHuella?: string;
   /** PRO-328: huella del domicilio del receptor REVISADO (dirección seleccionada o fiscal, tal como irá en el JSON; la devuelve la previa). Obligatoria al crear una FE nueva: si cambió, se exige revisar de nuevo. */
@@ -228,6 +232,10 @@ export function leerCuerpoFactura(c: Record<string, unknown>): CuerpoFactura | s
   if (typeof descuentoGlobal === "string") return descuentoGlobal;
   if (c.direccionEntregaId !== undefined && c.direccionEntregaId !== null && !(typeof c.direccionEntregaId === "string" && UUID.test(c.direccionEntregaId))) return "La dirección de entrega no es válida.";
 
+  const depositosPendiente = leerDepositosPendiente(c.depositosPendiente);
+
+  if (depositosPendiente === null) return "El depósito del faltante de stock no es válido.";
+
   if (typeof c.vendedorId !== "string" || !UUID.test(c.vendedorId)) return "Seleccione el vendedor.";
   if (c.fechaEmision !== undefined && c.fechaEmision !== null && fechaIsoValida(c.fechaEmision) === null) return "La fecha de emisión no es válida.";
 
@@ -264,6 +272,7 @@ export function leerCuerpoFactura(c: Record<string, unknown>): CuerpoFactura | s
     ...(descuentoGlobal ? { descuentoGlobal } : {}),
     ...(typeof c.direccionEntregaId === "string" ? { direccionEntregaId: c.direccionEntregaId } : {}),
     ...(typeof c.repartoHuella === "string" && /^[0-9a-f]{64}$/.test(c.repartoHuella) ? { repartoHuella: c.repartoHuella } : {}),
+    ...(Object.keys(depositosPendiente).length > 0 ? { depositosPendiente } : {}),
     vendedorId: c.vendedorId,
     ...(typeof c.fechaEmision === "string" ? { fechaEmision: c.fechaEmision } : {}),
     ...(typeof c.infoAdicionalHuella === "string" && /^[0-9a-f]{64}$/.test(c.infoAdicionalHuella) ? { infoAdicionalHuella: c.infoAdicionalHuella } : {}),
@@ -763,20 +772,29 @@ export async function crearFacturaElectronica(db: Db, empresaId: string, usuario
   // E02: control y baja de stock en la MISMA transacción que la FE (fe_documento_crear_fe_con_stock). Una repetición de la misma clave (doble clic, respuesta perdida, reintento) NO vuelve a evaluar el stock:
   // la FE ya existe y el stock ya se bajó; PostgreSQL devuelve el documento existente sin tocar inventario.
   let asignaciones: ReturnType<typeof asignacionesSql> = [];
+  // PRO-354-R02: faltante pendiente (solo si la política de la EMPRESA, leída de la base, permite facturar con stock insuficiente). Vacío = camino de siempre.
+  let pendientes: ReturnType<typeof pendientesSql> = [];
 
   if (!documentoExistente && lineasStock.some((l) => l.controlaStock)) {
-    const plan = await planificarStock(db, empresaId, usuarioId, cuerpo.sucursalId, lineasStock);
+    const plan = await planificarStockConPolitica(db, empresaId, usuarioId, cuerpo.sucursalId, lineasStock, cuerpo.depositosPendiente ?? {});
 
-    if (!plan.suficiente) throw new ErrorFacturacion(409, mensajeStockInsuficiente(plan));
+    if (!plan.emitible) throw new ErrorFacturacion(409, mensajePlanNoEmitible(plan));
     // El reparto que se baja es EXACTAMENTE el que el operador revisó; si el stock cambió y el reparto ya no coincide, se exige revisar de nuevo (no se sustituye en silencio).
-    if (plan.salidas.length > 0 && cuerpo.repartoHuella !== plan.huella) throw new ErrorFacturacion(409, MENSAJE_REPARTO_CAMBIO);
+    // Con faltante la huella incluye la política, las salidas y los pendientes con su depósito, y es obligatoria aunque no haya salida inmediata (disponible cero).
+    if ((plan.salidas.length > 0 || plan.pendientes.length > 0) && cuerpo.repartoHuella !== plan.huella) throw new ErrorFacturacion(409, MENSAJE_REPARTO_CAMBIO);
     asignaciones = asignacionesSql(plan);
+    pendientes = pendientesSql(plan);
   }
 
   const documento = receptor.naturaleza === 1 ? `${receptor.ruc}-${receptor.dv}` : receptor.numeroDocumento;
+  const parametros = [empresaId, usuarioId, cuerpo.sucursalId, cuerpo.puntoId, cuerpo.claveIdempotencia, cuerpo.clienteId, documento, receptor.razonSocial, totalTexto, JSON.stringify(payload), cuerpo.moneda ?? "PYG", JSON.stringify(asignaciones), cuerpo.direccionEntregaId ?? null, cuerpo.vendedorId];
+  // PRO-354-R02: con faltante, la emisión pasa por fe_documento_crear_fe_stock_pendiente (NEX-081), que envuelve fe_documento_crear_fe_receptor y revalida la política (FALSE) bajo bloqueo. Sin faltante, el camino de siempre.
   const llamar = () =>
-    db.query(`SELECT o_documento_id AS "documentoId", o_numero AS numero, o_reutilizado AS reutilizado FROM ${conReceptor ? "fe_documento_crear_fe_receptor" : "fe_documento_crear_fe_vendedor"}($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5, $6::uuid, $7, $8, $11, $9::numeric, $10::jsonb, $12::jsonb, $13::uuid, $14::uuid)`,
-      [empresaId, usuarioId, cuerpo.sucursalId, cuerpo.puntoId, cuerpo.claveIdempotencia, cuerpo.clienteId, documento, receptor.razonSocial, totalTexto, JSON.stringify(payload), cuerpo.moneda ?? "PYG", JSON.stringify(asignaciones), cuerpo.direccionEntregaId ?? null, cuerpo.vendedorId]);
+    pendientes.length > 0
+      ? db.query(`SELECT o_documento_id AS "documentoId", o_numero AS numero, o_reutilizado AS reutilizado FROM fe_documento_crear_fe_stock_pendiente($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5, $6::uuid, $7, $8, $11, $9::numeric, $10::jsonb, $12::jsonb, $13::uuid, $14::uuid, $15::jsonb, false)`,
+        [...parametros, JSON.stringify(pendientes)])
+      : db.query(`SELECT o_documento_id AS "documentoId", o_numero AS numero, o_reutilizado AS reutilizado FROM ${conReceptor ? "fe_documento_crear_fe_receptor" : "fe_documento_crear_fe_vendedor"}($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5, $6::uuid, $7, $8, $11, $9::numeric, $10::jsonb, $12::jsonb, $13::uuid, $14::uuid)`,
+        parametros);
 
   try {
     return (await llamar()).rows[0] as F;

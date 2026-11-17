@@ -572,6 +572,14 @@ export function respuestaErrorFacturacion(error: unknown, accion: string) {
   if (pg.detail === "NEX:ENTREGA_REQUERIDA") return NextResponse.json({ error: "El cliente tiene direcciones de entrega registradas: seleccione la dirección de entrega." }, { status: 409 });
   if (pg.detail === "NEX:ENTREGA_INVALIDA") return NextResponse.json({ error: "La dirección de entrega elegida no pertenece al cliente seleccionado o ya no está disponible. Revise la factura de nuevo." }, { status: 409 });
   if (pg.detail === "NEX:STOCK_INSUFICIENTE") return NextResponse.json({ error: `${pg.message ?? "Stock insuficiente."}. Revise la factura de nuevo.` }, { status: 409 });
+  // PRO-354-R02 (NEX-081): política de stock insuficiente por empresa y bajas pendientes.
+  if (pg.detail === "NEX:STOCK_POLITICA_CAMBIO") return NextResponse.json({ error: "La política de stock insuficiente de la empresa cambió desde la revisión. Revise la factura de nuevo." }, { status: 409 });
+  if (pg.detail && /^NEX:(STOCK_PENDIENTE_LOTE|STOCK_PENDIENTE_CON_DISPONIBLE|PENDIENTE_FE_NO_CONFIRMABLE|POLITICA_STOCK_INVALIDA)$/.test(pg.detail)) {
+    return NextResponse.json({ error: pg.message ?? "La operación de stock no cumple las reglas vigentes." }, { status: 409 });
+  }
+  if (pg.detail === "NEX:PENDIENTE_NO_ENCONTRADO") return NextResponse.json({ error: "La baja pendiente no existe." }, { status: 404 });
+  if (pg.detail === "NEX:STOCK_PENDIENTE_INVALIDO") return NextResponse.json({ error: "El faltante de stock ya no es válido. Revise la factura de nuevo." }, { status: 409 });
+  if (pg.detail === "NEX:MOVIMIENTO_VINCULADO_FE") return NextResponse.json({ error: pg.message ?? "El movimiento está vinculado a una factura electrónica y no se puede anular." }, { status: 409 });
   if (pg.detail && /^NEX:STOCK_(REPARTO_INVALIDO|DEPOSITO_NO_AUTORIZADO|PAYLOAD_INVALIDO)$/.test(pg.detail)) return NextResponse.json({ error: "El reparto de stock ya no es válido (depósitos o cantidades cambiaron). Revise la factura de nuevo." }, { status: 409 });
   if (pg.detail && /^NEX:(YA_ENVIADO|ENVIO_INDETERMINADO|ENVIO_EN_CURSO|REENVIO_REQUIERE_CONFIRMACION|TIPO_NO_ENVIABLE|SIN_SOLICITUD|ENVIO_NO_INICIADO)$/.test(pg.detail)) {
     return NextResponse.json({ error: pg.message ?? "El documento no se puede enviar en su estado actual." }, { status: 409 });

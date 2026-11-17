@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import ui from "@/components/ui/lista-padrao/lista.module.css";
 
 import estilos from "./page.module.css";
+import { PoliticaStockInsuficiente } from "./politica-stock";
 
 type Estado = "OK" | "CREDENCIALES_INVALIDAS" | "NO_DISPONIBLE" | "TIMEOUT";
 type Configuracion = {
@@ -259,6 +260,9 @@ export default function ConfiguracionFacturacionPage() {
           ) : null}
         </>
       ) : null}
+
+      {/* PRO-354-R02: política de la EMPRESA, independiente de las credenciales del gateway. */}
+      <PoliticaStockInsuficiente />
     </section>
   );
 }

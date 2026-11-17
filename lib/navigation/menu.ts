@@ -176,6 +176,13 @@ export const NAVIGATION_GROUPS: ShellNavigationGroup[] = [
         permission: "INVENTARIO.VER",
       },
       {
+        id: "stock-pending-outflows",
+        label: "Bajas pendientes de stock",
+        href: "/stock/bajas-pendientes",
+        icon: "stock",
+        permission: "STOCK.VER",
+      },
+      {
         id: "replenishment",
         label: "Reposición",
         href: "/reposicion",
@@ -422,6 +429,7 @@ const V1_HREFS = new Set([
   "/catalogos-comerciales",
   "/catalogos-comerciales/nuevo",
   "/stock",
+  "/stock/bajas-pendientes",
   "/reposicion",
   "/depositos",
   "/documentos",

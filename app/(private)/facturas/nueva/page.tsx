@@ -24,7 +24,7 @@ import { resumenCalculo, type LineaFE } from "@/lib/facturacion/payload-fe";
 import { crearFlujoRevision, type Revision } from "@/lib/facturacion/revision-factura";
 import { numeracionSiguiente, textoNumeracion } from "@/lib/facturacion/series";
 import { formatearDecimalTexto } from "@/lib/formato/decimal-texto";
-import { crearVerificadorStock, pedirDisponibilidad, textoInsuficiente, vistaStock, type AvisoStock, type BorradorStock } from "@/lib/facturacion/stock-preventivo";
+import { crearVerificadorStock, eleccionesVigentes, pedirDisponibilidad, textoFaltantePendiente, textoInsuficiente, vistaStock, type AvisoStock, type BorradorStock } from "@/lib/facturacion/stock-preventivo";
 import { formatearFechaPy } from "@/lib/formato/listas";
 import { registrarAnadido, type UltimoAnadido } from "@/lib/facturacion/seleccion-cantidad";
 import { agregarSiCabe, ALTA_BLOQUEADA, leerMaximoApi, mensajeAltaBloqueada, puedeAgregarLinea, textoContadorLineas } from "@/lib/facturacion/limite-lineas";
@@ -84,7 +84,11 @@ type Resumen = {
   totales: { exento: number; exonerado: number; gravado5: number; gravado10: number; iva5: number; iva10: number; totalIva: number; total: number };
   totalesTexto?: { exento: string; exonerado: string; gravado5: string; gravado10: string; iva5: string; iva10: string; totalIva: string; total: string };
   /** E02: reparto automático del stock por depósito (solo productos que controlan stock) y su huella, que se envía al emitir. */
-  stock?: { huella: string; lineas: Array<{ codigo: string; descripcion: string; requerido: string; salidas: Array<{ depositoCodigo: string; depositoNombre: string; loteCodigo: string | null; cantidad: string }> }> };
+  stock?: {
+    huella: string; lineas: Array<{ codigo: string; descripcion: string; requerido: string; salidas: Array<{ depositoCodigo: string; depositoNombre: string; loteCodigo: string | null; cantidad: string }> }>;
+    /** PRO-354-R02: la empresa permite facturar con stock insuficiente; faltante que queda como baja pendiente (por producto y depósito). */
+    permitirFaltante?: boolean; pendientes?: Array<{ productoId: string; codigo: string; descripcion: string; depositoCodigo: string; depositoNombre: string; cantidad: string }>;
+  };
 };
 type FaseEnvio = { fase: string; ok: boolean; detalle: string; http?: number | null };
 type ResultadoEnvio = {
@@ -555,7 +559,27 @@ function BuscadorProducto({ alElegir, permisos, moneda, accion }: { alElegir: (p
 }
 
 // PRO-330: aviso de stock en la propia línea. Insuficiencia (alerta), verificación en curso y error técnico se distinguen; sin control de stock no se muestra nada.
-function AvisoStockLinea({ aviso, alReintentar }: { aviso: AvisoStock; alReintentar: () => void }) {
+function AvisoStockLinea({ aviso, alReintentar, alElegirDeposito }: { aviso: AvisoStock; alReintentar: () => void; alElegirDeposito: (depositoId: string) => void }) {
+  // PRO-354-R02: la empresa permite facturar con faltante. Se informa lo que se descuenta ahora y lo que queda pendiente; con varios depósitos elegibles, el operador elige dónde queda el pendiente.
+  if (aviso.tipo === "FALTANTE_PENDIENTE") {
+    return (
+      <small className={aviso.bloqueo !== null || aviso.depositoId === null ? estilos.stockInsuficiente : estilos.stockVerificando} role={aviso.bloqueo !== null ? "alert" : "status"}>
+        <span className="sr-only">{aviso.codigo} {aviso.descripcion}: </span>{textoFaltantePendiente(aviso)}.{" "}
+        {aviso.bloqueo === "LOTE" ? "El producto controla lotes: su faltante no puede quedar pendiente."
+          : aviso.bloqueo === "SIN_DEPOSITO" ? "No hay un depósito propio y activo de la sucursal, dentro de su alcance, para registrar el pendiente."
+            : aviso.depositos.length === 1 ? `Pendiente en ${aviso.depositos[0].codigo} ${aviso.depositos[0].nombre}.`
+              : (
+                <label>
+                  Depósito del pendiente:{" "}
+                  <select value={aviso.depositoId ?? ""} onChange={(ev) => alElegirDeposito(ev.target.value)} aria-label={`Depósito del faltante pendiente de ${aviso.codigo}`}>
+                    <option value="">Seleccione…</option>
+                    {aviso.depositos.map((d) => <option key={d.id} value={d.id}>{d.codigo} {d.nombre}</option>)}
+                  </select>
+                </label>
+              )}
+      </small>
+    );
+  }
   if (aviso.tipo === "INSUFICIENTE") {
     return (
       <small className={estilos.stockInsuficiente} role="alert">
@@ -648,6 +672,8 @@ export default function NuevaFacturaPage() {
   const [hoy, setHoy] = useState("");
   const [revisando, setRevisando] = useState(false);
   const [errores, setErrores] = useState<string[]>([]);
+  // PRO-354-R02: depósito elegido para el faltante pendiente por producto (solo cuenta si el aviso vigente lo ofrece; el servidor y la base lo revalidan).
+  const [eleccionesFaltante, setEleccionesFaltante] = useState<Record<string, string>>({});
   // FAT-D02: la revisión fija el cuerpo validado por el servidor; «Enviar» usa ese mismo cuerpo y se invalida ante cualquier cambio.
   const [revision, setRevision] = useState<Revision<Resumen> | null>(null);
   const [enviando, setEnviando] = useState(false);
@@ -757,7 +783,8 @@ export default function NuevaFacturaPage() {
   const borradorStock: BorradorStock = { sucursalId, clienteId: clienteIdActual, lineas: lineas.map((l) => ({ productoId: l.producto.id, cantidad: l.cantidad, controlaStock: l.producto.controlaStock })) };
   const claveStock = JSON.stringify(borradorStock);
   // Calculada contra el borrador ACTUAL en cada render: un resultado de otra firma cuenta como «verificando», nunca como stock confirmado.
-  const vista = vistaStock(estadoStock, borradorStock);
+  const vista = vistaStock(estadoStock, borradorStock, eleccionesFaltante);
+  const depositosPendiente = eleccionesVigentes(vista.avisos, eleccionesFaltante);
   const calculo = resumenCalculo(lineas.map((l) => aLineaFE(l, moneda)), descuentoGeneralFE);
   const extranjera = moneda !== "PYG";
   const cambioNormal = extranjera ? leerCambio(cambio) : null;
@@ -965,6 +992,7 @@ export default function NuevaFacturaPage() {
   const cuerpoFactura = () => ({
     claveIdempotencia: clave, sucursalId, puntoId, clienteId: cliente?.id, vendedorId: vendedor?.id, tipoTransaccion: Number(tipoTransaccion), presencia: Number(presencia), ...(fechaEmision ? { fechaEmision } : {}), moneda, ...(extranjera ? { cambio } : {}),
     pagos: hayPagos ? pagos.map((p) => pagoParaEnvio(p, pagos.length === 1)) : [], condicion: Number(condicion), ...(enCredito ? { credito: creditoParaEnvio(credito) } : {}), infoAdicional, ...(descuentoGeneralFE ? { descuentoGlobal: descuentoGeneralFE } : {}), ...(direccionEntregaId ? { direccionEntregaId } : {}),
+    ...(Object.keys(depositosPendiente).length > 0 ? { depositosPendiente } : {}),
     lineas: lineas.map((l) => {
       const ajuste = ajusteParaEnvio(l.producto, l.ajuste);
       const descuento = descuentoDe(l.descuento);
@@ -1415,7 +1443,7 @@ export default function NuevaFacturaPage() {
 
                         return (
                           <Fragment key={l.clave}>
-                          <tr data-linea={l.clave} className={[!cantOk || !precOk || pr.length > 0 ? estilos.filaInvalida : "", avisoStock.tipo === "INSUFICIENTE" ? estilos.filaSinStock : "", seleccionada ? estilos.filaSeleccionada : ""].filter(Boolean).join(" ") || undefined}>
+                          <tr data-linea={l.clave} className={[!cantOk || !precOk || pr.length > 0 ? estilos.filaInvalida : "", avisoStock.tipo === "INSUFICIENTE" || (avisoStock.tipo === "FALTANTE_PENDIENTE" && avisoStock.bloqueo !== null) ? estilos.filaSinStock : "", seleccionada ? estilos.filaSeleccionada : ""].filter(Boolean).join(" ") || undefined}>
                             <td className={estilos.orden} data-label="N°">{ordinalLinea(i)}</td>
                             <td className={estilos.prod} data-label="Producto">
                               <strong title={l.producto.descripcion}>{l.producto.descripcion}</strong>
@@ -1430,7 +1458,7 @@ export default function NuevaFacturaPage() {
                                   {puedeAjustarFiscal ? "Completar: " : "No facturable: "}{pr.join(", ")}
                                 </small>
                               ) : null}
-                              <AvisoStockLinea aviso={avisoStock} alReintentar={() => stockCtl.reintentar()} />
+                              <AvisoStockLinea aviso={avisoStock} alReintentar={() => stockCtl.reintentar()} alElegirDeposito={(d) => setEleccionesFaltante((e) => ({ ...e, [l.producto.id]: d }))} />
                             </td>
                             <td data-label="IVA">
                               {puedeAjustarFiscal ? (
@@ -1788,16 +1816,22 @@ export default function NuevaFacturaPage() {
 
               {resumen.stock && resumen.stock.lineas.length > 0 ? (
                 <details className={estilos.stockSalida}>
-                  <summary>Salida de stock por depósito · {resumenStockCompacto(resumen.stock.lineas).texto}</summary>
+                  <summary>Salida de stock por depósito · {resumenStockCompacto(resumen.stock.lineas).texto}{(resumen.stock.pendientes ?? []).length > 0 ? ` · Baja pendiente en ${(resumen.stock.pendientes ?? []).length} producto${(resumen.stock.pendientes ?? []).length === 1 ? "" : "s"}` : ""}</summary>
                   <ul>
                     {resumen.stock.lineas.map((l) => (
                       <li key={l.codigo}>
                         <strong>{l.descripcion}</strong> ({l.codigo}) · {fd(l.requerido)}:{" "}
-                        {l.salidas.map((s) => `${s.depositoCodigo} ${s.depositoNombre}${s.loteCodigo ? ` · lote ${s.loteCodigo}` : ""}: ${fd(s.cantidad)}`).join(" + ")}
+                        {l.salidas.length > 0 ? l.salidas.map((s) => `${s.depositoCodigo} ${s.depositoNombre}${s.loteCodigo ? ` · lote ${s.loteCodigo}` : ""}: ${fd(s.cantidad)}`).join(" + ") : "sin salida inmediata"}
+                        {(resumen.stock?.pendientes ?? []).filter((p) => p.codigo === l.codigo).map((p) => ` · queda pendiente ${fd(p.cantidad)} en ${p.depositoCodigo} ${p.depositoNombre}`).join("")}
                       </li>
                     ))}
                   </ul>
                   <small className={estilos.hint}>El stock se descuenta de estos depósitos al enviar la factura.</small>
+                  {(resumen.stock.pendientes ?? []).length > 0 ? (
+                    <small className={estilos.hint} role="note">
+                      La empresa permite facturar con stock insuficiente: el faltante queda como «baja pendiente de stock» y se confirma manualmente en Inventario cuando haya stock disponible.
+                    </small>
+                  ) : null}
                 </details>
               ) : null}
 

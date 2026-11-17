@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { prepararFacturacion } from "@/lib/facturacion/servidor";
+import { leerContextoFaltante, leerPoliticaStock } from "@/lib/facturacion/politica-stock";
 import { ErrorFacturacion, respuestaErrorFacturacion } from "@/lib/facturacion/shared";
 import { consultarDisponibilidadEnLotes, evaluarDisponibilidadPreventiva } from "@/lib/facturacion/stock-fe";
 import { LIMITE_CUERPO_DISPONIBILIDAD, leerSolicitudDisponibilidad, lineasParaStock, productosParaStock, sucursalParaStock } from "@/lib/facturacion/stock-preventivo";
@@ -14,7 +15,8 @@ const sinCache = (r: NextResponse) => {
 };
 
 // PRO-330: verificación ANTICIPADA de stock al cargar líneas de «Nueva factura». SOLO LECTURA: no escribe, no reserva, no numera y no firma reparto; la previa y la emisión revalidan todo.
-// Empresa y usuario salen de la sesión; sucursal, productos y `controla_stock` se leen de la base. Responde solo requerido/disponible/faltante por producto (sin depósitos, lotes ni costos).
+// Empresa y usuario salen de la sesión; sucursal, productos y `controla_stock` se leen de la base. Responde solo requerido/disponible/faltante por producto (sin depósitos, lotes ni costos), salvo
+// PRO-354-R02: si la empresa permite facturar con faltante, también los depósitos elegibles para el pendiente (sin saldos ni costos).
 export async function POST(request: Request) {
   const b = await prepararFacturacion("CREAR");
 
@@ -47,7 +49,20 @@ export async function POST(request: Request) {
     // Solo los productos que controlan stock (según la base) consultan saldo, en tandas de ≤ 500 UUID; los servicios quedan SIN_CONTROL.
     const saldos = await consultarDisponibilidadEnLotes(b.db, b.empresaId, b.usuarioId, solicitud.sucursalId, lineas.filter((l) => l.controlaStock).map((l) => l.productoId));
 
-    return json({ sucursalId: solicitud.sucursalId, ...evaluarDisponibilidadPreventiva(lineas, saldos) });
+    const evaluacion = evaluarDisponibilidadPreventiva(lineas, saldos);
+    const insuficientes = evaluacion.productos.filter((p) => p.estado === "INSUFICIENTE").map((p) => p.productoId);
+
+    // PRO-354-R02: con insuficiencia, la política de la EMPRESA (leída de la base) dice si el faltante puede quedar pendiente. Solo entonces se informan los depósitos elegibles (código y nombre,
+    // sin saldos) y qué productos controlan lotes (su faltante se bloquea). Con la política TRUE la respuesta es la de siempre.
+    if (insuficientes.length > 0 && !(await leerPoliticaStock(b.db, b.empresaId)).bloquear) {
+      const contexto = await leerContextoFaltante(b.db, b.empresaId, b.usuarioId, solicitud.sucursalId, insuficientes);
+
+      if (!contexto.bloquear) {
+        return json({ sucursalId: solicitud.sucursalId, ...evaluacion, faltantePendiente: { depositos: contexto.depositos, conLote: insuficientes.filter((id) => contexto.conLote.has(id)) } });
+      }
+    }
+
+    return json({ sucursalId: solicitud.sucursalId, ...evaluacion });
   } catch (error) {
     if (error instanceof ErrorFacturacion || (error as { code?: string }).code === "42501") return sinCache(respuestaErrorFacturacion(error, "verificar el stock del"));
     console.error("Error al verificar el stock de la factura:", error);

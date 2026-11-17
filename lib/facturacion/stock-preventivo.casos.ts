@@ -374,7 +374,7 @@ export async function verificarCasosStockPreventivo(): Promise<string[]> {
     const fe = leer("lib/facturacion/stock-fe.ts");
     const plan = fe.slice(fe.indexOf("export async function planificarStock"), fe.indexOf("export const asignacionesSql"));
 
-    cierto("PRO330-54 la previa conserva su consulta real, el bloqueo 409 por insuficiencia y el resumen con la huella del reparto", /planificarStock\(b\.db, b\.empresaId, b\.usuarioId, datos\.sucursalId, lineasStock\)/.test(previa) && /if \(!plan\.suficiente\) throw new ErrorFacturacion\(409, mensajeStockInsuficiente\(plan\)\)/.test(previa) && /stock: resumenStock\(plan\)/.test(previa));
+    cierto("PRO330-54 (PRO-354-R02: vía planificarStockConPolitica, que con TRUE devuelve exactamente asignarStock) la previa conserva su consulta real, el bloqueo 409 por insuficiencia y el resumen con la huella del reparto", /planificarStockConPolitica\(b\.db, b\.empresaId, b\.usuarioId, datos\.sucursalId, lineasStock, datos\.depositosPendiente \?\? \{\}\)/.test(previa) && /if \(!plan\.emitible\) throw new ErrorFacturacion\(409, mensajePlanNoEmitible\(plan\)\)/.test(previa) && /stock: resumenStockPolitica\(plan\)/.test(previa));
     cierto("PRO330-55 planificarStock (R01-F001): misma forma (sin controladas → asignarStock vacío; saldos → asignarStock), ahora leyendo en tandas de ≤ 500", /const controladas = lineas\.filter\(\(l\) => l\.controlaStock\);/.test(plan) && /if \(controladas\.length === 0\) return asignarStock\(\[\], \[\]\);/.test(plan) && /const saldos = await consultarDisponibilidadEnLotes\(db, empresaId, usuarioId, sucursalId, controladas\.map\(\(l\) => l\.productoId\)\);/.test(plan) && !/await consultarDisponibilidad\(/.test(plan) && /return asignarStock\(lineas, saldos\);/.test(plan));
     cierto("PRO330-56 la emisión sigue exigiendo y validando repartoHuella", /repartoHuella/.test(leer("lib/facturacion/emision.ts")) && /MENSAJE_REPARTO_CAMBIO/.test(leer("lib/facturacion/emision.ts")));
   }
@@ -401,7 +401,7 @@ export async function verificarCasosStockPreventivo(): Promise<string[]> {
         && /const nuevas = cambio\(lineasActuales\.current\);\s*lineasActuales\.current = nuevas;\s*setLineas\(nuevas\);/.test(pag)
         && /const borradorStock: BorradorStock = \{ sucursalId, clienteId: clienteIdActual, lineas: lineas\.map\(\(l\) => \(\{ productoId: l\.producto\.id, cantidad: l\.cantidad, controlaStock: l\.producto\.controlaStock \}\)\) \};/.test(pag));
     }
-    cierto("PRO330-62 pantalla: la fila insuficiente se destaca con estilo propio y el CSS define los cuatro avisos", /avisoStock\.tipo === "INSUFICIENTE" \? estilos\.filaSinStock/.test(pag) && ["filaSinStock", "stockInsuficiente", "stockVerificando", "stockError", "stockOk"].every((c) => new RegExp("\\." + c + "\\b").test(leer("app/(private)/facturas/nueva/page.module.css"))));
+    cierto("PRO330-62 (PRO-354-R02: también el faltante bloqueado) pantalla: la fila insuficiente se destaca con estilo propio y el CSS define los cuatro avisos", /avisoStock\.tipo === "INSUFICIENTE" \|\| \(avisoStock\.tipo === "FALTANTE_PENDIENTE" && avisoStock\.bloqueo !== null\) \? estilos\.filaSinStock/.test(pag) && ["filaSinStock", "stockInsuficiente", "stockVerificando", "stockError", "stockOk"].every((c) => new RegExp("\\." + c + "\\b").test(leer("app/(private)/facturas/nueva/page.module.css"))));
     cierto("PRO330-63 módulo de la pantalla sin dependencias de Node (no importa valores de stock-fe ni node:)", (() => {
       const m = leer("lib/facturacion/stock-preventivo.ts");
 

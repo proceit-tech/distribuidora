@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { leerCuerpoFactura, prepararFactura } from "@/lib/facturacion/emision";
-import { mensajeStockInsuficiente, planificarStock, resumenStock } from "@/lib/facturacion/stock-fe";
+import { mensajePlanNoEmitible, planificarStockConPolitica, resumenStockPolitica } from "@/lib/facturacion/politica-stock";
 import { prepararFacturacion } from "@/lib/facturacion/servidor";
 import { ErrorFacturacion, respuestaErrorFacturacion } from "@/lib/facturacion/shared";
 
@@ -27,11 +27,12 @@ export async function POST(request: Request) {
   try {
     const { resumen, lineasStock } = await prepararFactura(b.db, b.empresaId, b.usuarioId, datos);
     // E02: el reparto por depósito se calcula y se MUESTRA aquí (sin reservar ni bajar nada); con stock insuficiente la revisión se bloquea.
-    const plan = await planificarStock(b.db, b.empresaId, b.usuarioId, datos.sucursalId, lineasStock);
+    // PRO-354-R02: si la política de la EMPRESA (leída de la base) permite facturar con stock insuficiente, la revisión muestra la salida inmediata y el faltante pendiente por depósito.
+    const plan = await planificarStockConPolitica(b.db, b.empresaId, b.usuarioId, datos.sucursalId, lineasStock, datos.depositosPendiente ?? {});
 
-    if (!plan.suficiente) throw new ErrorFacturacion(409, mensajeStockInsuficiente(plan));
+    if (!plan.emitible) throw new ErrorFacturacion(409, mensajePlanNoEmitible(plan));
 
-    return NextResponse.json({ resumen: plan.lineas.length > 0 ? { ...resumen, stock: resumenStock(plan) } : resumen });
+    return NextResponse.json({ resumen: plan.lineas.length > 0 ? { ...resumen, stock: resumenStockPolitica(plan) } : resumen });
   } catch (error) {
     return respuestaErrorFacturacion(error, "revisar");
   }

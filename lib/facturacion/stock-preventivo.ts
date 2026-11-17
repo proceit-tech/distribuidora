@@ -24,7 +24,9 @@ export const LIMITE_CUERPO_DISPONIBILIDAD = 256 * 1024;
 export const ESPERA_VERIFICACION_MS = 200;
 
 export type SolicitudDisponibilidad = { sucursalId: string; lineas: Array<{ productoId: string; cantidad: string }> };
-export type RespuestaDisponibilidad = { sucursalId: string; suficiente: boolean; productos: ProductoStockPreventivo[] };
+/** PRO-354-R02: presente SOLO si la empresa permite facturar con stock insuficiente y hay algún producto insuficiente: depósitos elegibles para el faltante y productos con lotes (bloqueados). */
+export type FaltantePendiente = { depositos: Array<{ id: string; codigo: string; nombre: string }>; conLote: string[] };
+export type RespuestaDisponibilidad = { sucursalId: string; suficiente: boolean; productos: ProductoStockPreventivo[]; faltantePendiente?: FaltantePendiente };
 export type ProductoParaStock = { id: string; codigo: string; descripcion: string; controlaStock: boolean };
 
 const MAL = "Los datos enviados no son válidos.";
@@ -138,7 +140,22 @@ export function respuestaCoherente(r: unknown, s: SolicitudDisponibilidad): r is
     vistos.add(p.productoId);
   }
 
-  return vistos.size === pedidos.size;
+  return vistos.size === pedidos.size && faltanteCoherente(r.faltantePendiente, pedidos);
+}
+
+/** PRO-354-R02: si viene, el bloque del faltante debe tener depósitos {id UUID, código, nombre} únicos y productos con lote que fueron pedidos. */
+function faltanteCoherente(v: unknown, pedidos: Set<string>): boolean {
+  if (v === undefined) return true;
+  if (!esObjeto(v) || !Array.isArray(v.depositos) || !Array.isArray(v.conLote)) return false;
+
+  const ids = new Set<string>();
+
+  for (const d of v.depositos as unknown[]) {
+    if (!esObjeto(d) || typeof d.id !== "string" || !UUID.test(d.id) || ids.has(d.id) || typeof d.codigo !== "string" || typeof d.nombre !== "string") return false;
+    ids.add(d.id);
+  }
+
+  return (v.conLote as unknown[]).every((x) => typeof x === "string" && pedidos.has(x));
 }
 
 export async function pedirDisponibilidad(s: SolicitudDisponibilidad, signal: AbortSignal, fetchFn: typeof fetch = fetch): Promise<RespuestaDisponibilidad> {
@@ -265,17 +282,26 @@ export type AvisoStock =
   | { tipo: "ERROR"; mensaje: string }
   | { tipo: "CANTIDAD_INVALIDA" }
   | { tipo: "SUFICIENTE"; requerido: string; disponible: string }
-  | { tipo: "INSUFICIENTE"; codigo: string; descripcion: string; requerido: string; disponible: string; faltante: string };
+  | { tipo: "INSUFICIENTE"; codigo: string; descripcion: string; requerido: string; disponible: string; faltante: string }
+  /**
+   * PRO-354-R02: la empresa permite facturar con faltante. Se descuenta el disponible y el resto queda pendiente en `depositoId`.
+   * `bloqueo` LOTE / SIN_DEPOSITO impide revisar; `depositoId` null con varios depósitos exige elegir.
+   */
+  | {
+    tipo: "FALTANTE_PENDIENTE"; codigo: string; descripcion: string; requerido: string; disponible: string; faltante: string;
+    depositos: FaltantePendiente["depositos"]; depositoId: string | null; bloqueo: "LOTE" | "SIN_DEPOSITO" | null;
+  };
 
 /**
  * Vista para la pantalla, calculada en CADA render contra el borrador ACTUAL: un estado cuya firma no es la vigente cuenta como VERIFICANDO (nunca un verde de otro borrador).
  * `pendiente` bloquea «Revisar y confirmar» con insuficiencia, verificación en curso/vencida o error; sin nada que verificar (solo servicios, sin sucursal) no bloquea por stock.
  */
-export function vistaStock(estado: EstadoVerificacion, b: BorradorStock): { avisos: Map<string, AvisoStock>; pendiente: string } {
+export function vistaStock(estado: EstadoVerificacion, b: BorradorStock, elecciones: Record<string, string> = {}): { avisos: Map<string, AvisoStock>; pendiente: string } {
   const { firma, solicitud, invalidas } = prepararVerificacion(b);
   const avisos = new Map<string, AvisoStock>();
   const actual = firma !== null && estado.firma === firma ? estado : null;
   const faltantes: string[] = [];
+  const porElegir: string[] = [];
 
   for (const id of invalidas) avisos.set(id, { tipo: "CANTIDAD_INVALIDA" });
   for (const l of solicitud?.lineas ?? []) {
@@ -294,7 +320,19 @@ export function vistaStock(estado: EstadoVerificacion, b: BorradorStock): { avis
     if (!p) avisos.set(l.productoId, { tipo: "VERIFICANDO" });
     else if (p.estado === "SIN_CONTROL") avisos.set(l.productoId, { tipo: "NINGUNO" });
     else if (p.estado === "SUFICIENTE") avisos.set(l.productoId, { tipo: "SUFICIENTE", requerido: p.requerido, disponible: p.disponible ?? "0" });
-    else {
+    else if (actual.resultado.faltantePendiente) {
+      // PRO-354-R02: faltante permitido por la empresa. Solo bloquea si el producto controla lotes, no hay depósito elegible o hay que elegir entre varios.
+      const fp = actual.resultado.faltantePendiente;
+      const bloqueo = fp.conLote.includes(l.productoId) ? "LOTE" : fp.depositos.length === 0 ? "SIN_DEPOSITO" : null;
+      const depositoId = bloqueo !== null ? null : fp.depositos.find((d) => d.id === elecciones[l.productoId])?.id ?? (fp.depositos.length === 1 ? fp.depositos[0].id : null);
+
+      avisos.set(l.productoId, {
+        tipo: "FALTANTE_PENDIENTE", codigo: p.codigo, descripcion: p.descripcion, requerido: p.requerido, disponible: p.disponible ?? "0", faltante: p.faltante ?? "0",
+        depositos: fp.depositos, depositoId, bloqueo,
+      });
+      if (bloqueo !== null) faltantes.push(`${p.codigo} (faltan ${formatearDecimalTexto(p.faltante)}; ${bloqueo === "LOTE" ? "controla lotes" : "sin depósito para el pendiente"})`);
+      else if (depositoId === null) porElegir.push(p.codigo);
+    } else {
       avisos.set(l.productoId, { tipo: "INSUFICIENTE", codigo: p.codigo, descripcion: p.descripcion, requerido: p.requerido, disponible: p.disponible ?? "0", faltante: p.faltante ?? "0" });
       faltantes.push(`${p.codigo} (faltan ${formatearDecimalTexto(p.faltante)})`);
     }
@@ -304,9 +342,25 @@ export function vistaStock(estado: EstadoVerificacion, b: BorradorStock): { avis
   const pendiente = faltantes.length > 0
     ? `corregir el stock insuficiente: ${faltantes.join(", ")}`
     : tipos.includes("ERROR") ? "reintentar la verificación de stock"
-      : tipos.includes("VERIFICANDO") ? "esperar la verificación de stock" : "";
+      : tipos.includes("VERIFICANDO") ? "esperar la verificación de stock"
+        : porElegir.length > 0 ? `elegir el depósito del faltante: ${porElegir.join(", ")}` : "";
 
   return { avisos, pendiente };
+}
+
+/** PRO-354-R02: «Stock insuficiente — Solicitado: 15 | Se descuenta ahora: 10 | Queda pendiente: 5». */
+export const textoFaltantePendiente = (a: { requerido: string; disponible: string; faltante: string }) =>
+  `Stock insuficiente — Solicitado: ${formatearDecimalTexto(a.requerido)} | Se descuenta ahora: ${formatearDecimalTexto(a.disponible)} | Queda pendiente: ${formatearDecimalTexto(a.faltante)}`;
+
+/** Elecciones de depósito del faltante que siguen vigentes (solo productos con aviso FALTANTE_PENDIENTE sin bloqueo y varios depósitos, y depósito todavía elegible). Va en el cuerpo de previa/emisión. */
+export function eleccionesVigentes(avisos: Map<string, AvisoStock>, elecciones: Record<string, string>): Record<string, string> {
+  const fuera: Record<string, string> = {};
+
+  for (const [id, a] of avisos) {
+    if (a.tipo === "FALTANTE_PENDIENTE" && a.bloqueo === null && a.depositos.length > 1 && a.depositoId !== null && a.depositoId === elecciones[id]) fuera[id] = a.depositoId;
+  }
+
+  return fuera;
 }
 
 /** «Stock insuficiente — Solicitado: 3 | Disponible: 2 | Faltante: 1» (decimales exactos en formato es-PY). */
