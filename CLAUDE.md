@@ -1,5 +1,8 @@
 # Claude — protocolo PROCEIT / Nexit
 
+> **ORDEN ÚNICA ACTIVA PRO-354-R02-R04 — RECTIFICACIÓN 17/11/2026:** [Regla vigente y cola R02](documentacao/planos/PLAN-NEXIT-AJUSTES-FUNCIONALES-R02-2026-11-17.md) (SHA c98adec49de06250aea8b3f2cce236e25983dece). La venta ocurre al emitir; stock físico se descuenta al crear FE comercial, no al APROBADO. RECHAZADO SIFEN no devuelve ni duplica stock. PRO-310 cancelada, diseño reserva/bandeja/NEX-082 sin objeto; PRO-309 sólo decisiones fiscales residuales. Correctivo focal: permitir confirmar manualmente faltante NEX-081 de FE comercial persistida con rechazo fiscal definitivo, con stock suficiente/ACL/guardas existentes; distinguir errores técnicos y no ampliar estados restantes. No reabrir núcleo PRO-354 ni modificar gateway/CDC/KuDE/NCE. No saldo negativo. Sólo orden R04 activa; demás ocho en cola. No ejecutar tests/lint/typecheck/build/CI manual/SQL/migrations/VM/Docker/gateway/deploy/merge. SHA y STOP auditoría. Banners y órdenes anteriores históricos donde incompatibles.
+
+
 > **ORDEN ÚNICA ACTIVA PRO-309/310-GATE-R01 — 17/11/2026:** [Cola funcional aprobada y orden vinculante](documentacao/planos/PLAN-NEXIT-AJUSTES-FUNCIONALES-AUTORIZADOS-2026-11-17.md) (SHA 188ad6476c96d10b3b3595bfc044db047a4ebe16). Sólo análisis/diseño de reserva al enviar y SALIDA física al APROBADO SIFEN, conciliando NEX-081 y PRO-354; P01/P02 pendientes de decisión del responsable. Entregar documento de diseño y parar; NO modificar código ni SQL, NO ejecutar nada. PRO-342/354 aprobadas estáticamente y congeladas salvo futura orden focal. Otras ocho frentes en cola, sin ejecución paralela. KuDE dependencia proveedor; preservar JSON contractual y controles, CDC dato API. Todos los banners previos históricos, no autorización activa.
 
 
