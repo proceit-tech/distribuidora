@@ -1,5 +1,8 @@
 # NEXIT — Factura Electrónica V1: fechas, vendedor, estados, respuestas y reserva de stock
 
+> **RECTIFICACIÓN VINCULANTE 17/11/2026:** La venta se consolida al emitir; RECHAZADO SIFEN no modifica stock. FE-V1-06 y las referencias de FE-V1-07 a reserva/liberación quedan sustituidas por la regla de baja comercial inmediata, sin retorno ni duplicación por eventos fiscales. No equivale a aprobación tributaria. Ver [plan R02](https://github.com/proceit-tech/distribuidora/blob/c98adec49de06250aea8b3f2cce236e25983dece/documentacao/planos/PLAN-NEXIT-AJUSTES-FUNCIONALES-R02-2026-11-17.md). Las demás decisiones compatibles se conservan.
+
+
 **Fecha de decisión:** 25/10/2026. **Origen:** instrucciones expresas del responsable del producto en la revisión de la V1. **Estado:** reglas funcionales confirmadas; análisis técnico/SQL, implementación y homologación pendientes. **No autoriza a Claude a implementar ni a nadie a ejecutar migrations/VM.**
 **Proyecto:** NEXIT multiempresa, no una regla particular exclusiva de CASA MINGO. **UI:** español (Paraguay).
 **Menus:** `Facturación → Facturas → Nueva factura electrónica` (captura y emisión) y `Facturación → Documentos electrónicos` (consulta, historial, corrección, cancelación). No crear un segundo panel de estados en Nueva factura.
