@@ -134,9 +134,9 @@ export async function verificarCasosDocumentosUxR01(): Promise<string[]> {
   }
 
   // ══ 7. Iconos para consultar, KuDE, copiar y expandir ═══════════════════════════════════════════════════════════════════════════════════
-  cierto("UXR01-23 consultar = botón de icono en la cabecera del detalle, SOLO con permiso EDITAR, con aria-label/title, deshabilitado y girando mientras consulta",
+  cierto("UXR01-23 (actualizado UX-R02) consultar = botón de icono en la cabecera del detalle, SOLO con permiso EDITAR, con aria-label/title, deshabilitado (acción no disponible) y girando mientras consulta",
     /\{editar \? \(\s*<div className=\{estilos\.herramientas\} role="toolbar"/.test(primera) && /<Glifo>\{ACCION\.consultar\}<\/Glifo>/.test(primera) && /title=\{accion === "consulta" \? "Consultando\.\.\." : "Consultar estado en SIFEN"\}/.test(primera) &&
-    /disabled=\{Boolean\(accion\)\}/.test(primera) && /accion === "consulta" && estilos\.girando/.test(primera) && /onClick=\{\(\) => void reconsultar\(d\)\}/.test(primera) && /prefers-reduced-motion: reduce/.test(cssLimpio));
+    /disabled=\{!habilitada\} aria-busy=\{accion === "consulta"\}/.test(primera) && /accion === "consulta" && estilos\.girando/.test(primera) && /onClick=\{\(\) => void reconsultar\(d\)\}/.test(primera) && /prefers-reduced-motion: reduce/.test(cssLimpio));
   cierto("UXR01-24 KuDE = icono de la fila (kudeDisponible, aria-label por tipo y número), sin duplicado en el detalle",
     /kudeDisponible\(d\) \? \(/.test(fila) && /\{ACCION\.kude\}/.test(fila) && (pagina.match(/abrirKude\(d\)/g) ?? []).length === 1 && !/abrirKude/.test(detalle));
   cierto("UXR01-25 copiar = icono con aria-label «Copiar número de lote»/«Copiar CDC», copia exacta (writeText(valor)) y feedback por icono ✓ + aviso aria-live; sin botón «Copiar» de texto",
@@ -176,26 +176,26 @@ export async function verificarCasosDocumentosUxR01(): Promise<string[]> {
     [claveContexto("[\"a\"]", 1) === claveContexto("[\"a\"]", 1), claveContexto("[\"a\"]", 1) === claveContexto("[\"a\"]", 2), claveContexto("[\"a\"]", 1) === claveContexto("[\"b\"]", 1)], [true, false, false]);
   igual("UXR01-37 esResultadoVigente: solo con detalle abierto y misma generación (cerrado, reabierto o de otro contexto → se descarta)",
     [esResultadoVigente(true, 3, 3), esResultadoVigente(false, 3, 3), esResultadoVigente(true, 3, 4)], [true, false, false]);
-  cierto("UXR01-38 el resultado guarda su contexto; uno de OTRO contexto no se muestra (filas vacías, «Cargando…»): no quedan filas obsoletas accionables tras cambiar filtros o página",
-    /setResultado\(\{ clave: claveConsulta, contexto, datos, error: "" \}\)/.test(pagina) && /const obsoleto = resultado !== null && resultado\.contexto !== contexto;/.test(pagina) && /const filas = obsoleto \? \[\] :/.test(pagina) && /obsoleto \? "Cargando\.\.\."/.test(pagina));
+  cierto("UXR01-38 (actualizado UX-R02) el resultado guarda su contexto (y su secuencia); uno de OTRO contexto no se muestra (filas vacías, «Cargando…»): no quedan filas obsoletas accionables tras cambiar filtros o página",
+    /\{ clave: claveConsulta, contexto, secuencia, datos, error \}/.test(pagina) && /const obsoleto = resultado !== null && resultado\.contexto !== contexto;/.test(pagina) && /const filas = obsoleto \? \[\] :/.test(pagina) && /obsoleto \? "Cargando\.\.\."/.test(pagina));
   cierto("UXR01-39 al cambiar de contexto se cierran todos los detalles y el tooltip (ajuste de estado en el render, sin efecto)",
     /if \(contextoVisto !== contexto\) \{\s*setContextoVisto\(contexto\);\s*setAbiertos\(\{\}\);\s*setTip\(null\);\s*\}/.test(pagina));
   cierto("UXR01-40 consultar/enviar: una acción por documento a la vez (ref + estado enCurso que sobrevive al cierre), respuesta aplicada SOLO a la misma generación y sin recrear el detalle; la lista se relee igual",
     /if \(accionEnCurso\.current\.has\(d\.id\)\) return null;/.test(pagina) && /if \(vigenteDetalle\(d, generacion\)\) fusionarIntentos/.test(pagina) && /if \(vigenteDetalle\(d, generacion\)\) aplicarDetalle/.test(pagina) &&
     (pagina.match(/finally \{\s*terminarAccion\(d\);/g) ?? []).length === 2 && /setRecarga\(\(n\) => n \+ 1\)/.test(tramo("async function reconsultar", "async function enviarAlGateway")) && !/actualizarDetalle/.test(pagina) &&
     /function aplicarDetalle\(id: string, parte: Partial<Detalle>\) \{\s*setAbiertos\(\(a\) => \(a\[id\] \?/.test(pagina));
-  cierto("UXR01-41 abrir un detalle invalida el JSON y el historial anteriores (nueva generación de ambos); la copia solo borra su propio «Copiado»",
-    /historialVigente\.current\[d\.id\] = generacion;\s*jsonVigente\.current\[d\.id\] = \(jsonVigente\.current\[d\.id\] \?\? 0\) \+ 1;/.test(pagina) && /if \(copiaVigente\.current\[d\.id\] === marca\) aplicarDetalle/.test(pagina));
+  cierto("UXR01-41 (actualizado UX-R02) abrir un detalle invalida el JSON y el historial anteriores (nueva generación de ambos); la copia solo borra su propio «Copiado»",
+    /historialVigente\.current\[d\.id\] = generacion;\s*jsonVigente\.current\[d\.id\] = \(jsonVigente\.current\[d\.id\] \?\? 0\) \+ 1;/.test(pagina) && /const vigente = \(\) => copiaVigente\.current\[d\.id\] === marca && vigenteDetalle\(d, generacion\);/.test(pagina) && /if \(vigente\(\)\) aplicarDetalle\(d\.id, \{ copiado: "" \}\)/.test(pagina));
   cierto("UXR01-42 el refresco automático (solo GET) se calcula sobre el contexto vigente y sigue limpiando su temporizador",
     /resultado\?\.contexto === contexto \?/.test(tramo("const hayPendientes", "useEffect(")) && /if \(!hayPendientes\) return;/.test(pagina) && /detener\(\);/.test(pagina) && !/consultar-estado|enviar/.test(tramo("Actualización automática", "const cargando")));
 
   // ══ 12. Responsive ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-  cierto("UXR01-43 escritorio: tabla con ancho mínimo propio 860px y scroll horizontal local; tarjeta en ≤ 720px (Documento|Total / Cliente|Fecha / Estados|Acciones) sin ancho mínimo",
-    /min-width: 860px/.test(regla(css, "table.tablaDocs")) && /<div className=\{ui\.tableScroll\}>\s*<table className=\{clases\(ui\.table, estilos\.tablaDocs\)\}/.test(pagina) &&
+  cierto("UXR01-43 (actualizado UX-R02) escritorio: tabla con ancho mínimo propio 860px y scroll horizontal local; tarjeta en ≤ 720px (Documento|Total / Cliente|Fecha / Estados|Acciones cuando el contenedor real tiene ancho de sobra) sin ancho mínimo",
+    /min-width: 860px/.test(regla(css, "table.tablaDocs")) && /<div className=\{clases\(ui\.tableScroll, estilos\.contenedorTabla\)\}>\s*<table className=\{clases\(ui\.table, estilos\.tablaDocs\)\}/.test(pagina) &&
     /@media \(max-width: 720px\) \{\s*table\.tablaDocs \{\s*min-width: 0;/.test(cssLimpio) && /"doc total"\s*"cliente fecha"\s*"estados acciones"/.test(cssLimpio) && /tr:has\(> td:nth-child\(6\)\)/.test(cssLimpio));
-  cierto("UXR01-44 móvil: la barra de orden se conserva (thead como fila flexible, sin la columna Acciones), el acento FE/NCE recorre la columna izquierda de la tarjeta y los datos fiscales apilan etiqueta/valor (≤ 640px)",
-    /table\.tablaDocs > thead > tr \{\s*display: flex;/.test(cssLimpio) && /table\.tablaDocs tr\.filaFE > td:is\(:nth-child\(3\), :nth-child\(5\)\) \{\s*box-shadow: inset 4px 0 0 #6d9bd1;/.test(cssLimpio) &&
-    /table\.tablaDocs tr\.filaNCE > td:is\(:nth-child\(3\), :nth-child\(5\)\) \{\s*box-shadow: inset 4px 0 0 #d9bb4e;/.test(cssLimpio) && /@media \(max-width: 640px\) \{\s*\.fiscal > div \{\s*grid-template-columns: minmax\(0, 1fr\) 36px;/.test(cssLimpio));
+  cierto("UXR01-44 (actualizado UX-R02) móvil: la barra de orden se conserva (thead como fila flexible, sin la columna Acciones), el acento FE/NCE recorre la columna izquierda de la tarjeta y los datos fiscales apilan etiqueta/valor (≤ 640px)",
+    /table\.tablaDocs > thead > tr \{\s*display: flex;/.test(cssLimpio) && /table\.tablaDocs tr\.filaFE > td:is\(:nth-child\(3\), :nth-child\(5\), :nth-child\(6\)\) \{\s*box-shadow: inset 4px 0 0 #6d9bd1;/.test(cssLimpio) &&
+    /table\.tablaDocs tr\.filaNCE > td:is\(:nth-child\(3\), :nth-child\(5\), :nth-child\(6\)\) \{\s*box-shadow: inset 4px 0 0 #d9bb4e;/.test(cssLimpio) && /@media \(max-width: 640px\) \{\s*\.fiscal > div \{\s*grid-template-columns: minmax\(0, 1fr\) 36px;/.test(cssLimpio));
   cierto("UXR01-45 áreas táctiles ≥ 36px en botones de acción/copia/historial y ≥ 40px en iconos de estado; sin cambios en el CSS compartido",
     /width: 36px;\s*height: 36px;/.test(regla(css, ".iconBtn")) && /width: 36px;\s*height: 36px;/.test(regla(css, ".copiar")) && /min-height: 36px/.test(regla(css, ".toggleTecnico")) && !/tablaDocs|tooltip|iconoVacio|kpis/.test(lista));
 

@@ -300,6 +300,11 @@ table.tablaDocs {
   min-width: 860px;
 }
 
+/* PRO-342-UX-R02 (UX-F002): el contenedor de la tabla mide su ANCHO REAL (con barra lateral, zoom, etc.) para decidir la tarjeta móvil (ver final del archivo). */
+.contenedorTabla {
+  container: documentos / inline-size;
+}
+
 /*
  * ---- Iconos de estado (puntos 2–4): cinco posiciones FIJAS por fila (Envío · XML/CDC · SIFEN · Correo + aviso «!» opcional, reservado aunque esté vacío).
  * Círculo de 28px con símbolo propio de trazo grueso (el color nunca es la única señal) y área táctil ≥ 40px. Contraste: símbolo blanco sobre fondos oscuros (≥ 4.5:1),
@@ -531,6 +536,13 @@ table.tablaDocs {
   margin: 8px 0 4px;
 }
 
+/* PRO-342-UX-R02 (UX-F001): aviso breve mientras el estado mostrado puede ser anterior a la última acción; ofrece releer (solo GET). */
+.esperaEstado {
+  margin: 4px 0;
+  color: #53687a;
+  font-size: 12.5px;
+}
+
 /* Control de la segunda capa: «Historial técnico (n)», cerrada por defecto. */
 .toggleTecnico {
   appearance: none;
@@ -675,12 +687,17 @@ table.tablaDocs {
     display: block;
   }
 
+  /*
+   * PRO-342-UX-R02 (UX-F002): por defecto Estados y Acciones van en FILAS SEPARADAS (cinco posiciones de 40px = 208px y dos botones de 36px = 78px nunca se
+   * superponen, ni a 320px). Solo si el contenedor real tiene ancho de sobra (≥ 440px) comparten fila (ver @container más abajo).
+   */
   table.tablaDocs > tbody > tr:has(> td:nth-child(6)) {
     display: grid;
     grid-template-areas:
       "doc total"
       "cliente fecha"
-      "estados acciones";
+      "estados estados"
+      "acciones acciones";
     grid-template-columns: minmax(0, 1fr) auto;
     border-bottom: 1px solid #e3ebf1;
   }
@@ -717,15 +734,41 @@ table.tablaDocs {
   table.tablaDocs > tbody > tr:has(> td:nth-child(6)) > td:nth-child(6) {
     grid-area: acciones;
     align-self: center;
+    padding-top: 0;
+    text-align: right;
   }
 
-  /* El acento del tipo recorre toda la columna izquierda de la tarjeta. */
-  table.tablaDocs tr.filaFE > td:is(:nth-child(3), :nth-child(5)) {
+  /* Red de seguridad: si aun así faltara ancho, los iconos (40px) y botones (36px) pasan a la línea siguiente en su orden; nunca se encogen ni se superponen. */
+  table.tablaDocs .iconosEstado,
+  table.tablaDocs .accionesLinea {
+    flex-wrap: wrap;
+  }
+
+  /* El acento del tipo recorre toda la columna izquierda de la tarjeta (también la fila de acciones cuando va separada). */
+  table.tablaDocs tr.filaFE > td:is(:nth-child(3), :nth-child(5), :nth-child(6)) {
     box-shadow: inset 4px 0 0 #6d9bd1;
   }
 
-  table.tablaDocs tr.filaNCE > td:is(:nth-child(3), :nth-child(5)) {
+  table.tablaDocs tr.filaNCE > td:is(:nth-child(3), :nth-child(5), :nth-child(6)) {
     box-shadow: inset 4px 0 0 #d9bb4e;
+  }
+
+  /* Ancho real suficiente (208 + 78 + 4 × 12 de relleno = 334px, con margen): Estados | Acciones en la misma fila, como en UX-R01. */
+  @container documentos (min-width: 440px) {
+    table.tablaDocs > tbody > tr:has(> td:nth-child(6)) {
+      grid-template-areas:
+        "doc total"
+        "cliente fecha"
+        "estados acciones";
+    }
+
+    table.tablaDocs > tbody > tr:has(> td:nth-child(6)) > td:nth-child(6) {
+      padding-top: 6px;
+    }
+
+    table.tablaDocs tr:is(.filaFE, .filaNCE) > td:nth-child(6) {
+      box-shadow: none;
+    }
   }
 }
 

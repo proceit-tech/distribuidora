@@ -7,7 +7,7 @@ import { CampoFecha } from "@/components/ui/campo-fecha";
 import ui from "@/components/ui/lista-padrao/lista.module.css";
 import { siguienteOrden, type Orden } from "@/components/ui/lista-padrao/orden";
 import { ThOrdenable } from "@/components/ui/lista-padrao/th-ordenable";
-import { claveContexto, esResultadoVigente, posicionTooltip } from "@/lib/facturacion/documentos-ux";
+import { accionDisponible, claveContexto, esListadoMasReciente, esResultadoVigente, posicionTooltip, unirIntentos } from "@/lib/facturacion/documentos-ux";
 import { crearControladorVisor, kudeDisponible, pedirKudeAlServidor } from "@/lib/facturacion/kude-visor";
 import { iniciarRefresco } from "@/lib/facturacion/refresco-documentos";
 import {
@@ -217,7 +217,12 @@ export default function DocumentosPage() {
   const [paginacion, setPaginacion] = useState({ clave: "", pagina: 1 });
   const [recarga, setRecarga] = useState(0);
   // PRO-342-UX-R01 (punto 11): el resultado guarda su CONTEXTO (filtros + página). Si el contexto actual es otro, sus filas no se muestran ni se pueden accionar.
-  const [resultado, setResultado] = useState<{ clave: string; contexto: string; datos: Respuesta | null; error: string } | null>(null);
+  // PRO-342-UX-R02 (UX-F001): `secuencia` = número asignado al LANZAR la lectura del listado; solo se aplica una lectura posterior a la mostrada.
+  const [resultado, setResultado] = useState<{ clave: string; contexto: string; secuencia: number; datos: Respuesta | null; error: string } | null>(null);
+  const secuenciaListado = useRef(0);
+  // PRO-342-UX-R02 (UX-F001): por documento, secuencia de la última lectura del listado lanzada antes de terminar su última consulta/envío. Sus acciones quedan
+  // deshabilitadas hasta mostrar un listado lanzado DESPUÉS (estado vigente); sobrevive al cierre/reapertura del detalle.
+  const [esperaListado, setEsperaListado] = useState<Record<string, number>>({});
   const [abiertos, setAbiertos] = useState<Record<string, Detalle>>({});
   // PRO-342-UX-R01 (punto 11): acción (consulta o envío) en curso por documento; sobrevive al cierre/reapertura del detalle y evita repetirla mientras no termine.
   const [enCurso, setEnCurso] = useState<Record<string, "consulta" | "envio">>({});
@@ -259,10 +264,16 @@ export default function DocumentosPage() {
 
     for (const [k, v] of Object.entries({ q: busquedaAplicada, tipo, sucursal, estadoSifen, grupo, desde, hasta, orden: orden?.campo ?? "", dir: orden?.dir ?? "" })) if (v) p.set(k, v);
 
+    secuenciaListado.current += 1;
+    const secuencia = secuenciaListado.current;
+    const aplicar = (datos: Respuesta | null, error: string) => {
+      if (activo) setResultado((r) => (esListadoMasReciente(r?.secuencia ?? null, secuencia) ? { clave: claveConsulta, contexto, secuencia, datos, error } : r));
+    };
+
     fetch(`/api/documentos?${p.toString()}`, { cache: "no-store" })
       .then((r) => leerJson<Respuesta>(r, "No fue posible cargar los documentos electrónicos."))
-      .then((datos) => activo && setResultado({ clave: claveConsulta, contexto, datos, error: "" }))
-      .catch((e: unknown) => activo && setResultado({ clave: claveConsulta, contexto, datos: null, error: e instanceof Error ? e.message : "No fue posible cargar los documentos electrónicos." }));
+      .then((datos) => aplicar(datos, ""))
+      .catch((e: unknown) => aplicar(null, e instanceof Error ? e.message : "No fue posible cargar los documentos electrónicos."));
 
     return () => {
       activo = false;
@@ -285,9 +296,12 @@ export default function DocumentosPage() {
 
     const detener = iniciarRefresco({
       leer: () => {
+        secuenciaListado.current += 1;
+        const secuencia = secuenciaListado.current;
+
         fetch(`/api/documentos?${p.toString()}`, { cache: "no-store" })
           .then((r) => leerJson<Respuesta>(r, "No fue posible actualizar los documentos electrónicos."))
-          .then((datos) => { if (activo) setResultado({ clave: claveConsulta, contexto, datos, error: "" }); })
+          .then((datos) => { if (activo) setResultado((r) => (esListadoMasReciente(r?.secuencia ?? null, secuencia) ? { clave: claveConsulta, contexto, secuencia, datos, error: "" } : r)); })
           .catch(() => undefined);
       },
       visible: () => document.visibilityState === "visible",
@@ -419,8 +433,7 @@ export default function DocumentosPage() {
       const previos = a[id].intentos;
       const masViejoNuevo = nuevos.length > 0 ? nuevos[nuevos.length - 1].cursor : undefined;
       const hueco = nuevos.length >= 100 && previos.length > 0 && masViejoNuevo !== undefined && (previos[0].cursor ?? "") < masViejoNuevo;
-      const vistos = new Set<string>();
-      const unidos = (hueco ? nuevos : [...nuevos, ...previos]).filter((i) => (vistos.has(i.id) ? false : (vistos.add(i.id), true))).sort((x, y) => ((y.cursor ?? "") < (x.cursor ?? "") ? -1 : (y.cursor ?? "") > (x.cursor ?? "") ? 1 : 0));
+      const unidos = unirIntentos(nuevos, hueco ? [] : previos);
       const siguiente = hueco || previos.length === 0 ? (nuevos.length >= 100 && masViejoNuevo !== undefined ? masViejoNuevo : null) : a[id].siguienteIntentos;
 
       return { ...a, [id]: { ...a[id], ...parte, intentos: unidos, siguienteIntentos: siguiente } };
@@ -475,7 +488,18 @@ export default function DocumentosPage() {
     try {
       const j = await leerJson<{ intentos: Intento[]; siguienteIntentos?: string | null; solicitudes?: Solicitud[] }>(await fetch(`/api/documentos/${d.id}`, { cache: "no-store" }), "No fue posible cargar el detalle.");
 
-      aplicar({ cargando: false, intentos: j.intentos, siguienteIntentos: j.siguienteIntentos ?? null, solicitudes: j.solicitudes ?? [] });
+      // PRO-342-UX-R02 (UX-F001): fusión NO regresiva. Las acciones esperan a esta carga, pero si algo ya fusionó intentos más nuevos en esta misma generación,
+      // el snapshot (anterior) no los borra ni retrocede el cursor de paginación ya conocido.
+      if (vigente()) {
+        setAbiertos((a) => {
+          if (!a[d.id]) return a;
+
+          const previos = a[d.id].intentos;
+          const fusion = previos.length > 0;
+
+          return { ...a, [d.id]: { ...a[d.id], cargando: false, intentos: fusion ? unirIntentos(previos, j.intentos) : j.intentos, siguienteIntentos: fusion ? (a[d.id].siguienteIntentos ?? j.siguienteIntentos ?? null) : (j.siguienteIntentos ?? null), solicitudes: j.solicitudes ?? [] } };
+        });
+      }
     } catch (e) {
       aplicar({ cargando: false, error: e instanceof Error ? e.message : "No fue posible cargar el detalle." });
     }
@@ -507,19 +531,23 @@ export default function DocumentosPage() {
     aplicarDetalle(d.id, { json: null });
   }
 
-  // PRO-342-R04 (UX02): copia EXACTA del lote o del CDC registrados (sin recortar ni enmascarar). Solo escribe si el detalle sigue abierto; el aviso «Copiado» dura 2 s y solo lo borra la última copia.
+  // PRO-342-R04 (UX02): copia EXACTA del lote o del CDC registrados (sin recortar ni enmascarar). El aviso «Copiado» dura 2 s y solo lo borra la última copia.
+  // PRO-342-UX-R02 (UX-F001): marca Y generación del detalle se comprueban al resolver/rechazar el portapapeles y al borrar: una copia de una apertura anterior
+  // (o superada por otra copia) no muestra ni borra el aviso de la apertura actual. La copia en sí no se bloquea.
   async function copiar(d: Documento, campo: "lote" | "cdc", valor: string) {
     const marca = (copiaVigente.current[d.id] ?? 0) + 1;
+    const generacion = historialVigente.current[d.id] ?? 0;
+    const vigente = () => copiaVigente.current[d.id] === marca && vigenteDetalle(d, generacion);
 
     copiaVigente.current[d.id] = marca;
     try {
       await navigator.clipboard.writeText(valor);
-      aplicarDetalle(d.id, { copiado: campo });
+      if (vigente()) aplicarDetalle(d.id, { copiado: campo });
     } catch {
-      aplicarDetalle(d.id, { copiado: "error" });
+      if (vigente()) aplicarDetalle(d.id, { copiado: "error" });
     }
     window.setTimeout(() => {
-      if (copiaVigente.current[d.id] === marca) aplicarDetalle(d.id, { copiado: "" });
+      if (vigente()) aplicarDetalle(d.id, { copiado: "" });
     }, 2000);
   }
 
@@ -550,7 +578,7 @@ export default function DocumentosPage() {
    * (cerrar o reabrir la fila, o cambiar de filtros, la descarta sin recrear nada). La relectura del listado se hace siempre que la acción terminó en el servidor.
    */
   function iniciarAccion(d: Documento, accion: "consulta" | "envio"): number | null {
-    if (accionEnCurso.current.has(d.id)) return null;
+    if (accionEnCurso.current.has(d.id) || !disponible(d)) return null;
 
     accionEnCurso.current.add(d.id);
     setEnCurso((e) => ({ ...e, [d.id]: accion }));
@@ -559,12 +587,21 @@ export default function DocumentosPage() {
     return historialVigente.current[d.id] ?? 0;
   }
 
+  // PRO-342-UX-R02 (UX-F001): al terminar (éxito o error) el documento espera un listado lanzado después; hasta entonces sus acciones siguen deshabilitadas
+  // aunque `enCurso` se libere (la vista no habilita envíos/correcciones con el estado anterior a la acción).
   function terminarAccion(d: Documento) {
+    const espera = secuenciaListado.current;
+
+    setEsperaListado((e) => ({ ...e, [d.id]: espera }));
     accionEnCurso.current.delete(d.id);
     setEnCurso((e) => Object.fromEntries(Object.entries(e).filter(([k]) => k !== d.id)));
   }
 
   const vigenteDetalle = (d: Documento, generacion: number) => esResultadoVigente(true, generacion, historialVigente.current[d.id] ?? 0);
+  /** PRO-342-UX-R02 (UX-F001): consultar/enviar/corregir solo con el detalle cargado, sin acción en curso y con el listado vigente tras la última acción. */
+  const disponible = (d: Documento) => accionDisponible({ cargandoDetalle: abiertos[d.id]?.cargando !== false, enCurso: Boolean(enCurso[d.id]), esperaListado: esperaListado[d.id], secuenciaListado: resultado?.secuencia ?? 0 });
+  /** Recuperación EXPLÍCITA tras un error o una espera: relee el listado (solo GET; nunca reenvía ni consulta al gateway). */
+  const actualizarListado = () => setRecarga((n) => n + 1);
 
   async function reconsultar(d: Documento) {
     const generacion = iniciarAccion(d, "consulta");
@@ -728,7 +765,7 @@ export default function DocumentosPage() {
           </span>
         </div>
 
-        <div className={ui.tableScroll}>
+        <div className={clases(ui.tableScroll, estilos.contenedorTabla)}>
           <table className={clases(ui.table, estilos.tablaDocs)} aria-busy={cargando}>
             <thead>
               <tr>
@@ -754,6 +791,8 @@ export default function DocumentosPage() {
                 const seguimiento = seguimientoFiscal(d);
                 const avisoFila = [alerta ? `${alerta.texto}. ${alerta.detalle}` : "", d.requiereRevision ? `Requiere revisión: lleva mucho tiempo sin resultado definitivo; no se reenvía${d.tipo === "NCE" ? " ni se libera el saldo" : ""}.` : ""].filter(Boolean).join(" ");
                 const accion = enCurso[d.id];
+                const habilitada = disponible(d);
+                const esperando = !accion && esperaListado[d.id] !== undefined && (resultado?.secuencia ?? 0) <= esperaListado[d.id];
                 const doc = `${d.tipo === "NCE" ? "la nota de crédito" : "la factura"} ${numeroDocumento(d)}`;
 
                 return (
@@ -808,7 +847,7 @@ export default function DocumentosPage() {
                             <strong>Detalle fiscal · {numeroDocumento(d)}</strong>
                             {editar ? (
                               <div className={estilos.herramientas} role="toolbar" aria-label={`Acciones de ${doc}`}>
-                                <button type="button" className={clases(estilos.iconBtn, accion === "consulta" && estilos.girando)} disabled={Boolean(accion)} aria-busy={accion === "consulta"} title={accion === "consulta" ? "Consultando..." : "Consultar estado en SIFEN"} aria-label={accion === "consulta" ? "Consultando el estado en SIFEN" : `Consultar estado en SIFEN de ${doc}`} onClick={() => void reconsultar(d)}>
+                                <button type="button" className={clases(estilos.iconBtn, accion === "consulta" && estilos.girando)} disabled={!habilitada} aria-busy={accion === "consulta"} title={accion === "consulta" ? "Consultando..." : "Consultar estado en SIFEN"} aria-label={accion === "consulta" ? "Consultando el estado en SIFEN" : `Consultar estado en SIFEN de ${doc}`} onClick={() => void reconsultar(d)}>
                                   <Glifo>{ACCION.consultar}</Glifo>
                                 </button>
                               </div>
@@ -864,17 +903,21 @@ export default function DocumentosPage() {
 
                           <div className={estilos.barraAcciones}>
                             {crear && (d.estadoLocal === "PENDIENTE_ENVIO" || (d.estadoLocal === "ERROR_ENVIO" && d.envioErrorTipo !== "RECHAZO")) ? (
-                              <button type="button" className={ui.primaryButton} disabled={Boolean(accion)} onClick={() => enviarAlGateway(d)}>
+                              <button type="button" className={ui.primaryButton} disabled={!habilitada} onClick={() => enviarAlGateway(d)}>
                                 {accion === "envio" ? "Enviando..." : "Enviar al gateway"}
                               </button>
                             ) : null}
                             {crear && d.tipo !== "NCE" && d.estadoLocal === "ERROR_ENVIO" && d.envioErrorTipo === "RECHAZO" ? (
-                              <button type="button" className={ui.secondaryButton} disabled={Boolean(accion)} onClick={() => enviarAlGateway(d, true)}>
+                              <button type="button" className={ui.secondaryButton} disabled={!habilitada} onClick={() => enviarAlGateway(d, true)}>
                                 {accion === "envio" ? "Enviando..." : "Reenviar el mismo documento (confirmar)"}
                               </button>
                             ) : null}
                             {crear && d.tipo === "NCE" && d.corregible ? (
-                              <Link className={ui.primaryButton} href={`/notas-credito?corregir=${d.id}`}>Corregir y emitir nueva</Link>
+                              habilitada ? (
+                                <Link className={ui.primaryButton} href={`/notas-credito?corregir=${d.id}`}>Corregir y emitir nueva</Link>
+                              ) : (
+                                <button type="button" className={ui.primaryButton} disabled>Corregir y emitir nueva</button>
+                              )
                             ) : null}
                             {/* PRO-342-UX-R01 (punto 7): «Alternar historial técnico» con icono de expandir; abrirlo no consulta al gateway. */}
                             <button type="button" className={estilos.toggleTecnico} aria-expanded={det.tecnico} aria-controls={`tecnico-${d.id}`} onClick={() => alternarTecnico(d)}>
@@ -882,6 +925,13 @@ export default function DocumentosPage() {
                               Historial técnico ({det.cargando ? "…" : `${det.intentos.length}${det.siguienteIntentos ? "+" : ""}`})
                             </button>
                           </div>
+                          {/* PRO-342-UX-R02 (UX-F001): tras una acción, el estado mostrado puede ser anterior; se dice y se ofrece releer (solo GET). */}
+                          {esperando ? (
+                            <p className={estilos.esperaEstado} role="status">
+                              {cargando ? "Actualizando el estado del documento…" : "Estado del documento sin actualizar tras la última acción."}{" "}
+                              {cargando ? null : <button type="button" className={ui.clearButton} onClick={actualizarListado}>Actualizar</button>}
+                            </p>
+                          ) : null}
                           {det.aviso ? <div className={ui.alertOk} role="status" style={{ margin: "6px 0" }}>{det.aviso}</div> : null}
                           {det.error ? <div className={ui.alertError} role="alert" style={{ margin: "6px 0" }}>{det.error}</div> : null}
 

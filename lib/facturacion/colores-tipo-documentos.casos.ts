@@ -166,9 +166,9 @@ export async function verificarCasosColoresTipoPro334(): Promise<string[]> {
   igual("PRO334-30 R02 no altera fondos, acentos ni hover/foco de PRO-334 R01", [fe, nce, fondosFila[2], fondosFila[3], detalleFe, detalleNce, acentoFe, acentoNce], ["#f4f8fd", "#fffcee", "#e9f1fb", "#fdf6da", "#f9fbfe", "#fffdf5", "#6d9bd1", "#d9bb4e"]);
   cierto("PRO334-19 alto contraste del sistema: el acento pasa a borde real (sólido FE, discontinuo NCE)", /@media \(forced-colors: active\)[\s\S]*border-left: 4px solid CanvasText[\s\S]*border-left: 4px dashed CanvasText/.test(css));
   // PRO-342-UX-R01 (punto 12): el ancho mínimo 860 pasa a la clase local tablaDocs para poder anularlo en la tarjeta móvil (≤ 720px).
-  cierto("PRO334-20 (actualizado UX-R01) sin desborde: el acento es box-shadow inset (no suma ancho); la tabla conserva tableScroll, minWidth 860 en escritorio (clase local) y 0 en tarjeta móvil",
+  cierto("PRO334-20 (actualizado UX-R01/UX-R02) sin desborde: el acento es box-shadow inset (no suma ancho); la tabla conserva tableScroll, minWidth 860 en escritorio (clase local) y 0 en tarjeta móvil",
     /inset 4px 0 0/.test(regla(css, "tr.filaFE > td:first-child")) && !/width|padding|margin/.test(regla(css, "tr.filaFE > td:first-child")) &&
-    /<div className=\{ui\.tableScroll\}>\s*<table className=\{clases\(ui\.table, estilos\.tablaDocs\)\}/.test(pagina) && /min-width: 860px/.test(regla(css, "table.tablaDocs")) && /@media \(max-width: 720px\) \{\s*table\.tablaDocs \{\s*min-width: 0;/.test(css));
+    /<div className=\{clases\(ui\.tableScroll, estilos\.contenedorTabla\)\}>\s*<table className=\{clases\(ui\.table, estilos\.tablaDocs\)\}/.test(pagina) && /min-width: 860px/.test(regla(css, "table.tablaDocs")) && /@media \(max-width: 720px\) \{\s*table\.tablaDocs \{\s*min-width: 0;/.test(css));
   cierto("PRO334-21 sin CSS global: lista.module.css no conoce filaFE/filaNCE", !/fila(FE|NCE)|detalle(FE|NCE)/.test(leer("components/ui/lista-padrao/lista.module.css")));
 
   // ── 5. Funcionalidades preservadas ────────────────────────────────────────────────────────────────────────────────────────────────────────────────

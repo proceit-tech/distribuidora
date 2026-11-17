@@ -44,3 +44,42 @@ export function claveContexto(claveFiltros: string, pagina: number): string {
 export function esResultadoVigente(abierto: boolean, generacionPeticion: number, generacionVigente: number): boolean {
   return abierto && generacionPeticion === generacionVigente;
 }
+
+/*
+ * PRO-342-UX-R02 (AUD UX-F001) — respuestas tardías del GET inicial, de consultas y de envíos.
+ *
+ *  · esListadoMasReciente: cada lectura del listado (carga, relectura tras una acción, refresco automático) recibe al LANZARSE un número de secuencia creciente;
+ *    solo se aplica si es posterior a la que ya se muestra. Una respuesta lenta lanzada antes nunca sustituye datos más nuevos.
+ *  · accionDisponible: consultar/enviar/corregir se habilitan solo con el detalle cargado (el GET inicial ya resolvió), sin acción en curso para ese documento y,
+ *    tras una acción, solo cuando ya se muestra un listado LANZADO DESPUÉS de que la acción terminó (estado vigente, no el anterior a la acción).
+ *  · unirIntentos: fusión NO regresiva del historial (sin duplicados, gana la versión nueva, orden por cursor DESC): una respuesta anterior no borra intentos nuevos.
+ */
+
+/** true si la lectura del listado `nueva` (secuencia asignada al lanzarla) es posterior a la mostrada. */
+export function esListadoMasReciente(secuenciaMostrada: number | null, secuenciaNueva: number): boolean {
+  return secuenciaMostrada === null || secuenciaNueva > secuenciaMostrada;
+}
+
+export type EstadoAccion = {
+  /** GET inicial del detalle aún sin resolver. */
+  cargandoDetalle: boolean;
+  /** Consulta o envío en curso para el documento. */
+  enCurso: boolean;
+  /** Secuencia de la última lectura del listado lanzada ANTES de terminar la última acción del documento (undefined: sin acción previa). */
+  esperaListado: number | undefined;
+  /** Secuencia de la lectura del listado que se muestra. */
+  secuenciaListado: number;
+};
+
+export function accionDisponible(e: EstadoAccion): boolean {
+  return !e.cargandoDetalle && !e.enCurso && (e.esperaListado === undefined || e.secuenciaListado > e.esperaListado);
+}
+
+/** Une dos páginas del historial sin duplicados; si un intento llega en ambas, se conserva el de `nuevos`. Orden cursor DESC (creado_at DESC, id DESC). */
+export function unirIntentos<T extends { id: string; cursor?: string }>(nuevos: T[], previos: T[]): T[] {
+  const vistos = new Set<string>();
+
+  return [...nuevos, ...previos]
+    .filter((i) => (vistos.has(i.id) ? false : (vistos.add(i.id), true)))
+    .sort((x, y) => ((y.cursor ?? "") < (x.cursor ?? "") ? -1 : (y.cursor ?? "") > (x.cursor ?? "") ? 1 : 0));
+}
