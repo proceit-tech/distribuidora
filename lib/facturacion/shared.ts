@@ -345,9 +345,12 @@ function fechaCursorValida(texto: string): boolean {
  * (`cdcRespuesta`, solo lectura) y únicamente cuando la columna está vacía, para que la pantalla indique su fuente y no lo presente como la columna estructurada.
  * PRO-342-R05: cualquier texto no vacío (dato opaco, sin exigir 44 dígitos); un valor JSON no textual no se convierte.
  * PRO-342-R05-R01 (F003): si la evidencia lleva la marca de credencial omitida, ese «[omitido]» NO se presenta como CDC informado.
+ * PRO-342-R05-R02 (F003-R): tampoco un valor que contiene el marcador «[omitido]» que deja el propio saneamiento de NEXIT (también en evidencias anteriores sin marca): es un dato omitido,
+ * no un CDC informado. Solo cambia la PRESENTACIÓN; la evidencia histórica no se modifica. No es una regla sobre la forma del CDC.
  */
 const CDC_EN_RESPUESTA = `CASE WHEN i.cdc_informado IS NULL AND i.tipo = 'CONSULTA' AND jsonb_typeof(i.respuesta #> '{response,DE,CDC}') = 'string' AND (i.respuesta #>> '{response,DE,CDC}') <> ''
-  AND (i.respuesta ->> '${CLAVE_ANOMALIA_NEXIT}') IS DISTINCT FROM '${ANOMALIA_CDC_CREDENCIAL}' THEN i.respuesta #>> '{response,DE,CDC}' END`;
+  AND (i.respuesta ->> '${CLAVE_ANOMALIA_NEXIT}') IS DISTINCT FROM '${ANOMALIA_CDC_CREDENCIAL}'
+  AND strpos(i.respuesta #>> '{response,DE,CDC}', '[omitido]') = 0 THEN i.respuesta #>> '{response,DE,CDC}' END`;
 
 /** PRO-342-R05: traza de la proyección del CDC en el documento (NEX-080). Por to_jsonb(i) para no fallar en la lectura si NEX-080 aún no está aplicada (quedan null). */
 const PROYECCION_CDC = `(to_jsonb(i) ->> 'cdc_proyeccion') AS "cdcProyeccion", (to_jsonb(i) ->> 'cdc_anterior') AS "cdcAnterior"`;
