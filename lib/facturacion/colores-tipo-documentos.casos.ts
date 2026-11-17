@@ -89,8 +89,9 @@ export async function verificarCasosColoresTipoPro334(): Promise<string[]> {
   cierto("PRO334-09 ninguna clase de tipo usa rojo o verde (no se confunde con aprobado/rechazado)",
     ["tr.filaFE > td", "tr.filaNCE > td", "tr.filaFE:hover > td,\ntr.filaFE:focus-within > td", "tr.filaNCE:hover > td,\ntr.filaNCE:focus-within > td", "tr.detalleFE > td", "tr.detalleNCE > td"]
       .map((s) => hex(regla(css, s), "background")).every((h) => h !== "" && !esRojoOVerde(h)));
-  cierto("PRO334-10 el amarillo de la fila NCE es distinto y más claro que la cápsula «pendiente», y la fila no lleva borde de cápsula",
-    nce !== hex(regla(css, ".sifenPendiente"), "background") && luminancia(nce) > luminancia(hex(regla(css, ".sifenPendiente"), "background")) && !/border-radius/.test(regla(css, "tr.filaNCE > td")));
+  // PRO-342-UX-R01: la cápsula .sifenPendiente (sin uso) se retiró; el «pendiente» fiscal es el icono ámbar.
+  cierto("PRO334-10 (actualizado UX-R01) el amarillo de la fila NCE es distinto y más claro que el icono ámbar «pendiente», y la fila no lleva borde redondeado",
+    nce !== hex(regla(css, ".iconoAviso .iconoCirculo"), "background") && luminancia(nce) > luminancia(hex(regla(css, ".iconoAviso .iconoCirculo"), "background")) && !/border-radius/.test(regla(css, "tr.filaNCE > td")));
 
   // ── 3. Estado fiscal PRO-338 y CDC_DIVERGENTE intactos e independientes del tipo ──────────────────────────────────────────────────────────────────
   /** El documento completo (con tipo) pasa a la lógica fiscal real: el tono debe ser el mismo para FE y NCE. */
@@ -109,13 +110,15 @@ export async function verificarCasosColoresTipoPro334(): Promise<string[]> {
   igual("PRO334-12 FE y NCE RECHAZADO → tono «rechazado» (rojo) en ambos tipos; PENDIENTE enviado → «pendiente» (amarillo) en ambos", [tonos("ENVIADO", "RECHAZADO"), tonos("ENVIADO", "PENDIENTE")], [["rechazado", "rechazado"], ["pendiente", "pendiente"]]);
   igual("PRO334-13 FE y NCE aún no transmitidos → «sinTransmitir» (gris) en ambos tipos", tonos("PENDIENTE_ENVIO", "SIN_CONSULTA"), ["sinTransmitir", "sinTransmitir"]);
   igual("PRO334-14 (R05: CDC_DIVERGENTE solo como registro histórico) CDC_DIVERGENTE sigue siendo alerta de «inconsistencia» (roja técnica) para FE y NCE", alertas, ["inconsistencia", "inconsistencia"]);
-  cierto("PRO334-15 cápsula fiscal sin cambios: verde aprobado, rojo rechazado, amarillo pendiente, gris sin transmitir",
-    hex(regla(css, ".sifenAprobado"), "background") === "#e6f6ec" && hex(regla(css, ".sifenRechazado"), "background") === "#fdeceb" &&
-    hex(regla(css, ".sifenPendiente"), "background") === "#fff6d6" && hex(regla(css, ".sifenSinTransmitir"), "background") === "#f1f3f5");
+  // PRO-342-UX-R01 (punto 13): la cápsula .sifen* no tenía uso desde R04 y se retiró; los colores fiscales viven en los iconos (verde/azul/ámbar/rojo/gris), nunca en la fila.
+  cierto("PRO334-15 (actualizado UX-R01) colores fiscales en los iconos: verde confirmado, rojo rechazo/error, ámbar pendiente, contorno gris sin información; ninguno coincide con los fondos de tipo",
+    hex(regla(css, ".iconoOk .iconoCirculo"), "background") === "#12703f" && hex(regla(css, ".iconoError .iconoCirculo"), "background") === "#b42318" &&
+    hex(regla(css, ".iconoAviso .iconoCirculo"), "background") === "#f2b632" && hex(regla(css, ".iconoNeutro .iconoCirculo"), "border-color") === "#5b6b7b" &&
+    ![fe, nce].includes(hex(regla(css, ".iconoAviso .iconoCirculo"), "background")) && !/\.sifen/.test(css.replace(/\/\*[\s\S]*?\*\//g, "")));
   // PRO-342-R04 (UX01): la cápsula de texto fue sustituida por los iconos independientes (Envío · XML/CDC · SIFEN · Correo); el color por TIPO sigue sin mezclarse con el estado.
-  cierto("PRO334-16 (actualizado R04) iconos de estado y aviso técnico en la celda Estados (clases propias, no las del tipo); el aviso del detalle conserva las clases PRO-338",
-    /iconos\.map\(\(i\) => <IconoFase key=\{i\.eje\} icono=\{i\} \/>\)/.test(pagina) && !/CLASE_TONO_ICONO\[[^\]]*tipo/.test(pagina) &&
-    /alerta\.tipo === "inconsistencia" \? estilos\.avisoInconsistencia : estilos\.avisoTecnico/.test(pagina) && hex(regla(css, ".alertaInconsistencia"), "border-color") === "#c8372d");
+  cierto("PRO334-16 (actualizado UX-R01) iconos de estado y aviso técnico en la celda Estados (clases propias por tono, no las del tipo); el aviso del detalle conserva las clases PRO-338 y su borde rojo",
+    /iconos\.map\(\(i\) => <IconoFase key=\{i\.eje\} eje=\{i\.eje\} simbolo=\{i\.simbolo\} clase=\{CLASE_TONO_ICONO\[i\.tono\]\} texto=\{i\.texto\} tip=\{eventosTip\} \/>\)/.test(pagina) && !/CLASE_TONO_ICONO\[[^\]]*tipo/.test(pagina) &&
+    /alerta\.tipo === "inconsistencia" \? estilos\.avisoInconsistencia : estilos\.avisoTecnico/.test(pagina) && hex(regla(css, ".avisoInconsistencia"), "border-color") === "#c8372d");
 
   // ── 4. Hover/foco, accesibilidad y responsive ─────────────────────────────────────────────────────────────────────────────────────────────────────
   cierto("PRO334-17 hover y foco de teclado (focus-within) siguen visibles sobre FE y NCE con un tono más intenso del MISMO color",
@@ -154,16 +157,18 @@ export async function verificarCasosColoresTipoPro334(): Promise<string[]> {
     !/nth-child\((2|4|5|6)\)/.test(regla(css, SEL_SECUNDARIO) + SEL_SECUNDARIO) && /<div className=\{estilos\.iconosEstado\} role="group"/.test(pagina) /* R04: iconos en lugar de ui.statuses */);
   cierto("PRO334-28 la etiqueta de tipo no es hija directa de la celda (va dentro del span de metadatos) y conserva su color propio con contraste AA",
     /<span><span className=\{CLASE_ETIQUETA_TIPO\[d\.tipo\]\}>/.test(pagina) && hex(regla(css, ".filaFE .tipoFE"), "color") === "#1d4a7c" && hex(regla(css, ".filaNCE .tipoNCE"), "color") === "#5a4500");
-  cierto("PRO334-29 detalle: todos los <dt> y <small> del detalle son ui.muted; los <p> sin role son ui.muted o solo contienen el botón «Cargar intentos anteriores» (color propio); los avisos role=alert quedan excluidos",
+  // PRO-342-UX-R01: los indicadores ya no tienen <small> de ayuda (es texto accesible oculto) y «Cargar intentos anteriores» está en un <div>, no en un <p>.
+  cierto("PRO334-29 (actualizado UX-R01) detalle: todos los <dt> son ui.muted; todo <small> es ui.muted (con o sin clase extra); todo <p> sin role es ui.muted; los avisos role=alert quedan excluidos",
     (pagina.match(/<dt /g) ?? []).length === (pagina.match(/<dt className=\{ui\.muted\}>/g) ?? []).length &&
-    (pagina.match(/<small className=\{ui\.muted\}>/g) ?? []).length === (pagina.match(/<small/g) ?? []).length - 1 && /<small>\{i\.ayuda\}<\/small>/.test(pagina) &&
-    (pagina.match(/<p (?![^>]*role=)(?![^>]*ui\.muted)[^>]*>/g) ?? []).length === 1 && /<p style=\{\{ margin: "8px 0 0" \}\}>\s*<button type="button" className=\{ui\.secondaryButton\}/.test(pagina) &&
+    (pagina.match(/<small className=\{(ui\.muted|clases\(ui\.muted, [^)]*\))\}>/g) ?? []).length === (pagina.match(/<small/g) ?? []).length && !/<small>\{i\.ayuda\}<\/small>/.test(pagina) &&
+    (pagina.match(/<p (?![^>]*role=)(?![^>]*ui\.muted)[^>]*>/g) ?? []).length === 0 &&
     /<p className=\{ui\.alertError\} role="alert">/.test(pagina) && /p:not\(\[role\]\)/.test(SEL_SECUNDARIO));
   igual("PRO334-30 R02 no altera fondos, acentos ni hover/foco de PRO-334 R01", [fe, nce, fondosFila[2], fondosFila[3], detalleFe, detalleNce, acentoFe, acentoNce], ["#f4f8fd", "#fffcee", "#e9f1fb", "#fdf6da", "#f9fbfe", "#fffdf5", "#6d9bd1", "#d9bb4e"]);
   cierto("PRO334-19 alto contraste del sistema: el acento pasa a borde real (sólido FE, discontinuo NCE)", /@media \(forced-colors: active\)[\s\S]*border-left: 4px solid CanvasText[\s\S]*border-left: 4px dashed CanvasText/.test(css));
-  cierto("PRO334-20 sin desborde: el acento es box-shadow inset (no suma ancho) y la tabla conserva tableScroll y minWidth 860",
+  // PRO-342-UX-R01 (punto 12): el ancho mínimo 860 pasa a la clase local tablaDocs para poder anularlo en la tarjeta móvil (≤ 720px).
+  cierto("PRO334-20 (actualizado UX-R01) sin desborde: el acento es box-shadow inset (no suma ancho); la tabla conserva tableScroll, minWidth 860 en escritorio (clase local) y 0 en tarjeta móvil",
     /inset 4px 0 0/.test(regla(css, "tr.filaFE > td:first-child")) && !/width|padding|margin/.test(regla(css, "tr.filaFE > td:first-child")) &&
-    /<div className=\{ui\.tableScroll\}>\s*<table className=\{ui\.table\} style=\{\{ minWidth: 860 \}\}>/.test(pagina));
+    /<div className=\{ui\.tableScroll\}>\s*<table className=\{clases\(ui\.table, estilos\.tablaDocs\)\}/.test(pagina) && /min-width: 860px/.test(regla(css, "table.tablaDocs")) && /@media \(max-width: 720px\) \{\s*table\.tablaDocs \{\s*min-width: 0;/.test(css));
   cierto("PRO334-21 sin CSS global: lista.module.css no conoce filaFE/filaNCE", !/fila(FE|NCE)|detalle(FE|NCE)/.test(leer("components/ui/lista-padrao/lista.module.css")));
 
   // ── 5. Funcionalidades preservadas ────────────────────────────────────────────────────────────────────────────────────────────────────────────────

@@ -98,6 +98,7 @@ Module._resolveFilename = function (request, ...resto) {
   const r338 = cargar("lib/facturacion/cdc-inmutable-r03.casos.js");
   const r342 = cargar("lib/facturacion/flujo-fiscal-pro342.casos.js");
   const r342r05 = cargar("lib/facturacion/cdc-dato-api-r05.casos.js");
+  const uxr01 = cargar("lib/facturacion/documentos-ux-r01.casos.js");
   const uxf = cargar("lib/facturacion/flujo-factura-ux.casos.js");
   const red = cargar("lib/facturacion/rediseno.casos.js");
   const suites = [
@@ -193,6 +194,7 @@ Module._resolveFilename = function (request, ...resto) {
     ["PRO-338-R03: CDC INMUTABLE — el saneamiento de secretos no modifica el CDC de la API en consulta ni envío (clave = RUC contenido en el CDC), primera consulta Rechazado/1101 sin falso CDC_DIVERGENTE, CDC de otra FE / previo distinto sin sobrescritura, textos libres saneados y alerta sin «distinto del registrado» cuando no hay CDC", async () => r338.verificarCasosCdcInmutableR03(), null],
     ["PRO-342-R01: FLUJO FISCAL INTEGRAL — envío único con lote exacto, «XML firmado» intermedio (CDC solo si la API lo informa), reconsultas del mismo documento por el worker NEX-077 hasta Aprobado/Rechazado, CDC nunca sobrescrito, KuDE durante XML firmado sin PDF ajeno, secretos saneados", async () => r342.verificarCasosFlujoFiscalPro342(), null],
     ["PRO-342-R05: CDC = DATO OPACO DE LA API — NEXIT no valida el CDC (44/43/45 caracteres, no numérico, con espacios: literal); estado fiscal informado registrado sin condicionarlo al CDC; ausente no borra; cambio trazado (CAMBIO); eco/ACK/estados contradictorios protegidos; NEX-080 fail-closed; KuDE por identidad sin verificar por CDC; CASA MINGO FE 001-001-0000002 (AA)", async () => r342r05.verificarCasosCdcDatoApiR05(), null],
+    ["PRO-342-UX-R01: Documentos electrónicos — indicadores compactos, 4 iconos independientes con tooltip accesible sin recorte, leyenda única, acciones con iconos, primera capa de 4 datos fiscales, historial técnico cerrado, avisos críticos visibles, respuestas tardías/cambio de filtros, responsive y colores FE/NCE", async () => uxr01.verificarCasosDocumentosUxR01(), null],
   ];
   let total = 0;
   let fallosTotal = 0;
