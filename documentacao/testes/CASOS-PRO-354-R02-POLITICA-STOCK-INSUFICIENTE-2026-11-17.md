@@ -29,7 +29,7 @@
 | Listado «Bajas pendientes de stock» | 40, 61, 74, 75 |
 | Confirmación manual tras reposición (entrada 8, pendiente 5, saldo final 3) | 43, 58, 59 |
 | Confirmación bloqueada sin saldo, sin llegar a negativo | 42, 59, 60 |
-| FE rechazada, indeterminada o no transmitida bloqueada | 44, 58 |
+| FE con error técnico, indeterminada, no transmitida, cancelada, inutilizada o no reconocida bloqueada (R02-R04: la FE con rechazo fiscal SIFEN definitivo es confirmable) | 44, 58, R02-R04-01..07, 13 |
 | TRUE tras pendientes: siguen visibles y confirmables solo con disponible | 61 (el listado no depende de la política), 65 (la reversión rehúsa) |
 | Reportes sin doble conteo | Ver sección 2: la salida inmediata y la confirmación son movimientos ordinarios únicos y el pendiente no es movimiento. **Verificación con datos: pendiente del responsable.** |
 | Regresión fiscal (PRO-342, CDC, KuDE, gateway, Documentos, NCE) y compras ordinarias | 64, 77 |
@@ -55,7 +55,8 @@ Estos casos solo se pueden comprobar con PostgreSQL real y la aplicación. Ejecu
 7. **Confirmación:** con una entrada de 8 y un pendiente de 5, «Confirmar baja» crea una SALIDA/VENTA de 5 (clave `FE-STOCK-PEND:<id>`) y el saldo queda en 3. Repetir la confirmación devuelve el mismo movimiento.
 8. **Confirmación bloqueada:**
    - Con saldo 4 y pendiente 5: 409 sin cambios.
-   - Con FE `RECHAZADO`, `CANCELADO`, `INUTILIZADO`, `NO_RECONOCIDO`, `ENVIO_INDETERMINADO`, `PENDIENTE_ENVIO` o `ERROR_ENVIO`: 409 sin cambios.
+   - Con FE `CANCELADO`, `INUTILIZADO`, `NO_RECONOCIDO`, `ENVIO_INDETERMINADO`, `PENDIENTE_ENVIO`, `ENVIANDO` o `ERROR_ENVIO`: 409 sin cambios.
+   - R02-R04: con FE `ENVIADO` + `RECHAZADO` (rechazo fiscal SIFEN definitivo) la confirmación SÍ procede si hay saldo suficiente (ver sección 7).
 9. **Política TRUE con pendientes:** los pendientes siguen visibles y confirmables solo con disponible. La reversión de NEX-081 se rehúsa.
 10. **Anulación protegida:** el movimiento de la confirmación no se puede anular manualmente (NEX:MOVIMIENTO_VINCULADO_FE).
 11. **Reportes:** Kardex y Movimientos muestran las dos salidas (inmediata y confirmación) una sola vez cada una. El pendiente no aparece como movimiento.
@@ -68,8 +69,8 @@ Estos casos solo se pueden comprobar con PostgreSQL real y la aplicación. Ejecu
 - **R01-D2:** valor negativo o deuda valorizada en `inventario_costos`.
 - **R01-D3:** regularización automática con compras o entradas.
 - **Reportes de valorización y Kardex** con el pendiente valorizado.
-- **R01-D6:** política final de confirmación por estado fiscal. R02 usa la condición conservadora de la orden.
-- **PRO-310:** reserva al envío y salida al aprobar. Es incompatible con la baja al emitir y **bloquea el GO de producción** hasta reconciliarla por separado.
+- **R01-D6 (residual):** confirmación con FE `CANCELADO` o `INUTILIZADO`, que siguen bloqueadas. R02-R04 resolvió `RECHAZADO` (confirmable).
+- ~~**PRO-310:** reserva al envío y salida al aprobar.~~ Cancelada por el responsable (17/11/2026): la venta ocurre al emitir (sección 7).
 
 ## 4. Correctivo PRO-354-R02-R01 (auditoría AUD-CHATGPT-PRO-354-R02, hallazgos F001–F003)
 
@@ -176,3 +177,34 @@ El verificador ya no busca posiciones sobre `pg_get_functiondef` (que conserva c
 | Ningún control quitado ni forzado | Se conservan todos los demás controles | R02-R03-11 |
 | Solo lectura | `BEGIN READ ONLY … ROLLBACK`, sin escrituras ejecutables | R02-R03-12 |
 | Migration sin cambios | El orden aprobado en R02-R02 se conserva | R02-R03-13 |
+
+## 7. Correctivo PRO-354-R02-R04 (rectificación del responsable, 17/11/2026: la venta ocurre al emitir; PRO-310 cancelada)
+
+La baja física sigue en la emisión. La confirmación manual de una baja pendiente admite ahora una FE con **rechazo fiscal SIFEN definitivo** (`ENVIADO` + `RECHAZADO`). Listado (`o_fe_confirmable`) y `fe_stock_pendiente_confirmar` usan el mismo predicado: `ENVIADO` y `SIN_CONSULTA`/`PENDIENTE`/`APROBADO`/`RECHAZADO`. NEX-081 sigue **no aplicada** (sin evidencia de aplicación en el repositorio), por eso se corrige el mismo archivo. Casos en la sección O de `lib/facturacion/politica-stock-pro354.casos.ts` (`PRO354-R02-R04-01..25`), **no ejecutados**; ningún script se ejecutó.
+
+| Escenario | Esperado | Caso |
+|---|---|---|
+| Lista de estados de la confirmación (fuente) | Exactamente SIN_CONSULTA, PENDIENTE, APROBADO, RECHAZADO con `ENVIADO` | R02-R04-01 |
+| Listado vs. confirmación | Misma lista; coinciden en las 35 combinaciones local × SIFEN | R02-R04-02, 03 |
+| FE emitida 10/15, rechazo definitivo, entrada 8, confirmación 5 | El rechazo no mueve stock (saldo 0); sin entrada 409 insuficiente; tras la entrada confirma y el saldo queda 3 | R02-R04-04, 08 |
+| Errores técnicos de transmisión (`ERROR_ENVIO`, incluido el rechazo de recepción del gateway), `ENVIO_INDETERMINADO`, `ENVIANDO`, `PENDIENTE_ENVIO` | Bloqueados (409 `NEX:PENDIENTE_FE_NO_CONFIRMABLE`, sin movimiento) | R02-R04-05, 13 |
+| `CANCELADO`, `INUTILIZADO`, `NO_RECONOCIDO` | Bloqueados; ningún otro estado habilitado | R02-R04-06, 13 |
+| `SIN_CONSULTA`, `PENDIENTE`, `APROBADO` | Siguen confirmables (sin regresión) | R02-R04-07 |
+| Doble confirmación y respuesta fiscal repetida | Mismo movimiento; ni devolución ni duplicación de stock | R02-R04-09, 10 |
+| FE rechazada sin permiso, sin alcance, de otra empresa, sin saldo (4,9999 < 5) o con lotes | 403 / 403 / 404 / 409 / 409, sin escribir | R02-R04-11, 12 |
+| Pantalla | Botón ofrecido para FE rechazada con saldo; motivo de bloqueo sin «rechazada» y con error técnico/indeterminado/cancelada/inutilizada/no reconocida | R02-R04-14, 15 |
+| Mensaje SQL | Distingue error técnico de transmisión; conserva `NEX:PENDIENTE_FE_NO_CONFIRMABLE` | R02-R04-16 |
+| Controles conservados | Permiso, candado, FOR UPDATE, alcance, idempotencia, FE/depósito/producto bloqueados, motor | R02-R04-17 |
+| Baja al emitir y respuestas fiscales | La baja sigue en la emisión; registro de envío/consulta sin stock; sin liberación automática | R02-R04-18, 19, 20 |
+| Política TRUE, saldo negativo, costos | Intactos | R02-R04-21, 22 |
+| Verificador | Elegibilidad exacta en confirmar y listar, detectores (R04 = true; sin RECHAZADO, ampliada, comentada = false) y control «ninguna respuesta fiscal mueve stock» | R02-R04-23, 24 |
+| Preflight, reversión, NEX-067, NEX-080 | Sin cambios (no contienen el predicado) | R02-R04-25 |
+
+Casos manuales (base descartable, con NEX-081 aplicada; requieren autorización):
+
+1. FE con política FALSE, 15 pedidos y 10 disponibles; registrar por consulta un rechazo fiscal definitivo (`RECHAZADO`). El saldo sigue en 0 y la baja pendiente de 5 sigue abierta.
+2. Entrada de 8, «Confirmar baja»: SALIDA/VENTA de 5 (`FE-STOCK-PEND:<id>`), saldo 3. Repetir devuelve el mismo movimiento.
+3. FE con `ERROR_ENVIO`, `ENVIO_INDETERMINADO`, `CANCELADO`, `INUTILIZADO` o `NO_RECONOCIDO`: 409 sin cambios.
+4. `verificar-NEX-081.sql`: todas las filas `ok = true`, incluidas las nuevas R02-R04.
+
+Pendientes de decisión: confirmación con FE `CANCELADO` o `INUTILIZADO` (siguen bloqueadas). Fuera de alcance: PRO-311, gateway, CDC, KuDE, PRO-342, NCE.

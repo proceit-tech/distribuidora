@@ -4,7 +4,9 @@
  *    referencia fiscal con serie, y cantidades separadas: facturado, descontado al emitir, faltante original, pendiente actual y descontado total.
  *    Saldo registrado = disponible propio real. Proyectado = registrado − pendientes abiertos: es SOLO informativo, un negativo no es saldo físico ni contable.
  *  · Confirmación: MOVIMIENTOS.CREAR y alcance del depósito, con bloqueo e idempotencia.
- *    Genera una SALIDA/VENTA por el motor ordinario, solo con saldo real suficiente y con la FE enviada sin rechazo, cancelación ni inutilización.
+ *    Genera una SALIDA/VENTA por el motor ordinario, solo con saldo real suficiente y con la recepción de la FE confirmada por el gateway, sin cancelación,
+ *    inutilización ni falta de reconocimiento. R02-R04: una FE con rechazo fiscal SIFEN definitivo también admite la confirmación (la venta ocurrió al emitir);
+ *    los errores técnicos de transmisión no. Ninguna respuesta fiscal mueve stock por sí sola.
  *    La reposición no confirma sola.
  * Sin NEX-081 las funciones no existen (42883): se responde 503 con un mensaje claro, nunca datos inventados.
  */
@@ -159,7 +161,7 @@ export function errorBajaPendiente(error: unknown): { status: number; error: str
 export function puedeIntentarConfirmar(b: BajaPendiente, permisoCrear: boolean): { puede: boolean; motivo: string } {
   if (b.estado !== "PENDIENTE") return { puede: false, motivo: "Ya confirmada." };
   if (!permisoCrear) return { puede: false, motivo: "Requiere permiso para crear movimientos." };
-  if (!b.feConfirmable) return { puede: false, motivo: "La factura no tiene la recepción confirmada o fue rechazada, cancelada o inutilizada." };
+  if (!b.feConfirmable) return { puede: false, motivo: "La factura no tiene la recepción confirmada por el gateway (no enviada, con error técnico de transmisión o envío indeterminado) o fue cancelada, inutilizada o no reconocida." };
   if (b.conLote) return { puede: false, motivo: "El producto controla lotes: requiere una definición específica." };
 
   // Comparación decimal EXACTA en texto (saldo registrado ≥ pendiente de ESTA baja).

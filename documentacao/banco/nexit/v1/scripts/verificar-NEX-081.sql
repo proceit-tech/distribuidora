@@ -15,6 +15,13 @@
 -- solo en un literal, segunda comprobación de lotes solo comentada o antes del candado = mal. Si un detector falla, su fila da ok = false y la verificación no se da por buena.
 -- Condición del limpiado, revisada en la fuente de NEX-081: sus cuerpos no tienen «--» ni «/*» dentro de literales ni literales con $tag$ internos.
 -- No se quitó ningún control ni se fuerza ningún resultado: solo cambia QUÉ texto se inspecciona.
+-- PRO-354-R02-R04 (rectificación: la venta ocurre al emitir; PRO-310 cancelada): controles nuevos, sin quitar ninguno:
+--   · elegibilidad EXACTA de la confirmación manual, el MISMO predicado en fe_stock_pendiente_confirmar y en o_fe_confirmable del listado (código ejecutable): estado_local 'ENVIADO' y
+--     estado_sifen en ('SIN_CONSULTA', 'PENDIENTE', 'APROBADO', 'RECHAZADO'); RECHAZADO (rechazo fiscal definitivo) admitido, ningún otro estado agregado (CANCELADO, INUTILIZADO,
+--     NO_RECONOCIDO y los estados locales de error técnico siguen fuera). Detectores: predicado R04 correcto = true; lista anterior sin RECHAZADO, lista ampliada con CANCELADO y predicado
+--     solo comentado = false.
+--   · ninguna respuesta fiscal mueve stock: las funciones instaladas que registran envíos y consultas (fe_documento_registrar_envio%, fe_documento_registrar_consulta%) y los triggers de
+--     documentos_electronicos no referencian, en código ejecutable, el motor de movimientos, saldos, movimientos, la baja de la FE ni las bajas pendientes.
 BEGIN READ ONLY;
 WITH fuente(nombre, src) AS (
   SELECT 'MUESTRA_ORDEN_OK', E'BEGIN\n  -- la unidad se compara antes de fe_documento_crear_fe_receptor (este comentario nombra la función antes del marcador)\n  SELECT p.activo, p.controla_stock, p.unidad_medida_id INTO v_pr FROM public.productos p WHERE p.empresa_id = p_empresa AND p.id = v_prod FOR SHARE;\n  IF v_pr.unidad_medida_id IS DISTINCT FROM v_uni THEN\n    RAISE EXCEPTION ''la unidad base cambió'' USING ERRCODE = ''P0001'', DETAIL = ''NEX:STOCK_PENDIENTE_UNIDAD_CAMBIO'';\n  END IF;\n  IF EXISTS (SELECT 1 FROM public.stock_lotes l WHERE l.empresa_id = p_empresa AND l.producto_id = v_prod) THEN\n    RAISE EXCEPTION ''controla lotes'' USING ERRCODE = ''P0001'', DETAIL = ''NEX:STOCK_PENDIENTE_LOTE'';\n  END IF;\n  SELECT c.o_documento_id INTO v_id FROM public.fe_documento_crear_fe_receptor(p_empresa, p_usuario) c;\n  PERFORM pg_advisory_xact_lock(hashtextextended(''movimientos.numero:'' || p_empresa::text, 0));\n  IF EXISTS (SELECT 1 FROM public.stock_lotes l WHERE l.empresa_id = p_empresa AND l.producto_id = r.producto_id) THEN\n    RAISE EXCEPTION ''controla lotes'' USING ERRCODE = ''P0001'', DETAIL = ''NEX:STOCK_PENDIENTE_LOTE'';\n  END IF;\n  INSERT INTO public.documento_electronico_stock_pendientes (empresa_id, documento_id) VALUES (p_empresa, v_id);\nEND'
@@ -22,6 +29,10 @@ WITH fuente(nombre, src) AS (
   UNION ALL SELECT 'MUESTRA_UNIDAD_EN_LITERAL', E'BEGIN\n  SELECT p.activo, p.controla_stock, p.unidad_medida_id INTO v_pr FROM public.productos p WHERE p.empresa_id = p_empresa AND p.id = v_prod FOR SHARE;\n  RAISE NOTICE ''IF v_pr.unidad_medida_id IS DISTINCT FROM v_uni THEN NEX:STOCK_PENDIENTE_UNIDAD_CAMBIO'';\n  IF EXISTS (SELECT 1 FROM public.stock_lotes l WHERE l.empresa_id = p_empresa AND l.producto_id = v_prod) THEN\n    RAISE EXCEPTION ''controla lotes'' USING ERRCODE = ''P0001'', DETAIL = ''NEX:STOCK_PENDIENTE_LOTE'';\n  END IF;\n  SELECT c.o_documento_id INTO v_id FROM public.fe_documento_crear_fe_receptor(p_empresa, p_usuario) c;\n  PERFORM pg_advisory_xact_lock(hashtextextended(''movimientos.numero:'' || p_empresa::text, 0));\n  IF EXISTS (SELECT 1 FROM public.stock_lotes l WHERE l.empresa_id = p_empresa AND l.producto_id = r.producto_id) THEN\n    RAISE EXCEPTION ''controla lotes'' USING ERRCODE = ''P0001'', DETAIL = ''NEX:STOCK_PENDIENTE_LOTE'';\n  END IF;\n  INSERT INTO public.documento_electronico_stock_pendientes (empresa_id, documento_id) VALUES (p_empresa, v_id);\nEND'
   UNION ALL SELECT 'MUESTRA_LOTE_SOLO_COMENTADO', E'BEGIN\n  SELECT p.activo, p.controla_stock, p.unidad_medida_id INTO v_pr FROM public.productos p WHERE p.empresa_id = p_empresa AND p.id = v_prod FOR SHARE;\n  IF v_pr.unidad_medida_id IS DISTINCT FROM v_uni THEN\n    RAISE EXCEPTION ''la unidad base cambió'' USING ERRCODE = ''P0001'', DETAIL = ''NEX:STOCK_PENDIENTE_UNIDAD_CAMBIO'';\n  END IF;\n  IF EXISTS (SELECT 1 FROM public.stock_lotes l WHERE l.empresa_id = p_empresa AND l.producto_id = v_prod) THEN\n    RAISE EXCEPTION ''controla lotes'' USING ERRCODE = ''P0001'', DETAIL = ''NEX:STOCK_PENDIENTE_LOTE'';\n  END IF;\n  SELECT c.o_documento_id INTO v_id FROM public.fe_documento_crear_fe_receptor(p_empresa, p_usuario) c;\n  PERFORM pg_advisory_xact_lock(hashtextextended(''movimientos.numero:'' || p_empresa::text, 0));\n  -- IF EXISTS (SELECT 1 FROM public.stock_lotes l WHERE l.empresa_id = p_empresa AND l.producto_id = r.producto_id) THEN\n  -- RAISE EXCEPTION ''controla lotes'' USING ERRCODE = ''P0001'', DETAIL = ''NEX:STOCK_PENDIENTE_LOTE'';\n  -- END IF;\n  INSERT INTO public.documento_electronico_stock_pendientes (empresa_id, documento_id) VALUES (p_empresa, v_id);\nEND'
   UNION ALL SELECT 'MUESTRA_LOTE_ANTES_DEL_CANDADO', E'BEGIN\n  SELECT p.activo, p.controla_stock, p.unidad_medida_id INTO v_pr FROM public.productos p WHERE p.empresa_id = p_empresa AND p.id = v_prod FOR SHARE;\n  IF v_pr.unidad_medida_id IS DISTINCT FROM v_uni THEN\n    RAISE EXCEPTION ''la unidad base cambió'' USING ERRCODE = ''P0001'', DETAIL = ''NEX:STOCK_PENDIENTE_UNIDAD_CAMBIO'';\n  END IF;\n  IF EXISTS (SELECT 1 FROM public.stock_lotes l WHERE l.empresa_id = p_empresa AND l.producto_id = v_prod) THEN\n    RAISE EXCEPTION ''controla lotes'' USING ERRCODE = ''P0001'', DETAIL = ''NEX:STOCK_PENDIENTE_LOTE'';\n  END IF;\n  SELECT c.o_documento_id INTO v_id FROM public.fe_documento_crear_fe_receptor(p_empresa, p_usuario) c;\n  IF EXISTS (SELECT 1 FROM public.stock_lotes l WHERE l.empresa_id = p_empresa AND l.producto_id = r.producto_id) THEN\n    RAISE EXCEPTION ''controla lotes'' USING ERRCODE = ''P0001'', DETAIL = ''NEX:STOCK_PENDIENTE_LOTE'';\n  END IF;\n  PERFORM pg_advisory_xact_lock(hashtextextended(''movimientos.numero:'' || p_empresa::text, 0));\n  INSERT INTO public.documento_electronico_stock_pendientes (empresa_id, documento_id) VALUES (p_empresa, v_id);\nEND'
+  UNION ALL SELECT 'MUESTRA_ELEG_R04_OK', E'BEGIN\n  -- antes: v_doc.estado_sifen NOT IN (''SIN_CONSULTA'', ''PENDIENTE'', ''APROBADO'')\n  IF v_doc.estado_local IS DISTINCT FROM ''ENVIADO'' OR v_doc.estado_sifen NOT IN (''SIN_CONSULTA'', ''PENDIENTE'', ''APROBADO'', ''RECHAZADO'') THEN\n    RAISE EXCEPTION ''no confirmable'' USING ERRCODE = ''P0001'', DETAIL = ''NEX:PENDIENTE_FE_NO_CONFIRMABLE'';\n  END IF;\nEND'
+  UNION ALL SELECT 'MUESTRA_ELEG_SIN_RECHAZADO', E'BEGIN\n  IF v_doc.estado_local IS DISTINCT FROM ''ENVIADO'' OR v_doc.estado_sifen NOT IN (''SIN_CONSULTA'', ''PENDIENTE'', ''APROBADO'') THEN\n    RAISE EXCEPTION ''no confirmable'' USING ERRCODE = ''P0001'', DETAIL = ''NEX:PENDIENTE_FE_NO_CONFIRMABLE'';\n  END IF;\nEND'
+  UNION ALL SELECT 'MUESTRA_ELEG_AMPLIADA', E'BEGIN\n  IF v_doc.estado_local IS DISTINCT FROM ''ENVIADO'' OR v_doc.estado_sifen NOT IN (''SIN_CONSULTA'', ''PENDIENTE'', ''APROBADO'', ''RECHAZADO'', ''CANCELADO'') THEN\n    RAISE EXCEPTION ''no confirmable'' USING ERRCODE = ''P0001'', DETAIL = ''NEX:PENDIENTE_FE_NO_CONFIRMABLE'';\n  END IF;\nEND'
+  UNION ALL SELECT 'MUESTRA_ELEG_COMENTADA', E'BEGIN\n  -- IF v_doc.estado_local IS DISTINCT FROM ''ENVIADO'' OR v_doc.estado_sifen NOT IN (''SIN_CONSULTA'', ''PENDIENTE'', ''APROBADO'', ''RECHAZADO'') THEN\n  --   RAISE EXCEPTION ''no confirmable'' USING ERRCODE = ''P0001'', DETAIL = ''NEX:PENDIENTE_FE_NO_CONFIRMABLE'';\n  -- END IF;\n  NULL;\nEND'
   UNION ALL SELECT f.nombre, p.prosrc
   FROM (VALUES
     ('crear', 'public.fe_documento_crear_fe_stock_pendiente(uuid,uuid,uuid,uuid,text,uuid,text,text,text,numeric,jsonb,jsonb,uuid,uuid,jsonb,boolean)'),
@@ -54,8 +65,20 @@ WITH fuente(nombre, src) AS (
          (codigo_ejecutable ~ 'stock_lotes l WHERE l\.empresa_id = p_empresa AND l\.producto_id = v_prod\)[[:space:]]+THEN[[:space:]]+RAISE EXCEPTION[^;]*''NEX:STOCK_PENDIENTE_LOTE'''
           AND codigo_ejecutable ~ 'stock_lotes l WHERE l\.empresa_id = p_empresa AND l\.producto_id = r\.producto_id\)[[:space:]]+THEN[[:space:]]+RAISE EXCEPTION[^;]*''NEX:STOCK_PENDIENTE_LOTE'''
           AND codigo_ejecutable ~ 'pg_advisory_xact_lock[[:space:]]*\([[:space:]]*hashtextextended[[:space:]]*\([[:space:]]*''movimientos\.numero:'''
-          AND p_lote1 > 0 AND p_lote1 < p_llamada AND p_llamada < p_candado AND p_candado < p_lote2 AND p_lote2 < p_insert) AS lotes_ok
+          AND p_lote1 > 0 AND p_lote1 < p_llamada AND p_llamada < p_candado AND p_candado < p_lote2 AND p_lote2 < p_insert) AS lotes_ok,
+         -- R02-R04: elegibilidad exacta de la confirmación (lista cerrada; el «\)» final impide estados agregados).
+         (codigo_ejecutable ~ 'v_doc\.estado_local IS DISTINCT FROM ''ENVIADO'' OR v_doc\.estado_sifen NOT IN \(''SIN_CONSULTA'', ''PENDIENTE'', ''APROBADO'', ''RECHAZADO''\)[[:space:]]+THEN[[:space:]]+RAISE EXCEPTION[^;]*''NEX:PENDIENTE_FE_NO_CONFIRMABLE''') AS elegibilidad_confirmar_ok,
+         (codigo_ejecutable ~ 'd\.estado_local = ''ENVIADO'' AND d\.estado_sifen IN \(''SIN_CONSULTA'', ''PENDIENTE'', ''APROBADO'', ''RECHAZADO''\)\)') AS elegibilidad_listar_ok
     FROM orden
+), fiscal AS (
+  -- R02-R04: registro de envíos/consultas instalado y triggers de documentos_electronicos, en código ejecutable.
+  SELECT p.proname::text AS nombre, regexp_replace(regexp_replace(p.prosrc, '--[^\n]*', ' ', 'g'), '/\*.*?\*/', ' ', 'g') AS codigo_ejecutable
+    FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+   WHERE n.nspname = 'public' AND (p.proname LIKE 'fe\_documento\_registrar\_envio%' OR p.proname LIKE 'fe\_documento\_registrar\_consulta%')
+  UNION ALL
+  SELECT 'trigger:' || t.tgname, regexp_replace(regexp_replace(p.prosrc, '--[^\n]*', ' ', 'g'), '/\*.*?\*/', ' ', 'g')
+    FROM pg_trigger t JOIN pg_proc p ON p.oid = t.tgfoid
+   WHERE t.tgrelid = 'public.documentos_electronicos'::regclass AND NOT t.tgisinternal
 )
 SELECT 'detector: un comentario que nombra fe_documento_crear_fe_receptor ANTES del marcador no adelanta la llamada (orden correcto = true)' AS control,
        EXISTS (SELECT 1 FROM evaluacion WHERE nombre = 'MUESTRA_ORDEN_OK' AND unidad_ok AND lotes_ok) AS ok
@@ -67,6 +90,21 @@ UNION ALL SELECT 'detector: la segunda comprobación de lotes solo comentada no 
        EXISTS (SELECT 1 FROM evaluacion WHERE nombre = 'MUESTRA_LOTE_SOLO_COMENTADO' AND NOT lotes_ok)
 UNION ALL SELECT 'detector: la segunda comprobación de lotes ANTES del candado de numeración se rechaza',
        EXISTS (SELECT 1 FROM evaluacion WHERE nombre = 'MUESTRA_LOTE_ANTES_DEL_CANDADO' AND NOT lotes_ok)
+UNION ALL SELECT 'detector R02-R04: el predicado de elegibilidad con RECHAZADO se reconoce (= true)',
+       EXISTS (SELECT 1 FROM evaluacion WHERE nombre = 'MUESTRA_ELEG_R04_OK' AND elegibilidad_confirmar_ok)
+UNION ALL SELECT 'detector R02-R04: la lista anterior sin RECHAZADO no cuenta',
+       EXISTS (SELECT 1 FROM evaluacion WHERE nombre = 'MUESTRA_ELEG_SIN_RECHAZADO' AND NOT elegibilidad_confirmar_ok)
+UNION ALL SELECT 'detector R02-R04: una lista ampliada (CANCELADO) se rechaza',
+       EXISTS (SELECT 1 FROM evaluacion WHERE nombre = 'MUESTRA_ELEG_AMPLIADA' AND NOT elegibilidad_confirmar_ok)
+UNION ALL SELECT 'detector R02-R04: el predicado solo comentado no cuenta',
+       EXISTS (SELECT 1 FROM evaluacion WHERE nombre = 'MUESTRA_ELEG_COMENTADA' AND NOT elegibilidad_confirmar_ok)
+UNION ALL SELECT 'R02-R04: la confirmación admite FE ENVIADA con rechazo fiscal definitivo (RECHAZADO) y ningún otro estado nuevo (código ejecutable)',
+       EXISTS (SELECT 1 FROM evaluacion WHERE nombre = 'confirmar' AND elegibilidad_confirmar_ok)
+UNION ALL SELECT 'R02-R04: el listado marca confirmable con el MISMO predicado (o_fe_confirmable, código ejecutable)',
+       EXISTS (SELECT 1 FROM evaluacion WHERE nombre = 'listar' AND elegibilidad_listar_ok)
+UNION ALL SELECT 'R02-R04: ninguna respuesta fiscal mueve stock (registro de envío/consulta y triggers de documentos_electronicos sin motor, saldos, movimientos ni bajas)',
+       EXISTS (SELECT 1 FROM fiscal WHERE nombre LIKE 'fe\_documento\_registrar\_consulta%')
+       AND NOT EXISTS (SELECT 1 FROM fiscal WHERE codigo_ejecutable ~* '(inventario_registrar_movimiento|inventario_anular_movimiento|stock_saldos|movimientos_inventario|fe_stock_baja_documento|documento_electronico_stock_pendientes|fe_stock_pendiente_confirmar)')
 UNION ALL SELECT 'funciones inspeccionadas presentes (5)', (SELECT count(*) FROM codigo WHERE nombre NOT LIKE 'MUESTRA\_%') = 5
 UNION ALL SELECT 'empresas.bloquear_stock_insuficiente boolean NOT NULL DEFAULT true',
        EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'empresas' AND column_name = 'bloquear_stock_insuficiente'

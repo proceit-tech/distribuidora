@@ -56,8 +56,7 @@ export const CASOS_PENDIENTES_POR_GATE = [
   "R01-D2 valor negativo de inventario_costos / deuda valorizada",
   "R01-D3 regularización automática del pendiente con una compra/entrada (costo de la entrada vs. costo promedio)",
   "R01 reportes de valorización y Kardex mostrando el pendiente como salida valorizada",
-  "R01-D6 política final de confirmación según estado fiscal (R02 adopta la condición conservadora: ENVIADO y SIN_CONSULTA|PENDIENTE|APROBADO)",
-  "PRO-310 reserva al envío / salida al aprobar: incompatibilidad con la baja al emitir, a reconciliar antes del GO de producción",
+  "R01-D6 residual: confirmación con FE CANCELADO o INUTILIZADO (R02-R04 resolvió RECHAZADO; esos estados siguen bloqueados hasta decisión separada)",
 ] as const;
 
 function baseSimulada(o: { politica?: unknown; sinFila?: boolean; saldos?: SaldoDisponible[]; depositos?: unknown[]; conLote?: string[] } = {}) {
@@ -257,7 +256,7 @@ export async function verificarCasosPoliticaStockPro354(): Promise<string[]> {
     igual("PRO354-41 decimal exacto en texto (sin float): -5 < 0; 5.0000 = 5; 0.0001 > 0", [compararDecimal("-5.0000", "0"), compararDecimal("5.0000", "5"), compararDecimal("0.0001", "0")], [-1, 0, 1]);
     igual("PRO354-42 confirmación con faltante sin saldo suficiente: el botón no se ofrece (la base además lo rechaza sin saldo negativo)", puedeIntentarConfirmar(baja(), true).puede, false);
     igual("PRO354-43 tras reposición (entrada 8, pendiente 5): se ofrece la confirmación", puedeIntentarConfirmar(baja({ saldoRegistrado: "8.0000", saldoProyectado: "3.0000" }), true).puede, true);
-    igual("PRO354-44 FE rechazada/indeterminada/no transmitida (feConfirmable false), lote o sin MOVIMIENTOS.CREAR: no se ofrece", [puedeIntentarConfirmar(baja({ saldoRegistrado: "8", feConfirmable: false }), true).puede, puedeIntentarConfirmar(baja({ saldoRegistrado: "8", conLote: true }), true).puede, puedeIntentarConfirmar(baja({ saldoRegistrado: "8" }), false).puede], [false, false, false]);
+    igual("PRO354-44 FE con error técnico/indeterminada/no transmitida/cancelada/inutilizada/no reconocida (feConfirmable false; R02-R04: la rechazada SÍ es confirmable), lote o sin MOVIMIENTOS.CREAR: no se ofrece", [puedeIntentarConfirmar(baja({ saldoRegistrado: "8", feConfirmable: false }), true).puede, puedeIntentarConfirmar(baja({ saldoRegistrado: "8", conLote: true }), true).puede, puedeIntentarConfirmar(baja({ saldoRegistrado: "8" }), false).puede], [false, false, false]);
     igual("PRO354-45 ya confirmada: no se vuelve a ofrecer", puedeIntentarConfirmar(baja({ estado: "CONFIRMADA", saldoRegistrado: "8" }), true).puede, false);
     igual("PRO354-46 errores: sin NEX-081 503; permiso 403; no encontrado 404; insuficiente/FE no confirmable/lote 409 con el texto de la base; otro 500 genérico",
       [errorBajaPendiente(new SinNex081Error("x")).status, errorBajaPendiente({ code: "42501" }).status, errorBajaPendiente({ detail: "NEX:PENDIENTE_NO_ENCONTRADO" }).status, errorBajaPendiente({ detail: "NEX:STOCK_INSUFICIENTE", message: "m" }), errorBajaPendiente({ detail: "NEX:PENDIENTE_FE_NO_CONFIRMABLE" }).status, errorBajaPendiente(new Error("interno")).error],
@@ -288,7 +287,7 @@ export async function verificarCasosPoliticaStockPro354(): Promise<string[]> {
     cierto("PRO354-55 emisión con faltante: producto activo que controla stock y sin lotes; depósito propio, activo, de la sucursal y en alcance (R01: filas bloqueadas antes de validar)", /NOT v_pr\.controla_stock OR NOT v_pr\.activo/.test(crear) && /NEX:STOCK_PENDIENTE_LOTE/.test(crear) && /NOT v_dp\.activo OR v_dp\.es_de_terceros OR v_dp\.sucursal_id IS DISTINCT FROM p_sucursal/.test(crear) && /usuario_puede_deposito\(p_empresa, p_usuario, v_dep\)/.test(crear));
     cierto("PRO354-56 faltante REAL: tras la salida no queda disponible elegible (FOR UPDATE); si queda, NEX:STOCK_PENDIENTE_CON_DISPONIBLE", /FOR UPDATE OF s;\s*IF FOUND THEN/.test(crear) && /NEX:STOCK_PENDIENTE_CON_DISPONIBLE/.test(crear));
     cierto("PRO354-57 reintento / carrera de la misma clave: no escribe y exige los mismos pendientes (NEX:IDEMPOTENCIA_CONFLICTO)", /IF v_reutilizado THEN/.test(crear) && /NEX:IDEMPOTENCIA_CONFLICTO/.test(crear) && crear.indexOf("IF v_reutilizado THEN") < crear.indexOf("INSERT INTO public.documento_electronico_stock_pendientes"));
-    cierto("PRO354-58 confirmación: MOVIMIENTOS.CREAR, advisory lock + FOR UPDATE, alcance, idempotente, FE ENVIADA y no rechazada/cancelada/inutilizada", /'MOVIMIENTOS', 'CREAR'/.test(confirmar) && /pg_advisory_xact_lock/.test(confirmar) && /FOR UPDATE/.test(confirmar) && /usuario_puede_deposito\(p_empresa, p_usuario, v_p\.deposito_id\)/.test(confirmar) && /v_p\.estado = 'CONFIRMADA'/.test(confirmar) && /estado_local IS DISTINCT FROM 'ENVIADO' OR v_doc\.estado_sifen NOT IN \('SIN_CONSULTA', 'PENDIENTE', 'APROBADO'\)/.test(confirmar));
+    cierto("PRO354-58 confirmación: MOVIMIENTOS.CREAR, advisory lock + FOR UPDATE, alcance, idempotente, FE ENVIADA no cancelada/inutilizada/no reconocida (R02-R04: con rechazo fiscal definitivo admitida)", /'MOVIMIENTOS', 'CREAR'/.test(confirmar) && /pg_advisory_xact_lock/.test(confirmar) && /FOR UPDATE/.test(confirmar) && /usuario_puede_deposito\(p_empresa, p_usuario, v_p\.deposito_id\)/.test(confirmar) && /v_p\.estado = 'CONFIRMADA'/.test(confirmar) && /estado_local IS DISTINCT FROM 'ENVIADO' OR v_doc\.estado_sifen NOT IN \('SIN_CONSULTA', 'PENDIENTE', 'APROBADO', 'RECHAZADO'\) THEN/.test(confirmar));
     cierto("PRO354-59 confirmación solo con saldo real suficiente (jamás negativo; R01: lo decide el motor bajo su bloqueo) y por el motor ordinario con clave idempotente", /SQLERRM LIKE 'saldo disponible insuficiente%'/.test(confirmar) && /NEX:STOCK_INSUFICIENTE/.test(confirmar) && /inventario_registrar_movimiento\(p_empresa, p_usuario, 'SALIDA', 'VENTA'/.test(confirmar) && /'FE-STOCK-PEND:' \|\| v_p\.id::text/.test(confirmar));
     cierto("PRO354-60 NO toca CHECK de stock_saldos, inventario_costos (estructura), costo promedio ni saldo negativo", !/ALTER TABLE public\.stock_saldos|stock_saldos_cant_chk|ALTER TABLE public\.inventario_costos|costo_promedio\s*=|UPDATE public\.stock_saldos/.test(cod));
     cierto("PRO354-61 listado: STOCK.VER y alcance de depósito (R02-R02: alcance histórico); proyectado = registrado − pendientes abiertos", /'STOCK', 'VER'/.test(listar) && /deposito_en_alcance\(p_empresa, p_usuario, p\.deposito_id\)/.test(listar) && /sal\.registrado - ab\.abierto/.test(listar));
@@ -651,7 +650,153 @@ export async function verificarCasosPoliticaStockPro354(): Promise<string[]> {
       /IF v_pr\.unidad_medida_id IS DISTINCT FROM v_uni THEN/.test(cuerpoCrear) && /PERFORM pg_advisory_xact_lock\(hashtextextended\('movimientos\.numero:' \|\| p_empresa::text, 0\)\);/.test(cuerpoCrear));
   }
 
-  igual("PRO354-78 casos de la matriz R01 que dependen del gate contable: listados como PENDIENTES POR GATE (no simulados)", CASOS_PENDIENTES_POR_GATE.length, 7);
+  // ── O. PRO-354-R02-R04 — rectificación: la venta ocurre al EMITIR; confirmación manual también con rechazo fiscal SIFEN definitivo ─────────────
+  // Casos ESCRITOS, NO ejecutados. La elegibilidad se lee de la FUENTE real de NEX-081 (no aplicada): listado y confirmación deben usar la MISMA lista cerrada.
+  // La «base simulada» de la confirmación reproduce el orden de fe_stock_pendiente_confirmar (permiso → candado/fila → alcance → CONFIRMADA idempotente → FE elegible →
+  // lotes → motor con saldo suficiente) usando la lista de estados extraída del código ejecutable; no sustituye la validación en PostgreSQL del responsable.
+  {
+    const ruta = "documentacao/banco/nexit/v1/migraciones/NEX-081-facturacion-politica-stock-pendientes.sql";
+    const fuente = existsSync(join(process.cwd(), ruta)) ? leer(ruta) : "";
+    const cod = sinComSql(fuente);
+    const tramo = (desde: string, hasta: string) => cod.slice(cod.indexOf(desde), cod.indexOf(hasta, cod.indexOf(desde) + desde.length));
+    const confirmar = tramo("CREATE FUNCTION public.fe_stock_pendiente_confirmar", "COMMENT ON FUNCTION");
+    const listar = tramo("CREATE FUNCTION public.fe_stock_pendientes_listar", "CREATE FUNCTION public.fe_stock_pendientes_filtros");
+    const verificar = leer("documentacao/banco/nexit/v1/scripts/verificar-NEX-081.sql");
+    const lista = (m: RegExpMatchArray | null) => (m ? [...m[1].matchAll(/'([A-Z_]+)'/g)].map((x) => x[1]) : []);
+    const listaConfirmar = lista(confirmar.match(/v_doc\.estado_local IS DISTINCT FROM 'ENVIADO' OR v_doc\.estado_sifen NOT IN \(([^)]*)\) THEN/));
+    const listaListar = lista(listar.match(/\(d\.estado_local = 'ENVIADO' AND d\.estado_sifen IN \(([^)]*)\)\),/));
+    const elegibleConfirmar = (local: string, sifen: string) => local === "ENVIADO" && listaConfirmar.includes(sifen);
+    const elegibleListar = (local: string, sifen: string) => local === "ENVIADO" && listaListar.includes(sifen);
+    const ESTADOS_LOCALES = ["PENDIENTE_ENVIO", "ENVIANDO", "ENVIADO", "ERROR_ENVIO", "ENVIO_INDETERMINADO"];
+    const ESTADOS_SIFEN = ["SIN_CONSULTA", "PENDIENTE", "APROBADO", "RECHAZADO", "CANCELADO", "INUTILIZADO", "NO_RECONOCIDO"];
+
+    // Base simulada de la confirmación (una empresa, un depósito). Saldo en diezmilésimas (decimal exacto, sin float).
+    type Doc = { estadoLocal: string; estadoSifen: string };
+    const simular = (o: { doc: Doc; saldo: string; pendiente: string; permiso?: boolean; alcance?: boolean; conLote?: boolean; empresaPendiente?: string }) => {
+      const dz = (x: string) => BigInt(x.replace(".", "").padEnd(x.includes(".") ? x.length - 1 : x.length + 4, "0"));
+      const st = { saldo: dz(o.saldo), estado: "PENDIENTE" as "PENDIENTE" | "CONFIRMADA", movimientos: [] as string[], doc: { ...o.doc } };
+      const confirmarSim = (empresa: string): { ok: true; repetido: boolean; movimiento: string } | { ok: false; error: { code?: string; detail?: string; message?: string } } => {
+        if (o.permiso === false) return { ok: false, error: { code: "42501" } };
+        if (empresa !== (o.empresaPendiente ?? EMPRESA)) return { ok: false, error: { detail: "NEX:PENDIENTE_NO_ENCONTRADO" } };
+        if (o.alcance === false) return { ok: false, error: { code: "42501" } };
+        if (st.estado === "CONFIRMADA") return { ok: true, repetido: true, movimiento: st.movimientos[0] };
+        if (!elegibleConfirmar(st.doc.estadoLocal, st.doc.estadoSifen)) return { ok: false, error: { detail: "NEX:PENDIENTE_FE_NO_CONFIRMABLE", message: "no confirmable" } };
+        if (o.conLote) return { ok: false, error: { detail: "NEX:STOCK_PENDIENTE_LOTE", message: "lote" } };
+        const req = dz(o.pendiente);
+        if (st.saldo < req) return { ok: false, error: { detail: "NEX:STOCK_INSUFICIENTE", message: "saldo disponible insuficiente" } };
+        st.saldo -= req;
+        st.estado = "CONFIRMADA";
+        st.movimientos.push("FE-STOCK-PEND:f0f0f0f0");
+
+        return { ok: true, repetido: false, movimiento: st.movimientos[0] };
+      };
+      // Una respuesta fiscal solo cambia el estado del documento: la simulación no tiene (igual que la base) ningún camino de stock desde la consulta.
+      const respuestaFiscal = (sifen: string) => { st.doc = { estadoLocal: "ENVIADO", estadoSifen: sifen }; };
+      const saldo = () => { const s = st.saldo.toString().padStart(5, "0"); return `${s.slice(0, -4)}.${s.slice(-4)}`; };
+
+      return { confirmarSim, respuestaFiscal, saldo, st };
+    };
+    const RECHAZADA: Doc = { estadoLocal: "ENVIADO", estadoSifen: "RECHAZADO" };
+
+    igual("PRO354-R02-R04-01 fuente: la confirmación admite exactamente SIN_CONSULTA/PENDIENTE/APROBADO/RECHAZADO con recepción ENVIADA (lista cerrada)", listaConfirmar, ["SIN_CONSULTA", "PENDIENTE", "APROBADO", "RECHAZADO"]);
+    igual("PRO354-R02-R04-02 fuente: el listado (o_fe_confirmable) usa la MISMA lista que la confirmación", listaListar, listaConfirmar);
+    igual("PRO354-R02-R04-03 matriz completa local × SIFEN: confirmación y listado coinciden en las 35 combinaciones",
+      ESTADOS_LOCALES.flatMap((l) => ESTADOS_SIFEN.map((s) => elegibleConfirmar(l, s) === elegibleListar(l, s))).every(Boolean), true);
+    igual("PRO354-R02-R04-04 rechazo fiscal SIFEN definitivo (ENVIADO + RECHAZADO): confirmable", elegibleConfirmar("ENVIADO", "RECHAZADO"), true);
+    igual("PRO354-R02-R04-05 errores técnicos de transmisión y envíos sin recepción confirmada siguen bloqueados (ERROR_ENVIO, ENVIO_INDETERMINADO, ENVIANDO, PENDIENTE_ENVIO)",
+      ["ERROR_ENVIO", "ENVIO_INDETERMINADO", "ENVIANDO", "PENDIENTE_ENVIO"].map((l) => elegibleConfirmar(l, "SIN_CONSULTA")), [false, false, false, false]);
+    igual("PRO354-R02-R04-06 CANCELADO, INUTILIZADO y NO_RECONOCIDO siguen bloqueados (no se habilitan otros estados)",
+      ["CANCELADO", "INUTILIZADO", "NO_RECONOCIDO"].map((s) => elegibleConfirmar("ENVIADO", s)), [false, false, false]);
+    igual("PRO354-R02-R04-07 sin regresión: SIN_CONSULTA, PENDIENTE y APROBADO siguen confirmables", ["SIN_CONSULTA", "PENDIENTE", "APROBADO"].map((s) => elegibleConfirmar("ENVIADO", s)), [true, true, true]);
+    {
+      // Escenario del plan: FE de 15 emitida con 10 disponibles (salida 10 al emitir, pendiente 5), rechazo fiscal definitivo, entrada de 8, confirmación manual de 5 → saldo 3.
+      const b = simular({ doc: { estadoLocal: "ENVIADO", estadoSifen: "SIN_CONSULTA" }, saldo: "0.0000", pendiente: "5.0000" });
+      b.respuestaFiscal("RECHAZADO");
+      const trasRechazo = b.saldo();
+      const sinEntrada = b.confirmarSim(EMPRESA);
+      b.st.saldo += 80000n; // entrada de 8 (motor ordinario, fuera de la FE)
+      const r = b.confirmarSim(EMPRESA);
+      igual("PRO354-R02-R04-08 FE 10/15 rechazada: el rechazo no mueve stock (saldo sigue 0), sin entrada no confirma (NEX:STOCK_INSUFICIENTE, sin saldo negativo); entrada 8 → confirma 5 → saldo 3",
+        [trasRechazo, sinEntrada.ok ? null : sinEntrada.error.detail, r.ok && !r.repetido, b.saldo(), b.st.movimientos.length], ["0.0000", "NEX:STOCK_INSUFICIENTE", true, "3.0000", 1]);
+      const otra = b.confirmarSim(EMPRESA);
+      igual("PRO354-R02-R04-09 doble confirmación: devuelve el MISMO movimiento (repetido) y no duplica la salida (saldo 3, un movimiento)", [otra.ok && otra.repetido, otra.ok ? otra.movimiento : null, b.saldo(), b.st.movimientos.length], [true, "FE-STOCK-PEND:f0f0f0f0", "3.0000", 1]);
+      b.respuestaFiscal("RECHAZADO");
+      igual("PRO354-R02-R04-10 una respuesta fiscal posterior (repetida) no devuelve ni duplica stock", [b.saldo(), b.st.movimientos.length, b.st.estado], ["3.0000", 1, "CONFIRMADA"]);
+    }
+    {
+      const sinPermiso = simular({ doc: RECHAZADA, saldo: "8.0000", pendiente: "5.0000", permiso: false });
+      const sinAlcance = simular({ doc: RECHAZADA, saldo: "8.0000", pendiente: "5.0000", alcance: false });
+      const otraEmpresa = simular({ doc: RECHAZADA, saldo: "8.0000", pendiente: "5.0000", empresaPendiente: OTRA_EMPRESA });
+      const sinSaldo = simular({ doc: RECHAZADA, saldo: "4.9999", pendiente: "5.0000" });
+      const conLote = simular({ doc: RECHAZADA, saldo: "8.0000", pendiente: "5.0000", conLote: true });
+      const res = [sinPermiso, sinAlcance, otraEmpresa, sinSaldo, conLote].map((s) => s.confirmarSim(EMPRESA));
+      igual("PRO354-R02-R04-11 FE rechazada sigue exigiendo permiso, alcance, misma empresa, saldo suficiente (4,9999 < 5) y producto sin lotes; ninguno escribe",
+        [res.map((r) => (r.ok ? "OK" : (r.error.detail ?? r.error.code))), [sinPermiso, sinAlcance, otraEmpresa, sinSaldo, conLote].map((s) => [s.saldo(), s.st.movimientos.length])],
+        [["42501", "42501", "NEX:PENDIENTE_NO_ENCONTRADO", "NEX:STOCK_INSUFICIENTE", "NEX:STOCK_PENDIENTE_LOTE"], [["8.0000", 0], ["8.0000", 0], ["8.0000", 0], ["4.9999", 0], ["8.0000", 0]]]);
+      igual("PRO354-R02-R04-12 errores mapeados por la API sin cambios: 403 permiso/alcance, 404 otra empresa, 409 saldo/FE no confirmable/lote",
+        res.map((r) => (r.ok ? 200 : errorBajaPendiente(r.error).status)).concat(errorBajaPendiente({ detail: "NEX:PENDIENTE_FE_NO_CONFIRMABLE" }).status), [403, 403, 404, 409, 409, 409]);
+    }
+    {
+      const casos: Array<[string, Doc]> = [["error técnico", { estadoLocal: "ERROR_ENVIO", estadoSifen: "SIN_CONSULTA" }], ["indeterminado", { estadoLocal: "ENVIO_INDETERMINADO", estadoSifen: "SIN_CONSULTA" }],
+        ["cancelado", { estadoLocal: "ENVIADO", estadoSifen: "CANCELADO" }], ["inutilizado", { estadoLocal: "ENVIADO", estadoSifen: "INUTILIZADO" }], ["no reconocido", { estadoLocal: "ENVIADO", estadoSifen: "NO_RECONOCIDO" }]];
+      igual("PRO354-R02-R04-13 con saldo suficiente, error técnico / indeterminado / cancelado / inutilizado / no reconocido: 409 NEX:PENDIENTE_FE_NO_CONFIRMABLE sin movimiento",
+        casos.map(([, d]) => { const s = simular({ doc: d, saldo: "8.0000", pendiente: "5.0000" }); const r = s.confirmarSim(EMPRESA); return [r.ok ? "OK" : r.error.detail, s.saldo()]; }),
+        casos.map(() => ["NEX:PENDIENTE_FE_NO_CONFIRMABLE", "8.0000"]));
+    }
+    igual("PRO354-R02-R04-14 pantalla: FE rechazada (feConfirmable true del listado) con saldo suficiente ofrece «Confirmar baja»; sin saldo, lote o permiso no",
+      [puedeIntentarConfirmar(baja({ estadoSifen: "RECHAZADO", saldoRegistrado: "8.0000", saldoProyectado: "3.0000" }), true).puede, puedeIntentarConfirmar(baja({ estadoSifen: "RECHAZADO" }), true).puede,
+        puedeIntentarConfirmar(baja({ estadoSifen: "RECHAZADO", saldoRegistrado: "8", conLote: true }), true).puede, puedeIntentarConfirmar(baja({ estadoSifen: "RECHAZADO", saldoRegistrado: "8" }), false).puede],
+      [true, false, false, false]);
+    igual("PRO354-R02-R04-15 pantalla: el motivo de FE no confirmable ya no dice «rechazada» y nombra el error técnico/indeterminado, cancelada, inutilizada o no reconocida",
+      ((t: string) => [/rechazada/i.test(t), /error técnico/.test(t), /indeterminado/.test(t), /cancelada/.test(t), /inutilizada/.test(t), /no reconocida/.test(t)])(puedeIntentarConfirmar(baja({ saldoRegistrado: "8", feConfirmable: false }), true).motivo),
+      [false, true, true, true, true, true]);
+    cierto("PRO354-R02-R04-16 mensaje SQL distingue error técnico de transmisión de rechazo fiscal y conserva NEX:PENDIENTE_FE_NO_CONFIRMABLE (409)",
+      /RAISE EXCEPTION 'la factura no tiene la recepción confirmada por el gateway \(no enviada, con error técnico de transmisión o envío indeterminado\) o fue cancelada, inutilizada o no reconocida: la baja pendiente no se puede confirmar'\s+USING ERRCODE = 'P0001', DETAIL = 'NEX:PENDIENTE_FE_NO_CONFIRMABLE'/.test(confirmar)
+      && !/fue rechazada/.test(confirmar));
+    cierto("PRO354-R02-R04-17 los demás controles de la confirmación siguen en su orden (permiso → candado → FOR UPDATE → alcance → CONFIRMADA → FE FOR SHARE → depósito/producto → motor)",
+      ["'MOVIMIENTOS', 'CREAR'", "pg_advisory_xact_lock", "FOR UPDATE", "usuario_puede_deposito(p_empresa, p_usuario, v_p.deposito_id)", "v_p.estado = 'CONFIRMADA'", "FROM public.documentos_electronicos WHERE empresa_id = p_empresa AND id = v_p.documento_id FOR SHARE",
+        "FROM public.depositos d WHERE d.empresa_id = p_empresa AND d.id = v_p.deposito_id FOR SHARE", "inventario_registrar_movimiento(p_empresa, p_usuario, 'SALIDA', 'VENTA'"]
+        .map((c) => confirmar.indexOf(c)).every((p, i, a) => p > 0 && (i === 0 || p > a[i - 1])));
+    cierto("PRO354-R02-R04-18 la baja física sigue en la EMISIÓN: crear sigue llamando a la emisión vigente y la baja redefinida (NEX-067) no mira estado_sifen",
+      /FROM public\.fe_documento_crear_fe_receptor\(p_empresa/.test(tramo("CREATE FUNCTION public.fe_documento_crear_fe_stock_pendiente", "CREATE FUNCTION public.fe_stock_pendientes_listar"))
+      && !/estado_sifen/.test(tramo("CREATE OR REPLACE FUNCTION public.fe_stock_baja_documento", "CREATE FUNCTION public.fe_politica_stock_actualizar")));
+    {
+      // Ninguna respuesta fiscal mueve stock: los registros de envío/consulta versionados (NEX-047..080) no referencian stock en código ejecutable.
+      const dir = "documentacao/banco/nexit/v1/migraciones";
+      const migs = ["NEX-047-facturacion-documentos-electronicos.sql", "NEX-049-facturacion-envio-fe.sql", "NEX-050-facturacion-envio-control.sql", "NEX-054-facturacion-consulta-estado-final.sql",
+        "NEX-062-facturacion-nce-v1.sql", "NEX-077-facturacion-consulta-automatica-lease.sql", "NEX-079-facturacion-intentos-conexion-cdc-consulta.sql", "NEX-080-facturacion-cdc-dato-api.sql"];
+      const cuerpos = migs.filter((f) => existsSync(join(process.cwd(), `${dir}/${f}`))).flatMap((f) => {
+        const s = sinComSql(leer(`${dir}/${f}`));
+
+        return [...s.matchAll(/CREATE (?:OR REPLACE )?FUNCTION public\.(fe_documento_registrar_(?:consulta|envio)\w*)\(/g)].map((m) => s.slice(m.index, s.indexOf("$$;", m.index)));
+      });
+      cierto("PRO354-R02-R04-19 ninguna respuesta fiscal mueve stock: las funciones de registro de envío/consulta no tocan motor, saldos, movimientos, baja ni pendientes",
+        cuerpos.length >= 10 && cuerpos.every((c) => !/inventario_registrar_movimiento|inventario_anular_movimiento|stock_saldos|movimientos_inventario|fe_stock_baja_documento|documento_electronico_stock_pendientes|fe_stock_pendiente_confirmar/.test(c)));
+    }
+    cierto("PRO354-R02-R04-20 NEX-081 no libera faltantes automáticamente: solo fe_stock_pendiente_confirmar actualiza a CONFIRMADA (manual, MOVIMIENTOS.CREAR)",
+      (cod.match(/estado = 'CONFIRMADA'/g) ?? []).length >= 1 && (cod.match(/UPDATE public\.documento_electronico_stock_pendientes/g) ?? []).length === 1
+      && confirmar.includes("UPDATE public.documento_electronico_stock_pendientes"));
+    cierto("PRO354-R02-R04-21 política TRUE intacta: la emisión de siempre (receptor) sigue sin pendientes y la columna sigue NOT NULL DEFAULT true",
+      /ALTER TABLE public\.empresas ADD COLUMN bloquear_stock_insuficiente boolean NOT NULL DEFAULT true;/.test(cod) && /v_bloquear IS DISTINCT FROM false OR p_bloquear_revisado IS DISTINCT FROM false/.test(cod));
+    cierto("PRO354-R02-R04-22 sin saldo negativo ni cambios de costo: CHECK de saldos e inventario_costos sin tocar",
+      !/ALTER TABLE public\.stock_saldos|stock_saldos_cant_chk|ALTER TABLE public\.inventario_costos|UPDATE public\.stock_saldos/.test(cod));
+    cierto("PRO354-R02-R04-23 verificador: elegibilidad exacta en confirmar y listar + detectores (R04 ok = true; sin RECHAZADO, ampliada con CANCELADO y comentada = false) + control «ninguna respuesta fiscal mueve stock»",
+      ["MUESTRA_ELEG_R04_OK' AND elegibilidad_confirmar_ok", "MUESTRA_ELEG_SIN_RECHAZADO' AND NOT elegibilidad_confirmar_ok", "MUESTRA_ELEG_AMPLIADA' AND NOT elegibilidad_confirmar_ok",
+        "MUESTRA_ELEG_COMENTADA' AND NOT elegibilidad_confirmar_ok", "nombre = 'confirmar' AND elegibilidad_confirmar_ok", "nombre = 'listar' AND elegibilidad_listar_ok", "ninguna respuesta fiscal mueve stock"].every((c) => verificar.includes(c))
+      && /BEGIN READ ONLY;/.test(verificar) && /ROLLBACK;\s*$/.test(verificar));
+    {
+      // Emulación TS de los detectores del script: lista extraída de cada muestra (comentarios fuera) y comparada con la de R04.
+      const muestras = new Map([...verificar.matchAll(/SELECT '(MUESTRA_ELEG_[A-Z0-9_]+)', E'((?:[^']|'')*)'/g)].map((m) => [m[1], m[2].replace(/''/g, "'").replace(/\\n/g, "\n")] as const));
+      const ok = (n: string) => lista((muestras.get(n) ?? "").replace(/--[^\n]*/g, " ").match(/v_doc\.estado_local IS DISTINCT FROM 'ENVIADO' OR v_doc\.estado_sifen NOT IN \(([^)]*)\)\s+THEN\s+RAISE EXCEPTION[^;]*'NEX:PENDIENTE_FE_NO_CONFIRMABLE'/))
+        .join(",") === "SIN_CONSULTA,PENDIENTE,APROBADO,RECHAZADO";
+      igual("PRO354-R02-R04-24 detectores del verificador evaluados: R04 ok, sin RECHAZADO, ampliada y comentada", ["MUESTRA_ELEG_R04_OK", "MUESTRA_ELEG_SIN_RECHAZADO", "MUESTRA_ELEG_AMPLIADA", "MUESTRA_ELEG_COMENTADA"].map(ok), [true, false, false, false]);
+    }
+    cierto("PRO354-R02-R04-25 preflight y reversión no contienen el predicado (no requieren cambios); NEX-067/NEX-080 sin editar",
+      !/estado_sifen/.test(leer("documentacao/banco/nexit/v1/scripts/preflight-NEX-081.sql")) && !/estado_sifen/.test(leer("documentacao/banco/nexit/v1/scripts/reversion-NEX-081.sql"))
+      && !/fe_stock_pendientes_preparacion/.test(leer("documentacao/banco/nexit/v1/migraciones/NEX-067-facturacion-stock-baja-fe.sql")) && !/bloquear_stock_insuficiente/.test(leer("documentacao/banco/nexit/v1/migraciones/NEX-080-facturacion-cdc-dato-api.sql")));
+  }
+
+  igual("PRO354-78 casos de la matriz R01 que dependen del gate contable: listados como PENDIENTES POR GATE (no simulados; R02-R04: PRO-310 cancelada sale de la lista, D6 queda solo CANCELADO/INUTILIZADO)", CASOS_PENDIENTES_POR_GATE.length, 6);
 
   return fallos;
 }

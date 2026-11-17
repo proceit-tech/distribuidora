@@ -15,7 +15,8 @@
 --     tras la salida inmediata (el faltante es real) y registra los pendientes. Reintento de la misma clave: no escribe; exige los mismos pendientes.
 --  6) fe_stock_politica_contexto (lectura): política vigente, depósitos elegibles para el faltante y productos con control de lotes evidenciado (stock_lotes).
 --  7) fe_stock_pendientes_listar (lectura, STOCK.VER + alcance de depósito) y fe_stock_pendiente_confirmar (MOVIMIENTOS.CREAR + alcance): SALIDA/VENTA complementaria por el motor ordinario
---     (inventario_registrar_movimiento, costo promedio vigente) con clave 'FE-STOCK-PEND:<id>', SOLO con saldo real suficiente y FE ENVIADA no rechazada/cancelada/inutilizada/no reconocida.
+--     (inventario_registrar_movimiento, costo promedio vigente) con clave 'FE-STOCK-PEND:<id>', SOLO con saldo real suficiente y FE ENVIADA (recepción confirmada por el gateway)
+--     no cancelada/inutilizada/no reconocida; desde R02-R04 también con rechazo fiscal SIFEN definitivo (RECHAZADO).
 --     El movimiento complementario queda protegido contra la anulación manual (igual que la salida de NEX-067).
 -- PRO-354-R02-R01 (auditoría AUD-CHATGPT-PRO-354-R02, F001/F002; la migración sigue NO aplicada, por eso se corrige en este mismo archivo):
 --  · F001: la obligación congela la UNIDAD BASE del producto y la SUCURSAL de la FE (columnas nuevas). Guardas por trigger, en TODOS los caminos de UPDATE: mientras haya una baja PENDIENTE del
@@ -25,6 +26,12 @@
 --    La confirmación ya NO bloquea costo/saldo antes del motor: respeta el orden efectivo de inventario_registrar_movimiento (clave → numeración → depósito/producto FOR SHARE → costo → saldo).
 --  · F002: la referencia fiscal incluye la serie; el listado es paginado (total), filtra por sucursal en el alcance, distingue faltante original / pendiente actual / descontado total, y un
 --    catálogo propio de filtros (fe_stock_pendientes_filtros) no depende de la página ni del filtro.
+-- PRO-354-R02-R04 (rectificación del responsable 17/11/2026: la venta ocurre al emitir; PRO-310 cancelada; la migración sigue NO aplicada, se corrige este mismo archivo):
+--  · La baja física sigue en la EMISIÓN (sin cambios). Una respuesta fiscal NUNCA mueve stock: ni el rechazo devuelve la salida ni ninguna consulta confirma o libera pendientes.
+--  · Elegibilidad de la confirmación MANUAL (listado o_fe_confirmable y fe_stock_pendiente_confirmar, mismo predicado): estado_local = 'ENVIADO' y estado_sifen en
+--    SIN_CONSULTA/PENDIENTE/APROBADO/RECHAZADO. RECHAZADO es el rechazo fiscal DEFINITIVO de SIFEN (solo se registra por consulta con recepción ENVIADA y es final).
+--    Siguen excluidos los errores técnicos de transmisión y estados sin recepción confirmada (PENDIENTE_ENVIO, ENVIANDO, ERROR_ENVIO —incluido el rechazo de recepción del gateway—,
+--    ENVIO_INDETERMINADO), NO_RECONOCIDO, CANCELADO e INUTILIZADO. Permisos, alcance, unidad, sucursal, lotes, saldo suficiente, idempotencia y bloqueos: sin cambios.
 -- NO hace (gate PRO-354 D1–D3 / RF07): saldo físico negativo, cambios a stock_saldos_cant_chk (>= 0) ni a inventario_costos, deuda valorizada, regularización, cambio del método de costo,
 -- reposición que confirme sola, cambio del momento de la baja (PRO-310), reproceso de FE históricas, NCE, CDC, KuDE, gateway, numeración ni Documentos electrónicos.
 -- DEPENDENCIAS: NEX-014 (motor), NEX-067 (baja FE), NEX-076 (emisión vigente). No depende funcionalmente de NEX-077..080; el runner aplica las pendientes EN ORDEN, por lo que NEX-080 (PRO-342) se aplicaría
@@ -586,7 +593,7 @@ BEGIN
            p.cantidad_descontada + CASE WHEN p.estado = 'CONFIRMADA' THEN p.cantidad_pendiente ELSE 0::numeric END,
            sal.registrado, ab.abierto, sal.registrado - ab.abierto,
            p.estado, p.creado_at, p.confirmado_at, NULLIF(btrim(COALESCE(u.nombre, '') || ' ' || COALESCE(u.apellido, '')), ''), m.numero_movimiento,
-           (d.estado_local = 'ENVIADO' AND d.estado_sifen IN ('SIN_CONSULTA', 'PENDIENTE', 'APROBADO')),
+           (d.estado_local = 'ENVIADO' AND d.estado_sifen IN ('SIN_CONSULTA', 'PENDIENTE', 'APROBADO', 'RECHAZADO')),
            EXISTS (SELECT 1 FROM public.stock_lotes l WHERE l.empresa_id = p.empresa_id AND l.producto_id = p.producto_id),
            count(*) OVER ()
       FROM public.documento_electronico_stock_pendientes p
@@ -635,7 +642,8 @@ BEGIN
      LIMIT 1000;
 END $$;
 
--- 9) Confirmación MANUAL de una baja pendiente: SALIDA/VENTA complementaria por el motor ordinario, solo con saldo real suficiente (nunca a negativo) y FE enviada no rechazada/cancelada/inutilizada.
+-- 9) Confirmación MANUAL de una baja pendiente: SALIDA/VENTA complementaria por el motor ordinario, solo con saldo real suficiente (nunca a negativo) y FE enviada no cancelada/inutilizada/no reconocida
+--    (R02-R04: la FE con rechazo fiscal SIFEN definitivo SÍ es confirmable; los errores técnicos de transmisión no).
 --    Idempotente: el pendiente se bloquea; si ya está confirmado devuelve su movimiento; la clave del movimiento es 'FE-STOCK-PEND:<id>'. La reposición nunca confirma sola.
 --    R01/F001 — Orden de bloqueos: candado propio del pendiente → fila del pendiente (FOR UPDATE) → FE (FOR SHARE) → depósito y producto (FOR SHARE: los mismos modos que toman el trigger de
 --    movimientos de NEX-046 y el motor de NEX-052, que no entran en conflicto entre sí) → motor (clave, numeración, costo, saldo). NO se bloquean costo ni saldo antes del motor: así no se invierte el
@@ -669,8 +677,10 @@ BEGIN
   END IF;
 
   SELECT * INTO v_doc FROM public.documentos_electronicos WHERE empresa_id = p_empresa AND id = v_p.documento_id FOR SHARE;
-  IF v_doc.estado_local IS DISTINCT FROM 'ENVIADO' OR v_doc.estado_sifen NOT IN ('SIN_CONSULTA', 'PENDIENTE', 'APROBADO') THEN
-    RAISE EXCEPTION 'la factura no tiene la recepción confirmada o fue rechazada, cancelada, inutilizada o no reconocida: la baja pendiente no se puede confirmar'
+  -- R02-R04: RECHAZADO (rechazo fiscal definitivo, solo posible con recepción ENVIADA) es confirmable; los estados locales sin recepción confirmada (no enviada, en envío, error técnico
+  -- de transmisión, indeterminada) y NO_RECONOCIDO/CANCELADO/INUTILIZADO siguen bloqueados. Mismo predicado que o_fe_confirmable del listado.
+  IF v_doc.estado_local IS DISTINCT FROM 'ENVIADO' OR v_doc.estado_sifen NOT IN ('SIN_CONSULTA', 'PENDIENTE', 'APROBADO', 'RECHAZADO') THEN
+    RAISE EXCEPTION 'la factura no tiene la recepción confirmada por el gateway (no enviada, con error técnico de transmisión o envío indeterminado) o fue cancelada, inutilizada o no reconocida: la baja pendiente no se puede confirmar'
       USING ERRCODE = 'P0001', DETAIL = 'NEX:PENDIENTE_FE_NO_CONFIRMABLE';
   END IF;
 

@@ -47,6 +47,14 @@
 - **Lotes:** la evidencia de `stock_lotes` se vuelve a comprobar después del candado `movimientos.numero:` y antes de insertar cada pendiente.
 - **Historial:** listado y filtros usan `deposito_en_alcance` (NEX-046, alcance histórico, depósitos activos o no): una baja confirmada sigue visible tras inactivar su depósito. La confirmación sigue exigiendo depósito activo y en el alcance operativo (`usuario_puede_deposito`). La reversión no cambia (mismas firmas; `deposito_en_alcance` pertenece a NEX-046).
 
+### Corrección R02-R04 (rectificación del responsable, 17/11/2026)
+
+- La venta ocurre al **emitir**: la baja física sigue en la emisión, sin cambios. PRO-310 quedó cancelada (no hay reservas ni consumo al APROBADO).
+- La confirmación **manual** de una baja pendiente admite ahora una FE con **rechazo fiscal SIFEN definitivo** (`estado_local = 'ENVIADO'`, `estado_sifen = 'RECHAZADO'`). El listado (`o_fe_confirmable`) y `fe_stock_pendiente_confirmar` usan el mismo predicado: `ENVIADO` y `SIN_CONSULTA`/`PENDIENTE`/`APROBADO`/`RECHAZADO`.
+- Siguen bloqueados (409 `NEX:PENDIENTE_FE_NO_CONFIRMABLE`): FE no enviada, en envío, con **error técnico** de transmisión (`ERROR_ENVIO`, incluido el rechazo de recepción del gateway) o envío indeterminado, y `NO_RECONOCIDO`, `CANCELADO`, `INUTILIZADO`.
+- Ninguna respuesta fiscal mueve stock: el rechazo no devuelve la salida de la emisión ni confirma o libera pendientes. Permisos, alcance, unidad, sucursal, lotes, saldo suficiente, idempotencia y bloqueos no cambian.
+- `verificar-NEX-081.sql` agrega la elegibilidad exacta (con detectores) y la comprobación de que el registro de envíos/consultas y los triggers de la FE no tocan stock. Pre-verificación y reversión no cambian: no contienen el predicado (la reversión elimina las funciones de NEX-081 y restaura la baja de NEX-067).
+
 ## Coexistencia
 
 | Combinación | Resultado |
