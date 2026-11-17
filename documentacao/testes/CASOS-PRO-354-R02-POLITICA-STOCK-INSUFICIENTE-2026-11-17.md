@@ -155,3 +155,24 @@ Casos escritos en `lib/facturacion/politica-stock-pro354.casos.ts`, sección M (
 | Cambio de filtros durante el POST (éxito o error) | El resultado se muestra igual, con su factura; cambiar filtros no lo borra | R02-24 |
 | A→B→A con respuesta tardía | La lectura vieja se descarta (generación y clave) | R02-25 |
 | Acciones mientras carga o confirma | Bloqueadas; iniciar otra confirmación reemplaza el resultado; «Cerrar» lo descarta | R02-26 |
+
+## 6. Correctivo PRO-354-R02-R03 (auditoría AUD-CHATGPT-PRO-354-R02-R02, hallazgo V001 del verificador)
+
+Solo cambian `scripts/verificar-NEX-081.sql` y estos casos. La migration NEX-081 y el código funcional quedan como en R02-R02. Casos en la sección N de `lib/facturacion/politica-stock-pro354.casos.ts` (`PRO354-R02-R03-01..13`), **no ejecutados**; el script tampoco se ejecutó.
+
+El verificador ya no busca posiciones sobre `pg_get_functiondef` (que conserva comentarios). Igual que `verificar-NEX-080.sql`, limpia `prosrc`: primero comentarios (código ejecutable, con literales) y luego literales (código sin textos, para llamadas y orden).
+
+| Escenario | Esperado | Caso |
+|---|---|---|
+| Código real de NEX-081: comentario que nombra `fe_documento_crear_fe_receptor` antes del marcador | El falso negativo existía; con el limpiado, unidad y lotes dan true | R02-R03-01, 02 |
+| Muestra: comentario antes del marcador, orden correcto | true / true | R02-R03-03 |
+| Muestra: comparación de unidad después de reservar numeración | false | R02-R03-04 |
+| Muestra: comparación de unidad solo en un literal | false | R02-R03-05 |
+| Muestra: segunda comprobación de lotes solo comentada | false | R02-R03-06 |
+| Muestra: segunda comprobación de lotes antes del candado | false | R02-R03-07 |
+| Sin posiciones sobre `pg_get_functiondef` ni conteo de textos | Limpiado de `prosrc` como NEX-080 | R02-R03-08 |
+| Filas de unidad/lotes y detectores | Predicados de orden sobre `crear`; detectores deben dar true | R02-R03-09 |
+| Controles similares del mismo script | Confirmación, candado, alcance histórico y baja sobre código ejecutable | R02-R03-10 |
+| Ningún control quitado ni forzado | Se conservan todos los demás controles | R02-R03-11 |
+| Solo lectura | `BEGIN READ ONLY … ROLLBACK`, sin escrituras ejecutables | R02-R03-12 |
+| Migration sin cambios | El orden aprobado en R02-R02 se conserva | R02-R03-13 |

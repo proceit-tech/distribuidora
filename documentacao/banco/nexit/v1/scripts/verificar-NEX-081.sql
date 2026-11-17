@@ -1,9 +1,76 @@
 -- VERIFICACIÓN POSTERIOR de NEX-081 (PRO-354-R02). SOLO LECTURA. Cada fila debe dar ok = true. La ejecuta el responsable INMEDIATAMENTE después de aplicar:
 --   docker exec -i nexit-db psql -U nexit_app -d nexit -v ON_ERROR_STOP=1 < verificar-NEX-081.sql
+--
+-- PRO-354-R02-R03 (V001): las comprobaciones sobre el CÓDIGO de las funciones miran solo lo que se EJECUTA (misma técnica que verificar-NEX-080.sql, que no se modifica).
+-- pg_get_functiondef/prosrc conservan los comentarios: NEX-081 nombra fe_documento_crear_fe_receptor en un comentario ANTES de la comparación de la unidad base, así que una búsqueda
+-- de posición sobre el texto completo daba un falso negativo sobre código correcto. Ahora el cuerpo (prosrc) se limpia así:
+--   1) sin comentarios «-- …» ni «/* … */» → codigo_ejecutable (conserva literales: sirve para los marcadores 'NEX:…' y el candado 'movimientos.numero:');
+--   2) además, sin literales '…' → codigo_sin_textos (sirve para LLAMADAS y para el ORDEN: un comentario o un mensaje que nombra algo no cuenta).
+-- Orden verificado en fe_documento_crear_fe_stock_pendiente (posiciones sobre codigo_sin_textos):
+--   · unidad base: lectura del producto FOR SHARE (p.unidad_medida_id INTO v_pr) → comparación IS DISTINCT FROM v_uni (cuyo RAISE lleva NEX:STOCK_PENDIENTE_UNIDAD_CAMBIO)
+--     → llamada efectiva a fe_documento_crear_fe_receptor (reserva la numeración);
+--   · lotes: primera consulta real a stock_lotes (v_prod, con su RAISE NEX:STOCK_PENDIENTE_LOTE) antes de la llamada → candado pg_advisory_xact_lock('movimientos.numero:')
+--     → SEGUNDA consulta real a stock_lotes (r.producto_id, con su RAISE NEX:STOCK_PENDIENTE_LOTE) → INSERT del pendiente.
+-- Las filas «detector» prueban el limpiado y el orden con textos de muestra: comentario que nombra la llamada antes del marcador = sigue bien; comparación tras numerar, comparación
+-- solo en un literal, segunda comprobación de lotes solo comentada o antes del candado = mal. Si un detector falla, su fila da ok = false y la verificación no se da por buena.
+-- Condición del limpiado, revisada en la fuente de NEX-081: sus cuerpos no tienen «--» ni «/*» dentro de literales ni literales con $tag$ internos.
+-- No se quitó ningún control ni se fuerza ningún resultado: solo cambia QUÉ texto se inspecciona.
 BEGIN READ ONLY;
-SELECT 'empresas.bloquear_stock_insuficiente boolean NOT NULL DEFAULT true' AS control,
+WITH fuente(nombre, src) AS (
+  SELECT 'MUESTRA_ORDEN_OK', E'BEGIN\n  -- la unidad se compara antes de fe_documento_crear_fe_receptor (este comentario nombra la función antes del marcador)\n  SELECT p.activo, p.controla_stock, p.unidad_medida_id INTO v_pr FROM public.productos p WHERE p.empresa_id = p_empresa AND p.id = v_prod FOR SHARE;\n  IF v_pr.unidad_medida_id IS DISTINCT FROM v_uni THEN\n    RAISE EXCEPTION ''la unidad base cambió'' USING ERRCODE = ''P0001'', DETAIL = ''NEX:STOCK_PENDIENTE_UNIDAD_CAMBIO'';\n  END IF;\n  IF EXISTS (SELECT 1 FROM public.stock_lotes l WHERE l.empresa_id = p_empresa AND l.producto_id = v_prod) THEN\n    RAISE EXCEPTION ''controla lotes'' USING ERRCODE = ''P0001'', DETAIL = ''NEX:STOCK_PENDIENTE_LOTE'';\n  END IF;\n  SELECT c.o_documento_id INTO v_id FROM public.fe_documento_crear_fe_receptor(p_empresa, p_usuario) c;\n  PERFORM pg_advisory_xact_lock(hashtextextended(''movimientos.numero:'' || p_empresa::text, 0));\n  IF EXISTS (SELECT 1 FROM public.stock_lotes l WHERE l.empresa_id = p_empresa AND l.producto_id = r.producto_id) THEN\n    RAISE EXCEPTION ''controla lotes'' USING ERRCODE = ''P0001'', DETAIL = ''NEX:STOCK_PENDIENTE_LOTE'';\n  END IF;\n  INSERT INTO public.documento_electronico_stock_pendientes (empresa_id, documento_id) VALUES (p_empresa, v_id);\nEND'
+  UNION ALL SELECT 'MUESTRA_UNIDAD_TRAS_NUMERAR', E'BEGIN\n  SELECT p.activo, p.controla_stock, p.unidad_medida_id INTO v_pr FROM public.productos p WHERE p.empresa_id = p_empresa AND p.id = v_prod FOR SHARE;\n  IF EXISTS (SELECT 1 FROM public.stock_lotes l WHERE l.empresa_id = p_empresa AND l.producto_id = v_prod) THEN\n    RAISE EXCEPTION ''controla lotes'' USING ERRCODE = ''P0001'', DETAIL = ''NEX:STOCK_PENDIENTE_LOTE'';\n  END IF;\n  SELECT c.o_documento_id INTO v_id FROM public.fe_documento_crear_fe_receptor(p_empresa, p_usuario) c;\n  IF v_pr.unidad_medida_id IS DISTINCT FROM v_uni THEN\n    RAISE EXCEPTION ''la unidad base cambió'' USING ERRCODE = ''P0001'', DETAIL = ''NEX:STOCK_PENDIENTE_UNIDAD_CAMBIO'';\n  END IF;\n  PERFORM pg_advisory_xact_lock(hashtextextended(''movimientos.numero:'' || p_empresa::text, 0));\n  IF EXISTS (SELECT 1 FROM public.stock_lotes l WHERE l.empresa_id = p_empresa AND l.producto_id = r.producto_id) THEN\n    RAISE EXCEPTION ''controla lotes'' USING ERRCODE = ''P0001'', DETAIL = ''NEX:STOCK_PENDIENTE_LOTE'';\n  END IF;\n  INSERT INTO public.documento_electronico_stock_pendientes (empresa_id, documento_id) VALUES (p_empresa, v_id);\nEND'
+  UNION ALL SELECT 'MUESTRA_UNIDAD_EN_LITERAL', E'BEGIN\n  SELECT p.activo, p.controla_stock, p.unidad_medida_id INTO v_pr FROM public.productos p WHERE p.empresa_id = p_empresa AND p.id = v_prod FOR SHARE;\n  RAISE NOTICE ''IF v_pr.unidad_medida_id IS DISTINCT FROM v_uni THEN NEX:STOCK_PENDIENTE_UNIDAD_CAMBIO'';\n  IF EXISTS (SELECT 1 FROM public.stock_lotes l WHERE l.empresa_id = p_empresa AND l.producto_id = v_prod) THEN\n    RAISE EXCEPTION ''controla lotes'' USING ERRCODE = ''P0001'', DETAIL = ''NEX:STOCK_PENDIENTE_LOTE'';\n  END IF;\n  SELECT c.o_documento_id INTO v_id FROM public.fe_documento_crear_fe_receptor(p_empresa, p_usuario) c;\n  PERFORM pg_advisory_xact_lock(hashtextextended(''movimientos.numero:'' || p_empresa::text, 0));\n  IF EXISTS (SELECT 1 FROM public.stock_lotes l WHERE l.empresa_id = p_empresa AND l.producto_id = r.producto_id) THEN\n    RAISE EXCEPTION ''controla lotes'' USING ERRCODE = ''P0001'', DETAIL = ''NEX:STOCK_PENDIENTE_LOTE'';\n  END IF;\n  INSERT INTO public.documento_electronico_stock_pendientes (empresa_id, documento_id) VALUES (p_empresa, v_id);\nEND'
+  UNION ALL SELECT 'MUESTRA_LOTE_SOLO_COMENTADO', E'BEGIN\n  SELECT p.activo, p.controla_stock, p.unidad_medida_id INTO v_pr FROM public.productos p WHERE p.empresa_id = p_empresa AND p.id = v_prod FOR SHARE;\n  IF v_pr.unidad_medida_id IS DISTINCT FROM v_uni THEN\n    RAISE EXCEPTION ''la unidad base cambió'' USING ERRCODE = ''P0001'', DETAIL = ''NEX:STOCK_PENDIENTE_UNIDAD_CAMBIO'';\n  END IF;\n  IF EXISTS (SELECT 1 FROM public.stock_lotes l WHERE l.empresa_id = p_empresa AND l.producto_id = v_prod) THEN\n    RAISE EXCEPTION ''controla lotes'' USING ERRCODE = ''P0001'', DETAIL = ''NEX:STOCK_PENDIENTE_LOTE'';\n  END IF;\n  SELECT c.o_documento_id INTO v_id FROM public.fe_documento_crear_fe_receptor(p_empresa, p_usuario) c;\n  PERFORM pg_advisory_xact_lock(hashtextextended(''movimientos.numero:'' || p_empresa::text, 0));\n  -- IF EXISTS (SELECT 1 FROM public.stock_lotes l WHERE l.empresa_id = p_empresa AND l.producto_id = r.producto_id) THEN\n  -- RAISE EXCEPTION ''controla lotes'' USING ERRCODE = ''P0001'', DETAIL = ''NEX:STOCK_PENDIENTE_LOTE'';\n  -- END IF;\n  INSERT INTO public.documento_electronico_stock_pendientes (empresa_id, documento_id) VALUES (p_empresa, v_id);\nEND'
+  UNION ALL SELECT 'MUESTRA_LOTE_ANTES_DEL_CANDADO', E'BEGIN\n  SELECT p.activo, p.controla_stock, p.unidad_medida_id INTO v_pr FROM public.productos p WHERE p.empresa_id = p_empresa AND p.id = v_prod FOR SHARE;\n  IF v_pr.unidad_medida_id IS DISTINCT FROM v_uni THEN\n    RAISE EXCEPTION ''la unidad base cambió'' USING ERRCODE = ''P0001'', DETAIL = ''NEX:STOCK_PENDIENTE_UNIDAD_CAMBIO'';\n  END IF;\n  IF EXISTS (SELECT 1 FROM public.stock_lotes l WHERE l.empresa_id = p_empresa AND l.producto_id = v_prod) THEN\n    RAISE EXCEPTION ''controla lotes'' USING ERRCODE = ''P0001'', DETAIL = ''NEX:STOCK_PENDIENTE_LOTE'';\n  END IF;\n  SELECT c.o_documento_id INTO v_id FROM public.fe_documento_crear_fe_receptor(p_empresa, p_usuario) c;\n  IF EXISTS (SELECT 1 FROM public.stock_lotes l WHERE l.empresa_id = p_empresa AND l.producto_id = r.producto_id) THEN\n    RAISE EXCEPTION ''controla lotes'' USING ERRCODE = ''P0001'', DETAIL = ''NEX:STOCK_PENDIENTE_LOTE'';\n  END IF;\n  PERFORM pg_advisory_xact_lock(hashtextextended(''movimientos.numero:'' || p_empresa::text, 0));\n  INSERT INTO public.documento_electronico_stock_pendientes (empresa_id, documento_id) VALUES (p_empresa, v_id);\nEND'
+  UNION ALL SELECT f.nombre, p.prosrc
+  FROM (VALUES
+    ('crear', 'public.fe_documento_crear_fe_stock_pendiente(uuid,uuid,uuid,uuid,text,uuid,text,text,text,numeric,jsonb,jsonb,uuid,uuid,jsonb,boolean)'),
+    ('confirmar', 'public.fe_stock_pendiente_confirmar(uuid,uuid,uuid)'),
+    ('listar', 'public.fe_stock_pendientes_listar(uuid,uuid,text,uuid,uuid,text,integer,integer)'),
+    ('filtros', 'public.fe_stock_pendientes_filtros(uuid,uuid)'),
+    ('baja', 'public.fe_stock_baja_documento(uuid,uuid,uuid,jsonb)')
+  ) AS f(nombre, firma)
+  JOIN pg_proc p ON p.oid = f.firma::regprocedure
+), ejecutable AS (
+  SELECT nombre, regexp_replace(regexp_replace(src, '--[^\n]*', ' ', 'g'), '/\*.*?\*/', ' ', 'g') AS codigo_ejecutable FROM fuente
+), codigo AS (
+  SELECT nombre, codigo_ejecutable, regexp_replace(codigo_ejecutable, '''([^'']|'''')*''', ' ', 'g') AS codigo_sin_textos FROM ejecutable
+), orden AS (
+  SELECT nombre, codigo_ejecutable, codigo_sin_textos,
+         strpos(codigo_sin_textos, 'p.unidad_medida_id INTO v_pr') AS p_lee,
+         strpos(codigo_sin_textos, 'IS DISTINCT FROM v_uni') AS p_compara,
+         strpos(codigo_sin_textos, 'l.producto_id = v_prod') AS p_lote1,
+         strpos(codigo_sin_textos, 'fe_documento_crear_fe_receptor') AS p_llamada,
+         strpos(codigo_sin_textos, 'pg_advisory_xact_lock') AS p_candado,
+         strpos(codigo_sin_textos, 'l.producto_id = r.producto_id') AS p_lote2,
+         strpos(codigo_sin_textos, 'INSERT INTO public.documento_electronico_stock_pendientes') AS p_insert
+    FROM codigo
+), evaluacion AS (
+  SELECT nombre,
+         (codigo_sin_textos ~ 'p\.unidad_medida_id INTO v_pr FROM public\.productos p WHERE p\.empresa_id = p_empresa AND p\.id = v_prod FOR SHARE'
+          AND codigo_ejecutable ~ 'IS DISTINCT FROM v_uni[[:space:]]+THEN[[:space:]]+RAISE EXCEPTION[^;]*''NEX:STOCK_PENDIENTE_UNIDAD_CAMBIO'''
+          AND codigo_sin_textos ~* '(^|[^a-z0-9_$])"?fe_documento_crear_fe_receptor"?[[:space:]]*\('
+          AND p_lee > 0 AND p_lee < p_compara AND p_compara < p_llamada) AS unidad_ok,
+         (codigo_ejecutable ~ 'stock_lotes l WHERE l\.empresa_id = p_empresa AND l\.producto_id = v_prod\)[[:space:]]+THEN[[:space:]]+RAISE EXCEPTION[^;]*''NEX:STOCK_PENDIENTE_LOTE'''
+          AND codigo_ejecutable ~ 'stock_lotes l WHERE l\.empresa_id = p_empresa AND l\.producto_id = r\.producto_id\)[[:space:]]+THEN[[:space:]]+RAISE EXCEPTION[^;]*''NEX:STOCK_PENDIENTE_LOTE'''
+          AND codigo_ejecutable ~ 'pg_advisory_xact_lock[[:space:]]*\([[:space:]]*hashtextextended[[:space:]]*\([[:space:]]*''movimientos\.numero:'''
+          AND p_lote1 > 0 AND p_lote1 < p_llamada AND p_llamada < p_candado AND p_candado < p_lote2 AND p_lote2 < p_insert) AS lotes_ok
+    FROM orden
+)
+SELECT 'detector: un comentario que nombra fe_documento_crear_fe_receptor ANTES del marcador no adelanta la llamada (orden correcto = true)' AS control,
+       EXISTS (SELECT 1 FROM evaluacion WHERE nombre = 'MUESTRA_ORDEN_OK' AND unidad_ok AND lotes_ok) AS ok
+UNION ALL SELECT 'detector: comparar la unidad DESPUÉS de reservar numeración se rechaza',
+       EXISTS (SELECT 1 FROM evaluacion WHERE nombre = 'MUESTRA_UNIDAD_TRAS_NUMERAR' AND NOT unidad_ok)
+UNION ALL SELECT 'detector: una comparación de unidad que solo aparece en un literal no cuenta',
+       EXISTS (SELECT 1 FROM evaluacion WHERE nombre = 'MUESTRA_UNIDAD_EN_LITERAL' AND NOT unidad_ok)
+UNION ALL SELECT 'detector: la segunda comprobación de lotes solo comentada no cuenta',
+       EXISTS (SELECT 1 FROM evaluacion WHERE nombre = 'MUESTRA_LOTE_SOLO_COMENTADO' AND NOT lotes_ok)
+UNION ALL SELECT 'detector: la segunda comprobación de lotes ANTES del candado de numeración se rechaza',
+       EXISTS (SELECT 1 FROM evaluacion WHERE nombre = 'MUESTRA_LOTE_ANTES_DEL_CANDADO' AND NOT lotes_ok)
+UNION ALL SELECT 'funciones inspeccionadas presentes (5)', (SELECT count(*) FROM codigo WHERE nombre NOT LIKE 'MUESTRA\_%') = 5
+UNION ALL SELECT 'empresas.bloquear_stock_insuficiente boolean NOT NULL DEFAULT true',
        EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'empresas' AND column_name = 'bloquear_stock_insuficiente'
-               AND data_type = 'boolean' AND is_nullable = 'NO' AND column_default = 'true') AS ok
+               AND data_type = 'boolean' AND is_nullable = 'NO' AND column_default = 'true')
 UNION ALL SELECT 'al aplicar, TODAS las empresas quedan en TRUE (comportamiento actual)', NOT EXISTS (SELECT 1 FROM public.empresas WHERE NOT bloquear_stock_insuficiente)
 UNION ALL SELECT 'tabla documento_electronico_stock_pendientes con PK propia', EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'public.documento_electronico_stock_pendientes'::regclass AND contype = 'p')
 UNION ALL SELECT 'conciliación descontado + pendiente = facturado (CHECK)', EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'public.documento_electronico_stock_pendientes'::regclass AND conname = 'fe_stock_pend_cantidades_chk')
@@ -17,26 +84,23 @@ UNION ALL SELECT 'R01: la obligación congela unidad base y sucursal (columnas N
 UNION ALL SELECT 'R01: guardas de producto (unidad/control/estado) y de depósito (sucursal/estado/terceros)',
        EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'fe_stock_pendientes_producto_guarda_trg' AND tgrelid = 'public.productos'::regclass AND NOT tgisinternal)
        AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'fe_stock_pendientes_deposito_guarda_trg' AND tgrelid = 'public.depositos'::regclass AND NOT tgisinternal)
-UNION ALL SELECT 'R01: la confirmación no bloquea costo/saldo antes del motor y referencia la serie',
-       position('inventario_costos' IN pg_get_functiondef('public.fe_stock_pendiente_confirmar(uuid,uuid,uuid)'::regprocedure)) = 0
-       AND position('v_doc.serie' IN pg_get_functiondef('public.fe_stock_pendiente_confirmar(uuid,uuid,uuid)'::regprocedure)) > 0
-UNION ALL SELECT 'R01: el registro del faltante toma el candado de numeración de movimientos',
-       position('movimientos.numero:' IN pg_get_functiondef('public.fe_documento_crear_fe_stock_pendiente(uuid,uuid,uuid,uuid,text,uuid,text,text,text,numeric,jsonb,jsonb,uuid,uuid,jsonb,boolean)'::regprocedure)) > 0
-UNION ALL SELECT 'R02-R02: el registro exige la unidad base revisada (UUID) y la compara bajo bloqueo antes de numerar',
-       position('NEX:STOCK_PENDIENTE_UNIDAD_CAMBIO' IN pg_get_functiondef('public.fe_documento_crear_fe_stock_pendiente(uuid,uuid,uuid,uuid,text,uuid,text,text,text,numeric,jsonb,jsonb,uuid,uuid,jsonb,boolean)'::regprocedure)) > 0
-       AND position('NEX:STOCK_PENDIENTE_UNIDAD_CAMBIO' IN pg_get_functiondef('public.fe_documento_crear_fe_stock_pendiente(uuid,uuid,uuid,uuid,text,uuid,text,text,text,numeric,jsonb,jsonb,uuid,uuid,jsonb,boolean)'::regprocedure))
-         < position('fe_documento_crear_fe_receptor' IN pg_get_functiondef('public.fe_documento_crear_fe_stock_pendiente(uuid,uuid,uuid,uuid,text,uuid,text,text,text,numeric,jsonb,jsonb,uuid,uuid,jsonb,boolean)'::regprocedure))
-UNION ALL SELECT 'R02-R02: la evidencia de lotes se re-comprueba después del candado de numeración',
-       (SELECT count(*) FROM regexp_matches(pg_get_functiondef('public.fe_documento_crear_fe_stock_pendiente(uuid,uuid,uuid,uuid,text,uuid,text,text,text,numeric,jsonb,jsonb,uuid,uuid,jsonb,boolean)'::regprocedure), 'NEX:STOCK_PENDIENTE_LOTE', 'g')) = 2
-UNION ALL SELECT 'R02-R02: listado y filtros usan el alcance histórico (deposito_en_alcance); la confirmación sigue exigiendo depósito activo',
-       position('deposito_en_alcance' IN pg_get_functiondef('public.fe_stock_pendientes_listar(uuid,uuid,text,uuid,uuid,text,integer,integer)'::regprocedure)) > 0
-       AND position('usuario_puede_deposito' IN pg_get_functiondef('public.fe_stock_pendientes_listar(uuid,uuid,text,uuid,uuid,text,integer,integer)'::regprocedure)) = 0
-       AND position('deposito_en_alcance' IN pg_get_functiondef('public.fe_stock_pendientes_filtros(uuid,uuid)'::regprocedure)) > 0
-       AND position('usuario_puede_deposito' IN pg_get_functiondef('public.fe_stock_pendiente_confirmar(uuid,uuid,uuid)'::regprocedure)) > 0
-       AND position('NOT v_dp.activo' IN pg_get_functiondef('public.fe_stock_pendiente_confirmar(uuid,uuid,uuid)'::regprocedure)) > 0
+UNION ALL SELECT 'R01: la confirmación no bloquea costo/saldo antes del motor y referencia la serie (código ejecutable)',
+       EXISTS (SELECT 1 FROM codigo WHERE nombre = 'confirmar' AND strpos(codigo_sin_textos, 'inventario_costos') = 0 AND strpos(codigo_sin_textos, 'v_doc.serie') > 0)
+UNION ALL SELECT 'R01: el registro del faltante toma el candado de numeración de movimientos (llamada efectiva con el literal ''movimientos.numero:'')',
+       EXISTS (SELECT 1 FROM codigo WHERE nombre = 'crear'
+               AND codigo_ejecutable ~ 'pg_advisory_xact_lock[[:space:]]*\([[:space:]]*hashtextextended[[:space:]]*\([[:space:]]*''movimientos\.numero:''')
+UNION ALL SELECT 'R02-R02/V001: unidad base revisada leída FOR SHARE y comparada (NEX:STOCK_PENDIENTE_UNIDAD_CAMBIO) ANTES de la llamada efectiva que reserva numeración',
+       EXISTS (SELECT 1 FROM evaluacion WHERE nombre = 'crear' AND unidad_ok)
+UNION ALL SELECT 'R02-R02/V001: lotes comprobados antes de numerar y RE-COMPROBADOS con una consulta real después del candado y antes del INSERT del pendiente',
+       EXISTS (SELECT 1 FROM evaluacion WHERE nombre = 'crear' AND lotes_ok)
+UNION ALL SELECT 'R02-R02: listado y filtros usan el alcance histórico (deposito_en_alcance); la confirmación sigue exigiendo alcance operativo y depósito activo (código ejecutable)',
+       EXISTS (SELECT 1 FROM codigo WHERE nombre = 'listar' AND codigo_sin_textos ~* 'deposito_en_alcance[[:space:]]*\(' AND codigo_sin_textos !~* 'usuario_puede_deposito')
+       AND EXISTS (SELECT 1 FROM codigo WHERE nombre = 'filtros' AND codigo_sin_textos ~* 'deposito_en_alcance[[:space:]]*\(' AND codigo_sin_textos !~* 'usuario_puede_deposito')
+       AND EXISTS (SELECT 1 FROM codigo WHERE nombre = 'confirmar' AND codigo_sin_textos ~* 'usuario_puede_deposito[[:space:]]*\(' AND strpos(codigo_sin_textos, 'NOT v_dp.activo') > 0)
 UNION ALL SELECT 'PK histórica de documento_electronico_stock_salidas intacta (empresa, documento, depósito)',
        EXISTS (SELECT 1 FROM pg_constraint c WHERE c.conrelid = 'public.documento_electronico_stock_salidas'::regclass AND c.contype = 'p' AND array_length(c.conkey, 1) = 3)
-UNION ALL SELECT 'baja redefinida: lee la preparación y concilia pendientes', position('fe_stock_pendientes_preparacion' IN pg_get_functiondef('public.fe_stock_baja_documento(uuid,uuid,uuid,jsonb)'::regprocedure)) > 0
+UNION ALL SELECT 'baja redefinida: lee la preparación y concilia pendientes (código ejecutable)',
+       EXISTS (SELECT 1 FROM codigo WHERE nombre = 'baja' AND strpos(codigo_sin_textos, 'fe_stock_pendientes_preparacion') > 0)
 UNION ALL SELECT 'stock_saldos conserva su CHECK de cantidad no negativa (NEX-081 no lo toca)',
        EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'public.stock_saldos'::regclass AND conname = 'stock_saldos_cant_chk' AND pg_get_constraintdef(oid) LIKE '%cantidad >= %0%')
 UNION ALL SELECT 'tablas sin pendientes ni preparación al aplicar',

@@ -6,6 +6,7 @@
  * SQL (NEX-081 y sus scripts), rutas, pantalla y menú se verifican sobre el código fuente.
  * Empresas, productos y depósitos son SINTÉTICOS (UUID de prueba): ningún caso depende de CASA MINGO ni de un tenant real.
  * PRO-354-R02-R01: sección L (F001 integridad y concurrencia, F002 listado, F003 respuestas tardías). PRO354-40, 55, 59 y 63 se actualizaron al contrato R01.
+ * PRO-354-R02-R02: sección M (F001-R unidad base revisada y lotes, F002-R historial, F003-R resultado de confirmación). PRO-354-R02-R03: sección N (V001, verificador NEX-081 sobre código ejecutable).
  * Casos ESCRITOS, NO EJECUTADOS en la entrega (restricción de la orden: sin runner, tests, lint, typecheck ni build).
  * Los casos de la matriz R01 que requieren saldo negativo real o política de costos (D1–D3, RF07) NO se simulan: figuran en CASOS_PENDIENTES_POR_GATE.
  */
@@ -384,7 +385,7 @@ export async function verificarCasosPoliticaStockPro354(): Promise<string[]> {
       && !/UPDATE public\.stock_saldos|stock_saldos_cant_chk|factor_conversion/.test(cod));
     cierto("PRO354-R01-15 scripts: preflight exige las dependencias R01 y la ausencia de guardas; verificación comprueba columnas, guardas, orden de la confirmación y candado del registro; reversión quita guardas, catálogo y la firma nueva del listado",
       /movimientos\.numero:/.test(scripts("preflight")) && /fe_stock_pendientes_producto_guarda_trg/.test(scripts("preflight")) && /sucursal_en_alcance/.test(scripts("preflight"))
-      && /fe_stock_pend_sucursal_fk/.test(scripts("verificar")) && /fe_stock_pendientes_deposito_guarda_trg/.test(scripts("verificar")) && /position\('inventario_costos' IN pg_get_functiondef\('public\.fe_stock_pendiente_confirmar/.test(scripts("verificar"))
+      && /fe_stock_pend_sucursal_fk/.test(scripts("verificar")) && /fe_stock_pendientes_deposito_guarda_trg/.test(scripts("verificar")) && /strpos\(codigo_sin_textos, 'inventario_costos'\) = 0/.test(scripts("verificar"))
       && /DROP TRIGGER fe_stock_pendientes_producto_guarda_trg ON public\.productos;/.test(rev) && /DROP TRIGGER fe_stock_pendientes_deposito_guarda_trg ON public\.depositos;/.test(rev)
       && /DROP FUNCTION public\.fe_stock_pendientes_filtros\(uuid, uuid\);/.test(rev) && /DROP FUNCTION public\.fe_stock_pendientes_listar\(uuid, uuid, text, uuid, uuid, text, integer, integer\);/.test(rev)
       && !/fe_stock_pendientes_listar\(uuid, uuid, text, uuid, text\)/.test(rev + scripts("verificar")) && /Bloqueos y concurrencia/.test(leer("documentacao/banco/nexit/v1/docs/PROCEDIMIENTO-NEX-081.md")));
@@ -588,6 +589,66 @@ export async function verificarCasosPoliticaStockPro354(): Promise<string[]> {
         /if \(confirmando \|\| !vigentes \|\| cargando\) return;/.test(pagina) && /disabled=\{!c\.puede \|\| confirmando !== null \|\| cargando \|\| !vigentes\}/.test(pagina)
         && enOrden(pagina, "setConfirmando(b.id);", "setResultado(null);", "await fetch(`/api/stock/bajas-pendientes/${b.id}/confirmar`") && /void leer\(contexto\.current\.releer\(\)\);/.test(pagina));
     }
+  }
+
+  // ── N. PRO-354-R02-R03 — V001: verificar-NEX-081.sql inspecciona solo código EJECUTABLE y el ORDEN real (unidad base / lotes) ─────────────────
+  {
+    const verificar = leer("documentacao/banco/nexit/v1/scripts/verificar-NEX-081.sql");
+    const nex081 = leer("documentacao/banco/nexit/v1/migraciones/NEX-081-facturacion-politica-stock-pendientes.sql");
+    const cuerpoCrear = (() => { const i = nex081.indexOf("CREATE FUNCTION public.fe_documento_crear_fe_stock_pendiente("); const a = nex081.indexOf("$$", i) + 2; return i < 0 ? "" : nex081.slice(a, nex081.indexOf("$$", a)); })();
+    // Emulación TS del limpiado del script (mismo orden: comentarios → literales) y de sus dos predicados.
+    const ejecutable = (src: string) => src.replace(/--[^\n]*/g, " ").replace(/\/\*[\s\S]*?\*\//g, " ");
+    const sinTextos = (src: string) => ejecutable(src).replace(/'(?:[^']|'')*'/g, " ");
+    const evaluar = (src: string) => {
+      const ej = ejecutable(src);
+      const st = sinTextos(src);
+      const p = (s: string) => st.indexOf(s) + 1;
+      const [lee, compara, lote1, llamada, candado, lote2, insert] = ["p.unidad_medida_id INTO v_pr", "IS DISTINCT FROM v_uni", "l.producto_id = v_prod", "fe_documento_crear_fe_receptor", "pg_advisory_xact_lock",
+        "l.producto_id = r.producto_id", "INSERT INTO public.documento_electronico_stock_pendientes"].map(p);
+      const unidad = /p\.unidad_medida_id INTO v_pr FROM public\.productos p WHERE p\.empresa_id = p_empresa AND p\.id = v_prod FOR SHARE/.test(st)
+        && /IS DISTINCT FROM v_uni\s+THEN\s+RAISE EXCEPTION[^;]*'NEX:STOCK_PENDIENTE_UNIDAD_CAMBIO'/.test(ej) && /(^|[^a-z0-9_$])"?fe_documento_crear_fe_receptor"?\s*\(/i.test(st)
+        && lee > 0 && lee < compara && compara < llamada;
+      const lotes = /stock_lotes l WHERE l\.empresa_id = p_empresa AND l\.producto_id = v_prod\)\s+THEN\s+RAISE EXCEPTION[^;]*'NEX:STOCK_PENDIENTE_LOTE'/.test(ej)
+        && /stock_lotes l WHERE l\.empresa_id = p_empresa AND l\.producto_id = r\.producto_id\)\s+THEN\s+RAISE EXCEPTION[^;]*'NEX:STOCK_PENDIENTE_LOTE'/.test(ej)
+        && /pg_advisory_xact_lock\s*\(\s*hashtextextended\s*\(\s*'movimientos\.numero:'/.test(ej)
+        && lote1 > 0 && lote1 < llamada && llamada < candado && candado < lote2 && lote2 < insert;
+      return { unidad, lotes };
+    };
+    const muestras = new Map([...verificar.matchAll(/SELECT '(MUESTRA_[A-Z_]+)', E'((?:[^']|'')*)'/g)].map((m) => [m[1], m[2].replace(/''/g, "'").replace(/\\n/g, "\n")] as const));
+    const m = (n: string) => evaluar(muestras.get(n) ?? "");
+    // Para el SCRIPT completo: primero literales (sus patrones contienen «--»), luego comentarios.
+    const filas = verificar.replace(/'(?:[^']|'')*'/g, " ").replace(/--[^\n]*/g, " ");
+
+    cierto("PRO354-R02-R03-01 el falso negativo existía: el cuerpo REAL de crear nombra fe_documento_crear_fe_receptor en un COMENTARIO antes del marcador NEX:STOCK_PENDIENTE_UNIDAD_CAMBIO",
+      cuerpoCrear.length > 1000 && cuerpoCrear.indexOf("fe_documento_crear_fe_receptor") < cuerpoCrear.indexOf("NEX:STOCK_PENDIENTE_UNIDAD_CAMBIO")
+      && ejecutable(cuerpoCrear).indexOf("fe_documento_crear_fe_receptor") > ejecutable(cuerpoCrear).indexOf("NEX:STOCK_PENDIENTE_UNIDAD_CAMBIO"));
+    igual("PRO354-R02-R03-02 sobre el código correcto de NEX-081 los dos controles de orden dan true (unidad base y lotes)", evaluar(cuerpoCrear), { unidad: true, lotes: true });
+    igual("PRO354-R02-R03-03 detector: comentario que nombra la llamada ANTES del marcador = orden correcto (true/true)", m("MUESTRA_ORDEN_OK"), { unidad: true, lotes: true });
+    igual("PRO354-R02-R03-04 detector: orden invertido (comparar la unidad DESPUÉS de reservar numeración) = false", m("MUESTRA_UNIDAD_TRAS_NUMERAR").unidad, false);
+    igual("PRO354-R02-R03-05 detector: la comparación de unidad que solo aparece en un literal no cuenta", m("MUESTRA_UNIDAD_EN_LITERAL").unidad, false);
+    igual("PRO354-R02-R03-06 detector: segunda comprobación de lotes solo comentada = false", m("MUESTRA_LOTE_SOLO_COMENTADO").lotes, false);
+    igual("PRO354-R02-R03-07 detector: segunda comprobación de lotes antes del candado de numeración = false", m("MUESTRA_LOTE_ANTES_DEL_CANDADO").lotes, false);
+    cierto("PRO354-R02-R03-08 el script ya no busca posiciones sobre pg_get_functiondef (texto con comentarios) ni cuenta apariciones de texto para lotes; limpia prosrc como verificar-NEX-080.sql",
+      !/pg_get_functiondef/.test(filas) && !/regexp_matches/.test(filas) && /p\.prosrc/.test(verificar)
+      && verificar.includes("regexp_replace(regexp_replace(src, '--[^\\n]*', ' ', 'g'), '/\\*.*?\\*/', ' ', 'g') AS codigo_ejecutable")
+      && verificar.includes("regexp_replace(codigo_ejecutable, '''([^'']|'''')*''', ' ', 'g') AS codigo_sin_textos"));
+    cierto("PRO354-R02-R03-09 las filas de unidad y lotes usan los predicados de orden sobre crear, y los detectores exigen ok = true para dar la verificación por buena",
+      /EXISTS \(SELECT 1 FROM evaluacion WHERE nombre = 'crear' AND unidad_ok\)/.test(verificar) && /EXISTS \(SELECT 1 FROM evaluacion WHERE nombre = 'crear' AND lotes_ok\)/.test(verificar)
+      && ["MUESTRA_ORDEN_OK' AND unidad_ok AND lotes_ok", "MUESTRA_UNIDAD_TRAS_NUMERAR' AND NOT unidad_ok", "MUESTRA_UNIDAD_EN_LITERAL' AND NOT unidad_ok", "MUESTRA_LOTE_SOLO_COMENTADO' AND NOT lotes_ok",
+        "MUESTRA_LOTE_ANTES_DEL_CANDADO' AND NOT lotes_ok"].every((c) => verificar.includes(c)) && /funciones inspeccionadas presentes \(5\)/.test(verificar));
+    cierto("PRO354-R02-R03-10 controles similares del mismo script también sobre código ejecutable: confirmación (sin inventario_costos, con v_doc.serie), candado, alcance histórico y preparación de la baja",
+      /nombre = 'confirmar' AND strpos\(codigo_sin_textos, 'inventario_costos'\) = 0 AND strpos\(codigo_sin_textos, 'v_doc\.serie'\) > 0/.test(verificar)
+      && /nombre = 'listar' AND codigo_sin_textos ~\* 'deposito_en_alcance/.test(verificar) && /nombre = 'filtros' AND codigo_sin_textos ~\* 'deposito_en_alcance/.test(verificar)
+      && /nombre = 'confirmar' AND codigo_sin_textos ~\* 'usuario_puede_deposito/.test(verificar) && /nombre = 'baja' AND strpos\(codigo_sin_textos, 'fe_stock_pendientes_preparacion'\) > 0/.test(verificar));
+    cierto("PRO354-R02-R03-11 no se quitaron controles ni se fuerza true: siguen tabla, CHECK, UNIQUE, triggers, columnas/FK, guardas, PK de salidas, CHECK de saldos, tablas vacías y grants",
+      ["empresas.bloquear_stock_insuficiente boolean NOT NULL DEFAULT true", "TODAS las empresas quedan en TRUE", "con PK propia", "fe_stock_pend_cantidades_chk", "fe_stock_pend_documento_producto_uk", "fe_stock_pendientes_inmutable_trg",
+        "fe_stock_pend_sucursal_fk", "fe_stock_pendientes_producto_guarda_trg", "fe_stock_pendientes_deposito_guarda_trg", "PK histórica de documento_electronico_stock_salidas", "stock_saldos_cant_chk",
+        "tablas sin pendientes ni preparación al aplicar", "la aplicación NO accede a las tablas nuevas", "la aplicación NO ejecuta la baja interna", "las 6 funciones públicas de NEX-081", "PUBLIC no ejecuta las funciones nuevas",
+        "la emisión de siempre (receptor)"].every((c) => verificar.includes(c)) && !/\bOR true\b|SELECT true\b/i.test(filas));
+    cierto("PRO354-R02-R03-12 sigue siendo de SOLO LECTURA (BEGIN READ ONLY … ROLLBACK, sin escrituras ejecutables fuera de literales y comentarios)",
+      /BEGIN READ ONLY;/.test(verificar) && /ROLLBACK;\s*$/.test(verificar) && !/\b(INSERT|UPDATE|DELETE|ALTER|DROP|CREATE)\b/i.test(filas));
+    cierto("PRO354-R02-R03-13 V001 no toca la migration ni código funcional: el cuerpo de crear conserva el orden aprobado en R02-R02",
+      /IF v_pr\.unidad_medida_id IS DISTINCT FROM v_uni THEN/.test(cuerpoCrear) && /PERFORM pg_advisory_xact_lock\(hashtextextended\('movimientos\.numero:' \|\| p_empresa::text, 0\)\);/.test(cuerpoCrear));
   }
 
   igual("PRO354-78 casos de la matriz R01 que dependen del gate contable: listados como PENDIENTES POR GATE (no simulados)", CASOS_PENDIENTES_POR_GATE.length, 7);
