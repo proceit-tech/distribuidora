@@ -2,11 +2,37 @@
 -- NO es una prueba ejecutada por la IA: la corre el runner del responsable sobre una base descartable con NEX-001…064 aplicadas, NUNCA sobre el PostgreSQL operativo.
 \i _helpers.sql
 
+-- PRO-130-R03: foto determinista (filas completas, ordenadas por id) de puntos, secuencias y bitácora de las empresas indicadas; la bitácora se toma por empresa_id, sin unir con puntos, para detectar también entradas huérfanas.
+CREATE OR REPLACE FUNCTION pg_temp.t30_foto(p_empresas uuid[]) RETURNS jsonb LANGUAGE sql AS $$
+  SELECT jsonb_build_object(
+    'puntos',      (SELECT count(*) FROM fe_puntos_expedicion WHERE empresa_id = ANY (p_empresas)),
+    'secuencias',  (SELECT count(*) FROM fe_punto_secuencias WHERE empresa_id = ANY (p_empresas)),
+    'bitacora',    (SELECT count(*) FROM fe_puntos_expedicion_log WHERE empresa_id = ANY (p_empresas)),
+    'filas_puntos',     coalesce((SELECT jsonb_agg(to_jsonb(x) ORDER BY x.id) FROM fe_puntos_expedicion x WHERE x.empresa_id = ANY (p_empresas)), '[]'::jsonb),
+    'filas_secuencias', coalesce((SELECT jsonb_agg(to_jsonb(x) ORDER BY x.empresa_id, x.punto_id, x.tipo_documento) FROM fe_punto_secuencias x WHERE x.empresa_id = ANY (p_empresas)), '[]'::jsonb),
+    'filas_bitacora',   coalesce((SELECT jsonb_agg(to_jsonb(x) ORDER BY x.id) FROM fe_puntos_expedicion_log x WHERE x.empresa_id = ANY (p_empresas)), '[]'::jsonb))
+$$;
+-- PRO-130-R03: exige el rechazo con SQLSTATE y DETAIL contractuales exactos (DETAIL vacío cuando la función no lo define).
+CREATE OR REPLACE FUNCTION pg_temp.t30_rechazo(p_sql text, p_estado text, p_detalle text, msg text) RETURNS void LANGUAGE plpgsql AS $$
+DECLARE v_det text;
+BEGIN
+  BEGIN
+    EXECUTE p_sql;
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS v_det = PG_EXCEPTION_DETAIL;
+    IF SQLSTATE = p_estado AND coalesce(v_det, '') = coalesce(p_detalle, '') THEN
+      RAISE NOTICE 'PASS: % (rechazado: % %)', msg, SQLSTATE, coalesce(v_det, ''); RETURN;
+    END IF;
+    RAISE EXCEPTION 'FALLA: % — SQLSTATE/DETAIL inesperados % / % (%), esperado % / %', msg, SQLSTATE, coalesce(v_det, ''), SQLERRM, p_estado, coalesce(p_detalle, '');
+  END;
+  RAISE EXCEPTION 'FALLA: % — la sentencia debió ser rechazada', msg;
+END $$;
+
 DO $t$
 DECLARE
   v_h text := crypt(current_setting('nex.pw_prueba'), gen_salt('bf', 12));
   v_a uuid; v_b uuid; v_ua uuid; v_ub uuid; v_sa uuid; v_sa2 uuid; v_sb uuid; v_op uuid;
-  v_p uuid; v_p2 uuid; r record; v_n int; v_antes jsonb;
+  v_p uuid; v_p2 uuid; r record; v_n int; v_antes jsonb; v_foto jsonb;
 BEGIN
   v_a := nex_inicializar_empresa('emp-t30a', 'Empresa T30 A SA (prueba)', '8030101', '1', 'admin.t30a', 'Ana', 'A', NULL, v_h);
   v_b := nex_inicializar_empresa('emp-t30b', 'Empresa T30 B SA (prueba)', '8030102', '1', 'admin.t30b', 'Beto', 'B', NULL, v_h);
@@ -64,20 +90,29 @@ BEGIN
   PERFORM pg_temp.falla(format('SELECT * FROM fe_punto_alta_tipo(%L, %L, %L, ''001'', ''Conflicto'', ''FE'', NULL, 0, true, false)', v_a, v_ua, (SELECT id FROM sucursales WHERE empresa_id = v_a AND codigo = 'S3-T30')), 'P0001', 'P4: la identidad fiscal 001/001 ya usada en otra sucursal se rechaza');
   PERFORM pg_temp.ok((SELECT count(*) = v_n FROM fe_puntos_expedicion WHERE empresa_id = v_a), 'P4: no quedó ningún punto conflictivo');
 
-  -- P5: rollback de la operación incompleta: el punto se registraría bien, pero la configuración falla (serie inválida / número fuera de rango / sin confirmación): NO queda punto vacío
-  SELECT count(*) INTO v_n FROM fe_puntos_expedicion WHERE empresa_id = v_a;
-  PERFORM pg_temp.falla(format('SELECT * FROM fe_punto_alta_tipo(%L, %L, %L, ''003'', ''Falla serie'', ''FE'', ''A1'', 0, true, true)', v_a, v_ua, v_sa), 'P0001', 'P5: serie inválida → se rechaza TODA la operación');
-  PERFORM pg_temp.falla(format('SELECT * FROM fe_punto_alta_tipo(%L, %L, %L, ''003'', ''Falla numero'', ''FE'', NULL, 10000000, true, true)', v_a, v_ua, v_sa), 'P0001', 'P5: número fuera de rango → se rechaza TODA la operación');
-  PERFORM pg_temp.falla(format('SELECT * FROM fe_punto_alta_tipo(%L, %L, %L, ''003'', ''Falla confirmacion'', ''FE'', NULL, 0, false, true)', v_a, v_ua, v_sa), 'P0001', 'P5: sin confirmación → se rechaza TODA la operación');
-  PERFORM pg_temp.falla(format('SELECT * FROM fe_punto_alta_tipo(%L, %L, %L, ''003'', ''Falla tipo'', ''XX'', NULL, 0, true, true)', v_a, v_ua, v_sa), 'P0001', 'P5: tipo desconocido → se rechaza TODA la operación');
-  PERFORM pg_temp.ok((SELECT count(*) = v_n FROM fe_puntos_expedicion WHERE empresa_id = v_a) AND NOT EXISTS (SELECT 1 FROM fe_puntos_expedicion WHERE empresa_id = v_a AND codigo = '003') AND NOT EXISTS (SELECT 1 FROM fe_puntos_expedicion_log l JOIN fe_puntos_expedicion x ON x.id = l.punto_id WHERE x.codigo = '003'),
-    'P5: ningún punto 003 huérfano ni registro de bitácora tras las operaciones incompletas (rollback atómico)');
+  -- P5: rollback de la operación incompleta: el punto se registraría bien, pero la configuración falla (serie inválida / número fuera de rango / sin confirmación / tipo desconocido): NO queda punto vacío.
+  -- PRO-130-R03: tras CADA rechazo, la foto de la empresa A (puntos, secuencias y bitácora por empresa_id, filas completas) es idéntica a la previa; sin consultas globales por código.
+  v_foto := pg_temp.t30_foto(ARRAY[v_a]);
+  PERFORM pg_temp.ok((v_foto->>'puntos')::int > 0 AND (v_foto->>'secuencias')::int > 0 AND (v_foto->>'bitacora')::int > 0 AND NOT EXISTS (SELECT 1 FROM fe_puntos_expedicion WHERE empresa_id = v_a AND sucursal_id = v_sa AND codigo = '003'), 'P5: punto de partida con filas previas en A y sin punto 003 en la sucursal');
+  PERFORM pg_temp.t30_rechazo(format('SELECT * FROM fe_punto_alta_tipo(%L, %L, %L, ''003'', ''Falla serie'', ''FE'', ''A1'', 0, true, true)', v_a, v_ua, v_sa), 'P0001', 'NEX:SERIE_INVALIDA', 'P5: serie inválida → se rechaza TODA la operación');
+  PERFORM pg_temp.ok(pg_temp.t30_foto(ARRAY[v_a]) = v_foto, 'P5 serie: sin punto 003, secuencias ni bitácora nuevas y filas existentes intactas');
+  PERFORM pg_temp.t30_rechazo(format('SELECT * FROM fe_punto_alta_tipo(%L, %L, %L, ''003'', ''Falla numero'', ''FE'', NULL, 10000000, true, true)', v_a, v_ua, v_sa), 'P0001', 'NEX:NUMERO_INVALIDO', 'P5: número fuera de rango → se rechaza TODA la operación');
+  PERFORM pg_temp.ok(pg_temp.t30_foto(ARRAY[v_a]) = v_foto, 'P5 número: sin punto 003, secuencias ni bitácora nuevas y filas existentes intactas');
+  PERFORM pg_temp.t30_rechazo(format('SELECT * FROM fe_punto_alta_tipo(%L, %L, %L, ''003'', ''Falla confirmacion'', ''FE'', NULL, 0, false, true)', v_a, v_ua, v_sa), 'P0001', 'NEX:CONFIRMACION_REQUERIDA', 'P5: sin confirmación → se rechaza TODA la operación');
+  PERFORM pg_temp.ok(pg_temp.t30_foto(ARRAY[v_a]) = v_foto, 'P5 confirmación: sin punto 003, secuencias ni bitácora nuevas y filas existentes intactas');
+  PERFORM pg_temp.t30_rechazo(format('SELECT * FROM fe_punto_alta_tipo(%L, %L, %L, ''003'', ''Falla tipo'', ''XX'', NULL, 0, true, true)', v_a, v_ua, v_sa), 'P0001', 'NEX:TIPO_INVALIDO', 'P5: tipo desconocido → se rechaza TODA la operación');
+  PERFORM pg_temp.ok(pg_temp.t30_foto(ARRAY[v_a]) = v_foto AND NOT EXISTS (SELECT 1 FROM fe_puntos_expedicion WHERE empresa_id = v_a AND codigo = '003'),
+    'P5: ningún punto 003 huérfano ni registro de bitácora (incluidas entradas sin punto) tras las operaciones incompletas (rollback atómico)');
 
-  -- Permisos y alcance
+  -- Permisos y alcance. PRO-130-R03: foto de A y B (empresas afectadas) antes y después de ambos rechazos; ausencia de 004 acotada a esas empresas y sucursales.
   INSERT INTO usuarios (empresa_id, usuario, nombre, password_hash) VALUES (v_a, 'op.t30', 'Operador sin PUNTOS', v_h) RETURNING id INTO v_op;
-  PERFORM pg_temp.falla(format('SELECT * FROM fe_punto_alta_tipo(%L, %L, %L, ''004'', ''X'', ''FE'', NULL, 0, true, false)', v_a, v_op, v_sa), '42501', 'sin PUNTOS no se da de alta');
-  PERFORM pg_temp.falla(format('SELECT * FROM fe_punto_alta_tipo(%L, %L, %L, ''004'', ''X'', ''FE'', NULL, 0, true, false)', v_b, v_ub, v_sa), 'P0001', 'aislamiento: la empresa B no da de alta sobre una sucursal de A');
-  PERFORM pg_temp.ok(NOT EXISTS (SELECT 1 FROM fe_puntos_expedicion WHERE codigo = '004'), 'los rechazos por permiso/aislamiento no crearon puntos');
+  v_foto := pg_temp.t30_foto(ARRAY[v_a, v_b]);
+  PERFORM pg_temp.t30_rechazo(format('SELECT * FROM fe_punto_alta_tipo(%L, %L, %L, ''004'', ''X'', ''FE'', NULL, 0, true, false)', v_a, v_op, v_sa), '42501', NULL, 'sin PUNTOS no se da de alta');
+  PERFORM pg_temp.ok(pg_temp.t30_foto(ARRAY[v_a, v_b]) = v_foto, 'sin PUNTOS: sin puntos, secuencias ni bitácora nuevas en A ni B');
+  PERFORM pg_temp.t30_rechazo(format('SELECT * FROM fe_punto_alta_tipo(%L, %L, %L, ''004'', ''X'', ''FE'', NULL, 0, true, false)', v_b, v_ub, v_sa), 'P0001', 'NEX:SUCURSAL_INVALIDA', 'aislamiento: la empresa B no da de alta sobre una sucursal de A');
+  PERFORM pg_temp.ok(pg_temp.t30_foto(ARRAY[v_a, v_b]) = v_foto
+    AND NOT EXISTS (SELECT 1 FROM fe_puntos_expedicion WHERE empresa_id IN (v_a, v_b) AND codigo = '004')
+    AND NOT EXISTS (SELECT 1 FROM fe_puntos_expedicion WHERE sucursal_id IN (v_sa, v_sa2, v_sb) AND codigo = '004'), 'los rechazos por permiso/aislamiento no crearon puntos, secuencias ni bitácora en A ni B');
 
   -- Numeración fiscal independiente y emisión: FE y NCE del mismo punto siguen cada una en su secuencia (la FE avanza, la NCE no)
   SELECT * INTO r FROM fe_documento_crear_fe(v_a, v_ua, v_sa, v_p, 'clave-t30-0001', NULL, '1234567-1', 'Receptor T30', 'PYG', 1000, '{"iTiDE": 1, "Subtotales": [{"dTotGralOpe": 1000}]}'::jsonb);

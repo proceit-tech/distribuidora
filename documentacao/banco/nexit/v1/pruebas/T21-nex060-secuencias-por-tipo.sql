@@ -6,7 +6,7 @@ DO $t$
 DECLARE
   v_h text := crypt(current_setting('nex.pw_prueba'), gen_salt('bf', 12));
   v_a uuid; v_b uuid; v_m uuid; v_ua uuid; v_ub uuid; v_um uuid; v_sa uuid; v_sb uuid; v_sm uuid; v_sm2 uuid;
-  v_p1 uuid; v_p2 uuid; v_p3 uuid; v_pm1 uuid; v_pm2 uuid; v_n int; v_antes text; v_det text; v_sx uuid; v_px uuid; v_pm3 uuid; v_pm4 uuid; v_doc uuid; v_ult text;
+  v_p1 uuid; v_p2 uuid; v_p3 uuid; v_pm1 uuid; v_pm2 uuid; v_n int; v_antes text; v_det text; v_sx uuid; v_px uuid; v_pm3 uuid; v_pm4 uuid; v_doc uuid; v_ult text; v_act_ids uuid[]; v_act_n int;
   v_payload jsonb := '{"iTiDE": 1, "Subtotales": [{"dTotGralOpe": 1000}]}'::jsonb;
   r record;
 BEGIN
@@ -47,7 +47,14 @@ BEGIN
   PERFORM pg_temp.ok((SELECT count(*) = 1 AND bool_and(tipo_documento = 'FE' AND ultimo_numero = 120 AND origen = 'ALTA_PUNTO') FROM fe_punto_secuencias WHERE punto_id = v_p1), 'T-F01: el alta crea SOLO la secuencia FE con el número informado; NCE/NDE/NRE/AFE no existen ni en cero');
   PERFORM pg_temp.ok((SELECT ultimo_numero = 0 FROM fe_puntos_expedicion WHERE id = v_p1), 'el contador legado del punto nace en 0 y queda congelado (la numeración vive en la secuencia)');
   PERFORM pg_temp.ok((SELECT (nuevo->>'tipo_documento') = 'FE' AND (nuevo->>'ultimo_numero')::int = 120 FROM fe_puntos_expedicion_log WHERE punto_id = v_p1 AND accion = 'CREAR'), 'bitácora: el alta registra el tipo y el número');
+  -- PRO-130-R03: la bitácora ACTIVAR se prueba por conjunto de IDs capturado antes de cada activación (no por creado_at, que puede repetirse dentro del DO).
+  PERFORM pg_temp.ok((SELECT count(*) = 0 FROM fe_puntos_expedicion_log WHERE empresa_id = v_a AND punto_id = v_p1 AND accion = 'ACTIVAR'), 'bitácora ACTIVAR: el alta no registra activación (punto nace inactivo)');
   PERFORM fe_punto_activar(v_a, v_ua, v_p1, 120, true);
+  PERFORM pg_temp.ok((SELECT count(*) = 1 AND bool_and(empresa_id = v_a AND punto_id = v_p1 AND usuario_id = v_ua
+      AND anterior->>'tipo_documento' = 'FE' AND (anterior->>'ultimo_numero')::int = 120 AND (anterior->>'activo')::boolean = false
+      AND nuevo->>'tipo_documento' = 'FE' AND (nuevo->>'ultimo_numero')::int = 120 AND (nuevo->>'activo')::boolean = true)
+    FROM fe_puntos_expedicion_log WHERE empresa_id = v_a AND punto_id = v_p1 AND accion = 'ACTIVAR'), 'bitácora ACTIVAR (1.ª): exactamente una entrada, actor/empresa/punto correctos, FE 120→120, inactivo→activo');
+  SELECT array_agg(id ORDER BY id), count(*) INTO v_act_ids, v_act_n FROM fe_puntos_expedicion_log WHERE empresa_id = v_a AND punto_id = v_p1 AND accion = 'ACTIVAR';
 
   -- T-F04: ya hay FE 0000126 persistido por Nexit → no se puede reconfirmar la secuencia FE con un número menor (se prueba tras emitir más abajo); aquí, emisión FE normal
   SELECT * INTO r FROM fe_documento_crear_fe(v_a, v_ua, v_sa, v_p1, 'clave-t21-0001', NULL, '1234567-1', 'Receptor T21', 'PYG', 1000, v_payload);
@@ -75,13 +82,19 @@ BEGIN
   PERFORM fe_punto_desactivar(v_a, v_ua, v_p1);
   PERFORM pg_temp.falla(format('SELECT fe_punto_activar(%L, %L, %L, 121, true)', v_a, v_ua, v_p1), 'P0001', 'T-F04: reactivar FE con 121 (< 122 ya emitido) se rechaza');
   PERFORM pg_temp.ok((SELECT ultimo_numero = 122 FROM fe_punto_secuencias WHERE punto_id = v_p1 AND tipo_documento = 'FE') AND (SELECT NOT activo FROM fe_puntos_expedicion WHERE id = v_p1), 'T-F04: el rechazo no alteró secuencia ni estado');
+  PERFORM pg_temp.ok((SELECT count(*) = v_act_n AND array_agg(id ORDER BY id) = v_act_ids FROM fe_puntos_expedicion_log WHERE empresa_id = v_a AND punto_id = v_p1 AND accion = 'ACTIVAR'), 'T-F04: el intento rechazado con 121 no registra activación en la bitácora');
   PERFORM fe_secuencia_estado(v_a, v_ua, v_p1, 'FE', false);   -- NEX-065: el bloqueo de emisión es el del TIPO FE
   PERFORM pg_temp.falla(format($f$SELECT * FROM fe_documento_crear_fe(%L, %L, %L, %L, 'clave-t21-0003', NULL, '1234567-1', 'Receptor T21', 'PYG', 1000, %L)$f$, v_a, v_ua, v_sa, v_p1, v_payload::text), 'P0001', 'un punto inactivo no numera');
   PERFORM fe_secuencia_estado(v_a, v_ua, v_p1, 'FE', true);
+  SELECT array_agg(id ORDER BY id), count(*) INTO v_act_ids, v_act_n FROM fe_puntos_expedicion_log WHERE empresa_id = v_a AND punto_id = v_p1 AND accion = 'ACTIVAR';
   PERFORM fe_punto_activar(v_a, v_ua, v_p1, 122, true);
   PERFORM pg_temp.ok((SELECT activo FROM fe_puntos_expedicion WHERE id = v_p1) AND (SELECT ultimo_numero = 122 FROM fe_punto_secuencias WHERE punto_id = v_p1 AND tipo_documento = 'FE'), 'reactivar confirmando 122 mantiene FE en 122');
-  SELECT (anterior->>'ultimo_numero') || '>' || (nuevo->>'ultimo_numero') INTO v_ult FROM fe_puntos_expedicion_log WHERE punto_id = v_p1 AND accion = 'ACTIVAR' ORDER BY creado_at DESC, id LIMIT 1;
-  PERFORM pg_temp.ok(v_ult = '122>122', 'bitácora ACTIVAR: registra el número de la secuencia FE');
+  PERFORM pg_temp.ok(v_act_n = 1 AND (SELECT count(*) = v_act_n + 1 AND array_agg(id ORDER BY id) @> v_act_ids FROM fe_puntos_expedicion_log WHERE empresa_id = v_a AND punto_id = v_p1 AND accion = 'ACTIVAR'), 'bitácora ACTIVAR (2.ª): exactamente una entrada nueva y la anterior (120→120) se conserva');
+  SELECT count(*), string_agg((anterior->>'ultimo_numero') || '>' || (nuevo->>'ultimo_numero'), ',') INTO v_n, v_ult FROM fe_puntos_expedicion_log
+   WHERE empresa_id = v_a AND punto_id = v_p1 AND accion = 'ACTIVAR' AND NOT (id = ANY (v_act_ids))
+     AND usuario_id = v_ua AND anterior->>'tipo_documento' = 'FE' AND nuevo->>'tipo_documento' = 'FE'
+     AND (anterior->>'activo')::boolean = false AND (nuevo->>'activo')::boolean = true;
+  PERFORM pg_temp.ok(v_n = 1 AND v_ult = '122>122', 'bitácora ACTIVAR: la entrada nueva registra el número de la secuencia FE (122→122), actor, empresa y punto');
 
   -- T-F01: punto cargado a mano SIN secuencia: no numera (no se presume cero); la activación confirmada crea su secuencia FE
   INSERT INTO fe_puntos_expedicion (empresa_id, sucursal_id, codigo, nombre, activo) VALUES (v_a, v_sa, '002', 'Manual sin secuencia', true) RETURNING id INTO v_p2;
