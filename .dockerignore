@@ -10,3 +10,20 @@ coverage
 dist
 tmp
 .DS_Store
+
+# BUILD-R02: pruebas y su soporte exclusivo (versionados en Git; fuera del contexto y de la imagen operacional).
+# Comprobado estáticamente: ningún módulo alcanzable desde app/, instrumentation.ts ni next.config.ts los importa ni los lee.
+**/*.casos.ts
+**/*.casos.tsx
+lib/clientes/contador-casos.ts
+scripts
+.tmp-casos
+*.tsbuildinfo
+# Documentación, banco y gestión del proyecto (la aplicación no los importa ni los lee en tiempo de build ni de ejecución).
+documentacao
+CLAUDE.md
+PROGRESSO-NEXIT-V1.md
+README.md
+compose.yml
+app.compose.yml
+.claude

@@ -1,15 +1,64 @@
 /* eslint-disable @typescript-eslint/no-require-imports */
 // Ejecuta los casos de regresión de Clientes ya compilados en .tmp-casos (ver README.md de esta carpeta). Solo lógica pura y archivos del repositorio: NO usa base de datos, red ni servidor.
+// BUILD-R02: el proceso termina con código distinto de cero ante cualquier fallo, excepción de carga/ejecución, resultado inválido o inventario incompleto
+// (archivo *.casos.ts sin cargar, módulo cargado dos veces, función verificar* exportada sin invocar o invocada dos veces, JS compilado sin fuente).
+const fs = require("fs");
 const Module = require("module");
 const path = require("path");
-const salida = path.join(process.cwd(), ".tmp-casos");
+const raiz = process.cwd();
+const salida = path.join(raiz, ".tmp-casos");
 const original = Module._resolveFilename;
 Module._resolveFilename = function (request, ...resto) {
   if (request.startsWith("@/")) request = path.join(salida, request.slice(2));
   return original.call(this, request, ...resto);
 };
+
+/** Archivos bajo `dir` (relativos a `base`, con «/») cuyo nombre termina en `sufijo`, ordenados. */
+function listar(base, dir, sufijo) {
+  const res = [];
+  const recorrer = (d) => {
+    for (const e of fs.readdirSync(path.join(base, d), { withFileTypes: true })) {
+      const rel = d ? `${d}/${e.name}` : e.name;
+      if (e.isDirectory()) recorrer(rel);
+      else if (e.isFile() && e.name.endsWith(sufijo)) res.push(rel);
+    }
+  };
+  recorrer(dir);
+  return res.sort();
+}
+
+const modulosCargados = new Map(); // "lib/x/y.casos" -> { exportadas: string[], invocadas: Map<string, number> }
+const erroresInventario = [];
+
+/** Carga un módulo de casos compilado y lo envuelve para registrar qué funciones verificar* se invocan (los demás miembros pasan sin cambio). */
+function cargarCasos(r) {
+  const clave = r.replace(/\.js$/, "");
+  if (modulosCargados.has(clave)) erroresInventario.push(`módulo cargado dos veces (duplicado accidental): ${clave}`);
+  const m = require(path.join(salida, r));
+  const exportadas = Object.keys(m).filter((k) => /^verificar/.test(k) && typeof m[k] === "function");
+  if (exportadas.length === 0) erroresInventario.push(`el módulo ${clave} no exporta ninguna función verificar*`);
+  const registro = { exportadas, invocadas: new Map() };
+  modulosCargados.set(clave, registro);
+  return new Proxy(m, {
+    get(objetivo, prop) {
+      const v = objetivo[prop];
+      if (typeof prop === "string" && exportadas.includes(prop)) {
+        return (...args) => {
+          registro.invocadas.set(prop, (registro.invocadas.get(prop) || 0) + 1);
+          return v(...args);
+        };
+      }
+      return v;
+    },
+  });
+}
+
 (async () => {
-  const cargar = (r) => require(path.join(salida, r));
+  if (!fs.existsSync(salida)) throw new Error(`no existe ${salida}: compile primero (npm run casos:compilar)`);
+  const fuentes = listar(raiz, "lib", ".casos.ts").map((f) => f.replace(/\.ts$/, ""));
+  const compilados = listar(salida, "lib", ".casos.js").map((f) => f.replace(/\.js$/, ""));
+  for (const c of compilados) if (!fuentes.includes(c)) erroresInventario.push(`JS compilado sin fuente (salida vieja en .tmp-casos): ${c}.js`);
+  const cargar = (r) => (r.endsWith(".casos.js") ? cargarCasos(r) : require(path.join(salida, r)));
   const { contador } = cargar("lib/clientes/contador-casos.js");
   const tel = cargar("lib/fiscal/telefono.casos.js");
   const apt = cargar("lib/fiscal/aptitud-sifen.casos.js");
@@ -79,7 +128,7 @@ Module._resolveFilename = function (request, ...resto) {
   const gwc = cargar("lib/facturacion/gateway-config.casos.js");
   const kud = cargar("lib/facturacion/kude.casos.js");
   const vis = cargar("lib/facturacion/visual-v1.casos.js");
-  const mon = cargar("lib/formato/monto-visual.casos.js");
+  const fmv = cargar("lib/formato/monto-visual.casos.js");
   const e01 = cargar("lib/facturacion/cantidad-e01.casos.js");
   const e02 = cargar("lib/facturacion/stock-e02.casos.js");
   const e03 = cargar("lib/facturacion/descuentos-e03.casos.js");
@@ -103,6 +152,10 @@ Module._resolveFilename = function (request, ...resto) {
   const p354 = cargar("lib/facturacion/politica-stock-pro354.casos.js");
   const uxf = cargar("lib/facturacion/flujo-factura-ux.casos.js");
   const red = cargar("lib/facturacion/rediseno.casos.js");
+  // BUILD-R02 / D3: suites escritas antes fuera del runner; solo se registran (sus casos no se modifican).
+  const p330 = cargar("lib/facturacion/stock-preventivo.casos.js");
+  const p338 = cargar("lib/facturacion/consulta-automatica-fe.casos.js");
+  const p337 = cargar("lib/reportes/ventas-layout.casos.js");
   const suites = [
     ["teléfono y día de cobro", async () => tel.verificarCasosTelefonoYCobro(), () => tel.CASOS_TELEFONO.length + 11 + 6 + 2],
     ["catálogo mundial", async () => tel.verificarCatalogoMundial(), null],
@@ -176,7 +229,7 @@ Module._resolveFilename = function (request, ...resto) {
     ["Facturación PRO-133: prontitud del gateway por empresa (SIN_CONFIGURAR/INVALIDA/SIN_CREDENCIALES/CONFIGURADO), envío bloqueado en la pantalla y aprovisionamiento de prueba sin secretos", async () => gwc.verificarCasosGatewayConfig(), null],
     ["Facturación PRO-194: KuDE (PDF) de la FE — solicitud al gateway por empresa, PDF validado, errores controlados, alcance y pantalla (contrato de respuesta NO confirmado: solo se acepta application/pdf)", async () => kud.verificarCasosKude(), null],
     ["Facturación — primera versión visual: acciones con iconos en Documentos (KuDE en la fila) e importes sin decimales largos en el resumen de Factura y Nota de crédito (solo presentación)", async () => vis.verificarCasosVisualV1(), null],
-    ["PRO-335: formato monetario en todas las pantallas — PYG 0 decimales, USD/BRL 2, redondeo por texto, moneda por fila, cantidades/tasas/códigos exactos y exportaciones intactas (solo presentación)", async () => mon.verificarCasosFormatoMonetarioPro335(), null],
+    ["PRO-335: formato monetario en todas las pantallas — PYG 0 decimales, USD/BRL 2, redondeo por texto, moneda por fila, cantidades/tasas/códigos exactos y exportaciones intactas (solo presentación)", async () => fmv.verificarCasosFormatoMonetarioPro335(), null],
     ["Facturación E01 (PRO-200): cantidades fraccionarias con coma o punto (también unidad 77) y foco automático en Cantidad", async () => e01.verificarCasosCantidadE01(), null],
     ["Facturación E02 (PRO-200): control de stock, reparto automático entre depósitos y baja al emitir (contrato NEX-067 simulado; SQL estructural, no aplicado)", async () => e02.verificarCasosStockE02(), null],
     ["Facturación E03 (PRO-200 / PRO-124): descuentos por ítem y general (% o monto) según MT SIFEN v150 + NT 1: EA002/EA003/EA004/EA008, F009/F033/F011/F010, IVA sobre el neto, combinación y precisión Decimal", async () => e03.verificarCasosDescuentosE03(), null],
@@ -199,6 +252,9 @@ Module._resolveFilename = function (request, ...resto) {
     ["PRO-342-UX-R01: Documentos electrónicos — indicadores compactos, 4 iconos independientes con tooltip accesible sin recorte, leyenda única, acciones con iconos, primera capa de 4 datos fiscales, historial técnico cerrado, avisos críticos visibles, respuestas tardías/cambio de filtros, responsive y colores FE/NCE", async () => uxr01.verificarCasosDocumentosUxR01(), null],
     ["PRO-342-UX-R02: Documentos electrónicos — respuestas tardías (GET inicial, consultas, envíos, listado fuera de orden), acciones solo sobre el estado vigente, feedback de copia por generación y tarjeta móvil sin superposición de iconos y acciones (320/360/768, zoom)", async () => uxr02.verificarCasosDocumentosUxR02(), null],
     ["PRO-354-R02: política por EMPRESA «Bloquear facturación por stock insuficiente» (TRUE por omisión = comportamiento actual; FALSE = salida del disponible + baja pendiente en depósito elegible, sin saldo negativo), NEX-081 (no aplicada), «Bajas pendientes de stock» con confirmación manual solo con saldo real; casos de costos/negativo PENDIENTES POR GATE", async () => p354.verificarCasosPoliticaStockPro354(), null],
+    ["PRO-330: aviso inmediato de stock en «Nueva factura» (servidor, controlador con temporizador simulado, estructura; PRO330-61 según PRO-330-T01)", async () => p330.verificarCasosStockPreventivo(), null],
+    ["PRO-338: consulta AUTOMÁTICA del estado fiscal de FE y NCE, estados SIFEN y alertas técnicas (P338-01…20, R02-F001/F002/F003; base y gateway simulados)", async () => p338.verificarCasosPro338(), null],
+    ["PRO-337: Informe de Ventas — layout de tarjetas sin recortes (sexta columna, rolagem horizontal local, títulos cortos, altura natural)", async () => p337.verificarCasosVentasLayout(), null],
   ];
   let total = 0;
   let fallosTotal = 0;
@@ -206,11 +262,30 @@ Module._resolveFilename = function (request, ...resto) {
     const antes = contador.n;
     let fallos;
     try { fallos = await ejecutar(); } catch (e) { fallos = ["EXCEPCIÓN: " + (e && e.stack || e)]; }
-    const n = (cuenta ? cuenta() : 0) + (contador.n - antes);
+    if (!Array.isArray(fallos)) fallos = [`RESULTADO INVÁLIDO: la suite devolvió ${typeof fallos} en lugar de una lista de fallos`];
+    let n;
+    try { n = (cuenta ? cuenta() : 0) + (contador.n - antes); } catch (e) { n = contador.n - antes; fallos = [...fallos, "EXCEPCIÓN AL CONTAR: " + (e && e.stack || e)]; }
     total += n;
     fallosTotal += fallos.length;
     console.log(`${fallos.length === 0 ? "OK  " : "FALLA"} ${nombre}: ${n} comprobaciones contadas`);
     for (const f of fallos) console.log("   - " + f);
   }
-  console.log(`TOTAL comprobaciones contadas: ${total}; fallos: ${fallosTotal}`);
-})();
+  // Inventario: cada *.casos.ts de lib/ cargado una vez y cada función verificar* exportada invocada exactamente una vez.
+  for (const f of fuentes) if (!modulosCargados.has(f)) erroresInventario.push(`archivo de casos sin registrar en el runner: ${f}.ts`);
+  for (const [modulo, { exportadas, invocadas }] of modulosCargados) {
+    if (!fuentes.includes(modulo)) erroresInventario.push(`módulo cargado sin fuente en lib/: ${modulo}`);
+    for (const fn of exportadas) {
+      const veces = invocadas.get(fn) || 0;
+      if (veces === 0) erroresInventario.push(`suite sin invocar: ${modulo}.${fn}`);
+      else if (veces > 1) erroresInventario.push(`suite invocada ${veces} veces (duplicado accidental): ${modulo}.${fn}`);
+    }
+  }
+  const invocadasTotal = [...modulosCargados.values()].reduce((s, r) => s + r.invocadas.size, 0);
+  console.log(`INVENTARIO: ${fuentes.length} archivos *.casos.ts; ${modulosCargados.size} módulos cargados; ${invocadasTotal} funciones verificar* invocadas; ${suites.length} suites registradas`);
+  for (const e of erroresInventario) console.log("   - INVENTARIO: " + e);
+  console.log(`TOTAL comprobaciones contadas: ${total}; fallos: ${fallosTotal}; errores de inventario: ${erroresInventario.length}`);
+  process.exitCode = fallosTotal === 0 && erroresInventario.length === 0 ? 0 : 1;
+})().catch((e) => {
+  console.log("FALLA DEL RUNNER (carga o configuración): " + (e && e.stack || e));
+  process.exitCode = 1;
+});
