@@ -26,8 +26,9 @@ const leer = (r: string) => readFileSync(join(process.cwd(), r), "utf8");
 const sinComentariosSql = (t: string) => t.split("\n").map((l) => l.replace(/--.*$/, "")).join("\n");
 const sinComentariosTs = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
 
-const EMPRESA = "11111111-1111-4111-8111-111111111111";
-const EMPRESA_B = "22222222-2222-4222-8222-222222222222";
+// Tipadas como string (no como literales): R05-E10 compara dos empresas distintas y TypeScript rechaza (TS2367) comparar dos literales sin intersección.
+const EMPRESA: string = "11111111-1111-4111-8111-111111111111";
+const EMPRESA_B: string = "22222222-2222-4222-8222-222222222222";
 const USUARIO = "99999999-9999-4999-8999-999999999999";
 const DOC = "d0805000-0000-4000-8000-000000000001";
 const TOKEN = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJyMDUifQ.firma-sintetica-r05";
