@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # T29 — NEX-063 (AUD-NEX063-R01-01/02): la REVERSIÓN tiene sintaxis válida y toma sus bloqueos ANTES de comprobar, de modo que una emisión concurrente que ya pasó a la serie AA no puede quedar
-# oculta por una comprobación obsoleta. Trabaja sobre COPIAS descartables (CREATE DATABASE … TEMPLATE) de la base de la batería (con NEX-001…063): una reversión exitosa es destructiva para el esquema.
+# oculta por una comprobación obsoleta. Trabaja sobre COPIAS descartables (CREATE DATABASE … TEMPLATE) de su base propia (NEX-001…065, ver abajo): una reversión exitosa es destructiva para el esquema.
 #   A) Corrida real: S1 emite una FE en la frontera 9999999 → AA-0000001 y retiene la transacción; la reversión (S2) queda BLOQUEADA; al confirmar S1 revalida y ABORTA sin tocar series ni documentos.
 #   B) Escenario válido (sin series, tipos activos): la reversión se aplica (prueba la sintaxis), restaura FE/NCE de NEX-060/062, documentos idénticos y la numeración continúa sin repetir.
 #   C) Tipo desactivado: aborta sin cambios.
 # AISLAMIENTO (AUD-NEX063-R02-01): la reversión aborta si existe CUALQUIER serie no nula o tipo desactivado en la base, y T27/T28 dejan series (AA…ZZ) en la base de la batería. Por eso T29 NO copia la
-# base de la batería: construye su PROPIA base limpia (${PGDATABASE}_t29base) aplicando las migraciones NEX-001…063 y la semilla S-001, y de ella saca las copias de cada escenario. Antes de inyectar el
+# base de la batería: construye su PROPIA base limpia (${PGDATABASE}_t29base) aplicando EXACTAMENTE las migraciones NEX-001…065 (MIGRACIONES_DIR; PRO-130-R02: nunca las posteriores, que redefinen
+# las mismas funciones) y la semilla S-001, verifica versiones y checksums registrados, y de ella saca las copias de cada escenario; en cada copia revierte 065 → 064 y verifica el estado real. Antes de inyectar el
 # estado propio de cada escenario se verifican las precondiciones GLOBALES (sin series, sin tipos desactivados y sin documentos con serie en toda la base).
 # Requiere PGDATABASE (base de la batería, solo para derivar nombres y la clave de prueba), nex.pw_prueba (PGOPTIONS), NEX_BOOTSTRAP_ANTES_DE_019 (lo exporta el runner) y permiso CREATE DATABASE.
 # Datos sintéticos. NUNCA sobre la base operativa: el nombre debe ser nexit_test_* y se niega a correr si no lo es.
@@ -23,11 +24,17 @@ chk()  { if [[ "$1" == "$2" ]]; then ok "$3 (esperado=$2)"; else falla "$3 (obte
 Q()    { psql -X -Atq -v ON_ERROR_STOP=1 -c "$1"; }
 esperar() { local n=0; until eval "$1"; do n=$((n+1)); [[ $n -gt 300 ]] && return 1; sleep 0.1; done; }
 PAYLOAD='{"iTiDE": 1, "Subtotales": [{"dTotGralOpe": 1000}]}'
-# Base propia, limpia y aislada de T27/T28 y del resto de la batería: migraciones NEX-001…063 + semilla S-001, sin ninguna empresa de prueba ni serie.
+# Base propia, limpia y aislada de T27/T28 y del resto de la batería: EXACTAMENTE NEX-001…065 + semilla S-001, sin ninguna empresa de prueba ni serie.
+mkdir -p "$T/mig"
+for f in "$AQUI"/migraciones/NEX-0*.sql; do b="$(basename "$f")"; n="${b#NEX-}"; n="${n%%-*}"; (( 10#$n <= 65 )) && cp "$f" "$T/mig/"; done
+[[ "$(ls "$T"/mig/NEX-0*.sql | wc -l)" == 65 && -f "$(ls "$T"/mig/NEX-065-*.sql)" ]] || { echo "FALLA: el conjunto de migraciones de T29 no es exactamente NEX-001…065"; exit 1; }
 psql -X -q -d postgres -c "CREATE DATABASE $BASE" >/dev/null 2>&1 || { echo "FALLA: no se pudo crear la base limpia $BASE"; exit 1; }
-if PGDATABASE="$BASE" "$AQUI/scripts/aplicar-migraciones.sh" >"$T/mig.out" 2>&1 && psql -X -q -v ON_ERROR_STOP=1 -d "$BASE" -f "$AQUI/seeds/S-001-catalogos-globales.sql" >"$T/seed.out" 2>&1; then
-  ok "base limpia propia de T29 creada con las migraciones y la semilla vigentes (independiente de T27/T28)"
+if PGDATABASE="$BASE" MIGRACIONES_DIR="$T/mig" "$AQUI/scripts/aplicar-migraciones.sh" >"$T/mig.out" 2>&1 && psql -X -q -v ON_ERROR_STOP=1 -d "$BASE" -f "$AQUI/seeds/S-001-catalogos-globales.sql" >"$T/seed.out" 2>&1; then
+  ok "base limpia propia de T29 creada con NEX-001…065 y la semilla S-001 (independiente de T27/T28)"
 else falla "no se pudo preparar la base limpia de T29: $(tail -3 "$T/mig.out" "$T/seed.out" 2>/dev/null)"; exit 1; fi
+ESPERADO="$(for f in "$T"/mig/NEX-0*.sql; do b="$(basename "$f" .sql)"; echo "${b%%-*}-$(echo "$b" | cut -d- -f2) $(sha256sum "$f" | cut -d' ' -f1)"; done | LC_ALL=C sort)"
+APLICADO="$(psql -X -Atq -d "$BASE" -c "select version||' '||checksum from schema_migrations" | LC_ALL=C sort)"
+[[ "$ESPERADO" == "$APLICADO" ]] && ok "la base limpia tiene registradas exactamente NEX-001…065 con los checksums de los archivos" || { falla "schema_migrations de $BASE no coincide con NEX-001…065: preparación abortada"; exit 1; }
 H="$(psql -X -Atq -d "$BASE" -c "select crypt(current_setting('nex.pw_prueba'), gen_salt('bf', 12))")"
 # Precondiciones GLOBALES (toda la base, no solo la empresa del escenario): sin series, sin tipos desactivados y sin documentos con serie.
 precondicion_global() { # $1 etiqueta
@@ -38,11 +45,15 @@ precondicion_global_base() { local c; export PGDATABASE="$BASE"; precondicion_gl
 precondicion_global_base
 
 crear_copia() { # $1 sufijo, $2 dígito de RUC → deja PGDATABASE apuntando a la copia; define E, U, S, P (punto 001 con FE y NCE activos)
-  psql -X -q -d postgres -c "CREATE DATABASE ${ORIG}_t29$1 TEMPLATE $BASE" >/dev/null || { falla "no se pudo copiar la base limpia"; return 1; }
+  psql -X -q -d postgres -c "CREATE DATABASE ${ORIG}_t29$1 TEMPLATE $BASE" >/dev/null || { falla "no se pudo copiar la base limpia (escenario $1): preparación abortada"; exit 1; }
   export PGDATABASE="${ORIG}_t29$1"
   # NEX-065 y NEX-064 dependen de NEX-063: la reversión se hace en orden inverso (la de NEX-063 aborta mientras NEX-064/065 sigan aplicadas).
-  psql -X -q -v ON_ERROR_STOP=1 -1 -f "$AQUI/scripts/reversion-NEX-065.sql" >"$T/r65$1.out" 2>&1 || falla "no se pudo revertir NEX-065 en la copia: $(cat "$T/r65$1.out")"
-  psql -X -q -v ON_ERROR_STOP=1 -1 -f "$AQUI/scripts/reversion-NEX-064.sql" >"$T/r64$1.out" 2>&1 || falla "no se pudo revertir NEX-064 en la copia: $(cat "$T/r64$1.out")"
+  psql -X -q -v ON_ERROR_STOP=1 -1 -f "$AQUI/scripts/reversion-NEX-065.sql" >"$T/r65$1.out" 2>&1 || { falla "no se pudo revertir NEX-065 en la copia $1: $(cat "$T/r65$1.out"): preparación abortada"; exit 1; }
+  psql -X -q -v ON_ERROR_STOP=1 -1 -f "$AQUI/scripts/reversion-NEX-064.sql" >"$T/r64$1.out" 2>&1 || { falla "no se pudo revertir NEX-064 en la copia $1: $(cat "$T/r64$1.out"): preparación abortada"; exit 1; }
+  # Estado REAL tras las dos reversiones (no se confía en el código de salida): sin snapshot NEX-065, sin alta única NEX-064, con las series de NEX-063 vigentes
+  local est; est="$(Q "select (to_regclass('public.fe_estado_previo_nex065') is null)::text||'/'||(to_regprocedure('public.fe_punto_alta_tipo(uuid,uuid,uuid,text,text,text,text,integer,boolean,boolean)') is null)::text||'/'||(to_regprocedure('public.fe_secuencia_reservar(uuid,uuid,text)') is not null)::text")"
+  if [[ "$est" == "true/true/true" ]]; then ok "copia $1: revertidas NEX-065 y NEX-064, NEX-063 vigente (esperado=true/true/true)"
+  else falla "copia $1: estado tras revertir 065/064 inesperado (obtenido=$est, esperado=true/true/true): preparación abortada"; exit 1; fi
   E="$(Q "select nex_inicializar_empresa('emp-t29$1','Empresa T29$1 SA (prueba)','802910$2','1','admin.t29$1','Ana','T29',NULL,'$H')")"
   U="$(Q "select id from usuarios where empresa_id='$E'")"
   S="$(Q "select id from sucursales where empresa_id='$E' order by creado_at, id limit 1")"
@@ -51,7 +62,7 @@ crear_copia() { # $1 sufijo, $2 dígito de RUC → deja PGDATABASE apuntando a l
   Q "select fe_secuencia_configurar('$E','$U','$P','FE',NULL,${3:-10},true,true)" >/dev/null
   Q "select fe_secuencia_configurar('$E','$U','$P','NCE',NULL,0,true,true)" >/dev/null
   # Setup LEGADO (solo estas copias, ya revertidas a NEX-063): fe_punto_registrar crea el punto inactivo y la emisión restaurada de NEX-063 exige el punto activo. No existe en el modelo nuevo.
-  Q "select fe_punto_estado('$E','$U','$P',true)" >/dev/null || { falla "no se pudo activar el punto físico en el setup legado"; return 1; }
+  Q "select fe_punto_estado('$E','$U','$P',true)" >/dev/null || { falla "no se pudo activar el punto físico en el setup legado: preparación abortada"; exit 1; }
   chk "$(Q "select activo::text from fe_puntos_expedicion where id='$P'")" "true" "setup legado: punto físico activo (requisito de la emisión NEX-063 restaurada)"
 }
 

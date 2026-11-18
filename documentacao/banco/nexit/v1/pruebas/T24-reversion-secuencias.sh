@@ -1,15 +1,20 @@
 #!/usr/bin/env bash
 # T24 — NEX-060 (PRO-131, AUD-PRO131-R02-01): la REVERSIÓN toma sus bloqueos ANTES de comprobar y no puede borrar una secuencia fiscal confirmada por una corrida.
-# Trabaja sobre COPIAS descartables (CREATE DATABASE … TEMPLATE) de la base de la batería, porque una reversión exitosa es destructiva para el esquema; la base original no se toca.
+# Trabaja sobre COPIAS descartables (CREATE DATABASE … TEMPLATE), porque una reversión exitosa es destructiva para el esquema.
+# AISLAMIENTO (PRO-130-R02): la reversión aborta si existe CUALQUIER secuencia no FE en la base, y la base de la batería ya tiene NCE de otras pruebas (p. ej. T22). Por eso T24 NO copia la base
+# de la batería: construye su PROPIA base (${PGDATABASE}_t24base) con EXACTAMENTE las migraciones NEX-001…060 (MIGRACIONES_DIR) + S-001, verifica versiones y checksums aplicados, y de ella saca
+# una copia por escenario; antes de inyectar el estado propio de cada escenario verifica la precondición GLOBAL (ninguna secuencia de otro tipo en toda la copia).
 #   A) Corrida real: S1 inserta una secuencia NCE y retiene la transacción; la reversión (S2) queda BLOQUEADA; al confirmar S1 la reversión revalida y ABORTA sin borrar la NCE.
 #   B) Escenario válido (solo FE, punto activo con secuencia, sin retroceso): la reversión se aplica, el contador legado toma el último número FE y la numeración continúa sin repetir; documentos intactos.
 #   C) Punto ACTIVO sin secuencia FE: aborta y el esquema, los contadores y los documentos quedan inalterados.
-# Requiere PGDATABASE (migraciones + S-001), nex.pw_prueba (PGOPTIONS) y permiso CREATE DATABASE; ninguna sesión abierta sobre la base plantilla. Datos sintéticos.
+# Requiere PGDATABASE (base de la batería, solo para derivar nombres), nex.pw_prueba (PGOPTIONS), NEX_BOOTSTRAP_ANTES_DE_019 (lo exporta el runner) y permiso CREATE DATABASE. Datos sintéticos.
+# NUNCA sobre la base operativa: el nombre debe ser nexit_test_* y se niega a correr si no lo es.
 set -uo pipefail
 AQUI="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REV="$AQUI/scripts/reversion-NEX-060.sql"
-T="$(mktemp -d)"; ORIG="$PGDATABASE"
-limpiar() { kill $(jobs -p) 2>/dev/null; for x in a b c; do psql -X -q -d postgres -c "DROP DATABASE IF EXISTS ${ORIG}_t24$x WITH (FORCE)" >/dev/null 2>&1; done; rm -rf "$T"; }
+T="$(mktemp -d)"; ORIG="$PGDATABASE"; BASE="${ORIG}_t24base"
+[[ "$ORIG" == nexit_test_* ]] || { echo "ABORTADO: T24 solo corre sobre bases efímeras nexit_test_*" >&2; exit 3; }
+limpiar() { kill $(jobs -p) 2>/dev/null; for x in a b c base; do psql -X -q -d postgres -c "DROP DATABASE IF EXISTS ${ORIG}_t24$x WITH (FORCE)" >/dev/null 2>&1; done; rm -rf "$T"; }
 trap limpiar EXIT
 FALLAS=0
 ok()   { echo "PASS: $1"; }
@@ -18,11 +23,27 @@ chk()  { if [[ "$1" == "$2" ]]; then ok "$3 (esperado=$2)"; else falla "$3 (obte
 Q()    { psql -X -Atq -v ON_ERROR_STOP=1 -c "$1"; }
 esperar() { local n=0; until eval "$1"; do n=$((n+1)); [[ $n -gt 300 ]] && return 1; sleep 0.1; done; }
 PAYLOAD='{"iTiDE": 1, "Subtotales": [{"dTotGralOpe": 1000}]}'
-H="$(psql -X -Atq -d "$ORIG" -c "select crypt(current_setting('nex.pw_prueba'), gen_salt('bf', 12))")"
+
+# ── Base propia con EXACTAMENTE NEX-001…060 + S-001 ──
+mkdir -p "$T/mig"
+for f in "$AQUI"/migraciones/NEX-0*.sql; do b="$(basename "$f")"; n="${b#NEX-}"; n="${n%%-*}"; (( 10#$n <= 60 )) && cp "$f" "$T/mig/"; done
+[[ "$(ls "$T"/mig/NEX-0*.sql | wc -l)" == 60 && -f "$(ls "$T"/mig/NEX-060-*.sql)" ]] || { echo "FALLA: el conjunto de migraciones de T24 no es exactamente NEX-001…060"; exit 1; }
+psql -X -q -d postgres -c "CREATE DATABASE $BASE" >/dev/null 2>&1 || { echo "FALLA: no se pudo crear la base propia $BASE"; exit 1; }
+if PGDATABASE="$BASE" MIGRACIONES_DIR="$T/mig" "$AQUI/scripts/aplicar-migraciones.sh" >"$T/mig.out" 2>&1 && psql -X -q -v ON_ERROR_STOP=1 -d "$BASE" -f "$AQUI/seeds/S-001-catalogos-globales.sql" >"$T/seed.out" 2>&1; then
+  ok "base propia de T24 creada con NEX-001…060 y la semilla S-001 (independiente de la base de la batería)"
+else echo "FALLA: no se pudo preparar la base propia de T24: $(tail -3 "$T/mig.out" "$T/seed.out" 2>/dev/null)"; exit 1; fi
+ESPERADO="$(for f in "$T"/mig/NEX-0*.sql; do b="$(basename "$f" .sql)"; echo "${b%%-*}-$(echo "$b" | cut -d- -f2) $(sha256sum "$f" | cut -d' ' -f1)"; done | LC_ALL=C sort)"
+APLICADO="$(psql -X -Atq -d "$BASE" -c "select version||' '||checksum from schema_migrations" | LC_ALL=C sort)"
+[[ "$ESPERADO" == "$APLICADO" ]] && ok "la base propia tiene registradas exactamente NEX-001…060 con los checksums de los archivos" || { echo "FALLA: schema_migrations de $BASE no coincide con NEX-001…060"; exit 1; }
+H="$(psql -X -Atq -d "$BASE" -c "select crypt(current_setting('nex.pw_prueba'), gen_salt('bf', 12))")"
 
 crear_copia() { # $1 sufijo, $2 dígito de RUC → deja PGDATABASE apuntando a la copia; define E, U, S
-  psql -X -q -d postgres -c "CREATE DATABASE ${ORIG}_t24$1 TEMPLATE $ORIG" >/dev/null || { falla "no se pudo copiar la base"; return 1; }
+  psql -X -q -d postgres -c "CREATE DATABASE ${ORIG}_t24$1 TEMPLATE $BASE" >/dev/null || { falla "no se pudo copiar la base propia (escenario $1): preparación abortada"; exit 1; }
   export PGDATABASE="${ORIG}_t24$1"
+  # Precondición GLOBAL antes de inyectar el escenario: ninguna secuencia de otro tipo en toda la copia (la reversión aborta por cualquiera)
+  local otros; otros="$(Q "select count(*) from fe_punto_secuencias where tipo_documento <> 'FE'")"
+  if [[ "$otros" == "0" ]]; then ok "precondición $1: la copia no tiene secuencias de otros tipos antes del escenario (esperado=0)"
+  else falla "precondición $1: la copia tiene secuencias de otros tipos (obtenido=$otros, esperado=0): preparación abortada"; exit 1; fi
   E="$(Q "select nex_inicializar_empresa('emp-t24$1','Empresa T24$1 SA (prueba)','802410$2','1','admin.t24$1','Ana','T24',NULL,'$H')")"
   U="$(Q "select id from usuarios where empresa_id='$E'")"
   S="$(Q "select id from sucursales where empresa_id='$E' order by creado_at, id limit 1")"

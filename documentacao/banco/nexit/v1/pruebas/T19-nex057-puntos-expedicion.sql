@@ -59,7 +59,15 @@ BEGIN
   PERFORM fe_punto_activar(v_a, v_ua, v_p, 125, true);
   PERFORM pg_temp.ok((SELECT activo AND ultimo_numero = 125 FROM pt WHERE id = v_p), 'activar: confirma un número MAYOR (se emitió fuera de Nexit) y activa');
   PERFORM pg_temp.falla(format('SELECT fe_punto_activar(%L, %L, %L, 125, true)', v_a, v_ua, v_p), 'P0001', 'activar: un punto ya activo se rechaza');
-  PERFORM pg_temp.ok((SELECT count(*) = 2 FROM fe_puntos_expedicion_log WHERE punto_id = v_p) AND (SELECT (anterior->>'ultimo_numero')::int = 120 AND (nuevo->>'ultimo_numero')::int = 125 FROM fe_puntos_expedicion_log WHERE punto_id = v_p AND accion = 'ACTIVAR'), 'bitácora: la activación conserva el número anterior y el nuevo');
+  -- PRO-130-R02: desde NEX-063/065 cada fe_secuencia_estado (líneas de arriba) registra una acción SECUENCIA; la bitácora tiene CUATRO filas y se verifican TODAS con su desglose exacto.
+  PERFORM pg_temp.ok((SELECT count(*) = 4 AND count(*) FILTER (WHERE accion = 'CREAR') = 1 AND count(*) FILTER (WHERE accion = 'ACTIVAR') = 1 AND count(*) FILTER (WHERE accion = 'SECUENCIA') = 2
+      AND bool_and(usuario_id = v_ua AND empresa_id = v_a) FROM fe_puntos_expedicion_log WHERE punto_id = v_p), 'bitácora: CREAR=1, SECUENCIA=2, ACTIVAR=1 (cuatro filas, todas del usuario y la empresa A)');
+  PERFORM pg_temp.ok((SELECT count(*) = 2
+        AND count(*) FILTER (WHERE (anterior->>'activo')::boolean = true AND (nuevo->>'activo')::boolean = false) = 1
+        AND count(*) FILTER (WHERE (anterior->>'activo')::boolean = false AND (nuevo->>'activo')::boolean = true) = 1
+        AND bool_and(anterior->>'tipo_documento' = 'FE' AND nuevo->>'tipo_documento' = 'FE' AND (anterior->>'ultimo_numero')::int = 120 AND (nuevo->>'ultimo_numero')::int = 120)
+      FROM fe_puntos_expedicion_log WHERE punto_id = v_p AND accion = 'SECUENCIA'), 'bitácora SECUENCIA: una desactivación y una reactivación del tipo FE, ambas con el número 120 intacto');
+  PERFORM pg_temp.ok((SELECT (anterior->>'ultimo_numero')::int = 120 AND (nuevo->>'ultimo_numero')::int = 125 AND usuario_id = v_ua FROM fe_puntos_expedicion_log WHERE punto_id = v_p AND accion = 'ACTIVAR'), 'bitácora: la activación conserva el número anterior y el nuevo');
 
   -- La emisión continúa desde el número confirmado (la única autoridad que incrementa es fe_documento_crear_fe)
   SELECT * INTO r FROM fe_documento_crear_fe(v_a, v_ua, v_sa, v_p, 'clave-t19-0002', NULL, '1234567-1', 'Receptor T19', 'PYG', 1000, v_payload);

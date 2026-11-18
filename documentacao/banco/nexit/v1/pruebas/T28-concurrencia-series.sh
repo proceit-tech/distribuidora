@@ -6,6 +6,8 @@
 #   Con la FE en 9999998: S1 toma 9999999 (sin serie) y S2, tras esperar, toma AA-0000001 (nunca el mismo número, sin reinicio ni salto). NCE avanza sin esperar.
 # Requiere PGDATABASE (migraciones + S-001) y nex.pw_prueba (PGOPTIONS), como el resto de la batería. Base descartable; datos sintéticos.
 set -uo pipefail
+# PRO-130-R02: guarda de base descartable (como T24/T29/T33/T34): NUNCA sobre la base operativa
+[[ "${PGDATABASE:-}" == nexit_test_* ]] || { echo "ABORTADO: T28 solo corre sobre bases efímeras nexit_test_*" >&2; exit 3; }
 T="$(mktemp -d)"; trap 'kill $(jobs -p) 2>/dev/null; rm -rf "$T"' EXIT
 FALLAS=0
 ok()   { echo "PASS: $1"; }

@@ -55,7 +55,8 @@ BEGIN
     GET STACKED DIAGNOSTICS v_det = PG_EXCEPTION_DETAIL;
   END;
   PERFORM pg_temp.ok(v_det = 'NEX:TIPO_INACTIVO' AND (SELECT ultimo_numero = 1 FROM fe_punto_secuencias WHERE punto_id = v_p AND tipo_documento = 'FE'), 'FE inactiva: bloquea la FE (sin consumir) mientras la NCE sigue disponible');
-  UPDATE documentos_electronicos SET estado_sifen = 'RECHAZADO' WHERE id = v_n.o_documento_id;
+  -- PRO-130-R02: el fixture simula el rechazo SIFEN de una NCE ENVIADA (CHECK documentos_electronicos_estados_chk, NEX-047); libera el saldo NCE, NUNCA el número fiscal (la siguiente toma 0000057).
+  UPDATE documentos_electronicos SET estado_local = 'ENVIADO', estado_sifen = 'RECHAZADO' WHERE id = v_n.o_documento_id;
   SELECT * INTO v_n FROM fe_documento_crear_nce(v_a, v_ua, v_sa, v_p, 'clave-t32-nce-3', v_fe.o_id, 3, '[{"linea":1,"cantidad":0,"monto":30000}]'::jsonb, 'PYG', 30000, pg_temp.nce_payload(v_fe.o_cdc, 30000));
   PERFORM pg_temp.ok(v_n.o_numero = '0000057', 'con la FE desactivada la NCE sigue emitiendo (AB-0000057)');
   PERFORM fe_secuencia_estado(v_a, v_ua, v_p, 'FE', true);
@@ -82,8 +83,12 @@ BEGIN
     AND NOT has_function_privilege('nexit_runtime', 'public.fe_punto_crear(uuid,uuid,uuid,text,text,integer,boolean)', 'EXECUTE') AND NOT has_function_privilege('nexit_runtime', 'public.fe_punto_activar(uuid,uuid,uuid,integer,boolean)', 'EXECUTE')
     AND NOT has_function_privilege('nexit_runtime', 'public.fe_punto_desactivar(uuid,uuid,uuid)', 'EXECUTE'), 'tras nex_aplicar_grants_runtime() siguen SIN acceso para la aplicación: registrar, estado, crear, activar y desactivar del punto físico');
   PERFORM pg_temp.ok(has_function_privilege('nexit_runtime', 'public.fe_punto_alta_tipo(uuid,uuid,uuid,text,text,text,text,integer,boolean,boolean)', 'EXECUTE') AND has_function_privilege('nexit_runtime', 'public.fe_secuencia_configurar(uuid,uuid,uuid,text,text,integer,boolean,boolean)', 'EXECUTE')
-    AND has_function_privilege('nexit_runtime', 'public.fe_secuencia_estado(uuid,uuid,uuid,text,boolean)', 'EXECUTE') AND has_function_privilege('nexit_runtime', 'public.fe_documento_crear_fe(uuid,uuid,uuid,uuid,text,uuid,text,text,text,numeric,jsonb)', 'EXECUTE')
-    AND has_function_privilege('nexit_runtime', 'public.fe_documento_crear_nce(uuid,uuid,uuid,uuid,text,uuid,integer,jsonb,text,numeric,jsonb)', 'EXECUTE'), 'tras el envoltorio global se conservan alta única, configuración y estado por tipo, y emisión FE/NCE');
+    AND has_function_privilege('nexit_runtime', 'public.fe_secuencia_estado(uuid,uuid,uuid,text,boolean)', 'EXECUTE')
+    -- PRO-130-R02 (A01): desde NEX-067:277 la FE interna sin baja de stock NO es ejecutable por la aplicación; la emisión FE vigente pasa por los envoltorios receptor (NEX-076) y faltante (NEX-081)
+    AND NOT has_function_privilege('nexit_runtime', 'public.fe_documento_crear_fe(uuid,uuid,uuid,uuid,text,uuid,text,text,text,numeric,jsonb)', 'EXECUTE')
+    AND has_function_privilege('nexit_runtime', 'public.fe_documento_crear_fe_receptor(uuid,uuid,uuid,uuid,text,uuid,text,text,text,numeric,jsonb,jsonb,uuid,uuid)', 'EXECUTE')
+    AND has_function_privilege('nexit_runtime', 'public.fe_documento_crear_fe_stock_pendiente(uuid,uuid,uuid,uuid,text,uuid,text,text,text,numeric,jsonb,jsonb,uuid,uuid,jsonb,boolean)', 'EXECUTE')
+    AND has_function_privilege('nexit_runtime', 'public.fe_documento_crear_nce(uuid,uuid,uuid,uuid,text,uuid,integer,jsonb,text,numeric,jsonb)', 'EXECUTE'), 'tras el envoltorio global se conservan alta única, configuración y estado por tipo, emisión FE por los envoltorios vigentes (sin la FE interna) y emisión NCE');
 
   -- T03: misma empresa/establecimiento/punto con series y números distintos; unicidad fiscal COMPLETA con serie NULL
   PERFORM fe_secuencia_estado(v_a, v_ua, v_p, 'FE', true);

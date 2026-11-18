@@ -27,8 +27,19 @@ BEGIN
   PERFORM pg_temp.ok(has_table_privilege('nexit_runtime', 'public.fe_punto_secuencias', 'SELECT') AND NOT has_table_privilege('nexit_runtime', 'public.fe_punto_secuencias', 'INSERT')
     AND NOT has_table_privilege('nexit_runtime', 'public.fe_punto_secuencias', 'UPDATE') AND NOT has_table_privilege('nexit_runtime', 'public.fe_punto_secuencias', 'DELETE'), 'grants: la aplicación solo LEE las secuencias; las escriben las funciones SECURITY DEFINER');
   PERFORM pg_temp.ok(NOT has_function_privilege('nexit_runtime', 'public.fe_secuencias_conciliar_legado(uuid)', 'EXECUTE') AND NOT has_function_privilege('nexit_runtime', 'public.fe_punto_maximo_emitido(uuid,text,text,text)', 'EXECUTE')
-    AND has_function_privilege('nexit_runtime', 'public.fe_documento_crear_fe(uuid,uuid,uuid,uuid,text,uuid,text,text,text,numeric,jsonb)', 'EXECUTE')
-    AND has_function_privilege('nexit_runtime', 'public.fe_punto_crear(uuid,uuid,uuid,text,text,integer,boolean)', 'EXECUTE'), 'grants: el rol de la aplicación no ejecuta la conciliación ni el máximo; conserva la emisión y la gestión de puntos');
+    -- PRO-130-R02: contrato vigente de grants (NEX-065:516-519/537-539 retiran la gestión de puntos de NEX-057/060; NEX-067:277 retira la FE interna sin baja de stock).
+    AND NOT has_function_privilege('nexit_runtime', 'public.fe_documento_crear_fe(uuid,uuid,uuid,uuid,text,uuid,text,text,text,numeric,jsonb)', 'EXECUTE')
+    AND NOT has_function_privilege('nexit_runtime', 'public.fe_punto_crear(uuid,uuid,uuid,text,text,integer,boolean)', 'EXECUTE')
+    AND NOT has_function_privilege('nexit_runtime', 'public.fe_punto_activar(uuid,uuid,uuid,integer,boolean)', 'EXECUTE')
+    AND NOT has_function_privilege('nexit_runtime', 'public.fe_punto_desactivar(uuid,uuid,uuid)', 'EXECUTE')
+    AND has_function_privilege('nexit_runtime', 'public.fe_documento_crear_fe_receptor(uuid,uuid,uuid,uuid,text,uuid,text,text,text,numeric,jsonb,jsonb,uuid,uuid)', 'EXECUTE')
+    AND has_function_privilege('nexit_runtime', 'public.fe_documento_crear_fe_stock_pendiente(uuid,uuid,uuid,uuid,text,uuid,text,text,text,numeric,jsonb,jsonb,uuid,uuid,jsonb,boolean)', 'EXECUTE')
+    AND has_function_privilege('nexit_runtime', 'public.fe_punto_alta_tipo(uuid,uuid,uuid,text,text,text,text,integer,boolean,boolean)', 'EXECUTE')
+    AND has_function_privilege('nexit_runtime', 'public.fe_secuencia_configurar(uuid,uuid,uuid,text,text,integer,boolean,boolean)', 'EXECUTE')
+    AND has_function_privilege('nexit_runtime', 'public.fe_secuencia_estado(uuid,uuid,uuid,text,boolean)', 'EXECUTE')
+    AND NOT has_function_privilege('public', 'public.fe_documento_crear_fe(uuid,uuid,uuid,uuid,text,uuid,text,text,text,numeric,jsonb)', 'EXECUTE')
+    AND NOT has_function_privilege('public', 'public.fe_documento_crear_fe_stock_pendiente(uuid,uuid,uuid,uuid,text,uuid,text,text,text,numeric,jsonb,jsonb,uuid,uuid,jsonb,boolean)', 'EXECUTE'),
+    'grants: el rol de la aplicación no ejecuta la conciliación, el máximo, la FE interna ni la gestión de puntos retirada; emite por los envoltorios vigentes (receptor y faltante) y gestiona tipos por alta/configuración/estado; PUBLIC no ejecuta');
   PERFORM pg_temp.falla($f$INSERT INTO fe_punto_secuencias (empresa_id, punto_id, tipo_documento, ultimo_numero, origen) VALUES (gen_random_uuid(), gen_random_uuid(), 'XX', 0, 'CARGA_MANUAL')$f$, '23514', 'solo los cinco tipos conocidos (FE, NCE, NDE, NRE, AFE)');
 
   -- T-F01: punto creado: su secuencia FE es la informada y confirmada; ningún otro tipo nace configurado (ni en cero)

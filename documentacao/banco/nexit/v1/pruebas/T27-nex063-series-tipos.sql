@@ -152,7 +152,8 @@ BEGIN
     PERFORM pg_temp.ok((SELECT count(*) = 1 FROM documentos_electronicos WHERE empresa_id = v_a AND tipo = 'NCE'), 'solo se creó la NCE (la FE no consumió nada)');
 
     -- tipo NCE inactivo: no emite, no consume
-    UPDATE documentos_electronicos SET estado_sifen = 'RECHAZADO' WHERE id = v_n1.o_documento_id;
+    -- PRO-130-R02: rechazo SIFEN de una NCE ENVIADA (CHECK documentos_electronicos_estados_chk, NEX-047); libera el saldo NCE, nunca el número fiscal.
+    UPDATE documentos_electronicos SET estado_local = 'ENVIADO', estado_sifen = 'RECHAZADO' WHERE id = v_n1.o_documento_id;
     PERFORM fe_secuencia_estado(v_a, v_ua, v_p1, 'NCE', false);
     v_det := NULL;
     BEGIN
@@ -181,7 +182,8 @@ BEGIN
     PERFORM pg_temp.ok((SELECT count(*) = 2 FROM documentos_electronicos WHERE empresa_id = v_a AND tipo = 'NCE' AND numero = '0000001'), 'la NCE 0000001 sin serie y la AA-0000001 coexisten (sin colisión)');
 
     -- límite NCE: ZZ-9999999 detiene sin reiniciar
-    UPDATE documentos_electronicos SET estado_sifen = 'RECHAZADO' WHERE id = v_n2.o_documento_id;
+    -- PRO-130-R02: rechazo SIFEN de una NCE ENVIADA (CHECK documentos_electronicos_estados_chk, NEX-047); libera el saldo NCE, nunca el número fiscal.
+    UPDATE documentos_electronicos SET estado_local = 'ENVIADO', estado_sifen = 'RECHAZADO' WHERE id = v_n2.o_documento_id;
     PERFORM fe_secuencia_configurar(v_a, v_ua, v_p1, 'NCE', 'ZZ', 9999999, true, false);
     v_det := NULL;
     BEGIN

@@ -56,7 +56,7 @@ BEGIN
   -- Mismo tipo en otra empresa / otro establecimiento: independientes
   PERFORM fe_punto_alta_tipo(v_b, v_ub, v_sb, '001', 'Caja B', 'FE', NULL, 7, true, true);
   PERFORM fe_punto_alta_tipo(v_a, v_ua, v_sa2, '001', 'Caja Suc 2', 'FE', NULL, 0, true, true);
-  PERFORM pg_temp.ok((SELECT ultimo_numero = 7 FROM fe_punto_secuencias s JOIN fe_puntos_expedicion p ON p.id = s.punto_id WHERE p.empresa_id = v_b AND s.tipo_documento = 'FE') AND (SELECT ultimo_numero = 120 FROM fe_punto_secuencias WHERE punto_id = v_p AND tipo_documento = 'FE')
+  PERFORM pg_temp.ok((SELECT s.ultimo_numero = 7 FROM fe_punto_secuencias s JOIN fe_puntos_expedicion p ON p.id = s.punto_id WHERE p.empresa_id = v_b AND s.tipo_documento = 'FE') AND (SELECT ultimo_numero = 120 FROM fe_punto_secuencias WHERE punto_id = v_p AND tipo_documento = 'FE')
     AND (SELECT count(*) = 2 FROM fe_puntos_expedicion WHERE empresa_id = v_a AND codigo = '001'), 'P4: la misma combinación en otra empresa / otro establecimiento es independiente');
   -- P4b: misma identidad física en otra sucursal del MISMO establecimiento: se rechaza (no se registra punto conflictivo)
   INSERT INTO sucursales (empresa_id, codigo, nombre, establecimiento_sifen) VALUES (v_a, 'S3-T30', 'Sucursal 3 T30', '001');

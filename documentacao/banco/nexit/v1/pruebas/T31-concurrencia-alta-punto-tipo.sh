@@ -5,6 +5,8 @@
 #   Fase 2: S1 da de alta 001-002 con FE y retiene; S2 intenta el MISMO tipo: bloqueada y luego rechazada con NEX:TIPO_DUPLICADO sin alterar la FE de S1.
 # Requiere PGDATABASE (migraciones NEX-001…064 + S-001) y nex.pw_prueba (PGOPTIONS), como el resto de la batería. Base descartable; datos sintéticos. NUNCA sobre la base operativa.
 set -uo pipefail
+# PRO-130-R02: guarda de base descartable (como T24/T29/T33/T34): NUNCA sobre la base operativa
+[[ "${PGDATABASE:-}" == nexit_test_* ]] || { echo "ABORTADO: T31 solo corre sobre bases efímeras nexit_test_*" >&2; exit 3; }
 T="$(mktemp -d)"; trap 'kill $(jobs -p) 2>/dev/null; rm -rf "$T"' EXIT
 FALLAS=0
 ok()   { echo "PASS: $1"; }

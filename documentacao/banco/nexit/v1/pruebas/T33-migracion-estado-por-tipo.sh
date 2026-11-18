@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # T33 — NEX-065 (AUD-PRO129-UX-R04): la MIGRACIÓN convierte el estado compartido en estado por tipo SIN reactivar nada y sin tocar series, contadores ni documentos.
-# Construye su PROPIA base (${PGDATABASE}_t33base) con las migraciones NEX-001…064 (MIGRACIONES_DIR sin la 065) + S-001, arma cuatro puntos con estados distintos bajo la regla ANTERIOR
+# Construye su PROPIA base (${PGDATABASE}_t33base) con EXACTAMENTE las migraciones NEX-001…064 (MIGRACIONES_DIR; PRO-130-R02: ninguna posterior) + S-001, arma cuatro puntos con estados distintos bajo la regla ANTERIOR
 # (emite solo si punto activo Y tipo activo), registra los estados efectivos y aplica NEX-065 con el runner real:
 #   001: punto INACTIVO con FE y NCE activas   → bloqueados por el punto  → tras NEX-065 FE y NCE siguen BLOQUEADAS (tipo inactivo)
 #   002: punto activo, FE activa, NCE inactiva → FE emite, NCE bloqueada  → igual después
@@ -23,12 +23,19 @@ Q()    { psql -X -Atq -v ON_ERROR_STOP=1 -c "$1"; }
 PAYLOAD='{"iTiDE": 1, "Subtotales": [{"dTotGralOpe": 1000}]}'
 
 # ── Base propia con NEX-001…064 ──
-mkdir -p "$T/mig"; for f in "$AQUI"/migraciones/NEX-0*.sql; do [[ "$(basename "$f")" == NEX-065-* ]] || cp "$f" "$T/mig/"; done
+# PRO-130-R02: dos conjuntos EXACTOS y ordenados: NEX-001…064 (base previa) y NEX-001…065 (el runner real aplica SOLO la 065, en orden, sin las 066+ que redefinen las mismas funciones)
+mkdir -p "$T/mig" "$T/mig65"
+for f in "$AQUI"/migraciones/NEX-0*.sql; do b="$(basename "$f")"; n="${b#NEX-}"; n="${n%%-*}"; (( 10#$n <= 64 )) && cp "$f" "$T/mig/"; (( 10#$n <= 65 )) && cp "$f" "$T/mig65/"; done
+[[ "$(ls "$T"/mig/NEX-0*.sql | wc -l)" == 64 && -f "$(ls "$T"/mig/NEX-064-*.sql)" && "$(ls "$T"/mig65/NEX-0*.sql | wc -l)" == 65 && -f "$(ls "$T"/mig65/NEX-065-*.sql)" ]] \
+  || { echo "FALLA: los conjuntos de migraciones de T33 no son exactamente NEX-001…064 y NEX-001…065"; exit 1; }
+registro() { psql -X -Atq -c "select version||' '||checksum from schema_migrations" | LC_ALL=C sort; }
+esperado() { for f in "$1"/NEX-0*.sql; do b="$(basename "$f" .sql)"; echo "${b%%-*}-$(echo "$b" | cut -d- -f2) $(sha256sum "$f" | cut -d' ' -f1)"; done | LC_ALL=C sort; }
 psql -X -q -d postgres -c "CREATE DATABASE $BASE" >/dev/null 2>&1 || { echo "FALLA: no se pudo crear la base $BASE"; exit 1; }
 export PGDATABASE="$BASE"
 if MIGRACIONES_DIR="$T/mig" "$AQUI/scripts/aplicar-migraciones.sh" >"$T/mig.out" 2>&1 && psql -X -q -v ON_ERROR_STOP=1 -f "$AQUI/seeds/S-001-catalogos-globales.sql" >"$T/seed.out" 2>&1; then
   ok "base propia creada con NEX-001…064 y la semilla (sin NEX-065)"
 else falla "no se pudo preparar la base: $(tail -3 "$T/mig.out" "$T/seed.out" 2>/dev/null)"; exit 1; fi
+[[ "$(registro)" == "$(esperado "$T/mig")" ]] && ok "antes: schema_migrations tiene exactamente NEX-001…064 con los checksums de los archivos" || { falla "antes: schema_migrations de $BASE no coincide con NEX-001…064: preparación abortada"; exit 1; }
 chk "$(Q "select coalesce(to_regclass('public.fe_estado_previo_nex065')::text,'ausente')")" "ausente" "NEX-065 todavía no está aplicada"
 
 H="$(Q "select crypt(current_setting('nex.pw_prueba'), gen_salt('bf', 12))")"
@@ -67,7 +74,8 @@ DOC_ANTES="$(Q "select md5(string_agg(d::text,'|' order by d.id)) from documento
 PFIS_ANTES="$(Q "select string_agg(codigo||'='||activo::text, ',' order by codigo) from fe_puntos_expedicion where empresa_id='$E'")"
 
 # ── Aplicación de NEX-065 con el runner real ──
-if "$AQUI/scripts/aplicar-migraciones.sh" >"$T/m65.out" 2>&1 && grep -q "aplicando     NEX-065" "$T/m65.out"; then ok "NEX-065 aplicada por el runner (única migración pendiente)"; else falla "no se aplicó NEX-065: $(tail -5 "$T/m65.out")"; exit 1; fi
+if MIGRACIONES_DIR="$T/mig65" "$AQUI/scripts/aplicar-migraciones.sh" >"$T/m65.out" 2>&1 && grep -q "aplicando     NEX-065" "$T/m65.out" && [[ "$(grep -c '^aplicando ' "$T/m65.out")" == 1 ]]; then ok "NEX-065 aplicada por el runner (única migración pendiente)"; else falla "no se aplicó NEX-065: $(tail -5 "$T/m65.out")"; exit 1; fi
+[[ "$(registro)" == "$(esperado "$T/mig65")" ]] && ok "después: schema_migrations tiene exactamente NEX-001…065 con los checksums de los archivos (ninguna 066+)" || falla "después: schema_migrations de $BASE no coincide con NEX-001…065"
 chk "$(efectivo)" "$(Q "select string_agg(p.codigo||':'||s.tipo_documento||'='||s.activo::text, ',' order by p.codigo, s.tipo_documento) from fe_punto_secuencias s join fe_puntos_expedicion p on p.id=s.punto_id and p.empresa_id=s.empresa_id where s.empresa_id='$E'")" "el estado efectivo posterior coincide con la bandera del TIPO (ya no hay segunda llave)"
 chk "$(Q "select string_agg(p.codigo||':'||s.tipo_documento||'='||s.activo::text, ',' order by p.codigo, s.tipo_documento) from fe_punto_secuencias s join fe_puntos_expedicion p on p.id=s.punto_id and p.empresa_id=s.empresa_id where s.empresa_id='$E'")" "001:FE=false,001:NCE=false,002:FE=true,002:NCE=false,003:FE=true,003:NCE=true,004:FE=false,004:NCE=true" "los tipos bloqueados antes siguen bloqueados y NADA se activó automáticamente (001 FE/NCE, 002 NCE, 004 FE)"
 chk "$(Q "select count(*) from fe_punto_secuencias s join fe_estado_previo_nex065 v on v.empresa_id=s.empresa_id and v.punto_id=s.punto_id and v.tipo_documento=s.tipo_documento where s.activo and not v.efectivo_previo")" "0" "ningún tipo quedó activo sin haberlo estado de forma efectiva antes de la migración"

@@ -28,7 +28,12 @@ limpiar() {
 trap limpiar EXIT
 paso() { printf '%-62s' "$1"; }
 fin() { # $1 = código, $2 = archivo de log
-  if [[ $1 -eq 0 ]]; then local n; n=$(grep -c "PASS" "$2" || true); PASS_TOTAL=$((PASS_TOTAL + n)); echo "OK   ($n verificaciones)"; else echo "FALLA"; sed 's/^/      /' "$2" | grep -v "PASS" | grep -E "FALLA|ERROR|rechaz|CONTEXT|DETAIL" | head -12; FALLAS=$((FALLAS + 1)); fi
+  if [[ $1 -eq 0 ]]; then local n; n=$(grep -c "PASS" "$2" || true); PASS_TOTAL=$((PASS_TOTAL + n)); echo "OK   ($n verificaciones)"; else echo "FALLA"; sed 's/^/      /' "$2" | grep -v "PASS" | grep -E "FALLA|ERROR|rechaz|CONTEXT|DETAIL" | head -12
+    # PRO-130-R02: diagnóstico de invocación. Sin cambiar el criterio (sigue siendo FALLA), informa el código de salida y, si el filtro no dejó ninguna línea
+    # (p. ej. exit 126 «Permission denied», ABORTADO de una guarda o fallo de preparación), las últimas líneas del log, acotadas y con la clave de prueba enmascarada.
+    echo "      código de salida: $1"
+    if ! grep -v "PASS" "$2" | grep -qE "FALLA|ERROR|rechaz|CONTEXT|DETAIL"; then tail -5 "$2" | sed -e "s/$PW/[omitido]/g" -e 's/^/      /' | cut -c1-400; fi
+    FALLAS=$((FALLAS + 1)); fi
 }
 fin0() { if [[ $1 -eq 0 ]]; then echo "OK"; else echo "FALLA"; tail -5 "$2"; FALLAS=$((FALLAS + 1)); fi; }
 psql -X -q -d postgres -c "CREATE DATABASE $DB" || exit 1
