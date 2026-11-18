@@ -16,7 +16,7 @@ import { contador } from "@/lib/clientes/contador-casos";
 import { ETIQUETA_RESULTADO_INTENTO } from "@/lib/facturacion/estados";
 import {
   ANOMALIA_CDC_CREDENCIAL, CLAVE_ANOMALIA_NEXIT, CONTRATO_FISCAL_CONSULTA, CONTRATO_FISCAL_ENVIO, cdcEsCredencial, cdcInformadoPorApi, correspondenciaKude, cuerpoKudeGateway, ecoIdentidadConsulta,
-  ecoIdentidadContradice, enviarDocumentoGateway, interpretarConsulta, interpretarRecepcion, limpiarCacheTokens, MAX_CDC, resultadoFiscalSinSecretos, seriePayload, sinSecretos, type FetchLike,
+  ecoIdentidadContradice, enviarDocumentoGateway, interpretarConsulta, interpretarRecepcion, limpiarCacheTokens, MAX_CDC, resultadoFiscalSinSecretos, seriePayload, sinSecretos, type DocumentoConsulta, type DocumentoRecepcion, type FetchLike,
 } from "@/lib/facturacion/gateway";
 import { alertaConsulta, avisoProyeccionCdc, avisoSinCdc, detalleFiscalPrimario, iconosEstado } from "@/lib/facturacion/presentacion-sifen";
 import { decidirConsulta } from "@/lib/facturacion/reconciliacion";
@@ -46,7 +46,7 @@ const CDC_ALFA = "CDC-PROVEEDOR-ABC-0001";
 const CDC_ESPACIOS = " 0180000005600100100000022 ";
 const CDC_LARGO = "9".repeat(MAX_CDC + 1);
 
-type Doc = typeof CASA_MINGO;
+type Doc = DocumentoConsulta;
 
 const respuestaConsulta = (estado: string, cdc: unknown, extra: Record<string, unknown> = {}, deExtra: Record<string, unknown> = {}) => ({
   status: "success",
@@ -152,7 +152,7 @@ export async function verificarCasosCdcDatoApiR05(): Promise<string[]> {
 
   // ══ D. Recepción (ACK): el CDC no confirma ni descarta la recepción ═══════════════════════════════════════════════════════════════
   const DOC_REC = { tipo: "FE", establecimiento: "001", puntoExpedicion: "001", numero: "0000002", serie: "AA" };
-  const ack = (cuerpo: unknown) => interpretarRecepcion(200, JSON.stringify(cuerpo), [], DOC_REC as never);
+  const ack = (cuerpo: unknown) => interpretarRecepcion(200, JSON.stringify(cuerpo), [], DOC_REC);
 
   igual("R05-D01 ACK con lote y CDC de 43 caracteres: ENVIADO, CDC literal (sin validar composición)", [ack({ status: "success", nro_lote: "L-R05", cdc: CDC_43 }).estadoLocal, ack({ status: "success", nro_lote: "L-R05", cdc: CDC_43 }).cdcInformado], ["ENVIADO", CDC_43]);
   igual("R05-D02 ACK sin lote ni eco, con SOLO un CDC: no correlacionado → ENVIO_INDETERMINADO; el CDC queda solo como evidencia", [ack({ status: "success", cdc: CDC_CASA_MINGO }).estadoLocal, ack({ status: "success", cdc: CDC_CASA_MINGO }).lote, ack({ status: "success", cdc: CDC_CASA_MINGO }).cdc, ack({ status: "success", cdc: CDC_CASA_MINGO }).cdcInformado], ["ENVIO_INDETERMINADO", null, null, CDC_CASA_MINGO]);
@@ -257,7 +257,7 @@ export async function verificarCasosCdcDatoApiR05(): Promise<string[]> {
   cierto("R05-H02 NCE ya emitidas no se propagan: NEX-080 no actualiza nce_origen.fe_cdc ni payloads existentes", !/UPDATE public\.nce_origen|UPDATE public\.documento_electronico_solicitudes/.test(sql080));
 
   // ══ I. Pantalla: CDC literal y avisos informativos (nunca bloqueos) ═════════════════════════════════════════════════════════════
-  const iconos = (cdc: string | null, estadoSifen: "APROBADO" | "PENDIENTE" | "RECHAZADO", ultima: string | null = "OK") => iconosEstado({ estadoLocal: "ENVIADO", estadoSifen, estadoEmail: "NO_ENVIADO" as never, cdc, ultimaConsultaResultado: ultima });
+  const iconos = (cdc: string | null, estadoSifen: "APROBADO" | "PENDIENTE" | "RECHAZADO", ultima: string | null = "OK") => iconosEstado({ estadoLocal: "ENVIADO", estadoSifen, estadoEmail: "NO_INFORMADO", cdc, ultimaConsultaResultado: ultima });
 
   igual("R05-I01 XML/CDC con CDC de 43 caracteres: «CDC informado» (sin juicio de validez)", [iconos(CDC_43, "PENDIENTE")[1].corto, /tal cual/.test(iconos(CDC_43, "PENDIENTE")[1].texto)], ["CDC informado", true]);
   igual("R05-I02 SIFEN Aprobado sin CDC: «SIFEN Aprobado» (sin alerta de integridad) + nota informativa avisoSinCdc", [iconos(null, "APROBADO")[2].corto, iconos(null, "APROBADO")[2].tono, /sin CDC/.test(avisoSinCdc({ estadoSifen: "APROBADO", cdc: null }) ?? ""), avisoSinCdc({ estadoSifen: "APROBADO", cdc: CDC_ALFA })], ["SIFEN Aprobado", "ok", true, null]);
@@ -285,8 +285,8 @@ export async function verificarCasosCdcDatoApiR05(): Promise<string[]> {
     // ── F001: ecos explícitos de identidad en la RECEPCIÓN (raíz del ACK) contra establecimiento, punto, número, SERIE y TIPO ──
     const DOC_L = { tipo: "FE", establecimiento: "001", puntoExpedicion: "001", numero: "0000002", serie: "AA" };
     const ECO = { dEst: "001", dPunExp: "001", dNumDoc: "0000002" };
-    const ackL = (cuerpo: unknown, d: Record<string, unknown> = DOC_L) => interpretarRecepcion(200, JSON.stringify(cuerpo), [], d as never);
-    const est = (cuerpo: unknown, d?: Record<string, unknown>) => ackL(cuerpo, d).estadoLocal;
+    const ackL = (cuerpo: unknown, d: DocumentoRecepcion = DOC_L) => interpretarRecepcion(200, JSON.stringify(cuerpo), [], d);
+    const est = (cuerpo: unknown, d?: DocumentoRecepcion) => ackL(cuerpo, d).estadoLocal;
 
     igual("R05-R01-F001-01 ACK success + nro_lote con dSerieNum CONTRADICTORIO («AB» ≠ «AA»): ENVIO_INDETERMINADO, sin lote atribuido (antes ENVIADO)", [est({ status: "success", nro_lote: "L-1", dSerieNum: "AB" }), ackL({ status: "success", nro_lote: "L-1", dSerieNum: "AB" }).lote], ["ENVIO_INDETERMINADO", null]);
     igual("R05-R01-F001-02 ACK success + nro_lote con tipoDoc CONTRADICTORIO («NCE» para una FE): ENVIO_INDETERMINADO", est({ status: "success", nro_lote: "L-1", tipoDoc: "NCE" }), "ENVIO_INDETERMINADO");
@@ -316,7 +316,7 @@ export async function verificarCasosCdcDatoApiR05(): Promise<string[]> {
   }
   {
     // ── F001: ecos explícitos en la CONSULTA (response y response.DE): ya no se ignoran números ni vacíos ──
-    const SIN_SERIE = { ...CASA_MINGO, serie: null as unknown as string };
+    const SIN_SERIE: DocumentoConsulta = { ...CASA_MINGO, serie: null };
 
     igual("R05-R01-F001-16 consulta: eco explícito NO interpretable (dNumDoc numérico, dSerieNum vacío, DE.tipoDoc booleano) → RESPUESTA_INVALIDA sin estado ni CDC (antes se ignoraban)", [
       consulta("Aprobado", CDC_CASA_MINGO, CASA_MINGO, { dNumDoc: 2 }), consulta("Aprobado", CDC_CASA_MINGO, CASA_MINGO, { dSerieNum: "" }), consulta("Aprobado", CDC_CASA_MINGO, CASA_MINGO, {}, { tipoDoc: true }),
@@ -385,7 +385,7 @@ export async function verificarCasosCdcDatoApiR05(): Promise<string[]> {
       const r = await enviarDocumentoGateway({ empresaId: EMPRESA, baseUrl: "https://gateway.prueba.invalid", credencialRef: "PRUEBA", timeoutMs: 1000 }, { iTiDE: 1, dEst: "001", dPunExp: "001", dNumDoc: "0000002", dSerieNum: "AA" }, { tipo: "FE", establecimiento: "001", puntoExpedicion: "001", numero: "0000002", serie: "AA" }, { fetch: g.fetch, env: ENV });
       const e = "sinContrato" in r ? null : r;
 
-      igual("R05-R01-F003-06 envío real: ACK con lote y la clave en «cdc» → ENVIADO por el lote; cdc y cdcInformado NULL (no llegan a la SQL), evidencia «[omitido]» con la marca técnica y sin la clave en ninguna parte del resultado", [e?.estadoLocal, e?.lote, e?.cdc, e?.cdcInformado, (e?.respuesta as Record<string, unknown> | null)?.cdc, (e?.respuesta as Record<string, unknown> | null)?.[CLAVE_ANOMALIA_NEXIT], JSON.stringify(e).includes(CLAVE)], ["ENVIADO", "L-R01", null, null, "[omitido]", ANOMALIA_CDC_CREDENCIAL, false]);
+      igual("R05-R01-F003-06 envío real: ACK con lote y la clave en «cdc» → ENVIADO por el lote; cdc y cdcInformado NULL (no llegan a la SQL), evidencia «[omitido]» con la marca técnica y sin la clave en ninguna parte del resultado", [e?.estadoLocal, e?.lote, e?.cdc, e?.cdcInformado, e?.respuesta?.cdc, e?.respuesta?.[CLAVE_ANOMALIA_NEXIT], JSON.stringify(e).includes(CLAVE)], ["ENVIADO", "L-R01", null, null, "[omitido]", ANOMALIA_CDC_CREDENCIAL, false]);
     }
     igual("R05-R01-F003-07 resultadoFiscalSinSecretos: una credencial CORTA exacta (< 4 caracteres, fuera del saneamiento de subcadenas) tampoco se repone como CDC; un CDC distinto sí, literal", [
       resultadoFiscalSinSecretos({ cdc: "a1b", respuesta: { cdc: "a1b" } }, ["a1b", TOKEN], CONTRATO_FISCAL_ENVIO).cdc, resultadoFiscalSinSecretos({ cdc: "a1b", respuesta: { cdc: "a1b" } }, ["a1b", TOKEN], CONTRATO_FISCAL_ENVIO).respuesta.cdc,
@@ -405,7 +405,7 @@ export async function verificarCasosCdcDatoApiR05(): Promise<string[]> {
     const FE_AA = { tipo: "FE", establecimiento: "001", puntoExpedicion: "001", numero: "0000002", serie: "AA" };
     const NCE_AA = { ...FE_AA, tipo: "NCE" };
     const rechazoPropio = (extra: Record<string, unknown> = {}) => ({ status: "error", message: "Rechazado por validación", rechazados: 1, response: { Aceptados: [], Rechazados: [{ "001-001-0000002": { dRucRec: "RUC inválido" } }] }, ...extra });
-    const rec = (http: number, cuerpo: unknown, d: Record<string, unknown>) => { const r = interpretarRecepcion(http, JSON.stringify(cuerpo), [], d as never); return [r.estadoLocal, r.errorTipo]; };
+    const rec = (http: number, cuerpo: unknown, d: DocumentoRecepcion) => { const r = interpretarRecepcion(http, JSON.stringify(cuerpo), [], d); return [r.estadoLocal, r.errorTipo]; };
     const IND = ["ENVIO_INDETERMINADO", null];
     const RECH = ["ERROR_ENVIO", "RECHAZO"];
 
@@ -421,7 +421,7 @@ export async function verificarCasosCdcDatoApiR05(): Promise<string[]> {
       rec(401, { message: "no autorizado", dSerieNum: "AB" }, FE_AA), rec(403, { message: "prohibido", dSerieNum: "AB" }, FE_AA), rec(429, { message: "límite", tipoDoc: "NCE" }, FE_AA), rec(500, rechazoPropio({ dSerieNum: "AB" }), FE_AA), rec(400, { status: "error", message: "Token inválido", dSerieNum: "AB" }, FE_AA),
     ], [["ERROR_ENVIO", "AUTENTICACION"], ["ERROR_ENVIO", "AUTENTICACION"], ["ERROR_ENVIO", "TRANSITORIO"], IND, ["ERROR_ENVIO", "AUTENTICACION"]]);
     igual("R05-R02-F001R-07 el CDC no es identidad: un Rechazados propio sin ecos con un CDC de cualquier composición sigue siendo RECHAZO; un CDC «propio» no salva una serie contradictoria", [rec(400, rechazoPropio({ cdc: CDC_ALFA }), FE_AA), rec(400, rechazoPropio({ cdc: CDC_CASA_MINGO, dSerieNum: "AB" }), FE_AA)], [RECH, IND]);
-    igual("R05-R02-F001R-08 el mensaje del indeterminado nombra el campo y dice que no se atribuye el rechazo", /campo «dSerieNum»\) distinto del enviado: no se atribuye el rechazo a este documento/.test(interpretarRecepcion(400, JSON.stringify(rechazoPropio({ dSerieNum: "AB" })), [], FE_AA as never).mensaje ?? ""), true);
+    igual("R05-R02-F001R-08 el mensaje del indeterminado nombra el campo y dice que no se atribuye el rechazo", /campo «dSerieNum»\) distinto del enviado: no se atribuye el rechazo a este documento/.test(interpretarRecepcion(400, JSON.stringify(rechazoPropio({ dSerieNum: "AB" })), [], FE_AA).mensaje ?? ""), true);
     cierto("R05-R02-F001R-09 fuente: en interpretarRecepcion todo ERROR_ENVIO/RECHAZO pasa por rechazo(), que evalúa los ecos calculados ANTES de la primera atribución; los ecos no incluyen el CDC", (() => {
       const f = tramo(gwSinComentarios, "export function interpretarRecepcion", "export async function enviarDocumentoGateway");
       const usos = f.match(/"ERROR_ENVIO", "RECHAZO"/g) ?? [];
@@ -463,8 +463,8 @@ export async function verificarCasosCdcDatoApiR05(): Promise<string[]> {
     igual("R05-R02-F003R-05 credencial CORTA exacta (< 4 caracteres) en DE.CDC de una respuesta inválida: omitida y marcada", (() => { const r = consultaSaneada(200, respuestaConsulta("Aprobado", "a1b", { dNumDoc: "0000009" }), ["a1b", TOKEN]); return [r.resultado, deCdc(r), marcada(r.respuesta)]; })(), ["RESPUESTA_INVALIDA", "[omitido]", true]);
     igual("R05-R02-F003R-06 «Bearer <token>» en DE.CDC de una respuesta inválida (ya omitido por el saneamiento previo de la evidencia): la evidencia queda marcada y sin el token", (() => { const r = consultaSaneada(200, respuestaConsulta("Aprobado", `Bearer ${TOKEN}`, { tipoDoc: "NCE" }), [CLAVE, TOKEN]); return [r.resultado, marcada(r.respuesta), JSON.stringify(r).includes(TOKEN)]; })(), ["RESPUESTA_INVALIDA", true, false]);
     igual("R05-R02-F003R-07 envío: ACK con lote y CDC NUMÉRICO igual a la clave numérica → ENVIADO por el lote, cdcInformado NULL, evidencia «[omitido]» marcada, sin la clave", (() => {
-      const r = resultadoFiscalSinSecretos(interpretarRecepcion(200, JSON.stringify({ status: "success", nro_lote: "L-R02", cdc: 80000005 }), [], CASA_MINGO as never), ["80000005", TOKEN], CONTRATO_FISCAL_ENVIO);
-      return [r.estadoLocal, r.lote, r.cdcInformado, (r.respuesta as Record<string, unknown> | null)?.cdc, marcada(r.respuesta), JSON.stringify(r.respuesta).includes("80000005")];
+      const r = resultadoFiscalSinSecretos(interpretarRecepcion(200, JSON.stringify({ status: "success", nro_lote: "L-R02", cdc: 80000005 }), [], CASA_MINGO), ["80000005", TOKEN], CONTRATO_FISCAL_ENVIO);
+      return [r.estadoLocal, r.lote, r.cdcInformado, r.respuesta?.cdc, marcada(r.respuesta), JSON.stringify(r.respuesta).includes("80000005")];
     })(), ["ENVIADO", "L-R02", null, "[omitido]", true, false]);
     igual("R05-R02-F003R-08 regresión: un CDC de TEXTO legítimo que contiene la clave numérica / RUC sigue literal en el dato y en la evidencia, sin marca; un CDC alfanumérico tampoco se marca", [
       (() => { const r = consultaSaneada(200, respuestaConsulta("Aprobado", "0180000005" + "6".repeat(34)), ["80000005", TOKEN]); return [r.cdc, deCdc(r), marcada(r.respuesta)]; })(),

@@ -27,8 +27,8 @@ import { CADENCIA_SEGUNDOS, ejecutarLote } from "@/lib/facturacion/consulta-auto
 import { enviarDocumento } from "@/lib/facturacion/envio";
 import { esFaseXmlFirmado, estadoSifenDesdeGateway } from "@/lib/facturacion/estados";
 import {
-  cdcCoherente, cdcInformadoPorApi, consultarDocumentoGateway, continuidadConexion, cuerpoKudeGateway, interpretarConsulta, interpretarRecepcion, limpiarCacheTokens, obtenerKudeGateway, referenciaConexion,
-  type CuerpoLegible, type DocumentoKude, type FetchLike, type KudeFetch, type ResultadoConsulta,
+  CONTRATO_FISCAL_ENVIO, cdcCoherente, cdcInformadoPorApi, consultarDocumentoGateway, continuidadConexion, cuerpoKudeGateway, interpretarConsulta, interpretarRecepcion, limpiarCacheTokens, obtenerKudeGateway, referenciaConexion, resultadoFiscalSinSecretos,
+  type CuerpoLegible, type DocumentoKude, type FaseEnvio, type FetchLike, type KudeFetch, type ResultadoConsulta,
 } from "@/lib/facturacion/gateway";
 import { alertaConsulta, avisoSinCdc, detalleFiscalPrimario, iconosEstado, presentacionSifen, resumenFases, seguimientoFiscal, textoConexion } from "@/lib/facturacion/presentacion-sifen";
 import { consultarEstado, reiniciarNex080ParaCasos } from "@/lib/facturacion/shared";
@@ -538,7 +538,9 @@ export async function verificarCasosFlujoFiscalPro342(): Promise<string[]> {
   // ── R02-F003: lote LITERAL (sin trim ni normalización) ────────────────────────────────────────────────────────────────────────────────
   {
     const doc = { tipo: "FE", establecimiento: "001", puntoExpedicion: "001", numero: "0000001" };
-    const recep = (lote: unknown, secretos: string[] = []) => interpretarRecepcion(200, JSON.stringify({ status: "success", nro_lote: lote }), secretos, doc);
+    // Mismo contrato que enviarDocumentoGateway: interpretarRecepcion(http, texto, fases, doc) y, después, el saneamiento con CONTRATO_FISCAL_ENVIO.
+    const fases: FaseEnvio[] = [];
+    const recep = (lote: unknown, secretos: string[] = []) => resultadoFiscalSinSecretos(interpretarRecepcion(200, JSON.stringify({ status: "success", nro_lote: lote }), fases, doc), secretos, CONTRATO_FISCAL_ENVIO);
     const limpio = recep(LOTE);
     const espacios = recep(` ${LOTE} `);
     const finalEspacio = recep(`${LOTE} `);
