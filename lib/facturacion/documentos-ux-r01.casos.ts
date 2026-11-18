@@ -50,7 +50,8 @@ export async function verificarCasosDocumentosUxR01(): Promise<string[]> {
   const cssLimpio = sinComentariosCss(css);
   const lista = leer("components/ui/lista-padrao/lista.module.css");
   const tramo = (desde: string, hasta: string) => pagina.slice(pagina.indexOf(desde), pagina.indexOf(hasta, pagina.indexOf(desde) + desde.length));
-  const fila = tramo("<tr className={clases(ui.row, CLASE_FILA_TIPO[d.tipo])} data-tipo={d.tipo}>", "{det ? (\n                      <tr");
+  // PRO-195-UX-R01: la fila suma la clase de selección; el tramo de la fila llega hasta el detalle.
+  const fila = tramo("<tr className={clases(ui.row, CLASE_FILA_TIPO[d.tipo], marcado && estilos.filaMarcada)} data-tipo={d.tipo}>", "{det ? (\n                      <tr");
   const detalle = tramo("PRIMERA CAPA", "</Fragment>");
   const primera = detalle.slice(0, detalle.indexOf("SEGUNDA CAPA"));
   const segunda = detalle.slice(detalle.indexOf("SEGUNDA CAPA"));
@@ -76,33 +77,32 @@ export async function verificarCasosDocumentosUxR01(): Promise<string[]> {
     igual("UXR01-06 ejes independientes: Enviado ✓ + CDC informado + SIFEN Rechazado ✕ coexisten (la firma/CDC no es aprobación)",
       iconosEstado(base).slice(0, 3).map((i) => [i.simbolo, i.tono]), [["check", "ok"], ["archivoCheck", "info"], ["cruz", "error"]]);
   }
-  cierto("UXR01-07 la celda Estados pinta los cuatro iconos de iconosEstado y reserva la QUINTA posición (aviso «!» o hueco invisible) para no desalinear filas",
-    /iconos\.map\(\(i\) => <IconoFase key=\{i\.eje\}/.test(fila) && /\{avisoFila \? \(\s*<IconoFase eje="aviso" simbolo="alerta"/.test(fila) && /<span className=\{estilos\.iconoVacio\} aria-hidden="true" \/>/.test(fila) &&
-    /\.icono,\s*\.iconoVacio \{[^}]*min-width: 40px;\s*min-height: 40px;/.test(cssLimpio) && /flex-wrap: nowrap/.test(regla(css, ".iconosEstado")));
+  // PRO-195-UX-R01 (punto 4): la fila ya no muestra los cuatro ejes sino UN estado principal + el aviso «!» opcional; los cuatro ejes pasan a la segunda capa.
+  cierto("UXR01-07 (actualizado PRO-195) la celda Estado muestra UN estado principal (símbolo + texto) y el aviso «!» solo si existe; los cuatro iconos de iconosEstado viven en la segunda capa",
+    /<IconoFase eje="estado" simbolo=\{SIMBOLO_ESTADO\[estado\.tono\]\}/.test(fila) && /<strong>\{estado\.texto\}<\/strong>/.test(fila) && /\{avisoFila \? \(\s*<IconoFase eje="aviso" simbolo="alerta"/.test(fila) && !/iconosEstado\(d\)/.test(fila) &&
+    /iconosEstado\(d\)\.map\(\(i\) => \(/.test(segunda) && /\.icono \{[^}]*min-width: 36px;\s*min-height: 36px;/.test(cssLimpio));
 
   // ══ 3. Sin textos repetidos debajo de cada icono ════════════════════════════════════════════════════════════════════════════════════════
-  cierto("UXR01-08 ningún nombre corto bajo los iconos (sin iconoNombre / icono.nombre / i.corto en la fila); los nombres de los ejes aparecen UNA vez en la leyenda",
-    !/iconoNombre|icono\.nombre|i\.nombre|i\.corto/.test(pagina) && !/iconoNombre/.test(cssLimpio) && (pagina.match(/NOMBRE_EJE\.envio/g) ?? []).length === 1);
+  cierto("UXR01-08 (actualizado PRO-195) ningún nombre corto bajo iconos en la FILA; en la segunda capa cada eje lleva su nombre (NOMBRE_EJE) y su texto corto una vez",
+    !/iconoNombre|icono\.nombre|i\.nombre|i\.corto/.test(fila) && !/iconoNombre/.test(cssLimpio) && /<strong>\{NOMBRE_EJE\[i\.eje\]\}:<\/strong> \{i\.corto\}/.test(segunda));
 
-  // ══ 4. Visibilidad y contraste de los iconos ════════════════════════════════════════════════════════════════════════════════════════════
+  // ══ 4. Visibilidad y contraste de los iconos (PRO-195-UX-R01: CONTORNO, sin círculo relleno) ═════════════════════════════════════════════
   {
-    const fondo = (t: string) => hex(regla(css, `.${t} .iconoCirculo`), "background");
-    const simbolo = (t: string) => hex(regla(css, `.${t} .iconoCirculo`), "color");
+    const trazo = (t: string) => hex(regla(css, `.${t} .iconoCirculo`), "color");
 
-    cierto("UXR01-09 contraste del símbolo sobre su círculo ≥ 4.5:1 en verde, azul, ámbar y rojo (blanco o marrón oscuro sobre ámbar)",
-      ["iconoOk", "iconoInfo", "iconoAviso", "iconoError"].every((t) => fondo(t) !== "" && simbolo(t) !== "" && contraste(simbolo(t), fondo(t)) >= 4.5));
-    cierto("UXR01-10 «sin información» = contorno oscuro sobre blanco: símbolo ≥ 4.5:1 y borde ≥ 3:1 (objeto gráfico, WCAG 1.4.11), también sobre el fondo FE",
-      contraste(simbolo("iconoNeutro"), "#ffffff") >= 4.5 && contraste(hex(regla(css, ".iconoNeutro .iconoCirculo"), "border-color"), "#ffffff") >= 3 && contraste(hex(regla(css, ".iconoNeutro .iconoCirculo"), "border-color"), "#e9f1fb") >= 3);
-    cierto("UXR01-11 círculos y fondos fiscales ≥ 3:1 contra los fondos de fila FE/NCE (normal y hover), salvo el ámbar que lleva borde oscuro ≥ 3:1",
-      ["iconoOk", "iconoInfo", "iconoError"].every((t) => ["#f4f8fd", "#fffcee", "#e9f1fb", "#fdf6da"].every((f) => contraste(fondo(t), f) >= 3)) &&
-      ["#f4f8fd", "#fffcee", "#e9f1fb", "#fdf6da"].every((f) => contraste(hex(regla(css, ".iconoAviso .iconoCirculo"), "border-color"), f) >= 3));
-    cierto("UXR01-12 iconos más visibles: círculo 28px (antes 24), símbolo 18px (antes 16), trazo 2.4 (antes 2.2)",
-      /width: 28px;\s*height: 28px;/.test(regla(css, ".iconoCirculo")) && /width: 18px;\s*height: 18px;/.test(regla(css, ".iconoCirculo svg")) && /stroke-width: 2\.4/.test(regla(css, ".iconoCirculo svg")));
+    cierto("UXR01-09 (actualizado PRO-195) símbolos de contorno: trazo verde, azul, ámbar oscuro y rojo con contraste ≥ 4.5:1 sobre blanco, sin fondo relleno",
+      ["iconoOk", "iconoInfo", "iconoAviso", "iconoError"].every((t) => trazo(t) !== "" && contraste(trazo(t), "#ffffff") >= 4.5 && !/background/.test(regla(css, `.${t} .iconoCirculo`))));
+    cierto("UXR01-10 (actualizado PRO-195) «sin información» = trazo gris oscuro ≥ 4.5:1 sobre blanco y sobre el hover neutro de la fila",
+      contraste(trazo("iconoNeutro"), "#ffffff") >= 4.5 && contraste(trazo("iconoNeutro"), "#f7f9fb") >= 4.5);
+    cierto("UXR01-11 (actualizado PRO-195) estado principal: texto y símbolo del mismo color por tono, ≥ 4.5:1 sobre blanco, hover y fila seleccionada",
+      ["estadoAprobado", "estadoRechazado", "estadoPendiente", "estadoSinInfo", "estadoAnulado"].every((t) => ["#ffffff", "#f7f9fb", "#f1f6fb"].every((f) => contraste(hex(regla(css, `.${t}`), "color"), f) >= 4.5)));
+    cierto("UXR01-12 (actualizado PRO-195) iconos compactos: caja 24px sin círculo, símbolo 18px, trazo 2",
+      /width: 24px;\s*height: 24px;/.test(regla(css, ".iconoCirculo")) && !/border-radius|background/.test(regla(css, ".iconoCirculo")) && /width: 18px;\s*height: 18px;/.test(regla(css, ".iconoCirculo svg")) && /stroke-width: 2;/.test(regla(css, ".iconoCirculo svg")));
   }
 
   // ══ 5. Descripción completa por tooltip accesible ═══════════════════════════════════════════════════════════════════════════════════════
-  cierto("UXR01-13 el texto COMPLETO de cada icono es su nombre accesible (role=img + aria-label) y es enfocable (tabIndex 0)",
-    /role="img"\s+tabIndex=\{0\}\s+aria-label=\{texto\}/.test(pagina) && /texto=\{i\.texto\}/.test(fila) && /texto=\{`Aviso técnico: \$\{avisoFila\}`\}/.test(fila));
+  cierto("UXR01-13 (actualizado PRO-195) el texto COMPLETO de cada icono es su nombre accesible (role=img + aria-label) y es enfocable (tabIndex 0)",
+    /role="img"\s+tabIndex=\{0\}\s+aria-label=\{texto\}/.test(pagina) && /texto=\{i\.texto\}/.test(segunda) && /texto=\{`Estado: \$\{estado\.texto\}\. \$\{estado\.detalle\}`\}/.test(fila) && /texto=\{`Aviso técnico: \$\{avisoFila\}`\}/.test(fila));
   cierto("UXR01-14 el tooltip visual se abre con mouse (enter), teclado (focus) y toque (click), se cierra al salir con demora (pasar al tooltip sin cerrarlo) y al perder el foco",
     ["onMouseEnter={(e) => tip.mostrar(e.currentTarget, texto)}", "onFocus={(e) => tip.mostrar(e.currentTarget, texto)}", "onClick={(e) => tip.mostrar(e.currentTarget, texto)}", "onMouseLeave={tip.programarCierre}", "onBlur={(e) => tip.ocultar(e.currentTarget)}"].every((t) => pagina.includes(t)) &&
     /setTimeout\(\(\) => setTip\(null\), 160\)/.test(pagina) && /onMouseEnter=\{\(\) => window\.clearTimeout\(cierreTip\.current\)\}/.test(pagina));
@@ -121,34 +121,29 @@ export async function verificarCasosDocumentosUxR01(): Promise<string[]> {
       [posicionTooltip({ x: 300, y: 100, ancho: 40, alto: 40 }, { ancho: 344, alto: 80 }, { ancho: 360, alto: 640 }).x, posicionTooltip({ x: 100, y: 50, ancho: 40, alto: 40 }, { ancho: 200, alto: 600 }, { ancho: 360, alto: 640 })], [8, { x: 20, y: 32, lado: "abajo" }]);
   }
 
-  // ══ 6. Leyenda simplificada ═════════════════════════════════════════════════════════════════════════════════════════════════════════════
-  {
-    const leyenda = tramo("className={estilos.leyenda}", "<div className={ui.tableScroll}>");
-
-    cierto("UXR01-21 leyenda UNA vez, fuera de las filas: orden de los cuatro iconos en una línea + cinco colores (confirmado, CDC informado, pendiente/aviso, rechazo/error, sin información)",
-      (pagina.match(/className=\{estilos\.leyenda\}/g) ?? []).length === 1 && pagina.indexOf("estilos.leyenda}") < pagina.indexOf("filas.map((d) =>") &&
-      /NOMBRE_EJE\.envio\} · \{NOMBRE_EJE\.xml\} · \{NOMBRE_EJE\.sifen\} · \{NOMBRE_EJE\.correo\}/.test(leyenda) && (leyenda.match(/estilos\.punto/g) ?? []).length === 5 &&
-      ["confirmado", "CDC informado", "pendiente / aviso", "rechazo / error", "sin información"].every((t) => leyenda.includes(t)));
-    cierto("UXR01-22 sin párrafo de instrucciones ni explicaciones por eje en la leyenda (antes «Pase el cursor…» y «(recepción del gateway)…»)",
-      !/Pase el cursor|recepción del gateway\)|leyendaAyuda/.test(pagina));
-  }
+  // ══ 6. Leyenda (PRO-195-UX-R01: retirada; la fila ya no tiene cuatro iconos que explicar y cada eje de la segunda capa lleva su nombre) ════════════
+  cierto("UXR01-21 (actualizado PRO-195) sin leyenda de iconos: no hay estilos.leyenda/punto en la página ni en el CSS; la segunda capa nombra cada eje junto a su icono",
+    !/estilos\.(leyenda|punto)\b/.test(pagina) && !/\.(leyenda|punto)\b/.test(cssLimpio) && /aria-label=\{`Estados técnicos de \$\{numeroDocumento\(d\)\}`\}/.test(segunda));
+  cierto("UXR01-22 sin párrafo de instrucciones ni explicaciones por eje (antes «Pase el cursor…» y «(recepción del gateway)…»)",
+    !/Pase el cursor|recepción del gateway\)|leyendaAyuda/.test(pagina));
 
   // ══ 7. Iconos para consultar, KuDE, copiar y expandir ═══════════════════════════════════════════════════════════════════════════════════
-  cierto("UXR01-23 (actualizado UX-R02) consultar = botón de icono en la cabecera del detalle, SOLO con permiso EDITAR, con aria-label/title, deshabilitado (acción no disponible) y girando mientras consulta",
-    /\{editar \? \(\s*<div className=\{estilos\.herramientas\} role="toolbar"/.test(primera) && /<Glifo>\{ACCION\.consultar\}<\/Glifo>/.test(primera) && /title=\{accion === "consulta" \? "Consultando\.\.\." : "Consultar estado en SIFEN"\}/.test(primera) &&
-    /disabled=\{!habilitada\} aria-busy=\{accion === "consulta"\}/.test(primera) && /accion === "consulta" && estilos\.girando/.test(primera) && /onClick=\{\(\) => void reconsultar\(d\)\}/.test(primera) && /prefers-reduced-motion: reduce/.test(cssLimpio));
-  cierto("UXR01-24 KuDE = icono de la fila (kudeDisponible, aria-label por tipo y número), sin duplicado en el detalle",
-    /kudeDisponible\(d\) \? \(/.test(fila) && /\{ACCION\.kude\}/.test(fila) && (pagina.match(/abrirKude\(d\)/g) ?? []).length === 1 && !/abrirKude/.test(detalle));
+  // PRO-195-UX-R01 (punto 3): consultar y KuDE son acciones de la FILA (iconos de contorno con su color); XML y correo, deshabilitados con motivo.
+  cierto("UXR01-23 (actualizado PRO-195) consultar = acción de icono en la FILA, SOLO con permiso EDITAR (accionesFila), con nombre accesible, deshabilitada con motivo si no está disponible y girando mientras consulta",
+    /accionesFila\(kudeDisponible\(d\), \{ editar \}, habilitada, motivoEspera\)/.test(fila) && /glifo=\{ACCION\.consultar\}/.test(fila) && /ocupado=\{accion === "consulta"\}/.test(fila) && /onClick=\{\(\) => void reconsultar\(d\)\}|alActivar=\{\(\) => void reconsultar\(d\)\}/.test(fila) &&
+    /aria-disabled=\{!disponible\}/.test(pagina) && /if \(disponible\) alActivar\(\);/.test(pagina) && /ocupado && estilos\.girando/.test(pagina) && /prefers-reduced-motion: reduce/.test(cssLimpio) && !/ACCION\.consultar/.test(detalle));
+  cierto("UXR01-24 (actualizado PRO-195) KuDE = icono de la fila (kudeDisponible, nombre accesible por tipo y número), sin duplicado en el detalle",
+    /accionesFila\(kudeDisponible\(d\)/.test(fila) && /glifo=\{ACCION\.kude\}/.test(fila) && (pagina.match(/abrirKude\(d\)/g) ?? []).length === 1 && !/abrirKude/.test(detalle));
   cierto("UXR01-25 copiar = icono con aria-label «Copiar número de lote»/«Copiar CDC», copia exacta (writeText(valor)) y feedback por icono ✓ + aviso aria-live; sin botón «Copiar» de texto",
     /aria-label="Copiar número de lote"/.test(primera) && /aria-label="Copiar CDC"/.test(primera) && /ACCION\.copiado : ACCION\.copiar/.test(primera) && /await navigator\.clipboard\.writeText\(valor\);/.test(pagina) && !/>Copiar<|>Copiado</.test(primera) && /aria-live="polite"/.test(primera));
-  cierto("UXR01-26 expandir = icono chevron (abrir/cerrar) en la fila con aria-expanded y en el control del historial técnico",
-    /aria-expanded=\{Boolean\(det\)\}/.test(fila) && /\{det \? ACCION\.cerrar : ACCION\.abrir\}/.test(fila) && /aria-expanded=\{det\.tecnico\}/.test(primera) && /\{det\.tecnico \? ACCION\.cerrar : ACCION\.abrir\}/.test(primera));
+  cierto("UXR01-26 (actualizado PRO-195) expandir = icono chevron (abrir/cerrar) en la fila con aria-expanded y en el control del historial técnico",
+    /aria-expanded=\{Boolean\(det\)\}/.test(fila) && /aria-controls=\{det \? `detalle-\$\{d\.id\}` : undefined\}/.test(fila) && /\{det \? ACCION\.cerrar : ACCION\.abrir\}/.test(fila) && /aria-expanded=\{det\.tecnico\}/.test(primera) && /\{det\.tecnico \? ACCION\.cerrar : ACCION\.abrir\}/.test(primera));
 
   // ══ 8. Primera capa: solo cuatro datos fiscales ═════════════════════════════════════════════════════════════════════════════════════════
   cierto("UXR01-27 primera capa con exactamente cuatro <dt>: Nro lote, CDC (o «CDC de la nota de crédito»), Fecha firma, Mensaje; sin «fases» repetidas en la cabecera",
     (primera.match(/<dt /g) ?? []).length === 4 && ["Nro lote</dt>", "\"CDC de la nota de crédito\" : \"CDC\"", "Fecha firma</dt>", "Mensaje</dt>"].every((t) => primera.includes(t)) && !/resumenFases|fiscalFases/.test(pagina));
-  cierto("UXR01-28 lote y CDC literales (sin trim/recorte, CDC en pre-wrap) con «No informado»; mensaje en rojo SOLO con RECHAZADO persistido",
-    /\{d\.lote \?\? "No informado"\}/.test(primera) && /style=\{\{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" \}\}>\{fiscal\.cdc \?\? "No informado"\}/.test(primera) && /fiscal\.rechazo \? estilos\.mensajeRechazo/.test(primera) && !/\.trim\(\)/.test(primera));
+  cierto("UXR01-28 (actualizado PRO-195) lote y CDC literales (sin trim/recorte, CDC en pre-wrap) con «Sin información»; mensaje en rojo SOLO con RECHAZADO persistido",
+    /\{d\.lote \?\? "Sin información"\}/.test(primera) && /style=\{\{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" \}\}>\{fiscal\.cdc \?\? "Sin información"\}/.test(primera) && /fiscal\.rechazo \? estilos\.mensajeRechazo/.test(primera) && !/\.trim\(\)/.test(primera));
   igual("UXR01-29 detalleFiscalPrimario (sin cambios) entrega el CDC opaco tal cual, aunque tenga espacios o no tenga 44 dígitos",
     detalleFiscalPrimario({ lote: " L-1 ", cdc: " 0180-ABC ", fechaFirma: null, codRespuesta: "1101", mensajeRespuesta: "Número de timbrado inválido", estadoSifen: "RECHAZADO" }),
     { lote: " L-1 ", cdc: " 0180-ABC ", fechaFirma: null, mensaje: "1101 · Número de timbrado inválido", rechazo: true });
@@ -178,10 +173,10 @@ export async function verificarCasosDocumentosUxR01(): Promise<string[]> {
     [esResultadoVigente(true, 3, 3), esResultadoVigente(false, 3, 3), esResultadoVigente(true, 3, 4)], [true, false, false]);
   cierto("UXR01-38 (actualizado UX-R02) el resultado guarda su contexto (y su secuencia); uno de OTRO contexto no se muestra (filas vacías, «Cargando…»): no quedan filas obsoletas accionables tras cambiar filtros o página",
     /\{ clave: claveConsulta, contexto, secuencia, datos, error \}/.test(pagina) && /const obsoleto = resultado !== null && resultado\.contexto !== contexto;/.test(pagina) && /const filas = obsoleto \? \[\] :/.test(pagina) && /obsoleto \? "Cargando\.\.\."/.test(pagina));
-  cierto("UXR01-39 al cambiar de contexto se cierran todos los detalles y el tooltip (ajuste de estado en el render, sin efecto)",
-    /if \(contextoVisto !== contexto\) \{\s*setContextoVisto\(contexto\);\s*setAbiertos\(\{\}\);\s*setTip\(null\);\s*\}/.test(pagina));
+  cierto("UXR01-39 (actualizado PRO-195) al cambiar de contexto se cierran todos los detalles y el tooltip, y se limpian la selección y el aviso de la fila (ajuste de estado en el render, sin efecto)",
+    /if \(contextoVisto !== contexto\) \{\s*setContextoVisto\(contexto\);\s*setAbiertos\(\{\}\);\s*setTip\(null\);[^}]*setSeleccion\(\{ contexto, ids: \[\] \}\);\s*setAnuncio\(null\);\s*\}/.test(pagina));
   cierto("UXR01-40 consultar/enviar: una acción por documento a la vez (ref + estado enCurso que sobrevive al cierre), respuesta aplicada SOLO a la misma generación y sin recrear el detalle; la lista se relee igual",
-    /if \(accionEnCurso\.current\.has\(d\.id\)\) return null;/.test(pagina) && /if \(vigenteDetalle\(d, generacion\)\) fusionarIntentos/.test(pagina) && /if \(vigenteDetalle\(d, generacion\)\) aplicarDetalle/.test(pagina) &&
+    /if \(accionEnCurso\.current\.has\(d\.id\)( \|\| !disponible\(d\))?\) return null;/.test(pagina) /* actualizado PRO-195: admite la guarda de disponibilidad de UX-R02 */ && /if \(vigenteDetalle\(d, generacion\)\) fusionarIntentos/.test(pagina) && /if \(vigenteDetalle\(d, generacion\)\) aplicarDetalle/.test(pagina) &&
     (pagina.match(/finally \{\s*terminarAccion\(d\);/g) ?? []).length === 2 && /setRecarga\(\(n\) => n \+ 1\)/.test(tramo("async function reconsultar", "async function enviarAlGateway")) && !/actualizarDetalle/.test(pagina) &&
     /function aplicarDetalle\(id: string, parte: Partial<Detalle>\) \{\s*setAbiertos\(\(a\) => \(a\[id\] \?/.test(pagina));
   cierto("UXR01-41 (actualizado UX-R02) abrir un detalle invalida el JSON y el historial anteriores (nueva generación de ambos); la copia solo borra su propio «Copiado»",
@@ -190,14 +185,15 @@ export async function verificarCasosDocumentosUxR01(): Promise<string[]> {
     /resultado\?\.contexto === contexto \?/.test(tramo("const hayPendientes", "useEffect(")) && /if \(!hayPendientes\) return;/.test(pagina) && /detener\(\);/.test(pagina) && !/consultar-estado|enviar/.test(tramo("Actualización automática", "const cargando")));
 
   // ══ 12. Responsive ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-  cierto("UXR01-43 (actualizado UX-R02) escritorio: tabla con ancho mínimo propio 860px y scroll horizontal local; tarjeta en ≤ 720px (Documento|Total / Cliente|Fecha / Estados|Acciones cuando el contenedor real tiene ancho de sobra) sin ancho mínimo",
-    /min-width: 860px/.test(regla(css, "table.tablaDocs")) && /<div className=\{clases\(ui\.tableScroll, estilos\.contenedorTabla\)\}>\s*<table className=\{clases\(ui\.table, estilos\.tablaDocs\)\}/.test(pagina) &&
-    /@media \(max-width: 720px\) \{\s*table\.tablaDocs \{\s*min-width: 0;/.test(cssLimpio) && /"doc total"\s*"cliente fecha"\s*"estados acciones"/.test(cssLimpio) && /tr:has\(> td:nth-child\(6\)\)/.test(cssLimpio));
-  cierto("UXR01-44 (actualizado UX-R02) móvil: la barra de orden se conserva (thead como fila flexible, sin la columna Acciones), el acento FE/NCE recorre la columna izquierda de la tarjeta y los datos fiscales apilan etiqueta/valor (≤ 640px)",
-    /table\.tablaDocs > thead > tr \{\s*display: flex;/.test(cssLimpio) && /table\.tablaDocs tr\.filaFE > td:is\(:nth-child\(3\), :nth-child\(5\), :nth-child\(6\)\) \{\s*box-shadow: inset 4px 0 0 #6d9bd1;/.test(cssLimpio) &&
-    /table\.tablaDocs tr\.filaNCE > td:is\(:nth-child\(3\), :nth-child\(5\), :nth-child\(6\)\) \{\s*box-shadow: inset 4px 0 0 #d9bb4e;/.test(cssLimpio) && /@media \(max-width: 640px\) \{\s*\.fiscal > div \{\s*grid-template-columns: minmax\(0, 1fr\) 36px;/.test(cssLimpio));
-  cierto("UXR01-45 áreas táctiles ≥ 36px en botones de acción/copia/historial y ≥ 40px en iconos de estado; sin cambios en el CSS compartido",
-    /width: 36px;\s*height: 36px;/.test(regla(css, ".iconBtn")) && /width: 36px;\s*height: 36px;/.test(regla(css, ".copiar")) && /min-height: 36px/.test(regla(css, ".toggleTecnico")) && !/tablaDocs|tooltip|iconoVacio|kpis/.test(lista));
+  cierto("UXR01-43 (actualizado PRO-195) escritorio: tabla de diez columnas con ancho mínimo propio 1180px y scroll horizontal local; tarjeta en ≤ 720px (agrupada cuando el contenedor real tiene ancho de sobra) sin ancho mínimo",
+    /min-width: 1180px/.test(regla(css, "table.tablaDocs")) && /<div className=\{clases\(ui\.tableScroll, estilos\.contenedorTabla\)\}>\s*<table className=\{clases\(ui\.table, estilos\.tablaDocs\)\}/.test(pagina) &&
+    /@media \(max-width: 720px\) \{\s*table\.tablaDocs \{\s*min-width: 0;/.test(cssLimpio) && /"exp doc estado"\s*"sel razon monto"\s*"\. ruc fecha"\s*"\. acciones eventos"/.test(cssLimpio) && /tr:has\(> td:nth-child\(10\)\)/.test(cssLimpio));
+  cierto("UXR01-44 (actualizado PRO-195) móvil: la barra de orden se conserva (thead flexible, sin Detalle/Acciones/RUC/Eventos que no ordenan), el acento FE/NCE queda en la columna izquierda de la tarjeta y los datos fiscales apilan etiqueta/valor (≤ 640px)",
+    /table\.tablaDocs > thead > tr \{\s*display: flex;/.test(cssLimpio) && /thead th:is\(:nth-child\(1\), :nth-child\(3\), :nth-child\(6\), :nth-child\(10\)\) \{\s*display: none;/.test(cssLimpio) &&
+    /table\.tablaDocs tr\.filaFE > td:nth-child\(2\) \{\s*box-shadow: inset 3px 0 0 #6d9bd1;/.test(cssLimpio) && /table\.tablaDocs tr\.filaNCE > td:nth-child\(2\) \{\s*box-shadow: inset 3px 0 0 #d9bb4e;/.test(cssLimpio) && /@media \(max-width: 640px\) \{\s*\.fiscal > div \{\s*grid-template-columns: minmax\(0, 1fr\) 36px;/.test(cssLimpio));
+  cierto("UXR01-45 (actualizado PRO-195) áreas táctiles: acciones de fila y expandir 32px, botones del detalle/copia/historial 36px e iconos de estado ≥ 28px; sin cambios en el CSS compartido",
+    /width: 32px;\s*height: 32px;/.test(regla(css, ".accion")) && /width: 32px;\s*height: 32px;/.test(regla(css, ".expandir")) && /width: 36px;\s*height: 36px;/.test(regla(css, ".iconBtn")) && /width: 36px;\s*height: 36px;/.test(regla(css, ".copiar")) && /min-height: 36px/.test(regla(css, ".toggleTecnico")) &&
+    /min-height: 28px/.test(regla(css, ".estadoPrincipal .icono")) && !/tablaDocs|tooltip|iconoVacio|kpis/.test(lista));
 
   // ══ 13. Solo se eliminan estilos locales sin uso confirmado ═════════════════════════════════════════════════════════════════════════════
   {
@@ -211,20 +207,21 @@ export async function verificarCasosDocumentosUxR01(): Promise<string[]> {
   }
 
   // ══ 14. Colores FE y NCE preservados ════════════════════════════════════════════════════════════════════════════════════════════════════
-  igual("UXR01-48 FE azul / NCE amarillo sin cambios: fila, acento, hover/foco, detalle y etiqueta de tipo (mismos valores de PRO-334/R02)",
-    [hex(regla(css, "tr.filaFE > td"), "background"), hex(regla(css, "tr.filaNCE > td"), "background"), /#6d9bd1/.test(regla(css, "tr.filaFE > td:first-child")), /#d9bb4e/.test(regla(css, "tr.filaNCE > td:first-child")),
-      hex(regla(css, "tr.filaFE:hover > td,\ntr.filaFE:focus-within > td"), "background"), hex(regla(css, "tr.filaNCE:hover > td,\ntr.filaNCE:focus-within > td"), "background"),
+  // PRO-195-UX-R01: «no pintar la fila entera»: fondo blanco; el tipo queda en la etiqueta FE/NCE (mismos colores) y en un acento lateral de 3px (mismos tonos).
+  igual("UXR01-48 (actualizado PRO-195) fila blanca, acento lateral FE azul / NCE amarillo con los mismos tonos de PRO-334, hover neutro, detalle casi blanco y etiquetas de tipo sin cambios",
+    [hex(regla(css, "tr.filaFE > td,\ntr.filaNCE > td"), "background"), /#6d9bd1/.test(regla(css, "tr.filaFE > td:first-child")), /#d9bb4e/.test(regla(css, "tr.filaNCE > td:first-child")),
+      hex(regla(css, "tr.filaFE:hover > td,\ntr.filaFE:focus-within > td,\ntr.filaNCE:hover > td,\ntr.filaNCE:focus-within > td"), "background"),
       hex(regla(css, "tr.detalleFE > td"), "background"), hex(regla(css, "tr.detalleNCE > td"), "background"), hex(regla(css, ".filaFE .tipoFE"), "color"), hex(regla(css, ".filaNCE .tipoNCE"), "color")],
-    ["#f4f8fd", "#fffcee", true, true, "#e9f1fb", "#fdf6da", "#f9fbfe", "#fffdf5", "#1d4a7c", "#5a4500"]);
-  cierto("UXR01-49 el color de la fila sigue dependiendo SOLO del tipo (CLASE_FILA_TIPO/CLASE_DETALLE_TIPO) y el texto secundario AA (#53687a) se mantiene",
-    /CLASE_FILA_TIPO: Partial<Record<TipoDocumento, string>> = \{ FE: estilos\.filaFE, NCE: estilos\.filaNCE \}/.test(pagina) && /<tr className=\{clases\(estilos\.detalle, CLASE_DETALLE_TIPO\[d\.tipo\]\)\} data-tipo=\{d\.tipo\}>/.test(pagina) && /#53687a/.test(cssLimpio));
+    ["#ffffff", true, true, "#f7f9fb", "#fbfcfe", "#fffefa", "#1d4a7c", "#5a4500"]);
+  cierto("UXR01-49 (actualizado PRO-195) el acento de la fila sigue dependiendo SOLO del tipo (CLASE_FILA_TIPO/CLASE_DETALLE_TIPO) y el texto secundario AA (#53687a) se mantiene",
+    /CLASE_FILA_TIPO: Partial<Record<TipoDocumento, string>> = \{ FE: estilos\.filaFE, NCE: estilos\.filaNCE \}/.test(pagina) && /className=\{clases\(estilos\.detalle, CLASE_DETALLE_TIPO\[d\.tipo\]\)\} data-tipo=\{d\.tipo\}>/.test(pagina) && /#53687a/.test(cssLimpio));
 
   // ══ 15. Funcionalidades, permisos, filtros, estados, consultas y acciones preservados ══════════════════════════════════════════════════
   cierto("UXR01-50 filtros (búsqueda con espera 300 ms, tipo, sucursal, estado SIFEN, desde/hasta), «Limpiar filtros», indicadores-filtro, orden por 5 columnas y paginación",
     ["setBusqueda(e.target.value)", "setBusquedaAplicada(busqueda.trim()), 300", "TIPOS_DOCUMENTO.map", "datos?.sucursales", "ESTADOS_SIFEN.map", "<CampoFecha valor={desde}", "<CampoFecha valor={hasta}", "onClick={limpiar}", "INDICADORES.map", "setPagina(paginaMostrada + 1)", "setPagina(paginaMostrada - 1)"].every((t) => pagina.includes(t)) &&
     ["numero", "fecha", "cliente", "total", "estado"].every((c) => pagina.includes(`campo="${c}" orden={orden} onOrden={cambiarOrden}`)));
-  cierto("UXR01-51 permisos sin cambios: consultar solo con EDITAR; enviar/reenviar/corregir NCE solo con CREAR; las rutas llamadas son exactamente las mismas (sin rutas nuevas)",
-    /\{editar \? \(/.test(primera) && /crear && \(d\.estadoLocal === "PENDIENTE_ENVIO" \|\| \(d\.estadoLocal === "ERROR_ENVIO" && d\.envioErrorTipo !== "RECHAZO"\)\)/.test(primera) && /crear && d\.tipo !== "NCE" && d\.estadoLocal === "ERROR_ENVIO" && d\.envioErrorTipo === "RECHAZO"/.test(primera) && /crear && d\.tipo === "NCE" && d\.corregible/.test(primera) &&
+  cierto("UXR01-51 (actualizado PRO-195) permisos sin cambios: consultar solo con EDITAR (acción de la fila); enviar/reenviar/corregir NCE solo con CREAR; las rutas llamadas son exactamente las mismas (sin rutas nuevas)",
+    /accionesFila\(kudeDisponible\(d\), \{ editar \}/.test(fila) && /crear && \(d\.estadoLocal === "PENDIENTE_ENVIO" \|\| \(d\.estadoLocal === "ERROR_ENVIO" && d\.envioErrorTipo !== "RECHAZO"\)\)/.test(primera) && /crear && d\.tipo !== "NCE" && d\.estadoLocal === "ERROR_ENVIO" && d\.envioErrorTipo === "RECHAZO"/.test(primera) && /crear && d\.tipo === "NCE" && d\.corregible/.test(primera) &&
     igualRutas(pagina));
   cierto("UXR01-52 acciones y lecturas preservadas: enviar, reenviar con confirmación, corregir NCE, consulta manual, KuDE, JSON de solicitud/respuesta, intentos anteriores, refresco automático y relectura tras acciones",
     ["enviarAlGateway(d)", "enviarAlGateway(d, true)", "Corregir y emitir nueva", "reconsultar(d)", "abrirKude(d)", "verSolicitud(d, sol)", "verRespuesta(d, i)", "cargarAnteriores(d)", "cerrarJson(d)", "iniciarRefresco({", "<KudeModal controlador={visor} />"].every((t) => pagina.includes(t)));

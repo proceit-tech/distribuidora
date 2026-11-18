@@ -67,8 +67,10 @@ export async function verificarCasosDocumentosUxR02(): Promise<string[]> {
     accionDisponible({ cargandoDetalle: true, enCurso: false, esperaListado: undefined, secuenciaListado: 5 }), false);
   igual("UXR02-06 accionDisponible: detalle cargado, sin acción previa ni en curso → disponible; con acción en curso → no (doble clic)",
     [accionDisponible({ cargandoDetalle: false, enCurso: false, esperaListado: undefined, secuenciaListado: 5 }), accionDisponible({ cargandoDetalle: false, enCurso: true, esperaListado: undefined, secuenciaListado: 5 })], [true, false]);
-  cierto("UXR02-07 la apertura del detalle parte de cargando=true y las acciones consultan `cargando !== false` (fila cerrada o detalle cargando = no disponible)",
-    /setAbiertos\(\(a\) => \(\{ \.\.\.a, \[d\.id\]: \{ \.\.\.DETALLE_VACIO, cargando: true \} \}\)\);/.test(pagina) && /cargandoDetalle: abiertos\[d\.id\]\?\.cargando !== false/.test(pagina));
+  // PRO-195-UX-R01: la consulta SIFEN pasó a la FILA y funciona con el detalle cerrado (no hay snapshot que pueda pisar intentos nuevos; al reabrir, el GET se fusiona con unirIntentos).
+  // Con el detalle ABIERTO y su GET inicial sin resolver, sigue sin haber acción.
+  cierto("UXR02-07 (actualizado PRO-195) la apertura del detalle parte de cargando=true y las acciones consultan `cargando === true` (detalle cargando = no disponible; fila cerrada = disponible)",
+    /setAbiertos\(\(a\) => \(\{ \.\.\.a, \[d\.id\]: \{ \.\.\.DETALLE_VACIO, cargando: true \} \}\)\);/.test(pagina) && /cargandoDetalle: abiertos\[d\.id\]\?\.cargando === true/.test(pagina) && /fusion \? unirIntentos\(previos, j\.intentos\)/.test(pagina));
   igual("UXR02-08 unirIntentos: fusión NO regresiva sin duplicados (gana la versión nueva) y orden por cursor DESC",
     unirIntentos([intento("c", "3"), { id: "b", cursor: "2", nuevo: true }], [{ id: "b", cursor: "2", nuevo: false }, intento("a", "1")]),
     [intento("c", "3"), { id: "b", cursor: "2", nuevo: true }, intento("a", "1")]);
@@ -93,8 +95,8 @@ export async function verificarCasosDocumentosUxR02(): Promise<string[]> {
   cierto("UXR02-12 al terminar (éxito o error, en finally) se registra la espera con la última lectura LANZADA antes de liberar «en curso»: no hay instante con estado viejo habilitado",
     /function terminarAccion\(d: Documento\) \{[\s\S]*?const espera = secuenciaListado\.current;\s*setEsperaListado\(\(e\) => \(\{ \.\.\.e, \[d\.id\]: espera \}\)\);\s*accionEnCurso\.current\.delete\(d\.id\);/.test(pagina) &&
     (pagina.match(/finally \{\s*terminarAccion\(d\);/g) ?? []).length === 2);
-  cierto("UXR02-13 los cuatro controles que actúan sobre el estado (Consultar, Enviar, Reenviar con confirmación, Corregir NCE) dependen de la MISMA disponibilidad; «Corregir» no es un enlace activo mientras no lo está",
-    (primera.match(/disabled=\{!habilitada\}/g) ?? []).length === 3 && /habilitada \? \(\s*<Link className=\{ui\.primaryButton\} href=\{`\/notas-credito\?corregir=\$\{d\.id\}`\}>Corregir y emitir nueva<\/Link>\s*\) : \(\s*<button type="button" className=\{ui\.primaryButton\} disabled>Corregir y emitir nueva<\/button>/.test(primera) &&
+  cierto("UXR02-13 (actualizado PRO-195) los cuatro controles que actúan sobre el estado (Consultar en la fila, Enviar, Reenviar con confirmación, Corregir NCE) dependen de la MISMA disponibilidad; «Corregir» no es un enlace activo mientras no lo está",
+    (primera.match(/disabled=\{!habilitada\}/g) ?? []).length === 2 && /accionesFila\(kudeDisponible\(d\), \{ editar \}, habilitada, motivoEspera\)/.test(pagina) && /habilitada \? \(\s*<Link className=\{ui\.primaryButton\} href=\{`\/notas-credito\?corregir=\$\{d\.id\}`\}>Corregir y emitir nueva<\/Link>\s*\) : \(\s*<button type="button" className=\{ui\.primaryButton\} disabled>Corregir y emitir nueva<\/button>/.test(primera) &&
     !/disabled=\{Boolean\(accion\)\}/.test(pagina) && /const habilitada = disponible\(d\);/.test(pagina));
   cierto("UXR02-14 además del atributo disabled, la función también se niega (clic tardío o repetido con un render anterior): iniciarAccion exige disponible(d) y no estar en curso",
     /if \(accionEnCurso\.current\.has\(d\.id\) \|\| !disponible\(d\)\) return null;/.test(pagina) && /const generacion = iniciarAccion\(d, "consulta"\);\s*if \(generacion === null\) return;/.test(reconsultar) && /const generacion = iniciarAccion\(d, "envio"\);\s*if \(generacion === null\) return;/.test(enviar));
@@ -109,8 +111,8 @@ export async function verificarCasosDocumentosUxR02(): Promise<string[]> {
   cierto("UXR02-18 las respuestas de consulta/envío siguen aplicándose SOLO a la misma generación abierta (cerrar/reabrir las descarta) y nunca recrean un detalle cerrado",
     /if \(vigenteDetalle\(d, generacion\)\) fusionarIntentos/.test(reconsultar) && /if \(vigenteDetalle\(d, generacion\)\) aplicarDetalle/.test(reconsultar) && /if \(vigenteDetalle\(d, generacion\)\) fusionarIntentos/.test(enviar) &&
     /function aplicarDetalle\(id: string, parte: Partial<Detalle>\) \{\s*setAbiertos\(\(a\) => \(a\[id\] \?/.test(pagina) && /if \(!a\[id\]\) return a;/.test(tramo("function fusionarIntentos", "async function cargarAnteriores")));
-  cierto("UXR02-19 permisos sin cambios: consultar solo con EDITAR; enviar/reenviar/corregir solo con CREAR y las mismas condiciones de estado; el reenvío conserva la confirmación",
-    /\{editar \? \(\s*<div className=\{estilos\.herramientas\}/.test(primera) && /crear && \(d\.estadoLocal === "PENDIENTE_ENVIO" \|\| \(d\.estadoLocal === "ERROR_ENVIO" && d\.envioErrorTipo !== "RECHAZO"\)\)/.test(primera) &&
+  cierto("UXR02-19 (actualizado PRO-195) permisos sin cambios: consultar solo con EDITAR (acción de la fila); enviar/reenviar/corregir solo con CREAR y las mismas condiciones de estado; el reenvío conserva la confirmación",
+    /accionesFila\(kudeDisponible\(d\), \{ editar \}/.test(pagina) && /clave: "consulta", visible: permisos\.editar, disponible: permisos\.editar && consultaDisponible/.test(leer("lib/facturacion/documentos-tabla.ts")) && /crear && \(d\.estadoLocal === "PENDIENTE_ENVIO" \|\| \(d\.estadoLocal === "ERROR_ENVIO" && d\.envioErrorTipo !== "RECHAZO"\)\)/.test(primera) &&
     /crear && d\.tipo !== "NCE" && d\.estadoLocal === "ERROR_ENVIO" && d\.envioErrorTipo === "RECHAZO"/.test(primera) && /crear && d\.tipo === "NCE" && d\.corregible/.test(primera) && /if \(confirmarRechazo && !window\.confirm\(/.test(enviar));
 
   // ══ UX-F001 (d) Feedback de copia ═══════════════════════════════════════════════════════════════════════════════════════════════════════
@@ -126,44 +128,40 @@ export async function verificarCasosDocumentosUxR02(): Promise<string[]> {
     /await navigator\.clipboard\.writeText\(valor\);\s*if \(vigente\(\)\) aplicarDetalle\(d\.id, \{ copiado: campo \}\);/.test(pagina) && /\} catch \{\s*if \(vigente\(\)\) aplicarDetalle\(d\.id, \{ copiado: "error" \}\);/.test(pagina) &&
     /window\.setTimeout\(\(\) => \{\s*if \(vigente\(\)\) aplicarDetalle\(d\.id, \{ copiado: "" \}\);\s*\}, 2000\);/.test(pagina) && !/copiar\([^)]*\)[^\n]*disabled/.test(primera));
 
-  // ══ UX-F002 Responsive sin superposición ═══════════════════════════════════════════════════════════════════════════════════════════════
+  // ══ UX-F002 Responsive sin superposición (actualizado PRO-195: tarjeta de diez celdas) ═════════════════════════════════════════════════
   {
-    const icono = px(regla(css, ".icono,\n.iconoVacio"), "min-width");
-    const gapIconos = px(regla(css, ".iconosEstado"), "gap");
-    const boton = px(regla(css, ".iconBtn"), "width");
-    const gapBotones = px(regla(css, ".accionesLinea"), "gap");
-    const relleno = 12; // padding lateral de cada celda de la tarjeta (6px 12px)
-    const estados = 5 * icono + 4 * gapIconos; // 4 iconos + aviso o hueco reservado
-    const acciones = 2 * boton + gapBotones; // KuDE + expandir
+    const accion = px(regla(css, ".accion"), "width");
+    const gapAcciones = px(regla(css, ".accionesLinea"), "gap");
+    const control = 40; // columna izquierda de la tarjeta (expandir / seleccionar): grid-template-columns: 40px …
+    const relleno = 10; // padding lateral de cada celda de la tarjeta (4px 10px)
+    const acciones = 4 * accion + 3 * gapAcciones; // KuDE · XML · Consulta · Correo (con permiso; sin él, menos)
+    const eventosMin = 32; // el control de eventos (32px); el texto «Sin eventos» puede pasar a la línea siguiente (flex-wrap)
     const umbral = Number(/@container documentos \(min-width: (\d+)px\)/.exec(cssLimpio)?.[1] ?? NaN);
-    const contenedor = (vista: number) => vista - 24 - 2; // padding exterior del listado compartido + borde (valores de la auditoría)
+    const contenedor = (vista: number) => vista - 24 - 2; // padding exterior del listado compartido + borde (valores de la auditoría UX-R01)
     const enFila = (ancho: number) => ancho >= umbral;
-    const cabe = (ancho: number) => (enFila(ancho) ? estados + acciones + 4 * relleno <= ancho : Math.max(estados, acciones) + 2 * relleno <= ancho);
+    const cabe = (ancho: number) => (enFila(ancho) ? control + acciones + eventosMin + 4 * relleno <= ancho : control + Math.max(acciones, eventosMin) + 2 * relleno <= ancho);
 
-    igual("UXR02-22 geometría con los valores REALES del CSS: iconos 40px (no reducidos), separación 2px → Estados 208px; botones 36px + 6px → Acciones 78px", [icono, gapIconos, estados, boton, gapBotones, acciones], [40, 2, 208, 36, 6, 78]);
-    igual("UXR02-23 umbral del contenedor (440px) ≥ mínimo para compartir fila sin solaparse (208 + 78 + 4 × 12 = 334px)", [umbral, estados + acciones + 4 * relleno, umbral >= estados + acciones + 4 * relleno], [440, 334, true]);
-    igual("UXR02-24 320px / 360px (contenedor 294 / 334): Estados y Acciones en filas SEPARADAS y ambas caben (232px ≤ ancho); ya no dependen del margen exacto de 334px",
+    igual("UXR02-22 (actualizado PRO-195) geometría con los valores REALES del CSS: acciones de 32px y separación 6px → 4 acciones = 146px", [accion, gapAcciones, acciones], [32, 6, 146]);
+    igual("UXR02-23 (actualizado PRO-195) umbral del contenedor (440px) ≥ mínimo para juntar acciones y eventos sin solaparse (40 + 146 + 32 + 4 × 10 = 258px)", [umbral, control + acciones + eventosMin + 4 * relleno, umbral >= control + acciones + eventosMin + 4 * relleno], [440, 258, true]);
+    igual("UXR02-24 (actualizado PRO-195) 320px / 360px (contenedor 294 / 334): estado, acciones y eventos en filas SEPARADAS y caben (206px ≤ ancho)",
       [contenedor(320), enFila(contenedor(320)), cabe(contenedor(320)), contenedor(360), enFila(contenedor(360)), cabe(contenedor(360))], [294, false, true, 334, false, true]);
-    igual("UXR02-25 tarjeta con contenedor de 600px (p. ej. 1280px al 200 % de zoom, o 720px con barra lateral): misma fila como en UX-R01, sin solape",
-      [enFila(600), cabe(600)], [true, true]);
-    igual("UXR02-26 hasta un contenedor extremo de 240px (zoom 400 %) entra la fila de Estados; si faltara ancho, la red de seguridad pasa iconos/botones a la línea siguiente sin encogerlos",
-      [cabe(240), /table\.tablaDocs \.iconosEstado,\s*table\.tablaDocs \.accionesLinea \{\s*flex-wrap: wrap;/.test(cssLimpio)], [true, true]);
+    igual("UXR02-25 (actualizado PRO-195) tarjeta con contenedor de 600px (p. ej. 1280px al 200 % de zoom, o 720px con barra lateral): agrupada, sin solape", [enFila(600), cabe(600)], [true, true]);
+    igual("UXR02-26 (actualizado PRO-195) hasta un contenedor extremo de 240px (zoom 400 %) entran las acciones; si faltara ancho, la red de seguridad pasa acciones/eventos/estado a la línea siguiente sin encogerlos",
+      [cabe(240), /table\.tablaDocs \.accionesLinea,\s*table\.tablaDocs \.eventos,\s*table\.tablaDocs \.estado \{\s*flex-wrap: wrap;/.test(cssLimpio)], [true, true]);
   }
-  cierto("UXR02-27 por defecto (≤ 720px) la tarjeta pone Estados y Acciones en filas propias de ancho completo; @container (≥ 440px de ancho REAL del contenedor) los vuelve a juntar",
-    /grid-template-areas:\s*"doc total"\s*"cliente fecha"\s*"estados estados"\s*"acciones acciones";/.test(cssLimpio) &&
-    /@container documentos \(min-width: 440px\) \{\s*table\.tablaDocs > tbody > tr:has\(> td:nth-child\(6\)\) \{\s*grid-template-areas:\s*"doc total"\s*"cliente fecha"\s*"estados acciones";/.test(cssLimpio) &&
+  cierto("UXR02-27 (actualizado PRO-195) por defecto (≤ 720px) la tarjeta pone estado, acciones y eventos en filas propias; @container (≥ 440px de ancho REAL del contenedor) los agrupa",
+    /grid-template-areas:\s*"exp doc doc"\s*"sel estado estado"\s*"\. razon monto"\s*"\. ruc fecha"\s*"\. acciones acciones"\s*"\. eventos eventos";/.test(cssLimpio) &&
+    /@container documentos \(min-width: 440px\) \{\s*table\.tablaDocs > tbody > tr:has\(> td:nth-child\(10\)\) \{\s*grid-template-areas:\s*"exp doc estado"\s*"sel razon monto"\s*"\. ruc fecha"\s*"\. acciones eventos";/.test(cssLimpio) &&
     cssLimpio.indexOf("@container documentos") > cssLimpio.indexOf("@media (max-width: 720px)"));
   cierto("UXR02-28 el contenedor medido es el de la tabla de documentos (container: documentos / inline-size), no la página ni el CSS compartido",
     /container: documentos \/ inline-size;/.test(regla(css, ".contenedorTabla")) && /<div className=\{clases\(ui\.tableScroll, estilos\.contenedorTabla\)\}>\s*<table className=\{clases\(ui\.table, estilos\.tablaDocs\)\}/.test(pagina) &&
     !/contenedorTabla|@container/.test(leer("components/ui/lista-padrao/lista.module.css")));
-  cierto("UXR02-29 en fila separada las acciones quedan a la derecha y el acento FE/NCE sigue toda la columna izquierda (incluida la fila de acciones); al compartir fila el acento no se pinta en la celda derecha",
-    /grid-area: acciones;\s*align-self: center;\s*padding-top: 0;\s*text-align: right;/.test(cssLimpio) &&
-    /table\.tablaDocs tr\.filaFE > td:is\(:nth-child\(3\), :nth-child\(5\), :nth-child\(6\)\) \{\s*box-shadow: inset 4px 0 0 #6d9bd1;/.test(cssLimpio) &&
-    /table\.tablaDocs tr\.filaNCE > td:is\(:nth-child\(3\), :nth-child\(5\), :nth-child\(6\)\) \{\s*box-shadow: inset 4px 0 0 #d9bb4e;/.test(cssLimpio) &&
-    /table\.tablaDocs tr:is\(\.filaFE, \.filaNCE\) > td:nth-child\(6\) \{\s*box-shadow: none;/.test(cssLimpio));
-  cierto("UXR02-30 se conservan el orden fijo y la accesibilidad: cuatro iconos + aviso o hueco reservado, iconos ≥ 40px, botones 36px, nowrap en escritorio y escritorio (> 720px) con tabla de 860px y scroll local",
-    /iconos\.map\(\(i\) => <IconoFase key=\{i\.eje\}/.test(pagina) && /<span className=\{estilos\.iconoVacio\} aria-hidden="true" \/>/.test(pagina) && /flex-wrap: nowrap/.test(regla(css, ".iconosEstado")) &&
-    /min-width: 860px/.test(regla(css, "table.tablaDocs")) && /width: 28px;\s*height: 28px;/.test(regla(css, ".iconoCirculo")) && /width: 36px;\s*height: 36px;/.test(regla(css, ".iconBtn")));
+  cierto("UXR02-29 (actualizado PRO-195) cada celda tiene su área propia (sin solaparse) y el acento FE/NCE queda en la columna de control de la tarjeta",
+    ["exp", "sel", "acciones", "doc", "fecha", "ruc", "razon", "monto", "estado", "eventos"].every((a, i) => new RegExp(`tr:has\\(> td:nth-child\\(10\\)\\) > td:nth-child\\(${i + 1}\\) \\{\\s*grid-area: ${a};`).test(cssLimpio)) &&
+    /table\.tablaDocs tr\.filaFE > td:nth-child\(2\) \{\s*box-shadow: inset 3px 0 0 #6d9bd1;/.test(cssLimpio) && /table\.tablaDocs tr\.filaNCE > td:nth-child\(2\) \{\s*box-shadow: inset 3px 0 0 #d9bb4e;/.test(cssLimpio));
+  cierto("UXR02-30 (actualizado PRO-195) accesibilidad y escritorio: estado principal con símbolo enfocable + texto, aviso «!» solo si existe, acciones 32px, tabla de 1180px con scroll local en escritorio",
+    /<IconoFase eje="estado"/.test(pagina) && /<strong>\{estado\.texto\}<\/strong>/.test(pagina) && !/iconoVacio/.test(pagina) &&
+    /min-width: 1180px/.test(regla(css, "table.tablaDocs")) && /width: 24px;\s*height: 24px;/.test(regla(css, ".iconoCirculo")) && /width: 32px;\s*height: 32px;/.test(regla(css, ".accion")));
 
   // ══ Alcance ═════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
   cierto("UXR02-31 sin rutas nuevas ni cambios de API: la pantalla sigue llamando exactamente a las mismas rutas", (() => {

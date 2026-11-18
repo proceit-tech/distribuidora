@@ -39,6 +39,17 @@ import {
   type SimboloEstado,
   type TonoIcono,
 } from "@/lib/facturacion/presentacion-sifen";
+import {
+  accionesFila,
+  alternarSeleccion,
+  estadoPrincipalFila,
+  eventosFila,
+  partirFechaHora,
+  seleccionVigente,
+  type AccionFila,
+  type Seleccion,
+} from "@/lib/facturacion/documentos-tabla";
+import type { TonoSifen } from "@/lib/facturacion/presentacion-sifen";
 import { formatearFechaHoraPy } from "@/lib/formato/listas";
 import { formatearImporteMoneda } from "@/lib/formato/monto-visual";
 
@@ -109,10 +120,13 @@ const GLIFO: Record<SimboloEstado, ReactNode> = {
   correoCheck: <><path d="M4.5 7h15v10h-15z" /><path d="m8.5 12.2 2.4 2.3 4.6-4.6" /></>,
   correoCruz: <><path d="M4.5 7h15v10h-15z" /><path d="m9.2 9.2 5.6 5.6m0-5.6-5.6 5.6" /></>,
 };
-/** Iconos de ACCIÓN (punto 7): consultar, KuDE, copiar, copiado y expandir. Siempre decorativos: el botón lleva aria-label y title. */
+/** Iconos de ACCIÓN (punto 7; PRO-195-UX-R01: contorno fino, sin fondo): consultar, KuDE, XML, correo, eventos, copiar, copiado y expandir. Siempre decorativos: el botón lleva aria-label. */
 const ACCION = {
   consultar: <><path d="M19 12a7 7 0 1 1-2.05-4.95" /><path d="M19 4.5V8h-3.5" /></>,
   kude: <><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /><path d="M9 13h6M9 17h4" /></>,
+  xml: <><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /><path d="m10 12-2 2.5 2 2.5M14 12l2 2.5-2 2.5" /></>,
+  correo: <><path d="M4 6.5h16v11H4z" /><path d="m4.5 7 7.5 6 7.5-6" /></>,
+  eventos: <><circle cx="12" cy="12" r="8" /><path d="m8.5 15.5 7-7" /></>,
   copiar: <><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V6a2 2 0 0 1 2-2h8" /></>,
   copiado: <path d="m6 12.5 4 4 8-9" />,
   abrir: <path d="m6 9 6 6 6-6" />,
@@ -143,6 +157,39 @@ function IconoFase({ eje, simbolo, clase, texto, tip }: { eje: string; simbolo: 
     </span>
   );
 }
+
+/**
+ * PRO-195-UX-R01 (punto 3): acción de la fila con icono de contorno y color propio (KuDE rojo, XML azul, consulta azul neutro, correo ámbar). Una acción no disponible
+ * queda DESHABILITADA con su motivo (aria-disabled: sigue enfocable para leer el motivo en el tooltip y en el nombre accesible) y su clic no hace nada.
+ */
+function AccionIcono({ clase, glifo, etiqueta, disponible, motivo, ocupado, alActivar, tip }: { clase: string; glifo: ReactNode; etiqueta: string; disponible: boolean; motivo: string; ocupado?: boolean; alActivar: () => void; tip: EventosTip }) {
+  const texto = disponible ? etiqueta : `${etiqueta}. ${motivo}`;
+
+  return (
+    <button
+      type="button"
+      className={clases(estilos.accion, clase, ocupado && estilos.girando)}
+      aria-label={texto}
+      aria-disabled={!disponible}
+      aria-busy={ocupado || undefined}
+      onMouseEnter={(e) => tip.mostrar(e.currentTarget, texto)}
+      onMouseLeave={tip.programarCierre}
+      onFocus={(e) => tip.mostrar(e.currentTarget, texto)}
+      onBlur={(e) => tip.ocultar(e.currentTarget)}
+      onClick={(e) => {
+        if (disponible) alActivar();
+        else tip.mostrar(e.currentTarget, texto);
+      }}
+    >
+      <svg viewBox="0 0 24 24" aria-hidden="true">{glifo}</svg>
+    </button>
+  );
+}
+
+/** PRO-195-UX-R01 (punto 4): un único estado principal; el tono decide el color del texto y del símbolo (el símbolo también distingue, no solo el color). */
+const CLASE_ESTADO: Record<TonoSifen, string> = { aprobado: estilos.estadoAprobado, rechazado: estilos.estadoRechazado, pendiente: estilos.estadoPendiente, sinTransmitir: estilos.estadoSinInfo, anulado: estilos.estadoAnulado };
+const SIMBOLO_ESTADO: Record<TonoSifen, SimboloEstado> = { aprobado: "check", rechazado: "cruz", pendiente: "reloj", sinTransmitir: "guion", anulado: "prohibido" };
+const CLASE_ACCION: Record<AccionFila["clave"], string> = { kude: estilos.accionKude, xml: estilos.accionXml, consulta: estilos.accionConsulta, correo: estilos.accionCorreo };
 
 function Glifo({ children }: { children: ReactNode }) {
   return <svg viewBox="0 0 24 24" aria-hidden="true">{children}</svg>;
@@ -235,6 +282,11 @@ export default function DocumentosPage() {
   const copiaVigente = useRef<Record<string, number>>({});
   // Tooltip de los iconos de estado (PRO-342-UX-R01, punto 5): uno solo, en coordenadas de ventana, fuera del contenedor con scroll.
   const [tip, setTip] = useState<{ texto: string; ancla: HTMLElement } | null>(null);
+  // PRO-195-UX-R01 (punto 2): selección REAL de filas visibles, ligada al contexto (filtros + página); no habilita acciones masivas (R05).
+  const [seleccion, setSeleccion] = useState<Seleccion>({ contexto: "", ids: [] });
+  // PRO-195-UX-R01 (punto 3): resultado de la consulta lanzada desde la FILA con el detalle cerrado; vale solo en su contexto.
+  const [anuncio, setAnuncio] = useState<{ contexto: string; texto: string; error: boolean } | null>(null);
+  const abiertosRef = useRef<Record<string, Detalle>>({});
   const tipRef = useRef<HTMLDivElement | null>(null);
   const cierreTip = useRef<number | undefined>(undefined);
 
@@ -331,17 +383,31 @@ export default function DocumentosPage() {
   const total = obsoleto ? 0 : (datos?.total ?? 0);
   const hayFiltros = busquedaAplicada !== "" || tipo !== "" || sucursal !== "" || estadoSifen !== "" || grupo !== "" || desde !== "" || hasta !== "";
   const editar = datos?.permisos.editar === true;
+  const seleccionados = seleccionVigente(seleccion, contexto, filas.map((f) => f.id));
   const crear = datos?.permisos.crear === true;
 
   // PRO-342-UX-R01 (punto 11): al cambiar de contexto se cierran los detalles y el tooltip del contexto anterior (ajuste de estado durante el render, patrón de React).
   // Las respuestas tardías de esos detalles ya no encuentran la fila abierta y se descartan; una reapertura inicia una generación nueva.
   const [contextoVisto, setContextoVisto] = useState(contexto);
+  const contextoVistoRef = useRef(contexto);
+
+  useEffect(() => {
+    contextoVistoRef.current = contextoVisto;
+  }, [contextoVisto]);
 
   if (contextoVisto !== contexto) {
     setContextoVisto(contexto);
     setAbiertos({});
     setTip(null);
+    // PRO-195-UX-R01: otro contexto (filtros, página u otra lectura) ⇒ selección y aviso de la fila anteriores se descartan.
+    setSeleccion({ contexto, ids: [] });
+    setAnuncio(null);
   }
+
+  // Estado actual de los detalles para las respuestas asíncronas (¿el detalle sigue abierto?). Se sincroniza después del render.
+  useEffect(() => {
+    abiertosRef.current = abiertos;
+  }, [abiertos]);
 
   // Posiciona el tooltip después de medirlo (fixed: no lo recorta el scroll horizontal de la tabla ni la última fila). Se escribe en el nodo, sin estado extra.
   useLayoutEffect(() => {
@@ -598,13 +664,21 @@ export default function DocumentosPage() {
   }
 
   const vigenteDetalle = (d: Documento, generacion: number) => esResultadoVigente(true, generacion, historialVigente.current[d.id] ?? 0);
-  /** PRO-342-UX-R02 (UX-F001): consultar/enviar/corregir solo con el detalle cargado, sin acción en curso y con el listado vigente tras la última acción. */
-  const disponible = (d: Documento) => accionDisponible({ cargandoDetalle: abiertos[d.id]?.cargando !== false, enCurso: Boolean(enCurso[d.id]), esperaListado: esperaListado[d.id], secuenciaListado: resultado?.secuencia ?? 0 });
+  /**
+   * PRO-342-UX-R02 (UX-F001): sin acción en curso y con el listado vigente tras la última acción; si el detalle está abierto, además con su GET inicial ya resuelto.
+   * PRO-195-UX-R01: la consulta SIFEN es acción de la FILA y funciona con el detalle cerrado (no hay snapshot que pueda pisar intentos nuevos; al reabrir, unirIntentos fusiona).
+   */
+  const disponible = (d: Documento) => accionDisponible({ cargandoDetalle: abiertos[d.id]?.cargando === true, enCurso: Boolean(enCurso[d.id]), esperaListado: esperaListado[d.id], secuenciaListado: resultado?.secuencia ?? 0 });
   /** Recuperación EXPLÍCITA tras un error o una espera: relee el listado (solo GET; nunca reenvía ni consulta al gateway). */
   const actualizarListado = () => setRecarga((n) => n + 1);
 
   async function reconsultar(d: Documento) {
     const generacion = iniciarAccion(d, "consulta");
+    const contextoAccion = contexto;
+    // PRO-195-UX-R01: con el detalle cerrado, el resultado se informa en la cabecera del listado, solo si sigue el mismo contexto.
+    const anunciar = (texto: string, error: boolean) => {
+      if (!abiertosRef.current[d.id]) setAnuncio((a) => (contextoAccion === contextoVistoRef.current ? { contexto: contextoAccion, texto: `Consulta de ${numeroDocumento(d)}: ${texto}`, error } : a));
+    };
 
     if (generacion === null) return;
     try {
@@ -614,10 +688,16 @@ export default function DocumentosPage() {
         j.continuidadConexion === "SIN_REFERENCIA" ? "Continuidad de la conexión no verificable (conexión del envío no registrada o credenciales de entorno del servidor): no se pudo comprobar que la consulta use la misma cuenta del envío" : "",
       ].filter(Boolean);
 
-      if (vigenteDetalle(d, generacion)) fusionarIntentos(d.id, j.intentos, { aviso: [`${ETIQUETA_RESULTADO_INTENTO[j.resultado] ?? j.resultado}${j.mensaje ? `: ${j.mensaje}` : ""}`, ...notas].join(" · ") });
+      const texto = [`${ETIQUETA_RESULTADO_INTENTO[j.resultado] ?? j.resultado}${j.mensaje ? `: ${j.mensaje}` : ""}`, ...notas].join(" · ");
+
+      if (vigenteDetalle(d, generacion)) fusionarIntentos(d.id, j.intentos, { aviso: texto });
+      anunciar(texto, false);
       setRecarga((n) => n + 1);
     } catch (e) {
-      if (vigenteDetalle(d, generacion)) aplicarDetalle(d.id, { error: e instanceof Error ? e.message : "No fue posible consultar el estado." });
+      const texto = e instanceof Error ? e.message : "No fue posible consultar el estado.";
+
+      if (vigenteDetalle(d, generacion)) aplicarDetalle(d.id, { error: texto });
+      anunciar(texto, true);
     } finally {
       terminarAccion(d);
     }
@@ -751,37 +831,57 @@ export default function DocumentosPage() {
           </div>
         ) : null}
 
-        {/* PRO-342-UX-R01 (punto 6): leyenda breve, UNA vez por listado: el orden fijo de los cuatro iconos y el significado de los colores. */}
-        <div className={estilos.leyenda} aria-label="Leyenda de los iconos de estado">
-          <span className={estilos.leyendaOrden}>
-            <strong>Estados:</strong> {NOMBRE_EJE.envio} · {NOMBRE_EJE.xml} · {NOMBRE_EJE.sifen} · {NOMBRE_EJE.correo}
-          </span>
-          <span className={estilos.leyendaColores}>
-            <i className={clases(estilos.punto, estilos.iconoOk)} aria-hidden="true" />confirmado
-            <i className={clases(estilos.punto, estilos.iconoInfo)} aria-hidden="true" />CDC informado
-            <i className={clases(estilos.punto, estilos.iconoAviso)} aria-hidden="true" />pendiente / aviso
-            <i className={clases(estilos.punto, estilos.iconoError)} aria-hidden="true" />rechazo / error
-            <i className={clases(estilos.punto, estilos.iconoNeutro)} aria-hidden="true" />sin información
-          </span>
-        </div>
+        {/* PRO-195-UX-R01: resultado de una consulta lanzada desde la fila con el detalle cerrado (solo en su contexto). */}
+        {anuncio && anuncio.contexto === contexto ? (
+          <div className={clases(anuncio.error ? ui.alertError : ui.alertOk, estilos.anuncio)} role={anuncio.error ? "alert" : "status"}>
+            <span>{anuncio.texto}</span>
+            <span className={estilos.anuncioAcciones}>
+              {cargando ? null : <button type="button" className={ui.clearButton} onClick={actualizarListado}>Actualizar listado</button>}
+              <button type="button" className={ui.clearButton} onClick={() => setAnuncio(null)}>Cerrar</button>
+            </span>
+          </div>
+        ) : null}
+
+        {/* PRO-195-UX-R01 (punto 2): selección real de la página visible; sin acciones masivas en esta versión (R05). */}
+        {seleccionados.length > 0 ? (
+          <div className={estilos.barraSeleccion} role="status">
+            <span>{seleccionados.length} documento(s) seleccionado(s) en esta página. Sin acciones masivas disponibles en esta versión.</span>
+            <button type="button" className={ui.clearButton} onClick={() => setSeleccion({ contexto, ids: [] })}>Quitar selección</button>
+          </div>
+        ) : null}
 
         <div className={clases(ui.tableScroll, estilos.contenedorTabla)}>
           <table className={clases(ui.table, estilos.tablaDocs)} aria-busy={cargando}>
             <thead>
               <tr>
-                <ThOrdenable titulo="Documento" campo="numero" orden={orden} onOrden={cambiarOrden} />
-                <ThOrdenable titulo="Fecha" campo="fecha" orden={orden} onOrden={cambiarOrden} />
-                <ThOrdenable titulo="Cliente" campo="cliente" orden={orden} onOrden={cambiarOrden} />
-                <ThOrdenable titulo="Total" campo="total" orden={orden} onOrden={cambiarOrden} alinear="derecha" />
-                <ThOrdenable titulo="Estados" campo="estado" orden={orden} onOrden={cambiarOrden} />
-                <ThOrdenable titulo="Acciones" alinear="derecha" />
+                <th className={estilos.colControl}><span className={estilos.srSolo}>Detalle</span></th>
+                <th className={estilos.colControl}>
+                  <input
+                    type="checkbox"
+                    className={estilos.casilla}
+                    aria-label="Seleccionar todos los documentos de esta página"
+                    checked={filas.length > 0 && seleccionados.length === filas.length}
+                    ref={(el) => {
+                      if (el) el.indeterminate = seleccionados.length > 0 && seleccionados.length < filas.length;
+                    }}
+                    disabled={filas.length === 0 || cargando}
+                    onChange={(e) => setSeleccion({ contexto, ids: e.target.checked ? filas.map((f) => f.id) : [] })}
+                  />
+                </th>
+                <ThOrdenable titulo="Acciones" />
+                <ThOrdenable titulo="Nro. Documento" campo="numero" orden={orden} onOrden={cambiarOrden} />
+                <ThOrdenable titulo="Fecha emisión" campo="fecha" orden={orden} onOrden={cambiarOrden} />
+                <ThOrdenable titulo="RUC/CI" />
+                <ThOrdenable titulo="Razón Social" campo="cliente" orden={orden} onOrden={cambiarOrden} />
+                <ThOrdenable titulo="Monto" campo="total" orden={orden} onOrden={cambiarOrden} alinear="derecha" />
+                <ThOrdenable titulo="Estado" campo="estado" orden={orden} onOrden={cambiarOrden} />
+                <ThOrdenable titulo="Eventos" />
               </tr>
             </thead>
 
             <tbody>
               {filas.map((d) => {
                 const det = abiertos[d.id];
-                const iconos = iconosEstado(d);
                 const alerta = alertaConsulta(d);
                 // PRO-342-R05: nota informativa (no alerta de integridad) si la API informó un estado final sin CDC. PRO-342-UX-R01: va en el historial técnico.
                 const sinCdc = avisoSinCdc(d);
@@ -789,74 +889,96 @@ export default function DocumentosPage() {
                 const consultas = det ? resumenConsultas(det.intentos) : { valida: null, ultima: null };
                 // PRO-342-R01: envío (ACK), último retorno del gateway (p. ej. «XML firmado») y resultado fiscal SIFEN en ejes separados (segunda capa).
                 const seguimiento = seguimientoFiscal(d);
+                // PRO-195-UX-R01 (punto 4): UN estado principal (nunca Aprobado y Rechazado a la vez) + la fase técnica real como línea secundaria.
+                const estado = estadoPrincipalFila(d);
+                const eventos = eventosFila(d);
                 const avisoFila = [alerta ? `${alerta.texto}. ${alerta.detalle}` : "", d.requiereRevision ? `Requiere revisión: lleva mucho tiempo sin resultado definitivo; no se reenvía${d.tipo === "NCE" ? " ni se libera el saldo" : ""}.` : ""].filter(Boolean).join(" ");
                 const accion = enCurso[d.id];
                 const habilitada = disponible(d);
                 const esperando = !accion && esperaListado[d.id] !== undefined && (resultado?.secuencia ?? 0) <= esperaListado[d.id];
                 const doc = `${d.tipo === "NCE" ? "la nota de crédito" : "la factura"} ${numeroDocumento(d)}`;
+                const motivoEspera = accion === "consulta" ? "Consulta en curso." : accion === "envio" ? "Envío en curso." : esperando ? "Actualizando el estado del documento tras la última acción." : "Cargando el detalle del documento.";
+                const acciones = accionesFila(kudeDisponible(d), { editar }, habilitada, motivoEspera);
+                const { fecha, hora } = partirFechaHora(fechaHora(d.fechaEmision));
+                const marcado = seleccionados.includes(d.id);
 
                 return (
                   <Fragment key={d.id}>
-                    <tr className={clases(ui.row, CLASE_FILA_TIPO[d.tipo])} data-tipo={d.tipo}>
-                      <td>
-                        <div className={ui.cell}>
-                          <strong className={ui.mono}>{numeroDocumento(d)}</strong>
-                          <span><span className={CLASE_ETIQUETA_TIPO[d.tipo]}>{ETIQUETA_TIPO[d.tipo]}</span> · {d.sucursalNombre}</span>
-                          {d.tipo === "NCE" && d.feNumero ? <span>Factura {d.feNumero}{d.nceMotivo ? ` · ${MOTIVO_NCE[d.nceMotivo] ?? ""}` : ""}</span> : null}
-                        </div>
+                    <tr className={clases(ui.row, CLASE_FILA_TIPO[d.tipo], marcado && estilos.filaMarcada)} data-tipo={d.tipo}>
+                      <td className={estilos.colControl}>
+                        <button type="button" className={clases(estilos.expandir, det && estilos.expandirActivo)} aria-expanded={Boolean(det)} aria-controls={det ? `detalle-${d.id}` : undefined} title={det ? "Ocultar detalle" : "Ver detalle"} aria-label={`${det ? "Ocultar" : "Ver"} detalle de ${doc}`} onClick={() => alternar(d)}>
+                          <svg viewBox="0 0 24 24" aria-hidden="true">{det ? ACCION.cerrar : ACCION.abrir}</svg>
+                        </button>
                       </td>
-                      <td>{fechaHora(d.fechaEmision)}</td>
-                      <td>
-                        <div className={ui.cell}>
-                          <strong>{d.receptorNombre}</strong>
-                          <span>{d.receptorDocumento ?? "Sin documento"}</span>
-                        </div>
-                      </td>
-                      <td className={ui.numeric}>
-                        <strong className={ui.mono}>{importe(d)}</strong>
+                      <td className={estilos.colControl}>
+                        <input type="checkbox" className={estilos.casilla} aria-label={`Seleccionar ${doc}`} checked={marcado} onChange={(e) => setSeleccion((s) => alternarSeleccion(s, contexto, d.id, e.target.checked))} />
                       </td>
                       <td>
-                        <div className={estilos.iconosEstado} role="group" aria-label={`Estados de ${numeroDocumento(d)}`}>
-                          {iconos.map((i) => <IconoFase key={i.eje} eje={i.eje} simbolo={i.simbolo} clase={CLASE_TONO_ICONO[i.tono]} texto={i.texto} tip={eventosTip} />)}
-                          {avisoFila ? (
-                            <IconoFase eje="aviso" simbolo="alerta" clase={alerta?.tipo === "inconsistencia" || !alerta ? estilos.iconoError : estilos.iconoAviso} texto={`Aviso técnico: ${avisoFila}`} tip={eventosTip} />
-                          ) : (
-                            <span className={estilos.iconoVacio} aria-hidden="true" />
+                        <div className={estilos.accionesLinea} role="group" aria-label={`Acciones de ${doc}`}>
+                          {acciones.filter((a) => a.visible).map((a) =>
+                            a.clave === "kude" ? (
+                              <AccionIcono key={a.clave} clase={CLASE_ACCION.kude} glifo={ACCION.kude} etiqueta={`Consultar KuDE (PDF) de ${doc}: no confirma por sí que el PDF exista ni que esté verificado`} disponible={a.disponible} motivo={a.motivo} alActivar={() => abrirKude(d)} tip={eventosTip} />
+                            ) : a.clave === "consulta" ? (
+                              <AccionIcono key={a.clave} clase={CLASE_ACCION.consulta} glifo={ACCION.consultar} etiqueta={accion === "consulta" ? `Consultando el estado en SIFEN de ${doc}` : `Consultar estado en SIFEN de ${doc} (no reenvía el documento)`} disponible={a.disponible} motivo={a.motivo} ocupado={accion === "consulta"} alActivar={() => void reconsultar(d)} tip={eventosTip} />
+                            ) : (
+                              <AccionIcono key={a.clave} clase={CLASE_ACCION[a.clave]} glifo={a.clave === "xml" ? ACCION.xml : ACCION.correo} etiqueta={a.clave === "xml" ? `XML de ${doc}` : `Correo de ${doc}`} disponible={a.disponible} motivo={a.motivo} alActivar={() => undefined} tip={eventosTip} />
+                            ),
                           )}
                         </div>
                       </td>
-                      <td className={ui.actionsCell}>
-                        <div className={estilos.accionesLinea}>
-                          {kudeDisponible(d) ? (
-                            <button type="button" className={estilos.iconBtn} title="Consultar KuDE (PDF) al gateway: no confirma por sí que el PDF exista ni que esté verificado" aria-label={`Consultar KuDE (PDF) de ${d.tipo === "NCE" ? "la nota de crédito" : "la factura"} ${d.establecimiento}-${d.puntoExpedicion}-${d.numero}`} onClick={() => abrirKude(d)}>
-                              <svg viewBox="0 0 24 24" aria-hidden="true">{ACCION.kude}</svg>
-                            </button>
+                      <td>
+                        <div className={ui.cell}>
+                          <strong className={ui.mono}>{d.establecimiento}-{d.puntoExpedicion}-{d.numero}</strong>
+                          <span>
+                            <span className={CLASE_ETIQUETA_TIPO[d.tipo] ?? estilos.tipoOtro} title={ETIQUETA_TIPO[d.tipo]}>{d.tipo}</span>
+                            <span className={estilos.srSolo}> {ETIQUETA_TIPO[d.tipo]}</span>
+                            {" · "}{d.serie ? `Serie ${d.serie}` : "Sin serie"} · {d.sucursalNombre}
+                          </span>
+                          {d.tipo === "NCE" && d.feNumero ? <span>Factura {d.feNumero}{d.nceMotivo ? ` · ${MOTIVO_NCE[d.nceMotivo] ?? ""}` : ""}</span> : null}
+                        </div>
+                      </td>
+                      <td>
+                        <div className={ui.cell}>
+                          <strong className={estilos.sinCorte}>{fecha}</strong>
+                          <span className={ui.mono}>{hora}</span>
+                        </div>
+                      </td>
+                      <td className={clases(ui.mono, estilos.sinCorte)}>{d.receptorDocumento ?? "Sin información"}</td>
+                      <td className={estilos.razon}>{d.receptorNombre}</td>
+                      <td className={ui.numeric} title={importe(d)}>
+                        <span className={estilos.moneda}>{d.moneda}</span> <strong className={ui.mono}>{formatearImporteMoneda(d.total, d.moneda)}</strong>
+                      </td>
+                      <td>
+                        <div className={estilos.estado}>
+                          <span className={clases(estilos.estadoPrincipal, CLASE_ESTADO[estado.tono])}>
+                            <IconoFase eje="estado" simbolo={SIMBOLO_ESTADO[estado.tono]} clase={CLASE_ESTADO[estado.tono]} texto={`Estado: ${estado.texto}. ${estado.detalle}`} tip={eventosTip} />
+                            <strong>{estado.texto}</strong>
+                          </span>
+                          {avisoFila ? (
+                            <IconoFase eje="aviso" simbolo="alerta" clase={alerta?.tipo === "inconsistencia" || !alerta ? estilos.iconoError : estilos.iconoAviso} texto={`Aviso técnico: ${avisoFila}`} tip={eventosTip} />
                           ) : null}
-                          <button type="button" className={clases(estilos.iconBtn, det && estilos.iconBtnActivo)} aria-expanded={Boolean(det)} title={det ? "Ocultar detalle" : "Ver detalle"} aria-label={det ? "Ocultar detalle" : "Ver detalle"} onClick={() => alternar(d)}>
-                            <svg viewBox="0 0 24 24" aria-hidden="true">{det ? ACCION.cerrar : ACCION.abrir}</svg>
-                          </button>
+                        </div>
+                        {estado.secundario ? <small className={clases(ui.muted, estilos.estadoSecundario)}>{estado.secundario}</small> : null}
+                      </td>
+                      <td>
+                        <div className={estilos.eventos}>
+                          <span className={eventos.registrado ? estilos.eventoRegistrado : estilos.sinEventos}>{eventos.registrado ?? "Sin eventos"}</span>
+                          <AccionIcono clase={estilos.accionEventos} glifo={ACCION.eventos} etiqueta={`Eventos de ${doc}`} disponible={false} motivo={eventos.operacion} alActivar={() => undefined} tip={eventosTip} />
                         </div>
                       </td>
                     </tr>
 
                     {det ? (
-                      <tr className={clases(estilos.detalle, CLASE_DETALLE_TIPO[d.tipo])} data-tipo={d.tipo}>
-                        <td colSpan={6}>
-                          {/* PRO-342-R04 (UX02) / PRO-342-UX-R01 (punto 8) — PRIMERA CAPA: solo cuatro datos fiscales, tal como los registró la API (sin inventar, recortar ni enmascarar). */}
+                      <tr id={`detalle-${d.id}`} className={clases(estilos.detalle, CLASE_DETALLE_TIPO[d.tipo])} data-tipo={d.tipo}>
+                        <td colSpan={10}>
+                          {/* PRO-342-R04 (UX02) / PRO-342-UX-R01 (punto 8) / PRO-195-UX-R01 (punto 5) — PRIMERA CAPA: solo cuatro datos fiscales, tal como los registró la API (sin inventar, recortar ni enmascarar). */}
                           <div className={estilos.detalleCabecera}>
                             <strong>Detalle fiscal · {numeroDocumento(d)}</strong>
-                            {editar ? (
-                              <div className={estilos.herramientas} role="toolbar" aria-label={`Acciones de ${doc}`}>
-                                <button type="button" className={clases(estilos.iconBtn, accion === "consulta" && estilos.girando)} disabled={!habilitada} aria-busy={accion === "consulta"} title={accion === "consulta" ? "Consultando..." : "Consultar estado en SIFEN"} aria-label={accion === "consulta" ? "Consultando el estado en SIFEN" : `Consultar estado en SIFEN de ${doc}`} onClick={() => void reconsultar(d)}>
-                                  <Glifo>{ACCION.consultar}</Glifo>
-                                </button>
-                              </div>
-                            ) : null}
                           </div>
                           <dl className={estilos.fiscal} aria-label="Datos fiscales">
                             <div>
                               <dt className={ui.muted}>Nro lote</dt>
-                              <dd className={ui.mono}>{d.lote ?? "No informado"}</dd>
+                              <dd className={ui.mono}>{d.lote ?? "Sin información"}</dd>
                               {fiscal.lote ? (
                                 <button type="button" className={estilos.copiar} title={det.copiado === "lote" ? "Copiado" : "Copiar"} aria-label="Copiar número de lote" onClick={() => void copiar(d, "lote", fiscal.lote as string)}>
                                   <Glifo>{det.copiado === "lote" ? ACCION.copiado : ACCION.copiar}</Glifo>
@@ -866,7 +988,7 @@ export default function DocumentosPage() {
                             <div>
                               <dt className={ui.muted}>{d.tipo === "NCE" ? "CDC de la nota de crédito" : "CDC"}</dt>
                               {/* PRO-342-R05: CDC literal informado por la API (cualquier forma/longitud): se muestra completo, con espacios conservados y corte de línea. */}
-                              <dd className={ui.mono} style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{fiscal.cdc ?? "No informado"}</dd>
+                              <dd className={ui.mono} style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{fiscal.cdc ?? "Sin información"}</dd>
                               {fiscal.cdc ? (
                                 <button type="button" className={estilos.copiar} title={det.copiado === "cdc" ? "Copiado" : "Copiar"} aria-label="Copiar CDC" onClick={() => void copiar(d, "cdc", fiscal.cdc as string)}>
                                   <Glifo>{det.copiado === "cdc" ? ACCION.copiado : ACCION.copiar}</Glifo>
@@ -875,11 +997,11 @@ export default function DocumentosPage() {
                             </div>
                             <div>
                               <dt className={ui.muted}>Fecha firma</dt>
-                              <dd>{fiscal.fechaFirma ? fechaGateway(fiscal.fechaFirma) : "No informada"}</dd>
+                              <dd>{fiscal.fechaFirma ? fechaGateway(fiscal.fechaFirma) : "Sin información"}</dd>
                             </div>
                             <div>
                               <dt className={ui.muted}>Mensaje</dt>
-                              <dd className={fiscal.rechazo ? estilos.mensajeRechazo : undefined}>{fiscal.mensaje ?? "Sin mensaje informado"}</dd>
+                              <dd className={fiscal.rechazo ? estilos.mensajeRechazo : undefined}>{fiscal.mensaje ?? "Sin información"}</dd>
                             </div>
                           </dl>
                           <span className={estilos.srSolo} role="status" aria-live="polite">{det.copiado === "lote" || det.copiado === "cdc" ? "Copiado al portapapeles" : det.copiado === "error" ? "No fue posible copiar: seleccione el texto manualmente" : ""}</span>
@@ -901,7 +1023,8 @@ export default function DocumentosPage() {
                             <p className={ui.alertError} role="alert">Envío no confirmado. Verifique el documento en el gateway antes de cualquier reenvío: Nexit no reenvía automáticamente un envío indeterminado.</p>
                           ) : null}
 
-                          <div className={estilos.barraAcciones}>
+                          {/* PRO-195-UX-R01 (punto 3): «Más acciones» legítimas con sus guardas y confirmaciones de siempre (envío manual, reenvío confirmado, corrección NCE). */}
+                          <div className={estilos.barraAcciones} role="group" aria-label={`Más acciones de ${doc}`}>
                             {crear && (d.estadoLocal === "PENDIENTE_ENVIO" || (d.estadoLocal === "ERROR_ENVIO" && d.envioErrorTipo !== "RECHAZO")) ? (
                               <button type="button" className={ui.primaryButton} disabled={!habilitada} onClick={() => enviarAlGateway(d)}>
                                 {accion === "envio" ? "Enviando..." : "Enviar al gateway"}
@@ -940,6 +1063,18 @@ export default function DocumentosPage() {
                             <div id={`tecnico-${d.id}`} className={estilos.tecnico} role="region" aria-label="Historial técnico">
                               {sinCdc ? <div className={estilos.avisoTecnico} role="note">{sinCdc}</div> : null}
                               {alerta ? <div className={estilos.notaTecnica} role="note">{alerta.detalle}</div> : null}
+
+                              {/* PRO-195-UX-R01 (punto 5): los cuatro estados técnicos independientes (Envío · XML/CDC · SIFEN · Correo) pasan a esta segunda capa; la fila muestra un único estado. */}
+                              <h4 className={estilos.subtitulo}>Estados técnicos</h4>
+                              <ul className={estilos.estadosTecnicos} aria-label={`Estados técnicos de ${numeroDocumento(d)}`}>
+                                {iconosEstado(d).map((i) => (
+                                  <li key={i.eje}>
+                                    <IconoFase eje={i.eje} simbolo={i.simbolo} clase={CLASE_TONO_ICONO[i.tono]} texto={i.texto} tip={eventosTip} />
+                                    <span><strong>{NOMBRE_EJE[i.eje]}:</strong> {i.corto}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                              <p className={ui.muted}>Eventos: {eventos.registrado ?? "sin eventos registrados"}. {eventos.operacion}</p>
 
                               <h4 className={estilos.subtitulo}>Seguimiento fiscal</h4>
                               <dl className={estilos.datosTecnicos} aria-label="Seguimiento fiscal">
@@ -1046,7 +1181,7 @@ export default function DocumentosPage() {
 
               {filas.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className={ui.emptyCell}>
+                  <td colSpan={10} className={ui.emptyCell}>
                     <div className={ui.empty}>
                       <strong>{cargando ? "Cargando documentos..." : errorCarga ? "No se pudo cargar el listado" : hayFiltros ? "No se encontraron documentos" : "Aún no hay documentos electrónicos"}</strong>
                       {!cargando && !errorCarga ? <span>{hayFiltros ? "Modifique los filtros." : "Los documentos emitidos desde Nexit aparecerán aquí."}</span> : null}

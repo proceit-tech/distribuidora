@@ -1,7 +1,8 @@
 /*
  * Documentos electrónicos — estilos LOCALES del módulo (no se toca lista.module.css compartido).
  * PRO-342-UX-R01: se retiraron las reglas sin uso confirmado en page.tsx / kude-modal.tsx (cápsulas .sifen*, alertas .alerta*, .iconoNombre, .leyendaAyuda,
- * .fiscalCabecera/.fiscalFases y el tooltip por ::after, que quedaba recortado por el scroll de la tabla).
+ * .fiscalCabecera/.fiscalFases y el tooltip por pseudo-elemento, que quedaba recortado por el scroll de la tabla).
+ * PRO-195-UX-R01: tabla blanca con acciones de contorno y un estado principal; se retiraron .leyenda/.punto, .iconosEstado/.iconoVacio, .herramientas e .iconBtnActivo (sin uso).
  */
 
 /* ---- Indicadores compactos (punto 1): botones-filtro con su cantidad; la ayuda larga es descripción accesible + title. ---- */
@@ -95,7 +96,7 @@
   --tono: #687a8c;
 }
 
-/* ---- Acciones con iconos (punto 7): KuDE y expandir en la fila; consultar, copiar y cerrar JSON en el detalle. ---- */
+/* ---- Botones de icono del detalle (punto 7): cerrar JSON. Las acciones de la fila usan .accion (PRO-195-UX-R01). ---- */
 .accionesLinea {
   display: inline-flex;
   align-items: center;
@@ -136,12 +137,6 @@
 .iconBtn:disabled {
   cursor: progress;
   opacity: 0.65;
-}
-
-.iconBtnActivo {
-  color: #0a7f88;
-  border-color: #0f9ca5;
-  background: #f3fbfb;
 }
 
 .iconBtn svg,
@@ -199,34 +194,33 @@
 }
 
 /*
- * PRO-334 (CASA MINGO, ETAPA 3): color por TIPO de comprobante. FE = azul suave, NCE = amarillo claro suave, como fondo tenue + acento lateral de 4px.
- * Es INDEPENDIENTE del estado fiscal: nunca rojo/verde en la fila; el estado fiscal va en los iconos de la columna Estados.
+ * PRO-334 (CASA MINGO, ETAPA 3) / PRO-195-UX-R01 (punto 2): tabla BLANCA; la fila ya no se pinta entera. El tipo se distingue por la etiqueta FE/NCE (texto + color) y por
+ * un acento lateral DISCRETO de 3px en la primera celda (FE azul, NCE amarillo). Independiente del estado fiscal: nunca rojo/verde en la fila.
  * Selectores con «tr» para superar a .row:hover/.row:focus-within de la lista estándar sin tocar el CSS global; el acento usa box-shadow inset (no cambia anchos ni desborda).
  */
-tr.filaFE > td {
-  background: #f4f8fd;
+tr.filaFE > td,
+tr.filaNCE > td {
+  background: #ffffff;
 }
 
 tr.filaFE > td:first-child {
-  box-shadow: inset 4px 0 0 #6d9bd1;
-}
-
-tr.filaFE:hover > td,
-tr.filaFE:focus-within > td {
-  background: #e9f1fb;
-}
-
-tr.filaNCE > td {
-  background: #fffcee;
+  box-shadow: inset 3px 0 0 #6d9bd1;
 }
 
 tr.filaNCE > td:first-child {
-  box-shadow: inset 4px 0 0 #d9bb4e;
+  box-shadow: inset 3px 0 0 #d9bb4e;
 }
 
+tr.filaFE:hover > td,
+tr.filaFE:focus-within > td,
 tr.filaNCE:hover > td,
 tr.filaNCE:focus-within > td {
-  background: #fdf6da;
+  background: #f7f9fb;
+}
+
+/* Fila seleccionada (casilla marcada): fondo neutro tenue, sin significado fiscal. */
+tr.filaMarcada > td {
+  background: #f1f6fb;
 }
 
 /* Detalle desplegado: mismo acento del tipo con fondo aún más tenue. Otros tipos conservan el fondo neutro. */
@@ -235,13 +229,13 @@ tr.detalle > td {
 }
 
 tr.detalleFE > td {
-  background: #f9fbfe;
-  box-shadow: inset 4px 0 0 #6d9bd1;
+  background: #fbfcfe;
+  box-shadow: inset 3px 0 0 #6d9bd1;
 }
 
 tr.detalleNCE > td {
-  background: #fffdf5;
-  box-shadow: inset 4px 0 0 #d9bb4e;
+  background: #fffefa;
+  box-shadow: inset 3px 0 0 #d9bb4e;
 }
 
 /*
@@ -249,7 +243,8 @@ tr.detalleNCE > td {
  * Prefijada con la fila del tipo para superar a «.cell span» (gris 12.5px) de la lista estándar sin depender del orden de carga de los módulos.
  */
 .filaFE .tipoFE,
-.filaNCE .tipoNCE {
+.filaNCE .tipoNCE,
+.tipoOtro {
   display: inline-block;
   border: 1px solid;
   border-radius: 4px;
@@ -271,12 +266,18 @@ tr.detalleNCE > td {
   border-color: #dfc56a;
 }
 
+.tipoOtro {
+  color: #2f4357;
+  background: #f1f4f7;
+  border-color: #c7d1db;
+}
+
 /*
- * PRO-334-R02 (R01-F001): texto secundario legible (WCAG AA ≥ 4.5:1) SOLO sobre los fondos de tipo. #53687a da 5.08:1 en el peor caso (hover/foco FE #e9f1fb).
- * Filas: únicamente los metadatos directos de la celda Documento (1.ª) y Cliente (3.ª). Detalle: <dt>, <small> y <p> sin role (todos «ui.muted»); los avisos con role quedan fuera.
+ * PRO-334-R02 (R01-F001): texto secundario legible (WCAG AA ≥ 4.5:1). #53687a da 5.08:1 aun sobre el antiguo hover FE #e9f1fb; sobre blanco/#f7f9fb es mayor.
+ * PRO-195-UX-R01: filas = metadatos directos de Nro. Documento (4.ª) y Fecha emisión (5.ª). Detalle: <dt>, <small> y <p> sin role (todos «ui.muted»); los avisos con role quedan fuera.
  */
-tr.filaFE > td:is(:nth-child(1), :nth-child(3)) > div > span,
-tr.filaNCE > td:is(:nth-child(1), :nth-child(3)) > div > span,
+tr.filaFE > td:is(:nth-child(4), :nth-child(5)) > div > span,
+tr.filaNCE > td:is(:nth-child(4), :nth-child(5)) > div > span,
 tr.detalleFE > td :is(dt, small, p:not([role])),
 tr.detalleNCE > td :is(dt, small, p:not([role])) {
   color: #53687a;
@@ -297,7 +298,246 @@ tr.detalleNCE > td :is(dt, small, p:not([role])) {
 
 /* ---- Tabla (punto 12): ancho mínimo propio en escritorio; en pantallas angostas cada documento pasa a tarjeta (ver media query al final). ---- */
 table.tablaDocs {
-  min-width: 860px;
+  min-width: 1180px;
+}
+
+/* PRO-195-UX-R01 (punto 2): densidad compacta y separadores discretos (solo esta tabla; la lista estándar no cambia). */
+table.tablaDocs > thead th {
+  white-space: nowrap;
+}
+
+table.tablaDocs > tbody > tr > td {
+  border-bottom-color: #edf1f5;
+  vertical-align: middle;
+}
+
+/* Columnas de control (expandir y seleccionar): angostas y centradas. */
+.colControl {
+  width: 40px;
+  text-align: center;
+}
+
+.casilla {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: #1d5799;
+  cursor: pointer;
+}
+
+.casilla:focus-visible {
+  outline: 3px solid rgba(15, 156, 165, 0.4);
+  outline-offset: 2px;
+}
+
+.expandir {
+  appearance: none;
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 0;
+  color: #24506f;
+  background: transparent;
+  cursor: pointer;
+}
+
+.expandir:hover,
+.expandirActivo {
+  border-color: #c9d8e4;
+  background: #f5f8fb;
+}
+
+.expandir:focus-visible,
+.accion:focus-visible {
+  outline: 3px solid rgba(15, 156, 165, 0.45);
+  outline-offset: 1px;
+}
+
+.expandir svg,
+.accion svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Acciones de la fila (punto 3): iconos de CONTORNO, sin fondo relleno; color por función (no por resultado fiscal). Área táctil 32px. */
+.accion {
+  appearance: none;
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.accion:hover {
+  border-color: currentColor;
+  background: #ffffff;
+}
+
+.accion[aria-disabled="true"] {
+  color: #8a99a8;
+  cursor: not-allowed;
+}
+
+.accion[aria-disabled="true"]:hover {
+  border-color: #d5dde5;
+}
+
+.accionKude {
+  color: #b42318;
+}
+
+.accionXml {
+  color: #1d5799;
+}
+
+.accionConsulta {
+  color: #24506f;
+}
+
+.accionCorreo {
+  color: #8a5a00;
+}
+
+.accionEventos {
+  color: #3f4f5f;
+}
+
+.sinCorte {
+  white-space: nowrap;
+}
+
+.razon {
+  min-width: 180px;
+  max-width: 320px;
+  overflow-wrap: anywhere;
+}
+
+.moneda {
+  color: #53687a;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* Estado (punto 4): UN estado principal (símbolo de contorno + texto) y la fase técnica real como línea secundaria. */
+.estado {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.estadoPrincipal {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  white-space: nowrap;
+}
+
+.estadoPrincipal .icono {
+  min-width: 28px;
+  min-height: 28px;
+}
+
+.estadoAprobado {
+  color: #12703f;
+}
+
+.estadoRechazado {
+  color: #b42318;
+}
+
+.estadoPendiente {
+  color: #8a5a00;
+}
+
+.estadoSinInfo {
+  color: #4a5a6a;
+}
+
+.estadoAnulado {
+  color: #3f4f5f;
+}
+
+.estadoSecundario {
+  display: block;
+  color: #53687a;
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+/* Eventos (punto 6): estado registrado si existe + control deshabilitado con su motivo (sin API). */
+.eventos {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.sinEventos {
+  color: #53687a;
+  font-size: 12.5px;
+}
+
+.eventoRegistrado {
+  color: #2f4357;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+/* Aviso del resultado de una consulta lanzada desde la fila, y barra de selección. */
+.anuncio {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 12px;
+  margin: 0 0 8px;
+}
+
+.anuncioAcciones {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.barraSeleccion {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  padding: 6px 14px;
+  border-bottom: 1px solid #edf2f5;
+  color: #2f4357;
+  font-size: 12.5px;
+}
+
+/* Segunda capa: los cuatro estados técnicos independientes con su nombre y texto corto. */
+.estadosTecnicos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 16px;
+  margin: 2px 0 4px;
+  padding: 0;
+  list-style: none;
+}
+
+.estadosTecnicos li {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
 }
 
 /* PRO-342-UX-R02 (UX-F002): el contenedor de la tabla mide su ANCHO REAL (con barra lateral, zoom, etc.) para decidir la tarjeta móvil (ver final del archivo). */
@@ -306,26 +546,17 @@ table.tablaDocs {
 }
 
 /*
- * ---- Iconos de estado (puntos 2–4): cinco posiciones FIJAS por fila (Envío · XML/CDC · SIFEN · Correo + aviso «!» opcional, reservado aunque esté vacío).
- * Círculo de 28px con símbolo propio de trazo grueso (el color nunca es la única señal) y área táctil ≥ 40px. Contraste: símbolo blanco sobre fondos oscuros (≥ 4.5:1),
- * símbolo oscuro sobre ámbar; «sin información» en contorno oscuro sobre blanco (≥ 3:1 como objeto gráfico).
+ * ---- Iconos de estado: símbolo de CONTORNO (PRO-195-UX-R01, sin círculo relleno) con área táctil; nombre accesible = texto completo; el color nunca es la única señal.
+ * En la fila: el símbolo del estado principal y el aviso técnico «!». En la segunda capa: los cuatro estados técnicos (Envío · XML/CDC · SIFEN · Correo).
  */
-.iconosEstado {
-  display: flex;
-  flex-wrap: nowrap;
-  align-items: center;
-  gap: 2px;
-}
-
-.icono,
-.iconoVacio {
+.icono {
   display: inline-flex;
-  min-width: 40px;
-  min-height: 40px;
+  min-width: 36px;
+  min-height: 36px;
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  border-radius: 8px;
+  border-radius: 6px;
 }
 
 .icono {
@@ -344,49 +575,58 @@ table.tablaDocs {
 
 .iconoCirculo {
   display: inline-flex;
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   align-items: center;
   justify-content: center;
-  border: 2px solid transparent;
-  border-radius: 50%;
 }
 
+/* PRO-195-UX-R01 (punto 1): símbolos de CONTORNO sin círculo relleno; el color va en el trazo y el símbolo distingue además del color. */
 .iconoCirculo svg {
   width: 18px;
   height: 18px;
   fill: none;
   stroke: currentColor;
-  stroke-width: 2.4;
+  stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
 
 .iconoOk .iconoCirculo {
-  color: #ffffff;
-  background: #12703f;
+  color: #12703f;
 }
 
 .iconoInfo .iconoCirculo {
-  color: #ffffff;
-  background: #1d5799;
+  color: #1d5799;
 }
 
 .iconoAviso .iconoCirculo {
-  color: #3d2a00;
-  background: #f2b632;
-  border-color: #8a6200;
+  color: #8a5a00;
 }
 
 .iconoError .iconoCirculo {
-  color: #ffffff;
-  background: #b42318;
+  color: #b42318;
 }
 
 .iconoNeutro .iconoCirculo {
-  color: #3f4f5f;
-  background: #ffffff;
-  border-color: #5b6b7b;
+  color: #4a5a6a;
+}
+
+.estadoAprobado .iconoCirculo {
+  color: #12703f;
+}
+
+.estadoRechazado .iconoCirculo {
+  color: #b42318;
+}
+
+.estadoPendiente .iconoCirculo {
+  color: #8a5a00;
+}
+
+.estadoSinInfo .iconoCirculo,
+.estadoAnulado .iconoCirculo {
+  color: #4a5a6a;
 }
 
 /* Tooltip (punto 5): fijo a la ventana, medido y ubicado por posicionTooltip; no lo recorta el scroll de la tabla ni la última fila. Se puede pasar el puntero sobre él. */
@@ -408,62 +648,7 @@ table.tablaDocs {
   overflow-wrap: anywhere;
 }
 
-/* ---- Leyenda (punto 6): una línea con el orden de los iconos y el significado de los colores. ---- */
-.leyenda {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 4px 16px;
-  padding: 8px 14px;
-  border-bottom: 1px solid #edf2f5;
-  color: #3d5165;
-  font-size: 12.5px;
-}
-
-.leyendaOrden strong {
-  color: #173b59;
-}
-
-.leyendaColores {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 2px 6px;
-}
-
-.punto {
-  display: inline-block;
-  width: 10px;
-  height: 10px;
-  margin-left: 6px;
-  border: 1.5px solid transparent;
-  border-radius: 50%;
-}
-
-.punto.iconoOk {
-  background: #12703f;
-}
-
-.punto.iconoInfo {
-  background: #1d5799;
-}
-
-.punto.iconoAviso {
-  background: #f2b632;
-  border-color: #8a6200;
-}
-
-.punto.iconoError {
-  background: #b42318;
-}
-
-.punto.iconoNeutro {
-  background: #ffffff;
-  border-color: #5b6b7b;
-}
-
-/* ---- Detalle, primera capa (punto 8): cabecera con acciones de icono y cuatro datos fiscales alineados. ---- */
+/* ---- Detalle, primera capa (punto 8): cabecera y cuatro datos fiscales alineados (la consulta SIFEN pasó a la fila, PRO-195-UX-R01). ---- */
 .detalleCabecera {
   display: flex;
   flex-wrap: wrap;
@@ -472,11 +657,6 @@ table.tablaDocs {
   gap: 4px 16px;
   margin: 4px 0;
   color: #173d63;
-}
-
-.herramientas {
-  display: inline-flex;
-  gap: 6px;
 }
 
 .fiscal {
@@ -651,15 +831,12 @@ table.tablaDocs {
   .fiscal dt {
     grid-column: 1 / -1;
   }
-
-  .leyenda {
-    justify-content: flex-start;
-  }
 }
 
 /*
- * Pantallas angostas (≤ 720px, punto 12): cada documento es una tarjeta (Documento | Total / Cliente | Fecha / Estados | Acciones) sin scroll horizontal; el
- * encabezado queda como barra de orden. Las filas de documento se reconocen por tener 6 celdas; el detalle (1 celda) ocupa el ancho completo.
+ * Pantallas angostas (≤ 720px, punto 12; PRO-195-UX-R01): cada documento es una tarjeta, sin scroll horizontal, que conserva identidad (número, tipo, serie), estado,
+ * razón social, monto, RUC/CI, fecha, acciones y eventos. El encabezado queda como barra de orden (con «seleccionar todos»). Las filas de documento se reconocen por
+ * tener 10 celdas; el detalle (1 celda) ocupa el ancho completo.
  */
 @media (max-width: 720px) {
   table.tablaDocs {
@@ -669,6 +846,7 @@ table.tablaDocs {
   table.tablaDocs > thead > tr {
     display: flex;
     flex-wrap: wrap;
+    align-items: center;
     gap: 4px 10px;
     padding: 6px 12px;
   }
@@ -679,7 +857,8 @@ table.tablaDocs {
     padding: 0;
   }
 
-  table.tablaDocs > thead th:last-child {
+  /* Sin orden propio en la tarjeta: Detalle, Acciones, RUC/CI y Eventos. */
+  table.tablaDocs > thead th:is(:nth-child(1), :nth-child(3), :nth-child(6), :nth-child(10)) {
     display: none;
   }
 
@@ -688,86 +867,115 @@ table.tablaDocs {
   }
 
   /*
-   * PRO-342-UX-R02 (UX-F002): por defecto Estados y Acciones van en FILAS SEPARADAS (cinco posiciones de 40px = 208px y dos botones de 36px = 78px nunca se
-   * superponen, ni a 320px). Solo si el contenedor real tiene ancho de sobra (≥ 440px) comparten fila (ver @container más abajo).
+   * PRO-342-UX-R02 (UX-F002) se mantiene: por defecto estado, acciones y eventos van en FILAS SEPARADAS (nunca se superponen, ni a 320px). Solo si el contenedor
+   * real tiene ancho de sobra (≥ 440px) se agrupan (ver @container más abajo).
    */
-  table.tablaDocs > tbody > tr:has(> td:nth-child(6)) {
+  table.tablaDocs > tbody > tr:has(> td:nth-child(10)) {
     display: grid;
     grid-template-areas:
-      "doc total"
-      "cliente fecha"
-      "estados estados"
-      "acciones acciones";
-    grid-template-columns: minmax(0, 1fr) auto;
+      "exp doc doc"
+      "sel estado estado"
+      ". razon monto"
+      ". ruc fecha"
+      ". acciones acciones"
+      ". eventos eventos";
+    grid-template-columns: 40px minmax(0, 1fr) auto;
     border-bottom: 1px solid #e3ebf1;
   }
 
   table.tablaDocs > tbody > tr > td {
     display: block;
     border: 0;
-    padding: 6px 12px;
+    padding: 4px 10px;
   }
 
-  table.tablaDocs > tbody > tr:has(> td:nth-child(6)) > td:nth-child(1) {
+  table.tablaDocs > tbody > tr:has(> td:nth-child(10)) > td:nth-child(1) {
+    grid-area: exp;
+    padding: 4px;
+  }
+
+  table.tablaDocs > tbody > tr:has(> td:nth-child(10)) > td:nth-child(2) {
+    grid-area: sel;
+    padding: 4px;
+  }
+
+  table.tablaDocs > tbody > tr:has(> td:nth-child(10)) > td:nth-child(3) {
+    grid-area: acciones;
+  }
+
+  table.tablaDocs > tbody > tr:has(> td:nth-child(10)) > td:nth-child(4) {
     grid-area: doc;
   }
 
-  table.tablaDocs > tbody > tr:has(> td:nth-child(6)) > td:nth-child(2) {
+  table.tablaDocs > tbody > tr:has(> td:nth-child(10)) > td:nth-child(5) {
     grid-area: fecha;
     font-size: 12.5px;
     text-align: right;
   }
 
-  table.tablaDocs > tbody > tr:has(> td:nth-child(6)) > td:nth-child(3) {
-    grid-area: cliente;
+  table.tablaDocs > tbody > tr:has(> td:nth-child(10)) > td:nth-child(6) {
+    grid-area: ruc;
+    font-size: 12.5px;
   }
 
-  table.tablaDocs > tbody > tr:has(> td:nth-child(6)) > td:nth-child(4) {
-    grid-area: total;
+  table.tablaDocs > tbody > tr:has(> td:nth-child(10)) > td:nth-child(7) {
+    grid-area: razon;
+    max-width: none;
+  }
+
+  table.tablaDocs > tbody > tr:has(> td:nth-child(10)) > td:nth-child(8) {
+    grid-area: monto;
     text-align: right;
   }
 
-  table.tablaDocs > tbody > tr:has(> td:nth-child(6)) > td:nth-child(5) {
-    grid-area: estados;
+  table.tablaDocs > tbody > tr:has(> td:nth-child(10)) > td:nth-child(9) {
+    grid-area: estado;
   }
 
-  table.tablaDocs > tbody > tr:has(> td:nth-child(6)) > td:nth-child(6) {
-    grid-area: acciones;
-    align-self: center;
-    padding-top: 0;
-    text-align: right;
+  table.tablaDocs > tbody > tr:has(> td:nth-child(10)) > td:nth-child(10) {
+    grid-area: eventos;
   }
 
-  /* Red de seguridad: si aun así faltara ancho, los iconos (40px) y botones (36px) pasan a la línea siguiente en su orden; nunca se encogen ni se superponen. */
-  table.tablaDocs .iconosEstado,
-  table.tablaDocs .accionesLinea {
+  /* Fecha y hora en una línea dentro de la tarjeta. */
+  table.tablaDocs > tbody > tr:has(> td:nth-child(10)) > td:nth-child(5) > div {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0 6px;
+  }
+
+  /* Red de seguridad: si faltara ancho, las acciones pasan a la línea siguiente en su orden; nunca se encogen ni se superponen. */
+  table.tablaDocs .accionesLinea,
+  table.tablaDocs .eventos,
+  table.tablaDocs .estado {
     flex-wrap: wrap;
   }
 
-  /* El acento del tipo recorre toda la columna izquierda de la tarjeta (también la fila de acciones cuando va separada). */
-  table.tablaDocs tr.filaFE > td:is(:nth-child(3), :nth-child(5), :nth-child(6)) {
-    box-shadow: inset 4px 0 0 #6d9bd1;
+  /* El acento del tipo recorre la columna izquierda de la tarjeta (celdas de control). */
+  table.tablaDocs tr.filaFE > td:nth-child(2) {
+    box-shadow: inset 3px 0 0 #6d9bd1;
   }
 
-  table.tablaDocs tr.filaNCE > td:is(:nth-child(3), :nth-child(5), :nth-child(6)) {
-    box-shadow: inset 4px 0 0 #d9bb4e;
+  table.tablaDocs tr.filaNCE > td:nth-child(2) {
+    box-shadow: inset 3px 0 0 #d9bb4e;
   }
 
-  /* Ancho real suficiente (208 + 78 + 4 × 12 de relleno = 334px, con margen): Estados | Acciones en la misma fila, como en UX-R01. */
+  /* Ancho real suficiente: estado junto al número, acciones junto a eventos. */
   @container documentos (min-width: 440px) {
-    table.tablaDocs > tbody > tr:has(> td:nth-child(6)) {
+    table.tablaDocs > tbody > tr:has(> td:nth-child(10)) {
       grid-template-areas:
-        "doc total"
-        "cliente fecha"
-        "estados acciones";
+        "exp doc estado"
+        "sel razon monto"
+        ". ruc fecha"
+        ". acciones eventos";
     }
 
-    table.tablaDocs > tbody > tr:has(> td:nth-child(6)) > td:nth-child(6) {
-      padding-top: 6px;
+    table.tablaDocs > tbody > tr:has(> td:nth-child(10)) > td:nth-child(9) {
+      text-align: right;
     }
 
-    table.tablaDocs tr:is(.filaFE, .filaNCE) > td:nth-child(6) {
-      box-shadow: none;
+    table.tablaDocs > tbody > tr:has(> td:nth-child(10)) > td:nth-child(9) .estado {
+      justify-content: flex-end;
     }
   }
 }

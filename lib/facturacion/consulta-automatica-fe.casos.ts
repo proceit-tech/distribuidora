@@ -335,7 +335,7 @@ export async function verificarCasosPro338(): Promise<string[]> {
   }
 
   // ── P338-15 consulta manual autorizada: conservada
-  cierto("P338-15: la consulta manual sigue con EDITAR y la función original (sin flujoNce), y la pantalla la ofrece y relee la lista", /prepararFacturacion\("EDITAR"\)/.test(rutaManual) && !/flujoNce/.test(rutaManual) && /Consultar estado en SIFEN/.test(pagina) && /\{editar \? \(/.test(pagina) && /setRecarga\(\(n\) => n \+ 1\)/.test(pagina.slice(pagina.indexOf("async function reconsultar"), pagina.indexOf("async function enviarAlGateway"))));
+  cierto("P338-15 (actualizado PRO-195): la consulta manual sigue con EDITAR y la función original (sin flujoNce), y la pantalla la ofrece (acción de la fila, visible solo con permiso editar) y relee la lista", /prepararFacturacion\("EDITAR"\)/.test(rutaManual) && !/flujoNce/.test(rutaManual) && /Consultar estado en SIFEN/.test(pagina) && /accionesFila\(kudeDisponible\(d\), \{ editar \}/.test(pagina) && /clave: "consulta", visible: permisos\.editar/.test(leer("lib/facturacion/documentos-tabla.ts")) && /setRecarga\(\(n\) => n \+ 1\)/.test(pagina.slice(pagina.indexOf("async function reconsultar"), pagina.indexOf("async function enviarAlGateway"))));
 
   // ── P338-16 reinicio del proceso: lease vencido recupera el documento
   cierto("P338-16: un lease vencido vuelve a ser elegible y programar libera el lease; si programar falla, el lease vence solo", /coalesce\(d\.consulta_lease_hasta, '-infinity'\) < now\(\)/.test(reservar) && /consulta_lease_hasta = NULL/.test(programar) && /el lease vence solo/.test(auto));
@@ -346,7 +346,7 @@ export async function verificarCasosPro338(): Promise<string[]> {
 
   // ── P338-18 color por tipo (PRO-334) independiente del estado fiscal
   // PRO-342-UX-R01: la cápsula .sifen (sin uso desde R04) se retiró del CSS; el estado fiscal va en el icono SIFEN y la fila solo lleva la clase del TIPO (PRO-334).
-  cierto("P338-18 (actualizado UX-R01): el estado fiscal va en el icono SIFEN (no en la fila); la fila solo suma la clase del tipo y la presentación no depende del tipo; la cápsula .sifen ya no existe", /<tr className=\{clases\(ui\.row, CLASE_FILA_TIPO\[d\.tipo\]\)\} data-tipo=\{d\.tipo\}>/.test(pagina) && !/tipo/.test(leer("lib/facturacion/presentacion-sifen.ts").split("export function presentacionSifen")[1].split("\n")[0]) && !/\.sifen\b/.test(css.replace(/\/\*[\s\S]*?\*\//g, "")));
+  cierto("P338-18 (actualizado PRO-195): el estado fiscal va en la celda Estado (no en la fila); la fila solo suma la clase del tipo (y la de selección) y la presentación no depende del tipo; la cápsula .sifen ya no existe", /<tr className=\{clases\(ui\.row, CLASE_FILA_TIPO\[d\.tipo\], marcado && estilos\.filaMarcada\)\} data-tipo=\{d\.tipo\}>/.test(pagina) && !/tipo/.test(leer("lib/facturacion/presentacion-sifen.ts").split("export function presentacionSifen")[1].split("\n")[0]) && !/\.sifen\b/.test(css.replace(/\/\*[\s\S]*?\*\//g, "")));
   igual("P338-18: FE y NCE con el mismo estado reciben el mismo tono", presentacionSifen({ estadoLocal: "ENVIADO", estadoSifen: "PENDIENTE" }).tono, "pendiente");
 
   // ── P338-19 accesibilidad: texto siempre presente, contraste, sin desborde
@@ -356,7 +356,7 @@ export async function verificarCasosPro338(): Promise<string[]> {
   igual("P338-19: sin consultas o con la última consulta OK no hay alerta (una alerta antigua no se muestra como actual)", [alertaConsulta({ ultimaConsultaResultado: null }), alertaConsulta({ ultimaConsultaResultado: "OK" })], [null, null]);
 
   // ── P338-20 KuDE sin CDC / RECHAZADO: comportamiento previo
-  cierto("P338-20: el acceso al KuDE sigue decidido por kudeDisponible y abrirKude, sin depender del tono fiscal", /kudeDisponible\(d\) \?/.test(pagina) && /onClick=\{\(\) => abrirKude\(d\)\}/.test(pagina) && !/kude/i.test(leer("lib/facturacion/presentacion-sifen.ts").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "")) /* R04: solo el código (los comentarios pueden mencionar el KuDE) */);
+  cierto("P338-20 (actualizado PRO-195): el acceso al KuDE sigue decidido por kudeDisponible y abrirKude, sin depender del tono fiscal", /accionesFila\(kudeDisponible\(d\),/.test(pagina) && /alActivar=\{\(\) => abrirKude\(d\)\}/.test(pagina) && !/kude/i.test(leer("lib/facturacion/presentacion-sifen.ts").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "")) /* R04: solo el código (los comentarios pueden mencionar el KuDE) */);
   igual("P338-20: RECHAZADO sin CDC sigue siendo «Rechazado» (estado persistido), sin alerta si la última consulta fue OK", [presentacionSifen({ estadoLocal: "ENVIADO", estadoSifen: "RECHAZADO" }).tono, alertaConsulta({ ultimaConsultaResultado: "OK" })], ["rechazado", null]);
   igual("Cancelado / Inutilizado conservan su estado propio (no se presentan como rechazo)", [presentacionSifen({ estadoLocal: "ENVIADO", estadoSifen: "CANCELADO" }), presentacionSifen({ estadoLocal: "ENVIADO", estadoSifen: "INUTILIZADO" })].map((x) => `${x.tono}:${x.texto}`), ["anulado:Cancelado", "anulado:Inutilizado"]);
 
