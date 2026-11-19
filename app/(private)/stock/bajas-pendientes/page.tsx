@@ -38,25 +38,35 @@ export default function BajasPendientesPage() {
   const [deposito, setDeposito] = useState("");
   const [pagina, setPagina] = useState(1);
   const [porPagina, setPorPagina] = useState<number>(TAMANOS_PAGINA_BAJAS[0]);
-  const [datos, setDatos] = useState<Datos | null>(null);
+  const [datosLeidos, setDatos] = useState<Datos | null>(null);
+  /** Generación de la vista a la que pertenecen datosLeidos (se fija junto con setDatos). */
+  const [generacionDatos, setGeneracionDatos] = useState(0);
   const [catalogo, setCatalogo] = useState<CatalogoFiltrosBajas>(CATALOGO_VACIO);
   const [errorListado, setErrorListado] = useState("");
   const [resultado, setResultado] = useState<ResultadoConfirmacion | null>(null);
   const [cargando, setCargando] = useState(true);
   const [confirmando, setConfirmando] = useState<string | null>(null);
   const contexto = useRef(crearContextoBajas());
+  /** Generación de la vista vigente para las lecturas (se fija en el efecto, antes de pedir datos; nunca en el render). */
+  const generacionVigente = useRef(0);
 
   const consulta = useMemo(() => consultaBajas({ estado, sucursal, deposito, buscar, pagina, porPagina }), [estado, sucursal, deposito, buscar, pagina, porPagina]);
-  // PRE-VM-R02-C: «cargando» pasa a true en el MISMO render en que cambia la consulta (ajuste de estado durante el render con la consulta
-  // previa, patrón documentado de React), no en el cuerpo del efecto. Así A→B→A vuelve a ocultar y bloquear las filas hasta la nueva lectura.
-  const [consultaPrevia, setConsultaPrevia] = useState(consulta);
-  if (consultaPrevia !== consulta) {
-    setConsultaPrevia(consulta);
+  // PRE-VM-R02-C-R01/F002: cada cambio de consulta abre una GENERACIÓN nueva de la vista en el MISMO render (ajuste de estado con el valor
+  // previo, patrón documentado de React; no en el cuerpo del efecto). Los datos se identifican por clave Y generación: en A→B→A los datos
+  // de la primera A (misma clave, generación anterior) no reaparecen; se ocultan y se bloquean desde el cambio hasta la nueva lectura.
+  const [vista, setVista] = useState({ consulta, generacion: 1 });
+  if (vista.consulta !== consulta) {
+    setVista({ consulta, generacion: vista.generacion + 1 });
     setCargando(true);
   }
+  const datos = datosLeidos !== null && generacionDatos === vista.generacion ? datosLeidos : null;
 
   /** Lee la consulta del ticket; aplica la respuesta SOLO si el ticket sigue vigente (generación y consulta). */
   const leer = useCallback(async (ticket: TicketBajas) => {
+    // Inicio protegido: un ticket ya invalidado (filtros cambiados o relectura posterior) no arranca ni toca «cargando».
+    if (!contexto.current.vigente(ticket)) return;
+    const generacion = generacionVigente.current;
+
     setCargando(true);
     try {
       const r = await fetch(`/api/stock/bajas-pendientes?${ticket.clave}`, { cache: "no-store" });
@@ -70,12 +80,14 @@ export default function BajasPendientesPage() {
         return;
       }
       setDatos({ ...j, clave: ticket.clave });
+      setGeneracionDatos(generacion);
       setCatalogo(j.filtros ?? CATALOGO_VACIO);
       // Solo el error de CARGA; el resultado de una confirmación no se toca.
       setErrorListado("");
     } catch (e) {
       if (!contexto.current.vigente(ticket)) return;
       setDatos(null);
+      setGeneracionDatos(generacion);
       setErrorListado(e instanceof Error ? e.message : "No fue posible cargar las bajas pendientes.");
     } finally {
       if (contexto.current.vigente(ticket)) setCargando(false);
@@ -84,12 +96,14 @@ export default function BajasPendientesPage() {
 
   // El contexto cambia YA (invalida respuestas en vuelo y oculta las filas anteriores); solo la lectura espera el retardo de la búsqueda.
   useEffect(() => {
+    // La generación de la vista se publica para las lecturas ANTES de invalidar el contexto y programar la lectura.
+    generacionVigente.current = vista.generacion;
     const ticket = contexto.current.cambiar(consulta);
 
     const t = setTimeout(() => void leer(ticket), 250);
 
     return () => clearTimeout(t);
-  }, [consulta, leer]);
+  }, [consulta, vista.generacion, leer]);
 
   const vigentes = datos !== null && datos.clave === consulta;
   const bajas = vigentes ? datos.bajas : [];

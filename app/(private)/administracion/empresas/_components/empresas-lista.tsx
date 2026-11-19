@@ -61,9 +61,15 @@ export function EmpresasLista({ empresas }: { empresas: EmpresaFila[] }) {
   const totalPaginas = Math.max(1, Math.ceil(filtradas.length / PAGE_SIZE));
 
   // PRE-VM-R02-C: la página vuelve a 1 en los propios manejadores que cambian búsqueda, estado u
-  // orden (no en un efecto). La página visible se acota en render: nunca supera totalPaginas, y la
-  // navegación parte de la página visible, por lo que una página inválida no reaparece cuando
-  // aumentan los registros.
+  // orden (no en un efecto).
+  // PRE-VM-R02-C-R01/F001: si el total de páginas baja por debajo de la página guardada, el ESTADO se
+  // corrige en el mismo render (ajuste de estado durante el render con condición, patrón documentado
+  // de React; converge porque después pagina <= totalPaginas). Así la página antigua no reaparece
+  // cuando los registros vuelven a aumentar. paginaVista solo cubre este render descartado.
+  if (pagina > totalPaginas) {
+    setPagina(totalPaginas);
+  }
+
   const paginaVista = Math.min(pagina, totalPaginas);
 
   const paginaActual = useMemo(
