@@ -572,7 +572,7 @@ export async function verificarCasosPoliticaStockPro354(): Promise<string[]> {
       const r409 = resultadoConfirmacion(b, false, { error: "Stock disponible insuficiente." });
       const ok = resultadoConfirmacion(b, true, { numero: "MOV-9" });
       const rep = resultadoConfirmacion(b, true, { numero: "MOV-9", repetido: true });
-      const leerFn = pagina.slice(pagina.indexOf("const leer = useCallback"), pagina.indexOf("useEffect(() => {"));
+      const leerFn = pagina.slice(pagina.indexOf("const leer = useCallback"), pagina.indexOf("useLayoutEffect(() => {"));
       const cambiar = pagina.slice(pagina.indexOf("function cambiarFiltro"), pagina.indexOf("async function confirmar"));
 
       igual("PRO354-R02-21 resultado de confirmación identificado por la factura: 409 conserva el motivo; éxito y repetido con el movimiento",

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import ui from "@/components/ui/lista-padrao/lista.module.css";
 import { formatearDecimalTexto } from "@/lib/formato/decimal-texto";
@@ -95,7 +95,10 @@ export default function BajasPendientesPage() {
   }, []);
 
   // El contexto cambia YA (invalida respuestas en vuelo y oculta las filas anteriores); solo la lectura espera el retardo de la búsqueda.
-  useEffect(() => {
+  // PRE-VM-R02-C-R02: useLayoutEffect corre de forma síncrona en el commit, antes de presentar la pantalla nueva y antes de que pueda
+  // ejecutarse cualquier respuesta o fin de confirmación pendiente. Desde el commit, la generación y el contexto son los de la vista
+  // comprometida: una respuesta anterior ya no es vigente (no toca datos, catálogo, error ni carga) y releer() usa el contexto comprometido.
+  useLayoutEffect(() => {
     // La generación de la vista se publica para las lecturas ANTES de invalidar el contexto y programar la lectura.
     generacionVigente.current = vista.generacion;
     const ticket = contexto.current.cambiar(consulta);
