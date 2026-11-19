@@ -9,7 +9,9 @@ import { contador } from "@/lib/clientes/contador-casos";
 
 type Informe = {
   total: number; literales: { ok: number; fallas: Array<{ err: string }> }; reconstruidas: { ok: number; variantes: number; fallas: Array<{ err: string; sql: string }> };
-  fragmentos: { cubiertos: number }; reconstruidasPorArchivo: Record<string, number>; sugerencias: unknown[]; noVerificables: Array<{ id: string; motivo: string }>; corregidas: unknown[];
+  fragmentos: { cubiertos: number; sinAnfitrion: unknown[]; conAnfitrionaEnFalla: unknown[] }; reconstruidasPorArchivo: Record<string, number>; sugerencias: unknown[];
+  noVerificables: Array<{ id: string; motivo: string }>; corregidas: unknown[];
+  anfitrionas: { total: number; ok: number; variantes: number }; interpretadas: { ok: number; variantes: number };
 };
 type Modulo = {
   escanear: (s: string) => Array<{ partes: Array<{ t: string; v: string }>; nombre: string | null; params: string[] | null }>;
@@ -126,6 +128,128 @@ export async function verificarCasosVerificadorC1(): Promise<string[]> {
     preparados(`const q = ${BT}UPDATE t SET \${sets.join(", ")}\r\n  WHERE id = $1${BT};`).inf.noVerificables[0].id === id0, preparados(`const q = ${BT}UPDATE t SET \${sets.join(", ")} WHERE id = $2${BT};`).inf.noVerificables[0].id === id0,
   ], [true, false]);
 
+  // ── PRE-VM-R02-D: consultas anfitrionas, CTE dependientes e intérprete acotado
+  // Envoltura q(sql, adicional, extra) → `WITH ${cte}, ${adicional} ${sql}`; CTE común armado por una función auxiliar con push condicional y la clausura p(); CTE de la vista con pe().
+  const ANF = String.raw`function construir(f: F, esq: E, p: (v: unknown) => string): string {
+  const cond: string[] = [];
+  if (f.sucursal) cond.push(${"`"}d.sucursal_id = ${"${"}p(f.sucursal)}${"`"});
+  const dsc = esq.descuentos
+    ? ${"`"}SELECT nd.id FROM nce_descuentos nd JOIN docs n ON n.id = nd.nce_id${"`"}
+    : ${"`"}SELECT NULL::uuid AS id WHERE false${"`"};
+  return ${"`"}docs AS (SELECT d.id, d.estado FROM documentos d WHERE d.empresa_id = $1 ${"${"}cond.map((x) => ${"`"}AND ${"${"}x}${"`"}).join(" ")}), dsc AS (${"${"}dsc}), fil AS (SELECT docs.* FROM docs)${"`"};
+}
+export async function leer(db: Db, empresaId: string, filtros: F) {
+  const esq = await leerEsquema(db);
+  if (!esq.base) return null;
+  const params: unknown[] = [empresaId];
+  const p = (v: unknown) => { params.push(v); return ${"`"}$${"${"}params.length}${"`"}; };
+  const cte = construir(filtros, esq, p);
+  const base = params.length;
+  const q = async (sql: string, adicional = "", extra: unknown[] = []) =>
+    (await db.query(${"`"}WITH ${"${"}cte}${"${"}adicional ? ${"`"}, ${"${"}adicional}${"`"} : ""} ${"${"}sql}${"`"}, [...params, ...extra])).rows;
+  const pe = (k: number) => ${"`"}$${"${"}base + k}${"`"};
+  const total = await q(${"`"}SELECT count(*) FROM fil${"`"});
+  const extra: unknown[] = [];
+  const condLista: string[] = [];
+  if (filtros.estado) { extra.push(filtros.estado); condLista.push(${"`"}estado = ${"${"}pe(extra.length)}${"`"}); }
+  const lista = ${"`"}lista AS (SELECT * FROM fil${"${"}condLista.length ? ${"`"} WHERE ${"${"}condLista.join(" AND ")}${"`"} : ""})${"`"};
+  const filas = await q(${"`"}SELECT id FROM lista ORDER BY id LIMIT ${"${"}pe(extra.length + 1)}${"`"}, lista, [...extra, 10]);
+  return { total, filas };
+}`;
+  const anf = preparados(ANF);
+  const MAX = "WITH docs AS (SELECT d.id, d.estado FROM documentos d WHERE d.empresa_id = $1 AND d.sucursal_id = $2), dsc AS (SELECT nd.id FROM nce_descuentos nd JOIN docs n ON n.id = nd.nce_id), fil AS (SELECT docs.* FROM docs), lista AS (SELECT * FROM fil WHERE estado = $3) SELECT id FROM lista ORDER BY id LIMIT $4";
+
+  igual("R02-D anfitriona: la plantilla pasada a q(…) que depende del CTE común NUNCA se prepara suelta; se prepara la consulta COMPLETA «WITH docs…, fil… SELECT … FROM fil» y cuenta como anfitriona válida", [
+    anf.vistos.includes("SELECT count(*) FROM fil"), anf.vistos.every((s) => s.startsWith("WITH docs AS (")), anf.inf.anfitrionas.total, anf.inf.anfitrionas.ok, anf.inf.noVerificables.length, anf.inf.literales.ok,
+  ], [false, true, 2, 2, 0, 0]);
+  igual("R02-D CTE adicional y parámetros: la consulta de la vista agrega su CTE (lista) y sus parámetros siguen a los del CTE común (pe(k) = base + k); con todos los filtros activos la numeración es $1…$4 sin huecos", [anf.vistos.includes(MAX), anf.vistos.includes("WITH docs AS (SELECT d.id, d.estado FROM documentos d WHERE d.empresa_id = $1 ), dsc AS (SELECT NULL::uuid AS id WHERE false), fil AS (SELECT docs.* FROM docs), lista AS (SELECT * FROM fil) SELECT id FROM lista ORDER BY id LIMIT $2")], [true, true]);
+  igual("R02-D CTE dependiente del esquema: el cuerpo de dsc («… JOIN docs …») no se prepara suelto (docs no existiría); sus DOS ramas llegan a PREPARE dentro de la anfitriona y cuentan como FRAGMENTOS cubiertos", [
+    anf.vistos.some((s) => s.startsWith("SELECT nd.id")), anf.vistos.some((s) => s.includes("dsc AS (SELECT nd.id FROM nce_descuentos nd JOIN docs n")), anf.vistos.some((s) => s.includes("dsc AS (SELECT NULL::uuid AS id WHERE false)")), anf.inf.fragmentos.cubiertos,
+  ], [false, true, true, 2]);
+
+  const anfFalla = (() => {
+    const vistos: string[] = [];
+    const inf = C1.analizar([archivo("lib/x.ts", ANF.replace("SELECT count(*) FROM fil", "SELECT count(*) FROM nada"))], (sql) => {
+      vistos.push(sql);
+
+      return sql.includes("FROM nada") ? { ok: false, err: 'ERROR: relation "nada" does not exist' } : { ok: true, err: "" };
+    });
+
+    return inf;
+  })();
+
+  igual("R02-D SQL realmente inválido en una anfitriona: es FALLA (cada variante con el error de PREPARE), sus fragmentos no se dan por cubiertos ni se esconden como NO VERIFICABLE y el veredicto es negativo", [
+    anfFalla.reconstruidas.fallas.length, anfFalla.reconstruidas.fallas.every((f) => f.err.includes('relation "nada"')), anfFalla.fragmentos.cubiertos, anfFalla.fragmentos.conAnfitrionaEnFalla.length, anfFalla.noVerificables.length, C1.veredicto(anfFalla, { noVerificables: [] }).ok,
+  ], [4, true, 0, 2, 0, false]);
+
+  const anfNv = preparados(ANF.replace("FROM documentos d WHERE", "FROM ${filtros.tabla} d WHERE"));
+
+  igual("R02-D anfitriona no reconstruible (un dato de ejecución llega al SQL): NO VERIFICABLE con motivo, nada se prepara y sus fragmentos quedan «sin consulta anfitriona verificada» (nunca cubiertos en silencio)", [
+    anfNv.vistos.length, anfNv.inf.noVerificables.map((n) => n.motivo.startsWith("consulta anfitriona q(…) no reconstruible: valor de ejecución en el SQL") ? "anfitriona" : n.motivo),
+  ], [0, ["anfitriona", "anfitriona", "fragmento de consulta anfitriona sin consulta anfitriona verificada", "fragmento de consulta anfitriona sin consulta anfitriona verificada"]]);
+
+  const union = preparados(String.raw`const ISO = /^\d{4}-\d{2}-\d{2}$/;
+export function consulta(empresaId: string, c: { desde?: string; estado?: string }) {
+  const params: unknown[] = [empresaId];
+  const cond: string[] = ["e.empresa_id = $1"];
+  const agregar = (sql: (n: number) => string, valor: unknown) => { params.push(valor); cond.push(sql(params.length)); };
+  if (c.desde && ISO.test(c.desde)) agregar((n) => ${"`"}e.fecha >= $${"${"}n}::date${"`"}, c.desde);
+  if (c.estado && ["A", "B"].includes(c.estado)) agregar((n) => ${"`"}e.estado = $${"${"}n}${"`"}, c.estado);
+  const where = ${"`"} WHERE ${"${"}cond.join(" AND ")}${"`"};
+  return { sql: ${"`"}SELECT e.id FROM entradas e${"${"}where} ORDER BY e.id LIMIT $${"${"}params.length + 1}${"`"}, params };
+}`);
+
+  igual("R02-D unión de un arreglo local (cond.join) con función auxiliar agregar((n) => …): se recorre la función y se preparan la variante base, cada filtro por separado y todos juntos, con la numeración real", [union.vistos, union.inf.interpretadas, union.inf.noVerificables.length], [[
+    "SELECT e.id FROM entradas e WHERE e.empresa_id = $1 ORDER BY e.id LIMIT $2",
+    "SELECT e.id FROM entradas e WHERE e.empresa_id = $1 AND e.estado = $2 ORDER BY e.id LIMIT $3",
+    "SELECT e.id FROM entradas e WHERE e.empresa_id = $1 AND e.fecha >= $2::date AND e.estado = $3 ORDER BY e.id LIMIT $4",
+  ], { ok: 1, variantes: 3 }, 0]);
+  igual("R02-D sin falsos positivos: un arreglo armado en un bucle (fuera del subconjunto interpretable) NO se reconstruye; queda NO VERIFICABLE con su motivo original", preparados(String.raw`export function consulta(cols: string[]) {
+  const sets: string[] = [];
+  for (const c of cols) sets.push(${"`"}${"${"}c} = $2${"`"});
+  return ${"`"}UPDATE t SET ${"${"}sets.join(", ")} WHERE id = $1${"`"};
+}`).inf.noVerificables.map((n) => n.motivo), ['expresión de ejecución: sets.join(", ")']);
+
+  const sombra = preparados(String.raw`const extraSql = "AND 1 = 1";
+export function consulta(extraSql: string) {
+  const cond: string[] = ["a = $1"];
+  cond.push(extraSql);
+  return ${"`"}SELECT 1 FROM t WHERE ${"${"}cond.join(" AND ")}${"`"};
+}`);
+
+  igual("R02-D sin falsos positivos: un parámetro que sombrea una constante homónima del módulo es dato de ejecución; jamás se sustituye por la constante (sería otra consulta)", [sombra.vistos, sombra.inf.noVerificables.map((n) => n.motivo)], [[], ['expresión de ejecución: cond.join(" AND ")']]);
+
+  const numericas = preparados(String.raw`import { ALC } from "@/lib/a";
+const POR_PAGINA = 100;
+export async function f(db: Db, hay: boolean) {
+  const extra = hay ? " AND x.ok" : "";
+  return db.query(${"`"}SELECT x.id FROM t x WHERE x.e = $1${"${"}extra} AND ${"${"}ALC(3)} LIMIT ${"${"}POR_PAGINA + 1}${"`"});
+}`, [archivo("lib/a.ts", String.raw`const BASE = ${"`"}x.u IN (SELECT u FROM w WHERE w.k = $2)${"`"};
+export const ALC = (n: number) => BASE.split("$2").join(${"`"}$${"${"}n}${"`"});`)]);
+
+  igual("R02-D constantes: entero (POR_PAGINA + 1 → 101), fragmento condicional entre dos literales SIN parámetros (ambas ramas) y función flecha de una expresión importada (ALC(3): $2 → $3)", numericas.vistos, [
+    "SELECT x.id FROM t x WHERE x.e = $1 AND x.ok AND x.u IN (SELECT u FROM w WHERE w.k = $3) LIMIT 101",
+    "SELECT x.id FROM t x WHERE x.e = $1 AND x.u IN (SELECT u FROM w WHERE w.k = $3) LIMIT 101",
+  ]);
+
+  const calculados = preparados(String.raw`export function f(params: unknown[], sel: string) {
+  return ${"`"}${"${"}sel} WHERE a = $1 LIMIT $${"${"}params.length + 1}${"`"};
+}`);
+
+  igual("R02-D sin falsos negativos: una consulta cuyos marcadores son calculados ($${n}) ya no se omite en silencio; se analiza y, si no se reconstruye, queda NO VERIFICABLE", [calculados.inf.total, calculados.inf.noVerificables.map((n) => n.motivo)], [1, ["variable de ejecución: sel"]]);
+
+  const objeto = preparados(String.raw`export async function f(db: Db, vista: string) {
+  const params: unknown[] = [1];
+  const q = async (sql: string, adicional = "") => (await db.query(${"`"}WITH base AS (SELECT 1 AS n) ${"${"}adicional ? ${"`"}, ${"${"}adicional}${"`"} : ""} ${"${"}sql}${"`"}, params)).rows;
+  if (vista === "A") return q(${"`"}SELECT n FROM base${"`"});
+  const def = { X: { orden: "n DESC" }, Y: { orden: "n" } }[vista as "X" | "Y"];
+  return q(${"`"}SELECT n FROM base WHERE n = $1 ORDER BY ${"${"}def.orden}${"`"});
+}`);
+
+  igual("R02-D variantes por dato de ejecución: un objeto de definiciones indexado por la vista se prueba con CADA clave declarada; una vista sin definición aborta el camino (como en JS) y no inventa SQL", [objeto.vistos, objeto.inf.anfitrionas, objeto.inf.noVerificables.length], [[
+    "WITH base AS (SELECT 1 AS n) SELECT n FROM base", "WITH base AS (SELECT 1 AS n) SELECT n FROM base WHERE n = $1 ORDER BY n", "WITH base AS (SELECT 1 AS n) SELECT n FROM base WHERE n = $1 ORDER BY n DESC",
+  ], { total: 2, ok: 2, variantes: 3 }, 0]);
+
   // ── El código REAL de la aplicación: línea base vigente y sin crecimiento silencioso
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const lineaBase = require(join(process.cwd(), "documentacao/banco/nexit/v1/herramientas/c1-linea-base.json")) as { noVerificables: string[]; motivos: Record<string, string> };
@@ -141,6 +265,15 @@ export async function verificarCasosVerificadorC1(): Promise<string[]> {
 
     return inf.noVerificables.filter((n) => n.motivo.startsWith("proyección dinámica proyectar")).length === 8 && motivo("lib/clientes/aptitud-cliente.ts", "variable de ejecución: filtro") && motivo("lib/stock/shared.ts", "variable de ejecución: filtro")
       && !preparadas.some((q) => /SELECT t\.\* FROM (canales_venta|zonas_comerciales|categorias_producto|marcas_producto|familias_producto|lineas_producto)/.test(q));
+  })());
+
+  cierto("R02-D código real: las consultas de lib/reportes/ventas.ts pasadas a q(…) se verifican como anfitrionas COMPLETAS (WITH docs … fil …) y ningún PREPARE recibe su texto suelto dependiente de los CTE (fil, lista, g, prd, grt)", (() => {
+    const preparadas: string[] = [];
+    const inf = C1.analizar(C1.leerArchivos(process.cwd()), (sql) => { preparadas.push(sql.replace(/\s+/g, " ").trim()); return { ok: true, err: "" }; });
+    const sueltas = preparadas.filter((q) => /^SELECT\b/.test(q) && /\bFROM (fil|lista|g|prd|grt)\b/.test(q));
+
+    return inf.anfitrionas.total >= 11 && inf.anfitrionas.ok === inf.anfitrionas.total && sueltas.length === 0 && preparadas.some((q) => q.startsWith("WITH docs AS (") && q.includes(" grt AS (SELECT grp.*"))
+      && !inf.noVerificables.some((n) => n.id.startsWith("lib/reportes/ventas.ts"));
   })());
 
   return fallos;
