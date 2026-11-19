@@ -4,6 +4,7 @@ import Link from "next/link";
 import {
   useEffect,
   useState,
+  useSyncExternalStore,
 } from "react";
 import {
   useParams,
@@ -30,28 +31,71 @@ function money(
   ).format(value)}`;
 }
 
+// PRE-VM-R02-C: buscarRecepcionDemo puede sembrar localStorage, por eso se ejecuta en un
+// efecto y publica en un almacén local por instancia leído con useSyncExternalStore. El
+// estado de carga se deriva: mientras la recepción publicada no corresponda al ID de la
+// ruta (primer render, hidratación o cambio de ID) se muestra «Cargando recepción...».
+type VistaDetalle = {
+  id: string | null;
+  recepcion: RecepcionDemo | null;
+};
+
+function crearAlmacenDetalle() {
+  let vista: VistaDetalle = {
+    id: null,
+    recepcion: null,
+  };
+
+  const oyentes =
+    new Set<() => void>();
+
+  return {
+    suscribir: (oyente: () => void) => {
+      oyentes.add(oyente);
+
+      return () => {
+        oyentes.delete(oyente);
+      };
+    },
+    estado: () => vista,
+    cargar: (id: string) => {
+      vista = {
+        id,
+        recepcion:
+          buscarRecepcionDemo(id),
+      };
+      oyentes.forEach((oyente) =>
+        oyente(),
+      );
+    },
+  };
+}
+
 export default function RecepcionDetallePage() {
   const params = useParams<{
     id: string;
   }>();
 
-  const [recepcion, setRecepcion] =
-    useState<RecepcionDemo | null>(
-      null,
-    );
+  const [almacen] = useState(
+    crearAlmacenDetalle,
+  );
 
-  const [loading, setLoading] =
-    useState(true);
+  const vista =
+    useSyncExternalStore(
+      almacen.suscribir,
+      almacen.estado,
+      almacen.estado,
+    );
 
   useEffect(() => {
-    setRecepcion(
-      buscarRecepcionDemo(
-        params.id,
-      ),
-    );
+    almacen.cargar(params.id);
+  }, [almacen, params.id]);
 
-    setLoading(false);
-  }, [params.id]);
+  const loading =
+    vista.id !== params.id;
+
+  const recepcion =
+    loading ? null : vista.recepcion;
 
   if (loading) {
     return (

@@ -76,11 +76,19 @@ export default function Sidebar({
     activeGroupId ?? null,
   );
 
-  useEffect(() => {
+  // PRE-VM-R02-C: cuando la navegación cambia el grupo activo, ese grupo se expande en el
+  // mismo render (ajuste de estado con el valor previo, patrón documentado de React), no en un
+  // efecto. Solo reacciona al CAMBIO del grupo activo, así que abrir/cerrar grupos a mano sigue
+  // funcionando hasta la próxima navegación a otro grupo.
+  const [activeGroupIdPrevio, setActiveGroupIdPrevio] = useState(activeGroupId);
+
+  if (activeGroupIdPrevio !== activeGroupId) {
+    setActiveGroupIdPrevio(activeGroupId);
+
     if (activeGroupId) {
       setOpenGroupId(activeGroupId);
     }
-  }, [activeGroupId]);
+  }
 
   useEffect(() => {
     onMobileOpenChange(false);

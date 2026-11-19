@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 import { compararTexto, ordenarLista, siguienteOrden, type Orden } from "@/components/ui/lista-padrao/orden";
 import { ThOrdenable } from "@/components/ui/lista-padrao/th-ordenable";
@@ -60,22 +60,21 @@ export function EmpresasLista({ empresas }: { empresas: EmpresaFila[] }) {
 
   const totalPaginas = Math.max(1, Math.ceil(filtradas.length / PAGE_SIZE));
 
-  useEffect(() => {
-    setPagina(1);
-  }, [busqueda, estado, orden]);
-
-  useEffect(() => {
-    if (pagina > totalPaginas) {
-      setPagina(totalPaginas);
-    }
-  }, [pagina, totalPaginas]);
+  // PRE-VM-R02-C: la página vuelve a 1 en los propios manejadores que cambian búsqueda, estado u
+  // orden (no en un efecto). La página visible se acota en render: nunca supera totalPaginas, y la
+  // navegación parte de la página visible, por lo que una página inválida no reaparece cuando
+  // aumentan los registros.
+  const paginaVista = Math.min(pagina, totalPaginas);
 
   const paginaActual = useMemo(
-    () => ordenadas.slice((pagina - 1) * PAGE_SIZE, pagina * PAGE_SIZE),
-    [ordenadas, pagina],
+    () => ordenadas.slice((paginaVista - 1) * PAGE_SIZE, paginaVista * PAGE_SIZE),
+    [ordenadas, paginaVista],
   );
 
-  const cambiarOrden = (campo: CampoOrden) => setOrden((actual) => siguienteOrden(actual, campo));
+  const cambiarOrden = (campo: CampoOrden) => {
+    setOrden((actual) => siguienteOrden(actual, campo));
+    setPagina(1);
+  };
 
   return (
     <section className={ui.contentCard}>
@@ -84,7 +83,10 @@ export function EmpresasLista({ empresas }: { empresas: EmpresaFila[] }) {
           <span aria-hidden="true">⌕</span>
           <input
             value={busqueda}
-            onChange={(event) => setBusqueda(event.target.value)}
+            onChange={(event) => {
+              setBusqueda(event.target.value);
+              setPagina(1);
+            }}
             placeholder="Buscar por código, razón social o RUC"
             aria-label="Buscar empresas"
           />
@@ -92,7 +94,10 @@ export function EmpresasLista({ empresas }: { empresas: EmpresaFila[] }) {
 
         <label className={ui.filterField}>
           <span>Estado</span>
-          <select value={estado} onChange={(event) => setEstado(event.target.value)}>
+          <select value={estado} onChange={(event) => {
+            setEstado(event.target.value);
+            setPagina(1);
+          }}>
             <option value="TODOS">Todos</option>
             {estados.map((valor) => (
               <option key={valor} value={valor}>
@@ -108,6 +113,7 @@ export function EmpresasLista({ empresas }: { empresas: EmpresaFila[] }) {
           onClick={() => {
             setBusqueda("");
             setEstado("TODOS");
+            setPagina(1);
           }}
         >
           Limpiar filtros
@@ -167,29 +173,29 @@ export function EmpresasLista({ empresas }: { empresas: EmpresaFila[] }) {
 
       <footer className={ui.pagination}>
         <span>
-          Mostrando {filtradas.length === 0 ? 0 : (pagina - 1) * PAGE_SIZE + 1}–
-          {Math.min(pagina * PAGE_SIZE, filtradas.length)} de {filtradas.length}
+          Mostrando {filtradas.length === 0 ? 0 : (paginaVista - 1) * PAGE_SIZE + 1}–
+          {Math.min(paginaVista * PAGE_SIZE, filtradas.length)} de {filtradas.length}
         </span>
 
         <div>
           <button
             type="button"
             aria-label="Página anterior"
-            disabled={pagina === 1}
-            onClick={() => setPagina((actual) => actual - 1)}
+            disabled={paginaVista === 1}
+            onClick={() => setPagina(Math.max(1, paginaVista - 1))}
           >
             ‹
           </button>
 
           <strong>
-            {pagina} / {totalPaginas}
+            {paginaVista} / {totalPaginas}
           </strong>
 
           <button
             type="button"
             aria-label="Página siguiente"
-            disabled={pagina === totalPaginas}
-            onClick={() => setPagina((actual) => actual + 1)}
+            disabled={paginaVista === totalPaginas}
+            onClick={() => setPagina(Math.min(totalPaginas, paginaVista + 1))}
           >
             ›
           </button>

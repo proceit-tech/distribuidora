@@ -5,6 +5,7 @@ import {
   useEffect,
   useMemo,
   useState,
+  useSyncExternalStore,
 } from "react";
 
 import {
@@ -34,9 +35,78 @@ function money(
   ).format(value)}`;
 }
 
+// PRE-VM-R02-C: la lectura demo (que puede sembrar localStorage) y el consumo del flash de
+// sessionStorage son efectos sobre sistemas externos; se ejecutan en un efecto y publican su
+// resultado en un almacén local por instancia, leído con useSyncExternalStore (mismo patrón
+// que facturas/nueva y kude-modal). Nada impuro ocurre en el render ni en inicializadores.
+type VistaRecepciones = {
+  recepciones: RecepcionDemo[];
+  flash: string;
+};
+
+function crearAlmacenRecepciones() {
+  let vista: VistaRecepciones = {
+    recepciones: [],
+    flash: "",
+  };
+
+  const oyentes =
+    new Set<() => void>();
+
+  const publicar = (
+    siguiente: VistaRecepciones,
+  ) => {
+    vista = siguiente;
+    oyentes.forEach((oyente) =>
+      oyente(),
+    );
+  };
+
+  return {
+    suscribir: (oyente: () => void) => {
+      oyentes.add(oyente);
+
+      return () => {
+        oyentes.delete(oyente);
+      };
+    },
+    estado: () => vista,
+    cargar: () => {
+      // Consumo único: si el efecto se repite (StrictMode), la segunda lectura devuelve
+      // "" y no borra el mensaje ya consumido.
+      const flash =
+        consumirRecepcionFlash();
+
+      publicar({
+        recepciones:
+          obtenerRecepcionesDemo(),
+        flash: flash || vista.flash,
+      });
+    },
+    limpiarFlash: () => {
+      if (vista.flash) {
+        publicar({
+          ...vista,
+          flash: "",
+        });
+      }
+    },
+  };
+}
+
 export default function RecepcionesPage() {
-  const [recepciones, setRecepciones] =
-    useState<RecepcionDemo[]>([]);
+  const [almacen] = useState(
+    crearAlmacenRecepciones,
+  );
+
+  const {
+    recepciones,
+    flash,
+  } = useSyncExternalStore(
+    almacen.suscribir,
+    almacen.estado,
+    almacen.estado,
+  );
 
   const [busqueda, setBusqueda] =
     useState("");
@@ -44,18 +114,9 @@ export default function RecepcionesPage() {
   const [estado, setEstado] =
     useState<EstadoFiltro>("TODOS");
 
-  const [flash, setFlash] =
-    useState("");
-
   useEffect(() => {
-    setRecepciones(
-      obtenerRecepcionesDemo(),
-    );
-
-    setFlash(
-      consumirRecepcionFlash(),
-    );
-  }, []);
+    almacen.cargar();
+  }, [almacen]);
 
   useEffect(() => {
     if (!flash) {
@@ -64,13 +125,13 @@ export default function RecepcionesPage() {
 
     const timer =
       window.setTimeout(
-        () => setFlash(""),
+        () => almacen.limpiarFlash(),
         4200,
       );
 
     return () =>
       window.clearTimeout(timer);
-  }, [flash]);
+  }, [almacen, flash]);
 
   const resumen = useMemo(() => {
     return recepciones.reduce(
@@ -151,7 +212,7 @@ export default function RecepcionesPage() {
           <button
             type="button"
             onClick={() =>
-              setFlash("")
+              almacen.limpiarFlash()
             }
           >
             ×

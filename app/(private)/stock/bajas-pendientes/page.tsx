@@ -47,6 +47,13 @@ export default function BajasPendientesPage() {
   const contexto = useRef(crearContextoBajas());
 
   const consulta = useMemo(() => consultaBajas({ estado, sucursal, deposito, buscar, pagina, porPagina }), [estado, sucursal, deposito, buscar, pagina, porPagina]);
+  // PRE-VM-R02-C: «cargando» pasa a true en el MISMO render en que cambia la consulta (ajuste de estado durante el render con la consulta
+  // previa, patrón documentado de React), no en el cuerpo del efecto. Así A→B→A vuelve a ocultar y bloquear las filas hasta la nueva lectura.
+  const [consultaPrevia, setConsultaPrevia] = useState(consulta);
+  if (consultaPrevia !== consulta) {
+    setConsultaPrevia(consulta);
+    setCargando(true);
+  }
 
   /** Lee la consulta del ticket; aplica la respuesta SOLO si el ticket sigue vigente (generación y consulta). */
   const leer = useCallback(async (ticket: TicketBajas) => {
@@ -79,7 +86,6 @@ export default function BajasPendientesPage() {
   useEffect(() => {
     const ticket = contexto.current.cambiar(consulta);
 
-    setCargando(true);
     const t = setTimeout(() => void leer(ticket), 250);
 
     return () => clearTimeout(t);
