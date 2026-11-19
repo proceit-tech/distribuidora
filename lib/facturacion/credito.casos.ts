@@ -176,7 +176,16 @@ export async function verificarCasosCredito(): Promise<string[]> {
   const malSuma = { e: await resultado(prepararFactura(bloqueo.db, EMPRESA, USUARIO, cuerpoCuotas)), b: bloqueo };
   const creadoCuotas = baseSimulada();
   const malFecha = { e: await resultado(crearFacturaElectronica(creadoCuotas.db, EMPRESA, USUARIO, cuerpoCuotas)), b: creadoCuotas };
-  igual("CORE-04 POST directo con Cuotas (sin pasar por la lectura): 422 dirigido, sin una sola consulta y SIN reservar número (ninguna llamada a fe_documento_crear_fe)", [/^422:.*suspendido/.test(malSuma.e), malSuma.b.llamadas.length, /^422:.*suspendido/.test(malFecha.e), malFecha.b.creaciones().length, malFecha.b.llamadas.length], [true, 0, true, 0, 0]);
+  // PRE-VM-R02-A-R02 (CORE-04, opción A autorizada por el responsable): la matriz FE exige «respuesta dirigida antes de NEX-048», no «cero consultas». Desde PRO-322-R02 (F002) crearFacturaElectronica
+  // lee PRIMERO si la clave ya existe (para decidir domicilioHistorico) y luego prepararFactura rechaza Cuotas. Se admite EXACTAMENTE esa lectura: una sola consulta, SELECT de existencia sobre
+  // documentos_electronicos filtrada por empresa_id y clave_idempotencia, con parámetros [EMPRESA, clave del cuerpo]. Cualquier otra consulta (otra tabla, otra empresa, otra clave, una segunda
+  // consulta, una escritura, una reserva de número o un movimiento de stock) hace fallar el caso. La lectura del cuerpo (prepararFactura directa) sigue sin tocar la base.
+  const lecturaCore04 = malFecha.b.llamadas.map((l) => ({ sql: l.sql.replace(/\s+/g, " ").trim(), parametros: l.parametros }));
+  igual("CORE-04 POST directo con Cuotas (sin pasar por la lectura): 422 dirigido; la ÚNICA consulta es la lectura de existencia por empresa y clave de idempotencia (SQL y parámetros exactos); cero escrituras, cero reservas de número (fe_documento_crear_fe), cero documentos y cero stock", [
+    /^422:.*suspendido/.test(malSuma.e), malSuma.b.llamadas.length, /^422:.*suspendido/.test(malFecha.e), malFecha.b.creaciones().length, malFecha.b.escrituras().length,
+    lecturaCore04,
+    malFecha.b.llamadas.filter((l) => /inventario|stock|fe_documento|INSERT|UPDATE|DELETE|nextval|secuencia/i.test(l.sql)).length,
+  ], [true, 0, true, 0, 0, [{ sql: "SELECT 1 AS ok FROM documentos_electronicos WHERE empresa_id = $1::uuid AND clave_idempotencia = $2", parametros: [EMPRESA, "clave-de-prueba-0001"] }], 0]);
 
 
   const malEntrega = await creaP({ condicion: 2, credito: { tipo: 1, plazoDias: 30, entrega: "33000" } });
