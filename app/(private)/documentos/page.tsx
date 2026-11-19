@@ -992,7 +992,7 @@ export default function DocumentosPage() {
                           <span className={estilos.eventosTexto}>
                             <span className={eventos.registrado ? estilos.eventoRegistrado : estilos.sinEventos}>{eventos.registrado ?? eventos.sinRegistro}</span>
                             {eventos.operaciones.map((o) => (
-                              <small className={clases(ui.muted, estilos.eventoOperacion)} key={o.nombre}>{o.nombre}: {o.estado}</small>
+                              <Fragment key={o.nombre}><small className={clases(ui.muted, estilos.eventoOperacion)}>{o.nombre}: {o.estado}</small></Fragment>
                             ))}
                           </span>
                           <AccionIcono clase={estilos.accionEventos} glifo={ACCION.eventos} etiqueta={`Eventos de ${doc}`} disponible={false} motivo={eventos.operacion} alActivar={() => undefined} tip={eventosTip} />

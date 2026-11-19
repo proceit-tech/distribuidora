@@ -508,6 +508,12 @@ table.tablaDocs > tbody > tr > td {
   color: #53687a;
   font-size: 11.5px;
 }
+/* PRE-VM-R02-B-R02: el <small> lleva también ui.muted (#8092a4, misma especificidad 0,1,0). Este selector (0,2,0) garantiza #53687a sin depender del orden de carga de las hojas y sin
+   !important. La regla simple de arriba se conserva: la lee el caso PRO-195 (regla(css, ".eventoOperacion")) y no cambia nada visible. */
+.eventosTexto .eventoOperacion {
+  color: #53687a;
+  font-size: 11.5px;
+}
 
 /* Aviso del resultado de una consulta lanzada desde la fila, y barra de selección. */
 .anuncio {
