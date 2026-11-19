@@ -528,7 +528,7 @@ export async function verificarCasosEntregaE04(): Promise<string[]> {
 
     igual("E1-16 (F003) sin cambios entre previa y envío la emisión procede normalmente (huella idéntica, un solo documento)", [ok3.reutilizado, creaciones(f3), f3.docs.size], [false, 1, 1]);
 
-    const leida = cuerpoValido({ claveIdempotencia: "clave-e1-huella-01", sucursalId: SUC, puntoId: PUNTO, clienteId: CLI_C, vendedorId: USUARIO, tipoTransaccion: 1, presencia: 1, pagos: [{ tipo: 1 }], infoAdicional: "", lineas: [{ productoId: P1, cantidad: "1", precio: null }], infoAdicionalHuella: rev3.resumen.infoAdicionalHuella, nombreVendedor: "Impostor" }) & { nombreVendedor?: string };
+    const leida = cuerpoValido({ claveIdempotencia: "clave-e1-huella-01", sucursalId: SUC, puntoId: PUNTO, clienteId: CLI_C, vendedorId: USUARIO, tipoTransaccion: 1, presencia: 1, pagos: [{ tipo: 1 }], infoAdicional: "", lineas: [{ productoId: P1, cantidad: "1", precio: null }], infoAdicionalHuella: rev3.resumen.infoAdicionalHuella, nombreVendedor: "Impostor" }) as CuerpoFactura & { nombreVendedor?: string };
     const basura = cuerpoValido({ claveIdempotencia: "clave-e1-huella-02", sucursalId: SUC, puntoId: PUNTO, clienteId: CLI_C, vendedorId: USUARIO, tipoTransaccion: 1, presencia: 1, pagos: [{ tipo: 1 }], infoAdicional: "", lineas: [{ productoId: P1, cantidad: "1", precio: null }], infoAdicionalHuella: "no-es-hex" });
 
     igual("E1-17 el cuerpo del navegador solo aporta la huella (64 hex): un nombre de vendedor enviado se ignora y una huella inválida se descarta (la ruta exigirá revisar de nuevo)", [leida.infoAdicionalHuella === rev3.resumen.infoAdicionalHuella, "nombreVendedor" in leida, basura.infoAdicionalHuella], [true, false, undefined]);

@@ -134,6 +134,8 @@ psql -X -q -d postgres -c "CREATE DATABASE ${DB}_prod" >/dev/null 2>&1
 paso "V0 simulación de producción sin residuos del bootstrap sintético"
 # PRE-VM-R02-A (C-04): las empresas sintéticas reciben los perfiles estándar (perfiles + perfil_permiso), y el DELETE directo de empresas fallaba por esas FK. Se retiran en UNA transacción (-1) y en orden
 # perfil_permiso → perfiles → empresas, con el MISMO filtro de código y razón social, solo si no tienen usuarios, y solo en la base descartable de esta corrida (guardas en el shell y dentro de la transacción).
+# PRE-VM-R02-A-R01: el OK exige TAMBIÉN que la transacción de limpieza termine con código 0 (RC_V0). Un aborto (base no descartable, usuarios presentes, error SQL) es FALLA aunque el conteo dé 0.
+RC_V0=1
 if [[ "$DB" == nexit_test_* && "${DB}_prod" != "nexit" ]]; then
 psql -X -q -1 -v ON_ERROR_STOP=1 -v base="${DB}_prod" -d "${DB}_prod" >"$LOG/V0" 2>&1 <<'SQL'
 SELECT current_database() = :'base' AND current_database() ~ '^nexit_test_[0-9]+_prod$' AS es_descartable \gset
@@ -153,8 +155,11 @@ DELETE FROM perfil_permiso WHERE empresa_id IN (SELECT id FROM v0_sinteticas);
 DELETE FROM perfiles WHERE empresa_id IN (SELECT id FROM v0_sinteticas);
 DELETE FROM empresas WHERE id IN (SELECT id FROM v0_sinteticas);
 SQL
+RC_V0=$?
 else echo "V0 ABORTADO: base no descartable (${DB}_prod)" >"$LOG/V0"; fi
-[[ "$(psql -X -Atc "select count(*) from empresas" -d "${DB}_prod")" == 0 ]] && echo "OK   (0 empresas antes de inicializar la empresa real)" || { echo "FALLA"; tail -3 "$LOG/V0"; FALLAS=$((FALLAS+1)); }
+EMPRESAS_V0="$(psql -X -Atc "select count(*) from empresas" -d "${DB}_prod")"
+if [[ "$RC_V0" -eq 0 && "$EMPRESAS_V0" == 0 ]]; then echo "OK   (limpieza rc=0 y 0 empresas antes de inicializar la empresa real)"
+else echo "FALLA (limpieza rc=$RC_V0, empresas=${EMPRESAS_V0:-?})"; tail -3 "$LOG/V0"; FALLAS=$((FALLAS+1)); fi
 paso "I1 inicializar-empresa.sh / restablecer-clave.sh (generador: ${GENERADOR%% *})"
 ( export PGDATABASE="${DB}_prod"
   ID1="$(printf '%s\n' "$PWADM" | "$AQUI/scripts/inicializar-empresa.sh" --codigo emp-real --razon-social "Empresa Real S.A. (prueba)" --ruc 80012345 --dv 6 --usuario admin --nombre Magno --email m@example.invalid 2>&1 | tee "$LOG/I1.a" | sed -n 's/^empresa_id=//p')"

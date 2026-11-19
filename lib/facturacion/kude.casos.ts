@@ -656,7 +656,9 @@ export async function verificarCasosKude(): Promise<string[]> {
     await v.visor.descargar();
     await v.visor.descargar();
     v.visor.imprimir();
-    igual("KUDE-21 visor: una apertura y dos descargas = TRES solicitudes a /api/kude; cada descarga usa su propia URL temporal y su PDF íntegro; Imprimir usa el PDF mostrado (sin nueva solicitud)", [g.kudes.length, v.llamadas.length, v.acciones, descargaDe(v.visor.estado())], [3, 3, ["descargar:blob:nexit/2:KuDE-FE-001-001-0010004.pdf", "descargar:blob:nexit/3:KuDE-FE-001-001-0010004.pdf", "imprimir"], "INACTIVA"]);
+    // PRE-VM-R02-A-R01: desde PRO-342-R05 (gate R05-5) obtenerKude ya no devuelve CDC_REGISTRADO: todo PDF aceptado es NO_VERIFICADO y cada descarga (consulta NUEVA) se nombra «…-NO-VERIFICADO.pdf»
+    // (kude-visor.ts::nombreSegun). Se exige ese nombre y la pertenencia NO_VERIFICADA del visor; solicitudes, URL propias, imprimir sin nueva solicitud y liberación (21b/21c) no cambian.
+    igual("KUDE-21 visor: una apertura y dos descargas = TRES solicitudes a /api/kude; cada descarga usa su propia URL temporal y su PDF íntegro con nombre «-NO-VERIFICADO» (sin pertenencia verificada); Imprimir usa el PDF mostrado (sin nueva solicitud)", [g.kudes.length, v.llamadas.length, v.acciones, descargaDe(v.visor.estado()), (() => { const est = v.visor.estado(); return est.fase === "LISTO" ? [est.pertenencia, est.nombre] : null; })()], [3, 3, ["descargar:blob:nexit/2:KuDE-FE-001-001-0010004-NO-VERIFICADO.pdf", "descargar:blob:nexit/3:KuDE-FE-001-001-0010004-NO-VERIFICADO.pdf", "imprimir"], "INACTIVA", ["NO_VERIFICADA", "KuDE-FE-001-001-0010004.pdf"]]);
     igual("KUDE-21b visor: los PDF descargados son los bytes del gateway y las URL temporales de descarga se liberan después (sin persistir nada)", [(await bytesDe(v.urls.get("blob:nexit/2"))).equals(PDF), v.diferidas.length], [true, 2]);
     v.diferidas.forEach((fn) => fn());
     igual("KUDE-21c visor: ejecutadas las liberaciones diferidas solo queda la URL del PDF mostrado", [v.revocadas, [...v.urls.keys()]], [["blob:nexit/2", "blob:nexit/3"], ["blob:nexit/1"]]);

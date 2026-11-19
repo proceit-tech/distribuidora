@@ -212,8 +212,11 @@ BEGIN
     SELECT id INTO v_opw FROM usuarios WHERE empresa_id = v_a AND usuario = 'op.t26.crear';
     INSERT INTO documentos_electronicos (empresa_id, sucursal_id, tipo, establecimiento, punto_expedicion, numero, fecha_emision, receptor_nombre, moneda, total, estado_local, estado_sifen, creado_por)
     VALUES (v_a, v_sa, 'NCE', '001', '001', '0000091', now(), 'Cliente T26', 'PYG', 1000, 'ENVIADO', 'SIN_CONSULTA', v_opw) RETURNING id INTO v_d1;
+    -- PRE-VM-R02-A-R01: ENVIO_INDETERMINADO + PENDIENTE violaba documentos_electronicos_estados_chk (NEX-047: estado_sifen distinto de SIN_CONSULTA solo con estado_local ENVIADO) y abortaba
+    -- el bloque. Un envío indeterminado aún no tiene respuesta fiscal: SIN_CONSULTA es la combinación coherente y sigue siendo reservable por fe_consulta_reservar (NEX-077: ENVIADO|ENVIO_INDETERMINADO
+    -- con SIN_CONSULTA|PENDIENTE|NO_RECONOCIDO). Se conservan lease, actor autorizado, aislamiento por empresa y la comprobación de estado fiscal.
     INSERT INTO documentos_electronicos (empresa_id, sucursal_id, tipo, establecimiento, punto_expedicion, numero, fecha_emision, receptor_nombre, moneda, total, estado_local, estado_sifen, creado_por)
-    VALUES (v_a, v_sa, 'NCE', '001', '001', '0000092', now(), 'Cliente T26', 'PYG', 1000, 'ENVIO_INDETERMINADO', 'PENDIENTE', v_opw) RETURNING id INTO v_d2;
+    VALUES (v_a, v_sa, 'NCE', '001', '001', '0000092', now(), 'Cliente T26', 'PYG', 1000, 'ENVIO_INDETERMINADO', 'SIN_CONSULTA', v_opw) RETURNING id INTO v_d2;
     SELECT o_actor INTO v_actor FROM fe_consulta_reservar(100, 120, ARRAY['NCE']) WHERE o_documento = v_d1;
     PERFORM pg_temp.ok(v_actor = v_opw, 'ZERO-01 W01: NCE ENVIADO/SIN_CONSULTA creada por un operador solo CREAR activo: el actor de la consulta automática es ese operador');
     SELECT o_actor INTO v_actor FROM fe_consulta_reservar(100, 120, ARRAY['NCE']) WHERE o_documento = v_d2;
@@ -222,7 +225,8 @@ BEGIN
     UPDATE usuarios SET estado = 'BLOQUEADO' WHERE id = v_opw;
     SELECT o_actor INTO v_actor FROM fe_consulta_reservar(100, 120, ARRAY['NCE']) WHERE o_documento = v_d2;
     PERFORM pg_temp.ok(v_actor IS NOT NULL AND v_actor <> v_opw AND (SELECT estado = 'ACTIVO' FROM usuarios WHERE id = v_actor) AND usuario_tiene_permiso(v_a, v_actor, 'FACTURACION_ELECTRONICA', 'CREAR'), 'ZERO-01 W03: creador BLOQUEADO → se usa otro usuario ACTIVO autorizado de la empresa (nunca el inactivo)');
-    PERFORM pg_temp.ok(NOT EXISTS (SELECT 1 FROM documentos_electronicos WHERE id = v_d2 AND estado_sifen = 'APROBADO'), 'el reservar no cambia el estado fiscal');
+    PERFORM pg_temp.ok(NOT EXISTS (SELECT 1 FROM documentos_electronicos WHERE id = v_d2 AND estado_sifen = 'APROBADO')
+      AND (SELECT estado_local = 'ENVIO_INDETERMINADO' AND estado_sifen = 'SIN_CONSULTA' FROM documentos_electronicos WHERE id = v_d2), 'el reservar no cambia el estado fiscal ni el local (sigue ENVIO_INDETERMINADO / SIN_CONSULTA)');
     UPDATE usuarios SET estado = 'ACTIVO' WHERE id = v_opw;
   END;
 

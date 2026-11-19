@@ -254,7 +254,12 @@ export async function verificarCasosAjusteFiscal(): Promise<string[]> {
   const envio = leer("lib/facturacion/envio.ts");
   const editor0 = leer("app/(private)/facturas/nueva/ajuste-fiscal-item.tsx");
 
-  cierto("envío: «guardar en Productos» ocurre después de reservar el documento y antes de transmitir, es idempotente, un fallo no impide emitir y el resultado se devuelve al operador", envio.indexOf("crearFacturaElectronica(db") < envio.indexOf("guardarClasificacionIva(db") && envio.indexOf("guardarClasificacionIva(db") < envio.indexOf("enviarDocumento(db, empresaId, usuarioId, documentoId, dep)") && /ajustesProducto/.test(envio));
+  // PRE-VM-R02-A-R01: desde PRO-342-R02 (F002) la transmisión recibe la MISMA configuración del preflight (`enviarDocumento(..., dep, { config })`); la regla PRO-93 no cambia. El orden se
+  // comprueba sobre la llamada vigente (antes buscaba la firma de 5 argumentos, que ya no existe, y indexOf -1 daba falso). Se exige además que la llamada exista y que la idempotencia
+  // (reutilizado → OMITIDO) y el aislamiento del fallo (try/catch posterior) sigan presentes.
+  const llamadaEnvio = "enviarDocumento(db, empresaId, usuarioId, documentoId, dep, { config })";
+  cierto("envío: «guardar en Productos» ocurre después de reservar el documento y antes de transmitir, es idempotente, un fallo no impide emitir y el resultado se devuelve al operador", envio.indexOf("crearFacturaElectronica(db") >= 0 && envio.indexOf("crearFacturaElectronica(db") < envio.indexOf("guardarClasificacionIva(db") && envio.indexOf("guardarClasificacionIva(db") < envio.indexOf(llamadaEnvio)
+    && /reutilizado\s*\?\s*\{[^}]*estado: "OMITIDO"/.test(envio) && /ajustesProducto/.test(envio) && envio.indexOf("try {", envio.indexOf("guardarClasificacionIva(db")) < envio.indexOf(llamadaEnvio));
 
   const pagina = leer("app/(private)/facturas/nueva/page.tsx");
 

@@ -639,12 +639,20 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
   igual("AUD-FE-01: ítems del ejemplo (24.600 → base 22363.63636364 / IVA 2236.36363636; 58.100 → 52818.18181818 / 5281.81818182)", (ejemploFE.Detalles as Array<Record<string, number>>).map((d) => [d.dTotOpeItem, d.dBasGravIVA, d.dLiqIVAItem]), [[24600, 22363.63636364, 2236.36363636], [24600, 22363.63636364, 2236.36363636], [58100, 52818.18181818, 5281.81818182]]);
   igual("AUD-FE-01: al 5 % dLiqTotIVA5 = dIVA5 (coherente con el total de IVA)", (() => { const p = construirPayloadFE(entradaFE({ lineas: [linea({ precio: "10500", tasa: 5 })], pagos: [{ tipo: 1, monto: "10500" }] })) as { Subtotales: Array<Record<string, number>> }; return [p.Subtotales[0].dIVA5, p.Subtotales[0].dLiqTotIVA5, p.Subtotales[0].dLiqTotIVA10, p.Subtotales[0].dTotIVA]; })(), [500, 500, 0, 500]);
   igual("AUD-FE-02: dDVRec y dNumCasRec viajan como NÚMERO; RUC sin DV como texto", [typeof ejemploFE.dDVRec, ejemploFE.dDVRec, typeof ejemploFE.dNumCasRec, ejemploFE.dNumCasRec, ejemploFE.dRucRec], ["number", 6, "number", 123, "80000005"]);
-  igual("número de casa: se conserva el del cadastro; 0 solo si no hay uno utilizable (primera prueba); sin dirección, null", [
-    (construirPayloadFE(entradaFE({ receptor: { ...receptor, numeroCasa: "45" } })) as Record<string, unknown>).dNumCasRec,
-    (construirPayloadFE(entradaFE({ receptor: { ...receptor, numeroCasa: "" } })) as Record<string, unknown>).dNumCasRec,
-    (construirPayloadFE(entradaFE({ receptor: { ...receptor, numeroCasa: "S/N" } })) as Record<string, unknown>).dNumCasRec,
-    (construirPayloadFE(entradaFE({ receptor: { ...receptor, direccion: "", numeroCasa: "" } })) as Record<string, unknown>).dNumCasRec,
-  ], [45, 0, 0, null]);
+  // PRE-VM-R02-A-R01 (D218): el número de casa se conserva tal cual (1 a 6 dígitos); uno vacío, no numérico o de más de 6 dígitos BLOQUEA la emisión (validación y construcción del payload)
+  // y nunca se reemplaza por 0. Domicilio totalmente vacío → dDirRec/dNumCasRec nulos. Sustituye la expectativa obsoleta «0 si no hay uno utilizable».
+  igual("número de casa (D218): se conserva el del cadastro (1–6 dígitos); vacío, «S/N» o 7 dígitos se rechazan sin fallback a 0; sin domicilio, null", (() => {
+    const casa = (numeroCasa: string) => entradaFE({ receptor: { ...receptor, numeroCasa } });
+    const lanza = (e: EntradaFE) => { try { construirPayloadFE(e); return "SIN ERROR"; } catch (x) { return /D218/.test(String((x as Error).message)) && /no se reemplaza por 0/.test(String((x as Error).message)) ? "D218" : "OTRO"; } };
+    const sinDomicilio = entradaFE({ receptor: { ...receptor, direccion: "", numeroCasa: "", departamento: "", distrito: "", ciudad: "" } });
+
+    return [
+      (construirPayloadFE(casa("45")) as Record<string, unknown>).dNumCasRec,
+      (construirPayloadFE(casa("123456")) as Record<string, unknown>).dNumCasRec,
+      ["", "S/N", "1234567", "12a"].map((n) => [/D218/.test(errorDe(casa(n))), lanza(casa(n))]),
+      [validarEntradaFE(sinDomicilio).length, (construirPayloadFE(sinDomicilio) as Record<string, unknown>).dNumCasRec],
+    ];
+  })(), [45, 123456, [[true, "D218"], [true, "D218"], [true, "D218"], [true, "D218"]], [0, null]]);
   cierto("AUD-FE-03: no se envían tags de localización no presentes en el JSON funcional (cDepRec/cDisRec/cCiuRec) ni se inventan opcionales", !("cDepRec" in ejemploFE) && !("cDisRec" in ejemploFE) && !("cCiuRec" in ejemploFE));
   igual("pago: Efectivo (iTiPago 1) por el total con la forma exacta de siempre; una forma fuera del catálogo se rechaza en la validación y en el backend", [
     (ejemploFE.FormaPago as Array<Record<string, unknown>>), /forma de pago no es válida/.test(errorDe(entradaFE({ pagos: [{ tipo: 77, monto: "11000" }] }))),
@@ -1115,17 +1123,20 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
   })(), [0, [5, "Innominado", "0", "Sin Nombre", null, null], true, true, true]);
   igual("E1 Innominado y límite fiscal (NT 024, D208c): total 6.999.999 se emite; exactamente 7.000.000 y más se rechazan (límite inclusivo), con pago igual al total", ["6999999", "7000000", "7000001"].map((m) => validarEntradaFE(entradaFE({ receptor: nc({ tipoDocumentoIdentidad: 5, descripcionTipoDocumento: "", numeroDocumento: "0", razonSocial: "Sin Nombre", direccion: "", numeroCasa: "", departamento: "", distrito: "", ciudad: "" }), lineas: [linea({ precio: m, afectacion: 3, tasa: 0 })], pagos: [{ tipo: 1, monto: m }] })).some((e) => /7\.000\.000/.test(e))), [false, true, true]);
   igual("E1 B2F (exterior): requiere dirección del receptor (D213), no informa documento y no exige departamento ni ciudad paraguayos", (() => {
-    const b2f = (extra: Partial<ReceptorFE> = {}) => nc({ tipoOperacion: 4, pais: "ARG", tipoDocumentoIdentidad: 2, numeroDocumento: "X1", direccion: "Calle 5", numeroCasa: "", departamento: "", distrito: "", ciudad: "", ...extra });
+    // PRE-VM-R02-A-R01 (D218): en B2F calle y número son obligatorios; el fixture usa un número real y un número vacío/no numérico se rechaza (sin 0 inventado).
+    const b2f = (extra: Partial<ReceptorFE> = {}) => nc({ tipoOperacion: 4, pais: "ARG", tipoDocumentoIdentidad: 2, numeroDocumento: "X1", direccion: "Calle 5", numeroCasa: "77", departamento: "", distrito: "", ciudad: "", ...extra });
     const p = sinFE({ receptor: b2f() });
+    const d218 = (numeroCasa: string) => validarEntradaFE(entradaFE({ receptor: b2f({ numeroCasa }) })).some((m) => /D218/.test(m) && /no se reemplaza por 0/.test(m));
 
-    return [validarEntradaFE(entradaFE({ receptor: b2f() })).length, validarEntradaFE(entradaFE({ receptor: b2f({ direccion: "" }) })).length > 0, [p.iTipIDRec, p.dNumIDRec, p.cPaisRec, p.dDirRec, p.dNumCasRec]];
-  })(), [0, true, [null, null, "ARG", "Calle 5", 0]]);
-  igual("E1 campos opcionales del receptor: vacío → null; con valor → texto sin espacios sobrantes; número de casa solo de 1 a 6 dígitos (si no, 0, parámetro de prueba aprobado), sin dirección → null", (() => {
-    const lleno = sinFE({ receptor: { ...receptor, nombreFantasia: " FANTASIA SA ", telefono: "021123456", celular: "0981123456", email: "x@y.com", emailCopia: "c@y.com", emailFacturacion: "f@y.com", numeroCasa: "1234567" } });
+    return [validarEntradaFE(entradaFE({ receptor: b2f() })).length, validarEntradaFE(entradaFE({ receptor: b2f({ direccion: "" }) })).length > 0, [p.iTipIDRec, p.dNumIDRec, p.cPaisRec, p.dDirRec, p.dNumCasRec, "cDepRec" in p, "cDisRec" in p, "cCiuRec" in p], [d218(""), d218("S/N")]];
+  })(), [0, true, [null, null, "ARG", "Calle 5", 77, false, false, false], [true, true]]);
+  // PRE-VM-R02-A-R01 (D218): el número de casa del fixture «lleno» es válido (6 dígitos) y se conserva; el de 7 dígitos se cubre como rechazo en el caso «número de casa (D218)».
+  igual("E1 campos opcionales del receptor: vacío → null; con valor → texto sin espacios sobrantes; número de casa de 1 a 6 dígitos conservado (sin fallback a 0, D218)", (() => {
+    const lleno = sinFE({ receptor: { ...receptor, nombreFantasia: " FANTASIA SA ", telefono: "021123456", celular: "0981123456", email: "x@y.com", emailCopia: "c@y.com", emailFacturacion: "f@y.com", numeroCasa: "123456" } });
     const vacio = sinFE();
 
     return [[lleno.dNomFanRec, lleno.dTelRec, lleno.dCelRec, lleno.dEmailRec, lleno.dEmailAdic, lleno.dEmailAdmin, lleno.dNumCasRec], [vacio.dNomFanRec, vacio.dTelRec, vacio.dCelRec, vacio.dEmailAdic, vacio.dEmailAdmin]];
-  })(), [["FANTASIA SA", "021123456", "0981123456", "x@y.com", "c@y.com", "f@y.com", 0], [null, null, null, null, null]]);
+  })(), [["FANTASIA SA", "021123456", "0981123456", "x@y.com", "c@y.com", "f@y.com", 123456], [null, null, null, null, null]]);
   igual("E1 dCodCliente (D217, opcional, A 3-15): un código interno de 3 a 15 caracteres se envía; fuera de ese rango no se envía (null) y no se acorta ni se inventa", ["AB", "ABC", "CLI-000001", "A".repeat(15), "A".repeat(16)].map((c) => sinFE({ receptor: { ...receptor, codigo: c } }).dCodCliente), [null, "ABC", "CLI-000001", "A".repeat(15), null]);
 
   // Cabecera de la operación

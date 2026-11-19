@@ -54,7 +54,7 @@ export function respuestaContratoFE(sql: string, parametros: unknown[] = [], o: 
   if (/to_jsonb\(e\) -> 'bloquear_stock_insuficiente'/.test(sql)) return filas(o.politicaStock === undefined ? [] : [{ v: o.politicaStock }]);
   // vendedorActivo (lib/usuarios/vendedores.ts): usuario ACTIVO de la empresa con el perfil Vendedor.
   if (o.vendedorEnBase !== true && /FROM usuarios u\s+JOIN usuario_perfil up/.test(sql) && /u\.id = \$2 AND u\.estado = 'ACTIVO'/.test(sql)) {
-    const vendedores = o.vendedores ?? { [VENDEDOR_SIM]: VENDEDOR_SIM_NOMBRE };
+    const vendedores: Record<string, { nombre: string; apellido: string; empresaId?: string }> = o.vendedores ?? { [VENDEDOR_SIM]: VENDEDOR_SIM_NOMBRE };
     const v = vendedores[String(parametros[1])];
 
     if (!v || (v.empresaId !== undefined && v.empresaId !== String(parametros[0]))) return filas([]);
