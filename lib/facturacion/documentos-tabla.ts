@@ -6,7 +6,7 @@
  *    XML firmado, Envío indeterminado, Error de envío…). Aprobado y Rechazado nunca coexisten: salen del ÚNICO estado fiscal persistido. Un error de transporte o
  *    de validación del gateway se dice como tal, nunca como rechazo SIFEN.
  *  · eventosFila: columna Eventos. Cancelación e Inutilización NO tienen API ni contrato comprobado (PRO-199 suspendida, PRO-313 guardas): solo se informa el estado
- *    fiscal ya registrado (si la API informó Cancelado/Inutilizado) y la indisponibilidad honesta de la operación.
+ *    fiscal ya registrado (si la API informó Cancelado/Inutilizado), «Sin información de eventos» en otro caso (R01-R01 F003) y la indisponibilidad honesta de cada operación.
  *  · accionesFila: acciones directas de la fila según operaciones REALES: KuDE (endpoint existente, solo FE/NCE), consulta SIFEN (endpoint existente, permiso editar);
  *    XML y correo NO tienen endpoint en Nexit: se muestran deshabilitados con su motivo.
  *  · seleccionVigente: la selección solo vale en el contexto (filtros + página) donde se hizo y solo para filas visibles; no habilita ninguna acción masiva.
@@ -42,17 +42,31 @@ export function estadoPrincipalFila(d: DocEstado): EstadoFila {
   }
 }
 
-export type EventosFila = { registrado: string | null; operacion: string };
+/**
+ * PRO-195-UX-R01-R01 (F003): la columna Eventos NUNCA afirma ausencia de eventos. Nexit no tiene historial de eventos consultable (sin API ni contrato del proveedor):
+ * un estado APROBADO no prueba que no exista un evento pendiente o rechazado. Por eso, sin estado fiscal Cancelado/Inutilizado ya informado por la API, se dice
+ * «Sin información de eventos»; y Cancelación e Inutilización se muestran con su indisponibilidad explícita (no solo en el tooltip). No se infiere protocolo,
+ * fecha ni evento ejecutado.
+ */
+export type OperacionEvento = { nombre: "Cancelación" | "Inutilización"; estado: string };
+export type EventosFila = { registrado: string | null; sinRegistro: string; operaciones: readonly OperacionEvento[]; operacion: string };
+
+export const SIN_INFORMACION_EVENTOS = "Sin información de eventos";
 
 /** Motivo ÚNICO de indisponibilidad de los eventos (sin API ni contrato del proveedor). */
 export const MOTIVO_EVENTOS_NO_DISPONIBLES =
-  "Cancelación e Inutilización: operaciones no disponibles en Nexit (sin API ni contrato comprobado del proveedor). No se simula ningún evento ni se modifica el stock.";
+  "Cancelación e Inutilización: operaciones no disponibles en Nexit (sin API ni contrato comprobado del proveedor; la inutilización corresponde a numeración no utilizada). Nexit no tiene historial de eventos consultable. No se simula ningún evento ni se modifica el stock.";
+
+export const OPERACIONES_EVENTO: readonly OperacionEvento[] = [
+  { nombre: "Cancelación", estado: "No disponible" },
+  { nombre: "Inutilización", estado: "No disponible" },
+];
 
 export function eventosFila(d: { estadoSifen: EstadoSifen }): EventosFila {
   const registrado =
     d.estadoSifen === "CANCELADO" ? "Cancelado (estado fiscal informado por la API)" : d.estadoSifen === "INUTILIZADO" ? "Inutilizado (estado fiscal informado por la API)" : null;
 
-  return { registrado, operacion: MOTIVO_EVENTOS_NO_DISPONIBLES };
+  return { registrado, sinRegistro: SIN_INFORMACION_EVENTOS, operaciones: OPERACIONES_EVENTO, operacion: MOTIVO_EVENTOS_NO_DISPONIBLES };
 }
 
 export type AccionFila = { clave: "kude" | "xml" | "consulta" | "correo"; visible: boolean; disponible: boolean; motivo: string };
@@ -98,4 +112,38 @@ export function partirFechaHora(texto: string): { fecha: string; hora: string } 
   const i = texto.indexOf(" ");
 
   return i < 0 ? { fecha: texto, hora: "" } : { fecha: texto.slice(0, i), hora: texto.slice(i + 1) };
+}
+
+/**
+ * PRO-195-UX-R01-R01 (F001): claves del listado. El CONTEXTO visible (filas, selección, detalles, acciones e indicadores) sigue a la búsqueda ESCRITA (normalizada con
+ * trim) desde la primera tecla; la PETICIÓN usa la búsqueda APLICADA tras el debounce y su propia página. Mientras ambas difieren, el resultado mostrado es de otro
+ * contexto y la pantalla lo trata como obsoleto (no accionable). Sin cambios en el contrato de la API.
+ */
+export type ClavesListado = { claveFiltros: string; claveFiltrosAplicada: string; pagina: number; paginaAplicada: number };
+
+export function clavesListado(escrita: string, aplicada: string, resto: readonly unknown[], paginacion: { clave: string; pagina: number }): ClavesListado {
+  const claveFiltros = JSON.stringify([escrita.trim(), ...resto]);
+  const claveFiltrosAplicada = JSON.stringify([aplicada, ...resto]);
+
+  return {
+    claveFiltros,
+    claveFiltrosAplicada,
+    pagina: paginacion.clave === claveFiltros ? paginacion.pagina : 1,
+    paginaAplicada: paginacion.clave === claveFiltrosAplicada ? paginacion.pagina : 1,
+  };
+}
+
+/**
+ * PRO-195-UX-R01-R01 (F002): destino de la respuesta de una consulta SIFEN lanzada desde la fila.
+ *  · Otra época de contexto (filtros, página, empresa recargada, o A→B→A aunque la clave textual vuelva a coincidir) ⇒ «descartar».
+ *  · Misma época y detalle abierto AHORA (sea la apertura que sea: abierto después de lanzar, cerrado y reabierto) ⇒ «detalle» (fusión no regresiva del historial).
+ *  · Misma época y detalle cerrado ⇒ «anuncio» en la cabecera del listado.
+ * Nunca decide repetir la consulta ni reenviar el documento.
+ */
+export type DestinoConsulta = "descartar" | "detalle" | "anuncio";
+
+export function destinoConsulta(e: { epocaAccion: number; epocaActual: number; contextoAccion: string; contextoActual: string; detalleAbierto: boolean }): DestinoConsulta {
+  if (e.epocaAccion !== e.epocaActual || e.contextoAccion !== e.contextoActual) return "descartar";
+
+  return e.detalleAbierto ? "detalle" : "anuncio";
 }

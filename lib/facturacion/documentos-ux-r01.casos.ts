@@ -60,8 +60,8 @@ export async function verificarCasosDocumentosUxR01(): Promise<string[]> {
   // ══ 1. Indicadores superiores compactos, con cantidades y filtros ═══════════════════════════════════════════════════════════════════════
   igual("UXR01-01 los ocho indicadores se conservan: Total + los 7 grupos de GRUPOS_INDICADOR, en el mismo orden",
     [...indicadores.matchAll(/grupo: "([A-Z_]*)"/g)].map((m) => m[1]), ["", ...GRUPOS_INDICADOR]);
-  cierto("UXR01-02 cada indicador sigue siendo un botón-filtro (aria-pressed, setGrupo) con su cantidad del resumen del servidor",
-    /aria-pressed=\{grupo === i\.grupo\}/.test(pagina) && /onClick=\{\(\) => setGrupo\(i\.grupo\)\}/.test(pagina) && /\{i\.grupo === "" \? \(resumen\.total \?\? 0\) : \(resumen\[i\.grupo\] \?\? 0\)\}/.test(pagina));
+  cierto("UXR01-02 (actualizado PRO-195-R01-R01) cada indicador sigue siendo un botón-filtro (aria-pressed, setGrupo) con su cantidad del resumen del servidor; «—» mientras el recorte mostrado es de otro contexto (F001)",
+    /aria-pressed=\{grupo === i\.grupo\}/.test(pagina) && /onClick=\{\(\) => setGrupo\(i\.grupo\)\}/.test(pagina) && /\{resumen === null \? "—" : i\.grupo === "" \? \(resumen\.total \?\? 0\) : \(resumen\[i\.grupo\] \?\? 0\)\}/.test(pagina));
   cierto("UXR01-03 sin texto de ayuda visible por tarjeta: la ayuda es descripción accesible oculta (srSolo) y title; ya no usa las tarjetas grandes compartidas (summaryGrid/summaryCard)",
     !/<small>\{i\.ayuda\}<\/small>/.test(pagina) && /<span className=\{estilos\.srSolo\}>\. \{i\.ayuda\}<\/span>/.test(pagina) && /title=\{i\.ayuda\}/.test(pagina) && !/ui\.summary(Grid|Card)/.test(pagina) && /className=\{estilos\.kpis\}/.test(pagina));
   cierto("UXR01-04 CSS compacto: chips en una fila que se ajusta (flex-wrap), altura ≥ 36px, foco visible y estado activo turquesa",
@@ -171,8 +171,8 @@ export async function verificarCasosDocumentosUxR01(): Promise<string[]> {
     [claveContexto("[\"a\"]", 1) === claveContexto("[\"a\"]", 1), claveContexto("[\"a\"]", 1) === claveContexto("[\"a\"]", 2), claveContexto("[\"a\"]", 1) === claveContexto("[\"b\"]", 1)], [true, false, false]);
   igual("UXR01-37 esResultadoVigente: solo con detalle abierto y misma generación (cerrado, reabierto o de otro contexto → se descarta)",
     [esResultadoVigente(true, 3, 3), esResultadoVigente(false, 3, 3), esResultadoVigente(true, 3, 4)], [true, false, false]);
-  cierto("UXR01-38 (actualizado UX-R02) el resultado guarda su contexto (y su secuencia); uno de OTRO contexto no se muestra (filas vacías, «Cargando…»): no quedan filas obsoletas accionables tras cambiar filtros o página",
-    /\{ clave: claveConsulta, contexto, secuencia, datos, error \}/.test(pagina) && /const obsoleto = resultado !== null && resultado\.contexto !== contexto;/.test(pagina) && /const filas = obsoleto \? \[\] :/.test(pagina) && /obsoleto \? "Cargando\.\.\."/.test(pagina));
+  cierto("UXR01-38 (actualizado PRO-195-R01-R01) el resultado guarda el contexto de SU petición (búsqueda aplicada) y su secuencia; uno de OTRO contexto no se muestra (filas vacías, «Cargando…»): no quedan filas obsoletas accionables tras cambiar filtros o página",
+    /\{ clave: claveConsulta, contexto: contextoAplicado, secuencia, datos, error \}/.test(pagina) && /const obsoleto = resultado !== null && resultado\.contexto !== contexto;/.test(pagina) && /const filas = obsoleto \? \[\] :/.test(pagina) && /obsoleto \? "Cargando\.\.\."/.test(pagina));
   cierto("UXR01-39 (actualizado PRO-195) al cambiar de contexto se cierran todos los detalles y el tooltip, y se limpian la selección y el aviso de la fila (ajuste de estado en el render, sin efecto)",
     /if \(contextoVisto !== contexto\) \{\s*setContextoVisto\(contexto\);\s*setAbiertos\(\{\}\);\s*setTip\(null\);[^}]*setSeleccion\(\{ contexto, ids: \[\] \}\);\s*setAnuncio\(null\);\s*\}/.test(pagina));
   cierto("UXR01-40 consultar/enviar: una acción por documento a la vez (ref + estado enCurso que sobrevive al cierre), respuesta aplicada SOLO a la misma generación y sin recrear el detalle; la lista se relee igual",

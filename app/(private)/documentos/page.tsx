@@ -42,6 +42,8 @@ import {
 import {
   accionesFila,
   alternarSeleccion,
+  clavesListado,
+  destinoConsulta,
   estadoPrincipalFila,
   eventosFila,
   partirFechaHora,
@@ -285,7 +287,8 @@ export default function DocumentosPage() {
   // PRO-195-UX-R01 (punto 2): selección REAL de filas visibles, ligada al contexto (filtros + página); no habilita acciones masivas (R05).
   const [seleccion, setSeleccion] = useState<Seleccion>({ contexto: "", ids: [] });
   // PRO-195-UX-R01 (punto 3): resultado de la consulta lanzada desde la FILA con el detalle cerrado; vale solo en su contexto.
-  const [anuncio, setAnuncio] = useState<{ contexto: string; texto: string; error: boolean } | null>(null);
+  // PRO-195-UX-R01-R01 (F002): `epoca` identifica cada visita a un contexto (A→B→A da épocas distintas aunque la clave textual coincida).
+  const [anuncio, setAnuncio] = useState<{ contexto: string; epoca: number; texto: string; error: boolean } | null>(null);
   const abiertosRef = useRef<Record<string, Detalle>>({});
   const tipRef = useRef<HTMLDivElement | null>(null);
   const cierreTip = useRef<number | undefined>(undefined);
@@ -305,21 +308,24 @@ export default function DocumentosPage() {
     return () => window.clearTimeout(t);
   }, [busqueda]);
 
-  const claveFiltros = JSON.stringify([busquedaAplicada, tipo, sucursal, estadoSifen, grupo, desde, hasta, orden]);
-  const pagina = paginacion.clave === claveFiltros ? paginacion.pagina : 1;
+  // PRO-195-UX-R01-R01 (F001): el CONTEXTO visible deriva de la INTENCIÓN de búsqueda (texto escrito, normalizado) desde la primera tecla; el debounce de 300 ms
+  // solo demora la PETICIÓN HTTP. Mientras la búsqueda aplicada no alcanza a la escrita, el resultado mostrado es de otro contexto (obsoleto): sus filas, selección,
+  // detalles, acciones e indicadores no se muestran ni se pueden accionar. La petición sigue usando la búsqueda aplicada y su propia página (sin lecturas extra).
+  const { claveFiltros, claveFiltrosAplicada, pagina, paginaAplicada } = clavesListado(busqueda, busquedaAplicada, [tipo, sucursal, estadoSifen, grupo, desde, hasta, orden], paginacion);
   const contexto = claveContexto(claveFiltros, pagina);
-  const claveConsulta = JSON.stringify([claveFiltros, pagina, recarga]);
+  const contextoAplicado = claveContexto(claveFiltrosAplicada, paginaAplicada);
+  const claveConsulta = JSON.stringify([claveFiltrosAplicada, paginaAplicada, recarga]);
 
   useEffect(() => {
     let activo = true;
-    const p = new URLSearchParams({ pagina: String(pagina), tamano: String(PAGE_SIZE) });
+    const p = new URLSearchParams({ pagina: String(paginaAplicada), tamano: String(PAGE_SIZE) });
 
     for (const [k, v] of Object.entries({ q: busquedaAplicada, tipo, sucursal, estadoSifen, grupo, desde, hasta, orden: orden?.campo ?? "", dir: orden?.dir ?? "" })) if (v) p.set(k, v);
 
     secuenciaListado.current += 1;
     const secuencia = secuenciaListado.current;
     const aplicar = (datos: Respuesta | null, error: string) => {
-      if (activo) setResultado((r) => (esListadoMasReciente(r?.secuencia ?? null, secuencia) ? { clave: claveConsulta, contexto, secuencia, datos, error } : r));
+      if (activo) setResultado((r) => (esListadoMasReciente(r?.secuencia ?? null, secuencia) ? { clave: claveConsulta, contexto: contextoAplicado, secuencia, datos, error } : r));
     };
 
     fetch(`/api/documentos?${p.toString()}`, { cache: "no-store" })
@@ -342,7 +348,7 @@ export default function DocumentosPage() {
     if (!hayPendientes) return;
 
     let activo = true;
-    const p = new URLSearchParams({ pagina: String(pagina), tamano: String(PAGE_SIZE) });
+    const p = new URLSearchParams({ pagina: String(paginaAplicada), tamano: String(PAGE_SIZE) });
 
     for (const [k, v] of Object.entries({ q: busquedaAplicada, tipo, sucursal, estadoSifen, grupo, desde, hasta, orden: orden?.campo ?? "", dir: orden?.dir ?? "" })) if (v) p.set(k, v);
 
@@ -353,7 +359,7 @@ export default function DocumentosPage() {
 
         fetch(`/api/documentos?${p.toString()}`, { cache: "no-store" })
           .then((r) => leerJson<Respuesta>(r, "No fue posible actualizar los documentos electrónicos."))
-          .then((datos) => { if (activo) setResultado((r) => (esListadoMasReciente(r?.secuencia ?? null, secuencia) ? { clave: claveConsulta, contexto, secuencia, datos, error: "" } : r)); })
+          .then((datos) => { if (activo) setResultado((r) => (esListadoMasReciente(r?.secuencia ?? null, secuencia) ? { clave: claveConsulta, contexto: contextoAplicado, secuencia, datos, error: "" } : r)); })
           .catch(() => undefined);
       },
       visible: () => document.visibilityState === "visible",
@@ -377,7 +383,8 @@ export default function DocumentosPage() {
   const datos = resultado?.datos ?? null;
   const errorCarga = obsoleto ? "" : (resultado?.error ?? "");
   const filas = obsoleto ? [] : (datos?.documentos ?? []);
-  const resumen = datos?.resumen ?? {};
+  // F001: indicadores del recorte anterior no se muestran durante la transición («—», sin inventar cifras).
+  const resumen = obsoleto ? null : (datos?.resumen ?? {});
   const paginaMostrada = obsoleto ? pagina : (datos?.pagina ?? pagina);
   const totalPaginas = obsoleto ? 1 : (datos?.totalPaginas ?? 1);
   const total = obsoleto ? 0 : (datos?.total ?? 0);
@@ -390,15 +397,23 @@ export default function DocumentosPage() {
   // Las respuestas tardías de esos detalles ya no encuentran la fila abierta y se descartan; una reapertura inicia una generación nueva.
   const [contextoVisto, setContextoVisto] = useState(contexto);
   const contextoVistoRef = useRef(contexto);
+  // PRO-195-UX-R01-R01 (F002): época del contexto visible; aumenta en CADA cambio de contexto (nunca se repite tras A→B→A).
+  const [epocaContexto, setEpocaContexto] = useState(0);
+  const epocaRef = useRef(0);
 
   useEffect(() => {
     contextoVistoRef.current = contextoVisto;
   }, [contextoVisto]);
 
+  useEffect(() => {
+    epocaRef.current = epocaContexto;
+  }, [epocaContexto]);
+
   if (contextoVisto !== contexto) {
     setContextoVisto(contexto);
     setAbiertos({});
     setTip(null);
+    setEpocaContexto((n) => n + 1);
     // PRO-195-UX-R01: otro contexto (filtros, página u otra lectura) ⇒ selección y aviso de la fila anteriores se descartan.
     setSeleccion({ contexto, ids: [] });
     setAnuncio(null);
@@ -672,12 +687,27 @@ export default function DocumentosPage() {
   /** Recuperación EXPLÍCITA tras un error o una espera: relee el listado (solo GET; nunca reenvía ni consulta al gateway). */
   const actualizarListado = () => setRecarga((n) => n + 1);
 
+  /**
+   * PRO-195-UX-R01-R01 (F002): la consulta de la fila puede empezar con el detalle cerrado y el usuario abrirlo (o cerrarlo y reabrirlo) antes de la respuesta.
+   * La respuesta vale SOLO en la misma época de contexto (otro filtro, página o empresa recargada, o A→B→A, la descartan) y entonces:
+   *  · si el detalle del documento está abierto (cualquier apertura de esa época) se FUSIONA de forma no regresiva con su historial (unirIntentos; el GET inicial
+   *    que llegue después también fusiona) y se muestra el resultado en el detalle;
+   *  · si está cerrado, se anuncia en la cabecera del listado.
+   * Nunca se repite la consulta ni se reenvía el documento: una sola POST /consultar por acción y relectura del listado (GET).
+   */
   async function reconsultar(d: Documento) {
     const generacion = iniciarAccion(d, "consulta");
     const contextoAccion = contexto;
-    // PRO-195-UX-R01: con el detalle cerrado, el resultado se informa en la cabecera del listado, solo si sigue el mismo contexto.
-    const anunciar = (texto: string, error: boolean) => {
-      if (!abiertosRef.current[d.id]) setAnuncio((a) => (contextoAccion === contextoVistoRef.current ? { contexto: contextoAccion, texto: `Consulta de ${numeroDocumento(d)}: ${texto}`, error } : a));
+    const epocaAccion = epocaRef.current;
+    const informar = (texto: string, error: boolean, intentos: Intento[] | null) => {
+      const destino = destinoConsulta({ epocaAccion, epocaActual: epocaRef.current, contextoAccion, contextoActual: contextoVistoRef.current, detalleAbierto: Boolean(abiertosRef.current[d.id]) });
+
+      if (destino === "descartar") return;
+      // Escribe solo si el detalle sigue abierto (aplicarDetalle/fusionarIntentos nunca recrean uno cerrado); se intenta también con «anuncio» por si el detalle
+      // se abrió en este mismo instante (sin efecto si está cerrado).
+      if (intentos) fusionarIntentos(d.id, intentos, { aviso: texto, error: "" });
+      else aplicarDetalle(d.id, { error: texto });
+      if (destino === "anuncio") setAnuncio({ contexto: contextoAccion, epoca: epocaAccion, texto: `Consulta de ${numeroDocumento(d)}: ${texto}`, error });
     };
 
     if (generacion === null) return;
@@ -690,14 +720,10 @@ export default function DocumentosPage() {
 
       const texto = [`${ETIQUETA_RESULTADO_INTENTO[j.resultado] ?? j.resultado}${j.mensaje ? `: ${j.mensaje}` : ""}`, ...notas].join(" · ");
 
-      if (vigenteDetalle(d, generacion)) fusionarIntentos(d.id, j.intentos, { aviso: texto });
-      anunciar(texto, false);
+      informar(texto, false, j.intentos);
       setRecarga((n) => n + 1);
     } catch (e) {
-      const texto = e instanceof Error ? e.message : "No fue posible consultar el estado.";
-
-      if (vigenteDetalle(d, generacion)) aplicarDetalle(d.id, { error: texto });
-      anunciar(texto, true);
+      informar(e instanceof Error ? e.message : "No fue posible consultar el estado.", true, null);
     } finally {
       terminarAccion(d);
     }
@@ -743,7 +769,7 @@ export default function DocumentosPage() {
       </header>
 
       {/* PRO-342-UX-R01 (punto 1): indicadores compactos que siguen filtrando; la ayuda larga queda como descripción accesible y título. */}
-      <section className={estilos.kpis} aria-label="Indicadores de documentos (filtran el listado)" aria-busy={cargando}>
+      <section className={estilos.kpis} aria-label="Indicadores de documentos (filtran el listado)" aria-busy={cargando || obsoleto}>
         {INDICADORES.map((i) => (
           <button
             key={i.titulo}
@@ -754,7 +780,7 @@ export default function DocumentosPage() {
             onClick={() => setGrupo(i.grupo)}
           >
             <span className={estilos.kpiTitulo}>{i.titulo}</span>
-            <strong className={estilos.kpiValor}>{i.grupo === "" ? (resumen.total ?? 0) : (resumen[i.grupo] ?? 0)}</strong>
+            <strong className={estilos.kpiValor}>{resumen === null ? "—" : i.grupo === "" ? (resumen.total ?? 0) : (resumen[i.grupo] ?? 0)}</strong>
             <span className={estilos.srSolo}>. {i.ayuda}</span>
           </button>
         ))}
@@ -832,7 +858,7 @@ export default function DocumentosPage() {
         ) : null}
 
         {/* PRO-195-UX-R01: resultado de una consulta lanzada desde la fila con el detalle cerrado (solo en su contexto). */}
-        {anuncio && anuncio.contexto === contexto ? (
+        {anuncio && anuncio.contexto === contexto && anuncio.epoca === epocaContexto ? (
           <div className={clases(anuncio.error ? ui.alertError : ui.alertOk, estilos.anuncio)} role={anuncio.error ? "alert" : "status"}>
             <span>{anuncio.texto}</span>
             <span className={estilos.anuncioAcciones}>
@@ -962,7 +988,13 @@ export default function DocumentosPage() {
                       </td>
                       <td>
                         <div className={estilos.eventos}>
-                          <span className={eventos.registrado ? estilos.eventoRegistrado : estilos.sinEventos}>{eventos.registrado ?? "Sin eventos"}</span>
+                          {/* PRO-195-UX-R01-R01 (F003): sin historial de eventos consultable no se afirma ausencia; cada operación muestra su indisponibilidad. */}
+                          <span className={estilos.eventosTexto}>
+                            <span className={eventos.registrado ? estilos.eventoRegistrado : estilos.sinEventos}>{eventos.registrado ?? eventos.sinRegistro}</span>
+                            {eventos.operaciones.map((o) => (
+                              <small key={o.nombre} className={estilos.eventoOperacion}>{o.nombre}: {o.estado}</small>
+                            ))}
+                          </span>
                           <AccionIcono clase={estilos.accionEventos} glifo={ACCION.eventos} etiqueta={`Eventos de ${doc}`} disponible={false} motivo={eventos.operacion} alActivar={() => undefined} tip={eventosTip} />
                         </div>
                       </td>
@@ -1074,7 +1106,7 @@ export default function DocumentosPage() {
                                   </li>
                                 ))}
                               </ul>
-                              <p className={ui.muted}>Eventos: {eventos.registrado ?? "sin eventos registrados"}. {eventos.operacion}</p>
+                              <p className={ui.muted}>Eventos: {eventos.registrado ?? eventos.sinRegistro}. {eventos.operacion}</p>
 
                               <h4 className={estilos.subtitulo}>Seguimiento fiscal</h4>
                               <dl className={estilos.datosTecnicos} aria-label="Seguimiento fiscal">

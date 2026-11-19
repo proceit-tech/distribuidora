@@ -135,7 +135,7 @@ export async function verificarCasosDocumentosUxR02(): Promise<string[]> {
     const control = 40; // columna izquierda de la tarjeta (expandir / seleccionar): grid-template-columns: 40px …
     const relleno = 10; // padding lateral de cada celda de la tarjeta (4px 10px)
     const acciones = 4 * accion + 3 * gapAcciones; // KuDE · XML · Consulta · Correo (con permiso; sin él, menos)
-    const eventosMin = 32; // el control de eventos (32px); el texto «Sin eventos» puede pasar a la línea siguiente (flex-wrap)
+    const eventosMin = 32; // el control de eventos (32px); el texto de eventos (PRO-195-R01-R01: «Sin información de eventos», Cancelación/Inutilización) puede pasar a la línea siguiente (flex-wrap, sin nowrap)
     const umbral = Number(/@container documentos \(min-width: (\d+)px\)/.exec(cssLimpio)?.[1] ?? NaN);
     const contenedor = (vista: number) => vista - 24 - 2; // padding exterior del listado compartido + borde (valores de la auditoría UX-R01)
     const enFila = (ancho: number) => ancho >= umbral;

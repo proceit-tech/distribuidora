@@ -1,5 +1,6 @@
 /**
  * PRO-195-UX-R01 — Documentos electrónicos como central operacional compacta (orden ORD-CLAUDE-NEXIT-PRO-195-UX-R01-DOCUMENTOS-2026-11-18).
+ * PRO-195-UX-R01-R01 — correctivo focal de la auditoría AUD-CHATGPT-PRO-195-UX-R01 (F001 debounce, F002 consulta con detalle abierto tarde, F003 eventos): casos R01R01-*.
  * Casos de aceptación R01-01..R01-14 sobre funciones PURAS reales (documentos-tabla.ts, presentacion-sifen.ts, monto-visual.ts, documentos-ux.ts) y sobre la estructura del
  * texto fuente de page.tsx / page.module.css (React y navegador NO se renderizan aquí).
  * ESCRITOS, NO EJECUTADOS (orden PRO-195-UX-R01: sin tests, lint, typecheck, build, CI manual, SQL ni navegador). La comprobación visual (1366/1920, móvil, teclado, lector
@@ -14,15 +15,18 @@ import { contador } from "@/lib/clientes/contador-casos";
 import {
   accionesFila,
   alternarSeleccion,
+  clavesListado,
+  destinoConsulta,
   estadoPrincipalFila,
   eventosFila,
   MOTIVO_CORREO_NO_DISPONIBLE,
   MOTIVO_EVENTOS_NO_DISPONIBLES,
   MOTIVO_XML_NO_DISPONIBLE,
+  OPERACIONES_EVENTO,
   partirFechaHora,
   seleccionVigente,
 } from "@/lib/facturacion/documentos-tabla";
-import { accionDisponible, claveContexto } from "@/lib/facturacion/documentos-ux";
+import { accionDisponible, claveContexto, unirIntentos } from "@/lib/facturacion/documentos-ux";
 import { ESTADOS_LOCAL, ESTADOS_SIFEN, type EstadoLocal, type EstadoSifen } from "@/lib/facturacion/estados";
 import { kudeDisponible } from "@/lib/facturacion/kude-visor";
 import { iconosEstado } from "@/lib/facturacion/presentacion-sifen";
@@ -119,9 +123,10 @@ export async function verificarCasosDocumentosPro195R01(): Promise<string[]> {
     /const alerta = alertaConsulta\(d\);/.test(pagina) && /\{avisoFila \? \(\s*<IconoFase eje="aviso" simbolo="alerta"/.test(fila) && fila.indexOf("{estado.texto}") < fila.indexOf("eje=\"aviso\""));
 
   // ══ R01-06 Eventos: estado registrado vs. operación no disponible ══════════════════════════════════════════════════════════════════════
-  igual("R01-06a Eventos: Cancelado/Inutilizado solo como estado fiscal YA informado por la API; sin él «Sin eventos»; la operación siempre no disponible con su motivo",
-    [eventosFila({ estadoSifen: "CANCELADO" }).registrado, eventosFila({ estadoSifen: "INUTILIZADO" }).registrado, eventosFila({ estadoSifen: "APROBADO" }).registrado, eventosFila({ estadoSifen: "RECHAZADO" }).operacion === MOTIVO_EVENTOS_NO_DISPONIBLES],
-    ["Cancelado (estado fiscal informado por la API)", "Inutilizado (estado fiscal informado por la API)", null, true]);
+  igual("R01-06a (actualizado R01-R01 F003) Eventos: Cancelado/Inutilizado solo como estado fiscal YA informado por la API; sin él «Sin información de eventos» (nunca «Sin eventos»); la operación siempre no disponible con su motivo",
+    [eventosFila({ estadoSifen: "CANCELADO" }).registrado, eventosFila({ estadoSifen: "INUTILIZADO" }).registrado, eventosFila({ estadoSifen: "APROBADO" }).registrado, eventosFila({ estadoSifen: "APROBADO" }).sinRegistro,
+      eventosFila({ estadoSifen: "RECHAZADO" }).operacion === MOTIVO_EVENTOS_NO_DISPONIBLES],
+    ["Cancelado (estado fiscal informado por la API)", "Inutilizado (estado fiscal informado por la API)", null, "Sin información de eventos", true]);
   cierto("R01-06b el control de eventos está DESHABILITADO (disponible=false) y su clic no hace nada; no hay rutas de cancelación/inutilización ni stock en la pantalla",
     /<AccionIcono clase=\{estilos\.accionEventos\} glifo=\{ACCION\.eventos\} etiqueta=\{`Eventos de \$\{doc\}`\} disponible=\{false\} motivo=\{eventos\.operacion\} alActivar=\{\(\) => undefined\}/.test(fila) &&
     !/\/api\/[^`"]*(cancel|inutiliz|evento)/i.test(pagina) && !/stock|inventario/i.test(tabla.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "").replace(/MOTIVO_EVENTOS_NO_DISPONIBLES =[\s\S]*?;/, "")));
@@ -159,7 +164,7 @@ export async function verificarCasosDocumentosPro195R01(): Promise<string[]> {
     (primera.match(/<dt /g) ?? []).length === 4 && (primera.match(/"Sin información"/g) ?? []).length === 4 && !/reconsultar|fetch/.test(primera));
   cierto("R01-08b copiar lote y CDC exactos con feedback accesible (aria-live) y error visible; segunda capa CERRADA por defecto con los cuatro estados técnicos, eventos e historial",
     /aria-label="Copiar número de lote"/.test(primera) && /aria-label="Copiar CDC"/.test(primera) && /aria-live="polite"/.test(primera) && /tecnico: false, copiado: "" \};/.test(pagina) && /\{det\.tecnico \? \(/.test(segunda) &&
-    /Estados técnicos/.test(segunda) && /Eventos: \{eventos\.registrado \?\? "sin eventos registrados"\}/.test(segunda) && /Historial de envíos y consultas/.test(segunda));
+    /Estados técnicos/.test(segunda) && /Eventos: \{eventos\.registrado \?\? eventos\.sinRegistro\}/.test(segunda) && /Historial de envíos y consultas/.test(segunda));
   cierto("R01-08c el expandir está en su propia columna, con aria-expanded/aria-controls al detalle (id detalle-…) y nombre accesible por documento",
     /aria-expanded=\{Boolean\(det\)\} aria-controls=\{det \? `detalle-\$\{d\.id\}` : undefined\}/.test(fila) && /<tr id=\{`detalle-\$\{d\.id\}`\}/.test(pagina) && /aria-label=\{`\$\{det \? "Ocultar" : "Ver"\} detalle de \$\{doc\}`\}/.test(fila));
 
@@ -175,9 +180,10 @@ export async function verificarCasosDocumentosPro195R01(): Promise<string[]> {
     cierto("R01-09b al cambiar de contexto (filtros, página u otra lectura) se cierran detalles y tooltip y se limpian selección y aviso de la fila",
       /if \(contextoVisto !== contexto\) \{\s*setContextoVisto\(contexto\);\s*setAbiertos\(\{\}\);\s*setTip\(null\);[^}]*setSeleccion\(\{ contexto, ids: \[\] \}\);\s*setAnuncio\(null\);\s*\}/.test(pagina) &&
       /const seleccionados = seleccionVigente\(seleccion, contexto, filas\.map\(\(f\) => f\.id\)\);/.test(pagina));
-    cierto("R01-09c la consulta desde la fila conserva las guardas UX-R02: una por documento, listado vigente tras la acción, respuesta solo en su generación; con el detalle cerrado el resultado se anuncia SOLO si sigue el mismo contexto",
+    cierto("R01-09c (actualizado R01-R01 F002) la consulta desde la fila conserva las guardas UX-R02: una por documento y listado vigente tras la acción; su respuesta va al detalle abierto o al anuncio SOLO en la misma época de contexto (ver R01R01-F002)",
       /if \(accionEnCurso\.current\.has\(d\.id\) \|\| !disponible\(d\)\) return null;/.test(pagina) && /cargandoDetalle: abiertos\[d\.id\]\?\.cargando === true/.test(pagina) &&
-      /if \(!abiertosRef\.current\[d\.id\]\) setAnuncio\(\(a\) => \(contextoAccion === contextoVistoRef\.current \?/.test(pagina) && /anuncio && anuncio\.contexto === contexto \?/.test(pagina) &&
+      /const destino = destinoConsulta\(\{ epocaAccion, epocaActual: epocaRef\.current, contextoAccion, contextoActual: contextoVistoRef\.current, detalleAbierto: Boolean\(abiertosRef\.current\[d\.id\]\) \}\);/.test(pagina) &&
+      /anuncio && anuncio\.contexto === contexto && anuncio\.epoca === epocaContexto \?/.test(pagina) &&
       [accionDisponible({ cargandoDetalle: false, enCurso: false, esperaListado: 7, secuenciaListado: 7 }), accionDisponible({ cargandoDetalle: false, enCurso: false, esperaListado: 7, secuenciaListado: 8 })].join() === "false,true");
     cierto("R01-09d las referencias de las respuestas asíncronas se sincronizan DESPUÉS del render (useEffect), no se escriben durante el render",
       /useEffect\(\(\) => \{\s*abiertosRef\.current = abiertos;\s*\}, \[abiertos\]\);/.test(pagina) && /useEffect\(\(\) => \{\s*contextoVistoRef\.current = contextoVisto;\s*\}, \[contextoVisto\]\);/.test(pagina));
@@ -212,6 +218,126 @@ export async function verificarCasosDocumentosPro195R01(): Promise<string[]> {
   // ══ R01-14 Sin KPIs falsos ni estado de ambiente inventado ══════════════════════════════════════════════════════════════════════════════
   cierto("R01-14 los indicadores siguen siendo los del servidor (resumen) y no se muestra ambiente TEST/PRODUCCIÓN (no hay fuente confiable en el listado)",
     /resumen\[i\.grupo\]/.test(pagina) && !/PRODUCCI[OÓ]N|\bTEST\b|ambiente/i.test(pagina.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "")) && !/seleccionados\.length[^\n]*resumen/.test(pagina));
+
+  // ══ PRO-195-UX-R01-R01 — casos de los tres hallazgos de la auditoría (escritos, NO ejecutados) ══════════════════════════════════════════
+  // Modelos con las funciones PURAS reales que usa la pantalla (clavesListado, claveContexto, seleccionVigente, destinoConsulta, unirIntentos); la pantalla
+  // solo las conecta (comprobado aparte en el texto fuente). React no se renderiza.
+
+  // ── F001 Resultados obsoletos durante el debounce ─────────────────────────────────────────────────────────────────────────────────────
+  {
+    const resto = ["", "", "", "", "", "", null];
+    // Modelo de la pantalla: resultado mostrado = el de la última petición resuelta; contexto visible = intención escrita.
+    const vista = (escrita: string, aplicada: string, paginacion: { clave: string; pagina: number }, resultadoContexto: string, filasResultado: string[], sel: { contexto: string; ids: string[] }) => {
+      const k = clavesListado(escrita, aplicada, resto, paginacion);
+      const contexto = claveContexto(k.claveFiltros, k.pagina);
+      const obsoleto = resultadoContexto !== contexto;
+      const filas = obsoleto ? [] : filasResultado;
+
+      return { contexto, contextoPeticion: claveContexto(k.claveFiltrosAplicada, k.paginaAplicada), obsoleto, filas, seleccion: seleccionVigente(sel, contexto, filas), indicadores: obsoleto ? "—" : "resumen" };
+    };
+    const kA = clavesListado("A", "A", resto, { clave: "", pagina: 1 });
+    const ctxA = claveContexto(kA.claveFiltros, kA.pagina);
+    const selA = { contexto: ctxA, ids: ["a1"] };
+
+    igual("R01R01-F001a contexto estable (escrita = aplicada): el resultado de A se muestra con su selección e indicadores",
+      [vista("A", "A", { clave: "", pagina: 1 }, ctxA, ["a1", "a2"], selA)].map((v) => [v.obsoleto, v.filas, v.seleccion, v.indicadores]), [[false, ["a1", "a2"], ["a1"], "resumen"]]);
+    igual("R01R01-F001b se escribe «AB» y el debounce aún NO aplicó: las filas, la selección y los indicadores de A dejan de mostrarse y de ser accionables EN LA MISMA tecla; la petición sigue siendo la de A (sin lectura extra)",
+      [vista("AB", "A", { clave: "", pagina: 1 }, ctxA, ["a1", "a2"], selA)].map((v) => [v.obsoleto, v.filas, v.seleccion, v.indicadores, v.contextoPeticion === ctxA]), [[true, [], [], "—", true]]);
+    igual("R01R01-F001c espacios finales no cambian la intención (trim): «A » sigue mostrando A",
+      vista("A ", "A", { clave: "", pagina: 1 }, ctxA, ["a1"], selA).obsoleto, false);
+    {
+      // Página 3 de A; se escribe «AB» durante el debounce: la petición conserva la página 3 de A (sin pedir la 1 de A), la vista ya es «AB», página 1.
+      const pag = { clave: kA.claveFiltros, pagina: 3 };
+      const ctxA3 = claveContexto(kA.claveFiltros, 3);
+      const v = vista("AB", "A", pag, ctxA3, ["a41"], { contexto: ctxA3, ids: ["a41"] });
+      const kAB = clavesListado("AB", "AB", resto, pag);
+
+      igual("R01R01-F001d en la página 3 de A, al escribir «AB»: la vista pasa a «AB» página 1 sin filas de A, la petición pendiente sigue en A página 3 y, al aplicar el debounce, pide «AB» página 1",
+        [v.obsoleto, v.filas, v.contextoPeticion === ctxA3, kAB.paginaAplicada, kAB.pagina], [true, [], true, 1, 1]);
+    }
+    {
+      // A → AB → A dentro de los 300 ms: el resultado de A vuelve a coincidir con la intención, pero la selección de antes no revive (se limpió al cambiar de contexto).
+      const despues = vista("A", "A", { clave: "", pagina: 1 }, ctxA, ["a1", "a2"], { contexto: claveContexto(clavesListado("AB", "A", resto, { clave: "", pagina: 1 }).claveFiltros, 1), ids: [] });
+
+      igual("R01R01-F001e A→AB→A antes del debounce: las filas de A reaparecen (mismo contexto, mismo resultado), sin selección previa resucitada", [despues.obsoleto, despues.filas, despues.seleccion], [false, ["a1", "a2"], []]);
+    }
+    {
+      // Respuesta tardía: la petición de A llega cuando ya se escribió «AB»: queda guardada con el contexto de SU petición (A) y no se muestra.
+      const ctxGuardado = claveContexto(kA.claveFiltrosAplicada, kA.paginaAplicada);
+
+      igual("R01R01-F001f respuesta de A que llega después de escribir «AB»: se guarda con el contexto de A y no es accionable bajo «AB»",
+        vista("AB", "A", { clave: "", pagina: 1 }, ctxGuardado, ["a1"], selA).filas, []);
+    }
+    cierto("R01R01-F001g la pantalla conecta así las claves: contexto visible desde la intención, petición y resultado con la aplicada; indicadores «—» y aria-busy durante la transición; contrato de la API sin cambios",
+      /const \{ claveFiltros, claveFiltrosAplicada, pagina, paginaAplicada \} = clavesListado\(busqueda, busquedaAplicada, \[tipo, sucursal, estadoSifen, grupo, desde, hasta, orden\], paginacion\);/.test(pagina) &&
+      /const contexto = claveContexto\(claveFiltros, pagina\);/.test(pagina) && /const contextoAplicado = claveContexto\(claveFiltrosAplicada, paginaAplicada\);/.test(pagina) &&
+      /const claveConsulta = JSON\.stringify\(\[claveFiltrosAplicada, paginaAplicada, recarga\]\);/.test(pagina) && (pagina.match(/pagina: String\(paginaAplicada\)/g) ?? []).length === 2 &&
+      (pagina.match(/contexto: contextoAplicado, secuencia/g) ?? []).length === 2 && /const resumen = obsoleto \? null :/.test(pagina) && /aria-busy=\{cargando \|\| obsoleto\}/.test(pagina) &&
+      /setBusquedaAplicada\(busqueda\.trim\(\)\), 300/.test(pagina) && /for \(const \[k, v\] of Object\.entries\(\{ q: busquedaAplicada, tipo/.test(pagina));
+  }
+
+  // ── F002 Consulta SIFEN lanzada con el detalle cerrado ────────────────────────────────────────────────────────────────────────────────
+  {
+    type I = { id: string; cursor?: string };
+    const viejo: I = { id: "i1", cursor: "2026-11-18T10:00:00.000000Z|i1" };
+    const nuevo: I = { id: "i2", cursor: "2026-11-18T11:00:00.000000Z|i2" };
+    const d = (epocaAccion: number, epocaActual: number, abierto: boolean, ctxA = "c1", ctxB = "c1") => destinoConsulta({ epocaAccion, epocaActual, contextoAccion: ctxA, contextoActual: ctxB, detalleAbierto: abierto });
+
+    igual("R01R01-F002a destino: misma época con el detalle abierto ⇒ detalle; cerrado ⇒ anuncio; otra época u otro contexto ⇒ descartar",
+      [d(1, 1, true), d(1, 1, false), d(1, 2, true), d(1, 2, false), d(1, 1, true, "c1", "c2")], ["detalle", "anuncio", "descartar", "descartar", "descartar"]);
+    {
+      // Secuencia del hallazgo: POST con detalle cerrado → se abre el detalle → el GET inicial resuelve ANTES (sin el intento nuevo) → resuelve el POST.
+      let detalle: I[] = [];
+      detalle = unirIntentos(detalle, [viejo]); // GET inicial (snapshot sin la consulta nueva)
+      const destino = d(4, 4, true);
+      if (destino === "detalle") detalle = unirIntentos([nuevo, viejo], detalle); // fusionarIntentos con la respuesta del POST
+
+      igual("R01R01-F002b POST (cerrado) → abrir → GET resuelve antes → POST resuelve: el resultado va al detalle y el historial incluye la consulta nueva, sin duplicados",
+        [destino, detalle.map((x) => x.id)], ["detalle", ["i2", "i1"]]);
+    }
+    {
+      // Variante: el POST resuelve ANTES que el GET inicial; el GET (snapshot anterior) fusiona sin borrar el intento nuevo (UX-R02).
+      let detalle: I[] = [];
+      if (d(4, 4, true) === "detalle") detalle = unirIntentos([nuevo, viejo], detalle);
+      detalle = detalle.length > 0 ? unirIntentos(detalle, [viejo]) : [viejo];
+
+      igual("R01R01-F002c POST (cerrado) → abrir → POST resuelve → GET inicial resuelve después: el snapshot no hace retroceder el historial", detalle.map((x) => x.id), ["i2", "i1"]);
+    }
+    igual("R01R01-F002d cerrar y reabrir el detalle antes de la respuesta (misma época): el resultado va a la apertura ACTUAL; cerrar sin reabrir: anuncio; nunca recrea un detalle cerrado",
+      [d(2, 2, true), d(2, 2, false)], ["detalle", "anuncio"]);
+    igual("R01R01-F002e A→B→A: la respuesta lanzada en la primera visita de A no aparece en la segunda (épocas 1 y 3, misma clave textual) ni en B (época 2)",
+      [d(1, 3, false, "A", "A"), d(1, 3, true, "A", "A"), d(1, 2, false, "A", "B")], ["descartar", "descartar", "descartar"]);
+    igual("R01R01-F002f cambio de página o de filtros (o empresa recargada: otra carga de la pantalla, época nueva) durante la consulta: se descarta, sin anuncio ni historial ajenos",
+      [d(5, 6, false, "p1", "p2"), d(5, 6, true, "p1", "p1")], ["descartar", "descartar"]);
+    cierto("R01R01-F002g la pantalla: época por visita de contexto (aumenta en cada cambio, sincronizada en efecto), anuncio con época, una sola POST /consultar por acción, sin /enviar ni reconsulta automática; error y éxito siguen el mismo destino",
+      (() => {
+        const r = pagina.slice(pagina.indexOf("async function reconsultar"), pagina.indexOf("async function enviarAlGateway"));
+
+        return /setTip\(null\);\s*setEpocaContexto\(\(n\) => n \+ 1\);/.test(pagina) && /useEffect\(\(\) => \{\s*epocaRef\.current = epocaContexto;\s*\}, \[epocaContexto\]\);/.test(pagina) &&
+          /const epocaAccion = epocaRef\.current;/.test(r) && /if \(destino === "descartar"\) return;/.test(r) && /if \(intentos\) fusionarIntentos\(d\.id, intentos, \{ aviso: texto, error: "" \}\);\s*else aplicarDetalle\(d\.id, \{ error: texto \}\);/.test(r) &&
+          /if \(destino === "anuncio"\) setAnuncio\(\{ contexto: contextoAccion, epoca: epocaAccion,/.test(r) && (r.match(/fetch\(/g) ?? []).length === 1 && !/\/enviar/.test(r) &&
+          /informar\(texto, false, j\.intentos\);/.test(r) && /informar\(e instanceof Error \? e\.message : "No fue posible consultar el estado\.", true, null\);/.test(r);
+      })());
+    cierto("R01R01-F002h fusionarIntentos y aplicarDetalle solo escriben si el detalle existe (no resucitan una fila cerrada)",
+      /function aplicarDetalle\(id: string, parte: Partial<Detalle>\) \{\s*setAbiertos\(\(a\) => \(a\[id\] \?/.test(pagina) && /function fusionarIntentos\(id: string, nuevos: Intento\[\], parte: Partial<Detalle>\) \{\s*setAbiertos\(\(a\) => \{\s*if \(!a\[id\]\) return a;/.test(pagina));
+  }
+
+  // ── F003 Eventos sin afirmar ausencia ─────────────────────────────────────────────────────────────────────────────────────────────────
+  {
+    const todos = ESTADOS_SIFEN.map((s) => eventosFila({ estadoSifen: s }));
+
+    cierto("R01R01-F003a para TODO estado fiscal, la columna nunca dice «Sin eventos»: o el estado Cancelado/Inutilizado informado por la API, o «Sin información de eventos»",
+      todos.every((e) => (e.registrado ?? e.sinRegistro) !== "Sin eventos" && (e.registrado !== null || e.sinRegistro === "Sin información de eventos")));
+    igual("R01R01-F003b Cancelación e Inutilización visibles con su indisponibilidad explícita (no solo en el tooltip)",
+      OPERACIONES_EVENTO.map((o) => `${o.nombre}: ${o.estado}`), ["Cancelación: No disponible", "Inutilización: No disponible"]);
+    cierto("R01R01-F003c el motivo dice que no hay historial de eventos consultable y que la inutilización es de numeración; sin protocolo/fecha inferidos",
+      /no tiene historial de eventos consultable/.test(MOTIVO_EVENTOS_NO_DISPONIBLES) && /numeración no utilizada/.test(MOTIVO_EVENTOS_NO_DISPONIBLES) && !/protocolo|fecha/i.test(MOTIVO_EVENTOS_NO_DISPONIBLES));
+    cierto("R01R01-F003d la celda y la segunda capa muestran el texto honesto y las dos operaciones; ya no existen «Sin eventos» ni «sin eventos registrados» en la pantalla",
+      /\{eventos\.registrado \?\? eventos\.sinRegistro\}<\/span>/.test(fila) && /\{eventos\.operaciones\.map\(\(o\) => \(/.test(fila) && /\{o\.nombre\}: \{o\.estado\}/.test(fila) &&
+      /Eventos: \{eventos\.registrado \?\? eventos\.sinRegistro\}\. \{eventos\.operacion\}/.test(segunda) && !/Sin eventos|sin eventos registrados/.test(pagina));
+    cierto("R01R01-F003e sin rutas de eventos, sin stock y el control sigue deshabilitado (PRO-199 / PRO-313 intactas)",
+      !/\/api\/[^`"]*(cancel|inutiliz|evento)/i.test(pagina) && /disponible=\{false\} motivo=\{eventos\.operacion\}/.test(fila) && /color: #53687a;/.test(regla(css, ".eventoOperacion")));
+  }
 
   return fallos;
 }
