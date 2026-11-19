@@ -1021,9 +1021,20 @@ export async function verificarCasosFlujoFiscalPro342(): Promise<string[]> {
   {
     // PRO-195-UX-R01: la fila suma la clase de selección.
     const fila = pagina.slice(pagina.indexOf("<tr className={clases(ui.row, CLASE_FILA_TIPO[d.tipo], marcado && estilos.filaMarcada)} data-tipo={d.tipo}>"), pagina.indexOf("{det ? (\n                      <tr"));
-    const detalle = pagina.slice(pagina.indexOf("PRIMERA CAPA"), pagina.indexOf("</Fragment>"));
+    // PRE-VM-R02-B-R03: desde PRE-VM-R02-B la celda Eventos usa <Fragment key={o.nombre}>…</Fragment> ANTES de «PRIMERA CAPA», y el primer «</Fragment>» del archivo quedaba antes del inicio:
+    // `detalle` salía vacío. El bloque se delimita ahora desde «PRIMERA CAPA» hasta el cierre del Fragment EXTERNO de la fila (<Fragment key={d.id}>), buscado DESPUÉS del inicio y con la misma
+    // indentación que su apertura (no un Fragment interno). Se verifica la delimitación antes de usarla; las comprobaciones siguientes no cambian.
+    const aperturaFila = pagina.indexOf("<Fragment key={d.id}>");
+    const sangriaFila = aperturaFila >= 0 ? pagina.slice(pagina.lastIndexOf("\n", aperturaFila) + 1, aperturaFila) : "";
+    const inicioDetalle = pagina.indexOf("PRIMERA CAPA");
+    const finDetalle = inicioDetalle >= 0 ? pagina.indexOf(`\n${sangriaFila}</Fragment>`, inicioDetalle) : -1;
+    const detalle = inicioDetalle >= 0 && finDetalle > inicioDetalle ? pagina.slice(inicioDetalle, finDetalle) : "";
     const primera = detalle.slice(0, detalle.indexOf("SEGUNDA CAPA"));
     const segunda = detalle.slice(detalle.indexOf("SEGUNDA CAPA"));
+    cierto("PRO342-R04-UX00 delimitación del detalle: existe la apertura del Fragment externo de la fila, «PRIMERA CAPA» está después de ella, su cierre (misma indentación) está después de «PRIMERA CAPA»; «SEGUNDA CAPA» está dentro y después de «PRIMERA CAPA»; ningún bloque extraído queda vacío",
+      aperturaFila >= 0 && sangriaFila !== "" && /^ +$/.test(sangriaFila) && inicioDetalle > aperturaFila && finDetalle > inicioDetalle
+      && detalle.indexOf("SEGUNDA CAPA") > 0 && detalle.startsWith("PRIMERA CAPA") && primera.length > 0 && segunda.startsWith("SEGUNDA CAPA") && segunda.length > "SEGUNDA CAPA".length
+      && !/<Fragment key=\{d\.id\}>/.test(detalle));
 
     // PRO-195-UX-R01 (punto 4): la fila muestra UN estado principal (estadoPrincipalFila) + «!» si hay aviso; los cuatro iconos independientes pasan a la segunda capa.
     cierto("PRO342-R04-UX01a (actualizado PRO-195) lista: la celda Estado muestra UN estado principal (+ «!» si hay aviso), sin cápsulas «SIFEN: …», «Envío: …», e-mail ni «Requiere revisión»; los cuatro iconos de iconosEstado quedan en la segunda capa con su grupo accesible",
