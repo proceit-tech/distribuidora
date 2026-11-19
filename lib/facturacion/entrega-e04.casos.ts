@@ -12,6 +12,7 @@ import { crearControlEntrega, pendienteEntrega } from "@/lib/facturacion/entrega
 import { componerInfoAdicional, descomponerInfoAdicional, huellaInfoAdicional, MARCA_AUTOMATICA } from "@/lib/facturacion/info-adicional";
 import { erroresDomicilioReceptor } from "@/lib/facturacion/payload-fe";
 import { ErrorFacturacion, ErrorValidacionFiscal } from "@/lib/facturacion/shared";
+import { conContratoFE, cuerpoValido } from "@/lib/facturacion/contrato-fe-simulado.casos";
 import { planificarStock } from "@/lib/facturacion/stock-fe";
 
 void MENSAJE_REPARTO_CAMBIO;
@@ -59,23 +60,37 @@ const producto = { id: P1, codigo: "P-1", controlaStock: true, descripcion: "Pro
 
 function mundo(opciones: { stock?: number } = {}) {
   const llamadas: Array<{ sql: string; p: unknown[] }> = [];
-  const docs = new Map<string, { id: string; numero: string }>();
+  const docs = new Map<string, { id: string; numero: string; cliente: string; payload: Record<string, unknown>; vendedor: string }>();
   const entregas: Array<{ doc: string; cliente: string; direccion: string; snapshot: Record<string, unknown> }> = [];
   // E1: cuentas por empresa (nombre/apellido persistidos) y dInfAdic persistido por clave (snapshot de la emisión).
   const cuentas = new Map<string, { nombre: string; apellido: string | null }>([[EMPRESA + "|" + USUARIO, { nombre: "Juan", apellido: "Pérez" }]]);
   const infoPorClave = new Map<string, string | null>();
   let secuencia = 0;
   const stock = opciones.stock ?? 10;
-  const db = {
+  // PRE-VM-R02-A: el simulador responde además el contrato vigente — vendedor ELEGIDO (vendedorActivo, NEX-074: cuenta ACTIVA de la empresa con el perfil Vendedor, desde `cuentas`), lectura autorizada de la
+  // dirección seleccionada (fe_direccion_receptor_elegida, NEX-076, solo empresa de la sesión y destino elegible del cliente), emisión por fe_documento_crear_fe_receptor/_vendedor (mismos parámetros posicionales
+  // que fe_documento_crear_fe_con_stock_entrega, más el vendedor en p[13]) y payload histórico de una FE ya creada. Las lecturas de catálogo/configuración las responde la capa común (conContratoFE).
+  const db = conContratoFE({
     async query(sql: string, p: unknown[] = []) {
       llamadas.push({ sql, p });
-      if (/FROM usuarios WHERE empresa_id/.test(sql)) { const u = cuentas.get(String(p[0]) + "|" + String(p[1])); return { rows: u ? [u] : [], rowCount: u ? 1 : 0 }; }
+      if (/FROM usuarios u\s+JOIN usuario_perfil up/.test(sql)) { const u = cuentas.get(String(p[0]) + "|" + String(p[1])); return u ? { rows: [{ id: String(p[1]), usuario: "cuenta", nombre: u.nombre, apellido: u.apellido, email: "", estado: "ACTIVO" }], rowCount: 1 } : { rows: [], rowCount: 0 }; }
+      if (/FROM usuarios (u )?WHERE (u\.)?empresa_id/.test(sql)) { const u = cuentas.get(String(p[0]) + "|" + String(p[1])); return { rows: u ? [u] : [], rowCount: u ? 1 : 0 }; }
+      if (/FROM fe_direccion_receptor_elegida/.test(sql)) {
+        const o = p[0] === EMPRESA ? elegiblesDe(String(p[2])).find((x) => x.id === p[3]) : undefined;
+
+        return o ? { rows: [{ id: o.id, pais: o.pais, direccion: o.direccion, numeroCasa: o.numeroCasa, departamento: "1", distrito: "1", ciudad: "1" }], rowCount: 1 } : { rows: [], rowCount: 0 };
+      }
+      if (/FROM documento_electronico_solicitudes s\s+JOIN documentos_electronicos d/.test(sql)) {
+        const d = p[0] === EMPRESA ? docs.get(String(p[1])) : undefined;
+
+        return d ? { rows: [{ payload: d.payload, clienteId: d.cliente, sucursalId: SUC, puntoId: PUNTO, fecha: "", vendedorId: d.vendedor }], rowCount: 1 } : { rows: [], rowCount: 0 };
+      }
       if (/FROM documentos_electronicos d JOIN documento_electronico_solicitudes s/.test(sql)) return infoPorClave.has(String(p[1])) ? { rows: [{ info: infoPorClave.get(String(p[1])) }], rowCount: 1 } : { rows: [], rowCount: 0 };
       if (/usuario_tiene_permiso/.test(sql)) return { rows: [{ ok: false }], rowCount: 1 };
       if (/FROM clientes c\s+LEFT JOIN LATERAL/.test(sql)) return { rows: [filaCliente(String(p[1]))], rowCount: 1 };
       if (/SELECT c\.id, c\.naturaleza_receptor/.test(sql)) return { rows: [{ ...filaCliente(String(p[1])), id: p[1], tipo_persona: "JURIDICA", tipo_documento: "RUC" }], rowCount: 1 };
       if (/FROM direcciones_cliente/.test(sql)) return { rows: [{ cliente_id: p[1], direccion: "Domicilio FISCAL", numero_casa: "999", departamento_codigo: "1", distrito_codigo: "1", ciudad_codigo: "1", pais_codigo: "PRY" }], rowCount: 1 };
-      if (/FROM referencia_geografica_paises/.test(sql)) return { rows: [{ codigo: "PRY" }], rowCount: 1 };
+      if (/FROM referencia_geografica_paises/.test(sql)) return { rows: [{ codigo: "PRY", nombre: "Paraguay" }], rowCount: 1 };
       if (/FROM sucursales sc JOIN empresas e/.test(sql)) return { rows: [{ empresa: "EMPRESA SINTETICA", sucursal: "Casa Central", establecimiento: "001", punto: "002", puntoNombre: "Punto 002" }], rowCount: 1 };
       if (/FROM productos p/.test(sql)) return { rows: [producto], rowCount: 1 };
       if (/FROM documentos_electronicos WHERE empresa_id/.test(sql)) return { rows: docs.has(String(p[1])) ? [{ ok: 1 }] : [], rowCount: 0 };
@@ -84,7 +99,7 @@ function mundo(opciones: { stock?: number } = {}) {
         return { rows: p[0] === EMPRESA ? elegiblesDe(String(p[2])) : [], rowCount: 1 };
       }
       if (/FROM fe_stock_disponibilidad/.test(sql)) return { rows: [{ productoId: P1, depositoId: DEP_A, depositoCodigo: "A", depositoNombre: "Depósito A", loteId: null, loteCodigo: null, vencimiento: null, disponible: String(stock) }], rowCount: 1 };
-      if (/fe_documento_crear_fe_con_stock_entrega/.test(sql)) {
+      if (/FROM fe_documento_crear_fe_(con_stock_entrega|receptor|vendedor)\(/.test(sql)) {
         const clave = String(p[4]);
         const previo = docs.get(clave);
 
@@ -105,7 +120,7 @@ function mundo(opciones: { stock?: number } = {}) {
 
         const id = "d0000000-0000-4000-8000-" + String(secuencia).padStart(12, "0");
 
-        docs.set(clave, { id, numero: "00" + String(50000 + secuencia) });
+        docs.set(clave, { id, numero: "00" + String(50000 + secuencia), cliente, payload: JSON.parse(String(p[9])) as Record<string, unknown>, vendedor: p[13] === undefined || p[13] === null ? "" : String(p[13]) });
         infoPorClave.set(clave, (JSON.parse(String(p[9])) as { dInfAdic?: string | null }).dInfAdic ?? null);
         if (elegida) entregas.push({ doc: id, cliente, direccion: elegida.id, snapshot: { etiqueta: elegida.etiqueta, direccion: elegida.direccion, tipo: elegida.tipo } });
 
@@ -114,13 +129,13 @@ function mundo(opciones: { stock?: number } = {}) {
 
       return { rows: [], rowCount: 0 };
     },
-  } as never;
+  } as never, { nex076: true, vendedorEnBase: true });
 
   return { db, llamadas, docs, entregas, cuentas, infoPorClave, secuencia: () => secuencia };
 }
 
 const cuerpo = (cliente: string, extra: Record<string, unknown> = {}, clave = "clave-entrega-0001"): CuerpoFactura =>
-  leerCuerpoFactura({ claveIdempotencia: clave, sucursalId: SUC, puntoId: PUNTO, clienteId: cliente, tipoTransaccion: 1, presencia: 1, pagos: [{ tipo: 1 }], infoAdicional: "", lineas: [{ productoId: P1, cantidad: "2", precio: null }], ...extra }) as CuerpoFactura;
+  cuerpoValido({ claveIdempotencia: clave, sucursalId: SUC, puntoId: PUNTO, clienteId: cliente, vendedorId: USUARIO, tipoTransaccion: 1, presencia: 1, pagos: [{ tipo: 1 }], infoAdicional: "", lineas: [{ productoId: P1, cantidad: "2", precio: null }], ...extra });
 const estado = async (p: Promise<unknown>) => { try { await p; return "OK"; } catch (e) { return e instanceof ErrorFacturacion ? e.estado + ":" + e.message : "ERR:" + String((e as Error).message); } };
 
 export async function verificarCasosEntregaE04(): Promise<string[]> {
@@ -290,7 +305,7 @@ export async function verificarCasosEntregaE04(): Promise<string[]> {
     const prep = await prepararFactura(m.db, EMPRESA, USUARIO, c);
     const plan = await planificarStock(m.db, EMPRESA, USUARIO, SUC, prep.lineasStock);
     const creado = await crearFacturaElectronica(m.db, EMPRESA, USUARIO, { ...c, repartoHuella: plan.huella, receptorHuella: prep.resumen.receptorHuella });
-    const llamada = m.llamadas.find((l) => /fe_documento_crear_fe_con_stock_entrega/.test(l.sql));
+    const llamada = m.llamadas.find((l) => /FROM fe_documento_crear_fe_(con_stock_entrega|receptor|vendedor)\(/.test(l.sql));
 
     igual("EN-40 la emisión pasa el destino elegido a la función atómica (13.er parámetro) y queda guardado vinculado a la FE y al cliente correcto", [llamada?.p[12], m.entregas.map((e) => [e.cliente, e.direccion, e.snapshot.etiqueta, e.snapshot.tipo]), m.docs.size, creado.reutilizado], [A3.id, [[CLI_A, A3.id, "Depósito Este", "ENTREGA"]], 1, false]);
 
@@ -380,7 +395,7 @@ export async function verificarCasosEntregaE04(): Promise<string[]> {
   cierto("EN-75 el reintento de una FE ya creada NO vuelve a exigir el destino (aunque la dirección se haya editado o eliminado): la emisión consulta primero si la clave existe y lo pasa a la preparación; la aplicación sigue sin tocar direcciones_cliente", /\.rows as F\[\]\)\.length > 0/.test(emision) && /prepararFactura\(db, empresaId, usuarioId, cuerpo, \{ documentoExiste \}\)/.test(emision) && /opciones\.documentoExiste && \(await opciones\.documentoExiste\(\)\) \? \(\{ ok: true, opcion: null \} as const\)/.test(emision) && /!documentoExistente && lineasStock\.some/.test(emision) && !/DELETE FROM direcciones_cliente|UPDATE direcciones_cliente|INSERT INTO direcciones_cliente/.test(emision));
   cierto("EN-51 SQL: la emisión con destino es atómica (llama a la emisión con stock de NEX-067 en la misma función), valida el destino contra cliente y empresa (NEX:ENTREGA_INVALIDA / NEX:ENTREGA_REQUERIDA), guarda referencia + snapshot SOLO en la creación original y la tabla es inmutable", /FROM public\.fe_documento_crear_fe_con_stock\(p_empresa/.test(sql) && /IF NOT v_reutilizado THEN/.test(sql) && /NEX:ENTREGA_REQUERIDA/.test(sql) && /NEX:ENTREGA_INVALIDA/.test(sql) && /d\.empresa_id = p_empresa AND d\.cliente_id = p_cliente AND d\.id = p_direccion_entrega/.test(sql) && /INSERT INTO public\.documento_electronico_entregas/.test(sql) && /jsonb_strip_nulls\(jsonb_build_object\('tipo'/.test(sql) && /fe_entregas_inmutable_trg BEFORE UPDATE OR DELETE/.test(sql) && /PRIMARY KEY \(empresa_id, documento_id\)/.test(sql));
   cierto("EN-52 SQL: grants — la aplicación ejecuta la lectura y la emisión con destino, no la tabla ni la emisión sin destino; el ayudante se ejecuta después del de NEX-067 (orden alfabético); NEX-067 y el payload no se modifican; migración NO aplicada", /GRANT EXECUTE ON FUNCTION public\.fe_entrega_opciones/.test(sql) && /GRANT EXECUTE ON FUNCTION public\.fe_documento_crear_fe_con_stock_entrega/.test(sql) && /REVOKE ALL ON FUNCTION public\.fe_documento_crear_fe_con_stock\(uuid, uuid, uuid, uuid, text, uuid, text, text, text, numeric, jsonb, jsonb\) FROM nexit_runtime/.test(sql) && "nex_aplicar_grants_facturacion_stock" < "nex_aplicar_grants_facturacion_stock_entrega" && /nex_aplicar_grants_facturacion_stock_entrega\(\)/.test(sql) && !/CREATE OR REPLACE FUNCTION public\.fe_documento_crear_fe_con_stock\(|CREATE OR REPLACE FUNCTION public\.fe_stock_/.test(sql) && /NO aplicada/.test(sql));
-  cierto("EN-53 aplicación: la emisión usa SOLO la función con destino (nunca la de NEX-067 ni la original); el servidor valida el destino antes de reservar numeración; el cuerpo ignora empresa", /FROM fe_documento_crear_fe_con_stock_entrega\(/.test(emision) && !/FROM fe_documento_crear_fe_con_stock\(/.test(emision) && /resolverEntrega\(await opcionesEntrega\(db, empresaId, usuarioId, cuerpo\.clienteId\), cuerpo\.direccionEntregaId\)/.test(emision) && !/direcciones_cliente/.test(emision.slice(emision.indexOf("export async function crearFacturaElectronica"))));
+  cierto("EN-53 aplicación (PRE-VM-R02-A, contrato vigente): la emisión usa SOLO los envoltorios con destino y vendedor (NEX-076 fe_documento_crear_fe_receptor / NEX-074 fe_documento_crear_fe_vendedor, que envuelven la función con destino de NEX-068; nunca la de NEX-067 ni la original); el servidor valida el destino antes de reservar numeración; el cuerpo ignora empresa", /FROM \$\{conReceptor \? "fe_documento_crear_fe_receptor" : "fe_documento_crear_fe_vendedor"\}\(/.test(emision) && !/FROM fe_documento_crear_fe_con_stock\(/.test(emision) && /resolverEntrega\(await opcionesEntrega\(db, empresaId, usuarioId, cuerpo\.clienteId\), cuerpo\.direccionEntregaId\)/.test(emision) && !/direcciones_cliente/.test(emision.slice(emision.indexOf("export async function crearFacturaElectronica"))));
   cierto("EN-54 ruta: GET autenticado con FACTURACION_ELECTRONICA.CREAR, empresa y usuario de la SESIÓN, id validado como UUID, sin caché y solo lectura", /prepararFacturacion\("CREAR"\)/.test(ruta) && /opcionesEntrega\(b\.db, b\.empresaId, b\.usuarioId, id\)/.test(ruta) && /UUID\.test\(id\)/.test(ruta) && /no-store/.test(ruta) && !/POST|PUT|DELETE|PATCH/.test(ruta));
   {
     const previo = { d: process.env.DATABASE_URL, m: process.env.DEMO_MODE };
@@ -413,11 +428,16 @@ export async function verificarCasosEntregaE04(): Promise<string[]> {
     igual("E1-03 FE sin dirección de entrega (cliente sin destinos): sin línea de dirección, solo el vendedor; no se inventa destino", [info(sinDir), (sinDir.payload as { dDirRec?: string }).dDirRec], [M + "\nVendedor: Juan Pérez", "Domicilio FISCAL c3"]);
     igual("E1-04 las observaciones del operador se preservan íntegras (con sus saltos de línea) y el vendedor se añade después de la marca (PRO-328: sin línea de entrega)", info(conObs)?.split("\n"), ["Entregar por la tarde", "Pedido 123", M, "Vendedor: Juan Pérez"]);
 
-    m.cuentas.set(EMPRESA + "|" + "88888888-8888-4888-8888-888888888888", { nombre: "María", apellido: "Gómez" });
+    const MARIA = "88888888-8888-4888-8888-888888888888";
 
-    const otro = await prepararFactura(m.db, EMPRESA, "88888888-8888-4888-8888-888888888888", cuerpo(CLI_A, { direccionEntregaId: A1.id }));
+    m.cuentas.set(EMPRESA + "|" + MARIA, { nombre: "María", apellido: "Gómez" });
 
-    igual("E1-05 el vendedor es el usuario AUTENTICADO que emite: la misma factura emitida por otra cuenta lleva su nombre, no el de otra", [info(otro)?.includes("Vendedor: María Gómez"), info(otro)?.includes("Juan")], [true, false]);
+    // PRE-VM-R02-A (regla vigente PRO-93-R02 / PRO-307): el vendedor es el ELEGIDO en la factura (vendedorId, revalidado en el servidor), distinto del usuario que emite. Reemplaza la expectativa anterior
+    // («vendedor = usuario autenticado»), revocada por esa regla.
+    const elegidaMaria = await prepararFactura(m.db, EMPRESA, USUARIO, cuerpo(CLI_A, { direccionEntregaId: A1.id, vendedorId: MARIA }));
+    const emiteMaria = await prepararFactura(m.db, EMPRESA, MARIA, cuerpo(CLI_A, { direccionEntregaId: A1.id }));
+
+    igual("E1-05 (PRO-307) el vendedor es el ELEGIDO, no el usuario que emite: elegir a María emitiendo con Juan lleva «María Gómez»; emitir con la cuenta de María eligiendo a Juan lleva «Juan Pérez»", [info(elegidaMaria)?.includes("Vendedor: María Gómez"), info(elegidaMaria)?.includes("Juan"), info(emiteMaria)?.includes("Vendedor: Juan Pérez"), info(emiteMaria)?.includes("María")], [true, false, true, false]);
 
     const manual = await prepararFactura(m.db, EMPRESA, USUARIO, cuerpo(CLI_A, { direccionEntregaId: A1.id, infoAdicional: "Vendedor: Otro\nDirección de entrega: Otra casa" }));
     const lm = info(manual)?.split("\n") ?? [];
@@ -427,9 +447,10 @@ export async function verificarCasosEntregaE04(): Promise<string[]> {
 
     // aislamiento entre empresas: la cuenta de otra empresa no existe para esta; sin cuenta no se inventa vendedor
     const OTRA_EMPRESA = "22222222-2222-4222-8222-222222222222";
-    const ajena = await prepararFactura(m.db, OTRA_EMPRESA, USUARIO, cuerpo(CLI_C));
+    const ajena = await estado(prepararFactura(m.db, OTRA_EMPRESA, USUARIO, cuerpo(CLI_C)));
 
-    igual("E1-07 sin fuga entre tenants: con la empresa B el usuario de la empresa A no se resuelve y nunca aparece el nombre de la otra empresa", [info(ajena) === null || !info(ajena)?.includes("Juan"), m.llamadas.filter((l) => /FROM usuarios/.test(l.sql)).every((l) => l.p.length === 2)], [true, true]);
+    // PRE-VM-R02-A (PRO-307): sin vendedor resuelto en la empresa de la sesión la FE se rechaza (422) antes de reservar numeración; antes salía sin vendedor. La consulta sigue filtrada por empresa ($1) e ID ($2).
+    igual("E1-07 sin fuga entre tenants: con la empresa B la cuenta de la empresa A no se resuelve como vendedor (422, sin su nombre) y toda lectura de usuarios lleva empresa e ID", [ajena.startsWith("422:El vendedor elegido no existe en la empresa"), ajena.includes("Juan"), m.llamadas.filter((l) => /FROM usuarios/.test(l.sql)).every((l) => l.p.length === 2)], [true, false, true]);
 
     // límite de 5000 sobre el texto FINAL, antes de reservar numeración, sin recortar
     const sufijo = ("\n" + M + "\nVendedor: Juan Pérez").length;
@@ -438,7 +459,7 @@ export async function verificarCasosEntregaE04(): Promise<string[]> {
     const conLargo = await estado(prepararFactura(m.db, EMPRESA, USUARIO, cuerpo(CLI_C, { infoAdicional: largo })));
     const enLimite = await prepararFactura(m.db, EMPRESA, USUARIO, cuerpo(CLI_C, { infoAdicional: justo }));
 
-    igual("E1-08 (5001) el texto final supera el máximo por un carácter: error explícito (422), sin recortar y sin llegar a la función de emisión", [conLargo.startsWith("422:La información adicional"), m.llamadas.some((l) => /fe_documento_crear_fe_con_stock_entrega/.test(l.sql))], [true, false]);
+    igual("E1-08 (5001) el texto final supera el máximo por un carácter: error explícito (422), sin recortar y sin llegar a la función de emisión", [conLargo.startsWith("422:La información adicional"), m.llamadas.some((l) => /FROM fe_documento_crear_fe_(con_stock_entrega|receptor|vendedor)\(/.test(l.sql))], [true, false]);
     igual("E1-08b (5000) el texto final de exactamente 5000 caracteres se acepta completo (sin truncar)", info(enLimite)?.length, 5000);
 
     // reintento idempotente: mismo contenido, sin duplicar líneas, y snapshot aunque cambie el nombre del vendedor o la dirección
@@ -460,14 +481,14 @@ export async function verificarCasosEntregaE04(): Promise<string[]> {
 
     try { r2 = await crearFacturaElectronica(m2.db, EMPRESA, USUARIO, c); } finally { A2.etiqueta = etiquetaOriginal; }
 
-    const reenviado = JSON.parse(String(m2.llamadas.filter((l) => /fe_documento_crear_fe_con_stock_entrega/.test(l.sql)).pop()?.p[9])) as { dInfAdic: string };
+    const reenviado = JSON.parse(String(m2.llamadas.filter((l) => /FROM fe_documento_crear_fe_(con_stock_entrega|receptor|vendedor)\(/.test(l.sql)).pop()?.p[9])) as { dInfAdic: string };
 
-    igual("E1-09 (reenvío tras cambio de nombre y de dirección) la misma clave devuelve el mismo documento, el dInfAdic reenviado es EXACTAMENTE el persistido (no se recompone) y no hay líneas duplicadas ni 409", [r1.reutilizado, r2.reutilizado, r1.documentoId === r2.documentoId, reenviado.dInfAdic === guardada, (guardada ?? "").split("\n").filter((l) => l.startsWith("Vendedor:")).length, (reenviado.dInfAdic.match(/Dirección de entrega:/g) ?? []).length, m2.llamadas.filter((l) => /fe_documento_crear_fe_con_stock_entrega/.test(l.sql)).length], [false, true, true, true, 1, 0, 2]);
+    igual("E1-09 (reenvío tras cambio de nombre y de dirección) la misma clave devuelve el mismo documento, el dInfAdic reenviado es EXACTAMENTE el persistido (no se recompone) y no hay líneas duplicadas ni 409", [r1.reutilizado, r2.reutilizado, r1.documentoId === r2.documentoId, reenviado.dInfAdic === guardada, (guardada ?? "").split("\n").filter((l) => l.startsWith("Vendedor:")).length, (reenviado.dInfAdic.match(/Dirección de entrega:/g) ?? []).length, m2.llamadas.filter((l) => /FROM fe_documento_crear_fe_(con_stock_entrega|receptor|vendedor)\(/.test(l.sql)).length], [false, true, true, true, 1, 0, 2]);
     igual("E1-10 el JSON enviado conserva exactamente el nombre dInfAdic (J003) y no introduce campos con otro nombre", [Object.keys(reenviado).filter((k) => /inf.*adic/i.test(k)), "dInfAdic" in reenviado], [["dInfAdic"], true]);
     igual("E1-11 revisar dos veces la misma factura produce el mismo texto y la misma huella (la composición no acumula)", [info(await prepararFactura(m.db, EMPRESA, USUARIO, cuerpo(CLI_A, { direccionEntregaId: A2.id, infoAdicional: "Nota" }))) === info(await prepararFactura(m.db, EMPRESA, USUARIO, cuerpo(CLI_A, { direccionEntregaId: A2.id, infoAdicional: "Nota" }))), (await prepararFactura(m.db, EMPRESA, USUARIO, cuerpo(CLI_A, { direccionEntregaId: A2.id, infoAdicional: "Nota" }))).resumen.infoAdicionalHuella === (await prepararFactura(m.db, EMPRESA, USUARIO, cuerpo(CLI_A, { direccionEntregaId: A2.id, infoAdicional: "Nota" }))).resumen.infoAdicionalHuella], [true, true]);
 
     // ── F003: se emite lo que se revisó ──────────────────────────────────────────────────────────
-    const creaciones = (w: ReturnType<typeof mundo>) => w.llamadas.filter((l) => /fe_documento_crear_fe_con_stock_entrega/.test(l.sql)).length;
+    const creaciones = (w: ReturnType<typeof mundo>) => w.llamadas.filter((l) => /FROM fe_documento_crear_fe_(con_stock_entrega|receptor|vendedor)\(/.test(l.sql)).length;
     const conStock = async (w: ReturnType<typeof mundo>, cu: CuerpoFactura, extra: Record<string, unknown> = {}) => ({ ...cu, repartoHuella: (await planificarStock(w.db, EMPRESA, USUARIO, SUC, (await prepararFactura(w.db, EMPRESA, USUARIO, cu)).lineasStock)).huella, ...extra });
 
     const f1 = mundo();
@@ -507,8 +528,8 @@ export async function verificarCasosEntregaE04(): Promise<string[]> {
 
     igual("E1-16 (F003) sin cambios entre previa y envío la emisión procede normalmente (huella idéntica, un solo documento)", [ok3.reutilizado, creaciones(f3), f3.docs.size], [false, 1, 1]);
 
-    const leida = leerCuerpoFactura({ claveIdempotencia: "clave-e1-huella-01", sucursalId: SUC, puntoId: PUNTO, clienteId: CLI_C, tipoTransaccion: 1, presencia: 1, pagos: [{ tipo: 1 }], infoAdicional: "", lineas: [{ productoId: P1, cantidad: "1", precio: null }], infoAdicionalHuella: rev3.resumen.infoAdicionalHuella, nombreVendedor: "Impostor" }) as CuerpoFactura & { nombreVendedor?: string };
-    const basura = leerCuerpoFactura({ claveIdempotencia: "clave-e1-huella-02", sucursalId: SUC, puntoId: PUNTO, clienteId: CLI_C, tipoTransaccion: 1, presencia: 1, pagos: [{ tipo: 1 }], infoAdicional: "", lineas: [{ productoId: P1, cantidad: "1", precio: null }], infoAdicionalHuella: "no-es-hex" }) as CuerpoFactura;
+    const leida = cuerpoValido({ claveIdempotencia: "clave-e1-huella-01", sucursalId: SUC, puntoId: PUNTO, clienteId: CLI_C, vendedorId: USUARIO, tipoTransaccion: 1, presencia: 1, pagos: [{ tipo: 1 }], infoAdicional: "", lineas: [{ productoId: P1, cantidad: "1", precio: null }], infoAdicionalHuella: rev3.resumen.infoAdicionalHuella, nombreVendedor: "Impostor" }) & { nombreVendedor?: string };
+    const basura = cuerpoValido({ claveIdempotencia: "clave-e1-huella-02", sucursalId: SUC, puntoId: PUNTO, clienteId: CLI_C, vendedorId: USUARIO, tipoTransaccion: 1, presencia: 1, pagos: [{ tipo: 1 }], infoAdicional: "", lineas: [{ productoId: P1, cantidad: "1", precio: null }], infoAdicionalHuella: "no-es-hex" });
 
     igual("E1-17 el cuerpo del navegador solo aporta la huella (64 hex): un nombre de vendedor enviado se ignora y una huella inválida se descarta (la ruta exigirá revisar de nuevo)", [leida.infoAdicionalHuella === rev3.resumen.infoAdicionalHuella, "nombreVendedor" in leida, basura.infoAdicionalHuella], [true, false, undefined]);
 
@@ -630,6 +651,8 @@ function mundo328(o: { nex076?: boolean } = {}) {
       llamadas.push({ sql, p });
       if (/to_regprocedure\('public\.fe_documento_crear_fe_receptor/.test(sql)) return filas([{ ok: estado.nex076 }]);
       if (/to_regprocedure/.test(sql)) return filas([{ ok: true }]);
+      // PRE-VM-R02-A: máximo de líneas por empresa (PRO-339, NEX-078) aplicado, sin límite propio (NULL = 999); sin esta respuesta la FE nueva se rechazaba antes de cualquier caso PRO-328.
+      if (/to_jsonb\(e\) \? 'fe_max_lineas'/.test(sql)) return filas([{ existe: true, valor: null }]);
       if (/FROM fe_documento_crear_fe_receptor\(/.test(sql)) {
         if (!estado.nex076) throw Object.assign(new Error("function fe_documento_crear_fe_receptor does not exist"), { code: "42883" });
         return filas([crear(p, true)]);
@@ -680,7 +703,7 @@ function mundo328(o: { nex076?: boolean } = {}) {
 async function casosPro328(igual: (nombre: string, obtenido: unknown, esperado: unknown) => void, cierto: (nombre: string, c: boolean) => void) {
   const M = MARCA_AUTOMATICA;
   const cuerpo328 = (cliente: string, extra: Record<string, unknown> = {}, clave = "clave-pro328-0001"): CuerpoFactura =>
-    leerCuerpoFactura({ claveIdempotencia: clave, sucursalId: SUC, puntoId: PUNTO, clienteId: cliente, vendedorId: VEND_328, tipoTransaccion: 1, presencia: 1, pagos: [{ tipo: 1 }], infoAdicional: "", lineas: [{ productoId: P1, cantidad: "2", precio: null }], ...extra }) as CuerpoFactura;
+    cuerpoValido({ claveIdempotencia: clave, sucursalId: SUC, puntoId: PUNTO, clienteId: cliente, vendedorId: VEND_328, tipoTransaccion: 1, presencia: 1, pagos: [{ tipo: 1 }], infoAdicional: "", lineas: [{ productoId: P1, cantidad: "2", precio: null }], ...extra });
   const pl = (x: { payload: unknown }) => x.payload as unknown as Record<string, unknown>;
   const domicilio = (x: { payload: unknown }) => ["cPaisRec", "dDirRec", "dNumCasRec", "cDepRec", "cDisRec", "cCiuRec"].map((k) => (k in pl(x) ? pl(x)[k] : "∅"));
   const resultado = async (p: Promise<unknown>): Promise<Record<string, unknown>> => {

@@ -133,7 +133,9 @@ BEGIN
   -- Positivo fiscal: línea de IVA parcial (10 %, proporción 50 %): los derivados correctos se aceptan
   SELECT * INTO r FROM fe_documento_crear_nce(v_a, v_ua, v_sa, v_p, 'clave-t26-h508', v_fe, 3, '[{"linea":3,"cantidad":0,"monto":10500}]'::jsonb, 'PYG', 10500, pg_temp.pay(v_pay, v_sol, 3, 3, 0, 10500));
   PERFORM pg_temp.ok(r.o_numero = '0000004' AND NOT r.o_reutilizado, 'R05-01: con derivados y subtotales correctos (IVA parcial 50 %) la NCE se crea y toma 0000004');
-  UPDATE documentos_electronicos SET estado_sifen = 'RECHAZADO' WHERE id = r.o_documento_id;
+  -- PRE-VM-R02-A: un RECHAZADO de SIFEN solo existe para un documento ENVIADO (combinación coherente de estados exigida por la base); antes se marcaba RECHAZADO con el estado local inicial y la sentencia
+  -- abortaba la prueba antes de R02-02. No se reutiliza el número (A02 de PRO-130/131/132-R02).
+  UPDATE documentos_electronicos SET estado_local = 'ENVIADO', estado_sifen = 'RECHAZADO' WHERE id = r.o_documento_id;
 
   -- R02-02 (flujo_nce): un operador con SOLO CREAR registra la consulta de una FE/NCE pendiente con su identidad real; no puede usar la función EDITAR original; el estado final y otro tenant se rechazan
   DECLARE

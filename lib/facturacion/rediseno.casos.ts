@@ -11,7 +11,8 @@ import { AJUSTE_VACIO, ajusteParaEnvio, problemasFiscales, valoresEfectivos, typ
 import { formularioModificado, perdidasAlCambiarCondicion, perdidasAlCambiarMoneda, type EstadoFormulario } from "@/lib/facturacion/cambios-formulario";
 import { CREDITO_UI_VACIO } from "@/lib/facturacion/credito";
 import { cambiosPorOpcionIva, esParcial, etiquetaIva, OPCIONES_IVA, opcionIvaDe, RESTAURAR_IVA } from "@/lib/facturacion/iva-opciones";
-import { leerCuerpoFactura, prepararFactura } from "@/lib/facturacion/emision";
+import { prepararFactura } from "@/lib/facturacion/emision";
+import { conContratoFE, cuerpoValido, VENDEDOR_SIM } from "@/lib/facturacion/contrato-fe-simulado.casos";
 import { PAGO_UI_VACIO } from "@/lib/facturacion/pagos";
 import { construirPayloadFE, resumenCalculo, validarEntradaFE, type EntradaFE, type LineaFE, type ReceptorFE } from "@/lib/facturacion/payload-fe";
 import { etiquetaUnidad, filtrarUnidades, type UnidadMedida } from "@/lib/facturacion/unidades";
@@ -141,7 +142,8 @@ export async function verificarCasosRediseno(): Promise<string[]> {
   // ── 8. AUD-PRO128-R01-03: proporción parcial en la prévia (solo presentación) ─────────────────────────────────────────────────────────────
   const PRODUCTO = "f1f1f1f1-f1f1-4f1f-8f1f-f1f1f1f1f1f1";
   const filaCliente = { codigo: "CLI-000001", naturaleza_receptor: 1, tipo_operacion: 1, tipo_contribuyente_sifen: 2, pais_codigo: "PRY", tipo_documento_identidad_sifen: null, descripcion_documento_identidad: null, numero_documento: "80000005", dv: "6", razon_social: "EMPRESA SINTETICA SA", nombre_fantasia: null, email: "a@b.com", email_copia: null, email_facturacion: null, telefono: null, celular: null, activo: true, bloqueado_ventas: false, direccion: "Calle 1", numero_casa: "123", departamento_codigo: "1", distrito_codigo: "1", ciudad_codigo: "1" };
-  const dbCon = (prod: Record<string, unknown>) => ({
+  // PRE-VM-R02-A: capa de contrato (vendedor, NEX-074, máximo de líneas, geografía) delante de la base del caso.
+  const dbCon = (prod: Record<string, unknown>) => conContratoFE({
     async query(sql: string) {
       if (/usuario_tiene_permiso/.test(sql)) return { rows: [{ ok: true }], rowCount: 1 };
       if (/FROM clientes c\s+LEFT JOIN LATERAL/.test(sql)) return { rows: [filaCliente], rowCount: 1 };
@@ -153,9 +155,9 @@ export async function verificarCasosRediseno(): Promise<string[]> {
 
       return { rows: [], rowCount: 0 };
     },
-  }) as never;
+  } as never);
   const baseProd = { id: PRODUCTO, codigo: "P-1", descripcion: "Producto", unidadSifen: 77, unidadSimbolo: "UNI", unidadVigente: true, afectacion: 1, proporcion: null, tasa: 10, precio: "10500", monedaPrecio: "PYG", gtin: null };
-  const cuerpo = (lineaExtra: Record<string, unknown> = {}) => leerCuerpoFactura({ claveIdempotencia: "clave-de-prueba-0001", sucursalId: "55555555-5555-4555-8555-555555555555", puntoId: "b1b1b1b1-b1b1-4b1b-8b1b-b1b1b1b1b1b1", clienteId: "c1c1c1c1-c1c1-4c1c-8c1c-c1c1c1c1c1c1", tipoTransaccion: 1, presencia: 1, pagos: [{ tipo: 1 }], infoAdicional: "", lineas: [{ productoId: PRODUCTO, cantidad: "1", ...lineaExtra }] }) as never;
+  const cuerpo = (lineaExtra: Record<string, unknown> = {}) => cuerpoValido({ claveIdempotencia: "clave-de-prueba-0001", sucursalId: "55555555-5555-4555-8555-555555555555", puntoId: "b1b1b1b1-b1b1-4b1b-8b1b-b1b1b1b1b1b1", clienteId: "c1c1c1c1-c1c1-4c1c-8c1c-c1c1c1c1c1c1", vendedorId: VENDEDOR_SIM, tipoTransaccion: 1, presencia: 1, pagos: [{ tipo: 1 }], infoAdicional: "", lineas: [{ productoId: PRODUCTO, cantidad: "1", ...lineaExtra }] });
   const previaParcial = await prepararFactura(dbCon({ ...baseProd, afectacion: 4, proporcion: "50.0000" }), "11111111-1111-4111-8111-111111111111", "99999999-9999-4999-8999-999999999999", cuerpo());
   const previaComun = await prepararFactura(dbCon(baseProd), "11111111-1111-4111-8111-111111111111", "99999999-9999-4999-8999-999999999999", cuerpo());
   const previaAjustada = await prepararFactura(dbCon(baseProd), "11111111-1111-4111-8111-111111111111", "99999999-9999-4999-8999-999999999999", cuerpo({ ajuste: { afectacion: 4, tasa: 10, proporcion: "50" } }));

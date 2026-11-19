@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { contador } from "@/lib/clientes/contador-casos";
 import { B, parseDec, S, textoDec } from "@/lib/facturacion/calculo";
 import { cotizacionVigente, crearFacturaElectronica, leerCuerpoFactura, prepararFactura } from "@/lib/facturacion/emision";
+import { conContratoFE, cuerpoValido, VENDEDOR_SIM } from "@/lib/facturacion/contrato-fe-simulado.casos";
 import { decidirProducto } from "@/lib/facturacion/ajuste-item";
 import { cabeEnF023, esMonedaFE, leerCambio, leerMonedaYCambio, mismoPrecio, precioEnMoneda, precioSerializable, simboloMoneda, totalEnGuaranies } from "@/lib/facturacion/monedas";
 import { construirPayloadFE, validarEntradaFE, type EntradaFE, type ReceptorFE } from "@/lib/facturacion/payload-fe";
@@ -34,7 +35,8 @@ type Entorno = { producto?: Record<string, unknown>; permisos?: string[]; cotiza
 
 function baseSimulada(o: Entorno = {}) {
   const llamadas: Llamada[] = [];
-  const db = {
+  // PRE-VM-R02-A: capa de contrato (vendedor, NEX-074, máximo de líneas, geografía) por FUERA del registro de llamadas.
+  const db = conContratoFE({
     async query(sql: string, parametros: unknown[] = []) {
       llamadas.push({ sql, parametros });
       if (/usuario_tiene_permiso/.test(sql)) {
@@ -54,12 +56,12 @@ function baseSimulada(o: Entorno = {}) {
 
       return { rows: [], rowCount: 0 };
     },
-  };
+  });
 
   return { db: db as never, llamadas, creaciones: () => llamadas.filter((l) => /fe_documento_crear_fe/.test(l.sql)), escrituras: () => llamadas.filter((l) => /INSERT INTO|UPDATE |DELETE FROM|fe_documento_crear_fe/.test(l.sql)) };
 }
 
-const cuerpo = (extra: Record<string, unknown> = {}, cantidad = "3") => ({ claveIdempotencia: "clave-de-prueba-0001", sucursalId: SUC, puntoId: PUNTO, clienteId: CLIENTE, tipoTransaccion: 1, presencia: 1, pagos: [{ tipo: 1 }], infoAdicional: "", lineas: [{ productoId: PRODUCTO, cantidad }], ...extra });
+const cuerpo = (extra: Record<string, unknown> = {}, cantidad = "3") => ({ claveIdempotencia: "clave-de-prueba-0001", sucursalId: SUC, puntoId: PUNTO, clienteId: CLIENTE, vendedorId: VENDEDOR_SIM, tipoTransaccion: 1, presencia: 1, pagos: [{ tipo: 1 }], infoAdicional: "", lineas: [{ productoId: PRODUCTO, cantidad }], ...extra });
 
 export async function verificarCasosMonedas(): Promise<string[]> {
   const fallos: string[] = [];
@@ -136,7 +138,7 @@ export async function verificarCasosMonedas(): Promise<string[]> {
   const x75 = await emitir({ moneda: "USD", cambio: "7500" }, { producto: productoUsd, cotizacion: { cambio: "7650.000000", fecha: "2026-10-16" } });
   igual("MON-02: con la cotización del catálogo cambiada a 7400 o a 7650, el payload del documento sigue con dTiCam 7500 y dTotalGs 236250 (idéntico byte a byte)", [json(x74).dTiCam, json(x74).Subtotales[0].dTotalGs, JSON.stringify(json(x74)) === JSON.stringify(json(x75))], [7500, 236250, true]);
   const previaB = baseSimulada({ producto: productoUsd, cotizacion: { cambio: "7400.000000", fecha: "2026-10-15" } });
-  const previa = (await prepararFactura(previaB.db, EMPRESA, USUARIO, leerCuerpoFactura(cuerpo({ moneda: "USD", cambio: "7500" })) as never)).resumen as { moneda: string; cambio: { valor: string; totalGs: string; catalogo: { cambio: string; fecha: string } | null; modificado: boolean }; totales: { total: number } };
+  const previa = (await prepararFactura(previaB.db, EMPRESA, USUARIO, cuerpoValido(cuerpo({ moneda: "USD", cambio: "7500" })))).resumen as { moneda: string; cambio: { valor: string; totalGs: string; catalogo: { cambio: string; fecha: string } | null; modificado: boolean }; totales: { total: number } };
   igual("previa USD: moneda, total en USD, cambio usado, equivalente en guaraníes y aviso de cambio distinto del registrado; sin escrituras", [previa.moneda, previa.totales.total, previa.cambio.valor, previa.cambio.totalGs, previa.cambio.catalogo, previa.cambio.modificado, previaB.escrituras().length], ["USD", 31.5, "7500", "236250", { cambio: "7400", fecha: "2026-10-15" }, true, 0]);
   igual("aislamiento: la consulta de cotizaciones filtra por la empresa de la sesión", previaB.llamadas.filter((l) => /FROM tipos_cambio/.test(l.sql)).map((l) => [/empresa_id = \$1/.test(l.sql), l.parametros[0]]), [[true, EMPRESA]]);
 

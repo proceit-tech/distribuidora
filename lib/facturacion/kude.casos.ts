@@ -373,13 +373,20 @@ export async function verificarCasosKude(): Promise<string[]> {
     igual("NCR-03 la NCE sin CDC local y sin aprobar envía el request de seis campos con ncr y recibe el PDF (200 + CDC + Base64) para visualizar, descargar e imprimir", [JSON.stringify(gg.kudes[0].body), rr.pdf.length, Buffer.compare(rr.pdf, PDF), rr.nombre], [JSON.stringify({ tipOpe: "4", dEst: "001", dPunExp: "003", dNumDoc: "0090004", dSerieNum: null, tipoDoc: "ncr" }), PDF.length, 0, "KuDE-NCE-001-003-0090004-NO-VERIFICADO.pdf"]);
     igual("NCR-03 el estado fiscal local no cambió (solo lectura: ninguna escritura)", mm.consultas.some((q) => /\b(INSERT|UPDATE|DELETE)\b/i.test(q)), false);
 
-    // PRO-326: el CDC devuelto (de otro número o con tipo FE) se ignora; el PDF pedido por la identidad de la NCE se muestra
+    // PRE-VM-R02-A (D1, protección vigente PRO-342-R01/R02, igual que K01 para la FE): sin CDC registrado, un CDC devuelto que muestra OTRA numeración (otro número) o OTRO tipo (FE para una NCE) prueba que
+    // el PDF es de otro documento: se DESCARTA (502, NO_CORRESPONDE), sin mostrarlo como propio y sin el CDC en el mensaje. Sustituye la expectativa PRO-326 anterior («no se valida y se muestra»).
     limpiarCacheTokens();
 
-    const otroNum = await obtenerKude(mundo([nce(D(1), E1, { establecimiento: "001", puntoExpedicion: "003", numero: "0090004", cdc: null })]).db, E1, U1, D(1), gateway(() => ok({}, PDF, cdcDe("NCE", "001", "003", "0090005"))).dep);
-    const tipoFe = await obtenerKude(mundo([nce(D(1), E1, { establecimiento: "001", puntoExpedicion: "003", numero: "0090004", cdc: null })]).db, E1, U1, D(1), gateway(() => ok({}, PDF, cdcDe("FE", "001", "003", "0090004"))).dep);
+    const cdcOtroNum = cdcDe("NCE", "001", "003", "0090005");
+    const otroNum = await falla(mundo([nce(D(1), E1, { establecimiento: "001", puntoExpedicion: "003", numero: "0090004", cdc: null })]), gateway(() => ok({}, PDF, cdcOtroNum)), E1, U1, D(1));
 
-    igual("PRO326-NCR-04 CDC devuelto de otro número o de tipo FE para una NCE: no se valida y el PDF válido se MUESTRA", [Buffer.compare(otroNum.pdf, PDF), Buffer.compare(tipoFe.pdf, PDF)], [0, 0]);
+    limpiarCacheTokens();
+
+    const cdcTipoFe = cdcDe("FE", "001", "003", "0090004");
+    const tipoFe = await falla(mundo([nce(D(1), E1, { establecimiento: "001", puntoExpedicion: "003", numero: "0090004", cdc: null })]), gateway(() => ok({}, PDF, cdcTipoFe)), E1, U1, D(1));
+
+    igual("PRO326-NCR-04 (D1) CDC devuelto de otro número o de tipo FE para una NCE sin CDC registrado: el PDF se DESCARTA (502, «no corresponde a este documento») y el mensaje no expone el CDC",
+      [otroNum.estado, /no corresponde a este documento/.test(otroNum.mensaje), otroNum.mensaje.includes(cdcOtroNum), tipoFe.estado, /no corresponde a este documento/.test(tipoFe.mensaje), tipoFe.mensaje.includes(cdcTipoFe)], [502, true, false, 502, true, false]);
 
     // empresa no autorizada: nunca llega al gateway
     limpiarCacheTokens();

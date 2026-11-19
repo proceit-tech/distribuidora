@@ -55,9 +55,10 @@ export async function verificarCasosDocumentosUxR02(): Promise<string[]> {
     llega(1);
     igual("UXR02-02 escenario: una carga inicial lenta que llega DESPUÉS de un refresco más nuevo no sustituye los datos actualizados", mostrada, 2);
   }
+  // PRE-VM-R02-A: desde PRO-195-UX-R01-R01 (F002) el resultado guarda el contexto APLICADO a la lectura (contextoAplicado), no la variable contexto del render; la regla de secuencia no cambia.
   cierto("UXR02-03 toda lectura del listado (carga/relectura y refresco automático) recibe su secuencia AL LANZARSE y solo se aplica si es más reciente que la mostrada",
     (pagina.match(/secuenciaListado\.current \+= 1;\s*const secuencia = secuenciaListado\.current;/g) ?? []).length === 2 &&
-    (pagina.match(/setResultado\(\(r\) => \(esListadoMasReciente\(r\?\.secuencia \?\? null, secuencia\) \? \{ clave: claveConsulta, contexto, secuencia, datos, error(: "")? \} : r\)\)/g) ?? []).length === 2 &&
+    (pagina.match(/setResultado\(\(r\) => \(esListadoMasReciente\(r\?\.secuencia \?\? null, secuencia\) \? \{ clave: claveConsulta, contexto: contextoAplicado, secuencia, datos, error(: "")? \} : r\)\)/g) ?? []).length === 2 &&
     !/setResultado\(\{/.test(pagina));
   cierto("UXR02-04 se mantienen las protecciones de UX-R01: cancelación al cambiar de consulta (activo=false), filas de otro contexto ocultas y detalles/tooltip cerrados al cambiar filtros",
     (pagina.match(/activo = false;/g) ?? []).length === 2 && /const obsoleto = resultado !== null && resultado\.contexto !== contexto;/.test(pagina) && /if \(contextoVisto !== contexto\) \{\s*setContextoVisto\(contexto\);\s*setAbiertos\(\{\}\);\s*setTip\(null\);/.test(pagina));
@@ -98,8 +99,18 @@ export async function verificarCasosDocumentosUxR02(): Promise<string[]> {
   cierto("UXR02-13 (actualizado PRO-195) los cuatro controles que actúan sobre el estado (Consultar en la fila, Enviar, Reenviar con confirmación, Corregir NCE) dependen de la MISMA disponibilidad; «Corregir» no es un enlace activo mientras no lo está",
     (primera.match(/disabled=\{!habilitada\}/g) ?? []).length === 2 && /accionesFila\(kudeDisponible\(d\), \{ editar \}, habilitada, motivoEspera\)/.test(pagina) && /habilitada \? \(\s*<Link className=\{ui\.primaryButton\} href=\{`\/notas-credito\?corregir=\$\{d\.id\}`\}>Corregir y emitir nueva<\/Link>\s*\) : \(\s*<button type="button" className=\{ui\.primaryButton\} disabled>Corregir y emitir nueva<\/button>/.test(primera) &&
     !/disabled=\{Boolean\(accion\)\}/.test(pagina) && /const habilitada = disponible\(d\);/.test(pagina));
+  // PRE-VM-R02-A: desde PRO-195-UX-R01-R01 (F002) reconsultar captura contexto y época y define `informar` ENTRE iniciarAccion y la guarda; se admite cualquier declaración intermedia SIN efectos
+  // (sin await, fetch, llamadas a informar ni setters) antes de `if (generacion === null) return;`.
+  const guardaTrasDeclaraciones = (t: string, tipo: string) => {
+    const ini = t.indexOf(`const generacion = iniciarAccion(d, "${tipo}");`);
+    const fin = t.indexOf("if (generacion === null) return;", ini);
+    const medio = ini < 0 || fin < 0 ? "" : t.slice(ini, fin);
+    const nivelSuperior = medio.replace(/=>\s*\{[\s\S]*?\n    \};/g, "=> {};");
+
+    return ini >= 0 && fin > ini && !/\bawait\b|\bfetch\(|\binformar\(|\bset[A-Z]\w*\(/.test(nivelSuperior) && nivelSuperior.split("\n").slice(1).every((l) => l.trim() === "" || /^\s*const \w+ = /.test(l) || /^\s*\/\//.test(l));
+  };
   cierto("UXR02-14 además del atributo disabled, la función también se niega (clic tardío o repetido con un render anterior): iniciarAccion exige disponible(d) y no estar en curso",
-    /if \(accionEnCurso\.current\.has\(d\.id\) \|\| !disponible\(d\)\) return null;/.test(pagina) && /const generacion = iniciarAccion\(d, "consulta"\);\s*if \(generacion === null\) return;/.test(reconsultar) && /const generacion = iniciarAccion\(d, "envio"\);\s*if \(generacion === null\) return;/.test(enviar));
+    /if \(accionEnCurso\.current\.has\(d\.id\) \|\| !disponible\(d\)\) return null;/.test(pagina) && guardaTrasDeclaraciones(reconsultar, "consulta") && /const generacion = iniciarAccion\(d, "envio"\);\s*if \(generacion === null\) return;/.test(enviar));
   cierto("UXR02-15 tras éxito se relee el listado (solo GET); tras error NO se relee ni se reenvía automáticamente: el error se muestra y la espera ofrece «Actualizar» explícito",
     /setRecarga\(\(n\) => n \+ 1\);\s*\} catch/.test(reconsultar) && /setRecarga\(\(n\) => n \+ 1\);\s*\} catch/.test(enviar) && !/setRecarga|fetch|enviarAlGateway|reconsultar\(/.test(catchDe(reconsultar)) && !/setRecarga|fetch|enviarAlGateway|reconsultar\(/.test(catchDe(enviar)) &&
     /const actualizarListado = \(\) => setRecarga\(\(n\) => n \+ 1\);/.test(pagina) && /onClick=\{actualizarListado\}>Actualizar<\/button>/.test(primera));
@@ -108,8 +119,11 @@ export async function verificarCasosDocumentosUxR02(): Promise<string[]> {
     /Actualizando el estado del documento…/.test(primera) && /Estado del documento sin actualizar tras la última acción\./.test(primera) && /\.esperaEstado \{/.test(cssLimpio));
   cierto("UXR02-17 la espera sobrevive al cierre/reapertura del detalle y al cambio de filtros (estado por documento, no del detalle), y cualquier listado posterior la resuelve (relectura, refresco o error de carga)",
     /const \[esperaListado, setEsperaListado\] = useState<Record<string, number>>\(\{\}\);/.test(pagina) && !/setEsperaListado\(\{\}\)/.test(pagina) && /secuenciaListado: resultado\?\.secuencia \?\? 0/.test(pagina));
-  cierto("UXR02-18 las respuestas de consulta/envío siguen aplicándose SOLO a la misma generación abierta (cerrar/reabrir las descarta) y nunca recrean un detalle cerrado",
-    /if \(vigenteDetalle\(d, generacion\)\) fusionarIntentos/.test(reconsultar) && /if \(vigenteDetalle\(d, generacion\)\) aplicarDetalle/.test(reconsultar) && /if \(vigenteDetalle\(d, generacion\)\) fusionarIntentos/.test(enviar) &&
+  cierto("UXR02-18 (D2) las respuestas de envío se aplican SOLO a la misma generación abierta; las de consulta, solo dentro de la misma época de contexto (otra época se descarta); ninguna recrea un detalle cerrado",
+    // PRE-VM-R02-A (D2): la CONSULTA se rige por la época de contexto (PRO-195-UX-R01-R01 F002: destinoConsulta descarta respuestas de otra época y solo escribe en el detalle abierto); el ENVÍO conserva su
+    // protección por generación. En ambos, la escritura pasa por fusionarIntentos/aplicarDetalle, que nunca recrean un detalle cerrado.
+    /const destino = destinoConsulta\(\{ epocaAccion, epocaActual: epocaRef\.current, contextoAccion, contextoActual: contextoVistoRef\.current, detalleAbierto: Boolean\(abiertosRef\.current\[d\.id\]\) \}\);\s*if \(destino === "descartar"\) return;/.test(reconsultar) && /const epocaAccion = epocaRef\.current;/.test(reconsultar) && !/vigenteDetalle/.test(reconsultar) &&
+    /if \(vigenteDetalle\(d, generacion\)\) fusionarIntentos/.test(enviar) && /if \(vigenteDetalle\(d, generacion\)\) aplicarDetalle/.test(enviar) &&
     /function aplicarDetalle\(id: string, parte: Partial<Detalle>\) \{\s*setAbiertos\(\(a\) => \(a\[id\] \?/.test(pagina) && /if \(!a\[id\]\) return a;/.test(tramo("function fusionarIntentos", "async function cargarAnteriores")));
   cierto("UXR02-19 (actualizado PRO-195) permisos sin cambios: consultar solo con EDITAR (acción de la fila); enviar/reenviar/corregir solo con CREAR y las mismas condiciones de estado; el reenvío conserva la confirmación",
     /accionesFila\(kudeDisponible\(d\), \{ editar \}/.test(pagina) && /clave: "consulta", visible: permisos\.editar, disponible: permisos\.editar && consultaDisponible/.test(leer("lib/facturacion/documentos-tabla.ts")) && /crear && \(d\.estadoLocal === "PENDIENTE_ENVIO" \|\| \(d\.estadoLocal === "ERROR_ENVIO" && d\.envioErrorTipo !== "RECHAZO"\)\)/.test(primera) &&

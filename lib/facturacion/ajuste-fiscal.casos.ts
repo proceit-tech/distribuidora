@@ -13,6 +13,7 @@ import { AJUSTE_VACIO, ajusteParaEnvio, leerAjuste, problemasFiscales, productoI
 import { guardarClasificacionIva } from "@/lib/facturacion/ajuste-fiscal";
 import { catalogosFactura, crearFacturaElectronica, leerCuerpoFactura, prepararFactura } from "@/lib/facturacion/emision";
 import { ErrorFacturacion, ErrorValidacionFiscal } from "@/lib/facturacion/shared";
+import { conContratoFE, cuerpoValido, VENDEDOR_SIM } from "@/lib/facturacion/contrato-fe-simulado.casos";
 
 const leer = (r: string) => readFileSync(join(process.cwd(), r), "utf8");
 
@@ -23,7 +24,8 @@ const PRODUCTO = "f1f1f1f1-f1f1-4f1f-8f1f-f1f1f1f1f1f1";
 const CLIENTE = "c1c1c1c1-c1c1-4c1c-8c1c-c1c1c1c1c1c1";
 const PUNTO = "b1b1b1b1-b1b1-4b1b-8b1b-b1b1b1b1b1b1";
 const DOC = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
-const cuerpoBase = (lineas: unknown[]) => ({ claveIdempotencia: "clave-de-prueba-0001", sucursalId: SUC, puntoId: PUNTO, clienteId: CLIENTE, tipoTransaccion: 1, presencia: 1, pagos: [{ tipo: 1 }], infoAdicional: "", lineas });
+// PRE-VM-R02-A: vendedor comercial obligatorio (PRO-93-R02 / PRO-307); la base simulada pasa por la capa de contrato (vendedor, NEX-074, máximo de líneas, geografía).
+const cuerpoBase = (lineas: unknown[]) => ({ claveIdempotencia: "clave-de-prueba-0001", sucursalId: SUC, puntoId: PUNTO, clienteId: CLIENTE, vendedorId: VENDEDOR_SIM, tipoTransaccion: 1, presencia: 1, pagos: [{ tipo: 1 }], infoAdicional: "", lineas });
 const filaCliente = { codigo: "CLI-000001", naturaleza_receptor: 1, tipo_operacion: 1, tipo_contribuyente_sifen: 2, pais_codigo: "PRY", tipo_documento_identidad_sifen: null, descripcion_documento_identidad: null, numero_documento: "80000005", dv: "6", razon_social: "EMPRESA SINTETICA SA", nombre_fantasia: null, email: "a@b.com", email_copia: null, email_facturacion: null, telefono: null, celular: null, activo: true, bloqueado_ventas: false, direccion: "Calle 1", numero_casa: "123", departamento_codigo: "1", distrito_codigo: "1", ciudad_codigo: "1" };
 const completo = { id: PRODUCTO, codigo: "P-1", descripcion: "Producto de prueba", unidadSifen: 77, unidadSimbolo: "UNI", unidadVigente: true, afectacion: 1, proporcion: null, tasa: 10, precio: "11000", monedaPrecio: "PYG", gtin: null };
 const incompleto = { ...completo, unidadSifen: null, unidadSimbolo: null, unidadVigente: null, afectacion: null, tasa: null, precio: null, monedaPrecio: null };
@@ -33,7 +35,7 @@ type Opciones = { producto?: Record<string, unknown>; permisos?: string[]; unida
 
 function baseSimulada(o: Opciones = {}) {
   const llamadas: Llamada[] = [];
-  const db = {
+  const db = conContratoFE({
     async query(sql: string, parametros: unknown[] = []) {
       llamadas.push({ sql, parametros });
       if (/usuario_tiene_permiso/.test(sql)) {
@@ -54,7 +56,7 @@ function baseSimulada(o: Opciones = {}) {
 
       return { rows: [], rowCount: 0 };
     },
-  };
+  });
 
   return { db: db as never, llamadas, escrituras: () => llamadas.filter((l) => /fe_documento_crear_fe|WITH ant AS|INSERT INTO|UPDATE /.test(l.sql)) };
 }
@@ -115,7 +117,7 @@ export async function verificarCasosAjusteFiscal(): Promise<string[]> {
   igual("servidor: ajustar sin FACTURACION_ELECTRONICA.AJUSTE_FISCAL → 403 y no se escribe nada", [(await resultado(sinPermiso.p)).slice(0, 4), sinPermiso.b.escrituras().length], ["403:", 0]);
 
   const conPermiso = baseSimulada({ producto: incompleto, permisos: [PERMISO_AJUSTE, PERMISO_PRECIO], unidades: UNIDADES });
-  const cuerpoOk = leerCuerpoFactura(cuerpoBase([linea({ precio: "11000", ajuste: { unidadSifen: 83, afectacion: 1, tasa: 10, descripcion: "Producto fiscal", gtin: "7791234567890" } })])) as never;
+  const cuerpoOk = cuerpoValido(cuerpoBase([linea({ precio: "11000", ajuste: { unidadSifen: 83, afectacion: 1, tasa: 10, descripcion: "Producto fiscal", gtin: "7791234567890" } })]));
   const prep = await prepararFactura(conPermiso.db, EMPRESA, USUARIO, cuerpoOk);
   const payloadPrep = prep.payload as unknown as { Detalles: Array<Record<string, unknown>>; Subtotales: Array<Record<string, unknown>> };
   const det = payloadPrep.Detalles[0];
@@ -184,10 +186,10 @@ export async function verificarCasosAjusteFiscal(): Promise<string[]> {
   const guardable = baseSimulada({ permisos: [PERMISO_AJUSTE, PERMISO_PRODUCTOS] });
   const salida = { guardar: [] as Array<{ productoId: string; codigo: string; afectacion: number; tasa: number; proporcion: string | null }> };
 
-  await crearFacturaElectronica(guardable.db, EMPRESA, USUARIO, leerCuerpoFactura(cuerpoBase([linea({ ajuste: { afectacion: 3, tasa: 0, guardarClasificacion: true } })])) as never, salida);
+  await crearFacturaElectronica(guardable.db, EMPRESA, USUARIO, cuerpoValido(cuerpoBase([linea({ ajuste: { afectacion: 3, tasa: 0, guardarClasificacion: true } })])), salida);
 
   igual("guardar: con confirmación y PRODUCTOS.EDITAR la creación entrega la clasificación a guardar (solo IVA); sin la opción no entrega nada", [
-    salida.guardar, (await (async () => { const s2 = { guardar: [] as typeof salida.guardar }; await crearFacturaElectronica(baseSimulada({ permisos: [PERMISO_AJUSTE] }).db, EMPRESA, USUARIO, leerCuerpoFactura(cuerpoBase([linea({ ajuste: { afectacion: 3, tasa: 0 } })])) as never, s2); return s2.guardar; })()),
+    salida.guardar, (await (async () => { const s2 = { guardar: [] as typeof salida.guardar }; await crearFacturaElectronica(baseSimulada({ permisos: [PERMISO_AJUSTE] }).db, EMPRESA, USUARIO, cuerpoValido(cuerpoBase([linea({ ajuste: { afectacion: 3, tasa: 0 } })])), s2); return s2.guardar; })()),
   ], [[{ productoId: PRODUCTO, codigo: "P-1", afectacion: 3, tasa: 0, proporcion: null }], []]);
 
   const guardarCon = async (permisos: string[], cte: Record<string, number> | Error, impuestos = [{ id: "i1" }]) => {
@@ -294,12 +296,12 @@ export async function verificarCasosAjusteFiscal(): Promise<string[]> {
     leerAjuste({ gtin: null }), (await resultado(preparar({ producto: { ...completo, gtin: "7791234567890" }, permisos: [] }, [linea({ ajuste: { gtin: null } })]).p)).slice(0, 4), typeof leerAjuste({ gtin: "123" }),
     await (async () => {
       const b = baseSimulada({ producto: { ...completo, gtin: "7791234567890" }, permisos: [PERMISO_AJUSTE] });
-      const p = await prepararFactura(b.db, EMPRESA, USUARIO, leerCuerpoFactura(cuerpoBase([linea({ ajuste: { gtin: null } })])) as never);
+      const p = await prepararFactura(b.db, EMPRESA, USUARIO, cuerpoValido(cuerpoBase([linea({ ajuste: { gtin: null } })])));
       const d = (p.payload as unknown as { Detalles: Array<Record<string, unknown>> }).Detalles[0];
 
       return [d.dGtin, p.resumen.lineas[0].ajustes, b.escrituras().length];
     })(),
-    (await (async () => { const b = baseSimulada({ producto: { ...completo, gtin: "7791234567890" }, permisos: [] }); const p = await prepararFactura(b.db, EMPRESA, USUARIO, leerCuerpoFactura(cuerpoBase([linea()])) as never); return (p.payload as unknown as { Detalles: Array<Record<string, unknown>> }).Detalles[0].dGtin; })()),
+    (await (async () => { const b = baseSimulada({ producto: { ...completo, gtin: "7791234567890" }, permisos: [] }); const p = await prepararFactura(b.db, EMPRESA, USUARIO, cuerpoValido(cuerpoBase([linea()]))); return (p.payload as unknown as { Detalles: Array<Record<string, unknown>> }).Detalles[0].dGtin; })()),
   ], [{ gtin: null }, "403:", "string", [null, ["GTIN"], 0], "7791234567890"]);
   cierto("GTIN en la pantalla: selector de tres opciones (Usar el del producto / Informar otro GTIN / Sin GTIN (solo esta factura)); el campo de texto solo aparece al informar", /Sin GTIN \(solo esta factura\)/.test(editor0) && /Usar el del producto/.test(editor0) && /Informar otro GTIN/.test(editor0) && /ajuste\.gtinModo === "informar" \? \(/.test(editor0));
 
@@ -309,7 +311,8 @@ export async function verificarCasosAjusteFiscal(): Promise<string[]> {
   const mundo = {
     iva: { afectacion: 1, tasa: 10 }, log: [] as unknown[], sentencias: 0, posts: 0, crear: 0, estadoDoc: "NUEVO" as "NUEVO" | "ENVIADO" | "INDETERMINADO", payload: null as string | null,
   };
-  const dbReplay = {
+  // PRE-VM-R02-A: la capa de contrato responde ANTES que el `to_regprocedure` genérico de NEX-080 de esta base (si no, NEX-074 parecería ausente).
+  const dbReplay = conContratoFE({
     async query(sql: string, parametros: unknown[] = []) {
       if (/usuario_tiene_permiso/.test(sql)) { const lit = /'([A-Z_]+)',\s*'([A-Z_]+)'\)/.exec(sql); const c = parametros.length >= 4 ? `${String(parametros[2])}.${String(parametros[3])}` : lit ? `${lit[1]}.${lit[2]}` : ""; return { rows: [{ ok: [PERMISO_AJUSTE, PERMISO_PRODUCTOS].includes(c) }] }; }
       // PRO-342-R05: el preflight de emisión exige NEX-080 en el catálogo (exigirNex080).
@@ -341,14 +344,14 @@ export async function verificarCasosAjusteFiscal(): Promise<string[]> {
 
       return { rows: [], rowCount: 0 };
     },
-  } as never;
+  } as never);
   const fetchReplay = (async (url: string) => {
     if (url.endsWith("/api/login")) return { status: 200, text: async () => JSON.stringify({ status: "success", token: "token.sintetico.no-real" }) };
     mundo.posts += 1;
 
     return { status: 200, text: async () => JSON.stringify({ status: "success", message: "Documento recibido", nro_lote: "L-1" }) };
   }) as never;
-  const cuerpoReplay = leerCuerpoFactura(cuerpoBase([linea({ ajuste: { afectacion: 3, tasa: 0, guardarClasificacion: true } })])) as never;
+  const cuerpoReplay = cuerpoValido(cuerpoBase([linea({ ajuste: { afectacion: 3, tasa: 0, guardarClasificacion: true } })]));
   const dep = { fetch: fetchReplay, env: { NEXIT_FE_PRUEBA_RUC: "80000005", NEXIT_FE_PRUEBA_PASSWORD: "clave-sintetica-no-real" } };
 
   const primera = await emitirFactura(dbReplay, EMPRESA, USUARIO, cuerpoReplay, dep);

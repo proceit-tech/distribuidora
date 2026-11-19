@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { contador } from "@/lib/clientes/contador-casos";
 import { B, parseDec } from "@/lib/facturacion/calculo";
 import { crearFacturaElectronica, leerCuerpoFactura, prepararFactura } from "@/lib/facturacion/emision";
+import { conContratoFE, cuerpoValido, VENDEDOR_SIM } from "@/lib/facturacion/contrato-fe-simulado.casos";
 import { conciliarPagos, DESCRIPCION_FISCAL_DENOMINACION, DESCRIPCION_FISCAL_MONEDA, DESCRIPCION_FISCAL_PAGO, FORMAS_PAGO, leerPagos, numeroChequeFiscal, pagoParaEnvio, PAGO_UI_VACIO, pendientesPagos, type PagoEntrada } from "@/lib/facturacion/pagos";
 import { construirPayloadFE, validarEntradaFE, type EntradaFE, type ReceptorFE } from "@/lib/facturacion/payload-fe";
 import { ErrorFacturacion, ErrorValidacionFiscal } from "@/lib/facturacion/shared";
@@ -31,7 +32,8 @@ type Llamada = { sql: string; parametros: unknown[] };
 
 function baseSimulada() {
   const llamadas: Llamada[] = [];
-  const db = {
+  // PRE-VM-R02-A: capa de contrato (vendedor, NEX-074, máximo de líneas, geografía) por FUERA del registro de llamadas.
+  const db = conContratoFE({
     async query(sql: string, parametros: unknown[] = []) {
       llamadas.push({ sql, parametros });
       if (/usuario_tiene_permiso/.test(sql)) return { rows: [{ ok: false }], rowCount: 1 };
@@ -45,13 +47,13 @@ function baseSimulada() {
 
       return { rows: [], rowCount: 0 };
     },
-  };
+  });
 
   return { db: db as never, llamadas, creaciones: () => llamadas.filter((l) => /fe_documento_crear_fe/.test(l.sql)), escrituras: () => llamadas.filter((l) => /INSERT INTO|UPDATE |DELETE FROM|fe_documento_crear_fe/.test(l.sql)) };
 }
 
 // Total del cuerpo de prueba: 3 × 11.000 = 33.000 (IVA 10 % incluido)
-const cuerpo = (extra: Record<string, unknown> = {}) => ({ claveIdempotencia: "clave-de-prueba-0001", sucursalId: SUC, puntoId: PUNTO, clienteId: CLIENTE, tipoTransaccion: 1, presencia: 1, pagos: [{ tipo: 1 }], infoAdicional: "", lineas: [{ productoId: PRODUCTO, cantidad: "3" }], ...extra });
+const cuerpo = (extra: Record<string, unknown> = {}) => ({ claveIdempotencia: "clave-de-prueba-0001", sucursalId: SUC, puntoId: PUNTO, clienteId: CLIENTE, vendedorId: VENDEDOR_SIM, tipoTransaccion: 1, presencia: 1, pagos: [{ tipo: 1 }], infoAdicional: "", lineas: [{ productoId: PRODUCTO, cantidad: "3" }], ...extra });
 
 export async function verificarCasosPagos(): Promise<string[]> {
   const fallos: string[] = [];
@@ -185,7 +187,7 @@ export async function verificarCasosPagos(): Promise<string[]> {
   const repetido = await emitir({ pagos: [{ tipo: 5 }] });
   igual("idempotencia: la misma operación produce el MISMO payload (misma huella); Efectivo, Transferencia y combinado producen payloads distintos (misma clave con otro contenido conflictúa en SQL)", [JSON.stringify(json(repetido)) === JSON.stringify(json(transf)), new Set([base, transf, combinado, cheque].map((x) => JSON.stringify(json(x)))).size], [true, 4]);
   const previaB = baseSimulada();
-  const previa = (await prepararFactura(previaB.db, EMPRESA, USUARIO, leerCuerpoFactura(cuerpo({ pagos: [{ tipo: 1, monto: "13000" }, { tipo: 3, monto: "20000", tarjeta: { denominacion: 99, descripcion: "Unica", formaProcesamiento: 9 } }] })) as never)).resumen as { formaPago: string; pagos: Array<{ medio: string; monto: string; detalle: string }> };
+  const previa = (await prepararFactura(previaB.db, EMPRESA, USUARIO, cuerpoValido(cuerpo({ pagos: [{ tipo: 1, monto: "13000" }, { tipo: 3, monto: "20000", tarjeta: { denominacion: 99, descripcion: "Unica", formaProcesamiento: 9 } }] })))).resumen as { formaPago: string; pagos: Array<{ medio: string; monto: string; detalle: string }> };
   igual("previa: lista cada medio con monto y dato legible (sin número de tarjeta) y no escribe nada", [previa.formaPago, previa.pagos, previaB.escrituras().length], ["Efectivo + Tarjeta de crédito", [{ medio: "Efectivo", monto: "13000", detalle: "" }, { medio: "Tarjeta de crédito", monto: "20000", detalle: "Unica · Otro" }], 0]);
 
   // ── 9-bis. AUD-MFE-P1-R01-02: la suma de la pantalla usa la MISMA aritmética Decimal exacta que el servidor ────────────────────────────────────────

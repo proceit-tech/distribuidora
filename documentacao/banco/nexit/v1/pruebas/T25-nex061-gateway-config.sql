@@ -6,6 +6,7 @@ DO $t$
 DECLARE
   v_h text := crypt(current_setting('nex.pw_prueba'), gen_salt('bf', 12));
   v_a uuid; v_b uuid; v_ua uuid; v_ub uuid; v_n int; v_r record;
+  v_estado_prev text; v_at_prev timestamptz; -- PRE-VM-R02-A: estado visible ANTES de una prueba con credenciales no guardadas
   v_clave text := 'Cl4ve-sintetica-T25!$x';
   v_url text := 'https://gateway-bebidas-py.e-factura-hub.com';
 BEGIN
@@ -90,8 +91,10 @@ BEGIN
 
   -- Resultado de la prueba
   PERFORM pg_temp.falla(format($f$SELECT fe_gateway_prueba_registrar(%L, %L, 'INVENTADO', true, 2)$f$, v_a, v_ua), 'P0001', 'registrar: estado inválido');
+  -- PRE-VM-R02-A: el estado visible previo NO es necesariamente NULL (una prueba anterior con las credenciales guardadas lo dejó en OK); se captura y se exige que no cambie (estado ni fecha).
+  SELECT ultima_prueba_estado, ultima_prueba_at INTO v_estado_prev, v_at_prev FROM fe_gateway_config WHERE empresa_id = v_a;
   PERFORM fe_gateway_prueba_registrar(v_a, v_ua, 'CREDENCIALES_INVALIDAS', false, NULL);
-  PERFORM pg_temp.ok((SELECT ultima_prueba_estado IS NULL FROM fe_gateway_config WHERE empresa_id = v_a), 'una prueba con credenciales NO guardadas no cambia el estado visible');
+  PERFORM pg_temp.ok((SELECT ultima_prueba_estado IS NOT DISTINCT FROM v_estado_prev AND ultima_prueba_at IS NOT DISTINCT FROM v_at_prev FROM fe_gateway_config WHERE empresa_id = v_a), 'una prueba con credenciales NO guardadas no cambia el estado visible (estado y fecha previos intactos)');
 
   -- Bitácora: solo altas y sin secretos
   PERFORM pg_temp.ok(NOT EXISTS (SELECT 1 FROM fe_gateway_config_log WHERE detalle::text LIKE '%' || v_clave || '%' OR detalle::text LIKE '%otra-clave-T25%' OR detalle::text LIKE '%clave-b%'), 'la bitácora no contiene claves');

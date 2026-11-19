@@ -7,7 +7,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { contador } from "@/lib/clientes/contador-casos";
-import { crearFacturaElectronica, leerCuerpoFactura, MENSAJE_REPARTO_CAMBIO, prepararFactura, type CuerpoFactura } from "@/lib/facturacion/emision";
+import { crearFacturaElectronica, MENSAJE_REPARTO_CAMBIO, prepararFactura } from "@/lib/facturacion/emision";
+import { conContratoFE, cuerpoValido, VENDEDOR_SIM } from "@/lib/facturacion/contrato-fe-simulado.casos";
 import { ErrorFacturacion } from "@/lib/facturacion/shared";
 import { asignarStock, huellaReparto, planificarStock, type SaldoDisponible } from "@/lib/facturacion/stock-fe";
 import { verificarCasosStockPreventivo } from "@/lib/facturacion/stock-preventivo.casos";
@@ -48,7 +49,8 @@ function mundo(saldosIniciales: Saldo[], opciones: { sinAlcance?: string[]; perm
     stock.filter((s) => productoIds.includes(s.producto) && s.sucursal === sucursal && s.estado === "DISPONIBLE" && s.propiedad === "PROPIO" && s.activo && !s.tercero && s.cantidad > 0 && !(opciones.sinAlcance ?? []).includes(s.deposito)
       && CATALOGO.find((p) => p.id === s.producto)?.controlaStock === true);
 
-  const db = {
+  // PRE-VM-R02-A: capa de contrato (vendedor, NEX-074, máximo de líneas, geografía, política de stock por omisión) por FUERA del registro de consultas.
+  const db = conContratoFE({
     async query(sql: string, p: unknown[] = []) {
       consultas.push(sql);
       if (/usuario_tiene_permiso/.test(sql)) return { rows: [{ ok: false }], rowCount: 1 };
@@ -68,7 +70,9 @@ function mundo(saldosIniciales: Saldo[], opciones: { sinAlcance?: string[]; perm
           rowCount: 1,
         };
       }
-      if (/fe_documento_crear_fe_con_stock/.test(sql)) {
+      // PRE-VM-R02-A: desde NEX-074 la aplicación emite por fe_documento_crear_fe_vendedor (envuelve, sin copiarla, la emisión atómica con stock y entrega de NEX-067/068) con
+      // los MISMOS parámetros posicionales (clave $5, payload $10, asignaciones $12); el espejo atómico del contrato de stock se conserva íntegro.
+      if (/fe_documento_crear_fe_(con_stock|vendedor)\b/.test(sql) && !/to_regprocedure/.test(sql)) {
         const clave = String(p[4]);
         const previo = docs.get(clave);
 
@@ -123,7 +127,7 @@ function mundo(saldosIniciales: Saldo[], opciones: { sinAlcance?: string[]; perm
 
       return { rows: [], rowCount: 0 };
     },
-  };
+  });
 
   /** Espejo de inventario_anular_movimiento + disparador fe_stock_movimiento_protegido_trg: una salida vinculada a una FE NO se anula (la transacción completa se deshace, sin movimiento inverso). */
   async function anular(movimiento: string) {
@@ -147,7 +151,7 @@ function mundo(saldosIniciales: Saldo[], opciones: { sinAlcance?: string[]; perm
 
 const base = (producto: string, deposito: string, codigo: string, cantidad: number, extra: Partial<Saldo> = {}): Saldo => ({ producto, deposito, codigo, nombre: "Depósito " + codigo, sucursal: SUC, lote: null, venc: null, estado: "DISPONIBLE", propiedad: "PROPIO", cantidad, activo: true, ...extra });
 const cuerpo = (lineas: Array<{ productoId: string; cantidad: string }>, clave = "clave-de-prueba-0001", extra: Record<string, unknown> = {}) =>
-  leerCuerpoFactura({ claveIdempotencia: clave, sucursalId: SUC, puntoId: PUNTO, clienteId: CLIENTE, tipoTransaccion: 1, presencia: 1, pagos: [{ tipo: 1 }], infoAdicional: "", lineas: lineas.map((l) => ({ ...l, precio: null })), ...extra }) as CuerpoFactura;
+  cuerpoValido({ claveIdempotencia: clave, sucursalId: SUC, puntoId: PUNTO, clienteId: CLIENTE, vendedorId: VENDEDOR_SIM, tipoTransaccion: 1, presencia: 1, pagos: [{ tipo: 1 }], infoAdicional: "", lineas: lineas.map((l) => ({ ...l, precio: null })), ...extra });
 
 export async function verificarCasosStockE02(): Promise<string[]> {
   const fallos: string[] = [];
@@ -322,7 +326,7 @@ export async function verificarCasosStockE02(): Promise<string[]> {
   cierto("E02-32 SQL: idempotencia y auditoría — bloqueo advisory por documento, vínculo PK (empresa, documento, depósito), clave 'FE-STOCK:<doc>:<depósito>', un movimiento SALIDA/VENTA por depósito, tabla inmutable", /pg_advisory_xact_lock\(hashtextextended\('fe\.stock:'/.test(sql) && /PRIMARY KEY \(empresa_id, documento_id, deposito_id\)/.test(sql) && /'FE-STOCK:' \|\| p_documento::text \|\| ':' \|\| v_dep::text/.test(sql) && /'SALIDA', 'VENTA'/.test(sql) && /fe_stock_salidas_inmutable_trg BEFORE UPDATE OR DELETE/.test(sql) && /IF EXISTS \(SELECT 1 FROM public\.documento_electronico_stock_salidas WHERE empresa_id = p_empresa AND documento_id = p_documento\) THEN\s+RETURN 0;/.test(sql));
   cierto("E02-33 SQL: revalida bajo FOR UPDATE (costo y luego saldo, igual que el motor), bloquea con NEX:STOCK_INSUFICIENTE, concilia con el payload persistido (dCodInt/dCantProSer), usa el motor de líneas de Inventario y cantidades de 4 decimales; NEX-014 no se modifica", /FOR UPDATE;\s+IF NOT FOUND THEN\s+RAISE EXCEPTION 'stock disponible insuficiente para facturar/.test(sql) && /NEX:STOCK_INSUFICIENTE/.test(sql) && /d->>'dCodInt'/.test(sql) && /d->>'dCantProSer'/.test(sql) && /public\.inventario_agregar_linea\(p_empresa, v_mov, b\.producto_id, b\.cantidad/.test(sql) && /round\(\(a\.x->>'cantidad'\)::numeric, 4\)/.test(sql) && !/CREATE OR REPLACE FUNCTION (public\.)?inventario_(registrar_movimiento|registrar_linea|agregar_linea)/.test(sql) && !/UPDATE public\.stock_saldos|INSERT INTO public\.stock_saldos/.test(sql));
   cierto("E02-34 SQL: grants — la aplicación ejecuta solo la disponibilidad y la emisión atómica; la creación de FE SIN baja (fe_documento_crear_fe) deja de ser ejecutable por la aplicación; helper descubierto por el envoltorio; migración NO aplicada", /GRANT EXECUTE ON FUNCTION public\.fe_stock_disponibilidad/.test(sql) && /GRANT EXECUTE ON FUNCTION public\.fe_documento_crear_fe_con_stock/.test(sql) && /REVOKE ALL ON FUNCTION public\.fe_documento_crear_fe\(uuid, uuid, uuid, uuid, text, uuid, text, text, text, numeric, jsonb\) FROM nexit_runtime/.test(sql) && /nex_aplicar_grants_facturacion_stock/.test(sql) && /NO aplicada/.test(sql));
-  cierto("E02-35 aplicación: la emisión usa SOLO la función atómica (nunca fe_documento_crear_fe directa), no vuelve a evaluar stock si la clave ya existe, exige la huella del reparto revisado y no escribe en stock_saldos", /FROM fe_documento_crear_fe_con_stock_entrega\(/.test(emision) && !/FROM fe_documento_crear_fe_con_stock\(/.test(emision) && !/FROM fe_documento_crear_fe\(/.test(emision) && /clave_idempotencia = \$2/.test(emision) && /cuerpo\.repartoHuella !== plan\.huella/.test(emision) && !/stock_saldos/.test(emision) && !/inventario_registrar/.test(emision));
+  cierto("E02-35 aplicación (PRE-VM-R02-A, contrato vigente): la emisión usa SOLO las funciones atómicas que envuelven la de stock (NEX-076 _receptor / NEX-074 _vendedor; con faltante NEX-081 _stock_pendiente), nunca fe_documento_crear_fe directa, no vuelve a evaluar stock si la clave ya existe, exige la huella del reparto revisado y no escribe en stock_saldos", /FROM \$\{conReceptor \? "fe_documento_crear_fe_receptor" : "fe_documento_crear_fe_vendedor"\}\(/.test(emision) && /FROM fe_documento_crear_fe_stock_pendiente\(/.test(emision) && !/FROM fe_documento_crear_fe_con_stock\(/.test(emision) && !/FROM fe_documento_crear_fe\(/.test(emision) && /clave_idempotencia = \$2/.test(emision) && /cuerpo\.repartoHuella !== plan\.huella/.test(emision) && !/stock_saldos/.test(emision) && !/inventario_registrar/.test(emision));
   cierto("E02-36 (PRO-354-R02: plan con la política de la empresa; con TRUE es el mismo plan y el mismo mensaje) previa y pantalla: la previa devuelve el reparto (sin escribir) y bloquea si no alcanza; el resumen muestra la salida por depósito y la huella revisada viaja con el envío", /planificarStockConPolitica\(b\.db/.test(previa) && /if \(!plan\.emitible\) throw new ErrorFacturacion\(409, mensajePlanNoEmitible\(plan\)\)/.test(previa) && /resumen: plan\.lineas\.length > 0 \? \{ \.\.\.resumen, stock: resumenStockPolitica\(plan\) \}/.test(previa) && /Salida de stock por depósito/.test(pagina) && /enviar: async \(cuerpo, revisado\)/.test(pagina) && /repartoHuella: repartoDe\(revisado\)/.test(pagina) && /const repartoDe = \(r: Resumen \| null\): string \| null => r\?\.stock\?\.huella \?\? null/.test(pagina) && /deps\.enviar\(toma\.cuerpo, toma\.resumen\)/.test(leer("lib/facturacion/revision-factura.ts")));
   cierto("E02-37 documentación operativa de NEX-067: preflight, verificación, reversión y procedimiento versionados", ["scripts/preflight-NEX-067.sql", "scripts/verificar-NEX-067.sql", "scripts/reversion-NEX-067.sql", "docs/PROCEDIMIENTO-NEX-067.md"].every((f) => { try { return leer("documentacao/banco/nexit/v1/" + f).length > 200; } catch { return false; } }));
 

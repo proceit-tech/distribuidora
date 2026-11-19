@@ -4,6 +4,7 @@
  * Los mocks prueban la FORMA de las lecturas y la lógica de TypeScript, NO la serialización real de PostgreSQL.
  */
 import { readdirSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 
 import { contador } from "@/lib/clientes/contador-casos";
@@ -461,7 +462,10 @@ export async function verificarCasosReportesStockGeneral(): Promise<string[]> {
   cierto("SG-T09 informe cuantitativo: sin costos, valorización, precios, movimientos ni planificación; fuente única stock_saldos; sin float8; solo lectura", !/inventario_costos|precio|costo|valor_total|float8/i.test(fuente.replace(/\/\/.*$/gm, "").replace(/"[^"\n]*(costos|valorización|precios)[^"\n]*"/g, "")) && /FROM stock_saldos/.test(fuente) && !/(INSERT|UPDATE|DELETE)\s/i.test(fuente.replace(/\/\/.*$/gm, "")) && !/calcularPlanReposicion|movimientos_inventario/.test(fuente + planFuente));
   cierto("SG-T09 la regla de situación es la de Inventario > Stock (documentada y probada contra clasificarNivel); no hay política paralela de mínimo/máximo ni cambios en Reposición", /clasificarNivel/.test(planFuente) && !/stock-general/.test(leer("lib/reposicion/calculo.ts") + leer("lib/stock/vista.ts") + leer("lib/stock/shared.ts")));
   cierto("SG-T09 los otros informes conservan sus dependencias compartidas (depositosPermitidos y MAX_FILAS_EXPORTACION siguen exportados con la misma firma) y sus rutas", /export async function depositosPermitidos\(db: Db, empresaId: string, usuarioId: string\)/.test(fuente) && /export const MAX_FILAS_EXPORTACION = 50000/.test(fuente) && ["kardex", "lotes", "stock-critico", "valorizacion"].every((r) => /export async function GET/.test(leer(`app/api/reportes/${r}/route.ts`))));
-  cierto("SG-T09 sin migraciones nuevas: la última del repositorio sigue siendo NEX-053", readdirSync(join(process.cwd(), "documentacao/banco/nexit/v1/migraciones")).filter((n) => /^NEX-\d+/.test(n)).sort().at(-1)?.match(/^NEX-05[3-9]/) != null);
+  // PRE-VM-R02-A: la comprobación anterior («la última migración del repositorio sigue siendo NEX-053») dejó de ser válida en cuanto otras entregas versionaron NEX-054…081, sin relación con este módulo. Lo que
+  // esta ronda garantiza es que NO tocó el esquema de inventario: las migraciones que lo definen (movimientos/costos NEX-009, operativos NEX-014, depósitos NEX-046) conservan exactamente su contenido (SHA-256).
+  const migracionesInventario: Record<string, string> = { "NEX-009-inventario-costos.sql": "c1568a12802a5ead3a9c199b30ed71b8d74214e55d3780cc666bff7467bc4f9b", "NEX-014-movimientos-operativos.sql": "d6477b3e79ab7fe480cd9647e54751044371b5eb4dd11573b39fed1800597eba", "NEX-046-depositos-gestion.sql": "fec235c1db920e98fc01ccc8615d13f819d5f05075d760b99b5b01ff3d7360b5" };
+  cierto("SG-T09 sin cambios estructurales del informe: las migraciones que definen inventario, movimientos y depósitos (NEX-009, NEX-014, NEX-046) conservan su contenido exacto (SHA-256); ninguna se editó", Object.entries(migracionesInventario).every(([f, h]) => createHash("sha256").update(readFileSync(join(process.cwd(), "documentacao/banco/nexit/v1/migraciones", f))).digest("hex") === h) && readdirSync(join(process.cwd(), "documentacao/banco/nexit/v1/migraciones")).filter((n) => /^NEX-(009|014|046)-/.test(n)).length === 3);
 
   return fallos;
 }

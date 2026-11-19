@@ -9,7 +9,8 @@ import { join } from "node:path";
 import { contador } from "@/lib/clientes/contador-casos";
 import { B, parseDec, S, textoDec } from "@/lib/facturacion/calculo";
 import { leerDescuento, resolverDescuentos } from "@/lib/facturacion/descuentos";
-import { crearFacturaElectronica, leerCuerpoFactura, prepararFactura, type CuerpoFactura } from "@/lib/facturacion/emision";
+import { crearFacturaElectronica, leerCuerpoFactura, prepararFactura } from "@/lib/facturacion/emision";
+import { conContratoFE, cuerpoValido, VENDEDOR_SIM } from "@/lib/facturacion/contrato-fe-simulado.casos";
 import { construirPayloadFE, resumenCalculo, totalFactura, validarEntradaFE, type EntradaFE, type LineaFE, type ReceptorFE } from "@/lib/facturacion/payload-fe";
 
 const leer = (r: string) => readFileSync(join(process.cwd(), r), "utf8");
@@ -168,11 +169,12 @@ export async function verificarCasosDescuentosE03(): Promise<string[]> {
   }
 
   // ── 8. Servidor: cuerpo, previa y emisión (orquestación real) ─────────────────────────────────────────────────────────────────────────────────────
-  const cuerpoBase = (lineas: unknown[], extra: Record<string, unknown> = {}) => ({ claveIdempotencia: "clave-descuento-0001", sucursalId: SUC, puntoId: PUNTO, clienteId: CLIENTE, tipoTransaccion: 1, presencia: 1, pagos: [{ tipo: 1 }], infoAdicional: "", lineas, ...extra });
+  // PRE-VM-R02-A: vendedor comercial obligatorio (PRO-93-R02 / PRO-307).
+  const cuerpoBase = (lineas: unknown[], extra: Record<string, unknown> = {}) => ({ claveIdempotencia: "clave-descuento-0001", sucursalId: SUC, puntoId: PUNTO, clienteId: CLIENTE, vendedorId: VENDEDOR_SIM, tipoTransaccion: 1, presencia: 1, pagos: [{ tipo: 1 }], infoAdicional: "", lineas, ...extra });
   const l1 = (extra: Record<string, unknown> = {}) => ({ productoId: P1, cantidad: "2", precio: null, ...extra });
 
   igual("D-30 el cuerpo acepta descuento por ítem y general (forma validada) y los conserva", (() => {
-    const c = leerCuerpoFactura(cuerpoBase([l1({ descuento: { modo: "PORCENTAJE", valor: "10" } })], { descuentoGlobal: { modo: "MONTO", valor: "500" } })) as { lineas: Array<{ descuento?: unknown }>; descuentoGlobal?: unknown };
+    const c = cuerpoValido(cuerpoBase([l1({ descuento: { modo: "PORCENTAJE", valor: "10" } })], { descuentoGlobal: { modo: "MONTO", valor: "500" } }));
 
     return [c.lineas[0].descuento, c.descuentoGlobal];
   })(), [{ modo: "PORCENTAJE", valor: "10" }, { modo: "MONTO", valor: "500" }]);
@@ -183,7 +185,8 @@ export async function verificarCasosDescuentosE03(): Promise<string[]> {
     const producto = { id: P1, codigo: "P-1", controlaStock: true, descripcion: "Producto P-1", unidadSifen: 77, unidadSimbolo: "UNI", unidadNombre: "Unidad", unidadVigente: true, afectacion: 1, proporcion: null, tasa: 10, precio: "11000", monedaPrecio: "PYG", gtin: null };
     const llamadas: Array<{ sql: string; p: unknown[] }> = [];
     let stock = 10;
-    const db = {
+    // PRE-VM-R02-A: capa de contrato (vendedor, NEX-074, máximo de líneas, geografía) por FUERA del registro de llamadas.
+    const db = conContratoFE({
       async query(sql: string, p: unknown[] = []) {
         llamadas.push({ sql, p });
         if (/usuario_tiene_permiso/.test(sql)) return { rows: [{ ok: false }], rowCount: 1 };
@@ -195,13 +198,14 @@ export async function verificarCasosDescuentosE03(): Promise<string[]> {
         if (/FROM productos p/.test(sql)) return { rows: [producto], rowCount: 1 };
         if (/FROM documentos_electronicos WHERE empresa_id/.test(sql)) return { rows: [], rowCount: 0 };
         if (/FROM fe_stock_disponibilidad/.test(sql)) return { rows: [{ productoId: P1, depositoId: DEP_A, depositoCodigo: "A", depositoNombre: "Depósito A", loteId: null, loteCodigo: null, vencimiento: null, disponible: String(stock) }], rowCount: 1 };
-        if (/fe_documento_crear_fe_con_stock/.test(sql)) return { rows: [{ documentoId: "d0000000-0000-4000-8000-000000000001", numero: "0050000", reutilizado: false }], rowCount: 1 };
+        // PRE-VM-R02-A: desde NEX-074 la emisión atómica se invoca por fe_documento_crear_fe_vendedor (mismos parámetros posicionales: total $9, payload $10, asignaciones $12).
+        if (/FROM fe_documento_crear_fe_(con_stock|vendedor)\(/.test(sql)) return { rows: [{ documentoId: "d0000000-0000-4000-8000-000000000001", numero: "0050000", reutilizado: false }], rowCount: 1 };
 
         return { rows: [], rowCount: 0 };
       },
-    } as never;
+    } as never);
 
-    const c = leerCuerpoFactura(cuerpoBase([l1({ descuento: { modo: "PORCENTAJE", valor: "10" } })], { descuentoGlobal: { modo: "PORCENTAJE", valor: "5" } })) as CuerpoFactura;
+    const c = cuerpoValido(cuerpoBase([l1({ descuento: { modo: "PORCENTAJE", valor: "10" } })], { descuentoGlobal: { modo: "PORCENTAJE", valor: "5" } }));
     const prep = await prepararFactura(db, EMPRESA, USUARIO, c);
     const pay = prep.payload as unknown as Payload;
     const resumen = prep.resumen as unknown as { totalesTexto: { total: string }; descuentos?: { total: string; porcGlobal: string }; lineas: Array<{ descuento?: { unitario: string; global: string; total: string } }> };
@@ -215,7 +219,7 @@ export async function verificarCasosDescuentosE03(): Promise<string[]> {
 
     await crearFacturaElectronica(db, EMPRESA, USUARIO, { ...c, repartoHuella: plan.huella });
 
-    const emision = llamadas.find((x) => /fe_documento_crear_fe_con_stock/.test(x.sql));
+    const emision = llamadas.find((x) => /FROM fe_documento_crear_fe_(con_stock|vendedor)\(/.test(x.sql));
     const enviado = JSON.parse(String(emision?.p[9])) as Payload;
     const asignaciones = JSON.parse(String(emision?.p[11])) as Array<{ cantidad: string }>;
 

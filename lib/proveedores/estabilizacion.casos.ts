@@ -8,6 +8,7 @@ import { join } from "node:path";
 
 import { contador } from "@/lib/clientes/contador-casos";
 import { leerRetomada, subirDocumentosPendientes, urlRetomada } from "@/lib/proveedores/alta";
+import { decidirGet } from "@/lib/proveedores/acceso-get";
 import { cerrarCargaInicialProveedor } from "@/lib/proveedores/cierre-carga";
 import type { DocumentoPendiente } from "@/lib/proveedores/documento-pendiente";
 import { decidirAccesoDocumento, type AccionDocumento } from "@/lib/proveedores/permisos-documentos";
@@ -248,7 +249,14 @@ export async function verificarCasosEstabilizacionProveedores(): Promise<string[
   const get = lista.slice(lista.indexOf("export async function GET"));
   const posGet = (t: string) => get.indexOf(t);
 
-  cierto("R01-04: sin VER, solo modo=catalogos y los catálogos geográficos se sirven a quien tiene CREAR; cualquier otra consulta (lista) sigue denegada; el POST sigue exigiendo CREAR", /const soloAlta = url\.searchParams\.get\("modo"\) === "catalogos" \|\| url\.searchParams\.has\("catalogo"\)/.test(get) && /!soloAlta \|\| \(await denyIfNoPermission\(session, "PROVEEDORES", "CREAR"\)\)\) return denegadoVer/.test(get) && /denyIfNoPermission\(session, "PROVEEDORES", "CREAR"\)/.test(lista.slice(lista.indexOf("export async function POST"))));
+  // PRE-VM-R02-A: la autorización del GET se decide ahora por FINALIDAD en una función pura (PRV-R03-01, lib/proveedores/acceso-get.ts) que la ruta invoca; se verifica el COMPORTAMIENTO de esa decisión y que la
+  // ruta la use antes de cualquier lectura, en lugar del texto de la implementación anterior (`soloAlta`), ya sustituida. La regla no cambia.
+  const decide = (q: string, ver: boolean, crear: boolean) => { const d = decidirGet(new URL("http://x/api/proveedores" + q), { ver, crear }); return d.tipo === "permitida" ? d.finalidad : d.tipo; };
+
+  igual("R01-04: sin VER, solo modo=catalogos y los catálogos geográficos se sirven a quien tiene CREAR; la lista y las consultas inconsistentes siguen denegadas o inválidas; con VER la lista se sirve",
+    [decide("?modo=catalogos", false, true), decide("?catalogo=paises", false, true), decide("", false, true), decide("?q=abc", false, true), decide("?catalogo=", false, true), decide("?catalogo=paises&modo=catalogos", false, true), decide("?modo=catalogos", false, false), decide("", true, false)],
+    ["CATALOGOS", "GEOGRAFIA", "denegada", "denegada", "invalida", "invalida", "denegada", "LISTA"]);
+  cierto("R01-04: la ruta decide con decidirGet (VER y CREAR reales de la sesión), rechaza inválidas (400) y denegadas antes de abrir la base; el POST sigue exigiendo CREAR", /const decision = decidirGet\(url, \{ ver: !denegadoVer, crear: tieneCrear \}\)/.test(get) && /if \(decision\.tipo === "invalida"\) return NextResponse\.json\(\{ error: "Consulta no válida\." \}, \{ status: 400 \}\)/.test(get) && /if \(decision\.tipo === "denegada"\)/.test(get) && posGet('decision.tipo === "denegada"') < posGet("const db = await obtenerDb()") && /denyIfNoPermission\(session, "PROVEEDORES", "CREAR"\)/.test(lista.slice(lista.indexOf("export async function POST"))));
   cierto("R01-04: en modo catálogos no se consulta ningún proveedor (la consulta de lista queda reemplazada por vacío) y todo filtra por empresa de la sesión; la exención se evalúa antes de cualquier lectura", /soloCatalogos\s*\n?\s*\? Promise\.resolve\(\{ rows: \[\] as unknown\[\] \}\)/.test(get) && posGet("denegadoVer") < posGet("const db = await obtenerDb()") && posGet("denegadoVer") < posGet("catalogoGeografico(url, db)"));
 
   // ── PRV-R01-05: precedencia de la versión

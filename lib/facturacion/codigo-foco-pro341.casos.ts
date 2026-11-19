@@ -345,7 +345,8 @@ export async function verificarCasosCodigoFocoPro341(): Promise<string[]> {
   const iTabla = seccion331.indexOf("@media (min-width: 901px) {");
   const iTarjeta = seccion331.indexOf("@media (max-width: 900px) {");
   const modoTabla = iTabla >= 0 && iTarjeta > iTabla ? seccion331.slice(iTabla, iTarjeta) : "";
-  const modoTarjeta = iTarjeta >= 0 ? seccion331.slice(iTarjeta) : "";
+  // PRE-VM-R02-A: el bloque empieza DESPUÉS de la llave de la regla @media; si no, su propia condición «max-width: 900px» se leía como un ancho fijo de la tarjeta.
+  const modoTarjeta = iTarjeta >= 0 ? seccion331.slice(iTarjeta + "@media (max-width: 900px) {".length) : "";
 
   cierto("PRO341-25 el elemento del código NO tiene ellipsis, nowrap ni recorte: white-space normal, text-overflow clip, overflow visible y quiebre overflow-wrap:anywhere",
     reglaCodigo !== "" && /white-space: normal;/.test(reglaCodigo) && /text-overflow: clip;/.test(reglaCodigo) && /overflow: visible;/.test(reglaCodigo) && /overflow-wrap: anywhere;/.test(reglaCodigo) && !/nowrap|ellipsis|hidden/.test(reglaCodigo));
@@ -405,7 +406,7 @@ export async function verificarCasosCodigoFocoPro341(): Promise<string[]> {
   cierto("PRO341-44 Cantidad del selector avanzado (CantidadAnadido) se edita dentro del diálogo y al terminar vuelve al filtro; el input de fondo conserva id y teclado decimal",
     /<CantidadAnadido [\s\S]*?alTerminar=\{\(\) => document\.getElementById\("filtro-productos"\)\?\.focus\(\)\}/.test(pag) && /campo\.current\?\.focus\(\)/.test(sinCom(leer("app/(private)/facturas/nueva/cantidad-anadido.tsx"))) && /id=\{`cantidad-\$\{l\.clave\}`\}\s*inputMode="decimal"/.test(tabla));
   cierto("PRO341-45 el buscador sigue limpio y usable al volver (id estable, mantenerAbierto, controlador limpia el texto tras elegir); sin atajo nuevo que devuelva el foco tras digitar la cantidad",
-    /idCampo=\{ID_BUSCADOR_PRODUCTOS\}/.test(pag) && /mantenerAbierto\s*describir=/.test(pag) && /const resultado = deps\.alElegir\(t\);\s*api\.escribir\(""\);/.test(leer("lib/facturacion/busqueda-rapida.ts")) && !/onKeyDown=\{[^}]*ID_BUSCADOR_PRODUCTOS/.test(tabla) && ID_BUSCADOR_PRODUCTOS === "buscador-productos-factura");
+    /idCampo=\{ID_BUSCADOR_PRODUCTOS\}/.test(pag) && /mantenerAbierto\s*describir=/.test(pag) && /const resultado = deps\.alElegir\(t\);\s*api\.escribir\(""\);/.test(sinCom(leer("lib/facturacion/busqueda-rapida.ts"))) /* PRE-VM-R02-A: sin comentarios */ && !/onKeyDown=\{[^}]*ID_BUSCADOR_PRODUCTOS/.test(tabla) && ID_BUSCADOR_PRODUCTOS === "buscador-productos-factura");
   igual("PRO341-46 límite fiscal común intacto (MAX_LINEAS = 999) y cuatro filas visibles no son tope", [MAX_LINEAS, FILAS_VISIBLES_DETALLE], [999, 4]);
 
   // ── 9. PRO-341-R02 (R01-F001): resultado EFECTIVO de la búsqueda rápida — controlador REAL crearBuscadorRapido con dependencias simuladas ──────────────
@@ -562,7 +563,7 @@ export async function verificarCasosCodigoFocoPro341(): Promise<string[]> {
     && /\{avisoLimiteLineas && !puedeAgregarLinea\(lineas\.length, maxLineasFE\) \? <p className=\{estilos\.fieldError\} role="alert">\{avisoLimiteLineas\}<\/p> : null\}/.test(pag)
     && /setAvisoLimiteLineas\(mensajeAltaBloqueada\(maxLineasFE\)\);/.test(agregar));
   cierto("PRO341-66 selector avanzado intacto: recibe agregar (origen por defecto «avanzado») y sigue decidiendo su propio aviso con ALTA_BLOQUEADA, sin pasar por agregarRapido",
-    /<SelectorProducto [^>]*alAgregar=\{agregar\}/.test(pag) && /function agregar\(p: Producto, origen: OrigenAlta = "avanzado"\): number \{/.test(pag)
+    /<SelectorProducto\b[^\n]*?\balAgregar=\{agregar\}[^\n]*?\/>/.test(pag) /* PRE-VM-R02-A: acotado a la etiqueta (una línea); «[^>]*» se cortaba en el «=>» de alCerrar */ && /function agregar\(p: Producto, origen: OrigenAlta = "avanzado"\): number \{/.test(pag)
     && /setAviso\(clave === ALTA_BLOQUEADA \? mensajeAltaBloqueada\(maxLineas\) : `«\$\{p\.descripcion\}» añadido\.`\);/.test(pag) && (pag.match(/agregarRapido/g) ?? []).length === 2);
 
   return fallos;

@@ -11,6 +11,7 @@ import { ETIQUETA_SIFEN, estadoSifenDesdeGateway, numeroDocumento } from "@/lib/
 import { claveToken, consultarDocumentoGateway, enviarDocumentoGateway, interpretarRecepcion, interpretarConsulta, leerCredenciales, limpiarCacheTokens, sanearRespuesta, tamanoCacheTokens, tipoDocConsulta, type FetchLike, type ResultadoEnvio } from "@/lib/facturacion/gateway";
 import { calcularItem, calcularSubtotales, numeroDec, parseDec, textoDec } from "@/lib/facturacion/calculo";
 import { buscarClientesFactura, buscarProductosFactura, crearFacturaElectronica, leerCuerpoFactura, leerPagina, permisoPrecio, prepararFactura } from "@/lib/facturacion/emision";
+import { conContratoFE, cuerpoValido, VENDEDOR_SIM, type OpcionesContratoFE } from "@/lib/facturacion/contrato-fe-simulado.casos";
 import { formatearFechaHoraPy, formatearFechaPy } from "@/lib/formato/listas";
 import { emitirFactura, enviarDocumento } from "@/lib/facturacion/envio";
 import { CATALOGO_TIPOS_TRANSACCION, CONDICIONES_OPERACION, INDICADORES_PRESENCIA, TIPOS_TRANSACCION, construirPayloadFE, DESCRIPCION_TIPO_DOCUMENTO, FORMAS_PAGO, validarEntradaFE, totalFactura, type EntradaFE, type LineaFE, type ReceptorFE } from "@/lib/facturacion/payload-fe";
@@ -340,14 +341,16 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
   const PRODUCTO = "f1f1f1f1-f1f1-4f1f-8f1f-f1f1f1f1f1f1";
   const CLIENTE = "c1c1c1c1-c1c1-4c1c-8c1c-c1c1c1c1c1c1";
   const PUNTO = "b1b1b1b1-b1b1-4b1b-8b1b-b1b1b1b1b1b1";
-  const cuerpo = (extra: Record<string, unknown> = {}) => ({ claveIdempotencia: "clave-de-prueba-0001", sucursalId: SUC, puntoId: PUNTO, clienteId: CLIENTE, tipoTransaccion: 1, presencia: 1, pagos: [{ tipo: 1 }], infoAdicional: "", lineas: [{ productoId: PRODUCTO, cantidad: "1" }], ...extra });
+  // PRE-VM-R02-A: vendedor comercial obligatorio desde PRO-93-R02 / PRO-307 (usuario activo con el perfil Vendedor, revalidado por el servidor).
+  const cuerpo = (extra: Record<string, unknown> = {}) => ({ claveIdempotencia: "clave-de-prueba-0001", sucursalId: SUC, puntoId: PUNTO, clienteId: CLIENTE, vendedorId: VENDEDOR_SIM, tipoTransaccion: 1, presencia: 1, pagos: [{ tipo: 1 }], infoAdicional: "", lineas: [{ productoId: PRODUCTO, cantidad: "1" }], ...extra });
   const filaCliente = { codigo: "CLI-000001", naturaleza_receptor: 1, tipo_operacion: 1, tipo_contribuyente_sifen: 2, pais_codigo: "PRY", tipo_documento_identidad_sifen: null, descripcion_documento_identidad: null, numero_documento: "80000005", dv: "6", razon_social: "EMPRESA SINTETICA SA", nombre_fantasia: null, email: "a@b.com", email_copia: null, email_facturacion: null, telefono: null, celular: null, activo: true, bloqueado_ventas: false, direccion: "Calle 1", numero_casa: "123", departamento_codigo: "1", distrito_codigo: "1", ciudad_codigo: "1" };
   const filaProducto = { id: PRODUCTO, codigo: "P-1", descripcion: "Producto de prueba", unidadSifen: 77, afectacion: 1, proporcion: null, tasa: 10, precio: "11000", monedaPrecio: "PYG", gtin: null };
   const llamadasCrear: Array<{ sql: string; parametros: unknown[] }> = [];
-  const dbCrear = (opciones: { cliente?: Record<string, unknown> | null; productos?: Array<Record<string, unknown>>; conflicto?: boolean; aptitudMala?: boolean; sinPunto?: boolean } = {}) => {
+  // PRE-VM-R02-A: la capa de contrato (contrato-fe-simulado) responde vendedor, NEX-074/076/073, máximo de líneas y geografía; `contrato` la configura en los casos negativos.
+  const dbCrear = (opciones: { cliente?: Record<string, unknown> | null; productos?: Array<Record<string, unknown>>; conflicto?: boolean; aptitudMala?: boolean; sinPunto?: boolean; contrato?: OpcionesContratoFE } = {}) => {
     let intentos = 0;
 
-    return {
+    return conContratoFE({
       async query(sql: string, parametros: unknown[] = []) {
         llamadasCrear.push({ sql, parametros });
         if (/FROM clientes c\s+LEFT JOIN LATERAL/.test(sql)) return { rows: opciones.cliente === null ? [] : [opciones.cliente ?? filaCliente], rowCount: 1 };
@@ -365,7 +368,7 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
 
         return { rows: [], rowCount: 0 };
       },
-    } as never;
+    } as never, opciones.contrato);
   };
 
   igual("cuerpo: forma inválida (sin clave, ids no UUID, sin ítems, sin pago) se rechaza antes de tocar la base", [
@@ -377,7 +380,7 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
 
   igual("cuerpo: IVA, afectación, total y empresa enviados por el navegador se IGNORAN; el precio solo se conserva como propuesta (el servidor lo contrasta)", [JSON.stringify(parseado).includes("otra"), JSON.stringify(parseado).includes('"afectacion"'), JSON.stringify(parseado).includes('"total"'), (parseado as { lineas: Array<{ precio: string | null }> }).lineas[0].precio], [false, false, false, "1"]);
 
-  const creada = await crearFacturaElectronica(dbCrear(), EMPRESA, USUARIO, leerCuerpoFactura(cuerpo()) as never);
+  const creada = await crearFacturaElectronica(dbCrear(), EMPRESA, USUARIO, cuerpoValido(cuerpo()));
   const crear = llamadasCrear.find((l) => /fe_documento_crear_fe/.test(l.sql))!;
   const payloadEnviado = JSON.parse(String(crear.parametros[9])) as Record<string, unknown>;
 
@@ -385,7 +388,7 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
   igual("creación: el precio sale del catálogo (11000), no del navegador", (payloadEnviado.Detalles as Array<Record<string, unknown>>)[0].dPUniProSer, 11000);
 
   const antes = llamadasCrear.length;
-  const rechaza = async (db: never, c: Record<string, unknown> = cuerpo()) => { try { await crearFacturaElectronica(db, EMPRESA, USUARIO, leerCuerpoFactura(c) as never); return "sin error"; } catch (e) { return e instanceof ErrorValidacionFiscal ? `${e.estado}:fiscal` : e instanceof ErrorFacturacion ? `${e.estado}:${e.message.slice(0, 40)}` : "otro"; } };
+  const rechaza = async (db: never, c: Record<string, unknown> = cuerpo()) => { try { await crearFacturaElectronica(db, EMPRESA, USUARIO, cuerpoValido(c)); return "sin error"; } catch (e) { return e instanceof ErrorValidacionFiscal ? `${e.estado}:fiscal` : e instanceof ErrorFacturacion ? `${e.estado}:${e.message.slice(0, 40)}` : "otro"; } };
 
   igual("creación: cliente inexistente 404; producto inexistente/no facturable 422; sin precio en PYG 422; producto sin IVA 422 (con lista de motivos)", [
     (await rechaza(dbCrear({ cliente: null }))).slice(0, 3),
@@ -395,8 +398,20 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
   ], ["404", "422", "422", "422:fiscal"]);
   cierto("creación: ninguna validación fallida llega a fe_documento_crear_fe (no se consume número)", llamadasCrear.slice(antes).every((l) => !/fe_documento_crear_fe/.test(l.sql)));
   igual("creación: cliente con datos fiscales pendientes (aptitud SIFEN) se rechaza con el detalle", await rechaza(dbCrear({ cliente: { ...filaCliente, dv: "9" } })), "422:fiscal");
-  igual("creación: la carrera de la misma clave (23505) se resuelve releyendo el documento ya creado", (await crearFacturaElectronica(dbCrear({ conflicto: true }), EMPRESA, USUARIO, leerCuerpoFactura(cuerpo()) as never)).reutilizado, true);
+  igual("creación: la carrera de la misma clave (23505) se resuelve releyendo el documento ya creado", (await crearFacturaElectronica(dbCrear({ conflicto: true }), EMPRESA, USUARIO, cuerpoValido(cuerpo()))).reutilizado, true);
   igual("creación: forma de pago fuera de catálogo", await rechaza(dbCrear(), cuerpo({ pagos: [{ tipo: 77 }] })), "422:La forma de pago no es válida.");
+
+  // PRE-VM-R02-A: casos NEGATIVOS del vendedor (se conservan explícitos ahora que los fixtures traen un vendedor válido). Vendedor ausente o con id inválido: rechazo de forma
+  // antes de tocar la base. Inexistente, sin el perfil Vendedor (la consulta no lo devuelve), inactivo o de otra empresa: 422. Sin NEX-074: 422. Ninguno reserva número.
+  igual("vendedor: sin vendedorId, con un id que no es UUID o con otro tipo, el cuerpo se rechaza en leerCuerpoFactura («Seleccione el vendedor.»)", [leerCuerpoFactura({ ...cuerpo(), vendedorId: undefined }), leerCuerpoFactura({ ...cuerpo(), vendedorId: "no-es-uuid" }), leerCuerpoFactura({ ...cuerpo(), vendedorId: 7 })], ["Seleccione el vendedor.", "Seleccione el vendedor.", "Seleccione el vendedor."]);
+  const antesVendedor = llamadasCrear.length;
+
+  igual("vendedor: inexistente / sin perfil Vendedor / inactivo (la consulta de vendedores activos no lo devuelve) o de OTRA empresa → 422; sin NEX-074 → 422", [
+    await rechaza(dbCrear({ contrato: { vendedores: {} } })),
+    await rechaza(dbCrear({ contrato: { vendedores: { [VENDEDOR_SIM]: { nombre: "Ana", apellido: "Vendedora", empresaId: "33333333-3333-4333-8333-333333333333" } } } })),
+    await rechaza(dbCrear({ contrato: { nex074: false } })),
+  ], ["422:El vendedor elegido no existe en la empr", "422:El vendedor elegido no existe en la empr", "422:Elegir el vendedor de la factura requier"]);
+  cierto("vendedor: ningún rechazo del vendedor llega a fe_documento_crear_fe (no se consume número)", llamadasCrear.slice(antesVendedor).every((l) => !/fe_documento_crear_fe/.test(l.sql)));
 
   // ── NEX-048 y superficie de la emisión
   const m48 = leer("documentacao/banco/nexit/v1/migraciones/NEX-048-facturacion-emision-fe.sql");
@@ -497,20 +512,22 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
   // ── Previa («Grabar»): sin escrituras ni numeración
   const consultasPrevia: string[] = [];
   const dbPrevia = dbCrear();
-  const espia = { async query(sql: string, parametros: unknown[] = []) { consultasPrevia.push(sql); return (dbPrevia as unknown as { query: (s: string, p?: unknown[]) => Promise<unknown> }).query(sql, parametros); } } as never;
-  const previa = await prepararFactura(espia, EMPRESA, USUARIO, leerCuerpoFactura(cuerpo()) as never);
+  // PRE-VM-R02-A: las lecturas de catálogo del contrato (to_regprocedure de NEX-074/076) no son llamadas a funciones de escritura; la capa las responde antes del espía.
+  const espia = conContratoFE({ async query(sql: string, parametros: unknown[] = []) { consultasPrevia.push(sql); return (dbPrevia as unknown as { query: (s: string, p?: unknown[]) => Promise<unknown> }).query(sql, parametros); } } as never);
+  const previa = await prepararFactura(espia, EMPRESA, USUARIO, cuerpoValido(cuerpo()));
 
   igual("previa: calcula y valida en el servidor sin tocar funciones de escritura ni reservar número", [consultasPrevia.some((q) => /fe_documento_crear_fe|fe_documento_iniciar_envio|fe_documento_registrar|INSERT|UPDATE/i.test(q)), previa.resumen.numero, previa.resumen.punto, previa.resumen.establecimiento], [false, "Se asigna al enviar la factura", "002", "001"]);
   igual("previa: el resumen trae empresa, sucursal, cliente, líneas con precio/IVA/total y totales calculados por el servidor", [previa.resumen.empresa, previa.resumen.cliente.razonSocial, previa.resumen.lineas[0], previa.resumen.totales.total, previa.resumen.totales.iva10, previa.resumen.formaPago], ["EMPRESA SINTETICA", "EMPRESA SINTETICA SA", { codigo: "P-1", descripcion: "Producto de prueba", unidad: "", cantidad: "1", precio: "11000", precioLista: "11000", precioModificado: false, afectacion: 1, tasa: 10, proporcion: null, total: 11000, totalTexto: "11000" }, 11000, 1000, "Efectivo"]);
   igual("previa: el JSON a enviar coincide con lo mostrado (mismo total e IVA)", [(previa.payload as unknown as { Subtotales: Array<Record<string, unknown>> }).Subtotales[0].dTotGralOpe, (previa.payload as unknown as { Subtotales: Array<Record<string, unknown>> }).Subtotales[0].dTotIVA], [previa.resumen.totales.total, previa.resumen.totales.iva10]);
-  igual("previa: el punto de expedición ajeno/inactivo o la sucursal fuera de alcance se rechaza", await (async () => { try { await prepararFactura(dbCrear({ sinPunto: true }), EMPRESA, USUARIO, leerCuerpoFactura(cuerpo()) as never); return "sin error"; } catch (e) { return e instanceof ErrorFacturacion ? e.estado : -1; } })(), 422);
+  igual("previa: el punto de expedición ajeno/inactivo o la sucursal fuera de alcance se rechaza", await (async () => { try { await prepararFactura(dbCrear({ sinPunto: true }), EMPRESA, USUARIO, cuerpoValido(cuerpo())); return "sin error"; } catch (e) { return e instanceof ErrorFacturacion ? e.estado : -1; } })(), 422);
 
   // ── Emisión completa: preflight → crear → iniciar → transmitir → registrar
   type SqlEnvio = { sql: string; parametros: unknown[] };
   const mkDb = (o: { cfg?: boolean; inicio?: string; crearError?: string; reutilizado?: boolean; iniciarDetalle?: string } = {}) => {
     const llamadas: SqlEnvio[] = [];
     const base = dbCrear() as unknown as { query: (s: string, p?: unknown[]) => Promise<{ rows: unknown[] }> };
-    const db = {
+    // PRE-VM-R02-A: la capa de contrato va POR FUERA: el to_regprocedure de NEX-074 no se confunde con el de NEX-080 ni con la función de emisión del registro `orden`.
+    const db = conContratoFE({
       async query(sql: string, parametros: unknown[] = []) {
         llamadas.push({ sql, parametros });
         if (/to_regprocedure/.test(sql)) return { rows: [{ disponible: true }] };
@@ -526,11 +543,11 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
 
         return base.query(sql, parametros);
       },
-    } as never;
+    } as never);
 
     return { db, llamadas };
   };
-  const ejecutar = (db: never, fetchSim: FetchLike, env: Record<string, string | undefined> = ENV) => emitirFactura(db, EMPRESA, USUARIO, leerCuerpoFactura(cuerpo()) as never, { fetch: fetchSim, env });
+  const ejecutar = (db: never, fetchSim: FetchLike, env: Record<string, string | undefined> = ENV) => emitirFactura(db, EMPRESA, USUARIO, cuerpoValido(cuerpo()), { fetch: fetchSim, env });
   const orden = (l: SqlEnvio[]) => l.map((x) => (/fe_gateway_config/.test(x.sql) ? "config" : /fe_documento_crear_fe/.test(x.sql) ? "crear" : /fe_documento_iniciar_envio/.test(x.sql) ? "iniciar" : /fe_documento_registrar_envio/.test(x.sql) ? "registrar" : "otro")).filter((x) => x !== "otro");
 
   limpiarCacheTokens();
@@ -791,28 +808,28 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
 
   consultasUx.length = 0;
 
-  const sinPermiso = await estadoError(prepararFactura(dbConPermiso(false), EMPRESA, USUARIO, leerCuerpoFactura(cuerpoPrecio("9000")) as never));
+  const sinPermiso = await estadoError(prepararFactura(dbConPermiso(false), EMPRESA, USUARIO, cuerpoValido(cuerpoPrecio("9000"))));
 
   igual("precio: un precio distinto del de lista SIN permiso FACTURACION_ELECTRONICA.PRECIO se rechaza (403) y se consulta el permiso en el servidor", [sinPermiso, consultasUx.some((q) => /usuario_tiene_permiso/.test(q))], [403, true]);
 
-  const conPermiso = await prepararFactura(dbConPermiso(true), EMPRESA, USUARIO, leerCuerpoFactura(cuerpoPrecio("9000", "2")) as never);
+  const conPermiso = await prepararFactura(dbConPermiso(true), EMPRESA, USUARIO, cuerpoValido(cuerpoPrecio("9000", "2")));
 
   igual("precio: con permiso, el precio propuesto reemplaza al de lista (IVA incluido, sin sumar IVA otra vez), el servidor recalcula y marca la línea modificada", [conPermiso.resumen.lineas[0].precio, conPermiso.resumen.lineas[0].precioLista, conPermiso.resumen.lineas[0].precioModificado, conPermiso.resumen.totales.total, conPermiso.resumen.totales.iva10, conPermiso.resumen.totales.gravado10], ["9000", "11000", true, 18000, 1636.36363636, 18000]);
 
   consultasUx.length = 0;
 
-  const igualLista = await prepararFactura(dbConPermiso(false), EMPRESA, USUARIO, leerCuerpoFactura(cuerpoPrecio("11000")) as never);
+  const igualLista = await prepararFactura(dbConPermiso(false), EMPRESA, USUARIO, cuerpoValido(cuerpoPrecio("11000")));
 
   igual("precio: un precio igual al de lista no requiere permiso ni se marca como modificado", [igualLista.resumen.lineas[0].precioModificado, consultasUx.some((q) => /usuario_tiene_permiso/.test(q))], [false, false]);
   igual("precio: forma inválida (negativo, texto, más de 4 decimales) se rechaza al leer el cuerpo; cero se rechaza en el servidor (422) aun con permiso", [
     typeof leerCuerpoFactura(cuerpoPrecio("-5")), typeof leerCuerpoFactura(cuerpoPrecio("abc")), typeof leerCuerpoFactura(cuerpoPrecio("1.23456")), typeof leerCuerpoFactura(cuerpoPrecio("1500.5")),
-    await estadoError(prepararFactura(dbConPermiso(true), EMPRESA, USUARIO, leerCuerpoFactura(cuerpoPrecio("0")) as never)),
+    await estadoError(prepararFactura(dbConPermiso(true), EMPRESA, USUARIO, cuerpoValido(cuerpoPrecio("0")))),
   ], ["string", "string", "string", "object", 422]);
   igual("precio: sin la migración (la consulta del permiso falla) se factura solo a precio de lista", await permisoPrecio({ async query() { throw new Error("la función no existe"); } } as never, EMPRESA, USUARIO), false);
   igual("cantidad (E01): la unidad SIFEN «Unidad» (77) YA admite fracciones, igual que otra unidad (hasta 4 decimales; ninguna da 422)", [
-    await estadoError(prepararFactura(dbConPermiso(false), EMPRESA, USUARIO, leerCuerpoFactura(cuerpoPrecio(undefined, "1.5")) as never)),
-    await estadoError(prepararFactura(dbConPermiso(false), EMPRESA, USUARIO, leerCuerpoFactura(cuerpoPrecio(undefined, "2.0")) as never)),
-    await estadoError(prepararFactura(dbConPermiso(false, [{ ...filaProducto, unidadSifen: 86 }]), EMPRESA, USUARIO, leerCuerpoFactura(cuerpoPrecio(undefined, "1.5")) as never)),
+    await estadoError(prepararFactura(dbConPermiso(false), EMPRESA, USUARIO, cuerpoValido(cuerpoPrecio(undefined, "1.5")))),
+    await estadoError(prepararFactura(dbConPermiso(false), EMPRESA, USUARIO, cuerpoValido(cuerpoPrecio(undefined, "2.0")))),
+    await estadoError(prepararFactura(dbConPermiso(false, [{ ...filaProducto, unidadSifen: 86 }]), EMPRESA, USUARIO, cuerpoValido(cuerpoPrecio(undefined, "1.5")))),
   ], [0, 0, 0]);
 
   // Selectores: lista paginada inmediata (sin texto), filtro opcional y paginación en el servidor
@@ -874,7 +891,7 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
   const prodUnidad = (extra: Record<string, unknown>) => [{ ...filaProducto, ...extra }];
   const falla = async (productos: Array<Record<string, unknown>>) => {
     try {
-      await prepararFactura(dbCrear({ productos }), EMPRESA, USUARIO, leerCuerpoFactura(cuerpo()) as never);
+      await prepararFactura(dbCrear({ productos }), EMPRESA, USUARIO, cuerpoValido(cuerpo()));
 
       return [0, ""] as const;
     } catch (e) {
@@ -897,7 +914,7 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
 
   llamadasCrear.length = 0;
 
-  const emVend = await estadoError(crearFacturaElectronica(dbCrear({ productos: [] }), EMPRESA, USUARIO, leerCuerpoFactura(cuerpo()) as never));
+  const emVend = await estadoError(crearFacturaElectronica(dbCrear({ productos: [] }), EMPRESA, USUARIO, cuerpoValido(cuerpo())));
 
   igual("A15: crearFacturaElectronica con producto no vendible falla antes de fe_documento_crear_fe (idempotencia y numeración intactas)", [emVend, llamadasCrear.some((l) => /fe_documento_crear_fe/.test(l.sql))], [422, false]);
   cierto("selector de la factura: marca «unidad SIFEN no vigente» y bloquea Añadir", /unidad SIFEN no vigente/.test(leer("lib/facturacion/ajuste-item.ts")) && /unidadVigente\?: boolean \| null/.test(formulario) && /decidirProducto/.test(formulario));

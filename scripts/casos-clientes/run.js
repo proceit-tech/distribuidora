@@ -27,6 +27,8 @@ function listar(base, dir, sufijo) {
   return res.sort();
 }
 
+// PRE-VM-R02-A: módulos de APOYO de los casos (bases simuladas comunes, sin funciones verificar*). Se cargan una vez y cuentan en el inventario sin exigir suites.
+const APOYO = new Set(["lib/facturacion/contrato-fe-simulado.casos"]);
 const modulosCargados = new Map(); // "lib/x/y.casos" -> { exportadas: string[], invocadas: Map<string, number> }
 const erroresInventario = [];
 
@@ -36,7 +38,8 @@ function cargarCasos(r) {
   if (modulosCargados.has(clave)) erroresInventario.push(`módulo cargado dos veces (duplicado accidental): ${clave}`);
   const m = require(path.join(salida, r));
   const exportadas = Object.keys(m).filter((k) => /^verificar/.test(k) && typeof m[k] === "function");
-  if (exportadas.length === 0) erroresInventario.push(`el módulo ${clave} no exporta ninguna función verificar*`);
+  if (exportadas.length === 0 && !APOYO.has(clave)) erroresInventario.push(`el módulo ${clave} no exporta ninguna función verificar*`);
+  if (exportadas.length > 0 && APOYO.has(clave)) erroresInventario.push(`el módulo de apoyo ${clave} no debe exportar funciones verificar*`);
   const registro = { exportadas, invocadas: new Map() };
   modulosCargados.set(clave, registro);
   return new Proxy(m, {
@@ -157,6 +160,11 @@ function cargarCasos(r) {
   const p330 = cargar("lib/facturacion/stock-preventivo.casos.js");
   const p338 = cargar("lib/facturacion/consulta-automatica-fe.casos.js");
   const p337 = cargar("lib/reportes/ventas-layout.casos.js");
+  // PRE-VM-R02-A: capa común de contrato de las bases simuladas de FE (apoyo, sin suites propias).
+  cargar("lib/facturacion/contrato-fe-simulado.casos.js");
+  // PRE-VM-R02-A: aislamiento entre suites. La caché de tokens del gateway es estado GLOBAL del módulo; una suite que aborta (o falla) antes de su limpieza final ya no
+  // contamina a las siguientes: se vacía antes de cada suite, ocurra lo que ocurra en la anterior.
+  const { limpiarCacheTokens } = require(path.join(salida, "lib/facturacion/gateway.js"));
   const suites = [
     ["teléfono y día de cobro", async () => tel.verificarCasosTelefonoYCobro(), () => tel.CASOS_TELEFONO.length + 11 + 6 + 2],
     ["catálogo mundial", async () => tel.verificarCatalogoMundial(), null],
@@ -263,6 +271,7 @@ function cargarCasos(r) {
   for (const [nombre, ejecutar, cuenta] of suites) {
     const antes = contador.n;
     let fallos;
+    try { limpiarCacheTokens(); } catch (e) { erroresInventario.push("no se pudo aislar la caché de tokens antes de la suite: " + nombre); }
     try { fallos = await ejecutar(); } catch (e) { fallos = ["EXCEPCIÓN: " + (e && e.stack || e)]; }
     if (!Array.isArray(fallos)) fallos = [`RESULTADO INVÁLIDO: la suite devolvió ${typeof fallos} en lugar de una lista de fallos`];
     let n;

@@ -129,7 +129,7 @@ export async function verificarCasosDocumentosPro195R01(): Promise<string[]> {
     ["Cancelado (estado fiscal informado por la API)", "Inutilizado (estado fiscal informado por la API)", null, "Sin información de eventos", true]);
   cierto("R01-06b el control de eventos está DESHABILITADO (disponible=false) y su clic no hace nada; no hay rutas de cancelación/inutilización ni stock en la pantalla",
     /<AccionIcono clase=\{estilos\.accionEventos\} glifo=\{ACCION\.eventos\} etiqueta=\{`Eventos de \$\{doc\}`\} disponible=\{false\} motivo=\{eventos\.operacion\} alActivar=\{\(\) => undefined\}/.test(fila) &&
-    !/\/api\/[^`"]*(cancel|inutiliz|evento)/i.test(pagina) && !/stock|inventario/i.test(tabla.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "").replace(/MOTIVO_EVENTOS_NO_DISPONIBLES =[\s\S]*?;/, "")));
+    !/\/api\/[^`"]*(cancel|inutiliz|evento)/i.test(pagina) && !/stock|inventario/i.test(tabla.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "").replace(/MOTIVO_EVENTOS_NO_DISPONIBLES =\s*"[^"]*";/, "") /* PRE-VM-R02-A: se quita el literal COMPLETO (el texto contiene «;» y menciona el stock); el resto del código sigue sin stock */));
   cierto("R01-06c el motivo dice la verdad: sin API ni contrato del proveedor, sin simular eventos ni tocar stock; Inutilización no exige factura (no se pide un documento ficticio)",
     /sin API ni contrato comprobado del proveedor/.test(MOTIVO_EVENTOS_NO_DISPONIBLES) && /No se simula ningún evento ni se modifica el stock/.test(MOTIVO_EVENTOS_NO_DISPONIBLES) && !/factura/i.test(MOTIVO_EVENTOS_NO_DISPONIBLES));
 

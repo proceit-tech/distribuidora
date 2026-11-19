@@ -210,6 +210,9 @@ export async function verificarCasosConfiguracionGateway(): Promise<string[]> {
   cierto("la página está protegida en el servidor (guardPage CONFIGURAR) y el menú «Facturación electrónica» exige ese permiso y apunta a la ruta real", /guardPage\("FACTURACION_ELECTRONICA", "CONFIGURAR"\)/.test(layout) && /label: "Facturación electrónica",\s+href: "\/configuracion\/facturacion-electronica",\s+icon: "settings",\s+permission: "FACTURACION_ELECTRONICA\.CONFIGURAR"/.test(menu) && /"\/configuracion\/facturacion-electronica",/.test(menu));
 
   // ── 3. Probar conexión (éxito / errores simulados, sin fuga) ────────────────────────────────────────
+  // PRE-VM-R02-A: la caché de tokens es global del módulo; la sección 3 comprueba que la prueba no deja token en caché (tamanoCacheTokens() === 0), así que parte de una caché VACÍA aunque una sección
+  // anterior (o una aserción fallida) haya dejado una entrada. No relaja la comprobación: solo aísla su punto de partida.
+  limpiarCacheTokens();
   const g = gatewayFalso();
   const ok = await probarConexion(b.db, EMP_A, ADM_A, { baseUrl: null, apiUsuario: null, password: null }, { fetch: g.f });
   cierto("probar con las credenciales GUARDADAS: autenticación correcta, solo POST /api/login con el usuario y clave guardados, y se registra el resultado visible", ok.estado === "OK" && ok.credenciales === "GUARDADAS" && g.pedidos.length === 1 && g.pedidos[0].url === `${URL_GATEWAY_PRUEBA}/api/login` && g.pedidos[0].cuerpo.ruc === SECRETOS.ruc && b.cfg.get(EMP_A)?.pruebaEstado === "OK");

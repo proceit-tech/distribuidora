@@ -52,6 +52,8 @@ export async function verificarCasosDocumentosUxR01(): Promise<string[]> {
   const tramo = (desde: string, hasta: string) => pagina.slice(pagina.indexOf(desde), pagina.indexOf(hasta, pagina.indexOf(desde) + desde.length));
   // PRO-195-UX-R01: la fila suma la clase de selección; el tramo de la fila llega hasta el detalle.
   const fila = tramo("<tr className={clases(ui.row, CLASE_FILA_TIPO[d.tipo], marcado && estilos.filaMarcada)} data-tipo={d.tipo}>", "{det ? (\n                      <tr");
+  // PRE-VM-R02-A: desde PRO-195-UX-R01 las acciones se calculan (accionesFila) ANTES del <tr> y la fila las pinta; se verifica el cálculo en la página y su uso en la fila.
+  const accionesEnFila = /acciones\.filter\(\(a\) => a\.visible\)/.test(fila);
   const detalle = tramo("PRIMERA CAPA", "</Fragment>");
   const primera = detalle.slice(0, detalle.indexOf("SEGUNDA CAPA"));
   const segunda = detalle.slice(detalle.indexOf("SEGUNDA CAPA"));
@@ -130,10 +132,10 @@ export async function verificarCasosDocumentosUxR01(): Promise<string[]> {
   // ══ 7. Iconos para consultar, KuDE, copiar y expandir ═══════════════════════════════════════════════════════════════════════════════════
   // PRO-195-UX-R01 (punto 3): consultar y KuDE son acciones de la FILA (iconos de contorno con su color); XML y correo, deshabilitados con motivo.
   cierto("UXR01-23 (actualizado PRO-195) consultar = acción de icono en la FILA, SOLO con permiso EDITAR (accionesFila), con nombre accesible, deshabilitada con motivo si no está disponible y girando mientras consulta",
-    /accionesFila\(kudeDisponible\(d\), \{ editar \}, habilitada, motivoEspera\)/.test(fila) && /glifo=\{ACCION\.consultar\}/.test(fila) && /ocupado=\{accion === "consulta"\}/.test(fila) && /onClick=\{\(\) => void reconsultar\(d\)\}|alActivar=\{\(\) => void reconsultar\(d\)\}/.test(fila) &&
+    /const acciones = accionesFila\(kudeDisponible\(d\), \{ editar \}, habilitada, motivoEspera\)/.test(pagina) && accionesEnFila && /glifo=\{ACCION\.consultar\}/.test(fila) && /ocupado=\{accion === "consulta"\}/.test(fila) && /onClick=\{\(\) => void reconsultar\(d\)\}|alActivar=\{\(\) => void reconsultar\(d\)\}/.test(fila) &&
     /aria-disabled=\{!disponible\}/.test(pagina) && /if \(disponible\) alActivar\(\);/.test(pagina) && /ocupado && estilos\.girando/.test(pagina) && /prefers-reduced-motion: reduce/.test(cssLimpio) && !/ACCION\.consultar/.test(detalle));
   cierto("UXR01-24 (actualizado PRO-195) KuDE = icono de la fila (kudeDisponible, nombre accesible por tipo y número), sin duplicado en el detalle",
-    /accionesFila\(kudeDisponible\(d\)/.test(fila) && /glifo=\{ACCION\.kude\}/.test(fila) && (pagina.match(/abrirKude\(d\)/g) ?? []).length === 1 && !/abrirKude/.test(detalle));
+    /const acciones = accionesFila\(kudeDisponible\(d\)/.test(pagina) && accionesEnFila && /glifo=\{ACCION\.kude\}/.test(fila) && (pagina.match(/abrirKude\(d\)/g) ?? []).length === 1 && !/abrirKude/.test(detalle));
   cierto("UXR01-25 copiar = icono con aria-label «Copiar número de lote»/«Copiar CDC», copia exacta (writeText(valor)) y feedback por icono ✓ + aviso aria-live; sin botón «Copiar» de texto",
     /aria-label="Copiar número de lote"/.test(primera) && /aria-label="Copiar CDC"/.test(primera) && /ACCION\.copiado : ACCION\.copiar/.test(primera) && /await navigator\.clipboard\.writeText\(valor\);/.test(pagina) && !/>Copiar<|>Copiado</.test(primera) && /aria-live="polite"/.test(primera));
   cierto("UXR01-26 (actualizado PRO-195) expandir = icono chevron (abrir/cerrar) en la fila con aria-expanded y en el control del historial técnico",
@@ -221,7 +223,7 @@ export async function verificarCasosDocumentosUxR01(): Promise<string[]> {
     ["setBusqueda(e.target.value)", "setBusquedaAplicada(busqueda.trim()), 300", "TIPOS_DOCUMENTO.map", "datos?.sucursales", "ESTADOS_SIFEN.map", "<CampoFecha valor={desde}", "<CampoFecha valor={hasta}", "onClick={limpiar}", "INDICADORES.map", "setPagina(paginaMostrada + 1)", "setPagina(paginaMostrada - 1)"].every((t) => pagina.includes(t)) &&
     ["numero", "fecha", "cliente", "total", "estado"].every((c) => pagina.includes(`campo="${c}" orden={orden} onOrden={cambiarOrden}`)));
   cierto("UXR01-51 (actualizado PRO-195) permisos sin cambios: consultar solo con EDITAR (acción de la fila); enviar/reenviar/corregir NCE solo con CREAR; las rutas llamadas son exactamente las mismas (sin rutas nuevas)",
-    /accionesFila\(kudeDisponible\(d\), \{ editar \}/.test(fila) && /crear && \(d\.estadoLocal === "PENDIENTE_ENVIO" \|\| \(d\.estadoLocal === "ERROR_ENVIO" && d\.envioErrorTipo !== "RECHAZO"\)\)/.test(primera) && /crear && d\.tipo !== "NCE" && d\.estadoLocal === "ERROR_ENVIO" && d\.envioErrorTipo === "RECHAZO"/.test(primera) && /crear && d\.tipo === "NCE" && d\.corregible/.test(primera) &&
+    /const acciones = accionesFila\(kudeDisponible\(d\), \{ editar \}/.test(pagina) && accionesEnFila && /crear && \(d\.estadoLocal === "PENDIENTE_ENVIO" \|\| \(d\.estadoLocal === "ERROR_ENVIO" && d\.envioErrorTipo !== "RECHAZO"\)\)/.test(primera) && /crear && d\.tipo !== "NCE" && d\.estadoLocal === "ERROR_ENVIO" && d\.envioErrorTipo === "RECHAZO"/.test(primera) && /crear && d\.tipo === "NCE" && d\.corregible/.test(primera) &&
     igualRutas(pagina));
   cierto("UXR01-52 acciones y lecturas preservadas: enviar, reenviar con confirmación, corregir NCE, consulta manual, KuDE, JSON de solicitud/respuesta, intentos anteriores, refresco automático y relectura tras acciones",
     ["enviarAlGateway(d)", "enviarAlGateway(d, true)", "Corregir y emitir nueva", "reconsultar(d)", "abrirKude(d)", "verSolicitud(d, sol)", "verRespuesta(d, i)", "cargarAnteriores(d)", "cerrarJson(d)", "iniciarRefresco({", "<KudeModal controlador={visor} />"].every((t) => pagina.includes(t)));

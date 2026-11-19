@@ -132,7 +132,28 @@ psql -X -q -d postgres -c "CREATE DATABASE ${DB}_prod" >/dev/null 2>&1
 ( export PGDATABASE="${DB}_prod"; "$AQUI/scripts/aplicar-migraciones.sh" >/dev/null 2>&1 && psql -X -q -v ON_ERROR_STOP=1 -f "$AQUI/seeds/S-001-catalogos-globales.sql" >/dev/null 2>&1 )
 # La simulación de producción es una instalación LIMPIA: se retiran las dos empresas sintéticas que solo existen para que NEX-019 pueda ejecutarse (sin datos asociados).
 paso "V0 simulación de producción sin residuos del bootstrap sintético"
-psql -X -q -v ON_ERROR_STOP=1 -d "${DB}_prod" -c "DELETE FROM empresas WHERE codigo IN ('80003314','5469464') AND razon_social LIKE 'Empresa legada sintetica%'" >"$LOG/V0" 2>&1
+# PRE-VM-R02-A (C-04): las empresas sintéticas reciben los perfiles estándar (perfiles + perfil_permiso), y el DELETE directo de empresas fallaba por esas FK. Se retiran en UNA transacción (-1) y en orden
+# perfil_permiso → perfiles → empresas, con el MISMO filtro de código y razón social, solo si no tienen usuarios, y solo en la base descartable de esta corrida (guardas en el shell y dentro de la transacción).
+if [[ "$DB" == nexit_test_* && "${DB}_prod" != "nexit" ]]; then
+psql -X -q -1 -v ON_ERROR_STOP=1 -v base="${DB}_prod" -d "${DB}_prod" >"$LOG/V0" 2>&1 <<'SQL'
+SELECT current_database() = :'base' AND current_database() ~ '^nexit_test_[0-9]+_prod$' AS es_descartable \gset
+\if :es_descartable
+\else
+  \echo 'V0 ABORTADO: la base no es la copia descartable de esta corrida'
+  SELECT 1/0;
+\endif
+CREATE TEMP TABLE v0_sinteticas ON COMMIT DROP AS
+  SELECT id FROM empresas WHERE codigo IN ('80003314','5469464') AND razon_social LIKE 'Empresa legada sintetica%';
+DO $v0$ BEGIN
+  IF EXISTS (SELECT 1 FROM usuarios u WHERE u.empresa_id IN (SELECT id FROM v0_sinteticas)) THEN
+    RAISE EXCEPTION 'V0: las empresas sintéticas tienen usuarios; no se retiran';
+  END IF;
+END $v0$;
+DELETE FROM perfil_permiso WHERE empresa_id IN (SELECT id FROM v0_sinteticas);
+DELETE FROM perfiles WHERE empresa_id IN (SELECT id FROM v0_sinteticas);
+DELETE FROM empresas WHERE id IN (SELECT id FROM v0_sinteticas);
+SQL
+else echo "V0 ABORTADO: base no descartable (${DB}_prod)" >"$LOG/V0"; fi
 [[ "$(psql -X -Atc "select count(*) from empresas" -d "${DB}_prod")" == 0 ]] && echo "OK   (0 empresas antes de inicializar la empresa real)" || { echo "FALLA"; tail -3 "$LOG/V0"; FALLAS=$((FALLAS+1)); }
 paso "I1 inicializar-empresa.sh / restablecer-clave.sh (generador: ${GENERADOR%% *})"
 ( export PGDATABASE="${DB}_prod"

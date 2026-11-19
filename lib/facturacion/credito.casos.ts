@@ -10,6 +10,7 @@ import { contador } from "@/lib/clientes/contador-casos";
 import { creditoParaEnvio, CREDITO_UI_VACIO, erroresCredito, fechaValida, hoyParaguay, leerCredito, pendientesCredito, plazoTexto, repartirCuotas, sumarDias } from "@/lib/facturacion/credito";
 import { B, parseDec, S } from "@/lib/facturacion/calculo";
 import { crearFacturaElectronica, leerCuerpoFactura, prepararFactura } from "@/lib/facturacion/emision";
+import { conContratoFE, cuerpoValido, VENDEDOR_SIM } from "@/lib/facturacion/contrato-fe-simulado.casos";
 import { construirPayloadFE, validarEntradaFE, type EntradaFE, type ReceptorFE } from "@/lib/facturacion/payload-fe";
 import { ErrorFacturacion, ErrorValidacionFiscal } from "@/lib/facturacion/shared";
 
@@ -35,7 +36,8 @@ let permisosActuales: string[] = [];
 
 function baseSimulada() {
   const llamadas: Llamada[] = [];
-  const db = {
+  // PRE-VM-R02-A: capa de contrato (vendedor, NEX-074, máximo de líneas, geografía) por FUERA del registro de llamadas.
+  const db = conContratoFE({
     async query(sql: string, parametros: unknown[] = []) {
       llamadas.push({ sql, parametros });
       if (/usuario_tiene_permiso/.test(sql)) {
@@ -55,12 +57,12 @@ function baseSimulada() {
 
       return { rows: [], rowCount: 0 };
     },
-  };
+  });
 
   return { db: db as never, llamadas, creaciones: () => llamadas.filter((l) => /fe_documento_crear_fe/.test(l.sql)), escrituras: () => llamadas.filter((l) => /INSERT INTO|UPDATE |DELETE FROM|fe_documento_crear_fe/.test(l.sql)) };
 }
 
-const cuerpo = (extra: Record<string, unknown> = {}, cantidad = "3") => ({ claveIdempotencia: "clave-de-prueba-0001", sucursalId: SUC, puntoId: PUNTO, clienteId: CLIENTE, tipoTransaccion: 1, presencia: 1, pagos: [{ tipo: 1 }], infoAdicional: "", lineas: [{ productoId: PRODUCTO, cantidad }], ...extra });
+const cuerpo = (extra: Record<string, unknown> = {}, cantidad = "3") => ({ claveIdempotencia: "clave-de-prueba-0001", sucursalId: SUC, puntoId: PUNTO, clienteId: CLIENTE, vendedorId: VENDEDOR_SIM, tipoTransaccion: 1, presencia: 1, pagos: [{ tipo: 1 }], infoAdicional: "", lineas: [{ productoId: PRODUCTO, cantidad }], ...extra });
 
 const leerCreditoTodo = (c: number, x: unknown) => leerCredito(c, x, true);
 
@@ -170,7 +172,7 @@ export async function verificarCasosCredito(): Promise<string[]> {
 
   // CA-05: errores no reservan número (no llega a fe_documento_crear_fe) y devuelven 422 con el motivo exacto
   const bloqueo = baseSimulada();
-  const cuerpoCuotas = { ...(leerCuerpoFactura(cuerpo()) as object), condicion: 2, credito: { tipo: 2, plazoDias: null, cuotas: cuotas3, entrega: null } } as never;
+  const cuerpoCuotas = { ...cuerpoValido(cuerpo()), condicion: 2, credito: { tipo: 2, plazoDias: null, cuotas: cuotas3, entrega: null } } as never;
   const malSuma = { e: await resultado(prepararFactura(bloqueo.db, EMPRESA, USUARIO, cuerpoCuotas)), b: bloqueo };
   const creadoCuotas = baseSimulada();
   const malFecha = { e: await resultado(crearFacturaElectronica(creadoCuotas.db, EMPRESA, USUARIO, cuerpoCuotas)), b: creadoCuotas };

@@ -8,7 +8,8 @@ import { join } from "node:path";
 import { contador } from "@/lib/clientes/contador-casos";
 import { crearBuscadorRapido, elegirPorEnter, MENSAJE_ENTER } from "@/lib/facturacion/busqueda-rapida";
 import { soloDifierenCerosIniciales } from "@/lib/facturacion/codigo-producto";
-import { buscarProductosFactura, leerCuerpoFactura, prepararFactura, type CuerpoFactura } from "@/lib/facturacion/emision";
+import { buscarProductosFactura, prepararFactura } from "@/lib/facturacion/emision";
+import { conContratoFE, cuerpoValido, VENDEDOR_SIM } from "@/lib/facturacion/contrato-fe-simulado.casos";
 import { construirPayloadFE, resumenCalculo, totalFactura, type EntradaFE, type LineaFE, type ReceptorFE } from "@/lib/facturacion/payload-fe";
 import { etiquetaEstablecimiento, textoConciliacionPagos } from "@/lib/facturacion/presentacion";
 import { textoDec } from "@/lib/facturacion/calculo";
@@ -114,7 +115,8 @@ export async function verificarCasosVisualCodigosE05(): Promise<string[]> {
     // Emisión: 001234, 1234 y un código de 11 dígitos viajan como TEXTO distinto e intacto en el payload y en el resumen del servidor.
     const filaCliente = { codigo: "CLI-1", naturaleza_receptor: 1, tipo_operacion: 1, tipo_contribuyente_sifen: 2, pais_codigo: "PRY", tipo_documento_identidad_sifen: null, descripcion_documento_identidad: null, numero_documento: "80000005", dv: "6", razon_social: "CLIENTE", nombre_fantasia: null, email: null, email_copia: null, email_facturacion: null, telefono: null, celular: null, telefono_ddi: null, celular_ddi: null, activo: true, bloqueado_ventas: false, direccion: "Calle 1", numero_casa: "123", departamento_codigo: "1", distrito_codigo: "1", ciudad_codigo: "1" };
     const catalogo = [prod(P_CERO, "001234"), prod(P_SIN, "1234"), prod(P_11, "00123456789")];
-    const db = {
+    // PRE-VM-R02-A: capa de contrato (vendedor, NEX-074, máximo de líneas, geografía) delante de la base del caso.
+    const db = conContratoFE({
       async query(sql: string, p: unknown[] = []) {
         if (/usuario_tiene_permiso/.test(sql)) return { rows: [{ ok: false }], rowCount: 1 };
         if (/FROM clientes c\s+LEFT JOIN LATERAL/.test(sql)) return { rows: [filaCliente], rowCount: 1 };
@@ -126,8 +128,8 @@ export async function verificarCasosVisualCodigosE05(): Promise<string[]> {
 
         return { rows: [], rowCount: 0 };
       },
-    } as never;
-    const cuerpo = leerCuerpoFactura({ claveIdempotencia: "clave-codigos-0001", sucursalId: SUC, puntoId: PUNTO, clienteId: CLIENTE, tipoTransaccion: 1, presencia: 1, pagos: [{ tipo: 1 }], infoAdicional: "", lineas: [{ productoId: P_CERO, cantidad: "1", precio: null }, { productoId: P_SIN, cantidad: "1", precio: null }, { productoId: P_11, cantidad: "1", precio: null }] }) as CuerpoFactura;
+    } as never);
+    const cuerpo = cuerpoValido({ claveIdempotencia: "clave-codigos-0001", sucursalId: SUC, puntoId: PUNTO, clienteId: CLIENTE, vendedorId: VENDEDOR_SIM, tipoTransaccion: 1, presencia: 1, pagos: [{ tipo: 1 }], infoAdicional: "", lineas: [{ productoId: P_CERO, cantidad: "1", precio: null }, { productoId: P_SIN, cantidad: "1", precio: null }, { productoId: P_11, cantidad: "1", precio: null }] });
     const prep = await prepararFactura(db, EMPRESA, USUARIO, cuerpo);
     const pay = prep.payload as unknown as Payload;
     const res = prep.resumen as unknown as { establecimiento: string; lineas: Array<{ codigo: string }> };

@@ -187,7 +187,7 @@ export async function verificarCasosGatewayConfig(): Promise<string[]> {
     cierto("los secretos NO aparecen en la salida, en ningún argumento de docker (log) ni en el archivo de estado", !ap.salida.includes(RUC) && !ap.salida.includes(CLAVE) && !logC.includes(RUC) && !logC.includes(CLAVE) && !readFileSync(estadoDe(c.stack), "utf8").includes(CLAVE));
     cierto("R01-03: la base se consulta con el usuario y la base leídos del contenedor, nunca con un rol presumido", /-U usuario_real -d base_real/.test(logC) && !/nexit_app/.test(logC));
     if (process.platform !== "win32") {
-      cierto("R02-03: app.env (era 0644), su copia previa y el archivo de estado terminan con modo 600; no queda ningún temporal", modo(join(c.stack, "app.env")) === 0o600 && modo(join(c.stack, copias(c)[0])) === 0o600 && modo(estadoDe(c.stack)) === 0o600 && !readdirSync(c.stack).some((n) => /\.[A-Za-z0-9]{6}$/.test(n) && !n.includes("bak")));
+      cierto("R02-03: app.env (era 0644), su copia previa y el archivo de estado terminan con modo 600; no queda ningún temporal", modo(join(c.stack, "app.env")) === 0o600 && modo(join(c.stack, copias(c)[0])) === 0o600 && modo(estadoDe(c.stack)) === 0o600 && !readdirSync(c.stack).some((n) => /\.[A-Za-z0-9]{6}$/.test(n) && !n.includes("bak") && !/^\.provisionar-gateway-[^/]*\.estado$/.test(n) /* PRE-VM-R02-A: el archivo de estado (sufijo «.estado», también 6 caracteres) no es un temporal; su modo 600 se comprueba arriba */));
     }
 
     const c2 = c.correr(["--aplicar"], cred);

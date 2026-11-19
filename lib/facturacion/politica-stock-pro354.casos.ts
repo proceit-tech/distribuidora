@@ -339,8 +339,9 @@ export async function verificarCasosPoliticaStockPro354(): Promise<string[]> {
     const listar = tramo("CREATE FUNCTION public.fe_stock_pendientes_listar", "CREATE FUNCTION public.fe_stock_pendientes_filtros");
     const filtros = tramo("CREATE FUNCTION public.fe_stock_pendientes_filtros", "CREATE FUNCTION public.fe_stock_pendiente_confirmar");
     const confirmar = tramo("CREATE FUNCTION public.fe_stock_pendiente_confirmar", "COMMENT ON FUNCTION");
-    const pos = (t: string, s: string) => t.indexOf(s);
-    const enOrden = (t: string, ...ss: string[]) => ss.every((s) => pos(t, s) >= 0) && ss.every((s, i) => i === 0 || pos(t, ss[i - 1]) < pos(t, s));
+    // PRE-VM-R02-A: orden PROGRESIVO — cada texto se busca DESPUÉS de la aparición del anterior (antes se comparaban las PRIMERAS apariciones: un texto repetido antes, p. ej. un segundo
+    // «if (!contexto.current.vigente(ticket)) return;» o una línea previa, hacía fallar o acertar por la ocurrencia equivocada).
+    const enOrden = (t: string, ...ss: string[]) => { let desde = 0; for (const s of ss) { const i = t.indexOf(s, desde); if (i < 0) return false; desde = i + s.length; } return true; };
     const scripts = (n: string) => leer(`documentacao/banco/nexit/v1/scripts/${n}-NEX-081.sql`);
     const rev = scripts("reversion");
 
@@ -503,7 +504,9 @@ export async function verificarCasosPoliticaStockPro354(): Promise<string[]> {
     const confirmar = tramo("CREATE FUNCTION public.fe_stock_pendiente_confirmar", "COMMENT ON FUNCTION");
     const gDep = tramo("CREATE FUNCTION public.fe_stock_pendientes_deposito_guarda()", "CREATE TABLE public.fe_stock_pendientes_preparacion");
     const pos = (t: string, s: string, desde = 0) => t.indexOf(s, desde);
-    const enOrden = (t: string, ...ss: string[]) => ss.every((s) => pos(t, s) >= 0) && ss.every((s, i) => i === 0 || pos(t, ss[i - 1]) < pos(t, s));
+    // PRE-VM-R02-A: orden PROGRESIVO — cada texto se busca DESPUÉS de la aparición del anterior (antes se comparaban las PRIMERAS apariciones: un texto repetido antes, p. ej. un segundo
+    // «if (!contexto.current.vigente(ticket)) return;» o una línea previa, hacía fallar o acertar por la ocurrencia equivocada).
+    const enOrden = (t: string, ...ss: string[]) => { let desde = 0; for (const s of ss) { const i = t.indexOf(s, desde); if (i < 0) return false; desde = i + s.length; } return true; };
     const nex046 = leer("documentacao/banco/nexit/v1/migraciones/NEX-046-depositos-gestion.sql");
     const alcance = nex046.slice(nex046.indexOf("FUNCTION public.deposito_en_alcance"), nex046.indexOf("$$;", nex046.indexOf("FUNCTION public.deposito_en_alcance")));
     const emision = leer("lib/facturacion/emision.ts");
