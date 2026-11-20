@@ -1,0 +1,145 @@
+/* Complementos de «Nueva entrada»: cabecera y acciones usan las clases de Catálogos de productos y components/ui/lista-padrao (mismas convenciones que «Nuevo movimiento»). */
+.seccion {
+  grid-column: 1 / -1;
+  margin: 6px 0 -2px;
+  border-top: 1px solid #e6eef4;
+  padding-top: 10px;
+  color: #112f4a;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.info {
+  grid-column: 1 / -1;
+  border: 1px solid #cfe0ee;
+  border-radius: 9px;
+  background: #f1f7fc;
+  padding: 8px 12px;
+  color: #2c5878;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.leyenda {
+  grid-column: 1 / -1;
+  border: 1px solid #ecd9a6;
+  border-radius: 9px;
+  background: #fff9e8;
+  padding: 8px 12px;
+  color: #8a6410;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.buscador {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 6px;
+}
+
+.resultados {
+  display: grid;
+  gap: 4px;
+  max-height: 260px;
+  overflow-y: auto;
+  margin: 0;
+  border: 1px solid #e1eaf0;
+  border-radius: 9px;
+  padding: 6px;
+  list-style: none;
+  background: #fbfcfd;
+}
+
+.resultados li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 6px;
+  color: #173b59;
+  font-size: 13px;
+}
+
+.resultados li small {
+  color: #6f8498;
+}
+
+.lineas {
+  grid-column: 1 / -1;
+  overflow-x: auto;
+}
+
+.lineas input {
+  width: 100%;
+  min-width: 90px;
+  height: 34px;
+  border: 1px solid #d3dfe8;
+  border-radius: 8px;
+  padding: 0 8px;
+  color: #173b59;
+  font: inherit;
+  font-size: 13.5px;
+}
+
+.lineas input[aria-invalid="true"] {
+  border-color: #c0394d;
+}
+
+.error {
+  display: block;
+  color: #b3263b;
+  font-size: 11.5px;
+  font-weight: 500;
+}
+
+.quitar {
+  border: 0;
+  background: transparent;
+  color: #b3263b;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.totales {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+  gap: 18px;
+  color: #173b59;
+  font-size: 14px;
+}
+
+.totales strong {
+  font-size: 16px;
+}
+
+.resumen {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px 16px;
+  margin: 0;
+}
+
+.resumen dt {
+  color: #6f8498;
+  font-size: 11.5px;
+  font-weight: 650;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+
+.resumen dd {
+  margin: 2px 0 0;
+  color: #173b59;
+  font-size: 14px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 1100px) {
+  .resumen {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

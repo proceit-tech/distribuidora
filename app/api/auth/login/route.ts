@@ -129,7 +129,7 @@ export async function POST(request: NextRequest) {
        FROM usuarios u
        JOIN empresas e ON e.id = u.empresa_id
       WHERE lower(e.codigo) = $1
-        AND e.activo
+        AND e.estado = 'ACTIVA' AND NOT e.es_demo
         AND lower(u.usuario) = $2
         AND u.estado = 'ACTIVO'
       LIMIT 1`,

@@ -1,0 +1,23 @@
+// BUILD-R02: configuración del BUILD OPERACIONAL (next build la usa vía next.config.ts typescript.tsconfigPath).
+// Hereda de tsconfig.json strict, noEmit, paths y plugins; repite el mismo `include` (Next lo verifica en este archivo)
+// y solo excluye pruebas y material no operacional. Los casos se comprueban con scripts/casos-clientes/tsconfig.json.
+// Si la aplicación importara un caso, tsc lo incluiría igualmente por importación: lo detecta scripts/verificar-separacion.sh dependencias.
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "next-env.d.ts",
+    "**/*.ts",
+    "**/*.tsx",
+    ".next/types/**/*.ts",
+    ".next/dev/types/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "**/*.casos.ts",
+    "**/*.casos.tsx",
+    "lib/clientes/contador-casos.ts",
+    "scripts/**",
+    "documentacao/**",
+    ".tmp-casos/**"
+  ]
+}
