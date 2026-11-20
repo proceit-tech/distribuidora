@@ -52,9 +52,11 @@ import {
   type Seleccion,
 } from "@/lib/facturacion/documentos-tabla";
 import type { TonoSifen } from "@/lib/facturacion/presentacion-sifen";
+import { aprobacionOficialDocumento, elegibilidadCancelacionFe, textoFechaGateway, type ProyeccionEventosFe } from "@/lib/facturacion/eventos-fe";
 import { formatearFechaHoraPy } from "@/lib/formato/listas";
 import { formatearImporteMoneda } from "@/lib/formato/monto-visual";
 
+import { CancelacionModal } from "./cancelacion-modal";
 import { KudeModal } from "./kude-modal";
 import estilos from "./page.module.css";
 
@@ -68,6 +70,8 @@ type Documento = {
   ultimaConsultaAt: string | null; ultimaConsultaResultado: string | null; lote: string | null; envioErrorTipo: "AUTENTICACION" | "RECHAZO" | "TRANSITORIO" | null;
   /** NCE (PRO-94): factura original y motivo; `corregible` = rechazo definitivo (acción «Corregir y emitir nueva»); `requiereRevision` = mucho tiempo pendiente (solo etiqueta). */
   feNumero?: string | null; feId?: string | null; feCdc?: string | null; nceMotivo?: number | null; corregible?: boolean; requiereRevision?: boolean;
+  /** PRO-313-R01: eventos de la FE leídos de response.DE.Evento en las consultas registradas (proyección del servidor, solo lectura). */
+  eventosFe?: ProyeccionEventosFe | null;
 };
 
 const MOTIVO_NCE: Record<number, string> = { 2: "Devolución", 3: "Descuento", 4: "Bonificación", 8: "Ajuste de precio" };
@@ -77,6 +81,8 @@ type Solicitud = { version: number; payloadHash: string; creadoAt: string };
 type VistaJson = { titulo: string; detalle: string; texto: string; cargando: boolean; error: string };
 type Respuesta = {
   documentos: Documento[]; total: number; pagina: number; totalPaginas: number; resumen: Record<string, number>; sucursales: Array<{ id: string; nombre: string }>; permisos: { editar: boolean; crear: boolean };
+  /** PRO-313-R01: instante del servidor al generar el listado (base del plazo de 48 h cuando la aprobación oficial esté acreditada; nunca el reloj del navegador). */
+  generadoMs?: number;
 };
 /**
  * PRO-342-R04: `tecnico` = segunda capa (historial técnico) abierta; cerrada por defecto. `copiado` = feedback breve del botón Copiar.
@@ -206,11 +212,8 @@ const CLASE_ETIQUETA_TIPO: Partial<Record<TipoDocumento, string>> = { FE: estilo
 const clases = (...c: Array<string | undefined | false>) => c.filter(Boolean).join(" ");
 const fechaHora = (v: string) => formatearFechaHoraPy(v);
 // Fechas que informa el gateway como texto (sin zona): se reordenan a dd/MM/yyyy sin convertir la hora.
-const fechaGateway = (v: string | null) => {
-  const m = v ? /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}:\d{2}(?::\d{2})?))?/.exec(v) : null;
-
-  return m ? `${m[3]}/${m[2]}/${m[1]}${m[4] ? ` ${m[4]}` : ""}` : (v ?? "—");
-};
+// PRO-313-R01 (F014): FechaFirma real DD-MM-YYYY HH:mm:ss (validación estricta) y FechaEnvio YYYY-MM-DD HH:mm:ss; sin zona ni conversión; otro texto se muestra literal.
+const fechaGateway = (v: string | null) => textoFechaGateway(v);
 // PRO-335: importe visual desde el texto numeric exacto (sin Number), en la moneda del propio documento.
 // PRO-338-R02 (F003): una línea por intento de consulta, con fecha, resultado, HTTP, mensaje y CDC informado (indicando si sale del JSON de respuesta).
 const describirConsulta = (i: IntentoConsulta, conResultado: boolean) => {
@@ -286,6 +289,8 @@ export default function DocumentosPage() {
   const [tip, setTip] = useState<{ texto: string; ancla: HTMLElement } | null>(null);
   // PRO-195-UX-R01 (punto 2): selección REAL de filas visibles, ligada al contexto (filtros + página); no habilita acciones masivas (R05).
   const [seleccion, setSeleccion] = useState<Seleccion>({ contexto: "", ids: [] });
+  // PRO-313-R01: documento cuya modal PREPARADA de cancelación está abierta (solo si fue elegible; hoy nunca). No transmite nada.
+  const [cancelando, setCancelando] = useState<Documento | null>(null);
   // PRO-195-UX-R01 (punto 3): resultado de la consulta lanzada desde la FILA con el detalle cerrado; vale solo en su contexto.
   // PRO-195-UX-R01-R01 (F002): `epoca` identifica cada visita a un contexto (A→B→A da épocas distintas aunque la clave textual coincida).
   const [anuncio, setAnuncio] = useState<{ contexto: string; epoca: number; texto: string; error: boolean } | null>(null);
@@ -756,6 +761,14 @@ export default function DocumentosPage() {
   return (
     <section className={ui.page}>
       <KudeModal controlador={visor} />
+      <CancelacionModal
+        key={cancelando?.id ?? "cerrada"}
+        datos={cancelando ? {
+          numero: numeroDocumento(cancelando), cdc: cancelando.cdc, importe: importe(cancelando), aprobacionCandidata: cancelando.eventosFe?.aprobacionCandidata ?? null,
+          elegibilidad: elegibilidadCancelacionFe({ tipo: cancelando.tipo, estadoSifen: cancelando.estadoSifen, puedeEditar: editar, proyeccion: cancelando.eventosFe, aprobacion: aprobacionOficialDocumento(cancelando.eventosFe), ahoraMs: datos?.generadoMs ?? Number.NaN }),
+        } : null}
+        alVolver={() => setCancelando(null)}
+      />
       <header className={ui.topbar}>
         <div className={ui.titleBlock}>
           <nav className={ui.breadcrumb} aria-label="Ruta de navegación">
@@ -917,7 +930,9 @@ export default function DocumentosPage() {
                 const seguimiento = seguimientoFiscal(d);
                 // PRO-195-UX-R01 (punto 4): UN estado principal (nunca Aprobado y Rechazado a la vez) + la fase técnica real como línea secundaria.
                 const estado = estadoPrincipalFila(d);
-                const eventos = eventosFila(d);
+                // PRO-313-R01: elegibilidad PREPARADA de la cancelación (no operativa: sin aprobación oficial acreditada ni envío habilitado); el servidor revalidará todo al confirmar.
+                const cancelacion = elegibilidadCancelacionFe({ tipo: d.tipo, estadoSifen: d.estadoSifen, puedeEditar: editar, proyeccion: d.eventosFe, aprobacion: aprobacionOficialDocumento(d.eventosFe), ahoraMs: datos?.generadoMs ?? Number.NaN });
+                const eventos = eventosFila(d, cancelacion);
                 const avisoFila = [alerta ? `${alerta.texto}. ${alerta.detalle}` : "", d.requiereRevision ? `Requiere revisión: lleva mucho tiempo sin resultado definitivo; no se reenvía${d.tipo === "NCE" ? " ni se libera el saldo" : ""}.` : ""].filter(Boolean).join(" ");
                 const accion = enCurso[d.id];
                 const habilitada = disponible(d);
@@ -995,7 +1010,12 @@ export default function DocumentosPage() {
                               <Fragment key={o.nombre}><small className={clases(ui.muted, estilos.eventoOperacion)}>{o.nombre}: {o.estado}</small></Fragment>
                             ))}
                           </span>
-                          <AccionIcono clase={estilos.accionEventos} glifo={ACCION.eventos} etiqueta={`Eventos de ${doc}`} disponible={false} motivo={eventos.operacion} alActivar={() => undefined} tip={eventosTip} />
+                          {/* PRO-313-R01: «Cancelar documento» solo FE; habilitado únicamente si es elegible (hoy nunca: gates de aprobación oficial y homologación). No hay ruta de envío. */}
+                          {cancelacion.aplica ? (
+                            <AccionIcono clase={estilos.accionEventos} glifo={ACCION.eventos} etiqueta={`Cancelar documento ${doc}`} disponible={cancelacion.disponible} motivo={eventos.operacion} alActivar={() => setCancelando(d)} tip={eventosTip} />
+                          ) : (
+                            <AccionIcono clase={estilos.accionEventos} glifo={ACCION.eventos} etiqueta={`Eventos de ${doc}`} disponible={false} motivo={eventos.operacion} alActivar={() => undefined} tip={eventosTip} />
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -1107,6 +1127,24 @@ export default function DocumentosPage() {
                                 ))}
                               </ul>
                               <p className={ui.muted}>Eventos: {eventos.registrado ?? eventos.sinRegistro}. {eventos.operacion}</p>
+                              {/* PRO-313-R01: eventos tal como los informó la API (response.DE.Evento), separados del estado de la FE; todas las ocurrencias, en el orden recibido. */}
+                              {d.eventosFe ? (
+                                <div className={estilos.eventosDetalle} role="note" aria-label={`Eventos informados de ${numeroDocumento(d)}`}>
+                                  <span className={ui.muted}>{d.eventosFe.detalle}{d.eventosFe.lectura ? ` Consulta registrada el ${fechaHora(d.eventosFe.lectura.creadoAt)}.` : ""}</span>
+                                  {d.eventosFe.aprobacionCandidata ? <span className={ui.muted}>Fecha de retorno informada con la aprobación (candidata, sin confirmar significado ni zona horaria): {d.eventosFe.aprobacionCandidata}. No habilita el plazo de 48 horas.</span> : null}
+                                  {d.eventosFe.avisos.map((a) => <span key={a} className={ui.muted}>{a}</span>)}
+                                  {d.eventosFe.eventos.length ? (
+                                    <ol className={estilos.listaEventos}>
+                                      {d.eventosFe.eventos.map((e) => (
+                                        <li key={e.posicion}>
+                                          <strong className={e.clase === "APROBADO" ? estilos.eventoAprobado : e.clase === "RECHAZADO" ? estilos.eventoRechazado : undefined}>{e.estado ?? "Estado no informado"}</strong>
+                                          {" · "}Motivo: {e.motivo ?? "Sin información"}{" · "}Detalle: {e.detalle ?? "Sin información"}{" · "}Fecha: {e.fecha ?? "Sin información"}
+                                        </li>
+                                      ))}
+                                    </ol>
+                                  ) : null}
+                                </div>
+                              ) : null}
 
                               <h4 className={estilos.subtitulo}>Seguimiento fiscal</h4>
                               <dl className={estilos.datosTecnicos} aria-label="Seguimiento fiscal">

@@ -515,6 +515,63 @@ table.tablaDocs > tbody > tr > td {
   font-size: 11.5px;
 }
 
+/* PRO-313-R01: eventos informados por la API (segunda capa), separados del estado de la FE; colores con contraste AA y texto (el color no es la única señal). */
+.eventosDetalle {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 4px 0 8px;
+  font-size: 12.5px;
+}
+.listaEventos {
+  margin: 2px 0 0;
+  padding-left: 20px;
+  overflow-wrap: anywhere;
+}
+.eventoAprobado {
+  color: #1f6b3a;
+}
+.eventoRechazado {
+  color: #a3241b;
+}
+
+/* PRO-313-R01: modal PREPARADA de cancelación (no operativa). */
+.cancelacionFondo {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(15, 23, 32, 0.45);
+}
+.cancelacionCaja {
+  width: min(560px, 100%);
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+  padding: 18px;
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: 0 12px 32px rgba(15, 23, 32, 0.25);
+}
+.campoMotivo {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 8px 0;
+}
+.campoConfirmacion {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 8px 0;
+}
+.campoMotivo textarea {
+  width: 100%;
+  resize: vertical;
+}
+
 /* Aviso del resultado de una consulta lanzada desde la fila, y barra de selección. */
 .anuncio {
   display: flex;

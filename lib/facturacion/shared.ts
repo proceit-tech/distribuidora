@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import type { Pool } from "pg";
 
 import { ESTADOS_EMAIL, ESTADOS_LOCAL, ESTADOS_LOCAL_TRANSMITIDO, ESTADOS_SIFEN, ESTADOS_SIFEN_SIN_FINAL, GRUPOS_INDICADOR, TIPOS_DOCUMENTO, UMBRAL_REVISION_HORAS, type GrupoIndicador } from "@/lib/facturacion/estados";
-import { ANOMALIA_CDC_CREDENCIAL, CLAVE_ANOMALIA_NEXIT, configGatewayValida, consultarDocumentoGateway, continuidadConexion, obtenerKudeGateway, referenciaConexion, type ConfigGateway, type ContinuidadConexion, type CorrespondenciaKude, type Dependencias, type DependenciasKude } from "@/lib/facturacion/gateway";
+import { contextoCancelacionDocumento, proyectarEventosFe, SIN_INFORMACION_EVENTOS_FE, type LecturaConsulta, type ProyeccionEventosFe } from "@/lib/facturacion/eventos-fe";
+import { ANOMALIA_CDC_CREDENCIAL, CLAVE_ANOMALIA_NEXIT, configGatewayValida, consultarDocumentoGateway, continuidadConexion, limpiarTexto, obtenerKudeGateway, referenciaConexion, type ConfigGateway, type ContinuidadConexion, type CorrespondenciaKude, type Dependencias, type DependenciasKude, type ReferenciaConexion } from "@/lib/facturacion/gateway";
 import { adjuntarCredencialesDeBase } from "@/lib/facturacion/gateway-credenciales";
 import { decidirConsulta } from "@/lib/facturacion/reconciliacion";
 
@@ -300,7 +301,8 @@ async function leerDocumentosCon(db: Db, empresaId: string, usuarioId: string, e
   const filas = total === 0 ? { rows: [] } : await db.query(consulta.sql, consulta.params);
 
   return {
-    documentos: filas.rows,
+    // PRO-313-R01: cada FE de la página lleva la proyección de sus eventos (solo lectura; sin cambiar estado fiscal, CDC, historial ni stock).
+    documentos: await conEventosFe(db, empresaId, filas.rows as F[]),
     total,
     pagina,
     tamano: c.tamano,
@@ -308,7 +310,88 @@ async function leerDocumentosCon(db: Db, empresaId: string, usuarioId: string, e
     /** Indicadores sobre TODO lo que el usuario puede ver (sin los filtros de la lista). */
     resumen: resumen.rows[0] as Record<string, number>,
     sucursales: sucursales.rows,
+    /** PRO-313-R01: instante del SERVIDOR al generar el listado (base del plazo de 48 h cuando exista aprobación oficial acreditada; el navegador no usa su reloj). */
+    generadoMs: Date.now(),
   };
+}
+
+/**
+ * PRO-313-R01 / PRO-199 — Lecturas de eventos de las FE de una página, SIN esquema nuevo: salen de la evidencia ya registrada (documento_electronico_intentos.respuesta, saneada) de las
+ * consultas OK de cada documento (POST /api/consulta_de). Solo se extraen los fragmentos contractuales response.DE.CDC, response.DE.Evento y response.DE.Retorno.
+ *  · Alcance: los ids vienen de la página ya filtrada por empresa + sucursal_en_alcance; además cada lectura se filtra por empresa_id = $1 y por documento FE de la misma empresa.
+ *  · Cota: las 5 consultas OK más recientes de cada documento + las 3 más recientes que informaron algún evento «Aprobado» (no regresión de una cancelación acreditada aunque haya
+ *    consultas posteriores). El historial completo sigue en los intentos.
+ *  · creadoAt en UTC ISO 8601 con milisegundos (legible por la pantalla): orden lexicográfico = cronológico; empate resuelto por id.
+ */
+export const LECTURAS_EVENTOS_RECIENTES = 5;
+export const LECTURAS_EVENTOS_CON_APROBADO = 3;
+
+export const SQL_LECTURAS_EVENTOS_FE = `WITH c AS (
+  SELECT i.documento_id AS "documentoId", i.id AS "intentoId", to_char(i.creado_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "creadoAt", i.creado_at AS creado,
+         (to_jsonb(i) -> 'conexion') AS conexion, i.respuesta #> '{response,DE,CDC}' AS cdc, i.respuesta #> '{response,DE,Evento}' AS evento, i.respuesta #> '{response,DE,Retorno}' AS retorno,
+         coalesce(jsonb_path_exists(i.respuesta, '$.response.DE.Evento[*] ? (@.estado == "Aprobado")'), false) AS con_aprobado
+    FROM documento_electronico_intentos i JOIN documentos_electronicos d ON d.empresa_id = i.empresa_id AND d.id = i.documento_id
+   WHERE i.empresa_id = $1 AND i.documento_id = ANY($2::uuid[]) AND d.tipo = 'FE' AND i.tipo = 'CONSULTA' AND i.resultado = 'OK' AND jsonb_typeof(i.respuesta) = 'object'
+), r AS (
+  SELECT c.*, row_number() OVER (PARTITION BY c."documentoId" ORDER BY c.creado DESC, c."intentoId" DESC) AS n,
+         row_number() OVER (PARTITION BY c."documentoId", c.con_aprobado ORDER BY c.creado DESC, c."intentoId" DESC) AS m
+    FROM c
+)
+SELECT r."documentoId", r."intentoId", r."creadoAt", r.conexion, r.cdc, r.evento, r.retorno FROM r
+ WHERE r.n <= ${LECTURAS_EVENTOS_RECIENTES} OR (r.con_aprobado AND r.m <= ${LECTURAS_EVENTOS_CON_APROBADO})`;
+
+/** Referencia NO secreta de la conexión del último ENVÍO de cada documento de la página (misma regla que SQL_CONEXION_ENVIO). */
+export const SQL_CONEXIONES_ENVIO = `SELECT DISTINCT ON (i.documento_id) i.documento_id AS "documentoId", (to_jsonb(i) -> 'conexion') AS "conexion" FROM documento_electronico_intentos i
+  WHERE i.empresa_id = $1 AND i.documento_id = ANY($2::uuid[]) AND i.tipo = 'ENVIO' AND jsonb_typeof(to_jsonb(i) -> 'conexion') = 'object' ORDER BY i.documento_id, i.creado_at DESC, i.id DESC`;
+
+/** Referencia de conexión registrada en un intento (jsonb) con la forma de referenciaConexion; null si no la tiene (no se completa ni se supone). */
+export function referenciaConexionDeIntento(v: unknown): ReferenciaConexion | null {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+
+  const r = v as F;
+
+  if (typeof r.host !== "string" || r.host === "" || typeof r.credencialRef !== "string" || (r.origenCredenciales !== "BASE" && r.origenCredenciales !== "ENTORNO")) return null;
+
+  return { host: r.host, credencialRef: r.credencialRef, credencialesVersion: typeof r.credencialesVersion === "number" ? r.credencialesVersion : null, origenCredenciales: r.origenCredenciales };
+}
+
+/** Si el historial de eventos no se pudo leer: sin información y BLOQUEO de nueva solicitud (resultado desconocido). No interrumpe el listado. */
+export const PROYECCION_EVENTOS_NO_LEIDA: ProyeccionEventosFe = {
+  situacion: "SIN_INFORMACION", eventos: [], lectura: null, texto: SIN_INFORMACION_EVENTOS_FE,
+  detalle: "No fue posible leer el historial de consultas para informar los eventos: no se afirma que no existan.", bloqueaSolicitud: true, aprobacionCandidata: null, avisos: [],
+};
+
+export async function conEventosFe(db: Db, empresaId: string, filas: F[]): Promise<F[]> {
+  const ids = filas.filter((f) => f.tipo === "FE" && typeof f.id === "string").map((f) => f.id as string);
+
+  if (ids.length === 0) return filas;
+
+  let porDocumento: Map<string, ProyeccionEventosFe>;
+
+  try {
+    const [lecturas, envios] = await Promise.all([db.query(SQL_LECTURAS_EVENTOS_FE, [empresaId, ids]), db.query(SQL_CONEXIONES_ENVIO, [empresaId, ids])]);
+    const envioDe = new Map((envios.rows as F[]).map((e) => [String(e.documentoId), e.conexion]));
+    const agrupadas = new Map<string, LecturaConsulta[]>();
+
+    for (const l of lecturas.rows as F[]) {
+      const id = String(l.documentoId);
+      const actual = referenciaConexionDeIntento(l.conexion);
+      const lectura: LecturaConsulta = {
+        intentoId: String(l.intentoId), creadoAt: String(l.creadoAt), cdc: l.cdc, evento: l.evento, retorno: l.retorno,
+        continuidad: actual ? continuidadConexion(envioDe.get(id) ?? null, actual) : "SIN_REFERENCIA",
+      };
+
+      agrupadas.set(id, [...(agrupadas.get(id) ?? []), lectura]);
+    }
+
+    porDocumento = new Map(
+      filas.filter((f) => f.tipo === "FE").map((f) => [String(f.id), proyectarEventosFe(agrupadas.get(String(f.id)) ?? [], typeof f.cdc === "string" ? f.cdc : null, contextoCancelacionDocumento(), limpiarTexto)]),
+    );
+  } catch {
+    porDocumento = new Map(ids.map((id) => [id, PROYECCION_EVENTOS_NO_LEIDA]));
+  }
+
+  return filas.map((f) => (f.tipo === "FE" ? { ...f, eventosFe: porDocumento.get(String(f.id)) ?? PROYECCION_EVENTOS_NO_LEIDA } : f));
 }
 
 export async function leerDocumento(db: Db, empresaId: string, usuarioId: string, id: string) {

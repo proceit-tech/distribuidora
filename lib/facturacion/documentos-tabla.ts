@@ -5,21 +5,28 @@
  *  · estadoPrincipalFila: UN solo estado principal por documento (presentacionSifen, ya auditado) + una línea secundaria con la fase técnica real (Enviado,
  *    XML firmado, Envío indeterminado, Error de envío…). Aprobado y Rechazado nunca coexisten: salen del ÚNICO estado fiscal persistido. Un error de transporte o
  *    de validación del gateway se dice como tal, nunca como rechazo SIFEN.
- *  · eventosFila: columna Eventos. Cancelación e Inutilización NO tienen API ni contrato comprobado (PRO-199 suspendida, PRO-313 guardas): solo se informa el estado
- *    fiscal ya registrado (si la API informó Cancelado/Inutilizado), «Sin información de eventos» en otro caso (R01-R01 F003) y la indisponibilidad honesta de cada operación.
+ *  · eventosFila: columna Eventos. PRO-313-R01: además del estado fiscal ya registrado (Cancelado/Inutilizado informado por la API), muestra la proyección de los eventos
+ *    leídos de response.DE.Evento (eventos-fe.ts) y la elegibilidad de la cancelación (preparada, NO operativa). Inutilización sigue fuera de alcance.
  *  · accionesFila: acciones directas de la fila según operaciones REALES: KuDE (endpoint existente, solo FE/NCE), consulta SIFEN (endpoint existente, permiso editar);
  *    XML y correo NO tienen endpoint en Nexit: se muestran deshabilitados con su motivo.
  *  · seleccionVigente: la selección solo vale en el contexto (filtros + página) donde se hizo y solo para filas visibles; no habilita ninguna acción masiva.
  */
 import { esFaseXmlFirmado, type EstadoLocal, type EstadoSifen } from "@/lib/facturacion/estados";
+import type { ElegibilidadCancelacion, ProyeccionEventosFe } from "@/lib/facturacion/eventos-fe";
 import { presentacionSifen, type TonoSifen } from "@/lib/facturacion/presentacion-sifen";
 
 export type EstadoFila = { tono: TonoSifen; texto: string; detalle: string; secundario: string | null };
 
 type DocEstado = { estadoLocal: EstadoLocal; estadoSifen: EstadoSifen; estadoGatewayTexto?: string | null; ultimaConsultaAt?: string | null; envioErrorTipo?: string | null };
 
-export function estadoPrincipalFila(d: DocEstado): EstadoFila {
+export function estadoPrincipalFila(d: DocEstado & { eventosFe?: ProyeccionEventosFe | null }): EstadoFila {
   const p = presentacionSifen(d);
+
+  // PRO-313-R01: cancelación ACREDITADA (evento de cancelación aprobado y correlacionado) sobre una FE aprobada: se presenta Cancelado y la aprobación original queda como historial.
+  // Es proyección de presentación: estado_sifen persistido, filtros e indicadores no cambian (el Estado del gateway sigue «Aprobado»).
+  if (d.estadoSifen === "APROBADO" && d.eventosFe?.situacion === "CANCELADO") {
+    return { tono: "anulado", texto: "Cancelado", detalle: `${d.eventosFe.detalle} Estado fiscal registrado: Aprobado (aprobación original).`, secundario: "Aprobación original conservada" };
+  }
 
   // Estados fiscales finales registrados: sin línea secundaria (Envío OK o CDC informado nunca se muestran como si fueran el resultado).
   if (p.tono === "aprobado" || p.tono === "rechazado" || p.tono === "anulado") return { ...p, secundario: null };
@@ -43,30 +50,39 @@ export function estadoPrincipalFila(d: DocEstado): EstadoFila {
 }
 
 /**
- * PRO-195-UX-R01-R01 (F003): la columna Eventos NUNCA afirma ausencia de eventos. Nexit no tiene historial de eventos consultable (sin API ni contrato del proveedor):
- * un estado APROBADO no prueba que no exista un evento pendiente o rechazado. Por eso, sin estado fiscal Cancelado/Inutilizado ya informado por la API, se dice
- * «Sin información de eventos»; y Cancelación e Inutilización se muestran con su indisponibilidad explícita (no solo en el tooltip). No se infiere protocolo,
- * fecha ni evento ejecutado.
+ * PRO-195-UX-R01-R01 (F003): la columna Eventos NUNCA afirma ausencia de eventos sin una lectura que la acredite: sin estado fiscal Cancelado/Inutilizado ni lectura de response.DE.Evento
+ * se dice «Sin información de eventos». PRO-313-R01: con la proyección de eventos (eventos-fe.ts) se muestra su resumen (evento aprobado, rechazados, en revisión, lista vacía acreditada) y
+ * la operación Cancelación con su estado REAL (no disponible y por qué, en revisión, plazo vencido, cancelado); Inutilización sigue no disponible (fuera de alcance). No se infiere
+ * protocolo ni fecha, no se simula ningún evento y no se toca el stock.
  */
 export type OperacionEvento = { nombre: "Cancelación" | "Inutilización"; estado: string };
 export type EventosFila = { registrado: string | null; sinRegistro: string; operaciones: readonly OperacionEvento[]; operacion: string };
 
 export const SIN_INFORMACION_EVENTOS = "Sin información de eventos";
 
-/** Motivo ÚNICO de indisponibilidad de los eventos (sin API ni contrato del proveedor). */
-export const MOTIVO_EVENTOS_NO_DISPONIBLES =
-  "Cancelación e Inutilización: operaciones no disponibles en Nexit (sin API ni contrato comprobado del proveedor; la inutilización corresponde a numeración no utilizada). Nexit no tiene historial de eventos consultable. No se simula ningún evento ni se modifica el stock.";
+/** Inutilización: fuera del alcance de PRO-313 (corresponde a numeración no utilizada, no a un documento emitido). */
+export const MOTIVO_INUTILIZACION_NO_DISPONIBLE = "Inutilización no disponible en Nexit (corresponde a numeración no utilizada). No se simula ningún evento ni se modifica el stock.";
+
+/** Motivo por defecto cuando no se conoce la elegibilidad (sin proyección): la cancelación no se ofrece. */
+export const MOTIVO_EVENTOS_NO_DISPONIBLES = `Cancelación no disponible: falta la lectura de eventos y la fecha oficial de aprobación acreditada; el envío al gateway no está habilitado. ${MOTIVO_INUTILIZACION_NO_DISPONIBLE}`;
 
 export const OPERACIONES_EVENTO: readonly OperacionEvento[] = [
   { nombre: "Cancelación", estado: "No disponible" },
   { nombre: "Inutilización", estado: "No disponible" },
 ];
 
-export function eventosFila(d: { estadoSifen: EstadoSifen }): EventosFila {
-  const registrado =
+export function eventosFila(d: { estadoSifen: EstadoSifen; eventosFe?: ProyeccionEventosFe | null }, cancelacion?: ElegibilidadCancelacion | null): EventosFila {
+  const fiscal =
     d.estadoSifen === "CANCELADO" ? "Cancelado (estado fiscal informado por la API)" : d.estadoSifen === "INUTILIZADO" ? "Inutilizado (estado fiscal informado por la API)" : null;
+  const proyectado = d.eventosFe && d.eventosFe.situacion !== "SIN_INFORMACION" ? d.eventosFe.texto : null;
+  const operaciones: readonly OperacionEvento[] = cancelacion
+    ? cancelacion.aplica
+      ? [{ nombre: "Cancelación", estado: cancelacion.corto }, OPERACIONES_EVENTO[1]]
+      : [OPERACIONES_EVENTO[1]]
+    : OPERACIONES_EVENTO;
+  const operacion = cancelacion ? `${cancelacion.disponible ? "Cancelación disponible." : cancelacion.motivo} ${MOTIVO_INUTILIZACION_NO_DISPONIBLE}` : MOTIVO_EVENTOS_NO_DISPONIBLES;
 
-  return { registrado, sinRegistro: SIN_INFORMACION_EVENTOS, operaciones: OPERACIONES_EVENTO, operacion: MOTIVO_EVENTOS_NO_DISPONIBLES };
+  return { registrado: fiscal ?? proyectado, sinRegistro: SIN_INFORMACION_EVENTOS, operaciones, operacion };
 }
 
 export type AccionFila = { clave: "kude" | "xml" | "consulta" | "correo"; visible: boolean; disponible: boolean; motivo: string };

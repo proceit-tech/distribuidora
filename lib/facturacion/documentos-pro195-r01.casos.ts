@@ -21,6 +21,7 @@ import {
   eventosFila,
   MOTIVO_CORREO_NO_DISPONIBLE,
   MOTIVO_EVENTOS_NO_DISPONIBLES,
+  MOTIVO_INUTILIZACION_NO_DISPONIBLE,
   MOTIVO_XML_NO_DISPONIBLE,
   OPERACIONES_EVENTO,
   partirFechaHora,
@@ -127,11 +128,15 @@ export async function verificarCasosDocumentosPro195R01(): Promise<string[]> {
     [eventosFila({ estadoSifen: "CANCELADO" }).registrado, eventosFila({ estadoSifen: "INUTILIZADO" }).registrado, eventosFila({ estadoSifen: "APROBADO" }).registrado, eventosFila({ estadoSifen: "APROBADO" }).sinRegistro,
       eventosFila({ estadoSifen: "RECHAZADO" }).operacion === MOTIVO_EVENTOS_NO_DISPONIBLES],
     ["Cancelado (estado fiscal informado por la API)", "Inutilizado (estado fiscal informado por la API)", null, "Sin información de eventos", true]);
-  cierto("R01-06b el control de eventos está DESHABILITADO (disponible=false) y su clic no hace nada; no hay rutas de cancelación/inutilización ni stock en la pantalla",
+  // PRO-313-R01 (actualizado): para NCE y demás tipos el control sigue deshabilitado; para FE pasa a «Cancelar documento», habilitado solo si la elegibilidad lo permite (hoy nunca).
+  cierto("R01-06b (actualizado PRO-313-R01) el control de eventos de documentos no FE sigue DESHABILITADO; el de FE es «Cancelar documento» con disponible = elegibilidad; no hay rutas de cancelación/inutilización ni stock en la pantalla",
     /<AccionIcono clase=\{estilos\.accionEventos\} glifo=\{ACCION\.eventos\} etiqueta=\{`Eventos de \$\{doc\}`\} disponible=\{false\} motivo=\{eventos\.operacion\} alActivar=\{\(\) => undefined\}/.test(fila) &&
-    !/\/api\/[^`"]*(cancel|inutiliz|evento)/i.test(pagina) && !/stock|inventario/i.test(tabla.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "").replace(/MOTIVO_EVENTOS_NO_DISPONIBLES =\s*"[^"]*";/, "") /* PRE-VM-R02-A: se quita el literal COMPLETO (el texto contiene «;» y menciona el stock); el resto del código sigue sin stock */));
-  cierto("R01-06c el motivo dice la verdad: sin API ni contrato del proveedor, sin simular eventos ni tocar stock; Inutilización no exige factura (no se pide un documento ficticio)",
-    /sin API ni contrato comprobado del proveedor/.test(MOTIVO_EVENTOS_NO_DISPONIBLES) && /No se simula ningún evento ni se modifica el stock/.test(MOTIVO_EVENTOS_NO_DISPONIBLES) && !/factura/i.test(MOTIVO_EVENTOS_NO_DISPONIBLES));
+    /etiqueta=\{`Cancelar documento \$\{doc\}`\} disponible=\{cancelacion\.disponible\} motivo=\{eventos\.operacion\}/.test(fila) &&
+    !/\/api\/[^`"]*(cancel|inutiliz|evento)/i.test(pagina) &&
+    !/stock|inventario/i.test(tabla.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "").replace(/`(?:[^`\\]|\\.)*`|"(?:[^"\\]|\\.)*"/g, '""') /* PRO-313-R01: se quitan TODOS los literales (los motivos dicen que no se modifica el stock); el código sigue sin stock */));
+  cierto("R01-06c (actualizado PRO-313-R01) el motivo ya no dice «sin API»: «Cancelación no disponible» con razón real (lectura de eventos, aprobación oficial no acreditada, envío no habilitado); sin simular eventos ni tocar stock; Inutilización fuera de alcance y sin exigir factura",
+    /^Cancelación no disponible: /.test(MOTIVO_EVENTOS_NO_DISPONIBLES) && !/sin API/.test(MOTIVO_EVENTOS_NO_DISPONIBLES) && /aprobación acreditada/.test(MOTIVO_EVENTOS_NO_DISPONIBLES) && /no está habilitado/.test(MOTIVO_EVENTOS_NO_DISPONIBLES) &&
+    /No se simula ningún evento ni se modifica el stock/.test(MOTIVO_INUTILIZACION_NO_DISPONIBLE) && !/factura/i.test(MOTIVO_INUTILIZACION_NO_DISPONIBLE));
 
   // ══ R01-07 Acciones, ACL y deshabilitación honesta ═══════════════════════════════════════════════════════════════════════════════════════
   {
@@ -330,8 +335,10 @@ export async function verificarCasosDocumentosPro195R01(): Promise<string[]> {
       todos.every((e) => (e.registrado ?? e.sinRegistro) !== "Sin eventos" && (e.registrado !== null || e.sinRegistro === "Sin información de eventos")));
     igual("R01R01-F003b Cancelación e Inutilización visibles con su indisponibilidad explícita (no solo en el tooltip)",
       OPERACIONES_EVENTO.map((o) => `${o.nombre}: ${o.estado}`), ["Cancelación: No disponible", "Inutilización: No disponible"]);
-    cierto("R01R01-F003c el motivo dice que no hay historial de eventos consultable y que la inutilización es de numeración; sin protocolo/fecha inferidos",
-      /no tiene historial de eventos consultable/.test(MOTIVO_EVENTOS_NO_DISPONIBLES) && /numeración no utilizada/.test(MOTIVO_EVENTOS_NO_DISPONIBLES) && !/protocolo|fecha/i.test(MOTIVO_EVENTOS_NO_DISPONIBLES));
+    // PRO-313-R01 (actualizado): ahora SÍ hay lectura de eventos (response.DE.Evento); el motivo nombra la fecha OFICIAL de aprobación que falta (no infiere ninguna fecha ni protocolo).
+    cierto("R01R01-F003c (actualizado PRO-313-R01) el motivo ya no afirma «sin historial de eventos»; la inutilización sigue siendo de numeración; sin protocolo inferido; la única fecha mencionada es la aprobación oficial que falta",
+      !/no tiene historial de eventos consultable/.test(MOTIVO_EVENTOS_NO_DISPONIBLES) && /numeración no utilizada/.test(MOTIVO_EVENTOS_NO_DISPONIBLES) && !/protocolo/i.test(MOTIVO_EVENTOS_NO_DISPONIBLES) &&
+      (MOTIVO_EVENTOS_NO_DISPONIBLES.match(/fecha/gi) ?? []).length === 1 && /fecha oficial de aprobación acreditada/.test(MOTIVO_EVENTOS_NO_DISPONIBLES));
     cierto("R01R01-F003d la celda y la segunda capa muestran el texto honesto y las dos operaciones; ya no existen «Sin eventos» ni «sin eventos registrados» en la pantalla",
       /\{eventos\.registrado \?\? eventos\.sinRegistro\}<\/span>/.test(fila) && /\{eventos\.operaciones\.map\(\(o\) => \(/.test(fila) && /\{o\.nombre\}: \{o\.estado\}/.test(fila) &&
       /Eventos: \{eventos\.registrado \?\? eventos\.sinRegistro\}\. \{eventos\.operacion\}/.test(segunda) && !/Sin eventos|sin eventos registrados/.test(pagina));
