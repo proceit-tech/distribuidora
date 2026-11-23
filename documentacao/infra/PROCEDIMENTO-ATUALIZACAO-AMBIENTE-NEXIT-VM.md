@@ -4,17 +4,28 @@
 
 **Regra para IA:** antes de orientar atualização, leia **este arquivo e o runner oficial vigente**. Não redescubra caminhos/nome de serviços já identificados, não invente comando alternativo de migrations e não peça novamente ao responsável os dados aqui confirmados. Se o ambiente mudar, atualize este documento após confirmação.
 
+## Estado mais recente confirmado na VM — 23/11/2026
+
+**Configuração atual confirmada pelo responsável no terminal SSH** (substitui caminhos antigos do histórico de 2026-10-11):
+
+- **Git:** `/home/proceit24/nexit-instalacao`, branch `feature/NEXIT-2026-001-banco-demo`, HEAD `aec133449252bc518f71d1e6a25f328049faea9c` após `git pull --ff-only`. Alterações documentais posteriores no GitHub não significam que foram aplicadas na VM.
+- **Stack efetiva:** `/srv/stacks/nexit`, arquivos `compose.yml` e `app.compose.yml`. Os contêineres `nexit-app` e `nexit-db` foram vistos ativos; PostgreSQL 16 saudável.
+- **Banco:** `public.schema_migrations` registrou **NEX-001…083**. Em 23/11, o responsável aplicou NEX-082 e NEX-083 pelo runner oficial. A verificação posterior retornou **15/15 controles OK** em NEX-082 e **16/16 OK** em NEX-083; a foto histórica NEX-065 conservou 3 linhas e a preparação de NEX-081 permaneceu vazia. Isso valida a estrutura, não toda a homologação funcional.
+- **Documentos:** bind mount real `/srv/stacks/nexit/data/nexit-archivos:/data/archivos`; `NEXIT_ARCHIVOS_DIR=/data/archivos`, UID/GID `1001:1001`, modo `700`, leitura e escrita **OK** dentro da aplicação.
+- **Imagem:** `sudo docker build -t nexit-app:teste .` concluído com `15/15 FINISHED` no clone atualizado. **A recriação do container `nexit-app` ainda não estava comprovada** no último resultado recebido; deve-se executar e verificar a ETAPA 5 antes de declarar atualização completa.
+- **Importante:** o arquivo versionado `app.compose.yml` foi corrigido no Git para o mount em `/srv/stacks/nexit`; não copiar automaticamente esse arquivo sobre o Compose efetivo da VM e nunca sobrescrever `.env`/`app.env`.
+
 ## Ambiente conhecido
 
 | Item | Valor |
 |---|---|
 | VM (host visto no terminal) | `instance-20260930-232419` |
 | Usuário Linux | `proceit24` |
-| Git clone na VM | `/tmp/nexit-instalacao` |
+| Git clone na VM | `/home/proceit24/nexit-instalacao` |
 | Branch de desenvolvimento | `feature/NEXIT-2026-001-banco-demo` |
-| Diretório Docker Compose | `/srv/stacks/distribuidora` |
-| Compose principal | `/srv/stacks/distribuidora/compose.yml` |
-| Compose app | `/srv/stacks/distribuidora/app.compose.yml` |
+| Diretório Docker Compose | `/srv/stacks/nexit` |
+| Compose principal | `/srv/stacks/nexit/compose.yml` |
+| Compose app | `/srv/stacks/nexit/app.compose.yml` |
 | Projeto Compose | `nexit` |
 | Serviço app | `app` |
 | Contêiner app e imagem | `nexit-app`, `nexit-app:teste` |
@@ -23,23 +34,25 @@
 | Diretório SQL no Git | `documentacao/banco/nexit/v1/migraciones` |
 | Runner oficial no Git | `documentacao/banco/nexit/v1/scripts/aplicar-migraciones.sh` |
 | Diretório temporário usado dentro do PostgreSQL | `/tmp/nexit-migraciones` |
-| Diretório persistente de documentos no host | `/srv/stacks/distribuidora/data/nexit-archivos` |
+| Diretório persistente de documentos no host | `/srv/stacks/nexit/data/nexit-archivos` |
 | Diretório de documentos no contêiner | `/data/archivos` |
 | Variável exigida | `NEXIT_ARCHIVOS_DIR=/data/archivos` |
 
-**Histórico comprovado:** já se executou com sucesso o runner até `NEX-032` e foi confirmado `32 | NEX-032`; isso NÃO comprova as migrations posteriores. O histórico também mostra `docker build -t nexit-app:teste .` seguido de `docker compose ... up -d --no-deps --force-recreate app` executados com sucesso em atualizações anteriores. Isso não garante que o código atual passe no build (houve falhas reais de TypeScript e prerender em outros commits).
+**Histórico de 2026-10-11:** já se executou com sucesso o runner até `NEX-032` e foi confirmado `32 | NEX-032`; isso NÃO comprova as migrations posteriores. O histórico também mostra `docker build -t nexit-app:teste .` seguido de `docker compose ... up -d --no-deps --force-recreate app` executados com sucesso em atualizações anteriores. Isso não garante que o código atual passe no build (houve falhas reais de TypeScript e prerender em outros commits).
 
 ## ETAPA 1 — Git (sempre a partir do repositório)
 
+**Use exclusivamente o clone permanente em `/home/proceit24/nexit-instalacao`; o antigo clone temporário do histórico não existe mais. Execute uma etapa por vez.**
+
 ```bash
-cd /tmp/nexit-instalacao
+cd /home/proceit24/nexit-instalacao
 git status --short
 git branch --show-current
 git pull --ff-only origin feature/NEXIT-2026-001-banco-demo
 git log -1 --oneline
 ```
 
-**Não executar `git pull` em `/srv/stacks/distribuidora`:** não é um repositório Git; o terminal já devolveu `fatal: not a git repository`.
+**Não executar `git pull` em `/srv/stacks/nexit`:** não é um repositório Git; o terminal já devolveu `fatal: not a git repository`.
 
 ## NEX-061 — Configuración del gateway FE por empresa (PRO-133 UI)
 Migration incremental **NEX-061** (`migraciones/NEX-061-facturacion-gateway-credenciales-empresa.sql`; reversión `scripts/reversion-NEX-061.sql`). Se aplica con el MISMO runner documentado en la ETAPA 2 (copiar `v1/.` al contenedor, `--solo-listar`, luego aplicar), con backup previo y solo con autorización del responsable. Verificación posterior (solo lectura): `docker exec nexit-db psql -U nexit_app -d nexit -c "SELECT version FROM public.schema_migrations WHERE version = 'NEX-061';"` y `... -c "SELECT codigo FROM public.permisos WHERE codigo = 'FACTURACION_ELECTRONICA.CONFIGURAR';"`. Después se despliega la aplicación (build + recreate de `app`, ver abajo). Ningún secreto en `app.env` es necesario: las credenciales se cargan desde la pantalla.
@@ -69,20 +82,23 @@ Migration incremental **NEX-065** (`migraciones/NEX-065-facturacion-estado-por-t
 
 ## ETAPA 2 — Migraciones automáticas (SOMENTE se a atualização inclui migrations e há autorização)
 
+**Situação de 23/11/2026:** NEX-082 e NEX-083 já estão aplicadas e verificadas na VM; **NÃO reaplicar por conta própria**. Os comandos abaixo são o procedimento geral para futuras migrations, precedido de verificação da listagem. O runner é idempotente e faz conferência de SHA-256.
+
+
 O procedimento abaixo é o que **funcionou no terminal real**. Copiar o DIRETÓRIO `v1/.`, não cinco SQLs escolhidos manualmente: o runner verifica **todas** as migrations versionadas, checksums e `schema_migrations`, pulando as já aplicadas.
 
 Primeiro, copiar os arquivos oficiais do Git atualizado para o contêiner, incluindo runner e todas as migrations:
 
 ```bash
-cd /tmp/nexit-instalacao
-docker exec nexit-db mkdir -p /tmp/nexit-migraciones
-docker cp documentacao/banco/nexit/v1/. nexit-db:/tmp/nexit-migraciones/
+cd /home/proceit24/nexit-instalacao
+sudo docker exec nexit-db mkdir -p /tmp/nexit-migraciones
+sudo docker cp documentacao/banco/nexit/v1/. nexit-db:/tmp/nexit-migraciones/
 ```
 
 Listar pendentes SEM executar:
 
 ```bash
-docker exec -e PGHOST=/var/run/postgresql \
+sudo docker exec -e PGHOST=/var/run/postgresql \
   -e PGUSER=nexit_app \
   -e PGDATABASE=nexit \
   nexit-db bash /tmp/nexit-migraciones/scripts/aplicar-migraciones.sh \
@@ -92,7 +108,7 @@ docker exec -e PGHOST=/var/run/postgresql \
 Executar **somente após revisão da listagem e autorização do responsável**:
 
 ```bash
-docker exec -e PGHOST=/var/run/postgresql \
+sudo docker exec -e PGHOST=/var/run/postgresql \
   -e PGUSER=nexit_app \
   -e PGDATABASE=nexit \
   nexit-db bash /tmp/nexit-migraciones/scripts/aplicar-migraciones.sh \
@@ -104,55 +120,59 @@ docker exec -e PGHOST=/var/run/postgresql \
 Conferir resultado:
 
 ```bash
-docker exec nexit-db psql -U nexit_app -d nexit \
+sudo docker exec nexit-db psql -U nexit_app -d nexit \
   -c "SELECT COUNT(*) AS total, MAX(version) AS ultima FROM public.schema_migrations;"
-docker exec nexit-db psql -U nexit_app -d nexit \
+sudo docker exec nexit-db psql -U nexit_app -d nexit \
   -c "SELECT version, nombre FROM public.schema_migrations ORDER BY version;"
 ```
 
-A última versão registrada até a primeira atualização foi NEX-032; commits posteriores incluem NEX-033 a NEX-045, mas nunca presumir que já foram executadas. Se houver erro, **PARAR antes do deploy** e inspecionar.
+Em 2026-10-11, a última versão registrada até a primeira atualização foi NEX-032; commits posteriores incluem NEX-033 a NEX-045, mas nunca presumir que já foram executadas. Se houver erro, **PARAR antes do deploy** e inspecionar.
 
 ## ETAPA 3 — Verificar persistência de arquivos antes de substituir a app
 
 O histórico confirmou que inicialmente `NEXIT_ARCHIVOS_DIR` estava vazio e `docker inspect nexit-app --format '{{json .Mounts}}'` retornou `[]`. Depois o responsável criou o diretório de documentos no host e os arquivos Compose foram colocados no Git; a presença efetiva do mount no contêiner atual deve ser verificada.
 
 ```bash
-cd /srv/stacks/distribuidora
-docker compose -p nexit -f compose.yml -f app.compose.yml config --quiet
-docker inspect nexit-app --format '{{json .Mounts}}'
-docker exec nexit-app sh -c 'printenv NEXIT_ARCHIVOS_DIR'
-ls -ld /srv/stacks/distribuidora/data/nexit-archivos
+cd /srv/stacks/nexit
+sudo docker compose -p nexit -f compose.yml -f app.compose.yml config --quiet
+sudo docker inspect nexit-app --format '{{json .Mounts}}'
+sudo docker exec nexit-app sh -c 'printenv NEXIT_ARCHIVOS_DIR'
+ls -ld /srv/stacks/nexit/data/nexit-archivos
 ```
 
-Configuração versionada no `app.compose.yml`: bind mount `/srv/stacks/distribuidora/data/nexit-archivos:/data/archivos`, `NEXIT_ARCHIVOS_DIR=/data/archivos`. Usuário da app UID/GID 1001. Se diretório ainda não existir:
+Configuração versionada no `app.compose.yml`: bind mount `/srv/stacks/nexit/data/nexit-archivos:/data/archivos`, `NEXIT_ARCHIVOS_DIR=/data/archivos`. Usuário da app UID/GID 1001. Se diretório ainda não existir:
 
 ```bash
-sudo mkdir -p /srv/stacks/distribuidora/data/nexit-archivos
-sudo chown 1001:1001 /srv/stacks/distribuidora/data/nexit-archivos
-sudo chmod 700 /srv/stacks/distribuidora/data/nexit-archivos
+sudo mkdir -p /srv/stacks/nexit/data/nexit-archivos
+sudo chown 1001:1001 /srv/stacks/nexit/data/nexit-archivos
+sudo chmod 700 /srv/stacks/nexit/data/nexit-archivos
 ```
 
 **Não copiar automaticamente Compose do Git para o stack em toda atualização**: o histórico mostra que isso foi feito uma vez com `cp compose.yml compose.yml.bak` e `cp app.compose.yml app.compose.yml.bak`. Hoje o Compose do stack tem arquivos e `.env` próprios; comparar antes de substituir e nunca sobrescrever `.env`/`app.env`. Não exibir senhas.
 
 ## ETAPA 4 — Build da aplicação
 
+**Última execução informada em 23/11/2026:** build com `15/15 FINISHED` para `nexit-app:teste`. Se a imagem já foi construída e nenhuma mudança funcional ocorreu, não é necessário reconstruí-la para seguir à ETAPA 5.
+
 Executar **no Git clone**, não na pasta Compose:
 
 ```bash
-cd /tmp/nexit-instalacao
-docker build -t nexit-app:teste .
+cd /home/proceit24/nexit-instalacao
+sudo docker build -t nexit-app:teste .
 ```
 
 **Obrigatório:** só avançar se o build terminar **FINISHED**, com exit code 0. Se falhar em TypeScript, `next build` ou prerender (como já ocorreu com `clientes`/`login`), não recriar o contêiner.
 
 ## ETAPA 5 — Recriar SOMENTE a aplicação
 
+**Próximo passo operacional após o build concluído em 23/11/2026:** recriar somente `nexit-app` usando o Compose efetivo de `/srv/stacks/nexit`. Esse procedimento causa breve interrupção da aplicação, mas não recria `nexit-db` nem altera o volume persistente.
+
 Executar **no stack Compose**:
 
 ```bash
-cd /srv/stacks/distribuidora
-docker compose -p nexit -f compose.yml -f app.compose.yml config --quiet
-docker compose -p nexit -f compose.yml -f app.compose.yml \
+cd /srv/stacks/nexit
+sudo docker compose -p nexit -f compose.yml -f app.compose.yml config --quiet
+sudo docker compose -p nexit -f compose.yml -f app.compose.yml \
   up -d --no-deps --force-recreate app
 ```
 
@@ -161,11 +181,11 @@ Não executar `docker compose down -v`, não remover volumes e não reiniciar de
 ## ETAPA 6 — Conferência após atualização
 
 ```bash
-docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}"
-docker logs --tail 50 nexit-app
-docker exec nexit-app sh -c 'printenv NEXIT_ARCHIVOS_DIR'
-docker inspect nexit-app --format '{{json .Mounts}}'
-docker exec nexit-db psql -U nexit_app -d nexit \
+sudo docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}"
+sudo docker logs --tail 50 nexit-app
+sudo docker exec nexit-app sh -c 'printenv NEXIT_ARCHIVOS_DIR'
+sudo docker inspect nexit-app --format '{{json .Mounts}}'
+sudo docker exec nexit-db psql -U nexit_app -d nexit \
   -c "SELECT COUNT(*) AS total, MAX(version) AS ultima FROM public.schema_migrations;"
 ```
 
@@ -175,11 +195,11 @@ O terminal histórico mostra `nexit-app`, `nexit-db`, `proceit-caddy` e Portaine
 
 - Este documento descreve **uma VM única de desenvolvimento/homologação**; não presumir staging separado.
 - Projeto não possui clientes reais ainda; **o responsável determinou não exigir backups nesta fase**. Isso é decisão consciente de risco, não afirmação de risco zero. Não adicionar backup obrigatório em toda resposta. Para operações destrutivas futuras, solicitar autorização específica.
-- `git`: somente `/tmp/nexit-instalacao`; `compose`: somente `/srv/stacks/distribuidora`.
+- `git`: somente `/home/proceit24/nexit-instalacao`; `compose`: somente `/srv/stacks/nexit`.
 - `postgres` como usuário BD não existe; usar `nexit_app`.
 - Runner de migration oficial (NEX-0xx) é a fonte de verdade; não copiar SQL individualmente e não propor containers auxiliares de PostgreSQL sem necessidade.
 - `--permitir-banco-real` é obrigatório porque o banco se chama `nexit`.
-- `app.compose.yml` existe tanto no Git quanto no stack, mas somente a **configuração efetiva** em `/srv/stacks/distribuidora` determina o ambiente.
+- `app.compose.yml` existe tanto no Git quanto no stack, mas somente a **configuração efetiva** em `/srv/stacks/nexit` determina o ambiente.
 - Atualização automática de banco e de aplicação são fases distintas. Deploy só após migrations pertinentes concluídas, armazenamento válido e build OK.
 - O código de Proveedores NEX-033…037, os privilégios e os triggers ainda precisam de validação real; checksums e status de aplicação devem ser conferidos no PostgreSQL.
 
@@ -187,30 +207,30 @@ O terminal histórico mostra `nexit-app`, `nexit-db`, `proceit-caddy` e Portaine
 
 ```bash
 # Git
-cd /tmp/nexit-instalacao
+cd /home/proceit24/nexit-instalacao
 git pull --ff-only origin feature/NEXIT-2026-001-banco-demo
 
 # Migrations (somente se houver pendências e autorização)
-docker exec nexit-db mkdir -p /tmp/nexit-migraciones
-docker cp documentacao/banco/nexit/v1/. nexit-db:/tmp/nexit-migraciones/
-docker exec -e PGHOST=/var/run/postgresql -e PGUSER=nexit_app -e PGDATABASE=nexit \
+sudo docker exec nexit-db mkdir -p /tmp/nexit-migraciones
+sudo docker cp documentacao/banco/nexit/v1/. nexit-db:/tmp/nexit-migraciones/
+sudo docker exec -e PGHOST=/var/run/postgresql -e PGUSER=nexit_app -e PGDATABASE=nexit \
   nexit-db bash /tmp/nexit-migraciones/scripts/aplicar-migraciones.sh --permitir-banco-real --solo-listar
 # Após conferir:
-docker exec -e PGHOST=/var/run/postgresql -e PGUSER=nexit_app -e PGDATABASE=nexit \
+sudo docker exec -e PGHOST=/var/run/postgresql -e PGUSER=nexit_app -e PGDATABASE=nexit \
   nexit-db bash /tmp/nexit-migraciones/scripts/aplicar-migraciones.sh --permitir-banco-real
 
 # Build (somente com banco e infraestrutura compatíveis)
-cd /tmp/nexit-instalacao
-docker build -t nexit-app:teste .
+cd /home/proceit24/nexit-instalacao
+sudo docker build -t nexit-app:teste .
 
 # Deploy apenas da app, depois de build OK
-cd /srv/stacks/distribuidora
-docker compose -p nexit -f compose.yml -f app.compose.yml config --quiet
-docker compose -p nexit -f compose.yml -f app.compose.yml up -d --no-deps --force-recreate app
+cd /srv/stacks/nexit
+sudo docker compose -p nexit -f compose.yml -f app.compose.yml config --quiet
+sudo docker compose -p nexit -f compose.yml -f app.compose.yml up -d --no-deps --force-recreate app
 
 # Conferência
-docker logs --tail 50 nexit-app
-docker exec nexit-db psql -U nexit_app -d nexit -c "SELECT COUNT(*) AS total, MAX(version) AS ultima FROM public.schema_migrations;"
+sudo docker logs --tail 50 nexit-app
+sudo docker exec nexit-db psql -U nexit_app -d nexit -c "SELECT COUNT(*) AS total, MAX(version) AS ultima FROM public.schema_migrations;"
 ```
 
 **NEX-039 e NEX-043 (checksum):** a NEX-039 já aplicada no banco real tem SHA-256 `6d5a5d3dea0f00521ab9a2bdcb5bb4722f187069a94198d12ae84793f6e38dab` (34 unidades da Tabela 5) e o arquivo versionado foi restaurado exatamente a essa versão; **não deve ser editada**. As 30 unidades da NT023 (111–140, incl. Caja 131/BX e Docena 113/DOC) entram pela migration incremental **NEX-043**, que só depende da NEX-039. Ordem: 038 → 039 → 040 → 041 → 042 → 043 (nenhuma depende de 043; os seeds/reconciliação de CJ e DOC exigem 043). Sem a 043 aplicada, vincular unidades 111–140 falha pela FK.
