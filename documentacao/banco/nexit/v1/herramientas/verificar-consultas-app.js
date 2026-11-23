@@ -1855,7 +1855,11 @@ function main(argv) {
   const ruta = path.join(__dirname, "c1-linea-base.json");
 
   if (argv.includes("--actualizar-linea-base")) {
-    fs.writeFileSync(ruta, JSON.stringify({ descripcion: "Consultas dinámicas que el verificador C1 NO puede validar (con su motivo). Una consulta nueva sin verificar hace fallar el CI; esta lista solo se actualiza con revisión.", noVerificables: informe.noVerificables.map((x) => x.id).sort(), motivos: Object.fromEntries(informe.noVerificables.map((x) => [x.id, x.motivo])) }, null, 1) + "\n");
+    // NEXIT-CI-R01: la justificación por entrada (revisiones: altas/bajas con su causa) se CONSERVA; regenerar ids y motivos nunca borra el historial de revisión.
+    const previa = fs.existsSync(ruta) ? JSON.parse(fs.readFileSync(ruta, "utf8")) : {};
+    const revisiones = Array.isArray(previa.revisiones) ? previa.revisiones : [];
+
+    fs.writeFileSync(ruta, JSON.stringify({ descripcion: "Consultas dinámicas que el verificador C1 NO puede validar (con su motivo). Una consulta nueva sin verificar hace fallar el CI; esta lista solo se actualiza con revisión.", noVerificables: informe.noVerificables.map((x) => x.id).sort(), motivos: Object.fromEntries(informe.noVerificables.map((x) => [x.id, x.motivo])), revisiones }, null, 1) + "\n");
     console.log(`línea base escrita: ${informe.noVerificables.length} NO_VERIFICABLE`);
 
     return 0;

@@ -18,6 +18,7 @@ type Modulo = {
   analizar: (a: Array<{ archivo: string; src: string; plantillas: unknown[] }>, p: (sql: string) => { ok: boolean; err: string }) => Informe;
   veredicto: (i: Informe, base: { noVerificables?: string[] }) => { fallas: number; nuevas: unknown[]; obsoletas: string[]; ok: boolean };
   leerArchivos: (raiz: string) => Array<{ archivo: string; src: string; plantillas: unknown[] }>;
+  idDe: (archivo: string, partes: Array<{ t: string; v: string }>) => string;
 };
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -250,6 +251,34 @@ export const ALC = (n: number) => BASE.split("$2").join(${"`"}$${"${"}n}${"`"});
     "WITH base AS (SELECT 1 AS n) SELECT n FROM base", "WITH base AS (SELECT 1 AS n) SELECT n FROM base WHERE n = $1 ORDER BY n", "WITH base AS (SELECT 1 AS n) SELECT n FROM base WHERE n = $1 ORDER BY n DESC",
   ], { total: 2, ok: 2, variantes: 3 }, 0]);
 
+  // ── NEXIT-CI-R01: consultas con marcadores CALCULADOS que desde PRE-VM-R02-D se analizan (antes se omitían en silencio). Si dependen de la ejecución quedan
+  //    NO VERIFICABLES con su motivo exacto: nunca un PREPARE sintético ni un PASS por conveniencia.
+  const fragCalculado = preparados(String.raw`export async function editar(db: Db, columnas: Array<[string, unknown]>) {
+  const sets = columnas.map(([n], i) => ${"`"}${"${"}n} = $${"${"}i + 3}${"`"});
+  sets.push(${"`"}pais_nombre = (SELECT nombre FROM paises WHERE codigo = $${"${"}columnas.length + 3})${"`"});
+  return db.query(${"`"}UPDATE proveedores x SET ${"${"}sets.join(", ")} WHERE x.id = $1 AND x.empresa_id = $2${"`"});
+}`);
+
+  igual("NEXIT-CI-R01 fragmento con marcador calculado agregado a un arreglo (sets.push(`… = $${columnas.length + 3}`)): NO VERIFICABLE con el motivo exacto, igual que su anfitriona UPDATE … ${sets.join}; no se prepara nada",
+    [fragCalculado.vistos, fragCalculado.inf.noVerificables.length, fragCalculado.inf.noVerificables.some((n) => n.motivo === "expresión de ejecución: columnas.length + 3")], [[], 2, true]);
+
+  const listaOtraFuncion = preparados(String.raw`const ALC = "d.empresa_id = $1";
+function filtros(c: { tipo?: string }) {
+  const params: unknown[] = [];
+  const cond: string[] = [];
+  if (c.tipo) { params.push(c.tipo); cond.push(${"`"}d.tipo = $${"${"}params.length + 2}${"`"}); }
+  return { params, sql: cond.length ? ${"`"} AND ${"${"}cond.join(" AND ")}${"`"} : "" };
+}
+export function construir(e: string, c: { tipo?: string }) {
+  const f = filtros(c);
+  const base = ${"`"}WHERE ${"${"}ALC}${"${"}f.sql}${"`"};
+  const params = [e, ...f.params];
+  return { sql: ${"`"}SELECT d.id FROM documentos d ${"${"}base} ORDER BY d.id LIMIT $${"${"}params.length + 1}${"`"} };
+}`);
+
+  igual("NEXIT-CI-R01 lista con LIMIT $${params.length + 1} cuyo filtro f.sql arma OTRA función (filtros(c) → {params, sql}): NO VERIFICABLE «f.sql» (no se inventa el filtro ni se prepara la consulta sin él)",
+    [listaOtraFuncion.vistos, listaOtraFuncion.inf.noVerificables.map((n) => n.motivo)], [[], ["expresión de ejecución: f.sql"]]);
+
   // ── El código REAL de la aplicación: línea base vigente y sin crecimiento silencioso
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const lineaBase = require(join(process.cwd(), "documentacao/banco/nexit/v1/herramientas/c1-linea-base.json")) as { noVerificables: string[]; motivos: Record<string, string> };
@@ -275,6 +304,36 @@ export const ALC = (n: number) => BASE.split("$2").join(${"`"}$${"${"}n}${"`"});
     return inf.anfitrionas.total >= 11 && inf.anfitrionas.ok === inf.anfitrionas.total && sueltas.length === 0 && preparadas.some((q) => q.startsWith("WITH docs AS (") && q.includes(" grt AS (SELECT grp.*"))
       && !inf.noVerificables.some((n) => n.id.startsWith("lib/reportes/ventas.ts"));
   })());
+
+  // ── NEXIT-CI-R01: revisión auditable de la línea base (4 altas, 7 bajas) sobre el código REAL
+  {
+    type Revision = { orden: string; altas: Array<{ id: string; justificacion: string }>; bajas: Array<{ ids: string[]; causa: string }> };
+    const rev = ((lineaBase as unknown as { revisiones?: Revision[] }).revisiones ?? []).find((r) => r.orden.startsWith("NEXIT-CI-R01"));
+    const ALTAS: Array<[string, string]> = [
+      ["app/api/proveedores/[id]/route.ts:5d92226dbd3c", "expresión de ejecución: columnas.length + 3"],
+      ["lib/facturacion/shared.ts:f09f679a9080", "expresión de ejecución: f.sql"],
+      ["lib/movimientos/historial.ts:d6889b02be11", 'expresión de ejecución: SELECT_FILAS.slice(0, SELECT_FILAS.indexOf("FROM movimientos_inventario m"))'],
+      ["lib/stock/shared.ts:e037e0b3e9a8", "variable de ejecución: filtro"],
+    ];
+    const LOTES = ["794224b8e3b1", "87b579f62810", "98f40b5a2b71", "9a90330b87b3", "9d66e832ea97", "d52c880973a3"].map((h) => `lib/reportes/lotes.ts:${h}`);
+    const BAJAS = [...LOTES, "lib/stock/shared.ts:f9e47cee5a4b"];
+    const preparadas: string[] = [];
+    const archivos = C1.leerArchivos(process.cwd());
+    const inf = C1.analizar(archivos, (sql) => { preparadas.push(sql.replace(/\s+/g, " ").trim()); return { ok: true, err: "" }; });
+    const lotes = archivos.find((a) => a.archivo === "lib/reportes/lotes.ts");
+    const idsLotes = new Set((lotes?.plantillas ?? []).map((p) => C1.idDe("lib/reportes/lotes.ts", (p as { partes: Array<{ t: string; v: string }> }).partes)));
+
+    igual("NEXIT-CI-R01 altas: las 4 consultas de marcadores calculados son NO VERIFICABLES con su motivo exacto, figuran en la línea base con ese motivo y con justificación de la revisión",
+      ALTAS.map(([id]) => [inf.noVerificables.find((n) => n.id === id)?.motivo ?? null, lineaBase.noVerificables.includes(id), lineaBase.motivos[id] ?? null, (rev?.altas ?? []).some((a) => a.id === id && a.justificacion.length > 40)]),
+      ALTAS.map(([, m]) => [m, true, m, true]));
+    igual("NEXIT-CI-R01 bajas: las 7 entradas retiradas no están en la línea base ni en los NO VERIFICABLES actuales y cada una tiene su causa documentada",
+      [BAJAS.filter((id) => lineaBase.noVerificables.includes(id) || id in lineaBase.motivos), BAJAS.filter((id) => inf.noVerificables.some((n) => n.id === id)), BAJAS.filter((id) => !(rev?.bajas ?? []).some((b) => b.ids.includes(id) && b.causa.length > 40))], [[], [], []]);
+    igual("NEXIT-CI-R01 lotes.ts: las seis plantillas retiradas SIGUEN en el código con el mismo id (no se borró nada) y ahora se verifican: sus consultas «WITH par AS (…)» llegan a PREPARE con el filtro de lote activo y el cte nunca se prepara suelto",
+      [LOTES.filter((id) => !idsLotes.has(id)), preparadas.some((q) => q.startsWith("WITH par AS (") && q.includes("FROM stock_lotes l") && /l\.codigo_lote ILIKE \$\d+/.test(q)), preparadas.some((q) => q.startsWith("par AS (")), inf.interpretadas.ok >= 5],
+      [[], true, false, true]);
+    cierto("NEXIT-CI-R01 stock/shared.ts: la consulta de productos con el «filtro» condicional sigue NO VERIFICABLE (no se resuelve la rama ni se toma un homónimo) con su NUEVA identidad tras C24/STK-D01",
+      inf.noVerificables.some((n) => n.id === "lib/stock/shared.ts:e037e0b3e9a8" && n.motivo === "variable de ejecución: filtro") && !preparadas.some((q) => q.includes("WHERE p.empresa_id = $1 AND p.controla_stock") && /p\.controla_stock AND p\.id = \$2/.test(q)));
+  }
 
   return fallos;
 }

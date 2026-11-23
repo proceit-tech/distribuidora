@@ -8,7 +8,7 @@
  * zoom, teclado, toque, lector de pantalla) queda para la homologación autorizada por el responsable.
  * Sin cambios de motor fiscal, APIs, SQL, migrations ni otros módulos: el CDC sigue siendo dato opaco mostrado tal cual (PRO-342-R05).
  */
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { contador } from "@/lib/clientes/contador-casos";
@@ -36,6 +36,52 @@ const contraste = (a: string, b: string) => {
 
   return (x + 0.05) / (y + 0.05);
 };
+
+// ── NEXIT-CI-R01 (UXR01-46): inventario de clases del módulo CSS por CONSUMIDORES REALES ────────────────────────────────────────────────────────
+/**
+ * Clases declaradas en los SELECTORES del CSS (sin comentarios, cadenas ni cuerpos de declaraciones): un valor como «0.5rem», «#0f9ca5», «url(x.svg)» o el
+ * preludio «@media (max-width: 40.5em)» no es una clase; las pseudo-clases (:hover, :is(…), ::before) se ignoran y el nombre se toma completo (también con guion).
+ */
+function clasesDeCss(css: string): string[] {
+  let t = sinComentariosCss(css).replace(/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/g, '""');
+
+  // Una sola pasada: los bloques más internos son los cuerpos de declaraciones; los selectores dentro de @media quedan (su llave exterior no contiene clases).
+  t = t.replace(/\{[^{}]*\}/g, ";");
+
+  return [...new Set([...t.matchAll(/\.(-?[_a-zA-Z][\w-]*)/g)].map((m) => m[1]))];
+}
+/** Nombre con el que un archivo importa el módulo CSS (import X from "./page.module.css"), o null si no lo importa. */
+const importacionCss = (src: string, modulo: string) => new RegExp(`import\\s+([A-Za-z_$][\\w$]*)\\s+from\\s+["']${modulo.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}["']`).exec(src)?.[1] ?? null;
+/** Clases que un consumidor usa con acceso estático (estilos.X); un acceso calculado (estilos[…]) no es inventariable y se informa aparte. */
+function usosDeEstilos(src: string, nombre: string) {
+  const n = nombre.replace(/[$]/g, "\\$&");
+
+  return { clases: new Set([...src.matchAll(new RegExp(`\\b${n}\\.([A-Za-z_][\\w]*)`, "g"))].map((m) => m[1])), calculado: new RegExp(`\\b${n}\\s*\\[`).test(src) };
+}
+/** Huérfanas (declaradas y no usadas por NINGÚN consumidor) y rotas (usadas por algún consumidor y no declaradas). */
+function inventarioCss(css: string, consumidores: Array<{ archivo: string; src: string }>, modulo = "./page.module.css") {
+  const declaradas = clasesDeCss(css);
+  const usadas = new Map<string, string[]>();
+  const sinImportar: string[] = [];
+  const calculados: string[] = [];
+
+  for (const c of consumidores) {
+    const nombre = importacionCss(c.src, modulo);
+
+    if (!nombre) { sinImportar.push(c.archivo); continue; }
+    const u = usosDeEstilos(c.src, nombre);
+
+    if (u.calculado) calculados.push(c.archivo);
+    for (const x of u.clases) usadas.set(x, [...(usadas.get(x) ?? []), c.archivo]);
+  }
+
+  return {
+    declaradas, usadas,
+    huerfanas: declaradas.filter((x) => !usadas.has(x)),
+    rotas: [...usadas.keys()].filter((x) => !declaradas.includes(x)).map((x) => `${x} (${(usadas.get(x) ?? []).join(", ")})`),
+    sinImportar, calculados,
+  };
+}
 
 export async function verificarCasosDocumentosUxR01(): Promise<string[]> {
   const fallos: string[] = [];
@@ -199,11 +245,33 @@ export async function verificarCasosDocumentosUxR01(): Promise<string[]> {
 
   // ══ 13. Solo se eliminan estilos locales sin uso confirmado ═════════════════════════════════════════════════════════════════════════════
   {
-    const clasesCss = [...new Set([...cssLimpio.matchAll(/\.([a-zA-Z][a-zA-Z0-9]*)/g)].map((m) => m[1]))];
-    const usadas = new Set([...pagina.matchAll(/estilos\.([a-zA-Z0-9]+)/g)].map((m) => m[1]));
+    // NEXIT-CI-R01: el módulo CSS lo consumen DIRECTAMENTE page.tsx y cancelacion-modal.tsx (mismo import). El inventario cuenta todos los consumidores reales
+    // del directorio (descubiertos por su import, no supuestos) y sigue rechazando clases huérfanas y referencias rotas; un consumidor nuevo exige revisar este caso.
+    const dir = "app/(private)/documentos";
+    const consumidores = readdirSync(join(process.cwd(), dir)).filter((f) => /\.tsx?$/.test(f)).sort()
+      .map((f) => ({ archivo: f, src: leer(`${dir}/${f}`) })).filter((c) => importacionCss(c.src, "./page.module.css") !== null);
+    const inv = inventarioCss(css, consumidores);
+    const MODAL = ["cancelacionFondo", "cancelacionCaja", "campoMotivo", "campoConfirmacion"];
 
-    cierto("UXR01-46 toda clase del CSS local se usa en page.tsx (estilos.X) y toda estilos.X existe en el CSS: no quedan reglas huérfanas ni referencias rotas",
-      clasesCss.length > 0 && clasesCss.every((c) => usadas.has(c)) && [...usadas].every((c) => clasesCss.includes(c)));
+    igual("UXR01-46 (actualizado NEXIT-CI-R01) toda clase del CSS local la usa algún consumidor real (page.tsx o cancelacion-modal.tsx, estilos.X) y toda estilos.X de ellos existe en el CSS: sin huérfanas, sin referencias rotas, sin acceso calculado",
+      [consumidores.map((c) => c.archivo), inv.declaradas.length > 0, inv.huerfanas, inv.rotas, inv.calculados], [["cancelacion-modal.tsx", "page.tsx"], true, [], [], []]);
+    igual("UXR01-46b las cuatro clases del modal de cancelación están declaradas en el CSS y las usa cancelacion-modal.tsx (no page.tsx): por eso el inventario de page.tsx solo daba un falso positivo",
+      MODAL.map((x) => [inv.declaradas.includes(x), inv.usadas.get(x) ?? []]), MODAL.map(() => [true, ["cancelacion-modal.tsx"]]));
+    {
+      const cssX = ".a { color: #0f9ca5; } .b:hover, :is(.c, .d)::before { margin: 0.5rem 1.25em; background: url(img.svg); }\n@media (max-width: 40.5em) { .e > .f { width: 2.5px; } }\n/* .comentada {} */ [data-x=\".noClase\"] .g {}";
+      const usa = (nombre: string, clases: string[]) => `import ${nombre} from "./page.module.css";\n` + clases.map((c) => `<i className={${nombre}.${c}} />`).join("\n");
+
+      igual("UXR01-46c selectores: se toman .a…g (con pseudo-clases :hover/:is/::before y dentro de @media); NO valores ni comentarios (#0f9ca5, 0.5rem, 1.25em, url(img.svg), 40.5em, 2.5px, .comentada, cadena «.noClase»)",
+        clasesDeCss(cssX).sort(), ["a", "b", "c", "d", "e", "f", "g"]);
+      igual("UXR01-46d una clase usada SOLO por un segundo consumidor real no es huérfana; una clase que nadie usa SÍ lo es",
+        [inventarioCss(cssX, [{ archivo: "p.tsx", src: usa("estilos", ["a", "b", "c", "d", "e", "f"]) }, { archivo: "m.tsx", src: usa("estilos", ["g"]) }]).huerfanas,
+          inventarioCss(cssX, [{ archivo: "p.tsx", src: usa("estilos", ["a", "b", "c", "d", "e", "f"]) }]).huerfanas], [[], ["g"]]);
+      igual("UXR01-46e una referencia a una clase inexistente en CUALQUIER consumidor se informa como rota (con el archivo); el nombre del import se respeta (s.X) y un consumidor que no importa el módulo no cuenta",
+        [inventarioCss(cssX, [{ archivo: "p.tsx", src: usa("estilos", ["a", "b", "c", "d", "e", "f", "g"]) }, { archivo: "m.tsx", src: usa("s", ["inexistente"]) }]).rotas,
+          inventarioCss(cssX, [{ archivo: "x.tsx", src: "<i className={estilos.a} />" }]).sinImportar], [["inexistente (m.tsx)"], ["x.tsx"]]);
+      igual("UXR01-46f un acceso calculado (estilos[clave]) no es inventariable y se informa (no se aprueba en silencio)",
+        inventarioCss(cssX, [{ archivo: "p.tsx", src: usa("estilos", ["a"]) + "\n<i className={estilos[clave]} />" }]).calculados, ["p.tsx"]);
+    }
     cierto("UXR01-47 retiradas SOLO reglas sin uso confirmado (cápsulas .sifen*, alertas .alerta*, .iconoNombre, .leyendaAyuda, .fiscalCabecera/.fiscalFases, tooltip ::after) y ningún otro archivo las usaba",
       !/\.(sifen|alertaInconsistencia|alertaTecnica|alertaIcono|iconoNombre|leyendaAyuda|fiscalCabecera|fiscalFases)\b/.test(cssLimpio) && !/estilos\.(sifen|alerta[A-Z])/.test(pagina) && !/page\.module\.css/.test(leer("app/(private)/documentos/kude-modal.tsx")));
   }

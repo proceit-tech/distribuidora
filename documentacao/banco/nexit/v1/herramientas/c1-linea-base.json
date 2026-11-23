@@ -8,6 +8,7 @@
   "app/api/productos/route.ts:9a86a204ae81",
   "app/api/proveedores/[id]/cuentas/[cuentaId]/resolucion/route.ts:b980cae7fa3f",
   "app/api/proveedores/[id]/gobernanza/route.ts:2ee8ee29cf3d",
+  "app/api/proveedores/[id]/route.ts:5d92226dbd3c",
   "app/api/proveedores/[id]/route.ts:cf8a505a8d63",
   "app/api/proveedores/route.ts:147fbb948541",
   "lib/clientes/aptitud-cliente.ts:352c0558b6a3",
@@ -17,7 +18,9 @@
   "lib/comercial/servidor.ts:bb50cfb3d373",
   "lib/facturacion/shared.ts:a6b014534425",
   "lib/facturacion/shared.ts:e0cccbb70a9e",
+  "lib/facturacion/shared.ts:f09f679a9080",
   "lib/movimientos/historial.ts:67cf9be9bbe1",
+  "lib/movimientos/historial.ts:d6889b02be11",
   "lib/productos/catalogos-admin.ts:0fcd439aca3f",
   "lib/productos/catalogos-admin.ts:42ea0d4149df",
   "lib/productos/catalogos-admin.ts:42ea0d4149df",
@@ -41,12 +44,6 @@
   "lib/reportes/kardex.ts:8306cb70c4f6",
   "lib/reportes/kardex.ts:b1fa26d7f88a",
   "lib/reportes/kardex.ts:babea44e7e9a",
-  "lib/reportes/lotes.ts:794224b8e3b1",
-  "lib/reportes/lotes.ts:87b579f62810",
-  "lib/reportes/lotes.ts:98f40b5a2b71",
-  "lib/reportes/lotes.ts:9a90330b87b3",
-  "lib/reportes/lotes.ts:9d66e832ea97",
-  "lib/reportes/lotes.ts:d52c880973a3",
   "lib/reportes/stock-general.ts:3848b6b53dd3",
   "lib/reportes/stock-general.ts:7882a89040f7",
   "lib/reportes/stock-general.ts:ecc0d79eeb26",
@@ -57,7 +54,7 @@
   "lib/stock/shared.ts:2166afb5852e",
   "lib/stock/shared.ts:472a00125eb1",
   "lib/stock/shared.ts:baefc63137bd",
-  "lib/stock/shared.ts:f9e47cee5a4b"
+  "lib/stock/shared.ts:e037e0b3e9a8"
  ],
  "motivos": {
   "app/api/clientes/route.ts:289e5c8b5b20": "tabla interpolada sin configuración CFG en el archivo: tabla",
@@ -96,12 +93,6 @@
   "lib/reportes/kardex.ts:8306cb70c4f6": "variable de ejecución: unidadSql",
   "lib/reportes/kardex.ts:babea44e7e9a": "variable de ejecución: unidadSql",
   "lib/reportes/kardex.ts:1fd3f1de14d5": "variable de ejecución: unidadSql",
-  "lib/reportes/lotes.ts:87b579f62810": "expresión de ejecución: \" AND \" + donde.join(\" AND \")",
-  "lib/reportes/lotes.ts:98f40b5a2b71": "expresión de ejecución: \" AND \" + donde.join(\" AND \")",
-  "lib/reportes/lotes.ts:9a90330b87b3": "expresión de ejecución: \" AND \" + donde.join(\" AND \")",
-  "lib/reportes/lotes.ts:794224b8e3b1": "expresión de ejecución: \" AND \" + donde.join(\" AND \")",
-  "lib/reportes/lotes.ts:d52c880973a3": "expresión de ejecución: \" AND \" + donde.join(\" AND \")",
-  "lib/reportes/lotes.ts:9d66e832ea97": "expresión de ejecución: \" AND \" + donde.join(\" AND \")",
   "lib/reportes/stock-general.ts:7882a89040f7": "argumentos no literales en SUMAS(…)",
   "lib/reportes/stock-general.ts:3848b6b53dd3": "variable de ejecución: loteDet",
   "lib/reportes/stock-general.ts:ecc0d79eeb26": "variable de ejecución: loteDet",
@@ -109,9 +100,64 @@
   "lib/reportes/valorizacion.ts:9b1444c321ff": "expresión de ejecución: \"WHERE \" + donde.join(\" AND \")",
   "lib/reportes/valorizacion.ts:0bc325792133": "expresión de ejecución: \"WHERE \" + donde.join(\" AND \")",
   "lib/reportes/valorizacion.ts:194ac83573c0": "expresión de ejecución: \"WHERE \" + donde.join(\" AND \")",
-  "lib/stock/shared.ts:f9e47cee5a4b": "variable de ejecución: filtro",
   "lib/stock/shared.ts:2166afb5852e": "variable de ejecución: filtroS",
   "lib/stock/shared.ts:baefc63137bd": "variable de ejecución: filtroC",
-  "lib/stock/shared.ts:472a00125eb1": "variable de ejecución: filtroR"
- }
+  "lib/stock/shared.ts:472a00125eb1": "variable de ejecución: filtroR",
+  "app/api/proveedores/[id]/route.ts:5d92226dbd3c": "expresión de ejecución: columnas.length + 3",
+  "lib/facturacion/shared.ts:f09f679a9080": "expresión de ejecución: f.sql",
+  "lib/movimientos/historial.ts:d6889b02be11": "expresión de ejecución: SELECT_FILAS.slice(0, SELECT_FILAS.indexOf(\"FROM movimientos_inventario m\"))",
+  "lib/stock/shared.ts:e037e0b3e9a8": "variable de ejecución: filtro"
+ },
+ "revisiones": [
+  {
+   "orden": "NEXIT-CI-R01 (23/11/2026)",
+   "base": "HEAD 0f72bd9aeeabad19d0d458bd85af96c5584112d5; evidencia: CI automático nexit-banco-ci run 44791651890 sobre f15a2b2 (C1: 463 consultas, 0 FALLAS de PREPARE, 54 NO VERIFICABLES, 4 nuevas, 7 obsoletas).",
+   "procedimiento": "Identidad = archivo + sha1(plantilla cruda con las interpolaciones ${…} literales y espacios normalizados)[0:12] (idDe). Los ids nuevos se calcularon sobre el texto fuente de cada plantilla con ese mismo algoritmo, validado contra ids ya existentes (lib/facturacion/shared.ts:e0cccbb70a9e; lib/stock/shared.ts:f9e47cee5a4b sobre bfcf5ac~1; lib/reportes/lotes.ts:98f40b5a2b71 y 9a90330b87b3). Motivo = el que informa el verificador. Ningún SQL funcional modificado. --actualizar-linea-base conserva esta lista de revisiones.",
+   "altas": [
+    {
+     "id": "app/api/proveedores/[id]/route.ts:5d92226dbd3c",
+     "linea": 313,
+     "clasificacion": "NO VERIFICABLE genuina (fragmento de una anfitriona no verificable)",
+     "justificacion": "Fragmento «pais_nombre = (SELECT nombre FROM referencia_geografica_paises WHERE codigo = $${columnas.length + 3})» agregado con push al arreglo sets: el número del marcador depende de cuántas columnas cambian en la edición (dato de ejecución). Su consulta anfitriona «UPDATE proveedores x SET ${sets.join(\", \")} …» (cf8a505a8d63) ya es NO VERIFICABLE por el mismo arreglo. Hasta PRE-VM-R02-D no se analizaba (solo se reconocían marcadores fijos $n): no es SQL nuevo ni inválido, es un falso negativo anterior que ahora queda visible."
+    },
+    {
+     "id": "lib/facturacion/shared.ts:f09f679a9080",
+     "linea": 268,
+     "clasificacion": "NO VERIFICABLE genuina (filtros armados en otra función y orden indexado por un dato de ejecución)",
+     "justificacion": "Lista de Documentos electrónicos (construirConsultas().lista): ${base} incluye f.sql, que arma la función filtros(c) en otro alcance y devuelve {params, sql}; el orden sale de ORDEN[c.orden](dir) indexado por un dato de ejecución; LIMIT/OFFSET usan marcadores calculados. Hermana de la consulta de conteo ya registrada (e0cccbb70a9e, mismo motivo f.sql). Hasta PRE-VM-R02-D no se analizaba por usar solo marcadores calculados."
+    },
+    {
+     "id": "lib/movimientos/historial.ts:d6889b02be11",
+     "linea": 96,
+     "clasificacion": "NO VERIFICABLE genuina (recorte de cadena en ejecución y filtros de otra función)",
+     "justificacion": "Lista del historial de Movimientos (construirConsultas().lista): proyección SELECT_FILAS.slice(0, SELECT_FILAS.indexOf(…)) (forma no soportada por la resolución exacta), ${base} con FROM_FILAS y f.sql de filtros(c, 3) (otra función), ORDEN[c.orden] de ejecución y LIMIT/OFFSET calculados. Hermana de la plantilla base ya registrada (67cf9be9bbe1, motivo FROM_FILAS). Hasta PRE-VM-R02-D no se analizaba por usar solo marcadores calculados."
+    },
+    {
+     "id": "lib/stock/shared.ts:e037e0b3e9a8",
+     "linea": 34,
+     "clasificacion": "NO VERIFICABLE genuina (misma consulta, texto cambiado)",
+     "justificacion": "Consulta de productos de leerStock antes registrada como f9e47cee5a4b: C24/STK-D01 (bfcf5ac, 19/10/2026, posterior a la línea base del 14/10/2026) le agregó ${filtroAlcanceS} y por eso cambió su identidad. El motivo sigue siendo la variable local condicional «filtro» con $2, que por diseño NO se resuelve (regresión C1-R03-01: no se toma un homónimo ni se adivina la rama)."
+    }
+   ],
+   "bajas": [
+    {
+     "ids": [
+      "lib/reportes/lotes.ts:794224b8e3b1",
+      "lib/reportes/lotes.ts:87b579f62810",
+      "lib/reportes/lotes.ts:98f40b5a2b71",
+      "lib/reportes/lotes.ts:9a90330b87b3",
+      "lib/reportes/lotes.ts:9d66e832ea97",
+      "lib/reportes/lotes.ts:d52c880973a3"
+     ],
+     "causa": "Ahora VERIFICADAS, no eliminadas: las seis plantillas siguen en el código con el mismo id (el cte par/base/ex/fil/lot y las cinco consultas «WITH ${cte} …»). Desde PRE-VM-R02-D el intérprete acotado reconstruye donde.join(\" AND \") y post.join(\" AND \") con la clausura p(): las cinco consultas pasan a INTERPRETADAS (todas sus combinaciones llegan a PREPARE) y el cte queda como FRAGMENTO cubierto por ellas. Run 44791651890: 7 interpretadas / 111 combinaciones, 11 fragmentos cubiertos, 0 FALLAS."
+    },
+    {
+     "ids": [
+      "lib/stock/shared.ts:f9e47cee5a4b"
+     ],
+     "causa": "Texto de la consulta cambiado por C24/STK-D01 (bfcf5ac); sustituida por lib/stock/shared.ts:e037e0b3e9a8 con el mismo motivo (ver altas)."
+    }
+   ]
+  }
+ ]
 }
