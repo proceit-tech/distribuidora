@@ -11,7 +11,7 @@ services:
       NEXIT_ARCHIVOS_DIR: /data/archivos
 
     volumes:
-      - /srv/stacks/distribuidora/data/nexit-archivos:/data/archivos
+      - /srv/stacks/nexit/data/nexit-archivos:/data/archivos
 
     expose:
       - "3000"
