@@ -33,6 +33,44 @@ El modo visual de BSERP es una referencia secundaria de que se pueden presentar 
 6. **Diseño responsivo profesional:** revisión visual comparativa en desktop de 1366 y 1920 px y mobile (320–720), sin iconos minúsculos, sin columnas superpuestas, sin información crítica inaccesible. Accesibilidad teclado, focus, `aria-label`, tooltip no truncado por scroll, contraste y estados por símbolo+color.
 7. **Sin regresión de negocio:** conservar filtros/orden/paginación/selección por contexto, UTC vs hora mostrada, bigint/NUMERIC sin pérdida, multiempresa/sucursal, ACL, FE/NCE, CDC, gateway, KuDE modal y datos existentes. Si un ajuste requiere API nueva, SQL o cambio de estado fiscal, **DETENER esa parte** y documentar dependencia en vez de extender el scope.
 
+## Anexo vinculante — comparación explícita de ambas capturas de la competencia
+
+Estas observaciones **derivan de lo visible en las dos capturas aportadas por el responsable**, no prueban operaciones de backend. **Las dos imágenes son de la competencia** y se complementan: una vista con panel de filtros/resumen avanzado y una vista con filtros compactos, leyenda y fila operativa. **NO** asumir que la competencia tiene exactamente cuatro iconos en todas sus variantes: distinguir estados visibles y leyenda, y satisfacer el requisito NEXIT de cuatro fases independientes sin sobrecarga.
+
+### Lista visual obligatoria de comparación
+
+| Área | Referencia vista en competencia | Obligación NEXIT R01 |
+|---|---|---|
+| Encabezado | Título claro de Documentos/Facturas electrónicas, en una cabecera ordenada | Utilizar título y contexto actuales sin desperdiciar altura; no rediseñar navegación global |
+| Filtros avanzados | Contenedor `Filtros` plegable; controles tipo Nro. lote, sucursal, fecha emisión, fecha firma; checkboxes para estados/ocultar ciertos grupos | Separar filtros rápidos y avanzados **SOLO si cada filtro tiene contrato real**; si fecha firma, lote u otros no existen en API, registrarlos como dependencia y no dibujar selectores falsos; conservar filtros actuales |
+| Tipo de documento | Opciones FE, NCE, NDE, NRE, AFE con marca visual diferenciada | Mostrar solamente tipos soportados/habilitados; no inventar FE/NCE ni cambio de numeración/serie |
+| Resumen | Sección de tarjetas compactas para pendientes de envío/respuesta, aprobados/rechazados, estado de correo, total y otras categorías | Mantener KPIs útiles con nombre/alcance inequívoco, fuente REAL y semántica independiente; no cambiar SQL global/filtrado sin autorización; categorías sin fuente quedan pendientes y NO simuladas |
+| Selección | Casillas de selección, toolbar de consulta/reenvío agrupado y exportación visibles en la referencia | Conservar selección real actual; operaciones masivas/exportación SOLO si backend/ACL existen; de lo contrario indicar explícitamente no disponibles sin botones falsamente operativos |
+| Agrupación | Área para organizar/arrastrar encabezados o agrupar columnas | No simular drag/drop o grupo si no hay lógica; documentar como fase futura separada |
+| Tabla | Tabla blanca compacta con Acciones, Nro. Factura, Fecha Emisión, RUC/CI, Razón Social, Monto, Estado, Eventos; FE/NCE como marcas pequeñas | Usar esta jerarquía visual en NEXIT; alinear importes y monedas; condensar metadatos, sin sacrificar serie fiscal, orden y relación NCE/FE |
+| Acciones | Iconografía operacional pequeña de colores (PDF, XML/archivo, consulta, correo), por documento | Separar completamente iconos **de acción** de iconos **de estado**. Disponibilidad real y tooltip obligatorio; XML y correo sin endpoint confirmado quedan inactivos |
+| Estado | Símbolos pequeños y secuenciales en la línea; leyenda independiente de significados | Mostrar SIEMPRE por documento **Envío, XML/CDC, SIFEN y Correo**, desde `iconosEstado`; icono SIFEN expresa estado real (incluidos rechazados); texto grande `Rechazado` NO sustituye cuatro fases; no confundir ACK, XML y aprobación |
+| Eventos | Selector/acción contextual compacta en cada línea | Evitar tres líneas repetidas por factura; mostrar situación acreditada o ausencia de información; no fingir `Documento cancelado` sin evento oficial correlacionado, sin habilitar cancelación/inutilización ficticia |
+| Lista y paginación | Selector de registros por página, búsqueda local visible y controles compactos | Preservar paginación/búsqueda server-side, límites reales y filtros; no ofrecer 25/50/100 si API no lo soporta; la lista no debe ocultar columnas críticas |
+| Usabilidad | Los iconos y textos principales caben en una misma línea operativa sin enormes tarjetas por factura | Densidad y contraste profesional a 1366 y 1920 px; no copiar los colores corporativos de competencia; mobile muestra cuatro estados y acciones accesibles sin superponer |
+
+### Criterios explícitos de aceptación visual/funcional
+
+- **A01:** En desktop, la fila conserva identificación fiscal, serie si existe, FE/NCE, fecha/hora, cliente, moneda/importe, columna de Acciones, cuatro estados y Eventos, con alineación limpia. La captura de referencia manda en jerarquía, no en copia de estilos.
+- **A02:** Ningún documento requiere abrir `Historial técnico` para identificar Envío, XML/CDC, SIFEN o Correo. Los cuatro se representan con iconos y tooltips de significado inequívoco.
+- **A03:** Documento real `RECHAZADO`: indicador SIFEN señala rechazo; el detalle muestra código y motivo cuando están registrados. `APROBADO`, `PENDIENTE`, `XML firmado`, errores de red/gateway y correo permanecen categorías independientes sin reclasificar.
+- **A04:** Acciones inactivas XML/correo no simulan uso; KuDE y consulta conservan ACL y sus guardas, sin reenvío accidental ni doble clic.
+- **A05:** Eventos se leen en formato compacto. "Sin información" no equivale a "sin eventos". Cancelación/Inutilización indisponibles se explican en contexto, no como texto repetitivo por fila; nunca se emite un evento nuevo en este trabajo.
+- **A06:** Los filtros actuales operan sin mezclas de recortes/empresas, sin hacer accionables datos obsoletos durante debounce y sin reset inesperado de selección/página; los filtros nuevos sin soporte se documentan, no se fingen.
+- **A07:** KPI y contador RECHAZADO conservan el valor del backend sin alterar estados ni datos de producción. Antes de afirmar que hay errores de clasificación, solicitar evidencia del campo persistido, intentos SIFEN y código/mensaje, mediante diagnóstico **solo escrito**, jamás ejecutado por Claude.
+- **A08:** Monto fiscal se representa con texto DECIMAL exacto, PYG y monedas extranjeras sin truncamiento/redondeos espurios; nombres/RUC/número no se cortan sin tooltip y identificación accesible.
+- **A09:** A 1366px y 1920px, las cuatro fases son legibles, la tabla no desperdicia espacio ni produce superposición. En móvil, 320–720px conserva estados y acciones con foco/teclado/touch.
+- **A10:** La comparación documenta de forma verificable, por cada una de las dos imágenes: elementos reproduzibles, no soportados, diferencias con NEXIT y decisiones UX; no declara "igual a la competencia" sin captura de NEXIT renderizada y examinada.
+
+### Restricción adicional de implementación
+
+Esta orden es un **correctivo UI R01, no un proyecto nuevo de backend**. No añadir nuevas opciones de filtros, agrupamiento, exportación, consulta masiva, envio masivo, blacklist, fechas firma o controles de reproceso cuando carecen de operación y autorización. Aunque figuren en la referencia, declararlos `PENDIENTE / requiere orden separada`. Preservar los indicadores ya existentes y su consulta de resumen, sin hacerlos desaparecer solo para ganar espacio; reorganizar únicamente la presentación en la medida requerida por la competencia.
+
 ## Alcance de archivos y seguridad
 
 Autorizada exclusivamente la **autoría de UI de Documentos electrónicos y casos escritos de regresión** en archivos existentes directamente necesarios, especialmente `app/(private)/documentos/page.tsx`, `app/(private)/documentos/page.module.css` y los casos pertinentes. Reutilizar `lib/facturacion/presentacion-sifen.ts` sin modificar su contrato fiscal; tocar helpers puros SOLO si demuestra necesidad y sin reinterpretar estados. Ninguna biblioteca visual nueva sin justificación y autorización.
