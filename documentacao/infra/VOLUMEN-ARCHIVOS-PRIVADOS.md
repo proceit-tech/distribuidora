@@ -1,8 +1,8 @@
 # Volumen de archivos privados (documentos de Clientes) — preparación para la VM
 
-**Estado:** PREPARADO EN GIT, **NO EJECUTADO**. Ninguna IA accede a la VM, a Docker ni crea el volumen: los pasos siguientes los ejecuta el responsable humano, con revisión, tras publicar el código. Decisión del responsable (2026-10-11): archivos de documentos en **almacenamiento privado dentro de la propia VM**, en **volumen persistente separado**, fuera de `public/`, sin URL pública, con carga y descarga autenticadas y aisladas por `empresa_id`.
+**Estado real verificado en VM el 23/11/2026: MONTADO Y ACCESIBLE.** El responsable confirmó mediante SSH el bind mount `/srv/stacks/nexit/data/nexit-archivos:/data/archivos`, `NEXIT_ARCHIVOS_DIR=/data/archivos`, UID/GID 1001:1001, modo 700, lectura y escritura **OK** desde `nexit-app`. No se ejecutó ningún comando remoto por un agente de IA. Las instrucciones de preparación más abajo son históricas o aplicables solo cuando falte ese recurso; no crear el directorio ni cambiar propietario/permisos si ya están correctos. Política de 2026-10-11: documentos privados por `empresa_id`, persistentes fuera de `public/`.
 
-## Configuración real de Docker Compose — confirmada 2026-10-11
+## Configuración actual de Docker Compose — reconfirmada 23/11/2026
 
 Fuente: salida de `docker inspect nexit-app` proporcionada por el responsable de la VM; no inferir nombres de los archivos por su presencia en el directorio.
 
@@ -11,22 +11,24 @@ Fuente: salida de `docker inspect nexit-app` proporcionada por el responsable de
 | Proyecto Compose | `nexit` |
 | Servicio Compose de la aplicación | `app` (**no** `nexit-app`) |
 | Contenedor de la aplicación | `nexit-app` |
-| Primer archivo Compose | `/srv/stacks/distribuidora/compose.yml` |
-| Segundo archivo Compose | `/srv/stacks/distribuidora/app.compose.yml` |
-| Directorio del stack | `/srv/stacks/distribuidora` |
+| Primer archivo Compose | `/srv/stacks/nexit/compose.yml` |
+| Segundo archivo Compose | `/srv/stacks/nexit/app.compose.yml` |
+| Directorio del stack | `/srv/stacks/nexit` |
 | Contenedor PostgreSQL | `nexit-db` |
 | Banco / usuario informado por el entorno | `nexit` / `nexit_app` |
 
 Comando de referencia para operar Compose en este entorno (primero inspeccionar `config` antes de cualquier recreación):
 
 ```bash
-cd /srv/stacks/distribuidora
-docker compose -p nexit -f compose.yml -f app.compose.yml config --services
+cd /srv/stacks/nexit
+sudo docker compose -p nexit -f compose.yml -f app.compose.yml config --services
 ```
 
 El repositorio GitHub contiene documentación y código de la aplicación, pero **no contiene los archivos Compose reales ni los archivos .env del stack de la VM**. Se deben inspeccionar los Compose efectivos antes de editar, sin exponer credenciales de los archivos de entorno. Nunca volver a solicitar al responsable que descubra de cero los nombres de proyecto, servicio o archivos ya confirmados; volver a inspeccionar solo si la infraestructura cambia.
 
-Estado informado 2026-10-11: migrations `NEX-001` hasta `NEX-032` registradas en `schema_migrations` (`32` filas); contenedor `nexit-app` en ejecución con imagen `nexit-app:teste`, Next.js 16.2.6. Esto no certifica homologación funcional ni confirma que el volumen de archivos esté montado.
+Histórico de 2026-10-11: migrations `NEX-001` hasta `NEX-032` registradas en `schema_migrations` (`32` filas); contenedor `nexit-app` en ejecución con imagen `nexit-app:teste`, Next.js 16.2.6. Esto no certifica homologación funcional ni confirma que el volumen de archivos esté montado.
+
+**Estado actualizado de migrations (23/11/2026):** la VM tiene NEX-001 a NEX-083 registradas, incluidas NEX-082 y NEX-083 con verificación posterior aprobada. El build de `nexit-app:teste` terminó con éxito; el último paso pendiente de confirmación es recrear y verificar el contenedor `nexit-app`. Git permanente: `/home/proceit24/nexit-instalacao`; Compose efectivo: `/srv/stacks/nexit`. No mezclar ni copiar archivos `.env`/`app.env` desde Git.
 
 ## Qué hace el código
 
@@ -48,14 +50,14 @@ Estado informado 2026-10-11: migrations `NEX-001` hasta `NEX-032` registradas en
 
 ## Pasos para el responsable (cuando decida aplicarlo)
 
-Configuración real de Docker Compose identificada mediante `docker inspect` por el responsable el 2026-10-11 (archivos de ejecución fuera del Git). El montaje privado todavía no está confirmado como aplicado; validar configuración efectiva antes de reiniciar.
+Configuración de Docker Compose identificada por el responsable en 2026-10-11 y **validada nuevamente el 23/11/2026** por `docker inspect` y pruebas de lectura/escritura. El montaje privado está aplicado en la VM. Revalidar la configuración efectiva antes de cualquier recreación del contenedor.
 
 1. **Copia de seguridad previa** de la base y de la configuración del stack.
 2. **Directorio del volumen en el host** (ejemplo, ajustar a la convención de la VM):
    ```bash
-   sudo mkdir -p /srv/stacks/distribuidora/data/nexit-archivos
-   sudo chown 1001:1001 /srv/stacks/distribuidora/data/nexit-archivos
-   sudo chmod 700 /srv/stacks/distribuidora/data/nexit-archivos
+   sudo mkdir -p /srv/stacks/nexit/data/nexit-archivos
+   sudo chown 1001:1001 /srv/stacks/nexit/data/nexit-archivos
+   sudo chmod 700 /srv/stacks/nexit/data/nexit-archivos
    ```
 3. **Compose** — en el servicio `app` (contenedor `nexit-app`; archivos del stack fuera del Git), montar el directorio y definir la variable:
    ```yaml
@@ -64,10 +66,10 @@ Configuración real de Docker Compose identificada mediante `docker inspect` por
        environment:
          NEXIT_ARCHIVOS_DIR: /data/archivos
        volumes:
-         - /srv/stacks/distribuidora/data/nexit-archivos:/data/archivos
+         - /srv/stacks/nexit/data/nexit-archivos:/data/archivos
    ```
    (Alternativa: volumen con nombre `nexit_archivos` declarado en `volumes:`; igual de válido. Lo importante: **persistente y fuera del contenedor**.)
-4. **Aplicar las migraciones** NEX-028 (documentos como archivo), NEX-029 (auditoría de conversiones), NEX-030 (autoría de la carga inicial), NEX-031 (exclusión lógica, versiones y auditoría de documentos) y NEX-032 (día del mes de entrega) de Clientes y, para **Proveedores**, NEX-033 (nombres 255 y código inmutable), NEX-034 (auditoría y permisos de gobernanza), NEX-035 (aprobación de cuentas bancarias) y NEX-036 (documentos como archivos privados y retenciones con certificado) con el procedimiento habitual (`scripts/aplicar-migraciones.sh`), después de las NEX-022…NEX-027 pendientes y de validar cada una según lo acordado.
+4. **Migraciones ya aplicadas en esta VM (registro confirmado al 23/11/2026):** NEX-028…036, NEX-041/042 y todas las demás hasta NEX-083. No ejecutarlas manualmente otra vez. Para futuras versiones, consultar `schema_migrations`, ejecutar los preflights autorizados y usar exclusivamente `scripts/aplicar-migraciones.sh` con checksum/transacción. El runner omite las versiones idénticas y aborta si el archivo histórico fue editado.
 5. **Reconstruir/desplegar** la aplicación con el procedimiento habitual.
 6. **Verificación operativa** (sin exponer datos): cargar un PDF de prueba a un cliente de prueba, descargarlo, confirmar que el archivo existe en el host bajo `<empresa_id>/clientes/<cliente_id>/…` con permisos `600`, y que **no** es accesible por ninguna URL pública ni sin sesión (`GET /api/clientes/{id}/documentos/{docId}` sin cookie → 401).
 7. **Respaldo del volumen**: incluir el directorio en la copia de seguridad externa junto con el dump de PostgreSQL; base y archivos deben restaurarse juntos (la base referencia la clave del archivo).
@@ -82,7 +84,7 @@ Configuración real de Docker Compose identificada mediante `docker inspect` por
 - Sin análisis antivirus ni conversión (la política propuesta solo admite formatos de documento/imagen con firma verificada y se entregan siempre como descarga, nunca inline).
 - Las variables del Compose reales y el nombre exacto del directorio dependen del stack de la VM, que no está en este repositorio.
 
-## Productos (NEX-041, no aplicada)
+## Productos (NEX-041 — migración histórica, aplicada en la VM al 23/11/2026)
 
 - Los documentos técnicos y la foto principal de Productos usan el MISMO volumen y la variable `NEXIT_ARCHIVOS_DIR`, con claves `<empresa>/productos/<producto>/<uuid>`. No hay configuración adicional ni cambio de propietario (UID 1001).
 - Orden de aplicación: NEX-041 después de NEX-037 y NEX-039 (envoltorio de grants). La reversión `scripts/reversion-NEX-041.sql` **aborta** si hay archivos, versiones, fotos o auditoría de Productos.
