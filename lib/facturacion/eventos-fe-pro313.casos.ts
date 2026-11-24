@@ -266,8 +266,9 @@ export async function verificarCasosEventosFePro313(): Promise<string[]> {
       /export const CANCELACION_FE_OPERATIVA = false as const;/.test(modulo) && !/cancelacion_dte/.test(sinComentarios(shared)));
     cierto("P313-11b el módulo de eventos es puro y no toca stock/inventario ni escribe estado (sin node:, sin fetch, sin SQL)",
       !/stock|inventario/i.test(sinLiterales(sinComentarios(modulo))) && !/from "node:|fetch\(|SELECT |UPDATE |INSERT /.test(sinComentarios(modulo)));
-    cierto("P313-11c la pantalla calcula la elegibilidad con el instante del SERVIDOR (generadoMs), no con el reloj del navegador; «Cancelar documento» solo abre la modal si está disponible",
-      /ahoraMs: datos\?\.generadoMs \?\? Number\.NaN/.test(pagina) && !/Date\.now\(\)/.test(pagina) && /disponible=\{cancelacion\.disponible\} motivo=\{eventos\.operacion\} alActivar=\{\(\) => setCancelando\(d\)\}/.test(pagina) && /generadoMs: Date\.now\(\)/.test(shared));
+    // PRO-365-R02-C02: el motivo de primera capa sale de eventosOperador (eventosVista.operacion); la regla de apertura no cambia.
+    cierto("P313-11c (actualizado PRO-365-R02-C02) la pantalla calcula la elegibilidad con el instante del SERVIDOR (generadoMs), no con el reloj del navegador; «Cancelar documento» solo abre la modal si está disponible",
+      /ahoraMs: datos\?\.generadoMs \?\? Number\.NaN/.test(pagina) && !/Date\.now\(\)/.test(pagina) && /disponible=\{cancelacion\.disponible\} motivo=\{eventosVista\.operacion\} alActivar=\{\(\) => setCancelando\(d\)\}/.test(pagina) && /generadoMs: Date\.now\(\)/.test(shared));
     cierto("P313-11d segunda capa: eventos en lista ordenada con estado, motivo, detalle y fecha («Sin información» si falta), separados del estado de la FE; FechaRetorno solo como candidata",
       /<ol className=\{estilos\.listaEventos\}>/.test(pagina) && /Motivo: \{e\.motivo \?\? "Sin información"\}/.test(pagina) && /Fecha: \{e\.fecha \?\? "Sin información"\}/.test(pagina) && /candidata, sin confirmar significado ni zona horaria/.test(pagina));
     cierto("P313-11e modal: diálogo accesible, Volver sin efectos, motivo obligatorio y confirmación explícita; Escape cierra; foco atrapado",
