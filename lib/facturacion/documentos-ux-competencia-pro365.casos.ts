@@ -144,7 +144,7 @@ export async function verificarCasosDocumentosUxCompetenciaPro365(): Promise<str
     /min-width: 1100px/.test(regla(css, "table.tablaDocs")) && /padding: 6px 10px;/.test(regla(css, "table.tablaDocs > tbody > tr > td")) && /table\.tablaDocs > thead th \{\s*padding: 8px 10px;/.test(cssLimpio) &&
     /min-width: 28px;/.test(regla(css, ".estado .icono")) && /@media \(max-width: 720px\) \{[\s\S]*\.estado \.icono \{\s*min-width: 36px;/.test(cssLimpio));
   cierto("PRO365-R02-10 leyenda compacta en UNA franja: «Estado: Envío · XML/CDC · SIFEN · Correo» + símbolos; la explicación larga queda solo para lectores de pantalla",
-    /<span><strong>Estado:<\/strong> Envío · XML\/CDC · SIFEN · Correo<\/span>/.test(pagina) && /<span className=\{estilos\.srSolo\}>Envío es la recepción del gateway; XML\/CDC indica si la API informó el CDC y no es aprobación; SIFEN es el resultado fiscal\./.test(pagina) &&
+    /<span>\s*<strong>Estado:<\/strong>\s*Envío · XML\/CDC · SIFEN · Correo\s*<\/span>/.test(pagina) /* C01: admite espacios y saltos de línea del JSX formateado */ && /<span className=\{estilos\.srSolo\}>Envío es la recepción del gateway; XML\/CDC indica si la API informó el CDC y no es aprobación; SIFEN es el resultado fiscal\./.test(pagina) &&
     /padding: 4px 14px;/.test(regla(css, ".leyendaEstados")));
   igual("PRO365-R02-11 acciones intactas y distintas de los estados: KuDE y Consulta activas, XML y Correo deshabilitados con su motivo",
     accionesFila(true, { editar: true }, true, "").map((a) => [a.clave, a.disponible]), [["kude", true], ["xml", false], ["consulta", true], ["correo", false]]);
