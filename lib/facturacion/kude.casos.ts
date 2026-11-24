@@ -329,10 +329,10 @@ export async function verificarCasosKude(): Promise<string[]> {
 
     const conCdc = mundo([nceInc({ cdc: cdcDe("NCE", "001", "003", "0090004") })]);
 
-    const inc08 = await falla(conCdc, gateway(() => ok({}, PDF, cdcDe("NCE", "001", "003", "0090004", EMISOR_OTRO))), E1, U1, D(1));
+    const inc08 = await obtenerKude(conCdc.db, E1, U1, D(1), gateway(() => ok({}, PDF, cdcDe("NCE", "001", "003", "0090004", EMISOR_OTRO))).dep);
 
-    // PRO-342-R01: el CDC devuelto (de OTRO emisor) difiere del registrado → el PDF ajeno se descarta; tampoco se consulta historial, RUC/DV ni se escribe nada (no hay algoritmo nuevo de RUC).
-    igual("PRO326-INC-08 (actualizado PRO-342-R01) CDC persistido distinto del devuelto: PDF ajeno descartado; sin historial ni escrituras", [inc08.estado, conCdc.consultas.some((q) => /substr\(cdc|FROM empresas\b|\b(INSERT|UPDATE|DELETE)\b/i.test(q))], [502, false]);
+    // PRO-365-R02-C02-C02 (actualiza PRO-342-R01): el CDC devuelto (de OTRO emisor) distinto del registrado ya no descarta el PDF; no se consulta historial, RUC/DV ni se escribe nada.
+    igual("PRO326-INC-08 (actualizado C02-C02) CDC persistido distinto del devuelto: el PDF válido se entrega con el nombre normal; sin historial ni escrituras", [Buffer.compare(inc08.pdf, PDF), inc08.nombre, conCdc.consultas.some((q) => /substr\(cdc|FROM empresas\b|\b(INSERT|UPDATE|DELETE)\b/i.test(q))], [0, "KuDE-NCE-001-003-0090004.pdf", false]);
 
     // acceso cruzado entre empresas y FE sin regresión
     limpiarCacheTokens();

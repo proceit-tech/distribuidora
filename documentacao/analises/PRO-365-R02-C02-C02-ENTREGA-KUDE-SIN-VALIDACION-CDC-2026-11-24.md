@@ -27,7 +27,7 @@ Identificación de empresa y documento; permisos y alcance de sucursal; continui
 
 Casos actualizados porque contradecían la nueva decisión (cada uno marcado «actualizado C02-C02» con su explicación en el código):
 
-- `kude.casos.ts`: KUDE-02/04/08/21/56, PRO342-R01-K01..K04, NCR-02/03, PRO326-INC-06, PRO326-NCR-04, PRO326-02/03/04/09/10, PRO342-R02-K01..K05, PRO342-R02-C02, PRO342-R02-V01..V03. Cubren FE y NCE con CDC ausente, igual, diferente, de otro emisor, de otro número/tipo, con espacios y no numérico: mismo PDF, nombre normal, sin clasificación y sin escrituras.
+- `kude.casos.ts`: KUDE-02/04/08/21/56, PRO342-R01-K01..K04, NCR-02/03, PRO326-INC-06, PRO326-INC-08 (corregido en un segundo commit tras el CI), PRO326-NCR-04, PRO326-02/03/04/09/10, PRO342-R02-K01..K05, PRO342-R02-C02, PRO342-R02-V01..V03. Cubren FE y NCE con CDC ausente, igual, diferente, de otro emisor, de otro número/tipo, con espacios y no numérico: mismo PDF, nombre normal, sin clasificación y sin escrituras.
 - `cdc-dato-api-r05.casos.ts`: R05-G03..G06, R05-K01, R05-R01-F003-11 (ahora con `interpretarKude` real: el CDC no cambia el resultado; un error o un PDF inválido siguen rechazados aunque traigan CDC).
 - `flujo-fiscal-pro342.casos.ts`: PRO342-09b..09e y PRO342-R04-F4/UX03.
 - `documentos-pro195-r01.casos.ts`: R01-11.
