@@ -84,7 +84,7 @@ export function KudeModal({ controlador }: { controlador: Controlador }) {
         {noVerificado ? <p className={ui.alertError} role="alert" style={{ margin: "8px 16px 0" }}>{AVISO_KUDE_NO_VERIFICADO}</p> : null}
         {estado.fase === "LISTO" && estado.descarga === "ERROR" ? <p className={ui.alertError} role="alert" style={{ margin: "8px 16px 0" }}>{estado.mensajeDescarga} Puede intentar «Descargar PDF» nuevamente.</p> : null}
         <div style={visor ? { flex: 1, minHeight: 0, display: "flex", alignItems: "stretch", justifyContent: "center" } : { padding: "16px 16px 20px", overflowY: "auto" }}>
-          {estado.fase === "CARGANDO" ? <p role="status" style={{ margin: 0 }}>Obteniendo el KuDE del gateway…</p> : null}
+          {estado.fase === "CARGANDO" ? <p role="status" style={{ margin: 0 }}>Cargando el KuDE…</p> : null}
           {estado.fase === "ERROR" ? (
             <div role="alert" style={{ textAlign: "left" }}>
               <p className={ui.alertError} style={{ marginTop: 0, overflowWrap: "anywhere" }}>{estado.mensaje}</p>

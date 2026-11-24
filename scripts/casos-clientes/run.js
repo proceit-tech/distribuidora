@@ -154,6 +154,7 @@ function cargarCasos(r) {
   const uxr02 = cargar("lib/facturacion/documentos-ux-r02.casos.js");
   const pro195 = cargar("lib/facturacion/documentos-pro195-r01.casos.js");
   const pro365 = cargar("lib/facturacion/documentos-ux-competencia-pro365.casos.js");
+  const c02 = cargar("lib/facturacion/documentos-c02-lenguaje-pro365.casos.js");
   const p313 = cargar("lib/facturacion/eventos-fe-pro313.casos.js");
   const p354 = cargar("lib/facturacion/politica-stock-pro354.casos.js");
   const uxf = cargar("lib/facturacion/flujo-factura-ux.casos.js");
@@ -264,6 +265,7 @@ function cargarCasos(r) {
     ["PRO-342-UX-R02: Documentos electrónicos — respuestas tardías (GET inicial, consultas, envíos, listado fuera de orden), acciones solo sobre el estado vigente, feedback de copia por generación y tarjeta móvil sin superposición de iconos y acciones (320/360/768, zoom)", async () => uxr02.verificarCasosDocumentosUxR02(), null],
     ["PRO-195-UX-R01: Documentos electrónicos — tabla compacta (10 columnas), acciones de contorno honestas, estado principal único, eventos sin API, selección por contexto, expansión inline; R01-R01: debounce, consulta con detalle abierto tarde, eventos honestos", async () => pro195.verificarCasosDocumentosPro195R01(), null],
     ["PRO-365 (R01+R02): Documentos electrónicos — cuatro indicadores independientes por fila, acciones separadas, Eventos compacto, leyenda compacta, filtros en tarjeta y «Resumen de estados» (referencia de la competencia)", async () => pro365.verificarCasosDocumentosUxCompetenciaPro365(), null],
+    ["PRO-365-R02-C02: Documentos electrónicos — lenguaje de usuario final (tooltip «Enviado», detalle fiscal por estado, «Motivo del rechazo» 1109, avisos y acciones sin jerga; historial técnico y KuDE intactos)", async () => c02.verificarCasosDocumentosC02LenguajePro365(), null],
     ["PRO-313-R01 / PRO-199: eventos de FE leídos de response.DE.Evento (todas las ocurrencias, ausente ≠ vacío, estados literales), fechas acreditadas estrictas sin zona, Cancelado solo con tipo y correlación acreditados (CDC literal + misma cuenta), no regresión, elegibilidad 48 h desde aprobación oficial (no acreditada: FechaRetorno candidata), modal preparada NO operativa, sin POST ni stock", async () => p313.verificarCasosEventosFePro313(), null],
     ["PRO-354-R02: política por EMPRESA «Bloquear facturación por stock insuficiente» (TRUE por omisión = comportamiento actual; FALSE = salida del disponible + baja pendiente en depósito elegible, sin saldo negativo), NEX-081 (no aplicada), «Bajas pendientes de stock» con confirmación manual solo con saldo real; casos de costos/negativo PENDIENTES POR GATE", async () => p354.verificarCasosPoliticaStockPro354(), null],
     ["PRO-330: aviso inmediato de stock en «Nueva factura» (servidor, controlador con temporizador simulado, estructura; PRO330-61 según PRO-330-T01)", async () => p330.verificarCasosStockPreventivo(), null],

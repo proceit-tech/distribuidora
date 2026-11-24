@@ -48,9 +48,9 @@ export async function verificarCasosDocumentosUxCompetenciaPro365(): Promise<str
   // ══ A01 Cuatro indicadores independientes, visibles en la fila y en orden fijo ═════════════════════════════════════════════════════════
   igual("PRO365-A01a iconosEstado devuelve SIEMPRE cuatro ejes en orden Envío · XML/CDC · SIFEN · Correo",
     iconosEstado(doc({})).map((i) => NOMBRE_EJE[i.eje]), ["Envío", "XML/CDC", "SIFEN", "Correo"]);
-  cierto("PRO365-A01b la celda Estado de la FILA pinta los cuatro iconos (fases.map de iconosEstado), cada uno enfocable con su texto completo",
-    /const fases = iconosEstado\(d\);/.test(pagina) && /\{fases\.map\(\(i\) => \(\s*<IconoFase key=\{i\.eje\} eje=\{i\.eje\} simbolo=\{i\.simbolo\} clase=\{CLASE_TONO_ICONO\[i\.tono\]\} texto=\{textoFase\(i, fiscal\)\} tip=\{eventosTip\} \/>/.test(celdaEstado) &&
-    /role="img"\s+tabIndex=\{0\}\s+aria-label=\{texto\}/.test(pagina) && /role="group" aria-label=\{`Estados de \$\{doc\}`\}/.test(celdaEstado));
+  cierto("PRO365-A01b (actualizado PRO-365-R02-C02) la celda Estado de la FILA pinta los cuatro iconos (fases.map de iconosEstado), cada uno enfocable con su texto de operador y nombre accesible con el eje",
+    /const fases = iconosEstado\(d\);/.test(pagina) && /\{fases\.map\(\(i\) => \(\s*<IconoFase key=\{i\.eje\} eje=\{i\.eje\} simbolo=\{i\.simbolo\} clase=\{CLASE_TONO_ICONO\[i\.tono\]\} texto=\{textoIconoOperador\(i, d\)\.texto\} etiqueta=\{textoIconoOperador\(i, d\)\.etiqueta\} tip=\{eventosTip\} \/>/.test(celdaEstado) &&
+    /role="img"\s+tabIndex=\{0\}\s+aria-label=\{etiqueta \?\? texto\}/.test(pagina) && /role="group" aria-label=\{`Estados de \$\{doc\}`\}/.test(celdaEstado));
   cierto("PRO365-A01c los indicadores NO quedan ocultos en el Historial técnico: la fila los muestra y la segunda capa los repite con nombre",
     /fases\.map/.test(fila) && /iconosEstado\(d\)\.map\(\(i\) => \(/.test(segunda) && /<strong>\{NOMBRE_EJE\[i\.eje\]\}:<\/strong> \{i\.corto\}/.test(segunda));
 
@@ -62,8 +62,9 @@ export async function verificarCasosDocumentosUxCompetenciaPro365(): Promise<str
       rechazado.map((i) => [i.eje, i.simbolo, i.tono]), [["envio", "check", "ok"], ["xml", "archivoCheck", "info"], ["sifen", "cruz", "error"], ["correo", "correo", "neutro"]]);
     cierto("PRO365-A02b la fila ya no pinta un texto grande de estado (sin estadoPrincipalFila, {estado.texto} ni <strong> en la celda Estado)",
       !/estadoPrincipalFila|\{estado\.texto\}|SIMBOLO_ESTADO|CLASE_ESTADO/.test(pagina) && !/<strong>/.test(celdaEstado));
-    cierto("PRO365-A02c el motivo del rechazo se añade al tooltip del icono SIFEN SOLO si el rechazo y su mensaje están registrados (detalleFiscalPrimario), sin reclasificar",
-      /i\.eje === "sifen" && fiscal\.rechazo && fiscal\.mensaje \? `\$\{i\.texto\} Motivo registrado: \$\{fiscal\.mensaje\}\.` : i\.texto/.test(pagina) && /const fiscal = detalleFiscalPrimario\(d\);/.test(pagina));
+    // PRO-365-R02-C02: el tooltip SIFEN es «Rechazado» a secas; el motivo (código y descripción) va en el detalle fiscal como «Motivo del rechazo».
+    cierto("PRO365-A02c (actualizado PRO-365-R02-C02) el tooltip SIFEN no arrastra el mensaje; el motivo del rechazo se muestra en el detalle fiscal solo con RECHAZADO persistido (detalleFiscalPrimario → respuestaFiscal), sin reclasificar",
+      !/textoFase|Motivo registrado/.test(pagina) && /const fiscal = detalleFiscalPrimario\(d\);/.test(pagina) && /const respuesta = respuestaFiscal\(d, fiscal\);/.test(pagina));
     igual("PRO365-A02d iconosEstado es puro: no modifica el documento (estado y CDC idénticos tras derivar la presentación)",
       (() => { const d = doc({ estadoSifen: "RECHAZADO", cdc: "X" }); const antes = JSON.stringify(d); iconosEstado(d); return JSON.stringify(d) === antes; })(), true);
   }
@@ -77,7 +78,7 @@ export async function verificarCasosDocumentosUxCompetenciaPro365(): Promise<str
 
   // ══ A04 Eventos compacto, sin repetir indisponibilidad por fila ═════════════════════════════════════════════════════════════════════════
   cierto("PRO365-A04a Eventos: situación acreditada o «Sin información» (de eventos, para lectores); no repite «Cancelación/Inutilización: No disponible» en cada fila",
-    /\{eventos\.registrado \?\? "Sin información"\}/.test(celdaEventos) && !/eventos\.operaciones|No disponible|\{o\.nombre\}/.test(celdaEventos) && /motivo=\{eventos\.operacion\}/.test(celdaEventos));
+    /\{eventosVista\.registrado \?\? "Sin información"\}/.test(celdaEventos) && !/eventos\.operaciones|No disponible|\{o\.nombre\}/.test(celdaEventos) && /motivo=\{eventosVista\.operacion\}/.test(celdaEventos));
   igual("PRO365-A04b «Sin información» ≠ «sin eventos»: sin registro, eventosFila no inventa una situación registrada",
     eventosFila({ estadoSifen: "PENDIENTE" }).registrado, null);
   cierto("PRO365-A04c la segunda capa conserva el texto honesto completo de eventos (sinRegistro + operación)",
@@ -144,7 +145,7 @@ export async function verificarCasosDocumentosUxCompetenciaPro365(): Promise<str
     /min-width: 1100px/.test(regla(css, "table.tablaDocs")) && /padding: 6px 10px;/.test(regla(css, "table.tablaDocs > tbody > tr > td")) && /table\.tablaDocs > thead th \{\s*padding: 8px 10px;/.test(cssLimpio) &&
     /min-width: 28px;/.test(regla(css, ".estado .icono")) && /@media \(max-width: 720px\) \{[\s\S]*\.estado \.icono \{\s*min-width: 36px;/.test(cssLimpio));
   cierto("PRO365-R02-10 leyenda compacta en UNA franja: «Estado: Envío · XML/CDC · SIFEN · Correo» + símbolos; la explicación larga queda solo para lectores de pantalla",
-    /<span>\s*<strong>Estado:<\/strong>\s*Envío · XML\/CDC · SIFEN · Correo\s*<\/span>/.test(pagina) /* C01: admite espacios y saltos de línea del JSX formateado */ && /<span className=\{estilos\.srSolo\}>Envío es la recepción del gateway; XML\/CDC indica si la API informó el CDC y no es aprobación; SIFEN es el resultado fiscal\./.test(pagina) &&
+    /<span>\s*<strong>Estado:<\/strong>\s*Envío · XML\/CDC · SIFEN · Correo\s*<\/span>/.test(pagina) /* C01: admite espacios y saltos de línea del JSX formateado */ && /<span className=\{estilos\.srSolo\}>Envío indica si el documento fue enviado; XML\/CDC indica si se registró el código del documento, que no es una aprobación; SIFEN es el resultado fiscal; Correo es el envío por correo al cliente\./.test(pagina) /* C02: lenguaje llano */ &&
     /padding: 4px 14px;/.test(regla(css, ".leyendaEstados")));
   igual("PRO365-R02-11 acciones intactas y distintas de los estados: KuDE y Consulta activas, XML y Correo deshabilitados con su motivo",
     accionesFila(true, { editar: true }, true, "").map((a) => [a.clave, a.disponible]), [["kude", true], ["xml", false], ["consulta", true], ["correo", false]]);

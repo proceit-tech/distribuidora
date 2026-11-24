@@ -76,7 +76,7 @@ export async function verificarCasosDocumentosPro195R01(): Promise<string[]> {
       (fila.match(/\n {22}<td/g) ?? []).length === 10 && fila.indexOf("alternar(d)") < fila.indexOf("aria-label={`Seleccionar ${doc}`}") && fila.indexOf("aria-label={`Seleccionar ${doc}`}") < fila.indexOf("aria-label={`Acciones de ${doc}`}") &&
         fila.indexOf("aria-label={`Acciones de ${doc}`}") < fila.indexOf("{d.establecimiento}-{d.puntoExpedicion}-{d.numero}") && fila.indexOf("{fecha}") < fila.indexOf("d.receptorDocumento ?? \"Sin información\"") &&
         fila.indexOf("d.receptorDocumento") < fila.indexOf("{d.receptorNombre}") && fila.indexOf("{d.receptorNombre}") < fila.indexOf("formatearImporteMoneda(d.total, d.moneda)") && fila.indexOf("formatearImporteMoneda(d.total, d.moneda)") < fila.indexOf("{fases.map((i) => (") &&
-        fila.indexOf("{fases.map((i) => (") < fila.indexOf("eventos.registrado"));
+        fila.indexOf("{fases.map((i) => (") < fila.indexOf("eventosVista.registrado"));
     cierto("R01-01c documento: número EEE-PPP-NNNNNNN, tipo FE/NCE visible (código + nombre completo accesible), serie fiscal («Serie X» / «Sin serie»), sucursal y factura original de la NCE",
       /\{d\.establecimiento\}-\{d\.puntoExpedicion\}-\{d\.numero\}/.test(fila) && />\{d\.tipo\}<\/span>/.test(fila) && /\{ETIQUETA_TIPO\[d\.tipo\]\}/.test(fila) && /d\.serie \? `Serie \$\{d\.serie\}` : "Sin serie"/.test(fila) && /\{d\.sucursalNombre\}/.test(fila) && /Factura \{d\.feNumero\}/.test(fila));
     igual("R01-01d fecha y hora por separado, sin reconvertir zona (texto ya formateado en hora de Paraguay)", [partirFechaHora("18/11/2026 09:10:27"), partirFechaHora("—")], [{ fecha: "18/11/2026", hora: "09:10:27" }, { fecha: "—", hora: "" }]);
@@ -131,8 +131,8 @@ export async function verificarCasosDocumentosPro195R01(): Promise<string[]> {
     ["Cancelado (estado fiscal informado por la API)", "Inutilizado (estado fiscal informado por la API)", null, "Sin información de eventos", true]);
   // PRO-313-R01 (actualizado): para NCE y demás tipos el control sigue deshabilitado; para FE pasa a «Cancelar documento», habilitado solo si la elegibilidad lo permite (hoy nunca).
   cierto("R01-06b (actualizado PRO-313-R01) el control de eventos de documentos no FE sigue DESHABILITADO; el de FE es «Cancelar documento» con disponible = elegibilidad; no hay rutas de cancelación/inutilización ni stock en la pantalla",
-    /<AccionIcono clase=\{estilos\.accionEventos\} glifo=\{ACCION\.eventos\} etiqueta=\{`Eventos de \$\{doc\}`\} disponible=\{false\} motivo=\{eventos\.operacion\} alActivar=\{\(\) => undefined\}/.test(fila) &&
-    /etiqueta=\{`Cancelar documento \$\{doc\}`\} disponible=\{cancelacion\.disponible\} motivo=\{eventos\.operacion\}/.test(fila) &&
+    /<AccionIcono clase=\{estilos\.accionEventos\} glifo=\{ACCION\.eventos\} etiqueta=\{`Eventos de \$\{doc\}`\} disponible=\{false\} motivo=\{eventosVista\.operacion\} alActivar=\{\(\) => undefined\}/.test(fila) &&
+    /etiqueta=\{`Cancelar documento \$\{doc\}`\} disponible=\{cancelacion\.disponible\} motivo=\{eventosVista\.operacion\}/.test(fila) &&
     !/\/api\/[^`"]*(cancel|inutiliz|evento)/i.test(pagina) &&
     !/stock|inventario/i.test(tabla.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "").replace(/`(?:[^`\\]|\\.)*`|"(?:[^"\\]|\\.)*"/g, '""') /* PRO-313-R01: se quitan TODOS los literales (los motivos dicen que no se modifica el stock); el código sigue sin stock */));
   cierto("R01-06c (actualizado PRO-313-R01) el motivo ya no dice «sin API»: «Cancelación no disponible» con razón real (lectura de eventos, aprobación oficial no acreditada, envío no habilitado); sin simular eventos ni tocar stock; Inutilización fuera de alcance y sin exigir factura",
@@ -166,8 +166,9 @@ export async function verificarCasosDocumentosPro195R01(): Promise<string[]> {
   }
 
   // ══ R01-08 Detalle: cuatro campos, copia e historial recogido ═══════════════════════════════════════════════════════════════════════════
-  cierto("R01-08a primera capa: exactamente Nro lote, CDC, Fecha firma y Mensaje/código, con «Sin información» si falta; sin consulta externa al expandir",
-    (primera.match(/<dt /g) ?? []).length === 4 && (primera.match(/"Sin información"/g) ?? []).length === 4 && !/reconsultar|fetch/.test(primera));
+  // PRO-365-R02-C02: el cuarto campo es el motivo del rechazo, solo cuando corresponde (sin «Mensaje» genérico ni «Sin información» en ese campo).
+  cierto("R01-08a (actualizado PRO-365-R02-C02) primera capa: Nro lote, CDC y Fecha firma con «Sin información» si falta, y el motivo del rechazo solo cuando corresponde; sin consulta externa al expandir",
+    (primera.match(/<dt /g) ?? []).length === 4 && (primera.match(/"Sin información"/g) ?? []).length === 3 && /\{respuesta\.motivo \? \(/.test(primera) && !/reconsultar|fetch/.test(primera));
   cierto("R01-08b copiar lote y CDC exactos con feedback accesible (aria-live) y error visible; segunda capa CERRADA por defecto con los cuatro estados técnicos, eventos e historial",
     /aria-label="Copiar número de lote"/.test(primera) && /aria-label="Copiar CDC"/.test(primera) && /aria-live="polite"/.test(primera) && /tecnico: false, copiado: "" \};/.test(pagina) && /\{det\.tecnico \? \(/.test(segunda) &&
     /Estados técnicos/.test(segunda) && /Eventos: \{eventos\.registrado \?\? eventos\.sinRegistro\}/.test(segunda) && /Historial de envíos y consultas/.test(segunda));
@@ -209,7 +210,7 @@ export async function verificarCasosDocumentosPro195R01(): Promise<string[]> {
   // ══ R01-11 KuDE NO_VERIFICADO y guardas intactas ════════════════════════════════════════════════════════════════════════════════════════
   cierto("R01-11 KuDE: misma apertura (abrirKude → visor, sin caché nueva) y modal/aviso NO_VERIFICADO intactos; la acción no afirma que el PDF exista ni esté verificado",
     /alActivar=\{\(\) => abrirKude\(d\)\}/.test(fila) && /function abrirKude\(d: Documento\) \{\s*void visor\.abrir\(/.test(pagina) && /AVISO_KUDE_NO_VERIFICADO/.test(leer("app/(private)/documentos/kude-modal.tsx")) &&
-    /no confirma por sí que el PDF exista ni que esté verificado/.test(fila) && !/sessionStorage|localStorage|caches\./.test(pagina));
+    /etiqueta=\{`Consultar KuDE \(PDF\) de \$\{doc\}`\}/.test(fila) && !/KuDE[^`]*(verificado|confirmado|disponible)`/.test(fila) && !/sessionStorage|localStorage|caches\./.test(pagina));
 
   // ══ R01-12 Regresión FE/NCE, consulta sin reenvío, estados técnicos e historial ═════════════════════════════════════════════════════════
   cierto("R01-12 FE/NCE: colores de tipo y detalle por tipo, CDC de la factura original en la NCE, consulta = POST /consultar (nunca /enviar), estados técnicos y historial completos en la segunda capa",
@@ -342,10 +343,10 @@ export async function verificarCasosDocumentosPro195R01(): Promise<string[]> {
       (MOTIVO_EVENTOS_NO_DISPONIBLES.match(/fecha/gi) ?? []).length === 1 && /fecha oficial de aprobación acreditada/.test(MOTIVO_EVENTOS_NO_DISPONIBLES));
     // PRO-365: Eventos compacto; la fila ya no repite «Cancelación: No disponible / Inutilización: No disponible» (va en el control y en la segunda capa).
     cierto("R01R01-F003d (actualizado PRO-365) la celda muestra la situación acreditada o «Sin información» (de eventos, para lectores) sin repetir operaciones por fila; la segunda capa conserva el texto honesto; nunca «Sin eventos»",
-      /\{eventos\.registrado \?\? "Sin información"\}/.test(fila) && /<span className=\{estilos\.srSolo\}> de eventos<\/span>/.test(fila) && !/eventos\.operaciones|\{o\.nombre\}: \{o\.estado\}/.test(fila) &&
+      /\{eventosVista\.registrado \?\? "Sin información"\}/.test(fila) && /<span className=\{estilos\.srSolo\}> de eventos<\/span>/.test(fila) && !/eventos\.operaciones|\{o\.nombre\}: \{o\.estado\}/.test(fila) &&
       /Eventos: \{eventos\.registrado \?\? eventos\.sinRegistro\}\. \{eventos\.operacion\}/.test(segunda) && !/Sin eventos|sin eventos registrados/.test(pagina));
     cierto("R01R01-F003e sin rutas de eventos, sin stock y el control sigue deshabilitado (PRO-199 / PRO-313 intactas)",
-      !/\/api\/[^`"]*(cancel|inutiliz|evento)/i.test(pagina) && /disponible=\{false\} motivo=\{eventos\.operacion\}/.test(fila) && /color: #53687a;/.test(regla(css, ".sinEventos")));
+      !/\/api\/[^`"]*(cancel|inutiliz|evento)/i.test(pagina) && /disponible=\{false\} motivo=\{eventosVista\.operacion\}/.test(fila) && /color: #53687a;/.test(regla(css, ".sinEventos")));
   }
 
   return fallos;

@@ -834,6 +834,48 @@ table.tablaDocs > thead th {
   color: #173d63;
 }
 
+/* PRO-365-R02-C02: estado fiscal claro en el encabezado del detalle (Aprobado / Rechazado / Pendiente de respuesta / Cancelado / Inutilizado). Fondo blanco propio para
+   que el contraste del texto (mismo color que el icono del tono, ≥ 4,5:1 sobre #fff) no dependa del fondo FE/NCE; el símbolo acompaña al color. */
+.estadoFiscal {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  padding: 1px 10px 1px 4px;
+  background: #ffffff;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.estadoFiscal.iconoOk {
+  color: #12703f;
+}
+
+.estadoFiscal.iconoInfo {
+  color: #1d5799;
+}
+
+.estadoFiscal.iconoAviso {
+  color: #8a5a00;
+}
+
+.estadoFiscal.iconoError {
+  color: #b42318;
+}
+
+.estadoFiscal.iconoNeutro {
+  color: #4a5a6a;
+}
+
+.notaEstadoFiscal {
+  flex-basis: 100%;
+  margin: 0 0 4px;
+  color: #53687a;
+  font-size: 12.5px;
+}
+
 .fiscal {
   display: grid;
   gap: 0;
@@ -1179,5 +1221,10 @@ table.tablaDocs > thead th {
 
   .tooltip {
     border: 1px solid CanvasText;
+  }
+
+  .estadoFiscal {
+    border-color: CanvasText;
+    color: CanvasText;
   }
 }

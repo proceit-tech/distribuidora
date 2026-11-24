@@ -35,7 +35,6 @@ import {
   resumenConsultas,
   seguimientoFiscal,
   textoConexion,
-  type IconoEstado,
   type IntentoConsulta,
   type SimboloEstado,
   type TonoIcono,
@@ -51,6 +50,16 @@ import {
   type AccionFila,
   type Seleccion,
 } from "@/lib/facturacion/documentos-tabla";
+import {
+  avisoOperador,
+  AYUDA_ACCION_NO_DISPONIBLE,
+  encabezadoFiscal,
+  eventosOperador,
+  respuestaFiscal,
+  textoConsultaOperador,
+  textoEnvioOperador,
+  textoIconoOperador,
+} from "@/lib/facturacion/documentos-copy-operador";
 import { aprobacionOficialDocumento, elegibilidadCancelacionFe, textoFechaGateway, type ProyeccionEventosFe } from "@/lib/facturacion/eventos-fe";
 import { formatearFechaHoraPy } from "@/lib/formato/listas";
 import { formatearImporteMoneda } from "@/lib/formato/monto-visual";
@@ -97,15 +106,17 @@ const DETALLE_VACIO: Detalle = { cargando: false, error: "", intentos: [], sigui
  */
 // PRO-365-R02: tarjetas del «Resumen de estados» en el orden de la referencia (pendientes, resultado SIFEN, correo y Total al final). Cifras del servidor sin cambios;
 // el símbolo es decorativo (el título y la cantidad son el texto) y el color sigue el significado de cada grupo.
+// PRO-365-R02-C02: ayudas en lenguaje llano (sin gateway/API/proveedor). Mismos grupos, cifras, filtro y orden. SIN_EMAIL agrupa «sin correo» y «sin información de correo»
+// (criterio SQL sin cambios), por eso su ayuda nombra los dos casos.
 const INDICADORES: Array<{ grupo: GrupoIndicador | ""; titulo: string; ayuda: string; clase: string; simbolo: SimboloEstado }> = [
-  { grupo: "PEND_ENVIO", titulo: "Pend. envío", ayuda: "Recepción del gateway no confirmada (incluye envío indeterminado)", clase: estilos.tonoAmber, simbolo: "reloj" },
-  { grupo: "PEND_RESPUESTA", titulo: "Pend. respuesta", ayuda: "Enviados o envío indeterminado, sin resultado fiscal final", clase: estilos.tonoBlue, simbolo: "archivoReloj" },
-  { grupo: "APROBADO", titulo: "Aprobados", ayuda: "Estado SIFEN aprobado", clase: estilos.tonoVerde, simbolo: "check" },
-  { grupo: "RECHAZADO", titulo: "Rechazados", ayuda: "Estado SIFEN rechazado", clase: estilos.tonoRed, simbolo: "cruz" },
-  { grupo: "EMAIL_ENVIADO", titulo: "E-mail enviado", ayuda: "Según el proveedor", clase: estilos.tonoViolet, simbolo: "correoCheck" },
-  { grupo: "EMAIL_ERROR", titulo: "Error de e-mail", ayuda: "Según el proveedor", clase: estilos.tonoRed, simbolo: "correoCruz" },
-  { grupo: "SIN_EMAIL", titulo: "Sin e-mail", ayuda: "Sin información de envío", clase: estilos.tonoGris, simbolo: "correo" },
-  { grupo: "", titulo: "Total", ayuda: "Documentos visibles", clase: estilos.tonoTeal, simbolo: "archivoCheck" },
+  { grupo: "PEND_ENVIO", titulo: "Pend. envío", ayuda: "Envíos pendientes de confirmación (incluye los envíos que no se pudieron confirmar)", clase: estilos.tonoAmber, simbolo: "reloj" },
+  { grupo: "PEND_RESPUESTA", titulo: "Pend. respuesta", ayuda: "Documentos pendientes de respuesta de SIFEN (incluye los envíos que no se pudieron confirmar)", clase: estilos.tonoBlue, simbolo: "archivoReloj" },
+  { grupo: "APROBADO", titulo: "Aprobados", ayuda: "Documentos aprobados", clase: estilos.tonoVerde, simbolo: "check" },
+  { grupo: "RECHAZADO", titulo: "Rechazados", ayuda: "Documentos rechazados", clase: estilos.tonoRed, simbolo: "cruz" },
+  { grupo: "EMAIL_ENVIADO", titulo: "Correo enviado", ayuda: "Correos enviados", clase: estilos.tonoViolet, simbolo: "correoCheck" },
+  { grupo: "EMAIL_ERROR", titulo: "Error de correo", ayuda: "Errores de correo", clase: estilos.tonoRed, simbolo: "correoCruz" },
+  { grupo: "SIN_EMAIL", titulo: "Sin correo", ayuda: "Sin correo o sin información de correo", clase: estilos.tonoGris, simbolo: "correo" },
+  { grupo: "", titulo: "Total", ayuda: "Total de documentos", clase: estilos.tonoTeal, simbolo: "archivoCheck" },
 ];
 
 /**
@@ -145,13 +156,15 @@ const ACCION = {
 /** Tooltip visual (no reemplaza al nombre accesible): se muestra en hover, foco de teclado y toque; Escape, tocar fuera, desplazar o redimensionar lo cierran. */
 type EventosTip = { mostrar: (ancla: HTMLElement, texto: string) => void; programarCierre: () => void; ocultar: (ancla: HTMLElement) => void };
 
-function IconoFase({ eje, simbolo, clase, texto, tip }: { eje: string; simbolo: SimboloEstado; clase: string; texto: string; tip: EventosTip }) {
+// PRO-365-R02-C02: `texto` es el tooltip visual (breve, p. ej. «Enviado»); `etiqueta` es el nombre accesible y antepone el eje para desambiguar (p. ej. «Envío: Enviado»).
+// Sin `etiqueta` (historial técnico) el nombre accesible es el mismo texto.
+function IconoFase({ eje, simbolo, clase, texto, etiqueta, tip }: { eje: string; simbolo: SimboloEstado; clase: string; texto: string; etiqueta?: string; tip: EventosTip }) {
   return (
     <span
       className={clases(estilos.icono, clase)}
       role="img"
       tabIndex={0}
-      aria-label={texto}
+      aria-label={etiqueta ?? texto}
       data-eje={eje}
       data-simbolo={simbolo}
       onMouseEnter={(e) => tip.mostrar(e.currentTarget, texto)}
@@ -206,10 +219,6 @@ const LEYENDA_SIMBOLOS: Array<{ simbolo: SimboloEstado; clase: string; texto: st
   { simbolo: "cruz", clase: estilos.iconoError, texto: "error o rechazo" },
   { simbolo: "guion", clase: estilos.iconoNeutro, texto: "sin información" },
 ];
-/** Texto del icono SIFEN en la fila: si el rechazo está registrado, se añaden el código y el mensaje TAL COMO los registró la API (sin inventar ni reclasificar). */
-function textoFase(i: IconoEstado, fiscal: { rechazo: boolean; mensaje: string | null }): string {
-  return i.eje === "sifen" && fiscal.rechazo && fiscal.mensaje ? `${i.texto} Motivo registrado: ${fiscal.mensaje}.` : i.texto;
-}
 const CLASE_ACCION: Record<AccionFila["clave"], string> = { kude: estilos.accionKude, xml: estilos.accionXml, consulta: estilos.accionConsulta, correo: estilos.accionCorreo };
 
 function Glifo({ children }: { children: ReactNode }) {
@@ -731,12 +740,9 @@ export default function DocumentosPage() {
     if (generacion === null) return;
     try {
       const j = await leerJson<{ resultado: string; mensaje: string | null; intentos: Intento[]; modoRegistro?: string; continuidadConexion?: string }>(await fetch(`/api/documentos/${d.id}/consultar`, { method: "POST" }), "No fue posible consultar el estado.");
-      // PRO-342-R02/R05: la conexión no verificable se informa. El modo compatibilidad (sin NEX-079) ya no existe: sin NEX-080 la consulta falla cerrada (503) y llega como error.
-      const notas = [
-        j.continuidadConexion === "SIN_REFERENCIA" ? "Continuidad de la conexión no verificable (conexión del envío no registrada o credenciales de entorno del servidor): no se pudo comprobar que la consulta use la misma cuenta del envío" : "",
-      ].filter(Boolean);
-
-      const texto = [`${ETIQUETA_RESULTADO_INTENTO[j.resultado] ?? j.resultado}${j.mensaje ? `: ${j.mensaje}` : ""}`, ...notas].join(" · ");
+      // PRO-342-R02/R05: la conexión no verificable se informa. PRO-365-R02-C02: mensaje breve de negocio (textoConsultaOperador) que conserva esa advertencia
+      // (continuidadConexion === "SIN_REFERENCIA"); el resultado técnico completo (HTTP, mensaje crudo) queda en el historial de consultas.
+      const texto = textoConsultaOperador(j.resultado, j.continuidadConexion);
 
       informar(texto, false, j.intentos);
       setRecarga((n) => n + 1);
@@ -748,19 +754,18 @@ export default function DocumentosPage() {
   }
 
   async function enviarAlGateway(d: Documento, confirmarRechazo = false) {
-    if (confirmarRechazo && !window.confirm("El gateway rechazó este documento por validación. Reenviar el MISMO contenido solo tiene sentido si ya se corrigió la causa en el gateway. No se generará un número nuevo. ¿Reenviar?")) return;
+    if (confirmarRechazo && !window.confirm("El proveedor de facturación rechazó este documento por errores de datos. Reenviar el MISMO contenido solo tiene sentido si la causa ya fue corregida. No se generará un número nuevo. ¿Reenviar?")) return;
 
     const generacion = iniciarAccion(d, "envio");
 
     if (generacion === null) return;
     try {
-      const j = await leerJson<{ resultado: string; mensaje: string | null; http: number | null; lote: string | null; errores: string[]; intentos: Intento[] }>(
+      const j = await leerJson<{ resultado: string; estadoLocal?: string | null; mensaje: string | null; http: number | null; lote: string | null; errores: string[]; intentos: Intento[] }>(
         await fetch(`/api/documentos/${d.id}/enviar`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirmarRechazo }) }),
         "No fue posible enviar el documento.",
       );
-      const partes = [etiquetaIntento("ENVIO", j.resultado), j.http ? `HTTP ${j.http}` : "", j.lote ? `lote ${j.lote}` : "", j.mensaje ?? "", ...j.errores].filter(Boolean);
-
-      if (vigenteDetalle(d, generacion)) fusionarIntentos(d.id, j.intentos, { aviso: partes.join(" · ") });
+      // PRO-365-R02-C02: mensaje breve según el estado local devuelto (un envío no confirmado nunca se dice «Enviado»); lote, HTTP y respuesta quedan en el historial.
+      if (vigenteDetalle(d, generacion)) fusionarIntentos(d.id, j.intentos, { aviso: textoEnvioOperador(j) });
       setRecarga((n) => n + 1);
     } catch (e) {
       if (vigenteDetalle(d, generacion)) aplicarDetalle(d.id, { error: e instanceof Error ? e.message : "No fue posible enviar el documento." });
@@ -933,7 +938,7 @@ export default function DocumentosPage() {
               aviso
             </span>
           </span>
-          <span className={estilos.srSolo}>Envío es la recepción del gateway; XML/CDC indica si la API informó el CDC y no es aprobación; SIFEN es el resultado fiscal. Enfoque, toque o pase el puntero sobre cada icono para ver su detalle.</span>
+          <span className={estilos.srSolo}>Envío indica si el documento fue enviado; XML/CDC indica si se registró el código del documento, que no es una aprobación; SIFEN es el resultado fiscal; Correo es el envío por correo al cliente. Enfoque, toque o pase el puntero sobre cada icono para ver su estado.</span>
         </div>
 
         <div className={clases(ui.tableScroll, estilos.contenedorTabla)}>
@@ -980,7 +985,11 @@ export default function DocumentosPage() {
                 // PRO-313-R01: elegibilidad PREPARADA de la cancelación (no operativa: sin aprobación oficial acreditada ni envío habilitado); el servidor revalidará todo al confirmar.
                 const cancelacion = elegibilidadCancelacionFe({ tipo: d.tipo, estadoSifen: d.estadoSifen, puedeEditar: editar, proyeccion: d.eventosFe, aprobacion: aprobacionOficialDocumento(d.eventosFe), ahoraMs: datos?.generadoMs ?? Number.NaN });
                 const eventos = eventosFila(d, cancelacion);
-                const avisoFila = [alerta ? `${alerta.texto}. ${alerta.detalle}` : "", d.requiereRevision ? `Requiere revisión: lleva mucho tiempo sin resultado definitivo; no se reenvía${d.tipo === "NCE" ? " ni se libera el saldo" : ""}.` : ""].filter(Boolean).join(" ");
+                // PRO-365-R02-C02: primera capa en lenguaje llano (eventos, aviso, encabezado y motivo); la versión técnica (eventos, alerta) sigue en el historial técnico.
+                const eventosVista = eventosOperador(d, cancelacion);
+                const avisoFila = avisoOperador(alerta, d.requiereRevision, d.tipo);
+                const encabezado = encabezadoFiscal(d);
+                const respuesta = respuestaFiscal(d, fiscal);
                 const accion = enCurso[d.id];
                 const habilitada = disponible(d);
                 const esperando = !accion && esperaListado[d.id] !== undefined && (resultado?.secuencia ?? 0) <= esperaListado[d.id];
@@ -1005,11 +1014,11 @@ export default function DocumentosPage() {
                         <div className={estilos.accionesLinea} role="group" aria-label={`Acciones de ${doc}`}>
                           {acciones.filter((a) => a.visible).map((a) =>
                             a.clave === "kude" ? (
-                              <AccionIcono key={a.clave} clase={CLASE_ACCION.kude} glifo={ACCION.kude} etiqueta={`Consultar KuDE (PDF) de ${doc}: no confirma por sí que el PDF exista ni que esté verificado`} disponible={a.disponible} motivo={a.motivo} alActivar={() => abrirKude(d)} tip={eventosTip} />
+                              <AccionIcono key={a.clave} clase={CLASE_ACCION.kude} glifo={ACCION.kude} etiqueta={`Consultar KuDE (PDF) de ${doc}`} disponible={a.disponible} motivo={a.motivo} alActivar={() => abrirKude(d)} tip={eventosTip} />
                             ) : a.clave === "consulta" ? (
-                              <AccionIcono key={a.clave} clase={CLASE_ACCION.consulta} glifo={ACCION.consultar} etiqueta={accion === "consulta" ? `Consultando el estado en SIFEN de ${doc}` : `Consultar estado en SIFEN de ${doc} (no reenvía el documento)`} disponible={a.disponible} motivo={a.motivo} ocupado={accion === "consulta"} alActivar={() => void reconsultar(d)} tip={eventosTip} />
+                              <AccionIcono key={a.clave} clase={CLASE_ACCION.consulta} glifo={ACCION.consultar} etiqueta={accion === "consulta" ? `Consultando el estado en SIFEN de ${doc}` : `Consultar estado en SIFEN de ${doc} (no reenvía)`} disponible={a.disponible} motivo={a.motivo} ocupado={accion === "consulta"} alActivar={() => void reconsultar(d)} tip={eventosTip} />
                             ) : (
-                              <AccionIcono key={a.clave} clase={CLASE_ACCION[a.clave]} glifo={a.clave === "xml" ? ACCION.xml : ACCION.correo} etiqueta={a.clave === "xml" ? `XML de ${doc}` : `Correo de ${doc}`} disponible={a.disponible} motivo={a.motivo} alActivar={() => undefined} tip={eventosTip} />
+                              <AccionIcono key={a.clave} clase={CLASE_ACCION[a.clave]} glifo={a.clave === "xml" ? ACCION.xml : ACCION.correo} etiqueta={a.clave === "xml" ? `XML de ${doc}` : `Correo de ${doc}`} disponible={a.disponible} motivo={AYUDA_ACCION_NO_DISPONIBLE[a.clave]} alActivar={() => undefined} tip={eventosTip} />
                             ),
                           )}
                         </div>
@@ -1039,11 +1048,12 @@ export default function DocumentosPage() {
                       <td>
                         {/* PRO-365: cuatro iconos simultáneos en orden fijo + quinta posición reservada al aviso técnico (vacía si no hay, para alinear las filas). */}
                         <div className={estilos.estado} role="group" aria-label={`Estados de ${doc}`}>
+                          {/* PRO-365-R02-C02: tooltip breve de operador (Envío ENVIADO = exactamente «Enviado») y nombre accesible con el eje; símbolo, color y posición sin cambios. */}
                           {fases.map((i) => (
-                            <IconoFase key={i.eje} eje={i.eje} simbolo={i.simbolo} clase={CLASE_TONO_ICONO[i.tono]} texto={textoFase(i, fiscal)} tip={eventosTip} />
+                            <IconoFase key={i.eje} eje={i.eje} simbolo={i.simbolo} clase={CLASE_TONO_ICONO[i.tono]} texto={textoIconoOperador(i, d).texto} etiqueta={textoIconoOperador(i, d).etiqueta} tip={eventosTip} />
                           ))}
                           {avisoFila ? (
-                            <IconoFase eje="aviso" simbolo="alerta" clase={alerta?.tipo === "inconsistencia" || !alerta ? estilos.iconoError : estilos.iconoAviso} texto={`Aviso técnico: ${avisoFila}`} tip={eventosTip} />
+                            <IconoFase eje="aviso" simbolo="alerta" clase={alerta?.tipo === "inconsistencia" || !alerta ? estilos.iconoError : estilos.iconoAviso} texto={`Revisar: ${avisoFila}`} etiqueta={`Aviso: ${avisoFila}`} tip={eventosTip} />
                           ) : (
                             <span className={estilos.iconoVacio} aria-hidden="true" />
                           )}
@@ -1053,15 +1063,15 @@ export default function DocumentosPage() {
                         <div className={estilos.eventos}>
                           {/* PRO-365: Eventos COMPACTO. Situación acreditada o «Sin información» (nunca «sin eventos»); la indisponibilidad de Cancelación/Inutilización va en el
                               nombre accesible y el tooltip del control, no repetida como texto en cada fila. */}
-                          <span className={eventos.registrado ? estilos.eventoRegistrado : estilos.sinEventos}>
-                            {eventos.registrado ?? "Sin información"}
-                            {eventos.registrado ? null : <span className={estilos.srSolo}> de eventos</span>}
+                          <span className={eventosVista.registrado ? estilos.eventoRegistrado : estilos.sinEventos}>
+                            {eventosVista.registrado ?? "Sin información"}
+                            {eventosVista.registrado ? null : <span className={estilos.srSolo}> de eventos</span>}
                           </span>
                           {/* PRO-313-R01: «Cancelar documento» solo FE; habilitado únicamente si es elegible (hoy nunca: gates de aprobación oficial y homologación). No hay ruta de envío. */}
                           {cancelacion.aplica ? (
-                            <AccionIcono clase={estilos.accionEventos} glifo={ACCION.eventos} etiqueta={`Cancelar documento ${doc}`} disponible={cancelacion.disponible} motivo={eventos.operacion} alActivar={() => setCancelando(d)} tip={eventosTip} />
+                            <AccionIcono clase={estilos.accionEventos} glifo={ACCION.eventos} etiqueta={`Cancelar documento ${doc}`} disponible={cancelacion.disponible} motivo={eventosVista.operacion} alActivar={() => setCancelando(d)} tip={eventosTip} />
                           ) : (
-                            <AccionIcono clase={estilos.accionEventos} glifo={ACCION.eventos} etiqueta={`Eventos de ${doc}`} disponible={false} motivo={eventos.operacion} alActivar={() => undefined} tip={eventosTip} />
+                            <AccionIcono clase={estilos.accionEventos} glifo={ACCION.eventos} etiqueta={`Eventos de ${doc}`} disponible={false} motivo={eventosVista.operacion} alActivar={() => undefined} tip={eventosTip} />
                           )}
                         </div>
                       </td>
@@ -1071,8 +1081,15 @@ export default function DocumentosPage() {
                       <tr id={`detalle-${d.id}`} className={clases(estilos.detalle, CLASE_DETALLE_TIPO[d.tipo])} data-tipo={d.tipo}>
                         <td colSpan={10}>
                           {/* PRO-342-R04 (UX02) / PRO-342-UX-R01 (punto 8) / PRO-195-UX-R01 (punto 5) — PRIMERA CAPA: solo cuatro datos fiscales, tal como los registró la API (sin inventar, recortar ni enmascarar). */}
+                          {/* PRO-365-R02-C02: el encabezado declara UN estado claro (Aprobado / Rechazado / Pendiente de respuesta / Cancelado / Inutilizado…) derivado del estado
+                              persistido (encabezadoFiscal), nunca del texto del mensaje. */}
                           <div className={estilos.detalleCabecera}>
                             <strong>Detalle fiscal · {numeroDocumento(d)}</strong>
+                            <span className={clases(estilos.estadoFiscal, CLASE_TONO_ICONO[encabezado.tono])} data-estado-fiscal={encabezado.titulo}>
+                              <span className={estilos.iconoCirculo} aria-hidden="true"><svg viewBox="0 0 24 24">{GLIFO[encabezado.simbolo]}</svg></span>
+                              <span><span className={estilos.srSolo}>Estado: </span>{encabezado.titulo}</span>
+                            </span>
+                            {encabezado.nota ? <span className={estilos.notaEstadoFiscal}>{encabezado.nota}</span> : null}
                           </div>
                           <dl className={estilos.fiscal} aria-label="Datos fiscales">
                             <div>
@@ -1098,35 +1115,40 @@ export default function DocumentosPage() {
                               <dt className={ui.muted}>Fecha firma</dt>
                               <dd>{fiscal.fechaFirma ? fechaGateway(fiscal.fechaFirma) : "Sin información"}</dd>
                             </div>
-                            <div>
-                              <dt className={ui.muted}>Mensaje</dt>
-                              <dd className={fiscal.rechazo ? estilos.mensajeRechazo : undefined}>{fiscal.mensaje ?? "Sin información"}</dd>
-                            </div>
+                            {/* PRO-365-R02-C02: ya no hay «Mensaje» incondicional. Solo con RECHAZADO persistido: «Motivo del rechazo» con código y mensaje tal como se registraron
+                                (p. ej. «1109 · …»; no se convierte en Inutilizado). En otros estados el mensaje registrado no se presenta como resultado vigente: queda en el historial técnico. */}
+                            {respuesta.motivo ? (
+                              <div>
+                                <dt className={ui.muted}>{respuesta.motivo.etiqueta}</dt>
+                                <dd className={estilos.mensajeRechazo}>{respuesta.motivo.valor}</dd>
+                              </div>
+                            ) : null}
                           </dl>
+                          {respuesta.notaHistorial ? <p className={clases(ui.muted, estilos.notaEstadoFiscal)}>{respuesta.notaHistorial}</p> : null}
                           <span className={estilos.srSolo} role="status" aria-live="polite">{det.copiado === "lote" || det.copiado === "cdc" ? "Copiado al portapapeles" : det.copiado === "error" ? "No fue posible copiar: seleccione el texto manualmente" : ""}</span>
                           {det.copiado === "error" ? <div className={ui.alertError} role="alert" style={{ margin: "4px 0" }}>No fue posible copiar: seleccione el texto manualmente.</div> : null}
 
                           {/* PRO-342-UX-R01 (punto 10): avisos CRÍTICOS breves, siempre visibles en la primera capa; la explicación técnica completa queda en la segunda capa. */}
                           {alerta ? (
                             <div className={alerta.tipo === "inconsistencia" ? estilos.avisoInconsistencia : estilos.avisoTecnico} role="note">
-                              <strong>Aviso técnico:</strong> {alerta.texto}.{d.ultimaConsultaAt ? ` Última consulta: ${fechaHora(d.ultimaConsultaAt)}.` : ""}
+                              <strong>Aviso:</strong> {avisoOperador(alerta, false, d.tipo)}{d.ultimaConsultaAt ? ` Última consulta: ${fechaHora(d.ultimaConsultaAt)}.` : ""}
                             </div>
                           ) : null}
                           {d.requiereRevision ? (
                             <div className={estilos.avisoTecnico} role="note"><strong>Requiere revisión:</strong> sin resultado definitivo desde hace mucho tiempo; no se reenvía{d.tipo === "NCE" ? " ni se libera el saldo" : ""}.</div>
                           ) : null}
                           {d.estadoLocal === "ERROR_ENVIO" && d.envioErrorTipo === "RECHAZO" ? (
-                            <p className={ui.alertError} role="alert">{d.tipo === "NCE" ? "El gateway rechazó esta nota de crédito por validación. Se conservan su número y el historial; no se reenvía: emita una nueva con «Corregir y emitir nueva»." : "El gateway rechazó este documento por validación. Se conservan su número y el historial; no se genera otro número ni se reenvía automáticamente."}</p>
+                            <p className={ui.alertError} role="alert">{d.tipo === "NCE" ? "El proveedor de facturación rechazó esta nota de crédito por errores de datos (no es un rechazo de SIFEN). Se conservan su número y el historial; no se reenvía: emita una nueva con «Corregir y emitir nueva»." : "El proveedor de facturación rechazó este documento por errores de datos (no es un rechazo de SIFEN). Se conservan su número y el historial; no se genera otro número ni se reenvía automáticamente."}</p>
                           ) : null}
                           {d.estadoLocal === "ENVIO_INDETERMINADO" ? (
-                            <p className={ui.alertError} role="alert">Envío no confirmado. Verifique el documento en el gateway antes de cualquier reenvío: Nexit no reenvía automáticamente un envío indeterminado.</p>
+                            <p className={ui.alertError} role="alert">Envío no confirmado. Antes de cualquier reenvío, verifique con el proveedor de facturación si el documento llegó: Nexit no reenvía automáticamente un envío no confirmado.</p>
                           ) : null}
 
                           {/* PRO-195-UX-R01 (punto 3): «Más acciones» legítimas con sus guardas y confirmaciones de siempre (envío manual, reenvío confirmado, corrección NCE). */}
                           <div className={estilos.barraAcciones} role="group" aria-label={`Más acciones de ${doc}`}>
                             {crear && (d.estadoLocal === "PENDIENTE_ENVIO" || (d.estadoLocal === "ERROR_ENVIO" && d.envioErrorTipo !== "RECHAZO")) ? (
                               <button type="button" className={ui.primaryButton} disabled={!habilitada} onClick={() => enviarAlGateway(d)}>
-                                {accion === "envio" ? "Enviando..." : "Enviar al gateway"}
+                                {accion === "envio" ? "Enviando..." : "Enviar documento"}
                               </button>
                             ) : null}
                             {crear && d.tipo !== "NCE" && d.estadoLocal === "ERROR_ENVIO" && d.envioErrorTipo === "RECHAZO" ? (
@@ -1161,7 +1183,7 @@ export default function DocumentosPage() {
                           {det.tecnico ? (
                             <div id={`tecnico-${d.id}`} className={estilos.tecnico} role="region" aria-label="Historial técnico">
                               {sinCdc ? <div className={estilos.avisoTecnico} role="note">{sinCdc}</div> : null}
-                              {alerta ? <div className={estilos.notaTecnica} role="note">{alerta.detalle}</div> : null}
+                              {alerta ? <div className={estilos.notaTecnica} role="note"><strong>Aviso técnico:</strong> {alerta.texto}. {alerta.detalle}</div> : null}
 
                               {/* PRO-365: los cuatro estados se ven SIEMPRE en la fila; aquí se repiten con su nombre y texto corto como referencia técnica (no es el único sitio). */}
                               <h4 className={estilos.subtitulo}>Estados técnicos</h4>

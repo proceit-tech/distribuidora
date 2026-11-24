@@ -150,8 +150,9 @@ export async function verificarCasosDocumentosUxR01(): Promise<string[]> {
   }
 
   // ══ 5. Descripción completa por tooltip accesible ═══════════════════════════════════════════════════════════════════════════════════════
-  cierto("UXR01-13 (actualizado PRO-195) el texto COMPLETO de cada icono es su nombre accesible (role=img + aria-label) y es enfocable (tabIndex 0)",
-    /role="img"\s+tabIndex=\{0\}\s+aria-label=\{texto\}/.test(pagina) && /texto=\{i\.texto\}/.test(segunda) && /texto=\{textoFase\(i, fiscal\)\}/.test(fila) && /texto=\{`Aviso técnico: \$\{avisoFila\}`\}/.test(fila));
+  // PRO-365-R02-C02: en la FILA el tooltip es el texto breve de operador y el nombre accesible antepone el eje; la segunda capa conserva el texto técnico completo (i.texto).
+  cierto("UXR01-13 (actualizado PRO-195, PRO-365-R02-C02) cada icono tiene nombre accesible (role=img + aria-label = etiqueta con el eje, o el texto) y es enfocable (tabIndex 0); fila con texto de operador, segunda capa con texto técnico",
+    /role="img"\s+tabIndex=\{0\}\s+aria-label=\{etiqueta \?\? texto\}/.test(pagina) && /texto=\{i\.texto\}/.test(segunda) && /texto=\{textoIconoOperador\(i, d\)\.texto\} etiqueta=\{textoIconoOperador\(i, d\)\.etiqueta\}/.test(fila) && /texto=\{`Revisar: \$\{avisoFila\}`\} etiqueta=\{`Aviso: \$\{avisoFila\}`\}/.test(fila));
   cierto("UXR01-14 el tooltip visual se abre con mouse (enter), teclado (focus) y toque (click), se cierra al salir con demora (pasar al tooltip sin cerrarlo) y al perder el foco",
     ["onMouseEnter={(e) => tip.mostrar(e.currentTarget, texto)}", "onFocus={(e) => tip.mostrar(e.currentTarget, texto)}", "onClick={(e) => tip.mostrar(e.currentTarget, texto)}", "onMouseLeave={tip.programarCierre}", "onBlur={(e) => tip.ocultar(e.currentTarget)}"].every((t) => pagina.includes(t)) &&
     /setTimeout\(\(\) => setTip\(null\), 160\)/.test(pagina) && /onMouseEnter=\{\(\) => window\.clearTimeout\(cierreTip\.current\)\}/.test(pagina));
@@ -190,10 +191,10 @@ export async function verificarCasosDocumentosUxR01(): Promise<string[]> {
     /aria-expanded=\{Boolean\(det\)\}/.test(fila) && /aria-controls=\{det \? `detalle-\$\{d\.id\}` : undefined\}/.test(fila) && /\{det \? ACCION\.cerrar : ACCION\.abrir\}/.test(fila) && /aria-expanded=\{det\.tecnico\}/.test(primera) && /\{det\.tecnico \? ACCION\.cerrar : ACCION\.abrir\}/.test(primera));
 
   // ══ 8. Primera capa: solo cuatro datos fiscales ═════════════════════════════════════════════════════════════════════════════════════════
-  cierto("UXR01-27 primera capa con exactamente cuatro <dt>: Nro lote, CDC (o «CDC de la nota de crédito»), Fecha firma, Mensaje; sin «fases» repetidas en la cabecera",
-    (primera.match(/<dt /g) ?? []).length === 4 && ["Nro lote</dt>", "\"CDC de la nota de crédito\" : \"CDC\"", "Fecha firma</dt>", "Mensaje</dt>"].every((t) => primera.includes(t)) && !/resumenFases|fiscalFases/.test(pagina));
-  cierto("UXR01-28 (actualizado PRO-195) lote y CDC literales (sin trim/recorte, CDC en pre-wrap) con «Sin información»; mensaje en rojo SOLO con RECHAZADO persistido",
-    /\{d\.lote \?\? "Sin información"\}/.test(primera) && /style=\{\{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" \}\}>\{fiscal\.cdc \?\? "Sin información"\}/.test(primera) && /fiscal\.rechazo \? estilos\.mensajeRechazo/.test(primera) && !/\.trim\(\)/.test(primera));
+  cierto("UXR01-27 (actualizado PRO-365-R02-C02) primera capa con cuatro <dt> en el código: Nro lote, CDC (o «CDC de la nota de crédito»), Fecha firma y el motivo condicional (solo con rechazo); sin «Mensaje» genérico ni «fases» repetidas",
+    (primera.match(/<dt /g) ?? []).length === 4 && ["Nro lote</dt>", "\"CDC de la nota de crédito\" : \"CDC\"", "Fecha firma</dt>", "{respuesta.motivo.etiqueta}</dt>"].every((t) => primera.includes(t)) && !primera.includes(">Mensaje</dt>") && !/resumenFases|fiscalFases/.test(pagina));
+  cierto("UXR01-28 (actualizado PRO-195, PRO-365-R02-C02) lote y CDC literales (sin trim/recorte, CDC en pre-wrap) con «Sin información»; motivo en rojo SOLO con RECHAZADO persistido (respuestaFiscal usa fiscal.rechazo)",
+    /\{d\.lote \?\? "Sin información"\}/.test(primera) && /style=\{\{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" \}\}>\{fiscal\.cdc \?\? "Sin información"\}/.test(primera) && /<dd className=\{estilos\.mensajeRechazo\}>\{respuesta\.motivo\.valor\}<\/dd>/.test(primera) && /const respuesta = respuestaFiscal\(d, fiscal\);/.test(pagina) && !/\.trim\(\)/.test(primera));
   igual("UXR01-29 detalleFiscalPrimario (sin cambios) entrega el CDC opaco tal cual, aunque tenga espacios o no tenga 44 dígitos",
     detalleFiscalPrimario({ lote: " L-1 ", cdc: " 0180-ABC ", fechaFirma: null, codRespuesta: "1101", mensajeRespuesta: "Número de timbrado inválido", estadoSifen: "RECHAZADO" }),
     { lote: " L-1 ", cdc: " 0180-ABC ", fechaFirma: null, mensaje: "1101 · Número de timbrado inválido", rechazo: true });
@@ -208,13 +209,13 @@ export async function verificarCasosDocumentosUxR01(): Promise<string[]> {
     (segunda.match(/style=\{\{/g) ?? []).length === 2 /* ancho mínimo de la tabla del historial + margen del error de «cargar anteriores» */ && /className=\{estilos\.datosTecnicos\}/.test(segunda) && /<pre className=\{estilos\.json\}>/.test(segunda) && /<h4 className=\{estilos\.subtitulo\}>/.test(segunda));
 
   // ══ 10. Avisos críticos siempre visibles ════════════════════════════════════════════════════════════════════════════════════════════════
-  cierto("UXR01-33 en la PRIMERA capa, breves y visibles: rechazo del gateway por validación, envío indeterminado (verificar antes de reenviar), aviso técnico de la última consulta y «Requiere revisión»",
+  cierto("UXR01-33 (actualizado PRO-365-R02-C02) en la PRIMERA capa, breves y visibles y en lenguaje llano: rechazo del proveedor por errores de datos, envío no confirmado (verificar antes de reenviar), aviso de la última consulta y «Requiere revisión»",
     /d\.estadoLocal === "ERROR_ENVIO" && d\.envioErrorTipo === "RECHAZO" \? \(\s*<p className=\{ui\.alertError\} role="alert">/.test(primera) && /d\.estadoLocal === "ENVIO_INDETERMINADO" \? \(\s*<p className=\{ui\.alertError\} role="alert">/.test(primera) &&
-    /Verifique el documento en el gateway antes de cualquier reenvío/.test(primera) && /<strong>Aviso técnico:<\/strong> \{alerta\.texto\}/.test(primera) && /<strong>Requiere revisión:<\/strong>/.test(primera));
+    /Antes de cualquier reenvío, verifique con el proveedor de facturación si el documento llegó/.test(primera) && /<strong>Aviso:<\/strong> \{avisoOperador\(alerta, false, d\.tipo\)\}/.test(primera) && /<strong>Requiere revisión:<\/strong>/.test(primera));
   cierto("UXR01-34 el reenvío de un documento rechazado sigue exigiendo confirmación explícita (window.confirm) antes de cualquier POST; el envío indeterminado no ofrece reenviar",
     /if \(confirmarRechazo && !window\.confirm\(/.test(pagina) && pagina.indexOf("window.confirm(") < pagina.indexOf("iniciarAccion(d, \"envio\")") && !/ENVIO_INDETERMINADO"[^)]{0,80}enviarAlGateway/.test(pagina));
-  cierto("UXR01-35 resultado y error de la última acción visibles (role status / alert) en la primera capa, incluida la continuidad de conexión no verificable",
-    /\{det\.aviso \? <div className=\{ui\.alertOk\} role="status"/.test(primera) && /\{det\.error \? <div className=\{ui\.alertError\} role="alert"/.test(primera) && /Continuidad de la conexión no verificable/.test(pagina));
+  cierto("UXR01-35 (actualizado PRO-365-R02-C02) resultado y error de la última acción visibles (role status / alert) en la primera capa, incluida la continuidad de conexión no comprobada (textoConsultaOperador)",
+    /\{det\.aviso \? <div className=\{ui\.alertOk\} role="status"/.test(primera) && /\{det\.error \? <div className=\{ui\.alertError\} role="alert"/.test(primera) && /textoConsultaOperador\(j\.resultado, j\.continuidadConexion\)/.test(pagina));
 
   // ══ 11. Respuestas tardías y cambios de filtros (AUD UX04) ══════════════════════════════════════════════════════════════════════════════
   igual("UXR01-36 claveContexto: filtros + página; la recarga NO cambia el contexto, otra página u otros filtros sí",

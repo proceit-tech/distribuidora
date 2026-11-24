@@ -110,8 +110,8 @@ export async function verificarCasosVisualV1(): Promise<string[]> {
   // (sin endpoint). El expandir pasa a su propia columna (la primera).
   const celda = pagina.slice(pagina.indexOf("<div className={estilos.accionesLinea} role=\"group\""), pagina.indexOf("</td>", pagina.indexOf("<div className={estilos.accionesLinea} role=\"group\"")));
 
-  cierto("VIS-21 (actualizado PRO-195) la columna Acciones muestra acciones de icono compactas por accionesFila: KuDE (solo si kudeDisponible) con nombre accesible «Consultar KuDE (PDF)» que no promete PDF confirmado; el detalle (aria-expanded, título y etiqueta accesibles) va en su propia columna",
-    /accionesFila\(kudeDisponible\(d\)/.test(pagina) && /etiqueta=\{`Consultar KuDE \(PDF\) de \$\{doc\}: no confirma por sí que el PDF exista ni que esté verificado`\}/.test(celda) && /alActivar=\{\(\) => abrirKude\(d\)\}/.test(celda) &&
+  cierto("VIS-21 (actualizado PRO-195) la columna Acciones muestra acciones de icono compactas por accionesFila: KuDE (solo si kudeDisponible) con nombre accesible «Consultar KuDE (PDF)» que no promete PDF confirmado (actualizado PRO-365-R02-C02: sin coletilla técnica); el detalle (aria-expanded, título y etiqueta accesibles) va en su propia columna",
+    /accionesFila\(kudeDisponible\(d\)/.test(pagina) && /etiqueta=\{`Consultar KuDE \(PDF\) de \$\{doc\}`\}/.test(celda) && !/KuDE[^`]*(verificado|confirmado)`/.test(celda) && /alActivar=\{\(\) => abrirKude\(d\)\}/.test(celda) &&
     /aria-expanded=\{Boolean\(det\)\}/.test(pagina) && /title=\{det \? "Ocultar detalle" : "Ver detalle"\}/.test(pagina) && /onClick=\{\(\) => alternar\(d\)\}/.test(pagina) && !/alternar\(d\)/.test(celda));
   // PRO-195-UX-R01: XML y correo se muestran como acciones DESHABILITADAS con su motivo (no hay endpoint): no es falso soporte. El aviso del detalle se mantiene.
   cierto("VIS-22 (actualizado PRO-195) no hay descarga de XML ni falso soporte: el icono XML está deshabilitado con su motivo y el aviso «XML: descarga no disponible» se mantiene; el KuDE es la acción de la fila «Consultar KuDE (PDF)», sin botón de texto duplicado en el detalle",
