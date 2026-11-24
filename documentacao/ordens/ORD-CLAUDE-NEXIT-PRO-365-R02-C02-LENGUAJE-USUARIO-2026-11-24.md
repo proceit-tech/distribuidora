@@ -80,3 +80,72 @@ Alcance autorizado: `app/(private)/documentos/page.tsx` y helpers de PRESENTACI�
 - Entregar diff, SHA completo, archivos modificados, matriz antes/después de TODOS los textos de primera capa y casos escritos; registrar otras frases técnicas que no se puedan cambiar sin otro alcance.
 - **NO ejecutar** tests, lint, typecheck, build, SQL/psql, GitHub Actions manual, VM, Docker, gateway, deploy ni merge.
 - STOP para auditoría ChatGPT. **NO iniciar R03 ni otras rondas**, no modificar el servidor.
+
+
+## 8. AMPLIACIÓN VINCULANTE DEL RESPONSABLE — AUDITAR Y CORREGIR EL 100% DE LAS SECCIONES VISIBLES
+
+El responsable amplió expresamente el encargo el **24/11/2026**: **«¿Y si es aprobado, cómo queda? ¿Quién pidió poner ese mensaje en el KuDE? Revisar 100% la pantalla»**. La presente ampliación sustituye cualquier interpretación que limite C02 exclusivamente a las palabras de los cuatro iconos. Sigue siendo una **corrección de UX/solo presentación de Documentos electrónicos**, no una autorización de nueva lógica fiscal/backend.
+
+**Leer y aplicar íntegramente el dictamen complementario**:
+
+`documentacao/testes/AUD-CHATGPT-PRO-365-C02-PANTALLA-COMPLETA-2026-11-24.md`
+
+### A. Aclaración demostrada que se debe conservar
+
+El texto `1109 · Número de documento ha sido inutilizado anteriormente` de la captura **NO está insertado en el PDF KuDE**. Es el campo `Mensaje` del panel `Detalle fiscal` (`page.tsx:1102–1103`), cuya fuente es `detalleFiscalPrimario(): codRespuesta + mensajeRespuesta`. `kude-modal.tsx` presenta el Blob PDF recibido en un iframe sin insertar esa cadena. No trasladar el mensaje de SIFEN al KuDE ni alterar el PDF. El error 1109 puede explicar un RECHAZO, **no transforma automáticamente el documento en INUTILIZADO**. El KuDE original y su control de correspondencia VERIFICADA/NO_VERIFICADA deben permanecer intactos.
+
+### B. Problema adicional P0 de UX que C02 DEBE solucionar
+
+**Actualmente la cabecera `Detalle fiscal` NO declara claramente `Aprobado`, `Rechazado`, `Pendiente`, `Cancelado` o `Inutilizado` y la fila `Mensaje` se muestra SIEMPRE, incluso con estado APROBADO o sin mensaje.** Cambiar solo los tooltips de iconos **NO** satisface la petición.
+
+Implementar **presentación condicional segura**, basada en el estado/resultado real existente:
+
+- **APROBADO:** encabezado claro `Aprobado`, con icono verde. En la primera capa no mostrar `Mensaje: Sin información` ni presentar un mensaje viejo de rechazo como si fuese el resultado aprobado. Cuando exista respuesta SIFEN comprobable y pertinente, identificarla como tal sin agregar un párrafo técnico. Las respuestas crudas permanecen en historial.
+- **RECHAZADO:** encabezado rojo `Rechazado`; en lugar de `Mensaje` genérico, poner `Motivo del rechazo` con **código y mensaje reales**. En el caso mostrado, `1109 · Número de documento ha sido inutilizado anteriormente`. No ocultar el dato ni convertirlo en estado de inutilización.
+- **PENDIENTE/SIN_CONSULTA/NO_RECONOCIDO:** encabezado no-final distinguible (`Pendiente de respuesta` o `Sin resultado confirmado` según información real); ningún mensaje antiguo de rechazo debe parecer vigente.
+- **CANCELADO/INUTILIZADO:** encabezado con su condición registrada (o evento cancelado oficialmente acreditado si el contrato actual así lo determina); no deducir esos estados a partir del cuerpo de un mensaje fiscal.
+- **APROBADO histórico + CANCELADO por evento:** evitar que la pantalla sugiera vigencia activa con un icono verde aislado; si requiere contrato de negocio distinto, marcar bloqueo, sin cambiar API ni persistencia.
+- **Contradicción entre estado persistido y código/mensaje:** no ocultar/falsificar para conseguir `Aprobado`; mostrar aviso neutro de revisión y conservar evidencia, aclarando qué campos existentes permiten comprobar correlación/fecha. Si no existe contrato seguro para separar respuesta vigente de histórica, detener solo esa parte y solicitar orden específica para backend.
+
+No alterar `detalleFiscalPrimario` como fuente fiscal ni recortar CDC, lote, fecha de firma, rechazo o número. Preferir **una nueva capa PURA de copy/selección de campos visuales**, usando el estado ya acreditado y preservando campos crudos en el historial.
+
+### C. Auditoría COMPLETA de todas las zonas de UI (no solo iconos)
+
+Revisar y entregar una tabla **zona × copia actual × problema × corrección × casos escritos**, sin excluir:
+
+1. Cabecera y navegación.
+2. Filtros por fechas, sucursal, cliente, tipo, estado y limpieza; comportamiento real sin botones falsos.
+3. Tarjetas KPI, sus `title`, ayudas accesibles, cifra/filtro, caso `SIN_EMAIL` vs `NO_INFORMADO`.
+4. Leyenda de cuatro fases y significado de iconos.
+5. Tabla de diez columnas, orden, fechas/horas, monedas DECIMAL exactas, FE/NCE/serie.
+6. Checkboxes, selección y barra sin acciones masivas; no inventar funciones.
+7. **Todos** los tooltips, `aria-label` y títulos de Acciones (KuDE, XML, Consulta, Correo), Estados (cuatro + aviso), Eventos.
+8. Detalle fiscal de primera capa con estado visible y motivos condicionales; copia de lote/CDC sin pérdidas.
+9. Alertas críticas de envío incierto, error y rechazo, con lenguaje claro pero **sin reducir advertencias de seguridad** ni reenvío automático.
+10. Detalle/historial técnico (segunda capa), estados de seguimiento, eventos, solicitudes, respuestas JSON, HTTP, actor, fecha y trazas; conservar su precisión y evitar duplicación innecesaria.
+11. Modal de KuDE: carga, aviso de PDF NO_VERIFICADO, descargar/imprimir/reintentar; nunca cambiar contenido PDF, endpoint ni verificación.
+12. Estados vacío/cargando/error, paginación, selección obsoleta, cambios de filtros, hover/teclado/toque/scroll/zoom, mobile/desktop.
+
+### D. Criterios adicionales de aceptación
+
+**C02-11** Primera capa APROBADO muestra `Aprobado` explícito, sin `Mensaje` incondicional.
+
+**C02-12** Primera capa RECHAZADO muestra `Rechazado` + `Motivo del rechazo` real; caso 1109 se conserva en detalle, no en PDF KuDE.
+
+**C02-13** PENDIENTE, CANCELADO e INUTILIZADO distinguidos sin inferir de texto sucio; escenarios contradicción/documentos con historial comprobados o declarados bloqueados.
+
+**C02-14** Los cuatro estados siguen independientes; `Enviado` no significa aprobado y `Código registrado` no significa PDF/XML disponible.
+
+**C02-15** Modal KuDE conserva PDF de respuesta, validación de pertenencia y avisos críticos; ningún mensaje fiscal añadido al PDF. El botón por tipo FE/NCE no se interpretará como prueba de disponibilidad de PDF ni de aprobación.
+
+**C02-16** Inventario del 100% de zonas arriba enumeradas y de cada texto técnico de la primera capa, con tabla antes/después; no tocar negocios externos.
+
+**C02-17** Casos escritos para APROBADO con y sin mensaje, RECHAZADO/1109, SIN_CONSULTA, PENDIENTE, CANCELADO, INUTILIZADO, envío indeterminado, ausencia de CDC, correo sin estado, PDF NO_VERIFICADO y conflicto respuesta/estado. **No inventar fixtures SIFEN ni declaraciones de éxito en navegador.**
+
+**C02-18** Diferenciar conformidad estática, CI automático y homologación visual real por el responsable. No declarar `100% homologado` solo por leer todo el código.
+
+### E. Scope y STOP
+
+Se autoriza exclusivamente presentación/UX de `/documentos`, `kude-modal.tsx` si **solo** cambia copy manteniendo las protecciones, helpers puros estrictamente necesarios, casos escritos y documentación de entrega. **NO** cambiar PDFs de KuDE, su identidad/verificación/endpoint, lógica de estado fiscal, enums persistidos, APIs, SQL, migrations, gateway, stock, permisos, reenvíos, exportaciones o eventos. La falta de contrato seguro deja dependencia anotada, no permite improvisar. Publicar **UN ÚNICO lote C02** y STOP ChatGPT, PR #7 DRAFT, no tests/lint/build/CI manual/SQL/VM/Docker/deploy/merge ni R03.
+
+**La R02 y C01 ya estaban ejecutadas y auditadas. C02 NO está implementada; esta es la orden completa actualizada que las sustituye.**
