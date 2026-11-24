@@ -7,12 +7,13 @@
  *  · SEGUNDA CAPA (historial técnico): sigue usando IconoEstado.texto, seguimientoFiscal, alertaConsulta.detalle, eventosFila y el historial de intentos SIN cambios.
  *
  * No clasifica nada de nuevo: los iconos siguen saliendo de iconosEstado(d) (símbolo, color y posición intactos) y este módulo solo pone NOMBRE a lo que ya se derivó.
+ * Única excepción (PRO-365-R02-C02-C03, F03): iconosEstadoOperador presenta en primera capa el eje SIFEN de un APROBADO con cancelación acreditada como «Cancelado».
  * Reglas de seguridad: «Enviado» nunca significa aprobado; un envío indeterminado nunca se llama «Enviado»; «Código del documento registrado» no afirma XML ni PDF;
  * un código o mensaje de rechazo (p. ej. 1109) nunca convierte el documento en Inutilizado o Cancelado; el estado fiscal sale SOLO del estado persistido.
  */
 import { ESTADOS_LOCAL_TRANSMITIDO, type EstadoEmail, type EstadoLocal, type EstadoSifen } from "@/lib/facturacion/estados";
 import type { ElegibilidadCancelacion, ProyeccionEventosFe } from "@/lib/facturacion/eventos-fe";
-import { NOMBRE_EJE, type AlertaConsulta, type IconoEstado, type SimboloEstado, type TonoIcono } from "@/lib/facturacion/presentacion-sifen";
+import { iconosEstado, NOMBRE_EJE, type AlertaConsulta, type IconoEstado, type SimboloEstado, type TonoIcono } from "@/lib/facturacion/presentacion-sifen";
 
 type DocOperador = { estadoLocal: EstadoLocal; estadoSifen: EstadoSifen; estadoEmail: EstadoEmail; eventosFe?: ProyeccionEventosFe | null };
 
@@ -44,8 +45,9 @@ const TEXTO_XML_OPERADOR: Partial<Record<SimboloEstado, string>> = {
 function textoSifen(i: IconoEstado, d: DocOperador): string {
   switch (d.estadoSifen) {
     case "APROBADO":
-      // Cancelación ACREDITADA por evento (misma regla que estadoPrincipalFila): el icono sigue verde por el estado persistido, el texto deja claro que ya no está vigente.
-      return d.eventosFe?.situacion === "CANCELADO" ? "Aprobado, luego cancelado" : "Aprobado";
+      // PRO-365-R02-C02-C03 (F03): cancelación ACREDITADA por evento (misma regla que estadoPrincipalFila y encabezadoFiscal) ⇒ «Cancelado» en primera capa.
+      // La aprobación original sigue en el historial técnico (iconosEstado base, sin cambios).
+      return d.eventosFe?.situacion === "CANCELADO" ? "Cancelado" : "Aprobado";
     case "RECHAZADO":
       return "Rechazado";
     case "CANCELADO":
@@ -57,6 +59,32 @@ function textoSifen(i: IconoEstado, d: DocOperador): string {
 
       return "Sin información";
   }
+}
+
+/**
+ * PRO-365-R02-C02-C03 (F03): iconos de PRIMERA CAPA (fila, también en móvil). Reutiliza iconosEstado(d) tal cual y sustituye SOLO el eje SIFEN cuando el estado persistido es
+ * APROBADO y la proyección de eventos existente acredita la cancelación (eventosFe.situacion === "CANCELADO"): símbolo «prohibido», tono neutro (igual que un CANCELADO persistido).
+ * No deduce cancelación de mensajes, códigos, fechas, CDC ni eventos genéricos; EN_REVISION, SOLO_RECHAZADOS, SIN_EVENTOS, SIN_INFORMACION o sin proyección ⇒ iconos base sin cambios.
+ * Envío, XML/CDC y Correo idénticos, cuatro ejes en el mismo orden. No muta el documento ni los iconos base (devuelve un array y un objeto nuevos).
+ * El historial técnico sigue usando iconosEstado(d) (aprobación original con check verde) y el estado fiscal registrado no cambia.
+ */
+type DocIconosOperador = Parameters<typeof iconosEstado>[0] & { eventosFe?: ProyeccionEventosFe | null };
+
+export function cancelacionAcreditadaSobreAprobado(d: { estadoSifen: EstadoSifen; eventosFe?: ProyeccionEventosFe | null }): boolean {
+  return d.estadoSifen === "APROBADO" && d.eventosFe?.situacion === "CANCELADO";
+}
+
+export function iconosEstadoOperador(d: DocIconosOperador): [IconoEstado, IconoEstado, IconoEstado, IconoEstado] {
+  const [envio, xml, sifen, correo] = iconosEstado(d);
+
+  if (!cancelacionAcreditadaSobreAprobado(d)) return [envio, xml, sifen, correo];
+
+  return [
+    envio,
+    xml,
+    { ...sifen, simbolo: "prohibido", tono: "neutro", corto: "SIFEN Cancelado", texto: "SIFEN: cancelado (fue aprobado y luego cancelado; la aprobación original se conserva en el historial)." },
+    correo,
+  ];
 }
 
 /** Tooltip visual (texto) y nombre accesible (etiqueta: antepone el eje para desambiguar en lectores de pantalla). El tooltip de Envío ENVIADO es EXACTAMENTE «Enviado». */

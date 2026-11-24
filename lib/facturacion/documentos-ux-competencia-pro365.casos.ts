@@ -49,7 +49,7 @@ export async function verificarCasosDocumentosUxCompetenciaPro365(): Promise<str
   igual("PRO365-A01a iconosEstado devuelve SIEMPRE cuatro ejes en orden Envío · XML/CDC · SIFEN · Correo",
     iconosEstado(doc({})).map((i) => NOMBRE_EJE[i.eje]), ["Envío", "XML/CDC", "SIFEN", "Correo"]);
   cierto("PRO365-A01b (actualizado PRO-365-R02-C02) la celda Estado de la FILA pinta los cuatro iconos (fases.map de iconosEstado), cada uno enfocable con su texto de operador y nombre accesible con el eje",
-    /const fases = iconosEstado\(d\);/.test(pagina) && /\{fases\.map\(\(i\) => \(\s*<IconoFase key=\{i\.eje\} eje=\{i\.eje\} simbolo=\{i\.simbolo\} clase=\{CLASE_TONO_ICONO\[i\.tono\]\} texto=\{textoIconoOperador\(i, d\)\.texto\} etiqueta=\{textoIconoOperador\(i, d\)\.etiqueta\} tip=\{eventosTip\} \/>/.test(celdaEstado) &&
+    /const fases = iconosEstadoOperador\(d\);/.test(pagina) && /\{fases\.map\(\(i\) => \(\s*<IconoFase key=\{i\.eje\} eje=\{i\.eje\} simbolo=\{i\.simbolo\} clase=\{CLASE_TONO_ICONO\[i\.tono\]\} texto=\{textoIconoOperador\(i, d\)\.texto\} etiqueta=\{textoIconoOperador\(i, d\)\.etiqueta\} tip=\{eventosTip\} \/>/.test(celdaEstado) &&
     /role="img"\s+tabIndex=\{0\}\s+aria-label=\{etiqueta \?\? texto\}/.test(pagina) && /role="group" aria-label=\{`Estados de \$\{doc\}`\}/.test(celdaEstado));
   cierto("PRO365-A01c los indicadores NO quedan ocultos en el Historial técnico: la fila los muestra y la segunda capa los repite con nombre",
     /fases\.map/.test(fila) && /iconosEstado\(d\)\.map\(\(i\) => \(/.test(segunda) && /<strong>\{NOMBRE_EJE\[i\.eje\]\}:<\/strong> \{i\.corto\}/.test(segunda));

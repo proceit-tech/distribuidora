@@ -128,7 +128,7 @@ export async function verificarCasosDocumentosUxR01(): Promise<string[]> {
   // PRO-195-UX-R01 (punto 4): la fila ya no muestra los cuatro ejes sino UN estado principal + el aviso «!» opcional; los cuatro ejes pasan a la segunda capa.
   // PRO-365: la regla anterior se revoca; la celda Estado vuelve a mostrar los CUATRO iconos independientes (Envío | XML/CDC | SIFEN | Correo) sin texto de estado.
   cierto("UXR01-07 (actualizado PRO-365) la celda Estado muestra los cuatro iconos de iconosEstado y el aviso «!» solo si existe (hueco fijo si no); sin texto grande de estado; la segunda capa los repite con nombre",
-    /<IconoFase key=\{i\.eje\} eje=\{i\.eje\} simbolo=\{i\.simbolo\} clase=\{CLASE_TONO_ICONO\[i\.tono\]\}/.test(fila) && /const fases = iconosEstado\(d\);/.test(pagina) && !/\{estado\.texto\}|SIMBOLO_ESTADO/.test(pagina) && /\{avisoFila \? \(\s*<IconoFase eje="aviso" simbolo="alerta"/.test(fila) && /<span className=\{estilos\.iconoVacio\} aria-hidden="true" \/>/.test(fila) &&
+    /<IconoFase key=\{i\.eje\} eje=\{i\.eje\} simbolo=\{i\.simbolo\} clase=\{CLASE_TONO_ICONO\[i\.tono\]\}/.test(fila) && /const fases = iconosEstadoOperador\(d\);/.test(pagina) && !/\{estado\.texto\}|SIMBOLO_ESTADO/.test(pagina) && /\{avisoFila \? \(\s*<IconoFase eje="aviso" simbolo="alerta"/.test(fila) && /<span className=\{estilos\.iconoVacio\} aria-hidden="true" \/>/.test(fila) &&
     /iconosEstado\(d\)\.map\(\(i\) => \(/.test(segunda) && /\.icono \{[^}]*min-width: 36px;\s*min-height: 36px;/.test(cssLimpio));
 
   // ══ 3. Sin textos repetidos debajo de cada icono ════════════════════════════════════════════════════════════════════════════════════════

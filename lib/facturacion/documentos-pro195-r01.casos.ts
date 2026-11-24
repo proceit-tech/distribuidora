@@ -107,7 +107,7 @@ export async function verificarCasosDocumentosPro195R01(): Promise<string[]> {
       [iconosEstado(doc({ estadoSifen: "RECHAZADO", cdc: "X" })).map((i) => i.tono), estadoPrincipalFila(doc({ estadoSifen: "RECHAZADO", cdc: "X" })).tono], [["ok", "info", "error", "neutro"], "rechazado"]);
     // PRO-365: regla PRO-195 punto 4 revocada por el responsable; la fila vuelve a pintar los cuatro iconos (y la segunda capa los repite).
     cierto("R01-03d (actualizado PRO-365) la fila pinta los cuatro iconos (iconosEstado) sin texto grande de estado; la segunda capa los repite",
-      /\{fases\.map\(\(i\) => \(/.test(fila) && /const fases = iconosEstado\(d\);/.test(pagina) && /iconosEstado\(d\)/.test(segunda) && !/estadoPrincipalFila\(d\)|\{estado\.texto\}/.test(pagina));
+      /\{fases\.map\(\(i\) => \(/.test(fila) && /const fases = iconosEstadoOperador\(d\);/.test(pagina) && /iconosEstado\(d\)/.test(segunda) && !/estadoPrincipalFila\(d\)|\{estado\.texto\}/.test(pagina));
   }
 
   // ══ R01-04 XML firmado / pendiente / sin información, sin aprobación falsa ═════════════════════════════════════════════════════════════

@@ -1042,7 +1042,7 @@ export async function verificarCasosFlujoFiscalPro342(): Promise<string[]> {
     // PRO-365 (sustituye la regla PRO-195-UX-R01 punto 4, rechazada por el responsable): la fila vuelve a mostrar los CUATRO iconos independientes (+ «!» si hay aviso),
     // sin texto grande de estado; la segunda capa los repite con su nombre, pero ya no es el único sitio.
     cierto("PRO342-R04-UX01a (actualizado PRO-365) lista: la celda Estado muestra los cuatro iconos de iconosEstado (+ «!» si hay aviso), sin texto principal ni cápsulas «SIFEN: …», «Envío: …», e-mail o «Requiere revisión»; la segunda capa los repite con su grupo accesible",
-      /const fases = iconosEstado\(d\);/.test(pagina) && /\{fases\.map\(\(i\) => \(/.test(fila) && !/estadoPrincipalFila|\{estado\.texto\}/.test(pagina) && /\{avisoFila \? \(/.test(fila) && !/SIFEN: \{|Envío: \{|ETIQUETA_EMAIL|>Requiere revisión</.test(fila) &&
+      /const fases = iconosEstadoOperador\(d\);/.test(pagina) && /\{fases\.map\(\(i\) => \(/.test(fila) && !/estadoPrincipalFila|\{estado\.texto\}/.test(pagina) && /\{avisoFila \? \(/.test(fila) && !/SIFEN: \{|Envío: \{|ETIQUETA_EMAIL|>Requiere revisión</.test(fila) &&
       /iconosEstado\(d\)\.map\(\(i\) => \(/.test(segunda) && /aria-label=\{`Estados técnicos de \$\{numeroDocumento\(d\)\}`\}/.test(segunda));
     // PRO-342-UX-R01 (puntos 3 y 5): sin nombre repetido bajo cada icono; tooltip visual fijo a la ventana (no recortado por el scroll de la tabla) en vez de ::after.
     cierto("PRO342-R04-F8a (actualizado UX-R01, PRO-365-R02-C02) accesibilidad: cada icono es role=img con nombre accesible (etiqueta con el eje, o el texto), enfocable por teclado/toque (tabIndex 0) y abre el tooltip con hover, foco y toque; SVG aria-hidden; sin nombre corto repetido",

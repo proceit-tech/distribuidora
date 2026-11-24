@@ -55,6 +55,7 @@ import {
   AYUDA_ACCION_NO_DISPONIBLE,
   encabezadoFiscal,
   eventosOperador,
+  iconosEstadoOperador,
   respuestaFiscal,
   textoConsultaOperador,
   textoEnvioOperador,
@@ -218,6 +219,8 @@ const LEYENDA_SIMBOLOS: Array<{ simbolo: SimboloEstado; clase: string; texto: st
   { simbolo: "reloj", clase: estilos.iconoAviso, texto: "pendiente" },
   { simbolo: "cruz", clase: estilos.iconoError, texto: "error o rechazo" },
   { simbolo: "guion", clase: estilos.iconoNeutro, texto: "sin información" },
+  // PRO-365-R02-C02-C03 (F03): símbolo ya usado por CANCELADO/INUTILIZADO (y APROBADO luego cancelado), con el estilo neutro existente.
+  { simbolo: "prohibido", clase: estilos.iconoNeutro, texto: "cancelado o inutilizado" },
 ];
 const CLASE_ACCION: Record<AccionFila["clave"], string> = { kude: estilos.accionKude, xml: estilos.accionXml, consulta: estilos.accionConsulta, correo: estilos.accionCorreo };
 
@@ -981,7 +984,8 @@ export default function DocumentosPage() {
                 // PRO-342-R01: envío (ACK), último retorno del gateway (p. ej. «XML firmado») y resultado fiscal SIFEN en ejes separados (segunda capa).
                 const seguimiento = seguimientoFiscal(d);
                 // PRO-365: los cuatro estados INDEPENDIENTES de la fila (Envío · XML/CDC · SIFEN · Correo), derivados solo de lo persistido.
-                const fases = iconosEstado(d);
+                // PRO-365-R02-C02-C03 (F03): primera capa (fila y móvil); APROBADO con cancelación acreditada ⇒ eje SIFEN «Cancelado». El historial técnico sigue con iconosEstado(d).
+                const fases = iconosEstadoOperador(d);
                 // PRO-313-R01: elegibilidad PREPARADA de la cancelación (no operativa: sin aprobación oficial acreditada ni envío habilitado); el servidor revalidará todo al confirmar.
                 const cancelacion = elegibilidadCancelacionFe({ tipo: d.tipo, estadoSifen: d.estadoSifen, puedeEditar: editar, proyeccion: d.eventosFe, aprobacion: aprobacionOficialDocumento(d.eventosFe), ahoraMs: datos?.generadoMs ?? Number.NaN });
                 const eventos = eventosFila(d, cancelacion);

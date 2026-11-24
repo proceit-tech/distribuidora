@@ -5,6 +5,9 @@
  * Cubre T01–T10 y C02-11..C02-18 de la orden: APROBADO, RECHAZADO (1109), PENDIENTE, CANCELADO, INUTILIZADO, respuestas contradictorias y estados históricos.
  * PRO-365-R02-C02-C01 (PRO-369): casos C02C01 de F01 (aviso en APROBADO — BLOQUEADO por falta de datos fiables, ver informe). Sus casos F02 (título/aviso del PDF sin verificación) quedan
  * SUSTITUIDOS por PRO-365-R02-C02-C02 (decisión del responsable: se retira la validación por CDC, el título «PDF sin verificación», el aviso y el sufijo): casos C02C02-01..06.
+ * PRO-370 / PRO-365-R02-C02-C03 (F03): APROBADO con cancelación acreditada por evento ⇒ eje SIFEN de PRIMERA CAPA «prohibido»/neutro/«Cancelado» (iconosEstadoOperador);
+ * el historial técnico conserva la aprobación original (iconosEstado base, check verde). C02-14b/c actualizados; casos C02C03-01..18. La cancelación acreditada es un escenario
+ * SINTÉTICO de presentación: hoy contextoCancelacionDocumento() no acredita ninguna (acreditado:false) y CANCELACION_FE_OPERATIVA=false.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -15,6 +18,7 @@ import {
   avisoOperador,
   encabezadoFiscal,
   eventosOperador,
+  iconosEstadoOperador,
   MOTIVO_NO_INFORMADO,
   NOTA_MENSAJES_HISTORIAL,
   respuestaFiscal,
@@ -215,10 +219,13 @@ export async function verificarCasosDocumentosC02LenguajePro365(): Promise<strin
     igual("C02-14a CANCELADO e INUTILIZADO: encabezado propio (neutro), sin motivo ni nota aunque haya un mensaje anterior",
       [encabezadoFiscal(canc).titulo, encabezadoFiscal(canc).tono, respuestaFiscal(canc, detalleFiscalPrimario(canc)), encabezadoFiscal(inut).titulo],
       ["Cancelado", "neutro", { motivo: null, notaHistorial: null }, "Inutilizado"]);
-    igual("C02-14b APROBADO con cancelación acreditada por evento: encabezado «Cancelado» con nota de la aprobación original; tooltip SIFEN «Aprobado, luego cancelado»; Eventos muestra la situación",
-      [encabezadoFiscal(apCanc).titulo, encabezadoFiscal(apCanc).nota, textoIconoOperador(iconosEstado(apCanc)[2], apCanc).texto, eventosOperador(apCanc, cancelFe).registrado],
-      ["Cancelado", "Fue aprobado y luego cancelado. La aprobación original se conserva en el historial.", "Aprobado, luego cancelado", "Cancelado (evento aprobado)"]);
-    igual("C02-14c el icono SIFEN de APROBADO luego cancelado no cambia de clasificación (check verde por el estado persistido)", [iconosEstado(apCanc)[2].simbolo, iconosEstado(apCanc)[2].tono], ["check", "ok"]);
+    // Actualizado C02-C03 (F03): el tooltip de primera capa pasa de «Aprobado, luego cancelado» a «Cancelado» (orden PRO-370).
+    igual("C02-14b APROBADO con cancelación acreditada por evento: encabezado «Cancelado» con nota de la aprobación original; tooltip SIFEN «Cancelado»; Eventos muestra la situación",
+      [encabezadoFiscal(apCanc).titulo, encabezadoFiscal(apCanc).nota, textoIconoOperador(iconosEstadoOperador(apCanc)[2], apCanc).texto, eventosOperador(apCanc, cancelFe).registrado],
+      ["Cancelado", "Fue aprobado y luego cancelado. La aprobación original se conserva en el historial.", "Cancelado", "Cancelado (evento aprobado)"]);
+    // Actualizado C02-C03 (F03): la expectativa «check verde» queda SUSTITUIDA solo en primera capa; el historial técnico (iconosEstado base) sigue verde y se comprueba aquí.
+    igual("C02-14c APROBADO luego cancelado: primera capa prohibido/neutro; historial técnico (iconosEstado base) conserva el check verde de la aprobación original",
+      [iconosEstadoOperador(apCanc)[2].simbolo, iconosEstadoOperador(apCanc)[2].tono, iconosEstado(apCanc)[2].simbolo, iconosEstado(apCanc)[2].tono], ["prohibido", "neutro", "check", "ok"]);
     igual("C02-14d Eventos: estado persistido CANCELADO/INUTILIZADO con nombre llano; sin lectura → null (la celda muestra «Sin información»)",
       [eventosOperador(canc, cancelFe).registrado, eventosOperador(inut, cancelNce).registrado, eventosOperador(doc({ estadoSifen: "APROBADO" }), cancelFe).registrado], ["Cancelado", "Inutilizado", null]);
   }
@@ -295,6 +302,69 @@ export async function verificarCasosDocumentosC02LenguajePro365(): Promise<strin
       /texto=\{i\.texto\}/.test(segunda) && /\{alerta\.texto\}\. \{alerta\.detalle\}/.test(segunda) && /etiquetaIntento\(/.test(segunda));
     cierto("C02C01-12 sin cambios fiscales, de API, SQL ni permisos: el módulo de textos sigue puro y la página no gana rutas ni llamadas nuevas",
       !/fetch\(|\/api\/|SELECT |UPDATE |INSERT /.test(copy) && !/\/api\/[^`"]*(cancel|inutiliz|evento)/i.test(pagina) && /accionesFila\(kudeDisponible\(d\), \{ editar \}/.test(pagina));
+  }
+
+  // ══ C02C03 (PRO-370, F03) — APROBADO con cancelación acreditada: primera capa «Cancelado»; historial con la aprobación original ═══════════════════
+  {
+    const sifen = (d: Doc) => {
+      const i = iconosEstadoOperador(d)[2];
+      const t = textoIconoOperador(i, d);
+
+      return [i.simbolo, i.tono, t.texto, t.etiqueta];
+    };
+    const ap = doc({ estadoSifen: "APROBADO", cdc: "CDC-1", estadoEmail: "ENVIADO" });
+    const apSinCdc = doc({ estadoSifen: "APROBADO", cdc: null });
+    const apCanc = { ...doc({ estadoSifen: "APROBADO", cdc: "CDC-1", estadoEmail: "ENVIADO" }), eventosFe: eventos("CANCELADO", "Cancelado (evento aprobado)") };
+    const canc = doc({ estadoSifen: "CANCELADO" });
+    const cancConEv = { ...doc({ estadoSifen: "CANCELADO" }), eventosFe: eventos("CANCELADO", "Cancelado (evento aprobado)") };
+    const inut = doc({ estadoSifen: "INUTILIZADO" });
+    const r1109 = doc({ estadoSifen: "RECHAZADO", cdc: "X", codRespuesta: "1109", mensajeRespuesta: "Número de documento ha sido inutilizado anteriormente" });
+    const pend = doc({ estadoSifen: "PENDIENTE" });
+    const conEv = (situacion: string) => ({ ...doc({ estadoSifen: "APROBADO", cdc: "CDC-1" }), eventosFe: eventos(situacion, "x") });
+    const segundaCodigo = segunda.replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
+
+    igual("C02C03-01 APROBADO normal: check verde «Aprobado» (igual que iconosEstado base)", [sifen(ap), iconosEstadoOperador(ap)[2]], [["check", "ok", "Aprobado", "SIFEN: Aprobado"], iconosEstado(ap)[2]]);
+    igual("C02C03-02 APROBADO sin CDC: check verde «Aprobado»", sifen(apSinCdc), ["check", "ok", "Aprobado", "SIFEN: Aprobado"]);
+    igual("C02C03-03 APROBADO + cancelación acreditada: eje SIFEN prohibido/neutro, tooltip EXACTO «Cancelado», aria-label «SIFEN: Cancelado»; encabezado y nota intactos",
+      [...sifen(apCanc), encabezadoFiscal(apCanc).titulo, encabezadoFiscal(apCanc).simbolo, encabezadoFiscal(apCanc).nota],
+      ["prohibido", "neutro", "Cancelado", "SIFEN: Cancelado", "Cancelado", "prohibido", "Fue aprobado y luego cancelado. La aprobación original se conserva en el historial."]);
+    igual("C02C03-04 historial técnico del mismo documento: iconosEstado base con check verde y estado registrado APROBADO; la página usa iconosEstado(d) en la segunda capa y no la proyección",
+      [iconosEstado(apCanc)[2].simbolo, iconosEstado(apCanc)[2].tono, iconosEstado(apCanc)[2].corto, apCanc.estadoSifen, /\{iconosEstado\(d\)\.map\(\(i\) => \(/.test(segundaCodigo), /iconosEstadoOperador/.test(segundaCodigo)],
+      ["check", "ok", "SIFEN Aprobado", "APROBADO", true, false]);
+    igual("C02C03-05 CANCELADO persistido (con y sin eventos): prohibido/neutro «Cancelado», sin nota de aprobación original inventada",
+      [sifen(canc), sifen(cancConEv), encabezadoFiscal(canc).nota, encabezadoFiscal(cancConEv).nota, iconosEstadoOperador(canc)[2], iconosEstado(canc)[2]],
+      [["prohibido", "neutro", "Cancelado", "SIFEN: Cancelado"], ["prohibido", "neutro", "Cancelado", "SIFEN: Cancelado"], null, null, iconosEstado(canc)[2], iconosEstado(canc)[2]]);
+    igual("C02C03-06 INUTILIZADO sin cambios: prohibido/neutro con tooltip «Inutilizado»", [sifen(inut), iconosEstadoOperador(inut)[2]], [["prohibido", "neutro", "Inutilizado", "SIFEN: Inutilizado"], iconosEstado(inut)[2]]);
+    igual("C02C03-07 RECHAZADO 1109: cruz roja «Rechazado» y «Motivo del rechazo» con código y mensaje literales (no se vuelve Cancelado ni Inutilizado)",
+      [sifen(r1109), encabezadoFiscal(r1109).titulo, respuestaFiscal(r1109, detalleFiscalPrimario(r1109)).motivo],
+      [["cruz", "error", "Rechazado", "SIFEN: Rechazado"], "Rechazado", { etiqueta: "Motivo del rechazo", valor: "1109 · Número de documento ha sido inutilizado anteriormente" }]);
+    igual("C02C03-08 PENDIENTE sin cambios (reloj ámbar, «Pendiente de respuesta»)", [sifen(pend), iconosEstadoOperador(pend)], [["reloj", "aviso", "Pendiente de respuesta", "SIFEN: Pendiente de respuesta"], iconosEstado(pend)]);
+    igual("C02C03-09 APROBADO + EN_REVISION (incluye evento genérico aprobado sin tipo/correlación): no se presenta cancelación", sifen(conEv("EN_REVISION")), ["check", "ok", "Aprobado", "SIFEN: Aprobado"]);
+    igual("C02C03-10 APROBADO + SOLO_RECHAZADOS: no cancelado", sifen(conEv("SOLO_RECHAZADOS")), ["check", "ok", "Aprobado", "SIFEN: Aprobado"]);
+    igual("C02C03-11 APROBADO + SIN_INFORMACION y sin proyección (null/ausente): no cancelado",
+      [sifen(conEv("SIN_INFORMACION")), sifen({ ...ap, eventosFe: null as never }), sifen(ap)], [["check", "ok", "Aprobado", "SIFEN: Aprobado"], ["check", "ok", "Aprobado", "SIFEN: Aprobado"], ["check", "ok", "Aprobado", "SIFEN: Aprobado"]]);
+    igual("C02C03-12 APROBADO + SIN_EVENTOS: no cancelado; un mensaje/código de cancelación en la respuesta tampoco acredita nada",
+      [sifen(conEv("SIN_EVENTOS")), sifen(doc({ estadoSifen: "APROBADO", cdc: "X", codRespuesta: "0600", mensajeRespuesta: "Documento cancelado" }))],
+      [["check", "ok", "Aprobado", "SIFEN: Aprobado"], ["check", "ok", "Aprobado", "SIFEN: Aprobado"]]);
+    igual("C02C03-13 Envío, XML/CDC y Correo idénticos a iconosEstado base en el caso cancelado; el aviso técnico sigue independiente (avisoOperador no recibe la proyección)",
+      [0, 1, 3].map((n) => JSON.stringify(iconosEstadoOperador(apCanc)[n]) === JSON.stringify(iconosEstado(apCanc)[n])).concat(/const avisoFila = avisoOperador\(alerta, d\.requiereRevision, d\.tipo\);/.test(pagina)), [true, true, true, true]);
+    igual("C02C03-14 cuatro ejes en el mismo orden (Envío · XML/CDC · SIFEN · Correo)", [iconosEstadoOperador(apCanc).map((i) => i.eje), iconosEstadoOperador(ap).map((i) => i.eje)], [["envio", "xml", "sifen", "correo"], ["envio", "xml", "sifen", "correo"]]);
+    cierto("C02C03-15 leyenda con «prohibido» (estilo neutro existente, «cancelado o inutilizado»); la fila (misma en móvil) usa la proyección una sola vez con el mismo IconoFase/GLIFO",
+      /\{ simbolo: "prohibido", clase: estilos\.iconoNeutro, texto: "cancelado o inutilizado" \}/.test(pagina) && /const fases = iconosEstadoOperador\(d\);/.test(pagina) &&
+      (pagina.match(/iconosEstadoOperador\(/g) ?? []).length === 1 && /\{fases\.map\(\(i\) => \(\s*<IconoFase key=\{i\.eje\} eje=\{i\.eje\} simbolo=\{i\.simbolo\} clase=\{CLASE_TONO_ICONO\[i\.tono\]\}/.test(fila) && /prohibido: /.test(pagina));
+    {
+      const d = { ...doc({ estadoSifen: "APROBADO", cdc: "CDC-1" }), eventosFe: eventos("CANCELADO", "Cancelado (evento aprobado)") };
+      const antes = JSON.stringify(d);
+      const base = iconosEstado(d);
+      const baseAntes = JSON.stringify(base);
+      const salida = iconosEstadoOperador(d);
+      igual("C02C03-16 sin mutación: documento, eventos e iconos base intactos; el eje SIFEN sustituido es un objeto nuevo", [JSON.stringify(d) === antes, JSON.stringify(base) === baseAntes, salida[2] !== base[2], d.estadoSifen], [true, true, true, "APROBADO"]);
+    }
+    cierto("C02C03-17 filtros/KPI, permisos y operaciones intactos: indicador «Aprobados» sigue en check; cancelación no operativa; el módulo de textos sigue puro (sin red ni SQL)",
+      /\{ grupo: "APROBADO", titulo: "Aprobados", ayuda: "Documentos aprobados", clase: estilos\.tonoVerde, simbolo: "check" \}/.test(pagina) && /accionesFila\(kudeDisponible\(d\), \{ editar \}/.test(pagina) &&
+      /const cancelacion = elegibilidadCancelacionFe\(/.test(pagina) && /CANCELACION_FE_OPERATIVA = false/.test(leer("lib/facturacion/eventos-fe.ts")) && !/fetch\(|\/api\/|SELECT |UPDATE |INSERT /.test(copy));
+    cierto("C02C03-18 KuDE C02-C02 preservado: título del documento, sin aviso/sufijo/clasificación por CDC en visor y modal",
+      /const titulo = estado\.titulo;/.test(modal) && !/PDF sin verificación|NO-VERIFICADO|VERIFICADA|tituloKude|AVISO_KUDE/.test(visor.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "") + modal.replace(/\/\/.*$/gm, "")));
   }
 
   return fallos;
