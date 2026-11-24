@@ -75,8 +75,8 @@ export async function verificarCasosDocumentosPro195R01(): Promise<string[]> {
     cierto("R01-01b la fila tiene sus diez celdas en el mismo orden (expandir, casilla, acciones, documento, fecha, RUC/CI, razón social, monto, estado, eventos) y el detalle ocupa las 10",
       (fila.match(/\n {22}<td/g) ?? []).length === 10 && fila.indexOf("alternar(d)") < fila.indexOf("aria-label={`Seleccionar ${doc}`}") && fila.indexOf("aria-label={`Seleccionar ${doc}`}") < fila.indexOf("aria-label={`Acciones de ${doc}`}") &&
         fila.indexOf("aria-label={`Acciones de ${doc}`}") < fila.indexOf("{d.establecimiento}-{d.puntoExpedicion}-{d.numero}") && fila.indexOf("{fecha}") < fila.indexOf("d.receptorDocumento ?? \"Sin información\"") &&
-        fila.indexOf("d.receptorDocumento") < fila.indexOf("{d.receptorNombre}") && fila.indexOf("{d.receptorNombre}") < fila.indexOf("formatearImporteMoneda(d.total, d.moneda)") && fila.indexOf("formatearImporteMoneda(d.total, d.moneda)") < fila.indexOf("{estado.texto}") &&
-        fila.indexOf("{estado.texto}") < fila.indexOf("eventos.registrado"));
+        fila.indexOf("d.receptorDocumento") < fila.indexOf("{d.receptorNombre}") && fila.indexOf("{d.receptorNombre}") < fila.indexOf("formatearImporteMoneda(d.total, d.moneda)") && fila.indexOf("formatearImporteMoneda(d.total, d.moneda)") < fila.indexOf("{fases.map((i) => (") &&
+        fila.indexOf("{fases.map((i) => (") < fila.indexOf("eventos.registrado"));
     cierto("R01-01c documento: número EEE-PPP-NNNNNNN, tipo FE/NCE visible (código + nombre completo accesible), serie fiscal («Serie X» / «Sin serie»), sucursal y factura original de la NCE",
       /\{d\.establecimiento\}-\{d\.puntoExpedicion\}-\{d\.numero\}/.test(fila) && />\{d\.tipo\}<\/span>/.test(fila) && /\{ETIQUETA_TIPO\[d\.tipo\]\}/.test(fila) && /d\.serie \? `Serie \$\{d\.serie\}` : "Sin serie"/.test(fila) && /\{d\.sucursalNombre\}/.test(fila) && /Factura \{d\.feNumero\}/.test(fila));
     igual("R01-01d fecha y hora por separado, sin reconvertir zona (texto ya formateado en hora de Paraguay)", [partirFechaHora("18/11/2026 09:10:27"), partirFechaHora("—")], [{ fecha: "18/11/2026", hora: "09:10:27" }, { fecha: "—", hora: "" }]);
@@ -103,10 +103,11 @@ export async function verificarCasosDocumentosPro195R01(): Promise<string[]> {
       [estadoPrincipalFila(doc({ estadoSifen: "APROBADO", cdc: "X" })).texto, estadoPrincipalFila(doc({ estadoSifen: "RECHAZADO", cdc: "X" })).texto, estadoPrincipalFila(doc({ estadoSifen: "PENDIENTE", cdc: "X" })).texto,
         estadoPrincipalFila(doc({ estadoSifen: "APROBADO" })).secundario],
       ["Aprobado", "Rechazado", "Pendiente de confirmación", null]);
-    igual("R01-03c los ejes técnicos coexisten SOLO en la segunda capa (Enviado ✓ · CDC informado · SIFEN ✕) y la fila sigue con un único estado",
+    igual("R01-03c (actualizado PRO-365) los ejes técnicos coexisten (Enviado ✓ · CDC informado · SIFEN ✕); estadoPrincipalFila sigue siendo un helper puro coherente, pero la fila ya no lo usa",
       [iconosEstado(doc({ estadoSifen: "RECHAZADO", cdc: "X" })).map((i) => i.tono), estadoPrincipalFila(doc({ estadoSifen: "RECHAZADO", cdc: "X" })).tono], [["ok", "info", "error", "neutro"], "rechazado"]);
-    cierto("R01-03d la fila NO pinta los cuatro iconos (iconosEstado solo en la segunda capa) y la celda Estado usa estadoPrincipalFila",
-      !/iconosEstado\(d\)/.test(fila) && /iconosEstado\(d\)/.test(segunda) && /const estado = estadoPrincipalFila\(d\);/.test(pagina) && /<strong>\{estado\.texto\}<\/strong>/.test(fila));
+    // PRO-365: regla PRO-195 punto 4 revocada por el responsable; la fila vuelve a pintar los cuatro iconos (y la segunda capa los repite).
+    cierto("R01-03d (actualizado PRO-365) la fila pinta los cuatro iconos (iconosEstado) sin texto grande de estado; la segunda capa los repite",
+      /\{fases\.map\(\(i\) => \(/.test(fila) && /const fases = iconosEstado\(d\);/.test(pagina) && /iconosEstado\(d\)/.test(segunda) && !/estadoPrincipalFila\(d\)|\{estado\.texto\}/.test(pagina));
   }
 
   // ══ R01-04 XML firmado / pendiente / sin información, sin aprobación falsa ═════════════════════════════════════════════════════════════
@@ -120,8 +121,8 @@ export async function verificarCasosDocumentosPro195R01(): Promise<string[]> {
   igual("R01-05a error de envío (transporte o validación del gateway) = «Aún sin transmitir» + «no es rechazo SIFEN»; nunca tono «rechazado»",
     [estadoPrincipalFila(doc({ estadoLocal: "ERROR_ENVIO", estadoSifen: "SIN_CONSULTA" })), estadoPrincipalFila(doc({ estadoLocal: "ERROR_ENVIO", estadoSifen: "SIN_CONSULTA", envioErrorTipo: "RECHAZO" }))].map((e) => [e.tono, e.texto, e.secundario]),
     [["sinTransmitir", "Aún sin transmitir", "Error de envío (no es rechazo SIFEN)"], ["sinTransmitir", "Aún sin transmitir", "Error de envío: validación del gateway (no es rechazo SIFEN)"]]);
-  cierto("R01-05b el aviso técnico real de la última consulta se conserva como «!» separado del estado principal (no lo reemplaza)",
-    /const alerta = alertaConsulta\(d\);/.test(pagina) && /\{avisoFila \? \(\s*<IconoFase eje="aviso" simbolo="alerta"/.test(fila) && fila.indexOf("{estado.texto}") < fila.indexOf("eje=\"aviso\""));
+  cierto("R01-05b (actualizado PRO-365) el aviso técnico real de la última consulta se conserva como «!» separado, después de los cuatro iconos de estado (no los reemplaza)",
+    /const alerta = alertaConsulta\(d\);/.test(pagina) && /\{avisoFila \? \(\s*<IconoFase eje="aviso" simbolo="alerta"/.test(fila) && fila.indexOf("{fases.map((i) => (") < fila.indexOf("eje=\"aviso\""));
 
   // ══ R01-06 Eventos: estado registrado vs. operación no disponible ══════════════════════════════════════════════════════════════════════
   igual("R01-06a (actualizado R01-R01 F003) Eventos: Cancelado/Inutilizado solo como estado fiscal YA informado por la API; sin él «Sin información de eventos» (nunca «Sin eventos»); la operación siempre no disponible con su motivo",
@@ -201,7 +202,7 @@ export async function verificarCasosDocumentosPro195R01(): Promise<string[]> {
   cierto("R01-10b móvil (≤ 720px): tarjeta de diez áreas sin ocultar identidad, estado, monto ni acciones; filas separadas por defecto y agrupadas solo con contenedor ≥ 440px",
     /tr:has\(> td:nth-child\(10\)\) \{\s*display: grid;/.test(cssLimpio) && ["doc", "estado", "monto", "acciones", "eventos", "razon", "ruc", "fecha"].every((a) => new RegExp(`grid-area: ${a};`).test(cssLimpio)) && /@container documentos \(min-width: 440px\)/.test(cssLimpio));
   cierto("R01-10c teclado y foco: casillas, expandir y acciones enfocables con foco visible; tooltip en hover/foco/toque para acciones y estado (mismo tooltip fijo de UX-R01)",
-    /\.casilla:focus-visible \{/.test(cssLimpio) && /\.expandir:focus-visible,\s*\.accion:focus-visible \{/.test(cssLimpio) && /onFocus=\{\(e\) => tip\.mostrar\(e\.currentTarget, texto\)\}/.test(tramo("function AccionIcono", "const CLASE_ESTADO")) && /\.tooltip \{\s*position: fixed;/.test(cssLimpio));
+    /\.casilla:focus-visible \{/.test(cssLimpio) && /\.expandir:focus-visible,\s*\.accion:focus-visible \{/.test(cssLimpio) && /onFocus=\{\(e\) => tip\.mostrar\(e\.currentTarget, texto\)\}/.test(tramo("function AccionIcono", "const LEYENDA_SIMBOLOS")) && /\.tooltip \{\s*position: fixed;/.test(cssLimpio));
   cierto("R01-10d «seleccionar todos» con estado indeterminado real y nombre accesible; cada casilla nombra su documento",
     /aria-label="Seleccionar todos los documentos de esta página"/.test(cabecera) && /el\.indeterminate = seleccionados\.length > 0 && seleccionados\.length < filas\.length/.test(cabecera) && /aria-label=\{`Seleccionar \$\{doc\}`\}/.test(fila));
 
@@ -333,17 +334,18 @@ export async function verificarCasosDocumentosPro195R01(): Promise<string[]> {
 
     cierto("R01R01-F003a para TODO estado fiscal, la columna nunca dice «Sin eventos»: o el estado Cancelado/Inutilizado informado por la API, o «Sin información de eventos»",
       todos.every((e) => (e.registrado ?? e.sinRegistro) !== "Sin eventos" && (e.registrado !== null || e.sinRegistro === "Sin información de eventos")));
-    igual("R01R01-F003b Cancelación e Inutilización visibles con su indisponibilidad explícita (no solo en el tooltip)",
+    igual("R01R01-F003b (actualizado PRO-365) Cancelación e Inutilización conservan su indisponibilidad explícita en el helper (en la fila va en el nombre accesible/tooltip del control y en la segunda capa)",
       OPERACIONES_EVENTO.map((o) => `${o.nombre}: ${o.estado}`), ["Cancelación: No disponible", "Inutilización: No disponible"]);
     // PRO-313-R01 (actualizado): ahora SÍ hay lectura de eventos (response.DE.Evento); el motivo nombra la fecha OFICIAL de aprobación que falta (no infiere ninguna fecha ni protocolo).
     cierto("R01R01-F003c (actualizado PRO-313-R01) el motivo ya no afirma «sin historial de eventos»; la inutilización sigue siendo de numeración; sin protocolo inferido; la única fecha mencionada es la aprobación oficial que falta",
       !/no tiene historial de eventos consultable/.test(MOTIVO_EVENTOS_NO_DISPONIBLES) && /numeración no utilizada/.test(MOTIVO_EVENTOS_NO_DISPONIBLES) && !/protocolo/i.test(MOTIVO_EVENTOS_NO_DISPONIBLES) &&
       (MOTIVO_EVENTOS_NO_DISPONIBLES.match(/fecha/gi) ?? []).length === 1 && /fecha oficial de aprobación acreditada/.test(MOTIVO_EVENTOS_NO_DISPONIBLES));
-    cierto("R01R01-F003d la celda y la segunda capa muestran el texto honesto y las dos operaciones; ya no existen «Sin eventos» ni «sin eventos registrados» en la pantalla",
-      /\{eventos\.registrado \?\? eventos\.sinRegistro\}<\/span>/.test(fila) && /\{eventos\.operaciones\.map\(\(o\) => \(/.test(fila) && /\{o\.nombre\}: \{o\.estado\}/.test(fila) &&
+    // PRO-365: Eventos compacto; la fila ya no repite «Cancelación: No disponible / Inutilización: No disponible» (va en el control y en la segunda capa).
+    cierto("R01R01-F003d (actualizado PRO-365) la celda muestra la situación acreditada o «Sin información» (de eventos, para lectores) sin repetir operaciones por fila; la segunda capa conserva el texto honesto; nunca «Sin eventos»",
+      /\{eventos\.registrado \?\? "Sin información"\}/.test(fila) && /<span className=\{estilos\.srSolo\}> de eventos<\/span>/.test(fila) && !/eventos\.operaciones|\{o\.nombre\}: \{o\.estado\}/.test(fila) &&
       /Eventos: \{eventos\.registrado \?\? eventos\.sinRegistro\}\. \{eventos\.operacion\}/.test(segunda) && !/Sin eventos|sin eventos registrados/.test(pagina));
     cierto("R01R01-F003e sin rutas de eventos, sin stock y el control sigue deshabilitado (PRO-199 / PRO-313 intactas)",
-      !/\/api\/[^`"]*(cancel|inutiliz|evento)/i.test(pagina) && /disponible=\{false\} motivo=\{eventos\.operacion\}/.test(fila) && /color: #53687a;/.test(regla(css, ".eventoOperacion")));
+      !/\/api\/[^`"]*(cancel|inutiliz|evento)/i.test(pagina) && /disponible=\{false\} motivo=\{eventos\.operacion\}/.test(fila) && /color: #53687a;/.test(regla(css, ".sinEventos")));
   }
 
   return fallos;

@@ -35,6 +35,7 @@ import {
   resumenConsultas,
   seguimientoFiscal,
   textoConexion,
+  type IconoEstado,
   type IntentoConsulta,
   type SimboloEstado,
   type TonoIcono,
@@ -44,14 +45,12 @@ import {
   alternarSeleccion,
   clavesListado,
   destinoConsulta,
-  estadoPrincipalFila,
   eventosFila,
   partirFechaHora,
   seleccionVigente,
   type AccionFila,
   type Seleccion,
 } from "@/lib/facturacion/documentos-tabla";
-import type { TonoSifen } from "@/lib/facturacion/presentacion-sifen";
 import { aprobacionOficialDocumento, elegibilidadCancelacionFe, textoFechaGateway, type ProyeccionEventosFe } from "@/lib/facturacion/eventos-fe";
 import { formatearFechaHoraPy } from "@/lib/formato/listas";
 import { formatearImporteMoneda } from "@/lib/formato/monto-visual";
@@ -194,9 +193,21 @@ function AccionIcono({ clase, glifo, etiqueta, disponible, motivo, ocupado, alAc
   );
 }
 
-/** PRO-195-UX-R01 (punto 4): un único estado principal; el tono decide el color del texto y del símbolo (el símbolo también distingue, no solo el color). */
-const CLASE_ESTADO: Record<TonoSifen, string> = { aprobado: estilos.estadoAprobado, rechazado: estilos.estadoRechazado, pendiente: estilos.estadoPendiente, sinTransmitir: estilos.estadoSinInfo, anulado: estilos.estadoAnulado };
-const SIMBOLO_ESTADO: Record<TonoSifen, SimboloEstado> = { aprobado: "check", rechazado: "cruz", pendiente: "reloj", sinTransmitir: "guion", anulado: "prohibido" };
+/**
+ * PRO-365 (NEXIT-DOC-UX-COMPETENCIA-R01): la fila vuelve a mostrar SIEMPRE los cuatro estados independientes (Envío · XML/CDC · SIFEN · Correo, iconosEstado) y ya no
+ * un único texto grande («Rechazado»). El estado fiscal real no cambia: un RECHAZADO persistido se ve en el icono SIFEN (cruz roja) con su código y mensaje registrados
+ * en el tooltip y en el detalle. La leyenda de los cuatro ejes se muestra UNA vez sobre la tabla.
+ */
+const LEYENDA_SIMBOLOS: Array<{ simbolo: SimboloEstado; clase: string; texto: string }> = [
+  { simbolo: "check", clase: estilos.iconoOk, texto: "confirmado" },
+  { simbolo: "reloj", clase: estilos.iconoAviso, texto: "pendiente" },
+  { simbolo: "cruz", clase: estilos.iconoError, texto: "error o rechazo" },
+  { simbolo: "guion", clase: estilos.iconoNeutro, texto: "sin información" },
+];
+/** Texto del icono SIFEN en la fila: si el rechazo está registrado, se añaden el código y el mensaje TAL COMO los registró la API (sin inventar ni reclasificar). */
+function textoFase(i: IconoEstado, fiscal: { rechazo: boolean; mensaje: string | null }): string {
+  return i.eje === "sifen" && fiscal.rechazo && fiscal.mensaje ? `${i.texto} Motivo registrado: ${fiscal.mensaje}.` : i.texto;
+}
 const CLASE_ACCION: Record<AccionFila["clave"], string> = { kude: estilos.accionKude, xml: estilos.accionXml, consulta: estilos.accionConsulta, correo: estilos.accionCorreo };
 
 function Glifo({ children }: { children: ReactNode }) {
@@ -889,8 +900,28 @@ export default function DocumentosPage() {
           </div>
         ) : null}
 
+        {/* PRO-365: leyenda ÚNICA de los cuatro estados de cada fila (orden fijo) y de sus símbolos; las filas no repiten estos textos. */}
+        <div className={estilos.leyendaEstados} id="leyenda-estados">
+          <span>
+            <strong>Estado</strong>, en este orden: <strong>Envío</strong> (recepción del gateway) · <strong>XML/CDC</strong> (CDC informado; no es aprobación) · <strong>SIFEN</strong> (resultado fiscal) · <strong>Correo</strong>.
+          </span>
+          <span className={estilos.leyendaSimbolos}>
+            {LEYENDA_SIMBOLOS.map((s) => (
+              <span key={s.simbolo} className={clases(estilos.leyendaSimbolo, s.clase)}>
+                <span className={estilos.iconoCirculo} aria-hidden="true"><svg viewBox="0 0 24 24">{GLIFO[s.simbolo]}</svg></span>
+                {s.texto}
+              </span>
+            ))}
+            <span className={clases(estilos.leyendaSimbolo, estilos.iconoAviso)}>
+              <span className={estilos.iconoCirculo} aria-hidden="true"><svg viewBox="0 0 24 24">{GLIFO.alerta}</svg></span>
+              aviso técnico
+            </span>
+            <span>Pase el puntero, toque o enfoque cada icono para ver su detalle.</span>
+          </span>
+        </div>
+
         <div className={clases(ui.tableScroll, estilos.contenedorTabla)}>
-          <table className={clases(ui.table, estilos.tablaDocs)} aria-busy={cargando}>
+          <table className={clases(ui.table, estilos.tablaDocs)} aria-busy={cargando} aria-describedby="leyenda-estados">
             <thead>
               <tr>
                 <th className={estilos.colControl}><span className={estilos.srSolo}>Detalle</span></th>
@@ -928,8 +959,8 @@ export default function DocumentosPage() {
                 const consultas = det ? resumenConsultas(det.intentos) : { valida: null, ultima: null };
                 // PRO-342-R01: envío (ACK), último retorno del gateway (p. ej. «XML firmado») y resultado fiscal SIFEN en ejes separados (segunda capa).
                 const seguimiento = seguimientoFiscal(d);
-                // PRO-195-UX-R01 (punto 4): UN estado principal (nunca Aprobado y Rechazado a la vez) + la fase técnica real como línea secundaria.
-                const estado = estadoPrincipalFila(d);
+                // PRO-365: los cuatro estados INDEPENDIENTES de la fila (Envío · XML/CDC · SIFEN · Correo), derivados solo de lo persistido.
+                const fases = iconosEstado(d);
                 // PRO-313-R01: elegibilidad PREPARADA de la cancelación (no operativa: sin aprobación oficial acreditada ni envío habilitado); el servidor revalidará todo al confirmar.
                 const cancelacion = elegibilidadCancelacionFe({ tipo: d.tipo, estadoSifen: d.estadoSifen, puedeEditar: editar, proyeccion: d.eventosFe, aprobacion: aprobacionOficialDocumento(d.eventosFe), ahoraMs: datos?.generadoMs ?? Number.NaN });
                 const eventos = eventosFila(d, cancelacion);
@@ -990,25 +1021,25 @@ export default function DocumentosPage() {
                         <span className={estilos.moneda}>{d.moneda}</span> <strong className={ui.mono}>{formatearImporteMoneda(d.total, d.moneda)}</strong>
                       </td>
                       <td>
-                        <div className={estilos.estado}>
-                          <span className={clases(estilos.estadoPrincipal, CLASE_ESTADO[estado.tono])}>
-                            <IconoFase eje="estado" simbolo={SIMBOLO_ESTADO[estado.tono]} clase={CLASE_ESTADO[estado.tono]} texto={`Estado: ${estado.texto}. ${estado.detalle}`} tip={eventosTip} />
-                            <strong>{estado.texto}</strong>
-                          </span>
+                        {/* PRO-365: cuatro iconos simultáneos en orden fijo + quinta posición reservada al aviso técnico (vacía si no hay, para alinear las filas). */}
+                        <div className={estilos.estado} role="group" aria-label={`Estados de ${doc}`}>
+                          {fases.map((i) => (
+                            <IconoFase key={i.eje} eje={i.eje} simbolo={i.simbolo} clase={CLASE_TONO_ICONO[i.tono]} texto={textoFase(i, fiscal)} tip={eventosTip} />
+                          ))}
                           {avisoFila ? (
                             <IconoFase eje="aviso" simbolo="alerta" clase={alerta?.tipo === "inconsistencia" || !alerta ? estilos.iconoError : estilos.iconoAviso} texto={`Aviso técnico: ${avisoFila}`} tip={eventosTip} />
-                          ) : null}
+                          ) : (
+                            <span className={estilos.iconoVacio} aria-hidden="true" />
+                          )}
                         </div>
-                        {estado.secundario ? <small className={clases(ui.muted, estilos.estadoSecundario)}>{estado.secundario}</small> : null}
                       </td>
                       <td>
                         <div className={estilos.eventos}>
-                          {/* PRO-195-UX-R01-R01 (F003): sin historial de eventos consultable no se afirma ausencia; cada operación muestra su indisponibilidad. */}
-                          <span className={estilos.eventosTexto}>
-                            <span className={eventos.registrado ? estilos.eventoRegistrado : estilos.sinEventos}>{eventos.registrado ?? eventos.sinRegistro}</span>
-                            {eventos.operaciones.map((o) => (
-                              <Fragment key={o.nombre}><small className={clases(ui.muted, estilos.eventoOperacion)}>{o.nombre}: {o.estado}</small></Fragment>
-                            ))}
+                          {/* PRO-365: Eventos COMPACTO. Situación acreditada o «Sin información» (nunca «sin eventos»); la indisponibilidad de Cancelación/Inutilización va en el
+                              nombre accesible y el tooltip del control, no repetida como texto en cada fila. */}
+                          <span className={eventos.registrado ? estilos.eventoRegistrado : estilos.sinEventos}>
+                            {eventos.registrado ?? "Sin información"}
+                            {eventos.registrado ? null : <span className={estilos.srSolo}> de eventos</span>}
                           </span>
                           {/* PRO-313-R01: «Cancelar documento» solo FE; habilitado únicamente si es elegible (hoy nunca: gates de aprobación oficial y homologación). No hay ruta de envío. */}
                           {cancelacion.aplica ? (
@@ -1116,7 +1147,7 @@ export default function DocumentosPage() {
                               {sinCdc ? <div className={estilos.avisoTecnico} role="note">{sinCdc}</div> : null}
                               {alerta ? <div className={estilos.notaTecnica} role="note">{alerta.detalle}</div> : null}
 
-                              {/* PRO-195-UX-R01 (punto 5): los cuatro estados técnicos independientes (Envío · XML/CDC · SIFEN · Correo) pasan a esta segunda capa; la fila muestra un único estado. */}
+                              {/* PRO-365: los cuatro estados se ven SIEMPRE en la fila; aquí se repiten con su nombre y texto corto como referencia técnica (no es el único sitio). */}
                               <h4 className={estilos.subtitulo}>Estados técnicos</h4>
                               <ul className={estilos.estadosTecnicos} aria-label={`Estados técnicos de ${numeroDocumento(d)}`}>
                                 {iconosEstado(d).map((i) => (

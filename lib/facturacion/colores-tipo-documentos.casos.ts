@@ -120,8 +120,9 @@ export async function verificarCasosColoresTipoPro334(): Promise<string[]> {
     ![".iconoOk .iconoCirculo", ".iconoInfo .iconoCirculo", ".iconoAviso .iconoCirculo", ".iconoError .iconoCirculo", ".iconoNeutro .iconoCirculo"].some((x) => /background/.test(regla(css, x))) &&
     !/\.sifen/.test(css.replace(/\/\*[\s\S]*?\*\//g, "")));
   // PRO-195-UX-R01 (punto 4): la fila muestra UN estado principal (clase por tono fiscal); los cuatro ejes independientes pasan a la segunda capa, con las clases por tono, nunca por tipo.
-  cierto("PRO334-16 (actualizado PRO-195) estado principal por tono fiscal en la fila; cuatro estados técnicos en la segunda capa con CLASE_TONO_ICONO (no las del tipo); el aviso del detalle conserva las clases PRO-338 y su borde rojo",
-    /clases\(estilos\.estadoPrincipal, CLASE_ESTADO\[estado\.tono\]\)/.test(pagina) && !/CLASE_ESTADO\[[^\]]*tipo/.test(pagina) &&
+  // PRO-365: la fila vuelve a los cuatro iconos (clase por tono fiscal de cada eje, nunca por tipo de documento).
+  cierto("PRO334-16 (actualizado PRO-365) cuatro estados por tono fiscal en la fila y en la segunda capa con CLASE_TONO_ICONO (no las del tipo); el aviso del detalle conserva las clases PRO-338 y su borde rojo",
+    /\{fases\.map\(\(i\) => \(\s*<IconoFase key=\{i\.eje\} eje=\{i\.eje\} simbolo=\{i\.simbolo\} clase=\{CLASE_TONO_ICONO\[i\.tono\]\}/.test(pagina) && !/CLASE_ESTADO/.test(pagina) &&
     /iconosEstado\(d\)\.map\(\(i\) => \([\s\S]*?<IconoFase eje=\{i\.eje\} simbolo=\{i\.simbolo\} clase=\{CLASE_TONO_ICONO\[i\.tono\]\} texto=\{i\.texto\} tip=\{eventosTip\} \/>/.test(pagina) && !/CLASE_TONO_ICONO\[[^\]]*tipo/.test(pagina) &&
     /alerta\.tipo === "inconsistencia" \? estilos\.avisoInconsistencia : estilos\.avisoTecnico/.test(pagina) && hex(regla(css, ".avisoInconsistencia"), "border-color") === "#c8372d");
 

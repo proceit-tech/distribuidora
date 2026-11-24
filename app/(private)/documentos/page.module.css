@@ -434,57 +434,59 @@ table.tablaDocs > tbody > tr > td {
   font-weight: 600;
 }
 
-/* Estado (punto 4): UN estado principal (símbolo de contorno + texto) y la fase técnica real como línea secundaria. */
+/*
+ * PRO-365: Estado = cuatro iconos INDEPENDIENTES simultáneos (Envío · XML/CDC · SIFEN · Correo) + quinta posición del aviso técnico, en una sola línea operativa.
+ * Área táctil de 36px por icono (.icono), sin texto grande de estado en la fila.
+ */
 .estado {
   display: flex;
   align-items: center;
-  gap: 2px;
-}
-
-.estadoPrincipal {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
+  gap: 0;
   white-space: nowrap;
 }
 
-.estadoPrincipal .icono {
-  min-width: 28px;
-  min-height: 28px;
+/* Posición del aviso técnico sin aviso: reserva el ancho para que las filas queden alineadas. */
+.iconoVacio {
+  display: inline-block;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
 }
 
-.estadoAprobado {
-  color: #12703f;
+/* Leyenda única sobre la tabla: los cuatro ejes en su orden y el significado de los símbolos (símbolo + color + texto). */
+.leyendaEstados {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 16px;
+  padding: 6px 14px;
+  border-bottom: 1px solid #edf2f5;
+  color: #2f4357;
+  font-size: 12.5px;
+  line-height: 1.4;
 }
 
-.estadoRechazado {
-  color: #b42318;
-}
-
-.estadoPendiente {
-  color: #8a5a00;
-}
-
-.estadoSinInfo {
-  color: #4a5a6a;
-}
-
-.estadoAnulado {
-  color: #3f4f5f;
-}
-
-.estadoSecundario {
-  display: block;
+.leyendaSimbolos {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 12px;
   color: #53687a;
-  font-size: 12px;
-  line-height: 1.3;
 }
 
-/* Eventos (punto 6): estado registrado si existe + control deshabilitado con su motivo (sin API). */
+.leyendaSimbolo {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: #2f4357;
+}
+
+/* Eventos (PRO-365): texto breve de la situación acreditada + control con su motivo en tooltip/nombre accesible (sin repetir indisponibilidades por fila). */
 .eventos {
   display: flex;
   align-items: center;
   gap: 4px;
+  white-space: nowrap;
 }
 
 .sinEventos {
@@ -497,24 +499,6 @@ table.tablaDocs > tbody > tr > td {
   font-size: 12.5px;
   font-weight: 600;
 }
-/* PRO-195-UX-R01-R01 (F003): texto de eventos honesto + indisponibilidad explícita de Cancelación e Inutilización (contraste AA sobre blanco). */
-.eventosTexto {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 1px;
-}
-.eventoOperacion {
-  color: #53687a;
-  font-size: 11.5px;
-}
-/* PRE-VM-R02-B-R02: el <small> lleva también ui.muted (#8092a4, misma especificidad 0,1,0). Este selector (0,2,0) garantiza #53687a sin depender del orden de carga de las hojas y sin
-   !important. La regla simple de arriba se conserva: la lee el caso PRO-195 (regla(css, ".eventoOperacion")) y no cambia nada visible. */
-.eventosTexto .eventoOperacion {
-  color: #53687a;
-  font-size: 11.5px;
-}
-
 /* PRO-313-R01: eventos informados por la API (segunda capa), separados del estado de la FE; colores con contraste AA y texto (el color no es la única señal). */
 .eventosDetalle {
   display: flex;
@@ -621,7 +605,7 @@ table.tablaDocs > tbody > tr > td {
 
 /*
  * ---- Iconos de estado: símbolo de CONTORNO (PRO-195-UX-R01, sin círculo relleno) con área táctil; nombre accesible = texto completo; el color nunca es la única señal.
- * En la fila: el símbolo del estado principal y el aviso técnico «!». En la segunda capa: los cuatro estados técnicos (Envío · XML/CDC · SIFEN · Correo).
+ * PRO-365: en la fila, los cuatro estados (Envío · XML/CDC · SIFEN · Correo) y el aviso técnico «!»; en la segunda capa se repiten con su nombre como referencia.
  */
 .icono {
   display: inline-flex;
@@ -683,23 +667,6 @@ table.tablaDocs > tbody > tr > td {
 }
 
 .iconoNeutro .iconoCirculo {
-  color: #4a5a6a;
-}
-
-.estadoAprobado .iconoCirculo {
-  color: #12703f;
-}
-
-.estadoRechazado .iconoCirculo {
-  color: #b42318;
-}
-
-.estadoPendiente .iconoCirculo {
-  color: #8a5a00;
-}
-
-.estadoSinInfo .iconoCirculo,
-.estadoAnulado .iconoCirculo {
   color: #4a5a6a;
 }
 

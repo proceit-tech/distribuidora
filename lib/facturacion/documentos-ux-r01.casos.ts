@@ -126,8 +126,9 @@ export async function verificarCasosDocumentosUxR01(): Promise<string[]> {
       iconosEstado(base).slice(0, 3).map((i) => [i.simbolo, i.tono]), [["check", "ok"], ["archivoCheck", "info"], ["cruz", "error"]]);
   }
   // PRO-195-UX-R01 (punto 4): la fila ya no muestra los cuatro ejes sino UN estado principal + el aviso «!» opcional; los cuatro ejes pasan a la segunda capa.
-  cierto("UXR01-07 (actualizado PRO-195) la celda Estado muestra UN estado principal (símbolo + texto) y el aviso «!» solo si existe; los cuatro iconos de iconosEstado viven en la segunda capa",
-    /<IconoFase eje="estado" simbolo=\{SIMBOLO_ESTADO\[estado\.tono\]\}/.test(fila) && /<strong>\{estado\.texto\}<\/strong>/.test(fila) && /\{avisoFila \? \(\s*<IconoFase eje="aviso" simbolo="alerta"/.test(fila) && !/iconosEstado\(d\)/.test(fila) &&
+  // PRO-365: la regla anterior se revoca; la celda Estado vuelve a mostrar los CUATRO iconos independientes (Envío | XML/CDC | SIFEN | Correo) sin texto de estado.
+  cierto("UXR01-07 (actualizado PRO-365) la celda Estado muestra los cuatro iconos de iconosEstado y el aviso «!» solo si existe (hueco fijo si no); sin texto grande de estado; la segunda capa los repite con nombre",
+    /<IconoFase key=\{i\.eje\} eje=\{i\.eje\} simbolo=\{i\.simbolo\} clase=\{CLASE_TONO_ICONO\[i\.tono\]\}/.test(fila) && /const fases = iconosEstado\(d\);/.test(pagina) && !/\{estado\.texto\}|SIMBOLO_ESTADO/.test(pagina) && /\{avisoFila \? \(\s*<IconoFase eje="aviso" simbolo="alerta"/.test(fila) && /<span className=\{estilos\.iconoVacio\} aria-hidden="true" \/>/.test(fila) &&
     /iconosEstado\(d\)\.map\(\(i\) => \(/.test(segunda) && /\.icono \{[^}]*min-width: 36px;\s*min-height: 36px;/.test(cssLimpio));
 
   // ══ 3. Sin textos repetidos debajo de cada icono ════════════════════════════════════════════════════════════════════════════════════════
@@ -142,15 +143,15 @@ export async function verificarCasosDocumentosUxR01(): Promise<string[]> {
       ["iconoOk", "iconoInfo", "iconoAviso", "iconoError"].every((t) => trazo(t) !== "" && contraste(trazo(t), "#ffffff") >= 4.5 && !/background/.test(regla(css, `.${t} .iconoCirculo`))));
     cierto("UXR01-10 (actualizado PRO-195) «sin información» = trazo gris oscuro ≥ 4.5:1 sobre blanco y sobre el hover neutro de la fila",
       contraste(trazo("iconoNeutro"), "#ffffff") >= 4.5 && contraste(trazo("iconoNeutro"), "#f7f9fb") >= 4.5);
-    cierto("UXR01-11 (actualizado PRO-195) estado principal: texto y símbolo del mismo color por tono, ≥ 4.5:1 sobre blanco, hover y fila seleccionada",
-      ["estadoAprobado", "estadoRechazado", "estadoPendiente", "estadoSinInfo", "estadoAnulado"].every((t) => ["#ffffff", "#f7f9fb", "#f1f6fb"].every((f) => contraste(hex(regla(css, `.${t}`), "color"), f) >= 4.5)));
+    cierto("UXR01-11 (actualizado PRO-365) los trazos de los cuatro iconos de la fila (ok/info/aviso/error/neutro) ≥ 4.5:1 sobre blanco, hover y fila seleccionada; ya no existen clases estado* de texto principal",
+      ["iconoOk", "iconoInfo", "iconoAviso", "iconoError", "iconoNeutro"].every((t) => ["#ffffff", "#f7f9fb", "#f1f6fb"].every((f) => contraste(trazo(t), f) >= 4.5)) && !/\.estado(Principal|Aprobado|Rechazado|Pendiente|SinInfo|Anulado)\b/.test(cssLimpio));
     cierto("UXR01-12 (actualizado PRO-195) iconos compactos: caja 24px sin círculo, símbolo 18px, trazo 2",
       /width: 24px;\s*height: 24px;/.test(regla(css, ".iconoCirculo")) && !/border-radius|background/.test(regla(css, ".iconoCirculo")) && /width: 18px;\s*height: 18px;/.test(regla(css, ".iconoCirculo svg")) && /stroke-width: 2;/.test(regla(css, ".iconoCirculo svg")));
   }
 
   // ══ 5. Descripción completa por tooltip accesible ═══════════════════════════════════════════════════════════════════════════════════════
   cierto("UXR01-13 (actualizado PRO-195) el texto COMPLETO de cada icono es su nombre accesible (role=img + aria-label) y es enfocable (tabIndex 0)",
-    /role="img"\s+tabIndex=\{0\}\s+aria-label=\{texto\}/.test(pagina) && /texto=\{i\.texto\}/.test(segunda) && /texto=\{`Estado: \$\{estado\.texto\}\. \$\{estado\.detalle\}`\}/.test(fila) && /texto=\{`Aviso técnico: \$\{avisoFila\}`\}/.test(fila));
+    /role="img"\s+tabIndex=\{0\}\s+aria-label=\{texto\}/.test(pagina) && /texto=\{i\.texto\}/.test(segunda) && /texto=\{textoFase\(i, fiscal\)\}/.test(fila) && /texto=\{`Aviso técnico: \$\{avisoFila\}`\}/.test(fila));
   cierto("UXR01-14 el tooltip visual se abre con mouse (enter), teclado (focus) y toque (click), se cierra al salir con demora (pasar al tooltip sin cerrarlo) y al perder el foco",
     ["onMouseEnter={(e) => tip.mostrar(e.currentTarget, texto)}", "onFocus={(e) => tip.mostrar(e.currentTarget, texto)}", "onClick={(e) => tip.mostrar(e.currentTarget, texto)}", "onMouseLeave={tip.programarCierre}", "onBlur={(e) => tip.ocultar(e.currentTarget)}"].every((t) => pagina.includes(t)) &&
     /setTimeout\(\(\) => setTip\(null\), 160\)/.test(pagina) && /onMouseEnter=\{\(\) => window\.clearTimeout\(cierreTip\.current\)\}/.test(pagina));
@@ -170,10 +171,11 @@ export async function verificarCasosDocumentosUxR01(): Promise<string[]> {
   }
 
   // ══ 6. Leyenda (PRO-195-UX-R01: retirada; la fila ya no tiene cuatro iconos que explicar y cada eje de la segunda capa lleva su nombre) ════════════
-  cierto("UXR01-21 (actualizado PRO-195) sin leyenda de iconos: no hay estilos.leyenda/punto en la página ni en el CSS; la segunda capa nombra cada eje junto a su icono",
-    !/estilos\.(leyenda|punto)\b/.test(pagina) && !/\.(leyenda|punto)\b/.test(cssLimpio) && /aria-label=\{`Estados técnicos de \$\{numeroDocumento\(d\)\}`\}/.test(segunda));
-  cierto("UXR01-22 sin párrafo de instrucciones ni explicaciones por eje (antes «Pase el cursor…» y «(recepción del gateway)…»)",
-    !/Pase el cursor|recepción del gateway\)|leyendaAyuda/.test(pagina));
+  // PRO-365: vuelve UNA leyenda compacta sobre la tabla (orden de los cuatro estados y significado de los símbolos); nunca dentro de la fila.
+  cierto("UXR01-21 (actualizado PRO-365) leyenda ÚNICA sobre la tabla (id leyenda-estados, referida por aria-describedby), nunca en la fila; la segunda capa nombra cada eje junto a su icono",
+    (pagina.match(/className=\{estilos\.leyendaEstados\}/g) ?? []).length === 1 && !/leyendaEstados/.test(fila) && /aria-describedby="leyenda-estados"/.test(pagina) && /\.leyendaEstados \{/.test(cssLimpio) && /aria-label=\{`Estados técnicos de \$\{numeroDocumento\(d\)\}`\}/.test(segunda));
+  cierto("UXR01-22 (actualizado PRO-365) sin explicaciones por eje en cada fila ni el párrafo antiguo «Pase el cursor…»/leyendaAyuda; la explicación vive solo en la leyenda única",
+    !/Pase el cursor|leyendaAyuda/.test(pagina) && !/recepción del gateway/.test(fila));
 
   // ══ 7. Iconos para consultar, KuDE, copiar y expandir ═══════════════════════════════════════════════════════════════════════════════════
   // PRO-195-UX-R01 (punto 3): consultar y KuDE son acciones de la FILA (iconos de contorno con su color); XML y correo, deshabilitados con motivo.
@@ -239,9 +241,9 @@ export async function verificarCasosDocumentosUxR01(): Promise<string[]> {
   cierto("UXR01-44 (actualizado PRO-195) móvil: la barra de orden se conserva (thead flexible, sin Detalle/Acciones/RUC/Eventos que no ordenan), el acento FE/NCE queda en la columna izquierda de la tarjeta y los datos fiscales apilan etiqueta/valor (≤ 640px)",
     /table\.tablaDocs > thead > tr \{\s*display: flex;/.test(cssLimpio) && /thead th:is\(:nth-child\(1\), :nth-child\(3\), :nth-child\(6\), :nth-child\(10\)\) \{\s*display: none;/.test(cssLimpio) &&
     /table\.tablaDocs tr\.filaFE > td:nth-child\(2\) \{\s*box-shadow: inset 3px 0 0 #6d9bd1;/.test(cssLimpio) && /table\.tablaDocs tr\.filaNCE > td:nth-child\(2\) \{\s*box-shadow: inset 3px 0 0 #d9bb4e;/.test(cssLimpio) && /@media \(max-width: 640px\) \{\s*\.fiscal > div \{\s*grid-template-columns: minmax\(0, 1fr\) 36px;/.test(cssLimpio));
-  cierto("UXR01-45 (actualizado PRO-195) áreas táctiles: acciones de fila y expandir 32px, botones del detalle/copia/historial 36px e iconos de estado ≥ 28px; sin cambios en el CSS compartido",
+  cierto("UXR01-45 (actualizado PRO-365) áreas táctiles: acciones de fila y expandir 32px, botones del detalle/copia/historial 36px e iconos de estado 36px (hueco del aviso 36px); sin cambios en el CSS compartido",
     /width: 32px;\s*height: 32px;/.test(regla(css, ".accion")) && /width: 32px;\s*height: 32px;/.test(regla(css, ".expandir")) && /width: 36px;\s*height: 36px;/.test(regla(css, ".iconBtn")) && /width: 36px;\s*height: 36px;/.test(regla(css, ".copiar")) && /min-height: 36px/.test(regla(css, ".toggleTecnico")) &&
-    /min-height: 28px/.test(regla(css, ".estadoPrincipal .icono")) && !/tablaDocs|tooltip|iconoVacio|kpis/.test(lista));
+    /width: 36px;\s*height: 36px;/.test(regla(css, ".iconoVacio")) && !/tablaDocs|tooltip|iconoVacio|kpis/.test(lista));
 
   // ══ 13. Solo se eliminan estilos locales sin uso confirmado ═════════════════════════════════════════════════════════════════════════════
   {
