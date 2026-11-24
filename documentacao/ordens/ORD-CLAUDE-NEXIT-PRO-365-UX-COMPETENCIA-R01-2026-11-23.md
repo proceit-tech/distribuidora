@@ -1,10 +1,12 @@
 # ORDEN ÚNICA CLAUDE — PRO-365 / NEXIT-DOC-UX-COMPETENCIA-R01 — 23/11/2026
 
+> **ESTADO DE EJECUCIÓN AL 24/11/2026:** R01 ya desarrollada por Claude en el commit `294f4e29619e54e71d8afcab425d7f3f171881ae`; auditoría ChatGPT [parcial conforme técnico, CI verde, homologación visual pendiente](../testes/AUD-CHATGPT-NEXIT-PRO-365-UX-COMPETENCIA-R01-2026-11-24.md). Las dos capturas ahora se encuentran aquí en el Git: **su disponibilidad habilita la comparación visual**, pero **NO autoriza automáticamente una ronda R02, cambios adicionales, pruebas manuales, VM, deploy o merge**. Cualquier correctivo después del análisis requiere autorización separada.
+
 ## Decisión inequívoca del responsable
 
 **REFERENCIA VISUAL PRINCIPAL Y OBLIGATORIA:** las DOS capturas de la **competencia** compartidas por el responsable el 23/11/2026. **NO** confundirlas con la captura de NEXIT ni con la captura del sistema propio BSERP. BSERP está más próximo a la referencia y puede servir para identificar diferencias, **PERO NO ES LA FUENTE DE VERDAD DE DISEÑO**. La pantalla actual de NEXIT `/documentos` ha sido rechazada visualmente por el responsable; no se trata de una sugerencia decorativa.
 
-Las capturas de competencia son material de referencia aportado por el usuario en el chat, **no están adjuntas a este archivo Git**. En la ejecución, coteja ambas imágenes facilitadas por el responsable. Si Claude no tiene acceso visual directo a las dos capturas, **no inventar similitud visual o un "95% igual"**: pedir que se adjunten al mismo hilo de desarrollo antes de afirmar conformidad. La descripción funcional de esta orden sí es vinculante y no depende de inventar datos de las imágenes.
+**ACTUALIZACIÓN 24/11/2026 — LAS DOS CAPTURAS ORIGINALES YA ESTÁN EN EL GIT.** Abrir directamente [Referencia 1: Filtros/Resumen/Tabla](../referencias-visuais/PRO-365/01_Concorrencia_Filtros_Resumo_Tabela.png) y [Referencia 2: Filtros/Leyenda/Estados](../referencias-visuais/PRO-365/02_Concorrencia_Filtros_Leyenda_Estados.png). Índice visual: [README de referencias](../referencias-visuais/PRO-365/README.md). Son PNG originales sin modificaciones, SHA-256 comprobado, no capturas de BSERP o NEXIT. **Claude debe ver AMBAS desde el Git antes de volver a comparar. NO pedir al responsable que vuelva a enviarlas.** No declarar paridad visual sin cotejo con NEXIT renderizado. Los dos archivos están en la propia rama/PR #7.
 
 **Objetivo:** pantalla de documentos electrónicos de NEXIT comparable a la referencia en **jerarquía visual, organización funcional, legibilidad, densidad profesional, controles e iconografía**; implementar con design tokens y código propios, sin copiar código, imágenes, CSS o identidad gráfica de la competencia. Mantener NEXIT multiempresa y condiciones reales de acceso.
 
@@ -81,6 +83,6 @@ Autorizada exclusivamente la **autoría de UI de Documentos electrónicos y caso
 
 ## Entrega y parada
 
-Publicar **un lote de código** con SHA completo, diff y lista de archivos, matriz de comparación con ambas capturas, qué se corrigió en iconos/estados/acciones/eventos/filtros,  casos de regresión escritos **NO EJECUTADOS**, accesibilidad y riesgos. No afirmar equivalencia visual ni cerrar la tarea sin comparar las imágenes; si las capturas no están disponibles para Claude, decláralo expresamente en el informe y solicita su adjunto.
+Publicar **un lote de código** con SHA completo, diff y lista de archivos, matriz de comparación con ambas capturas, qué se corrigió en iconos/estados/acciones/eventos/filtros,  casos de regresión escritos **NO EJECUTADOS**, accesibilidad y riesgos. No afirmar equivalencia visual ni cerrar la tarea sin comparar las imágenes; las capturas ya están versionadas bajo `documentacao/referencias-visuais/PRO-365/`; se deben abrir desde Git. Para validar paridad visual hace falta además evidencia renderizada de NEXIT. No solicitar al responsable reenviar las capturas.
 
 **STOP obligatorio tras commit/push para auditoría ChatGPT.** No iniciar segunda ronda ni desplegar en VM por iniciativa propia.
