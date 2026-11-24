@@ -3,6 +3,7 @@
  * Casos sobre funciones PURAS reales (documentos-copy-operador.ts, presentacion-sifen.ts) y sobre el texto fuente de page.tsx / page.module.css / kude-modal.tsx.
  * ESCRITOS, NO EJECUTADOS (orden PRO-365-R02-C02: sin tests, lint, typecheck, build, CI manual, SQL ni navegador). No es homologación visual.
  * Cubre T01–T10 y C02-11..C02-18 de la orden: APROBADO, RECHAZADO (1109), PENDIENTE, CANCELADO, INUTILIZADO, respuestas contradictorias y estados históricos.
+ * PRO-365-R02-C02-C01 (PRO-369): casos C02C01-01..12 (F01 aviso en APROBADO — BLOQUEADO por falta de datos fiables, ver informe; F02 título y aviso del PDF sin verificación).
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -23,6 +24,7 @@ import {
   textoIconoOperador,
 } from "@/lib/facturacion/documentos-copy-operador";
 import { type EstadoEmail, type EstadoLocal, type EstadoSifen } from "@/lib/facturacion/estados";
+import { AVISO_KUDE_NO_VERIFICADO, pertenenciaDe, tituloKude, type BlobKude } from "@/lib/facturacion/kude-visor";
 import { alertaConsulta, detalleFiscalPrimario, iconosEstado } from "@/lib/facturacion/presentacion-sifen";
 
 const leer = (r: string) => readFileSync(join(process.cwd(), r), "utf8");
@@ -177,10 +179,11 @@ export async function verificarCasosDocumentosC02LenguajePro365(): Promise<strin
   // ══ C02-11 APROBADO: sin motivo; un mensaje anterior no se presenta como vigente ══════════════════════════════════════════════════════════
   {
     const ap = doc({ estadoSifen: "APROBADO", cdc: "X", codRespuesta: "0260", mensajeRespuesta: "Aprobado" });
-    const apViejo = doc({ estadoSifen: "APROBADO", cdc: "X", codRespuesta: "1109", mensajeRespuesta: "Número de documento ha sido inutilizado anteriormente" });
-    igual("C02-11a APROBADO: encabezado «Aprobado» verde; sin fila de motivo ni nota (con mensaje de aprobación o con un rechazo histórico registrado)",
-      [encabezadoFiscal(ap), respuestaFiscal(ap, detalleFiscalPrimario(ap)), respuestaFiscal(apViejo, detalleFiscalPrimario(apViejo))],
-      [{ titulo: "Aprobado", tono: "ok", simbolo: "check", nota: null }, { motivo: null, notaHistorial: null }, { motivo: null, notaHistorial: null }]);
+    // PRO-365-R02-C02-C01: el escenario APROBADO + 1109 se retiró de este caso (no se fuerza un PASS sobre él). Ver C02C01-F01: con los datos actuales no se puede
+    // acreditar que un código registrado junto a APROBADO sea una respuesta anterior; queda BLOQUEADO y documentado en el informe C02-C01.
+    igual("C02-11a (actualizado PRO-365-R02-C02-C01) APROBADO con respuesta de aprobación: encabezado «Aprobado» verde; sin fila de motivo ni nota",
+      [encabezadoFiscal(ap), respuestaFiscal(ap, detalleFiscalPrimario(ap))],
+      [{ titulo: "Aprobado", tono: "ok", simbolo: "check", nota: null }, { motivo: null, notaHistorial: null }]);
     cierto("C02-11b el detalle ya no tiene «Mensaje» incondicional: la fila de respuesta solo existe si respuesta.motivo",
       !primera.includes(">Mensaje</dt>") && /\{respuesta\.motivo \? \(/.test(primera) && /<dt className=\{ui\.muted\}>\{respuesta\.motivo\.etiqueta\}<\/dt>/.test(primera));
   }
@@ -246,6 +249,54 @@ export async function verificarCasosDocumentosC02LenguajePro365(): Promise<strin
 
   // ══ C02-18 Alcance de la evidencia ═══════════════════════════════════════════════════════════════════════════════════════════════════════
   // Estos casos son conformidad ESTÁTICA (fuente y funciones puras). El CI automático los ejecuta tras el push; la homologación visual real en el navegador es del responsable.
+
+  // ══ PRO-365-R02-C02-C01 (PRO-369) ═══════════════════════════════════════════════════════════════════════════════════════════════════════
+  {
+    const nex080 = leer("documentacao/banco/nexit/v1/migraciones/NEX-080-facturacion-cdc-dato-api.sql");
+    const nucleo = nex080.slice(nex080.indexOf("FUNCTION public.fe_documento_registrar_consulta_nucleo_r05("), nex080.indexOf("FUNCTION public.fe_documento_registrar_consulta_r05("));
+    const ap0260 = doc({ estadoSifen: "APROBADO", cdc: "X", codRespuesta: "0260", mensajeRespuesta: "Aprobado" });
+    const apSin = doc({ estadoSifen: "APROBADO", cdc: "X" });
+    const r1109 = doc({ estadoSifen: "RECHAZADO", codRespuesta: "1109", mensajeRespuesta: "Número de documento ha sido inutilizado anteriormente" });
+    const pend = doc({ estadoSifen: "PENDIENTE", codRespuesta: "0160", mensajeRespuesta: "XML firmado" });
+
+    // F01 — escenarios que NO deben recibir aviso.
+    igual("C02C01-01 APROBADO + respuesta normal 0260: «Aprobado», sin motivo ni nota (ninguna advertencia falsa)", [encabezadoFiscal(ap0260).titulo, respuestaFiscal(ap0260, detalleFiscalPrimario(ap0260))], ["Aprobado", { motivo: null, notaHistorial: null }]);
+    igual("C02C01-02 APROBADO sin respuesta adicional: «Aprobado», sin motivo ni nota", [encabezadoFiscal(apSin).titulo, respuestaFiscal(apSin, detalleFiscalPrimario(apSin))], ["Aprobado", { motivo: null, notaHistorial: null }]);
+    // F01 — BLOQUEADO: evidencia de fuente del motivo. El código y el mensaje del documento se escriben en el MISMO UPDATE que fija el estado (respuesta OK), y una respuesta
+    // contradictoria posterior NO los toca. No hay fecha ni correlación por campo: un 1109 junto a APROBADO es el código que llegó con esa respuesta, no una respuesta anterior
+    // demostrable. El historial (segunda capa, paginado y cargado a demanda) no se usa como prueba en la primera capa. Por eso no se implementa el aviso (sin heurísticas).
+    cierto("C02C01-F01 (bloqueo, evidencia) NEX-080: cod_respuesta/mensaje_respuesta solo se actualizan junto con estado_sifen en una respuesta OK; la contradictoria solo anota la consulta",
+      /IF v_resultado = 'OK' THEN[\s\S]*?UPDATE public\.documentos_electronicos SET\s+estado_sifen = p_estado_sifen,[\s\S]*?cod_respuesta = p_cod_respuesta,\s+mensaje_respuesta = v_mensaje,/.test(nucleo) &&
+      /ELSE[\s\S]*?UPDATE public\.documentos_electronicos SET ultima_consulta_at = now\(\), ultima_consulta_resultado = v_resultado, actualizado_at = now\(\)/.test(nucleo) &&
+      !/Hay una respuesta anterior para revisar/.test(copy) && !/notaAprobado|respuestaAnterior/.test(pagina));
+    igual("C02C01-03 RECHAZADO + 1109: «Rechazado» con «Motivo del rechazo» con código y descripción literales", [encabezadoFiscal(r1109).titulo, respuestaFiscal(r1109, detalleFiscalPrimario(r1109)).motivo],
+      ["Rechazado", { etiqueta: "Motivo del rechazo", valor: "1109 · Número de documento ha sido inutilizado anteriormente" }]);
+    igual("C02C01-04 PENDIENTE con respuesta anterior: comportamiento C02 (sin motivo, nota que remite al historial técnico)", respuestaFiscal(pend, detalleFiscalPrimario(pend)), { motivo: null, notaHistorial: NOTA_MENSAJES_HISTORIAL });
+
+    // F02 — título y aviso del PDF sin verificación.
+    igual("C02C01-05 KuDE VERIFICADO: conserva su título exacto", tituloKude("KuDE · Factura 001-001-0000003", "VERIFICADA"), "KuDE · Factura 001-001-0000003");
+    igual("C02C01-06 PDF NO_VERIFICADO: título claro con el número del documento real (FE y NCE)",
+      [tituloKude("KuDE · Factura 001-001-0000003", "NO_VERIFICADA"), tituloKude("KuDE · Nota de crédito 001-002-0000010 (AA)", "NO_VERIFICADA")],
+      ["PDF sin verificación — Factura 001-001-0000003", "PDF sin verificación — Nota de crédito 001-002-0000010 (AA)"]);
+    igual("C02C01-07 advertencia obligatoria en lenguaje llano, sin gateway/API/CDC, que expresa falta de verificación (no «falso», «incorrecto» ni «rechazado»)",
+      [AVISO_KUDE_NO_VERIFICADO, /gateway|\bAPI\b|CDC|NEXIT/.test(AVISO_KUDE_NO_VERIFICADO + tituloKude("KuDE · Factura 1", "NO_VERIFICADA")), /falso|incorrecto|rechazad/i.test(AVISO_KUDE_NO_VERIFICADO)],
+      ["No se pudo confirmar que este PDF corresponda a esta factura. Revise la empresa emisora, el número, la fecha y los importes antes de utilizarlo. Si los datos no coinciden, no lo entregue como KuDE.", false, false]);
+    igual("C02C01-08 sin evidencia de correspondencia = NO_VERIFICADA (Blob sin marca o con valor desconocido); solo «VERIFICADA» verifica",
+      [pertenenciaDe(new Blob([])), pertenenciaDe(Object.assign(new Blob([]), { pertenencia: "OTRO" }) as unknown as BlobKude), pertenenciaDe(Object.assign(new Blob([]), { pertenencia: "VERIFICADA" }) as BlobKude)],
+      ["NO_VERIFICADA", "NO_VERIFICADA", "VERIFICADA"]);
+    cierto("C02C01-09 nombre de descarga protegido «-NO-VERIFICADO.pdf» y lógica de pertenencia sin cambios",
+      /const nombreSegun = \(nombre: string, p: PertenenciaKude\) => \(p === "VERIFICADA" \? nombre : nombre\.replace\(\/\\\.pdf\$\/i, ""\) \+ "-NO-VERIFICADO\.pdf"\);/.test(visor) &&
+      /export const pertenenciaDe = \(b: Blob\): PertenenciaKude => \(\(b as BlobKude\)\.pertenencia === "VERIFICADA" \? "VERIFICADA" : "NO_VERIFICADA"\);/.test(visor) &&
+      /p === "VERIFICADA" \? titulo : `PDF sin verificación — \$\{titulo\.replace\(\/\^KuDE · \/, ""\)\}`/.test(visor));
+    cierto("C02C01-10 PDF, endpoint, cierre y respuestas tardías intactos: misma solicitud /kude, abortos, revocación de URL y secuencia; la modal sigue condicionando el aviso a noVerificado y muestra el mismo iframe",
+      /fetchFn\("\/api\/documentos\/" \+ encodeURIComponent\(docId\) \+ "\/kude"/.test(visor) && /aborto\?\.abort\(\);/.test(visor) && /revocarUrl/.test(visor) && /let secuencia = 0;/.test(visor) &&
+      /\{noVerificado \? <p className=\{ui\.alertError\} role="alert"[^>]*>\{AVISO_KUDE_NO_VERIFICADO\}<\/p> : null\}/.test(modal) && /tituloKude\(estado\.titulo, estado\.pertenencia\)/.test(modal) &&
+      /<iframe id="kude-visor" key=\{estado\.url\} src=\{estado\.url\}/.test(modal));
+    cierto("C02C01-11 historial técnico preservado: i.texto, aviso técnico completo, eventos técnicos y etiquetaIntento en la segunda capa",
+      /texto=\{i\.texto\}/.test(segunda) && /\{alerta\.texto\}\. \{alerta\.detalle\}/.test(segunda) && /etiquetaIntento\(/.test(segunda));
+    cierto("C02C01-12 sin cambios fiscales, de API, SQL ni permisos: el módulo de textos sigue puro y la página no gana rutas ni llamadas nuevas",
+      !/fetch\(|\/api\/|SELECT |UPDATE |INSERT /.test(copy) && !/\/api\/[^`"]*(cancel|inutiliz|evento)/i.test(pagina) && /accionesFila\(kudeDisponible\(d\), \{ editar \}/.test(pagina));
+  }
 
   return fallos;
 }

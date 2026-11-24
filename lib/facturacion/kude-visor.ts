@@ -13,11 +13,12 @@ export type BlobKude = Blob & { pertenencia?: PertenenciaKude };
 
 export const pertenenciaDe = (b: Blob): PertenenciaKude => ((b as BlobKude).pertenencia === "VERIFICADA" ? "VERIFICADA" : "NO_VERIFICADA");
 
-/** Título visible: sin pertenencia verificada el PDF NO se titula como KuDE del documento. */
-export const tituloKude = (titulo: string, p: PertenenciaKude): string => (p === "VERIFICADA" ? titulo : `PDF devuelto por el gateway — pertenencia NO verificada (${titulo.replace(/^KuDE · /, "")})`);
+/** Título visible: sin pertenencia verificada el PDF NO se titula como KuDE del documento (PRO-365-R02-C02-C01: texto llano, el número sale del documento real). */
+export const tituloKude = (titulo: string, p: PertenenciaKude): string => (p === "VERIFICADA" ? titulo : `PDF sin verificación — ${titulo.replace(/^KuDE · /, "")}`);
 
+/** Advertencia obligatoria de la primera capa (PRO-365-R02-C02-C01: sin términos técnicos). Expresa falta de verificación, no una discrepancia comprobada. */
 export const AVISO_KUDE_NO_VERIFICADO =
-  "El gateway devolvió este PDF para el número de documento solicitado, pero NEXIT no puede comprobar que pertenezca a este documento ni a esta empresa: el documento aún no tiene un CDC informado por la API con el cual compararlo, o la respuesta no trajo CDC. Verifique el emisor, la fecha y los importes del PDF antes de usarlo; no lo entregue como KuDE de este documento si no coinciden.";
+  "No se pudo confirmar que este PDF corresponda a esta factura. Revise la empresa emisora, el número, la fecha y los importes antes de utilizarlo. Si los datos no coinciden, no lo entregue como KuDE.";
 
 const nombreSegun = (nombre: string, p: PertenenciaKude) => (p === "VERIFICADA" ? nombre : nombre.replace(/\.pdf$/i, "") + "-NO-VERIFICADO.pdf");
 export type EstadoKudeVisor =
