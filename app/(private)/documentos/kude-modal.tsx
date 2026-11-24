@@ -3,7 +3,7 @@
 import { useEffect, useRef, useSyncExternalStore } from "react";
 
 import ui from "@/components/ui/lista-padrao/lista.module.css";
-import { AVISO_KUDE_NO_VERIFICADO, tituloKude, type crearControladorVisor } from "@/lib/facturacion/kude-visor";
+import { type crearControladorVisor } from "@/lib/facturacion/kude-visor";
 
 type Controlador = ReturnType<typeof crearControladorVisor>;
 
@@ -62,9 +62,8 @@ export function KudeModal({ controlador }: { controlador: Controlador }) {
 
   // Solo el visor del PDF (LISTO) usa la modal grande; ERROR y CARGANDO son cajas compactas de altura natural (sin 92vh de blanco).
   const visor = estado.fase === "LISTO";
-  // PRO-342-R02 (F001): sin pertenencia verificada el PDF no se titula como KuDE del documento y se advierte de forma explícita.
-  const noVerificado = estado.fase === "LISTO" && estado.pertenencia !== "VERIFICADA";
-  const titulo = estado.fase === "LISTO" ? tituloKude(estado.titulo, estado.pertenencia) : estado.titulo;
+  // PRO-365-R02-C02-C02: título normal del documento («KuDE · Factura …» / «KuDE · Nota de crédito …»), sin advertencia de verificación por CDC.
+  const titulo = estado.titulo;
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }} onMouseDown={(e) => { if (e.target === e.currentTarget) controlador.cerrar(); }}>
@@ -81,7 +80,6 @@ export function KudeModal({ controlador }: { controlador: Controlador }) {
             <button ref={cierre} type="button" className={ui.primaryButton} onClick={() => controlador.cerrar()}>Cerrar</button>
           </div>
         </header>
-        {noVerificado ? <p className={ui.alertError} role="alert" style={{ margin: "8px 16px 0" }}>{AVISO_KUDE_NO_VERIFICADO}</p> : null}
         {estado.fase === "LISTO" && estado.descarga === "ERROR" ? <p className={ui.alertError} role="alert" style={{ margin: "8px 16px 0" }}>{estado.mensajeDescarga} Puede intentar «Descargar PDF» nuevamente.</p> : null}
         <div style={visor ? { flex: 1, minHeight: 0, display: "flex", alignItems: "stretch", justifyContent: "center" } : { padding: "16px 16px 20px", overflowY: "auto" }}>
           {estado.fase === "CARGANDO" ? <p role="status" style={{ margin: 0 }}>Cargando el KuDE…</p> : null}

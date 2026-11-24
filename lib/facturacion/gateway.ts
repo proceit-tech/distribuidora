@@ -173,8 +173,6 @@ export function cdcEsCredencial(valor: string, secretos: readonly string[]): boo
 // SQL admite 1..256 caracteres, NEX-080). Fuera de la ruta contractual sigue siendo texto libre y se sanea como antes.
 export const MAX_CDC = 256;
 const CDC_TRANSPORTABLE = /^[^\u0000]{1,256}$/u;
-/** SOLO KuDE (gate R05-5, ver correspondenciaKude): forma de CDC SIFEN usada únicamente para DESCARTAR un PDF de otra numeración. No participa en envío, consulta ni estado fiscal. */
-const CDC_FORMATO = /^\d{44}$/;
 const NUMERO_FISCAL_CLAVE = /^\d{3}-\d{3}-\d{7}$/;
 // PRO-342-R01: el lote es el identificador LITERAL que devolvió el gateway (p. ej. «RUC-tipo-EEE-PPP-NNNNNNN-fecha-aleatorio»): se conserva tal cual (hasta 60 caracteres imprimibles, sin
 // caracteres de control), aunque contenga dígitos iguales al RUC o a la clave de la API. Antes se exigía [0-9A-Za-z-]: un lote con otro carácter quedaba «[omitido]» en la evidencia.
@@ -773,8 +771,8 @@ const CODIGO_TIPO: Record<string, string> = { FE: "01", AFE: "04", NCE: "05", ND
 
 /**
  * Mismo criterio que fe_cdc_coherente (SQL): tipo de DE y posiciones de establecimiento, punto y número (MT v150 §10.1).
- * PRO-342-R05: YA NO participa en envío, recepción, consulta, estado fiscal ni persistencia. Uso EXCLUSIVO y congelado: descartar en el KuDE un PDF cuyo CDC muestra OTRA numeración cuando
- * el documento no tiene CDC registrado (única evidencia disponible contra un PDF ajeno: gate R05-5, ver correspondenciaKude). Retirarla exige antes evidencia contractual del proveedor.
+ * PRO-342-R05: YA NO participa en envío, recepción, consulta, estado fiscal ni persistencia. PRO-365-R02-C02-C02 (decisión del responsable): tampoco en el KuDE, que ya no compara CDC.
+ * Ningún flujo la usa; se conserva exportada solo por los casos históricos que la citan.
  */
 export function cdcCoherente(doc: DocumentoRecepcion, cdc: string): boolean {
   return /^\d{44}$/.test(cdc) && cdc.slice(0, 2) === CODIGO_TIPO[doc.tipo] && cdc.slice(11, 14) === doc.establecimiento && cdc.slice(14, 17) === doc.puntoExpedicion && cdc.slice(17, 24) === doc.numero;
@@ -1063,26 +1061,18 @@ export async function enviarDocumentoGateway(
 // ── KuDE (PDF) ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 // Contrato CONFIRMADO por el responsable (PRO-194 / E08): POST {base}/api/kude con Bearer y FE: {dEst, dPunExp, dNumDoc, dSerieNum, tipoDoc:"FE"}; NCE: {tipOpe:"4", …, tipoDoc:"ncr"} (ver cuerpoKudeGateway) → HTTP 200, JSON {status:"success", kude:<PDF en Base64, «JVBER…»>}.
 // PRO-326: el KuDE se pide por la identidad del documento (tipo, establecimiento, punto, número, serie); el CDC NO participa en la SOLICITUD ni se exige en la respuesta, y nunca se guarda.
-// PRO-342-R01/R02: si la respuesta SÍ trae un CDC, se usa SOLO para no presentar como propio el PDF de OTRO documento. La ÚNICA pertenencia verificable con lo que hoy informa el contrato es
-// la IGUALDAD literal con el CDC que la API ya informó para ESTE documento en su consulta (CDC_REGISTRADO). Sin CDC registrado, un CDC coherente con tipo/establecimiento/punto/número NO prueba
-// el emisor (otro contribuyente puede tener la misma numeración y NEXIT no agrega validaciones de RUC/DV/fecha/dígito): el PDF se entrega como NO_VERIFICADO, nunca como propio (la pantalla lo
-// advierte). Sin CDC en la respuesta, también NO_VERIFICADO. Un CDC con otra numeración, o distinto del registrado, descarta el PDF (NO_CORRESPONDE). Probar la titularidad sin CDC registrado
-// exige un dato del proveedor que el contrato documentado no incluye (emisor/cuenta del PDF): dependencia abierta, no se suple con heurísticas.
+// PRO-365-R02-C02-C02 (decisión del responsable, 24/11/2026): se RETIRA la validación adicional de correspondencia por CDC (PRO-342-R01/R02/R05). El CDC que traiga la respuesta NO se lee,
+// no se compara y no decide si el PDF se acepta: NEXIT pide el KuDE por la identidad del documento y presenta el PDF válido que devuelve la API del proveedor, sin clasificarlo como verificado
+// ni como no verificado. Riesgo residual aceptado por el responsable: si el proveedor devolviera un PDF válido de otro documento, el CDC ya no lo detecta.
 // Se exige status «success», Base64 estricto y un PDF íntegro («%PDF-» … «%%EOF», ≤ 10 MB). Nada se guarda (ni Base64 ni PDF) y los errores no incluyen el CDC ni el contenido. No se sigue ninguna URL.
 export const MAX_KUDE_BYTES = 10 * 1024 * 1024;
 const MAX_KUDE_JSON = Math.ceil((MAX_KUDE_BYTES * 4) / 3) + 8192;
 export type CuerpoLegible = { getReader(): { read(): Promise<{ done: boolean; value?: Uint8Array }>; cancel(motivo?: unknown): Promise<void> } };
 export type KudeFetch = (url: string, init: { method: string; headers: Record<string, string>; body: string; signal: AbortSignal }) => Promise<{ status: number; headers: { get(nombre: string): string | null }; body: CuerpoLegible | null }>;
 export type DependenciasKude = { fetch?: FetchLike; fetchKude?: KudeFetch; env?: Record<string, string | undefined>; ahora?: () => number };
-/** Identidad del documento para el KuDE (FE o NCE). Sin CDC (PRO-326): ni el persistido ni el devuelto condicionan el PDF. */
-/** `cdcRegistrado` (PRO-342-R01): CDC persistido del documento (el que informó la API), usado SOLO para verificar la correspondencia del PDF devuelto; nunca se envía al gateway. */
-export type DocumentoKude = { tipoDoc: "FE" | "NCE"; establecimiento: string; puntoExpedicion: string; numero: string; serie: string | null; cdcRegistrado?: string | null };
-export type CodigoErrorKude = "SIN_CREDENCIALES" | "AUTENTICACION" | "TIMEOUT" | "NO_DISPONIBLE" | "NO_ENCONTRADO" | "FORMATO_NO_CONFIRMADO" | "PDF_INVALIDO" | "DEMASIADO_GRANDE" | "SOLICITUD_RECHAZADA" | "PROHIBIDO" | "REDIRECCION" | "NO_CORRESPONDE";
-/**
- * PRO-342-R02: pertenencia del PDF al documento. NO_VERIFICADO = no hay forma de comprobarla con el contrato actual: el PDF puede mostrarse (PRO-326) pero NUNCA como KuDE propio confirmado.
- * PRO-342-R05: «CDC_REGISTRADO» queda SOLO por compatibilidad de tipos con la UI/cabecera; correspondenciaKude ya no lo produce (un CDC igual no prueba la titularidad del PDF).
- */
-export type CorrespondenciaKude = "CDC_REGISTRADO" | "NO_VERIFICADO";
+/** Identidad del documento para el KuDE (FE o NCE). Sin CDC (PRO-326 / PRO-365-R02-C02-C02): ni el persistido ni el devuelto condicionan el PDF. */
+export type DocumentoKude = { tipoDoc: "FE" | "NCE"; establecimiento: string; puntoExpedicion: string; numero: string; serie: string | null };
+export type CodigoErrorKude = "SIN_CREDENCIALES" | "AUTENTICACION" | "TIMEOUT" | "NO_DISPONIBLE" | "NO_ENCONTRADO" | "FORMATO_NO_CONFIRMADO" | "PDF_INVALIDO" | "DEMASIADO_GRANDE" | "SOLICITUD_RECHAZADA" | "PROHIBIDO" | "REDIRECCION";
 /**
  * ÚNICA transformación del documento interno al contrato EXTERNO de POST /api/kude (confirmado con HTTP 200 en Postman). El tipo interno (FE/NCE) no cambia; solo la solicitud al gateway:
  *  · FE  → {dEst, dPunExp, dNumDoc, dSerieNum, tipoDoc: "FE"} (cinco campos, sin tipOpe).
@@ -1095,7 +1085,7 @@ export function cuerpoKudeGateway(doc: DocumentoKude): Record<string, string | n
   return doc.tipoDoc === "NCE" ? { tipOpe: "4", ...id, tipoDoc: "ncr" } : { ...id, tipoDoc: "FE" };
 }
 
-export type ResultadoKude = { ok: true; pdf: Buffer; correspondencia: CorrespondenciaKude } | { ok: false; codigo: CodigoErrorKude; http: number | null; mensaje: string };
+export type ResultadoKude = { ok: true; pdf: Buffer } | { ok: false; codigo: CodigoErrorKude; http: number | null; mensaje: string };
 
 /**
  * Resumen SEGURO de lo que respondió el gateway ante un error (para el diagnóstico del operador): solo el texto del campo message/mensaje/error de un JSON, sin CDC (44 dígitos), sin cadenas largas tipo
@@ -1144,35 +1134,11 @@ export function decodificarBase64Estricto(texto: string): Buffer | null {
   return b.length > 0 ? b : null;
 }
 
-const MSG_NO_CORRESPONDE = "El gateway devolvió un KuDE que no corresponde a este documento (el CDC de su respuesta no coincide con el documento consultado): fue descartado y no se muestra como propio. Solicite la corrección al proveedor del gateway.";
-
 /**
- * Pertenencia del PDF según el CDC que trae la respuesta (null = NO corresponde: se descarta).
- * PRO-342-R05 (gate R05-5): el CDC es un dato opaco de la API y NO prueba pertenencia: este método YA NO devuelve «CDC_REGISTRADO» (verificado); todo PDF aceptado es NO_VERIFICADO
- * (política vigente de aviso, sin cambios). Se CONSERVAN, congelados, los dos únicos descartes protectores contra un PDF ajeno, porque no existe evidencia contractual alternativa del
- * proveedor (titularidad binaria del PDF):
- *  · el documento tiene CDC registrado (informado por la API, cualquier forma) y la respuesta trae OTRO texto de CDC → se descarta (comparación literal, sin trim);
- *  · sin CDC registrado, la respuesta trae un CDC con forma SIFEN que muestra OTRA numeración (cdcCoherente) → se descarta.
- * Un CDC ausente, no textual o de forma no SIFEN sin CDC registrado no descarta ni verifica. Nunca devuelve ni registra el CDC.
+ * Interpreta la respuesta de /api/kude {status, CDC, kude(Base64)} del documento solicitado por su identidad. PRO-326: no se exige estado fiscal ni CDC. PRO-365-R02-C02-C02: el CDC de la
+ * respuesta tampoco se lee ni se compara (sin descarte ni clasificación por CDC). Basta status «success» y un PDF íntegro dentro de los límites.
  */
-export function correspondenciaKude(doc: DocumentoKude, cdcRespuesta: unknown): CorrespondenciaKude | null {
-  const cdc = typeof cdcRespuesta === "string" ? cdcRespuesta : ""; // sin trim: un CDC con espacios no se iguala al registrado
-
-  if (cdc === "") return "NO_VERIFICADO";
-
-  const registrado = typeof doc.cdcRegistrado === "string" && doc.cdcRegistrado !== "" ? doc.cdcRegistrado : null;
-
-  if (registrado) return cdc === registrado ? "NO_VERIFICADO" : null;
-  if (!CDC_FORMATO.test(cdc)) return "NO_VERIFICADO";
-
-  return cdcCoherente({ tipo: doc.tipoDoc, establecimiento: doc.establecimiento, puntoExpedicion: doc.puntoExpedicion, numero: doc.numero }, cdc) ? "NO_VERIFICADO" : null;
-}
-
-/**
- * Interpreta la respuesta de /api/kude {status, CDC, kude(Base64)} del documento solicitado por su identidad. PRO-326: no se exige estado fiscal ni CDC. PRO-342-R01: si la respuesta trae CDC y NO
- * corresponde a `doc` (ver correspondenciaKude), el PDF se descarta. Sin `doc` no hay verificación posible: NO_VERIFICADO. Basta status «success» y un PDF íntegro.
- */
-export function interpretarKude(http: number, cuerpoTexto: string, doc?: DocumentoKude): ResultadoKude {
+export function interpretarKude(http: number, cuerpoTexto: string): ResultadoKude {
   let j: Record<string, unknown> | null = null;
 
   try {
@@ -1192,11 +1158,7 @@ export function interpretarKude(http: number, cuerpoTexto: string, doc?: Documen
   if (!pdf || !esPdfValido(pdf)) return falloKude("PDF_INVALIDO", http, MSG_INVALIDO);
   if (pdf.length > MAX_KUDE_BYTES) return falloKude("DEMASIADO_GRANDE", http, "El archivo recibido del gateway excede el tamaño permitido y fue descartado.");
 
-  const correspondencia = doc ? correspondenciaKude(doc, enRaiz(j, "cdc")) : "NO_VERIFICADO";
-
-  if (correspondencia === null) return falloKude("NO_CORRESPONDE", http, MSG_NO_CORRESPONDE);
-
-  return { ok: true, pdf, correspondencia };
+  return { ok: true, pdf };
 }
 
 type RespuestaKude = { ok: true; status: number; texto: string | null } | { ok: false; motivo: "TIMEOUT" | "RED" };
@@ -1291,7 +1253,7 @@ export async function obtenerKudeGateway(config: ConfigGateway, doc: DocumentoKu
     if (r.status !== 200) return falloKude("FORMATO_NO_CONFIRMADO", r.status, con("El KuDE de este documento no está disponible: respuesta inesperada del gateway"));
     if (r.texto === null) return falloKude("DEMASIADO_GRANDE", r.status, "El archivo recibido del gateway excede el tamaño permitido y fue descartado.");
 
-    return interpretarKude(r.status, r.texto, doc);
+    return interpretarKude(r.status, r.texto);
   }
 
   return falloKude("AUTENTICACION", 401, "El gateway rechazó el token tras renovarlo.");

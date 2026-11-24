@@ -208,8 +208,9 @@ export async function verificarCasosDocumentosPro195R01(): Promise<string[]> {
     /aria-label="Seleccionar todos los documentos de esta página"/.test(cabecera) && /el\.indeterminate = seleccionados\.length > 0 && seleccionados\.length < filas\.length/.test(cabecera) && /aria-label=\{`Seleccionar \$\{doc\}`\}/.test(fila));
 
   // ══ R01-11 KuDE NO_VERIFICADO y guardas intactas ════════════════════════════════════════════════════════════════════════════════════════
-  cierto("R01-11 KuDE: misma apertura (abrirKude → visor, sin caché nueva) y modal/aviso NO_VERIFICADO intactos; la acción no afirma que el PDF exista ni esté verificado",
-    /alActivar=\{\(\) => abrirKude\(d\)\}/.test(fila) && /function abrirKude\(d: Documento\) \{\s*void visor\.abrir\(/.test(pagina) && /AVISO_KUDE_NO_VERIFICADO/.test(leer("app/(private)/documentos/kude-modal.tsx")) &&
+  // PRO-365-R02-C02-C02: el aviso NO_VERIFICADO de la modal se retiró por decisión del responsable; se exige que ya no exista.
+  cierto("R01-11 (actualizado C02-C02) KuDE: misma apertura (abrirKude → visor, sin caché nueva); la modal ya no muestra aviso de PDF no verificado; la acción no afirma que el PDF exista ni esté verificado",
+    /alActivar=\{\(\) => abrirKude\(d\)\}/.test(fila) && /function abrirKude\(d: Documento\) \{\s*void visor\.abrir\(/.test(pagina) && !/AVISO_KUDE_NO_VERIFICADO/.test(leer("app/(private)/documentos/kude-modal.tsx")) &&
     /etiqueta=\{`Consultar KuDE \(PDF\) de \$\{doc\}`\}/.test(fila) && !/KuDE[^`]*(verificado|confirmado|disponible)`/.test(fila) && !/sessionStorage|localStorage|caches\./.test(pagina));
 
   // ══ R01-12 Regresión FE/NCE, consulta sin reenvío, estados técnicos e historial ═════════════════════════════════════════════════════════

@@ -480,10 +480,10 @@ export async function verificarCasosFlujoFiscalPro342(): Promise<string[]> {
     cierto("PRO342-08e no hay un segundo planificador: un solo setInterval en lib/facturacion (consulta-automatica.ts) y el worker sigue usando la reserva con token NEX-077", (leer("lib/facturacion/consulta-automatica.ts").match(/setInterval\(/g) ?? []).length === 1 && /fe_consulta_reservar_token/.test(leer("lib/facturacion/consulta-automatica.ts")));
   }
 
-  // ── 9. KuDE disponible durante «XML firmado»; un PDF ajeno no se presenta como propio ──────────────────────────────────────
+  // ── 9. KuDE disponible durante «XML firmado»; PRO-365-R02-C02-C02: el CDC devuelto ya no decide la aceptación del PDF ─────────────
   {
-    const fe: DocumentoKude = { tipoDoc: "FE", establecimiento: "001", puntoExpedicion: "001", numero: "0000001", serie: "AA", cdcRegistrado: null };
-    const nce: DocumentoKude = { tipoDoc: "NCE", establecimiento: "001", puntoExpedicion: "001", numero: "0000003", serie: "AA", cdcRegistrado: null };
+    const fe: DocumentoKude = { tipoDoc: "FE", establecimiento: "001", puntoExpedicion: "001", numero: "0000001", serie: "AA" };
+    const nce: DocumentoKude = { tipoDoc: "NCE", establecimiento: "001", puntoExpedicion: "001", numero: "0000003", serie: "AA" };
 
     igual("PRO342-09a contrato del KuDE intacto: FE cinco campos (tipoDoc FE), NCE seis (tipOpe 4, tipoDoc ncr); el CDC nunca se envía", [Object.keys(cuerpoKudeGateway(fe)), cuerpoKudeGateway(nce)], [["dEst", "dPunExp", "dNumDoc", "dSerieNum", "tipoDoc"], { tipOpe: "4", dEst: "001", dPunExp: "001", dNumDoc: "0000003", dSerieNum: "AA", tipoDoc: "ncr" }]);
 
@@ -491,23 +491,24 @@ export async function verificarCasosFlujoFiscalPro342(): Promise<string[]> {
     const k1 = gatewayKude(CDC1);
     const r1 = await obtenerKudeGateway(CONFIG, fe, k1.dep);
 
-    // PRO-342-R02 (F001): sin CDC registrado no hay prueba de pertenencia → NO_VERIFICADO (se entrega con advertencia; nunca «identidad confirmada»).
-    igual("PRO342-09b (actualizado R02) documento PENDIENTE (XML firmado, sin CDC registrado): el KuDE se entrega sin exigir aprobación, pero NO_VERIFICADO", [r1.ok, r1.ok ? r1.correspondencia : null, k1.pedidos[0]?.dNumDoc], [true, "NO_VERIFICADO", "0000001"]);
+    // PRO-365-R02-C02-C02: sin clasificación de pertenencia; el resultado solo trae el PDF.
+    igual("PRO342-09b (actualizado C02-C02) documento PENDIENTE (XML firmado): el KuDE se entrega sin exigir aprobación y sin clasificación de pertenencia", [r1.ok, r1.ok ? Object.keys(r1).sort().join(",") : null, k1.pedidos[0]?.dNumDoc], [true, "ok,pdf", "0000001"]);
 
     limpiarCacheTokens();
-    const r2 = await obtenerKudeGateway(CONFIG, { ...fe, cdcRegistrado: CDC1 }, gatewayKude(CDC1_OTRA_EMPRESA).dep);
+    const r2 = await obtenerKudeGateway(CONFIG, fe, gatewayKude(CDC1_OTRA_EMPRESA).dep);
 
-    igual("PRO342-09c CDC registrado y el gateway devuelve el PDF de OTRA empresa (mismo número): se DESCARTA (NO_CORRESPONDE) y el mensaje no expone el CDC", [r2.ok, r2.ok ? null : r2.codigo, r2.ok ? null : r2.mensaje.includes(CDC1_OTRA_EMPRESA)], [false, "NO_CORRESPONDE", false]);
+    // Riesgo residual (decisión del responsable): un PDF válido con el CDC de otra empresa ya no se descarta por CDC.
+    igual("PRO342-09c (actualizado C02-C02) el gateway devuelve un CDC de OTRA empresa (mismo número): el CDC no condiciona el retorno (PDF entregado)", r2.ok, true);
 
     limpiarCacheTokens();
     const r3 = await obtenerKudeGateway(CONFIG, fe, gatewayKude(CDC2).dep);
 
-    igual("PRO342-09d sin CDC registrado y PDF de OTRO número: se DESCARTA (NO_CORRESPONDE)", [r3.ok, r3.ok ? null : r3.codigo], [false, "NO_CORRESPONDE"]);
+    igual("PRO342-09d (actualizado C02-C02) CDC devuelto de OTRO número: el CDC no condiciona el retorno (PDF entregado)", r3.ok, true);
 
     limpiarCacheTokens();
-    const r4 = await obtenerKudeGateway(CONFIG, { ...fe, cdcRegistrado: CDC1 }, gatewayKude(null).dep);
+    const r4 = await obtenerKudeGateway(CONFIG, fe, gatewayKude(null).dep);
 
-    igual("PRO342-09e (actualizado R02) respuesta sin CDC: PDF mostrado (PRO-326) como NO_VERIFICADO aunque haya CDC registrado", [r4.ok, r4.ok ? r4.correspondencia : null], [true, "NO_VERIFICADO"]);
+    igual("PRO342-09e (actualizado C02-C02) respuesta sin CDC: PDF mostrado (PRO-326), sin clasificación", [r4.ok, r4.ok ? Object.keys(r4).sort().join(",") : null], [true, "ok,pdf"]);
     igual("PRO342-09f la disponibilidad del KuDE no es estado fiscal: el badge sigue «Pendiente de confirmación» y menciona XML firmado", [presentacionSifen({ estadoLocal: "ENVIADO", estadoSifen: "PENDIENTE", estadoGatewayTexto: "XML firmado" }).texto, /XML firmado/.test(presentacionSifen({ estadoLocal: "ENVIADO", estadoSifen: "PENDIENTE", estadoGatewayTexto: "XML firmado" }).detalle)], ["Pendiente de confirmación", true]);
   }
 
@@ -1061,8 +1062,8 @@ export async function verificarCasosFlujoFiscalPro342(): Promise<string[]> {
       ["seguimiento.envio", "Último intento de consulta", "verSolicitud(d, sol)", "verRespuesta(d, i)", "Historial de envíos y consultas", "Conexión: no registrada (intento anterior a NEX-079)", "cargarAnteriores(d)", "XML: descarga no disponible"].every((t) => segunda.includes(t) && !primera.includes(t)));
     cierto("PRO342-R04-UX02 (actualizado PRO-195) abrir la fila y la segunda capa NO consultan al gateway: alternar solo hace GET /api/documentos/{id}; alternarTecnico no hace fetch; «Consultar estado en SIFEN» sigue siendo una acción explícita (de la fila) con permiso EDITAR",
       /fetch\(`\/api\/documentos\/\$\{d\.id\}`, \{ cache: "no-store" \}\)/.test(pagina.slice(pagina.indexOf("async function alternar"), pagina.indexOf("// E01 (PRO-314): JSON registrado"))) && !/fetch/.test(pagina.slice(pagina.indexOf("function alternarTecnico"), pagina.indexOf("function verSolicitud"))) && /const acciones = accionesFila\(kudeDisponible\(d\), \{ editar \}/.test(pagina) /* PRE-VM-R02-A: se calcula antes del <tr> (PRO-195-UX-R01) y la fila lo usa */ && /acciones\.filter\(\(a\) => a\.visible\)/.test(fila) && /Consultar estado en SIFEN/.test(fila) && !/reconsultar/.test(detalle));
-    cierto("PRO342-R04-F4/UX03 (actualizado PRO-195) KuDE: la acción se llama «Consultar KuDE» y es UN icono en la fila (sin duplicado en el detalle), condicionada por kudeDisponible (permiso, no estado fiscal); no aparece «Ver KuDE»; el visor y su aviso NO VERIFICADO no cambian",
-      /etiqueta=\{`Consultar KuDE \(PDF\) de \$\{doc\}/.test(fila) && !/abrirKude/.test(primera) && !/Ver KuDE/.test(pagina) && (pagina.match(/kudeDisponible\(d\)/g) ?? []).length === 1 && /AVISO_KUDE_NO_VERIFICADO/.test(leer("app/(private)/documentos/kude-modal.tsx")));
+    cierto("PRO342-R04-F4/UX03 (actualizado PRO-195) KuDE: la acción se llama «Consultar KuDE» y es UN icono en la fila (sin duplicado en el detalle), condicionada por kudeDisponible (permiso, no estado fiscal); no aparece «Ver KuDE»; (actualizado C02-C02) la modal ya no tiene aviso de PDF no verificado",
+      /etiqueta=\{`Consultar KuDE \(PDF\) de \$\{doc\}/.test(fila) && !/abrirKude/.test(primera) && !/Ver KuDE/.test(pagina) && (pagina.match(/kudeDisponible\(d\)/g) ?? []).length === 1 && !/AVISO_KUDE_NO_VERIFICADO/.test(leer("app/(private)/documentos/kude-modal.tsx")));
     cierto("PRO342-R04-UX01b no regresión: filtros (tipo, sucursal, estado SIFEN, fechas, búsqueda), indicadores, orden por columnas, paginación, refresco GET, colores FE/NCE, acciones de envío/NCE y avisos de consulta siguen presentes",
       ["ESTADOS_SIFEN.map", "setBusqueda(e.target.value)", "INDICADORES.map", '<ThOrdenable titulo="Estado" campo="estado"' /* actualizado PRO-195 */, "setPagina(paginaMostrada + 1)", "iniciarRefresco", "CLASE_FILA_TIPO[d.tipo]", "CLASE_DETALLE_TIPO[d.tipo]", "enviarAlGateway(d)", "Corregir y emitir nueva", "avisoSinCdc(d)", "alertaConsulta(d)"].every((t) => pagina.includes(t)));
   }

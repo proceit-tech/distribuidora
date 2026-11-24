@@ -1,7 +1,7 @@
 /**
  * PRO-342-R05 — REGLA DEFINITIVA DEL RESPONSABLE: NEXIT NO valida el CDC. El CDC es generado e informado por la API del proveedor; NEXIT solo lo recibe, lo guarda EXACTAMENTE como fue
  * informado y lo presenta. Matriz de aceptación y regresión R05 sobre las funciones REALES (cdcInformadoPorApi, interpretarConsulta, interpretarRecepcion, decidirConsulta, consultarEstado,
- * correspondenciaKude, cuerpoKudeGateway, presentación) con `fetch`, entorno y base SIMULADOS, y comprobaciones de TEXTO de la migración NEX-080 y sus scripts.
+ * interpretarKude, cuerpoKudeGateway, presentación) con `fetch`, entorno y base SIMULADOS, y comprobaciones de TEXTO de la migración NEX-080 y sus scripts.
  * Sin red, sin PostgreSQL y sin credenciales reales (fixtures sintéticos). ESCRITOS, NO EJECUTADOS en esta entrega (orden PRO-342-R05: sin tests, lint, typecheck, build ni SQL).
  * No prueban el gateway, la SQL ni SIFEN reales: la semántica de NEX-080 se verifica como texto y queda pendiente de ejecución en base descartable.
  * PRO-342-R05-R01: sección L = correctivo focal de la auditoría R05 (F001 identidad completa por establecimiento/punto/número/serie/tipo, F002 verificar-NEX-080.sql sin falsos negativos por
@@ -15,8 +15,8 @@ import { join } from "node:path";
 import { contador } from "@/lib/clientes/contador-casos";
 import { ETIQUETA_RESULTADO_INTENTO } from "@/lib/facturacion/estados";
 import {
-  ANOMALIA_CDC_CREDENCIAL, CLAVE_ANOMALIA_NEXIT, CONTRATO_FISCAL_CONSULTA, CONTRATO_FISCAL_ENVIO, cdcEsCredencial, cdcInformadoPorApi, correspondenciaKude, cuerpoKudeGateway, ecoIdentidadConsulta,
-  ecoIdentidadContradice, enviarDocumentoGateway, interpretarConsulta, interpretarRecepcion, limpiarCacheTokens, MAX_CDC, resultadoFiscalSinSecretos, seriePayload, sinSecretos, type DocumentoConsulta, type DocumentoRecepcion, type FetchLike,
+  ANOMALIA_CDC_CREDENCIAL, CLAVE_ANOMALIA_NEXIT, CONTRATO_FISCAL_CONSULTA, CONTRATO_FISCAL_ENVIO, cdcEsCredencial, cdcInformadoPorApi, cuerpoKudeGateway, ecoIdentidadConsulta,
+  ecoIdentidadContradice, enviarDocumentoGateway, interpretarConsulta, interpretarKude, interpretarRecepcion, limpiarCacheTokens, MAX_CDC, resultadoFiscalSinSecretos, seriePayload, sinSecretos, type DocumentoConsulta, type DocumentoRecepcion, type FetchLike,
 } from "@/lib/facturacion/gateway";
 import { alertaConsulta, avisoProyeccionCdc, avisoSinCdc, detalleFiscalPrimario, iconosEstado } from "@/lib/facturacion/presentacion-sifen";
 import { decidirConsulta } from "@/lib/facturacion/reconciliacion";
@@ -241,16 +241,19 @@ export async function verificarCasosCdcDatoApiR05(): Promise<string[]> {
   cierto("R05-F18 reversión protegida: aborta si hay evidencia R05 (cdc_proyeccion/cdc_anterior) o CDC que las restricciones anteriores no admiten, o respaldo incompleto; restaura desde nex080_respaldo", reversion.indexOf("RAISE EXCEPTION 'Hay intentos con evidencia") > 0 && /las restricciones anteriores no admiten/.test(reversion) && /Respaldo de NEX-080 incompleto/.test(reversion) && reversion.indexOf("RAISE EXCEPTION") < reversion.indexOf("DROP FUNCTION") && /FROM public\.nex080_respaldo WHERE clase = 'FUNCION'/.test(reversion));
   cierto("R05-F19 filas históricas NO se corrigen: la migración no hace UPDATE/DELETE de documentos, intentos ni nce_origen fuera de las funciones", !/^\s*(UPDATE|DELETE FROM) public\.(documentos_electronicos|documento_electronico_intentos|nce_origen)\b/m.test(sql080.replace(/\$\$[\s\S]*?\$\$/g, "")));
 
-  // ══ G. KuDE: identidad sin CDC; el CDC nunca prueba pertenencia; PDF ajeno descartado ═════════════════════════════════════════════
-  const kFe = { tipoDoc: "FE" as const, establecimiento: "001", puntoExpedicion: "001", numero: "0000002", serie: "AA", cdcRegistrado: CDC_CASA_MINGO };
-  const kNce = { ...kFe, tipoDoc: "NCE" as const, serie: null, cdcRegistrado: null };
+  // ══ G. KuDE: identidad sin CDC; PRO-365-R02-C02-C02: el CDC de la respuesta ya no se lee ni decide la aceptación del PDF ═══════════════
+  const kFe = { tipoDoc: "FE" as const, establecimiento: "001", puntoExpedicion: "001", numero: "0000002", serie: "AA" };
+  const kNce = { ...kFe, tipoDoc: "NCE" as const, serie: null };
+  const PDF_K = Buffer.from("%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n", "latin1");
+  const kude = (extra: Record<string, unknown>) => interpretarKude(200, JSON.stringify({ status: "success", kude: PDF_K.toString("base64"), ...extra }));
+  const aceptado = (r: ReturnType<typeof interpretarKude>) => (r.ok ? [Buffer.compare(r.pdf, PDF_K), Object.keys(r).sort().join(",")] : [r.codigo]);
 
   igual("R05-G01 KuDE FE: cuerpo de 5 campos (dEst, dPunExp, dNumDoc, dSerieNum, tipoDoc) sin CDC", cuerpoKudeGateway(kFe), { dEst: "001", dPunExp: "001", dNumDoc: "0000002", dSerieNum: "AA", tipoDoc: "FE" });
   igual("R05-G02 KuDE NCE: 6 campos (tipOpe 4 + identidad + tipoDoc ncr) sin CDC", cuerpoKudeGateway(kNce), { tipOpe: "4", dEst: "001", dPunExp: "001", dNumDoc: "0000002", dSerieNum: null, tipoDoc: "ncr" });
-  igual("R05-G03 CASA MINGO: CDC del KuDE IGUAL al registrado → NO_VERIFICADO (el CDC no prueba titularidad; CDC_REGISTRADO inalcanzable)", correspondenciaKude(kFe, CDC_CASA_MINGO), "NO_VERIFICADO");
-  igual("R05-G04 CDC del KuDE DISTINTO del registrado (incluso solo por espacios) → descartado como posible PDF ajeno (null → 502)", [correspondenciaKude(kFe, CDC_ALFA), correspondenciaKude(kFe, ` ${CDC_CASA_MINGO}`)], [null, null]);
-  igual("R05-G05 KuDE sin CDC en la respuesta, o documento sin CDC registrado y CDC no SIFEN: NO_VERIFICADO (se muestra con advertencia, nunca como verificado)", [correspondenciaKude(kFe, undefined), correspondenciaKude({ ...kFe, cdcRegistrado: null }, CDC_ALFA)], ["NO_VERIFICADO", "NO_VERIFICADO"]);
-  cierto("R05-G06 fuente: correspondenciaKude nunca devuelve «CDC_REGISTRADO»", !/return\s+"CDC_REGISTRADO"|\?\s*"CDC_REGISTRADO"/.test(tramo(gwSinComentarios, "export function correspondenciaKude", "export function interpretarKude")));
+  igual("R05-G03 (actualizado C02-C02) PDF válido con CDC CASA MINGO, otro CDC, CDC con espacios o sin CDC: el mismo resultado (PDF íntegro, solo ok+pdf, sin clasificación)", [kude({ CDC: CDC_CASA_MINGO }), kude({ CDC: CDC_ALFA }), kude({ CDC: ` ${CDC_CASA_MINGO}` }), kude({})].map(aceptado), Array(4).fill([0, "ok,pdf"]));
+  igual("R05-G04 (actualizado C02-C02) el CDC nunca convierte un PDF inválido en válido ni un error en éxito: status distinto de success y Base64 no PDF siguen rechazados", [aceptado(interpretarKude(200, JSON.stringify({ status: "error", CDC: CDC_CASA_MINGO, kude: PDF_K.toString("base64") }))), aceptado(kude({ CDC: CDC_CASA_MINGO, kude: Buffer.from("no es pdf").toString("base64") }))], [["FORMATO_NO_CONFIRMADO"], ["PDF_INVALIDO"]]);
+  cierto("R05-G05 (actualizado C02-C02) fuente: gateway.ts ya no tiene correspondenciaKude, NO_CORRESPONDE, CorrespondenciaKude ni cdcRegistrado", !/correspondenciaKude|NO_CORRESPONDE|CorrespondenciaKude|cdcRegistrado/.test(gwSinComentarios));
+  cierto("R05-G06 (actualizado C02-C02) fuente: ningún valor «CDC_REGISTRADO» ni «NO_VERIFICADO» se fabrica en el KuDE", !/CDC_REGISTRADO|NO_VERIFICADO/.test(tramo(gwSinComentarios, "export function interpretarKude", "type RespuestaKude")));
 
   // ══ H. NCE: asociación legítima con el CDC literal de la FE ══════════════════════════════════════════════════════════════════════
   cierto("R05-H01 nce.ts exige solo la PRESENCIA del CDC de la FE APROBADA (sin 44 dígitos) y payload-nce.ts lo asocia literal", /typeof f\.cdc !== "string" \|\| f\.cdc === ""/.test(leer("lib/facturacion/nce.ts")) && /typeof cdcOriginal !== "string" \|\| cdcOriginal === ""/.test(leer("lib/facturacion/payload-nce.ts")) && /dCdCDERef: cdcOriginal/.test(leer("lib/facturacion/payload-nce.ts")));
@@ -270,11 +273,7 @@ export async function verificarCasosCdcDatoApiR05(): Promise<string[]> {
   cierto("R05-J01 Informe de ventas: una NCE ya no se marca NCE_ORIGEN_INVALIDO porque el CDC de la FE cambió (sin comparar fe_cdc_doc con fe_cdc)", !/fe_cdc_doc IS DISTINCT FROM fe_cdc/.test(leer("lib/reportes/ventas.ts")));
 
   // ══ K. Barrido de dependencias (100%): ninguna validación propia del CDC en recepción, envío, consulta ni estado ═════════════════
-  cierto("R05-K01 gateway.ts: el único /^\\d{44}$/ es CDC_FORMATO y solo se usa en el KuDE (correspondenciaKude); cdcCoherente solo en el KuDE", (() => {
-    const usos = gwSinComentarios.split("\n").filter((l) => /CDC_FORMATO|cdcCoherente\(/.test(l) && !/^(export )?(const|function) /.test(l.trim()) && !/^export function cdcCoherente/.test(l.trim()));
-    const kude = tramo(gwSinComentarios, "export function correspondenciaKude", "export function interpretarKude");
-    return usos.every((l) => kude.includes(l.trim()));
-  })());
+  cierto("R05-K01 (actualizado C02-C02) gateway.ts: sin CDC_FORMATO y cdcCoherente sin ningún uso (ni recepción, ni consulta, ni KuDE)", !/CDC_FORMATO/.test(gwSinComentarios) && gwSinComentarios.split("\n").filter((l) => /cdcCoherente\(/.test(l) && !/^export function cdcCoherente/.test(l.trim())).length === 0);
   cierto("R05-K02 shared.ts: CDC_EN_RESPUESTA acepta cualquier texto no vacío (sin 44 dígitos) y los SELECT de intentos exponen cdc_proyeccion / cdc_anterior", !/\\d\{44\}|\[0-9\]\{44\}/.test(sinComentariosTs(shared)) && /cdc_proyeccion/.test(shared) && /cdc_anterior/.test(shared));
   cierto("R05-K03 el saneamiento de secretos se mantiene en la ruta contractual (resultadoFiscalSinSecretos con CDC_TRANSPORTABLE)", /resultadoFiscalSinSecretos/.test(gw) && /cdc: CDC_TRANSPORTABLE/.test(gw) && /"respuesta\.response\.de\.cdc": CDC_TRANSPORTABLE/.test(gw));
   cierto("R05-K04 NEXIT no genera, completa ni reconstruye CDC: ninguna función TS construye un CDC (sin concatenar RUC/DV/código de seguridad)", !/function (generar|construir|calcular|completar)Cdc/i.test(gw + shared + envio));
@@ -395,7 +394,8 @@ export async function verificarCasosCdcDatoApiR05(): Promise<string[]> {
     igual("R05-R01-F003-09 límite de transporte UNIFORME (caracteres, como CDC_TRANSPORTABLE /u y char_length de la SQL): 200 caracteres astrales (400 unidades UTF-16) se conservan literales en el dato y en la evidencia; 257 caracteres no", [cdcInformadoPorApi(ASTRAL_200).valor === ASTRAL_200, resultadoFiscalSinSecretos({ cdc: ASTRAL_200, respuesta: { cdc: ASTRAL_200 } }, [CLAVE], CONTRATO_FISCAL_ENVIO).respuesta.cdc === ASTRAL_200, cdcInformadoPorApi("\u{1F600}".repeat(MAX_CDC + 1)).motivo, cdcInformadoPorApi(CDC_LARGO).motivo], [true, true, "EXCEDE_LIMITE", "EXCEDE_LIMITE"]);
     cierto("R05-R01-F003-10 fuente: cdcEsCredencial no agrega reglas fiscales al CDC (sin 44 dígitos, módulo 11, composición ni CDC_DIVERGENTE) y gateway.ts sigue sin CDC_DIVERGENTE", (() => { const f = tramo(gwSinComentarios, "export function cdcEsCredencial", "export const MAX_CDC"); return f.length > 0 && !/\\d\{44\}|44|modulo|módulo|cdcCoherente|CDC_FORMATO/.test(f) && !/CDC_DIVERGENTE/.test(gwSinComentarios); })());
     cierto("R05-R01-F003-12 (actualizado R05-R02) historial: un «[omitido]» de evidencia con la marca de credencial NO se presenta como CDC informado (CDC_EN_RESPUESTA lo excluye por la marca, no por formato)", /IS DISTINCT FROM '\$\{ANOMALIA_CDC_CREDENCIAL\}'[\s\S]*? THEN i\.respuesta #>> '\{response,DE,CDC\}' END/.test(shared) && /i\.respuesta ->> '\$\{CLAVE_ANOMALIA_NEXIT\}'/.test(shared));
-    igual("R05-R01-F003-11 KuDE sin cambios (pertenencia no se debilita): CDC distinto del registrado sigue descartado (null → 502); igual, NO_VERIFICADO", [correspondenciaKude({ tipoDoc: "FE", establecimiento: "001", puntoExpedicion: "001", numero: "0000002", serie: "AA", cdcRegistrado: CDC_CASA_MINGO }, CDC_ALFA), correspondenciaKude({ tipoDoc: "FE", establecimiento: "001", puntoExpedicion: "001", numero: "0000002", serie: "AA", cdcRegistrado: CDC_CASA_MINGO }, CDC_CASA_MINGO)], [null, "NO_VERIFICADO"]);
+    // PRO-365-R02-C02-C02 (decisión del responsable): la comprobación de pertenencia por CDC del KuDE se retiró; el CDC devuelto ya no descarta el PDF.
+    igual("R05-R01-F003-11 (actualizado C02-C02) KuDE: CDC distinto o igual al de CASA MINGO → mismo PDF aceptado, sin descarte ni clasificación", [aceptado(kude({ CDC: CDC_ALFA })), aceptado(kude({ CDC: CDC_CASA_MINGO }))], [[0, "ok,pdf"], [0, "ok,pdf"]]);
   }
 
   // ══ M. PRO-342-R05-R02 — residuales de la auditoría R05-R01 (F001-R identidad también antes de atribuir un RECHAZO; F003-R credencial numérica / evidencia / historial) ════════════

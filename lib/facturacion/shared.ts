@@ -3,7 +3,7 @@ import type { Pool } from "pg";
 
 import { ESTADOS_EMAIL, ESTADOS_LOCAL, ESTADOS_LOCAL_TRANSMITIDO, ESTADOS_SIFEN, ESTADOS_SIFEN_SIN_FINAL, GRUPOS_INDICADOR, TIPOS_DOCUMENTO, UMBRAL_REVISION_HORAS, type GrupoIndicador } from "@/lib/facturacion/estados";
 import { contextoCancelacionDocumento, proyectarEventosFe, SIN_INFORMACION_EVENTOS_FE, type LecturaConsulta, type ProyeccionEventosFe } from "@/lib/facturacion/eventos-fe";
-import { ANOMALIA_CDC_CREDENCIAL, CLAVE_ANOMALIA_NEXIT, configGatewayValida, consultarDocumentoGateway, continuidadConexion, limpiarTexto, obtenerKudeGateway, referenciaConexion, type ConfigGateway, type ContinuidadConexion, type CorrespondenciaKude, type Dependencias, type DependenciasKude, type ReferenciaConexion } from "@/lib/facturacion/gateway";
+import { ANOMALIA_CDC_CREDENCIAL, CLAVE_ANOMALIA_NEXIT, configGatewayValida, consultarDocumentoGateway, continuidadConexion, limpiarTexto, obtenerKudeGateway, referenciaConexion, type ConfigGateway, type ContinuidadConexion, type Dependencias, type DependenciasKude, type ReferenciaConexion } from "@/lib/facturacion/gateway";
 import { adjuntarCredencialesDeBase } from "@/lib/facturacion/gateway-credenciales";
 import { decidirConsulta } from "@/lib/facturacion/reconciliacion";
 
@@ -608,9 +608,9 @@ export function nombreArchivoKude(doc: Record<string, unknown>): string {
 /**
  * KuDE (PDF) de una FE o NCE existente (PRO-194 / E08). Documento por ID dentro de empresa + sucursal de la SESIÓN; identidad fiscal (tipo, establecimiento, punto, número, serie) del registro
  * persistido, nunca del navegador. PRO-326: ni el estado fiscal ni el CDC (persistido, devuelto o histórico) condicionan el KuDE: se consulta al gateway de la empresa por esa identidad y se muestra
- * el PDF válido que devuelva. Sin credenciales/config no se llama a nadie. No modifica ningún dato (ni estados, ni CDC, ni intentos, ni numeración).
+ * el PDF válido que devuelva (PRO-365-R02-C02-C02: sin validación adicional por CDC ni nombre «-NO-VERIFICADO»). Sin credenciales/config no se llama a nadie. No modifica ningún dato (ni estados, ni CDC, ni intentos, ni numeración).
  */
-export async function obtenerKude(db: Db, empresaId: string, usuarioId: string, id: string, dep: DependenciasKude = {}): Promise<{ pdf: Buffer; nombre: string; correspondencia: CorrespondenciaKude; continuidadConexion: ContinuidadConexion }> {
+export async function obtenerKude(db: Db, empresaId: string, usuarioId: string, id: string, dep: DependenciasKude = {}): Promise<{ pdf: Buffer; nombre: string; continuidadConexion: ContinuidadConexion }> {
   const doc = await leerDocumento(db, empresaId, usuarioId, id);
 
   if (!doc) throw new ErrorFacturacion(404, "Documento no encontrado.");
@@ -621,8 +621,8 @@ export async function obtenerKude(db: Db, empresaId: string, usuarioId: string, 
 
   const r = await obtenerKudeGateway(
     config,
-    // PRO-342-R01/R05: el CDC registrado (si la API ya lo informó) NO se envía ni prueba pertenencia: solo permite DESCARTAR un PDF cuyo CDC es otro (gateway.correspondenciaKude).
-    { tipoDoc: doc.tipo, establecimiento: String(doc.establecimiento), puntoExpedicion: String(doc.puntoExpedicion), numero: String(doc.numero), serie: (doc.serie as string | null) ?? null, cdcRegistrado: (doc.cdc as string | null) ?? null },
+    // PRO-365-R02-C02-C02: solo la identidad del documento; el CDC registrado no se envía ni se usa para aceptar o descartar el PDF.
+    { tipoDoc: doc.tipo, establecimiento: String(doc.establecimiento), puntoExpedicion: String(doc.puntoExpedicion), numero: String(doc.numero), serie: (doc.serie as string | null) ?? null },
     dep,
   );
 
@@ -632,10 +632,8 @@ export async function obtenerKude(db: Db, empresaId: string, usuarioId: string, 
     throw new ErrorFacturacion(estado, r.mensaje);
   }
 
-  // PRO-342-R02 (F001) / R05: sin pertenencia verificada el nombre del archivo no lo presenta como KuDE propio confirmado (con R05 siempre NO_VERIFICADO).
-  const nombre = r.correspondencia === "CDC_REGISTRADO" ? nombreArchivoKude(doc) : nombreArchivoKude(doc).replace(/\.pdf$/, "-NO-VERIFICADO.pdf");
-
-  return { pdf: r.pdf, nombre, correspondencia: r.correspondencia, continuidadConexion: continuidad };
+  // PRO-365-R02-C02-C02: nombre normal derivado de la identidad fiscal del documento (sin sufijo de verificación).
+  return { pdf: r.pdf, nombre: nombreArchivoKude(doc), continuidadConexion: continuidad };
 }
 
 export function respuestaErrorFacturacion(error: unknown, accion: string) {

@@ -14,7 +14,7 @@ export async function GET(request: Request, contexto: Contexto) {
   const { id } = await contexto.params;
 
   try {
-    const { pdf, nombre, correspondencia, continuidadConexion } = await obtenerKude(b.db, b.empresaId, b.usuarioId, id);
+    const { pdf, nombre, continuidadConexion } = await obtenerKude(b.db, b.empresaId, b.usuarioId, id);
     const descargar = new URL(request.url).searchParams.get("descargar") === "1";
 
     return new NextResponse(new Uint8Array(pdf), {
@@ -25,9 +25,7 @@ export async function GET(request: Request, contexto: Contexto) {
         "Content-Length": String(pdf.length),
         "Cache-Control": "private, no-store",
         "X-Content-Type-Options": "nosniff",
-        // PRO-342-R02/R05: pertenencia del PDF (con R05 el servidor ya no emite CDC_REGISTRADO: un CDC igual no prueba la titularidad del PDF; valor conservado por compatibilidad; NO_VERIFICADO = no comprobable con el contrato actual: la pantalla lo advierte y
-        // no lo presenta como KuDE propio) y continuidad de la conexión con la del envío (MISMA / SIN_REFERENCIA). Nunca incluye el CDC ni datos de la conexión.
-        "X-Nexit-Kude-Correspondencia": correspondencia,
+        // PRO-342-R02: continuidad de la conexión con la del envío (MISMA / SIN_REFERENCIA). PRO-365-R02-C02-C02: se retira la cabecera de pertenencia por CDC. Nunca incluye el CDC ni datos de la conexión.
         "X-Nexit-Kude-Conexion": continuidadConexion,
       },
     });

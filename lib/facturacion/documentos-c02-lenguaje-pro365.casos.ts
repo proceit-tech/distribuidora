@@ -3,7 +3,8 @@
  * Casos sobre funciones PURAS reales (documentos-copy-operador.ts, presentacion-sifen.ts) y sobre el texto fuente de page.tsx / page.module.css / kude-modal.tsx.
  * ESCRITOS, NO EJECUTADOS (orden PRO-365-R02-C02: sin tests, lint, typecheck, build, CI manual, SQL ni navegador). No es homologación visual.
  * Cubre T01–T10 y C02-11..C02-18 de la orden: APROBADO, RECHAZADO (1109), PENDIENTE, CANCELADO, INUTILIZADO, respuestas contradictorias y estados históricos.
- * PRO-365-R02-C02-C01 (PRO-369): casos C02C01-01..12 (F01 aviso en APROBADO — BLOQUEADO por falta de datos fiables, ver informe; F02 título y aviso del PDF sin verificación).
+ * PRO-365-R02-C02-C01 (PRO-369): casos C02C01 de F01 (aviso en APROBADO — BLOQUEADO por falta de datos fiables, ver informe). Sus casos F02 (título/aviso del PDF sin verificación) quedan
+ * SUSTITUIDOS por PRO-365-R02-C02-C02 (decisión del responsable: se retira la validación por CDC, el título «PDF sin verificación», el aviso y el sufijo): casos C02C02-01..06.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -24,7 +25,6 @@ import {
   textoIconoOperador,
 } from "@/lib/facturacion/documentos-copy-operador";
 import { type EstadoEmail, type EstadoLocal, type EstadoSifen } from "@/lib/facturacion/estados";
-import { AVISO_KUDE_NO_VERIFICADO, pertenenciaDe, tituloKude, type BlobKude } from "@/lib/facturacion/kude-visor";
 import { alertaConsulta, detalleFiscalPrimario, iconosEstado } from "@/lib/facturacion/presentacion-sifen";
 
 const leer = (r: string) => readFileSync(join(process.cwd(), r), "utf8");
@@ -167,10 +167,10 @@ export async function verificarCasosDocumentosC02LenguajePro365(): Promise<strin
   igual("C02-T08 iconosEstado intacto: RECHAZADO con CDC = check/ok · archivoCheck/info · cruz/error · correo/neutro",
     iconosEstado(doc({ estadoSifen: "RECHAZADO", cdc: "X" })).map((i) => [i.eje, i.simbolo, i.tono]), [["envio", "check", "ok"], ["xml", "archivoCheck", "info"], ["sifen", "cruz", "error"], ["correo", "correo", "neutro"]]);
 
-  // ══ T09 KuDE: PDF original, endpoint y aviso NO_VERIFICADO intactos ═══════════════════════════════════════════════════════════════════════
-  cierto("C02-T09 KuDE: mismo endpoint /api/documentos/{id}/kude, aviso NO_VERIFICADO y título de seguridad conservados; solo cambia el texto de carga",
-    /fetchFn\("\/api\/documentos\/" \+ encodeURIComponent\(docId\) \+ "\/kude"/.test(visor) && /\{noVerificado \? <p className=\{ui\.alertError\} role="alert"[^>]*>\{AVISO_KUDE_NO_VERIFICADO\}<\/p>/.test(modal) &&
-    /tituloKude/.test(modal) && /Cargando el KuDE…/.test(modal) && !/Obteniendo el KuDE del gateway/.test(modal) && /<iframe id="kude-visor" key=\{estado\.url\} src=\{estado\.url\}/.test(modal));
+  // ══ T09 KuDE: PDF original y endpoint intactos (PRO-365-R02-C02-C02: el aviso NO_VERIFICADO y el título de seguridad se retiraron por decisión del responsable) ═══
+  cierto("C02-T09 (actualizado C02-C02) KuDE: mismo endpoint /api/documentos/{id}/kude; la modal titula con el título del documento y sin aviso de verificación; texto de carga en lenguaje llano",
+    /fetchFn\("\/api\/documentos\/" \+ encodeURIComponent\(docId\) \+ "\/kude"/.test(visor) && !/AVISO_KUDE_NO_VERIFICADO|noVerificado/.test(modal) &&
+    /const titulo = estado\.titulo;/.test(modal) && /Cargando el KuDE…/.test(modal) && !/Obteniendo el KuDE del gateway/.test(modal) && /<iframe id="kude-visor" key=\{estado\.url\} src=\{estado\.url\}/.test(modal));
 
   // ══ T10 Sin efectos: módulo puro, sin red ni escritura ════════════════════════════════════════════════════════════════════════════════════
   cierto("C02-T10 documentos-copy-operador es puro: sin fetch, React, SQL ni rutas /api",
@@ -273,25 +273,24 @@ export async function verificarCasosDocumentosC02LenguajePro365(): Promise<strin
       ["Rechazado", { etiqueta: "Motivo del rechazo", valor: "1109 · Número de documento ha sido inutilizado anteriormente" }]);
     igual("C02C01-04 PENDIENTE con respuesta anterior: comportamiento C02 (sin motivo, nota que remite al historial técnico)", respuestaFiscal(pend, detalleFiscalPrimario(pend)), { motivo: null, notaHistorial: NOTA_MENSAJES_HISTORIAL });
 
-    // F02 — título y aviso del PDF sin verificación.
-    igual("C02C01-05 KuDE VERIFICADO: conserva su título exacto", tituloKude("KuDE · Factura 001-001-0000003", "VERIFICADA"), "KuDE · Factura 001-001-0000003");
-    igual("C02C01-06 PDF NO_VERIFICADO: título claro con el número del documento real (FE y NCE)",
-      [tituloKude("KuDE · Factura 001-001-0000003", "NO_VERIFICADA"), tituloKude("KuDE · Nota de crédito 001-002-0000010 (AA)", "NO_VERIFICADA")],
-      ["PDF sin verificación — Factura 001-001-0000003", "PDF sin verificación — Nota de crédito 001-002-0000010 (AA)"]);
-    igual("C02C01-07 advertencia obligatoria en lenguaje llano, sin gateway/API/CDC, que expresa falta de verificación (no «falso», «incorrecto» ni «rechazado»)",
-      [AVISO_KUDE_NO_VERIFICADO, /gateway|\bAPI\b|CDC|NEXIT/.test(AVISO_KUDE_NO_VERIFICADO + tituloKude("KuDE · Factura 1", "NO_VERIFICADA")), /falso|incorrecto|rechazad/i.test(AVISO_KUDE_NO_VERIFICADO)],
-      ["No se pudo confirmar que este PDF corresponda a esta factura. Revise la empresa emisora, el número, la fecha y los importes antes de utilizarlo. Si los datos no coinciden, no lo entregue como KuDE.", false, false]);
-    igual("C02C01-08 sin evidencia de correspondencia = NO_VERIFICADA (Blob sin marca o con valor desconocido); solo «VERIFICADA» verifica",
-      [pertenenciaDe(new Blob([])), pertenenciaDe(Object.assign(new Blob([]), { pertenencia: "OTRO" }) as unknown as BlobKude), pertenenciaDe(Object.assign(new Blob([]), { pertenencia: "VERIFICADA" }) as BlobKude)],
-      ["NO_VERIFICADA", "NO_VERIFICADA", "VERIFICADA"]);
-    cierto("C02C01-09 nombre de descarga protegido «-NO-VERIFICADO.pdf» y lógica de pertenencia sin cambios",
-      /const nombreSegun = \(nombre: string, p: PertenenciaKude\) => \(p === "VERIFICADA" \? nombre : nombre\.replace\(\/\\\.pdf\$\/i, ""\) \+ "-NO-VERIFICADO\.pdf"\);/.test(visor) &&
-      /export const pertenenciaDe = \(b: Blob\): PertenenciaKude => \(\(b as BlobKude\)\.pertenencia === "VERIFICADA" \? "VERIFICADA" : "NO_VERIFICADA"\);/.test(visor) &&
-      /p === "VERIFICADA" \? titulo : `PDF sin verificación — \$\{titulo\.replace\(\/\^KuDE · \/, ""\)\}`/.test(visor));
-    cierto("C02C01-10 PDF, endpoint, cierre y respuestas tardías intactos: misma solicitud /kude, abortos, revocación de URL y secuencia; la modal sigue condicionando el aviso a noVerificado y muestra el mismo iframe",
-      /fetchFn\("\/api\/documentos\/" \+ encodeURIComponent\(docId\) \+ "\/kude"/.test(visor) && /aborto\?\.abort\(\);/.test(visor) && /revocarUrl/.test(visor) && /let secuencia = 0;/.test(visor) &&
-      /\{noVerificado \? <p className=\{ui\.alertError\} role="alert"[^>]*>\{AVISO_KUDE_NO_VERIFICADO\}<\/p> : null\}/.test(modal) && /tituloKude\(estado\.titulo, estado\.pertenencia\)/.test(modal) &&
-      /<iframe id="kude-visor" key=\{estado\.url\} src=\{estado\.url\}/.test(modal));
+    // F02 de C02-C01 SUSTITUIDO por PRO-365-R02-C02-C02 (decisión del responsable): sin título «PDF sin verificación», sin aviso, sin sufijo ni clasificación por CDC.
+    const visorCodigo = visor.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+    const modalCodigo = modal.replace(/\/\/.*$/gm, "");
+
+    cierto("C02C02-01 título normal: la modal usa el título del documento («KuDE · Factura …» / «KuDE · Nota de crédito …» con número y serie dinámicos que arma la página)",
+      /const titulo = estado\.titulo;/.test(modal) && /titulo: `KuDE · \$\{d\.tipo === "NCE" \? "Nota de crédito" : "Factura"\} \$\{d\.establecimiento\}-\$\{d\.puntoExpedicion\}-\$\{d\.numero\}\$\{d\.serie \? ` \(\$\{d\.serie\}\)` : ""\}`/.test(pagina));
+    cierto("C02C02-02 sin título «PDF sin verificación», sin aviso de PDF no verificado, sin sufijo «-NO-VERIFICADO» y sin clasificación VERIFICADA/NO_VERIFICADA en visor y modal",
+      !/PDF sin verificación|No se pudo confirmar que este PDF|NO-VERIFICADO|VERIFICADA|pertenencia|tituloKude|AVISO_KUDE/.test(visorCodigo + modalCodigo));
+    cierto("C02C02-03 botones Descargar PDF, Imprimir y Cerrar; mismo iframe con el PDF original (URL del Blob, sin modificar bytes)",
+      />\{estado\.fase === "LISTO" && estado\.descarga === "CARGANDO" \? "Preparando descarga…" : "Descargar PDF"\}</.test(modal) && />Imprimir</.test(modal) && />Cerrar</.test(modal) &&
+      /<iframe id="kude-visor" key=\{estado\.url\} src=\{estado\.url\}/.test(modal) && /return r\.blob\(\);/.test(visor));
+    cierto("C02C02-04 descarga con el nombre normal del documento (sin sufijo) y solicitud NUEVA en cada apertura/descarga",
+      /dep\.descargar\(temporal, nombre\);/.test(visor) && /const blob = await dep\.obtener\(docId, control\.signal\);/.test(visor) && /cache: "no-store"/.test(visor));
+    cierto("C02C02-05 cierre, abortos y respuestas tardías intactos: abortos, revocación de URL y secuencias de apertura y descarga",
+      /aborto\?\.abort\(\);/.test(visor) && /abortoDescarga\?\.abort\(\);/.test(visor) && /dep\.revocarUrl\(estado\.url\)/.test(visor) && /if \(mia !== secuencia \|\| control\.signal\.aborted\) return;/.test(visor) &&
+      /if \(mia !== secuenciaDescarga \|\| control\.signal\.aborted\) return;/.test(visor));
+    cierto("C02C02-06 sin cambios fuera del KuDE: la página no cambia el título armado ni gana rutas nuevas; el módulo de textos sigue puro",
+      !/fetch\(|\/api\/|SELECT |UPDATE |INSERT /.test(copy) && /accionesFila\(kudeDisponible\(d\), \{ editar \}/.test(pagina));
     cierto("C02C01-11 historial técnico preservado: i.texto, aviso técnico completo, eventos técnicos y etiquetaIntento en la segunda capa",
       /texto=\{i\.texto\}/.test(segunda) && /\{alerta\.texto\}\. \{alerta\.detalle\}/.test(segunda) && /etiquetaIntento\(/.test(segunda));
     cierto("C02C01-12 sin cambios fiscales, de API, SQL ni permisos: el módulo de textos sigue puro y la página no gana rutas ni llamadas nuevas",
