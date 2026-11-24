@@ -95,15 +95,17 @@ const DETALLE_VACIO: Detalle = { cargando: false, error: "", intentos: [], sigui
  * PRO-342-UX-R01 (punto 1): indicadores COMPACTOS. Se conservan los ocho grupos, sus cantidades y su función de filtro (aria-pressed); la explicación larga deja de estar
  * escrita en cada tarjeta y pasa a la descripción accesible (texto oculto) y al título nativo del botón.
  */
-const INDICADORES: Array<{ grupo: GrupoIndicador | ""; titulo: string; ayuda: string; clase: string }> = [
-  { grupo: "", titulo: "Total", ayuda: "Documentos visibles", clase: estilos.tonoTeal },
-  { grupo: "PEND_ENVIO", titulo: "Pend. envío", ayuda: "Recepción del gateway no confirmada (incluye envío indeterminado)", clase: estilos.tonoAmber },
-  { grupo: "PEND_RESPUESTA", titulo: "Pend. respuesta", ayuda: "Enviados o envío indeterminado, sin resultado fiscal final", clase: estilos.tonoBlue },
-  { grupo: "APROBADO", titulo: "Aprobados", ayuda: "Estado SIFEN aprobado", clase: estilos.tonoVerde },
-  { grupo: "RECHAZADO", titulo: "Rechazados", ayuda: "Estado SIFEN rechazado", clase: estilos.tonoRed },
-  { grupo: "EMAIL_ENVIADO", titulo: "E-mail enviado", ayuda: "Según el proveedor", clase: estilos.tonoViolet },
-  { grupo: "EMAIL_ERROR", titulo: "Error de e-mail", ayuda: "Según el proveedor", clase: estilos.tonoRed },
-  { grupo: "SIN_EMAIL", titulo: "Sin e-mail", ayuda: "Sin información de envío", clase: estilos.tonoGris },
+// PRO-365-R02: tarjetas del «Resumen de estados» en el orden de la referencia (pendientes, resultado SIFEN, correo y Total al final). Cifras del servidor sin cambios;
+// el símbolo es decorativo (el título y la cantidad son el texto) y el color sigue el significado de cada grupo.
+const INDICADORES: Array<{ grupo: GrupoIndicador | ""; titulo: string; ayuda: string; clase: string; simbolo: SimboloEstado }> = [
+  { grupo: "PEND_ENVIO", titulo: "Pend. envío", ayuda: "Recepción del gateway no confirmada (incluye envío indeterminado)", clase: estilos.tonoAmber, simbolo: "reloj" },
+  { grupo: "PEND_RESPUESTA", titulo: "Pend. respuesta", ayuda: "Enviados o envío indeterminado, sin resultado fiscal final", clase: estilos.tonoBlue, simbolo: "archivoReloj" },
+  { grupo: "APROBADO", titulo: "Aprobados", ayuda: "Estado SIFEN aprobado", clase: estilos.tonoVerde, simbolo: "check" },
+  { grupo: "RECHAZADO", titulo: "Rechazados", ayuda: "Estado SIFEN rechazado", clase: estilos.tonoRed, simbolo: "cruz" },
+  { grupo: "EMAIL_ENVIADO", titulo: "E-mail enviado", ayuda: "Según el proveedor", clase: estilos.tonoViolet, simbolo: "correoCheck" },
+  { grupo: "EMAIL_ERROR", titulo: "Error de e-mail", ayuda: "Según el proveedor", clase: estilos.tonoRed, simbolo: "correoCruz" },
+  { grupo: "SIN_EMAIL", titulo: "Sin e-mail", ayuda: "Sin información de envío", clase: estilos.tonoGris, simbolo: "correo" },
+  { grupo: "", titulo: "Total", ayuda: "Documentos visibles", clase: estilos.tonoTeal, simbolo: "archivoCheck" },
 ];
 
 /**
@@ -792,44 +794,21 @@ export default function DocumentosPage() {
         </div>
       </header>
 
-      {/* PRO-342-UX-R01 (punto 1): indicadores compactos que siguen filtrando; la ayuda larga queda como descripción accesible y título. */}
-      <section className={estilos.kpis} aria-label="Indicadores de documentos (filtran el listado)" aria-busy={cargando || obsoleto}>
-        {INDICADORES.map((i) => (
-          <button
-            key={i.titulo}
-            type="button"
-            className={clases(estilos.kpi, i.clase, grupo === i.grupo && estilos.kpiActivo)}
-            aria-pressed={grupo === i.grupo}
-            title={i.ayuda}
-            onClick={() => setGrupo(i.grupo)}
-          >
-            <span className={estilos.kpiTitulo}>{i.titulo}</span>
-            <strong className={estilos.kpiValor}>{resumen === null ? "—" : i.grupo === "" ? (resumen.total ?? 0) : (resumen[i.grupo] ?? 0)}</strong>
-            <span className={estilos.srSolo}>. {i.ayuda}</span>
-          </button>
-        ))}
-      </section>
-
-      <section className={ui.contentCard}>
-        <div className={ui.toolbar}>
-          <label className={ui.search}>
-            <span aria-hidden="true">⌕</span>
-            <input value={busqueda} onChange={(e) => setBusqueda(e.target.value)} placeholder="Buscar por número, CDC, RUC o cliente..." aria-label="Buscar documentos" />
+      {/* PRO-365-R02: filtros EXISTENTES reorganizados como la referencia (tarjeta propia, etiqueta sobre cada campo, rejilla compacta). Mismo estado y misma consulta:
+          se aplican solos (búsqueda con espera de 300 ms), por eso no hay botón «Filtrar». Filtros de la referencia sin soporte en NEXIT quedan pendientes (no se simulan). */}
+      <section className={clases(ui.contentCard, estilos.tarjetaFiltros)} aria-label="Filtros de documentos">
+        <div className={estilos.filtros}>
+          <label className={clases(ui.filterField, estilos.campoFiltro)}>
+            <span>Emisión desde</span>
+            <CampoFecha valor={desde} alCambiar={setDesde} />
           </label>
 
-          <label className={ui.filterField}>
-            <span>Tipo</span>
-            <select value={tipo} onChange={(e) => setTipo(e.target.value)}>
-              <option value="">Todos</option>
-              {TIPOS_DOCUMENTO.map((t) => (
-                <option key={t} value={t}>
-                  {ETIQUETA_TIPO[t]}
-                </option>
-              ))}
-            </select>
+          <label className={clases(ui.filterField, estilos.campoFiltro)}>
+            <span>Emisión hasta</span>
+            <CampoFecha valor={hasta} alCambiar={setHasta} />
           </label>
 
-          <label className={ui.filterField}>
+          <label className={clases(ui.filterField, estilos.campoFiltro)}>
             <span>Sucursal</span>
             <select value={sucursal} onChange={(e) => setSucursal(e.target.value)}>
               <option value="">Todas</option>
@@ -841,7 +820,27 @@ export default function DocumentosPage() {
             </select>
           </label>
 
-          <label className={ui.filterField}>
+          <label className={clases(ui.filterField, estilos.campoFiltro, estilos.campoBusqueda)}>
+            <span>Receptor / RUC / Nro. / CDC</span>
+            <span className={ui.search}>
+              <span aria-hidden="true">⌕</span>
+              <input value={busqueda} onChange={(e) => setBusqueda(e.target.value)} placeholder="Buscar por número, CDC, RUC o cliente..." aria-label="Buscar documentos" />
+            </span>
+          </label>
+
+          <label className={clases(ui.filterField, estilos.campoFiltro)}>
+            <span>Tipo</span>
+            <select value={tipo} onChange={(e) => setTipo(e.target.value)}>
+              <option value="">Todos</option>
+              {TIPOS_DOCUMENTO.map((t) => (
+                <option key={t} value={t}>
+                  {ETIQUETA_TIPO[t]}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className={clases(ui.filterField, estilos.campoFiltro)}>
             <span>Estado SIFEN</span>
             <select value={estadoSifen} onChange={(e) => setEstadoSifen(e.target.value)}>
               <option value="">Todos</option>
@@ -853,25 +852,42 @@ export default function DocumentosPage() {
             </select>
           </label>
 
-          <label className={ui.filterField}>
-            <span>Emisión desde</span>
-            <CampoFecha valor={desde} alCambiar={setDesde} />
-          </label>
-
-          <label className={ui.filterField}>
-            <span>Emisión hasta</span>
-            <CampoFecha valor={hasta} alCambiar={setHasta} />
-          </label>
-
-          <button type="button" className={ui.clearButton} onClick={limpiar}>
-            Limpiar filtros
-          </button>
-
-          <span className={ui.resultCount} aria-live="polite">
-            {datos && !obsoleto ? `${total} documento(s)` : ""}
-          </span>
+          <div className={estilos.filtrosAcciones}>
+            <span className={estilos.conteo} aria-live="polite">
+              {datos && !obsoleto ? `${total} documento(s)` : ""}
+            </span>
+            <button type="button" className={ui.clearButton} onClick={limpiar}>
+              Limpiar filtros
+            </button>
+          </div>
         </div>
+      </section>
 
+      {/* PRO-365-R02: «Resumen de estados» en tarjetas (título, cantidad con color semántico y símbolo), como la referencia. Siguen siendo botones-filtro con la cifra del servidor. */}
+      <section className={estilos.resumen} aria-labelledby="titulo-resumen-estados">
+        <h2 className={estilos.tituloSeccion} id="titulo-resumen-estados">Resumen de estados</h2>
+        <div className={estilos.kpis} role="group" aria-label="Indicadores de documentos (filtran el listado)" aria-busy={cargando || obsoleto}>
+          {INDICADORES.map((i) => (
+            <button
+              key={i.titulo}
+              type="button"
+              className={clases(estilos.kpi, i.clase, grupo === i.grupo && estilos.kpiActivo)}
+              aria-pressed={grupo === i.grupo}
+              title={i.ayuda}
+              onClick={() => setGrupo(i.grupo)}
+            >
+              <span className={estilos.kpiTexto}>
+                <span className={estilos.kpiTitulo}>{i.titulo}</span>
+                <strong className={estilos.kpiValor}>{resumen === null ? "—" : i.grupo === "" ? (resumen.total ?? 0) : (resumen[i.grupo] ?? 0)}</strong>
+              </span>
+              <span className={estilos.kpiIcono} aria-hidden="true"><svg viewBox="0 0 24 24">{GLIFO[i.simbolo]}</svg></span>
+              <span className={estilos.srSolo}>. {i.ayuda}</span>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className={ui.contentCard}>
         {errorCarga && !cargando ? (
           <div className={ui.alertError} role="alert" style={{ margin: "0 0 8px" }}>
             {errorCarga}{" "}
@@ -900,10 +916,10 @@ export default function DocumentosPage() {
           </div>
         ) : null}
 
-        {/* PRO-365: leyenda ÚNICA de los cuatro estados de cada fila (orden fijo) y de sus símbolos; las filas no repiten estos textos. */}
+        {/* PRO-365-R02: leyenda ÚNICA y COMPACTA en una línea, como la referencia: orden de los cuatro estados y significado de los símbolos. El detalle de cada fase va en su tooltip. */}
         <div className={estilos.leyendaEstados} id="leyenda-estados">
           <span>
-            <strong>Estado</strong>, en este orden: <strong>Envío</strong> (recepción del gateway) · <strong>XML/CDC</strong> (CDC informado; no es aprobación) · <strong>SIFEN</strong> (resultado fiscal) · <strong>Correo</strong>.
+            <strong>Estado:</strong> Envío · XML/CDC · SIFEN · Correo
           </span>
           <span className={estilos.leyendaSimbolos}>
             {LEYENDA_SIMBOLOS.map((s) => (
@@ -914,10 +930,10 @@ export default function DocumentosPage() {
             ))}
             <span className={clases(estilos.leyendaSimbolo, estilos.iconoAviso)}>
               <span className={estilos.iconoCirculo} aria-hidden="true"><svg viewBox="0 0 24 24">{GLIFO.alerta}</svg></span>
-              aviso técnico
+              aviso
             </span>
-            <span>Pase el puntero, toque o enfoque cada icono para ver su detalle.</span>
           </span>
+          <span className={estilos.srSolo}>Envío es la recepción del gateway; XML/CDC indica si la API informó el CDC y no es aprobación; SIFEN es el resultado fiscal. Enfoque, toque o pase el puntero sobre cada icono para ver su detalle.</span>
         </div>
 
         <div className={clases(ui.tableScroll, estilos.contenedorTabla)}>

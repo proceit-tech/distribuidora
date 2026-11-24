@@ -169,10 +169,10 @@ export async function verificarCasosColoresTipoPro334(): Promise<string[]> {
     /<p className=\{ui\.alertError\} role="alert">/.test(pagina) && /p:not\(\[role\]\)/.test(SEL_SECUNDARIO));
   igual("PRO334-30 (actualizado PRO-195) fondos blancos/neutros y acentos de tipo vigentes", [fe, hover, fondosFila[3], detalleFe, detalleNce, acentoFe, acentoNce], ["#ffffff", "#f7f9fb", "#f1f6fb", "#fbfcfe", "#fffefa", "#6d9bd1", "#d9bb4e"]);
   cierto("PRO334-19 alto contraste del sistema: el acento pasa a borde real (sólido FE, discontinuo NCE)", /@media \(forced-colors: active\)[\s\S]*border-left: 4px solid CanvasText[\s\S]*border-left: 4px dashed CanvasText/.test(css));
-  // PRO-195-UX-R01: diez columnas ⇒ ancho mínimo 1180px en escritorio (scroll horizontal local); 0 en la tarjeta móvil.
-  cierto("PRO334-20 (actualizado PRO-195) sin desborde: el acento es box-shadow inset (no suma ancho); la tabla conserva tableScroll, minWidth 1180 en escritorio (clase local) y 0 en tarjeta móvil",
+  // PRO-195-UX-R01 / PRO-365-R02: diez columnas ⇒ ancho mínimo 1100px en escritorio (scroll horizontal local); 0 en la tarjeta móvil.
+  cierto("PRO334-20 (actualizado PRO-195) sin desborde: el acento es box-shadow inset (no suma ancho); la tabla conserva tableScroll, minWidth 1100 en escritorio (clase local) y 0 en tarjeta móvil",
     /inset 3px 0 0/.test(regla(css, "tr.filaFE > td:first-child")) && !/width|padding|margin/.test(regla(css, "tr.filaFE > td:first-child")) &&
-    /<div className=\{clases\(ui\.tableScroll, estilos\.contenedorTabla\)\}>\s*<table className=\{clases\(ui\.table, estilos\.tablaDocs\)\}/.test(pagina) && /min-width: 1180px/.test(regla(css, "table.tablaDocs")) && /@media \(max-width: 720px\) \{\s*table\.tablaDocs \{\s*min-width: 0;/.test(css));
+    /<div className=\{clases\(ui\.tableScroll, estilos\.contenedorTabla\)\}>\s*<table className=\{clases\(ui\.table, estilos\.tablaDocs\)\}/.test(pagina) && /min-width: 1100px/.test(regla(css, "table.tablaDocs")) && /@media \(max-width: 720px\) \{\s*table\.tablaDocs \{\s*min-width: 0;/.test(css));
   cierto("PRO334-21 sin CSS global: lista.module.css no conoce filaFE/filaNCE", !/fila(FE|NCE)|detalle(FE|NCE)/.test(leer("components/ui/lista-padrao/lista.module.css")));
 
   // ── 5. Funcionalidades preservadas ────────────────────────────────────────────────────────────────────────────────────────────────────────────────

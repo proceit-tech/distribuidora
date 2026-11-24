@@ -5,6 +5,8 @@
  * ESCRITOS, NO EJECUTADOS (orden PRO-365: sin tests, lint, typecheck, build, CI manual, SQL ni navegador). La paridad visual con las capturas de la competencia NO se afirma: las capturas no
  * fueron recibidas; la comprobación visual real queda para la homologación.
  * Sin cambios de estados, contadores, APIs, SQL, migraciones, gateway, CDC, KuDE, stock ni permisos.
+ * PRO-365-R02 (24/11/2026): las dos capturas ya están en el repositorio (documentacao/referencias-visuais/PRO-365/); casos R02-01..12 sobre filtros, «Resumen de estados»,
+ * densidad de la tabla, leyenda compacta y acciones. Igualmente ESCRITOS, NO EJECUTADOS; la paridad visual la confirma el responsable en el navegador.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -82,16 +84,16 @@ export async function verificarCasosDocumentosUxCompetenciaPro365(): Promise<str
     /Eventos: \{eventos\.registrado \?\? eventos\.sinRegistro\}\. \{eventos\.operacion\}/.test(segunda));
 
   // ══ A05 Leyenda única ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-  cierto("PRO365-A05 leyenda ÚNICA sobre la tabla con el orden de los cuatro estados y los símbolos (check/reloj/cruz/guion + aviso), referida por aria-describedby",
+  cierto("PRO365-A05 (actualizado PRO-365-R02) leyenda ÚNICA y compacta sobre la tabla con el orden de los cuatro estados y los símbolos (check/reloj/cruz/guion + aviso), referida por aria-describedby",
     (pagina.match(/className=\{estilos\.leyendaEstados\}/g) ?? []).length === 1 && pagina.indexOf("id=\"leyenda-estados\"") < pagina.indexOf("aria-describedby=\"leyenda-estados\"") &&
-    /<strong>Envío<\/strong>[\s\S]*?<strong>XML\/CDC<\/strong>[\s\S]*?<strong>SIFEN<\/strong>[\s\S]*?<strong>Correo<\/strong>/.test(pagina) && !/leyenda/.test(fila));
+    /<strong>Estado:<\/strong> Envío · XML\/CDC · SIFEN · Correo/.test(pagina) && !/leyenda/.test(fila));
 
   // ══ A06 CSS: sin clases huérfanas y áreas táctiles ══════════════════════════════════════════════════════════════════════════════════════
   cierto("PRO365-A06a retiradas las clases del estado principal y de las operaciones por fila; añadidas iconoVacio/leyendaEstados/leyendaSimbolos/leyendaSimbolo usadas por la página",
     !/\.(estadoPrincipal|estadoAprobado|estadoRechazado|estadoPendiente|estadoSinInfo|estadoAnulado|estadoSecundario|eventosTexto|eventoOperacion)\b/.test(cssLimpio) &&
     ["iconoVacio", "leyendaEstados", "leyendaSimbolos", "leyendaSimbolo"].every((c) => new RegExp(`\\.${c} \\{`).test(cssLimpio) && pagina.includes(`estilos.${c}`)));
-  cierto("PRO365-A06b la celda Estado no rompe línea y el hueco del aviso reserva 36px (alineación entre filas)",
-    /white-space: nowrap;/.test(regla(css, ".estado")) && /width: 36px;\s*height: 36px;/.test(regla(css, ".iconoVacio")));
+  cierto("PRO365-A06b (actualizado PRO-365-R02) la celda Estado no rompe línea y el hueco del aviso reserva el mismo ancho que un icono (28px en escritorio; 36px en móvil) para alinear filas",
+    /white-space: nowrap;/.test(regla(css, ".estado")) && /width: 28px;\s*height: 28px;/.test(regla(css, ".iconoVacio")) && /min-width: 28px;/.test(regla(css, ".estado .icono")));
 
   // ══ A07 Alcance ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
   cierto("PRO365-A07 sin rutas nuevas, sin filtros/KPIs/acciones masivas inventados: las rutas de la pantalla son las mismas de UX-R02",
@@ -100,6 +102,54 @@ export async function verificarCasosDocumentosUxCompetenciaPro365(): Promise<str
 
       return JSON.stringify(rutas) === JSON.stringify(["/api/documentos/:x", "/api/documentos/:x/consultar", "/api/documentos/:x/enviar", "/api/documentos/:x/intentos/:x/respuesta", "/api/documentos/:x/intentos?cursor=:x", "/api/documentos/:x/solicitud?version=:x", "/api/documentos?:x"].sort());
     })());
+
+  // ══ PRO-365-R02 — corrección visual con las dos capturas de la competencia (ESCRITOS, NO EJECUTADOS) ═══════════════════════════════════════
+  const filtros = pagina.slice(pagina.indexOf("estilos.tarjetaFiltros"), pagina.indexOf("estilos.resumen}"));
+  const resumenJsx = pagina.slice(pagina.indexOf("estilos.resumen}"), pagina.indexOf("<section className={ui.contentCard}>", pagina.indexOf("estilos.resumen}")));
+  const indicadores = pagina.slice(pagina.indexOf("const INDICADORES"), pagina.indexOf("];", pagina.indexOf("const INDICADORES")));
+
+  cierto("PRO365-R02-01 filtros en tarjeta propia ANTES del resumen y de la tabla, con etiqueta sobre cada campo, en el orden de la referencia: Emisión desde · Emisión hasta · Sucursal · Receptor/RUC/Nro./CDC · Tipo · Estado SIFEN",
+    pagina.indexOf("estilos.tarjetaFiltros") > 0 && pagina.indexOf("estilos.tarjetaFiltros") < pagina.indexOf("estilos.resumen}") && pagina.indexOf("estilos.resumen}") < pagina.indexOf("aria-describedby=\"leyenda-estados\"") &&
+    ["<span>Emisión desde</span>", "<span>Emisión hasta</span>", "<span>Sucursal</span>", "<span>Receptor / RUC / Nro. / CDC</span>", "<span>Tipo</span>", "<span>Estado SIFEN</span>"].every((t, k, a) => filtros.includes(t) && (k === 0 || filtros.indexOf(a[k - 1]) < filtros.indexOf(t))));
+  cierto("PRO365-R02-02 los filtros son los MISMOS de antes (sin filtros nuevos fingidos: ni lote, ni fecha de firma, ni estado de envío, ni tamaño de página) y se siguen aplicando solos (sin botón «Filtrar»)",
+    ["<CampoFecha valor={desde} alCambiar={setDesde} />", "<CampoFecha valor={hasta} alCambiar={setHasta} />", "setSucursal(e.target.value)", "setBusqueda(e.target.value)", "TIPOS_DOCUMENTO.map", "ESTADOS_SIFEN.map", "onClick={limpiar}"].every((t) => filtros.includes(t)) &&
+    (filtros.match(/<label /g) ?? []).length === 6 && !/lote|firma|estadoLocal|tamano|Filtrar</i.test(filtros));
+  cierto("PRO365-R02-03 CSS de filtros: rejilla que se adapta (auto-fill, mínimo 160px), campos de 36px, búsqueda en dos columnas (toda la fila en móvil) y acciones a la derecha en su propia fila",
+    /grid-template-columns: repeat\(auto-fill, minmax\(160px, 1fr\)\);/.test(regla(css, ".filtros")) && /height: 36px;/.test(regla(css, ".campoFiltro > select,\n.campoFiltro > input")) &&
+    /grid-column: span 2;/.test(regla(css, ".campoBusqueda")) && /@media \(max-width: 720px\) \{[\s\S]*\.campoBusqueda \{\s*grid-column: 1 \/ -1;/.test(cssLimpio) && /grid-column: 1 \/ -1;[\s\S]*justify-content: flex-end;/.test(regla(css, ".filtrosAcciones")));
+  cierto("PRO365-R02-04 «Resumen de estados» con título propio (h2 asociado por aria-labelledby) entre filtros y tabla",
+    /<section className=\{estilos\.resumen\} aria-labelledby="titulo-resumen-estados">\s*<h2 className=\{estilos\.tituloSeccion\} id="titulo-resumen-estados">Resumen de estados<\/h2>/.test(pagina));
+  igual("PRO365-R02-05 ocho tarjetas con el color semántico de cada grupo (ámbar, azul, verde, rojo, violeta, rojo, gris) y Total al final (turquesa)",
+    [...indicadores.matchAll(/grupo: "([A-Z_]*)"[^}]*clase: estilos\.(tono\w+), simbolo: "(\w+)"/g)].map((m) => [m[1], m[2], m[3]]),
+    [["PEND_ENVIO", "tonoAmber", "reloj"], ["PEND_RESPUESTA", "tonoBlue", "archivoReloj"], ["APROBADO", "tonoVerde", "check"], ["RECHAZADO", "tonoRed", "cruz"],
+      ["EMAIL_ENVIADO", "tonoViolet", "correoCheck"], ["EMAIL_ERROR", "tonoRed", "correoCruz"], ["SIN_EMAIL", "tonoGris", "correo"], ["", "tonoTeal", "archivoCheck"]]);
+  cierto("PRO365-R02-06 cada tarjeta: título, cifra REAL del resumen del servidor (incluido RECHAZADO, «—» si el recorte es de otro contexto), símbolo decorativo (aria-hidden) y ayuda accesible; sigue siendo botón-filtro",
+    /<span className=\{estilos\.kpiTitulo\}>\{i\.titulo\}<\/span>\s*<strong className=\{estilos\.kpiValor\}>\{resumen === null \? "—" : i\.grupo === "" \? \(resumen\.total \?\? 0\) : \(resumen\[i\.grupo\] \?\? 0\)\}<\/strong>/.test(resumenJsx) &&
+    /<span className=\{estilos\.kpiIcono\} aria-hidden="true"><svg viewBox="0 0 24 24">\{GLIFO\[i\.simbolo\]\}<\/svg><\/span>/.test(resumenJsx) && /aria-pressed=\{grupo === i\.grupo\}/.test(resumenJsx) && /onClick=\{\(\) => setGrupo\(i\.grupo\)\}/.test(resumenJsx) &&
+    !/kpi::before/.test(cssLimpio));
+  cierto("PRO365-R02-07 tarjetas uniformes: rejilla auto-fill (mínimo 170px), 64px de alto, cifra de 20px con el color del grupo y recuadro del símbolo con su fondo tenue",
+    /repeat\(auto-fill, minmax\(170px, 1fr\)\)/.test(regla(css, ".kpis")) && /min-height: 64px;/.test(regla(css, ".kpi")) && /font-size: 20px;/.test(regla(css, ".kpiValor")) && /color: var\(--tonoTexto/.test(regla(css, ".kpiValor")) &&
+    /background: var\(--tonoFondo/.test(regla(css, ".kpiIcono")));
+  {
+    const luz = (h: string) => { const c = [1, 3, 5].map((k) => parseInt(h.slice(k, k + 2), 16) / 255).map((x) => (x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4)); return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]; };
+    const contraste = (a: string, b: string) => { const [x, y] = [luz(a), luz(b)].sort((m, n) => n - m); return (x + 0.05) / (y + 0.05); };
+    const tonos = ["tonoTeal", "tonoAmber", "tonoBlue", "tonoVerde", "tonoRed", "tonoViolet", "tonoGris"].map((t) => {
+      const r = regla(css, `.${t}`);
+      return [/--tonoTexto: (#[0-9a-f]{6});/i.exec(r)?.[1] ?? "", /--tonoFondo: (#[0-9a-f]{6});/i.exec(r)?.[1] ?? ""];
+    });
+    cierto("PRO365-R02-08 contraste AA (≥ 4.5:1) de la cifra y del símbolo de cada grupo sobre blanco, sobre su fondo tenue y sobre la tarjeta activa (#f3fbfb)",
+      tonos.every(([t, f]) => t !== "" && f !== "" && [contraste(t, "#ffffff"), contraste(t, f), contraste(t, "#f3fbfb")].every((v) => v >= 4.5)));
+  }
+  cierto("PRO365-R02-09 tabla más densa (como la referencia): ancho mínimo 1100px en escritorio, celdas 6px/10px, encabezado 8px/10px; iconos de estado 28px en escritorio y 36px en móvil",
+    /min-width: 1100px/.test(regla(css, "table.tablaDocs")) && /padding: 6px 10px;/.test(regla(css, "table.tablaDocs > tbody > tr > td")) && /table\.tablaDocs > thead th \{\s*padding: 8px 10px;/.test(cssLimpio) &&
+    /min-width: 28px;/.test(regla(css, ".estado .icono")) && /@media \(max-width: 720px\) \{[\s\S]*\.estado \.icono \{\s*min-width: 36px;/.test(cssLimpio));
+  cierto("PRO365-R02-10 leyenda compacta en UNA franja: «Estado: Envío · XML/CDC · SIFEN · Correo» + símbolos; la explicación larga queda solo para lectores de pantalla",
+    /<span><strong>Estado:<\/strong> Envío · XML\/CDC · SIFEN · Correo<\/span>/.test(pagina) && /<span className=\{estilos\.srSolo\}>Envío es la recepción del gateway; XML\/CDC indica si la API informó el CDC y no es aprobación; SIFEN es el resultado fiscal\./.test(pagina) &&
+    /padding: 4px 14px;/.test(regla(css, ".leyendaEstados")));
+  igual("PRO365-R02-11 acciones intactas y distintas de los estados: KuDE y Consulta activas, XML y Correo deshabilitados con su motivo",
+    accionesFila(true, { editar: true }, true, "").map((a) => [a.clave, a.disponible]), [["kude", true], ["xml", false], ["consulta", true], ["correo", false]]);
+  cierto("PRO365-R02-12 sin el contador y la barra compartidos anteriores (ui.toolbar / ui.resultCount): el contador de documentos vive en la tarjeta de filtros (aria-live)",
+    !/ui\.toolbar|ui\.resultCount/.test(pagina) && /<span className=\{estilos\.conteo\} aria-live="polite">/.test(filtros));
 
   return fallos;
 }

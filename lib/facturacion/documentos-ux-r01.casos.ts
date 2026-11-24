@@ -106,14 +106,14 @@ export async function verificarCasosDocumentosUxR01(): Promise<string[]> {
   const indicadores = tramo("const INDICADORES", "];");
 
   // ══ 1. Indicadores superiores compactos, con cantidades y filtros ═══════════════════════════════════════════════════════════════════════
-  igual("UXR01-01 los ocho indicadores se conservan: Total + los 7 grupos de GRUPOS_INDICADOR, en el mismo orden",
-    [...indicadores.matchAll(/grupo: "([A-Z_]*)"/g)].map((m) => m[1]), ["", ...GRUPOS_INDICADOR]);
+  igual("UXR01-01 (actualizado PRO-365-R02) los ocho indicadores se conservan: los 7 grupos de GRUPOS_INDICADOR en su orden y Total al final (como el resumen de la referencia)",
+    [...indicadores.matchAll(/grupo: "([A-Z_]*)"/g)].map((m) => m[1]), [...GRUPOS_INDICADOR, ""]);
   cierto("UXR01-02 (actualizado PRO-195-R01-R01) cada indicador sigue siendo un botón-filtro (aria-pressed, setGrupo) con su cantidad del resumen del servidor; «—» mientras el recorte mostrado es de otro contexto (F001)",
     /aria-pressed=\{grupo === i\.grupo\}/.test(pagina) && /onClick=\{\(\) => setGrupo\(i\.grupo\)\}/.test(pagina) && /\{resumen === null \? "—" : i\.grupo === "" \? \(resumen\.total \?\? 0\) : \(resumen\[i\.grupo\] \?\? 0\)\}/.test(pagina));
   cierto("UXR01-03 sin texto de ayuda visible por tarjeta: la ayuda es descripción accesible oculta (srSolo) y title; ya no usa las tarjetas grandes compartidas (summaryGrid/summaryCard)",
     !/<small>\{i\.ayuda\}<\/small>/.test(pagina) && /<span className=\{estilos\.srSolo\}>\. \{i\.ayuda\}<\/span>/.test(pagina) && /title=\{i\.ayuda\}/.test(pagina) && !/ui\.summary(Grid|Card)/.test(pagina) && /className=\{estilos\.kpis\}/.test(pagina));
-  cierto("UXR01-04 CSS compacto: chips en una fila que se ajusta (flex-wrap), altura ≥ 36px, foco visible y estado activo turquesa",
-    /display: flex;\s*flex-wrap: wrap;/.test(regla(css, ".kpis")) && /min-height: 36px/.test(regla(css, ".kpi")) && /outline: 3px solid/.test(regla(css, ".kpi:focus-visible")) && /#0f9ca5/.test(regla(css, ".kpiActivo")));
+  cierto("UXR01-04 (actualizado PRO-365-R02) CSS: tarjetas compactas en grilla que se ajusta (auto-fill, mínimo 170px), altura 64px (≥ 36px táctil), foco visible y estado activo turquesa",
+    /display: grid;\s*grid-template-columns: repeat\(auto-fill, minmax\(170px, 1fr\)\);/.test(regla(css, ".kpis")) && /min-height: 64px/.test(regla(css, ".kpi")) && /outline: 3px solid/.test(regla(css, ".kpi:focus-visible")) && /#0f9ca5/.test(regla(css, ".kpiActivo")));
 
   // ══ 2. Cuatro iconos independientes en posiciones fijas ═════════════════════════════════════════════════════════════════════════════════
   {
@@ -235,15 +235,16 @@ export async function verificarCasosDocumentosUxR01(): Promise<string[]> {
     /resultado\?\.contexto === contexto \?/.test(tramo("const hayPendientes", "useEffect(")) && /if \(!hayPendientes\) return;/.test(pagina) && /detener\(\);/.test(pagina) && !/consultar-estado|enviar/.test(tramo("Actualización automática", "const cargando")));
 
   // ══ 12. Responsive ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-  cierto("UXR01-43 (actualizado PRO-195) escritorio: tabla de diez columnas con ancho mínimo propio 1180px y scroll horizontal local; tarjeta en ≤ 720px (agrupada cuando el contenedor real tiene ancho de sobra) sin ancho mínimo",
-    /min-width: 1180px/.test(regla(css, "table.tablaDocs")) && /<div className=\{clases\(ui\.tableScroll, estilos\.contenedorTabla\)\}>\s*<table className=\{clases\(ui\.table, estilos\.tablaDocs\)\}/.test(pagina) &&
+  cierto("UXR01-43 (actualizado PRO-365-R02) escritorio: tabla de diez columnas con ancho mínimo propio 1100px y scroll horizontal local; tarjeta en ≤ 720px (agrupada cuando el contenedor real tiene ancho de sobra) sin ancho mínimo",
+    /min-width: 1100px/.test(regla(css, "table.tablaDocs")) && /<div className=\{clases\(ui\.tableScroll, estilos\.contenedorTabla\)\}>\s*<table className=\{clases\(ui\.table, estilos\.tablaDocs\)\}/.test(pagina) &&
     /@media \(max-width: 720px\) \{\s*table\.tablaDocs \{\s*min-width: 0;/.test(cssLimpio) && /"exp doc estado"\s*"sel razon monto"\s*"\. ruc fecha"\s*"\. acciones eventos"/.test(cssLimpio) && /tr:has\(> td:nth-child\(10\)\)/.test(cssLimpio));
   cierto("UXR01-44 (actualizado PRO-195) móvil: la barra de orden se conserva (thead flexible, sin Detalle/Acciones/RUC/Eventos que no ordenan), el acento FE/NCE queda en la columna izquierda de la tarjeta y los datos fiscales apilan etiqueta/valor (≤ 640px)",
     /table\.tablaDocs > thead > tr \{\s*display: flex;/.test(cssLimpio) && /thead th:is\(:nth-child\(1\), :nth-child\(3\), :nth-child\(6\), :nth-child\(10\)\) \{\s*display: none;/.test(cssLimpio) &&
     /table\.tablaDocs tr\.filaFE > td:nth-child\(2\) \{\s*box-shadow: inset 3px 0 0 #6d9bd1;/.test(cssLimpio) && /table\.tablaDocs tr\.filaNCE > td:nth-child\(2\) \{\s*box-shadow: inset 3px 0 0 #d9bb4e;/.test(cssLimpio) && /@media \(max-width: 640px\) \{\s*\.fiscal > div \{\s*grid-template-columns: minmax\(0, 1fr\) 36px;/.test(cssLimpio));
-  cierto("UXR01-45 (actualizado PRO-365) áreas táctiles: acciones de fila y expandir 32px, botones del detalle/copia/historial 36px e iconos de estado 36px (hueco del aviso 36px); sin cambios en el CSS compartido",
+  cierto("UXR01-45 (actualizado PRO-365-R02) áreas táctiles: acciones de fila y expandir 32px, botones del detalle/copia/historial 36px; iconos de estado 28px en escritorio (densidad de la referencia) y 36px en móvil (hueco del aviso igual); sin cambios en el CSS compartido",
     /width: 32px;\s*height: 32px;/.test(regla(css, ".accion")) && /width: 32px;\s*height: 32px;/.test(regla(css, ".expandir")) && /width: 36px;\s*height: 36px;/.test(regla(css, ".iconBtn")) && /width: 36px;\s*height: 36px;/.test(regla(css, ".copiar")) && /min-height: 36px/.test(regla(css, ".toggleTecnico")) &&
-    /width: 36px;\s*height: 36px;/.test(regla(css, ".iconoVacio")) && !/tablaDocs|tooltip|iconoVacio|kpis/.test(lista));
+    /width: 28px;\s*height: 28px;/.test(regla(css, ".iconoVacio")) && /min-width: 28px;\s*min-height: 28px;/.test(regla(css, ".estado .icono")) &&
+    /@media \(max-width: 720px\) \{[\s\S]*\.estado \.icono \{\s*min-width: 36px;\s*min-height: 36px;\s*\}\s*table\.tablaDocs \.iconoVacio \{\s*width: 36px;\s*height: 36px;/.test(cssLimpio) && !/tablaDocs|tooltip|iconoVacio|kpis/.test(lista));
 
   // ══ 13. Solo se eliminan estilos locales sin uso confirmado ═════════════════════════════════════════════════════════════════════════════
   {

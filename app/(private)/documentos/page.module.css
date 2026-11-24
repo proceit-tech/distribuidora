@@ -5,38 +5,119 @@
  * PRO-195-UX-R01: tabla blanca con acciones de contorno y un estado principal; se retiraron .leyenda/.punto, .iconosEstado/.iconoVacio, .herramientas e .iconBtnActivo (sin uso).
  */
 
-/* ---- Indicadores compactos (punto 1): botones-filtro con su cantidad; la ayuda larga es descripción accesible + title. ---- */
-.kpis {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+/*
+ * ---- PRO-365-R02: filtros en tarjeta propia (como la referencia): etiqueta sobre cada campo, rejilla compacta que se adapta al ancho y acciones a la derecha. ----
+ * Los campos son los MISMOS filtros existentes (sin filtros nuevos ni cambios de consulta).
+ */
+.tarjetaFiltros {
   margin: 0 0 10px;
+}
+
+.filtros {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  align-items: end;
+  gap: 10px 12px;
+  padding: 12px 14px;
+}
+
+.campoFiltro {
+  min-width: 0;
+}
+
+/* Etiqueta del campo con contraste AA propio (no depende del orden de carga del CSS compartido). */
+.campoFiltro > span:first-child {
+  color: #3d5165;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.campoFiltro > select,
+.campoFiltro > input {
+  width: 100%;
+  min-width: 0;
+  height: 36px;
+  border: 1px solid #d3dfe8;
+  border-radius: 9px;
+  padding: 0 10px;
+  color: #173b59;
+  background: #ffffff;
+  font-size: 13px;
+}
+
+.campoFiltro > input:focus-visible,
+.campoFiltro > select:focus-visible {
+  outline: 0;
+  border-color: #0f9ca5;
+  box-shadow: 0 0 0 3px rgba(15, 156, 165, 0.14);
+}
+
+/* La búsqueda ocupa dos columnas cuando hay espacio (en móvil, toda la fila). */
+.campoBusqueda {
+  grid-column: span 2;
+}
+
+.campoBusqueda > span:last-child {
+  min-width: 0;
+}
+
+.filtrosAcciones {
+  display: flex;
+  grid-column: 1 / -1;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px 12px;
+}
+
+.conteo {
+  color: #53687a;
+  font-size: 12.5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+/*
+ * ---- PRO-365-R02: «Resumen de estados» en tarjetas (referencia): título en versalitas, cantidad grande con color semántico y símbolo a la derecha en un recuadro tenue.
+ * Siguen siendo botones-filtro (aria-pressed); la ayuda larga es descripción accesible + title. Rejilla uniforme que se adapta al ancho.
+ */
+.resumen {
+  margin: 0 0 10px;
+  border: 1px solid #dce6ed;
+  border-radius: 12px;
+  padding: 10px 12px 12px;
+  background: #ffffff;
+}
+
+.tituloSeccion {
+  margin: 0 0 8px;
+  color: #173b59;
+  font-size: 13.5px;
+  font-weight: 700;
+}
+
+.kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 8px;
 }
 
 .kpi {
   appearance: none;
-  display: inline-flex;
-  min-height: 36px;
+  display: flex;
+  min-height: 64px;
   align-items: center;
-  gap: 8px;
-  border: 1px solid #d3dfe8;
-  border-radius: 8px;
-  padding: 4px 12px 4px 10px;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid #e1e9ef;
+  border-radius: 10px;
+  padding: 8px 12px;
   color: #28465f;
   background: #ffffff;
   font: inherit;
   text-align: left;
   cursor: pointer;
   transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
-}
-
-.kpi::before {
-  flex: 0 0 auto;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--tono, #687a8c);
-  content: "";
 }
 
 .kpi:hover {
@@ -54,46 +135,87 @@
   box-shadow: 0 0 0 3px rgba(15, 156, 165, 0.12);
 }
 
+.kpiTexto {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
 .kpiTitulo {
   color: #3d5165;
-  font-size: 12.5px;
-  font-weight: 600;
-  white-space: nowrap;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1.2;
+  text-transform: uppercase;
+  overflow-wrap: anywhere;
 }
 
 .kpiValor {
-  color: #173b59;
-  font-size: 15px;
+  color: var(--tonoTexto, #173b59);
+  font-size: 20px;
   font-weight: 700;
+  line-height: 1.15;
   font-variant-numeric: tabular-nums;
 }
 
+.kpiIcono {
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  color: var(--tonoTexto, #173b59);
+  background: var(--tonoFondo, #f1f4f7);
+}
+
+.kpiIcono svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Colores semánticos por grupo (texto ≥ 4.5:1 sobre blanco y sobre el fondo de la tarjeta activa). */
 .tonoTeal {
-  --tono: #18a9ad;
+  --tonoTexto: #0b6f74;
+  --tonoFondo: #e6f5f5;
 }
 
 .tonoAmber {
-  --tono: #d4920f;
+  --tonoTexto: #8a5a00;
+  --tonoFondo: #fdf3df;
 }
 
 .tonoBlue {
-  --tono: #3e7bd8;
+  --tonoTexto: #1d5799;
+  --tonoFondo: #e8f0fb;
 }
 
 .tonoVerde {
-  --tono: #17864b;
+  --tonoTexto: #12703f;
+  --tonoFondo: #e6f4ec;
 }
 
 .tonoRed {
-  --tono: #d0443a;
+  --tonoTexto: #b42318;
+  --tonoFondo: #fdecea;
 }
 
 .tonoViolet {
-  --tono: #8063d9;
+  --tonoTexto: #5b3fb3;
+  --tonoFondo: #efebfb;
 }
 
 .tonoGris {
-  --tono: #687a8c;
+  --tonoTexto: #4a5a6a;
+  --tonoFondo: #eef2f5;
 }
 
 /* ---- Botones de icono del detalle (punto 7): cerrar JSON. Las acciones de la fila usan .accion (PRO-195-UX-R01). ---- */
@@ -298,7 +420,7 @@ tr.detalleNCE > td :is(dt, small, p:not([role])) {
 
 /* ---- Tabla (punto 12): ancho mínimo propio en escritorio; en pantallas angostas cada documento pasa a tarjeta (ver media query al final). ---- */
 table.tablaDocs {
-  min-width: 1180px;
+  min-width: 1100px;
 }
 
 /* PRO-195-UX-R01 (punto 2): densidad compacta y separadores discretos (solo esta tabla; la lista estándar no cambia). */
@@ -308,7 +430,13 @@ table.tablaDocs > thead th {
 
 table.tablaDocs > tbody > tr > td {
   border-bottom-color: #edf1f5;
+  padding: 6px 10px;
   vertical-align: middle;
+}
+
+/* PRO-365-R02: densidad de la referencia (filas y cabecera más bajas, menos espacio lateral). */
+table.tablaDocs > thead th {
+  padding: 8px 10px;
 }
 
 /* Columnas de control (expandir y seleccionar): angostas y centradas. */
@@ -445,11 +573,17 @@ table.tablaDocs > tbody > tr > td {
   white-space: nowrap;
 }
 
+/* PRO-365-R02: en la fila, iconos más compactos (área de 28px, ≥ 24px de WCAG 2.5.8) para acercar la densidad de la referencia; en móvil vuelven a 36px. */
+.estado .icono {
+  min-width: 28px;
+  min-height: 28px;
+}
+
 /* Posición del aviso técnico sin aviso: reserva el ancho para que las filas queden alineadas. */
 .iconoVacio {
   display: inline-block;
-  width: 36px;
-  height: 36px;
+  width: 28px;
+  height: 28px;
   flex: 0 0 auto;
 }
 
@@ -458,19 +592,19 @@ table.tablaDocs > tbody > tr > td {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 2px 16px;
-  padding: 6px 14px;
+  gap: 2px 20px;
+  padding: 4px 14px;
   border-bottom: 1px solid #edf2f5;
   color: #2f4357;
   font-size: 12.5px;
-  line-height: 1.4;
+  line-height: 1.3;
 }
 
 .leyendaSimbolos {
   display: inline-flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 2px 12px;
+  gap: 0 10px;
   color: #53687a;
 }
 
@@ -882,6 +1016,21 @@ table.tablaDocs > tbody > tr > td {
 @media (max-width: 720px) {
   table.tablaDocs {
     min-width: 0;
+  }
+
+  /* PRO-365-R02: en móvil los iconos de estado recuperan el área táctil de 36px y la búsqueda ocupa toda la fila de filtros. */
+  .estado .icono {
+    min-width: 36px;
+    min-height: 36px;
+  }
+
+  table.tablaDocs .iconoVacio {
+    width: 36px;
+    height: 36px;
+  }
+
+  .campoBusqueda {
+    grid-column: 1 / -1;
   }
 
   table.tablaDocs > thead > tr {

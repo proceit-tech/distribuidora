@@ -173,9 +173,9 @@ export async function verificarCasosDocumentosUxR02(): Promise<string[]> {
   cierto("UXR02-29 (actualizado PRO-195) cada celda tiene su área propia (sin solaparse) y el acento FE/NCE queda en la columna de control de la tarjeta",
     ["exp", "sel", "acciones", "doc", "fecha", "ruc", "razon", "monto", "estado", "eventos"].every((a, i) => new RegExp(`tr:has\\(> td:nth-child\\(10\\)\\) > td:nth-child\\(${i + 1}\\) \\{\\s*grid-area: ${a};`).test(cssLimpio)) &&
     /table\.tablaDocs tr\.filaFE > td:nth-child\(2\) \{\s*box-shadow: inset 3px 0 0 #6d9bd1;/.test(cssLimpio) && /table\.tablaDocs tr\.filaNCE > td:nth-child\(2\) \{\s*box-shadow: inset 3px 0 0 #d9bb4e;/.test(cssLimpio));
-  cierto("UXR02-30 (actualizado PRO-365) accesibilidad y escritorio: cuatro iconos de estado enfocables en la fila, aviso «!» con posición reservada (iconoVacio) para alinear, acciones 32px, tabla de 1180px con scroll local en escritorio",
+  cierto("UXR02-30 (actualizado PRO-365) accesibilidad y escritorio: cuatro iconos de estado enfocables en la fila, aviso «!» con posición reservada (iconoVacio) para alinear, acciones 32px, tabla de 1100px con scroll local en escritorio (actualizado PRO-365-R02: densidad de la referencia)",
     /<IconoFase key=\{i\.eje\} eje=\{i\.eje\}/.test(pagina) && !/<IconoFase eje="estado"|\{estado\.texto\}/.test(pagina) && /<span className=\{estilos\.iconoVacio\} aria-hidden="true" \/>/.test(pagina) &&
-    /min-width: 1180px/.test(regla(css, "table.tablaDocs")) && /width: 24px;\s*height: 24px;/.test(regla(css, ".iconoCirculo")) && /width: 32px;\s*height: 32px;/.test(regla(css, ".accion")));
+    /min-width: 1100px/.test(regla(css, "table.tablaDocs")) && /width: 24px;\s*height: 24px;/.test(regla(css, ".iconoCirculo")) && /width: 32px;\s*height: 32px;/.test(regla(css, ".accion")));
 
   // ══ Alcance ═════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
   cierto("UXR02-31 sin rutas nuevas ni cambios de API: la pantalla sigue llamando exactamente a las mismas rutas", (() => {

@@ -196,8 +196,8 @@ export async function verificarCasosDocumentosPro195R01(): Promise<string[]> {
   }
 
   // ══ R01-10 Escritorio 1366/1920 y móvil, teclado, tooltip y foco (estructura; render PENDIENTE) ═══════════════════════════════════════
-  cierto("R01-10a escritorio: tabla blanca de 1180px con scroll horizontal LOCAL (cabe en 1366 con barra lateral solo con scroll; en 1920 sin scroll); separadores discretos; sin pintar la fila entera",
-    /min-width: 1180px/.test(regla(css, "table.tablaDocs")) && /background: #ffffff;/.test(regla(css, "tr.filaFE > td,\ntr.filaNCE > td")) && /border-bottom-color: #edf1f5;/.test(regla(css, "table.tablaDocs > tbody > tr > td")) &&
+  cierto("R01-10a (actualizado PRO-365-R02) escritorio: tabla blanca de 1100px con scroll horizontal LOCAL (cabe en 1366 con barra lateral solo con scroll; en 1920 sin scroll); separadores discretos; sin pintar la fila entera",
+    /min-width: 1100px/.test(regla(css, "table.tablaDocs")) && /background: #ffffff;/.test(regla(css, "tr.filaFE > td,\ntr.filaNCE > td")) && /border-bottom-color: #edf1f5;/.test(regla(css, "table.tablaDocs > tbody > tr > td")) &&
     /<div className=\{clases\(ui\.tableScroll, estilos\.contenedorTabla\)\}>/.test(pagina));
   cierto("R01-10b móvil (≤ 720px): tarjeta de diez áreas sin ocultar identidad, estado, monto ni acciones; filas separadas por defecto y agrupadas solo con contenedor ≥ 440px",
     /tr:has\(> td:nth-child\(10\)\) \{\s*display: grid;/.test(cssLimpio) && ["doc", "estado", "monto", "acciones", "eventos", "razon", "ruc", "fecha"].every((a) => new RegExp(`grid-area: ${a};`).test(cssLimpio)) && /@container documentos \(min-width: 440px\)/.test(cssLimpio));
