@@ -76,7 +76,7 @@ BEGIN
 
   -- P1: procedencia exacta
   IF to_regclass('public.schema_migrations') IS NULL
-     OR NOT EXISTS (SELECT 1 FROM public.schema_migrations WHERE version = 'NEX-084' AND checksum = '12439af60ce0073cc98aebb7e9662312f7a21e46c6a800321319b48b4853248b') THEN
+     OR NOT EXISTS (SELECT 1 FROM public.schema_migrations WHERE version = 'NEX-084' AND checksum = '38d45ea661ed5d8f1dc3d43dc6b0f727f8872c6bdd0fbab5745cc7802f5b6854') THEN
     RAISE EXCEPTION 'reversion NEX-084: schema_migrations no registra NEX-084 con el checksum del archivo versionado: el estado no es atribuible a NEX-084.' USING ERRCODE = 'P0001';
   END IF;
   IF EXISTS (SELECT 1 FROM public.schema_migrations WHERE version ~ '^NEX-[0-9]{3}$' AND version > 'NEX-084') THEN

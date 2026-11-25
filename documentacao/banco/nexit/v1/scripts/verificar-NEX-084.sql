@@ -31,15 +31,16 @@ lecturas(firma) AS (VALUES ('public.fe_e03_operacion_por_correlacion_r05(uuid,uu
 internas(firma) AS (VALUES ('public.fe_e03_r05_validar_proyeccion(jsonb,integer,text,text,text,text,jsonb)'), ('public.fe_e03_r05_cotejar(jsonb,jsonb,boolean,boolean)'),
   ('public.fe_e03_r05_procesar_proyeccion(jsonb,integer,text,text,text,text,jsonb,jsonb,boolean,boolean)'), ('public.fe_e03_r05_clase_eco(text,jsonb,jsonb,text)'),
   ('public.fe_e03_r05_alterado(jsonb)'), ('public.fe_e03_r05_astral(text)'), ('public.fe_e03_r05_trim_js(text)'), ('public.fe_e03_r05_token_rechazado_post1(uuid,uuid,uuid)'),
-  ('public.fe_e03_r05_posts(uuid,uuid,uuid)'), ('public.fe_e03_r05_ultima_actividad(uuid,uuid,uuid)'), ('public.fe_e03_r05_abiertas(timestamptz)')),
+  ('public.fe_e03_r05_posts(uuid,uuid,uuid)'), ('public.fe_e03_r05_ultima_actividad(uuid,uuid,uuid)'), ('public.fe_e03_r05_abiertas(timestamptz)'),
+  ('public.fe_e03_r05_token_mensaje(jsonb)'), ('public.fe_e03_r05_derivar_cierre(uuid,uuid,uuid)')),
 legado(firma) AS (VALUES ('public.fe_e03_iniciar_envio(uuid,uuid,uuid,boolean)'),
   ('public.fe_e03_registrar_evento(uuid,uuid,uuid,uuid,text,smallint,text,integer,jsonb,boolean,text)'),
   ('public.fe_e03_cerrar_envio(uuid,uuid,uuid,uuid,text,text,text,text,integer,text,text,text,text,text,text,jsonb)')),
 rt AS (SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'nexit_runtime') AS existe),
 modo AS (SELECT (SELECT e.modo FROM public.nex_e03_r05_estado e WHERE e.id) AS valor)
 SELECT orden, control, ok FROM (
-  SELECT 1 AS orden, 'NEX-084 registrada en schema_migrations con checksum 12439af60ce0073cc98aebb7e9662312f7a21e46c6a800321319b48b4853248b' AS control,
-    EXISTS (SELECT 1 FROM public.schema_migrations WHERE version = 'NEX-084' AND checksum = '12439af60ce0073cc98aebb7e9662312f7a21e46c6a800321319b48b4853248b') AS ok
+  SELECT 1 AS orden, 'NEX-084 registrada en schema_migrations con checksum 38d45ea661ed5d8f1dc3d43dc6b0f727f8872c6bdd0fbab5745cc7802f5b6854' AS control,
+    EXISTS (SELECT 1 FROM public.schema_migrations WHERE version = 'NEX-084' AND checksum = '38d45ea661ed5d8f1dc3d43dc6b0f727f8872c6bdd0fbab5745cc7802f5b6854') AS ok
   UNION ALL SELECT 2, 'nex_e03_r05_estado: exactamente una fila (id = true) con modo ACTIVO o REVERTIDO',
     (SELECT count(*) = 1 AND bool_and(e.id AND e.modo IN ('ACTIVO', 'REVERTIDO')) FROM public.nex_e03_r05_estado e)
   UNION ALL SELECT 4, 'entorno declarado: ' || :'entorno' || ' (valores admitidos VM o CI)', :'entorno' IN ('VM', 'CI')
@@ -86,7 +87,7 @@ SELECT orden, control, ok FROM (
                        OR p.prosrc ~* '\mEXECUTE\M'))
   UNION ALL SELECT 31, 'funciones R05 que se conceden a nexit_runtime: 7 de escritura + 3 de lectura, todas SECURITY DEFINER',
     (SELECT count(*) FROM (SELECT firma FROM escrituras UNION ALL SELECT firma FROM lecturas) f JOIN pg_proc p ON p.oid = to_regprocedure(f.firma) WHERE p.prosecdef) = 10
-  UNION ALL SELECT 33, 'R02-C01: ayudantes internos con su firma exacta (validador contra snapshot, cotejo, procesamiento común, token rechazado, actividad) y sin firmas anteriores',
+  UNION ALL SELECT 33, 'R02-C01/C02: ayudantes internos con su firma exacta (validador contra snapshot, cotejo, procesamiento común, token rechazado, actividad, mensaje de token 4xx, derivación del cierre) y sin firmas anteriores',
     (SELECT count(*) FROM internas i WHERE to_regprocedure(i.firma) IS NOT NULL) = (SELECT count(*) FROM internas)
     AND to_regprocedure('public.fe_e03_r05_validar_proyeccion(jsonb,integer,text,text,text,text,text)') IS NULL
     AND to_regprocedure('public.fe_e03_registrar_salida_tardia_r05(uuid,uuid,uuid,uuid,text,smallint,text,integer,jsonb,boolean,text,jsonb)') IS NULL

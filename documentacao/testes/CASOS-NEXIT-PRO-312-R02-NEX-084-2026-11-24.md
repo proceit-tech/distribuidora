@@ -4,6 +4,8 @@
 
 **Corrección R02-C01 (25/11/2026):** [orden](../ordens/ORD-CLAUDE-NEXIT-PRO-312-R02-C01-NEX-084-2026-11-25.md) · [auditoría](AUD-CHATGPT-NEXIT-PRO-312-R02-NEX-084-2026-11-25.md) · base `6680b3c`. Solo F001–F005, en los mismos cinco archivos. Las expectativas contradictorias de las secciones 1–10 se corrigieron en su lugar (marcadas «R02-C01»); la matriz de hallazgos, firmas, checksum y casos nuevos R02-C01-001…060 están en §11–§13.
 
+**Corrección R02-C02 (25/11/2026):** [orden](../ordens/ORD-CLAUDE-NEXIT-PRO-312-R02-C02-NEX-084-2026-11-25.md) · [auditoría](AUD-CHATGPT-NEXIT-PRO-312-R02-C01-NEX-084-2026-11-25.md) · base `d512754`. Solo los residuos R-C01-01 / R-C01-02 / R-C01-03, en los archivos existentes de NEX-084 que lo requieren (migración, verificar, reversión y este documento; el preflight no cambia). Las expectativas afectadas de §1–§13 se corrigieron por referencia (marcadas «R02-C02»); informe por residuo en §15 y casos nuevos R02-C02-001…052 en §16.
+
 **Estado:** autoría solamente. Ningún caso de este documento fue ejecutado; ningún SQL fue aplicado ni ejecutado por Claude (ni en la VM ni en otra base). El catálogo real de la VM **no** fue verificado. El CI automático del repositorio aplica todas las migraciones versionadas en su base efímera de pruebas: eso es comportamiento existente del runner, no una aplicación autorizada en la VM.
 
 Archivos de este lote (los cinco de la orden):
@@ -33,7 +35,7 @@ Todas las funciones de escritura son `SECURITY DEFINER`, fijan `search_path = pu
 | `fe_e03_registrar_salida_tardia_r05(…, nro_post, tipo, http, respuesta, truncada, clase, proyeccion, motivo_sin_proyeccion)` (R02-C01: 13 parámetros) | salida que la vía normal ya no admite; HTTP_RESPUESTA con P o motivo (exactamente uno) | POST existente sin salida normal; `fe_e03_r05_no_vigente` ≠ NULL | `o_salida_id, o_motivo, o_estado_proyeccion, o_reutilizado` (huella semántica) | `SALIDA_ADMISIBLE`, `SALIDA_TARDIA_DISTINTA`, `SALIDA_DISTINTA`, `EVIDENCIA_CON_CREDENCIALES` |
 | `fe_e03_operacion_por_correlacion_r05(empresa, usuario, documento, correlacion)` (lectura) | — | mismo actor, CREAR, alcance | `o_operacion_id, o_version, o_vigente, o_cerrada, o_creado_at` (sin testigo ni hash) | permiso / documento no encontrado |
 | `fe_e03_conexion_referencia_r05(empresa, usuario, documento)` (lectura) | — | CREAR o EDITAR, alcance | `o_conexion, o_origen INTENTO\|OPERACION_R05, o_referencia_id, o_instante, o_ambigua` | permiso / documento no encontrado |
-| `fe_e03_estado_operacion_r05(empresa, usuario, documento, operacion)` (lectura, R02-C01 F003) | — | mismo actor, CREAR, alcance (antes de leer) | identidad, versión, correlación, vigencia, NO_TRANSMITIDO, POSTs, último POST (almacenamiento, instante, salida `SIN_POST\|SIN_SALIDA\|ERROR_TRANSMISION\|HTTP_RESPUESTA\|TARDIA_*`, HTTP, estado de P), cierre histórico (regla, fase, resultado, estado, error, motivo, intento, HTTP POST y autenticación, lote, CDC, fecha) y estado ACTUAL del documento; sin testigo, hash, payload ni respuesta | permiso / documento no encontrado / `OPERACION_NO_ENCONTRADA` |
+| `fe_e03_estado_operacion_r05(empresa, usuario, documento, operacion)` (lectura, R02-C01 F003; **R02-C02 R-C01-03**) | — | mismo actor, CREAR, alcance (antes de leer) | identidad, versión, correlación, vigencia y motivo de no vigencia, NO_TRANSMITIDO; autenticación inicial y renovación por separado (existencia, origen, resultado, HTTP); POSTs y último POST (id, almacenamiento, instante); salida NORMAL `SIN_POST\|SIN_SALIDA\|ERROR_TRANSMISION\|HTTP_RESPUESTA` con HTTP, clase de error, estado de P, regla, resultado, estado local, tipo de error, motivo sin P, cotejo y campos cotejados; tardía SOLO como observación (tipo, HTTP, estado de su P); clasificación de cierre derivable provisional `{regla, resultado, estado_local, error_tipo}` o no derivable con motivo; cierre histórico (regla, fase, resultado, estado, error, motivo, intento, HTTP POST y autenticación, lote, CDC, fecha) y estado ACTUAL del documento (`estado_local` y `estado_sifen` por separado); sin testigo, hash, payload ni respuesta | permiso / documento no encontrado / `OPERACION_NO_ENCONTRADA` |
 
 **Derivación del cierre** (solo de la evidencia persistida; primera regla aplicable):
 
@@ -102,7 +104,7 @@ La reversión toma la misma fila de modo **FOR UPDATE** primero: espera a toda e
 - **Una sola transmisión por número de POST**: el POST se registra antes del fetch; la repetición vigente devuelve `o_reutilizado` (el mismo proceso hace su único fetch si aún no lo hizo); un POST distinto se rechaza; el POST 2 exige token rechazado comprobado (salida HTTP 4xx del POST 1, P validada con `token_invalido`, regla R-01; R02-C01) y renovación OK; nunca tras ACK 2xx, 5xx, TIMEOUT/RED, salida sin P, P rechazada o contradictoria; no hay POST 3.
 - **Correlación y testigo**: se persiste solo `SHA-256(testigo)`; la columna `testigo_sha256` no se concede a `nexit_runtime` (privilegio por columnas) y ninguna función la devuelve. Ningún mensaje de error repite el testigo ni su hash. Perder el testigo = ningún POST nuevo de esa operación.
 - **Cierre**: derivado de la evidencia; idempotente por operación (huella de la clasificación); un intento por cierre; nunca `estado_sifen`; CDC opaco (NEX-080) sin reglas de forma.
-- **P**: esquema cerrado v1, ≤ 16384 bytes reales (`octet_length`), tipos estrictos, rangos (`n_entradas` 0..50, alias de lote en enum) y coherencia (`token_invalido` = true con 401, false fuera de 4xx); identidad estrictamente tipada = fila del documento y snapshot transmitido (`serie_estado` TEXTO/NULO/AUSENTE como `seriePayload`); `confianza` exacta (verificados_sql / cotejables / confiados_servidor); clasificación de la aplicación = clasificación SQL; saneada antes de persistir; cotejo de status, ecos, contador, lote, CDC y listas solo cuando el valor llegó íntegro (`campos_cotejados` nunca incluye lo perdido por saneado, truncamiento, redacción, coerción o jsonb). CDC opaco: nunca criterio de ACK.
+- **P**: esquema cerrado v1, ≤ 16384 bytes reales (`octet_length`), tipos estrictos, rangos (`n_entradas` 0..32767 desde R02-C02 —entradas expandidas de los primeros 50 elementos, conteo saturado—, alias de lote en enum) y coherencia (`token_invalido` = true con 401, false fuera de 4xx; **R02-C02:** con otro 4xx, igual a `esTokenInvalido` recalculado sobre la clave exacta `message` cuando la respuesta persistida lo permite); identidad estrictamente tipada = fila del documento y snapshot transmitido (`serie_estado` TEXTO/NULO/AUSENTE como `seriePayload`); `confianza` exacta (verificados_sql / cotejables / confiados_servidor); clasificación de la aplicación = clasificación SQL; saneada antes de persistir; cotejo de status, ecos, contador, lote, CDC y listas solo cuando el valor llegó íntegro (`campos_cotejados` nunca incluye lo perdido por saneado, truncamiento, redacción, coerción o jsonb). CDC opaco: nunca criterio de ACK.
 - **Aislamiento**: toda tabla con `empresa_id` y FK anclada en `empresa_id` (T01); FK compuestas por `(empresa, documento[, version])`.
 - **Inmutabilidad**: UPDATE/DELETE/TRUNCATE bloqueados; DELETE solo en reinicio DEMO autorizado (mismo mecanismo de NEX-072).
 - **ACL** (`nexit_runtime`): SELECT de las tablas R05 (sin `testigo_sha256`) y de la fila de modo; EXECUTE de las 7 escrituras solo en modo ACTIVO; EXECUTE de las 3 lecturas en ambos modos; sin EXECUTE en ayudantes; **sin EXECUTE en las 3 funciones de escritura de NEX-072** (la aplicación no las usa: camino único R05). Sin escritura directa en ninguna tabla. El EXECUTE de `fe_documento_iniciar_envio` y `fe_documento_registrar_envio_r05` (camino vigente de la aplicación) no se toca.
@@ -323,35 +325,35 @@ Fixture común (sintético, base efímera): empresa E1 y E2; usuario U1 (CREAR e
 
 ## 11. R02-C01 — matriz de hallazgos (referencias exactas)
 
-Referencias por archivo y línea del estado de este commit (`NEX-084` = `documentacao/banco/nexit/v1/migraciones/NEX-084-facturacion-e03-envio-r05.sql`).
+Referencias por archivo y línea del estado del commit R02-C01 (`NEX-084` = `documentacao/banco/nexit/v1/migraciones/NEX-084-facturacion-e03-envio-r05.sql`); las líneas vigentes tras R02-C02 están en §15.
 
 | Hallazgo | Corrección | Referencias |
 |---|---|---|
-| **F001** paridad de P / ACK / POST 2 (ALTA) | `token_invalido` coherente con el HTTP (401 → true; fuera de 4xx → false; resto de 4xx confiado al servidor); P contradictoria rechazada ANTES de persistir; renovación y POST 2 solo por `fe_e03_r05_token_rechazado_post1` (salida HTTP 4xx del POST 1 + P validada + regla R-01), misma función en las reglas AUT-2 / EI-TOKEN-SIN-POST2 del cierre; autenticación OK por HTTP = 200 exacto (CACHE igual); esquema cerrado con identidad estrictamente tipada contra el snapshot transmitido (`serie_estado` TEXTO/NULO/AUSENTE), alias de lote en enum, `n_entradas` 0..50, `confianza` exacta; cotejo ampliado (status ausente/no texto, ecos con `clase_eco`, contador, lote entero seguro o texto, CDC transportable, listas propias) sin declarar cotejado lo que el saneado, truncamiento, redacción, coerción o jsonb perdieron. P ≤ 16384 bytes; CDC opaco y nunca criterio de ACK; `gateway.ts` y NEX-080 sin cambios | NEX-084 :211 (CHECK 200), :476–569 (`alterado`, `astral`, `trim_js`, `clase_eco`), :570 (validador), :889 (cotejo), :1130 (procesamiento común), :1234 (`token_rechazado_post1`), :1384 (renovación), :1452 (POST 2), :1748–1750 (cierre) |
+| **F001** paridad de P / ACK / POST 2 (ALTA) | `token_invalido` coherente con el HTTP (401 → true; fuera de 4xx → false; resto de 4xx confiado al servidor — **R02-C02 R-C01-01: ahora cotejado sobre `message`, confiado solo si no es cotejable; ver §15**); P contradictoria rechazada ANTES de persistir; renovación y POST 2 solo por `fe_e03_r05_token_rechazado_post1` (salida HTTP 4xx del POST 1 + P validada + regla R-01), misma función en las reglas AUT-2 / EI-TOKEN-SIN-POST2 del cierre; autenticación OK por HTTP = 200 exacto (CACHE igual); esquema cerrado con identidad estrictamente tipada contra el snapshot transmitido (`serie_estado` TEXTO/NULO/AUSENTE), alias de lote en enum, `n_entradas` 0..50 (**R02-C02 R-C01-02: 0..32767 sobre entradas expandidas; ver §15**), `confianza` exacta; cotejo ampliado (status ausente/no texto, ecos con `clase_eco`, contador, lote entero seguro o texto, CDC transportable, listas propias) sin declarar cotejado lo que el saneado, truncamiento, redacción, coerción o jsonb perdieron. P ≤ 16384 bytes; CDC opaco y nunca criterio de ACK; `gateway.ts` y NEX-080 sin cambios | NEX-084 :211 (CHECK 200), :476–569 (`alterado`, `astral`, `trim_js`, `clase_eco`), :570 (validador), :889 (cotejo), :1130 (procesamiento común), :1234 (`token_rechazado_post1`), :1384 (renovación), :1452 (POST 2), :1748–1750 (cierre) |
 | **F002** idempotencia de salidas (ALTA) | Salida normal: reutiliza solo con equivalencia semántica completa (versión, tipo, HTTP, clase, SHA-256 y bytes de la respuesta, truncamiento, P canónica, motivo, regla, resultado, estado, tipo de error, cotejo y campos); P que ya no valida → `SALIDA_DISTINTA`. Tardía: estados A `SIN_PROYECCION` / B `PROYECCION_DESCARTADA` (motivo seguro de lista cerrada, sin valores) / C `PROYECCION_VALIDADA` / D `PROYECCION_COTEJADA_PARCIAL`, huella semántica que los incluye; exclusión normal/tardía; una tardía nunca cambia cierre ni estado; D-C02-2-A preservada | NEX-084 :306 (columnas y CHECK de la tardía), :1484 (salida normal), :1823 (salida tardía) |
-| **F003** recuperación / verificación (MEDIA) | Cierre con columnas `salida_ultimo_post`, `http_post`, `http_autenticacion` y retorno histórico completo + estado actual (también al repetir); lectura `fe_e03_estado_operacion_r05` con ACL antes de leer y sin testigo/hash/payload/respuesta; `verificar-NEX-084.sql` §3: 13 controles de integridad de datos (100–112) solo lectura | NEX-084 :265, :1660, :1967; verificar :152–233 |
+| **F003** recuperación / verificación (MEDIA) | Cierre con columnas `salida_ultimo_post`, `http_post`, `http_autenticacion` y retorno histórico completo + estado actual (también al repetir); lectura `fe_e03_estado_operacion_r05` con ACL antes de leer y sin testigo/hash/payload/respuesta (**R02-C02 R-C01-03: ampliada para operaciones abiertas; ver §15**); `verificar-NEX-084.sql` §3: 13 controles de integridad de datos (100–112) solo lectura | NEX-084 :265, :1660, :1967; verificar :152–233 |
 | **F004** límite 8 MiB (gate B) | Límite PROVISIONAL; retirada la justificación `pg_column_size`; bloqueos del Lote B explícitos; sin mediciones ni ampliación; D8-B intacta | NEX-084 :10–15; preflight :114–116; este documento §4 y §10 B-05 |
 | **F005** coherencia preflight / verificación / reversión | Definición ÚNICA de operación abierta y última actividad (`fe_e03_r05_ultima_actividad`, `fe_e03_r05_abiertas`: raíz, eventos NEX-072, POST grandes, autenticaciones, proyecciones, tardías); un corte por ejecución; umbral 10 min ≠ drenaje 15 min; reversión: corte tomado con el bloqueo, informe = valores calculados bajo el bloqueo, confirmaciones `backup_verificado` / `instrumentacion_desactivada` / `drenaje_confirmado` / `huerfanas`; modo VM (estricto, rol obligatorio) vs CI (`-v entorno=CI`); bloqueos, ACTIVO tras el bloqueo, no destructiva, idempotente, sin re-GRANT NEX-072, sin borrar `schema_migrations` | NEX-084 :1257, :1268; preflight :66–67, :81–99; verificar :4–5, :33–34, :136–140; reversión completa |
 
 ## 12. Firmas, objetos y checksum
 
-- **Checksum final de NEX-084 (SHA-256 del archivo):** `12439af60ce0073cc98aebb7e9662312f7a21e46c6a800321319b48b4853248b`. Sincronizado en `verificar-NEX-084.sql` (control 1) y `reversion-NEX-084.sql` (P1). El valor anterior `ec59bd92…` queda sustituido; NEX-084 no está aplicada en ninguna base persistente.
+- **Checksum final de NEX-084 (SHA-256 del archivo, R02-C02):** `38d45ea661ed5d8f1dc3d43dc6b0f727f8872c6bdd0fbab5745cc7802f5b6854`. Sincronizado en `verificar-NEX-084.sql` (control 1) y `reversion-NEX-084.sql` (P1). Los valores anteriores `12439af6…` (R02-C01) y `ec59bd92…` (R02) quedan sustituidos; NEX-084 no está aplicada en ninguna base persistente.
 - **Escrituras (7):** `fe_e03_iniciar_envio_r05(uuid,uuid,uuid,boolean,uuid,text,jsonb)` · `fe_e03_registrar_autenticacion_r05(uuid,uuid,uuid,uuid,text,text,text,text,integer)` · `fe_e03_registrar_post_r05(uuid,uuid,uuid,uuid,text,smallint,text)` · `fe_e03_registrar_salida_r05(uuid,uuid,uuid,uuid,text,smallint,text,integer,jsonb,boolean,text,jsonb,text)` · `fe_e03_registrar_no_transmitido_r05(uuid,uuid,uuid,uuid,text,text)` · `fe_e03_cerrar_envio_r05(uuid,uuid,uuid,uuid,text,jsonb)` (retorno ampliado) · `fe_e03_registrar_salida_tardia_r05(uuid,uuid,uuid,uuid,text,smallint,text,integer,jsonb,boolean,text,jsonb,text)` (**cambia**: +`motivo_sin_proyeccion`).
-- **Lecturas (3):** `fe_e03_operacion_por_correlacion_r05(uuid,uuid,uuid,uuid)` · `fe_e03_conexion_referencia_r05(uuid,uuid,uuid)` · `fe_e03_estado_operacion_r05(uuid,uuid,uuid,uuid)` (**nueva**).
-- **Ayudantes internos sin EXECUTE para PUBLIC ni `nexit_runtime`:** `fe_e03_r05_validar_proyeccion(jsonb,integer,text,text,text,text,jsonb)` (**cambia**: snapshot en lugar de serie), `fe_e03_r05_cotejar(jsonb,jsonb,boolean,boolean)`, **nuevos** `fe_e03_r05_procesar_proyeccion(jsonb,integer,text,text,text,text,jsonb,jsonb,boolean,boolean)`, `fe_e03_r05_clase_eco(text,jsonb,jsonb,text)`, `fe_e03_r05_alterado(jsonb)`, `fe_e03_r05_astral(text)`, `fe_e03_r05_trim_js(text)`, `fe_e03_r05_token_rechazado_post1(uuid,uuid,uuid)`, `fe_e03_r05_ultima_actividad(uuid,uuid,uuid)`, `fe_e03_r05_abiertas(timestamptz)`; los demás de R02 sin cambio de firma.
+- **Lecturas (3):** `fe_e03_operacion_por_correlacion_r05(uuid,uuid,uuid,uuid)` · `fe_e03_conexion_referencia_r05(uuid,uuid,uuid)` · `fe_e03_estado_operacion_r05(uuid,uuid,uuid,uuid)` (**nueva**; R02-C02 amplía su retorno, misma firma de entrada).
+- **Ayudantes internos sin EXECUTE para PUBLIC ni `nexit_runtime`:** `fe_e03_r05_validar_proyeccion(jsonb,integer,text,text,text,text,jsonb)` (**cambia**: snapshot en lugar de serie), `fe_e03_r05_cotejar(jsonb,jsonb,boolean,boolean)`, **nuevos** `fe_e03_r05_procesar_proyeccion(jsonb,integer,text,text,text,text,jsonb,jsonb,boolean,boolean)`, `fe_e03_r05_clase_eco(text,jsonb,jsonb,text)`, `fe_e03_r05_alterado(jsonb)`, `fe_e03_r05_astral(text)`, `fe_e03_r05_trim_js(text)`, `fe_e03_r05_token_rechazado_post1(uuid,uuid,uuid)`, `fe_e03_r05_ultima_actividad(uuid,uuid,uuid)`, `fe_e03_r05_abiertas(timestamptz)`; **R02-C02 nuevos:** `fe_e03_r05_token_mensaje(jsonb)` y `fe_e03_r05_derivar_cierre(uuid,uuid,uuid)` (REVOKE de PUBLIC en el ayudante de privilegios; añadidos a `internas` del control 33); los demás de R02 sin cambio de firma.
 - **Columnas nuevas:** cierres `salida_ultimo_post`, `http_post`, `http_autenticacion`; tardías `estado_proyeccion`, `motivo_sin_proyeccion`, `motivo_descarte`, `regla`, `resultado`, `estado_local`, `error_tipo`, `cotejo`, `campos_cotejados`. Sin tablas nuevas; T01 (FK en `empresa_id`, sin `actualizado_at`, sin inglés) y disparadores sin cambios.
 - **Compatibilidad con la aplicación:** ningún archivo de `app/` ni `lib/` llama funciones `fe_e03_*_r05` (las R05 siguen sin llamador hasta el Lote B); `envio.ts` sigue con NEX-062 + NEX-080. NEX-001…083, `gateway.ts`, FE/NCE, CDC, stock, KuDE y consulta intactos.
 
 ## 13. Casos nuevos R02-C01 (R02-C01-001…060) — ESCRITOS, NO EJECUTADOS
 
-Mismo fixture de §9. Total de identificadores: 191 previos + 88 R02 (mapeo preservado; 7 con expectativa corregida en su fila: R02-014, 015, 035, 053, 055, 082, 088) + 60 R02-C01 = **339**.
+Mismo fixture de §9. Total de identificadores: 191 previos + 88 R02 (mapeo preservado; 7 con expectativa corregida en su fila: R02-014, 015, 035, 053, 055, 082, 088) + 60 R02-C01 = **339** (R02-C02 conserva los 339 y corrige por referencia R02-C01-004, 016 y 049; suma 52 en §16 → **391**).
 
 | ID | Hallazgo | Precondición | Operación | Resultado esperado |
 |---|---|---|---|---|
 | R02-C01-001 | F001 | POST 1; respuesta HTTP 200; P `token_invalido = true` | `registrar_salida_r05` | `PROYECCION_INVALIDA`; nada escrito |
 | R02-C01-002 | F001 | HTTP 500; P `token_invalido = true` | Ídem | `PROYECCION_INVALIDA` |
 | R02-C01-003 | F001 | HTTP 401; P `token_invalido = false` | Ídem | `PROYECCION_INVALIDA` |
-| R02-C01-004 | F001 | HTTP 403; P `token_invalido = true`, R-01 | Ídem | Aceptado (4xx ≠ 401 confiado al servidor; `confianza.confiados_servidor` contiene `token_invalido_4xx`) |
+| R02-C01-004 | F001 | **R02-C02:** HTTP 403 con respuesta íntegra `{"status":"error","message":"Token inválido"}`; P `token_invalido = true`, R-01 | Ídem | Aceptado; `token_invalido` en `campos_cotejados`; `confianza.cotejables` contiene `token_invalido_4xx`. (La expectativa anterior —403 aceptado por confianza sin mensaje— queda sustituida: un 403 sin indicación de token determinable da `PROYECCION_INCOHERENTE`, R02-C02-004…007.) |
 | R02-C01-005 | F001 | HTTP 401 con P R-01 registrada; renovación OK | `registrar_post_r05` nro 2 | Aceptado |
 | R02-C01-006 | F001 | POST 1 con ACK 2xx (R-06f) | `registrar_autenticacion_r05` RENOVACION / POST 2 | `EVENTO_CONTRADICTORIO` ambos |
 | R02-C01-007 | F001 | POST 1 con salida HTTP 401 sin P (motivo `PROYECCION_RECHAZADA`) | Renovación / POST 2 | `EVENTO_CONTRADICTORIO`; cierre `EI-SIN-P` |
@@ -363,7 +365,7 @@ Mismo fixture de §9. Total de identificadores: 191 previos + 88 R02 (mapeo pres
 | R02-C01-013 | F001 | Snapshot con `dNumDoc` distinto de la fila (manipulado en fixture) | Ídem con P | `IDENTIDAD_SNAPSHOT_DISTINTA` |
 | R02-C01-014 | F001 | P con `identidad.numero` número en lugar de texto | Ídem | `PROYECCION_INVALIDA` |
 | R02-C01-015 | F001 | P con `lote.clave = "nroLoteX"` (fuera del enum) | Ídem | `PROYECCION_INVALIDA` |
-| R02-C01-016 | F001 | P con `aceptados.n_entradas = 51` | Ídem | `PROYECCION_INVALIDA` |
+| R02-C01-016 | F001 | **R02-C02:** P con `aceptados.n_entradas = 32768` (fuera de 0..32767) | Ídem | `PROYECCION_INVALIDA`. (51 entradas expandidas de ≤ 50 elementos es válido desde R02-C02: R02-C02-021.) |
 | R02-C01-017 | F001 | P con `confianza` sin `confiados_servidor` / con clave extra | Ídem | `PROYECCION_INVALIDA` |
 | R02-C01-018 | F001 | Respuesta sin `status`; P `status.presente = true` | Ídem | `PROYECCION_INCOHERENTE` |
 | R02-C01-019 | F001 | Respuesta `status: 1`; P `status.clase = OTRO_TIPO` | Ídem | Aceptado; `status` en `campos_cotejados` |
@@ -396,7 +398,7 @@ Mismo fixture de §9. Total de identificadores: 191 previos + 88 R02 (mapeo pres
 | R02-C01-046 | F003 | Cierre `EI-SIN-SALIDA` | Cierre | `o_salida_ultimo_post = SIN_SALIDA`, `o_http_post` NULL (ausencia de evidencia) |
 | R02-C01-047 | F003 | Cierre `ET-TIMEOUT` | Cierre | `ERROR_TRANSMISION` (consta que no hubo HTTP) |
 | R02-C01-048 | F003 | Cierre `AUT-1` (401) | Cierre | `SIN_POST`, `o_http_autenticacion = 401`, `o_http_post` NULL |
-| R02-C01-049 | F003 | Cierre hecho; luego consulta APROBADO | Repetir cierre / `estado_operacion_r05` | Resultado histórico intacto; `o_estado_documento_actual = APROBADO` |
+| R02-C01-049 | F003 | Cierre hecho; luego consulta APROBADO | Repetir cierre / `estado_operacion_r05` | Resultado histórico intacto. **R02-C02:** `o_estado_sifen_actual = APROBADO` (estado SIFEN); `o_estado_documento_actual` = `estado_local` del documento tal como lo dejó la consulta, nunca `APROBADO` por esta lectura; ninguno se modifica |
 | R02-C01-050 | F003 | U1 con operación propia; U4 con CREAR en S1 | `estado_operacion_r05` por U4 | `OPERACION_NO_ENCONTRADA` (mismo actor) |
 | R02-C01-051 | F003 | U2 sin CREAR / U3 fuera de alcance | Ídem | `42501` / `DOCUMENTO_NO_ENCONTRADO` |
 | R02-C01-052 | F003 | Cualquier operación | `estado_operacion_r05` | Ninguna columna devuelve testigo, hash, payload ni respuesta |
@@ -411,6 +413,178 @@ Mismo fixture de §9. Total de identificadores: 191 previos + 88 R02 (mapeo pres
 
 ## 14. Ejecutado por el CI vs. solo escrito
 
-- **Solo escrito (no ejecutado por Claude ni por el CI):** los 339 casos de este documento; `preflight-NEX-084.sql`, `verificar-NEX-084.sql` y `reversion-NEX-084.sql` (el CI no los invoca).
+- **Solo escrito (no ejecutado por Claude ni por el CI):** los 391 casos de este documento (339 + 52 R02-C02); `preflight-NEX-084.sql`, `verificar-NEX-084.sql` y `reversion-NEX-084.sql` (el CI no los invoca).
 - **Lo que el CI automático del repositorio sí hace** (comportamiento existente, observado tras el push; no es aplicación en la VM): aplica todas las migraciones versionadas, incluida NEX-084, en su base efímera, y corre sus suites existentes (T01, C1, DEMO y demás). Eso prueba que NEX-084 instala y convive con las invariantes del catálogo, no que los contratos de este documento se cumplan.
 - Claude no ejecutó SQL, tests, lint, typecheck, build ni CI manual; NEX-084 no se aplicó en la VM.
+
+## 15. R02-C02 — informe por residuo
+
+Referencias por archivo y línea del estado de este commit (`NEX-084` = `documentacao/banco/nexit/v1/migraciones/NEX-084-facturacion-e03-envio-r05.sql`). `gateway.ts`, NEX-080, NEX-001…083, `app/`, `lib/`, runner y CI sin cambios. El preflight no requiere cambio.
+
+### 15.1 R-C01-01 — token 4xx con `message` determinable
+
+- **Causa.** Con un HTTP 4xx distinto de 401, `token_invalido` quedaba confiado al servidor sin mirar la respuesta persistida. Una P con `token_invalido = true` sobre un 403 sin indicación de token pasaba la validación y habilitaba renovación y POST 2 (`fe_e03_r05_token_rechazado_post1`).
+- **Corrección.**
+  - Nuevo ayudante `fe_e03_r05_token_mensaje(jsonb)` (NEX-084 :890). Recalcula `esTokenInvalido` sobre la clave EXACTA `message` de la respuesta saneada persistida y devuelve true, false o NULL:
+    - raíz no objeto, o `message` ausente, null o no texto → false. Es determinable porque `JSON.parse(cuerpo).message` no es texto. El saneado conserva la clave `message` (no es clave secreta) y su tipo en la raíz.
+    - texto alterado por el saneado (`[omitido]` o recorte `…`) → NULL.
+    - algún carácter fuera de {U+0009–U+000D, U+0020–U+007E, U+00A1–U+00FF} → NULL.
+    - en el resto, la expresión normalizada con `translate` y evaluada con `~`.
+  - El cotejo (NEX-084 :942, bloque :997) lo evalúa **antes** del retorno por raíz no objeto:
+    - resultado determinable distinto de la P → `NEX:PROYECCION_INCOHERENTE`; la P no se persiste;
+    - coincidencia → `token_invalido` entra en `campos_cotejados`;
+    - NULL → no se coteja.
+  - `confianza` (NEX-084 :738): `cotejables` incluye `token_invalido_4xx`; `confiados_servidor` pasa a `token_invalido_4xx_no_cotejable`. Comentario del validador en :616–620. Comentario de la puerta en :1317.
+  - La puerta `fe_e03_r05_token_rechazado_post1` (:1320) no cambia: exige P persistida con R-01 y `token_invalido`. Toda P persistida pasó el cotejo, así que un 4xx comprobadamente sin indicación de token deja la salida sin P. Resultado: sin renovación ni POST 2, y el cierre deriva `EI-SIN-P` (D-C02-2-A).
+- **Equivalencia demostrada.** Dentro del conjunto admitido:
+  - `\s` de JavaScript solo coincide con U+0009–U+000D y U+0020. U+00A0 queda excluido por el conjunto.
+  - Sin indicador `u`, la insensibilidad a mayúsculas solo identifica A–Z con a–z y Á con á. Ningún otro carácter del conjunto canoniza a un carácter del patrón.
+  - Por eso `translate` (espacios en blanco → espacio; A–Z, Á → a–z, á) seguido de `~` sensible a mayúsculas equivale a `/token\s+(inv[aá]lid|vencid|expirad|no\s+v[aá]lid)|invalid\s+token|token\s+(is\s+)?(invalid|expired)/i`.
+  - `chr(193)` y `chr(225)` suponen una base UTF8, que es la codificación del proyecto.
+- **Invariantes preservadas:**
+  - 401 → true y fuera de 4xx → false los decide el validador.
+  - Autenticación OK = HTTP 200; CACHE igual.
+  - P ≤ 16384 bytes; CDC opaco; lote literal.
+  - F002/F004/F005 sin cambio. La política de reenvío no cambia.
+- **Contraejemplos cubiertos:**
+  - falso positivo: 403 `{"status":"error"}` con P true;
+  - falso negativo: 400 «Token vencido» con P false;
+  - `message` null, numérico o genérico;
+  - clave `Message` (alias, no exacta);
+  - raíz array.
+- **Limitación.** Si `message` no es cotejable (sin cuerpo, truncada, redactada, alterada o con caracteres fuera del conjunto), `token_invalido` sigue confiado (`token_invalido_4xx_no_cotejable`), como pide la orden («no cambiar política de reenvío»). Exigir fail-closed también ahí sería una decisión del responsable.
+- **Resultado:** corregido en la migración; casos R02-C02-001…020, solo escritos.
+
+### 15.2 R-C01-02 — primeros 50 ELEMENTOS frente a entradas expandidas
+
+- **Causa.** El validador limitaba `n_entradas` a 0..50, pero `entradasPorNumero` toma 50 elementos y expande cada uno en varias entradas. Una lista legítima de 50 elementos con objetos de varias claves daba más de 50 entradas, y la P se rechazaba. El cotejo además acumulaba nombres en un array.
+- **Corrección.**
+  - Validador: `rechazados.n_entradas` y `aceptados.n_entradas` en 0..32767 (NEX-084 :630, :636).
+  - Cotejo (:1159–:1203), mismo algoritmo que el parser sobre `lista.slice(0,50)`:
+    - texto → 1 entrada (trim de JS);
+    - objeto → 1 entrada por clave (trim de JS);
+    - array interno → 1 entrada por índice;
+    - null, número y booleano → ignorados.
+  - Conteo saturado con `least(…, 32767)`. `propio`, `incluye_propio` y `con_formato_fiscal` se calculan sobre todas las entradas, también después de saturar. No se acumulan nombres.
+  - Un array interno persistido con 50 elementos pudo tener más en el original (el saneado recorta a 50). En ese caso `n_entradas` se coteja como cota inferior y el campo es `<lista>.conteo_cota_inferior`.
+  - Claves o textos alterados, varias claves alias o terceros retirados → la lista no se coteja.
+- **Invariantes preservadas.** Las claves de índice nunca igualan el número fiscal ni tienen formato fiscal, así que solo afectan al conteo. El elemento 51 y siguientes se ignoran igual que en el parser, y el saneado tampoco los conserva. La regla de ACK y de rechazo no cambia.
+- **Contraejemplos cubiertos:**
+  - 50 elementos → 51 entradas;
+  - entrada propia más allá de la 50.ª entrada expandida;
+  - elemento 51 propio ignorado;
+  - arrays internos y su cota;
+  - saturación;
+  - null, número y booleano.
+- **Limitación.** Con la clave exacta `response`, `redactarAjenos` retira los elementos no propios (arrays y null incluidos) y añade `OtrosDocumentosOmitidos`, así que la lista no se coteja. Arrays internos y null solo llegan cotejables bajo claves alias (p. ej. `Response`). La saturación en el cotejo es inalcanzable con respuestas persistidas: más de 32767 entradas superan los 30000 caracteres del saneado, que queda `{truncado:true}` → `NO_COTEJABLE_TRUNCADA`. El validador sí acota la P.
+- **Resultado:** corregido en la migración; casos R02-C02-021…034, solo escritos.
+
+### 15.3 R-C01-03 — recuperación antes del cierre
+
+- **Causa.** `fe_e03_estado_operacion_r05` solo daba el último POST y el cierre histórico. Con la operación abierta no mostraba:
+  - las autenticaciones por separado;
+  - la regla, resultado, estado local, error, motivo sin P y cotejo de la salida;
+  - la clasificación de cierre que el cierre derivaría.
+
+  Además mezclaba la tardía con la salida normal (`TARDIA_*`) y no separaba `estado_local` de `estado_sifen`.
+- **Corrección.**
+  - **Derivación única.** La lógica de derivación del cierre se movió sin cambios a `fe_e03_r05_derivar_cierre(uuid,uuid,uuid)` (NEX-084 :1747). Es STABLE, no SECURITY DEFINER, sin EXECUTE para PUBLIC (REVOKE :2319) ni para `nexit_runtime`.
+    - Devuelve `o_derivable = false` con `o_motivo = CIERRE_SIN_EVIDENCIA` donde antes el cierre lanzaba la excepción.
+    - `fe_e03_cerrar_envio_r05` (:1850) la llama (:1908) y lanza la misma excepción `NEX:CIERRE_SIN_EVIDENCIA` si no es derivable.
+    - El cierre conserva: bloqueo FOR UPDATE previo, testigo, vigencia, `p_clasificacion_esperada`, NEX-080, evento, fila de cierre, idempotencia y retorno.
+  - **Lectura reescrita** (:2109; misma firma de entrada, mismo actor, CREAR y alcance antes de leer):
+    - vigencia y `o_motivo_no_vigente`;
+    - `o_aut1_*` y `o_aut2_*` por separado: existencia, origen, resultado, HTTP;
+    - último POST: número, id del evento NEX-072 o del POST grande, almacenamiento, instante;
+    - salida NORMAL con HTTP, clase TIMEOUT/RED, estado de P, regla, resultado, estado local, tipo de error, motivo sin P, cotejo y campos cotejados;
+    - tardía solo como observación: tipo, HTTP, estado de su P;
+    - `o_cierre_derivable` con `o_clasificacion_derivable` en el formato exacto de `p_clasificacion_esperada`, o `o_motivo_no_derivable` (`CIERRE_SIN_EVIDENCIA` / `OPERACION_CERRADA`);
+    - cierre histórico;
+    - `o_estado_documento_actual` = `estado_local` y `o_estado_sifen_actual` = `estado_sifen`.
+  - **Nunca devuelve** P, respuesta, mensajes del gateway, testigo, su hash ni credenciales.
+- **Invariantes preservadas:**
+  - Leer no autoriza ningún fetch: la renovación y el POST 2 siguen dependiendo de `fe_e03_r05_token_rechazado_post1` dentro de las escrituras.
+  - La clasificación es provisional; el cierre la vuelve a derivar bajo bloqueo.
+  - La tardía nunca alimenta el cierre.
+  - Ninguna columna de estado se modifica.
+- **Contraejemplos cubiertos:**
+  - POST 1 HTTP 400 R-01 con ACK SQL perdido antes de renovar;
+  - autenticaciones;
+  - salida sin P;
+  - sin salida;
+  - TIMEOUT/RED;
+  - ACK; rechazo;
+  - sin POST;
+  - cerrada; no vigente;
+  - tardía.
+- **Limitación.** La clasificación provisional de una operación abierta puede cambiar si se registra más evidencia antes del cierre. Es un dato de recuperación, no un resultado.
+- **Resultado:** corregido en la migración; casos R02-C02-035…052, solo escritos.
+
+### 15.4 Firmas, scripts y checksum
+
+- **Nuevos ayudantes internos:** `fe_e03_r05_token_mensaje(jsonb)` y `fe_e03_r05_derivar_cierre(uuid,uuid,uuid)`.
+  - REVOKE de PUBLIC en el ayudante de privilegios (NEX-084 :2304, :2319).
+  - Añadidos a `internas` y al texto del control 33 de `verificar-NEX-084.sql` (:35, :90).
+  - Los controles 31 (10 SECURITY DEFINER concedidas) y 63 (sin EXECUTE de runtime en `fe_e03_r05_%`) siguen válidos sin cambio.
+- **Firmas de entrada sin cambio:** las 7 escrituras y las 3 lecturas. `fe_e03_estado_operacion_r05` cambia solo su retorno, y no tiene llamador en `app/` ni en `lib/`.
+- **Checksum SHA-256 de NEX-084:** `38d45ea661ed5d8f1dc3d43dc6b0f727f8872c6bdd0fbab5745cc7802f5b6854`. Sustituye a `12439af6…` en `verificar-NEX-084.sql` control 1 (:41–:42), `reversion-NEX-084.sql` (:79) y §12.
+- **Gate B:** el límite provisional de 8 MiB y D6 quedan intactos y sin mediciones.
+
+## 16. Casos nuevos R02-C02 (R02-C02-001…052) — ESCRITOS, NO EJECUTADOS
+
+Mismo fixture de §9. Para R-C01-01, «íntegra» = respuesta persistida no truncada ni redactada. «Sin P» = la aplicación solo puede registrar la salida con motivo `PROYECCION_RECHAZADA` (R02-C01-007).
+
+| ID | Residuo | Precondición | Operación | Resultado esperado |
+|---|---|---|---|---|
+| R02-C02-001 | R-C01-01 | POST 1 HTTP 401; P `token_invalido = true`, R-01 | `registrar_salida_r05` | Aceptado (lo decide el validador; `token_invalido` no se recoteja por mensaje) |
+| R02-C02-002 | R-C01-01 | HTTP 400 íntegra `{"message":"Token inválido"}`; P true, R-01 | Ídem | Aceptado; `token_invalido` en `campos_cotejados` |
+| R02-C02-003 | R-C01-01 | HTTP 403 íntegra `{"message":"invalid token"}`; P true, R-01; renovación OK | `registrar_post_r05` nro 2 | Aceptado (`token_rechazado_post1` = true) |
+| R02-C02-004 | R-C01-01 | HTTP 403 íntegra sin clave `message`; P true | `registrar_salida_r05` | `PROYECCION_INCOHERENTE`; nada escrito |
+| R02-C02-005 | R-C01-01 | HTTP 403 íntegra `{"message":null}`; P true | Ídem | `PROYECCION_INCOHERENTE` |
+| R02-C02-006 | R-C01-01 | HTTP 403 íntegra `{"message":401}`; P true | Ídem | `PROYECCION_INCOHERENTE` |
+| R02-C02-007 | R-C01-01 | HTTP 403 íntegra `{"status":"error","message":"Acceso denegado"}`; P true (falso positivo) | Ídem | `PROYECCION_INCOHERENTE` |
+| R02-C02-008 | R-C01-01 | HTTP 400 íntegra `{"message":"Token vencido"}`; P false (falso negativo) | Ídem | `PROYECCION_INCOHERENTE` |
+| R02-C02-009 | R-C01-01 | Casos 004…007 con P `token_invalido = false` | Ídem | Aceptado; `token_invalido` cotejado |
+| R02-C02-010 | R-C01-01 | Tras 004…007: salida sin P | `registrar_autenticacion_r05` RENOVACION / `registrar_post_r05` nro 2 | `EVENTO_CONTRADICTORIO` ambos; cierre `EI-SIN-P` (`ENVIO_INDETERMINADO`) |
+| R02-C02-011 | R-C01-01 | HTTP 400 `{"message":"TOKEN   INVÁLIDO"}` (mayúsculas, Á, varios espacios); P true | `registrar_salida_r05` | Aceptado; cotejado |
+| R02-C02-012 | R-C01-01 | HTTP 400 `message` «token\texpired» / «token\nis invalid»; P true | Ídem | Aceptado; cotejado |
+| R02-C02-013 | R-C01-01 | HTTP 400 `message` «Su token no válido»; P true / P false | Ídem | Aceptado / `PROYECCION_INCOHERENTE` |
+| R02-C02-014 | R-C01-01 | HTTP 400 `message` «token inválido» (NBSP) o con un carácter > U+00FF | Ídem con P true o false | Aceptado en ambos; `token_invalido` NO en `campos_cotejados` (no cotejable) |
+| R02-C02-015 | R-C01-01 | HTTP 403 `message` con `[omitido]` (secreto saneado) o terminado en «…» (recorte > 1000) | Ídem con P true o false | Aceptado; `token_invalido` no cotejado |
+| R02-C02-016 | R-C01-01 | HTTP 403 con respuesta truncada (`{truncado:true}`), redactada o sin cuerpo; P true | Ídem | Aceptado; cotejo `NO_COTEJABLE_*`; `token_invalido` confiado (limitación §15.1) |
+| R02-C02-017 | R-C01-01 | HTTP 403 con raíz array `["token inválido"]`; P true | Ídem | `PROYECCION_INCOHERENTE` (determinable false aunque el cotejo termine en `COTEJADO_PARCIAL`) |
+| R02-C02-018 | R-C01-01 | HTTP 403 `{"Message":"Token inválido"}` (clave no exacta); P true / P false | Ídem | `PROYECCION_INCOHERENTE` / aceptado |
+| R02-C02-019 | R-C01-01 | P con `confianza` de R02-C01 (`token_invalido_4xx` en `confiados_servidor`) | Ídem | `PROYECCION_INVALIDA` |
+| R02-C02-020 | R-C01-01 | HTTP 200 o 500 con `{"message":"Token inválido"}`; P false | Ídem | Aceptado; el mensaje no se evalúa fuera de 4xx |
+| R02-C02-021 | R-C01-02 | Respuesta íntegra con alias `Response.Aceptados` de 50 elementos: 49 textos + 1 objeto de 2 claves; P `n_entradas = 51` / 50 | Ídem | Aceptado / `PROYECCION_INCOHERENTE` |
+| R02-C02-022 | R-C01-02 | Elemento 50 objeto cuya 3.ª clave es el número propio (entrada expandida n.º 52); P `incluye_propio = true` / false | Ídem | Aceptado / `PROYECCION_INCOHERENTE` |
+| R02-C02-023 | R-C01-02 | Lista original de 51 elementos con el propio en el 51 (persistida con 50); P `incluye_propio = false`, `n_entradas = 50` | Ídem | Aceptado (elemento 51 ignorado, como el parser) |
+| R02-C02-024 | R-C01-02 | Elemento array interno `["a","b","c"]` + texto propio; P `n_entradas = 4`, propio true | Ídem | Aceptado; las claves de índice nunca son propias ni con formato fiscal |
+| R02-C02-025 | R-C01-02 | Array interno persistido con 50 elementos; P `n_entradas` ≥ conteo / < conteo | Ídem | Aceptado con campo `<lista>.conteo_cota_inferior` / `PROYECCION_INCOHERENTE` |
+| R02-C02-026 | R-C01-02 | Lista `[null, 5, true, " 001-001-0000001 "]` (número propio con espacios) | Ídem | `n_entradas = 1`, propio true (trim de JS) |
+| R02-C02-027 | R-C01-02 | P `n_entradas = 32767` / 32768 | Ídem | Aceptado por el validador / `PROYECCION_INVALIDA` |
+| R02-C02-028 | R-C01-02 | Respuesta con más de 32767 entradas posibles | Ídem | Saneado `{truncado:true}` → `NO_COTEJABLE_TRUNCADA`; listas no cotejadas (saturación inalcanzable en el cotejo, §15.2) |
+| R02-C02-029 | R-C01-02 | ACK por lote (R-06f) con `aceptados` que incluye el propio entre 60 entradas expandidas | Ídem | Aceptado; regla R-06f sin cambio; CDC no decide |
+| R02-C02-030 | R-C01-02 | Rechazo propio en `Response.Rechazados` (objeto con 3 claves, una propia) | Ídem | Aceptado con `propio = true`; regla de rechazo sin cambio |
+| R02-C02-031 | R-C01-02 | Rechazo ajeno bajo `response` exacta (la aplicación retiró terceros: `OtrosDocumentosOmitidos`) | Ídem | Listas fuera de `campos_cotejados`; `terceros_omitidos` confiado |
+| R02-C02-032 | R-C01-02 | Clave de lista con `[omitido]`, texto alterado o dos claves alias | Ídem | Lista no cotejada; nada inventado |
+| R02-C02-033 | R-C01-02 | Lista con entradas de formato fiscal ajenas; P `con_formato_fiscal = false` | Ídem | `PROYECCION_INCOHERENTE` |
+| R02-C02-034 | R-C01-02 | Salida con P de 51 entradas registrada | Repetir idéntica / con P de 50 | `o_reutilizado` / `SALIDA_DISTINTA` (F002 intacta) |
+| R02-C02-035 | R-C01-03 | POST 1 HTTP 400 con P R-01 registrada; el ACK SQL de `registrar_salida_r05` se perdió; sin renovación | `estado_operacion_r05` | Vigente; aut1 OK/200 (HTTP o CACHE); aut2 inexistente; último POST 1, `HTTP_RESPUESTA` 400, `CON_PROYECCION`, regla R-01, cotejo y campos; derivable `{EI-TOKEN-SIN-POST2, ERROR_HTTP, ENVIO_INDETERMINADO, null}` |
+| R02-C02-036 | R-C01-03 | Ídem 035 | La aplicación renueva (`registrar_autenticacion_r05` RENOVACION) | Permitido solo por la escritura (puerta `token_rechazado_post1`); la lectura no habilita nada |
+| R02-C02-037 | R-C01-03 | Renovación con 401 | `estado_operacion_r05` | `o_aut2_*` = existe, HTTP, ERROR_HTTP, 401; derivable `AUT-2` (fase AUTENTICACION) |
+| R02-C02-038 | R-C01-03 | Autenticación inicial fallida, sin POST | Ídem | `o_aut1_*` con resultado y HTTP; `SIN_POST`; derivable `AUT-1` |
+| R02-C02-039 | R-C01-03 | Autenticación inicial OK y sin POST | Ídem | `SIN_POST`; `o_cierre_derivable = false`, `o_motivo_no_derivable = CIERRE_SIN_EVIDENCIA` |
+| R02-C02-040 | R-C01-03 | POST 1 registrado sin salida | Ídem | `SIN_SALIDA`; derivable `EI-SIN-SALIDA` (ausencia de evidencia) |
+| R02-C02-041 | R-C01-03 | POST 1 con TIMEOUT / RED | Ídem | `ERROR_TRANSMISION`, `o_error_transmision` = clase, HTTP nulo; derivable `ET-TIMEOUT` / `ET-RED` |
+| R02-C02-042 | R-C01-03 | POST 1 HTTP 403 sin P (`PROYECCION_RECHAZADA`) | Ídem | `SIN_PROYECCION`, `o_motivo_sin_proyeccion`; derivable `EI-SIN-P` |
+| R02-C02-043 | R-C01-03 | POST 1 con ACK (R-06f) | Ídem | Regla, resultado, estado local y error de la salida = los de la P; derivable igual |
+| R02-C02-044 | R-C01-03 | POST con rechazo propio | Ídem | Ídem con la regla de rechazo |
+| R02-C02-045 | R-C01-03 | Operación con `NO_TRANSMITIDO` | Ídem | `o_no_transmitido = true`; derivable `NT` |
+| R02-C02-046 | R-C01-03 | Cualquier caso 035…045 | `cerrar_envio_r05` con `o_clasificacion_derivable` como esperada | Cierre aceptado con esa misma clasificación (derivación compartida); sin derivable → `CIERRE_SIN_EVIDENCIA` igual que antes |
+| R02-C02-047 | R-C01-03 | Operación cerrada | `estado_operacion_r05` | `o_cerrada = true`; derivable false con `OPERACION_CERRADA`; histórico completo |
+| R02-C02-048 | R-C01-03 | Operación abierta superada por otra versión / documento fuera de ENVIANDO | Ídem | `o_vigente = false`, `o_motivo_no_vigente` (`OPERACION_NO_VIGENTE` / `DOCUMENTO_NO_ENVIANDO`); la clasificación se informa pero el cierre la rechaza por vigencia |
+| R02-C02-049 | R-C01-03 | Operación sin cierre y ya no vigente; salida normal ausente; tardía HTTP 200 con P (estado C) del último POST | Ídem | `o_salida_ultimo_post = SIN_SALIDA`; `o_tardia_*` = HTTP_RESPUESTA, 200, `PROYECCION_VALIDADA` (observación); derivable `EI-SIN-SALIDA` (la tardía no alimenta el cierre) |
+| R02-C02-050 | R-C01-03 | Documento con `estado_sifen = APROBADO` tras consulta | Ídem | `o_estado_sifen_actual = APROBADO`; `o_estado_documento_actual` = `estado_local`; ninguno modificado |
+| R02-C02-051 | R-C01-03 | Cualquier operación | Ídem | Ninguna columna devuelve P, respuesta saneada o bruta, mensajes del gateway, testigo, su hash ni credenciales |
+| R02-C02-052 | R-C01-03 | U4 (otro actor), U2 sin CREAR, U3 fuera de alcance | Ídem | `OPERACION_NO_ENCONTRADA` / `42501` / `DOCUMENTO_NO_ENCONTRADO`, comprobados antes de leer |
