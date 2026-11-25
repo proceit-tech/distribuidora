@@ -187,8 +187,8 @@ SELECT (SELECT e.modo FROM public.nex_e03_r05_estado e WHERE e.id) AS modo_r05,
 --   1) aplicar NEX-001…085 con el runner (que ya reaplica el wrapper una vez) y correr este script con -v entorno=CI y verificar-NEX-084.sql: todo ok = true;
 --   2) SELECT public.nex_aplicar_grants_runtime(); dos veces seguidas (la base vuelve a conceder EXECUTE a los disparadores y el ayudante R05 lo retira cada vez);
 --      repetir ambos verificadores: todo ok = true y la sección 2 sin filas;
---   3) en la misma base descartable, pasar a REVERTIDO por el procedimiento de reversion-NEX-084.sql (no por UPDATE manual) y repetir el paso 2 (dos reaplicaciones) y los
---      verificadores: 3 lecturas con EXECUTE, 0 escrituras, 0 auxiliares internos;
+--   3) en la misma base descartable, pasar a REVERTIDO con desactivar-envio-r05.sql (PRO-312-R02-C04; no por UPDATE manual ni con reversion-NEX-084.sql, que aborta con
+--      NEX-085 instalada) y repetir el paso 2 (dos reaplicaciones) y los verificadores: 3 lecturas con EXECUTE, 0 escrituras, 0 auxiliares internos;
 --   4) ejercitar como nexit_runtime una escritura R05 en ACTIVO para comprobar que los disparadores de guarda e inmutabilidad se ejecutan sin EXECUTE directo de runtime.
 -- Esta lectura sola NO demuestra la persistencia tras reaplicar el wrapper; solo describe el estado en el momento de ejecutarla.
 

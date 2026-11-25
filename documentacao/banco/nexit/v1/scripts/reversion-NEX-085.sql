@@ -9,8 +9,9 @@
 -- Ninguna de las dos mantiene las invariantes de NEX-084 (control 63 de verificar-NEX-084.sql). Por eso este script NO modifica nada:
 --   no restaura concesiones indebidas, no redefine ni restaura el ayudante, no borra la fila 'NEX-085' de schema_migrations, no cambia el modo ACTIVO/REVERTIDO de R05,
 --   no toca NEX-084, sus tablas, disparadores ni evidencia, y no reaplica privilegios.
--- Desactivar el ENVÍO R05 (modo REVERTIDO, que retira las 7 escrituras y conserva las 3 lecturas) NO es deshacer NEX-085: se hace con reversion-NEX-084.sql, cuyo ayudante ya es
--- el corregido por NEX-085 y conserva la revocación de los auxiliares internos.
+-- Desactivar el ENVÍO R05 (modo REVERTIDO, que retira las 7 escrituras y conserva las 3 lecturas) NO es deshacer NEX-085: con NEX-085 instalada se hace con el procedimiento
+-- de operador desactivar-envio-r05.sql (PRO-312-R02-C04; runbook documentacao/infra/PROCEDIMENTO-DESACTIVACION-COORDINADA-R05-2026-11-25.md), que reaplica solo el ayudante
+-- corregido por NEX-085 y conserva la revocación de los auxiliares internos. reversion-NEX-084.sql NO sirve con NEX-085 instalada: su P1 aborta ante cualquier migración posterior.
 -- Cualquier intervención excepcional (p. ej. un defecto demostrado en la redefinición del ayudante) requiere diagnóstico, una DECISIÓN separada del responsable y una ORDEN
 -- específica con su propia migración incremental posterior, preflight y verificación; nunca la edición de NEX-085 ya aplicada (el runner aborta ante un checksum distinto).
 --
@@ -29,7 +30,7 @@ BEGIN
   RAISE EXCEPTION 'NEX-085: reversión NO disponible. Deshacer la corrección reintroduciría EXECUTE de nexit_runtime en auxiliares internos de NEX-084 (F-VM-084-01). No se modificó nada.'
     USING ERRCODE = 'P0001',
           DETAIL = 'NEX:NEX085_REVERSION_PROTEGIDA',
-          HINT = 'Para desactivar el envío R05 use reversion-NEX-084.sql (modo REVERTIDO). Toda intervención excepcional exige decisión y orden separadas del responsable y una migración incremental nueva.';
+          HINT = 'Para desactivar el envío R05 con NEX-085 instalada use desactivar-envio-r05.sql (modo REVERTIDO; ver PROCEDIMENTO-DESACTIVACION-COORDINADA-R05). Toda intervención excepcional exige decisión y orden separadas del responsable y una migración incremental nueva.';
 END $$;
 
 ROLLBACK;
