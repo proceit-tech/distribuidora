@@ -7,12 +7,23 @@
 -- Decisiones del responsable incorporadas (orden ORD-CLAUDE-NEXIT-PRO-312-R02-NEX-084-2026-11-24):
 --   D8-B      cuerpo HTTP ÍNTEGRO de cada POST: <= 1 MiB en la evidencia de NEX-072 (POST_INTENTADO, sin cambios); > 1 MiB en la tabla incremental
 --             documento_electronico_envio_posts_grandes_r05 (texto íntegro + SHA-256 y bytes UTF-8 calculados aquí). Sin hash-only, sin ruta directa por tamaño, sin reducir las 999 líneas.
---             Límite DEFENSIVO 8 MiB (8388608 bytes), justificado: el snapshot que se transmite está acotado por NEX-048 (pg_column_size(payload) < 262144) y su serialización JSON no puede
---             superar ~6 veces ese tamaño binario (peor caso: caracteres de control escapados como \u00XX); 8 MiB cubre ese máximo con margen. Como el cuerpo se compara con el snapshot por
---             igualdad jsonb, solo un relleno de espacios lo haría crecer más: eso se rechaza (NEX:SOLICITUD_EXCEDE_LIMITE_DEFENSIVO) y el caso queda escrito para el Lote B.
+--             Límite DEFENSIVO PROVISIONAL de 8 MiB (8388608 bytes) [R02-C01 F004]: un texto HTTP > 8 MiB se rechaza ANTES del fetch (NEX:SOLICITUD_EXCEDE_LIMITE_DEFENSIVO) y no se
+--             transmite. NO está demostrado que cubra toda factura válida: pg_column_size(payload) < 262144 (NEX-048) mide el almacenamiento jsonb (TOAST/compresión) y NO acota el texto
+--             JSON serializado; además el texto canónico de jsonb no es el texto de JSON.stringify de la aplicación. Bloqueos del Lote B (gate B): compatibilidad con facturas válidas de
+--             999 ítems no demostrada; tamaño canónico jsonb distinto de la serialización JavaScript; precisión numérica del snapshot histórico (D6-c) pendiente de verificación. Aquí no se
+--             mide nada ni se amplía el límite. D8-B se preserva: texto íntegro, sin truncamiento, sin hash-only y sin vía alternativa por tamaño.
 --   D-C02-2-A evidencia insuficiente después de un POST posible → ENVIO_INDETERMINADO con motivo seguro, sin segundo POST, sin cierre paralelo; reconciliación posterior por consulta en la
 --             misma cuenta. El CDC nunca es condición de ACK; un CDC con forma de credencial se omite (solo ese valor) sin invalidar la clasificación.
 --   D4/D5 sin cambios (ventana de 2 minutos de NEX-062 y recuperación manual). D6: la igualdad del cuerpo con el snapshot la decide el banco. D7: sin hash del cuerpo bruto de respuesta ni HMAC.
+--
+-- Corrección R02-C01 (auditoría AUD-CHATGPT-NEXIT-PRO-312-R02-NEX-084-2026-11-25, solo F001–F005; archivo aún no aplicado en ninguna base):
+--   F001 paridad de P: token_invalido coherente con el HTTP (401 → true; fuera de 4xx → false), autenticación OK por HTTP = 200 exacto, renovación y POST 2 solo tras un POST 1 4xx
+--        clasificado R-01; identidad estrictamente tipada contra el snapshot transmitido (serie TEXTO/NULO/AUSENTE como seriePayload); n_entradas 0..50; alias de lote en enum; cotejo
+--        ampliado (status, ecos, contador, lote textual o entero seguro, CDC transportable, listas propias) sin declarar cotejado lo que el saneado, el truncamiento o jsonb perdieron.
+--   F002 idempotencia: una salida normal se reutiliza solo con equivalencia semántica completa (incluida la P canónica, su motivo, regla y cotejo); la salida tardía distingue
+--        SIN_PROYECCION / PROYECCION_DESCARTADA (motivo seguro) / PROYECCION_VALIDADA / PROYECCION_COTEJADA_PARCIAL y su huella las incluye.
+--   F003 recuperación: cierre con retorno extendido y lectura fe_e03_estado_operacion_r05 (sin testigo, hash ni payload); verificación de integridad de datos (solo lectura).
+--   F004 límite 8 MiB provisional (gate B), arriba.  F005 coherencia de preflight / verificación / reversión (scripts).
 --
 -- Objetos nuevos (prefijo _r05 / fe_e03_*_r05):
 --   tablas   nex_e03_r05_estado (fila única ACTIVO/REVERTIDO, configuración de plataforma: sin empresa_id), documento_electronico_envio_operaciones_r05, …_posts_grandes_r05,
@@ -175,6 +186,7 @@ CREATE TABLE public.documento_electronico_envio_posts_grandes_r05 (
 COMMENT ON TABLE public.documento_electronico_envio_posts_grandes_r05 IS 'NEX-084 (D8-B): POST cuyo texto HTTP exacto supera 1 MiB (límite de NEX-072). Texto íntegro, SHA-256 y bytes UTF-8 calculados por el banco ANTES del fetch; igualdad jsonb con el snapshot verificada. Límite defensivo 8 MiB.';
 
 -- Autenticaciones de la operación (sin mensajes ni secretos): nro 1 = INICIAL (HTTP o caché), nro 2 = RENOVACION_TOKEN tras token rechazado en el POST 1.
+-- R02-C01 F001: OK por HTTP exige exactamente 200 (paridad con obtenerToken: r.status === 200, status «success» y token); otro 2xx es ERROR_HTTP. CACHE: OK sin HTTP, solo INICIAL.
 CREATE TABLE public.documento_electronico_envio_autenticaciones_r05 (
   id           uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
   orden        bigint      GENERATED ALWAYS AS IDENTITY,
@@ -196,7 +208,7 @@ CREATE TABLE public.documento_electronico_envio_autenticaciones_r05 (
   CONSTRAINT envio_autenticaciones_r05_forma_chk CHECK (
        (nro = 1) = (motivo = 'INICIAL')
    AND (origen <> 'CACHE' OR (resultado = 'OK' AND http_status IS NULL AND motivo = 'INICIAL'))
-   AND (origen <> 'HTTP' OR ((resultado = 'OK' AND http_status BETWEEN 200 AND 299) OR (resultado = 'ERROR_HTTP' AND http_status IS NOT NULL) OR (resultado IN ('TIMEOUT', 'RED') AND http_status IS NULL))))
+   AND (origen <> 'HTTP' OR ((resultado = 'OK' AND http_status = 200) OR (resultado = 'ERROR_HTTP' AND http_status IS NOT NULL) OR (resultado IN ('TIMEOUT', 'RED') AND http_status IS NULL))))
 );
 
 -- Salida HTTP de un POST (evento HTTP_RESPUESTA de NEX-072) con su proyección P validada, o la razón por la que no hay P (forma persistida de la ausencia).
@@ -250,6 +262,9 @@ CREATE TABLE public.documento_electronico_envio_cierres_r05 (
   estado_local         text        NOT NULL CHECK (estado_local IN ('ENVIADO', 'ERROR_ENVIO', 'ENVIO_INDETERMINADO')),
   error_tipo           text        CHECK (error_tipo IS NULL OR error_tipo IN ('AUTENTICACION', 'RECHAZO', 'TRANSITORIO')),
   http_status          integer     CHECK (http_status IS NULL OR http_status BETWEEN 100 AND 599),
+  salida_ultimo_post   text        NOT NULL CHECK (salida_ultimo_post IN ('SIN_POST', 'SIN_SALIDA', 'ERROR_TRANSMISION', 'HTTP_RESPUESTA')),
+  http_post            integer     CHECK (http_post IS NULL OR http_post BETWEEN 100 AND 599),
+  http_autenticacion   integer     CHECK (http_autenticacion IS NULL OR http_autenticacion BETWEEN 100 AND 599),
   motivo               text        CHECK (motivo IS NULL OR motivo IN ('EVIDENCIA_INSUFICIENTE', 'NO_TRANSMITIDO')),
   clasificacion_sha256 text        NOT NULL CHECK (clasificacion_sha256 ~ '^[0-9a-f]{64}$'),
   lote_paridad         boolean,
@@ -263,8 +278,10 @@ CREATE TABLE public.documento_electronico_envio_cierres_r05 (
     REFERENCES public.documento_electronico_intentos (empresa_id, documento_id, id) ON DELETE CASCADE,
   CONSTRAINT envio_cierres_r05_actor_fk FOREIGN KEY (empresa_id, actor_id) REFERENCES public.usuarios (empresa_id, id) ON DELETE CASCADE,
   CONSTRAINT envio_cierres_r05_intento_uk UNIQUE (empresa_id, documento_id, intento_id),
-  CONSTRAINT envio_cierres_r05_forma_chk CHECK ((resultado = 'OK') = (estado_local = 'ENVIADO') AND (estado_local = 'ERROR_ENVIO') = (error_tipo IS NOT NULL))
+  CONSTRAINT envio_cierres_r05_forma_chk CHECK ((resultado = 'OK') = (estado_local = 'ENVIADO') AND (estado_local = 'ERROR_ENVIO') = (error_tipo IS NOT NULL)
+                                              AND (salida_ultimo_post = 'HTTP_RESPUESTA') = (http_post IS NOT NULL))
 );
+COMMENT ON COLUMN public.documento_electronico_envio_cierres_r05.salida_ultimo_post IS 'R02-C01 F003: SIN_POST (no hubo POST), SIN_SALIDA (hubo POST y no consta su salida: AUSENCIA DE EVIDENCIA), ERROR_TRANSMISION (consta que no hubo HTTP: TIMEOUT/RED), HTTP_RESPUESTA (http_post = su estado). http_autenticacion = HTTP de la autenticación decisiva (o la última), separado del POST.';
 COMMENT ON COLUMN public.documento_electronico_envio_cierres_r05.lote_paridad IS 'Solo en R-06f (ACK por lote): true si el lote de P también lo admite la regla vigente de NEX-080 (clases de caracteres del locale SQL). false = discrepancia Unicode real entre JS y SQL: el intento queda sin lote; se registra, no se corrige aquí (bloqueo B).';
 
 -- Salidas tardías: la salida de un POST que llega cuando la vía normal ya no la admite (operación cerrada, no vigente o documento fuera de envío). Nunca reescribe el cierre ni el estado.
@@ -286,6 +303,16 @@ CREATE TABLE public.documento_electronico_envio_salidas_tardias_r05 (
   respuesta_sha256   text        CHECK (respuesta_sha256 IS NULL OR respuesta_sha256 ~ '^[0-9a-f]{64}$'),
   respuesta_bytes    integer     CHECK (respuesta_bytes IS NULL OR respuesta_bytes >= 0),
   proyeccion         jsonb       CHECK (proyeccion IS NULL OR (jsonb_typeof(proyeccion) = 'object' AND octet_length(proyeccion::text) <= 16384)),
+  estado_proyeccion  text        NOT NULL CHECK (estado_proyeccion IN ('NO_APLICA', 'SIN_PROYECCION', 'PROYECCION_DESCARTADA', 'PROYECCION_VALIDADA', 'PROYECCION_COTEJADA_PARCIAL')),
+  motivo_sin_proyeccion text     CHECK (motivo_sin_proyeccion IS NULL OR motivo_sin_proyeccion IN ('PROYECCION_RECHAZADA', 'CREDENCIALES_RESIDUALES', 'CUERPO_NO_PROYECTABLE', 'FALLO_LOCAL')),
+  motivo_descarte    text        CHECK (motivo_descarte IS NULL OR motivo_descarte IN ('PROYECCION_INVALIDA', 'PROYECCION_EXCEDIDA', 'PROYECCION_INCOHERENTE', 'CLASIFICACION_NO_COINCIDE',
+                                                                                    'EVIDENCIA_CON_CREDENCIALES', 'IDENTIDAD_SNAPSHOT_DISTINTA', 'OTRO')),
+  regla              text        CHECK (regla IS NULL OR char_length(regla) <= 40),
+  resultado          text        CHECK (resultado IS NULL OR resultado IN ('OK', 'ERROR_HTTP', 'RESPUESTA_INVALIDA')),
+  estado_local       text        CHECK (estado_local IS NULL OR estado_local IN ('ENVIADO', 'ERROR_ENVIO', 'ENVIO_INDETERMINADO')),
+  error_tipo         text        CHECK (error_tipo IS NULL OR error_tipo IN ('AUTENTICACION', 'RECHAZO', 'TRANSITORIO')),
+  cotejo             text        CHECK (cotejo IS NULL OR cotejo IN ('COTEJADO_PARCIAL', 'NO_COTEJABLE_SIN_CUERPO', 'NO_COTEJABLE_TRUNCADA', 'NO_COTEJABLE_REDACTADA')),
+  campos_cotejados   text[],
   motivo_tardia      text        NOT NULL CHECK (motivo_tardia IN ('OPERACION_CERRADA', 'OPERACION_NO_VIGENTE', 'DOCUMENTO_NO_ENVIANDO')),
   huella_sha256      text        NOT NULL CHECK (huella_sha256 ~ '^[0-9a-f]{64}$'),
   actor_id           uuid        NOT NULL,
@@ -301,8 +328,18 @@ CREATE TABLE public.documento_electronico_envio_salidas_tardias_r05 (
   CONSTRAINT envio_salidas_tardias_r05_forma_chk CHECK (
        num_nonnulls(post_evento_id, post_grande_id) = 1
    AND (respuesta_saneada IS NULL) = (respuesta_sha256 IS NULL) AND (respuesta_saneada IS NULL) = (respuesta_bytes IS NULL) AND (NOT respuesta_truncada OR respuesta_saneada IS NOT NULL)
-   AND ((tipo_salida = 'HTTP_RESPUESTA' AND http_status IS NOT NULL AND clase_error IS NULL)
-     OR (tipo_salida = 'ERROR_TRANSMISION' AND http_status IS NULL AND clase_error IS NOT NULL AND respuesta_saneada IS NULL AND proyeccion IS NULL)))
+   AND ((tipo_salida = 'HTTP_RESPUESTA' AND http_status IS NOT NULL AND clase_error IS NULL AND estado_proyeccion <> 'NO_APLICA')
+     OR (tipo_salida = 'ERROR_TRANSMISION' AND http_status IS NULL AND clase_error IS NOT NULL AND respuesta_saneada IS NULL AND proyeccion IS NULL AND estado_proyeccion = 'NO_APLICA'))
+   -- R02-C01 F002: A = SIN_PROYECCION (el llamador no envió P y declara por qué), B = PROYECCION_DESCARTADA (la P enviada no pasó validación/saneado/clasificación/cotejo: motivo seguro),
+   -- C = PROYECCION_VALIDADA (P válida, respuesta no cotejable), D = PROYECCION_COTEJADA_PARCIAL. La clasificación de C/D es informativa: una salida tardía nunca cambia cierre ni estados.
+   AND (estado_proyeccion = 'SIN_PROYECCION') = (motivo_sin_proyeccion IS NOT NULL)
+   AND (estado_proyeccion = 'PROYECCION_DESCARTADA') = (motivo_descarte IS NOT NULL)
+   AND (estado_proyeccion IN ('PROYECCION_VALIDADA', 'PROYECCION_COTEJADA_PARCIAL')) = (proyeccion IS NOT NULL)
+   AND (proyeccion IS NULL) = (regla IS NULL) AND (regla IS NULL) = (resultado IS NULL) AND (regla IS NULL) = (estado_local IS NULL) AND (regla IS NULL) = (cotejo IS NULL)
+   AND (regla IS NULL) = (campos_cotejados IS NULL)
+   AND ((estado_local = 'ERROR_ENVIO') = (error_tipo IS NOT NULL) OR estado_local IS NULL)
+   AND (estado_proyeccion <> 'PROYECCION_COTEJADA_PARCIAL' OR cotejo = 'COTEJADO_PARCIAL')
+   AND (estado_proyeccion <> 'PROYECCION_VALIDADA' OR cotejo <> 'COTEJADO_PARCIAL'))
 );
 COMMENT ON TABLE public.documento_electronico_envio_salidas_tardias_r05 IS 'NEX-084: salida de un POST registrada fuera de la vía normal (append-only, vínculo compuesto al POST). No cambia estado, cierre ni intento; queda para conciliación (consulta en la misma cuenta).';
 
@@ -433,17 +470,105 @@ $$;
 -- ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 -- 4) Proyección P v1: esquema cerrado, saneado, clasificación (matriz R-01…R-07 de interpretarRecepcion) y cotejo con la respuesta persistida
 -- ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
--- Esquema P v1 (todas las claves obligatorias, ninguna adicional, <= 16384 bytes UTF-8):
---   {version:1, http:int, cuerpo:{json_valido:bool, raiz_objeto:bool, bytes:int>=0}, status:'AUSENTE'|'SUCCESS'|'ERROR'|'OTRO_TEXTO'|'OTRO_TIPO', token_invalido:bool, duplicado:bool,
---    contador_rechazados_positivo:bool, rechazados:{no_vacia:bool, propio:bool, n_entradas:0..32767}, aceptados:{n_entradas:0..32767, incluye_propio:bool, con_formato_fiscal:bool},
+-- Ayudantes del cotejo (R02-C01 F001), puros:
+--   fe_e03_r05_alterado: un texto de la respuesta persistida que el saneado de la aplicación pudo haber cambiado («[omitido]» de secretos/JWT/Bearer o «…» de recorte > 1000 caracteres o
+--   de profundidad): su valor original se desconoce y NO se coteja.
+CREATE OR REPLACE FUNCTION public.fe_e03_r05_alterado(v jsonb) RETURNS boolean
+LANGUAGE sql IMMUTABLE SET search_path = public, pg_temp AS $$
+  SELECT v IS NOT NULL AND jsonb_typeof(v) = 'string' AND (strpos(v #>> '{}', '[omitido]') > 0 OR right(v #>> '{}', 1) = '…')
+$$;
+
+-- Hay un punto de código fuera del plano básico (JavaScript lo cuenta como 2 unidades en .length: el largo del lote no se puede recalcular igual).
+CREATE OR REPLACE FUNCTION public.fe_e03_r05_astral(p text) RETURNS boolean
+LANGUAGE plpgsql IMMUTABLE SET search_path = public, pg_temp AS $$
+DECLARE
+  i integer;
+BEGIN
+  IF p IS NULL THEN
+    RETURN false;
+  END IF;
+  FOR i IN 1 .. char_length(p) LOOP
+    IF ascii(substr(p, i, 1)) > 65535 THEN
+      RETURN true;
+    END IF;
+  END LOOP;
+  RETURN false;
+END $$;
+
+-- String.prototype.trim() de JavaScript (mismo conjunto de espacios y terminadores que fe_e03_r05_lote_valido).
+CREATE OR REPLACE FUNCTION public.fe_e03_r05_trim_js(p text) RETURNS text
+LANGUAGE plpgsql IMMUTABLE SET search_path = public, pg_temp AS $$
+DECLARE
+  v_espacios constant integer[] := ARRAY[9, 10, 11, 12, 13, 32, 160, 5760, 8192, 8193, 8194, 8195, 8196, 8197, 8198, 8199, 8200, 8201, 8202, 8232, 8233, 8239, 8287, 12288, 65279];
+  v text := p;
+BEGIN
+  WHILE char_length(v) > 0 AND ascii(left(v, 1)) = ANY (v_espacios) LOOP
+    v := substr(v, 2);
+  END LOOP;
+  WHILE char_length(v) > 0 AND ascii(right(v, 1)) = ANY (v_espacios) LOOP
+    v := left(v, char_length(v) - 1);
+  END LOOP;
+  RETURN v;
+END $$;
+
+-- Clase de UN eco explícito de la raíz (réplica de claseEco de gateway.ts): COINCIDE / CONTRADICE / NO_INTERPRETABLE, o NULL = ausencia. p_identidad = P.identidad ya validada contra el
+-- snapshot transmitido; p_tipo_doc = tipoDocConsulta (FE/NCE; otro tipo → NULL).
+CREATE OR REPLACE FUNCTION public.fe_e03_r05_clase_eco(p_campo text, v jsonb, p_identidad jsonb, p_tipo_doc text) RETURNS text
+LANGUAGE plpgsql IMMUTABLE SET search_path = public, pg_temp AS $$
+DECLARE
+  v_ref text;
+BEGIN
+  IF v IS NULL THEN
+    RETURN NULL;
+  END IF;
+  IF p_campo = 'dserienum' THEN
+    IF p_identidad ->> 'serie_estado' = 'AUSENTE' THEN
+      RETURN 'NO_INTERPRETABLE';
+    END IF;
+    IF jsonb_typeof(v) = 'null' THEN
+      RETURN CASE WHEN p_identidad ->> 'serie_estado' = 'NULO' THEN 'COINCIDE' ELSE 'CONTRADICE' END;
+    END IF;
+    IF jsonb_typeof(v) <> 'string' OR (v #>> '{}') = '' THEN
+      RETURN 'NO_INTERPRETABLE';
+    END IF;
+    RETURN CASE WHEN p_identidad ->> 'serie_estado' = 'TEXTO' AND (v #>> '{}') = (p_identidad ->> 'serie') THEN 'COINCIDE' ELSE 'CONTRADICE' END;
+  END IF;
+  IF jsonb_typeof(v) = 'null' THEN
+    RETURN NULL;
+  END IF;
+  IF jsonb_typeof(v) <> 'string' OR (v #>> '{}') = '' THEN
+    RETURN 'NO_INTERPRETABLE';
+  END IF;
+  IF p_campo = 'tipodoc' THEN
+    IF p_tipo_doc IS NULL THEN
+      RETURN 'NO_INTERPRETABLE';
+    END IF;
+    RETURN CASE WHEN upper(v #>> '{}') = upper(p_tipo_doc) THEN 'COINCIDE' ELSE 'CONTRADICE' END;
+  END IF;
+  v_ref := CASE p_campo WHEN 'dest' THEN p_identidad ->> 'establecimiento' WHEN 'dpunexp' THEN p_identidad ->> 'punto' ELSE p_identidad ->> 'numero' END;
+  RETURN CASE WHEN (v #>> '{}') = v_ref THEN 'COINCIDE' ELSE 'CONTRADICE' END;
+END $$;
+
+-- Esquema P v1 (todas las claves obligatorias, ninguna adicional, <= 16384 bytes UTF-8). R02-C01: identidad con serie_estado, n_entradas 0..50, alias de lote en enum, confianza explícita.
+--   {version:1, http:int, cuerpo:{json_valido:bool, raiz_objeto:bool, bytes:int>=0}, status:'AUSENTE'|'SUCCESS'|'ERROR'|'OTRO_TEXTO'|'OTRO_TIPO' (null u otro tipo JSON = OTRO_TIPO),
+--    token_invalido:bool (401 → true; fuera de 4xx → false; resto de 4xx: regex de esTokenInvalido, hecho confiado), duplicado:bool, contador_rechazados_positivo:bool,
+--    rechazados:{no_vacia:bool, propio:bool, n_entradas:0..50}, aceptados:{n_entradas:0..50, incluye_propio:bool, con_formato_fiscal:bool},
 --    ecos:{dest|dpunexp|dnumdoc|dserienum|tipodoc: {n_variantes:0..32767, hay_coincide:bool, hay_contradice:bool, hay_no_interpretable:bool}},
---    lote:{clase:'AUSENTE'|'VALIDO'|'INVALIDO_LARGO'|'INVALIDO_FORMATO'|'INVALIDO_TIPO', clave:text<=40|null, texto:text<=60|null, n_ocurrencias:0..32767},
+--    lote:{clase:'AUSENTE'|'VALIDO'|'INVALIDO_LARGO'|'INVALIDO_FORMATO'|'INVALIDO_TIPO', clave:'nrolote'|'lote'|'numerolote'|'nrodelote'|'numerodelote'|null (alias normalizado de la
+--          raíz), texto:text<=60|null (texto literal o String(entero seguro)), n_ocurrencias:0..32767},
 --    cdc:{presente:bool, valor:text<=256|null, motivo:'NO_TEXTO'|'EXCEDE_LIMITE'|'CARACTER_NUL'|'CREDENCIAL'|null},
---    identidad:{tipo, establecimiento, punto, numero, serie|null} (= fila del documento),
+--    identidad:{tipo, establecimiento, punto, numero (textos = fila del documento y, si el snapshot los trae, = dEst/dPunExp/dNumDoc del snapshot transmitido),
+--               serie_estado:'TEXTO'|'NULO'|'AUSENTE' (= seriePayload del snapshot: texto, null, ausente u otro tipo), serie:texto si TEXTO, si no null},
 --    lectura:{texto_resultado:<=500|null, mensaje:<=300|null, errores_propios:[<=3 textos <=200], estado_gateway:<=120|null, request_id:<=80|null, campo_problema:<=40|null},
---    clasificacion_app:{regla, resultado, estado_local, error_tipo|null} (= clasificación SQL), confianza:{hechos_servidor:["http","identidad","clasificacion"]}}
+--    clasificacion_app:{regla, resultado, estado_local, error_tipo|null} (= clasificación SQL),
+--    confianza:{verificados_sql:["http","identidad","token_invalido_fuera_4xx","clasificacion"],
+--               cotejables:["cuerpo","status","ecos","contador_rechazados_positivo","lote","cdc","rechazados","aceptados"],
+--               confiados_servidor:["token_invalido_4xx","duplicado","lectura","orden_alias","coercion_js","terceros_omitidos"]}}
+--   verificados_sql: el banco los comprueba siempre. cotejables: se comprueban contra la respuesta persistida SOLO cuando esta los conserva (campos_cotejados dice cuáles se compararon).
+--   confiados_servidor: hechos que el banco no puede recalcular (regex de token en 4xx y de duplicidad, textos de lectura, orden de claves alias perdido en jsonb, coerciones de
+--   JavaScript como Number(), entradas de terceros retiradas por la aplicación): se aceptan como declarados y se dice explícitamente.
 CREATE OR REPLACE FUNCTION public.fe_e03_r05_validar_proyeccion(
-  p jsonb, p_http integer, p_tipo text, p_establecimiento text, p_punto text, p_numero text, p_serie text)
+  p jsonb, p_http integer, p_tipo text, p_establecimiento text, p_punto text, p_numero text, p_snapshot jsonb)
 RETURNS void
 LANGUAGE plpgsql IMMUTABLE SET search_path = public, pg_temp AS $$
 DECLARE
@@ -454,6 +579,9 @@ DECLARE
   v_lote_texto text;
   v_cdc jsonb;
   v_err jsonb;
+  v_token boolean;
+  v_serie_estado text;
+  v_tipo_doc text := CASE p_tipo WHEN 'FE' THEN 'FE' WHEN 'NCE' THEN 'NCE' END;
 BEGIN
   IF p IS NULL OR jsonb_typeof(p) <> 'object' THEN
     RAISE EXCEPTION 'proyección no válida: no es un objeto' USING ERRCODE = 'P0001', DETAIL = 'NEX:PROYECCION_INVALIDA';
@@ -468,7 +596,7 @@ BEGIN
   IF NOT public.fe_e03_r05_entero(p -> 'version', 1, 1) THEN
     RAISE EXCEPTION 'proyección no válida: versión' USING ERRCODE = 'P0001', DETAIL = 'NEX:PROYECCION_INVALIDA';
   END IF;
-  IF NOT public.fe_e03_r05_entero(p -> 'http', 100, 599) OR (p ->> 'http')::integer IS DISTINCT FROM p_http THEN
+  IF p_http IS NULL OR NOT public.fe_e03_r05_entero(p -> 'http', 100, 599) OR (p ->> 'http')::integer IS DISTINCT FROM p_http THEN
     RAISE EXCEPTION 'proyección no válida: estado HTTP distinto del registrado' USING ERRCODE = 'P0001', DETAIL = 'NEX:PROYECCION_INVALIDA';
   END IF;
   IF NOT public.fe_e03_r05_claves_exactas(p -> 'cuerpo', ARRAY['json_valido', 'raiz_objeto', 'bytes'])
@@ -484,15 +612,22 @@ BEGIN
      OR NOT public.fe_e03_r05_bool(p -> 'token_invalido') OR NOT public.fe_e03_r05_bool(p -> 'duplicado') OR NOT public.fe_e03_r05_bool(p -> 'contador_rechazados_positivo') THEN
     RAISE EXCEPTION 'proyección no válida: status o indicadores' USING ERRCODE = 'P0001', DETAIL = 'NEX:PROYECCION_INVALIDA';
   END IF;
+  -- R02-C01 F001: regla determinística de esTokenInvalido (gateway.ts) que el banco SÍ puede decidir: HTTP 401 → token inválido; fuera de 4xx → nunca. Solo en el resto de 4xx el valor
+  -- depende de la regex sobre «message» y queda confiado al servidor (confiados_servidor.token_invalido_4xx). Una P contradictoria no se persiste ni habilita renovación o POST 2.
+  v_token := (p ->> 'token_invalido')::boolean;
+  IF (p_http = 401 AND NOT v_token) OR ((p_http < 400 OR p_http >= 500) AND v_token) THEN
+    RAISE EXCEPTION 'proyección no válida: token_invalido contradice el estado HTTP' USING ERRCODE = 'P0001', DETAIL = 'NEX:PROYECCION_INVALIDA';
+  END IF;
+  -- n_entradas: entradasPorNumero toma los primeros 50 elementos de cada lista; más de 50 entradas (elementos objeto con varias claves) se rechaza: P sin certificar → cierre indeterminado.
   IF NOT public.fe_e03_r05_claves_exactas(p -> 'rechazados', ARRAY['no_vacia', 'propio', 'n_entradas'])
      OR NOT public.fe_e03_r05_bool(p #> '{rechazados,no_vacia}') OR NOT public.fe_e03_r05_bool(p #> '{rechazados,propio}')
-     OR NOT public.fe_e03_r05_entero(p #> '{rechazados,n_entradas}', 0, 32767)
+     OR NOT public.fe_e03_r05_entero(p #> '{rechazados,n_entradas}', 0, 50)
      OR ((p #>> '{rechazados,n_entradas}')::integer > 0) <> (p #>> '{rechazados,no_vacia}')::boolean
      OR ((p #>> '{rechazados,propio}')::boolean AND NOT (p #>> '{rechazados,no_vacia}')::boolean) THEN
     RAISE EXCEPTION 'proyección no válida: rechazados' USING ERRCODE = 'P0001', DETAIL = 'NEX:PROYECCION_INVALIDA';
   END IF;
   IF NOT public.fe_e03_r05_claves_exactas(p -> 'aceptados', ARRAY['n_entradas', 'incluye_propio', 'con_formato_fiscal'])
-     OR NOT public.fe_e03_r05_entero(p #> '{aceptados,n_entradas}', 0, 32767)
+     OR NOT public.fe_e03_r05_entero(p #> '{aceptados,n_entradas}', 0, 50)
      OR NOT public.fe_e03_r05_bool(p #> '{aceptados,incluye_propio}') OR NOT public.fe_e03_r05_bool(p #> '{aceptados,con_formato_fiscal}')
      OR ((p #>> '{aceptados,incluye_propio}')::boolean AND NOT (p #>> '{aceptados,con_formato_fiscal}')::boolean)
      OR ((p #>> '{aceptados,con_formato_fiscal}')::boolean AND (p #>> '{aceptados,n_entradas}')::integer = 0) THEN
@@ -512,7 +647,8 @@ BEGIN
   END LOOP;
   IF NOT public.fe_e03_r05_claves_exactas(p -> 'lote', ARRAY['clase', 'clave', 'texto', 'n_ocurrencias'])
      OR NOT public.fe_e03_r05_enum(p #> '{lote,clase}', ARRAY['AUSENTE', 'VALIDO', 'INVALIDO_LARGO', 'INVALIDO_FORMATO', 'INVALIDO_TIPO'])
-     OR NOT public.fe_e03_r05_texto(p #> '{lote,clave}', 40, true) OR NOT public.fe_e03_r05_texto(p #> '{lote,texto}', 60, true)
+     OR NOT (jsonb_typeof(p #> '{lote,clave}') = 'null' OR public.fe_e03_r05_enum(p #> '{lote,clave}', ARRAY['nrolote', 'lote', 'numerolote', 'nrodelote', 'numerodelote']))
+     OR NOT public.fe_e03_r05_texto(p #> '{lote,texto}', 60, true)
      OR NOT public.fe_e03_r05_entero(p #> '{lote,n_ocurrencias}', 0, 32767) THEN
     RAISE EXCEPTION 'proyección no válida: lote' USING ERRCODE = 'P0001', DETAIL = 'NEX:PROYECCION_INVALIDA';
   END IF;
@@ -532,20 +668,42 @@ BEGIN
      OR ((v_cdc ->> 'presente')::boolean AND (jsonb_typeof(v_cdc -> 'valor') = 'null') = (jsonb_typeof(v_cdc -> 'motivo') = 'null')) THEN
     RAISE EXCEPTION 'proyección no válida: cdc' USING ERRCODE = 'P0001', DETAIL = 'NEX:PROYECCION_INVALIDA';
   END IF;
-  -- Sin raíz objeto, nada de la raíz pudo leerse: todos los hechos de la raíz en su valor neutro.
+  -- Sin raíz objeto, nada de la raíz pudo leerse: todos los hechos de la raíz en su valor neutro (también token_invalido salvo 401: esTokenInvalido usa JSON.parse(...).message).
   IF NOT v_raiz AND (p ->> 'status' <> 'AUSENTE' OR (p ->> 'duplicado')::boolean OR (p ->> 'contador_rechazados_positivo')::boolean
                      OR (p #>> '{rechazados,no_vacia}')::boolean OR (p #>> '{aceptados,n_entradas}')::integer > 0 OR v_lote_clase <> 'AUSENTE'
-                     OR (v_cdc ->> 'presente')::boolean
+                     OR (v_cdc ->> 'presente')::boolean OR (v_token AND p_http <> 401)
                      OR EXISTS (SELECT 1 FROM jsonb_each(p -> 'ecos') x WHERE (x.value ->> 'n_variantes')::integer > 0)) THEN
     RAISE EXCEPTION 'proyección no válida: hechos de la raíz sin raíz objeto' USING ERRCODE = 'P0001', DETAIL = 'NEX:PROYECCION_INVALIDA';
   END IF;
-  IF NOT public.fe_e03_r05_claves_exactas(p -> 'identidad', ARRAY['tipo', 'establecimiento', 'punto', 'numero', 'serie'])
+
+  -- R02-C01 F001: identidad estrictamente tipada = la identidad que la aplicación compara (fila del documento) y la del snapshot EFECTIVAMENTE transmitido (versión de la operación).
+  IF p_snapshot IS NULL OR jsonb_typeof(p_snapshot) <> 'object' THEN
+    RAISE EXCEPTION 'falta el snapshot transmitido de la operación' USING ERRCODE = 'P0001', DETAIL = 'NEX:IDENTIDAD_SNAPSHOT_DISTINTA';
+  END IF;
+  IF (p_snapshot ? 'dEst' AND (jsonb_typeof(p_snapshot -> 'dEst') <> 'string' OR (p_snapshot ->> 'dEst') IS DISTINCT FROM p_establecimiento))
+     OR (p_snapshot ? 'dPunExp' AND (jsonb_typeof(p_snapshot -> 'dPunExp') <> 'string' OR (p_snapshot ->> 'dPunExp') IS DISTINCT FROM p_punto))
+     OR (p_snapshot ? 'dNumDoc' AND (jsonb_typeof(p_snapshot -> 'dNumDoc') <> 'string' OR (p_snapshot ->> 'dNumDoc') IS DISTINCT FROM p_numero)) THEN
+    RAISE EXCEPTION 'la identidad del snapshot transmitido no coincide con la del documento' USING ERRCODE = 'P0001', DETAIL = 'NEX:IDENTIDAD_SNAPSHOT_DISTINTA';
+  END IF;
+  -- seriePayload: dSerieNum texto → TEXTO; null → NULO; ausente u otro tipo → AUSENTE (un eco de serie no se puede comparar: NO_INTERPRETABLE).
+  v_serie_estado := CASE WHEN NOT p_snapshot ? 'dSerieNum' THEN 'AUSENTE' WHEN jsonb_typeof(p_snapshot -> 'dSerieNum') = 'string' THEN 'TEXTO'
+                         WHEN jsonb_typeof(p_snapshot -> 'dSerieNum') = 'null' THEN 'NULO' ELSE 'AUSENTE' END;
+  IF NOT public.fe_e03_r05_claves_exactas(p -> 'identidad', ARRAY['tipo', 'establecimiento', 'punto', 'numero', 'serie_estado', 'serie'])
+     OR jsonb_typeof(p #> '{identidad,tipo}') IS DISTINCT FROM 'string' OR jsonb_typeof(p #> '{identidad,establecimiento}') IS DISTINCT FROM 'string'
+     OR jsonb_typeof(p #> '{identidad,punto}') IS DISTINCT FROM 'string' OR jsonb_typeof(p #> '{identidad,numero}') IS DISTINCT FROM 'string'
      OR (p #>> '{identidad,tipo}') IS DISTINCT FROM p_tipo OR (p #>> '{identidad,establecimiento}') IS DISTINCT FROM p_establecimiento
      OR (p #>> '{identidad,punto}') IS DISTINCT FROM p_punto OR (p #>> '{identidad,numero}') IS DISTINCT FROM p_numero
-     OR (p #>> '{identidad,serie}') IS DISTINCT FROM p_serie
-     OR jsonb_typeof(p #> '{identidad,tipo}') <> 'string' OR jsonb_typeof(p #> '{identidad,numero}') <> 'string' THEN
-    RAISE EXCEPTION 'proyección no válida: identidad distinta de la del documento' USING ERRCODE = 'P0001', DETAIL = 'NEX:PROYECCION_INVALIDA';
+     OR NOT public.fe_e03_r05_enum(p #> '{identidad,serie_estado}', ARRAY['TEXTO', 'NULO', 'AUSENTE']) OR (p #>> '{identidad,serie_estado}') IS DISTINCT FROM v_serie_estado
+     OR (v_serie_estado = 'TEXTO' AND (jsonb_typeof(p #> '{identidad,serie}') IS DISTINCT FROM 'string' OR (p #>> '{identidad,serie}') IS DISTINCT FROM (p_snapshot ->> 'dSerieNum')))
+     OR (v_serie_estado <> 'TEXTO' AND jsonb_typeof(p #> '{identidad,serie}') IS DISTINCT FROM 'null') THEN
+    RAISE EXCEPTION 'proyección no válida: identidad distinta de la del documento o del snapshot transmitido' USING ERRCODE = 'P0001', DETAIL = 'NEX:PROYECCION_INVALIDA';
   END IF;
+  -- Ecos imposibles para esa identidad (claseEco): serie AUSENTE → todo eco de serie es NO_INTERPRETABLE; tipo sin valor contractual → todo eco de tipo es NO_INTERPRETABLE.
+  IF (v_serie_estado = 'AUSENTE' AND ((p #>> '{ecos,dserienum,hay_coincide}')::boolean OR (p #>> '{ecos,dserienum,hay_contradice}')::boolean))
+     OR (v_tipo_doc IS NULL AND ((p #>> '{ecos,tipodoc,hay_coincide}')::boolean OR (p #>> '{ecos,tipodoc,hay_contradice}')::boolean)) THEN
+    RAISE EXCEPTION 'proyección no válida: eco incompatible con la identidad transmitida' USING ERRCODE = 'P0001', DETAIL = 'NEX:PROYECCION_INVALIDA';
+  END IF;
+
   IF NOT public.fe_e03_r05_claves_exactas(p -> 'lectura', ARRAY['texto_resultado', 'mensaje', 'errores_propios', 'estado_gateway', 'request_id', 'campo_problema'])
      OR NOT public.fe_e03_r05_texto(p #> '{lectura,texto_resultado}', 500, true) OR NOT public.fe_e03_r05_texto(p #> '{lectura,mensaje}', 300, true)
      OR NOT public.fe_e03_r05_texto(p #> '{lectura,estado_gateway}', 120, true) OR NOT public.fe_e03_r05_texto(p #> '{lectura,request_id}', 80, true)
@@ -568,7 +726,10 @@ BEGIN
      OR NOT (jsonb_typeof(p #> '{clasificacion_app,error_tipo}') = 'null' OR public.fe_e03_r05_enum(p #> '{clasificacion_app,error_tipo}', ARRAY['AUTENTICACION', 'RECHAZO', 'TRANSITORIO'])) THEN
     RAISE EXCEPTION 'proyección no válida: clasificación de la aplicación' USING ERRCODE = 'P0001', DETAIL = 'NEX:PROYECCION_INVALIDA';
   END IF;
-  IF NOT public.fe_e03_r05_claves_exactas(p -> 'confianza', ARRAY['hechos_servidor']) OR p #> '{confianza,hechos_servidor}' <> '["http", "identidad", "clasificacion"]'::jsonb THEN
+  IF NOT public.fe_e03_r05_claves_exactas(p -> 'confianza', ARRAY['verificados_sql', 'cotejables', 'confiados_servidor'])
+     OR p #> '{confianza,verificados_sql}' <> '["http", "identidad", "token_invalido_fuera_4xx", "clasificacion"]'::jsonb
+     OR p #> '{confianza,cotejables}' <> '["cuerpo", "status", "ecos", "contador_rechazados_positivo", "lote", "cdc", "rechazados", "aceptados"]'::jsonb
+     OR p #> '{confianza,confiados_servidor}' <> '["token_invalido_4xx", "duplicado", "lectura", "orden_alias", "coercion_js", "terceros_omitidos"]'::jsonb THEN
     RAISE EXCEPTION 'proyección no válida: confianza' USING ERRCODE = 'P0001', DETAIL = 'NEX:PROYECCION_INVALIDA';
   END IF;
 EXCEPTION WHEN data_exception THEN
@@ -710,9 +871,21 @@ BEGIN
   RETURN QUERY SELECT 'R-07', 'RESPUESTA_INVALIDA', 'ENVIO_INDETERMINADO', NULL::text;
 END $$;
 
--- Cotejo honesto de P con la respuesta saneada PERSISTIDA del mismo POST: solo los campos que sobreviven al saneado y se pueden recalcular igual que JavaScript (raíz objeto, status
--- textual, lote de la raíz con una sola ocurrencia y claves ASCII). Ecos, listas y CDC NO se cotejan aquí (dependen de normalizaciones de JavaScript): se declaran en campos_cotejados.
--- Respuesta ausente, truncada o redactada por el banco → no cotejable (se dice cuál). Una diferencia → NEX:PROYECCION_INCOHERENTE (la salida se registra sin P y el cierre queda indeterminado).
+-- Cotejo de P con la respuesta saneada PERSISTIDA del mismo POST (R02-C01 F001). Se recalcula en SQL, con las reglas de interpretarRecepcion, todo hecho que la respuesta persistida
+-- CONSERVA, y se exige igualdad con P; una diferencia → NEX:PROYECCION_INCOHERENTE (la salida se registra sin P y el cierre queda indeterminado, D-C02-2-A). Lo que el saneado, el
+-- truncamiento, la coerción o jsonb perdieron NO se declara cotejado (campos_cotejados enumera exactamente lo comparado):
+--   · respuesta ausente / truncada / redactada por el banco → NO_COTEJABLE_* (sin comparar nada);
+--   · status: clave exacta «status» (ausente → AUSENTE; no texto, incluido null → OTRO_TIPO; texto conservado → SUCCESS/ERROR/OTRO_TEXTO; texto alterado por el saneado → no se coteja);
+--   · ecos dEst/dPunExp/dNumDoc/dSerieNum/tipoDoc: todas las claves de la raíz que normalizan al campo, clase por fe_e03_r05_clase_eco contra la identidad transmitida (serie del snapshot);
+--     un valor alterado, o un tipoDoc no ASCII (mayúsculas JS ≠ SQL), deja ESE eco sin cotejar;
+--   · contador_rechazados_positivo: clave exacta «rechazados» ausente/null/número/booleano (Number() de JavaScript); texto, objeto o lista → coerción JS no recalculable, no se coteja;
+--   · lote: n_ocurrencias siempre; con UNA ocurrencia, alias, clase y texto (texto literal, o String(entero seguro) para un número); con varias, el orden de claves que eligió
+--     JavaScript se perdió en jsonb: solo el conteo. Un texto con puntos de código > U+FFFF (largo UTF-16 ≠ puntos de código) no permite recalcular la clase;
+--   · cdc: presente siempre; con UNA ocurrencia, valor y motivo (NO_TEXTO / EXCEDE_LIMITE en puntos de código como cdcInformadoPorApi). Un CDC omitido por credencial no se coteja.
+--     El CDC nunca es criterio de ACK;
+--   · rechazados / aceptados: con UNA clave «response» objeto y sin OtrosDocumentosOmitidos (la aplicación no retiró terceros), entradas de los primeros 50 elementos (trim de JS),
+--     n_entradas, propio / incluye_propio y con_formato_fiscal. Con terceros retirados, varias claves alias o claves alteradas: no se cotejan.
+-- Las claves de la raíz (y de response) deben ser ASCII sin «[omitido]» para cotejar hechos que dependen de la normalización de claves (lower() de SQL ≠ toLowerCase() de JS fuera de ASCII).
 CREATE OR REPLACE FUNCTION public.fe_e03_r05_cotejar(p jsonb, p_respuesta jsonb, p_truncada boolean, p_redactada boolean)
 RETURNS TABLE (o_cotejo text, o_campos text[])
 LANGUAGE plpgsql IMMUTABLE SET search_path = public, pg_temp AS $$
@@ -720,9 +893,28 @@ DECLARE
   v_campos text[] := ARRAY[]::text[];
   v_raiz boolean;
   v_status text;
-  v_ascii boolean;
+  v_claves_ok boolean;
   v_n integer;
   v_valor jsonb;
+  v_clave text;
+  v_campo text;
+  v_clase text;
+  v_var integer;
+  v_co boolean;
+  v_cn boolean;
+  v_ni boolean;
+  v_omitir boolean;
+  v_contador boolean;
+  v_idn jsonb := p -> 'identidad';
+  v_tipo_doc text := CASE p #>> '{identidad,tipo}' WHEN 'FE' THEN 'FE' WHEN 'NCE' THEN 'NCE' END;
+  v_numero_fiscal text := (p #>> '{identidad,establecimiento}') || '-' || (p #>> '{identidad,punto}') || '-' || (p #>> '{identidad,numero}');
+  v_resp jsonb;
+  v_lista jsonb;
+  v_item jsonb;
+  v_nombres text[];
+  v_texto text;
+  x record;
+  y record;
 BEGIN
   IF p_respuesta IS NULL THEN
     RETURN QUERY SELECT 'NO_COTEJABLE_SIN_CUERPO', v_campos; RETURN;
@@ -748,36 +940,211 @@ BEGIN
     RETURN QUERY SELECT 'COTEJADO_PARCIAL', v_campos; RETURN;
   END IF;
 
-  IF p_respuesta ? 'status' AND jsonb_typeof(p_respuesta -> 'status') = 'string' THEN
+  -- status (raiz.status, clave exacta)
+  IF NOT p_respuesta ? 'status' THEN
+    v_status := 'AUSENTE';
+  ELSIF jsonb_typeof(p_respuesta -> 'status') <> 'string' THEN
+    v_status := 'OTRO_TIPO';
+  ELSIF public.fe_e03_r05_alterado(p_respuesta -> 'status') THEN
+    v_status := NULL;
+  ELSE
     v_status := CASE p_respuesta ->> 'status' WHEN 'success' THEN 'SUCCESS' WHEN 'error' THEN 'ERROR' ELSE 'OTRO_TEXTO' END;
+  END IF;
+  IF v_status IS NOT NULL THEN
     IF v_status <> p ->> 'status' THEN
       RAISE EXCEPTION 'la proyección no coincide con la respuesta persistida (status)' USING ERRCODE = 'P0001', DETAIL = 'NEX:PROYECCION_INCOHERENTE';
     END IF;
     v_campos := array_append(v_campos, 'status'::text);
   END IF;
 
-  SELECT bool_and(k ~ '^[ -~]*$') INTO v_ascii FROM jsonb_object_keys(p_respuesta) AS t(k);
-  IF coalesce(v_ascii, true) THEN
-    SELECT count(*) INTO v_n FROM jsonb_each(p_respuesta) x
-     WHERE regexp_replace(lower(x.key), '[^a-z0-9]', '', 'g') IN ('nrolote', 'lote', 'numerolote', 'nrodelote', 'numerodelote')
-       AND jsonb_typeof(x.value) <> 'null' AND x.value <> '""'::jsonb;
+  -- contador_rechazados_positivo (Number(raiz.rechazados) > 0, clave exacta)
+  v_contador := CASE WHEN NOT p_respuesta ? 'rechazados' OR jsonb_typeof(p_respuesta -> 'rechazados') = 'null' THEN false
+                     WHEN jsonb_typeof(p_respuesta -> 'rechazados') = 'number' THEN (p_respuesta ->> 'rechazados')::numeric > 0
+                     WHEN jsonb_typeof(p_respuesta -> 'rechazados') = 'boolean' THEN (p_respuesta ->> 'rechazados')::boolean END;
+  IF v_contador IS NOT NULL THEN
+    IF v_contador <> (p ->> 'contador_rechazados_positivo')::boolean THEN
+      RAISE EXCEPTION 'la proyección no coincide con la respuesta persistida (contador de rechazados)' USING ERRCODE = 'P0001', DETAIL = 'NEX:PROYECCION_INCOHERENTE';
+    END IF;
+    v_campos := array_append(v_campos, 'contador_rechazados_positivo'::text);
+  END IF;
+
+  SELECT coalesce(bool_and(k ~ '^[ -~]*$' AND strpos(k, '[omitido]') = 0), true) INTO v_claves_ok FROM jsonb_object_keys(p_respuesta) AS t(k);
+  IF v_claves_ok THEN
+    -- Ecos de identidad
+    FOREACH v_campo IN ARRAY ARRAY['dest', 'dpunexp', 'dnumdoc', 'dserienum', 'tipodoc'] LOOP
+      v_var := 0; v_co := false; v_cn := false; v_ni := false; v_omitir := false;
+      FOR x IN SELECT j.key, j.value FROM jsonb_each(p_respuesta) j WHERE regexp_replace(lower(j.key), '[^a-z0-9]', '', 'g') = v_campo LOOP
+        IF public.fe_e03_r05_alterado(x.value) OR (v_campo = 'tipodoc' AND jsonb_typeof(x.value) = 'string' AND (x.value #>> '{}') !~ '^[ -~]*$') THEN
+          v_omitir := true;
+          EXIT;
+        END IF;
+        v_clase := public.fe_e03_r05_clase_eco(v_campo, x.value, v_idn, v_tipo_doc);
+        IF v_clase IS NOT NULL THEN
+          v_var := v_var + 1;
+          v_co := v_co OR v_clase = 'COINCIDE';
+          v_cn := v_cn OR v_clase = 'CONTRADICE';
+          v_ni := v_ni OR v_clase = 'NO_INTERPRETABLE';
+        END IF;
+      END LOOP;
+      IF NOT v_omitir THEN
+        IF v_var <> (p #>> ARRAY['ecos', v_campo, 'n_variantes'])::integer OR v_co <> (p #>> ARRAY['ecos', v_campo, 'hay_coincide'])::boolean
+           OR v_cn <> (p #>> ARRAY['ecos', v_campo, 'hay_contradice'])::boolean OR v_ni <> (p #>> ARRAY['ecos', v_campo, 'hay_no_interpretable'])::boolean THEN
+          RAISE EXCEPTION 'la proyección no coincide con la respuesta persistida (eco %)', v_campo USING ERRCODE = 'P0001', DETAIL = 'NEX:PROYECCION_INCOHERENTE';
+        END IF;
+        v_campos := array_append(v_campos, ('ecos.' || v_campo)::text);
+      END IF;
+    END LOOP;
+
+    -- Lote de la raíz
+    SELECT count(*) INTO v_n FROM jsonb_each(p_respuesta) j
+     WHERE regexp_replace(lower(j.key), '[^a-z0-9]', '', 'g') IN ('nrolote', 'lote', 'numerolote', 'nrodelote', 'numerodelote')
+       AND jsonb_typeof(j.value) <> 'null' AND j.value <> '""'::jsonb;
     IF v_n <> (p #>> '{lote,n_ocurrencias}')::integer THEN
       RAISE EXCEPTION 'la proyección no coincide con la respuesta persistida (lote)' USING ERRCODE = 'P0001', DETAIL = 'NEX:PROYECCION_INCOHERENTE';
     END IF;
     v_campos := array_append(v_campos, 'lote.n_ocurrencias'::text);
-    IF v_n = 1 AND p #>> '{lote,clase}' = 'VALIDO' THEN
-      SELECT x.value INTO v_valor FROM jsonb_each(p_respuesta) x
-       WHERE regexp_replace(lower(x.key), '[^a-z0-9]', '', 'g') IN ('nrolote', 'lote', 'numerolote', 'nrodelote', 'numerodelote')
-         AND jsonb_typeof(x.value) <> 'null' AND x.value <> '""'::jsonb;
-      IF jsonb_typeof(v_valor) = 'string' THEN
-        IF (v_valor #>> '{}') IS DISTINCT FROM (p #>> '{lote,texto}') THEN
-          RAISE EXCEPTION 'la proyección no coincide con la respuesta persistida (texto del lote)' USING ERRCODE = 'P0001', DETAIL = 'NEX:PROYECCION_INCOHERENTE';
-        END IF;
-        v_campos := array_append(v_campos, 'lote.texto'::text);
+    IF v_n = 0 THEN
+      v_campos := array_append(v_campos, 'lote.clase'::text);
+    ELSIF v_n = 1 THEN
+      SELECT regexp_replace(lower(j.key), '[^a-z0-9]', '', 'g'), j.value INTO v_clave, v_valor FROM jsonb_each(p_respuesta) j
+       WHERE regexp_replace(lower(j.key), '[^a-z0-9]', '', 'g') IN ('nrolote', 'lote', 'numerolote', 'nrodelote', 'numerodelote')
+         AND jsonb_typeof(j.value) <> 'null' AND j.value <> '""'::jsonb;
+      IF v_clave IS DISTINCT FROM (p #>> '{lote,clave}') THEN
+        RAISE EXCEPTION 'la proyección no coincide con la respuesta persistida (alias del lote)' USING ERRCODE = 'P0001', DETAIL = 'NEX:PROYECCION_INCOHERENTE';
       END IF;
+      v_campos := array_append(v_campos, 'lote.clave'::text);
+      v_clase := NULL; v_texto := NULL;
+      IF jsonb_typeof(v_valor) = 'string' THEN
+        IF NOT public.fe_e03_r05_alterado(v_valor) AND NOT public.fe_e03_r05_astral(v_valor #>> '{}') THEN
+          v_texto := v_valor #>> '{}';
+          v_clase := CASE WHEN char_length(v_texto) > 60 THEN 'INVALIDO_LARGO' WHEN public.fe_e03_r05_lote_valido(v_texto) THEN 'VALIDO' ELSE 'INVALIDO_FORMATO' END;
+        END IF;
+      ELSIF jsonb_typeof(v_valor) = 'number' THEN
+        -- Number.isSafeInteger: entero y |n| <= 2^53 − 1 → String(n); si no, tipo no admitido.
+        IF (v_valor #>> '{}')::numeric = trunc((v_valor #>> '{}')::numeric) AND abs((v_valor #>> '{}')::numeric) <= 9007199254740991 THEN
+          v_texto := ((v_valor #>> '{}')::numeric)::bigint::text;
+          v_clase := 'VALIDO';
+        ELSE
+          v_clase := 'INVALIDO_TIPO';
+        END IF;
+      ELSE
+        v_clase := 'INVALIDO_TIPO';
+      END IF;
+      IF v_clase IS NOT NULL THEN
+        IF v_clase <> (p #>> '{lote,clase}') OR (v_clase = 'VALIDO' AND v_texto IS DISTINCT FROM (p #>> '{lote,texto}')) THEN
+          RAISE EXCEPTION 'la proyección no coincide con la respuesta persistida (clase o texto del lote)' USING ERRCODE = 'P0001', DETAIL = 'NEX:PROYECCION_INCOHERENTE';
+        END IF;
+        v_campos := array_append(v_campos, 'lote.clase'::text);
+        IF v_clase = 'VALIDO' THEN
+          v_campos := array_append(v_campos, 'lote.texto'::text);
+        END IF;
+      END IF;
+    END IF;
+
+    -- CDC de la raíz (dato opaco; solo transporte, nunca criterio de ACK)
+    SELECT count(*) INTO v_n FROM jsonb_each(p_respuesta) j
+     WHERE regexp_replace(lower(j.key), '[^a-z0-9]', '', 'g') = 'cdc' AND jsonb_typeof(j.value) <> 'null' AND j.value <> '""'::jsonb;
+    IF (v_n > 0) <> (p #>> '{cdc,presente}')::boolean THEN
+      RAISE EXCEPTION 'la proyección no coincide con la respuesta persistida (presencia del CDC)' USING ERRCODE = 'P0001', DETAIL = 'NEX:PROYECCION_INCOHERENTE';
+    END IF;
+    v_campos := array_append(v_campos, 'cdc.presente'::text);
+    IF v_n = 1 AND (p #>> '{cdc,motivo}') IS DISTINCT FROM 'CREDENCIAL' THEN
+      SELECT j.value INTO v_valor FROM jsonb_each(p_respuesta) j
+       WHERE regexp_replace(lower(j.key), '[^a-z0-9]', '', 'g') = 'cdc' AND jsonb_typeof(j.value) <> 'null' AND j.value <> '""'::jsonb;
+      v_omitir := false;
+      IF jsonb_typeof(v_valor) <> 'string' THEN
+        v_omitir := NOT (jsonb_typeof(p #> '{cdc,valor}') = 'null' AND (p #>> '{cdc,motivo}') IS NOT DISTINCT FROM 'NO_TEXTO');
+      ELSIF public.fe_e03_r05_alterado(v_valor) THEN
+        v_omitir := NULL;
+      ELSIF char_length(v_valor #>> '{}') > 256 THEN
+        v_omitir := NOT (jsonb_typeof(p #> '{cdc,valor}') = 'null' AND (p #>> '{cdc,motivo}') IS NOT DISTINCT FROM 'EXCEDE_LIMITE');
+      ELSE
+        v_omitir := (p #>> '{cdc,valor}') IS DISTINCT FROM (v_valor #>> '{}') OR jsonb_typeof(p #> '{cdc,motivo}') <> 'null';
+      END IF;
+      IF v_omitir THEN
+        RAISE EXCEPTION 'la proyección no coincide con la respuesta persistida (CDC)' USING ERRCODE = 'P0001', DETAIL = 'NEX:PROYECCION_INCOHERENTE';
+      END IF;
+      IF v_omitir IS NOT NULL THEN
+        v_campos := array_append(v_campos, 'cdc.valor'::text);
+      END IF;
+    END IF;
+
+    -- Listas propias de response (sin terceros retirados)
+    SELECT count(*) INTO v_n FROM jsonb_each(p_respuesta) j WHERE regexp_replace(lower(j.key), '[^a-z0-9]', '', 'g') = 'response' AND jsonb_typeof(j.value) = 'object';
+    v_resp := NULL;
+    IF v_n = 1 THEN
+      SELECT j.value INTO v_resp FROM jsonb_each(p_respuesta) j WHERE regexp_replace(lower(j.key), '[^a-z0-9]', '', 'g') = 'response' AND jsonb_typeof(j.value) = 'object';
+    END IF;
+    IF v_n = 0 OR (v_resp IS NOT NULL AND NOT v_resp ? 'OtrosDocumentosOmitidos'
+                   AND (SELECT coalesce(bool_and(k ~ '^[ -~]*$' AND strpos(k, '[omitido]') = 0), true) FROM jsonb_object_keys(v_resp) AS t(k))) THEN
+      FOREACH v_campo IN ARRAY ARRAY['rechazados', 'aceptados'] LOOP
+        v_lista := NULL; v_omitir := false; v_nombres := ARRAY[]::text[];
+        IF v_resp IS NOT NULL THEN
+          SELECT count(*) INTO v_n FROM jsonb_each(v_resp) j WHERE regexp_replace(lower(j.key), '[^a-z0-9]', '', 'g') = v_campo;
+          IF v_n > 1 THEN
+            v_omitir := true;
+          ELSIF v_n = 1 THEN
+            SELECT j.value INTO v_lista FROM jsonb_each(v_resp) j WHERE regexp_replace(lower(j.key), '[^a-z0-9]', '', 'g') = v_campo;
+          END IF;
+        END IF;
+        IF NOT v_omitir AND v_lista IS NOT NULL AND jsonb_typeof(v_lista) = 'array' THEN
+          FOR v_item IN SELECT z.value FROM jsonb_array_elements(v_lista) WITH ORDINALITY AS z(value, n) WHERE z.n <= 50 ORDER BY z.n LOOP
+            IF jsonb_typeof(v_item) = 'string' THEN
+              IF public.fe_e03_r05_alterado(v_item) THEN
+                v_omitir := true;
+                EXIT;
+              END IF;
+              v_nombres := array_append(v_nombres, public.fe_e03_r05_trim_js(v_item #>> '{}'));
+            ELSIF jsonb_typeof(v_item) = 'object' THEN
+              FOR y IN SELECT k FROM jsonb_object_keys(v_item) AS t(k) LOOP
+                IF strpos(y.k, '[omitido]') > 0 THEN
+                  v_omitir := true;
+                END IF;
+                v_nombres := array_append(v_nombres, public.fe_e03_r05_trim_js(y.k));
+              END LOOP;
+              EXIT WHEN v_omitir;
+            END IF;
+          END LOOP;
+        END IF;
+        IF NOT v_omitir THEN
+          IF v_campo = 'rechazados' THEN
+            IF cardinality(v_nombres) <> (p #>> '{rechazados,n_entradas}')::integer OR (v_numero_fiscal = ANY (v_nombres)) <> (p #>> '{rechazados,propio}')::boolean THEN
+              RAISE EXCEPTION 'la proyección no coincide con la respuesta persistida (rechazados)' USING ERRCODE = 'P0001', DETAIL = 'NEX:PROYECCION_INCOHERENTE';
+            END IF;
+          ELSE
+            IF cardinality(v_nombres) <> (p #>> '{aceptados,n_entradas}')::integer OR (v_numero_fiscal = ANY (v_nombres)) <> (p #>> '{aceptados,incluye_propio}')::boolean
+               OR EXISTS (SELECT 1 FROM unnest(v_nombres) u(nm) WHERE u.nm ~ '^[0-9]{3}-[0-9]{3}-[0-9]{7}$') <> (p #>> '{aceptados,con_formato_fiscal}')::boolean THEN
+              RAISE EXCEPTION 'la proyección no coincide con la respuesta persistida (aceptados)' USING ERRCODE = 'P0001', DETAIL = 'NEX:PROYECCION_INCOHERENTE';
+            END IF;
+          END IF;
+          v_campos := array_append(v_campos, v_campo);
+        END IF;
+      END LOOP;
     END IF;
   END IF;
   RETURN QUERY SELECT 'COTEJADO_PARCIAL', v_campos;
+END $$;
+
+-- Procesamiento común de una P (vía normal y tardía): esquema cerrado contra el snapshot transmitido → saneado → esquema otra vez → clasificación SQL = clasificación de la aplicación →
+-- cotejo con la respuesta persistida. Devuelve la P saneada CANÓNICA (jsonb) y su clasificación/cotejo; cualquier falla se propaga con su DETAIL NEX:… seguro (sin valores).
+CREATE OR REPLACE FUNCTION public.fe_e03_r05_procesar_proyeccion(
+  p jsonb, p_http integer, p_tipo text, p_establecimiento text, p_punto text, p_numero text, p_snapshot jsonb, p_respuesta jsonb, p_truncada boolean, p_redactada boolean)
+RETURNS TABLE (o_proyeccion jsonb, o_regla text, o_resultado text, o_estado_local text, o_error_tipo text, o_cotejo text, o_campos text[])
+LANGUAGE plpgsql IMMUTABLE SET search_path = public, pg_temp AS $$
+DECLARE
+  v_p jsonb;
+  c record;
+  k record;
+BEGIN
+  PERFORM public.fe_e03_r05_validar_proyeccion(p, p_http, p_tipo, p_establecimiento, p_punto, p_numero, p_snapshot);
+  v_p := public.fe_e03_r05_sanear_proyeccion(p);
+  PERFORM public.fe_e03_r05_validar_proyeccion(v_p, p_http, p_tipo, p_establecimiento, p_punto, p_numero, p_snapshot);
+  SELECT * INTO c FROM public.fe_e03_clasificar_recepcion_r05(v_p, p_tipo);
+  IF jsonb_build_object('regla', c.o_regla, 'resultado', c.o_resultado, 'estado_local', c.o_estado_local, 'error_tipo', c.o_error_tipo) <> v_p -> 'clasificacion_app' THEN
+    RAISE EXCEPTION 'la clasificación de la aplicación no coincide con la clasificación del banco' USING ERRCODE = 'P0001', DETAIL = 'NEX:CLASIFICACION_NO_COINCIDE';
+  END IF;
+  SELECT * INTO k FROM public.fe_e03_r05_cotejar(v_p, p_respuesta, coalesce(p_truncada, false), coalesce(p_redactada, false));
+  RETURN QUERY SELECT v_p, c.o_regla, c.o_resultado, c.o_estado_local, c.o_error_tipo, k.o_cotejo, k.o_campos;
 END $$;
 
 -- ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
@@ -862,6 +1229,17 @@ BEGIN
   RETURN NULL;
 END $$;
 
+-- R02-C01 F001: el POST 1 tiene token inválido COMPROBADO: salida normal HTTP 4xx con P validada (token_invalido coherente con el HTTP), clasificada R-01. Única puerta para renovar el
+-- token y para el POST 2. Nunca tras ACK 2xx, 5xx, TIMEOUT/RED, salida sin P, P rechazada, salida tardía o ausencia de salida.
+CREATE OR REPLACE FUNCTION public.fe_e03_r05_token_rechazado_post1(p_empresa uuid, p_documento uuid, p_operacion uuid) RETURNS boolean
+LANGUAGE sql STABLE SET search_path = public, pg_temp AS $$
+  SELECT EXISTS (SELECT 1 FROM public.documento_electronico_envio_proyecciones_r05 y
+                   JOIN public.documento_electronico_envio_evidencias ev ON ev.empresa_id = y.empresa_id AND ev.documento_id = y.documento_id AND ev.id = y.evento_id
+                  WHERE y.empresa_id = p_empresa AND y.documento_id = p_documento AND y.operacion_id = p_operacion AND y.nro_post = 1
+                    AND y.proyeccion IS NOT NULL AND y.regla = 'R-01' AND (y.proyeccion ->> 'token_invalido')::boolean
+                    AND ev.tipo_evento = 'HTTP_RESPUESTA' AND ev.operacion_id = p_operacion AND ev.nro_post = 1 AND ev.http_status BETWEEN 400 AND 499)
+$$;
+
 -- POST de la operación, de ambas tablas (un número vive en una sola).
 CREATE OR REPLACE FUNCTION public.fe_e03_r05_posts(p_empresa uuid, p_documento uuid, p_operacion uuid)
 RETURNS TABLE (o_nro smallint, o_evento_id uuid, o_grande_id uuid, o_sha256 text, o_creado_at timestamptz)
@@ -871,6 +1249,28 @@ LANGUAGE sql STABLE SET search_path = public, pg_temp AS $$
   UNION ALL
   SELECT g.nro_post, NULL::uuid, g.id, g.solicitud_sha256, g.creado_at FROM public.documento_electronico_envio_posts_grandes_r05 g
    WHERE g.empresa_id = p_empresa AND g.documento_id = p_documento AND g.operacion_id = p_operacion
+$$;
+
+-- R02-C01 F005: definición ÚNICA de «operación R05 abierta» (sin fila de cierre R05) y de su última actividad = el mayor creado_at entre la raíz de la operación, sus eventos NEX-072
+-- (INICIO, POST_INTENTADO, salidas, NO_TRANSMITIDO, CIERRE), sus POST grandes, autenticaciones, proyecciones y salidas tardías. Reciente = última actividad >= corte − 10 minutos, con UN
+-- corte por ejecución (lo fija el llamador). Solo para el propietario (verificar / reversión): sin EXECUTE para PUBLIC ni para nexit_runtime.
+CREATE OR REPLACE FUNCTION public.fe_e03_r05_ultima_actividad(p_empresa uuid, p_documento uuid, p_operacion uuid) RETURNS timestamptz
+LANGUAGE sql STABLE SET search_path = public, pg_temp AS $$
+  SELECT greatest(
+    (SELECT o.creado_at FROM public.documento_electronico_envio_operaciones_r05 o WHERE o.empresa_id = p_empresa AND o.documento_id = p_documento AND o.operacion_id = p_operacion),
+    (SELECT max(e.creado_at) FROM public.documento_electronico_envio_evidencias e WHERE e.empresa_id = p_empresa AND e.documento_id = p_documento AND e.operacion_id = p_operacion),
+    (SELECT max(g.creado_at) FROM public.documento_electronico_envio_posts_grandes_r05 g WHERE g.empresa_id = p_empresa AND g.documento_id = p_documento AND g.operacion_id = p_operacion),
+    (SELECT max(a.creado_at) FROM public.documento_electronico_envio_autenticaciones_r05 a WHERE a.empresa_id = p_empresa AND a.documento_id = p_documento AND a.operacion_id = p_operacion),
+    (SELECT max(y.creado_at) FROM public.documento_electronico_envio_proyecciones_r05 y WHERE y.empresa_id = p_empresa AND y.documento_id = p_documento AND y.operacion_id = p_operacion),
+    (SELECT max(t.creado_at) FROM public.documento_electronico_envio_salidas_tardias_r05 t WHERE t.empresa_id = p_empresa AND t.documento_id = p_documento AND t.operacion_id = p_operacion))
+$$;
+
+CREATE OR REPLACE FUNCTION public.fe_e03_r05_abiertas(p_corte timestamptz) RETURNS TABLE (o_abiertas bigint, o_recientes bigint, o_antiguas bigint)
+LANGUAGE sql STABLE SET search_path = public, pg_temp AS $$
+  SELECT count(*), count(*) FILTER (WHERE x.ultima >= p_corte - interval '10 minutes'), count(*) FILTER (WHERE x.ultima < p_corte - interval '10 minutes')
+    FROM (SELECT public.fe_e03_r05_ultima_actividad(o.empresa_id, o.documento_id, o.operacion_id) AS ultima
+            FROM public.documento_electronico_envio_operaciones_r05 o
+           WHERE NOT EXISTS (SELECT 1 FROM public.documento_electronico_envio_cierres_r05 c WHERE c.operacion_id = o.operacion_id)) x
 $$;
 
 -- ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
@@ -937,7 +1337,8 @@ BEGIN
   RETURN QUERY SELECT r.o_resultado, r.o_payload, r.o_numero, r.o_tipo, r.o_establecimiento, r.o_punto, s.version, s.payload_hash, v_op, false, true;
 END $$;
 
--- 6.2 Autenticación (sin mensajes ni secretos). INICIAL antes de cualquier POST; RENOVACION_TOKEN solo si el POST 1 recibió token inválido (según su P validada) y aún no hay POST 2.
+-- 6.2 Autenticación (sin mensajes ni secretos). INICIAL antes de cualquier POST; RENOVACION_TOKEN solo si el POST 1 recibió token inválido COMPROBADO (fe_e03_r05_token_rechazado_post1:
+-- HTTP 4xx, P validada, regla R-01) y aún no hay POST 2. OK por HTTP = 200 exacto (CHECK de la tabla).
 CREATE OR REPLACE FUNCTION public.fe_e03_registrar_autenticacion_r05(
   p_empresa uuid, p_usuario uuid, p_documento uuid, p_operacion uuid, p_testigo text, p_motivo text, p_origen text, p_resultado text, p_http integer)
 RETURNS TABLE (o_nro smallint, o_reutilizado boolean)
@@ -980,9 +1381,7 @@ BEGIN
        OR (SELECT count(*) FROM public.fe_e03_r05_posts(p_empresa, p_documento, p_operacion)) <> 1
        OR NOT EXISTS (SELECT 1 FROM public.documento_electronico_envio_autenticaciones_r05 x
                        WHERE x.empresa_id = p_empresa AND x.documento_id = p_documento AND x.operacion_id = p_operacion AND x.nro = 1 AND x.resultado = 'OK')
-       OR NOT EXISTS (SELECT 1 FROM public.documento_electronico_envio_proyecciones_r05 y
-                       WHERE y.empresa_id = p_empresa AND y.documento_id = p_documento AND y.operacion_id = p_operacion AND y.nro_post = 1
-                         AND y.proyeccion IS NOT NULL AND (y.proyeccion ->> 'token_invalido')::boolean) THEN
+       OR NOT public.fe_e03_r05_token_rechazado_post1(p_empresa, p_documento, p_operacion) THEN
       RAISE EXCEPTION 'la renovación del token exige el POST 1 con token inválido comprobado y sin POST 2' USING ERRCODE = 'P0001', DETAIL = 'NEX:EVENTO_CONTRADICTORIO';
     END IF;
   END IF;
@@ -1050,9 +1449,7 @@ BEGIN
   END IF;
   IF p_nro_post = 2 AND (NOT EXISTS (SELECT 1 FROM public.documento_electronico_envio_autenticaciones_r05 a
                                       WHERE a.empresa_id = p_empresa AND a.documento_id = p_documento AND a.operacion_id = p_operacion AND a.nro = 2 AND a.resultado = 'OK')
-                         OR NOT EXISTS (SELECT 1 FROM public.documento_electronico_envio_proyecciones_r05 y
-                                         WHERE y.empresa_id = p_empresa AND y.documento_id = p_documento AND y.operacion_id = p_operacion AND y.nro_post = 1
-                                           AND y.proyeccion IS NOT NULL AND (y.proyeccion ->> 'token_invalido')::boolean)) THEN
+                         OR NOT public.fe_e03_r05_token_rechazado_post1(p_empresa, p_documento, p_operacion)) THEN
     RAISE EXCEPTION 'el POST 2 exige token inválido comprobado en el POST 1 y renovación OK' USING ERRCODE = 'P0001', DETAIL = 'NEX:EVENTO_CONTRADICTORIO';
   END IF;
 
@@ -1080,6 +1477,10 @@ END $$;
 
 -- 6.4 Salida de un POST por la vía normal: HTTP_RESPUESTA (con P validada o con el motivo de su ausencia) o ERROR_TRANSMISION (TIMEOUT/RED). Saneado de la respuesta como NEX-072.
 -- Si la vía normal ya no la admite → NEX:OPERACION_CERRADA / OPERACION_NO_VIGENTE / DOCUMENTO_NO_ENVIANDO (la aplicación usa entonces la salida tardía).
+-- R02-C01 F002: repetir la salida devuelve la persistida (o_reutilizado) SOLO con equivalencia semántica completa: empresa, documento, versión, operación y número de POST (por la
+-- búsqueda); tipo de salida, HTTP, clase de error, SHA-256 y bytes de la respuesta saneada, indicador de truncamiento; P saneada canónica (jsonb), motivo de la ausencia de P,
+-- clasificación (regla, resultado, estado local, tipo de error) y cotejo (resultado y campos). Misma respuesta con otra P, otro motivo o una P que ahora no valida → NEX:SALIDA_DISTINTA
+-- sin reescribir nada (la escritura de la salida y de su proyección es atómica: un ACK de escritura perdido se recupera repitiendo exactamente la misma salida).
 CREATE OR REPLACE FUNCTION public.fe_e03_registrar_salida_r05(
   p_empresa uuid, p_usuario uuid, p_documento uuid, p_operacion uuid, p_testigo text, p_nro_post smallint, p_tipo_salida text, p_http integer,
   p_respuesta jsonb, p_respuesta_truncada boolean, p_clase_error text, p_proyeccion jsonb, p_motivo_sin_proyeccion text)
@@ -1091,15 +1492,15 @@ DECLARE
   v_ev public.documento_electronico_envio_evidencias%ROWTYPE;
   v_pr public.documento_electronico_envio_proyecciones_r05%ROWTYPE;
   v_motivo_nv text;
+  v_snapshot jsonb;
   v_resp jsonb;
   v_resp_txt text;
   v_redactado boolean := false;
   v_bytes integer;
   v_sha text;
   v_mensaje text;
-  v_p jsonb;
-  c record;
-  k record;
+  v_igual boolean;
+  q record;
   v_id uuid;
 BEGIN
   IF p_nro_post IS NULL OR p_nro_post NOT BETWEEN 1 AND 2 OR p_tipo_salida IS NULL OR p_tipo_salida NOT IN ('HTTP_RESPUESTA', 'ERROR_TRANSMISION') THEN
@@ -1124,6 +1525,7 @@ BEGIN
               WHERE t.empresa_id = p_empresa AND t.documento_id = p_documento AND t.operacion_id = p_operacion AND t.nro_post = p_nro_post) THEN
     RAISE EXCEPTION 'la salida de este POST ya se registró como tardía' USING ERRCODE = 'P0001', DETAIL = 'NEX:SALIDA_TARDIA_REGISTRADA';
   END IF;
+  SELECT sol.payload INTO v_snapshot FROM public.documento_electronico_solicitudes sol WHERE sol.empresa_id = p_empresa AND sol.documento_id = p_documento AND sol.version = o.version;
 
   -- Saneado de la respuesta (idéntico a NEX-072): claves y valores reconocibles redactados; un residuo se rechaza sin repetir el valor.
   IF p_respuesta IS NOT NULL THEN
@@ -1142,15 +1544,32 @@ BEGIN
     RAISE EXCEPTION 'una respuesta truncada exige el objeto parcial saneado' USING ERRCODE = 'P0001', DETAIL = 'NEX:EVENTO_INVALIDO';
   END IF;
 
-  -- Repetición de la misma salida: se devuelve la persistida; otra distinta se rechaza.
+  -- Repetición de la misma salida: equivalencia semántica completa → la persistida; cualquier diferencia → NEX:SALIDA_DISTINTA (nada se reescribe).
   SELECT * INTO v_ev FROM public.documento_electronico_envio_evidencias e
    WHERE e.empresa_id = p_empresa AND e.documento_id = p_documento AND e.operacion_id = p_operacion AND e.nro_post = p_nro_post AND e.tipo_evento IN ('HTTP_RESPUESTA', 'ERROR_TRANSMISION');
   IF FOUND THEN
     SELECT * INTO v_pr FROM public.documento_electronico_envio_proyecciones_r05 y WHERE y.empresa_id = p_empresa AND y.documento_id = p_documento AND y.evento_id = v_ev.id;
-    IF v_ev.tipo_evento = p_tipo_salida AND v_ev.http_status IS NOT DISTINCT FROM p_http AND v_ev.respuesta_sha256 IS NOT DISTINCT FROM v_sha
-       AND v_ev.respuesta_truncada = coalesce(p_respuesta_truncada, false)
-       AND (p_tipo_salida = 'HTTP_RESPUESTA' OR v_ev.mensaje = p_clase_error)
-       AND (p_tipo_salida = 'ERROR_TRANSMISION' OR v_pr.motivo_sin_proyeccion IS NOT DISTINCT FROM p_motivo_sin_proyeccion) THEN
+    v_igual := v_ev.version = o.version AND v_ev.tipo_evento = p_tipo_salida AND v_ev.http_status IS NOT DISTINCT FROM p_http
+               AND v_ev.respuesta_sha256 IS NOT DISTINCT FROM v_sha AND v_ev.respuesta_bytes IS NOT DISTINCT FROM v_bytes
+               AND v_ev.respuesta_truncada = coalesce(p_respuesta_truncada, false)
+               AND (p_tipo_salida = 'HTTP_RESPUESTA' OR v_ev.mensaje = p_clase_error)
+               AND (p_tipo_salida = 'ERROR_TRANSMISION' OR v_pr.motivo_sin_proyeccion IS NOT DISTINCT FROM p_motivo_sin_proyeccion);
+    IF v_igual AND p_tipo_salida = 'HTTP_RESPUESTA' THEN
+      IF p_proyeccion IS NULL THEN
+        v_igual := v_pr.proyeccion IS NULL;
+      ELSE
+        BEGIN
+          SELECT * INTO q FROM public.fe_e03_r05_procesar_proyeccion(p_proyeccion, p_http, d.tipo, d.establecimiento, d.punto_expedicion, d.numero, v_snapshot,
+                                                                     v_resp, coalesce(p_respuesta_truncada, false), v_redactado);
+          v_igual := v_pr.proyeccion IS NOT DISTINCT FROM q.o_proyeccion AND v_pr.regla IS NOT DISTINCT FROM q.o_regla AND v_pr.resultado IS NOT DISTINCT FROM q.o_resultado
+                     AND v_pr.estado_local IS NOT DISTINCT FROM q.o_estado_local AND v_pr.error_tipo IS NOT DISTINCT FROM q.o_error_tipo
+                     AND v_pr.cotejo IS NOT DISTINCT FROM q.o_cotejo AND v_pr.campos_cotejados IS NOT DISTINCT FROM q.o_campos;
+        EXCEPTION WHEN raise_exception OR data_exception THEN
+          v_igual := false;
+        END;
+      END IF;
+    END IF;
+    IF v_igual THEN
       RETURN QUERY SELECT v_ev.id, v_pr.regla, v_pr.cotejo, true; RETURN;
     END IF;
     RAISE EXCEPTION 'el POST indicado ya tiene otra salida registrada' USING ERRCODE = 'P0001', DETAIL = 'NEX:SALIDA_DISTINTA';
@@ -1168,17 +1587,11 @@ BEGIN
     RETURN QUERY SELECT v_id, NULL::text, NULL::text, false; RETURN;
   END IF;
 
-  -- P: esquema cerrado → saneado → esquema otra vez → clasificación de la aplicación = clasificación SQL → cotejo con la respuesta persistida. Si algo falla, la transacción se revierte y
-  -- la aplicación vuelve a registrar la MISMA salida sin P (motivo PROYECCION_RECHAZADA o CREDENCIALES_RESIDUALES): el cierre quedará indeterminado (D-C02-2-A).
+  -- P: procesamiento común (esquema contra el snapshot transmitido, saneado, clasificación SQL = aplicación, cotejo). Si algo falla, la transacción se revierte y la aplicación vuelve a
+  -- registrar la MISMA salida sin P (motivo PROYECCION_RECHAZADA o CREDENCIALES_RESIDUALES): el cierre quedará indeterminado (D-C02-2-A).
   IF p_proyeccion IS NOT NULL THEN
-    PERFORM public.fe_e03_r05_validar_proyeccion(p_proyeccion, p_http, d.tipo, d.establecimiento, d.punto_expedicion, d.numero, d.serie);
-    v_p := public.fe_e03_r05_sanear_proyeccion(p_proyeccion);
-    PERFORM public.fe_e03_r05_validar_proyeccion(v_p, p_http, d.tipo, d.establecimiento, d.punto_expedicion, d.numero, d.serie);
-    SELECT * INTO c FROM public.fe_e03_clasificar_recepcion_r05(v_p, d.tipo);
-    IF jsonb_build_object('regla', c.o_regla, 'resultado', c.o_resultado, 'estado_local', c.o_estado_local, 'error_tipo', c.o_error_tipo) <> v_p -> 'clasificacion_app' THEN
-      RAISE EXCEPTION 'la clasificación de la aplicación no coincide con la clasificación del banco' USING ERRCODE = 'P0001', DETAIL = 'NEX:CLASIFICACION_NO_COINCIDE';
-    END IF;
-    SELECT * INTO k FROM public.fe_e03_r05_cotejar(v_p, v_resp, coalesce(p_respuesta_truncada, false), v_redactado);
+    SELECT * INTO q FROM public.fe_e03_r05_procesar_proyeccion(p_proyeccion, p_http, d.tipo, d.establecimiento, d.punto_expedicion, d.numero, v_snapshot,
+                                                               v_resp, coalesce(p_respuesta_truncada, false), v_redactado);
   END IF;
 
   v_mensaje := CASE WHEN v_redactado THEN 'respuesta con credenciales redactadas' END;
@@ -1186,10 +1599,10 @@ BEGIN
   VALUES (p_empresa, p_documento, o.version, p_operacion, 'HTTP_RESPUESTA', p_nro_post, p_http, v_resp, coalesce(p_respuesta_truncada, false), v_bytes, v_sha, v_mensaje, p_usuario)
   RETURNING id INTO v_id;
 
-  IF v_p IS NOT NULL THEN
+  IF p_proyeccion IS NOT NULL THEN
     INSERT INTO public.documento_electronico_envio_proyecciones_r05 (empresa_id, documento_id, version, operacion_id, evento_id, nro_post, proyeccion, regla, resultado, estado_local, error_tipo, cotejo, campos_cotejados, actor_id)
-    VALUES (p_empresa, p_documento, o.version, p_operacion, v_id, p_nro_post, v_p, c.o_regla, c.o_resultado, c.o_estado_local, c.o_error_tipo, k.o_cotejo, k.o_campos, p_usuario);
-    RETURN QUERY SELECT v_id, c.o_regla, k.o_cotejo, false; RETURN;
+    VALUES (p_empresa, p_documento, o.version, p_operacion, v_id, p_nro_post, q.o_proyeccion, q.o_regla, q.o_resultado, q.o_estado_local, q.o_error_tipo, q.o_cotejo, q.o_campos, p_usuario);
+    RETURN QUERY SELECT v_id, q.o_regla, q.o_cotejo, false; RETURN;
   END IF;
   INSERT INTO public.documento_electronico_envio_proyecciones_r05 (empresa_id, documento_id, version, operacion_id, evento_id, nro_post, motivo_sin_proyeccion, actor_id)
   VALUES (p_empresa, p_documento, o.version, p_operacion, v_id, p_nro_post, p_motivo_sin_proyeccion, p_usuario);
@@ -1242,14 +1655,20 @@ END $$;
 
 -- 6.6 Cierre derivado EXCLUSIVAMENTE de la evidencia persistida (sin respuesta, lote, CDC ni mensajes del llamador). El llamador declara la clasificación que espera; si no coincide con la
 -- derivada → NEX:CIERRE_CONTRADICTORIO sin escribir nada. Repetición: misma clasificación → la persistida (o_reutilizado); otra → NEX:CIERRE_DISTINTO. Nunca escribe estado_sifen.
+-- R02-C01 F003: el retorno (también en la repetición) da el resultado HISTÓRICO completo (regla, fase, resultado, tipo de error, motivo, salida del último POST, HTTP del POST y de la
+-- autenticación por separado, lote y CDC tal como quedaron en el intento, fecha del cierre) y, separado, el estado ACTUAL del documento. Nunca testigo, su hash, secretos ni payload.
 CREATE OR REPLACE FUNCTION public.fe_e03_cerrar_envio_r05(
   p_empresa uuid, p_usuario uuid, p_documento uuid, p_operacion uuid, p_testigo text, p_clasificacion_esperada jsonb)
-RETURNS TABLE (o_estado_local text, o_intento_id uuid, o_regla text, o_reutilizado boolean)
+RETURNS TABLE (o_estado_local text, o_intento_id uuid, o_regla text, o_reutilizado boolean, o_fase text, o_resultado text, o_error_tipo text, o_motivo text,
+               o_salida_ultimo_post text, o_http_post integer, o_http_autenticacion integer, o_lote text, o_cdc text, o_cerrado_at timestamptz, o_estado_documento_actual text)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
 DECLARE
   d public.documentos_electronicos%ROWTYPE;
   o public.documento_electronico_envio_operaciones_r05%ROWTYPE;
   v_ci public.documento_electronico_envio_cierres_r05%ROWTYPE;
+  v_salida text := 'SIN_POST';
+  v_http_post integer;
+  v_http_aut integer;
   v_ev public.documento_electronico_envio_evidencias%ROWTYPE;
   v_pr public.documento_electronico_envio_proyecciones_r05%ROWTYPE;
   a1 public.documento_electronico_envio_autenticaciones_r05%ROWTYPE;
@@ -1290,7 +1709,10 @@ BEGIN
   SELECT * INTO v_ci FROM public.documento_electronico_envio_cierres_r05 WHERE operacion_id = p_operacion;
   IF FOUND THEN
     IF encode(sha256(convert_to(p_clasificacion_esperada::text, 'UTF8')), 'hex') = v_ci.clasificacion_sha256 THEN
-      RETURN QUERY SELECT v_ci.estado_local, v_ci.intento_id, v_ci.regla, true; RETURN;
+      RETURN QUERY SELECT v_ci.estado_local, v_ci.intento_id, v_ci.regla, true, v_ci.fase, v_ci.resultado, v_ci.error_tipo, v_ci.motivo, v_ci.salida_ultimo_post, v_ci.http_post,
+                          v_ci.http_autenticacion, i.lote, i.cdc_informado, v_ci.creado_at, d.estado_local
+                     FROM public.documento_electronico_intentos i WHERE i.empresa_id = p_empresa AND i.documento_id = p_documento AND i.id = v_ci.intento_id;
+      RETURN;
     END IF;
     RAISE EXCEPTION 'la operación ya se cerró con otra clasificación' USING ERRCODE = 'P0001', DETAIL = 'NEX:CIERRE_DISTINTO';
   END IF;
@@ -1323,9 +1745,9 @@ BEGIN
     ELSE
       RAISE EXCEPTION 'no hay evidencia para cerrar la operación (sin POST, sin autenticación fallida ni no transmisión)' USING ERRCODE = 'P0001', DETAIL = 'NEX:CIERRE_SIN_EVIDENCIA';
     END IF;
-  ELSIF v_ultimo = 1 AND v_tiene_pr AND (v_pr.proyeccion ->> 'token_invalido')::boolean AND a2.id IS NOT NULL AND a2.resultado <> 'OK' THEN
+  ELSIF v_ultimo = 1 AND public.fe_e03_r05_token_rechazado_post1(p_empresa, p_documento, p_operacion) AND a2.id IS NOT NULL AND a2.resultado <> 'OK' THEN
     v_regla := 'AUT-2'; v_fase := 'AUTENTICACION'; v_resultado := a2.resultado; v_estado := 'ERROR_ENVIO'; v_error_tipo := 'AUTENTICACION'; v_http := a2.http_status;
-  ELSIF v_ultimo = 1 AND v_tiene_pr AND (v_pr.proyeccion ->> 'token_invalido')::boolean THEN
+  ELSIF v_ultimo = 1 AND public.fe_e03_r05_token_rechazado_post1(p_empresa, p_documento, p_operacion) THEN
     v_regla := 'EI-TOKEN-SIN-POST2'; v_resultado := 'ERROR_HTTP'; v_estado := 'ENVIO_INDETERMINADO'; v_http := v_ev.http_status; v_respuesta := v_ev.respuesta_saneada;
     v_motivo := 'EVIDENCIA_INSUFICIENTE';
     v_mensaje := 'Evidencia insuficiente: el token fue rechazado y no consta la renovación ni el reenvío; verifique en el gateway (consulta) antes de reenviar.';
@@ -1351,6 +1773,10 @@ BEGIN
       v_paridad := public.fe_e03_r05_lote_nex080(v_lote);
     END IF;
   END IF;
+  -- R02-C01 F003: salida del último POST (ausencia de evidencia ≠ ausencia de HTTP) y HTTP del POST y de la autenticación, por separado.
+  v_salida := CASE WHEN v_n_posts = 0 THEN 'SIN_POST' WHEN NOT v_tiene_salida THEN 'SIN_SALIDA' ELSE v_ev.tipo_evento END;
+  v_http_post := CASE WHEN v_salida = 'HTTP_RESPUESTA' THEN v_ev.http_status END;
+  v_http_aut := CASE WHEN v_regla = 'AUT-1' THEN a1.http_status WHEN a2.id IS NOT NULL THEN a2.http_status ELSE a1.http_status END;
   IF v_fase = 'AUTENTICACION' THEN
     v_mensaje := CASE v_resultado WHEN 'TIMEOUT' THEN 'Tiempo de espera agotado al autenticar con el gateway.'
                                   WHEN 'RED' THEN 'No fue posible comunicarse con el gateway.'
@@ -1377,18 +1803,27 @@ BEGIN
   VALUES (p_empresa, p_documento, o.version, p_operacion, 'CIERRE', v_http, v_nuevos[1], false, p_usuario)
   RETURNING id INTO v_evento;
   INSERT INTO public.documento_electronico_envio_cierres_r05 (operacion_id, empresa_id, documento_id, version, evento_cierre_id, intento_id, regla, fase, resultado, estado_local, error_tipo,
-                                                             http_status, motivo, clasificacion_sha256, lote_paridad, actor_id)
-  VALUES (p_operacion, p_empresa, p_documento, o.version, v_evento, v_nuevos[1], v_regla, v_fase, v_resultado, v_estado, v_error_tipo, v_http, v_motivo, v_huella, v_paridad, p_usuario);
+                                                             http_status, salida_ultimo_post, http_post, http_autenticacion, motivo, clasificacion_sha256, lote_paridad, actor_id)
+  VALUES (p_operacion, p_empresa, p_documento, o.version, v_evento, v_nuevos[1], v_regla, v_fase, v_resultado, v_estado, v_error_tipo, v_http, v_salida, v_http_post, v_http_aut,
+          v_motivo, v_huella, v_paridad, p_usuario);
 
-  RETURN QUERY SELECT v_estado_final, v_nuevos[1], v_regla, false;
+  RETURN QUERY SELECT v_estado_final, v_nuevos[1], v_regla, false, v_fase, v_resultado, v_error_tipo, v_motivo, v_salida, v_http_post, v_http_aut, i.lote, i.cdc_informado, c.creado_at,
+                      (SELECT x.estado_local FROM public.documentos_electronicos x WHERE x.empresa_id = p_empresa AND x.id = p_documento)
+                 FROM public.documento_electronico_intentos i
+                 JOIN public.documento_electronico_envio_cierres_r05 c ON c.operacion_id = p_operacion
+                WHERE i.empresa_id = p_empresa AND i.documento_id = p_documento AND i.id = v_nuevos[1];
 END $$;
 
 -- 6.7 Salida tardía: solo cuando la vía normal NO la admite (motivo con la precedencia de fe_e03_r05_no_vigente) y el POST no tiene salida normal. Append-only; no cambia estado ni cierre.
--- Una P inválida no impide conservar la salida: se guarda sin P. Repetición: misma huella → la persistida; otra → NEX:SALIDA_TARDIA_DISTINTA.
+-- R02-C01 F002: la P recibe el MISMO procesamiento que en la vía normal (fe_e03_r05_procesar_proyeccion), pero su falla no impide conservar la salida; el estado queda explícito:
+--   A SIN_PROYECCION (sin P, con el motivo declarado como en la vía normal) · B PROYECCION_DESCARTADA (P enviada que no pasó: motivo seguro tomado del DETAIL NEX:…, sin valores)
+--   C PROYECCION_VALIDADA (respuesta no cotejable) · D PROYECCION_COTEJADA_PARCIAL. La clasificación de C/D es informativa.
+-- Huella = SHA-256 del jsonb canónico de: tipo, HTTP, clase de error, SHA-256 y bytes de la respuesta, truncamiento, estado de la P, motivo, motivo de descarte, P canónica, clasificación
+-- y cotejo. Repetición con la misma huella → la persistida (o_reutilizado); otra → NEX:SALIDA_TARDIA_DISTINTA. Las escrituras del documento están serializadas por su bloqueo FOR UPDATE.
 CREATE OR REPLACE FUNCTION public.fe_e03_registrar_salida_tardia_r05(
   p_empresa uuid, p_usuario uuid, p_documento uuid, p_operacion uuid, p_testigo text, p_nro_post smallint, p_tipo_salida text, p_http integer,
-  p_respuesta jsonb, p_respuesta_truncada boolean, p_clase_error text, p_proyeccion jsonb)
-RETURNS TABLE (o_salida_id uuid, o_motivo text, o_reutilizado boolean)
+  p_respuesta jsonb, p_respuesta_truncada boolean, p_clase_error text, p_proyeccion jsonb, p_motivo_sin_proyeccion text)
+RETURNS TABLE (o_salida_id uuid, o_motivo text, o_estado_proyeccion text, o_reutilizado boolean)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
 DECLARE
   d public.documentos_electronicos%ROWTYPE;
@@ -1396,17 +1831,30 @@ DECLARE
   v_t public.documento_electronico_envio_salidas_tardias_r05%ROWTYPE;
   v_post record;
   v_motivo text;
+  v_snapshot jsonb;
   v_resp jsonb;
   v_resp_txt text;
+  v_redactado boolean := false;
   v_bytes integer;
   v_sha text;
+  v_estado text;
+  v_descarte text;
+  v_detalle text;
   v_p jsonb;
+  v_regla text;
+  v_resultado text;
+  v_estado_local text;
+  v_error_tipo text;
+  v_cotejo text;
+  v_campos text[];
   v_huella text;
   v_id uuid;
 BEGIN
   IF p_nro_post IS NULL OR p_nro_post NOT BETWEEN 1 AND 2 OR p_tipo_salida IS NULL
-     OR NOT ((p_tipo_salida = 'HTTP_RESPUESTA' AND p_http BETWEEN 100 AND 599 AND p_clase_error IS NULL)
-          OR (p_tipo_salida = 'ERROR_TRANSMISION' AND p_http IS NULL AND p_clase_error IN ('TIMEOUT', 'RED') AND p_respuesta IS NULL AND p_proyeccion IS NULL)) THEN
+     OR NOT ((p_tipo_salida = 'HTTP_RESPUESTA' AND p_http BETWEEN 100 AND 599 AND p_clase_error IS NULL AND (p_proyeccion IS NULL) <> (p_motivo_sin_proyeccion IS NULL)
+              AND (p_motivo_sin_proyeccion IS NULL OR p_motivo_sin_proyeccion IN ('PROYECCION_RECHAZADA', 'CREDENCIALES_RESIDUALES', 'CUERPO_NO_PROYECTABLE', 'FALLO_LOCAL')))
+          OR (p_tipo_salida = 'ERROR_TRANSMISION' AND p_http IS NULL AND p_clase_error IN ('TIMEOUT', 'RED') AND p_respuesta IS NULL AND p_proyeccion IS NULL
+              AND p_motivo_sin_proyeccion IS NULL)) THEN
     RAISE EXCEPTION 'salida tardía no válida' USING ERRCODE = 'P0001', DETAIL = 'NEX:EVENTO_INVALIDO';
   END IF;
   d := public.fe_e03_r05_preparar(p_empresa, p_usuario, p_documento);
@@ -1420,9 +1868,11 @@ BEGIN
               WHERE e.empresa_id = p_empresa AND e.documento_id = p_documento AND e.operacion_id = p_operacion AND e.nro_post = p_nro_post AND e.tipo_evento IN ('HTTP_RESPUESTA', 'ERROR_TRANSMISION')) THEN
     RAISE EXCEPTION 'el POST ya tiene su salida normal registrada' USING ERRCODE = 'P0001', DETAIL = 'NEX:SALIDA_DISTINTA';
   END IF;
+  SELECT sol.payload INTO v_snapshot FROM public.documento_electronico_solicitudes sol WHERE sol.empresa_id = p_empresa AND sol.documento_id = p_documento AND sol.version = o.version;
 
   IF p_respuesta IS NOT NULL THEN
     v_resp_txt := public.fe_e03_redactar_texto(p_respuesta::text);
+    IF v_resp_txt IS DISTINCT FROM p_respuesta::text THEN v_redactado := true; END IF;
     IF public.fe_e03_secreto_residual(v_resp_txt) THEN
       RAISE EXCEPTION 'la respuesta contiene credenciales que no se pudieron redactar: no se registra' USING ERRCODE = 'P0001', DETAIL = 'NEX:EVIDENCIA_CON_CREDENCIALES';
     END IF;
@@ -1435,23 +1885,36 @@ BEGIN
   ELSIF coalesce(p_respuesta_truncada, false) THEN
     RAISE EXCEPTION 'una respuesta truncada exige el objeto parcial saneado' USING ERRCODE = 'P0001', DETAIL = 'NEX:EVENTO_INVALIDO';
   END IF;
-  IF p_proyeccion IS NOT NULL THEN
+
+  IF p_tipo_salida = 'ERROR_TRANSMISION' THEN
+    v_estado := 'NO_APLICA';
+  ELSIF p_proyeccion IS NULL THEN
+    v_estado := 'SIN_PROYECCION';
+  ELSE
     BEGIN
-      PERFORM public.fe_e03_r05_validar_proyeccion(p_proyeccion, p_http, d.tipo, d.establecimiento, d.punto_expedicion, d.numero, d.serie);
-      v_p := public.fe_e03_r05_sanear_proyeccion(p_proyeccion);
-      PERFORM public.fe_e03_r05_validar_proyeccion(v_p, p_http, d.tipo, d.establecimiento, d.punto_expedicion, d.numero, d.serie);
-    EXCEPTION WHEN raise_exception THEN
-      v_p := NULL;
+      SELECT x.o_proyeccion, x.o_regla, x.o_resultado, x.o_estado_local, x.o_error_tipo, x.o_cotejo, x.o_campos
+        INTO v_p, v_regla, v_resultado, v_estado_local, v_error_tipo, v_cotejo, v_campos
+        FROM public.fe_e03_r05_procesar_proyeccion(p_proyeccion, p_http, d.tipo, d.establecimiento, d.punto_expedicion, d.numero, v_snapshot,
+                                                   v_resp, coalesce(p_respuesta_truncada, false), v_redactado) x;
+      v_estado := CASE WHEN v_cotejo = 'COTEJADO_PARCIAL' THEN 'PROYECCION_COTEJADA_PARCIAL' ELSE 'PROYECCION_VALIDADA' END;
+    EXCEPTION WHEN raise_exception OR data_exception THEN
+      GET STACKED DIAGNOSTICS v_detalle = PG_EXCEPTION_DETAIL;
+      v_p := NULL; v_regla := NULL; v_resultado := NULL; v_estado_local := NULL; v_error_tipo := NULL; v_cotejo := NULL; v_campos := NULL;
+      v_estado := 'PROYECCION_DESCARTADA';
+      v_descarte := CASE WHEN v_detalle IN ('NEX:PROYECCION_INVALIDA', 'NEX:PROYECCION_EXCEDIDA', 'NEX:PROYECCION_INCOHERENTE', 'NEX:CLASIFICACION_NO_COINCIDE',
+                                            'NEX:EVIDENCIA_CON_CREDENCIALES', 'NEX:IDENTIDAD_SNAPSHOT_DISTINTA') THEN substr(v_detalle, 5) ELSE 'OTRO' END;
     END;
   END IF;
-  v_huella := encode(sha256(convert_to(jsonb_build_object('tipo', p_tipo_salida, 'http', p_http, 'clase', p_clase_error, 'respuesta', v_sha,
-                                                          'truncada', coalesce(p_respuesta_truncada, false), 'proyeccion', v_p)::text, 'UTF8')), 'hex');
+  v_huella := encode(sha256(convert_to(jsonb_build_object(
+                'tipo', p_tipo_salida, 'http', p_http, 'clase', p_clase_error, 'respuesta', v_sha, 'bytes', v_bytes, 'truncada', coalesce(p_respuesta_truncada, false),
+                'estado_proyeccion', v_estado, 'motivo_sin_proyeccion', p_motivo_sin_proyeccion, 'motivo_descarte', v_descarte, 'proyeccion', v_p,
+                'regla', v_regla, 'resultado', v_resultado, 'estado_local', v_estado_local, 'error_tipo', v_error_tipo, 'cotejo', v_cotejo, 'campos', to_jsonb(v_campos))::text, 'UTF8')), 'hex');
 
   SELECT * INTO v_t FROM public.documento_electronico_envio_salidas_tardias_r05 t
    WHERE t.empresa_id = p_empresa AND t.documento_id = p_documento AND t.operacion_id = p_operacion AND t.nro_post = p_nro_post;
   IF FOUND THEN
-    IF v_t.huella_sha256 = v_huella THEN
-      RETURN QUERY SELECT v_t.id, v_t.motivo_tardia, true; RETURN;
+    IF v_t.huella_sha256 = v_huella AND v_t.version = o.version THEN
+      RETURN QUERY SELECT v_t.id, v_t.motivo_tardia, v_t.estado_proyeccion, true; RETURN;
     END IF;
     RAISE EXCEPTION 'el POST ya tiene otra salida tardía registrada' USING ERRCODE = 'P0001', DETAIL = 'NEX:SALIDA_TARDIA_DISTINTA';
   END IF;
@@ -1462,11 +1925,15 @@ BEGIN
   END IF;
 
   INSERT INTO public.documento_electronico_envio_salidas_tardias_r05 (empresa_id, documento_id, version, operacion_id, nro_post, post_evento_id, post_grande_id, tipo_salida, clase_error,
-                                                                      http_status, respuesta_saneada, respuesta_truncada, respuesta_sha256, respuesta_bytes, proyeccion, motivo_tardia, huella_sha256, actor_id)
+                                                                      http_status, respuesta_saneada, respuesta_truncada, respuesta_sha256, respuesta_bytes, proyeccion, estado_proyeccion,
+                                                                      motivo_sin_proyeccion, motivo_descarte, regla, resultado, estado_local, error_tipo, cotejo, campos_cotejados,
+                                                                      motivo_tardia, huella_sha256, actor_id)
   VALUES (p_empresa, p_documento, o.version, p_operacion, p_nro_post, v_post.o_evento_id, v_post.o_grande_id, p_tipo_salida, p_clase_error,
-          p_http, v_resp, coalesce(p_respuesta_truncada, false), v_sha, v_bytes, v_p, v_motivo, v_huella, p_usuario)
+          p_http, v_resp, coalesce(p_respuesta_truncada, false), v_sha, v_bytes, v_p, v_estado,
+          p_motivo_sin_proyeccion, v_descarte, v_regla, v_resultado, v_estado_local, v_error_tipo, v_cotejo, v_campos,
+          v_motivo, v_huella, p_usuario)
   RETURNING id INTO v_id;
-  RETURN QUERY SELECT v_id, v_motivo, false;
+  RETURN QUERY SELECT v_id, v_motivo, v_estado, false;
 END $$;
 
 -- ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
@@ -1491,6 +1958,80 @@ BEGIN
            EXISTS (SELECT 1 FROM public.documento_electronico_envio_cierres_r05 c WHERE c.operacion_id = o.operacion_id), o.creado_at
       FROM public.documento_electronico_envio_operaciones_r05 o
      WHERE o.empresa_id = p_empresa AND o.documento_id = p_documento AND o.correlacion_id = p_correlacion AND o.actor_id = p_usuario;
+END $$;
+
+-- R02-C01 F003: estado completo de UNA operación para recuperar una respuesta perdida (del inicio, de una salida o del cierre). Mismo actor de la operación, permiso
+-- FACTURACION_ELECTRONICA.CREAR y sucursal en alcance, comprobados ANTES de leer. Sin testigo ni su hash, sin payload, sin respuesta, sin secretos.
+--   Último POST y su salida: SIN_POST / SIN_SALIDA (ausencia de evidencia) / ERROR_TRANSMISION (consta que no hubo HTTP) / HTTP_RESPUESTA / TARDIA_HTTP_RESPUESTA / TARDIA_ERROR_TRANSMISION.
+--   Resultado HISTÓRICO del cierre (si existe) separado del estado ACTUAL del documento; HTTP del POST y de la autenticación por separado; lote y CDC tal como quedaron en el intento.
+CREATE OR REPLACE FUNCTION public.fe_e03_estado_operacion_r05(p_empresa uuid, p_usuario uuid, p_documento uuid, p_operacion uuid)
+RETURNS TABLE (o_operacion_id uuid, o_version smallint, o_correlacion_id uuid, o_creado_at timestamptz, o_vigente boolean, o_no_transmitido boolean,
+               o_n_posts integer, o_ultimo_post smallint, o_ultimo_post_almacenamiento text, o_ultimo_post_at timestamptz, o_salida_ultimo_post text, o_http_ultimo_post integer,
+               o_proyeccion_ultimo_post text, o_cerrada boolean, o_regla text, o_fase text, o_resultado_historico text, o_estado_local_historico text, o_error_tipo text,
+               o_motivo text, o_intento_id uuid, o_http_post integer, o_http_autenticacion integer, o_lote text, o_cdc text, o_cerrado_at timestamptz,
+               o_estado_documento_actual text)
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE
+  d public.documentos_electronicos%ROWTYPE;
+  o public.documento_electronico_envio_operaciones_r05%ROWTYPE;
+  v_post record;
+  v_ev public.documento_electronico_envio_evidencias%ROWTYPE;
+  v_t public.documento_electronico_envio_salidas_tardias_r05%ROWTYPE;
+  v_n integer;
+  v_salida text;
+  v_http integer;
+  v_proy text;
+BEGIN
+  IF NOT public.usuario_tiene_permiso(p_empresa, p_usuario, 'FACTURACION_ELECTRONICA', 'CREAR') THEN
+    RAISE EXCEPTION 'el usuario no tiene permiso FACTURACION_ELECTRONICA.CREAR en esta empresa' USING ERRCODE = '42501';
+  END IF;
+  SELECT * INTO d FROM public.documentos_electronicos WHERE empresa_id = p_empresa AND id = p_documento;
+  IF NOT FOUND OR NOT public.sucursal_en_alcance(p_empresa, p_usuario, d.sucursal_id) THEN
+    RAISE EXCEPTION 'documento no encontrado' USING ERRCODE = 'P0001', DETAIL = 'NEX:DOCUMENTO_NO_ENCONTRADO';
+  END IF;
+  SELECT * INTO o FROM public.documento_electronico_envio_operaciones_r05
+   WHERE empresa_id = p_empresa AND documento_id = p_documento AND operacion_id = p_operacion AND actor_id = p_usuario;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'la operación de envío R05 no existe para este documento' USING ERRCODE = 'P0001', DETAIL = 'NEX:OPERACION_NO_ENCONTRADA';
+  END IF;
+
+  SELECT count(*) INTO v_n FROM public.fe_e03_r05_posts(p_empresa, p_documento, p_operacion);
+  SELECT * INTO v_post FROM public.fe_e03_r05_posts(p_empresa, p_documento, p_operacion) x ORDER BY x.o_nro DESC LIMIT 1;
+  IF v_n = 0 THEN
+    v_salida := 'SIN_POST';
+  ELSE
+    SELECT * INTO v_ev FROM public.documento_electronico_envio_evidencias e
+     WHERE e.empresa_id = p_empresa AND e.documento_id = p_documento AND e.operacion_id = p_operacion AND e.nro_post = v_post.o_nro AND e.tipo_evento IN ('HTTP_RESPUESTA', 'ERROR_TRANSMISION');
+    IF FOUND THEN
+      v_salida := v_ev.tipo_evento;
+      v_http := v_ev.http_status;
+      IF v_ev.tipo_evento = 'HTTP_RESPUESTA' THEN
+        SELECT CASE WHEN y.proyeccion IS NOT NULL THEN 'CON_PROYECCION' ELSE 'SIN_PROYECCION' END INTO v_proy
+          FROM public.documento_electronico_envio_proyecciones_r05 y WHERE y.empresa_id = p_empresa AND y.documento_id = p_documento AND y.evento_id = v_ev.id;
+      END IF;
+    ELSE
+      SELECT * INTO v_t FROM public.documento_electronico_envio_salidas_tardias_r05 t
+       WHERE t.empresa_id = p_empresa AND t.documento_id = p_documento AND t.operacion_id = p_operacion AND t.nro_post = v_post.o_nro;
+      IF FOUND THEN
+        v_salida := 'TARDIA_' || v_t.tipo_salida;
+        v_http := v_t.http_status;
+        v_proy := CASE WHEN v_t.tipo_salida = 'HTTP_RESPUESTA' THEN v_t.estado_proyeccion END;
+      ELSE
+        v_salida := 'SIN_SALIDA';
+      END IF;
+    END IF;
+  END IF;
+
+  RETURN QUERY
+    SELECT o.operacion_id, o.version, o.correlacion_id, o.creado_at, public.fe_e03_r05_no_vigente(p_empresa, p_documento, o.operacion_id, d.estado_local) IS NULL,
+           EXISTS (SELECT 1 FROM public.documento_electronico_envio_evidencias e
+                    WHERE e.empresa_id = p_empresa AND e.documento_id = p_documento AND e.operacion_id = p_operacion AND e.tipo_evento = 'NO_TRANSMITIDO'),
+           v_n, v_post.o_nro, CASE WHEN v_n = 0 THEN NULL WHEN v_post.o_grande_id IS NULL THEN 'EVIDENCIA_NEX072' ELSE 'POST_GRANDE_R05' END, v_post.o_creado_at,
+           v_salida, v_http, v_proy, c.operacion_id IS NOT NULL, c.regla, c.fase, c.resultado, c.estado_local, c.error_tipo, c.motivo, c.intento_id, c.http_post,
+           c.http_autenticacion, i.lote, i.cdc_informado, c.creado_at, d.estado_local
+      FROM (SELECT 1) uno
+      LEFT JOIN public.documento_electronico_envio_cierres_r05 c ON c.operacion_id = p_operacion AND c.empresa_id = p_empresa AND c.documento_id = p_documento
+      LEFT JOIN public.documento_electronico_intentos i ON i.empresa_id = p_empresa AND i.documento_id = p_documento AND i.id = c.intento_id;
 END $$;
 
 -- Conexión de referencia del documento (C02 §4.3 corregido): candidatas = intentos ENVIO con conexión (instante = creado_at) y operaciones R05 con al menos un POST (instante = último POST);
@@ -1535,9 +2076,10 @@ END $$;
 -- ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 COMMENT ON FUNCTION public.fe_e03_iniciar_envio_r05(uuid, uuid, uuid, boolean, uuid, text, jsonb) IS 'NEX-084: inicio correlacionado (correlación + hash de testigo) que envuelve fe_documento_iniciar_envio; una correlación repetida no vuelve a iniciar.';
 COMMENT ON FUNCTION public.fe_e03_registrar_post_r05(uuid, uuid, uuid, uuid, text, smallint, text) IS 'NEX-084: POST antes del fetch, texto íntegro (D8-B: <= 1 MiB en NEX-072, > 1 MiB en posts_grandes_r05, límite defensivo 8 MiB). La repetición no autoriza otro fetch.';
-COMMENT ON FUNCTION public.fe_e03_registrar_salida_r05(uuid, uuid, uuid, uuid, text, smallint, text, integer, jsonb, boolean, text, jsonb, text) IS 'NEX-084: salida de un POST con P validada (esquema cerrado, saneado, clasificación SQL = aplicación, cotejo) o con el motivo de su ausencia.';
-COMMENT ON FUNCTION public.fe_e03_cerrar_envio_r05(uuid, uuid, uuid, uuid, text, jsonb) IS 'NEX-084: cierre derivado de la evidencia persistida; evidencia insuficiente → ENVIO_INDETERMINADO con motivo (D-C02-2-A); idempotente por operación.';
-COMMENT ON FUNCTION public.fe_e03_registrar_salida_tardia_r05(uuid, uuid, uuid, uuid, text, smallint, text, integer, jsonb, boolean, text, jsonb) IS 'NEX-084: salida tardía append-only cuando la vía normal ya no la admite; no cambia estados.';
+COMMENT ON FUNCTION public.fe_e03_registrar_salida_r05(uuid, uuid, uuid, uuid, text, smallint, text, integer, jsonb, boolean, text, jsonb, text) IS 'NEX-084: salida de un POST con P validada (esquema cerrado contra el snapshot, saneado, clasificación SQL = aplicación, cotejo) o con el motivo de su ausencia; repetición solo con equivalencia semántica completa.';
+COMMENT ON FUNCTION public.fe_e03_cerrar_envio_r05(uuid, uuid, uuid, uuid, text, jsonb) IS 'NEX-084: cierre derivado de la evidencia persistida; evidencia insuficiente → ENVIO_INDETERMINADO con motivo (D-C02-2-A); idempotente por operación; retorno histórico completo + estado actual.';
+COMMENT ON FUNCTION public.fe_e03_registrar_salida_tardia_r05(uuid, uuid, uuid, uuid, text, smallint, text, integer, jsonb, boolean, text, jsonb, text) IS 'NEX-084: salida tardía append-only cuando la vía normal ya no la admite (P en estado A/B/C/D, huella semántica); no cambia estados ni cierre.';
+COMMENT ON FUNCTION public.fe_e03_estado_operacion_r05(uuid, uuid, uuid, uuid) IS 'NEX-084 (R02-C01 F003): estado de una operación para recuperación (mismo actor, permiso y alcance); histórico del cierre separado del estado actual; sin testigo, hash ni payload.';
 
 -- NEX-072 conserva su tabla y funciones; la aplicación no usa sus funciones de escritura (verificado en lib/) y desde NEX-084 la única vía de escritura de evidencia para nexit_runtime
 -- es R05. Se redefine su ayudante (se descubre por el envoltorio) para retirar esas tres funciones a nexit_runtime en cada reaplicación de privilegios.
@@ -1559,7 +2101,7 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION public.nex_aplicar_grants_facturacion_e03() FROM PUBLIC;
 
--- Ayudante R05 en dos estados: ACTIVO concede EXECUTE de escritura; REVERTIDO lo retira. Lecturas y SELECT en ambos. testigo_sha256 nunca se concede (privilegio por columnas).
+-- Ayudante R05 en dos estados: ACTIVO concede EXECUTE de escritura; REVERTIDO lo retira. Las 3 lecturas y el SELECT en ambos. testigo_sha256 nunca se concede (privilegio por columnas).
 CREATE OR REPLACE FUNCTION public.nex_aplicar_grants_facturacion_e03_r05() RETURNS void
 LANGUAGE plpgsql AS $$
 DECLARE
@@ -1576,24 +2118,33 @@ BEGIN
   REVOKE ALL ON FUNCTION public.fe_e03_r05_enum(jsonb, text[]) FROM PUBLIC;
   REVOKE ALL ON FUNCTION public.fe_e03_r05_lote_valido(text) FROM PUBLIC;
   REVOKE ALL ON FUNCTION public.fe_e03_r05_lote_nex080(text) FROM PUBLIC;
-  REVOKE ALL ON FUNCTION public.fe_e03_r05_validar_proyeccion(jsonb, integer, text, text, text, text, text) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION public.fe_e03_r05_alterado(jsonb) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION public.fe_e03_r05_astral(text) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION public.fe_e03_r05_trim_js(text) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION public.fe_e03_r05_clase_eco(text, jsonb, jsonb, text) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION public.fe_e03_r05_validar_proyeccion(jsonb, integer, text, text, text, text, jsonb) FROM PUBLIC;
   REVOKE ALL ON FUNCTION public.fe_e03_r05_sanear_proyeccion(jsonb) FROM PUBLIC;
   REVOKE ALL ON FUNCTION public.fe_e03_clasificar_recepcion_r05(jsonb, text) FROM PUBLIC;
   REVOKE ALL ON FUNCTION public.fe_e03_r05_cotejar(jsonb, jsonb, boolean, boolean) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION public.fe_e03_r05_procesar_proyeccion(jsonb, integer, text, text, text, text, jsonb, jsonb, boolean, boolean) FROM PUBLIC;
   REVOKE ALL ON FUNCTION public.fe_e03_r05_exigir_activo() FROM PUBLIC;
   REVOKE ALL ON FUNCTION public.fe_e03_r05_preparar(uuid, uuid, uuid) FROM PUBLIC;
   REVOKE ALL ON FUNCTION public.fe_e03_r05_hash_testigo(text) FROM PUBLIC;
   REVOKE ALL ON FUNCTION public.fe_e03_r05_operacion(uuid, uuid, uuid, uuid, text) FROM PUBLIC;
   REVOKE ALL ON FUNCTION public.fe_e03_r05_no_vigente(uuid, uuid, uuid, text) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION public.fe_e03_r05_token_rechazado_post1(uuid, uuid, uuid) FROM PUBLIC;
   REVOKE ALL ON FUNCTION public.fe_e03_r05_posts(uuid, uuid, uuid) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION public.fe_e03_r05_ultima_actividad(uuid, uuid, uuid) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION public.fe_e03_r05_abiertas(timestamptz) FROM PUBLIC;
   REVOKE ALL ON FUNCTION public.fe_e03_iniciar_envio_r05(uuid, uuid, uuid, boolean, uuid, text, jsonb) FROM PUBLIC;
   REVOKE ALL ON FUNCTION public.fe_e03_registrar_autenticacion_r05(uuid, uuid, uuid, uuid, text, text, text, text, integer) FROM PUBLIC;
   REVOKE ALL ON FUNCTION public.fe_e03_registrar_post_r05(uuid, uuid, uuid, uuid, text, smallint, text) FROM PUBLIC;
   REVOKE ALL ON FUNCTION public.fe_e03_registrar_salida_r05(uuid, uuid, uuid, uuid, text, smallint, text, integer, jsonb, boolean, text, jsonb, text) FROM PUBLIC;
   REVOKE ALL ON FUNCTION public.fe_e03_registrar_no_transmitido_r05(uuid, uuid, uuid, uuid, text, text) FROM PUBLIC;
   REVOKE ALL ON FUNCTION public.fe_e03_cerrar_envio_r05(uuid, uuid, uuid, uuid, text, jsonb) FROM PUBLIC;
-  REVOKE ALL ON FUNCTION public.fe_e03_registrar_salida_tardia_r05(uuid, uuid, uuid, uuid, text, smallint, text, integer, jsonb, boolean, text, jsonb) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION public.fe_e03_registrar_salida_tardia_r05(uuid, uuid, uuid, uuid, text, smallint, text, integer, jsonb, boolean, text, jsonb, text) FROM PUBLIC;
   REVOKE ALL ON FUNCTION public.fe_e03_operacion_por_correlacion_r05(uuid, uuid, uuid, uuid) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION public.fe_e03_estado_operacion_r05(uuid, uuid, uuid, uuid) FROM PUBLIC;
   REVOKE ALL ON FUNCTION public.fe_e03_conexion_referencia_r05(uuid, uuid, uuid) FROM PUBLIC;
 
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'nexit_runtime') THEN
@@ -1616,6 +2167,7 @@ BEGIN
   GRANT SELECT ON public.documento_electronico_envio_salidas_tardias_r05 TO nexit_runtime;
   GRANT EXECUTE ON FUNCTION public.fe_e03_operacion_por_correlacion_r05(uuid, uuid, uuid, uuid) TO nexit_runtime;
   GRANT EXECUTE ON FUNCTION public.fe_e03_conexion_referencia_r05(uuid, uuid, uuid) TO nexit_runtime;
+  GRANT EXECUTE ON FUNCTION public.fe_e03_estado_operacion_r05(uuid, uuid, uuid, uuid) TO nexit_runtime;
 
   SELECT modo INTO v_modo FROM public.nex_e03_r05_estado WHERE id;
   IF v_modo = 'ACTIVO' THEN
@@ -1625,7 +2177,7 @@ BEGIN
     GRANT EXECUTE ON FUNCTION public.fe_e03_registrar_salida_r05(uuid, uuid, uuid, uuid, text, smallint, text, integer, jsonb, boolean, text, jsonb, text) TO nexit_runtime;
     GRANT EXECUTE ON FUNCTION public.fe_e03_registrar_no_transmitido_r05(uuid, uuid, uuid, uuid, text, text) TO nexit_runtime;
     GRANT EXECUTE ON FUNCTION public.fe_e03_cerrar_envio_r05(uuid, uuid, uuid, uuid, text, jsonb) TO nexit_runtime;
-    GRANT EXECUTE ON FUNCTION public.fe_e03_registrar_salida_tardia_r05(uuid, uuid, uuid, uuid, text, smallint, text, integer, jsonb, boolean, text, jsonb) TO nexit_runtime;
+    GRANT EXECUTE ON FUNCTION public.fe_e03_registrar_salida_tardia_r05(uuid, uuid, uuid, uuid, text, smallint, text, integer, jsonb, boolean, text, jsonb, text) TO nexit_runtime;
   ELSE
     REVOKE ALL ON FUNCTION public.fe_e03_iniciar_envio_r05(uuid, uuid, uuid, boolean, uuid, text, jsonb) FROM nexit_runtime;
     REVOKE ALL ON FUNCTION public.fe_e03_registrar_autenticacion_r05(uuid, uuid, uuid, uuid, text, text, text, text, integer) FROM nexit_runtime;
@@ -1633,7 +2185,7 @@ BEGIN
     REVOKE ALL ON FUNCTION public.fe_e03_registrar_salida_r05(uuid, uuid, uuid, uuid, text, smallint, text, integer, jsonb, boolean, text, jsonb, text) FROM nexit_runtime;
     REVOKE ALL ON FUNCTION public.fe_e03_registrar_no_transmitido_r05(uuid, uuid, uuid, uuid, text, text) FROM nexit_runtime;
     REVOKE ALL ON FUNCTION public.fe_e03_cerrar_envio_r05(uuid, uuid, uuid, uuid, text, jsonb) FROM nexit_runtime;
-    REVOKE ALL ON FUNCTION public.fe_e03_registrar_salida_tardia_r05(uuid, uuid, uuid, uuid, text, smallint, text, integer, jsonb, boolean, text, jsonb) FROM nexit_runtime;
+    REVOKE ALL ON FUNCTION public.fe_e03_registrar_salida_tardia_r05(uuid, uuid, uuid, uuid, text, smallint, text, integer, jsonb, boolean, text, jsonb, text) FROM nexit_runtime;
   END IF;
 END $$;
 REVOKE ALL ON FUNCTION public.nex_aplicar_grants_facturacion_e03_r05() FROM PUBLIC;

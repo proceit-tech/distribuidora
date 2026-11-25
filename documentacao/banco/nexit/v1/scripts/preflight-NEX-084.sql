@@ -1,11 +1,16 @@
 -- PRE-VERIFICACIÓN de NEX-084 (PRO-312-R02 / Lote A: contrato SQL de envío E03 R05). SOLO LECTURA.
 -- La ejecuta el responsable, con autorización expresa y en la ventana prevista, ANTES de aplicar NEX-084 con el runner oficial:
---   psql -X -v ON_ERROR_STOP=1 -f preflight-NEX-084.sql
+--   psql -X -v ON_ERROR_STOP=1 -v entorno=VM -f preflight-NEX-084.sql
+-- entorno (R02-C01 F005): VM (por defecto, modo estricto del operador: el rol nexit_runtime DEBE existir) o CI (base efímera sin ese rol: su ausencia es intencional y se informa).
 -- Transacción READ ONLY + ROLLBACK: no escribe nada. Nada de esto fue ejecutado por Claude (ni en la VM ni en otra base).
 -- Sección 1: cualquier fila con ok = false significa NO APLICAR hasta conciliar. Secciones 2–4: informativas (conteos agregados; no muestra payloads, respuestas, CDC, lotes,
 -- credenciales ni identificadores de empresa/documento).
 -- Ejecutar con el rol propietario del esquema (el mismo del runner): nexit_runtime no tiene SELECT sobre todas las tablas consultadas.
 -- Checksums esperados (SHA-256 de los archivos versionados de la rama): NEX-062 62ce6709…, NEX-072 e34de98d…, NEX-079 6a87a9a7…, NEX-080 00c1aaf2…, NEX-083 88de3731… (completos abajo).
+\if :{?entorno}
+\else
+  \set entorno VM
+\endif
 BEGIN READ ONLY;
 
 \echo '== 1. Dependencias y ausencia de objetos R05 (todas deben dar ok = true) =='
@@ -58,6 +63,9 @@ SELECT orden, control, ok FROM (
     to_regprocedure('pg_catalog.gen_random_uuid()') IS NOT NULL AND to_regprocedure('pg_catalog.sha256(bytea)') IS NOT NULL
   UNION ALL SELECT 15, 'base en UTF8 (los bytes y SHA-256 del cuerpo HTTP se calculan sobre convert_to(texto, ''UTF8''))',
     (SELECT pg_encoding_to_char(encoding) FROM pg_database WHERE datname = current_database()) = 'UTF8'
+  UNION ALL SELECT 16, 'entorno declarado: ' || :'entorno' || ' (valores admitidos VM o CI)', :'entorno' IN ('VM', 'CI')
+  UNION ALL SELECT 17, 'rol nexit_runtime: obligatorio en VM; su ausencia solo se admite con -v entorno=CI',
+    EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'nexit_runtime') OR :'entorno' = 'CI'
   UNION ALL SELECT 20, 'ningún objeto R05 previo (tablas, funciones, ayudante ni disparadores de NEX-084)',
     to_regclass('public.nex_e03_r05_estado') IS NULL AND to_regclass('public.documento_electronico_envio_operaciones_r05') IS NULL
     AND to_regclass('public.documento_electronico_envio_posts_grandes_r05') IS NULL AND to_regclass('public.documento_electronico_envio_autenticaciones_r05') IS NULL
@@ -70,19 +78,29 @@ SELECT orden, control, ok FROM (
     EXISTS (SELECT 1 FROM pg_class c WHERE c.oid = to_regclass('public.documento_electronico_envio_evidencias') AND pg_has_role(current_user, c.relowner, 'USAGE'))
 ) x ORDER BY orden;
 
-\echo '== 2. Ventana de aplicación (informativo; lo esperado es 0 documentos en envío) =='
+\echo '== 2. Ventana de aplicación (informativo; lo esperado es 0 documentos en envío y 0 operaciones recientes) =='
+-- Mismos criterios que verificar y reversión (R02-C01 F005): operación abierta = sin cierre; última actividad = el mayor creado_at de la raíz y de sus eventos; reciente = última
+-- actividad >= corte − 10 minutos; UN corte por ejecución (now() es fijo dentro de esta transacción). Antes de NEX-084 solo existen operaciones NEX-072 (raíz INICIO + eventos).
+-- El UMBRAL DE ACTIVIDAD (10 min) no es la VENTANA DE DRENAJE (15 min, procedimiento del operador: desactivar el envío en todas las instancias y esperar o reiniciar).
 SELECT 'documentos en ENVIANDO (NEX-084 toma un bloqueo de fila del documento en cada escritura R05; aplicar sin envíos en curso)' AS control,
        count(*) FILTER (WHERE estado_local = 'ENVIANDO') AS cantidad,
        count(*) FILTER (WHERE estado_local = 'ENVIO_INDETERMINADO') AS indeterminados_previos
   FROM public.documentos_electronicos;
+WITH corte AS (SELECT now() AS t),
+abiertas AS (
+  SELECT (SELECT max(e.creado_at) FROM public.documento_electronico_envio_evidencias e
+           WHERE e.empresa_id = i.empresa_id AND e.documento_id = i.documento_id AND e.operacion_id = i.id) AS ultima
+    FROM public.documento_electronico_envio_evidencias i
+   WHERE i.tipo_evento = 'INICIO'
+     AND NOT EXISTS (SELECT 1 FROM public.documento_electronico_envio_evidencias c WHERE c.empresa_id = i.empresa_id AND c.documento_id = i.documento_id AND c.operacion_id = i.id AND c.tipo_evento = 'CIERRE'))
+SELECT 'operaciones NEX-072 abiertas (sin CIERRE) por última actividad' AS control, (SELECT t FROM corte) AS corte, count(*) AS abiertas,
+       count(*) FILTER (WHERE ultima >= (SELECT t FROM corte) - interval '10 minutes') AS recientes_10_min,
+       count(*) FILTER (WHERE ultima < (SELECT t FROM corte) - interval '10 minutes') AS antiguas
+  FROM abiertas;
 
 \echo '== 3. Evidencia NEX-072 existente (informativo: NEX-084 no la modifica ni la completa; no hay backfill) =='
 SELECT tipo_evento, count(*) AS filas FROM public.documento_electronico_envio_evidencias GROUP BY tipo_evento ORDER BY tipo_evento;
-SELECT 'operaciones NEX-072 sin CIERRE (quedarán como están: no se adoptan como R05)' AS control,
-       count(*) AS cantidad
-  FROM public.documento_electronico_envio_evidencias i
- WHERE i.tipo_evento = 'INICIO'
-   AND NOT EXISTS (SELECT 1 FROM public.documento_electronico_envio_evidencias c WHERE c.empresa_id = i.empresa_id AND c.documento_id = i.documento_id AND c.operacion_id = i.id AND c.tipo_evento = 'CIERRE');
+-- Las operaciones NEX-072 abiertas (§2) quedan como están: NEX-084 no las adopta como R05 ni les inventa cierre.
 SELECT 'privilegio EXECUTE de nexit_runtime sobre las 3 funciones de escritura de NEX-072 (NEX-084 lo RETIRA: la aplicación vigente no las usa)' AS control,
        CASE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'nexit_runtime') THEN 'sin rol nexit_runtime'
             ELSE (SELECT string_agg(p::text || ' = ' || has_function_privilege('nexit_runtime', p, 'EXECUTE'), '; ')
@@ -90,9 +108,11 @@ SELECT 'privilegio EXECUTE de nexit_runtime sobre las 3 funciones de escritura d
                                       'public.fe_e03_registrar_evento(uuid,uuid,uuid,uuid,text,smallint,text,integer,jsonb,boolean,text)'::regprocedure,
                                       'public.fe_e03_cerrar_envio(uuid,uuid,uuid,uuid,text,text,text,text,integer,text,text,text,text,text,text,jsonb)'::regprocedure]) p) END AS estado;
 
-\echo '== 4. Dimensión de los snapshots FE/NCE (D8-B, D6-c; conteo agregado autorizado, sin contenido) =='
--- payload::text es la serialización canónica de jsonb, NO el texto exacto que transmite la aplicación (JSON.stringify): sirve como orden de magnitud. El límite real lo decide
--- NEX-084 sobre el texto HTTP exacto en cada POST (<= 1 MiB en NEX-072, > 1 MiB en la tabla de POST grandes, > 8 MiB rechazado sin transmitir).
+\echo '== 4. Dimensión de los snapshots FE/NCE (D8-B, D6-c; conteo agregado autorizado, sin contenido; NO es una medición de compatibilidad) =='
+-- payload::text es la serialización canónica de jsonb, NO el texto exacto que transmite la aplicación (JSON.stringify): solo orden de magnitud. NEX-084 aplica sus límites sobre el texto
+-- HTTP exacto de cada POST (<= 1 MiB en NEX-072, > 1 MiB en la tabla de POST grandes, > 8 MiB rechazado sin transmitir).
+-- R02-C01 F004: 8 MiB es un límite PROVISIONAL. pg_column_size (almacenamiento jsonb, TOAST/compresión) NO acota el texto serializado. Bloqueos del Lote B (gate B), no resueltos aquí:
+-- compatibilidad con facturas válidas de 999 ítems no demostrada; tamaño canónico jsonb ≠ serialización JavaScript; precisión numérica del snapshot histórico (D6-c) pendiente.
 SELECT count(*) AS solicitudes,
        max(octet_length(convert_to(payload::text, 'UTF8'))) AS max_bytes_texto_canonico,
        count(*) FILTER (WHERE octet_length(convert_to(payload::text, 'UTF8')) > 1048576) AS mayores_1_mib,
