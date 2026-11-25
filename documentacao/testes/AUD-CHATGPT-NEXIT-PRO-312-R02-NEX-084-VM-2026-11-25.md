@@ -1,0 +1,14 @@
+# NEX-084 — verificação da instalação na VM — 25/11/2026
+
+**Instalada com checksum auditado; verificação operacional PARCIAL (40/41). Controle 63 reprovado. Não ativar Lote B.**
+
+Evidência: saída de terminal enviada pelo responsável em 25/11/2026, host instance-20260930-232419, clone ~/nexit-instalacao. Execução pelo responsável, não por ChatGPT. Banco nexit, container nexit-db PostgreSQL 16. NEX-084 registrada em public.schema_migrations; 84 migrations, última NEX-084. SHA-256 38d45ea661ed5d8f1dc3d43dc6b0f727f8872c6bdd0fbab5745cc7802f5b6854, coincide com entrega ad8cdea3c0f7087e6738a2d8cb26461cab287814. Modo ACTIVO desde 2026-11-25 11:18:51.785712 UTC. Verificação 11:19:01 UTC. Container nexit-app:teste Up 15 hours; nexit-db Up 6 days (healthy). Não houve evidência de rebuild/recreate nem de ativação de instrumentação. Não presumir homologação.
+
+## Controles
+Seção 1: 27/28 true. Única falha 63 (nexit_runtime EXECUTE nas 3 leituras R05 e ausência de EXECUTE nos auxiliares internos). Controles 32 PUBLIC sem EXECUTE, 60 sem DML, 61 testigo privado, 62 revogação legado, 64 caminho vigente, 70/71 modo aprovados. Seção 3: 13/13, zero violações, **tabelas R05 vazias**; não demonstra funcionamento dos contratos com dados. Operações abertas/recentes/antigas 0; POST grandes, projeções, fechamentos e tardias 0. ROLLBACK final pertence à transação READ ONLY da verificação; não reverte instalação. Preflight/runner anteriores não fornecidos neste extrato.
+
+## F-VM-084-01 — controle 63
+A função nex_aplicar_grants_facturacion_e03_r05() da NEX-084 revoga PUBLIC nos auxiliares, mas não explicitamente EXECUTE de nexit_runtime em cada auxiliar. Uma hipótese é grant direto por privilégios default ou herdado; outra é ausência de EXECUTE de leitura. A falha agregada não identifica qual, não concluir causa sem catálogo real. Controle 63 exige as 3 leituras e verifica prefixo fe_e03_r05_ nas funções internas. Solicitar diagnóstico read-only de pg_proc, has_function_privilege, ACL, pg_default_acl e memberships; verificar runtime sem expor credenciais. Não reaplicar migration, não editar NEX-084 aplicada, não remover schema_migrations, não revogar/grantar manualmente sem diagnóstico e autorização. Se confirmado defeito persistente do helper, correção incremental versionada (número a confirmar) e auditoria separada; não presumir necessidade de NEX-085 até diagnóstico. Reaplicar helper somente após análise/autorização. Não executar SQL por ChatGPT.
+
+## Estado
+PRO-312/321 In Review, PRO-309 Todo/gate aberto. Lote A autoria aceita, instalação confirmada, verificação operacional pendente F-VM-084-01. Lote B/C não autorizados; gates 8 MiB/D6 e homologação funcional mantidos. STOP sem ordem ativa.
