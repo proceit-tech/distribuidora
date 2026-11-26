@@ -773,7 +773,8 @@ export async function verificarCasosE03EvidenciasR03(): Promise<string[]> {
   const CLAVE_OPACA = "Zq81mPwTx4";
   const TOKEN_OPACO_1 = "tok3nOpacoR03C01primero";
   const TOKEN_OPACO_2 = "tok3nOpacoR03C01segundo";
-  const LOGIN_OPACO = [{ status: 200, cuerpo: { status: "success", token: TOKEN_OPACO_1 } }, { status: 200, cuerpo: { status: "success", token: TOKEN_OPACO_2 } }];
+  // Copia nueva en cada uso: el simulador consume la lista de logins (shift).
+  const loginOpaco = (): Http[] => [{ status: 200, cuerpo: { status: "success", token: TOKEN_OPACO_1 } }, { status: 200, cuerpo: { status: "success", token: TOKEN_OPACO_2 } }];
   const conClave = (password: string): ConfigGateway => ({ ...CONFIG, credenciales: { ruc: RUC, password } });
   const salidasParams = (m: ReturnType<typeof mundo>) => m.de("fe_e03_registrar_salida_r05").map((l) => l.params.slice(5));
   const pDe = (params: unknown[]) => (typeof params[6] === "string" ? (JSON.parse(params[6]) as { lectura: F; cdc: F }) : null);
@@ -781,7 +782,7 @@ export async function verificarCasosE03EvidenciasR03(): Promise<string[]> {
   limpiarCacheTokens();
   {
     const m = mundo();
-    const g = gateway(m, [{ status: 400, cuerpo: { status: "error", message: `Error de validación ${CLAVE_OPACA} en dRucRec`, errores: [`campo ${TOKEN_OPACO_1}`] } }], LOGIN_OPACO);
+    const g = gateway(m, [{ status: 400, cuerpo: { status: "error", message: `Error de validación ${CLAVE_OPACA} en dRucRec`, errores: [`campo ${TOKEN_OPACO_1}`] } }], loginOpaco());
     const r = await enviar(m, g, conClave(CLAVE_OPACA));
     const s = salidasParams(m)[0] ?? [];
 
@@ -792,7 +793,7 @@ export async function verificarCasosE03EvidenciasR03(): Promise<string[]> {
     const conLote = async (lote: string) => {
       limpiarCacheTokens();
       const m = mundo();
-      const g = gateway(m, [{ status: 200, cuerpo: { status: "success", message: "Documento recibido", nro_lote: lote } }], LOGIN_OPACO);
+      const g = gateway(m, [{ status: 200, cuerpo: { status: "success", message: "Documento recibido", nro_lote: lote } }], loginOpaco());
       const r = await enviar(m, g, conClave(CLAVE_OPACA));
       const s = salidasParams(m)[0] ?? [];
 
@@ -806,7 +807,7 @@ export async function verificarCasosE03EvidenciasR03(): Promise<string[]> {
   limpiarCacheTokens();
   {
     const m = mundo();
-    const g = gateway(m, [TOKEN_INVALIDO, { status: 200, cuerpo: { status: "success", message: `Sesión ${TOKEN_OPACO_1} reemplazada`, nro_lote: "LOTE-R03B-1" } }], LOGIN_OPACO);
+    const g = gateway(m, [TOKEN_INVALIDO, { status: 200, cuerpo: { status: "success", message: `Sesión ${TOKEN_OPACO_1} reemplazada`, nro_lote: "LOTE-R03B-1" } }], loginOpaco());
     const r = await enviar(m, g, conClave(CLAVE_OPACA));
     const s2 = salidasParams(m)[1] ?? [];
 
@@ -816,7 +817,7 @@ export async function verificarCasosE03EvidenciasR03(): Promise<string[]> {
   {
     const corta = "q7Z";
     const m = mundo();
-    const g = gateway(m, [{ status: 400, cuerpo: { status: "error", message: corta } }], LOGIN_OPACO);
+    const g = gateway(m, [{ status: 400, cuerpo: { status: "error", message: corta } }], loginOpaco());
     const r = await enviar(m, g, conClave(corta));
     const s = salidasParams(m)[0] ?? [];
 
@@ -827,7 +828,7 @@ export async function verificarCasosE03EvidenciasR03(): Promise<string[]> {
     const CDC_RUC = `01${RUC}${"7".repeat(34)}`;
     const LOTE_RUC = `LOTE-${RUC}-7`;
     const m = mundo({ cierre: { lote: LOTE_RUC, cdc: CDC_RUC } });
-    const g = gateway(m, [{ status: 200, cuerpo: { status: "success", message: "Documento recibido", nro_lote: LOTE_RUC, cdc: CDC_RUC } }], LOGIN_OPACO);
+    const g = gateway(m, [{ status: 200, cuerpo: { status: "success", message: "Documento recibido", nro_lote: LOTE_RUC, cdc: CDC_RUC } }], loginOpaco());
     const r = await enviar(m, g, conClave(RUC));
     const s = salidasParams(m)[0] ?? [];
     const resp = typeof s[3] === "string" ? (JSON.parse(s[3]) as F) : {};

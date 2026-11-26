@@ -646,7 +646,7 @@ export async function consultarEstado(db: Db, empresaId: string, usuarioId: stri
   // PRO-342-R05: sin NEX-080 no se consulta (503 antes de cualquier llamada): el resultado no podría registrarse con la regla R05 y no hay fallback a las firmas que validan el CDC.
   await exigirNex080(db);
 
-  // PRO-342-R02 + PRO-312-R03-C01: la consulta usa la MISMA conexión del envío (o, sin referencia registrada, la activa) según UNA autoridad: la referencia R05 si NEX-084 está instalada,
+  // PRO-342-R02: la consulta usa la MISMA conexión del envío (o, sin referencia registrada, la activa) según UNA autoridad: la referencia R05 si NEX-084 está instalada,
   // NEX-079 solo con ausencia comprobada. DISTINTA o AMBIGUA: 409; estructura incoherente: 503; en ambos casos sin intento (no hubo llamada).
   const { config, continuidad } = await conexionParaConsulta(db, empresaId, usuarioId, id);
 
