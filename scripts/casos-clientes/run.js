@@ -163,6 +163,8 @@ function cargarCasos(r) {
   const p330 = cargar("lib/facturacion/stock-preventivo.casos.js");
   const p338 = cargar("lib/facturacion/consulta-automatica-fe.casos.js");
   const p337 = cargar("lib/reportes/ventas-layout.casos.js");
+  // PRO-312-R03 / Lote B: vía de envío con evidencia R05 (bandera apagada por omisión; base y gateway simulados).
+  const e03b = cargar("lib/facturacion/e03-evidencias.casos.js");
   // PRE-VM-R02-A: capa común de contrato de las bases simuladas de FE (apoyo, sin suites propias).
   cargar("lib/facturacion/contrato-fe-simulado.casos.js");
   // PRE-VM-R02-A: aislamiento entre suites. La caché de tokens del gateway es estado GLOBAL del módulo; una suite que aborta (o falla) antes de su limpieza final ya no
@@ -271,6 +273,7 @@ function cargarCasos(r) {
     ["PRO-330: aviso inmediato de stock en «Nueva factura» (servidor, controlador con temporizador simulado, estructura; PRO330-61 según PRO-330-T01)", async () => p330.verificarCasosStockPreventivo(), null],
     ["PRO-338: consulta AUTOMÁTICA del estado fiscal de FE y NCE, estados SIFEN y alertas técnicas (P338-01…20, R02-F001/F002/F003; base y gateway simulados)", async () => p338.verificarCasosPro338(), null],
     ["PRO-337: Informe de Ventas — layout de tarjetas sin recortes (sexta columna, rolagem horizontal local, títulos cortos, altura natural)", async () => p337.verificarCasosVentasLayout(), null],
+    ["PRO-312-R03 / Lote B: envío FE/NCE con evidencias R05 (bandera, preparación, testigo, serialización única, POST registrado antes del fetch, P v1, POST 2, tardías, cierre, recuperación, continuidad de consulta)", async () => e03b.verificarCasosE03EvidenciasR03(), null],
   ];
   let total = 0;
   let fallosTotal = 0;

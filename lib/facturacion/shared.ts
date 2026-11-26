@@ -103,6 +103,41 @@ async function conexionParaDocumento(db: Db, empresaId: string, usuarioId: strin
   return { config, continuidad };
 }
 
+/**
+ * PRO-312-R03 / Lote B: continuidad de la conexión para CONSULTAR con la referencia de NEX-084 (fe_e03_conexion_referencia_r05), que toma lo más reciente entre los ENVÍOS registrados con
+ * conexión y las operaciones R05 con POST real. Se usa aunque la variable NEXIT_E03_EVIDENCIAS esté apagada: un documento enviado por la vía R05 se consulta siempre con la cuenta de ese
+ * envío. Solo cuando la estructura R05 NO existe (comprobado en el catálogo: instalación anterior a NEX-084) rige la referencia de NEX-079 tal como hoy. AMBIGUA (otra operación incierta
+ * con conexión distinta) o DISTINTA: 409 sin llamar al gateway. Sin fallback por error: un fallo de la lectura se propaga y la falta de EXECUTE sobre una estructura presente es 503.
+ * No se usa en el KuDE (su conexión no cambia).
+ */
+export const SQL_REFERENCIA_R05_DISPONIBLE = `SELECT CASE WHEN to_regprocedure('public.fe_e03_conexion_referencia_r05(uuid,uuid,uuid)') IS NULL THEN 'AUSENTE'
+  WHEN has_function_privilege(to_regprocedure('public.fe_e03_conexion_referencia_r05(uuid,uuid,uuid)')::oid, 'EXECUTE') THEN 'LISTA' ELSE 'SIN_PERMISO' END AS "referenciaR05"`;
+export const SQL_CONEXION_REFERENCIA_R05 = `SELECT o_conexion AS "conexion", o_ambigua AS "ambigua" FROM public.fe_e03_conexion_referencia_r05($1::uuid, $2::uuid, $3::uuid)`;
+
+export const MENSAJE_CONEXION_AMBIGUA =
+  "Este documento tiene un envío anterior sin resultado confirmado hecho con otra conexión del gateway: no se consulta su estado para no atribuirle datos de otra cuenta. Revise el caso con el proveedor del gateway.";
+export const MENSAJE_REFERENCIA_R05_SIN_PERMISO =
+  "No se pudo verificar la conexión con la que se envió este documento (permisos de la base): no se consultó nada. Avise al administrador.";
+
+/** null = estructura R05 ausente (rige la continuidad de NEX-079); si no, la continuidad según la referencia R05 (DISTINTA y AMBIGUA lanzan 409). */
+export async function continuidadReferenciaR05(db: Db, empresaId: string, usuarioId: string, documentoId: string, config: ConfigGateway): Promise<ContinuidadConexion | null> {
+  const estado = ((await db.query(SQL_REFERENCIA_R05_DISPONIBLE)).rows[0] as F | undefined)?.referenciaR05;
+
+  // Sin dato (o AUSENTE): la estructura no existe, instalación anterior a NEX-084.
+  if (estado === undefined || estado === null || estado === "AUSENTE") return null;
+  if (estado !== "LISTA") throw new ErrorFacturacion(503, MENSAJE_REFERENCIA_R05_SIN_PERMISO);
+
+  const ref = (await db.query(SQL_CONEXION_REFERENCIA_R05, [empresaId, usuarioId, documentoId])).rows[0] as F | undefined;
+
+  if (ref?.ambigua === true) throw new ErrorFacturacion(409, MENSAJE_CONEXION_AMBIGUA);
+
+  const continuidad = continuidadConexion(ref?.conexion ?? null, referenciaConexion(config));
+
+  if (continuidad === "DISTINTA") throw new ErrorFacturacion(409, MENSAJE_CONEXION_DISTINTA);
+
+  return continuidad;
+}
+
 export const TAMANO_DEFECTO = 20;
 export const TAMANO_MAXIMO = 100;
 
@@ -564,7 +599,9 @@ export async function consultarEstado(db: Db, empresaId: string, usuarioId: stri
   await exigirNex080(db);
 
   // PRO-342-R02: la consulta usa la MISMA conexión del envío (o, sin referencia registrada, la activa); si cambió, no se consulta (409, sin intento: no hubo llamada).
-  const { config, continuidad } = await conexionParaDocumento(db, empresaId, usuarioId, id);
+  const { config, continuidad: continuidadNex079 } = await conexionParaDocumento(db, empresaId, usuarioId, id);
+  // PRO-312-R03 / Lote B: con la estructura R05 presente decide la referencia de NEX-084 (envíos + operaciones R05 con POST); DISTINTA o AMBIGUA: 409 sin HTTP.
+  const continuidad = (await continuidadReferenciaR05(db, empresaId, usuarioId, id, config)) ?? continuidadNex079;
 
   // PRO-342-R05: identidad de la consulta = cuenta autenticada (config) + tipo, establecimiento, punto, número y serie del documento persistido. El CDC no se envía ni identifica.
   const bruto = await consultarDocumentoGateway(

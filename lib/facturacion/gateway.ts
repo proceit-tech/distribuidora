@@ -18,8 +18,9 @@ import { fetchKudeSeguro, fetchSeguro, validarUrlGateway } from "@/lib/facturaci
 /** Referencia lógica que marca «las credenciales están en la base» (fe_gateway_config.credencial_ref). Con ella el modo es EXCLUSIVO: jamás se usan variables de entorno globales como respaldo. */
 export const REF_CREDENCIALES_BASE = "NEXIT_DB";
 
-/** `credenciales`: usuario/clave de la API guardados en la base para la empresa (PRO-133, NEX-061); si faltan se usan las variables de entorno NEXIT_FE_<REF>_*. Nunca se serializan ni se devuelven. */
-export type ConfigGateway = { empresaId: string; baseUrl: string; credencialRef: string; timeoutMs: number; credenciales?: { ruc: string; password: string }; credencialesVersion?: number | null };
+/** PRO-312-R03 / Lote B: `rutaEnvio` = "R05" solo si el preflight (configuracionGateway) decidió la vía instrumentada para ESTA operación; ausente = vía vigente.
+ * `credenciales`: usuario/clave de la API guardados en la base para la empresa (PRO-133, NEX-061); si faltan se usan las variables de entorno NEXIT_FE_<REF>_*. Nunca se serializan ni se devuelven. */
+export type ConfigGateway = { empresaId: string; baseUrl: string; credencialRef: string; timeoutMs: number; credenciales?: { ruc: string; password: string }; credencialesVersion?: number | null; rutaEnvio?: "R05" };
 export type FetchLike = (url: string, init: { method: string; headers: Record<string, string>; body: string; signal: AbortSignal }) => Promise<{ status: number; text(): Promise<string> }>;
 export type Dependencias = { fetch?: FetchLike; env?: Record<string, string | undefined>; ahora?: () => number };
 
@@ -1056,6 +1057,158 @@ export async function enviarDocumentoGateway(
   }
 
   return resultadoEnvioVacio("ERROR_HTTP", "AUTENTICACION", "ERROR_ENVIO", "AUTENTICACION", 401, "El gateway rechazó el token tras renovarlo.", fases);
+}
+
+// ── PRO-312-R03 / Lote B: transporte de la vía R05 (evidencia previa al POST) ─────────────────────────────────────────────────────────────────────────
+// Bloque ADITIVO: enviarDocumentoGateway (vía vigente) no cambia. La vía R05 (lib/facturacion/e03-evidencias.ts, solo con NEXIT_E03_EVIDENCIAS=R05) necesita del cliente del gateway:
+//  · la autenticación con su ORIGEN (CACHE / HTTP) y su HTTP, para registrarla antes de cualquier POST;
+//  · el POST de recepción con el TEXTO HTTP EXACTO ya registrado en la base (sin volver a serializar: el SHA-256 de lo transmitido es el de lo registrado);
+//  · los hechos de la respuesta que interpretarRecepcion usa (para la proyección P v1 de NEX-084), calculados con las MISMAS funciones internas.
+// No hay reintento automático ni renovación implícita: la vía R05 decide cada paso tras registrar el anterior.
+
+/** Respuesta del transporte: HTTP con su texto, o la clase del error de transmisión (TIMEOUT / RED). */
+export type SalidaTransporte = { ok: true; status: number; texto: string } | { ok: false; motivo: "TIMEOUT" | "RED" };
+
+const fetchDe = (dep: Dependencias): FetchLike => (dep.fetch === undefined ? fetchSeguro : dep.fetch);
+
+async function enviarTexto(url: string, headers: Record<string, string>, texto: string, timeoutMs: number, fetchFn: FetchLike): Promise<SalidaTransporte> {
+  const control = new AbortController();
+  const timer = setTimeout(() => control.abort(), timeoutMs);
+
+  try {
+    const r = await fetchFn(url, { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json", ...headers }, body: texto, signal: control.signal });
+
+    return { ok: true, status: r.status, texto: await r.text() };
+  } catch (error) {
+    return { ok: false, motivo: control.signal.aborted || (error instanceof Error && error.name === "AbortError") ? "TIMEOUT" : "RED" };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Autenticación de la vía R05. `forzar` = renovación (siempre HTTP). Resultado OK por HTTP solo con 200 + {status:"success", token} (igual que obtenerToken); el token nunca sale de aquí
+ * salvo hacia el POST. Comparte la caché de tokens de la vía vigente (misma clave por empresa + gateway + referencia + huella de credenciales).
+ */
+export type AutenticacionR05 =
+  | { resultado: "OK"; origen: "CACHE" | "HTTP"; http: number | null; token: string }
+  | { resultado: "ERROR_HTTP" | "TIMEOUT" | "RED"; origen: "HTTP"; http: number | null; mensaje: string };
+
+export async function autenticarGatewayR05(config: ConfigGateway, credenciales: { ruc: string; password: string }, dep: Dependencias, forzar: boolean): Promise<AutenticacionR05> {
+  const ahora = dep.ahora ?? Date.now;
+  const clave = claveToken(config, credenciales.ruc, credenciales.password);
+  const guardado = cacheTokens.get(clave);
+
+  if (!forzar && guardado && guardado.vence > ahora()) return { resultado: "OK", origen: "CACHE", http: null, token: guardado.token };
+
+  const r = await enviarTexto(`${config.baseUrl}/api/login`, {}, JSON.stringify({ ruc: credenciales.ruc, password: credenciales.password }), config.timeoutMs, fetchDe(dep));
+
+  if (!r.ok) {
+    return { resultado: r.motivo, origen: "HTTP", http: null, mensaje: r.motivo === "TIMEOUT" ? "Tiempo de espera agotado al autenticar con el gateway." : "No fue posible comunicarse con el gateway." };
+  }
+
+  let token: string | null = null;
+
+  try {
+    const j = JSON.parse(r.texto) as { status?: unknown; token?: unknown };
+
+    if (r.status === 200 && j.status === "success" && typeof j.token === "string" && j.token) token = j.token;
+  } catch {
+    // respuesta no JSON: fallo de autenticación
+  }
+  if (!token) return { resultado: "ERROR_HTTP", origen: "HTTP", http: r.status, mensaje: "El gateway rechazó la autenticación (credenciales de la empresa)." };
+
+  guardarToken(clave, token, venceToken(token, ahora()), ahora());
+
+  return { resultado: "OK", origen: "HTTP", http: 200, token };
+}
+
+/** UN POST de recepción con el texto HTTP exacto (el registrado). No interpreta ni reintenta. */
+export function transmitirRecepcionTexto(config: ConfigGateway, token: string, texto: string, dep: Dependencias): Promise<SalidaTransporte> {
+  return enviarTexto(`${config.baseUrl}/api/recepcion_de`, { Authorization: `Bearer ${token}` }, texto, config.timeoutMs, fetchDe(dep));
+}
+
+/** Hechos de una respuesta de recepción, con las MISMAS lecturas que interpretarRecepcion (raíz, alias, listas, ecos, lote, mensaje y errores). Sin decidir nada. */
+export type HechosRecepcion = {
+  jsonValido: boolean;
+  raizObjeto: boolean;
+  status: "AUSENTE" | "SUCCESS" | "ERROR" | "OTRO_TEXTO" | "OTRO_TIPO";
+  tokenInvalido: boolean;
+  duplicado: boolean;
+  contadorRechazadosPositivo: boolean;
+  rechazados: { nEntradas: number; propio: boolean };
+  aceptados: { nEntradas: number; incluyePropio: boolean; conFormatoFiscal: boolean };
+  ecos: Array<{ campo: string; clave: string; clase: ClaseEco }>;
+  lote: { clase: "AUSENTE" | "VALIDO" | "INVALIDO_LARGO" | "INVALIDO_FORMATO" | "INVALIDO_TIPO"; clave: string | null; texto: string | null; nOcurrencias: number };
+  cdcBruto: unknown;
+  mensaje: string | null;
+  campoProblema: string | null;
+};
+
+const MAX_CONTEO_P = 32767;
+
+export function hechosRecepcion(http: number, cuerpoTexto: string, doc: DocumentoRecepcion): HechosRecepcion {
+  let cuerpo: unknown;
+  let jsonValido = true;
+
+  try {
+    cuerpo = JSON.parse(cuerpoTexto);
+  } catch {
+    cuerpo = undefined;
+    jsonValido = false;
+  }
+
+  const raiz = cuerpo && typeof cuerpo === "object" && !Array.isArray(cuerpo) ? (cuerpo as Record<string, unknown>) : null;
+  const mensaje = raiz ? comoTexto(buscar(raiz, CLAVES_MENSAJE)) : null;
+  const resp = raiz ? Object.entries(raiz).find(([k, v]) => CLAVES_RESPUESTA.has(norm(k)) && v && typeof v === "object" && !Array.isArray(v))?.[1] as Record<string, unknown> | undefined : undefined;
+  const lista = (nombre: string) => entradasPorNumero(resp ? Object.entries(resp).find(([k]) => norm(k) === nombre)?.[1] : undefined);
+  const rechazados = lista("rechazados");
+  const aceptados = lista("aceptados");
+  const numeroFiscal = `${doc.establecimiento}-${doc.puntoExpedicion}-${doc.numero}`;
+  const propio = rechazados.find((e) => e.numero === numeroFiscal);
+  const errores = propio && !aceptados.some((e) => e.numero === numeroFiscal) ? erroresDeEntrada(propio) : raiz ? listaErrores(buscar(raiz, CLAVES_ERRORES)) : [];
+  const ecos = raiz ? ecosIdentidad([raiz], { establecimiento: doc.establecimiento, puntoExpedicion: doc.puntoExpedicion, numero: doc.numero, serie: doc.serie, tipoDoc: tipoDocConsulta(doc.tipo) }) : [];
+  const problema = ecoIdentidadProblema(ecos);
+  const statusRaiz = raiz && Object.prototype.hasOwnProperty.call(raiz, "status") ? raiz.status : undefined;
+  const status: HechosRecepcion["status"] = !raiz || !Object.prototype.hasOwnProperty.call(raiz, "status") ? "AUSENTE"
+    : typeof statusRaiz !== "string" ? "OTRO_TIPO" : statusRaiz === "success" ? "SUCCESS" : statusRaiz === "error" ? "ERROR" : "OTRO_TEXTO";
+  const ocurrenciasLote = raiz ? Object.entries(raiz).filter(([k, x]) => CLAVES_LOTE_RAIZ.has(norm(k)) && x !== null && x !== undefined && x !== "") : [];
+  const primeraLote = ocurrenciasLote[0];
+  let lote: HechosRecepcion["lote"] = { clase: "AUSENTE", clave: null, texto: null, nOcurrencias: 0 };
+
+  if (primeraLote) {
+    const v = primeraLote[1];
+    const base = { clave: norm(primeraLote[0]), nOcurrencias: Math.min(ocurrenciasLote.length, MAX_CONTEO_P) };
+
+    if (typeof v === "string") {
+      lote = v.length > 60 ? { ...base, clase: "INVALIDO_LARGO", texto: null }
+        : FORMATO_LOTE.test(v) && !/^\s|\s$/u.test(v) ? { ...base, clase: "VALIDO", texto: v } : { ...base, clase: "INVALIDO_FORMATO", texto: null };
+    } else if (typeof v === "number" && Number.isSafeInteger(v)) {
+      lote = { ...base, clase: "VALIDO", texto: String(v) };
+    } else {
+      lote = { ...base, clase: "INVALIDO_TIPO", texto: null };
+    }
+  }
+
+  return {
+    jsonValido,
+    raizObjeto: raiz !== null,
+    status,
+    tokenInvalido: esTokenInvalido(http, cuerpoTexto),
+    duplicado: DUPLICADO.test([mensaje ?? "", ...errores].join(" ")),
+    contadorRechazadosPositivo: raiz !== null && Number(raiz.rechazados) > 0,
+    rechazados: { nEntradas: Math.min(rechazados.length, MAX_CONTEO_P), propio: propio !== undefined },
+    aceptados: {
+      nEntradas: Math.min(aceptados.length, MAX_CONTEO_P),
+      incluyePropio: aceptados.some((e) => e.numero === numeroFiscal),
+      conFormatoFiscal: aceptados.some((e) => NUMERO_FISCAL_CLAVE.test(e.numero)),
+    },
+    ecos,
+    lote,
+    cdcBruto: enRaiz(raiz, "cdc"),
+    mensaje,
+    campoProblema: problema ? problema.campo : null,
+  };
 }
 
 // ── KuDE (PDF) ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────

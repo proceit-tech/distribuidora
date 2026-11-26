@@ -1,6 +1,7 @@
 import type { Pool } from "pg";
 
 import { guardarClasificacionIva, type ClasificacionGuardar, type ResultadoGuardado } from "@/lib/facturacion/ajuste-fiscal";
+import { enviarDocumentoR05, exigirPreparacionR05, rutaEnvioE03 } from "@/lib/facturacion/e03-evidencias";
 import { crearFacturaElectronica, type CuerpoFactura } from "@/lib/facturacion/emision";
 import { adjuntarCredencialesDeBase, hayCredencialesEnBase, REF_CREDENCIALES_BASE } from "@/lib/facturacion/gateway-credenciales";
 import { configGatewayValida, credencialesDe, enviarDocumentoGateway, leerCredenciales, referenciaConexion, seriePayload, type ConfigGateway, type Dependencias, type FaseEnvio, type ReferenciaConexion, type ResultadoEnvio } from "@/lib/facturacion/gateway";
@@ -88,6 +89,15 @@ export async function configuracionGateway(db: Db, empresaId: string, dep: Depen
 
   if (!credencialesDe(conCredenciales, dep.env)) throw new ErrorFacturacion(409, "Las credenciales del gateway de esta empresa no están configuradas.");
 
+  // PRO-312-R03 / Lote B: la vía de envío se decide UNA vez por operación, aquí (antes de numerar), con la variable del SERVIDOR NEXIT_E03_EVIDENCIAS (apagada por omisión: vía vigente
+  // sin cambios). Con R05 la base debe estar preparada (NEX-084/085, firmas, permisos, modo ACTIVO): si no, 503 sin número ni HTTP y sin volver a la vía directa. La decisión viaja en la
+  // MISMA configuración hasta el cierre (emisión de FE, emisión de NCE y envío desde «Documentos»).
+  if (rutaEnvioE03(dep.env ?? process.env) === "R05") {
+    await exigirPreparacionR05(db);
+
+    return { ...conCredenciales, rutaEnvio: "R05" };
+  }
+
   return conCredenciales;
 }
 
@@ -173,6 +183,10 @@ async function cerrarEnvio(db: Db, empresaId: string, usuarioId: string, documen
  */
 export async function enviarDocumento(db: Db, empresaId: string, usuarioId: string, documentoId: string, dep: Dependencias = {}, opciones: { confirmaRechazo?: boolean; config?: ConfigGateway } = {}): Promise<Omit<RespuestaEnvio, "reutilizado" | "numero" | "documentoId"> & { numero: string }> {
   const config = opciones.config ?? (await configuracionGateway(db, empresaId, dep, usuarioId));
+
+  // PRO-312-R03 / Lote B: vía R05 (evidencia previa al POST) SOLO si el preflight de esta operación la eligió; nunca se mezclan caminos ni se vuelve a la vía directa por un error.
+  if (config.rutaEnvio === "R05") return enviarDocumentoR05(db, empresaId, usuarioId, documentoId, config, dep, opciones.confirmaRechazo === true);
+
   const inicio = await db.query(
     `SELECT o_resultado AS resultado, o_payload AS payload, o_numero AS numero, o_tipo AS tipo, o_establecimiento AS establecimiento, o_punto AS punto FROM fe_documento_iniciar_envio($1::uuid, $2::uuid, $3::uuid, $4::boolean)`,
     [empresaId, usuarioId, documentoId, opciones.confirmaRechazo === true],
