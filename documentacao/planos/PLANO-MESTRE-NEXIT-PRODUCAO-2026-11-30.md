@@ -321,4 +321,18 @@ Baseline anterior às atualizações administrativas desta decisão. Cada ID apa
 | [PRO-369](https://linear.app/proceit/issue/PRO-369) | P04 | In Review | [NEXIT PRO-365 C02-C01] Aviso neutro APROBADO e alerta KuDE não verificado em linguagem simples |
 | [PRO-370](https://linear.app/proceit/issue/PRO-370) | P04 | In Review | [NEXIT PRO-365 C02-C03 / F03] Indicador visual de FE aprobada y posteriormente cancelada |
 
+
+## 8. Atualização administrativa de rastreabilidade — 26/11/2026 (R01)
+Este adendo prevalece sobre as quantidades/status de baseline nas seções 1 e 7. Os 203 IDs originais permanecem preservados e mapeados; três novas tarefas específicas foram criadas para lacunas sem tarefa dedicada, total 206 (201 não canceladas). Não são novas ordens de Claude.
+
+| Nova tarefa | Pacote primário | Status | Entrega |
+|---|---|---|---|
+| [PRO-372](https://linear.app/proceit/issue/PRO-372) | P04 | Todo | XML fiscal real por documento/conta, contrato fornecedor; filha PRO-91, complementa PRO-195 sem duplicar JSON/KuDE |
+| [PRO-373](https://linear.app/proceit/issue/PRO-373) | P04 | Todo | Correo: envio/reenvio comprovado, contrato fornecedor, destinatário, autorização, idempotência e retorno; filha PRO-91 |
+| [PRO-374](https://linear.app/proceit/issue/PRO-374) | P11 | Todo | Gate de definição das dependências mínimas dos 18 menus e rastreabilidade histórica V2; não promove escopo extra nem autoriza código |
+
+**Distribuição atual:** In Progress 1; Todo 44; In Review 148; Backlog 6; Done 2; Canceled 5. P01=11, P02=54, P03=27, P04=71, P05=5, P06=3, P07=5, P08=2, P09=14, P10=6, P11=8; total 206. Todas as 19 tarefas dos 18 menus em Todo; PRO-199/305 promovidas de Backlog para Todo por integrarem pacotes V1. Critérios focais de entrega anotados nas 19 tarefas dos menus, PRO-199/305/115/312. Os 148 In Review continuam sem aceite definitivo.
+**Sequência:** PRO-312-R03 B → auditoria → autorização separada para C → PRO-309/311 → PRO-313/199 → demais pacotes pela dependência. PRO-374 deve orientar decisões antes das respectivas ordens de NRE, Compras, Ventas, Finanzas, etc.; não iniciar trabalho concorrente por este registro. 18 menus obrigatórios, 49 opções existentes + Dashboard/Plataforma + Informe Compras; XML/Correo são ações do menu Documentos, não menus novos. Não declarar produção completa se houver bloqueio de fornecedor ou gate não resolvido.
+**Comando vigente**: [ordem R03 B](https://github.com/proceit-tech/distribuidora/blob/333a7f336c73e4bb8d54172238ebfa60a530e88d/documentacao/ordens/ORD-CLAUDE-NEXIT-PRO-312-R03-LOTE-B-INSTRUMENTACION-R05-2026-11-25.md), HEAD autorizado 7e927c46e957c81e55f2394a5f5c360a0f780ad0. HEAD observado no PR #7: 7e927c46e957c81e55f2394a5f5c360a0f780ad0; Draft=true, merged=false. Não alterar CLAUDE.md ou branch de desenvolvimento por este planejamento. Sem Vercel, VM/SQL/testes manuais/deploy/merge. Nenhuma nova base de testes.
+
 **STOP:** PRO-312-R03 única ordem ativa. Este plano é organização do produto, não comando Claude. Próxima ordem somente após auditoria e autorização do responsável.
