@@ -70,9 +70,18 @@ const PARECE_SECRETO = /authorization|password|contrase|token\s*[:=]|secret|api_
 const SUSTITUTO_SUELTO = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/;
 const CONTROL_O_SUSTITUTO = new RegExp(`[\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]|${SUSTITUTO_SUELTO.source}`);
 
-export function textoLectura(v: string | null | undefined, max: number): string | null {
+/**
+ * PRO-312-R03-C01 (F-R03-02): los patrones no conocen el VALOR de la clave ni de los tokens de la sesión. Con `secretos` (clave de la API, token inicial y renovado) un texto que ES uno de
+ * ellos, o que contiene uno de 4 o más caracteres, tampoco se declara (null, entero: nunca se recorta ni se enmascara una parte). Se decide ANTES de recortar: un secreto partido por el
+ * recorte no queda a medias. Solo afecta a textos de lectura (confiados al servidor, opcionales en P); los hechos de la clasificación no cambian.
+ */
+export function lecturaConSecreto(v: string, secretos: readonly string[]): boolean {
+  return secretos.some((s) => typeof s === "string" && s !== "" && (v === s || (s.length >= 4 && v.includes(s))));
+}
+
+export function textoLectura(v: string | null | undefined, max: number, secretos: readonly string[] = []): string | null {
   if (typeof v !== "string" || v === "") return null;
-  if (PARECE_SECRETO.test(v) || CONTROL_O_SUSTITUTO.test(v)) return null;
+  if (PARECE_SECRETO.test(v) || CONTROL_O_SUSTITUTO.test(v) || lecturaConSecreto(v, secretos)) return null;
 
   return recortar(v, max);
 }
@@ -189,7 +198,7 @@ export type EntradaProyeccion = {
   /** Clasificación de interpretarRecepcion (la que la vía vigente habría registrado). */
   app: { resultado: string; estadoLocal: string; errorTipo: string | null };
   lectura: { textoResultado: string | null; estadoGateway: string | null; errores: string[] };
-  /** Clave de la API y token de la sesión: un CDC con forma de credencial se declara CREDENCIAL (sin valor). */
+  /** Clave de la API y TODOS los tokens de la operación (inicial y renovado): un CDC con forma de credencial se declara CREDENCIAL (sin valor); un lote credencial no se certifica; una lectura con secreto queda null. */
   secretos: string[];
 };
 
@@ -199,14 +208,15 @@ export type EntradaProyeccion = {
  */
 export function construirProyeccion(e: EntradaProyeccion): { p: ProyeccionP; motivo: null } | { p: null; motivo: MotivoSinProyeccion } {
   const h = e.hechos;
+  const secretos = e.secretos.filter((s) => typeof s === "string" && s !== "");
   const cdcInf = cdcInformadoPorApi(h.cdcBruto);
-  const cdc: ProyeccionP["cdc"] = cdcInf.valor !== null && cdcEsCredencial(cdcInf.valor, e.secretos.filter((s) => s !== ""))
+  const cdc: ProyeccionP["cdc"] = cdcInf.valor !== null && cdcEsCredencial(cdcInf.valor, secretos)
     ? { presente: true, valor: null, motivo: "CREDENCIAL" }
     : cdcInf.valor !== null && SUSTITUTO_SUELTO.test(cdcInf.valor) ? { presente: true, valor: null, motivo: "NO_TEXTO" } : { presente: cdcInf.presente, valor: cdcInf.valor, motivo: cdcInf.motivo };
 
   // Un CDC con un sustituto UTF-16 suelto (que jsonb no admite) no se puede declarar igual al recibido: sin P (la respuesta queda como evidencia y el cierre indeterminado).
   if (cdcInf.valor !== null && cdc.motivo === "NO_TEXTO") return { p: null, motivo: "CUERPO_NO_PROYECTABLE" };
-  if (h.lote.texto !== null && cdcEsCredencial(h.lote.texto, e.secretos.filter((s) => s !== ""))) {
+  if (h.lote.texto !== null && cdcEsCredencial(h.lote.texto, secretos)) {
     return { p: null, motivo: "CREDENCIALES_RESIDUALES" };
   }
 
@@ -225,12 +235,13 @@ export function construirProyeccion(e: EntradaProyeccion): { p: ProyeccionP; mot
     cdc,
     identidad: { tipo: e.identidad.tipo, establecimiento: e.identidad.establecimiento, punto: e.identidad.punto, numero: e.identidad.numero, serie_estado: e.identidad.serieEstado, serie: e.identidad.serie },
     lectura: {
-      texto_resultado: textoLectura(e.lectura.textoResultado, 500),
-      mensaje: textoLectura(h.mensaje, 300),
-      errores_propios: e.lectura.errores.map((x) => textoLectura(x, 200)).filter((x): x is string => x !== null).slice(0, 3),
-      estado_gateway: textoLectura(e.lectura.estadoGateway, 120),
+      // F-R03-02: TODAS las lecturas (también el mensaje ORIGINAL de la respuesta) se filtran con los secretos efectivos antes de recortar y de persistir.
+      texto_resultado: textoLectura(e.lectura.textoResultado, 500, secretos),
+      mensaje: textoLectura(h.mensaje, 300, secretos),
+      errores_propios: e.lectura.errores.map((x) => textoLectura(x, 200, secretos)).filter((x): x is string => x !== null).slice(0, 3),
+      estado_gateway: textoLectura(e.lectura.estadoGateway, 120, secretos),
       request_id: null,
-      campo_problema: textoLectura(h.campoProblema, 40),
+      campo_problema: textoLectura(h.campoProblema, 40, secretos),
     },
     confianza: { verificados_sql: [...CONFIANZA_P.verificados_sql], cotejables: [...CONFIANZA_P.cotejables], confiados_servidor: [...CONFIANZA_P.confiados_servidor] },
   };

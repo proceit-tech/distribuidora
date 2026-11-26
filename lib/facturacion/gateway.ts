@@ -1066,21 +1066,39 @@ export async function enviarDocumentoGateway(
 //  · los hechos de la respuesta que interpretarRecepcion usa (para la proyección P v1 de NEX-084), calculados con las MISMAS funciones internas.
 // No hay reintento automático ni renovación implícita: la vía R05 decide cada paso tras registrar el anterior.
 
-/** Respuesta del transporte: HTTP con su texto, o la clase del error de transmisión (TIMEOUT / RED). */
-export type SalidaTransporte = { ok: true; status: number; texto: string } | { ok: false; motivo: "TIMEOUT" | "RED" };
+/**
+ * Respuesta del transporte (PRO-312-R03-C01, F-R03-03): HTTP con su texto completo; HTTP con estado CONFIRMADO cuyo cuerpo no se pudo leer (`texto: null`, con la clase del fallo de
+ * lectura); o la clase del error de transmisión (TIMEOUT / RED) cuando no llegó ningún estado HTTP válido (sin cabeceras o estado fuera de 100–599).
+ */
+export type SalidaTransporte =
+  | { ok: true; status: number; texto: string }
+  | { ok: true; status: number; texto: null; cuerpoFallido: "TIMEOUT" | "RED" }
+  | { ok: false; motivo: "TIMEOUT" | "RED" };
 
 const fetchDe = (dep: Dependencias): FetchLike => (dep.fetch === undefined ? fetchSeguro : dep.fetch);
+const claseFallo = (control: AbortController, error: unknown): "TIMEOUT" | "RED" => (control.signal.aborted || (error instanceof Error && error.name === "AbortError") ? "TIMEOUT" : "RED");
 
 async function enviarTexto(url: string, headers: Record<string, string>, texto: string, timeoutMs: number, fetchFn: FetchLike): Promise<SalidaTransporte> {
   const control = new AbortController();
   const timer = setTimeout(() => control.abort(), timeoutMs);
 
   try {
-    const r = await fetchFn(url, { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json", ...headers }, body: texto, signal: control.signal });
+    let r: Awaited<ReturnType<FetchLike>>;
 
-    return { ok: true, status: r.status, texto: await r.text() };
-  } catch (error) {
-    return { ok: false, motivo: control.signal.aborted || (error instanceof Error && error.name === "AbortError") ? "TIMEOUT" : "RED" };
+    // Fallo ANTES de cualquier respuesta (sin estado ni cabeceras): error de transmisión.
+    try {
+      r = await fetchFn(url, { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json", ...headers }, body: texto, signal: control.signal });
+    } catch (error) {
+      return { ok: false, motivo: claseFallo(control, error) };
+    }
+    if (!Number.isInteger(r.status) || r.status < 100 || r.status > 599) return { ok: false, motivo: "RED" };
+
+    // Estado y cabeceras YA recibidos: un fallo al leer el cuerpo conserva el estado real (no se inventa un cuerpo ni se trata como vacío).
+    try {
+      return { ok: true, status: r.status, texto: await r.text() };
+    } catch (error) {
+      return { ok: true, status: r.status, texto: null, cuerpoFallido: claseFallo(control, error) };
+    }
   } finally {
     clearTimeout(timer);
   }
@@ -1106,6 +1124,9 @@ export async function autenticarGatewayR05(config: ConfigGateway, credenciales: 
   if (!r.ok) {
     return { resultado: r.motivo, origen: "HTTP", http: null, mensaje: r.motivo === "TIMEOUT" ? "Tiempo de espera agotado al autenticar con el gateway." : "No fue posible comunicarse con el gateway." };
   }
+
+  // Estado HTTP conocido con cuerpo ilegible o incompleto: nunca OK (sin token); se registra ERROR_HTTP con el estado real. El cuerpo del login nunca se expone.
+  if (r.texto === null) return { resultado: "ERROR_HTTP", origen: "HTTP", http: r.status, mensaje: "La respuesta de autenticación del gateway no se pudo leer completa." };
 
   let token: string | null = null;
 

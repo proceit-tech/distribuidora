@@ -112,6 +112,8 @@ function baseSimulada(filasOMundo: Fila[] | Mundo, docs: Record<string, Doc> = {
 
         return { rows: [{ ok }] };
       }
+      // PRO-312-R03-C01: catálogo R05 de la consulta → estructura NEX-084 AUSENTE (estos casos ejercen la regla NEX-079).
+      if (/"catalogoR05"/.test(texto)) return { rows: [{ catalogoR05: "NEX-084", referenciaR05: "AUSENTE" }] };
       if (/to_regprocedure/.test(texto)) return { rows: [{ disponible: true }] };
       if (/FROM fe_gateway_config/.test(texto)) return { rows: opciones.sinConfig ? [] : [{ ...CONFIG, empresaId: params[0] }] };
       if (/fe_documento_registrar_consulta/.test(texto) && !/_r05\(/.test(texto)) throw new Error("R05: firma anterior a NEX-080 (no debe usarse)");

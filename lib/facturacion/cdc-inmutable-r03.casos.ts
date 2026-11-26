@@ -104,6 +104,8 @@ export async function verificarCasosCdcInmutableR03(): Promise<string[]> {
     const db = {
       async query(sql: string, p: unknown[] = []) {
         // PRO-342-R05: NEX-080 presente (catálogo) y registro SOLO por la función R05 (fe_documento_registrar_consulta_r05), sin firmas anteriores.
+        // PRO-312-R03-C01: catálogo R05 de la consulta → estructura NEX-084 AUSENTE (estos casos ejercen la regla NEX-079).
+        if (/"catalogoR05"/.test(sql)) return { rows: [{ catalogoR05: "NEX-084", referenciaR05: "AUSENTE" }] };
         if (/to_regprocedure/.test(sql)) return { rows: [{ disponible: true }] };
         if (/FROM fe_gateway_config/.test(sql)) return { rows: [{ baseUrl: CONFIG.baseUrl, credencialRef: "PRUEBA", timeoutMs: 1000 }] };
         if (/fe_documento_registrar_consulta_r05\(/.test(sql)) { params.push(p); return { rows: [{ resultado: p[3] }] }; }

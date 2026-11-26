@@ -76,6 +76,8 @@ function base(fila: Record<string, unknown> = {}, opciones: { sinNex080?: boolea
   const db = {
     async query(sql: string, p: unknown[] = []) {
       sqls.push(sql);
+      // PRO-312-R03-C01: catálogo R05 de la consulta → estructura NEX-084 AUSENTE (estos casos ejercen la regla NEX-079).
+      if (/"catalogoR05"/.test(sql)) return { rows: [{ catalogoR05: "NEX-084", referenciaR05: "AUSENTE" }] };
       if (/to_regprocedure/.test(sql)) return { rows: [{ disponible: !opciones.sinNex080 }] };
       if (/FROM fe_gateway_config/.test(sql)) return { rows: [{ baseUrl: "https://gateway.prueba.invalid", credencialRef: "PRUEBA", timeoutMs: 1000 }] };
       if (/fe_documento_registrar_(consulta|envio)/.test(sql)) {

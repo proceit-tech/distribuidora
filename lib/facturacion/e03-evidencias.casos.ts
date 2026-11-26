@@ -5,6 +5,8 @@
  * reales: la base simulada responde con los contratos (nombres de columnas y códigos NEX) leídos de la migración; la homologación integrada queda para la VM existente.
  * Identificadores R03B-A… (bandera), B (preparación), C (flujo feliz, testigo, serialización única), D (no transmitido / D8-B), E (POST 2), F (incertidumbre y recuperación),
  * G (salida tardía y P rechazada), H (proyección P), I (continuidad de la consulta), J (fuente).
+ * PRO-312-R03-C01: K (consultarEstado/obtenerKude integrados, F-R03-01), L (secretos conocidos en P, respuesta y retorno, F-R03-02), M (HTTP conocido con cuerpo ilegible y fases,
+ * F-R03-03). ESCRITOS, NO EJECUTADOS en la entrega; los ejecuta el CI automático.
  */
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -16,8 +18,14 @@ import {
   respuestaRegistrable, rutaEnvioE03, SQL_R05,
 } from "@/lib/facturacion/e03-evidencias";
 import { construirProyeccion, derivarCierre, identidadDeSnapshot, MAX_BYTES_P, MENSAJES_CIERRE, type LibroOperacion } from "@/lib/facturacion/e03-proyeccion";
-import { hechosRecepcion, interpretarRecepcion, limpiarCacheTokens, referenciaConexion, type ConfigGateway, type DocumentoRecepcion, type FetchLike } from "@/lib/facturacion/gateway";
-import { continuidadReferenciaR05, ErrorFacturacion, MENSAJE_CONEXION_AMBIGUA, MENSAJE_CONEXION_DISTINTA, MENSAJE_REFERENCIA_R05_SIN_PERMISO, reiniciarNex080ParaCasos } from "@/lib/facturacion/shared";
+import {
+  hechosRecepcion, interpretarRecepcion, limpiarCacheTokens, referenciaConexion, transmitirRecepcionTexto, type ConfigGateway, type DocumentoRecepcion, type FetchLike,
+} from "@/lib/facturacion/gateway";
+import {
+  consultarEstado, continuidadReferenciaR05, ErrorFacturacion, estadoEstructuraR05, MENSAJE_CONEXION_AMBIGUA, MENSAJE_CONEXION_DISTINTA, MENSAJE_REFERENCIA_R05_INCOHERENTE,
+  MENSAJE_REFERENCIA_R05_SIN_PERMISO, obtenerKude, reiniciarNex080ParaCasos, SQL_CONEXION_ENVIO, SQL_CONEXION_REFERENCIA_R05, SQL_CONFIG_GATEWAY, SQL_NEX080_DISPONIBLE,
+  SQL_REFERENCIA_R05_DISPONIBLE, TABLAS_R05,
+} from "@/lib/facturacion/shared";
 
 type F = Record<string, unknown>;
 
@@ -43,7 +51,9 @@ const TOKEN_INVALIDO = { status: 400, cuerpo: { status: "error", message: "Token
 const RECHAZO_400 = { status: 400, cuerpo: { status: "error", message: "dRucRec inválido" } };
 
 type Llamada = { fn: string; params: unknown[] };
-type Respuesta = { status: number; cuerpo: unknown } | "TIMEOUT" | "RED";
+/** `falla`: estado y cabeceras recibidos, pero la lectura del cuerpo falla (PRO-312-R03-C01, F-R03-03). */
+type Http = { status: number; cuerpo?: unknown; falla?: "TIMEOUT" | "RED" };
+type Respuesta = Http | "TIMEOUT" | "RED";
 type Opciones = {
   inicio?: F | "INCIERTO" | { error: unknown };
   post?: (nro: number, intento: number) => unknown | null;
@@ -53,6 +63,10 @@ type Opciones = {
   cerrar?: (intento: number) => unknown | null;
   estado?: F;
   porCorrelacion?: F;
+  /** Fallo del registro de la autenticación n (simulado). */
+  autenticacion?: (nro: number) => unknown | null;
+  /** Campos de la fila de cierre que devuelve la base (p. ej. lote y CDC registrados). */
+  cierre?: F;
 };
 
 /** Base simulada con los CONTRATOS de NEX-084 (nombres de salida en camelCase como los alias de SQL_R05). Registra el orden global de escrituras y llamadas HTTP. */
@@ -84,6 +98,9 @@ function mundo(o: Opciones = {}) {
         return { rows: [{ resultado: "INICIADO", payload: PAYLOAD, numero: "0000123", tipo: "FE", establecimiento: "001", punto: "002", version: 1, payloadHash: "h", operacionId: OP, reutilizado: false, vigente: true, ...((o.inicio as F | undefined) ?? {}) }] };
       }
       if (fn === "fe_e03_registrar_autenticacion_r05") {
+        const e = o.autenticacion?.(params[5] === "INICIAL" ? 1 : 2);
+
+        if (e) throw e;
         ultimoHttpAut = params[8];
 
         return { rows: [{ nro: params[5] === "INICIAL" ? 1 : 2, reutilizado: false }] };
@@ -123,7 +140,7 @@ function mundo(o: Opciones = {}) {
           rows: [{
             estadoLocal: c.estado_local, intentoId: "i1", regla: c.regla, reutilizado: false, fase: aut ? "AUTENTICACION" : "TRANSMISION", resultado: c.resultado, errorTipo: c.error_tipo,
             motivo: "CODIGO", salidaUltimoPost: null, httpPost: aut ? null : ultimoHttpPost, httpAutenticacion: aut ? ultimoHttpAut : null,
-            lote: c.estado_local === "ENVIADO" ? "LOTE-R03B-1" : null, cdc: null, cerradoAt: "2026-11-26T00:00:00Z", estadoDocumentoActual: c.estado_local,
+            lote: c.estado_local === "ENVIADO" ? "LOTE-R03B-1" : null, cdc: null, cerradoAt: "2026-11-26T00:00:00Z", estadoDocumentoActual: c.estado_local, ...(o.cierre ?? {}),
           }],
         };
       }
@@ -146,8 +163,16 @@ function mundo(o: Opciones = {}) {
 }
 
 /** Gateway simulado: login devuelve TOKEN_A y luego TOKEN_B (o el estado pedido); recepción toma de la cola. */
-function gateway(m: ReturnType<typeof mundo>, cola: Respuesta[], login: Array<{ status: number; cuerpo: unknown }> = [{ status: 200, cuerpo: { status: "success", token: TOKEN_A } }, { status: 200, cuerpo: { status: "success", token: TOKEN_B } }]) {
+function gateway(m: ReturnType<typeof mundo>, cola: Respuesta[], login: Http[] = [{ status: 200, cuerpo: { status: "success", token: TOKEN_A } }, { status: 200, cuerpo: { status: "success", token: TOKEN_B } }]) {
   const pedidos: Array<{ url: string; headers: Record<string, string>; body: string }> = [];
+  const responder = (r: Http) => ({
+    status: r.status,
+    text: async () => {
+      if (r.falla) throw r.falla === "TIMEOUT" ? Object.assign(new Error("abortado"), { name: "AbortError" }) : new Error("ECONNRESET");
+
+      return JSON.stringify(r.cuerpo);
+    },
+  });
   const fetch: FetchLike = async (url, init) => {
     pedidos.push({ url, headers: init.headers, body: init.body });
 
@@ -155,7 +180,7 @@ function gateway(m: ReturnType<typeof mundo>, cola: Respuesta[], login: Array<{ 
       m.orden.push("http:login");
       const r = login.length > 1 ? login.shift()! : login[0];
 
-      return { status: r.status, text: async () => JSON.stringify(r.cuerpo) };
+      return responder(r);
     }
 
     m.orden.push("http:recepcion");
@@ -165,7 +190,7 @@ function gateway(m: ReturnType<typeof mundo>, cola: Respuesta[], login: Array<{ 
     if (r === "RED" || !r) throw new Error("ECONNREFUSED");
     m.marcarHttpPost(r.status);
 
-    return { status: r.status, text: async () => JSON.stringify(r.cuerpo) };
+    return responder(r);
   };
 
   return { fetch, pedidos, recepciones: () => pedidos.filter((p) => p.url.endsWith("/api/recepcion_de")), logins: () => pedidos.filter((p) => p.url.endsWith("/api/login")) };
@@ -560,43 +585,348 @@ export async function verificarCasosE03EvidenciasR03(): Promise<string[]> {
   ], ["NT", "AUT-1", "EI-SIN-SALIDA", "ET-RED", "ERROR_HTTP", "EI-TOKEN-SIN-POST2", null]);
 
   // ══ I. Continuidad de la conexión para CONSULTAR (referencia R05) ════════════════════════════════════════════════════════════════════════════
+  // PRO-312-R03-C01 (F-R03-01): la estructura se decide en estadoEstructuraR05 (catálogo: AUSENTE / LISTA, todo lo demás 503) y la referencia en continuidadReferenciaR05 (exactamente una fila).
   const BASE: ConfigGateway = { empresaId: EMPRESA, baseUrl: "https://gateway.prueba.invalid", credencialRef: "NEXIT_DB", credencialesVersion: 3, timeoutMs: 1000, credenciales: { ruc: RUC, password: CLAVE } };
-  const dbReferencia = (estado: unknown, fila: F | null) => ({
+  const REF = referenciaConexion(BASE);
+  const etiquetaError = (e: unknown) => {
+    if (!(e instanceof ErrorFacturacion)) return `ERR:${String((e as { code?: unknown }).code ?? "OTRO")}`;
+    const m = e.message;
+
+    return `${e.estado}:${m === MENSAJE_CONEXION_AMBIGUA ? "AMBIGUA" : m === MENSAJE_CONEXION_DISTINTA ? "DISTINTA" : m === MENSAJE_REFERENCIA_R05_SIN_PERMISO ? "SIN_PERMISO" : m === MENSAJE_REFERENCIA_R05_INCOHERENTE ? "INCOHERENTE" : "OTRO"}`;
+  };
+  const dbReferencia = (catalogo: F[], filas: F[] = []) => ({
     consultas: [] as string[],
     async query(sql: string) {
       this.consultas.push(sql);
-      if (/"referenciaR05"/.test(sql)) return { rows: estado === undefined ? [{}] : [{ referenciaR05: estado }] };
-      if (/fe_e03_conexion_referencia_r05\(\$1/.test(sql)) return { rows: fila ? [fila] : [] };
+      if (sql === SQL_REFERENCIA_R05_DISPONIBLE) return { rows: catalogo };
+      if (sql === SQL_CONEXION_REFERENCIA_R05) return { rows: filas };
 
       return { rows: [] };
     },
   });
-  const continuidad = async (db: ReturnType<typeof dbReferencia>) => {
+  const CAT = (referenciaR05: unknown): F => ({ catalogoR05: "NEX-084", referenciaR05 });
+  const estructura = async (db: ReturnType<typeof dbReferencia>) => {
     try {
-      return await continuidadReferenciaR05(db as never, EMPRESA, USUARIO, DOC, BASE);
+      return await estadoEstructuraR05(db as never);
     } catch (e) {
-      return e instanceof ErrorFacturacion ? `${e.estado}:${e.message === MENSAJE_CONEXION_AMBIGUA ? "AMBIGUA" : e.message === MENSAJE_CONEXION_DISTINTA ? "DISTINTA" : e.message === MENSAJE_REFERENCIA_R05_SIN_PERMISO ? "SIN_PERMISO" : "OTRO"}` : "OTRO";
+      return etiquetaError(e);
+    }
+  };
+  const continuidad = async (filas: F[]) => {
+    try {
+      return await continuidadReferenciaR05(dbReferencia([CAT("LISTA")], filas) as never, EMPRESA, USUARIO, DOC, BASE);
+    } catch (e) {
+      return etiquetaError(e);
     }
   };
   {
-    const ausente = dbReferencia("AUSENTE", null);
+    const ausente = dbReferencia([CAT("AUSENTE")]);
 
-    igual("R03B-I01 estructura R05 ausente (anterior a NEX-084) → null: rige la continuidad de NEX-079 como hoy, sin leer la función", [await continuidad(ausente), ausente.consultas.length, await continuidad(dbReferencia(undefined, null))], [null, 1, null]);
+    // Expectativa corregida (F-R03-01): antes una fila sin la forma esperada (undefined) se aceptaba como ausencia; ahora es 503 (nunca se supone ausencia).
+    igual("R03B-I01 estructura R05 ausente comprobada en el catálogo → AUSENTE con una sola lectura; una fila sin la forma esperada (sin marca ni estado) → 503, no ausencia", [await estructura(ausente), ausente.consultas.length, await estructura(dbReferencia([{}]))], ["AUSENTE", 1, "503:INCOHERENTE"]);
   }
-  igual("R03B-I02 estructura presente sin EXECUTE → 503 (sin fallback)", await continuidad(dbReferencia("SIN_PERMISO", null)), "503:SIN_PERMISO");
-  igual("R03B-I03 referencia AMBIGUA → 409", await continuidad(dbReferencia("LISTA", { conexion: referenciaConexion(BASE), ambigua: true })), "409:AMBIGUA");
-  igual("R03B-I04 referencia DISTINTA (otro host) → 409", await continuidad(dbReferencia("LISTA", { conexion: referenciaConexion({ ...BASE, baseUrl: "https://otro.prueba.invalid" }), ambigua: false })), "409:DISTINTA");
-  igual("R03B-I05 misma conexión (base, misma versión) → MISMA; sin referencia → SIN_REFERENCIA", [await continuidad(dbReferencia("LISTA", { conexion: referenciaConexion(BASE), ambigua: false })), await continuidad(dbReferencia("LISTA", { conexion: null, ambigua: false }))], ["MISMA", "SIN_REFERENCIA"]);
+  igual("R03B-I02 estructura presente sin EXECUTE → 503 (sin fallback)", await estructura(dbReferencia([CAT("SIN_PERMISO")])), "503:SIN_PERMISO");
+  igual("R03B-I03 referencia AMBIGUA → 409", await continuidad([{ conexion: REF, ambigua: true }]), "409:AMBIGUA");
+  igual("R03B-I04 referencia DISTINTA (otro host) → 409", await continuidad([{ conexion: referenciaConexion({ ...BASE, baseUrl: "https://otro.prueba.invalid" }), ambigua: false }]), "409:DISTINTA");
+  igual("R03B-I05 misma conexión (base, misma versión) → MISMA; fila explícita sin referencia → SIN_REFERENCIA", [await continuidad([{ conexion: REF, ambigua: false }]), await continuidad([{ conexion: null, ambigua: false }])], ["MISMA", "SIN_REFERENCIA"]);
   {
-    const db = { async query() { throw Object.assign(new Error("caída"), { code: "08006" }); } };
-    let codigo: unknown = "SIN_ERROR";
+    const caida = { async query() { throw Object.assign(new Error("caída"), { code: "08006" }); } };
+    const codigo = async (f: () => Promise<unknown>) => {
+      try {
+        await f();
+
+        return "SIN_ERROR";
+      } catch (e) {
+        return (e as { code?: unknown }).code;
+      }
+    };
+
+    igual("R03B-I06 error de lectura (catálogo o función) → se propaga (nunca se supone ausencia)", [await codigo(() => estadoEstructuraR05(caida as never)), await codigo(() => continuidadReferenciaR05(caida as never, EMPRESA, USUARIO, DOC, BASE))], ["08006", "08006"]);
+  }
+
+  // ══ K. consultarEstado integrado: UNA autoridad de continuidad (F-R03-01) ═══════════════════════════════════════════════════════════════════
+  // Base y gateway simulados; documento ya enviado; conexión activa = REF (credenciales de la base, versión 3). Funciones REALES: consultarEstado y obtenerKude.
+  const REF_VIEJA = { ...REF, credencialesVersion: 2 };
+  type OpcionesConsulta = { catalogo?: F[] | Error; referencia?: F[] | Error; nex079?: unknown };
+  const dbConsulta = (o: OpcionesConsulta = {}) => {
+    const sqls: string[] = [];
+    const registros: Array<{ sql: string; p: unknown[] }> = [];
+    const db = {
+      async query(sql: string, p: unknown[] = []) {
+        sqls.push(sql);
+        if (sql === SQL_NEX080_DISPONIBLE) return { rows: [{ disponible: true }] };
+        if (sql === SQL_CONFIG_GATEWAY) return { rows: [{ baseUrl: BASE.baseUrl, credencialRef: "NEXIT_DB", timeoutMs: 1000, credencialesVersion: "3" }] };
+        if (/fe_gateway_credenciales_leer/.test(sql)) return { rows: [{ ruc: RUC, password: CLAVE, version: 3 }] };
+        if (sql === SQL_REFERENCIA_R05_DISPONIBLE) {
+          if (o.catalogo instanceof Error) throw o.catalogo;
+
+          return { rows: o.catalogo ?? [CAT("LISTA")] };
+        }
+        if (sql === SQL_CONEXION_REFERENCIA_R05) {
+          if (o.referencia instanceof Error) throw o.referencia;
+
+          return { rows: o.referencia ?? [{ conexion: REF, ambigua: false }] };
+        }
+        if (sql === SQL_CONEXION_ENVIO) return { rows: o.nex079 === undefined ? [] : [{ conexion: o.nex079 }] };
+        if (/fe_documento_registrar_consulta/.test(sql)) {
+          registros.push({ sql, p });
+
+          return { rows: [{ resultado: p[3] }] };
+        }
+
+        return { rows: [{ id: DOC, tipo: "FE", establecimiento: "001", puntoExpedicion: "002", numero: "0000123", serie: null, cdc: null, estadoSifen: "PENDIENTE", estadoLocal: "ENVIADO" }] };
+      },
+    };
+
+    return { db, sqls, registros, leyo: (q: string) => sqls.includes(q) };
+  };
+  const gatewayConsulta = () => {
+    const urls: string[] = [];
+    const fetch: FetchLike = async (url) => {
+      urls.push(url);
+      if (url.endsWith("/api/login")) return { status: 200, text: async () => JSON.stringify({ status: "success", token: TOKEN_A }) };
+
+      return { status: 200, text: async () => JSON.stringify({ status: "success", response: { Estado: "Aprobado", DE: { CDC: "0".repeat(44), FechaFirma: "2026-11-26 10:00:00", Retorno: { CodRespuesta: "0260", Mensaje: "Aprobado" } } } }) };
+    };
+
+    return { fetch, urls };
+  };
+  const consultar = async (o: OpcionesConsulta = {}, opciones: { flujoNce?: boolean; leaseToken?: string } = {}) => {
+    reiniciarNex080ParaCasos();
+    limpiarCacheTokens();
+    const b = dbConsulta(o);
+    const g = gatewayConsulta();
+    let r: unknown;
 
     try {
-      await continuidadReferenciaR05(db as never, EMPRESA, USUARIO, DOC, BASE);
+      r = (await consultarEstado(b.db as never, EMPRESA, USUARIO, DOC, { fetch: g.fetch }, opciones)).continuidadConexion;
     } catch (e) {
-      codigo = (e as { code?: unknown }).code;
+      r = etiquetaError(e);
     }
-    igual("R03B-I06 error de lectura → se propaga (nunca se supone ausencia)", codigo, "08006");
+
+    return { r, http: g.urls.length, registros: b.registros.map((x) => /public\.(fe_documento_registrar_consulta[a-z_0-9]*)\(/.exec(x.sql)?.[1]), nex079: b.leyo(SQL_CONEXION_ENVIO), referencia: b.leyo(SQL_CONEXION_REFERENCIA_R05), sqls: b.sqls };
+  };
+  const resumen = (x: Awaited<ReturnType<typeof consultar>>) => [x.r, x.http, x.registros.length, x.nex079];
+  {
+    const x = await consultar({ nex079: REF_VIEJA, referencia: [{ conexion: REF, ambigua: false }] });
+
+    igual("R03B-K01 envío histórico A (NEX-079, otra versión) y operación R05 posterior B = conexión activa → MISMA: se consulta en B sin evaluar NEX-079 antes (sin 409 previo)", [...resumen(x), x.referencia], ["MISMA", 2, 1, false, true]);
+  }
+  igual("R03B-K02 referencia R05 antigua B (otra versión) con conexión activa A → 409 DISTINTA sin HTTP ni registro (aunque NEX-079 diría MISMA)", resumen(await consultar({ nex079: REF, referencia: [{ conexion: REF_VIEJA, ambigua: false }] })), ["409:DISTINTA", 0, 0, false]);
+  igual("R03B-K03 referencia R05 AMBIGUA (envío abierto con otra conexión) → 409 sin HTTP ni registro", resumen(await consultar({ referencia: [{ conexion: REF, ambigua: true }] })), ["409:AMBIGUA", 0, 0, false]);
+  igual("R03B-K04 operación sin POST / sin envío con conexión: fila explícita nula → SIN_REFERENCIA; se consulta con la conexión activa (sin NEX-079)", resumen(await consultar({ nex079: REF_VIEJA, referencia: [{ conexion: null, ambigua: false }] })), ["SIN_REFERENCIA", 2, 1, false]);
+  {
+    const x = await consultar({ catalogo: [CAT("PARCIAL")], nex079: REF });
+    const sqlCat = SQL_REFERENCIA_R05_DISPONIBLE.replace(/\s+/g, " ");
+    const tablas084 = [...leer("documentacao/banco/nexit/v1/migraciones/NEX-084-facturacion-e03-envio-r05.sql").matchAll(/^CREATE TABLE (public\.[a-z_0-9]+)/gm)].map((t) => t[1]);
+
+    igual("R03B-K05 estructura PARCIAL (p. ej. tablas sin la función, o la función sin todas las tablas) → 503 sin HTTP, sin NEX-079 ni referencia", [...resumen(x), x.referencia], ["503:INCOHERENTE", 0, 0, false, false]);
+    cierto("R03B-K05b catálogo: AUSENTE solo sin la función Y sin ninguna de las 7 tablas de NEX-084; LISTA solo con la función y las 7 (lista = CREATE TABLE de NEX-084)", /WHEN f IS NULL AND tablas = 0 THEN 'AUSENTE'/.test(sqlCat) && /WHEN f IS NOT NULL AND tablas = esperadas THEN/.test(sqlCat) && /ELSE 'PARCIAL'/.test(sqlCat) && JSON.stringify([...TABLAS_R05].sort()) === JSON.stringify([...tablas084].sort()) && tablas084.length === 7);
+  }
+  igual("R03B-K06 catálogo vacío, con dos filas, sin marca, con estado desconocido o nulo → 503 sin HTTP (nunca ausencia ni NEX-079)", await Promise.all([[], [CAT("AUSENTE"), CAT("AUSENTE")], [{ referenciaR05: "AUSENTE" }], [CAT("OTRO")], [CAT(null)]].map(async (catalogo) => resumen(await consultar({ catalogo, nex079: REF })))), Array(5).fill(["503:INCOHERENTE", 0, 0, false]));
+  igual("R03B-K07 respuesta de la función que no es exactamente una fila válida (vacía, dos filas, ambigua no booleana o ausente, sin columna conexión, conexión no objeto) → 503 sin HTTP", await Promise.all([
+    [], [{ conexion: REF, ambigua: false }, { conexion: REF, ambigua: false }], [{ conexion: REF, ambigua: "false" }], [{ conexion: REF }], [{ ambigua: false }], [{ conexion: [REF], ambigua: false }], [{ conexion: "gateway", ambigua: false }],
+  ].map(async (referencia) => resumen(await consultar({ referencia, nex079: REF })))), Array(7).fill(["503:INCOHERENTE", 0, 0, false]));
+  igual("R03B-K08 función presente sin EXECUTE → 503 sin HTTP (sin fallback a NEX-079)", resumen(await consultar({ catalogo: [CAT("SIN_PERMISO")], nex079: REF })), ["503:SIN_PERMISO", 0, 0, false]);
+  {
+    const sin = (nex079: unknown) => consultar({ catalogo: [CAT("AUSENTE")], nex079 });
+    const [a, b, c] = [await sin(REF_VIEJA), await sin(REF), await sin(undefined)];
+
+    igual("R03B-K09 instalación anterior a NEX-084 (ausencia comprobada) → regla NEX-079 como hoy: DISTINTA 409 sin HTTP, MISMA y SIN_REFERENCIA consultan; la función R05 no se lee", [resumen(a), resumen(b), resumen(c), [a, b, c].some((x) => x.referencia)], [["409:DISTINTA", 0, 0, true], ["MISMA", 2, 1, true], ["SIN_REFERENCIA", 2, 1, true], false]);
+  }
+  {
+    const vias = [{}, { flujoNce: true }, { leaseToken: "1e312c01-0000-4000-8000-000000000001" }];
+    const distintas = await Promise.all(vias.map(async (v) => resumen(await consultar({ nex079: REF, referencia: [{ conexion: REF_VIEJA, ambigua: false }] }, v))));
+    const mismas = await Promise.all(vias.map(async (v) => (await consultar({ nex079: REF_VIEJA }, v)).registros));
+
+    igual("R03B-K10 las tres vías (manual, flujo NCE, automática) usan la misma autoridad: DISTINTA → 409 sin HTTP; MISMA → registran con su función *_r05", [distintas, mismas], [Array(3).fill(["409:DISTINTA", 0, 0, false]), [["fe_documento_registrar_consulta_r05"], ["fe_documento_registrar_consulta_flujo_nce_r05"], ["fe_documento_registrar_consulta_auto_r05"]]]);
+  }
+  {
+    const x = await consultar({ nex079: REF_VIEJA });
+    const fuente = sinComentariosTs(leer("lib/facturacion/shared.ts"));
+    const c = fuente.slice(fuente.indexOf("export async function conexionParaConsulta"), fuente.indexOf("export const TAMANO_DEFECTO"));
+
+    igual("R03B-K11 bandera apagada / modo REVERTIDO: la consulta no lee la bandera ni el modo R05 (la referencia rige igual; NEX-084 la deja ejecutable en REVERTIDO)", [x.r, x.sqls.some((s) => /nex_e03_r05_estado/.test(s)), /NEXIT_E03_EVIDENCIAS|rutaEnvioE03|modo/.test(c)], ["MISMA", false, false]);
+  }
+  igual("R03B-K12 error de lectura del catálogo o de la función → se propaga sin HTTP ni NEX-079", [resumen(await consultar({ catalogo: Object.assign(new Error("caída"), { code: "08006" }), nex079: REF })), resumen(await consultar({ referencia: Object.assign(new Error("caída"), { code: "57P01" }), nex079: REF }))], [["ERR:08006", 0, 0, false], ["ERR:57P01", 0, 0, false]]);
+  {
+    const kude = async (nex079: unknown) => {
+      const b = dbConsulta({ nex079, referencia: [{ conexion: REF, ambigua: false }] });
+      const g = gatewayConsulta();
+      let r = "OK";
+      let kudePedido = false;
+
+      try {
+        await obtenerKude(b.db as never, EMPRESA, USUARIO, DOC, { fetch: g.fetch, fetchKude: async () => { kudePedido = true; throw new Error("ECONNREFUSED"); } });
+      } catch (e) {
+        r = etiquetaError(e);
+      }
+
+      return [r === "409:DISTINTA" ? r : "SIGUE", kudePedido, b.leyo(SQL_REFERENCIA_R05_DISPONIBLE) || b.leyo(SQL_CONEXION_REFERENCIA_R05), b.leyo(SQL_CONEXION_ENVIO)];
+    };
+
+    limpiarCacheTokens();
+    igual("R03B-K13 KuDE sin cambios: regla NEX-079 (DISTINTA 409 sin HTTP; MISMA pide el PDF), sin catálogo ni referencia R05", [await kude(REF_VIEJA), await kude(REF)], [["409:DISTINTA", false, false, true], ["SIGUE", true, false, true]]);
+  }
+
+  // ══ L. Secretos conocidos en P, respuesta registrada y retorno (F-R03-02) ═══════════════════════════════════════════════════════════════════
+  const CLAVE_OPACA = "Zq81mPwTx4";
+  const TOKEN_OPACO_1 = "tok3nOpacoR03C01primero";
+  const TOKEN_OPACO_2 = "tok3nOpacoR03C01segundo";
+  const LOGIN_OPACO = [{ status: 200, cuerpo: { status: "success", token: TOKEN_OPACO_1 } }, { status: 200, cuerpo: { status: "success", token: TOKEN_OPACO_2 } }];
+  const conClave = (password: string): ConfigGateway => ({ ...CONFIG, credenciales: { ruc: RUC, password } });
+  const salidasParams = (m: ReturnType<typeof mundo>) => m.de("fe_e03_registrar_salida_r05").map((l) => l.params.slice(5));
+  const pDe = (params: unknown[]) => (typeof params[6] === "string" ? (JSON.parse(params[6]) as { lectura: F; cdc: F }) : null);
+  const nadaContiene = (s: string, ...x: unknown[]) => x.every((v) => !(typeof v === "string" ? v : JSON.stringify(v ?? null)).includes(s));
+  limpiarCacheTokens();
+  {
+    const m = mundo();
+    const g = gateway(m, [{ status: 400, cuerpo: { status: "error", message: `Error de validación ${CLAVE_OPACA} en dRucRec`, errores: [`campo ${TOKEN_OPACO_1}`] } }], LOGIN_OPACO);
+    const r = await enviar(m, g, conClave(CLAVE_OPACA));
+    const s = salidasParams(m)[0] ?? [];
+
+    cierto("R03B-L01 clave y token OPACOS (sin prefijo reconocible) en el mensaje y errores libres: ni en P (lectura nula), ni en la respuesta registrada, ni en el retorno ni en los logs", [CLAVE_OPACA, TOKEN_OPACO_1].every((x) => nadaContiene(x, s, r.valor, r.logs)) && pDe(s) !== null && pDe(s)?.lectura.mensaje === null);
+  }
+  limpiarCacheTokens();
+  {
+    const conLote = async (lote: string) => {
+      limpiarCacheTokens();
+      const m = mundo();
+      const g = gateway(m, [{ status: 200, cuerpo: { status: "success", message: "Documento recibido", nro_lote: lote } }], LOGIN_OPACO);
+      const r = await enviar(m, g, conClave(CLAVE_OPACA));
+      const s = salidasParams(m)[0] ?? [];
+
+      return [s.slice(3, 8), r.valor?.lote, nadaContiene(lote, s, r.valor, r.logs)];
+    };
+    const esperado = [[JSON.stringify({ truncado: true }), true, null, null, "CREDENCIALES_RESIDUALES"], null, true];
+
+    igual("R03B-L02 lote IGUAL a la clave → la respuesta no se guarda (solo la marca de truncamiento), sin P (CREDENCIALES_RESIDUALES), lote no devuelto", await conLote(CLAVE_OPACA), esperado);
+    igual("R03B-L03 lote IGUAL al token de la sesión → igual que L02", await conLote(TOKEN_OPACO_1), esperado);
+  }
+  limpiarCacheTokens();
+  {
+    const m = mundo();
+    const g = gateway(m, [TOKEN_INVALIDO, { status: 200, cuerpo: { status: "success", message: `Sesión ${TOKEN_OPACO_1} reemplazada`, nro_lote: "LOTE-R03B-1" } }], LOGIN_OPACO);
+    const r = await enviar(m, g, conClave(CLAVE_OPACA));
+    const s2 = salidasParams(m)[1] ?? [];
+
+    cierto("R03B-L04 POST 2: la respuesta repite el token ANTERIOR (ya renovado) → tampoco queda en P, en la respuesta registrada, en el retorno ni en los logs", g.recepciones().length === 2 && pDe(s2) !== null && pDe(s2)?.lectura.mensaje === null && nadaContiene(TOKEN_OPACO_1, s2, r.valor, r.logs));
+  }
+  limpiarCacheTokens();
+  {
+    const corta = "q7Z";
+    const m = mundo();
+    const g = gateway(m, [{ status: 400, cuerpo: { status: "error", message: corta } }], LOGIN_OPACO);
+    const r = await enviar(m, g, conClave(corta));
+    const s = salidasParams(m)[0] ?? [];
+
+    igual("R03B-L05 credencial CORTA exacta (< 4 caracteres) como mensaje → respuesta no guardada (marca), sin P, mensaje fijo del cierre (no la credencial)", [s.slice(3, 8), r.valor?.mensaje === corta, nadaContiene(`"${corta}"`, s, r.valor)], [[JSON.stringify({ truncado: true }), true, null, null, "CREDENCIALES_RESIDUALES"], false, true]);
+  }
+  limpiarCacheTokens();
+  {
+    const CDC_RUC = `01${RUC}${"7".repeat(34)}`;
+    const LOTE_RUC = `LOTE-${RUC}-7`;
+    const m = mundo({ cierre: { lote: LOTE_RUC, cdc: CDC_RUC } });
+    const g = gateway(m, [{ status: 200, cuerpo: { status: "success", message: "Documento recibido", nro_lote: LOTE_RUC, cdc: CDC_RUC } }], LOGIN_OPACO);
+    const r = await enviar(m, g, conClave(RUC));
+    const s = salidasParams(m)[0] ?? [];
+    const resp = typeof s[3] === "string" ? (JSON.parse(s[3]) as F) : {};
+
+    igual("R03B-L06 clave = RUC y CDC/lote legítimos que CONTIENEN el RUC → se conservan exactos (respuesta, P y retorno): no se mutilan ni se toman por credencial", [resp.nro_lote, resp.cdc, s[4], pDe(s)?.cdc.valor, r.valor?.lote, r.valor?.cdc, r.valor?.estadoLocal], [LOTE_RUC, CDC_RUC, false, CDC_RUC, LOTE_RUC, CDC_RUC, "ENVIADO"]);
+  }
+
+  // ══ M. HTTP conocido con cuerpo ilegible y fases (F-R03-03) ═════════════════════════════════════════════════════════════════════════════════
+  const SIN_P_CUERPO = (http: number) => ["HTTP_RESPUESTA", http, JSON.stringify({ truncado: true }), true, null, null, "CUERPO_NO_PROYECTABLE"];
+  limpiarCacheTokens();
+  {
+    const m = mundo();
+    const g = gateway(m, [{ status: 200, falla: "TIMEOUT" }]);
+    const r = await enviar(m, g);
+
+    igual("R03B-M01 POST con estado 200 recibido y cuerpo que vence al leerse → HTTP_RESPUESTA 200 sin P (CUERPO_NO_PROYECTABLE), cierre EI-SIN-P indeterminado con HTTP 200; nunca ERROR_TRANSMISION", [salidasParams(m).map((p) => p.slice(1, 8)), cierreDe(m), r.valor?.http, g.recepciones().length], [[SIN_P_CUERPO(200)], [{ regla: "EI-SIN-P", resultado: "RESPUESTA_INVALIDA", estado_local: "ENVIO_INDETERMINADO", error_tipo: null }], 200, 1]);
+  }
+  {
+    const caso = async (status: number, falla: "TIMEOUT" | "RED") => {
+      limpiarCacheTokens();
+      const m = mundo();
+      const g = gateway(m, [{ status, falla }, ACK]);
+      const r = await enviar(m, g);
+
+      return [salidasParams(m).map((p) => p.slice(1, 8)), cierreDe(m).map((c) => [c.regla, c.resultado]), r.valor?.http, g.recepciones().length, g.logins().length];
+    };
+
+    igual("R03B-M02 401 con cuerpo ilegible → HTTP_RESPUESTA 401 sin P: sin token inválido acreditado, sin renovación ni POST 2; cierre EI-SIN-P ERROR_HTTP", await caso(401, "RED"), [[SIN_P_CUERPO(401)], [["EI-SIN-P", "ERROR_HTTP"]], 401, 1, 1]);
+    igual("R03B-M03 400 / 500 / 503 con cuerpo ilegible → el estado REAL, sin P y sin POST 2", [await caso(400, "TIMEOUT"), await caso(500, "RED"), await caso(503, "TIMEOUT")].map((x) => [x[0], x[2], x[3]]), [[[SIN_P_CUERPO(400)], 400, 1], [[SIN_P_CUERPO(500)], 500, 1], [[SIN_P_CUERPO(503)], 503, 1]]);
+  }
+  {
+    const sinEstado = async (cola: Respuesta[]) => {
+      limpiarCacheTokens();
+      const m = mundo();
+      const g = gateway(m, cola);
+
+      await enviar(m, g);
+
+      return [salidasParams(m).map((p) => p.slice(1, 6)), cierreDe(m).map((c) => c.regla)];
+    };
+    const et = [[["ERROR_TRANSMISION", null, null, false, "RED"]], ["ET-RED"]];
+
+    igual("R03B-M04 sin estado HTTP (fetch rechazado, sin cabeceras) o estado fuera de 100–599 → ERROR_TRANSMISION RED con HTTP nulo (no se inventa un estado)", [await sinEstado(["RED"]), await sinEstado([{ status: 0, cuerpo: {} }]), await sinEstado([{ status: 600, cuerpo: {} }])], [et, et, et]);
+  }
+  {
+    const login = async (l: Http[]) => {
+      limpiarCacheTokens();
+      const m = mundo();
+      const g = gateway(m, [ACK], l);
+      const r = await enviar(m, g);
+
+      return [m.de("fe_e03_registrar_autenticacion_r05").map((x) => x.params.slice(5)), g.recepciones().length, cierreDe(m).map((c) => [c.regla, c.resultado]), r.valor?.http, r.valor?.fases.map((f) => [f.fase, f.ok])];
+    };
+
+    igual("R03B-M05 login con estado 200 (o 401) y cuerpo ilegible → autenticación ERROR_HTTP con el estado real, nunca OK; sin POST; cierre AUT-1", [await login([{ status: 200, falla: "TIMEOUT" }]), await login([{ status: 401, falla: "RED" }])], [
+      [[["INICIAL", "HTTP", "ERROR_HTTP", 200]], 0, [["AUT-1", "ERROR_HTTP"]], 200, [["AUTENTICACION", false]]],
+      [[["INICIAL", "HTTP", "ERROR_HTTP", 401]], 0, [["AUT-1", "ERROR_HTTP"]], 401, [["AUTENTICACION", false]]],
+    ]);
+  }
+  {
+    limpiarCacheTokens();
+    const m = mundo();
+    const g = gateway(m, [TOKEN_INVALIDO, ACK], [{ status: 200, cuerpo: { status: "success", token: TOKEN_A } }, { status: 200, falla: "RED" }]);
+
+    await enviar(m, g);
+    igual("R03B-M06 renovación con estado 200 y cuerpo ilegible → RENOVACION_TOKEN ERROR_HTTP 200, sin POST 2; cierre AUT-2", [m.de("fe_e03_registrar_autenticacion_r05").map((x) => x.params.slice(5)), g.recepciones().length, cierreDe(m).map((c) => c.regla)], [[["INICIAL", "HTTP", "OK", 200], ["RENOVACION_TOKEN", "HTTP", "ERROR_HTTP", 200]], 1, ["AUT-2"]]);
+  }
+  {
+    limpiarCacheTokens();
+    const m = mundo();
+    const g = gateway(m, [TOKEN_INVALIDO, ACK], [{ status: 200, cuerpo: { status: "success", token: TOKEN_A } }, { status: 500, cuerpo: {} }]);
+    const r = await enviar(m, g);
+
+    igual("R03B-M07 AUT-2 sin POST 2: fases = autenticación, transmisión con token rechazado y renovación fallida (visible aunque no hubo POST 2); sin fase RESPUESTA; HTTP del cierre = el de la autenticación", [r.valor?.fases.map((f) => [f.fase, f.ok, f.http ?? null]), r.valor?.fases[1]?.detalle, r.valor?.http], [[["AUTENTICACION", true, null], ["TRANSMISION", false, 400], ["AUTENTICACION", false, 500]], "Token rechazado (HTTP 400); se renueva la sesión.", 500]);
+  }
+  {
+    limpiarCacheTokens();
+    const m = mundo({ autenticacion: (nro) => (nro === 2 ? Object.assign(new Error("definitivo"), { code: "P0001", detail: "NEX:EVENTO_INVALIDO" }) : null) });
+    const g = gateway(m, [TOKEN_INVALIDO, ACK]);
+    const r = await enviar(m, g);
+
+    igual("R03B-M08 renovación sin registro confirmado → sin POST 2 y sin anunciar una renovación que no quedó registrada; cierre EI-TOKEN-SIN-POST2", [g.recepciones().length, cierreDe(m).map((c) => c.regla), r.valor?.fases.map((f) => f.fase), r.valor?.fases[1]?.detalle], [1, ["EI-TOKEN-SIN-POST2"], ["AUTENTICACION", "TRANSMISION", "RESPUESTA"], "Token rechazado (HTTP 400)."]);
+  }
+  {
+    limpiarCacheTokens();
+    const m = mundo();
+    const g = gateway(m, [{ status: 200, falla: "RED" }]);
+    const r = await enviar(m, g);
+
+    igual("R03B-M09 fases con cuerpo ilegible: la transmisión muestra el estado real y que el contenido no se pudo leer (no «Solicitud transmitida» con éxito)", r.valor?.fases.map((f) => [f.fase, f.ok, f.http ?? null, f.fase === "TRANSMISION" ? f.detalle : ""]), [["AUTENTICACION", true, null, ""], ["TRANSMISION", false, 200, "Respuesta HTTP 200 recibida, pero su contenido no se pudo leer completo."], ["RESPUESTA", false, 200, ""]]);
+  }
+  {
+    const transporte = (f: FetchLike) => transmitirRecepcionTexto(CONFIG, TOKEN_A, "{}", { fetch: f });
+    const fallaTexto = (name: string): FetchLike => async () => ({ status: 200, text: async () => { throw Object.assign(new Error("x"), { name }); } });
+
+    igual("R03B-M10 transporte R05: estado recibido + cuerpo fallido → {ok, status, texto:null, clase}; sin respuesta → ok:false; estado inválido → RED", [
+      await transporte(fallaTexto("AbortError")), await transporte(fallaTexto("Error")),
+      await transporte(async () => { throw new Error("ECONNREFUSED"); }), await transporte(async () => ({ status: 0, text: async () => "" })),
+    ], [{ ok: true, status: 200, texto: null, cuerpoFallido: "TIMEOUT" }, { ok: true, status: 200, texto: null, cuerpoFallido: "RED" }, { ok: false, motivo: "RED" }, { ok: false, motivo: "RED" }]);
   }
 
   // ══ J. Fuente: vía vigente intacta, sin fallback, sin DML ni estado SIFEN ═══════════════════════════════════════════════════════════════════
@@ -614,10 +944,13 @@ export async function verificarCasosE03EvidenciasR03(): Promise<string[]> {
   cierto("R03B-J05 SQL R05: solo funciones públicas fe_e03_*_r05 y cada parámetro con tipo explícito", Object.values(SQL_R05).every((s) => /FROM public\.fe_e03_[a-z_]+_r05\(/.test(s) && !/\$\d+(?!\d|::)/.test(s)));
   cierto("R03B-J06 sin logs con parámetros: los fallos se registran solo con lugar y código", !/console\.(log|info|warn)/.test(evid) && (evid.match(/console\.error\(/g) ?? []).length === 1);
   cierto("R03B-J07 sin stock, numeración, saldos, impuestos ni KuDE en la vía R05", !/\bstock|movimientos_inventario|\bkude|\bsaldo|fe_documento_crear|\biva\b/i.test(`${evid}\n${proy}`));
-  cierto("R03B-J08 consulta: la referencia R05 se evalúa antes de llamar al gateway", (() => {
+  // Expectativa actualizada (F-R03-01): la consulta llama a conexionParaConsulta (una sola autoridad) y ya no a conexionParaDocumento (NEX-079 con 409 previo).
+  cierto("R03B-J08 consulta: la continuidad (conexionParaConsulta: R05 si está LISTA, NEX-079 solo si AUSENTE) se decide antes del gateway, sin la regla NEX-079 previa del KuDE", (() => {
     const c = tramo(shared, "export async function consultarEstado", "export async function obtenerKude");
+    const k = tramo(shared, "export async function conexionParaConsulta", "export const TAMANO_DEFECTO");
 
-    return c.indexOf("continuidadReferenciaR05(") > 0 && c.indexOf("continuidadReferenciaR05(") < c.indexOf("consultarDocumentoGateway(");
+    return c.indexOf("conexionParaConsulta(") > 0 && c.indexOf("conexionParaConsulta(") < c.indexOf("consultarDocumentoGateway(") && !/conexionParaDocumento\(|continuidadNex079\(/.test(c)
+      && /estadoEstructuraR05\(db\)/.test(k) && /estructura === "LISTA" \? await continuidadReferenciaR05\(/.test(k);
   })());
   cierto("R03B-J09 KuDE sin cambios: conexionParaDocumento y obtenerKude no usan la referencia R05", !/continuidadReferenciaR05|fe_e03_conexion_referencia_r05/.test(tramo(shared, "async function conexionParaDocumento", "export const SQL_REFERENCIA_R05_DISPONIBLE")) && !/continuidadReferenciaR05/.test(tramo(shared, "export async function obtenerKude", "\n}\n")));
   cierto("R03B-J10 el límite de 999 ítems y la numeración no se tocan desde la vía R05", !/999|fe_max_lineas|MAX_LINEAS|numeracion|secuencia/i.test(`${evid}\n${proy}`));

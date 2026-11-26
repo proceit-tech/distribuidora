@@ -149,6 +149,8 @@ function mundo(docs: Partial<DocMundo>[], opciones: { sinNex080?: boolean; baseU
     async query(sql: string, p: unknown[] = []) {
       sqls.push(sql);
       // PRO-342-R05: verificación en el catálogo de las funciones R05 (exigirNex080). Sin NEX-080 no existen y nunca se llama a una firma anterior.
+      // PRO-312-R03-C01: catálogo R05 de la consulta → estructura NEX-084 AUSENTE (estos casos ejercen la regla NEX-079).
+      if (/"catalogoR05"/.test(sql)) return { rows: [{ catalogoR05: "NEX-084", referenciaR05: "AUSENTE" }] };
       if (/to_regprocedure/.test(sql)) return { rows: [{ disponible: !opciones.sinNex080 }] };
       if (/fe_documento_registrar_(consulta|envio)/.test(sql) && !/_r05\(/.test(sql)) throw new Error(`R05: la aplicación no debe usar firmas anteriores a NEX-080: ${sql.slice(0, 80)}`);
       if (opciones.sinNex080 && /_r05\(/.test(sql)) throw Object.assign(new Error("function does not exist"), { code: "42883" });

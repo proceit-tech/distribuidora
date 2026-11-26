@@ -25,7 +25,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { Pool } from "pg";
 
 import {
-  autenticarGatewayR05, CONTRATO_FISCAL_ENVIO, credencialesDe, hechosRecepcion, interpretarRecepcion, referenciaConexion, resultadoFiscalSinSecretos, seriePayload, transmitirRecepcionTexto,
+  autenticarGatewayR05, cdcEsCredencial, CONTRATO_FISCAL_ENVIO, credencialesDe, hechosRecepcion, interpretarRecepcion, referenciaConexion, resultadoFiscalSinSecretos, seriePayload, transmitirRecepcionTexto,
   type ConfigGateway, type Dependencias, type DocumentoRecepcion, type FaseEnvio, type ResultadoEnvio, type SalidaTransporte,
 } from "@/lib/facturacion/gateway";
 import {
@@ -249,6 +249,25 @@ export function respuestaRegistrable(respuesta: unknown): { respuesta: unknown; 
   return { respuesta, truncada: false };
 }
 
+/**
+ * PRO-312-R03-C01 (F-R03-02): ¿la respuesta YA saneada conserva una credencial conocida? El saneamiento de la vía vigente deja exactas las rutas fiscales (CDC, lote) aunque el valor SEA la
+ * clave o un token, e ignora en textos libres los secretos de menos de 4 caracteres. Aquí se revisa cada valor y cada nombre de campo con cdcEsCredencial (clave o token EXACTOS, de cualquier
+ * longitud; token largo contenido; Bearer/JWT): un CDC o lote legítimo que solo CONTIENE dígitos del RUC o de una clave numérica no es credencial y se conserva. Con credencial, la respuesta
+ * no se guarda (solo la marca de truncamiento) y no hay P.
+ */
+export function respuestaConCredencial(valor: unknown, secretos: readonly string[]): boolean {
+  if (typeof valor === "string") return cdcEsCredencial(valor, secretos);
+  if (typeof valor === "number") return cdcEsCredencial(String(valor), secretos);
+  if (Array.isArray(valor)) return valor.some((v) => respuestaConCredencial(v, secretos));
+  if (valor && typeof valor === "object") return Object.entries(valor as F).some(([k, v]) => cdcEsCredencial(k, secretos) || respuestaConCredencial(v, secretos));
+
+  return false;
+}
+
+/** Texto que se DEVUELVE al llamador (mensaje, estado del gateway, errores): sin credencial exacta ni contenida (≥ 4 caracteres); si la tiene, no se devuelve. */
+const textoDevolvible = (v: string | null, secretos: readonly string[]): string | null =>
+  v === null || cdcEsCredencial(v, secretos) || secretos.some((x) => x.length >= 4 && v.includes(x)) ? null : v;
+
 /** Mensaje del cierre según su regla (la base devuelve el motivo como código, no el texto): mismos textos que la derivación de NEX-084 y que la vía vigente. */
 export function mensajeCierre(regla: string, resultado: unknown): string | null {
   if (regla === "NT") return MENSAJES_CIERRE.NT;
@@ -265,24 +284,30 @@ export function mensajeCierre(regla: string, resultado: unknown): string | null 
 /** Testigo: 256 bits aleatorios en base64url (43 caracteres, formato que acepta fe_e03_r05_hash_testigo). */
 export const nuevoTestigo = () => randomBytes(32).toString("base64url");
 
-/** Fases para el modal técnico (mismos textos que la vía vigente). */
-function fasesDe(libro: LibroOperacion, transmisiones: Array<SalidaTransporte | null>, cierre: { estadoLocal: string; mensaje: string | null }, mensajesAut: [string | null, string | null]): FaseEnvio[] {
+/**
+ * Fases OBSERVADAS en esta operación para el modal técnico (mismos textos que la vía vigente). PRO-312-R03-C01 (F-R03-03): la renovación (autenticación 2) aparece aunque no haya habido
+ * POST 2; «se renueva la sesión» solo si la renovación se registró; un estado HTTP con cuerpo ilegible se muestra con su estado real; la fase RESPUESTA corresponde al último POST y NO
+ * se muestra cuando el cierre es de AUTENTICACIÓN (AUT-1/AUT-2: su HTTP es el de la autenticación, ya mostrado). No se inventan eventos: solo lo registrado localmente.
+ */
+function fasesDe(
+  libro: LibroOperacion, transmisiones: Array<SalidaTransporte | null>, cierre: { estadoLocal: string; mensaje: string | null; fase: unknown }, mensajesAut: [string | null, string | null],
+): FaseEnvio[] {
   const fases: FaseEnvio[] = [];
+  const autenticacion = (a: NonNullable<LibroOperacion["aut1"]>, okDetalle: string, mensaje: string | null): FaseEnvio =>
+    a.resultado === "OK" ? { fase: "AUTENTICACION", ok: true, detalle: okDetalle } : { fase: "AUTENTICACION", ok: false, detalle: mensaje ?? MENSAJES_CIERRE.AUT_HTTP, http: a.http };
 
-  if (libro.aut1) {
-    fases.push(libro.aut1.resultado === "OK" ? { fase: "AUTENTICACION", ok: true, detalle: "Autenticación obtenida." } : { fase: "AUTENTICACION", ok: false, detalle: mensajesAut[0] ?? MENSAJES_CIERRE.AUT_HTTP, http: libro.aut1.http });
-  }
-  for (let n = 1; n <= transmisiones.length; n++) {
+  if (libro.aut1) fases.push(autenticacion(libro.aut1, "Autenticación obtenida.", mensajesAut[0]));
+  for (let n = 1; n <= Math.max(transmisiones.length, libro.aut2 ? 2 : 0); n++) {
     const t = transmisiones[n - 1];
 
-    if (n === 2 && libro.aut2) {
-      fases.push(libro.aut2.resultado === "OK" ? { fase: "AUTENTICACION", ok: true, detalle: "Sesión renovada con el gateway." } : { fase: "AUTENTICACION", ok: false, detalle: mensajesAut[1] ?? MENSAJES_CIERRE.AUT_HTTP, http: libro.aut2.http });
-    }
+    if (n === 2 && libro.aut2) fases.push(autenticacion(libro.aut2, "Sesión renovada con el gateway.", mensajesAut[1]));
     if (!t) continue;
     if (!t.ok) {
       fases.push({ fase: "TRANSMISION", ok: false, detalle: t.motivo === "TIMEOUT" ? MENSAJES_CIERRE.ET_TIMEOUT : MENSAJES_CIERRE.ET_RED });
+    } else if (t.texto === null) {
+      fases.push({ fase: "TRANSMISION", ok: false, detalle: `Respuesta HTTP ${t.status} recibida, pero su contenido no se pudo leer completo.`, http: t.status });
     } else if (n === 1 && tokenRechazadoPost1(libro)) {
-      fases.push({ fase: "TRANSMISION", ok: false, detalle: `Token rechazado (HTTP ${t.status}); se renueva la sesión.`, http: t.status });
+      fases.push({ fase: "TRANSMISION", ok: false, detalle: libro.aut2 ? `Token rechazado (HTTP ${t.status}); se renueva la sesión.` : `Token rechazado (HTTP ${t.status}).`, http: t.status });
     } else {
       fases.push({ fase: "TRANSMISION", ok: true, detalle: "Solicitud transmitida.", http: t.status });
     }
@@ -290,7 +315,7 @@ function fasesDe(libro: LibroOperacion, transmisiones: Array<SalidaTransporte | 
 
   const ultimo = transmisiones[transmisiones.length - 1];
 
-  if (ultimo && ultimo.ok) {
+  if (ultimo && ultimo.ok && cierre.fase !== "AUTENTICACION") {
     const detalle = cierre.estadoLocal === "ENVIADO"
       ? "El gateway confirmó la recepción del documento. El estado fiscal (SIFEN) aún no está confirmado."
       : cierre.estadoLocal === "ENVIO_INDETERMINADO" ? `Recepción NO confirmada: ${cierre.mensaje ?? "respuesta no concluyente"}` : (cierre.mensaje ?? "Respuesta del gateway");
@@ -427,7 +452,10 @@ export async function enviarDocumentoR05(db: Db, empresaId: string, usuarioId: s
   };
 
   /** Registra la salida del POST n (6). Devuelve la salida local confirmada o undefined. */
-  const registrarSalida = async (nro: 1 | 2, t: SalidaTransporte, token: string, password: string): Promise<Salida> => {
+  /**
+   * `secretos`: la clave de la API y TODOS los tokens usados hasta este POST (en el POST 2, el inicial y el renovado: la respuesta puede repetir el anterior). Nunca se registran ni se loguean.
+   */
+  const registrarSalida = async (nro: 1 | 2, t: SalidaTransporte, secretos: string[]): Promise<Salida> => {
     const s: Salida = { local: undefined, candidatas: [], res: null, p: null, tardia: false };
 
     if (!t.ok) {
@@ -439,24 +467,36 @@ export async function enviarDocumentoR05(db: Db, empresaId: string, usuarioId: s
       return s;
     }
     if (!Number.isInteger(t.status) || t.status < 100 || t.status > 599) return s;
+    // F-R03-03: estado HTTP confirmado con cuerpo ilegible: HTTP_RESPUESTA con el estado real, sin cuerpo inventado (solo la marca de truncamiento) y sin P (CUERPO_NO_PROYECTABLE).
+    // Sin P no hay token inválido acreditado: nunca hay renovación ni POST 2 por una respuesta así; el cierre queda indeterminado (EI-SIN-P).
+    if (t.texto === null) {
+      const local: SalidaLocal = { tipo: "HTTP_RESPUESTA", http: t.status, clasificacionP: null, tokenInvalidoP: false, textoResultado: null };
 
-    const res = resultadoFiscalSinSecretos(interpretarRecepcion(t.status, t.texto, [], docRec), [password, token], CONTRATO_FISCAL_ENVIO);
-    const reg = respuestaRegistrable(res.respuesta);
+      s.candidatas.push(local);
+      await intentarSalida(nro, s, ["HTTP_RESPUESTA", t.status, JSON.stringify(TRUNCADA), true, null, null, "CUERPO_NO_PROYECTABLE"], local);
+
+      return s;
+    }
+
+    const res = resultadoFiscalSinSecretos(interpretarRecepcion(t.status, t.texto, [], docRec), secretos, CONTRATO_FISCAL_ENVIO);
+    // F-R03-02: una credencial que el saneamiento conservó (lote o CDC en su ruta fiscal, credencial corta exacta) no se guarda: solo la marca de truncamiento, y sin P.
+    const conCredencial = respuestaConCredencial(res.respuesta, secretos);
+    const reg = conCredencial ? { respuesta: TRUNCADA, truncada: true } : respuestaRegistrable(res.respuesta);
     let p: ProyeccionP | null = null;
     let motivo: MotivoSinProyeccion | null = null;
 
-    s.res = res;
+    s.res = { ...res, mensaje: textoDevolvible(res.mensaje, secretos), estadoGateway: textoDevolvible(res.estadoGateway, secretos), errores: res.errores.map((x) => textoDevolvible(x, secretos)).filter((x): x is string => x !== null) };
     try {
       const hechos = hechosRecepcion(t.status, t.texto, docRec);
       const construida = construirProyeccion({
         http: t.status, cuerpoTexto: t.texto, hechos, identidad,
         app: { resultado: res.resultado, estadoLocal: res.estadoLocal, errorTipo: res.errorTipo },
         lectura: { textoResultado: res.mensaje, estadoGateway: res.estadoGateway, errores: res.errores },
-        secretos: [password, token],
+        secretos,
       });
 
-      p = construida.p;
-      motivo = construida.motivo;
+      p = conCredencial ? null : construida.p;
+      motivo = conCredencial ? "CREDENCIALES_RESIDUALES" : construida.motivo;
     } catch {
       p = null;
       motivo = "FALLO_LOCAL";
@@ -529,6 +569,8 @@ export async function enviarDocumentoR05(db: Db, empresaId: string, usuarioId: s
   // 2) Credenciales del preflight de ESTA operación; sin ellas: no transmitido.
   const cred = credencialesDe(config, dep.env);
   let token: string | null = null;
+  // Secretos conocidos de ESTA operación (clave y tokens): solo en memoria, para que nada de lo devuelto los contenga.
+  const conocidos: string[] = cred ? [cred.password] : [];
 
   if (!cred) {
     await noTransmitido("SIN_CREDENCIALES");
@@ -545,10 +587,13 @@ export async function enviarDocumentoR05(db: Db, empresaId: string, usuarioId: s
       a1 = null;
     }
     if (!a1 || !(await registrarAutenticacion(1, a1))) await noTransmitido("FALLO_LOCAL");
-    else if (a1.resultado === "OK") token = a1.token;
+    else if (a1.resultado === "OK") {
+      token = a1.token;
+      conocidos.push(a1.token);
+    }
 
     if (token !== null && (await postear(1, token)) === "TRANSMITIDO") {
-      const s1 = await registrarSalida(1, transmisiones[0] as SalidaTransporte, token, cred.password);
+      const s1 = await registrarSalida(1, transmisiones[0] as SalidaTransporte, [cred.password, token]);
 
       salidas[0] = s1;
 
@@ -564,8 +609,9 @@ export async function enviarDocumentoR05(db: Db, empresaId: string, usuarioId: s
           a2 = null;
         }
         // Sin resultado de la renovación (fallo local) no hay POST 2: el cierre queda EI-TOKEN-SIN-POST2.
+        if (a2 && a2.resultado === "OK") conocidos.push(a2.token);
         if (a2 && (await registrarAutenticacion(2, a2)) && a2.resultado === "OK" && (await postear(2, a2.token)) === "TRANSMITIDO") {
-          salidas[1] = await registrarSalida(2, transmisiones[1] as SalidaTransporte, a2.token, cred.password);
+          salidas[1] = await registrarSalida(2, transmisiones[1] as SalidaTransporte, [cred.password, token, a2.token]);
         }
       }
     }
@@ -575,6 +621,8 @@ export async function enviarDocumentoR05(db: Db, empresaId: string, usuarioId: s
   const presentar = (c: { estadoLocal: string; resultado: unknown; errorTipo: unknown; fase: unknown; regla: unknown; httpPost: unknown; httpAutenticacion: unknown; lote: unknown; cdc: unknown; motivo: unknown }): ResultadoEnvioR05 => {
     const estadoLocal = c.estadoLocal;
     const ultima = salidas[salidas.length - 1];
+    // F-R03-02: un lote o CDC que sea una credencial conocida no se devuelve (cdcEsCredencial: no mutila un valor legítimo que solo contiene dígitos del RUC).
+    const sinCredencial = (v: string | null) => (v !== null && cdcEsCredencial(v, conocidos) ? null : v);
     // Mensaje, estado del gateway y errores de la respuesta solo si el cierre se rige por su P (misma regla); si no, los textos fijos del cierre.
     const porP = ultima?.res && ultima.p && ultima.local?.tipo === "HTTP_RESPUESTA" && ultima.local.clasificacionP?.regla === c.regla;
     const mensaje = porP ? ultima!.res!.mensaje : mensajeCierre(String(c.regla), c.resultado) ?? "Resultado del envío registrado; consulte el detalle del documento.";
@@ -586,11 +634,11 @@ export async function enviarDocumentoR05(db: Db, empresaId: string, usuarioId: s
       resultado: comoResultado(c.resultado),
       http: c.fase === "AUTENTICACION" ? enteroONulo(c.httpAutenticacion) : enteroONulo(c.httpPost),
       mensaje,
-      lote: estadoLocal === "ENVIADO" ? textoONulo(c.lote) : null,
-      cdc: estadoLocal === "ENVIADO" ? textoONulo(c.cdc) : null,
+      lote: estadoLocal === "ENVIADO" ? sinCredencial(textoONulo(c.lote)) : null,
+      cdc: estadoLocal === "ENVIADO" ? sinCredencial(textoONulo(c.cdc)) : null,
       estadoGateway: porP ? ultima!.res!.estadoGateway : null,
       errores: porP ? ultima!.res!.errores : [],
-      fases: fasesDe(libro, transmisiones, { estadoLocal, mensaje }, mensajesAut),
+      fases: fasesDe(libro, transmisiones, { estadoLocal, mensaje, fase: c.fase }, mensajesAut),
     };
   };
 

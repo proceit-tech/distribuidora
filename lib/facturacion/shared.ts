@@ -81,10 +81,10 @@ export const MENSAJE_CONEXION_DISTINTA =
   "La conexión del gateway de la empresa (servidor o credenciales) cambió desde que este documento fue enviado: no se consulta su estado ni se muestra su KuDE con otra conexión, para no atribuirle datos de otra cuenta. Restablezca la conexión con la que fue enviado o revise el caso con el proveedor del gateway.";
 
 /**
- * PRO-342-R02 (F002): conexión EFECTIVA para un documento ya enviado (configuración activa + credenciales leídas en esta operación) y su continuidad con la del envío. Con DISTINTA no se llama al
- * gateway (409): nunca se consulta un documento ni se pide su KuDE en otra cuenta/servidor por tanteo, ni se cambian URL o credenciales. Documento solo leído; nada se escribe.
+ * PRO-342-R02 (F002): conexión EFECTIVA para un documento ya enviado (configuración activa + credenciales leídas en esta operación). Solo carga; no decide la continuidad (PRO-312-R03-C01:
+ * la consulta elige UNA autoridad de continuidad después de cargar). Documento solo leído; nada se escribe.
  */
-async function conexionParaDocumento(db: Db, empresaId: string, usuarioId: string, documentoId: string): Promise<{ config: ConfigGateway; continuidad: ContinuidadConexion }> {
+async function cargarConexionEfectiva(db: Db, empresaId: string, usuarioId: string): Promise<ConfigGateway> {
   const cfg = await db.query(SQL_CONFIG_GATEWAY, [empresaId]);
   const fila = cfg.rows[0] as { baseUrl: string; credencialRef: string; timeoutMs: number; credencialesVersion?: unknown } | undefined;
 
@@ -94,48 +94,96 @@ async function conexionParaDocumento(db: Db, empresaId: string, usuarioId: strin
 
   if (!valida) throw new ErrorFacturacion(409, "La configuración del gateway de esta empresa no es válida (URL https y tiempo de espera).");
 
-  const config = await adjuntarCredencialesDeBase(db, valida, usuarioId);
+  return adjuntarCredencialesDeBase(db, valida, usuarioId);
+}
+
+/** PRO-342-R02 (F002): continuidad con la conexión del último ENVÍO registrado (NEX-079). Con DISTINTA no se llama al gateway (409): nunca se consulta ni se pide el KuDE en otra cuenta por tanteo. */
+async function continuidadNex079(db: Db, empresaId: string, documentoId: string, config: ConfigGateway): Promise<ContinuidadConexion> {
   const envio = await db.query(SQL_CONEXION_ENVIO, [empresaId, documentoId]);
   const continuidad = continuidadConexion((envio.rows[0] as F | undefined)?.conexion ?? null, referenciaConexion(config));
 
   if (continuidad === "DISTINTA") throw new ErrorFacturacion(409, MENSAJE_CONEXION_DISTINTA);
 
-  return { config, continuidad };
+  return continuidad;
+}
+
+/** KuDE (regla anterior, sin cambios de comportamiento): conexión efectiva + continuidad NEX-079. */
+async function conexionParaDocumento(db: Db, empresaId: string, usuarioId: string, documentoId: string): Promise<{ config: ConfigGateway; continuidad: ContinuidadConexion }> {
+  const config = await cargarConexionEfectiva(db, empresaId, usuarioId);
+
+  return { config, continuidad: await continuidadNex079(db, empresaId, documentoId, config) };
 }
 
 /**
- * PRO-312-R03 / Lote B: continuidad de la conexión para CONSULTAR con la referencia de NEX-084 (fe_e03_conexion_referencia_r05), que toma lo más reciente entre los ENVÍOS registrados con
- * conexión y las operaciones R05 con POST real. Se usa aunque la variable NEXIT_E03_EVIDENCIAS esté apagada: un documento enviado por la vía R05 se consulta siempre con la cuenta de ese
- * envío. Solo cuando la estructura R05 NO existe (comprobado en el catálogo: instalación anterior a NEX-084) rige la referencia de NEX-079 tal como hoy. AMBIGUA (otra operación incierta
- * con conexión distinta) o DISTINTA: 409 sin llamar al gateway. Sin fallback por error: un fallo de la lectura se propaga y la falta de EXECUTE sobre una estructura presente es 503.
- * No se usa en el KuDE (su conexión no cambia).
+ * PRO-312-R03 / Lote B + R03-C01 (F-R03-01): UNA sola autoridad de continuidad para CONSULTAR. Si la estructura R05 de NEX-084 está instalada y coherente, decide SOLO su referencia
+ * (fe_e03_conexion_referencia_r05: lo más reciente entre los ENVÍOS registrados con conexión y las operaciones R05 con POST real), aunque NEXIT_E03_EVIDENCIAS esté apagada o el modo sea
+ * REVERTIDO (la lectura no depende del modo); NEX-079 no se evalúa antes ni después. La regla NEX-079 rige SOLO con la ausencia COMPROBADA en el catálogo: ni la función ni ninguna de las 7 tablas
+ * de NEX-084 existen (instalación anterior a NEX-084). Cualquier otra cosa falla CERRADA (503, sin HTTP): estructura parcial (algún objeto sin los demás), función sin EXECUTE, respuesta del
+ * catálogo vacía, múltiple o sin la forma esperada, y respuesta de la función que no sea exactamente una fila válida. Un error de lectura se propaga (sin fallback). AMBIGUA o DISTINTA: 409 sin HTTP.
+ * Una fila explícita sin referencia (NEX-084 la devuelve cuando no hubo envío con conexión ni POST R05) es SIN_REFERENCIA: se consulta con la conexión activa, como selecciona la SQL.
+ * No se usa en el KuDE (su regla no cambia).
  */
-export const SQL_REFERENCIA_R05_DISPONIBLE = `SELECT CASE WHEN to_regprocedure('public.fe_e03_conexion_referencia_r05(uuid,uuid,uuid)') IS NULL THEN 'AUSENTE'
-  WHEN has_function_privilege(to_regprocedure('public.fe_e03_conexion_referencia_r05(uuid,uuid,uuid)')::oid, 'EXECUTE') THEN 'LISTA' ELSE 'SIN_PERMISO' END AS "referenciaR05"`;
+export const TABLAS_R05 = [
+  "public.nex_e03_r05_estado",
+  "public.documento_electronico_envio_operaciones_r05",
+  "public.documento_electronico_envio_posts_grandes_r05",
+  "public.documento_electronico_envio_autenticaciones_r05",
+  "public.documento_electronico_envio_proyecciones_r05",
+  "public.documento_electronico_envio_cierres_r05",
+  "public.documento_electronico_envio_salidas_tardias_r05",
+] as const;
+export const SQL_REFERENCIA_R05_DISPONIBLE = `WITH obj AS (
+  SELECT to_regprocedure('public.fe_e03_conexion_referencia_r05(uuid,uuid,uuid)') AS f,
+         (SELECT count(*) FROM unnest($1::text[]) AS t(n) WHERE to_regclass(t.n) IS NOT NULL)::integer AS tablas, cardinality($1::text[]) AS esperadas)
+  SELECT 'NEX-084' AS "catalogoR05",
+         CASE WHEN f IS NULL AND tablas = 0 THEN 'AUSENTE'
+              WHEN f IS NOT NULL AND tablas = esperadas THEN CASE WHEN has_function_privilege(f::oid, 'EXECUTE') THEN 'LISTA' ELSE 'SIN_PERMISO' END
+              ELSE 'PARCIAL' END AS "referenciaR05"
+  FROM obj`;
 export const SQL_CONEXION_REFERENCIA_R05 = `SELECT o_conexion AS "conexion", o_ambigua AS "ambigua" FROM public.fe_e03_conexion_referencia_r05($1::uuid, $2::uuid, $3::uuid)`;
 
 export const MENSAJE_CONEXION_AMBIGUA =
   "Este documento tiene un envío anterior sin resultado confirmado hecho con otra conexión del gateway: no se consulta su estado para no atribuirle datos de otra cuenta. Revise el caso con el proveedor del gateway.";
 export const MENSAJE_REFERENCIA_R05_SIN_PERMISO =
   "No se pudo verificar la conexión con la que se envió este documento (permisos de la base): no se consultó nada. Avise al administrador.";
+export const MENSAJE_REFERENCIA_R05_INCOHERENTE =
+  "No se pudo verificar la conexión con la que se envió este documento (la estructura de evidencias de envío de la base está incompleta o respondió de forma inesperada): no se consultó nada. Avise al administrador.";
 
-/** null = estructura R05 ausente (rige la continuidad de NEX-079); si no, la continuidad según la referencia R05 (DISTINTA y AMBIGUA lanzan 409). */
-export async function continuidadReferenciaR05(db: Db, empresaId: string, usuarioId: string, documentoId: string, config: ConfigGateway): Promise<ContinuidadConexion | null> {
-  const estado = ((await db.query(SQL_REFERENCIA_R05_DISPONIBLE)).rows[0] as F | undefined)?.referenciaR05;
+/** Estado de la estructura R05 según el catálogo: exactamente una fila con la marca y un estado conocido; si no, 503 (nunca se interpreta como ausencia). */
+export async function estadoEstructuraR05(db: Db): Promise<"AUSENTE" | "LISTA"> {
+  const filas = (await db.query(SQL_REFERENCIA_R05_DISPONIBLE, [TABLAS_R05])).rows as F[];
+  const fila = filas.length === 1 ? filas[0] : undefined;
 
-  // Sin dato (o AUSENTE): la estructura no existe, instalación anterior a NEX-084.
-  if (estado === undefined || estado === null || estado === "AUSENTE") return null;
-  if (estado !== "LISTA") throw new ErrorFacturacion(503, MENSAJE_REFERENCIA_R05_SIN_PERMISO);
+  if (!fila || fila.catalogoR05 !== "NEX-084") throw new ErrorFacturacion(503, MENSAJE_REFERENCIA_R05_INCOHERENTE);
+  if (fila.referenciaR05 === "AUSENTE" || fila.referenciaR05 === "LISTA") return fila.referenciaR05;
+  if (fila.referenciaR05 === "SIN_PERMISO") throw new ErrorFacturacion(503, MENSAJE_REFERENCIA_R05_SIN_PERMISO);
 
-  const ref = (await db.query(SQL_CONEXION_REFERENCIA_R05, [empresaId, usuarioId, documentoId])).rows[0] as F | undefined;
+  throw new ErrorFacturacion(503, MENSAJE_REFERENCIA_R05_INCOHERENTE);
+}
 
-  if (ref?.ambigua === true) throw new ErrorFacturacion(409, MENSAJE_CONEXION_AMBIGUA);
+/** Referencia R05 (estructura LISTA): exactamente una fila; o_ambigua booleano; o_conexion objeto o null explícito. DISTINTA y AMBIGUA: 409. */
+export async function continuidadReferenciaR05(db: Db, empresaId: string, usuarioId: string, documentoId: string, config: ConfigGateway): Promise<ContinuidadConexion> {
+  const filas = (await db.query(SQL_CONEXION_REFERENCIA_R05, [empresaId, usuarioId, documentoId])).rows as F[];
+  const ref = filas.length === 1 ? filas[0] : undefined;
+  const conexionValida = (v: unknown) => v === null || (typeof v === "object" && !Array.isArray(v));
 
-  const continuidad = continuidadConexion(ref?.conexion ?? null, referenciaConexion(config));
+  if (!ref || typeof ref.ambigua !== "boolean" || !("conexion" in ref) || !conexionValida(ref.conexion)) throw new ErrorFacturacion(503, MENSAJE_REFERENCIA_R05_INCOHERENTE);
+  if (ref.ambigua) throw new ErrorFacturacion(409, MENSAJE_CONEXION_AMBIGUA);
+
+  const continuidad = continuidadConexion((ref.conexion as Record<string, unknown> | null) ?? null, referenciaConexion(config));
 
   if (continuidad === "DISTINTA") throw new ErrorFacturacion(409, MENSAJE_CONEXION_DISTINTA);
 
   return continuidad;
+}
+
+/** Continuidad de la CONSULTA (manual, automática y flujo NCE): conexión efectiva cargada una vez; R05 si está LISTA; NEX-079 solo con ausencia comprobada. */
+export async function conexionParaConsulta(db: Db, empresaId: string, usuarioId: string, documentoId: string): Promise<{ config: ConfigGateway; continuidad: ContinuidadConexion }> {
+  const config = await cargarConexionEfectiva(db, empresaId, usuarioId);
+  const estructura = await estadoEstructuraR05(db);
+  const continuidad = estructura === "LISTA" ? await continuidadReferenciaR05(db, empresaId, usuarioId, documentoId, config) : await continuidadNex079(db, empresaId, documentoId, config);
+
+  return { config, continuidad };
 }
 
 export const TAMANO_DEFECTO = 20;
@@ -598,10 +646,9 @@ export async function consultarEstado(db: Db, empresaId: string, usuarioId: stri
   // PRO-342-R05: sin NEX-080 no se consulta (503 antes de cualquier llamada): el resultado no podría registrarse con la regla R05 y no hay fallback a las firmas que validan el CDC.
   await exigirNex080(db);
 
-  // PRO-342-R02: la consulta usa la MISMA conexión del envío (o, sin referencia registrada, la activa); si cambió, no se consulta (409, sin intento: no hubo llamada).
-  const { config, continuidad: continuidadNex079 } = await conexionParaDocumento(db, empresaId, usuarioId, id);
-  // PRO-312-R03 / Lote B: con la estructura R05 presente decide la referencia de NEX-084 (envíos + operaciones R05 con POST); DISTINTA o AMBIGUA: 409 sin HTTP.
-  const continuidad = (await continuidadReferenciaR05(db, empresaId, usuarioId, id, config)) ?? continuidadNex079;
+  // PRO-342-R02 + PRO-312-R03-C01: la consulta usa la MISMA conexión del envío (o, sin referencia registrada, la activa) según UNA autoridad: la referencia R05 si NEX-084 está instalada,
+  // NEX-079 solo con ausencia comprobada. DISTINTA o AMBIGUA: 409; estructura incoherente: 503; en ambos casos sin intento (no hubo llamada).
+  const { config, continuidad } = await conexionParaConsulta(db, empresaId, usuarioId, id);
 
   // PRO-342-R05: identidad de la consulta = cuenta autenticada (config) + tipo, establecimiento, punto, número y serie del documento persistido. El CDC no se envía ni identifica.
   const bruto = await consultarDocumentoGateway(

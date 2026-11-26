@@ -185,6 +185,8 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
   const dbConsulta = (cfg: boolean, doc: boolean) => ({
     async query(sql: string, parametros: unknown[] = []) {
       // PRO-342-R05: NEX-080 presente en el catálogo; el registro solo por fe_documento_registrar_consulta_r05.
+      // PRO-312-R03-C01: catálogo R05 de la consulta → estructura NEX-084 AUSENTE (estos casos ejercen la regla NEX-079).
+      if (/"catalogoR05"/.test(sql)) return { rows: [{ catalogoR05: "NEX-084", referenciaR05: "AUSENTE" }] };
       if (/to_regprocedure/.test(sql)) return { rows: [{ disponible: true }] };
       if (/FROM fe_gateway_config/.test(sql)) return { rows: cfg ? [CONFIG] : [] };
       if (/fe_documento_registrar_consulta_r05\(/.test(sql)) { registrar.push(parametros); return { rows: [{ resultado: parametros[3] }] }; }
@@ -208,7 +210,7 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
   igual("consultar: documento ajeno/fuera de alcance 404; sin gateway configurado 409; tipo sin contrato 409; sin credenciales 409 — ninguno registra un intento", [
     await codigoError(consultarEstado(dbConsulta(true, false), EMPRESA, USUARIO, DOC, { fetch: g6.fetch, env: ENV })),
     await codigoError(consultarEstado(dbConsulta(false, true), EMPRESA, USUARIO, DOC, { fetch: g6.fetch, env: ENV })),
-    await codigoError(consultarEstado({ async query(sql: string) { return /to_regprocedure/.test(sql) ? { rows: [{ disponible: true }] } : /fe_gateway_config/.test(sql) ? { rows: [CONFIG] } : { rows: [{ ...filaDoc, tipo: "AFE" }] }; } } as never, EMPRESA, USUARIO, DOC, { fetch: g6.fetch, env: ENV })),
+    await codigoError(consultarEstado({ async query(sql: string) { return /"catalogoR05"/.test(sql) ? { rows: [{ catalogoR05: "NEX-084", referenciaR05: "AUSENTE" }] } : /to_regprocedure/.test(sql) ? { rows: [{ disponible: true }] } : /fe_gateway_config/.test(sql) ? { rows: [CONFIG] } : { rows: [{ ...filaDoc, tipo: "AFE" }] }; } } as never, EMPRESA, USUARIO, DOC, { fetch: g6.fetch, env: ENV })),
     await codigoError(consultarEstado(dbConsulta(true, true), EMPRESA, USUARIO, DOC, { fetch: g6.fetch, env: {} })),
     registrar.length - previo,
   ], [404, 409, 409, 409, 0]);
@@ -549,6 +551,8 @@ export async function verificarCasosFacturacion(): Promise<string[]> {
     const db = conContratoFE({
       async query(sql: string, parametros: unknown[] = []) {
         llamadas.push({ sql, parametros });
+        // PRO-312-R03-C01: catálogo R05 de la consulta → estructura NEX-084 AUSENTE (estos casos ejercen la regla NEX-079).
+        if (/"catalogoR05"/.test(sql)) return { rows: [{ catalogoR05: "NEX-084", referenciaR05: "AUSENTE" }] };
         if (/to_regprocedure/.test(sql)) return { rows: [{ disponible: true }] };
         if (/FROM fe_gateway_config/.test(sql)) return { rows: o.cfg === false ? [] : [{ baseUrl: CONFIG.baseUrl, credencialRef: CONFIG.credencialRef, timeoutMs: 1000 }] };
         if (/fe_documento_crear_fe/.test(sql)) return { rows: [{ documentoId: DOC, numero: "0050000", reutilizado: o.reutilizado === true }] };

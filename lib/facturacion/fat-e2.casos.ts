@@ -88,6 +88,8 @@ export async function verificarCasosFatE2(): Promise<string[]> {
         llamadas.push({ sql, parametros });
 
         // PRO-342-R05: NEX-080 presente en el catálogo; el cierre solo por fe_documento_registrar_envio_r05 (lote = 11, CDC literal = 12).
+        // PRO-312-R03-C01: catálogo R05 de la consulta → estructura NEX-084 AUSENTE (estos casos ejercen la regla NEX-079).
+        if (/"catalogoR05"/.test(sql)) return { rows: [{ catalogoR05: "NEX-084", referenciaR05: "AUSENTE" }] };
         if (/to_regprocedure/.test(sql)) return { rows: [{ disponible: true }] };
         if (/fe_documento_registrar_envio/.test(sql) && !/fe_documento_registrar_envio_r05\(/.test(sql)) throw new Error("R05: firma anterior a NEX-080");
         if (/FROM fe_gateway_config/.test(sql)) return { rows: [{ baseUrl: opciones.baseUrl ?? CONFIG.baseUrl, credencialRef: "PRUEBA", timeoutMs: 1000 }] };
@@ -241,6 +243,8 @@ export async function verificarCasosFatE2(): Promise<string[]> {
     const registrar: unknown[][] = [];
     const db = {
       async query(sql: string, parametros: unknown[] = []) {
+        // PRO-312-R03-C01: catálogo R05 de la consulta → estructura NEX-084 AUSENTE (estos casos ejercen la regla NEX-079).
+        if (/"catalogoR05"/.test(sql)) return { rows: [{ catalogoR05: "NEX-084", referenciaR05: "AUSENTE" }] };
         if (/to_regprocedure/.test(sql)) return { rows: [{ disponible: true }] };
         if (/FROM fe_gateway_config/.test(sql)) return { rows: [{ baseUrl: CONFIG.baseUrl, credencialRef: "PRUEBA", timeoutMs: 1000 }] };
         if (/fe_documento_registrar_consulta/.test(sql) && !/_r05\(/.test(sql)) throw new Error("R05: firma anterior a NEX-080");
@@ -273,7 +277,7 @@ export async function verificarCasosFatE2(): Promise<string[]> {
   // ── T-E2-13: aislamiento multiempresa / alcance
   limpiarCacheTokens();
   const gAjeno = gateway([{ status: 200, cuerpo: cuerpoConsulta("Aprobado", { cdc: CDC_FE }) }]);
-  const dbAjena = { async query(sql: string) { return /to_regprocedure/.test(sql) ? { rows: [{ disponible: true }] } : /FROM fe_gateway_config/.test(sql) ? { rows: [{ baseUrl: CONFIG.baseUrl, credencialRef: "PRUEBA", timeoutMs: 1000 }] } : { rows: [] }; } } as never;
+  const dbAjena = { async query(sql: string) { return /"catalogoR05"/.test(sql) ? { rows: [{ catalogoR05: "NEX-084", referenciaR05: "AUSENTE" }] } : /to_regprocedure/.test(sql) ? { rows: [{ disponible: true }] } : /FROM fe_gateway_config/.test(sql) ? { rows: [{ baseUrl: CONFIG.baseUrl, credencialRef: "PRUEBA", timeoutMs: 1000 }] } : { rows: [] }; } } as never;
 
   igual("T-E2-13 documento ajeno/fuera de alcance → 404 sin llamar al gateway; la sesión (empresa/usuario) decide el SQL del documento", [await codigo(consultarEstado(dbAjena, EMPRESA, USUARIO, DOC, { fetch: gAjeno.fetch, env: ENV })), gAjeno.llamadas.length], [404, 0]);
   const apiEnviar = leer("app/api/documentos/[id]/enviar/route.ts");
@@ -371,6 +375,8 @@ export async function verificarCasosFatE2(): Promise<string[]> {
     };
     const db = {
       async query(sql: string, parametros: unknown[] = []) {
+        // PRO-312-R03-C01: catálogo R05 de la consulta → estructura NEX-084 AUSENTE (estos casos ejercen la regla NEX-079).
+        if (/"catalogoR05"/.test(sql)) return { rows: [{ catalogoR05: "NEX-084", referenciaR05: "AUSENTE" }] };
         if (/to_regprocedure/.test(sql)) return { rows: [{ disponible: true }] };
         if (/FROM fe_gateway_config/.test(sql)) return { rows: [{ baseUrl: CONFIG.baseUrl, credencialRef: "PRUEBA", timeoutMs: 1000 }] };
         if (/fe_documento_registrar_consulta_r05\(/.test(sql)) return { rows: [{ resultado: await registrar(parametros) }] };
