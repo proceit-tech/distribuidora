@@ -98,3 +98,60 @@ export type StockResumenDemo = {
   valorInventario: number;
   valorVentaReferencia: number;
 };
+/** Stock real (PostgreSQL). Cantidades = stock PROPIO; `terceros` = stock de terceros (todas las situaciones). */
+export type StockLote = {
+  id: string;
+  lote: string;
+  fechaVencimiento: string;
+  cantidad: number;
+  estado: StockEstado;
+  depositoId: string;
+  /** Nombre del depósito (la ubicación física dentro del depósito no existe en el banco). */
+  ubicacion: string;
+  propietario: string;
+};
+
+/** Detalle real por depósito: saldos PROPIOS, terceros, costo valorizado y parámetros propios del depósito (null = no configurado). */
+export type StockDeposito = StockDepositoDetalleDemo & {
+  terceros: number;
+  costoCantidad: number;
+  costoValor: number;
+  /** Cantidad disponible propia y valor a costo como decimal exacto (texto de numeric): nunca se suman como float (INV-04). */
+  disponibleTexto: string;
+  costoValorTexto: string;
+  /** Cantidad valorizada (numeric como texto) para derivar el costo unitario exacto por depósito (INV-R02-01). */
+  costoCantidadTexto: string;
+  stockMinimo: number | null;
+  stockMaximo: number | null;
+  puntoReposicion: number | null;
+  cantidadReposicion: number | null;
+};
+
+export type StockItem = Omit<
+  StockDemo,
+  | "depositos"
+  | "precioVentaReferencia"
+  | "valorVentaReferencia"
+  | "costoPromedio"
+  | "lotes"
+  | "stockMaximo"
+  | "puntoReposicion"
+> & {
+  stockMaximo: number;
+  puntoReposicion: number;
+  /** null = sin costo registrado / sin precio de referencia (nunca se inventan). */
+  costoPromedioTexto: string | null;
+  precioVentaReferencia: number | null;
+  valorVentaReferencia: number | null;
+  monedaPrecio: string;
+  /** Decimales exactos (texto) para presentar importes sin pérdida; el valor a costo está en la moneda base y el de venta en `monedaPrecio` (INV-03/04). */
+  valorInventarioTexto: string;
+  precioVentaReferenciaTexto: string | null;
+  valorVentaReferenciaTexto: string | null;
+  terceros: number;
+  depositos: StockDeposito[];
+  lotes: StockLote[];
+};
+
+/** alcanceParcial: el usuario solo ve los depósitos que tiene autorizados (los totales no incluyen los demás). */
+export type StockRespuesta = { stock: StockItem[]; monedaBase: string; alcanceParcial?: boolean; /** C24: COMPLETO | PARCIAL | SIN_DEPOSITOS (ver lib/stock/vista.ts). */ alcance?: "COMPLETO" | "PARCIAL" | "SIN_DEPOSITOS"; depositosAutorizados?: Array<{ id: string; nombre: string }>; permisos?: { movimientosCrear: boolean; movimientosVer: boolean } };

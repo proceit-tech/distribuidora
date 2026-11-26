@@ -6,7 +6,17 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "typegen": "next typegen",
+    "typecheck": "next typegen && tsc --noEmit -p tsconfig.build.json",
+    "typecheck:casos": "next typegen && tsc --noEmit -p scripts/casos-clientes/tsconfig.json",
+    "lint:app": "eslint app components lib types instrumentation.ts next.config.ts --ignore-pattern \"**/*.casos.ts\" --ignore-pattern \"**/*.casos.tsx\" --ignore-pattern lib/clientes/contador-casos.ts",
+    "lint:casos": "eslint \"lib/**/*.casos.ts\" lib/clientes/contador-casos.ts scripts/casos-clientes",
+    "casos:limpiar": "node -e \"require('fs').rmSync('.tmp-casos',{recursive:true,force:true})\"",
+    "casos:compilar": "npm run casos:limpiar && next typegen && tsc -p scripts/casos-clientes/tsconfig.json",
+    "casos": "npm run casos:compilar && node scripts/casos-clientes/run.js",
+    "verificar:dependencias": "bash scripts/verificar-separacion.sh dependencias",
+    "verificar:standalone": "bash scripts/verificar-separacion.sh standalone"
   },
   "dependencies": {
     "next": "16.2.6",

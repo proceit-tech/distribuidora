@@ -1,125 +1,132 @@
+/* Login Nexit V1 — escala tipográfica: etiqueta 15, entrada 16 (evita zoom en iOS), auxiliar >= 13. */
 .form {
   display: grid;
-  gap: 18px;
-}
-
-.company {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 18px;
-  padding: 12px 14px;
-  border: 1px solid #dbe7ee;
-  border-radius: 10px;
-  background: #f8fbfc;
-}
-
-.company > span {
-  color: #7a8ca0;
-  font-size: 11px;
-  font-weight: 650;
-}
-
-.company > div {
-  min-width: 0;
-  text-align: right;
-}
-
-.company strong,
-.company small {
-  display: block;
-}
-
-.company strong {
-  color: #0c7180;
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.company small {
-  margin-top: 2px;
-  color: #8294a6;
-  font-size: 9px;
+  gap: 20px;
 }
 
 .field {
   display: grid;
-  gap: 7px;
+  gap: 8px;
   color: #173a5d;
-  font-size: 12px;
+  font-size: 15px;
   font-weight: 700;
 }
 
+/* Los tres campos (empresa, usuario, contraseña) comparten exactamente esta caja. */
 .inputWrap {
   display: flex;
-  min-height: 48px;
+  height: 52px;
   align-items: center;
-  overflow: hidden;
-  border: 1px solid #cfdde9;
+  border: 1px solid #c3d3e1;
   border-radius: 10px;
   background: #ffffff;
-  transition: border-color 0.2s, box-shadow 0.2s;
+  transition: border-color 0.18s, box-shadow 0.18s, background-color 0.18s;
+}
+
+.inputWrap:hover {
+  border-color: #8fb2c9;
 }
 
 .inputWrap:focus-within {
-  border-color: #11a8ae;
-  box-shadow: 0 0 0 4px rgba(17, 168, 174, 0.1);
+  border-color: #0f9ca5;
+  box-shadow: 0 0 0 4px rgba(15, 156, 165, 0.16);
+}
+
+.inputWrap:has(input:disabled) {
+  border-color: #dbe5ee;
+  background: #f3f6f9;
 }
 
 .inputWrap svg {
-  width: 18px;
-  height: 18px;
-  flex: 0 0 18px;
-  margin: 0 14px;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  margin: 0 12px 0 15px;
   fill: none;
-  stroke: #6d8aa3;
+  stroke: #5f7f99;
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-width: 1.8;
 }
 
+.inputWrap:focus-within svg {
+  stroke: #0f9ca5;
+}
+
 .inputWrap input {
   width: 100%;
-  height: 46px;
+  height: 100%;
   min-width: 0;
-  padding: 0;
+  padding: 0 14px 0 0;
   border: 0;
+  border-radius: 10px;
   outline: 0;
-  color: #123454;
+  color: #0f2f4f;
   background: transparent;
-  font-size: 13px;
+  font-size: 16px;
+  line-height: 1.3;
 }
 
 .inputWrap input::placeholder {
-  color: #9aabbd;
+  color: #7d92a7;
+  opacity: 1;
 }
 
+/* Autocompletado del navegador: mismo fondo y color que el resto, sin franja amarilla/azul. */
+.inputWrap input:-webkit-autofill,
+.inputWrap input:-webkit-autofill:hover,
+.inputWrap input:-webkit-autofill:focus {
+  -webkit-text-fill-color: #0f2f4f;
+  box-shadow: 0 0 0 1000px #ffffff inset;
+  caret-color: #0f2f4f;
+  transition: background-color 9999s ease-out 0s;
+}
+
+/* Mostrar/ocultar integrado al campo: misma altura, sin segmento de otro color. */
 .showPassword {
-  margin: 0 13px 0 8px;
-  padding: 6px 0;
+  height: 100%;
+  min-width: 92px;
+  padding: 0 16px;
   border: 0;
-  color: #0b929d;
+  border-left: 1px solid #e3ebf2;
+  border-radius: 0 9px 9px 0;
+  color: #0a7f8a;
   background: transparent;
   cursor: pointer;
-  font-size: 10px;
-  font-weight: 750;
+  font-size: 14px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.showPassword:hover {
+  background: #f1f8f9;
+}
+
+.showPassword:focus-visible {
+  outline: 3px solid rgba(15, 156, 165, 0.45);
+  outline-offset: -3px;
 }
 
 .submit {
   display: flex;
-  min-height: 48px;
+  min-height: 52px;
   align-items: center;
   justify-content: center;
   gap: 12px;
-  margin-top: 3px;
+  margin-top: 4px;
   border: 0;
   border-radius: 10px;
   color: #ffffff;
-  background: linear-gradient(90deg, #099ca7, #16b3b6);
+  background: linear-gradient(90deg, #087f8a, #12a3a8);
   box-shadow: 0 10px 20px rgba(8, 164, 172, 0.2);
   cursor: pointer;
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 800;
+}
+
+.submit:focus-visible {
+  outline: 3px solid rgba(15, 156, 165, 0.45);
+  outline-offset: 3px;
 }
 
 .submit:disabled {
@@ -133,22 +140,22 @@
 
 .error {
   margin: 0;
-  padding: 11px 13px;
-  border: 1px solid #ffd6dc;
+  padding: 12px 14px;
+  border: 1px solid #ffc9d1;
   border-radius: 9px;
-  color: #c53045;
+  color: #b3263b;
   background: #fff4f5;
-  font-size: 11px;
+  font-size: 14px;
+  line-height: 1.4;
 }
 
-.demoHint {
-  margin: -4px 0 0;
-  color: #8b9bad;
-  font-size: 9px;
-  text-align: center;
-}
+@media (max-width: 480px) {
+  .form {
+    gap: 18px;
+  }
 
-.demoHint strong {
-  margin-left: 4px;
-  color: #52708c;
+  .showPassword {
+    min-width: 84px;
+    padding: 0 12px;
+  }
 }

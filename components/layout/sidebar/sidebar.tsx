@@ -21,6 +21,8 @@ type SidebarProps = {
   user: ShellUser;
   company: ShellCompany;
   navigation: ShellNavigationGroup[];
+  inicioHref: string;
+  puedeDashboard: boolean;
   collapsed: boolean;
   mobileOpen: boolean;
   onCollapsedChange: (value: boolean) => void;
@@ -28,8 +30,13 @@ type SidebarProps = {
 };
 
 function isActivePath(pathname: string, href: string) {
-  if (href === "/dashboard") {
-    return pathname === "/dashboard";
+  if (href === "/dashboard" || href === "/reportes") {
+    return pathname === href;
+  }
+
+  // "Productos" no se marca activo dentro de su submódulo propio "Catálogos de productos".
+  if (href === "/productos" && pathname.startsWith("/productos/catalogos")) {
+    return false;
   }
 
   return pathname === href || pathname.startsWith(`${href}/`);
@@ -48,6 +55,8 @@ export default function Sidebar({
   user,
   company,
   navigation,
+  inicioHref,
+  puedeDashboard,
   collapsed,
   mobileOpen,
   onCollapsedChange,
@@ -67,11 +76,19 @@ export default function Sidebar({
     activeGroupId ?? null,
   );
 
-  useEffect(() => {
+  // PRE-VM-R02-C: cuando la navegación cambia el grupo activo, ese grupo se expande en el
+  // mismo render (ajuste de estado con el valor previo, patrón documentado de React), no en un
+  // efecto. Solo reacciona al CAMBIO del grupo activo, así que abrir/cerrar grupos a mano sigue
+  // funcionando hasta la próxima navegación a otro grupo.
+  const [activeGroupIdPrevio, setActiveGroupIdPrevio] = useState(activeGroupId);
+
+  if (activeGroupIdPrevio !== activeGroupId) {
+    setActiveGroupIdPrevio(activeGroupId);
+
     if (activeGroupId) {
       setOpenGroupId(activeGroupId);
     }
-  }, [activeGroupId]);
+  }
 
   useEffect(() => {
     onMobileOpenChange(false);
@@ -121,9 +138,9 @@ export default function Sidebar({
       >
         <header className={styles.brandArea}>
           <Link
-            href="/dashboard"
+            href={inicioHref}
             className={styles.brand}
-            aria-label="DistribuNex"
+            aria-label="Nexit"
           >
             <span className={styles.brandMark}>
               <span />
@@ -134,8 +151,8 @@ export default function Sidebar({
             {!collapsed ? (
               <span className={styles.brandCopy}>
                 <strong>
-                  Distribu
-                  <em>Nex</em>
+                  Nex
+                  <em>it</em>
                 </strong>
                 <small>Una solución PROCEIT</small>
               </span>
@@ -165,31 +182,33 @@ export default function Sidebar({
         </header>
 
         <nav className={styles.navigation}>
-          <Link
-            href="/dashboard"
-            className={[
-              styles.dashboardLink,
-              isActivePath(pathname, "/dashboard")
-                ? styles.dashboardLinkActive
-                : "",
-            ].join(" ")}
-            title={collapsed ? "Panel general" : undefined}
-          >
-            <span className={styles.primaryIcon}>
-              <NavigationIcon name="dashboard" size={16} />
-            </span>
+          {puedeDashboard ? (
+            <Link
+              href="/dashboard"
+              className={[
+                styles.dashboardLink,
+                isActivePath(pathname, "/dashboard")
+                  ? styles.dashboardLinkActive
+                  : "",
+              ].join(" ")}
+              title={collapsed ? "Panel general" : undefined}
+            >
+              <span className={styles.primaryIcon}>
+                <NavigationIcon name="dashboard" size={16} />
+              </span>
 
-            {!collapsed ? (
-              <>
-                <span className={styles.primaryText}>
-                  <strong>Panel general</strong>
-                  <small>Resumen ejecutivo</small>
-                </span>
+              {!collapsed ? (
+                <>
+                  <span className={styles.primaryText}>
+                    <strong>Panel general</strong>
+                    <small>Resumen ejecutivo</small>
+                  </span>
 
-                <span className={styles.activeIndicator} />
-              </>
-            ) : null}
-          </Link>
+                  <span className={styles.activeIndicator} />
+                </>
+              ) : null}
+            </Link>
+          ) : null}
 
           {!collapsed ? (
             <p className={styles.menuCaption}>

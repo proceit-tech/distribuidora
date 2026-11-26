@@ -1,0 +1,36 @@
+# ORDEN ÚNICA — PRO-312-R01-C01 — cierre de hallazgos de diseño E03
+24/11/2026. PR #7 DRAFT, rama feature/NEXIT-2026-001-banco-demo, base 6e242e391e7fce8906fcb0eb34f75fa3c319383a. Autorización del responsable: corregir exclusivamente el diseño documental R01. NO implementar NEX-084 ni iniciar R02.
+
+## Fuentes vinculantes
+- Auditoría ChatGPT [R01](../testes/AUD-CHATGPT-NEXIT-PRO-312-R01-2026-11-24.md), SHA 88e6e9e4a8a31de8efc4059a8c475b6c367dc747.
+- Diagnóstico [R01](../analises/PRO-312-R01-DIAGNOSTICO-INTEGRACION-E03-2026-11-24.md), SHA 75c4dcc159ef3190dd12ca14ff7464d8e677d54c.
+- Orden R01, ESPEC E03 R03, código actual, NEX-050/062/072/077/079/080 y grants vigentes.
+- Conservar los 21 puntos y 48 casos R01; corregir contradicciones por referencia y ampliar casos. No repetir inventario general. Diagnóstico de incompatibilidad confirmado, diseño no aprobado.
+
+## Alcance obligatorio — F001 a F006
+### F001 Paridad del cierre
+Definir matriz completa y determinista del ACK y de errores FE/NCE a partir de interpretarRecepcion y saneamiento actuales. status literal, HTTP, lote válido literal, alias y precedencias, eco parcial/completo, tipo/serie, contradicción/no interpretable, terceros, rechazos, duplicidad y autorización. CDC opaco, nunca condición para ACK. No considerar suficiente success + lote si hay contradicción. Especificar validación de parámetros del cierre frente a la evidencia del último POST y su clasificación; no aceptar respuesta alternativa ni perder las guardas del saldo NCE. Distinguir intento HTTP de aprobación SIFEN. Casos negativos directos de SQL escritos.
+
+### F002 Evidencia suficiente y saneamiento
+Diseñar proyección contractual mínima que conserve los datos decisivos, incluida presencia/ausencia, alias, contradicciones y redacciones; vincularla al mismo POST y resultado, no confiar en un resumen arbitrario. Truncamiento, 30.000 caracteres, 64 KiB, UTF-8, hash de objeto saneado vs bytes originales, CDC omitido por credencial, límite 1 MiB y FE 999 líneas/NCE con decimales SQL. No almacenar login, token, contraseña ni respuesta bruta. Evaluar si NEX-072 altera valores en la segunda redacción y cómo preservar semántica sin exponer secretos. D2/D6/D7/D8: alternativas con evidencia y límites; no degradar ACK válidos, cambiar límite o serialización por decisión unilateral. Cuando evidencia insuficiente, especificar incertidumbre y necesidad de decisión, no inventar certeza.
+
+### F003 Resultado histórico idempotente
+Separar resultado inmutable de operación y estado actual del documento. NEX-072:585–590 devuelve estado actual: corregir diseño del nuevo cierre, no editar SQL existente. Contrato exacto de retorno estable del cierre original, vínculo único al intento, reintento con mismos/diferentes parámetros, pérdida de respuesta de BD, consulta posterior, operación nueva/obsoleta, concurrencia. Sin segundo intento ni mutación del documento en repetición; no presentar resultado histórico como actual. Definir datos adicionales necesarios y cómo se comprobarían en futura migration.
+
+### F004 POST_INTENTADO no prueba transmisión
+Definir máquina de estados de evidencia y rótulos de UI según hecho acreditado. Texto preparado/intentado antes de fetch no equivale a transmitido ni recibido; timeout no prueba recepción. Commit durable con respuesta perdida: no enviar ni afirmar NO_TRANSMITIDO sin reconciliar; distinguir error local de BD de autenticación, nunca reintento ciego. Eventos repetidos, caída antes/entre/después de registro/fetch/respuesta/cierre; segundo POST únicamente por token inválido acreditado según contrato actual, no cualquier respuesta/error. Diferenciar HTTP del login y del POST. Definir identificación estable, consulta de evidencia, resultado de confirmación perdida y acciones permitidas.
+
+### F005 Recuperación temporal y correlación
+NEX-062 cambia ENVIANDO a indeterminado solo al nuevo inicio vencido; no es transición automática. NEX-080 excluye ENVIANDO del worker. Analizar ventana 2 min vs peor caso real de timeout; carrera entre registro y fetch, recuperación sin intervención, consulta/manual, reintento y evidencia tardía. Diseñar fencing por operación/versión/cuenta e identidad de conexión inmutable aunque no exista cierre; distinguir evidencia tardía de permiso para modificar estado actual. Explicar cómo prevenir doble POST, pérdida de evidencia y sobrescritura de otra operación; límites de atomicidad BD/HTTP y condiciones para que la garantía sea válida. D5: recomendar alternativa con impactos y decisión requerida; no modificar ventana, worker ni política de reenvío ahora.
+
+### F006 Coexistencia, grants y rollback
+A debe coexistir con app actual (inicio directo y cierre R05); retirar únicamente cierre E03 incompatible, evitar reotorgamiento por helper. Diseñar transición A/B, ruta única tras activar instrumentación, política de procesos antiguos simultáneos, permisos mínimos, ACL y rollback app/SQL sin perder evidencia ni reactivar cierre incompatible. Proteger reversión incluso con INICIO/POST sin cierre; preflight, verificación, roles, T01/C1. Confirmar NEX-084 libre en inventario de repositorio, no afirmar catálogo VM verificado. Para C especificar paginación consistente y límites de OFFSET bajo mutación, una fila por versión, KPI por documento.
+
+## Decisiones y límites
+D1: dirección incremental aceptable conceptualmente; NO autoriza NEX-084. D3: diseñar retiro del cierre antiguo sin romper app vigente. D7: distinguir hash del objeto saneado del cuerpo HTTP. D2/D4/D5/D6/D8: preservar comportamiento, clasificación fiscal, límites y reglas actuales como restricción de diseño; presentar alternativas justificadas y decisiones explícitas del responsable si cualquier cambio resulta imprescindible. No asumir aprobación de cambio de negocio, no introducir falsa certeza de envío ni modificar CDC/KuDE/stock. No levantar gate PRO-309 ni iniciar PRO-311/313/199/324/323. E01/E02/E08 ya existen.
+
+## Entrega verificable
+Único archivo autorizado: documentacao/analises/PRO-312-R01-C01-DISENO-E03-2026-11-24.md. Informe autocontenido con matriz F001–F006: fuente/linea, corrección del diseño, invariantes, casos positivos/negativos, limitaciones, dependencias y estado propuesto; decisión D1–D8 (resuelta técnicamente o pendiente del responsable), comparación con R01, contratos propuestos sin SQL ejecutable, plan A/B/C actualizado, archivos futuros exactos, criterios de entrada/salida por lote. Preservar y mapear los 48 casos anteriores y añadir los necesarios sin ejecutarlos. No declarar cerrado un hallazgo sin demostrarlo documentalmente; si bloqueado, indicar causa y alternativa concreta.
+
+## STOP
+Un commit exclusivamente documental en PR #7 Draft. NO editar R01, CLAUDE.md, código, migrations, scripts, casos ejecutables, CI ni configuraciones. NO ejecutar tests, lint, typecheck, build, SQL, CI manual, gateway, VM, Docker, merge o deploy. Informar SHA completo, matriz de los seis hallazgos, decisiones aún pendientes, casos escritos y CI automático observado. DETENERSE para auditoría ChatGPT. No iniciar R02 ni ninguna otra tarea.

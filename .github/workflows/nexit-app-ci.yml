@@ -1,0 +1,151 @@
+# CI de la APLICACIÓN Nexit (BUILD-R02). Independiente del CI del banco (nexit-banco-ci.yml), que no se modifica.
+# Sin deploy, sin push de imágenes, sin credenciales ni base de datos real: solo checkout, npm (registry) y la imagen base pública de Docker.
+# Los controles corren en jobs INDEPENDIENTES: un fallo de casos o de lint no impide el diagnóstico de typecheck, build e imagen de la aplicación.
+# El job «liberacion» es la compuerta agregada: falla si cualquier control obligatorio falla, se omite o se cancela.
+# Producción exige este workflow Y nexit-banco-ci verdes sobre el MISMO SHA y aprobación explícita del responsable (la implantación sigue siendo manual).
+name: nexit-app-ci
+on:
+  push:
+    branches:
+      - 'feature/NEXIT-2026-001-banco-demo'
+  pull_request:
+  workflow_call:
+permissions:
+  contents: read
+concurrency:
+  group: nexit-app-ci-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  NEXT_TELEMETRY_DISABLED: '1'
+
+jobs:
+  typecheck-app:
+    name: Typecheck de la aplicación + importaciones de pruebas
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Tipos de la aplicación (tsconfig.build.json, strict, tipos de rutas generados con next typegen)
+        run: npm run typecheck
+      - name: Ningún módulo de la aplicación incluye o importa pruebas
+        run: npm run verificar:dependencias
+
+  casos:
+    name: Casos de regresión (ES2020) + runner
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Compilar casos (limpia .tmp-casos; comprueba tipos con scripts/casos-clientes/tsconfig.json)
+        run: npm run casos:compilar
+      # Corre aunque la compilación haya informado errores de tipos (tsc emite igual) para dar el diagnóstico completo; el job falla igualmente.
+      - name: Ejecutar el runner (inventario de los *.casos.ts y código de salida)
+        if: ${{ !cancelled() }}
+        run: node scripts/casos-clientes/run.js
+
+  lint-app:
+    name: Lint de la aplicación
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run lint:app
+
+  lint-casos:
+    name: Lint de casos y runner
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run lint:casos
+
+  build:
+    name: next build + contenido de standalone
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build
+      - name: .next/standalone sin pruebas ni documentación
+        run: npm run verificar:standalone
+
+  imagen:
+    name: docker build + inspección (builder y final)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Stage builder (contexto real tras .dockerignore)
+        run: docker build --target builder -t "nexit-app-builder:ci-${GITHUB_SHA}" .
+      - name: Inspección del stage builder
+        run: bash scripts/verificar-separacion.sh builder "nexit-app-builder:ci-${GITHUB_SHA}"
+      - name: Imagen final (sin push)
+        run: docker build -t "nexit-app:ci-${GITHUB_SHA}" .
+      - name: Inspección de la imagen final
+        run: bash scripts/verificar-separacion.sh imagen "nexit-app:ci-${GITHUB_SHA}"
+
+  liberacion:
+    name: Compuerta de liberación (todos los controles obligatorios)
+    needs: [typecheck-app, casos, lint-app, lint-casos, build, imagen]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Todos los controles en «success» y SHA registrado
+        env:
+          RESULTADOS: ${{ toJSON(needs) }}
+          EVENTO: ${{ github.event_name }}
+          SHA: ${{ github.sha }}
+          HEAD_PR: ${{ github.event.pull_request.head.sha }}
+          REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          esperados="typecheck-app casos lint-app lint-casos build imagen"
+          {
+            echo "### nexit-app-ci — compuerta de liberación"
+            if [[ "$EVENTO" == "pull_request" ]]; then
+              echo "- evento: pull_request — \`$SHA\` es el commit de merge SINTÉTICO ($REF); cabeza del PR: \`$HEAD_PR\`"
+            else
+              echo "- evento: $EVENTO — commit exacto \`$SHA\` ($REF)"
+            fi
+            echo "| control | resultado |"
+            echo "|---|---|"
+          } >> "$GITHUB_STEP_SUMMARY"
+          fallos=0
+          for j in $esperados; do
+            r="$(jq -r --arg j "$j" '.[$j].result // "ausente"' <<<"$RESULTADOS")"
+            echo "| $j | $r |" >> "$GITHUB_STEP_SUMMARY"
+            echo "$j: $r"
+            [[ "$r" == "success" ]] || fallos=$((fallos + 1))
+          done
+          if [[ $fallos -ne 0 ]]; then
+            echo "- **NO LIBERABLE**: $fallos control(es) no terminaron en success" >> "$GITHUB_STEP_SUMMARY"
+            echo "::error title=nexit-app-ci - liberación bloqueada::$fallos control(es) obligatorio(s) fallaron, se omitieron o se cancelaron"
+            exit 1
+          fi
+          echo "- liberable desde el punto de vista de la aplicación (falta nexit-banco-ci verde sobre el mismo SHA y aprobación del responsable)" >> "$GITHUB_STEP_SUMMARY"

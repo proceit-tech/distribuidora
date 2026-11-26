@@ -1,0 +1,1026 @@
+/**
+ * MOV-O07 / PRO-188 — recuperación durable de la intención de registro (REQ-MOV-O07, T01…T18). Sin PostgreSQL real ni navegador:
+ *  · el control real (`crearControlRegistro`), el cliente real (`reservarIntencionApi` / `ejecutarIntencionApi` / `consultarIntencionApi`), la recuperación real (`recuperarIntencion`) y la orquestación de servidor
+ *    real (`reservarIntencion` / `ejecutarIntencion` / `consultarIntencion`) se ejercen contra una BASE SIMULADA que reproduce el contrato de NEX-066 y NEX-014 (índice único parcial, titularidad por empresa+usuario,
+ *    bloqueos que serializan K1 y el motor idempotente) con transacciones deshacibles y bloqueos reales entre llamadas concurrentes;
+ *  · un adaptador HTTP simulado traduce rutas ↔ funciones con las mismas respuestas que las rutas y puede PERDER la respuesta tras el COMMIT.
+ * NO prueban el motor SQL: el SQL de NEX-066 solo se verifica estructuralmente (contrato documentado). Tampoco prueban React ni navegador.
+ */
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
+import { contador } from "@/lib/clientes/contador-casos";
+import { consultarIntencionApi, ejecutarIntencionApi, reconocerIntencionApi, reservarIntencionApi } from "@/lib/movimientos/cliente-api";
+import { consultarIntencion, ejecutarIntencion, ErrorIntencion, esRechazoDeterminista, reconocerIntencion, reservarIntencion, respuestaDeError, respuestaEjecucion, respuestaPostLegado, respuestaReconocimiento } from "@/lib/movimientos/intenciones";
+import { aplicarResultadoSiVigente, crearControlRegistro, MENSAJE_SALIDA, MENSAJE_SIN_ACK } from "@/lib/movimientos/intento";
+import { confirmarRecepcionOperador, consultarResultado, recuperarIntencion } from "@/lib/movimientos/recuperacion";
+import type { NuevoMovimientoStock } from "@/types/movimientos-stock";
+
+const leer = (r: string) => readFileSync(join(process.cwd(), r), "utf8").replace(/\r\n/g, "\n");
+const U = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+const [EMP, EMP2, USR, USR_B, USR_C, PROD, DEP_A, DEP_B] = [U(1), U(2), U(11), U(12), U(13), U(21), U(31), U(32)];
+const D = "2026-10-19";
+
+const base = (extra: Partial<NuevoMovimientoStock> = {}): NuevoMovimientoStock =>
+  ({ tipo: "ENTRADA", origen: "COMPRA", fecha: D, productoId: PROD, cantidad: 5, costoUnitario: 100, depositoOrigenId: "", depositoDestinoId: DEP_A, lote: "", fechaVencimiento: "", documentoReferencia: "OC-1", motivo: "conteo", observacion: "obs", claveIdempotencia: "", ...extra }) as NuevoMovimientoStock;
+
+type Fila = { id: string; empresa: string; usuario: string; clave: string; snapshot: Record<string, unknown>; huella: string; estado: string; movimientoId: string | null; numero: string | null; creadoAt: Date; reconocida: boolean };
+class ErrorPg extends Error {
+  constructor(m: string, readonly code: string, readonly detail?: string) {
+    super(m);
+  }
+}
+
+/** Base simulada: contrato de NEX-066 + NEX-014. Las mutaciones se deshacen en ROLLBACK; los bloqueos duran hasta COMMIT/ROLLBACK. */
+function bdSimulada() {
+  const st = { intenciones: [] as Fila[], movimientos: new Map<string, { id: string; numero: string; creadoPor: string; huella: string }>(), efectosStock: 0, stock: 0, siguiente: 1 };
+  const cfg = { permisos: new Set([`${EMP}|${USR}`, `${EMP}|${USR_B}`, `${EMP2}|${USR_C}`]), ver: new Set([`${EMP}|${USR}`, `${EMP}|${USR_B}`, `${EMP2}|${USR_C}`]), depositos: new Set([DEP_A, DEP_B]), fallaMotor: null as null | (() => Error), fallarCommit: 0, antesDeCommit: null as null | (() => Promise<void>), ahora: () => new Date() };
+  const bloqueos = new Map<string, Promise<void>>();
+  const consultas: string[] = [];
+
+  const adquirir = async (clave: string, tx: { liberar: Array<() => void> }) => {
+    while (bloqueos.has(clave)) await bloqueos.get(clave);
+    let libre: () => void = () => undefined;
+
+    bloqueos.set(clave, new Promise<void>((r) => { libre = r; }));
+    tx.liberar.push(() => { bloqueos.delete(clave); libre(); });
+  };
+  const permiso = (e: string, u: string) => cfg.permisos.has(`${e}|${u}`);
+  /** Contrato de movimiento_intencion_visible: MOVIMIENTOS.VER + alcance ACTIVO sobre el depósito de origen y el de destino (usuario_puede_deposito). */
+  const visible = (e: string, u: string, snapshot: Record<string, unknown>) => cfg.ver.has(`${e}|${u}`) && [snapshot.origenId, snapshot.destinoId].every((d) => !d || cfg.depositos.has(String(d)));
+  const sinVisibilidad = () => new ErrorPg("la operación anterior no puede recuperarse con los permisos actuales", "42501", "NEX:INTENCION_SIN_VISIBILIDAD");
+  const hoyLimite = "2026-12-31";
+
+  function conectar() {
+    const tx = { abierta: false, deshacer: [] as Array<() => void>, liberar: [] as Array<() => void> };
+    const cerrar = (confirma: boolean) => {
+      if (!confirma) [...tx.deshacer].reverse().forEach((f) => f());
+      tx.deshacer = [];
+      tx.liberar.forEach((f) => f());
+      tx.liberar = [];
+      tx.abierta = false;
+    };
+
+    return {
+      release() {
+        if (tx.abierta) cerrar(false);
+      },
+      async query(sqlCrudo: string, p: unknown[] = []) {
+        const sql = sqlCrudo.replace(/\s+/g, " ").trim();
+
+        consultas.push(sql);
+        if (sql === "BEGIN") { tx.abierta = true; return { rows: [] }; }
+        if (sql === "COMMIT") {
+          if (cfg.antesDeCommit) await cfg.antesDeCommit();
+          if (cfg.fallarCommit > 0) { cfg.fallarCommit -= 1; cerrar(false); throw new ErrorPg("conexión cortada durante el COMMIT", "08006"); }
+          cerrar(true);
+
+          return { rows: [] };
+        }
+        if (sql === "ROLLBACK") { cerrar(false); return { rows: [] }; }
+
+        const [empresa, usuario, clave] = p as [string, string, string];
+        const necesitaPermiso = () => { if (!permiso(empresa, usuario)) throw new ErrorPg("el usuario no tiene permiso MOVIMIENTOS.CREAR en esta empresa", "42501"); };
+
+        if (/FROM movimiento_intencion_reservar/.test(sql)) {
+          necesitaPermiso();
+          const snapshot = JSON.parse(p[3] as string) as Record<string, unknown>;
+
+          if (!clave || clave.length < 8) throw new ErrorPg("la clave del registro no es válida", "P0001");
+          await adquirir(`u:${empresa}:${usuario}`, tx);
+          const huella = JSON.stringify(snapshot);
+          const previa = st.intenciones.find((i) => i.empresa === empresa && i.clave === clave);
+
+          if (previa) {
+            if (previa.usuario !== usuario || previa.huella !== huella) throw new ErrorPg("la clave del registro no está disponible", "P0001", "NEX:INTENCION_CONFLICTO");
+            if (!visible(empresa, usuario, previa.snapshot)) throw sinVisibilidad();
+
+            return { rows: [{ clave: previa.clave, estado: previa.estado, snapshot: previa.snapshot, creado_at: previa.creadoAt, nueva: false }] };
+          }
+          if (st.intenciones.some((i) => i.empresa === empresa && i.usuario === usuario && !i.reconocida && (i.estado === "RESERVADA" || i.estado === "CONFIRMADA"))) throw new ErrorPg("hay un registro anterior sin resolver", "P0001", "NEX:INTENCION_PENDIENTE");
+
+          const fila: Fila = { id: `i${st.intenciones.length + 1}`, empresa, usuario, clave, snapshot, huella, estado: "RESERVADA", movimientoId: null, numero: null, creadoAt: cfg.ahora(), reconocida: false };
+
+          st.intenciones.push(fila);
+          tx.deshacer.push(() => { st.intenciones = st.intenciones.filter((i) => i !== fila); });
+
+          return { rows: [{ clave, estado: "RESERVADA", snapshot, creado_at: fila.creadoAt, nueva: true }] };
+        }
+        if (/FROM movimiento_intencion_pendiente/.test(sql)) {
+          necesitaPermiso();
+          const i = st.intenciones.find((x) => x.empresa === empresa && x.usuario === usuario && !x.reconocida && (x.estado === "RESERVADA" || x.estado === "CONFIRMADA"));
+
+          if (!i) return { rows: [] };
+          if (!visible(empresa, usuario, i.snapshot)) throw sinVisibilidad();
+          const evidencia = st.movimientos.get(`${empresa}|${i.clave}`);
+
+          return { rows: [{ clave: i.clave, estado: i.estado, snapshot: i.snapshot, creado_at: i.creadoAt, requiere_revision: i.estado === "RESERVADA" && cfg.ahora().getTime() - i.creadoAt.getTime() > 7 * 86_400_000, evidencia_numero: i.estado === "CONFIRMADA" ? i.numero : evidencia && evidencia.creadoPor === usuario ? evidencia.numero : null }] };
+        }
+        if (/FROM movimiento_intencion_tomar/.test(sql)) {
+          necesitaPermiso();
+          const i = st.intenciones.find((x) => x.empresa === empresa && x.usuario === usuario && x.clave === clave);
+
+          if (!i) throw new ErrorPg("registro no encontrado", "P0002");
+          if (!visible(empresa, usuario, i.snapshot)) throw sinVisibilidad();
+          await adquirir(`k:${empresa}:${clave}`, tx);
+
+          return { rows: [{ estado: i.estado, snapshot: i.snapshot, numero: i.numero }] };
+        }
+        if (/FROM productos/.test(sql)) return { rows: [{ modo: "CANTIDAD", controla_stock: true }], rowCount: 1 };
+        if (/FROM inventario_registrar_movimiento/.test(sql)) {
+          const [emp, usr, tipo, , fecha, orig, dest, lineas, k] = p as [string, string, string, string, string, string | null, string | null, string, string];
+
+          if (!permiso(emp, usr)) throw new ErrorPg("sin permiso", "42501");
+          for (const d of [orig, dest]) if (d && !cfg.depositos.has(d)) throw new ErrorPg("el usuario no tiene alcance sobre el depósito", "42501");
+          if (fecha > hoyLimite) throw new ErrorPg("la fecha del movimiento no puede ser futura", "P0001");
+          const huella = JSON.stringify([tipo, fecha, orig, dest, lineas]);
+          const previo = st.movimientos.get(`${emp}|${k}`);
+
+          if (previo) {
+            if (previo.huella !== huella) throw new ErrorPg("la clave de idempotencia ya fue usada con una solicitud distinta", "P0001", "NEX:IDEMPOTENCIA_CONFLICTO");
+
+            return { rows: [{ id: previo.id, numero: previo.numero, repetido: true }] };
+          }
+          if (cfg.fallaMotor) throw cfg.fallaMotor();
+          const mov = { id: `m${st.siguiente}`, numero: `MOV-${String(st.siguiente).padStart(6, "0")}`, creadoPor: usr, huella };
+
+          st.siguiente += 1;
+          const cantidad = Number((JSON.parse(lineas) as Array<{ cantidad: number }>)[0].cantidad);
+
+          st.efectosStock += 1;
+          st.stock += cantidad;
+          st.movimientos.set(`${emp}|${k}`, mov);
+          tx.deshacer.push(() => { st.movimientos.delete(`${emp}|${k}`); st.efectosStock -= 1; st.stock -= cantidad; });
+
+          return { rows: [{ id: mov.id, numero: mov.numero, repetido: false }] };
+        }
+        if (/FROM movimiento_intencion_reconocer/.test(sql)) {
+          necesitaPermiso();
+          await adquirir(`u:${empresa}:${usuario}`, tx); // el MISMO bloqueo que reservar: el ACK y la reserva siguiente se serializan
+          const i = st.intenciones.find((x) => x.empresa === empresa && x.usuario === usuario && x.clave === clave);
+
+          if (!i) throw new ErrorPg("registro no encontrado", "P0002");
+          if (!visible(empresa, usuario, i.snapshot)) throw sinVisibilidad();
+          if (i.estado !== "CONFIRMADA") throw new ErrorPg("solo se reconoce un registro confirmado", "P0001", "NEX:INTENCION_NO_CONFIRMADA");
+          const evidencia = st.movimientos.get(`${empresa}|${clave}`);
+
+          if (!evidencia || evidencia.id !== i.movimientoId || evidencia.numero !== i.numero || evidencia.creadoPor !== usuario) throw new ErrorPg("no existe el movimiento original de esta intención", "P0001");
+          if (!i.reconocida) {
+            i.reconocida = true;
+            tx.deshacer.push(() => { i.reconocida = false; });
+          }
+
+          return { rows: [{ numero: i.numero }] };
+        }
+        if (/movimiento_intencion_confirmar/.test(sql)) {
+          const [, , k, movimientoId, numero] = p as [string, string, string, string, string];
+          const i = st.intenciones.find((x) => x.empresa === empresa && x.usuario === usuario && x.clave === k);
+          const evidencia = st.movimientos.get(`${empresa}|${k}`);
+
+          if (!i || !evidencia || evidencia.id !== movimientoId || evidencia.numero !== numero || evidencia.creadoPor !== usuario) throw new ErrorPg("no existe el movimiento original de esta intención", "P0001");
+          const antes = { ...i };
+
+          i.estado = "CONFIRMADA";
+          i.movimientoId = movimientoId;
+          i.numero = numero;
+          tx.deshacer.push(() => Object.assign(i, antes));
+
+          return { rows: [] };
+        }
+        if (/movimiento_intencion_rechazar/.test(sql)) {
+          necesitaPermiso();
+          const i = st.intenciones.find((x) => x.empresa === empresa && x.usuario === usuario && x.clave === clave);
+
+          if (!i) throw new ErrorPg("registro no encontrado", "P0002");
+          if (i.estado !== "RESERVADA") return { rows: [] };
+          if (st.movimientos.has(`${empresa}|${clave}`)) throw new ErrorPg("existe un movimiento con esa clave", "P0001", "NEX:INTENCION_NO_RECHAZABLE");
+          const antes = { ...i };
+
+          i.estado = "RECHAZADA_DEFINITIVA";
+          tx.deshacer.push(() => Object.assign(i, antes));
+
+          return { rows: [] };
+        }
+        throw new Error("consulta no simulada: " + sql.slice(0, 80));
+      },
+    };
+  }
+
+  return { st, cfg, consultas, db: { connect: async () => conectar() as never } };
+}
+
+type Sesion = { empresa: string; usuario: string } | null;
+
+/** Adaptador HTTP simulado: mismas respuestas que las rutas (sesión → permiso → función); `perderRespuesta` descarta la respuesta tras ejecutar (el servidor ya terminó). */
+function http(bd: ReturnType<typeof bdSimulada>, sesion: () => Sesion, opciones: { esperarReconocer?: () => Promise<void>; perderRespuestaReconocer?: () => boolean; estadoReconocer?: () => number | null; perderRespuestaEjecutar?: () => boolean; perderRespuestaReservar?: () => boolean; estadoEjecutar?: () => number | null; sinApi?: () => boolean } = {}) {
+  const peticiones: string[] = [];
+  const f = async (url: string, init?: RequestInit): Promise<Response> => {
+    const metodo = init?.method ?? "GET";
+
+    peticiones.push(`${metodo} ${url}`);
+    if (opciones.sinApi?.()) throw new TypeError("fetch failed");
+    const s = sesion();
+    const respuesta = (status: number, body: unknown) => new Response(JSON.stringify(body), { status });
+
+    if (!s) return respuesta(401, { error: "Sesión no válida." });
+    if (!bd.cfg.permisos.has(`${s.empresa}|${s.usuario}`)) return respuesta(403, { error: "No tiene permiso para esta acción." });
+
+    try {
+      if (url.endsWith("/reconocer")) {
+        const forzado = opciones.estadoReconocer?.() ?? null;
+
+        if (forzado) return respuesta(forzado, forzado === 401 || forzado === 403 ? { error: "Rechazado." } : "<html>");
+        const clave = String((JSON.parse(String(init?.body)) as { clave?: string }).clave);
+
+        if (opciones.esperarReconocer) await opciones.esperarReconocer();
+        const h = respuestaReconocimiento(await reconocerIntencion(bd.db, s.empresa, s.usuario, clave));
+
+        if (opciones.perderRespuestaReconocer?.()) throw new TypeError("fetch failed");
+
+        return respuesta(h.status, h.body);
+      }
+      if (url.endsWith("/ejecutar")) {
+        const forzado = opciones.estadoEjecutar?.() ?? null;
+
+        if (forzado) return respuesta(forzado, forzado === 401 || forzado === 403 ? { error: "Rechazado antes de consultar la clave." } : "<html>");
+        const clave = String((JSON.parse(String(init?.body)) as { clave?: string }).clave);
+        const h = respuestaEjecucion(await ejecutarIntencion(bd.db, s.empresa, s.usuario, clave));
+
+        if (opciones.perderRespuestaEjecutar?.()) throw new TypeError("fetch failed");
+
+        return respuesta(h.status, h.body);
+      }
+      if (metodo === "POST") {
+        const r = await reservarIntencion(bd.db, s.empresa, s.usuario, JSON.parse(String(init?.body)) as Record<string, unknown>);
+
+        if (opciones.perderRespuestaReservar?.()) throw new TypeError("fetch failed");
+
+        return respuesta(r.nueva ? 201 : 200, { intencion: r.intencion, nueva: r.nueva });
+      }
+
+      return respuesta(200, { intencion: await consultarIntencion(bd.db, s.empresa, s.usuario) });
+    } catch (e) {
+      if (e instanceof TypeError) throw e;
+      const h = respuestaDeError(e);
+
+      return respuesta(h.status, h.body);
+    }
+  };
+
+  return { f, peticiones };
+}
+
+/** Pantalla simulada: control real en modo durable conectado al adaptador HTTP. */
+function pantalla(h: ReturnType<typeof http>, prefijo = "") {
+  let n = 0;
+  const control = crearControlRegistro({
+    generarClave: () => `${prefijo}clave-K${++n}-00000000`,
+    reservar: (d) => reservarIntencionApi(d, h.f),
+    enviar: (d) => ejecutarIntencionApi(d.claveIdempotencia, h.f),
+    reconocer: (c) => reconocerIntencionApi(c, h.f),
+    iniciarRecuperando: true,
+  });
+
+  return { control, abrir: () => recuperarIntencion(control, () => consultarIntencionApi(h.f)) };
+}
+
+export async function verificarCasosMovimientosIntenciones(): Promise<string[]> {
+  const fallos: string[] = [];
+  const igual = (nombre: string, obtenido: unknown, esperado: unknown) => {
+    contador.n += 1;
+    if (JSON.stringify(obtenido) !== JSON.stringify(esperado)) fallos.push(`${nombre}: esperado ${JSON.stringify(esperado)}, obtenido ${JSON.stringify(obtenido)}`);
+  };
+  const cierto = (nombre: string, c: boolean) => igual(nombre, c, true);
+  const sesion: { actual: Sesion } = { actual: { empresa: EMP, usuario: USR } };
+
+  // T01: la reserva se confirma ANTES de tocar stock; si falla, no hay movimiento.
+  {
+    const bd = bdSimulada();
+    const h = http(bd, () => sesion.actual, { sinApi: () => true });
+    const p = pantalla(h);
+
+    p.control.fijarRecuperacion(null);
+    const r = await p.control.registrar(base());
+
+    igual("T01: la reserva falla (API caída) → NO_RESERVADA, ningún efecto de stock ni intención local, y el formulario queda libre", [r.tipo, bd.st.efectosStock, bd.st.intenciones.length, p.control.bloqueado(), h.peticiones.some((x) => x.includes("/ejecutar"))], ["NO_RESERVADA", 0, 0, false, false]);
+  }
+  {
+    const bd = bdSimulada();
+    const h = http(bd, () => sesion.actual);
+    const p = pantalla(h);
+
+    await p.abrir();
+    const orden: string[] = [];
+    const original = bd.cfg.antesDeCommit;
+
+    bd.cfg.antesDeCommit = async () => { orden.push(`commit(stock=${bd.st.efectosStock},intenciones=${bd.st.intenciones.length})`); };
+    await p.control.registrar(base());
+    bd.cfg.antesDeCommit = original;
+
+    igual("T01b: la intención RESERVADA se compromete con 0 efectos de stock (checkpoint previo); luego el segundo COMMIT lleva movimiento + CONFIRMADA en la misma transacción", [orden, bd.st.efectosStock, bd.st.intenciones[0].estado, bd.st.intenciones[0].numero], [["commit(stock=0,intenciones=1)", "commit(stock=1,intenciones=1)"], 1, "CONFIRMADA", "MOV-000001"]);
+  }
+
+  // T03 (AUD-R08 / MOV-R08-01): COMMIT con la respuesta HTTP perdida → refresh / nuevo login → se RECUPERAN K1 y el número original; K2 queda bloqueada hasta el reconocimiento (ACK); el ACK no toca stock.
+  {
+    const bd = bdSimulada();
+    let perder = true;
+    const h1 = http(bd, () => sesion.actual, { perderRespuestaEjecutar: () => perder });
+    const p1 = pantalla(h1);
+
+    await p1.abrir();
+    const r1 = await p1.control.registrar(base({ cantidad: 5 })); // pasos 1-4: reserva K1, entrada de 5 unidades, COMMIT en el servidor, respuesta HTTP perdida
+
+    igual("T03-1..4: K1 reservada y ejecutada (entrada de 5), COMMIT en el servidor y respuesta perdida → el cliente queda INDETERMINADO mientras el servidor ya tiene CONFIRMADA y stock = 5", [r1.tipo, bd.st.stock, bd.st.efectosStock, bd.st.intenciones[0].estado, bd.st.intenciones[0].reconocida], ["INDETERMINADO", 5, 1, "CONFIRMADA", false]);
+
+    // pasos 5-7: se cierra la primera instancia; nueva sesión del mismo usuario; se recuperan K1 y el número original
+    perder = false;
+    sesion.actual = null;
+    const sinSesion = await pantalla(h1).abrir();
+
+    sesion.actual = { empresa: EMP, usuario: USR };
+    const h2 = http(bd, () => sesion.actual);
+    const p2 = pantalla(h2, "s2-");
+    const rec = await p2.abrir();
+
+    igual("T03-5..7: tras cerrar la primera instancia y volver a entrar (sin sesión el registro falla cerrado), la nueva pantalla RECUPERA la operación CONFIRMADA con K1 y el número original — nunca LIBRE", [sinSesion.estado, rec.estado, rec.estado === "CONFIRMADA" ? rec.mensaje : null, p2.control.estado(), p2.control.clave(), p2.control.numero(), rec.estado === "CONFIRMADA" ? rec.formulario.cantidad : null], ["ERROR", "CONFIRMADA", "El movimiento MOV-000001 fue registrado correctamente. Falta confirmar la recepción del resultado: pulse «Confirmar recepción» para poder registrar otro movimiento.", "CONFIRMADA", "clave-K1-00000000", "MOV-000001", 5]);
+
+    // paso 8: K2 antes del ACK — local (control bloqueado) y desde OTRA pestaña (la base lo impide)
+    const k2Local = await p2.control.registrar(base({ cantidad: 3 }));
+    const otraPestana = pantalla(h2, "tabB-");
+
+    otraPestana.control.fijarRecuperacion(null);
+    const k2Remota = await otraPestana.control.registrar(base({ cantidad: 3 }));
+
+    igual("T03-8/9: intentar una K2 antes del reconocimiento se rechaza (control local y reserva desde otra pestaña = RECUPERADA con el mismo K1 y número); el stock permanece en 5 y no hay segundo movimiento", [k2Local.tipo, k2Remota.tipo, otraPestana.control.clave(), otraPestana.control.numero(), bd.st.stock, bd.st.efectosStock, bd.st.intenciones.length], ["OCUPADO", "RECUPERADA", "clave-K1-00000000", "MOV-000001", 5, 1, 1]);
+
+    // pasos 10-11: ACK; no altera stock
+    const stockAntes = bd.st.stock;
+    const ack = await p2.control.reconocer();
+
+    igual("T03-10/11: el reconocimiento (ACK) del movimiento original no altera el stock ni crea movimientos, y libera el control", [ack, bd.st.stock === stockAntes, bd.st.efectosStock, bd.st.intenciones[0].reconocida, p2.control.estado()], [{ ok: true }, true, 1, true, "LIBRE"]);
+
+    // pasos 12-13: solo ahora nace una K2 legítima
+    const k2 = await p2.control.registrar(base({ cantidad: 2 }));
+
+    igual("T03-12/13: tras el ACK una operación nueva (K2) es legítima y es la ÚNICA segunda operación: stock 5 + 2 = 7, dos movimientos, dos intenciones", [k2.tipo, bd.st.stock, bd.st.efectosStock, bd.st.intenciones.map((i) => i.estado)], ["OK", 7, 2, ["CONFIRMADA", "CONFIRMADA"]]);
+  }
+
+  // AUD-R08: dos pestañas — A ejecuta K1 (COMMIT, respuesta perdida); B consulta y recibe K1 + número; K2 bloqueada hasta el ACK; ACK repetido / concurrente / perdido.
+  {
+    const bd = bdSimulada();
+    const hA = http(bd, () => sesion.actual, { perderRespuestaEjecutar: () => true });
+    const pA = pantalla(hA);
+
+    await pA.abrir();
+    await pA.control.registrar(base({ cantidad: 4 }));
+    const hB = http(bd, () => sesion.actual);
+    const pB = pantalla(hB, "tabB-");
+    const recB = await pB.abrir();
+
+    igual("AUD-R08 dos pestañas: la pestaña B recibe K1 y el número original (CONFIRMADA), no una pantalla libre; el stock sigue en 4", [recB.estado, pB.control.clave(), pB.control.numero(), pB.control.bloqueado(), bd.st.stock], ["CONFIRMADA", "clave-K1-00000000", "MOV-000001", true, 4]);
+
+    const [a1, a2] = await Promise.all([pB.control.reconocer(), reconocerIntencionApi("clave-K1-00000000", hB.f)]);
+    const a3 = await reconocerIntencionApi("clave-K1-00000000", hB.f);
+
+    igual("AUD-R08 ACK concurrente y repetido: ambos tienen éxito (idempotente), una sola marca, sin stock nuevo", [a1, a2, a3, bd.st.intenciones.filter((i) => i.reconocida).length, bd.st.stock, bd.st.efectosStock], [{ ok: true }, { ok: true }, { ok: true }, 1, 4, 1]);
+
+    const pC = pantalla(hB, "tabC-");
+    const recC = await pC.abrir();
+
+    igual("AUD-R08: ya reconocida, una nueva visita queda LIBRE y puede iniciar una operación nueva", [recC.estado, pC.control.bloqueado()], ["LIBRE", false]);
+  }
+
+  // ACK con respuesta perdida: el servidor ya lo aplicó; repetir es seguro y el control sigue CONFIRMADA hasta la confirmación inequívoca.
+  {
+    const bd = bdSimulada();
+    let perderAck = true;
+    const h = http(bd, () => sesion.actual, { perderRespuestaReconocer: () => perderAck });
+    const p = pantalla(h);
+
+    await p.abrir();
+    await p.control.registrar(base({ cantidad: 6 }));
+    const ack1 = await p.control.reconocer();
+    const bloqueadoTrasAckPerdido = p.control.bloqueado();
+    const k2Bloqueada = await p.control.registrar(base({ cantidad: 1 }));
+
+    perderAck = false;
+    const ack2 = await p.control.reconocer();
+
+    igual("AUD-R08 ACK perdido: sin confirmación inequívoca el control sigue CONFIRMADA y bloquea K2; el reintento del ACK es idempotente y libera (stock intacto en 6)", [ack1.ok, bloqueadoTrasAckPerdido, k2Bloqueada.tipo, ack2, p.control.estado(), bd.st.stock, bd.st.efectosStock], [false, true, "OCUPADO", { ok: true }, "LIBRE", 6, 1]);
+  }
+
+  // ACK: sesión expirada, otro usuario, permisos revocados y fallas de red.
+  {
+    const bd = bdSimulada();
+    const h = http(bd, () => sesion.actual);
+    const p = pantalla(h);
+
+    await p.abrir();
+    await p.control.registrar(base({ cantidad: 2 }));
+    const hPerdida = http(bd, () => sesion.actual, { perderRespuestaEjecutar: () => true });
+    const bd2 = bdSimulada();
+    const hx = http(bd2, () => sesion.actual, { perderRespuestaEjecutar: () => true });
+    const px = pantalla(hx);
+
+    await px.abrir();
+    await px.control.registrar(base({ cantidad: 8 }));
+    void hPerdida;
+
+    sesion.actual = null;
+    const ackSinSesion = await reconocerIntencionApi("clave-K1-00000000", hx.f);
+
+    sesion.actual = { empresa: EMP, usuario: USR_B };
+    const ackOtroUsuario = await reconocerIntencionApi("clave-K1-00000000", hx.f);
+    const verOtro = await consultarIntencionApi(hx.f);
+
+    sesion.actual = { empresa: EMP2, usuario: USR_C };
+    const ackOtraEmpresa = await reconocerIntencionApi("clave-K1-00000000", hx.f);
+
+    sesion.actual = { empresa: EMP, usuario: USR };
+    bd2.cfg.permisos.delete(`${EMP}|${USR}`);
+    const ackSinPermiso = await reconocerIntencionApi("clave-K1-00000000", hx.f);
+
+    bd2.cfg.permisos.add(`${EMP}|${USR}`);
+    const caido = http(bd2, () => sesion.actual, { sinApi: () => true });
+    const ackRed = await reconocerIntencionApi("clave-K1-00000000", caido.f);
+    const aunBloqueado = bd2.st.intenciones[0].reconocida === false && (await consultarIntencion(bd2.db, EMP, USR)) !== null;
+    const pz = pantalla(http(bd2, () => sesion.actual), "z-");
+
+    await pz.abrir();
+    const ackFinal = await pz.control.reconocer();
+
+    igual("AUD-R08 ACK denegado: sin sesión (401), otro usuario de la misma empresa y otra empresa (404 neutro), sin permiso (403) y con la red caída NO liberan nada; el stock no cambia y solo el titular, con acceso, lo logra", [ackSinSesion.ok, ackOtroUsuario.ok, ackOtraEmpresa.ok, ackSinPermiso.ok, ackRed.ok, aunBloqueado, bd2.st.intenciones[0].reconocida === true ? "reconocida" : null, verOtro.ok && verOtro.intencion, ackFinal, bd2.st.stock], [false, false, false, false, false, true, "reconocida", null, { ok: true }, 8]);
+  }
+
+  // El ACK solo corresponde a una intención CONFIRMADA: una RESERVADA no puede «reconocerse» (409) y sigue pendiente.
+  {
+    const bd = bdSimulada();
+    const h = http(bd, () => sesion.actual, { estadoEjecutar: () => 503 });
+    const p = pantalla(h);
+
+    await p.abrir();
+    await p.control.registrar(base());
+    const intento = await reconocerIntencionApi("clave-K1-00000000", h.f);
+
+    igual("AUD-R08: reconocer una intención RESERVADA (no confirmada) se rechaza y no libera: sigue pendiente", [intento.ok, bd.st.intenciones[0].estado, bd.st.intenciones[0].reconocida, p.control.bloqueado()], [false, "RESERVADA", false, true]);
+  }
+
+  {
+    // T02: reserva hecha pero la respuesta de la ejecución nunca llegó (ni se ejecutó): recarga → recupera K1 y snapshot, nunca K2.
+    const bd = bdSimulada();
+    const hCaido = http(bd, () => sesion.actual, { estadoEjecutar: () => 503 });
+    const p1 = pantalla(hCaido);
+
+    await p1.abrir();
+    await p1.control.registrar(base({ cantidad: 7 }));
+    const h2 = http(bd, () => sesion.actual);
+    const p2 = pantalla(h2);
+    const rec = await p2.abrir();
+
+    igual("T02: tras un 5xx en la ejecución y un refresh, se RECUPERAN K1 y el snapshot originales (cantidad 7, fecha original) con el formulario bloqueado; no se genera K2", [rec.estado, rec.estado === "INDETERMINADO" ? rec.formulario.cantidad : null, rec.estado === "INDETERMINADO" ? rec.formulario.fecha : null, p2.control.clave(), p2.control.bloqueado(), bd.st.intenciones.length, bd.st.efectosStock], ["INDETERMINADO", 7, D, "clave-K1-00000000", true, 1, 0]);
+
+    const reintento = await p2.control.registrar(base({ cantidad: 999 }));
+
+    igual("T04: el reintento de la intención recuperada usa K1 y el snapshot PERSISTIDO (no lo que haya en pantalla): un único movimiento con cantidad 7", [reintento.tipo, reintento.tipo === "OK" ? reintento.numero : null, bd.st.efectosStock, bd.st.intenciones[0].estado], ["OK", "MOV-000001", 1, "CONFIRMADA"]);
+  }
+
+  // T05/T07: titularidad. Otro usuario de la misma empresa / otra empresa no recupera ni ejecuta K1.
+  {
+    const bd = bdSimulada();
+    const h = http(bd, () => sesion.actual, { estadoEjecutar: () => null });
+    const p1 = pantalla(http(bd, () => sesion.actual, { estadoEjecutar: () => 503 }));
+
+    await p1.abrir();
+    await p1.control.registrar(base());
+    const clave = p1.control.clave()!;
+
+    sesion.actual = { empresa: EMP, usuario: USR_B };
+    const verB = await consultarIntencionApi(h.f);
+    const ejecutarB = await ejecutarIntencionApi(clave, h.f);
+    const reservarMismaClaveB = await reservarIntencionApi({ ...base(), claveIdempotencia: clave }, h.f);
+
+    sesion.actual = { empresa: EMP2, usuario: USR_C };
+    const verC = await consultarIntencionApi(h.f);
+    const ejecutarC = await ejecutarIntencionApi(clave, h.f);
+
+    sesion.actual = { empresa: EMP, usuario: USR };
+
+    igual("T05/T07: otro usuario de la misma empresa y un usuario de otra empresa NO ven la intención (ausencia neutra), no pueden ejecutarla con K1 (indeterminado, sin movimiento) ni reservar esa clave; K1 no es una credencial", [verB.ok && verB.intencion, verC.ok && verC.intencion, ejecutarB.tipo, ejecutarC.tipo, reservarMismaClaveB.tipo, bd.st.efectosStock], [null, null, "INDETERMINADO", "INDETERMINADO", "FALLO", 0]);
+  }
+
+  // T08: dos pestañas intentan reservar simultáneamente → una sola intención incierta; la otra recupera la existente (sin K2).
+  {
+    const bd = bdSimulada();
+    const hA = http(bd, () => sesion.actual, { estadoEjecutar: () => 503 });
+    const pA = pantalla(hA);
+    const pB = pantalla(hA, "tabB-");
+
+    pA.control.fijarRecuperacion(null);
+    pB.control.fijarRecuperacion(null);
+    const [rA, rB] = await Promise.all([pA.control.registrar(base({ cantidad: 3 })), pB.control.registrar(base({ cantidad: 4 }))]);
+    const tipos = [rA.tipo, rB.tipo].sort();
+
+    igual("T08: dos pestañas del mismo operador reservan a la vez: la base admite UNA sola intención incierta; la otra recibe la pendiente existente (RECUPERADA) y queda bloqueada con la K1 original", [bd.st.intenciones.filter((i) => i.estado === "RESERVADA").length, tipos, new Set([pA.control.clave(), pB.control.clave()]).size === 1], [1, ["INDETERMINADO", "RECUPERADA"], true]);
+
+    const segunda = pantalla(hA);
+    const r3 = await segunda.abrir();
+
+    igual("T08b: una tercera visita recupera la misma intención pendiente y NO habilita un registro nuevo", [r3.estado, segunda.control.bloqueado(), bd.st.intenciones.length], ["INDETERMINADO", true, 1]);
+  }
+
+  // T09: dos POST concurrentes de la misma K1 → un solo movimiento y un solo efecto de stock.
+  {
+    const bd = bdSimulada();
+    const h = http(bd, () => sesion.actual);
+
+    await reservarIntencionApi({ ...base(), claveIdempotencia: "clave-K1-00000000" }, h.f);
+    const [a, b] = await Promise.all([ejecutarIntencionApi("clave-K1-00000000", h.f), ejecutarIntencionApi("clave-K1-00000000", h.f)]);
+
+    igual("T09: dos ejecuciones simultáneas de la misma K1 se serializan (bloqueo de fila): un solo movimiento y un solo efecto de stock; la segunda ve la confirmación («repetido»)", [a.tipo, b.tipo, [a, b].filter((x) => x.tipo === "OK" && x.repetido).length, bd.st.efectosStock, bd.st.movimientos.size], ["OK", "OK", 1, 1, 1]);
+  }
+
+  // T10: fallo cerrado de la recuperación; navegación / Back no destruyen el checkpoint del servidor.
+  {
+    const bd = bdSimulada();
+    const caido = http(bd, () => sesion.actual, { sinApi: () => true });
+    const p = pantalla(caido);
+    const rec = await p.abrir();
+    const intento = await p.control.registrar(base());
+
+    igual("T10: si la API de recuperación no está disponible el registro nuevo permanece BLOQUEADO (falla cerrado), sin modo libre y sin enviar nada", [rec.estado, p.control.estado(), intento.tipo, caido.peticiones.filter((x) => x.startsWith("POST")).length, bd.st.efectosStock], ["ERROR", "RECUPERACION_ERROR", "OCUPADO", 0, 0]);
+
+    // El checkpoint vive en el servidor: abandonar la pantalla (Back/enlace) no lo toca.
+    const h = http(bd, () => sesion.actual, { estadoEjecutar: () => 503 });
+    const p2 = pantalla(h);
+
+    await p2.abrir();
+    await p2.control.registrar(base());
+    const antes = bd.st.intenciones.map((i) => i.estado);
+    const p3 = pantalla(http(bd, () => sesion.actual));
+
+    igual("T10b: tras abandonar la pantalla (sin ningún acceso al servidor) la intención sigue RESERVADA y se recupera en la siguiente apertura", [antes, (await p3.abrir()).estado], [["RESERVADA"], "INDETERMINADO"]);
+  }
+
+  // T11: más de 7 días → «requiere revisión»; nunca se libera ni se descarta.
+  {
+    const bd = bdSimulada();
+    const h = http(bd, () => sesion.actual, { estadoEjecutar: () => 503 });
+    const p1 = pantalla(h);
+
+    await p1.abrir();
+    await p1.control.registrar(base());
+    bd.cfg.ahora = () => new Date(Date.now() + 8 * 86_400_000);
+    const vieja = await consultarIntencion(bd.db, EMP, USR);
+    const p2 = pantalla(http(bd, () => sesion.actual));
+    const rec = await p2.abrir();
+
+    igual("T11: con más de 7 días la intención sigue pendiente y bloqueando, marcada «requiere revisión»; no se eliminó ni se liberó K2", [vieja?.requiereRevision, rec.estado, rec.estado === "INDETERMINADO" ? /requiere revisión/.test(rec.mensaje) : null, p2.control.bloqueado(), bd.st.intenciones.length, bd.st.intenciones[0].estado], [true, "INDETERMINADO", true, true, 1, "RESERVADA"]);
+  }
+
+  // T12: 400/401/403/409/timeout/5xx/cuerpo ilegible tras indeterminado: nunca RECHAZADA_DEFINITIVA ni K2.
+  for (const status of [400, 401, 403, 409, 408, 500, 502, 504]) {
+    const bd = bdSimulada();
+    let forzar: number | null = 503;
+    const h = http(bd, () => sesion.actual, { estadoEjecutar: () => forzar });
+    const p = pantalla(h);
+
+    await p.abrir();
+    await p.control.registrar(base());
+    forzar = status;
+    const r = await p.control.registrar(base({ cantidad: 50 }));
+
+    igual(`T12-${status}: tras un resultado indeterminado, un reintento con HTTP ${status} NO libera: sigue INDETERMINADO con K1, sin K2 y sin rechazo definitivo`, [r.tipo, p.control.estado(), p.control.clave(), bd.st.intenciones[0].estado, bd.st.efectosStock], ["INDETERMINADO", "INDETERMINADO", "clave-K1-00000000", "RESERVADA", 0]);
+  }
+
+  // T13: confirmada limpia el bloqueo y conserva trazabilidad; rechazo definitivo comprobado libera sin borrar la auditoría.
+  {
+    const bd = bdSimulada();
+    const h = http(bd, () => sesion.actual);
+    const p = pantalla(h);
+
+    await p.abrir();
+    const ok = await p.control.registrar(base());
+    const antesAck = await p.control.registrar(base({ cantidad: 2 }));
+
+    await p.control.reconocer();
+
+    const nueva = await p.control.registrar(base({ cantidad: 2 }));
+
+    igual("T13a: una confirmación libera el bloqueo SOLO tras el reconocimiento (antes: OCUPADO) y conserva la trazabilidad de la primera (CONFIRMADA con su número)", [ok.tipo, antesAck.tipo, nueva.tipo, bd.st.intenciones.map((i) => [i.estado, i.numero]), bd.st.efectosStock], ["OK", "OCUPADO", "OK", [["CONFIRMADA", "MOV-000001"], ["CONFIRMADA", "MOV-000002"]], 2]);
+
+    const bd2 = bdSimulada();
+    const p2 = pantalla(http(bd2, () => sesion.actual));
+
+    await p2.abrir();
+    bd2.cfg.fallaMotor = () => new ErrorPg("saldo insuficiente", "P0001");
+    const rech = await p2.control.registrar(base());
+    const libre = !p2.control.bloqueado();
+
+    bd2.cfg.fallaMotor = null;
+    const corregida = await p2.control.registrar(base({ cantidad: 1 }));
+    await p2.control.reconocer();
+
+    igual("T13b: un rechazo DEFINITIVO comprobado por el servidor (reglas de inventario) libera el formulario, conserva la auditoría (RECHAZADA_DEFINITIVA) y permite una operación nueva con otra clave", [rech.tipo, rech.tipo === "RECHAZADO" ? rech.definitivo : null, libre, corregida.tipo, bd2.st.intenciones.map((i) => i.estado), bd2.st.efectosStock], ["RECHAZADO", true, true, "OK", ["RECHAZADA_DEFINITIVA", "CONFIRMADA"], 1]);
+  }
+
+  // T14: la fecha original viaja en el snapshot; la regla de fecha futura se valida con «hoy» solo para intenciones nuevas.
+  {
+    const bd = bdSimulada();
+    const h = http(bd, () => sesion.actual, { estadoEjecutar: () => 503 });
+    const p1 = pantalla(h);
+
+    await p1.abrir();
+    await p1.control.registrar(base({ fecha: "2026-10-19" }));
+    const p2 = pantalla(http(bd, () => sesion.actual));
+
+    await p2.abrir();
+    const r = await p2.control.registrar(base({ fecha: "2026-10-20" }));
+    const movimientos = [...bd.st.movimientos.values()].map((m) => m.huella);
+
+    igual("T14: con otra fecha de Asunción al reintentar, el movimiento se registra con la fecha ORIGINAL del snapshot (2026-10-19), nunca la de la pantalla", [r.tipo, movimientos.length === 1 && movimientos[0].includes("2026-10-19"), bd.st.intenciones[0].snapshot.fecha], ["OK", true, "2026-10-19"]);
+  }
+
+  // T15: la recuperación sustituye el formulario por el snapshot; no se aplica sobre datos editados por el operador (lógica de la pantalla: tocado/inicializado) — ver pruebas de inicialización.
+  const pagina = leer("app/(private)/movimientos/nuevo/page.tsx");
+
+  cierto("AUD-R08 pantalla (estructura): el control recibe `reconocer`; una CONFIRMADA recuperada muestra «Confirmar recepción» y bloquea el envío; tras el OK del servidor se reconoce (ACK) ANTES de navegar y, si el ACK falla, la pantalla sigue CONFIRMADA con el número original; ya no hay descarte", /reconocer: \(clave\) => reconocerIntencionApi\(clave\)/.test(pagina) && /setEstadoRegistro\(r\.estado\)/.test(pagina) && /Confirmar recepción/.test(pagina) && /estadoRegistro === "CONFIRMADA"/.test(pagina) && /confirmarRecepcionOperador\(control\.current/.test(pagina) && /MENSAJE_SIN_ACK\(numero\)/.test(pagina) && !/Descartar este intento/.test(pagina));
+  cierto("T15 (estructura): la recuperación marca inicializado/tocado para que catálogos / precarga / respuestas tardías no restauren ni sobrescriban; usa el snapshot del servidor", /inicializado\.current = true;\n\s+tocado\.current = true;\n\s+setForm\(r\.formulario\)/.test(pagina) && /recuperarIntencion\(control\.current, consultarIntencionApi\)/.test(pagina) && /iniciarRecuperando: true/.test(pagina));
+
+  // T16: permisos / depósitos revocados → niega, preserva K1, sin efecto de stock.
+  {
+    const bd = bdSimulada();
+    let forzar: number | null = 503;
+    const h = http(bd, () => sesion.actual, { estadoEjecutar: () => forzar });
+    const p = pantalla(h);
+
+    await p.abrir();
+    await p.control.registrar(base());
+    forzar = null;
+    bd.cfg.depositos.delete(DEP_A); // alcance de depósito revocado
+    const r = await p.control.registrar(base());
+
+    igual("T16a: con el alcance de depósito revocado el reintento se niega (403), K1 se preserva, la intención sigue pendiente y no hay efecto de stock", [r.tipo, p.control.clave(), bd.st.intenciones[0].estado, bd.st.efectosStock], ["INDETERMINADO", "clave-K1-00000000", "RESERVADA", 0]);
+
+    bd.cfg.permisos.delete(`${EMP}|${USR}`); // permiso MOVIMIENTOS.CREAR revocado
+    const lectura = await consultarIntencionApi(h.f);
+
+    igual("T16b: con MOVIMIENTOS.CREAR revocado la lectura de la intención se niega (sin payload) y la intención se conserva", [lectura.ok, bd.st.intenciones[0].estado], [false, "RESERVADA"]);
+  }
+
+  // T17: DEMO_MODE / sin sesión / sin base: nunca un checkpoint ni un éxito falsos.
+  {
+    const bd = bdSimulada();
+    const h = http(bd, () => null);
+    const reserva = await reservarIntencionApi({ ...base(), claveIdempotencia: "clave-K1-00000000" }, h.f);
+    const ejecucion = await ejecutarIntencionApi("clave-K1-00000000", h.f);
+
+    igual("T17: sin sesión no se crea ningún checkpoint ni se confirma nada (401: la reserva falla, la ejecución es indeterminada, 0 efectos)", [reserva.tipo, ejecucion.tipo, bd.st.intenciones.length, bd.st.efectosStock], ["FALLO", "INDETERMINADO", 0, 0]);
+
+    const rutaHttp = leer("lib/movimientos/intenciones-http.ts");
+
+    cierto("T17b (estructura): las rutas rechazan DEMO_MODE (400) y la falta de base (503) antes de tocar datos; sin sesión 401; permiso MOVIMIENTOS.CREAR; empresa y usuario de la sesión", /DEMO_MODE\) return \{ ok: false, respuesta: NextResponse\.json\(\{ error: "Operación no disponible en modo demo\." \}, \{ status: 400 \}\)/.test(rutaHttp) && /!process\.env\.DATABASE_URL\) return \{ ok: false.*status: 503/.test(rutaHttp) && /status: 401/.test(rutaHttp) && /denyIfNoPermission\(session, "MOVIMIENTOS", "CREAR"\)/.test(rutaHttp) && /empresaId: session\.user\.empresaId, usuarioId: session\.user\.id/.test(rutaHttp));
+  }
+
+  // Consultar resultado y evidencia; liberar solo cuando el servidor ya no tiene la intención.
+  {
+    const bd = bdSimulada();
+    const h = http(bd, () => sesion.actual, { perderRespuestaEjecutar: () => true });
+    const p = pantalla(h);
+
+    await p.abrir();
+    await p.control.registrar(base()); // COMMIT hecho; respuesta perdida (CONFIRMADA ya en el servidor)
+    const hLeer = http(bd, () => sesion.actual);
+    const p2 = pantalla(hLeer);
+
+    await p2.abrir();
+    // Simula la ventana en la que el movimiento existe pero la intención sigue pendiente (p. ej. ruta directa): evidencia visible.
+    bd.st.intenciones[0].estado = "RESERVADA";
+    const evidencia = await consultarResultado(p.control, () => consultarIntencionApi(hLeer.f));
+
+    igual("consulta de resultado: muestra el número del movimiento original encontrado (evidencia) sin registrar nada y sin liberar", [/MOV-000001/.test(evidencia.mensaje), evidencia.liberada, bd.st.efectosStock], [true, false, 1]);
+
+    bd.st.intenciones[0].estado = "CONFIRMADA";
+    bd.st.intenciones[0].reconocida = true;
+    const resuelta = await consultarResultado(p.control, () => consultarIntencionApi(hLeer.f));
+
+    igual("consulta de resultado: si el servidor ya no tiene la intención pendiente (resuelta en otra pestaña/sesión) se libera la local y se remite a Movimientos", [resuelta.liberada, p.control.bloqueado(), /Movimientos/.test(resuelta.mensaje)], [true, false, true]);
+  }
+
+  // Clasificación de rechazos del servidor y mensajes de salida.
+  igual("rechazo determinista solo para errores del motor (P0001 de reglas, 22xxx/23xxx, validaciones planas); NUNCA permiso, conexión, tiempo, deadlock ni conflicto de idempotencia", [
+    esRechazoDeterminista(Object.assign(new Error("saldo"), { code: "P0001" })), esRechazoDeterminista(Object.assign(new Error("x"), { code: "23514" })), esRechazoDeterminista(new Error("El lote L1 no existe para este producto.")),
+    esRechazoDeterminista(Object.assign(new Error("perm"), { code: "42501" })), esRechazoDeterminista(Object.assign(new Error("x"), { code: "08006" })), esRechazoDeterminista(Object.assign(new Error("x"), { code: "40P01" })),
+    esRechazoDeterminista(Object.assign(new Error("x"), { code: "57014" })), esRechazoDeterminista(Object.assign(new Error("x"), { code: "ECONNRESET" })), esRechazoDeterminista(new Error("Connection terminated unexpectedly")),
+    esRechazoDeterminista(Object.assign(new Error("idem"), { code: "P0001", detail: "NEX:IDEMPOTENCIA_CONFLICTO" })),
+  ], [true, true, true, false, false, false, false, false, false, false]);
+  igual("los mensajes de salida con una intención incierta dicen que PUEDE haberse registrado y que se recupera al volver; nunca «cancelado», «revertido» ni «no registrado»", [/puede/.test(Object.values(MENSAJE_SALIDA).slice(1, 3).join(" ")), /recuper/.test(MENSAJE_SALIDA.ENVIANDO + MENSAJE_SALIDA.INDETERMINADO), /cancel|revert|deshech|no se registr/i.test(Object.values(MENSAJE_SALIDA).join(" "))], [true, true, false]);
+  cierto("ErrorIntencion conserva su estado HTTP (409 pendiente / 403 / 404); un error desconocido es un 500 genérico que no revela datos y dice que el movimiento puede haberse registrado", respuestaDeError(new ErrorIntencion("x", 409)).status === 409 && respuestaDeError(new Error("secreto SQL")).status === 500 && !JSON.stringify(respuestaDeError(new Error("secreto SQL")).body).includes("secreto") && /puede haberse registrado/.test(JSON.stringify(respuestaDeError(new Error("x")).body)));
+
+  // ── PRO-191 (AUD-R09 / MOV-R09-01): sin ACK automático — el operador debe ver el número y pulsar «Confirmar recepción» ───────────────────────────
+  // Pantalla simulada con el MISMO cableado que el componente: control real → aplicarResultadoSiVigente (aviso con el número, sin ACK ni navegación) → confirmarRecepcionOperador (único camino al ACK).
+  const paginaSim = (h: ReturnType<typeof http>, prefijo = "") => {
+    const p = pantalla(h, prefijo);
+    const log: string[] = [];
+    let montada = true;
+    const vigente = () => montada;
+    const registrar = async (datos: NuevoMovimientoStock) => {
+      const r = await p.control.registrar(datos);
+
+      aplicarResultadoSiVigente(r, vigente, { alEstado: () => log.push(`estado:${p.control.estado()}`), alRegistrar: (n) => log.push(`aviso:${MENSAJE_SIN_ACK(n)}`), alMensaje: (m) => log.push(`mensaje:${m}`) });
+
+      return r;
+    };
+    const confirmar = () => confirmarRecepcionOperador(p.control, vigente, { alExito: (n) => log.push(`navegar:${n}`), alFallo: (m) => log.push(`fallo:${m}`) });
+
+    return { ...p, log, registrar, confirmar, desmontar: () => { montada = false; } };
+  };
+  const nAcks = (h: ReturnType<typeof http>) => h.peticiones.filter((x) => x.includes("/reconocer")).length;
+
+  {
+    const bd = bdSimulada();
+    const h = http(bd, () => sesion.actual);
+    const pg1 = paginaSim(h);
+
+    await pg1.abrir();
+    const ok = await pg1.registrar(base({ cantidad: 5 }));
+
+    igual("PRO-191 pasos 1-3: POST de K1 confirmado (M1); la pantalla muestra el número original M1 con «Confirmar recepción»; NO se llamó al ACK ni se navegó; la intención sigue CONFIRMADA sin reconocer", [ok.tipo, pg1.log, nAcks(h), bd.st.intenciones[0].estado, bd.st.intenciones[0].reconocida, pg1.control.estado()], ["OK", ["estado:CONFIRMADA", "aviso:El movimiento MOV-000001 fue registrado correctamente. Falta confirmar la recepción del resultado: pulse «Confirmar recepción» para poder registrar otro movimiento."], 0, "CONFIRMADA", false, "CONFIRMADA"]);
+
+    const k2Local = await pg1.registrar(base({ cantidad: 2 }));
+    const pestanaB = pantalla(h, "tabB-");
+
+    pestanaB.control.fijarRecuperacion(null);
+    const k2Remota = await pestanaB.control.registrar(base({ cantidad: 2 }));
+
+    igual("PRO-191 paso 4: K2 bloqueada antes del clic — en la pantalla (OCUPADO) y en el servidor/otra pestaña (RECUPERADA con K1 y M1); sin segundo movimiento ni ACK", [k2Local.tipo, k2Remota.tipo, pestanaB.control.numero(), bd.st.stock, bd.st.efectosStock, bd.st.intenciones.length, nAcks(h)], ["OCUPADO", "RECUPERADA", "MOV-000001", 5, 1, 1, 0]);
+
+    // paso 5-6: se cierra la pestaña antes del clic; al reabrir se recupera K1 y M1 (sigue sin reconocer)
+    pg1.desmontar();
+    const pg2 = paginaSim(http(bd, () => sesion.actual), "s2-");
+    const rec = await pg2.abrir();
+
+    igual("PRO-191 pasos 5-6: cerrar la pestaña antes del clic deja la intención CONFIRMADA sin reconocer; al reabrir (o tras logout/login) se recuperan K1 y el número M1 y sigue bloqueada", [rec.estado, pg2.control.clave(), pg2.control.numero(), bd.st.intenciones[0].reconocida, pg2.control.bloqueado()], ["CONFIRMADA", "clave-K1-00000000", "MOV-000001", false, true]);
+
+    // pasos 7-9: clic explícito → ACK, sin tocar stock; K2 autorizada solo después
+    const hAck = http(bd, () => sesion.actual);
+    const pg3 = paginaSim(hAck, "s3-");
+
+    await pg3.abrir();
+    const stockAntes = bd.st.stock;
+
+    await pg3.confirmar();
+    const stockTrasAck = bd.st.stock;
+    const k2 = await pg3.registrar(base({ cantidad: 3 }));
+
+    igual("PRO-191 pasos 7-9: el clic explícito ejecuta el ACK (1 llamada), navega al número original, no altera el stock y solo entonces una K2 es legítima (5 + 3 = 8)", [pg3.log.filter((x) => x.startsWith("navegar")), nAcks(hAck), stockTrasAck === stockAntes, bd.st.intenciones[0].reconocida, k2.tipo, bd.st.stock, bd.st.efectosStock], [["navegar:MOV-000001"], 1, true, true, "OK", 8, 2]);
+  }
+
+  // Paso 10: ACK perdido y repetido; paso 11: doble clic y dos pestañas; paso 12: respuesta tardía tras desmontar.
+  {
+    const bd = bdSimulada();
+    let perder = true;
+    const h = http(bd, () => sesion.actual, { perderRespuestaReconocer: () => perder });
+    const pg = paginaSim(h);
+
+    await pg.abrir();
+    await pg.registrar(base({ cantidad: 4 }));
+    await pg.confirmar();
+    const trasPerdido = [...pg.log];
+    const k2 = await pg.registrar(base({ cantidad: 1 }));
+
+    perder = false;
+    await pg.confirmar();
+
+    igual("PRO-191 paso 10: ACK con respuesta perdida → la pantalla sigue CONFIRMADA (aviso de fallo, sin navegar, K2 bloqueada); repetirlo es seguro y entonces navega", [trasPerdido.filter((x) => x.startsWith("fallo")).length, trasPerdido.some((x) => x.startsWith("navegar")), k2.tipo, pg.log.filter((x) => x.startsWith("navegar")), pg.control.estado(), bd.st.stock], [1, false, "OCUPADO", ["navegar:MOV-000001"], "LIBRE", 4]);
+  }
+  {
+    const bd = bdSimulada();
+    const h = http(bd, () => sesion.actual);
+    const pgA = paginaSim(h);
+
+    await pgA.abrir();
+    await pgA.registrar(base({ cantidad: 6 }));
+    const pgB = paginaSim(h, "tabB-");
+
+    await pgB.abrir();
+    await Promise.all([pgA.confirmar(), pgA.confirmar(), pgB.confirmar()]);
+
+    igual("PRO-191 paso 11: doble clic (misma solicitud, un solo efecto) y dos pestañas confirmando a la vez: ambas terminan coherentes, la intención queda reconocida una vez y el stock no cambia", [pgA.log.filter((x) => x.startsWith("navegar")).length, pgB.log.filter((x) => x.startsWith("navegar")).length, nAcks(h), bd.st.intenciones.filter((i) => i.reconocida).length, bd.st.stock], [1, 1, 2, 1, 6]);
+  }
+  {
+    const bd = bdSimulada();
+    let liberar: () => void = () => undefined;
+    const espera = new Promise<void>((r) => { liberar = r; });
+    const h = http(bd, () => sesion.actual, { esperarReconocer: () => espera });
+    const pg = paginaSim(h);
+
+    await pg.abrir();
+    await pg.registrar(base({ cantidad: 3 }));
+    const pendiente = pg.confirmar();
+
+    pg.desmontar();
+    liberar();
+    await pendiente;
+
+    igual("PRO-191 paso 12: la respuesta del ACK que llega tras desmontar la pantalla no navega ni cambia estado (el servidor sí lo aplicó); el stock no cambia", [pg.log.some((x) => x.startsWith("navegar") || x.startsWith("fallo")), bd.st.intenciones[0].reconocida, bd.st.stock], [false, true, 3]);
+
+    const pagina2 = leer("app/(private)/movimientos/nuevo/page.tsx");
+
+    cierto("PRO-191 pantalla (estructura): el éxito solo muestra el aviso con el número (sin ACK ni navegación automáticos); `reconocer` solo se invoca desde el botón «Confirmar recepción» vía confirmarRecepcionOperador; router.push solo dentro del reconocimiento explícito", /alRegistrar: \(numero\) => setAvisoRecuperacion\(MENSAJE_SIN_ACK\(numero\)\)/.test(pagina2) && !/control\.current\.reconocer\(\)/.test(pagina2) && /confirmarRecepcionOperador\(control\.current, \(\) => vigente\.current/.test(pagina2) && /onClick=\{\(\) => void confirmarRecepcion\(\)\}/.test(pagina2) && (pagina2.match(/router\.push\(/g) ?? []).length === 1 && /alExito: \(numero\) => \{[\s\S]*?router\.push\(/.test(pagina2));
+  }
+
+  // ── PRO-192 (AUD-R09 / MOV-R09-02): sin visibilidad vigente, la recuperación se rechaza; nunca «sin pendiente» ni K2 ─────────────────────────────
+  const transferencia = () => base({ tipo: "TRANSFERENCIA", origen: "TRANSFERENCIA", depositoOrigenId: DEP_B, depositoDestinoId: DEP_A, costoUnitario: null, motivo: "reubicación entre depósitos", cantidad: 9 });
+  const claveUsuario = `${EMP}|${USR}`;
+  const mutaciones: Array<[string, (bd: ReturnType<typeof bdSimulada>) => void, (bd: ReturnType<typeof bdSimulada>) => void, boolean]> = [
+    ["CREAR sin VER", (bd) => { bd.cfg.ver.delete(claveUsuario); }, (bd) => { bd.cfg.ver.add(claveUsuario); }, true],
+    ["VER sin CREAR", (bd) => { bd.cfg.permisos.delete(claveUsuario); }, (bd) => { bd.cfg.permisos.add(claveUsuario); }, false],
+    ["depósito ORIGEN revocado", (bd) => { bd.cfg.depositos.delete(DEP_B); }, (bd) => { bd.cfg.depositos.add(DEP_B); }, true],
+    ["depósito DESTINO revocado", (bd) => { bd.cfg.depositos.delete(DEP_A); }, (bd) => { bd.cfg.depositos.add(DEP_A); }, true],
+    ["depósito inactivo / fuera de alcance", (bd) => { bd.cfg.depositos.clear(); }, (bd) => { bd.cfg.depositos.add(DEP_A); bd.cfg.depositos.add(DEP_B); }, true],
+  ];
+
+  for (const [nombre, quitar, restaurar, esVisibilidad] of mutaciones) {
+    for (const estadoInicial of ["RESERVADA", "CONFIRMADA"] as const) {
+      const bd = bdSimulada();
+      const hSetup = http(bd, () => sesion.actual, estadoInicial === "RESERVADA" ? { estadoEjecutar: () => 503 } : { perderRespuestaEjecutar: () => true });
+      const pSetup = pantalla(hSetup);
+
+      await pSetup.abrir();
+      await pSetup.control.registrar(transferencia());
+      const stockBase = bd.st.stock;
+
+      quitar(bd);
+      const h = http(bd, () => sesion.actual);
+      const crudo = async (url: string, init?: RequestInit) => { const r = await h.f(url, init); const t = await r.text(); return { status: r.status, texto: t }; };
+      const consulta = await crudo("/api/movimientos/intencion");
+      const ejecutar = await crudo("/api/movimientos/intencion/ejecutar", { method: "POST", body: JSON.stringify({ clave: "clave-K1-00000000" }) });
+      const ack = await crudo("/api/movimientos/intencion/reconocer", { method: "POST", body: JSON.stringify({ clave: "clave-K1-00000000" }) });
+      const filtra = (t: string) => /MOV-\d|"snapshot"|productoId|"cantidad"|reubicaci/.test(t);
+      const pNueva = pantalla(h, "n-");
+      const rec = await pNueva.abrir();
+      const otra = pantalla(h, "k2-");
+
+      otra.control.fijarRecuperacion(null);
+      const k2 = await otra.control.registrar(base({ cantidad: 1 }));
+
+      igual(`PRO-192 [${nombre} · ${estadoInicial}]: consulta, ejecución y ACK se rechazan (403) SIN snapshot ni número ni detalles y SIN responder «sin pendiente»; la pantalla falla cerrado; K2 sigue bloqueada; la intención y el stock quedan intactos`, [consulta.status, ejecutar.status, ack.status, [consulta, ejecutar, ack].some((x) => filtra(x.texto)), /"intencion":null/.test(consulta.texto), rec.estado, pNueva.control.bloqueado(), k2.tipo, bd.st.intenciones.length, bd.st.intenciones[0].estado, bd.st.intenciones[0].reconocida, bd.st.stock === stockBase], [403, 403, 403, false, false, "ERROR", true, "NO_RESERVADA", 1, estadoInicial, false, true]);
+      if (esVisibilidad) igual(`PRO-192 [${nombre} · ${estadoInicial}]: el mensaje es neutro y pide la intervención de un administrador autorizado (sin datos de la operación)`, [/administrador autorizado/.test(consulta.texto), /administrador autorizado/.test(rec.estado === "ERROR" ? rec.mensaje : "")], [true, true]);
+
+      // ── PRO-193 (AUD-R10 / MOV-R10-01): repetir la reserva con la MISMA K1 y el MISMO snapshot, sin visibilidad vigente, tampoco devuelve nada ─────────────────
+      const cuerpoK1 = { ...transferencia(), claveIdempotencia: "clave-K1-00000000" };
+      const repetida = await crudo("/api/movimientos/intencion", { method: "POST", body: JSON.stringify(cuerpoK1) });
+      const viaCliente = await reservarIntencionApi(cuerpoK1 as never, h.f);
+      const otroHash = await crudo("/api/movimientos/intencion", { method: "POST", body: JSON.stringify({ ...cuerpoK1, cantidad: 1 }) });
+
+      igual(`PRO-193 [${nombre} · ${estadoInicial}]: repetir la reserva con K1 y snapshot originales es un bloqueo neutro (409 sin datos), el cliente lo traduce a PENDIENTE_NO_VISIBLE, no se libera el formulario, K1/estado/stock quedan intactos y K2 sigue bloqueada`, [repetida.status, filtra(repetida.texto), /"nueva"|"intencion":\{|clave-K1|MOV-\d/.test(repetida.texto), /"sinVisibilidad":true/.test(repetida.texto), viaCliente.tipo, bd.st.intenciones.length, bd.st.intenciones[0].clave, bd.st.intenciones[0].estado, bd.st.intenciones[0].reconocida, bd.st.stock === stockBase, bd.st.efectosStock, k2.tipo], [esVisibilidad ? 409 : 403, false, false, esVisibilidad, esVisibilidad ? "PENDIENTE_NO_VISIBLE" : "FALLO", 1, "clave-K1-00000000", estadoInicial, false, true, estadoInicial === "CONFIRMADA" ? 1 : 0, "NO_RESERVADA"]);
+      igual(`PRO-193 [${nombre} · ${estadoInicial}]: con otro hash la misma K1 sigue siendo conflicto (409 sin datos de la intención)`, [otroHash.status, filtra(otroHash.texto)], [esVisibilidad ? 409 : 403, false]);
+
+      // Permiso / alcance restablecido: se recupera la MISMA operación y se resuelve normalmente; no se creó otra intención.
+      restaurar(bd);
+
+      const hOk = http(bd, () => sesion.actual);
+      const repetidaOk2 = await hOk.f("/api/movimientos/intencion", { method: "POST", body: JSON.stringify(cuerpoK1) });
+      const rj = await repetidaOk2.json() as { intencion?: { clave: string; estado: string } };
+
+      igual(`PRO-193 [${nombre} · ${estadoInicial}]: con la autorización restablecida repetir K1 vuelve a ser idempotente (misma intención, sin crear otra ni mover stock)`, [repetidaOk2.status, rj.intencion?.clave, rj.intencion?.estado, bd.st.intenciones.length], [200, "clave-K1-00000000", estadoInicial === "CONFIRMADA" ? "CONFIRMADA" : "RESERVADA", 1]);
+      const pOk = paginaSim(http(bd, () => sesion.actual), "ok-");
+      const rec2 = await pOk.abrir();
+
+      if (estadoInicial === "CONFIRMADA") await pOk.confirmar();
+      else await pOk.registrar(base());
+      const final = estadoInicial === "CONFIRMADA" ? bd.st.intenciones[0].reconocida : bd.st.intenciones[0].estado === "CONFIRMADA";
+
+      igual(`PRO-192 [${nombre} · ${estadoInicial}]: restablecido el acceso se recupera la misma K1 y su snapshot autorizado y se resuelve (${estadoInicial === "CONFIRMADA" ? "ACK explícito" : "retry con K1"}) sin crear otra intención ni duplicar stock`, [rec2.estado, pOk.control.clave() ?? "libre", bd.st.intenciones.length, final, bd.st.stock], [estadoInicial === "CONFIRMADA" ? "CONFIRMADA" : "INDETERMINADO", estadoInicial === "RESERVADA" ? "clave-K1-00000000" : "libre", 1, true, stockBase + (estadoInicial === "RESERVADA" ? 9 : 0)]);
+
+    }
+  }
+
+  // Otro usuario de la misma empresa / otra empresa / sesión expirada: respuestas sin ningún dato de la operación ajena.
+  {
+    const bd = bdSimulada();
+    const hSetup = http(bd, () => sesion.actual, { perderRespuestaEjecutar: () => true });
+    const pSetup = pantalla(hSetup);
+
+    await pSetup.abrir();
+    await pSetup.control.registrar(transferencia());
+    const h = http(bd, () => sesion.actual);
+    const crudo = async (url: string, init?: RequestInit) => { const r = await h.f(url, init); return { status: r.status, texto: await r.text() }; };
+
+    sesion.actual = { empresa: EMP, usuario: USR_B };
+    const otroUsuario = [await crudo("/api/movimientos/intencion"), await crudo("/api/movimientos/intencion/reconocer", { method: "POST", body: JSON.stringify({ clave: "clave-K1-00000000" }) })];
+
+    sesion.actual = { empresa: EMP2, usuario: USR_C };
+    const otraEmpresa = [await crudo("/api/movimientos/intencion"), await crudo("/api/movimientos/intencion/reconocer", { method: "POST", body: JSON.stringify({ clave: "clave-K1-00000000" }) })];
+
+    sesion.actual = null;
+    const expirada = [await crudo("/api/movimientos/intencion"), await crudo("/api/movimientos/intencion/reconocer", { method: "POST", body: JSON.stringify({ clave: "clave-K1-00000000" }) })];
+
+    sesion.actual = { empresa: EMP, usuario: USR };
+    const todo = [...otroUsuario, ...otraEmpresa, ...expirada];
+
+    igual("PRO-192: otro usuario de la misma empresa, usuario de otra empresa y sesión expirada no reciben ningún dato de la operación (ni snapshot, ni número, ni claves); el ACK ajeno es 404 neutro o 401 y no reconoce nada; la intención del titular sigue pendiente", [otroUsuario.map((x) => x.status), otraEmpresa.map((x) => x.status), expirada.map((x) => x.status), todo.some((x) => /MOV-\d|"snapshot"|productoId|reubicaci|clave-K1/.test(x.texto)), bd.st.intenciones[0].reconocida], [[200, 404], [200, 404], [401, 401], false, false]);
+  }
+
+  // ── PRO-190 (AUD-R08 / MOV-R08-02): el POST directo antiguo ya no registra en NINGÚN caso ───────────────────────────────────────────────────────
+  // Se importa el manejador REAL de la ruta con sesión / permisos / base simulados que cuentan cualquier uso; en todos los escenarios responde 410 sin leer cuerpo, sin sesión, sin conexión y sin tocar stock.
+  {
+    const usos = { sesion: 0, permisos: 0, conexiones: 0, consultas: 0 };
+    const bd = bdSimulada();
+    const modo = { sesion: { empresa: EMP, usuario: USR } as Sesion, permisos: true, sinNex066: false };
+    const { NextResponse: NR } = await import("next/server");
+    const falsos: Record<string, unknown> = {
+      "@/lib/auth/session": { getCurrentSession: async () => { usos.sesion += 1; return modo.sesion ? { user: { id: modo.sesion.usuario, empresaId: modo.sesion.empresa }, demo: false } : null; } },
+      "@/lib/auth/permissions": { denyIfNoPermission: async () => { usos.permisos += 1; return modo.permisos ? null : NR.json({ error: "sin permiso" }, { status: 403 }); }, getAccessContext: async () => ({}), hasPermission: () => true },
+      "@/lib/db": { db: { connect: async () => { usos.conexiones += 1; return bd.db.connect(); }, query: async () => { usos.consultas += 1; if (modo.sinNex066) throw new ErrorPg("la función no existe", "42883"); return { rows: [] }; } } },
+    };
+    const previos: Array<[string, NodeJS.Module | undefined]> = [];
+
+    for (const [m, exports] of Object.entries(falsos)) {
+      const r = require.resolve(m);
+
+      previos.push([r, require.cache[r]]);
+      require.cache[r] = { id: r, filename: r, loaded: true, exports, children: [], paths: [] } as unknown as NodeJS.Module;
+    }
+    const rutaJs = require.resolve("@/app/api/movimientos/route");
+
+    delete require.cache[rutaJs];
+
+    try {
+      const { POST } = (await import("@/app/api/movimientos/route")) as typeof import("@/app/api/movimientos/route");
+      const intentar = async (clave: string | null) => {
+        const antes = bd.st.stock;
+        const r = await (POST as unknown as (r: Request) => Promise<Response>)(new Request("http://x/api/movimientos", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...base(), ...(clave ? { claveIdempotencia: clave } : {}) }) } as RequestInit));
+        const cuerpo = (await r.json()) as Record<string, unknown>;
+
+        return { status: r.status, flujo: cuerpo.flujo, cambioStock: bd.st.stock !== antes };
+      };
+      const todos = (rs: Array<{ status: number; flujo: unknown; cambioStock: boolean }>) => rs.every((x) => x.status === 410 && x.flujo === "/api/movimientos/intencion" && !x.cambioStock);
+
+      const sinIntencion = await intentar(null);
+
+      // K1 reservada por el flujo durable; POST legado con la misma K1 y con una K2 distinta
+      const hReal = http(bd, () => ({ empresa: EMP, usuario: USR }));
+
+      await reservarIntencionApi({ ...base(), claveIdempotencia: "clave-K1-00000000" }, hReal.f);
+      const mismaK1 = await intentar("clave-K1-00000000");
+      const otraK2 = await intentar("clave-K2-00000000");
+      const concurrentes = await Promise.all([intentar("clave-K3-00000000"), intentar("clave-K3-00000000"), intentar(null)]);
+
+      modo.sinNex066 = true;
+      const sinMigracion = await intentar("clave-K4-00000000");
+
+      modo.sinNex066 = false;
+      modo.sesion = null;
+      const sinSesion = await intentar("clave-K5-00000000");
+
+      modo.sesion = { empresa: EMP, usuario: USR };
+      modo.permisos = false;
+      const sinPermiso = await intentar("clave-K6-00000000");
+
+      modo.permisos = true;
+      modo.sesion = { empresa: EMP, usuario: USR_B };
+      const otroUsuario = await intentar("clave-K1-00000000");
+
+      modo.sesion = { empresa: EMP2, usuario: USR_C };
+      const otraEmpresa = await intentar("clave-K1-00000000");
+
+      igual("PRO-190: el POST legado responde 410 y NO modifica stock en ningún caso: sin intención, con K1 reservada, con K2, dos llamadas concurrentes, sin NEX-066, sin sesión, sin permiso, otro usuario y otra empresa", [todos([sinIntencion, mismaK1, otraK2, ...concurrentes, sinMigracion, sinSesion, sinPermiso, otroUsuario, otraEmpresa]), bd.st.stock, bd.st.efectosStock, bd.st.intenciones.map((i) => i.estado)], [true, 0, 0, ["RESERVADA"]]);
+      igual("PRO-190: la ruta no lee el cuerpo ni consulta sesión, permisos o base (política independiente del contexto): 0 usos en 11 llamadas, de modo que no hay nada que contornear", [usos.sesion, usos.permisos, usos.conexiones, usos.consultas], [0, 0, 0, 0]);
+
+      const polit = respuestaPostLegado();
+
+      igual("PRO-190: la política real indica el flujo durable (reservar → ejecutar → reconocer) y es un 410 explícito", [polit.status, polit.body.flujo, /reserva durable/.test(String(polit.body.error))], [410, "/api/movimientos/intencion", true]);
+
+      // La ruta durable sigue operativa: el flujo reservar → ejecutar → reconocer registra exactamente una vez.
+      const h = http(bd, () => ({ empresa: EMP, usuario: USR }));
+      const pOk = pantalla(h, "ok-");
+      const rec = await pOk.abrir();
+      const ej = await ejecutarIntencionApi("clave-K1-00000000", h.f);
+
+      igual("PRO-190: el flujo durable sigue operativo (la K1 reservada se ejecuta una vez por /intencion/ejecutar, con ACK posterior pendiente)", [rec.estado, ej.tipo, bd.st.stock, bd.st.efectosStock], ["INDETERMINADO", "OK", 5, 1]);
+    } finally {
+      for (const [r, previo] of previos) { if (previo) require.cache[r] = previo; else delete require.cache[r]; }
+      delete require.cache[rutaJs];
+    }
+  }
+
+  // T18: contrato SQL y scripts (estructural; no se ejecuta SQL).
+  const mig = leer("documentacao/banco/nexit/v1/migraciones/NEX-066-movimientos-intenciones.sql");
+  const rev = leer("documentacao/banco/nexit/v1/scripts/reversion-NEX-066.sql");
+  const pre = leer("documentacao/banco/nexit/v1/scripts/preflight-NEX-066.sql");
+  const ver = leer("documentacao/banco/nexit/v1/scripts/verificar-NEX-066.sql");
+  const doc = leer("documentacao/banco/nexit/v1/docs/PROCEDIMIENTO-NEX-066.md");
+
+  cierto("T18a SQL: tabla por empresa+usuario con unicidad (empresa, clave), índice único PARCIAL de UNA sola intención sin resolver o sin reconocer (RESERVADA o CONFIRMADA con reconocida_at NULL), reconocida_at solo en CONFIRMADA, FK a usuarios y CHECK de coherencia", /CREATE TABLE public\.movimientos_intenciones/.test(mig) && /CONSTRAINT movimientos_intenciones_clave_uk\s+UNIQUE \(empresa_id, clave\)/.test(mig) && /CREATE UNIQUE INDEX movimientos_intenciones_pendiente_uk ON public\.movimientos_intenciones \(empresa_id, usuario_id\) WHERE reconocida_at IS NULL AND estado IN \('RESERVADA', 'CONFIRMADA'\)/.test(mig) && /estado IN \('RESERVADA', 'CONFIRMADA', 'RECHAZADA_DEFINITIVA'\)/.test(mig) && /reconocida_at     timestamptz/.test(mig) && /CHECK \(reconocida_at IS NULL OR estado = 'CONFIRMADA'\)/.test(mig) && /FOREIGN KEY \(empresa_id, usuario_id\) REFERENCES public\.usuarios/.test(mig) && /\(estado = 'CONFIRMADA'\) = \(movimiento_id IS NOT NULL AND numero_movimiento IS NOT NULL\)/.test(mig));
+  cierto("T18b SQL: seis funciones SECURITY DEFINER con search_path fijo y permiso MOVIMIENTOS.CREAR; reservar con bloqueo advisory por empresa+usuario y pendiente = RESERVADA o CONFIRMADA sin reconocer; pendiente devuelve el número de la CONFIRMADA; reconocer con el MISMO bloqueo advisory, FOR UPDATE, idempotente, exige la evidencia del movimiento y no toca movimientos_inventario; tomar con FOR UPDATE; rechazar solo sin movimiento; sin cron ni expiración", ["reservar", "pendiente", "tomar", "confirmar", "reconocer", "rechazar"].every((fn) => new RegExp(`FUNCTION public\\.movimiento_intencion_${fn}\\(`).test(mig)) && (mig.match(/SECURITY DEFINER SET search_path = public, pg_temp/g) ?? []).length === 7 && /FUNCTION public\.movimiento_intencion_visible\(/.test(mig) && (mig.match(/movimiento_intencion_visible\(p_empresa, p_usuario, (i|v|v_prev)\.snapshot\)/g) ?? []).length === 4 && /NEX:INTENCION_SIN_VISIBILIDAD/.test(mig) && /usuario_tiene_permiso\(p_empresa, p_usuario, 'MOVIMIENTOS', 'VER'\)/.test(mig) && /usuario_puede_deposito\(p_empresa, p_usuario, \(p_snapshot->>'origenId'\)::uuid\)/.test(mig) && /usuario_puede_deposito\(p_empresa, p_usuario, \(p_snapshot->>'destinoId'\)::uuid\)/.test(mig) && !/GRANT EXECUTE ON FUNCTION public\.movimiento_intencion_visible/.test(mig) && (mig.match(/pg_advisory_xact_lock\(hashtextextended\('movimientos\.int:'/g) ?? []).length === 2 && /NEX:INTENCION_PENDIENTE/.test(mig) && /reconocida_at IS NULL AND estado IN \('RESERVADA', 'CONFIRMADA'\)\) THEN\n\s+RAISE EXCEPTION 'hay un registro anterior sin resolver'/.test(mig) && /CASE WHEN i\.estado = 'CONFIRMADA' THEN i\.numero_movimiento/.test(mig) && /NEX:INTENCION_NO_CONFIRMADA/.test(mig) && !/UPDATE public\.movimientos_inventario|INSERT INTO public\.movimientos_inventario|inventario_registrar_movimiento\(/.test(mig.slice(mig.indexOf("movimiento_intencion_reconocer(p_empresa"), mig.indexOf("-- 5) Rechazo"))) && /clave = p_clave FOR UPDATE/.test(mig) && /NEX:INTENCION_NO_RECHAZABLE/.test(mig) && /m\.clave_idempotencia = p_clave AND m\.creado_por = p_usuario/.test(mig) && !/cron|pg_cron|DELETE FROM public\.movimientos_intenciones|estado = 'EXPIRADA'/i.test(mig) && /interval '7 days'/.test(mig));
+  cierto("T18c SQL: el rol de la aplicación solo EJECUTA las seis funciones (sin acceso a la tabla), ayudante nex_aplicar_grants_* descubierto por el envoltorio, NEX-014 no se modifica y no se ejecuta nada en la VM", /REVOKE ALL ON public\.movimientos_intenciones FROM nexit_runtime/.test(mig) && /GRANT EXECUTE ON FUNCTION public\.movimiento_intencion_reservar\(uuid, uuid, text, jsonb\) TO nexit_runtime/.test(mig) && /GRANT EXECUTE ON FUNCTION public\.movimiento_intencion_reconocer\(uuid, uuid, text\) TO nexit_runtime/.test(mig) && /nex_aplicar_grants_movimientos_intenciones/.test(mig) && !/CREATE OR REPLACE FUNCTION (public\.)?inventario_registrar_movimiento/.test(mig) && /NO aplicada|NO se reaplica|no se reaplica/.test(mig));
+  cierto("T18d scripts: preflight de solo lectura, verificación posterior, reversión que se NIEGA con intenciones inciertas y conserva respaldo, y procedimiento del responsable (backup, orden migración→código, reversión segura, sin descarte)", /BEGIN READ ONLY/.test(pre) && /ROLLBACK;/.test(pre) && /NEX-014 aplicada/.test(pre) && /BEGIN READ ONLY/.test(ver) && /nexit_runtime/.test(ver) && /REVERSIÓN ABORTADA: hay intenciones RESERVADAS \(inciertas\) o CONFIRMADAS sin reconocer/.test(rev) && /reconocida_at IS NULL AND estado IN \('RESERVADA', 'CONFIRMADA'\)/.test(rev) && /DROP FUNCTION IF EXISTS public\.movimiento_intencion_reconocer/.test(rev) && /movimientos_intenciones_respaldo_nex066/.test(rev) && /docker exec -i nexit-db psql/.test(pre) && /Reversión segura/.test(doc) && /Primero la migración, después el código/.test(doc) && /nunca se elimina ni libera sola/.test(doc) && /Reconocimiento \(ACK\)/.test(doc) && /CONFIRMADA. todavía no reconocida|CONFIRMADA\*\* todavía no reconocida|`CONFIRMADA` todavía no reconocida/.test(doc));
+
+  // Estructura del servidor: ruta directa no puede eludir la protección; el POST de reserva precede a todo efecto.
+  const srv = leer("lib/movimientos/intenciones.ts");
+
+  cierto("servidor (estructura): la reserva hace COMMIT antes de cualquier motor; la ejecución usa el snapshot persistido y confirma en la MISMA transacción; el COMMIT de la ejecución dudoso nunca marca rechazo; el ACK no invoca el motor", /await c\.query\("COMMIT"\); \/\/ checkpoint durable/.test(srv) && !/registrarMovimiento/.test(srv.slice(srv.indexOf("export async function reservarIntencion"), srv.indexOf("export function esRechazoDeterminista"))) && /datosDeSnapshot\(t\.snapshot as Record<string, unknown>, clave\)/.test(srv) && /movimiento_intencion_confirmar/.test(srv) && /comprometiendo = true;\n\s+await c\.query\("COMMIT"\)/.test(srv) && /if \(comprometiendo\) throw e;/.test(srv) && !/registrarMovimiento/.test(srv.slice(srv.indexOf("export async function reconocerIntencion"), srv.indexOf("export function esRechazoDeterminista"))) && /movimiento_intencion_reconocer\(\$1::uuid, \$2::uuid, \$3\)/.test(srv));
+
+  return fallos;
+}

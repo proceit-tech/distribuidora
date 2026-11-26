@@ -12,24 +12,47 @@ import {
   useRouter,
 } from "next/navigation";
 
-import {
-  actualizarClienteDemo,
-  buscarClienteDemo,
-} from "@/lib/mocks/clientes-storage";
 import type {
-  ClienteDemo,
+  ClienteDetalle,
   ClienteNaturaleza,
   ClienteOperacion,
   ClienteTipoPersona,
 } from "@/types/clientes";
 
+import {
+  calcularDvRuc,
+  validarRucDv,
+} from "@/lib/fiscal/calcular-dv-ruc";
+import { TelefonoPais } from "@/components/clientes/telefono-pais";
+import { validarCamposReceptor, validarGln } from "@/lib/fiscal/campos-receptor";
+import { DESCUENTO_COMERCIAL, LIMITE_CREDITO, decimalAcotado } from "@/lib/clientes/comercial";
+import { pestanaDeErrorApi } from "@/lib/clientes/pestanas";
+import { convertirLimites, requiereConversion, validarTasa } from "@/lib/clientes/cambio";
+import { validarFrecuenciaYDias } from "@/lib/clientes/logistica";
+import { validarDireccionFiscalRequerida } from "@/lib/clientes/obligatoriedad-fiscal";
+import { importeVerificable } from "@/lib/formato/monto-visual";
+import { useProtegerCambios } from "@/lib/ui/proteger-cambios";
+
 import styles from "./page.module.css";
+import { DocumentosCliente, type DocumentoCliente } from "./_components/documentos";
+import {
+  HijosEditor,
+  hijosDesdeApi,
+  hijosParaApi,
+  hijosVacios,
+  validarHijos,
+  type HijosForm,
+  type OpcionGeo,
+} from "./_components/hijos";
 
 type TabId =
   | "fiscal"
   | "comercial"
   | "contacto"
-  | "logistica";
+  | "logistica"
+  | "contactos"
+  | "direcciones"
+  | "documentos";
 
 type FormState = {
   naturaleza: ClienteNaturaleza;
@@ -40,6 +63,8 @@ type FormState = {
   paisNombre: string;
 
   tipoDocumento: string;
+  /** D209: descripción del documento, obligatoria (9–41) solo con tipo OTRO; vacía en los demás tipos. */
+  descripcionDocumentoIdentidad: string;
   numeroDocumento: string;
   dv: string;
 
@@ -50,6 +75,12 @@ type FormState = {
   emailCopia: string;
   telefono: string;
   celular: string;
+  telefonoPais: string;
+  telefonoDdi: string;
+  telefonoArea: string;
+  celularPais: string;
+  celularDdi: string;
+  celularArea: string;
 
   limiteCredito: string;
   limiteCreditoTemporal: string;
@@ -79,6 +110,7 @@ type FormState = {
   rutaEntrega: string;
   zonaComercial: string;
   frecuenciaEntrega: string;
+  diaMesEntrega: string;
   diasEntrega: number[];
 
   observacionComercial: string;
@@ -107,77 +139,69 @@ const TABS: Array<{
     id: "logistica",
     label: "Entrega y ventas",
   },
+  {
+    id: "contactos",
+    label: "Contactos",
+  },
+  {
+    id: "direcciones",
+    label: "Direcciones",
+  },
+  {
+    id: "documentos",
+    label: "Documentos",
+  },
 ];
 
-const OPTIONS = {
-  paises: [
-    ["PRY", "Paraguay"],
-    ["ARG", "Argentina"],
-    ["BRA", "Brasil"],
-    ["URY", "Uruguay"],
-    ["BOL", "Bolivia"],
-  ],
-  grupos: [
-    "Mayoristas",
-    "Minoristas",
-    "Supermercados",
-    "Distribuidores",
-    "Instituciones",
-    "Exterior",
-  ],
-  condiciones: [
-    "Contado",
-    "Crédito 7 días",
-    "Crédito 15 días",
-    "Crédito 30 días",
-    "Crédito 45 días",
-    "Crédito 60 días",
-  ],
-  listas: [
-    "Minorista",
-    "Mayorista A",
-    "Mayorista B",
-    "Distribuidor",
-    "Institucional",
-    "Exportación",
-  ],
-  canales: [
-    "Venta directa",
-    "Ejecutivo comercial",
-    "Preventista",
-    "WhatsApp",
-    "Licitaciones",
-  ],
-  vendedores: [
-    "Carlos Benítez",
-    "Laura Franco",
-    "Andrea López",
-    "José Ramírez",
-  ],
-  rutas: [
-    "Ruta Central 01",
-    "Ruta Central 02",
-    "Ruta Central 03",
-    "Ruta Central 04",
-    "Ruta Norte 01",
-    "Ruta Norte 02",
-    "Ruta Sur 01",
-    "Ruta Sur 02",
-    "Ruta Institucional",
-  ],
-  zonas: [
-    "Gran Asunción",
-    "Asunción",
-    "Asunción Norte",
-    "Fernando de la Mora",
-    "San Lorenzo",
-    "Luque",
-    "Lambaré",
-    "Ñemby",
-    "Mariano Roque Alonso",
-    "Exterior",
-  ],
+type Opcion = {
+  id: string;
+  nombre: string;
 };
+
+type Catalogos = {
+  monedas: { codigo: string; nombre: string }[];
+  grupos: Opcion[];
+  condicionesPago: Opcion[];
+  listasPrecio: Opcion[];
+  canalesVenta: Opcion[];
+  vendedores: Opcion[];
+  rutasEntrega: Opcion[];
+  zonasComerciales: Opcion[];
+  paises: { codigo: string; nombre: string }[];
+  departamentosParaguay: OpcionGeo[];
+};
+
+const CATALOGOS_VACIOS: Catalogos = {
+  monedas: [],
+  grupos: [],
+  condicionesPago: [],
+  listasPrecio: [],
+  canalesVenta: [],
+  vendedores: [],
+  rutasEntrega: [],
+  zonasComerciales: [],
+  paises: [],
+  departamentosParaguay: [],
+};
+
+// dd/mm/yyyy (API) <-> yyyy-mm-dd (input type=date)
+function aInputFecha(valor: string) {
+  const m = valor.match(
+    /^(\d{2})\/(\d{2})\/(\d{4})$/,
+  );
+  return m
+    ? `${m[3]}-${m[2]}-${m[1]}`
+    : "";
+}
+
+function aApiFecha(valor: string) {
+  const m = valor.match(
+    /^(\d{4})-(\d{2})-(\d{2})$/,
+  );
+  return m
+    ? `${m[3]}/${m[2]}/${m[1]}`
+    : "";
+}
 
 function formatDate(value: string) {
   if (!value) {
@@ -199,18 +223,8 @@ function formatDate(value: string) {
   ).format(date);
 }
 
-function money(value: string) {
-  const parsed = Number(
-    value.replace(/\./g, "").replace(",", "."),
-  );
-
-  return Number.isFinite(parsed)
-    ? parsed
-    : 0;
-}
-
 function fromCliente(
-  cliente: ClienteDemo,
+  cliente: ClienteDetalle,
 ): FormState {
   return {
     naturaleza: cliente.naturaleza,
@@ -226,6 +240,7 @@ function fromCliente(
 
     tipoDocumento:
       cliente.tipoDocumento,
+    descripcionDocumentoIdentidad: cliente.descripcionDocumentoIdentidad ?? "",
     numeroDocumento:
       cliente.numeroDocumento,
     dv: cliente.dv,
@@ -240,26 +255,35 @@ function fromCliente(
       cliente.emailCopia,
     telefono: cliente.telefono,
     celular: cliente.celular,
+    // Registro con número y sin país (anterior a la retificación): se deja sin país hasta que el usuario lo elija;
+    // sin número se propone Paraguay (+595) como predeterminado.
+    telefonoPais: cliente.telefono ? cliente.telefonoPais ?? "" : "PRY",
+    telefonoDdi: cliente.telefono ? cliente.telefonoDdi ?? "" : "595",
+    telefonoArea: cliente.telefonoArea ?? "",
+    celularPais: cliente.celular ? cliente.celularPais ?? "" : "PRY",
+    celularDdi: cliente.celular ? cliente.celularDdi ?? "" : "595",
+    celularArea: cliente.celularArea ?? "",
 
     limiteCredito:
       String(cliente.limiteCredito),
     limiteCreditoTemporal:
-      String(
-        cliente.limiteCreditoTemporal,
-      ),
+      cliente.limiteCreditoTemporal,
     fechaVencimientoCredito:
-      cliente.fechaVencimientoCredito,
+      aInputFecha(
+        cliente.fechaVencimientoCredito,
+      ),
 
     grupoCliente:
-      cliente.grupoCliente,
+      cliente.grupoClienteId,
     condicionPago:
-      cliente.condicionPago,
-    moneda: cliente.moneda,
+      cliente.condicionPagoId,
+    moneda:
+      cliente.monedaCodigoPredeterminada,
     listaPrecio:
-      cliente.listaPrecio,
+      cliente.listaPrecioId,
     canalVenta:
-      cliente.canalVenta,
-    vendedor: cliente.vendedor,
+      cliente.canalVentaId,
+    vendedor: cliente.vendedorId,
 
     codigoExterno:
       cliente.codigoExterno,
@@ -291,11 +315,12 @@ function fromCliente(
       cliente.recibeDocumentoElectronico,
 
     rutaEntrega:
-      cliente.rutaEntrega,
+      cliente.rutaEntregaId,
     zonaComercial:
-      cliente.zonaComercial,
+      cliente.zonaComercialId,
     frecuenciaEntrega:
       cliente.frecuenciaEntrega,
+    diaMesEntrega: cliente.diaMesEntrega ?? "",
     diasEntrega: [
       ...cliente.diasEntrega,
     ],
@@ -324,7 +349,7 @@ function SectionTitle({
       </div>
 
       <small>
-        Los cambios se guardan localmente para la demostración.
+        Los cambios se guardan en la base de datos.
       </small>
     </div>
   );
@@ -408,6 +433,18 @@ function SelectInput({
   );
 }
 
+/** PRO-335-R01 F-003: importe de la confirmación de conversión de límites — visual por moneda (PYG 0 / USD-BRL 2) y, si oculta decimales, el valor exacto que se confirma. Solo presentación. */
+function ImporteConversion({ valor, moneda }: { valor: string | null; moneda: string | null | undefined }) {
+  const i = importeVerificable(valor, moneda);
+
+  return (
+    <>
+      {i.visual} {moneda}
+      {i.difiere ? <small> (exacto: {i.exacto})</small> : null}
+    </>
+  );
+}
+
 export default function ClienteDetallePage() {
   const router = useRouter();
   const params = useParams<{
@@ -417,7 +454,7 @@ export default function ClienteDetallePage() {
   const id = params.id;
 
   const [cliente, setCliente] =
-    useState<ClienteDemo | null>(
+    useState<ClienteDetalle | null>(
       null,
     );
 
@@ -435,20 +472,159 @@ export default function ClienteDetallePage() {
   const [saving, setSaving] =
     useState(false);
 
+  // CLI-D02: permiso EDITAR del usuario autenticado (lo informa la API desde la sesión del servidor). Sin él la ficha es solo de lectura; el PUT lo sigue exigiendo.
+  const [puedeEditar, setPuedeEditar] =
+    useState(false);
+
   const [error, setError] =
     useState("");
 
+  const [aptitud, setAptitud] =
+    useState<{
+      apto: boolean;
+      pendientes: string[];
+    } | null>(null);
+
+  // Documentos: archivos reales; se gestionan aparte del «Guardar» del cliente (carga/reemplazo/eliminación inmediatos).
+  const [documentos, setDocumentos] = useState<DocumentoCliente[]>([]);
+  const [aviso, setAviso] = useState("");
+
+  // Cambio de moneda con límites vigentes: tasa informada por el usuario y confirmación expresa (CLI-VIS-05/06).
+  const [tasaCambio, setTasaCambio] = useState("");
+  const [conversionConfirmada, setConversionConfirmada] = useState(false);
+
+  async function recargarDocumentos() {
+    const r = await fetch(`/api/clientes/${id}`, { cache: "no-store" });
+    const j = (await r.json().catch(() => ({}))) as { documentos?: DocumentoCliente[] };
+
+    if (r.ok) setDocumentos(j.documentos ?? []);
+  }
+
+  const [hijos, setHijos] =
+    useState<HijosForm>(hijosVacios);
+
+  // CLI-A02: huella de lo que el servidor entregó (ficha + contactos + direcciones) y borrador de documento sin enviar; avisa al recargar/cerrar y al usar enlaces.
+  const [huellaBase, setHuellaBase] = useState("");
+  const [borradorDocumento, setBorradorDocumento] = useState(false);
+  const sucio = !saving && ((huellaBase !== "" && JSON.stringify({ form, hijos }) !== huellaBase) || borradorDocumento);
+
+  useProtegerCambios(sucio);
+
+  const [catalogos, setCatalogos] =
+    useState<Catalogos>(
+      CATALOGOS_VACIOS,
+    );
+
   useEffect(() => {
-    const found =
-      buscarClienteDemo(id);
+    let activo = true;
 
-    setCliente(found);
+    async function cargar() {
+      try {
+        const [rCliente, rCatalogos] =
+          await Promise.all([
+            fetch(`/api/clientes/${id}`, {
+              cache: "no-store",
+            }),
+            fetch(
+              "/api/clientes?modo=catalogos",
+              { cache: "no-store" },
+            ),
+          ]);
 
-    if (found) {
-      setForm(fromCliente(found));
+        if (rCliente.status === 404) {
+          if (activo) {
+            setCliente(null);
+          }
+          return;
+        }
+
+        const datos =
+          (await rCliente.json()) as {
+            cliente?: ClienteDetalle;
+            contactos?: Parameters<typeof hijosDesdeApi>[0]["contactos"];
+            direcciones?: Parameters<typeof hijosDesdeApi>[0]["direcciones"];
+            documentos?: DocumentoCliente[];
+            aptitudSifen?: { apto: boolean; pendientes: string[] };
+            permisos?: { editar?: boolean };
+            referenciasHistoricas?: Record<string, { id: string; codigo: string; nombre: string }>;
+            error?: string;
+          };
+
+        if (
+          !rCliente.ok ||
+          !datos.cliente
+        ) {
+          throw new Error(
+            datos.error ??
+              "No fue posible cargar el cliente.",
+          );
+        }
+
+        // CLI-A04: un fallo del catálogo (401/403/500) NO se convierte en listas vacías: eso borraría vínculos al guardar y parecería un cliente normal.
+        if (!rCatalogos.ok) {
+          const detalle = (await rCatalogos.json().catch(() => ({}))) as { error?: string };
+
+          throw new Error(
+            `No fue posible cargar los catálogos del cliente (código ${rCatalogos.status}): ${
+              detalle.error ?? (rCatalogos.status === 401 || rCatalogos.status === 403 ? "no tiene permiso para consultarlos." : "el servicio no respondió correctamente.")
+            } La ficha no se muestra para no perder sus vínculos; recargue la página o pida acceso.`,
+          );
+        }
+
+        const cat =
+          (await rCatalogos.json()) as {
+            catalogos?: Partial<Catalogos>;
+          };
+        const catalogosCompletos = { ...CATALOGOS_VACIOS, ...(cat.catalogos ?? {}) };
+        const formularioInicial = fromCliente(datos.cliente);
+        const hijosIniciales = hijosDesdeApi(datos);
+
+        if (activo) {
+          // CLI-A01: una referencia que el cliente ya tiene pero hoy está inactiva se muestra (marcada) para conservarla; no se ofrece como elección nueva.
+          const historicas = datos.referenciasHistoricas ?? {};
+          const conHistorica = (lista: Opcion[], campo: string) => {
+            const h = historicas[campo];
+
+            return h && !lista.some((o) => o.id === h.id) ? [...lista, { id: h.id, nombre: `${h.nombre} (inactivo)` }] : lista;
+          };
+
+          setCatalogos({
+            ...catalogosCompletos,
+            grupos: conHistorica(catalogosCompletos.grupos, "grupoClienteId"),
+            listasPrecio: conHistorica(catalogosCompletos.listasPrecio, "listaPrecioId"),
+            canalesVenta: conHistorica(catalogosCompletos.canalesVenta, "canalVentaId"),
+            vendedores: conHistorica(catalogosCompletos.vendedores, "vendedorId"),
+            rutasEntrega: conHistorica(catalogosCompletos.rutasEntrega, "rutaEntregaId"),
+            zonasComerciales: conHistorica(catalogosCompletos.zonasComerciales, "zonaComercialId"),
+          });
+          setHijos(hijosIniciales);
+          setDocumentos(datos.documentos ?? []);
+          setAptitud(datos.aptitudSifen ?? null);
+          setPuedeEditar(datos.permisos?.editar === true);
+          setCliente(datos.cliente);
+          setForm(formularioInicial);
+          setHuellaBase(JSON.stringify({ form: formularioInicial, hijos: hijosIniciales }));
+        }
+      } catch (e) {
+        if (activo) {
+          setError(
+            e instanceof Error
+              ? e.message
+              : "No fue posible cargar el cliente.",
+          );
+        }
+      } finally {
+        if (activo) {
+          setLoading(false);
+        }
+      }
     }
 
-    setLoading(false);
+    void cargar();
+
+    return () => {
+      activo = false;
+    };
   }, [id]);
 
   const operacionesPermitidas =
@@ -515,13 +691,14 @@ export default function ClienteDetallePage() {
       return {
         ...current,
         tipoOperacion: value,
+        // Paraguay por defecto; en B2F el país se elige del catálogo (sin valores fijos).
         paisCodigo:
           value === "B2F"
-            ? "ARG"
+            ? ""
             : "PRY",
         paisNombre:
           value === "B2F"
-            ? "Argentina"
+            ? ""
             : "Paraguay",
         tipoDocumento:
           value === "B2F"
@@ -534,12 +711,34 @@ export default function ClienteDetallePage() {
     });
   }
 
+  // Los límites que se ven están en la moneda GUARDADA del cliente; si se elige otra moneda se convierten al guardar con la
+  // tasa que informe el usuario (sin cotización automática) y su confirmación expresa. Cálculo exacto, half-up a 4 decimales.
+  const monedaLimites = cliente?.monedaCodigoPredeterminada || form?.moneda || "sin moneda";
+  const monedaCambia = Boolean(cliente?.monedaCodigoPredeterminada && form?.moneda && cliente.monedaCodigoPredeterminada !== form.moneda);
+  const vistaConversion = ((): { tipo: "sin-limites" } | { tipo: "esperando" } | { tipo: "error"; mensaje: string } | { tipo: "listo"; limite: string; temporal: string | null; limiteDestino: string; temporalDestino: string | null } | null => {
+    if (!form || !monedaCambia) return null;
+
+    try {
+      const limite = decimalAcotado(form.limiteCredito, "El límite de crédito", LIMITE_CREDITO) ?? "0";
+      const temporal = decimalAcotado(form.limiteCreditoTemporal, "El límite de crédito temporal", LIMITE_CREDITO);
+
+      if (!requiereConversion(limite, temporal)) return { tipo: "sin-limites" };
+      if (tasaCambio.trim() === "") return { tipo: "esperando" };
+
+      const c = convertirLimites(limite, temporal, tasaCambio);
+
+      return { tipo: "listo", limite, temporal, limiteDestino: c.limiteDestino, temporalDestino: c.temporalDestino };
+    } catch (errorVista) {
+      return { tipo: "error", mensaje: (errorVista as Error).message };
+    }
+  })();
+
   async function guardar(
     event: FormEvent<HTMLFormElement>,
   ) {
     event.preventDefault();
 
-    if (!cliente || !form) {
+    if (!cliente || !form || !puedeEditar) {
       return;
     }
 
@@ -565,139 +764,269 @@ export default function ClienteDetallePage() {
       return;
     }
 
+    if (form.naturaleza === "CONTRIBUYENTE") {
+      const sinCambio =
+        form.numeroDocumento === cliente.numeroDocumento &&
+        form.dv === cliente.dv;
+      const rucDv = validarRucDv(
+        form.numeroDocumento,
+        form.dv,
+      );
+
+      if (!sinCambio && !rucDv.ok) {
+        setTab("fiscal");
+        setError(rucDv.error);
+        return;
+      }
+    }
+
+    const errorReceptor = validarCamposReceptor(
+      {
+        naturaleza: form.naturaleza,
+        tipoDocumento: form.tipoDocumento,
+        numeroDocumento: form.numeroDocumento.trim(),
+        descripcionDocumento: form.tipoDocumento === "OTRO" ? form.descripcionDocumentoIdentidad.trim() : "",
+        razonSocial: form.razonSocial.trim().toUpperCase(),
+        nombreFantasia: form.nombreFantasia.trim(),
+        email: form.email.trim(),
+        telefono: form.telefono.trim(),
+        celular: form.celular.trim(),
+      },
+      {
+        numeroDocumento: cliente.numeroDocumento,
+        descripcionDocumento: cliente.descripcionDocumentoIdentidad ?? "",
+        razonSocial: cliente.razonSocial,
+        nombreFantasia: cliente.nombreFantasia,
+        email: cliente.email,
+        telefono: cliente.telefono,
+        celular: cliente.celular,
+      },
+    );
+
+    if (errorReceptor) {
+      setTab("fiscal");
+      setError(errorReceptor);
+      return;
+    }
+
+    const errorHijos = validarHijos(hijos);
+    if (errorHijos) {
+      setTab(
+        errorHijos.includes("contacto")
+          ? "contactos"
+          : errorHijos.includes("documento")
+            ? "documentos"
+            : "direcciones",
+      );
+      setError(errorHijos);
+      return;
+    }
+
+    // GLN opcional: si se informa, exactamente 13 dígitos y dígito verificador GS1.
+    const errorGln = validarGln(form.gln.trim());
+
+    if (errorGln) {
+      setTab("comercial");
+      setError(errorGln);
+      return;
+    }
+
+    try {
+      decimalAcotado(form.limiteCredito, "El límite de crédito", LIMITE_CREDITO);
+      decimalAcotado(form.limiteCreditoTemporal, "El límite de crédito temporal", LIMITE_CREDITO);
+      decimalAcotado(form.descuentoComercialPct, "El descuento comercial", DESCUENTO_COMERCIAL);
+    } catch (errorNumerico) {
+      setTab("comercial");
+      setError((errorNumerico as Error).message);
+      return;
+    }
+
+    if (!form.paisCodigo) {
+      setTab("fiscal");
+      setError("Seleccione el país del cliente.");
+      return;
+    }
+
+    // Entrega y ventas: días obligatorios con frecuencia semanal/quincenal. Se valida al cambiar la combinación
+    // (un cliente anterior que no la toca no se bloquea; el servidor aplica la misma tolerancia).
+    const diasOrdenados = (dias: number[]) => [...dias].sort((a, b) => a - b).join(",");
+    const logisticaCambio =
+      (form.frecuenciaEntrega || "") !== (cliente.frecuenciaEntrega || "") || diasOrdenados(form.diasEntrega) !== diasOrdenados(cliente.diasEntrega ?? []) || (form.diaMesEntrega || "") !== (cliente.diaMesEntrega || "");
+    const errorLogistica = logisticaCambio ? validarFrecuenciaYDias(form.frecuenciaEntrega, form.diasEntrega, form.diaMesEntrega) : null;
+
+    if (errorLogistica) {
+      setTab("logistica");
+      setError(errorLogistica);
+      return;
+    }
+
+    // B2F exige dirección fiscal (decisión 01). Un cliente B2F anterior sin tocar direcciones se tolera.
+    const direccionesTocadas = hijos.direccionesEliminar.length > 0 || hijos.direcciones.some((d) => !d.id);
+    const errorB2F =
+      form.tipoOperacion === "B2F" && (cliente.tipoOperacion !== "B2F" || direccionesTocadas)
+        ? validarDireccionFiscalRequerida(form.tipoOperacion, hijos.direcciones.some((d) => d.esFiscal || d.tipo === "FISCAL"))
+        : null;
+
+    if (errorB2F) {
+      setTab("direcciones");
+      setError(errorB2F);
+      return;
+    }
+
+    // Cambio de moneda con límites vigentes: tasa informada + confirmación expresa; el servidor recalcula y valida.
+    const monedaPrevia = cliente.monedaCodigoPredeterminada || "";
+    let conversionMoneda: Record<string, unknown> | undefined;
+
+    if (monedaPrevia && form.moneda && monedaPrevia !== form.moneda) {
+      const limiteOrigen = decimalAcotado(form.limiteCredito, "El límite de crédito", LIMITE_CREDITO) ?? "0";
+      const temporalOrigen = decimalAcotado(form.limiteCreditoTemporal, "El límite de crédito temporal", LIMITE_CREDITO);
+
+      if (requiereConversion(limiteOrigen, temporalOrigen)) {
+        try {
+          validarTasa(tasaCambio);
+
+          if (!conversionConfirmada) {
+            throw new Error("Confirme expresamente la conversión de los límites para cambiar la moneda.");
+          }
+
+          const c = convertirLimites(limiteOrigen, temporalOrigen, tasaCambio);
+
+          conversionMoneda = {
+            monedaOrigen: monedaPrevia,
+            monedaDestino: form.moneda,
+            tasa: c.tasa,
+            limiteDestino: c.limiteDestino,
+            temporalDestino: c.temporalDestino ?? "",
+            confirmada: true,
+          };
+        } catch (errorConversion) {
+          setTab("comercial");
+          setError((errorConversion as Error).message);
+          return;
+        }
+      }
+    }
+
     setSaving(true);
 
     try {
-      const updated =
-        actualizarClienteDemo(
-          cliente.id,
-          {
-            naturaleza:
-              form.naturaleza,
+      const respuesta = await fetch(
+        `/api/clientes/${cliente.id}`,
+        {
+          method: "PUT",
+          headers: {
+            "Content-Type":
+              "application/json",
+          },
+          body: JSON.stringify({
+            // CLI-A03: versión de la ficha cargada; el servidor rechaza (409) si otro usuario guardó antes.
+            actualizadoEn: cliente.actualizadoEn,
+            naturaleza: form.naturaleza,
             tipoOperacion:
               form.tipoOperacion,
-            tipoPersona:
-              form.tipoPersona,
-
-            paisCodigo:
-              form.paisCodigo,
-            paisNombre:
-              form.paisNombre,
-
+            tipoPersona: form.tipoPersona,
+            paisCodigo: form.paisCodigo,
+            paisNombre: form.paisNombre,
             tipoDocumento:
               form.tipoDocumento,
+            descripcionDocumentoIdentidad:
+              form.naturaleza !== "CONTRIBUYENTE" && form.tipoDocumento === "OTRO" ? form.descripcionDocumentoIdentidad.trim() : "",
             numeroDocumento:
-              form.numeroDocumento.trim(),
-            dv: form.dv.trim(),
-
+              form.numeroDocumento,
+            dv: form.dv,
             razonSocial:
-              form.razonSocial
-                .trim()
-                .toUpperCase(),
+              form.razonSocial.toUpperCase(),
             nombreFantasia:
-              form.nombreFantasia.trim(),
-
-            email:
-              form.email.trim(),
-            emailCopia:
-              form.emailCopia.trim(),
-            telefono:
-              form.telefono.trim(),
-            celular:
-              form.celular.trim(),
-
-            limiteCredito:
-              money(
-                form.limiteCredito,
-              ),
-            limiteCreditoTemporal:
-              money(
-                form.limiteCreditoTemporal,
-              ),
+              form.nombreFantasia,
+            email: form.email,
+            emailCopia: form.emailCopia,
+            telefono: form.telefono,
+            celular: form.celular,
+            telefonoPais: form.telefonoPais,
+            telefonoDdi: form.telefonoDdi,
+            telefonoArea: form.telefonoArea,
+            celularPais: form.celularPais,
+            celularDdi: form.celularDdi,
+            celularArea: form.celularArea,
+            limiteCredito: form.limiteCredito.trim(),
+            limiteCreditoTemporal: form.limiteCreditoTemporal.trim(),
             fechaVencimientoCredito:
-              form.fechaVencimientoCredito,
-
-            grupoCliente:
-              form.grupoCliente,
-            condicionPago:
-              form.condicionPago,
-            moneda:
-              form.moneda,
-            listaPrecio:
-              form.listaPrecio,
-            canalVenta:
-              form.canalVenta,
-            vendedor:
-              form.vendedor,
-
-            codigoExterno:
-              form.codigoExterno.trim(),
-            gln: form.gln.trim(),
-            descuentoComercialPct:
-              money(
-                form.descuentoComercialPct,
+              aApiFecha(
+                form.fechaVencimientoCredito,
               ),
-
+            grupoClienteId:
+              form.grupoCliente,
+            condicionPagoId:
+              form.condicionPago,
+            monedaCodigoPredeterminada:
+              form.moneda,
+            conversionMoneda,
+            listaPrecioId:
+              form.listaPrecio,
+            canalVentaId: form.canalVenta,
+            vendedorId: form.vendedor,
+            codigoExterno:
+              form.codigoExterno,
+            gln: form.gln,
+            descuentoComercialPct: form.descuentoComercialPct.trim(),
             bloqueadoVentas:
               form.bloqueadoVentas,
             motivoBloqueoVentas:
-              form.motivoBloqueoVentas.trim(),
-
+              form.motivoBloqueoVentas,
             diaPreferidoCobro:
               form.diaPreferidoCobro
                 ? Number(
                     form.diaPreferidoCobro,
                   )
                 : null,
-
             requiereOrdenCompra:
               form.requiereOrdenCompra,
-
             emailFacturacion:
-              form.emailFacturacion.trim(),
+              form.emailFacturacion,
             emailCobranzas:
-              form.emailCobranzas.trim(),
+              form.emailCobranzas,
             recibeDocumentoElectronico:
               form.recibeDocumentoElectronico,
-
-            rutaEntrega:
+            rutaEntregaId:
               form.rutaEntrega,
-            zonaComercial:
+            zonaComercialId:
               form.zonaComercial,
             frecuenciaEntrega:
               form.frecuenciaEntrega,
-            diasEntrega: [
-              ...form.diasEntrega,
-            ],
-
+            diasEntrega: form.diasEntrega,
+            diaMesEntrega: form.diaMesEntrega,
             observacionComercial:
-              form.observacionComercial.trim(),
+              form.observacionComercial,
             observacionLogistica:
-              form.observacionLogistica.trim(),
+              form.observacionLogistica,
+            activo: form.activo,
+            ...hijosParaApi(hijos),
+          }),
+        },
+      );
 
-            activo:
-              form.activo,
-          },
+      const datos =
+        (await respuesta.json()) as {
+          error?: string;
+        };
+
+      if (!respuesta.ok) {
+        throw new Error(
+          datos.error ??
+            "No fue posible actualizar el cliente.",
         );
-
-      if (!updated) {
-        throw new Error();
       }
 
-      await new Promise(
-        (resolve) =>
-          window.setTimeout(
-            resolve,
-            400,
-          ),
+      router.push(
+        "/clientes?ok=actualizado",
       );
-
-      router.push("/clientes");
       router.refresh();
-    } catch {
-      setError(
-        "No fue posible actualizar el cliente de demostración.",
-      );
+    } catch (e) {
+      const mensaje = e instanceof Error ? e.message : "No fue posible actualizar el cliente.";
+
+      // Los datos del formulario se conservan; se abre la pestaña a la que pertenece el error.
+      setTab(pestanaDeErrorApi(mensaje));
+      setError(mensaje);
     } finally {
       setSaving(false);
     }
@@ -731,13 +1060,15 @@ export default function ClienteDetallePage() {
           className={styles.stateCard}
         >
           <strong>
-            Cliente no encontrado
+            {error
+              ? "No fue posible cargar el cliente"
+              : "Cliente no encontrado"}
           </strong>
 
           <p>
             El registro puede haber sido
-            eliminado o los datos demo
-            fueron restaurados.
+            eliminado o pertenecer a otra
+            empresa.
           </p>
 
           <Link href="/clientes">
@@ -772,12 +1103,6 @@ export default function ClienteDetallePage() {
             >
               {cliente.codigo}
             </span>
-
-            <span
-              className={styles.demoPill}
-            >
-              DEMO
-            </span>
           </div>
 
           <h1>
@@ -785,8 +1110,7 @@ export default function ClienteDetallePage() {
           </h1>
 
           <p>
-            Ficha del cliente y edición de
-            datos maestros.
+            {puedeEditar ? "Ficha del cliente y edición de datos maestros." : "Ficha del cliente (solo lectura)."}
           </p>
         </div>
 
@@ -838,6 +1162,7 @@ export default function ClienteDetallePage() {
               <h2>
                 {cliente.codigo}
               </h2>
+              <strong>{cliente.razonSocial}</strong>
 
               <p>
                 Última actualización:{" "}
@@ -874,8 +1199,42 @@ export default function ClienteDetallePage() {
                 Ventas bloqueadas
               </span>
             ) : null}
+
+            {aptitud ? (
+              <span className={aptitud.apto ? styles.statusActive : styles.statusBlocked}>
+                {aptitud.apto ? "Apto para SIFEN" : `Fiscal incompleto (${aptitud.pendientes.length})`}
+              </span>
+            ) : null}
           </div>
         </div>
+
+        {aptitud && !aptitud.apto ? (
+          <div
+            className={styles.error}
+            role="status"
+          >
+            <strong>
+              Datos fiscales pendientes: este cliente aún no está apto para la emisión SIFEN
+            </strong>
+            <ul>
+              {aptitud.pendientes.map((pendiente) => (
+                <li key={pendiente}>{pendiente}</li>
+              ))}
+            </ul>
+            <p>
+              Para guardar cualquier cambio de este cliente debe regularizar antes estos datos fiscales (decisión del responsable): corríjalos en las pestañas indicadas.
+            </p>
+          </div>
+        ) : null}
+
+        {aviso ? (
+          <div className={styles.error} role="status">
+            <span>{aviso}</span>
+            <button onClick={() => setAviso("")} type="button">
+              Entendido
+            </button>
+          </div>
+        ) : null}
 
         {error ? (
           <div
@@ -912,7 +1271,10 @@ export default function ClienteDetallePage() {
           ))}
         </nav>
 
-        <div
+        {/* CLI-D02: con CLIENTES.VER y sin EDITAR todos los campos, contactos, direcciones y acciones de documentos quedan deshabilitados (las descargas y la lectura siguen disponibles). */}
+        <fieldset
+          disabled={!puedeEditar}
+          style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}
           className={styles.content}
         >
           {tab === "fiscal" ? (
@@ -988,9 +1350,9 @@ export default function ClienteDetallePage() {
                     }
                     onChange={(value) => {
                       const country =
-                        OPTIONS.paises.find(
-                          ([code]) =>
-                            code === value,
+                        catalogos.paises.find(
+                          (pais) =>
+                            pais.codigo === value,
                         );
 
                       update(
@@ -1000,7 +1362,7 @@ export default function ClienteDetallePage() {
 
                       update(
                         "paisNombre",
-                        country?.[1] ??
+                        country?.nombre ??
                           "",
                       );
                     }}
@@ -1009,16 +1371,22 @@ export default function ClienteDetallePage() {
                       "B2F"
                     }
                   >
-                    {OPTIONS.paises.map(
-                      ([code, name]) => (
-                        <option
-                          key={code}
-                          value={code}
-                        >
-                          {name}
+                    {form.tipoOperacion === "B2F" ? (
+                      <option value="">
+                        Seleccione un país
+                      </option>
+                    ) : null}
+                    {catalogos.paises
+                      .filter((pais) =>
+                        form.tipoOperacion === "B2F"
+                          ? pais.codigo !== "PRY"
+                          : pais.codigo === "PRY",
+                      )
+                      .map((pais) => (
+                        <option key={pais.codigo} value={pais.codigo}>
+                          {pais.nombre}
                         </option>
-                      ),
-                    )}
+                      ))}
                   </SelectInput>
                 </Field>
 
@@ -1068,17 +1436,21 @@ export default function ClienteDetallePage() {
                       }
                       inputMode="numeric"
                       maxLength={8}
-                      onChange={(value) =>
-                        update(
-                          "numeroDocumento",
-                          value
-                            .replace(
-                              /\D/g,
-                              "",
-                            )
-                            .slice(0, 8),
-                        )
-                      }
+                      onChange={(value) => {
+                        const ruc = value
+                          .replace(/\D/g, "")
+                          .slice(0, 8);
+
+                        setForm((current) =>
+                          current
+                            ? {
+                                ...current,
+                                numeroDocumento: ruc,
+                                dv: calcularDvRuc(ruc) ?? "",
+                              }
+                            : current,
+                        );
+                      }}
                     />
                   ) : (
                     <SelectInput
@@ -1107,6 +1479,9 @@ export default function ClienteDetallePage() {
                       <option value="INNOMINADO">
                         Innominado
                       </option>
+                      <option value="TARJETA_DIPLOMATICA">
+                        Tarjeta diplomática
+                      </option>
                       <option value="OTRO">
                         Otro
                       </option>
@@ -1114,26 +1489,26 @@ export default function ClienteDetallePage() {
                   )}
                 </Field>
 
+                {!esContribuyente && form.tipoDocumento === "OTRO" ? (
+                  <Field label="Descripción del documento * (9 a 41 caracteres)">
+                    <TextInput
+                      maxLength={41}
+                      onChange={(value) => update("descripcionDocumentoIdentidad", value)}
+                      value={form.descripcionDocumentoIdentidad}
+                    />
+                  </Field>
+                ) : null}
+
                 {esContribuyente ? (
                   <Field
-                    label="DV"
+                    label="DV (automático)"
                     required
                   >
                     <TextInput
                       value={form.dv}
-                      inputMode="numeric"
-                      maxLength={1}
-                      onChange={(value) =>
-                        update(
-                          "dv",
-                          value
-                            .replace(
-                              /\D/g,
-                              "",
-                            )
-                            .slice(0, 1),
-                        )
-                      }
+                      readOnly
+                      tabIndex={-1}
+                      onChange={() => undefined}
                     />
                   </Field>
                 ) : (
@@ -1352,16 +1727,12 @@ export default function ClienteDetallePage() {
                       )
                     }
                   >
-                    {OPTIONS.grupos.map(
-                      (item) => (
-                        <option
-                          key={item}
-                          value={item}
-                        >
-                          {item}
-                        </option>
-                      ),
-                    )}
+                    <>
+<option value="">Sin asignar</option>
+{catalogos.grupos.map((item) => (
+<option key={item.id} value={item.id}>{item.nombre}</option>
+))}
+</>
                   </SelectInput>
                 </Field>
 
@@ -1377,16 +1748,12 @@ export default function ClienteDetallePage() {
                       )
                     }
                   >
-                    {OPTIONS.condiciones.map(
-                      (item) => (
-                        <option
-                          key={item}
-                          value={item}
-                        >
-                          {item}
-                        </option>
-                      ),
-                    )}
+                    <>
+<option value="">Sin asignar</option>
+{catalogos.condicionesPago.map((item) => (
+<option key={item.id} value={item.id}>{item.nombre}</option>
+))}
+</>
                   </SelectInput>
                 </Field>
 
@@ -1395,19 +1762,24 @@ export default function ClienteDetallePage() {
                     value={
                       form.moneda
                     }
-                    onChange={(value) =>
+                    onChange={(value) => {
                       update(
                         "moneda",
                         value,
-                      )
-                    }
+                      );
+                      setTasaCambio("");
+                      setConversionConfirmada(false);
+                    }}
                   >
-                    <option value="PYG">
-                      Guaraníes · PYG
-                    </option>
-                    <option value="USD">
-                      Dólares · USD
-                    </option>
+                    <option value="">Sin definir</option>
+                    {catalogos.monedas.map((m) => (
+                      <option key={m.codigo} value={m.codigo}>
+                        {m.nombre} · {m.codigo}
+                      </option>
+                    ))}
+                    {form.moneda && !catalogos.monedas.some((m) => m.codigo === form.moneda) ? (
+                      <option value={form.moneda}>{form.moneda}</option>
+                    ) : null}
                   </SelectInput>
                 </Field>
 
@@ -1423,16 +1795,12 @@ export default function ClienteDetallePage() {
                       )
                     }
                   >
-                    {OPTIONS.listas.map(
-                      (item) => (
-                        <option
-                          key={item}
-                          value={item}
-                        >
-                          {item}
-                        </option>
-                      ),
-                    )}
+                    <>
+<option value="">Sin asignar</option>
+{catalogos.listasPrecio.map((item) => (
+<option key={item.id} value={item.id}>{item.nombre}</option>
+))}
+</>
                   </SelectInput>
                 </Field>
               </div>
@@ -1442,43 +1810,37 @@ export default function ClienteDetallePage() {
                   styles.gridFour
                 }
               >
-                <Field label="Límite de crédito">
+                <Field label={`Límite de crédito (${monedaLimites})`}>
                   <TextInput
                     value={
                       form.limiteCredito
                     }
-                    inputMode="numeric"
+                    inputMode="decimal"
                     onChange={(value) =>
                       update(
                         "limiteCredito",
-                        value.replace(
-                          /\D/g,
-                          "",
-                        ),
+                        value,
                       )
                     }
                   />
                 </Field>
 
-                <Field label="Crédito temporal">
+                <Field label={`Límite temporal (${monedaLimites})`}>
                   <TextInput
                     value={
                       form.limiteCreditoTemporal
                     }
-                    inputMode="numeric"
+                    inputMode="decimal"
                     onChange={(value) =>
                       update(
                         "limiteCreditoTemporal",
-                        value.replace(
-                          /\D/g,
-                          "",
-                        ),
+                        value,
                       )
                     }
                   />
                 </Field>
 
-                <Field label="Vencimiento crédito temporal">
+                <Field label="Vencimiento del límite temporal">
                   <TextInput
                     type="date"
                     value={
@@ -1509,6 +1871,84 @@ export default function ClienteDetallePage() {
                 </Field>
               </div>
 
+              {monedaCambia && vistaConversion ? (
+                <div
+                  aria-live="polite"
+                  role="group"
+                  style={{ border: "1px solid #e0b34a", background: "rgba(224, 179, 74, 0.12)", borderRadius: 10, padding: 12, margin: "8px 0", display: "grid", gap: 8 }}
+                >
+                  <strong>
+                    Cambio de moneda: {cliente?.monedaCodigoPredeterminada} → {form.moneda}
+                  </strong>
+                  {vistaConversion.tipo === "sin-limites" ? (
+                    <span>No hay límites de crédito vigentes para convertir: la moneda se cambia sin tasa.</span>
+                  ) : (
+                    <>
+                      <span>
+                        Los límites de arriba están en {cliente?.monedaCodigoPredeterminada} y no deben modificarse en este mismo guardado (el servidor lo rechaza). Informe la tasa de cambio (no se consulta ninguna cotización) y confirme la conversión. Los saldos u
+                        operaciones de otros módulos no se convierten.
+                      </span>
+                      <Field label={`Tasa: 1 ${cliente?.monedaCodigoPredeterminada} = ? ${form.moneda}`}>
+                        <TextInput
+                          inputMode="decimal"
+                          onChange={(valor) => {
+                            setTasaCambio(valor);
+                            setConversionConfirmada(false);
+                          }}
+                          value={tasaCambio}
+                        />
+                      </Field>
+                      {vistaConversion.tipo === "error" ? (
+                        <span role="alert" style={{ color: "#b3263b" }}>
+                          {vistaConversion.mensaje}
+                        </span>
+                      ) : null}
+                      {vistaConversion.tipo === "listo" ? (
+                        <>
+                          <table style={{ borderCollapse: "collapse" }}>
+                            <tbody>
+                              <tr>
+                                <td style={{ padding: "2px 12px 2px 0" }}>Límite de crédito</td>
+                                <td style={{ padding: "2px 12px 2px 0" }}>
+                                  <ImporteConversion valor={vistaConversion.limite} moneda={cliente?.monedaCodigoPredeterminada} />
+                                </td>
+                                <td style={{ padding: "2px 12px 2px 0" }}>→</td>
+                                <td>
+                                  <strong>
+                                    <ImporteConversion valor={vistaConversion.limiteDestino} moneda={form.moneda} />
+                                  </strong>
+                                </td>
+                              </tr>
+                              {vistaConversion.temporal !== null ? (
+                                <tr>
+                                  <td style={{ padding: "2px 12px 2px 0" }}>Límite temporal</td>
+                                  <td style={{ padding: "2px 12px 2px 0" }}>
+                                    <ImporteConversion valor={vistaConversion.temporal} moneda={cliente?.monedaCodigoPredeterminada} />
+                                  </td>
+                                  <td style={{ padding: "2px 12px 2px 0" }}>→</td>
+                                  <td>
+                                    <strong>
+                                      <ImporteConversion valor={vistaConversion.temporalDestino} moneda={form.moneda} />
+                                    </strong>
+                                  </td>
+                                </tr>
+                              ) : null}
+                            </tbody>
+                          </table>
+                          <small>Redondeo half-up a 4 decimales (escala del importe). El servidor vuelve a calcular y rechaza si no coincide.</small>
+                          <label className={styles.checkItem}>
+                            <input checked={conversionConfirmada} onChange={(evento) => setConversionConfirmada(evento.target.checked)} type="checkbox" />
+                            <span>
+                              Confirmo la conversión con la tasa 1 {cliente?.monedaCodigoPredeterminada} = {tasaCambio.trim()} {form.moneda}
+                            </span>
+                          </label>
+                        </>
+                      ) : null}
+                    </>
+                  )}
+                </div>
+              ) : null}
+
               <div
                 className={
                   styles.gridThree
@@ -1526,16 +1966,12 @@ export default function ClienteDetallePage() {
                       )
                     }
                   >
-                    {OPTIONS.canales.map(
-                      (item) => (
-                        <option
-                          key={item}
-                          value={item}
-                        >
-                          {item}
-                        </option>
-                      ),
-                    )}
+                    <>
+<option value="">Sin asignar</option>
+{catalogos.canalesVenta.map((item) => (
+<option key={item.id} value={item.id}>{item.nombre}</option>
+))}
+</>
                   </SelectInput>
                 </Field>
 
@@ -1551,16 +1987,12 @@ export default function ClienteDetallePage() {
                       )
                     }
                   >
-                    {OPTIONS.vendedores.map(
-                      (item) => (
-                        <option
-                          key={item}
-                          value={item}
-                        >
-                          {item}
-                        </option>
-                      ),
-                    )}
+                    <>
+<option value="">Sin asignar</option>
+{catalogos.vendedores.map((item) => (
+<option key={item.id} value={item.id}>{item.nombre}</option>
+))}
+</>
                   </SelectInput>
                 </Field>
 
@@ -1658,11 +2090,35 @@ export default function ClienteDetallePage() {
             </section>
           ) : null}
 
+          {tab === "documentos" ? (
+            <DocumentosCliente
+              clienteId={cliente.id}
+              documentos={documentos}
+              onAviso={setAviso}
+              onError={setError}
+              onRecargar={recargarDocumentos}
+              onBorrador={setBorradorDocumento}
+            />
+          ) : null}
+
+          {tab === "contactos" || tab === "direcciones" ? (
+            <HijosEditor
+              tab={tab}
+              valor={hijos}
+              onChange={setHijos}
+              paises={catalogos.paises}
+              departamentos={
+                catalogos.departamentosParaguay
+              }
+              onError={setError}
+            />
+          ) : null}
+
           {tab === "contacto" ? (
             <section>
               <SectionTitle
-                title="Contacto y facturación"
-                description="Datos generales y correos operativos del cliente."
+                title="Datos de contacto del cliente"
+                description="Correo y teléfonos generales del cliente y correos operativos. Las personas de contacto están en la pestaña Contactos."
               />
 
               <div
@@ -1698,31 +2154,72 @@ export default function ClienteDetallePage() {
                   />
                 </Field>
 
-                <Field label="Teléfono">
-                  <TextInput
-                    value={
-                      form.telefono
-                    }
-                    onChange={(value) =>
-                      update(
-                        "telefono",
-                        value,
-                      )
-                    }
-                  />
-                </Field>
+              </div>
 
-                <Field label="Celular">
-                  <TextInput
-                    value={form.celular}
-                    onChange={(value) =>
-                      update(
-                        "celular",
-                        value,
-                      )
-                    }
-                  />
-                </Field>
+              <div
+                className={
+                  styles.gridTwo
+                }
+              >
+                <TelefonoPais
+                  campo="telefono"
+                  clases={{
+                    campo: styles.field,
+                    selector: styles.select,
+                    entrada: styles.input,
+                  }}
+                  etiqueta="Teléfono"
+                  id="cli-edit-telefono"
+                  onChange={(nuevo) =>
+                    setForm((current) =>
+                      current
+                        ? {
+                            ...current,
+                            telefonoPais: nuevo.pais,
+                            telefonoDdi: nuevo.ddi,
+                            telefonoArea: nuevo.area,
+                            telefono: nuevo.numero,
+                          }
+                        : current,
+                    )
+                  }
+                  valor={{
+                    pais: form.telefonoPais,
+                    ddi: form.telefonoDdi,
+                    area: form.telefonoArea,
+                    numero: form.telefono,
+                  }}
+                />
+
+                <TelefonoPais
+                  campo="celular"
+                  clases={{
+                    campo: styles.field,
+                    selector: styles.select,
+                    entrada: styles.input,
+                  }}
+                  etiqueta="Celular"
+                  id="cli-edit-celular"
+                  onChange={(nuevo) =>
+                    setForm((current) =>
+                      current
+                        ? {
+                            ...current,
+                            celularPais: nuevo.pais,
+                            celularDdi: nuevo.ddi,
+                            celularArea: nuevo.area,
+                            celular: nuevo.numero,
+                          }
+                        : current,
+                    )
+                  }
+                  valor={{
+                    pais: form.celularPais,
+                    ddi: form.celularDdi,
+                    area: form.celularArea,
+                    numero: form.celular,
+                  }}
+                />
               </div>
 
               <div
@@ -1791,16 +2288,12 @@ export default function ClienteDetallePage() {
                       Sin ruta asignada
                     </option>
 
-                    {OPTIONS.rutas.map(
-                      (item) => (
-                        <option
-                          key={item}
-                          value={item}
-                        >
-                          {item}
-                        </option>
-                      ),
-                    )}
+                    <>
+<option value="">Sin asignar</option>
+{catalogos.rutasEntrega.map((item) => (
+<option key={item.id} value={item.id}>{item.nombre}</option>
+))}
+</>
                   </SelectInput>
                 </Field>
 
@@ -1816,16 +2309,12 @@ export default function ClienteDetallePage() {
                       )
                     }
                   >
-                    {OPTIONS.zonas.map(
-                      (item) => (
-                        <option
-                          key={item}
-                          value={item}
-                        >
-                          {item}
-                        </option>
-                      ),
-                    )}
+                    <>
+<option value="">Sin asignar</option>
+{catalogos.zonasComerciales.map((item) => (
+<option key={item.id} value={item.id}>{item.nombre}</option>
+))}
+</>
                   </SelectInput>
                 </Field>
 
@@ -1834,12 +2323,11 @@ export default function ClienteDetallePage() {
                     value={
                       form.frecuenciaEntrega
                     }
-                    onChange={(value) =>
-                      update(
-                        "frecuenciaEntrega",
-                        value,
-                      )
-                    }
+                    onChange={(value) => {
+                      update("frecuenciaEntrega", value);
+                      // El día del mes solo aplica a la frecuencia mensual: al cambiar de frecuencia se limpia (no se conserva un dato que no aplica).
+                      if (value !== "MENSUAL") update("diaMesEntrega", "");
+                    }}
                   >
                     <option value="">
                       Sin frecuencia
@@ -1856,11 +2344,22 @@ export default function ClienteDetallePage() {
                     <option value="MENSUAL">
                       Mensual
                     </option>
-                    <option value="SEGUN_PEDIDO">
-                      Según pedido
+                    <option value="A_DEMANDA">
+                      A demanda
                     </option>
                   </SelectInput>
                 </Field>
+
+                {form.frecuenciaEntrega === "MENSUAL" ? (
+                  <Field label="Día del mes de entrega * (1 a 31)">
+                    <TextInput
+                      inputMode="numeric"
+                      maxLength={2}
+                      onChange={(value) => update("diaMesEntrega", value)}
+                      value={form.diaMesEntrega}
+                    />
+                  </Field>
+                ) : null}
               </div>
 
               <div
@@ -1869,7 +2368,7 @@ export default function ClienteDetallePage() {
                 }
               >
                 <span>
-                  Días de entrega
+                  {["SEMANAL", "QUINCENAL"].includes(form.frecuenciaEntrega) ? "Días de entrega * (obligatorios con esta frecuencia)" : "Días de entrega"}
                 </span>
 
                 <div>
@@ -1958,7 +2457,7 @@ export default function ClienteDetallePage() {
               </div>
             </section>
           ) : null}
-        </div>
+        </fieldset>
 
         <footer
           className={styles.footer}
@@ -1969,13 +2468,13 @@ export default function ClienteDetallePage() {
                 styles.footerHint
               }
             >
-              Registro local
+              {puedeEditar ? "Registro local" : "Solo lectura"}
             </span>
 
             <small>
-              Los cambios se reflejarán
-              inmediatamente en la lista de
-              clientes.
+              {puedeEditar
+                ? "Los cambios se reflejarán inmediatamente en la lista de clientes."
+                : "Su perfil puede consultar este cliente, pero no modificarlo."}
             </small>
           </div>
 
@@ -1993,17 +2492,19 @@ export default function ClienteDetallePage() {
               Cancelar
             </Link>
 
-            <button
-              type="submit"
-              className={
-                styles.saveButton
-              }
-              disabled={saving}
-            >
-              {saving
-                ? "Actualizando..."
-                : "Actualizar cliente"}
-            </button>
+            {puedeEditar ? (
+              <button
+                type="submit"
+                className={
+                  styles.saveButton
+                }
+                disabled={saving}
+              >
+                {saving
+                  ? "Actualizando..."
+                  : "Actualizar cliente"}
+              </button>
+            ) : null}
           </div>
         </footer>
       </form>

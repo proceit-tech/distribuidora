@@ -1,0 +1,315 @@
+/**
+ * PRO-342-UX-R01 — Revisión y simplificación integral de la pantalla «Documentos electrónicos» (AUD-CHATGPT-PRO-342-DOCUMENTOS-UX-PREPRODUCCION-2026-11-17: UX01–UX04).
+ * Casos de ACEPTACIÓN de los 15 puntos del responsable:
+ *  · funciones PURAS reales (posicionTooltip, claveContexto, esResultadoVigente de documentos-ux.ts; iconosEstado/detalleFiscalPrimario de presentacion-sifen.ts, sin cambios);
+ *  · contraste WCAG calculado sobre los colores REALES del CSS local;
+ *  · estructura de page.tsx / page.module.css verificada sobre el texto fuente (React y navegador NO se renderizan aquí).
+ * ESCRITOS, NO EJECUTADOS en esta entrega (orden PRO-342-UX-R01: sin tests, lint, typecheck, build, SQL ni navegador). La verificación visual real (360/768/1280/1600,
+ * zoom, teclado, toque, lector de pantalla) queda para la homologación autorizada por el responsable.
+ * Sin cambios de motor fiscal, APIs, SQL, migrations ni otros módulos: el CDC sigue siendo dato opaco mostrado tal cual (PRO-342-R05).
+ */
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+
+import { contador } from "@/lib/clientes/contador-casos";
+import { claveContexto, esResultadoVigente, posicionTooltip } from "@/lib/facturacion/documentos-ux";
+import { GRUPOS_INDICADOR } from "@/lib/facturacion/estados";
+import { detalleFiscalPrimario, iconosEstado } from "@/lib/facturacion/presentacion-sifen";
+
+const leer = (r: string) => readFileSync(join(process.cwd(), r), "utf8");
+const sinComentariosCss = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, "");
+
+/** Cuerpo de la PRIMERA regla cuyo selector completo coincide exactamente (sin comentarios). */
+function regla(css: string, selector: string): string {
+  const m = new RegExp(`(?:^|[}{])\\s*${selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\{([^}]*)\\}`).exec(sinComentariosCss(css));
+
+  return m ? m[1] : "";
+}
+const hex = (bloque: string, prop: string) => new RegExp(`(?:^|[;\\s])${prop}:\\s*(#[0-9a-f]{6})`, "i").exec(bloque)?.[1]?.toLowerCase() ?? "";
+function luminancia(h: string): number {
+  const v = [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16) / 255).map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+
+  return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2];
+}
+const contraste = (a: string, b: string) => {
+  const [x, y] = [luminancia(a), luminancia(b)].sort((m, n) => n - m);
+
+  return (x + 0.05) / (y + 0.05);
+};
+
+// ── NEXIT-CI-R01 (UXR01-46): inventario de clases del módulo CSS por CONSUMIDORES REALES ────────────────────────────────────────────────────────
+/**
+ * Clases declaradas en los SELECTORES del CSS (sin comentarios, cadenas ni cuerpos de declaraciones): un valor como «0.5rem», «#0f9ca5», «url(x.svg)» o el
+ * preludio «@media (max-width: 40.5em)» no es una clase; las pseudo-clases (:hover, :is(…), ::before) se ignoran y el nombre se toma completo (también con guion).
+ */
+function clasesDeCss(css: string): string[] {
+  let t = sinComentariosCss(css).replace(/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/g, '""');
+
+  // Una sola pasada: los bloques más internos son los cuerpos de declaraciones; los selectores dentro de @media quedan (su llave exterior no contiene clases).
+  t = t.replace(/\{[^{}]*\}/g, ";");
+
+  return [...new Set([...t.matchAll(/\.(-?[_a-zA-Z][\w-]*)/g)].map((m) => m[1]))];
+}
+/** Nombre con el que un archivo importa el módulo CSS (import X from "./page.module.css"), o null si no lo importa. */
+const importacionCss = (src: string, modulo: string) => new RegExp(`import\\s+([A-Za-z_$][\\w$]*)\\s+from\\s+["']${modulo.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}["']`).exec(src)?.[1] ?? null;
+/** Clases que un consumidor usa con acceso estático (estilos.X); un acceso calculado (estilos[…]) no es inventariable y se informa aparte. */
+function usosDeEstilos(src: string, nombre: string) {
+  const n = nombre.replace(/[$]/g, "\\$&");
+
+  return { clases: new Set([...src.matchAll(new RegExp(`\\b${n}\\.([A-Za-z_][\\w]*)`, "g"))].map((m) => m[1])), calculado: new RegExp(`\\b${n}\\s*\\[`).test(src) };
+}
+/** Huérfanas (declaradas y no usadas por NINGÚN consumidor) y rotas (usadas por algún consumidor y no declaradas). */
+function inventarioCss(css: string, consumidores: Array<{ archivo: string; src: string }>, modulo = "./page.module.css") {
+  const declaradas = clasesDeCss(css);
+  const usadas = new Map<string, string[]>();
+  const sinImportar: string[] = [];
+  const calculados: string[] = [];
+
+  for (const c of consumidores) {
+    const nombre = importacionCss(c.src, modulo);
+
+    if (!nombre) { sinImportar.push(c.archivo); continue; }
+    const u = usosDeEstilos(c.src, nombre);
+
+    if (u.calculado) calculados.push(c.archivo);
+    for (const x of u.clases) usadas.set(x, [...(usadas.get(x) ?? []), c.archivo]);
+  }
+
+  return {
+    declaradas, usadas,
+    huerfanas: declaradas.filter((x) => !usadas.has(x)),
+    rotas: [...usadas.keys()].filter((x) => !declaradas.includes(x)).map((x) => `${x} (${(usadas.get(x) ?? []).join(", ")})`),
+    sinImportar, calculados,
+  };
+}
+
+export async function verificarCasosDocumentosUxR01(): Promise<string[]> {
+  const fallos: string[] = [];
+  const igual = (nombre: string, obtenido: unknown, esperado: unknown) => {
+    contador.n += 1;
+    if (JSON.stringify(obtenido) !== JSON.stringify(esperado)) fallos.push(`${nombre}: esperado ${JSON.stringify(esperado)}, obtenido ${JSON.stringify(obtenido)}`);
+  };
+  const cierto = (nombre: string, condicion: boolean) => igual(nombre, condicion, true);
+
+  const pagina = leer("app/(private)/documentos/page.tsx");
+  const css = leer("app/(private)/documentos/page.module.css");
+  const cssLimpio = sinComentariosCss(css);
+  const lista = leer("components/ui/lista-padrao/lista.module.css");
+  const tramo = (desde: string, hasta: string) => pagina.slice(pagina.indexOf(desde), pagina.indexOf(hasta, pagina.indexOf(desde) + desde.length));
+  // PRO-195-UX-R01: la fila suma la clase de selección; el tramo de la fila llega hasta el detalle.
+  const fila = tramo("<tr className={clases(ui.row, CLASE_FILA_TIPO[d.tipo], marcado && estilos.filaMarcada)} data-tipo={d.tipo}>", "{det ? (\n                      <tr");
+  // PRE-VM-R02-A: desde PRO-195-UX-R01 las acciones se calculan (accionesFila) ANTES del <tr> y la fila las pinta; se verifica el cálculo en la página y su uso en la fila.
+  const accionesEnFila = /acciones\.filter\(\(a\) => a\.visible\)/.test(fila);
+  const detalle = tramo("PRIMERA CAPA", "</Fragment>");
+  const primera = detalle.slice(0, detalle.indexOf("SEGUNDA CAPA"));
+  const segunda = detalle.slice(detalle.indexOf("SEGUNDA CAPA"));
+  const indicadores = tramo("const INDICADORES", "];");
+
+  // ══ 1. Indicadores superiores compactos, con cantidades y filtros ═══════════════════════════════════════════════════════════════════════
+  igual("UXR01-01 (actualizado PRO-365-R02) los ocho indicadores se conservan: los 7 grupos de GRUPOS_INDICADOR en su orden y Total al final (como el resumen de la referencia)",
+    [...indicadores.matchAll(/grupo: "([A-Z_]*)"/g)].map((m) => m[1]), [...GRUPOS_INDICADOR, ""]);
+  cierto("UXR01-02 (actualizado PRO-195-R01-R01) cada indicador sigue siendo un botón-filtro (aria-pressed, setGrupo) con su cantidad del resumen del servidor; «—» mientras el recorte mostrado es de otro contexto (F001)",
+    /aria-pressed=\{grupo === i\.grupo\}/.test(pagina) && /onClick=\{\(\) => setGrupo\(i\.grupo\)\}/.test(pagina) && /\{resumen === null \? "—" : i\.grupo === "" \? \(resumen\.total \?\? 0\) : \(resumen\[i\.grupo\] \?\? 0\)\}/.test(pagina));
+  cierto("UXR01-03 sin texto de ayuda visible por tarjeta: la ayuda es descripción accesible oculta (srSolo) y title; ya no usa las tarjetas grandes compartidas (summaryGrid/summaryCard)",
+    !/<small>\{i\.ayuda\}<\/small>/.test(pagina) && /<span className=\{estilos\.srSolo\}>\. \{i\.ayuda\}<\/span>/.test(pagina) && /title=\{i\.ayuda\}/.test(pagina) && !/ui\.summary(Grid|Card)/.test(pagina) && /className=\{estilos\.kpis\}/.test(pagina));
+  cierto("UXR01-04 (actualizado PRO-365-R02) CSS: tarjetas compactas en grilla que se ajusta (auto-fill, mínimo 170px), altura 64px (≥ 36px táctil), foco visible y estado activo turquesa",
+    /display: grid;\s*grid-template-columns: repeat\(auto-fill, minmax\(170px, 1fr\)\);/.test(regla(css, ".kpis")) && /min-height: 64px/.test(regla(css, ".kpi")) && /outline: 3px solid/.test(regla(css, ".kpi:focus-visible")) && /#0f9ca5/.test(regla(css, ".kpiActivo")));
+
+  // ══ 2. Cuatro iconos independientes en posiciones fijas ═════════════════════════════════════════════════════════════════════════════════
+  {
+    const base = { estadoLocal: "ENVIADO" as const, estadoSifen: "RECHAZADO" as const, estadoEmail: "NO_INFORMADO" as never, cdc: "CDC-OPACO", ultimaConsultaResultado: "OK", envioErrorTipo: null };
+    const sinNada = { ...base, estadoLocal: "PENDIENTE_ENVIO" as const, estadoSifen: "SIN_CONSULTA" as const, cdc: null, ultimaConsultaResultado: null };
+
+    igual("UXR01-05 iconosEstado devuelve SIEMPRE cuatro ejes en orden fijo Envío · XML/CDC · SIFEN · Correo (también sin CDC ni correo)",
+      [iconosEstado(base).map((i) => i.eje), iconosEstado(sinNada).map((i) => i.eje)], [["envio", "xml", "sifen", "correo"], ["envio", "xml", "sifen", "correo"]]);
+    igual("UXR01-06 ejes independientes: Enviado ✓ + CDC informado + SIFEN Rechazado ✕ coexisten (la firma/CDC no es aprobación)",
+      iconosEstado(base).slice(0, 3).map((i) => [i.simbolo, i.tono]), [["check", "ok"], ["archivoCheck", "info"], ["cruz", "error"]]);
+  }
+  // PRO-195-UX-R01 (punto 4): la fila ya no muestra los cuatro ejes sino UN estado principal + el aviso «!» opcional; los cuatro ejes pasan a la segunda capa.
+  // PRO-365: la regla anterior se revoca; la celda Estado vuelve a mostrar los CUATRO iconos independientes (Envío | XML/CDC | SIFEN | Correo) sin texto de estado.
+  cierto("UXR01-07 (actualizado PRO-365) la celda Estado muestra los cuatro iconos de iconosEstado y el aviso «!» solo si existe (hueco fijo si no); sin texto grande de estado; la segunda capa los repite con nombre",
+    /<IconoFase key=\{i\.eje\} eje=\{i\.eje\} simbolo=\{i\.simbolo\} clase=\{CLASE_TONO_ICONO\[i\.tono\]\}/.test(fila) && /const fases = iconosEstadoOperador\(d\);/.test(pagina) && !/\{estado\.texto\}|SIMBOLO_ESTADO/.test(pagina) && /\{avisoFila \? \(\s*<IconoFase eje="aviso" simbolo="alerta"/.test(fila) && /<span className=\{estilos\.iconoVacio\} aria-hidden="true" \/>/.test(fila) &&
+    /iconosEstado\(d\)\.map\(\(i\) => \(/.test(segunda) && /\.icono \{[^}]*min-width: 36px;\s*min-height: 36px;/.test(cssLimpio));
+
+  // ══ 3. Sin textos repetidos debajo de cada icono ════════════════════════════════════════════════════════════════════════════════════════
+  cierto("UXR01-08 (actualizado PRO-195) ningún nombre corto bajo iconos en la FILA; en la segunda capa cada eje lleva su nombre (NOMBRE_EJE) y su texto corto una vez",
+    !/iconoNombre|icono\.nombre|i\.nombre|i\.corto/.test(fila) && !/iconoNombre/.test(cssLimpio) && /<strong>\{NOMBRE_EJE\[i\.eje\]\}:<\/strong> \{i\.corto\}/.test(segunda));
+
+  // ══ 4. Visibilidad y contraste de los iconos (PRO-195-UX-R01: CONTORNO, sin círculo relleno) ═════════════════════════════════════════════
+  {
+    const trazo = (t: string) => hex(regla(css, `.${t} .iconoCirculo`), "color");
+
+    cierto("UXR01-09 (actualizado PRO-195) símbolos de contorno: trazo verde, azul, ámbar oscuro y rojo con contraste ≥ 4.5:1 sobre blanco, sin fondo relleno",
+      ["iconoOk", "iconoInfo", "iconoAviso", "iconoError"].every((t) => trazo(t) !== "" && contraste(trazo(t), "#ffffff") >= 4.5 && !/background/.test(regla(css, `.${t} .iconoCirculo`))));
+    cierto("UXR01-10 (actualizado PRO-195) «sin información» = trazo gris oscuro ≥ 4.5:1 sobre blanco y sobre el hover neutro de la fila",
+      contraste(trazo("iconoNeutro"), "#ffffff") >= 4.5 && contraste(trazo("iconoNeutro"), "#f7f9fb") >= 4.5);
+    cierto("UXR01-11 (actualizado PRO-365) los trazos de los cuatro iconos de la fila (ok/info/aviso/error/neutro) ≥ 4.5:1 sobre blanco, hover y fila seleccionada; ya no existen clases estado* de texto principal",
+      ["iconoOk", "iconoInfo", "iconoAviso", "iconoError", "iconoNeutro"].every((t) => ["#ffffff", "#f7f9fb", "#f1f6fb"].every((f) => contraste(trazo(t), f) >= 4.5)) && !/\.estado(Principal|Aprobado|Rechazado|Pendiente|SinInfo|Anulado)\b/.test(cssLimpio));
+    cierto("UXR01-12 (actualizado PRO-195) iconos compactos: caja 24px sin círculo, símbolo 18px, trazo 2",
+      /width: 24px;\s*height: 24px;/.test(regla(css, ".iconoCirculo")) && !/border-radius|background/.test(regla(css, ".iconoCirculo")) && /width: 18px;\s*height: 18px;/.test(regla(css, ".iconoCirculo svg")) && /stroke-width: 2;/.test(regla(css, ".iconoCirculo svg")));
+  }
+
+  // ══ 5. Descripción completa por tooltip accesible ═══════════════════════════════════════════════════════════════════════════════════════
+  // PRO-365-R02-C02: en la FILA el tooltip es el texto breve de operador y el nombre accesible antepone el eje; la segunda capa conserva el texto técnico completo (i.texto).
+  cierto("UXR01-13 (actualizado PRO-195, PRO-365-R02-C02) cada icono tiene nombre accesible (role=img + aria-label = etiqueta con el eje, o el texto) y es enfocable (tabIndex 0); fila con texto de operador, segunda capa con texto técnico",
+    /role="img"\s+tabIndex=\{0\}\s+aria-label=\{etiqueta \?\? texto\}/.test(pagina) && /texto=\{i\.texto\}/.test(segunda) && /texto=\{textoIconoOperador\(i, d\)\.texto\} etiqueta=\{textoIconoOperador\(i, d\)\.etiqueta\}/.test(fila) && /texto=\{`Revisar: \$\{avisoFila\}`\} etiqueta=\{`Aviso: \$\{avisoFila\}`\}/.test(fila));
+  cierto("UXR01-14 el tooltip visual se abre con mouse (enter), teclado (focus) y toque (click), se cierra al salir con demora (pasar al tooltip sin cerrarlo) y al perder el foco",
+    ["onMouseEnter={(e) => tip.mostrar(e.currentTarget, texto)}", "onFocus={(e) => tip.mostrar(e.currentTarget, texto)}", "onClick={(e) => tip.mostrar(e.currentTarget, texto)}", "onMouseLeave={tip.programarCierre}", "onBlur={(e) => tip.ocultar(e.currentTarget)}"].every((t) => pagina.includes(t)) &&
+    /setTimeout\(\(\) => setTip\(null\), 160\)/.test(pagina) && /onMouseEnter=\{\(\) => window\.clearTimeout\(cierreTip\.current\)\}/.test(pagina));
+  cierto("UXR01-15 se puede descartar: Escape, toque fuera del icono/tooltip, desplazamiento (también el horizontal de la tabla, captura) y cambio de tamaño",
+    /e\.key === "Escape"/.test(pagina) && /addEventListener\("pointerdown", fuera\)/.test(pagina) && /addEventListener\("scroll", cerrar, true\)/.test(pagina) && /addEventListener\("resize", cerrar\)/.test(pagina) && /removeEventListener\("scroll", cerrar, true\)/.test(pagina));
+  cierto("UXR01-16 sin recorte (AUD UX03): tooltip position: fixed fuera de la tabla, posicionado con posicionTooltip tras medirlo; ya no ::after dentro del contenedor con scroll",
+    /\.tooltip \{\s*position: fixed;/.test(cssLimpio) && !/::after|data-tip/.test(cssLimpio) && /posicionTooltip\(/.test(pagina) && /useLayoutEffect\(/.test(pagina) &&
+    pagina.lastIndexOf("className={estilos.tooltip}") > pagina.lastIndexOf("</footer>") && /aria-hidden="true" onMouseEnter/.test(pagina));
+  {
+    const vista = { ancho: 1280, alto: 800 };
+
+    igual("UXR01-17 posicionTooltip: con espacio abajo → debajo del icono y centrado", posicionTooltip({ x: 600, y: 100, ancho: 40, alto: 40 }, { ancho: 200, alto: 60 }, vista), { x: 520, y: 146, lado: "abajo" });
+    igual("UXR01-18 posicionTooltip: última fila (sin espacio abajo) → arriba del icono", posicionTooltip({ x: 600, y: 740, ancho: 40, alto: 40 }, { ancho: 200, alto: 60 }, vista), { x: 520, y: 674, lado: "arriba" });
+    igual("UXR01-19 posicionTooltip: junto al borde derecho/izquierdo se mantiene dentro de la ventana con margen 8", [posicionTooltip({ x: 1250, y: 100, ancho: 40, alto: 40 }, { ancho: 280, alto: 60 }, vista).x, posicionTooltip({ x: 0, y: 100, ancho: 40, alto: 40 }, { ancho: 280, alto: 60 }, vista).x], [992, 8]);
+    igual("UXR01-20 posicionTooltip móvil 360px: tooltip de 344px queda en x=8 y no desborda; si no cabe ni arriba ni abajo, usa el lado con más espacio sin salir de la ventana",
+      [posicionTooltip({ x: 300, y: 100, ancho: 40, alto: 40 }, { ancho: 344, alto: 80 }, { ancho: 360, alto: 640 }).x, posicionTooltip({ x: 100, y: 50, ancho: 40, alto: 40 }, { ancho: 200, alto: 600 }, { ancho: 360, alto: 640 })], [8, { x: 20, y: 32, lado: "abajo" }]);
+  }
+
+  // ══ 6. Leyenda (PRO-195-UX-R01: retirada; la fila ya no tiene cuatro iconos que explicar y cada eje de la segunda capa lleva su nombre) ════════════
+  // PRO-365: vuelve UNA leyenda compacta sobre la tabla (orden de los cuatro estados y significado de los símbolos); nunca dentro de la fila.
+  cierto("UXR01-21 (actualizado PRO-365) leyenda ÚNICA sobre la tabla (id leyenda-estados, referida por aria-describedby), nunca en la fila; la segunda capa nombra cada eje junto a su icono",
+    (pagina.match(/className=\{estilos\.leyendaEstados\}/g) ?? []).length === 1 && !/leyendaEstados/.test(fila) && /aria-describedby="leyenda-estados"/.test(pagina) && /\.leyendaEstados \{/.test(cssLimpio) && /aria-label=\{`Estados técnicos de \$\{numeroDocumento\(d\)\}`\}/.test(segunda));
+  cierto("UXR01-22 (actualizado PRO-365) sin explicaciones por eje en cada fila ni el párrafo antiguo «Pase el cursor…»/leyendaAyuda; la explicación vive solo en la leyenda única",
+    !/Pase el cursor|leyendaAyuda/.test(pagina) && !/recepción del gateway/.test(fila));
+
+  // ══ 7. Iconos para consultar, KuDE, copiar y expandir ═══════════════════════════════════════════════════════════════════════════════════
+  // PRO-195-UX-R01 (punto 3): consultar y KuDE son acciones de la FILA (iconos de contorno con su color); XML y correo, deshabilitados con motivo.
+  cierto("UXR01-23 (actualizado PRO-195) consultar = acción de icono en la FILA, SOLO con permiso EDITAR (accionesFila), con nombre accesible, deshabilitada con motivo si no está disponible y girando mientras consulta",
+    /const acciones = accionesFila\(kudeDisponible\(d\), \{ editar \}, habilitada, motivoEspera\)/.test(pagina) && accionesEnFila && /glifo=\{ACCION\.consultar\}/.test(fila) && /ocupado=\{accion === "consulta"\}/.test(fila) && /onClick=\{\(\) => void reconsultar\(d\)\}|alActivar=\{\(\) => void reconsultar\(d\)\}/.test(fila) &&
+    /aria-disabled=\{!disponible\}/.test(pagina) && /if \(disponible\) alActivar\(\);/.test(pagina) && /ocupado && estilos\.girando/.test(pagina) && /prefers-reduced-motion: reduce/.test(cssLimpio) && !/ACCION\.consultar/.test(detalle));
+  cierto("UXR01-24 (actualizado PRO-195) KuDE = icono de la fila (kudeDisponible, nombre accesible por tipo y número), sin duplicado en el detalle",
+    /const acciones = accionesFila\(kudeDisponible\(d\)/.test(pagina) && accionesEnFila && /glifo=\{ACCION\.kude\}/.test(fila) && (pagina.match(/abrirKude\(d\)/g) ?? []).length === 1 && !/abrirKude/.test(detalle));
+  cierto("UXR01-25 copiar = icono con aria-label «Copiar número de lote»/«Copiar CDC», copia exacta (writeText(valor)) y feedback por icono ✓ + aviso aria-live; sin botón «Copiar» de texto",
+    /aria-label="Copiar número de lote"/.test(primera) && /aria-label="Copiar CDC"/.test(primera) && /ACCION\.copiado : ACCION\.copiar/.test(primera) && /await navigator\.clipboard\.writeText\(valor\);/.test(pagina) && !/>Copiar<|>Copiado</.test(primera) && /aria-live="polite"/.test(primera));
+  cierto("UXR01-26 (actualizado PRO-195) expandir = icono chevron (abrir/cerrar) en la fila con aria-expanded y en el control del historial técnico",
+    /aria-expanded=\{Boolean\(det\)\}/.test(fila) && /aria-controls=\{det \? `detalle-\$\{d\.id\}` : undefined\}/.test(fila) && /\{det \? ACCION\.cerrar : ACCION\.abrir\}/.test(fila) && /aria-expanded=\{det\.tecnico\}/.test(primera) && /\{det\.tecnico \? ACCION\.cerrar : ACCION\.abrir\}/.test(primera));
+
+  // ══ 8. Primera capa: solo cuatro datos fiscales ═════════════════════════════════════════════════════════════════════════════════════════
+  cierto("UXR01-27 (actualizado PRO-365-R02-C02) primera capa con cuatro <dt> en el código: Nro lote, CDC (o «CDC de la nota de crédito»), Fecha firma y el motivo condicional (solo con rechazo); sin «Mensaje» genérico ni «fases» repetidas",
+    (primera.match(/<dt /g) ?? []).length === 4 && ["Nro lote</dt>", "\"CDC de la nota de crédito\" : \"CDC\"", "Fecha firma</dt>", "{respuesta.motivo.etiqueta}</dt>"].every((t) => primera.includes(t)) && !primera.includes(">Mensaje</dt>") && !/resumenFases|fiscalFases/.test(pagina));
+  cierto("UXR01-28 (actualizado PRO-195, PRO-365-R02-C02) lote y CDC literales (sin trim/recorte, CDC en pre-wrap) con «Sin información»; motivo en rojo SOLO con RECHAZADO persistido (respuestaFiscal usa fiscal.rechazo)",
+    /\{d\.lote \?\? "Sin información"\}/.test(primera) && /style=\{\{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" \}\}>\{fiscal\.cdc \?\? "Sin información"\}/.test(primera) && /<dd className=\{estilos\.mensajeRechazo\}>\{respuesta\.motivo\.valor\}<\/dd>/.test(primera) && /const respuesta = respuestaFiscal\(d, fiscal\);/.test(pagina) && !/\.trim\(\)/.test(primera));
+  igual("UXR01-29 detalleFiscalPrimario (sin cambios) entrega el CDC opaco tal cual, aunque tenga espacios o no tenga 44 dígitos",
+    detalleFiscalPrimario({ lote: " L-1 ", cdc: " 0180-ABC ", fechaFirma: null, codRespuesta: "1101", mensajeRespuesta: "Número de timbrado inválido", estadoSifen: "RECHAZADO" }),
+    { lote: " L-1 ", cdc: " 0180-ABC ", fechaFirma: null, mensaje: "1101 · Número de timbrado inválido", rechazo: true });
+
+  // ══ 9. Segunda capa: explicaciones técnicas y JSON, cerrada por defecto ═══════════════════════════════════════════════════════════════════
+  cierto("UXR01-30 el historial técnico arranca CERRADO (tecnico: false) y abrirlo no hace fetch (solo muestra lo ya cargado por GET)",
+    /tecnico: false, copiado: "" \};/.test(pagina) && /\{det\.tecnico \? \(/.test(segunda) && !/fetch/.test(tramo("function alternarTecnico", "function verSolicitud")));
+  cierto("UXR01-31 en la segunda capa (y no en la primera): explicación completa del aviso (alerta.detalle), nota «estado final sin CDC» (avisoSinCdc), seguimiento en 3 ejes, registro, JSON de solicitud/respuesta, historial, conexión y paginación",
+    ["{alerta.detalle}", "{sinCdc}", "seguimiento.envio", "Estado fiscal registrado", "verSolicitud(d, sol)", "verRespuesta(d, i)", "Historial de envíos y consultas", "Conexión: no registrada (intento anterior a NEX-079)", "cargarAnteriores(d)", "XML: descarga no disponible"]
+      .every((t) => segunda.includes(t) && !primera.includes(t)));
+  cierto("UXR01-32 la segunda capa ya no usa estilos en línea para su maquetación (dl/pre/h4 con clases locales); solo quedan el ancho mínimo de la tabla del historial y el margen de un aviso",
+    (segunda.match(/style=\{\{/g) ?? []).length === 2 /* ancho mínimo de la tabla del historial + margen del error de «cargar anteriores» */ && /className=\{estilos\.datosTecnicos\}/.test(segunda) && /<pre className=\{estilos\.json\}>/.test(segunda) && /<h4 className=\{estilos\.subtitulo\}>/.test(segunda));
+
+  // ══ 10. Avisos críticos siempre visibles ════════════════════════════════════════════════════════════════════════════════════════════════
+  cierto("UXR01-33 (actualizado PRO-365-R02-C02) en la PRIMERA capa, breves y visibles y en lenguaje llano: rechazo del proveedor por errores de datos, envío no confirmado (verificar antes de reenviar), aviso de la última consulta y «Requiere revisión»",
+    /d\.estadoLocal === "ERROR_ENVIO" && d\.envioErrorTipo === "RECHAZO" \? \(\s*<p className=\{ui\.alertError\} role="alert">/.test(primera) && /d\.estadoLocal === "ENVIO_INDETERMINADO" \? \(\s*<p className=\{ui\.alertError\} role="alert">/.test(primera) &&
+    /Antes de cualquier reenvío, verifique con el proveedor de facturación si el documento llegó/.test(primera) && /<strong>Aviso:<\/strong> \{avisoOperador\(alerta, false, d\.tipo\)\}/.test(primera) && /<strong>Requiere revisión:<\/strong>/.test(primera));
+  cierto("UXR01-34 el reenvío de un documento rechazado sigue exigiendo confirmación explícita (window.confirm) antes de cualquier POST; el envío indeterminado no ofrece reenviar",
+    /if \(confirmarRechazo && !window\.confirm\(/.test(pagina) && pagina.indexOf("window.confirm(") < pagina.indexOf("iniciarAccion(d, \"envio\")") && !/ENVIO_INDETERMINADO"[^)]{0,80}enviarAlGateway/.test(pagina));
+  cierto("UXR01-35 (actualizado PRO-365-R02-C02) resultado y error de la última acción visibles (role status / alert) en la primera capa, incluida la continuidad de conexión no comprobada (textoConsultaOperador)",
+    /\{det\.aviso \? <div className=\{ui\.alertOk\} role="status"/.test(primera) && /\{det\.error \? <div className=\{ui\.alertError\} role="alert"/.test(primera) && /textoConsultaOperador\(j\.resultado, j\.continuidadConexion\)/.test(pagina));
+
+  // ══ 11. Respuestas tardías y cambios de filtros (AUD UX04) ══════════════════════════════════════════════════════════════════════════════
+  igual("UXR01-36 claveContexto: filtros + página; la recarga NO cambia el contexto, otra página u otros filtros sí",
+    [claveContexto("[\"a\"]", 1) === claveContexto("[\"a\"]", 1), claveContexto("[\"a\"]", 1) === claveContexto("[\"a\"]", 2), claveContexto("[\"a\"]", 1) === claveContexto("[\"b\"]", 1)], [true, false, false]);
+  igual("UXR01-37 esResultadoVigente: solo con detalle abierto y misma generación (cerrado, reabierto o de otro contexto → se descarta)",
+    [esResultadoVigente(true, 3, 3), esResultadoVigente(false, 3, 3), esResultadoVigente(true, 3, 4)], [true, false, false]);
+  cierto("UXR01-38 (actualizado PRO-195-R01-R01) el resultado guarda el contexto de SU petición (búsqueda aplicada) y su secuencia; uno de OTRO contexto no se muestra (filas vacías, «Cargando…»): no quedan filas obsoletas accionables tras cambiar filtros o página",
+    /\{ clave: claveConsulta, contexto: contextoAplicado, secuencia, datos, error \}/.test(pagina) && /const obsoleto = resultado !== null && resultado\.contexto !== contexto;/.test(pagina) && /const filas = obsoleto \? \[\] :/.test(pagina) && /obsoleto \? "Cargando\.\.\."/.test(pagina));
+  cierto("UXR01-39 (actualizado PRO-195) al cambiar de contexto se cierran todos los detalles y el tooltip, y se limpian la selección y el aviso de la fila (ajuste de estado en el render, sin efecto)",
+    /if \(contextoVisto !== contexto\) \{\s*setContextoVisto\(contexto\);\s*setAbiertos\(\{\}\);\s*setTip\(null\);[^}]*setSeleccion\(\{ contexto, ids: \[\] \}\);\s*setAnuncio\(null\);\s*\}/.test(pagina));
+  cierto("UXR01-40 consultar/enviar: una acción por documento a la vez (ref + estado enCurso que sobrevive al cierre), respuesta aplicada SOLO a la misma generación y sin recrear el detalle; la lista se relee igual",
+    /if \(accionEnCurso\.current\.has\(d\.id\)( \|\| !disponible\(d\))?\) return null;/.test(pagina) /* actualizado PRO-195: admite la guarda de disponibilidad de UX-R02 */ && /if \(vigenteDetalle\(d, generacion\)\) fusionarIntentos/.test(pagina) && /if \(vigenteDetalle\(d, generacion\)\) aplicarDetalle/.test(pagina) &&
+    (pagina.match(/finally \{\s*terminarAccion\(d\);/g) ?? []).length === 2 && /setRecarga\(\(n\) => n \+ 1\)/.test(tramo("async function reconsultar", "async function enviarAlGateway")) && !/actualizarDetalle/.test(pagina) &&
+    /function aplicarDetalle\(id: string, parte: Partial<Detalle>\) \{\s*setAbiertos\(\(a\) => \(a\[id\] \?/.test(pagina));
+  cierto("UXR01-41 (actualizado UX-R02) abrir un detalle invalida el JSON y el historial anteriores (nueva generación de ambos); la copia solo borra su propio «Copiado»",
+    /historialVigente\.current\[d\.id\] = generacion;\s*jsonVigente\.current\[d\.id\] = \(jsonVigente\.current\[d\.id\] \?\? 0\) \+ 1;/.test(pagina) && /const vigente = \(\) => copiaVigente\.current\[d\.id\] === marca && vigenteDetalle\(d, generacion\);/.test(pagina) && /if \(vigente\(\)\) aplicarDetalle\(d\.id, \{ copiado: "" \}\)/.test(pagina));
+  cierto("UXR01-42 el refresco automático (solo GET) se calcula sobre el contexto vigente y sigue limpiando su temporizador",
+    /resultado\?\.contexto === contexto \?/.test(tramo("const hayPendientes", "useEffect(")) && /if \(!hayPendientes\) return;/.test(pagina) && /detener\(\);/.test(pagina) && !/consultar-estado|enviar/.test(tramo("Actualización automática", "const cargando")));
+
+  // ══ 12. Responsive ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+  cierto("UXR01-43 (actualizado PRO-365-R02) escritorio: tabla de diez columnas con ancho mínimo propio 1100px y scroll horizontal local; tarjeta en ≤ 720px (agrupada cuando el contenedor real tiene ancho de sobra) sin ancho mínimo",
+    /min-width: 1100px/.test(regla(css, "table.tablaDocs")) && /<div className=\{clases\(ui\.tableScroll, estilos\.contenedorTabla\)\}>\s*<table className=\{clases\(ui\.table, estilos\.tablaDocs\)\}/.test(pagina) &&
+    /@media \(max-width: 720px\) \{\s*table\.tablaDocs \{\s*min-width: 0;/.test(cssLimpio) && /"exp doc estado"\s*"sel razon monto"\s*"\. ruc fecha"\s*"\. acciones eventos"/.test(cssLimpio) && /tr:has\(> td:nth-child\(10\)\)/.test(cssLimpio));
+  cierto("UXR01-44 (actualizado PRO-195) móvil: la barra de orden se conserva (thead flexible, sin Detalle/Acciones/RUC/Eventos que no ordenan), el acento FE/NCE queda en la columna izquierda de la tarjeta y los datos fiscales apilan etiqueta/valor (≤ 640px)",
+    /table\.tablaDocs > thead > tr \{\s*display: flex;/.test(cssLimpio) && /thead th:is\(:nth-child\(1\), :nth-child\(3\), :nth-child\(6\), :nth-child\(10\)\) \{\s*display: none;/.test(cssLimpio) &&
+    /table\.tablaDocs tr\.filaFE > td:nth-child\(2\) \{\s*box-shadow: inset 3px 0 0 #6d9bd1;/.test(cssLimpio) && /table\.tablaDocs tr\.filaNCE > td:nth-child\(2\) \{\s*box-shadow: inset 3px 0 0 #d9bb4e;/.test(cssLimpio) && /@media \(max-width: 640px\) \{\s*\.fiscal > div \{\s*grid-template-columns: minmax\(0, 1fr\) 36px;/.test(cssLimpio));
+  cierto("UXR01-45 (actualizado PRO-365-R02) áreas táctiles: acciones de fila y expandir 32px, botones del detalle/copia/historial 36px; iconos de estado 28px en escritorio (densidad de la referencia) y 36px en móvil (hueco del aviso igual); sin cambios en el CSS compartido",
+    /width: 32px;\s*height: 32px;/.test(regla(css, ".accion")) && /width: 32px;\s*height: 32px;/.test(regla(css, ".expandir")) && /width: 36px;\s*height: 36px;/.test(regla(css, ".iconBtn")) && /width: 36px;\s*height: 36px;/.test(regla(css, ".copiar")) && /min-height: 36px/.test(regla(css, ".toggleTecnico")) &&
+    /width: 28px;\s*height: 28px;/.test(regla(css, ".iconoVacio")) && /min-width: 28px;\s*min-height: 28px;/.test(regla(css, ".estado .icono")) &&
+    /@media \(max-width: 720px\) \{[\s\S]*\.estado \.icono \{\s*min-width: 36px;\s*min-height: 36px;\s*\}\s*table\.tablaDocs \.iconoVacio \{\s*width: 36px;\s*height: 36px;/.test(cssLimpio) && !/tablaDocs|tooltip|iconoVacio|kpis/.test(lista));
+
+  // ══ 13. Solo se eliminan estilos locales sin uso confirmado ═════════════════════════════════════════════════════════════════════════════
+  {
+    // NEXIT-CI-R01: el módulo CSS lo consumen DIRECTAMENTE page.tsx y cancelacion-modal.tsx (mismo import). El inventario cuenta todos los consumidores reales
+    // del directorio (descubiertos por su import, no supuestos) y sigue rechazando clases huérfanas y referencias rotas; un consumidor nuevo exige revisar este caso.
+    const dir = "app/(private)/documentos";
+    const consumidores = readdirSync(join(process.cwd(), dir)).filter((f) => /\.tsx?$/.test(f)).sort()
+      .map((f) => ({ archivo: f, src: leer(`${dir}/${f}`) })).filter((c) => importacionCss(c.src, "./page.module.css") !== null);
+    const inv = inventarioCss(css, consumidores);
+    const MODAL = ["cancelacionFondo", "cancelacionCaja", "campoMotivo", "campoConfirmacion"];
+
+    igual("UXR01-46 (actualizado NEXIT-CI-R01) toda clase del CSS local la usa algún consumidor real (page.tsx o cancelacion-modal.tsx, estilos.X) y toda estilos.X de ellos existe en el CSS: sin huérfanas, sin referencias rotas, sin acceso calculado",
+      [consumidores.map((c) => c.archivo), inv.declaradas.length > 0, inv.huerfanas, inv.rotas, inv.calculados], [["cancelacion-modal.tsx", "page.tsx"], true, [], [], []]);
+    igual("UXR01-46b las cuatro clases del modal de cancelación están declaradas en el CSS y las usa cancelacion-modal.tsx (no page.tsx): por eso el inventario de page.tsx solo daba un falso positivo",
+      MODAL.map((x) => [inv.declaradas.includes(x), inv.usadas.get(x) ?? []]), MODAL.map(() => [true, ["cancelacion-modal.tsx"]]));
+    {
+      const cssX = ".a { color: #0f9ca5; } .b:hover, :is(.c, .d)::before { margin: 0.5rem 1.25em; background: url(img.svg); }\n@media (max-width: 40.5em) { .e > .f { width: 2.5px; } }\n/* .comentada {} */ [data-x=\".noClase\"] .g {}";
+      const usa = (nombre: string, clases: string[]) => `import ${nombre} from "./page.module.css";\n` + clases.map((c) => `<i className={${nombre}.${c}} />`).join("\n");
+
+      igual("UXR01-46c selectores: se toman .a…g (con pseudo-clases :hover/:is/::before y dentro de @media); NO valores ni comentarios (#0f9ca5, 0.5rem, 1.25em, url(img.svg), 40.5em, 2.5px, .comentada, cadena «.noClase»)",
+        clasesDeCss(cssX).sort(), ["a", "b", "c", "d", "e", "f", "g"]);
+      igual("UXR01-46d una clase usada SOLO por un segundo consumidor real no es huérfana; una clase que nadie usa SÍ lo es",
+        [inventarioCss(cssX, [{ archivo: "p.tsx", src: usa("estilos", ["a", "b", "c", "d", "e", "f"]) }, { archivo: "m.tsx", src: usa("estilos", ["g"]) }]).huerfanas,
+          inventarioCss(cssX, [{ archivo: "p.tsx", src: usa("estilos", ["a", "b", "c", "d", "e", "f"]) }]).huerfanas], [[], ["g"]]);
+      igual("UXR01-46e una referencia a una clase inexistente en CUALQUIER consumidor se informa como rota (con el archivo); el nombre del import se respeta (s.X) y un consumidor que no importa el módulo no cuenta",
+        [inventarioCss(cssX, [{ archivo: "p.tsx", src: usa("estilos", ["a", "b", "c", "d", "e", "f", "g"]) }, { archivo: "m.tsx", src: usa("s", ["inexistente"]) }]).rotas,
+          inventarioCss(cssX, [{ archivo: "x.tsx", src: "<i className={estilos.a} />" }]).sinImportar], [["inexistente (m.tsx)"], ["x.tsx"]]);
+      igual("UXR01-46f un acceso calculado (estilos[clave]) no es inventariable y se informa (no se aprueba en silencio)",
+        inventarioCss(cssX, [{ archivo: "p.tsx", src: usa("estilos", ["a"]) + "\n<i className={estilos[clave]} />" }]).calculados, ["p.tsx"]);
+    }
+    cierto("UXR01-47 retiradas SOLO reglas sin uso confirmado (cápsulas .sifen*, alertas .alerta*, .iconoNombre, .leyendaAyuda, .fiscalCabecera/.fiscalFases, tooltip ::after) y ningún otro archivo las usaba",
+      !/\.(sifen|alertaInconsistencia|alertaTecnica|alertaIcono|iconoNombre|leyendaAyuda|fiscalCabecera|fiscalFases)\b/.test(cssLimpio) && !/estilos\.(sifen|alerta[A-Z])/.test(pagina) && !/page\.module\.css/.test(leer("app/(private)/documentos/kude-modal.tsx")));
+  }
+
+  // ══ 14. Colores FE y NCE preservados ════════════════════════════════════════════════════════════════════════════════════════════════════
+  // PRO-195-UX-R01: «no pintar la fila entera»: fondo blanco; el tipo queda en la etiqueta FE/NCE (mismos colores) y en un acento lateral de 3px (mismos tonos).
+  igual("UXR01-48 (actualizado PRO-195) fila blanca, acento lateral FE azul / NCE amarillo con los mismos tonos de PRO-334, hover neutro, detalle casi blanco y etiquetas de tipo sin cambios",
+    [hex(regla(css, "tr.filaFE > td,\ntr.filaNCE > td"), "background"), /#6d9bd1/.test(regla(css, "tr.filaFE > td:first-child")), /#d9bb4e/.test(regla(css, "tr.filaNCE > td:first-child")),
+      hex(regla(css, "tr.filaFE:hover > td,\ntr.filaFE:focus-within > td,\ntr.filaNCE:hover > td,\ntr.filaNCE:focus-within > td"), "background"),
+      hex(regla(css, "tr.detalleFE > td"), "background"), hex(regla(css, "tr.detalleNCE > td"), "background"), hex(regla(css, ".filaFE .tipoFE"), "color"), hex(regla(css, ".filaNCE .tipoNCE"), "color")],
+    ["#ffffff", true, true, "#f7f9fb", "#fbfcfe", "#fffefa", "#1d4a7c", "#5a4500"]);
+  cierto("UXR01-49 (actualizado PRO-195) el acento de la fila sigue dependiendo SOLO del tipo (CLASE_FILA_TIPO/CLASE_DETALLE_TIPO) y el texto secundario AA (#53687a) se mantiene",
+    /CLASE_FILA_TIPO: Partial<Record<TipoDocumento, string>> = \{ FE: estilos\.filaFE, NCE: estilos\.filaNCE \}/.test(pagina) && /className=\{clases\(estilos\.detalle, CLASE_DETALLE_TIPO\[d\.tipo\]\)\} data-tipo=\{d\.tipo\}>/.test(pagina) && /#53687a/.test(cssLimpio));
+
+  // ══ 15. Funcionalidades, permisos, filtros, estados, consultas y acciones preservados ══════════════════════════════════════════════════
+  cierto("UXR01-50 filtros (búsqueda con espera 300 ms, tipo, sucursal, estado SIFEN, desde/hasta), «Limpiar filtros», indicadores-filtro, orden por 5 columnas y paginación",
+    ["setBusqueda(e.target.value)", "setBusquedaAplicada(busqueda.trim()), 300", "TIPOS_DOCUMENTO.map", "datos?.sucursales", "ESTADOS_SIFEN.map", "<CampoFecha valor={desde}", "<CampoFecha valor={hasta}", "onClick={limpiar}", "INDICADORES.map", "setPagina(paginaMostrada + 1)", "setPagina(paginaMostrada - 1)"].every((t) => pagina.includes(t)) &&
+    ["numero", "fecha", "cliente", "total", "estado"].every((c) => pagina.includes(`campo="${c}" orden={orden} onOrden={cambiarOrden}`)));
+  cierto("UXR01-51 (actualizado PRO-195) permisos sin cambios: consultar solo con EDITAR (acción de la fila); enviar/reenviar/corregir NCE solo con CREAR; las rutas llamadas son exactamente las mismas (sin rutas nuevas)",
+    /const acciones = accionesFila\(kudeDisponible\(d\), \{ editar \}/.test(pagina) && accionesEnFila && /crear && \(d\.estadoLocal === "PENDIENTE_ENVIO" \|\| \(d\.estadoLocal === "ERROR_ENVIO" && d\.envioErrorTipo !== "RECHAZO"\)\)/.test(primera) && /crear && d\.tipo !== "NCE" && d\.estadoLocal === "ERROR_ENVIO" && d\.envioErrorTipo === "RECHAZO"/.test(primera) && /crear && d\.tipo === "NCE" && d\.corregible/.test(primera) &&
+    igualRutas(pagina));
+  cierto("UXR01-52 acciones y lecturas preservadas: enviar, reenviar con confirmación, corregir NCE, consulta manual, KuDE, JSON de solicitud/respuesta, intentos anteriores, refresco automático y relectura tras acciones",
+    ["enviarAlGateway(d)", "enviarAlGateway(d, true)", "Corregir y emitir nueva", "reconsultar(d)", "abrirKude(d)", "verSolicitud(d, sol)", "verRespuesta(d, i)", "cargarAnteriores(d)", "cerrarJson(d)", "iniciarRefresco({", "<KudeModal controlador={visor} />"].every((t) => pagina.includes(t)));
+  cierto("UXR01-53 sin validación fiscal del CDC en la pantalla (sin 44 dígitos, módulo 11 ni comparación): el CDC se muestra y copia tal cual lo informó la API",
+    !/\\d\{44\}|\{44\}|modulo|módulo|cdcCoherente|cdcValido/.test(pagina));
+
+  return fallos;
+}
+
+/** Las únicas llamadas de red de la pantalla son las ya existentes (listado, detalle, intentos, consultar, enviar, solicitud, respuesta); ninguna ruta nueva. */
+function igualRutas(pagina: string): boolean {
+  const rutas = [...pagina.matchAll(/`(\/api\/[^`]*)`/g)].map((m) => m[1].replace(/\$\{[^}]*\}/g, ":x")).sort();
+
+  return JSON.stringify([...new Set(rutas)]) === JSON.stringify([
+    "/api/documentos/:x", "/api/documentos/:x/consultar", "/api/documentos/:x/enviar", "/api/documentos/:x/intentos/:x/respuesta", "/api/documentos/:x/intentos?cursor=:x", "/api/documentos/:x/solicitud?version=:x", "/api/documentos?:x",
+  ].sort());
+}
